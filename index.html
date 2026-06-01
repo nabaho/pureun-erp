@@ -725,7 +725,7 @@ function buildCurrentUser(sid){
   var arr;
   try{ arr = JSON.parse(localStorage.getItem('pureun_v6_user_accounts')||'null'); }catch(e){ arr=null; }
   if(!arr || !Array.isArray(arr)) return null;
-  var u = arr.find(function(x){ return x.sid === sid && x.status !== 'retired'; });
+  var u = arr.find(function(x){ return x.sid === sid && (x.status === 'active' || (x.status === 'leave' && x.leaveLoginAllowed === true)); });
   if(!u) return null;
   var isAdmin = (u.role==='admin'||u.role==='admin-delegate'||u.isAdmin===true);
   var isSubAdmin = !isAdmin && (u.isSubAdmin===true);
@@ -3964,6 +3964,14 @@ function Header(props){
       style:{ background:'rgba(255,255,255,0.12)', border:'1px solid rgba(255,255,255,0.25)', color:'#fff', padding:'5px 12px', borderRadius:'5px', fontSize:'13px', fontWeight:600, cursor:'pointer', marginRight:'8px' }
     }, '◀ 뒤로'),
     h('div', { className:'hd-title' }, title),
+    props.onSetStart && h('button', {
+      onClick: props.onSetStart,
+      title: props.startMenuActive ? '내 시작화면으로 지정됨 (클릭 시 해제)' : '이 화면을 로그인 시작화면으로 지정',
+      style:{ marginLeft:'6px', padding:'3px 8px', fontSize:'11px', cursor:'pointer',
+        background: props.startMenuActive ? '#fef3c7' : 'rgba(255,255,255,0.12)',
+        border:'1px solid '+(props.startMenuActive ? '#fbbf24' : 'rgba(255,255,255,0.25)'),
+        color: props.startMenuActive ? '#92400e' : '#fff', borderRadius:'5px', fontWeight:600 }
+    }, props.startMenuActive ? '🏠 시작화면' : '🏠 시작화면 지정'),
     h('div', { className:'hd-spacer' }),
     h(GlobalSearch, { onNavigate:onNavigate }),
     h(FirebaseStatus, null),
@@ -31687,13 +31695,15 @@ function CorpDashboard(props){
       label:lbl, color:col, evId:r.id, draggable:true });
   });
   // 2-2) 휴직 (loa: 시작일·종료일에만 표시) - 푸른 직원만
+  var _allLoaUsers = dbGet('user_accounts', []) || [];  // 휴직자는 users(assignable)에서 제외되므로 전체 목록 사용
   allLoa.forEach(function(l){
     if(!l.startDate) return;
     if(filterIsEum || filterEumId) return;
     if(filterIsEumWork) return;
     if(filterIsEumKeyword) return;
     if(filterIsStaffSid && l.sid !== calFilter) return;
-    var baseLabel = '🏠 '+(l.typeLabel||l.loaType||'휴직');
+    var _loaNm = (_allLoaUsers.find(function(u){ return u.sid === l.sid; }) || {}).name || '';
+    var baseLabel = '🏠 '+(l.typeLabel||l.loaType||'휴직') + (_loaNm ? ' '+_loaNm : '');
     // 시작일 (그리드 범위면 표시)
     if(inCalRange(l.startDate)){
       calEvents.push({ date:l.startDate, sid:l.sid, type:'loa',
@@ -38032,6 +38042,13 @@ function StaffRosterModal(props){
       h('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px' } },
         fld('고용형태', sel('contractType', CONTRACT_TYPES)),
         fld('상태', sel('status', [{v:'scheduled',label:'입사예정'},{v:'active',label:'재직'},{v:'leave',label:'휴직'},{v:'standby',label:'대기'},{v:'retired',label:'퇴직'}]))
+      ),
+      f.status === 'leave' && h('div', { style:{ marginBottom:'12px', padding:'8px 10px', background:'#fff7ed', border:'1px solid #fdba74', borderRadius:'6px', display:'flex', alignItems:'center', gap:'8px' } },
+        h('input', { type:'checkbox', checked: !!f.leaveLoginAllowed, onChange:function(e){ var v=e.target.checked; setF(function(prev){ return Object.assign({}, prev, { leaveLoginAllowed: v }); }); },
+          style:{ width:'16px', height:'16px', cursor:'pointer' } }),
+        h('div', null,
+          h('div', { style:{ fontSize:'12.5px', fontWeight:600, color:'#9a3412' } }, '휴직 중 로그인 허용'),
+          h('div', { style:{ fontSize:'11px', color:'#b45309' } }, '체크 시 휴직 중에도 본인 담당 자료를 조회할 수 있습니다 (재직자와 동일 권한).'))
       ),
       // 소정근로시간 (연차·시간연차 계산 기준)
       h('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px' } },
@@ -47771,9 +47788,20 @@ function LoginScreen(props){
         try { dbSet('user_accounts', users); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
       }
       var u = users.find(function(x){
-        return x.status !== 'retired' && ((x.loginId && x.loginId === id) || x.sid === id);
+        var canLogin = x.status === 'active' || (x.status === 'leave' && x.leaveLoginAllowed === true);
+        return canLogin && ((x.loginId && x.loginId === id) || x.sid === id);
       });
-      if(!u){ setErr('아이디가 존재하지 않습니다.'); setLoading(false); return; }
+      if(!u){
+        // 로그인 불가 상태 안내 구분
+        var anyMatch = users.find(function(x){ return (x.loginId && x.loginId === id) || x.sid === id; });
+        if(anyMatch && !(anyMatch.status === 'active' || (anyMatch.status === 'leave' && anyMatch.leaveLoginAllowed === true))){
+          var stLabel = anyMatch.status==='leave'?'휴직':anyMatch.status==='retired'?'퇴직':anyMatch.status==='standby'?'대기':anyMatch.status==='scheduled'?'입사예정':'비활성';
+          setErr('재직 상태가 아니어서 로그인할 수 없습니다. (현재: '+stLabel+') 관리자에게 문의하세요.');
+        } else {
+          setErr('아이디가 존재하지 않습니다.');
+        }
+        setLoading(false); return;
+      }
       var storedPw = u.loginPw || u.password || '';
       // 비밀번호 미입력 시 검증 생략 (무비번 로그인 허용). 입력했을 때만 일치 검사.
       if(pw && storedPw && !verifyPw(pw, storedPw)){
@@ -47812,8 +47840,11 @@ function LoginScreen(props){
       localStorage.removeItem('pureun_v6_save_pw_flag');
       localStorage.removeItem('pureun_v6_saved_pw');
       if(autoLogin){ setAutoLogin(u.sid); } else { clearAutoLogin(); }
-      if(isDefaultPwStored(users.find(function(x){ return x.sid === u.sid; }) && users.find(function(x){ return x.sid === u.sid; }).loginPw || storedPw)){
+      var _loginUser = users.find(function(x){ return x.sid === u.sid; });
+      if(isDefaultPwStored((_loginUser && _loginUser.loginPw) || storedPw)){
         try { localStorage.setItem('pureun_v6_force_pw', u.sid); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+      } else {
+        try { localStorage.removeItem('pureun_v6_force_pw'); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
       }
       setSession(u.sid);
       onLogin(u.sid);
@@ -48662,12 +48693,23 @@ function ERPMain(props){
     } catch(e){ window._erpErrLog && window._erpErrLog(e); }
     return '';
   })();
-  // ★ 로그인 진입 시 항상 법인 대시보드(캘린더)로 시작
-  var defaultMenu = hashMenu || 'dash/corp';
+  // ★ 시작화면 결정: ①URL hash ②개인 설정 ③역할 기본(관리자·위임관리인=법인대시보드, 직원=나의업무)
+  var startMenu = (function(){
+    var personal = dbGet('start_menu_' + (CURRENT_USER.sid||''), null);
+    if(personal) return personal;
+    if(CURRENT_USER.isAdmin || CURRENT_USER.isSubAdmin) return 'dash/corp';
+    return 'dash/my';
+  })();
+  var defaultMenu = hashMenu || startMenu;
   var s = useState(defaultMenu); var current = s[0]; var setCurrent = s[1];
   var hbS = useState(false); var helpOpen = hbS[0]; var setHelpOpen = hbS[1];
   var tourS = useState(false); var showTour = tourS[0]; var setShowTour = tourS[1];
   var _fpRaw = localStorage.getItem('pureun_v6_force_pw') || '';
+  // 저장된 force_pw가 현재 로그인 사용자와 다르면 이전 사용자 잔재 → 무시·삭제
+  if(_fpRaw && CURRENT_USER && _fpRaw !== CURRENT_USER.sid){
+    _fpRaw = '';
+    try { localStorage.removeItem('pureun_v6_force_pw'); } catch(e){}
+  }
   var fpcS = useState(_fpRaw); var forcePwSid = fpcS[0]; var setForcePwSid = fpcS[1];
   useEffect(function(){
     if(isAdminByUser(CURRENT_USER)) return;  // 관리자(권형하)는 접속 시 자동 투어 생략
@@ -48928,7 +48970,13 @@ function ERPMain(props){
         onNavigate: selectMenu,
         onLogout: onLogout,
         onHelpOpen: function(){ setHelpOpen(true); },
-        onTourOpen: function(){ setShowTour(true); }
+        onTourOpen: function(){ setShowTour(true); },
+        startMenuActive: (dbGet('start_menu_'+(CURRENT_USER.sid||''), null) === current),
+        onSetStart: function(){
+          var key = 'start_menu_'+(CURRENT_USER.sid||'');
+          if(dbGet(key, null) === current){ dbRemove(key); showToast('🏠 시작화면 지정 해제 (역할 기본값으로 복원)'); }
+          else { dbSet(key, current); showToast('🏠 현재 화면을 내 시작화면으로 지정했습니다'); }
+        }
       }),
       h('main', { className:'main',
         id:'main-scroll-area',
