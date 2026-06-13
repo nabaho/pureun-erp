@@ -49268,63 +49268,77 @@ function PayrollIrregular(props){
   }
 
   // ── 일용노무비대장 / 기타소득지급대장 엑셀 가져오기 (한 파일씩, 파일명에서 월 인식) ──
-  function importIrregularXlsx(e){
-    var file = e.target.files && e.target.files[0]; if(!file) return;
-    if(typeof XLSX === 'undefined'){ showToast('엑셀 모듈 로딩중'); return; }
+  // 파일 1개를 읽어 레코드 배열에 누적 (arr/have는 누적 상태, cb(addedN, skippedN, label, ym))
+  function _processIrregularFile(file, arr, have, cb){
+    function num(v){ if(v===null||v===undefined||v==='') return 0; var n=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?0:Math.round(n); }
     var fname = file.name || '';
-    // 파일명에서 월 추출 (예: 2025년_7월_..., 2025년_12월_...)
     var mm = fname.match(/(\d{4})년?[_\s]*(\d{1,2})월/);
     var ym = mm ? (mm[1]+'-'+('0'+mm[2]).slice(-2)) : props.selYM;
-    function num(v){ if(v===null||v===undefined||v==='') return 0; var n=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?0:Math.round(n); }
     var reader = new FileReader();
     reader.onload = function(ev){
+      var added=0, skipped=0, isMisc=false;
       try {
         var wb = XLSX.read(ev.target.result, { type:'array' });
-        // 종류 판별: '지급대장' 시트 → 기타소득(misc) / 그 외 → 일용직(daily)
-        var isMisc = wb.SheetNames.indexOf('지급대장') >= 0;
+        isMisc = wb.SheetNames.indexOf('지급대장') >= 0;
         var sn = isMisc ? '지급대장' : wb.SheetNames[0];
-        var ws = wb.Sheets[sn];
-        var data = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+        var data = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header:1, defval:'' });
         var type = isMisc ? 'misc' : 'daily';
-        try { console.log('[비정규직 가져오기 백업]', JSON.stringify(dbGet('payroll_irregular',[]))); } catch(_){}
-        var arr = recs.slice();
-        var have = {};
-        arr.forEach(function(r){ have[r.ym+'|'+r.type+'|'+(r.name||'')+'|'+String(r.rrn||'').replace(/[^0-9]/g,'')] = true; });
-        var added=0, skipped=0;
-        // 헤더 행 탐색 (이름/성명 + 주민)
         var hi = data.findIndex(function(row){ return row.some(function(x){ return /이름|성명/.test(String(x)); }) && row.some(function(x){ return String(x).indexOf('주민')>=0; }); });
-        if(hi<0){ showToast('⚠️ 헤더(이름·주민) 행 없음'); e.target.value=''; return; }
+        if(hi<0){ cb(0,0,'⚠️ '+fname+': 헤더 없음',ym); return; }
         for(var r=hi+1;r<data.length;r++){
           var row=data[r]; if(!row) continue;
           var nm, rrn, amount, itax, ltax, net, wdays;
           if(isMisc){
-            // 기타소득: col2 성명, col3 주민, col8 지급액, col9 소득세, col10 지방세, col13 차인지급액
             nm=String(row[1]||'').trim(); rrn=String(row[2]||'').trim();
             amount=num(row[7]); itax=num(row[8]); ltax=num(row[9]); net=num(row[12]); wdays=0;
           } else {
-            // 일용직: col2 이름, col3 주민, col38 근무일수, col40 총급여액, col41 소득세, col42 지방세, col48 실지급액
             nm=String(row[1]||'').trim(); rrn=String(row[2]||'').trim();
             wdays=num(row[37]); amount=num(row[39]); itax=num(row[40]); ltax=num(row[41]); net=num(row[47]);
           }
-          if(!/^[가-힣]{2,5}$/.test(nm)) continue;   // 사람 이름만 (합계·소계 등 제외)
+          if(!/^[가-힣]{2,5}$/.test(nm)) continue;
           if(amount<=0) continue;
           var key = ym+'|'+type+'|'+nm+'|'+String(rrn).replace(/[^0-9]/g,'');
           if(have[key]){ skipped++; continue; }
           arr.push({
-            id:'irr-'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)+'-'+added,
+            id:'irr-'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)+'-'+arr.length,
             ym:ym, type:type, name:nm, rrn:rrn, amount:amount,
-            workDays:wdays, dailyWage: (wdays>0 ? Math.round(amount/wdays) : 0),
+            workDays:wdays, dailyWage:(wdays>0?Math.round(amount/wdays):0),
             incomeTax:itax, localTax:ltax, netPay:(net>0?net:amount-itax-ltax),
             bank:'', account:'', note:'급여대장 가져오기', paid:true, paidDate:''
           });
           have[key]=true; added++;
         }
-        persist(arr);
-        showToast('📥 '+(isMisc?'기타소득':'일용노무비')+' '+ym+': 추가 '+added+'명 / 건너뜀 '+skipped+'명');
-      } catch(err){ showToast('가져오기 실패: '+(err&&err.message)); }
-      e.target.value='';
+        cb(added, skipped, (isMisc?'기타소득':'일용노무비')+' '+ym, ym);
+      } catch(err){ cb(0,0,'⚠️ '+fname+': '+(err&&err.message),ym); }
     };
     reader.readAsArrayBuffer(file);
+  }
+
+  // 여러 파일 순차 처리 (단일/일괄 공용)
+  function importIrregularFiles(files){
+    if(!files || !files.length) return;
+    if(typeof XLSX === 'undefined'){ showToast('엑셀 모듈 로딩중'); return; }
+    try { console.log('[비정규직 가져오기 백업]', JSON.stringify(dbGet('payroll_irregular',[]))); } catch(_){}
+    var arr = recs.slice();
+    var have = {};
+    arr.forEach(function(r){ have[r.ym+'|'+r.type+'|'+(r.name||'')+'|'+String(r.rrn||'').replace(/[^0-9]/g,'')] = true; });
+    var list = Array.prototype.slice.call(files);
+    var totalAdded=0, totalSkipped=0, msgs=[], i=0;
+    function next(){
+      if(i >= list.length){
+        persist(arr);
+        showToast('📥 '+list.length+'개 파일: 추가 '+totalAdded+'명 / 건너뜀 '+totalSkipped+'명');
+        return;
+      }
+      _processIrregularFile(list[i], arr, have, function(a,s,label,ym){
+        totalAdded+=a; totalSkipped+=s; i++; next();
+      });
+    }
+    next();
+  }
+  function importIrregularXlsx(e){
+    importIrregularFiles(e.target.files);
+    e.target.value='';
   }
   function openEdit(r){
     setModal(Object.assign({}, r));
@@ -49471,10 +49485,15 @@ function PayrollIrregular(props){
         h('button', { onClick:confirmAll, disabled:isIrregularLocked(props.selYM),
           style:{ padding:'8px 14px', background:isIrregularLocked(props.selYM)?'#cbd5e1':'#1e40af', color:'#fff', border:'none', borderRadius:'6px',
             cursor:isIrregularLocked(props.selYM)?'not-allowed':'pointer', fontSize:'12px', fontWeight:700, opacity:isIrregularLocked(props.selYM)?0.6:1, flexShrink:0, whiteSpace:'nowrap' } }, '✓ 일괄 확정'),
-        h('label', { style:{ padding:'8px 14px', background:'#eff6ff', color:'#1d4ed8', border:'1px solid #bfdbfe', borderRadius:'6px',
-            cursor:'pointer', fontSize:'12px', fontWeight:600, flexShrink:0, whiteSpace:'nowrap', display:'inline-block' } },
-          '📥 일용·기타소득 가져오기',
-          h('input', { type:'file', accept:'.xlsx,.xls', onChange:importIrregularXlsx, style:{ display:'none' } }))
+        h('label', { style:{ padding:'8px 14px', background:'#eff6ff', color:'#1d4ed8', border:'1px dashed #60a5fa', borderRadius:'6px',
+            cursor:'pointer', fontSize:'12px', fontWeight:600, flexShrink:0, whiteSpace:'nowrap', display:'inline-block' },
+            title:'여러 파일 선택 가능 · 파일을 끌어다 놓아도 됩니다',
+            onDragOver:function(ev){ ev.preventDefault(); ev.currentTarget.style.background='#dbeafe'; },
+            onDragLeave:function(ev){ ev.currentTarget.style.background='#eff6ff'; },
+            onDrop:function(ev){ ev.preventDefault(); ev.currentTarget.style.background='#eff6ff';
+              if(ev.dataTransfer && ev.dataTransfer.files) importIrregularFiles(ev.dataTransfer.files); } },
+          '📥 일용·기타소득 가져오기 (여러 개·드래그 가능)',
+          h('input', { type:'file', accept:'.xlsx,.xls', multiple:true, onChange:importIrregularXlsx, style:{ display:'none' } }))
       )
     ),
 
