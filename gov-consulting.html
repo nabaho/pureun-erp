@@ -948,7 +948,7 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 
 <script>
 // ===== localStorage 안전 래퍼 (용량 초과 방지) =====
-const LS_VALID_KEYS=['p_staff','p_types','p_cos','p_scheds','p_env','p_fieldState','p_lastUserId','p_session','p_autoSession','p_loginFails','p_loginLock','p_roundlog','p_favCos','p_autobackups','p_autoDl','p_autoKeep','p_lastAutoDl','p_autoDlFreq','p_dashW','p_dashHintSeen','p_dashMCollapsed'];
+const LS_VALID_KEYS=['p_staff','p_types','p_cos','p_scheds','p_env','p_fieldState','p_lastUserId','p_session','p_autoSession','p_loginFails','p_loginLock','p_roundlog','p_favCos','p_autobackups','p_autoDl','p_autoKeep','p_lastAutoDl','p_autoDlFreq','p_dashW','p_dashHintSeen','p_dashMCollapsed','p_photoHashes'];
 // 시작 시: 정상 키 외의 잔재(과거 사진 등) 제거로 용량 확보
 (function cleanupLS(){
   try{
@@ -1167,10 +1167,36 @@ async function savePhotoToDB(sid,key,dataUrl){
   try{const db=await openPhotoDB();const tx=db.transaction('photos','readwrite');tx.objectStore('photos').put(dataUrl,`${sid}_${key}`);}catch(e){console.warn('사진 저장 실패',e);}
 }
 async function deletePhotoFromDB(sid){
-  try{const db=await openPhotoDB();const tx=db.transaction('photos','readwrite');const st=tx.objectStore('photos');st.delete(`${sid}_c0`);st.delete(`${sid}_c1`);}catch(e){}
+  try{const db=await openPhotoDB();const tx=db.transaction('photos','readwrite');const st=tx.objectStore('photos');st.delete(`${sid}_c0`);st.delete(`${sid}_c1`);st.delete(`${sid}_o0`);st.delete(`${sid}_o1`);}catch(e){}
 }
 async function deleteOnePhotoFromDB(sid,key){
   try{const db=await openPhotoDB();const tx=db.transaction('photos','readwrite');tx.objectStore('photos').delete(`${sid}_${key}`);}catch(e){}
+}
+
+// ===== 사진 중복 검사 레지스트리 (같은 사업장+같은 컨설팅 범위에서만 중복으로 판단) =====
+function getPhotoReg(){try{return JSON.parse(localStorage.getItem('p_photoHashes'))||[];}catch(e){return [];}}
+function addPhotoHash(hash,sc){
+  if(!hash||!sc)return;
+  const r=getPhotoReg();
+  if(!r.some(e=>e.hash===hash&&e.sid===sc.id))
+    r.push({hash,sid:sc.id,coId:sc.coId,typeId:sc.typeId,round:sc.round||0,t:todayStr()});
+  lsSet('p_photoHashes',JSON.stringify(r.slice(-500)));
+}
+function findDupPhoto(hash,sc){
+  if(!hash||!sc)return null;
+  return getPhotoReg().find(e=>e.hash===hash&&e.coId===sc.coId&&e.typeId===sc.typeId&&e.sid!==sc.id)||null;
+}
+async function hashDataUrl(durl){
+  try{
+    if(crypto&&crypto.subtle){
+      const buf=new TextEncoder().encode(durl);
+      const h=await crypto.subtle.digest('SHA-256',buf);
+      return Array.from(new Uint8Array(h)).slice(0,12).map(b=>b.toString(16).padStart(2,'0')).join('');
+    }
+  }catch(e){}
+  let h1=5381,h2=52711;
+  for(let i=0;i<durl.length;i++){const c=durl.charCodeAt(i);h1=(h1*33+c)|0;h2=(h2*37+c)|0;}
+  return (h1>>>0).toString(16)+'-'+(h2>>>0).toString(16)+'-'+durl.length.toString(36);
 }
 async function loadPhotosFromDB(){
   try{
@@ -3083,7 +3109,7 @@ function deleteType(id){
 
 // ===== STAMP MODAL =====
 function openStampModal(sid){
-  ST.sid=sid;ST.photos=[null,null];ST.times=[null,null];ST.done=[false,false];ST.pos='bottom-left';ST.color='#ffb347';ST.slot=0;
+  ST.sid=sid;ST.photos=[null,null];ST.times=[null,null];ST.done=[false,false];ST.pos='bottom-left';ST.color='#ffb347';ST.slot=0;ST.pHash=[null,null];ST.pDurl=[null,null];
   // 이미 저장된 사진이 있으면 done 플래그 복원
   const saved=PHOTOS[sid];
   if(saved){if(saved.c0)ST.done[0]=true;if(saved.c1)ST.done[1]=true;}
@@ -3175,14 +3201,28 @@ function renderRFs(){
 }
 
 function loadStampImg(idx,file){
-  const finish=img=>{ST.photos[idx]=img;ST.done[idx]=false;renderPDs();renderRFs();};
-  const fallback=()=>{const img=new Image();img.onload=()=>finish(img);img.src=URL.createObjectURL(file);};
+  const finish=async(img,durl)=>{
+    const apply=()=>{ST.photos[idx]=img;ST.done[idx]=false;renderPDs();renderRFs();};
+    if(durl){
+      const h=await hashDataUrl(durl);
+      ST.pHash[idx]=h;ST.pDurl[idx]=durl;
+      const sc=getScheds().find(x=>x.id===ST.sid);
+      const dup=findDupPhoto(h,sc);
+      if(dup){
+        showConfirm(`⚠️ 이 사진은 같은 사업장·같은 컨설팅의 ${dup.round?dup.round+'회차':'다른 회차'}(${dup.t||''})에 이미 사용된 사진입니다. 그래도 사용하시겠습니까?`,apply);
+        return; // 확인 전에는 적용하지 않음 (취소 시 미적용)
+      }
+    }
+    apply();
+  };
+  const fallback=()=>{const r=new FileReader();r.onload=()=>{const img=new Image();img.onload=()=>finish(img,r.result);img.src=r.result;};r.readAsDataURL(file);};
   // EXIF 회전 보정: 폰 세로/가로 사진이 눕지 않도록 정규화
   if(window.createImageBitmap){
     createImageBitmap(file,{imageOrientation:'from-image'}).then(bmp=>{
       const cv=document.createElement('canvas');cv.width=bmp.width;cv.height=bmp.height;
       cv.getContext('2d').drawImage(bmp,0,0);if(bmp.close)bmp.close();
-      const img=new Image();img.onload=()=>finish(img);img.src=cv.toDataURL('image/jpeg',.95);
+      const durl=cv.toDataURL('image/jpeg',.95);
+      const img=new Image();img.onload=()=>finish(img,durl);img.src=durl;
     }).catch(fallback);
   }else fallback();
 }
@@ -3264,12 +3304,14 @@ async function saveStamp(){
   const attNm=getStaff().find(a=>a.id===sc?.attId)?.name||'담당자';
   const slug=`${tyNm}_${co?.name||'?'}_${sc?.round||'N'}회_${attNm}`;
   if(!PHOTOS[ST.sid])PHOTOS[ST.sid]={c0:null,c1:null};
-  // 1) 앱 내부 저장 (IndexedDB)
+  // 1) 앱 내부 저장 (IndexedDB) — 합성 결과 + 원본 모두 저장, 지문 등록
   [0,1].forEach(i=>{
     if(!ST.done[i])return;
     const cv=q(`#cv${i}`);if(!cv)return;
     PHOTOS[ST.sid][`c${i}`]=cv;
     savePhotoToDB(ST.sid,`c${i}`,cv.toDataURL('image/jpeg',.92));
+    if(ST.pDurl&&ST.pDurl[i])savePhotoToDB(ST.sid,`o${i}`,ST.pDurl[i]);
+    if(ST.pHash&&ST.pHash[i]&&sc)addPhotoHash(ST.pHash[i],sc);
   });
   closeModal('mbStamp');renderCal();
   // 2) 파일 저장 (위치 선택, 순차)
@@ -3327,6 +3369,9 @@ const SHORTCUTS=[
   {key:'Esc',desc:'모달·패널 닫기'},
   {key:'?',desc:'이 도움말 열기'},
   {key:'Shift+휠',desc:'캘린더에서 이전 / 다음 기간 이동'},
+  {key:'Ctrl+Enter',desc:'열린 팝업 바로 저장'},
+  {key:'Ctrl+Z',desc:'방금 이동한 일정 복귀 (복귀 토스트 표시 중)'},
+  {key:'🖱 더블클릭',desc:'대시보드 경계선: 폭 기본값 복원'},
   {key:'🖱 드래그',desc:'컨설팅 행 → 날짜 칸: 일정 등록 · 내 일정 칩: 날짜 이동'},
   {key:'🖱 드래그',desc:'대시보드 경계: 폭 조절 · 팝업 제목줄: 위치 이동'},
 ];
@@ -3402,7 +3447,25 @@ function initShortcuts(){
     // 입력 중에는 단축키 무시 (Esc 제외)
     const tag=(e.target.tagName||'').toLowerCase();
     const typing=tag==='input'||tag==='select'||tag==='textarea';
-    if(e.key==='Escape'){closeAllOverlays();if(typing)e.target.blur();return;}
+    // Ctrl+Enter: 열린 팝업의 저장 실행 (입력 중에도 동작)
+    if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){
+      const om=document.querySelector('.mb.open');
+      if(om){
+        const map={mbSingle:'#mSingleSave',mbCo:'#mCoSave',mbEdit:'#mEditSave',mbStamp:'#mStampSave',mbPwChange:'#mbPwChange .btn-p'};
+        const sel=map[om.id];const b=sel?document.querySelector(sel):null;
+        if(b){e.preventDefault();b.click();return;}
+      }
+    }
+    // Ctrl+Z: 방금 이동한 일정 복귀 (복귀 토스트가 떠 있을 때)
+    if((e.ctrlKey||e.metaKey)&&(e.key==='z'||e.key==='Z')&&!typing){
+      const t=q('#toast'),ub=q('#undoBtn');
+      if(t&&t.classList.contains('on')&&ub){e.preventDefault();ub.click();return;}
+    }
+    if(e.key==='Escape'){
+      // 검색창에 검색어가 있으면 먼저 지우기
+      if(e.target.id==='dashSearch'&&e.target.value){e.target.value='';e.target.dispatchEvent(new Event('input'));return;}
+      closeAllOverlays();if(typing)e.target.blur();return;
+    }
     if(typing||e.ctrlKey||e.metaKey||e.altKey)return;
     // 모달·패널 열려있으면 단축키 무시
     if(document.querySelector('.mb.open'))return;
@@ -3625,6 +3688,11 @@ function initDashResizer(){
     localStorage.setItem('p_dashHintSeen','1');
   }
   let dragging=false;
+  rez.addEventListener('dblclick',()=>{
+    if(window.innerWidth<=768)return;
+    body.style.setProperty('--dash-w','290px');setDashDensity(290);
+    lsSet('p_dashW','290');toast('대시보드 폭 초기화');
+  });
   rez.addEventListener('mousedown',e=>{
     if(window.innerWidth<=768)return;
     dragging=true;rez.classList.add('dragging');rez.classList.remove('hint');
