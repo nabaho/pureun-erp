@@ -189,6 +189,20 @@ body.pc #main,body.pc #fab,body.pc #selbar{display:none!important}
 .pcitem.dropover{outline:2px dashed #7e95d0}
 .pchintside{font-size:11.5px;color:#7e8db3;line-height:1.7;padding:4px 8px}
 #pcMain{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+/* 오른쪽 분류 패널 — 왼쪽과 같은 240px, 더 연한 색 */
+#pcRight{width:240px;flex-shrink:0;background:#eef2fb;color:#33415e;border-left:1px solid #dde3ee;overflow-y:auto;padding:18px 14px}
+#pcRight .rsec{font-size:11.5px;color:#7c89a6;letter-spacing:1px;margin:4px 4px 10px;font-weight:700}
+#pcRight .radd{display:flex;gap:6px;margin-bottom:12px}
+#pcRight .radd input{flex:1;min-width:0;padding:8px 10px;border:1px solid #cfd8e8;border-radius:8px;background:#fff;font-size:13px}
+#pcRight .radd button{flex-shrink:0;background:#3a4a73;color:#fff;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:700}
+#pcRight .ritem{display:flex;align-items:center;gap:8px;padding:9px 11px;border-radius:9px;font-size:13.5px;cursor:pointer;background:#fff;border:1px solid #e1e8f4;margin-bottom:6px}
+#pcRight .ritem:hover{border-color:#9db0d8;background:#f7faff}
+#pcRight .ritem.on{background:#dde7fb;border-color:#9db0d8;font-weight:700;color:#1e2a47}
+#pcRight .ritem .cnt{margin-left:auto;font-size:11.5px;color:#8b98b3}
+#pcRight .ritem .edit{margin-left:6px;font-size:12px;color:#9db0d8;padding:2px 5px;border-radius:6px}
+#pcRight .ritem .edit:hover{background:#e1e8f4;color:#3a4a73}
+#pcRight .ritem.dropover{outline:2px dashed #5a76c0;background:#dde7fb}
+#pcRight .rhint{font-size:11.5px;color:#90a0c0;line-height:1.7;padding:6px 4px}
 #pcTop{display:flex;gap:10px;padding:14px 22px;background:#fff;border-bottom:1px solid #e4e8f0;align-items:center}
 #pcSearch{flex:1;padding:10px 14px 10px 38px;border:1px solid #dde3ee;border-radius:10px;font-size:14px;
   background:#f7f9fc url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="%238b98b3" viewBox="0 0 16 16"><path d="M11.7 10.3a6 6 0 1 0-1.4 1.4l3 3 1.4-1.4-3-3zM6 10a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>') 12px center no-repeat}
@@ -320,17 +334,20 @@ body.pc #pcDetail{display:flex}
     </div>
     <div id="pcHead">
       <h2><span id="pcTitle">전체 명함</span> <em id="pcCount">0개</em></h2>
-      <select id="pcPageSize" onchange="state.pageSize=this.value==='all'?999999:+this.value;state.page=0;render()" style="margin-left:auto">
-        <option value="50">50개씩</option>
-        <option value="100" selected>100개씩</option>
-        <option value="300">300개씩</option>
-        <option value="500">500개씩</option>
-        <option value="all">전체 보기</option>
-      </select>
-      <select id="pcSort" onchange="state.sort=this.value;state.sortKey=null;render()">
-        <option value="date">등록일순</option><option value="name">가나다순</option></select>
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <select id="pcPageSize" onchange="state.pageSize=this.value==='all'?999999:+this.value;state.page=0;render()">
+          <option value="50">50개씩</option>
+          <option value="100" selected>100개씩</option>
+          <option value="300">300개씩</option>
+          <option value="500">500개씩</option>
+          <option value="all">전체 보기</option>
+        </select>
+        <select id="pcSort" onchange="state.sort=this.value;state.sortKey=null;render()">
+          <option value="date">등록일순</option><option value="name">가나다순</option></select>
+      </div>
     </div>
     <p class="pchint">거래처·기관 명함을 한곳에서 등록·분류·정리합니다 — 행 앞 □로 여러 장을 선택해 폴더 이동·삭제할 수 있습니다</p>
+    <div id="pcFilters" style="display:flex;gap:8px;padding:0 22px 8px;flex-wrap:wrap"></div>
     <div id="pcSel"></div>
     <div id="pcTableWrap"><table id="pcTable"></table></div>
     <div id="pcPager" style="display:flex;align-items:center;justify-content:center;gap:14px;padding:14px;font-size:13.5px;color:#5a6885"></div>
@@ -373,7 +390,7 @@ const FIREBASE_CONFIG = {
 const DB_ROOT = 'pucards';
 const GEMINI_KEY_LS = 'pucards_gemini_key';
 
-const state = { tab:'card', group:'all', owner:'all', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, items:{}, groups:{} };
+const state = { tab:'card', group:'all', owner:'all', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, items:{}, groups:{} };
 
 /* ── 데이터 계층 ── */
 const Store = {
@@ -476,12 +493,42 @@ function listItems(){
   const isCho = qc && /^[ㄱ-ㅎ]+$/.test(qc);   /* 초성 검색: ㅎㄱㄷ → 홍길동 */
   const arr = Object.values(state.items)
     .filter(it => it.kind===state.tab)
-    .filter(it => state.group==='all' || (it.group||'')===state.group)
+    .filter(it => {
+      if (state.group==='all') return true;
+      /* 선택 폴더 + 모든 하위 폴더 포함 */
+      const ids=new Set([state.group]);
+      const addKids = pid => Object.values(state.groups).forEach(g=>{ if((g.parent||'')===pid && !ids.has(g.id)){ ids.add(g.id); addKids(g.id);} });
+      addKids(state.group);
+      return ids.has(it.group||'');
+    })
     .filter(it => state.owner==='all' || (it.owner||'')===state.owner)
     .filter(it => !q || [it.name,it.company,it.title,it.dept,it.mobile,it.tel,it.email,
                          it.ceo,it.bizno,it.address].some(v => String(v||'').toLowerCase().includes(q)
                          || (digits(q).length>=3 && digits(v).includes(digits(q))))
-                || (isCho && [it.name,it.company,it.ceo].some(v=>chosung(v).replace(/\s/g,'').includes(qc))));
+                || (isCho && [it.name,it.company,it.ceo].some(v=>chosung(v).replace(/\s/g,'').includes(qc))))
+    /* 칸별 검색 필터 */
+    .filter(it => {
+      const f = state.colFilter || {};
+      const has = (key, val) => !val || String(it[key]||'').toLowerCase().includes(String(val).toLowerCase());
+      if (f.name && !(String(it.name||'').toLowerCase().includes(f.name.toLowerCase()))) return false;
+      if (f.company && !(String(it.company||'').toLowerCase().includes(f.company.toLowerCase()))) return false;
+      if (f.phone){ const d=digits(f.phone); if(!(digits(it.mobile).includes(d)||digits(it.tel).includes(d)||digits(it.companyTel).includes(d))) return false; }
+      if (f.email && !has('email', f.email)) return false;
+      return true;
+    })
+    /* 조건 필터: 전화있음 / 이메일있음 / 중복만 */
+    .filter(it => {
+      if (state.onlyPhone && !(it.mobile||it.tel||it.companyTel)) return false;
+      if (state.onlyEmail && !it.email) return false;
+      return true;
+    });
+  /* 중복만 보기 */
+  let result = arr;
+  if (state.onlyDup){
+    const kc={}; Object.values(state.items).filter(x=>x.kind===state.tab)
+      .forEach(x=>itemKeys(x).forEach(k=>kc[k]=(kc[k]||0)+1));
+    result = arr.filter(it=>itemKeys(it).some(k=>kc[k]>1));
+  }
   /* 헤더 클릭 정렬(PC) 우선, 없으면 기존 등록일/이름순 */
   if (state.sortKey){
     const dir = state.sortDir==='asc' ? 1 : -1;
@@ -494,14 +541,14 @@ function listItems(){
         default: return '';
       }
     };
-    arr.sort((a,b)=>{ const x=val(a),y=val(b);
+    result.sort((a,b)=>{ const x=val(a),y=val(b);
       if (typeof x==='number') return (x-y)*dir;
       return String(x).localeCompare(String(y),'ko')*dir; });
   }
   else if (state.sort==='name')
-    arr.sort((a,b)=>String(a.name||a.company||'').localeCompare(String(b.name||b.company||''),'ko'));
-  else arr.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
-  return arr;
+    result.sort((a,b)=>String(a.name||a.company||'').localeCompare(String(b.name||b.company||''),'ko'));
+  else result.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  return result;
 }
 
 /* ── 렌더링 ── */
@@ -747,8 +794,8 @@ window.addEventListener('paste',e=>{
 async function aiExtract(dataUrl, kind){
   const key=localStorage.getItem(GEMINI_KEY_LS);
   const prompt = kind==='card'
-    ? `이 명함 이미지에서 정보를 추출해 JSON으로만 답하세요. 키: name(이름), company(회사명), dept(부서), title(직책), mobile(휴대폰), tel(유선전화), fax(팩스), email(이메일), address(주소), memo(기타 정보). 없는 값은 빈 문자열. 전화번호는 010-1234-5678 형식. JSON 외 텍스트 금지.`
-    : `이 사업자등록증 이미지에서 정보를 추출해 JSON으로만 답하세요. 키: company(상호/법인명), ceo(대표자), bizno(사업자등록번호), corpno(법인등록번호), openDate(개업연월일), bizType(업태), bizItem(종목), address(사업장 소재지), memo(기타). 없는 값은 빈 문자열. JSON 외 텍스트 금지.`;
+    ? `이 명함 이미지에서 정보를 추출해 JSON으로만 답하세요. 키: name(이름), company(회사명), dept(부서), title(직책), mobile(휴대폰), tel(직통전화), fax(개인팩스), email(이메일), companyTel(회사 대표번호), companyFax(회사 팩스), companyAddr(회사 주소), website(홈페이지), address(개인 주소), memo(기타 정보). 없는 값은 빈 문자열. 전화번호는 010-1234-5678 형식. JSON 외 텍스트 금지.`
+    : `이 사업자등록증 이미지에서 정보를 추출해 JSON으로만 답하세요. 키: company(상호/법인명), ceo(대표자), bizno(사업자등록번호), corpno(법인등록번호), openDate(개업연월일), bizType(업태), bizItem(종목), companyTel(대표번호), companyFax(팩스), address(사업장 소재지), memo(기타). 없는 값은 빈 문자열. JSON 외 텍스트 금지.`;
   const body={contents:[{parts:[
     {inline_data:{mime_type:'image/jpeg',data:dataUrl.split(',')[1]}},
     {text:prompt}]}]};
@@ -762,9 +809,12 @@ async function aiExtract(dataUrl, kind){
 
 /* ════════════ 등록/수정 ════════════ */
 const CARD_FIELDS=[['name','이름'],['company','회사'],['dept','부서'],['title','직책'],
-  ['mobile','휴대폰'],['tel','유선전화'],['email','이메일'],['fax','팩스'],['owner','담당자'],['address','주소'],['memo','메모']];
+  ['mobile','휴대폰'],['tel','직통전화'],['email','이메일'],['fax','개인팩스'],
+  ['companyTel','회사 대표번호'],['companyFax','회사 팩스'],['companyAddr','회사 주소'],['website','홈페이지'],
+  ['owner','담당자'],['address','개인 주소'],['memo','메모']];
 const BIZ_FIELDS=[['company','상호(법인명)'],['ceo','대표자'],['bizno','사업자등록번호'],['corpno','법인등록번호'],
-  ['openDate','개업연월일'],['bizType','업태'],['bizItem','종목'],['owner','담당자'],['address','사업장 소재지'],['memo','메모']];
+  ['openDate','개업연월일'],['bizType','업태'],['bizItem','종목'],['companyTel','대표번호'],['companyFax','팩스'],
+  ['owner','담당자'],['address','사업장 소재지'],['memo','메모']];
 
 let editing=null;
 function openEditor(item, photoObj, pre){
@@ -1526,32 +1576,85 @@ function renderPCSide(){
   const isAllView = g => state.group===g && state.owner==='all';
   let h = `<div class="pclogo">📇 푸른명함첩<span>푸른노무법인 · 명함 관리</span></div>`;
   h += `<div class="pcsec">명함첩</div>`;
-  h += pcItem(`onclick="state.tab='card';state.group='all';state.owner='all';render()"`,
+  h += pcItem(`onclick="switchTab('card')"`,
               '📇 전체 명함', all.filter(i=>i.kind==='card').length, state.tab==='card'&&isAllView('all'));
-  h += pcItem(`onclick="state.tab='biz';state.group='all';state.owner='all';render()"`,
+  h += pcItem(`onclick="switchTab('biz')"`,
               '📄 사업자등록증', all.filter(i=>i.kind==='biz').length, state.tab==='biz'&&isAllView('all'));
-  h += `<div class="pcsec">폴더 <button onclick="addGroup()">＋ 폴더 추가</button></div>`;
-  const cnt = g => kindArr.filter(it=>(it.group||'')===g).length;
-  h += pcItem(`onclick="state.group='';state.owner='all';render()"
+
+  /* 현재 탭(명함/사업자등록증)에 속한 폴더만, 2단계 계층 */
+  const groups = Object.values(state.groups).filter(g=>(g.kind||'card')===state.tab);
+  const children = pid => groups.filter(g=>(g.parent||'')===pid).sort((a,b)=>(a.order||0)-(b.order||0));
+  /* 폴더 본인 + 모든 하위 폴더의 건수 합산 */
+  const descIds = id => { const out=[id]; children(id).forEach(c=>out.push(...descIds(c.id))); return out; };
+  const cntDeep = id => { const ids=new Set(descIds(id)); return kindArr.filter(it=>ids.has(it.group||'')).length; };
+  const cntSelf = g => kindArr.filter(it=>(it.group||'')===g).length;
+
+  h += `<div class="pcsec">폴더 <button onclick="addFolderTo('')">＋ 추가</button></div>`;
+  h += pcItem(`onclick="state.group='';state.owner='all';state.page=0;render()"
         ondragover="event.preventDefault();this.classList.add('dropover')"
         ondragleave="this.classList.remove('dropover')" ondrop="onGroupDrop(event,'')"`,
-        '📁 미분류', cnt(''), state.group===''&&state.owner==='all');
-  Object.values(state.groups).sort((a,b)=>(a.order||0)-(b.order||0)).forEach(g=>{
-    h += pcItem(`onclick="state.group='${g.id}';state.owner='all';render()"
-        oncontextmenu="event.preventDefault();groupMenu('${g.id}')"
+        '📭 미분류', cntSelf(''), state.group===''&&state.owner==='all');
+
+  const folderRow = (g, depth) => {
+    const kids = children(g.id);
+    const hasKids = kids.length>0;
+    const collapsed = !!state.collapsed[g.id];
+    const pad = 11 + depth*16;
+    const on = state.group===g.id && state.owner==='all';
+    let row = `<div class="pcitem ${on?'on':''}" style="padding-left:${pad}px"
         ondragover="event.preventDefault();this.classList.add('dropover')"
-        ondragleave="this.classList.remove('dropover')" ondrop="onGroupDrop(event,'${g.id}')"`,
-        '📁 '+esc(g.name), cnt(g.id), state.group===g.id&&state.owner==='all');
-  });
+        ondragleave="this.classList.remove('dropover')" ondrop="onGroupDrop(event,'${g.id}')">
+        ${hasKids
+          ? `<span onclick="event.stopPropagation();toggleCollapse('${g.id}')" style="cursor:pointer;width:14px;display:inline-block">${collapsed?'▸':'▾'}</span>`
+          : `<span style="width:14px;display:inline-block"></span>`}
+        <span onclick="state.group='${g.id}';state.owner='all';state.page=0;render()" style="flex:1">📁 ${esc(g.name)}</span>
+        <span style="font-size:11.5px;color:#8fa0c4">${cntDeep(g.id)}</span>
+        <span onclick="event.stopPropagation();addFolderTo('${g.id}')" title="하위폴더 추가" style="cursor:pointer;padding:0 3px;color:#8fa0c4">＋</span>
+        <span onclick="event.stopPropagation();renameFolder('${g.id}')" title="이름변경" style="cursor:pointer;padding:0 3px">✏️</span>
+        <span onclick="event.stopPropagation();deleteFolder('${g.id}')" title="삭제" style="cursor:pointer;padding:0 3px">🗑</span>
+      </div>`;
+    if (hasKids && !collapsed) kids.forEach(c=> row += folderRow(c, depth+1));
+    return row;
+  };
+  children('').forEach(g=> h += folderRow(g, 0));
+
   h += `<div class="pcsec">담당자별 (직원)</div>`;
   const owners=[...new Set(kindArr.map(it=>String(it.owner||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ko'));
   if (!owners.length)
     h += `<div class="pchintside">명함에 담당자를 입력하면<br>여기에 자동으로 분류됩니다</div>`;
   owners.forEach(o=>{
-    h += pcItem(`onclick="state.owner='${esc(o)}';state.group='all';render()"`,
+    h += pcItem(`onclick="state.owner='${esc(o)}';state.group='all';state.page=0;render()"`,
       '👤 '+esc(o), kindArr.filter(it=>String(it.owner||'').trim()===o).length, state.owner===o);
   });
   $('pcSide').innerHTML = h;
+}
+function switchTab(t){ state.tab=t; state.group='all'; state.owner='all'; state.page=0; state.sel={}; render(); }
+function toggleCollapse(id){ state.collapsed[id]=!state.collapsed[id]; render(); }
+/* 폴더 추가: 부모(parent) 지정 가능, 현재 탭(kind)에 소속 */
+function addFolderTo(parent){
+  const name=prompt(parent? '하위 폴더 이름':'새 폴더 이름'); if(!name||!name.trim()) return;
+  Store.putGroup({id:uid(), name:name.trim(), parent:parent||'', kind:state.tab, order:Date.now()});
+  if(parent) state.collapsed[parent]=false;
+  toast('폴더를 추가했습니다');
+}
+function renameFolder(id){
+  const g=state.groups[id]; if(!g) return;
+  const name=prompt('폴더 이름 변경', g.name);
+  if(name===null||!name.trim()) return;
+  g.name=name.trim(); Store.putGroup(g);
+}
+function deleteFolder(id){
+  const g=state.groups[id]; if(!g) return;
+  const kids=Object.values(state.groups).filter(x=>(x.parent||'')===id);
+  const msg = kids.length
+    ? `'${g.name}' 폴더와 하위 폴더 ${kids.length}개를 삭제할까요? (명함은 미분류로 이동)`
+    : `'${g.name}' 폴더를 삭제할까요? (명함은 미분류로 이동)`;
+  if(!confirm(msg)) return;
+  /* 하위 폴더까지 재귀 삭제 */
+  const delRec = gid => { Object.values(state.groups).filter(x=>(x.parent||'')===gid).forEach(c=>delRec(c.id)); Store.delGroup(gid); };
+  delRec(id);
+  if(state.group===id) state.group='all';
+  toast('폴더를 삭제했습니다');
 }
 function renderPCTable(){
   const isCard = state.tab==='card';
@@ -1567,6 +1670,17 @@ function renderPCTable(){
     : (isCard?'전체 명함':'사업자등록증');
   $('pcCount').textContent = items.length.toLocaleString()+'개';
   $('pcSort').value = state.sort;
+  /* 조건 필터 토글 버튼 */
+  const fbtn = (on,label,fn)=>`<button onclick="${fn}"
+    style="border:1px solid ${on?'#3a4a73':'#dde3ee'};background:${on?'#3a4a73':'#fff'};color:${on?'#fff':'#5a6885'};
+    border-radius:99px;padding:6px 13px;font-size:12.5px;font-weight:700;cursor:pointer">${on?'✓ ':''}${label}</button>`;
+  $('pcFilters').innerHTML =
+    fbtn(state.onlyPhone,'전화 있음','state.onlyPhone=!state.onlyPhone;state.page=0;render()')
+    + fbtn(state.onlyEmail,'이메일 있음','state.onlyEmail=!state.onlyEmail;state.page=0;render()')
+    + fbtn(state.onlyDup,'중복만','state.onlyDup=!state.onlyDup;state.page=0;render()')
+    + (Object.values(state.colFilter||{}).some(Boolean)||state.onlyPhone||state.onlyEmail||state.onlyDup
+        ? `<button onclick="state.colFilter={};state.onlyPhone=state.onlyEmail=state.onlyDup=false;state.page=0;render()"
+           style="border:1px solid #f3c2c2;background:#fff;color:#c0392b;border-radius:99px;padding:6px 13px;font-size:12.5px;font-weight:700;cursor:pointer">✕ 필터 해제</button>` : '');
   /* 현재 페이지 분량만 잘라서 렌더 (메모리 보호) */
   const size = state.pageSize || 100;
   const totalPages = Math.max(1, Math.ceil(items.length/size));
@@ -1583,25 +1697,41 @@ function renderPCTable(){
   /* 표 */
   const sortArrow = key => state.sortKey===key ? (state.sortDir==='asc'?' ▲':' ▼') : '';
   const colg = isCard
-    ? `<colgroup><col style="width:36px"><col style="width:38px"><col style="width:11%"><col style="width:20%"><col style="width:20%"><col style="width:14%"><col style="width:21%"><col style="width:90px"></colgroup>`
-    : `<colgroup><col style="width:36px"><col style="width:38px"><col style="width:22%"><col style="width:12%"><col style="width:18%"><col style="width:auto"><col style="width:90px"></colgroup>`;
-  const thead = isCard
+    ? `<colgroup><col style="width:36px"><col style="width:38px"><col style="width:11%"><col style="width:19%"><col style="width:18%"><col style="width:13%"><col style="width:19%"><col style="width:86px"><col style="width:74px"></colgroup>`
+    : `<colgroup><col style="width:36px"><col style="width:38px"><col style="width:22%"><col style="width:12%"><col style="width:16%"><col style="width:auto"><col style="width:86px"><col style="width:74px"></colgroup>`;
+  /* 칸별 검색 입력행 */
+  const cf = state.colFilter || {};
+  const fInput = (key,ph) => `<input value="${esc(cf[key]||'')}" placeholder="${ph}" onclick="event.stopPropagation()"
+     oninput="state.colFilter['${key}']=this.value;state.page=0;renderPCTable();this.focus();const v=this.value;this.setSelectionRange(v.length,v.length)"
+     style="width:100%;box-sizing:border-box;padding:4px 7px;border:1px solid #dde3ee;border-radius:6px;font-size:12px;background:#fff">`;
+  const filterRow = isCard
+    ? `<tr style="background:#fbfcfe"><th></th><th></th>
+        <th>${fInput('name','이름')}</th><th>${fInput('company','회사')}</th><th></th>
+        <th>${fInput('phone','전화')}</th><th>${fInput('email','이메일')}</th><th></th><th></th></tr>`
+    : `<tr style="background:#fbfcfe"><th></th><th></th>
+        <th>${fInput('company','상호')}</th><th></th><th></th><th></th><th></th><th></th></tr>`;
+  const thead = (isCard
     ? `<tr><th></th><th class="num">#</th>
        <th onclick="sortBy('name')" style="cursor:pointer">이름${sortArrow('name')}</th>
        <th onclick="sortBy('company')" style="cursor:pointer">회사${sortArrow('company')}</th>
        <th>직책·부서</th>
        <th onclick="sortBy('phone')" style="cursor:pointer">전화${sortArrow('phone')}</th>
        <th>이메일</th>
-       <th onclick="sortBy('date')" style="cursor:pointer;text-align:right">등록일${sortArrow('date')}</th></tr>`
+       <th style="text-align:right">구분</th>
+       <th style="text-align:center">관리</th></tr>`
     : `<tr><th></th><th class="num">#</th>
        <th onclick="sortBy('company')" style="cursor:pointer">상호${sortArrow('company')}</th>
        <th>대표자</th><th>사업자번호</th><th>소재지</th>
-       <th onclick="sortBy('date')" style="cursor:pointer;text-align:right">등록일${sortArrow('date')}</th></tr>`;
+       <th style="text-align:right">구분</th>
+       <th style="text-align:center">관리</th></tr>`) + filterRow;
   let rows='';
   pageItems.forEach((it,pi)=>{
     const i = start + pi;
     const chk=`<td onclick="event.stopPropagation()"><input type="checkbox" ${state.sel[it.id]?'checked':''} onchange="toggleSel('${it.id}')"></td>`;
     const dup = isDup(it) ? `<span class="dup">⚠중복</span>` : '';
+    const actCell = `<td onclick="event.stopPropagation()" style="text-align:center;white-space:nowrap">
+        <button onclick="openEditor(state.items['${it.id}'])" title="수정" style="border:none;background:none;cursor:pointer;font-size:14px;padding:3px 5px">✏️</button>
+        <button onclick="delItem('${it.id}')" title="삭제" style="border:none;background:none;cursor:pointer;font-size:14px;padding:3px 5px">🗑</button></td>`;
     if (isCard){
       rows += `<tr draggable="true" ondragstart="onRowDrag(event,'${it.id}')" onclick="openDetail('${it.id}')">
         ${chk}<td class="num">${i+1}</td>
@@ -1610,7 +1740,8 @@ function renderPCTable(){
         <td>${esc([it.title,it.dept].filter(Boolean).join('·'))}</td>
         <td>${esc(it.mobile||it.tel||'')}</td>
         <td>${esc(it.email||'')}</td>
-        <td class="dt">${fmtDate(it.createdAt)}${dup}</td></tr>`;
+        <td class="dt">${dup}</td>
+        ${actCell}</tr>`;
     } else {
       rows += `<tr draggable="true" ondragstart="onRowDrag(event,'${it.id}')" onclick="openDetail('${it.id}')">
         ${chk}<td class="num">${i+1}</td>
@@ -1618,10 +1749,11 @@ function renderPCTable(){
         <td>${esc(it.ceo||'')}</td>
         <td>${esc(fmtBizno(it.bizno))}</td>
         <td>${esc(it.address||'')}</td>
-        <td class="dt">${fmtDate(it.createdAt)}${dup}</td></tr>`;
+        <td class="dt">${dup}</td>
+        ${actCell}</tr>`;
     }
   });
-  if (!rows) rows = `<tr><td class="pcempty" colspan="8">등록된 항목이 없습니다 — 우측 상단 [＋ 명함 등록] 또는 이미지·PDF를 화면에 끌어다 놓으세요. (Ctrl+V 붙여넣기 가능)</td></tr>`;
+  if (!rows) rows = `<tr><td class="pcempty" colspan="9">등록된 항목이 없습니다 — 우측 상단 [＋ 명함 등록] 또는 이미지·PDF를 화면에 끌어다 놓으세요. (Ctrl+V 붙여넣기 가능)</td></tr>`;
   $('pcTable').innerHTML = `${colg}<thead>${thead}</thead><tbody>${rows}</tbody>`;
   /* 페이지 이동 바 */
   const pager=$('pcPager');
@@ -1634,6 +1766,7 @@ function renderPCTable(){
   } else pager.innerHTML='';
 }
 function renderPC(){ renderPCSide(); renderPCTable(); }
+
 /* 헤더 클릭 정렬: 같은 칸 누르면 방향 토글 */
 function sortBy(key){
   if (state.sortKey===key) state.sortDir = state.sortDir==='asc' ? 'desc' : 'asc';
