@@ -41796,13 +41796,17 @@ function PerfManagement(props){
           var date=fmtDate(row[1]); if(!date) continue;
           var item=String(row[2]||'').trim();
           var rate=parseFloat(row[5])||0;
+          // 항목 "업체명_유형" → 첫 밑줄 기준 분리. 밑줄 없으면 업체 비우고 전체를 유형으로
+          var compName='', kindName=item;
+          var us=item.indexOf('_');
+          if(us>0){ compName=item.slice(0,us).trim(); kindName=item.slice(us+1).trim(); }
           var key=date+'|'+item+'|'+sid;
           if(have[key]){ skipped++; continue; }
           fiArr.unshift({
             id:'fi-inc-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5)+'-'+added,
             date:date, amount:pay,
             category:'inc-incentive', sourceKind:'incentive', sourceId:'',
-            caseNo:'', companyName:'', kind:item,
+            caseNo:'', companyName:compName, kind:kindName,
             perfShares:[{ sid:sid, name:recv, pct:Math.round(rate*1000)/10, amount:perf, role:'주담당', sharePct:100, baseAmount:supply||pay }],
             managerSid:sid, managerName:recv, splitMainPct:100,
             deductions:{}, perfBaseAmount:(supply||pay), perfExclude:false,
@@ -41819,6 +41823,20 @@ function PerfManagement(props){
       e.target.value='';
     };
     reader.readAsArrayBuffer(file);
+  }
+
+  // ── 인센티브 가져오기 데이터만 초기화 (sourceKind:incentive 만 삭제, 다른 입금은 안전) ──
+  function clearIncentive(){
+    var all = dbGet('finance_income', []) || [];
+    var incCount = all.filter(function(fi){ return fi.sourceKind==='incentive'; }).length;
+    if(incCount===0){ showToast('삭제할 인센티브 데이터 없음'); return; }
+    showConfirm('인센티브 가져오기로 넣은 '+incCount+'건을 삭제할까요?\n(다른 입금·사건·컨설팅 데이터는 그대로 유지됩니다)', { title:'인센티브 초기화', confirmText:'삭제', danger:true }).then(function(ok){
+      if(!ok) return;
+      try { console.log('[인센티브 초기화 백업]', JSON.stringify(all)); } catch(_){}
+      dbSet('finance_income', all.filter(function(fi){ return fi.sourceKind!=='incentive'; }));
+      showToast('🗑 인센티브 '+incCount+'건 삭제됨');
+      setTimeout(function(){ try{ location.reload(); }catch(_){} }, 1000);
+    });
   }
 
   var now = new Date();
@@ -42062,7 +42080,10 @@ function PerfManagement(props){
         h('label', { style:{ fontSize:'11px', padding:'3px 12px', borderRadius:'6px', background:'#fff', color:'#1d4ed8',
             border:'1px solid #bfdbfe', cursor:'pointer', fontWeight:700, whiteSpace:'nowrap' } },
           '📥 인센티브 가져오기',
-          h('input', { type:'file', accept:'.xlsx,.xls', onChange:importIncentiveXlsx, style:{ display:'none' } }))
+          h('input', { type:'file', accept:'.xlsx,.xls', onChange:importIncentiveXlsx, style:{ display:'none' } })),
+        h('button', { onClick:clearIncentive,
+          style:{ fontSize:'11px', padding:'3px 12px', borderRadius:'6px', background:'#fff', color:'#dc2626',
+            border:'1px solid #fecaca', cursor:'pointer', fontWeight:700, whiteSpace:'nowrap' } }, '🗑 인센티브 초기화')
       ),
       h('div',{style:{display:'flex',gap:'4px',overflowX:'auto',WebkitOverflowScrolling:'touch',paddingBottom:'2px'}},
         tabOrder.map(function(key){
