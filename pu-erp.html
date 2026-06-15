@@ -50617,6 +50617,87 @@ function StaffRoster(){
   }
   function openEdit(u){ setDetailModal(null); setModal({ mode:'edit', user:u }); }
 
+  // ── 퇴사자 사번 T-번호 일괄 정리 (모든 저장소의 sid 일괄 교체, 같은 사람의 여러 옛 사번을 하나로 통합) ──
+  function convertRetiredSids(){
+    // 매핑: 이름 → 새 T사번 + 통합할 옛 사번들(과거 데이터에 박힌 미상 사번 포함)
+    var MAP = [
+      { name:'김아름', newSid:'T-001', oldSids:['EMP-KARM'] },
+      { name:'김동근', newSid:'T-002', oldSids:['EMP-KDONG'] },
+      { name:'김정현', newSid:'T-003', oldSids:['EMP-KJHUN'] },
+      { name:'박지호', newSid:'T-004', oldSids:['A-008'] },
+      { name:'장한돌', newSid:'T-005', oldSids:[] },
+      { name:'임혜미', newSid:'T-006', oldSids:['P-006','P-007'] }
+    ];
+    // 현재 user_accounts에서 이름으로 옛 사번 자동 수집 (명부 등록분)
+    var curUsers = dbGet('user_accounts', []) || [];
+    MAP.forEach(function(m){
+      curUsers.forEach(function(u){
+        if(u.name===m.name && u.sid && m.oldSids.indexOf(u.sid)<0 && u.sid!==m.newSid){ m.oldSids.push(u.sid); }
+      });
+    });
+    // 옛사번 → 새사번 룩업
+    var sidMap = {};
+    MAP.forEach(function(m){ m.oldSids.forEach(function(o){ sidMap[o]=m.newSid; }); });
+    var oldList = Object.keys(sidMap);
+    if(oldList.length===0){ showToast('변환할 퇴사자 사번 없음'); return; }
+    // 영향 건수 집계 (미리보기)
+    function remap(sid){ return sidMap[sid] || sid; }
+    var fi = dbGet('finance_income', []) || [];
+    var pay = dbGet('payroll_monthly', []) || [];
+    var ot = dbGet('overtime_records', []) || [];
+    var att = dbGet('attendance_records', []) || [];
+    var cnt = { 직원계정:0, 성과입금:0, 급여:0, 근태:0, 업체사건:0 };
+    curUsers.forEach(function(u){ if(sidMap[u.sid]) cnt.직원계정++; });
+    fi.forEach(function(x){ if(sidMap[x.managerSid]||(x.perfShares||[]).some(function(p){return sidMap[p.sid];})) cnt.성과입금++; });
+    pay.forEach(function(x){ if(sidMap[x.empSid]) cnt.급여++; });
+    ot.forEach(function(x){ if(sidMap[x.sid]) cnt.근태++; });
+    att.forEach(function(x){ if(sidMap[x.sid]) cnt.근태++; });
+    ['companies','cases','consultings','funds','other_projects'].forEach(function(k){
+      (dbGet(k,[])||[]).forEach(function(x){ if(sidMap[x.managerMain]||(x.managerSubs||[]).some(function(s){return sidMap[s];})) cnt.업체사건++; });
+    });
+    var preview = MAP.filter(function(m){return m.oldSids.length>0;}).map(function(m){ return '· '+m.name+': '+m.oldSids.join(', ')+' → '+m.newSid; }).join('\n');
+    showConfirm('[퇴사자 사번 T-정리]\n\n'+preview+'\n\n영향: 직원계정 '+cnt.직원계정+' / 성과·입금 '+cnt.성과입금+' / 급여 '+cnt.급여+' / 근태 '+cnt.근태+' / 업체·사건 '+cnt.업체사건+'건\n\n모든 저장소의 사번을 일괄 교체합니다. (변경 전 콘솔에 백업 출력)\n진행할까요?',
+      { title:'퇴사자 사번 정리', confirmText:'일괄 변환', danger:true }).then(function(ok){
+      if(!ok) return;
+      try {
+        console.log('[사번정리 백업] user_accounts', JSON.stringify(curUsers));
+        console.log('[사번정리 백업] finance_income', JSON.stringify(fi));
+        console.log('[사번정리 백업] payroll_monthly', JSON.stringify(pay));
+        console.log('[사번정리 백업] overtime_records', JSON.stringify(ot));
+        console.log('[사번정리 백업] attendance_records', JSON.stringify(att));
+        ['companies','cases','consultings','funds','other_projects'].forEach(function(k){ console.log('[사번정리 백업] '+k, JSON.stringify(dbGet(k,[]))); });
+      } catch(_){}
+      // 1) user_accounts
+      dbSet('user_accounts', curUsers.map(function(u){ return sidMap[u.sid] ? Object.assign({}, u, { sid:sidMap[u.sid] }) : u; }));
+      // 2) finance_income (managerSid·perfShares·managerSidAtRecord·managerSidCurrent)
+      dbSet('finance_income', fi.map(function(x){
+        var n = Object.assign({}, x);
+        if(sidMap[n.managerSid]) n.managerSid = sidMap[n.managerSid];
+        if(sidMap[n.managerSidAtRecord]) n.managerSidAtRecord = sidMap[n.managerSidAtRecord];
+        if(sidMap[n.managerSidCurrent]) n.managerSidCurrent = sidMap[n.managerSidCurrent];
+        if(n.perfShares) n.perfShares = n.perfShares.map(function(p){ return sidMap[p.sid] ? Object.assign({}, p, { sid:sidMap[p.sid] }) : p; });
+        return n;
+      }));
+      // 3) payroll_monthly (empSid)
+      dbSet('payroll_monthly', pay.map(function(x){ return sidMap[x.empSid] ? Object.assign({}, x, { empSid:sidMap[x.empSid] }) : x; }));
+      // 4) overtime_records / attendance_records (sid)
+      dbSet('overtime_records', ot.map(function(x){ return sidMap[x.sid] ? Object.assign({}, x, { sid:sidMap[x.sid] }) : x; }));
+      dbSet('attendance_records', att.map(function(x){ return sidMap[x.sid] ? Object.assign({}, x, { sid:sidMap[x.sid] }) : x; }));
+      // 5) 업체·사건·컨설팅·기금·기타 (managerMain, managerSubs)
+      ['companies','cases','consultings','funds','other_projects'].forEach(function(k){
+        var arr = dbGet(k,[]) || [];
+        dbSet(k, arr.map(function(x){
+          var n = Object.assign({}, x);
+          if(sidMap[n.managerMain]) n.managerMain = sidMap[n.managerMain];
+          if(n.managerSubs) n.managerSubs = n.managerSubs.map(function(s){ return sidMap[s] || s; });
+          return n;
+        }));
+      });
+      showToast('✅ 퇴사자 사번 정리 완료 — 모든 데이터 갱신됨');
+      setTimeout(function(){ try{ location.reload(); }catch(_){} }, 1200);
+    });
+  }
+
   // ── 급여대장 엑셀 가져오기 (안전: 빈 칸만 채움 / 주민번호·이름 매칭 / 핵심 계정정보 불변) ──
   // 매칭 우선순위: ① 주민번호(숫자) ② 이름. 기존 직원은 hireDate·rrn이 비어있을 때만 채움(덮어쓰기 안 함).
   // 신규(매칭 안 됨)는 status=retired 가정 없이 추가하지 않고, 별도 표시만 — 단 사용자가 올린 명단의 '퇴직' 표시는 신규 추가.
@@ -50971,6 +51052,8 @@ function StaffRoster(){
           h('div', { style:{ flex:1 } }),
           h('label', { style:{ background:'#eff6ff', color:'#1d4ed8', border:'1px solid #bfdbfe', padding:'7px 12px', borderRadius:'6px', fontSize:'12px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap', marginRight:'6px' } },
             '📥 급여대장 가져오기', h('input', { type:'file', accept:'.xlsx,.xls', onChange:importPayrollStaff, style:{ display:'none' } })),
+          h('button', { onClick:convertRetiredSids,
+            style:{ background:'#fff', color:'#b45309', border:'1px solid #fed7aa', padding:'7px 12px', borderRadius:'6px', fontSize:'12px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap', marginRight:'6px' } }, '🔖 퇴사자 사번정리(T-)'),
           h('button', { className:'btn-primary', onClick:openAdd }, '+ 근로자 등록')
         ),
         h('div', { style:{ display:'flex', gap:'4px', marginBottom:'12px' } },
