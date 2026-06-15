@@ -41754,6 +41754,73 @@ function PerfManagement(props){
   var rates = getMgrRates();
   var allIncomes = dbGet('finance_income', []);
 
+  // ── 인센티브(상여내역) 엑셀 가져오기 — 사건별 입금→담당자 성과급 보관 (사업장 연결 없음) ──
+  function importIncentiveXlsx(e){
+    var file = e.target.files && e.target.files[0]; if(!file) return;
+    if(typeof XLSX === 'undefined'){ showToast('엑셀 모듈 로딩중'); return; }
+    function num(v){ if(v===null||v===undefined||v==='') return 0; var n=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?0:Math.round(n); }
+    function fmtDate(v){
+      if(v instanceof Date) return v.getFullYear()+'-'+('0'+(v.getMonth()+1)).slice(-2)+'-'+('0'+v.getDate()).slice(-2);
+      var s=String(v||'').trim().replace(' 00:00:00',''); return s ? s.slice(0,10) : '';
+    }
+    var allU = dbGet('user_accounts', USERS_SEED) || [];
+    var name2sid = {}; allU.forEach(function(u){ if(u.name) name2sid[u.name.trim()]=u.sid; });
+    var reader = new FileReader();
+    reader.onload = function(ev){
+      try {
+        var wb = XLSX.read(ev.target.result, { type:'array' });
+        var sn = wb.SheetNames.indexOf('인센티브_25') >= 0 ? '인센티브_25'
+               : (wb.SheetNames.filter(function(n){return /인센티브/.test(n);})[0] || wb.SheetNames[0]);
+        var ws = wb.Sheets[sn];
+        var data = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+        // 헤더(상여구분/입금일/항목...) 탐색
+        var hi = data.findIndex(function(row){ return row.some(function(x){return String(x).indexOf('입금일')>=0;}) && row.some(function(x){return String(x).indexOf('수령인')>=0;}); });
+        if(hi<0){ showToast('⚠️ 헤더(입금일·수령인) 행 없음'); e.target.value=''; return; }
+        try { console.log('[인센티브 가져오기 백업]', JSON.stringify(dbGet('finance_income',[]))); } catch(_){}
+        var fiArr = dbGet('finance_income', []) || [];
+        // 중복 방지: 이미 가져온 인센티브(sourceKind:incentive) 키 = 입금일|항목|수령인
+        var have = {};
+        fiArr.forEach(function(fi){ if(fi.sourceKind==='incentive') have[(fi.date||'')+'|'+(fi.kind||'')+'|'+((fi.perfShares&&fi.perfShares[0]&&fi.perfShares[0].sid)||'')]=true; });
+        var added=0, skipped=0, nomatch={};
+        // 컬럼: 0상여구분 1입금일 2항목 3입금금액 4부가세제외 5비율 6성과급 7수령인
+        for(var r=hi+1;r<data.length;r++){
+          var row=data[r]; if(!row) continue;
+          var recv=String(row[7]||'').trim();
+          if(!/^[가-힣]{2,4}$/.test(recv)) continue;
+          var perf=num(row[6]); var pay=num(row[3]);
+          var supply=num(row[4]);
+          if(perf<=0) continue;                      // 성과급 없으면 스킵 (#N/A·빈행)
+          if(pay<=0) pay = supply || perf;           // 입금금액 비면 부가세제외액(없으면 성과급)으로 대체
+          var sid=name2sid[recv];
+          if(!sid){ nomatch[recv]=true; continue; }
+          var date=fmtDate(row[1]); if(!date) continue;
+          var item=String(row[2]||'').trim();
+          var rate=parseFloat(row[5])||0;
+          var key=date+'|'+item+'|'+sid;
+          if(have[key]){ skipped++; continue; }
+          fiArr.unshift({
+            id:'fi-inc-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5)+'-'+added,
+            date:date, amount:pay,
+            category:'inc-incentive', sourceKind:'incentive', sourceId:'',
+            caseNo:'', companyName:'', kind:item,
+            perfShares:[{ sid:sid, name:recv, pct:Math.round(rate*1000)/10, amount:perf, role:'주담당', sharePct:100, baseAmount:supply||pay }],
+            managerSid:sid, managerName:recv, splitMainPct:100,
+            deductions:{}, perfBaseAmount:(supply||pay), perfExclude:false,
+            isPersonalIncome:false, note:'인센티브 가져오기', paid:true,
+            createdAt:(new Date()).toISOString()
+          });
+          have[key]=true; added++;
+        }
+        dbSet('finance_income', fiArr);
+        var nm=Object.keys(nomatch);
+        showToast('📥 인센티브: 추가 '+added+'건 / 건너뜀 '+skipped+'건'+(nm.length?' / 미매칭: '+nm.join(','):''));
+        setTimeout(function(){ try{ location.reload(); }catch(_){} }, 1200);
+      } catch(err){ showToast('가져오기 실패: '+(err&&err.message)); }
+      e.target.value='';
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
   var now = new Date();
   var initYm = now.getFullYear()+'-'+(String(now.getMonth()+1).padStart(2,'0'));
   var initY  = String(now.getFullYear());
@@ -41991,7 +42058,11 @@ function PerfManagement(props){
         h('button', { onClick:function(){ onNav('fin/income'); },
           style:{ fontSize:'11px', padding:'3px 12px', borderRadius:'6px',
             background:'#1e40af', color:'#fff', border:'none', cursor:'pointer', fontWeight:700, whiteSpace:'nowrap' }
-        }, '✏️ 입금관리로 이동 →')
+        }, '✏️ 입금관리로 이동 →'),
+        h('label', { style:{ fontSize:'11px', padding:'3px 12px', borderRadius:'6px', background:'#fff', color:'#1d4ed8',
+            border:'1px solid #bfdbfe', cursor:'pointer', fontWeight:700, whiteSpace:'nowrap' } },
+          '📥 인센티브 가져오기',
+          h('input', { type:'file', accept:'.xlsx,.xls', onChange:importIncentiveXlsx, style:{ display:'none' } }))
       ),
       h('div',{style:{display:'flex',gap:'4px',overflowX:'auto',WebkitOverflowScrolling:'touch',paddingBottom:'2px'}},
         tabOrder.map(function(key){
