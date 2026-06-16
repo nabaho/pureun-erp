@@ -5158,9 +5158,9 @@ function kindInfo(v){ return CONTRACT_KINDS.find(function(x){return x.v===v;}) |
 function kindSubLabel(c, kv){
   if(!c) return '';
   var v = '';
-  // typeCodes 우선 (코드→이름 변환)
+  // typeCodes 우선 (코드→이름 변환) — 숨김 유형도 포함해야 기존 데이터 이름이 유지됨
   if(c.typeCodes && c.typeCodes[kv]){
-    var types = getKindTypes(kv);
+    var types = getKindTypes(kv, true);
     var found = types.find(function(t){ return t.code === c.typeCodes[kv]; });
     if(found) return (found.name || '').toString().trim().slice(0, 20);
     var raw = (c.typeCodes[kv] || '').toString();
@@ -5192,7 +5192,7 @@ function genContractNo(){
 
 var CONTRACT_DEMO_SEED = [];
 
-function getKindTypes(kindV){
+function getKindTypes(kindV, includeHidden){
   var k = kindInfo(kindV);
   if(!k) return [];
   var arr = dbGet(k.typesKey, null);
@@ -5201,9 +5201,11 @@ function getKindTypes(kindV){
     var seedMap = { case:BIZ_CASE_SEED, consulting:BIZ_CONS_SEED, fund:BIZ_FUND_SEED, other:BIZ_OTHER_SEED };
     var seed = seedMap[kindV] || [];
     dbSet(k.typesKey, seed);
-    return seed.slice();
+    arr = seed;
   }
-  return arr;
+  // 숨김(hidden) 유형은 기본 제외 — 새 등록 드롭다운엔 안 보이게. 관리화면은 includeHidden로 전체 조회.
+  if(includeHidden) return arr.slice();
+  return arr.filter(function(x){ return !x.hidden; });
 }
 
 // ============ 과거 회사 통합 검색 (6개 모듈) ============
@@ -17024,7 +17026,49 @@ function BizTypeCard(props){
     persist(list.concat([item]));
     setInput(''); setShortIn(''); setAgencyIn(''); showToast('추가됨');
   }
-  function del(code){ persist(list.filter(function(x){ return x.code !== code; })); }
+  // 이 유형(code)을 사용 중인 데이터 건수 — cat.key별 저장소의 typeCodes[kind] 검사
+  function countUsage(code){
+    var kindKey = cat.key; // company/case/consulting/fund/other
+    var storeMap = { company:'companies', case:'cases', consulting:'consultings', fund:'funds', other:'other_projects' };
+    var store = storeMap[kindKey];
+    var n = 0;
+    function hit(rec){
+      if(!rec) return false;
+      if(rec.typeCodes && rec.typeCodes[kindKey] === code) return true;
+      // 옛 방식(이름 직접 저장) 호환
+      if(kindKey==='case' && rec.caseType && rec.typeCode===code) return true;
+      if(rec.typeCode === code) return true;
+      return false;
+    }
+    if(store){ (dbGet(store, [])||[]).forEach(function(r){ if(hit(r)) n++; }); }
+    // 컨설팅/사건은 이관 전 원장(consultations)에도 있을 수 있음
+    (dbGet('consultations', [])||[]).forEach(function(r){ if(r.typeCodes && r.typeCodes[kindKey]===code) n++; });
+    return n;
+  }
+  function del(code){
+    var used = countUsage(code);
+    if(used > 0){
+      var item = list.find(function(x){ return x.code === code; });
+      showConfirm('"'+(item?item.name:code)+'" 유형은 '+used+'건의 데이터가 사용 중입니다.\n\n삭제하면 그 '+used+'건이 "미설정"이 되어 유형 표시가 사라집니다.\n\n대신 목록에서 "숨김" 처리할까요?\n(숨기면 새 등록 시 안 보이지만, 기존 '+used+'건의 유형 표시는 그대로 유지됩니다)',
+        { title:'유형 사용 중', confirmText:'숨김 처리', danger:false }).then(function(ok){
+        if(!ok) return;
+        persist(list.map(function(x){ return x.code===code ? Object.assign({}, x, { hidden:true }) : x; }));
+        showToast('🙈 숨김 처리됨 — 기존 '+used+'건 표시 유지');
+      });
+      return;
+    }
+    // 사용 0건 → 안전하게 삭제
+    showConfirm('"'+(list.find(function(x){return x.code===code;})||{}).name+'" 유형을 삭제할까요?\n(사용 중인 데이터 없음)', { title:'유형 삭제', confirmText:'삭제', danger:true }).then(function(ok){
+      if(!ok) return;
+      persist(list.filter(function(x){ return x.code !== code; }));
+      showToast('🗑 삭제됨');
+    });
+  }
+  // 숨김 유형 다시 보이기
+  function unhide(code){
+    persist(list.map(function(x){ return x.code===code ? Object.assign({}, x, { hidden:false }) : x; }));
+    showToast('👁 다시 표시됨');
+  }
   function editType(x){
     var sh = window.prompt('약어 (최대 4자)', x.short || ''); if(sh === null) return;
     var nm = window.prompt('유형 이름', x.name || ''); if(nm === null) return;
@@ -17099,19 +17143,23 @@ function BizTypeCard(props){
                 border:'1px solid '+(isOver?'#1e40af':'#e2e8f0'),
                 borderTop: isOver ? '3px solid #1e40af' : '1px solid #e5e7eb',
                 borderRadius:'4px', marginBottom:'4px',
-                background: isOver?'#eff6ff':'#fff',
-                opacity: isDragging?0.4:1,
+                background: isOver?'#eff6ff':(x.hidden?'#f8fafc':'#fff'),
+                opacity: isDragging?0.4:(x.hidden?0.55:1),
                 cursor:'grab', userSelect:'none', transition:'all 0.1s' } },
               h('span', { style:{ color:'#cbd5e1', fontSize:'11px', cursor:'grab', flexShrink:0 }, title:'드래그로 순서 변경' }, '⋮⋮'),
               h('span', { style:{ background:cat.shortBg, color:cat.shortFg, fontSize:'10.5px', fontWeight:700, padding:'1px 4px', flexShrink:0, borderRadius:'4px', minWidth:'34px', maxWidth:'68px', textAlign:'center', whiteSpace:'nowrap' } }, x.short),
               h('span', { style:{ flex:1, fontSize:'11px', color:'#1e293b', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', minWidth:0 } },
                 x.name,
+                x.hidden ? h('span', { style:{ marginLeft:'6px', fontSize:'10px', color:'#64748b', background:'#e2e8f0', padding:'1px 6px', borderRadius:'8px', fontWeight:600 } }, '숨김') : null,
                 cat.key === 'consulting' && x.agency ? h('span', { style:{ marginLeft:'6px', fontSize:'10.5px', color:'#64748b', background:'#f1f5f9', padding:'2px 7px', borderRadius:'10px', fontWeight:500 } }, x.agency) : null
               ),
               h('button', { onClick:function(){ editType(x); }, className:'erp-tip', 'data-tip':'✏ 수정 가능 (코드 유지 — 연결 안 끊김)',
                 style:{ background:'#eff6ff', color:'#1e40af', border:'1px solid #bfdbfe', borderRadius:'5px', width:'18px', flexShrink:0, height:'22px', fontSize:'11px', cursor:'pointer' } }, '✏'),
-              h('button', { onClick:function(){ del(x.code); },
-                style:{ background:'#fef2f2', color:'#dc2626', border:'1px solid #fecaca', borderRadius:'5px', width:'16px', flexShrink:0, height:'22px', fontSize:'12px', cursor:'pointer' } }, '×')
+              x.hidden
+                ? h('button', { onClick:function(){ unhide(x.code); }, className:'erp-tip', 'data-tip':'다시 표시',
+                    style:{ background:'#f0fdf4', color:'#16a34a', border:'1px solid #bbf7d0', borderRadius:'5px', width:'18px', flexShrink:0, height:'22px', fontSize:'11px', cursor:'pointer' } }, '👁')
+                : h('button', { onClick:function(){ del(x.code); },
+                    style:{ background:'#fef2f2', color:'#dc2626', border:'1px solid #fecaca', borderRadius:'5px', width:'16px', flexShrink:0, height:'22px', fontSize:'12px', cursor:'pointer' } }, '×')
             );
           })
     ),
