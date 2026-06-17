@@ -3378,6 +3378,94 @@ window.showConfirm = function(message, opts){
   });
 };
 
+// === 멀티탭 감지 (같은 브라우저의 다른 탭/창만 — 다른 PC는 감지 못 함) ===
+// 복원 직전 옛 탭이 최신 데이터를 덮어쓰는 사고 방지용. 핑→퐁으로 살아있는 다른 탭 수를 센다.
+var _erpTabId = Math.random().toString(36).slice(2) + '-' + Date.now();
+var _erpTabCh = null;
+try {
+  if(typeof BroadcastChannel !== 'undefined'){
+    _erpTabCh = new BroadcastChannel('pureun_erp_tabs');
+    _erpTabCh.onmessage = function(e){
+      var d = e.data || {};
+      if(d.t === 'ping' && d.from !== _erpTabId){
+        try { _erpTabCh.postMessage({ t:'pong', from:_erpTabId, to:d.from }); } catch(_){}
+      }
+    };
+  }
+} catch(_){}
+window.erpCountOtherTabs = function(){
+  return new Promise(function(res){
+    if(!_erpTabCh){ res(0); return; }
+    var seen = {};
+    function onMsg(e){ var d = e.data || {}; if(d.t === 'pong' && d.to === _erpTabId && d.from){ seen[d.from] = 1; } }
+    _erpTabCh.addEventListener('message', onMsg);
+    try { _erpTabCh.postMessage({ t:'ping', from:_erpTabId }); } catch(_){}
+    setTimeout(function(){ try { _erpTabCh.removeEventListener('message', onMsg); } catch(_){} res(Object.keys(seen).length); }, 250);
+  });
+};
+
+// === 복원 타이핑 확인 게이트 (관문 ①②③ 통합) ===
+// info: { summary:[..], sourceLabel, otherTabs:int, stale:{diffText}|null }
+// 현재가 더 최신(stale)이면 '되돌리기', 아니면 '복원'을 정확히 입력해야만 진행. 클릭/Enter만으로는 진행 불가.
+window.restoreGate = function(info){
+  info = info || {};
+  var word = info.stale ? '되돌리기' : '복원';
+  return new Promise(function(resolve){
+    function _esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+    var overlay = document.createElement('div');
+    Object.assign(overlay.style, {
+      position:'fixed', top:0, left:0, width:'100%', height:'100%',
+      background:'rgba(0,0,0,0.5)', zIndex:100001,
+      display:'flex', alignItems:'center', justifyContent:'center',
+      fontFamily:"'Apple SD Gothic Neo','맑은 고딕',sans-serif"
+    });
+    var summaryHtml = (info.summary && info.summary.length)
+      ? _esc(info.summary.join('\n'))
+      : '(데이터 키 없음)';
+    var warnTabs = info.otherTabs > 0
+      ? '<div style="background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;border-radius:7px;padding:9px 11px;font-size:12.5px;line-height:1.55;margin-bottom:10px">⚠️ 다른 탭·창 '+info.otherTabs+'개가 열려 있습니다.<br>옛 탭이 복원 직후 데이터를 다시 덮어쓸 수 있습니다. <b>다른 탭을 모두 닫고</b> 진행하세요.</div>'
+      : '';
+    var warnStale = info.stale
+      ? '<div style="background:#fffbeb;border:1px solid #fcd34d;color:#92400e;border-radius:7px;padding:9px 11px;font-size:12.5px;line-height:1.55;margin-bottom:10px">⚠️ <b>현재 데이터가 이 백업보다 '+_esc(info.stale.diffText)+' 최신입니다.</b><br>복원하면 그 사이 입력·수정한 내용이 사라집니다. 정말 과거로 되돌리려면 아래에 강한 확인 문구를 입력하세요.</div>'
+      : '';
+    overlay.innerHTML =
+      '<div style="background:#fff;border-radius:12px;padding:22px 22px;max-width:400px;width:92%;box-shadow:0 8px 32px rgba(0,0,0,.22)">' +
+        '<div style="font-size:15px;font-weight:800;color:#1e293b;margin-bottom:12px">'+(info.stale?'⚠️ 과거로 되돌리기 — 최신 데이터 손실 주의':'복원 확인')+'</div>' +
+        '<div style="font-size:12.5px;color:#64748b;margin-bottom:6px">복원 대상 ('+_esc(info.sourceLabel||'백업')+') — 아래 데이터로 현재 내용을 덮어쓰고 서버에도 반영합니다.</div>' +
+        '<div style="font-size:12.5px;color:#334155;line-height:1.55;white-space:pre-line;max-height:32vh;overflow-y:auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:7px;padding:9px 11px;margin-bottom:12px">'+summaryHtml+'</div>' +
+        warnTabs + warnStale +
+        '<div style="font-size:13px;color:#1e293b;margin-bottom:7px">진행하려면 아래에 <b style="color:#dc2626">'+word+'</b> 를 입력하세요.</div>' +
+        '<input id="_rg_input" type="text" autocomplete="off" placeholder="'+word+'" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid #cbd5e1;border-radius:7px;font-size:13.5px;font-family:inherit;margin-bottom:14px" />' +
+        '<div style="display:flex;gap:10px;justify-content:flex-end">' +
+          '<button id="_rg_cancel" style="padding:9px 20px;background:#f1f5f9;color:#475569;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer">취소</button>' +
+          '<button id="_rg_ok" disabled style="padding:9px 20px;background:#fca5a5;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:not-allowed">진행</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    var input = overlay.querySelector('#_rg_input');
+    var ok = overlay.querySelector('#_rg_ok');
+    var cancel = overlay.querySelector('#_rg_cancel');
+    function matched(){ return input.value.trim() === word; }
+    function refresh(){
+      var m = matched();
+      ok.disabled = !m;
+      ok.style.background = m ? '#dc2626' : '#fca5a5';
+      ok.style.cursor = m ? 'pointer' : 'not-allowed';
+    }
+    function cleanup(result){ try { document.body.removeChild(overlay); } catch(_){} document.removeEventListener('keydown', onKey, true); resolve(result); }
+    input.addEventListener('input', refresh);
+    ok.addEventListener('click', function(){ if(matched()) cleanup(true); });
+    cancel.addEventListener('click', function(){ cleanup(false); });
+    overlay.addEventListener('mousedown', function(e){ if(e.target === overlay) cleanup(false); });
+    function onKey(e){
+      if(e.key === 'Escape'){ e.preventDefault(); cleanup(false); }
+      else if(e.key === 'Enter' && matched()){ e.preventDefault(); cleanup(true); }
+    }
+    document.addEventListener('keydown', onKey, true);
+    setTimeout(function(){ try { input.focus(); } catch(_){} }, 30);
+  });
+};
+
 
 // 본인이 본인 일정을 변경한 경우는 기록 안 함 (잡음 줄임)
 function logActivity(action, evType, evId, targetSid, evTitle, extra){
@@ -3506,6 +3594,38 @@ function fbMigrateToIdKeyMap(){
 // === Firebase 실시간 리스너 (다른 사람 변경 → 내 화면) ===
 var _fbSelfTouchKey = {}; // 내가 방금 푸시한 키 (echo 무시용)
 var _fbListenerSetup = false;
+// === 급감 수신 차단 게이트 ===
+// 서버에서 받은 배열이 현재보다 절반 미만으로 급감하면 자동 저장하지 않고 사용자가 선택.
+var _shrinkModalOpen = false;
+var _shrinkKeep = {}; // k -> '유지' 결정 만료시각 (TTL 내엔 조용히 차단)
+function _healServerKey(k){
+  try {
+    if(!fbDb || !fbShouldSync(k)) return;
+    var raw = localStorage.getItem(KEY+k);
+    if(!raw) return;
+    var val = JSON.parse(raw);
+    var ts = Date.now();
+    localStorage.setItem(KEY+'_meta_'+k, String(ts));
+    fbDb.ref('data/'+k).set({ v:val, u:ts }).catch(function(e){ window._erpErrLog && window._erpErrLog(e); });
+    if(typeof showToast === 'function') showToast('현재 '+k+' 데이터로 서버를 교정했습니다');
+  } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+}
+function _handleShrinkSync(k, oldCount, newCount, onApply){
+  var now = Date.now();
+  if(_shrinkKeep[k] && _shrinkKeep[k] > now) return;   // 최근 '유지' → 조용히 차단(현재 유지)
+  if(_shrinkModalOpen) return;                         // 다른 차단 모달 떠있으면 일단 차단
+  _shrinkModalOpen = true;
+  var msg = '서버에서 받은 "'+k+'" 데이터가 현재('+oldCount+'건)보다 크게 줄었습니다 → '+newCount+'건.\n\n'
+    + '다른 PC·탭이 옛 데이터를 밀고 있을 수 있습니다.\n\n'
+    + '· 현재 데이터 유지: 내 데이터를 지키고 서버도 현재 값으로 교정합니다. (권장)\n'
+    + '· 서버 값으로 교체: 정말 대량 삭제한 경우에만 선택하세요.';
+  showConfirm(msg, { title:'⚠️ 데이터 급감 차단', danger:true, confirmText:'서버 값으로 교체', cancelText:'현재 데이터 유지(권장)' })
+    .then(function(applyIt){
+      _shrinkModalOpen = false;
+      if(applyIt){ try { onApply(); } catch(e){ window._erpErrLog && window._erpErrLog(e); } }   // 서버 값 적용(1회)
+      else { _shrinkKeep[k] = Date.now() + 300000; _healServerKey(k); }                          // 현재 유지 + 서버 교정
+    });
+}
 function fbSetupListener(){
   if(!fbDb) return;
   if(_fbListenerSetup) return; // 중복 등록 차단
@@ -3545,7 +3665,14 @@ function fbSetupListener(){
             _oldArr = _oldRaw ? JSON.parse(_oldRaw) : null;
           }
           if(Array.isArray(_oldArr) && Array.isArray(arrValue) && _oldArr.length >= 10 && arrValue.length < _oldArr.length * 0.5){
-            window.erpAlert && erpAlert('danger', '다른 기기에서 '+k+' 데이터가 크게 줄었습니다', '서버 동기화 수신으로 '+_oldArr.length+'건 → '+arrValue.length+'건이 되었습니다.', '의도한 삭제가 아니면 환경설정→💾 서버백업(일간/수시)에서 직전 시점으로 복원하세요.');
+            // 급감 차단: 자동 저장하지 않고 사용자 선택(현재 유지+서버교정 / 서버값 교체)
+            _handleShrinkSync(k, _oldArr.length, arrValue.length, function(){
+              localStorage.setItem(KEY+k, JSON.stringify(arrValue));
+              localStorage.setItem(KEY+'_meta_'+k, String(v.u));
+              _dbCache[k] = arrValue;
+              try { _scheduleFbChanged(k); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+            });
+            return; // 아래 자동 저장 건너뜀
           }
         } catch(_e){}
         localStorage.setItem(KEY+k, JSON.stringify(arrValue));
@@ -3574,7 +3701,13 @@ function fbSetupListener(){
             _oldArr2 = _oldRaw2 ? JSON.parse(_oldRaw2) : null;
           }
           if(Array.isArray(_oldArr2) && Array.isArray(arrValue) && _oldArr2.length >= 10 && arrValue.length < _oldArr2.length * 0.5){
-            window.erpAlert && erpAlert('danger', '서버의 '+k+' 데이터가 이 기기보다 크게 적습니다', '동기화 수신으로 '+_oldArr2.length+'건 → '+arrValue.length+'건이 되었습니다.', '의도한 삭제가 아니면 환경설정→💾 서버백업(일간/수시)에서 직전 시점으로 복원하세요.');
+            // 급감 차단: 자동 저장하지 않고 사용자 선택(현재 유지+서버교정 / 서버값 교체)
+            _handleShrinkSync(k, _oldArr2.length, arrValue.length, function(){
+              localStorage.setItem(KEY+k, JSON.stringify(arrValue));
+              localStorage.setItem(KEY+'_meta_'+k, String(v.u));
+              _dbCache[k] = arrValue;
+            });
+            return; // 아래 자동 저장 건너뜀
           }
         } catch(_e){}
         localStorage.setItem(KEY+k, JSON.stringify(arrValue));
@@ -22242,7 +22375,7 @@ function BackupSection(){
     });
   }
   // 파일/서버백업 공용: 백업 data 객체를 로컬+서버에 복원 (미리보기 확인 포함)
-  async function applyBackupData(d, sourceLabel){
+  async function applyBackupData(d, sourceLabel, backupTs){
     if(!d || typeof d !== 'object'){ showToast('복원 실패: 잘못된 형식'); return; }
     // 두 형식 지원:
     //  - 정제형식 : data.contracts = [ ... ]            (논리 키 + 값)
@@ -22278,10 +22411,32 @@ function BackupSection(){
 
     if(writes.length === 0){ showToast('복원할 데이터가 없습니다'); return; }
     summary.sort();
-    var msg = '복원 미리보기 ('+(sourceLabel||'백업')+') — 아래 데이터로 현재 내용을 덮어쓰고 서버에도 반영합니다.\n\n'
-      + (summary.length ? summary.join('\n') : '(데이터 키 없음)')
-      + '\n\n진행하시겠습니까?';
-    if(!(await popConfirm(msg))) return;
+    // 관문②: 현재 데이터 최신 시각(_meta_ 최대값) vs 백업 시각 — 현재가 더 최신이면 '되돌리기' 입력 강제
+    var stale = null;
+    if(backupTs){
+      var newest = 0;
+      try {
+        for(var _mi = 0; _mi < localStorage.length; _mi++){
+          var _mk = localStorage.key(_mi);
+          if(_mk && _mk.indexOf(KEY + '_meta_') === 0){
+            var _mv = parseInt(localStorage.getItem(_mk) || '0', 10);
+            if(_mv > newest) newest = _mv;
+          }
+        }
+      } catch(_){}
+      if(newest && newest > backupTs){
+        var _diff = newest - backupTs;
+        var _mins = Math.round(_diff / 60000);
+        var _diffText = (_mins < 60) ? (_mins + '분')
+          : (Math.round(_mins / 60) < 48 ? Math.round(_mins / 60) + '시간' : Math.round(_mins / 1440) + '일');
+        stale = { diffText: _diffText };
+      }
+    }
+    // 관문①: 같은 브라우저의 다른 탭/창 수
+    var otherTabs = 0;
+    try { otherTabs = await window.erpCountOtherTabs(); } catch(_){}
+    // 관문③: 타이핑 확인 (stale이면 '되돌리기', 아니면 '복원')
+    if(!(await window.restoreGate({ summary: summary, sourceLabel: (sourceLabel || '백업'), otherTabs: otherTabs, stale: stale }))) return;
 
     try {
       // 저장공간 확보(quota 초과 방지): 교체될 키의 기존 값 제거, 전체복원(30키 이상)이면 앱 키 전부 제거 후 새로 씀
@@ -22315,7 +22470,9 @@ function BackupSection(){
       parsed = JSON.parse(text);
       if(!parsed || !parsed.data || typeof parsed.data !== 'object') throw new Error('잘못된 형식');
     } catch(e){ showToast('복원 실패: ' + e.message); return; }
-    await applyBackupData(parsed.data, file.name);
+    var _bts = (typeof parsed.ts === 'number') ? parsed.ts : Date.parse(parsed.ts);
+    if(isNaN(_bts)) _bts = 0;
+    await applyBackupData(parsed.data, file.name, _bts);
   }
   async function doRestore(e){
     var file = e.target.files && e.target.files[0];
@@ -22383,7 +22540,9 @@ function BackupSection(){
       try { localStorage.removeItem('pureun_v6_recent_sig'); serverBackupRecent(); } catch(_e){}
       var s = await fbDb.ref(entry.path + '/' + entry.fbKey).once('value');
       var snap = (s && s.val()) || {};
-      await applyBackupData(snap.data || {}, (entry.kind === 'daily' ? '서버백업 ' : '수시백업 ') + entry.label);
+      var _sbts = snap.savedAt ? Date.parse(snap.savedAt) : 0;
+      if(isNaN(_sbts)) _sbts = 0;
+      await applyBackupData(snap.data || {}, (entry.kind === 'daily' ? '서버백업 ' : '수시백업 ') + entry.label, _sbts);
     } catch(e){ window._erpErrLog && window._erpErrLog(e); alert('백업을 불러오지 못했습니다.'); }
   }
 
