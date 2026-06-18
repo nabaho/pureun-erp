@@ -2567,7 +2567,22 @@ function dbSet(k, v){
           }
         }
         var fbValue = (DIFF_KEYS.indexOf(k) >= 0 && Array.isArray(v)) ? arrayToIdMap(v) : v;
-        fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(fbSyncFail);
+        // ── 근본 급감 차단: 서버 현재 건수 대비 이 기기 데이터가 절반 이하면 = 옛 데이터 → 푸시 차단 ──
+        if(Array.isArray(v)){
+          fbDb.ref('data/'+k).once('value').then(function(snap){
+            var sv = snap.val(); var svv = sv && sv.v;
+            var srvN = svv ? (Array.isArray(svv) ? svv.length : Object.keys(svv).length) : 0;
+            var _bulkOk2 = window._bulkDeleteIntent && (Date.now() - window._bulkDeleteIntent < 15000);
+            if(srvN >= 10 && v.length < srvN * 0.5 && !_bulkOk2){
+              console.warn('[데이터보호] '+k+': 서버 '+srvN+'건 > 이 기기 '+v.length+'건 — 옛 데이터로 판단, 서버 푸시 차단');
+              try { window.erpAlert && erpAlert('danger', '옛 데이터 푸시 차단: '+k, '이 기기 데이터('+v.length+'건)가 서버 현재('+srvN+'건)보다 훨씬 적어, 옛 데이터가 서버를 덮어쓰는 것을 막았습니다.', '이 기기에서 새로고침(Ctrl+Shift+R) 후 서버 최신을 받아 다시 작업하세요. 의도한 대량 삭제면 콘솔에 erpAllowBulk() 입력 후 다시 저장.'); } catch(_){}
+              return;
+            }
+            fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(fbSyncFail);
+          }).catch(function(){ fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(fbSyncFail); });
+        } else {
+          fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(fbSyncFail);
+        }
       }
     } catch(e){ window._erpErrLog && window._erpErrLog(e); }
   }
