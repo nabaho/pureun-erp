@@ -718,7 +718,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = 'V2 (2026-06-19 T정리)';
+var ERP_BUILD = 'V3 (2026-06-19 입사일순)';
 (function(){
   try{
     console.log('[ERP 빌드] '+ERP_BUILD);
@@ -51007,36 +51007,41 @@ function StaffRoster(){
 
   // ── 퇴사자 사번 T-번호 일괄 정리 (모든 저장소의 sid 일괄 교체, 같은 사람의 여러 옛 사번을 하나로 통합) ──
   function convertRetiredSids(){
-    // 동적·안전 방식: 상태가 '퇴직'이고 A-/P- 사번인 사람을 현재 사번 기준으로 새 T번호로 변환.
-    // (앞으로 새 퇴사자도 자동 처리됨. 재직자 A-는 건드리지 않음 → A순번 보존.)
+    // 퇴직자 전원을 입사일 빠른 순으로 정렬해 T-001부터 다시 부여.
+    // (입사일 빈 사람은 맨 뒤, 입사일 동률이면 이름순. 재직자 A-는 건드리지 않음.)
     var curUsers = dbGet('user_accounts', []) || [];
-    var maxT = 0;
-    curUsers.forEach(function(u){ var m=/^T-(\d+)$/.exec(u.sid||''); if(m) maxT=Math.max(maxT, parseInt(m[1],10)); });
+    var retired = curUsers.filter(function(u){ return u.status==='retired'; }).slice();
+    retired.sort(function(a,b){
+      var ha=a.hireDate||'9999-99-99', hb=b.hireDate||'9999-99-99';
+      if(ha!==hb) return ha<hb?-1:1;
+      return (a.name||'')<(b.name||'')?-1:((a.name||'')>(b.name||'')?1:0);
+    });
     var sidMap = {};
-    curUsers.filter(function(u){ return u.status==='retired' && /^[AP]-\d+$/.test(u.sid||''); })
-      .sort(function(a,b){ var pa=a.sid.charAt(0), pb=b.sid.charAt(0); if(pa!==pb) return pa<pb?-1:1; return parseInt(a.sid.split('-')[1],10)-parseInt(b.sid.split('-')[1],10); })
-      .forEach(function(u){ maxT++; sidMap[u.sid]='T-'+('00'+maxT).slice(-3); });
-    // 옛 급여데이터에만 남은 고아 사번 → 같은 이름의 현재 계정으로 통합.
-    // (현재 어떤 계정도 쓰지 않는 사번만 대상 → 재직 계정 안전. 급여기록의 empName으로 매칭.)
+    var tName = {};
+    retired.forEach(function(u,i){
+      var nt='T-'+('00'+(i+1)).slice(-3);
+      tName[nt]=u.name;
+      if(u.sid!==nt) sidMap[u.sid]=nt;
+    });
+    // 옛 급여데이터에만 남은 고아 사번(EMP-*, 옛 P- 등) → 같은 이름의 새 T (현재 누구도 안 쓰는 사번만)
     var heldSids = {};
     curUsers.forEach(function(u){ if(u.sid) heldSids[u.sid]=1; });
-    var nameToFinal = {};
-    curUsers.forEach(function(u){ if(u.name) nameToFinal[u.name] = sidMap[u.sid] || u.sid; });
+    var nameToNewT = {};
+    retired.forEach(function(u,i){ nameToNewT[u.name]='T-'+('00'+(i+1)).slice(-3); });
     (dbGet('payroll_monthly', []) || []).forEach(function(r){
       var sx = r.empSid;
-      if(sx && !heldSids[sx] && !sidMap[sx] && r.empName && nameToFinal[r.empName]){
-        sidMap[sx] = nameToFinal[r.empName];
+      if(sx && !heldSids[sx] && !sidMap[sx] && r.empName && nameToNewT[r.empName]){
+        sidMap[sx] = nameToNewT[r.empName];
       }
     });
-    // 미리보기용 MAP 재구성 (새 T사번별로 묶음)
+    // 미리보기용 MAP 재구성 (새 T사번별로 묶음, 입사일 순)
     var byNew = {};
     Object.keys(sidMap).forEach(function(o){ (byNew[sidMap[o]]=byNew[sidMap[o]]||[]).push(o); });
-    var MAP = Object.keys(byNew).sort().map(function(t){
-      var nm=''; curUsers.forEach(function(u){ if(sidMap[u.sid]===t && u.name) nm=u.name; });
-      return { name:nm, newSid:t, oldSids:byNew[t] };
+    var MAP = Object.keys(byNew).sort(function(a,b){ return parseInt(a.split('-')[1],10)-parseInt(b.split('-')[1],10); }).map(function(t){
+      return { name:tName[t]||'', newSid:t, oldSids:byNew[t] };
     });
     var oldList = Object.keys(sidMap);
-    if(oldList.length===0){ showToast('변환할 퇴사자 사번 없음'); return; }
+    if(oldList.length===0){ showToast('이미 입사일 순으로 정리됨 (변경 없음)'); return; }
     // 영향 건수 집계 (미리보기)
     function remap(sid){ return sidMap[sid] || sid; }
     var fi = dbGet('finance_income', []) || [];
