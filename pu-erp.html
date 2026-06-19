@@ -47851,10 +47851,12 @@ function PayrollLedger(props){
   }
   var sr = useState(false); var showResigned = sr[0]; var setShowResigned = sr[1]; // 퇴사자 포함 토글
   var users = sortUsers(dbGet('user_accounts', USERS_SEED).filter(function(u){
-    if(!isActiveInYM(u)) return false;
-    if(u.status==='active' || u.status==='leave') return true;
-    // 퇴직자: payroll 기록이 있는 경우만 목록 포함
-    if(u.status==='resigned') return showResigned || rawRecs.some(function(r){ return r.empSid===u.sid; });
+    if(u.status==='active' || u.status==='leave') return isActiveInYM(u);
+    // 퇴직자: 해당 월 급여기록이 있으면 입·퇴사일과 무관하게 표시(근무 증빙). 토글 시 재직기간 내 빈 달도.
+    if(u.status==='retired'||u.status==='resigned'){
+      if(rawRecs.some(function(r){ return r.empSid===u.sid && r.ym===_ym; })) return true;
+      return showResigned && isActiveInYM(u);
+    }
     return false;
   }));
   var rs = useState(rawRecs); var recs = rs[0]; var setRecs = rs[1];
@@ -48456,7 +48458,7 @@ function PayrollLedger(props){
               h('span', { style:{ fontWeight:800, color:'#fff', fontSize:'10px', background:'#475569', borderRadius:'4px', padding:'1px 5px', flexShrink:0 } }, idx+1),
               h('span', { style:{ fontWeight:700, color:'#1e293b', fontSize:'13px', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, u.name),
               u.status==='leave' && h('span', { style:{ fontSize:'9.5px', background:'#fef3c7', color:'#92400e', padding:'1px 5px', borderRadius:'8px', fontWeight:700, flexShrink:0 } }, '휴직'),
-              u.status==='resigned' && h('span', { style:{ fontSize:'9.5px', background:'#fee2e2', color:'#991b1b', padding:'1px 5px', borderRadius:'8px', fontWeight:700, flexShrink:0 } }, '퇴사'),
+              (u.status==='resigned'||u.status==='retired') && h('span', { style:{ fontSize:'9.5px', background:'#fee2e2', color:'#991b1b', padding:'1px 5px', borderRadius:'8px', fontWeight:700, flexShrink:0 } }, '퇴사'),
               u.title && h('span', { style:{ fontSize:'10px', color:'#64748b', flexShrink:0 } }, u.title),
               h('span', { style:{ fontSize:'10px', background:stBg, color:stFg, padding:'1px 7px', borderRadius:'10px', fontWeight:700, flexShrink:0 } }, stLb)
             ),
@@ -48534,7 +48536,7 @@ function PayrollLedger(props){
         h('tbody', null,
           users.map(function(u, idx){
             // 퇴직자는 해당 월 급여 기록 없으면 행 숨김
-            if(u.status==='resigned'){
+            if(u.status==='resigned'||u.status==='retired'){
               var hasRec = recs.some(function(r){ return r.empSid===u.sid && r.ym===props.selYM; });
               if(!hasRec) return null;
             }
@@ -48567,7 +48569,7 @@ function PayrollLedger(props){
                   title:'휴직 (환경설정 상태)',
                   style:{marginLeft:'5px',padding:'1px 5px',borderRadius:'5px',background:'#2563eb',color:'#fff',fontSize:'8.5px',fontWeight:700}
                 }, '🏠 휴직'),
-                u.status==='resigned' && h('span', {
+                (u.status==='resigned'||u.status==='retired') && h('span', {
                   title:'퇴직: '+(u.resignDate||''),
                   style:{marginLeft:'5px',padding:'1px 5px',borderRadius:'5px',background:'#dc2626',color:'#fff',fontSize:'8.5px',fontWeight:700}
                 }, '📤 퇴직')
@@ -51005,25 +51007,34 @@ function StaffRoster(){
 
   // ── 퇴사자 사번 T-번호 일괄 정리 (모든 저장소의 sid 일괄 교체, 같은 사람의 여러 옛 사번을 하나로 통합) ──
   function convertRetiredSids(){
-    // 매핑: 이름 → 새 T사번 + 통합할 옛 사번들(과거 데이터에 박힌 미상 사번 포함)
-    var MAP = [
-      { name:'김아름', newSid:'T-001', oldSids:['EMP-KARM'] },
-      { name:'김동근', newSid:'T-002', oldSids:['EMP-KDONG'] },
-      { name:'김정현', newSid:'T-003', oldSids:['EMP-KJHUN'] },
-      { name:'박지호', newSid:'T-004', oldSids:['A-008'] },
-      { name:'장한돌', newSid:'T-005', oldSids:[] },
-      { name:'임혜미', newSid:'T-006', oldSids:['P-006','P-007'] }
-    ];
-    // 현재 user_accounts에서 이름으로 옛 사번 자동 수집 (명부 등록분)
+    // 동적·안전 방식: 상태가 '퇴직'이고 A-/P- 사번인 사람을 현재 사번 기준으로 새 T번호로 변환.
+    // (앞으로 새 퇴사자도 자동 처리됨. 재직자 A-는 건드리지 않음 → A순번 보존.)
     var curUsers = dbGet('user_accounts', []) || [];
-    MAP.forEach(function(m){
-      curUsers.forEach(function(u){
-        if(u.name===m.name && u.sid && m.oldSids.indexOf(u.sid)<0 && u.sid!==m.newSid){ m.oldSids.push(u.sid); }
-      });
-    });
-    // 옛사번 → 새사번 룩업
+    var maxT = 0;
+    curUsers.forEach(function(u){ var m=/^T-(\d+)$/.exec(u.sid||''); if(m) maxT=Math.max(maxT, parseInt(m[1],10)); });
     var sidMap = {};
-    MAP.forEach(function(m){ m.oldSids.forEach(function(o){ sidMap[o]=m.newSid; }); });
+    curUsers.filter(function(u){ return u.status==='retired' && /^[AP]-\d+$/.test(u.sid||''); })
+      .sort(function(a,b){ var pa=a.sid.charAt(0), pb=b.sid.charAt(0); if(pa!==pb) return pa<pb?-1:1; return parseInt(a.sid.split('-')[1],10)-parseInt(b.sid.split('-')[1],10); })
+      .forEach(function(u){ maxT++; sidMap[u.sid]='T-'+('00'+maxT).slice(-3); });
+    // 옛 급여데이터에만 남은 고아 사번 → 같은 이름의 현재 계정으로 통합.
+    // (현재 어떤 계정도 쓰지 않는 사번만 대상 → 재직 계정 안전. 급여기록의 empName으로 매칭.)
+    var heldSids = {};
+    curUsers.forEach(function(u){ if(u.sid) heldSids[u.sid]=1; });
+    var nameToFinal = {};
+    curUsers.forEach(function(u){ if(u.name) nameToFinal[u.name] = sidMap[u.sid] || u.sid; });
+    (dbGet('payroll_monthly', []) || []).forEach(function(r){
+      var sx = r.empSid;
+      if(sx && !heldSids[sx] && !sidMap[sx] && r.empName && nameToFinal[r.empName]){
+        sidMap[sx] = nameToFinal[r.empName];
+      }
+    });
+    // 미리보기용 MAP 재구성 (새 T사번별로 묶음)
+    var byNew = {};
+    Object.keys(sidMap).forEach(function(o){ (byNew[sidMap[o]]=byNew[sidMap[o]]||[]).push(o); });
+    var MAP = Object.keys(byNew).sort().map(function(t){
+      var nm=''; curUsers.forEach(function(u){ if(sidMap[u.sid]===t && u.name) nm=u.name; });
+      return { name:nm, newSid:t, oldSids:byNew[t] };
+    });
     var oldList = Object.keys(sidMap);
     if(oldList.length===0){ showToast('변환할 퇴사자 사번 없음'); return; }
     // 영향 건수 집계 (미리보기)
