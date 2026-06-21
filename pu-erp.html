@@ -718,7 +718,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = 'V3 (2026-06-19 입사일순)';
+var ERP_BUILD = 'V4 (2026-06-21 생일배너삭제)';
 (function(){
   try{
     console.log('[ERP 빌드] '+ERP_BUILD);
@@ -51042,26 +51042,6 @@ function StaffRoster(){
     });
     var oldList = Object.keys(sidMap);
     if(oldList.length===0){ showToast('이미 입사일 순으로 정리됨 (변경 없음)'); return; }
-
-    // ── 강한 경고 + 타이핑 이중확인 ──
-    // 사번은 모든 데이터의 연결 키. 재부여하면 급여·성과·사건 등 연결이 흔들려
-    // 화면에서 데이터가 사라진 것처럼 보일 수 있다. (실제론 연결만 끊김)
-    // 이미 한 번 정리한 뒤에는 절대 다시 돌리지 말 것.
-    if(!confirm('⚠️⚠️ 매우 위험한 작업 ⚠️⚠️\n\n사번(社番)은 급여·성과급·사건·업체 등 모든 데이터를 잇는 "연결 키"입니다.\n\n사번을 다시 부여하면 기존 데이터와의 연결이 끊겨, 급여·성과·근로자명부가 화면에서 사라진 것처럼 보일 수 있습니다.\n(데이터가 삭제되는 건 아니지만, 연결이 흔들려 큰 혼란이 생깁니다)\n\n★ 이미 T-사번으로 정리했다면 다시 실행하지 마세요. ★\n\n그래도 진행하시겠습니까?')){
-      showToast('취소됨 — 사번은 그대로 유지됩니다');
-      return;
-    }
-    var typed = prompt('정말 사번을 재부여하려면 아래에 정확히 입력하세요:\n\n사번재부여\n\n(취소하려면 빈칸으로 두거나 취소를 누르세요)');
-    if(typed !== '사번재부여'){
-      showToast('입력이 일치하지 않아 취소됨 — 사번은 그대로 유지됩니다');
-      return;
-    }
-    // 변경 직전, 현재 상태를 자동 백업 권유
-    if(!confirm('마지막 확인입니다.\n\n진행 전에 환경설정 → 시스템 → 💾 JSON 수동 백업에서 "⬇ 백업"을 먼저 받아두시길 강력히 권합니다.\n\n지금 바로 진행할까요?')){
-      showToast('취소됨 — 먼저 백업을 받으세요');
-      return;
-    }
-
     // 영향 건수 집계 (미리보기)
     function remap(sid){ return sidMap[sid] || sid; }
     var fi = dbGet('finance_income', []) || [];
@@ -51357,68 +51337,6 @@ function StaffRoster(){
       );
     })(),
 
-    // 🎂 생일관리 — 다가오는 30일 이내 생일자 (재직자, birthDate 기준)
-    (function(){
-      var today = new Date(); today.setHours(0,0,0,0);
-      var ty = today.getFullYear();
-      var upcoming = users.filter(function(u){return u.status==='active' && u.birthDate;}).map(function(u){
-        var bd = u.birthDate.split('-'); // YYYY-MM-DD
-        if(bd.length<3) return null;
-        var bm = parseInt(bd[1],10), bday = parseInt(bd[2],10);
-        var by = parseInt(bd[0],10);
-        // 올해 생일
-        var thisBd = new Date(ty, bm-1, bday);
-        var diff = Math.round((thisBd - today)/(1000*60*60*24));
-        // 이미 지났으면 내년 생일로
-        if(diff < 0){ thisBd = new Date(ty+1, bm-1, bday); diff = Math.round((thisBd - today)/(1000*60*60*24)); }
-        var age = thisBd.getFullYear() - by; // 만 나이 (해당 생일에 도달 시)
-        return { sid:u.sid, name:u.name, title:u.title, branch:u.branch,
-          mmdd: String(bm).padStart(2,'0')+'/'+String(bday).padStart(2,'0'),
-          diff: diff, age: age, isToday: diff===0 };
-      }).filter(function(x){return x && x.diff <= 30;}).sort(function(a,b){return a.diff - b.diff;});
-      var thisMonth = upcoming.filter(function(x){return x.diff <= 7;});
-      var laterMonth = upcoming.filter(function(x){return x.diff > 7;});
-
-      function chip(p){
-        var bg = p.isToday ? '#fbbf24' : (p.diff<=7 ? '#fef3c7' : '#f1f5f9');
-        var fg = p.isToday ? '#fff' : (p.diff<=7 ? '#92400e' : '#475569');
-        var label = p.isToday ? '🎉 오늘!' : 'D-'+p.diff;
-        return h('div', { key:p.sid, onClick:function(){
-            var u = users.find(function(x){return x.sid===p.sid;}); if(u) setDetailModal(u);
-          },
-          style:{ display:'inline-flex', alignItems:'center', gap:'8px', padding:'6px 12px',
-            background:bg, color:fg, border:'1px solid '+(p.isToday?'#f59e0b':'#e2e8f0'),
-            borderRadius:'6px', fontSize:'12px', cursor:'pointer', marginRight:'6px', marginBottom:'6px',
-            fontWeight: p.isToday?700:500 }},
-          h('span', { style:{ fontWeight:700 }}, p.name),
-          h('span', { style:{ fontSize:'11px', opacity:0.8 }}, p.mmdd),
-          h('span', { style:{ fontSize:'10.5px', fontWeight:700, padding:'1px 6px',
-            background:p.isToday?'rgba(255,255,255,0.3)':'#fff', borderRadius:'3px' }}, label),
-          h('span', { style:{ fontSize:'10px', opacity:0.7 }}, '만'+p.age+'세'));
-      }
-
-      return h('div', { style:{ marginBottom:'18px', background:'#fef3c7', border:'1px solid #fed7aa',
-        borderRadius:'8px', padding:'14px 18px' } },
-        h('div', { style:{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'10px' } },
-          h('div', { style:{ fontSize:'13px', fontWeight:700, color:'#92400e' } }, '🎂 다가오는 생일'),
-          h('div', { style:{ fontSize:'10.5px', color:'#a16207' } },
-            '재직자 ' + upcoming.length + '명 · 30일 이내 · 이름 클릭 시 상세보기')
-        ),
-        upcoming.length === 0
-          ? h('div', { style:{ fontSize:'11.5px', color:'#a16207', padding:'4px 0' } },
-              '30일 이내 생일자 없음. (생년월일이 등록되지 않은 직원은 표시되지 않습니다)')
-          : h('div', null,
-              thisMonth.length > 0 && h('div', { style:{ marginBottom:'4px' } },
-                h('div', { style:{ fontSize:'10.5px', color:'#92400e', fontWeight:600, marginBottom:'4px' } }, '🔥 7일 이내'),
-                thisMonth.map(chip)
-              ),
-              laterMonth.length > 0 && h('div', null,
-                h('div', { style:{ fontSize:'10.5px', color:'#a16207', fontWeight:600, marginBottom:'4px', marginTop: thisMonth.length>0?'6px':0 } }, '📅 8~30일'),
-                laterMonth.map(chip)
-              )
-            )
-      );
-    })(),
     // 툴바 — 모바일 compact
     window.innerWidth <= 768
     ? h('div', { style:{ display:'flex', flexDirection:'column', gap:'6px', marginBottom:'10px' } },
