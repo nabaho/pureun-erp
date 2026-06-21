@@ -981,6 +981,8 @@ function verifyPw(pw, stored){
   return legacyDecodePw(stored) === pw;
 }
 function isLegacyPw(stored){ return !!stored && String(stored).indexOf('v2$') !== 0; }
+// 사번 → Firebase 로그인 이메일 (P-007 → p007@pureun.kr). 신원은 uid로 묶이므로 이메일은 추후 변경 가능.
+function sidToEmail(sid){ return String(sid||'').toLowerCase().replace(/-/g,'') + '@pureun.kr'; }
 // 전역 Ctrl+K (캡처 단계): 한글 입력 상태(e.key가 'ㅏ' 등)여도 e.code로 인식 — 전역 검색 포커스
 window.addEventListener('keydown', function(e){
   if(!(e.ctrlKey || e.metaKey)) return;
@@ -2041,11 +2043,7 @@ try {
           } else {
             fbAuthUid = null;
             fbAuthReady = false;
-            // 미인증 상태 → 익명 로그인 시도
-            firebase.auth().signInAnonymously().catch(function(err){
-              console.warn('[Firebase Auth] 익명 로그인 실패:', err && err.message);
-              // 실패해도 LS는 정상 작동 (오프라인 모드와 동일)
-            });
+            // 익명 로그인 제거: 이제 이메일/비밀번호 로그인으로만 Firebase 인증 (보안 강화)
           }
         });
       } catch(e){
@@ -22238,17 +22236,31 @@ function PasswordChangeSection(){
     var users = dbGet('user_accounts', []) || [];
     var u = users.find(function(x){ return x.sid === CURRENT_USER.sid; });
     if(!u){ setMsg('❌ 계정 정보를 찾을 수 없습니다.'); return; }
-    if(!verifyPw(oldPw, u.loginPw || u.password || '')){ setMsg('❌ 현재 비밀번호가 올바르지 않습니다.'); return; }
     if(newPw.length < 4){ setMsg('❌ 새 비밀번호는 4자 이상이어야 합니다.'); return; }
     if(newPw !== confPw){ setMsg('❌ 새 비밀번호가 일치하지 않습니다.'); return; }
-    var updated = users.map(function(x){
-      if(x.sid !== CURRENT_USER.sid) return x;
-      return Object.assign({}, x, { loginPw: encodePw(newPw), password: undefined });
+    // Firebase 비밀번호 변경 (현재 비번 재인증 후 갱신)
+    var _email = sidToEmail(u.sid);
+    var _cred = firebase.auth.EmailAuthProvider.credential(_email, oldPw);
+    var _fbu = firebase.auth().currentUser;
+    var _reauth = _fbu ? _fbu.reauthenticateWithCredential(_cred)
+                       : firebase.auth().signInWithEmailAndPassword(_email, oldPw);
+    _reauth.then(function(){
+      return firebase.auth().currentUser.updatePassword(newPw);
+    }).then(function(){
+      var u2 = dbGet('user_accounts', []) || [];
+      var updated = u2.map(function(x){
+        if(x.sid !== CURRENT_USER.sid) return x;
+        return Object.assign({}, x, { loginPw: encodePw(newPw), password: undefined, pwChangedFb: true });
+      });
+      dbSet('user_accounts', updated);
+      try { localStorage.removeItem('pureun_v6_force_pw'); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+      setOldPw(''); setNewPw(''); setConfPw('');
+      setMsg('✅ 비밀번호가 변경되었습니다.');
+      showToast('✅ 비밀번호 변경 완료');
+    }).catch(function(e){
+      window._erpErrLog && window._erpErrLog(e);
+      setMsg('❌ 현재 비밀번호가 올바르지 않습니다.');
     });
-    dbSet('user_accounts', updated);
-    setOldPw(''); setNewPw(''); setConfPw('');
-    setMsg('✅ 비밀번호가 변경되었습니다.');
-    showToast('✅ 비밀번호 변경 완료');
   }
   var rowS = { display:'flex', flexDirection:'column', gap:'4px', marginBottom:'14px' };
   var labelS = { fontSize:'12px', fontWeight:600, color:'#475569' };
@@ -51721,22 +51733,37 @@ function ChangePasswordModal(props){
       var id = inputId.trim();
       if(!id){ setErr('아이디를 입력하세요.'); return; }
       u = users.find(function(x){
-        return x.status !== 'retired' && ((x.loginId && x.loginId === id) || x.sid === id);
+        return x.status !== 'retired' && ((x.loginId && x.loginId === id) || x.sid === id || sidToEmail(x.sid) === id.toLowerCase());
       });
     }
     if(!u){ setErr('아이디가 존재하지 않습니다.'); return; }
     if(!curPw){ setErr('현재 비밀번호를 입력하세요.'); return; }
-    if(!verifyPw(curPw, u.loginPw || u.password || '')){ setErr('현재 비밀번호가 틀렸습니다.'); return; }
     if(!newPw || newPw.length < 4){ setErr('새 비밀번호는 4자 이상이어야 합니다.'); return; }
     if(newPw !== cfmPw){ setErr('새 비밀번호 확인이 일치하지 않습니다.'); return; }
     if(newPw === curPw){ setErr('현재 비밀번호와 동일합니다.'); return; }
-    var idx = users.findIndex(function(x){ return x.sid === u.sid; });
-    users[idx] = Object.assign({}, users[idx], { loginPw: encodePw(newPw) });
-    dbSet('user_accounts', users);
-    // force_pw 즉시 삭제 (재등장 방지)
-    try { localStorage.removeItem('pureun_v6_force_pw'); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
-    setOk(true);
-    setTimeout(function(){ props.onClose && props.onClose(); }, 1200);
+    // Firebase 비밀번호 변경: 현재 비번으로 재인증 후 새 비번으로 갱신
+    var _email = sidToEmail(u.sid);
+    var _cred = firebase.auth.EmailAuthProvider.credential(_email, curPw);
+    var _fbu = firebase.auth().currentUser;
+    var _reauth = _fbu ? _fbu.reauthenticateWithCredential(_cred)
+                       : firebase.auth().signInWithEmailAndPassword(_email, curPw);
+    _reauth.then(function(){
+      return firebase.auth().currentUser.updatePassword(newPw);
+    }).then(function(){
+      // 로컬 미러(기존 코드 호환) + 변경완료 플래그
+      var users2 = dbGet('user_accounts', USERS_SEED) || [];
+      var idx = users2.findIndex(function(x){ return x.sid === u.sid; });
+      if(idx >= 0){
+        users2[idx] = Object.assign({}, users2[idx], { loginPw: encodePw(newPw), pwChangedFb: true });
+        dbSet('user_accounts', users2);
+      }
+      try { localStorage.removeItem('pureun_v6_force_pw'); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+      setOk(true);
+      setTimeout(function(){ props.onClose && props.onClose(); }, 1200);
+    }).catch(function(e){
+      window._erpErrLog && window._erpErrLog(e);
+      setErr('현재 비밀번호가 틀렸습니다.');
+    });
   }
 
   var eyeBtn = function(show, setShow){
@@ -51932,11 +51959,11 @@ function LoginScreen(props){
       }
       var u = users.find(function(x){
         var canLogin = x.status === 'active' || (x.status === 'leave' && x.leaveLoginAllowed === true);
-        return canLogin && ((x.loginId && x.loginId === id) || x.sid === id);
+        return canLogin && ((x.loginId && x.loginId === id) || x.sid === id || sidToEmail(x.sid) === id.toLowerCase());
       });
       if(!u){
         // 로그인 불가 상태 안내 구분
-        var anyMatch = users.find(function(x){ return (x.loginId && x.loginId === id) || x.sid === id; });
+        var anyMatch = users.find(function(x){ return (x.loginId && x.loginId === id) || x.sid === id || sidToEmail(x.sid) === id.toLowerCase(); });
         if(anyMatch && !(anyMatch.status === 'active' || (anyMatch.status === 'leave' && anyMatch.leaveLoginAllowed === true))){
           var stLabel = anyMatch.status==='leave'?'휴직':anyMatch.status==='retired'?'퇴직':anyMatch.status==='standby'?'대기':anyMatch.status==='scheduled'?'입사예정':'비활성';
           setErr('재직 상태가 아니어서 로그인할 수 없습니다. (현재: '+stLabel+') 관리자에게 문의하세요.');
@@ -51945,13 +51972,12 @@ function LoginScreen(props){
         }
         setLoading(false); return;
       }
-      var storedPw = u.loginPw || u.password || '';
-      // 비번이 설정된 계정은 빈 비번 거부(틀린 비번 처리). 비번 미설정 계정만 무비번 로그인 허용.
-      if(storedPw && (!pw || !verifyPw(pw, storedPw))){
+      // ── 비밀번호 확인: Firebase 인증으로 검증 (비번은 Firebase에 저장됨) ──
+      var _email = sidToEmail(u.sid);
+      function _loginFail(){
         var newFail = failCount + 1;
         setFailCount(newFail); localStorage.setItem(FAIL_KEY, String(newFail));
         if(newFail >= MAX_FAIL + 3){
-          // 확인절차 통과 후도 계속 실패 → 잠금
           var until = Date.now() + LOCK_MIN * 60000;
           setLockUntil(until); localStorage.setItem(LOCK_KEY, JSON.stringify({until:until}));
           setErr('⛔ 비밀번호 반복 오류로 ' + LOCK_MIN + '분 잠금됩니다.');
@@ -51961,36 +51987,37 @@ function LoginScreen(props){
         } else {
           setErr('비밀번호가 틀렸습니다. (' + newFail + '/' + MAX_FAIL + '회)');
         }
-        setPw(''); setLoading(false); return;
+        setPw(''); setLoading(false);
       }
-      // ── 로그인 성공 ──
-      if(pw && isLegacyPw(storedPw)){
-        var idx = users.findIndex(function(x){ return x.sid === u.sid; });
-        if(idx >= 0){
-          users[idx] = Object.assign({}, users[idx], { loginPw: encodePw(pw), password: undefined });
-          try { dbSet('user_accounts', users); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+      function _loginSuccess(){
+        setFailCount(0); localStorage.setItem(FAIL_KEY, '0');
+        localStorage.removeItem(LOCK_KEY); setCaptcha(null);
+        if(saveId){
+          localStorage.setItem('pureun_v6_save_id_flag', '1');
+          localStorage.setItem('pureun_v6_last_login_id', id);
+        } else {
+          localStorage.removeItem('pureun_v6_save_id_flag');
+          localStorage.removeItem('pureun_v6_last_login_id');
         }
+        localStorage.removeItem('pureun_v6_save_pw_flag');
+        localStorage.removeItem('pureun_v6_saved_pw');
+        if(autoLogin){ setAutoLogin(u.sid); } else { clearAutoLogin(); }
+        // 첫 로그인(기본비번 123456 시작) → 비번 변경 강제. pwChangedFb 플래그로 판단.
+        var _lu = (dbGet('user_accounts', USERS_SEED) || []).find(function(x){ return x.sid === u.sid; });
+        if(!_lu || !_lu.pwChangedFb){
+          try { localStorage.setItem('pureun_v6_force_pw', u.sid); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+        } else {
+          try { localStorage.removeItem('pureun_v6_force_pw'); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+        }
+        setSession(u.sid);
+        setLoading(false);
+        onLogin(u.sid);
       }
-      setFailCount(0); localStorage.setItem(FAIL_KEY, '0');
-      localStorage.removeItem(LOCK_KEY); setCaptcha(null);
-      if(saveId){
-        localStorage.setItem('pureun_v6_save_id_flag', '1');
-        localStorage.setItem('pureun_v6_last_login_id', id);
-      } else {
-        localStorage.removeItem('pureun_v6_save_id_flag');
-        localStorage.removeItem('pureun_v6_last_login_id');
-      }
-      localStorage.removeItem('pureun_v6_save_pw_flag');
-      localStorage.removeItem('pureun_v6_saved_pw');
-      if(autoLogin){ setAutoLogin(u.sid); } else { clearAutoLogin(); }
-      var _loginUser = users.find(function(x){ return x.sid === u.sid; });
-      if(isDefaultPwStored((_loginUser && _loginUser.loginPw) || storedPw)){
-        try { localStorage.setItem('pureun_v6_force_pw', u.sid); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
-      } else {
-        try { localStorage.removeItem('pureun_v6_force_pw'); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
-      }
-      setSession(u.sid);
-      onLogin(u.sid);
+      if(!pw){ _loginFail(); return; }
+      firebase.auth().signInWithEmailAndPassword(_email, pw).then(_loginSuccess).catch(function(e){
+        window._erpErrLog && window._erpErrLog(e);
+        _loginFail();
+      });
     }, 300);
   }
 
@@ -53309,6 +53336,15 @@ function App(){
     CURRENT_USER.isAdmin = false; CURRENT_USER.branch = '';
     setIsLoggedIn(false);
   }
+
+  // Firebase 인증 없이 자동로그인만으로 들어온 경우(배포 직후 등) → 강제 재로그인 (서버 저장 실패 방지)
+  useEffect(function(){
+    if(!isLoggedIn) return;
+    var t = setTimeout(function(){
+      if(typeof fbDb !== 'undefined' && fbDb && !fbAuthReady){ handleLogout(); }
+    }, 5000);
+    return function(){ clearTimeout(t); };
+  }, []);
 
   var isFileProtocol = (typeof location !== 'undefined' && location.protocol === 'file:');
 
