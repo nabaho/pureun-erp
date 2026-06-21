@@ -1896,6 +1896,82 @@ function tabClaimOwnership() {
 }
 function tabIsOwner() { return _tabIsOwner; }
 
+// ============================================================
+// === 서버 기반 기기 잠금 — 기기(PC/폰)를 넘어 한 곳만 쓰기 허용 ===
+// BroadcastChannel(같은 브라우저 전용)로는 폰이 PC를 덮어쓰는 걸 못 막는다.
+// Firebase의 activeWriter/ 에 "현재 주 기기"를 기록하고, 모든 기기가 그걸 보고 판단.
+// 주 기기가 아니면 dbSet에서 서버 푸시를 막아, 옛 기기가 최신을 덮어쓰는 사고를 차단.
+// ============================================================
+var DEVICE_ID = (function(){
+  try {
+    var k = 'pureun_v6_device_id';
+    var v = localStorage.getItem(k);
+    if(!v){ v = (Date.now().toString(36) + Math.random().toString(36).slice(2,10)); localStorage.setItem(k, v); }
+    return v;
+  } catch(_){ return (Date.now().toString(36) + Math.random().toString(36).slice(2,10)); }
+})();
+var DEVICE_NAME = (function(){
+  try {
+    var ua = navigator.userAgent || '';
+    var isMobile = /Mobi|Android|iPhone|iPad/i.test(ua);
+    return (isMobile ? '📱 폰' : '💻 PC') + ' (' + DEVICE_ID.slice(-4) + ')';
+  } catch(_){ return '기기 ' + DEVICE_ID.slice(-4); }
+})();
+var DEVICE_STALE_MS = 90 * 1000;   // 90초간 heartbeat 없으면 주 기기가 죽은 것으로 간주
+var _serverWriter = null;          // 서버가 보고한 현재 주 기기 정보 {id,name,heartbeat}
+var _deviceIsWriter = false;       // 이 기기가 서버 기준 주 기기인가
+var _deviceHbTimer = null;
+
+function deviceIsWriter(){ return _deviceIsWriter; }
+
+// 서버의 주 기기 정보를 구독 + 비었거나 오래됐으면 내가 차지
+function initDeviceLock(){
+  if(!fbDb) { _deviceIsWriter = true; return; }   // 오프라인이면 단독이므로 쓰기 허용
+  try {
+    fbDb.ref('activeWriter').on('value', function(snap){
+      var w = snap.val();
+      _serverWriter = w;
+      var now = Date.now();
+      var live = w && w.id && w.heartbeat && (now - w.heartbeat < DEVICE_STALE_MS);
+      if(!live){
+        // 주 기기 없음(또는 죽음) → 내가 차지
+        claimDeviceLock();
+      } else if(w.id === DEVICE_ID){
+        if(!_deviceIsWriter){ _deviceIsWriter = true; notifyDeviceLock(); }
+      } else {
+        // 다른 살아있는 기기가 주인 → 나는 읽기 전용
+        if(_deviceIsWriter){ _deviceIsWriter = false; }
+        notifyDeviceLock();
+      }
+    });
+  } catch(e){ _deviceIsWriter = true; }
+}
+
+function claimDeviceLock(){
+  if(!fbDb){ _deviceIsWriter = true; notifyDeviceLock(); return; }
+  var now = Date.now();
+  fbDb.ref('activeWriter').set({ id: DEVICE_ID, name: DEVICE_NAME, at: now, heartbeat: now })
+    .then(function(){
+      _deviceIsWriter = true;
+      notifyDeviceLock();
+      // heartbeat 갱신 (30초마다)
+      if(_deviceHbTimer) clearInterval(_deviceHbTimer);
+      _deviceHbTimer = setInterval(function(){
+        if(_deviceIsWriter && fbDb){ fbDb.ref('activeWriter/heartbeat').set(Date.now()).catch(function(){}); }
+      }, 30 * 1000);
+    })
+    .catch(function(){});
+}
+
+// 사용자가 명시적으로 "이 기기에서 작업" → 강제로 주 기기 차지
+function deviceClaimOwnership(){
+  claimDeviceLock();
+}
+
+function notifyDeviceLock(){
+  try { window.dispatchEvent(new CustomEvent('device_lock_changed', { detail: { isWriter: _deviceIsWriter, writer: _serverWriter } })); } catch(_){}
+}
+
 // === Firebase 초기화 (있으면 자동 활성화, 없거나 실패해도 LS는 정상 작동) ===
 var FB_CONFIG = {
   apiKey: 'AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA',
@@ -1940,6 +2016,7 @@ try {
             fbAuthUid = user.uid;
             fbAuthReady = true;
             try { window.dispatchEvent(new CustomEvent('fb_auth_ready', {detail: user.uid})); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+            try { initDeviceLock(); } catch(_){}  // 서버 기반 기기 잠금 시작
           } else {
             fbAuthUid = null;
             fbAuthReady = false;
@@ -2505,6 +2582,13 @@ function dbSet(k, v){
     if(typeof tabIsOwner === 'function' && !tabIsOwner()){
       console.warn('[다중탭보호] '+k+': 이 탭은 주 탭이 아니라 서버 동기화를 막음 (다른 곳에서 사용 중)');
       try { showToast('⚠ 다른 곳(탭/기기)에서 사용 중이라 이 탭의 변경은 서버에 저장되지 않습니다. 상단 배너의 "여기서 작업하기"를 누르세요'); } catch(_){}
+      return true;
+    }
+    // ── 서버 기반 기기 잠금: 이 기기가 서버 기준 주 기기가 아니면 서버 푸시 차단 ──
+    //    폰·PC 등 기기를 넘어 작동. 옛 기기(폰)가 최신(PC)을 덮어쓰는 사고를 근본 차단.
+    if(typeof deviceIsWriter === 'function' && !deviceIsWriter()){
+      console.warn('[기기잠금] '+k+': 이 기기는 주 기기가 아니라 서버 동기화를 막음');
+      try { showToast('⚠ 다른 기기('+((_serverWriter&&_serverWriter.name)||'다른 곳')+')에서 사용 중입니다. 이 기기의 변경은 서버에 저장되지 않습니다. 상단 배너의 "이 기기에서 작업"을 누르세요'); } catch(_){}
       return true;
     }
     try {
@@ -53134,6 +53218,26 @@ function MultiTabBanner(){
   );
 }
 
+// 서버 기반 기기 잠금 배너 — 이 기기가 서버 기준 주 기기가 아니면 표시 (폰↔PC 등 기기 넘어 작동)
+function DeviceLockBanner(){
+  var s = useState(typeof deviceIsWriter === 'function' ? deviceIsWriter() : true);
+  var isWriter = s[0]; var setIsWriter = s[1];
+  var ws = useState(null); var writer = ws[0]; var setWriter = ws[1];
+  useEffect(function(){
+    function onChange(e){ setIsWriter(!!(e.detail && e.detail.isWriter)); setWriter(e.detail && e.detail.writer); }
+    window.addEventListener('device_lock_changed', onChange);
+    return function(){ window.removeEventListener('device_lock_changed', onChange); };
+  }, []);
+  if(isWriter) return null;
+  var otherName = (writer && writer.name) ? writer.name : '다른 기기';
+  return h('div', { style:{ position:'fixed', top:0, left:0, right:0, zIndex:99999, background:'#dc2626', color:'#fff', padding:'10px 16px', fontSize:'13px', fontWeight:700, textAlign:'center', boxShadow:'0 2px 8px rgba(0,0,0,0.25)', display:'flex', alignItems:'center', justifyContent:'center', gap:'12px', flexWrap:'wrap' } },
+    h('span', null, '🔒 현재 '+otherName+'에서 ERP를 사용 중입니다. 이 기기에서 수정하면 서버에 저장되지 않습니다 (보기만 가능). 같은 자료를 두 기기에서 동시에 쓰지 마세요.'),
+    h('button', { onClick:function(){ if(typeof deviceClaimOwnership === 'function') deviceClaimOwnership(); },
+      style:{ background:'#fff', color:'#dc2626', border:'none', padding:'5px 14px', borderRadius:'5px', fontSize:'12.5px', fontWeight:700, cursor:'pointer' } },
+      '이 기기에서 작업')
+  );
+}
+
 function App(){
   // 세션 키만으로 판단하지 않음 — 세션의 sid가 user_accounts에서 활성 사용자로 매핑되어야 로그인 상태
   function isValidSession(){
@@ -53176,6 +53280,7 @@ function App(){
 
   return h('div', null,
     h(MultiTabBanner),
+    h(DeviceLockBanner),
     isFileProtocol && h('div', { style:{ position:'fixed', top:0, left:0, right:0, zIndex:99999, background:'#dc2626', color:'#fff', padding:'10px 16px', fontSize:'13px', fontWeight:600, textAlign:'center', boxShadow:'0 2px 8px rgba(0,0,0,0.2)' } },
       '⚠️ 로컬 파일(file://)로 열려 있어 기기 간 데이터 동기화가 작동하지 않습니다. 반드시 ',
       h('span', { style:{ textDecoration:'underline' } }, 'https://nabaho.github.io/pureunall/pu-erp.html'),
