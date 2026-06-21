@@ -893,6 +893,14 @@ function getSessionSid(){ return sessionStorage.getItem(SESSION_KEY) || null; }
 function setSession(sid){
   sessionStorage.setItem(SESSION_KEY, sid);
   try { localStorage.removeItem(SESSION_KEY); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+  // 로그인하면 그 계정(sid) 경로로 기기 잠금을 다시 시작 (직원별 분리)
+  try {
+    if(typeof fbDb !== 'undefined' && fbDb && typeof initDeviceLock === 'function'){
+      if(typeof _deviceLockRef !== 'undefined' && _deviceLockRef){ try { fbDb.ref(_deviceLockRef).off(); } catch(_){} }
+      _deviceIsWriter = false;
+      initDeviceLock();
+    }
+  } catch(_){}
 }
 function clearSession(){
   sessionStorage.removeItem(SESSION_KEY);
@@ -1921,14 +1929,26 @@ var DEVICE_STALE_MS = 90 * 1000;   // 90초간 heartbeat 없으면 주 기기가
 var _serverWriter = null;          // 서버가 보고한 현재 주 기기 정보 {id,name,heartbeat}
 var _deviceIsWriter = false;       // 이 기기가 서버 기준 주 기기인가
 var _deviceHbTimer = null;
+var _deviceLockRef = null;         // 현재 구독 중인 잠금 경로
 
 function deviceIsWriter(){ return _deviceIsWriter; }
+
+// 잠금 경로 — 계정(sid)별로 분리.
+//   같은 계정이 여러 기기(PC+폰)로 들어오면 한쪽만 쓰기 (덮어쓰기 방지)
+//   다른 계정(직원들)끼리는 경로가 달라 서로 간섭 안 함 → 동시 작업 가능
+function deviceLockPath(){
+  var sid = (typeof getSessionSid === 'function' && getSessionSid()) ? getSessionSid() : 'anon';
+  // sid에 '/', '.', '#', '$', '[', ']' 등 Firebase 키 금지문자 제거
+  sid = String(sid).replace(/[.#$\[\]\/]/g, '_');
+  return 'activeWriter/' + sid;
+}
 
 // 서버의 주 기기 정보를 구독 + 비었거나 오래됐으면 내가 차지
 function initDeviceLock(){
   if(!fbDb) { _deviceIsWriter = true; return; }   // 오프라인이면 단독이므로 쓰기 허용
   try {
-    fbDb.ref('activeWriter').on('value', function(snap){
+    _deviceLockRef = deviceLockPath();
+    fbDb.ref(_deviceLockRef).on('value', function(snap){
       var w = snap.val();
       _serverWriter = w;
       var now = Date.now();
@@ -1939,7 +1959,7 @@ function initDeviceLock(){
       } else if(w.id === DEVICE_ID){
         if(!_deviceIsWriter){ _deviceIsWriter = true; notifyDeviceLock(); }
       } else {
-        // 다른 살아있는 기기가 주인 → 나는 읽기 전용
+        // 같은 계정의 다른 살아있는 기기가 주인 → 나는 읽기 전용
         if(_deviceIsWriter){ _deviceIsWriter = false; }
         notifyDeviceLock();
       }
@@ -1950,14 +1970,15 @@ function initDeviceLock(){
 function claimDeviceLock(){
   if(!fbDb){ _deviceIsWriter = true; notifyDeviceLock(); return; }
   var now = Date.now();
-  fbDb.ref('activeWriter').set({ id: DEVICE_ID, name: DEVICE_NAME, at: now, heartbeat: now })
+  var path = _deviceLockRef || deviceLockPath();
+  fbDb.ref(path).set({ id: DEVICE_ID, name: DEVICE_NAME, at: now, heartbeat: now })
     .then(function(){
       _deviceIsWriter = true;
       notifyDeviceLock();
       // heartbeat 갱신 (30초마다)
       if(_deviceHbTimer) clearInterval(_deviceHbTimer);
       _deviceHbTimer = setInterval(function(){
-        if(_deviceIsWriter && fbDb){ fbDb.ref('activeWriter/heartbeat').set(Date.now()).catch(function(){}); }
+        if(_deviceIsWriter && fbDb){ fbDb.ref((_deviceLockRef||deviceLockPath())+'/heartbeat').set(Date.now()).catch(function(){}); }
       }, 30 * 1000);
     })
     .catch(function(){});
@@ -53231,7 +53252,7 @@ function DeviceLockBanner(){
   if(isWriter) return null;
   var otherName = (writer && writer.name) ? writer.name : '다른 기기';
   return h('div', { style:{ position:'fixed', top:0, left:0, right:0, zIndex:99999, background:'#dc2626', color:'#fff', padding:'10px 16px', fontSize:'13px', fontWeight:700, textAlign:'center', boxShadow:'0 2px 8px rgba(0,0,0,0.25)', display:'flex', alignItems:'center', justifyContent:'center', gap:'12px', flexWrap:'wrap' } },
-    h('span', null, '🔒 현재 '+otherName+'에서 ERP를 사용 중입니다. 이 기기에서 수정하면 서버에 저장되지 않습니다 (보기만 가능). 같은 자료를 두 기기에서 동시에 쓰지 마세요.'),
+    h('span', null, '🔒 같은 계정이 '+otherName+'에서 사용 중입니다. 이 기기에서 수정하면 저장되지 않습니다 (보기만 가능). 본인의 PC와 폰을 동시에 쓰지 마세요. (다른 직원과는 무관 — 직원들은 각자 동시 작업 가능)'),
     h('button', { onClick:function(){ if(typeof deviceClaimOwnership === 'function') deviceClaimOwnership(); },
       style:{ background:'#fff', color:'#dc2626', border:'none', padding:'5px 14px', borderRadius:'5px', fontSize:'12.5px', fontWeight:700, cursor:'pointer' } },
       '이 기기에서 작업')
