@@ -723,7 +723,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-22 업체관리 업체명·유형·주담당 틀고정';
+var ERP_BUILD = '2026-06-22 중복제거 버그수정(그룹당 1개 보존)';
 (function(){
   try{
     console.log('[ERP 빌드] '+ERP_BUILD);
@@ -23503,10 +23503,17 @@ function DuplicateCleanerSection(){
     var totalRemoved = 0;
     scanResult.forEach(function(r){
       var arr = dbGet(r.storeKey, []) || [];
-      var removeIds = new Set(r.dups.map(function(d){ return d.id; }));
-      var cleaned = arr.filter(function(x){ return !removeIds.has(x.id); });
+      var seen = {};
+      var cleaned = arr.filter(function(item){
+        // scanDuplicates와 동일한 그룹 키 (사업자번호/관리번호, 없으면 이름·id)
+        var key = (r.field === 'bizNo') ? (item.bizNo||'').replace(/[^0-9]/g,'') : (item[r.field] || '');
+        if(!key) key = item.name || item.companyName || item.id || '';
+        if(!key) return true;            // 키 없으면 보존
+        if(seen[key]) return false;      // 같은 키 2번째부터 제거 (id가 같아도 1개는 반드시 보존)
+        seen[key] = 1; return true;      // 그룹 첫 항목 보존
+      });
+      totalRemoved += (arr.length - cleaned.length);
       dbSet(r.storeKey, cleaned);
-      totalRemoved += r.dups.length;
     });
     setDoneMsg('✅ ' + totalRemoved + '건 중복 제거 완료. 각 화면을 새로고침하면 반영됩니다.');
     setScanResult(null);
