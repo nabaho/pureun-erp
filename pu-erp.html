@@ -723,7 +723,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-23 일정추가 버튼→휴가등 추가';
+var ERP_BUILD = '2026-06-23 급여명세서 발송: 휴직자 제외+예외발송';
 (function(){
   try{
     console.log('[ERP 빌드] '+ERP_BUILD);
@@ -48063,6 +48063,12 @@ function PayrollLedger(props){
   // 표 확대(돋보기) 배율 (저장됨, 80~200%)
   var zmS = usePersistedState('payroll_zoom', 100); var zoom = zmS[0]; var setZoom = zmS[1];
   var emS = useState(false); var emailModal = emS[0]; var setEmailModal = emS[1];
+  var eilS = useState(false); var emailIncludeLeave = eilS[0]; var setEmailIncludeLeave = eilS[1];  // 휴직자 포함(예외 발송) 토글
+  // 급여명세서 이메일: 휴직자(status==='leave' 또는 해당 근무월 휴직 활성) 기본 제외, 토글 시 포함
+  var _emailLoaRef = (props.selYM || (typeof todayYMD==='function' ? todayYMD().slice(0,7) : '')) + '-01';
+  function _emailOnLeave(u){ return !!(u && (u.status === 'leave' || (typeof getLoaStatus === 'function' && getLoaStatus(u.sid, _emailLoaRef)))); }
+  var emailLeaveCount = (users||[]).filter(_emailOnLeave).length;
+  var emailUsers = (users||[]).filter(function(u){ return emailIncludeLeave || !_emailOnLeave(u); });
   var toS = useState(false); var toolsOpen = toS[0]; var setToolsOpen = toS[1];
   function clampZoom(v){ return Math.max(80, Math.min(200, v)); }
 
@@ -49062,6 +49068,11 @@ function PayrollLedger(props){
             '📌 직원별 📧 버튼 클릭 시 기본 이메일 클라이언트(한메일·아웃룩 등)가 열립니다.',h('br'),
             '이메일 주소가 없는 직원은 먼저 환경설정 → 인사관리기준 → 직원 정보에서 이메일을 등록해 주세요.'
           ),
+          h('label', { style:{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'12px', fontSize:'12px', color:'#475569', cursor:'pointer' } },
+            h('input', { type:'checkbox', checked: emailIncludeLeave, onChange:function(e){ setEmailIncludeLeave(e.target.checked); } }),
+            h('span', null, '휴직자 포함 (예외 발송)'),
+            (emailLeaveCount > 0 && !emailIncludeLeave) ? h('span', { style:{ color:'#92400e', fontWeight:600 } }, '· 휴직자 ' + emailLeaveCount + '명 제외됨') : null
+          ),
           h('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:'12px' } },
             h('thead', null,
               h('tr', { style:{ background:'#f8fafc', borderBottom:'2px solid #e5e7eb' } },
@@ -49072,7 +49083,7 @@ function PayrollLedger(props){
               )
             ),
             h('tbody', null,
-              users.map(function(u){
+              emailUsers.map(function(u){
                 var rec = getRec(u.sid);
                 var calc = calcPayroll(rec);
                 var allUsers = dbGet('user_accounts', USERS_SEED) || [];
@@ -49103,7 +49114,7 @@ function PayrollLedger(props){
                 );
                 var mailto = 'mailto:' + email + '?subject=' + subject + '&body=' + body;
                 return h('tr', { key:u.sid, style:{ borderBottom:'1px solid #f1f5f9' } },
-                  h('td', { style:{ padding:'8px 10px', fontWeight:600 } }, u.name),
+                  h('td', { style:{ padding:'8px 10px', fontWeight:600 } }, u.name, _emailOnLeave(u) ? h('span', { style:{ marginLeft:'6px', fontSize:'9.5px', background:'#fef3c7', color:'#92400e', padding:'1px 5px', borderRadius:'8px', fontWeight:700 } }, '휴직') : null),
                   h('td', { style:{ padding:'8px 10px', color: email?'#1e293b':'#dc2626', fontSize:'11.5px' } },
                     email || '⚠️ 미등록'),
                   h('td', { style:{ padding:'8px 10px', textAlign:'right', fontFamily:'monospace', fontWeight:700 } },
@@ -49128,7 +49139,7 @@ function PayrollLedger(props){
             onClick:function(){
               var allUsers2 = dbGet('user_accounts', USERS_SEED) || [];
               var sent = 0;
-              users.forEach(function(u){
+              emailUsers.forEach(function(u){
                 var fu = allUsers2.find(function(x){return x.sid===u.sid;})||{};
                 if(!fu.email) return;
                 var rec2 = getRec(u.sid); var calc2 = calcPayroll(rec2);
