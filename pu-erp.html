@@ -723,7 +723,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-22 중복제거 버그수정(그룹당 1개 보존)';
+var ERP_BUILD = '2026-06-23 중복제거 보존규칙(가장 채워진 항목)';
 (function(){
   try{
     console.log('[ERP 빌드] '+ERP_BUILD);
@@ -23500,22 +23500,37 @@ function DuplicateCleanerSection(){
 
   function removeDuplicates(){
     if(!scanResult || scanResult.length === 0) return;
+    // 같은 그룹에서 어느 복사본을 남길지: "가장 많이 채워진(필드 수 최다)" 항목 우선, 동률이면 첫 번째.
+    // (사건은 수정시각을 기록하지 않아 최근 수정본을 알 수 없으므로, 데이터 손실이 가장 적은 쪽을 남김)
+    function _score(o){
+      var n = 0;
+      for(var k in o){ if(!o.hasOwnProperty(k)) continue;
+        var v = o[k];
+        if(v === '' || v === null || v === undefined || v === 0) continue;
+        if(Array.isArray(v)){ if(v.length) n++; continue; }
+        if(typeof v === 'object'){ try{ if(Object.keys(v).length) n++; }catch(_){}; continue; }
+        n++;
+      }
+      return n;
+    }
     var totalRemoved = 0;
     scanResult.forEach(function(r){
       var arr = dbGet(r.storeKey, []) || [];
-      var seen = {};
-      var cleaned = arr.filter(function(item){
-        // scanDuplicates와 동일한 그룹 키 (사업자번호/관리번호, 없으면 이름·id)
+      var bestIdx = {};   // 그룹키 -> 보존할 인덱스 (id가 같아도 인덱스로 처리해 1개는 반드시 보존)
+      arr.forEach(function(item, idx){
         var key = (r.field === 'bizNo') ? (item.bizNo||'').replace(/[^0-9]/g,'') : (item[r.field] || '');
         if(!key) key = item.name || item.companyName || item.id || '';
-        if(!key) return true;            // 키 없으면 보존
-        if(seen[key]) return false;      // 같은 키 2번째부터 제거 (id가 같아도 1개는 반드시 보존)
-        seen[key] = 1; return true;      // 그룹 첫 항목 보존
+        if(!key){ bestIdx['__k' + idx] = idx; return; }   // 키 없으면 각자 보존
+        var cur = bestIdx[key];
+        if(cur === undefined || _score(item) > _score(arr[cur])) bestIdx[key] = idx;
       });
+      var keep = {};
+      Object.keys(bestIdx).forEach(function(k){ keep[bestIdx[k]] = 1; });
+      var cleaned = arr.filter(function(item, idx){ return keep[idx]; });
       totalRemoved += (arr.length - cleaned.length);
       dbSet(r.storeKey, cleaned);
     });
-    setDoneMsg('✅ ' + totalRemoved + '건 중복 제거 완료. 각 화면을 새로고침하면 반영됩니다.');
+    setDoneMsg('✅ ' + totalRemoved + '건 중복 제거 완료 (그룹마다 가장 많이 채워진 항목 보존). 각 화면을 새로고침하면 반영됩니다.');
     setScanResult(null);
     showToast('✅ 중복 ' + totalRemoved + '건 제거됨');
   }
