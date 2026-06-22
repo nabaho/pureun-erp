@@ -718,7 +718,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = 'V11 (2026-06-22 근로자 삭제 버튼)';
+var ERP_BUILD = 'V12 (2026-06-22 업체관리 컬럼 개별/사용자별)';
 (function(){
   try{
     console.log('[ERP 빌드] '+ERP_BUILD);
@@ -10306,17 +10306,33 @@ function CompanyManagement(){
     showToast('✅ ' + selIds.size + '개 업체에 ' + (u?u.name:sid) + ' 배정됨');
     clearSel(); setBulkMgrModal(null);
   }
-  // 컬럼 그룹 hide 토글 (localStorage 저장)
-  var CO_COL_KEY = 'pureun_v6_co_hide_cols';
-  var savedCols = (function(){ try{ return safeParse(localStorage.getItem(CO_COL_KEY), {}); }catch(e){ return {}; } })();
-  var hdS = useState(!!savedCols.detail);   var hideDetail = hdS[0];   var setHideDetail = hdS[1];
-  var hcS = useState(!!savedCols.contact);  var hideContact = hcS[0];  var setHideContact = hcS[1];
-  var hfS = useState(!!savedCols.finance);  var hideFinance = hfS[0];  var setHideFinance = hfS[1];
-  var hfeeS = useState(!!savedCols.fee);    var hideFee = hfeeS[0];    var setHideFee = hfeeS[1];
+  // 컬럼 표시/숨김 — 로그인 사용자별 저장(Firebase 동기화), 컬럼 개별 토글.
+  // 표는 nth-child로 숨김 → 컬럼 추가·이동 시 아래 idx도 함께 갱신할 것. (모바일 카드뷰에는 미적용)
+  var CO_COLS_FULL = [
+    {k:'f_type',label:'유형',idx:4},{k:'f_mgrMain',label:'주담당',idx:5},{k:'f_mgrSub',label:'부담당',idx:6},
+    {k:'f_bizNo',label:'사업자번호',idx:7},{k:'f_bizType',label:'업태',idx:8},{k:'f_bizCat',label:'종목',idx:9},
+    {k:'f_ceo',label:'대표자',idx:10},{k:'f_size',label:'규모',idx:11,d:true},{k:'f_empCnt',label:'근로자수',idx:12,d:true},
+    {k:'f_zip',label:'우편번호',idx:13,d:true},{k:'f_addr',label:'주소',idx:14,d:true},{k:'f_contactName',label:'담당자',idx:15},
+    {k:'f_contactPhone',label:'연락처',idx:16},{k:'f_taxIssue',label:'세금계산서발급일',idx:17,d:true},{k:'f_cms',label:'CMS',idx:18,d:true},
+    {k:'f_payDay',label:'입금일',idx:19,d:true},{k:'f_cStart',label:'계약시작',idx:20,d:true},{k:'f_cEnd',label:'계약종료',idx:21,d:true},
+    {k:'f_fee',label:'월자문료',idx:22},{k:'f_note',label:'특이사항',idx:23},{k:'f_diff',label:'난이도',idx:24}
+  ];
+  var CO_COLS_SUB = [
+    {k:'s_mgr',label:'담당자',idx:4},{k:'s_bizNo',label:'사업자번호',idx:5},{k:'s_bizType',label:'업태',idx:6},
+    {k:'s_bizCat',label:'종목',idx:7},{k:'s_ceo',label:'대표자',idx:8},{k:'s_branch',label:'지점',idx:9},
+    {k:'s_filed',label:'신고서전달',idx:10,d:true},{k:'s_taxReq',label:'세무사요청',idx:11,d:true},{k:'s_taxReply',label:'세무사회신',idx:12,d:true},
+    {k:'s_eiSi',label:'고용·산재',idx:13,d:true},{k:'s_health',label:'건강',idx:14,d:true},{k:'s_note',label:'특이사항',idx:15},{k:'s_diff',label:'난이도',idx:16}
+  ];
+  var CO_COLS_KEY = 'co_cols_' + (CURRENT_USER.sid || 'guest');
+  var hcS = useState(function(){ return dbGet(CO_COLS_KEY, {}) || {}; }); var hiddenCols = hcS[0]; var setHiddenCols = hcS[1];
   var coS = useState(false); var colMenuOpen = coS[0]; var setColMenuOpen = coS[1];
-  function saveColPref(patch){
-    try{ localStorage.setItem(CO_COL_KEY, JSON.stringify(Object.assign({ detail:hideDetail, contact:hideContact, finance:hideFinance, fee:hideFee }, patch))); }catch(e){ window._erpErrLog && window._erpErrLog(e); }
-  }
+  var coColReg = (statusTab === 'suboffice') ? CO_COLS_SUB : CO_COLS_FULL;
+  function saveHiddenCols(next){ setHiddenCols(next); dbSet(CO_COLS_KEY, next); }
+  function toggleCol(k){ var n = Object.assign({}, hiddenCols); if(n[k]) delete n[k]; else n[k] = true; saveHiddenCols(n); }
+  function coShowAll(){ var n = Object.assign({}, hiddenCols); coColReg.forEach(function(c){ delete n[c.k]; }); saveHiddenCols(n); }
+  function coSimple(){ var n = Object.assign({}, hiddenCols); coColReg.forEach(function(c){ if(c.d) n[c.k] = true; else delete n[c.k]; }); saveHiddenCols(n); }
+  var coHideCss = coColReg.filter(function(c){ return hiddenCols[c.k]; }).map(function(c){ return '.co-table td:nth-child('+c.idx+'),.co-table th:nth-child('+c.idx+'){display:none}'; }).join('');
+  var coHiddenCount = coColReg.filter(function(c){ return hiddenCols[c.k]; }).length;
   // 컬럼 드롭다운 외부 클릭 자동 닫기
   useEffect(function(){
     if(!colMenuOpen) return;
@@ -10992,44 +11008,35 @@ function CompanyManagement(){
           filtered.length + '건 ×')
       ),
       (function(){
-        var hiddenCount = (hideDetail?1:0)+(hideContact?1:0)+(hideFinance?1:0)+(hideFee?1:0);
         return h('div', { style:{ position:'relative', marginLeft:'8px' } },
           h('button', {
             onClick:function(e){ e.stopPropagation(); setColMenuOpen(!colMenuOpen); },
-            title:'컬럼 표시/숨김',
+            title:'컬럼 표시/숨김 (로그인 사용자별 저장)',
             style:{ padding:'5px 12px', fontSize:'11.5px', fontWeight:600, borderRadius:'4px',
-              background: hiddenCount > 0 ? '#1e40af' : '#fff',
-              color: hiddenCount > 0 ? '#fff' : '#475569',
-              border:'1px solid '+(hiddenCount > 0 ? '#1e40af' : '#cbd5e1'), cursor:'pointer' } },
-            '⚙ 컬럼' + (hiddenCount > 0 ? ' ('+hiddenCount+' 숨김)' : '') + ' ▼'),
+              background: coHiddenCount > 0 ? '#1e40af' : '#fff',
+              color: coHiddenCount > 0 ? '#fff' : '#475569',
+              border:'1px solid '+(coHiddenCount > 0 ? '#1e40af' : '#cbd5e1'), cursor:'pointer' } },
+            '⚙ 컬럼' + (coHiddenCount > 0 ? ' ('+coHiddenCount+' 숨김)' : '') + ' ▼'),
           colMenuOpen && h('div', { onClick:function(e){e.stopPropagation();},
             style:{ position:'absolute', top:'calc(100% + 4px)', left:0, zIndex:100,
               background:'#fff', border:'1px solid #cbd5e1', borderRadius:'6px',
-              boxShadow:'0 4px 12px rgba(0,0,0,0.15)', minWidth:'220px', padding:'6px' } },
+              boxShadow:'0 4px 12px rgba(0,0,0,0.15)', minWidth:'220px', maxHeight:'70vh', overflowY:'auto', padding:'6px' } },
             h('div', { style:{ display:'flex', gap:'6px', padding:'4px 6px 8px', borderBottom:'1px solid #f1f5f9', marginBottom:'4px' } },
-              h('button', { onClick:function(){ setHideDetail(true); setHideFinance(true); setHideContact(false); setHideFee(false); saveColPref({detail:true,finance:true,contact:false,fee:false}); },
-                className:'erp-tip', 'data-tip':'업체명·담당·연락처·자문료·특이사항·난이도만 표시',
+              h('button', { onClick:coSimple,
+                className:'erp-tip', 'data-tip':'상세·재무 컬럼을 숨긴 간단 보기',
                 style:{ flex:1, padding:'6px 0', background:'#1e40af', color:'#fff', border:'none', borderRadius:'5px', fontSize:'11.5px', fontWeight:700, cursor:'pointer' } }, '✨ 간단 보기'),
-              h('button', { onClick:function(){ setHideDetail(false); setHideFinance(false); setHideContact(false); setHideFee(false); saveColPref({detail:false,finance:false,contact:false,fee:false}); },
+              h('button', { onClick:coShowAll,
                 style:{ flex:1, padding:'6px 0', background:'#fff', color:'#475569', border:'1px solid #cbd5e1', borderRadius:'5px', fontSize:'11.5px', fontWeight:600, cursor:'pointer' } }, '전체 보기')
             ),
-            [
-              { key:'detail',  label:'상세 (규모·근로자수·우편·주소)', hidden:hideDetail,
-                toggle:function(){ var nv=!hideDetail; setHideDetail(nv); saveColPref({detail:nv}); } },
-              { key:'contact', label:'연락 (담당자·연락처)',           hidden:hideContact,
-                toggle:function(){ var nv=!hideContact; setHideContact(nv); saveColPref({contact:nv}); } },
-              { key:'finance', label:'재무 (세금·CMS·입금·계약기간)',   hidden:hideFinance,
-                toggle:function(){ var nv=!hideFinance; setHideFinance(nv); saveColPref({finance:nv}); } },
-              { key:'fee',     label:'💰 월 자문료',                    hidden:hideFee,
-                toggle:function(){ var nv=!hideFee; setHideFee(nv); saveColPref({fee:nv}); } }
-            ].map(function(opt){
-              return h('label', { key:opt.key,
-                style:{ display:'flex', alignItems:'center', gap:'8px', padding:'7px 10px', cursor:'pointer', borderRadius:'4px',
-                  background: opt.hidden ? '#fff' : '#eff6ff', fontSize:'11.5px' },
-                onMouseEnter:function(e){ e.currentTarget.style.background = opt.hidden ? '#f8fafc' : '#dbeafe'; },
-                onMouseLeave:function(e){ e.currentTarget.style.background = opt.hidden ? '#fff' : '#eff6ff'; } },
-                h('input', { type:'checkbox', checked:!opt.hidden, onChange:opt.toggle }),
-                h('span', { style:{ fontWeight:!opt.hidden?600:400, color:!opt.hidden?'#1e40af':'#94a3b8' } }, opt.label));
+            coColReg.map(function(c){
+              var visible = !hiddenCols[c.k];
+              return h('label', { key:c.k,
+                style:{ display:'flex', alignItems:'center', gap:'8px', padding:'6px 10px', cursor:'pointer', borderRadius:'4px',
+                  background: visible ? '#eff6ff' : '#fff', fontSize:'11.5px' },
+                onMouseEnter:function(e){ e.currentTarget.style.background = visible ? '#dbeafe' : '#f8fafc'; },
+                onMouseLeave:function(e){ e.currentTarget.style.background = visible ? '#eff6ff' : '#fff'; } },
+                h('input', { type:'checkbox', checked:visible, onChange:function(){ toggleCol(c.k); } }),
+                h('span', { style:{ fontWeight:visible?600:400, color:visible?'#1e40af':'#94a3b8' } }, c.label));
             })
           )
         );
@@ -11088,7 +11095,8 @@ function CompanyManagement(){
             })
       )
     : h('div', { style:{ overflow:'auto', maxHeight:'calc(100vh - 240px)', background:'#fff', border:'1px solid #e5e7eb', borderRadius:'6px' } },
-      h('table', { className: 'dt' + (hideDetail?' hide-detail':'') + (hideContact?' hide-contact':'') + (hideFinance?' hide-finance':'') + (hideFee?' hide-fee':''), style:{ minWidth:'1700px' } },
+      h('style', null, coHideCss),
+      h('table', { className: 'dt co-table', style:{ minWidth:'1700px' } },
         h('thead', null, h('tr', null,
           statusTab === 'suboffice'
             ? [
