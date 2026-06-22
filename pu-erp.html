@@ -718,7 +718,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = 'V8 (2026-06-22 재무 건별저장)';
+var ERP_BUILD = 'V9 (2026-06-22 설정 되돌림방지)';
 (function(){
   try{
     console.log('[ERP 빌드] '+ERP_BUILD);
@@ -2703,7 +2703,23 @@ function dbSet(k, v){
             fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(fbSyncFail);
           }).catch(function(){ fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(fbSyncFail); });
         } else {
-          fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(fbSyncFail);
+          // 되돌림 방지(객체/스칼라 설정): 서버가 이 기기 기준보다 최신이면 덮어쓰지 말고 서버 원본을 raw 그대로 수신
+          fbDb.ref('data/'+k).once('value').then(function(snap){
+            var sv2 = snap.val();
+            var srvU2 = (sv2 && typeof sv2.u === 'number') ? sv2.u : 0;
+            if(srvU2 > _preMeta){
+              console.warn('[되돌림방지] '+k+': 서버('+srvU2+')가 이 기기 기준('+_preMeta+')보다 최신 — 설정 덮어쓰기 차단, 서버 원본 수신');
+              try {
+                localStorage.setItem(KEY+k, JSON.stringify(sv2.v));
+                localStorage.setItem(KEY+'_meta_'+k, String(srvU2));
+                _dbCache[k] = sv2.v;
+                try { if(typeof _scheduleFbChanged === 'function') _scheduleFbChanged(k); } catch(_){}
+              } catch(_){}
+              try { window.erpAlert && erpAlert('danger', '되돌림 방지: '+k, '다른 곳에서 먼저 저장된 더 최신 설정이 서버에 있어, 이 기기의 (오래된) 값이 덮어쓰는 것을 막았습니다.', '방금 최신값을 받아왔습니다. 확인 후 다시 저장하세요. (이 기기의 직전 변경은 서버에 반영되지 않았습니다)'); } catch(_){}
+              return;
+            }
+            fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(fbSyncFail);
+          }).catch(function(){ fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(fbSyncFail); });
         }
       }
     } catch(e){ window._erpErrLog && window._erpErrLog(e); }
