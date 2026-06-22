@@ -51949,31 +51949,23 @@ function LoginScreen(props){
 
     setLoading(true);
     setTimeout(function(){
+      var idl = id.toLowerCase();
       var users = dbGet('user_accounts', USERS_SEED) || [];
-      // 동기화 전 + 로컬 명단 없음 = 서버 명단 도착 전 → 시드 푸시 금지(비번 초기화 방지) + 잠시 대기 안내
-      if(fbDb && !_fbSynced && !localStorage.getItem('pureun_v6_user_accounts')){
-        setErr('서버 동기화 중입니다. 잠시 후 다시 시도하세요.'); setLoading(false); return;
-      }
-      if(!localStorage.getItem('pureun_v6_user_accounts')){
-        if(fbSeedAllowed()){ try { dbSet('user_accounts', users); } catch(e){ window._erpErrLog && window._erpErrLog(e); } }
-      }
-      var u = users.find(function(x){
-        var canLogin = x.status === 'active' || (x.status === 'leave' && x.leaveLoginAllowed === true);
-        return canLogin && ((x.loginId && x.loginId === id) || x.sid === id || sidToEmail(x.sid) === id.toLowerCase());
-      });
-      if(!u){
-        // 로그인 불가 상태 안내 구분
-        var anyMatch = users.find(function(x){ return (x.loginId && x.loginId === id) || x.sid === id || sidToEmail(x.sid) === id.toLowerCase(); });
-        if(anyMatch && !(anyMatch.status === 'active' || (anyMatch.status === 'leave' && anyMatch.leaveLoginAllowed === true))){
-          var stLabel = anyMatch.status==='leave'?'휴직':anyMatch.status==='retired'?'퇴직':anyMatch.status==='standby'?'대기':anyMatch.status==='scheduled'?'입사예정':'비활성';
-          setErr('재직 상태가 아니어서 로그인할 수 없습니다. (현재: '+stLabel+') 관리자에게 문의하세요.');
-        } else {
-          setErr('아이디가 존재하지 않습니다.');
-        }
+      function _matches(x){ return (x.loginId && x.loginId === id) || x.sid === id || sidToEmail(x.sid) === idl; }
+      function _canLogin(x){ return x.status === 'active' || (x.status === 'leave' && x.leaveLoginAllowed === true); }
+      // 로컬 캐시에 계정이 있고 재직이 아니면 사전 안내 (기존 UX 유지)
+      var _anyLocal = users.find(_matches);
+      if(_anyLocal && !_canLogin(_anyLocal)){
+        var stLabel = _anyLocal.status==='leave'?'휴직':_anyLocal.status==='retired'?'퇴직':_anyLocal.status==='standby'?'대기':_anyLocal.status==='scheduled'?'입사예정':'비활성';
+        setErr('재직 상태가 아니어서 로그인할 수 없습니다. (현재: '+stLabel+') 관리자에게 문의하세요.');
         setLoading(false); return;
       }
-      // ── 비밀번호 확인: Firebase 인증으로 검증 (비번은 Firebase에 저장됨) ──
-      var _email = sidToEmail(u.sid);
+      // 로그인 이메일 결정 — 로컬 계정이 없어도(새 컴퓨터) 이메일/사번으로 가능
+      var _u0 = users.find(function(x){ return _canLogin(x) && _matches(x); });
+      var _email = id.indexOf('@') >= 0 ? idl
+                 : (_u0 ? sidToEmail(_u0.sid)
+                        : (/^[A-Za-z]+-?\d+$/.test(id) ? sidToEmail(id) : ''));
+      if(!_email){ setErr('이메일로 로그인하세요. (예: p001@pureun.kr)'); setLoading(false); return; }
       function _loginFail(){
         var newFail = failCount + 1;
         setFailCount(newFail); localStorage.setItem(FAIL_KEY, String(newFail));
@@ -51989,7 +51981,7 @@ function LoginScreen(props){
         }
         setPw(''); setLoading(false);
       }
-      function _loginSuccess(){
+      function _loginSuccess(acct){
         setFailCount(0); localStorage.setItem(FAIL_KEY, '0');
         localStorage.removeItem(LOCK_KEY); setCaptcha(null);
         if(saveId){
@@ -52001,20 +51993,38 @@ function LoginScreen(props){
         }
         localStorage.removeItem('pureun_v6_save_pw_flag');
         localStorage.removeItem('pureun_v6_saved_pw');
-        if(autoLogin){ setAutoLogin(u.sid); } else { clearAutoLogin(); }
+        if(autoLogin){ setAutoLogin(acct.sid); } else { clearAutoLogin(); }
         // 첫 로그인(기본비번 123456 시작) → 비번 변경 강제. pwChangedFb 플래그로 판단.
-        var _lu = (dbGet('user_accounts', USERS_SEED) || []).find(function(x){ return x.sid === u.sid; });
+        var _lu = (dbGet('user_accounts', USERS_SEED) || []).find(function(x){ return x.sid === acct.sid; });
         if(!_lu || !_lu.pwChangedFb){
-          try { localStorage.setItem('pureun_v6_force_pw', u.sid); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+          try { localStorage.setItem('pureun_v6_force_pw', acct.sid); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
         } else {
           try { localStorage.removeItem('pureun_v6_force_pw'); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
         }
-        setSession(u.sid);
+        setSession(acct.sid);
         setLoading(false);
-        onLogin(u.sid);
+        onLogin(acct.sid);
       }
       if(!pw){ _loginFail(); return; }
-      firebase.auth().signInWithEmailAndPassword(_email, pw).then(_loginSuccess).catch(function(e){
+      // 인증 먼저 → 그 다음 서버에서 계정 동기화·확인 (새 컴퓨터에서도 로그인 가능)
+      firebase.auth().signInWithEmailAndPassword(_email, pw).then(function(){
+        return (typeof fbInitialSync === 'function') ? fbInitialSync() : null;
+      }).then(function(){
+        var users2 = dbGet('user_accounts', USERS_SEED) || [];
+        var acct = users2.find(function(x){ return _canLogin(x) && _matches(x); });
+        if(!acct){
+          var any2 = users2.find(_matches);
+          try { firebase.auth().signOut(); } catch(_){}
+          if(any2 && !_canLogin(any2)){
+            var st2 = any2.status==='leave'?'휴직':any2.status==='retired'?'퇴직':any2.status==='standby'?'대기':any2.status==='scheduled'?'입사예정':'비활성';
+            setErr('재직 상태가 아니어서 로그인할 수 없습니다. (현재: '+st2+')');
+          } else {
+            setErr('계정을 찾을 수 없습니다. 관리자에게 문의하세요.');
+          }
+          setLoading(false); return;
+        }
+        _loginSuccess(acct);
+      }).catch(function(e){
         window._erpErrLog && window._erpErrLog(e);
         _loginFail();
       });
