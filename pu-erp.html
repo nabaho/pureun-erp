@@ -718,7 +718,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = 'V10 (2026-06-22 신규직원 P/A 버튼 수정)';
+var ERP_BUILD = 'V11 (2026-06-22 근로자 삭제 버튼)';
 (function(){
   try{
     console.log('[ERP 빌드] '+ERP_BUILD);
@@ -42040,6 +42040,9 @@ function StaffRosterDetail(props){
       ),
       h('div', { className:'modal-f' },
         h('button', { className:'btn-secondary', onClick:props.onClose }, '닫기'),
+        props.onDelete && h('button', { onClick:function(){ props.onDelete(); },
+          style:{ padding:'7px 12px', background:'#fef2f2', color:'#b91c1c', border:'1px solid #fca5a5', borderRadius:'5px', fontSize:'12px', fontWeight:700, cursor:'pointer' } },
+          '🗑 삭제'),
         props.onContract && h('button', { onClick:function(){ props.onContract(); },
           style:{ padding:'7px 12px', background:'#fff7ed', color:'#9a3412', border:'1px solid #fed7aa', borderRadius:'5px', fontSize:'12px', fontWeight:700, cursor:'pointer' } },
           '📝 계약서'),
@@ -51353,11 +51356,35 @@ function StaffRoster(){
       showToast(modal.mode==='add' ? '등록 완료' : '수정 완료');
     }
   }
+  // 사번이 다른 데이터(급여·근태·성과·업체)에 연결돼 있는지 집계 — 오입력(빈 레코드) 판별용
+  function countSidRefs(sid){
+    var pay = (dbGet('payroll_monthly', []) || []).filter(function(x){ return x.empSid === sid; }).length;
+    var ot  = (dbGet('overtime_records', []) || []).filter(function(x){ return x.sid === sid; }).length;
+    var att = (dbGet('attendance_records', []) || []).filter(function(x){ return x.sid === sid; }).length;
+    var fi  = (dbGet('finance_income', []) || []).filter(function(x){
+      return x.managerSid === sid || (x.perfShares || []).some(function(p){ return p.sid === sid; });
+    }).length;
+    var biz = 0;
+    ['companies','cases','consultings','funds','other_projects'].forEach(function(k){
+      (dbGet(k, []) || []).forEach(function(x){
+        if(x.managerMain === sid || (x.managerSubs || []).some(function(s){ return s === sid; })) biz++;
+      });
+    });
+    return { 급여:pay, 근태:ot + att, 성과입금:fi, 업체사건:biz };
+  }
   async function del(sid){
-    if(!(await popConfirm('삭제하시겠습니까? (이 작업은 되돌릴 수 없습니다)'))) return;
+    var victim = users.find(function(u){ return u.sid === sid; });
+    var nm = (victim && victim.name) || sid;
+    var r = countSidRefs(sid);
+    var total = r.급여 + r.근태 + r.성과입금 + r.업체사건;
+    var warn = total > 0
+      ? '\n⚠ 연결된 데이터: 급여 ' + r.급여 + ' · 근태 ' + r.근태 + ' · 성과/입금 ' + r.성과입금 + ' · 업체/사건 ' + r.업체사건 + '건\n(데이터는 지워지지 않고 사번만 사라져 고아 데이터가 됩니다)\n'
+      : '\n연결된 데이터 없음 — 안전하게 삭제 가능\n';
+    if(!(await popConfirm(nm + ' (' + sid + ') 삭제하시겠습니까?\n' + warn + '명부에서만 제거됩니다.'))) return;
+    var _backup = users.slice();
     persist(users.filter(function(u){ return u.sid !== sid; }));
     setDetailModal(null);
-    showToast('삭제됨');
+    showToastUndo('🗑 ' + nm + ' 삭제됨', function(){ persist(_backup); });
   }
   async function reinstate(sid){
     if(!(await popConfirm('재직으로 복귀시키겠습니까?'))) return;
@@ -51695,7 +51722,8 @@ function StaffRoster(){
       onRetire: function(){ openRetire(detailModal); },
       onReinstate: function(){ reinstate(detailModal.sid); },
       onContract: function(){ setContractModal(detailModal); setDetailModal(null); },
-      onCard: function(){ setCardModal(detailModal); setDetailModal(null); }
+      onCard: function(){ setCardModal(detailModal); setDetailModal(null); },
+      onDelete: function(){ del(detailModal.sid); }
     }),
     // 근로계약서 모달
     contractModal && h(EmploymentContractModal, {
