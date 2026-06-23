@@ -521,6 +521,18 @@ function chosung(s){ let r='';
   for (const ch of String(s||'')){ const c=ch.charCodeAt(0);
     r += (c>=0xAC00 && c<=0xD7A3) ? CHO[Math.floor((c-0xAC00)/588)] : ch; }
   return r; }
+/* 빈 명함 정리 — 이름·회사·전화·이메일이 모두 없는 항목 삭제 */
+async function cleanEmpty(){
+  const targets = Object.values(state.items).filter(it=>it.kind===state.tab)
+    .filter(it=> !String(it.name||'').trim() && !String(it.company||'').trim()
+              && !String(it.mobile||'').trim() && !String(it.tel||'').trim()
+              && !String(it.companyTel||'').trim() && !String(it.email||'').trim());
+  if (!targets.length) return toast('빈 명함이 없습니다');
+  if (!confirm(`이름·회사·전화·이메일이 모두 없는 빈 명함 ${targets.length}건을 삭제할까요?`)) return;
+  targets.forEach(it=>Store.del(it.id));
+  toast(`빈 명함 ${targets.length}건을 삭제했습니다`);
+}
+
 /* 회사주소 앞 시·도 추출 (지역 필터용) */
 function regionOf(it){
   const a=String(it.companyAddr||it.address||'').trim(); if(!a) return '';
@@ -746,6 +758,36 @@ function moveSelTo(gid){
   $('folderDlgBg').classList.remove('open');
   state.sel={}; renderSelbar(); render();
   toast(n+'개 명함을 폴더로 옮겼습니다');
+}
+/* 선택 명함 일괄 담당자 지정 */
+function selPickOwner(){
+  if(!Object.keys(state.sel).length) return toast('명함을 먼저 선택하세요');
+  const name=prompt('선택한 명함의 담당자(직원) 이름을 입력하세요\n(비우면 담당자 해제)');
+  if(name===null) return;
+  const owner=name.trim();
+  Object.keys(state.sel).forEach(sid=>{ const it=state.items[sid]; if(it){ it.owner=owner; Store.put(it); } });
+  const n=Object.keys(state.sel).length;
+  state.sel={}; renderSelbar(); render();
+  toast(owner ? `${n}개 명함의 담당자를 '${owner}'로 지정했습니다` : `${n}개 명함의 담당자를 해제했습니다`);
+}
+/* 선택 명함 단체 복사 */
+function copySelInfo(){
+  const ids=Object.keys(state.sel); if(!ids.length) return toast('명함을 먼저 선택하세요');
+  const lines=ids.map(id=>{ const it=state.items[id]; if(!it) return '';
+    const p=[it.name, it.company, it.mobile||it.companyTel||it.tel, it.email].filter(Boolean);
+    return p.join(' / ');
+  }).filter(Boolean);
+  const text=lines.join('\n');
+  if(navigator.clipboard) navigator.clipboard.writeText(text).then(()=>toast(`${lines.length}건을 복사했습니다`)).catch(()=>fallbackCopy(text));
+  else fallbackCopy(text);
+}
+/* 선택 명함 단체 메일 (이메일 있는 것만, 숨은참조) */
+function mailSel(){
+  const ids=Object.keys(state.sel); if(!ids.length) return toast('명함을 먼저 선택하세요');
+  const emails=[...new Set(ids.map(id=>state.items[id]?.email).filter(e=>e&&/.+@.+/.test(e)))];
+  if(!emails.length) return toast('이메일이 있는 명함이 없습니다');
+  location.href = `mailto:?bcc=${encodeURIComponent(emails.join(','))}`;
+  toast(`${emails.length}명에게 메일 작성 (숨은참조)`);
 }
 function delSel(){
   const ids=Object.keys(state.sel); if(!ids.length) return toast('항목을 먼저 선택하세요');
@@ -1371,6 +1413,7 @@ function openMenu(){
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');exportXlsx()">📤 엑셀로 내보내기</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');backupNow()">💾 지금 백업 (JSON 저장)</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openDedup()">🧹 중복 정리</button>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');cleanEmpty()">🧽 빈 명함 정리</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openSettings()">🤖 AI 키 설정</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');wipeAll()" style="color:#c0392b">🗑 전체 비우기 (현재 탭)
       <span style="margin-left:auto;color:#c0392b;font-size:12px">되돌릴 수 없음</span></button>`;
@@ -1869,6 +1912,7 @@ function startColResize(e, key){
     if(!state.colW) state.colW = {};
     if(!state.colW[state.tab]) state.colW[state.tab] = {};
     state.colW[state.tab][key] = col.style.width;
+    saveColPrefs();
   };
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup', onUp);
@@ -1898,7 +1942,19 @@ function setColVisible(key, visible){
   if(!state.hiddenCols[state.tab]) state.hiddenCols[state.tab]={};
   if(visible) delete state.hiddenCols[state.tab][key];
   else state.hiddenCols[state.tab][key]=true;
+  saveColPrefs();
   renderPCTable();
+}
+/* 열 설정(숨김·너비) localStorage 저장/복원 */
+function saveColPrefs(){
+  try{ localStorage.setItem('pucards_colPrefs', JSON.stringify({hiddenCols:state.hiddenCols, colW:state.colW})); }catch(e){}
+}
+function loadColPrefs(){
+  try{
+    const p=JSON.parse(localStorage.getItem('pucards_colPrefs')||'{}');
+    if(p.hiddenCols) state.hiddenCols=p.hiddenCols;
+    if(p.colW) state.colW=p.colW;
+  }catch(e){}
 }
 function toggleCollapse(id){ state.collapsed[id]=!state.collapsed[id]; render(); }
 function toggleAllFolders(){
@@ -2002,6 +2058,9 @@ function renderPCTable(){
   const n=Object.keys(state.sel).length;
   $('pcSel').innerHTML = n ? `<div class="bar"><b>${n}개 선택</b>
       <button onclick="selPickGroup()">📁 폴더 이동</button>
+      <button onclick="selPickOwner()">👤 담당자 지정</button>
+      <button onclick="copySelInfo()">📋 단체 복사</button>
+      <button onclick="mailSel()">📧 단체 메일</button>
       <button class="red" onclick="delSel()">삭제</button>
       <button onclick="state.sel={};render()">선택 해제</button></div>` : '';
   /* 표 */
@@ -2107,7 +2166,24 @@ if (IS_PC){
   document.body.classList.add('pc');
   $('pcRoot').hidden = false;
 }
+loadColPrefs();
 render();
+
+/* 키보드 단축키 */
+document.addEventListener('keydown', e=>{
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
+  /* Ctrl+F: 검색창 포커스 */
+  if((e.ctrlKey||e.metaKey) && e.key==='f'){ const s=$('pcSearch'); if(s){ e.preventDefault(); s.focus(); s.select(); } return; }
+  /* ESC: 열린 패널·창 닫기 */
+  if(e.key==='Escape'){
+    closeDetail();
+    ['menuBg','folderDlgBg','groupSheetBg','detailBg','dupBg'].forEach(id=>{ const el=$(id); if(el) el.classList.remove('open'); });
+    closeFolderMenu(); closeColMenu();
+    return;
+  }
+  /* N: 새 명함 (입력 중 아닐 때) */
+  if(!typing && (e.key==='n'||e.key==='N') && !e.ctrlKey && !e.metaKey){ e.preventDefault(); openAddSheet(); }
+});
 </script>
 </body>
 </html>
