@@ -723,7 +723,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-23 급여명세서 자동발송 테스트 버튼(함수 연결)';
+var ERP_BUILD = '2026-06-23 급여명세서 행별 📧 실제 발송(함수)으로 교체';
 (function(){
   try{
     console.log('[ERP 빌드] '+ERP_BUILD);
@@ -48098,6 +48098,22 @@ function PayrollLedger(props){
       else { showToast('\u26a0 \ubc1c\uc1a1 \uc2e4\ud328: ' + JSON.stringify((d && d.error) || d)); }
     }).catch(function(e){ showToast('\u26a0 \ud638\ucd9c \uc2e4\ud328: ' + ((e && e.message) || e)); });
   }
+  // [행별 실제 발송 — B안] 각 직원 📧 버튼: 함수를 통해 그 직원 이메일로 명세서 실제 발송 (확인창 포함)
+  function sendPayslipRow(u, email, subjectText, bodyText){
+    popConfirm(u.name + ' 님에게\n' + email + ' (으)로\n' + props.selYM + ' 급여명세서를 발송할까요?').then(function(ok){
+      if(!ok) return;
+      var html = '<pre style="font-family:monospace;font-size:13px;line-height:1.6;color:#1e293b;white-space:pre-wrap;margin:0">'
+        + bodyText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>';
+      showToast('📤 ' + u.name + '님에게 발송 중...');
+      fetch(PAYSLIP_FN_URL, {
+        method:'POST', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ to: email, name: u.name, ym: props.selYM, subject: subjectText, html: html })
+      }).then(function(r){ return r.json(); }).then(function(d){
+        if(d && d.ok){ showToast('✅ ' + u.name + '님 발송 완료 → ' + email); }
+        else { showToast('⚠ ' + u.name + ' 발송 실패: ' + JSON.stringify((d && d.error) || d)); }
+      }).catch(function(e){ showToast('⚠ 호출 실패: ' + ((e && e.message) || e)); });
+    });
+  }
   var toS = useState(false); var toolsOpen = toS[0]; var setToolsOpen = toS[1];
   function clampZoom(v){ return Math.max(80, Math.min(200, v)); }
 
@@ -49094,7 +49110,7 @@ function PayrollLedger(props){
         ),
         h('div', { className:'modal-b', style:{ maxHeight:'70vh', overflowY:'auto' } },
           h('div', { style:{ background:'#eff6ff', border:'1px solid #bfdbfe', borderRadius:'6px', padding:'10px 14px', marginBottom:'14px', fontSize:'11.5px', color:'#1e40af', lineHeight:'1.7' } },
-            '📌 직원별 📧 버튼 클릭 시 기본 이메일 클라이언트(한메일·아웃룩 등)가 열립니다.',h('br'),
+            '📌 직원별 📧 버튼을 누르면 확인 후 그 직원 이메일로 명세서가 자동 발송됩니다 (발신: 푸른노무법인).',h('br'),
             '이메일 주소가 없는 직원은 먼저 환경설정 → 인사관리기준 → 직원 정보에서 이메일을 등록해 주세요.'
           ),
           h('label', { style:{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'12px', fontSize:'12px', color:'#475569', cursor:'pointer' } },
@@ -49118,8 +49134,8 @@ function PayrollLedger(props){
                 var allUsers = dbGet('user_accounts', USERS_SEED) || [];
                 var fullUser = allUsers.find(function(x){ return x.sid === u.sid; }) || {};
                 var email = fullUser.email || '';
-                var subject = encodeURIComponent('[푸른노무법인] ' + props.selYM + ' 급여명세서 — ' + u.name);
-                var body = encodeURIComponent(
+                var subjectText = '[푸른노무법인] ' + props.selYM + ' 급여명세서 — ' + u.name;
+                var bodyText =
                   u.name + ' 님 안녕하세요.\n푸른노무법인입니다.\n\n' +
                   '▶ ' + props.selYM + ' 급여명세서\n\n' +
                   '─────────────────\n' +
@@ -49139,9 +49155,7 @@ function PayrollLedger(props){
                   '  공제 합계:   ' + calc.totalDeduct.toLocaleString() + '원\n\n' +
                   '─────────────────\n' +
                   '★ 실지급액:   ' + calc.netPay.toLocaleString() + '원\n\n' +
-                  '문의사항은 사무실로 연락 주세요.\n감사합니다.\n\n푸른노무법인'
-                );
-                var mailto = 'mailto:' + email + '?subject=' + subject + '&body=' + body;
+                  '문의사항은 사무실로 연락 주세요.\n감사합니다.\n\n푸른노무법인';
                 return h('tr', { key:u.sid, style:{ borderBottom:'1px solid #f1f5f9' } },
                   h('td', { style:{ padding:'8px 10px', fontWeight:600 } }, u.name, _emailOnLeave(u) ? h('span', { style:{ marginLeft:'6px', fontSize:'9.5px', background:'#fef3c7', color:'#92400e', padding:'1px 5px', borderRadius:'8px', fontWeight:700 } }, '휴직') : null),
                   h('td', { style:{ padding:'8px 10px', color: email?'#1e293b':'#dc2626', fontSize:'11.5px' } },
@@ -49150,8 +49164,8 @@ function PayrollLedger(props){
                     calc.netPay.toLocaleString() + '원'),
                   h('td', { style:{ padding:'8px 10px', textAlign:'center' } },
                     email
-                      ? h('a', { href:mailto,
-                          style:{ display:'inline-block', padding:'4px 12px', background:'#16a34a', color:'#fff', borderRadius:'5px', fontSize:'11.5px', fontWeight:700, textDecoration:'none' } },
+                      ? h('button', { onClick: function(){ sendPayslipRow(u, email, subjectText, bodyText); },
+                          style:{ display:'inline-block', padding:'4px 12px', background:'#16a34a', color:'#fff', border:'none', borderRadius:'5px', fontSize:'11.5px', fontWeight:700, cursor:'pointer' } },
                           '📧 발송')
                       : h('span', { style:{ fontSize:'11px', color:'#94a3b8' } }, '—')
                   )
