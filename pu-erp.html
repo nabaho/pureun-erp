@@ -6,6 +6,8 @@
 <title>푸른노무법인 ERP V1</title>
 <!-- SheetJS: 엑셀(xls/xlsx) 파싱용 (아카이브 import) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <!-- Daum 우편번호 서비스 (무료, 가입 불필요) -->
 <script src="https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
 <!-- Firebase SDK: 실시간 동기화 + 11명 동시 접속 -->
@@ -723,7 +725,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-23 급여명세서 행별 📧 실제 발송(함수)으로 교체';
+var ERP_BUILD = '2026-06-23 급여명세서 PDF 첨부 발송(행별 📧)';
 (function(){
   try{
     console.log('[ERP 빌드] '+ERP_BUILD);
@@ -48098,20 +48100,82 @@ function PayrollLedger(props){
       else { showToast('\u26a0 \ubc1c\uc1a1 \uc2e4\ud328: ' + JSON.stringify((d && d.error) || d)); }
     }).catch(function(e){ showToast('\u26a0 \ud638\ucd9c \uc2e4\ud328: ' + ((e && e.message) || e)); });
   }
-  // [행별 실제 발송 — B안] 각 직원 📧 버튼: 함수를 통해 그 직원 이메일로 명세서 실제 발송 (확인창 포함)
+  // [PDF 생성] 명세서를 화면 렌더 → 이미지 → PDF(base64). 한글 깨짐 없음(html2canvas).
+  function buildPayslipPdfBase64(u){
+    return new Promise(function(resolve, reject){
+      if(!window.html2canvas || !window.jspdf){ reject(new Error('PDF 라이브러리 로딩 안됨 (새로고침 후 재시도)')); return; }
+      var rec = getRec(u.sid); var calc = calcPayroll(rec); var ym = props.selYM;
+      var won = function(n){ return (n||0).toLocaleString() + '원'; };
+      var r2 = function(label, val, strong){
+        return '<tr><td style="padding:5px 0;color:#475569">' + label + '</td>'
+          + '<td style="padding:5px 0;text-align:right;' + (strong ? 'font-weight:700' : '') + '">' + val + '</td></tr>';
+      };
+      var el = document.createElement('div');
+      el.style.cssText = 'position:absolute;left:-9999px;top:0;width:600px;background:#fff;padding:36px;font-family:\'Malgun Gothic\',\'\ub9d1\uc740 \uace0\ub515\',sans-serif;color:#1e293b';
+      el.innerHTML =
+        '<div style="text-align:center;font-size:22px;font-weight:700">\uae09\uc5ec\uba85\uc138\uc11c</div>'
+        + '<div style="text-align:center;font-size:13px;color:#64748b;margin:4px 0 22px">' + ym + ' &middot; \ud478\ub978\ub178\ubb34\ubc95\uc778</div>'
+        + '<table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:6px">'
+        + '<tr><td style="padding:5px 0;color:#475569">\uc131\uba85</td><td style="padding:5px 0;text-align:right;font-weight:700">' + u.name + '</td></tr>'
+        + '</table>'
+        + '<div style="font-weight:700;font-size:15px;margin:16px 0 4px;border-bottom:2px solid #1e293b;padding-bottom:4px">\uc9c0\uae09</div>'
+        + '<table style="width:100%;border-collapse:collapse;font-size:14px">'
+        + r2('\uae30\ubcf8\uae09', won(rec.baseSalary))
+        + r2('\uc218\ub2f9 \ud569\uacc4', won(calc.allowSum))
+        + r2('\ubc95\uc815\uc218\ub2f9', won(calc.legal.total))
+        + r2('\uc131\uacfc\uae08', won(calc.perfBonus.total))
+        + r2('\uc9c0\uae09\uc561 \ud569\uacc4', won(calc.grossPay), true)
+        + '</table>'
+        + '<div style="font-weight:700;font-size:15px;margin:16px 0 4px;border-bottom:2px solid #1e293b;padding-bottom:4px">\uacf5\uc81c</div>'
+        + '<table style="width:100%;border-collapse:collapse;font-size:14px">'
+        + r2('\uad6d\ubbfc\uc5f0\uae08', won(calc.pension))
+        + r2('\uac74\uac15\ubcf4\ud5d8', won(calc.healthIns))
+        + r2('\uc7a5\uae30\uc694\uc591', won(calc.longCare))
+        + r2('\uace0\uc6a9\ubcf4\ud5d8', won(calc.empIns))
+        + r2('\uc18c\ub4dd\uc138', won(calc.incomeTax))
+        + r2('\uc9c0\ubc29\uc138', won(calc.localTax))
+        + r2('\uacf5\uc81c \ud569\uacc4', won(calc.totalDeduct), true)
+        + '</table>'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:20px;padding:14px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px">'
+        + '<span style="font-weight:700;font-size:15px">\uc2e4\uc9c0\uae09\uc561</span>'
+        + '<span style="font-weight:700;font-size:18px;color:#16a34a">' + won(calc.netPay) + '</span></div>'
+        + '<div style="margin-top:24px;font-size:12px;color:#94a3b8;text-align:center">\ubb38\uc758\uc0ac\ud56d\uc740 \uc0ac\ubb34\uc2e4\ub85c \uc5f0\ub77d \uc8fc\uc138\uc694 &middot; \ud478\ub978\ub178\ubb34\ubc95\uc778</div>';
+      document.body.appendChild(el);
+      window.html2canvas(el, { scale: 2, backgroundColor: '#ffffff' }).then(function(canvas){
+        try { document.body.removeChild(el); } catch(_e){}
+        var imgData = canvas.toDataURL('image/png');
+        var JsPDF = window.jspdf.jsPDF;
+        var pdf = new JsPDF('p', 'mm', 'a4');
+        var pageW = pdf.internal.pageSize.getWidth();
+        var imgW = pageW - 20;
+        var imgH = canvas.height * imgW / canvas.width;
+        pdf.addImage(imgData, 'PNG', 10, 10, imgW, imgH);
+        var uri = pdf.output('datauristring');
+        var base64 = uri.substring(uri.indexOf('base64,') + 7);
+        resolve(base64);
+      }).catch(function(e){ try { document.body.removeChild(el); } catch(_e2){} reject(e); });
+    });
+  }
+  // [행별 실제 발송] 각 직원 📧 버튼: PDF 첨부 + 본문, 함수로 그 직원 이메일에 발송 (확인창 포함)
   function sendPayslipRow(u, email, subjectText, bodyText){
-    popConfirm(u.name + ' 님에게\n' + email + ' (으)로\n' + props.selYM + ' 급여명세서를 발송할까요?').then(function(ok){
+    popConfirm(u.name + ' 님에게\n' + email + ' (으)로\n' + props.selYM + ' 급여명세서를 PDF로 발송할까요?').then(function(ok){
       if(!ok) return;
-      var html = '<pre style="font-family:monospace;font-size:13px;line-height:1.6;color:#1e293b;white-space:pre-wrap;margin:0">'
-        + bodyText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>';
-      showToast('📤 ' + u.name + '님에게 발송 중...');
-      fetch(PAYSLIP_FN_URL, {
-        method:'POST', headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify({ to: email, name: u.name, ym: props.selYM, subject: subjectText, html: html })
-      }).then(function(r){ return r.json(); }).then(function(d){
-        if(d && d.ok){ showToast('✅ ' + u.name + '님 발송 완료 → ' + email); }
-        else { showToast('⚠ ' + u.name + ' 발송 실패: ' + JSON.stringify((d && d.error) || d)); }
-      }).catch(function(e){ showToast('⚠ 호출 실패: ' + ((e && e.message) || e)); });
+      showToast('📄 ' + u.name + '님 명세서 PDF 만드는 중...');
+      buildPayslipPdfBase64(u).then(function(pdfB64){
+        var html = '<pre style="font-family:monospace;font-size:13px;line-height:1.6;color:#1e293b;white-space:pre-wrap;margin:0">'
+          + bodyText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>'
+          + '<p style="font-size:12px;color:#64748b">\u203b \ucca8\ubd80\ub41c PDF \ud30c\uc77c\uc5d0\uc11c\ub3c4 \ub3d9\uc77c\ud55c \uba85\uc138\uc11c\ub97c \ud655\uc778\ud558\uc2e4 \uc218 \uc788\uc2b5\ub2c8\ub2e4.</p>';
+        var fname = '\uae09\uc5ec\uba85\uc138\uc11c_' + props.selYM + '_' + u.name + '.pdf';
+        showToast('📤 ' + u.name + '님에게 발송 중...');
+        fetch(PAYSLIP_FN_URL, {
+          method:'POST', headers:{ 'Content-Type':'application/json' },
+          body: JSON.stringify({ to: email, name: u.name, ym: props.selYM, subject: subjectText, html: html,
+            attachments: [{ filename: fname, content: pdfB64 }] })
+        }).then(function(r){ return r.json(); }).then(function(d){
+          if(d && d.ok){ showToast('✅ ' + u.name + '님 PDF 발송 완료 → ' + email); }
+          else { showToast('⚠ ' + u.name + ' 발송 실패: ' + JSON.stringify((d && d.error) || d)); }
+        }).catch(function(e){ showToast('⚠ 호출 실패: ' + ((e && e.message) || e)); });
+      }).catch(function(e){ showToast('⚠ PDF 생성 실패: ' + ((e && e.message) || e)); });
     });
   }
   var toS = useState(false); var toolsOpen = toS[0]; var setToolsOpen = toS[1];
@@ -49110,7 +49174,7 @@ function PayrollLedger(props){
         ),
         h('div', { className:'modal-b', style:{ maxHeight:'70vh', overflowY:'auto' } },
           h('div', { style:{ background:'#eff6ff', border:'1px solid #bfdbfe', borderRadius:'6px', padding:'10px 14px', marginBottom:'14px', fontSize:'11.5px', color:'#1e40af', lineHeight:'1.7' } },
-            '📌 직원별 📧 버튼을 누르면 확인 후 그 직원 이메일로 명세서가 자동 발송됩니다 (발신: 푸른노무법인).',h('br'),
+            '📌 직원별 📧 버튼을 누르면 확인 후 그 직원 이메일로 명세서가 PDF 첨부로 자동 발송됩니다 (발신: 푸른노무법인).',h('br'),
             '이메일 주소가 없는 직원은 먼저 환경설정 → 인사관리기준 → 직원 정보에서 이메일을 등록해 주세요.'
           ),
           h('label', { style:{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'12px', fontSize:'12px', color:'#475569', cursor:'pointer' } },
