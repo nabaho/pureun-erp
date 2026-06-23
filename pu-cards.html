@@ -422,7 +422,7 @@ const FIREBASE_CONFIG = {
 const DB_ROOT = 'pucards';
 const GEMINI_KEY_LS = 'pucards_gemini_key';
 
-const state = { tab:'card', group:'all', owner:'all', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, items:{}, groups:{} };
+const state = { tab:'card', group:'all', owner:'all', region:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, items:{}, groups:{} };
 
 /* ── 데이터 계층 ── */
 const Store = {
@@ -438,7 +438,8 @@ const Store = {
       this.mode = 'firebase';
       modeBadge.textContent='실시간 공유'; modeBadge.classList.add('live');
       const subscribe = () => {
-        this.db.ref(DB_ROOT+'/items').on('value', s => { state.items = s.val()||{}; render(); });
+        this.db.ref(DB_ROOT+'/items').on('value', s => { state.items = s.val()||{}; render();
+          if(!Store._autoBackupDone){ Store._autoBackupDone=true; setTimeout(autoBackupCheck, 1500); } });
         this.db.ref(DB_ROOT+'/groups').on('value', s => { state.groups = s.val()||{}; render(); });
       };
       /* ERP와 동일하게 익명 인증 완료 후 구독 (보안규칙 auth!=null 대응) */
@@ -534,6 +535,12 @@ function listItems(){
       return ids.has(it.group||'');
     })
     .filter(it => state.owner==='all' || (it.owner||'')===state.owner)
+    .filter(it => {
+      if(!state.region) return true;
+      const a=String(it.companyAddr||it.address||'');
+      const map={'서울':/^(서울|서울특별시)/,'부산':/^(부산|부산광역시)/,'대구':/^(대구|대구광역시)/,'인천':/^(인천|인천광역시)/,'광주':/^(광주|광주광역시)/,'대전':/^(대전|대전광역시)/,'울산':/^(울산|울산광역시)/,'세종':/^(세종|세종특별자치시)/,'경기':/^(경기|경기도)/,'강원':/^(강원)/,'충북':/^(충북|충청북도)/,'충남':/^(충남|충청남도)/,'전북':/^(전북|전라북도)/,'전남':/^(전남|전라남도)/,'경북':/^(경북|경상북도)/,'경남':/^(경남|경상남도)/,'제주':/^(제주)/};
+      return map[state.region] ? map[state.region].test(a.trim()) : true;
+    })
     .filter(it => !q || [it.name,it.company,it.title,it.dept,it.mobile,it.tel,it.email,
                          it.ceo,it.bizno,it.address].some(v => String(v||'').toLowerCase().includes(q)
                          || (digits(q).length>=3 && digits(v).includes(digits(q))))
@@ -1086,11 +1093,12 @@ function openPcDetail(id){
   const acts = isCard ? `
     <div class="pdacts">
       <button onclick="location.href='mailto:${esc(it.email)}'" ${it.email?'':'disabled'}>📧 메일</button>
+      <button onclick="copyCardInfo('${id}')">📋 정보 복사</button>
       <button onclick="downloadVcf('${id}')">📇 연락처 저장</button>
       <button onclick="downloadPhoto('${id}')">📥 원본 사진</button>
       <button onclick="sendToErp('${id}')">🏢 ERP 거래처로</button>
     </div>` : `
-    <div class="pdacts"><button onclick="downloadPhoto('${id}')">📥 원본 사진</button></div>`;
+    <div class="pdacts"><button onclick="copyCardInfo('${id}')">📋 정보 복사</button><button onclick="downloadPhoto('${id}')">📥 원본 사진</button></div>`;
   $('pcDetail').innerHTML = `
     <div class="pdhead"><span class="ttl">${isCard?'명함':'사업자등록증'}</span>
       <button class="x" onclick="closeDetail()">✕</button></div>
@@ -1165,6 +1173,25 @@ async function downloadPhoto(id){
 }
 
 /* ════════════ 내 폰 연락처 저장 (vCard) ════════════ */
+function copyCardInfo(id){
+  const it=state.items[id]; if(!it) return;
+  const parts=[];
+  if(it.name) parts.push(it.name);
+  if(it.title||it.dept) parts.push([it.title,it.dept].filter(Boolean).join(' '));
+  if(it.company) parts.push(it.company);
+  if(it.mobile) parts.push('휴대폰 '+it.mobile);
+  if(it.companyTel||it.tel) parts.push('전화 '+(it.companyTel||it.tel));
+  if(it.email) parts.push(it.email);
+  if(it.companyAddr||it.address) parts.push(it.companyAddr||it.address);
+  const text=parts.join(' / ');
+  if(navigator.clipboard) navigator.clipboard.writeText(text).then(()=>toast('명함 정보를 복사했습니다')).catch(()=>fallbackCopy(text));
+  else fallbackCopy(text);
+}
+function fallbackCopy(text){
+  const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta);
+  ta.select(); try{ document.execCommand('copy'); toast('명함 정보를 복사했습니다'); }catch(e){ toast('복사 실패'); }
+  document.body.removeChild(ta);
+}
 function downloadVcf(id){
   const it=state.items[id]; if(!it) return;
   const lines=['BEGIN:VCARD','VERSION:3.0',
@@ -1338,11 +1365,39 @@ function openMenu(){
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');importInput.click()">📥 파일 가져오기
       <span style="margin-left:auto;color:var(--sub);font-size:12px">리멤버 엑셀 · 구글 CSV · vCard</span></button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');exportXlsx()">📤 엑셀로 내보내기</button>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');backupNow()">💾 지금 백업 (JSON 저장)</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openDedup()">🧹 중복 정리</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openSettings()">🤖 AI 키 설정</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');wipeAll()" style="color:#c0392b">🗑 전체 비우기 (현재 탭)
       <span style="margin-left:auto;color:#c0392b;font-size:12px">되돌릴 수 없음</span></button>`;
   $('menuBg').classList.add('open');
+}
+
+/* 전체 백업 — items + groups를 JSON 파일로 (수동/자동 공용) */
+function backupNow(silent){
+  const data = { backupAt: new Date().toISOString(), items: state.items, groups: state.groups };
+  const cnt = Object.keys(state.items||{}).length;
+  if (!cnt){ if(!silent) toast('백업할 명함이 없습니다'); return; }
+  const blob = new Blob([JSON.stringify(data)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `푸른명함첩_백업_${fmtDate(Date.now())}.json`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+  if(!silent) toast(`백업 완료 (${cnt}건)`);
+}
+/* 하루 한 번 자동 백업: 마지막 백업일이 오늘이 아니면 실행 */
+function autoBackupCheck(){
+  try{
+    const today = fmtDate(Date.now());
+    const last = localStorage.getItem('pucards_lastBackup');
+    if (last === today) return;
+    const cnt = Object.keys(state.items||{}).length;
+    if (cnt < 1) return;            /* 데이터 없으면 건너뜀 */
+    backupNow(true);
+    localStorage.setItem('pucards_lastBackup', today);
+    toast('오늘의 자동 백업을 내려받았습니다');
+  }catch(e){ console.error('자동 백업 실패', e); }
 }
 
 /* 전체 비우기 — 현재 탭(명함 또는 사업자등록증) 전부 삭제. "삭제" 입력 안전장치 */
@@ -1689,7 +1744,12 @@ async function exportXlsx(){
   await needXLSX();
   const isCard = state.tab==='card';
   const fields = isCard ? CARD_FIELDS : BIZ_FIELDS;
-  const rows = Object.values(state.items).filter(it=>it.kind===state.tab)
+  /* 선택된 항목이 있으면 그것만, 없으면 전체 */
+  const selIds = Object.keys(state.sel);
+  let targets = Object.values(state.items).filter(it=>it.kind===state.tab);
+  let scopeLabel = '전체';
+  if (selIds.length){ targets = targets.filter(it=>state.sel[it.id]); scopeLabel = `선택${selIds.length}건`; }
+  const rows = targets
     .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))
     .map(it=>{ const o={};
       fields.forEach(([k,l])=> o[l] = k==='bizno' ? fmtBizno(it[k]) : (it[k]||''));
@@ -1700,8 +1760,8 @@ async function exportXlsx(){
   const ws=XLSX.utils.json_to_sheet(rows);
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, isCard?'명함':'사업자등록증');
-  XLSX.writeFile(wb, `푸른명함첩_${isCard?'명함':'사업자등록증'}_${fmtDate(Date.now())}.xlsx`);
-  toast('엑셀 파일을 내려받았습니다');
+  XLSX.writeFile(wb, `푸른명함첩_${isCard?'명함':'사업자등록증'}_${scopeLabel}_${fmtDate(Date.now())}.xlsx`);
+  toast(`엑셀 파일을 내려받았습니다 (${scopeLabel} ${rows.length}건)`);
 }
 </script>
 
@@ -1755,7 +1815,7 @@ function renderPCSide(){
         ${hasKids
           ? `<span onclick="event.stopPropagation();toggleCollapse('${g.id}')" style="cursor:pointer;width:13px;display:inline-block;color:#8fa0c4">${collapsed?'▸':'▾'}</span>`
           : `<span style="width:13px;display:inline-block"></span>`}
-        <span class="gname" onclick="state.group='${g.id}';state.owner='all';state.page=0;render()">📁 ${esc(g.name)}</span>
+        <span class="gname" onclick="state.group='${g.id}';state.owner='all';state.region='';state.page=0;render()">📁 ${esc(g.name)}</span>
         <span class="gcount">${n}</span>
         <span class="gmenu" onclick="event.stopPropagation();openFolderMenu(event,'${g.id}')" title="관리">⋮</span>
       </div>`;
@@ -1774,16 +1834,35 @@ function renderPCSide(){
   if (!owners.length)
     h += `<div class="pchintside">명함에 담당자를 입력하면<br>여기에 자동으로 분류됩니다</div>`;
   owners.forEach(o=>{
-    h += pcItem(`onclick="state.owner='${esc(o)}';state.group='all';state.page=0;render()"`,
+    h += pcItem(`onclick="state.owner='${esc(o)}';state.group='all';state.region='';state.page=0;render()"`,
       '👤 '+esc(o), kindArr.filter(it=>String(it.owner||'').trim()===o).length, state.owner===o);
   });
+
+  /* 지역별 (회사주소 앞 시·도 기준) */
+  const regionOf = it => {
+    const a=String(it.companyAddr||it.address||'').trim(); if(!a) return '';
+    const m=a.match(/^(서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주|충청북도|충청남도|전라북도|전라남도|경상북도|경상남도|강원특별자치도|서울특별시|부산광역시|대구광역시|인천광역시|광주광역시|대전광역시|울산광역시|세종특별자치시|제주특별자치도|경기도)/);
+    if(!m) return '';
+    const map={'서울특별시':'서울','부산광역시':'부산','대구광역시':'대구','인천광역시':'인천','광주광역시':'광주','대전광역시':'대전','울산광역시':'울산','세종특별자치시':'세종','경기도':'경기','강원특별자치도':'강원','충청북도':'충북','충청남도':'충남','전라북도':'전북','전라남도':'전남','경상북도':'경북','경상남도':'경남','제주특별자치도':'제주'};
+    return map[m[1]]||m[1];
+  };
+  const regionCount={};
+  kindArr.forEach(it=>{ const r=regionOf(it); if(r) regionCount[r]=(regionCount[r]||0)+1; });
+  const regions=Object.keys(regionCount).sort((a,b)=>regionCount[b]-regionCount[a]);
+  if (regions.length){
+    h += `<div class="pcsec">지역별 (회사주소)</div>`;
+    regions.forEach(r=>{
+      h += pcItem(`onclick="state.region='${r}';state.group='all';state.owner='all';state.page=0;render()"`,
+        '📍 '+r, regionCount[r], state.region===r);
+    });
+  }
   /* 맨 아래 고정 환경설정 */
   h += `<div class="pcside-bottom">
     <button class="pcside-settings" onclick="openMenu()">⚙️ 환경설정</button>
   </div>`;
   $('pcSide').innerHTML = h;
 }
-function switchTab(t){ state.tab=t; state.group='all'; state.owner='all'; state.page=0; state.sel={}; render(); }
+function switchTab(t){ state.tab=t; state.group='all'; state.owner='all'; state.region=''; state.page=0; state.sel={}; render(); }
 function toggleSidebar(){ $('pcRoot').classList.toggle('sidehidden'); }
 
 /* 열 너비 드래그 조절 */
