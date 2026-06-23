@@ -376,6 +376,7 @@ body.pc #pcDetail{display:flex}
   </main>
 </div>
 
+<div id="pcDetailOverlay" onclick="closePcDetail()" style="display:none;position:fixed;inset:0;z-index:9;background:transparent"></div>
 <aside id="pcDetail"></aside>
 <div id="cambg">
   <video id="camvid" autoplay playsinline muted></video>
@@ -700,8 +701,31 @@ function renderSelbar(){
     <button class="btn danger" onclick="delSel()">삭제</button>`;
 }
 let selPick=false;
-function selPickGroup(){ if(!Object.keys(state.sel).length) return toast('항목을 먼저 선택하세요');
-  selPick=true; openGroupSheet(); }
+function selPickGroup(){
+  if(!Object.keys(state.sel).length) return toast('항목을 먼저 선택하세요');
+  /* 현재 탭의 폴더만 골라 이동 (계층 들여쓰기 표시) */
+  const groups = Object.values(state.groups).filter(g=>(g.kind||'card')===state.tab);
+  const children = pid => groups.filter(g=>(g.parent||'')===pid).sort((a,b)=>(a.order||0)-(b.order||0));
+  let opts = `<div class="fmi" onclick="moveSelTo('')">📭 미분류</div>`;
+  const walk=(pid,depth)=>{ children(pid).forEach(g=>{
+    opts += `<div class="fmi" style="padding-left:${14+depth*16}px" onclick="moveSelTo('${g.id}')">📁 ${esc(g.name)}</div>`;
+    walk(g.id, depth+1);
+  }); };
+  walk('',0);
+  $('folderDlg').innerHTML = `
+    <div class="mhead"><b>${Object.keys(state.sel).length}개 명함을 옮길 폴더</b>
+      <button class="iconbtn" onclick="folderDlgBg.classList.remove('open')">✕</button></div>
+    <div style="max-height:50vh;overflow:auto;padding:4px">${opts}</div>
+    <div class="mfoot"><button class="btn ghost" onclick="folderDlgBg.classList.remove('open')">취소</button></div>`;
+  $('folderDlgBg').classList.add('open');
+}
+function moveSelTo(gid){
+  Object.keys(state.sel).forEach(sid=>{ const it=state.items[sid]; if(it){ it.group=gid; Store.put(it); } });
+  const n=Object.keys(state.sel).length;
+  $('folderDlgBg').classList.remove('open');
+  state.sel={}; renderSelbar(); render();
+  toast(n+'개 명함을 폴더로 옮겼습니다');
+}
 function delSel(){
   const ids=Object.keys(state.sel); if(!ids.length) return toast('항목을 먼저 선택하세요');
   if(!confirm(ids.length+'개 항목을 삭제할까요? (전 직원 명함첩에서 삭제됩니다)')) return;
@@ -1032,7 +1056,9 @@ function toggleFav(id){ const it=state.items[id]; if(!it) return;
   it.fav=!it.fav; Store.put(it); openDetail(id);
   toast(it.fav?'⭐ 즐겨찾기에 고정했습니다':'즐겨찾기를 해제했습니다'); }
 function closeDetail(){ $('detailBg').classList.remove('open');
-  const pd=$('pcDetail'); if(pd) pd.classList.remove('open'); }
+  const pd=$('pcDetail'); if(pd) pd.classList.remove('open');
+  const ov=$('pcDetailOverlay'); if(ov) ov.style.display='none'; }
+function closePcDetail(){ closeDetail(); }
 
 /* ── PC 오른쪽 상세 패널 (리멤버식) ── */
 function openPcDetail(id){
@@ -1079,6 +1105,7 @@ function openPcDetail(id){
       </div>
     </div>`;
   $('pcDetail').classList.add('open');
+  const ov=$('pcDetailOverlay'); if(ov) ov.style.display='block';
   if (it.thumb) Store.getPhoto(id).then(p=>{ const im=$('pcdphoto'); if(p&&im) im.src=p; });
   if (it.thumb2) Store.getPhoto(id+'_b').then(p=>{ const im=$('pcdphoto2'); if(p&&im) im.src=p; });
 }
