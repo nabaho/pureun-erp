@@ -705,7 +705,7 @@ function fileNameFor(it){
   const base=(it.kind==='card' ? (it.name||'명함')+'_명함' : (it.company||'사업자등록증')+'_사업자등록증');
   return base.replace(/[\\/:*?"<>|]/g,'')+'.jpg';
 }
-function onRowDrag(e,id){ dragId=id; e.target.classList.add('dragging');
+function onRowDrag(e,id){ dragId=id; dragFolderId=null; e.target.classList.add('dragging');
   e.dataTransfer.effectAllowed='copyMove';
   const it=state.items[id];
   const img=Store.photoCache[id]||it?.thumb;   /* 바탕화면·폴더로 끌면 사진 파일로 저장됨 */
@@ -715,6 +715,37 @@ function onRowDrag(e,id){ dragId=id; e.target.classList.add('dragging');
 function onGroupDrop(e,gid){ e.preventDefault(); e.currentTarget.classList.remove('dropover');
   if(!dragId) return; const it=state.items[dragId]; if(!it) return;
   it.group = gid==='all' ? '' : gid; Store.put(it); toast('그룹으로 이동했습니다'); dragId=null; }
+
+function onDropToTopLevel(e){
+  e.preventDefault();
+  if(dragFolderId){ const g=state.groups[dragFolderId];
+    if(g && (g.parent||'')!==''){ g.parent=''; g.order=Date.now(); Store.putGroup(g); toast('최상위 폴더로 옮겼습니다'); }
+    dragFolderId=null;
+  }
+}
+/* ── 폴더 드래그 이동 ── */
+let dragFolderId=null;
+function onFolderDrag(e,gid){ dragFolderId=gid; dragId=null;
+  e.currentTarget.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; e.stopPropagation(); }
+/* 폴더 위에 드롭: 명함이면 그룹이동, 폴더면 하위로 편입 */
+function onFolderOrCardDrop(e,targetGid){
+  e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.remove('dropover');
+  /* 1) 명함을 폴더로 */
+  if(dragId){ const it=state.items[dragId]; if(it){ it.group=targetGid; Store.put(it); toast('폴더로 이동했습니다'); } dragId=null; return; }
+  /* 2) 폴더를 폴더 안으로 */
+  if(dragFolderId && dragFolderId!==targetGid){
+    /* 순환 방지: 대상이 끌고 온 폴더의 자손이면 거부 */
+    const isDescendant=(pid,childId)=>{
+      let cur=state.groups[childId];
+      while(cur){ if((cur.parent||'')===pid) return true; cur=state.groups[cur.parent]; }
+      return false;
+    };
+    if(isDescendant(dragFolderId, targetGid)){ toast('하위 폴더로는 옮길 수 없습니다'); dragFolderId=null; return; }
+    const g=state.groups[dragFolderId];
+    if(g){ g.parent=targetGid; g.order=Date.now(); Store.putGroup(g); state.collapsed[targetGid]=false; toast('폴더를 옮겼습니다'); }
+    dragFolderId=null;
+  }
+}
 
 /* ── 사이드바 폭 조절(PC) ── */
 (function(){ const rz=$('resizer'); let on=false;
@@ -1653,7 +1684,10 @@ function renderPCSide(){
   const cntDeep = id => { const ids=new Set(descIds(id)); return kindArr.filter(it=>ids.has(it.group||'')).length; };
   const cntSelf = g => kindArr.filter(it=>(it.group||'')===g).length;
 
-  h += `<div class="pcsec" style="display:flex;align-items:center">폴더
+  h += `<div class="pcsec" style="display:flex;align-items:center"
+        ondragover="event.preventDefault();this.style.background='rgba(120,150,200,.15)'"
+        ondragleave="this.style.background=''"
+        ondrop="this.style.background='';onDropToTopLevel(event)">폴더
         <span style="margin-left:auto;display:flex;gap:8px">
           <span onclick="toggleAllFolders()" title="모두 접기/펼치기" style="cursor:pointer">⚙️</span>
           <span onclick="openFolderDialog('')" title="새 폴더" style="cursor:pointer;font-weight:700">＋</span>
@@ -1667,8 +1701,11 @@ function renderPCSide(){
     const on = state.group===g.id && state.owner==='all';
     const n = cntDeep(g.id);
     let row = `<div class="pcitem folderrow ${on?'on':''}" style="padding-left:${pad}px"
+        draggable="true"
+        ondragstart="onFolderDrag(event,'${g.id}')"
+        ondragend="this.classList.remove('dragging')"
         ondragover="event.preventDefault();this.classList.add('dropover')"
-        ondragleave="this.classList.remove('dropover')" ondrop="onGroupDrop(event,'${g.id}')">
+        ondragleave="this.classList.remove('dropover')" ondrop="onFolderOrCardDrop(event,'${g.id}')">
         ${hasKids
           ? `<span onclick="event.stopPropagation();toggleCollapse('${g.id}')" style="cursor:pointer;width:13px;display:inline-block;color:#8fa0c4">${collapsed?'▸':'▾'}</span>`
           : `<span style="width:13px;display:inline-block"></span>`}
