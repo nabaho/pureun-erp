@@ -363,6 +363,7 @@ body.pc #pcDetail{display:flex}
     <div id="pcHead">
       <h2><span id="pcTitle">전체 명함</span> <em id="pcCount">0개</em></h2>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <select id="pcRegion" onchange="state.region=this.value;state.page=0;render()"></select>
         <div style="position:relative">
           <button id="colBtn" onclick="toggleColMenu(event)" style="background:#fff;border:1px solid #dde3ee;border-radius:8px;padding:7px 12px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;color:#33415e">열 표시 ▾</button>
           <div id="colMenu" style="display:none;position:absolute;top:38px;right:0;width:180px;background:#fff;border:1px solid #dde3ee;border-radius:10px;box-shadow:0 6px 22px rgba(20,30,50,.13);padding:8px;z-index:60"></div>
@@ -520,6 +521,14 @@ function chosung(s){ let r='';
   for (const ch of String(s||'')){ const c=ch.charCodeAt(0);
     r += (c>=0xAC00 && c<=0xD7A3) ? CHO[Math.floor((c-0xAC00)/588)] : ch; }
   return r; }
+/* 회사주소 앞 시·도 추출 (지역 필터용) */
+function regionOf(it){
+  const a=String(it.companyAddr||it.address||'').trim(); if(!a) return '';
+  const m=a.match(/^(서울특별시|부산광역시|대구광역시|인천광역시|광주광역시|대전광역시|울산광역시|세종특별자치시|제주특별자치도|강원특별자치도|충청북도|충청남도|전라북도|전라남도|경상북도|경상남도|경기도|서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)/);
+  if(!m) return '';
+  const map={'서울특별시':'서울','부산광역시':'부산','대구광역시':'대구','인천광역시':'인천','광주광역시':'광주','대전광역시':'대전','울산광역시':'울산','세종특별자치시':'세종','경기도':'경기','강원특별자치도':'강원','충청북도':'충북','충청남도':'충남','전라북도':'전북','전라남도':'전남','경상북도':'경북','경상남도':'경남','제주특별자치도':'제주'};
+  return map[m[1]]||m[1];
+}
 function listItems(){
   const q = $('search').value.trim().toLowerCase();
   const qc = q.replace(/\s/g,'');
@@ -535,12 +544,7 @@ function listItems(){
       return ids.has(it.group||'');
     })
     .filter(it => state.owner==='all' || (it.owner||'')===state.owner)
-    .filter(it => {
-      if(!state.region) return true;
-      const a=String(it.companyAddr||it.address||'');
-      const map={'서울':/^(서울|서울특별시)/,'부산':/^(부산|부산광역시)/,'대구':/^(대구|대구광역시)/,'인천':/^(인천|인천광역시)/,'광주':/^(광주|광주광역시)/,'대전':/^(대전|대전광역시)/,'울산':/^(울산|울산광역시)/,'세종':/^(세종|세종특별자치시)/,'경기':/^(경기|경기도)/,'강원':/^(강원)/,'충북':/^(충북|충청북도)/,'충남':/^(충남|충청남도)/,'전북':/^(전북|전라북도)/,'전남':/^(전남|전라남도)/,'경북':/^(경북|경상북도)/,'경남':/^(경남|경상남도)/,'제주':/^(제주)/};
-      return map[state.region] ? map[state.region].test(a.trim()) : true;
-    })
+    .filter(it => !state.region || regionOf(it)===state.region)
     .filter(it => !q || [it.name,it.company,it.title,it.dept,it.mobile,it.tel,it.email,
                          it.ceo,it.bizno,it.address].some(v => String(v||'').toLowerCase().includes(q)
                          || (digits(q).length>=3 && digits(v).includes(digits(q))))
@@ -1838,24 +1842,6 @@ function renderPCSide(){
       '👤 '+esc(o), kindArr.filter(it=>String(it.owner||'').trim()===o).length, state.owner===o);
   });
 
-  /* 지역별 (회사주소 앞 시·도 기준) */
-  const regionOf = it => {
-    const a=String(it.companyAddr||it.address||'').trim(); if(!a) return '';
-    const m=a.match(/^(서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주|충청북도|충청남도|전라북도|전라남도|경상북도|경상남도|강원특별자치도|서울특별시|부산광역시|대구광역시|인천광역시|광주광역시|대전광역시|울산광역시|세종특별자치시|제주특별자치도|경기도)/);
-    if(!m) return '';
-    const map={'서울특별시':'서울','부산광역시':'부산','대구광역시':'대구','인천광역시':'인천','광주광역시':'광주','대전광역시':'대전','울산광역시':'울산','세종특별자치시':'세종','경기도':'경기','강원특별자치도':'강원','충청북도':'충북','충청남도':'충남','전라북도':'전북','전라남도':'전남','경상북도':'경북','경상남도':'경남','제주특별자치도':'제주'};
-    return map[m[1]]||m[1];
-  };
-  const regionCount={};
-  kindArr.forEach(it=>{ const r=regionOf(it); if(r) regionCount[r]=(regionCount[r]||0)+1; });
-  const regions=Object.keys(regionCount).sort((a,b)=>regionCount[b]-regionCount[a]);
-  if (regions.length){
-    h += `<div class="pcsec">지역별 (회사주소)</div>`;
-    regions.forEach(r=>{
-      h += pcItem(`onclick="state.region='${r}';state.group='all';state.owner='all';state.page=0;render()"`,
-        '📍 '+r, regionCount[r], state.region===r);
-    });
-  }
   /* 맨 아래 고정 환경설정 */
   h += `<div class="pcside-bottom">
     <button class="pcside-settings" onclick="openMenu()">⚙️ 환경설정</button>
@@ -1995,6 +1981,14 @@ function renderPCTable(){
     : (isCard?'전체 명함':'사업자등록증');
   $('pcCount').textContent = items.length.toLocaleString()+'개';
   $('pcSort').value = state.sort;
+  /* 지역 드롭다운 옵션 (현재 탭 명함의 회사주소 기준) */
+  const regSel = $('pcRegion');
+  if (regSel){
+    const rc={}; Object.values(state.items).filter(it=>it.kind===state.tab).forEach(it=>{ const r=regionOf(it); if(r) rc[r]=(rc[r]||0)+1; });
+    const regs=Object.keys(rc).sort((a,b)=>rc[b]-rc[a]);
+    regSel.innerHTML = `<option value="">📍 전체 지역</option>` + regs.map(r=>`<option value="${r}">${r} (${rc[r]})</option>`).join('');
+    regSel.value = state.region || '';
+  }
   /* 조건 필터 버튼 제거됨 — pcFilters 영역 비움 */
   $('pcFilters').innerHTML = '';
   /* 현재 페이지 분량만 잘라서 렌더 (메모리 보호) */
