@@ -245,6 +245,9 @@ body.pc #main,body.pc #fab,body.pc #selbar{display:none!important}
 #pcSel .bar button.red{color:#c0392b}
 #pcTableWrap{flex:1;overflow:auto;padding:0 22px 26px}
 #pcTable{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e4e8f0;border-radius:12px;table-layout:fixed}
+#pcTable thead th{position:relative}
+.colresize{position:absolute;right:-3px;top:0;bottom:0;width:7px;cursor:col-resize;z-index:5}
+.colresize:hover::after{content:'';position:absolute;right:3px;top:6px;bottom:6px;width:2px;background:#3a4a73}
 #pcTable thead th{position:sticky;top:0;background:#f7f9fc;font-size:12px;color:#7c89a6;text-align:left;
   padding:10px 12px;border-bottom:1px solid #e4e8f0;font-weight:700;z-index:1}
 #pcTable td{padding:11px 12px;border-bottom:1px solid #eef1f6;font-size:13.5px;color:#33415e;vertical-align:middle;
@@ -419,7 +422,7 @@ const FIREBASE_CONFIG = {
 const DB_ROOT = 'pucards';
 const GEMINI_KEY_LS = 'pucards_gemini_key';
 
-const state = { tab:'card', group:'all', owner:'all', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, items:{}, groups:{} };
+const state = { tab:'card', group:'all', owner:'all', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, items:{}, groups:{} };
 
 /* ── 데이터 계층 ── */
 const Store = {
@@ -1783,6 +1786,30 @@ function renderPCSide(){
 function switchTab(t){ state.tab=t; state.group='all'; state.owner='all'; state.page=0; state.sel={}; render(); }
 function toggleSidebar(){ $('pcRoot').classList.toggle('sidehidden'); }
 
+/* 열 너비 드래그 조절 */
+function startColResize(e, key){
+  e.preventDefault(); e.stopPropagation();
+  const col = document.querySelector(`#pcTable col[data-col="${key}"]`);
+  if(!col) return;
+  const startX = e.clientX;
+  const startW = col.getBoundingClientRect().width;
+  const onMove = ev => {
+    const w = Math.max(50, startW + (ev.clientX - startX));
+    col.style.width = w + 'px';
+  };
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.body.style.cursor = '';
+    if(!state.colW) state.colW = {};
+    if(!state.colW[state.tab]) state.colW[state.tab] = {};
+    state.colW[state.tab][key] = col.style.width;
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+  document.body.style.cursor = 'col-resize';
+}
+
 /* 열 표시/숨김 — 탭별 열 정의 */
 const COL_DEFS = {
   card: [['name','이름'],['company','회사'],['title','직책·부서'],['mobile','핸드폰'],
@@ -1915,29 +1942,33 @@ function renderPCTable(){
       <button onclick="state.sel={};render()">선택 해제</button></div>` : '';
   /* 표 */
   const sortArrow = key => state.sortKey===key ? (state.sortDir==='asc'?' ▲':' ▼') : '';
+  /* 열 너비: 사용자가 드래그로 조정한 값(state.colW)이 있으면 우선 적용 */
+  const cw = (state.colW && state.colW[state.tab]) || {};
+  const colW = (key, def) => `<col data-col="${key}" style="width:${cw[key]||def}">`;
   const colg = isCard
-    ? `<colgroup><col style="width:30px"><col style="width:28px"><col style="width:7%"><col style="width:11%"><col style="width:10%"><col style="width:9%"><col style="width:9%"><col style="width:9%"><col style="width:12%"><col style="width:13%"><col style="width:48px"><col style="width:74px"><col style="width:54px"></colgroup>`
-    : `<colgroup><col style="width:32px"><col style="width:30px"><col style="width:22%"><col style="width:12%"><col style="width:15%"><col style="width:auto"><col style="width:58px"><col style="width:82px"><col style="width:60px"></colgroup>`;
+    ? `<colgroup><col style="width:30px"><col style="width:28px">${colW('name','7%')}${colW('company','11%')}${colW('title','10%')}${colW('mobile','9%')}${colW('companyTel','9%')}${colW('companyFax','9%')}${colW('email','12%')}${colW('companyAddr','13%')}<col style="width:48px">${colW('date','74px')}<col style="width:54px"></colgroup>`
+    : `<colgroup><col style="width:32px"><col style="width:30px">${colW('company','22%')}${colW('ceo','12%')}${colW('bizno','15%')}${colW('address','auto')}<col style="width:58px">${colW('date','82px')}<col style="width:60px"></colgroup>`;
   /* 칸별 검색 입력행 — 제거됨 (상단 통합 검색 사용) */
   const filterRow = '';
   const allChecked = pageItems.length>0 && pageItems.every(it=>state.sel[it.id]);
   const headChk = `<th><input type="checkbox" ${allChecked?'checked':''} onchange="toggleSelectAll(this.checked)" title="이 페이지 전체 선택"></th>`;
+  const rz = key => `<span class="colresize" onmousedown="startColResize(event,'${key}')" onclick="event.stopPropagation()"></span>`;
   const thead = (isCard
     ? `<tr>${headChk}<th class="num">#</th>
-       <th class="col-name" onclick="sortBy('name')" style="cursor:pointer">이름${sortArrow('name')}</th>
-       <th class="col-company" onclick="sortBy('company')" style="cursor:pointer">회사${sortArrow('company')}</th>
-       <th class="col-title">직책·부서</th>
-       <th class="col-mobile" onclick="sortBy('phone')" style="cursor:pointer">핸드폰${sortArrow('phone')}</th>
-       <th class="col-companyTel">회사전화</th>
-       <th class="col-companyFax">회사팩스</th>
-       <th class="col-email">이메일</th>
-       <th class="col-companyAddr">회사주소</th>
+       <th class="col-name" onclick="sortBy('name')" style="cursor:pointer">이름${sortArrow('name')}${rz('name')}</th>
+       <th class="col-company" onclick="sortBy('company')" style="cursor:pointer">회사${sortArrow('company')}${rz('company')}</th>
+       <th class="col-title">직책·부서${rz('title')}</th>
+       <th class="col-mobile" onclick="sortBy('phone')" style="cursor:pointer">핸드폰${sortArrow('phone')}${rz('mobile')}</th>
+       <th class="col-companyTel">회사전화${rz('companyTel')}</th>
+       <th class="col-companyFax">회사팩스${rz('companyFax')}</th>
+       <th class="col-email">이메일${rz('email')}</th>
+       <th class="col-companyAddr">회사주소${rz('companyAddr')}</th>
        <th style="text-align:right">구분</th>
        <th class="col-date" onclick="sortBy('date')" style="cursor:pointer;text-align:right">등록일${sortArrow('date')}</th>
        <th style="text-align:center">관리</th></tr>`
     : `<tr>${headChk}<th class="num">#</th>
-       <th class="col-company" onclick="sortBy('company')" style="cursor:pointer">상호${sortArrow('company')}</th>
-       <th class="col-ceo">대표자</th><th class="col-bizno">사업자번호</th><th class="col-address">소재지</th>
+       <th class="col-company" onclick="sortBy('company')" style="cursor:pointer">상호${sortArrow('company')}${rz('company')}</th>
+       <th class="col-ceo">대표자${rz('ceo')}</th><th class="col-bizno">사업자번호${rz('bizno')}</th><th class="col-address">소재지${rz('address')}</th>
        <th style="text-align:right">구분</th>
        <th class="col-date" onclick="sortBy('date')" style="cursor:pointer;text-align:right">등록일${sortArrow('date')}</th>
        <th style="text-align:center">관리</th></tr>`) + filterRow;
