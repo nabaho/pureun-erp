@@ -423,7 +423,7 @@ const FIREBASE_CONFIG = {
 const DB_ROOT = 'pucards';
 const GEMINI_KEY_LS = 'pucards_gemini_key';
 
-const state = { tab:'card', group:'all', owner:'all', region:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, items:{}, groups:{} };
+const state = { tab:'card', group:'all', owner:'all', region:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, items:{}, groups:{}, trash:{} };
 
 /* ── 데이터 계층 ── */
 const Store = {
@@ -442,6 +442,8 @@ const Store = {
         this.db.ref(DB_ROOT+'/items').on('value', s => { state.items = s.val()||{}; render();
           if(!Store._autoBackupDone){ Store._autoBackupDone=true; setTimeout(autoBackupCheck, 1500); } });
         this.db.ref(DB_ROOT+'/groups').on('value', s => { state.groups = s.val()||{}; render(); });
+        this.db.ref(DB_ROOT+'/trash').on('value', s => { state.trash = s.val()||{};
+          if(!Store._trashPurgeDone){ Store._trashPurgeDone=true; setTimeout(purgeTrash, 2000); } });
       };
       /* ERP와 동일하게 익명 인증 완료 후 구독 (보안규칙 auth!=null 대응) */
       if (firebase.auth){
@@ -454,6 +456,7 @@ const Store = {
     } else {
       state.items  = JSON.parse(localStorage.getItem('pucards_local_items')||'{}');
       state.groups = JSON.parse(localStorage.getItem('pucards_local_groups')||'{}');
+      state.trash  = JSON.parse(localStorage.getItem('pucards_local_trash')||'{}');
       /* 구버전 구조(item.photo 내장) → 사진 분리 저장으로 1회 이전 */
       Object.values(state.items).forEach(it=>{
         if (it.photo){ const p=it.photo; delete it.photo; this.putPhoto(it.id,p);
@@ -467,9 +470,43 @@ const Store = {
   put(it){ it.updatedAt = Date.now();
     if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/items/${it.id}`).set(it);
     else { state.items[it.id]=it; this._ls(); render(); } },
-  del(id){ this.delPhoto(id); this.delPhoto(id+'_b');
-    if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/items/${id}`).remove();
-    else { delete state.items[id]; this._ls(); render(); } },
+  /* 삭제 = 휴지통으로 이동 (30일 보관). 사진도 함께 보관 */
+  async del(id){
+    const it = state.items[id]; if(!it) return;
+    const photo = await this.getPhoto(id).catch(()=>'');
+    const photo2 = await this.getPhoto(id+'_b').catch(()=>'');
+    const rec = { ...it, _deletedAt: Date.now(), _photo: photo||'', _photo2: photo2||'' };
+    if (this.mode==='firebase'){
+      await this.db.ref(`${DB_ROOT}/trash/${id}`).set(rec);
+      this.delPhoto(id); this.delPhoto(id+'_b');
+      this.db.ref(`${DB_ROOT}/items/${id}`).remove();
+    } else {
+      const t=JSON.parse(localStorage.getItem('pucards_local_trash')||'{}'); t[id]=rec;
+      try{ localStorage.setItem('pucards_local_trash', JSON.stringify(t)); }catch(e){}
+      state.trash[id]=rec;
+      this.delPhoto(id); this.delPhoto(id+'_b');
+      delete state.items[id]; this._ls(); render();
+    }
+  },
+  /* 영구 삭제 (휴지통에서 완전 제거) */
+  hardDel(id){
+    if (this.mode==='firebase'){ this.db.ref(`${DB_ROOT}/trash/${id}`).remove(); }
+    else { const t=JSON.parse(localStorage.getItem('pucards_local_trash')||'{}'); delete t[id];
+      localStorage.setItem('pucards_local_trash', JSON.stringify(t)); delete state.trash[id]; render(); }
+  },
+  /* 휴지통에서 복원 (사진까지) */
+  async restore(id){
+    let rec=null;
+    if (this.mode==='firebase'){ const s=await this.db.ref(`${DB_ROOT}/trash/${id}`).once('value'); rec=s.val(); }
+    else rec=(JSON.parse(localStorage.getItem('pucards_local_trash')||'{}'))[id];
+    if(!rec) return;
+    const photo=rec._photo, photo2=rec._photo2;
+    const it={...rec}; delete it._deletedAt; delete it._photo; delete it._photo2;
+    if(photo) this.putPhoto(id, photo);
+    if(photo2) this.putPhoto(id+'_b', photo2);
+    this.put(it);
+    this.hardDel(id);
+  },
   /* 원본 사진은 목록 데이터와 분리 저장 — 필요할 때만 내려받음 */
   photoCache:{},
   async getPhoto(id){
@@ -1414,10 +1451,72 @@ function openMenu(){
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');backupNow()">💾 지금 백업 (JSON 저장)</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openDedup()">🧹 중복 정리</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');cleanEmpty()">🧽 빈 명함 정리</button>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');openTrash()">🗑 휴지통 (삭제 명함 30일 보관)</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openSettings()">🤖 AI 키 설정</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');wipeAll()" style="color:#c0392b">🗑 전체 비우기 (현재 탭)
       <span style="margin-left:auto;color:#c0392b;font-size:12px">되돌릴 수 없음</span></button>`;
   $('menuBg').classList.add('open');
+}
+
+/* ════════════ 🗑 휴지통 (30일 보관) ════════════ */
+const TRASH_DAYS = 30;
+function openTrash(){
+  const all = Object.values(state.trash||{}).sort((a,b)=>(b._deletedAt||0)-(a._deletedAt||0));
+  const dleft = ts => Math.max(0, TRASH_DAYS - Math.floor((Date.now()-(ts||0))/86400000));
+  let rows;
+  if (!all.length){
+    rows = `<div style="padding:30px;text-align:center;color:var(--sub)">휴지통이 비어 있습니다</div>`;
+  } else {
+    rows = all.map(it=>{
+      const name = it.kind==='biz' ? (it.company||'(상호 없음)') : (it.name||it.company||'(이름 없음)');
+      const sub = [it.company, it.mobile||it.companyTel].filter(Boolean).join(' · ');
+      const left = dleft(it._deletedAt);
+      return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #e4e8f0;border-radius:9px">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:14px;color:#1e2a47;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(name)}</div>
+          <div style="font-size:12px;color:#8b98b3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(sub)}</div>
+        </div>
+        <span style="font-size:11.5px;color:${left<=3?'#c0392b':'#8b98b3'};white-space:nowrap">${left}일 남음</span>
+        <button onclick="restoreFromTrash('${it.id}')" style="border:1px solid #cfe0ff;background:#eef4ff;color:#2452b5;border-radius:7px;padding:6px 10px;font-size:12.5px;cursor:pointer;white-space:nowrap">♻️ 복원</button>
+        <button onclick="hardDelFromTrash('${it.id}')" style="border:1px solid #f3c2c2;background:#fff;color:#c0392b;border-radius:7px;padding:6px 10px;font-size:12.5px;cursor:pointer;white-space:nowrap">영구삭제</button>
+      </div>`;
+    }).join('');
+  }
+  $('folderDlg').innerHTML = `
+    <div class="mhead"><b>🗑 휴지통 (${all.length})</b>
+      <button class="iconbtn" onclick="folderDlgBg.classList.remove('open')">✕</button></div>
+    <div style="font-size:12.5px;color:#8b98b3;padding:0 4px 10px">삭제한 명함은 ${TRASH_DAYS}일간 보관되며, 그 후 자동으로 완전히 삭제됩니다.</div>
+    <div style="max-height:52vh;overflow:auto;display:flex;flex-direction:column;gap:7px;padding:2px">${rows}</div>
+    ${all.length?`<div class="mfoot"><button class="btn ghost" onclick="emptyTrash()" style="color:#c0392b">휴지통 비우기 (전체 영구삭제)</button></div>`:''}`;
+  $('folderDlgBg').classList.add('open');
+}
+function restoreFromTrash(id){
+  Store.restore(id);
+  toast('명함을 복원했습니다');
+  setTimeout(openTrash, 300);
+}
+function hardDelFromTrash(id){
+  if(!confirm('이 명함을 완전히 삭제할까요? 복구할 수 없습니다.')) return;
+  Store.hardDel(id);
+  toast('영구 삭제했습니다');
+  setTimeout(openTrash, 300);
+}
+function emptyTrash(){
+  const n=Object.keys(state.trash||{}).length; if(!n) return;
+  if(!confirm(`휴지통의 ${n}건을 모두 완전히 삭제할까요? 복구할 수 없습니다.`)) return;
+  Object.keys(state.trash).forEach(id=>Store.hardDel(id));
+  toast('휴지통을 비웠습니다');
+  $('folderDlgBg').classList.remove('open');
+}
+/* 30일 지난 항목 자동 영구삭제 (앱 시작 시 1회) */
+function purgeTrash(){
+  try{
+    const now=Date.now(); let n=0;
+    Object.values(state.trash||{}).forEach(it=>{
+      if (it._deletedAt && (now-it._deletedAt) > TRASH_DAYS*86400000){ Store.hardDel(it.id); n++; }
+    });
+    if(n) console.log(`휴지통 자동 정리: ${n}건`);
+  }catch(e){ console.error('휴지통 정리 실패', e); }
 }
 
 /* 전체 백업 — items + groups를 JSON 파일로 (수동/자동 공용) */
