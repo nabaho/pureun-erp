@@ -725,7 +725,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-25 동기화 반복문제 근본해결 — 기기/다중탭 잠금 해제 + 자동 코드최신화 + 화면복귀 시 데이터 자동수신';
+var ERP_BUILD = '2026-06-25 API 키(OCR·캘린더·사용자정의) 기기 간 동기화 — 저장 시 모든 기기 공유(NTS와 동일)';
 // === 자동 최신화 — 브라우저 캐시 때문에 옛 코드가 계속 도는 문제 방지 ===
 // 세션당 1회, 서버의 배포 버전을 확인해 현재 실행 중 버전과 다르면 캐시 우회로 새로고침.
 (function(){
@@ -2303,6 +2303,15 @@ function uid(prefix){
   // Date.now() + 카운터 + 랜덤 → 같은 밀리초 연속 클릭도 고유값 보장
   var r = Math.random().toString(36).slice(2, 6);
   return (prefix || 'id') + '-' + Date.now().toString(36) + (_uidSeq++).toString(36) + r;
+}
+// ── 동기화 문자열 키 읽기 (구 '원문' / 신 'JSON' 형식 둘 다 호환 — 마이그레이션 안전) ──
+function _readSyncKey(k){
+  try {
+    var r = localStorage.getItem('pureun_v6_' + k);
+    if(!r) return '';
+    var p = safeParse(r, null);
+    return (typeof p === 'string') ? p : r;
+  } catch(e){ return ''; }
 }
 
 // ── id-key 객체 ↔ 배열 변환 (Firebase 동시편집 안정성 — #4 Tier 3) ──
@@ -22429,13 +22438,13 @@ function AppSettingsSection(){
   if(!existing){ dbSet('app_settings', DEFAULT); existing = DEFAULT; }
   var s = useState(existing); var f = s[0]; var setF = s[1];
   function set(k, v){ var next = Object.assign({}, f); next[k] = v; setF(next); dbSet('app_settings', next); }
-  var vk = useState((function(){ try { return localStorage.getItem('pureun_v6_vision_api_key')||''; } catch(e){ return ''; } })());
+  var vk = useState(_readSyncKey('vision_api_key'));
   var visionKey = vk[0]; var setVisionKey = vk[1];
   var sk = useState(false); var showKeys = sk[0]; var setShowKeys = sk[1];   // API 키 마스킹 토글
   var _isKeyAdmin = isAdminByUser(CURRENT_USER);   // 총괄 관리자만 키 관리
   var nk = useState((function(){ try { return safeParse(localStorage.getItem('pureun_v6_nts_api_key'), '')||''; } catch(e){ return ''; } })());
   var ntsKey = nk[0]; var setNtsKey = nk[1];
-  var gk = useState((function(){ try { return localStorage.getItem('pureun_v6_gcal_api_key')||''; } catch(e){ return ''; } })());
+  var gk = useState(_readSyncKey('gcal_api_key'));
   var gcalKey = gk[0]; var setGcalKey = gk[1];
   // 사용자 정의 API 키 목록
   var ck = useState((function(){ try { return safeParse(localStorage.getItem('pureun_v6_custom_api_keys'), [])||[]; } catch(e){ return []; } })());
@@ -22449,7 +22458,7 @@ function AppSettingsSection(){
       else { localStorage.removeItem(lsKey); showToast('🔑 '+label+' 삭제 — 기본값 사용'); }
     } catch(e){ showToast('저장 실패'); }
   }
-  function persistCustom(arr){ setCustomKeys(arr); try { localStorage.setItem('pureun_v6_custom_api_keys', JSON.stringify(arr)); } catch(e){} }
+  function persistCustom(arr){ setCustomKeys(arr); try { dbSet('custom_api_keys', arr); } catch(e){} }
   function addCustomKey(){
     var lb = (newKeyLabel||'').trim(); var v = (newKeyVal||'').trim();
     if(!lb){ showToast('키 이름을 입력하세요'); return; }
@@ -22480,8 +22489,8 @@ function AppSettingsSection(){
         h('button', { onClick:function(){
             var k = (visionKey||'').trim();
             try {
-              if(k){ localStorage.setItem('pureun_v6_vision_api_key', k); showToast('🔑 Vision API 키 저장됨'); }
-              else { localStorage.removeItem('pureun_v6_vision_api_key'); showToast('🔑 키 삭제 — 기본 키 사용'); }
+              if(k){ dbSet('vision_api_key', k); showToast('🔑 Vision API 키 저장됨 (모든 기기 동기화)'); }
+              else { dbRemove('vision_api_key'); showToast('🔑 키 삭제 — 기본 키 사용'); }
             } catch(e){ showToast('저장 실패'); }
           },
           style:{ padding:'6px 12px', background:'#1e40af', color:'#fff', border:'none', borderRadius:'4px', fontSize:'11.5px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } }, '저장')
@@ -22509,7 +22518,7 @@ function AppSettingsSection(){
         h('input', { type: showKeys?'text':'password', value:gcalKey, onChange:function(e){ setGcalKey(e.target.value); },
           placeholder:'AIza... (비워두면 기본 키)',
           style:{ width:'320px', maxWidth:'100%', padding:'6px 9px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'11.5px', fontFamily:'monospace' } }),
-        h('button', { onClick:function(){ saveLsKey('pureun_v6_gcal_api_key', gcalKey, 'Calendar 키'); },
+        h('button', { onClick:function(){ var v=(gcalKey||'').trim(); if(v){ dbSet('gcal_api_key', v); showToast('🔑 Calendar 키 저장됨 (모든 기기 동기화)'); } else { dbRemove('gcal_api_key'); showToast('🔑 Calendar 키 삭제 — 기본값 사용'); } },
           style:{ padding:'6px 12px', background:'#1e40af', color:'#fff', border:'none', borderRadius:'4px', fontSize:'11.5px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } }, '저장')
       )
     }),
@@ -34790,7 +34799,7 @@ function CorpDashboard(props){
   // 특정 직원 SID 필터: 특수 키워드가 아닌 경우만 (gcal, pureun 등 제외)
   var filterIsStaffSid = calFilter && !filterIsPureun && !filterIsEum && !filterIsEumWork && !filterIsEumKeyword && !filterIsGcal && !filterEumId;
   // ── 구글 캘린더 연동 ──
-  var GCAL_API_KEY    = (function(){ try { var k=(localStorage.getItem('pureun_v6_gcal_api_key')||'').trim(); if(k) return k; } catch(e){} return 'AIzaSyA0I_VD_dvFo9CPCDrPCiewcnuG0VeTkuo'; })();
+  var GCAL_API_KEY    = (function(){ try { var k=(_readSyncKey('gcal_api_key')||'').trim(); if(k) return k; } catch(e){} return 'AIzaSyA0I_VD_dvFo9CPCDrPCiewcnuG0VeTkuo'; })();
   var GCAL_CAL_ID     = 'euh07th7tvlco9corqen9lqpts@group.calendar.google.com';
   var GCAL_OAUTH_ID   = '30712196914-1qc61a41ptmo6u7hbk71i70g00k3a8lk.apps.googleusercontent.com';
   var GCAL_SCOPE      = 'https://www.googleapis.com/auth/calendar.events';
@@ -43781,7 +43790,7 @@ function parseBizLicense(text){
   return out;
 }
 function getVisionApiKey(){
-  try { var k = (localStorage.getItem('pureun_v6_vision_api_key')||'').trim(); if(k) return k; } catch(e){}
+  try { var k = (_readSyncKey('vision_api_key')||'').trim(); if(k) return k; } catch(e){}
   return ''; // 저장된 키 없음 → Vision 건너뛰고 로컬 OCR(Tesseract)로 폴백
 }
 function ocrWithGoogleVision(base64){
