@@ -725,7 +725,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-24 급여 툴바 정리(내보내기·가져오기 메뉴)+줌 제거';
+var ERP_BUILD = '2026-06-24 퇴사자 기본표시(제외 옵션)+나이별 4대보험 면제(60세 연금·65세후입사 고용보험)';
 (function(){
   try{
     console.log('[ERP 빌드] '+ERP_BUILD);
@@ -16601,7 +16601,7 @@ function UserWithRateSection(){
 
   var q = useState(''); var query = q[0]; var setQuery = q[1];
   var fl = useState('all'); var filter = fl[0]; var setFilter = fl[1];
-  var sr = useState(false); var showRetired = sr[0]; var setShowRetired = sr[1];
+  var sr = useState(true); var showRetired = sr[0]; var setShowRetired = sr[1];
   var m = useState(null); var modal = m[0]; var setModal = m[1];
   // 휴직 입력 모달
   var lm = useState(null); var leaveModal = lm[0]; var setLeaveModal = lm[1];
@@ -42334,7 +42334,7 @@ function RetireModal(props){
 // ============ 성과관리 ============
 function PerfManagement(props){
   var onNav = props.onNavigate || function(){};
-  var srS = useState(false); var showRetired = srS[0]; var setShowRetired = srS[1];
+  var srS = useState(true); var showRetired = srS[0]; var setShowRetired = srS[1];
   var users = showRetired
     ? sortUsers(dbGet('user_accounts', USERS_SEED).filter(function(u){return u.status==='active'||u.status==='retired';}))
     : getActiveUsers();
@@ -42655,9 +42655,9 @@ function PerfManagement(props){
   return h('div',{style:{padding:window.innerWidth<=768?'10px':'20px'}},
     // 헤더 + 탭
     h('div',{style:{display:'flex',flexDirection:'column',gap:'6px',marginBottom:window.innerWidth<=768?'8px':'16px'}},
-      h('label',{style:{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'11px',color:showRetired?'#dc2626':'#94a3b8',cursor:'pointer',userSelect:'none',padding:'4px 10px',borderRadius:'10px',background:showRetired?'#fef2f2':'#f1f5f9',fontWeight:600,border:'1px solid '+(showRetired?'#fecaca':'#e2e8f0')}},
-        h('input',{type:'checkbox',checked:showRetired,onChange:function(e){setShowRetired(e.target.checked);},style:{width:'12px',height:'12px',cursor:'pointer',margin:0}}),
-        h('span',null,'🚪 퇴사자 포함')
+      h('label',{style:{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'11px',color:!showRetired?'#dc2626':'#94a3b8',cursor:'pointer',userSelect:'none',padding:'4px 10px',borderRadius:'10px',background:!showRetired?'#fef2f2':'#f1f5f9',fontWeight:600,border:'1px solid '+(!showRetired?'#fecaca':'#e2e8f0')}},
+        h('input',{type:'checkbox',checked:!showRetired,onChange:function(e){setShowRetired(!e.target.checked);},style:{width:'12px',height:'12px',cursor:'pointer',margin:0}}),
+        h('span',null,'🚪 퇴사자 제외')
       ),
       h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', padding:window.innerWidth<=768?'5px 8px':'6px 12px',
         background:'#eff6ff', border:'1px solid #bfdbfe', borderRadius:'8px', marginBottom:'4px' } },
@@ -43318,6 +43318,34 @@ function calcIncomeTax2026(monthlyPay, dependents){
 }
 
 // 직원 급여 자동계산
+// rrn(주민번호)→지급월 기준 만 나이 (없으면 null)
+function _ageFromRrn(rrn, ymStr){
+  var d = String(rrn||'').replace(/[^0-9]/g,'');
+  if(d.length < 7) return null;
+  var yy = parseInt(d.slice(0,2),10), mm = parseInt(d.slice(2,4),10), c = d.charAt(6);
+  var by = (c==='1'||c==='2'||c==='5'||c==='6') ? 1900+yy : (c==='3'||c==='4'||c==='7'||c==='8') ? 2000+yy : (c==='9'||c==='0') ? 1800+yy : null;
+  if(by===null || mm<1 || mm>12) return null;
+  var p = String(ymStr||'').split('-');
+  if(p.length<2) return null;
+  var ymY = parseInt(p[0],10), ymM = parseInt(p[1],10);
+  if(!ymY || !ymM) return null;
+  return ymY - by - (ymM < mm ? 1 : 0);
+}
+// rrn + 입사일 → 만 65세 이후 신규 입사 여부 (고용보험 실업급여 적용제외)
+function _hiredAfter65(rrn, hireDate){
+  var d = String(rrn||'').replace(/[^0-9]/g,'');
+  if(d.length < 7) return false;
+  var yy = parseInt(d.slice(0,2),10), mm = parseInt(d.slice(2,4),10), dd = parseInt(d.slice(4,6),10), c = d.charAt(6);
+  var by = (c==='1'||c==='2'||c==='5'||c==='6') ? 1900+yy : (c==='3'||c==='4'||c==='7'||c==='8') ? 2000+yy : (c==='9'||c==='0') ? 1800+yy : null;
+  if(by===null) return false;
+  var h = String(hireDate||'').split('-');
+  if(h.length<3) return false;
+  var hy = parseInt(h[0],10), hm = parseInt(h[1],10), hdd = parseInt(h[2],10);
+  if(!hy || !hm || !hdd) return false;
+  var ageAtHire = hy - by - ((hm < mm || (hm===mm && hdd < dd)) ? 1 : 0);
+  return ageAtHire >= 65;
+}
+
 function calcPayroll(rec){
   var rates = PAYROLL_RATES_2026;
   // ★ 임금항목 메타데이터 로드 (동적 분류용)
@@ -43391,21 +43419,27 @@ function calcPayroll(rec){
   // 4대보험·소득세 과세표준 = 지급액 - 비과세
   var insurableBase = Math.max(0, grossPay - totalNonTaxable);
 
+  // ★ 나이별 보험료 면제 판정 (rrn 기반)
+  var _emp = (dbGet('user_accounts', USERS_SEED)||[]).find(function(u){ return u.sid===rec.empSid; });
+  var _age = _emp ? _ageFromRrn(_emp.rrn, rec.ym) : null;
+  var _pensionExempt = (_age != null && _age >= 60);
+  var _empInsExempt  = _emp ? _hiredAfter65(_emp.rrn, _emp.hireDate) : false;
+
   // 근로자 부담분
   var pensionBase = Math.max(rates.pensionWageMin, Math.min(insurableBase, rates.pensionWageMax));
-  var pension   = rec.pensionOverride != null ? rec.pensionOverride : Math.round(pensionBase * rates.pension);
+  var pension   = rec.pensionOverride != null ? rec.pensionOverride : (_pensionExempt ? 0 : Math.round(pensionBase * rates.pension));
   var healthIns = rec.healthInsOverride != null ? rec.healthInsOverride : Math.round(insurableBase * rates.healthIns);
   var longCare  = rec.longCareOverride  != null ? rec.longCareOverride  : Math.round(healthIns * rates.longCare);
-  var empIns    = rec.empInsOverride    != null ? rec.empInsOverride    : Math.round(insurableBase * rates.empIns);
+  var empIns    = rec.empInsOverride    != null ? rec.empInsOverride    : (_empInsExempt ? 0 : Math.round(insurableBase * rates.empIns));
   var incomeTax = rec.incomeTaxOverride != null ? rec.incomeTaxOverride : calcIncomeTax2026(insurableBase, rec.dependents||1);
   var localTax  = rec.localTaxOverride  != null ? rec.localTaxOverride  : Math.round(incomeTax * 0.1);
   var totalDeduct = pension + healthIns + longCare + empIns + incomeTax + localTax;
 
   // 사업주 부담분
-  var empPension    = Math.round(pensionBase * rates.empPension);
+  var empPension    = _pensionExempt ? 0 : Math.round(pensionBase * rates.empPension);
   var empHealthIns  = Math.round(insurableBase * rates.empHealthIns);
   var empLongCare   = Math.round(empHealthIns * rates.empLongCare);
-  var empEmpIns     = Math.round(insurableBase * (rates.empEmpInsBase + rates.empEmpInsExtra));
+  var empEmpIns     = Math.round(insurableBase * ((_empInsExempt ? 0 : rates.empEmpInsBase) + rates.empEmpInsExtra));
   var empWorkers    = Math.round(insurableBase * rates.empWorkers);
   var employerTotal = empPension + empHealthIns + empLongCare + empEmpIns + empWorkers;
 
@@ -45530,7 +45564,7 @@ function LeaveOfAbsenceTab(){
 // ============================================================
 function LeaveManagement(){
   var tbs = useState('annual'); var tab = tbs[0]; var setTab = tbs[1];
-  var srS = useState(false); var showRetired = srS[0]; var setShowRetired = srS[1];
+  var srS = useState(true); var showRetired = srS[0]; var setShowRetired = srS[1];
   var _isAdminView = !!(CURRENT_USER && (CURRENT_USER.isAdmin || CURRENT_USER.isSubAdmin));
   var users = (function(){
     var all = showRetired
@@ -45755,9 +45789,9 @@ function LeaveManagement(){
         h('button',{onClick:function(){setSelYear(String(parseInt(selYear)+1));},style:{border:'1px solid #cbd5e1',background:'#fff',borderRadius:'4px',padding:'2px 7px',cursor:'pointer',fontSize:'13px'}},'▶')
       ),
       h('div',{style:{display:'flex',gap:'3px',alignItems:'center',flexShrink:0}},
-        _isAdminView && h('label',{style:{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'10.5px',color:showRetired?'#dc2626':'#94a3b8',cursor:'pointer',userSelect:'none',padding:'2px 5px',borderRadius:'8px',background:showRetired?'#fef2f2':'#f1f5f9',fontWeight:600,border:'1px solid '+(showRetired?'#fecaca':'#e2e8f0')}},
-          h('input',{type:'checkbox',checked:showRetired,onChange:function(e){setShowRetired(e.target.checked);},style:{width:'10px',height:'10px',cursor:'pointer',margin:0}}),
-          h('span',null,'퇴사자')
+        _isAdminView && h('label',{style:{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'10.5px',color:!showRetired?'#dc2626':'#94a3b8',cursor:'pointer',userSelect:'none',padding:'2px 5px',borderRadius:'8px',background:!showRetired?'#fef2f2':'#f1f5f9',fontWeight:600,border:'1px solid '+(!showRetired?'#fecaca':'#e2e8f0')}},
+          h('input',{type:'checkbox',checked:!showRetired,onChange:function(e){setShowRetired(!e.target.checked);},style:{width:'10px',height:'10px',cursor:'pointer',margin:0}}),
+          h('span',null,'퇴사자 제외')
         ),
         // ★ 퇴직자 연차 재산정 미완료 경고
         (function(){
@@ -48043,7 +48077,7 @@ function PayrollLedger(props){
     if(rd && rd < _ymFirst) return false;
     return true;
   }
-  var sr = useState(false); var showResigned = sr[0]; var setShowResigned = sr[1]; // 퇴사자 포함 토글
+  var sr = useState(true); var showResigned = sr[0]; var setShowResigned = sr[1]; // 퇴사자 포함 토글
   var users = sortUsers(dbGet('user_accounts', USERS_SEED).filter(function(u){
     if(u.status==='active' || u.status==='leave') return isActiveInYM(u);
     // 퇴직자: 해당 월 급여기록이 있으면 입·퇴사일과 무관하게 표시(근무 증빙). 토글 시 재직기간 내 빈 달도.
@@ -48578,7 +48612,7 @@ function PayrollLedger(props){
       h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', flexShrink:0 } },
         h(MonthNav, { onPrev:function(){changeMonth(-1);}, onNext:function(){changeMonth(1);}, label:props.selYM, onToday:function(){props.setSelYM(todayYM());}, todayActive: props.selYM===todayYM() }),
         h('label', { style:{ display:'flex', alignItems:'center', gap:'3px', fontSize:'11px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
-          h('input', { type:'checkbox', checked:showResigned, onChange:function(e){ setShowResigned(e.target.checked); } }), '퇴사자 포함'),
+          h('input', { type:'checkbox', checked:!showResigned, onChange:function(e){ setShowResigned(!e.target.checked); } }), '퇴사자 제외'),
         isPayrollLocked(props.selYM)
           ? h('button',{ onClick:async function(){
                 if(!(await popConfirm('🔒 '+props.selYM+' 잠금을 해제할까요?'))) return;
