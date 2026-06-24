@@ -725,7 +725,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-24 인센티브 가져오기 날짜 버그 수정(엑셀 일련번호→정상 날짜)';
+var ERP_BUILD = '2026-06-25 기기/다중탭 쓰기잠금 해제 — 폰·PC·여러 탭 동시 사용 허용(저장차단·배너 제거)';
 (function(){
   try{
     console.log('[ERP 빌드] '+ERP_BUILD);
@@ -1887,25 +1887,8 @@ try {
     // 새로 열린 탭은 먼저 "누가 주인이냐" 질문
     _tabChan.postMessage({ t: 'who', id: TAB_ID, at: Date.now() });
     _tabChan.onmessage = function (ev) {
-      var m = ev.data || {};
-      if (m.id === TAB_ID) return;
-      if (m.t === 'who') {
-        // 내가 주인이면 응답 (heartbeat)
-        if (_tabIsOwner) { _tabChan.postMessage({ t: 'owner', id: TAB_ID, at: Date.now() }); }
-      } else if (m.t === 'owner') {
-        // 이미 다른 주 탭이 있음 → 나는 읽기 전용으로
-        _tabOwnerSeen = Date.now();
-        if (_tabIsOwner) {
-          _tabIsOwner = false;
-          try { window.dispatchEvent(new CustomEvent('tab_owner_changed', { detail: { owner: false } })); } catch (_) {}
-        }
-      } else if (m.t === 'claim') {
-        // 다른 탭이 주인을 가져감 → 나는 양보
-        if (_tabIsOwner) {
-          _tabIsOwner = false;
-          try { window.dispatchEvent(new CustomEvent('tab_owner_changed', { detail: { owner: false } })); } catch (_) {}
-        }
-      }
+      // 다중 탭 쓰기차단 비활성화 — 모든 탭이 주 탭. 데이터 충돌은 저장 시 항목별 충돌감지로 처리.
+      return;
     };
     // 주 탭은 5초마다 heartbeat (다른 탭이 살아있는 주인을 인식하도록)
     setInterval(function () {
@@ -1964,26 +1947,8 @@ function deviceLockPath(){
 
 // 서버의 주 기기 정보를 구독 + 비었거나 오래됐으면 내가 차지
 function initDeviceLock(){
-  if(!fbDb) { _deviceIsWriter = true; return; }   // 오프라인이면 단독이므로 쓰기 허용
-  try {
-    _deviceLockRef = deviceLockPath();
-    fbDb.ref(_deviceLockRef).on('value', function(snap){
-      var w = snap.val();
-      _serverWriter = w;
-      var now = Date.now();
-      var live = w && w.id && w.heartbeat && (now - w.heartbeat < DEVICE_STALE_MS);
-      if(!live){
-        // 주 기기 없음(또는 죽음) → 내가 차지
-        claimDeviceLock();
-      } else if(w.id === DEVICE_ID){
-        if(!_deviceIsWriter){ _deviceIsWriter = true; notifyDeviceLock(); }
-      } else {
-        // 같은 계정의 다른 살아있는 기기가 주인 → 나는 읽기 전용
-        if(_deviceIsWriter){ _deviceIsWriter = false; }
-        notifyDeviceLock();
-      }
-    });
-  } catch(e){ _deviceIsWriter = true; }
+  // 기기 잠금 비활성화 — 폰·PC 동시 사용 허용. 데이터 충돌은 저장 시 항목별 충돌감지로 처리.
+  _deviceIsWriter = true; notifyDeviceLock();
 }
 
 function claimDeviceLock(){
