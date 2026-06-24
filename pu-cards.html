@@ -345,6 +345,7 @@ body.pc #pcDetail{display:flex}
 <input type="file" id="cameraInput" accept="image/*" capture="environment" hidden onchange="onFiles(this.files);this.value=''">
 <input type="file" id="fileInput" accept="image/*,.pdf" multiple hidden onchange="onFiles(this.files);this.value=''">
 <input type="file" id="importInput" accept=".xlsx,.xls,.csv,.vcf,text/csv,text/vcard" hidden onchange="onImportFile(this.files);this.value=''">
+<input type="file" id="restoreInput" accept=".json,application/json" hidden onchange="onRestoreFile(this.files);this.value=''">
 
 <div class="modalbg" id="addBg" onclick="if(event.target===this)this.classList.remove('open')"><div class="modal" id="addM"></div></div>
 <div class="modalbg" id="groupSheetBg" onclick="if(event.target===this)this.classList.remove('open')"><div class="modal" id="groupSheetM"></div></div>
@@ -370,6 +371,7 @@ body.pc #pcDetail{display:flex}
       <h2><span id="pcTitle">전체 명함</span> <em id="pcCount">0개</em></h2>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <select id="pcRegion" onchange="state.region=this.value;state.page=0;render()" title="회사주소 기준 지역으로 거르기"></select>
+        <button id="incompleteBtn" onclick="state.onlyIncomplete=!state.onlyIncomplete;state.page=0;render()" title="전화·이메일이 모두 있지 않은 명함만 보기 (빠진 정보 채우기용)" style="background:#fff;border:1px solid #dde3ee;border-radius:8px;padding:7px 12px;font-size:13px;cursor:pointer;color:#33415e">정보 부족만</button>
         <div style="position:relative">
           <button id="colBtn" onclick="toggleColMenu(event)" title="표에 보일 열 선택 (체크로 켜고 끄기)" style="background:#fff;border:1px solid #dde3ee;border-radius:8px;padding:7px 12px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;color:#33415e">열 표시 ▾</button>
           <div id="colMenu" style="display:none;position:absolute;top:38px;right:0;width:180px;background:#fff;border:1px solid #dde3ee;border-radius:10px;box-shadow:0 6px 22px rgba(20,30,50,.13);padding:8px;z-index:60"></div>
@@ -429,7 +431,7 @@ const FIREBASE_CONFIG = {
 const DB_ROOT = 'pucards';
 const GEMINI_KEY_LS = 'pucards_gemini_key';
 
-const state = { tab:'card', group:'all', owner:'all', region:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, items:{}, groups:{}, trash:{} };
+const state = { tab:'card', group:'all', owner:'all', region:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, items:{}, groups:{}, trash:{} };
 
 /* ── 데이터 계층 ── */
 const Store = {
@@ -618,6 +620,7 @@ function listItems(){
     .filter(it => {
       if (state.onlyPhone && !(it.mobile||it.tel||it.companyTel)) return false;
       if (state.onlyEmail && !it.email) return false;
+      if (state.onlyIncomplete && (it.mobile||it.tel||it.companyTel) && it.email) return false;
       return true;
     });
   /* 중복만 보기 */
@@ -1026,8 +1029,11 @@ function openEditor(item, photoObj, pre){
     fh += `<div class="field" style="${wide.includes(k)?'grid-column:1/3':''}"><label>${label}</label>${tag}</div>`;
   });
   const groups=Object.values(state.groups).sort((a,b)=>(a.order||0)-(b.order||0));
+  /* 새 명함이고 현재 폴더 보는 중이면 그 폴더를 기본 선택 */
+  const curGroupValid = state.group && state.group!=='all' && state.groups[state.group] && (state.groups[state.group].kind||'card')===kind;
+  const defGroup = (src.group!==undefined && src.group!=='') ? src.group : (!item && curGroupValid ? state.group : (src.group||''));
   const gOpts=`<option value="">미분류</option>`+groups.map(g=>
-    `<option value="${g.id}" ${(src.group||'')===g.id?'selected':''}>${esc(g.name)}</option>`).join('');
+    `<option value="${g.id}" ${defGroup===g.id?'selected':''}>${esc(g.name)}</option>`).join('');
   $('editorM').innerHTML=`
     <div class="mhead"><b>${item?'수정':(kind==='card'?'명함 등록':'사업자등록증 등록')}</b>
       <button class="iconbtn" onclick="closeEditor()">✕</button></div>
@@ -1118,6 +1124,8 @@ function dupDialog(dup,kind){
 <script>
 /* ════════════ 상세 보기 ════════════ */
 function openDetail(id){
+  /* 표에서 셀 인라인 편집 중이면 행 클릭 무시 */
+  if (document.querySelector('#pcTable input.cellEdit')) return;
   const it=state.items[id]; if(!it) return;
   if (document.body.classList.contains('pc')) return openPcDetail(id);
   const isCard = it.kind==='card';
@@ -1454,7 +1462,9 @@ function openMenu(){
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');importInput.click()">📥 파일 가져오기
       <span style="margin-left:auto;color:var(--sub);font-size:12px">리멤버 엑셀 · 구글 CSV · vCard</span></button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');exportXlsx()">📤 엑셀로 내보내기</button>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');printList()">🖨 현재 목록 인쇄 / PDF</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');backupNow()">💾 지금 백업 (JSON 저장)</button>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');restoreInput.click()">📂 백업 복원 (JSON 불러오기)</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openDedup()">🧹 중복 정리</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');cleanEmpty()">🧽 빈 명함 정리</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openTrash()">🗑 휴지통 (삭제 명함 30일 보관)</button>
@@ -1523,6 +1533,56 @@ function purgeTrash(){
     });
     if(n) console.log(`휴지통 자동 정리: ${n}건`);
   }catch(e){ console.error('휴지통 정리 실패', e); }
+}
+
+/* 현재 목록 인쇄 / PDF */
+function printList(){
+  const items=listItems();
+  if(!items.length) return toast('인쇄할 항목이 없습니다');
+  const isCard = state.tab==='card';
+  const head = isCard ? ['이름','회사','직책·부서','핸드폰','회사전화','이메일']
+                      : ['상호','대표자','사업자번호','소재지'];
+  const rowHtml = items.map((it,i)=>{
+    const cells = isCard
+      ? [it.name, it.company, [it.title,it.dept].filter(Boolean).join('·'), it.mobile, it.companyTel||it.tel, it.email]
+      : [it.company, it.ceo, fmtBizno(it.bizno), it.address];
+    return `<tr><td>${i+1}</td>${cells.map(c=>`<td>${esc(c||'')}</td>`).join('')}</tr>`;
+  }).join('');
+  const scope = state.region ? ` · ${state.region}` : '';
+  const win=window.open('', '_blank');
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>푸른명함첩 목록</title>
+    <style>body{font-family:'Malgun Gothic',sans-serif;padding:20px;font-size:12px}
+    h1{font-size:16px}.meta{color:#666;font-size:11px;margin-bottom:10px}
+    table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:5px 7px;text-align:left}
+    th{background:#f0f0f0}tr:nth-child(even){background:#fafafa}
+    @media print{body{padding:0}}</style></head><body>
+    <h1>푸른명함첩 — ${isCard?'명함':'사업자등록증'}${scope}</h1>
+    <div class="meta">${items.length}건 · ${fmtDate(Date.now())} 출력</div>
+    <table><thead><tr><th>#</th>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+    <tbody>${rowHtml}</tbody></table>
+    <scr`+`ipt>window.onload=()=>window.print()<\/scr`+`ipt></body></html>`);
+  win.document.close();
+}
+
+/* 백업 파일(JSON) 복원 */
+function onRestoreFile(files){
+  const f=files&&files[0]; if(!f) return;
+  const reader=new FileReader();
+  reader.onload=()=>{
+    let data;
+    try{ data=JSON.parse(reader.result); }
+    catch(e){ return toast('백업 파일을 읽을 수 없습니다 (JSON 형식 아님)'); }
+    const items=data.items||{}, groups=data.groups||{};
+    const ic=Object.keys(items).length, gc=Object.keys(groups).length;
+    if(!ic && !gc) return toast('백업 파일에 데이터가 없습니다');
+    const cur=Object.keys(state.items).length;
+    if(!confirm(`백업 복원: 명함 ${ic}건, 폴더 ${gc}개를 불러옵니다.\n\n현재 ${cur}건과 합쳐집니다 (같은 명함은 덮어씀).\n진행할까요?`)) return;
+    let done=0;
+    Object.values(groups).forEach(g=>{ if(g&&g.id) Store.putGroup(g); });
+    Object.values(items).forEach(it=>{ if(it&&it.id){ Store.put(it); done++; } });
+    toast(`백업 복원 완료 — 명함 ${done}건, 폴더 ${gc}개`);
+  };
+  reader.readAsText(f);
 }
 
 /* 전체 백업 — items + groups를 JSON 파일로 (수동/자동 공용) */
@@ -2094,17 +2154,89 @@ function confirmNewFolder(parent){
 function openFolderMenu(ev, id){
   const g=state.groups[id]; if(!g) return;
   const m=$('folderMenu');
+  /* 같은 부모 형제 중 위/아래 이동 가능 여부 */
+  const sibs=Object.values(state.groups).filter(x=>(x.kind||'card')===(g.kind||'card') && (x.parent||'')===(g.parent||'')).sort((a,b)=>(a.order||0)-(b.order||0));
+  const idx=sibs.findIndex(x=>x.id===id);
+  const canUp=idx>0, canDown=idx<sibs.length-1;
   m.innerHTML = `
     <div class="fmi" onclick="closeFolderMenu();openFolderDialog('${id}')">＋ 하위 폴더 추가</div>
     <div class="fmi" onclick="closeFolderMenu();renameFolder('${id}')">✏️ 이름 변경</div>
     <div class="fmi" onclick="closeFolderMenu();moveCardsHere('${id}')">📥 선택 명함 이 폴더로</div>
+    ${canUp?`<div class="fmi" onclick="closeFolderMenu();moveFolderOrder('${id}',-1)">⬆ 위로</div>`:''}
+    ${canDown?`<div class="fmi" onclick="closeFolderMenu();moveFolderOrder('${id}',1)">⬇ 아래로</div>`:''}
     <div class="fmi danger" onclick="closeFolderMenu();deleteFolder('${id}')">🗑 폴더 삭제</div>`;
   m.style.display='block';
-  const x=Math.min(ev.clientX, window.innerWidth-170), y=Math.min(ev.clientY, window.innerHeight-180);
+  const x=Math.min(ev.clientX, window.innerWidth-170), y=Math.min(ev.clientY, window.innerHeight-220);
   m.style.left=x+'px'; m.style.top=y+'px';
   setTimeout(()=>document.addEventListener('click', closeFolderMenu, {once:true}), 0);
 }
+/* 폴더 순서 한 칸 이동 (같은 부모 형제끼리 order 교환) */
+function moveFolderOrder(id, dir){
+  const g=state.groups[id]; if(!g) return;
+  const sibs=Object.values(state.groups)
+    .filter(x=>(x.kind||'card')===(g.kind||'card') && (x.parent||'')===(g.parent||''))
+    .sort((a,b)=>(a.order||0)-(b.order||0));
+  const idx=sibs.findIndex(x=>x.id===id);
+  const swapIdx=idx+dir;
+  if(swapIdx<0||swapIdx>=sibs.length) return;
+  /* 형제 전체에 일련번호 order 부여 후, 두 항목 위치 교환 */
+  sibs.forEach((s,i)=>{ s.order=i+1; });
+  const a=sibs[idx], b=sibs[swapIdx];
+  const t=a.order; a.order=b.order; b.order=t;
+  Store.putGroup(a); Store.putGroup(b);
+  toast('폴더 순서를 변경했습니다');
+}
+/* 표에서 바로 수정 (셀 더블클릭 → 인라인 입력) */
+function startCellEdit(ev, id, field){
+  ev.stopPropagation();
+  const td=ev.currentTarget;
+  if(td.querySelector('input')) return;          /* 이미 편집 중 */
+  const it=state.items[id]; if(!it) return;
+  const old=it[field]||'';
+  td.dataset.editing='1';
+  td.innerHTML=`<input class="cellEdit" value="${esc(old)}" style="width:100%;border:1.5px solid #3a4a73;border-radius:5px;padding:4px 6px;font-size:13px;font-family:inherit;box-sizing:border-box">`;
+  const inp=td.querySelector('input');
+  inp.focus(); inp.select();
+  const commit=(save)=>{
+    if(td._done) return; td._done=true;
+    if(save){
+      const v=inp.value.trim();
+      if(v!==old){ it[field]=v; Store.put(it); toast('수정했습니다'); }
+    }
+    render();
+  };
+  inp.addEventListener('keydown', e=>{
+    e.stopPropagation();
+    if(e.key==='Enter'){ e.preventDefault(); commit(true); }
+    else if(e.key==='Escape'){ e.preventDefault(); commit(false); }
+  });
+  inp.addEventListener('blur', ()=>commit(true));
+}
+
 function closeFolderMenu(){ $('folderMenu').style.display='none'; }
+/* 행 우클릭 메뉴 (복사·폴더이동·즐겨찾기·삭제) */
+function openRowMenu(ev, id){
+  ev.preventDefault(); ev.stopPropagation();
+  const it=state.items[id]; if(!it) return;
+  const m=$('folderMenu');
+  const fav = it.fav ? '⭐ 즐겨찾기 해제' : '☆ 즐겨찾기';
+  m.innerHTML = `
+    <div class="fmi" onclick="closeFolderMenu();openDetail('${id}')">👁 상세 보기</div>
+    <div class="fmi" onclick="closeFolderMenu();openEditor(state.items['${id}'])">✏️ 수정</div>
+    <div class="fmi" onclick="closeFolderMenu();copyCardInfo('${id}')">📋 정보 복사</div>
+    <div class="fmi" onclick="closeFolderMenu();rowMenuMove('${id}')">📁 폴더 이동</div>
+    <div class="fmi" onclick="closeFolderMenu();toggleFav('${id}')">${fav}</div>
+    <div class="fmi danger" onclick="closeFolderMenu();delItem('${id}')">🗑 삭제 (휴지통)</div>`;
+  m.style.display='block';
+  const x=Math.min(ev.clientX, window.innerWidth-180), y=Math.min(ev.clientY, window.innerHeight-240);
+  m.style.left=x+'px'; m.style.top=y+'px';
+  setTimeout(()=>document.addEventListener('click', closeFolderMenu, {once:true}), 0);
+}
+/* 우클릭 메뉴의 폴더 이동: 그 한 건만 선택 상태로 만들어 폴더 선택 띄움 */
+function rowMenuMove(id){
+  state.sel={[id]:1};
+  selPickGroup();
+}
 function moveCardsHere(id){
   const ids=Object.keys(state.sel); if(!ids.length) return toast('먼저 표에서 명함을 선택하세요');
   ids.forEach(sid=>{ const it=state.items[sid]; if(it){ it.group=id; Store.put(it); } });
@@ -2149,6 +2281,11 @@ function renderPCTable(){
     const regs=Object.keys(rc).sort((a,b)=>rc[b]-rc[a]);
     regSel.innerHTML = `<option value="">📍 전체 지역</option>` + regs.map(r=>`<option value="${r}">${r} (${rc[r]})</option>`).join('');
     regSel.value = state.region || '';
+  }
+  const incBtn=$('incompleteBtn');
+  if(incBtn){
+    if(state.onlyIncomplete){ incBtn.style.background='#3a4a73'; incBtn.style.color='#fff'; incBtn.style.borderColor='#3a4a73'; incBtn.textContent='✓ 정보 부족만'; }
+    else { incBtn.style.background='#fff'; incBtn.style.color='#33415e'; incBtn.style.borderColor='#dde3ee'; incBtn.textContent='정보 부족만'; }
   }
   /* 조건 필터 버튼 제거됨 — pcFilters 영역 비움 */
   $('pcFilters').innerHTML = '';
@@ -2209,21 +2346,21 @@ function renderPCTable(){
         <button onclick="openEditor(state.items['${it.id}'])" title="수정" style="border:none;background:none;cursor:pointer;font-size:14px;padding:3px 5px">✏️</button>
         <button onclick="delItem('${it.id}')" title="삭제" style="border:none;background:none;cursor:pointer;font-size:14px;padding:3px 5px">🗑</button></td>`;
     if (isCard){
-      rows += `<tr draggable="true" ondragstart="onRowDrag(event,'${it.id}')" onclick="openDetail('${it.id}')">
+      rows += `<tr draggable="true" ondragstart="onRowDrag(event,'${it.id}')" onclick="openDetail('${it.id}')" oncontextmenu="openRowMenu(event,'${it.id}')">
         ${chk}<td class="num">${i+1}</td>
-        <td class="nm col-name">${it.fav?'⭐ ':''}${esc(it.name||'(이름 없음)')}</td>
-        <td class="co col-company">${esc(it.company||'')}</td>
-        <td class="col-title">${esc([it.title,it.dept].filter(Boolean).join('·'))}</td>
-        <td class="col-mobile">${esc(it.mobile||'')}</td>
-        <td class="col-companyTel">${esc(it.companyTel||it.tel||'')}</td>
-        <td class="col-companyFax">${esc(it.companyFax||it.fax||'')}</td>
-        <td class="col-email">${esc(it.email||'')}</td>
-        <td class="col-companyAddr" style="font-size:12px;color:#5a6885">${esc(it.companyAddr||it.address||'')}</td>
+        <td class="nm col-name" ondblclick="startCellEdit(event,'${it.id}','name')">${it.fav?'⭐ ':''}${esc(it.name||'(이름 없음)')}</td>
+        <td class="co col-company" ondblclick="startCellEdit(event,'${it.id}','company')">${esc(it.company||'')}</td>
+        <td class="col-title" ondblclick="startCellEdit(event,'${it.id}','title')">${esc([it.title,it.dept].filter(Boolean).join('·'))}</td>
+        <td class="col-mobile" ondblclick="startCellEdit(event,'${it.id}','mobile')">${esc(it.mobile||'')}</td>
+        <td class="col-companyTel" ondblclick="startCellEdit(event,'${it.id}','companyTel')">${esc(it.companyTel||it.tel||'')}</td>
+        <td class="col-companyFax" ondblclick="startCellEdit(event,'${it.id}','companyFax')">${esc(it.companyFax||it.fax||'')}</td>
+        <td class="col-email" ondblclick="startCellEdit(event,'${it.id}','email')">${esc(it.email||'')}</td>
+        <td class="col-companyAddr" style="font-size:12px;color:#5a6885" ondblclick="startCellEdit(event,'${it.id}','companyAddr')">${esc(it.companyAddr||it.address||'')}</td>
         <td class="dt">${dup}</td>
         <td class="dt col-date">${fmtDate(it.createdAt)}</td>
         ${actCell}</tr>`;
     } else {
-      rows += `<tr draggable="true" ondragstart="onRowDrag(event,'${it.id}')" onclick="openDetail('${it.id}')">
+      rows += `<tr draggable="true" ondragstart="onRowDrag(event,'${it.id}')" onclick="openDetail('${it.id}')" oncontextmenu="openRowMenu(event,'${it.id}')">
         ${chk}<td class="num">${i+1}</td>
         <td class="nm col-company">${it.fav?'⭐ ':''}${esc(it.company||'(상호 없음)')}</td>
         <td class="col-ceo">${esc(it.ceo||'')}</td>
