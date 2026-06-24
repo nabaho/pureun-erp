@@ -3975,6 +3975,29 @@ if(fbDb){
       _startFbSync();
     }, 8000);
   }
+
+  // ── 근본 해결: 기기 전환·재연결 시 최신 자동 수신 ──
+  //    폰을 백그라운드에 뒀다 돌아오면 실시간 구독이 멈춰 데이터가 낡고, 그 상태로 저장하면
+  //    충돌/되돌림/옛데이터 경고가 반복됨. 화면 복귀·재연결 때 최신을 받아 _meta_를 맞춰 원천 차단.
+  var _lastResync = 0;
+  function _resyncLatest(){
+    if(!fbDb || !_fbSynced) return;
+    var now = Date.now();
+    if(now - _lastResync < 4000) return;   // 디바운스(과도한 호출 방지)
+    _lastResync = now;
+    fbInitialSync().then(function(n){
+      if(n > 0){
+        _dbCacheClear();
+        try { window.dispatchEvent(new CustomEvent('fb_initial_done', {detail:n})); } catch(e){}
+        console.log('[Firebase] 복귀 재동기화: '+n+'개 항목 갱신');
+      }
+    }).catch(function(){});
+  }
+  try {
+    document.addEventListener('visibilitychange', function(){ if(!document.hidden){ _resyncLatest(); } });
+    window.addEventListener('focus', _resyncLatest);
+    window.addEventListener('online', _resyncLatest);
+  } catch(e){}
 }
 
 // ============ IndexedDB 헬퍼 (대용량 아카이브용) ============
