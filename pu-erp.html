@@ -725,7 +725,30 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-25 기기/다중탭 쓰기잠금 해제 — 폰·PC·여러 탭 동시 사용 허용(저장차단·배너 제거)';
+var ERP_BUILD = '2026-06-25 자동 최신화 추가(캐시로 옛 코드 도는 문제 근본 해결) + 기기/다중탭 잠금 해제';
+// === 자동 최신화 — 브라우저 캐시 때문에 옛 코드가 계속 도는 문제 방지 ===
+// 세션당 1회, 서버의 배포 버전을 확인해 현재 실행 중 버전과 다르면 캐시 우회로 새로고침.
+(function(){
+  try {
+    if(location.protocol === 'file:') return;                       // 로컬 파일 실행 시 비활성
+    if(sessionStorage.getItem('pureun_v6_au_done')) return;         // 세션당 1회만(데이터 절약)
+    setTimeout(function(){
+      try { sessionStorage.setItem('pureun_v6_au_done','1'); } catch(_){}
+      fetch(location.pathname + '?_cb=' + Date.now(), { cache:'no-store' })
+        .then(function(r){ return r.ok ? r.text() : null; })
+        .then(function(html){
+          if(!html) return;
+          var m = html.match(/var ERP_BUILD = '([^']*)'/);
+          if(!m || !m[1] || m[1] === ERP_BUILD) return;             // 못 찾거나 이미 최신
+          if(sessionStorage.getItem('pureun_v6_au_to') === m[1]) return;  // 이미 이 버전으로 시도 → 루프 방지
+          try { sessionStorage.setItem('pureun_v6_au_to', m[1]); } catch(_){}
+          try { showToast('🔄 새 버전이 있어 새로고침합니다…'); } catch(_){}
+          setTimeout(function(){ location.replace(location.pathname + '?v=' + Date.now()); }, 1000);
+        })
+        .catch(function(){});
+    }, 4000);
+  } catch(_){}
+})();
 (function(){
   try{
     console.log('[ERP 빌드] '+ERP_BUILD);
@@ -2686,7 +2709,7 @@ function dbSet(k, v){
                 _dbCache[k] = _good;
                 try { if(typeof _scheduleFbChanged === 'function') _scheduleFbChanged(k); } catch(_){}
               } catch(_){}
-              try { window.erpAlert && erpAlert('danger', '되돌림 방지: '+k, '다른 곳에서 먼저 저장된 더 최신 데이터가 서버에 있어, 이 기기의 (오래된) 화면이 그것을 덮어쓰는 것을 막았습니다.', '방금 최신 데이터를 받아왔습니다. 화면을 확인하고 필요한 변경을 다시 적용해 저장하세요. (이 기기의 직전 변경은 서버에 반영되지 않았습니다)'); } catch(_){}
+              try { showToast('🔄 다른 기기의 최신 데이터로 갱신됨 — 방금 변경은 다시 확인하세요'); } catch(_){}
               return;
             }
             fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(fbSyncFail);
@@ -2704,7 +2727,7 @@ function dbSet(k, v){
                 _dbCache[k] = sv2.v;
                 try { if(typeof _scheduleFbChanged === 'function') _scheduleFbChanged(k); } catch(_){}
               } catch(_){}
-              try { window.erpAlert && erpAlert('danger', '되돌림 방지: '+k, '다른 곳에서 먼저 저장된 더 최신 설정이 서버에 있어, 이 기기의 (오래된) 값이 덮어쓰는 것을 막았습니다.', '방금 최신값을 받아왔습니다. 확인 후 다시 저장하세요. (이 기기의 직전 변경은 서버에 반영되지 않았습니다)'); } catch(_){}
+              try { showToast('🔄 다른 기기의 최신 설정으로 갱신됨 — 방금 변경은 다시 확인하세요'); } catch(_){}
               return;
             }
             fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(fbSyncFail);
