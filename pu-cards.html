@@ -596,11 +596,7 @@ function listItems(){
     .filter(it => it.kind===state.tab)
     .filter(it => {
       if (state.group==='all') return true;
-      /* 선택 폴더 + 모든 하위 폴더 포함 */
-      const ids=new Set([state.group]);
-      const addKids = pid => Object.values(state.groups).forEach(g=>{ if((g.parent||'')===pid && !ids.has(g.id)){ ids.add(g.id); addKids(g.id);} });
-      addKids(state.group);
-      return ids.has(it.group||'');
+      return (it.group||'')===state.group;
     })
     .filter(it => state.owner==='all' || (it.owner||'')===state.owner)
     .filter(it => {
@@ -877,28 +873,15 @@ function onDropToTopLevel(e){
     dragFolderId=null;
   }
 }
-/* ── 폴더 드래그 이동 ── */
+/* ── 폴더 드래그 ── */
 let dragFolderId=null;
 function onFolderDrag(e,gid){ dragFolderId=gid; dragId=null;
   e.currentTarget.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; e.stopPropagation(); }
-/* 폴더 위에 드롭: 명함이면 그룹이동, 폴더면 하위로 편입 */
+/* 폴더 위에 드롭: 명함이면 그 폴더로 이동 (폴더끼리는 계층 없음 — 순서는 ⋮ 메뉴로) */
 function onFolderOrCardDrop(e,targetGid){
   e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.remove('dropover');
-  /* 1) 명함을 폴더로 */
   if(dragId){ const it=state.items[dragId]; if(it){ it.group=targetGid; Store.put(it); toast('폴더로 이동했습니다'); } dragId=null; return; }
-  /* 2) 폴더를 폴더 안으로 */
-  if(dragFolderId && dragFolderId!==targetGid){
-    /* 순환 방지: 대상이 끌고 온 폴더의 자손이면 거부 */
-    const isDescendant=(pid,childId)=>{
-      let cur=state.groups[childId];
-      while(cur){ if((cur.parent||'')===pid) return true; cur=state.groups[cur.parent]; }
-      return false;
-    };
-    if(isDescendant(dragFolderId, targetGid)){ toast('하위 폴더로는 옮길 수 없습니다'); dragFolderId=null; return; }
-    const g=state.groups[dragFolderId];
-    if(g){ g.parent=targetGid; g.order=Date.now(); Store.putGroup(g); state.collapsed[targetGid]=false; toast('폴더를 옮겼습니다'); }
-    dragFolderId=null;
-  }
+  dragFolderId=null;
 }
 
 /* ── 사이드바 폭 조절(PC) ── */
@@ -2012,52 +1995,38 @@ function renderPCSide(){
               state.tab==='card'?'📇 전체 명함':'📄 전체 사업자등록증',
               all.filter(i=>i.kind===state.tab).length, isAllView('all'));
 
-  /* 현재 탭에 속한 폴더만, 2단계 계층 — 전체 명함 바로 아래 */
-  const groups = Object.values(state.groups).filter(g=>(g.kind||'card')===state.tab);
-  const children = pid => groups.filter(g=>(g.parent||'')===pid).sort((a,b)=>(a.order||0)-(b.order||0));
-  const descIds = id => { const out=[id]; children(id).forEach(c=>out.push(...descIds(c.id))); return out; };
-  const cntDeep = id => { const ids=new Set(descIds(id)); return kindArr.filter(it=>ids.has(it.group||'')).length; };
+  /* 현재 탭에 속한 폴더만 — 계층 없이 1단계로 평평하게 */
+  const groups = Object.values(state.groups).filter(g=>(g.kind||'card')===state.tab)
+                   .sort((a,b)=>(a.order||0)-(b.order||0));
   const cntSelf = g => kindArr.filter(it=>(it.group||'')===g).length;
 
-  h += `<div class="pcsec" style="display:flex;align-items:center"
-        ondragover="event.preventDefault();this.style.background='rgba(120,150,200,.15)'"
-        ondragleave="this.style.background=''"
-        ondrop="this.style.background='';onDropToTopLevel(event)">폴더
+  h += `<div class="pcsec" style="display:flex;align-items:center">폴더
         <span style="margin-left:auto;display:flex;gap:8px">
-          <span onclick="toggleAllFolders()" title="모두 접기/펼치기" style="cursor:pointer">⚙️</span>
           <span onclick="openFolderDialog('')" title="새 폴더" style="cursor:pointer;font-weight:700">＋</span>
         </span></div>`;
 
-  const folderRow = (g, depth) => {
-    const kids = children(g.id);
-    const hasKids = kids.length>0;
-    const collapsed = !!state.collapsed[g.id];
-    const pad = 11 + depth*15;
+  const folderRow = (g) => {
     const on = state.group===g.id && state.owner==='all';
-    const n = cntDeep(g.id);
+    const n = cntSelf(g.id);
     const isLocked = !!g.locked;
     const unlocked = isLocked && state.unlocked && state.unlocked[g.id];
     const icon = isLocked ? (unlocked ? '🔓' : '🔒') : '📁';
     const openClick = isLocked
       ? `if(tryUnlockFolder('${g.id}')){state.group='${g.id}';state.owner='all';state.region='';state.page=0;}render()`
       : `state.group='${g.id}';state.owner='all';state.region='';state.page=0;render()`;
-    let row = `<div class="pcitem folderrow ${on?'on':''}" style="padding-left:${pad}px"
+    return `<div class="pcitem folderrow ${on?'on':''}" style="padding-left:11px"
         draggable="true"
         ondragstart="onFolderDrag(event,'${g.id}')"
         ondragend="this.classList.remove('dragging')"
         ondragover="event.preventDefault();this.classList.add('dropover')"
         ondragleave="this.classList.remove('dropover')" ondrop="onFolderOrCardDrop(event,'${g.id}')">
-        ${hasKids
-          ? `<span onclick="event.stopPropagation();toggleCollapse('${g.id}')" style="cursor:pointer;width:13px;display:inline-block;color:#8fa0c4">${collapsed?'▸':'▾'}</span>`
-          : `<span style="width:13px;display:inline-block"></span>`}
+        <span style="width:13px;display:inline-block"></span>
         <span class="gname" onclick="${openClick}">${icon} ${esc(g.name)}</span>
         <span class="gcount">${isLocked&&!unlocked?'🔒':n}</span>
         <span class="gmenu" onclick="event.stopPropagation();openFolderMenu(event,'${g.id}')" title="관리">⋮</span>
       </div>`;
-    if (hasKids && !collapsed) kids.forEach(c=> row += folderRow(c, depth+1));
-    return row;
   };
-  children('').forEach(g=> h += folderRow(g, 0));
+  groups.forEach(g=> h += folderRow(g));
 
   h += `<div class="pcsec">담당자별 (직원)</div>`;
   const owners=[...new Set(kindArr.map(it=>String(it.owner||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ko'));
@@ -2193,7 +2162,6 @@ function openFolderMenu(ev, id){
     ? `<div class="fmi" onclick="closeFolderMenu();unsetFolderLock('${id}')">🔓 잠금 해제</div>`
     : `<div class="fmi" onclick="closeFolderMenu();setFolderLock('${id}')">🔒 비밀번호 잠금</div>`;
   m.innerHTML = `
-    <div class="fmi" onclick="closeFolderMenu();openFolderDialog('${id}')">＋ 하위 폴더 추가</div>
     <div class="fmi" onclick="closeFolderMenu();renameFolder('${id}')">✏️ 이름 변경</div>
     <div class="fmi" onclick="closeFolderMenu();moveCardsHere('${id}')">📥 선택 명함 이 폴더로</div>
     ${canUp?`<div class="fmi" onclick="closeFolderMenu();moveFolderOrder('${id}',-1)">⬆ 위로</div>`:''}
@@ -2480,6 +2448,14 @@ if (IS_PC){
   $('pcRoot').hidden = false;
 }
 loadColPrefs();
+/* 폴더 계층 폐지: 기존에 parent(하위폴더)였던 폴더를 모두 최상위로 1회 정리 */
+setTimeout(()=>{
+  try{
+    Object.values(state.groups||{}).forEach(g=>{
+      if(g && g.parent){ g.parent=''; Store.putGroup(g); }
+    });
+  }catch(e){}
+}, 2500);
 render();
 
 /* 키보드 단축키 */
