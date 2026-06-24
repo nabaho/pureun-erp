@@ -725,7 +725,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-24 중복 데이터 자동정리(동기화 수신·시작 점검에서 id 중복 제거) — 재로그인 재발 방지';
+var ERP_BUILD = '2026-06-24 검색·계약추가 중복판단 정보 보강(종류·세부유형·번호 표시)';
 (function(){
   try{
     console.log('[ERP 빌드] '+ERP_BUILD);
@@ -5060,6 +5060,9 @@ function GlobalSearch(props){
       return arr.length>0 ? arr.join(', ') : '미지정';
     }
     var q = query.toLowerCase().trim();
+    var _KIND_LBL = { consult:'상담', company:'업체계약', case:'사건계약', consulting:'컨설팅', fund:'기금', other:'기타' };
+    function _ctKinds(c){ return (c.kinds||(c.kind?[c.kind]:[])).map(function(k){return _KIND_LBL[k]||k;}).join('+'); }
+    function _nz(){ var a=[]; for(var i=0;i<arguments.length;i++){ var x=arguments[i]; if(x!=null && String(x).trim()) a.push(String(x)); } return a.join(' · '); }
     function match(item, fields){
       return fields.some(function(f){
         var v = item[f]; if(v==null) return false;
@@ -5070,13 +5073,13 @@ function GlobalSearch(props){
     (dbGet('cases', [])||[]).forEach(function(c){
       if(c.permanentArchived) return;
       if(match(c, ['title','caseNo','companyName','payee','description','note','plaintiff','defendant'])){
-        results.push({type:'사건',icon:'⚖️',color:'#dc2626',title:c.title||c.caseNo||'-',sub:c.companyName||c.payee||'-',mgr:mgrs(c),goto:'biz/case',closed:!!(c.closedDate||c.status==='closed')});
+        results.push({type:'사건',icon:'⚖️',color:'#dc2626',title:c.title||c.caseNo||'-',sub:_nz(c.caseType, c.companyName||c.payee, c.caseNo)||'-',mgr:mgrs(c),goto:'biz/case',closed:!!(c.closedDate||c.status==='closed')});
       }
     });
     (dbGet('consultings', [])||[]).forEach(function(c){
       if(c.permanentArchived) return;
       if(match(c, ['title','companyName','consultingType','description','note','programName'])){
-        results.push({type:'컨설팅',icon:'💼',color:'#2563eb',title:c.title||c.programName||c.consultingType||'-',sub:c.companyName||'-',mgr:mgrs(c),goto:'biz/consulting',closed:!!c.closedDate});
+        results.push({type:'컨설팅',icon:'💼',color:'#2563eb',title:c.title||c.programName||c.consultingType||'-',sub:_nz(c.consultingType||c.programName, c.companyName)||'-',mgr:mgrs(c),goto:'biz/consulting',closed:!!c.closedDate});
       }
     });
     (dbGet('companies', [])||[]).forEach(function(c){
@@ -5099,7 +5102,7 @@ function GlobalSearch(props){
     (dbGet('contracts', [])||[]).forEach(function(c){
       if(c.status==='closed'||c.status==='cancelled'||c.status==='transferred') return;
       if(match(c, ['companyName','ceoName','bizNum','contractType','contactName'])){
-        results.push({type:'계약',icon:'📋',color:'#1e40af',title:c.companyName||'-',sub:c.contractType||c.ceoName||'-',mgr:mgrs(c),goto:'biz/contract',closed:false});
+        results.push({type:'계약',icon:'📋',color:'#1e40af',title:c.companyName||'-',sub:_nz(_ctKinds(c), c.consultingType||c.caseType||c.fundType||c.programName, c.contractNo)||c.ceoName||'-',mgr:mgrs(c),goto:'biz/contract',closed:false});
       }
     });
     (dbGet('finance_income', [])||[]).forEach(function(c){
@@ -7097,6 +7100,7 @@ function ContractModal(props){
           dupContracts.slice(0, 4).map(function(c){
             var u = users.find(function(x){ return x.sid === (c.createdBySid || c.managerMain); });
             var cKinds = (c.kinds || (c.kind ? [c.kind] : [])).map(kindName).join('+') || '-';
+            var cSubtype = c.consultingType || c.caseType || c.fundType || c.programName || '';
             var isClosed = c.status === 'closed' || c.status === 'cancelled' || !!c.closedDate;
             var closedLabel = isClosed ? (
               c.closedDate ? ('🏁 종료 ' + String(c.closedDate).slice(0,10)) :
@@ -7112,6 +7116,7 @@ function ContractModal(props){
                   color: isClosed ? '#6b7280' : (isOverlap ? '#b91c1c' : '#065f46'),
                   fontSize:'10px', padding:'1px 6px', borderRadius:'8px', fontWeight:700 } },
                   cKinds),
+                cSubtype ? h('span', { style:{ color:'#475569', fontSize:'10.5px', fontWeight:600, marginLeft:'4px' } }, cSubtype) : null,
                 ' · ', u ? u.name : '-',
                 isClosed && h('span', { style:{ marginLeft:'6px', background:'#f1f5f9', color:'#6b7280', fontSize:'10px', padding:'1px 6px', borderRadius:'8px', fontWeight:600, border:'1px solid #d1d5db' } }, closedLabel)
               ),
