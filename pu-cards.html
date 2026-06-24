@@ -431,7 +431,7 @@ const FIREBASE_CONFIG = {
 const DB_ROOT = 'pucards';
 const GEMINI_KEY_LS = 'pucards_gemini_key';
 
-const state = { tab:'card', group:'all', owner:'all', region:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, items:{}, groups:{}, trash:{} };
+const state = { tab:'card', group:'all', owner:'all', region:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, unlocked:{}, items:{}, groups:{}, trash:{} };
 
 /* ── 데이터 계층 ── */
 const Store = {
@@ -601,6 +601,16 @@ function listItems(){
       return ids.has(it.group||'');
     })
     .filter(it => state.owner==='all' || (it.owner||'')===state.owner)
+    .filter(it => {
+      /* 잠긴 폴더(세션에서 해제 안 된)의 명함은 숨김. 단 그 폴더를 직접 열고 있으면 보임 */
+      const gid = it.group||'';
+      if (!gid) return true;
+      const g = state.groups[gid];
+      if (!g || !g.locked) return true;
+      if (state.unlocked && state.unlocked[gid]) return true;   /* 세션에서 풀림 */
+      if (state.group===gid) return true;                       /* 그 폴더를 직접 보는 중 */
+      return false;
+    })
     .filter(it => !state.region || regionOf(it)===state.region)
     .filter(it => !q || [it.name,it.company,it.title,it.dept,it.mobile,it.tel,it.email,
                          it.ceo,it.bizno,it.address].some(v => String(v||'').toLowerCase().includes(q)
@@ -2023,6 +2033,12 @@ function renderPCSide(){
     const pad = 11 + depth*15;
     const on = state.group===g.id && state.owner==='all';
     const n = cntDeep(g.id);
+    const isLocked = !!g.locked;
+    const unlocked = isLocked && state.unlocked && state.unlocked[g.id];
+    const icon = isLocked ? (unlocked ? '🔓' : '🔒') : '📁';
+    const openClick = isLocked
+      ? `if(tryUnlockFolder('${g.id}')){state.group='${g.id}';state.owner='all';state.region='';state.page=0;}render()`
+      : `state.group='${g.id}';state.owner='all';state.region='';state.page=0;render()`;
     let row = `<div class="pcitem folderrow ${on?'on':''}" style="padding-left:${pad}px"
         draggable="true"
         ondragstart="onFolderDrag(event,'${g.id}')"
@@ -2032,8 +2048,8 @@ function renderPCSide(){
         ${hasKids
           ? `<span onclick="event.stopPropagation();toggleCollapse('${g.id}')" style="cursor:pointer;width:13px;display:inline-block;color:#8fa0c4">${collapsed?'▸':'▾'}</span>`
           : `<span style="width:13px;display:inline-block"></span>`}
-        <span class="gname" onclick="state.group='${g.id}';state.owner='all';state.region='';state.page=0;render()">📁 ${esc(g.name)}</span>
-        <span class="gcount">${n}</span>
+        <span class="gname" onclick="${openClick}">${icon} ${esc(g.name)}</span>
+        <span class="gcount">${isLocked&&!unlocked?'🔒':n}</span>
         <span class="gmenu" onclick="event.stopPropagation();openFolderMenu(event,'${g.id}')" title="관리">⋮</span>
       </div>`;
     if (hasKids && !collapsed) kids.forEach(c=> row += folderRow(c, depth+1));
@@ -2158,17 +2174,57 @@ function openFolderMenu(ev, id){
   const sibs=Object.values(state.groups).filter(x=>(x.kind||'card')===(g.kind||'card') && (x.parent||'')===(g.parent||'')).sort((a,b)=>(a.order||0)-(b.order||0));
   const idx=sibs.findIndex(x=>x.id===id);
   const canUp=idx>0, canDown=idx<sibs.length-1;
+  const lockItem = g.locked
+    ? `<div class="fmi" onclick="closeFolderMenu();unsetFolderLock('${id}')">🔓 잠금 해제</div>`
+    : `<div class="fmi" onclick="closeFolderMenu();setFolderLock('${id}')">🔒 비밀번호 잠금</div>`;
   m.innerHTML = `
     <div class="fmi" onclick="closeFolderMenu();openFolderDialog('${id}')">＋ 하위 폴더 추가</div>
     <div class="fmi" onclick="closeFolderMenu();renameFolder('${id}')">✏️ 이름 변경</div>
     <div class="fmi" onclick="closeFolderMenu();moveCardsHere('${id}')">📥 선택 명함 이 폴더로</div>
     ${canUp?`<div class="fmi" onclick="closeFolderMenu();moveFolderOrder('${id}',-1)">⬆ 위로</div>`:''}
     ${canDown?`<div class="fmi" onclick="closeFolderMenu();moveFolderOrder('${id}',1)">⬇ 아래로</div>`:''}
+    ${lockItem}
     <div class="fmi danger" onclick="closeFolderMenu();deleteFolder('${id}')">🗑 폴더 삭제</div>`;
   m.style.display='block';
-  const x=Math.min(ev.clientX, window.innerWidth-170), y=Math.min(ev.clientY, window.innerHeight-220);
+  const x=Math.min(ev.clientX, window.innerWidth-170), y=Math.min(ev.clientY, window.innerHeight-260);
   m.style.left=x+'px'; m.style.top=y+'px';
   setTimeout(()=>document.addEventListener('click', closeFolderMenu, {once:true}), 0);
+}
+/* 폴더 비밀번호 잠금 설정/해제/확인 (화면에서만 가림 — 진짜 보안 아님) */
+function setFolderLock(id){
+  const g=state.groups[id]; if(!g) return;
+  const pw=prompt(`'${g.name}' 폴더에 걸 비밀번호를 입력하세요.\n(이 폴더는 화면에서 가려지며, 비밀번호를 입력해야 보입니다)`);
+  if(pw===null) return;
+  if(!pw.trim()) return toast('비밀번호가 비어 있습니다');
+  g.locked=true; g.pw=pw; Store.putGroup(g);
+  if(state.unlocked) delete state.unlocked[id];
+  toast('폴더를 잠갔습니다 🔒');
+  render();
+}
+function unsetFolderLock(id){
+  const g=state.groups[id]; if(!g) return;
+  /* 해제하려면 현재 비번 확인 (세션에서 이미 풀려있으면 생략) */
+  if(!(state.unlocked&&state.unlocked[id])){
+    const pw=prompt('잠금을 해제하려면 비밀번호를 입력하세요.');
+    if(pw===null) return;
+    if(pw!==g.pw) return toast('비밀번호가 틀렸습니다');
+  }
+  g.locked=false; delete g.pw; Store.putGroup(g);
+  toast('잠금을 해제했습니다 🔓');
+  render();
+}
+/* 잠긴 폴더 클릭 시 비번 확인 → 세션 동안 해제 */
+function tryUnlockFolder(id){
+  const g=state.groups[id]; if(!g) return false;
+  if(!g.locked) return true;
+  if(state.unlocked && state.unlocked[id]) return true;
+  const pw=prompt(`'${g.name}'은(는) 잠긴 폴더입니다. 비밀번호를 입력하세요.`);
+  if(pw===null) return false;
+  if(pw!==g.pw){ toast('비밀번호가 틀렸습니다'); return false; }
+  if(!state.unlocked) state.unlocked={};
+  state.unlocked[id]=true;
+  toast('잠금을 풀었습니다 (이 세션 동안 표시)');
+  return true;
 }
 /* 폴더 순서 한 칸 이동 (같은 부모 형제끼리 order 교환) */
 function moveFolderOrder(id, dir){
