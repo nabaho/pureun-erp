@@ -725,7 +725,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-24 근태관리에서 이음센터 근무 미표시(휴가·근태만)';
+var ERP_BUILD = '2026-06-24 급여명세서 이메일 PDF를 화면과 동일하게(산출근거 포함)';
 (function(){
   try{
     console.log('[ERP 빌드] '+ERP_BUILD);
@@ -48155,41 +48155,63 @@ function PayrollLedger(props){
     return new Promise(function(resolve, reject){
       if(!window.html2canvas || !window.jspdf){ reject(new Error('PDF 라이브러리 로딩 안됨 (새로고침 후 재시도)')); return; }
       var rec = getRec(u.sid); var calc = calcPayroll(rec); var ym = props.selYM;
-      var won = function(n){ return (n||0).toLocaleString() + '원'; };
-      var r2 = function(label, val, strong){
-        return '<tr><td style="padding:5px 0;color:#475569">' + label + '</td>'
-          + '<td style="padding:5px 0;text-align:right;' + (strong ? 'font-weight:700' : '') + '">' + val + '</td></tr>';
-      };
+      var num = function(n){ return (n||0).toLocaleString(); };
+      var payTr = function(label, val, color){ var c = color?(';color:'+color):''; return '<tr><td style="padding:4px 8px'+c+'">'+label+'</td><td style="padding:4px 8px;text-align:right;font-family:monospace'+c+'">'+val+'</td></tr>'; };
+      var payRows = payTr('기본급', num(rec.baseSalary));
+      (rec.allowances||[]).forEach(function(a){ payRows += payTr(a.name, num(a.amount)); });
+      if(calc.legal.overtime>0) payRows += payTr('연장근로수당 ('+calc.legal.overtimeHours+'h)', num(calc.legal.overtime), '#854d0e');
+      if(calc.legal.night>0)    payRows += payTr('야간근로수당 ('+calc.legal.nightHours+'h)', num(calc.legal.night), '#854d0e');
+      if(calc.legal.holiday>0)  payRows += payTr('휴일근로수당 ('+calc.legal.holidayHours+'h)', num(calc.legal.holiday), '#854d0e');
+      if(calc.perfBonus.total>0) payRows += '<tr><td style="padding:4px 8px;color:#2563eb">성과금 ('+calc.perfBonus.details.length+'건)</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#2563eb;font-weight:700">'+num(calc.perfBonus.total)+'</td></tr>';
+      if((rec.bonus||0)>0) payRows += payTr('기타상여', num(rec.bonus));
+      payRows += '<tr style="background:#f0fdf4;font-weight:700"><td style="padding:5px 8px">지급액 합계</td><td style="padding:5px 8px;text-align:right;font-family:monospace;color:#166534">'+num(calc.grossPay)+'</td></tr>';
+      var dedRows = payTr('국민연금', num(calc.pension)) + payTr('건강보험', num(calc.healthIns)) + payTr('장기요양', num(calc.longCare)) + payTr('고용보험', num(calc.empIns)) + payTr('소득세', num(calc.incomeTax)) + payTr('지방세', num(calc.localTax)) + '<tr style="background:#fef3c7;font-weight:700"><td style="padding:5px 8px">공제 합계</td><td style="padding:5px 8px;text-align:right;font-family:monospace;color:#854d0e">'+num(calc.totalDeduct)+'</td></tr>';
+      var perfHtml = '';
+      if(calc.perfBonus.total>0){
+        var prRows = calc.perfBonus.details.map(function(d){
+          return '<tr style="border-top:1px solid #ede9fe">'
+            + '<td style="padding:4px 6px;font-family:monospace;font-size:10.5px">'+d.date+'</td>'
+            + '<td style="padding:4px 6px">'+d.source+'</td>'
+            + '<td style="padding:4px 6px;text-align:right;font-family:monospace;color:#475569">'+num(d.incomeAmount)+'</td>'
+            + '<td style="padding:4px 6px;text-align:right;font-family:monospace;color:'+(((d.taxDeduction||0)>0)?'#dc2626':'#cbd5e1')+'">'+(((d.taxDeduction||0)>0)?('-'+num(d.taxDeduction)):'-')+'</td>'
+            + '<td style="padding:4px 6px;text-align:right;font-family:monospace;font-weight:600">'+num(d.baseAmount)+'</td>'
+            + '<td style="padding:4px 6px;text-align:center"><span style="background:'+((d.role==='주담당')?'#ede9fe':'#dbeafe')+';color:#1e40af;font-size:10.5px;padding:1px 6px;border-radius:8px;font-weight:600">'+d.role+'</span></td>'
+            + '<td style="padding:4px 6px;text-align:right;font-family:monospace;color:#64748b">'+d.pct+'%</td>'
+            + '<td style="padding:4px 6px;text-align:right;font-family:monospace;font-weight:700;color:#2563eb">'+num(d.amount)+'</td>'
+            + '</tr>';
+        }).join('');
+        perfHtml = '<div style="margin-bottom:16px"><div style="background:#ede9fe;padding:7px 10px;font-weight:700;font-size:12px;color:#1e40af;border-radius:4px 4px 0 0">🌟 성과금 발생내역 ('+calc.perfBonus.details.length+'건 / 합계 '+num(calc.perfBonus.total)+'원)</div><table style="width:100%;font-size:11px;border-collapse:collapse;border:1px solid #e5e7eb"><thead><tr style="background:#faf5ff"><th style="padding:4px 6px;text-align:left;font-weight:700;color:#1e40af">발생일</th><th style="padding:4px 6px;text-align:left;font-weight:700;color:#1e40af">발생원</th><th style="padding:4px 6px;text-align:right;font-weight:700;color:#1e40af">입금금액</th><th style="padding:4px 6px;text-align:right;font-weight:700;color:#1e40af">세금공제</th><th style="padding:4px 6px;text-align:right;font-weight:700;color:#1e40af">산정기준</th><th style="padding:4px 6px;text-align:center;font-weight:700;color:#1e40af">역할</th><th style="padding:4px 6px;text-align:right;font-weight:700;color:#1e40af">요율</th><th style="padding:4px 6px;text-align:right;font-weight:700;color:#1e40af">성과금</th></tr></thead><tbody>'+prRows+'</tbody></table></div>';
+      }
+      var ntHtml = '';
+      if(calc.nonTaxable.total>0){
+        var ntParts = '';
+        if(calc.nonTaxable.meal>0) ntParts += '<span style="margin-right:14px">식대 '+num(calc.nonTaxable.meal)+'</span>';
+        if(calc.nonTaxable.car>0) ntParts += '<span style="margin-right:14px">자가운전 '+num(calc.nonTaxable.car)+'</span>';
+        if(calc.nonTaxable.childcare>0) ntParts += '<span style="margin-right:14px">보육 '+num(calc.nonTaxable.childcare)+'</span>';
+        ntHtml = '<div style="margin-bottom:12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:5px;padding:8px 12px;font-size:11px"><div style="font-weight:700;color:#065f46;margin-bottom:4px">🟢 비과세 항목 (4대보험·소득세 산정 시 제외)</div><div style="color:#0f766e;font-family:monospace">'+ntParts+'<span style="font-weight:700">비과세계 '+num(calc.nonTaxable.total)+'원</span></div><div style="font-size:10.5px;color:#065f46;margin-top:2px">과세표준 = 지급액 '+num(calc.grossPay)+' - 비과세 '+num(calc.nonTaxable.total)+' = '+num(calc.insurableBase)+'원</div></div>';
+      }
+      var reimbList = rec.reimbursements||[];
+      var reimbTotal = reimbList.reduce(function(s,r){return s+(parseInt(r.amount)||0);},0);
+      var reimbHtml = '';
+      if(reimbTotal>0){
+        var rbRows = reimbList.map(function(rb){ return '<tr style="border-top:1px solid #fef3c7"><td style="padding:3px 6px;font-family:monospace;font-size:10.5px">'+(rb.date||'-')+'</td><td style="padding:3px 6px">'+(rb.category||'-')+'</td><td style="padding:3px 6px;color:#64748b">'+(rb.note||'-')+'</td><td style="padding:3px 6px;text-align:right;font-family:monospace">'+num(rb.amount)+'</td></tr>'; }).join('');
+        reimbHtml = '<div style="margin-top:12px"><div style="background:#fef3c7;padding:7px 10px;font-weight:700;font-size:12px;color:#854d0e;border-radius:4px 4px 0 0">💵 실비변상 (비과세 - 4대보험·소득세 산정 제외)</div><table style="width:100%;font-size:11px;border-collapse:collapse;border:1px solid #fde68a"><thead><tr style="background:#fef3c7"><th style="padding:4px 6px;text-align:left;font-weight:700;color:#854d0e">발생일</th><th style="padding:4px 6px;text-align:left;font-weight:700;color:#854d0e">구분</th><th style="padding:4px 6px;text-align:left;font-weight:700;color:#854d0e">내용</th><th style="padding:4px 6px;text-align:right;font-weight:700;color:#854d0e">금액</th></tr></thead><tbody>'+rbRows+'<tr style="background:#fef3c7;font-weight:700"><td colspan="3" style="padding:5px 6px">실비 합계</td><td style="padding:5px 6px;text-align:right;font-family:monospace;color:#854d0e">'+num(reimbTotal)+'</td></tr></tbody></table></div><div style="margin-top:10px;background:#854d0e;color:#fff;padding:12px 20px;border-radius:6px;display:flex;justify-content:space-between;align-items:center"><div style="font-size:14px;font-weight:700">💵 실비 입금 (비과세)</div><div style="font-size:22px;font-weight:800;font-family:monospace">'+num(reimbTotal)+' 원</div></div>';
+      }
+      var basisHtml = '<div style="margin-top:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:5px;padding:8px 12px;font-size:10px;color:#475569;line-height:1.7"><div style="font-weight:700;color:#334155;margin-bottom:3px">📋 산출근거 (근로기준법 48조 임금명세서 의무 기재)</div>· 통상시급: (기본급 '+num(rec.baseSalary)+' + 고정수당) ÷ 209h = '+num(calc.legal.ordinaryWage)+'원<br>'+(calc.prorated?('· 일할계산: 기본급 × '+calc.workDays+'/30일 = '+num(calc.baseSalaryProrated)+'원<br>'):'')+'· 국민연금: 과세표준 × 4.5% (상한월 6,170,000원) | 건강보험: 3.545% | 장기요양: 건강보험 × 12.95% | 고용보험: 0.9%<br>· 소득세: 근로소득 간이세액표 (부양가족 '+(rec.dependents||1)+'명) | 지방세: 소득세 × 10%<br>· 연장 ×1.5 / 야간 추가 ×0.5 / 휴일 8h이내 ×1.5, 초과 ×2.0 / 주휴 (주 15h 이상)'+(calc.minWageWarning?('<div style="margin-top:4px;color:#dc2626;font-weight:700">⚠️ 최저임금 위반: 2026년 시급 10,320원 / 월 209h '+num(calc.minWageMonthly)+'원 미달</div>'):'')+'</div>';
       var el = document.createElement('div');
-      el.style.cssText = 'position:absolute;left:-9999px;top:0;width:600px;background:#fff;padding:36px;font-family:\'Malgun Gothic\',\'\ub9d1\uc740 \uace0\ub515\',sans-serif;color:#1e293b';
+      el.style.cssText = "position:absolute;left:-9999px;top:0;width:700px;box-sizing:border-box;background:#fff;padding:30px;font-family:'Malgun Gothic','맑은 고딕',sans-serif;color:#1e293b";
       el.innerHTML =
-        '<div style="text-align:center;font-size:22px;font-weight:700">\uae09\uc5ec\uba85\uc138\uc11c</div>'
-        + '<div style="text-align:center;font-size:13px;color:#64748b;margin:4px 0 22px">' + ym + ' &middot; \ud478\ub978\ub178\ubb34\ubc95\uc778</div>'
-        + '<table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:6px">'
-        + '<tr><td style="padding:5px 0;color:#475569">\uc131\uba85</td><td style="padding:5px 0;text-align:right;font-weight:700">' + u.name + '</td></tr>'
-        + '</table>'
-        + '<div style="font-weight:700;font-size:15px;margin:16px 0 4px;border-bottom:2px solid #1e293b;padding-bottom:4px">\uc9c0\uae09</div>'
-        + '<table style="width:100%;border-collapse:collapse;font-size:14px">'
-        + r2('\uae30\ubcf8\uae09', won(rec.baseSalary))
-        + r2('\uc218\ub2f9 \ud569\uacc4', won(calc.allowSum))
-        + r2('\ubc95\uc815\uc218\ub2f9', won(calc.legal.total))
-        + r2('\uc131\uacfc\uae08', won(calc.perfBonus.total))
-        + r2('\uc9c0\uae09\uc561 \ud569\uacc4', won(calc.grossPay), true)
-        + '</table>'
-        + '<div style="font-weight:700;font-size:15px;margin:16px 0 4px;border-bottom:2px solid #1e293b;padding-bottom:4px">\uacf5\uc81c</div>'
-        + '<table style="width:100%;border-collapse:collapse;font-size:14px">'
-        + r2('\uad6d\ubbfc\uc5f0\uae08', won(calc.pension))
-        + r2('\uac74\uac15\ubcf4\ud5d8', won(calc.healthIns))
-        + r2('\uc7a5\uae30\uc694\uc591', won(calc.longCare))
-        + r2('\uace0\uc6a9\ubcf4\ud5d8', won(calc.empIns))
-        + r2('\uc18c\ub4dd\uc138', won(calc.incomeTax))
-        + r2('\uc9c0\ubc29\uc138', won(calc.localTax))
-        + r2('\uacf5\uc81c \ud569\uacc4', won(calc.totalDeduct), true)
-        + '</table>'
-        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:20px;padding:14px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px">'
-        + '<span style="font-weight:700;font-size:15px">\uc2e4\uc9c0\uae09\uc561</span>'
-        + '<span style="font-weight:700;font-size:18px;color:#16a34a">' + won(calc.netPay) + '</span></div>'
-        + '<div style="margin-top:24px;font-size:12px;color:#94a3b8;text-align:center">\ubb38\uc758\uc0ac\ud56d\uc740 \uc0ac\ubb34\uc2e4\ub85c \uc5f0\ub77d \uc8fc\uc138\uc694 &middot; \ud478\ub978\ub178\ubb34\ubc95\uc778</div>';
+        '<div style="text-align:center;margin-bottom:24px;border-bottom:2px solid #1e40af;padding-bottom:12px"><div style="font-size:11px;color:#64748b;margin-bottom:4px">푸른노무법인</div><div style="font-size:22px;font-weight:800;color:#1e293b">'+ym+' 급여명세서</div></div>'
+        + '<table style="width:100%;margin-bottom:18px;font-size:12.5px;border-collapse:collapse"><tbody>'
+        + '<tr><td style="padding:5px 8px;background:#f8fafc;width:90px;font-weight:700">성명</td><td style="padding:5px 8px;border-right:1px solid #e5e7eb">'+u.name+'</td><td style="padding:5px 8px;background:#f8fafc;width:90px;font-weight:700">사번</td><td style="padding:5px 8px">'+u.sid+'</td></tr>'
+        + '<tr><td style="padding:5px 8px;background:#f8fafc;font-weight:700">직책</td><td style="padding:5px 8px;border-right:1px solid #e5e7eb">'+u.title+'</td><td style="padding:5px 8px;background:#f8fafc;font-weight:700">소속</td><td style="padding:5px 8px">'+(u.branch||'천안본사')+'</td></tr>'
+        + '<tr><td style="padding:5px 8px;background:#f8fafc;font-weight:700">입사일</td><td style="padding:5px 8px;border-right:1px solid #e5e7eb">'+(u.hireDate||'-')+'</td><td style="padding:5px 8px;background:#f8fafc;font-weight:700">지급일</td><td style="padding:5px 8px">'+(rec.paidDate||(ym+'-25'))+'</td></tr>'
+        + '</tbody></table>'
+        + '<table style="width:100%;border-collapse:collapse;margin-bottom:16px"><tr><td style="width:50%;vertical-align:top;padding-right:7px"><div style="background:#dcfce7;padding:7px 10px;font-weight:700;font-size:12.5px;color:#166534;border-radius:4px 4px 0 0">지급</div><table style="width:100%;font-size:12px;border-collapse:collapse;border:1px solid #e5e7eb"><tbody>'+payRows+'</tbody></table></td><td style="width:50%;vertical-align:top;padding-left:7px"><div style="background:#fef3c7;padding:7px 10px;font-weight:700;font-size:12.5px;color:#854d0e;border-radius:4px 4px 0 0">공제</div><table style="width:100%;font-size:12px;border-collapse:collapse;border:1px solid #e5e7eb"><tbody>'+dedRows+'</tbody></table></td></tr></table>'
+        + perfHtml + ntHtml
+        + '<div style="background:#2563eb;color:#fff;padding:14px 20px;border-radius:6px;display:flex;justify-content:space-between;align-items:center"><div style="font-size:14px;font-weight:700">실지급액 (급여)</div><div style="font-size:22px;font-weight:800;font-family:monospace">'+num(calc.netPay)+' 원</div></div>'
+        + reimbHtml + basisHtml
+        + '<div style="text-align:center;margin-top:12px;font-size:10.5px;color:#94a3b8;border-top:1px solid #e5e7eb;padding-top:8px">본 명세서는 '+todayYMD()+' 발행되었습니다.</div>';
       document.body.appendChild(el);
       window.html2canvas(el, { scale: 1.3, backgroundColor: '#ffffff' }).then(function(canvas){
         try { document.body.removeChild(el); } catch(_e){}
