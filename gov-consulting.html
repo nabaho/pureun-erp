@@ -263,6 +263,9 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 .re{text-align:center;color:var(--t2);font-size:11px;opacity:.7;}
 .tg-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;}
 .tg-btn{padding:8px;border:1.5px solid var(--border);border-radius:8px;background:var(--surface);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;}
+.drag-chip{padding:6px 14px;border-radius:8px;color:#fff;font-size:12px;font-weight:800;cursor:grab;user-select:none;}
+.drag-chip:active{cursor:grabbing;opacity:.7;}
+.bulk-cell.drop-hover{outline:3px dashed var(--accent);outline-offset:-2px;}
 .rng-opt{flex:1;max-width:80px;padding:6px 4px;border:1.5px solid var(--border);border-radius:8px;background:var(--surface);color:var(--t2);font-size:11px;font-weight:700;text-align:center;cursor:pointer;}
 .rng-opt.on{border-color:var(--accent);background:rgba(46,58,140,.08);color:var(--accent);font-weight:800;}
 .tg-btn:hover{border-color:var(--accent);color:var(--accent);}
@@ -805,18 +808,23 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
   <div class="modal sm" style="max-width:380px;">
     <div class="mhdr"><h3 id="mSingleTitle">개별 일정 등록</h3><button class="mcls" id="mSingleCls">✕</button></div>
     <div class="mbody">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap;">
         <div id="mSingleInfo" style="flex:1;font-size:12px;font-weight:700;color:var(--accent);"></div>
         <div class="tog-row" id="mSingleField" style="width:auto;">
           <div class="topt on" data-f="1" style="padding:5px 12px;font-size:12px;">📍 방문</div>
           <div class="topt" data-f="0" style="padding:5px 12px;font-size:12px;">🏢 사무실</div>
         </div>
       </div>
+      <div id="mSingleHistory" style="font-size:11px;color:var(--t2);background:var(--sf2);border-radius:8px;padding:6px 10px;margin-bottom:10px;line-height:1.5;"></div>
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;font-size:11px;color:var(--t2);">
         <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:700;">
           <input type="checkbox" id="mSingleMulti" style="cursor:pointer;"> 여러 회차 한 번에 등록
         </label>
-        <span id="mMultiHint" style="display:none;">— 날짜를 여러 개 누르면 방문/사무실이 각각 기록됩니다</span>
+      </div>
+      <div id="mDragPalette" style="display:none;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:11px;color:var(--t2);font-weight:700;">끌어다 날짜에 놓기 →</span>
+        <div class="drag-chip" draggable="true" data-f="1" style="background:var(--accent);">📍 방문</div>
+        <div class="drag-chip" draggable="true" data-f="0" style="background:var(--info);">🏢 사무실</div>
       </div>
       <div style="font-size:10px;font-weight:800;color:var(--t2);margin-bottom:6px;">날짜를 선택하세요</div>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
@@ -955,11 +963,17 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
           </div>
           <div style="margin-top:8px;">
             <div style="font-size:10px;color:var(--t2);text-align:center;margin-bottom:5px;">입장~활동 간격 범위</div>
-            <div id="mStampRange" style="display:flex;gap:5px;justify-content:center;">
+            <div id="mStampRange" style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap;">
+              <div class="rng-opt" data-rng="1">1시간</div>
               <div class="rng-opt" data-rng="2">2시간</div>
+              <div class="rng-opt" data-rng="3">3시간</div>
               <div class="rng-opt" data-rng="4">4시간</div>
+              <div class="rng-opt" data-rng="5">5시간</div>
               <div class="rng-opt" data-rng="6">6시간</div>
+              <div class="rng-opt" data-rng="7">7시간</div>
+              <div class="rng-opt" data-rng="8">8시간</div>
             </div>
+            <div style="font-size:9px;color:var(--t2);text-align:center;margin-top:4px;">입장 시각 + 선택 시간 (±15분 랜덤)</div>
           </div>
         </div>
       </div>
@@ -1330,7 +1344,7 @@ function getCoAtts(o){
 }
 function coAttStaffList(o){const st=getStaff();return getCoAtts(o).map(id=>st.find(a=>a.id===id)).filter(Boolean);}
 // Stamp state
-const ST={sid:null,photos:[null,null],times:[null,null],done:[false,false],pos:'bottom-left',color:'#ffb347',slot:0,rangeHr:2};
+const ST={sid:null,photos:[null,null],times:[null,null],done:[false,false],pos:'bottom-left',color:'#ffb347',slot:0,rangeHr:2,view:[{ox:.5,oy:.5,z:1},{ox:.5,oy:.5,z:1}]};
 
 // ===== UTILS =====
 function todayStr(){const d=new Date();return `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`;}
@@ -1510,8 +1524,19 @@ function openSingleModal(coId,typeId){
   single={coId,typeId,isField:getFieldState(coId,typeId),selDate:'',calY:new Date().getFullYear(),calM:new Date().getMonth(),multi:false,picks:[]};
   q('#mSingleTitle').textContent='개별 일정 등록';
   q('#mSingleInfo').textContent=`${co.name} · ${t.fullName||t.name} | ${nr}회차`;
+  // 기존 등록 현황 (총 회차 / 마지막 회차 날짜)
+  (function(){
+    const ex=getScheds().filter(s=>s.coId===coId&&s.typeId===typeId).sort((a,b)=>a.date<b.date?-1:1);
+    const hEl=q('#mSingleHistory');
+    if(!ex.length){ hEl.innerHTML=`아직 등록된 일정이 없습니다. <b style="color:var(--accent);">1회차부터 시작</b>${maxR>0?` · 최대 ${maxR}회차`:''}`; return; }
+    const last=ex[ex.length-1];
+    const lastR=getScheds().find(s=>s.id===last.id)?.round||ex.length;
+    const lf=last.isField?'📍방문':'🏢사무실';
+    hEl.innerHTML=`기존 <b style="color:var(--accent);">${ex.length}회</b> 등록됨 · 마지막 <b>${lastR}회차</b> (${last.date} ${lf})${maxR>0?` · 최대 ${maxR}회차`:''} → <b style="color:var(--accent);">다음 ${nr}회차</b>`;
+  })();
   qa('#mSingleField .topt').forEach(o=>o.classList.toggle('on',(o.dataset.f==='1')===single.isField));
-  q('#mSingleMulti').checked=false;q('#mMultiHint').style.display='none';
+  q('#mSingleMulti').checked=false;q('#mDragPalette').style.display='none';
+  q('#mSingleField').style.display='';
   q('#mMultiList').style.display='none';q('#mMultiList').innerHTML='';
   renderSingleCal();renderSingleSelected();
   q('#mbSingle').classList.add('open');
@@ -1540,7 +1565,10 @@ function renderSingleCal(){
     else if(isToday)cls+=' today';
     const clk=(!blocked&&!isTaken)?`onclick="pickSingleDate('${ds}')"`:'';
     const icon=isSel?((pick?pick.isField:single.isField)?'📍':'🏢'):'';
-    h+=`<div class="${cls}" ${clk}>${icon||d}</div>`;
+    const droppable=(single.multi&&!blocked&&!isTaken)
+      ? ` ondragover="event.preventDefault();this.classList.add('drop-hover');" ondragleave="this.classList.remove('drop-hover');" ondrop="onDropDate(event,'${ds}')"`
+      : '';
+    h+=`<div class="${cls}" ${clk}${droppable}>${icon||d}</div>`;
   }
   q('#mSingleCal').innerHTML=h+`</div>`;
 }
@@ -1565,13 +1593,24 @@ function pickSingleDate(ds){
     renderSingleCal();renderSingleSelected();
   }
 }
+function calcMultiRounds(){
+  // 기존 일정 날짜 + picks 날짜를 합쳐 날짜순 정렬 → 각 picks의 회차 산출
+  const exist=getScheds().filter(s=>s.coId===single.coId&&s.typeId===single.typeId).map(s=>s.date);
+  const all=[...exist,...single.picks.map(p=>p.date)].sort((a,b)=>a<b?-1:1);
+  const map={};
+  single.picks.forEach(pk=>{ map[pk.date]=all.indexOf(pk.date)+1; });
+  return map;
+}
 function renderMultiList(){
   const box=q('#mMultiList');
-  if(!single.picks.length){box.innerHTML='<div style="font-size:11px;color:var(--t2);text-align:center;padding:6px;">날짜를 누르면 여기에 쌓입니다</div>';return;}
-  box.innerHTML=single.picks.map(pk=>{
+  if(!single.picks.length){box.innerHTML='<div style="font-size:11px;color:var(--t2);text-align:center;padding:6px;">날짜를 끌어다 놓으면 여기에 쌓입니다</div>';return;}
+  const rmap=calcMultiRounds();
+  const sorted=[...single.picks].sort((a,b)=>a.date<b.date?-1:1);
+  box.innerHTML=sorted.map(pk=>{
     const ic=pk.isField?'📍 방문':'🏢 사무실';
     const col=pk.isField?'var(--accent)':'var(--info)';
-    return `<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;border-bottom:1px solid var(--border);font-size:12px;">
+    return `<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid var(--border);font-size:12px;">
+      <span style="background:var(--accent);color:#fff;border-radius:8px;padding:2px 8px;font-weight:800;font-size:11px;">${rmap[pk.date]}회차</span>
       <span style="flex:1;font-weight:700;">${pk.date}</span>
       <span onclick="togglePickField('${pk.date}')" style="color:${col};font-weight:800;cursor:pointer;" title="방문/사무실 전환">${ic}</span>
       <span onclick="pickSingleDate('${pk.date}')" style="color:var(--danger);cursor:pointer;font-weight:900;">✕</span>
@@ -1581,6 +1620,19 @@ function renderMultiList(){
 function togglePickField(ds){
   const pk=single.picks.find(x=>x.date===ds);
   if(pk){pk.isField=!pk.isField;renderSingleCal();renderMultiList();}
+}
+function onDropDate(ev,ds){
+  ev.preventDefault();
+  const cell=ev.currentTarget; if(cell)cell.classList.remove('drop-hover');
+  if(!single.multi)return;
+  const f=ev.dataTransfer.getData('text/f');
+  if(f!=='0'&&f!=='1')return;
+  const isField=(f==='1');
+  const pk=single.picks.find(x=>x.date===ds);
+  if(pk){ pk.isField=isField; }              // 이미 있으면 종류만 변경
+  else{ single.picks.push({date:ds,isField}); }
+  single.picks.sort((a,b)=>a.date<b.date?-1:1);
+  renderSingleCal();renderMultiList();
 }
 
 function saveSingle(){
@@ -3247,7 +3299,7 @@ function deleteType(id){
 
 // ===== STAMP MODAL =====
 function openStampModal(sid){
-  ST.sid=sid;ST.photos=[null,null];ST.times=[null,null];ST.done=[false,false];ST.pos='bottom-left';ST.color='#ffb347';ST.slot=0;ST.pHash=[null,null];ST.pDurl=[null,null];
+  ST.sid=sid;ST.photos=[null,null];ST.times=[null,null];ST.done=[false,false];ST.pos='bottom-left';ST.color='#ffb347';ST.slot=0;ST.pHash=[null,null];ST.pDurl=[null,null];ST.view=[{ox:.5,oy:.5,z:1},{ox:.5,oy:.5,z:1}];
   // 이미 저장된 사진이 있으면 done 플래그 복원
   const saved=PHOTOS[sid];
   if(saved){if(saved.c0)ST.done[0]=true;if(saved.c1)ST.done[1]=true;}
@@ -3305,6 +3357,7 @@ function renderRFs(){
         <canvas id="cv${i}"></canvas>`;
       if(ST.photos[i]&&ST.times[i]){
         drawStamp(i); // 새로 합성
+        attachPhotoAdjust(i); // 끌어서 위치/줌 조정
       } else {
         const sc=PHOTOS[ST.sid]?.[`c${i}`];
         if(sc){const cv=q(`#cv${i}`);cv.width=sc.width;cv.height=sc.height;cv.getContext('2d').drawImage(sc,0,0);}
@@ -3343,7 +3396,7 @@ function renderRFs(){
 
 function loadStampImg(idx,file){
   const finish=async(img,durl)=>{
-    const apply=()=>{ST.photos[idx]=img;ST.done[idx]=false;renderPDs();renderRFs();};
+    const apply=()=>{ST.photos[idx]=img;ST.done[idx]=false;if(ST.view)ST.view[idx]={ox:.5,oy:.5,z:1};renderPDs();renderRFs();};
     if(durl){
       const h=await hashDataUrl(durl);
       ST.pHash[idx]=h;ST.pDurl[idx]=durl;
@@ -3370,20 +3423,58 @@ function loadStampImg(idx,file){
 
 function applyTimes(slot){
   if(!ST.photos[0]||!ST.photos[1]){toast('사진 2장을 먼저 올려주세요','err');return;}
-  // 입장(시작) 기본 범위: 오전 09:30~10:00, 오후 13:30~14:30
-  const s=slot==='morning'?570:810, e=slot==='morning'?600:870;
-  const f=s+Math.floor(Math.random()*(e-s+1));
-  // 간격: 선택한 범위시간 기준 ±20분 변동 (예: 2시간 → 100~140분)
+  // 입장(시작) 시각: 입력칸 값 우선, 없으면 오전/오후 기본 범위에서 랜덤
+  let f;
+  const ih=q('#mh0').value, im=q('#mm0').value;
+  if(ih!==''&&!isNaN(+ih)){
+    f=Math.min(1439, Math.max(0, (+ih)*60 + (im!==''&&!isNaN(+im)?+im:0)));
+  }else{
+    const s=slot==='morning'?570:810, e=slot==='morning'?600:870;
+    f=s+Math.floor(Math.random()*(e-s+1));
+  }
+  // 활동 = 입장 + 선택시간 ±15분 완전 랜덤 (정각 포함)
   const base=(ST.rangeHr||2)*60;
-  const g=Math.max(30, base-20+Math.floor(Math.random()*41));
-  const t=f+g;
+  const g=base-15+Math.floor(Math.random()*31); // base-15 ~ base+15
+  let t=f+g; if(t>1439)t=1439;
   ST.times=[{h:Math.floor(f/60),m:f%60},{h:Math.floor(t/60),m:t%60}];
   ST.done=[true,true];renderRFs();
+}
+function attachPhotoAdjust(idx){
+  const cv=q(`#cv${idx}`); if(!cv)return;
+  if(!ST.view)ST.view=[{ox:.5,oy:.5,z:1},{ox:.5,oy:.5,z:1}];
+  if(!ST.view[idx])ST.view[idx]={ox:.5,oy:.5,z:1};
+  cv.style.cursor='grab'; cv.title='끌어서 위치 이동 · 휠로 확대/축소';
+  let dragging=false,lx=0,ly=0;
+  const redraw=()=>{ if(ST.done[idx]&&ST.photos[idx]&&ST.times[idx])drawStamp(idx); };
+  cv.onmousedown=e=>{ dragging=true;lx=e.clientX;ly=e.clientY;cv.style.cursor='grabbing';e.preventDefault(); };
+  window.addEventListener('mousemove',e=>{
+    if(!dragging)return;
+    const rect=cv.getBoundingClientRect();
+    const v=ST.view[idx];
+    // 화면 이동량 → 이미지 중심비율 변화 (보이는 폭 대비)
+    v.ox=Math.min(1,Math.max(0, v.ox - (e.clientX-lx)/rect.width/(v.z||1) ));
+    v.oy=Math.min(1,Math.max(0, v.oy - (e.clientY-ly)/rect.height/(v.z||1) ));
+    lx=e.clientX;ly=e.clientY; redraw();
+  });
+  window.addEventListener('mouseup',()=>{ if(dragging){dragging=false;cv.style.cursor='grab';} });
+  cv.onwheel=e=>{
+    e.preventDefault();
+    const v=ST.view[idx];
+    v.z=Math.min(4,Math.max(1,(v.z||1)*(e.deltaY<0?1.1:0.9)));
+    redraw();
+  };
 }
 function renderRangeOpts(){
   qa('#mStampRange .rng-opt').forEach(o=>{
     o.classList.toggle('on',+o.dataset.rng===ST.rangeHr);
-    o.onclick=()=>{ST.rangeHr=+o.dataset.rng;renderRangeOpts();};
+    o.onclick=()=>{
+      ST.rangeHr=+o.dataset.rng;renderRangeOpts();
+      // 사진 2장 있으면 즉시 타임스탬프 적용 (입장시각 입력값 기준)
+      if(ST.photos[0]&&ST.photos[1]){
+        const ih=q('#mh0').value;
+        applyTimes(ih!==''&&!isNaN(+ih)&&(+ih)>=12?'afternoon':'morning');
+      }
+    };
   });
 }
 
@@ -3402,8 +3493,21 @@ function drawStamp(idx){
     Promise.all([document.fonts.load("16px 'RadioGothic'"),document.fonts.load("16px 'LogoCasual'")]).then(()=>{if(ST.done[idx])drawStamp(idx);}).catch(()=>{});
   }
   const ctx=cv.getContext('2d'),img=ST.photos[idx];
-  cv.width=img.naturalWidth;cv.height=img.naturalHeight;ctx.drawImage(img,0,0);
-  const W=cv.width,H=cv.height;
+  // 결과물은 항상 1080×1080 정사각형 — 원본을 중앙 크롭(cover)으로 꽉 채움
+  const OUT=1080;
+  cv.width=OUT;cv.height=OUT;
+  const iw=img.naturalWidth||img.width, ih=img.naturalHeight||img.height;
+  const v=(ST.view&&ST.view[idx])||{ox:.5,oy:.5,z:1};
+  const scale=Math.max(OUT/iw,OUT/ih)*(v.z||1);
+  const dw=iw*scale, dh=ih*scale;
+  // ox,oy: 0~1 (이미지의 어느 지점을 중앙에 둘지). 끌어서 이동/줌 반영, 빈 영역 안 생기게 클램프
+  let drawX=OUT/2-dw*(v.ox==null?.5:v.ox);
+  let drawY=OUT/2-dh*(v.oy==null?.5:v.oy);
+  drawX=Math.min(0,Math.max(OUT-dw,drawX));
+  drawY=Math.min(0,Math.max(OUT-dh,drawY));
+  ctx.fillStyle='#000';ctx.fillRect(0,0,OUT,OUT);
+  ctx.drawImage(img,drawX,drawY,dw,dh);
+  const W=OUT,H=OUT;
   const sc=getScheds().find(s=>s.id===ST.sid);
   const ds=sc?.date||todayStr();const[yr,mo,dy]=ds.split('-').map(Number);
   const t=ST.times[idx];
@@ -3747,14 +3851,19 @@ function bind(){
   q('#mAlertOk').onclick=()=>q('#mbAlert').classList.remove('open');
   q('#mSingleMulti').onchange=e=>{
     single.multi=e.target.checked;
-    q('#mMultiHint').style.display=single.multi?'inline':'none';
+    q('#mDragPalette').style.display=single.multi?'flex':'none';
     q('#mMultiList').style.display=single.multi?'block':'none';
     q('#mSingleSelected').style.display=single.multi?'none':'block';
+    q('#mSingleField').style.display=single.multi?'none':'';
     if(single.multi){single.selDate='';if(!single.picks)single.picks=[];renderMultiList();}
     else{single.picks=[];}
     q('#mSingleSave').textContent=single.multi?'💾 전체 등록':'💾 등록';
     renderSingleCal();
   };
+  // 드래그 팔레트: 끌기 시작 시 어떤 종류인지 기록
+  qa('#mDragPalette .drag-chip').forEach(chip=>{
+    chip.addEventListener('dragstart',ev=>{ ev.dataTransfer.setData('text/f',chip.dataset.f); ev.dataTransfer.effectAllowed='copy'; });
+  });
   q('#mSinglePrev').onclick=()=>{single.calM--;if(single.calM<0){single.calM=11;single.calY--;}renderSingleCal();};
   q('#mSingleNext').onclick=()=>{single.calM++;if(single.calM>11){single.calM=0;single.calY++;}renderSingleCal();};
   qa('#mSingleField .topt').forEach(o=>o.onclick=()=>{single.isField=o.dataset.f==='1';qa('#mSingleField .topt').forEach(x=>x.classList.toggle('on',(x.dataset.f==='1')===single.isField));renderSingleCal();renderSingleSelected();});
