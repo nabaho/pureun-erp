@@ -725,7 +725,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-27 인증 보강 — 미인증·권한거부 시 옛 데이터 대신 로그인 안내';
+var ERP_BUILD = '2026-06-27 서버에서 다시 받기 버튼 (환경설정 — 옛 데이터 복구, 읽기전용)';
 // === 자동 최신화 — 브라우저 캐시 때문에 옛 코드가 계속 도는 문제 방지 ===
 // 세션당 1회, 서버의 배포 버전을 확인해 현재 실행 중 버전과 다르면 캐시 우회로 새로고침.
 (function(){
@@ -2568,6 +2568,48 @@ function startRecentBackupTimer(){
   window._recentBackupTimer = setInterval(serverBackupRecent, RECENT_BACKUP_INTERVAL_MIN * 60 * 1000);
 }
 window.erpRecentBackupNow = function(){ serverBackupRecent(); console.log('수시 백업 시도'); };
+
+// ── 서버에서 강제로 받아오기 (읽기 전용, _meta 무시) — 콘솔: erpPullFromServer() / 환경설정 버튼 ──
+window.erpPullFromServer = function(){
+  if(typeof fbDb === 'undefined' || !fbDb){ try{ showToast('Firebase 미연결 — 받아올 수 없습니다'); }catch(_){ alert('Firebase 미연결'); } return; }
+  if(typeof firebase !== 'undefined' && firebase.auth && !firebase.auth().currentUser){
+    try{ showToast('서버 로그인이 필요합니다 — 로그아웃 후 다시 로그인하세요'); }catch(_){ alert('서버 로그인이 필요합니다'); }
+    return;
+  }
+  if(!confirm('서버의 최신 데이터를 이 기기로 받아옵니다.\n(이 기기 화면 데이터를 서버 내용으로 교체 · 서버에는 쓰지 않음)\n\n계속할까요?')) return;
+  fbDb.ref('data').once('value').then(function(snap){
+    var remote = snap.val() || {};
+    var CHECK = ['companies','cases','consultings','funds','other_projects','payroll_monthly','finance_income','finance_expense','contracts'];
+    var shrink = [];
+    CHECK.forEach(function(k){
+      var rec = remote[k];
+      var sv = (rec && rec.v !== undefined) ? normalizeFbValue(rec.v) : [];
+      var sN = Array.isArray(sv) ? sv.length : 0;
+      var lN = 0; try { var la = JSON.parse(localStorage.getItem(KEY+k)||'[]'); lN = Array.isArray(la)?la.length:0; } catch(e){}
+      if(lN >= 10 && sN < lN * 0.5) shrink.push('· '+k+': 이 기기 '+lN+'건 → 서버 '+sN+'건');
+    });
+    if(shrink.length && !confirm('⚠ 서버 데이터가 이 기기보다 훨씬 적습니다:\n'+shrink.join('\n')+'\n\n받아오면 이 기기 데이터가 줄어듭니다. 그래도 받으시겠어요?')) return;
+    var n = 0;
+    Object.keys(remote).forEach(function(k){
+      try {
+        if(!fbShouldSync(k)) return;
+        var rec = remote[k];
+        if(!rec || rec.v === undefined) return;
+        var val = normalizeFbValue(rec.v);
+        localStorage.setItem(KEY+k, JSON.stringify(val));
+        localStorage.setItem(KEY+'_meta_'+k, String(rec.u || Date.now()));
+        if(typeof _dbCache !== 'undefined') _dbCache[k] = val;
+        n++;
+      } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+    });
+    try { showToast('서버에서 '+n+'개 항목을 받았습니다 — 새로고침합니다'); } catch(_){}
+    setTimeout(function(){ location.reload(); }, 600);
+  }).catch(function(e){
+    var m = (e && (e.message||e.code||''))+'';
+    if(/permission|PERMISSION_DENIED/i.test(m)){ try{ showToast('서버 인증 필요 — 다시 로그인하세요'); }catch(_){} }
+    else { try{ showToast('받기 실패: '+m); }catch(_){ alert('받기 실패: '+m); } }
+  });
+};
 
 function dbSet(k, v){
   // 데이터보호: 배열 내 동일 id 중복 자동 제거 (id가 문자열인 항목만 대상)
@@ -21744,6 +21786,11 @@ function BackupSection(){
         h('span', { style:{ background:'#e2e8f0', color:'#475569', fontSize:'10.5px', padding:'2px 7px', borderRadius:'10px', fontWeight:600 } }, sbState.list.length + '개'),
         h('div', { style:{ flex:1 } }),
         h('span', { style:{ fontSize:'10.5px', color:'#94a3b8' } }, '일간 30일 · 수시 30분(최근 24)')
+      ),
+      h('div', { style:{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'10px', flexWrap:'wrap' } },
+        h('button', { onClick:function(){ if(window.erpPullFromServer) window.erpPullFromServer(); },
+          style:{ padding:'7px 14px', background:'#0d9488', color:'#fff', border:0, borderRadius:'6px', fontSize:'12px', fontWeight:700, cursor:'pointer' } }, '🔄 서버에서 다시 받기'),
+        h('span', { style:{ fontSize:'10.5px', color:'#94a3b8' } }, '이 기기가 옛 데이터를 보일 때 — 서버 최신을 받아옴 (읽기 전용)')
       ),
       sbState.loading
         ? h('div', { style:{ color:'#94a3b8', fontSize:'12px', textAlign:'center', padding:'16px', background:'#f8fafc', borderRadius:'4px' } }, '불러오는 중...')
