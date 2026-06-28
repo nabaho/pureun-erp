@@ -248,6 +248,9 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 .pd.drag{border-color:var(--accent);background:rgba(21,101,192,.05);}
 .pd.filled{border-style:solid;padding:0;}
 .pd.filled img{width:100%;height:100%;object-fit:cover;display:block;}
+.pd-cv{width:100%;height:100%;display:block;object-fit:cover;touch-action:none;}
+.pd-edit-hint{position:absolute;bottom:30px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.55);color:#fff;font-size:9px;font-weight:700;padding:2px 7px;border-radius:6px;pointer-events:none;z-index:3;}
+.pd-zoom{position:absolute;bottom:7px;left:50%;transform:translateX(-50%);width:80%;z-index:4;cursor:pointer;}
 .pbadge{position:absolute;top:5px;left:5px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:800;z-index:2;}
 .prm{position:absolute;top:5px;right:5px;background:rgba(0,0,0,.6);color:#fff;border:none;width:20px;height:20px;border-radius:50%;cursor:pointer;font-size:10px;z-index:2;}
 .d-ico{font-size:24px;opacity:.5;margin-bottom:3px;}
@@ -525,6 +528,7 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
     <button class="notif-btn" id="notifBtn" data-tip="알림 · 오늘 할 일">🔔<span class="notif-badge" id="notifBadge" style="display:none;">0</span></button>
     <button class="notif-btn" id="statsBtn" data-tip="노무사별 통계">📊</button>
     <button class="notif-btn" id="helpBtn" data-tip="키보드 단축키 안내 ( ? )">⌨️</button>
+    <button class="notif-btn" id="photoLogBtn" data-tip="사진 변경 이력 (등록·교체·삭제)">🕘</button>
     <button class="notif-btn" id="backupBtn" data-tip="이 PC에 백업 파일 저장 (JSON)">💾</button>
     <button class="zip-btn" id="zipBtn" data-tip="전체 데이터 백업 — ZIP 파일로 내보내기">📦 ZIP</button>
   </div>
@@ -793,6 +797,15 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 </div>
 
 <!-- SINGLE SCHEDULE MODAL -->
+<div class="mb" id="mbPhotoLog">
+  <div class="modal" style="max-width:460px;max-height:80vh;display:flex;flex-direction:column;">
+    <div class="mhead" style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);">
+      <div style="font-size:15px;font-weight:800;">🕘 사진 변경 이력</div>
+      <button class="mclose" id="photoLogCls" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--t2);">✕</button>
+    </div>
+    <div id="photoLogBody" style="overflow:auto;padding:4px 12px;flex:1;"></div>
+  </div>
+</div>
 <div class="mb" id="mbAlert" style="z-index:600;">
   <div class="modal sm" style="max-width:360px;">
     <div class="mbody" style="text-align:center;padding:26px 22px 10px;">
@@ -1266,6 +1279,62 @@ async function loadPhotosFromDB(){
 async function getPhotoFromDB(sid,key){
   try{const db=await openPhotoDB();return await new Promise(res=>{const tx=db.transaction('photos','readonly');const rq=tx.objectStore('photos').get(`${sid}_${key}`);rq.onsuccess=()=>res(rq.result||null);rq.onerror=()=>res(null);});}catch(e){return null;}
 }
+
+// ===== 사진 변경 이력 (등록/교체/삭제 + 이전 사진 썸네일) =====
+const PHOTO_LOG_MAX=200;
+function getPhotoLog(){try{return JSON.parse(localStorage.getItem('p_photoLog')||'[]');}catch(e){return[];}}
+function setPhotoLog(arr){lsSet('p_photoLog',JSON.stringify(arr.slice(-PHOTO_LOG_MAX)));}
+// dataURL을 작은 썸네일(가로 120px)로 축소
+async function makeThumb(durl){
+  if(!durl)return null;
+  try{
+    const img=new Image();
+    await new Promise(r=>{img.onload=r;img.onerror=r;img.src=durl;});
+    const w=120,h=Math.max(1,Math.round((img.naturalHeight||img.height)*w/(img.naturalWidth||img.width)));
+    const c=document.createElement('canvas');c.width=w;c.height=h;
+    c.getContext('2d').drawImage(img,0,0,w,h);
+    return c.toDataURL('image/jpeg',.5);
+  }catch(e){return null;}
+}
+// 이력 1건 추가. action: 'add'|'replace'|'delete'
+async function logPhoto(action,sid,slotIdx,prevDurl){
+  try{
+    const sc=getScheds().find(x=>x.id===sid);
+    const co=sc?getCos().find(c=>c.id===sc.coId):null;
+    const ty=sc?getTypes().find(t=>t.id===sc.typeId):null;
+    const thumb=(action==='delete'||action==='replace')?await makeThumb(prevDurl):null;
+    const arr=getPhotoLog();
+    arr.push({
+      t:new Date().toISOString(),
+      action, sid, slot:slotIdx,
+      slotName: slotIdx===0?'입장':'활동',
+      co: co?.name||'?', ty: ty?.name||'?', round: sc?.round||0,
+      who: getSession()?.name||'',
+      prevThumb: thumb
+    });
+    setPhotoLog(arr);
+    if(typeof renderPhotoLog==='function'&&q('#mbPhotoLog')?.classList.contains('open'))renderPhotoLog();
+  }catch(e){console.warn('logPhoto',e);}
+}
+function openPhotoLog(){ renderPhotoLog(); q('#mbPhotoLog').classList.add('open'); }
+function renderPhotoLog(){
+  const box=q('#photoLogBody'); if(!box)return;
+  const arr=getPhotoLog().slice().reverse();
+  if(!arr.length){ box.innerHTML='<div style="text-align:center;padding:30px;color:var(--t2);font-size:13px;">아직 사진 변경 기록이 없습니다</div>'; return; }
+  const actMap={add:['📥 등록','var(--ok)'],replace:['🔄 교체','var(--info)'],delete:['🗑 삭제','var(--danger)']};
+  box.innerHTML=arr.map(e=>{
+    const [lbl,col]=actMap[e.action]||['?','var(--t2)'];
+    const dt=e.t?e.t.slice(0,16).replace('T',' '):'';
+    const th=e.prevThumb?`<img src="${e.prevThumb}" style="width:54px;height:54px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0;" title="변경 전 사진">`:`<div style="width:54px;height:54px;border-radius:6px;background:var(--sf2);flex-shrink:0;"></div>`;
+    return `<div style="display:flex;gap:10px;align-items:center;padding:8px;border-bottom:1px solid var(--border);">
+      ${th}
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:12px;font-weight:800;"><span style="color:${col};">${lbl}</span> · ${e.co} ${e.ty} ${e.round}회차</div>
+        <div style="font-size:11px;color:var(--t2);margin-top:2px;">${e.slotName} 사진 · ${dt}${e.who?' · '+e.who:''}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
 // 일정 수정창: 저장된 타임스탬프 사진(합성본+원본) 미리보기 — 캐시 없으면 DB에서 직접 로드
 function renderEditPhotos(sid,sc){
   const phDiv=q('#mEditPhotos'); if(!phDiv)return;
@@ -1450,12 +1519,26 @@ function buildNotifications(){
           items.push({type:'mfail',color:'var(--danger)',icon:'⚠️',
             title:`방문 미달 · ${co.name}`,sub:`${t.name} 현장방문 ${fieldDone}/${mf}회 (마감 D-${diff})`,date:dl});
         }
+        // 회차 진척 경고: 종료일 전 남은 회차를 다 못 끝낼 위험 (마감 한 달 전부터 미리 안내)
+        if(diff>=0&&diff<=30&&maxR>0){
+          const remain=maxR-done.length;
+          if(remain>0){
+            const weeksLeft=Math.max(1,Math.ceil((diff+1)/7));
+            const perWeek=remain/weeksLeft;
+            // 주당 1회 초과로 몰아야 하거나, 마감 14일 내 2회 이상 남으면 경고
+            if(perWeek>1 || (diff<=14&&remain>=2)){
+              items.push({type:'pace',color:diff<=14?'var(--danger)':'#cc7700',icon:'🏃',
+                title:`회차 부족 · ${co.name}`,
+                sub:`${t.name} ${done.length}/${maxR}회 · 남은 ${remain}회를 D-${diff} 안에 (주당 약 ${perWeek.toFixed(1)}회 필요)`,date:dl});
+            }
+          }
+        }
       }
     });
   });
 
   // 정렬: 오늘 > 마감임박(가까운순)
-  const order={today:0,mfail:1,deadline:2};
+  const order={today:0,mfail:1,pace:2,deadline:3};
   items.sort((a,b)=>(order[a.type]-order[b.type])||(a.date>b.date?1:-1));
   return items;
 }
@@ -1498,13 +1581,24 @@ function renderSummaryBar(){
       const dl=co.deadlines?.[tid];
       if(dl){const diff=Math.round((new Date(dl)-new Date(today))/(864e5));if(diff>=0&&diff<=14)warn++;}
       const mf=getCoMandatory(co.id,tid);
-      if(mf>0&&sc.filter(s=>s.isField).length<mf)mfail++;
+      const maxR=getCoMaxRounds(co.id,tid);
+      let lacking=(mf>0&&sc.filter(s=>s.isField).length<mf);
+      // 회차 진척 부족: 마감 30일 내 남은 회차를 주당 1회 초과로 몰아야 하면 부족으로 집계
+      if(dl&&maxR>0&&!lacking){
+        const diff=Math.round((new Date(dl)-new Date(today))/(864e5));
+        const remain=maxR-sc.length;
+        if(diff>=0&&diff<=30&&remain>0){
+          const weeksLeft=Math.max(1,Math.ceil((diff+1)/7));
+          if(remain/weeksLeft>1 || (diff<=14&&remain>=2))lacking=true;
+        }
+      }
+      if(lacking)mfail++;
     });
   });
   q('#summaryBar').innerHTML=`<div class="summary-bar">
     <div class="sum-card"><div class="sum-num" style="color:var(--info)">${active}</div><div class="sum-lbl">진행중</div></div>
     <div class="sum-card"><div class="sum-num" style="color:var(--danger)">${warn}</div><div class="sum-lbl">마감 14일내<br>⚠️ 주의</div></div>
-    <div class="sum-card"><div class="sum-num" style="color:#cc7700">${mfail}</div><div class="sum-lbl">의무방문<br>미달</div></div>
+    <div class="sum-card"><div class="sum-num" style="color:#cc7700">${mfail}</div><div class="sum-lbl">회차·방문<br>부족 ⚠️</div></div>
     <div class="sum-card"><div class="sum-num" style="color:var(--ok)">${done}</div><div class="sum-lbl">완료/종료</div></div>
     <div style="flex:1;display:flex;align-items:center;justify-content:flex-end;font-size:10px;color:var(--t2);font-weight:600;">기준일: ${today}</div>
   </div>`;
@@ -3034,6 +3128,9 @@ function deleteEdit(){
   let scheds=getScheds();
   const sc=scheds.find(s=>s.id===edit_id);
   const coId=sc?.coId,typeId=sc?.typeId;
+  const delId=edit_id;
+  // 보유 사진 이력 기록 후 삭제
+  (async()=>{ for(const i of [0,1]){ const prev=await getPhotoFromDB(delId,`c${i}`); if(prev)logPhoto('delete',delId,i,prev); } })();
   setScheds(scheds.filter(s=>s.id!==edit_id));
   if(coId&&typeId)reorderRounds(coId,typeId);
   if(PHOTOS[edit_id])delete PHOTOS[edit_id];
@@ -3327,23 +3424,72 @@ function buildSpColors(){
 }
 
 function renderPDs(){
+  if(!ST.view)ST.view=[{ox:.5,oy:.5,z:1},{ox:.5,oy:.5,z:1}];
   for(let i=0;i<2;i++){
     const d=q(`#pd${i}`);const lbl=i===0?'📍 입장':'🔧 활동';
     if(ST.photos[i]){
       d.classList.add('filled');
-      d.innerHTML=`<span class="pbadge">${lbl}</span><button class="prm" data-ri="${i}">✕</button><img src="${ST.photos[i].src}">`;
+      d.innerHTML=`<span class="pbadge">${lbl}</span><button class="prm" data-ri="${i}">✕</button>
+        <canvas class="pd-cv" id="pdcv${i}"></canvas>
+        <div class="pd-edit-hint">🖐 끌어서 위치 · 휠 확대</div>
+        <input type="range" class="pd-zoom" id="pdzoom${i}" min="100" max="400" value="${Math.round((ST.view[i]?.z||1)*100)}" title="확대/축소">`;
+      drawPdPreview(i);
+      attachPdAdjust(i);
+      const rm=d.querySelector('.prm');
+      if(rm)rm.onclick=ev=>{ev.stopPropagation();const ri=+rm.dataset.ri;ST.photos[ri]=null;ST.done[ri]=false;ST.times[ri]=null;if(ST.view)ST.view[ri]={ox:.5,oy:.5,z:1};renderPDs();renderRFs();};
     }else{
       d.classList.remove('filled');
       d.innerHTML=`<span class="pbadge">${lbl}</span><div><div class="d-ico">📷</div><div class="d-hint">사진 ${i+1}</div></div>`;
+      d.onclick=e=>{ ST.slot=i;q('#photoFi').click(); };
     }
-    d.onclick=e=>{
-      if(e.target.classList.contains('prm')){const ri=+e.target.dataset.ri;ST.photos[ri]=null;ST.done[ri]=false;ST.times[ri]=null;renderPDs();renderRFs();return;}
-      ST.slot=i;q('#photoFi').click();
-    };
     d.ondragover=e=>{e.preventDefault();d.classList.add('drag');};
     d.ondragleave=()=>d.classList.remove('drag');
     d.ondrop=e=>{e.preventDefault();d.classList.remove('drag');const f=e.dataTransfer.files[0];if(f&&f.type.startsWith('image/'))loadStampImg(i,f);};
   }
+}
+// 업로드 칸: 정사각형 미리보기에 위치/줌 반영해 그리기 (타임스탬프 없이 사진만)
+function drawPdPreview(idx){
+  const cv=q(`#pdcv${idx}`),img=ST.photos[idx]; if(!cv||!img)return;
+  const OUT=320; cv.width=OUT;cv.height=OUT;
+  const ctx=cv.getContext('2d');
+  const iw=img.naturalWidth||img.width, ih=img.naturalHeight||img.height;
+  const v=(ST.view&&ST.view[idx])||{ox:.5,oy:.5,z:1};
+  const scale=Math.max(OUT/iw,OUT/ih)*(v.z||1);
+  const dw=iw*scale, dh=ih*scale;
+  let dx=OUT/2-dw*(v.ox==null?.5:v.ox), dy=OUT/2-dh*(v.oy==null?.5:v.oy);
+  dx=Math.min(0,Math.max(OUT-dw,dx)); dy=Math.min(0,Math.max(OUT-dh,dy));
+  ctx.fillStyle='#000';ctx.fillRect(0,0,OUT,OUT);
+  ctx.drawImage(img,dx,dy,dw,dh);
+}
+// 업로드 칸 편집: 끌기 이동 + 휠/슬라이더 줌. 조정 시 합성본도 다시 그림
+function attachPdAdjust(idx){
+  const cv=q(`#pdcv${idx}`); if(!cv)return;
+  if(!ST.view[idx])ST.view[idx]={ox:.5,oy:.5,z:1};
+  cv.style.cursor='grab';
+  let dragging=false,lx=0,ly=0,moved=false;
+  const sync=()=>{ drawPdPreview(idx); if(ST.done[idx]&&ST.times[idx])drawStamp(idx); };
+  cv.onmousedown=e=>{dragging=true;moved=false;lx=e.clientX;ly=e.clientY;cv.style.cursor='grabbing';e.preventDefault();e.stopPropagation();};
+  window.addEventListener('mousemove',e=>{
+    if(!dragging)return; moved=true;
+    const rect=cv.getBoundingClientRect(),v=ST.view[idx];
+    v.ox=Math.min(1,Math.max(0,v.ox-(e.clientX-lx)/rect.width/(v.z||1)));
+    v.oy=Math.min(1,Math.max(0,v.oy-(e.clientY-ly)/rect.height/(v.z||1)));
+    lx=e.clientX;ly=e.clientY; sync();
+  });
+  window.addEventListener('mouseup',()=>{if(dragging){dragging=false;cv.style.cursor='grab';}});
+  cv.onwheel=e=>{e.preventDefault();const v=ST.view[idx];v.z=Math.min(4,Math.max(1,(v.z||1)*(e.deltaY<0?1.1:0.9)));const zi=q(`#pdzoom${idx}`);if(zi)zi.value=Math.round(v.z*100);sync();};
+  const zoom=q(`#pdzoom${idx}`);
+  if(zoom)zoom.oninput=e=>{e.stopPropagation();ST.view[idx].z=(+e.target.value)/100;sync();};
+  // 터치(모바일) 끌기
+  cv.ontouchstart=e=>{if(e.touches.length===1){dragging=true;lx=e.touches[0].clientX;ly=e.touches[0].clientY;}};
+  cv.ontouchmove=e=>{
+    if(!dragging||e.touches.length!==1)return; e.preventDefault();
+    const rect=cv.getBoundingClientRect(),v=ST.view[idx];
+    v.ox=Math.min(1,Math.max(0,v.ox-(e.touches[0].clientX-lx)/rect.width/(v.z||1)));
+    v.oy=Math.min(1,Math.max(0,v.oy-(e.touches[0].clientY-ly)/rect.height/(v.z||1)));
+    lx=e.touches[0].clientX;ly=e.touches[0].clientY; sync();
+  };
+  cv.ontouchend=()=>{dragging=false;};
 }
 
 function renderRFs(){
@@ -3378,8 +3524,10 @@ function renderRFs(){
         renderCal();
       };
       // 삭제: 합성결과·원본·시각 모두 비움
-      r.querySelector('.rf-del').onclick=e=>{
+      r.querySelector('.rf-del').onclick=async e=>{
         e.stopPropagation();const ri=+e.currentTarget.dataset.ri;
+        const prev=await getPhotoFromDB(ST.sid,`c${ri}`);
+        logPhoto('delete', ST.sid, ri, prev);
         ST.photos[ri]=null;ST.done[ri]=false;ST.times[ri]=null;
         if(PHOTOS[ST.sid])PHOTOS[ST.sid][`c${ri}`]=null;
         deleteOnePhotoFromDB(ST.sid,`c${ri}`);
@@ -3557,15 +3705,17 @@ async function saveStamp(){
   const attNm=getStaff().find(a=>a.id===sc?.attId)?.name||'담당자';
   const slug=`${tyNm}_${co?.name||'?'}_${sc?.round||'N'}회_${attNm}`;
   if(!PHOTOS[ST.sid])PHOTOS[ST.sid]={c0:null,c1:null};
-  // 1) 앱 내부 저장 (IndexedDB) — 합성 결과 + 원본 모두 저장, 지문 등록
-  [0,1].forEach(i=>{
-    if(!ST.done[i])return;
-    const cv=q(`#cv${i}`);if(!cv)return;
+  // 1) 앱 내부 저장 (IndexedDB) — 합성 결과 + 원본 모두 저장, 지문 등록 + 이력
+  for(const i of [0,1]){
+    if(!ST.done[i])continue;
+    const cv=q(`#cv${i}`);if(!cv)continue;
+    const prev=await getPhotoFromDB(ST.sid,`c${i}`); // 변경 전 사진(있으면 교체)
+    logPhoto(prev?'replace':'add', ST.sid, i, prev);
     PHOTOS[ST.sid][`c${i}`]=cv;
     savePhotoToDB(ST.sid,`c${i}`,cv.toDataURL('image/jpeg',.92));
     if(ST.pDurl&&ST.pDurl[i])savePhotoToDB(ST.sid,`o${i}`,ST.pDurl[i]);
     if(ST.pHash&&ST.pHash[i]&&sc)addPhotoHash(ST.pHash[i],sc);
-  });
+  }
   closeModal('mbStamp');renderCal();
   if(_photoQueue&&_photoQueue.length)setTimeout(runPhotoQueue,250);
   // 2) 파일 저장 (위치 선택, 순차)
@@ -3871,6 +4021,8 @@ function bind(){
   // 백업/복원
   q('#exportJsonBtn').onclick=exportJson;
   q('#backupBtn').onclick=exportJson;
+  q('#photoLogBtn').onclick=openPhotoLog;
+  q('#photoLogCls').onclick=()=>q('#mbPhotoLog').classList.remove('open');
   q('#importJsonBtn').onclick=()=>q('#importJsonFi').click();
   q('#importJsonFi').onchange=e=>{const f=e.target.files[0];if(f)importJson(f);e.target.value='';};
   const _snb=q('#snapNowBtn'); if(_snb)_snb.onclick=()=>{ takeSnapshot('수동 스냅샷'); renderAutoBackups(); toast('현재 데이터를 스냅샷으로 저장했습니다'); };
