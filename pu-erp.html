@@ -725,7 +725,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-27 명세서 연차현황 연도별표(월별)·근거 아래로';
+var ERP_BUILD = '2026-06-27 육아휴직 누적일수 표시·1일 빠른입력';
 // === 자동 최신화 — 브라우저 캐시 때문에 옛 코드가 계속 도는 문제 방지 ===
 // 세션당 1회, 서버의 배포 버전을 확인해 현재 실행 중 버전과 다르면 캐시 우회로 새로고침.
 (function(){
@@ -9301,6 +9301,21 @@ function getLoaSplitUsed(sid, code, childBirthDate){
     .reduce(function(s, x){
       if(!x.startDate || !x.endDate) return s;
       return s + monthsBetween(x.startDate, x.endDate);
+    }, 0);
+}
+
+// 분할 사용 누적 '일수' (육아휴직 - 같은 자녀 기준)
+function getLoaSplitUsedDays(sid, code, childBirthDate){
+  return getLoaList()
+    .filter(function(x){
+      if(x.sid !== sid || x.code !== code) return false;
+      if(x.status === 'rejected' || x.status === 'pending') return false;
+      if(childBirthDate && x.childBirthDate !== childBirthDate) return false;
+      return true;
+    })
+    .reduce(function(s, x){
+      if(!x.startDate || !x.endDate) return s;
+      return s + loaUsage(x.startDate, x.endDate).days;
     }, 0);
 }
 
@@ -43717,6 +43732,20 @@ function LeaveOfAbsenceTab(){
       createdBy: CURRENT_USER ? CURRENT_USER.name : ''
     }});
   }
+  function openQuickParental(){
+    var t = todayYMD();
+    setModal({ isNew:true, item:{
+      id:'lv-'+Date.now(),
+      sid: users[0]?users[0].sid:'',
+      code:'parental-leave',
+      startDate:t, endDate:t, reason:'',
+      childBirthDate:'',
+      unit:'day',
+      status:'active',
+      createdAt:(new Date()).toISOString(),
+      createdBy: CURRENT_USER ? CURRENT_USER.name : ''
+    }});
+  }
   function openEdit(it){ setModal({ isNew:false, item:Object.assign({}, it) }); }
 
   // user_accounts status 동기화 헬퍼
@@ -43806,9 +43835,14 @@ function LeaveOfAbsenceTab(){
         h('div', { style:{fontSize:'14px',fontWeight:700,color:'#1e293b'} }, '🏠 휴직 관리'),
         h('div', { style:{fontSize:'11.5px',color:'#94a3b8',marginTop:'2px'} }, '출산휴직 · 육아휴직 · 병가 · 기타 — LoA 시스템 + 환경설정 status=\'leave\' 통합 동기화')
       ),
-      h('button', { onClick:openAdd,
-        style:{padding:'6px 12px',background:'#1e40af',color:'#fff',border:'none',borderRadius:'5px',cursor:'pointer',fontSize:'11.5px',fontWeight:600} },
-        '+ 휴직 등록')
+      h('div', { style:{display:'flex',gap:'6px'} },
+        h('button', { onClick:openQuickParental,
+          title:'오늘 날짜로 1일짜리 육아휴직을 빠르게 추가 (직원·자녀생일 선택 후 저장)',
+          style:{padding:'6px 12px',background:'#dcfce7',color:'#166534',border:'1px solid #86efac',borderRadius:'5px',cursor:'pointer',fontSize:'11.5px',fontWeight:700} },
+          '🍼 1일 육아휴직'),
+        h('button', { onClick:openAdd,
+          style:{padding:'6px 12px',background:'#1e40af',color:'#fff',border:'none',borderRadius:'5px',cursor:'pointer',fontSize:'11.5px',fontWeight:600} },
+          '+ 휴직 등록'))
     ),
     // 통합 통계
     (function(){
@@ -44037,8 +44071,9 @@ function LeaveOfAbsenceTab(){
               '🍼 이번 회차 사용량: ', h('strong', null, loaUsageText(modal.item.startDate, modal.item.endDate, modal.item.unit||'month')),
               (function(){
                 var used = getLoaSplitUsed(modal.item.sid, 'parental-leave', modal.item.childBirthDate);
+                var usedDays = getLoaSplitUsedDays(modal.item.sid, 'parental-leave', modal.item.childBirthDate);
                 return h('div', { style:{marginTop:'4px',fontSize:'10px',color:'#92400e'} },
-                  '누적 사용(같은 자녀 기준): ' + Math.round(used*10)/10 + '개월');
+                  '누적 사용(같은 자녀 기준): ' + usedDays + '일 · ' + Math.round(used*10)/10 + '개월');
               })())
           ),
           h('div', { className:'fld' },
