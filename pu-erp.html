@@ -725,7 +725,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-27 급여대장 실비 칸 맨오른쪽 분리(비과세 표시)';
+var ERP_BUILD = '2026-06-27 즐겨찾기 상단 고정 (메뉴만 스크롤 — 안 사라짐)';
 // === 자동 최신화 — 브라우저 캐시 때문에 옛 코드가 계속 도는 문제 방지 ===
 // 세션당 1회, 서버의 배포 버전을 확인해 현재 실행 중 버전과 다르면 캐시 우회로 새로고침.
 (function(){
@@ -4378,6 +4378,61 @@ function Sidebar(props){
     h('div', { className:'sb-actions', style:{ display:'flex', gap:'4px', flexWrap:'wrap' } },
       h('button', { onClick:onToggleAll, style:{ flex:1 } }, allOpened ? '📁 모두 접기' : '📂 모두 펼치기')
     ),
+      // ⭐ 즐겨찾기 — 상단 고정 (스크롤 밖, 항상 보임)
+      pinnedItems.length > 0 && h('div', { style:{ flexShrink:0, padding:'8px 0', borderBottom:'1px solid #2a3656' } },
+        h('div', { style:{ padding:'4px 14px', fontSize:'10.5px', color:'#fbbf24', fontWeight:600, letterSpacing:'0.5px' } }, '⭐ 즐겨찾기'),
+        pinnedItems.map(function(p, pIdx){
+          if(!matchSearch(p.item.text) && !matchSearch(p.grp.name)) return null;
+          var badge = getMenuBadge(p.id);
+          var isDragging = dragPinIdx === pIdx;
+          return h('div', {
+            key:'pin-'+p.id,
+            className:'sb-menu-item' + (current===p.id ? ' active':''),
+            draggable: true,
+            onDragStart:function(e){
+              setDragPinIdx(pIdx);
+              e.dataTransfer.effectAllowed = 'move';
+              try { e.dataTransfer.setData('text/plain', String(pIdx)); } catch(_){}
+            },
+            onDragOver:function(e){
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+            },
+            onDrop:function(e){
+              e.preventDefault();
+              var from = dragPinIdx;
+              if(from === null || from === pIdx){ setDragPinIdx(null); return; }
+              var next = pinned.slice();
+              var moved = next.splice(from, 1)[0];
+              next.splice(pIdx, 0, moved);
+              setPinned(next);
+              try{ localStorage.setItem(pinKey, JSON.stringify(next)); }catch(e){ window._erpErrLog && window._erpErrLog(e); }
+              setDragPinIdx(null);
+              showToast('⭐ 즐겨찾기 순서 변경');
+            },
+            onDragEnd:function(){ setDragPinIdx(null); },
+            onClick:function(){ onSelect(p.id); },
+            onTouchStart:onMenuTouchStart(p.id),
+            onTouchEnd:onMenuTouchEnd,
+            onContextMenu:function(e){ e.preventDefault(); togglePin(p.id); },
+            style: isDragging ? { opacity:0.4 } : {},
+            title: '드래그하여 순서 변경',
+            tabIndex:0
+          },
+            h('span', { className:'mi-drag', style:{ cursor:'grab', color:'#475569', marginRight:'4px', fontSize:'10px' } }, '⋮⋮'),
+            h('span', { className:'mi-icon' }, p.item.icon),
+            h('span', { className:'mi-text' }, p.item.text),
+            badge && h('span', { style:{ background:badge.color, color:'#fff', fontSize:'10.5px', padding:'1px 6px', borderRadius:'10px', fontWeight:700, marginLeft:'auto', marginRight:'4px' } }, badge.count),
+            h('span', {
+              onClick:function(e){ e.stopPropagation(); e.preventDefault(); togglePin(p.id); },
+              onMouseDown:function(e){ e.stopPropagation(); },
+              onTouchStart:function(e){ e.stopPropagation(); },
+              onTouchEnd:function(e){ e.stopPropagation(); e.preventDefault(); togglePin(p.id); },
+              title:'즐겨찾기 해제',
+              style:{ fontSize:'11px', cursor:'pointer', color:'#fbbf24', marginLeft: badge ? '0' : 'auto', padding:'2px 6px' } }, '⭐')
+          );
+        })
+      ),
     h('nav', { className:'sb-nav' },
       MENUS.map(function(grp){
         // 환경설정은 하단 고정으로 별도 렌더 → 여기서 제외
@@ -4439,61 +4494,6 @@ function Sidebar(props){
           )
         );
       }),
-      // 즐겨찾기 섹션 (그룹 아래로 이동 — 별표 눌러도 그룹이 안 밀림)
-      pinnedItems.length > 0 && h('div', { style:{ marginTop:'10px', paddingTop:'10px', borderTop:'1px solid #2a3656' } },
-        h('div', { style:{ padding:'4px 14px', fontSize:'10.5px', color:'#fbbf24', fontWeight:600, letterSpacing:'0.5px' } }, '⭐ 즐겨찾기'),
-        pinnedItems.map(function(p, pIdx){
-          if(!matchSearch(p.item.text) && !matchSearch(p.grp.name)) return null;
-          var badge = getMenuBadge(p.id);
-          var isDragging = dragPinIdx === pIdx;
-          return h('div', {
-            key:'pin-'+p.id,
-            className:'sb-menu-item' + (current===p.id ? ' active':''),
-            draggable: true,
-            onDragStart:function(e){
-              setDragPinIdx(pIdx);
-              e.dataTransfer.effectAllowed = 'move';
-              try { e.dataTransfer.setData('text/plain', String(pIdx)); } catch(_){}
-            },
-            onDragOver:function(e){
-              e.preventDefault();
-              e.dataTransfer.dropEffect = 'move';
-            },
-            onDrop:function(e){
-              e.preventDefault();
-              var from = dragPinIdx;
-              if(from === null || from === pIdx){ setDragPinIdx(null); return; }
-              var next = pinned.slice();
-              var moved = next.splice(from, 1)[0];
-              next.splice(pIdx, 0, moved);
-              setPinned(next);
-              try{ localStorage.setItem(pinKey, JSON.stringify(next)); }catch(e){ window._erpErrLog && window._erpErrLog(e); }
-              setDragPinIdx(null);
-              showToast('⭐ 즐겨찾기 순서 변경');
-            },
-            onDragEnd:function(){ setDragPinIdx(null); },
-            onClick:function(){ onSelect(p.id); },
-            onTouchStart:onMenuTouchStart(p.id),
-            onTouchEnd:onMenuTouchEnd,
-            onContextMenu:function(e){ e.preventDefault(); togglePin(p.id); },
-            style: isDragging ? { opacity:0.4 } : {},
-            title: '드래그하여 순서 변경',
-            tabIndex:0
-          },
-            h('span', { className:'mi-drag', style:{ cursor:'grab', color:'#475569', marginRight:'4px', fontSize:'10px' } }, '⋮⋮'),
-            h('span', { className:'mi-icon' }, p.item.icon),
-            h('span', { className:'mi-text' }, p.item.text),
-            badge && h('span', { style:{ background:badge.color, color:'#fff', fontSize:'10.5px', padding:'1px 6px', borderRadius:'10px', fontWeight:700, marginLeft:'auto', marginRight:'4px' } }, badge.count),
-            h('span', {
-              onClick:function(e){ e.stopPropagation(); e.preventDefault(); togglePin(p.id); },
-              onMouseDown:function(e){ e.stopPropagation(); },
-              onTouchStart:function(e){ e.stopPropagation(); },
-              onTouchEnd:function(e){ e.stopPropagation(); e.preventDefault(); togglePin(p.id); },
-              title:'즐겨찾기 해제',
-              style:{ fontSize:'11px', cursor:'pointer', color:'#fbbf24', marginLeft: badge ? '0' : 'auto', padding:'2px 6px' } }, '⭐')
-          );
-        })
-      ),
       // 최근 본 메뉴 (3개)
       props.menuHistory && props.menuHistory.length > 0 && h('div', { style:{ marginTop:'10px', paddingTop:'10px', borderTop:'1px solid #2a3656' } },
         h('div', { style:{ padding:'4px 14px', fontSize:'10.5px', color:'#94a3b8', fontWeight:600, letterSpacing:'0.5px' } }, '⏱ 최근 본'),
