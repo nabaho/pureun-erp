@@ -725,7 +725,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-27 4·5월 급여 가져오기(확정) 추가';
+var ERP_BUILD = '2026-06-27 동시저장 안전 - 필드 단위 동기화(dbSet)';
 // === 자동 최신화 — 브라우저 캐시 때문에 옛 코드가 계속 도는 문제 방지 ===
 // 세션당 1회, 서버의 배포 버전을 확인해 현재 실행 중 버전과 다르면 캐시 우회로 새로고침.
 (function(){
@@ -2667,9 +2667,26 @@ function dbSet(k, v){
         var _mustFull = (v.length === 0 && prev.length > 0) || (diff && prev.length >= 10 && diff.removes.length >= prev.length * 0.5 && !_bulkOk0);
         if(diff && diff.totalChange > 0 && !_mustFull){
           var updates = {};
-          // 추가/수정: id를 키로 직접 set (인덱스 무관)
+          // 추가/수정: 변경된 '필드만' set (다른 기기가 만진 다른 칸을 덮지 않음 → 동시저장 손실 방지). 신규·특수문자키는 통째.
+          var _prevById = {};
+          prev.forEach(function(p){ if(p && p.id) _prevById[p.id] = p; });
+          var _badKey = function(kk){ return /[.#$\[\]\/]/.test(kk); };
           diff.upserts.forEach(function(item){
-            if(item && item.id) updates['data/'+k+'/v/'+item.id] = item;
+            if(!item || !item.id) return;
+            var _pid = _prevById[item.id];
+            if(!_pid){ updates['data/'+k+'/v/'+item.id] = item; return; }   // 신규 → 통째
+            var _anyBad = false, _fu = {};
+            Object.keys(item).forEach(function(f){
+              if(_badKey(f)){ _anyBad = true; return; }
+              var _nv = item[f];
+              if(JSON.stringify(_nv) !== JSON.stringify(_pid[f])) _fu['data/'+k+'/v/'+item.id+'/'+f] = (_nv === undefined ? null : _nv);
+            });
+            Object.keys(_pid).forEach(function(f){
+              if(_badKey(f)){ _anyBad = true; return; }
+              if(!(f in item)) _fu['data/'+k+'/v/'+item.id+'/'+f] = null;   // 제거된 필드
+            });
+            if(_anyBad){ updates['data/'+k+'/v/'+item.id] = item; }
+            else { Object.keys(_fu).forEach(function(p){ updates[p] = _fu[p]; }); }
           });
           // 삭제: null로 set (Firebase는 null 받으면 키 제거)
           diff.removes.forEach(function(id){
