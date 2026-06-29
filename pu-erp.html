@@ -725,7 +725,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-27 동시저장 안전 - 필드 단위 동기화(dbSet)';
+var ERP_BUILD = '2026-06-29 동시저장 안전 확장 - 자동변환+게이트(근태·휴가·퇴직·세금계산서 등)';
 // === 자동 최신화 — 브라우저 캐시 때문에 옛 코드가 계속 도는 문제 방지 ===
 // 세션당 1회, 서버의 배포 버전을 확인해 현재 실행 중 버전과 다르면 캐시 우회로 새로고침.
 (function(){
@@ -2055,6 +2055,7 @@ try {
 
 // ── 메모리 캐시: 매 렌더 LS 읽기 방지 (296곳 var X = dbGet) ──
 var _dbCache = {};
+var _fbObjForm = {};  // 키별 서버형식: true=클린 객체형(칸 단위 동기화 안전) / 미설정·false=배열형(통째 폴백). id없는 항목 섞인 키는 변환 안 함.
 function _dbCacheClear(k){ if(k){ delete _dbCache[k]; } else { _dbCache = {}; } }
 function dbGet(k, def){
   if(_dbCache.hasOwnProperty(k)){ var _c = _dbCache[k]; return (_c == null) ? def : _c; }
@@ -2657,7 +2658,7 @@ function dbSet(k, v){
 
       // ── 자동 Diff Sync (핵심 5개 키) — 1단계: 변경 개수 무관 항상 건별 저장 ──
       // #4 Tier 3: id 키 기반 부분 업데이트 (인덱스 충돌 제거) — 삭제도 가능
-      var DIFF_KEYS = ['companies','cases','consultings','funds','other_projects','payroll_monthly','finance_income','finance_expense'];
+      var DIFF_KEYS = ['companies','cases','consultings','funds','other_projects','payroll_monthly','finance_income','finance_expense','contracts','attendance_records','overtime_records','leave_grants','comp_leave_records','leave_of_absence','retirement_settlements','finance_invoice','external_staff','payroll_irregular','employment_contracts'];
       var diffApplied = false;
       if(DIFF_KEYS.indexOf(k) >= 0 && Array.isArray(v) && Array.isArray(prev)){
         var diff = computeArrayDiff(prev, v);
@@ -2665,7 +2666,7 @@ function dbSet(k, v){
         // 단, 전체삭제·대량삭제(보유 10건↑ 중 절반 이상 삭제)는 건별로 처리하지 않고 폴백(통째)로 보내 기존 급감·0건 가드가 검사.
         var _bulkOk0 = window._bulkDeleteIntent && (Date.now() - window._bulkDeleteIntent < 15000);
         var _mustFull = (v.length === 0 && prev.length > 0) || (diff && prev.length >= 10 && diff.removes.length >= prev.length * 0.5 && !_bulkOk0);
-        if(diff && diff.totalChange > 0 && !_mustFull){
+        if(diff && diff.totalChange > 0 && !_mustFull && _fbObjForm[k]){
           var updates = {};
           // 추가/수정: 변경된 '필드만' set (다른 기기가 만진 다른 칸을 덮지 않음 → 동시저장 손실 방지). 신규·특수문자키는 통째.
           var _prevById = {};
@@ -2731,7 +2732,7 @@ function dbSet(k, v){
             return true;
           }
         }
-        var fbValue = (DIFF_KEYS.indexOf(k) >= 0 && Array.isArray(v)) ? arrayToIdMap(v) : v;
+        var fbValue = (DIFF_KEYS.indexOf(k) >= 0 && Array.isArray(v) && v.every(function(x){return x&&x.id;})) ? arrayToIdMap(v) : v;
         // ── 근본 급감 차단: 서버 현재 건수 대비 이 기기 데이터가 절반 이하면 = 옛 데이터 → 푸시 차단 ──
         if(Array.isArray(v)){
           fbDb.ref('data/'+k).once('value').then(function(snap){
@@ -2752,13 +2753,14 @@ function dbSet(k, v){
                 localStorage.setItem(KEY+k, JSON.stringify(_good));
                 localStorage.setItem(KEY+'_meta_'+k, String(_srvU));
                 _dbCache[k] = _good;
+                _fbObjForm[k] = !!(sv.v && typeof sv.v==='object' && !Array.isArray(sv.v));
                 try { if(typeof _scheduleFbChanged === 'function') _scheduleFbChanged(k); } catch(_){}
               } catch(_){}
               try { showToast('🔄 다른 기기의 최신 데이터로 갱신됨 — 방금 변경은 다시 확인하세요'); } catch(_){}
               return;
             }
-            fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(fbSyncFail);
-          }).catch(function(){ fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(fbSyncFail); });
+            fbDb.ref('data/'+k).set({v:fbValue, u:ts}).then(function(){ if(DIFF_KEYS.indexOf(k)>=0 && fbValue && !Array.isArray(fbValue)) _fbObjForm[k]=true; }).catch(fbSyncFail);
+          }).catch(function(){ fbDb.ref('data/'+k).set({v:fbValue, u:ts}).then(function(){ if(DIFF_KEYS.indexOf(k)>=0 && fbValue && !Array.isArray(fbValue)) _fbObjForm[k]=true; }).catch(fbSyncFail); });
         } else {
           // 되돌림 방지(객체/스칼라 설정): 서버가 이 기기 기준보다 최신이면 덮어쓰지 말고 서버 원본을 raw 그대로 수신
           fbDb.ref('data/'+k).once('value').then(function(snap){
@@ -3727,6 +3729,7 @@ function fbInitialSync(){
       var rec = remote[k];
       if(!fbShouldSync(k)) return;
       if(!rec || rec.v === undefined) return;
+      _fbObjForm[k] = !!(rec.v && typeof rec.v==='object' && !Array.isArray(rec.v));
       var localTime = parseInt(localStorage.getItem(KEY+'_meta_'+k) || '0', 10);
       if(rec.u > localTime){
         try {
@@ -3829,6 +3832,7 @@ function fbSetupListener(){
     var v = snap.val();
     if(!fbShouldSync(k)) return;
     if(!v || v.v === undefined) return;
+    _fbObjForm[k] = !!(v.v && typeof v.v==='object' && !Array.isArray(v.v));
     var localTime = parseInt(localStorage.getItem(KEY+'_meta_'+k) || '0', 10);
     if(v.u > localTime){
       try {
@@ -3868,6 +3872,7 @@ function fbSetupListener(){
     var v = snap.val();
     if(!fbShouldSync(k)) return;
     if(!v || v.v === undefined) return;
+    _fbObjForm[k] = !!(v.v && typeof v.v==='object' && !Array.isArray(v.v));
     var localTime = parseInt(localStorage.getItem(KEY+'_meta_'+k) || '0', 10);
     if(v.u > localTime){
       try {
