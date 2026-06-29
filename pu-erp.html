@@ -725,7 +725,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-29 로그인 직후 서버읽기 권한오류 자동복구(토큰 갱신 재시도)';
+var ERP_BUILD = '2026-06-29 로그인 시 계정명부 서버 직접조회(캐시 낡음 우회)';
 // === 자동 최신화 — 브라우저 캐시 때문에 옛 코드가 계속 도는 문제 방지 ===
 // 세션당 1회, 서버의 배포 버전을 확인해 현재 실행 중 버전과 다르면 캐시 우회로 새로고침.
 (function(){
@@ -50978,7 +50978,17 @@ function LoginScreen(props){
       firebase.auth().signInWithEmailAndPassword(_email, pw).then(function(){
         return (typeof fbInitialSync === 'function') ? fbInitialSync() : null;
       }).then(function(){
-        var users2 = dbGet('user_accounts', USERS_SEED) || [];
+        // 캐시가 낡아 계정을 못 찾는 문제 방지 — 로그인 판단용 명부를 서버에서 직접 읽음
+        return fbDb.ref('data/user_accounts').once('value').then(function(snap){
+          var sv = snap.val();
+          var fresh = (sv && sv.v !== undefined) ? normalizeFbValue(sv.v) : null;
+          if(fresh && fresh.length){
+            try { localStorage.setItem(KEY+'user_accounts', JSON.stringify(fresh)); localStorage.setItem(KEY+'_meta_user_accounts', String(sv.u||Date.now())); _dbCache['user_accounts']=fresh; } catch(_){}
+            return fresh;
+          }
+          return dbGet('user_accounts', USERS_SEED) || [];
+        }).catch(function(){ return dbGet('user_accounts', USERS_SEED) || []; });
+      }).then(function(users2){
         var acct = users2.find(function(x){ return _canLogin(x) && _matches(x); });
         if(!acct){
           var any2 = users2.find(_matches);
