@@ -725,7 +725,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-30 접속자 현황(사이드바) 표시';
+var ERP_BUILD = '2026-06-30 접속자 현황 + 다른 접속 시 확인창 알림';
 // === 자동 최신화 — 브라우저 캐시 때문에 옛 코드가 계속 도는 문제 방지 ===
 // 세션당 1회, 서버의 배포 버전을 확인해 현재 실행 중 버전과 다르면 캐시 우회로 새로고침.
 (function(){
@@ -2000,6 +2000,7 @@ function notifyDeviceLock(){
 // ============================================================
 var PRESENCE_STALE_MS = 90 * 1000;
 var _presenceList = [];        // 구독 결과(원본 배열)
+var _presenceAnnounced = {};   // 이미 알림창 띄운 다른 기기 devId 모음(떠나면 제거 → 재접속 시 다시 알림)
 var _presenceHbTimer = null;
 var _presenceRef = null;       // 내 presence 경로 ref (onDisconnect 취소용)
 var _presencePayload = null;   // 하트비트 시 통째로 다시 쓰기 위한 내 정보
@@ -2034,6 +2035,22 @@ function initPresence(sid, name){
         });
         _presenceList = arr;
         try { window.dispatchEvent(new CustomEvent('presence_changed')); } catch(_){}
+        // 나 외 다른 기기 접속 → 확인창으로 알림 (이미 알린 기기는 제외, 떠난 기기는 추적에서 제거)
+        try {
+          var nowT = Date.now();
+          var liveOthers = arr.filter(function(p){ return p.devId !== DEVICE_ID && p.lastSeen && (nowT - p.lastSeen) < PRESENCE_STALE_MS; });
+          var liveIds = {}; liveOthers.forEach(function(p){ liveIds[p.devId] = true; });
+          Object.keys(_presenceAnnounced).forEach(function(id){ if(!liveIds[id]) delete _presenceAnnounced[id]; });
+          var fresh = liveOthers.filter(function(p){ return !_presenceAnnounced[p.devId]; });
+          fresh.forEach(function(p){ _presenceAnnounced[p.devId] = true; });
+          if(fresh.length && typeof showAlert === 'function'){
+            var names = fresh.map(function(p){ return ((p.device && p.device.indexOf('폰') >= 0) ? '📱 ' : '💻 ') + p.name; });
+            var body = (fresh.length === 1)
+              ? names[0] + ' 님이 ERP에 접속했습니다.'
+              : '현재 접속 중: ' + names.join(', ');
+            showAlert(body, { title:'🟢 접속 알림' });
+          }
+        } catch(_e){}
       });
     }
   } catch(e){ window._erpErrLog && window._erpErrLog(e); }
@@ -3616,6 +3633,37 @@ window.showConfirm = function(message, opts){
     overlay.addEventListener('click', function(e){ if(e.target === overlay) cleanup(false); });
     // ESC 키
     function onKey(e){ if(e.key === 'Escape'){ cleanup(false); document.removeEventListener('keydown', onKey); } }
+    document.addEventListener('keydown', onKey);
+  });
+};
+
+// 단일 버튼 알림창(확인 눌러야 닫힘) — showConfirm과 같은 가운데 모달, 버튼만 [확인] 하나
+window.showAlert = function(message, opts){
+  return new Promise(function(resolve){
+    opts = opts || {};
+    var overlay = document.createElement('div');
+    Object.assign(overlay.style, {
+      position:'fixed', top:0, left:0, width:'100%', height:'100%',
+      background:'rgba(0,0,0,0.45)', zIndex:99999,
+      display:'flex', alignItems:'center', justifyContent:'center',
+      fontFamily:"'Apple SD Gothic Neo','맑은 고딕',sans-serif"
+    });
+    var title = opts.title || '알림';
+    var okText = opts.okText || '확인';
+    function _esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+    overlay.innerHTML =
+      '<div style="background:#fff;border-radius:12px;padding:24px 22px;max-width:360px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.18)">' +
+        '<div style="font-size:15px;font-weight:800;color:#1e293b;margin-bottom:10px">'+_esc(title)+'</div>' +
+        '<div style="font-size:13.5px;color:#334155;line-height:1.65;white-space:pre-line;margin-bottom:20px">'+_esc(message)+'</div>' +
+        '<div style="display:flex;justify-content:flex-end">' +
+          '<button id="_pureun_alert_ok" style="padding:9px 20px;background:#1e40af;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer">'+_esc(okText)+'</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    function cleanup(){ try{ document.body.removeChild(overlay); }catch(e){ window._erpErrLog && window._erpErrLog(e); } document.removeEventListener('keydown', onKey); resolve(); }
+    overlay.querySelector('#_pureun_alert_ok').addEventListener('click', cleanup);
+    overlay.addEventListener('click', function(e){ if(e.target === overlay) cleanup(); });
+    function onKey(e){ if(e.key === 'Escape' || e.key === 'Enter'){ cleanup(); } }
     document.addEventListener('keydown', onKey);
   });
 };
