@@ -725,9 +725,9 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-30 폰 로그아웃 버튼 글자 표시';
+var ERP_BUILD = '2026-06-30 접속자 패널 드래그 이동 + 폰 새로고침 글자';
 // 배포할 때마다 +1 (서버 appBuild.seq보다 낮은 탭 = 옛 코드 → 안전한 순간 자동 새로고침)
-var BUILD_SEQ = 4;
+var BUILD_SEQ = 5;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -1993,7 +1993,37 @@ function presenceListLive(){
   var now = Date.now();
   return _presenceList.filter(function(p){ return p && p.lastSeen && (now - p.lastSeen) < PRESENCE_STALE_MS; });
 }
-// 대시보드 위에 떠있는 작은 패널(body 레벨 고정) — 사이드바 메뉴를 밀지 않음. PC/폰까지 표시.
+// 대시보드 위에 떠있는 작은 패널(body 레벨 고정) — 마우스/터치로 드래그 이동 가능. 시작 위치 = 좌측 상단(사이드바 영역).
+var _panelPos = null;   // 드래그로 옮긴 현재 위치(세션 동안 유지). null이면 시작 위치 사용. 새로고침하면 다시 시작 위치.
+function _attachPanelDrag(panel){
+  var dragging=false, sx=0, sy=0, sl=0, st=0;
+  function move(e){
+    if(!dragging) return;
+    var pt = (e.touches && e.touches[0]) ? e.touches[0] : e;
+    var nl = sl + (pt.clientX - sx), nt = st + (pt.clientY - sy);
+    nl = Math.max(0, Math.min(nl, window.innerWidth - panel.offsetWidth));
+    nt = Math.max(0, Math.min(nt, window.innerHeight - panel.offsetHeight));
+    _panelPos = { left:nl, top:nt };
+    panel.style.left = nl + 'px'; panel.style.top = nt + 'px';
+    if(e.cancelable) e.preventDefault();
+  }
+  function up(){
+    dragging=false;
+    document.removeEventListener('mousemove', move, true); document.removeEventListener('mouseup', up, true);
+    document.removeEventListener('touchmove', move, true); document.removeEventListener('touchend', up, true);
+  }
+  function down(e){
+    dragging=true;
+    var pt = (e.touches && e.touches[0]) ? e.touches[0] : e;
+    sx = pt.clientX; sy = pt.clientY;
+    var r = panel.getBoundingClientRect(); sl = r.left; st = r.top;
+    document.addEventListener('mousemove', move, true); document.addEventListener('mouseup', up, true);
+    document.addEventListener('touchmove', move, { capture:true, passive:false }); document.addEventListener('touchend', up, true);
+    if(e.cancelable) e.preventDefault();
+  }
+  panel.addEventListener('mousedown', down, true);
+  panel.addEventListener('touchstart', down, { capture:true, passive:false });
+}
 function _renderPresencePanel(){
   try {
     var loggedIn = (typeof getSessionSid === 'function') ? !!getSessionSid() : true;
@@ -2001,8 +2031,15 @@ function _renderPresencePanel(){
     var panel = document.getElementById('erp-presence-panel');
     if(!loggedIn || !fbDb || list.length === 0){ if(panel) panel.remove(); return; }
     var hasOther = list.some(function(p){ return p.devId !== DEVICE_ID; });
-    if(!panel){ panel = document.createElement('div'); panel.id = 'erp-presence-panel'; document.body.appendChild(panel); }
-    panel.style.cssText = 'position:fixed;top:62px;right:14px;z-index:9000;background:#fff;border:1px solid '+(hasOther?'#fb923c':'#d1d5db')+';border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.12);padding:8px 12px;min-width:150px;max-width:230px;font-family:\'Apple SD Gothic Neo\',\'맑은 고딕\',sans-serif;';
+    if(!panel){ panel = document.createElement('div'); panel.id = 'erp-presence-panel'; panel.title='드래그해서 이동'; document.body.appendChild(panel); _attachPanelDrag(panel); }
+    var pos = _panelPos || { left:12, top:200 };   // 시작 위치: 좌측 상단 사이드바 영역(캡처3)
+    // 위치는 left/top로 따로 적용(드래그 보존), 나머지 스타일만 갱신
+    panel.style.position='fixed'; panel.style.left=pos.left+'px'; panel.style.top=pos.top+'px'; panel.style.zIndex='9000';
+    panel.style.background='#fff'; panel.style.border='1px solid '+(hasOther?'#fb923c':'#d1d5db');
+    panel.style.borderRadius='10px'; panel.style.boxShadow='0 6px 20px rgba(0,0,0,.12)';
+    panel.style.padding='8px 12px'; panel.style.minWidth='150px'; panel.style.maxWidth='230px';
+    panel.style.fontFamily="'Apple SD Gothic Neo','맑은 고딕',sans-serif";
+    panel.style.cursor='move'; panel.style.userSelect='none'; panel.style.touchAction='none';
     function _esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
     var html = '<div style="font-size:11.5px;font-weight:700;margin-bottom:5px;color:'+(hasOther?'#c2410c':'#16a34a')+'">🟢 '+list.length+'명 접속</div>';
     list.forEach(function(p){
@@ -5104,7 +5141,7 @@ function Header(props){
         showConfirm('앱을 최신 버전으로 새로 시작할까요?\n(저장 안 된 입력 중인 내용은 사라질 수 있어요)', { title:'🔄 새로 시작', confirmText:'새로 시작', cancelText:'취소' })
           .then(function(ok){ if(ok){ try { location.replace(location.pathname + '?v=' + Date.now()); } catch(_){ try{ location.reload(); }catch(__){} } } });
       },
-      style:{ marginLeft:'2px', padding:'5px 9px', fontSize:'14px', cursor:'pointer', background:'#eff6ff', border:'1px solid #bfdbfe', borderRadius:'5px', color:'#1e40af', fontWeight:700, flexShrink:0 } }, '🔄'),
+      style:{ marginLeft:'2px', padding:'5px 10px', fontSize:'12.5px', cursor:'pointer', background:'#eff6ff', border:'1px solid #bfdbfe', borderRadius:'5px', color:'#1e40af', fontWeight:700, flexShrink:0, whiteSpace:'nowrap' } }, '🔄 새로고침'),
     window.IS_MOBILE && h('button', { title:'로그아웃', onClick:onLogout,
       style:{ marginLeft:'2px', padding:'5px 10px', fontSize:'12.5px', cursor:'pointer', background:'#fef2f2', border:'1px solid #fca5a5', borderRadius:'5px', color:'#dc2626', fontWeight:700, flexShrink:0, whiteSpace:'nowrap' } }, '🚪 로그아웃'),
     props.onBack && h('button', {
