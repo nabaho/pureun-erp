@@ -725,7 +725,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-30 계약관리 열 때 항상 3컬럼(단독 보기 기억 안 함)';
+var ERP_BUILD = '2026-06-30 급여명세서·메일에 연차 사용촉진 안내(대상·기간 한정)';
 // === 자동 최신화 — 브라우저 캐시 때문에 옛 코드가 계속 도는 문제 방지 ===
 // 세션당 1회, 서버의 배포 버전을 확인해 현재 실행 중 버전과 다르면 캐시 우회로 새로고침.
 (function(){
@@ -47043,6 +47043,8 @@ function PayrollLedger(props){
       if((rec.bonus||0)>0) _payBasis += '· 기타상여: '+num(rec.bonus)+'원<br>';
       var _dedBasis = '· 과세표준: '+num(calc.insurableBase)+'원<br>· 국민연금: 과세표준 × 4.5% (상한월 6,170,000원)<br>· 건강보험: 과세표준 × 3.545%<br>· 장기요양: 건강보험 × 12.95%<br>· 고용보험: 과세표준 × 0.9%<br>· 소득세: 근로소득 간이세액표 (부양가족 '+(rec.dependents||1)+'명)<br>· 지방세: 소득세 × 10%';
       var basisHtml = '<table style="width:100%;border-collapse:collapse;margin-top:12px"><tr><td style="width:50%;vertical-align:top;padding-right:7px"><div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:5px;padding:8px 12px;font-size:10px;color:#166534;line-height:1.7"><div style="font-weight:700;color:#065f46;margin-bottom:3px">📋 지급 근거</div>'+_payBasis+'</div></td><td style="width:50%;vertical-align:top;padding-left:7px"><div style="background:#fef3c7;border:1px solid #fde68a;border-radius:5px;padding:8px 12px;font-size:10px;color:#854d0e;line-height:1.7"><div style="font-weight:700;color:#854d0e;margin-bottom:3px">📋 공제 근거</div>'+_dedBasis+'</div></td></tr></table>'+(calc.minWageWarning?('<div style="margin-top:8px;background:#fef2f2;border:1px solid #fecaca;border-radius:5px;padding:6px 12px;font-size:10px;color:#dc2626;font-weight:700">⚠️ 최저임금 위반: 2026년 시급 10,320원 / 월 209h '+num(calc.minWageMonthly)+'원 미달</div>'):'');
+      var _pn2 = getLeavePromoNotice(u.name);
+      var promoHtml = _pn2 ? ('<div style="margin-top:12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:10px 14px"><div style="font-size:12px;font-weight:700;color:#1e40af;margin-bottom:4px">📣 연차 사용촉진 안내</div><div style="font-size:11.5px;color:#1e3a8a;line-height:1.6">미사용 연차 <b>'+_pn2.remain+'일</b> · 사용기간 ~'+_pn2.expiryStr+' 까지 · 사용시기를 지정해 주세요.</div></div>') : '';
       var el = document.createElement('div');
       el.style.cssText = "position:absolute;left:-9999px;top:0;width:700px;box-sizing:border-box;background:#fff;padding:30px;font-family:'Malgun Gothic','맑은 고딕',sans-serif;color:#1e293b";
       el.innerHTML =
@@ -47055,7 +47057,7 @@ function PayrollLedger(props){
         + '<table style="width:100%;border-collapse:collapse;margin-bottom:16px"><tr><td style="width:50%;vertical-align:top;padding-right:7px"><div style="background:#dcfce7;padding:7px 10px;font-weight:700;font-size:12.5px;color:#166534;border-radius:4px 4px 0 0">지급</div><table style="width:100%;font-size:12px;border-collapse:collapse;border:1px solid #e5e7eb"><tbody>'+payRows+'</tbody></table></td><td style="width:50%;vertical-align:top;padding-left:7px"><div style="background:#fef3c7;padding:7px 10px;font-weight:700;font-size:12.5px;color:#854d0e;border-radius:4px 4px 0 0">공제</div><table style="width:100%;font-size:12px;border-collapse:collapse;border:1px solid #e5e7eb"><tbody>'+dedRows+'</tbody></table></td></tr></table>'
         + perfHtml + ntHtml
         + '<div style="background:#2563eb;color:#fff;padding:14px 20px;border-radius:6px;display:flex;justify-content:space-between;align-items:center"><div style="font-size:14px;font-weight:700">실지급액 (급여)</div><div style="font-size:22px;font-weight:800;font-family:monospace">'+num(calc.netPay)+' 원</div></div>'
-        + reimbHtml + basisHtml + leaveHtml
+        + reimbHtml + basisHtml + leaveHtml + promoHtml
         + '<div style="text-align:center;margin-top:12px;font-size:10.5px;color:#94a3b8;border-top:1px solid #e5e7eb;padding-top:8px">본 명세서는 '+todayYMD()+' 발행되었습니다.</div>';
       document.body.appendChild(el);
       window.html2canvas(el, { scale: 1.3, backgroundColor: '#ffffff' }).then(function(canvas){
@@ -48351,6 +48353,40 @@ function PayrollBulkModal(props){
 }
 
 // ── 급여명세서 (1직원 상세) ──
+function getLeavePromoNotice(empName){
+  try{
+    var pol = dbGet('policy_leave', {}) || {};
+    var basis = pol.basis || 'joinDate';
+    var fiscalMonth = Number(pol.fiscalMonth || 1) || 1;
+    var ledger = dbGet('leave_ledger', []) || [];
+    var today = new Date(); today.setHours(0,0,0,0);
+    var year = today.getFullYear();
+    var lr = null;
+    for(var i=0;i<ledger.length;i++){ if(ledger[i].name===empName && Number(ledger[i].year)===year){ lr=ledger[i]; break; } }
+    if(!lr) return null;
+    var remain = (lr.remain!=null && !isNaN(Number(lr.remain))) ? Number(lr.remain) : null;
+    if(remain==null || remain<=0) return null;
+    function pad(n){ return (n<10?'0':'')+n; }
+    function fmt(d){ return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
+    function lastDayOfMonth(y, mIdx){ return new Date(y, mIdx+1, 0); }
+    var expiry;
+    if(basis==='fiscalYear'){
+      expiry = (fiscalMonth===1) ? new Date(year,11,31) : lastDayOfMonth(year+1, fiscalMonth-2);
+    } else {
+      var users = dbGet('user_accounts', USERS_SEED) || [];
+      var u=null; for(var j=0;j<users.length;j++){ if(users[j].name===empName){ u=users[j]; break; } }
+      if(!u || !u.hireDate) return null;
+      var hd=new Date(u.hireDate); if(isNaN(hd.getTime())) return null;
+      var cand=new Date(year, hd.getMonth(), hd.getDate());
+      if(cand.getTime()<=today.getTime()) cand=new Date(year+1, hd.getMonth(), hd.getDate());
+      expiry=cand;
+    }
+    var p1=new Date(expiry.getTime()); var _d=p1.getDate(); p1.setMonth(p1.getMonth()-6); if(p1.getDate()<_d) p1.setDate(0);
+    if(today < p1 || today >= expiry) return null;
+    return { remain:remain, expiryStr:fmt(expiry) };
+  }catch(_e){ return null; }
+}
+
 function PayrollPayslip(props){
   // Hooks: 조기 return보다 먼저 호출 (Hooks 규칙)
   var rf = useState(0); var refresh = rf[0]; var setRefresh = rf[1];
@@ -48440,6 +48476,8 @@ function PayrollPayslip(props){
       '※ 푸른노무법인',
       '※ 본 명세서는 ERP에서 자동 생성되었습니다.'
     ].join('\n');
+    var _pn = getLeavePromoNotice(emp.name);
+    if(_pn){ body += '\n\n─── 연차 사용촉진 안내 ───\n미사용 연차 '+_pn.remain+'일 · 사용기간 ~'+_pn.expiryStr+' 까지\n사용시기를 지정해 주세요.'; }
     return body;
   }
 
@@ -48745,6 +48783,7 @@ function PayrollPayslip(props){
             h('td', {style:{padding:'5px 8px'}}, rec.paidDate||(props.selYM+'-25')))
         )
       ),
+      (function(){ var _pn=getLeavePromoNotice(u.name); return _pn ? h('div',{style:{margin:'0 0 16px',background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'6px',padding:'10px 14px'}}, h('div',{style:{fontSize:'12px',fontWeight:700,color:'#1e40af',marginBottom:'4px'}},'📣 연차 사용촉진 안내'), h('div',{style:{fontSize:'11.5px',color:'#1e3a8a',lineHeight:1.6}}, '미사용 연차 '+_pn.remain+'일 · 사용기간 ~'+_pn.expiryStr+' 까지 · 사용시기를 지정해 주세요.')) : null; })(),
       // 지급/공제 2단
       h('div', {style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'14px',marginBottom:'16px'}},
         // 지급
