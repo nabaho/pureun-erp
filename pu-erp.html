@@ -725,9 +725,9 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-30 노무사/직원 필터 + 항목별 주·부담당 이름 표시';
+var ERP_BUILD = '2026-06-30 필터 드롭다운 통합(지사·업무있는사람만 제거) + 합계 줄';
 // 배포할 때마다 +1 (서버 appBuild.seq보다 낮은 탭 = 옛 코드 → 안전한 순간 자동 새로고침)
-var BUILD_SEQ = 17;
+var BUILD_SEQ = 18;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -33512,9 +33512,9 @@ function CorpDashboard(props){
   var sortS = useState('default'); var sortKey = sortS[0]; var setSortKey = sortS[1];
   // 지사 필터
   var brS = useState('all'); var branchFilter = brS[0]; var setBranchFilter = brS[1];
-  // Top 5 / 전체 토글
-  var exS = useState(false); var matrixExpanded = exS[0]; var setMatrixExpanded = exS[1];
   var svmS = useState('all'); var staffViewMode = svmS[0]; var setStaffViewMode = svmS[1];
+  // 정렬 방향 (desc=내림 / asc=오름)
+  var sdS = useState('desc'); var sortDir = sdS[0]; var setSortDir = sdS[1];
   // 직군 필터: all=전체 / nomusa=노무사 / staff=직원
   var rfS = useState('all'); var roleFilter = rfS[0]; var setRoleFilter = rfS[1];
   // 마스터-디테일 선택 ('all' = 전체, 또는 sid) - 비admin은 본인 sid로 강제 잠금
@@ -33528,23 +33528,19 @@ function CorpDashboard(props){
   // 인사 종합 모드: 'month' (월별) / 'year' (연간)
   var wlMdS = useState('month'); var wlMode = wlMdS[0]; var setWlMode = wlMdS[1];
 
-  // 지사 목록 추출
-  var branches = ['all'].concat(Array.from(new Set(staffMatrix.map(function(s){return s.branch;}).filter(Boolean))));
-
   var sortedMatrix = staffMatrix.slice();
   if(branchFilter !== 'all') sortedMatrix = sortedMatrix.filter(function(s){return s.branch === branchFilter;});
-  if(sortKey === 'contracts') sortedMatrix.sort(function(a,b){return b.contracts - a.contracts;});
-  else if(sortKey === 'cases') sortedMatrix.sort(function(a,b){return b.cases - a.cases;});
-  else if(sortKey === 'consultings') sortedMatrix.sort(function(a,b){return b.consultings - a.consultings;});
-  else if(sortKey === 'funds') sortedMatrix.sort(function(a,b){return b.funds - a.funds;});
-  else if(sortKey === 'others') sortedMatrix.sort(function(a,b){return b.otherProjects - a.otherProjects;});
-  else if(sortKey === 'leave') sortedMatrix.sort(function(a,b){return b.leaveRemain - a.leaveRemain;});
-  else sortedMatrix.sort(function(a,b){
-    // default: 총 업무량 내림차순
-    var ta = (a.contracts||0)+(a.cases||0)+(a.consultings||0)+(a.funds||0)+(a.otherProjects||0);
-    var tb = (b.contracts||0)+(b.cases||0)+(b.consultings||0)+(b.funds||0)+(b.otherProjects||0);
-    return tb - ta;
-  });
+  var _sortVal = function(s){
+    if(sortKey==='companies') return s.companies||0;
+    if(sortKey==='contracts') return s.contracts||0;
+    if(sortKey==='cases') return s.cases||0;
+    if(sortKey==='consultings') return s.consultings||0;
+    if(sortKey==='funds') return s.funds||0;
+    if(sortKey==='others') return s.otherProjects||0;
+    if(sortKey==='leave') return s.leaveRemain||0;
+    return (s.contracts||0)+(s.cases||0)+(s.consultings||0)+(s.funds||0)+(s.otherProjects||0); // 업무량(기본)
+  };
+  sortedMatrix.sort(function(a,b){ var d = _sortVal(b) - _sortVal(a); return sortDir==='asc' ? -d : d; });
 
   // ── 법인 공유 캘린더 데이터 ──
   // 직원별 색상 매핑 (기존 위치 색상 재활용)
@@ -36469,24 +36465,23 @@ function CorpDashboard(props){
                   border:'none', background:'none', cursor:'pointer', fontSize:'12px', color:'#94a3b8', padding:'0', lineHeight:1 } }, '✕')
             )
           ),
-          IS_ADMIN && h('div', { style:{ display:'flex', gap:'4px', alignItems:'center', flexWrap:'wrap' } },
-            h('span', { style:{ fontSize:'10.5px', color:'#94a3b8', marginRight:'2px' } }, '지사:'),
-            branches.map(function(b){
-              var on = branchFilter === b;
-              return h('button', { key:b, onClick:function(){setBranchFilter(b);},
-                style:{ padding:'4px 9px', fontSize:'10.5px', fontWeight:on?700:500,
-                  background:on?'#2563eb':'#f8fafc', color:on?'#fff':'#64748b',
-                  border:'1px solid '+(on?'#2563eb':'#e2e8f0'), borderRadius:'4px', cursor:'pointer' } },
-                b==='all'?'전체':b);
-            }),
-            h('span', { style:{ fontSize:'10.5px', color:'#94a3b8', marginLeft:'8px', marginRight:'2px' } }, '정렬:'),
-            [{v:'default',label:'업무량'},{v:'contracts',label:'계약'},{v:'cases',label:'사건'},{v:'consultings',label:'컨설팅'},{v:'funds',label:'기금'},{v:'others',label:'기타'},{v:'leave',label:'연차'}].map(function(s){
-              var on = sortKey === s.v;
-              return h('button', { key:s.v, onClick:function(){setSortKey(s.v);},
-                style:{ padding:'4px 9px', fontSize:'10.5px', fontWeight:on?700:500,
-                  background:on?'#1e40af':'#f8fafc', color:on?'#fff':'#64748b',
-                  border:'1px solid '+(on?'#1e40af':'#e2e8f0'), borderRadius:'4px', cursor:'pointer' } }, s.label);
-            })
+          IS_ADMIN && h('div', { style:{ display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap' } },
+            (function(){
+              var selStyle = { fontSize:'11px', padding:'3px 6px', border:'1px solid #cbd5e1', borderRadius:'6px', background:'#fff', color:'#334155', cursor:'pointer' };
+              return [
+                h('label', { key:'role', style:{ fontSize:'10px', color:'#94a3b8' } }, '직군 ',
+                  h('select', { value:roleFilter, onChange:function(e){ setRoleFilter(e.target.value); }, style:selStyle },
+                    h('option',{value:'all'},'전체'), h('option',{value:'nomusa'},'노무사'), h('option',{value:'staff'},'직원'))),
+                h('label', { key:'view', style:{ fontSize:'10px', color:'#94a3b8' } }, '표시 ',
+                  h('select', { value:staffViewMode, onChange:function(e){ setStaffViewMode(e.target.value); }, style:selStyle },
+                    h('option',{value:'all'},'법인 전체'), h('option',{value:'collapsed'},'모두 접기'))),
+                h('label', { key:'sort', style:{ fontSize:'10px', color:'#94a3b8' } }, '정렬 ',
+                  h('select', { value:sortKey, onChange:function(e){ setSortKey(e.target.value); }, style:selStyle },
+                    [{v:'default',label:'업무량'},{v:'companies',label:'업체'},{v:'contracts',label:'계약'},{v:'cases',label:'사건'},{v:'consultings',label:'컨설팅'},{v:'funds',label:'기금'},{v:'others',label:'기타'}].map(function(o){ return h('option',{key:o.v,value:o.v}, o.label); }))),
+                h('select', { key:'dir', value:sortDir, onChange:function(e){ setSortDir(e.target.value); }, style:selStyle },
+                    h('option',{value:'desc'},'내림차순 ▼'), h('option',{value:'asc'},'오름차순 ▲'))
+              ];
+            })()
           )
         ),
 
@@ -36514,47 +36509,20 @@ function CorpDashboard(props){
             })(),
             // 구분선
             h('div',{style:{height:'1px',background:'#e2e8f0',margin:'8px 0 6px'}}),
-            // ── 직원 표시 모드 필터 ──
-            h('div',{style:{display:'flex',gap:'3px',marginBottom:'8px',flexWrap:'wrap'}},
-              [{v:'all',label:'법인 전체'},{v:'active',label:'업무 있는사람만'},{v:'collapsed',label:'모두 접기'}].map(function(m){
-                var on = staffViewMode === m.v;
-                return h('button',{key:m.v, onClick:function(){
-                    setStaffViewMode(m.v);
-                    if(m.v==='collapsed') setMatrixExpanded(false);
-                    else if(m.v==='all') setMatrixExpanded(true);
-                  },
-                  style:{flex:1,padding:'4px 4px',fontSize:'10px',fontWeight:on?700:500,cursor:'pointer',borderRadius:'5px',
-                    background:on?'#1e40af':'#f8fafc',color:on?'#fff':'#64748b',
-                    border:'1px solid '+(on?'#1e40af':'#e2e8f0'),whiteSpace:'nowrap',textAlign:'center'}},
-                  m.label);
-              })
-            ),
-            // 직군 필터 (전체/노무사/직원)
-            h('div',{style:{display:'flex',gap:'3px',marginBottom:'8px',flexWrap:'wrap'}},
-              [{v:'all',label:'전체'},{v:'nomusa',label:'노무사'},{v:'staff',label:'직원'}].map(function(m){
-                var on = roleFilter === m.v;
-                return h('button',{key:m.v, onClick:function(){ setRoleFilter(m.v); },
-                  style:{flex:1,padding:'4px 4px',fontSize:'10px',fontWeight:on?700:500,cursor:'pointer',borderRadius:'5px',
-                    background:on?'#0f766e':'#f8fafc',color:on?'#fff':'#64748b',
-                    border:'1px solid '+(on?'#0f766e':'#e2e8f0'),whiteSpace:'nowrap',textAlign:'center'}},
-                  m.label);
-              })
-            ),
             // 직원 비교 표(이름+분류막대+총계) — 한 줄=한 명, 줄 클릭=선택
             (function(){
               function _isNomusa(s){ return /노무사/.test(s.title||''); }
               var roleBase = roleFilter==='nomusa' ? sortedMatrix.filter(_isNomusa)
                 : roleFilter==='staff' ? sortedMatrix.filter(function(s){ return !_isNomusa(s); })
                 : sortedMatrix;
-              var displayMatrix = staffViewMode === 'active'
-                ? roleBase.filter(function(s){ return ((s.contracts||0)+(s.cases||0)+(s.consultings||0)+(s.funds||0)+(s.otherProjects||0)) > 0; })
-                : roleBase;
-              var showAll = staffViewMode === 'all' || matrixExpanded;
-              var listToShow = (staffViewMode === 'collapsed') ? [] : (showAll ? displayMatrix : displayMatrix.slice(0,5));
+              var displayMatrix = roleBase;
+              var listToShow = (staffViewMode === 'collapsed') ? [] : displayMatrix;
               // 비교 표 정규화: 분류별 최댓값(열별) + 총계 최댓값 — 전 직원 기준(필터 무관 고정)
               var cmpCats = [['업체','companies','#9333ea'],['계약','contracts','#1e40af'],['사건','cases','#dc2626'],['컨설팅','consultings','#2563eb'],['기금','funds','#ca8a04'],['기타','otherProjects','#16a34a']];
               var maxByCat = {}; cmpCats.forEach(function(c){ maxByCat[c[1]] = Math.max(1, staffMatrix.reduce(function(m,x){ return Math.max(m, x[c[1]]||0); }, 0)); });
               var maxTotalC = Math.max(1, staffMatrix.reduce(function(m,x){ return Math.max(m, (x.contracts||0)+(x.cases||0)+(x.consultings||0)+(x.funds||0)+(x.otherProjects||0)); }, 0));
+              var colSums = {}; cmpCats.forEach(function(c){ colSums[c[1]] = listToShow.reduce(function(a,s){ return a+(s[c[1]]||0); }, 0); });
+              var totSum = listToShow.reduce(function(a,s){ return a+((s.contracts||0)+(s.cases||0)+(s.consultings||0)+(s.funds||0)+(s.otherProjects||0)); }, 0);
               function bcell(v,max,color){ var w=Math.round(v/max*100); return h('div',{style:{display:'flex',alignItems:'center',gap:'3px'}},
                 h('span',{style:{minWidth:'13px',textAlign:'right',fontSize:'9.5px',fontFamily:'monospace',fontWeight:700,color:v>0?color:'#cbd5e1'}}, v),
                 h('div',{style:{flex:1,height:'7px',background:'#f1f5f9',borderRadius:'4px',overflow:'hidden'}}, h('div',{style:{width:w+'%',height:'100%',background:color,borderRadius:'4px'}}))); }
@@ -36581,14 +36549,14 @@ function CorpDashboard(props){
                         cmpCats.map(function(c){ return h('td',{key:c[1],style:{padding:'2px 4px'}}, bcell(s[c[1]]||0, maxByCat[c[1]], c[2])); }),
                         h('td',{style:{padding:'2px 4px'}}, bcell(total, maxTotalC, '#475569'))
                       );
-                    })
+                    }),
+                    listToShow.length > 0 && h('tr', { style:{ borderTop:'2px solid #cbd5e1', background:'#f8fafc' } },
+                      h('td', { style:{ padding:'5px 4px', fontSize:'10px', fontWeight:800, color:'#334155' } }, '합계'),
+                      cmpCats.map(function(c){ return h('td', { key:c[1], style:{ padding:'5px 4px', fontSize:'11px', fontFamily:'monospace', fontWeight:800, color:c[2] } }, colSums[c[1]]); }),
+                      h('td', { style:{ padding:'5px 4px', fontSize:'11px', fontFamily:'monospace', fontWeight:800, color:'#1e293b' } }, totSum)
+                    )
                   )
-                ),
-              staffViewMode !== 'collapsed' && staffViewMode !== 'all' && displayMatrix.length > 5 && h('div', { style:{ textAlign:'center', marginTop:'8px' } },
-                h('button', { onClick:function(){setMatrixExpanded(!matrixExpanded);},
-                  style:{ padding:'5px 12px', background:'#fff', border:'1px solid #cbd5e1', borderRadius:'4px', cursor:'pointer', fontSize:'10.5px', fontWeight:600, color:'#475569' } },
-                  matrixExpanded ? '▲ 접기' : '▼ + '+(displayMatrix.length-5)+'명 더 보기')
-              )
+                )
             );
             })()
           ),
