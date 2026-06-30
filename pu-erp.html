@@ -725,9 +725,9 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-30 사건·컨설팅 항목에 유형 배지 표시';
+var ERP_BUILD = '2026-06-30 직원 비교 패널(표+막대) 추가';
 // 배포할 때마다 +1 (서버 appBuild.seq보다 낮은 탭 = 옛 코드 → 안전한 순간 자동 새로고침)
-var BUILD_SEQ = 9;
+var BUILD_SEQ = 10;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -33508,6 +33508,8 @@ function CorpDashboard(props){
   // Top 5 / 전체 토글
   var exS = useState(false); var matrixExpanded = exS[0]; var setMatrixExpanded = exS[1];
   var svmS = useState('all'); var staffViewMode = svmS[0]; var setStaffViewMode = svmS[1];
+  // 직원 비교 패널(표+막대) 펼침 여부
+  var cmpS = useState(true); var cmpOpen = cmpS[0]; var setCmpOpen = cmpS[1];
   // 마스터-디테일 선택 ('all' = 전체, 또는 sid) - 비admin은 본인 sid로 강제 잠금
   var selSidS = useState(IS_ADMIN ? 'all' : CURRENT_USER.sid); var selectedSid = selSidS[0]; var setSelectedSid = selSidS[1];
   // 직원별 업무 검색 쿼리
@@ -36480,6 +36482,60 @@ function CorpDashboard(props){
             })
           )
         ),
+
+        // 📊 직원 비교 (표+칸막대) — 관리자 전용. 전 직원의 분류별 업무량을 막대로 한눈에 비교 (현재 정렬·지사 필터 반영)
+        IS_ADMIN && (function(){
+          var cats = [
+            {k:'contracts', label:'계약', color:'#1e40af'},
+            {k:'cases', label:'사건', color:'#dc2626'},
+            {k:'consultings', label:'컨설팅', color:'#2563eb'},
+            {k:'funds', label:'기금', color:'#ca8a04'},
+            {k:'otherProjects', label:'기타', color:'#16a34a'},
+            {k:'companies', label:'업체', color:'#9333ea'}
+          ];
+          var rows = sortedMatrix;
+          var maxByCat = {};
+          cats.forEach(function(c){ maxByCat[c.k] = Math.max(1, rows.reduce(function(m,s){ return Math.max(m, s[c.k]||0); }, 0)); });
+          var maxTotal = Math.max(1, rows.reduce(function(m,s){ var t=cats.reduce(function(a,c){return a+(s[c.k]||0);},0); return Math.max(m,t); }, 0));
+          function barCell(v, max, color, bold){
+            var w = Math.round((v/max)*100);
+            return h('div', { style:{ display:'flex', alignItems:'center', gap:'5px' } },
+              h('span', { style:{ minWidth:'18px', textAlign:'right', fontWeight:bold?800:700, color: v>0?color:'#cbd5e1', fontFamily:'monospace', fontSize:'11px' } }, v),
+              h('div', { style:{ flex:1, height:'9px', background:'#f1f5f9', borderRadius:'5px', overflow:'hidden' } },
+                h('div', { style:{ width:w+'%', height:'100%', background:color, borderRadius:'5px' } }))
+            );
+          }
+          return h('div', { style:{ marginBottom:'12px', border:'1px solid #e2e8f0', borderRadius:'10px', overflow:'hidden' } },
+            h('div', { onClick:function(){ setCmpOpen(!cmpOpen); },
+              style:{ display:'flex', alignItems:'center', gap:'8px', padding:'8px 12px', background:'#f8fafc', cursor:'pointer', borderBottom: cmpOpen?'1px solid #e2e8f0':'none' } },
+              h('span', { style:{ fontSize:'12px', color:'#64748b' } }, cmpOpen?'▼':'▶'),
+              h('span', { style:{ fontWeight:700, fontSize:'12.5px', color:'#1e293b' } }, '📊 직원 비교'),
+              h('span', { style:{ fontSize:'10.5px', color:'#94a3b8' } }, '분류별 업무량을 막대로 한눈에')
+            ),
+            cmpOpen && h('div', { style:{ overflowX:'auto', padding:'8px 10px' } },
+              h('table', { style:{ borderCollapse:'collapse', width:'100%', minWidth:'660px' } },
+                h('thead', null,
+                  h('tr', null,
+                    h('th', { style:{ textAlign:'left', padding:'4px 8px', color:'#64748b', fontWeight:700, fontSize:'11px', position:'sticky', left:0, background:'#fff', zIndex:1 } }, '직원'),
+                    cats.map(function(c){ return h('th', { key:c.k, style:{ textAlign:'left', padding:'4px 8px', color:c.color, fontWeight:700, fontSize:'11px', minWidth:'92px' } }, c.label); }),
+                    h('th', { style:{ textAlign:'left', padding:'4px 8px', color:'#1e293b', fontWeight:800, fontSize:'11px', minWidth:'100px' } }, '총계')
+                  )
+                ),
+                h('tbody', null,
+                  rows.map(function(s){
+                    var total = cats.reduce(function(a,c){return a+(s[c.k]||0);},0);
+                    return h('tr', { key:s.sid, style:{ borderTop:'1px solid #f1f5f9' } },
+                      h('td', { style:{ padding:'4px 8px', whiteSpace:'nowrap', position:'sticky', left:0, background:'#fff', fontWeight:600, color:'#1e293b', fontSize:'11px', zIndex:1 } },
+                        s.name, h('span', { style:{ color:'#94a3b8', fontWeight:500, marginLeft:'4px', fontSize:'10px' } }, s.title)),
+                      cats.map(function(c){ return h('td', { key:c.k, style:{ padding:'3px 8px' } }, barCell(s[c.k]||0, maxByCat[c.k], c.color, false)); }),
+                      h('td', { style:{ padding:'3px 8px' } }, barCell(total, maxTotal, '#475569', true))
+                    );
+                  })
+                )
+              )
+            )
+          );
+        })(),
 
         // 본문: 좌(직원 목록, admin만) + 우(상세) / 비admin은 1컬럼
         h('div', { style:{ display:'grid',
