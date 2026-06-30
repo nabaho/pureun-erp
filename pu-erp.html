@@ -725,9 +725,9 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-30 접속 팝업 초기위치 좌측하단 + 개인별 마지막 위치 기억';
+var ERP_BUILD = '2026-06-30 직원 목록을 비교 표(이름+분류막대+총계)로 교체';
 // 배포할 때마다 +1 (서버 appBuild.seq보다 낮은 탭 = 옛 코드 → 안전한 순간 자동 새로고침)
-var BUILD_SEQ = 13;
+var BUILD_SEQ = 14;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -36490,7 +36490,7 @@ function CorpDashboard(props){
 
         // 본문: 좌(직원 목록, admin만) + 우(상세) / 비admin은 1컬럼
         h('div', { style:{ display:'grid',
-          gridTemplateColumns: (IS_ADMIN && window.innerWidth>480) ? '220px 1fr' : '1fr',
+          gridTemplateColumns: (IS_ADMIN && window.innerWidth>480) ? '450px 1fr' : '1fr',
           gap:'10px', alignItems:'flex-start' } },
 
           // ─ 좌측: 직원 목록 (admin 전용) ─
@@ -36527,62 +36527,46 @@ function CorpDashboard(props){
                   m.label);
               })
             ),
-            // 미니그래프 색 범례(1줄, 카드별 글자 대신)
-            h('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px 8px',marginBottom:'7px',fontSize:'9px',color:'#64748b'}},
-              [['계약','#1e40af'],['사건','#dc2626'],['컨설팅','#2563eb'],['기금','#ca8a04'],['기타','#16a34a']].map(function(p,pi){
-                return h('span',{key:pi,style:{display:'inline-flex',alignItems:'center',gap:'3px'}},
-                  h('span',{style:{width:'8px',height:'8px',borderRadius:'2px',background:p[1],display:'inline-block'}}), p[0]);
-              })
-            ),
-            // 직원 목록 (staffViewMode 적용)
+            // 직원 비교 표(이름+분류막대+총계) — 한 줄=한 명, 줄 클릭=선택
             (function(){
               var displayMatrix = staffViewMode === 'active'
                 ? sortedMatrix.filter(function(s){ return ((s.contracts||0)+(s.cases||0)+(s.consultings||0)+(s.funds||0)+(s.otherProjects||0)) > 0; })
                 : sortedMatrix;
               var showAll = staffViewMode === 'all' || matrixExpanded;
               var listToShow = (staffViewMode === 'collapsed') ? [] : (showAll ? displayMatrix : displayMatrix.slice(0,5));
-              // 카드 미니그래프 정규화 기준: 전 직원 5개 업무항목 중 최댓값(필터 무관 고정 → 막대 길이 안 흔들림)
-              var _workMax = Math.max(1, staffMatrix.reduce(function(m,x){ return Math.max(m, x.contracts||0, x.cases||0, x.consultings||0, x.funds||0, x.otherProjects||0); }, 0));
+              // 비교 표 정규화: 분류별 최댓값(열별) + 총계 최댓값 — 전 직원 기준(필터 무관 고정)
+              var cmpCats = [['계약','contracts','#1e40af'],['사건','cases','#dc2626'],['컨설팅','consultings','#2563eb'],['기금','funds','#ca8a04'],['기타','otherProjects','#16a34a']];
+              var maxByCat = {}; cmpCats.forEach(function(c){ maxByCat[c[1]] = Math.max(1, staffMatrix.reduce(function(m,x){ return Math.max(m, x[c[1]]||0); }, 0)); });
+              var maxTotalC = Math.max(1, staffMatrix.reduce(function(m,x){ return Math.max(m, (x.contracts||0)+(x.cases||0)+(x.consultings||0)+(x.funds||0)+(x.otherProjects||0)); }, 0));
+              function bcell(v,max,color){ var w=Math.round(v/max*100); return h('div',{style:{display:'flex',alignItems:'center',gap:'3px'}},
+                h('span',{style:{minWidth:'13px',textAlign:'right',fontSize:'9.5px',fontFamily:'monospace',fontWeight:700,color:v>0?color:'#cbd5e1'}}, v),
+                h('div',{style:{flex:1,height:'7px',background:'#f1f5f9',borderRadius:'4px',overflow:'hidden'}}, h('div',{style:{width:w+'%',height:'100%',background:color,borderRadius:'4px'}}))); }
               return h('div', null,
-                listToShow.map(function(s){
-              var on = selectedSid === s.sid;
-              var total = (s.contracts||0)+(s.cases||0)+(s.consultings||0)+(s.funds||0)+(s.otherProjects||0);
-              var color = staffColorMap[s.sid] || '#64748b';
-              // 정렬 기준에 따른 표시 값·라벨
-              var dispVal, dispLabel;
-              if(sortKey==='contracts'){ dispVal = s.contracts||0; dispLabel = '계약'; }
-              else if(sortKey==='cases'){ dispVal = s.cases||0; dispLabel = '사건'; }
-              else if(sortKey==='consultings'){ dispVal = s.consultings||0; dispLabel = '컨설팅'; }
-              else if(sortKey==='funds'){ dispVal = s.funds||0; dispLabel = '기금'; }
-              else if(sortKey==='others'){ dispVal = s.otherProjects||0; dispLabel = '기타'; }
-              else if(sortKey==='leave'){ dispVal = s.leaveRemain||0; dispLabel = '잔여연차'; }
-              else { dispVal = total; dispLabel = ''; }
-              return h('div',{ key:s.sid, onClick:function(){setSelectedSid(s.sid);},
-                style:{ padding:'6px 8px', background: on?color+'22':'#fff', border:'1px solid '+(on?color:'#f1f5f9'), borderLeft:'3px solid '+color, borderRadius:'5px', marginBottom:'4px', cursor:'pointer', display:'flex', alignItems:'center', gap:'8px',
-                  boxShadow: on?'0 2px 6px '+color+'33':'none' }},
-                h('div',{style:{flex:1,minWidth:0}},
-                  h('div',{style:{fontWeight:on?700:600,fontSize:'10.5px',color:'#1e293b',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
-                    s.name,
-                    s.loaName && h('span',{style:{marginLeft:'4px',fontSize:'10px',padding:'1px 4px',background:'#fee2e2',color:'#991b1b',borderRadius:'5px',fontWeight:700}},'🏠')
+                h('table',{style:{borderCollapse:'collapse',width:'100%',tableLayout:'fixed'}},
+                  h('thead',null,
+                    h('tr',null,
+                      h('th',{style:{textAlign:'left',padding:'3px 4px',fontSize:'9.5px',color:'#64748b',fontWeight:700,width:'58px'}},'직원'),
+                      cmpCats.map(function(c){ return h('th',{key:c[1],style:{textAlign:'left',padding:'3px 4px',fontSize:'9.5px',color:c[2],fontWeight:700}}, c[0]); }),
+                      h('th',{style:{textAlign:'left',padding:'3px 4px',fontSize:'9.5px',color:'#1e293b',fontWeight:800,width:'56px'}},'총계')
+                    )
                   ),
-                  h('div',{style:{fontSize:'10.5px',color:'#94a3b8',marginTop:'1px'}},s.title+' · '+s.branch),
-                  h('div',{style:{display:'flex',flexDirection:'column',gap:'2px',marginTop:'4px'}},
-                    [['계약',s.contracts,'#1e40af'],['사건',s.cases,'#dc2626'],['컨설팅',s.consultings,'#2563eb'],['기금',s.funds,'#ca8a04'],['기타',s.otherProjects,'#16a34a']].map(function(p,pi){
-                      var n=p[1]||0; var w=Math.round(n/_workMax*100);
-                      return h('div',{key:pi,style:{display:'flex',alignItems:'center',gap:'4px'}},
-                        h('span',{style:{width:'14px',textAlign:'right',fontSize:'9px',fontFamily:'monospace',color:n>0?p[2]:'#cbd5e1'}}, n),
-                        h('div',{style:{flex:1,height:'4px',background:'#f1f5f9',borderRadius:'3px',overflow:'hidden'}},
-                          h('div',{style:{width:w+'%',height:'100%',background:p[2]}}))
+                  h('tbody',null,
+                    listToShow.map(function(s){
+                      var on = selectedSid === s.sid;
+                      var total = (s.contracts||0)+(s.cases||0)+(s.consultings||0)+(s.funds||0)+(s.otherProjects||0);
+                      var color = staffColorMap[s.sid] || '#64748b';
+                      return h('tr',{ key:s.sid, onClick:function(){setSelectedSid(s.sid);},
+                        style:{ cursor:'pointer', background: on?color+'1f':'transparent', borderTop:'1px solid #f1f5f9' }},
+                        h('td',{style:{padding:'4px 4px',borderLeft:'3px solid '+color,overflow:'hidden'}},
+                          h('div',{style:{fontSize:'10px',fontWeight:on?700:600,color:'#1e293b',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}, s.name, s.loaName && h('span',{style:{marginLeft:'2px',fontSize:'8px'}},'🏠')),
+                          h('div',{style:{fontSize:'8.5px',color:'#94a3b8',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}, s.title)
+                        ),
+                        cmpCats.map(function(c){ return h('td',{key:c[1],style:{padding:'2px 4px'}}, bcell(s[c[1]]||0, maxByCat[c[1]], c[2])); }),
+                        h('td',{style:{padding:'2px 4px'}}, bcell(total, maxTotalC, '#475569'))
                       );
                     })
                   )
                 ),
-                h('div',{style:{display:'flex',flexDirection:'column',alignItems:'flex-end'}},
-                  h('div',{style:{fontFamily:'monospace',fontWeight:800,fontSize:'13px',color: dispVal>0?color:'#cbd5e1'}}, dispVal),
-                  dispLabel && h('div',{style:{fontSize:'8.5px',color:'#94a3b8',fontWeight:600,marginTop:'-1px'}}, dispLabel)
-                )
-              );
-              }),
               staffViewMode !== 'collapsed' && staffViewMode !== 'all' && displayMatrix.length > 5 && h('div', { style:{ textAlign:'center', marginTop:'8px' } },
                 h('button', { onClick:function(){setMatrixExpanded(!matrixExpanded);},
                   style:{ padding:'5px 12px', background:'#fff', border:'1px solid #cbd5e1', borderRadius:'4px', cursor:'pointer', fontSize:'10.5px', fontWeight:600, color:'#475569' } },
