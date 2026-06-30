@@ -725,7 +725,9 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-30 접속자 현황 + 다른 접속 시 확인창 알림';
+var ERP_BUILD = '2026-06-30 접속자 패널(화면 위) + PC/폰 표시 + 버전 자동최신화';
+// 배포할 때마다 +1 (서버 appBuild.seq보다 낮은 탭 = 옛 코드 → 안전한 순간 자동 새로고침)
+var BUILD_SEQ = 1;
 // === 자동 최신화 — 브라우저 캐시 때문에 옛 코드가 계속 도는 문제 방지 ===
 // 세션당 1회, 서버의 배포 버전을 확인해 현재 실행 중 버전과 다르면 캐시 우회로 새로고침.
 (function(){
@@ -2013,6 +2015,26 @@ function presenceListLive(){
   var now = Date.now();
   return _presenceList.filter(function(p){ return p && p.lastSeen && (now - p.lastSeen) < PRESENCE_STALE_MS; });
 }
+// 대시보드 위에 떠있는 작은 패널(body 레벨 고정) — 사이드바 메뉴를 밀지 않음. PC/폰까지 표시.
+function _renderPresencePanel(){
+  try {
+    var loggedIn = (typeof getSessionSid === 'function') ? !!getSessionSid() : true;
+    var list = presenceListLive();
+    var panel = document.getElementById('erp-presence-panel');
+    if(!loggedIn || !fbDb || list.length === 0){ if(panel) panel.remove(); return; }
+    var hasOther = list.some(function(p){ return p.devId !== DEVICE_ID; });
+    if(!panel){ panel = document.createElement('div'); panel.id = 'erp-presence-panel'; document.body.appendChild(panel); }
+    panel.style.cssText = 'position:fixed;top:62px;right:14px;z-index:9000;background:#fff;border:1px solid '+(hasOther?'#fb923c':'#d1d5db')+';border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.12);padding:8px 12px;min-width:150px;max-width:230px;font-family:\'Apple SD Gothic Neo\',\'맑은 고딕\',sans-serif;';
+    function _esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    var html = '<div style="font-size:11.5px;font-weight:700;margin-bottom:5px;color:'+(hasOther?'#c2410c':'#16a34a')+'">🟢 '+list.length+'명 접속</div>';
+    list.forEach(function(p){
+      var mine = (p.devId === DEVICE_ID);
+      var isPhone = (p.device && p.device.indexOf('폰') >= 0);
+      html += '<div style="font-size:11.5px;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:'+(mine?'#94a3b8':'#334155')+'">'+(isPhone?'📱 폰':'💻 PC')+' · '+_esc(p.name)+(mine?' (나)':'')+'</div>';
+    });
+    panel.innerHTML = html;
+  } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+}
 function initPresence(sid, name){
   if(!fbDb) return;
   try {
@@ -2026,6 +2048,7 @@ function initPresence(sid, name){
     _presenceHbTimer = setInterval(_writePresence, 30 * 1000);  // 30초 하트비트(통째로 재기록 → 자가복구)
     if(!_presenceSubbed){
       _presenceSubbed = true;
+      try { window.addEventListener('presence_changed', _renderPresencePanel); } catch(_){}
       fbDb.ref('presence').on('value', function(snap){
         var v = snap.val() || {};
         var arr = [];
@@ -2044,7 +2067,7 @@ function initPresence(sid, name){
           var fresh = liveOthers.filter(function(p){ return !_presenceAnnounced[p.devId]; });
           fresh.forEach(function(p){ _presenceAnnounced[p.devId] = true; });
           if(fresh.length && typeof showAlert === 'function'){
-            var names = fresh.map(function(p){ return ((p.device && p.device.indexOf('폰') >= 0) ? '📱 ' : '💻 ') + p.name; });
+            var names = fresh.map(function(p){ return ((p.device && p.device.indexOf('폰') >= 0) ? '📱 폰 ' : '💻 PC ') + p.name; });
             var body = (fresh.length === 1)
               ? names[0] + ' 님이 ERP에 접속했습니다.'
               : '현재 접속 중: ' + names.join(', ');
@@ -2064,8 +2087,70 @@ function clearPresence(){
       _presenceRef = null;
     }
     _presencePayload = null;
+    try { var _pp = document.getElementById('erp-presence-panel'); if(_pp) _pp.remove(); } catch(_){}
   } catch(e){ window._erpErrLog && window._erpErrLog(e); }
 }
+
+// ============================================================
+// 버전 게이트 — 서버 기준 최신 빌드(appBuild.seq)보다 낮은 탭(=옛 코드)을 안전한 순간 자동 새로고침.
+//   옛 코드 탭이 옛 데이터를 통째로 덮어써 "데이터 급감/경고"가 반복되던 문제의 근본 차단.
+//   안전한 순간 = 탭이 백그라운드이거나, 입력 중이 아니고 30초 이상 손 놓고 있을 때(작업 안 끊김).
+//   appBuild는 data/ 와 별개 경로 — 데이터 동기화와 안 섞임.
+// ============================================================
+var _vgPending = false;
+var _vgLastActivity = Date.now();
+['keydown','mousedown','touchstart','input','wheel'].forEach(function(ev){
+  try { window.addEventListener(ev, function(){ _vgLastActivity = Date.now(); }, true); } catch(_){}
+});
+function _vgInputFocused(){
+  var el = document.activeElement; if(!el) return false;
+  var tag = (el.tagName || '').toLowerCase();
+  return tag==='input' || tag==='textarea' || tag==='select' || !!el.isContentEditable;
+}
+function _vgSafeNow(){
+  if(document.hidden) return true;                       // 백그라운드 → 안전
+  if(_vgInputFocused()) return false;                    // 입력 중 → 보류
+  return (Date.now() - _vgLastActivity) > 30000;         // 30초 이상 유휴 → 안전
+}
+function _vgReloadNow(){
+  _vgPending = false;
+  try { location.replace(location.pathname + '?v=' + Date.now()); } catch(_){ try { location.reload(); } catch(__){} }
+}
+function _vgScheduleReload(){
+  if(_vgPending) return; _vgPending = true;
+  try { showToast('🔄 새 버전이 배포됐습니다 — 작업을 멈추면 자동으로 새로고침됩니다'); } catch(_){}
+  var iv = setInterval(function(){
+    if(!_vgPending){ clearInterval(iv); return; }
+    if(_vgSafeNow()){ clearInterval(iv); _vgReloadNow(); }
+  }, 5000);
+  try { document.addEventListener('visibilitychange', function(){ if(_vgPending && document.hidden) _vgReloadNow(); }); } catch(_){}
+}
+function initVersionGate(){
+  if(!fbDb) return;
+  try {
+    var ref = fbDb.ref('appBuild');
+    ref.once('value').then(function(snap){
+      var v = snap.val() || {};
+      var srvSeq = (typeof v.seq === 'number') ? v.seq : 0;
+      if(srvSeq > BUILD_SEQ){ _vgScheduleReload(); }
+      else if(BUILD_SEQ > srvSeq){ ref.set({ seq:BUILD_SEQ, build:ERP_BUILD, at:Date.now() }).catch(function(){}); }  // 내가 더 최신 → 알림
+    }).catch(function(){});
+    ref.on('value', function(snap){
+      var v = snap.val() || {};
+      if(typeof v.seq === 'number' && v.seq > BUILD_SEQ) _vgScheduleReload();
+    });
+  } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+}
+(function(){   // fbDb+인증 준비되면 버전 게이트 시작(로그인 여부 무관)
+  if(location.protocol === 'file:') return;
+  var tries = 0;
+  var iv = setInterval(function(){
+    tries++;
+    if(typeof fbDb !== 'undefined' && fbDb && typeof fbAuthReady !== 'undefined' && fbAuthReady){
+      clearInterval(iv); try { initVersionGate(); } catch(_){}
+    } else if(tries > 40){ clearInterval(iv); }   // 20초 후 포기
+  }, 500);
+})();
 
 // === Firebase 초기화 (있으면 자동 활성화, 없거나 실패해도 LS는 정상 작동) ===
 var FB_CONFIG = {
@@ -4372,14 +4457,6 @@ function Sidebar(props){
   })());
   var pinned = pp[0]; var setPinned = pp[1];
   var dgS = useState(null); var dragPinIdx = dgS[0]; var setDragPinIdx = dgS[1];
-  // 접속자 현황(presence) 구독 — presence_changed 이벤트 + 30초 주기로 stale 갱신 리렌더
-  var prS = useState(0); var setPrTick = prS[1];
-  useEffect(function(){
-    function onPr(){ setPrTick(function(t){ return t + 1; }); }
-    window.addEventListener('presence_changed', onPr);
-    var iv = setInterval(onPr, 30 * 1000);
-    return function(){ window.removeEventListener('presence_changed', onPr); clearInterval(iv); };
-  }, []);
   function togglePin(menuId){
     var isPinned = pinned.indexOf(menuId) >= 0;
     if(!isPinned && pinned.length >= 5){
@@ -4497,10 +4574,6 @@ function Sidebar(props){
     return f ? { id:mid, item:f.item, grp:f.grp } : null;
   }).filter(Boolean);
 
-  // 접속자 현황(stale 제외) — 내 기기 외 다른 접속이 있으면 강조
-  var presList = (typeof presenceListLive === 'function') ? presenceListLive() : [];
-  var presHasOther = presList.some(function(p){ return p.devId !== DEVICE_ID; });
-
   return h('aside', { className: 'sb' + (collapsed ? ' collapsed':''),
       onTouchStart:onAsideTouchStart, onTouchEnd:onAsideTouchEnd },
     h('div', { className:'sb-logo' },
@@ -4514,19 +4587,6 @@ function Sidebar(props){
         h('div', { className:'n' }, CURRENT_USER.name),
         h('div', { className:'r' }, CURRENT_USER.role)
       )
-    ),
-    // 접속자 현황 — 지금 ERP에 접속해 있는 사람들 (보여주기만, 잠금 아님)
-    (fbDb && presList.length > 0) && h('div', { style:{ padding:'8px 14px', borderBottom:'1px solid #2a3656' } },
-      h('div', { style:{ fontSize:'11px', fontWeight:700, marginBottom:'4px', color: presHasOther ? '#fb923c' : '#34d399' } },
-        '🟢 ' + presList.length + '명 접속'),
-      presList.map(function(p){
-        var mine = (p.devId === DEVICE_ID);
-        var icon = (p.device && p.device.indexOf('폰') >= 0) ? '📱' : '💻';
-        return h('div', { key:p.devId, title:p.device,
-          style:{ fontSize:'11px', lineHeight:'1.55', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis',
-                  color: mine ? '#94a3b8' : '#cbd5e1' } },
-          icon + ' ' + p.name + (mine ? ' (나)' : ''));
-      })
     ),
     // 검색 input 제거됨 (사용자 요청)
     h('div', { className:'sb-actions', style:{ display:'flex', gap:'4px', flexWrap:'wrap' } },
