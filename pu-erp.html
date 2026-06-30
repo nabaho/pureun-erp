@@ -725,7 +725,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-30 주담당 × 삭제 시 확인창 + 3초 삭제 안내';
+var ERP_BUILD = '2026-06-30 접속자 현황(사이드바) 표시';
 // === 자동 최신화 — 브라우저 캐시 때문에 옛 코드가 계속 도는 문제 방지 ===
 // 세션당 1회, 서버의 배포 버전을 확인해 현재 실행 중 버전과 다르면 캐시 우회로 새로고침.
 (function(){
@@ -1118,6 +1118,7 @@ function checkSelfStatus(){
 }
 function forceLogout(msg){
   try {
+    try { if(typeof clearPresence === 'function') clearPresence(); } catch(_){}
     clearSession();
     clearAutoLogin();
     showToast(msg || '세션이 종료되었습니다.');
@@ -1989,6 +1990,64 @@ function claimDeviceLock(){
 
 function notifyDeviceLock(){
   try { window.dispatchEvent(new CustomEvent('device_lock_changed', { detail: { isWriter: _deviceIsWriter, writer: _serverWriter } })); } catch(_){}
+}
+
+// ============================================================
+// 접속자 현황(presence) — "지금 누가 ERP에 접속해 있는지"를 보여주기만 함(잠금 아님, 동시작업 그대로).
+//   presence/{DEVICE_ID} = {sid, name, device, loginAt, lastSeen}
+//   onDisconnect로 탭 닫힘/새로고침/크래시 시 서버가 자동 삭제 · 30초 하트비트 · 90초 넘으면 stale로 숨김.
+//   data/ 와 완전히 분리된 경로라 데이터 동기화·급감차단과 전혀 섞이지 않음.
+// ============================================================
+var PRESENCE_STALE_MS = 90 * 1000;
+var _presenceList = [];        // 구독 결과(원본 배열)
+var _presenceHbTimer = null;
+var _presenceRef = null;       // 내 presence 경로 ref (onDisconnect 취소용)
+var _presencePayload = null;   // 하트비트 시 통째로 다시 쓰기 위한 내 정보
+var _presenceSubbed = false;   // 전체 구독 1회만
+function _writePresence(){
+  if(!_presenceRef || !_presencePayload) return;
+  _presenceRef.set({ sid:_presencePayload.sid, name:_presencePayload.name, device:_presencePayload.device, loginAt:_presencePayload.loginAt, lastSeen:Date.now() }).catch(function(){});
+}
+function presenceListLive(){
+  var now = Date.now();
+  return _presenceList.filter(function(p){ return p && p.lastSeen && (now - p.lastSeen) < PRESENCE_STALE_MS; });
+}
+function initPresence(sid, name){
+  if(!fbDb) return;
+  try {
+    sid = sid || (typeof getSessionSid === 'function' ? getSessionSid() : '') || '';
+    name = name || (CURRENT_USER && CURRENT_USER.name) || '';
+    _presencePayload = { sid:sid, name:name, device:DEVICE_NAME, loginAt:Date.now() };
+    _presenceRef = fbDb.ref('presence/' + DEVICE_ID);
+    _writePresence();                       // 즉시 1회
+    _presenceRef.onDisconnect().remove();    // 닫힘/새로고침/크래시 시 서버가 자동 삭제
+    if(_presenceHbTimer) clearInterval(_presenceHbTimer);
+    _presenceHbTimer = setInterval(_writePresence, 30 * 1000);  // 30초 하트비트(통째로 재기록 → 자가복구)
+    if(!_presenceSubbed){
+      _presenceSubbed = true;
+      fbDb.ref('presence').on('value', function(snap){
+        var v = snap.val() || {};
+        var arr = [];
+        Object.keys(v).forEach(function(devId){
+          var p = v[devId]; if(!p) return;
+          arr.push({ devId:devId, sid:p.sid||'', name:p.name||'(이름없음)', device:p.device||'', loginAt:p.loginAt||0, lastSeen:p.lastSeen||0 });
+        });
+        _presenceList = arr;
+        try { window.dispatchEvent(new CustomEvent('presence_changed')); } catch(_){}
+      });
+    }
+  } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+}
+function clearPresence(){
+  try {
+    if(_presenceHbTimer){ clearInterval(_presenceHbTimer); _presenceHbTimer = null; }
+    if(_presenceRef){
+      try { _presenceRef.onDisconnect().cancel(); } catch(_){}
+      _presenceRef.remove().catch(function(){});
+      _presenceRef = null;
+    }
+    _presencePayload = null;
+  } catch(e){ window._erpErrLog && window._erpErrLog(e); }
 }
 
 // === Firebase 초기화 (있으면 자동 활성화, 없거나 실패해도 LS는 정상 작동) ===
@@ -4265,6 +4324,14 @@ function Sidebar(props){
   })());
   var pinned = pp[0]; var setPinned = pp[1];
   var dgS = useState(null); var dragPinIdx = dgS[0]; var setDragPinIdx = dgS[1];
+  // 접속자 현황(presence) 구독 — presence_changed 이벤트 + 30초 주기로 stale 갱신 리렌더
+  var prS = useState(0); var setPrTick = prS[1];
+  useEffect(function(){
+    function onPr(){ setPrTick(function(t){ return t + 1; }); }
+    window.addEventListener('presence_changed', onPr);
+    var iv = setInterval(onPr, 30 * 1000);
+    return function(){ window.removeEventListener('presence_changed', onPr); clearInterval(iv); };
+  }, []);
   function togglePin(menuId){
     var isPinned = pinned.indexOf(menuId) >= 0;
     if(!isPinned && pinned.length >= 5){
@@ -4382,6 +4449,10 @@ function Sidebar(props){
     return f ? { id:mid, item:f.item, grp:f.grp } : null;
   }).filter(Boolean);
 
+  // 접속자 현황(stale 제외) — 내 기기 외 다른 접속이 있으면 강조
+  var presList = (typeof presenceListLive === 'function') ? presenceListLive() : [];
+  var presHasOther = presList.some(function(p){ return p.devId !== DEVICE_ID; });
+
   return h('aside', { className: 'sb' + (collapsed ? ' collapsed':''),
       onTouchStart:onAsideTouchStart, onTouchEnd:onAsideTouchEnd },
     h('div', { className:'sb-logo' },
@@ -4395,6 +4466,19 @@ function Sidebar(props){
         h('div', { className:'n' }, CURRENT_USER.name),
         h('div', { className:'r' }, CURRENT_USER.role)
       )
+    ),
+    // 접속자 현황 — 지금 ERP에 접속해 있는 사람들 (보여주기만, 잠금 아님)
+    (fbDb && presList.length > 0) && h('div', { style:{ padding:'8px 14px', borderBottom:'1px solid #2a3656' } },
+      h('div', { style:{ fontSize:'11px', fontWeight:700, marginBottom:'4px', color: presHasOther ? '#fb923c' : '#34d399' } },
+        '🟢 ' + presList.length + '명 접속'),
+      presList.map(function(p){
+        var mine = (p.devId === DEVICE_ID);
+        var icon = (p.device && p.device.indexOf('폰') >= 0) ? '📱' : '💻';
+        return h('div', { key:p.devId, title:p.device,
+          style:{ fontSize:'11px', lineHeight:'1.55', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis',
+                  color: mine ? '#94a3b8' : '#cbd5e1' } },
+          icon + ' ' + p.name + (mine ? ' (나)' : ''));
+      })
     ),
     // 검색 input 제거됨 (사용자 요청)
     h('div', { className:'sb-actions', style:{ display:'flex', gap:'4px', flexWrap:'wrap' } },
@@ -52564,6 +52648,7 @@ function App(){
     setIsLoggedIn(true);
   }
   function handleLogout(){
+    try { if(typeof clearPresence === 'function') clearPresence(); } catch(_){}
     clearSession();
     clearAutoLogin();
     // CURRENT_USER 게스트화
@@ -52587,6 +52672,20 @@ function App(){
     window.addEventListener('fb_need_relogin', onRelogin);
     return function(){ window.removeEventListener('fb_need_relogin', onRelogin); };
   }, []);
+
+  // 접속자 현황(presence) — 로그인 상태 + Firebase 인증 준비되면 등록 (수동/자동 로그인 모두 커버)
+  useEffect(function(){
+    if(!isLoggedIn) return;
+    var tries = 0;
+    var iv = setInterval(function(){
+      tries++;
+      if(typeof fbDb !== 'undefined' && fbDb && fbAuthReady){
+        clearInterval(iv);
+        try { initPresence(getSessionSid(), CURRENT_USER && CURRENT_USER.name); } catch(_){}
+      } else if(tries > 20){ clearInterval(iv); }   // 10초까지 대기 후 포기
+    }, 500);
+    return function(){ clearInterval(iv); };
+  }, [isLoggedIn]);
 
   var isFileProtocol = (typeof location !== 'undefined' && location.protocol === 'file:');
 
