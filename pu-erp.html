@@ -725,7 +725,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-06-29 사용촉진을 휴가관리 탭으로 이동(연차/반차 옆)';
+var ERP_BUILD = '2026-06-29 사용촉진 기록(1·2차·사용신청) 연도별 저장 추가';
 // === 자동 최신화 — 브라우저 캐시 때문에 옛 코드가 계속 도는 문제 방지 ===
 // 세션당 1회, 서버의 배포 버전을 확인해 현재 실행 중 버전과 다르면 캐시 우회로 새로고침.
 (function(){
@@ -44208,6 +44208,22 @@ function LeavePromotion(){
   var ledger = dbGet('leave_ledger', []) || [];
 
   var ys = useState(nowY); var selYear = ys[0]; var setSelYear = ys[1];
+  var ps = useState(dbGet('leave_promotion', []) || []); var promo = ps[0]; var setPromo = ps[1];
+  var ex = useState(''); var openSid = ex[0]; var setOpenSid = ex[1];
+
+  function persistPromo(next){ setPromo(next); dbSet('leave_promotion', next); }
+  function recOf(sid){
+    for(var i=0;i<promo.length;i++){ if(promo[i].sid===sid && Number(promo[i].year)===Number(selYear)) return promo[i]; }
+    return null;
+  }
+  function patchRec(sid, patch){
+    var next = promo.slice(); var found=false;
+    for(var i=0;i<next.length;i++){
+      if(next[i].sid===sid && Number(next[i].year)===Number(selYear)){ next[i]=Object.assign({}, next[i], patch); found=true; break; }
+    }
+    if(!found){ next.push(Object.assign({ sid:sid, year:Number(selYear) }, patch)); }
+    persistPromo(next);
+  }
 
   function pad(n){ return (n<10?'0':'')+n; }
   function fmt(d){ return d ? (d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())) : '—'; }
@@ -44226,6 +44242,8 @@ function LeavePromotion(){
   }
 
   var today = new Date(); today.setHours(0,0,0,0);
+  var todayStr = fmt(today);
+  var meName = (typeof CURRENT_USER!=='undefined' && CURRENT_USER && CURRENT_USER.name) ? CURRENT_USER.name : '';
 
   var rows = []; var unmatched = [];
   users.forEach(function(u){
@@ -44253,13 +44271,77 @@ function LeavePromotion(){
 
   var th = {padding:'6px 8px',background:'#f8fafc',color:'#475569',fontWeight:700,fontSize:'11px',textAlign:'left',borderBottom:'2px solid #e2e8f0',whiteSpace:'nowrap'};
   var td = {padding:'5px 8px',borderBottom:'1px solid #f1f5f9',fontSize:'12px',verticalAlign:'middle'};
+  function badge(text, bg, fg){ return h('span',{style:{display:'inline-block',fontSize:'10.5px',fontWeight:700,padding:'1px 6px',borderRadius:'8px',marginRight:'4px',background:bg,color:fg}}, text); }
+  var lbl = {display:'inline-block',width:'62px',fontSize:'11px',fontWeight:700,color:'#475569',flexShrink:0};
+  var inp = {flex:'1',minWidth:'120px',padding:'4px 8px',border:'1px solid #cbd5e1',borderRadius:'6px',fontSize:'12px',fontFamily:'inherit',boxSizing:'border-box'};
+  var recBtn = {padding:'4px 10px',background:'#1e40af',color:'#fff',border:'none',borderRadius:'6px',cursor:'pointer',fontSize:'11.5px',fontWeight:700};
+  var xBtn = {marginLeft:'8px',padding:'1px 6px',background:'#fff',border:'1px solid #fca5a5',borderRadius:'5px',cursor:'pointer',fontSize:'10.5px',color:'#b91c1c'};
+  var erow = {display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',marginBottom:'7px'};
+
+  function editorPanel(r){
+    var rec = recOf(r.sid);
+    function stamp(field, byField){ var p={}; p[field]=todayStr; if(byField) p[byField]=meName; patchRec(r.sid, p); }
+    function clear2(field, byField){ var p={}; p[field]=null; if(byField) p[byField]=null; patchRec(r.sid, p); }
+    return h('div',{style:{padding:'10px 12px',background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'8px'}},
+      h('div',{style:erow},
+        h('span',{style:lbl},'1차 촉진'),
+        (rec&&rec.n1Date)
+          ? h('span',{style:{fontSize:'12px',color:'#166534',fontWeight:700}}, '✓ '+rec.n1Date+(rec.n1By?(' · '+rec.n1By):''),
+              h('button',{style:xBtn,onClick:function(){ clear2('n1Date','n1By'); }},'취소'))
+          : h('button',{style:recBtn,onClick:function(){ stamp('n1Date','n1By'); }},'오늘 1차 기록')
+      ),
+      h('div',{style:erow},
+        h('span',{style:lbl},'2차 촉진'),
+        (rec&&rec.n2Date)
+          ? h('span',{style:{fontSize:'12px',color:'#166534',fontWeight:700}}, '✓ '+rec.n2Date+(rec.n2By?(' · '+rec.n2By):''),
+              h('button',{style:xBtn,onClick:function(){ clear2('n2Date','n2By'); }},'취소'))
+          : h('button',{style:recBtn,onClick:function(){ stamp('n2Date','n2By'); }},'오늘 2차 기록')
+      ),
+      h('div',{style:erow},
+        h('span',{style:lbl},'사용 신청'),
+        h('input',{type:'text', value:(rec&&rec.request)||'', placeholder:'예: 8/15~8/19, 5일',
+          onChange:function(e){ var v=e.target.value; var cur=recOf(r.sid); patchRec(r.sid,{ request:v, requestDate:(v?((cur&&cur.requestDate)||todayStr):null) }); },
+          style:inp}),
+        (rec&&rec.requestDate) ? h('span',{style:{fontSize:'11px',color:'#64748b'}}, '신청일 '+rec.requestDate) : null
+      ),
+      h('div',{style:erow},
+        h('span',{style:lbl},'비고'),
+        h('input',{type:'text', value:(rec&&rec.note)||'', placeholder:'메모(선택)',
+          onChange:function(e){ patchRec(r.sid,{ note:e.target.value }); }, style:inp})
+      ),
+      h('div',{style:{fontSize:'11px',color:(r.email?'#64748b':'#dc2626')}}, '이메일: '+(r.email||'미등록 (근로자명부에서 입력)'))
+    );
+  }
+
+  var body=[];
+  rows.forEach(function(r){
+    var rec = recOf(r.sid);
+    var hasReq = !!(rec && rec.request);
+    body.push(h('tr',{key:r.sid},
+      h('td',{style:td}, r.name),
+      h('td',{style:Object.assign({},td,{textAlign:'right',fontFamily:'monospace',fontWeight:700})}, r.remain),
+      h('td',{style:Object.assign({},td,{fontFamily:'monospace'})}, fmt(r.expiry)),
+      h('td',{style:Object.assign({},td,{fontFamily:'monospace'})}, fmt(r.p1)),
+      h('td',{style:Object.assign({},td,{fontFamily:'monospace'})}, fmt(r.p2)),
+      h('td',{style:td}, h('span',{style:{color:r.sc,fontWeight:700,fontSize:'11.5px'}}, r.stage)),
+      h('td',{style:Object.assign({},td,{cursor:'pointer',whiteSpace:'nowrap'}), onClick:function(){ setOpenSid(openSid===r.sid?'':r.sid); }},
+        badge((rec&&rec.n1Date)?'1차 ✓':'1차 –', (rec&&rec.n1Date)?'#dcfce7':'#f1f5f9', (rec&&rec.n1Date)?'#166534':'#94a3b8'),
+        badge((rec&&rec.n2Date)?'2차 ✓':'2차 –', (rec&&rec.n2Date)?'#dcfce7':'#f1f5f9', (rec&&rec.n2Date)?'#166534':'#94a3b8'),
+        hasReq ? badge('신청','#dbeafe','#1e40af') : null,
+        h('span',{style:{color:'#94a3b8',fontSize:'11px'}}, openSid===r.sid?' ▾':' ▸')
+      )
+    ));
+    if(openSid===r.sid){
+      body.push(h('tr',{key:r.sid+'_x'}, h('td',{colSpan:7, style:{padding:'4px 8px 12px'}}, editorPanel(r))));
+    }
+  });
 
   return h('div',null,
     h('div',{style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'6px',flexWrap:'wrap'}},
       h('div',{style:{fontWeight:700,fontSize:'15px',color:'#1e293b'}},'📣 연차사용촉진'),
       h('span',{style:{fontSize:'11px',padding:'2px 8px',borderRadius:'10px',background:'#eef2ff',color:'#3730a3',fontWeight:700}}, '기준: '+(basis==='fiscalYear'?'회계연도':'입사일')),
       h('label',{style:{fontSize:'12px',color:'#475569',marginLeft:'auto'}}, '대상 연도 ',
-        h('select',{value:String(selYear),onChange:function(e){ setSelYear(Number(e.target.value)); },
+        h('select',{value:String(selYear),onChange:function(e){ setSelYear(Number(e.target.value)); setOpenSid(''); },
           style:{padding:'4px 8px',border:'1px solid #cbd5e1',borderRadius:'4px',fontSize:'12px',fontFamily:'inherit'}},
           years.map(function(y){ return h('option',{key:y,value:String(y)}, y+'년'); })
         ))
@@ -44268,7 +44350,7 @@ function LeavePromotion(){
       (basis==='fiscalYear'
         ? '※ 회계연도 기준 · 만료 = '+(fiscalMonth===1?'12/31':((fiscalMonth-1)+'월 말일'))+' · 1차 통보 만료 6개월 전 · 2차 만료 2개월 전.'
         : '※ 입사일 기준 · 만료 = 각자 입사일의 다음 도래일(오늘 기준) · 1차 6개월 전 · 2차 2개월 전.')
-      + ' 미사용 잔여(연차대장 '+selYear+'년) > 0 인 재직자만 표시합니다.'
+      + ' 미사용 잔여(연차대장 '+selYear+'년) > 0 인 재직자만 표시. 행을 누르면 촉진 기록·사용신청을 입력합니다.'
     ),
     rows.length===0
       ? h('div',{style:{padding:'24px',textAlign:'center',color:'#94a3b8',background:'#fff',border:'1px dashed #cbd5e1',borderRadius:'8px'}}, '대상자가 없습니다 (선택 연도에 잔여 > 0 인 재직자 없음).')
@@ -44276,24 +44358,14 @@ function LeavePromotion(){
           h('table',{style:{width:'100%',borderCollapse:'collapse'}},
             h('thead',null,h('tr',null,
               h('th',{style:Object.assign({},th,{width:'90px'})},'이름'),
-              h('th',{style:Object.assign({},th,{width:'70px',textAlign:'right',background:'#ecfeff'})},'미사용'),
-              h('th',{style:Object.assign({},th,{width:'112px'})},'만료일'),
-              h('th',{style:Object.assign({},th,{width:'112px'})},'1차 통보일'),
-              h('th',{style:Object.assign({},th,{width:'112px'})},'2차 통보일'),
-              h('th',{style:Object.assign({},th,{width:'120px'})},'현재 단계'),
-              h('th',{style:Object.assign({},th,{minWidth:'160px'})},'이메일')
+              h('th',{style:Object.assign({},th,{width:'66px',textAlign:'right',background:'#ecfeff'})},'미사용'),
+              h('th',{style:Object.assign({},th,{width:'108px'})},'만료일'),
+              h('th',{style:Object.assign({},th,{width:'108px'})},'1차 통보일'),
+              h('th',{style:Object.assign({},th,{width:'108px'})},'2차 통보일'),
+              h('th',{style:Object.assign({},th,{width:'112px'})},'현재 단계'),
+              h('th',{style:Object.assign({},th,{minWidth:'150px'})},'촉진 기록 (행 클릭)')
             )),
-            h('tbody',null, rows.map(function(r){
-              return h('tr',{key:r.sid},
-                h('td',{style:td}, r.name),
-                h('td',{style:Object.assign({},td,{textAlign:'right',fontFamily:'monospace',fontWeight:700})}, r.remain),
-                h('td',{style:Object.assign({},td,{fontFamily:'monospace'})}, fmt(r.expiry)),
-                h('td',{style:Object.assign({},td,{fontFamily:'monospace'})}, fmt(r.p1)),
-                h('td',{style:Object.assign({},td,{fontFamily:'monospace'})}, fmt(r.p2)),
-                h('td',{style:td}, h('span',{style:{color:r.sc,fontWeight:700,fontSize:'11.5px'}}, r.stage)),
-                h('td',{style:Object.assign({},td,{color:(r.email?'#475569':'#dc2626'),fontSize:'11px'})}, r.email||'미등록')
-              );
-            }))
+            h('tbody',null, body)
           )
         ),
     (unmatched.length>0) && h('div',{style:{marginTop:'12px',fontSize:'11px',color:'#b45309',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'6px',padding:'8px 10px'}},
