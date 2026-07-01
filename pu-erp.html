@@ -742,8 +742,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-01 배포 결과 팝업 추가 — 관리자 전용, X로 닫으면 해당 버전 재표시 안함';
-var BUILD_SEQ = 40;
+var ERP_BUILD = '2026-07-01 휴직관리 — 육아휴직 현황 탭(잔여 개월·주, 진행바, 분할내역) + 근로자명부 한도 필드 + KPI 축소';
+var BUILD_SEQ = 41;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -9579,6 +9579,28 @@ function monthsBetween(start, end){
   return Math.round((months + dayDiff/30)*10)/10;
 }
 
+// 평일(월~금) 일수 — 주말 제외. start~end 포함. (공휴일은 제외 안 함)
+function countBusinessDays(startDate, endDate){
+  if(!startDate || !endDate) return 0;
+  var s = new Date(startDate), e = new Date(endDate);
+  if(e < s) return 0;
+  var cnt = 0, d = new Date(s);
+  while(d <= e){
+    var w = d.getDay();          // 0=일,6=토
+    if(w !== 0 && w !== 6) cnt++;
+    d.setDate(d.getDate()+1);
+  }
+  return cnt;
+}
+// 특정 연도(1/1~12/31)와 겹치는 구간으로 잘라 [시작,종료] 반환. 겹침 없으면 null
+function clampToYear(startDate, endDate, year){
+  if(!startDate || !endDate) return null;
+  var ys = year+'-01-01', ye = year+'-12-31';
+  var s = startDate < ys ? ys : startDate;
+  var e = endDate   > ye ? ye : endDate;
+  if(e < s) return null;
+  return { start:s, end:e };
+}
 // 육아휴직 사용량 - 시작일·종료일 기준 일/주/월 환산
 function loaUsage(startDate, endDate){
   if(!startDate || !endDate) return { days:0, weeks:0, months:0 };
@@ -40178,6 +40200,7 @@ function StaffRosterModal(props){
     emergencyContact:'', emergencyPhone:'',
     hireDate:'', probationEnd:'', retireDate:'', leaveReason:'', lastWorkDate:'', contractType:'정규직', contractEnd:'',
     scheduledHours: 8,
+    parentalLeaveLimit: 12,        // ★ 육아휴직 한도(개월): 12=1년 / 18=1년6개월
     jobDuty:'',                    // ★ 담당 직무 (근기법 §41 종사업무 종류)
     wageType:'월급제',             // ★ 임금 계산방법 (§17)
     payDay:25,                     // ★ 임금 지급일 (§17)
@@ -40367,7 +40390,14 @@ function StaffRosterModal(props){
       ),
       h('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px' } },
         fld('수습종료일', inp('probationEnd','date')),
-        h('div', null)
+        fld('육아휴직 한도', h('select', {
+            value: f.parentalLeaveLimit || 12,
+            onChange: setNum('parentalLeaveLimit'),
+            title:'육아휴직 총 사용 가능 기간 (부부 동시사용 등은 1년6개월)',
+            style:{ width:'100%', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12.5px', boxSizing:'border-box', background:'#fff' } },
+          h('option', { value:12 }, '1년 (12개월)'),
+          h('option', { value:18 }, '1년 6개월 (18개월)')
+        ))
       ),
       // 수습 근로자 체크 + 기간 (성과급 자동 미반영)
       h('div', { style:{ padding:'10px 12px', background:'#fef3c7', border:'1px solid #fde68a', borderRadius:'6px', marginBottom:'10px' } },
@@ -44089,6 +44119,9 @@ function LeaveOfAbsenceTab(){
   var users = getActiveUsers();
   var ls = useState(getLoaList()); var leaves = ls[0]; var setLeaves = ls[1];
   var ms = useState(null); var modal = ms[0]; var setModal = ms[1];
+  var sts = useState('list'); var subTab = sts[0]; var setSubTab = sts[1];   // list | parental
+  var pss = useState(''); var selEmpSid = pss[0]; var setSelEmpSid = pss[1];  // 육아휴직 현황 선택 직원
+  var pys = useState(String(new Date().getFullYear())); var selYear = pys[0]; var setSelYear = pys[1];
   function persist(arr){ setLeaves(arr); setLoaList(arr); }
 
   // 4종만 노출 (정책 code와 매핑)
@@ -44196,6 +44229,122 @@ function LeaveOfAbsenceTab(){
   var TYPE_BG = {'maternity':'#fef3c7','parental-leave':'#dcfce7','sick-leave':'#fee2e2','personal':'#dbeafe'};
   var TYPE_FG = {'maternity':'#92400e','parental-leave':'#166534','sick-leave':'#991b1b','personal':'#3730a3'};
 
+  // ── 육아휴직 현황 렌더 (선택 직원 1명) ──
+  function renderParentalStatus(){
+    var allUsers = dbGet('user_accounts', USERS_SEED);
+    var pLeaves = leaves.filter(function(x){ return x.code==='parental-leave' && x.status!=='rejected' && x.status!=='pending'; });
+    var empSids = [];
+    pLeaves.forEach(function(x){ if(empSids.indexOf(x.sid)<0) empSids.push(x.sid); });
+    var empOpts = empSids.map(function(sid){
+      var u = allUsers.find(function(z){return z.sid===sid;}) || {};
+      return { sid:sid, name:u.name||sid, title:u.title||'' };
+    });
+    var curSid = selEmpSid || (empOpts[0] ? empOpts[0].sid : '');
+    var yearNum = selYear==='all' ? null : parseInt(selYear,10);
+    var selUser = allUsers.find(function(z){return z.sid===curSid;}) || {};
+    var limitM = selUser.parentalLeaveLimit || 12;
+    var limitW = Math.round(limitM*4.345*10)/10;
+    var recs = pLeaves.filter(function(x){ return x.sid===curSid && x.startDate && x.endDate; })
+      .sort(function(a,b){ return (a.startDate<b.startDate)?-1:1; });
+    var usedDays=0, usedWeeksSum=0, usedMonths=0, rows=[];
+    recs.forEach(function(r){
+      var seg = yearNum ? clampToYear(r.startDate, r.endDate, yearNum) : { start:r.startDate, end:r.endDate };
+      if(!seg) return;
+      var bdays = countBusinessDays(seg.start, seg.end);
+      var wk = Math.round((bdays/5)*10)/10;
+      var mo = monthsBetween(seg.start, seg.end);
+      usedDays += bdays; usedWeeksSum += wk; usedMonths += mo;
+      rows.push({ n:(rows.length+1), period:seg.start+' ~ '+seg.end, bdays:bdays, wk:wk, mo:mo,
+        status: r.status==='ended' ? '종료' : '진행중' });
+    });
+    usedWeeksSum = Math.round(usedWeeksSum*10)/10;
+    usedMonths = Math.round(usedMonths*10)/10;
+    var remainM = Math.round(Math.max(0, limitM - usedMonths)*10)/10;
+    var remainW = Math.round(Math.max(0, limitW - usedWeeksSum)*10)/10;
+    var pct = limitM>0 ? Math.min(100, Math.round(usedMonths/limitM*100)) : 0;
+    var limitLabel = limitM===18 ? '한도 1년 6개월 (18개월)' : '한도 1년 ('+limitM+'개월)';
+    var rbStyle = function(bg,fg){ return { flex:1, minWidth:'140px', borderRadius:'10px', padding:'12px', textAlign:'center', background:bg, color:fg }; };
+
+    return h('div', null,
+      h('div', { style:{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap',background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',padding:'12px 14px',marginBottom:'14px'} },
+        h('label',{style:{fontSize:'12px',fontWeight:700,color:'#475569'}},'👤 직원'),
+        empOpts.length===0
+          ? h('span',{style:{fontSize:'12px',color:'#94a3b8'}},'육아휴직 기록이 있는 직원이 없습니다')
+          : h('select', { value:curSid, onChange:function(e){setSelEmpSid(e.target.value);},
+              style:{padding:'7px 12px',border:'1px solid #cbd5e1',borderRadius:'7px',fontSize:'13px',background:'#fff',cursor:'pointer'} },
+              empOpts.map(function(o){ return h('option',{key:o.sid,value:o.sid}, o.name + (o.title?' · '+o.title:'')); })),
+        h('label',{style:{fontSize:'12px',fontWeight:700,color:'#475569'}},'📅 연도'),
+        h('select', { value:selYear, onChange:function(e){setSelYear(e.target.value);},
+            style:{padding:'7px 12px',border:'1px solid #cbd5e1',borderRadius:'7px',fontSize:'13px',background:'#fff',cursor:'pointer'} },
+          h('option',{value:String(new Date().getFullYear())}, new Date().getFullYear()+'년'),
+          h('option',{value:String(new Date().getFullYear()-1)}, (new Date().getFullYear()-1)+'년'),
+          h('option',{value:'all'},'전체 기간'))
+      ),
+      h('div', { style:{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'9px 12px',fontSize:'11.5px',color:'#1e40af',marginBottom:'14px'} },
+        '📐 주수 = 사용 평일(월~금) ÷ 5 · 개월 = 캘린더 기준 · 잔여 = 한도 − 사용'),
+      empOpts.length===0 ? null : h('div', { style:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'12px',overflow:'hidden'} },
+        h('div', { style:{display:'flex',alignItems:'center',gap:'10px',padding:'14px 16px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0'} },
+          h('div', { style:{fontSize:'15px',fontWeight:800} }, (selUser.name||curSid), selUser.title?h('span',{style:{fontSize:'11px',color:'#94a3b8',fontWeight:500,marginLeft:'6px'}},selUser.title):null),
+          h('span', { style:{marginLeft:'auto',fontSize:'11px',fontWeight:700,padding:'4px 11px',borderRadius:'20px',background:'#dbeafe',color:'#1e40af'} }, limitLabel)
+        ),
+        h('div',{style:{display:'flex',gap:'12px',padding:'14px',flexWrap:'wrap'}},
+          h('div',{style:rbStyle('#eff6ff','#1e40af')},
+            h('div',{style:{fontSize:'11px',fontWeight:700,opacity:.85,marginBottom:'4px'}},'총 한도'),
+            h('div',{style:{fontSize:'22px',fontWeight:800,fontFamily:'monospace'}},limitM.toFixed(1)),
+            h('div',{style:{fontSize:'10px',marginTop:'3px',opacity:.75}},'개월 (= 약 '+limitW+'주)')),
+          h('div',{style:rbStyle('#fef3c7','#92400e')},
+            h('div',{style:{fontSize:'11px',fontWeight:700,opacity:.85,marginBottom:'4px'}},'사용'),
+            h('div',{style:{fontSize:'22px',fontWeight:800,fontFamily:'monospace'}},usedMonths.toFixed(1)),
+            h('div',{style:{fontSize:'10px',marginTop:'3px',opacity:.75}},'개월 ('+usedDays+'평일 = '+usedWeeksSum.toFixed(1)+'주)')),
+          h('div',{style:rbStyle('#dcfce7','#065f46')},
+            h('div',{style:{fontSize:'11px',fontWeight:700,opacity:.85,marginBottom:'4px'}},'✅ 잔여'),
+            h('div',{style:{fontSize:'22px',fontWeight:800,fontFamily:'monospace'}},remainM.toFixed(1)),
+            h('div',{style:{fontSize:'10px',marginTop:'3px',opacity:.75}},'개월 (= 약 '+remainW+'주)'))
+        ),
+        h('div', { style:{padding:'0 16px 14px'} },
+          h('div', { style:{display:'flex',justifyContent:'space-between',fontSize:'11px',color:'#64748b',marginBottom:'5px'} },
+            h('span', null, '사용 '+pct+'%'), h('span', null, remainM.toFixed(1)+'개월 · '+remainW+'주 남음')),
+          h('div', { style:{height:'14px',background:'#f1f5f9',borderRadius:'8px',overflow:'hidden'} },
+            h('div', { style:{height:'100%',width:pct+'%',background:'linear-gradient(90deg,#f59e0b,#f97316)',borderRadius:'8px'} }))
+        ),
+        h('div', { style:{padding:'0 16px 16px'} },
+          h('div', { style:{fontSize:'12px',fontWeight:800,color:'#7c3aed',marginBottom:'8px'} }, '👶 분할 사용 내역'+(yearNum?' ('+yearNum+'년)':' (전체)')),
+          h('table', { style:{width:'100%',borderCollapse:'collapse'} },
+            h('thead', null, h('tr', null,
+              h('th',{style:{background:'#faf5ff',color:'#6b21a8',fontSize:'11px',fontWeight:700,padding:'6px 8px',textAlign:'left',borderBottom:'1px solid #e9d5ff',width:'50px'}},'회차'),
+              h('th',{style:{background:'#faf5ff',color:'#6b21a8',fontSize:'11px',fontWeight:700,padding:'6px 8px',textAlign:'left',borderBottom:'1px solid #e9d5ff'}},'사용 기간'),
+              h('th',{style:{background:'#faf5ff',color:'#6b21a8',fontSize:'11px',fontWeight:700,padding:'6px 8px',textAlign:'right',borderBottom:'1px solid #e9d5ff',width:'60px'}},'평일'),
+              h('th',{style:{background:'#faf5ff',color:'#6b21a8',fontSize:'11px',fontWeight:700,padding:'6px 8px',textAlign:'right',borderBottom:'1px solid #e9d5ff',width:'60px'}},'주'),
+              h('th',{style:{background:'#faf5ff',color:'#6b21a8',fontSize:'11px',fontWeight:700,padding:'6px 8px',textAlign:'right',borderBottom:'1px solid #e9d5ff',width:'70px'}},'개월'),
+              h('th',{style:{background:'#faf5ff',color:'#6b21a8',fontSize:'11px',fontWeight:700,padding:'6px 8px',textAlign:'left',borderBottom:'1px solid #e9d5ff',width:'60px'}},'상태')
+            )),
+            h('tbody', null,
+              (rows.length===0
+                ? [h('tr', {key:'e'}, h('td', {colSpan:6, style:{textAlign:'center',color:'#94a3b8',padding:'24px',fontSize:'12px'}}, '해당 기간에 육아휴직 기록이 없습니다'))]
+                : rows.map(function(r){ return h('tr', {key:r.n},
+                    h('td',{style:{padding:'7px 8px',fontFamily:'monospace',fontWeight:700,fontSize:'11.5px',borderBottom:'1px solid #f5f3ff'}},r.n+'차'),
+                    h('td',{style:{padding:'7px 8px',fontSize:'11.5px',borderBottom:'1px solid #f5f3ff'}},r.period),
+                    h('td',{style:{padding:'7px 8px',fontFamily:'monospace',fontWeight:700,fontSize:'11.5px',textAlign:'right',borderBottom:'1px solid #f5f3ff'}},r.bdays),
+                    h('td',{style:{padding:'7px 8px',fontFamily:'monospace',fontWeight:700,fontSize:'11.5px',textAlign:'right',color:'#2563eb',borderBottom:'1px solid #f5f3ff'}},r.wk.toFixed(1)),
+                    h('td',{style:{padding:'7px 8px',fontFamily:'monospace',fontWeight:700,fontSize:'11.5px',textAlign:'right',borderBottom:'1px solid #f5f3ff'}},r.mo.toFixed(1)),
+                    h('td',{style:{padding:'7px 8px',fontSize:'10px',color:r.status==='진행중'?'#dc2626':'#059669',borderBottom:'1px solid #f5f3ff'}},r.status)
+                  ); }).concat([h('tr', {key:'tot'},
+                    h('td',{colSpan:2,style:{padding:'7px 8px',background:'#faf5ff',fontWeight:800,color:'#6b21a8',borderTop:'2px solid #d8b4fe'}},'사용 합계'),
+                    h('td',{style:{padding:'7px 8px',background:'#faf5ff',fontFamily:'monospace',fontWeight:800,color:'#6b21a8',textAlign:'right',borderTop:'2px solid #d8b4fe'}},usedDays),
+                    h('td',{style:{padding:'7px 8px',background:'#faf5ff',fontFamily:'monospace',fontWeight:800,color:'#6b21a8',textAlign:'right',borderTop:'2px solid #d8b4fe'}},usedWeeksSum.toFixed(1)),
+                    h('td',{style:{padding:'7px 8px',background:'#faf5ff',fontFamily:'monospace',fontWeight:800,color:'#6b21a8',textAlign:'right',borderTop:'2px solid #d8b4fe'}},usedMonths.toFixed(1)),
+                    h('td',{style:{background:'#faf5ff',borderTop:'2px solid #d8b4fe'}})
+                  )])
+              )
+            )
+          ),
+          h('div', { style:{background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'6px',padding:'8px 12px',fontSize:'11px',color:'#92400e',marginTop:'10px'} },
+            '⚙️ 한도(1년/1년6개월)는 근로자명부 → 해당 직원 → 육아휴직 한도에서 지정합니다.')
+        )
+      )
+    );
+  }
+
   return h('div', null,
     h('div', { style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px'} },
       h('div', null,
@@ -44206,6 +44355,17 @@ function LeaveOfAbsenceTab(){
         style:{padding:'6px 12px',background:'#1e40af',color:'#fff',border:'none',borderRadius:'5px',cursor:'pointer',fontSize:'11.5px',fontWeight:600} },
         '+ 휴직 등록')
     ),
+    // 서브탭
+    h('div', { style:{display:'flex',gap:'4px',marginBottom:'14px',borderBottom:'2px solid #e2e8f0'} },
+      [{v:'list',label:'📋 전체 목록'},{v:'parental',label:'👶 육아휴직 현황'}].map(function(t){
+        var on = subTab===t.v;
+        return h('button', { key:t.v, onClick:function(){setSubTab(t.v);},
+          style:{padding:'8px 14px',fontSize:'12px',fontWeight:700,cursor:'pointer',border:'none',background:'none',
+            color:on?'#2563eb':'#94a3b8',borderBottom:'2px solid '+(on?'#2563eb':'transparent'),marginBottom:'-2px'} }, t.label);
+      })
+    ),
+    subTab==='parental' ? renderParentalStatus() : null,
+    subTab!=='list' ? null : (function(){ return h('div', null,
     // 통합 통계
     (function(){
       var allUsers = dbGet('user_accounts', USERS_SEED);
@@ -44216,21 +44376,21 @@ function LeaveOfAbsenceTab(){
       var inconsistent = statusLeaveUsers.filter(function(u){
         return !activeLoa.find(function(l){return l.sid===u.sid;});
       });
-      return h('div', { style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'8px',marginBottom:'12px'} },
-        h('div', { style:{background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:'6px',padding:'10px 12px'} },
-          h('div', { style:{fontSize:'10.5px',color:'#9a3412',fontWeight:600} }, '🏠 현재 휴직중'),
-          h('div', { style:{fontSize:'13px',fontWeight:800,color:'#9a3412'} }, activeLoa.length+'명')),
-        h('div', { style:{background:'#f1f5f9',border:'1px solid #cbd5e1',borderRadius:'6px',padding:'10px 12px'} },
-          h('div', { style:{fontSize:'10.5px',color:'#475569',fontWeight:600} }, '✓ 휴직 종료(복귀)'),
-          h('div', { style:{fontSize:'13px',fontWeight:800,color:'#475569'} }, endedLoa.length+'건')),
-        h('div', { style:{background:'#ecfeff',border:'1px solid #bfdbfe',borderRadius:'6px',padding:'10px 12px'} },
-          h('div', { style:{fontSize:'10.5px',color:'#2563eb',fontWeight:600} }, '⚙️ status=leave'),
-          h('div', { style:{fontSize:'13px',fontWeight:800,color:'#2563eb'} }, statusLeaveUsers.length+'명')),
+      return h('div', { style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'5px',marginBottom:'8px'} },
+        h('div', { style:{background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:'6px',padding:'5px 8px'} },
+          h('div', { style:{fontSize:'9px',color:'#9a3412',fontWeight:600} }, '🏠 현재 휴직중'),
+          h('div', { style:{fontSize:'11px',fontWeight:800,color:'#9a3412'} }, activeLoa.length+'명')),
+        h('div', { style:{background:'#f1f5f9',border:'1px solid #cbd5e1',borderRadius:'6px',padding:'5px 8px'} },
+          h('div', { style:{fontSize:'9px',color:'#475569',fontWeight:600} }, '✓ 휴직 종료(복귀)'),
+          h('div', { style:{fontSize:'11px',fontWeight:800,color:'#475569'} }, endedLoa.length+'건')),
+        h('div', { style:{background:'#ecfeff',border:'1px solid #bfdbfe',borderRadius:'6px',padding:'5px 8px'} },
+          h('div', { style:{fontSize:'9px',color:'#2563eb',fontWeight:600} }, '⚙️ status=leave'),
+          h('div', { style:{fontSize:'11px',fontWeight:800,color:'#2563eb'} }, statusLeaveUsers.length+'명')),
         inconsistent.length > 0
-          ? h('div', { style:{background:'#fef2f2',border:'1px solid #fca5a5',borderRadius:'6px',padding:'10px 12px'} },
-              h('div', { style:{fontSize:'10.5px',color:'#991b1b',fontWeight:600} }, '⚠️ 동기화 불일치'),
-              h('div', { style:{fontSize:'13px',fontWeight:800,color:'#991b1b'} }, inconsistent.length+'명'),
-              h('div', { style:{fontSize:'10.5px',color:'#991b1b',marginTop:'4px',marginBottom:'6px'} },
+          ? h('div', { style:{background:'#fef2f2',border:'1px solid #fca5a5',borderRadius:'6px',padding:'5px 8px'} },
+              h('div', { style:{fontSize:'9px',color:'#991b1b',fontWeight:600} }, '⚠️ 동기화 불일치'),
+              h('div', { style:{fontSize:'11px',fontWeight:800,color:'#991b1b'} }, inconsistent.length+'명'),
+              h('div', { style:{fontSize:'9px',color:'#991b1b',marginTop:'3px',marginBottom:'5px'} },
                 inconsistent.map(function(u){return u.name||u.sid;}).join(', ')),
               h('div', { style:{display:'flex',gap:'4px',marginTop:'4px'} },
                 // 옵션 1: 재직 복귀 (LoA 기록 없음 → user 상태도 active로)
@@ -44327,7 +44487,8 @@ function LeaveOfAbsenceTab(){
               })
         )
       )
-    ),
+    )
+    ); })(),
     modal && h('div', { className:'modal-bg', onClick:function(){setModal(null);} },
       h('div', { className:'modal', style:{width:'460px'}, onClick:function(e){e.stopPropagation();} },
         h('div', { className:'modal-h' },
