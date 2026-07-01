@@ -742,8 +742,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-01 휴직관리 — 육아휴직 현황 탭(잔여 개월·주, 진행바, 분할내역) + 근로자명부 한도 필드 + KPI 축소';
-var BUILD_SEQ = 41;
+var ERP_BUILD = '2026-07-01 [근본수정] 초기 동기화 완료 전 서버쓰기 차단 — 폰/새기기 옛 데이터가 서버를 덮어쓰는 회귀 원천 차단';
+var BUILD_SEQ = 42;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -2885,6 +2885,13 @@ function dbSet(k, v){
 
   // Firebase 동기화 (백그라운드, 실패해도 LS는 저장됨)
   if(fbDb && fbShouldSync(k)){
+    // ── 근본 방어: 초기 동기화(서버→로컬) 완료 전에는 서버로 쓰지 않는다 ──
+    //    폰/새 기기에서 앱을 막 열었을 때, 서버 최신을 받기 전의 '옛 localStorage 값'이
+    //    서버를 덮어써 과거로 회귀하는 문제를 원천 차단. (로컬에는 이미 저장됨)
+    if(!_fbSynced){
+      console.warn('[동기화보호] 초기 동기화 완료 전 — '+k+' 서버 쓰기 보류 (로컬만 저장)');
+      return true;
+    }
     try {
       var ts = Date.now();
       var _preMeta = parseInt(localStorage.getItem(KEY+'_meta_'+k) || '0', 10); // 되돌림방지: 덮이기 전 마지막 동기화 시각
@@ -4173,6 +4180,41 @@ function fbSetupListener(){
 if(fbDb){
   var _fbSyncTimer = null;
   setTimeout(function(){ _fbSynced = true; }, 12000); // 연결 지연 시 영구 잠금 방지
+  // 초기 동기화 게이트로 보류됐던 '로컬이 서버보다 최신인' 키를 서버로 반영.
+  //   (앱 시작 직후 사용자가 저장한 정상 변경이 서버에 안 올라가는 갭 방지)
+  function _flushPendingLocalNewer(){
+    if(!fbDb) return;
+    try {
+      fbDb.ref('data').once('value').then(function(snap){
+        var remote = snap.val() || {};
+        // 로컬에 있는 동기화 대상 키 순회
+        for(var i=0; i<localStorage.length; i++){
+          var full = localStorage.key(i);
+          if(!full || full.indexOf(KEY) !== 0) continue;
+          var k = full.slice(KEY.length);
+          if(k.indexOf('_meta_') === 0) continue;
+          if(!fbShouldSync(k)) continue;
+          var lMeta = parseInt(localStorage.getItem(KEY+'_meta_'+k) || '0', 10);
+          var rec = remote[k];
+          var rU = (rec && typeof rec.u === 'number') ? rec.u : 0;
+          if(lMeta > rU){
+            // 로컬이 더 최신 → 다시 저장해 서버 반영 (이제 _fbSynced=true라 게이트 통과)
+            try {
+              var raw = localStorage.getItem(KEY+k);
+              var val = raw ? JSON.parse(raw) : null;
+              if(val != null){
+                // 값 동일 스킵 로직을 우회하기 위해 meta를 잠시 낮춰 강제 재푸시
+                _dbCache[k] = val;
+                localStorage.removeItem(KEY+k);       // dbSet의 oldJson===newJson 스킵 회피
+                dbSet(k, val);
+                console.log('[동기화보호] 보류됐던 '+k+' 서버 반영');
+              }
+            } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+          }
+        }
+      }).catch(function(){});
+    } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+  }
   var _startFbSync = function(){
     fbInitialSync().then(function(n){
       if(n > 0){
@@ -4182,6 +4224,7 @@ if(fbDb){
       }
       _fbSynced = true;
       fbSetupListener();
+      try { _flushPendingLocalNewer(); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
       try { setTimeout(function(){ serverBackupDaily(false); startRecentBackupTimer(); }, 3000); } catch(e){}
     }).catch(function(e){
       console.warn('[Firebase] 초기 동기화 실패:', e && e.message);
