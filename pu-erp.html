@@ -757,8 +757,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-02 입금확정 해제 유령상태 버그 수정 — 금액·날짜 수정 후 해제해도 원본이 반드시 미입금 대기로 복귀';
-var BUILD_SEQ = 45;
+var ERP_BUILD = '2026-07-02 연차/반차 목록에 1차·2차 통보 열 추가 — 목록에서 바로 촉진 기록(사용촉진 탭과 동일 데이터 동기화)';
+var BUILD_SEQ = 46;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -44879,6 +44879,38 @@ function LeaveLedgerTab(){
   );
 }
 
+// 연차 사용촉진 단계·만료일 계산 (사용촉진 탭 + 연차/반차 목록 공용)
+//   같은 leave_ledger·policy_leave·leave_promotion 데이터를 읽으므로 양쪽 결과가 항상 일치
+function calcLeavePromoStage(hireDate, year){
+  var pol = dbGet('policy_leave', {}) || {};
+  var basis = pol.basis || 'joinDate';
+  var fiscalMonth = Number(pol.fiscalMonth || 1) || 1;
+  function pad(n){ return (n<10?'0':'')+n; }
+  function fmt(d){ return d ? (d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())) : '—'; }
+  function addMonths(d, m){ var x=new Date(d.getTime()); var day=x.getDate(); x.setMonth(x.getMonth()+m); if(x.getDate()<day) x.setDate(0); return x; }
+  function lastDayOfMonth(y, mIdx){ return new Date(y, mIdx+1, 0); }
+  function fiscalEnd(y){ if(fiscalMonth===1) return new Date(y, 11, 31); return lastDayOfMonth(y+1, fiscalMonth-2); }
+  function joinExpiry(hd0, ref){
+    if(!hd0) return null;
+    var hd = new Date(hd0); if(isNaN(hd.getTime())) return null;
+    var cand = new Date(ref.getFullYear(), hd.getMonth(), hd.getDate());
+    if(cand.getTime() <= ref.getTime()) cand = new Date(ref.getFullYear()+1, hd.getMonth(), hd.getDate());
+    return cand;
+  }
+  var today = new Date(); today.setHours(0,0,0,0);
+  var expiry = (basis==='fiscalYear') ? fiscalEnd(Number(year)) : joinExpiry(hireDate, today);
+  var p1=null, p2=null;
+  if(expiry){ p1 = addMonths(expiry, -6); p2 = addMonths(expiry, -2); }
+  var stage, sc;
+  if(!expiry){ stage='입사일 없음'; sc='#94a3b8'; }
+  else if(today < p1){ stage='대기'; sc='#94a3b8'; }
+  else if(today < p2){ stage='1차 통보 시기'; sc='#d97706'; }
+  else if(today < expiry){ stage='2차 통보 시기'; sc='#dc2626'; }
+  else { stage='만료'; sc='#991b1b'; }
+  var dday = expiry ? Math.ceil((expiry.getTime()-today.getTime())/86400000) : null;
+  return { expiry:expiry, expiryStr:fmt(expiry), p1:p1, p2:p2, stage:stage, sc:sc, dday:dday };
+}
+
 function LeavePromotion(){
   var nowY = new Date().getFullYear();
   var pol = dbGet('policy_leave', {}) || {};
@@ -45157,6 +45189,20 @@ function LeaveManagement(){
   var caS = useState({ sid:'', date:todayYMD(), hours:1, note:'' });
   var compAddForm = caS[0]; var setCompAddForm = caS[1];
   var rfS = useState(0); var compRefresh = rfS[0]; var setCompRefresh = rfS[1]; // 강제 리렌더
+  // 사용촉진 통보 기록 (연차/반차 목록 인라인 기록용 — 사용촉진 탭과 동일 데이터)
+  var lpS = useState(dbGet('leave_promotion', []) || []); var leavePromo = lpS[0]; var setLeavePromo = lpS[1];
+  function promoRecOf(sid){
+    for(var i=0;i<leavePromo.length;i++){ if(leavePromo[i].sid===sid && Number(leavePromo[i].year)===Number(selYear)) return leavePromo[i]; }
+    return null;
+  }
+  function promoPatch(sid, patch){
+    var next = leavePromo.slice(); var found=false;
+    for(var i=0;i<next.length;i++){
+      if(next[i].sid===sid && Number(next[i].year)===Number(selYear)){ next[i]=Object.assign({}, next[i], patch); found=true; break; }
+    }
+    if(!found){ next.push(Object.assign({ sid:sid, year:Number(selYear) }, patch)); }
+    setLeavePromo(next); dbSet('leave_promotion', next);
+  }
   function bumpComp(){ setCompRefresh(compRefresh+1); }
 
   // 연차 자동 부여 계산
@@ -45351,6 +45397,8 @@ function LeaveManagement(){
               h('th',{style:Object.assign({},thS,{textAlign:'right',background:'#eff6ff'})},'총'),
               h('th',{style:Object.assign({},thS,{textAlign:'right',background:'#fefce8'})},'사용'),
               h('th',{style:Object.assign({},thS,{textAlign:'right',background:'#ecfeff'})},'잔여'),
+              h('th',{style:Object.assign({},thS,{textAlign:'center',background:'#fff7ed',color:'#9a3412',width:'88px'})},'1차 통보'),
+              h('th',{style:Object.assign({},thS,{textAlign:'center',background:'#fff7ed',color:'#9a3412',width:'88px'})},'2차 통보'),
               h('th',{style:Object.assign({},thS,{textAlign:'center',width:'36px'})},  '⚙️')
             )),
             h('tbody',null,
@@ -45385,6 +45433,50 @@ function LeaveManagement(){
                     Math.round(us.used*10)/10),
                   h('td',{style:Object.assign({},tdS,{textAlign:'right',fontFamily:'monospace',fontWeight:800,fontSize:'13px',color:re<0?'#dc2626':'#2563eb',background:'#ecfeff'})},
                     Math.round(re*10)/10),
+                  // ── 1차/2차 통보 (사용촉진 데이터 인라인) ──
+                  (function(){
+                    var pstage = calcLeavePromoStage(u.hireDate, selYear);
+                    var prec = promoRecOf(u.sid);
+                    var hasRemain = re > 0;   // 잔여 있을 때만 촉진 대상
+                    // 통보 셀 렌더: 완료(날짜+✎) / 시기도래(＋기록) / 아직(—)
+                    function noticeCell(round){
+                      var dateVal = prec ? (round===1 ? prec.n1Date : prec.n2Date) : null;
+                      var byVal   = prec ? (round===1 ? prec.n1By   : prec.n2By)   : null;
+                      // 이 라운드의 통보 시기가 도래했는지 (+ 잔여 필요)
+                      var reached = hasRemain && (round===1
+                        ? (pstage.stage==='1차 통보 시기' || pstage.stage==='2차 통보 시기' || pstage.stage==='만료')
+                        : (pstage.stage==='2차 통보 시기' || pstage.stage==='만료'));
+                      if(dateVal){
+                        return h('span',{title:(byVal?('기록자: '+byVal):'')+' · 클릭하여 날짜 수정',
+                            onClick:function(e){ e.stopPropagation();
+                              var nd = window.prompt((round===1?'1차':'2차')+' 통보일 (YYYY-MM-DD, 비우면 기록 삭제)', dateVal);
+                              if(nd===null) return;
+                              nd = nd.trim();
+                              if(nd===''){ var pp={}; pp[round===1?'n1Date':'n2Date']=null; pp[round===1?'n1By':'n2By']=null; promoPatch(u.sid, pp); }
+                              else if(/^\d{4}-\d{2}-\d{2}$/.test(nd)){ var pp2={}; pp2[round===1?'n1Date':'n2Date']=nd; pp2[round===1?'n1By':'n2By']=(CURRENT_USER?CURRENT_USER.name:''); promoPatch(u.sid, pp2); }
+                              else showToast('날짜 형식은 YYYY-MM-DD');
+                            },
+                            style:{display:'inline-flex',alignItems:'center',gap:'3px',fontSize:'10px',fontWeight:700,color:'#16a34a',background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:'6px',padding:'2px 6px',fontFamily:'monospace',cursor:'pointer'}},
+                          '✓ '+dateVal.slice(5), h('span',{style:{color:'#94a3b8',fontSize:'9px'}},'✎'));
+                      }
+                      if(reached){
+                        return h('button',{title:'오늘 날짜로 '+(round===1?'1차':'2차')+' 통보 기록 (Shift+클릭: 날짜 직접 입력)',
+                            onClick:function(e){ e.stopPropagation();
+                              var d = todayYMD();
+                              if(e.shiftKey){ var nd=window.prompt((round===1?'1차':'2차')+' 통보일 (YYYY-MM-DD)', d); if(nd===null) return; nd=nd.trim(); if(!/^\d{4}-\d{2}-\d{2}$/.test(nd)){ showToast('날짜 형식은 YYYY-MM-DD'); return; } d=nd; }
+                              var pp={}; pp[round===1?'n1Date':'n2Date']=d; pp[round===1?'n1By':'n2By']=(CURRENT_USER?CURRENT_USER.name:'');
+                              promoPatch(u.sid, pp);
+                              showToast((round===1?'1차':'2차')+' 통보 기록 ('+d+') — 사용촉진 탭에도 반영');
+                            },
+                            style:{fontSize:'10px',fontWeight:700,color:'#ea580c',background:'#fff',border:'1px dashed #fdba74',borderRadius:'6px',padding:'2px 7px',cursor:'pointer'}},'＋ 기록');
+                      }
+                      return h('span',{style:{fontSize:'10px',color:'#cbd5e1'}},'—');
+                    }
+                    return [
+                      h('td',{key:'n1',style:Object.assign({},tdS,{textAlign:'center',padding:'3px'})}, noticeCell(1)),
+                      h('td',{key:'n2',style:Object.assign({},tdS,{textAlign:'center',padding:'3px'})}, noticeCell(2))
+                    ];
+                  })(),
                   h('td',{style:Object.assign({},tdS,{textAlign:'center',padding:'3px'})},
                     h('button',{onClick:function(e){e.stopPropagation();setSelSid(u.sid);openOverride();},
                       style:{padding:'2px 6px',background:'#f1f5f9',color:'#475569',border:'1px solid #cbd5e1',borderRadius:'5px',cursor:'pointer',fontSize:'10px'}},'수정'))
@@ -45400,6 +45492,8 @@ function LeaveManagement(){
                   Math.round(leaveUsers.reduce(function(s,u){return s+calcUsed(u.sid,selYear).used;},0)*10)/10),
                 h('td',{style:{padding:'7px 10px',textAlign:'right',fontFamily:'monospace',fontWeight:800}},
                   Math.round(leaveUsers.reduce(function(s,u){var a=calcGrantDays(u.hireDate,selYear);var ov=grants[u.sid]&&grants[u.sid][selYear];var t=ov&&ov.total!=null?ov.total:a.days;var co=ov?(ov.carryOver||0):0;return s+(t+co-calcUsed(u.sid,selYear).used);},0)*10)/10),
+                h('td',null),
+                h('td',null),
                 h('td',null)
               )
             )
