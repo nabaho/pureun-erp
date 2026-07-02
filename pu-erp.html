@@ -20,6 +20,21 @@
     }
   }catch(e){}
 })();
+// [1회성] 동기화 타임스탬프 초기화 — 쓰기 실패로 부풀려진 _meta_를 지워
+//   모든 기기가 다음 로드에서 서버 원본을 다시 받도록 함 (과거회귀 오염 청소)
+(function(){
+  try{
+    if(!localStorage.getItem('pu_meta_reset_v1')){
+      var del=[];
+      for(var i=0;i<localStorage.length;i++){
+        var kk=localStorage.key(i);
+        if(kk && kk.indexOf('pureun_v6__meta_')===0) del.push(kk);
+      }
+      del.forEach(function(kk){ localStorage.removeItem(kk); });
+      localStorage.setItem('pu_meta_reset_v1','1');
+    }
+  }catch(e){}
+})();
 </script>
 <title>푸른노무법인 ERP V1</title>
 <!-- SheetJS: 엑셀(xls/xlsx) 파싱용 (아카이브 import) -->
@@ -742,8 +757,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-01 [근본수정] 초기 동기화 완료 전 서버쓰기 차단 — 폰/새기기 옛 데이터가 서버를 덮어쓰는 회귀 원천 차단';
-var BUILD_SEQ = 42;
+var ERP_BUILD = '2026-07-02 [근본수정2] 쓰기실패 meta원복 + flush 안전화(막힌 키만) + meta 1회 초기화 — 과거회귀 3중 차단';
+var BUILD_SEQ = 43;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -2889,6 +2904,7 @@ function dbSet(k, v){
     //    폰/새 기기에서 앱을 막 열었을 때, 서버 최신을 받기 전의 '옛 localStorage 값'이
     //    서버를 덮어써 과거로 회귀하는 문제를 원천 차단. (로컬에는 이미 저장됨)
     if(!_fbSynced){
+      try { (window._fbPendingKeys = window._fbPendingKeys || {})[k] = true; } catch(_){}
       console.warn('[동기화보호] 초기 동기화 완료 전 — '+k+' 서버 쓰기 보류 (로컬만 저장)');
       return true;
     }
@@ -2896,6 +2912,9 @@ function dbSet(k, v){
       var ts = Date.now();
       var _preMeta = parseInt(localStorage.getItem(KEY+'_meta_'+k) || '0', 10); // 되돌림방지: 덮이기 전 마지막 동기화 시각
       localStorage.setItem(KEY+'_meta_'+k, String(ts));
+      // 쓰기 실패 시 meta를 원복 — 실패했는데 meta만 올라가면 이 기기가 '더 최신'으로 오인되어
+      // 나중에 옛 데이터를 서버로 미는 과거회귀 사고의 씨앗이 됨
+      var _metaRollback = function(){ try { localStorage.setItem(KEY+'_meta_'+k, String(_preMeta)); } catch(_){} };
 
       // ── 자동 Diff Sync (핵심 5개 키) — 1단계: 변경 개수 무관 항상 건별 저장 ──
       // #4 Tier 3: id 키 기반 부분 업데이트 (인덱스 충돌 제거) — 삭제도 가능
@@ -2935,7 +2954,7 @@ function dbSet(k, v){
             if(id) updates['data/'+k+'/v/'+id] = null;
           });
           updates['data/'+k+'/u'] = ts;
-          try { fbDb.ref().update(updates).catch(fbSyncFail); diffApplied = true; } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+          try { fbDb.ref().update(updates).catch(function(e){ _metaRollback(); fbSyncFail(e); }); diffApplied = true; } catch(e){ _metaRollback(); window._erpErrLog && window._erpErrLog(e); }
         }
       }
 
@@ -3000,8 +3019,8 @@ function dbSet(k, v){
               try { showToast('🔄 다른 기기의 최신 데이터로 갱신됨 — 방금 변경은 다시 확인하세요'); } catch(_){}
               return;
             }
-            fbDb.ref('data/'+k).set({v:fbValue, u:ts}).then(function(){ if(DIFF_KEYS.indexOf(k)>=0 && fbValue && !Array.isArray(fbValue)) _fbObjForm[k]=true; }).catch(fbSyncFail);
-          }).catch(function(){ fbDb.ref('data/'+k).set({v:fbValue, u:ts}).then(function(){ if(DIFF_KEYS.indexOf(k)>=0 && fbValue && !Array.isArray(fbValue)) _fbObjForm[k]=true; }).catch(fbSyncFail); });
+            fbDb.ref('data/'+k).set({v:fbValue, u:ts}).then(function(){ if(DIFF_KEYS.indexOf(k)>=0 && fbValue && !Array.isArray(fbValue)) _fbObjForm[k]=true; }).catch(function(e){ _metaRollback(); fbSyncFail(e); });
+          }).catch(function(){ fbDb.ref('data/'+k).set({v:fbValue, u:ts}).then(function(){ if(DIFF_KEYS.indexOf(k)>=0 && fbValue && !Array.isArray(fbValue)) _fbObjForm[k]=true; }).catch(function(e){ _metaRollback(); fbSyncFail(e); }); });
         } else {
           // 되돌림 방지(객체/스칼라 설정): 서버가 이 기기 기준보다 최신이면 덮어쓰지 말고 서버 원본을 raw 그대로 수신
           fbDb.ref('data/'+k).once('value').then(function(snap){
@@ -3018,8 +3037,8 @@ function dbSet(k, v){
               try { showToast('🔄 다른 기기의 최신 설정으로 갱신됨 — 방금 변경은 다시 확인하세요'); } catch(_){}
               return;
             }
-            fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(fbSyncFail);
-          }).catch(function(){ fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(fbSyncFail); });
+            fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(function(e){ _metaRollback(); fbSyncFail(e); });
+          }).catch(function(){ fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(function(e){ _metaRollback(); fbSyncFail(e); }); });
         }
       }
     } catch(e){ window._erpErrLog && window._erpErrLog(e); }
@@ -4180,39 +4199,29 @@ function fbSetupListener(){
 if(fbDb){
   var _fbSyncTimer = null;
   setTimeout(function(){ _fbSynced = true; }, 12000); // 연결 지연 시 영구 잠금 방지
-  // 초기 동기화 게이트로 보류됐던 '로컬이 서버보다 최신인' 키를 서버로 반영.
-  //   (앱 시작 직후 사용자가 저장한 정상 변경이 서버에 안 올라가는 갭 방지)
+  // 초기 동기화 게이트에 '이번 세션에서 실제로 막힌' 키만 서버로 재반영.
+  //   ※ 타임스탬프 비교로 임의 키를 밀지 않음 — 쓰기 실패로 부풀려진 meta가
+  //     옛 데이터를 서버로 밀어 과거회귀를 일으켰던 사고의 재발 방지.
+  //   재반영은 dbSet을 다시 타므로 되돌림방지·급감차단 등 모든 보호를 통과해야 함.
   function _flushPendingLocalNewer(){
     if(!fbDb) return;
     try {
-      fbDb.ref('data').once('value').then(function(snap){
-        var remote = snap.val() || {};
-        // 로컬에 있는 동기화 대상 키 순회
-        for(var i=0; i<localStorage.length; i++){
-          var full = localStorage.key(i);
-          if(!full || full.indexOf(KEY) !== 0) continue;
-          var k = full.slice(KEY.length);
-          if(k.indexOf('_meta_') === 0) continue;
-          if(!fbShouldSync(k)) continue;
-          var lMeta = parseInt(localStorage.getItem(KEY+'_meta_'+k) || '0', 10);
-          var rec = remote[k];
-          var rU = (rec && typeof rec.u === 'number') ? rec.u : 0;
-          if(lMeta > rU){
-            // 로컬이 더 최신 → 다시 저장해 서버 반영 (이제 _fbSynced=true라 게이트 통과)
-            try {
-              var raw = localStorage.getItem(KEY+k);
-              var val = raw ? JSON.parse(raw) : null;
-              if(val != null){
-                // 값 동일 스킵 로직을 우회하기 위해 meta를 잠시 낮춰 강제 재푸시
-                _dbCache[k] = val;
-                localStorage.removeItem(KEY+k);       // dbSet의 oldJson===newJson 스킵 회피
-                dbSet(k, val);
-                console.log('[동기화보호] 보류됐던 '+k+' 서버 반영');
-              }
-            } catch(e){ window._erpErrLog && window._erpErrLog(e); }
-          }
-        }
-      }).catch(function(){});
+      var pend = window._fbPendingKeys || {};
+      var keys = Object.keys(pend);
+      if(keys.length === 0) return;
+      window._fbPendingKeys = {};
+      keys.forEach(function(k){
+        try {
+          if(!fbShouldSync(k)) return;
+          var raw = localStorage.getItem(KEY+k);
+          var val = raw ? JSON.parse(raw) : null;
+          if(val == null) return;
+          _dbCache[k] = val;
+          localStorage.removeItem(KEY+k);       // dbSet의 oldJson===newJson 스킵 회피
+          dbSet(k, val);                        // 모든 보호로직 통과 후에만 서버 반영
+          console.log('[동기화보호] 보류됐던 '+k+' 재저장 (보호로직 경유)');
+        } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+      });
     } catch(e){ window._erpErrLog && window._erpErrLog(e); }
   }
   var _startFbSync = function(){
