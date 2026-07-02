@@ -757,8 +757,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-02 연차/반차 목록 사용촉진시행 그룹헤더 추가 (1·2차 통보 상단)';
-var BUILD_SEQ = 48;
+var ERP_BUILD = '2026-07-02 사용촉진 탭을 연차/반차로 통합 — 우측 상세에 촉진관리(통보서·발송·사용신청) + 타임라인에 촉진이력 연도별, 촉진 탭 제거';
+var BUILD_SEQ = 49;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -44911,6 +44911,59 @@ function calcLeavePromoStage(hireDate, year){
   return { expiry:expiry, expiryStr:fmt(expiry), p1:p1, p2:p2, stage:stage, sc:sc, dday:dday };
 }
 
+// 사용촉진 통보서 인쇄창 (연차/반차 우측 상세 + 사용촉진 탭 공용)
+//   r: {name, remain, expiry(Date)}, round: 1|2, opts.assign(2차 지정일)
+//   반환: 인쇄 후 기록에 쓸 { todayStr } — 호출측이 통보일 기록
+function printLeaveNotice(r, round, opts){
+  opts = opts || {};
+  function pad(n){ return (n<10?'0':'')+n; }
+  function fmt(d){ return d ? (d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())) : '—'; }
+  var today = new Date(); today.setHours(0,0,0,0);
+  var todayStr = fmt(today);
+  var remain = r.remain;
+  var expS = fmt(r.expiry);
+  var company = '푸른노무법인';
+  var titleTxt, bodyHtml;
+  if(round===1){
+    var dl = new Date(today.getTime()); dl.setDate(dl.getDate()+10); var dlS = fmt(dl);
+    titleTxt = '연차유급휴가 사용촉진 통보서 (1차)';
+    bodyHtml = '<p>근로기준법 제61조에 따라 귀하의 미사용 연차유급휴가 사용을 촉진합니다. 아래 잔여 휴가에 대하여 <b>사용시기를 정하여 회신 기한까지 통보</b>하여 주시기 바랍니다.</p>'
+      + '<table><tr><th>미사용 연차</th><td>' + remain + '일</td></tr>'
+      + '<tr><th>사용기간(만료일)</th><td>' + expS + ' 까지</td></tr>'
+      + '<tr><th>회신 기한</th><td>' + dlS + ' 까지 (사용시기 지정·통보)</td></tr></table>'
+      + '<p class="warn">※ 회신 기한까지 사용시기를 통보하지 않으시면, 근로기준법 제61조에 따라 <b>사용자가 사용시기를 지정하여 통보</b>할 수 있습니다.</p>';
+  } else {
+    var assign = opts.assign || '';
+    titleTxt = '연차유급휴가 사용시기 지정 통보서 (2차)';
+    bodyHtml = '<p>근로기준법 제61조에 따라, 1차 사용촉진에도 사용시기를 통보하지 아니한 귀하의 미사용 연차유급휴가에 대하여 <b>사용자가 아래와 같이 사용시기를 지정</b>하여 통보합니다.</p>'
+      + '<table><tr><th>미사용 연차</th><td>' + remain + '일</td></tr>'
+      + '<tr><th>지정 사용일</th><td>' + assign + '</td></tr>'
+      + '<tr><th>사용기간(만료일)</th><td>' + expS + ' 까지</td></tr></table>'
+      + '<p class="warn">※ 지정된 사용일에 휴가를 사용하지 않을 경우, 해당 연차유급휴가는 소멸될 수 있습니다.</p>';
+  }
+  var w = window.open('', '_blank');
+  if(!w){ try{ showToast('팝업이 차단되었습니다 — 팝업 허용 후 다시 시도하세요.'); }catch(_){ } return null; }
+  var doc = '<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>' + titleTxt + ' - ' + r.name + '</title>'
+    + '<style>'
+    + 'body{font-family:"맑은 고딕","Malgun Gothic","Apple SD Gothic Neo",sans-serif;color:#111;margin:25mm 20mm;line-height:1.7;font-size:13.5px;}'
+    + '.title{font-size:20px;font-weight:800;text-align:center;letter-spacing:2px;margin:0 0 4px;}'
+    + '.bar{height:3px;background:#1e40af;margin:0 0 18px;}'
+    + '.meta{margin:0 0 12px;font-size:13px;} .meta b{display:inline-block;width:60px;}'
+    + 'table{width:100%;border-collapse:collapse;margin:14px 0;}'
+    + 'th,td{border:1px solid #333;padding:8px 12px;font-size:13.5px;} th{background:#f1f5f9;width:160px;text-align:left;}'
+    + '.warn{color:#b91c1c;font-size:12.5px;} .foot{margin-top:36px;text-align:right;} .foot .d{margin-bottom:14px;} .foot .c{font-size:16px;font-weight:800;}'
+    + '.noprint{text-align:right;margin-bottom:10px;} @media print{.noprint{display:none;} body{margin:18mm 16mm;}}'
+    + '</style></head><body>'
+    + '<div class="noprint"><button onclick="window.print()" style="padding:8px 16px;font-size:14px;cursor:pointer;">🖨 인쇄 / PDF 저장</button></div>'
+    + '<div class="title">' + titleTxt + '</div><div class="bar"></div>'
+    + '<div class="meta"><div><b>수신</b> ' + r.name + ' 귀하</div><div><b>발신</b> ' + company + '</div><div><b>통보일</b> ' + todayStr + '</div></div>'
+    + bodyHtml
+    + '<div class="foot"><div class="d">' + todayStr + '</div><div class="c">' + company + '  (직인)</div><div>대표 권형하</div></div>'
+    + '</body></html>';
+  w.document.write(doc); w.document.close();
+  return { todayStr: todayStr };
+}
+
 function LeavePromotion(){
   var nowY = new Date().getFullYear();
   var pol = dbGet('policy_leave', {}) || {};
@@ -45517,14 +45570,13 @@ function LeaveManagement(){
 
     // 탭 바 (#1 연차 / 휴직 / 보상휴가)
     h('div', { style:{display:'flex',gap:'4px',marginBottom:'6px',borderBottom:'1px solid #e2e8f0',overflowX:'auto',WebkitOverflowScrolling:'touch'} },
-      ['annual','promote','loa','comp','aledger'].map(function(t){
-        var label = t==='annual' ? '🏖️ 연차/반차' : t==='promote' ? '📣 사용촉진' : t==='loa' ? '🏠 휴직' : t==='comp' ? '💎 보상휴가' : '📋 연차대장';
+      ['annual','loa','comp','aledger'].map(function(t){
+        var label = t==='annual' ? '🏖️ 연차/반차' : t==='loa' ? '🏠 휴직' : t==='comp' ? '💎 보상휴가' : '📋 연차대장';
         var on = tab===t;
         return h('button', { key:t, onClick:function(){setTab(t);},
           style:{padding:'5px 10px',background:'transparent',border:'none',borderBottom:'2px solid '+(on?'#1e40af':'transparent'),color:on?'#1e40af':'#64748b',fontWeight:on?700:500,fontSize:'13px',cursor:'pointer',marginBottom:'-1px',flexShrink:0,whiteSpace:'nowrap'} }, label);
       })
     ),
-    tab==='promote' && h(LeavePromotion, null),
     tab==='aledger' && h(LeaveLedgerTab, null),
     tab==='annual' && h('div',{style:_isAdminView?{display:'grid',gridTemplateColumns:'1fr 1.6fr',gap:'10px',alignItems:'start'}:{}},
 
@@ -45700,6 +45752,71 @@ function LeaveManagement(){
               transition:'width 0.3s'}}))
         ),
 
+        // ── 사용촉진 관리 (사용촉진 탭 통합) ──
+        selUser && (function(){
+          var pst = calcLeavePromoStage(selUser.hireDate, selYear);
+          var prec = promoRecOf(selUser.sid);
+          var remainNum = Math.round(remain*10)/10;
+          var noP = remainNum <= 0;
+          var rObj = { name:selUser.name, remain:remainNum, expiry:pst.expiry };
+          var kS = {width:'64px',fontSize:'11px',fontWeight:700,color:'#475569',flexShrink:0};
+          var rowS = {display:'flex',alignItems:'center',gap:'8px',padding:'8px 12px',borderBottom:'1px solid #f5f7fa',flexWrap:'wrap'};
+          var btnO = {padding:'5px 11px',background:'#ea580c',color:'#fff',border:'none',borderRadius:'6px',fontSize:'11px',fontWeight:700,cursor:'pointer'};
+          var btnW = {padding:'5px 11px',background:'#fff',color:'#0d9488',border:'1px solid #5eead4',borderRadius:'6px',fontSize:'11px',fontWeight:700,cursor:'pointer'};
+          function noticeRow(round){
+            var dateVal = prec ? (round===1?prec.n1Date:prec.n2Date) : null;
+            var sentAt  = prec ? (round===1?prec.n1SentAt:prec.n2SentAt) : null;
+            var planned = round===1 ? pst.p1 : pst.p2;
+            var plannedStr = planned ? lmFmt(planned) : null;
+            var reached = !noP && (round===1
+              ? (pst.stage==='1차 통보 시기'||pst.stage==='2차 통보 시기'||pst.stage==='만료')
+              : (pst.stage==='2차 통보 시기'||pst.stage==='만료'));
+            var left;
+            if(dateVal){
+              left = h('span',{style:{display:'inline-flex',alignItems:'center',gap:'5px',fontSize:'11px',fontWeight:700,color:'#166534'}},
+                '✓ '+dateVal, sentAt ? h('span',{style:{fontSize:'10px',color:'#2563eb',background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'6px',padding:'1px 6px',fontWeight:700}},'📧 '+sentAt) : null);
+            } else if(reached){
+              left = h('span',{style:{display:'inline-flex',gap:'6px',alignItems:'center'}},
+                plannedStr ? h('span',{style:{fontSize:'11px',color:'#c2410c',fontFamily:'monospace',fontWeight:700}}, plannedStr+' 예정') : null,
+                h('button',{style:btnO,onClick:function(){ sendPromoFromList(selUser, round, remainNum, pst.expiryStr); }},'📧 발송'));
+            } else {
+              left = h('span',{style:{fontSize:'11px',color:'#cbd5e1'}}, plannedStr && !noP ? (plannedStr+' 예정') : '—');
+            }
+            return h('div',{style:rowS},
+              h('span',{style:kS}, round===1?'1차 통보':'2차 통보'),
+              left,
+              h('button',{style:Object.assign({},btnW,{marginLeft:'auto'}),onClick:function(){
+                  var opts = {};
+                  if(round===2){ var a=window.prompt('회사가 지정한 사용일을 입력하세요 (예: 2026-08-10 ~ 08-14)', (prec&&prec.n2Assign)||''); if(a==null||!String(a).trim()) return; opts.assign=String(a).trim(); }
+                  var res = printLeaveNotice(rObj, round, opts);
+                  if(res){ var pp={}; if(round===1){ if(!(prec&&prec.n1Date)){ pp.n1Date=res.todayStr; pp.n1By=(CURRENT_USER?CURRENT_USER.name:''); } } else { pp.n2Date=res.todayStr; pp.n2By=(CURRENT_USER?CURRENT_USER.name:''); pp.n2Assign=opts.assign; } if(Object.keys(pp).length) promoPatch(selUser.sid, pp); }
+                }},'🖨 '+(round===1?'1차':'2차')+' 통보서')
+            );
+          }
+          return h('div',{style:{background:'#fff',border:'1.5px solid #fdba74',borderRadius:'8px',overflow:'hidden',marginBottom:'10px'}},
+            h('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'9px 12px',background:'#fff7ed',borderBottom:'1px solid #fed7aa'}},
+              h('span',null,'📣'), h('div',{style:{fontSize:'12.5px',fontWeight:800,color:'#9a3412'}},'연차 사용촉진'),
+              h('span',{style:{marginLeft:'auto',fontSize:'10.5px',fontWeight:800,color:pst.sc,background:'#fff',border:'1px solid '+pst.sc,borderRadius:'11px',padding:'2px 9px'}}, pst.stage)),
+            noP
+              ? h('div',{style:{padding:'12px',fontSize:'11.5px',color:'#94a3b8',textAlign:'center'}}, '잔여 연차가 없어 촉진 대상이 아닙니다')
+              : h('div',null,
+                  noticeRow(1),
+                  noticeRow(2),
+                  h('div',{style:rowS},
+                    h('span',{style:kS},'사용 신청'),
+                    h('input',{type:'text', value:(prec&&prec.request)||'', placeholder:'예: 8/15~8/19, 5일',
+                      onChange:function(e){ var v=e.target.value; var cur=promoRecOf(selUser.sid); promoPatch(selUser.sid,{ request:v, requestDate:(v?((cur&&cur.requestDate)||todayYMD()):null) }); },
+                      style:{flex:1,minWidth:'150px',padding:'6px 9px',border:'1px solid #cbd5e1',borderRadius:'6px',fontSize:'11.5px'}}),
+                    (prec&&prec.requestDate) ? h('span',{style:{fontSize:'10.5px',color:'#64748b'}}, '신청일 '+prec.requestDate) : null),
+                  h('div',{style:Object.assign({},rowS,{borderBottom:'none'})},
+                    h('span',{style:kS},'비고'),
+                    h('input',{type:'text', value:(prec&&prec.note)||'', placeholder:'메모(선택)',
+                      onChange:function(e){ promoPatch(selUser.sid,{ note:e.target.value }); },
+                      style:{flex:1,minWidth:'150px',padding:'6px 9px',border:'1px solid #cbd5e1',borderRadius:'6px',fontSize:'11.5px'}}))
+                )
+          );
+        })(),
+
         // 연도별 사용 이력 + 시각화 대시보드
         selUser&&(function(){
           var hire = selUser.hireDate ? new Date(selUser.hireDate) : null;
@@ -45757,6 +45874,22 @@ function LeaveManagement(){
             ? allRecs.filter(function(r){return r.date.startsWith(selY+'-');})
             : allRecs;
           var sortedRecs = viewRecs.slice().sort(function(a,b){return b.date.localeCompare(a.date);});
+          // ── 사용촉진 이벤트를 타임라인에 병합 (연도별) ──
+          (function(){
+            var allPromo = dbGet('leave_promotion', []) || [];
+            var mine = allPromo.filter(function(p){ return p.sid===selUser.sid; });
+            var evts = [];
+            mine.forEach(function(p){
+              if(p.n1Date) evts.push({ id:'promo-n1-'+p.year, date:p.n1Date, type:'promo-n1', note:'사용촉진 1차 통보'+(p.n1SentAt?' · 메일발송':'') });
+              if(p.n2Date) evts.push({ id:'promo-n2-'+p.year, date:p.n2Date, type:'promo-n2', note:'사용시기 지정 통보'+(p.n2Assign?(' ('+p.n2Assign+')'):'')+(p.n2SentAt?' · 메일발송':'') });
+              if(p.request && p.requestDate) evts.push({ id:'promo-req-'+p.year, date:p.requestDate, type:'promo-req', note:'사용시기 회신: '+p.request });
+            });
+            // single 모드면 해당 연도만
+            if(viewMode==='single') evts = evts.filter(function(e){ return (e.date||'').startsWith(selY+'-'); });
+            if(evts.length){
+              sortedRecs = sortedRecs.concat(evts).sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
+            }
+          })();
           var viewLeave = viewRecs.filter(function(r){return r.type==='leave';}).length;
           var viewHalf  = viewRecs.filter(function(r){return r.type==='halfday-am' || r.type==='halfday-pm';}).length;
           var viewHour  = viewRecs.filter(function(r){return r.type==='leave-hour';}).reduce(function(s,r){return s+(Number(r.hours)||0);},0);
@@ -45764,7 +45897,10 @@ function LeaveManagement(){
             'leave':       { label:'연차',     color:'#166534', bg:'#dcfce7' },
             'halfday-am':  { label:'오전반차', color:'#2563eb', bg:'#cffafe' },
             'halfday-pm':  { label:'오후반차', color:'#2563eb', bg:'#cffafe' },
-            'leave-hour':  { label:'시간연차', color:'#1e40af', bg:'#ede9fe' }
+            'leave-hour':  { label:'시간연차', color:'#1e40af', bg:'#ede9fe' },
+            'promo-n1':    { label:'1차 촉진', color:'#ea580c', bg:'#ffedd5' },
+            'promo-n2':    { label:'2차 촉진', color:'#dc2626', bg:'#fee2e2' },
+            'promo-req':   { label:'사용신청', color:'#1e40af', bg:'#dbeafe' }
           };
           return h('div',{style:{marginTop:'14px',display:'flex',flexDirection:'column',gap:'12px'}},
             // ── 모드 토글 + (single) 연도 탭
