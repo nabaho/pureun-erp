@@ -757,8 +757,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-02 입금확정 카드결제 토글 (매출유지·완납·카드수수료 기록·입금리스트 배지)';
-var BUILD_SEQ = 55;
+var ERP_BUILD = '2026-07-02 카드수수료 출금관리 파생행 + 손익 비용 반영 (2단계)';
+var BUILD_SEQ = 56;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -15234,7 +15234,8 @@ var EXPENSE_CAT_SEED = [
   // ─── 자동 시스템 카테고리 (숨김, 마이그레이션용 호환) ───
   { code:'exp-bankfee',         name:'이체수수료',       color:'#475569', sortOrder:131, group:'외부지급', hidden:false },
   { code:'exp-reimburse',       name:'실비지급',         color:'#ea580c', sortOrder:132, group:'외부지급', hidden:false },
-  { code:'exp-personal-income', name:'개인소득송금',     color:'#6366f1', sortOrder:133, group:'외부지급', hidden:false }
+  { code:'exp-personal-income', name:'개인소득송금',     color:'#6366f1', sortOrder:133, group:'외부지급', hidden:false },
+  { code:'exp-cardfee',         name:'카드수수료',       color:'#7c3aed', sortOrder:134, group:'외부지급', hidden:false }
 ];
 
 // 구버전 카테고리 → 신버전 매핑 (마이그레이션)
@@ -28269,7 +28270,23 @@ function FinanceExpense(){
       _ym: r.ym
     };
   });
-  var expenses = expensesReal.concat(payVirtuals);
+  // 카드결제 수수료 (입금건 finance_income.cardFee 파생, finance_expense에는 저장 안 됨)
+  var cardFeeVirtuals = dbGet('finance_income', []).filter(function(i){ return (i.cardFee||0) > 0 && !i.isPersonalIncome; }).map(function(i){
+    return {
+      id: 'cardfee-'+i.id,
+      date: i.date || '',
+      amount: i.cardFee || 0,
+      category: 'exp-cardfee',
+      payee: i.companyName || '',
+      note: '카드결제 수수료' + (i.kind ? ' ('+i.kind+')' : '') + ' — 입금건 파생 · 매출 유지·완납',
+      paid: true,
+      paidDate: i.date || '',
+      branch: 'common',
+      _isCardFee: true,
+      _incomeRef: i.id
+    };
+  });
+  var expenses = expensesReal.concat(payVirtuals).concat(cardFeeVirtuals);
   var q = useState(''); var query = q[0]; var setQuery = q[1];
   var thisMonthInit = todayYM();
   var ym = useState(thisMonthInit); var monthFilter = ym[0]; var setMonthFilter = ym[1];
@@ -28373,7 +28390,7 @@ function FinanceExpense(){
       return;
     }
     // 월별급여 가상 항목은 finance_expense에 저장하지 않음
-    var real = (arr||[]).filter(function(x){return !x._isPayroll;});
+    var real = (arr||[]).filter(function(x){return !x._isPayroll && !x._isCardFee;});
     var snap = dbGet('finance_expense', []);
     try {
       setExpenses(real);
@@ -28463,6 +28480,10 @@ function FinanceExpense(){
     var target = expenses.find(function(x){return x.id===id;});
     if(target && target._isPayroll){
       showToast('월별급여는 인사관리에서 수정/삭제하세요');
+      return;
+    }
+    if(target && target._isCardFee){
+      showToast('카드수수료는 입금건에서 자동 계산됩니다 — 입금관리에서 확정 해제하세요');
       return;
     }
     // 연결된 자식(이체수수료) 확인
@@ -28903,6 +28924,8 @@ function LastMonthCopyModal(props){
       delete copy.linkedExpenseId;
       delete copy._isPayroll;
       delete copy._payrollRef;
+      delete copy._isCardFee;
+      delete copy._incomeRef;
       return copy;
     });
     props.onApply(newItems);
@@ -37463,6 +37486,7 @@ function FinancePnL(){
       return s + v;
     },0);
     var exp = monthExpenses.reduce(function(s,e){return s+(e.amount||0);},0);
+    var monthCardFee = monthIncomes.reduce(function(s,i){ return s+(i.cardFee||0); }, 0);
     // ★ 급여비용: finance_expense에 exp-salary 등록 없는 경우 payroll_monthly 합산
     var hasSalaryEntry = monthExpenses.some(function(e){ return e.category==='exp-salary'; });
     var payrollExp = 0;
@@ -37470,9 +37494,9 @@ function FinancePnL(){
       payrollExp = allPayrolls.filter(function(r){ return r.ym===ymKey; })
         .reduce(function(s,r){ return s+(r.grossPay||0); }, 0);
     }
-    var totalExp = exp + payrollExp;
+    var totalExp = exp + payrollExp + monthCardFee;
     monthlyData.push({ ym:ymKey, month:m, revenue:rev, expense:totalExp, profit:rev-totalExp,
-      payrollExp:payrollExp, incomeCnt:monthIncomes.length, expenseCnt:monthExpenses.length });
+      payrollExp:payrollExp, cardFeeExp:monthCardFee, incomeCnt:monthIncomes.length, expenseCnt:monthExpenses.length });
   }
   var totalRev = monthlyData.reduce(function(s,d){return s+d.revenue;},0);
   var totalExp = monthlyData.reduce(function(s,d){return s+d.expense;},0);
@@ -37487,6 +37511,9 @@ function FinancePnL(){
     var c = e.category||'exp-other';
     byCategory[c] = (byCategory[c]||0) + (e.amount||0);
   });
+  // 카드수수료 (입금건 파생): finance_income.cardFee 합산 → 카드수수료 카테고리로 표시
+  var _yearCardFee = allIncomes.filter(function(i){ return (i.date||'').slice(0,4)===selYear && !i.isPersonalIncome; }).reduce(function(s,i){ return s+(i.cardFee||0); }, 0);
+  if(_yearCardFee > 0){ byCategory['exp-cardfee'] = (byCategory['exp-cardfee']||0) + _yearCardFee; }
   var catRanking = Object.keys(byCategory).map(function(code){
     var info = catMap[code] || { name:code, color:'#94a3b8' };
     return { code:code, name:info.name, color:info.color, total:byCategory[code], pct:totalExp>0?(byCategory[code]/totalExp*100):0 };
