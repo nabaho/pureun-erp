@@ -757,8 +757,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-02 [근본수정2] 쓰기실패 meta원복 + flush 안전화(막힌 키만) + meta 1회 초기화 — 과거회귀 3중 차단';
-var BUILD_SEQ = 43;
+var ERP_BUILD = '2026-07-02 성과급 건별 수동조정 팝업 — 원천(입금 성과분배) 직접 수정으로 성과관리·급여 자동 동기화, 수기 항목·자동 복귀';
+var BUILD_SEQ = 44;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -42958,16 +42958,20 @@ function calcPerfBonus(empSid, ym){
     (item.perfShares||[]).forEach(function(p){
       // sid 직접 일치 또는 (옛 데이터) 이름 일치
       var match = p.sid === empSid || (empName && p.sid === empName) || (p.name && p.name === empName);
-      if(match && (p.amount||0) > 0){
+      if(match && (p.amount||0) !== 0){   // 음수(수기 차감 조정)도 산입
         var amt = p.amount||0;
         total += amt;
         // 입금금액(전체)·성과 산정기준액(세금 공제 후) 함께 노출
         var incomeAmount = +item.amount || 0;
         var baseAmount   = (p.baseAmount != null) ? p.baseAmount : (+item.amount || 0);
         details.push({
+          incomeId: item.id,                                  // ★ 원천 수정용
           date: item.date,
           source: (item.companyName||'-') + ' / ' + (item.kind||item.category||''),
           sourceKind: item.sourceKind,
+          isAdjust: item.sourceKind === 'perf-adjust',        // ★ 수기 조정 항목
+          manual: !!p.manual,                                 // ★ 건별 수동 대체 여부
+          amountAuto: (p.amountAuto != null) ? p.amountAuto : null,
           role: p.role || '담당',
           pct: p.pct || 0,
           amount: amt,
@@ -42979,6 +42983,81 @@ function calcPerfBonus(empSid, ym){
     });
   });
   return { total:total, details:details };
+}
+
+// ===== 성과급 건별 수동조정 (원천 finance_income.perfShares 직접 수정 → 성과관리·급여 자동 동기화) =====
+function _perfShareMatch(p, empSid, empName){
+  return p.sid === empSid || (empName && p.sid === empName) || (p.name && p.name === empName);
+}
+// 특정 입금건의 이 직원 성과금액을 수동값으로 대체 (자동값은 amountAuto에 보존)
+function applyPerfOverride(incomeId, empSid, empName, newAmount){
+  var fi = dbGet('finance_income', []);
+  var changed = false;
+  var next = fi.map(function(item){
+    if(item.id !== incomeId) return item;
+    var shares = (item.perfShares||[]).map(function(p){
+      if(!_perfShareMatch(p, empSid, empName)) return p;
+      changed = true;
+      var np = Object.assign({}, p);
+      if(np.amountAuto == null) np.amountAuto = (p.amount||0);  // 최초 1회만 자동값 보존
+      np.amount = newAmount;
+      np.manual = true;
+      return np;
+    });
+    return Object.assign({}, item, { perfShares: shares });
+  });
+  if(changed) dbSet('finance_income', next);
+  return changed;
+}
+// 수동 대체 해제 → 보존된 자동값으로 복귀
+function revertPerfOverride(incomeId, empSid, empName){
+  var fi = dbGet('finance_income', []);
+  var changed = false;
+  var next = fi.map(function(item){
+    if(item.id !== incomeId) return item;
+    var shares = (item.perfShares||[]).map(function(p){
+      if(!_perfShareMatch(p, empSid, empName) || !p.manual) return p;
+      changed = true;
+      var np = Object.assign({}, p);
+      np.amount = (np.amountAuto != null) ? np.amountAuto : np.amount;
+      delete np.manual; delete np.amountAuto;
+      return np;
+    });
+    return Object.assign({}, item, { perfShares: shares });
+  });
+  if(changed) dbSet('finance_income', next);
+  return changed;
+}
+// 수기 조정 항목 추가 — 입금관리에 '성과 조정' 레코드 생성 (성과관리·급여 양쪽 표시, 음수 가능)
+function addPerfAdjust(empSid, empName, label, amount, ym){
+  var today = todayYMD();
+  var date = (today.slice(0,7) === ym) ? today : (ym + '-28');
+  var rec = {
+    id: 'fi-adj-' + Date.now(),
+    date: date,
+    companyName: '성과 조정',
+    kind: label || '수기 조정',
+    category: 'perf-adjust',
+    sourceKind: 'perf-adjust',
+    amount: amount,
+    status: '확정',
+    isPersonalIncome: false,
+    perfExclude: false,
+    perfShares: [{ sid:empSid, name:empName, pct:0, amount:amount, role:'조정', sharePct:0, baseAmount:0, manual:true }],
+    note: '급여 성과급 팝업에서 수기 추가 (' + (CURRENT_USER ? CURRENT_USER.name : '') + ')',
+    createdAt: new Date().toISOString()
+  };
+  var fi = dbGet('finance_income', []);
+  dbSet('finance_income', fi.concat([rec]));
+  return rec.id;
+}
+// 수기 조정 항목 삭제 (perf-adjust 레코드만 삭제 허용)
+function removePerfAdjust(incomeId){
+  var fi = dbGet('finance_income', []);
+  var target = fi.find(function(x){ return x.id === incomeId; });
+  if(!target || target.sourceKind !== 'perf-adjust') return false;
+  dbSet('finance_income', fi.filter(function(x){ return x.id !== incomeId; }));
+  return true;
 }
 
 // ===== 급여 편의기능 헬퍼 =====
@@ -48457,25 +48536,28 @@ function PayrollLedger(props){
                   // 성과급 (자동: finance_income 연동 우선 → bonus_lump 컬럼 없을 때만 rec.bonus fallback)
                   perf: (function(){
                     var perfLinked = calc.perfBonus.total || 0;
+                    var perfDetails = calc.perfBonus.details || [];
+                    var hasOverride = perfDetails.some(function(d){ return d.manual || d.isAdjust; });
                     // bonus_lump 컬럼이 이미 표시 중이면 이중표시 방지
                     var hasBonusLumpCol = colSpec.some(function(c){ return c.key === 'bonus_lump'; });
                     var directBonus = (!hasBonusLumpCol && (rec.bonus||0) > 0) ? (rec.bonus||0) : 0;
-                    var displayVal = perfLinked > 0 ? perfLinked : directBonus;
-                    var isLinked = perfLinked > 0;
+                    var isLinked = perfDetails.length > 0;
+                    var displayVal = isLinked ? perfLinked : directBonus;
                     var isDirect = !isLinked && directBonus > 0;
                     // ★ Fix#2: 상여 셀에도 수동값이 있으면 이중계산 경고
                     var hasDualCount = isLinked && hasBonusLumpCol && (rec.bonus||0) > 0 && !rec.bonusIsPerf;
-                    return h('td', {style:Object.assign({},tdNum,{background: hasDualCount?'#fef2f2':'#faf5ff',
-                      color:displayVal>0?'#2563eb':'#cbd5e1',
-                      fontWeight:displayVal>0?700:400,
+                    return h('td', {style:Object.assign({},tdNum,{background: hasDualCount?'#fef2f2':(hasOverride?'#fef9c3':'#faf5ff'),
+                      color:displayVal>0?'#2563eb':(displayVal<0?'#dc2626':'#cbd5e1'),
+                      fontWeight:(displayVal!==0)?700:400,
                       cursor:isLinked?'pointer':'default'})},
                       hasDualCount && h('span',{title:'⚠️ 상여 셀('+( rec.bonus||0).toLocaleString()+'원)과 입금연동 성과('+perfLinked.toLocaleString()+'원)가 동시에 입력됩니다. 이중계산 위험!\n→ 상여 셀을 0으로 비우거나, 입금관리 성과 연동을 해제하세요.',style:{color:'#dc2626',cursor:'help',marginRight:'2px',fontSize:'11px'}},'⚠️'),
-                      displayVal > 0
+                      (isLinked || displayVal > 0)
                         ? h('span',{
-                            title: isLinked ? '클릭: 출처 상세 보기' : '엑셀 직접 입력값 (입금관리 연동 없음)',
-                            onClick: isLinked ? function(e){e.stopPropagation();setPerfModal({sid:u.sid,name:u.name,ym:props.selYM,total:perfLinked,details:calc.perfBonus.details});} : null},
+                            title: isLinked ? (hasOverride?'✏️ 수동조정 포함 — 클릭: 건별 조정':'클릭: 건별 내역·수동조정') : '엑셀 직접 입력값 (입금관리 연동 없음)',
+                            onClick: isLinked ? function(e){e.stopPropagation();setPerfModal({sid:u.sid,name:u.name,ym:props.selYM,total:perfLinked,details:perfDetails});} : null},
+                            hasOverride && h('span',{style:{marginRight:'2px',fontSize:'10px'}},'✏️'),
                             displayVal.toLocaleString(),
-                            isLinked && h('span',{style:{marginLeft:'3px',fontSize:'10px',color:'#60a5fa'}},'ⓘ'),
+                            (isLinked && !hasOverride) && h('span',{style:{marginLeft:'3px',fontSize:'10px',color:'#60a5fa'}},'ⓘ'),
                             isDirect && h('span',{style:{marginLeft:'3px',fontSize:'10px',color:'#93c5fd'}},'직접'))
                         : '-');
                   })()
@@ -48772,49 +48854,112 @@ function PayrollLedger(props){
       )
     ),
 
-    perfModal && h('div', { className:'modal-bg', onClick:function(){setPerfModal(null);} },
-      h('div', { className:'modal', style:{width:'620px'}, onClick:function(e){e.stopPropagation();} },
+    perfModal && (function(){
+      var _pm = perfModal;
+      var _pmRefresh = function(extra){
+        var r = calcPerfBonus(_pm.sid, _pm.ym);
+        setPerfModal(Object.assign({}, _pm, {total:r.total, details:r.details, editIdx:null, editVal:''}, extra||{}));
+      };
+      var _parseAmt = function(s){ return parseInt(String(s).replace(/[^0-9\-]/g,''),10)||0; };
+      var _hasManual = _pm.details.some(function(d){ return d.manual || d.isAdjust; });
+      var thP = {padding:'7px 8px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',fontWeight:700,color:'#475569',fontSize:'10.5px',textAlign:'left'};
+      return h('div', { className:'modal-bg', onClick:function(){setPerfModal(null);} },
+      h('div', { className:'modal', style:{width:'660px'}, onClick:function(e){e.stopPropagation();} },
         h('div', { className:'modal-h' },
-          h('div', { className:'t' }, '⭐ 성과급 출처 - '+perfModal.name+' ('+perfModal.ym+')'),
+          h('div', { className:'t' }, '⭐ 성과급 - '+_pm.name+' ('+_pm.ym+')'),
           h('button', { className:'x', onClick:function(){setPerfModal(null);} }, '×')
         ),
         h('div', { className:'modal-b' },
           h('div', { style:{background:'#faf5ff',border:'1px solid #e9d5ff',borderRadius:'6px',padding:'10px 14px',marginBottom:'12px',display:'flex',justifyContent:'space-between',alignItems:'center'} },
-            h('div', { style:{fontSize:'12px',color:'#1e40af'} }, '총 '+perfModal.details.length+'건'),
-            h('div', { style:{fontSize:'17px',fontWeight:800,color:'#2563eb',fontFamily:'monospace'} }, perfModal.total.toLocaleString()+'원')
+            h('div', { style:{fontSize:'12px',color:'#1e40af'} }, '총 '+_pm.details.length+'건',
+              _hasManual && h('span',{style:{marginLeft:'8px',background:'#fef3c7',color:'#92400e',padding:'2px 8px',borderRadius:'10px',fontSize:'10px',fontWeight:800}},'✏️ 수동조정 포함')),
+            h('div', { style:{fontSize:'17px',fontWeight:800,color:'#2563eb',fontFamily:'monospace'} }, _pm.total.toLocaleString()+'원')
           ),
           h('table', { style:{width:'100%',borderCollapse:'collapse',fontSize:'11.5px'} },
             h('thead', null, h('tr', null,
-              h('th', { style:{padding:'7px 10px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',textAlign:'left',fontWeight:700,color:'#475569'} }, '일자'),
-              h('th', { style:{padding:'7px 10px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',textAlign:'left',fontWeight:700,color:'#475569'} }, '출처 (회사 / 종류)'),
-              h('th', { style:{padding:'7px 10px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',textAlign:'center',fontWeight:700,color:'#475569',width:'60px'} }, '역할'),
-              h('th', { style:{padding:'7px 10px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',textAlign:'right',fontWeight:700,color:'#475569',width:'56px'} }, '비율'),
-              h('th', { style:{padding:'7px 10px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',textAlign:'right',fontWeight:700,color:'#475569',width:'110px'} }, '금액')
+              h('th', { style:thP }, '일자'),
+              h('th', { style:thP }, '출처'),
+              h('th', { style:Object.assign({},thP,{textAlign:'center',width:'52px'}) }, '역할'),
+              h('th', { style:Object.assign({},thP,{textAlign:'right',width:'46px'}) }, '비율'),
+              h('th', { style:Object.assign({},thP,{textAlign:'right',width:'120px'}) }, '금액'),
+              h('th', { style:Object.assign({},thP,{width:'40px'}) }, '')
             )),
             h('tbody', null,
-              perfModal.details.length === 0
-                ? h('tr', null, h('td', { colSpan:5, style:{padding:'24px',textAlign:'center',color:'#94a3b8'} }, '내역 없음'))
-                : perfModal.details.map(function(d, i){
-                    return h('tr', { key:i, style:{borderBottom:'1px solid #f1f5f9'} },
-                      h('td', { style:{padding:'7px 10px',fontFamily:'monospace',color:'#64748b'} }, d.date||'-'),
-                      h('td', { style:{padding:'7px 10px',color:'#1e293b'} }, d.source||'-'),
-                      h('td', { style:{padding:'7px 10px',textAlign:'center'} },
-                        h('span', { style:{background:d.role==='주담당'?'#dbeafe':'#cffafe',color:d.role==='주담당'?'#1e40af':'#2563eb',padding:'1px 7px',borderRadius:'8px',fontSize:'10px',fontWeight:700} }, d.role||'담당')),
-                      h('td', { style:{padding:'7px 10px',textAlign:'right',fontFamily:'monospace',color:'#64748b'} }, (d.pct||0)+'%'),
-                      h('td', { style:{padding:'7px 10px',textAlign:'right',fontFamily:'monospace',fontWeight:700,color:'#2563eb'} }, (d.amount||0).toLocaleString())
+              _pm.details.length === 0
+                ? h('tr', null, h('td', { colSpan:6, style:{padding:'24px',textAlign:'center',color:'#94a3b8'} }, '내역 없음'))
+                : _pm.details.map(function(d, i){
+                    var editing = _pm.editIdx === i;
+                    return h('tr', { key:i, style:{borderBottom:'1px solid #f1f5f9', background: d.isAdjust?'#f0fdfa':(d.manual?'#fffbeb':'transparent')} },
+                      h('td', { style:{padding:'7px 8px',fontFamily:'monospace',color:'#64748b'} }, (d.date||'-').slice(5)),
+                      h('td', { style:{padding:'7px 8px',color:'#1e293b'} },
+                        d.source||'-',
+                        d.isAdjust && h('span',{style:{marginLeft:'5px',background:'#ccfbf1',color:'#0f766e',padding:'1px 6px',borderRadius:'8px',fontSize:'9px',fontWeight:800}},'추가'),
+                        (!d.isAdjust && d.manual) && h('span',{style:{marginLeft:'5px',background:'#fef3c7',color:'#92400e',padding:'1px 6px',borderRadius:'8px',fontSize:'9px',fontWeight:800}},'수동'),
+                        (!d.isAdjust && d.manual && d.amountAuto != null) && h('div',{style:{fontSize:'9.5px',color:'#cbd5e1',textDecoration:'line-through',fontFamily:'monospace'}},'자동 '+d.amountAuto.toLocaleString())),
+                      h('td', { style:{padding:'7px 8px',textAlign:'center'} },
+                        h('span', { style:{background:d.role==='주담당'?'#dbeafe':(d.role==='조정'?'#ccfbf1':'#cffafe'),color:d.role==='주담당'?'#1e40af':(d.role==='조정'?'#0f766e':'#2563eb'),padding:'1px 7px',borderRadius:'8px',fontSize:'10px',fontWeight:700} }, d.role||'담당')),
+                      h('td', { style:{padding:'7px 8px',textAlign:'right',fontFamily:'monospace',color:'#64748b'} }, d.isAdjust?'—':((d.pct||0)+'%')),
+                      h('td', { style:{padding:'7px 8px',textAlign:'right'} },
+                        editing
+                          ? h('input', { type:'text', autoFocus:true, value:_pm.editVal,
+                              onChange:function(e){ setPerfModal(Object.assign({},_pm,{editVal:e.target.value})); },
+                              onKeyDown:function(e){ if(e.key==='Enter'){ applyPerfOverride(d.incomeId,_pm.sid,_pm.name,_parseAmt(_pm.editVal)); showToast('건별 수동값 적용 — 성과관리에도 반영됨'); _pmRefresh(); } if(e.key==='Escape'){ setPerfModal(Object.assign({},_pm,{editIdx:null,editVal:''})); } },
+                              style:{width:'100px',padding:'4px 7px',border:'1.5px solid #f59e0b',borderRadius:'6px',fontFamily:'monospace',fontWeight:700,fontSize:'11.5px',textAlign:'right',background:'#fffbeb'} })
+                          : h('span', { style:{fontFamily:'monospace',fontWeight:700,color:d.amount<0?'#dc2626':(d.manual||d.isAdjust?'#92400e':'#2563eb')} }, (d.amount||0).toLocaleString())),
+                      h('td', { style:{padding:'7px 4px',textAlign:'center'} },
+                        editing
+                          ? h('button', { title:'적용(Enter)', onClick:function(){ applyPerfOverride(d.incomeId,_pm.sid,_pm.name,_parseAmt(_pm.editVal)); showToast('건별 수동값 적용 — 성과관리에도 반영됨'); _pmRefresh(); },
+                              style:{width:'26px',height:'24px',border:'1px solid #f59e0b',background:'#fef3c7',borderRadius:'6px',cursor:'pointer',fontSize:'11px'} }, '✔')
+                          : d.isAdjust
+                            ? h('button', { title:'수기 항목 삭제', onClick:async function(){ if(!(await popConfirm('수기 조정 항목을 삭제할까요?\n\n'+d.source+' / '+(d.amount||0).toLocaleString()+'원\n(성과관리에서도 함께 제거됩니다)'))) return; removePerfAdjust(d.incomeId); showToast('수기 항목 삭제됨'); _pmRefresh(); },
+                                style:{width:'26px',height:'24px',border:'1px solid #fca5a5',background:'#fef2f2',borderRadius:'6px',cursor:'pointer',fontSize:'11px'} }, '🗑️')
+                            : d.manual
+                              ? h('button', { title:'자동값으로 복귀', onClick:function(){ revertPerfOverride(d.incomeId,_pm.sid,_pm.name); showToast('자동값으로 복귀됨'); _pmRefresh(); },
+                                  style:{width:'26px',height:'24px',border:'1px solid #bfdbfe',background:'#eff6ff',borderRadius:'6px',cursor:'pointer',fontSize:'11px'} }, '↩️')
+                              : h('button', { title:'이 건만 수동 수정', onClick:function(){ setPerfModal(Object.assign({},_pm,{editIdx:i, editVal:String(d.amount||0)})); },
+                                  style:{width:'26px',height:'24px',border:'1px solid #e2e8f0',background:'#fff',borderRadius:'6px',cursor:'pointer',fontSize:'11px',color:'#94a3b8'} }, '✏️'))
                     );
                   })
             )
           ),
-          h('div', { style:{marginTop:'10px',padding:'8px 12px',background:'#f0f9ff',borderRadius:'5px',fontSize:'10.5px',color:'#1e40af'} },
-            '💡 출처 데이터: ',h('strong',null,'재무관리 → 입금관리'),'에서 등록된 입금건의 담당자 성과배분 (자문료 제외)')
+          // 수기 항목 추가
+          h('div', { style:{display:'flex',gap:'8px',alignItems:'center',marginTop:'12px'} },
+            h('input', { type:'text', placeholder:'항목명 (예: 소급 정산)', value:_pm.addLabel||'',
+              onChange:function(e){ setPerfModal(Object.assign({},_pm,{addLabel:e.target.value})); },
+              style:{flex:1,padding:'7px 10px',border:'1px solid #cbd5e1',borderRadius:'7px',fontSize:'11.5px'} }),
+            h('input', { type:'text', placeholder:'금액 (±)', value:_pm.addAmt||'',
+              onChange:function(e){ setPerfModal(Object.assign({},_pm,{addAmt:e.target.value})); },
+              style:{width:'110px',padding:'7px 10px',border:'1px solid #cbd5e1',borderRadius:'7px',fontSize:'11.5px',fontFamily:'monospace',fontWeight:700,textAlign:'right'} }),
+            h('button', { onClick:function(){
+                var amt = _parseAmt(_pm.addAmt);
+                if(!amt){ showToast('금액을 입력하세요 (음수 가능)'); return; }
+                addPerfAdjust(_pm.sid, _pm.name, _pm.addLabel||'수기 조정', amt, _pm.ym);
+                showToast('수기 항목 추가 — 성과관리에도 표시됩니다');
+                _pmRefresh({addLabel:'', addAmt:''});
+              },
+              style:{padding:'7px 12px',background:'#0f766e',color:'#fff',border:'none',borderRadius:'7px',fontSize:'11.5px',fontWeight:800,cursor:'pointer',whiteSpace:'nowrap'} }, '＋ 수기 항목')
+          ),
+          h('div', { style:{marginTop:'10px',padding:'8px 12px',background:'#f0f9ff',borderRadius:'5px',fontSize:'10.5px',color:'#1e40af',lineHeight:'1.5'} },
+            '💡 ✏️로 고친 건과 수기 항목은 ',h('strong',null,'원천(입금관리 성과분배)을 직접 수정'),'하므로 성과관리·급여·대시보드가 모두 자동 동기화됩니다. 나머지 건은 계속 자동 연동.')
         ),
         h('div', { className:'modal-f' },
+          _hasManual
+            ? h('button', { className:'btn-secondary', style:{color:'#1e40af'}, onClick:async function(){
+                if(!(await popConfirm('모든 수동값을 지우고 완전 자동으로 되돌릴까요?\n\n· 건별 수동값 → 자동값 복원\n· 수기 추가 항목 → 삭제'))) return;
+                _pm.details.forEach(function(d){
+                  if(d.isAdjust) removePerfAdjust(d.incomeId);
+                  else if(d.manual) revertPerfOverride(d.incomeId,_pm.sid,_pm.name);
+                });
+                showToast('전체 자동으로 복귀됨');
+                _pmRefresh();
+              } }, '↩️ 전체 자동으로 복귀')
+            : h('div', { style:{flex:1} }),
           h('div', { style:{flex:1} }),
           h('button', { className:'btn-secondary', onClick:function(){setPerfModal(null);} }, '닫기')
         )
       )
-    )
+    );
+    })()
   );
 }
 
