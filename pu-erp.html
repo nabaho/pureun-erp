@@ -757,8 +757,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-02 성과급 건별 수동조정 팝업 — 원천(입금 성과분배) 직접 수정으로 성과관리·급여 자동 동기화, 수기 항목·자동 복귀';
-var BUILD_SEQ = 44;
+var ERP_BUILD = '2026-07-02 입금확정 해제 유령상태 버그 수정 — 금액·날짜 수정 후 해제해도 원본이 반드시 미입금 대기로 복귀';
+var BUILD_SEQ = 45;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -28008,6 +28008,18 @@ function IncomeDetailModal(props){
                   }
                   return true;
                 });
+                // ── 2차 시도: 확정 후 금액·날짜가 수정된 경우 정확 매칭이 깨짐 → 같은 종류의 마지막 기록 제거 ──
+                if(!removed){
+                  var lastIdx = -1;
+                  for(var li = x.splitPayments.length-1; li >= 0; li--){
+                    if(x.splitPayments[li].kind === subKindLabel){ lastIdx = li; break; }
+                  }
+                  if(lastIdx >= 0){
+                    remain = x.splitPayments.filter(function(_, i2){ return i2 !== lastIdx; });
+                    removed = true;
+                    console.warn('[입금해제] 정확 매칭 실패(금액·날짜 수정됨) — 같은 종류 마지막 기록으로 대체 제거:', x.id, subKindLabel);
+                  }
+                }
                 patch.splitPayments = remain;
                 var feeKey = f.sourceSubKind === 'contract' ? 'contractFee' : 'balanceFee';
                 var totalFee = x[feeKey] || f.totalContractAmt || 0;
@@ -28015,6 +28027,12 @@ function IncomeDetailModal(props){
                                     .reduce(function(s,sp){return s+(sp.amount||0);},0);
                 // 남은 분할이 약정액 미만이면 미납 처리
                 if(paidSum < totalFee){ patch[paidKey] = false; patch[dateKey] = null; }
+                // ── 최후 안전장치: 어떤 기록도 못 지웠으면 입금표시 강제 해제 — '기록 삭제 + 원본 입금완료 유지' 유령상태 원천 차단 ──
+                if(!removed){
+                  patch[paidKey] = false; patch[dateKey] = null;
+                  console.warn('[입금해제] 분할기록 매칭 전부 실패 — 입금표시 강제 해제로 미입금 대기 복귀:', x.id);
+                  try { showToast('⚠ 분할입금 기록을 못 찾아 입금표시만 해제했습니다 — 원본의 분할입금 내역을 확인하세요'); } catch(_){}
+                }
               } else {
                 // 분할기록 없으면 기존 방식 (단일 입금)
                 patch[paidKey] = false; patch[dateKey] = null;
@@ -28038,12 +28056,24 @@ function IncomeDetailModal(props){
                   }
                   return true;
                 });
+                // ── 2차 시도: 금액·날짜 수정으로 정확 매칭 실패 → 같은 종류 마지막 기록 제거 ──
+                if(!removedC){
+                  var lastIdxC = -1;
+                  for(var lc = x.splitPayments.length-1; lc >= 0; lc--){
+                    if(x.splitPayments[lc].kind === caseLabel){ lastIdxC = lc; break; }
+                  }
+                  if(lastIdxC >= 0){
+                    remainC = x.splitPayments.filter(function(_, i3){ return i3 !== lastIdxC; });
+                    removedC = true;
+                    console.warn('[입금해제] 사건 정확 매칭 실패 — 같은 종류 마지막 기록으로 대체 제거:', x.id, caseLabel);
+                  }
+                }
                 patch.splitPayments = remainC;
                 var feeKeyC = caseLabel === '착수금' ? 'retainerFee' : 'successFee';
                 var totalFeeC = x[feeKeyC] || f.totalContractAmt || 0;
                 var paidSumC = remainC.filter(function(sp){return sp.kind===caseLabel;})
                                      .reduce(function(s,sp){return s+(sp.amount||0);},0);
-                // incomes도 이 건만 제거 (amount+date 매칭)
+                // incomes도 이 건만 제거 (amount+date 매칭 → 실패 시 kind 마지막 건)
                 var removedI = false;
                 patch.incomes = (x.incomes||[]).filter(function(i){
                   if(!removedI && i.kind === caseLabel && i.amount === f.amount && i.date === f.date){
@@ -28051,9 +28081,23 @@ function IncomeDetailModal(props){
                   }
                   return true;
                 });
+                if(!removedI){
+                  var lastIdxI = -1; var incArr = x.incomes||[];
+                  for(var lii = incArr.length-1; lii >= 0; lii--){
+                    if(incArr[lii].kind === caseLabel){ lastIdxI = lii; break; }
+                  }
+                  if(lastIdxI >= 0){ patch.incomes = incArr.filter(function(_, i4){ return i4 !== lastIdxI; }); removedI = true; }
+                }
                 if(paidSumC < totalFeeC){
                   if(caseLabel === '착수금') patch.retainerPaidDate = '';
                   else patch.successPaidDate = '';
+                }
+                // ── 최후 안전장치: 아무 기록도 못 지웠으면 입금표시 강제 해제 (유령상태 차단) ──
+                if(!removedC){
+                  if(caseLabel === '착수금') patch.retainerPaidDate = '';
+                  else patch.successPaidDate = '';
+                  console.warn('[입금해제] 사건 분할기록 매칭 전부 실패 — 입금표시 강제 해제:', x.id);
+                  try { showToast('⚠ 분할입금 기록을 못 찾아 입금표시만 해제했습니다 — 사건의 분할입금 내역을 확인하세요'); } catch(_){}
                 }
               } else {
                 patch.incomes = (x.incomes||[]).filter(function(i){ return i.kind !== caseLabel; });
