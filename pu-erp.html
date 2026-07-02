@@ -757,8 +757,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-02 사용촉진 탭을 연차/반차로 통합 — 우측 상세에 촉진관리(통보서·발송·사용신청) + 타임라인에 촉진이력 연도별, 촉진 탭 제거';
-var BUILD_SEQ = 49;
+var ERP_BUILD = '2026-07-02 퇴사자 근무연도에만 표시(입사~퇴사) + 퇴사자 사용촉진 예정·발송·기록 숨김';
+var BUILD_SEQ = 50;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -45292,9 +45292,8 @@ function LeaveManagement(){
   var _isAdminView = !!(CURRENT_USER && (CURRENT_USER.isAdmin || CURRENT_USER.isSubAdmin));
   var users = (function(){
     var _q = (query||'').trim().toLowerCase();
-    var all = (showRetired || _q)
-      ? sortUsers(dbGet('user_accounts', USERS_SEED).filter(function(u){return u.status==='active'||u.status==='retired';}))
-      : getActiveUsers();
+    // 퇴사자도 항상 후보에 포함 — 근무 연도 필터(leaveUsers)에서 선택연도 기준으로 거른다
+    var all = sortUsers(dbGet('user_accounts', USERS_SEED).filter(function(u){return u.status==='active'||u.status==='retired';}));
     if(!_isAdminView) all = all.filter(function(u){return u.sid===CURRENT_USER.sid;});
     if(_q) all = all.filter(function(u){return (u.name||'').toLowerCase().indexOf(_q)>=0;});
     return all;
@@ -45492,10 +45491,24 @@ function LeaveManagement(){
 
   // 선택 연도에 재직(입사연도 ≤ 선택연도)인 직원만 — 입사 전 연도는 목록에서 제외
   var leaveUsers = users.filter(function(u){
-    if(!u.hireDate) return true;
-    var hy = parseInt(String(u.hireDate).slice(0,4),10);
-    if(isNaN(hy)) return true;
-    return parseInt(selYear,10) >= hy;
+    var y = parseInt(selYear,10);
+    var isRetired = (u.status==='retired' || u.status==='resigned');
+    // "퇴사자 제외" 체크 시(showRetired=false): 검색 중이 아니면 퇴사자 완전 숨김
+    if(isRetired && !showRetired && !(query||'').trim()) return false;
+    // 입사연도 이후만
+    if(u.hireDate){
+      var hy = parseInt(String(u.hireDate).slice(0,4),10);
+      if(!isNaN(hy) && y < hy) return false;
+    }
+    // 퇴사자: 근무한 해(입사~퇴사 연도)에만 표시. 퇴사 연도 이후엔 제외
+    if(isRetired){
+      var rd = u.retireDate || u.lastWorkDate || '';
+      if(rd){
+        var ry = parseInt(String(rd).slice(0,4),10);
+        if(!isNaN(ry) && y > ry) return false;
+      }
+    }
+    return true;
   });
 
   // CSV 다운로드
@@ -45640,8 +45653,11 @@ function LeaveManagement(){
                     var pstage = calcLeavePromoStage(u.hireDate, selYear);
                     var prec = promoRecOf(u.sid);
                     var hasRemain = re > 0;   // 잔여 있을 때만 촉진 대상
+                    var isRetiredU = (u.status==='retired' || u.status==='resigned');  // 퇴사자는 촉진 불필요
+                    if(isRetiredU) hasRemain = false;
                     // 통보 셀 렌더: 완료(날짜+✎) / 시기도래(＋기록) / 아직(—)
                     function noticeCell(round){
+                      if(isRetiredU) return h('span',{style:{fontSize:'10px',color:'#cbd5e1'}, title:'퇴사자 — 사용촉진 불필요'},'—');
                       var dateVal = prec ? (round===1 ? prec.n1Date : prec.n2Date) : null;
                       var byVal   = prec ? (round===1 ? prec.n1By   : prec.n2By)   : null;
                       var sentAt  = prec ? (round===1 ? prec.n1SentAt : prec.n2SentAt) : null;
@@ -45754,6 +45770,8 @@ function LeaveManagement(){
 
         // ── 사용촉진 관리 (사용촉진 탭 통합) ──
         selUser && (function(){
+          // 퇴사자는 사용촉진 불필요 — 카드 자체를 표시하지 않음
+          if(selUser.status==='retired' || selUser.status==='resigned') return null;
           var pst = calcLeavePromoStage(selUser.hireDate, selYear);
           var prec = promoRecOf(selUser.sid);
           var remainNum = Math.round(remain*10)/10;
