@@ -757,8 +757,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-02 컨설팅관리 컬럼 정렬 수정 (정렬 시 내담당 우선 해제·유형명 순)';
-var BUILD_SEQ = 52;
+var ERP_BUILD = '2026-07-02 사무관리 전체 부담당 필터 추가 (계약·업체·사건·컨설팅·기금·기타)';
+var BUILD_SEQ = 53;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -8581,6 +8581,7 @@ function ContractManagement(){
   var kf = usePersistedState('contract_kind_filter', 'all'); var kindFilter = kf[0]; var setKindFilter = kf[1];
   var sf = usePersistedState('contract_subtype_filter', 'all'); var selSubType = sf[0]; var setSelSubType = sf[1];
   var mf = usePersistedState('contract_mgr_filter', 'all'); var mgrFilter = mf[0]; var setMgrFilter = mf[1];  // 'all' | 'mine' | sid
+  var smf = usePersistedState('contract_submgr_filter', 'all'); var subMgrFilter = smf[0]; var setSubMgrFilter = smf[1];
   var moS = useState(false); var monthOnly = moS[0]; var setMonthOnly = moS[1];
   var hlpS = useState(false); var showHelp = hlpS[0]; var setShowHelp = hlpS[1];
   var fcS = useState('all'); var focusCol = fcS[0]; var setFocusCol = fcS[1];  // 'all' | 'consult' | 'review' | 'signed' — 단독 보기는 세션 한정, 열 때마다 전체(3컬럼)로 시작
@@ -8870,6 +8871,7 @@ function ContractManagement(){
       var isSub  = (c.managerSubs||[]).indexOf(targetSid) >= 0;
       if(!isMain && !isSub) return false;
     }
+    if(subMgrFilter !== 'all' && (c.managerSubs||[]).indexOf(subMgrFilter) < 0) return false;
     if(selSubType !== 'all'){
       var _sub = kindsArr.map(function(kv){ return kindSubLabel(c, kv); }).join(' ');
       if(_sub.indexOf(selSubType) < 0) return false;
@@ -9147,6 +9149,10 @@ function ContractManagement(){
         style:{ padding:'6px 10px', border:'1px solid '+(mgrFilter!=='all'?'#1e40af':'#cbd5e1'), borderRadius:'5px', fontSize:'11.5px', fontFamily:'inherit', color:mgrFilter!=='all'?'#1e40af':'#475569', fontWeight:mgrFilter!=='all'?700:400, cursor:'pointer' } },
         h('option', { value:'all' }, '👤 전체 담당자'),
         h('option', { value:'mine' }, '⭐ 내 업무'),
+        users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); })),
+      h('select', { value:subMgrFilter, onChange:function(e){ setSubMgrFilter(e.target.value); },
+        style:{ padding:'6px 10px', border:'1px solid '+(subMgrFilter!=='all'?'#7c3aed':'#cbd5e1'), borderRadius:'5px', fontSize:'11.5px', fontFamily:'inherit', color:subMgrFilter!=='all'?'#7c3aed':'#475569', fontWeight:subMgrFilter!=='all'?700:400, cursor:'pointer' } },
+        h('option', { value:'all' }, '👥 부담당'),
         users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); })),
       // ── 월 마감 잠금 + 번호재정렬 (모바일 숨김)
       window.innerWidth > 768 && (function(){
@@ -10620,6 +10626,7 @@ function CompanyManagement(){
   var st = useState('active'); var statusTab = st[0]; var setStatusTab = st[1];   // 'active' | 'suboffice'
   var tf = useState('all'); var typeFilter = tf[0]; var setTypeFilter = tf[1];
   var mf = useState('all'); var mgrFilter = mf[0]; var setMgrFilter = mf[1];
+  var smf = useState('all'); var subMgrFilter = smf[0]; var setSubMgrFilter = smf[1];
   var q = useState(''); var query = q[0]; var setQuery = q[1];
   var btf = useState('all'); var bizTypeFilter = btf[0]; var setBizTypeFilter = btf[1];
   var bcf = useState('all'); var bizCatFilter = bcf[0]; var setBizCatFilter = bcf[1];
@@ -11023,13 +11030,14 @@ function CompanyManagement(){
     if(bizTypeFilter !== 'all' && (co.bizType||'').trim() !== bizTypeFilter) return false;
     if(bizCatFilter !== 'all' && (co.bizCategory||'').trim() !== bizCatFilter) return false;
     // monthOnly는 담당자 필터/검색어 없을 때만 적용
-    if(monthOnly && mgrFilter === 'all' && !query){
+    if(monthOnly && mgrFilter === 'all' && subMgrFilter === 'all' && !query){
       var d = (co.contractStartDate||co.firstContractDate||co.createdAt||'').slice(0,7);
       if(d !== thisYM) return false;
     }
     if(mgrFilter !== 'all'){
       if(co.managerMain !== mgrFilter && (co.managerSubs||[]).indexOf(mgrFilter) < 0) return false;
     }
+    if(subMgrFilter !== 'all' && (co.managerSubs||[]).indexOf(subMgrFilter) < 0) return false;
     if(query){
       var qq = query.toLowerCase().trim();
       if(!qq) return true;
@@ -11274,7 +11282,13 @@ function CompanyManagement(){
                 color: mgrFilter!=='all'?'#1e40af':'#64748b', fontWeight: mgrFilter!=='all'?700:400 } },
               h('option', { value:'all' }, '👤 담당자'),
               users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); })),
-            mgrFilter !== 'all' && h('span', { style:{ fontSize:'11px', color:'#1e40af', fontWeight:700, whiteSpace:'nowrap' } }, mgrCount(mgrFilter) + '개')
+            mgrFilter !== 'all' && h('span', { style:{ fontSize:'11px', color:'#1e40af', fontWeight:700, whiteSpace:'nowrap' } }, mgrCount(mgrFilter) + '개'),
+            h('select', { value:subMgrFilter, onChange:function(e){ setSubMgrFilter(e.target.value); },
+              style:{ padding:'5px 8px', border:'1px solid '+(subMgrFilter!=='all'?'#7c3aed':'#cbd5e1'), borderRadius:'20px', fontSize:'11px',
+                fontFamily:'inherit', background:'#f8fafc', flexShrink:0, cursor:'pointer',
+                color: subMgrFilter!=='all'?'#7c3aed':'#64748b', fontWeight: subMgrFilter!=='all'?700:400 } },
+              h('option', { value:'all' }, '👥 부담당'),
+              users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); }))
           )
         )
       )
@@ -11316,7 +11330,12 @@ function CompanyManagement(){
             color: mgrFilter!=='all'?'#1e40af':'#475569', fontWeight: mgrFilter!=='all'?700:400 } },
           h('option', { value:'all' }, '담당자 전체'),
           users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); })),
-        mgrFilter !== 'all' && h('span', { style:{ fontSize:'11.5px', color:'#1e40af', fontWeight:700, whiteSpace:'nowrap' } }, mgrCount(mgrFilter) + '개')
+        mgrFilter !== 'all' && h('span', { style:{ fontSize:'11.5px', color:'#1e40af', fontWeight:700, whiteSpace:'nowrap' } }, mgrCount(mgrFilter) + '개'),
+        h('select', { value:subMgrFilter, onChange:function(e){ setSubMgrFilter(e.target.value); },
+          style:{ padding:'5px 10px', border:'1px solid '+(subMgrFilter!=='all'?'#7c3aed':'#cbd5e1'), borderRadius:'4px', fontSize:'11.5px', fontFamily:'inherit',
+            color: subMgrFilter!=='all'?'#7c3aed':'#475569', fontWeight: subMgrFilter!=='all'?700:400 } },
+          h('option', { value:'all' }, '👥 부담당'),
+          users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); }))
       ),
       h('div', { style:{ position:'relative', display:'inline-flex', alignItems:'center' } },
         h('input', { className:'dt-search', placeholder:'🔍 업체명·번호·대표·주소·메모',
@@ -12958,6 +12977,7 @@ function CaseManagement(props){
   var sf = usePersistedState('case_status_filter', 'open'); var statusFilter = sf[0]; var setStatusFilter = sf[1];
   var ty = usePersistedState('case_type_filter', 'all'); var typeFilter = ty[0]; var setTypeFilter = ty[1];
   var mg = usePersistedState('case_mgr_filter', 'all'); var mgrFilter = mg[0]; var setMgrFilter = mg[1];
+  var smg = usePersistedState('case_submgr_filter', 'all'); var subMgrFilter = smg[0]; var setSubMgrFilter = smg[1];
   var moS = useState(false); var monthOnly = moS[0]; var setMonthOnly = moS[1];
   var ymS = useState(todayYM()); var selYM = ymS[0]; var setSelYM = ymS[1];
   var thisYM = selYM;
@@ -13512,6 +13532,7 @@ function CaseManagement(props){
       if(d !== thisYM) return false;
     }
     if(mgrFilter !== 'all' && c.managerMain !== mgrFilter && (c.managerSubs||[]).indexOf(mgrFilter) < 0) return false;
+    if(subMgrFilter !== 'all' && (c.managerSubs||[]).indexOf(subMgrFilter) < 0) return false;
     if(query){
       var qq = query.toLowerCase();
       var qDigits = query.replace(/[^0-9]/g,'');
@@ -13626,6 +13647,14 @@ function CaseManagement(props){
               color: mgrFilter!=='all'?'#1e40af':'#64748b', fontWeight: mgrFilter!=='all'?700:400, cursor:'pointer' } },
             h('option', { value:'all' }, '👤 담당자'),
             users.filter(function(u){return isAdminByUser(u) || isLawyerByUser(u);}).map(function(u){
+              return h('option', { key:u.sid, value:u.sid }, u.name); })),
+          h('select', { value:subMgrFilter, onChange:function(e){ setSubMgrFilter(e.target.value); },
+            style:{ padding:'5px 8px', border:'1px solid '+(subMgrFilter!=='all'?'#7c3aed':'#cbd5e1'),
+              borderRadius:'20px', fontSize:'11px', fontFamily:'inherit', flexShrink:0,
+              background: subMgrFilter!=='all'?'#f5f3ff':'#f8fafc',
+              color: subMgrFilter!=='all'?'#7c3aed':'#64748b', fontWeight: subMgrFilter!=='all'?700:400, cursor:'pointer' } },
+            h('option', { value:'all' }, '👥 부담당'),
+            users.filter(function(u){return isAdminByUser(u) || isLawyerByUser(u);}).map(function(u){
               return h('option', { key:u.sid, value:u.sid }, u.name); }))
         )
       )
@@ -13650,6 +13679,12 @@ function CaseManagement(props){
         h('select', { value:mgrFilter, onChange:function(e){ setMgrFilter(e.target.value); },
           style:{ padding:'6px 10px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12px', fontFamily:'inherit' } },
           h('option', { value:'all' }, '전체 담당'),
+          users.filter(function(u){return isAdminByUser(u) || isLawyerByUser(u);}).map(function(u){
+            return h('option', { key:u.sid, value:u.sid }, u.name);
+          })),
+        h('select', { value:subMgrFilter, onChange:function(e){ setSubMgrFilter(e.target.value); },
+          style:{ padding:'6px 10px', border:'1px solid '+(subMgrFilter!=='all'?'#7c3aed':'#cbd5e1'), borderRadius:'4px', fontSize:'12px', fontFamily:'inherit', color:subMgrFilter!=='all'?'#7c3aed':'#475569', fontWeight:subMgrFilter!=='all'?700:400 } },
+          h('option', { value:'all' }, '👥 부담당'),
           users.filter(function(u){return isAdminByUser(u) || isLawyerByUser(u);}).map(function(u){
             return h('option', { key:u.sid, value:u.sid }, u.name);
           })),
@@ -38103,6 +38138,7 @@ function ProjectManagementShared(props){
   var sf = usePersistedState('proj_'+props.sourceKind+'_status', 'open'); var statusFilter = sf[0]; var setStatusFilter = sf[1];
   var ty = usePersistedState('proj_'+props.sourceKind+'_type', 'all'); var typeFilter = ty[0]; var setTypeFilter = ty[1];
   var mg = usePersistedState('proj_'+props.sourceKind+'_mgr', 'all'); var mgrFilter = mg[0]; var setMgrFilter = mg[1];
+  var smg = usePersistedState('proj_'+props.sourceKind+'_submgr', 'all'); var subMgrFilter = smg[0]; var setSubMgrFilter = smg[1];
   var ymS = useState(todayYM()); var selYM = ymS[0]; var setSelYM = ymS[1];
   var thisYM = selYM;
   var em = useState(null); var editModal = em[0]; var setEditModal = em[1];
@@ -38402,7 +38438,7 @@ function ProjectManagementShared(props){
     if(typeFilter !== 'all' && it.typeCode !== typeFilter) return false;
     // monthOnly는 담당자 필터/검색어 없을 때만 적용
     // 입금된 항목은 입금일 기준(가장 최근), 미입금은 startDate 기준
-    if(monthOnly && mgrFilter === 'all' && !query){
+    if(monthOnly && mgrFilter === 'all' && subMgrFilter === 'all' && !query){
       var d;
       if(it.balancePaidDate)       d = it.balancePaidDate.slice(0,7);
       else if(it.contractPaidDate) d = it.contractPaidDate.slice(0,7);
@@ -38412,6 +38448,7 @@ function ProjectManagementShared(props){
       if(d !== thisYM) return false;
     }
     if(mgrFilter !== 'all' && it.managerMain !== mgrFilter && (it.managerSubs||[]).indexOf(mgrFilter) < 0) return false;
+    if(subMgrFilter !== 'all' && (it.managerSubs||[]).indexOf(subMgrFilter) < 0) return false;
     if(query){
       var q = query.toLowerCase();
       var qDigits = query.replace(/[^0-9]/g,'');
@@ -38564,6 +38601,13 @@ function ProjectManagementShared(props){
               background: mgrFilter!=='all'?'#eff6ff':'#f8fafc',
               color: mgrFilter!=='all'?'#1e40af':'#64748b', fontWeight: mgrFilter!=='all'?700:400 } },
             h('option',{value:'all'},'👤 담당자'),
+            users.map(function(u){ return h('option',{key:u.sid,value:u.sid},u.name); })),
+          h('select', { value:subMgrFilter, onChange:function(e){ setSubMgrFilter(e.target.value); },
+            style:{ padding:'5px 8px', border:'1px solid '+(subMgrFilter!=='all'?'#7c3aed':'#cbd5e1'),
+              borderRadius:'20px', fontSize:'11px', fontFamily:'inherit', flexShrink:0,
+              background: subMgrFilter!=='all'?'#f5f3ff':'#f8fafc',
+              color: subMgrFilter!=='all'?'#7c3aed':'#64748b', fontWeight: subMgrFilter!=='all'?700:400 } },
+            h('option',{value:'all'},'👥 부담당'),
             users.map(function(u){ return h('option',{key:u.sid,value:u.sid},u.name); }))
         )
       )
@@ -38594,6 +38638,10 @@ function ProjectManagementShared(props){
       h('select', { value:mgrFilter, onChange:function(e){ setMgrFilter(e.target.value); },
         style:{ padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12px' } },
         h('option', { value:'all' }, '전체 담당'),
+        users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); })),
+      h('select', { value:subMgrFilter, onChange:function(e){ setSubMgrFilter(e.target.value); },
+        style:{ padding:'7px 10px', border:'1px solid '+(subMgrFilter!=='all'?'#7c3aed':'#cbd5e1'), borderRadius:'4px', fontSize:'12px' } },
+        h('option', { value:'all' }, '👥 부담당'),
         users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); })),
       h('div', { style:{ flex:1 } }),
       h('button', { onClick:function(){setGapModal(true);},
