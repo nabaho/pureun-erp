@@ -757,8 +757,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-03 건별 쓰기 Phase 4 — 급여·근태·초과근무·보상휴가·퇴직정산·비정규직 1건 단위 저장 + 검증기(erpVerifyPhase4)';
-var BUILD_SEQ = 66;
+var ERP_BUILD = '2026-07-03 Phase 4 + 환경설정 🧪 저장방식 검증 버튼 (폰에서도 원탭 검증)';
+var BUILD_SEQ = 67;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -24752,6 +24752,31 @@ function EnvSettings(){
       setTd(Object.assign({}, td, {overId:tid}));
     }
   }
+  // ── 저장방식(건별 쓰기) 통합 검증 — 폰에서도 버튼 한 번으로 Phase 1~4 실행 ──
+  var vfS = useState(null); var verifyRes = vfS[0]; var setVerifyRes = vfS[1];
+  var vrS = useState(false); var verifyRunning = vrS[0]; var setVerifyRunning = vrS[1];
+  async function runAllVerify(){
+    if(verifyRunning) return;
+    if(!window.erpVerifyPhase1){ showToast('검증기 미탑재 버전입니다 — 새로고침 후 다시'); return; }
+    setVerifyRunning(true);
+    var logs = [];
+    var origLog = console.log;
+    console.log = function(){ try{ logs.push(Array.prototype.slice.call(arguments).map(String).join(' ')); }catch(_){} return origLog.apply(console, arguments); };
+    try {
+      var r = [];
+      r.push(await window.erpVerifyPhase1());
+      r.push(await window.erpVerifyPhase2());
+      r.push(await window.erpVerifyPhase3());
+      r.push(await window.erpVerifyPhase4());
+      setVerifyRes({ pass: r.every(function(x){return x;}), logs: logs });
+    } catch(e){
+      logs.push('❌ 검증 중 오류: ' + (e && e.message));
+      setVerifyRes({ pass:false, logs:logs });
+    } finally {
+      console.log = origLog;
+      setVerifyRunning(false);
+    }
+  }
   function onTabDrop(tid, e){
     e.preventDefault();
     if(!td.srcId || td.srcId === tid){ setTd({srcId:null, overId:null}); return; }
@@ -24768,6 +24793,25 @@ function EnvSettings(){
   function onTabDragEnd(){ setTd({srcId:null, overId:null}); }
 
   return h('div', { className:'page' },
+    CURRENT_USER && CURRENT_USER.isAdmin && h('div', { style:{ display:'flex', justifyContent:'flex-end', marginBottom:'8px' } },
+      h('button', {
+        onClick: runAllVerify, disabled: verifyRunning,
+        style:{ padding:'7px 14px', background:verifyRunning?'#94a3b8':'#2E3A8C', color:'#fff', border:'none', borderRadius:'7px', fontSize:'12px', fontWeight:700, cursor:'pointer' }
+      }, verifyRunning ? '⏳ 검증 중… (약 20초)' : '🧪 저장방식 검증 (Phase 1~4)')
+    ),
+    verifyRes && h('div', { style:{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.5)', zIndex:9500, display:'flex', alignItems:'center', justifyContent:'center', padding:'16px' },
+      onClick:function(e){ if(e.target===e.currentTarget) setVerifyRes(null); } },
+      h('div', { style:{ background:'#fff', borderRadius:'12px', maxWidth:'560px', width:'100%', maxHeight:'80vh', display:'flex', flexDirection:'column', overflow:'hidden' } },
+        h('div', { style:{ padding:'14px 16px', fontWeight:800, fontSize:'14px', background:verifyRes.pass?'#dcfce7':'#fee2e2', color:verifyRes.pass?'#166534':'#991b1b' } },
+          verifyRes.pass ? '🎉 전체 통과 — 모든 장부가 1건 단위로만 서버에 저장됩니다' : '⚠ 실패 항목 있음 — 아래 ❌ 줄을 캡처해서 공유해주세요'),
+        h('div', { style:{ padding:'10px 14px', overflowY:'auto', fontSize:'11px', fontFamily:'monospace', lineHeight:'1.55', whiteSpace:'pre-wrap' } },
+          verifyRes.logs.map(function(l, i){
+            return h('div', { key:i, style:{ color: l.indexOf('❌')===0 ? '#dc2626' : (l.indexOf('🎉')===0 ? '#16a34a' : '#334155'), fontWeight: (l.indexOf('❌')===0||l.indexOf('🎉')===0)?700:400 } }, l);
+          })),
+        h('div', { style:{ padding:'10px 14px', borderTop:'1px solid #e2e8f0', textAlign:'right' } },
+          h('button', { onClick:function(){ setVerifyRes(null); }, style:{ padding:'7px 16px', background:'#f1f5f9', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'12px', fontWeight:600, cursor:'pointer' } }, '닫기'))
+      )
+    ),
     h('div', { className:'env-tabs-wrap' },
       h('div', { className:'env-tabs', style:{ overflowX:'auto', flexWrap:'nowrap' } },
         orderedTabs.map(function(et){
