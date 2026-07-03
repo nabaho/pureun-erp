@@ -757,8 +757,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-03 건별 쓰기 Phase 3 — 업체·사건·컨설팅·기금·기타 1건 단위 저장 + 검증기(erpVerifyPhase3)';
-var BUILD_SEQ = 65;
+var ERP_BUILD = '2026-07-03 건별 쓰기 Phase 4 — 급여·근태·초과근무·보상휴가·퇴직정산·비정규직 1건 단위 저장 + 검증기(erpVerifyPhase4)';
+var BUILD_SEQ = 66;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -3486,6 +3486,64 @@ async function erpVerifyPhase3(){
   }
 }
 window.erpVerifyPhase3 = erpVerifyPhase3;
+
+// ── Phase 4 자동 검증기 (F12 콘솔: erpVerifyPhase4()) — 급여·근태 건별 전송 실측 ──
+async function erpVerifyPhase4(){
+  if(!fbDb){ console.log('❌ Firebase 미연결 — 로그인 상태에서 실행하세요'); return false; }
+  var results = [];
+  var ck = function(ok, msg){ results.push(ok); console.log((ok?'✅ ':'❌ ') + msg); return ok; };
+  var origRefFn = fbDb.ref.bind(fbDb);
+  var captured = [];
+  fbDb.ref = function(p){
+    var r = origRefFn(p);
+    if(p === undefined || p === null || p === ''){
+      var origUpdate = r.update.bind(r);
+      r.update = function(u){ captured.push(Object.keys(u)); return origUpdate(u); };
+    }
+    return r;
+  };
+  async function runKey(k, seed){
+    if(_fbObjForm[k] !== true){ ck(false, k+': 서버 객체형 아님'); return; }
+    var tid = seed.id;
+    var before = dbGet(k, []).length;
+    try {
+      ck(dbUpsert(k, seed), k+': 테스트 건 생성');
+      captured = [];
+      ck(dbPatch(k, tid, { note:'검증patch' }), k+': patch 실행');
+      var paths = captured[0] || [];
+      ck(paths.length > 0 && paths.every(function(p){ return p === 'data/'+k+'/u' || p.indexOf('data/'+k+'/v/'+tid) === 0; }), k+': 그 1건 경로만 전송 ('+paths.length+'개) — 다른 건 불가침');
+      ck(!paths.some(function(p){ return p === 'data/'+k+'/v'; }), k+': 통째 교체 없음');
+      await new Promise(function(res){ setTimeout(res, 800); });
+      var sv = (await origRefFn('data/'+k+'/v/'+tid).once('value')).val();
+      ck(!!sv && sv.note === '검증patch', k+': 서버 반영 확인');
+      ck(dbRemove(k, tid), k+': 테스트 건 삭제');
+      await new Promise(function(res){ setTimeout(res, 800); });
+      var sv2 = (await origRefFn('data/'+k+'/v/'+tid).once('value')).val();
+      ck(sv2 === null && dbGet(k, []).length === before, k+': 서버 삭제·건수 원상복구 ('+before+'건)');
+    } finally {
+      try { if(dbGet(k, []).some(function(x){return x && x.id===tid;})) dbRemove(k, tid); } catch(_){}
+    }
+  }
+  try {
+    var ts = Date.now().toString(36);
+    await runKey('payroll_monthly', { id:'pay-vtest-'+ts, empSid:'VTEST', empName:'(자동검증)', ym:'1900-01', status:'draft' });
+    await runKey('attendance_records', { id:'att-vtest-'+ts, sid:'VTEST', date:'1900-01-01', type:'leave', hours:8 });
+    // 부속 키는 서버 형식만 안내 (객체형 아니면 안전한 전체저장 폴백으로 동작)
+    ['overtime_records','comp_leave_records','retirement_settlements','payroll_irregular'].forEach(function(k){
+      console.log('ℹ️ ' + k + ': ' + (_fbObjForm[k] === true ? '객체형 — 건별 전송 활성' : '아직 배열형 — 다음 저장부터 자동 전환(그 전까진 보호장치 경유 전체저장)'));
+    });
+    var pass = results.every(function(x){ return x; });
+    console.log(pass ? '🎉 Phase 4 자동검증 전체 통과 — 급여·근태 저장은 1건 단위로만 서버에 나갑니다'
+                     : '⚠ 실패 항목 있음 — 위 ❌ 로그를 캡처해서 공유해주세요');
+    return pass;
+  } catch(e){
+    console.error('❌ 검증 중 오류:', e && e.message);
+    return false;
+  } finally {
+    fbDb.ref = origRefFn;
+  }
+}
+window.erpVerifyPhase4 = erpVerifyPhase4;
 
 // 콘솔 접근용 노출 (앱 전체가 IIFE 안이라 window 부착 필요 — erpAllowBulk와 동일 방식)
 window.erpTestRecordWrite = erpTestRecordWrite;
@@ -31074,12 +31132,9 @@ function moveCalendarEvent(eventType, eventId, newDate){
   // 근태 (연차·반차·시간연차·재택·출장·병가 등)
   if(eventType === 'leave' || eventType === 'trip' || eventType === 'telework' || eventType === 'eum-work' || eventType === 'attendance'){
     var att = dbGet('attendance_records', []);
-    var ch = false;
-    att = att.map(function(r){
-      if(r.id === eventId){ ch = true; return Object.assign({}, r, {date:newDate}); }
-      return r;
-    });
-    if(ch){ dbSet('attendance_records', att); return true; }
+    if(att.some(function(r){ return r.id === eventId; })){
+      dbPatch('attendance_records', eventId, { date:newDate }); return true;
+    }
   }
   // 사건 마감 / 컨설팅 마감 - 신중하게 드래그 가능
   if(eventType === 'case'){
@@ -31464,8 +31519,7 @@ function PersonalCalendar(props){
                 dbSet('my_schedules', arr.filter(function(s){return s.id!==ctxMenu.ev.evId;}));
                 showToast('🗑️ 삭제됨'); setRefreshKey(refreshKey+1);
               } else if(ctxMenu.ev.type==='leave'){
-                var arr2 = dbGet('attendance_records', [])||[];
-                dbSet('attendance_records', arr2.filter(function(r){return r.id!==ctxMenu.ev.evId;}));
+                dbRemove('attendance_records', ctxMenu.ev.evId);
                 showToast('🗑️ 삭제됨'); setRefreshKey(refreshKey+1);
               }
               setCtxMenu(null);
@@ -31861,17 +31915,15 @@ function MyDeskV2(props){
         };
         var ti = attTypeMap[atype];
         if(!ti){ showToast('알 수 없는 유형'); return; }
-        var att = dbGet('attendance_records', []);
         if(m.id){
-          att = att.map(function(r){ return r.id===m.id ? Object.assign({},r,{date:m.date,type:atype,hours:ti.hours,note:m.note||''}) : r; });
+          dbPatch('attendance_records', m.id, { date:m.date, type:atype, hours:ti.hours, note:m.note||'' });
         } else {
-          att.unshift({
+          dbUpsert('attendance_records', {
             id:'att-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
             sid:sid, date:m.date, type:atype, hours:ti.hours,
             note: m.note || ''
           });
         }
-        dbSet('attendance_records', att);
         showToast('✅ '+ti.label+(m.id?' 수정':' 등록'));
       } else {
         // 일반 일정: my_schedules
@@ -31917,24 +31969,22 @@ function MyDeskV2(props){
         'eum-work':      { hours:8, label:'이음센터' }
       };
       var ti = typeMap[m.attType] || typeMap.leave;
-      var att = dbGet('attendance_records', []);
       if(m.id){
-        att = att.map(function(r){ return r.id===m.id ? Object.assign({},r,{date:m.date,type:m.attType,hours:ti.hours,note:m.note||''}) : r; });
+        dbPatch('attendance_records', m.id, { date:m.date, type:m.attType, hours:ti.hours, note:m.note||'' });
       } else {
-        att.unshift({
+        dbUpsert('attendance_records', {
           id:'att-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
           sid:sid, date:m.date, type:m.attType,
           hours: ti.hours,
           note: m.note||''
         });
       }
-      dbSet('attendance_records', att);
       showToast((m.id?'✅ ':'✅ ')+ti.label+(m.id?' 수정':' 등록'));
     } else if(m.kind === 'eum'){
       if(!m.date){ showToast('날짜 선택'); return; }
       var att2 = dbGet('attendance_records', []);
       if(m.id){
-        att2 = att2.map(function(r){ return r.id===m.id ? Object.assign({},r,{date:m.date,note:m.note||'',externalId:m.externalId||null}) : r; });
+        dbPatch('attendance_records', m.id, { date:m.date, note:m.note||'', externalId:m.externalId||null });
         showToast('✅ 이음센터 근무 수정');
       } else {
         // 본인 근무 시는 같은 날짜 중복 방지, 제3자 근무 시는 중복 허용 (여러 명 가능)
@@ -31942,14 +31992,13 @@ function MyDeskV2(props){
           var dup = att2.find(function(r){ return r.sid===sid && r.date===m.date && r.type==='eum-work' && !r.externalId; });
           if(dup){ showToast('해당 날짜 이미 등록됨'); return; }
         }
-        att2.unshift({
+        dbUpsert('attendance_records', {
           id:'att-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
           sid:sid, date:m.date, type:'eum-work', hours:8, note:m.note||'',
           externalId: m.externalId || null
         });
         showToast('🏛️ 이음센터 근무 등록');
       }
-      dbSet('attendance_records', att2);
     }
     setQuickModal(null);
     setRfk(rfk+1);
@@ -31967,10 +32016,10 @@ function MyDeskV2(props){
       dbSet('my_schedules', (dbGet('my_schedules',[])||[]).filter(function(s){return s.id!==m.id;}));
       showToast('🗑️ 일정 삭제');
     } else if(m.kind === 'attendance'){
-      dbSet('attendance_records', (dbGet('attendance_records',[])||[]).filter(function(r){return r.id!==m.id;}));
+      dbRemove('attendance_records', m.id);
       showToast('🗑️ 근태 삭제');
     } else if(m.kind === 'eum'){
-      dbSet('attendance_records', (dbGet('attendance_records',[])||[]).filter(function(r){return r.id!==m.id;}));
+      dbRemove('attendance_records', m.id);
       showToast('🗑️ 이음센터 근무 삭제');
     }
     setQuickModal(null);
@@ -35560,9 +35609,8 @@ function CorpDashboard(props){
                   var dup = att.find(function(r){ return r.sid===mySid && r.date===today && r.type===it.type; });
                   if(dup){ showToast('이미 오늘 '+it.label+' 등록됨'); return; }
                   var hours = {leave:8,'halfday-am':4,'halfday-pm':4,sick:8,telework:8,trip:8}[it.type]||8;
-                  att.unshift({ id:'att-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+                  dbUpsert('attendance_records', { id:'att-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
                     sid:mySid, date:today, type:it.type, hours:hours, note:'' });
-                  dbSet('attendance_records', att);
                   showToast('✅ '+it.label+' 등록됨');
                 },
                 style:{ padding:'6px 12px', background:it.bg, color:it.color, border:'1px solid '+it.color+'44',
@@ -36029,12 +36077,13 @@ function CorpDashboard(props){
                     } else {
                       var att = (dbGet('attendance_records',[])||[]).find(function(r){return r.id === evDetail.ev.evId;});
                       if(att){ targetSid = att.sid; gcalId = att.gcalEventId||null; }
-                      // ★ 동일 날짜·유형·담당자 중복 기록 전체 삭제
-                      dbSet('attendance_records', (dbGet('attendance_records',[])||[]).filter(function(r){
-                        if(r.id === evDetail.ev.evId) return false;
-                        if(att && r.sid===att.sid && r.date===att.date && r.type===att.type) return false;
-                        return true;
-                      }));
+                      // ★ 동일 날짜·유형·담당자 중복 기록 전체 삭제 (해당 건들만)
+                      var _rmAtt = (dbGet('attendance_records',[])||[]).filter(function(r){
+                        if(r.id === evDetail.ev.evId) return true;
+                        if(att && r.sid===att.sid && r.date===att.date && r.type===att.type) return true;
+                        return false;
+                      }).map(function(r){ return r.id; });
+                      dbRemoveMany('attendance_records', _rmAtt);
                       // ★ fromAttendance 연동 스케줄도 삭제
                       if(att){
                         var schArr = dbGet('my_schedules',[])||[];
@@ -36133,10 +36182,8 @@ function CorpDashboard(props){
               after:{date:info.date, title:info.title}
             });
           } else {
-            var arr2 = dbGet('attendance_records', []);
-            var orig2 = arr2.find(function(r){return r.id===info.evId;}) || {};
-            arr2 = arr2.map(function(r){ return r.id===info.evId ? Object.assign({},r,{date:info.date,note:info.note||'',hours:info.hours||r.hours}) : r; });
-            dbSet('attendance_records', arr2);
+            var orig2 = dbGet('attendance_records', []).find(function(r){return r.id===info.evId;}) || {};
+            dbPatch('attendance_records', info.evId, { date:info.date, note:info.note||'', hours:(info.hours||orig2.hours) });
             logActivity('수정', info.type, info.evId, orig2.sid||'', info.attType||'근태', {
               before:{date:orig2.date||''},
               after:{date:info.date}
@@ -36574,10 +36621,9 @@ function CorpDashboard(props){
                   if(found) gcalId2 = found.gcalEventId||null;
                   dbSet('my_schedules', arr.filter(function(s){return s.id!==calCtxMenu.ev.evId;}));
                 } else if(t==='leave' || t==='trip' || t==='telework' || t==='eum-work'){
-                  var arr2 = dbGet('attendance_records',[])||[];
-                  var found2 = arr2.find(function(r){return r.id===calCtxMenu.ev.evId;});
+                  var found2 = (dbGet('attendance_records',[])||[]).find(function(r){return r.id===calCtxMenu.ev.evId;});
                   if(found2) gcalId2 = found2.gcalEventId||null;
-                  dbSet('attendance_records', arr2.filter(function(r){return r.id!==calCtxMenu.ev.evId;}));
+                  dbRemove('attendance_records', calCtxMenu.ev.evId);
                   // ★ fromAttendance 연동 스케줄도 함께 삭제
                   var schArr = dbGet('my_schedules',[])||[];
                   dbSet('my_schedules', schArr.filter(function(s){
@@ -36673,10 +36719,7 @@ function CorpDashboard(props){
                 var dup = att.find(function(r){ return r.sid===lSid && r.date===leaveInputModal.date && r.type===leaveInputModal.type; });
                 if(dup){
                   // ★ 중복 시 차단 대신 업데이트
-                  att = att.map(function(r){
-                    return r.id===dup.id ? Object.assign({},r,{ note:(leaveInputModal.content||leaveInputModal.note||'') }) : r;
-                  });
-                  dbSet('attendance_records', att);
+                  dbPatch('attendance_records', dup.id, { note:(leaveInputModal.content||leaveInputModal.note||'') });
                   showToast('✅ 기존 기록 업데이트됨');
                   setLeaveInputModal(null); setCorpRfk(corpRfk+1); setCalRfk(calRfk+1);
                   return;
@@ -36684,8 +36727,7 @@ function CorpDashboard(props){
                 var newRec = { id:'att-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
                   sid:lSid, date:leaveInputModal.date, type:leaveInputModal.type,
                   note:(leaveInputModal.content||leaveInputModal.note||'') };
-                att.unshift(newRec);
-                dbSet('attendance_records', att);
+                dbUpsert('attendance_records', newRec);
                 // ★ my_schedules 중복 저장 제거 (attendance_records가 캘린더 소스)
                 // 구글 캘린더 동기화
                 if(gcalAuthed && GCAL_CAL_ID){
@@ -36695,9 +36737,7 @@ function CorpDashboard(props){
                   gcalApiCall('POST','/calendars/'+encodeURIComponent(GCAL_CAL_ID)+'/events', evL, function(r){
                     if(r&&r.id){
                       // gcalEventId를 레코드에 저장
-                      var attList = dbGet('attendance_records',[])||[];
-                      attList = attList.map(function(x){ return x.id===newRec.id ? Object.assign({},x,{gcalEventId:r.id}) : x; });
-                      dbSet('attendance_records', attList);
+                      dbPatch('attendance_records', newRec.id, { gcalEventId:r.id });
                       setGcalRfk(gcalRfk+1); showToast('✅ '+lbl+' 등록 + 🔗 구글 캘린더 연동');
                     } else showToast('✅ '+lbl+' 등록 (구글 연동 실패 — 토큰 만료 시 🔑 G 버튼 재로그인)');
                   });
@@ -36847,18 +36887,15 @@ function CorpDashboard(props){
                   });
                   if(dup){ showToast('해당 날짜 이미 등록됨'); return; }
                   var newEumId = 'att-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
-                  att.unshift({ id:newEumId,
+                  dbUpsert('attendance_records', { id:newEumId,
                     sid:targetSid, externalId:targetExtId, date:eumWorkModal.date, type:'eum-work', hours:8, note:eumWorkModal.note||'',
                     startTime:eumWorkModal.startTime||'', endTime:eumWorkModal.endTime||'' });
-                  dbSet('attendance_records', att);
                   // 구글 캘린더 동기화
                   if(gcalAuthed && GCAL_CAL_ID){
                     var evEum = buildGcalEvent(workerName+' 이음센터', eumWorkModal.date, '', '', eumWorkModal.note||'', '', '');
                     gcalApiCall('POST','/calendars/'+encodeURIComponent(GCAL_CAL_ID)+'/events', evEum, function(r){
                       if(r&&r.id){
-                        var attList2 = dbGet('attendance_records',[])||[];
-                        attList2 = attList2.map(function(x){ return x.id===newEumId ? Object.assign({},x,{gcalEventId:r.id}) : x; });
-                        dbSet('attendance_records', attList2);
+                        dbPatch('attendance_records', newEumId, { gcalEventId:r.id });
                         setGcalRfk(gcalRfk+1); showToast('🏛️ '+workerName+' 이음센터 등록 + 🔗 구글 연동');
                       } else showToast('🏛️ '+workerName+' 이음센터 등록 (구글 연동 실패)');
                     });
@@ -43630,18 +43667,11 @@ function AttendanceManagement(){
   var users = getActiveUsers();
   var rs = useState(dbGet('attendance_records', [])); var records = rs[0]; var setRecords = rs[1];
   var atzS = usePersistedState('attendance_zoom', 100); var attZoom = atzS[0]; var setAttZoom = atzS[1];
-  // 마운트 시점 id 집합 (의도적 삭제 vs 외부 추가 구분)
-  var iis = useState(function(){ var ids={}; (dbGet('attendance_records',[])||[]).forEach(function(r){if(r&&r.id)ids[r.id]=true;}); return ids; });
-  var initialIds = iis[0];
-  function persist(arr){
-    setRecords(arr);
-    // 머지: 마운트 후 다른 화면이 추가한 레코드는 보존 (마운트 시점에 있던 id의 삭제는 그대로)
-    var latest = dbGet('attendance_records', []) || [];
-    var arrIds = {};
-    arr.forEach(function(r){ if(r && r.id) arrIds[r.id] = true; });
-    var external = latest.filter(function(r){ return r && r.id && !arrIds[r.id] && !initialIds[r.id]; });
-    dbSet('attendance_records', arr.concat(external));
-  }
+  // ── Phase 4: 건별 저장 (과거회귀 방지) — 병합 로직 불필요 (그 건만 서버 반영, 외부 추가 자동 보존) ──
+  function refreshAtt(){ setRecords(dbGet('attendance_records', []).slice()); }
+  function attUpsert(rec){ if(!rec || !rec.id) return false; var ok = dbUpsert('attendance_records', rec); if(ok) refreshAtt(); else showToast('❌ 근태 저장 실패'); return ok; }
+  function attPatch(id, fields){ var ok = dbPatch('attendance_records', id, fields); if(ok) refreshAtt(); else showToast('❌ 근태 저장 실패'); return ok; }
+  function attRemove(id){ var ok = dbRemove('attendance_records', id); if(ok) refreshAtt(); return ok; }
 
   var now = new Date();
   var initYM = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
@@ -43735,27 +43765,24 @@ function AttendanceManagement(){
       if(f) sums[f] += parseFloat(r.hours)||0;
     });
     var pms = dbGet('payroll_monthly', []);
-    var idx = pms.findIndex(function(r){return r.sid===selSid&&r.ym===selYM;});
-    if(idx>=0){
-      pms[idx] = Object.assign({}, pms[idx], sums);
+    var ex = pms.find(function(r){return (r.empSid||r.sid)===selSid&&r.ym===selYM;});
+    if(ex){
+      dbUpsert('payroll_monthly', Object.assign({}, ex, sums, { id:(ex.id || 'pay-'+selSid+'-'+selYM) }));
     } else if(recs.length > 0){
-      pms.push(Object.assign({sid:selSid, ym:selYM, status:'draft'}, sums));
+      dbUpsert('payroll_monthly', Object.assign({id:'pay-'+selSid+'-'+selYM, sid:selSid, ym:selYM, status:'draft'}, sums));
     }
-    dbSet('payroll_monthly', pms);
   }
   function addOTRecord(date, kind, hours, note){
     var all = dbGet('overtime_records', []);
-    all.push({
+    dbUpsert('overtime_records', {
       id:'ot-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5)+'-'+Math.random().toString(36).slice(2,5),
       sid:selSid, date:date, kind:kind, hours:parseFloat(hours)||0, note:note||'',
       createdAt:(new Date()).toISOString()
     });
-    dbSet('overtime_records', all);
     syncOTToPayroll();
   }
   function deleteOTRecord(id){
-    var all = dbGet('overtime_records', []);
-    dbSet('overtime_records', all.filter(function(r){return r.id!==id;}));
+    dbRemove('overtime_records', id);
     syncOTToPayroll();
   }
   // 모달 state
@@ -43764,11 +43791,11 @@ function AttendanceManagement(){
   var otAddForm = oafs[0]; var setOtAddForm = oafs[1];
   function setOT(field, val){
     var pms = dbGet('payroll_monthly',[]);
-    var idx = pms.findIndex(function(r){return r.sid===selSid&&r.ym===selYM;});
+    var ex = pms.find(function(r){return (r.empSid||r.sid)===selSid&&r.ym===selYM;});
     var v = parseFloat(val)||0;
-    if(idx>=0){ pms[idx]=Object.assign({},pms[idx]); pms[idx][field]=v; }
-    else pms.push({sid:selSid,ym:selYM,status:'draft',[field]:v});
-    dbSet('payroll_monthly',pms);
+    var _p = {}; _p[field]=v;
+    if(ex){ dbUpsert('payroll_monthly', Object.assign({}, ex, _p, { id:(ex.id || 'pay-'+selSid+'-'+selYM) })); }
+    else { dbUpsert('payroll_monthly', Object.assign({id:'pay-'+selSid+'-'+selYM, sid:selSid, ym:selYM, status:'draft'}, _p)); }
   }
 
   // 등록
@@ -43798,13 +43825,14 @@ function AttendanceManagement(){
       createdAt:(new Date()).toISOString() };
     if(type==='leave-hour') rec.hours=hours;
     if(period!=='full') rec.period=period;
-    persist([rec].concat(records));
+    attUpsert(rec);
     showToast(type==='leave-hour'?'시간연차 '+hours+'h 등록':'등록 완료');
   }
 
   function delRecord(id){
-    var _ud=records.slice(); persist(records.filter(function(r){return r.id!==id;}));
-    showToastUndo('🗑️ 근태기록 삭제됨', function(){persist(_ud);});
+    var _bak = dbGet('attendance_records', []).find(function(r){ return r.id === id; });
+    if(!attRemove(id)) return;
+    showToastUndo('🗑️ 근태기록 삭제됨', function(){ if(_bak) attUpsert(_bak); });
   }
 
   // 캘린더 더블클릭 모달 등록
@@ -43842,7 +43870,7 @@ function AttendanceManagement(){
           createdAt:(new Date()).toISOString() };
         if(attType==='leave-hour') rec.hours=hours;
         if(attPeriod!=='full') rec.period=attPeriod;
-        persist([rec].concat(records));
+        attUpsert(rec);
         msgs.push(((TYPE_MAP[attType]||{}).label||attType)+periodSfx(rec));
       }
     }
@@ -43856,7 +43884,7 @@ function AttendanceManagement(){
   function moveRecord(id, newDate){
     var rec = records.find(function(r){return r.id===id;});
     if(!rec||rec.date===newDate) return;
-    persist(records.map(function(r){ return r.id===id?Object.assign({},r,{date:newDate}):r; }));
+    attPatch(id, { date:newDate });
     showToast((rec.date||'').slice(5)+'→'+newDate.slice(5)+' 이동됨');
   }
 
@@ -43869,7 +43897,7 @@ function AttendanceManagement(){
       createdAt:(new Date()).toISOString() };
     if(item.type==='leave-hour') rec.hours = item.hours || 1;
     if(item.type==='special-leave') rec.days = item.days || 1;
-    persist([rec].concat(records));
+    attUpsert(rec);
     var t = TYPE_MAP[item.type];
     var lbl = (t?t.icon+' '+t.label:item.type) + periodSfx(item) + (item.type==='leave-hour'?' '+(item.hours||1)+'h':'') + ' · ' + date.slice(5);
     showToast('등록 ' + lbl);
@@ -44586,11 +44614,8 @@ function AttendanceManagement(){
                                   h('button',{title:'전환 취소',
                                     onClick:async function(){
                                       if(!(await popConfirm('보상휴가 전환을 취소합니까?\n→ 이 시간은 다시 임금 지급 대상이 됩니다.'))) return;
-                                      var all = dbGet('overtime_records',[]);
-                                      var idx = all.findIndex(function(x){return x.id===r.id;});
-                                      if(idx>=0){
-                                        all[idx] = Object.assign({}, all[idx], {convertedToComp:false, compHours:0});
-                                        dbSet('overtime_records', all);
+                                      if(dbGet('overtime_records',[]).some(function(x){return x.id===r.id;})){
+                                        dbPatch('overtime_records', r.id, {convertedToComp:false, compHours:0});
                                         syncOTToPayroll();
                                         showToast('전환 취소됨');
                                       }
@@ -44600,11 +44625,8 @@ function AttendanceManagement(){
                                   onClick:async function(){
                                     var ch = calcCompHoursForOT(r);
                                     if(!(await popConfirm('보상휴가로 전환합니까?\n\n원본: '+k.label+' '+parseFloat(r.hours).toFixed(1)+'h\n보상휴가: '+ch.toFixed(1)+'h (가산율 자동)\n\n※ 임금 지급 대신 휴가로 보상됩니다.'))) return;
-                                    var all = dbGet('overtime_records',[]);
-                                    var idx = all.findIndex(function(x){return x.id===r.id;});
-                                    if(idx>=0){
-                                      all[idx] = Object.assign({}, all[idx], {convertedToComp:true, compHours:ch, convertedAt:(new Date()).toISOString()});
-                                      dbSet('overtime_records', all);
+                                    if(dbGet('overtime_records',[]).some(function(x){return x.id===r.id;})){
+                                      dbPatch('overtime_records', r.id, {convertedToComp:true, compHours:ch, convertedAt:(new Date()).toISOString()});
                                       syncOTToPayroll();
                                       showToast('💎 보상휴가 '+ch.toFixed(1)+'h 발생');
                                     }
@@ -45896,9 +45918,8 @@ function LeaveManagement(){
     var all = dbGet('attendance_records',[]);
     var rec = all.find(function(r){return r.id===id;});
     if(!rec||rec.date===newDate) return;
-    var updated = all.map(function(r){return r.id===id?Object.assign({},r,{date:newDate}):r;});
-    dbSet('attendance_records',updated);
-    setAttendance(updated);
+    dbPatch('attendance_records', id, { date:newDate });
+    setAttendance(dbGet('attendance_records', []).slice());
     showToast((rec.date||'').slice(5)+'→'+newDate.slice(5)+' 이동됨');
   }
 
@@ -46560,22 +46581,21 @@ function LeaveManagement(){
           if(!(await popConfirm('잔여 ('+bal.toFixed(1)+'h)를 초과합니다. 그래도 등록할까요?'))) return;
         }
         var all = dbGet('comp_leave_records', []);
-        all.push({
+        dbUpsert('comp_leave_records', {
           id:'comp-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5)+'-'+Math.random().toString(36).slice(2,5),
           sid:selSid, date:compAddForm.date, hours:hrs, note:compAddForm.note||'',
           createdAt:(new Date()).toISOString()
         });
-        dbSet('comp_leave_records', all);
         setCompAddForm(Object.assign({},compAddForm,{hours:1,note:''}));
         bumpComp();
         showToast('💎 보상휴가 '+hrs.toFixed(1)+'h 사용 등록');
       }
       async function delUse(id){
         if(!(await popConfirm('이 사용 기록을 삭제합니까?\n→ 보상휴가 잔여가 복원됩니다.'))) return;
-        var all = dbGet('comp_leave_records', []);
-        var _prev=all.slice(); dbSet('comp_leave_records', all.filter(function(r){return r.id!==id;}));
+        var _bak = dbGet('comp_leave_records', []).find(function(r){ return r.id === id; });
+        dbRemove('comp_leave_records', id);
         bumpComp();
-        showToastUndo('🗑️ 삭제됨', function(){dbSet('comp_leave_records',_prev);});
+        showToastUndo('🗑️ 삭제됨', function(){ if(_bak) dbUpsert('comp_leave_records', _bak); });
       }
 
       return h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1.8fr',gap:'14px',alignItems:'start'}},
@@ -47768,8 +47788,8 @@ function RetirementSettlement(){
           updatedAt: (new Date()).toISOString()
         });
         if(s === 'paid' && !nextItem.paidDate) nextItem.paidDate = todayYMD();
-        if(idx >= 0) arr[idx] = nextItem; else arr.unshift(nextItem);
-        dbSet('retirement_settlements', arr);
+        if(!nextItem.id) nextItem.id = 'rs-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+        dbUpsert('retirement_settlements', nextItem);
         if(typeof AuditLog !== 'undefined' && AuditLog.write){
           AuditLog.write('retirement', settleModal.sid, 'settlement', '', netPay, '퇴사자 정산 ' + (s==='paid'?'지급완료':s==='confirmed'?'확정':'저장'));
         }
@@ -47915,10 +47935,10 @@ function RetirementSettlement(){
             h('div', null,
               !settleModal.isNew && h('button', { onClick:async function(){
                 if(!(await popConfirm('이 정산 내역을 삭제하시겠습니까?'))) return;
-                var _prev=dbGet('retirement_settlements',[]); var arr = _prev.filter(function(x){return x.id!==settleModal.id;});
-                dbSet('retirement_settlements', arr);
+                var _bak = dbGet('retirement_settlements',[]).find(function(x){return x.id===settleModal.id;});
+                dbRemove('retirement_settlements', settleModal.id);
                 setSettleModal(null); setRefresh(refresh+1);
-                showToastUndo('🗑️ 퇴직정산 삭제됨', function(){dbSet('retirement_settlements',_prev);});
+                showToastUndo('🗑️ 퇴직정산 삭제됨', function(){ if(_bak) dbUpsert('retirement_settlements', _bak); });
               },
                 style:{padding:'6px 14px', background:'#fee2e2', color:'#991b1b', border:'1px solid #fca5a5', borderRadius:'5px', cursor:'pointer', fontSize:'11.5px', fontWeight:600} }, '🗑️ 삭제')
             ),
@@ -48639,18 +48659,49 @@ function PayrollLedger(props){
 
 
   function persist(arr){ setRecs(arr); dbSet('payroll_monthly', arr); }
+  // ── Phase 4: 건별 저장 (과거회귀 방지). 급여 복합키(직원+월) → id('pay-sid-ym') 정합화 후 그 건들만 서버 반영 ──
+  function _payKey(r){ return ((r && (r.empSid||r.sid)) || '') + '|' + ((r && r.ym) || ''); }
+  function ensurePayIds(list){
+    var fresh = dbGet('payroll_monthly', []);
+    var byKey = {}; fresh.forEach(function(r){ if(r) byKey[_payKey(r)] = r; });
+    return (list||[]).map(function(r){
+      var ex = byKey[_payKey(r)];
+      var id = (ex && ex.id) || r.id || ('pay-'+(r.empSid||r.sid)+'-'+r.ym);
+      return Object.assign({}, r, { id:id });
+    });
+  }
+  function refreshRecs(){ setRecs(dbGet('payroll_monthly', []).slice()); }
+  function payUpsertMany(list){
+    if(!list || !list.length) return true;
+    var w = ensurePayIds(list);
+    var ok = dbUpsertMany('payroll_monthly', w);
+    if(ok) refreshRecs(); else showToast('❌ 급여 저장 실패');
+    return ok;
+  }
+  function payReplaceMonth(ym, newList){
+    var fresh = dbGet('payroll_monthly', []);
+    if(fresh.some(function(r){ return r && r.ym===ym && !r.id; })){
+      // id 없는 옛 레코드가 섞인 월 → 안전하게 전체 저장 폴백 (보호장치 경유)
+      var others = fresh.filter(function(r){ return r.ym!==ym; });
+      persist(others.concat(ensurePayIds(newList)));
+      return true;
+    }
+    var w = ensurePayIds(newList);
+    var keep = {}; w.forEach(function(r){ keep[r.id]=true; });
+    var rmIds = fresh.filter(function(r){ return r.ym===ym && !keep[r.id]; }).map(function(r){ return r.id; });
+    if(rmIds.length) dbRemoveMany('payroll_monthly', rmIds);
+    var ok = dbUpsertMany('payroll_monthly', w);
+    if(ok) refreshRecs();
+    return ok;
+  }
   function importPay45(){
     var NEW = [{"id": "pay-P-001-2026-04", "empSid": "P-001", "empName": "권형하", "ym": "2026-04", "dependents": 2, "baseSalary": 2000000, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 116800, "healthInsOverride": -168700, "longCareOverride": 9440, "empInsOverride": -54000, "incomeTaxOverride": 19520, "localTaxOverride": 1950, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-001-2026-04", "empSid": "A-001", "empName": "최기운", "ym": "2026-04", "dependents": 1, "baseSalary": 3150000, "allowances": [{"code": "meal", "name": "식대", "amount": 200000}, {"code": "car", "name": "차량유지비", "amount": 200000}], "bonus": 182078, "bonusIsPerf": true, "pensionOverride": 0, "healthInsOverride": 79370, "longCareOverride": 15730, "empInsOverride": 29980, "incomeTaxOverride": 105210, "localTaxOverride": 10520, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-003-2026-04", "empSid": "A-003", "empName": "김보람", "ym": "2026-04", "dependents": 1, "baseSalary": 3250000, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 139980, "healthInsOverride": 184810, "longCareOverride": 15350, "empInsOverride": 29250, "incomeTaxOverride": 95430, "localTaxOverride": 9540, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-004-2026-04", "empSid": "A-004", "empName": "주민정", "ym": "2026-04", "dependents": 1, "baseSalary": 2650000, "allowances": [], "bonus": 637000, "bonusIsPerf": true, "pensionOverride": 111720, "healthInsOverride": 209480, "longCareOverride": 15520, "empInsOverride": 29580, "incomeTaxOverride": 100320, "localTaxOverride": 10030, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-002-2026-04", "empSid": "A-002", "empName": "신욱임", "ym": "2026-04", "dependents": 1, "baseSalary": 2250000, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 93950, "healthInsOverride": 124740, "longCareOverride": 10620, "empInsOverride": 20250, "incomeTaxOverride": 27560, "localTaxOverride": 2750, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-006-2026-04", "empSid": "A-006", "empName": "김석우", "ym": "2026-04", "dependents": 1, "baseSalary": 2022180, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 0, "healthInsOverride": 0, "longCareOverride": 0, "empInsOverride": 0, "incomeTaxOverride": 20170, "localTaxOverride": 2010, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-003-2026-04", "empSid": "P-003", "empName": "박한별", "ym": "2026-04", "dependents": 1, "baseSalary": 3700000, "allowances": [], "bonus": 540000, "bonusIsPerf": true, "pensionOverride": 195790, "healthInsOverride": 612350, "longCareOverride": 20020, "empInsOverride": 38160, "incomeTaxOverride": 228000, "localTaxOverride": 22800, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-004-2026-04", "empSid": "P-004", "empName": "김혜민", "ym": "2026-04", "dependents": 1, "baseSalary": 2900000, "allowances": [{"code": "etc", "name": "업무분담수당", "amount": 290000}], "bonus": 1766678, "bonusIsPerf": true, "pensionOverride": 99560, "healthInsOverride": 512690, "longCareOverride": 23410, "empInsOverride": 44610, "incomeTaxOverride": 327050, "localTaxOverride": 32700, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-005-2026-04", "empSid": "P-005", "empName": "박재원", "ym": "2026-04", "dependents": 1, "baseSalary": 3000000, "allowances": [{"code": "etc", "name": "업무분담수당", "amount": 300000}], "bonus": 1913895, "bonusIsPerf": true, "pensionOverride": 99560, "healthInsOverride": 471470, "longCareOverride": 24620, "empInsOverride": 46920, "incomeTaxOverride": 363520, "localTaxOverride": 36350, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-005-2026-04", "empSid": "A-005", "empName": "박은비", "ym": "2026-04", "dependents": 1, "baseSalary": 2250000, "allowances": [], "bonus": 234000, "bonusIsPerf": true, "pensionOverride": 99560, "healthInsOverride": 82000, "longCareOverride": 11730, "empInsOverride": 22350, "incomeTaxOverride": 34950, "localTaxOverride": 3490, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-006-2026-04", "empSid": "P-006", "empName": "임혜미", "ym": "2026-04", "dependents": 0, "baseSalary": 2156880, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 102410, "healthInsOverride": 77530, "longCareOverride": 10180, "empInsOverride": 19410, "incomeTaxOverride": 24340, "localTaxOverride": 2430, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-007-2026-04", "empSid": "P-007", "empName": "김동현", "ym": "2026-04", "dependents": 0, "baseSalary": 2156880, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 102410, "healthInsOverride": 77530, "longCareOverride": 10180, "empInsOverride": 19410, "incomeTaxOverride": 24340, "localTaxOverride": 2430, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-001-2026-05", "empSid": "P-001", "empName": "권형하", "ym": "2026-05", "dependents": 2, "baseSalary": 2000000, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 116800, "healthInsOverride": 71900, "longCareOverride": 9440, "empInsOverride": 0, "incomeTaxOverride": 19520, "localTaxOverride": 1950, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-001-2026-05", "empSid": "A-001", "empName": "최기운", "ym": "2026-05", "dependents": 1, "baseSalary": 3150000, "allowances": [{"code": "meal", "name": "식대", "amount": 200000}, {"code": "car", "name": "차량유지비", "amount": 200000}], "bonus": 166363, "bonusIsPerf": true, "pensionOverride": 0, "healthInsOverride": 119220, "longCareOverride": 15660, "empInsOverride": 29840, "incomeTaxOverride": 102770, "localTaxOverride": 10270, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-003-2026-05", "empSid": "A-003", "empName": "김보람", "ym": "2026-05", "dependents": 1, "baseSalary": 3250000, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 139980, "healthInsOverride": 116830, "longCareOverride": 15350, "empInsOverride": 29250, "incomeTaxOverride": 95430, "localTaxOverride": 9540, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-004-2026-05", "empSid": "A-004", "empName": "주민정", "ym": "2026-05", "dependents": 1, "baseSalary": 2650000, "allowances": [], "bonus": 78000, "bonusIsPerf": true, "pensionOverride": 111720, "healthInsOverride": 98070, "longCareOverride": 12880, "empInsOverride": 24550, "incomeTaxOverride": 49960, "localTaxOverride": 4990, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-002-2026-05", "empSid": "A-002", "empName": "신욱임", "ym": "2026-05", "dependents": 1, "baseSalary": 2250000, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 93950, "healthInsOverride": 80880, "longCareOverride": 10620, "empInsOverride": 20250, "incomeTaxOverride": 27560, "localTaxOverride": 2750, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-006-2026-05", "empSid": "A-006", "empName": "김석우", "ym": "2026-05", "dependents": 1, "baseSalary": 2022180, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 0, "healthInsOverride": 0, "longCareOverride": 0, "empInsOverride": 0, "incomeTaxOverride": 20170, "localTaxOverride": 2010, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-004-2026-05", "empSid": "P-004", "empName": "김혜민", "ym": "2026-05", "dependents": 1, "baseSalary": 2806452, "allowances": [{"code": "etc", "name": "업무분담수당", "amount": 280645}], "bonus": 1253217, "bonusIsPerf": true, "pensionOverride": 99560, "healthInsOverride": 156030, "longCareOverride": 20500, "empInsOverride": 39060, "incomeTaxOverride": 241350, "localTaxOverride": 24130, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-005-2026-05", "empSid": "P-005", "empName": "박재원", "ym": "2026-05", "dependents": 1, "baseSalary": 3000000, "allowances": [{"code": "etc", "name": "업무분담수당", "amount": 300000}], "bonus": 336818, "bonusIsPerf": true, "pensionOverride": 99560, "healthInsOverride": 130740, "longCareOverride": 17170, "empInsOverride": 32730, "incomeTaxOverride": 141890, "localTaxOverride": 14180, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-005-2026-05", "empSid": "A-005", "empName": "박은비", "ym": "2026-05", "dependents": 1, "baseSalary": 2250000, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 99560, "healthInsOverride": 80880, "longCareOverride": 10620, "empInsOverride": 20250, "incomeTaxOverride": 27560, "localTaxOverride": 2750, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-006-2026-05", "empSid": "P-006", "empName": "임혜미", "ym": "2026-05", "dependents": 0, "baseSalary": 1568640, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 102410, "healthInsOverride": 45070, "longCareOverride": 5920, "empInsOverride": 14110, "incomeTaxOverride": -48680, "localTaxOverride": -4860, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-007-2026-05", "empSid": "P-007", "empName": "김동현", "ym": "2026-05", "dependents": 0, "baseSalary": 2156880, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 102410, "healthInsOverride": 77530, "longCareOverride": 10180, "empInsOverride": 19410, "incomeTaxOverride": 24340, "localTaxOverride": 2430, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}];
     if(!confirm('2026년 4·5월 급여 ' + NEW.length + '건(4월 12·5월 11)을 가져옵니다.\n같은 직원·월이 이미 있으면 그 건만 교체하고, 1~3월 등 나머지는 그대로 둡니다.\n무급 달(박성수 4·5월·박한별 5월)은 제외됩니다.\n\n진행할까요?')) return;
-    var arr = (dbGet('payroll_monthly', []) || []).slice();
-    var idx = {};
-    arr.forEach(function(r,i){ idx[(r.empSid||r.sid)+'|'+r.ym] = i; });
+    var _byKey = {};
+    (dbGet('payroll_monthly', []) || []).forEach(function(r){ _byKey[(r.empSid||r.sid)+'|'+r.ym] = true; });
     var added=0, replaced=0;
-    NEW.forEach(function(rec){
-      var k = rec.empSid+'|'+rec.ym;
-      if(idx[k]!=null){ arr[idx[k]] = rec; replaced++; } else { arr.push(rec); added++; }
-    });
-    persist(arr);
+    NEW.forEach(function(rec){ if(_byKey[rec.empSid+'|'+rec.ym]) replaced++; else added++; });
+    payUpsertMany(NEW);
     showToast('급여 4·5월 반영 완료: 추가 '+added+' · 교체 '+replaced+' (새로고침 후 명세서 확인)');
   }
 
@@ -48683,6 +48734,7 @@ function PayrollLedger(props){
         var have = {}; arr.forEach(function(r){ have[(r.empSid||r.sid)+'|'+r.ym] = true; });
         // 연장/야간/휴일 근로 → overtime_records (월 1일자, 시간 소수점 그대로)
         var otAll = dbGet('overtime_records', []) || [];
+        var newPays = []; var newOts = [];
         var otHave = {}; otAll.forEach(function(r){ otHave[r.sid+'|'+r.date+'|'+r.kind] = true; });
         var otAdded = 0;
         var added=0, skipped=0, nomatch={};
@@ -48727,20 +48779,21 @@ function PayrollLedger(props){
               nightHours:    _hrsFromPay(row[13], 0.5),   // col14 야간수당
               holidayHours:  _hrsFromPay(row[15], 1.5)    // col16 휴일수당
             };
-            arr.push(rec); have[sid+'|'+ym]=true; added++;
+            arr.push(rec); newPays.push(rec); have[sid+'|'+ym]=true; added++;
             // 연장/야간/휴일 → overtime_records (월 1일자, legalAllowances와 동일한 역산 시간)
             var otDate = ym + '-01';
             [['overtimeHours','overtime'],['nightHours','night'],['holidayHours','holiday']].forEach(function(p){
               var h = rec.legalAllowances[p[0]]; if(!isFinite(h) || h<=0) return;
               if(otHave[sid+'|'+otDate+'|'+p[1]]) return;
-              otAll.push({ id:'ot-'+sid+'-'+ym+'-'+p[1], sid:sid, date:otDate, kind:p[1],
-                hours:h, note:'급여대장 가져오기', createdAt:(new Date()).toISOString() });
+              var _newOt = { id:'ot-'+sid+'-'+ym+'-'+p[1], sid:sid, date:otDate, kind:p[1],
+                hours:h, note:'급여대장 가져오기', createdAt:(new Date()).toISOString() };
+              otAll.push(_newOt); newOts.push(_newOt);
               otHave[sid+'|'+otDate+'|'+p[1]] = true; otAdded++;
             });
           }
         });
-        persist(arr);
-        if(otAdded > 0) dbSet('overtime_records', otAll);
+        payUpsertMany(newPays);
+        if(otAdded > 0) dbUpsertMany('overtime_records', newOts);
         var nm = Object.keys(nomatch);
         showToast('📥 급여대장: 추가 '+added+'건 / 건너뜀 '+skipped+'건 / 연장근로 '+otAdded+'건'+(nm.length?' / 미매칭: '+nm.join(','):''));
       } catch(err){ showToast('가져오기 실패: '+(err&&err.message)); }
@@ -48779,10 +48832,8 @@ function PayrollLedger(props){
         addPayrollAudit(sid, props.selYM, k, beforeRec[k], patch[k]);
       }
     });
-    var next = existing
-      ? recs.map(function(r){ return (r.empSid===sid&&r.ym===props.selYM) ? Object.assign({},r,patch) : r; })
-      : recs.concat([Object.assign({}, getRec(sid), patch)]);
-    persist(next);
+    var _baseF = dbGet('payroll_monthly', []).find(function(r){ return r.empSid===sid && r.ym===props.selYM; }) || existing || getRec(sid);
+    payUpsertMany([Object.assign({}, _baseF, patch)]);
   }
   function changeMonth(delta){
     var d = new Date(props.selYM+'-01'); d.setMonth(d.getMonth()+delta);
@@ -48808,15 +48859,13 @@ function PayrollLedger(props){
     // 현재 월 데이터 백업 (되돌리기용)
     var backup = recs.filter(function(r){return r.ym===props.selYM;});
     setCopyBackup({ ym:props.selYM, recs:backup });
-    var others = recs.filter(function(r){return r.ym!==props.selYM;});
-    persist(others.concat(copyModal.newRecs));
+    payReplaceMonth(props.selYM, copyModal.newRecs);
     setCopyModal(null);
     showToast('전월 복사 완료 ('+copyModal.newRecs.length+'건) · 되돌리기 가능');
   }
   function undoCopy(){
     if(!copyBackup) return;
-    var others = recs.filter(function(r){return r.ym!==copyBackup.ym;});
-    persist(others.concat(copyBackup.recs));
+    payReplaceMonth(copyBackup.ym, copyBackup.recs);
     setCopyBackup(null);
     showToast('복사 취소됨 · 이전 데이터로 복원');
   }
@@ -48864,13 +48913,11 @@ function PayrollLedger(props){
     newRecs.forEach(function(r){
       if(autoAccrueDCFromPayroll(r)) dcAccrued++;
     });
-    var others = recs.filter(function(r){return r.ym!==props.selYM;});
-    persist(others.concat(newRecs));
-    // finance_expense 기록 (급여 + 사업주부담분 별도)
-    var fe = dbGet('finance_expense', []);
-    // ★ Fix#5: 기존 동일 ym 급여 관련 기록 제거 — id 기반 (note 문자열 의존 제거)
+    payReplaceMonth(props.selYM, newRecs);
+    // finance_expense 기록 (급여 + 사업주부담분 별도) — 관련 4건만 교체 (id 기반)
     var _salaryIds = ['fe-salary-','fe-employer-','fe-reimburse-','fe-bankfee-'].map(function(p){return p+props.selYM;});
-    fe = fe.filter(function(e){ return _salaryIds.indexOf(e.id) < 0; });
+    dbRemoveMany('finance_expense', _salaryIds);
+    var _feNew = [];
     // newRecs에서 calcPayroll 재계산하여 합계 집계 (snapshot은 표시용)
     var calcs = newRecs.map(function(r){return calcPayroll(r);});
     var totalNet = calcs.reduce(function(s,c){return s+c.netPay;},0);
@@ -48888,14 +48935,14 @@ function PayrollLedger(props){
       return (r.reimbursements||[]).reduce(function(s,rb){return s+(parseInt(rb.amount)||0);},0) > 0;
     });
     // ① 급여 실지급
-    fe.unshift({
+    _feNew.push({
       id:'fe-salary-'+props.selYM, date:autoPaidDate, amount:totalNet, category:'exp-salary',
       payee:'직원 '+newRecs.length+'명', note:'급여 '+props.selYM+' 일괄지급',
       confirmedAt:today,
       createdAt:(new Date()).toISOString()
     });
     // ② 사업주 부담분 (4대보험 + 산재) — 향후 재무관리에서 분류·납부 처리 가능
-    fe.unshift({
+    _feNew.push({
       id:'fe-employer-'+props.selYM, date:autoPaidDate, amount:totalEmployer, category:'exp-employer-burden',
       payee:'4대보험·산재 사업주분', note:'사업주부담 '+props.selYM+' (국민연금'+totalEmpPension.toLocaleString()+' + 건강'+totalEmpHealth.toLocaleString()+' + 장기요양'+totalEmpLongCare.toLocaleString()+' + 고용'+totalEmpEmpIns.toLocaleString()+' + 산재'+totalEmpWorkers.toLocaleString()+')',
       breakdown:{ pension:totalEmpPension, healthIns:totalEmpHealth, longCare:totalEmpLongCare, empIns:totalEmpEmpIns, workers:totalEmpWorkers },
@@ -48908,7 +48955,7 @@ function PayrollLedger(props){
         var sum = (r.reimbursements||[]).reduce(function(s,rb){return s+(parseInt(rb.amount)||0);},0);
         return r.empName+' '+sum.toLocaleString();
       }).join(', ')+')';
-      fe.unshift({
+      _feNew.push({
         id:'fe-reimburse-'+props.selYM, date:autoPaidDate, amount:totalReimburse, category:'exp-reimburse',
         payee:'직원 '+reimbursees.length+'명', note:reimbNote,
         confirmedAt:today,
@@ -48921,14 +48968,14 @@ function PayrollLedger(props){
     var totalBankFee = bankFeePerTx * newRecs.length;
     if(totalBankFee > 0){
       // ★ Fix#5: fe-bankfee는 이미 위 _salaryIds 필터에서 제거됨 — 중복 제거 로직 불필요
-      fe.unshift({
+      _feNew.push({
         id:'fe-bankfee-'+props.selYM, date:autoPaidDate, amount:totalBankFee, category:'exp-bankfee',
         payee:'은행 이체수수료', note:'급여 '+props.selYM+' 이체수수료 ('+newRecs.length+'건 × '+bankFeePerTx.toLocaleString()+'원)',
         confirmedAt:today,
         createdAt:(new Date()).toISOString()
       });
     }
-    dbSet('finance_expense', fe);
+    dbUpsertMany('finance_expense', _feNew);
     // 감사로그
     addPayrollAudit('', props.selYM, '일괄확정', '', newRecs.length+'명', '급여 '+totalNet.toLocaleString()+(totalReimburse>0?' + 실비 '+totalReimburse.toLocaleString():'')+' + 사업주부담 '+totalEmployer.toLocaleString()+(totalBankFee>0?' + 이체수수료 '+totalBankFee.toLocaleString():''));
     // 자동 잠금 여부 (옵션)
@@ -49854,6 +49901,7 @@ function PayrollBulkModal(props){
     if(amount<=0 && mode!=='meal'){ showToast('금액 입력'); return; }
     var allRecs = dbGet('payroll_monthly', []);
     var ym = props.ym;
+    var _chgList = [];
     props.users.forEach(function(u){
       var existing = allRecs.find(function(r){return r.empSid===u.sid && r.ym===ym;});
       var base = existing || {
@@ -49879,14 +49927,10 @@ function PayrollBulkModal(props){
       } else if(mode==='meal'){
         patch.nonTaxableMeal = amount;
       }
-      var newRec = Object.assign({}, base, patch);
-      if(existing){
-        allRecs = allRecs.map(function(r){ return (r.empSid===u.sid&&r.ym===ym)?newRec:r; });
-      } else {
-        allRecs.push(newRec);
-      }
+      var newRec = Object.assign({}, base, patch, { id:(base.id || 'pay-'+u.sid+'-'+ym) });
+      _chgList.push(newRec);
     });
-    dbSet('payroll_monthly', allRecs);
+    dbUpsertMany('payroll_monthly', _chgList);
     addPayrollAudit('', ym, '일괄수정/'+mode, '', amount.toLocaleString(), props.users.length+'명 적용');
     showToast(props.users.length+'명 일괄 적용 완료');
     props.onApply();
@@ -50077,13 +50121,7 @@ function PayrollPayslip(props){
     var oldVal = base[field];
     var patch = {}; patch[field] = value;
     var newRec = Object.assign({}, base, patch);
-    if(existingRec){
-      dbSet('payroll_monthly', allRecs.map(function(r){
-        return (r.empSid===u.sid && r.ym===props.selYM) ? newRec : r;
-      }));
-    } else {
-      dbSet('payroll_monthly', allRecs.concat([newRec]));
-    }
+    dbUpsert('payroll_monthly', Object.assign({}, newRec, { id:(newRec.id || 'pay-'+u.sid+'-'+props.selYM) }));
     if(JSON.stringify(oldVal) !== JSON.stringify(value)){
       addPayrollAudit(u.sid, props.selYM, field,
         Array.isArray(oldVal)?(oldVal.length+'건'):oldVal,
@@ -50100,13 +50138,7 @@ function PayrollPayslip(props){
     var oldVal = la[field];
     la[field] = value;
     var newRec = Object.assign({}, base, { legalAllowances: la });
-    if(existingRec){
-      dbSet('payroll_monthly', allRecs.map(function(r){
-        return (r.empSid===u.sid && r.ym===props.selYM) ? newRec : r;
-      }));
-    } else {
-      dbSet('payroll_monthly', allRecs.concat([newRec]));
-    }
+    dbUpsert('payroll_monthly', Object.assign({}, newRec, { id:(newRec.id || 'pay-'+u.sid+'-'+props.selYM) }));
     if(oldVal !== value){
       addPayrollAudit(u.sid, props.selYM, 'legal.'+field, oldVal, value);
     }
@@ -50677,6 +50709,22 @@ function PayrollIrregular(props){
       console.error('[Transaction:irregular.persist]', e && e.message);
     }
   }
+  // ── Phase 4: 건별 저장 (과거회귀 방지) ──
+  function refreshIrr(){ setRecs(dbGet('payroll_irregular', []).slice()); }
+  function irrGuard(){ if(isIrregularLocked(props.selYM)){ showToast('🔒 ' + props.selYM + ' 잠겨있어 수정 불가'); return false; } return true; }
+  function irrUpsertMany(list){
+    if(!irrGuard()) return false;
+    if(!list || !list.length) return true;
+    var ok = dbUpsertMany('payroll_irregular', list);
+    if(ok) refreshIrr(); else showToast('❌ 비정규직 저장 실패');
+    return ok;
+  }
+  function irrRemove(id){
+    if(!irrGuard()) return false;
+    var ok = dbRemove('payroll_irregular', id);
+    if(ok) refreshIrr();
+    return ok;
+  }
 
   // 현재 월 + 필터된 레코드
   var monthRecs = recs.filter(function(r){ return r.ym === props.selYM; });
@@ -50727,13 +50775,14 @@ function PayrollIrregular(props){
           if(amount<=0) continue;
           var key = ym+'|'+type+'|'+nm+'|'+String(rrn).replace(/[^0-9]/g,'');
           if(have[key]){ skipped++; continue; }
-          arr.push({
+          var _newIrr = {
             id:'irr-'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)+'-'+arr.length,
             ym:ym, type:type, name:nm, rrn:rrn, amount:amount,
             workDays:wdays, dailyWage:(wdays>0?Math.round(amount/wdays):0),
             incomeTax:itax, localTax:ltax, netPay:(net>0?net:amount-itax-ltax),
             bank:'', account:'', note:'급여대장 가져오기', paid:true, paidDate:''
-          });
+          };
+          arr.push(_newIrr); newIrrs.push(_newIrr);
           have[key]=true; added++;
         }
         cb(added, skipped, (isMisc?'기타소득':'일용노무비')+' '+ym, ym);
@@ -50748,13 +50797,14 @@ function PayrollIrregular(props){
     if(typeof XLSX === 'undefined'){ showToast('엑셀 모듈 로딩중'); return; }
     try { console.log('[비정규직 가져오기 백업]', JSON.stringify(dbGet('payroll_irregular',[]))); } catch(_){}
     var arr = recs.slice();
+    var newIrrs = [];
     var have = {};
     arr.forEach(function(r){ have[r.ym+'|'+r.type+'|'+(r.name||'')+'|'+String(r.rrn||'').replace(/[^0-9]/g,'')] = true; });
     var list = Array.prototype.slice.call(files);
     var totalAdded=0, totalSkipped=0, msgs=[], i=0;
     function next(){
       if(i >= list.length){
-        persist(arr);
+        irrUpsertMany(newIrrs);
         showToast('📥 '+list.length+'개 파일: 추가 '+totalAdded+'명 / 건너뜀 '+totalSkipped+'명');
         return;
       }
@@ -50786,21 +50836,16 @@ function PayrollIrregular(props){
     if(!modal.name.trim()){ showToast('이름을 입력하세요'); return; }
     var m = autoCalc(modal);
     if(m.amount <= 0){ showToast('지급액을 입력하세요'); return; }
-    var arr = recs.slice();
-    if(m.id){
-      arr = arr.map(function(r){ return r.id===m.id ? m : r; });
-    } else {
-      m.id = 'pi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
-      arr.push(m);
-    }
-    persist(arr);
+    if(!m.id) m.id = 'pi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+    if(!irrUpsertMany([m])) return;
     setModal(null);
     showToast(m.id?'✅ 저장됨':'✅ 추가됨');
   }
   async function delRec(id){
     if(!(await popConfirm('삭제하시겠습니까?'))) return;
-    var _ud=recs.slice(); persist(recs.filter(function(r){ return r.id !== id; }));
-    showToastUndo('🗑️ 삭제됨', function(){persist(_ud);});
+    var _bak = dbGet('payroll_irregular', []).find(function(r){ return r.id === id; });
+    if(!irrRemove(id)) return;
+    showToastUndo('🗑️ 삭제됨', function(){ if(_bak) irrUpsertMany([_bak]); });
   }
 
   // 일괄 확정 → finance_expense 동기화
@@ -50811,23 +50856,18 @@ function PayrollIrregular(props){
     if(!(await popConfirm(props.selYM+' 비정규직 '+unpaid.length+'건을 일괄 지급 확정하시겠습니까?\n→ 재무관리(출금)에 카테고리별 자동 등록됩니다.'))) return;
 
     var today = todayYMD();
-    // recs 업데이트
-    var newRecs = recs.map(function(r){
-      if(r.ym===props.selYM && !r.paid){
-        return Object.assign({}, r, { paid:true, paidDate:today });
-      }
-      return r;
-    });
-    persist(newRecs);
+    // recs 업데이트 — 그 월 미지급 건들만
+    var _chg = dbGet('payroll_irregular', []).filter(function(r){ return r.ym===props.selYM && !r.paid && r.id; })
+      .map(function(r){ return Object.assign({}, r, { paid:true, paidDate:today }); });
+    if(!irrUpsertMany(_chg)) return;
 
-    // finance_expense 동기화 - 유형별 합계
-    var fe = dbGet('finance_expense', []);
-    // 기존 동일 ym 비정규직 자동 기록 제거 (재확정 대비)
-    fe = fe.filter(function(e){
+    // finance_expense 동기화 - 유형별 합계 (기존 동일 ym 자동 기록만 제거 후 재등록)
+    var _rmFe = dbGet('finance_expense', []).filter(function(e){
       var isIrr = ['exp-irregular-daily','exp-irregular-misc','exp-irregular-biz'].indexOf(e.category) >= 0;
-      if(!isIrr) return true;
-      return (e.note||'').indexOf('['+props.selYM+' 일괄]') < 0;
-    });
+      return isIrr && (e.note||'').indexOf('['+props.selYM+' 일괄]') >= 0 && e.id;
+    }).map(function(e){ return e.id; });
+    if(_rmFe.length) dbRemoveMany('finance_expense', _rmFe);
+    var _feNewIrr = [];
 
     IRREGULAR_TYPES.forEach(function(t){
       var typeRecs = unpaid.filter(function(r){ return r.type === t.v; });
@@ -50836,7 +50876,7 @@ function PayrollIrregular(props){
       var taxTotal = typeRecs.reduce(function(s,r){ return s + (parseInt(r.incomeTax)||0) + (parseInt(r.localTax)||0); }, 0);
       var grossTotal = typeRecs.reduce(function(s,r){ return s + (parseInt(r.amount)||0); }, 0);
       var names = typeRecs.map(function(r){ return r.name; }).join(', ');
-      fe.unshift({
+      _feNewIrr.push({
         id:'fe-irr-'+t.v+'-'+props.selYM, date:today, amount:total,
         category:t.catCode,
         payee:t.label+' '+typeRecs.length+'명',
@@ -50845,7 +50885,7 @@ function PayrollIrregular(props){
         createdAt:(new Date()).toISOString()
       });
     });
-    dbSet('finance_expense', fe);
+    dbUpsertMany('finance_expense', _feNewIrr);
     showToast('확정 완료 ('+unpaid.length+'건 → 재무관리 자동 등록)');
   }
 
