@@ -757,8 +757,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-03 건별 쓰기 Phase 0 — 콘솔 진단함수 window 노출';
-var BUILD_SEQ = 60;
+var ERP_BUILD = '2026-07-03 건별 쓰기 Phase 1 — 계약 등록·수정·삭제·상태·이관 1건 단위 저장 (과거회귀 차단)';
+var BUILD_SEQ = 61;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -3145,8 +3145,9 @@ var _REC_BADKEY = /[.#$\[\]\/]/;
 function _recStamp(item){
   try {
     item.updatedAt = Date.now();
+    var _nm = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.name) || null;
     var _sid = (typeof getSessionSid === 'function') ? getSessionSid() : null;
-    if(_sid) item.updatedBy = _sid;
+    if(_nm || _sid) item.updatedBy = _nm || _sid;
   } catch(_){}
   return item;
 }
@@ -3246,7 +3247,7 @@ function erpTestRecordWrite(){
   if(fbDb){
     fbDb.ref('data/'+k).once('value').then(function(s){
       var v = s.val();
-      console.log((v && v.v && v.v.t1 === undefined ? '✅' : '❌') + ' 서버 최종상태 (t1 삭제됨):', JSON.stringify(v));
+      console.log(((!v || !v.v || v.v.t1 === undefined) ? '✅' : '❌') + ' 서버 최종상태 (t1 삭제됨):', JSON.stringify(v));
       fbDb.ref('data/'+k).remove().then(function(){ console.log('🧹 테스트 키 서버 정리 완료'); });
     });
   }
@@ -8410,15 +8411,7 @@ function transferContract(contract){
   var typeCodes = contract.typeCodes || {};
   var amounts = contract.amounts || {};
 
-  // Transaction 보강: 다중 store 변경 → 실패 시 전부 롤백
-  var snaps = {
-    companies:      dbGet('companies', []),
-    cases:          dbGet('cases', []),
-    consultings:    dbGet('consultings', []),
-    funds:          dbGet('funds', []),
-    other_projects: dbGet('other_projects', [])
-  };
-
+  // Transaction: 실패 시 이번에 생성한 레코드만 제거 (catch 참조)
   try {
     kinds.forEach(function(kindV){
     var k = kindInfo(kindV);
@@ -8432,7 +8425,6 @@ function transferContract(contract){
     }
 
     if(kindV === 'company'){
-      var arr = dbGet('companies', []);
       var co = contract.company || {};
       var primaryContact = (co.contacts || []).find(function(x){ return x.isPrimary; }) || (co.contacts || [])[0] || {};
       // 계약종료일 - 계약일 + 1년
@@ -8474,7 +8466,7 @@ function transferContract(contract){
         note: '계약(' + contract.contractNo + ')에서 이관',
         createdAt: (new Date()).toISOString()
       };
-      arr.unshift(item); dbSet('companies', arr);
+      dbUpsert('companies', item);
       results.push({ type:'company', no:item.name, id:item.id });
       return;
     }
@@ -8534,7 +8526,7 @@ function transferContract(contract){
         sourceContractNo: contract.contractNo,
         note: '계약(' + contract.contractNo + ')에서 이관' + (contract.successFeeType === 'percent' ? ' / 성공보수 ' + (contract.successFee||0) + '%' : '')
       };
-      cases.unshift(newCase); dbSet('cases', cases);
+      dbUpsert('cases', newCase);
       results.push({ type:'case', no:caseNo, id:newCase.id });
       return;
     }
@@ -8613,7 +8605,7 @@ function transferContract(contract){
     };
     if(kindV === 'fund'){ item2.estDate = contract.signDate; delete item2.startDate; delete item2.endDate; }
     // (제거) 컨설팅 이관 시 업체관리 자동 등록 — 컨설팅 사업장은 컨설팅관리에서만 관리
-    arr2.unshift(item2); dbSet(storageMap[kindV], arr2);
+    dbUpsert(storageMap[kindV], item2);
     // 컨설팅은 계약일(startDate)순 자동 재정렬 (소급 입력 자연 정렬)
     if(kindV === 'consulting'){
       reorderConsultingNos();
@@ -8625,15 +8617,17 @@ function transferContract(contract){
     });
     return results;
   } catch(e){
-    // 롤백: 5개 store 모두 원본으로 복원
-    try { dbSet('companies',      snaps.companies); }      catch(_){}
-    try { dbSet('cases',          snaps.cases); }          catch(_){}
-    try { dbSet('consultings',    snaps.consultings); }    catch(_){}
-    try { dbSet('funds',          snaps.funds); }          catch(_){}
-    try { dbSet('other_projects', snaps.other_projects); } catch(_){}
-    try { if(typeof showToast==='function') showToast('❌ 계약 이관 실패 — 변경 사항이 복원되었습니다'); } catch(_){}
+    // 롤백: 이번 이관에서 생성한 레코드만 제거 (전체 스냅샷 복원은 다른 기기 변경을 덮을 수 있어 폐기)
+    try {
+      var _storeOf = { company:'companies', 'case':'cases', consulting:'consultings', fund:'funds', other:'other_projects' };
+      (results || []).forEach(function(r){
+        var st = _storeOf[r.type];
+        if(st && r.id) dbRemove(st, r.id);
+      });
+    } catch(_){}
+    try { if(typeof showToast==='function') showToast('❌ 계약 이관 실패 — 생성분이 정리되었습니다'); } catch(_){}
     console.error('[Transaction:transferContract]', e && e.message);
-    return [];  // 빈 결과: 호출자가 contracts 삭제 안 함
+    return [];  // 빈 결과: 호출자가 contracts 상태 변경 안 함
   }
 }
 
@@ -8789,6 +8783,43 @@ function ContractManagement(){
       console.error('[Transaction:contract.persist]', e && e.message);
     }
   }
+  // ── Phase 1: 건별 저장 (과거회귀 방지) — 화면 배열을 재사용하지 않고 그 1건만 서버 반영 ──
+  function refreshContracts(){
+    var fresh = dbGet('contracts', []).slice();
+    fresh.sort(function(a,b){ return (b.signDate||'').localeCompare(a.signDate||''); });
+    setContracts(fresh);
+  }
+  function lockGuard(c){
+    var ym = ((c && c.signDate) || '').slice(0,7);
+    if(ym && isContractLocked(ym)){ showToast('🔒 ' + ym + ' 잠겨있어 수정 불가'); return false; }
+    return true;
+  }
+  function persistOne(item){
+    if(!item || !item.id){ showToast('❌ 저장 실패 (id 없음)'); return false; }
+    if(!lockGuard(item)) return false;
+    var prev = dbGet('contracts', []).find(function(x){ return x.id === item.id; });
+    if(prev && !lockGuard(prev)) return false;  // 월 이동 시 기존 월 잠금도 검사
+    var ok = dbUpsert('contracts', item);
+    if(ok) refreshContracts();
+    else showToast('❌ 계약 저장 실패');
+    return ok;
+  }
+  function patchOne(id, fields){
+    var cur = dbGet('contracts', []).find(function(x){ return x.id === id; });
+    if(!cur){ showToast('❌ 대상 계약 없음 — 새로고침 후 다시 시도'); return false; }
+    if(!lockGuard(cur)) return false;
+    var ok = dbPatch('contracts', id, fields);
+    if(ok) refreshContracts();
+    else showToast('❌ 계약 상태 저장 실패');
+    return ok;
+  }
+  function removeOne(id){
+    var cur = dbGet('contracts', []).find(function(x){ return x.id === id; });
+    if(cur && !lockGuard(cur)) return false;
+    var ok = dbRemove('contracts', id);
+    if(ok) refreshContracts();
+    return ok;
+  }
   function openAdd(){ setModal({ mode:'add', cur:null }); }
   window._erpOpenNewContract = openAdd; // 모바일 📷 버튼 연결용
   function openEdit(cur){ setModal({ mode:'edit', cur:cur }); }
@@ -8820,10 +8851,10 @@ function ContractManagement(){
         transferredTo: null
       });
       delete newOne._manualContractNo;
-      persist(contracts.concat([newOne]));
+      if(!persistOne(newOne)) return;
       showToast('계약 등록: ' + newOne.contractNo);
     } else {
-      persist(contracts.map(function(x){ return x.id === form.id ? form : x; }));
+      if(!persistOne(form)) return;
       showToast('수정됨');
     }
     close();
@@ -8831,8 +8862,9 @@ function ContractManagement(){
   async function del(id){
     var c = contracts.find(function(x){return x.id===id;});
     if(!(await popConfirm('계약 ' + (c?c.contractNo:'') + ' 을 삭제하시겠습니까?'))) return;
-    var _ud=contracts.slice(); persist(contracts.filter(function(x){ return x.id !== id; }));
-    showToastUndo('🗑️ 계약 삭제됨', function(){persist(_ud);});
+    var _bak = dbGet('contracts', []).find(function(x){ return x.id === id; }) || c;
+    if(!removeOne(id)) return;
+    showToastUndo('🗑️ 계약 삭제됨', function(){ if(_bak) persistOne(_bak); });
   }
   function reseed(){ persist([]); showToast('초기화'); }
 
@@ -8845,15 +8877,12 @@ function ContractManagement(){
               : reason === '이관완료' ? 'transferred'
               : 'closed';
     var nowISO = (new Date()).toISOString();
-    persist(contracts.map(function(x){
-      if(x.id !== ct.id) return x;
-      return Object.assign({}, x, {
-        status: status,
-        closedAt: nowISO,
-        closedReason: reason,
-        transferredTo: ct.transferredTo || null
-      });
-    }));
+    patchOne(ct.id, {
+      status: status,
+      closedAt: nowISO,
+      closedReason: reason,
+      transferredTo: ct.transferredTo || null
+    });
   }
 
   // 취소 (status='cancelled')
@@ -8882,9 +8911,7 @@ function ContractManagement(){
     var ct = contracts.find(function(x){return x.id===id;});
     if(!ct) return;
     if(ct.status === newStatus) return;
-    persist(contracts.map(function(x){
-      return x.id === id ? Object.assign({}, x, { status:newStatus }) : x;
-    }));
+    if(!patchOne(id, { status:newStatus })) return;
     showToast(ct.companyName + ' → ' + contractStatusInfo(newStatus).label);
   }
 
