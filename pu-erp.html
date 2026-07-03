@@ -757,8 +757,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-02 날짜선택 달력 화면밖 잘림 수정 (body 포털 + 뷰포트 고정)';
-var BUILD_SEQ = 58;
+var ERP_BUILD = '2026-07-03 건별 쓰기 프리미티브 추가 (Phase 0 — 과거회귀 근본대책, 호출부 변경 없음)';
+var BUILD_SEQ = 59;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -3135,6 +3135,135 @@ function dbRemove(k, itemId){
     } catch(e){ window._erpErrLog && window._erpErrLog(e); }
   }
   return true;
+}
+
+// ============ 건별 쓰기 프리미티브 (Phase 0 — 과거회귀 근본대책) ============
+// 원칙: 고친 그 1건만 서버에 쓴다 (data/{k}/v/{id}). 다른 레코드는 건드리지 않아 덮어쓰기 자체가 불가능.
+// 화면 배열을 재사용하지 않고, 저장 시점에 dbGet 최신 로컬을 읽어 id로 병합한다.
+// 서버가 객체형(_fbObjForm[k]===true)일 때만 건별 경로 사용. 아니면 dbSet 폴백(급감차단 등 전체 보호 경유).
+var _REC_BADKEY = /[.#$\[\]\/]/;
+function _recStamp(item){
+  try {
+    item.updatedAt = Date.now();
+    var _sid = (typeof getSessionSid === 'function') ? getSessionSid() : null;
+    if(_sid) item.updatedBy = _sid;
+  } catch(_){}
+  return item;
+}
+function _recLocalSave(k, arr){
+  try { localStorage.setItem(KEY+k, JSON.stringify(arr)); }
+  catch(e){
+    window._erpErrLog && window._erpErrLog(e);
+    try { showToast('⚠ 저장 실패 — 변경사항이 저장되지 않았습니다'); } catch(_){}
+    return false;
+  }
+  _dbCache[k] = arr;
+  try { window.dispatchEvent(new CustomEvent('pureun-saved', { detail:{ key:k, at:Date.now() } })); } catch(_){}
+  scheduleAutoSnap();
+  return true;
+}
+function _recServerWrite(k, childPaths){ // childPaths: { '{id}' 또는 '{id}/{field}' : 값(null=삭제) }
+  var ts = Date.now();
+  var _pre = parseInt(localStorage.getItem(KEY+'_meta_'+k) || '0', 10);
+  try { localStorage.setItem(KEY+'_meta_'+k, String(ts)); } catch(_){}
+  var updates = {};
+  Object.keys(childPaths).forEach(function(p){ updates['data/'+k+'/v/'+p] = (childPaths[p] === undefined ? null : childPaths[p]); });
+  updates['data/'+k+'/u'] = ts;
+  fbDb.ref().update(updates).catch(function(e){
+    try { localStorage.setItem(KEY+'_meta_'+k, String(_pre)); } catch(_){}
+    fbSyncFail(e);
+  });
+}
+function _recCanDirect(k){
+  return !!(fbDb && fbShouldSync(k) && _fbSynced && _fbObjForm[k] === true);
+}
+// 1건 추가/수정. 반환 true=저장됨.
+function dbUpsert(k, item){
+  if(!item || typeof item.id !== 'string' || !item.id){ console.warn('[dbUpsert] '+k+': id 없는 항목 거부'); return false; }
+  if(_REC_BADKEY.test(item.id)){ console.warn('[dbUpsert] '+k+'/'+item.id+': id 금지문자 — dbSet 폴백'); }
+  _recStamp(item);
+  var arr = dbGet(k, []);
+  if(!Array.isArray(arr)){ console.warn('[dbUpsert] '+k+': 배열 아님 — 거부'); return false; }
+  var found = false;
+  var next = arr.map(function(x){ if(x && x.id === item.id){ found = true; return item; } return x; });
+  if(!found) next = next.concat([item]);
+  if(_recCanDirect(k) && !_REC_BADKEY.test(item.id)){
+    if(!_recLocalSave(k, next)) return false;
+    var cp = {}; cp[item.id] = item;
+    _recServerWrite(k, cp);
+    return true;
+  }
+  return dbSet(k, next); // 폴백: 전체 보호 경유 (동기화 전 보류 포함)
+}
+// 1건의 특정 필드만 수정 (상태변경 등). 반환 true=저장됨, false=대상 없음/실패.
+function dbPatch(k, id, fields){
+  if(typeof id !== 'string' || !id || !fields){ console.warn('[dbPatch] '+k+': 인자 오류'); return false; }
+  var arr = dbGet(k, []);
+  if(!Array.isArray(arr)) return false;
+  var cur = null;
+  for(var i=0; i<arr.length; i++){ if(arr[i] && arr[i].id === id){ cur = arr[i]; break; } }
+  if(!cur){ console.warn('[dbPatch] '+k+'/'+id+': 대상 없음'); return false; }
+  var merged = _recStamp(Object.assign({}, cur, fields));
+  var next = arr.map(function(x){ return (x && x.id === id) ? merged : x; });
+  var _fieldsBad = _REC_BADKEY.test(id);
+  if(!_fieldsBad){ Object.keys(fields).forEach(function(f){ if(_REC_BADKEY.test(f)) _fieldsBad = true; }); }
+  if(_recCanDirect(k) && !_fieldsBad){
+    if(!_recLocalSave(k, next)) return false;
+    var cp = {};
+    Object.keys(fields).forEach(function(f){ cp[id+'/'+f] = (fields[f] === undefined ? null : fields[f]); });
+    cp[id+'/updatedAt'] = merged.updatedAt;
+    if(merged.updatedBy) cp[id+'/updatedBy'] = merged.updatedBy;
+    _recServerWrite(k, cp);
+    return true;
+  }
+  return dbSet(k, next);
+}
+// 1건 삭제. 반환 true=처리됨.
+function dbRemove(k, id){
+  if(typeof id !== 'string' || !id){ console.warn('[dbRemove] '+k+': id 오류'); return false; }
+  var arr = dbGet(k, []);
+  if(!Array.isArray(arr)) return false;
+  var next = arr.filter(function(x){ return !(x && x.id === id); });
+  if(_recCanDirect(k) && !_REC_BADKEY.test(id)){
+    if(!_recLocalSave(k, next)) return false;
+    var cp = {}; cp[id] = null;
+    _recServerWrite(k, cp);
+    return true;
+  }
+  return dbSet(k, next);
+}
+// ── Phase 0 셀프테스트 (F12 콘솔: erpTestRecordWrite()) ──
+function erpTestRecordWrite(){
+  var k = 'rec_write_test';
+  var log = function(ok, msg){ console.log((ok?'✅ ':'❌ ')+msg); return ok; };
+  _fbObjForm[k] = true; // 건별 경로 강제 (신규 키)
+  var pass = true;
+  pass = log(dbUpsert(k, { id:'t1', a:1 }) && (dbGet(k,[]).length===1) && dbGet(k,[])[0].a===1, 'upsert 신규') && pass;
+  pass = log(dbUpsert(k, { id:'t1', a:2 }) && dbGet(k,[])[0].a===2 && dbGet(k,[]).length===1, 'upsert 수정(중복 없음)') && pass;
+  pass = log(dbPatch(k, 't1', { b:'x' }) && dbGet(k,[])[0].b==='x' && dbGet(k,[])[0].a===2, 'patch 필드 병합') && pass;
+  pass = log(dbGet(k,[])[0].updatedAt > 0, 'updatedAt 스탬프') && pass;
+  pass = log(dbRemove(k, 't1') && dbGet(k,[]).length===0, 'remove') && pass;
+  if(fbDb){
+    fbDb.ref('data/'+k).once('value').then(function(s){
+      var v = s.val();
+      console.log((v && v.v && v.v.t1 === undefined ? '✅' : '❌') + ' 서버 최종상태 (t1 삭제됨):', JSON.stringify(v));
+      fbDb.ref('data/'+k).remove().then(function(){ console.log('🧹 테스트 키 서버 정리 완료'); });
+    });
+  }
+  try { localStorage.removeItem(KEY+k); localStorage.removeItem(KEY+'_meta_'+k); delete _dbCache[k]; delete _fbObjForm[k]; } catch(_){}
+  console.log(pass ? '✅ 로컬 테스트 전체 통과 (서버 결과는 위 비동기 로그 확인)' : '❌ 실패 항목 있음');
+  return pass;
+}
+// ── Phase 1 사전진단 (F12 콘솔: erpCheckObjForm()) — 핵심 키의 서버 저장형식 확인 ──
+function erpCheckObjForm(){
+  if(!fbDb){ console.log('Firebase 미연결'); return; }
+  ['contracts','companies','cases','consultings','funds','other_projects','finance_income','finance_expense','payroll_monthly','attendance_records'].forEach(function(k){
+    fbDb.ref('data/'+k+'/v').once('value').then(function(s){
+      var v = s.val();
+      var form = (v === null) ? '(없음)' : Array.isArray(v) ? '배열형 ⚠ (건별 경로 불가 — 폴백 사용됨)' : '객체형 ✅ (건별 경로 가능)';
+      console.log(k + ': ' + form + (v && !Array.isArray(v) ? ' · ' + Object.keys(v).length + '건' : Array.isArray(v) ? ' · ' + v.length + '건' : ''));
+    });
+  });
 }
 
 // ============ 보안·무결성 유틸리티 ============
