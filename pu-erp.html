@@ -757,8 +757,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-03 Phase 2(입금·출금 건별저장) + 알림 ✓확인 숨김 기능';
-var BUILD_SEQ = 64;
+var ERP_BUILD = '2026-07-03 건별 쓰기 Phase 3 — 업체·사건·컨설팅·기금·기타 1건 단위 저장 + 검증기(erpVerifyPhase3)';
+var BUILD_SEQ = 65;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -3431,6 +3431,62 @@ async function erpVerifyPhase2(){
 }
 window.erpVerifyPhase2 = erpVerifyPhase2;
 
+// ── Phase 3 자동 검증기 (F12 콘솔: erpVerifyPhase3()) — 업체·사건·컨설팅·기금·기타 건별 전송 실측 ──
+async function erpVerifyPhase3(){
+  if(!fbDb){ console.log('❌ Firebase 미연결 — 로그인 상태에서 실행하세요'); return false; }
+  var results = [];
+  var ck = function(ok, msg){ results.push(ok); console.log((ok?'✅ ':'❌ ') + msg); return ok; };
+  var origRefFn = fbDb.ref.bind(fbDb);
+  var captured = [];
+  fbDb.ref = function(p){
+    var r = origRefFn(p);
+    if(p === undefined || p === null || p === ''){
+      var origUpdate = r.update.bind(r);
+      r.update = function(u){ captured.push(Object.keys(u)); return origUpdate(u); };
+    }
+    return r;
+  };
+  async function runKey(k, prefix){
+    if(_fbObjForm[k] !== true){ ck(false, k+': 서버 객체형 아님'); return; }
+    var tid = prefix + '-vtest-' + Date.now().toString(36);
+    var before = dbGet(k, []).length;
+    try {
+      ck(dbUpsert(k, { id:tid, companyName:'(자동검증용 임시)', no:'검증-000', status:'pending' }), k+': 테스트 건 생성');
+      captured = [];
+      ck(dbPatch(k, tid, { status:'closed', note:'검증patch' }), k+': patch 실행');
+      var paths = captured[0] || [];
+      ck(paths.length > 0 && paths.every(function(p){ return p === 'data/'+k+'/u' || p.indexOf('data/'+k+'/v/'+tid) === 0; }), k+': 그 1건 경로만 전송 ('+paths.length+'개) — 다른 건 불가침');
+      ck(!paths.some(function(p){ return p === 'data/'+k+'/v'; }), k+': 통째 교체 없음');
+      await new Promise(function(res){ setTimeout(res, 800); });
+      var sv = (await origRefFn('data/'+k+'/v/'+tid).once('value')).val();
+      ck(!!sv && sv.status === 'closed', k+': 서버 반영 확인');
+      ck(dbRemove(k, tid), k+': 테스트 건 삭제');
+      await new Promise(function(res){ setTimeout(res, 800); });
+      var sv2 = (await origRefFn('data/'+k+'/v/'+tid).once('value')).val();
+      ck(sv2 === null && dbGet(k, []).length === before, k+': 서버 삭제·건수 원상복구 ('+before+'건)');
+    } finally {
+      try { if(dbGet(k, []).some(function(x){return x && x.id===tid;})) dbRemove(k, tid); } catch(_){}
+    }
+  }
+  try {
+    await runKey('companies', 'co');
+    await runKey('cases', 'c');
+    await runKey('consultings', 'cs');
+    await runKey('funds', 'fd');
+    await runKey('other_projects', 'op');
+    var pass = results.every(function(x){ return x; });
+    console.log(pass ? '🎉 Phase 3 자동검증 전체 통과 — 업체·사건·컨설팅·기금·기타 저장은 1건 단위로만 서버에 나갑니다'
+                     : '⚠ 실패 항목 있음 — 위 ❌ 로그를 캡처해서 공유해주세요');
+    return pass;
+  } catch(e){
+    console.error('❌ 검증 중 오류:', e && e.message);
+    return false;
+  } finally {
+    fbDb.ref = origRefFn;
+  }
+}
+window.erpVerifyPhase3 = erpVerifyPhase3;
+
 // 콘솔 접근용 노출 (앱 전체가 IIFE 안이라 window 부착 필요 — erpAllowBulk와 동일 방식)
 window.erpTestRecordWrite = erpTestRecordWrite;
 window.erpCheckObjForm = erpCheckObjForm;
@@ -3643,8 +3699,7 @@ var CompanyRef = {
       primaryContactEmail:item.primaryContactEmail||'', sourceContractNo:item.sourceContractNo||'',
       createdAt:(new Date()).toISOString()
     };
-    var cos = dbGet('companies', []) || [];
-    cos.push(rec); dbSet('companies', cos);
+    dbUpsert('companies', rec);
     item.companyId = rec.id;
     try { showToast('🏢 업체 자동 등록: ' + rec.name + ' → 업체관리 [컨설팅] 탭'); } catch(_e){}
     return item;
@@ -9701,6 +9756,7 @@ function reorderConsultingNos(){
     groups[key].push(item);
   });
   var changed = 0;
+  var changedItems = [];
   Object.keys(groups).forEach(function(key){
     var items = groups[key];
     // startDate 빠른 순으로 정렬 (없으면 contractDate→createdAt fallback)
@@ -9712,10 +9768,10 @@ function reorderConsultingNos(){
     });
     items.forEach(function(item, idx){
       var newNo = key + '-' + ('00'+(idx+1)).slice(-3);
-      if(item.no !== newNo){ item.no = newNo; changed++; }
+      if(item.no !== newNo){ item.no = newNo; changed++; changedItems.push(item); }
     });
   });
-  if(changed > 0) dbSet('consultings', arr);
+  if(changed > 0) dbUpsertMany('consultings', changedItems);
   return changed;
 }
 
@@ -11044,10 +11100,15 @@ function CompanyManagement(){
     var t = types.find(function(x){return x.code===code;});
     return t ? t.name : code;
   }
-  function persist(arr){
-    arr.sort(function(a,b){ return (b.createdAt||'').localeCompare(a.createdAt||''); });
-    setCompanies(arr); dbSet('companies', arr);
+  // ── Phase 3: 건별 저장 (과거회귀 방지) — 그 건만 서버 반영 ──
+  function refreshCompanies(){
+    var fresh = dbGet('companies', []).slice();
+    fresh.sort(function(a,b){ return (b.createdAt||'').localeCompare(a.createdAt||''); });
+    setCompanies(fresh);
   }
+  function coUpsert(item){ if(!item || !item.id) return false; var ok = dbUpsert('companies', item); if(ok) refreshCompanies(); else showToast('❌ 저장 실패'); return ok; }
+  function coPatch(id, fields){ var ok = dbPatch('companies', id, fields); if(ok) refreshCompanies(); else showToast('❌ 저장 실패'); return ok; }
+  function coUpsertMany(list){ if(!list || !list.length) return true; var ok = dbUpsertMany('companies', list); if(ok) refreshCompanies(); else showToast('❌ 일괄 저장 실패'); return ok; }
 
   // 계약만료 30일 이내?
   function daysUntilEnd(co){
@@ -11106,15 +11167,11 @@ function CompanyManagement(){
         }
       }
     }
-    var changedCo = null;
-    var next = companies.map(function(co){
-      if(co.id !== editing.id) return co;
-      var patch = {}; patch[editing.field] = nextVal;
-      var u = Object.assign({}, co, patch);
-      changedCo = u;
-      return u;
-    });
-    persist(next);
+    var _coF = dbGet('companies', []).find(function(co){ return co.id === editing.id; });
+    if(!_coF){ showToast('❌ 대상 업체 없음 — 새로고침 후 다시 시도'); cancelEdit(); return; }
+    var _p = {}; _p[editing.field] = nextVal;
+    if(!coPatch(editing.id, _p)){ cancelEdit(); return; }
+    var changedCo = Object.assign({}, _coF, _p);
     // 계약관리 동기화 (업체 정보 변경 시 같은 사업자번호의 계약 데이터에도 반영)
     syncToContracts(changedCo, editing.field, nextVal);
     cancelEdit();
@@ -11233,16 +11290,13 @@ function CompanyManagement(){
     if(pendingForCo.length > 0){
       doCleanup = await popConfirm('"' + closeModal.name + '" 업체의 미입금 자문료 ' + pendingForCo.length + '건이 있습니다.\n\n함께 정리(휴지통 이동)하시겠습니까?\n\n→ 확인: 종료 + 미입금 자동 정리\n→ 취소: 종료만 진행 (미입금은 입금관리에 남음)');
     }
-    var next = companies.map(function(x){
-      return x.id === closeModal.id ? Object.assign({}, x, {
-        status:'closed',
-        closedAt:(new Date()).toISOString(),
-        closedDate: closeModal.closedDate,
-        closedReason: closeModal.closedReason,
-        closedReasonDetail: closeModal.closedReasonDetail
-      }) : x;
+    coPatch(closeModal.id, {
+      status:'closed',
+      closedAt:(new Date()).toISOString(),
+      closedDate: closeModal.closedDate,
+      closedReason: closeModal.closedReason,
+      closedReasonDetail: closeModal.closedReasonDetail
     });
-    persist(next);
     // closed_archive에도 기록 (종료관리 표시용)
     var arch = dbGet('closed_archive', []);
     arch.unshift({
@@ -11288,13 +11342,7 @@ function CompanyManagement(){
     var co = companies.find(function(x){return x.id===id;});
     if(!co) return;
     if(!(await popConfirm('"' + co.name + '" 업체를 활성으로 복원하시겠습니까?'))) return;
-    var next = companies.map(function(x){
-      if(x.id !== id) return x;
-      var r = Object.assign({}, x, { status:'active' });
-      delete r.closedAt;
-      return r;
-    });
-    persist(next);
+    coPatch(id, { status:'active', closedAt:null });
     showToast('복원됨');
   }
   // 수정 모달 열기
@@ -11466,8 +11514,8 @@ function CompanyManagement(){
           e.stopPropagation();
           var coName = co.name||co.companyName||'이 업체';
           if(!(await popConfirm('「'+coName+'」 업체의 주담당 「'+mgrName+'」 을(를) 삭제할까요?'))) return;
-          var next = companies.map(function(x){ return x.id===co.id ? Object.assign({},x,{managerMain:''}) : x; });
-          persist(next); showToast('🗑 삭제됨 · 「'+coName+'」 주담당 「'+mgrName+'」 해제', 3000);
+          coPatch(co.id, { managerMain:'' });
+          showToast('🗑 삭제됨 · 「'+coName+'」 주담당 「'+mgrName+'」 해제', 3000);
         },
         style:{ background:'none', border:'none', color:'#94a3b8', cursor:'pointer', fontSize:'11px', padding:'0 2px', lineHeight:1, flexShrink:0 }
       }, '✕')
@@ -11560,7 +11608,9 @@ function CompanyManagement(){
               if(d === null) return;
               d = d.trim();
               if(d !== '' && ['1','2','3','4','5'].indexOf(d) < 0){ showToast('1~5 사이 숫자를 입력하세요'); return; }
-              persist(companies.map(function(c){ return selIds.has(c.id) ? Object.assign({}, c, { difficulty: d }) : c; }));
+              var _chg = dbGet('companies', []).filter(function(c){ return selIds.has(c.id); })
+                .map(function(c){ return Object.assign({}, c, { difficulty: d }); });
+              coUpsertMany(_chg);
               showToast('⭐ ' + selIds.size + '개 업체 난이도 ' + (d || '해제') + ' 적용');
               clearSel();
             },
@@ -11879,8 +11929,7 @@ function CompanyManagement(){
                   var subs = (co.managerSubs||[]).slice();
                   var i = subs.indexOf(sid);
                   if(i >= 0) subs.splice(i, 1); else subs.push(sid);
-                  var next = companies.map(function(x){ return x.id === co.id ? Object.assign({}, x, { managerSubs: subs }) : x; });
-                  persist(next);
+                  coPatch(co.id, { managerSubs: subs });
                 }
                 // 사무대행 - 간소 행
                 if(statusTab === 'suboffice'){
@@ -12027,8 +12076,7 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                       h('div', { style:{ display:'flex', alignItems:'center', gap:'3px' } },
                         h('input', { type:'checkbox', checked:!!(co.isCMS),
                           onChange:function(e){
-                            var next=companies.map(function(x){ return x.id===co.id ? Object.assign({},x,{isCMS:e.target.checked}) : x; });
-                            setCompanies(next); dbSet('companies',next);
+                            coPatch(co.id, { isCMS: e.target.checked });
                             showToast(co.name+' CMS '+(e.target.checked?'등록':'해제'));
                           },
                           style:{ width:'13px', height:'13px', accentColor:'#2563eb', cursor:'pointer' } }),
@@ -12083,8 +12131,7 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
     editModal && h(CompanyEditModal, {
       cur: editModal,
       onSave: function(form){
-        var next = companies.map(function(x){ return x.id === form.id ? form : x; });
-        persist(next);
+        coUpsert(form);
         setEditModal(null);
         // 계약관리 일괄 동기화 (회사정보 필드 모두)
         var fields = ['name','bizNo','ceo','ceo2','zipcode','address','phone','fax','email',
@@ -13339,6 +13386,15 @@ function CaseManagement(props){
     arr.sort(function(a,b){ return (b.receiveDate||'').localeCompare(a.receiveDate||''); });
     setCases(arr); dbSet('cases', arr);
   }
+  // ── Phase 3: 건별 저장 (과거회귀 방지) — 그 건만 서버 반영 ──
+  function refreshCases(){
+    var fresh = dbGet('cases', []).slice();
+    fresh.sort(function(a,b){ return (b.receiveDate||'').localeCompare(a.receiveDate||''); });
+    setCases(fresh);
+  }
+  function caseUpsert(item){ if(!item || !item.id) return false; var ok = dbUpsert('cases', item); if(ok) refreshCases(); else showToast('❌ 저장 실패'); return ok; }
+  function casePatch(id, fields){ var ok = dbPatch('cases', id, fields); if(ok) refreshCases(); else showToast('❌ 저장 실패'); return ok; }
+  function caseUpsertMany(list){ if(!list || !list.length) return true; var ok = dbUpsertMany('cases', list); if(ok) refreshCases(); else showToast('❌ 일괄 저장 실패'); return ok; }
   function confirmDropAdd(){
     var rows = dropPreview || [];
     if(rows.length === 0){ setDropPreview(null); return; }
@@ -13364,7 +13420,7 @@ function CaseManagement(props){
         note: (r[14]||'').replace(/^\s+|\s+$/g,'')
       };
     });
-    persist(cases.concat(added));
+    caseUpsertMany(added);
     setDropPreview(null);
     showToast('✅ ' + added.length + '건 사건 추가됨');
   }
@@ -13388,10 +13444,10 @@ function CaseManagement(props){
       });
       // #C 텍스트→ID 자동 연결: companyName으로 업체 찾아 companyId 부여
       CompanyRef.attachId(newCase);
-      persist(cases.concat([newCase]));
+      if(!caseUpsert(newCase)) return;
       showToast('사건 등록: ' + newCase.caseNo);
     } else {
-      persist(cases.map(function(x){ return x.id === form.id ? form : x; }));
+      if(!caseUpsert(form)) return;
       showToast('수정됨');
     }
     close();
@@ -13439,7 +13495,7 @@ function CaseManagement(props){
     if(!m){ showToast('번호 패턴이 아님'); return; }
     var newNo = m[1] + '-' + String(targetNum).padStart(3,'0');
     if(!(await popConfirm('번호 변경:\n\n' + oldNo + ' → ' + newNo + '\n\n기존 번호('+oldNo+') 자리는 결번이 됩니다.\n진행하시겠습니까?'))) return;
-    persist(cases.map(function(x){ return x.id===caseId ? Object.assign({},x,{caseNo:newNo}) : x; }));
+    casePatch(caseId, { caseNo:newNo });
     showToast('✓ '+oldNo+' → '+newNo+' 변경됨');
   }
   async function reseqCaseSeries(series, seriesItems){
@@ -13460,10 +13516,9 @@ function CaseManagement(props){
     msg += '\n진행하시겠습니까?\n(되돌리려면 개별 [이동] 버튼 사용)';
     if(!(await popConfirm(msg))) return;
     var changeMap = {}; changes.forEach(function(c){ changeMap[c.id] = c.newNo; });
-    persist(cases.map(function(x){
-      if(changeMap[x.id]) return Object.assign({}, x, { caseNo:changeMap[x.id] });
-      return x;
-    }));
+    var changedCases = dbGet('cases', []).filter(function(x){ return changeMap[x.id]; })
+      .map(function(x){ return Object.assign({}, x, { caseNo:changeMap[x.id] }); });
+    caseUpsertMany(changedCases);
     showToast('✓ '+series+' 시리즈 '+changes.length+'건 재정렬 완료');
   }
 
@@ -13624,21 +13679,16 @@ function CaseManagement(props){
     var supply = Math.round(paidIncl * 10 / 11);  // 공급가(매출·성과 기준)
     var vat = paidIncl - supply;
 
-    var snapCases = cases.slice();
-    var snapIncome = dbGet('finance_income', []);
+    var _cFresh = dbGet('cases', []).find(function(x){ return x.id === caseId; }) || c;
+    var _wBefore = Object.assign({}, ((_cFresh.workers||[])[wIdx]) || {});
     try {
       var finId = 'fi-' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
-      var nextCases = cases.map(function(x){
-        if(x.id !== caseId) return x;
-        var nws = (x.workers||[]).slice();
-        nws[wIdx] = Object.assign({}, nws[wIdx], { paidConfirmed:true, paidDate:payDate, paidFinId:finId });
-        return Object.assign({}, x, { workers: nws });
-      });
-      persist(nextCases);
+      var nws = (_cFresh.workers||[]).slice();
+      nws[wIdx] = Object.assign({}, nws[wIdx], { paidConfirmed:true, paidDate:payDate, paidFinId:finId });
+      casePatch(caseId, { workers: nws });
 
       var perfShares = calcPerfShares(supply, c.managerMain, c.managerSubs, 'case', 100, { paidDate: payDate });
-      var finIncomes = dbGet('finance_income', []);
-      finIncomes.unshift({
+      dbUpsert('finance_income', {
         id: finId, date: payDate, amount: supply,
         category: 'inc-case-fee', sourceKind: 'case', sourceId: caseId, sourceSubKind: 'worker',
         workerId: w.id || ('w'+wIdx), workerName: w.name || ('근로자'+(wIdx+1)),
@@ -13651,15 +13701,14 @@ function CaseManagement(props){
         isPersonalIncome: false, perfExclude: perfShares.length === 0,
         createdAt: (new Date()).toISOString()
       });
-      dbSet('finance_income', finIncomes);
 
-      var updated = nextCases.find(function(x){return x.id===caseId;});
+      var updated = dbGet('cases', []).find(function(x){return x.id===caseId;});
       if(updated) setDetailModal(updated);  // 상세 모달 즉시 새로고침
       showToast('✅ ' + (w.name||'근로자') + ' 입금확정 — 공급가 ' + supply.toLocaleString() + '원 성과반영');
     } catch(e){
-      try { persist(snapCases); } catch(_){}
-      try { dbSet('finance_income', snapIncome); } catch(_){}
-      showToast('❌ 입금확정 실패 — 변경 사항이 복원되었습니다');
+      try { var _nwsR = (_cFresh.workers||[]).slice(); _nwsR[wIdx] = _wBefore; casePatch(caseId, { workers: _nwsR }); } catch(_){}
+      try { if(typeof finId !== 'undefined' && finId) dbRemove('finance_income', finId); } catch(_){}
+      showToast('❌ 입금확정 실패 — 해당 건이 원복되었습니다');
       console.error('[Transaction:confirmWorkerFee]', e && e.message);
     }
   }
@@ -13695,20 +13744,13 @@ function CaseManagement(props){
       createdAt: (new Date()).toISOString(), _restored: true
     };
 
-    // incomes 배열도 동기화
-    var caseSnap = dbGet('cases', []);
-    var nextCases = caseSnap.map(function(x){
-      if(x.id !== c.id) return x;
-      var alreadyIncome = (x.incomes||[]).some(function(i){return i.kind===kindLabel;});
-      if(alreadyIncome) return x;
-      return Object.assign({}, x, { incomes:(x.incomes||[]).concat([{date:paidDate,amount:amount,kind:kindLabel,confirmed:true}]) });
-    });
-
-    var fiArr = dbGet('finance_income', []);
-    fiArr.unshift(newFi);
-    dbSet('finance_income', fiArr);
-    dbSet('cases', nextCases);
-    setCases(nextCases);
+    // incomes 배열도 동기화 (그 사건 1건만)
+    var _cf = dbGet('cases', []).find(function(x){ return x.id === c.id; });
+    if(_cf && !(_cf.incomes||[]).some(function(i){return i.kind===kindLabel;})){
+      casePatch(c.id, { incomes:(_cf.incomes||[]).concat([{date:paidDate,amount:amount,kind:kindLabel,confirmed:true}]) });
+    }
+    dbUpsert('finance_income', newFi);
+    refreshCases();
     showToast('✅ '+kindLabel+' 입금 데이터 복원 완료 — 성과관리에서 확인하세요');
   }
 
@@ -13794,32 +13836,19 @@ function CaseManagement(props){
 
   // 모달에서 확정 시 호출 — 실제 저장 (Transaction 보강: try-catch + LS 스냅샷 롤백)
   function applyCloseCase(caseId, result, feeStatus, reason, closeDate){
-    var snap = dbGet('cases', []);  // 롤백용 스냅샷
-    try {
-      var today = todayYMD();
-      var useDate = closeDate || today;
-      var nextCases = cases.map(function(x){
-        if(x.id === caseId){
-          return Object.assign({}, x, {
-            status: 'closed',
-            closeDate: useDate,
-            permanentArchived: true,
-            permanentArchivedAt: today,
-            caseResult: result,
-            successFeeStatus: feeStatus,
-            closeReason: reason
-          });
-        }
-        return x;
-      });
-      persist(nextCases);
-      setCloseModal(null);
-      showToast('✓ 사건 종료 처리됨');
-    } catch(e){
-      try { dbSet('cases', snap); setCases(snap); } catch(_){}
-      showToast('❌ 종료 처리 실패 — 변경 사항이 복원되었습니다');
-      console.error('[Transaction:closeCase]', e && e.message);
-    }
+    var today = todayYMD();
+    var useDate = closeDate || today;
+    if(!casePatch(caseId, {
+      status: 'closed',
+      closeDate: useDate,
+      permanentArchived: true,
+      permanentArchivedAt: today,
+      caseResult: result,
+      successFeeStatus: feeStatus,
+      closeReason: reason
+    })) return;
+    setCloseModal(null);
+    showToast('✓ 사건 종료 처리됨');
   }
 
   // 종결 재개 — 진행중 복원 + 종결 필드 초기화 (종료관리 unarchiveCase와 동일 기준)
@@ -13827,23 +13856,12 @@ function CaseManagement(props){
     var c = cases.find(function(x){return x.id===caseId;});
     if(!c) return;
     if(!(await popConfirm('종결을 취소하고 진행중으로 되돌리시겠습니까?\n\n→ 결과·성공보수 처리·종료사유 초기화\n→ 사건관리 진행중으로 복귀'))) return;
-    var snap = dbGet('cases', []);
-    try {
-      var nextCases = cases.map(function(x){
-        if(x.id !== caseId) return x;
-        return Object.assign({}, x, {
-          status:'progress', closeDate:'', closedDate:'',
-          caseResult:'', successFeeStatus:'', closeReason:'',
-          permanentArchived:false, permanentArchivedAt:''
-        });
-      });
-      persist(nextCases);
-      showToast('✓ 사건 재개됨 (진행중)');
-    } catch(e){
-      try { dbSet('cases', snap); setCases(snap); } catch(_){}
-      showToast('❌ 재개 실패 — 변경 사항이 복원되었습니다');
-      console.error('[Transaction:reopenCase]', e && e.message);
-    }
+    if(!casePatch(caseId, {
+      status:'progress', closeDate:'', closedDate:'',
+      caseResult:'', successFeeStatus:'', closeReason:'',
+      permanentArchived:false, permanentArchivedAt:''
+    })) return;
+    showToast('✓ 사건 재개됨 (진행중)');
   }
 
   var filtered = cases.filter(function(c){
@@ -14311,8 +14329,7 @@ function CaseManagement(props){
                         onChange: function(e){
                           e.stopPropagation();
                           var newStatus = e.target.value;
-                          var updated = cases.map(function(x){ return x.id===c.id ? Object.assign({},x,{status:newStatus}) : x; });
-                          dbSet('cases', updated); setCases(updated);
+                          casePatch(c.id, { status:newStatus });
                           showToast('상태 변경: '+ ({open:'진행중',progress:'진행중',pending:'대기',review:'검토중'}[newStatus]||newStatus));
                         },
                         style:{ fontSize:'10.5px', padding:'2px 5px', border:'1px solid #e2e8f0', borderRadius:'4px',
@@ -21710,12 +21727,7 @@ function ReconcileCheck(){
   function applyFix(issue){
     if(!issue.fix){ showToast('이 항목은 자동 수정 미지원'); return; }
     if(issue.fix.type === 'unlink_company'){
-      var cs = dbGet('cases', []) || [];
-      var next = cs.map(function(c){
-        if(c.id === issue.fix.caseId) return Object.assign({}, c, { companyId:'' });
-        return c;
-      });
-      dbSet('cases', next);
+      dbPatch('cases', issue.fix.caseId, { companyId:'' });
       showToast('✓ companyId 연결 해제됨 — 사건 정보 수정에서 재연결 필요');
       // 검사 재실행
       runCheck();
@@ -31071,22 +31083,14 @@ function moveCalendarEvent(eventType, eventId, newDate){
   }
   // 사건 마감 / 컨설팅 마감 - 신중하게 드래그 가능
   if(eventType === 'case'){
-    var cs = dbGet('cases', []);
-    var ch2 = false;
-    cs = cs.map(function(c){
-      if(c.id === eventId){ ch2 = true; return Object.assign({}, c, {dueDate:newDate}); }
-      return c;
-    });
-    if(ch2){ dbSet('cases', cs); return true; }
+    if(dbGet('cases', []).some(function(c){ return c.id === eventId; })){
+      dbPatch('cases', eventId, { dueDate:newDate }); return true;
+    }
   }
   if(eventType === 'cons'){
-    var cn = dbGet('consultings', []);
-    var ch3 = false;
-    cn = cn.map(function(c){
-      if(c.id === eventId){ ch3 = true; return Object.assign({}, c, {dueDate:newDate}); }
-      return c;
-    });
-    if(ch3){ dbSet('consultings', cn); return true; }
+    if(dbGet('consultings', []).some(function(c){ return c.id === eventId; })){
+      dbPatch('consultings', eventId, { dueDate:newDate }); return true;
+    }
   }
   return false;
 }
@@ -38578,11 +38582,7 @@ function ProjectManagementShared(props){
     if(!m){ showToast('번호 패턴이 아님'); return; }
     var newNo = m[1] + '-' + String(targetNum).padStart(3,'0');
     if(!(await popConfirm('번호 변경:\n\n' + oldNo + ' → ' + newNo + '\n\n기존 번호('+oldNo+') 자리는 결번이 됩니다.\n진행하시겠습니까?'))) return;
-    var next = items.map(function(x){
-      if(x.id === itemId) return Object.assign({}, x, { no:newNo });
-      return x;
-    });
-    setItems(next); dbSet(props.storageKey, next);
+    itemPatch(itemId, { no:newNo });
     showToast('✓ '+oldNo+' → '+newNo+' 변경됨');
   }
 
@@ -38606,11 +38606,9 @@ function ProjectManagementShared(props){
     msg += '\n진행하시겠습니까?\n(되돌리려면 개별 [이동] 버튼 사용)';
     if(!(await popConfirm(msg))) return;
     var changeMap = {}; changes.forEach(function(c){ changeMap[c.id] = c.newNo; });
-    var next = items.map(function(x){
-      if(changeMap[x.id]) return Object.assign({}, x, { no:changeMap[x.id] });
-      return x;
-    });
-    setItems(next); dbSet(props.storageKey, next);
+    var changedItems = dbGet(props.storageKey, []).filter(function(x){ return changeMap[x.id]; })
+      .map(function(x){ return Object.assign({}, x, { no:changeMap[x.id] }); });
+    itemUpsertMany(changedItems);
     showToast('✓ '+series+' 시리즈 '+changes.length+'건 재정렬 완료');
   }
   // 컬럼 표시/숨기기 (localStorage 저장)
@@ -38646,14 +38644,20 @@ function ProjectManagementShared(props){
   var types = dbGet(props.typesKey, props.seedTypes);
   function userName(sid){ var u = users.find(function(x){return x.sid===sid;}); return u ? u.name : sid; }
   function typeName(code){ var t = types.find(function(x){return x.code===code;}); return t ? t.name : code; }
-  function persist(arr){
-    arr.sort(function(a,b){
+  // ── Phase 3: 건별 저장 (과거회귀 방지) — 그 건만 서버 반영 ──
+  function refreshItems(){
+    var fresh = dbGet(props.storageKey, []).slice();
+    fresh.sort(function(a,b){
       var ad = a.startDate || a.estDate || '';
       var bd = b.startDate || b.estDate || '';
       return bd.localeCompare(ad);
     });
-    setItems(arr); dbSet(props.storageKey, arr);
+    setItems(fresh);
   }
+  function itemUpsert(item){ if(!item || !item.id) return false; var ok = dbUpsert(props.storageKey, item); if(ok) refreshItems(); else showToast('❌ 저장 실패'); return ok; }
+  function itemPatch(id, fields){ var ok = dbPatch(props.storageKey, id, fields); if(ok) refreshItems(); else showToast('❌ 저장 실패'); return ok; }
+  function itemUpsertMany(list){ if(!list || !list.length) return true; var ok = dbUpsertMany(props.storageKey, list); if(ok) refreshItems(); else showToast('❌ 일괄 저장 실패'); return ok; }
+  function itemRemove(id){ var ok = dbRemove(props.storageKey, id); if(ok) refreshItems(); return ok; }
   function closeItem(id){
     var it = items.find(function(x){return x.id===id;});
     if(!it) return;
@@ -38662,9 +38666,7 @@ function ProjectManagementShared(props){
     // 기존 종료 내용 있으면 그대로 종료 처리, 없으면 모달 열기
     if(it.closedReason && it.endDate){
       var today = todayYMD();
-      persist(items.map(function(x){
-        return x.id === id ? Object.assign({}, x, { status:'closed', closedAt:today, permanentArchived:true, permanentArchivedAt:today }) : x;
-      }));
+      itemPatch(id, { status:'closed', closedAt:today, permanentArchived:true, permanentArchivedAt:today });
       showToast('종료 처리됨');
       return;
     }
@@ -38682,30 +38684,29 @@ function ProjectManagementShared(props){
     if(!closeModal.closedReason){ showToast('종료 사유를 선택하세요'); return; }
     if(!closeModal.endDate){ showToast('종료일을 입력하세요'); return; }
     var today = todayYMD();
-    persist(items.map(function(x){
-      return x.id === closeModal.id ? Object.assign({}, x, {
-        status:'closed',
-        closedAt:today,
-        endDate: closeModal.endDate,
-        closedReason: closeModal.closedReason,
-        closedReasonDetail: closeModal.closedReasonDetail || '',
-        permanentArchived:true,
-        permanentArchivedAt:today
-      }) : x;
-    }));
+    itemPatch(closeModal.id, {
+      status:'closed',
+      closedAt:today,
+      endDate: closeModal.endDate,
+      closedReason: closeModal.closedReason,
+      closedReasonDetail: closeModal.closedReasonDetail || '',
+      permanentArchived:true,
+      permanentArchivedAt:today
+    });
     setCloseModal(null);
     showToast('종료 처리됨');
   }
   async function delItem(id){
     var it = items.find(function(x){return x.id===id;});
     if(!(await popConfirm('"' + (it ? it.companyName : '') + '" 데이터를 삭제하시겠습니까?'))) return;
-    var _ud=items.slice(); persist(items.filter(function(x){return x.id !== id;}));
-    showToastUndo('🗑️ 삭제됨', function(){persist(_ud);});
+    var _bak = dbGet(props.storageKey, []).find(function(x){ return x.id === id; }) || it;
+    if(!itemRemove(id)) return;
+    showToastUndo('🗑️ 삭제됨', function(){ if(_bak) itemUpsert(_bak); });
   }
 
   // 입금확정 - finance_income 추가 + 성과 분배 (kind: 'contract' | 'balance')
   function confirmProjectFee(itemId, kind){
-    var it = items.find(function(x){return x.id===itemId;});
+    var it = dbGet(props.storageKey, []).find(function(x){return x.id===itemId;}) || items.find(function(x){return x.id===itemId;});
     if(!it) return;
     var feeKey = kind === 'contract' ? 'contractFee' : 'balanceFee';
     var paidKey = kind === 'contract' ? 'contractPaid' : 'balancePaid';
@@ -38715,8 +38716,7 @@ function ProjectManagementShared(props){
     if(totalAmt <= 0){ showToast(kindLabel + ' 금액이 없습니다'); return; }
     if(it[paidKey]){ showToast('이미 완납됨'); return; }
 
-    var snapItems = items.slice();
-    var snapIncome = dbGet('finance_income', []);
+    var _itBefore = Object.assign({}, it);
     try {
       var today = arguments[2] || todayYMD();
       var ded = arguments[3] || {};
@@ -38730,13 +38730,9 @@ function ProjectManagementShared(props){
       var isFullyPaid = totalPaidNow >= totalAmt;
 
       var splitEntry = { id:'sp-'+Date.now().toString(36), date:today, amount:payAmt, kind:kindLabel };
-      persist(items.map(function(x){
-        if(x.id !== itemId) return x;
-        var newSplits = (x.splitPayments||[]).concat([splitEntry]);
-        var patch = { splitPayments: newSplits };
-        if(isFullyPaid){ patch[paidKey] = true; patch[dateKey] = today; }
-        return Object.assign({}, x, patch);
-      }));
+      var srcPatch = { splitPayments: (it.splitPayments||[]).concat([splitEntry]) };
+      if(isFullyPaid){ srcPatch[paidKey] = true; srcPatch[dateKey] = today; }
+      itemPatch(itemId, srcPatch);
 
       var srcKind = props.sourceKind || 'other';
       // 성과는 실제 입금액(payAmt) 기준으로만 계산
@@ -38761,9 +38757,7 @@ function ProjectManagementShared(props){
         totalContractAmt: totalAmt,
         createdAt: (new Date()).toISOString()
       };
-      var finIncomes = dbGet('finance_income', []);
-      finIncomes.unshift(newFinIncome);
-      dbSet('finance_income', finIncomes);
+      dbUpsert('finance_income', newFinIncome);
 
       var msg = isFullyPaid
         ? (kindLabel + ' ' + payAmt.toLocaleString() + '원 완납 확정 ✅')
@@ -38771,9 +38765,9 @@ function ProjectManagementShared(props){
       if(ded.isPersonalIncome) msg += ' (개인소득)';
       showToast(msg);
     } catch(e){
-      try { persist(snapItems); } catch(_){}
-      try { dbSet('finance_income', snapIncome); } catch(_){}
-      showToast('❌ 입금확정 실패 — 변경 사항이 복원되었습니다');
+      try { if(_itBefore) itemUpsert(_itBefore); } catch(_){}
+      try { if(typeof newFinIncome !== 'undefined' && newFinIncome && newFinIncome.id) dbRemove('finance_income', newFinIncome.id); } catch(_){}
+      showToast('❌ 입금확정 실패 — 해당 건이 원복되었습니다');
       console.error('[Transaction:confirmProjectFee]', e && e.message);
     }
   }
@@ -38781,36 +38775,33 @@ function ProjectManagementShared(props){
 
   // 입금확정 해제 - finance_income에서 삭제
   function unconfirmProjectFee(itemId, kind){
-    var it = items.find(function(x){return x.id===itemId;});
+    var it = dbGet(props.storageKey, []).find(function(x){return x.id===itemId;}) || items.find(function(x){return x.id===itemId;});
     if(!it) return;
     var paidKey = kind === 'contract' ? 'contractPaid' : 'balancePaid';
     var dateKey = kind === 'contract' ? 'contractPaidDate' : 'balancePaidDate';
 
-    // Transaction 보강: items + finance_income 동시 변경 → 실패 시 둘 다 롤백
-    var snapItems = items.slice();
-    var snapIncome = dbGet('finance_income', []);
+    // Transaction: 원장 1건 patch + 해당 입금건만 제거 — 실패 시 그 건만 원복
+    var _itBefore = Object.assign({}, it);
+    var _rmBak = [];
     try {
       var kindLabel2 = kind === 'contract' ? '계약금' : '잔금';
-      persist(items.map(function(x){
-        if(x.id !== itemId) return x;
-        var patch = {};
-        patch[paidKey] = false;
-        patch[dateKey] = '';
-        // 분할입금 기록도 해당 종류만 제거 (재입금 시 alreadyPaid 오류 방지)
-        if(Array.isArray(x.splitPayments)){
-          patch.splitPayments = x.splitPayments.filter(function(sp){ return sp.kind !== kindLabel2; });
-        }
-        return Object.assign({}, x, patch);
-      }));
-      var finIncomes = dbGet('finance_income', []).filter(function(fi){
-        return !(fi.sourceKind === (props.sourceKind || 'other') && fi.sourceId === itemId && fi.sourceSubKind === kind);
+      var patch = {};
+      patch[paidKey] = false;
+      patch[dateKey] = '';
+      // 분할입금 기록도 해당 종류만 제거 (재입금 시 alreadyPaid 오류 방지)
+      if(Array.isArray(it.splitPayments)){
+        patch.splitPayments = it.splitPayments.filter(function(sp){ return sp.kind !== kindLabel2; });
+      }
+      itemPatch(itemId, patch);
+      _rmBak = dbGet('finance_income', []).filter(function(fi){
+        return fi.sourceKind === (props.sourceKind || 'other') && fi.sourceId === itemId && fi.sourceSubKind === kind;
       });
-      dbSet('finance_income', finIncomes);
+      dbRemoveMany('finance_income', _rmBak.map(function(fi){ return fi.id; }));
       showToast(kindLabel2 + ' 입금확정 해제됨');
     } catch(e){
-      try { persist(snapItems); } catch(_){}
-      try { dbSet('finance_income', snapIncome); } catch(_){}
-      showToast('❌ 입금확정 해제 실패 — 변경 사항이 복원되었습니다');
+      try { if(_itBefore) itemUpsert(_itBefore); } catch(_){}
+      try { if(_rmBak.length) dbUpsertMany('finance_income', _rmBak); } catch(_){}
+      showToast('❌ 입금확정 해제 실패 — 해당 건이 원복되었습니다');
       console.error('[Transaction:unconfirmProjectFee]', e && e.message);
     }
   }
@@ -39164,9 +39155,7 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                               var year = (String(it.no||'').match(/\d{4}/) || [String(new Date().getFullYear())])[0];
                               newNo = genNextNo(nt.short, year, it.no, items, it.id, 'no');
                             }
-                            persist(items.map(function(x){
-                              return x.id === it.id ? Object.assign({}, x, { typeCode:newCode, no:newNo }) : x;
-                            }));
+                            itemPatch(it.id, { typeCode:newCode, no:newNo });
                             setEditingTypeId(null);
                             showToast('✓ ' + (it.companyName||it.no) + '\n유형: ' + (nt?nt.name:newCode) + '\n관리번호: ' + it.no + ' → ' + newNo);
                           },
@@ -39281,8 +39270,7 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
     editModal && h(ProjectEditModal, {
       cur: editModal, types: types, users: users, kindLabel: props.title, items: items,
       onSave: function(form){
-        var newItems = items.map(function(x){return x.id === form.id ? form : x;});
-        persist(newItems);
+        itemUpsert(form);
         // 컨설팅이면 startDate 변경 가능성 → 자동 재정렬
         if(props.storageKey === 'consultings'){
           var n = reorderConsultingNos();
@@ -39868,33 +39856,26 @@ function ClosedManagement(){
   }
   async function unarchiveCase(id){
     if(!(await popConfirm('보관 해제하시겠습니까?\n\n→ 상태: 진행중(progress)으로 복원\n→ 사건관리에 다시 표시됨'))) return;
-    var all = dbGet('cases', []).map(function(x){
-      if(x.id !== id) return x;
-      return Object.assign({}, x, {
-        permanentArchived:false,
-        permanentArchivedAt:'',
-        status:'progress',
-        closeDate:'',
-        closedDate:'',
-        caseResult:'',         // 패소/승소 결과 초기화
-        successFeeStatus:'',   // ★ 회수불능 상태 초기화 → 미입금 대기 복귀
-        closeReason:''         // 종료 사유 초기화
-      });
+    dbPatch('cases', id, {
+      permanentArchived:false,
+      permanentArchivedAt:'',
+      status:'progress',
+      closeDate:'',
+      closedDate:'',
+      caseResult:'',         // 패소/승소 결과 초기화
+      successFeeStatus:'',   // ★ 회수불능 상태 초기화 → 미입금 대기 복귀
+      closeReason:''         // 종료 사유 초기화
     });
-    dbSet('cases', all); setArchive(archive.slice()); showToast('해제 - 사건관리에서 확인');
+    setArchive(archive.slice()); showToast('해제 - 사건관리에서 확인');
   }
   async function unarchiveBiz(key, id){
     var labelMap = { consultings:'컨설팅관리', funds:'기금관리', other_projects:'기타사업' };
     if(!(await popConfirm('보관 해제하시겠습니까?\n\n→ 상태: 활성(active)으로 복원\n→ '+(labelMap[key]||'원래 모듈')+'에 다시 표시됨'))) return;
-    var arr = dbGet(key, []).map(function(x){
-      if(x.id !== id) return x;
-      return Object.assign({}, x, {
-        permanentArchived:false,
-        status:'active',
-        closedAt:''
-      });
-    });
-    dbSet(key, arr); setArchive(archive.slice()); showToast('해제 - '+(labelMap[key]||'원래 모듈')+'에서 확인');
+    var arr = dbGet(key, []);
+    if(arr.some(function(x){ return x.id === id; })){
+      dbPatch(key, id, { permanentArchived:false, status:'active', closedAt:'' });
+    }
+    setArchive(archive.slice()); showToast('해제 - '+(labelMap[key]||'원래 모듈')+'에서 확인');
   }
 
   function matchDate(dateStr){
@@ -40269,8 +40250,8 @@ function ClosedManagement(){
         amountLabel: !canSeeAmount(co) ? '🔒' : (fee>0 ? fee.toLocaleString()+' (월)' : '-'),
         action: h('button',{onClick:(function(co2){return async function(){
           if(!(await popConfirm('"'+co2.name+'" 업체를 활성으로 복원하시겠습니까?'))) return;
-          var all=dbGet('companies',[]).map(function(x){return x.id===co2.id?Object.assign({},x,{status:'active'}):x;});
-          dbSet('companies',all); setArchive(archive.slice()); showToast('복원됨');
+          dbPatch('companies', co2.id, { status:'active' });
+          setArchive(archive.slice()); showToast('복원됨');
         };})(co),style:{background:'#dbeafe',color:'#1e40af',border:'1px solid #93c5fd',padding:'4px 10px',borderRadius:'5px',fontSize:'10.5px',fontWeight:600,cursor:'pointer'}},'↩ 복원')
       });
     });
@@ -40514,8 +40495,8 @@ function ClosedManagement(){
                   h('td', { className:'ac', onClick:function(e){ e.stopPropagation(); } },
                     h('button', { onClick:(function(co2){ return async function(){
                         if(!(await popConfirm('"'+co2.name+'" 업체를 활성으로 복원하시겠습니까?'))) return;
-                        var all = dbGet('companies',[]).map(function(x){ return x.id===co2.id ? Object.assign({},x,{status:'active'}) : x; });
-                        dbSet('companies', all); setArchive(archive.slice()); showToast('복원됨');
+                        dbPatch('companies', co2.id, { status:'active' });
+                        setArchive(archive.slice()); showToast('복원됨');
                       }; })(co),
                       style:{ background:'#dbeafe', color:'#1e40af', border:'1px solid #93c5fd', padding:'2px 8px', borderRadius:'5px', fontSize:'10.5px', fontWeight:600, cursor:'pointer' } }, '↩ 복원'),
                     CURRENT_USER && CURRENT_USER.isAdmin && h('button', {
@@ -40704,8 +40685,8 @@ function ClosedManagement(){
           h('button', { className:'btn-primary',
             onClick:async function(){
               if(!(await popConfirm('"'+detailModalCo.name+'" 업체를 활성으로 복원하시겠습니까?'))) return;
-              var all = dbGet('companies',[]).map(function(x){ return x.id===detailModalCo.id ? Object.assign({},x,{status:'active'}) : x; });
-              dbSet('companies', all); setArchive(archive.slice()); setDetailModalCo(null); showToast('복원됨');
+              dbPatch('companies', detailModalCo.id, { status:'active' });
+              setArchive(archive.slice()); setDetailModalCo(null); showToast('복원됨');
             } }, '↩ 활성으로 복원')
         )
       )
@@ -41910,8 +41891,8 @@ function PerfManagement(props){
     var fi = dbGet('finance_income', []);
     var target = fi.find(function(x){ return x.id === it.fiId; });
     if(!target){ showToast('finance_income 항목을 찾을 수 없음'); return; }
-    // 1) finance_income에서 제거
-    dbSet('finance_income', fi.filter(function(x){ return x.id !== it.fiId; }));
+    // 1) finance_income에서 제거 (그 1건만)
+    dbRemove('finance_income', it.fiId);
     // 2) 원본 데이터 복원
     if(target.sourceKind === 'case'){
       var cases = dbGet('cases', []);
@@ -41926,20 +41907,17 @@ function PerfManagement(props){
         patch[dateKey] = '';
         return Object.assign({}, c, patch);
       });
-      dbSet('cases', nc);
+      var _ncT = nc.find(function(c){ return c.id === target.sourceId; });
+      if(_ncT) dbUpsert('cases', _ncT);
     } else {
       var storeKeyMap = { consulting:'consultings', fund:'funds', other:'other_projects', company:'companies' };
       var sk = storeKeyMap[target.sourceKind];
       if(sk){
         var arr = dbGet(sk, []);
-        arr = arr.map(function(x){
-          if(x.id !== target.sourceId) return x;
-          var paidKey = target.sourceSubKind === 'contract' ? 'contractPaid' : 'balancePaid';
-          var dateKey = target.sourceSubKind === 'contract' ? 'contractPaidDate' : 'balancePaidDate';
-          var patch = {}; patch[paidKey] = false; patch[dateKey] = '';
-          return Object.assign({}, x, patch);
-        });
-        dbSet(sk, arr);
+        var paidKey = target.sourceSubKind === 'contract' ? 'contractPaid' : 'balancePaid';
+        var dateKey = target.sourceSubKind === 'contract' ? 'contractPaidDate' : 'balancePaidDate';
+        var patch = {}; patch[paidKey] = false; patch[dateKey] = '';
+        if(arr.some(function(x){ return x.id === target.sourceId; })) dbPatch(sk, target.sourceId, patch);
       }
     }
     showToast('✓ 입금확정 해제 - 성과 항목 복원됨');
