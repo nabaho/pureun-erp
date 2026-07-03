@@ -757,8 +757,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-03 건별 쓰기 Phase 1 — 계약 등록·수정·삭제·상태·이관 1건 단위 저장 (과거회귀 차단)';
-var BUILD_SEQ = 61;
+var ERP_BUILD = '2026-07-03 건별 쓰기 Phase 1 + 원커맨드 자동검증기(erpVerifyPhase1)';
+var BUILD_SEQ = 62;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -3266,6 +3266,62 @@ function erpCheckObjForm(){
     });
   });
 }
+
+// ── Phase 1 자동 검증기 (F12 콘솔: erpVerifyPhase1()) ──
+// 테스트 계약 1건으로 "그 1건만 서버 전송"을 실측 검증. 실데이터 불변, 종료 시 자동 정리.
+async function erpVerifyPhase1(){
+  if(!fbDb){ console.log('❌ Firebase 미연결 — 로그인 상태에서 실행하세요'); return false; }
+  var k = 'contracts';
+  var tid = 'ct-vtest-' + Date.now().toString(36);
+  var results = [];
+  var ck = function(ok, msg){ results.push(ok); console.log((ok?'✅ ':'❌ ') + msg); return ok; };
+  var origRefFn = fbDb.ref.bind(fbDb);
+  var captured = [];
+  try {
+    if(_fbObjForm[k] !== true){ console.log('❌ contracts가 서버 객체형이 아님 — erpCheckObjForm() 확인'); return false; }
+    var before = dbGet(k, []).length;
+    // 서버 전송 경로 가로채기 (update 호출의 경로 목록 기록)
+    fbDb.ref = function(p){
+      var r = origRefFn(p);
+      if(p === undefined || p === null || p === ''){
+        var origUpdate = r.update.bind(r);
+        r.update = function(u){ captured.push(Object.keys(u)); return origUpdate(u); };
+      }
+      return r;
+    };
+    // 1) 생성
+    ck(dbUpsert(k, { id:tid, contractNo:'검증-임시', companyName:'(자동검증용 임시)', status:'consult' }), '테스트 계약 생성 (로컬)');
+    // 2) 상태변경 — 이관과 동일한 코드 경로(dbPatch)
+    captured = [];
+    ck(dbPatch(k, tid, { status:'transferred', closedReason:'검증' }), '상태변경 patch 실행');
+    var paths = captured[0] || [];
+    ck(paths.length > 0, '서버 전송 발생 (' + paths.length + '개 경로)');
+    ck(paths.every(function(p){ return p === 'data/'+k+'/u' || p.indexOf('data/'+k+'/v/'+tid) === 0; }), '전송 경로가 테스트 건(' + tid + ')과 타임스탬프뿐 — 다른 계약 불가침');
+    ck(!paths.some(function(p){ return p === 'data/'+k+'/v'; }), '전체(v) 통째 교체 없음');
+    // 3) 서버 실제값 확인
+    await new Promise(function(res){ setTimeout(res, 1200); });
+    var sv = (await origRefFn('data/'+k+'/v/'+tid).once('value')).val();
+    ck(!!sv && sv.status === 'transferred', '서버에 상태변경 반영 확인');
+    ck(!!sv && !!sv.updatedAt && !!sv.updatedBy, '서버에 updatedAt/updatedBy 스탬프 확인 (' + (sv && sv.updatedBy) + ')');
+    // 4) 삭제 + 서버 확인
+    ck(dbRemove(k, tid), '테스트 계약 삭제');
+    await new Promise(function(res){ setTimeout(res, 1200); });
+    var sv2 = (await origRefFn('data/'+k+'/v/'+tid).once('value')).val();
+    ck(sv2 === null, '서버에서도 삭제 확인');
+    ck(dbGet(k, []).length === before, '계약 건수 원상복구 (' + before + '건)');
+    var pass = results.every(function(x){ return x; });
+    console.log(pass ? '🎉 Phase 1 자동검증 전체 통과 — 계약 저장은 1건 단위로만 서버에 나갑니다'
+                     : '⚠ 실패 항목 있음 — 위 ❌ 로그를 캡처해서 공유해주세요');
+    return pass;
+  } catch(e){
+    console.error('❌ 검증 중 오류:', e && e.message);
+    return false;
+  } finally {
+    fbDb.ref = origRefFn; // 가로채기 원복
+    try { if(dbGet(k, []).some(function(x){return x && x.id===tid;})) dbRemove(k, tid); } catch(_){}
+  }
+}
+window.erpVerifyPhase1 = erpVerifyPhase1;
 
 // 콘솔 접근용 노출 (앱 전체가 IIFE 안이라 window 부착 필요 — erpAllowBulk와 동일 방식)
 window.erpTestRecordWrite = erpTestRecordWrite;
