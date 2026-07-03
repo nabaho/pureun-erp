@@ -757,8 +757,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-03 건별 쓰기 Phase 1 + 원커맨드 자동검증기(erpVerifyPhase1)';
-var BUILD_SEQ = 62;
+var ERP_BUILD = '2026-07-03 건별 쓰기 Phase 2 — 입금·출금 전 액션 1건 단위 저장 + 검증기(erpVerifyPhase2)';
+var BUILD_SEQ = 63;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -3233,6 +3233,41 @@ function dbRemove(k, id){
   }
   return dbSet(k, next);
 }
+// 여러 건 추가/수정 — 한 번의 요청에 건별 child 경로로 (통째 교체 없음). 자동생성·엑셀 일괄용.
+function dbUpsertMany(k, items){
+  if(!Array.isArray(items) || items.length === 0) return true;
+  var bad = items.some(function(it){ return !it || typeof it.id !== 'string' || !it.id || _REC_BADKEY.test(it.id); });
+  items.forEach(function(it){ if(it && it.id) _recStamp(it); });
+  var arr = dbGet(k, []);
+  if(!Array.isArray(arr)) return false;
+  var byId = {}; items.forEach(function(it){ if(it && it.id) byId[it.id] = it; });
+  var seen = {};
+  var next = arr.map(function(x){ if(x && byId[x.id]){ seen[x.id] = true; return byId[x.id]; } return x; });
+  items.forEach(function(it){ if(it && it.id && !seen[it.id]) next.push(it); });
+  if(_recCanDirect(k) && !bad){
+    if(!_recLocalSave(k, next)) return false;
+    var cp = {}; items.forEach(function(it){ cp[it.id] = it; });
+    _recServerWrite(k, cp);
+    return true;
+  }
+  return dbSet(k, next);
+}
+// 여러 건 삭제 — 한 번의 요청에 건별 null
+function dbRemoveMany(k, ids){
+  if(!Array.isArray(ids) || ids.length === 0) return true;
+  var bad = ids.some(function(id){ return typeof id !== 'string' || !id || _REC_BADKEY.test(id); });
+  var arr = dbGet(k, []);
+  if(!Array.isArray(arr)) return false;
+  var rm = {}; ids.forEach(function(id){ rm[id] = true; });
+  var next = arr.filter(function(x){ return !(x && rm[x.id]); });
+  if(_recCanDirect(k) && !bad){
+    if(!_recLocalSave(k, next)) return false;
+    var cp = {}; ids.forEach(function(id){ cp[id] = null; });
+    _recServerWrite(k, cp);
+    return true;
+  }
+  return dbSet(k, next);
+}
 // ── Phase 0 셀프테스트 (F12 콘솔: erpTestRecordWrite()) ──
 function erpTestRecordWrite(){
   var k = 'rec_write_test';
@@ -3322,6 +3357,59 @@ async function erpVerifyPhase1(){
   }
 }
 window.erpVerifyPhase1 = erpVerifyPhase1;
+
+// ── Phase 2 자동 검증기 (F12 콘솔: erpVerifyPhase2()) — 입금·출금 건별 전송 실측 ──
+async function erpVerifyPhase2(){
+  if(!fbDb){ console.log('❌ Firebase 미연결 — 로그인 상태에서 실행하세요'); return false; }
+  var results = [];
+  var ck = function(ok, msg){ results.push(ok); console.log((ok?'✅ ':'❌ ') + msg); return ok; };
+  var origRefFn = fbDb.ref.bind(fbDb);
+  var captured = [];
+  fbDb.ref = function(p){
+    var r = origRefFn(p);
+    if(p === undefined || p === null || p === ''){
+      var origUpdate = r.update.bind(r);
+      r.update = function(u){ captured.push(Object.keys(u)); return origUpdate(u); };
+    }
+    return r;
+  };
+  async function runKey(k, prefix){
+    if(_fbObjForm[k] !== true){ ck(false, k+': 서버 객체형 아님'); return; }
+    var tid = prefix + '-vtest-' + Date.now().toString(36);
+    var before = dbGet(k, []).length;
+    try {
+      ck(dbUpsert(k, { id:tid, date:todayYMD(), amount:1, companyName:'(자동검증용 임시)', category:'검증' }), k+': 테스트 건 생성');
+      captured = [];
+      ck(dbPatch(k, tid, { amount:2, note:'검증patch' }), k+': patch 실행');
+      var paths = captured[0] || [];
+      ck(paths.length > 0 && paths.every(function(p){ return p === 'data/'+k+'/u' || p.indexOf('data/'+k+'/v/'+tid) === 0; }), k+': 그 1건 경로만 전송 ('+paths.length+'개) — 다른 건 불가침');
+      ck(!paths.some(function(p){ return p === 'data/'+k+'/v'; }), k+': 통째 교체 없음');
+      await new Promise(function(res){ setTimeout(res, 1000); });
+      var sv = (await origRefFn('data/'+k+'/v/'+tid).once('value')).val();
+      ck(!!sv && sv.amount === 2, k+': 서버 반영 확인');
+      ck(dbRemove(k, tid), k+': 테스트 건 삭제');
+      await new Promise(function(res){ setTimeout(res, 1000); });
+      var sv2 = (await origRefFn('data/'+k+'/v/'+tid).once('value')).val();
+      ck(sv2 === null && dbGet(k, []).length === before, k+': 서버 삭제·건수 원상복구 ('+before+'건)');
+    } finally {
+      try { if(dbGet(k, []).some(function(x){return x && x.id===tid;})) dbRemove(k, tid); } catch(_){}
+    }
+  }
+  try {
+    await runKey('finance_income', 'fi');
+    await runKey('finance_expense', 'fe');
+    var pass = results.every(function(x){ return x; });
+    console.log(pass ? '🎉 Phase 2 자동검증 전체 통과 — 입금·출금 저장은 1건 단위로만 서버에 나갑니다'
+                     : '⚠ 실패 항목 있음 — 위 ❌ 로그를 캡처해서 공유해주세요');
+    return pass;
+  } catch(e){
+    console.error('❌ 검증 중 오류:', e && e.message);
+    return false;
+  } finally {
+    fbDb.ref = origRefFn;
+  }
+}
+window.erpVerifyPhase2 = erpVerifyPhase2;
 
 // 콘솔 접근용 노출 (앱 전체가 IIFE 안이라 window 부착 필요 — erpAllowBulk와 동일 방식)
 window.erpTestRecordWrite = erpTestRecordWrite;
@@ -24802,34 +24890,26 @@ function FinanceLedger(){
   // ── 입금 확정 ──
   function saveIncome(row, pItem){
     var paidDate=row.date||new Date().toISOString().slice(0,10);
-    var income=dbGet('finance_income',[])||[];
-    income.unshift({id:'fi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+    dbUpsert('finance_income', {id:'fi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
       companyName:pItem.companyName, amount:row.amount, date:paidDate,
       memo:'[하나'+(fileType==='bank'?'은행':'카드')+'] '+(row.memo||'')+(row.note?' / '+row.note:''),
       sourceKind:pItem.store.replace('s',''), sourceId:pItem.item.id,
       perfShares:[], confirmedAt:new Date().toISOString(), confirmedBy:CURRENT_USER?CURRENT_USER.sid:''});
-    dbSet('finance_income',income);
-    var arr=(dbGet(pItem.store,[])||[]).map(function(it){
-      if(it.id!==pItem.item.id) return it;
-      var u=Object.assign({},it);
-      if(pItem.kind==='retainer'){u.retainerPaid=true;u.retainerPaidDate=paidDate;}
-      else if(pItem.kind==='balance'){u.balancePaid=true;u.balancePaidDate=paidDate;}
-      else{u.paid=true;u.paidDate=paidDate;}
-      return u;
-    });
-    dbSet(pItem.store,arr);
+    var _sp = {};
+    if(pItem.kind==='retainer'){_sp.retainerPaid=true;_sp.retainerPaidDate=paidDate;}
+    else if(pItem.kind==='balance'){_sp.balancePaid=true;_sp.balancePaidDate=paidDate;}
+    else{_sp.paid=true;_sp.paidDate=paidDate;}
+    dbPatch(pItem.store, pItem.item.id, _sp);
   }
 
   // ── 출금 등록 ──
   function saveExpense(row, cat){
-    var fe=dbGet('finance_expense',[])||[];
-    fe.unshift({id:'fe-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+    dbUpsert('finance_expense', {id:'fe-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
       date:row.date||new Date().toISOString().slice(0,10),
       amount:row.amount, category:cat,
       payee:row.memo||'', note:'[하나'+(fileType==='bank'?'은행':'카드')+'] '+(row.note||row.memo||''),
       paid:true, paidDate:row.date||new Date().toISOString().slice(0,10),
       branch:'cheonan'});
-    dbSet('finance_expense',fe);
   }
 
   function removeRow(key, kind){
@@ -25209,8 +25289,7 @@ function IncomeUnmatchedTab(props){
     var perfBaseAmount = fi.perfBaseAmount || fi.amount || 0;
     var splitMainPct = fi.splitMainPct || 100;
     var newShares = calcPerfShares(perfBaseAmount, srcMain, srcSubs, fi.sourceKind, splitMainPct);
-    all[idx] = Object.assign({}, fi, { perfExclude:false, isPersonalIncome:false, perfShares:newShares });
-    dbSet('finance_income', all);
+    dbPatch('finance_income', fi.id, { perfExclude:false, isPersonalIncome:false, perfShares:newShares });
     setRefreshKey(refreshKey+1);
     showToast('⭐ 성과 반영 완료 ('+newShares.length+'명 분배, 총 '+perfBaseAmount.toLocaleString()+'원 기준)');
   }
@@ -25565,11 +25644,13 @@ function IncomePendingTab(){
     if(!paidDate){ showToast('입금일을 입력하세요'); return; }
     if(isIncomeLocked((paidDate||'').slice(0,7))){ showToast('🔒 ' + (paidDate||'').slice(0,7) + ' 입금 마감 — 확정 불가'); return; }
     rateOpts = rateOpts || {};
-    // Transaction 보강: 2개 store 변경 → 실패 시 둘 다 롤백
-    var snapStore = dbGet(p.store.key, []);
-    var snapIncome = dbGet('finance_income', []);
+    // Transaction: 원장 1건 + 입금 1건만 기록 — 실패 시 그 건만 원복 (전체 스냅샷 복원은 되돌림 벡터라 폐기)
+    var _srcBefore = null;
     try {
       var items = dbGet(p.store.key, []);
+      var _src = items.find(function(x){ return x.id === p.itemId; });
+      if(!_src){ showToast('❌ 원본 항목을 찾을 수 없음 — 새로고침 후 다시 시도'); return; }
+      _srcBefore = Object.assign({}, _src);
       // 기존 분할 누적 (잔액 계산용)
       var _prevPaid = ((p.item.splitPayments)||[]).filter(function(sp){
         return sp.kind === (p.store.isCase ? (p.kind==='retainer'?'착수금':'성공보수') : (p.kind==='contract'?'계약금':'잔금'));
@@ -25589,32 +25670,24 @@ function IncomePendingTab(){
         payAmt = Math.min(payAmt, _remaining);
       }
       var _isFullyPaid = (_prevPaid + payAmt) >= p.amount;
-      var newItems;
+      var srcPatch;
       if(p.store.isCase){
         // 사건: incomes 배열에 추가 + 완납 시에만 PaidDate 설정
         var kindLabel = p.kind === 'retainer' ? '착수금' : '성공보수';
         var dateKey   = p.kind === 'retainer' ? 'retainerPaidDate' : 'successPaidDate';
-        newItems = items.map(function(x){
-          if(x.id !== p.itemId) return x;
-          var newIncome = { date:paidDate, amount:payAmt, kind:kindLabel, confirmed:true };
-          var patch = { incomes:(x.incomes||[]).concat([newIncome]) };
-          var _splitEntry = { id:'sp-'+Date.now().toString(36), date:paidDate, amount:payAmt, kind:kindLabel };
-          patch.splitPayments = (x.splitPayments||[]).concat([_splitEntry]);
-          if(_isFullyPaid){ patch[dateKey] = paidDate; }
-          return Object.assign({}, x, patch);
-        });
+        var newIncome = { date:paidDate, amount:payAmt, kind:kindLabel, confirmed:true };
+        srcPatch = { incomes:(_src.incomes||[]).concat([newIncome]) };
+        var _splitEntry = { id:'sp-'+Date.now().toString(36), date:paidDate, amount:payAmt, kind:kindLabel };
+        srcPatch.splitPayments = (_src.splitPayments||[]).concat([_splitEntry]);
+        if(_isFullyPaid){ srcPatch[dateKey] = paidDate; }
       } else {
         var paidKey = p.kind === 'contract' ? 'contractPaid' : 'balancePaid';
         var dateKey2 = p.kind === 'contract' ? 'contractPaidDate' : 'balancePaidDate';
-        newItems = items.map(function(x){
-          if(x.id !== p.itemId) return x;
-          var _se = { id:'sp-'+Date.now().toString(36), date:paidDate, amount:payAmt, kind:(p.kind==='contract'?'계약금':'잔금') };
-          var patch = { splitPayments:(x.splitPayments||[]).concat([_se]) };
-          if(_isFullyPaid){ patch[paidKey] = true; patch[dateKey2] = paidDate; }
-          return Object.assign({}, x, patch);
-        });
+        var _se = { id:'sp-'+Date.now().toString(36), date:paidDate, amount:payAmt, kind:(p.kind==='contract'?'계약금':'잔금') };
+        srcPatch = { splitPayments:(_src.splitPayments||[]).concat([_se]) };
+        if(_isFullyPaid){ srcPatch[paidKey] = true; srcPatch[dateKey2] = paidDate; }
       }
-      dbSet(p.store.key, newItems);
+      dbPatch(p.store.key, p.itemId, srcPatch);
 
     var it = p.item;
     var effMainPct = splitOn ? mainPct : 100;
@@ -25690,9 +25763,7 @@ function IncomePendingTab(){
       totalContractAmt: p.amount,
       createdAt: (new Date()).toISOString()
     };
-      var fi = dbGet('finance_income', []);
-      fi.unshift(newFi);
-      dbSet('finance_income', fi);
+      dbUpsert('finance_income', newFi);
 
       // ★ 감사 로그 (override 있을 때만)
       if(hasOverride && typeof AuditLog !== 'undefined' && AuditLog.write){
@@ -25716,11 +25787,11 @@ function IncomePendingTab(){
       if(hasOverride) msg += ' ⚠️ 요율 변경';
       showToast(msg);
     } catch(e){
-      // 롤백: 두 store 모두 원본으로 복원
-      try { dbSet(p.store.key, snapStore); } catch(_){}
-      try { dbSet('finance_income', snapIncome); } catch(_){}
+      // 롤백: 이번에 만진 원장 1건 원복 + 생성한 입금 1건 제거
+      try { if(_srcBefore) dbUpsert(p.store.key, _srcBefore); } catch(_){}
+      try { if(typeof newFi !== 'undefined' && newFi && newFi.id) dbRemove('finance_income', newFi.id); } catch(_){}
       refresh();
-      showToast('❌ 입금확정 실패 — 변경 사항이 복원되었습니다');
+      showToast('❌ 입금확정 실패 — 해당 건이 원복되었습니다');
       console.error('[Transaction:doConfirm]', e && e.message);
     }
   }
@@ -26442,21 +26513,28 @@ function IncomeListTab(){
   var hbc = useState(true); var hideBeforeContract = hbc[0]; var setHideBeforeContract = hbc[1];
 
   var users = getActiveUsers();
-  function persist(arr){
-    var _oldMap = {}; incomes.forEach(function(i){ if(i && i.id) _oldMap[i.id] = i; });
-    var _newMap = {}; (arr||[]).forEach(function(i){ if(i && i.id) _newMap[i.id] = i; });
-    var _chgYms = {};
-    (arr||[]).forEach(function(i){
-      var prev = _oldMap[i.id];
-      if(!prev || JSON.stringify(prev) !== JSON.stringify(i)){
-        var ym = (i.date||'').slice(0,7); if(ym) _chgYms[ym] = true;
-        if(prev){ var pym=(prev.date||'').slice(0,7); if(pym) _chgYms[pym]=true; }
-      }
-    });
-    incomes.forEach(function(i){ if(i && i.id && !_newMap[i.id]){ var ym=(i.date||'').slice(0,7); if(ym) _chgYms[ym]=true; } });
-    var _locked = Object.keys(_chgYms).filter(function(ym){ return isIncomeLocked(ym); });
-    if(_locked.length > 0){ showToast('🔒 ' + _locked.join(', ') + ' 입금 마감 — 변경 불가'); return; }
-    setIncomes(arr); dbSet('finance_income', arr);
+  // ── Phase 2: 건별 저장 (과거회귀 방지) — 그 1건만 서버 반영, 화면 배열 재사용 금지 ──
+  function refreshIncomes(){ setIncomes(dbGet('finance_income', []).slice()); }
+  function incomeLockGuard(it){
+    var ym = ((it && it.date) || '').slice(0,7);
+    if(ym && isIncomeLocked(ym)){ showToast('🔒 ' + ym + ' 입금 마감 — 변경 불가'); return false; }
+    return true;
+  }
+  function persistOneIncome(item){
+    if(!item || !item.id){ showToast('❌ 저장 실패 (id 없음)'); return false; }
+    if(!incomeLockGuard(item)) return false;
+    var prev = dbGet('finance_income', []).find(function(x){ return x.id === item.id; });
+    if(prev && !incomeLockGuard(prev)) return false;
+    var ok = dbUpsert('finance_income', item);
+    if(ok) refreshIncomes(); else showToast('❌ 입금 저장 실패');
+    return ok;
+  }
+  function removeOneIncome(id){
+    var cur = dbGet('finance_income', []).find(function(x){ return x.id === id; });
+    if(cur && !incomeLockGuard(cur)) return false;
+    var ok = dbRemove('finance_income', id);
+    if(ok) refreshIncomes();
+    return ok;
   }
 
   // 소스별 계약시작일 lookup map (계약일 이전 숨기기용)
@@ -26488,8 +26566,8 @@ function IncomeListTab(){
     delete form.__historyMode;
     // 과거 기록 전용: confirmed=false로 강제 → 성과·재무 자동 연동 차단
     if(isHist){ form = Object.assign({}, form, { confirmed:false, sourceKind:'manual', _pastRecord:true }); }
-    if(incomes.find(function(x){return x.id===form.id;})){ persist(incomes.map(function(x){return x.id===form.id?form:x;})); showToast('수정됨'); }
-    else { persist([form].concat(incomes)); showToast(isHist ? '📜 과거 기록 추가됨 (성과 미반영)' : '추가됨'); }
+    if(incomes.find(function(x){return x.id===form.id;})){ if(!persistOneIncome(form)) return; showToast('수정됨'); }
+    else { if(!persistOneIncome(form)) return; showToast(isHist ? '📜 과거 기록 추가됨 (성과 미반영)' : '추가됨'); }
     setDetailModal(null);
   }
   function delItem(id){
@@ -26497,7 +26575,9 @@ function IncomeListTab(){
     if(!item) return;
     if(item.sourceKind && item.sourceKind !== 'manual'){ showToast('자동 연동 입금은 원본에서 해제하세요'); return; }
     customConfirm('이 입금을 삭제하시겠습니까?\n\n금액: ' + (item.amount||0).toLocaleString() + '원\n업체: ' + (item.companyName||'') + '\n날짜: ' + (item.date||''), function(){
-      (function(){var _ud=incomes.slice(); persist(incomes.filter(function(x){return x.id!==id;})); showToastUndo('🗑️ 삭제됨', function(){persist(_ud);});})();
+      var _bak = dbGet('finance_income', []).find(function(x){ return x.id === id; }) || item;
+      if(!removeOneIncome(id)) return;
+      showToastUndo('🗑️ 삭제됨', function(){ if(_bak) persistOneIncome(_bak); });
     });
   }
 
@@ -26776,24 +26856,6 @@ function IncomeCompanyTab(){
     }
   }, []);
 
-  function persist(arr){
-    // 입금 마감 잠금 가드: 추가/수정/삭제되는 항목의 date 월 중 잠긴 게 있으면 차단
-    var _oldMap = {}; incomes.forEach(function(i){ if(i && i.id) _oldMap[i.id] = i; });
-    var _newMap = {}; (arr||[]).forEach(function(i){ if(i && i.id) _newMap[i.id] = i; });
-    var _chgYms = {};
-    (arr||[]).forEach(function(i){
-      var prev = _oldMap[i.id];
-      if(!prev || JSON.stringify(prev) !== JSON.stringify(i)){
-        var ym = (i.date||'').slice(0,7); if(ym) _chgYms[ym] = true;
-        if(prev){ var pym=(prev.date||'').slice(0,7); if(pym) _chgYms[pym]=true; }
-      }
-    });
-    incomes.forEach(function(i){ if(i && i.id && !_newMap[i.id]){ var ym=(i.date||'').slice(0,7); if(ym) _chgYms[ym]=true; } });
-    var _locked = Object.keys(_chgYms).filter(function(ym){ return isIncomeLocked(ym); });
-    if(_locked.length > 0){ showToast('🔒 ' + _locked.join(', ') + ' 입금 마감 — 변경 불가'); return; }
-    setIncomes(arr); dbSet('finance_income', arr);
-  }
-
   function calcDate(ym, payDay){
     var pd=String(payDay||'');
     if(pd.indexOf('말')>=0){
@@ -26808,6 +26870,38 @@ function IncomeCompanyTab(){
     var ym=selYear+'-'+('0'+month).slice(-2);
     return incomes.some(function(i){return i.companyName===name&&i.sourceKind==='company'&&(i.date||'').slice(0,7)===ym;});
   }
+  // ── Phase 2: 건별 저장 — 그 건들만 서버 반영 ──
+  function refreshIncomes(){ setIncomes(dbGet('finance_income', []).slice()); }
+  function incomeLockGuard(it){
+    var ym = ((it && it.date) || '').slice(0,7);
+    if(ym && isIncomeLocked(ym)){ showToast('🔒 ' + ym + ' 입금 마감 — 변경 불가'); return false; }
+    return true;
+  }
+  function persistOneIncome(item){
+    if(!item || !item.id) return false;
+    if(!incomeLockGuard(item)) return false;
+    var ok = dbUpsert('finance_income', item);
+    if(ok) refreshIncomes(); else showToast('❌ 입금 저장 실패');
+    return ok;
+  }
+  function persistManyIncome(items){
+    if(!items || !items.length) return false;
+    for(var i=0;i<items.length;i++){ if(!incomeLockGuard(items[i])) return false; }
+    var ok = dbUpsertMany('finance_income', items);
+    if(ok) refreshIncomes(); else showToast('❌ 입금 일괄 저장 실패');
+    return ok;
+  }
+  function removeManyIncome(ids){
+    if(!ids || !ids.length) return false;
+    var all = dbGet('finance_income', []);
+    for(var i=0;i<ids.length;i++){
+      var cur = all.find(function(x){ return x.id === ids[i]; });
+      if(cur && !incomeLockGuard(cur)) return false;
+    }
+    var ok = dbRemoveMany('finance_income', ids);
+    if(ok) refreshIncomes();
+    return ok;
+  }
   function getItem(name,month){
     var ym=selYear+'-'+('0'+month).slice(-2);
     return incomes.find(function(i){return i.companyName===name&&i.sourceKind==='company'&&(i.date||'').slice(0,7)===ym;});
@@ -26816,16 +26910,16 @@ function IncomeCompanyTab(){
   function addIncome(co, month, date, note){
     var existing=getItem(co.name,month);
     if(existing){
-      persist(incomes.map(function(i){ return i.id===existing.id ? Object.assign({},i,{date:date,note:note||''}) : i; }));
-      showToast('수정됨');
+      if(!incomeLockGuard(existing) || !incomeLockGuard({date:date})) return;
+      if(dbPatch('finance_income', existing.id, { date:date, note:note||'' })){ refreshIncomes(); showToast('수정됨'); }
     } else {
-      persist([{
+      persistOneIncome({
         id:'fi-adv-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
         date:date, amount:co.fee||0, sourceKind:'company', sourceId:'',
         companyName:co.name, kind:'자문료', payDay:co.payDay||'',
         managerSid:co.mainSid, managerName:co.mainName,
         note:note||'', perfShares: [], createdAt:(new Date()).toISOString()
-      }].concat(incomes));
+      });
       showToast(co.name+' '+(date||'').slice(5)+' 입금확정');
     }
   }
@@ -26861,13 +26955,11 @@ function IncomeCompanyTab(){
     var ym=selYear+'-'+('0'+month).slice(-2);
     if(!checked){
       // 전체 해제
-      var removed=incomes.filter(function(i){
+      var _rmIds = dbGet('finance_income', []).filter(function(i){
         return i.sourceKind==='company'&&(i.date||'').slice(0,7)===ym&&SOURCE_LIST.some(function(co){return co.name===i.companyName;});
-      }).length;
-      persist(incomes.filter(function(i){
-        return !(i.sourceKind==='company'&&(i.date||'').slice(0,7)===ym&&SOURCE_LIST.some(function(co){return co.name===i.companyName;}));
-      }));
-      showToast(month+'월 '+removed+'건 해제');
+      }).map(function(i){ return i.id; });
+      if(!removeManyIncome(_rmIds)) return;
+      showToast(month+'월 '+_rmIds.length+'건 해제');
     } else {
       // 미납 전체 확정 (fee=0 업체 포함)
       var unpaid=SOURCE_LIST.filter(function(co){return !isPaid(co.name,month);});
@@ -26882,7 +26974,7 @@ function IncomeCompanyTab(){
           note:'', perfShares:[], createdAt:(new Date()).toISOString()
         };
       });
-      persist(toAdd.concat(incomes));
+      if(!persistManyIncome(toAdd)) return;
       showToast(month+'월 '+toAdd.length+'건 일괄 확정 ✓');
     }
   }
@@ -26900,7 +26992,7 @@ function IncomeCompanyTab(){
           managerSid:co.mainSid, managerName:co.mainName,
           note:'', perfShares: [], createdAt:(new Date()).toISOString() };
       });
-      persist(toAdd.concat(incomes));
+      if(!persistManyIncome(toAdd)) return;
       showToast(co.name+' '+toAdd.length+'개월 확정');
     });
   }
@@ -26917,7 +27009,7 @@ function IncomeCompanyTab(){
           managerSid:co.mainSid, managerName:co.mainName,
           note:'CMS자동이체', perfShares: [], createdAt:(new Date()).toISOString() };
       });
-      persist(toAdd.concat(incomes));
+      if(!persistManyIncome(toAdd)) return;
       showToast('CMS '+toAdd.length+'건 등록'); setCmsOpen(false);
     });
   }
@@ -26935,7 +27027,7 @@ function IncomeCompanyTab(){
         note:'', perfShares: [], createdAt:(new Date()).toISOString() });
     });
     if(!toAdd.length){showToast('생성할 항목 없음');return;}
-    persist(toAdd.concat(incomes)); showToast(toAdd.length+'건 자동 생성');
+    if(!persistManyIncome(toAdd)) return; showToast(toAdd.length+'건 자동 생성');
   }
 
   // 올해 12개월 일괄 자동 생성 — 각 월별 미입금 회사를 한 번에 등록
@@ -26958,7 +27050,7 @@ function IncomeCompanyTab(){
         });
       }
       if(!toAdd.length){ showToast('생성할 항목 없음 — 12개월 모두 처리 완료'); return; }
-      persist(toAdd.concat(incomes));
+      if(!persistManyIncome(toAdd)) return;
       showToast(selYear+'년 12개월 · '+toAdd.length+'건 일괄 자동 생성');
     });
   }
@@ -27170,7 +27262,7 @@ function IncomeCompanyTab(){
           });
           existingKeys[key] = true;
         });
-        persist(added.concat(incomes));
+        persistManyIncome(added);
         setCmsImportState({ status:'done', progress:100,
           msg:'✅ 나이스빌 CMS import 완료 — '+added.length+'건 추가' + (dup?', '+dup+'건 중복 제외':''),
           preview:null });
@@ -27285,7 +27377,7 @@ function IncomeCompanyTab(){
           existingKeys[key] = true;
         });
 
-        persist(added.concat(incomes));
+        persistManyIncome(added);
         setImportState({ status:'done', progress:100,
           msg:'✅ '+added.length+'건 추가됨'+(duplicate?' · 중복 '+duplicate+'건 제외':'')+(noMatch?' · 미등록 업체 '+noMatch+'건':''),
           preview:null });
@@ -27351,7 +27443,7 @@ function IncomeCompanyTab(){
           h('button',{onClick:function(){setConfirming(false);},
             style:{padding:'3px 9px',border:'1px solid #cbd5e1',borderRadius:'10px',background:'#fff',cursor:'pointer',fontSize:'10.5px'}},'취소'),
           h('button',{onClick:function(){
-              persist(incomes.filter(function(i){return i.id!==existing.id;}));
+              if(!removeManyIncome([existing.id])) return;
               showToast('해제'); setCellModal(null);
             },style:{padding:'3px 10px',border:'none',borderRadius:'5px',background:'#dc2626',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:'10.5px'}},'해제')
         )
@@ -27796,7 +27888,7 @@ function IncomeCompanyTab(){
                       e.stopPropagation();
                       if(paid && item){
                         // 더블클릭 → 즉시 해제
-                        persist(incomes.filter(function(i){return i.id!==item.id;}));
+                        if(!removeManyIncome([item.id])) return;
                         showToast('↩ '+co.name+' '+m+'월 입금 해제');
                         setCellModal(null);
                       }
@@ -27852,8 +27944,7 @@ function IncomeCompanyTab(){
         cellCtxMenu.paid && h('div', { onClick:function(){
             var item = getItem(cellCtxMenu.co.name, cellCtxMenu.m);
             if(item){
-              persist(incomes.filter(function(i){return i.id !== item.id;}));
-              showToast(cellCtxMenu.co.name + ' ' + cellCtxMenu.m + '월 해제');
+              if(removeManyIncome([item.id])) showToast(cellCtxMenu.co.name + ' ' + cellCtxMenu.m + '월 해제');
             }
             setCellCtxMenu(null);
           }, style:{ padding:'7px 10px', cursor:'pointer', fontSize:'11.5px', borderRadius:'5px', color:'#dc2626', fontWeight:600 },
@@ -27912,7 +28003,7 @@ function IncomeCompanyTab(){
                   managerSid:co.mainSid, managerName:co.mainName,
                   note:'CMS자동이체', perfShares: [], createdAt:(new Date()).toISOString()};
               });
-              persist(toAdd.concat(incomes));
+              if(!persistManyIncome(toAdd)) return;
               showToast('CMS '+toAdd.length+'건 오늘 입금 확정 ✓');
               setCmsAlertOpen(false);
             },
@@ -28281,8 +28372,8 @@ function IncomeDetailModal(props){
           if(storeKey && f.sourceId){
             var items = dbGet(storeKey, []);
             var subKindLabel = f.sourceSubKind === 'contract' ? '계약금' : '잔금';
-            var newItems = items.map(function(x){
-              if(x.id !== f.sourceId) return x;
+            var x = items.find(function(q){ return q.id === f.sourceId; });
+            if(x){
               var paidKey = f.sourceSubKind === 'contract' ? 'contractPaid' : 'balancePaid';
               var dateKey = f.sourceSubKind === 'contract' ? 'contractPaidDate' : 'balancePaidDate';
               var patch = {};
@@ -28324,15 +28415,15 @@ function IncomeDetailModal(props){
                 // 분할기록 없으면 기존 방식 (단일 입금)
                 patch[paidKey] = false; patch[dateKey] = null;
               }
-              return Object.assign({}, x, patch);
-            });
-            dbSet(storeKey, newItems);
+              dbPatch(storeKey, f.sourceId, patch);
+            }
           }
           // 1-b) 사건(case) 원장 되돌리기
           if(f.sourceKind === 'case' && f.sourceId){
             var caseLabel = f.kind || (f.sourceSubKind === 'retainer' ? '착수금' : '성공보수');
-            var caseArr = dbGet('cases', []).map(function(x){
-              if(x.id !== f.sourceId) return x;
+            var xc = dbGet('cases', []).find(function(q){ return q.id === f.sourceId; });
+            if(xc){
+              var x = xc;
               var patch = {};
               // 분할입금: 이 건만 제거, 남은 합계로 paid 재계산
               if(Array.isArray(x.splitPayments) && x.splitPayments.length > 0){
@@ -28391,13 +28482,11 @@ function IncomeDetailModal(props){
                 if(caseLabel === '착수금') patch.retainerPaidDate = '';
                 else patch.successPaidDate = '';
               }
-              return Object.assign({}, x, patch);
-            });
-            dbSet('cases', caseArr);
+              dbPatch('cases', f.sourceId, patch);
+            }
           }
           // 2) finance_income에서 삭제
-          var fi = dbGet('finance_income', []).filter(function(x){return x.id !== f.id;});
-          dbSet('finance_income', fi);
+          dbRemove('finance_income', f.id);
           // 3) AuditLog 기록
           try{
             if(typeof AuditLog !== 'undefined' && AuditLog.write){
@@ -28613,23 +28702,40 @@ function FinanceExpense(){
     showToast('다운로드 완료 ('+data.length+'건)');
   }
 
-  function persist(arr){
-    // 잠금 가드: 현재 보고 있는 월이 잠겨있으면 모든 변경 차단
-    if(isExpenseLocked(monthFilter)){
-      showToast('🔒 ' + monthFilter + '은(는) 잠겨있어 수정 불가');
-      return;
+  // ── Phase 2: 건별 저장 (과거회귀 방지) — 그 건들만 서버 반영, 가상행(_isPayroll/_isCardFee) 저장 금지 ──
+  function refreshExpenses(){ setExpenses(dbGet('finance_expense', []).slice()); }
+  function expenseLockGuard(it){
+    var ym = ((it && it.date) || '').slice(0,7) || monthFilter;
+    if(ym && isExpenseLocked(ym)){ showToast('🔒 ' + ym + '은(는) 잠겨있어 수정 불가'); return false; }
+    return true;
+  }
+  function persistOneExpense(item){
+    if(!item || !item.id || item._isPayroll || item._isCardFee) return false;
+    if(!expenseLockGuard(item)) return false;
+    var prev = dbGet('finance_expense', []).find(function(x){ return x.id === item.id; });
+    if(prev && !expenseLockGuard(prev)) return false;
+    var ok = dbUpsert('finance_expense', item);
+    if(ok) refreshExpenses(); else showToast('❌ 출금 저장 실패');
+    return ok;
+  }
+  function persistManyExpense(items){
+    var real = (items||[]).filter(function(x){ return x && x.id && !x._isPayroll && !x._isCardFee; });
+    if(!real.length) return false;
+    for(var i=0;i<real.length;i++){ if(!expenseLockGuard(real[i])) return false; }
+    var ok = dbUpsertMany('finance_expense', real);
+    if(ok) refreshExpenses(); else showToast('❌ 출금 일괄 저장 실패');
+    return ok;
+  }
+  function removeManyExpense(ids){
+    if(!ids || !ids.length) return false;
+    var all = dbGet('finance_expense', []);
+    for(var i=0;i<ids.length;i++){
+      var cur = all.find(function(x){ return x.id === ids[i]; });
+      if(cur && !expenseLockGuard(cur)) return false;
     }
-    // 월별급여 가상 항목은 finance_expense에 저장하지 않음
-    var real = (arr||[]).filter(function(x){return !x._isPayroll && !x._isCardFee;});
-    var snap = dbGet('finance_expense', []);
-    try {
-      setExpenses(real);
-      dbSet('finance_expense', real);
-    } catch(e){
-      try { dbSet('finance_expense', snap); setExpenses(snap); } catch(_){}
-      showToast('❌ 출금 저장 실패 — 변경 사항이 복원되었습니다');
-      console.error('[Transaction:expense.persist]', e && e.message);
-    }
+    var ok = dbRemoveMany('finance_expense', ids);
+    if(ok) refreshExpenses();
+    return ok;
   }
   function addManual(){
     if(isExpenseLocked(monthFilter)){
@@ -28680,12 +28786,10 @@ function FinanceExpense(){
       }
     } catch(e){ window._erpErrLog && window._erpErrLog(e); }
 
-    var newList;
+    var _toSave = [form];
     if(expenses.find(function(x){return x.id===form.id;})){
-      newList = expenses.map(function(x){return x.id===form.id ? form : x;});
       showToast('수정됨');
     } else {
-      newList = [form].concat(expenses);
       // 이체수수료 자동 추가 (별도 레코드)
       if(bankFee > 0){
         var feeItem = {
@@ -28697,13 +28801,13 @@ function FinanceExpense(){
           note: '이체수수료 (연결: ' + (form.payee||form.id) + ')',
           linkedExpenseId: form.id
         };
-        newList = [feeItem].concat(newList);
+        _toSave.push(feeItem);
         showToast('추가됨 + 이체수수료 ' + bankFee.toLocaleString() + '원 자동 등록');
       } else {
         showToast('추가됨');
       }
     }
-    persist(newList);
+    if(!persistManyExpense(_toSave)) return;
     setDetailModal(null);
   }
   async function delItem(id){
@@ -28724,9 +28828,8 @@ function FinanceExpense(){
       msg = '삭제하시겠습니까?\n\n연결된 자동 출금 '+children.length+'건도 함께 삭제됩니다:\n· 이체수수료 등 '+childSum.toLocaleString()+'원';
     }
     if(!(await popConfirm(msg))) return;
-    persist(expenses.filter(function(x){
-      return x.id !== id && x.linkedExpenseId !== id;
-    }));
+    var _rmIds = [id].concat(children.map(function(c){ return c.id; }));
+    if(!removeManyExpense(_rmIds)) return;
     showToast(children.length > 0 ? '삭제됨 (자동 출금 '+children.length+'건 포함)' : '삭제됨');
   }
   // 가상 항목 진입 차단 헬퍼
@@ -29046,7 +29149,7 @@ function FinanceExpense(){
                       h('span',{style:{fontFamily:'monospace',fontWeight:700,color:'#dc2626',minWidth:'120px',textAlign:'right'}},(it.amount||0).toLocaleString()+'원'),
                       isEB ? h('button',{onClick:function(){
                           var today=todayYMD();
-                          persist(expenses.map(function(x){if(x.id!==it.id) return x; return Object.assign({},x,{paid:!isPaid,paidDate:!isPaid?today:''});}));
+                          (function(){ if(it._isPayroll||it._isCardFee) return; if(!expenseLockGuard(it)) return; if(dbPatch('finance_expense', it.id, {paid:!isPaid, paidDate:!isPaid?today:''})) refreshExpenses(); })();
                           showToast(!isPaid?'납부완료':'미납으로 변경');
                         },
                         style:{background:isPaid?'#dcfce7':'#fef3c7',color:isPaid?'#166534':'#92400e',border:'1px solid '+(isPaid?'#86efac':'#fde68a'),padding:'3px 9px',borderRadius:'5px',fontSize:'10.5px',fontWeight:700,cursor:'pointer'}},isPaid?'✓ 납부':'납부')
@@ -29083,7 +29186,7 @@ function FinanceExpense(){
       expensesReal: expensesReal,
       cats: cats,
       onApply: function(newItems){
-        persist(newItems.concat(expensesReal));
+        persistManyExpense(newItems);
         setShowLastCopy(false);
         showToast('✓ '+newItems.length+'건 복사 완료');
       },
@@ -29656,16 +29759,15 @@ function ExpenseBulkImportModal(props){
   async function doImport(){
     if(parsed.length === 0){ showToast('파싱된 항목이 없습니다'); return; }
     if(!(await popConfirm(parsed.length+'건 ('+totalAmt.toLocaleString()+'원)을 출금에 일괄 등록할까요?'))) return;
-    var fe = dbGet('finance_expense', []);
-    parsed.forEach(function(r){
-      fe.unshift({
+    var _newFes = parsed.map(function(r){
+      return {
         id: 'fe-bulk-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5)+'-'+Math.random().toString(36).slice(2,7),
         date: r.date, amount: r.amount, category: defCat,
         payee: r.payee, note: r.note,
         createdAt: (new Date()).toISOString()
-      });
+      };
     });
-    dbSet('finance_expense', fe);
+    dbUpsertMany('finance_expense', _newFes);
     showToast(parsed.length+'건 등록 완료');
     props.onClose();
   }
@@ -29910,8 +30012,7 @@ function CardExcelImportModal(props){
         importedAt:(new Date()).toISOString()
       };
     });
-    fe = newItems.concat(fe);
-    dbSet('finance_expense', fe);
+    dbUpsertMany('finance_expense', newItems);
     showToast(parsed.length+'건 등록 완료 (자동 분류 적용)');
     props.onClose && props.onClose();
   }
@@ -31298,9 +31399,7 @@ function PersonalCalendar(props){
               perfShares: [],
               createdAt: (new Date()).toISOString()
             };
-            var arr = dbGet('finance_income', []) || [];
-            arr.unshift(income);
-            dbSet('finance_income', arr);
+            dbUpsert('finance_income', income);
             showToast('💰 '+advQuickModal.co.name+' 입금 처리 완료');
             setAdvQuickModal(null);
             setRefreshKey(refreshKey+1);
@@ -35812,9 +35911,7 @@ function CorpDashboard(props){
                 perfShares: [],
                 createdAt: (new Date()).toISOString()
               };
-              var arr = dbGet('finance_income', []) || [];
-              arr.unshift(income);
-              dbSet('finance_income', arr);
+              dbUpsert('finance_income', income);
               showToast('💰 '+corpAdvQuickModal.co.name+' 입금 처리 완료');
               setCorpAdvQuickModal(null);
               setCalRfk(calRfk+1);
@@ -37479,22 +37576,16 @@ function FinanceTxn(){
 
   function confirmIncomeTxn(txn, pItem){
     var paidDate = txn.date;
-    var income = dbGet('finance_income',[])||[];
     var newId = 'fi-'+Date.now().toString(36);
-    income.unshift({id:newId, companyName:pItem.companyName, amount:txn.amount,
+    dbUpsert('finance_income', {id:newId, companyName:pItem.companyName, amount:txn.amount,
       date:paidDate, memo:'[거래내역] '+(txn.memo||'')+(txn.note?' / '+txn.note:''),
       sourceKind:pItem.store.replace('s',''), sourceId:pItem.item.id, perfShares:[],
       confirmedAt:new Date().toISOString(), confirmedBy:CURRENT_USER?CURRENT_USER.sid:''});
-    dbSet('finance_income', income);
-    var arr = (dbGet(pItem.store,[])||[]).map(function(it){
-      if(it.id !== pItem.item.id) return it;
-      var u = Object.assign({},it);
-      if(pItem.kind==='retainer'){u.retainerPaid=true;u.retainerPaidDate=paidDate;}
-      else if(pItem.kind==='balance'){u.balancePaid=true;u.balancePaidDate=paidDate;}
-      else{u.paid=true;u.paidDate=paidDate;}
-      return u;
-    });
-    dbSet(pItem.store, arr);
+    var _sp2 = {};
+    if(pItem.kind==='retainer'){_sp2.retainerPaid=true;_sp2.retainerPaidDate=paidDate;}
+    else if(pItem.kind==='balance'){_sp2.balancePaid=true;_sp2.balancePaidDate=paidDate;}
+    else{_sp2.paid=true;_sp2.paidDate=paidDate;}
+    dbPatch(pItem.store, pItem.item.id, _sp2);
     var updated = txns.map(function(t){ return t.id===txn.id ? Object.assign({},t,{status:'matched',linkedId:newId}) : t; });
     saveTxns(updated);
     showToast('✅ 입금확정: '+pItem.companyName+' '+txn.amount.toLocaleString()+'원');
@@ -37502,13 +37593,11 @@ function FinanceTxn(){
 
   function registerExpenseTxn(txn, cat, payee){
     if(!cat){ showToast('⚠️ 카테고리를 선택하세요'); return; }
-    var fe = dbGet('finance_expense',[])||[];
     var newId = 'fe-'+Date.now().toString(36);
-    fe.unshift({id:newId, date:txn.date, amount:txn.amount, category:cat,
+    dbUpsert('finance_expense', {id:newId, date:txn.date, amount:txn.amount, category:cat,
       payee:payee||(txn.memo||''), note:'[거래내역] '+(txn.memo||'')+(txn.note?' / '+txn.note:''),
       paid:true, paidDate:txn.date, branch:'cheonan',
       confirmedAt:new Date().toISOString()});
-    dbSet('finance_expense', fe);
     var updated = txns.map(function(t){ return t.id===txn.id ? Object.assign({},t,{status:'matched',linkedId:newId}) : t; });
     saveTxns(updated);
     showToast('✅ 출금등록: '+txn.amount.toLocaleString()+'원 ('+cat+')');
