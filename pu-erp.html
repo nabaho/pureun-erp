@@ -760,8 +760,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-04 계약 하위종류를 상단 공통 칩으로 (3개 열 동시 필터), 열별 하위종류 제거';
-var BUILD_SEQ = 84;
+var ERP_BUILD = '2026-07-04 계약 카드 정렬 기준 추가 (종류별 묶기·금액·날짜) — 전체 표시';
+var BUILD_SEQ = 85;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -9033,6 +9033,7 @@ function ContractManagement(){
   var sf = usePersistedState('contract_subtype_filter', 'all'); var selSubType = sf[0]; var setSelSubType = sf[1];
   var mf = usePersistedState('contract_mgr_filter', 'all'); var mgrFilter = mf[0]; var setMgrFilter = mf[1];  // 'all' | 'mine' | sid
   var smf = usePersistedState('contract_submgr_filter', 'all'); var subMgrFilter = smf[0]; var setSubMgrFilter = smf[1];
+  var sbS = usePersistedState('contract_sort', 'default'); var sortKey = sbS[0]; var setSortKey = sbS[1];
   var moS = useState(false); var monthOnly = moS[0]; var setMonthOnly = moS[1];
   var hlpS = useState(false); var showHelp = hlpS[0]; var setShowHelp = hlpS[1];
   var fcS = useState('all'); var focusCol = fcS[0]; var setFocusCol = fcS[1];  // 'all' | 'consult' | 'review' | 'signed' — 단독 보기는 세션 한정, 열 때마다 전체(3컬럼)로 시작
@@ -9398,18 +9399,26 @@ function ContractManagement(){
     return true;
   });
   // ★ #10 핀된 계약 상단 정렬 + 내 담당 우선
+  function _amtOf(c){ var t=0; var arr=c.kinds||(c.kind?[c.kind]:[]); if(c.amounts){ arr.forEach(function(kv){ t+=(c.amounts[kv]||0); }); } else { t=c.contractAmount||0; } if(!t && c.successFee) t=c.successFee; return t; }
+  function _dateOf(c){ return (c.contractDate || c.signDate || c.createdAt || '').toString(); }
+  function _grpOf(c){ var arr=c.kinds||(c.kind?[c.kind]:[]); var kv=arr[0]||''; var kl=(kindInfo(kv)||{}).label||kv; var sub=kindSubLabel(c,kv)||''; return (kl+' '+sub).trim(); }
   filtered = filtered.slice().sort(function(a, b){
     var _sid = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? CURRENT_USER.sid : '';
-    function pinScore(x){ return isPinned(x.id) ? 0 : 1; }
     function mgrScore(x){
       if(!_sid) return 0;
       if(x.managerMain === _sid) return 0;
       if((x.managerSubs||[]).indexOf(_sid) >= 0) return 1;
       return 2;
     }
-    var pa = pinScore(a), pb = pinScore(b);
+    // 핀은 항상 최상단 (의도적 고정)
+    var pa = isPinned(a.id)?0:1, pb = isPinned(b.id)?0:1;
     if(pa !== pb) return pa - pb;
-    // ★ 이동한 카드를 상단 고정 (orderTs) — 최근 이동 우선. 안 옮긴 카드는 기존 순서 유지
+    if(sortKey === 'kind'){ var ga=_grpOf(a), gb=_grpOf(b); if(ga!==gb) return ga.localeCompare(gb, 'ko'); return _dateOf(b).localeCompare(_dateOf(a)); }
+    if(sortKey === 'amountDesc'){ return _amtOf(b) - _amtOf(a); }
+    if(sortKey === 'amountAsc'){ return _amtOf(a) - _amtOf(b); }
+    if(sortKey === 'dateDesc'){ return _dateOf(b).localeCompare(_dateOf(a)); }
+    if(sortKey === 'dateAsc'){ return _dateOf(a).localeCompare(_dateOf(b)); }
+    // 기본: 이동 카드 상단(orderTs) → 담당 우선
     var oa = a.orderTs || 0, ob = b.orderTs || 0;
     if(oa !== ob) return ob - oa;
     return mgrScore(a) - mgrScore(b);
@@ -9669,6 +9678,15 @@ function ContractManagement(){
         title:'단계별 종류 필터 표시 전환 (현재: '+(filterView==='dropdown'?'드롭다운':'칩')+')',
         style:{ padding:'6px 9px', background:'#fff', color:'#475569', border:'1px solid #cbd5e1', borderRadius:'5px', cursor:'pointer', fontSize:'11.5px', fontWeight:600, whiteSpace:'nowrap' } },
         filterView==='dropdown' ? '▾ 필터' : '▦ 필터'),
+      h('select', { value:sortKey, onChange:function(e){ setSortKey(e.target.value); },
+        title:'카드 정렬 (전체 표시 · 같은 종류끼리 모으기 등)',
+        style:{ padding:'6px 10px', border:'1px solid '+(sortKey!=='default'?'#0f766e':'#cbd5e1'), borderRadius:'5px', fontSize:'11.5px', fontFamily:'inherit', color:sortKey!=='default'?'#0f766e':'#475569', fontWeight:sortKey!=='default'?700:400, cursor:'pointer' } },
+        h('option', { value:'default' }, '↕ 기본순'),
+        h('option', { value:'kind' }, '📊 종류별 묶기'),
+        h('option', { value:'amountDesc' }, '💰 금액 높은순'),
+        h('option', { value:'amountAsc' }, '💰 금액 낮은순'),
+        h('option', { value:'dateDesc' }, '📅 최신순'),
+        h('option', { value:'dateAsc' }, '📅 오래된순')),
       h('select', { value:mgrFilter, onChange:function(e){ setMgrFilter(e.target.value); },
         style:{ padding:'6px 10px', border:'1px solid '+(mgrFilter!=='all'?'#1e40af':'#cbd5e1'), borderRadius:'5px', fontSize:'11.5px', fontFamily:'inherit', color:mgrFilter!=='all'?'#1e40af':'#475569', fontWeight:mgrFilter!=='all'?700:400, cursor:'pointer' } },
         h('option', { value:'all' }, '👤 전체 담당자'),
