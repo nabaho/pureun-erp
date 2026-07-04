@@ -668,8 +668,6 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
   <!-- 설정 내부 탭 -->
   <div style="display:flex;gap:0;border-bottom:2px solid var(--border);background:var(--surface);padding:0 20px;flex-shrink:0;overflow-x:auto;">
     <button class="set-tab active" data-stab="env">🔧 기본 환경</button>
-    <button class="set-tab" data-stab="att-limit">👤 노무사 업무 제한</button>
-    <button class="set-tab" data-stab="exclusive">🚫 컨설팅 중복 제한</button>
     <button class="set-tab" data-stab="type">📋 컨설팅 종류</button>
     <button class="set-tab" data-stab="staff">👥 직원 관리</button>
     <button class="set-tab" data-stab="backup">💾 백업 / 복원</button>
@@ -683,29 +681,12 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
     <div style="max-width:560px;display:flex;flex-direction:column;gap:10px;" id="envList"></div>
   </div>
 
-  <!-- 노무사 업무 제한 -->
-  <div id="stab-att-limit" class="stab-content" style="display:none;flex:1;overflow-y:auto;padding:24px;">
-    <div style="font-size:17px;font-weight:900;margin-bottom:4px;">👤 노무사 업무 중복 제한</div>
-    <div style="font-size:11px;color:var(--t2);margin-bottom:20px;">같은 날 동일 노무사가 담당(정·협업 포함)할 수 있는 최대 컨설팅 건수를 설정합니다. 0 = 무제한.</div>
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;max-width:560px;" id="attLimitList"></div>
-  </div>
-
-  <!-- 컨설팅 중복 제한 -->
-  <div id="stab-exclusive" class="stab-content" style="display:none;flex:1;overflow-y:auto;padding:24px;">
-    <div style="font-size:17px;font-weight:900;margin-bottom:4px;">🚫 컨설팅 중복 제한</div>
-    <div style="font-size:11px;color:var(--t2);margin-bottom:16px;">번호끼리 만나는 칸을 눌러 <b>같은 날 함께 등록</b>을 막습니다(사업장 달라도 적용). <b>파란 대각선</b> = 그 컨설팅 하루 1건.</div>
-    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;">
-      <div style="overflow-x:auto;" id="conflictMatrix"></div>
-      <div id="conflictLegend" style="font-size:12px;line-height:1.5;min-width:180px;"></div>
-    </div>
-  </div>
-
   <!-- 컨설팅 종류 -->
   <div id="stab-type" class="stab-content" style="display:none;flex:1;overflow-y:auto;padding:24px;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
       <div>
         <div style="font-size:17px;font-weight:900;">📋 컨설팅 종류 관리</div>
-        <div style="font-size:11px;color:var(--t2);margin-top:2px;">전체명·수행기관·최대회차·의무방문 — 변경 즉시 저장</div>
+        <div style="font-size:11px;color:var(--t2);margin-top:2px;">전체명·수행기관·최대회차·의무방문·중복 규칙 — 변경 즉시 저장</div>
       </div>
       <button class="btn btn-p" id="setAddBtn">+ 종류 추가</button>
     </div>
@@ -717,7 +698,7 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
       <div>
         <div style="font-size:17px;font-weight:900;">👥 직원 관리</div>
-        <div style="font-size:11px;color:var(--t2);margin-top:2px;">색상·이름 변경 즉시 저장. 👑 관리자 지정.</div>
+        <div style="font-size:11px;color:var(--t2);margin-top:2px;">색상·이름·당일 최대 건수 변경 즉시 저장. 👑 관리자 지정.</div>
       </div>
       <button class="btn btn-p" id="staffAddBtn">+ 직원 추가</button>
     </div>
@@ -2393,12 +2374,25 @@ function renderEndedView(){
 // ===== 직원 관리 =====
 function renderStaffList(){
   const staff=getStaff();
+  const env=getEnv();
+  const today=todayStr();
   q('#staffList').innerHTML=staff.map((s,i)=>{
     const pwSet=s.pin&&!['123456','1234','0000'].includes(s.pin);
+    const maxVal=env[`attMax_${s.id}`]??env.maxDailyPerAtt;
+    const todayCnt=getScheds().filter(sc=>sc.date===today&&(sc.attId===s.id||getCoAtts(sc).includes(s.id))).length;
+    const over=maxVal>0&&todayCnt>=maxVal;
     return `
     <div class="staff-row">
       <input class="staff-color" type="color" value="${s.color}" onchange="saveStaffField('${s.id}','color',this.value)" title="색상">
       <input class="staff-name-inp" type="text" value="${s.name}" onchange="saveStaffField('${s.id}','name',this.value)" placeholder="이름">
+      <div style="display:flex;align-items:center;gap:5px;white-space:nowrap;flex-shrink:0;" title="같은 날 담당(정·협업 포함) 최대 건수. 0=무제한">
+        <span style="font-size:10px;color:var(--t2);">당일 최대</span>
+        <input type="number" min="0" max="20" value="${maxVal}"
+          style="width:46px;padding:5px;border:1.5px solid var(--border);border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;text-align:center;outline:none;background:var(--surface);"
+          onchange="saveEnvField('attMax_${s.id}',+this.value);renderStaffList();">
+        <span style="font-size:10px;color:var(--t2);">건</span>
+        <span style="font-size:10px;color:${over?'var(--danger)':'var(--t2)'};">· 오늘 ${todayCnt}${over?' ⚠️':''}</span>
+      </div>
       <span style="font-size:10px;font-weight:700;color:${pwSet?'var(--ok)':'var(--t2)'};white-space:nowrap;" title="${pwSet?'개인 비밀번호 설정됨':'기본 비밀번호(123456)'}">${pwSet?'🔒 설정됨':'🔓 기본'}</span>
       <label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;">
         <input type="checkbox" ${s.isAdmin?'checked':''} onchange="saveStaffField('${s.id}','isAdmin',this.checked)">
@@ -3675,7 +3669,26 @@ function bindConflictLegendDrag(){
 }
 
 function renderSettings(){
-  const rows=getTypes().map(t=>`
+  const types=getTypes();
+  const active=types.filter(t=>t.active!==false);
+  const rows=types.map(t=>{
+    const inactive=t.active===false;
+    let onceCell,pairCell;
+    if(inactive){
+      onceCell='<span style="color:var(--t2);">—</span>';
+      pairCell='<span style="color:var(--t2);">—</span>';
+    }else{
+      const once=isConflictPair(t.id,t.id);
+      onceCell=`<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;color:var(--t2);white-space:nowrap;">
+        <input type="checkbox" ${once?'checked':''} onchange="toggleConflict('${t.id}','${t.id}');renderSettings();">하루 1건</label>`;
+      const partners=active.filter(o=>o.id!==t.id);
+      const chips=partners.filter(o=>isConflictPair(t.id,o.id)).map(o=>
+        `<span onclick="toggleConflict('${t.id}','${o.id}');renderSettings();" title="클릭하면 해제" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;background:rgba(233,69,96,.10);border:1px solid rgba(233,69,96,.35);color:var(--danger);font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;"><span style="width:7px;height:7px;border-radius:50%;background:${o.color};"></span>${o.name} ✕</span>`).join('');
+      const addable=partners.filter(o=>!isConflictPair(t.id,o.id));
+      const addSel=addable.length?`<select onchange="if(this.value){toggleConflict('${t.id}',this.value);renderSettings();}" style="padding:3px 6px;border:1.5px dashed var(--border);border-radius:12px;font-family:inherit;font-size:11px;font-weight:700;color:var(--t2);background:var(--surface);cursor:pointer;"><option value="">+ 추가</option>${addable.map(o=>`<option value="${o.id}">${o.name}</option>`).join('')}</select>`:'';
+      pairCell=`<div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;max-width:300px;">${chips}${addSel}</div>`;
+    }
+    return `
     <tr>
       <td><input type="color" value="${t.color}" onchange="saveTypeField('${t.id}','color',this.value)" title="색상"></td>
       <td><input class="fi-sm set-name" style="width:80px" type="text" value="${t.name}" onchange="saveTypeField('${t.id}','name',this.value)" placeholder="약칭"></td>
@@ -3683,16 +3696,22 @@ function renderSettings(){
       <td><input class="fi-sm" style="width:150px" type="text" value="${t.agency||''}" onchange="saveTypeField('${t.id}','agency',this.value)" placeholder="예: FM협회"></td>
       <td><input class="num-sm" type="number" min="0" value="${t.rounds||0}" onchange="saveTypeField('${t.id}','rounds',+this.value)" title="0=무제한"></td>
       <td><input class="num-sm" type="number" min="0" value="${t.mandatoryField||0}" onchange="saveTypeField('${t.id}','mandatoryField',+this.value)"></td>
+      <td style="text-align:center;">${onceCell}</td>
+      <td>${pairCell}</td>
       <td><div class="act-cell">
-        <button class="btn ${t.active===false?'btn-p':'btn-s'}" style="font-size:11px;padding:4px 10px;white-space:nowrap" onclick="toggleType('${t.id}')">${t.active===false?'✅ 활성':'⊘ 비활성'}</button>
+        <button class="btn ${inactive?'btn-p':'btn-s'}" style="font-size:11px;padding:4px 10px;white-space:nowrap" onclick="toggleType('${t.id}')">${inactive?'✅ 활성':'⊘ 비활성'}</button>
         <button class="btn btn-d" style="font-size:11px;padding:4px 10px" onclick="deleteType('${t.id}')">🗑</button>
       </div></td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
   q('#typeList').innerHTML=`
     <table class="set-tbl">
       <thead><tr>
         <th>색상</th><th>약칭</th><th>전체 이름</th><th>수행기관</th>
-        <th title="0=무제한">최대회차</th><th>의무방문</th><th>관리</th>
+        <th title="0=무제한">최대회차</th><th>의무방문</th>
+        <th title="켜면 이 컨설팅은 하루에 1건만 등록됩니다">하루 1건</th>
+        <th title="같은 날 함께 등록할 수 없는 컨설팅 (사업장이 달라도 적용)">같은 날 불가</th>
+        <th>관리</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
@@ -4372,8 +4391,6 @@ function bind(){
     const target=q(`#stab-${btn.dataset.stab}`);
     target.style.display='flex';target.classList.add('active');
     if(btn.dataset.stab==='env')renderEnv();
-    if(btn.dataset.stab==='att-limit')renderAttLimitList();
-    if(btn.dataset.stab==='exclusive')renderExclusiveList();
     if(btn.dataset.stab==='type')renderSettings();
     if(btn.dataset.stab==='staff')renderStaffList();
     if(btn.dataset.stab==='roundlog')renderRoundLog();
