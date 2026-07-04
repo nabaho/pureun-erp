@@ -692,9 +692,12 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 
   <!-- 컨설팅 중복 제한 -->
   <div id="stab-exclusive" class="stab-content" style="display:none;flex:1;overflow-y:auto;padding:24px;">
-    <div style="font-size:17px;font-weight:900;margin-bottom:4px;">🚫 컨설팅 간 중복 제한</div>
-    <div style="font-size:11px;color:var(--t2);margin-bottom:20px;"><b>당일 단독 실시</b>로 설정된 컨설팅은 같은 사업장 같은 날 다른 컨설팅과 중복 등록이 차단됩니다.</div>
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;max-width:560px;" id="exclusiveList"></div>
+    <div style="font-size:17px;font-weight:900;margin-bottom:4px;">🚫 컨설팅 중복 제한</div>
+    <div style="font-size:11px;color:var(--t2);margin-bottom:16px;">번호끼리 만나는 칸을 눌러 <b>같은 날 함께 등록</b>을 막습니다(사업장 달라도 적용). <b>파란 대각선</b> = 그 컨설팅 하루 1건.</div>
+    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;">
+      <div style="overflow-x:auto;" id="conflictMatrix"></div>
+      <div id="conflictLegend" style="font-size:12px;line-height:1.5;min-width:180px;"></div>
+    </div>
   </div>
 
   <!-- 컨설팅 종류 -->
@@ -1859,6 +1862,8 @@ function saveSingle(){
   if(dup){showBigAlert(`${single.selDate}\n이미 등록된 날짜입니다.\n(같은 컨설팅 중복 불가)`);return;}
   const exErr=checkExclusiveDay(single.coId,single.typeId,single.selDate);
   if(exErr){toast(exErr,'err');return;}
+  const mxErr=checkConflictMatrix(single.coId,single.typeId,single.selDate);
+  if(mxErr){showBigAlert(mxErr);return;}
   const newId=uid();
   // 담당자 배정: 사업장 정담당 우선, 협업노무사가 등록해도 정담당 유지
   const defA=co?.defAtt||myId()||'a1';
@@ -1899,6 +1904,8 @@ function saveMultiSingle(){
     if(scheds.find(x=>x.date===ds&&x.coId===single.coId&&x.typeId===single.typeId)){skipped.push(`${ds.slice(5)}(중복)`);continue;}
     const exErr=checkExclusiveDay(single.coId,single.typeId,ds);
     if(exErr){skipped.push(`${ds.slice(5)}(${exErr})`);continue;}
+    const mxErr=checkConflictMatrix(single.coId,single.typeId,ds);
+    if(mxErr){skipped.push(`${ds.slice(5)}(중복제한)`);continue;}
     const attErr=checkAttLimit(defA,ds);
     if(attErr){skipped.push(`${ds.slice(5)}(${attErr})`);continue;}
     const newId=uid();
@@ -3165,6 +3172,41 @@ function checkAttLimit(attId,date,excludeId=null){
 }
 
 // 당일 단독 실시 중복 체크
+// ===== 컨설팅 중복 매트릭스 (같은 날 함께 못 하는 컨설팅 조합) =====
+function getConflictMatrix(){try{return JSON.parse(localStorage.getItem('p_conflictMatrix')||'{}');}catch(e){return{};}}
+function setConflictMatrix(m){lsSet('p_conflictMatrix',JSON.stringify(m));}
+// 기존 exclusiveDay(당일 단독) 설정을 매트릭스 대각선으로 1회 이관
+function migrateExclusiveToMatrix(){
+  if(localStorage.getItem('p_conflictMigrated'))return;
+  const m=getConflictMatrix();
+  getTypes().forEach(t=>{ if(t.exclusiveDay)m[conflictKey(t.id,t.id)]=true; });
+  setConflictMatrix(m);
+  lsSet('p_conflictMigrated','1');
+}
+function conflictKey(a,b){return [a,b].sort().join('__');}
+function isConflictPair(a,b){return !!getConflictMatrix()[conflictKey(a,b)];}
+function toggleConflict(a,b){const m=getConflictMatrix();const k=conflictKey(a,b);if(m[k])delete m[k];else m[k]=true;setConflictMatrix(m);}
+// 같은 날(전체 사업장) 매트릭스 위반 검사. 위반이면 안내 메시지 반환.
+function checkConflictMatrix(coId,typeId,date,excludeId=null){
+  const m=getConflictMatrix(); if(!Object.keys(m).length)return null;
+  const types=getTypes();
+  // 같은 날 다른 일정들 (사업장 무관)
+  const sameDay=getScheds().filter(s=>s.date===date&&s.id!==excludeId);
+  for(const s of sameDay){
+    // 같은 사업장+같은 종류의 단순 회차 중복은 여기서 취급하지 않음(기존 로직이 처리)
+    if(s.coId===coId&&s.typeId===typeId)continue;
+    if(isConflictPair(typeId,s.typeId)){
+      const t1=types.find(x=>x.id===typeId)?.name||'?';
+      const t2=types.find(x=>x.id===s.typeId)?.name||'?';
+      const co2=getCos().find(c=>c.id===s.coId)?.name||'?';
+      if(typeId===s.typeId){
+        return `[${t1}]은 같은 날 하루 1건만 가능합니다.\n${date}에 이미 [${co2}] 일정이 있습니다.`;
+      }
+      return `[${t1}]과 [${t2}]은 같은 날 함께 진행할 수 없습니다.\n${date}에 이미 [${co2} · ${t2}] 일정이 있습니다.`;
+    }
+  }
+  return null;
+}
 function checkExclusiveDay(coId,typeId,date,excludeId=null){
   const types=getTypes();
   const ty=types.find(t=>t.id===typeId);
@@ -3297,6 +3339,8 @@ function handleDrop(date,item){
   if(dup){toast('해당 날짜에 동일 일정이 이미 있습니다','err');return;}
   const exErr=checkExclusiveDay(item.coId,item.typeId,date);
   if(exErr){toast(exErr,'err');return;}
+  const mxErr=checkConflictMatrix(item.coId,item.typeId,date);
+  if(mxErr){showBigAlert(mxErr);return;}
   const ty=getTypes().find(t=>t.id===item.typeId);
   const defA=co?.defAtt||myId()||'a1';
   const defCoAs=getCoAtts(co);
@@ -3566,24 +3610,67 @@ function renderAttLimitList(){
 }
 
 function renderExclusiveList(){
-  const types=getTypes();
-  q('#exclusiveList').innerHTML=types.filter(t=>t.active!==false).map(t=>`
-    <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--sf2);">
-      <span style="width:10px;height:10px;border-radius:50%;background:${t.color};flex-shrink:0;display:inline-block;"></span>
-      <div style="flex:1;">
-        <div style="font-size:13px;font-weight:800;">${t.fullName||t.name}</div>
-        ${t.agency?`<div style="font-size:10px;color:var(--t2);">${t.agency}</div>`:''}
-      </div>
-      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;white-space:nowrap;">
-        <label style="position:relative;display:inline-block;width:44px;height:24px;cursor:pointer;">
-          <input type="checkbox" ${t.exclusiveDay?'checked':''} onchange="saveTypeField('${t.id}','exclusiveDay',this.checked);renderExclusiveList();"
-            style="opacity:0;width:0;height:0;position:absolute;">
-          <span style="position:absolute;inset:0;border-radius:24px;background:${t.exclusiveDay?'var(--danger)':'var(--border)'};transition:.2s;"></span>
-          <span style="position:absolute;top:3px;left:${t.exclusiveDay?'23px':'3px'};width:18px;height:18px;border-radius:50%;background:#fff;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.2);"></span>
-        </label>
-        <span style="font-size:12px;font-weight:700;color:${t.exclusiveDay?'var(--danger)':'var(--t2)'};">${t.exclusiveDay?'🚫 당일 단독':'✅ 중복 허용'}</span>
-      </label>
-    </div>`).join('');
+  renderConflictMatrix();
+}
+function renderConflictMatrix(){
+  const box=q('#conflictMatrix'); if(!box)return;
+  const types=getTypes().filter(t=>t.active!==false);
+  const num=(i)=>i+1;
+  const th=types.map((t,i)=>`<th style="width:38px;height:32px;padding:2px;text-align:center;border:1px solid var(--border);font-size:13px;font-weight:800;color:var(--t2);" title="${t.name}">${num(i)}</th>`).join('');
+  const rows=types.map((rt,ri)=>{
+    const cells=types.map((ct,ci)=>{
+      const on=isConflictPair(rt.id,ct.id);
+      const diag=rt.id===ct.id;
+      const bg=on?(diag?'rgba(55,138,221,.20)':'rgba(233,69,96,.18)'):'var(--surface)';
+      const col=diag?'var(--info)':'var(--danger)';
+      const bd=diag?'1.5px solid rgba(55,138,221,.5)':'1px solid var(--border)';
+      const mark=on?(diag?'1':'✕'):'';
+      return `<td onclick="toggleConflict('${rt.id}','${ct.id}');renderConflictMatrix();"
+        style="width:38px;height:38px;text-align:center;border:${bd};cursor:pointer;font-size:14px;font-weight:800;color:${col};background:${bg};" title="${rt.name} × ${ct.name}">${mark}</td>`;
+    }).join('');
+    return `<tr>
+      <td style="width:120px;max-width:120px;padding:5px 8px;font-size:12px;font-weight:800;white-space:nowrap;text-align:right;border:1px solid transparent;">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${rt.color};margin-right:5px;vertical-align:middle;"></span><b>${num(ri)}</b> ${rt.name}
+      </td>${cells}</tr>`;
+  }).join('');
+  box.innerHTML=`<table style="border-collapse:collapse;table-layout:fixed;"><tr><td style="width:120px;"></td>${th}</tr>${rows}</table>`;
+  // 범례 (번호·컨설팅·운영기관)
+  const lg=q('#conflictLegend');
+  if(lg){
+    lg.innerHTML=`<div style="font-weight:800;color:var(--t2);margin-bottom:6px;">번호 안내 <span style="font-weight:600;color:var(--t2);font-size:10px;">(끌어서 순서 변경)</span></div>`+
+      types.map((t,i)=>`<div class="cf-legend-row" draggable="true" data-tid="${t.id}" style="display:flex;align-items:center;gap:6px;margin-bottom:4px;padding:4px 6px;border-radius:6px;white-space:nowrap;cursor:grab;border:1px solid transparent;">
+        <span style="color:var(--t2);cursor:grab;">⠿</span>
+        <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${t.color};flex-shrink:0;"></span>
+        <b>${num(i)}</b> ${t.fullName||t.name}${t.agency?`<span style="color:var(--t2);"> · ${t.agency}</span>`:''}
+      </div>`).join('')+
+      `<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border);color:var(--t2);font-size:11px;line-height:1.6;">
+        <span style="color:var(--info);font-weight:800;">파랑 1</span> = 그 컨설팅 하루 1건<br>
+        <span style="color:var(--danger);font-weight:800;">빨강 ✕</span> = 두 컨설팅 같은 날 불가
+      </div>`;
+    bindConflictLegendDrag();
+  }
+}
+function bindConflictLegendDrag(){
+  const rows=qa('.cf-legend-row'); let dragId=null;
+  rows.forEach(r=>{
+    r.ondragstart=e=>{dragId=r.dataset.tid;r.style.opacity='.4';e.dataTransfer.effectAllowed='move';};
+    r.ondragend=()=>{r.style.opacity='';qa('.cf-legend-row').forEach(x=>x.style.borderColor='transparent');};
+    r.ondragover=e=>{e.preventDefault();r.style.borderColor='var(--accent)';};
+    r.ondragleave=()=>{r.style.borderColor='transparent';};
+    r.ondrop=e=>{
+      e.preventDefault();
+      const dropId=r.dataset.tid;
+      if(!dragId||dragId===dropId)return;
+      const all=getTypes();
+      const from=all.findIndex(t=>t.id===dragId);
+      const to=all.findIndex(t=>t.id===dropId);
+      if(from<0||to<0)return;
+      const [moved]=all.splice(from,1);
+      all.splice(to,0,moved);
+      setTypes(all);
+      renderConflictMatrix();
+    };
+  });
 }
 
 function renderSettings(){
@@ -4503,6 +4590,7 @@ function init(){
   const clk=()=>{const d=new Date();const el=document.getElementById('loginClock');if(el)el.textContent=`${p2(d.getHours())}:${p2(d.getMinutes())} KST`;};
   clk();setInterval(clk,30000);
   getTypes();
+  migrateExclusiveToMatrix();
   bind();
   refreshStaffDropdowns();
   initLogin();
