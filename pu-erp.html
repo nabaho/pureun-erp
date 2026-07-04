@@ -760,8 +760,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-04 모바일 콤팩트 화면 복구 — PWA 커밋에서 삭제된 viewport 메타 복원';
-var BUILD_SEQ = 81;
+var ERP_BUILD = '2026-07-04 계약 칸반: 이동 카드 상단 고정(orderTs 저장) + 방금이동 3초 표시';
+var BUILD_SEQ = 82;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -9055,6 +9055,7 @@ function ContractManagement(){
   // 드래그&드롭
   var d = useState(null); var dragId = d[0]; var setDragId = d[1];
   var o = useState(null); var overStatus = o[0]; var setOverStatus = o[1];
+  var jm = useState(null); var justMovedId = jm[0]; var setJustMovedId = jm[1];
 
   var users = getActiveUsers();
   function userName(sid){ var u = users.find(function(x){return x.sid===sid;}); return u ? u.name : sid; }
@@ -9235,8 +9236,10 @@ function ContractManagement(){
     var ct = contracts.find(function(x){return x.id===id;});
     if(!ct) return;
     if(ct.status === newStatus) return;
-    if(!patchOne(id, { status:newStatus })) return;
-    showToast(ct.companyName + ' → ' + contractStatusInfo(newStatus).label);
+    if(!patchOne(id, { status:newStatus, orderTs: Date.now() })) return;
+    setJustMovedId(id);
+    setTimeout(function(){ setJustMovedId(function(cur){ return cur===id ? null : cur; }); }, 3000);
+    showToast(ct.companyName + ' → ' + contractStatusInfo(newStatus).label + ' · 맨 위로 이동');
   }
 
   // 계약확정 → 이관 (status='transferred')
@@ -9380,6 +9383,9 @@ function ContractManagement(){
     }
     var pa = pinScore(a), pb = pinScore(b);
     if(pa !== pb) return pa - pb;
+    // ★ 이동한 카드를 상단 고정 (orderTs) — 최근 이동 우선. 안 옮긴 카드는 기존 순서 유지
+    var oa = a.orderTs || 0, ob = b.orderTs || 0;
+    if(oa !== ob) return ob - oa;
     return mgrScore(a) - mgrScore(b);
   });
 
@@ -9427,6 +9433,7 @@ function ContractManagement(){
   function renderCard(c, idx, isFocused){
     var kindsArr = c.kinds || (c.kind ? [c.kind] : []);
     var isDragging = dragId === c.id;
+    var justMoved = (c.id === justMovedId);
     // 합계 금액
     var totalAmount = 0;
     if(c.amounts){
@@ -9463,7 +9470,8 @@ function ContractManagement(){
         onDragStart:onDragStart(c.id),
         onDragEnd:onDragEnd,
         onClick:function(){ openEdit(c); },
-        style:{ opacity: isDragging ? .4 : 1, transition:'opacity .15s', borderLeft: isPinned(c.id)?'3px solid #f59e0b':'3px solid transparent' } },
+        style:{ position:'relative', opacity: isDragging ? .4 : 1, transition:'opacity .15s, box-shadow .3s, background .3s', borderLeft: isPinned(c.id)?'3px solid #f59e0b':'3px solid transparent', background: justMoved ? '#eff6ff' : undefined, boxShadow: justMoved ? '0 0 0 2px #2563eb' : undefined } },
+        justMoved && h('div', { style:{ position:'absolute', top:'-9px', right:'8px', background:'#2563eb', color:'#fff', fontSize:'9.5px', fontWeight:700, padding:'2px 8px', borderRadius:'9px', boxShadow:'0 1px 4px rgba(0,0,0,0.25)', zIndex:6, whiteSpace:'nowrap' } }, '⤴ 방금 이동됨'),
         // ★ #10 핀 버튼
         h('div', { onClick:function(e){ e.stopPropagation(); togglePin(c.id); },
           title: isPinned(c.id)?'핀 해제':'상단 고정',
@@ -9515,12 +9523,14 @@ function ContractManagement(){
       onDragEnd:onDragEnd,
       onClick:function(){ openEdit(c); },
       style:{
-        background:'#fff', border:'1px solid #e5e7eb', borderRadius:'6px',
+        background: justMoved ? '#eff6ff' : '#fff', border: justMoved ? '1px solid #2563eb' : '1px solid #e5e7eb', borderRadius:'6px',
         padding:'10px 12px', marginBottom:'6px', cursor:'grab',
         opacity: isDragging ? .4 : 1,
-        transition: 'opacity .15s',
-        position:'relative'
+        transition: 'opacity .15s, background .3s, box-shadow .3s',
+        position:'relative',
+        boxShadow: justMoved ? '0 0 0 2px #2563eb, 0 3px 12px rgba(37,99,235,0.35)' : 'none'
       } },
+      justMoved && h('div', { style:{ position:'absolute', top:'-9px', right:'8px', background:'#2563eb', color:'#fff', fontSize:'9.5px', fontWeight:700, padding:'2px 8px', borderRadius:'9px', boxShadow:'0 1px 4px rgba(0,0,0,0.25)', zIndex:6, whiteSpace:'nowrap' } }, '⤴ 방금 이동됨'),
       // 첫째 줄: 종류 배지들 (다중) + 계약번호
       h('div', { style:{ display:'flex', alignItems:'center', gap:'3px', marginBottom:'4px', flexWrap:'wrap' } },
         kindsArr.map(function(kv){
