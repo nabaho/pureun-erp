@@ -760,8 +760,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-04 계약 칸반: 이동 카드 상단 고정(orderTs 저장) + 방금이동 3초 표시';
-var BUILD_SEQ = 82;
+var ERP_BUILD = '2026-07-04 계약 칸반 필터 칩↔드롭다운 전환(기본 드롭다운) — 열별 종류·하위종류';
+var BUILD_SEQ = 83;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -9040,6 +9040,32 @@ function ContractManagement(){
   var skf = useState({}); var stageKindFilter = skf[0]; var setStageKindFilter = skf[1];
   function getStageFilter(v){ return stageKindFilter[v] || 'all'; }
   function setStageFilter(v, k){ var n = Object.assign({}, stageKindFilter); n[v] = k; setStageKindFilter(n); }
+  // 단계별 종류·하위종류 필터 표시 모드 (드롭다운 기본 / 칩) — 저장됨
+  var fvm = usePersistedState('contract_filter_view', 'dropdown'); var filterView = fvm[0]; var setFilterView = fvm[1];
+  function filterRowUI(icon, label, opts, cur, onPick, accent){
+    if(filterView === 'dropdown'){
+      return h('div', { style:{padding:'6px 10px', background:'#fff', borderBottom:'1px solid #e5e7eb', display:'flex', alignItems:'center', gap:'6px'} },
+        h('span', { style:{fontSize:'10px', color:accent, fontWeight:600, whiteSpace:'nowrap'} }, icon+' '+label),
+        h('select', { value:cur, onChange:function(e){ onPick(e.target.value); },
+          style:{flex:1, maxWidth:'240px', padding:'3px 7px', fontSize:'11px', border:'1px solid '+accent+'55', borderRadius:'6px', color:accent, fontWeight:600, background:'#fff', cursor:'pointer', fontFamily:'inherit'} },
+          opts.map(function(o){ return h('option', { key:o.value, value:o.value }, o.label+' ('+o.count+')'); })
+        )
+      );
+    }
+    return h('div', { style:{padding:'6px 10px', background:'#fff', borderBottom:'1px solid #e5e7eb', display:'flex', flexWrap:'wrap', gap:'4px', alignItems:'center'} },
+      h('span', { style:{fontSize:'10px', color:accent, fontWeight:600, marginRight:'2px'} }, icon+' '+label),
+      opts.map(function(o){
+        var on = cur === o.value;
+        return h('button', { key:o.value, onClick:function(){ onPick(on && o.value!=='all' ? 'all' : o.value); },
+          style:{padding:'2px 8px', fontSize:'10.5px', borderRadius:'10px', cursor:'pointer',
+            background: on ? (o.color||accent) : (o.bg||'#f1f5f9'),
+            color: on ? '#fff' : (o.color||accent),
+            border:'1px solid '+(on ? (o.color||accent) : ((o.color||accent)+'44')),
+            fontWeight: on?700:500} },
+          o.label+' '+o.count);
+      })
+    );
+  }
   var ymS = usePersistedState('contract_month', todayYM()); var selYM = ymS[0]; var setSelYM = ymS[1];
   var thisYM = selYM;
   var q = useState(''); var query = q[0]; var setQuery = q[1];
@@ -9639,6 +9665,10 @@ function ContractManagement(){
         style:{ padding:'6px 10px', border:'1px solid '+(kindFilter!=='all'?'#1e40af':'#cbd5e1'), borderRadius:'5px', fontSize:'11.5px', fontFamily:'inherit', color:kindFilter!=='all'?'#1e40af':'#475569', fontWeight:kindFilter!=='all'?700:400, cursor:'pointer' } },
         [{ v:'all', label:'전체', icon:'📊' }].concat(CONTRACT_KINDS).map(function(k){ return h('option', { key:k.v, value:k.v }, k.icon + ' ' + k.label); })),
       h('span', { style:{ fontSize:'11.5px', color:'#475569', fontWeight:700, whiteSpace:'nowrap' } }, kindCount(kindFilter) + '건'),
+      h('button', { onClick:function(){ setFilterView(filterView==='dropdown'?'chips':'dropdown'); },
+        title:'단계별 종류·하위종류 필터 표시 전환 (현재: '+(filterView==='dropdown'?'드롭다운':'칩')+')',
+        style:{ padding:'6px 9px', background:'#fff', color:'#475569', border:'1px solid #cbd5e1', borderRadius:'5px', cursor:'pointer', fontSize:'11.5px', fontWeight:600, whiteSpace:'nowrap' } },
+        filterView==='dropdown' ? '▾ 필터' : '▦ 필터'),
       h('select', { value:mgrFilter, onChange:function(e){ setMgrFilter(e.target.value); },
         style:{ padding:'6px 10px', border:'1px solid '+(mgrFilter!=='all'?'#1e40af':'#cbd5e1'), borderRadius:'5px', fontSize:'11.5px', fontFamily:'inherit', color:mgrFilter!=='all'?'#1e40af':'#475569', fontWeight:mgrFilter!=='all'?700:400, cursor:'pointer' } },
         h('option', { value:'all' }, '👤 전체 담당자'),
@@ -9722,27 +9752,10 @@ function ContractManagement(){
             h('span', { style:{ fontSize:'11px', opacity:.7, marginLeft:'4px' } }, isFocused ? '◱ 전체보기' : '⛶ 단독')
           ),
           // 단계별 종류 필터 칩 (그 단계에 종류가 2개 이상일 때만 표시)
-          kindsInStage.length >= 2 && h('div', { style:{padding:'8px 10px', background:'#fff', borderBottom:'1px solid #e5e7eb', display:'flex', flexWrap:'wrap', gap:'4px', alignItems:'center'} },
-            h('span', { style:{fontSize:'10px', color:'#94a3b8', fontWeight:600, marginRight:'2px'} }, '🔍 종류'),
-            h('button', { onClick:function(){setStageFilter(s.v, 'all');},
-              style:{padding:'2px 8px', fontSize:'10.5px', borderRadius:'10px', cursor:'pointer',
-                background: stKindF==='all' ? '#475569' : '#f1f5f9',
-                color: stKindF==='all' ? '#fff' : '#475569',
-                border:'1px solid '+(stKindF==='all' ? '#475569' : '#e2e8f0'),
-                fontWeight: stKindF==='all'?700:500} }, '전체 '+allStageCards.length),
-            kindsInStage.map(function(k){
-              var on = stKindF === k.v;
-              return h('button', { key:k.v, onClick:function(){setStageFilter(s.v, on ? 'all' : k.v);},
-                style:{padding:'2px 8px', fontSize:'10.5px', borderRadius:'10px', cursor:'pointer',
-                  background: on ? k.color : k.bg,
-                  color: on ? '#fff' : k.color,
-                  border:'1px solid '+(on ? k.color : k.color+'44'),
-                  fontWeight: on?700:500, display:'inline-flex', alignItems:'center', gap:'3px'} },
-                h('span', null, k.icon),
-                h('span', null, k.label+' '+stKindCnt[k.v])
-              );
-            })
-          ),
+          kindsInStage.length >= 2 && filterRowUI('🔍','종류',
+            [{value:'all', label:'전체', count:allStageCards.length, color:'#475569', bg:'#f1f5f9'}].concat(
+              kindsInStage.map(function(k){ return {value:k.v, label:k.icon+' '+k.label, count:stKindCnt[k.v], color:k.color, bg:k.bg}; })),
+            stKindF, function(v){ setStageFilter(s.v, v); }, '#475569'),
           // 컨설팅 하위종류 서브필터 (consulting 필터 선택 시)
           (function(){
             if(stKindF !== 'consulting') return null;
@@ -9755,22 +9768,10 @@ function ContractManagement(){
             var presentTypes = consTypes.filter(function(t){ return subCnt[t.code] > 0; });
             if(presentTypes.length < 2) return null;
             var subF = getStageFilter(s.v + '_sub');
-            return h('div', { style:{padding:'6px 10px', background:'#f0fdf4', borderBottom:'1px solid #bfdbfe', display:'flex', flexWrap:'wrap', gap:'3px', alignItems:'center'} },
-              h('span', { style:{fontSize:'10px', color:'#0f766e', fontWeight:600, marginRight:'2px'} }, '📊 컨설팅 종류'),
-              h('button', { onClick:function(){ setStageFilter(s.v+'_sub','all'); },
-                style:{padding:'1px 7px', fontSize:'10px', borderRadius:'8px', cursor:'pointer',
-                  background:subF==='all'?'#0f766e':'#f0fdf4', color:subF==='all'?'#fff':'#0f766e',
-                  border:'1px solid #0f766e33', fontWeight:subF==='all'?700:500} },
-                '전체 ' + cards.length),
-              presentTypes.map(function(t){
-                var on = subF === t.code;
-                return h('button', { key:t.code, onClick:function(){ setStageFilter(s.v+'_sub', on?'all':t.code); },
-                  style:{padding:'1px 7px', fontSize:'10px', borderRadius:'8px', cursor:'pointer',
-                    background:on?'#0f766e':'#f0fdf4', color:on?'#fff':'#0f766e',
-                    border:'1px solid #0f766e33', fontWeight:on?700:500} },
-                  (t.short||t.name) + ' ' + subCnt[t.code]);
-              })
-            );
+            return filterRowUI('📊','컨설팅 종류',
+              [{value:'all', label:'전체', count:cards.length, color:'#0f766e', bg:'#f0fdf4'}].concat(
+                presentTypes.map(function(t){ return {value:t.code, label:(t.short||t.name), count:subCnt[t.code], color:'#0f766e', bg:'#f0fdf4'}; })),
+              subF, function(v){ setStageFilter(s.v+'_sub', v); }, '#0f766e');
           })(),
           // 카드 영역 (단독 보기 시 카드는 가로 한 줄 레이아웃 - CSS로 반응형)
           h('div', { style:{ padding:'10px' } },
