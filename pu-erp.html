@@ -759,8 +759,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-03 Phase 4 + 환경설정 🧪 저장방식 검증 버튼 (폰에서도 원탭 검증)';
-var BUILD_SEQ = 67;
+var ERP_BUILD = '2026-07-04 서버 잠금 전 안전점검 명령(erpCheckLockSafety) 추가';
+var BUILD_SEQ = 68;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -3612,6 +3612,43 @@ async function erpVerifyPhase4(){
   }
 }
 window.erpVerifyPhase4 = erpVerifyPhase4;
+
+// ── 서버 규칙 잠금 전 안전 점검 (F12 콘솔: erpCheckLockSafety()) ──
+// 잠금 대상 10개 키의 서버 데이터에 "숫자만으로 된 id"가 있는지 검사.
+// 있으면 그 항목은 잠금 후 저장이 막히므로, 잠그기 전에 반드시 0건이어야 함.
+async function erpCheckLockSafety(){
+  if(!fbDb){ console.log('❌ Firebase 미연결 — 로그인 상태에서 실행하세요'); return false; }
+  var LOCK_KEYS = ['contracts','companies','cases','consultings','funds','other_projects','finance_income','finance_expense','payroll_monthly','attendance_records'];
+  var bad = [];
+  console.log('🔍 서버 데이터 스캔 중… (10개 키)');
+  for(var i=0;i<LOCK_KEYS.length;i++){
+    var k = LOCK_KEYS[i];
+    try {
+      var snap = await fbDb.ref('data/'+k+'/v').once('value');
+      var v = snap.val();
+      if(!v){ console.log('  · '+k+': 데이터 없음'); continue; }
+      var keys = Array.isArray(v) ? v.map(function(_,idx){return String(idx);}) : Object.keys(v);
+      var numeric = keys.filter(function(id){ return /^[0-9]+$/.test(id); });
+      var form = Array.isArray(v) ? '⚠️ 배열형' : '객체형';
+      if(numeric.length > 0){
+        bad.push({ key:k, count:numeric.length, sample:numeric.slice(0,5) });
+        console.log('  ❌ '+k+' ('+form+'): 숫자 id '+numeric.length+'건 — 예: '+numeric.slice(0,5).join(', '));
+      } else {
+        console.log('  ✅ '+k+' ('+form+', '+keys.length+'건): 숫자 id 없음');
+      }
+    } catch(e){ console.log('  ⚠️ '+k+': 조회 실패 '+(e&&e.message)); }
+  }
+  if(bad.length === 0){
+    console.log('\n🎉 안전 — 10개 키 모두 숫자 id 없음. 서버 규칙 잠금을 진행해도 됩니다.');
+    return true;
+  } else {
+    console.log('\n⚠️ 주의 — 위 키에 숫자 id가 있습니다. 잠그면 그 항목 저장이 막힙니다.');
+    console.log('   배열형(⚠️)이면: 그 화면에서 항목 하나만 저장하면 객체형으로 자동 전환됩니다.');
+    console.log('   그래도 숫자 id가 남으면 캡처해서 공유해주세요 (id 재부여 필요).');
+    return false;
+  }
+}
+window.erpCheckLockSafety = erpCheckLockSafety;
 
 // 콘솔 접근용 노출 (앱 전체가 IIFE 안이라 window 부착 필요 — erpAllowBulk와 동일 방식)
 window.erpTestRecordWrite = erpTestRecordWrite;
