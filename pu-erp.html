@@ -760,8 +760,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-04 계약 표(테이블) 뷰 토글 추가 — 상태별 묶음 + 정렬 헤더';
-var BUILD_SEQ = 87;
+var ERP_BUILD = '2026-07-04 계약 필터 정리 — 세부종류 드롭다운(업체관리 업태/종목 방식) 추가, 각 열 종류 드롭다운 제거';
+var BUILD_SEQ = 88;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -9736,10 +9736,25 @@ function ContractManagement(){
         style:{ padding:'6px 10px', border:'1px solid '+(kindFilter!=='all'?'#1e40af':'#cbd5e1'), borderRadius:'5px', fontSize:'11.5px', fontFamily:'inherit', color:kindFilter!=='all'?'#1e40af':'#475569', fontWeight:kindFilter!=='all'?700:400, cursor:'pointer' } },
         [{ v:'all', label:'전체', icon:'📊' }].concat(CONTRACT_KINDS).map(function(k){ return h('option', { key:k.v, value:k.v }, k.icon + ' ' + k.label); })),
       h('span', { style:{ fontSize:'11.5px', color:'#475569', fontWeight:700, whiteSpace:'nowrap' } }, kindCount(kindFilter) + '건'),
-      h('button', { onClick:function(){ setFilterView(filterView==='dropdown'?'chips':'dropdown'); },
-        title:'단계별 종류 필터 표시 전환 (현재: '+(filterView==='dropdown'?'드롭다운':'칩')+')',
-        style:{ padding:'6px 9px', background:'#fff', color:'#475569', border:'1px solid #cbd5e1', borderRadius:'5px', cursor:'pointer', fontSize:'11.5px', fontWeight:600, whiteSpace:'nowrap' } },
-        filterView==='dropdown' ? '▾ 필터' : '▦ 필터'),
+      // 세부종류 필터 (업체관리 업태→종목과 동일: 종류 고르면 그 종류의 세부항목만) — 칸반 3열/표 동시 적용
+      h('select', { value:selSubType, onChange:function(e){ setSelSubType(e.target.value); },
+        title:'세부종류로 걸러내기 (컨설팅종류·사건종류 등)',
+        style:{ padding:'6px 10px', border:'1px solid '+(selSubType!=='all'?'#0f766e':'#cbd5e1'), borderRadius:'5px', fontSize:'11.5px', fontFamily:'inherit', color:selSubType!=='all'?'#0f766e':'#475569', fontWeight:selSubType!=='all'?700:400, cursor:'pointer', maxWidth:'170px' } },
+        h('option', { value:'all' }, '▾ 전체 세부종류'),
+        (function(){
+          var cnt = {};
+          contracts.forEach(function(c){
+            if(!isActiveContract(c)) return;
+            var arr = c.kinds || (c.kind ? [c.kind] : []);
+            if(kindFilter !== 'all'){
+              if(arr.indexOf(kindFilter) < 0) return;
+              var nm = kindSubLabel(c, kindFilter); if(nm) cnt[nm] = (cnt[nm]||0) + 1;
+            } else {
+              arr.forEach(function(kv){ var nm = kindSubLabel(c, kv); if(nm) cnt[nm] = (cnt[nm]||0) + 1; });
+            }
+          });
+          return Object.keys(cnt).sort().map(function(nm){ return h('option', { key:nm, value:nm }, nm + ' (' + cnt[nm] + ')'); });
+        })()),
       h('select', { value:sortKey, onChange:function(e){ setSortKey(e.target.value); },
         title:'카드 정렬 (전체 표시 · 같은 종류끼리 모으기 등)',
         style:{ padding:'6px 10px', border:'1px solid '+(sortKey!=='default'?'#0f766e':'#cbd5e1'), borderRadius:'5px', fontSize:'11.5px', fontFamily:'inherit', color:sortKey!=='default'?'#0f766e':'#475569', fontWeight:sortKey!=='default'?700:400, cursor:'pointer' } },
@@ -9789,35 +9804,14 @@ function ContractManagement(){
         '🔢 번호 재정렬')
     ),
     // (담당자 필터는 위 툴바 드롭다운으로 통합)
-    // 상단 공통 하위종류 칩 (종류=컨설팅 선택 시) — 클릭하면 3개 열 동시 필터
-    kindFilter === 'consulting' && (function(){
-      var consTypes = dbGet('biz_cons_types', BIZ_CONS_SEED) || BIZ_CONS_SEED;
-      var base = contracts.filter(function(c){ if(!isActiveContract(c)) return false; var arr=c.kinds||(c.kind?[c.kind]:[]); return arr.indexOf('consulting')>=0; });
-      var cnt = {};
-      base.forEach(function(c){ var nm=kindSubLabel(c,'consulting'); if(nm) cnt[nm]=(cnt[nm]||0)+1; });
-      var names = Object.keys(cnt).sort();
-      if(names.length < 2) return null;
-      function shortOf(nm){ var t=consTypes.find(function(x){ return (x.name||'').toString().trim().slice(0,20)===nm; }); return (t&&t.short)?t.short:nm; }
-      function chip(active){ return { padding:'3px 10px', fontSize:'11px', borderRadius:'11px', cursor:'pointer', background:active?'#0f766e':'#f0fdf4', color:active?'#fff':'#0f766e', border:'1px solid #0f766e55', fontWeight:active?700:600 }; }
-      return h('div', { style:{ display:'flex', flexWrap:'wrap', gap:'4px', alignItems:'center', marginTop:'6px', paddingTop:'6px', borderTop:'1px dashed #cbd5e1' } },
-        h('span', { style:{ fontSize:'11px', color:'#0f766e', fontWeight:700, marginRight:'2px' } }, '📊 컨설팅 종류'),
-        h('button', { onClick:function(){ setSelSubType('all'); }, style:chip(selSubType==='all') }, '전체 '+base.length),
-        names.map(function(nm){ var on=selSubType===nm; return h('button', { key:nm, onClick:function(){ setSelSubType(on?'all':nm); }, style:chip(on) }, shortOf(nm)+' '+cnt[nm]); })
-      );
-    })(),
+    // (컨설팅 전용 하위종류 칩 → 상단 툴바 '세부종류' 드롭다운으로 통합, 업체관리 업태/종목 방식)
     ),
     // 칸반 보드 (3컬럼 / 단독 보기) — 표 뷰면 renderContractTable()로 대체
     viewMode === 'table' ? renderContractTable() :
     h('div', { style:{ display:'grid', gridTemplateColumns: window.innerWidth<=768?'1fr':(focusCol==='all'?'repeat(3, 1fr)':'1fr'), gap:'8px' } },
       CONTRACT_STATUS.filter(function(s){ return focusCol==='all' || s.v===focusCol; }).map(function(s){
         var allStageCards = byStatus[s.v] || [];
-        // 단계별 종류 카운트
-        var stKindCnt = {};
-        allStageCards.forEach(function(c){
-          var arr = c.kinds || (c.kind ? [c.kind] : []);
-          arr.forEach(function(k){ stKindCnt[k] = (stKindCnt[k]||0)+1; });
-        });
-        var kindsInStage = CONTRACT_KINDS.filter(function(k){ return stKindCnt[k.v] > 0; });
+        // (열별 종류 카운트/필터는 상단 '종류'+'세부종류' 드롭다운으로 통합되어 제거)
         // 카드 필터링 (단계별 종류 필터 적용)
         var stKindF = getStageFilter(s.v);
         var cards = stKindF === 'all' ? allStageCards : allStageCards.filter(function(c){
@@ -9848,11 +9842,7 @@ function ContractManagement(){
             h('span', { style:{ background:'#fff', color:s.headFg, fontSize: isFocused?'14px':'11px', padding: isFocused?'3px 14px':'2px 9px', borderRadius:'10px', fontWeight:800, border:'1px solid '+s.headFg+'33' } }, cards.length + (isFocused?'건':'')),
             h('span', { style:{ fontSize:'11px', opacity:.7, marginLeft:'4px' } }, isFocused ? '◱ 전체보기' : '⛶ 단독')
           ),
-          // 단계별 종류 필터 칩 (그 단계에 종류가 2개 이상일 때만 표시)
-          kindsInStage.length >= 2 && filterRowUI('🔍','종류',
-            [{value:'all', label:'전체', count:allStageCards.length, color:'#475569', bg:'#f1f5f9'}].concat(
-              kindsInStage.map(function(k){ return {value:k.v, label:k.icon+' '+k.label, count:stKindCnt[k.v], color:k.color, bg:k.bg}; })),
-            stKindF, function(v){ setStageFilter(s.v, v); }, '#475569'),
+          // (각 열 종류 드롭다운=캡쳐2 제거 — 상단 '종류'+'세부종류' 드롭다운으로 통합)
           // (열별 하위종류 필터 제거 — 상단 공통 하위종류 칩으로 이동)
           // 카드 영역 (단독 보기 시 카드는 가로 한 줄 레이아웃 - CSS로 반응형)
           h('div', { style:{ padding:'10px' } },
