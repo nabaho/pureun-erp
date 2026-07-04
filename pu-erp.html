@@ -3463,6 +3463,62 @@ async function erpVerifyPhase3(){
     var tid = prefix + '-vtest-' + Date.now().toString(36);
     var before = dbGet(k, []).length;
     try {
+      ck(dbUpsert(k, { id:tid, no:'검증-임시', caseNo:'검증-임시', companyName:'(자동검증용 임시)', name:'(자동검증용 임시)', status:'open' }), k+': 테스트 건 생성');
+      captured = [];
+      ck(dbPatch(k, tid, { status:'progress', note:'검증patch' }), k+': patch 실행');
+      var paths = captured[0] || [];
+      ck(paths.length > 0 && paths.every(function(p){ return p === 'data/'+k+'/u' || p.indexOf('data/'+k+'/v/'+tid) === 0; }), k+': 그 1건 경로만 전송 ('+paths.length+'개) — 다른 건 불가침');
+      ck(!paths.some(function(p){ return p === 'data/'+k+'/v'; }), k+': 통째 교체 없음');
+      await new Promise(function(res){ setTimeout(res, 900); });
+      var sv = (await origRefFn('data/'+k+'/v/'+tid).once('value')).val();
+      ck(!!sv && sv.status === 'progress', k+': 서버 반영 확인');
+      ck(dbRemove(k, tid), k+': 테스트 건 삭제');
+      await new Promise(function(res){ setTimeout(res, 900); });
+      var sv2 = (await origRefFn('data/'+k+'/v/'+tid).once('value')).val();
+      ck(sv2 === null && dbGet(k, []).length === before, k+': 서버 삭제·건수 원상복구 ('+before+'건)');
+    } finally {
+      try { if(dbGet(k, []).some(function(x){return x && x.id===tid;})) dbRemove(k, tid); } catch(_){}
+    }
+  }
+  try {
+    await runKey('companies', 'co');
+    await runKey('cases', 'ca');
+    await runKey('consultings', 'cs');
+    await runKey('funds', 'fd');
+    await runKey('other_projects', 'ot');
+    var pass = results.every(function(x){ return x; });
+    console.log(pass ? '🎉 Phase 3 자동검증 전체 통과 — 업체·사건·컨설팅·기금·기타 저장은 1건 단위로만 서버에 나갑니다'
+                     : '⚠ 실패 항목 있음 — 위 ❌ 로그를 캡처해서 공유해주세요');
+    return pass;
+  } catch(e){
+    console.error('❌ 검증 중 오류:', e && e.message);
+    return false;
+  } finally {
+    fbDb.ref = origRefFn;
+  }
+}
+window.erpVerifyPhase3 = erpVerifyPhase3;
+
+// ── Phase 3 자동 검증기 (F12 콘솔: erpVerifyPhase3()) — 업체·사건·컨설팅·기금·기타 건별 전송 실측 ──
+async function erpVerifyPhase3(){
+  if(!fbDb){ console.log('❌ Firebase 미연결 — 로그인 상태에서 실행하세요'); return false; }
+  var results = [];
+  var ck = function(ok, msg){ results.push(ok); console.log((ok?'✅ ':'❌ ') + msg); return ok; };
+  var origRefFn = fbDb.ref.bind(fbDb);
+  var captured = [];
+  fbDb.ref = function(p){
+    var r = origRefFn(p);
+    if(p === undefined || p === null || p === ''){
+      var origUpdate = r.update.bind(r);
+      r.update = function(u){ captured.push(Object.keys(u)); return origUpdate(u); };
+    }
+    return r;
+  };
+  async function runKey(k, prefix){
+    if(_fbObjForm[k] !== true){ ck(false, k+': 서버 객체형 아님'); return; }
+    var tid = prefix + '-vtest-' + Date.now().toString(36);
+    var before = dbGet(k, []).length;
+    try {
       ck(dbUpsert(k, { id:tid, companyName:'(자동검증용 임시)', no:'검증-000', status:'pending' }), k+': 테스트 건 생성');
       captured = [];
       ck(dbPatch(k, tid, { status:'closed', note:'검증patch' }), k+': patch 실행');
@@ -10941,6 +10997,7 @@ function CompanyManagement(){
         var maxN = 0;
         arr.forEach(function(c){ var m=/^co-s(\d+)$/.exec(c.id||''); if(m){ var n=parseInt(m[1],10); if(n>maxN) maxN=n; } });
         var added=0, updated=0;
+        var _changed = [];  // 신규+갱신된 건만 서버 반영 (통째 교체 아님)
         for(var r=hi+1;r<data.length;r++){
           var row=data[r]; if(!row||!row.length) continue;
           var nm=cName>=0?String(row[cName]||'').trim():'';
@@ -10953,11 +11010,11 @@ function CompanyManagement(){
           var hit = mD ? subByMgmt[mD] : null;
           if(hit){
             // 기존: 비고(note)만 갱신 (변경 있을 때만)
-            if(note && hit.note !== note){ hit.note = note; updated++; }
+            if(note && hit.note !== note){ hit.note = note; updated++; _changed.push(hit); }
           } else {
             // 신규 추가
             maxN++;
-            arr.push({
+            var _newCo = {
               id:'co-s'+maxN, name:nm, bizNo:mgmt, ceo:'', zipcode:'', address:'',
               phone:'', fax:'', email:'', bizType:'', bizCategory:'', companySize:'',
               employmentInsuredCount:0, injuryInsuredCount:0, contacts:[],
@@ -10966,11 +11023,13 @@ function CompanyManagement(){
               monthlyAdvisoryFee:0, vatType:'separate',
               contractStartDate:'', contractEndDate:'', taxInvoiceIssueDay:'', taxInvoicePaymentDay:'',
               status:'suboffice', sourceContractNo:'', note:note, createdAt:'2020-01-01'
-            });
+            };
+            _changed.push(_newCo);
             added++;
           }
         }
-        persist(arr);
+        if(added===0 && updated===0){ showToast('추가·갱신할 항목이 없습니다'); e.target.value=''; return; }
+        if(!coUpsertMany(_changed)){ e.target.value=''; return; }
         showToast('📥 사무대행 가져오기: 신규 '+added+'건 / 비고 갱신 '+updated+'건');
       } catch(err){ showToast('가져오기 실패: '+(err&&err.message)); }
       e.target.value='';
@@ -11097,11 +11156,9 @@ function CompanyManagement(){
   function applyBulkMgr(sid){
     if(!sid) return;
     var u = users.find(function(u){return u.sid===sid;});
-    var next = companies.map(function(co){
-      if(!selIds.has(co.id)) return co;
-      return Object.assign({}, co, { managerMain: sid, managerMainName: u?u.name:sid });
-    });
-    persist(next);
+    var _chg = companies.filter(function(co){ return selIds.has(co.id); })
+      .map(function(co){ return Object.assign({}, co, { managerMain: sid, managerMainName: u?u.name:sid }); });
+    if(!coUpsertMany(_chg)) return;
     showToast('✅ ' + selIds.size + '개 업체에 ' + (u?u.name:sid) + ' 배정됨');
     clearSel(); setBulkMgrModal(null);
   }
