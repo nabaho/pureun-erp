@@ -759,8 +759,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-04 서버 잠금 전 안전점검 명령(erpCheckLockSafety) 추가';
-var BUILD_SEQ = 68;
+var ERP_BUILD = '2026-07-04 죽은 코드 정리 (옛 dbUpsert·dbRemove·confirmFee·unconfirmFee·사건 옛 persist 제거)';
+var BUILD_SEQ = 69;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -3103,70 +3103,6 @@ function computeArrayDiff(prev, next){
   });
 
   return { upserts:upserts, removes:removes, totalChange: upserts.length + removes.length };
-}
-
-// ── 단일 항목 업데이트 (Diff Sync 헬퍼) ──
-// 200건 배열 중 1건만 수정해도 해당 항목만 Firebase 업로드 → 충돌 위험·통신량 99% 절감
-// 사용: dbUpsert('companies', companyObj)  ← obj.id 필수
-function dbUpsert(k, item){
-  if(!item || !item.id) return false;
-  var arr = dbGet(k, []) || [];
-  if(!Array.isArray(arr)) arr = [];
-  var idx = -1;
-  for(var i=0; i<arr.length; i++){
-    if(arr[i] && arr[i].id === item.id){ idx = i; break; }
-  }
-  if(idx >= 0) arr[idx] = item;
-  else arr.push(item);
-
-  // LS는 전체 갱신 (기존 코드 호환)
-  try { localStorage.setItem(KEY+k, JSON.stringify(arr)); }
-  catch(e){ return false; }
-  _dbCache[k] = arr; // 캐시 갱신
-
-  // Firebase는 해당 인덱스만 부분 update
-  if(fbDb && fbShouldSync(k)){
-    try {
-      var ts = Date.now();
-      localStorage.setItem(KEY+'_meta_'+k, String(ts));
-      var i2 = idx >= 0 ? idx : (arr.length - 1);
-      var MAP_KEYS = ['companies','cases','consultings','funds','other_projects','payroll_monthly','finance_income','finance_expense'];
-      var fbItemKey = (MAP_KEYS.indexOf(k) >= 0) ? item.id : i2;
-      // id-key 저장소는 id로, 그 외 배열 저장소는 인덱스로 부분 갱신
-      var updates = {};
-      updates['data/'+k+'/v/'+fbItemKey] = item;
-      updates['data/'+k+'/u'] = ts;
-      fbDb.ref().update(updates).catch(fbSyncFail);
-    } catch(e){ window._erpErrLog && window._erpErrLog(e); }
-  }
-  return true;
-}
-
-// ── 단일 항목 삭제 (Diff Sync) ──
-// soft delete가 아니라 실제 제거. soft delete는 DataGuard.softDelete 사용.
-function dbRemove(k, itemId){
-  if(!itemId) return false;
-  var arr = dbGet(k, []) || [];
-  if(!Array.isArray(arr)) return false;
-  var idx = -1;
-  for(var i=0; i<arr.length; i++){
-    if(arr[i] && arr[i].id === itemId){ idx = i; break; }
-  }
-  if(idx < 0) return false;
-  arr.splice(idx, 1);
-  try { localStorage.setItem(KEY+k, JSON.stringify(arr)); }
-  catch(e){ return false; }
-  _dbCache[k] = arr; // 캐시 갱신
-
-  // 삭제는 인덱스 시프트가 발생하므로 전체 set이 안전
-  if(fbDb && fbShouldSync(k)){
-    try {
-      var ts = Date.now();
-      localStorage.setItem(KEY+'_meta_'+k, String(ts));
-      fbDb.ref('data/'+k).set({v:arr, u:ts}).catch(fbSyncFail);
-    } catch(e){ window._erpErrLog && window._erpErrLog(e); }
-  }
-  return true;
 }
 
 // ============ 건별 쓰기 프리미티브 (Phase 0 — 과거회귀 근본대책) ============
@@ -13551,10 +13487,6 @@ function CaseManagement(props){
   var users = getActiveUsers();
   function userName(sid){ var u = users.find(function(x){return x.sid===sid;}); return u ? u.name : sid; }
 
-  function persist(arr){
-    arr.sort(function(a,b){ return (b.receiveDate||'').localeCompare(a.receiveDate||''); });
-    setCases(arr); dbSet('cases', arr);
-  }
   // ── Phase 3: 건별 저장 (과거회귀 방지) — 그 건만 서버 반영 ──
   function refreshCases(){
     var fresh = dbGet('cases', []).slice();
@@ -13757,82 +13689,6 @@ function CaseManagement(props){
     showToast(rows.length + '건 다운로드');
   }
 
-  function confirmFee(caseId, kind, paidDate, actualAmt){
-    var c = cases.find(function(x){return x.id===caseId;});
-    if(!c) return;
-    var amount = kind === 'retainer' ? c.retainerFee : c.successFee;
-    if(!amount || amount <= 0){ showToast((kind==='retainer'?'착수금':'성공보수') + ' 금액 없음'); return; }
-    var existed = (c.incomes||[]).filter(function(i){ return i.kind === (kind==='retainer'?'착수금':'성공보수'); });
-    if(existed.length > 0){ showToast('이미 입금확정됨'); return; }
-    var _lockYm = (paidDate || todayYMD()).slice(0,7);
-    if(isIncomeLocked(_lockYm)){ showToast('🔒 ' + _lockYm + ' 입금 마감 — 확정 불가'); return; }
-
-    // Transaction 보강: cases + finance_income 동시 변경 → 실패 시 둘 다 롤백
-    var snapCases = cases.slice();
-    var snapIncome = dbGet('finance_income', []);
-    try {
-      var today = paidDate || todayYMD();
-      // 분할입금: actualAmt가 있으면 그 금액으로, 없으면 전체
-      var payAmt = (typeof actualAmt === 'number' && actualAmt > 0 && actualAmt <= amount) ? actualAmt : amount;
-      var kindLabel = kind === 'retainer' ? '착수금' : '성공보수';
-      // 기존 splitPayments 누적
-      var prevSplits = c.splitPayments ? c.splitPayments.filter(function(x){ return x.kind===kindLabel; }) : [];
-      var totalPaidSoFar = prevSplits.reduce(function(s,x){return s+(x.amount||0);},0) + payAmt;
-      var isFullyPaid = totalPaidSoFar >= amount;
-
-      var splitEntry = { id:'sp-'+Date.now().toString(36), date:today, amount:payAmt, kind:kindLabel };
-      var income = { date: today, amount: payAmt, kind: kindLabel, confirmed: true, splitEntry: splitEntry };
-
-      var nextCases = cases.map(function(x){
-        if(x.id === caseId){
-          var newSplits = (x.splitPayments||[]).concat([splitEntry]);
-          var patch = { incomes: (x.incomes||[]).concat([income]), splitPayments: newSplits };
-          // 완납 시에만 PaidDate 세팅
-          if(isFullyPaid){
-            if(kind === 'retainer') patch.retainerPaidDate = today;
-            else patch.successPaidDate = today;
-          }
-          return Object.assign({}, x, patch);
-        }
-        return x;
-      });
-      persist(nextCases);
-
-      var finIncomes = dbGet('finance_income', []);
-      // 성과는 실제 입금액 기준으로만 계산
-      var perfShares = calcPerfShares(payAmt, c.managerMain, c.managerSubs, 'case', 100);
-      var newFinIncome = {
-        id: 'fi-' + Date.now().toString(36)+Math.random().toString(36).slice(2,5),
-        date: today, amount: payAmt,
-        category: 'inc-case-fee', sourceKind: 'case', sourceId: caseId,
-        sourceSubKind: kind,
-        caseNo: c.caseNo, companyName: c.companyName,
-        kind: kindLabel, perfShares: perfShares,
-        managerSid: c.managerMain, managerName: userName(c.managerMain),
-        managerSidAtRecord: c.managerMain, managerSidCurrent: c.managerMain,
-        splitMainPct: 100,
-        deductions: {}, perfBaseAmount: payAmt,
-        isPersonalIncome: false, perfExclude: perfShares.length === 0,
-        isSplitPayment: !isFullyPaid,
-        splitSeq: prevSplits.length + 1,
-        totalContractAmt: amount,
-        createdAt: (new Date()).toISOString()
-      };
-      finIncomes.unshift(newFinIncome);
-      dbSet('finance_income', finIncomes);
-
-      var msg = isFullyPaid
-        ? (kindLabel + ' ' + payAmt.toLocaleString() + '원 완납 확정 ✅')
-        : (kindLabel + ' ' + payAmt.toLocaleString() + '원 분할입금 (' + totalPaidSoFar.toLocaleString() + '/' + amount.toLocaleString() + '원)');
-      showToast(msg);
-    } catch(e){
-      try { persist(snapCases); } catch(_){}
-      try { dbSet('finance_income', snapIncome); } catch(_){}
-      showToast('❌ 입금확정 실패 — 변경 사항이 복원되었습니다');
-      console.error('[Transaction:confirmFee]', e && e.message);
-    }
-  }
-
   // 근로자별 입금확정 — 입금된 근로자만 공급가 기준으로 매출·성과(주담당·부담당) 반영
   function confirmWorkerFee(caseId, wIdx){
     var c = cases.find(function(x){return x.id===caseId;});
@@ -13921,66 +13777,6 @@ function CaseManagement(props){
     dbUpsert('finance_income', newFi);
     refreshCases();
     showToast('✅ '+kindLabel+' 입금 데이터 복원 완료 — 성과관리에서 확인하세요');
-  }
-
-  async function unconfirmFee(caseId, kind){
-    var c = cases.find(function(x){return x.id===caseId;});
-    if(!c) return;
-    var kindLabel = kind === 'retainer' ? '착수금' : '성공보수';
-
-    var _lockYmU = ((kind === 'retainer' ? c.retainerPaidDate : c.successPaidDate) || '').slice(0,7);
-    if(_lockYmU && isIncomeLocked(_lockYmU)){ showToast('🔒 ' + _lockYmU + ' 입금 마감 — 해제 불가'); return; }
-
-    // 성과 데이터 삭제 경고
-    var hasPerf = dbGet('finance_income', []).some(function(fi){
-      return fi.sourceKind === 'case' && fi.sourceId === caseId && fi.kind === kindLabel
-             && (fi.perfShares||[]).length > 0;
-    });
-    var msg = kindLabel + ' 입금확정을 취소하시겠습니까?';
-    if(hasPerf) msg += '\n\n⚠️ 성과관리 데이터도 함께 삭제됩니다.\n재확정 시 성과 반영을 다시 해야 합니다.';
-    var _payYm = ((kind === 'retainer' ? c.retainerPaidDate : c.successPaidDate) || '').slice(0,7);
-    if(_payYm){
-      var _mgrs = [c.managerMain].concat(c.managerSubs || []).filter(Boolean);
-      var _prHit = dbGet('payroll_monthly', []).some(function(p){
-        return p.ym === _payYm && _mgrs.indexOf(p.sid) >= 0 && (p.perfBonus || 0) > 0;
-      });
-      if(_prHit) msg += '\n\n⚠️ ' + _payYm + ' 급여에 이 담당자의 성과급이 반영돼 있을 수 있습니다.\n입금 해제 후에도 급여 성과급은 자동 조정되지 않으니 급여대장을 확인하세요.';
-    }
-    if(!(await popConfirm(msg))) return;
-
-    // Transaction 보강: cases + finance_income 동시 변경 → 실패 시 둘 다 롤백
-    var snapCases = cases.slice();
-    var snapIncome = dbGet('finance_income', []);
-    try {
-      var nextCases = cases.map(function(x){
-        if(x.id === caseId){
-          var patch = { incomes: (x.incomes||[]).filter(function(i){ return i.kind !== kindLabel; }) };
-          if(kind === 'retainer') patch.retainerPaidDate = '';
-          else patch.successPaidDate = '';
-          // 분할입금 기록도 해당 종류만 제거 (재입금 시 alreadyPaid 오류 방지)
-          if(Array.isArray(x.splitPayments)){
-            patch.splitPayments = x.splitPayments.filter(function(sp){ return sp.kind !== kindLabel; });
-          }
-          return Object.assign({}, x, patch);
-        }
-        return x;
-      });
-      persist(nextCases);
-
-      // 재무관리 입금 자동 삭제
-      var finIncomes = dbGet('finance_income', []);
-      finIncomes = finIncomes.filter(function(fi){
-        return !(fi.sourceKind === 'case' && fi.sourceId === caseId && fi.kind === kindLabel);
-      });
-      dbSet('finance_income', finIncomes);
-
-      showToast(kindLabel + ' 입금확정 해제됨');
-    } catch(e){
-      try { persist(snapCases); } catch(_){}
-      try { dbSet('finance_income', snapIncome); } catch(_){}
-      showToast('❌ 입금확정 해제 실패 — 변경 사항이 복원되었습니다');
-      console.error('[Transaction:unconfirmFee]', e && e.message);
-    }
   }
 
   // 입금확정 날짜 직접 변경 (cases + finance_income 동기화)
