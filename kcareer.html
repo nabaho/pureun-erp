@@ -369,6 +369,7 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
 </head>
 <body>
 <div class="warn-banner" id="filenameWarn">⚠️ 파일명이 <b>kcareer.html</b>이 아니면 저장 데이터가 분리될 수 있습니다.</div>
+<div id="fbNotice" style="display:none;flex-shrink:0;background:#E1F5EE;color:#0F6E56;border-bottom:1px solid #9FE1CB;padding:8px 14px;font-size:12.5px;text-align:center">☁ 다른 기기에서 저장된 더 최신 기록이 있습니다.<a href="#" onclick="fbPull();return false" style="font-weight:700;color:#0F6E56;margin-left:8px">불러오기</a><a href="#" onclick="fbHideNotice();return false" style="color:#0F6E56;margin-left:12px;opacity:.65">닫기</a></div>
 <div class="app">
   <aside class="sidebar">
     <div class="brand" id="brand" style="cursor:pointer">권형하 경력관리<small>푸른노무법인 대표 · 요약 보기</small></div>
@@ -1313,7 +1314,7 @@ function get(key){
   try{ return JSON.parse(LS.get(NS+key)||'[]'); }catch(e){ return []; } }
 function set(key,arr){
   if(key==='id_docs' && hasIDPin()){ if(_idUnlocked && _idKey){ _idDocs=Array.isArray(arr)?arr.slice():[]; _persistIdDocs(); } return; }
-  try{ LS.set(NS+key, JSON.stringify(arr)); }catch(e){ if(e.name==='QuotaExceededError'||String(e).includes('quota')||String(e).includes('storage')){ toast('⚠️ 저장공간 부족 — 환경설정 › 저장공간 관리에서 파일 삭제 필요'); console.error('Storage full:',key,e); checkStorageQuota(); } else { toast('저장 오류: '+e.message); console.error(e); } } }
+  try{ LS.set(NS+key, JSON.stringify(arr)); if(typeof fbScheduleAuto==='function') fbScheduleAuto(key); }catch(e){ if(e.name==='QuotaExceededError'||String(e).includes('quota')||String(e).includes('storage')){ toast('⚠️ 저장공간 부족 — 환경설정 › 저장공간 관리에서 파일 삭제 필요'); console.error('Storage full:',key,e); checkStorageQuota(); } else { toast('저장 오류: '+e.message); console.error(e); } } }
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 
 /* 시드 1회 로드 (스토어가 비었을 때만) */
@@ -3947,7 +3948,8 @@ _safe(function(){ document.querySelectorAll('.modal-ov').forEach(function(ov){
 var FB_CONFIG={apiKey:'AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA',authDomain:'pureun-erp.firebaseapp.com',databaseURL:'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app',projectId:'pureun-erp',appId:'1:936817166182:web:9bd31f70d0afdf5fca2aa7',messagingSenderId:'936817166182'};
 var FB_APPCHECK_KEY='6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
 var fbDb=null, fbUid=null;
-var FB_SKIP=['id_docs','_idpin','_idmeta','_idsalt','kc_theme'];
+var FB_SKIP=['id_docs','_idpin','_idmeta','_idsalt','kc_theme','_fbbase','_fbauto'];
+var _fbBase=null, _fbPushT=null, _fbWatching=false;
 function fbInit(){ if(location.protocol==='file:') return; if(typeof firebase==='undefined'||!firebase.initializeApp) return;
   try{ if(!firebase.apps||!firebase.apps.length) firebase.initializeApp(FB_CONFIG);
     if(FB_APPCHECK_KEY && firebase.appCheck){ try{ firebase.appCheck().activate(new firebase.appCheck.ReCaptchaV3Provider(FB_APPCHECK_KEY), true); }catch(e){ console.warn('[AppCheck]',e&&e.message); } }
@@ -3955,8 +3957,9 @@ function fbInit(){ if(location.protocol==='file:') return; if(typeof firebase===
     firebase.auth().onAuthStateChanged(function(u){ fbUid=u?u.uid:null; fbUpdateUI(u); });
   }catch(e){ console.warn('fbInit',e); } }
 function fbUpdateUI(u){ var lo=document.getElementById('fbLoggedOut'), li=document.getElementById('fbLoggedIn'), btn=document.getElementById('fbBtn');
-  if(u){ if(lo)lo.style.display='none'; if(li)li.style.display=''; var w=document.getElementById('fbWho'); if(w)w.textContent=u.email||u.uid; if(btn){btn.textContent='☁ 동기화'; btn.style.color='var(--teal)';} fbLoadInfo(); }
-  else { if(lo)lo.style.display=''; if(li)li.style.display='none'; if(btn){btn.textContent='☁ 클라우드'; btn.style.color='';} } }
+  if(u){ if(lo)lo.style.display='none'; if(li)li.style.display=''; var w=document.getElementById('fbWho'); if(w)w.textContent=u.email||u.uid; if(btn){btn.textContent='☁ 동기화'; btn.style.color='var(--teal)';} fbLoadInfo();
+    _fbBase=fbGetBase(); var chk=document.getElementById('fbAutoChk'); if(chk) chk.checked=fbAutoOn(); if(fbAutoOn()) fbWatch(); }
+  else { if(lo)lo.style.display=''; if(li)li.style.display='none'; if(btn){btn.textContent='☁ 클라우드'; btn.style.color='';} fbHideNotice(); } }
 function fbOpenModal(){ if(location.protocol==='file:'){ toast('GitHub Pages(https)에서 열어야 클라우드가 됩니다'); return; } if(!fbDb){ toast('클라우드 준비 중 — 잠시 후 다시 (인터넷 확인)'); return; } var m=document.getElementById('fbModal'); if(m) m.style.display='flex'; }
 function fbCloseModal(){ var m=document.getElementById('fbModal'); if(m) m.style.display='none'; }
 function fbAuthMsg(ex){ var c=(ex&&ex.code)||''; if(c.indexOf('wrong-password')>=0||c.indexOf('invalid-credential')>=0) return '비밀번호가 올바르지 않습니다'; if(c.indexOf('user-not-found')>=0) return '등록되지 않은 계정입니다'; if(c.indexOf('invalid-email')>=0) return '이메일 형식이 아닙니다'; if(c.indexOf('too-many')>=0) return '시도가 많습니다. 잠시 후 다시 시도하세요'; if(c.indexOf('network')>=0) return '네트워크 오류'; return (ex&&ex.message)||'로그인 실패'; }
@@ -3967,17 +3970,37 @@ function fbLogout(){ firebase.auth().signOut().then(function(){ toast('로그아
 function fbGatherLS(){ var o={}; for(var i=0;i<localStorage.length;i++){ var k=localStorage.key(i); if(!k||k.indexOf(NS)!==0) continue; var bare=k.slice(NS.length); if(FB_SKIP.indexOf(bare)>=0) continue; o[bare]=localStorage.getItem(k); } return o; }
 function fbDeviceLabel(){ return (/Mobile|Android|iPhone/i.test(navigator.userAgent)?'폰':'PC'); }
 function fbPush(){ if(!fbUid){ toast('먼저 로그인하세요'); return; } if(!fbDb) return;
-  var data=fbGatherLS(); var payload={ls:data, at:Date.now(), device:fbDeviceLabel(), keys:Object.keys(data).length};
-  fbDb.ref('kcareer/'+fbUid).set(payload).then(function(){ toast('클라우드에 저장됨 ('+payload.keys+'개 항목)'); fbShowInfo(payload); }).catch(function(ex){ toast('저장 실패: '+((ex&&ex.message)||ex)); }); }
+  var at=Date.now(); fbSetBase(at); var data=fbGatherLS(); var payload={ls:data, at:at, device:fbDeviceLabel(), keys:Object.keys(data).length};
+  fbDb.ref('kcareer/'+fbUid).set(payload).then(function(){ toast('클라우드에 저장됨 ('+payload.keys+'개 항목)'); fbShowInfo(payload); fbHideNotice(); }).catch(function(ex){ toast('저장 실패: '+((ex&&ex.message)||ex)); }); }
 function fbPull(){ if(!fbUid){ toast('먼저 로그인하세요'); return; } if(!fbDb) return;
   fbDb.ref('kcareer/'+fbUid).once('value').then(function(snap){ var v=snap.val();
     if(!v||!v.ls){ toast('클라우드에 저장된 데이터가 없습니다 — 먼저 한 기기에서 저장하세요'); return; }
     var n=Object.keys(v.ls).length; var when=v.at?new Date(v.at).toLocaleString('ko-KR'):'';
     if(!confirm('클라우드 데이터('+n+'개 항목, '+when+' 저장, '+(v.device||'')+' )를\n이 기기에 덮어씁니다. 이 기기의 현재 기록은 사라집니다.\n\n계속할까요?')) return;
     Object.keys(v.ls).forEach(function(bare){ if(FB_SKIP.indexOf(bare)>=0) return; try{ localStorage.setItem(NS+bare, v.ls[bare]); }catch(e){ console.error('pull set',bare,e); } });
+    if(v.at) fbSetBase(v.at); fbHideNotice();
     toast('불러오기 완료 — 새로고침합니다'); setTimeout(function(){ location.reload(); }, 900); }).catch(function(ex){ toast('불러오기 실패: '+((ex&&ex.message)||ex)); }); }
 function fbShowInfo(p){ var el=document.getElementById('fbInfo'); if(el&&p&&p.at) el.textContent='마지막 저장: '+new Date(p.at).toLocaleString('ko-KR')+' · '+(p.keys||0)+'개 · '+(p.device||''); }
 function fbLoadInfo(){ if(!fbUid||!fbDb) return; fbDb.ref('kcareer/'+fbUid).child('at').once('value').then(function(s){ var el=document.getElementById('fbInfo'); if(!el) return; var at=s.val(); el.textContent=at?('클라우드 최신 저장: '+new Date(at).toLocaleString('ko-KR')):'클라우드에 저장된 데이터 없음'; }).catch(function(){}); }
+function fbGetBase(){ try{ var v=localStorage.getItem(NS+'_fbbase'); return v?Number(v):null; }catch(e){ return null; } }
+function fbSetBase(at){ _fbBase=at; try{ localStorage.setItem(NS+'_fbbase', String(at)); }catch(e){} }
+function fbAutoOn(){ try{ return localStorage.getItem(NS+'_fbauto')!=='0'; }catch(e){ return true; } }
+function fbSetAuto(on){ try{ localStorage.setItem(NS+'_fbauto', on?'1':'0'); }catch(e){} var c=document.getElementById('fbAutoChk'); if(c) c.checked=on; if(on&&fbUid){ fbWatch(); toast('자동 동기화 켜짐'); } else if(!on){ toast('자동 동기화 꺼짐'); } }
+function fbShowNotice(){ if(!fbAutoOn()) return; var n=document.getElementById('fbNotice'); if(n) n.style.display='block'; }
+function fbHideNotice(){ var n=document.getElementById('fbNotice'); if(n) n.style.display='none'; }
+function fbWatch(){ if(!fbUid||!fbDb||_fbWatching) return; _fbWatching=true;
+  fbDb.ref('kcareer/'+fbUid+'/at').on('value', function(s){ var at=s.val(); if(!at) return;
+    var base=(_fbBase!=null)?_fbBase:fbGetBase();
+    if(base==null){ fbShowNotice(); return; }
+    if(at>base) fbShowNotice(); else fbHideNotice();
+  }); }
+function fbScheduleAuto(key){ if(!fbUid||!fbDb||!fbAutoOn()) return; if(key&&FB_SKIP.indexOf(key)>=0) return; if(_fbPushT) clearTimeout(_fbPushT); _fbPushT=setTimeout(fbAutoPush, 2500); }
+function fbAutoPush(){ if(!fbUid||!fbDb||!fbAutoOn()) return;
+  fbDb.ref('kcareer/'+fbUid+'/at').once('value').then(function(s){ var cloudAt=s.val()||0;
+    if(_fbBase!=null && cloudAt>_fbBase){ fbShowNotice(); return; }
+    var at=Date.now(); fbSetBase(at); var data=fbGatherLS(); var payload={ls:data,at:at,device:fbDeviceLabel(),keys:Object.keys(data).length};
+    fbDb.ref('kcareer/'+fbUid).set(payload).then(function(){ var b=document.getElementById('fbBtn'); if(b){ var t=b.textContent; b.textContent='☁ 저장됨'; setTimeout(function(){ if(b.textContent==='☁ 저장됨') b.textContent=t; },1500); } }).catch(function(){});
+  }).catch(function(){}); }
 
 _safe(loadSeed); _safe(loadCustomNav); _safe(buildNav); _safe(initTabs); _safe(()=>initDocCreate('resume')); _safe(()=>initDocStore('resume')); _safe(()=>initDocCreate('profile')); _safe(()=>initDocStore('profile')); _safe(()=>initDocCreate('certdoc')); _safe(()=>initDocStore('certdoc')); _safe(bindCareer); _safe(initApiTab); _safe(initSettings); _safe(seedStamps); _safe(fbInit);
 _safe(()=>{ document.getElementById('brand').onclick=()=>{ nav_to('page-home','홈',null); renderHome(); };
@@ -4026,6 +4049,7 @@ _safe(()=>setTimeout(()=>{ initNavDrag(); initTabScroll(); initSideResize(); },1
       <div style="font-size:12px;color:var(--text-mute);margin-bottom:2px">로그인됨</div>
       <div id="fbWho" style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:4px"></div>
       <div id="fbInfo" style="font-size:11px;color:var(--text-mute);margin-bottom:12px"></div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:12px;cursor:pointer"><input type="checkbox" id="fbAutoChk" onchange="fbSetAuto(this.checked)" style="width:16px;height:16px"> 자동 동기화 <span style="color:var(--text-mute);font-size:11px">(변경 시 자동 저장 · 최신 감지 시 알림)</span></label>
       <button class="btn primary" style="width:100%;margin-bottom:8px" onclick="fbPush()">☁ 클라우드에 저장 <span style="font-weight:400;font-size:11px">(이 기기 → 클라우드)</span></button>
       <button class="btn" style="width:100%;margin-bottom:12px" onclick="fbPull()">⬇ 클라우드에서 불러오기 <span style="font-weight:400;font-size:11px">(클라우드 → 이 기기)</span></button>
       <button class="btn sm" onclick="fbLogout()">로그아웃</button>
