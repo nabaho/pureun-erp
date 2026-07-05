@@ -3640,15 +3640,39 @@ async function cvSendToEditor(){ const buf=await _cvHwpxZip('arraybuffer'); if(!
   try{ if(typeof mountEditor!=='function') throw new Error('editor unavailable'); await mountEditor(buf,'빠른이력서.hwpx'); toast('한글편집기로 보냈습니다 — 표 서식은 한글에서 정리하세요'); }
   catch(e){ console.warn('send to editor',e); const blob=new Blob([buf],{type:'application/hwp+zip'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='빠른이력서.hwpx'; a.click(); toast('편집기 적재 실패 — HWPX 파일로 내려받았습니다'); } }
 function renderCvForms(){ const box=document.getElementById('cvForms'); if(!box) return; const arr=get('cvforms');
-  let html='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;border:1px dashed var(--border);border-radius:8px;padding:8px"><b style="font-size:12px">📁 기관 제출 양식 보관</b><button class="btn sm" onclick="cvAddForm()">📎 양식 업로드</button>';
-  arr.forEach(function(f){ html+='<span style="font-size:11px;border:1px solid var(--border);border-radius:6px;padding:3px 6px">'+escapeHtml(f.name||'양식')+' <a href="#" onclick="downloadFile(\''+f.id+'\');return false">⬇</a> <a href="#" onclick="cvDelForm(\''+f.id+'\');return false" style="color:var(--red)">✕</a></span>'; });
-  if(!arr.length) html+='<span style="font-size:11px;color:var(--text-mute)">기관 양식(HWPX·PDF)을 올려두면 여기서 내려받아 한글로 마무리</span>';
+  let html='<div style="border:1px dashed var(--border);border-radius:8px;padding:8px">'
+    +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b style="font-size:12px">📁 기관 제출 양식 보관</b><button class="btn sm" onclick="cvAddForm()">📎 양식 업로드</button></div>';
+  arr.forEach(function(f){ const isH=(f.ext||'')==='hwpx';
+    html+='<span style="display:inline-flex;align-items:center;gap:6px;font-size:11px;border:1px solid var(--border);border-radius:6px;padding:3px 7px;margin:4px 4px 0 0">'+escapeHtml(f.name||'양식')
+      +(isH?' <a href="#" onclick="hwpxFill(\''+f.id+'\');return false" style="color:var(--teal);font-weight:700">✏️ 값채우기</a>':'')
+      +' <a href="#" onclick="downloadFile(\''+f.id+'\');return false">⬇</a> <a href="#" onclick="cvDelForm(\''+f.id+'\');return false" style="color:var(--red)">✕</a></span>'; });
+  if(!arr.length) html+='<div style="font-size:11px;color:var(--text-mute);margin-top:6px">기관 양식(HWPX)을 올려두면 여기서 값채우기 → 한글로 마무리</div>';
+  html+='<div style="font-size:11px;color:var(--text-mute);margin-top:8px;line-height:1.8">💡 한글 양식에 <b>{{성명}} {{생년월일}} {{성별}} {{연락처}} {{이메일}} {{주소}} {{자격}} {{소속}} {{발급일}} {{연도}}</b> 를 넣어 <b>.hwpx</b>로 저장 후 업로드하면, ✏️값채우기가 프로필 값으로 바꿔줍니다. (토큰은 한 번에 입력하세요)</div>';
   html+='</div>'; box.innerHTML=html; }
 async function cvAddForm(){ const inp=document.createElement('input'); inp.type='file'; inp.accept='.hwp,.hwpx,.pdf,.doc,.docx,.jpg,.jpeg,.png';
   inp.onchange=async function(){ const f=inp.files[0]; if(!f) return; const buf=await f.arrayBuffer(); const id='CVFORM'+Date.now()+Math.random().toString(36).slice(2,6); const ext=(f.name.split('.').pop()||'').toLowerCase();
     saveFileUnified(id,{id:id,name:f.name,ext:ext,size:f.size,base64:abToB64(buf),savedAt:new Date().toISOString()});
     const arr=get('cvforms'); arr.unshift({id:id,name:f.name,ext:ext}); set('cvforms',arr); renderCvForms(); toast('기관 양식 보관됨'); }; inp.click(); }
 function cvDelForm(id){ if(!confirm('이 양식을 삭제할까요?')) return; deleteFile(id); set('cvforms',get('cvforms').filter(function(f){return f.id!==id;})); renderCvForms(); }
+function _xesc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function _fillTokens(xml,map,stat){ return xml.replace(/\{\{([\s\S]*?)\}\}/g,function(m,inner){ const name=inner.replace(/<[^>]*>/g,'').replace(/\s+/g,''); if(Object.prototype.hasOwnProperty.call(map,name)){ stat.done++; return _xesc(map[name]); } stat.miss[name]=(stat.miss[name]||0)+1; return m; }); }
+async function hwpxFill(id){ const form=(get('cvforms').find(function(x){return x.id===id;}))||null; if(!form) return;
+  if((form.ext||'')!=='hwpx'){ toast('값 채우기는 HWPX 양식만 됩니다 — 한글에서 "다른 이름으로 저장 → hwpx"'); return; }
+  try{ await _ensureJSZip(); }catch(e){ toast('모듈 로드 실패(인터넷 필요)'); return; }
+  const f=await getFileAsync(id); if(!f||!f.base64){ toast('원본 양식을 찾을 수 없습니다'); return; }
+  const info=(typeof getProfileInfo==='function'?getProfileInfo():get('profile_info'))||{}; const d=new Date();
+  const today=d.getFullYear()+'년 '+(d.getMonth()+1)+'월 '+d.getDate()+'일';
+  const map={'성명':info.name||'','이름':info.name||'','생년월일':info.birth||'','성별':info.gender||'','전화':info.phone||'','연락처':info.phone||'','이메일':info.email||'','주소':info.addr||'','자격':info.license||'','소속':info.org||'','발급일':today,'오늘':today,'날짜':today,'연도':String(d.getFullYear())};
+  let zip; try{ zip=await JSZip.loadAsync(b64ToAb(f.base64)); }catch(e){ toast('HWPX 열기 실패 — 올바른 hwpx인지 확인'); return; }
+  const stat={done:0,miss:{}}; const names=Object.keys(zip.files).filter(function(n){return /\.xml$/i.test(n);});
+  for(const n of names){ let s=await zip.file(n).async('string'); if(s.indexOf('{{')<0) continue; s=_fillTokens(s,map,stat); zip.file(n,s); }
+  if(stat.done===0 && !Object.keys(stat.miss).length){ toast('양식에서 {{토큰}}을 찾지 못했습니다 — 한글에서 토큰을 한 번에 입력했는지 확인하세요'); return; }
+  const blob=await zip.generateAsync({type:'blob',mimeType:'application/hwp+zip'});
+  const nm=(form.name||'양식').replace(/\.hwpx$/i,'')+'_채움.hwpx';
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=nm; a.click();
+  if(typeof _logCv==='function') _logCv('기관양식','HWPX 채움');
+  const miss=Object.keys(stat.miss);
+  toast('값 '+stat.done+'개 채워 저장됨'+(miss.length?(' · 미매칭: '+miss.slice(0,5).join(', ')):'')+' — 한글에서 도장·PDF 마무리'); }
 function renderPersonalDocs(){ const box=document.getElementById('piDocs'); if(!box) return;
   const arr=get('personal'); const cnt=document.getElementById('piCnt'); if(cnt) cnt.textContent=arr.length+'건';
   if(!arr.length){ box.innerHTML='<div class="empty"><div class="emp-ico">📭</div>신분증·사진 없음<br><span style="font-size:12px">OCR 드롭존에 파일을 끌어놓거나 + 직접 추가</span></div>'; return; }
