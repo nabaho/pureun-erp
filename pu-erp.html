@@ -760,8 +760,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-04 계약 열별 필터 바를 업체관리 헤더 형태로 — 라벨(정렬/세부종류) 위 + 테두리 없는 전체 드롭다운';
-var BUILD_SEQ = 94;
+var ERP_BUILD = '2026-07-04 계약 열별 바에 종류 칸 추가 — 업체관리 업태→종목처럼 종류→세부종류 종속 필터(정렬·종류·세부종류)';
+var BUILD_SEQ = 95;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -9050,6 +9050,9 @@ function ContractManagement(){
   function setColSort(v, k){ var n = Object.assign({}, colSortMap); n[v] = k; setColSortMap(n); }
   function getColSub(v){ return colSubMap[v] || 'all'; }
   function setColSub(v, k){ var n = Object.assign({}, colSubMap); n[v] = k; setColSubMap(n); }
+  var ckS = usePersistedState('contract_col_kind', {}); var colKindMap = ckS[0]; var setColKindMap = ckS[1];
+  function getColKind(v){ return colKindMap[v] || 'all'; }
+  function setColKind(v, k){ var n = Object.assign({}, colKindMap); n[v] = k; setColKindMap(n); }
   // 단계별 종류·하위종류 필터 표시 모드 (드롭다운 기본 / 칩) — 저장됨
   var fvm = usePersistedState('contract_filter_view', 'dropdown'); var filterView = fvm[0]; var setFilterView = fvm[1];
   function filterRowUI(icon, label, opts, cur, onPick, accent){
@@ -9786,10 +9789,17 @@ function ContractManagement(){
     h('div', { style:{ display:'grid', gridTemplateColumns: window.innerWidth<=768?'1fr':(focusCol==='all'?'repeat(3, 1fr)':'1fr'), gap:'8px' } },
       CONTRACT_STATUS.filter(function(s){ return focusCol==='all' || s.v===focusCol; }).map(function(s){
         var allStageCards = byStatus[s.v] || [];
-        // 열별 세부종류 필터 + 정렬 (각 열 독립 적용)
+        // 열별 종류 → 세부종류 필터 + 정렬 (각 열 독립, 업체관리 업태→종목 방식)
+        var cKind = getColKind(s.v);
         var cSub = getColSub(s.v);
         var cSort = getColSort(s.v);
         var cards = allStageCards;
+        if(cKind !== 'all'){
+          cards = cards.filter(function(c){
+            var arr = c.kinds || (c.kind ? [c.kind] : []);
+            return arr.indexOf(cKind) >= 0;
+          });
+        }
         if(cSub !== 'all'){
           cards = cards.filter(function(c){
             var arr = c.kinds || (c.kind ? [c.kind] : []);
@@ -9843,6 +9853,16 @@ function ContractManagement(){
                 h('option', { value:'dateDesc' }, '최신순'),
                 h('option', { value:'dateAsc' }, '오래된순'),
                 h('option', { value:'name' }, '이름순'))),
+            h('div', { style:{ flex:1, minWidth:0, borderRight:'1px solid #e2e8f0' } },
+              h('div', { style:{ fontSize:'10px', color:'#64748b', fontWeight:600, padding:'2px 6px 0' } }, '종류'),
+              h('select', { value:cKind, onChange:function(e){ setColKind(s.v, e.target.value); setColSub(s.v, 'all'); }, title:'이 열 종류(대분류) 필터',
+                style:{ fontSize:'11px', border:'none', borderTop:'1px solid #e2e8f0', background:'transparent', width:'100%', padding:'3px 6px', fontFamily:'inherit', color:cKind!=='all'?'#2563eb':'#334155', fontWeight:cKind!=='all'?700:400, cursor:'pointer' } },
+                h('option', { value:'all' }, '전체'),
+                (function(){
+                  var kc = {};
+                  allStageCards.forEach(function(c){ var arr = c.kinds || (c.kind ? [c.kind] : []); arr.forEach(function(kv){ kc[kv] = (kc[kv]||0) + 1; }); });
+                  return CONTRACT_KINDS.filter(function(k){ return kc[k.v] > 0; }).map(function(k){ return h('option', { key:k.v, value:k.v }, k.label + ' (' + kc[k.v] + ')'); });
+                })())),
             h('div', { style:{ flex:1, minWidth:0 } },
               h('div', { style:{ fontSize:'10px', color:'#64748b', fontWeight:600, padding:'2px 6px 0' } }, '세부종류'),
               h('select', { value:cSub, onChange:function(e){ setColSub(s.v, e.target.value); }, title:'이 열 세부종류 필터',
@@ -9850,7 +9870,11 @@ function ContractManagement(){
                 h('option', { value:'all' }, '전체'),
                 (function(){
                   var cnt = {};
-                  allStageCards.forEach(function(c){ var arr = c.kinds || (c.kind ? [c.kind] : []); arr.forEach(function(kv){ var nm = kindSubLabel(c, kv); if(nm) cnt[nm] = (cnt[nm]||0) + 1; }); });
+                  allStageCards.forEach(function(c){
+                    var arr = c.kinds || (c.kind ? [c.kind] : []);
+                    if(cKind !== 'all'){ if(arr.indexOf(cKind) < 0) return; var nm = kindSubLabel(c, cKind); if(nm) cnt[nm] = (cnt[nm]||0) + 1; }
+                    else { arr.forEach(function(kv){ var nm = kindSubLabel(c, kv); if(nm) cnt[nm] = (cnt[nm]||0) + 1; }); }
+                  });
                   return Object.keys(cnt).sort().map(function(nm){ return h('option', { key:nm, value:nm }, nm + ' (' + cnt[nm] + ')'); });
                 })()))),
           // 카드 영역 (단독 보기 시 카드는 가로 한 줄 레이아웃 - CSS로 반응형)
