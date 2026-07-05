@@ -362,6 +362,10 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
   @page{size:A4;margin:14mm}
 }
 </style>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-check-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
 </head>
 <body>
 <div class="warn-banner" id="filenameWarn">⚠️ 파일명이 <b>kcareer.html</b>이 아니면 저장 데이터가 분리될 수 있습니다.</div>
@@ -402,7 +406,7 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
     </div>
   </div>
   <div class="content-wrap">
-    <div class="topbar"><button class="hamburger" id="hamburger" aria-label="메뉴">☰</button><span id="tbTitle">홈</span><span class="crumb" id="tbCrumb"></span><span style="flex:1"></span><button class="btn" id="themeBtn" style="font-size:12px" onclick="toggleTheme()">🌙</button><button class="btn" id="searchBtn" style="font-size:12px">🔍 전체검색</button><button class="btn" id="printBtn" style="font-size:12px">🖨 인쇄</button></div>
+    <div class="topbar"><button class="hamburger" id="hamburger" aria-label="메뉴">☰</button><span id="tbTitle">홈</span><span class="crumb" id="tbCrumb"></span><span style="flex:1"></span><button class="btn" id="themeBtn" style="font-size:12px" onclick="toggleTheme()">🌙</button><button class="btn" id="searchBtn" style="font-size:12px">🔍 전체검색</button><button class="btn" id="fbBtn" style="font-size:12px" onclick="fbOpenModal()">☁ 클라우드</button><button class="btn" id="printBtn" style="font-size:12px">🖨 인쇄</button></div>
     <div id="groupTabs" style="display:none"></div>
     <main class="main" id="main">
       <section class="page-view active" id="page-home"><div class="page">
@@ -3939,7 +3943,43 @@ document.addEventListener('mousedown', function(e){ var h=e.target.closest('.mod
 /* 모달이 열릴 때마다 위치 초기화(중앙) */
 _safe(function(){ document.querySelectorAll('.modal-ov').forEach(function(ov){
   new MutationObserver(function(){ if(ov.classList.contains('open')){ var m=ov.querySelector('.modal'); if(m){ m.style.transform=''; m._off=null; } } }).observe(ov,{attributes:true,attributeFilter:['class']}); }); });
-_safe(loadSeed); _safe(loadCustomNav); _safe(buildNav); _safe(initTabs); _safe(()=>initDocCreate('resume')); _safe(()=>initDocStore('resume')); _safe(()=>initDocCreate('profile')); _safe(()=>initDocStore('profile')); _safe(()=>initDocCreate('certdoc')); _safe(()=>initDocStore('certdoc')); _safe(bindCareer); _safe(initApiTab); _safe(initSettings); _safe(seedStamps);
+/* ===== Firebase 클라우드 동기화 (1단계: 로그인 + 수동 저장/불러오기) ===== */
+var FB_CONFIG={apiKey:'AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA',authDomain:'pureun-erp.firebaseapp.com',databaseURL:'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app',projectId:'pureun-erp',appId:'1:936817166182:web:9bd31f70d0afdf5fca2aa7',messagingSenderId:'936817166182'};
+var FB_APPCHECK_KEY='6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
+var fbDb=null, fbUid=null;
+var FB_SKIP=['id_docs','_idpin','_idmeta','_idsalt','kc_theme'];
+function fbInit(){ if(location.protocol==='file:') return; if(typeof firebase==='undefined'||!firebase.initializeApp) return;
+  try{ if(!firebase.apps||!firebase.apps.length) firebase.initializeApp(FB_CONFIG);
+    if(FB_APPCHECK_KEY && firebase.appCheck){ try{ firebase.appCheck().activate(new firebase.appCheck.ReCaptchaV3Provider(FB_APPCHECK_KEY), true); }catch(e){ console.warn('[AppCheck]',e&&e.message); } }
+    fbDb=firebase.database();
+    firebase.auth().onAuthStateChanged(function(u){ fbUid=u?u.uid:null; fbUpdateUI(u); });
+  }catch(e){ console.warn('fbInit',e); } }
+function fbUpdateUI(u){ var lo=document.getElementById('fbLoggedOut'), li=document.getElementById('fbLoggedIn'), btn=document.getElementById('fbBtn');
+  if(u){ if(lo)lo.style.display='none'; if(li)li.style.display=''; var w=document.getElementById('fbWho'); if(w)w.textContent=u.email||u.uid; if(btn){btn.textContent='☁ 동기화'; btn.style.color='var(--teal)';} fbLoadInfo(); }
+  else { if(lo)lo.style.display=''; if(li)li.style.display='none'; if(btn){btn.textContent='☁ 클라우드'; btn.style.color='';} } }
+function fbOpenModal(){ if(location.protocol==='file:'){ toast('GitHub Pages(https)에서 열어야 클라우드가 됩니다'); return; } if(!fbDb){ toast('클라우드 준비 중 — 잠시 후 다시 (인터넷 확인)'); return; } var m=document.getElementById('fbModal'); if(m) m.style.display='flex'; }
+function fbCloseModal(){ var m=document.getElementById('fbModal'); if(m) m.style.display='none'; }
+function fbAuthMsg(ex){ var c=(ex&&ex.code)||''; if(c.indexOf('wrong-password')>=0||c.indexOf('invalid-credential')>=0) return '비밀번호가 올바르지 않습니다'; if(c.indexOf('user-not-found')>=0) return '등록되지 않은 계정입니다'; if(c.indexOf('invalid-email')>=0) return '이메일 형식이 아닙니다'; if(c.indexOf('too-many')>=0) return '시도가 많습니다. 잠시 후 다시 시도하세요'; if(c.indexOf('network')>=0) return '네트워크 오류'; return (ex&&ex.message)||'로그인 실패'; }
+function fbLogin(){ var e=(document.getElementById('fbEmail').value||'').trim(), p=document.getElementById('fbPw').value||''; var err=document.getElementById('fbErr'); if(err)err.textContent='';
+  if(!e||!p){ if(err)err.textContent='이메일과 비밀번호를 입력하세요'; return; }
+  firebase.auth().signInWithEmailAndPassword(e,p).then(function(){ document.getElementById('fbPw').value=''; toast('로그인되었습니다'); }).catch(function(ex){ if(err)err.textContent=fbAuthMsg(ex); }); }
+function fbLogout(){ firebase.auth().signOut().then(function(){ toast('로그아웃되었습니다'); }); }
+function fbGatherLS(){ var o={}; for(var i=0;i<localStorage.length;i++){ var k=localStorage.key(i); if(!k||k.indexOf(NS)!==0) continue; var bare=k.slice(NS.length); if(FB_SKIP.indexOf(bare)>=0) continue; o[bare]=localStorage.getItem(k); } return o; }
+function fbDeviceLabel(){ return (/Mobile|Android|iPhone/i.test(navigator.userAgent)?'폰':'PC'); }
+function fbPush(){ if(!fbUid){ toast('먼저 로그인하세요'); return; } if(!fbDb) return;
+  var data=fbGatherLS(); var payload={ls:data, at:Date.now(), device:fbDeviceLabel(), keys:Object.keys(data).length};
+  fbDb.ref('kcareer/'+fbUid).set(payload).then(function(){ toast('클라우드에 저장됨 ('+payload.keys+'개 항목)'); fbShowInfo(payload); }).catch(function(ex){ toast('저장 실패: '+((ex&&ex.message)||ex)); }); }
+function fbPull(){ if(!fbUid){ toast('먼저 로그인하세요'); return; } if(!fbDb) return;
+  fbDb.ref('kcareer/'+fbUid).once('value').then(function(snap){ var v=snap.val();
+    if(!v||!v.ls){ toast('클라우드에 저장된 데이터가 없습니다 — 먼저 한 기기에서 저장하세요'); return; }
+    var n=Object.keys(v.ls).length; var when=v.at?new Date(v.at).toLocaleString('ko-KR'):'';
+    if(!confirm('클라우드 데이터('+n+'개 항목, '+when+' 저장, '+(v.device||'')+' )를\n이 기기에 덮어씁니다. 이 기기의 현재 기록은 사라집니다.\n\n계속할까요?')) return;
+    Object.keys(v.ls).forEach(function(bare){ if(FB_SKIP.indexOf(bare)>=0) return; try{ localStorage.setItem(NS+bare, v.ls[bare]); }catch(e){ console.error('pull set',bare,e); } });
+    toast('불러오기 완료 — 새로고침합니다'); setTimeout(function(){ location.reload(); }, 900); }).catch(function(ex){ toast('불러오기 실패: '+((ex&&ex.message)||ex)); }); }
+function fbShowInfo(p){ var el=document.getElementById('fbInfo'); if(el&&p&&p.at) el.textContent='마지막 저장: '+new Date(p.at).toLocaleString('ko-KR')+' · '+(p.keys||0)+'개 · '+(p.device||''); }
+function fbLoadInfo(){ if(!fbUid||!fbDb) return; fbDb.ref('kcareer/'+fbUid).child('at').once('value').then(function(s){ var el=document.getElementById('fbInfo'); if(!el) return; var at=s.val(); el.textContent=at?('클라우드 최신 저장: '+new Date(at).toLocaleString('ko-KR')):'클라우드에 저장된 데이터 없음'; }).catch(function(){}); }
+
+_safe(loadSeed); _safe(loadCustomNav); _safe(buildNav); _safe(initTabs); _safe(()=>initDocCreate('resume')); _safe(()=>initDocStore('resume')); _safe(()=>initDocCreate('profile')); _safe(()=>initDocStore('profile')); _safe(()=>initDocCreate('certdoc')); _safe(()=>initDocStore('certdoc')); _safe(bindCareer); _safe(initApiTab); _safe(initSettings); _safe(seedStamps); _safe(fbInit);
 _safe(()=>{ document.getElementById('brand').onclick=()=>{ nav_to('page-home','홈',null); renderHome(); };
   document.getElementById('hamburger').onclick=()=>toggleSidebar();
   var _pb=document.getElementById('printBtn'); if(_pb) _pb.onclick=()=>window.print();
@@ -3972,5 +4012,26 @@ _safe(()=>setTimeout(migrateFilesToIDB,1500)); /* localStorage → IDB 자동 �
 _safe(loadFileIndex); /* IDB 파일 인덱스 로드 → 보기/첨부 버튼 정확화 */
 _safe(()=>setTimeout(()=>{ initNavDrag(); initTabScroll(); initSideResize(); },150));
 </script>
+<div id="fbModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.42);z-index:60;align-items:center;justify-content:center" onclick="if(event.target===this)fbCloseModal()">
+  <div style="background:var(--card);border-radius:12px;padding:20px;width:340px;max-width:92vw;box-shadow:0 12px 44px rgba(0,0,0,.25)">
+    <div style="display:flex;align-items:center;margin-bottom:12px"><b style="flex:1;color:var(--navy);font-size:15px">☁ 클라우드 동기화</b><button class="btn sm" onclick="fbCloseModal()">✕</button></div>
+    <div id="fbLoggedOut">
+      <div style="font-size:12px;color:var(--text-mute);margin-bottom:8px">pu-erp에서 쓰는 이메일 계정으로 로그인하세요.</div>
+      <input id="fbEmail" class="tb-input" placeholder="이메일" autocomplete="username" style="width:100%;margin-bottom:6px">
+      <input id="fbPw" type="password" class="tb-input" placeholder="비밀번호" autocomplete="current-password" style="width:100%;margin-bottom:10px" onkeydown="if(event.key==='Enter')fbLogin()">
+      <button class="btn primary" style="width:100%" onclick="fbLogin()">로그인</button>
+      <div id="fbErr" style="font-size:12px;color:var(--red);margin-top:8px"></div>
+    </div>
+    <div id="fbLoggedIn" style="display:none">
+      <div style="font-size:12px;color:var(--text-mute);margin-bottom:2px">로그인됨</div>
+      <div id="fbWho" style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:4px"></div>
+      <div id="fbInfo" style="font-size:11px;color:var(--text-mute);margin-bottom:12px"></div>
+      <button class="btn primary" style="width:100%;margin-bottom:8px" onclick="fbPush()">☁ 클라우드에 저장 <span style="font-weight:400;font-size:11px">(이 기기 → 클라우드)</span></button>
+      <button class="btn" style="width:100%;margin-bottom:12px" onclick="fbPull()">⬇ 클라우드에서 불러오기 <span style="font-weight:400;font-size:11px">(클라우드 → 이 기기)</span></button>
+      <button class="btn sm" onclick="fbLogout()">로그아웃</button>
+    </div>
+    <div style="font-size:11px;color:var(--text-mute);margin-top:12px;line-height:1.6;border-top:1px solid var(--border);padding-top:10px">기록(경력·실적·프로필·설정 등 텍스트)만 동기화됩니다. 사진·첨부파일 실물과 신분증(암호화)은 제외 — 다음 단계에서 처리합니다.</div>
+  </div>
+</div>
 </body>
 </html>
