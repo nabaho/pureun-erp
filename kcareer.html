@@ -40,6 +40,12 @@ body{font-family:"Malgun Gothic","맑은 고딕",system-ui,sans-serif;color:var(
 .nav-item.active{background:var(--sidebar-hover);color:#fff;border-left-color:var(--teal)}
 .nav-item.sub{padding-left:30px;font-size:13px}
 .nav-item .lbl{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#groupTabs{display:flex;gap:2px;overflow-x:auto;background:var(--card);border-bottom:1px solid var(--border);padding:8px 16px 0;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+#groupTabs::-webkit-scrollbar{display:none}
+.gtab{background:none;border:none;border-bottom:2px solid transparent;padding:8px 13px;font-size:13.5px;color:var(--text-mute);cursor:pointer;white-space:nowrap;font-family:inherit;line-height:1.4}
+.gtab:hover{color:var(--text)}
+.gtab.active{color:var(--text);border-bottom-color:var(--teal);font-weight:700}
+.nav-group-btn.gsel{background:var(--sidebar-hover);color:#fff;border-left-color:var(--teal)}
 .nav-item.sub.dragging{opacity:.35}
 .nav-item.sub.drag-over{background:rgba(184,144,47,.28)!important;border-left-color:var(--gold)!important;outline:2px dashed rgba(184,144,47,.6);outline-offset:-2px}
 .tabrow{overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none;cursor:grab;-webkit-overflow-scrolling:touch;display:flex;gap:2px;border-bottom:2px solid var(--border);margin:10px 0 18px}
@@ -109,7 +115,7 @@ body{font-family:"Malgun Gothic","맑은 고딕",system-ui,sans-serif;color:var(
 .field input:focus,.field select:focus{border-color:var(--navy)}
 #hoverPrev{display:none;position:fixed;z-index:80;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.25);padding:4px;pointer-events:none}
 @media print{
-  .sidebar,.topbar,.toolbar,.hamburger,#printBtn,.dropzone,.ocr-zone,.nav-backdrop{display:none!important}
+  .sidebar,.topbar,.toolbar,.hamburger,#printBtn,.dropzone,.ocr-zone,.nav-backdrop,#groupTabs{display:none!important}
   .content-wrap,.main{margin:0!important;width:100%!important}
   .page{padding:0!important}
   body{background:#fff!important}
@@ -397,6 +403,7 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
   </div>
   <div class="content-wrap">
     <div class="topbar"><button class="hamburger" id="hamburger" aria-label="메뉴">☰</button><span id="tbTitle">홈</span><span class="crumb" id="tbCrumb"></span><span style="flex:1"></span><button class="btn" id="themeBtn" style="font-size:12px" onclick="toggleTheme()">🌙</button><button class="btn" id="searchBtn" style="font-size:12px">🔍 전체검색</button><button class="btn" id="printBtn" style="font-size:12px">🖨 인쇄</button></div>
+    <div id="groupTabs" style="display:none"></div>
     <main class="main" id="main">
       <section class="page-view active" id="page-home"><div class="page">
         <div id="noJsNotice" style="background:#FFF4E5;border:1px solid #F0C887;border-radius:10px;padding:18px 16px;margin-bottom:18px;color:#8A5A00;font-size:14px;line-height:1.7">
@@ -1465,29 +1472,32 @@ function buildNav(){
     favs.forEach(id=>{ const {label,grp}=navInfo(id); fb.appendChild(mkItem(id,label,grp,true,true)); });
     nav.appendChild(fb);
   }
-  const groups=NAV.filter(g=>g.g).map(g=>g.g), allCollapsed=groups.every(g=>st[g]===true);
-  const bar=document.createElement('div'); bar.className='nav-toggle-all'; bar.textContent=allCollapsed?'＋ 전체 펼치기':'－ 전체 접기'; bar.onclick=toggleAllGroups;
-  nav.appendChild(bar);
+  const groups=NAV.filter(g=>g.g).map(g=>g.g);
   NAV.forEach(grp=>{
-    const box=document.createElement('div'); box.className='nav-group';
-    const collapsed = st[grp.g]===true;
     if(grp.g){
-      const t=document.createElement('div'); t.className='g-title'+(collapsed?' collapsed':'');
-      t.innerHTML='<span class="caret">▾</span>'+grp.g;
-      const items=document.createElement('div'); items.className='g-items'; if(collapsed) items.style.display='none';
-      let sortedItems=[...grp.items]; const savedOrd=getNavOrder(grp.g);
-      if(savedOrd.length) sortedItems.sort((a,b)=>{ const ai=savedOrd.indexOf(a[0]),bi=savedOrd.indexOf(b[0]); if(ai<0&&bi<0)return 0; if(ai<0)return 1; if(bi<0)return -1; return ai-bi; });
-      sortedItems.forEach(([id,label])=>{ items.appendChild(mkItem(id,label,grp.g,favs.includes(id),true)); });
-      t.onclick=()=>{ const s=navState(); s[grp.g]=!(s[grp.g]===true); setNavState(s);
-        const open=!(s[grp.g]===true); items.style.display=open?'':'none'; t.classList.toggle('collapsed',!open); };
-      box.appendChild(t); box.appendChild(items);
+      const b=document.createElement('div'); b.className='nav-item nav-group-btn'; b.dataset.g=grp.g;
+      b.innerHTML='<span class="lbl"></span>'; b.querySelector('.lbl').textContent=grp.g;
+      b.onclick=()=>selectGroup(grp.g);
+      nav.appendChild(b);
     } else {
       grp.items.forEach(([id,label])=>{ footer.appendChild(mkItem(id,label,null,favs.includes(id),false)); });
-      return;
     }
-    nav.appendChild(box);
   });
+  syncGroupUI((document.querySelector('.page-view.active')||{}).id||'page-home');
 }
+function selectGroup(g){ const grp=NAV.find(x=>x.g===g); if(!grp||!grp.items.length) return;
+  const active=document.querySelector('.page-view.active'); const inf=active?navInfo(active.id):{grp:null};
+  if(inf.grp===g) return;
+  const first=grp.items[0]; navTile(first[0]); }
+function renderGroupTabs(g,activeId){ const gt=document.getElementById('groupTabs'); if(!gt) return;
+  const grp=NAV.find(x=>x.g===g); if(!grp){ gt.innerHTML=''; return; }
+  let ord=[...grp.items]; const saved=getNavOrder(g);
+  if(saved.length) ord.sort((a,b)=>{ const ai=saved.indexOf(a[0]),bi=saved.indexOf(b[0]); if(ai<0&&bi<0)return 0; if(ai<0)return 1; if(bi<0)return -1; return ai-bi; });
+  gt.innerHTML=ord.map(([id,label])=>'<button class="gtab'+(id===activeId?' active':'')+'" data-id="'+id+'" onclick="navTile(\''+id+'\')">'+escapeHtml(label)+'</button>').join(''); }
+function syncGroupUI(id){ const inf=(typeof navInfo==='function')?navInfo(id):{grp:null}; const grp=inf?inf.grp:null;
+  document.querySelectorAll('.nav-group-btn').forEach(b=>b.classList.toggle('gsel', b.dataset.g===grp));
+  const gt=document.getElementById('groupTabs'); if(!gt) return;
+  if(grp){ renderGroupTabs(grp,id); gt.style.display=''; } else { gt.style.display='none'; gt.innerHTML=''; } }
 function nav_to(id,label,grp){
   document.querySelectorAll('.page-view').forEach(s=>s.classList.remove('active'));
   const sec=document.getElementById(id); if(sec) sec.classList.add('active');
@@ -1503,6 +1513,7 @@ function nav_to(id,label,grp){
   if(id==='page-profile' && typeof renderDocStore==='function') renderDocStore('profile');
   if(id==='page-certdoc' && typeof renderDocStore==='function') renderDocStore('certdoc');
   if(id==='page-settings'){ _safe(renderPersonal); _safe(renderAccounts); _safe(initIDSecurity); _safe(()=>setTimeout(initTabScroll,80)); }
+  if(typeof syncGroupUI==='function') syncGroupUI(id);
 }
 function toggleNavAddForm(){
   const f=document.getElementById('navAddForm');
