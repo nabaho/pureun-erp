@@ -760,8 +760,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-06 다기기 동기화 자가치유 — 저장 차단 시 _meta 롤백, 탭 복귀·재접속 때 서버 최신 자동 수신(옛 데이터에 갇히는 문제 해결)';
-var BUILD_SEQ = 100;
+var ERP_BUILD = '2026-07-06 급여대장 왼쪽 열 고정(엑셀 틀고정) — 이름/직책까지 선택, 가로 스크롤 시 고정(이 기기에만 저장)';
+var BUILD_SEQ = 101;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -49050,6 +49050,29 @@ function PayrollLedger(props){
   var tdNum = {padding:'2px 4px',textAlign:'right',fontFamily:'monospace',fontSize:'10.5px',whiteSpace:'nowrap'};
   var IS_M = window.innerWidth <= 768;
   var inputNum = {width:'65px',padding:'1px 3px',border:'1px solid #e2e8f0',borderRadius:'5px',fontSize:'10px',fontFamily:'monospace',textAlign:'right'};
+  // ── 왼쪽 열 고정 (엑셀 틀고정: 고른 열까지 가로 스크롤 시 왼쪽 유지). 이 기기에만 저장, 데이터/서버 무관 ──
+  var _fzInit = (function(){ try{ return localStorage.getItem('pureun_v6_payroll_freeze_col') || 'none'; }catch(e){ return 'none'; } })();
+  var _fzS = useState(_fzInit); var freezeCol = _fzS[0]; var _setFreezeCol = _fzS[1];
+  function setFreezeCol(v){ _setFreezeCol(v); try{ localStorage.setItem('pureun_v6_payroll_freeze_col', v); }catch(e){} }
+  var _fzRef = useRef(null);
+  var _fzOffS = useState(null); var fzOff = _fzOffS[0]; var setFzOff = _fzOffS[1];
+  React.useLayoutEffect(function(){
+    if(IS_M || freezeCol==='none'){ if(fzOff) setFzOff(null); return; }
+    var box = _fzRef.current; if(!box) return;
+    var hr = box.querySelector('thead tr'); if(!hr || !hr.children[2]) return;
+    var c = hr.children;
+    var n = { num:c[0].offsetLeft, name:c[1].offsetLeft, title:c[2].offsetLeft };
+    if(!fzOff || fzOff.num!==n.num || fzOff.name!==n.name || fzOff.title!==n.title) setFzOff(n);
+  }, [freezeCol, props.selYM]);
+  var _FZRANK = { none:-1, name:1, title:2 };
+  function fzStyle(colId, bg, z){
+    if(IS_M || freezeCol==='none' || !fzOff) return {};
+    var rank = ({num:0,name:1,title:2})[colId];
+    if(rank > _FZRANK[freezeCol]) return {};
+    var st = { position:'sticky', left:(fzOff[colId]||0)+'px', zIndex:z, background:bg };
+    if(rank === _FZRANK[freezeCol]) st.boxShadow = '2px 0 5px -2px rgba(0,0,0,0.18)';
+    return st;
+  }
 
   return h('div', null,
     // KPI + 툴바
@@ -49097,6 +49120,13 @@ function PayrollLedger(props){
         h(MonthNav, { onPrev:function(){changeMonth(-1);}, onNext:function(){changeMonth(1);}, label:props.selYM, onToday:function(){props.setSelYM(todayYM());}, todayActive: props.selYM===todayYM() }),
         h('label', { style:{ display:'flex', alignItems:'center', gap:'3px', fontSize:'11px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
           h('input', { type:'checkbox', checked:!showResigned, onChange:function(e){ setShowResigned(!e.target.checked); } }), '퇴사자 제외'),
+        !IS_M && h('label', { style:{ display:'flex', alignItems:'center', gap:'4px', fontSize:'11px', color:'#64748b', whiteSpace:'nowrap' }, title:'가로 스크롤해도 왼쪽에 고정할 열' },
+          '📌 왼쪽 고정',
+          h('select', { value:freezeCol, onChange:function(e){ setFreezeCol(e.target.value); },
+            style:{ padding:'3px 6px', border:'1px solid #cbd5e1', borderRadius:'5px', fontSize:'11px', fontFamily:'inherit', cursor:'pointer' } },
+            h('option', { value:'none' }, '없음'),
+            h('option', { value:'name' }, '이름까지'),
+            h('option', { value:'title' }, '직책까지'))),
         isPayrollLocked(props.selYM)
           ? h('button',{ onClick:async function(){
                 if(!(await popConfirm('🔒 '+props.selYM+' 잠금을 해제할까요?'))) return;
@@ -49319,12 +49349,12 @@ function PayrollLedger(props){
           );
         })
       )
-    : h('div', { style:{ background:'#fff', border:'1px solid #e5e7eb', borderRadius:'6px', overflow:'auto', maxHeight:'calc(100vh - 280px)' } },
+    : h('div', { ref:_fzRef, style:{ background:'#fff', border:'1px solid #e5e7eb', borderRadius:'6px', overflow:'auto', maxHeight:'calc(100vh - 280px)' } },
       h('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:'11px' } },
         h('thead', null, h('tr', null,
-          h('th', { style:thStyle }, '#'),
-          h('th', { style:Object.assign({},thStyle,{textAlign:'left',minWidth:'52px'}, IS_M?{position:'sticky',left:0,zIndex:3}:{}) }, '이름'),
-          h('th', { style:Object.assign({},thStyle,{textAlign:'left',minWidth:'52px'}) }, '직책'),
+          h('th', { style:Object.assign({},thStyle, fzStyle('num','#f8fafc',6)) }, '#'),
+          h('th', { style:Object.assign({},thStyle,{textAlign:'left',minWidth:'52px'}, IS_M?{position:'sticky',left:0,zIndex:3}:{}, fzStyle('name','#f8fafc',6)) }, '이름'),
+          h('th', { style:Object.assign({},thStyle,{textAlign:'left',minWidth:'52px'}, fzStyle('title','#f8fafc',6)) }, '직책'),
           // 지급 항목
           h('th', { style:Object.assign({},thStyle,{textAlign:'right',minWidth:'62px',color:'#1e40af'}) }, '시급'),
           // 동적 임금항목 컬럼 (환경설정 sortOrder 순 + hidden 제외 + 신규 항목 자동 추가)
@@ -49397,8 +49427,8 @@ function PayrollLedger(props){
               return base;
             })();
             return h('tr', { key:u.sid, style:{borderBottom:'1px solid #f1f5f9', background: effectivePause ? '#fef3c7' : 'transparent'} },
-              h('td', {style:{padding:'4px',textAlign:'center',color:'#94a3b8',fontSize:'10.5px'}}, idx+1),
-              h('td', {style:Object.assign({padding:'4px 6px',fontWeight:600,fontSize:'11px',whiteSpace:'nowrap'}, IS_M?{position:'sticky',left:0,zIndex:1,background:effectivePause?'#fef3c7':'#fff'}:{})},
+              h('td', {style:Object.assign({padding:'4px',textAlign:'center',color:'#94a3b8',fontSize:'10.5px'}, fzStyle('num', effectivePause?'#fef3c7':'#fff', 2))}, idx+1),
+              h('td', {style:Object.assign({padding:'4px 6px',fontWeight:600,fontSize:'11px',whiteSpace:'nowrap'}, IS_M?{position:'sticky',left:0,zIndex:1,background:effectivePause?'#fef3c7':'#fff'}:{}, fzStyle('name', effectivePause?'#fef3c7':'#fff', 2))},
                 u.name,
                 loaActive && h('span', {
                   title:'휴직: '+(loaPolicy?loaPolicy.name:loaActive.code)+(loaActive.plannedEndDate?' (~'+loaActive.plannedEndDate+')':''),
@@ -49414,7 +49444,7 @@ function PayrollLedger(props){
                   style:{marginLeft:'5px',padding:'1px 5px',borderRadius:'5px',background:'#dc2626',color:'#fff',fontSize:'8.5px',fontWeight:700}
                 }, '📤 퇴직')
               ),
-              h('td', {style:{padding:'4px 6px',fontSize:'10.5px',color:'#64748b',whiteSpace:'nowrap'}}, u.title),
+              h('td', {style:Object.assign({padding:'4px 6px',fontSize:'10.5px',color:'#64748b',whiteSpace:'nowrap'}, fzStyle('title', effectivePause?'#fef3c7':'#fff', 2))}, u.title),
               // 시급 (통상시급, 자동계산: (기본급+고정수당)/209)
               h('td', {style:Object.assign({},tdNum,{color:'#1e40af',fontWeight:600,background:'#eff6ff'})},
                 calc.legal.ordinaryWage>0 ? calc.legal.ordinaryWage.toLocaleString() : '-'),
