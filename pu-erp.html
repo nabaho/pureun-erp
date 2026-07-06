@@ -760,8 +760,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-06 로그아웃 버튼 시 캐시 우회 새로고침 — 다음 로그인에 최신 버전 자동 반영(잠금 해제 유지, 강제 로그아웃은 안내 유지 위해 새로고침 안 함)';
-var BUILD_SEQ = 112;
+var ERP_BUILD = '2026-07-06 계정초기화 경로버그 수정(dbSet으로 data/user_accounts 재설정) + 백업 민감정보 제외 확대(nas_config·token·secret) + 백업 개인정보 경고';
+var BUILD_SEQ = 113;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -2767,7 +2767,7 @@ function buildBackupSnapshot(){
     if(!full || full.indexOf(KEY)!==0) continue;
     var k = full.slice(KEY.length);
     if(k.indexOf('_meta_')===0 || k.indexOf('pinned_menus_')===0 || k.indexOf('login_')===0 || k.indexOf('session')===0) continue;
-    if(SNAP_EXCLUDE[k] || /api_key/i.test(k)) continue; // API 키는 백업에서 제외
+    if(SNAP_EXCLUDE[k] || /api_key|nas_config|token|secret/i.test(k)) continue; // API 키·NAS 설정·토큰·시크릿은 백업에서 제외
     var raw = localStorage.getItem(full);
     if(raw==null) continue;
     try { data[k] = JSON.parse(raw); } catch(e){ data[k] = raw; }
@@ -22068,8 +22068,9 @@ function AdminResetSection(){
     }
     setLoading(true); setMsg('');
     try{
-      localStorage.removeItem('pureun_v6_user_accounts');
-      try{ await fbDb.ref('pureun_v6/user_accounts').remove(); } catch(e){}
+      // dbSet이 올바른 동기화 경로(data/user_accounts)와 로컬/메타/캐시를 일괄 처리.
+      // (기존 pureun_v6/user_accounts.remove()는 틀린 경로라 서버 원본이 안 지워져 리셋이 무효였음)
+      dbSet('user_accounts', USERS_SEED.slice());
       setMsg('✅ 직원 계정이 초기화되었습니다. 새로고침 후 다시 설정해주세요.');
       showToast('✅ 계정 초기화 완료');
     } catch(e){
@@ -22299,7 +22300,7 @@ function BackupSection(){
     var size = 0;
     for(var i=0; i<localStorage.length; i++){
       var k = localStorage.key(i);
-      if(k && k.indexOf(KEY) === 0 && !/api_key/i.test(k)){
+      if(k && k.indexOf(KEY) === 0 && !/api_key|nas_config|token|secret/i.test(k)){
         var v = localStorage.getItem(k);
         data[k] = v;
         size += (k.length + v.length);
@@ -22514,6 +22515,8 @@ function BackupSection(){
   }
 
   return h(PolicyCard, { title:'백업 · 복원', icon:'💾', headBg:'#f0fdf4', headFg:'#0f766e', collapseId:'sys_backup', defaultOpen:false },
+    h('div', { style:{ fontSize:'11.5px', color:'#92400e', background:'#fef3c7', border:'1px solid #fde68a', borderRadius:'6px', padding:'8px 12px', marginBottom:'10px', lineHeight:1.6 } },
+      '⚠️ 백업 파일에는 직원·급여·계약 등 업무 개인정보가 포함됩니다. 외부 공유·유출에 주의하세요. (API 키·NAS 설정·토큰 등은 백업에서 제외됩니다)'),
     h(PolicyRow, {
       label:'백업 주기',
       control: h('select', {
