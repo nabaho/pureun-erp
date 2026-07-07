@@ -760,8 +760,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-06 계정초기화 경로버그 수정(dbSet으로 data/user_accounts 재설정) + 백업 민감정보 제외 확대(nas_config·token·secret) + 백업 개인정보 경고';
-var BUILD_SEQ = 113;
+var ERP_BUILD = '2026-07-06 안정성 3건 — showConfirm 리스너 누수 수정 + #menu=/개인 시작화면 권한·모바일 검사 + 날짜 생성 로컬시간(todayYMD/localYMD)으로 통일';
+var BUILD_SEQ = 114;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -2690,7 +2690,7 @@ window.erpBackup = function(){
     var blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json'});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'pureun_erp_backup_'+new Date().toISOString().slice(0,10)+'.json';
+    a.download = 'pureun_erp_backup_'+todayYMD()+'.json';
     a.click();
     console.log('✅ 백업 다운로드 완료');
   } catch(e){ console.log('❌ 백업 실패:', e.message); }
@@ -4261,6 +4261,7 @@ window.showConfirm = function(message, opts){
     document.body.appendChild(overlay);
 
     function cleanup(result){
+      try{ document.removeEventListener('keydown', onKey); }catch(e){}
       try{ document.body.removeChild(overlay); }catch(e){ window._erpErrLog && window._erpErrLog(e); }
       resolve(result);
     }
@@ -4268,8 +4269,8 @@ window.showConfirm = function(message, opts){
     overlay.querySelector('#_pureun_ok').addEventListener('click', function(){ cleanup(true); });
     overlay.querySelector('#_pureun_cancel').addEventListener('click', function(){ cleanup(false); });
     overlay.addEventListener('click', function(e){ if(e.target === overlay) cleanup(false); });
-    // ESC 키
-    function onKey(e){ if(e.key === 'Escape'){ cleanup(false); document.removeEventListener('keydown', onKey); } }
+    // ESC 키 (리스너 제거는 cleanup에서 일괄 처리)
+    function onKey(e){ if(e.key === 'Escape'){ cleanup(false); } }
     document.addEventListener('keydown', onKey);
   });
 };
@@ -8758,7 +8759,7 @@ function transferContract(contract){
       if(contract.signDate){
         var d = new Date(contract.signDate);
         d.setFullYear(d.getFullYear() + 1);
-        endDate = d.toISOString().slice(0,10);
+        endDate = localYMD(d);
       }
       var item = {
         id: 'co-' + Date.now().toString(36)+Math.random().toString(36).slice(2,5) + '-' + Math.random().toString(36).slice(2,5),
@@ -20175,7 +20176,7 @@ function ContractDocVault(props){
     if(!url){ showToast('NAS 링크(주소)를 붙여넣으세요'); return; }
     if(!/^https?:\/\//i.test(url)){ showToast('http 또는 https로 시작하는 링크여야 합니다'); return; }
     if(!nm) nm = '계약서 ' + (docs.length+1);
-    persist(docs.concat([{ id:'doc-'+Date.now().toString(36), name:nm, url:url, addedAt:new Date().toISOString().slice(0,10) }]));
+    persist(docs.concat([{ id:'doc-'+Date.now().toString(36), name:nm, url:url, addedAt:todayYMD() }]));
     setNewName(''); setNewUrl('');
     showToast('📎 링크 등록됨');
   }
@@ -24958,7 +24959,7 @@ function FinanceLedger(){
 
   // ── 입금 확정 ──
   function saveIncome(row, pItem){
-    var paidDate=row.date||new Date().toISOString().slice(0,10);
+    var paidDate=row.date||todayYMD();
     dbUpsert('finance_income', {id:'fi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
       companyName:pItem.companyName, amount:row.amount, date:paidDate,
       memo:'[하나'+(fileType==='bank'?'은행':'카드')+'] '+(row.memo||'')+(row.note?' / '+row.note:''),
@@ -24974,10 +24975,10 @@ function FinanceLedger(){
   // ── 출금 등록 ──
   function saveExpense(row, cat){
     dbUpsert('finance_expense', {id:'fe-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
-      date:row.date||new Date().toISOString().slice(0,10),
+      date:row.date||todayYMD(),
       amount:row.amount, category:cat,
       payee:row.memo||'', note:'[하나'+(fileType==='bank'?'은행':'카드')+'] '+(row.note||row.memo||''),
-      paid:true, paidDate:row.date||new Date().toISOString().slice(0,10),
+      paid:true, paidDate:row.date||todayYMD(),
       branch:'cheonan'});
   }
 
@@ -30074,7 +30075,7 @@ function CardExcelImportModal(props){
     // 날짜 정규화
     var date = '';
     if(dateRaw instanceof Date && !isNaN(dateRaw.getTime())){
-      date = dateRaw.toISOString().slice(0,10);
+      date = localYMD(dateRaw);
     } else if(typeof dateRaw === 'string'){
       var m1 = dateRaw.match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
       if(m1){ date = m1[1]+'-'+m1[2].padStart(2,'0')+'-'+m1[3].padStart(2,'0'); }
@@ -30603,7 +30604,7 @@ function FinanceInvoice(){
         var existingCos = dbGet('companies', []).filter(function(c){return c.typeCode==='자문';});
         var advisoryNames = new Set(existingCos.map(function(c){return c.name;}));
         var twelveMonthsAgo = new Date(); twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth()-12);
-        var recentCutoff = twelveMonthsAgo.toISOString().slice(0,10);
+        var recentCutoff = localYMD(twelveMonthsAgo);
         var freqByName = {};
         allRows.forEach(function(r){
           if(r.date >= recentCutoff){
@@ -40975,7 +40976,7 @@ function StaffRosterModal(props){
                 next.probationStart = f.hireDate;
                 if(!f.probationEnd){
                   var d = new Date(f.hireDate); d.setMonth(d.getMonth()+3);
-                  next.probationEnd = d.toISOString().slice(0,10);
+                  next.probationEnd = localYMD(d);
                 }
               }
               setF(next);
@@ -41608,7 +41609,7 @@ function calcRetirementLeaveJoinBasis(hireDate, retireDateStr, policy){
   var proRated = Math.round(entitlement * workedInPeriod / periodDays * 10) / 10;
   return { days:proRated, basis:'joinDate', fullEntitlement:entitlement,
     workedInPeriod:workedInPeriod, periodDays:periodDays,
-    lastAnn:lastAnn.toISOString().slice(0,10), nextAnn:nextAnn.toISOString().slice(0,10),
+    lastAnn:localYMD(lastAnn), nextAnn:localYMD(nextAnn),
     fullYears:fullYears, nextFullYears:nextFY,
     reason:fullYears+'→'+nextFY+'년차 구간 ('+workedInPeriod+'/'+periodDays+'일 × '+entitlement+'일 = '+proRated+'일)' };
 }
@@ -53752,7 +53753,7 @@ function ERPMain(props){
         }
       }
       var json = JSON.stringify(data, null, 2);
-      var today = (new Date()).toISOString().slice(0,10);
+      var today = todayYMD();
       var fname = 'pureun_erp_auto_'+today+'.json';
 
       // NAS 로그인 → 업로드
@@ -53803,6 +53804,17 @@ function ERPMain(props){
     if(rc > 0) showToast('✓ 컨설팅 관리번호 계약일순 재정렬 완료 ('+rc+'건)');
   }, []);
   // URL hash에서 메뉴 복원 (#menu=biz/contract 형태)
+  // 메뉴 허용 검사: 권한(isMenuPermitted) + 모바일 차단을 함께 검사
+  function _isMenuBlockedMobile(menuId){
+    if(!(window.IS_MOBILE && CURRENT_USER && !CURRENT_USER.isAdmin)) return false;
+    var blocked = false;
+    MENUS.forEach(function(grp){
+      if(grp.hideOnMobile){ grp.items.forEach(function(it){ if(it.id === menuId) blocked = true; }); }
+      else { grp.items.forEach(function(it){ if(it.id === menuId && it.hideOnMobile) blocked = true; }); }
+    });
+    return blocked;
+  }
+  function _menuAllowed(menuId){ return !!menuId && isMenuPermitted(CURRENT_USER, menuId) && !_isMenuBlockedMobile(menuId); }
   var hashMenu = (function(){
     try {
       var h = window.location.hash;
@@ -53820,23 +53832,15 @@ function ERPMain(props){
     // 마지막 본 화면 복원 (이 기기·이 사용자 기준, 권한·모바일 차단 메뉴는 제외)
     try {
       var lastMenu = localStorage.getItem('pureun_v6_session_last_menu_' + (CURRENT_USER.sid||''));
-      if(lastMenu && isMenuPermitted(CURRENT_USER, lastMenu)){
-        var _blocked = false;
-        if(window.IS_MOBILE && !(CURRENT_USER && CURRENT_USER.isAdmin)){
-          MENUS.forEach(function(grp){
-            if(grp.hideOnMobile){ grp.items.forEach(function(it){ if(it.id === lastMenu) _blocked = true; }); }
-            else { grp.items.forEach(function(it){ if(it.id === lastMenu && it.hideOnMobile) _blocked = true; }); }
-          });
-        }
-        if(!_blocked) return lastMenu;
-      }
+      if(_menuAllowed(lastMenu)) return lastMenu;
     } catch(e){}
     var personal = dbGet('start_menu_' + (CURRENT_USER.sid||''), null);
-    if(personal) return personal;
+    if(_menuAllowed(personal)) return personal;   // 권한 잃었거나 모바일 차단이면 무시하고 역할 기본으로
     if(CURRENT_USER.isAdmin || CURRENT_USER.isSubAdmin) return 'dash/corp';
     return 'dash/my';
   })();
-  var defaultMenu = hashMenu || startMenu;
+  // #menu= 해시는 권한·모바일 검사를 통과할 때만 사용, 아니면 시작화면으로 fallback
+  var defaultMenu = _menuAllowed(hashMenu) ? hashMenu : startMenu;
   var s = useState(defaultMenu); var current = s[0]; var setCurrent = s[1];
   var hbS = useState(false); var helpOpen = hbS[0]; var setHelpOpen = hbS[1];
   var tourS = useState(false); var showTour = tourS[0]; var setShowTour = tourS[1];
