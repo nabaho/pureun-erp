@@ -1056,7 +1056,7 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 
 <script>
 // ===== localStorage 안전 래퍼 (용량 초과 방지) =====
-const LS_VALID_KEYS=['p_staff','p_types','p_cos','p_scheds','p_env','p_fieldState','p_lastUserId','p_session','p_autoSession','p_loginFails','p_loginLock','p_roundlog','p_favCos','p_autobackups','p_autoDl','p_autoKeep','p_lastAutoDl','p_autoDlFreq','p_dashW','p_dashHintSeen','p_dashMCollapsed','p_dashMineFirst','p_photoHashes'];
+const LS_VALID_KEYS=['p_staff','p_types','p_cos','p_scheds','p_env','p_fieldState','p_lastUserId','p_session','p_autoSession','p_loginFails','p_loginLock','p_roundlog','p_favCos','p_autobackups','p_autoDl','p_autoKeep','p_lastAutoDl','p_autoDlFreq','p_dashW','p_dashHintSeen','p_dashMCollapsed','p_dashMineFirst','p_photoHashes','p_conflictMatrix','p_conflictMigrated'];
 // 시작 시: 정상 키 외의 잔재(과거 사진 등) 제거로 용량 확보
 (function cleanupLS(){
   try{
@@ -1118,7 +1118,7 @@ const FB_CONFIG={
   appId:"1:936817166182:web:9bd31f70d0afdf5fca2aa7"
 };
 // localStorage 키 → Firebase 노드 매핑 (scal_ 접두어)
-const FB_NODES={p_staff:'scal_staff',p_types:'scal_types',p_cos:'scal_cos',p_scheds:'scal_scheds',p_env:'scal_env',p_fieldState:'scal_fieldState'};
+const FB_NODES={p_staff:'scal_staff',p_types:'scal_types',p_cos:'scal_cos',p_scheds:'scal_scheds',p_env:'scal_env',p_fieldState:'scal_fieldState',p_conflictMatrix:'scal_conflictMatrix'};
 let FB_READY=false, _fbDB=null, _fbSuppress=false;
 
 function fbInit(){
@@ -1919,7 +1919,7 @@ function runPhotoQueue(){
 }
 
 // ===== E: 백업/복원 =====
-const BK_KEYS=['p_staff','p_types','p_cos','p_scheds','p_fieldState','p_env'];
+const BK_KEYS=['p_staff','p_types','p_cos','p_scheds','p_fieldState','p_env','p_conflictMatrix'];
 function buildBackupData(){
   const d={version:1,exported:new Date().toISOString()};
   BK_KEYS.forEach(k=>d[k]=localStorage.getItem(k));
@@ -2975,6 +2975,10 @@ function moveChip(sid,newDate){
   if(oldDate===newDate)return;
   const dup=scheds.find(s=>s.id!==sid&&s.date===newDate&&s.coId===sc.coId&&s.typeId===sc.typeId);
   if(dup){toast('해당 날짜에 동일 일정이 이미 있습니다','err');return;}
+  const exErr=checkExclusiveDay(sc.coId,sc.typeId,newDate,sid);
+  if(exErr){toast(exErr,'err');return;}
+  const mxErr=checkConflictMatrix(sc.coId,sc.typeId,newDate,sid);
+  if(mxErr){showBigAlert(mxErr);return;}
   // 변경 전 회차 스냅샷 → 시뮬레이션(날짜 변경 + 날짜순 재정렬) → 영향 회차 산출
   const before={};
   scheds.filter(s=>s.coId===sc.coId&&s.typeId===sc.typeId).forEach(s=>before[s.id]=s.round);
@@ -3011,10 +3015,12 @@ function renderDay(){
   const hol=getHoliday(ds);
   let html=`<div style="background:var(--surface);border-radius:var(--r);border:1px solid var(--border);overflow:hidden;">`;
   // 날짜 헤더
-  html+=`<div style="padding:14px 16px;border-bottom:1px solid var(--border);background:var(--sf2);display:flex;align-items:center;gap:10px;">
+  const dWarn=dayConflictMsg(ds);
+  html+=`<div style="padding:14px 16px;border-bottom:1px solid var(--border);background:var(--sf2);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
     <div style="font-size:22px;font-weight:900;color:${ds===today?'var(--accent)':'var(--text)'};">${ds.slice(5).replace('-','/')}</div>
     ${hol?`<span style="font-size:12px;font-weight:900;color:var(--hol);">🔴 ${hol}</span>`:''}
     <span style="font-size:12px;font-weight:700;color:var(--t2);">${sc.length}건</span>
+    ${dWarn?`<span title="${dWarn}" style="font-size:12px;font-weight:800;color:#fff;background:var(--danger);padding:3px 10px;border-radius:10px;">⚠️ ${dWarn}</span>`:''}
   </div>`;
   if(!sc.length){
     html+=`<div style="text-align:center;padding:40px;color:var(--t2);font-size:13px;">등록된 일정이 없습니다<br><br>
@@ -3087,7 +3093,8 @@ function renderMonth(){
     const moreBtn=moreCount>0?`<button class="mc-more-btn" data-date="${ds}">+${moreCount}건</button>`:'';
     const dc=`mc-date${isToday?' today-c':(sun||isHol)?' hol-c':sat?' sat-c':''}`;
     const holLabel=hol?`<div class="hol-name">${hol}</div>`:'';
-    cells+=`<div class="${cls}" data-date="${ds}" style="${isHol?'background:rgba(209,26,42,.07)':''}"><div class="mc-date-wrap"><div class="${dc}">${d}</div>${moreBtn}</div>${holLabel}<div class="chips">${chips}</div></div>`;
+    const warn=dayConflictMsg(ds);
+    cells+=`<div class="${cls}" data-date="${ds}" style="${isHol?'background:rgba(209,26,42,.07)':''}${warn?';box-shadow:inset 0 0 0 2px var(--danger)':''}"><div class="mc-date-wrap"><div class="${dc}">${d}</div>${warn?`<span title="${warn}" style="font-size:13px;margin-left:3px;cursor:help;">⚠️</span>`:''}${moreBtn}</div>${holLabel}<div class="chips">${chips}</div></div>`;
   }
   // 다음 달 날짜
   let ny=y,nm=m+1;if(nm>11){nm=0;ny++;}
@@ -3132,10 +3139,11 @@ function renderWeek(){
     const chips=sc.map(chipHtml).join('');
     const isHolDay=hol&&!isSunday;
     const dnStyle=isSunday||hol?'color:var(--hol);font-weight:900':isSat?'color:var(--info)':'';
-    cols+=`<div class="wc" style="${isHolDay?'background:rgba(209,26,42,.06)':''}">
+    const warn=dayConflictMsg(ds);
+    cols+=`<div class="wc" style="${isHolDay?'background:rgba(209,26,42,.06)':''}${warn?';box-shadow:inset 0 0 0 2px var(--danger)':''}">
       <div class="wc-hd ${isToday?'today-col':''}">
         <div class="wc-name" style="${dnStyle}">${WN[i]}</div>
-        <div class="wc-num" style="${isSunday||hol?'color:var(--hol);font-weight:900':''}">${cur.getDate()}</div>
+        <div class="wc-num" style="${isSunday||hol?'color:var(--hol);font-weight:900':''}">${cur.getDate()}${warn?` <span title="${warn}" style="font-size:12px;cursor:help;">⚠️</span>`:''}</div>
         ${hol?`<div class="wc-hol">${hol}</div>`:''}
       </div>
       <div class="wc-body ${isSunday?'dis':''}" data-date="${ds}">${chips}</div></div>`;
@@ -3168,7 +3176,7 @@ function checkAttLimit(attId,date,excludeId=null){
 // 당일 단독 실시 중복 체크
 // ===== 컨설팅 중복 매트릭스 (같은 날 함께 못 하는 컨설팅 조합) =====
 function getConflictMatrix(){try{return JSON.parse(localStorage.getItem('p_conflictMatrix')||'{}');}catch(e){return{};}}
-function setConflictMatrix(m){lsSet('p_conflictMatrix',JSON.stringify(m));}
+function setConflictMatrix(m){lsSet('p_conflictMatrix',JSON.stringify(m));fbPush('p_conflictMatrix',m);}
 // 기존 exclusiveDay(당일 단독) 설정을 매트릭스 대각선으로 1회 이관
 function migrateExclusiveToMatrix(){
   if(localStorage.getItem('p_conflictMigrated'))return;
@@ -3180,6 +3188,22 @@ function migrateExclusiveToMatrix(){
 function conflictKey(a,b){return [a,b].sort().join('__');}
 function isConflictPair(a,b){return !!getConflictMatrix()[conflictKey(a,b)];}
 function toggleConflict(a,b){const m=getConflictMatrix();const k=conflictKey(a,b);if(m[k])delete m[k];else m[k]=true;setConflictMatrix(m);}
+// 특정 날짜에 '같은 날 불가'/'하루 1건' 위반이 실제로 있으면 안내 문구 반환(없으면 null) — 캘린더 경고 배지용
+function dayConflictMsg(date){
+  const m=getConflictMatrix(); if(!Object.keys(m).length)return null;
+  const types=getTypes();
+  const day=getScheds().filter(s=>s.date===date);
+  for(let i=0;i<day.length;i++)for(let j=i+1;j<day.length;j++){
+    const a=day[i],b=day[j];
+    if(a.coId===b.coId&&a.typeId===b.typeId)continue;
+    if(isConflictPair(a.typeId,b.typeId)){
+      const ta=types.find(t=>t.id===a.typeId)?.name||'?';
+      const tb=types.find(t=>t.id===b.typeId)?.name||'?';
+      return a.typeId===b.typeId?`[${ta}] 하루 1건 위반`:`[${ta}] × [${tb}] 같은 날 불가`;
+    }
+  }
+  return null;
+}
 // 같은 날(전체 사업장) 매트릭스 위반 검사. 위반이면 안내 메시지 반환.
 function checkConflictMatrix(coId,typeId,date,excludeId=null){
   const m=getConflictMatrix(); if(!Object.keys(m).length)return null;
