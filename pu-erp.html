@@ -760,8 +760,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-06 미저장 경고(__erpDirty)를 버튼 글자 대신 실제 저장 성공(pureun-saved) 기준으로 — 저장 실패 시 경고 유지, 닫기/취소만 즉시 해제';
-var BUILD_SEQ = 116;
+var ERP_BUILD = '2026-07-09 성과%(mgr_rates) 되돌림 근본수정 — normalizeFbValue가 사번-키 객체를 배열로 뭉개던 버그 수정(id 있는 목록만 배열화) + 복구함수 erpFixMgrRates()';
+var BUILD_SEQ = 117;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -2604,9 +2604,13 @@ function normalizeFbValue(v){
   var arr;
   if(Array.isArray(v)){ arr = v; }  // 마이그레이션 전: 배열
   else if(v && typeof v === 'object'){
-    // 마이그레이션 후: 객체 → 배열
-    arr = [];
-    Object.keys(v).forEach(function(id){ if(v[id] != null) arr.push(v[id]); });
+    // arrayToIdMap 결과(값마다 .id 있음)만 배열로 되돌린다.
+    // 값에 .id가 없으면 이름-키 객체(mgr_rates=사번키, security_perms 등)라, 배열화하면
+    // 키가 숫자 인덱스로 뭉개진다 → 그대로 보존. (빈 객체는 빈 배열로 = DIFF 키 빈 상태 호환)
+    var _vals = Object.keys(v).map(function(id){ return v[id]; }).filter(function(x){ return x != null; });
+    var _isIdMap = _vals.length === 0 || _vals.every(function(x){ return x && typeof x === 'object' && typeof x.id === 'string'; });
+    if(!_isIdMap) return v;  // 이름-키 객체는 그대로 보존
+    arr = _vals;
   } else { return v; }  // 스칼라/널 등은 그대로
   // 동기화로 들어온 데이터에 같은 id가 두 번 이상이면 첫 항목만 유지 (dbSet 쓰기 규칙과 동일) — 재로그인 시 중복 재발 방지
   var _seen = {};
@@ -3084,6 +3088,28 @@ function dbSet(k, v){
   }
   return true;
 }
+
+// ── 성과%(mgr_rates) 구조 복구: 숫자 인덱스로 뭉개진 항목을 사번(sid) 키로 재정리 (콘솔: erpFixMgrRates()) ──
+window.erpFixMgrRates = function(){
+  var raw = dbGet('mgr_rates', null);
+  if(!raw || typeof raw !== 'object'){ console.log('mgr_rates 없음 — 복구 불필요'); return; }
+  var before = Object.keys(raw).length;
+  var numericKeys = Object.keys(raw).filter(function(k){ return /^[0-9]+$/.test(k); }).length;
+  if(numericKeys === 0){ console.log('✅ 이미 정상(사번 키만). 항목 '+before+'개 — 복구 불필요'); return; }
+  var fixed = {}, bestT = {}, skipped = 0;
+  Object.keys(raw).forEach(function(k){
+    var e = raw[k];
+    if(!e || !e.sid){ skipped++; return; }
+    var t = (e.history && e.history[0] && e.history[0].changedAt) || '';
+    if(fixed[e.sid] === undefined || t >= bestT[e.sid]){ fixed[e.sid] = e; bestT[e.sid] = t; }  // 중복이면 최근 변경분 우선
+  });
+  var after = Object.keys(fixed).length;
+  if(!confirm('성과% 데이터를 복구합니다.\n지금: '+before+'개 (숫자 인덱스 '+numericKeys+'개 섞임)\n복구 후: 사번 키 '+after+'명'+(skipped?('\n(사번 없는 '+skipped+'개 제외)'):'')+'\n\n계속할까요?')){ console.log('취소됨'); return; }
+  dbSet('mgr_rates', fixed);
+  console.log('✅ mgr_rates 복구 완료 — 사번 키 '+after+'명. F5로 새로고침 후 성과% 확인하세요.');
+  try { showToast('✅ 성과% 데이터 복구 완료 ('+after+'명) — F5로 확인'); } catch(_){}
+  return fixed;
+};
 
 // ID 기반 배열 Diff 계산 (변경분 추출)
 function computeArrayDiff(prev, next){
