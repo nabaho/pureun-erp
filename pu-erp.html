@@ -760,8 +760,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-09 성과%(mgr_rates) 되돌림 근본수정 — normalizeFbValue가 사번-키 객체를 배열로 뭉개던 버그 수정(id 있는 목록만 배열화) + 복구함수 erpFixMgrRates()';
-var BUILD_SEQ = 117;
+var ERP_BUILD = '2026-07-09 환경설정 전체 보존 — 이름-키/납작 객체 설정(최저임금·회사정보·보험요율 등 26종) 배열화 방지 강화(키=id 일치시만 배열화) + 뭉개진 로컬 자가치유 + 진단 erpAuditSettings()';
+var BUILD_SEQ = 118;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -2604,13 +2604,13 @@ function normalizeFbValue(v){
   var arr;
   if(Array.isArray(v)){ arr = v; }  // 마이그레이션 전: 배열
   else if(v && typeof v === 'object'){
-    // arrayToIdMap 결과(값마다 .id 있음)만 배열로 되돌린다.
-    // 값에 .id가 없으면 이름-키 객체(mgr_rates=사번키, security_perms 등)라, 배열화하면
-    // 키가 숫자 인덱스로 뭉개진다 → 그대로 보존. (빈 객체는 빈 배열로 = DIFF 키 빈 상태 호환)
-    var _vals = Object.keys(v).map(function(id){ return v[id]; }).filter(function(x){ return x != null; });
-    var _isIdMap = _vals.length === 0 || _vals.every(function(x){ return x && typeof x === 'object' && typeof x.id === 'string'; });
+    // arrayToIdMap 결과(각 키가 그 값의 .id와 일치)만 배열로 되돌린다.
+    // 그 외(사번키 mgr_rates, 연도키 insurance_rates/wage_reports, 납작한 min_wage/company_info 등)는
+    // 배열화하면 키가 사라지므로 그대로 보존. (빈 객체는 빈 배열로 = DIFF 키 빈 상태 호환)
+    var _ks = Object.keys(v);
+    var _isIdMap = _ks.length === 0 || _ks.every(function(id){ var x = v[id]; return x == null || (typeof x === 'object' && x.id != null && String(x.id) === id); });
     if(!_isIdMap) return v;  // 이름-키 객체는 그대로 보존
-    arr = _vals;
+    arr = _ks.map(function(id){ return v[id]; }).filter(function(x){ return x != null; });
   } else { return v; }  // 스칼라/널 등은 그대로
   // 동기화로 들어온 데이터에 같은 id가 두 번 이상이면 첫 항목만 유지 (dbSet 쓰기 규칙과 동일) — 재로그인 시 중복 재발 방지
   var _seen = {};
@@ -3109,6 +3109,36 @@ window.erpFixMgrRates = function(){
   console.log('✅ mgr_rates 복구 완료 — 사번 키 '+after+'명. F5로 새로고침 후 성과% 확인하세요.');
   try { showToast('✅ 성과% 데이터 복구 완료 ('+after+'명) — F5로 확인'); } catch(_){}
   return fixed;
+};
+
+// ── 환경설정 전체 진단 (콘솔: erpAuditSettings()) — 읽기 전용, 아무것도 쓰지 않음 ──
+// 객체형 설정이 서버에 정상(객체)인지 / 뭉개짐(배열)인지 / 없음인지 점검
+window.erpAuditSettings = function(){
+  if(!fbDb){ console.log('Firebase 미연결'); return; }
+  var OBJ_KEYS = ['min_wage','company_info','insurance_rates','mgr_rates','security_perms','policy_leave','pension_policy','withholding_tax','wage_reports','expense_budget','contract_docs','cold_storage','module_visits','alert_dismissed','corp_widget_collapsed','mydesk_widget_collapsed','dup_criteria','policy_vat','policy_perf','policy_loa','policy_special_leave','policy_access','app_settings','backup_config','finance_bank_fee','withholding_brackets'];
+  return fbDb.ref('data').once('value').then(function(snap){
+    var remote = snap.val() || {};
+    var rows = [];
+    OBJ_KEYS.forEach(function(k){
+      var rec = remote[k];
+      var sv = rec && rec.v;
+      var st, memo = '';
+      if(rec === undefined || sv === undefined || sv === null){ st = '─ 서버에 없음'; }
+      else if(Array.isArray(sv)){
+        st = '❌ 뭉개짐(배열)';
+        memo = sv.length + '개 — 화면에서 다시 입력·저장 필요';
+      } else if(typeof sv === 'object'){
+        var nk = Object.keys(sv).filter(function(x){ return /^[0-9]+$/.test(x); }).length;
+        if(nk > 0){ st = '⚠️ 일부 뭉개짐'; memo = '숫자키 '+nk+'개 섞임' + (k==='mgr_rates' ? ' → erpFixMgrRates()' : ''); }
+        else { st = '✅ 정상(객체)'; memo = Object.keys(sv).length + '개 키'; }
+      } else { st = '· 스칼라'; memo = String(sv).slice(0,30); }
+      rows.push({ 설정: k, 상태: st, 비고: memo });
+    });
+    console.table(rows);
+    console.log('✅ 정상 = 그대로 두면 됨(새 코드가 보존). ❌ 뭉개짐 = 서버 원본도 손상 — 해당 화면에서 값을 다시 입력·저장하면 복구.');
+    console.log('⚠️ mgr_rates 는 erpFixMgrRates() 로 자동 복구 가능.');
+    return rows;
+  });
 };
 
 // ID 기반 배열 Diff 계산 (변경분 추출)
@@ -4516,6 +4546,21 @@ function fbInitialSync(_isRetry){
           localStorage.setItem(KEY+'_meta_'+k, String(rec.u));
           _dbCache[k] = arrValue; // 캐시 갱신
           pulled++;
+        } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+      } else if(rec.v && typeof rec.v === 'object' && !Array.isArray(rec.v)){
+        // 자가치유: 서버는 정상 이름-키 객체인데 로컬이 (옛 코드가 뭉갠) 배열이면 서버 원본으로 복구
+        try {
+          var _nv = normalizeFbValue(rec.v);
+          if(!Array.isArray(_nv)){
+            var _lraw = localStorage.getItem(KEY+k);
+            if(_lraw && _lraw.charAt(0) === '['){
+              localStorage.setItem(KEY+k, JSON.stringify(_nv));
+              localStorage.setItem(KEY+'_meta_'+k, String(rec.u || Date.now()));
+              _dbCache[k] = _nv;
+              pulled++;
+              console.log('[자가치유] '+k+': 뭉개진 로컬 설정을 서버 원본(객체)으로 복구');
+            }
+          }
         } catch(e){ window._erpErrLog && window._erpErrLog(e); }
       }
     });
