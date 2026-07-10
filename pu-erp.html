@@ -760,8 +760,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-10 법인 대시보드 정리 2단계 — 직원별 업무 표에 입금(연/월 기준)·이탈(현재 해지) 열 + 연·월 선택 추가';
-var BUILD_SEQ = 130;
+var ERP_BUILD = '2026-07-10 법인 대시보드 정리 3단계 — 직원 선택 시 오른쪽 상세에 실적(컨설팅 유형별·이탈 자문 사업장·입금) 블록 추가';
+var BUILD_SEQ = 131;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -37478,6 +37478,36 @@ function CorpDashboard(props){
               ),
               h('div',{style:{fontFamily:'monospace',fontWeight:800,fontSize:'13px',color: hasQuery && totalItems===0 ? '#dc2626' : '#1e293b'}}, totalItems+'건')
             ),
+
+            // 실적 (컨설팅 유형별 + 이탈 자문 사업장) — 선택 직원, SEQ131
+            (!isAll && selStaff) && (function(){
+              var _cts = dbGet('biz_cons_types', BIZ_CONS_SEED) || BIZ_CONS_SEED;
+              function _pm(d){ if(!d) return anaStaffYear==='all'; var y=d.slice(0,4), m=d.slice(5,7); if(anaStaffYear!=='all' && y!==anaStaffYear) return false; if(anaStaffMonth!=='all' && m!==String(anaStaffMonth).padStart(2,'0')) return false; return true; }
+              function _asg(it,sid){ return it.managerMain===sid || (it.managerSubs||[]).indexOf(sid)>=0 || it.managerSub===sid; }
+              var _sid = selStaff.sid;
+              var cmap = {};
+              (consultings||[]).forEach(function(c){ if(!_asg(c,_sid)) return; if(!_pm(c.createdAt||c.startDate||'')) return; var tc=(c.typeCodes&&c.typeCodes.consulting)||c.typeCode||'cons-other'; cmap[tc]=(cmap[tc]||0)+1; });
+              var cKeys = Object.keys(cmap).sort(function(a,b){ return cmap[b]-cmap[a]; });
+              var cTot = cKeys.reduce(function(s,k){ return s+cmap[k]; },0);
+              var lostList = (allCompanies||[]).filter(function(co){ return _asg(co,_sid) && (co.status==='inactive'||co.status==='terminated'||co.status==='closed'); });
+              var _incN = (allIncomes||[]).filter(function(i){ return (i.managerMain===_sid||(i.managerSubs||[]).indexOf(_sid)>=0) && _pm(i.date||''); }).length;
+              var perLbl = (anaStaffYear==='all'?'전체 기간':anaStaffYear+'년'+(anaStaffMonth==='all'?'':' '+parseInt(anaStaffMonth,10)+'월'));
+              return h('div', { style:{ background:'#f8fafc', border:'1px solid #e2e8f0', borderRadius:'8px', padding:'8px 10px', marginBottom:'12px' } },
+                h('div', { style:{ fontSize:'11px', fontWeight:700, color:'#475569', marginBottom:'6px' } }, '📊 실적 ', h('span',{style:{fontSize:'9.5px',color:'#94a3b8',fontWeight:600}}, '('+perLbl+' · 입금 '+_incN+'건)')),
+                h('div', { style:{ fontSize:'10px', color:'#94a3b8', marginBottom:'3px' } }, '컨설팅 유형별 ', h('span',{style:{color:'#2563eb',fontWeight:700}}, cTot+'건')),
+                cKeys.length===0
+                  ? h('div', { style:{ fontSize:'10.5px', color:'#cbd5e1' } }, '—')
+                  : h('div', { style:{ display:'flex', flexWrap:'wrap', gap:'3px', marginBottom:'6px' } },
+                      cKeys.map(function(k){ var td=_cts.find(function(t){return t.code===k;}); var lb=td?td.short:k.replace('cons-','').slice(0,3); return h('span',{key:k,style:{background:'#cffafe',color:'#2563eb',fontSize:'10.5px',padding:'1px 5px',borderRadius:'5px',fontWeight:700,whiteSpace:'nowrap'}}, lb+' '+cmap[k]); })
+                    ),
+                h('div', { style:{ fontSize:'10px', color:'#94a3b8', margin:'2px 0 3px' } }, '이탈 자문 사업장 ', h('span',{style:{color:'#dc2626',fontWeight:700}}, lostList.length+'개')),
+                lostList.length===0
+                  ? h('div', { style:{ fontSize:'10.5px', color:'#cbd5e1' } }, '—')
+                  : h('div', { style:{ display:'flex', flexWrap:'wrap', gap:'4px' } },
+                      lostList.map(function(co){ return h('span',{key:co.id||co.name,style:{background:'#fee2e2',color:'#dc2626',fontSize:'10.5px',padding:'1px 7px',borderRadius:'4px',fontWeight:600}}, co.name||co.companyName||'-'); })
+                    )
+              );
+            })(),
 
             // 5섹션
             totalItems === 0
