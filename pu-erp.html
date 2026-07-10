@@ -760,8 +760,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-10 캘린더 일정 칩 글자·모양 축소(구글 캘린더 매칭): 폰트 10.5→9.5px, 알약→납작 사각(4px), 굵기 600→500, 줄높이 16→14px';
-var BUILD_SEQ = 141;
+var ERP_BUILD = '2026-07-10 업체관리 급여지급일 열 추가(근로자수↔주소): 새 필드 payrollDay 숫자/말일 직접입력, 상단 급여지급일 필터, 일자순 정렬';
+var BUILD_SEQ = 142;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -11558,6 +11558,7 @@ function CompanyManagement(){
 
   var st = useState('active'); var statusTab = st[0]; var setStatusTab = st[1];   // 'active' | 'suboffice'
   var tf = useState('all'); var typeFilter = tf[0]; var setTypeFilter = tf[1];
+  var pdf = useState('all'); var payrollDayFilter = pdf[0]; var setPayrollDayFilter = pdf[1];
   var mf = useState('all'); var mgrFilter = mf[0]; var setMgrFilter = mf[1];
   var smf = useState('all'); var subMgrFilter = smf[0]; var setSubMgrFilter = smf[1];
   var q = useState(''); var query = q[0]; var setQuery = q[1];
@@ -11587,10 +11588,11 @@ function CompanyManagement(){
     {k:'f_type',label:'유형',idx:4},{k:'f_mgrMain',label:'주담당',idx:5},{k:'f_mgrSub',label:'부담당',idx:6},
     {k:'f_bizNo',label:'사업자번호',idx:7},{k:'f_bizType',label:'업태',idx:8},{k:'f_bizCat',label:'종목',idx:9},
     {k:'f_ceo',label:'대표자',idx:10},{k:'f_size',label:'규모',idx:11,d:true},{k:'f_empCnt',label:'근로자수',idx:12,d:true},
-    {k:'f_zip',label:'우편번호',idx:13,d:true},{k:'f_addr',label:'주소',idx:14,d:true},{k:'f_contactName',label:'담당자',idx:15},
-    {k:'f_contactPhone',label:'연락처',idx:16},{k:'f_taxIssue',label:'세금계산서발급일',idx:17,d:true},{k:'f_cms',label:'CMS',idx:18,d:true},
-    {k:'f_payDay',label:'입금일',idx:19,d:true},{k:'f_cStart',label:'계약시작',idx:20,d:true},{k:'f_cEnd',label:'계약종료',idx:21,d:true},
-    {k:'f_fee',label:'월자문료',idx:22},{k:'f_note',label:'특이사항',idx:23},{k:'f_diff',label:'난이도',idx:24}
+    {k:'f_payrollDay',label:'급여지급일',idx:13},
+    {k:'f_zip',label:'우편번호',idx:14,d:true},{k:'f_addr',label:'주소',idx:15,d:true},{k:'f_contactName',label:'담당자',idx:16},
+    {k:'f_contactPhone',label:'연락처',idx:17},{k:'f_taxIssue',label:'세금계산서발급일',idx:18,d:true},{k:'f_cms',label:'CMS',idx:19,d:true},
+    {k:'f_payDay',label:'입금일',idx:20,d:true},{k:'f_cStart',label:'계약시작',idx:21,d:true},{k:'f_cEnd',label:'계약종료',idx:22,d:true},
+    {k:'f_fee',label:'월자문료',idx:23},{k:'f_note',label:'특이사항',idx:24},{k:'f_diff',label:'난이도',idx:25}
   ];
   var CO_COLS_SUB = [
     {k:'s_mgr',label:'담당자',idx:4},{k:'s_bizNo',label:'사업자번호',idx:5},{k:'s_bizType',label:'업태',idx:6},
@@ -11598,6 +11600,9 @@ function CompanyManagement(){
     {k:'s_filed',label:'신고서전달',idx:10,d:true},{k:'s_taxReq',label:'세무사요청',idx:11,d:true},{k:'s_taxReply',label:'세무사회신',idx:12,d:true},
     {k:'s_eiSi',label:'고용·산재',idx:13,d:true},{k:'s_health',label:'건강',idx:14,d:true},{k:'s_note',label:'특이사항',idx:15},{k:'s_diff',label:'난이도',idx:16}
   ];
+  // 급여지급일 표시/정렬 정규화 — 저장값(숫자 또는 "말일") → "N일"/"말일" 표시, 정렬용 숫자
+  function payrollDayNorm(v){ v=String(v==null?'':v).trim(); if(!v) return ''; if(/말/.test(v)) return '말일'; var m=v.match(/\d{1,2}/); if(!m) return ''; var n=parseInt(m[0],10); return (n>=1&&n<=31)? n+'일' : ''; }
+  function payrollDaySortNum(v){ v=String(v==null?'':v).trim(); if(!v) return 999; if(/말/.test(v)) return 31.5; var m=v.match(/\d{1,2}/); return m? parseInt(m[0],10) : 998; }
   var CO_COLS_KEY = 'co_cols_' + (CURRENT_USER.sid || 'guest');
   var hcS = useState(function(){ return dbGet(CO_COLS_KEY, {}) || {}; }); var hiddenCols = hcS[0]; var setHiddenCols = hcS[1];
   var coS = useState(false); var colMenuOpen = coS[0]; var setColMenuOpen = coS[1];
@@ -11685,6 +11690,12 @@ function CompanyManagement(){
     // 숫자 필드 처리
     if(editing.field === 'monthlyAdvisoryFee' || editing.field === 'employmentInsuredCount' || editing.field === 'injuryInsuredCount'){
       nextVal = parseInt(String(nextVal).replace(/[^0-9-]/g,''),10) || 0;
+    }
+    // 급여지급일: 숫자(1~31) 또는 "말일"로 정규화
+    if(editing.field === 'payrollDay'){
+      var _pd = String(nextVal||'').trim();
+      if(/말/.test(_pd)) nextVal = '말일';
+      else { var _pm = _pd.match(/\d{1,2}/); nextVal = _pm ? String(parseInt(_pm[0],10)) : ''; }
     }
     // #B 사업자번호 중복 차단 (10자리 입력 시 다른 업체와 동일하면 경고)
     if(editing.field === 'bizNo' && nextVal){
@@ -11781,7 +11792,7 @@ function CompanyManagement(){
       var curField2 = editing.field;
       var dir = e.shiftKey ? -1 : 1;
       // 편집 가능 필드 순서 (활성업체 기준)
-      var fieldsActive = ['name','typeCode','bizNo','ceo','phone','address','companySize','employmentInsuredCount','injuryInsuredCount','monthlyAdvisoryFee','vatType','contractStartDate','contractEndDate','taxInvoicePaymentDay'];
+      var fieldsActive = ['name','typeCode','bizNo','ceo','phone','address','companySize','employmentInsuredCount','payrollDay','injuryInsuredCount','monthlyAdvisoryFee','vatType','contractStartDate','contractEndDate','taxInvoicePaymentDay'];
       var fieldsSub = ['name','bizNo','ceo','address','note'];
       var fieldList = statusTab === 'suboffice' ? fieldsSub : fieldsActive;
       var fIdx = fieldList.indexOf(curField2);
@@ -11950,6 +11961,7 @@ function CompanyManagement(){
       if(co.status !== statusTab) return false;
     }
     if(typeFilter !== 'all' && co.typeCode !== typeFilter) return false;
+    if(payrollDayFilter !== 'all' && payrollDayNorm(co.payrollDay) !== payrollDayFilter) return false;
     if(bizTypeFilter !== 'all' && (co.bizType||'').trim() !== bizTypeFilter) return false;
     if(bizCatFilter !== 'all' && (co.bizCategory||'').trim() !== bizCatFilter) return false;
     // monthOnly는 담당자 필터/검색어 없을 때만 적용
@@ -11984,6 +11996,10 @@ function CompanyManagement(){
   // 정렬 적용
   if(sortBy.key){
     filtered = filtered.slice().sort(function(a, b){
+      if(sortBy.key === 'payrollDay'){
+        var _an = payrollDaySortNum(a.payrollDay), _bn = payrollDaySortNum(b.payrollDay);
+        return sortBy.dir === 'asc' ? _an - _bn : _bn - _an;
+      }
       var av = a[sortBy.key]; var bv = b[sortBy.key];
       if(typeof av === 'number' && typeof bv === 'number'){
         return sortBy.dir === 'asc' ? av - bv : bv - av;
@@ -12034,6 +12050,8 @@ function CompanyManagement(){
       return c.status === statusTab && (sid === 'all' || c.managerMain === sid || (c.managerSubs||[]).indexOf(sid) !== -1);
     }).length;
   }
+  // 급여지급일 필터 옵션 (활성 업체에 실제 입력된 값만, 일자순 · 말일 마지막)
+  var payrollDayOpts = (function(){ var s={}; companies.forEach(function(c){ if(c.status!=='active') return; var t=payrollDayNorm(c.payrollDay); if(t) s[t]=1; }); return Object.keys(s).sort(function(a,b){ return payrollDaySortNum(a)-payrollDaySortNum(b); }); })();
 
   // 인라인 편집 셀 렌더
   // ★ 주담당 전용 셀: 빈 경우 "+ 지정", 지정된 경우 이름 + ✕
@@ -12213,7 +12231,13 @@ function CompanyManagement(){
                 fontFamily:'inherit', background:'#f8fafc', flexShrink:0, cursor:'pointer',
                 color: subMgrFilter!=='all'?'#7c3aed':'#64748b', fontWeight: subMgrFilter!=='all'?700:400 } },
               h('option', { value:'all' }, '👥 부담당'),
-              users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); }))
+              users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); })),
+            statusTab !== 'suboffice' && h('select', { value:payrollDayFilter, onChange:function(e){ setPayrollDayFilter(e.target.value); },
+              style:{ padding:'5px 8px', border:'1px solid '+(payrollDayFilter!=='all'?'#16a34a':'#cbd5e1'), borderRadius:'20px', fontSize:'11px',
+                fontFamily:'inherit', background:'#f8fafc', flexShrink:0, cursor:'pointer',
+                color: payrollDayFilter!=='all'?'#166534':'#64748b', fontWeight: payrollDayFilter!=='all'?700:400 } },
+              h('option', { value:'all' }, '📅 급여일'),
+              payrollDayOpts.map(function(d){ return h('option', { key:d, value:d }, d); }))
           )
         )
       )
@@ -12261,6 +12285,13 @@ function CompanyManagement(){
             color: subMgrFilter!=='all'?'#7c3aed':'#475569', fontWeight: subMgrFilter!=='all'?700:400 } },
           h('option', { value:'all' }, '👥 부담당'),
           users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); }))
+      ),
+      statusTab !== 'suboffice' && h('div', { style:{ display:'inline-flex', alignItems:'center', gap:'4px' } },
+        h('select', { value:payrollDayFilter, onChange:function(e){ setPayrollDayFilter(e.target.value); },
+          style:{ padding:'5px 10px', border:'1px solid '+(payrollDayFilter!=='all'?'#16a34a':'#cbd5e1'), borderRadius:'4px', fontSize:'11.5px', fontFamily:'inherit',
+            color: payrollDayFilter!=='all'?'#166534':'#475569', fontWeight: payrollDayFilter!=='all'?700:400, cursor:'pointer' } },
+          h('option', { value:'all' }, '📅 급여지급일'),
+          payrollDayOpts.map(function(d){ return h('option', { key:d, value:d }, d); }))
       ),
       h('div', { style:{ position:'relative', display:'inline-flex', alignItems:'center' } },
         h('input', { className:'dt-search', placeholder:'🔍 업체명·번호·대표·주소·메모',
@@ -12425,6 +12456,7 @@ function CompanyManagement(){
                 h('th', { key:'a7' }, '대표자'),
                 h('th', { key:'a8', onClick:function(){toggleSort('companySize');}, style:{ cursor:'pointer', userSelect:'none' } }, '규모' + sortIcon('companySize')),
                 h('th', { key:'a9', className:'ar', onClick:function(){toggleSort('employmentInsuredCount');}, style:{ cursor:'pointer', userSelect:'none' } }, '근로자수' + sortIcon('employmentInsuredCount')),
+                h('th', { key:'a9b', onClick:function(){toggleSort('payrollDay');}, style:{ cursor:'pointer', userSelect:'none', textAlign:'center', whiteSpace:'nowrap' }, title:'직원 급여 지급일' }, '급여지급일' + sortIcon('payrollDay')),
                 h('th', { key:'a10a', style:{ width:'80px' } }, '우편번호'),
                 h('th', { key:'a10b' }, '주소'),
                 h('th', { key:'a11' }, '담당자'),
@@ -12442,7 +12474,7 @@ function CompanyManagement(){
         )),
         h('tbody', null,
           filtered.length === 0
-            ? h('tr', null, h('td', { colSpan: statusTab === 'suboffice' ? 17 : 23, className:'ac', style:{ color:'#94a3b8', padding:'40px' } }, '등록된 데이터가 없습니다'))
+            ? h('tr', null, h('td', { colSpan: statusTab === 'suboffice' ? 17 : 24, className:'ac', style:{ color:'#94a3b8', padding:'40px' } }, '등록된 데이터가 없습니다'))
             : pg.paged.map(function(co, idx){
                 var expiring = isExpiringSoon(co);
                 // ★ 계약 중단: 주황 배경 구분
@@ -12583,6 +12615,8 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                   h('td', null, renderCell(co, 'companySize', co.companySize, { select: sizeOptions })),
                   // 근로자수
                   h('td', { className:'ar' }, renderCell(co, 'employmentInsuredCount', (co.employmentInsuredCount||0).toLocaleString() + '명', { numeric:true, type:'text' })),
+                  // 급여지급일 (직원 급여일) — 숫자 또는 "말일"
+                  h('td', null, renderCell(co, 'payrollDay', payrollDayNorm(co.payrollDay), { tipTitle:'급여 지급일 — 더블클릭 후 숫자(1~31) 또는 "말일" 입력' })),
                   // 우편번호 (별도 컬럼) - zipcode 없으면 address에서 (12345) 패턴 추출
                   h('td', null, (function(){
                     var zip = co.zipcode;
