@@ -760,8 +760,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-10 나의 업무 내 프로젝트 유형 필터를 버튼 나열 → 드롭다운으로 변경';
-var BUILD_SEQ = 135;
+var ERP_BUILD = '2026-07-10 개선요청함 3종 — 요청함 상태필터(미완료/완료/전체)+완료 시 회신, 대표 미처리 배지, 요청자 완료 배지+내 요청 내역';
+var BUILD_SEQ = 136;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -1073,9 +1073,10 @@ function buildCurrentUser(sid){
   var u = arr.find(function(x){ return x.sid === sid && (x.status === 'active' || (x.status === 'leave' && x.leaveLoginAllowed === true)); });
   if(!u) return null;
   var isAdmin = (u.role==='admin'||u.role==='admin-delegate'||u.isAdmin===true);
+  var isOwner = (u.role==='admin'); // 대표(총괄) — 위임관리인(admin-delegate)·부관리자 제외
   var isSubAdmin = !isAdmin && (u.isSubAdmin===true);
   var isFullViewer = !isAdmin && (u.isFullViewer===true); // ★ 전체열람 지정자
-  return { sid:u.sid, name:u.name, role:u.title||u.role, isAdmin:isAdmin, isSubAdmin:isSubAdmin, isFullViewer:isFullViewer, branch:u.branch||'천안본사' };
+  return { sid:u.sid, name:u.name, role:u.title||u.role, isAdmin:isAdmin, isOwner:isOwner, isSubAdmin:isSubAdmin, isFullViewer:isFullViewer, branch:u.branch||'천안본사' };
 }
 // 자동 로그인 키
 var AUTOLOGIN_KEY = 'pureun_v6_autologin_sid';
@@ -1100,11 +1101,11 @@ function clearAutoLogin(){ localStorage.removeItem(AUTOLOGIN_KEY); }
   } catch(e){ window._erpErrLog && window._erpErrLog(e); }
 })();
 // 무효 세션 시: 권한 없는 게스트(완전 null은 곳곳 접근 에러 위험). 로그인 게이트가 로그인 화면으로 강제.
-var CURRENT_USER = buildCurrentUser(getSessionSid()) || { sid:'', name:'', role:'', isAdmin:false, isSubAdmin:false, isFullViewer:false, branch:'' };
+var CURRENT_USER = buildCurrentUser(getSessionSid()) || { sid:'', name:'', role:'', isAdmin:false, isOwner:false, isSubAdmin:false, isFullViewer:false, branch:'' };
 // 로그인 후 전역 갱신
 function refreshCurrentUser(){
   var u = buildCurrentUser(getSessionSid());
-  if(u){ CURRENT_USER.sid=u.sid; CURRENT_USER.name=u.name; CURRENT_USER.role=u.role; CURRENT_USER.isAdmin=u.isAdmin; CURRENT_USER.isSubAdmin=u.isSubAdmin; CURRENT_USER.isFullViewer=u.isFullViewer; CURRENT_USER.branch=u.branch; }
+  if(u){ CURRENT_USER.sid=u.sid; CURRENT_USER.name=u.name; CURRENT_USER.role=u.role; CURRENT_USER.isAdmin=u.isAdmin; CURRENT_USER.isOwner=u.isOwner; CURRENT_USER.isSubAdmin=u.isSubAdmin; CURRENT_USER.isFullViewer=u.isFullViewer; CURRENT_USER.branch=u.branch; }
 }
 // 관리자 또는 위임관리인 체크 (번호수정·단계되돌리기 권한)
 function canSuperEdit(){ return !!(CURRENT_USER.isAdmin || CURRENT_USER.isSubAdmin); }
@@ -5804,6 +5805,7 @@ function ImproveRequestModal(props){
   var ws = useState(''); var want = ws[0]; var setWant = ws[1];
   var bs = useState(false); var busy = bs[0]; var setBusy = bs[1];
   var cap = props.capture || '';
+  var myS = useState(null); var mine = myS[0]; var setMine = myS[1];   // 내 요청 내역 (Q3)
   var ipt = { width:'100%', boxSizing:'border-box', padding:'8px 10px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'13px', fontFamily:'inherit', resize:'vertical' };
   function submit(){
     if(busy) return;
@@ -5822,6 +5824,19 @@ function ImproveRequestModal(props){
         .catch(function(){ setBusy(false); showToast('전송 실패 — 잠시 후 다시 시도해주세요'); });
     }catch(e){ setBusy(false); showToast('전송 실패 (연결 확인)'); }
   }
+  useEffect(function(){
+    if(typeof fbDb==='undefined' || !fbDb){ setMine([]); return; }
+    var sid = (typeof CURRENT_USER!=='undefined'&&CURRENT_USER&&CURRENT_USER.sid)||'';
+    if(!sid){ setMine([]); return; }
+    fbDb.ref('improve_requests').orderByChild('authorSid').equalTo(sid).once('value').then(function(snap){
+      var v = snap.val()||{};
+      var arr = Object.keys(v).map(function(k){ return Object.assign({ _key:k }, v[k]); });
+      arr.sort(function(a,b){ return (b.ts||0)-(a.ts||0); });
+      setMine(arr);
+      // 완료됐지만 미확인인 내 요청 → 확인 처리(✋ 배지 해제)
+      arr.forEach(function(r){ if(r.done && !r.seenByAuthor){ try{ fbDb.ref('improve_requests/'+r._key).update({ seenByAuthor:true }); }catch(_){} } });
+    }, function(){ setMine([]); });
+  }, []);
   return h('div', { className:'modal-bg', onClick:props.onClose },
     h('div', { className:'modal', onClick:function(e){ e.stopPropagation(); }, style:{ maxWidth:'520px' } },
       h('div', { className:'modal-h' }, h('div', { className:'t' }, '✋ 개선요청 · 건의'), h('button', { className:'x', onClick:props.onClose }, '×')),
@@ -5850,7 +5865,21 @@ function ImproveRequestModal(props){
               h('div', { style:{ fontSize:'11.5px', color:'#64748b', marginBottom:'4px' } }, '📷 지금 화면이 함께 저장됩니다'),
               h('img', { src:cap, style:{ width:'100%', maxHeight:'160px', objectFit:'contain', border:'1px solid #e5e7eb', borderRadius:'6px', background:'#f8fafc' } }))
           : h('div', { style:{ fontSize:'11.5px', color:'#94a3b8', marginTop:'6px' } }, '(화면 캡처가 첨부되지 않았습니다)'),
-        h('div', { style:{ fontSize:'11px', color:'#94a3b8', marginTop:'8px', lineHeight:'1.5' } }, '작성자·화면·기기·시각은 자동으로 함께 저장됩니다.')
+        h('div', { style:{ fontSize:'11px', color:'#94a3b8', marginTop:'8px', lineHeight:'1.5' } }, '작성자·화면·기기·시각은 자동으로 함께 저장됩니다.'),
+        (mine && mine.length>0) && h('div', { style:{ marginTop:'14px', borderTop:'1px solid #e5e7eb', paddingTop:'10px' } },
+          h('div', { style:{ fontSize:'12px', fontWeight:700, color:'#475569', marginBottom:'6px' } }, '📋 내 요청 내역'),
+          mine.map(function(r){
+            var ki = improveKindInfo(r.kind);
+            return h('div', { key:r._key, style:{ fontSize:'12px', color:'#334155', padding:'6px 0', borderBottom:'1px solid #f1f5f9' } },
+              h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap' } },
+                h('span', { style:{ fontWeight:700, color:r.done?'#059669':'#b45309', flexShrink:0 } }, r.done?'✅ 완료':'⏳ 미완료'),
+                h('span', { style:{ padding:'1px 7px', borderRadius:'5px', fontSize:'11px', fontWeight:700, background:ki.bg, color:ki.color, flexShrink:0 } }, ki.label),
+                h('span', null, r.symptom || r.situation || '(내용 없음)')
+              ),
+              (r.done && r.resolvedNote) && h('div', { style:{ marginTop:'2px', color:'#166534' } }, '↳ 회신: ' + r.resolvedNote)
+            );
+          })
+        )
       ),
       h('div', { className:'modal-f' },
         h('button', { onClick:props.onClose, style:{ background:'#f1f5f9', color:'#475569', border:'1px solid #cbd5e1', padding:'7px 14px', borderRadius:'6px', fontSize:'12.5px', fontWeight:600, cursor:'pointer' } }, '취소'),
@@ -5863,6 +5892,9 @@ function ImproveRequestModal(props){
 function ImproveInboxModal(props){
   useEscClose(props.onClose);
   var ls = useState(null); var list = ls[0]; var setList = ls[1];
+  var fsS = useState('pending'); var fs = fsS[0]; var setFs = fsS[1];   // 미완료/완료/전체 (Q1)
+  var rfS = useState(''); var rf = rfS[0]; var setRf = rfS[1];          // 회신 입력 중인 요청 key (Q3)
+  var rtS = useState(''); var rt = rtS[0]; var setRt = rtS[1];          // 회신 내용 (Q3)
   useEffect(function(){
     if(typeof fbDb==='undefined' || !fbDb){ setList([]); return; }
     var ref = fbDb.ref('improve_requests');
@@ -5874,20 +5906,33 @@ function ImproveInboxModal(props){
     }, function(){ setList([]); });
     return function(){ try{ ref.off('value', cb); }catch(_){} };
   }, []);
-  function complete(k){
-    try{ fbDb.ref('improve_requests/'+k).update({ done:true, doneAt:Date.now() }).then(function(){ showToast('완료 처리됨'); }); }catch(_){ showToast('처리 실패'); }
+  function complete(k, note){
+    try{ fbDb.ref('improve_requests/'+k).update({ done:true, doneAt:Date.now(), resolvedNote:(note||'').trim(), resolvedBy:((typeof CURRENT_USER!=='undefined'&&CURRENT_USER&&CURRENT_USER.name)||''), seenByAuthor:false }).then(function(){ showToast('완료 처리됨 — 요청자에게 표시됩니다'); setRf(''); setRt(''); }); }catch(_){ showToast('처리 실패'); }
   }
   var pending = (list||[]).filter(function(r){ return !r.done; }).length;
+  var doneCnt = (list||[]).filter(function(r){ return !!r.done; }).length;
+  var shown = (list||[]).filter(function(r){ return fs==='all' ? true : (fs==='done' ? !!r.done : !r.done); });
   function metaLine(r){ return [r.author||'-', r.screen||'-', r.device||'-', improveDateStr(r.ts, false)].filter(Boolean).join(' · '); }
   return h('div', { className:'modal-bg', onClick:props.onClose },
     h('div', { className:'modal', onClick:function(e){ e.stopPropagation(); }, style:{ maxWidth:'620px' } },
       h('div', { className:'modal-h' }, h('div', { className:'t' }, '📥 개선요청함' + (pending?(' · 미완료 '+pending):'')), h('button', { className:'x', onClick:props.onClose }, '×')),
       h('div', { className:'modal-b', style:{ maxHeight:'74vh', overflowY:'auto' } },
+        (list!==null && list.length>0) && h('div', { style:{ display:'flex', gap:'6px', marginBottom:'10px' } },
+          [{v:'pending',label:'미완료',c:pending},{v:'done',label:'완료',c:doneCnt},{v:'all',label:'전체',c:(list||[]).length}].map(function(t){
+            var on = fs===t.v;
+            return h('button', { key:t.v, type:'button', onClick:function(){ setFs(t.v); },
+              style:{ padding:'4px 12px', borderRadius:'6px', fontSize:'12px', fontWeight:700, cursor:'pointer',
+                background:on?'#1e40af':'#f8fafc', color:on?'#fff':'#64748b', border:'1px solid '+(on?'#1e40af':'#e2e8f0') } },
+              t.label+' '+t.c);
+          })
+        ),
         list===null
           ? h('div', { style:{ padding:'20px', textAlign:'center', color:'#94a3b8', fontSize:'13px' } }, '불러오는 중…')
           : (list.length===0
             ? h('div', { style:{ padding:'24px', textAlign:'center', color:'#94a3b8', fontSize:'13px' } }, '아직 접수된 개선요청이 없습니다.')
-            : list.map(function(r){
+            : (shown.length===0
+              ? h('div', { style:{ padding:'24px', textAlign:'center', color:'#94a3b8', fontSize:'13px' } }, '해당 상태의 요청이 없습니다.')
+              : shown.map(function(r){
                 var ki = improveKindInfo(r.kind);
                 return h('div', { key:r._key, style:{ border:'1px solid #e5e7eb', borderRadius:'10px', padding:'10px 12px', marginBottom:'8px', opacity:r.done?0.55:1, background:'#fff' } },
                   h('div', { style:{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'5px' } },
@@ -5901,14 +5946,23 @@ function ImproveInboxModal(props){
                   ),
                   h('div', { style:{ fontSize:'11px', color:'#94a3b8', marginBottom:'6px' } }, metaLine(r) + ' · SEQ' + (r.build||'-')),
                   r.capture && h('img', { src:r.capture, style:{ width:'100%', maxHeight:'220px', objectFit:'contain', border:'1px solid #e5e7eb', borderRadius:'6px', background:'#f8fafc', marginBottom:'6px' } }),
-                  h('div', { style:{ display:'flex', gap:'6px' } },
+                  r.done && r.resolvedNote && h('div', { style:{ fontSize:'12px', color:'#166534', background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:'6px', padding:'6px 8px', marginBottom:'6px' } }, '↳ 회신: ' + r.resolvedNote),
+                  h('div', { style:{ display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center' } },
                     h('button', { type:'button', onClick:function(){ improveCopy(r); },
                       style:{ padding:'5px 12px', borderRadius:'6px', fontSize:'12px', fontWeight:700, cursor:'pointer', background:'#eff6ff', color:'#1e40af', border:'1px solid #bfdbfe' } }, '📋 클로드용 복사'),
-                    !r.done && h('button', { type:'button', onClick:function(){ complete(r._key); },
+                    (!r.done && rf!==r._key) && h('button', { type:'button', onClick:function(){ setRf(r._key); setRt(''); },
                       style:{ padding:'5px 12px', borderRadius:'6px', fontSize:'12px', fontWeight:700, cursor:'pointer', background:'#f0fdf4', color:'#166534', border:'1px solid #bbf7d0' } }, '✓ 완료 처리')
+                  ),
+                  (!r.done && rf===r._key) && h('div', { style:{ marginTop:'6px', display:'flex', gap:'6px', flexWrap:'wrap', alignItems:'center' } },
+                    h('input', { type:'text', value:rt, onChange:function(e){ setRt(e.target.value); }, placeholder:'회신(선택): 예) 다음 업데이트에 반영',
+                      style:{ flex:'1 1 200px', minWidth:'160px', padding:'6px 8px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'12px', fontFamily:'inherit' } }),
+                    h('button', { type:'button', onClick:function(){ complete(r._key, rt); },
+                      style:{ padding:'6px 12px', borderRadius:'6px', fontSize:'12px', fontWeight:700, cursor:'pointer', background:'#166534', color:'#fff', border:'none' } }, '완료 저장'),
+                    h('button', { type:'button', onClick:function(){ setRf(''); setRt(''); },
+                      style:{ padding:'6px 10px', borderRadius:'6px', fontSize:'12px', fontWeight:600, cursor:'pointer', background:'#f1f5f9', color:'#475569', border:'1px solid #cbd5e1' } }, '취소')
                   )
                 );
-              }))
+              })))
       ),
       h('div', { className:'modal-f' },
         h('button', { className:'btn-primary', onClick:props.onClose }, '닫기')
@@ -5931,6 +5985,8 @@ function Header(props){
   var imS = useState(false); var showImprove = imS[0]; var setShowImprove = imS[1];
   var icS = useState(''); var improveCap = icS[0]; var setImproveCap = icS[1];
   var ibS = useState(false); var showInbox = ibS[0]; var setShowInbox = ibS[1];
+  var pcS = useState(0); var pendingCnt = pcS[0]; var setPendingCnt = pcS[1];      // 대표: 미처리 개선요청 수 (Q2)
+  var mdS = useState(0); var myDoneUnseen = mdS[0]; var setMyDoneUnseen = mdS[1];   // 요청자: 내 완료 미확인 수 (Q3)
   function openImprove(){
     setImproveCap('');
     try{
@@ -5946,15 +6002,43 @@ function Header(props){
       } else { setShowImprove(true); }
     }catch(_){ setShowImprove(true); }
   }
+  useEffect(function(){
+    if(typeof fbDb==='undefined' || !fbDb) return;
+    var subs = [];
+    // 요청자 배지: 내가 낸 요청 중 완료됐지만 아직 확인 안 한 것 (authorSid로 본인 것만 가볍게)
+    try{
+      var mySid = (CURRENT_USER && CURRENT_USER.sid) || '';
+      if(mySid){
+        var q1 = fbDb.ref('improve_requests').orderByChild('authorSid').equalTo(mySid);
+        var cb1 = q1.on('value', function(snap){
+          var v = snap.val()||{}, n=0;
+          Object.keys(v).forEach(function(k){ if(v[k] && v[k].done && !v[k].seenByAuthor) n++; });
+          setMyDoneUnseen(n);
+        }, function(){});
+        subs.push([q1, cb1]);
+      }
+    }catch(_){}
+    // 대표 배지: 전체 미처리 수 (done=false 만)
+    try{
+      if(CURRENT_USER && CURRENT_USER.isOwner){
+        var q2 = fbDb.ref('improve_requests').orderByChild('done').equalTo(false);
+        var cb2 = q2.on('value', function(snap){ var v = snap.val()||{}; setPendingCnt(Object.keys(v).length); }, function(){});
+        subs.push([q2, cb2]);
+      }
+    }catch(_){}
+    return function(){ subs.forEach(function(p){ try{ p[0].off('value', p[1]); }catch(_){} }); };
+  }, []);
 
   return h('header', { className:'hd' },
     h('button', { className:'hd-burger erp-tip tip-down', onClick:onBurger, 'data-tip':'메뉴 접기/펼치기 — 접으면 화면을 넓게 쓸 수 있어요' }, '☰'),
     h('button', { onClick:openImprove, title:'개선요청·건의 (지금 이 화면을 캡처해서 함께 보냅니다)',
       style:{ marginLeft:'4px', padding:'4px 10px', fontSize:'12px', fontWeight:700, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap',
-        background:'#fffbeb', border:'1.5px solid #fcd34d', borderRadius:'6px', color:'#92400e', display:'inline-flex', alignItems:'center', gap:'3px' } }, '✋ 개선요청'),
+        background:'#fffbeb', border:'1.5px solid #fcd34d', borderRadius:'6px', color:'#92400e', display:'inline-flex', alignItems:'center', gap:'3px' } }, '✋ 개선요청',
+      myDoneUnseen>0 && h('span', { style:{ marginLeft:'2px', background:'#2563eb', color:'#fff', fontSize:'10px', fontWeight:800, borderRadius:'999px', padding:'0 6px', minWidth:'16px', textAlign:'center' } }, myDoneUnseen)),
     CURRENT_USER.isAdmin && h('button', { onClick:function(){ setShowInbox(true); }, title:'개선요청함 (관리자 전용)',
       style:{ marginLeft:'2px', padding:'4px 10px', fontSize:'12px', fontWeight:700, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap',
-        background:'#eff6ff', border:'1.5px solid #bfdbfe', borderRadius:'6px', color:'#1e40af', display:'inline-flex', alignItems:'center', gap:'3px' } }, '📥 요청함'),
+        background:'#eff6ff', border:'1.5px solid #bfdbfe', borderRadius:'6px', color:'#1e40af', display:'inline-flex', alignItems:'center', gap:'3px' } }, '📥 요청함',
+      (CURRENT_USER.isOwner && pendingCnt>0) && h('span', { style:{ marginLeft:'2px', background:'#dc2626', color:'#fff', fontSize:'10px', fontWeight:800, borderRadius:'999px', padding:'0 6px', minWidth:'16px', textAlign:'center' } }, pendingCnt)),
     // 폰 전용: 헤더 우측이 화면 밖으로 밀려 안 보이므로, 항상 보이는 왼쪽에 새로고침·로그아웃 배치
     window.IS_MOBILE && h('button', { title:'앱 새로 시작(최신 버전 새로고침)',
       onClick:function(){
