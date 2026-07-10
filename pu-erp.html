@@ -760,8 +760,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-10 개선요청함 캡처 복사 버튼(이미지 클립보드) + 재무 가져오기 날짜 정규화(엑셀 일련번호→ISO, 두 파서)';
-var BUILD_SEQ = 138;
+var ERP_BUILD = '2026-07-10 재무 A — 엑셀 일련번호 날짜 일괄 정정 콘솔 유틸(erpFixSerialDates) 추가: 미리보기→백업→ISO 변환, 대표 전용';
+var BUILD_SEQ = 139;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -2713,6 +2713,45 @@ window.erpBackup = function(){
     a.click();
     console.log('✅ 백업 다운로드 완료');
   } catch(e){ console.log('❌ 백업 실패:', e.message); }
+};
+
+// ── 엑셀 일련번호 날짜 → ISO 일괄 정정 (콘솔: erpFixSerialDates() 미리보기 / erpFixSerialDates(true) 적용) ──
+window.erpFixSerialDates = function(apply){
+  try{
+    if(!(typeof CURRENT_USER!=='undefined' && CURRENT_USER && CURRENT_USER.isOwner)){ console.log('대표(총괄) 계정에서만 실행하세요.'); return; }
+    var STORES = {
+      finance_income:  ['date'],
+      finance_expense: ['date'],
+      contracts:       ['paidDate','retainerPaidDate','balancePaidDate'],
+      cases:           ['paidDate','retainerPaidDate','balancePaidDate','successPaidDate'],
+      consultings:     ['paidDate','retainerPaidDate','balancePaidDate'],
+      funds:           ['paidDate','retainerPaidDate','balancePaidDate'],
+      other_projects:  ['paidDate','retainerPaidDate','balancePaidDate']
+    };
+    function isSerial(v){ var s=String(v==null?'':v).trim(); if(!/^\d{4,6}$/.test(s)) return false; var n=parseInt(s,10); return n>=20000 && n<=80000; }
+    var plan=[], byStore={}, toSave={};
+    Object.keys(STORES).forEach(function(k){
+      var arr = (typeof dbGet==='function') ? dbGet(k, []) : null; if(!Array.isArray(arr)) return;
+      var changed=0;
+      arr.forEach(function(rec){
+        if(!rec) return;
+        STORES[k].forEach(function(f){
+          if(isSerial(rec[f])){ var iso=_excelToISO(rec[f]); if(iso && iso!==rec[f]){ plan.push({store:k,id:rec.id,field:f,from:rec[f],to:iso}); if(apply) rec[f]=iso; changed++; } }
+        });
+      });
+      if(changed){ byStore[k]=changed; if(apply){ toSave[k]=arr; } }
+    });
+    console.log('%c[날짜 정정] 일련번호 날짜 '+plan.length+'건'+(apply?' (적용)':' (미리보기)'), 'font-weight:bold;font-size:13px');
+    Object.keys(byStore).forEach(function(k){ console.log('  · '+k+': '+byStore[k]+'건'); });
+    plan.slice(0,12).forEach(function(p){ console.log('    '+p.store+' #'+(p.id||'?')+' '+p.field+': '+p.from+' → '+p.to); });
+    if(plan.length>12) console.log('    … 외 '+(plan.length-12)+'건');
+    if(!apply){ if(plan.length>0) console.log('%c실제 변환: erpFixSerialDates(true)  (자동 백업 후 진행)', 'color:#b45309;font-weight:bold'); else console.log('변환할 일련번호 날짜가 없습니다.'); return plan.length; }
+    if(plan.length===0){ console.log('변환할 항목이 없습니다.'); return 0; }
+    try{ if(window.erpBackup) window.erpBackup(); console.log('💾 백업 다운로드 완료(변환 전 스냅샷)'); }catch(_){}
+    Object.keys(toSave).forEach(function(k){ try{ dbSet(k, toSave[k]); }catch(_){} });
+    console.log('%c✅ '+plan.length+'건 변환 완료 — 새로고침(F5)하면 화면에 반영됩니다.', 'color:#16a34a;font-weight:bold;font-size:13px');
+    return plan.length;
+  }catch(e){ console.log('❌ 오류:', e&&e.message); }
 };
 
 // ── 긴급 Firebase 강제 재동기화 (콘솔에서: erpSyncNow()) ──
