@@ -760,8 +760,8 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-10 업체관리 급여지급일 열 추가(근로자수↔주소): 새 필드 payrollDay 숫자/말일 직접입력, 상단 급여지급일 필터, 일자순 정렬';
-var BUILD_SEQ = 142;
+var ERP_BUILD = '2026-07-10 급여일 일괄 이관 콘솔 유틸(erpMigratePayrollDay) 추가: 특이사항 "급여일 XX" → payrollDay 이관 + 특이사항에서 제거, 미리보기→백업→적용, 대표 전용';
+var BUILD_SEQ = 143;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -2751,6 +2751,52 @@ window.erpFixSerialDates = function(apply){
     Object.keys(toSave).forEach(function(k){ try{ dbSet(k, toSave[k]); }catch(_){} });
     console.log('%c✅ '+plan.length+'건 변환 완료 — 새로고침(F5)하면 화면에 반영됩니다.', 'color:#16a34a;font-weight:bold;font-size:13px');
     return plan.length;
+  }catch(e){ console.log('❌ 오류:', e&&e.message); }
+};
+
+// ── 특이사항 "급여일 XX" → 급여지급일(payrollDay) 일괄 이관 + 특이사항에서 제거 ──
+// 콘솔에서: erpMigratePayrollDay()  = 미리보기 / erpMigratePayrollDay(true) = 백업 후 적용. 대표(총괄) 전용.
+window.erpMigratePayrollDay = function(apply){
+  try{
+    if(!(typeof CURRENT_USER!=='undefined' && CURRENT_USER && CURRENT_USER.isOwner)){ console.log('대표(총괄) 계정에서만 실행하세요.'); return; }
+    var RE  = /급여일[\s:]*(\d{1,2}|말일|말)\s*일?/;    // 첫 매칭(일자 추출용)
+    var REG = /급여일[\s:]*(\d{1,2}|말일|말)\s*일?/g;   // 전체 제거용
+    function normDay(d){ d=String(d||'').trim(); if(/말/.test(d)) return '말일'; var m=d.match(/\d{1,2}/); if(!m) return ''; var n=parseInt(m[0],10); return (n>=1&&n<=31)? String(n) : ''; }
+    function cleanNote(s){
+      var out = String(s||'').replace(REG, '\u0001');
+      out = out.replace(/[ \t]*[,\/·|][ \t]*\u0001/g, '\u0001').replace(/\u0001/g, '');
+      out = out.replace(/[ \t]+\n/g, '\n').replace(/\n[ \t]+/g, '\n').replace(/\n{2,}/g, '\n').replace(/[ \t]{2,}/g, ' ').replace(/^[\s,\/·|]+|[\s,\/·|]+$/g, '');
+      return out;
+    }
+    var arr = (typeof dbGet==='function') ? dbGet('companies', []) : null;
+    if(!Array.isArray(arr)){ console.log('회사 데이터를 찾을 수 없습니다.'); return; }
+    var setPlan=[], stripPlan=[], conflict=[], changed=0;
+    arr.forEach(function(co){
+      if(!co) return;
+      var note = co.note||'';
+      var m = note.match(RE); if(!m) return;
+      var parsed = normDay(m[1]); if(!parsed) return;
+      var newNote = cleanNote(note);
+      var cur = String(co.payrollDay==null?'':co.payrollDay).trim();
+      var curN = cur ? normDay(cur) : '';
+      if(cur && curN !== parsed){ conflict.push({name:co.name||co.id, existing:cur, noteDay:parsed}); return; }
+      var doSet = !cur;
+      if(doSet) setPlan.push({name:co.name||co.id, day:parsed});
+      stripPlan.push({name:co.name||co.id, day:parsed, before:note, after:newNote});
+      if(apply){ if(doSet) co.payrollDay=parsed; co.note=newNote; }
+      changed++;
+    });
+    console.log('%c[급여일 이관] 대상 '+changed+'개 업체'+(apply?' (적용)':' (미리보기)'), 'font-weight:bold;font-size:13px');
+    console.log('  · 급여지급일 신규 설정 '+setPlan.length+'개 / 특이사항 정리 '+stripPlan.length+'개 / 충돌(건너뜀) '+conflict.length+'개');
+    stripPlan.slice(0,15).forEach(function(p){ console.log('    ['+p.name+'] 급여지급일='+p.day+'일  특이사항: "'+p.before.replace(/\n/g,'⏎')+'" → "'+p.after.replace(/\n/g,'⏎')+'"'); });
+    if(stripPlan.length>15) console.log('    … 외 '+(stripPlan.length-15)+'개');
+    if(conflict.length){ console.log('%c  ⚠ 충돌(급여지급일이 이미 입력됐고 특이사항과 다름 → 수동 확인, 건드리지 않음):','color:#b45309;font-weight:bold'); conflict.slice(0,10).forEach(function(p){ console.log('     ['+p.name+'] 기존='+p.existing+' vs 특이사항='+p.noteDay); }); }
+    if(!apply){ if(changed>0) console.log('%c실제 적용: erpMigratePayrollDay(true)  (자동 백업 후 진행)','color:#b45309;font-weight:bold'); else console.log('이관할 "급여일" 표기가 특이사항에 없습니다.'); return changed; }
+    if(changed===0){ console.log('적용할 항목이 없습니다.'); return 0; }
+    try{ if(window.erpBackup) window.erpBackup(); console.log('💾 백업 다운로드 완료(변경 전 스냅샷)'); }catch(_){}
+    try{ dbSet('companies', arr); }catch(_){}
+    console.log('%c✅ '+changed+'개 업체 이관 완료 — 새로고침(F5)하면 반영됩니다.','color:#16a34a;font-weight:bold;font-size:13px');
+    return changed;
   }catch(e){ console.log('❌ 오류:', e&&e.message); }
 };
 
