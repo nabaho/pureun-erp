@@ -54558,15 +54558,32 @@ function App(){
   }
 
   // ── [포털 연동] enter.html에서 로그인해 온 경우: Firebase 인증이 확인되면 자동으로 로그인 처리 ──
-  // sso=1 파라미터가 있으면 확인이 끝날 때까지 로그인 화면 대신 스플래시 표시 (번쩍임 방지)
-  var ssoS = useState(!isValidSession() && /[?&]sso=1/.test(location.search));
+  // [판정 원칙] '확실히 로그인 없음'일 때만 포털로 이동. 모름/로딩중/실패 = 자체 로그인 화면(안전 기본값).
+  // [루프 차단기] 10초 내 2회 이상 포털로 이동했다면 더 이상 이동하지 않음 (무한루프 구조적 차단)
+  // [비상 밸브] ?stay=1 이면 이동 없이 자체 로그인 화면 강제 표시
+  var _stayHere = /[?&]stay=1/.test(location.search);
+  function _ssoBounceOK(){
+    try{
+      var k='pu_sso_bounce', now=Date.now();
+      var arr=(JSON.parse(sessionStorage.getItem(k)||'[]')||[]).filter(function(t){ return now-t<10000; });
+      if(arr.length>=2) return false;
+      arr.push(now); sessionStorage.setItem(k, JSON.stringify(arr));
+      return true;
+    }catch(e){ return false; }
+  }
+  var ssoS = useState(!isValidSession() && !_stayHere);
   var ssoWait = ssoS[0]; var setSsoWait = ssoS[1];
   useEffect(function(){
+    if(_stayHere){ setSsoWait(false); return; }
     if(typeof firebase === 'undefined' || !firebase.auth){ setSsoWait(false); return; }
-    var to = setTimeout(function(){ setSsoWait(false); }, 6000);  // 안전장치: 6초 내 확인 안 되면 로그인 화면 표시
+    var to = setTimeout(function(){ setSsoWait(false); }, 6000);  // 판정 지연 시 로그인 화면 (튕기지 않음)
     var off = firebase.auth().onAuthStateChanged(function(user){
-      if(!user || !user.email){ setSsoWait(false); return; }
       if(isLoggedIn || getSessionSid()){ setSsoWait(false); return; }
+      if(!user || !user.email){
+        // 확정: 포털 로그인 없음 → 차단기 허용 시에만 포털로
+        if(_ssoBounceOK()){ location.replace('enter.html'); } else { setSsoWait(false); }
+        return;
+      }
       try {
         var _em = String(user.email).toLowerCase();
         var _us = dbGet('user_accounts', USERS_SEED) || [];
@@ -54574,6 +54591,7 @@ function App(){
         if(_acct && (_acct.status === 'active' || (_acct.status === 'leave' && _acct.leaveLoginAllowed === true))){
           handleLogin(_acct.sid);
         }
+        // 명부에 없음/로딩 전 = '모름' → 튕기지 않고 로그인 화면 (원칙)
       } catch(_){}
       setSsoWait(false);
     });
