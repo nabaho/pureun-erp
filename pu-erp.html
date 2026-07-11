@@ -54559,10 +54559,15 @@ function App(){
 
   // ── [포털 연동] enter.html에서 로그인해 온 경우: Firebase 인증이 확인되면 자동으로 로그인 처리 ──
   // (세션 자동 설정 + 화면 전환까지. 미로그인이거나 이미 로그인 상태면 아무 것도 안 함)
+  // sso=1 파라미터가 있으면 확인이 끝날 때까지 로그인 화면 대신 스플래시 표시 (번쩍임 방지)
+  var ssoS = useState(!isValidSession() && /[?&]sso=1/.test(location.search));
+  var ssoWait = ssoS[0]; var setSsoWait = ssoS[1];
   useEffect(function(){
-    if(typeof firebase === 'undefined' || !firebase.auth) return;
+    if(typeof firebase === 'undefined' || !firebase.auth){ setSsoWait(false); return; }
+    var to = setTimeout(function(){ setSsoWait(false); }, 6000);  // 안전장치: 6초 내 확인 안 되면 로그인 화면 표시
     var off = firebase.auth().onAuthStateChanged(function(user){
-      if(!user || !user.email || isLoggedIn || getSessionSid()) return;
+      if(!user || !user.email){ setSsoWait(false); return; }
+      if(isLoggedIn || getSessionSid()){ setSsoWait(false); return; }
       try {
         var _em = String(user.email).toLowerCase();
         var _us = dbGet('user_accounts', USERS_SEED) || [];
@@ -54571,14 +54576,17 @@ function App(){
           handleLogin(_acct.sid);
         }
       } catch(_){}
+      setSsoWait(false);
     });
-    return function(){ try { off && off(); } catch(_){} };
+    return function(){ clearTimeout(to); try { off && off(); } catch(_){} };
   }, [isLoggedIn]);
 
   function handleLogout(opts){
     try { if(typeof clearPresence === 'function') clearPresence(); } catch(_){}
     clearSession();
     clearAutoLogin();
+    // [포털 연동] 포털(이메일) 세션도 함께 종료 — 안 끊으면 재로그인 화면 없이 즉시 자동 로그인됨
+    try { if(firebase && firebase.auth && firebase.auth().currentUser && firebase.auth().currentUser.email){ firebase.auth().signOut(); } } catch(_){}
     // CURRENT_USER 게스트화
     CURRENT_USER.sid = ''; CURRENT_USER.name = ''; CURRENT_USER.role = '';
     CURRENT_USER.isAdmin = false; CURRENT_USER.branch = '';
@@ -54631,7 +54639,12 @@ function App(){
     ),
     isLoggedIn
       ? h(ERPMain, { onLogout: function(){ handleLogout({ reload:true }); } })
-      : h(LoginScreen, { onLogin: handleLogin })
+      : (ssoWait
+          ? h('div', { style:{ position:'fixed', inset:0, background:'#f7f8fb', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:'14px', zIndex:9999 } },
+              h('div', { style:{ width:'46px', height:'46px', borderRadius:'13px', background:'linear-gradient(135deg,#1e40af,#7c6ce0)', color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:800, fontSize:'19px' } }, '푸'),
+              h('div', { style:{ fontSize:'14px', color:'#475569', fontWeight:600 } }, '포털 로그인 확인 중\u2026')
+            )
+          : h(LoginScreen, { onLogin: handleLogin }))
   );
 }
 
