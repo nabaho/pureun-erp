@@ -1220,6 +1220,16 @@ const FB_CONFIG={
 const FB_NODES={p_staff:'scal_staff',p_types:'scal_types',p_cos:'scal_cos',p_scheds:'scal_scheds',p_env:'scal_env',p_fieldState:'scal_fieldState',p_conflictMatrix:'scal_conflictMatrix'};
 let FB_READY=false, _fbDB=null, _fbSuppress=false;
 
+// [포털 연동] 루프 차단기: 10초 내 2회 이상 포털로 이동했다면 더 이상 이동하지 않음 (무한루프 구조적 차단)
+function _govBounceOK(){
+  try{
+    const k='pu_sso_bounce', now=Date.now();
+    const arr=(JSON.parse(sessionStorage.getItem(k)||'[]')||[]).filter(t=>now-t<10000);
+    if(arr.length>=2) return false;
+    arr.push(now); sessionStorage.setItem(k,JSON.stringify(arr));
+    return true;
+  }catch(e){ return false; }
+}
 function fbInit(){
   try{
     firebase.initializeApp(FB_CONFIG);
@@ -1238,6 +1248,9 @@ function fbInit(){
         subscribeRoundLog(); // 회차 변경 이력 구독
         updateFbStatus('🟢');
       }
+      // [판정 원칙] '확실히 포털 로그인 없음(익명)'일 때만 포털로. 조회 실패/모름 = 자체 로그인 화면(안전 기본값).
+      // [비상 밸브] ?stay=1 이면 이동 없이 자체 로그인 화면
+      const _stay=/[?&]stay=1/.test(location.search);
       // [포털 연동] 포털에서 이메일 로그인해 온 경우: ERP 명부(이메일→이름) 조회 후 자동 로그인
       if(u.email && !getSession()){
         _fbDB.ref('data/user_accounts').once('value').then(snap=>{
@@ -1246,14 +1259,18 @@ function fbInit(){
           if(list&&!Array.isArray(list)&&typeof list==='object')list=Object.values(list);
           const em=String(u.email).toLowerCase();
           const acct=(list||[]).find(a=>a&&(String(a.sid||'').toLowerCase().replace(/-/g,'')+'@pureun.kr')===em);
-          if(!acct||acct.status==='retired')return;
+          if(!acct||acct.status==='retired')return;   // 모름/퇴직 → 튕기지 않고 로그인 화면
           const st=getStaff().find(s=>s.name===acct.name);
-          if(!st)return;
+          if(!st)return;                              // 매칭 실패 → 튕기지 않음
           setSession({id:st.id,name:st.name,color:st.color,isAdmin:!!st.isAdmin},false);
           lsSet('p_lastUserId',st.id);
           closeModal('mbLogin');
           applySession();
-        }).catch(()=>{});
+        }).catch(()=>{});                             // 조회 오류 → 튕기지 않음
+      } else if(!u.email && !getSession() && !_stay){
+        // 확정: 익명 = 포털 로그인 없음 → 루프 차단기 허용 시에만 포털로
+        if(_govBounceOK()) location.replace('enter.html');
+        else q('#mbLogin')?.classList.remove('sso-wait');
       }
     });
   }catch(e){console.warn('FB 초기화 실패',e);updateFbStatus('⚪');}
@@ -5055,10 +5072,10 @@ function init(){
   initShortcuts();
   const sess=getSession();
   if(sess){sessionStorage.setItem('p_session',JSON.stringify(sess));closeModal('mbLogin');applySession();}
-  // [포털 연동] 포털 경유(sso=1) + 미로그인: 자동 로그인 확인이 끝날 때까지 로그인 카드 숨김 (번쩍임 방지)
-  if(!sess && /[?&]sso=1/.test(location.search)){
+  // [포털 연동] 미로그인: 판정(자동로그인/포털이동)이 끝날 때까지 로그인 카드 숨김. 6초 내 판정 없으면 로그인 화면(안전 기본값)
+  if(!sess && !/[?&]stay=1/.test(location.search)){
     q('#mbLogin')?.classList.add('sso-wait');
-    setTimeout(()=>q('#mbLogin')?.classList.remove('sso-wait'),6000);  // 6초 내 판정 실패 시 로그인 화면 표시(안전장치)
+    setTimeout(()=>q('#mbLogin')?.classList.remove('sso-wait'),6000);
   }
   loadPhotosFromDB();
   fbInit();
