@@ -2317,17 +2317,6 @@ try {
           if(user){
             fbAuthUid = user.uid;
             fbAuthReady = true;
-            // ── [포털 연동] Firebase 로그인돼 있고 이 탭 세션만 비었으면 세션 자동 설정 (재로그인 생략) ──
-            try {
-              if(user.email && !getSessionSid()){
-                var _em = String(user.email).toLowerCase();
-                var _us = dbGet('user_accounts', USERS_SEED) || [];
-                var _acct = _us.find(function(x){ return sidToEmail(x.sid) === _em; });
-                if(_acct && (_acct.status === 'active' || (_acct.status === 'leave' && _acct.leaveLoginAllowed === true))){
-                  setSession(_acct.sid);
-                }
-              }
-            } catch(_){}
             try { window.dispatchEvent(new CustomEvent('fb_auth_ready', {detail: user.uid})); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
             try { initDeviceLock(); } catch(_){}  // 서버 기반 기기 잠금 시작
           } else {
@@ -54567,6 +54556,25 @@ function App(){
     refreshCurrentUser();
     setIsLoggedIn(true);
   }
+
+  // ── [포털 연동] enter.html에서 로그인해 온 경우: Firebase 인증이 확인되면 자동으로 로그인 처리 ──
+  // (세션 자동 설정 + 화면 전환까지. 미로그인이거나 이미 로그인 상태면 아무 것도 안 함)
+  useEffect(function(){
+    if(typeof firebase === 'undefined' || !firebase.auth) return;
+    var off = firebase.auth().onAuthStateChanged(function(user){
+      if(!user || !user.email || isLoggedIn || getSessionSid()) return;
+      try {
+        var _em = String(user.email).toLowerCase();
+        var _us = dbGet('user_accounts', USERS_SEED) || [];
+        var _acct = _us.find(function(x){ return sidToEmail(x.sid) === _em; });
+        if(_acct && (_acct.status === 'active' || (_acct.status === 'leave' && _acct.leaveLoginAllowed === true))){
+          handleLogin(_acct.sid);
+        }
+      } catch(_){}
+    });
+    return function(){ try { off && off(); } catch(_){} };
+  }, [isLoggedIn]);
+
   function handleLogout(opts){
     try { if(typeof clearPresence === 'function') clearPresence(); } catch(_){}
     clearSession();
