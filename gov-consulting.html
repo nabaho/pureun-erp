@@ -1238,29 +1238,22 @@ function fbInit(){
         subscribeRoundLog(); // 회차 변경 이력 구독
         updateFbStatus('🟢');
       }
-      // 이미 로컬 세션(이 앱에서 로그인 완료)이 있으면 그대로 사용
-      if(getSession()) return;
-      // 비상 탈출: ?stay=1 이면 포털로 튕기지 않고 자체 로그인 화면 유지
-      if(/[?&]stay=1/.test(location.search)) return;
       // [포털 연동] 포털에서 이메일 로그인해 온 경우: ERP 명부(이메일→이름) 조회 후 자동 로그인
-      if(u.email){
+      if(u.email && !getSession()){
         _fbDB.ref('data/user_accounts').once('value').then(snap=>{
           let raw=snap.val();
           let list=(raw&&raw.v!==undefined)?raw.v:raw;
           if(list&&!Array.isArray(list)&&typeof list==='object')list=Object.values(list);
           const em=String(u.email).toLowerCase();
           const acct=(list||[]).find(a=>a&&(String(a.sid||'').toLowerCase().replace(/-/g,'')+'@pureun.kr')===em);
-          if(!acct||acct.status==='retired'){location.replace('enter.html');return;}
+          if(!acct||acct.status==='retired')return;
           const st=getStaff().find(s=>s.name===acct.name);
-          if(!st){location.replace('enter.html');return;}
+          if(!st)return;
           setSession({id:st.id,name:st.name,color:st.color,isAdmin:!!st.isAdmin},false);
           lsSet('p_lastUserId',st.id);
           closeModal('mbLogin');
           applySession();
-        }).catch(()=>location.replace('enter.html'));
-      } else {
-        // [안②] 익명(포털 미경유·로그인 없음) → 포털 로그인 화면으로 이동 (자체 로그인 화면 대신)
-        location.replace('enter.html');
+        }).catch(()=>{});
       }
     });
   }catch(e){console.warn('FB 초기화 실패',e);updateFbStatus('⚪');}
@@ -5062,8 +5055,8 @@ function init(){
   initShortcuts();
   const sess=getSession();
   if(sess){sessionStorage.setItem('p_session',JSON.stringify(sess));closeModal('mbLogin');applySession();}
-  // [포털 연동] 미로그인이면 자동 로그인/포털 이동 판정이 끝날 때까지 로그인 카드 숨김 (번쩍임 방지)
-  if(!sess && !/[?&]stay=1/.test(location.search)){
+  // [포털 연동] 포털 경유(sso=1) + 미로그인: 자동 로그인 확인이 끝날 때까지 로그인 카드 숨김 (번쩍임 방지)
+  if(!sess && /[?&]sso=1/.test(location.search)){
     q('#mbLogin')?.classList.add('sso-wait');
     setTimeout(()=>q('#mbLogin')?.classList.remove('sso-wait'),6000);  // 6초 내 판정 실패 시 로그인 화면 표시(안전장치)
   }
