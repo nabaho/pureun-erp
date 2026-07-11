@@ -110,6 +110,26 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
 <body>
 <div class="mesh"></div>
 
+<!-- 비밀번호 변경 모달 -->
+<div id="pwModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:50;align-items:center;justify-content:center;padding:16px;">
+  <div style="background:#fff;border-radius:18px;padding:28px 26px;max-width:360px;width:100%;box-shadow:0 20px 60px rgba(20,30,80,.25);">
+    <div style="font-size:1.02rem;font-weight:800;margin-bottom:14px;">비밀번호 변경</div>
+    <label style="font-size:.75rem;font-weight:600;color:#475569;">아이디</label>
+    <input type="text" id="pwcId" placeholder="p001@pureun.kr" autocomplete="username" style="width:100%;padding:11px 12px;border:1.5px solid #dfe4ef;border-radius:10px;font-size:.9rem;margin:4px 0 12px;box-sizing:border-box;">
+    <label style="font-size:.75rem;font-weight:600;color:#475569;">현재 비밀번호</label>
+    <input type="password" id="pwcCur" autocomplete="current-password" style="width:100%;padding:11px 12px;border:1.5px solid #dfe4ef;border-radius:10px;font-size:.9rem;margin:4px 0 12px;box-sizing:border-box;">
+    <label style="font-size:.75rem;font-weight:600;color:#475569;">새 비밀번호 (6자 이상)</label>
+    <input type="password" id="pwcNew" autocomplete="new-password" style="width:100%;padding:11px 12px;border:1.5px solid #dfe4ef;border-radius:10px;font-size:.9rem;margin:4px 0 12px;box-sizing:border-box;">
+    <label style="font-size:.75rem;font-weight:600;color:#475569;">새 비밀번호 확인</label>
+    <input type="password" id="pwcNew2" autocomplete="new-password" style="width:100%;padding:11px 12px;border:1.5px solid #dfe4ef;border-radius:10px;font-size:.9rem;margin:4px 0 6px;box-sizing:border-box;">
+    <div id="pwcErr" style="display:none;color:#c0392b;font-size:.76rem;margin:6px 0;"></div>
+    <div style="display:flex;gap:8px;margin-top:14px;">
+      <button id="pwcCancel" type="button" style="flex:1;padding:12px;border:1.5px solid #dfe4ef;background:#fff;border-radius:11px;font-size:.9rem;font-weight:600;cursor:pointer;">취소</button>
+      <button id="pwcSave" type="button" style="flex:2;padding:12px;border:none;background:#1e40af;color:#fff;border-radius:11px;font-size:.9rem;font-weight:700;cursor:pointer;">변경하기</button>
+    </div>
+  </div>
+</div>
+
 <!-- 상단 고정 바: 로고 배지 · 시계 (로그인 화면에서만 표시) -->
 <div class="topfix" id="topfix">
   <div class="brandbadge">
@@ -149,6 +169,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
           <label><input type="checkbox" id="saveId"> 아이디 저장</label>
           <label><input type="checkbox" id="autoLogin"> 자동 로그인</label>
         </div>
+        <a href="#" id="pwChangeLink" style="font-size:.78rem;color:#1e40af;font-weight:600;text-decoration:none;">비밀번호 변경 ↗</a>
       </div>
 
       <button class="btn" id="loginBtn">로그인 <span>→</span></button>
@@ -307,6 +328,45 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
   $('loginBtn').addEventListener('click', doLogin);
   $('loginPw').addEventListener('keydown', function(e){ if(e.key === 'Enter') doLogin(); });
   $('loginId').addEventListener('keydown', function(e){ if(e.key === 'Enter') $('loginPw').focus(); });
+
+  // ── 비밀번호 변경: 현재 비번으로 로그인(재인증) → 새 비번으로 교체 ──
+  $('pwChangeLink').addEventListener('click', function(e){
+    e.preventDefault();
+    $('pwcId').value = $('loginId').value || '';
+    $('pwcCur').value = ''; $('pwcNew').value = ''; $('pwcNew2').value = '';
+    $('pwcErr').style.display = 'none';
+    $('pwModal').style.display = 'flex';
+    setTimeout(function(){ ($('pwcId').value ? $('pwcCur') : $('pwcId')).focus(); }, 60);
+  });
+  $('pwcCancel').addEventListener('click', function(){ $('pwModal').style.display = 'none'; });
+  $('pwcSave').addEventListener('click', function(){
+    var id = $('pwcId').value.trim(), cur = $('pwcCur').value, n1 = $('pwcNew').value, n2 = $('pwcNew2').value;
+    var err = $('pwcErr');
+    function show(m){ err.textContent = m; err.style.display = 'block'; }
+    if(!id){ show('아이디를 입력하세요.'); return; }
+    if(id.indexOf('@') < 0) id = id.toLowerCase().replace(/-/g,'') + '@pureun.kr';
+    if(!cur){ show('현재 비밀번호를 입력하세요.'); return; }
+    if(n1.length < 6){ show('새 비밀번호는 6자 이상이어야 합니다.'); return; }
+    if(n1 !== n2){ show('새 비밀번호가 서로 다릅니다.'); return; }
+    if(n1 === cur){ show('현재 비밀번호와 다른 비밀번호를 입력하세요.'); return; }
+    $('pwcSave').disabled = true; $('pwcSave').textContent = '변경 중…';
+    auth.signInWithEmailAndPassword(id, cur).then(function(cred){
+      return cred.user.updatePassword(n1);
+    }).then(function(){
+      $('pwModal').style.display = 'none';
+      alert('비밀번호가 변경되었습니다.');
+      // 재인증으로 이미 로그인된 상태 → onAuthStateChanged가 포털로 진입시킴
+    }).catch(function(e2){
+      var c = e2 && e2.code || '';
+      if(c === 'auth/wrong-password' || c === 'auth/invalid-credential' || c === 'auth/invalid-login-credentials') show('현재 비밀번호가 올바르지 않습니다.');
+      else if(c === 'auth/user-not-found') show('등록되지 않은 아이디입니다.');
+      else if(c === 'auth/weak-password') show('새 비밀번호가 너무 단순합니다.');
+      else if(c === 'auth/too-many-requests') show('시도가 많습니다. 잠시 후 다시 하세요.');
+      else show('변경 실패: ' + (e2 && e2.message || c));
+    }).finally(function(){
+      $('pwcSave').disabled = false; $('pwcSave').textContent = '변경하기';
+    });
+  });
 
   // ── 포털 진입: 로그인된 사용자의 계정 정보 조회 후 타일 렌더 ──
   function enterPortal(user){
