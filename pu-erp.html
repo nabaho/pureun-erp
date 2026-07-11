@@ -54560,23 +54560,31 @@ function App(){
   // ── [포털 연동] enter.html에서 로그인해 온 경우: Firebase 인증이 확인되면 자동으로 로그인 처리 ──
   // (세션 자동 설정 + 화면 전환까지. 미로그인이거나 이미 로그인 상태면 아무 것도 안 함)
   // sso=1 파라미터가 있으면 확인이 끝날 때까지 로그인 화면 대신 스플래시 표시 (번쩍임 방지)
-  var ssoS = useState(!isValidSession() && /[?&]sso=1/.test(location.search));
+  // sso=1이든 직접 접속이든, 유효 세션이 없으면 확인 대기(스플래시) — 확인 후 미로그인이면 포털로
+  // 단 ?stay=1 이 있으면 포털로 튕기지 않고 자체 로그인 화면 표시 (비상 탈출용)
+  var _stayHere = /[?&]stay=1/.test(location.search);
+  var ssoS = useState(!isValidSession() && !_stayHere);
   var ssoWait = ssoS[0]; var setSsoWait = ssoS[1];
   useEffect(function(){
+    if(_stayHere){ setSsoWait(false); return; }
     if(typeof firebase === 'undefined' || !firebase.auth){ setSsoWait(false); return; }
     var to = setTimeout(function(){ setSsoWait(false); }, 6000);  // 안전장치: 6초 내 확인 안 되면 로그인 화면 표시
     var off = firebase.auth().onAuthStateChanged(function(user){
-      if(!user || !user.email){ setSsoWait(false); return; }
-      if(isLoggedIn || getSessionSid()){ setSsoWait(false); return; }
+      if(isLoggedIn || getSessionSid()){ setSsoWait(false); return; }  // 이미 로그인 상태면 통과
+      // [안②] Firebase 인증이 없다(로그인 안 됨) → 포털로 보냄 (자체 로그인 화면 대신)
+      if(!user || !user.email){ location.replace('enter.html'); return; }
       try {
         var _em = String(user.email).toLowerCase();
         var _us = dbGet('user_accounts', USERS_SEED) || [];
         var _acct = _us.find(function(x){ return sidToEmail(x.sid) === _em; });
         if(_acct && (_acct.status === 'active' || (_acct.status === 'leave' && _acct.leaveLoginAllowed === true))){
           handleLogin(_acct.sid);
+          setSsoWait(false);
+        } else {
+          // 이메일은 있으나 명부에 없거나 퇴직 → 포털로
+          location.replace('enter.html');
         }
-      } catch(_){}
-      setSsoWait(false);
+      } catch(_){ setSsoWait(false); }
     });
     return function(){ clearTimeout(to); try { off && off(); } catch(_){} };
   }, [isLoggedIn]);
