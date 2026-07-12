@@ -909,11 +909,11 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
       <div class="login-card">
         <div class="login-field">
           <label>아이디</label>
-          <input type="text" id="loginName" placeholder="이름 입력" autocomplete="off">
+          <input type="text" id="loginId" placeholder="아이디 (예: p001@pureun.kr)" autocomplete="username">
         </div>
         <div class="login-field">
           <label>비밀번호</label>
-          <input type="password" id="loginPw" placeholder="비밀번호" autocomplete="off">
+          <input type="password" id="loginPw" placeholder="비밀번호" autocomplete="current-password">
         </div>
         <div class="login-row">
           <label class="login-remember"><input type="checkbox" id="loginRemember"> 자동 로그인</label>
@@ -1177,7 +1177,7 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 
 <script>
 // ===== localStorage 안전 래퍼 (용량 초과 방지) =====
-const LS_VALID_KEYS=['p_staff','p_types','p_cos','p_scheds','p_env','p_fieldState','p_lastUserId','p_session','p_autoSession','p_loginFails','p_loginLock','p_roundlog','p_favCos','p_autobackups','p_autoDl','p_autoKeep','p_lastAutoDl','p_autoDlFreq','p_dashW','p_dashHintSeen','p_dashMCollapsed','p_dashMineFirst','p_photoHashes','p_conflictMatrix','p_conflictMigrated'];
+const LS_VALID_KEYS=['p_staff','p_types','p_cos','p_scheds','p_env','p_fieldState','p_lastUserId','p_lastLoginEmail','p_session','p_autoSession','p_loginFails','p_loginLock','p_roundlog','p_favCos','p_autobackups','p_autoDl','p_autoKeep','p_lastAutoDl','p_autoDlFreq','p_dashW','p_dashHintSeen','p_dashMCollapsed','p_dashMineFirst','p_photoHashes','p_conflictMatrix','p_conflictMigrated'];
 // 시작 시: 이 앱의 잔재 키(p_ 접두사인데 목록에 없는 것)만 제거 — 다른 앱(포털·ERP 등) 키는 절대 건드리지 않음
 (function cleanupLS(){
   try{
@@ -1280,9 +1280,13 @@ function fbInit(){
           const acct=(list||[]).find(a=>a&&(String(a.sid||'').toLowerCase().replace(/-/g,'')+'@pureun.kr')===em);
           if(!acct||acct.status==='retired')return;
           const st=getStaff().find(s=>s.name===acct.name);
-          if(!st)return;
-          setSession({id:st.id,name:st.name,color:st.color,isAdmin:!!st.isAdmin},false);
-          lsSet('p_lastUserId',st.id);
+          if(st){
+            setSession({id:st.id,name:st.name,color:st.color,isAdmin:!!st.isAdmin},false);
+            lsSet('p_lastUserId',st.id);
+          }else{
+            // 컨설팅 담당자 목록에 없는 직원(사무직 등) → 열람자
+            setSession({id:'view-'+(acct.sid||em),name:acct.name,color:'#94a3b8',isAdmin:false,viewer:true},false);
+          }
           closeModal('mbLogin');
           applySession();
         }).catch(()=>{});
@@ -2228,15 +2232,14 @@ function isAdmin(){return getSession()?.isAdmin===true;}
 function myId(){return getSession()?.id||'';}
 
 function initLogin(){
-  const lastId=localStorage.getItem('p_lastUserId')||'';
-  const last=getStaff().find(s=>s.id===lastId);
-  const inp=q('#loginName');
-  if(inp)inp.value=last?last.name:'';
+  const inp=q('#loginId');
+  // 마지막 로그인 아이디(이메일) 복원 — 포털과 동일 키 사용 안 하고 컨설팅 자체 보관
+  const lastEmail=localStorage.getItem('p_lastLoginEmail')||'';
+  if(inp)inp.value=lastEmail;
   q('#loginErr').classList.remove('on');
 }
 
 async function doLogin(){
-  const staff=getStaff();
   const err=q('#loginErr');
   // 무차별 대입 방지: 5회 실패 시 30초 잠금
   const lockUntil=+localStorage.getItem('p_loginLock')||0;
@@ -2244,33 +2247,65 @@ async function doLogin(){
     const sec=Math.ceil((lockUntil-Date.now())/1000);
     err.textContent=`로그인 시도가 많아 ${sec}초간 잠겼습니다.`;err.classList.add('on');return;
   }
-  const name=q('#loginName').value.trim();
-  if(!name){err.textContent='이름을 입력해주세요.';err.classList.add('on');q('#loginName').focus();return;}
-  const user=staff.find(s=>s.name===name);
-  const pw=q('#loginPw').value;
-  let ok=false;
-  if(user){ try{ ok=await verifyPw(pw,user.pin); }catch(e){ ok=(pw==='123456'); } } // 검증 오류 시 기본 비번만 허용
-  if(!ok){
-    // 미존재 사용자도 동일 처리·동일 메시지 (사용자 열거 방지)
+  const idRaw=(q('#loginId').value||'').trim();
+  const pw=q('#loginPw').value||'';
+  if(!idRaw){err.textContent='아이디를 입력해주세요.';err.classList.add('on');q('#loginId').focus();return;}
+  if(!pw){err.textContent='비밀번호를 입력해주세요.';err.classList.add('on');q('#loginPw').focus();return;}
+  // 아이디 → 이메일 (이메일이면 그대로, 사번이면 변환: P-001 → p001@pureun.kr)
+  const email=(idRaw.indexOf('@')>=0)?idRaw.toLowerCase()
+             :(/^[A-Za-z]+-?\d+$/.test(idRaw)?(idRaw.toLowerCase().replace(/-/g,'')+'@pureun.kr'):'');
+  if(!email){err.textContent='이메일 형식으로 입력하세요. (예: p001@pureun.kr)';err.classList.add('on');return;}
+
+  q('#loginBtn').disabled=true; err.classList.remove('on');
+  const remember=q('#loginRemember')?.checked;
+  try{
+    // 자동로그인 지속성
+    const persist=remember?firebase.auth.Auth.Persistence.LOCAL:firebase.auth.Auth.Persistence.SESSION;
+    await firebase.auth().setPersistence(persist);
+    await firebase.auth().signInWithEmailAndPassword(email,pw);
+    // 인증 성공 → user_accounts에서 이메일→이름 확인
+    const snap=await _fbDB.ref('data/user_accounts').once('value');
+    let raw=snap.val(); let list=(raw&&raw.v!==undefined)?raw.v:raw;
+    if(list&&!Array.isArray(list)&&typeof list==='object')list=Object.values(list);
+    const em=email;
+    const acct=(list||[]).find(a=>a&&(String(a.sid||'').toLowerCase().replace(/-/g,'')+'@pureun.kr')===em);
+    if(!acct||acct.status==='retired'){
+      err.textContent='이 계정은 사용할 수 없습니다. 관리자에게 문의하세요.';err.classList.add('on');
+      q('#loginBtn').disabled=false; try{await firebase.auth().signOut();}catch(_){}
+      return;
+    }
+    // 이름으로 p_staff 매칭: 있으면 담당자 세션, 없으면(사무직 등) 열람자 세션 (A안)
+    localStorage.setItem('p_loginFails',0);
+    try{ localStorage.setItem('p_lastLoginEmail', idRaw); }catch(_){}
+    const st=getStaff().find(s=>s.name===acct.name);
+    if(st){
+      lsSet('p_lastUserId',st.id);
+      setSession({id:st.id,name:st.name,color:st.color,isAdmin:!!st.isAdmin},remember);
+    }else{
+      // 컨설팅 담당자 목록에 없는 직원 → 열람자 (담당자 색상 없음, 관리자 아님)
+      setSession({id:'view-'+(acct.sid||em),name:acct.name,color:'#94a3b8',isAdmin:false,viewer:true},remember);
+    }
+    closeModal('mbLogin');
+    applySession();
+  }catch(e){
+    q('#loginBtn').disabled=false;
+    const code=(e&&e.code)||'';
     let fails=(+localStorage.getItem('p_loginFails')||0)+1;
     localStorage.setItem('p_loginFails',fails);
     if(fails>=5){
       localStorage.setItem('p_loginLock',Date.now()+30000);
       localStorage.setItem('p_loginFails',0);
       err.textContent='5회 실패 — 30초간 잠금됩니다.';
+    }else if(code==='auth/wrong-password'||code==='auth/invalid-credential'){
+      err.textContent=`비밀번호가 올바르지 않습니다. (${fails}/5)`;
+    }else if(code==='auth/user-not-found'){
+      err.textContent='계정을 찾을 수 없습니다. 관리자에게 문의하세요.';
     }else{
-      err.textContent=`이름 또는 비밀번호가 올바르지 않습니다. (${fails}/5) — 초기화된 경우 123456으로 로그인하세요.`;
+      err.textContent=`로그인에 실패했습니다. (${fails}/5)`;
     }
     err.classList.add('on');
     q('#loginPw').value='';q('#loginPw').focus();
-    return;
   }
-  localStorage.setItem('p_loginFails',0);
-  lsSet('p_lastUserId',user.id);
-  const remember=q('#loginRemember')?.checked;
-  setSession({id:user.id,name:user.name,color:user.color,isAdmin:!!user.isAdmin},remember);
-  closeModal('mbLogin');
-  applySession();
 }
 
 function doLogout(){
@@ -4862,7 +4897,7 @@ function bind(){
   q('#attFilter').onchange=e=>{S.attFilter=e.target.value;renderCal();};
   q('#zipBtn').onclick=exportZip;
   q('#loginBtn').onclick=doLogin;
-  q('#loginName').onkeydown=e=>{if(e.key==='Enter')doLogin();};
+  q('#loginId').onkeydown=e=>{if(e.key==='Enter')doLogin();};
   q('#loginPw').onkeydown=e=>{if(e.key==='Enter')doLogin();};
   q('#notifBtn').onclick=toggleNotifPanel;
   q('#statsBtn').onclick=openStatsPanel;
