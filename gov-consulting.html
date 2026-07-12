@@ -1272,10 +1272,7 @@ function fbInit(){
       }
       // [포털 연동] 포털에서 이메일 로그인해 온 경우: ERP 명부(이메일→이름) 조회 후 자동 로그인 (튕기기 없음)
       if(u.email && !getSession()){
-        _fbDB.ref('data/user_accounts').once('value').then(snap=>{
-          let raw=snap.val();
-          let list=(raw&&raw.v!==undefined)?raw.v:raw;
-          if(list&&!Array.isArray(list)&&typeof list==='object')list=Object.values(list);
+        _fetchRoster().then(list=>{
           const em=String(u.email).toLowerCase();
           const acct=(list||[]).find(a=>a&&(String(a.sid||'').toLowerCase().replace(/-/g,'')+'@pureun.kr')===em);
           if(!acct||acct.status==='retired')return;
@@ -1293,6 +1290,17 @@ function fbInit(){
       }
     });
   }catch(e){console.warn('FB 초기화 실패',e);updateFbStatus('⚪');}
+}
+
+// [보안규칙 대비] 명부 읽기 공용: user_dir(공개 명부, 로그인용 최소정보) 우선 → 없으면 user_accounts 폴백.
+//   규칙 적용 후 일반 직원은 user_accounts 읽기가 거부되므로 user_dir이 로그인 경로. sid·name·status만 쓰므로 충분.
+function _fetchRoster(){
+  const norm=raw=>{let l=(raw&&raw.v!==undefined)?raw.v:raw; if(l&&!Array.isArray(l)&&typeof l==='object')l=Object.values(l); return l;};
+  return _fbDB.ref('data/user_dir').once('value').then(s=>{
+    const l=norm(s.val());
+    if(l&&l.length) return l;
+    return _fbDB.ref('data/user_accounts').once('value').then(s2=>norm(s2.val())||[]);
+  }).catch(()=>_fbDB.ref('data/user_accounts').once('value').then(s2=>norm(s2.val())||[]).catch(()=>[]));
 }
 
 // 시작 시 Firebase → localStorage (서버 우선)
@@ -2263,10 +2271,8 @@ async function doLogin(){
     const persist=remember?firebase.auth.Auth.Persistence.LOCAL:firebase.auth.Auth.Persistence.SESSION;
     await firebase.auth().setPersistence(persist);
     await firebase.auth().signInWithEmailAndPassword(email,pw);
-    // 인증 성공 → user_accounts에서 이메일→이름 확인
-    const snap=await _fbDB.ref('data/user_accounts').once('value');
-    let raw=snap.val(); let list=(raw&&raw.v!==undefined)?raw.v:raw;
-    if(list&&!Array.isArray(list)&&typeof list==='object')list=Object.values(list);
+    // 인증 성공 → 명부(user_dir 우선)에서 이메일→이름 확인
+    const list=await _fetchRoster();
     const em=email;
     const acct=(list||[]).find(a=>a&&(String(a.sid||'').toLowerCase().replace(/-/g,'')+'@pureun.kr')===em);
     if(!acct||acct.status==='retired'){
