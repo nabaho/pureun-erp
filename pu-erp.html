@@ -54563,19 +54563,37 @@ function App(){
   var ssoWait = ssoS[0]; var setSsoWait = ssoS[1];
   useEffect(function(){
     if(typeof firebase === 'undefined' || !firebase.auth){ setSsoWait(false); return; }
-    var to = setTimeout(function(){ setSsoWait(false); }, 6000);  // 6초 내 확인 안 되면 로그인 화면
+    var to = setTimeout(function(){ setSsoWait(false); }, 8000);  // 8초 내 확인 안 되면 로그인 화면
+    // 이메일 → 계정 매칭 후 로그인. 로컬 명부에 없으면 Firebase에서 직접 조회(명부 로딩 전이어도 확실히 매칭)
+    function _tryLoginByEmail(email){
+      var _em = String(email).toLowerCase();
+      function _match(list){
+        try {
+          var _acct = (list||[]).find(function(x){ return x && sidToEmail(x.sid) === _em; });
+          if(_acct && (_acct.status === 'active' || (_acct.status === 'leave' && _acct.leaveLoginAllowed === true))){
+            handleLogin(_acct.sid); return true;
+          }
+        } catch(_){}
+        return false;
+      }
+      // 1차: 로컬 명부
+      var _local = null; try { _local = dbGet('user_accounts', USERS_SEED); } catch(_){}
+      if(_match(_local)){ setSsoWait(false); return; }
+      // 2차: Firebase에서 직접 조회 (로컬이 아직 로딩 전인 경우)
+      try {
+        firebase.database().ref('user_accounts').once('value').then(function(snap){
+          var raw = snap.val();
+          var list = (raw && raw.v !== undefined) ? raw.v : raw;
+          if(list && !Array.isArray(list) && typeof list === 'object') list = Object.values(list);
+          _match(list);
+          setSsoWait(false);
+        }).catch(function(){ setSsoWait(false); });
+      } catch(_){ setSsoWait(false); }
+    }
     var off = firebase.auth().onAuthStateChanged(function(user){
       if(!user || !user.email){ setSsoWait(false); return; }
       if(isLoggedIn || getSessionSid()){ setSsoWait(false); return; }
-      try {
-        var _em = String(user.email).toLowerCase();
-        var _us = dbGet('user_accounts', USERS_SEED) || [];
-        var _acct = _us.find(function(x){ return sidToEmail(x.sid) === _em; });
-        if(_acct && (_acct.status === 'active' || (_acct.status === 'leave' && _acct.leaveLoginAllowed === true))){
-          handleLogin(_acct.sid);
-        }
-      } catch(_){}
-      setSsoWait(false);
+      _tryLoginByEmail(user.email);
     });
     return function(){ clearTimeout(to); try { off && off(); } catch(_){} };
   }, [isLoggedIn]);
