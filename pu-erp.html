@@ -54555,6 +54555,39 @@ function App(){
     setSession(sid);
     refreshCurrentUser();
     setIsLoggedIn(true);
+    try { recordUidRole(sid); } catch(_){}  // Firebase 보안규칙용 uid→role 매핑 자동기록 (규칙 미적용 상태에선 무해)
+  }
+
+  // ── [보안규칙 준비] 로그인한 사람의 uid에 role·권한 플래그를 uid_roles/{uid}에 기록 ──
+  // 목적: Firebase 규칙이 배열(user_accounts) 대신 uid_roles/{uid}를 O(1)로 읽어 재무·급여·개인정보 접근을 판별.
+  // 지금은 규칙을 켜지 않으므로 "기록만" 하며 앱 동작에 영향 없음. 직원 전원이 한 번씩 로그인하면 매핑이 채워짐.
+  function recordUidRole(sid){
+    if(typeof firebase === 'undefined' || !firebase.auth || !firebase.database) return;
+    var u = firebase.auth().currentUser;
+    if(!u || !u.uid) return;               // 이메일 인증 상태에서만 기록 (익명은 skip)
+    var accs = dbGet('user_accounts', USERS_SEED) || [];
+    var acct = accs.find(function(x){ return x && x.sid === sid; });
+    if(!acct) return;
+    var isAdmin = (acct.role==='admin' || acct.role==='admin-delegate' || acct.isAdmin===true);
+    var isSub   = (acct.isSubAdmin===true);
+    var isFull  = (acct.isFullViewer===true);
+    // security_perms에 재무(fin)/인사(hr) 메뉴가 있으면 해당 권한 보유로 표시
+    var perms = dbGet('security_perms', {}) || {};
+    var mine = perms[sid] || [];
+    var hasFin = isAdmin || isSub || mine.some(function(id){ return String(id).indexOf('fin/')===0; });
+    var hasHr  = isAdmin || isSub || mine.some(function(id){ return String(id).indexOf('hr/')===0; });
+    var rec = {
+      sid: sid,
+      role: acct.role || 'staff',
+      isAdmin: !!isAdmin,
+      isSubAdmin: !!isSub,
+      isFullViewer: !!isFull,
+      fin: !!hasFin,          // 재무·급여 접근 가능 여부 (규칙이 이 값을 봄)
+      hr: !!hasHr,
+      status: acct.status || 'active',
+      updatedAt: Date.now()
+    };
+    firebase.database().ref('uid_roles/' + u.uid).set(rec).catch(function(){});
   }
 
   // ── [포털 연동] enter.html에서 로그인해 온 경우: Firebase 인증이 확인되면 자동 로그인 (튕기기 없음) ──
