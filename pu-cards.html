@@ -313,9 +313,35 @@ body.pc #pcDetail{display:flex}
 #pcDetail .pdacts button:hover{background:#eaf1fe;color:#1d4fc4;border-color:#cfe0fb}
 #pcDetail .pdacts button.danger{color:#c0392b}
 #pcDetail .pdmemo{background:#f7f9fc;border:1px solid #eef1f6;border-radius:9px;padding:11px;font-size:13px;color:#475569;white-space:pre-wrap;line-height:1.6}
+#cardsLogin{position:fixed;inset:0;z-index:9999;background:#f4f6fb;display:none;align-items:center;justify-content:center;padding:20px}
+#cardsLogin .cl-card{width:100%;max-width:360px;background:#fff;border:1px solid #e8ecf3;border-radius:16px;padding:28px 24px;box-shadow:0 10px 40px rgba(20,30,50,.08)}
+#cardsLogin .cl-brand{display:flex;align-items:center;gap:12px;margin-bottom:22px}
+#cardsLogin .cl-mark{width:44px;height:44px;border-radius:12px;background:#1e2a47;color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800}
+#cardsLogin .cl-name{font-size:18px;font-weight:800;color:#1b2536}
+#cardsLogin .cl-sub{font-size:12px;color:#8b98b3;margin-top:2px}
+#cardsLogin .cl-field{margin-bottom:14px}
+#cardsLogin .cl-field label{display:block;font-size:12.5px;color:#5a6885;margin-bottom:6px}
+#cardsLogin .cl-field input{width:100%;padding:11px 14px;border:1px solid #e8ecf3;border-radius:11px;font-size:14px;box-sizing:border-box}
+#cardsLogin .cl-field input:focus{outline:none;border-color:#1e2a47}
+#cardsLogin .cl-remember{display:flex;align-items:center;gap:7px;font-size:13px;color:#5a6885;margin-bottom:16px;cursor:pointer}
+#cardsLogin .cl-err{background:#fdecec;color:#c0392b;font-size:13px;padding:9px 12px;border-radius:10px;margin-bottom:12px}
+#cardsLogin .cl-btn{width:100%;padding:13px;background:#1e2a47;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer}
+#cardsLogin .cl-btn:hover{background:#2c3c66}
+#cardsLogin .cl-btn:disabled{opacity:.6;cursor:default}
 </style>
 </head>
 <body>
+
+<div id="cardsLogin">
+  <div class="cl-card">
+    <div class="cl-brand"><span class="cl-mark">푸</span><div><div class="cl-name">푸른명함첩</div><div class="cl-sub">푸른노무법인 · 명함 관리</div></div></div>
+    <div class="cl-field"><label>아이디</label><input id="cardsLoginId" type="text" placeholder="아이디 (예: p001@pureun.kr)" autocomplete="username"></div>
+    <div class="cl-field"><label>비밀번호</label><input id="cardsLoginPw" type="password" placeholder="비밀번호" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLoginCards()"></div>
+    <label class="cl-remember"><input id="cardsLoginRemember" type="checkbox" checked> 자동 로그인</label>
+    <div id="cardsLoginErr" class="cl-err" style="display:none"></div>
+    <button id="cardsLoginBtn" class="cl-btn" onclick="doLoginCards()">로그인</button>
+  </div>
+</div>
 
 <div id="appbar">
   <div class="logo">명함첩</div>
@@ -461,12 +487,12 @@ const Store = {
         this.db.ref(DB_ROOT+'/trash').on('value', s => { state.trash = s.val()||{};
           if(!Store._trashPurgeDone){ Store._trashPurgeDone=true; setTimeout(purgeTrash, 2000); } });
       };
-      /* ERP와 동일하게 익명 인증 완료 후 구독 (보안규칙 auth!=null 대응) */
+      /* 통합 이메일 로그인 (포털·ERP·컨설팅과 같은 Firebase 세션 공유) */
       if (firebase.auth){
         firebase.auth().onAuthStateChanged(u=>{
-          if (u){ subscribe(); }
-          else firebase.auth().signInAnonymously().catch(e=>{
-            console.warn('[Auth]', e&&e.message); subscribe(); /* 실패해도 시도 */ });
+          if (u && u.email){ hideCardsLogin(); subscribe(); }
+          else if (u){ firebase.auth().signOut().catch(()=>{}); }  /* 익명 세션 잔재 제거 */
+          else { showCardsLogin(); }
         });
       } else subscribe();
     } else {
@@ -550,6 +576,37 @@ const Store = {
 
 /* ── 유틸 ── */
 const $ = id => document.getElementById(id);
+
+/* ══════ 통합 이메일 로그인 ══════ */
+function showCardsLogin(){ const el=$('cardsLogin'); if(el) el.style.display='flex'; }
+function hideCardsLogin(){ const el=$('cardsLogin'); if(el) el.style.display='none'; }
+async function doLoginCards(){
+  const err=$('cardsLoginErr');
+  const idRaw=($('cardsLoginId').value||'').trim();
+  const pw=$('cardsLoginPw').value||'';
+  if(!idRaw){ err.textContent='아이디를 입력하세요.'; err.style.display='block'; return; }
+  if(!pw){ err.textContent='비밀번호를 입력하세요.'; err.style.display='block'; return; }
+  /* 아이디 → 이메일 (이메일이면 그대로, 사번이면 변환: P-001 → p001@pureun.kr) */
+  const email=(idRaw.indexOf('@')>=0)?idRaw.toLowerCase()
+             :(/^[A-Za-z]+-?\d+$/.test(idRaw)?(idRaw.toLowerCase().replace(/-/g,'')+'@pureun.kr'):'');
+  if(!email){ err.textContent='이메일 형식으로 입력하세요 (예: p001@pureun.kr).'; err.style.display='block'; return; }
+  $('cardsLoginBtn').disabled=true; err.style.display='none';
+  try{
+    const remember=$('cardsLoginRemember') && $('cardsLoginRemember').checked;
+    const persist=remember?firebase.auth.Auth.Persistence.LOCAL:firebase.auth.Auth.Persistence.SESSION;
+    await firebase.auth().setPersistence(persist);
+    await firebase.auth().signInWithEmailAndPassword(email,pw);
+    /* onAuthStateChanged가 로그인 감지 → 화면 전환 + 데이터 로드 */
+  }catch(e){
+    $('cardsLoginBtn').disabled=false;
+    const code=(e&&e.code)||'';
+    if(code==='auth/wrong-password'||code==='auth/invalid-credential') err.textContent='비밀번호가 올바르지 않습니다.';
+    else if(code==='auth/user-not-found') err.textContent='계정을 찾을 수 없습니다. 관리자에게 문의하세요.';
+    else err.textContent='로그인에 실패했습니다.';
+    err.style.display='block';
+  }
+}
+function doLogoutCards(){ try{ firebase.auth().signOut(); }catch(e){} }
 const esc = s => String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid = () => 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
 const digits = s => String(s||'').replace(/\D/g,'');
@@ -1484,6 +1541,7 @@ function openMenu(){
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');cleanEmpty()">🧽 빈 명함 정리</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openTrash()">🗑 휴지통 (삭제 명함 30일 보관)</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openSettings()">🤖 AI 키 설정</button>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');doLogoutCards()">🚪 로그아웃</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');wipeAll()" style="color:#c0392b">🗑 전체 비우기 (현재 탭)
       <span style="margin-left:auto;color:#c0392b;font-size:12px">되돌릴 수 없음</span></button>`;
   $('menuBg').classList.add('open');
