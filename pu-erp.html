@@ -2305,7 +2305,7 @@ var FB_ALL_SYNC_KEYS = [
   'leave_grants','leave_of_absence','leave_ledger','mgr_rates','policy_access',
   'biz_case_types','biz_cons_types','biz_fund_types','biz_other_types',
   'activity_log','trash_bin','consult_logs',
-  'user_accounts','finance_expense','company_info','my_work_items','my_todos','closed_archive',
+  'user_accounts','user_dir','finance_expense','company_info','my_work_items','my_todos','closed_archive',
   'retirement_settlements','employment_contracts','finance_invoice',
   'recurring_expenses','pay_items','accounts','external_staff',
   'overtime_records','special_leave_grants','comp_leave_records',
@@ -53289,15 +53289,44 @@ function LoginScreen(props){
         return (typeof fbInitialSync === 'function') ? fbInitialSync() : null;
       }).then(function(){
         // 캐시가 낡아 계정을 못 찾는 문제 방지 — 로그인 판단용 명부를 서버에서 직접 읽음
-        return fbDb.ref('data/user_accounts').once('value').then(function(snap){
-          var sv = snap.val();
-          var fresh = (sv && sv.v !== undefined) ? normalizeFbValue(sv.v) : null;
-          if(fresh && fresh.length){
-            try { localStorage.setItem(KEY+'user_accounts', JSON.stringify(fresh)); localStorage.setItem(KEY+'_meta_user_accounts', String(sv.u||Date.now())); _dbCache['user_accounts']=fresh; } catch(_){}
-            return fresh;
+        // [보안규칙 대비] user_dir(공개 명부: 로그인·권한용 필드만) 우선 → 없으면 기존 user_accounts.
+        //   규칙 적용 후 일반 직원은 user_accounts 읽기가 거부되므로 user_dir이 로그인 경로가 됨.
+        return fbDb.ref('data/user_dir').once('value').then(function(dsnap){
+          var dv = dsnap.val();
+          var dir = (dv && dv.v !== undefined) ? normalizeFbValue(dv.v) : null;
+          if(dir && dir.length){
+            // 슬림 명부를 로컬 명부로 저장 → 새 기기에서도 권한판별(buildCurrentUser)·이름표시 작동.
+            // 이미 로컬에 전체 명부(민감정보 포함)가 있으면 덮지 않음(관리자 기기 보호).
+            try {
+              var _exRaw = localStorage.getItem(KEY+'user_accounts');
+              var _ex = _exRaw ? JSON.parse(_exRaw) : null;
+              var _exFull = Array.isArray(_ex) && _ex.length && _ex[0] && (_ex[0].loginPw !== undefined || _ex[0].rrn !== undefined);
+              if(!_exFull){ localStorage.setItem(KEY+'user_accounts', JSON.stringify(dir)); _dbCache['user_accounts']=dir; }
+            } catch(_){}
+            return dir;
           }
-          return dbGet('user_accounts', USERS_SEED) || [];
-        }).catch(function(){ return dbGet('user_accounts', USERS_SEED) || []; });
+          // user_dir 없음(아직 미생성) → 기존 경로
+          return fbDb.ref('data/user_accounts').once('value').then(function(snap){
+            var sv = snap.val();
+            var fresh = (sv && sv.v !== undefined) ? normalizeFbValue(sv.v) : null;
+            if(fresh && fresh.length){
+              try { localStorage.setItem(KEY+'user_accounts', JSON.stringify(fresh)); localStorage.setItem(KEY+'_meta_user_accounts', String(sv.u||Date.now())); _dbCache['user_accounts']=fresh; } catch(_){}
+              return fresh;
+            }
+            return dbGet('user_accounts', USERS_SEED) || [];
+          }).catch(function(){ return dbGet('user_accounts', USERS_SEED) || []; });
+        }).catch(function(){
+          // user_dir 읽기 실패 → 기존 경로
+          return fbDb.ref('data/user_accounts').once('value').then(function(snap){
+            var sv = snap.val();
+            var fresh = (sv && sv.v !== undefined) ? normalizeFbValue(sv.v) : null;
+            if(fresh && fresh.length){
+              try { localStorage.setItem(KEY+'user_accounts', JSON.stringify(fresh)); localStorage.setItem(KEY+'_meta_user_accounts', String(sv.u||Date.now())); _dbCache['user_accounts']=fresh; } catch(_){}
+              return fresh;
+            }
+            return dbGet('user_accounts', USERS_SEED) || [];
+          }).catch(function(){ return dbGet('user_accounts', USERS_SEED) || []; });
+        });
       }).then(function(users2){
         var acct = users2.find(function(x){ return _canLogin(x) && _matches(x); });
         if(!acct){
@@ -54605,7 +54634,28 @@ function App(){
     setIsLoggedIn(true);
     try { recordUidRole(sid); } catch(_){}  // Firebase 보안규칙용 uid→role 매핑 자동기록 (규칙 미적용 상태에선 무해)
     try { _purgeFinCacheIfNoPerm(sid); } catch(_){}  // 재무권한 없는 직원: 기기에 남은 재무 캐시 삭제
+    try { _syncUserDir(); } catch(_){}  // 관리자 로그인 시 로그인용 공개 명부(user_dir) 갱신
   }
+
+  // ── [보안규칙 대비] 로그인용 공개 명부 user_dir 생성·갱신 (관리자·위임관리인 기기에서만) ──
+  // user_accounts에서 로그인·권한판별·이름표시에 필요한 필드만 추출 — 민감정보(주민번호·계좌·주소·생년월일·비번해시·연락처) 제외.
+  // 규칙 적용 후: user_dir=누구나 읽기(로그인용), user_accounts=재무권한자만 → 일반 직원 F12로 민감정보 차단.
+  function _syncUserDir(){
+    if(typeof fbDb === 'undefined' || !fbDb) return;
+    if(!(CURRENT_USER && (CURRENT_USER.isAdmin || CURRENT_USER.isSubAdmin))) return;  // 쓰기 권한자만
+    var accs = dbGet('user_accounts', USERS_SEED) || [];
+    var dir = accs.map(function(u){
+      return {
+        sid: u.sid, name: u.name, loginId: u.loginId || u.name,
+        role: u.role || 'staff', title: u.title || '', branch: u.branch || '천안본사',
+        status: u.status || 'active', leaveLoginAllowed: (u.leaveLoginAllowed === true),
+        isSubAdmin: (u.isSubAdmin === true), isFullViewer: (u.isFullViewer === true),
+        sortOrder: u.sortOrder || 999
+      };
+    });
+    fbDb.ref('data/user_dir').set({ v: dir, u: Date.now() }).catch(function(){});
+  }
+  window.erpSyncUserDir = _syncUserDir;  // 콘솔 수동 실행용
 
   // ── [보안규칙 대비] 재무권한(fin) 없는 직원 로그인 시 로컬에 남은 재무·급여 캐시 삭제 ──
   // 규칙이 꺼진 지금은 초기 동기화가 다시 받아와 무해. 규칙 적용 후엔 재다운로드가 거부되므로
