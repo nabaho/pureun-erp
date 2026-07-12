@@ -2296,6 +2296,27 @@ function fbShouldSync(k){
   for(var i=0; i<FB_EXCLUDE.length; i++){ if(k.indexOf(FB_EXCLUDE[i])===0) return false; }
   return true;
 }
+// ── [보안규칙 대비] 재무·급여 키 목록 (Firebase 규칙의 fin 전용 항목과 1:1 동일) ──
+var FB_FIN_KEYS = ['finance_income','finance_expense','finance_invoice','payroll_monthly','payroll_irregular','funds','mgr_rates','pay_items','dc_contributions','retirement_settlements','recurring_expenses','expense_budget','finance_bank_fee'];
+// ── [보안규칙 대비] 전체 동기화 키 (키별 폴백 읽기/구독용 — fbUploadAll과 공유) ──
+var FB_ALL_SYNC_KEYS = [
+  'contracts','cases','consultings','funds','other_projects','companies',
+  'finance_income','payroll_monthly','attendance_records','my_schedules',
+  'leave_grants','leave_of_absence','leave_ledger','mgr_rates','policy_access',
+  'biz_case_types','biz_cons_types','biz_fund_types','biz_other_types',
+  'activity_log','trash_bin','consult_logs',
+  'user_accounts','finance_expense','company_info','my_work_items','my_todos','closed_archive',
+  'retirement_settlements','employment_contracts','finance_invoice',
+  'recurring_expenses','pay_items','accounts','external_staff',
+  'overtime_records','special_leave_grants','comp_leave_records',
+  'min_wage','insurance_rates','withholding_brackets','holidays',
+  'expense_budget','app_settings',
+  'locked_payroll_months','locked_expense_months','locked_income_months',
+  'locked_contract_months','locked_irregular_months',
+  'policy_leave','policy_loa','policy_perf','policy_special_leave','policy_vat',
+  'pension_policy','security_perms',
+  'payroll_irregular','contract_forms','dc_contributions','biz_cases'
+];
 // App Check reCAPTCHA v3 사이트키 — Firebase 콘솔에서 발급 후 따옴표 안에 붙여넣기 (비어있으면 비활성, 동작에 영향 없음)
 var FB_APPCHECK_KEY = '6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
 try {
@@ -4580,30 +4601,9 @@ function logActivity(action, evType, evId, targetSid, evTitle, extra){
 // === PC 데이터 전체 RTDB 업로드 (처음 동기화 시 1회 실행) ===
 function fbUploadAll(onProgress, onDone){
   if(!fbDb){ if(onDone) onDone(false, 'Firebase 미연결'); return; }
-  var SYNC_KEYS = [
-    'contracts','cases','consultings','funds','other_projects','companies',
-    'finance_income','payroll_monthly','attendance_records','my_schedules',
-    'leave_grants','leave_of_absence','leave_ledger','mgr_rates','policy_access',
-    'biz_case_types','biz_cons_types','biz_fund_types','biz_other_types',
-    'activity_log','trash_bin','consult_logs',
-    // ── 추가 동기화 키 ──
-    'user_accounts','finance_expense','company_info','my_work_items','my_todos','closed_archive',
-    // ── 핵심 업무 데이터 ──
-    'retirement_settlements','employment_contracts','finance_invoice',
-    'recurring_expenses','pay_items','accounts','external_staff',
-    'overtime_records','special_leave_grants','comp_leave_records',
-    // ── 설정/정책 ──
-    'min_wage','insurance_rates','withholding_brackets','holidays',
-    'expense_budget','app_settings',
-    // ── 잠금 상태 ──
-    'locked_payroll_months','locked_expense_months','locked_income_months',
-    'locked_contract_months','locked_irregular_months',
-    // ── 정책/규정 ──
-    'policy_leave','policy_loa','policy_perf','policy_special_leave','policy_vat',
-    'pension_policy','security_perms',
-    // ── 기타 업무 ──
-    'payroll_irregular','contract_forms','dc_contributions','biz_cases'
-  ];
+  // [보안규칙 대비] 전체 업로드는 관리자·위임관리인 전용 — 일반 직원 실행 시 재무 키 쓰기 거부로 멀티패스 전체 실패하므로 차단
+  if(!(CURRENT_USER && (CURRENT_USER.isAdmin || CURRENT_USER.isSubAdmin))){ if(onDone) onDone(false, '전체 업로드는 관리자 전용입니다'); return; }
+  var SYNC_KEYS = FB_ALL_SYNC_KEYS;
   var updates = {};
   var ts = Date.now();
   var count = 0;
@@ -4663,7 +4663,25 @@ function fbInitialSync(_isRetry){
     });
     if(pulled > 0) console.log('[Firebase] 초기 동기화: '+pulled+'개 항목 적용');
     return pulled;
-  }).catch(function(e){ var _im = (e && (e.message||e.code||''))+''; if(/permission|PERMISSION_DENIED/i.test(_im) && !_isRetry && typeof firebase!=='undefined' && firebase.auth && firebase.auth().currentUser){ console.warn('[Firebase] 첫 읽기 권한오류 — 토큰 갱신 후 재시도'); return firebase.auth().currentUser.getIdToken(true).catch(function(){}).then(function(){ return new Promise(function(res){ setTimeout(res, 700); }); }).then(function(){ return fbInitialSync(true); }); } console.warn('[Firebase] 초기 동기화 실패:', _im); if(/permission|PERMISSION_DENIED/i.test(_im)){ window._reloginNotice = '🔒 서버 인증이 만료되어 다시 로그인이 필요합니다.'; try { window.dispatchEvent(new CustomEvent('fb_need_relogin')); } catch(_){} } return 0; });
+  }).catch(function(e){ var _im = (e && (e.message||e.code||''))+''; if(/permission|PERMISSION_DENIED/i.test(_im) && !_isRetry && typeof firebase!=='undefined' && firebase.auth && firebase.auth().currentUser){ console.warn('[Firebase] 첫 읽기 권한오류 — 토큰 갱신 후 재시도'); return firebase.auth().currentUser.getIdToken(true).catch(function(){}).then(function(){ return new Promise(function(res){ setTimeout(res, 700); }); }).then(function(){ return fbInitialSync(true); }); } console.warn('[Firebase] 초기 동기화 실패:', _im); if(/permission|PERMISSION_DENIED/i.test(_im)){ if(typeof firebase!=='undefined' && firebase.auth && firebase.auth().currentUser){ console.warn('[Firebase] 통째 읽기 거부(권한 제한) — 키별 동기화 폴백'); return _fbInitialSyncPerKey(); } window._reloginNotice = '🔒 서버 인증이 만료되어 다시 로그인이 필요합니다.'; try { window.dispatchEvent(new CustomEvent('fb_need_relogin')); } catch(_){} } return 0; });
+}
+// ── [보안규칙 대비] 키별 초기 동기화 폴백 — data 통째 읽기가 규칙으로 거부된 일반 직원용.
+//    각 키를 개별 읽기, 권한 없는 키(재무 등)는 조용히 건너뜀. 적용 로직은 실시간 구독과 동일(_fbApplyRemote 재사용: 급감차단 포함).
+function _fbInitialSyncPerKey(){
+  if(!fbDb) return Promise.resolve(0);
+  var apply = window._fbApplyRemote;
+  if(typeof apply !== 'function'){ console.warn('[Firebase] 키별 폴백: 적용 함수 미준비 — 구독이 곧 커버'); return Promise.resolve(0); }
+  return Promise.all(FB_ALL_SYNC_KEYS.map(function(k){
+    return fbDb.ref('data/'+k).once('value').then(function(s){
+      var rec = s.val();
+      if(rec){ apply(k, rec); return 1; }
+      return 0;
+    }).catch(function(){ return 0; });   // 권한 없는 키 — 건너뜀
+  })).then(function(rs){
+    var n = rs.reduce(function(a,b){ return a+b; }, 0);
+    console.log('[Firebase] 키별 초기 동기화: '+n+'개 항목 수신');
+    return n;
+  });
 }
 
 // ── #4 Tier 3 마이그레이션: 기존 배열 형식 → id-key 객체 형식 (1회 실행) ──
@@ -4746,9 +4764,8 @@ function fbSetupListener(){
         '모든 사무실 PC에서 Ctrl+Shift+R로 최신 코드를 적용하세요.');
     }
   }
-  fbDb.ref('data').on('child_changed', function(snap){
-    var k = snap.key;
-    var v = snap.val();
+  // [보안규칙 대비] 원격 레코드 적용 공용 함수 (child_changed 본문을 그대로 추출 — 급감차단·폭풍감지 포함)
+  function _applyRemote(k, v){
     if(!fbShouldSync(k)) return;
     if(!v || v.v === undefined) return;
     _fbObjForm[k] = !!(v.v && typeof v.v==='object' && !Array.isArray(v.v));
@@ -4785,7 +4802,31 @@ function fbSetupListener(){
         try { _scheduleFbChanged(k); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
       } catch(e){ window._erpErrLog && window._erpErrLog(e); }
     }
-  });
+  }
+  window._fbApplyRemote = _applyRemote; // 키별 초기 동기화 폴백(fbInitialSync)에서 재사용
+
+  // [보안규칙 대비] data 통째 구독이 거부되면(일반 직원, 규칙 적용 후) → 키별 구독으로 자동 전환.
+  //   권한 없는 키(재무 등)는 조용히 건너뜀. 규칙이 꺼져 있는 동안엔 절대 발동하지 않음.
+  function _fbEnterPerKeyListen(err){
+    var _m = (err && (err.message||err.code||''))+'';
+    if(!/permission|PERMISSION_DENIED/i.test(_m)) return;
+    if(window._fbPerKeyListen) return;
+    window._fbPerKeyListen = true;
+    try { fbDb.ref('data').off(); } catch(_){}
+    console.warn('[Firebase] data 통째 구독 거부 — 키별 구독으로 전환 ('+FB_ALL_SYNC_KEYS.length+'개)');
+    FB_ALL_SYNC_KEYS.forEach(function(kk){
+      try {
+        fbDb.ref('data/'+kk).on('value', function(snap){
+          var vv = snap.val();
+          if(vv) _applyRemote(kk, vv);
+        }, function(){ /* 권한 없는 키(재무 등) — 조용히 건너뜀 */ });
+      } catch(_){}
+    });
+  }
+
+  fbDb.ref('data').on('child_changed', function(snap){
+    _applyRemote(snap.key, snap.val());
+  }, _fbEnterPerKeyListen);
   fbDb.ref('data').on('child_added', function(snap){
     var k = snap.key;
     var v = snap.val();
@@ -4820,7 +4861,7 @@ function fbSetupListener(){
         _dbCache[k] = arrValue; // 캐시 갱신
       } catch(e){ window._erpErrLog && window._erpErrLog(e); }
     }
-  });
+  }, _fbEnterPerKeyListen);
 }
 
 // 페이지 로드 시 자동 실행 - 인증 완료 후 실행 보장
@@ -54563,6 +54604,26 @@ function App(){
     refreshCurrentUser();
     setIsLoggedIn(true);
     try { recordUidRole(sid); } catch(_){}  // Firebase 보안규칙용 uid→role 매핑 자동기록 (규칙 미적용 상태에선 무해)
+    try { _purgeFinCacheIfNoPerm(sid); } catch(_){}  // 재무권한 없는 직원: 기기에 남은 재무 캐시 삭제
+  }
+
+  // ── [보안규칙 대비] 재무권한(fin) 없는 직원 로그인 시 로컬에 남은 재무·급여 캐시 삭제 ──
+  // 규칙이 꺼진 지금은 초기 동기화가 다시 받아와 무해. 규칙 적용 후엔 재다운로드가 거부되므로
+  // 과거에 내려받아 기기에 남아있던 재무 데이터가 실제로 제거됨 (F12 노출 차단의 마지막 조각).
+  function _purgeFinCacheIfNoPerm(sid){
+    var accs = dbGet('user_accounts', USERS_SEED) || [];
+    var acct = accs.find(function(x){ return x && x.sid === sid; });
+    if(!acct) return;
+    var isAdmin = (acct.role==='admin' || acct.role==='admin-delegate' || acct.isAdmin===true);
+    var isSub = (acct.isSubAdmin===true);
+    if(isAdmin || isSub) return;                       // 관리자·위임관리인은 유지
+    var perms = dbGet('security_perms', {}) || {};
+    var mine = perms[sid] || [];
+    var hasFin = mine.some(function(id){ return String(id).indexOf('fin/')===0 || String(id).indexOf('hr/')===0; });
+    if(hasFin) return;                                 // 환경설정에서 재무·인사 권한 받은 직원도 유지
+    FB_FIN_KEYS.forEach(function(k){
+      try { localStorage.removeItem(KEY+k); localStorage.removeItem(KEY+'_meta_'+k); delete _dbCache[k]; } catch(_){}
+    });
   }
 
   // ── [보안규칙 준비] 로그인한 사람의 uid에 role·권한 플래그를 uid_roles/{uid}에 기록 ──
