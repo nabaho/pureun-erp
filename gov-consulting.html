@@ -5115,5 +5115,61 @@ function init(){
 }
 init();
 </script>
+<script>
+/* ===== 자동 로그아웃 (무활동 60분, 탭·앱 공유) + 종료 2분 전 경고 + 남은시간 배지 =====
+   ERP와 같은 localStorage('pu_last_active') 키를 공유 → 두 앱 중 아무거나 쓰면 전체 리셋 */
+(function(){
+  var LIMIT=60*60*1000, WARN=2*60*1000, AKEY='pu_last_active';
+  var badge=null, warnBox=null, tick=null;
+  function loggedIn(){ try{ return !!(sessionStorage.getItem('p_session')||localStorage.getItem('p_autoSession')); }catch(e){ return false; } }
+  function now(){ return Date.now(); }
+  function getLast(){ try{ var v=parseInt(localStorage.getItem(AKEY)||'0',10); return v>0?v:now(); }catch(e){ return now(); } }
+  function markActive(){ try{ localStorage.setItem(AKEY,String(now())); }catch(e){} hideWarn(); }
+  function fmt(ms){ if(ms<0)ms=0; var s=Math.floor(ms/1000); return ('0'+Math.floor(s/60)).slice(-2)+':'+('0'+(s%60)).slice(-2); }
+  function doAutoLogout(){
+    try{
+      var hadPortal=false;
+      try{ var u=firebase.auth().currentUser; hadPortal=!!(u&&u.email); if(hadPortal) firebase.auth().signOut(); }catch(_){}
+      try{ sessionStorage.removeItem('p_session'); localStorage.removeItem('p_autoSession'); }catch(_){}
+      var ov=document.createElement('div'); ov.style.cssText='position:fixed;inset:0;background:#eef1f7;z-index:2147483647;'; document.body.appendChild(ov);
+      setTimeout(function(){ location.replace(hadPortal ? ('enter.html?v='+now()) : (location.pathname+'?v='+now())); }, 200);
+    }catch(_){ location.reload(); }
+  }
+  function ensureBadge(){
+    if(badge && document.body.contains(badge)) return;
+    var btns=document.querySelectorAll('button,a'), lo=null;
+    for(var i=0;i<btns.length;i++){ if(/로그아웃/.test(btns[i].textContent||'')){ lo=btns[i]; break; } }
+    if(!lo) return;
+    badge=document.createElement('span');
+    badge.style.cssText='display:inline-flex;align-items:center;gap:3px;margin-right:6px;padding:3px 8px;font-size:11px;font-weight:700;color:#fff;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);border-radius:5px;white-space:nowrap;vertical-align:middle;';
+    lo.parentNode.insertBefore(badge, lo);
+  }
+  function showWarn(remMs){
+    if(!warnBox){
+      warnBox=document.createElement('div');
+      warnBox.style.cssText='position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:2147483646;background:#fff;border:1px solid #fca5a5;border-radius:12px;padding:14px 18px;box-shadow:0 14px 40px rgba(20,30,80,.22);display:flex;align-items:center;gap:14px;font-size:13px;color:#202124;';
+      var msg=document.createElement('span'); msg.id='pu-warn-msg2'; msg.style.fontWeight='600';
+      var btn=document.createElement('button'); btn.textContent='계속 사용'; btn.style.cssText='padding:7px 16px;border:none;background:#1e40af;color:#fff;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;';
+      btn.addEventListener('click', markActive);
+      warnBox.appendChild(msg); warnBox.appendChild(btn); document.body.appendChild(warnBox);
+    }
+    warnBox.style.display='flex';
+    var m=document.getElementById('pu-warn-msg2'); if(m) m.textContent='⏱ 미사용으로 곧 로그아웃됩니다 ('+fmt(remMs)+' 남음)';
+  }
+  function hideWarn(){ if(warnBox) warnBox.style.display='none'; }
+  ['mousemove','mousedown','keydown','touchstart','scroll','click'].forEach(function(ev){
+    window.addEventListener(ev, markActive, {passive:true, capture:true});
+  });
+  try{ if(!localStorage.getItem(AKEY)) markActive(); }catch(e){}
+  tick=setInterval(function(){
+    if(!loggedIn()){ if(badge) badge.style.display='none'; hideWarn(); return; }
+    ensureBadge();
+    var rem=LIMIT-(now()-getLast());
+    if(badge){ badge.style.display='inline-flex'; badge.textContent='⏱ '+fmt(rem); }
+    if(rem<=0){ clearInterval(tick); doAutoLogout(); return; }
+    if(rem<=WARN){ showWarn(rem); } else { hideWarn(); }
+  }, 1000);
+})();
+</script>
 </body>
 </html>
