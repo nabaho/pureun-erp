@@ -38967,7 +38967,7 @@ function ProjectManagementShared(props){
   var em = useState(null); var editModal = em[0]; var setEditModal = em[1];
   var dt = useState(null); var detailModal = dt[0]; var setDetailModal = dt[1];
   var cmS = useState(null); var closeModal = cmS[0]; var setCloseModal = cmS[1];
-  var sb = useState({ key:'', dir:'asc' }); var sortBy = sb[0]; var setSortBy = sb[1];
+  var sb = usePersistedState('proj_'+props.sourceKind+'_sort', { key:'', dir:'asc' }); var sortBy = sb[0]; var setSortBy = sb[1];
   var ctx = useState(null); var ctxMenu = ctx[0]; var setCtxMenu = ctx[1];
   var etId = useState(null); var editingTypeId = etId[0]; var setEditingTypeId = etId[1];
   var enId = useState(null); var editingNoId = enId[0]; var setEditingNoId = enId[1];
@@ -39065,6 +39065,16 @@ function ProjectManagementShared(props){
   function sortIcon(key){
     if(sortBy.key !== key) return ' ⇅';
     return sortBy.dir === 'asc' ? ' ↑' : ' ↓';
+  }
+  // 첫 화면 기본값으로 초기화 (상태·유형·담당·정렬·검색)
+  function resetProjView(){
+    setStatusFilter('open');
+    setTypeFilter('all');
+    setMgrFilter('all');
+    setSubMgrFilter('all');
+    setSortBy({ key:'', dir:'asc' });
+    setQuery('');
+    setMonthOnly(false);
   }
   // 통합 검색 포커스 (GlobalSearch에서 진입 시)
   var initFocus = useGlobalSearchFocus();
@@ -39289,9 +39299,53 @@ function ProjectManagementShared(props){
       return sortBy.dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
     });
   }
-  // ★ 내 담당 항목 최상단 정렬 (주담당 > 부담당 > 기타)
+  // ★ 컨설팅 첫 화면 기본 정렬: 유형별 그룹(유형 순서) + 그룹 안 진행중 먼저 + 시작일 최신순
+  var _isGrouped = (props.sourceKind === 'consulting' && !sortBy.key);
+  if(_isGrouped){
+    var _typeOrder = {};
+    types.forEach(function(t, i){ _typeOrder[t.code] = (typeof t.sortOrder === 'number' ? t.sortOrder : 1000 + i); });
+    filtered = filtered.slice().sort(function(a, b){
+      var oa = (a.typeCode in _typeOrder) ? _typeOrder[a.typeCode] : 9999;
+      var ob = (b.typeCode in _typeOrder) ? _typeOrder[b.typeCode] : 9999;
+      if(oa !== ob) return oa - ob;
+      if((a.typeCode||'') !== (b.typeCode||'')) return String(a.typeCode||'').localeCompare(String(b.typeCode||''));
+      function _statusRank(x){ return x.status === 'progress' ? 0 : x.status === 'pending' ? 1 : 2; }
+      var sa = _statusRank(a), srb = _statusRank(b);
+      if(sa !== srb) return sa - srb;
+      var da = a.startDate || a.estDate || '';
+      var db = b.startDate || b.estDate || '';
+      return db.localeCompare(da);
+    });
+  }
+  // 유형별 건수 집계 (그룹 헤더용)
+  var _grpCount = {};
+  if(_isGrouped){
+    filtered.forEach(function(it){
+      var k = it.typeCode || '';
+      if(!_grpCount[k]) _grpCount[k] = { total:0, progress:0, pending:0 };
+      _grpCount[k].total++;
+      if(it.status === 'progress') _grpCount[k].progress++;
+      else if(it.status === 'pending') _grpCount[k].pending++;
+    });
+  }
+  // 그룹 헤더 노드 (mode: 'row'=PC테이블 / 'card'=모바일)
+  function _projGroupHeader(it, mode){
+    var _gc = _grpCount[it.typeCode||''] || { total:0, progress:0, pending:0 };
+    var _label = typeName(it.typeCode) + '  ·  ' + _gc.total + '건'
+      + (_gc.progress ? '   진행중 ' + _gc.progress : '')
+      + (_gc.pending ? '  · 대기 ' + _gc.pending : '');
+    if(mode === 'card'){
+      return h('div', { key:'grp-'+(it.typeCode||'none'),
+        style:{ marginTop:'4px', padding:'5px 10px', background:'#f1f5f9', borderRadius:'6px',
+          fontSize:'11.5px', fontWeight:700, color:'#334155' } }, _label);
+    }
+    return h('tr', { key:'grp-'+(it.typeCode||'none') },
+      h('td', { colSpan:16, style:{ background:'#f1f5f9', padding:'6px 10px', fontWeight:700,
+        color:'#334155', fontSize:'11.5px', borderTop:'1px solid #e2e8f0' } }, _label));
+  }
+  // ★ 내 담당 항목 최상단 정렬 (주담당 > 부담당 > 기타) — 컨설팅 그룹뷰에서는 그룹이 우선
   var _mySid = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? CURRENT_USER.sid : '';
-  if(_mySid && !sortBy.key) {
+  if(_mySid && !sortBy.key && !_isGrouped) {
     filtered = filtered.slice().sort(function(a, b){
       function myScore(x){
         if(x.managerMain === _mySid) return 0;
@@ -39418,7 +39472,10 @@ function ProjectManagementShared(props){
               background: subMgrFilter!=='all'?'#f5f3ff':'#f8fafc',
               color: subMgrFilter!=='all'?'#7c3aed':'#64748b', fontWeight: subMgrFilter!=='all'?700:400 } },
             h('option',{value:'all'},'👥 부담당'),
-            users.map(function(u){ return h('option',{key:u.sid,value:u.sid},u.name); }))
+            users.map(function(u){ return h('option',{key:u.sid,value:u.sid},u.name); })),
+          props.sourceKind === 'consulting' && h('button', { onClick:resetProjView,
+            title:'첫 화면 기본값으로 (상태·유형·담당·정렬·검색 초기화)',
+            style:{ padding:'5px 10px', border:'1px solid #93c5fd', borderRadius:'20px', fontSize:'11px', flexShrink:0, background:'#eff6ff', color:'#1d4ed8', fontWeight:700, cursor:'pointer' } }, '↺ 기본값')
         )
       )
     : h('div', { style:{ display:'flex', gap:'8px', marginBottom:'14px', alignItems:'center', flexWrap:'wrap' } },
@@ -39454,6 +39511,9 @@ function ProjectManagementShared(props){
         h('option', { value:'all' }, '👥 부담당'),
         users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); })),
       h('div', { style:{ flex:1 } }),
+      props.sourceKind === 'consulting' && h('button', { onClick:resetProjView,
+        title:'첫 화면 기본값으로 (상태·유형·담당·정렬·검색 초기화)',
+        style:{ background:'#eff6ff', color:'#1d4ed8', border:'1px solid #93c5fd', padding:'7px 12px', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer' } }, '↺ 기본값으로'),
       h('button', { onClick:function(){setGapModal(true);},
         title:'시리즈별 번호 결번 검사 + 번호 재정렬',
         style:{ background:'#fff7ed', color:'#9a3412', border:'1px solid #fed7aa', padding:'7px 12px', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer' } }, '🔍 결번 검사'),
@@ -39501,7 +39561,7 @@ function ProjectManagementShared(props){
               var st = it.status||'progress';
               var stColor = st==='closed'?'#16a34a':st==='pending'?'#d97706':'#1e40af';
               var stLabel = st==='closed'?'종료':st==='pending'?'대기':'진행중';
-              return h('div', { key:it.id,
+              var _card = h('div', { key:it.id,
                 style:{ background:'#fff', border:'1px solid #e2e8f0',
                   borderLeft:'4px solid '+stColor,
                   borderRadius:'8px', padding:'10px 12px',
@@ -39528,6 +39588,10 @@ function ProjectManagementShared(props){
                   totalFee>0 && h('span', { style:{ color:'#475569', fontWeight:700 } }, '합계 '+totalFee.toLocaleString()+'원')
                 )
               );
+              if(_isGrouped && (idx === 0 || (pgConsult.paged[idx-1]||{}).typeCode !== it.typeCode)){
+                return [_projGroupHeader(it, 'card'), _card];
+              }
+              return _card;
             })
       )
     : h('div', { style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'10px', overflow:'auto', maxHeight:'calc(100vh - 240px)' } },
@@ -39556,7 +39620,7 @@ function ProjectManagementShared(props){
                 items.length === 0 ? '계약관리에서 이관된 데이터 없음' : '검색 결과가 없습니다'))
             : pgConsult.paged.map(function(it, idx){
                 var t = types.find(function(x){return x.code===it.typeCode;});
-                return h('tr', { key:it.id, draggable:true,
+                var _row = h('tr', { key:it.id, draggable:true,
                   onDragStart:function(ev){
                     var txt = [it.no||'', (t?t.name:''), it.companyName||'', userName(it.managerMain), (it.managerSubs||[]).map(userName).join(','), it.receiveDate||'', it.dueDate||'', it.note||''].join('\t');
                     try { ev.dataTransfer.setData('text/plain', txt); ev.dataTransfer.effectAllowed='copy'; } catch(e){}
@@ -39676,6 +39740,10 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                     )
                   )
                 );
+                if(_isGrouped && (idx === 0 || (pgConsult.paged[idx-1]||{}).typeCode !== it.typeCode)){
+                  return [_projGroupHeader(it, 'row'), _row];
+                }
+                return _row;
               })
         ),
         // footer: 필터된 건 합계
