@@ -357,6 +357,12 @@ body.pc #pcDetail{display:flex}
 .sm-send:hover{background:#2c3c66}
 .sm-send:disabled{opacity:.5;cursor:default}
 .sm-note{font-size:12px;color:#9aa6bd;line-height:1.6;margin:12px 2px 0}
+.sm-empty{text-align:center;color:#8b98b3;font-size:13px;padding:24px 10px;line-height:1.7}
+.shelf-add{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;box-sizing:border-box;height:44px;border:1px dashed #cfe0fb;background:#f4f9ff;color:#1d4fc4;border-radius:10px;font-size:13.5px;font-weight:600;cursor:pointer;margin-bottom:14px}
+.shelf-add:hover{background:#eaf1fe}
+.shelf-acts{display:flex;gap:2px;flex-shrink:0}
+.shelf-acts button,.shelf-rep{border:none;background:none;font-size:16px;padding:6px;cursor:pointer;color:#5a6885;border-radius:6px;display:inline-flex;align-items:center}
+.shelf-acts button:hover,.shelf-rep:hover{background:#eef2f7}
 </style>
 </head>
 <body>
@@ -374,6 +380,10 @@ body.pc #pcDetail{display:flex}
 
 <div id="sendMatBg" class="smbg" onclick="if(event.target===this)closeSendMat()">
   <div class="smsheet" id="sendMatSheet"></div>
+</div>
+
+<div id="matShelfBg" class="smbg" onclick="if(event.target===this)closeMatShelf()">
+  <div class="smsheet" id="matShelfSheet"></div>
 </div>
 
 <div id="appbar">
@@ -643,41 +653,39 @@ async function doLoginCards(){
 function doLogoutCards(){ try{ firebase.auth().signOut(); }catch(e){} }
 
 /* ══════ 자료 보내기 (제안서·계약서 서랍) ══════ */
-const MATERIAL_SLOTS = [
-  { key:'company_intro', name:'회사소개서' },
-  { key:'contract_form', name:'자문계약서 양식' },
-];
 let _sendMatId = null;
-let _matMeta = {};   /* {key:{fileName,url,path,uploadedAt}} */
+let _matMeta = {};   /* {id:{id,name,fileName,url,path,uploadedAt}} */
 
+function loadMaterials(cb){
+  firebase.database().ref(DB_ROOT+'/materials').once('value').then(s=>{
+    _matMeta = s.val() || {};
+    if(cb) cb();
+  }).catch(e=>console.warn('[materials]', e&&e.message));
+}
+function matList(){ return Object.values(_matMeta).filter(m=>m&&m.id).sort((a,b)=>(a.uploadedAt||0)-(b.uploadedAt||0)); }
+
+/* ── 자료 보내기 (고객 명함에서: 고르기만) ── */
 function openSendMaterials(id){
   const it=state.items[id]; if(!it) return;
   _sendMatId=id;
   renderSendMat();
   $('sendMatBg').classList.add('open');
-  firebase.database().ref(DB_ROOT+'/materials').once('value').then(s=>{
-    _matMeta = s.val() || {};
-    if(_sendMatId===id) renderSendMat();
-  }).catch(e=>console.warn('[materials]', e&&e.message));
+  loadMaterials(()=>{ if(_sendMatId===id) renderSendMat(); });
 }
 function closeSendMat(){ $('sendMatBg').classList.remove('open'); _sendMatId=null; }
-
 function renderSendMat(){
   const it = state.items[_sendMatId]; if(!it) return;
   const nm = it.name || it.company || '(이름 없음)';
   const comp = it.company ? ' ('+esc(it.company)+')' : '';
   const email = it.email || '';
-  const slots = MATERIAL_SLOTS.map(sl=>{
-    const m = _matMeta[sl.key];
-    const filled = m && m.url;
-    const fileLine = filled ? esc(m.fileName||'파일') : '아직 올린 파일 없음';
-    return `<div class="sm-slot ${filled?'':'empty'}">
-      <input type="checkbox" class="sm-chk" data-key="${sl.key}" ${filled?'checked':'disabled'}>
-      <span class="sm-ic">${filled?'📄':'📁'}</span>
-      <div class="sm-sinfo"><div class="n">${esc(sl.name)}</div><div class="f">${fileLine}</div></div>
-      <label class="sm-up">${filled?'교체':'올리기'}<input type="file" accept="application/pdf" style="display:none" onchange="uploadMaterial('${sl.key}',this)"></label>
-    </div>`;
-  }).join('');
+  const list = matList();
+  const rows = list.length ? list.map(m=>`
+      <div class="sm-slot">
+        <input type="checkbox" class="sm-chk" data-id="${m.id}" checked>
+        <span class="sm-ic">📄</span>
+        <div class="sm-sinfo"><div class="n">${esc(m.name||'자료')}</div><div class="f">${esc(m.fileName||'')}</div></div>
+      </div>`).join('')
+    : `<div class="sm-empty">아직 자료함에 등록된 자료가 없습니다.<br>왼쪽 <b>📎 자료함</b>에서 먼저 올려주세요.</div>`;
   $('sendMatSheet').innerHTML = `
     <div class="sm-head">
       <div class="sm-ava">${esc(nm.slice(0,2))}</div>
@@ -685,40 +693,93 @@ function renderSendMat(){
       <button class="sm-x" onclick="closeSendMat()">✕</button>
     </div>
     <div class="sm-label">보낼 자료</div>
-    ${slots}
-    <div class="sm-hold">➕ 인사노무자문 제안서 (준비 중 — 나중에 추가)</div>
+    ${rows}
     <div class="sm-to">📧 <span>보낼 곳 · ${email?esc(email):'이메일 없음 (명함에 이메일을 추가하세요)'}</span></div>
-    <button class="sm-send" onclick="doSendMaterials()" ${email?'':'disabled'}>자료 보내기</button>
+    <button class="sm-send" onclick="doSendMaterials()" ${(email&&list.length)?'':'disabled'}>자료 보내기</button>
     <div class="sm-note">메일 본문엔 자료를 여는 링크가 담깁니다 (무거운 파일 첨부 없음). 메일 발송 연결은 다음 단계입니다.</div>`;
 }
+function doSendMaterials(){
+  const ids = [...document.querySelectorAll('#sendMatSheet .sm-chk:checked')].map(c=>c.dataset.id);
+  if(!ids.length){ toast('보낼 자료를 하나 이상 선택하세요'); return; }
+  const it = state.items[_sendMatId];
+  const names = ids.map(id=>(_matMeta[id]&&_matMeta[id].name)||'자료').join(', ');
+  alert('메일 발송 연결은 다음 단계입니다.\n\n받는 사람: '+((it&&it.email)||'')+'\n보낼 자료: '+names);
+}
 
-async function uploadMaterial(key, input){
-  const file = input.files && input.files[0]; if(!file) return;
-  if(file.type!=='application/pdf'){ toast('PDF 파일만 올릴 수 있습니다'); input.value=''; return; }
+/* ── 자료함 (대시보드에서: 관리 — 올리기·교체·미리보기·삭제) ── */
+function openMaterialShelf(){
+  renderMaterialShelf();
+  $('matShelfBg').classList.add('open');
+  loadMaterials(renderMaterialShelf);
+}
+function closeMatShelf(){ $('matShelfBg').classList.remove('open'); }
+function renderMaterialShelf(){
+  const list = matList();
+  const rows = list.length ? list.map(m=>`
+      <div class="sm-slot">
+        <span class="sm-ic">📄</span>
+        <div class="sm-sinfo"><div class="n">${esc(m.name||'자료')}</div><div class="f">${esc(m.fileName||'')} · ${fmtDate(m.uploadedAt)}</div></div>
+        <div class="shelf-acts">
+          <button title="미리보기" onclick="previewMaterial('${m.id}')">👁</button>
+          <label title="파일 교체" class="shelf-rep">🔄<input type="file" accept="application/pdf" style="display:none" onchange="replaceMaterialFile('${m.id}',this)"></label>
+          <button title="삭제" onclick="deleteMaterial('${m.id}')">🗑</button>
+        </div>
+      </div>`).join('')
+    : `<div class="sm-empty">아직 자료가 없습니다.<br>아래 <b>＋ 새 자료 올리기</b>로 회사소개서·계약서 등을 올리세요.</div>`;
+  $('matShelfSheet').innerHTML = `
+    <div class="sm-head">
+      <div class="sm-htxt"><div class="t">📎 자료함</div><div class="s">고객에게 보낼 자료를 여기서 관리합니다</div></div>
+      <button class="sm-x" onclick="closeMatShelf()">✕</button>
+    </div>
+    <label class="shelf-add">＋ 새 자료 올리기<input type="file" accept="application/pdf" style="display:none" onchange="addMaterial(this)"></label>
+    ${rows}
+    <div class="sm-note">여기 올린 자료가 고객 명함의 "자료 보내기"에 자동으로 나타납니다.</div>`;
+}
+async function addMaterial(input){
+  const file = input.files && input.files[0]; input.value='';
+  if(!file) return;
+  if(file.type!=='application/pdf'){ toast('PDF 파일만 올릴 수 있습니다'); return; }
+  const defName = file.name.replace(/\.pdf$/i,'');
+  const name = (prompt('자료 이름을 입력하세요 (예: 회사소개서)', defName)||'').trim();
+  if(!name) return;
+  const id = 'm'+Date.now()+Math.random().toString(36).slice(2,6);
+  await putMaterial(id, name, file);
+}
+async function replaceMaterialFile(id, input){
+  const file = input.files && input.files[0]; input.value='';
+  if(!file) return;
+  if(file.type!=='application/pdf'){ toast('PDF 파일만 올릴 수 있습니다'); return; }
+  const cur = _matMeta[id]; if(!cur) return;
+  await putMaterial(id, cur.name, file);
+}
+async function putMaterial(id, name, file){
   toast('업로드 중…');
   try{
-    const path = 'materials/'+key+'/'+Date.now()+'_'+file.name;
+    const path = 'materials/'+id+'/'+Date.now()+'_'+file.name;
     const ref = firebase.storage().ref(path);
     await ref.put(file);
     const url = await ref.getDownloadURL();
-    const meta = { fileName:file.name, url, path, uploadedAt: Date.now() };
-    await firebase.database().ref(DB_ROOT+'/materials/'+key).set(meta);
-    _matMeta[key]=meta;
-    renderSendMat();
+    const meta = { id, name, fileName:file.name, url, path, uploadedAt: Date.now() };
+    await firebase.database().ref(DB_ROOT+'/materials/'+id).set(meta);
+    _matMeta[id]=meta;
+    renderMaterialShelf();
     toast('✅ 올렸습니다');
   }catch(e){
     console.warn('[upload]', e&&e.message);
     toast('업로드 실패: '+((e&&e.message)||'알 수 없는 오류'));
   }
-  input.value='';
 }
-
-function doSendMaterials(){
-  const checked = [...document.querySelectorAll('#sendMatSheet .sm-chk:checked')].map(c=>c.dataset.key);
-  if(!checked.length){ toast('보낼 자료를 하나 이상 선택하세요'); return; }
-  const it = state.items[_sendMatId];
-  const names = checked.map(k=>{ const sl=MATERIAL_SLOTS.find(s=>s.key===k); return sl?sl.name:k; }).join(', ');
-  alert('메일 발송 연결은 다음 단계입니다.\n\n받는 사람: '+((it&&it.email)||'')+'\n보낼 자료: '+names);
+function previewMaterial(id){ const m=_matMeta[id]; if(m&&m.url) window.open(m.url,'_blank'); }
+async function deleteMaterial(id){
+  const m=_matMeta[id]; if(!m) return;
+  if(!confirm(`'${m.name}' 자료를 삭제할까요?`)) return;
+  try{
+    await firebase.database().ref(DB_ROOT+'/materials/'+id).remove();
+    if(m.path){ try{ await firebase.storage().ref(m.path).delete(); }catch(_){} }
+    delete _matMeta[id];
+    renderMaterialShelf();
+    toast('삭제했습니다');
+  }catch(e){ toast('삭제 실패: '+((e&&e.message)||'')); }
 }
 const esc = s => String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid = () => 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
@@ -1655,6 +1716,7 @@ function openMenu(){
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openDedup()">🧹 중복 정리</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');cleanEmpty()">🧽 빈 명함 정리</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openTrash()">🗑 휴지통 (삭제 명함 30일 보관)</button>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');openMaterialShelf()">📎 자료함</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openSettings()">🤖 AI 키 설정</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');doLogoutCards()">🚪 로그아웃</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');wipeAll()" style="color:#c0392b">🗑 전체 비우기 (현재 탭)
@@ -2232,6 +2294,7 @@ function renderPCSide(){
 
   /* 맨 아래 고정 환경설정 */
   h += `<div class="pcside-bottom">
+    <button class="pcside-settings" onclick="openMaterialShelf()" title="회사소개서·계약서 등 보낼 자료 관리">📎 자료함</button>
     <button class="pcside-settings" onclick="openMenu()" title="가져오기·내보내기·백업·중복정리·전체비우기">⚙️ 환경설정</button>
   </div>`;
   $('pcSide').innerHTML = h;
