@@ -3637,60 +3637,47 @@ function isConflictPair(a,b){return !!getConflictMatrix()[conflictKey(a,b)];}
 function toggleConflict(a,b){const m=getConflictMatrix();const k=conflictKey(a,b);if(m[k])delete m[k];else m[k]=true;setConflictMatrix(m);}
 // 특정 날짜에 '같은 날 불가'/'하루 1건' 위반이 실제로 있으면 안내 문구 반환(없으면 null) — 캘린더 경고 배지용
 function dayConflictMsg(date){
-  const m=getConflictMatrix(); if(!Object.keys(m).length)return null;
   const types=getTypes();
   const day=getScheds().filter(s=>s.date===date);
+  // 같은 주담당(attId) + 같은 유형(중복불가) 이 2건 이상이면 경고
   for(let i=0;i<day.length;i++)for(let j=i+1;j<day.length;j++){
     const a=day[i],b=day[j];
-    if(a.coId===b.coId&&a.typeId===b.typeId)continue;
-    if(isConflictPair(a.typeId,b.typeId)){
-      const ta=types.find(t=>t.id===a.typeId)?.name||'?';
-      const tb=types.find(t=>t.id===b.typeId)?.name||'?';
-      return a.typeId===b.typeId?`[${ta}] 하루 1건 위반`:`[${ta}] × [${tb}] 같은 날 불가`;
-    }
-  }
-  return null;
-}
-// 같은 날(전체 사업장) 매트릭스 위반 검사. 위반이면 안내 메시지 반환.
-function checkConflictMatrix(coId,typeId,date,excludeId=null){
-  const m=getConflictMatrix(); if(!Object.keys(m).length)return null;
-  const types=getTypes();
-  // 같은 날 다른 일정들 (사업장 무관)
-  const sameDay=getScheds().filter(s=>s.date===date&&s.id!==excludeId);
-  for(const s of sameDay){
-    // 같은 사업장+같은 종류의 단순 회차 중복은 여기서 취급하지 않음(기존 로직이 처리)
-    if(s.coId===coId&&s.typeId===typeId)continue;
-    if(isConflictPair(typeId,s.typeId)){
-      const t1=types.find(x=>x.id===typeId)?.name||'?';
-      const t2=types.find(x=>x.id===s.typeId)?.name||'?';
-      const co2=getCos().find(c=>c.id===s.coId)?.name||'?';
-      if(typeId===s.typeId){
-        return `[${t1}]은 같은 날 하루 1건만 가능합니다.\n${date}에 이미 [${co2}] 일정이 있습니다.`;
+    if(a.coId===b.coId&&a.typeId===b.typeId)continue; // 같은 사업장·같은 유형 단순중복은 별도 처리
+    if(a.attId&&a.attId===b.attId&&a.typeId===b.typeId){
+      if(isConflictPair(a.typeId,a.typeId)){
+        const ty=types.find(t=>t.id===a.typeId);
+        const attNm=getStaff().find(x=>x.id===a.attId)?.name||'주담당';
+        return `${attNm} · [${ty?.name||'?'}] 같은 날 중복`;
       }
-      return `[${t1}]과 [${t2}]은 같은 날 함께 진행할 수 없습니다.\n${date}에 이미 [${co2} · ${t2}] 일정이 있습니다.`;
     }
   }
   return null;
 }
-function checkExclusiveDay(coId,typeId,date,excludeId=null){
+// 같은 주담당 중복 검사. "같은 주담당 + 같은 날 + 같은 중복불가 유형 2건 이상"이면 안내 메시지 반환.
+// (주담당이 다르면 같은 날 같은 유형이어도 무관 / 유형이 다르면 같은 사람이어도 무관)
+function checkConflictMatrix(coId,typeId,date,excludeId=null){
   const types=getTypes();
   const ty=types.find(t=>t.id===typeId);
-  // 같은 사업장·같은 날·다른 컨설팅 종류
-  const others=getScheds().filter(s=>
-    s.coId===coId&&s.date===date&&s.typeId!==typeId&&s.id!==excludeId
+  if(!isConflictPair(typeId,typeId))return null; // '하루 1건'으로 표시된 유형만 검사(환경설정)
+  // 등록/이동하려는 일정의 주담당 = 그 사업장의 주담당(defAtt)
+  const mainAtt=getCos().find(c=>c.id===coId)?.defAtt;
+  if(!mainAtt)return null;
+  // 같은 날 · 같은 주담당 · 같은 유형 · 다른 사업장 일정
+  const clash=getScheds().find(s=>
+    s.date===date&&s.id!==excludeId&&s.attId===mainAtt&&s.typeId===typeId&&s.coId!==coId
   );
-  if(!others.length)return null;
-  // ① 등록하려는 컨설팅이 단독실시면 차단
-  if(ty?.exclusiveDay){
-    const dup=others.map(s=>types.find(x=>x.id===s.typeId)?.name||'?').join(', ');
-    return `[${ty.name}]은 당일 단독 실시 컨설팅입니다.\n${date}에 이미 [${dup}] 일정이 있습니다.`;
+  if(clash){
+    const t1=ty?.name||'?';
+    const co2=getCos().find(c=>c.id===clash.coId)?.name||'?';
+    const attNm=getStaff().find(a=>a.id===mainAtt)?.name||'주담당';
+    return `[${t1}]은 같은 주담당(${attNm})이 같은 날 중복 진행할 수 없습니다.\n${date}에 이미 [${co2}] 일정이 있습니다.`;
   }
-  // ② 그 날 이미 단독실시 컨설팅이 있으면 차단 (중복허용 컨설팅도 추가 불가)
-  const ex=others.find(s=>types.find(x=>x.id===s.typeId)?.exclusiveDay);
-  if(ex){
-    const t=types.find(x=>x.id===ex.typeId);
-    return `${date}에 [${t?.name}](당일 단독) 일정이 이미 있어 추가 등록이 불가합니다.`;
-  }
+  return null;
+}
+// [폐기됨 2026-07-14] 전역 '당일 단독 실시' 개념 제거.
+// 이제 중복 판정은 checkConflictMatrix(주담당 기준)에서만 처리한다.
+// 호출부 변경을 최소화하기 위해 함수는 남겨두되 항상 통과(null)시킨다.
+function checkExclusiveDay(coId,typeId,date,excludeId=null){
   return null;
 }
 
