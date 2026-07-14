@@ -759,7 +759,7 @@ var Component = React.Component;
   window.erpAlerts=function(){ try{ return JSON.parse(localStorage.getItem(LOGK)||'[]'); }catch(_){ return []; } };
 })();
 // ── 빌드 버전 표시: 배포가 실제 적용됐는지 화면에서 즉시 확인 (좌하단 작은 라벨) ──
-var ERP_BUILD = '2026-07-14 업체관리 툴바 재배치(조작=탭·필터·더보기 왼쪽 정렬, 검색창 오른쪽, 팝오버 좌측기준) / 컨설팅관리 첫화면 개선 / 외부협력자 숨김';
+var ERP_BUILD = '2026-07-14 법인 대시보드 캘린더 월/주/일 보기 추가(오늘 옆 세그먼트, 뷰별 이동, 주=7일 가로·일=시간순 목록, 드래그·추가 지원) / 업체관리 툴바 재배치';
 var BUILD_SEQ = 143;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
@@ -35312,8 +35312,9 @@ function CorpDashboard(props){
       .catch(function(e){ setGcalErr(e.message||'fetch 실패'); setGcalLoading(false); });
   }, [calYm, gcalRfk]);
 
-  // 캘린더 그리드 생성 (월/주 단위)
-  var calViewS = useState('month'); var calView = calViewS[0]; var setCalView = calViewS[1];
+  // 캘린더 그리드 생성 (월/주/일 단위)
+  var calViewS = useState((typeof dbGet==='function' && dbGet('corp_cal_view', null)) || 'month'); var calView = calViewS[0]; var setCalView = calViewS[1];
+  var selDS = useState(todayYMD()); var selDate = selDS[0]; var setSelDate = selDS[1];
   // 드래그 state + 강제 리렌더 키
   var cdoS = useState(null); var calDragOver = cdoS[0]; var setCalDragOver = cdoS[1];
   var crfS = useState(0); var calRfk = crfS[0]; var setCalRfk = crfS[1];
@@ -35435,6 +35436,50 @@ function CorpDashboard(props){
 
   function calMonthPrev(){ var d = new Date(calYm+'-01'); d.setMonth(d.getMonth()-1); var ym=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); setCalYm(ym); setSelYm(ym); }
   function calMonthNext(){ var d = new Date(calYm+'-01'); d.setMonth(d.getMonth()+1); var ym=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); setCalYm(ym); setSelYm(ym); }
+
+  // 뷰 전환(저장) + 뷰별 이동/오늘 (월=±1달, 주=±7일, 일=±1일)
+  function setCalViewPersist(v){ setCalView(v); if(typeof dbSet==='function') dbSet('corp_cal_view', v); }
+  function shiftSelDate(days){ var d=new Date(selDate); d.setDate(d.getDate()+days); var s=localYMD(d); setSelDate(s); var ym=s.slice(0,7); if(ym!==calYm){ setCalYm(ym); setSelYm(ym); } }
+  function calNavPrev(){ if(calView==='month') calMonthPrev(); else if(calView==='week') shiftSelDate(-7); else shiftSelDate(-1); }
+  function calNavNext(){ if(calView==='month') calMonthNext(); else if(calView==='week') shiftSelDate(7); else shiftSelDate(1); }
+  function calNavToday(){ var t=todayYMD(); var ym=t.slice(0,7); setCalYm(ym); setSelYm(ym); setSelDate(t); }
+  // 주 보기용: selDate가 속한 주(일~토) 7일
+  function weekDays(dateStr){ var d=new Date(dateStr); d.setDate(d.getDate()-d.getDay()); var arr=[]; for(var i=0;i<7;i++){ arr.push(localYMD(d)); d.setDate(d.getDate()+1); } return arr; }
+  // 주/일 보기용 일정 칩 (월 셀과 동일한 드래그·클릭·우클릭 동작)
+  function renderEventChip(ev, dateStr, key){
+    var timeStr = ev.time ? ev.time.slice(0,5)+' ' : '';
+    return h('div', { key:key,
+      draggable: ev.draggable ? 'true' : 'false',
+      onDragStart: ev.draggable ? function(e){ e.stopPropagation(); e.dataTransfer.effectAllowed='move';
+        e.dataTransfer.setData('text/plain', JSON.stringify({evType:ev.type, evId:ev.evId, fromDate:dateStr})); } : null,
+      onClick: function(e){ e.stopPropagation();
+        if(ev.type === 'advisory-due'){ setCorpAdvQuickModal({co:ev.advisoryCo, amount:ev.advisoryAmount, paid:ev.advisoryPaid, date:ev.advisoryDate}); setEvDetail(null); setDayPopover(null); }
+        else { setEvDetail({ ev:ev, date:dateStr }); setDayPopover(null); setQuickCreate(null); } },
+      onContextMenu: ev.draggable===true ? function(e){ e.preventDefault(); e.stopPropagation(); setCalCtxMenu({x:e.clientX, y:e.clientY, ev:ev, date:dateStr}); } : null,
+      onMouseEnter:function(e){ e.currentTarget.style.filter='brightness(0.88)'; },
+      onMouseLeave:function(e){ e.currentTarget.style.filter=''; },
+      title: ev.tip || ev.tooltipText || ev.label,
+      style:{ background:ev.color, color:'#fff', border:'none', padding:'3px 8px', borderRadius:'4px',
+        fontSize:'11px', fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis',
+        cursor: ev.draggable ? 'grab' : 'pointer', userSelect:'none', WebkitUserSelect:'none',
+        WebkitUserDrag: ev.draggable ? 'element' : 'none', transition:'filter 0.1s' }},
+      h('span', { style:{ fontSize:'10px', fontWeight:500, opacity:0.75, marginRight:'2px' }}, timeStr), ev.label);
+  }
+  // 주/일 셀 공통 이벤트 핸들러 (빈 곳 클릭=추가, 드롭=이동)
+  function dayCellHandlers(dateStr){
+    return {
+      onDragOver:function(e){ e.preventDefault(); e.dataTransfer.dropEffect='move'; if(dateStr!==calDragOver) setCalDragOver(dateStr); },
+      onDragLeave:function(){ setCalDragOver(null); },
+      onDrop:function(e){ handleCalDrop(dateStr, e); },
+      onDoubleClick:function(){ setSelDate(dateStr);
+        if(filterIsPureun){ setLeaveInputModal({ date:dateStr, type:'leave', sid:CURRENT_USER.sid, note:'' }); }
+        else if(filterIsEumKeyword){ setEumWorkModal({ date:dateStr, sid:CURRENT_USER.sid, note:'' }); }
+        else { setQuickCreate({ date:dateStr, title:'' }); }
+        setEvDetail(null); setDayPopover(null); }
+    };
+  }
+
+
 
   // ── 휴가·휴직·마감 임박 데이터 ──
   // 이번달 휴가 사용자
@@ -36088,15 +36133,26 @@ function CorpDashboard(props){
       // ─ 네비게이션 행 ─
       h('div', { style:{ display:'flex', alignItems:'center', justifyContent:'space-between', padding: IS_MOBILE ? '6px 10px' : '6px 14px', borderBottom:'1px solid #f1f5f9', gap:'6px', background:'#f8fafc', flexShrink:0 } },
         h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap' } },
-          h(MonthNav, { onPrev:monthPrev, onNext:monthNext, label:selYm,
+          h(MonthNav, { onPrev:calNavPrev, onNext:calNavNext,
+            label: calView==='month' ? selYm : (calView==='week' ? (function(){ var w=weekDays(selDate); return w[0].slice(5)+' ~ '+w[6].slice(5); })() : (selDate.slice(5)+' ('+['일','월','화','수','목','금','토'][new Date(selDate).getDay()]+')')),
             onDragEnterPrev: function(){ calNavDragEnter('prev'); setCalNavHover('prev'); },
             onDragLeavePrev: function(){ calNavDragLeave('prev'); setCalNavHover(null); },
             onDragEnterNext: function(){ calNavDragEnter('next'); setCalNavHover('next'); },
             onDragLeaveNext: function(){ calNavDragLeave('next'); setCalNavHover(null); },
             navHover: calNavHover }),
-          h('button',{onClick:function(){ var ym=todayYM(); setCalYm(ym); setSelYm(ym); },
+          h('button',{onClick:calNavToday,
             style:{padding:'4px 10px', border:'1px solid #e2e8f0', background:'#fff', borderRadius:'10px',
               cursor:'pointer', fontSize:'11.5px', fontWeight:600, color:'#475569'}},'오늘'),
+          // 월/주/일 뷰 전환 세그먼트
+          h('div', { style:{ display:'inline-flex', border:'1px solid #cbd5e1', borderRadius:'8px', overflow:'hidden' } },
+            [{v:'month',t:'월'},{v:'week',t:'주'},{v:'day',t:'일'}].map(function(m, mi){
+              var on = calView===m.v;
+              return h('button', { key:m.v, onClick:function(){ setCalViewPersist(m.v); },
+                style:{ padding:'4px 12px', fontSize:'11.5px', fontWeight:700,
+                  background: on?'#1e40af':'#fff', color: on?'#fff':'#475569',
+                  border:'none', borderRight: mi<2?'1px solid #e2e8f0':'none', cursor:'pointer' } }, m.t);
+            })
+          ),
           !IS_MOBILE && h('div',{style:{position:'relative'}},
             h('input',{type:'text', value:calSearchQ, placeholder:'일정 검색',
               onInput:function(e){setCalSearchQ(e.target.value);},
@@ -36194,16 +36250,16 @@ function CorpDashboard(props){
       h('div', { style:{ display:'flex', flex:!IS_MOBILE?1:undefined, minHeight:0 } },
         h('div', { style:{ flex:1, minWidth:0, display:!IS_MOBILE?'flex':undefined, flexDirection:!IS_MOBILE?'column':undefined, minHeight:0 } },
 
-      // ─ 요일 헤더 ─
-      h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', borderBottom:'1px solid #f1f5f9', flexShrink:0 }},
+      // ─ 요일 헤더 (월 보기만) ─
+      calView==='month' && h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', borderBottom:'1px solid #f1f5f9', flexShrink:0 }},
         ['일','월','화','수','목','금','토'].map(function(d, i){
           return h('div', { key:i, style:{ padding:'5px 4px', textAlign:'center', fontSize:'11px', fontWeight:700,
             color: i===0?'#dc2626':i===6?'#1e40af':'#78909c' }}, d);
         })
       ),
 
-      // ─ 날짜 그리드 ─
-      (function(){
+      // ─ 날짜 그리드 (월 보기만) ─
+      calView==='month' && (function(){
         var grid = buildMonthGrid(calYm);
         var todayStr = todayYMD();
         return h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gridTemplateRows:'repeat(6,1fr)', flex:!IS_MOBILE?1:undefined, minHeight:0 }},
@@ -36341,6 +36397,70 @@ function CorpDashboard(props){
           })
         );
       })() // end normal calendar grid
+      ,
+      // ─ 주(週) 보기 ─
+      calView==='week' && (function(){
+        var days = weekDays(selDate);
+        var todayStr = todayYMD();
+        return h('div', { style:{ display:'flex', flex:!IS_MOBILE?1:undefined, minHeight:0, borderTop:'1px solid #f1f5f9', overflow:!IS_MOBILE?'hidden':undefined } },
+          days.map(function(ds, di){
+            var d = new Date(ds);
+            var isToday = ds===todayStr;
+            var isSel = ds===selDate;
+            var isRed = d.getDay()===0 || !!corpHMap[ds];
+            var dayEvents = calEvents.filter(function(e){return e.date===ds && e.type!=='advisory-due';})
+              .sort(function(a,b){ return (a.time||'').localeCompare(b.time||''); });
+            var hd = corpHMap[ds];
+            return h('div', Object.assign({ key:di,
+              style:{ flex:1, minWidth:0, display:'flex', flexDirection:'column',
+                borderRight: di<6?'1px solid #f1f5f9':'none',
+                background: ds===calDragOver?'#fef3c7':isToday?'#fefce8':'#fff',
+                minHeight: IS_MOBILE?'160px':'0', overflow:'hidden' } },
+              dayCellHandlers(ds)),
+              // 날짜 헤더
+              h('div', { onClick:function(){ setSelDate(ds); },
+                style:{ padding:'6px 4px', textAlign:'center', borderBottom:'1px solid #f1f5f9', cursor:'pointer',
+                  background: isSel?'#eff6ff':'#f8fafc', flexShrink:0 } },
+                h('div', { style:{ fontSize:'10px', fontWeight:700, color: d.getDay()===0?'#dc2626':d.getDay()===6?'#1e40af':'#78909c' } }, ['일','월','화','수','목','금','토'][d.getDay()]),
+                h('div', { style:{ fontSize:'14px', fontWeight: isToday?800:600, color: isToday?'#2563eb': isRed?'#dc2626':'#3c4043', marginTop:'2px' } }, d.getDate()),
+                hd && h('div', { style:{ fontSize:'8.5px', color:'#ef4444', fontWeight:600, overflow:'hidden', whiteSpace:'nowrap', textOverflow:'ellipsis' } }, hd)
+              ),
+              // 일정 목록
+              h('div', { style:{ display:'flex', flexDirection:'column', gap:'3px', padding:'5px 4px', overflowY:'auto', flex:1 } },
+                dayEvents.length===0
+                  ? h('div', { style:{ fontSize:'10px', color:'#cbd5e1', textAlign:'center', paddingTop:'8px' } }, '·')
+                  : dayEvents.map(function(ev, ei){ return renderEventChip(ev, ds, ei); })
+              )
+            );
+          })
+        );
+      })()
+      ,
+      // ─ 일(日) 보기 ─
+      calView==='day' && (function(){
+        var ds = selDate;
+        var d = new Date(ds);
+        var dayEvents = calEvents.filter(function(e){return e.date===ds && e.type!=='advisory-due';})
+          .sort(function(a,b){ return (a.time||'').localeCompare(b.time||''); });
+        var hd = corpHMap[ds];
+        return h('div', Object.assign({ style:{ flex:!IS_MOBILE?1:undefined, minHeight: IS_MOBILE?'300px':'0', overflowY:'auto', borderTop:'1px solid #f1f5f9', padding:'12px 16px' } },
+          dayCellHandlers(ds)),
+          h('div', { style:{ fontSize:'15px', fontWeight:800, color:'#1e293b', marginBottom:'2px' } },
+            (d.getMonth()+1)+'월 '+d.getDate()+'일 ('+['일','월','화','수','목','금','토'][d.getDay()]+')'),
+          hd && h('div', { style:{ fontSize:'11px', color:'#ef4444', fontWeight:600, marginBottom:'8px' } }, '🎌 '+hd),
+          h('div', { style:{ fontSize:'11px', color:'#94a3b8', marginBottom:'10px' } }, '일정 '+dayEvents.length+'건 · 빈 곳 더블클릭으로 추가'),
+          dayEvents.length===0
+            ? h('div', { style:{ fontSize:'12px', color:'#cbd5e1', textAlign:'center', padding:'30px' } }, '등록된 일정이 없습니다')
+            : h('div', { style:{ display:'flex', flexDirection:'column', gap:'6px', maxWidth:'560px' } },
+                dayEvents.map(function(ev, ei){
+                  return h('div', { key:ei, style:{ display:'flex', alignItems:'center', gap:'10px' } },
+                    h('span', { style:{ fontSize:'11.5px', color:'#64748b', fontWeight:700, width:'44px', flexShrink:0, textAlign:'right', fontFamily:'monospace' } }, ev.time ? ev.time.slice(0,5) : '종일'),
+                    h('div', { style:{ flex:1, minWidth:0 } }, renderEventChip(ev, ds, ei))
+                  );
+                })
+              )
+        );
+      })()
 
         ) // end 오른쪽 달력
       ), // end flex 컨테이너
