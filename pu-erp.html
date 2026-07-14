@@ -370,9 +370,8 @@ button { font-family: inherit; cursor: pointer; border: 0; background: transpare
   .env-tab { font-size: 10.5px !important; padding: 5px 8px !important; }
   /* 버튼 그룹 줄바꿈 */
   [style*="display: flex"][style*="gap"] { flex-wrap: wrap; }
-  /* 외부협력자 테이블 모바일: 비고(5)/활성(6) 숨기기 */
-  .ext-tbl th:nth-child(5), .ext-tbl td:nth-child(5),
-  .ext-tbl th:nth-child(6), .ext-tbl td:nth-child(6) { display: none !important; }
+  /* 외부협력자 테이블 모바일: 비고(5) 숨기기 (활성 컬럼 제거로 관리 버튼은 표시) */
+  .ext-tbl th:nth-child(5), .ext-tbl td:nth-child(5) { display: none !important; }
   /* 사용자 테이블 모바일: 직책/지사/담당/아이디/비번 숨기기 (4,6,8,10,11번째 컬럼) */
   .user-tbl th:nth-child(4), .user-tbl td:nth-child(4),
   .user-tbl th:nth-child(6), .user-tbl td:nth-child(6),
@@ -2045,7 +2044,7 @@ function notifyDeviceLock(){
 // ============================================================
 var PRESENCE_STALE_MS = 90 * 1000;
 var _presenceList = [];        // 구독 결과(원본 배열)
-var _presenceAnnounced = {};   // 이미 알림창 띄운 다른 기기 devId 모음(떠나면 제거 → 재접속 시 다시 알림)
+var _presenceAnnounced = {};   // 이미 알림 띄운 다른 기기 devId 모음 (세션 동안 1회만 알림)
 var _presenceHbTimer = null;
 var _presenceRef = null;       // 내 presence 경로 ref (onDisconnect 취소용)
 var _presenceKey = null;       // 내 presence 키 = 기기ID + 계정(sid) → 같은 PC라도 계정 다르면 각각 표시
@@ -2153,20 +2152,18 @@ function initPresence(sid, name){
         });
         _presenceList = arr;
         try { window.dispatchEvent(new CustomEvent('presence_changed')); } catch(_){}
-        // 나 외 다른 기기 접속 → 확인창으로 알림 (이미 알린 기기는 제외, 떠난 기기는 추적에서 제거)
+        // 나 외 다른 기기 접속 → 토스트로 1회만 알림 (자동 사라짐, 확인 불필요). 한 번 알린 기기는 세션 동안 재알림 안 함.
         try {
           var nowT = Date.now();
           var liveOthers = arr.filter(function(p){ return p.devId !== _presenceKey && p.lastSeen && (nowT - p.lastSeen) < PRESENCE_STALE_MS; });
-          var liveIds = {}; liveOthers.forEach(function(p){ liveIds[p.devId] = true; });
-          Object.keys(_presenceAnnounced).forEach(function(id){ if(!liveIds[id]) delete _presenceAnnounced[id]; });
           var fresh = liveOthers.filter(function(p){ return !_presenceAnnounced[p.devId]; });
           fresh.forEach(function(p){ _presenceAnnounced[p.devId] = true; });
-          if(fresh.length && typeof showAlert === 'function'){
+          if(fresh.length && typeof showToast === 'function'){
             var names = fresh.map(function(p){ return ((p.device && p.device.indexOf('폰') >= 0) ? '📱 폰 ' : '💻 PC ') + p.name; });
             var body = (fresh.length === 1)
               ? names[0] + ' 님이 ERP에 접속했습니다.'
               : '현재 접속 중: ' + names.join(', ');
-            showAlert(body, { title:'🟢 접속 알림' });
+            showToast('🟢 ' + body);
           }
         } catch(_e){}
       });
@@ -11724,6 +11721,8 @@ function CompanyManagement(){
   var CO_COLS_KEY = 'co_cols_' + (CURRENT_USER.sid || 'guest');
   var hcS = useState(function(){ return dbGet(CO_COLS_KEY, {}) || {}; }); var hiddenCols = hcS[0]; var setHiddenCols = hcS[1];
   var coS = useState(false); var colMenuOpen = coS[0]; var setColMenuOpen = coS[1];
+  var fmoS = useState(false); var filterMenuOpen = fmoS[0]; var setFilterMenuOpen = fmoS[1];
+  var mmoS = useState(false); var moreMenuOpen = mmoS[0]; var setMoreMenuOpen = mmoS[1];
   var coColReg = (statusTab === 'suboffice') ? CO_COLS_SUB : CO_COLS_FULL;
   function saveHiddenCols(next){ setHiddenCols(next); dbSet(CO_COLS_KEY, next); }
   function toggleCol(k){ var n = Object.assign({}, hiddenCols); if(n[k]) delete n[k]; else n[k] = true; saveHiddenCols(n); }
@@ -11731,6 +11730,7 @@ function CompanyManagement(){
   function coSimple(){ var n = Object.assign({}, hiddenCols); coColReg.forEach(function(c){ if(c.d) n[c.k] = true; else delete n[c.k]; }); saveHiddenCols(n); }
   var coHideCss = coColReg.filter(function(c){ return hiddenCols[c.k]; }).map(function(c){ return '.co-table td:nth-child('+c.idx+'),.co-table th:nth-child('+c.idx+'){display:none}'; }).join('');
   var coHiddenCount = coColReg.filter(function(c){ return hiddenCols[c.k]; }).length;
+  var activeFilterCount = [typeFilter, mgrFilter, subMgrFilter, payrollDayFilter].filter(function(v){ return v && v !== 'all'; }).length;
   // 컬럼 드롭다운 외부 클릭 자동 닫기
   useEffect(function(){
     if(!colMenuOpen) return;
@@ -11738,6 +11738,18 @@ function CompanyManagement(){
     document.addEventListener('click', onDocClick);
     return function(){ document.removeEventListener('click', onDocClick); };
   }, [colMenuOpen]);
+  useEffect(function(){
+    if(!filterMenuOpen) return;
+    function onDocClick(){ setFilterMenuOpen(false); }
+    document.addEventListener('click', onDocClick);
+    return function(){ document.removeEventListener('click', onDocClick); };
+  }, [filterMenuOpen]);
+  useEffect(function(){
+    if(!moreMenuOpen) return;
+    function onDocClick(){ setMoreMenuOpen(false); }
+    document.addEventListener('click', onDocClick);
+    return function(){ document.removeEventListener('click', onDocClick); };
+  }, [moreMenuOpen]);
   // 통합 검색 포커스
   var initFocus = useGlobalSearchFocus();
   useEffect(function(){ if(initFocus){ setQuery(initFocus); setStatusTab('active'); setTypeFilter('all'); setMgrFilter('all'); } }, [initFocus]);
@@ -12383,80 +12395,68 @@ function CompanyManagement(){
           fontSize:'12px', fontWeight:700, cursor:'pointer' } },
         '⏸ 계약 중단 (' + companies.filter(function(c){return !!c.suspended;}).length + ')'),
       // (종료 탭 제거: 종료 업체는 종료관리에서 조회)
-      h('div', { style:{ width:'1px', height:'24px', background:'#e2e8f0', margin:'0 4px' } }),
-      statusTab !== 'suboffice' && h('div', { style:{ display:'inline-flex', alignItems:'center', gap:'6px' } },
-        h('select', { value:typeFilter, onChange:function(e){ setTypeFilter(e.target.value); },
-          style:{ padding:'5px 10px', border:'1px solid '+(typeFilter!=='all'?'#1e40af':'#cbd5e1'), borderRadius:'4px', fontSize:'11.5px', fontFamily:'inherit',
-            color: typeFilter!=='all'?'#1e40af':'#475569', fontWeight: typeFilter!=='all'?700:400, cursor:'pointer' } },
-          COMPANY_TYPE_FILTERS.map(function(tf0){ return h('option', { key:tf0.v, value:tf0.v }, tf0.icon + ' ' + tf0.label); })),
-        h('span', { style:{ fontSize:'11.5px', color:'#475569', fontWeight:700, whiteSpace:'nowrap' } }, typeCount(typeFilter) + '건')
-      ),
-      h('div', { style:{ display:'inline-flex', alignItems:'center', gap:'4px' } },
-        h('select', { value:mgrFilter, onChange:function(e){ setMgrFilter(e.target.value); },
-          style:{ padding:'5px 10px', border:'1px solid '+(mgrFilter!=='all'?'#1e40af':'#cbd5e1'), borderRadius:'4px', fontSize:'11.5px', fontFamily:'inherit',
-            color: mgrFilter!=='all'?'#1e40af':'#475569', fontWeight: mgrFilter!=='all'?700:400 } },
-          h('option', { value:'all' }, '담당자 전체'),
-          users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); })),
-        mgrFilter !== 'all' && h('span', { style:{ fontSize:'11.5px', color:'#1e40af', fontWeight:700, whiteSpace:'nowrap' } }, mgrCount(mgrFilter) + '개'),
-        h('select', { value:subMgrFilter, onChange:function(e){ setSubMgrFilter(e.target.value); },
-          style:{ padding:'5px 10px', border:'1px solid '+(subMgrFilter!=='all'?'#7c3aed':'#cbd5e1'), borderRadius:'4px', fontSize:'11.5px', fontFamily:'inherit',
-            color: subMgrFilter!=='all'?'#7c3aed':'#475569', fontWeight: subMgrFilter!=='all'?700:400 } },
-          h('option', { value:'all' }, '👥 부담당'),
-          users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); }))
-      ),
-      statusTab !== 'suboffice' && h('div', { style:{ display:'inline-flex', alignItems:'center', gap:'4px' } },
-        h('select', { value:payrollDayFilter, onChange:function(e){ setPayrollDayFilter(e.target.value); },
-          style:{ padding:'5px 10px', border:'1px solid '+(payrollDayFilter!=='all'?'#16a34a':'#cbd5e1'), borderRadius:'4px', fontSize:'11.5px', fontFamily:'inherit',
-            color: payrollDayFilter!=='all'?'#166534':'#475569', fontWeight: payrollDayFilter!=='all'?700:400, cursor:'pointer' } },
-          h('option', { value:'all' }, '📅 급여지급일'),
-          payrollDayOpts.map(function(d){ return h('option', { key:d, value:d }, d); }))
-      ),
-      h('div', { style:{ position:'relative', display:'inline-flex', alignItems:'center' } },
+      // 검색 (가운데, 넓게)
+      h('div', { style:{ position:'relative', display:'inline-flex', alignItems:'center', flex:1, minWidth:'180px' } },
         h('input', { className:'dt-search', placeholder:'🔍 업체명·번호·대표·주소·메모',
           value:query,
           onChange:function(e){ setQuery(e.target.value); },
-          style:{ width:'200px', paddingRight: query?'70px':'12px' } }),
+          style:{ width:'100%', paddingRight: query?'70px':'12px' } }),
         query && h('button', {
           onClick:function(){ setQuery(''); },
           title:'검색어 지우기',
           style:{ position:'absolute', right:'8px', background:'#f1f5f9', color:'#475569', border:'none', borderRadius:'10px', fontSize:'10px', fontWeight:700, padding:'2px 8px', cursor:'pointer' } },
           filtered.length + '건 ×')
       ),
-      (function(){
-        return h('div', { style:{ position:'relative', marginLeft:'8px' } },
-          h('button', {
-            onClick:function(e){ e.stopPropagation(); setColMenuOpen(!colMenuOpen); },
-            title:'컬럼 표시/숨김 (로그인 사용자별 저장)',
-            style:{ padding:'5px 12px', fontSize:'11.5px', fontWeight:600, borderRadius:'4px',
-              background: coHiddenCount > 0 ? '#1e40af' : '#fff',
-              color: coHiddenCount > 0 ? '#fff' : '#475569',
-              border:'1px solid '+(coHiddenCount > 0 ? '#1e40af' : '#cbd5e1'), cursor:'pointer' } },
-            '⚙ 컬럼' + (coHiddenCount > 0 ? ' ('+coHiddenCount+' 숨김)' : '') + ' ▼'),
-          colMenuOpen && h('div', { onClick:function(e){e.stopPropagation();},
-            style:{ position:'absolute', top:'calc(100% + 4px)', left:0, zIndex:100,
-              background:'#fff', border:'1px solid #cbd5e1', borderRadius:'6px',
-              boxShadow:'0 4px 12px rgba(0,0,0,0.15)', minWidth:'220px', maxHeight:'70vh', overflowY:'auto', padding:'6px' } },
-            h('div', { style:{ display:'flex', gap:'6px', padding:'4px 6px 8px', borderBottom:'1px solid #f1f5f9', marginBottom:'4px' } },
-              h('button', { onClick:coSimple,
-                className:'erp-tip', 'data-tip':'상세·재무 컬럼을 숨긴 간단 보기',
-                style:{ flex:1, padding:'6px 0', background:'#1e40af', color:'#fff', border:'none', borderRadius:'5px', fontSize:'11.5px', fontWeight:700, cursor:'pointer' } }, '✨ 간단 보기'),
-              h('button', { onClick:coShowAll,
-                style:{ flex:1, padding:'6px 0', background:'#fff', color:'#475569', border:'1px solid #cbd5e1', borderRadius:'5px', fontSize:'11.5px', fontWeight:600, cursor:'pointer' } }, '전체 보기')
-            ),
-            coColReg.map(function(c){
-              var visible = !hiddenCols[c.k];
-              return h('label', { key:c.k,
-                style:{ display:'flex', alignItems:'center', gap:'8px', padding:'6px 10px', cursor:'pointer', borderRadius:'4px',
-                  background: visible ? '#eff6ff' : '#fff', fontSize:'11.5px' },
-                onMouseEnter:function(e){ e.currentTarget.style.background = visible ? '#dbeafe' : '#f8fafc'; },
-                onMouseLeave:function(e){ e.currentTarget.style.background = visible ? '#eff6ff' : '#fff'; } },
-                h('input', { type:'checkbox', checked:visible, onChange:function(){ toggleCol(c.k); } }),
-                h('span', { style:{ fontWeight:visible?600:400, color:visible?'#1e40af':'#94a3b8' } }, c.label));
-            })
-          )
-        );
-      })(),
-      h('div', { style:{ flex:1 } }),
+      // 필터 팝오버 (유형·담당·부담당·급여일)
+      h('div', { style:{ position:'relative' } },
+        h('button', { onClick:function(e){ e.stopPropagation(); setFilterMenuOpen(!filterMenuOpen); setMoreMenuOpen(false); },
+          style:{ padding:'6px 12px', fontSize:'12px', fontWeight:600, borderRadius:'5px',
+            background: activeFilterCount>0 ? '#1e40af' : '#fff',
+            color: activeFilterCount>0 ? '#fff' : '#475569',
+            border:'1px solid '+(activeFilterCount>0 ? '#1e40af' : '#cbd5e1'), cursor:'pointer', whiteSpace:'nowrap' } },
+          '⚙ 필터' + (activeFilterCount>0 ? ' ('+activeFilterCount+')' : '') + ' ▾'),
+        filterMenuOpen && h('div', { onClick:function(e){ e.stopPropagation(); },
+          style:{ position:'absolute', top:'calc(100% + 4px)', right:0, zIndex:100,
+            background:'#fff', border:'1px solid #cbd5e1', borderRadius:'8px',
+            boxShadow:'0 4px 12px rgba(0,0,0,0.15)', minWidth:'260px', padding:'10px', display:'flex', flexDirection:'column', gap:'8px' } },
+          statusTab !== 'suboffice' && h('div', { style:{ display:'flex', alignItems:'center', gap:'6px' } },
+            h('span', { style:{ fontSize:'11px', color:'#64748b', width:'48px', flexShrink:0 } }, '유형'),
+            h('select', { value:typeFilter, onChange:function(e){ setTypeFilter(e.target.value); },
+              style:{ flex:1, padding:'5px 10px', border:'1px solid '+(typeFilter!=='all'?'#1e40af':'#cbd5e1'), borderRadius:'4px', fontSize:'11.5px', fontFamily:'inherit',
+                color: typeFilter!=='all'?'#1e40af':'#475569', fontWeight: typeFilter!=='all'?700:400, cursor:'pointer' } },
+              COMPANY_TYPE_FILTERS.map(function(tf0){ return h('option', { key:tf0.v, value:tf0.v }, tf0.icon + ' ' + tf0.label); })),
+            h('span', { style:{ fontSize:'11.5px', color:'#475569', fontWeight:700, whiteSpace:'nowrap' } }, typeCount(typeFilter) + '건')
+          ),
+          h('div', { style:{ display:'flex', alignItems:'center', gap:'6px' } },
+            h('span', { style:{ fontSize:'11px', color:'#64748b', width:'48px', flexShrink:0 } }, '담당자'),
+            h('select', { value:mgrFilter, onChange:function(e){ setMgrFilter(e.target.value); },
+              style:{ flex:1, padding:'5px 10px', border:'1px solid '+(mgrFilter!=='all'?'#1e40af':'#cbd5e1'), borderRadius:'4px', fontSize:'11.5px', fontFamily:'inherit',
+                color: mgrFilter!=='all'?'#1e40af':'#475569', fontWeight: mgrFilter!=='all'?700:400 } },
+              h('option', { value:'all' }, '담당자 전체'),
+              users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); })),
+            mgrFilter !== 'all' && h('span', { style:{ fontSize:'11.5px', color:'#1e40af', fontWeight:700, whiteSpace:'nowrap' } }, mgrCount(mgrFilter) + '개')
+          ),
+          h('div', { style:{ display:'flex', alignItems:'center', gap:'6px' } },
+            h('span', { style:{ fontSize:'11px', color:'#64748b', width:'48px', flexShrink:0 } }, '부담당'),
+            h('select', { value:subMgrFilter, onChange:function(e){ setSubMgrFilter(e.target.value); },
+              style:{ flex:1, padding:'5px 10px', border:'1px solid '+(subMgrFilter!=='all'?'#7c3aed':'#cbd5e1'), borderRadius:'4px', fontSize:'11.5px', fontFamily:'inherit',
+                color: subMgrFilter!=='all'?'#7c3aed':'#475569', fontWeight: subMgrFilter!=='all'?700:400 } },
+              h('option', { value:'all' }, '👥 부담당'),
+              users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); }))
+          ),
+          statusTab !== 'suboffice' && h('div', { style:{ display:'flex', alignItems:'center', gap:'6px' } },
+            h('span', { style:{ fontSize:'11px', color:'#64748b', width:'48px', flexShrink:0 } }, '급여일'),
+            h('select', { value:payrollDayFilter, onChange:function(e){ setPayrollDayFilter(e.target.value); },
+              style:{ flex:1, padding:'5px 10px', border:'1px solid '+(payrollDayFilter!=='all'?'#16a34a':'#cbd5e1'), borderRadius:'4px', fontSize:'11.5px', fontFamily:'inherit',
+                color: payrollDayFilter!=='all'?'#166534':'#475569', fontWeight: payrollDayFilter!=='all'?700:400, cursor:'pointer' } },
+              h('option', { value:'all' }, '📅 급여지급일'),
+              payrollDayOpts.map(function(d){ return h('option', { key:d, value:d }, d); }))
+          ),
+          activeFilterCount>0 && h('button', { onClick:function(){ setTypeFilter('all'); setMgrFilter('all'); setSubMgrFilter('all'); setPayrollDayFilter('all'); },
+            style:{ marginTop:'2px', background:'#f8fafc', color:'#1d4ed8', border:'1px solid #cbd5e1', borderRadius:'4px', padding:'5px 10px', fontSize:'11.5px', fontWeight:600, cursor:'pointer' } }, '↺ 필터 초기화')
+        )
+      ),
+      // 사무대행 전용 도구 (컨텍스트)
       statusTab === 'suboffice' && h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', marginRight:'6px' } },
         h('label', { style:{ background:'#eff6ff', color:'#1d4ed8', border:'1px solid #bfdbfe', padding:'5px 10px', borderRadius:'4px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
           '📥 업체 가져오기', h('input', { type:'file', accept:'.xlsx,.xls', onChange:importSubofficeXlsx, style:{ display:'none' } })),
@@ -12470,10 +12470,54 @@ function CompanyManagement(){
           style:{ background:'#0f766e', color:'#fff', border:'none', padding:'5px 10px', borderRadius:'4px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
           '📧 세무사무실 일괄요청')
       ),
-      h('button', { onClick:exportExcel,
-        style:{ background:'#fff', color:'#16a34a', border:'1px solid #16a34a', padding:'5px 14px', borderRadius:'4px', fontSize:'11.5px', fontWeight:600, cursor:'pointer' } },
-        '📥 엑셀'),
-      h(PageSizeSelector, { pageSize:coPageSize, setPageSize:setCoPageSize, setPage:pg.setPage })
+      // 더보기 (⋯): 컬럼 · 엑셀 · 페이지수
+      h('div', { style:{ position:'relative' } },
+        h('button', { onClick:function(e){ e.stopPropagation(); setMoreMenuOpen(!moreMenuOpen); setFilterMenuOpen(false); },
+          title:'컬럼·엑셀·페이지 설정',
+          style:{ padding:'6px 12px', fontSize:'14px', fontWeight:700, borderRadius:'5px', background:'#fff', color:'#475569', border:'1px solid #cbd5e1', cursor:'pointer', lineHeight:1 } }, '⋯'),
+        moreMenuOpen && h('div', { onClick:function(e){ e.stopPropagation(); },
+          style:{ position:'absolute', top:'calc(100% + 4px)', right:0, zIndex:100,
+            background:'#fff', border:'1px solid #cbd5e1', borderRadius:'8px',
+            boxShadow:'0 4px 12px rgba(0,0,0,0.15)', minWidth:'210px', padding:'8px', display:'flex', flexDirection:'column', gap:'8px' } },
+          h('div', { style:{ position:'relative' } },
+            h('button', { onClick:function(e){ e.stopPropagation(); setColMenuOpen(!colMenuOpen); },
+              title:'컬럼 표시/숨김 (로그인 사용자별 저장)',
+              style:{ width:'100%', textAlign:'left', padding:'6px 10px', fontSize:'11.5px', fontWeight:600, borderRadius:'4px',
+                background: coHiddenCount > 0 ? '#1e40af' : '#fff',
+                color: coHiddenCount > 0 ? '#fff' : '#475569',
+                border:'1px solid '+(coHiddenCount > 0 ? '#1e40af' : '#cbd5e1'), cursor:'pointer' } },
+              '⚙ 컬럼 설정' + (coHiddenCount > 0 ? ' ('+coHiddenCount+' 숨김)' : '')),
+            colMenuOpen && h('div', { onClick:function(e){e.stopPropagation();},
+              style:{ position:'absolute', top:'calc(100% + 4px)', left:0, zIndex:110,
+                background:'#fff', border:'1px solid #cbd5e1', borderRadius:'6px',
+                boxShadow:'0 4px 12px rgba(0,0,0,0.15)', minWidth:'220px', maxHeight:'60vh', overflowY:'auto', padding:'6px' } },
+              h('div', { style:{ display:'flex', gap:'6px', padding:'4px 6px 8px', borderBottom:'1px solid #f1f5f9', marginBottom:'4px' } },
+                h('button', { onClick:coSimple,
+                  className:'erp-tip', 'data-tip':'상세·재무 컬럼을 숨긴 간단 보기',
+                  style:{ flex:1, padding:'6px 0', background:'#1e40af', color:'#fff', border:'none', borderRadius:'5px', fontSize:'11.5px', fontWeight:700, cursor:'pointer' } }, '✨ 간단 보기'),
+                h('button', { onClick:coShowAll,
+                  style:{ flex:1, padding:'6px 0', background:'#fff', color:'#475569', border:'1px solid #cbd5e1', borderRadius:'5px', fontSize:'11.5px', fontWeight:600, cursor:'pointer' } }, '전체 보기')
+              ),
+              coColReg.map(function(c){
+                var visible = !hiddenCols[c.k];
+                return h('label', { key:c.k,
+                  style:{ display:'flex', alignItems:'center', gap:'8px', padding:'6px 10px', cursor:'pointer', borderRadius:'4px',
+                    background: visible ? '#eff6ff' : '#fff', fontSize:'11.5px' },
+                  onMouseEnter:function(e){ e.currentTarget.style.background = visible ? '#dbeafe' : '#f8fafc'; },
+                  onMouseLeave:function(e){ e.currentTarget.style.background = visible ? '#eff6ff' : '#fff'; } },
+                  h('input', { type:'checkbox', checked:visible, onChange:function(){ toggleCol(c.k); } }),
+                  h('span', { style:{ fontWeight:visible?600:400, color:visible?'#1e40af':'#94a3b8' } }, c.label));
+              })
+            )
+          ),
+          h('button', { onClick:exportExcel,
+            style:{ background:'#fff', color:'#16a34a', border:'1px solid #16a34a', padding:'6px 12px', borderRadius:'4px', fontSize:'11.5px', fontWeight:600, cursor:'pointer', textAlign:'left' } },
+            '📥 엑셀 내보내기'),
+          h('div', { style:{ display:'flex', alignItems:'center', gap:'6px' } },
+            h('span', { style:{ fontSize:'11px', color:'#64748b', flexShrink:0 } }, '페이지'),
+            h(PageSizeSelector, { pageSize:coPageSize, setPageSize:setCoPageSize, setPage:pg.setPage }))
+        )
+      )
     ),
     // 테이블 (모바일: 카드 뷰 / PC: 기존 테이블)
     window.innerWidth <= 768
@@ -19020,6 +19064,7 @@ function ExternalStaffMasters(){
   var form = f[0]; var setForm = f[1];
   var ts = useState(null); var activeTab = ts[0]; var setActiveTab = ts[1];
   var nmS = useState(false); var notifyOpen = nmS[0]; var setNotifyOpen = nmS[1];
+  var sh = useState(false); var showHidden = sh[0]; var setShowHidden = sh[1];
   function persist(arr){ arr.sort(function(a,b){return (a.sortOrder||0)-(b.sortOrder||0);}); setList(arr); dbSet('external_staff', arr); }
   function add(){
     if(!form.name.trim()){ showToast('이름 입력'); return; }
@@ -19028,7 +19073,7 @@ function ExternalStaffMasters(){
     persist(list.concat([{
       id:'ex-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
       name:form.name.trim(), role:form.role, org:form.org.trim(), contact:form.contact.trim(),
-      note:form.note.trim(), color:color, active:true, sortOrder:nextOrder
+      note:form.note.trim(), color:color, active:true, status:'active', sortOrder:nextOrder
     }]));
     setForm({name:'', role:'노무사', org:'이음센터', contact:'', note:''});
     showToast('등록됨');
@@ -19043,9 +19088,16 @@ function ExternalStaffMasters(){
     var _ud=list.slice(); persist(list.filter(function(x){return x.id!==id;}));
     showToastUndo('🗑️ 삭제됨', function(){persist(_ud);});
   }
-  // 소속별 그룹
+  // 상태 판별 (status 우선, 없으면 기존 active 불리언 — 데이터 자동 호환)
+  function isActive(x){ return x.status ? x.status==='active' : (x.active !== false); }
+  function setStatusFor(id, status){
+    persist(list.map(function(x){ return x.id===id ? Object.assign({},x,{ status:status, active: status==='active' }) : x; }));
+  }
+  var hiddenCount = list.filter(function(x){ return !isActive(x); }).length;
+  // 소속별 그룹 (숨김 보기 토글 반영)
+  var visibleList = showHidden ? list : list.filter(isActive);
   var byOrg = {};
-  list.forEach(function(x){ var o = x.org||'기타'; if(!byOrg[o]) byOrg[o]=[]; byOrg[o].push(x); });
+  visibleList.forEach(function(x){ var o = x.org||'기타'; if(!byOrg[o]) byOrg[o]=[]; byOrg[o].push(x); });
   var orgs = Object.keys(byOrg);
 
   return h('div', { className:'env-section', style:{ maxWidth:'100%' } },
@@ -19054,6 +19106,9 @@ function ExternalStaffMasters(){
     h('button', { onClick:function(){ setNotifyOpen(true); },
       style:{ marginTop:'8px', background:'#16a34a', color:'#fff', border:0, borderRadius:'6px', padding:'7px 14px', fontSize:'12px', fontWeight:700, cursor:'pointer' } },
       '📱 오늘·내일 근무문자'),
+    h('button', { onClick:function(){ setShowHidden(!showHidden); },
+      style:{ marginTop:'8px', marginLeft:'8px', background: showHidden?'#1e40af':'#fff', color: showHidden?'#fff':'#475569', border:'1px solid '+(showHidden?'#1e40af':'#cbd5e1'), borderRadius:'6px', padding:'7px 14px', fontSize:'12px', fontWeight:600, cursor:'pointer' } },
+      (showHidden?'✓ 숨김 보기':'👁 숨김 보기') + (hiddenCount?' ('+hiddenCount+')':'')),
     notifyOpen && h(EumNotifyModal, { onClose:function(){ setNotifyOpen(false); } }),
     // 등록 폼
     h('div', { style:{ background:'#f8fafc', border:'1px solid #e5e7eb', borderRadius:'8px', padding:'8px', marginTop:'8px', marginBottom:'18px' } },
@@ -19081,8 +19136,8 @@ function ExternalStaffMasters(){
       )
     ),
     // 목록 (소속별 그룹)
-    list.length===0
-      ? h('div', { style:{ textAlign:'center', padding:'40px', color:'#94a3b8', fontSize:'12.5px', border:'1px dashed #e5e7eb', borderRadius:'8px' } }, '등록된 외부협력자가 없습니다')
+    visibleList.length===0
+      ? h('div', { style:{ textAlign:'center', padding:'40px', color:'#94a3b8', fontSize:'12.5px', border:'1px dashed #e5e7eb', borderRadius:'8px' } }, list.length===0 ? '등록된 외부협력자가 없습니다' : '표시할 활성 협력자가 없습니다 (숨김 보기를 켜면 숨긴 항목이 보입니다)')
       : (function(){
           var currentOrg = (activeTab && byOrg[activeTab]) ? activeTab : orgs[0];
           return h('div', null,
@@ -19112,23 +19167,24 @@ function ExternalStaffMasters(){
                     h('th', { style:{ padding:'6px 5px', textAlign:'left', fontWeight:700, color:'#475569', width:'80px' } }, '역할'),
                     h('th', { style:{ padding:'6px 5px', textAlign:'left', fontWeight:700, color:'#475569', width:'130px' } }, '연락처'),
                     h('th', { style:{ padding:'6px 5px', textAlign:'left', fontWeight:700, color:'#475569' } }, '비고'),
-                    h('th', { style:{ padding:'6px 3px', textAlign:'center', fontWeight:700, color:'#475569', width:'36px' } }, '활성'),
-                    h('th', { style:{ padding:'6px 3px', textAlign:'center', fontWeight:700, color:'#475569', width:'56px' } }, '')
+                    h('th', { style:{ padding:'6px 3px', textAlign:'center', fontWeight:700, color:'#475569', width:'150px' } }, '관리')
                   )
                 ),
                 h('tbody', null,
                   byOrg[o].map(function(ex){
-                    return h('tr', { key:ex.id, style:{ borderTop:'1px solid #f1f5f9', opacity: ex.active?1:0.5 } },
+                    return h('tr', { key:ex.id, style:{ borderTop:'1px solid #f1f5f9', opacity: isActive(ex)?1:0.5, background: isActive(ex)?'transparent':'#f8fafc' } },
                       h('td', { style:{ padding:'6px 3px', textAlign:'center' } },
                         h('input', { type:'color', value:ex.color||'#2563eb',
                           onChange:function(e){update(ex.id,'color',e.target.value);},
                           style:{ width:'20px', height:'20px', border:'none', cursor:'pointer', background:'transparent' } })),
                       h('td', { style:{ padding:'6px 5px' } },
-                        h('input', { value:ex.name,
-                          onChange:function(e){update(ex.id,'name',e.target.value);},
-                          style:{ width:'100%', padding:'5px 7px', border:'1px solid transparent', borderRadius:'4px', fontSize:'12.5px', background:'transparent' },
-                          onFocus:function(e){e.target.style.border='1px solid #cbd5e1'; e.target.style.background='#fff';},
-                          onBlur:function(e){e.target.style.border='1px solid transparent'; e.target.style.background='transparent';} })),
+                        h('div', { style:{ display:'flex', alignItems:'center', gap:'4px' } },
+                          h('input', { value:ex.name,
+                            onChange:function(e){update(ex.id,'name',e.target.value);},
+                            style:{ width:'100%', padding:'5px 7px', border:'1px solid transparent', borderRadius:'4px', fontSize:'12.5px', background:'transparent' },
+                            onFocus:function(e){e.target.style.border='1px solid #cbd5e1'; e.target.style.background='#fff';},
+                            onBlur:function(e){e.target.style.border='1px solid transparent'; e.target.style.background='transparent';} }),
+                          !isActive(ex) && h('span', { style:{ flexShrink:0, background:'#f1f5f9', color:'#64748b', border:'1px solid #e2e8f0', fontSize:'10px', padding:'1px 6px', borderRadius:'10px', fontWeight:700 } }, '숨김'))),
                       h('td', { style:{ padding:'6px 3px' } },
                         h('select', { value:ex.role||'노무사',
                           onChange:function(e){update(ex.id,'role',e.target.value);},
@@ -19146,12 +19202,14 @@ function ExternalStaffMasters(){
                           style:{ width:'100%', padding:'5px 7px', border:'1px solid #e2e8f0', borderRadius:'4px', fontSize:'12px', background:'#f8fafc', color:'#334155' },
                           onFocus:function(e){e.target.style.border='1px solid #94a3b8'; e.target.style.background='#fff';},
                           onBlur:function(e){e.target.style.border='1px solid #e2e8f0'; e.target.style.background='#f8fafc';} })),
-                      h('td', { style:{ padding:'6px 3px', textAlign:'center' } },
-                        h('input', { type:'checkbox', checked:!!ex.active,
-                          onChange:function(e){update(ex.id,'active',e.target.checked);} })),
-                      h('td', { style:{ padding:'6px 3px', textAlign:'center' } },
+                      h('td', { style:{ padding:'6px 3px', textAlign:'center', whiteSpace:'nowrap' } },
+                        isActive(ex)
+                          ? h('button', { onClick:function(){setStatusFor(ex.id,'hidden');},
+                              style:{ background:'#f8fafc', color:'#475569', border:'1px solid #cbd5e1', borderRadius:'4px', padding:'4px 9px', fontSize:'11.5px', fontWeight:600, cursor:'pointer', marginRight:'4px' } }, '숨기기')
+                          : h('button', { onClick:function(){setStatusFor(ex.id,'active');},
+                              style:{ background:'#eff6ff', color:'#1d4ed8', border:'1px solid #93c5fd', borderRadius:'4px', padding:'4px 9px', fontSize:'11.5px', fontWeight:600, cursor:'pointer', marginRight:'4px' } }, '다시 활성'),
                         h('button', { onClick:function(){del(ex.id);},
-                          style:{ background:'#fef2f2', color:'#dc2626', border:'1px solid #fca5a5', borderRadius:'4px', padding:'4px 10px', fontSize:'11.5px', fontWeight:600, cursor:'pointer' },
+                          style:{ background:'#fef2f2', color:'#dc2626', border:'1px solid #fca5a5', borderRadius:'4px', padding:'4px 9px', fontSize:'11.5px', fontWeight:600, cursor:'pointer' },
                           onMouseEnter:function(e){ e.currentTarget.style.background='#fee2e2'; },
                           onMouseLeave:function(e){ e.currentTarget.style.background='#fef2f2'; } }, '🗑️ 삭제'))
                     );
@@ -53763,6 +53821,11 @@ function migrateClosedArchiveOnce(){
 //             finance_income, user_accounts, mgr_rates, payroll_monthly,
 //             attendance_records, leave_grants, leave_of_absence, last_login_id
 function migrateSidSwap_P006_P007_Once(){
+  // [비활성화 2026-07] 이 마이그레이션은 (1) sid만 스왑하고 이름/status는 두어 sid가 전임자 레코드를
+  //   가리킬 수 있고, (2) 가드는 기기별 localStorage인데 데이터는 Firebase 공유라 기기마다 실행 횟수가
+  //   달라 P-006↔P-007 매핑이 접속마다 뒤집혀(flip-flop) 로그인 튕김을 유발함. 데이터 오염 방지를 위해
+  //   no-op 처리한다. (아래 원본 로직은 실행되지 않음)
+  return 0;
   var KEY = 'pureun_v6_mig_sid_swap_p006_p007_v1';
   if(localStorage.getItem(KEY)) return 0;
   function swap(sid){
