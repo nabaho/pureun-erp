@@ -262,6 +262,8 @@ body.pc #main,body.pc #fab,body.pc #selbar{display:none!important}
 .colresize::after{content:'';width:2px;height:55%;background:#cfd6e6;border-radius:2px;transition:background .12s,height .12s}
 .colresize:hover::after{background:#3a4a73;height:80%}
 #pcTable thead th:hover .colresize::after{background:#aab6cf}
+#pcTable thead th.col-dragging{opacity:.4}
+#pcTable thead th.col-dragover{box-shadow:inset 3px 0 0 #3a4a73}
 #pcTable thead th{position:sticky;top:0;background:#f8fafc;font-size:12px;color:#7c89a6;text-align:left;
   padding:12px 14px;border-bottom:1px solid #eef2f7;font-weight:600;z-index:1}
 #pcTable td{padding:12px 14px;border-bottom:1px solid #f1f4f9;font-size:13.5px;color:#33415e;vertical-align:middle;
@@ -497,7 +499,7 @@ const FIREBASE_CONFIG = {
 const DB_ROOT = 'pucards';
 const GEMINI_KEY_LS = 'pucards_gemini_key';
 
-const state = { tab:'card', group:'all', owner:'all', region:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, onlyPrivate:false, unlocked:{}, items:{}, groups:{}, trash:{} };
+const state = { tab:'card', group:'all', owner:'all', region:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, colOrder:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, onlyPrivate:false, unlocked:{}, items:{}, groups:{}, trash:{} };
 
 /* ── 데이터 계층 ── */
 const Store = {
@@ -2282,6 +2284,39 @@ const COL_DEFS = {
   biz:  [['company','상호'],['ceo','대표자'],['bizno','사업자번호'],['address','소재지'],['date','등록일']]
 };
 function colHidden(key){ return !!(state.hiddenCols[state.tab]||{})[key]; }
+
+/* 열 순서: 저장된 순서(colOrder) 우선, 없으면 COL_DEFS 기본 순서. 새 열은 뒤에 붙임 */
+function orderedColKeys(){
+  const base = (COL_DEFS[state.tab]||[]).map(c=>c[0]);
+  const saved = state.colOrder && state.colOrder[state.tab];
+  if(!saved || !saved.length) return base;
+  const out = saved.filter(k=>base.includes(k));
+  base.forEach(k=>{ if(!out.includes(k)) out.push(k); });
+  return out;
+}
+/* 열 머리글 드래그로 좌우 순서 변경 (마우스, PC) */
+let _dragCol = null;
+function onColDragStart(e, key){ _dragCol=key; e.dataTransfer.effectAllowed='move';
+  try{ e.dataTransfer.setData('text/plain', key); }catch(_){}
+  const th=e.currentTarget; if(th) th.classList.add('col-dragging'); }
+function onColDragOver(e, key){ e.preventDefault(); e.dataTransfer.dropEffect='move';
+  const th=e.currentTarget; if(th && _dragCol && key!==_dragCol) th.classList.add('col-dragover'); }
+function onColDragLeave(e){ const th=e.currentTarget; if(th) th.classList.remove('col-dragover'); }
+function onColDragEnd(e){ const th=e.currentTarget; if(th) th.classList.remove('col-dragging');
+  document.querySelectorAll('#pcTable th.col-dragover').forEach(t=>t.classList.remove('col-dragover')); }
+function onColDrop(e, key){ e.preventDefault();
+  document.querySelectorAll('#pcTable th.col-dragover').forEach(t=>t.classList.remove('col-dragover'));
+  const from=_dragCol; _dragCol=null;
+  if(!from || from===key) return;
+  let order = orderedColKeys().filter(k=>k!==from);
+  const ti = order.indexOf(key); if(ti<0) return;
+  order.splice(ti, 0, from);
+  if(!state.colOrder) state.colOrder={};
+  state.colOrder[state.tab] = order;
+  saveColPrefs();
+  renderPCTable();
+  toast('열 순서를 바꿨습니다');
+}
 function toggleColMenu(ev){
   ev.stopPropagation();
   const m=$('colMenu');
@@ -2303,13 +2338,14 @@ function setColVisible(key, visible){
 }
 /* 열 설정(숨김·너비) localStorage 저장/복원 */
 function saveColPrefs(){
-  try{ localStorage.setItem('pucards_colPrefs', JSON.stringify({hiddenCols:state.hiddenCols, colW:state.colW})); }catch(e){}
+  try{ localStorage.setItem('pucards_colPrefs', JSON.stringify({hiddenCols:state.hiddenCols, colW:state.colW, colOrder:state.colOrder})); }catch(e){}
 }
 function loadColPrefs(){
   try{
     const p=JSON.parse(localStorage.getItem('pucards_colPrefs')||'{}');
     if(p.hiddenCols) state.hiddenCols=p.hiddenCols;
     if(p.colW) state.colW=p.colW;
+    if(p.colOrder) state.colOrder=p.colOrder;
   }catch(e){}
 }
 function toggleCollapse(id){ state.collapsed[id]=!state.collapsed[id]; render(); }
@@ -2539,34 +2575,54 @@ function renderPCTable(){
   const sortArrow = key => state.sortKey===key ? (state.sortDir==='asc'?' ▲':' ▼') : '';
   /* 열 너비: 사용자가 드래그로 조정한 값(state.colW)이 있으면 우선 적용 */
   const cw = (state.colW && state.colW[state.tab]) || {};
-  const colW = (key, def) => `<col data-col="${key}" style="width:${cw[key]||def}">`;
-  const colg = isCard
-    ? `<colgroup><col style="width:30px"><col style="width:28px">${colW('name','7%')}${colW('company','11%')}${colW('title','10%')}${colW('mobile','9%')}${colW('companyTel','9%')}${colW('companyFax','9%')}${colW('email','12%')}${colW('companyAddr','13%')}<col style="width:48px">${colW('date','74px')}<col style="width:54px"></colgroup>`
-    : `<colgroup><col style="width:32px"><col style="width:30px">${colW('company','22%')}${colW('ceo','12%')}${colW('bizno','15%')}${colW('address','auto')}<col style="width:58px">${colW('date','82px')}<col style="width:60px"></colgroup>`;
-  /* 칸별 검색 입력행 — 제거됨 (상단 통합 검색 사용) */
+  const DW = COL_DEFAULT_W[state.tab] || {};
+  const rz = key => `<span class="colresize" draggable="false" onmousedown="startColResize(event,'${key}')" ondblclick="resetColWidth(event,'${key}')" onclick="event.stopPropagation()" title="드래그: 너비 조절 · 더블클릭: 원래 크기로"></span>`;
+  const dragAttr = key => `draggable="true" ondragstart="onColDragStart(event,'${key}')" ondragover="onColDragOver(event,'${key}')" ondragleave="onColDragLeave(event)" ondrop="onColDrop(event,'${key}')" ondragend="onColDragEnd(event)"`;
+  /* 데이터 열 조각: colgroup / 헤더(th) / 셀(td) — 순서 배열대로 조합 */
+  const colFrag = key => `<col data-col="${key}" style="width:${cw[key]||DW[key]||'auto'}">`;
+  const TH = state.tab==='card' ? {
+    name:       `<th class="col-name" ${dragAttr('name')} onclick="sortBy('name')" style="cursor:pointer">이름${sortArrow('name')}${rz('name')}</th>`,
+    company:    `<th class="col-company" ${dragAttr('company')} onclick="sortBy('company')" style="cursor:pointer">회사${sortArrow('company')}${rz('company')}</th>`,
+    title:      `<th class="col-title" ${dragAttr('title')}>직책·부서${rz('title')}</th>`,
+    mobile:     `<th class="col-mobile" ${dragAttr('mobile')} onclick="sortBy('phone')" style="cursor:pointer">핸드폰${sortArrow('phone')}${rz('mobile')}</th>`,
+    companyTel: `<th class="col-companyTel" ${dragAttr('companyTel')}>회사전화${rz('companyTel')}</th>`,
+    companyFax: `<th class="col-companyFax" ${dragAttr('companyFax')}>회사팩스${rz('companyFax')}</th>`,
+    email:      `<th class="col-email" ${dragAttr('email')}>이메일${rz('email')}</th>`,
+    companyAddr:`<th class="col-companyAddr" ${dragAttr('companyAddr')}>회사주소${rz('companyAddr')}</th>`,
+    date:       `<th class="col-date" ${dragAttr('date')} onclick="sortBy('date')" style="cursor:pointer;text-align:right">등록일${sortArrow('date')}${rz('date')}</th>`,
+  } : {
+    company: `<th class="col-company" ${dragAttr('company')} onclick="sortBy('company')" style="cursor:pointer">상호${sortArrow('company')}${rz('company')}</th>`,
+    ceo:     `<th class="col-ceo" ${dragAttr('ceo')}>대표자${rz('ceo')}</th>`,
+    bizno:   `<th class="col-bizno" ${dragAttr('bizno')}>사업자번호${rz('bizno')}</th>`,
+    address: `<th class="col-address" ${dragAttr('address')}>소재지${rz('address')}</th>`,
+    date:    `<th class="col-date" ${dragAttr('date')} onclick="sortBy('date')" style="cursor:pointer;text-align:right">등록일${sortArrow('date')}${rz('date')}</th>`,
+  };
+  const TD = state.tab==='card' ? {
+    name:       it => `<td class="nm col-name" ondblclick="startCellEdit(event,'${it.id}','name')">${it.fav?'⭐ ':''}${esc(it.name||'(이름 없음)')}</td>`,
+    company:    it => `<td class="co col-company" ondblclick="startCellEdit(event,'${it.id}','company')">${esc(it.company||'')}</td>`,
+    title:      it => `<td class="col-title" ondblclick="startCellEdit(event,'${it.id}','title')">${esc([it.title,it.dept].filter(Boolean).join('·'))}</td>`,
+    mobile:     it => `<td class="col-mobile" ondblclick="startCellEdit(event,'${it.id}','mobile')">${esc(it.mobile||'')}</td>`,
+    companyTel: it => `<td class="col-companyTel" ondblclick="startCellEdit(event,'${it.id}','companyTel')">${esc(it.companyTel||it.tel||'')}</td>`,
+    companyFax: it => `<td class="col-companyFax" ondblclick="startCellEdit(event,'${it.id}','companyFax')">${esc(it.companyFax||it.fax||'')}</td>`,
+    email:      it => `<td class="col-email" ondblclick="startCellEdit(event,'${it.id}','email')">${esc(it.email||'')}</td>`,
+    companyAddr:it => `<td class="col-companyAddr" style="font-size:12px;color:#5a6885" ondblclick="startCellEdit(event,'${it.id}','companyAddr')">${esc(it.companyAddr||it.address||'')}</td>`,
+    date:       it => `<td class="dt col-date">${fmtDate(it.createdAt)}</td>`,
+  } : {
+    company: it => `<td class="nm col-company">${it.fav?'⭐ ':''}${esc(it.company||'(상호 없음)')}</td>`,
+    ceo:     it => `<td class="col-ceo">${esc(it.ceo||'')}</td>`,
+    bizno:   it => `<td class="col-bizno">${esc(fmtBizno(it.bizno))}</td>`,
+    address: it => `<td class="col-address">${esc(it.address||'')}</td>`,
+    date:    it => `<td class="dt col-date">${fmtDate(it.createdAt)}</td>`,
+  };
+  const order = orderedColKeys();
+  /* 앞뒤 고정 열: [체크박스][#] … 데이터 열 … [구분][관리] */
+  const cgFront = state.tab==='card' ? `<col style="width:30px"><col style="width:28px">` : `<col style="width:32px"><col style="width:30px">`;
+  const cgBack  = state.tab==='card' ? `<col style="width:48px"><col style="width:54px">` : `<col style="width:58px"><col style="width:60px">`;
+  const colg = `<colgroup>${cgFront}${order.map(colFrag).join('')}${cgBack}</colgroup>`;
   const filterRow = '';
   const allChecked = pageItems.length>0 && pageItems.every(it=>state.sel[it.id]);
   const headChk = `<th><input type="checkbox" ${allChecked?'checked':''} onchange="toggleSelectAll(this.checked)" title="이 페이지 전체 선택"></th>`;
-  const rz = key => `<span class="colresize" onmousedown="startColResize(event,'${key}')" ondblclick="resetColWidth(event,'${key}')" onclick="event.stopPropagation()" title="드래그: 너비 조절 · 더블클릭: 원래 크기로"></span>`;
-  const thead = (isCard
-    ? `<tr>${headChk}<th class="num">#</th>
-       <th class="col-name" onclick="sortBy('name')" style="cursor:pointer">이름${sortArrow('name')}${rz('name')}</th>
-       <th class="col-company" onclick="sortBy('company')" style="cursor:pointer">회사${sortArrow('company')}${rz('company')}</th>
-       <th class="col-title">직책·부서${rz('title')}</th>
-       <th class="col-mobile" onclick="sortBy('phone')" style="cursor:pointer">핸드폰${sortArrow('phone')}${rz('mobile')}</th>
-       <th class="col-companyTel">회사전화${rz('companyTel')}</th>
-       <th class="col-companyFax">회사팩스${rz('companyFax')}</th>
-       <th class="col-email">이메일${rz('email')}</th>
-       <th class="col-companyAddr">회사주소${rz('companyAddr')}</th>
-       <th style="text-align:right">구분</th>
-       <th class="col-date" onclick="sortBy('date')" style="cursor:pointer;text-align:right">등록일${sortArrow('date')}</th>
-       <th style="text-align:center">관리</th></tr>`
-    : `<tr>${headChk}<th class="num">#</th>
-       <th class="col-company" onclick="sortBy('company')" style="cursor:pointer">상호${sortArrow('company')}${rz('company')}</th>
-       <th class="col-ceo">대표자${rz('ceo')}</th><th class="col-bizno">사업자번호${rz('bizno')}</th><th class="col-address">소재지${rz('address')}</th>
-       <th style="text-align:right">구분</th>
-       <th class="col-date" onclick="sortBy('date')" style="cursor:pointer;text-align:right">등록일${sortArrow('date')}</th>
-       <th style="text-align:center">관리</th></tr>`) + filterRow;
+  const thead = `<tr>${headChk}<th class="num">#</th>${order.map(k=>TH[k]||'').join('')}<th style="text-align:right">구분</th><th style="text-align:center">관리</th></tr>` + filterRow;
   let rows='';
   pageItems.forEach((it,pi)=>{
     const i = start + pi;
@@ -2575,33 +2631,9 @@ function renderPCTable(){
     const actCell = `<td onclick="event.stopPropagation()" style="text-align:center;white-space:nowrap">
         <button onclick="openEditor(state.items['${it.id}'])" title="수정" style="border:none;background:none;cursor:pointer;font-size:14px;padding:3px 5px">✏️</button>
         <button onclick="delItem('${it.id}')" title="삭제" style="border:none;background:none;cursor:pointer;font-size:14px;padding:3px 5px">🗑</button></td>`;
-    if (isCard){
-      rows += `<tr draggable="true" ondragstart="onRowDrag(event,'${it.id}')" onclick="openDetail('${it.id}')" oncontextmenu="openRowMenu(event,'${it.id}')">
-        ${chk}<td class="num">${i+1}</td>
-        <td class="nm col-name" ondblclick="startCellEdit(event,'${it.id}','name')">${it.fav?'⭐ ':''}${esc(it.name||'(이름 없음)')}</td>
-        <td class="co col-company" ondblclick="startCellEdit(event,'${it.id}','company')">${esc(it.company||'')}</td>
-        <td class="col-title" ondblclick="startCellEdit(event,'${it.id}','title')">${esc([it.title,it.dept].filter(Boolean).join('·'))}</td>
-        <td class="col-mobile" ondblclick="startCellEdit(event,'${it.id}','mobile')">${esc(it.mobile||'')}</td>
-        <td class="col-companyTel" ondblclick="startCellEdit(event,'${it.id}','companyTel')">${esc(it.companyTel||it.tel||'')}</td>
-        <td class="col-companyFax" ondblclick="startCellEdit(event,'${it.id}','companyFax')">${esc(it.companyFax||it.fax||'')}</td>
-        <td class="col-email" ondblclick="startCellEdit(event,'${it.id}','email')">${esc(it.email||'')}</td>
-        <td class="col-companyAddr" style="font-size:12px;color:#5a6885" ondblclick="startCellEdit(event,'${it.id}','companyAddr')">${esc(it.companyAddr||it.address||'')}</td>
-        <td class="dt">${dup}</td>
-        <td class="dt col-date">${fmtDate(it.createdAt)}</td>
-        ${actCell}</tr>`;
-    } else {
-      rows += `<tr draggable="true" ondragstart="onRowDrag(event,'${it.id}')" onclick="openDetail('${it.id}')" oncontextmenu="openRowMenu(event,'${it.id}')">
-        ${chk}<td class="num">${i+1}</td>
-        <td class="nm col-company">${it.fav?'⭐ ':''}${esc(it.company||'(상호 없음)')}</td>
-        <td class="col-ceo">${esc(it.ceo||'')}</td>
-        <td class="col-bizno">${esc(fmtBizno(it.bizno))}</td>
-        <td class="col-address">${esc(it.address||'')}</td>
-        <td class="dt">${dup}</td>
-        <td class="dt col-date">${fmtDate(it.createdAt)}</td>
-        ${actCell}</tr>`;
-    }
+    rows += `<tr draggable="true" ondragstart="onRowDrag(event,'${it.id}')" onclick="openDetail('${it.id}')" oncontextmenu="openRowMenu(event,'${it.id}')">${chk}<td class="num">${i+1}</td>${order.map(k=>TD[k](it)).join('')}<td class="dt">${dup}</td>${actCell}</tr>`;
   });
-  if (!rows) rows = `<tr><td class="pcempty" colspan="13">등록된 항목이 없습니다 — 우측 상단 [＋ 명함 등록] 또는 이미지·PDF를 화면에 끌어다 놓으세요. (Ctrl+V 붙여넣기 가능)</td></tr>`;
+  if (!rows) rows = `<tr><td class="pcempty" colspan="${order.length+4}">등록된 항목이 없습니다 — 우측 상단 [＋ 명함 등록] 또는 이미지·PDF를 화면에 끌어다 놓으세요. (Ctrl+V 붙여넣기 가능)</td></tr>`;
   $('pcTable').innerHTML = `${colg}<thead>${thead}</thead><tbody>${rows}</tbody>`;
   /* 숨긴 열 적용: 해당 클래스 셀을 display:none */
   const hidden = state.hiddenCols[state.tab] || {};
