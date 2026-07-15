@@ -34203,20 +34203,8 @@ function CorpDashboard(props){
   // 외부 협력자 맵
   var extStaffList = dbGet('external_staff', []) || [];
   var extStaffMap = {}; extStaffList.forEach(function(x){ extStaffMap[x.id] = x; });
-  // 이음 모드: 이음센터 참여 내부직원만 칩 표시 (전 직원 노출 방지 · 드래그 → 이음센터 근무 등록)
-  var ieumMemberUsers = [];
-  if(ieumMode){
-    var _ieumMem = dbGet('ieum_members', null);
-    if(Array.isArray(_ieumMem)){
-      ieumMemberUsers = users.filter(function(u){ return _ieumMem.indexOf(u.sid) >= 0; });
-    } else {
-      // 자동: 이음센터 근무 기록이 있는 내부직원
-      var _attEum = dbGet('attendance_records', []) || [];
-      ieumMemberUsers = users.filter(function(u){
-        return _attEum.some(function(r){ return r.type==='eum-work' && r.sid===u.sid && !r.externalId; });
-      });
-    }
-  }
+  // 이음 모드: 내부 노무사(항상) + 수동 지정 직원 칩 표시 (드래그 → 이음센터 근무 등록)
+  var ieumMemberUsers = ieumMode ? ieumInternalUsers() : [];
   // calFilter 의미 확장: null=전체, 'pureun'=푸른직원만, 'eum'=외부전체, 'eum:<id>'=특정외부, 'eumwork'=이음센터근무모두, 'eum-keyword'=이음센터 키워드, sid=특정직원
   var filterIsPureun = calFilter === 'pureun';
   var filterIsEum = calFilter === 'eum';
@@ -37440,21 +37428,27 @@ function ieumStaffColorMap(){
   return map;
 }
 
+// 이음센터 내부 참여자: 직급(title)에 '노무사'가 들어간 직원은 항상 포함(드래그 배정 대상)
+// + ieum_members에 수동 지정한 직원 추가. 수동 목록이 없으면 이음근무 기록 있는 직원도 자동 포함
+function ieumInternalUsers(){
+  var mem = dbGet('ieum_members', null);
+  var memArr = Array.isArray(mem) ? mem : [];
+  var att = dbGet('attendance_records', []) || [];
+  return getAssignableUsers().filter(function(u){
+    if((String(u.title||'') + String(u.role||'')).indexOf('노무사') >= 0) return true; // 노무사는 항상 포함
+    if(memArr.indexOf(u.sid) >= 0) return true;                                        // 수동 지정 직원
+    if(!Array.isArray(mem) && att.some(function(r){ return r.type==='eum-work' && r.sid===u.sid && !r.externalId; })) return true;
+    return false;
+  });
+}
+
 // 이음센터 인원 목록 구성: 내부 노무사(법인 중심) → 외부 노무사 → 변호사 순
 function ieumBuildPeople(year){
-  var users = getAssignableUsers();
   var ext = getExternalStaff().filter(function(x){ return x.active !== false; });
-  var duty = ieumDutyStats(year);
-  var memberSids = dbGet('ieum_members', null);
-  if(!Array.isArray(memberSids)){
-    // 자동: 해당 연도 eum-work 기록이 있는 내부직원
-    memberSids = users.filter(function(u){ return duty[u.sid]; }).map(function(u){ return u.sid; });
-  }
   var colorMap = ieumStaffColorMap(); // 법인 대시보드 지정색과 동일
   var rows = [];
-  memberSids.forEach(function(sid){
-    var u = users.find(function(x){ return x.sid === sid; }); if(!u) return;
-    rows.push({ pk:sid, name:u.name, kind:'in', roleLabel:'내부 노무사', color:colorMap[sid]||'#1e40af',
+  ieumInternalUsers().forEach(function(u){
+    rows.push({ pk:u.sid, name:u.name, kind:'in', roleLabel:'내부 노무사', color:colorMap[u.sid]||'#1e40af',
       phone:(u.phone||u.contact||''), note:'' });
   });
   ext.filter(function(x){ return (x.role||'').indexOf('변호사') < 0; }).forEach(function(x){
@@ -37833,7 +37827,7 @@ function IeumPeopleTab(){
         style:{position:'fixed',inset:0,background:'rgba(15,23,42,0.5)',zIndex:10000,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'}},
         h('div',{style:{background:'#fff',borderRadius:'12px',width:'360px',maxWidth:'100%',padding:'20px 22px',boxShadow:'0 25px 50px rgba(0,0,0,0.3)',maxHeight:'80vh',overflowY:'auto'}},
           h('div',{style:{fontSize:'14px',fontWeight:800,marginBottom:'4px'}},'⚙ 이음센터 참여 내부직원'),
-          h('div',{style:{fontSize:'11px',color:'#94a3b8',marginBottom:'12px'}},'체크한 직원만 인원 현황에 표시됩니다'),
+          h('div',{style:{fontSize:'11px',color:'#94a3b8',marginBottom:'12px'}},'노무사 직급은 항상 자동 포함됩니다. 노무사가 아닌 직원을 추가하려면 체크하세요.'),
           users.map(function(u){
             return h('label',{key:u.sid,style:{display:'flex',alignItems:'center',gap:'8px',padding:'6px 4px',fontSize:'12.5px',cursor:'pointer'}},
               h('input',{type:'checkbox',defaultChecked:!!curSet[u.sid],
