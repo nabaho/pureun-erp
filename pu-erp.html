@@ -34276,14 +34276,15 @@ function CorpDashboard(props){
       body: body ? JSON.stringify(body) : undefined
     }).then(function(r){ return r.status===204?Promise.resolve({}):r.json(); }).then(cb).catch(function(e){ showToast('❌ 오류: '+e.message); });
   }
-  function moveGcalEventToDate(evId, newDate, cb){
   // ERP 레코드에 gcalEventId가 있으면 구글 캘린더에서도 삭제
+  // ★ moveGcalEventToDate 내부에 갇혀 있던 것을 밖으로 — 외부 호출부에서 ReferenceError 나던 버그 수정
   function gcalDeleteIfLinked(gcalEventId, cb){
     if(!gcalAuthed || !gcalEventId || !GCAL_CAL_ID) { cb && cb(); return; }
     gcalApiCall('DELETE','/calendars/'+encodeURIComponent(GCAL_CAL_ID)+'/events/'+encodeURIComponent(gcalEventId)+'?sendUpdates=none', null, function(){
       cb && cb();
     });
   }
+  function moveGcalEventToDate(evId, newDate, cb){
     gcalApiCall('GET','/calendars/'+encodeURIComponent(GCAL_CAL_ID)+'/events/'+encodeURIComponent(evId)+'?key='+GCAL_API_KEY, null, function(ev){
       if(!ev || !ev.start){ cb && cb(false); return; }
       var patch;
@@ -34649,29 +34650,40 @@ function CorpDashboard(props){
     setCalDragOver(null);
     try {
       var data = JSON.parse(e.dataTransfer.getData('text/plain'));
-      // 내부 직원 칩 드롭 → 해당 직원 이음센터 근무 일정 추가
+      // 내부 직원 칩 드롭 → 이음센터 근무 등록 (attendance_records — 이름 표시·인원현황 집계·문자·공개미러와 일원화)
       if(data && data.kind === 'int-staff' && data.sid){
-        var sArr0 = dbGet('my_schedules', []) || [];
-        var dup0 = sArr0.find(function(s){ return s.date===newDate && s.sid===data.sid && s.type==='eum-work' && !s.externalId; });
+        var attArr0 = dbGet('attendance_records', []) || [];
+        var dup0 = attArr0.find(function(r){ return r.date===newDate && r.type==='eum-work' && r.sid===data.sid && !r.externalId; });
         if(dup0){ showToast('이미 '+newDate+' '+(data.name||data.sid)+' 이음센터 등록됨'); return; }
-        sArr0.push({ id:'sch-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
-          date:newDate, sid:data.sid, type:'eum-work', title:'', note:'' });
-        dbSet('my_schedules', sArr0);
+        var newAttId0 = 'att-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+        dbUpsert('attendance_records', { id:newAttId0, sid:data.sid, externalId:null, date:newDate, type:'eum-work', hours:8, note:'' });
+        // 구글 캘린더 동기화 (이음센터 등록 모달과 동일)
+        if(gcalAuthed && GCAL_CAL_ID){
+          var evG0 = buildGcalEvent((data.name||data.sid)+' 이음센터', newDate, '', '', '', '', '');
+          gcalApiCall('POST','/calendars/'+encodeURIComponent(GCAL_CAL_ID)+'/events', evG0, function(r){
+            if(r&&r.id){ dbPatch('attendance_records', newAttId0, { gcalEventId:r.id }); setGcalRfk(function(n){return n+1;}); }
+          });
+        }
         showToast('🏛️ '+newDate+' '+(data.name||'')+' 이음센터 등록');
         setCalRfk(calRfk+1);
         return;
       }
-      // 외부협력자 칩 드롭 → 이음센터 근무 일정 추가
+      // 외부협력자 칩 드롭 → 이음센터 근무 등록 (attendance_records)
       if(data && data.kind === 'ext-staff' && data.extId){
         var exArr = dbGet('external_staff', []) || [];
         var exObj = exArr.find(function(x){ return x.id === data.extId; });
         if(!exObj){ return; }
-        var sArr = dbGet('my_schedules', []) || [];
-        var dup = sArr.find(function(s){ return s.date===newDate && s.externalId===data.extId; });
+        var attArr1 = dbGet('attendance_records', []) || [];
+        var dup = attArr1.find(function(r){ return r.date===newDate && r.type==='eum-work' && r.externalId===data.extId; });
         if(dup){ showToast('이미 '+newDate+' '+exObj.name+' 등록됨'); return; }
-        sArr.push({ id:'sch-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
-          date:newDate, sid:CURRENT_USER.sid, type:'eum-work', externalId:data.extId, title:'', note:'' });
-        dbSet('my_schedules', sArr);
+        var newAttId1 = 'att-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+        dbUpsert('attendance_records', { id:newAttId1, sid:null, externalId:data.extId, date:newDate, type:'eum-work', hours:8, note:'' });
+        if(gcalAuthed && GCAL_CAL_ID){
+          var evG1 = buildGcalEvent(exObj.name+' 이음센터', newDate, '', '', '', '', '');
+          gcalApiCall('POST','/calendars/'+encodeURIComponent(GCAL_CAL_ID)+'/events', evG1, function(r){
+            if(r&&r.id){ dbPatch('attendance_records', newAttId1, { gcalEventId:r.id }); setGcalRfk(function(n){return n+1;}); }
+          });
+        }
         showToast('🏛️ '+newDate+' '+exObj.name+' 이음센터 등록');
         setCalRfk(calRfk+1);
         return;
@@ -37467,6 +37479,25 @@ function ieumBuildPeople(year){
 // 이음센터 메인 화면: 탭 3개 (근무 캘린더 / 인원 현황 / 외부 공유 뷰)
 function IeumCenter(props){
   var tbS = usePersistedState('ieum_tab', 'cal'); var tab = tbS[0]; var setTab = tbS[1];
+  // 1회 이관: 과거 드래그로 my_schedules에 들어간 이음센터 일정('일정'으로만 표시되던 것)을
+  // attendance_records로 이동 — 이름 표시·인원현황 집계·문자·공개미러 일원화
+  useEffect(function(){
+    try {
+      var sch = dbGet('my_schedules', []) || [];
+      var eum = sch.filter(function(s){ return s.type === 'eum-work'; });
+      if(!eum.length) return;
+      var att = dbGet('attendance_records', []) || [];
+      eum.forEach(function(s, i){
+        var dup = att.find(function(r){ return r.type==='eum-work' && r.date===s.date &&
+          (s.externalId ? r.externalId===s.externalId : (r.sid===s.sid && !r.externalId)); });
+        if(!dup) att.push({ id:'att-'+Date.now().toString(36)+i.toString(36)+Math.random().toString(36).slice(2,5),
+          sid:s.externalId?null:(s.sid||null), externalId:s.externalId||null, date:s.date, type:'eum-work', hours:8, note:s.note||'' });
+      });
+      dbSet('attendance_records', att);
+      dbSet('my_schedules', sch.filter(function(s){ return s.type !== 'eum-work'; }));
+      showToast('🏛️ 이음센터 일정 '+eum.length+'건을 근무 기록으로 정리했습니다');
+    } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+  }, []);
   var TABS = [
     { v:'cal',   label:'📅 근무 캘린더', desc:'이음센터 일정' },
     { v:'ppl',   label:'👤 인원 현황',   desc:'근무·상담·강의 집계' },
