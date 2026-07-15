@@ -477,26 +477,46 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     document.body.classList.add('portal-mode');   // 포털 화면 상단 정렬
     var tf = $('topfix'); if(tf) tf.style.display = 'none';
 
-    // user_accounts에서 이 사용자(이메일 매칭) 찾아 이름·역할 확정 → 그 후에 한 번에 표시
+    // 직원명부에서 이 사용자(이메일 매칭) 찾아 이름·역할 확정 → 그 후에 한 번에 표시
     function _show(acct){
       renderPortal(acct);
       $('portalView').style.display = 'block';
     }
-    db.ref('data/user_accounts').once('value').then(function(snap){
-      var raw = snap.val();
-      var list = (raw && raw.v !== undefined) ? raw.v : raw;
-      if(list && !Array.isArray(list) && typeof list === 'object'){
-        // 객체 형태면 값 배열로
-        list = Object.keys(list).map(function(k){ return list[k]; });
-      }
-      var acct = null;
-      if(Array.isArray(list)){
-        acct = list.find(function(x){ return x && sidToEmail(x.sid) === (user.email||'').toLowerCase(); });
-      }
-      _show(acct);
-    }).catch(function(){
-      _show(null);
-    });
+    // 명부 읽기 공통: {v:...} 래핑·객체 형태 모두 배열로 정규화
+    function _readRoster(path){
+      return db.ref(path).once('value').then(function(snap){
+        var raw = snap.val();
+        var list = (raw && raw.v !== undefined) ? raw.v : raw;
+        if(list && !Array.isArray(list) && typeof list === 'object'){
+          list = Object.keys(list).map(function(k){ return list[k]; });
+        }
+        return Array.isArray(list) ? list : null;
+      });
+    }
+    function _match(list){
+      if(!list) return null;
+      var em = (user.email || '').toLowerCase();
+      return list.find(function(x){ return x && sidToEmail(x.sid) === em; }) || null;
+    }
+    // 이 기기의 ERP 로컬 캐시 최종 폴백 (서버 읽기가 모두 막혀도 이름 표시)
+    function _matchLocal(){
+      try {
+        var arr = JSON.parse(localStorage.getItem('pureun_v6_user_accounts') || 'null');
+        return _match(arr);
+      } catch(e){ return null; }
+    }
+    // [보안규칙 대비] user_accounts는 관리자 전용 → 일반 직원은 읽기 거부.
+    // ERP 로그인 경로와 동일하게 공개 명부 user_dir 우선, 실패 시 user_accounts → 로컬 캐시 순.
+    _readRoster('data/user_dir')
+      .then(function(dir){
+        var acct = _match(dir);
+        if(acct) return acct;
+        return _readRoster('data/user_accounts').then(_match).catch(function(){ return null; });
+      })
+      .catch(function(){
+        return _readRoster('data/user_accounts').then(_match).catch(function(){ return null; });
+      })
+      .then(function(acct){ _show(acct || _matchLocal()); });
   }
 
   function renderPortal(acct){
