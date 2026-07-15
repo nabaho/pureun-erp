@@ -91,7 +91,16 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
 .avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#7c6ce0);
   color:#fff;display:flex;align-items:center;justify-content:center;font-size:.78rem;font-weight:800;}
 .logout{color:var(--accent);font-weight:700;cursor:pointer;background:none;border:none;font-size:.8rem;font-family:inherit;}
-.sec{font-size:.82rem;font-weight:700;color:var(--sub);margin:24px 4px 12px;}
+.sec{font-size:.82rem;font-weight:700;color:var(--sub);margin:24px 4px 12px;display:flex;align-items:center;gap:10px;}
+/* 타일 순서 고정 토글 */
+#tileLockBtn{display:inline-flex;align-items:center;gap:4px;border:1px solid rgba(10,20,60,.14);background:rgba(255,255,255,.6);
+  color:var(--sub);border-radius:99px;padding:4px 12px;font-size:.68rem;font-weight:700;font-family:inherit;cursor:pointer;transition:.12s;}
+#tileLockBtn:hover{border-color:var(--accent);color:var(--accent);}
+#tileLockBtn.locked{background:#1e40af;border-color:#1e40af;color:#fff;}
+#tileHint{font-size:.66rem;color:var(--mute);font-weight:500;}
+.tile.dragging{opacity:.35;}
+.tile:not(.lock)[draggable="true"]{cursor:grab;}
+.tile:not(.lock)[draggable="true"]:active{cursor:grabbing;}
 .tiles{display:flex;flex-wrap:wrap;gap:8px 4px;justify-content:flex-start;}
 .tile{background:none;border:none;border-radius:14px;padding:14px 8px;width:96px;
   cursor:pointer;transition:.15s;text-decoration:none;color:inherit;
@@ -282,7 +291,10 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       </div>
     </div>
 
-    <div class="sec">업무 시스템</div>
+    <div class="sec">업무 시스템
+      <button id="tileLockBtn" type="button"></button>
+      <span id="tileHint">타일을 끌어 순서를 바꿀 수 있습니다</span>
+    </div>
     <div class="tiles" id="appTiles"></div>
   </div>
 
@@ -563,6 +575,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       if(app.roles && app.roles.indexOf(role) < 0) return;
       var a = document.createElement('a');
       a.className = 'tile';
+      a.dataset.key = app.key;
       a.href = app.url + (app.url.indexOf('?') >= 0 ? '&' : '?') + 'sso=1';
       a.innerHTML =
         '<div class="ic">' + app.icon + '</div>' +
@@ -595,12 +608,118 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     if(role === 'admin'){
       var lock = document.createElement('div');
       lock.className = 'tile lock';
+      lock.dataset.key = 'stafflock';
       lock.innerHTML = '<div class="ic">🔒</div><div class="tx"><b>직원 관리</b><span>ERP 내 관리자 메뉴</span></div>';
       tiles.appendChild(lock);
     }
 
+    // 타일 드래그 재배치 + 순서 고정 (사용자별 저장)
+    initTileOrder();
+
     // 건의함: 현재 사용자 정보 전달 + 플로팅 버튼 표시
     if(window.sgSetUser) window.sgSetUser(acct);
+  }
+
+  // ══════════ 타일 순서: 드래그 이동 + 고정 (사용자별, 기기 간 동기화) ══════════
+  var tilePrefs = { order: null, locked: false };
+  function tilePrefLocalKey(){ return 'pu_portal_tiles_' + sgEmailKey((auth.currentUser && auth.currentUser.email) || ''); }
+  function tilePrefPath(){ return 'data/portal_prefs/' + sgEmailKey((auth.currentUser && auth.currentUser.email) || '_'); }
+
+  function saveTilePrefs(){
+    try { localStorage.setItem(tilePrefLocalKey(), JSON.stringify(tilePrefs)); } catch(e){}
+    if(auth.currentUser) db.ref(tilePrefPath()).set(tilePrefs).catch(function(){});
+  }
+  // 저장된 순서(키 배열)대로 DOM 재정렬 — 저장에 없는 새 타일은 맨 뒤에 기본 순서로
+  function applyTileOrder(){
+    if(!tilePrefs.order || !tilePrefs.order.length) return;
+    var cont = $('appTiles');
+    var all = Array.prototype.slice.call(cont.children);
+    var byKey = {};
+    all.forEach(function(t){ byKey[t.dataset.key] = t; });
+    var seq = [];
+    tilePrefs.order.forEach(function(k){ if(byKey[k]){ seq.push(byKey[k]); delete byKey[k]; } });
+    all.forEach(function(t){ if(byKey[t.dataset.key] === t) seq.push(t); });  // 저장에 없던 새 타일
+    seq.forEach(function(t){ cont.appendChild(t); });
+  }
+  function persistOrderFromDom(){
+    tilePrefs.order = Array.prototype.map.call($('appTiles').children, function(t){ return t.dataset.key || ''; }).filter(Boolean);
+    saveTilePrefs();
+  }
+  function updateLockUi(){
+    var b = $('tileLockBtn');
+    b.textContent = tilePrefs.locked ? '🔒 고정됨' : '🔓 이동 가능';
+    b.classList.toggle('locked', tilePrefs.locked);
+    $('tileHint').style.display = tilePrefs.locked ? 'none' : 'inline';
+    Array.prototype.forEach.call($('appTiles').children, function(t){ t.draggable = !tilePrefs.locked; });
+  }
+
+  var _dragEl = null, _tileDragWired = false;
+  function onTileDragStart(e){
+    if(tilePrefs.locked){ e.preventDefault(); return; }
+    _dragEl = this;
+    this.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', this.dataset.key || ''); } catch(_){}
+  }
+  function onTileDragEnd(){
+    if(_dragEl) _dragEl.classList.remove('dragging');
+    if(_dragEl){ _dragEl = null; persistOrderFromDom(); }
+  }
+  function onTileDragOver(e){
+    if(!_dragEl) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    // 커서에서 가장 가까운 타일을 찾아 그 앞/뒤로 삽입 (그리드 대응)
+    var cont = $('appTiles'), target = null, before = true, dist = Infinity;
+    Array.prototype.forEach.call(cont.children, function(c){
+      if(c === _dragEl) return;
+      var r = c.getBoundingClientRect();
+      var dx = e.clientX - (r.left + r.width/2), dy = e.clientY - (r.top + r.height/2);
+      var d = dx*dx + dy*dy;
+      if(d < dist){ dist = d; target = c; before = (Math.abs(dy) > r.height/2) ? (dy < 0) : (dx < 0); }
+    });
+    if(target && target !== _dragEl){
+      cont.insertBefore(_dragEl, before ? target : target.nextSibling);
+    }
+  }
+
+  function initTileOrder(){
+    var btn = $('tileLockBtn');
+    // 모바일: HTML5 드래그 미지원 → 버튼·힌트 숨김, 저장된 순서만 적용
+    if(isMobile()){ btn.style.display = 'none'; $('tileHint').style.display = 'none'; }
+    // 1) 로컬 캐시로 즉시 적용 (깜빡임 없이)
+    try { var p = JSON.parse(localStorage.getItem(tilePrefLocalKey()) || 'null'); if(p) tilePrefs = { order: p.order || null, locked: !!p.locked }; } catch(e){}
+    applyTileOrder();
+    if(!isMobile()){
+      updateLockUi();
+      // 2) 드래그 배선 (컨테이너 이벤트는 1회만)
+      Array.prototype.forEach.call($('appTiles').children, function(t){
+        t.addEventListener('dragstart', onTileDragStart);
+        t.addEventListener('dragend', onTileDragEnd);
+      });
+      if(!_tileDragWired){
+        _tileDragWired = true;
+        $('appTiles').addEventListener('dragover', onTileDragOver);
+        $('appTiles').addEventListener('drop', function(e){ e.preventDefault(); });
+        btn.addEventListener('click', function(){
+          tilePrefs.locked = !tilePrefs.locked;
+          saveTilePrefs();
+          updateLockUi();
+        });
+      }
+    }
+    // 3) 서버 저장분과 동기화 (다른 기기에서 바꾼 순서 반영)
+    if(auth.currentUser){
+      db.ref(tilePrefPath()).once('value').then(function(s){
+        var p = s.val();
+        if(p && JSON.stringify({order:p.order||null,locked:!!p.locked}) !== JSON.stringify(tilePrefs)){
+          tilePrefs = { order: p.order || null, locked: !!p.locked };
+          try { localStorage.setItem(tilePrefLocalKey(), JSON.stringify(tilePrefs)); } catch(e){}
+          applyTileOrder();
+          if(!isMobile()) updateLockUi();
+        }
+      }).catch(function(){});
+    }
   }
 
   // ── 로그아웃 ──
