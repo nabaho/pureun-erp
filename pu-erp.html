@@ -342,6 +342,7 @@ class ErrorBoundary extends Component {
 var MENUS = [
   { gid:'dash', name:'대시보드', icon:'📊', items:[
     { id:'dash/corp', icon:'🏛️', text:'법인 대시보드' },
+    { id:'dash/ieum', icon:'🤝', text:'이음센터' },
     { id:'dash/my',   icon:'📋', text:'나의 업무' }
   ]},
   { gid:'biz', name:'사무관리', icon:'💼', items:[
@@ -18265,10 +18266,10 @@ function eumWorkTargets(dateYMD){
   var ext = dbGet('external_staff', []) || [];
   var users = dbGet('user_accounts', []) || [];
   return att.filter(function(r){ return r.type==='eum-work' && r.date===dateYMD; }).map(function(r){
-    var name='', phone='';
-    if(r.externalId){ var e=ext.find(function(x){return x.id===r.externalId;}); if(e){ name=e.name; phone=(e.contact||'').replace(/[^0-9]/g,''); } }
+    var name='', phone='', shareKey='';
+    if(r.externalId){ var e=ext.find(function(x){return x.id===r.externalId;}); if(e){ name=e.name; phone=(e.contact||'').replace(/[^0-9]/g,''); shareKey=e.shareKey||''; } }
     else if(r.sid){ var u=users.find(function(x){return x.sid===r.sid;}); if(u){ name=u.name; phone=(u.phone||u.contact||'').replace(/[^0-9]/g,''); } }
-    return { name:name||'(이름없음)', phone:phone, note:r.note||'' };
+    return { name:name||'(이름없음)', phone:phone, note:r.note||'', shareKey:shareKey };
   });
 }
 function _eumDateInfo(days){
@@ -18293,7 +18294,8 @@ function EumNotifyModal(props){
       targets.length===0
         ? h('div',{style:{color:'#94a3b8',fontSize:'12px',padding:'8px',textAlign:'center'}},'근무 예정자 없음')
         : h('div',null, targets.map(function(t,i){
-            var msg=msgFor(when,info,t.name);
+            var msg=msgFor(when,info,t.name)
+              + (t.shareKey ? '\n📅 전체 일정: '+ieumViewUrl(t.shareKey) : ''); // 외부 공유 뷰 개인 링크 자동 첨부
             var hasPhone=t.phone.length>=10;
             return h('div',{key:i,style:{display:'flex',alignItems:'center',gap:'8px',background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'6px',padding:'8px 10px',marginBottom:'5px'}},
               h('div',{style:{flex:1,minWidth:0}},
@@ -20889,7 +20891,7 @@ function flatMenus(){
 
 // 역할 프리셋: 메뉴 ID 배열로 정의
 // 직원 기본: 대시보드 2개 + 사무관리 7개만 (총 9개)
-var DASH_MENUS = ['dash/corp','dash/my'];
+var DASH_MENUS = ['dash/corp','dash/ieum','dash/my'];
 var BIZ_MENUS  = ['biz/contract','biz/company','biz/case','biz/consulting','biz/fund','biz/other','biz/closed'];
 var BIZ_DEFAULT_MENUS = DASH_MENUS.concat(BIZ_MENUS);
 var ROLE_PRESETS = [
@@ -33823,6 +33825,8 @@ function CertLog(){
 // ============================================================
 function CorpDashboard(props){
   var navigate = props.onNavigate || function(){};
+  // 이음센터 모드: 이음센터 화면(dash/ieum)에서 캘린더만 재사용 — 탭 고정 + 이음 필터 프리셋
+  var ieumMode = !!props.ieumMode;
   var users = getAssignableUsers();
   var allIncomes = dbGet('finance_income', []);
   var allExpenses = dbGet('finance_expense', []);
@@ -33830,11 +33834,11 @@ function CorpDashboard(props){
   // 권한: 관리자/위임관리인 = KPI/분석/직원별업무 전체 접근
   var IS_ADMIN = !!(CURRENT_USER.isAdmin || CURRENT_USER.isSubAdmin);
 
-  // 탭 초기값 — 마지막 본 탭 복원 (없으면 캘린더)
-  var initTab = dbGet('corp_dash_tab', null) || 'calendar';
+  // 탭 초기값 — 마지막 본 탭 복원 (없으면 캘린더) · 이음 모드는 항상 캘린더 고정
+  var initTab = ieumMode ? 'calendar' : (dbGet('corp_dash_tab', null) || 'calendar');
   var tbS = useState(initTab); var dashTab = tbS[0]; var setDashTab = tbS[1];
   var fsS = useState(false); var dashFull = fsS[0]; var setDashFull = fsS[1];
-  function changeTab(t){ setDashTab(t); dbSet('corp_dash_tab', t); }
+  function changeTab(t){ if(ieumMode) return; setDashTab(t); dbSet('corp_dash_tab', t); }
   var astS = useState('revenue'); var anaSubTab = astS[0]; var setAnaSubTab = astS[1];
   var asyS = usePersistedState('dash_ana_year', String(new Date().getFullYear())); var anaStaffYear = asyS[0]; var setAnaStaffYear = asyS[1];
   var asmS = usePersistedState('dash_ana_month', 'all'); var anaStaffMonth = asmS[0]; var setAnaStaffMonth = asmS[1];
@@ -34184,7 +34188,7 @@ function CorpDashboard(props){
   // selYm이 바뀌면 calYm 동기화
   useEffect(function(){ setCalYm(selYm); }, [selYm]);
   // 직원 필터 (null = 전체)
-  var calFilterS = useState(null); var calFilter = calFilterS[0]; var setCalFilter = calFilterS[1];
+  var calFilterS = useState(ieumMode ? 'eum-keyword' : null); var calFilter = calFilterS[0]; var setCalFilter = calFilterS[1];
   var extPopS = useState(null); var extPopover = extPopS[0]; var setExtPopover = extPopS[1];
   var cewmS = useState(null); var eumWorkModal = cewmS[0]; var setEumWorkModal = cewmS[1];
   var limS = useState(null); var leaveInputModal = limS[0]; var setLeaveInputModal = limS[1];
@@ -34830,11 +34834,11 @@ function CorpDashboard(props){
       })
     );
 
-  return h('div',{className:'corp-dash',style:{margin:!IS_MOBILE?(dashTab==='calendar'?'-24px':'-24px -24px 0 -24px'):'0 -10px',padding:IS_MOBILE?'4px 2px':(dashTab==='calendar'?'0':'4px 10px'),height:!IS_MOBILE&&dashTab==='calendar'?'calc(100vh - 46px)':'auto',display:!IS_MOBILE&&dashTab==='calendar'?'flex':'block',flexDirection:'column',overflow:!IS_MOBILE&&dashTab==='calendar'?'hidden':'visible'}},
+  return h('div',{className:'corp-dash',style:{margin:ieumMode?(!IS_MOBILE?'0 -24px':'0 -10px'):(!IS_MOBILE?(dashTab==='calendar'?'-24px':'-24px -24px 0 -24px'):'0 -10px'),padding:IS_MOBILE?'4px 2px':(dashTab==='calendar'?'0':'4px 10px'),height:!IS_MOBILE&&dashTab==='calendar'?(ieumMode?'calc(100vh - 104px)':'calc(100vh - 46px)'):'auto',display:!IS_MOBILE&&dashTab==='calendar'?'flex':'block',flexDirection:'column',overflow:!IS_MOBILE&&dashTab==='calendar'?'hidden':'visible'}},
 
     // 탭 전환 바 + 캘린더 필터 통합 행
     h('div',{style:{display:'flex',alignItems:'center',gap:'4px',marginBottom:'4px',background:'#fff',padding:'4px 6px',borderRadius:'10px',border:'1px solid #e2e8f0',flexShrink:0}},
-      h('div',{style:{display:'flex',gap:'3px',flexShrink:0}},
+      !ieumMode && h('div',{style:{display:'flex',gap:'3px',flexShrink:0}},
         (IS_ADMIN ? [
           {v:'calendar',  label:'📅 캘린더',     desc:'일정·휴가·마감'},
           {v:'workload',  label:'👥 직원별 업무', desc:'담당 항목 + 인사 종합'},
@@ -37374,6 +37378,559 @@ var EXPENSE_CAT_QUICK = [
   { code:'exp-bankfee',  name:'이체수수료' },
   { code:'exp-other',    name:'기타' },
 ];
+
+// ═══════════════════════ 이음센터 (dash/ieum) ═══════════════════════
+// 이음센터 전용 데이터 키 (모두 기존 dbGet/dbSet 계층 사용 — localStorage+Firebase 동기화):
+//   ieum_members  : 인원현황에 표시할 내부직원 sid 배열 (null=자동: eum-work 기록 있는 직원)
+//   ieum_caps     : { "<년도>": { "<personKey>": { law:24, edu:6 } } } — 연간 한도
+//   ieum_consults : { "<년도>": { "<월 01~12>": { "<personKey>": 건수 } } } — 법률상담 실적(수기, 캘린더 일정과 별개)
+//   ieum_lectures : [ { id, date, time, place, title, content, attendees, personKey } ] — 이음강의 기록
+// personKey = 내부직원 sid 또는 external_staff id
+
+// 이음근무(eum-work) 연간 집계: personKey → { total, byMonth: {'01':[일자,...]} }
+function ieumDutyStats(year){
+  var att = dbGet('attendance_records', []) || [];
+  var out = {};
+  att.forEach(function(r){
+    if(r.type !== 'eum-work') return;
+    if((r.date||'').slice(0,4) !== String(year)) return;
+    var pk = r.externalId || r.sid; if(!pk) return;
+    var mm = r.date.slice(5,7), dd = parseInt(r.date.slice(8,10),10);
+    if(!out[pk]) out[pk] = { total:0, byMonth:{} };
+    if(!out[pk].byMonth[mm]) out[pk].byMonth[mm] = [];
+    out[pk].byMonth[mm].push(dd);
+    out[pk].total++;
+  });
+  Object.keys(out).forEach(function(pk){
+    Object.keys(out[pk].byMonth).forEach(function(mm){ out[pk].byMonth[mm].sort(function(a,b){return a-b;}); });
+  });
+  return out;
+}
+
+// 이음센터 인원 목록 구성: 내부 노무사(법인 중심) → 외부 노무사 → 변호사 순
+function ieumBuildPeople(year){
+  var users = getAssignableUsers();
+  var ext = getExternalStaff().filter(function(x){ return x.active !== false; });
+  var duty = ieumDutyStats(year);
+  var memberSids = dbGet('ieum_members', null);
+  if(!Array.isArray(memberSids)){
+    // 자동: 해당 연도 eum-work 기록이 있는 내부직원
+    memberSids = users.filter(function(u){ return duty[u.sid]; }).map(function(u){ return u.sid; });
+  }
+  var IN_COLORS = ['#1e40af','#2563eb','#0ea5e9','#0d9488','#7c3aed','#db2777','#ea580c','#65a30d'];
+  var rows = [];
+  memberSids.forEach(function(sid, i){
+    var u = users.find(function(x){ return x.sid === sid; }); if(!u) return;
+    rows.push({ pk:sid, name:u.name, kind:'in', roleLabel:'내부 노무사', color:IN_COLORS[i%IN_COLORS.length],
+      phone:(u.phone||u.contact||''), note:'' });
+  });
+  ext.filter(function(x){ return (x.role||'').indexOf('변호사') < 0; }).forEach(function(x){
+    rows.push({ pk:x.id, name:x.name, kind:'ex', roleLabel:'외부 노무사', color:x.color||'#d97706',
+      phone:x.contact||'', note:x.note||'', ext:x });
+  });
+  ext.filter(function(x){ return (x.role||'').indexOf('변호사') >= 0; }).forEach(function(x){
+    rows.push({ pk:x.id, name:x.name, kind:'law', roleLabel:'변호사', color:x.color||'#16a34a',
+      phone:x.contact||'', note:x.note||'', ext:x });
+  });
+  return rows;
+}
+
+// 이음센터 메인 화면: 탭 3개 (근무 캘린더 / 인원 현황 / 외부 공유 뷰)
+function IeumCenter(props){
+  var tbS = usePersistedState('ieum_tab', 'cal'); var tab = tbS[0]; var setTab = tbS[1];
+  var TABS = [
+    { v:'cal',   label:'📅 근무 캘린더', desc:'이음센터 일정' },
+    { v:'ppl',   label:'👤 인원 현황',   desc:'근무·상담·강의 집계' },
+    { v:'share', label:'🔗 외부 공유 뷰', desc:'개인 링크 관리' }
+  ];
+  return h('div', null,
+    // 탭 바 (법인 대시보드와 동일 스타일)
+    h('div',{style:{display:'flex',alignItems:'center',gap:'4px',marginBottom:'6px',background:'#fff',padding:'4px 6px',borderRadius:'10px',border:'1px solid #e2e8f0'}},
+      TABS.map(function(t){
+        var on = tab === t.v;
+        return h('button',{key:t.v, onClick:function(){ setTab(t.v); },
+          style:{padding:'5px 10px', border:'none', borderRadius:'5px', cursor:'pointer',
+            background:on?'#1e40af':'transparent', color:on?'#fff':'#475569',
+            fontWeight:on?700:600, fontSize:'11.5px', whiteSpace:'nowrap'}},
+          t.label,
+          !IS_MOBILE && h('span',{style:{fontSize:'10px',fontWeight:500,marginLeft:'4px',opacity:0.85}}, t.desc));
+      }),
+      h('div',{style:{marginLeft:'auto',fontSize:'10.5px',color:'#94a3b8',paddingRight:'6px'}}, '🤝 이음센터')
+    ),
+    tab === 'cal'   && h(CorpDashboard, { onNavigate:props.onNavigate, ieumMode:true }),
+    tab === 'ppl'   && h(IeumPeopleTab, null),
+    tab === 'share' && h(IeumShareTab, null)
+  );
+}
+
+// ── 인원 현황 탭: 행×열 테이블 (내부 노무사 우선) ──
+function IeumPeopleTab(){
+  var nowY = String(new Date().getFullYear());
+  var nowM = String(new Date().getMonth()+1).padStart(2,'0');
+  var yS = usePersistedState('ieum_year', nowY);  var selYear = yS[0];  var setSelYear = yS[1];
+  var mS = usePersistedState('ieum_month', nowM); var selMonth = mS[0]; var setSelMonth = mS[1];
+  var fS = useState('all'); var roleFilter = fS[0]; var setRoleFilter = fS[1];
+  var oS = useState({});    var openRows = oS[0];   var setOpenRows = oS[1];
+  var rfS = useState(0);    var rfk = rfS[0];       var setRfk = rfS[1];
+  var lmS = useState(null); var lecModal = lmS[0];  var setLecModal = lmS[1];
+  var mmS = useState(false); var memberModal = mmS[0]; var setMemberModal = mmS[1];
+
+  var people = ieumBuildPeople(selYear);
+  var duty = ieumDutyStats(selYear);
+  var capsAll = dbGet('ieum_caps', {}) || {};
+  var caps = capsAll[selYear] || {};
+  var consultsAll = dbGet('ieum_consults', {}) || {};
+  var consults = consultsAll[selYear] || {};
+  var lectures = (dbGet('ieum_lectures', []) || []).filter(function(l){ return (l.date||'').slice(0,4) === String(selYear); });
+
+  function consultUsed(pk){
+    var s = 0; Object.keys(consults).forEach(function(mm){ s += (consults[mm] && consults[mm][pk]) || 0; }); return s;
+  }
+  function lecUsed(pk){ return lectures.filter(function(l){ return l.personKey === pk; }).length; }
+  function capOf(pk, kind){ return (caps[pk] && caps[pk][kind]) || 0; }
+
+  // 수정 함수들 (전 직원 수정 가능 — 확정 사양)
+  function saveConsult(pk, mm, n){
+    var all = dbGet('ieum_consults', {}) || {};
+    if(!all[selYear]) all[selYear] = {};
+    if(!all[selYear][mm]) all[selYear][mm] = {};
+    all[selYear][mm][pk] = Math.max(0, n|0);
+    dbSet('ieum_consults', all); setRfk(rfk+1);
+  }
+  function saveCap(pk, kind, n){
+    var all = dbGet('ieum_caps', {}) || {};
+    if(!all[selYear]) all[selYear] = {};
+    if(!all[selYear][pk]) all[selYear][pk] = {};
+    all[selYear][pk][kind] = Math.max(0, n|0);
+    dbSet('ieum_caps', all); setRfk(rfk+1);
+  }
+  function addLecture(rec){
+    var arr = dbGet('ieum_lectures', []) || [];
+    rec.id = 'lec-' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+    arr.push(rec); dbSet('ieum_lectures', arr);
+    setLecModal(null); setRfk(rfk+1); showToast('📚 이음강의 기록 추가');
+  }
+  function removeLecture(id){
+    customConfirm('이 강의 기록을 삭제할까요?', function(){
+      var arr = (dbGet('ieum_lectures', []) || []).filter(function(l){ return l.id !== id; });
+      dbSet('ieum_lectures', arr); setRfk(rfk+1); showToast('🗑️ 강의 기록 삭제');
+    });
+  }
+
+  // KPI 집계
+  var dutyMonthTotal = 0;
+  Object.keys(duty).forEach(function(pk){ dutyMonthTotal += ((duty[pk].byMonth[selMonth])||[]).length; });
+  var lawUsedTotal = 0, lawCapTotal = 0, eduUsedTotal = 0, eduCapTotal = 0;
+  people.forEach(function(p){
+    if(p.kind === 'law'){ lawUsedTotal += consultUsed(p.pk); lawCapTotal += capOf(p.pk,'law'); }
+    eduUsedTotal += lecUsed(p.pk); eduCapTotal += capOf(p.pk,'edu');
+  });
+
+  var visible = people.filter(function(p){ return roleFilter==='all' || p.kind===roleFilter; });
+  var maxDuty = 1; people.forEach(function(p){ var t=(duty[p.pk]||{}).total||0; if(t>maxDuty) maxDuty=t; });
+
+  var ROLE_CHIP = { 'in':{bg:'#e7efff',fg:'#2563eb'}, 'ex':{bg:'#f1eafe',fg:'#7c3aed'}, 'law':{bg:'#fdf2e0',fg:'#d97706'} };
+  function remBadge(used, cap){
+    if(!cap) return h('span',{style:{color:'#cbd5e1'}},'—');
+    var rem = cap - used, pct = used/cap;
+    var bg = pct>=0.85?'#fee2e2':pct<=0.4?'#dcfce7':'#fef3c7';
+    var fg = pct>=0.85?'#dc2626':pct<=0.4?'#16a34a':'#d97706';
+    return h('span',{style:{fontSize:'11px',fontWeight:800,background:bg,color:fg,borderRadius:'5px',padding:'2px 8px'}}, rem);
+  }
+  function barCell(used, cap, color){
+    if(!cap && !used) return h('span',{style:{color:'#cbd5e1'}},'—');
+    var pct = cap ? Math.min(100, Math.round(used/cap*100)) : 0;
+    var c = cap && used/cap>=0.85 ? '#dc2626' : color;
+    return h('div',{style:{display:'flex',alignItems:'center',gap:'7px',minWidth:'120px'}},
+      h('span',{style:{fontSize:'11.5px',fontWeight:700,color:'#64748b',whiteSpace:'nowrap'}},
+        h('b',{style:{color:'#1e293b',fontSize:'12.5px'}}, used), cap ? ' / '+cap+'회' : '회'),
+      cap ? h('div',{style:{flex:1,height:'7px',borderRadius:'20px',background:'#f1f5f9',overflow:'hidden',minWidth:'46px'}},
+        h('span',{style:{display:'block',height:'100%',borderRadius:'20px',width:pct+'%',background:c}})) : null
+    );
+  }
+  var thStyle = {textAlign:'left',fontSize:'10.5px',fontWeight:800,color:'#94a3b8',letterSpacing:'0.04em',padding:'9px 10px',borderBottom:'1px solid #e2e8f0',whiteSpace:'nowrap',background:'#f8fafc'};
+  var tdStyle = {padding:'8px 10px',borderBottom:'1px solid #f1f5f9',verticalAlign:'middle',whiteSpace:'nowrap',fontSize:'12px'};
+
+  function kpi(color, label, val){
+    return h('div',{style:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'9px',padding:'8px 12px',display:'flex',alignItems:'center',gap:'9px',position:'relative',overflow:'hidden',flex:1,minWidth:'150px'}},
+      h('span',{style:{position:'absolute',left:0,top:0,bottom:0,width:'3px',background:color}}),
+      h('span',{style:{fontSize:'11px',fontWeight:600,color:'#64748b',whiteSpace:'nowrap'}}, label),
+      h('span',{style:{marginLeft:'auto',fontSize:'15px',fontWeight:800,whiteSpace:'nowrap'}}, val));
+  }
+
+  return h('div', null,
+    // 연도·월 선택 + KPI
+    h('div',{style:{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',marginBottom:'8px'}},
+      h('select',{value:selYear, onChange:function(e){ setSelYear(e.target.value); },
+        style:{padding:'6px 9px',fontSize:'12px',fontWeight:700,border:'1px solid #e2e8f0',borderRadius:'8px',background:'#fff'}},
+        [0,1,2].map(function(d){ var y = String(new Date().getFullYear()-d);
+          return h('option',{key:y,value:y}, y+'년'); })),
+      h('select',{value:selMonth, onChange:function(e){ setSelMonth(e.target.value); },
+        style:{padding:'6px 9px',fontSize:'12px',fontWeight:700,border:'1px solid #e2e8f0',borderRadius:'8px',background:'#fff'}},
+        Array.from({length:12},function(_,i){ var mm = String(i+1).padStart(2,'0');
+          return h('option',{key:mm,value:mm}, (i+1)+'월'); })),
+      h('select',{value:roleFilter, onChange:function(e){ setRoleFilter(e.target.value); },
+        style:{padding:'6px 9px',fontSize:'12px',fontWeight:700,border:'1px solid #e2e8f0',borderRadius:'8px',background:'#fff'}},
+        h('option',{value:'all'},'전체 ('+people.length+'명)'),
+        h('option',{value:'in'},'노무사(내부)'),
+        h('option',{value:'ex'},'노무사(외부)'),
+        h('option',{value:'law'},'변호사')),
+      h('button',{onClick:function(){ setMemberModal(true); },
+        style:{padding:'6px 10px',fontSize:'11.5px',fontWeight:700,border:'1px solid #e2e8f0',borderRadius:'8px',background:'#fff',color:'#475569',cursor:'pointer'}},'⚙ 내부 인원 관리'),
+      h('span',{style:{marginLeft:'auto',fontSize:'10.5px',color:'#94a3b8'}},'행을 클릭하면 월별 상세가 펼쳐집니다')
+    ),
+    h('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',marginBottom:'10px'}},
+      kpi('#2563eb','이음근무 ('+parseInt(selMonth,10)+'월)', dutyMonthTotal+'일'),
+      kpi('#d97706','법률상담 ('+selYear+')', lawUsedTotal + (lawCapTotal?' / '+lawCapTotal+'회':'회')),
+      kpi('#7c3aed','이음강의 ('+selYear+')', eduUsedTotal + (eduCapTotal?' / '+eduCapTotal+'회':'회')),
+      kpi('#16a34a','활동 인원', people.length+'명')
+    ),
+    // 테이블
+    h('div',{style:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',overflowX:'auto'}},
+      h('table',{style:{width:'100%',borderCollapse:'collapse',minWidth:IS_MOBILE?'760px':'auto'}},
+        h('thead',null,h('tr',null,
+          h('th',{style:Object.assign({},thStyle,{width:'34px',textAlign:'center'})},'No.'),
+          h('th',{style:thStyle},'인원'),
+          h('th',{style:thStyle},'구분'),
+          h('th',{style:Object.assign({},thStyle,{boxShadow:'inset 0 -2px 0 #2563eb'})},'이음근무'),
+          h('th',{style:Object.assign({},thStyle,{boxShadow:'inset 0 -2px 0 #d97706'})},'법률상담 (연간)'),
+          h('th',{style:Object.assign({},thStyle,{boxShadow:'inset 0 -2px 0 #d97706'})},'잔여'),
+          h('th',{style:Object.assign({},thStyle,{boxShadow:'inset 0 -2px 0 #7c3aed'})},'이음강의'),
+          h('th',{style:Object.assign({},thStyle,{boxShadow:'inset 0 -2px 0 #7c3aed'})},'잔여'),
+          h('th',{style:thStyle},'연락처'),
+          h('th',{style:Object.assign({},thStyle,{width:'26px'})},'')
+        )),
+        h('tbody',null, visible.map(function(p, idx){
+          var d = duty[p.pk] || { total:0, byMonth:{} };
+          var isLaw = p.kind === 'law';
+          var cUsed = consultUsed(p.pk), cCap = capOf(p.pk,'law');
+          var eUsed = lecUsed(p.pk),    eCap = capOf(p.pk,'edu');
+          var open = !!openRows[p.pk];
+          var chip = ROLE_CHIP[p.kind];
+          var dutyPct = Math.round(d.total/maxDuty*100);
+          var rows = [
+            h('tr',{key:p.pk, onClick:function(){ var n=Object.assign({},openRows); n[p.pk]=!n[p.pk]; setOpenRows(n); },
+              style:{cursor:'pointer', background:open?'#eff6ff':'transparent'},
+              onMouseEnter:function(e){ if(!open) e.currentTarget.style.background='#f8fafc'; },
+              onMouseLeave:function(e){ if(!open) e.currentTarget.style.background='transparent'; }},
+              h('td',{style:Object.assign({},tdStyle,{textAlign:'center',color:'#94a3b8',fontWeight:700,fontSize:'11px'})}, idx+1),
+              h('td',{style:tdStyle},
+                h('div',{style:{display:'flex',alignItems:'center',gap:'8px'}},
+                  h('span',{style:{width:'26px',height:'26px',borderRadius:'8px',background:p.color,color:'#fff',display:'inline-flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:800,flexShrink:0}}, p.name.charAt(0)),
+                  h('span',null,
+                    h('span',{style:{fontWeight:800,fontSize:'12.5px'}}, p.name),
+                    p.note ? h('div',{style:{fontSize:'10px',color:'#94a3b8',maxWidth:'140px',overflow:'hidden',textOverflow:'ellipsis'}}, p.note) : null))),
+              h('td',{style:tdStyle},
+                h('span',{style:{fontSize:'9.5px',fontWeight:800,padding:'2px 7px',borderRadius:'5px',background:chip.bg,color:chip.fg,whiteSpace:'nowrap'}}, p.roleLabel)),
+              h('td',{style:tdStyle},
+                d.total ? h('div',{style:{display:'flex',alignItems:'center',gap:'7px',minWidth:'110px'}},
+                  h('span',{style:{fontSize:'12.5px',fontWeight:800}}, d.total, h('small',{style:{fontSize:'10px',color:'#94a3b8',fontWeight:600}},'일')),
+                  h('div',{style:{flex:1,height:'7px',borderRadius:'20px',background:'#f1f5f9',overflow:'hidden',minWidth:'46px'}},
+                    h('span',{style:{display:'block',height:'100%',borderRadius:'20px',width:dutyPct+'%',background:p.color}})))
+                : h('span',{style:{color:'#cbd5e1'}},'—')),
+              h('td',{style:tdStyle}, isLaw ? barCell(cUsed, cCap, '#d97706') : h('span',{style:{color:'#cbd5e1'}},'—')),
+              h('td',{style:tdStyle}, isLaw ? remBadge(cUsed, cCap) : h('span',{style:{color:'#cbd5e1'}},'—')),
+              h('td',{style:tdStyle}, (eUsed||eCap) ? barCell(eUsed, eCap, '#7c3aed') : h('span',{style:{color:'#cbd5e1'}},'—')),
+              h('td',{style:tdStyle}, remBadge(eUsed, eCap)),
+              h('td',{style:tdStyle},
+                p.phone ? h('span',{style:{fontSize:'11px',color:'#64748b'}},
+                  h('a',{href:'tel:'+p.phone.replace(/[^0-9]/g,''), onClick:function(e){e.stopPropagation();},
+                    style:{textDecoration:'none',marginRight:'6px'}},'📞'), p.phone)
+                : h('span',{style:{color:'#cbd5e1'}},'—')),
+              h('td',{style:tdStyle},
+                h('span',{style:{color:'#94a3b8',fontSize:'11px',display:'inline-block',transition:'transform 0.15s',transform:open?'rotate(90deg)':'none'}},'›'))
+            )
+          ];
+          if(open){
+            var months = Object.keys(d.byMonth).sort();
+            var myLecs = lectures.filter(function(l){ return l.personKey === p.pk; })
+              .sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
+            rows.push(h('tr',{key:p.pk+'-detail'},
+              h('td',{colSpan:10, style:{background:'#f8fafc',padding:'13px 18px',borderBottom:'1px solid #e2e8f0',whiteSpace:'normal'}},
+                h('div',{style:{display:'grid',gridTemplateColumns:IS_MOBILE?'1fr':'1fr 1fr',gap:'16px',maxWidth:'880px'}},
+                  // 좌: 월별 이음근무 or 월별 상담건수
+                  h('div',null,
+                    h('div',{style:{fontSize:'10.5px',fontWeight:800,color:'#94a3b8',marginBottom:'7px'}},
+                      isLaw ? '월별 법률상담 건수 (일정과 별개의 실적 수치)' : '월별 이음근무 일자'),
+                    isLaw
+                      ? h('div',null,
+                          Array.from({length:12},function(_,i){ var mm = String(i+1).padStart(2,'0');
+                            var n = (consults[mm] && consults[mm][p.pk]) || 0;
+                            if(!n && mm !== selMonth) return null;
+                            return h('div',{key:mm,style:{display:'flex',alignItems:'center',gap:'8px',padding:'3px 0',fontSize:'11.5px'}},
+                              h('span',{style:{width:'40px',fontWeight:700}}, (i+1)+'월'),
+                              mm === selMonth
+                                ? h('span',{style:{display:'inline-flex',alignItems:'center',border:'1px solid #e2e8f0',borderRadius:'7px',overflow:'hidden',background:'#fff'}},
+                                    h('button',{onClick:function(){ saveConsult(p.pk, mm, n-1); },
+                                      style:{width:'26px',height:'26px',border:'none',background:'#f1f5f9',cursor:'pointer',fontSize:'13px',color:'#64748b'}},'−'),
+                                    h('span',{style:{width:'38px',textAlign:'center',fontWeight:800,fontSize:'12.5px'}}, n),
+                                    h('button',{onClick:function(){ saveConsult(p.pk, mm, n+1); },
+                                      style:{width:'26px',height:'26px',border:'none',background:'#f1f5f9',cursor:'pointer',fontSize:'13px',color:'#64748b'}},'＋'),
+                                    h('span',{style:{fontSize:'10px',color:'#94a3b8',padding:'0 7px'}},'← 입력'))
+                                : h('span',{style:{background:'#fdf2e0',color:'#d97706',fontWeight:800,borderRadius:'4px',padding:'1px 8px',fontSize:'10.5px'}}, n+'건'));
+                          }),
+                          h('div',{style:{fontSize:'10px',color:'#94a3b8',marginTop:'6px'}},'※ 다른 달을 입력하려면 상단 월 선택을 바꾸세요'))
+                      : (months.length
+                          ? months.map(function(mm){
+                              return h('div',{key:mm,style:{display:'flex',alignItems:'flex-start',gap:'8px',padding:'3px 0',fontSize:'11.5px'}},
+                                h('span',{style:{width:'40px',fontWeight:700,flexShrink:0}}, parseInt(mm,10)+'월'),
+                                h('span',{style:{display:'flex',flexWrap:'wrap',gap:'4px',flex:1}},
+                                  d.byMonth[mm].map(function(dd,k){
+                                    return h('span',{key:k,style:{background:'#e7efff',color:'#2563eb',fontWeight:700,borderRadius:'4px',padding:'1px 6px',fontSize:'10.5px'}}, dd);
+                                  })),
+                                h('span',{style:{fontWeight:800,flexShrink:0}}, d.byMonth[mm].length+'회'));
+                            })
+                          : h('div',{style:{fontSize:'11.5px',color:'#94a3b8'}}, selYear+'년 이음근무 기록 없음'))
+                  ),
+                  // 우: 이음강의 이력 + 한도 설정
+                  h('div',null,
+                    h('div',{style:{fontSize:'10.5px',fontWeight:800,color:'#94a3b8',marginBottom:'7px'}},'이음강의 이력'),
+                    myLecs.length
+                      ? myLecs.map(function(l){
+                          return h('div',{key:l.id,style:{display:'flex',gap:'8px',alignItems:'baseline',padding:'3px 0',fontSize:'11.5px'}},
+                            h('span',{style:{color:'#64748b',fontWeight:700,width:'44px',flexShrink:0}}, (l.date||'').slice(5)),
+                            h('span',{style:{fontWeight:600,flex:1}}, l.title || '(제목 없음)',
+                              l.place ? h('span',{style:{color:'#94a3b8',fontWeight:400,fontSize:'10.5px'}}, ' · '+l.place) : null),
+                            l.attendees ? h('span',{style:{color:'#94a3b8',fontSize:'10.5px',flexShrink:0}},'참여 '+l.attendees+'명') : null,
+                            h('button',{onClick:function(){ removeLecture(l.id); },
+                              style:{border:'none',background:'none',color:'#cbd5e1',cursor:'pointer',fontSize:'11px',flexShrink:0}},'✕'));
+                        })
+                      : h('div',{style:{fontSize:'11.5px',color:'#94a3b8'}},'기록 없음'),
+                    h('button',{onClick:function(){ setLecModal({ personKey:p.pk, personName:p.name, date:todayYMD(), time:'', place:'', title:'', content:'', attendees:'' }); },
+                      style:{marginTop:'7px',padding:'5px 10px',fontSize:'11px',fontWeight:700,border:'1px dashed #cbd5e1',borderRadius:'7px',background:'#fff',color:'#475569',cursor:'pointer'}},'＋ 강의 기록 추가'),
+                    // 한도 설정
+                    h('div',{style:{marginTop:'12px',paddingTop:'10px',borderTop:'1px dashed #e2e8f0',display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}},
+                      h('span',{style:{fontSize:'10.5px',fontWeight:800,color:'#94a3b8'}},'연간 한도 설정'),
+                      isLaw && h('label',{style:{fontSize:'11px',color:'#64748b',display:'flex',alignItems:'center',gap:'5px'}},'상담',
+                        h('input',{type:'number',min:'0',defaultValue:cCap||'',placeholder:'0',
+                          onBlur:function(e){ var v=parseInt(e.target.value,10)||0; if(v!==cCap){ saveCap(p.pk,'law',v); showToast('✅ 상담 한도 저장'); } },
+                          style:{width:'56px',padding:'4px 6px',fontSize:'11.5px',border:'1px solid #e2e8f0',borderRadius:'6px'}}),'회'),
+                      h('label',{style:{fontSize:'11px',color:'#64748b',display:'flex',alignItems:'center',gap:'5px'}},'강의',
+                        h('input',{type:'number',min:'0',defaultValue:eCap||'',placeholder:'0',
+                          onBlur:function(e){ var v=parseInt(e.target.value,10)||0; if(v!==eCap){ saveCap(p.pk,'edu',v); showToast('✅ 강의 한도 저장'); } },
+                          style:{width:'56px',padding:'4px 6px',fontSize:'11.5px',border:'1px solid #e2e8f0',borderRadius:'6px'}}),'회'))
+                  )
+                ))
+            ));
+          }
+          return rows;
+        })),
+        // 합계
+        h('tfoot',null,h('tr',null,
+          h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0'})},''),
+          h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0',fontWeight:800})},'합계'),
+          h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0'})},''),
+          h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0',fontWeight:800})},
+            visible.reduce(function(s,p){ return s+((duty[p.pk]||{}).total||0); },0)+'일'),
+          h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0',fontWeight:800})},
+            lawUsedTotal + (lawCapTotal?' / '+lawCapTotal+'회':'회')),
+          h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0'})},
+            lawCapTotal ? remBadge(lawUsedTotal, lawCapTotal) : ''),
+          h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0',fontWeight:800})},
+            eduUsedTotal + (eduCapTotal?' / '+eduCapTotal+'회':'회')),
+          h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0'})},
+            eduCapTotal ? remBadge(eduUsedTotal, eduCapTotal) : ''),
+          h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0'})},''),
+          h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0'})},'')
+        ))
+      )
+    ),
+    h('div',{style:{fontSize:'10.5px',color:'#94a3b8',textAlign:'center',padding:'8px'}},
+      '※ 이음근무=캘린더의 이음센터 일정 자동 집계 · 법률상담 건수=수기 입력(일정과 별개) · 이음강의=기록 추가 시 집계'),
+
+    // 강의 기록 추가 모달
+    lecModal && h('div',{onClick:function(e){ if(e.target===e.currentTarget) setLecModal(null); },
+      style:{position:'fixed',inset:0,background:'rgba(15,23,42,0.5)',zIndex:10000,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'}},
+      h('div',{style:{background:'#fff',borderRadius:'12px',width:'430px',maxWidth:'100%',padding:'20px 22px',boxShadow:'0 25px 50px rgba(0,0,0,0.3)'}},
+        h('div',{style:{fontSize:'14px',fontWeight:800,marginBottom:'12px'}},'📚 이음강의 기록 — '+lecModal.personName),
+        h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px'}},
+          h('label',{style:{fontSize:'11px',color:'#64748b'}},'일자',
+            h('input',{type:'date',value:lecModal.date,onChange:function(e){ setLecModal(Object.assign({},lecModal,{date:e.target.value})); },
+              style:{width:'100%',padding:'7px 8px',fontSize:'12px',border:'1px solid #e2e8f0',borderRadius:'7px',boxSizing:'border-box',marginTop:'3px'}})),
+          h('label',{style:{fontSize:'11px',color:'#64748b'}},'시간',
+            h('input',{type:'time',value:lecModal.time,onChange:function(e){ setLecModal(Object.assign({},lecModal,{time:e.target.value})); },
+              style:{width:'100%',padding:'7px 8px',fontSize:'12px',border:'1px solid #e2e8f0',borderRadius:'7px',boxSizing:'border-box',marginTop:'3px'}}))),
+        h('label',{style:{fontSize:'11px',color:'#64748b',display:'block',marginTop:'8px'}},'장소',
+          h('input',{type:'text',value:lecModal.place,placeholder:'예: 이음센터 3층 세미나실',onChange:function(e){ setLecModal(Object.assign({},lecModal,{place:e.target.value})); },
+            style:{width:'100%',padding:'7px 8px',fontSize:'12px',border:'1px solid #e2e8f0',borderRadius:'7px',boxSizing:'border-box',marginTop:'3px'}})),
+        h('label',{style:{fontSize:'11px',color:'#64748b',display:'block',marginTop:'8px'}},'교육 제목 *',
+          h('input',{type:'text',value:lecModal.title,placeholder:'예: 직장 내 괴롭힘 예방 교육',onChange:function(e){ setLecModal(Object.assign({},lecModal,{title:e.target.value})); },
+            style:{width:'100%',padding:'7px 8px',fontSize:'12px',border:'1px solid #e2e8f0',borderRadius:'7px',boxSizing:'border-box',marginTop:'3px'}})),
+        h('label',{style:{fontSize:'11px',color:'#64748b',display:'block',marginTop:'8px'}},'교육 내용',
+          h('textarea',{value:lecModal.content,onChange:function(e){ setLecModal(Object.assign({},lecModal,{content:e.target.value})); },
+            style:{width:'100%',minHeight:'56px',padding:'7px 8px',fontSize:'12px',border:'1px solid #e2e8f0',borderRadius:'7px',boxSizing:'border-box',marginTop:'3px',resize:'vertical',fontFamily:'inherit'}})),
+        h('label',{style:{fontSize:'11px',color:'#64748b',display:'block',marginTop:'8px'}},'참여 인원(명)',
+          h('input',{type:'number',min:'0',value:lecModal.attendees,onChange:function(e){ setLecModal(Object.assign({},lecModal,{attendees:e.target.value})); },
+            style:{width:'90px',padding:'7px 8px',fontSize:'12px',border:'1px solid #e2e8f0',borderRadius:'7px',boxSizing:'border-box',marginTop:'3px',display:'block'}})),
+        h('div',{style:{display:'flex',gap:'8px',marginTop:'14px'}},
+          h('button',{onClick:function(){ setLecModal(null); },
+            style:{flex:1,padding:'10px',border:'1px solid #e2e8f0',background:'#fff',borderRadius:'8px',fontSize:'12.5px',fontWeight:600,cursor:'pointer'}},'취소'),
+          h('button',{onClick:function(){
+              if(!lecModal.title.trim()){ showToast('교육 제목을 입력하세요'); return; }
+              if(!lecModal.date){ showToast('일자를 입력하세요'); return; }
+              addLecture({ date:lecModal.date, time:lecModal.time, place:lecModal.place.trim(),
+                title:lecModal.title.trim(), content:lecModal.content.trim(),
+                attendees:parseInt(lecModal.attendees,10)||0, personKey:lecModal.personKey });
+            },
+            style:{flex:2,padding:'10px',border:'none',background:'#1e40af',color:'#fff',borderRadius:'8px',fontSize:'12.5px',fontWeight:700,cursor:'pointer'}},'저장'))
+      )),
+
+    // 내부 인원 관리 모달
+    memberModal && (function(){
+      var users = getAssignableUsers();
+      var cur = dbGet('ieum_members', null);
+      var curSet = {};
+      (Array.isArray(cur) ? cur : people.filter(function(p){return p.kind==='in';}).map(function(p){return p.pk;}))
+        .forEach(function(sid){ curSet[sid] = true; });
+      return h('div',{onClick:function(e){ if(e.target===e.currentTarget) setMemberModal(false); },
+        style:{position:'fixed',inset:0,background:'rgba(15,23,42,0.5)',zIndex:10000,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'}},
+        h('div',{style:{background:'#fff',borderRadius:'12px',width:'360px',maxWidth:'100%',padding:'20px 22px',boxShadow:'0 25px 50px rgba(0,0,0,0.3)',maxHeight:'80vh',overflowY:'auto'}},
+          h('div',{style:{fontSize:'14px',fontWeight:800,marginBottom:'4px'}},'⚙ 이음센터 참여 내부직원'),
+          h('div',{style:{fontSize:'11px',color:'#94a3b8',marginBottom:'12px'}},'체크한 직원만 인원 현황에 표시됩니다'),
+          users.map(function(u){
+            return h('label',{key:u.sid,style:{display:'flex',alignItems:'center',gap:'8px',padding:'6px 4px',fontSize:'12.5px',cursor:'pointer'}},
+              h('input',{type:'checkbox',defaultChecked:!!curSet[u.sid],
+                onChange:function(e){ curSet[u.sid] = e.target.checked; }}),
+              h('span',{style:{fontWeight:600}}, u.name),
+              h('span',{style:{fontSize:'10.5px',color:'#94a3b8'}}, u.sid));
+          }),
+          h('div',{style:{display:'flex',gap:'8px',marginTop:'14px'}},
+            h('button',{onClick:function(){ setMemberModal(false); },
+              style:{flex:1,padding:'10px',border:'1px solid #e2e8f0',background:'#fff',borderRadius:'8px',fontSize:'12.5px',fontWeight:600,cursor:'pointer'}},'취소'),
+            h('button',{onClick:function(){
+                var sids = Object.keys(curSet).filter(function(k){ return curSet[k]; });
+                dbSet('ieum_members', sids); setMemberModal(false); setRfk(rfk+1); showToast('✅ 참여 인원 저장');
+              },
+              style:{flex:2,padding:'10px',border:'none',background:'#1e40af',color:'#fff',borderRadius:'8px',fontSize:'12.5px',fontWeight:700,cursor:'pointer'}},'저장'))
+        ));
+    })()
+  );
+}
+
+// ── 외부 공유 뷰 탭: 개인 링크 관리 + 공개 미러 발행 ──
+var IEUM_VIEW_BASE = 'https://nabaho.github.io/pureunall/ieum-view.html';
+function ieumViewUrl(key){
+  var base = (window.location.protocol === 'https:')
+    ? window.location.origin + window.location.pathname.replace(/[^\/]*$/, 'ieum-view.html')
+    : IEUM_VIEW_BASE;
+  return base + '?k=' + encodeURIComponent(key);
+}
+function ieumEnsureShareKey(extId){
+  var arr = dbGet('external_staff', []) || [];
+  var x = arr.find(function(e){ return e.id === extId; });
+  if(!x) return null;
+  if(!x.shareKey){
+    x.shareKey = Math.random().toString(36).slice(2,10) + Math.random().toString(36).slice(2,6);
+    dbSet('external_staff', arr);
+  }
+  return x.shareKey;
+}
+// 공개 미러 발행: 이름·날짜·구분만 (연락처 등 개인정보 제외) — 단방향, 원본은 attendance_records
+function ieumPublishPublic(cb){
+  if(typeof fbDb === 'undefined' || !fbDb){ cb && cb(false, 'Firebase 미연결'); return; }
+  var att = dbGet('attendance_records', []) || [];
+  var users = getAssignableUsers();
+  var ext = getExternalStaff();
+  var extMap = {}; ext.forEach(function(x){ extMap[x.id] = x; });
+  var userMap = {}; users.forEach(function(u){ userMap[u.sid] = u; });
+  var roster = {};
+  var yearFrom = String(new Date().getFullYear() - 1); // 전년도부터 발행 (연말·연초 경계 대비)
+  att.forEach(function(r){
+    if(r.type !== 'eum-work' || !r.date) return;
+    if(r.date.slice(0,4) < yearFrom) return;
+    var name = '', kind = 'in';
+    if(r.externalId){
+      var e = extMap[r.externalId]; if(!e) return;
+      name = e.name; kind = ((e.role||'').indexOf('변호사') >= 0) ? 'law' : 'ex';
+    } else if(r.sid){
+      var u = userMap[r.sid]; name = u ? u.name : r.sid; kind = 'in';
+    } else return;
+    if(!roster[r.date]) roster[r.date] = [];
+    roster[r.date].push({ n:name, k:kind });
+  });
+  var people = {};
+  ext.filter(function(x){ return x.active !== false && x.shareKey; }).forEach(function(x){
+    people[x.shareKey] = { name:x.name };
+  });
+  fbDb.ref('ieum_public').set({ roster:roster, people:people, updatedAt:Date.now() })
+    .then(function(){ cb && cb(true); })
+    .catch(function(e){ cb && cb(false, e && e.message); });
+}
+
+function IeumShareTab(){
+  var rfS = useState(0); var rfk = rfS[0]; var setRfk = rfS[1];
+  var pubS = useState(''); var pubStatus = pubS[0]; var setPubStatus = pubS[1];
+  var ext = getExternalStaff().filter(function(x){ return x.active !== false; });
+
+  function copyLink(x){
+    var key = x.shareKey || ieumEnsureShareKey(x.id);
+    if(!key){ showToast('링크 생성 실패'); return; }
+    copyToClipboard(ieumViewUrl(key));
+    setRfk(rfk+1);
+  }
+  function regenKey(x){
+    customConfirm(x.name+'님의 링크를 재발급할까요?\n기존 링크는 더 이상 동작하지 않습니다.', function(){
+      var arr = dbGet('external_staff', []) || [];
+      var t = arr.find(function(e){ return e.id === x.id; });
+      if(t){ t.shareKey = Math.random().toString(36).slice(2,10) + Math.random().toString(36).slice(2,6); dbSet('external_staff', arr); }
+      setRfk(rfk+1); showToast('🔑 링크 재발급 완료 — 발행 후 새 링크를 전달하세요');
+    });
+  }
+  function publish(){
+    setPubStatus('발행 중…');
+    // 링크 없는 인원에게 키 자동 생성 후 발행
+    ext.forEach(function(x){ if(!x.shareKey) ieumEnsureShareKey(x.id); });
+    ieumPublishPublic(function(ok, err){
+      setPubStatus(ok ? '✅ 발행 완료 ('+new Date().toLocaleTimeString()+')' : '❌ 실패: '+(err||''));
+      if(ok) showToast('🔗 공개 일정 발행 완료');
+      setRfk(rfk+1);
+    });
+  }
+
+  var box = {background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',padding:'14px 16px'};
+  return h('div',{style:{display:'flex',flexDirection:'column',gap:'12px',maxWidth:'860px'}},
+    h('div',{style:box},
+      h('div',{style:{fontSize:'13.5px',fontWeight:800,marginBottom:'6px'}},'🔗 외부인용 읽기전용 일정 페이지'),
+      h('div',{style:{fontSize:'12px',color:'#64748b',lineHeight:1.8}},
+        '외부 변호사·노무사에게 개인 고유 링크를 보내면 로그인 없이 본인 근무일정을 확인할 수 있습니다.',h('br',null),
+        '공개되는 정보는 이름·날짜·구분뿐이며, 연락처 등 개인정보는 포함되지 않습니다.',h('br',null),
+        '일정을 수정한 뒤에는 아래 [지금 발행] 버튼으로 공개 일정을 갱신하세요.'),
+      h('div',{style:{display:'flex',alignItems:'center',gap:'10px',marginTop:'10px'}},
+        h('button',{onClick:publish,
+          style:{padding:'8px 14px',fontSize:'12px',fontWeight:700,border:'none',borderRadius:'8px',background:'#1e40af',color:'#fff',cursor:'pointer'}},'📤 지금 발행'),
+        h('span',{style:{fontSize:'11px',color:'#64748b'}}, pubStatus))
+    ),
+    h('div',{style:box},
+      h('div',{style:{fontSize:'12.5px',fontWeight:800,marginBottom:'10px'}},'개인 링크 목록'),
+      h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:'12px'}},
+        h('thead',null,h('tr',null,
+          ['이름','구분','링크 상태',''].map(function(t,i){
+            return h('th',{key:i,style:{textAlign:'left',fontSize:'10.5px',fontWeight:800,color:'#94a3b8',padding:'6px 8px',borderBottom:'1px solid #e2e8f0'}}, t);
+          }))),
+        h('tbody',null, ext.map(function(x){
+          return h('tr',{key:x.id},
+            h('td',{style:{padding:'8px',borderBottom:'1px solid #f1f5f9',fontWeight:700}},
+              h('span',{style:{display:'inline-flex',width:'22px',height:'22px',borderRadius:'6px',background:x.color||'#2563eb',color:'#fff',alignItems:'center',justifyContent:'center',fontSize:'10px',fontWeight:800,marginRight:'7px',verticalAlign:'middle'}}, x.name.charAt(0)),
+              x.name),
+            h('td',{style:{padding:'8px',borderBottom:'1px solid #f1f5f9',color:'#64748b'}}, x.role||'외부'),
+            h('td',{style:{padding:'8px',borderBottom:'1px solid #f1f5f9'}},
+              x.shareKey
+                ? h('span',{style:{fontSize:'10.5px',color:'#16a34a',fontWeight:700}},'● 발급됨')
+                : h('span',{style:{fontSize:'10.5px',color:'#94a3b8'}},'미발급 (복사 시 자동 생성)')),
+            h('td',{style:{padding:'8px',borderBottom:'1px solid #f1f5f9',textAlign:'right',whiteSpace:'nowrap'}},
+              h('button',{onClick:function(){ copyLink(x); },
+                style:{padding:'5px 10px',fontSize:'11px',fontWeight:700,border:'1px solid #bfdbfe',borderRadius:'7px',background:'#eff6ff',color:'#1e40af',cursor:'pointer',marginRight:'6px'}},'📋 링크 복사'),
+              x.shareKey && h('button',{onClick:function(){ regenKey(x); },
+                style:{padding:'5px 10px',fontSize:'11px',fontWeight:600,border:'1px solid #e2e8f0',borderRadius:'7px',background:'#fff',color:'#64748b',cursor:'pointer'}},'🔑 재발급'))
+          );
+        }))
+      ),
+      ext.length === 0 && h('div',{style:{fontSize:'12px',color:'#94a3b8',textAlign:'center',padding:'16px'}},'등록된 외부 인원이 없습니다')
+    ),
+    h('div',{style:{fontSize:'10.5px',color:'#94a3b8',textAlign:'center'}},
+      '※ 근무 문자 발송 시 개인 링크가 자동으로 첨부됩니다 (링크 발급된 인원만)')
+  );
+}
 
 // 유연한 컬럼 자동감지 파서
 function parseFlexibleExcel(wb, sourceLabel){
@@ -54002,6 +54559,8 @@ function ERPMain(props){
     mainContent = h(StartScreen, { onStart:function(){ selectMenu('dash/corp'); } });
   } else if(current === 'dash/corp'){
     mainContent = h(CorpDashboard, { onNavigate:selectMenu });
+  } else if(current === 'dash/ieum'){
+    mainContent = h(IeumCenter, { onNavigate:selectMenu });
   } else if(current === 'dash/my'){
     mainContent = h(MyDeskV2, { onNavigate:selectMenu });
   } else if(current === 'fin/pnl'){
