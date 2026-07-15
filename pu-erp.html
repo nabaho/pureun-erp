@@ -4565,9 +4565,9 @@ function Sidebar(props){
   var allCases = dbGet('cases', []) || [];
   var allSchedules = dbGet('my_schedules', []) || [];
   var allCompanies = dbGet('companies', []) || [];
-  // 본인 담당 사건 (active) - 주담당+부담당
+  // 본인 담당 사건 (active) - 주담당+부담당 (종료 판정 isItemClosed로 통일)
   var myCases = allCases.filter(function(c){
-    if(c.permanentArchived || c.closedDate) return false;
+    if(isItemClosed(c)) return false;
     return c.managerMain === sid || (c.managerSubs||[]).indexOf(sid) >= 0;
   });
   // 오늘 D-day (본인 사건 중 마감일 D-3 이내)
@@ -16459,6 +16459,17 @@ function isMyItem(item, sid){
     if(item.managerSub === u.name) return true;
     if((item.managerSubs||[]).indexOf(u.name) >= 0) return true;
   }
+  return false;
+}
+// ============ 종료 판정 통일 헬퍼 (내 프로젝트 미제거 버그 수정) ============
+// status/closedDate/closedAt/보관 필드가 화면마다 제각각 사용되어 생긴 불일치를 한 곳에서 판정.
+// 어느 경로로 종료했든(정식 종료 모달, 상태 변경, 보관) 하나라도 종료 표시면 "종료됨"으로 취급.
+function isItemClosed(item){
+  if(!item) return false;
+  if(item.permanentArchived || item.archived) return true;
+  if(item.closedDate || item.closedAt || item.closeDate) return true;
+  var st = String(item.status || '');
+  if(st === 'closed' || st === 'cancelled' || st === 'transferred') return true;
   return false;
 }
 // ============ 종료 권한: 담당자 본인·관리자·위임관리인만 직접 종료 ============
@@ -31552,33 +31563,33 @@ function MyDeskV2(props){
     }
     return false;
   }
-  // 1) 담당 계약 (active)
+  // 1) 담당 계약 (active) — 종료 판정 isItemClosed로 통일 (버그수정: status만/closedDate만 보던 불일치 해소)
   var myContracts = allContracts.filter(function(c){
-    if(c.status==='closed' || c.status==='cancelled' || c.status==='transferred') return false;
+    if(isItemClosed(c)) return false;
     return _myItem(c);
   });
 
   // 2) 담당 사건 (진행 중)
   var myCases = allCases.filter(function(c){
-    if(c.permanentArchived || c.status==='closed' || c.closedDate) return false;
+    if(isItemClosed(c)) return false;
     return _myItem(c);
   });
 
   // 3) 담당 컨설팅 (진행 중)
   var myConsultings = allConsultings.filter(function(c){
-    if(c.permanentArchived || c.closedDate) return false;
+    if(isItemClosed(c)) return false;
     return _myItem(c);
   });
 
   // 4) 담당 기금 (운영 중)
   var myFunds = allFunds.filter(function(c){
-    if(c.permanentArchived || c.closedDate) return false;
+    if(isItemClosed(c)) return false;
     return _myItem(c);
   });
 
   // 5) 담당 기타사업 (진행 중)
   var myOthers = allOthers.filter(function(c){
-    if(c.permanentArchived || c.closedDate) return false;
+    if(isItemClosed(c)) return false;
     return _myItem(c);
   });
 
@@ -31596,7 +31607,7 @@ function MyDeskV2(props){
   BIZ_CASE_TYPES.forEach(function(t){ BIZ_CASE_TYPE_MAP[t.v]=t; });
 
   var myBizCases = allBizCases.filter(function(c){
-    if(c.status === 'closed' || c.permanentArchived) return false;
+    if(isItemClosed(c)) return false;
     return _myItem(c);
   });
 
@@ -31687,6 +31698,7 @@ function MyDeskV2(props){
   var bcmS = useState(null); var bizCaseModal = bcmS[0]; var setBizCaseModal = bcmS[1];
   var wimS = useState(null); var workItemModal = wimS[0]; var setWorkItemModal = wimS[1];
   var cwts = useState(false); var showClosedWork = cwts[0]; var setShowClosedWork = cwts[1];
+  var scpS = useState(false); var showCompletedProj = scpS[0]; var setShowCompletedProj = scpS[1]; // 진행상황 '완료' 항목 표시 여부 (버그수정: 완료로 바꿔도 목록에 남던 문제)
   // progressModal = null | { type, id, no, name, company, role, ... 진행 정보 }
   var allProgress = dbGet('project_progress', []);
   function getProgress(type, id){
@@ -32171,6 +32183,12 @@ function MyDeskV2(props){
               function(x){return x.companyName||'-';})
           );
 
+          // 진행상황 '완료(completed)' 항목 분리 — 완료로 표시한 항목은 기본 숨김 (버그수정: 완료로 바꿔도 목록에 남던 문제)
+          var completedItems = allItems.filter(function(x){ return x.progressData && x.progressData.status === 'completed'; });
+          if(!showCompletedProj){
+            allItems = allItems.filter(function(x){ return !(x.progressData && x.progressData.status === 'completed'); });
+          }
+
           // 탭 필터링
           var TYPE_LABEL = { contract:'계약', case:'사건', consulting:'컨설팅', fund:'기금', other:'기타', 'biz-case':'업무케이스', 'work-item':'일반업무' };
           var TYPE_COLOR = { contract:'#1e40af', case:'#2563eb', consulting:'#2563eb', fund:'#059669', other:'#65a30d', 'biz-case':'#c2410c', 'work-item':'#0f766e' };
@@ -32186,22 +32204,31 @@ function MyDeskV2(props){
             return (a.progress||0) - (b.progress||0);
           });
 
+          function _cntType(t){ return allItems.filter(function(x){return x.type===t;}).length; }
           var TABS = [
             { v:'all',        label:'전체',    cnt:allItems.length },
-            { v:'contract',   label:'계약',    cnt:myContracts.length },
-            { v:'case',       label:'사건',    cnt:myCases.length },
-            { v:'consulting', label:'컨설팅',  cnt:myConsultings.length },
-            { v:'fund',       label:'기금',    cnt:myFunds.length },
-            { v:'other',      label:'기타',    cnt:myOthers.length },
-            { v:'biz-case',   label:'업무케이스', cnt:myBizCases.length },
-            { v:'work-item',  label:'일반업무',   cnt:myWorkItems.length }
+            { v:'contract',   label:'계약',    cnt:_cntType('contract') },
+            { v:'case',       label:'사건',    cnt:_cntType('case') },
+            { v:'consulting', label:'컨설팅',  cnt:_cntType('consulting') },
+            { v:'fund',       label:'기금',    cnt:_cntType('fund') },
+            { v:'other',      label:'기타',    cnt:_cntType('other') },
+            { v:'biz-case',   label:'업무케이스', cnt:_cntType('biz-case') },
+            { v:'work-item',  label:'일반업무',   cnt:_cntType('work-item') }
           ];
 
           return h('div', { style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'10px', padding:'12px', marginBottom:'14px' } },
             // 헤더
             h('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px', flexWrap:'wrap', gap:'8px' } },
               h('div', { style:{ fontSize:'13px', fontWeight:700, color:'#1e293b' } },
-                '📁 내 프로젝트 ', h('span', { style:{ color:'#94a3b8', fontWeight:500 } }, '('+filtered.length+')')),
+                '📁 내 프로젝트 ', h('span', { style:{ color:'#94a3b8', fontWeight:500 } }, '('+filtered.length+')'),
+                completedItems.length > 0 && h('button', {
+                  onClick:function(){ setShowCompletedProj(!showCompletedProj); },
+                  title:'진행상황을 완료로 표시한 항목 보기/숨기기',
+                  style:{ marginLeft:'8px', padding:'2px 8px', fontSize:'10.5px', fontWeight:600, cursor:'pointer',
+                    background: showCompletedProj ? '#dcfce7' : '#f1f5f9',
+                    color: showCompletedProj ? '#166534' : '#64748b',
+                    border:'1px solid ' + (showCompletedProj ? '#86efac' : '#cbd5e1'), borderRadius:'10px' } },
+                  showCompletedProj ? '✅ 완료 ' + completedItems.length + '건 표시중' : '✅ 완료 ' + completedItems.length + '건 숨김')),
               h('div', { style:{ display:'flex', gap:'6px', alignItems:'center', flexWrap:'wrap' } },
                 // 일반업무 추가 버튼
                 h('button', { onClick:function(){
@@ -34029,23 +34056,23 @@ function CorpDashboard(props){
   // 직원별 업무 집계
   var staffMatrix = users.map(function(u){
     var myContracts = allContracts.filter(function(c){
-      if(c.status==='closed' || c.status==='cancelled' || c.status==='transferred') return false;
+      if(isItemClosed(c)) return false;
       return isAssigned(c, u.sid);
     });
     var myCases = cases.filter(function(c){
-      if(c.permanentArchived || c.status==='closed' || c.closedDate) return false;
+      if(isItemClosed(c)) return false;
       return isAssigned(c, u.sid);
     });
     var myConsultings = consultings.filter(function(c){
-      if(c.permanentArchived || c.closedDate) return false;
+      if(isItemClosed(c)) return false;
       return isAssigned(c, u.sid);
     });
     var myFunds = funds.filter(function(c){
-      if(c.permanentArchived || c.closedDate) return false;
+      if(isItemClosed(c)) return false;
       return isAssigned(c, u.sid);
     });
     var myOthers = others.filter(function(c){
-      if(c.permanentArchived || c.closedDate) return false;
+      if(isItemClosed(c)) return false;
       return isAssigned(c, u.sid);
     });
     // 본인 미수금 (사건 retainerFee/successFee, 컨설팅 잔금)
