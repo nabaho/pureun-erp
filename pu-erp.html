@@ -37537,6 +37537,7 @@ function IeumPeopleTab(props){
   var rfS = useState(0);    var rfk = rfS[0];       var setRfk = rfS[1];
   var lmS = useState(null); var lecModal = lmS[0];  var setLecModal = lmS[1];
   var mmS = useState(false); var memberModal = mmS[0]; var setMemberModal = mmS[1];
+  var enS = useState(null); var editNote = enS[0];  var setEditNote = enS[1]; // {pk, val} 비고 인라인 편집
 
   var isAllYear = selYear === 'all';
   var IEUM_START_YEAR = 2025; // 이음센터 사업 시작 연도
@@ -37554,6 +37555,22 @@ function IeumPeopleTab(props){
   var capsAll = dbGet('ieum_caps', {}) || {};
   var caps = isAllYear ? {} : (capsAll[selYear] || {}); // 전체 보기에서는 한도 미적용
   var lectures = (dbGet('ieum_lectures', []) || []).filter(function(l){ return isAllYear || (l.date||'').slice(0,4) === String(selYear); });
+
+  // 비고: 개인 요구사항 메모 — 외부 인원은 external_staff.note(캘린더 툴팁과 공유), 내부 직원은 ieum_notes에 저장
+  var ieumNotes = dbGet('ieum_notes', {}) || {};
+  function noteOf(p){ return p.kind === 'in' ? (ieumNotes[p.pk] || '') : (p.note || ''); }
+  function saveNote(p, text){
+    text = String(text||'').trim();
+    if(p.kind === 'in'){
+      var ns = dbGet('ieum_notes', {}) || {};
+      ns[p.pk] = text; dbSet('ieum_notes', ns);
+    } else {
+      var arr = dbGet('external_staff', []) || [];
+      var t = arr.find(function(x){ return x.id === p.pk; });
+      if(t){ t.note = text; dbSet('external_staff', arr); }
+    }
+    setEditNote(null); setRfk(rfk+1); showToast('✅ 비고 저장');
+  }
 
   // 변호사 법률상담 = 캘린더의 이음센터 일정(eum-work) 자동 집계 (수기 입력 없음)
   function consultUsed(pk){ return (duty[pk] || {total:0}).total; }
@@ -37676,6 +37693,7 @@ function IeumPeopleTab(props){
           h('th',{style:Object.assign({},thStyle,{boxShadow:'inset 0 -2px 0 #7c3aed'})},'이음강의'),
           h('th',{style:Object.assign({},thStyle,{boxShadow:'inset 0 -2px 0 #7c3aed'})},'잔여'),
           h('th',{style:thStyle},'연락처'),
+          h('th',{style:Object.assign({},thStyle,{minWidth:'150px'})},'비고 (개인 요구사항)'),
           h('th',{style:Object.assign({},thStyle,{width:'26px'})},'')
         )),
         h('tbody',null, visible.map(function(p, idx){
@@ -37696,9 +37714,7 @@ function IeumPeopleTab(props){
               h('td',{style:tdStyle},
                 h('div',{style:{display:'flex',alignItems:'center',gap:'8px'}},
                   h('span',{style:{width:'26px',height:'26px',borderRadius:'8px',background:p.color,color:'#fff',display:'inline-flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:800,flexShrink:0}}, p.name.charAt(0)),
-                  h('span',null,
-                    h('span',{style:{fontWeight:800,fontSize:'12.5px'}}, p.name),
-                    p.note ? h('div',{style:{fontSize:'10px',color:'#94a3b8',maxWidth:'140px',overflow:'hidden',textOverflow:'ellipsis'}}, p.note) : null))),
+                  h('span',{style:{fontWeight:800,fontSize:'12.5px'}}, p.name))),
               h('td',{style:tdStyle},
                 h('span',{style:{fontSize:'9.5px',fontWeight:800,padding:'2px 7px',borderRadius:'5px',background:chip.bg,color:chip.fg,whiteSpace:'nowrap'}}, p.roleLabel)),
               // 이음근무: 노무사만 (변호사 일정은 법률상담으로 집계) · 월/연 동시 표시
@@ -37725,6 +37741,21 @@ function IeumPeopleTab(props){
                   h('a',{href:'tel:'+p.phone.replace(/[^0-9]/g,''), onClick:function(e){e.stopPropagation();},
                     style:{textDecoration:'none',marginRight:'6px'}},'📞'), p.phone)
                 : h('span',{style:{color:'#cbd5e1'}},'—')),
+              // 비고: 클릭해서 개인 요구사항 입력 (외부=external_staff.note 연동, 내부=ieum_notes)
+              h('td',{style:tdStyle, onClick:function(e){ e.stopPropagation(); }},
+                (editNote && editNote.pk === p.pk)
+                  ? h('input',{type:'text', value:editNote.val, autoFocus:true,
+                      placeholder:'예: 2·4주 금 선호',
+                      onInput:function(e){ setEditNote({pk:p.pk, val:e.target.value}); },
+                      onKeyDown:function(e){ if(e.key==='Enter'){ saveNote(p, editNote.val); } if(e.key==='Escape'){ setEditNote(null); } },
+                      onBlur:function(){ saveNote(p, editNote.val); },
+                      style:{width:'160px',padding:'4px 7px',fontSize:'11px',border:'1px solid #93c5fd',borderRadius:'6px',outline:'none'}})
+                  : h('span',{onClick:function(){ setEditNote({pk:p.pk, val:noteOf(p)}); },
+                      title:'클릭해서 비고 입력', style:{cursor:'text',display:'inline-flex',alignItems:'center',gap:'5px'}},
+                      noteOf(p)
+                        ? h('span',{style:{fontSize:'11px',color:'#475569',maxWidth:'170px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',display:'inline-block'}}, noteOf(p))
+                        : h('span',{style:{fontSize:'11px',color:'#cbd5e1'}},'＋ 입력'),
+                      h('span',{style:{fontSize:'10px',color:'#cbd5e1'}},'✎'))),
               h('td',{style:tdStyle},
                 h('span',{style:{color:'#94a3b8',fontSize:'11px',display:'inline-block',transition:'transform 0.15s',transform:open?'rotate(90deg)':'none'}},'›'))
             )
@@ -37736,7 +37767,7 @@ function IeumPeopleTab(props){
             var myLecs = lectures.filter(function(l){ return l.personKey === p.pk; })
               .sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
             rows.push(h('tr',{key:p.pk+'-detail'},
-              h('td',{colSpan:10, style:{background:'#f8fafc',padding:'13px 18px',borderBottom:'1px solid #e2e8f0',whiteSpace:'normal'}},
+              h('td',{colSpan:11, style:{background:'#f8fafc',padding:'13px 18px',borderBottom:'1px solid #e2e8f0',whiteSpace:'normal'}},
                 h('div',{style:{display:'grid',gridTemplateColumns:IS_MOBILE?'1fr':'1fr 1fr',gap:'16px',maxWidth:'880px'}},
                   // 좌: 월별 이음근무 or 월별 상담건수
                   h('div',null,
@@ -37805,6 +37836,7 @@ function IeumPeopleTab(props){
             eduUsedTotal + (eduCapTotal?' / '+eduCapTotal+'회':'회')),
           h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0'})},
             eduCapTotal ? remBadge(eduUsedTotal, eduCapTotal) : ''),
+          h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0'})},''),
           h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0'})},''),
           h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0'})},'')
         ))
