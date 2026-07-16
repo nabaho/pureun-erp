@@ -360,6 +360,7 @@ body.pc #pcDetail{display:flex}
 .sm-empty{text-align:center;color:#8b98b3;font-size:13px;padding:24px 10px;line-height:1.7}
 .shelf-add{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;box-sizing:border-box;height:44px;border:1px dashed #cfe0fb;background:#f4f9ff;color:#1d4fc4;border-radius:10px;font-size:13.5px;font-weight:600;cursor:pointer;margin-bottom:14px}
 .shelf-add:hover{background:#eaf1fe}
+#matShelfSheet.dragging{outline:2px dashed #1d4fc4;outline-offset:-6px;background:#f4f9ff}
 .shelf-acts{display:flex;gap:2px;flex-shrink:0}
 .shelf-acts button,.shelf-rep{border:none;background:none;font-size:16px;padding:6px;cursor:pointer;color:#5a6885;border-radius:6px;display:inline-flex;align-items:center}
 .shelf-acts button:hover,.shelf-rep:hover{background:#eef2f7}
@@ -684,9 +685,28 @@ function doSendMaterials(){
 
 /* ── 자료함 (대시보드에서: 관리 — 올리기·교체·미리보기·삭제) ── */
 function openMaterialShelf(){
+  initShelfDnd();
   renderMaterialShelf();
   $('matShelfBg').classList.add('open');
   loadMaterials(renderMaterialShelf);
+}
+/* PDF를 자료함 시트 위로 끌어다 놓으면 업로드 */
+function initShelfDnd(){
+  const sh=$('matShelfSheet'); if(sh._dnd) return; sh._dnd=true;
+  ['dragenter','dragover'].forEach(ev=>sh.addEventListener(ev, e=>{ e.preventDefault(); sh.classList.add('dragging'); }));
+  sh.addEventListener('dragleave', e=>{ if(!sh.contains(e.relatedTarget)) sh.classList.remove('dragging'); });
+  sh.addEventListener('drop', async e=>{
+    e.preventDefault(); sh.classList.remove('dragging');
+    const files=[...((e.dataTransfer&&e.dataTransfer.files)||[])];
+    const pdfs=files.filter(f=>f.type==='application/pdf'||/\.pdf$/i.test(f.name));
+    if(!pdfs.length){ toast('PDF 파일만 올릴 수 있습니다'); return; }
+    for(const f of pdfs){
+      const defName=f.name.replace(/\.pdf$/i,'');
+      const name=(prompt('자료 이름을 입력하세요 (예: 회사소개서)', defName)||'').trim();
+      if(!name) continue;
+      await putMaterial('m'+Date.now()+Math.random().toString(36).slice(2,6), name, f);
+    }
+  });
 }
 function closeMatShelf(){ $('matShelfBg').classList.remove('open'); }
 function renderMaterialShelf(){
@@ -707,9 +727,9 @@ function renderMaterialShelf(){
       <div class="sm-htxt"><div class="t">📎 자료함</div><div class="s">고객에게 보낼 자료를 여기서 관리합니다</div></div>
       <button class="sm-x" onclick="closeMatShelf()">✕</button>
     </div>
-    <label class="shelf-add">＋ 새 자료 올리기<input type="file" accept="application/pdf" style="display:none" onchange="addMaterial(this)"></label>
+    <label class="shelf-add">＋ 새 자료 올리기 (PDF 끌어다 놓기도 가능)<input type="file" accept="application/pdf" style="display:none" onchange="addMaterial(this)"></label>
     ${rows}
-    <div class="sm-note">여기 올린 자료가 고객 명함의 "자료 보내기"에 자동으로 나타납니다.</div>`;
+    <div class="sm-note">여기 올린 자료가 고객 명함의 "자료 보내기"에 자동으로 나타납니다. PDF 파일을 이 창에 끌어다 놓아도 올라갑니다 (8MB 이하).</div>`;
 }
 async function addMaterial(input){
   const file = input.files && input.files[0]; input.value='';
@@ -728,14 +748,19 @@ async function replaceMaterialFile(id, input){
   const cur = _matMeta[id]; if(!cur) return;
   await putMaterial(id, cur.name, file);
 }
+/* 파일 본문은 명함 사진과 같은 방식으로 DB에 저장 (Storage 미사용 — 권한설정 불필요) */
 async function putMaterial(id, name, file){
+  if (file.size > 8*1024*1024){ toast(`PDF가 너무 큽니다 (${(file.size/1024/1024).toFixed(1)}MB) — 8MB 이하만 올릴 수 있습니다`); return; }
   toast('업로드 중…');
   try{
-    const path = 'materials/'+id+'/'+Date.now()+'_'+file.name;
-    const ref = firebase.storage().ref(path);
-    await ref.put(file);
-    const url = await ref.getDownloadURL();
-    const meta = { id, name, fileName:file.name, url, path, uploadedAt: Date.now() };
+    const dataUrl = await new Promise((res,rej)=>{
+      const r=new FileReader();
+      r.onload=()=>res(r.result);
+      r.onerror=()=>rej(new Error('파일을 읽을 수 없습니다'));
+      r.readAsDataURL(file);
+    });
+    const meta = { id, name, fileName:file.name, size:file.size, uploadedAt: Date.now() };
+    await firebase.database().ref(DB_ROOT+'/materialFiles/'+id).set(dataUrl);
     await firebase.database().ref(DB_ROOT+'/materials/'+id).set(meta);
     _matMeta[id]=meta;
     renderMaterialShelf();
@@ -745,13 +770,28 @@ async function putMaterial(id, name, file){
     toast('업로드 실패: '+((e&&e.message)||'알 수 없는 오류'));
   }
 }
-function previewMaterial(id){ const m=_matMeta[id]; if(m&&m.url) window.open(m.url,'_blank'); }
+async function previewMaterial(id){
+  const m=_matMeta[id]; if(!m) return;
+  if (m.url){ window.open(m.url,'_blank'); return; }  /* 예전 Storage 방식으로 올린 자료 호환 */
+  toast('여는 중…');
+  try{
+    const s = await firebase.database().ref(DB_ROOT+'/materialFiles/'+id).once('value');
+    const dataUrl = s.val();
+    if(!dataUrl){ toast('파일 데이터가 없습니다 — 자료를 다시 올려주세요'); return; }
+    const bin = atob(dataUrl.split(',')[1]);
+    const arr = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([arr], {type:'application/pdf'}));
+    window.open(url,'_blank');
+    setTimeout(()=>URL.revokeObjectURL(url), 60000);
+  }catch(e){ toast('미리보기 실패: '+((e&&e.message)||'')); }
+}
 async function deleteMaterial(id){
   const m=_matMeta[id]; if(!m) return;
   if(!confirm(`'${m.name}' 자료를 삭제할까요?`)) return;
   try{
     await firebase.database().ref(DB_ROOT+'/materials/'+id).remove();
-    if(m.path){ try{ await firebase.storage().ref(m.path).delete(); }catch(_){} }
+    await firebase.database().ref(DB_ROOT+'/materialFiles/'+id).remove();
     delete _matMeta[id];
     renderMaterialShelf();
     toast('삭제했습니다');
