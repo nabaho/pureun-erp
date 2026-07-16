@@ -678,6 +678,7 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
     <button class="notif-btn" id="notifBtn" data-tip="알림 · 오늘 할 일">🔔<span class="notif-badge" id="notifBadge" style="display:none;">0</span></button>
     <button class="notif-btn" id="statsBtn" data-tip="노무사별 통계">📊</button>
     <button class="notif-btn" id="helpBtn" data-tip="키보드 단축키 안내 ( ? )">⌨️</button>
+    <button class="notif-btn" id="photoGalBtn" data-tip="날짜별 사진 모아보기">🖼️</button>
     <button class="notif-btn" id="photoLogBtn" data-tip="사진 변경 이력 (등록·교체·삭제)">🕘</button>
     <button class="notif-btn" id="backupBtn" data-tip="이 PC에 백업 파일 저장 (JSON)">💾</button>
     <button class="zip-btn" id="zipBtn" data-tip="전체 데이터 백업 — ZIP 파일로 내보내기">📦 ZIP</button>
@@ -963,6 +964,35 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
     <div id="photoLogBody" style="overflow:auto;padding:4px 12px;flex:1;"></div>
   </div>
 </div>
+
+<!-- 날짜별 사진 모아보기 -->
+<div class="mb" id="mbPhotoGal">
+  <div class="modal" style="max-width:620px;max-height:88vh;display:flex;flex-direction:column;">
+    <div class="mhead" style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);">
+      <div style="font-size:15px;font-weight:800;">🖼️ 날짜별 사진 모아보기</div>
+      <button class="mclose" onclick="closeModal('mbPhotoGal')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--t2);">✕</button>
+    </div>
+    <div style="display:flex;gap:8px;padding:10px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap;align-items:center;">
+      <button onclick="galShiftDay(-1)" style="width:32px;height:32px;border:1.5px solid var(--border);border-radius:8px;background:var(--sf);cursor:pointer;font-family:inherit;color:var(--t2);">◀</button>
+      <input type="date" id="galDate" onchange="renderPhotoGal()" style="height:32px;border:1.5px solid var(--border);border-radius:8px;padding:0 8px;font-family:inherit;color:var(--text);background:var(--surface);">
+      <button onclick="galShiftDay(1)" style="width:32px;height:32px;border:1.5px solid var(--border);border-radius:8px;background:var(--sf);cursor:pointer;font-family:inherit;color:var(--t2);">▶</button>
+      <select id="galCo" onchange="renderPhotoGal()" style="flex:1;min-width:120px;height:32px;border:1.5px solid var(--border);border-radius:8px;padding:0 8px;font-family:inherit;color:var(--text);background:var(--surface);"></select>
+      <button onclick="galZip()" style="height:32px;padding:0 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--sf);cursor:pointer;font-family:inherit;font-weight:700;font-size:12px;color:var(--info);white-space:nowrap;">⬇ 이 날짜 ZIP</button>
+    </div>
+    <div id="galSummary" style="padding:8px 16px;font-size:12px;color:var(--t2);border-bottom:1px solid var(--border);"></div>
+    <div id="galBody" style="overflow:auto;padding:12px 16px;flex:1;"></div>
+  </div>
+</div>
+
+<!-- 사진 확대 라이트박스 -->
+<div class="mb" id="mbPhotoView" style="z-index:1100;flex-direction:column;gap:12px;padding:24px;" onclick="if(event.target===this)closeModal('mbPhotoView')">
+  <img id="pvImg" alt="확대된 현장사진" style="max-width:92vw;max-height:78vh;border-radius:10px;object-fit:contain;background:#000;">
+  <div style="display:flex;gap:8px;">
+    <button id="pvDl" style="padding:9px 18px;border:none;border-radius:9px;background:var(--info);color:#fff;font-weight:800;cursor:pointer;font-family:inherit;font-size:13px;">⬇ 다운로드</button>
+    <button onclick="closeModal('mbPhotoView')" style="padding:9px 18px;border:none;border-radius:9px;background:rgba(255,255,255,.22);color:#fff;font-weight:800;cursor:pointer;font-family:inherit;font-size:13px;">닫기</button>
+  </div>
+</div>
+
 <div class="mb" id="mbAlert" style="z-index:600;">
   <div class="modal sm" style="max-width:360px;">
     <div class="mbody" style="text-align:center;padding:26px 22px 10px;">
@@ -1544,6 +1574,92 @@ async function logPhoto(action,sid,slotIdx,prevDurl){
   }catch(e){console.warn('logPhoto',e);}
 }
 function openPhotoLog(){ renderPhotoLog(); q('#mbPhotoLog').classList.add('open'); }
+
+// ===== 날짜별 사진 모아보기 =====
+// dateStr 없으면 오늘. 헤더 버튼·날짜 상세창에서 진입.
+function openPhotoGal(dateStr){
+  q('#galDate').value = dateStr || todayStr();
+  const cos=getCos();
+  q('#galCo').innerHTML=`<option value="">사업장 전체</option>`+cos.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  renderPhotoGal();
+  q('#mbPhotoGal').classList.add('open');
+}
+function galShiftDay(delta){
+  const cur=q('#galDate').value||todayStr();
+  const dt=new Date(cur+'T00:00:00'); dt.setDate(dt.getDate()+delta);
+  q('#galDate').value=`${dt.getFullYear()}-${p2(dt.getMonth()+1)}-${p2(dt.getDate())}`;
+  renderPhotoGal();
+}
+// 해당 일정에 저장된 사진 슬롯 존재 여부
+function schedHasPhoto(sid){ return !!(PHOTOS[sid]&&(PHOTOS[sid].c0||PHOTOS[sid].c1)); }
+function renderPhotoGal(){
+  const date=q('#galDate').value, coF=q('#galCo').value;
+  const cos=getCos(),types=getTypes(),staff=getStaff();
+  let scheds=getScheds().filter(s=>s.date===date&&schedHasPhoto(s.id));
+  if(coF)scheds=scheds.filter(s=>s.coId===coF);
+  const body=q('#galBody'), sum=q('#galSummary');
+  let photoCount=0; scheds.forEach(s=>['c0','c1'].forEach(k=>{if(PHOTOS[s.id][k])photoCount++;}));
+  sum.innerHTML=`${date} · 일정 ${scheds.length}건 · 사진 <b style="color:var(--text);">${photoCount}장</b>`;
+  if(!scheds.length){ body.innerHTML=`<div style="text-align:center;padding:44px;color:var(--t2);font-size:13px;">이 날짜에 저장된 사진이 없습니다</div>`; return; }
+  const slots=[['c0','입장','var(--accent)','rgba(21,101,192,.12)'],['c1','활동','#b37700','rgba(255,159,28,.16)']];
+  body.innerHTML=scheds.map(sc=>{
+    const co=cos.find(c=>c.id===sc.coId), ty=types.find(t=>t.id===sc.typeId), att=staff.find(a=>a.id===sc.attId);
+    const cards=slots.map(([k,lbl,col,bg])=>{
+      const cv=PHOTOS[sc.id]&&PHOTOS[sc.id][k];
+      if(cv){
+        const thumb=cv.toDataURL('image/jpeg',.7);
+        const fn=`${date}_${ty?.name||'컨설팅'}_${co?.name||'사업장'}_${sc.round||0}회_${lbl}.jpg`;
+        return `<div style="border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+          <div style="aspect-ratio:4/3;background:#000;cursor:zoom-in;" onclick="galView('${sc.id}','${k}','${escAttr(fn)}')"><img src="${thumb}" alt="${lbl} 사진" style="width:100%;height:100%;object-fit:cover;display:block;"></div>
+          <div style="padding:6px 8px;display:flex;align-items:center;justify-content:space-between;">
+            <span style="font-size:10.5px;font-weight:800;background:${bg};color:${col};padding:2px 8px;border-radius:8px;">${lbl}</span>
+            <button title="크게 보기" onclick="galView('${sc.id}','${k}','${escAttr(fn)}')" style="border:none;background:none;cursor:pointer;font-size:14px;color:var(--t2);">🔍</button>
+          </div>
+        </div>`;
+      }
+      return `<div style="border:1px dashed var(--border);border-radius:12px;aspect-ratio:4/3;display:flex;flex-direction:column;gap:4px;align-items:center;justify-content:center;color:var(--t2);"><span style="font-size:22px;">📷</span><span style="font-size:10.5px;">${lbl} 미등록</span></div>`;
+    }).join('');
+    return `<div style="margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <div style="width:3px;height:16px;border-radius:2px;background:${ty?.color||'#ccc'};flex-shrink:0;"></div>
+        <span style="font-size:14px;font-weight:900;">${co?.name||'?'}</span>
+        <span style="font-size:12px;color:var(--t2);">${ty?.name||'?'} ${sc.round||0}회차 · ${att?.name||'?'}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">${cards}</div>
+    </div>`;
+  }).join('');
+}
+// 사진 확대 (원본 화질). 캔버스 우선, 없으면 IndexedDB에서.
+async function galView(sid,key,fn){
+  let durl=PHOTOS[sid]&&PHOTOS[sid][key]?PHOTOS[sid][key].toDataURL('image/jpeg',.92):null;
+  if(!durl)durl=await getPhotoFromDB(sid,key);
+  if(!durl){toast('사진을 불러올 수 없습니다','err');return;}
+  q('#pvImg').src=durl;
+  q('#pvDl').onclick=()=>{const a=document.createElement('a');a.href=durl;a.download=fn||'photo.jpg';document.body.appendChild(a);a.click();a.remove();};
+  q('#mbPhotoView').classList.add('open');
+}
+// 현재 날짜(+사업장 필터)의 사진만 ZIP
+async function galZip(){
+  const date=q('#galDate').value, coF=q('#galCo').value;
+  const cos=getCos(),types=getTypes(),staff=getStaff();
+  let scheds=getScheds().filter(s=>s.date===date&&schedHasPhoto(s.id));
+  if(coF)scheds=scheds.filter(s=>s.coId===coF);
+  if(!scheds.length){toast('이 날짜에 저장된 사진이 없습니다','err');return;}
+  const zip=new JSZip();
+  scheds.forEach(sc=>{
+    const co=cos.find(c=>c.id===sc.coId), ty=types.find(t=>t.id===sc.typeId), att=staff.find(a=>a.id===sc.attId);
+    [['c0','시작사진'],['c1','끝사진']].forEach(([k,lbl])=>{
+      const cv=PHOTOS[sc.id]&&PHOTOS[sc.id][k]; if(!cv)return;
+      const b64=cv.toDataURL('image/jpeg',.92).split(',')[1];
+      zip.file(`${date}_${co?.name||'사업장'}_${ty?.name||'컨설팅'}_${sc.round||0}회_${att?.name||'담당자'}_${lbl}.jpg`,b64,{base64:true});
+    });
+  });
+  const blob=await zip.generateAsync({type:'blob'});
+  const fn=`푸른노무법인_사진_${date}.zip`;
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fn;document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  toast(`ZIP 다운로드: ${fn}`);
+}
 function renderPhotoLog(){
   const box=q('#photoLogBody'); if(!box)return;
   const arr=getPhotoLog().slice().reverse();
@@ -1694,9 +1810,11 @@ function openDayModal(date){
   }
   const cos=getCos(),types=getTypes();
   q('#mDayDate').textContent=korDate(date);
-  q('#mDayBody').innerHTML= scheds.length===0
+  const anyPh=scheds.some(sc=>schedHasPhoto(sc.id));
+  const galBtnHtml=anyPh?`<button onclick="closeModal('mbDay');openPhotoGal('${date}')" style="width:100%;margin-bottom:12px;padding:10px;border:1px solid var(--info);border-radius:10px;background:rgba(21,101,192,.06);color:var(--info);font-weight:800;font-size:12.5px;cursor:pointer;font-family:inherit;">🖼️ 이 날짜 사진 모아보기</button>`:'';
+  q('#mDayBody').innerHTML= (scheds.length===0
     ? `<div style="text-align:center;padding:30px;color:var(--t2);font-size:13px;">등록된 일정이 없습니다</div>`
-    : scheds.map(sc=>{
+    : galBtnHtml + scheds.map(sc=>{
         const co=cos.find(c=>c.id===sc.coId);
         const ty=types.find(t=>t.id===sc.typeId);
         const att=getStaff().find(a=>a.id===sc.attId);
@@ -1721,7 +1839,7 @@ function openDayModal(date){
               ${deadlineBadge(cos.find(c=>c.id===sc.coId)?.deadlines?.[sc.typeId])}            </div>
           </div>
         </div>`;
-      }).join('');
+      }).join(''));
   // 클릭 → 수정 모달로
   qa('#mDayBody .day-item').forEach(el=>el.onclick=()=>{
     closeModal('mbDay');
@@ -4960,6 +5078,7 @@ function bind(){
   q('#backupBtn').onclick=exportJson;
   q('#photoLogBtn').onclick=openPhotoLog;
   q('#photoLogCls').onclick=()=>q('#mbPhotoLog').classList.remove('open');
+  q('#photoGalBtn').onclick=()=>openPhotoGal();
   q('#importJsonBtn').onclick=()=>q('#importJsonFi').click();
   q('#importJsonFi').onchange=e=>{const f=e.target.files[0];if(f)importJson(f);e.target.value='';};
   const _snb=q('#snapNowBtn'); if(_snb)_snb.onclick=()=>{ takeSnapshot('수동 스냅샷'); renderAutoBackups(); toast('현재 데이터를 스냅샷으로 저장했습니다'); };
