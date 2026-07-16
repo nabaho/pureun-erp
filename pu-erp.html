@@ -53664,11 +53664,14 @@ function LoginScreen(props){
         var acct = users2.find(function(x){ return _canLogin(x) && _matches(x); });
         if(!acct){
           var any2 = users2.find(_matches);
-          try { firebase.auth().signOut(); } catch(_){}
           if(any2 && !_canLogin(any2)){
+            // 비활성 계정으로 '확정'된 경우에만 세션 종료 (보안)
+            try { firebase.auth().signOut(); } catch(_){}
             var st2 = any2.status==='leave'?'휴직':any2.status==='retired'?'퇴직':any2.status==='standby'?'대기':any2.status==='scheduled'?'입사예정':'비활성';
             setErr('재직 상태가 아니어서 로그인할 수 없습니다. (현재: '+st2+')');
           } else {
+            // 명부를 못 읽었을 가능성(규칙 거부·네트워크) — 여기서 signOut하면
+            // 포털·컨설팅 등 전체 세션이 함께 죽어 "튕김"이 됨. 세션은 유지하고 안내만.
             setErr('계정을 찾을 수 없습니다. 관리자에게 문의하세요.');
           }
           setLoading(false); return;
@@ -55071,14 +55074,22 @@ function App(){
       var _local = null; try { _local = dbGet('user_accounts', USERS_SEED); } catch(_){}
       if(_match(_local)){ setSsoWait(false); return; }
       // 2차: Firebase에서 직접 조회 (로컬이 아직 로딩 전인 경우)
-      try {
-        firebase.database().ref('user_accounts').once('value').then(function(snap){
+      // [버그수정] 경로에 data/ 누락으로 항상 빈 값 → SSO 매칭 실패 → 로그인 화면 재노출되던 문제.
+      // 일반 직원은 user_accounts 읽기 거부되므로 공개 명부 data/user_dir 우선, 폴백 data/user_accounts.
+      function _readList(path){
+        return firebase.database().ref(path).once('value').then(function(snap){
           var raw = snap.val();
           var list = (raw && raw.v !== undefined) ? raw.v : raw;
           if(list && !Array.isArray(list) && typeof list === 'object') list = Object.values(list);
-          _match(list);
-          setSsoWait(false);
-        }).catch(function(){ setSsoWait(false); });
+          return Array.isArray(list) && list.length ? list : null;
+        });
+      }
+      try {
+        _readList('data/user_dir')
+          .then(function(dir){ return dir || _readList('data/user_accounts').catch(function(){ return null; }); })
+          .catch(function(){ return _readList('data/user_accounts').catch(function(){ return null; }); })
+          .then(function(list){ if(list) _match(list); setSsoWait(false); })
+          .catch(function(){ setSsoWait(false); });
       } catch(_){ setSsoWait(false); }
     }
     var off = firebase.auth().onAuthStateChanged(function(user){
