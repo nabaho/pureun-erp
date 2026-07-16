@@ -34415,7 +34415,9 @@ function CorpDashboard(props){
                   var ext = (dbGet('external_staff',[])||[]).find(function(x){return x.id===r.externalId;});
                   if(ext) return '🏛️ ' + _tEum + ext.name + ' 이음센터' + (r.note?' '+r.note:'');
                 }
-                var u = users.find(function(x){return x.sid===r.sid;});
+                // 퇴사자도 이름 유지: 배정 가능 목록에 없으면 전체 계정에서 조회
+                var u = users.find(function(x){return x.sid===r.sid;})
+                     || (dbGet('user_accounts',[])||[]).find(function(x){return x.sid===r.sid;});
                 return '🏛️ ' + _tEum + (u?u.name+' 이음센터':'이음센터') + (r.note?' '+r.note:'');
               })()
             : '';
@@ -37456,9 +37458,11 @@ function ieumInternalUsers(){
   });
 }
 
-// 이음센터 인원 목록 구성: 내부 노무사(법인 중심) → 외부 노무사 → 변호사 순
+// 이음센터 인원 목록 구성: 내부 노무사(법인 중심) → 외부 노무사 → 변호사 → 퇴사·종료자(기록 보존) 순
+// 퇴사·종료자는 left:true — 기본 숨김이지만 KPI·합계에는 항상 포함 (통계 왜곡 방지)
 function ieumBuildPeople(year){
-  var ext = getExternalStaff().filter(function(x){ return x.active !== false; });
+  var extAll = getExternalStaff();
+  var ext = extAll.filter(function(x){ return x.active !== false; });
   var colorMap = ieumStaffColorMap(); // 법인 대시보드 지정색과 동일
   var rows = [];
   ieumInternalUsers().forEach(function(u){
@@ -37472,6 +37476,21 @@ function ieumBuildPeople(year){
   ext.filter(function(x){ return (x.role||'').indexOf('변호사') >= 0; }).forEach(function(x){
     rows.push({ pk:x.id, name:x.name, kind:'law', roleLabel:'변호사', color:x.color||'#16a34a',
       phone:x.contact||'', note:x.note||'', ext:x });
+  });
+  // 퇴사(내부)·종료(외부) 인원 — 이음근무 기록이 있는 사람만 (기록은 지우지 않고 회색으로 구분)
+  var att = dbGet('attendance_records', []) || [];
+  var activeSids = {}; rows.forEach(function(r){ if(r.kind === 'in') activeSids[r.pk] = 1; });
+  (dbGet('user_accounts', []) || []).forEach(function(u){
+    if(u.status === 'active' || activeSids[u.sid]) return;
+    if(!att.some(function(r){ return r.type==='eum-work' && r.sid===u.sid && !r.externalId; })) return;
+    rows.push({ pk:u.sid, name:u.name, kind:'in', roleLabel:'내부 노무사', color:'#94a3b8',
+      phone:(u.phone||u.contact||''), note:'', left:true, leftDate:u.retireDate||u.quitDate||'' });
+  });
+  extAll.filter(function(x){ return x.active === false; }).forEach(function(x){
+    if(!att.some(function(r){ return r.type==='eum-work' && r.externalId===x.id; })) return;
+    var isL = (x.role||'').indexOf('변호사') >= 0;
+    rows.push({ pk:x.id, name:x.name, kind:isL?'law':'ex', roleLabel:isL?'변호사':'외부 노무사', color:'#94a3b8',
+      phone:x.contact||'', note:x.note||'', ext:x, left:true, leftDate:'' });
   });
   return rows;
 }
@@ -37648,7 +37667,16 @@ function IeumPeopleTab(props){
     eduUsedTotal += lecUsed(p.pk); eduCapTotal += capOf(p.pk,'edu');
   });
 
-  var visible = people.filter(function(p){ return roleFilter==='all' || p.kind===roleFilter; });
+  // 표시 행: 기본은 재직자만, '퇴사·종료 포함' 선택 시 전체 (퇴사자는 build 순서상 맨 아래)
+  var visible = people.filter(function(p){
+    if(roleFilter === 'withleft') return true;
+    if(p.left) return false;
+    return roleFilter==='all' || p.kind===roleFilter;
+  });
+  // 합계 기준: 퇴사자 기록 항상 포함 (역할 필터만 적용) — 통계 왜곡 방지
+  var sumRows = people.filter(function(p){
+    return (roleFilter==='all' || roleFilter==='withleft') ? true : p.kind===roleFilter;
+  });
   var maxDuty = 1; people.forEach(function(p){ var t=(duty[p.pk]||{}).total||0; if(t>maxDuty) maxDuty=t; });
 
   var ROLE_CHIP = { 'in':{bg:'#e7efff',fg:'#2563eb'}, 'ex':{bg:'#f1eafe',fg:'#7c3aed'}, 'law':{bg:'#fdf2e0',fg:'#d97706'} };
@@ -37694,10 +37722,11 @@ function IeumPeopleTab(props){
       h('div',{style:{width:'1px',height:'22px',background:'#e2e8f0',margin:'0 4px',flexShrink:0}}),
       h('select',{value:roleFilter, onChange:function(e){ setRoleFilter(e.target.value); },
         style:{padding:'3px 6px',fontSize:'11px',fontWeight:700,border:'1px solid #e2e8f0',borderRadius:'8px',background:'#f8fafc',color:'#475569',flexShrink:0}},
-        h('option',{value:'all'},'전체 ('+people.length+'명)'),
+        h('option',{value:'all'},'전체 ('+people.filter(function(p){return !p.left;}).length+'명)'),
         h('option',{value:'in'},'노무사(내부)'),
         h('option',{value:'ex'},'노무사(외부)'),
-        h('option',{value:'law'},'변호사')),
+        h('option',{value:'law'},'변호사'),
+        h('option',{value:'withleft'},'🚪 퇴사·종료 포함')),
       h('button',{onClick:function(){ setMemberModal(true); },
         style:{padding:'3px 8px',fontSize:'10.5px',fontWeight:700,border:'1px solid #e2e8f0',borderRadius:'8px',background:'#f8fafc',color:'#475569',cursor:'pointer',flexShrink:0,height:'26px'}},'⚙ 내부 인원'),
       h('span',{style:{marginLeft:'auto',fontSize:'10.5px',color:'#94a3b8',whiteSpace:'nowrap',paddingRight:'4px'}},'행 클릭 → 월별 상세')
@@ -37768,14 +37797,17 @@ function IeumPeopleTab(props){
           var dutyPct = Math.round(d.total/maxDuty*100);
           var rows = [
             h('tr',{key:p.pk, onClick:function(){ var n=Object.assign({},openRows); n[p.pk]=!n[p.pk]; setOpenRows(n); },
-              style:{cursor:'pointer', background:open?'#eff6ff':'transparent'},
+              style:{cursor:'pointer', background:open?'#eff6ff':'transparent', opacity:p.left?0.55:1},
               onMouseEnter:function(e){ if(!open) e.currentTarget.style.background='#f8fafc'; },
               onMouseLeave:function(e){ if(!open) e.currentTarget.style.background='transparent'; }},
               h('td',{style:Object.assign({},tdStyle,{textAlign:'center',color:'#94a3b8',fontWeight:700,fontSize:'11px'})}, idx+1),
               h('td',{style:tdStyle},
                 h('div',{style:{display:'flex',alignItems:'center',gap:'8px'}},
                   h('span',{style:{width:'26px',height:'26px',borderRadius:'8px',background:p.color,color:'#fff',display:'inline-flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:800,flexShrink:0}}, p.name.charAt(0)),
-                  h('span',{style:{fontWeight:800,fontSize:'12.5px'}}, p.name))),
+                  h('span',{style:{fontWeight:800,fontSize:'12.5px'}}, p.name),
+                  p.left && h('span',{style:{fontSize:'9.5px',fontWeight:800,padding:'2px 7px',borderRadius:'5px',
+                    background:'#f1f5f9',color:'#94a3b8',border:'1px dashed #cbd5e1',whiteSpace:'nowrap'}},
+                    '🚪 '+(p.kind==='in'?'퇴사':'종료')+(p.leftDate?' ('+String(p.leftDate).slice(5)+')':'')))),
               h('td',{style:tdStyle},
                 h('span',{style:{fontSize:'9.5px',fontWeight:800,padding:'2px 7px',borderRadius:'5px',background:chip.bg,color:chip.fg,whiteSpace:'nowrap'}}, p.roleLabel)),
               // 이음근무 (노무사) — 현재 스코프 기준 단일 수치 + 상대 막대
@@ -37887,7 +37919,7 @@ function IeumPeopleTab(props){
           h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0',fontWeight:800})},'합계'),
           h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0'})},''),
           h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0',fontWeight:800})},
-            visible.reduce(function(s,p){ return s+(p.kind==='law'?0:((duty[p.pk]||{}).total||0)); },0)+'일'),
+            sumRows.reduce(function(s,p){ return s+(p.kind==='law'?0:((duty[p.pk]||{}).total||0)); },0)+'일'),
           h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0',fontWeight:800})},
             lawUsedTotal + (lawCapTotal?' / '+lawCapTotal+'회':'회')),
           h('td',{style:Object.assign({},tdStyle,{background:'#f8fafc',borderTop:'2px solid #e2e8f0'})},
