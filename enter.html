@@ -115,6 +115,24 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
 .tile.lock{opacity:.5;cursor:default;}
 .tile.lock:hover{background:none;}
 .tile.lock:hover .ic{transform:none;box-shadow:none;border-color:var(--card-border);}
+/* ── 로그인 후 바로가기(홈 앱) 선택 바 ── */
+.homebar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 4px 16px;font-size:.8rem;font-weight:600;color:var(--sub);}
+.homebar select{font-family:inherit;font-size:.8rem;font-weight:700;color:var(--accent);background:rgba(255,255,255,.72);
+  border:1px solid var(--card-border);border-radius:10px;padding:6px 12px;cursor:pointer;outline:none;}
+.homebar .hb-hint{font-size:.7rem;font-weight:500;color:var(--mute);}
+/* 이동 안내 배너 */
+#homeBanner{position:fixed;left:0;right:0;top:0;z-index:60;display:flex;align-items:center;justify-content:center;gap:16px;
+  background:linear-gradient(135deg,var(--accent),#2563eb);color:#fff;padding:13px 16px;font-size:.88rem;font-weight:600;
+  box-shadow:0 6px 22px rgba(20,30,80,.28);}
+#homeBanner b{font-weight:800;}
+#homeBanner button{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.45);color:#fff;border-radius:99px;
+  padding:6px 16px;font-size:.82rem;font-weight:700;font-family:inherit;cursor:pointer;transition:.12s;white-space:nowrap;}
+#homeBanner button:hover{background:rgba(255,255,255,.32);}
+@media(max-width:520px){
+  #homeBanner{font-size:.82rem;padding:11px 12px;gap:10px;flex-wrap:wrap;text-align:center;}
+  .homebar{font-size:.76rem;}
+  .homebar .hb-hint{flex-basis:100%;}
+}
 @media(max-width:520px){
   .hello{font-size:16px;}
   /* 로그인 옵션 줄: 폭이 좁아 글자가 세로로 쪼개지던 문제 해소
@@ -308,6 +326,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       <button id="tileLockBtn" type="button"></button>
       <span id="tileHint">타일을 끌어 순서를 바꿀 수 있습니다</span>
     </div>
+    <div class="homebar" id="homeBar"></div>
     <div class="tiles" id="appTiles"></div>
   </div>
 
@@ -421,6 +440,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       // 오래 방치된 탭은 브라우저 절전으로 얼어 있어, 그 안에서 화면만 바꿔치기하면
       // 입력이 안 먹는 반깨움 상태가 됨. ERP·컨설팅·명함첩과 동일하게 fresh load로 통일.
       _handled = false;
+      try { sessionStorage.removeItem('pu_skip_home'); } catch(_e){}   // 재로그인 시 바로가기 다시 동작
       try { location.replace(location.pathname + '?v=' + Date.now()); }
       catch(_) { location.reload(); }
     }
@@ -577,6 +597,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
   function renderPortal(acct){
     var name = acct ? acct.name : (auth.currentUser && auth.currentUser.email) || '사용자';
     var role = acct ? acct.role : 'member';
+    _curRole = role;   // 바로가기(홈 앱) 권한 판정용
     var title = acct ? (acct.title || '') : '';
     $('userName').textContent = name + (title ? ' · ' + title : '') + ' (' + role + ')';
     $('userAvatar').textContent = name ? name.charAt(0) : '·';
@@ -626,6 +647,9 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       tiles.appendChild(lock);
     }
 
+    // 로그인 후 바로가기(홈 앱) 선택 바
+    buildHomeBar();
+
     // 타일 드래그 재배치 + 순서 고정 (사용자별 저장)
     initTileOrder();
 
@@ -634,7 +658,8 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
   }
 
   // ══════════ 타일 순서: 드래그 이동 + 고정 (사용자별, 기기 간 동기화) ══════════
-  var tilePrefs = { order: null, locked: false };
+  var tilePrefs = { order: null, locked: false, homeApp: null };
+  var _curRole = 'member';   // 현재 로그인 사용자 역할 (바로가기 권한 판정용)
   function tilePrefLocalKey(){ return 'pu_portal_tiles_' + sgEmailKey((auth.currentUser && auth.currentUser.email) || ''); }
   function tilePrefPath(){ return 'data/portal_prefs/' + sgEmailKey((auth.currentUser && auth.currentUser.email) || '_'); }
 
@@ -700,9 +725,15 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     var btn = $('tileLockBtn');
     // 모바일: HTML5 드래그 미지원 → 버튼·힌트 숨김, 저장된 순서만 적용
     if(isMobile()){ btn.style.display = 'none'; $('tileHint').style.display = 'none'; }
-    // 1) 로컬 캐시로 즉시 적용 (깜빡임 없이)
-    try { var p = JSON.parse(localStorage.getItem(tilePrefLocalKey()) || 'null'); if(p) tilePrefs = { order: p.order || null, locked: !!p.locked }; } catch(e){}
+    // 1) 로컬 캐시로 즉시 적용 (깜빡임 없이) — 캐시 없으면 기본값으로 리셋(이전 사용자 설정 잔존 방지)
+    try {
+      var p = JSON.parse(localStorage.getItem(tilePrefLocalKey()) || 'null');
+      tilePrefs = p ? { order: p.order || null, locked: !!p.locked, homeApp: p.homeApp || null }
+                    : { order: null, locked: false, homeApp: null };
+    } catch(e){}
     applyTileOrder();
+    syncHomeBarValue();   // 캐시된 바로가기 값 반영
+    maybeGoHome();        // 설정된 바로가기 앱이 있으면 자동 이동 (캐시 기준 즉시)
     if(!isMobile()){
       updateLockUi();
       // 2) 드래그 배선 (컨테이너 이벤트는 1회만)
@@ -725,18 +756,74 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     if(auth.currentUser){
       db.ref(tilePrefPath()).once('value').then(function(s){
         var p = s.val();
-        if(p && JSON.stringify({order:p.order||null,locked:!!p.locked}) !== JSON.stringify(tilePrefs)){
-          tilePrefs = { order: p.order || null, locked: !!p.locked };
+        var norm = function(o){ return JSON.stringify({order:o.order||null,locked:!!o.locked,homeApp:o.homeApp||null}); };
+        if(p && norm(p) !== norm(tilePrefs)){
+          tilePrefs = { order: p.order || null, locked: !!p.locked, homeApp: p.homeApp || null };
           try { localStorage.setItem(tilePrefLocalKey(), JSON.stringify(tilePrefs)); } catch(e){}
           applyTileOrder();
+          syncHomeBarValue();
           if(!isMobile()) updateLockUi();
         }
       }).catch(function(){});
     }
   }
 
+  // ══════════ 로그인 후 바로가기(홈 앱) ══════════
+  // 현재 역할로 접근 가능한 앱만 반환
+  function accessibleApps(){
+    return APPS.filter(function(a){ return !(a.roles && a.roles.indexOf(_curRole) < 0); });
+  }
+  // 포털 상단 '로그인 후 바로가기' 드롭다운 구성
+  function buildHomeBar(){
+    var bar = $('homeBar'); if(!bar) return;
+    var opts = '<option value="">사용 안 함</option>';
+    accessibleApps().forEach(function(a){
+      opts += '<option value="' + a.key + '"' + (tilePrefs.homeApp === a.key ? ' selected' : '') + '>' + a.name + '</option>';
+    });
+    bar.innerHTML = '<span>⚡ 로그인 후 바로가기</span>'
+      + '<select id="homeAppSel" aria-label="로그인 후 바로 이동할 앱">' + opts + '</select>'
+      + '<span class="hb-hint">' + (tilePrefs.homeApp ? '다음 로그인부터 이 앱으로 바로 이동합니다' : '선택하면 로그인 후 그 앱으로 바로 이동합니다') + '</span>';
+    $('homeAppSel').addEventListener('change', function(){
+      tilePrefs.homeApp = this.value || null;
+      saveTilePrefs();
+      var hint = bar.querySelector('.hb-hint');
+      if(hint) hint.textContent = this.value ? '다음 로그인부터 이 앱으로 바로 이동합니다' : '자동 이동을 사용하지 않습니다';
+    });
+  }
+  // 드롭다운 표시값을 현재 tilePrefs.homeApp과 동기화
+  function syncHomeBarValue(){
+    var sel = $('homeAppSel');
+    if(sel) sel.value = tilePrefs.homeApp || '';
+  }
+  // 설정된 바로가기 앱이 있으면 안내 배너 후 자동 이동 ('포털 머무르기'로 취소 가능)
+  function maybeGoHome(){
+    try { if(sessionStorage.getItem('pu_skip_home')) return; } catch(e){}
+    var key = tilePrefs.homeApp; if(!key) return;
+    var app = null;
+    accessibleApps().forEach(function(a){ if(a.key === key) app = a; });
+    if(!app) return;   // 권한 없거나 사라진 앱이면 무시
+    showHomeBanner(app);
+  }
+  function showHomeBanner(app){
+    if($('homeBanner')) return;   // 중복 방지
+    var v = Math.floor(Date.now() / 600000);   // 10분 버킷 캐시 우회
+    var url = app.url + (app.url.indexOf('?') >= 0 ? '&' : '?') + 'sso=1&v=' + v;
+    var bn = document.createElement('div');
+    bn.id = 'homeBanner';
+    bn.innerHTML = '<span>⚡ 잠시 후 <b>' + app.name + '</b>(으)로 이동합니다…</span>'
+      + '<button type="button" id="homeStay">포털 머무르기</button>';
+    document.body.appendChild(bn);
+    var t = setTimeout(function(){ location.href = url; }, 1500);
+    $('homeStay').addEventListener('click', function(){
+      clearTimeout(t);
+      try { sessionStorage.setItem('pu_skip_home', '1'); } catch(e){}   // 이번 세션은 포털 유지
+      bn.remove();
+    });
+  }
+
   // ── 로그아웃 ──
   $('logoutBtn').addEventListener('click', function(){
+    try { sessionStorage.removeItem('pu_skip_home'); } catch(e){}   // 재로그인 시 바로가기 다시 동작
     auth.signOut().then(function(){ location.reload(); });
   });
 
