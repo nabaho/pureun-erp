@@ -4056,8 +4056,9 @@ function renderPuConsulting(byMgr){
     var closed=list.filter(function(c){return c.closedDate;}).length;
     var rid=(getStaffRoster().find(function(s){return s.name===nm;})||{}).id;
     var disp=(rid && staffIsRetired(rid))?'퇴직자':nm;
+    var nmJs=String(nm).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
     html+='<div style="padding:8px 12px;border-top:1px solid var(--border-soft)">'
-      +'<div style="font-weight:600;font-size:13px;margin-bottom:2px">'+escapeHtml(disp)+' <span style="font-size:11px;color:var(--text-mute);font-weight:400">— 총 '+list.length+'건 · 종료 '+closed+'건</span></div>'
+      +'<div style="font-weight:600;font-size:13px;margin-bottom:2px">'+escapeHtml(disp)+' <span style="font-size:11px;color:var(--text-mute);font-weight:400">— 총 '+list.length+'건 · 종료 '+closed+'건</span> <button class="btn sm" onclick="issuePerfCert(\''+nmJs+'\')">📄 실적증명서</button></div>'
       +list.slice(0,50).map(function(c){ var t=c.consultingType||c.programName||c.title||'컨설팅'; var co=c.companyName||'';
         var end=c.closedDate?('· 종료 '+String(c.closedDate).slice(0,10)):(c.endDate?('· 종료예정 '+String(c.endDate).slice(0,10)):'');
         return '<div style="font-size:12px;color:var(--text-mute);padding:2px 0">• '+escapeHtml(co)+(co&&t?' / ':'')+escapeHtml(t)+' <span style="font-size:11px">'+escapeHtml(end)+'</span>'+(c.closedDate?'':' <span style="color:var(--amber)">[진행중]</span>')+'</div>';
@@ -4066,6 +4067,51 @@ function renderPuConsulting(byMgr){
       +'</div>';
   });
   box.innerHTML=html+'</div>';
+}
+
+/* ===== 담당자별 실적증명서 (인쇄/PDF) ===== */
+function issuePerfCert(name){
+  var cache=null; try{ cache=JSON.parse(LS.get(NS+'pu_consult_cache')||'null'); }catch(e){}
+  if(!cache){ toast('먼저 [🔗 pu-erp 컨설팅 불러오기]를 눌러 실적을 불러오세요'); return; }
+  var list=((cache&&cache.byMgr)||{})[name]||[];
+  if(!list.length && !confirm(name+' 님의 불러온 컨설팅 실적이 없습니다.\n그래도 빈 증명서를 만들까요?')) return;
+  var rows=list.map(function(c,i){
+    var endRaw=c.closedDate||c.endDate||'';
+    var end=c.closedDate?String(c.closedDate).slice(0,10):(c.endDate?(String(c.endDate).slice(0,10)+' (예정)'):'진행중');
+    return {yr:String(endRaw).slice(0,4)||'', co:c.companyName||'', type:c.consultingType||c.programName||c.title||'컨설팅', end:end};
+  });
+  rows.sort(function(a,b){ return (b.yr||'').localeCompare(a.yr||''); });
+  rows.forEach(function(r,i){ r.no=i+1; });
+  var t=new Date(), y=t.getFullYear(), m=('0'+(t.getMonth()+1)).slice(-2), d=('0'+t.getDate()).slice(-2);
+  var esc=escapeHtml;
+  var trs=rows.map(function(r){ return '<tr><td>'+r.no+'</td><td>'+esc(r.yr)+'</td><td style="text-align:left">'+esc(r.co)+'</td><td style="text-align:left">'+esc(r.type)+'</td><td>'+esc(r.end)+'</td></tr>'; }).join('')
+    || '<tr><td colspan="5" style="color:#888;padding:20px">불러온 컨설팅 실적이 없습니다</td></tr>';
+  var closed=rows.filter(function(r){return r.end.indexOf('진행중')<0 && r.end.indexOf('예정')<0;}).length;
+  var html='<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>실적증명서_'+esc(name)+'</title>'
+    +'<style>@page{size:A4;margin:22mm 20mm}*{box-sizing:border-box}'
+    +'body{font-family:"Malgun Gothic","맑은 고딕",sans-serif;color:#111;line-height:1.7;margin:0}'
+    +'h1{text-align:center;font-size:30px;letter-spacing:18px;margin:6px 0 34px;padding-left:18px}'
+    +'.meta{font-size:15px;margin:5px 0}.meta b{display:inline-block;width:70px}'
+    +'.stmt{margin:26px 0 10px;font-size:15px}'
+    +'table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}'
+    +'th,td{border:1px solid #333;padding:7px 6px;text-align:center}th{background:#f0f0f0}'
+    +'.sum{font-size:12px;color:#555;margin-top:6px}'
+    +'.foot{margin-top:54px;text-align:center;font-size:16px}.org{margin-top:16px;font-size:20px;font-weight:700;letter-spacing:6px}'
+    +'.no{text-align:right;font-size:12px;color:#555;margin-bottom:4px}'
+    +'.bar{text-align:center;margin-top:26px}.bar button{padding:10px 22px;font-size:14px;cursor:pointer}'
+    +'@media print{.bar{display:none}}</style></head><body>'
+    +'<div class="no">증명번호 : 실적-'+y+m+d+'-'+(Math.floor(Math.random()*900)+100)+'</div>'
+    +'<h1>실 적 증 명 서</h1>'
+    +'<div class="meta"><b>성　명</b> : '+esc(name)+'</div>'
+    +'<div class="meta"><b>소　속</b> : 푸른노무법인</div>'
+    +'<div class="stmt">위 사람은 본 법인 소속으로 아래와 같이 컨설팅 업무를 수행하였음을 증명합니다.</div>'
+    +'<table><thead><tr><th style="width:44px">연번</th><th style="width:56px">연도</th><th>사업장</th><th>컨설팅 유형</th><th style="width:120px">종료일/상태</th></tr></thead><tbody>'+trs+'</tbody></table>'
+    +'<div class="sum">총 '+rows.length+'건 (종료 '+closed+'건)</div>'
+    +'<div class="foot">'+y+'년 '+m+'월 '+d+'일<div class="org">푸른노무법인　대표　(인)</div></div>'
+    +'<div class="bar"><button onclick="window.print()">🖨 인쇄 / PDF 저장</button></div>'
+    +'</body></html>';
+  var w=window.open('','_blank'); if(!w){ toast('팝업이 차단되었습니다 — 팝업 허용 후 다시 시도하세요'); return; }
+  w.document.open(); w.document.write(html); w.document.close();
 }
 
 /* ===== 부트 ===== */
