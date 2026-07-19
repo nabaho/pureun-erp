@@ -919,9 +919,11 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
           <select class="tb-select" data-f="type"><option value="">전체 유형</option><option>일터혁신</option><option>구조혁신</option><option>직장내괴롭힘조사</option><option>공동주택컨설팅</option><option>기타</option></select>
           <div class="tb-spacer"></div>
           <span class="cnt" style="font-size:11px;color:var(--text-mute)"></span>
+          <button class="btn" type="button" onclick="loadPuConsulting(true)">🔗 pu-erp 컨설팅 불러오기</button>
           <button class="btn" data-act="csv">📤 CSV</button>
           <button class="btn primary" data-act="new">+ 새 컨설팅</button>
         </div>
+        <div id="puConsultBox" style="margin-bottom:12px"></div>
         <div class="dt"></div>
       </div></section>
       <section class="page-view" id="page-fund" ondragover="pageDropOver(event,'fund')" ondragleave="pageDropLeave(event)" ondrop="pageDropFile(event,'fund')"><div class="page"><div class="page-drop-overlay" id="ovl-page-fund"><span>📎 기금 문서을 놓으면 OCR 자동 등록</span></div>
@@ -4013,6 +4015,57 @@ function renderStaffMgr(){ var box=document.getElementById('staffMgrBody'); if(!
         +'<td>'+statCell+'</td><td>'+act+'</td></tr>';
     }).join('')+'</tbody></table>'
     +'<div style="font-size:11px;color:var(--text-mute);margin-top:10px;line-height:1.7">※ 직원 추가·이름 변경은 <b>정부컨설팅 앱</b>에서 하면 여기 자동 반영됩니다.<br>※ 퇴직 처리는 경력관리에만 적용됩니다 (정부컨설팅 직원 정보는 그대로 유지). 현재 퇴직 '+retiredCnt+'명.</div>';
+}
+
+/* ===== pu-erp 컨설팅 실적 연동 (data/consultings + data/user_dir, 주담당별) ===== */
+var _puUserMap=null;
+async function _puLoadUserMap(){
+  if(_puUserMap) return _puUserMap; _puUserMap={};
+  try{ var s=await fbDb.ref('data/user_dir').once('value'); var v=s.val();
+    if(v){ var arr=Array.isArray(v)?v:Object.keys(v).map(function(k){return v[k];});
+      arr.filter(Boolean).forEach(function(u){ if(u&&u.sid) _puUserMap[String(u.sid)]=u.name||String(u.sid); }); }
+  }catch(e){ console.warn('user_dir load',e); }
+  return _puUserMap;
+}
+function _puMainMgr(c){ var sid=c.managerMain||'';
+  if(!sid && Array.isArray(c.workers)){ var w=c.workers.find(function(x){return x&&x.isPrimary;})||c.workers[0]; if(w) sid=w.sid||''; }
+  return sid; }
+async function loadPuConsulting(force){
+  var box=document.getElementById('puConsultBox'); if(!box) return;
+  if(typeof fbDb==='undefined' || !fbDb){ if(force) toast('클라우드 로그인 후 사용하세요'); return; }
+  if(force) box.innerHTML='<div style="font-size:12px;color:var(--text-mute);padding:10px">⏳ pu-erp 컨설팅 불러오는 중...</div>';
+  try{
+    await _puLoadUserMap();
+    var s=await fbDb.ref('data/consultings').once('value'); var v=s.val();
+    if(!v){ box.innerHTML='<div style="font-size:12px;color:var(--text-mute);padding:10px">pu-erp 컨설팅 데이터가 없습니다</div>'; return; }
+    var arr=(Array.isArray(v)?v:Object.keys(v).map(function(k){return v[k];})).filter(Boolean);
+    var byMgr={};
+    arr.forEach(function(c){ var sid=_puMainMgr(c); var nm=_puUserMap[String(sid)]||String(sid||'(미지정)'); (byMgr[nm]=byMgr[nm]||[]).push(c); });
+    try{ LS.set(NS+'pu_consult_cache', JSON.stringify({at:new Date().toISOString(),byMgr:byMgr})); }catch(e){}
+    renderPuConsulting(byMgr);
+    if(force) toast('pu-erp 컨설팅 '+arr.length+'건 불러옴 (주담당 '+Object.keys(byMgr).length+'명)');
+  }catch(e){ console.warn('consultings load',e); box.innerHTML='<div style="color:var(--red);font-size:12px;padding:10px">불러오기 실패 — 클라우드 로그인/권한을 확인하세요</div>'; if(force) toast('불러오기 실패'); }
+}
+function renderPuConsulting(byMgr){
+  var box=document.getElementById('puConsultBox'); if(!box) return;
+  var names=Object.keys(byMgr).sort(function(a,b){return a.localeCompare(b,'ko');});
+  if(!names.length){ box.innerHTML=''; return; }
+  var html='<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">'
+    +'<div style="background:var(--soft);padding:8px 12px;font-size:12px;font-weight:700;color:var(--navy)">🔗 pu-erp 컨설팅 실적 (주담당별) <span style="font-weight:400;color:var(--text-mute)">— 실시간 연동 · 원본은 pu-erp에서 관리</span></div>';
+  names.forEach(function(nm){ var list=byMgr[nm];
+    var closed=list.filter(function(c){return c.closedDate;}).length;
+    var rid=(getStaffRoster().find(function(s){return s.name===nm;})||{}).id;
+    var disp=(rid && staffIsRetired(rid))?'퇴직자':nm;
+    html+='<div style="padding:8px 12px;border-top:1px solid var(--border-soft)">'
+      +'<div style="font-weight:600;font-size:13px;margin-bottom:2px">'+escapeHtml(disp)+' <span style="font-size:11px;color:var(--text-mute);font-weight:400">— 총 '+list.length+'건 · 종료 '+closed+'건</span></div>'
+      +list.slice(0,50).map(function(c){ var t=c.consultingType||c.programName||c.title||'컨설팅'; var co=c.companyName||'';
+        var end=c.closedDate?('· 종료 '+String(c.closedDate).slice(0,10)):(c.endDate?('· 종료예정 '+String(c.endDate).slice(0,10)):'');
+        return '<div style="font-size:12px;color:var(--text-mute);padding:2px 0">• '+escapeHtml(co)+(co&&t?' / ':'')+escapeHtml(t)+' <span style="font-size:11px">'+escapeHtml(end)+'</span>'+(c.closedDate?'':' <span style="color:var(--amber)">[진행중]</span>')+'</div>';
+      }).join('')
+      +(list.length>50?'<div style="font-size:11px;color:var(--text-mute)">…외 '+(list.length-50)+'건</div>':'')
+      +'</div>';
+  });
+  box.innerHTML=html+'</div>';
 }
 
 /* ===== 부트 ===== */
