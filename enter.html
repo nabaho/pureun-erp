@@ -468,9 +468,19 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       ? firebase.auth.Auth.Persistence.LOCAL
       : firebase.auth.Auth.Persistence.SESSION;
 
-    auth.setPersistence(persistence).then(function(){
+    // 응답 감시: 얼어있던 탭에서 인증 모듈이 응답을 못 하면 버튼이 비활성으로
+    // 영원히 멈춤 — 12초 내 결과가 없으면 새로고침으로 깨운다.
+    var _settled = false;
+    var _watchdog = setTimeout(function(){
+      if(_settled) return;
+      showErr('응답이 없어 화면을 새로 고칩니다. 잠시 후 다시 로그인해 주세요.');
+      setTimeout(function(){ location.replace(location.pathname + '?v=' + Date.now()); }, 900);
+    }, 12000);
+
+    auth.setPersistence(persistence).catch(function(){ /* 지속성 설정 실패해도 로그인은 진행 */ }).then(function(){
       return auth.signInWithEmailAndPassword(email, pw);
     }).then(function(cred){
+      _settled = true; clearTimeout(_watchdog);
       // 아이디 저장 (포털 전용 키 + ERP 화면 채움용 공유 키 병행)
       try {
         if($('saveId').checked){
@@ -494,6 +504,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       _handled = true;
       enterPortal(cred.user);
     }).catch(function(err){
+      _settled = true; clearTimeout(_watchdog);
       $('loginBtn').disabled = false;
       var code = (err && err.code) || '';
       if(code === 'auth/wrong-password' || code === 'auth/invalid-credential'){
@@ -513,6 +524,22 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
   // 표준 form 제출 → 브라우저·삼성패스가 비번 저장/지문 자동입력을 인식 (버튼 클릭·Enter 모두 여기로)
   $('loginForm').addEventListener('submit', function(e){ e.preventDefault(); doLogin(); });
   $('loginId').addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); $('loginPw').focus(); } });
+
+  // ── 로그인 화면 신선도 가드: 오래 방치된 탭은 크롬 절전으로 얼어 로그인이 안 먹으므로,
+  //    탭에 돌아왔을 때 30분 이상 묵은 미로그인 화면이면 자동 새로고침 (비번 입력 중이면 방해 안 함) ──
+  (function(){
+    var loadedAt = Date.now();
+    var STALE = 30*60*1000;
+    function freshen(){
+      if(document.visibilityState !== 'visible') return;
+      if(auth.currentUser) return;                        // 로그인 상태면 포털 로직이 담당
+      if(Date.now() - loadedAt < STALE) return;
+      var pw = $('loginPw'); if(pw && pw.value) return;   // 입력하던 값이 있으면 유지
+      location.replace(location.pathname + '?v=' + Date.now());
+    }
+    document.addEventListener('visibilitychange', freshen);
+    window.addEventListener('pageshow', function(e){ if(e.persisted) freshen(); });
+  })();
 
   // ── 비밀번호 변경: 현재 비번으로 로그인(재인증) → 새 비번으로 교체 ──
   $('pwChangeLink').addEventListener('click', function(e){
