@@ -87,12 +87,14 @@ def score_sheet(ws):
         return f
 
     # 1) 후보 헤더행 = 핵심필드가 가장 많은 행
+    #    (헤더가 2~3줄로 쪼개진 경우가 많아, 단일행 문턱은 낮게 두고
+    #     최종 판정은 아래 '합쳐진 헤더(colmap)' 기준으로 한다)
     best_i, best_f = None, set()
     for i, row in enumerate(rows):
         f = field_hits(row)
         if len(f) > len(best_f):
             best_f, best_i = f, i
-    if best_i is None or len(best_f) < 4:
+    if best_i is None or len(best_f) < 2:
         return None
 
     # 2) 데이터 시작행: 헤더 이후 첫 주민번호행, 없으면 헤더+1
@@ -242,102 +244,125 @@ NAME_KEYS = {"성명", "사원명", "직원명", "근로자명", "성함", "이�
 FIELDS_VN = {k: [_norm(s) for s in v] for k, v in FIELDS_VERT.items() if k != "성명"}
 
 
+DED_FIELDS = ["소득세", "지방세", "국민연금", "건강보험", "장기요양", "고용보험", "공제총액"]
+
+
+def _value_right(ws, r, c, cmax):
+    """라벨(r,c) 오른쪽으로 스캔 → 첫 숫자 반환. 다른 라벨(글자) 만나면 멈춤(None).
+    병합 셀로 값이 여러 칸 떨어진 경우 대응."""
+    for cc in range(c + 1, cmax + 1):
+        v = ws.cell(row=r, column=cc).value
+        if v is None:
+            continue
+        n = parse_num(v)
+        if n is not None:
+            return n
+        return None  # 숫자 아닌 텍스트 = 다음 라벨 → 멈춤
+    return None
+
+
+def _validate_emp(emp):
+    """상식 검증: 값이 말이 되는지. 틀리면 False(→ 사람 확인 대상)."""
+    base = emp.get("지급총액") or emp.get("기본급") or emp.get("과세총액")
+    if base is None or base <= 0:
+        return False  # 기준 급여 없으면 신뢰 불가
+    for d in DED_FIELDS:
+        if d in emp and emp[d] > base:   # 공제가 급여보다 큼 = 오독
+            return False
+    if "실수령" in emp:
+        if emp["실수령"] <= 0 or emp["실수령"] > base * 1.5:
+            return False
+    return True
+
+
 def extract_vertical(path):
-    """세로 명세서형: 공백무시 + '성명' 앵커 기준 블록 단위 추출(좌우·상하 다중 블록 대응)."""
+    """세로 명세서형: 공백무시 + '사원명' 앵커 + 병합셀 값읽기 + 상식검증.
+    검증 통과분만 employees에 담고, 실패분 수는 n_flagged로 보고(틀린 숫자 유입 차단)."""
     import openpyxl
-    res = {"path": os.path.relpath(path, DATA_ROOT), "ok": False, "sheets": [], "err": None, "mode": "vertical"}
+    res = {"path": os.path.relpath(path, DATA_ROOT), "ok": False, "sheets": [],
+           "err": None, "mode": "vertical", "n_flagged": 0}
     try:
-        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        wb = openpyxl.load_workbook(path, data_only=True)  # 병합정보 위해 non-read_only
     except Exception as e:
         res["err"] = f"{type(e).__name__}: {e}"
         return res
+    flagged = 0
     for ws in wb.worksheets:
         low = ws.title.lower()
         if any(b in low for b in SHEET_BAD):
             continue
-        grid = list(ws.iter_rows(min_row=1, max_row=min(ws.max_row, 250),
-                                 max_col=min(ws.max_column, 40), values_only=True))
-        if not grid:
-            continue
-        R = len(grid)
-        norm = [[_norm(c) for c in row] for row in grid]
-
-        # 1) 성명 앵커 수집
+        maxr, maxc = min(ws.max_row, 250), min(ws.max_column, 40)
+        # 1) 사원명 앵커
         anchors = []
-        for r in range(R):
-            for c in range(len(norm[r])):
-                if norm[r][c] in NAME_KEYS:
-                    val = None
-                    for k in range(c + 1, min(c + 4, len(grid[r]))):
-                        cell = grid[r][k]
-                        s = "" if cell is None else str(cell).strip()
-                        if s and _norm(s) not in NAME_KEYS and not s.endswith("명"):
-                            val = s
+        for r in range(1, maxr + 1):
+            for c in range(1, maxc + 1):
+                if _norm(ws.cell(row=r, column=c).value) in NAME_KEYS:
+                    nm = None
+                    for k in range(c + 1, min(c + 4, maxc + 1)):
+                        s = ws.cell(row=r, column=k).value
+                        if s and str(s).strip() and _norm(s) not in NAME_KEYS:
+                            cand = str(s).strip()
+                            if re.match(r"^[가-힣A-Za-z]", cand) and len(cand) <= 12:
+                                nm = cand
                             break
-                    if val and re.match(r"^[가-힣A-Za-z]", val) and len(val) <= 12:
-                        anchors.append((r, c, val))
+                    if nm:
+                        anchors.append((r, c, nm))
         if not anchors:
             continue
-        anchors.sort()
-
-        # 2) 앵커별 영역 경계(하단/우측 다음 블록 전까지) → 필드 수집
-        emps = []
+        acols = sorted(set(a[1] for a in anchors))
+        emps, seen = [], set()
         for (ar, ac, nm) in anchors:
-            row_end, col_end = R, len(grid[0]) if grid[0] else ac + 12
-            for (br, bc, _n) in anchors:
-                if br > ar and abs(bc - ac) <= 2:
-                    row_end = min(row_end, br)
-                if bc > ac + 2 and abs(br - ar) <= 3:
-                    col_end = min(col_end, bc)
-            row_end = min(row_end, ar + 30)
-            col_end = min(col_end, ac + 12)
+            nexts = [x for x in acols if x > ac + 2]
+            cmax = (min(nexts) - 1) if nexts else maxc
+            below = [a[0] for a in anchors if a[0] > ar and abs(a[1] - ac) <= 2]
+            rmax = min(below) if below else min(ar + 22, maxr)
             emp = {"성명": nm}
             for canon, syns in FIELDS_VN.items():
                 got = None
-                for r in range(ar, min(row_end, R)):
-                    ln = len(norm[r])
-                    for c in range(ac, min(col_end, ln)):
-                        cell = norm[r][c]
+                for r in range(ar, rmax + 1):
+                    for c in range(ac, cmax + 1):
+                        cell = _norm(ws.cell(row=r, column=c).value)
                         if cell and any(s and s in cell for s in syns):
-                            for k in range(c + 1, min(c + 3, len(grid[r]))):
-                                v = parse_num(grid[r][k])
-                                if v is not None:
-                                    got = v
-                                    break
-                        if got is not None:
-                            break
+                            got = _value_right(ws, r, c, cmax)
+                            if got is not None:
+                                break
                     if got is not None:
                         break
                 if got is not None:
                     emp[canon] = got
-            if len(emp) >= 3:
-                emps.append(emp)
+            if len(emp) < 3:
+                continue
+            if not _validate_emp(emp):
+                flagged += 1
+                continue
+            key = (nm, tuple(sorted((k, v) for k, v in emp.items() if k != "성명")))
+            if key in seen:          # 완전 동일 레코드 중복 제거
+                continue
+            seen.add(key)
+            emps.append(emp)
         if emps:
             fields = sorted({k for e in emps for k in e})
             res["sheets"].append({"sheet": ws.title, "fields": fields, "n_emp": len(emps), "employees": emps})
     wb.close()
+    res["n_flagged"] = flagged
     res["ok"] = len(res["sheets"]) > 0
     res["n_emp_total"] = sum(s["n_emp"] for s in res["sheets"])
     return res
 
 
 def extract_any(path):
-    """가로형(검증됨) 우선. 세로형은 값 정확도 미검증 → 기본 비활성(환경변수로만 실험).
-
-    ⚠️ 세로 명세서형(extract_vertical)은 병합 셀 값-위치 매핑이 아직 부정확해
-       숫자를 틀리게 읽을 수 있음. HARNESS_VERTICAL=1 일 때만 실험적으로 사용.
-       (급여 시스템에서 틀린 숫자는 위험 → 검증 완료 전 기본 사용 금지)
-    """
+    """가로형(검증됨) 우선, 실패 시 세로 명세서형(상식검증 통과분만 채택).
+    세로형은 값이 의심스러우면 채택하지 않고 n_flagged로만 집계 → 틀린 숫자 유입 차단."""
     r = extract(path)
     if r["ok"]:
         r["mode"] = "horizontal"
         return r
-    if os.environ.get("HARNESS_VERTICAL") == "1":
-        v = extract_vertical(path)
-        if v["ok"]:
-            v["mode"] = "vertical(experimental)"
-            return v
+    v = extract_vertical(path)
+    if v["ok"]:
+        return v
+    # 세로형도 실패(플래그만 있음)면 그 정보 보존
     r["mode"] = "none"
+    r["n_flagged"] = v.get("n_flagged", 0)
     return r
 
 
@@ -389,7 +414,8 @@ def run_all():
     lines = []
     lines.append(f"대상 급여대장 엑셀(.xlsx/.xlsm): {len(targets)}")
     lines.append(f"  파싱 성공(직원 1명+ 추출): {len(ok)}  ({100*len(ok)//max(len(targets),1)}%)")
-    lines.append(f"    - 가로 표형: {mode_cnt.get('horizontal',0)}  / 세로 명세서형: {mode_cnt.get('vertical',0)}")
+    lines.append(f"    - 가로 표형: {mode_cnt.get('horizontal',0)}  / 세로 명세서형(검증통과): {mode_cnt.get('vertical',0)}")
+    lines.append(f"  세로형 상식검증 탈락(사람 확인 대상) 레코드: {sum(r.get('n_flagged',0) for r in results)}")
     lines.append(f"  표 인식 실패(열림·표없음): {len(norec)}")
     lines.append(f"  열기 실패(손상 등): {len(err)}")
     lines.append(f"  추출 직원 레코드 총: {total_emp}")
