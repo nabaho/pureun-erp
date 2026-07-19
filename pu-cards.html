@@ -641,6 +641,29 @@ function loadMaterials(cb){
 }
 function matList(){ return Object.values(_matMeta).filter(m=>m&&m.id).sort((a,b)=>(a.uploadedAt||0)-(b.uploadedAt||0)); }
 
+/* 자료함에서 받는 파일 형식 — 확장자별 MIME·아이콘·브라우저 표시 가능 여부 */
+const MAT_TYPES = {
+  pdf :{mime:'application/pdf', ic:'📄', view:true},
+  doc :{mime:'application/msword', ic:'📝'},
+  docx:{mime:'application/vnd.openxmlformats-officedocument.wordprocessingml.document', ic:'📝'},
+  hwp :{mime:'application/x-hwp', ic:'📝'},
+  hwpx:{mime:'application/hwp+zip', ic:'📝'},
+  ppt :{mime:'application/vnd.ms-powerpoint', ic:'📊'},
+  pptx:{mime:'application/vnd.openxmlformats-officedocument.presentationml.presentation', ic:'📊'},
+  xls :{mime:'application/vnd.ms-excel', ic:'📈'},
+  xlsx:{mime:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', ic:'📈'},
+  txt :{mime:'text/plain', ic:'📃', view:true},
+  jpg :{mime:'image/jpeg', ic:'🖼️', view:true},
+  jpeg:{mime:'image/jpeg', ic:'🖼️', view:true},
+  png :{mime:'image/png', ic:'🖼️', view:true},
+  gif :{mime:'image/gif', ic:'🖼️', view:true},
+  zip :{mime:'application/zip', ic:'🗜️'}
+};
+const MAT_ACCEPT = Object.keys(MAT_TYPES).map(e=>'.'+e).join(',');
+const matExt  = n => ((String(n||'').match(/\.([a-z0-9]+)$/i)||[])[1]||'').toLowerCase();
+const matType = n => MAT_TYPES[matExt(n)];
+const matIcon = n => (matType(n)||{}).ic || '📄';
+
 /* ── 자료 보내기 (고객 명함에서: 고르기만) ── */
 function openSendMaterials(id){
   const it=state.items[id]; if(!it) return;
@@ -659,7 +682,7 @@ function renderSendMat(){
   const rows = list.length ? list.map(m=>`
       <div class="sm-slot">
         <input type="checkbox" class="sm-chk" data-id="${m.id}" checked>
-        <span class="sm-ic">📄</span>
+        <span class="sm-ic">${matIcon(m.fileName)}</span>
         <div class="sm-sinfo"><div class="n">${esc(m.name||'자료')}</div><div class="f">${esc(m.fileName||'')}</div></div>
       </div>`).join('')
     : `<div class="sm-empty">아직 자료함에 등록된 자료가 없습니다.<br>왼쪽 <b>📎 자료함</b>에서 먼저 올려주세요.</div>`;
@@ -698,10 +721,11 @@ function initShelfDnd(){
   sh.addEventListener('drop', async e=>{
     e.preventDefault(); sh.classList.remove('dragging');
     const files=[...((e.dataTransfer&&e.dataTransfer.files)||[])];
-    const pdfs=files.filter(f=>f.type==='application/pdf'||/\.pdf$/i.test(f.name));
-    if(!pdfs.length){ toast('PDF 파일만 올릴 수 있습니다'); return; }
-    for(const f of pdfs){
-      const defName=f.name.replace(/\.pdf$/i,'');
+    const ok=files.filter(f=>matType(f.name));
+    if(!ok.length){ toast('지원하지 않는 파일 형식입니다 (PDF·워드·한글·PPT·엑셀·이미지 등)'); return; }
+    if(ok.length<files.length) toast(`지원하지 않는 형식 ${files.length-ok.length}개는 건너뜁니다`);
+    for(const f of ok){
+      const defName=f.name.replace(/\.[a-z0-9]+$/i,'');
       const name=(prompt('자료 이름을 입력하세요 (예: 회사소개서)', defName)||'').trim();
       if(!name) continue;
       await putMaterial('m'+Date.now()+Math.random().toString(36).slice(2,6), name, f);
@@ -713,11 +737,11 @@ function renderMaterialShelf(){
   const list = matList();
   const rows = list.length ? list.map(m=>`
       <div class="sm-slot">
-        <span class="sm-ic">📄</span>
+        <span class="sm-ic">${matIcon(m.fileName)}</span>
         <div class="sm-sinfo"><div class="n">${esc(m.name||'자료')}</div><div class="f">${esc(m.fileName||'')} · ${fmtDate(m.uploadedAt)}</div></div>
         <div class="shelf-acts">
           <button title="미리보기" onclick="previewMaterial('${m.id}')">👁</button>
-          <label title="파일 교체" class="shelf-rep">🔄<input type="file" accept="application/pdf" style="display:none" onchange="replaceMaterialFile('${m.id}',this)"></label>
+          <label title="파일 교체" class="shelf-rep">🔄<input type="file" accept="${MAT_ACCEPT}" style="display:none" onchange="replaceMaterialFile('${m.id}',this)"></label>
           <button title="삭제" onclick="deleteMaterial('${m.id}')">🗑</button>
         </div>
       </div>`).join('')
@@ -727,15 +751,15 @@ function renderMaterialShelf(){
       <div class="sm-htxt"><div class="t">📎 자료함</div><div class="s">고객에게 보낼 자료를 여기서 관리합니다</div></div>
       <button class="sm-x" onclick="closeMatShelf()">✕</button>
     </div>
-    <label class="shelf-add">＋ 새 자료 올리기 (PDF 끌어다 놓기도 가능)<input type="file" accept="application/pdf" style="display:none" onchange="addMaterial(this)"></label>
+    <label class="shelf-add">＋ 새 자료 올리기 (파일 끌어다 놓기도 가능)<input type="file" accept="${MAT_ACCEPT}" style="display:none" onchange="addMaterial(this)"></label>
     ${rows}
-    <div class="sm-note">여기 올린 자료가 고객 명함의 "자료 보내기"에 자동으로 나타납니다. PDF 파일을 이 창에 끌어다 놓아도 올라갑니다 (8MB 이하).</div>`;
+    <div class="sm-note">여기 올린 자료가 고객 명함의 "자료 보내기"에 자동으로 나타납니다. PDF·워드·한글(hwp/hwpx)·PPT·엑셀·이미지 파일을 이 창에 끌어다 놓아도 올라갑니다 (8MB 이하).</div>`;
 }
 async function addMaterial(input){
   const file = input.files && input.files[0]; input.value='';
   if(!file) return;
-  if(file.type!=='application/pdf'){ toast('PDF 파일만 올릴 수 있습니다'); return; }
-  const defName = file.name.replace(/\.pdf$/i,'');
+  if(!matType(file.name)){ toast('지원하지 않는 파일 형식입니다 (PDF·워드·한글·PPT·엑셀·이미지 등)'); return; }
+  const defName = file.name.replace(/\.[a-z0-9]+$/i,'');
   const name = (prompt('자료 이름을 입력하세요 (예: 회사소개서)', defName)||'').trim();
   if(!name) return;
   const id = 'm'+Date.now()+Math.random().toString(36).slice(2,6);
@@ -744,13 +768,13 @@ async function addMaterial(input){
 async function replaceMaterialFile(id, input){
   const file = input.files && input.files[0]; input.value='';
   if(!file) return;
-  if(file.type!=='application/pdf'){ toast('PDF 파일만 올릴 수 있습니다'); return; }
+  if(!matType(file.name)){ toast('지원하지 않는 파일 형식입니다 (PDF·워드·한글·PPT·엑셀·이미지 등)'); return; }
   const cur = _matMeta[id]; if(!cur) return;
   await putMaterial(id, cur.name, file);
 }
 /* 파일 본문은 명함 사진과 같은 방식으로 DB에 저장 (Storage 미사용 — 권한설정 불필요) */
 async function putMaterial(id, name, file){
-  if (file.size > 8*1024*1024){ toast(`PDF가 너무 큽니다 (${(file.size/1024/1024).toFixed(1)}MB) — 8MB 이하만 올릴 수 있습니다`); return; }
+  if (file.size > 8*1024*1024){ toast(`파일이 너무 큽니다 (${(file.size/1024/1024).toFixed(1)}MB) — 8MB 이하만 올릴 수 있습니다`); return; }
   toast('업로드 중…');
   try{
     const dataUrl = await new Promise((res,rej)=>{
@@ -781,8 +805,14 @@ async function previewMaterial(id){
     const bin = atob(dataUrl.split(',')[1]);
     const arr = new Uint8Array(bin.length);
     for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
-    const url = URL.createObjectURL(new Blob([arr], {type:'application/pdf'}));
-    window.open(url,'_blank');
+    const t = matType(m.fileName) || {mime:'application/octet-stream'};
+    const url = URL.createObjectURL(new Blob([arr], {type:t.mime}));
+    if (t.view){ window.open(url,'_blank'); }
+    else { /* 한글·워드·PPT 등 브라우저가 못 여는 형식은 원본 파일명으로 내려받기 */
+      const a=document.createElement('a'); a.href=url; a.download=m.fileName||'자료';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      toast('브라우저에서 바로 볼 수 없는 형식이라 내려받았습니다');
+    }
     setTimeout(()=>URL.revokeObjectURL(url), 60000);
   }catch(e){ toast('미리보기 실패: '+((e&&e.message)||'')); }
 }
