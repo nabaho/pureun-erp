@@ -18,7 +18,8 @@ OUT_DIR = os.path.join(DATA_ROOT, "_harness_out")
 FIELDS = {
     "성명":     ["성명", "이름", "성 명", "직원명"],
     "기본급":   ["기본급", "기본 급"],
-    "과세총액": ["과세총액", "과세대상", "과세소득", "과세금액", "과세계"],
+    "과세총액": ["과세총액", "과세대상액", "과세대상", "과세소득", "과세금액", "과세계",
+                "과세합계", "총과세", "보수총액", "보수월액", "과세보수"],
     "소득세":   ["소득세", "갑근세"],
     "지방세":   ["지방소득세", "지방세", "주민세"],
     "국민연금": ["국민연금"],
@@ -31,6 +32,22 @@ FIELDS = {
 JUMIN_RE = re.compile(r'\d{6}\s*[-]?\s*\d{6,7}')
 NAME_RE = re.compile(r'^[가-힣]{2,4}$')
 NUM_RE = re.compile(r'^-?[\d,]+(\.\d+)?$')
+
+# 성명 칸으로 오인되기 쉬운 직급·직위·부서·기타 단어(이름으로 채택 금지)
+NAME_BLOCK = {
+    "사원", "조리원", "실장", "주임", "점장", "영양사", "팀장", "시급직", "주방", "홀",
+    "매니저", "원장", "간호사", "간호조무사", "반장", "공장장", "대표", "이사", "부장",
+    "과장", "차장", "대리", "전무", "상무", "사장", "회장", "직원", "근로자", "성명",
+    "이름", "합계", "소계", "총계", "기숙사비", "베이커리", "파트", "알바", "정규직",
+    "계약직", "일용직", "월급직", "관리자", "사무", "생산", "배송", "판매", "본사", "지점",
+    "임원", "전장", "부장님", "실장님", "점주", "사원명", "직급", "직위", "부서", "성함",
+}
+
+
+def is_name(s):
+    """한글 2~4자이고 직급/비이름 목록에 없으면 성명으로 인정."""
+    s = (s or "").strip()
+    return bool(NAME_RE.match(s)) and s not in NAME_BLOCK
 
 # 급여대장 시트로 볼 이름 힌트 / 제외할 시트
 SHEET_GOOD = ["급여대장", "급상여", "급여", "임금대장", "명세"]
@@ -145,16 +162,16 @@ def pick_and_parse(wb):
             if any(k in joined for k in ["합계", "총계", "소계", "합 계"]):
                 continue
             has_jumin = bool(JUMIN_RE.search(joined))
-            # 성명 후보
+            # 성명 후보 (직급·비이름 단어는 건너뜀)
             nm = None
             if name_col is not None and name_col < len(row) and row[name_col]:
                 cand = str(row[name_col]).strip()
-                if NAME_RE.match(cand):
+                if is_name(cand):
                     nm = cand
-            if nm is None and has_jumin:
-                # 주민번호 왼쪽 첫 한글이름 셀
+            if nm is None:
+                # 직급 등 제외하고 행에서 진짜 이름 탐색(주민번호 있을 때 우선)
                 for c in row:
-                    if c and NAME_RE.match(str(c).strip()):
+                    if c and is_name(str(c).strip()):
                         nm = str(c).strip(); break
             if not nm:
                 continue
@@ -302,7 +319,8 @@ def extract_vertical(path):
                         s = ws.cell(row=r, column=k).value
                         if s and str(s).strip() and _norm(s) not in NAME_KEYS:
                             cand = str(s).strip()
-                            if re.match(r"^[가-힣A-Za-z]", cand) and len(cand) <= 12:
+                            if (re.match(r"^[가-힣A-Za-z]", cand) and len(cand) <= 12
+                                    and cand not in NAME_BLOCK):
                                 nm = cand
                             break
                     if nm:
