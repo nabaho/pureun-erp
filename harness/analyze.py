@@ -49,6 +49,33 @@ def payday_of(s):
     return None
 
 
+def round_by(x, mode):
+    import math
+    if mode == "절사":
+        return math.floor(x)
+    if mode == "올림":
+        return math.ceil(x)
+    return int(x + 0.5)  # 반올림
+
+
+def analyze_rounding(site_emps):
+    """사업장별 고용보험 단수처리 판정. (과세총액,고용보험) 쌍으로 요율×방식 최다일치."""
+    pairs = [(e["과세총액"], e["고용보험"]) for e in site_emps
+             if e.get("과세총액") and "고용보험" in e]
+    if len(pairs) < 3:
+        return None
+    # 전원 0 = 면제
+    if all(g == 0 for _, g in pairs):
+        return {"method": "면제(고용보험 0)", "rate": "-", "match": len(pairs), "n": len(pairs)}
+    best = None
+    for rate in (0.009, 0.00899, 0.008, 0.0115, 0.0105):
+        for mode in ("절사", "올림", "반올림"):
+            m = sum(1 for base, g in pairs if g and round_by(base * rate, mode) == g)
+            if best is None or m > best["match"]:
+                best = {"method": mode, "rate": f"{rate*100:.3f}%", "match": m, "n": len(pairs)}
+    return best
+
+
 def main():
     res = json.load(open(os.path.join(OUT_DIR, "parser_output.json"), encoding="utf-8"))
     ok = [r for r in res if r["ok"]]
@@ -81,7 +108,33 @@ def main():
     no_payday = sorted({site_base(raw_site(r["path"])) for r in ok
                         if site_base(raw_site(r["path"])) not in site_payday})
 
+    # ── 목표2: 단수처리 판정 (과세총액 있는 사업장) ──
+    emps_by_site = defaultdict(list)
+    for r in ok:
+        sb = site_base(raw_site(r["path"]))
+        for s in r["sheets"]:
+            emps_by_site[sb].extend(s["employees"])
+    rounding = {}
+    for sb, emps in emps_by_site.items():
+        judged = analyze_rounding(emps)
+        if judged:
+            rounding[sb] = judged
+
     lines = []
+    lines.append("=" * 50)
+    lines.append("목표2. 고용보험 단수처리 판정 (과세총액 확보 사업장)")
+    lines.append("=" * 50)
+    if not rounding:
+        lines.append("→ 과세총액+고용보험 쌍이 충분한 사업장 없음.")
+    method_dist = Counter(v["method"] for v in rounding.values())
+    for sb, v in sorted(rounding.items(), key=lambda kv: -kv[1]["n"]):
+        pct = 100 * v["match"] // max(v["n"], 1)
+        lines.append(f"  [{sb}] {v['method']} (요율 {v['rate']}) - {v['match']}/{v['n']}명 일치 {pct}%")
+    lines.append(f"\n판정된 사업장: {len(rounding)}곳 / 방식분포: " +
+                 ", ".join(f"{k} {c}" for k, c in method_dist.most_common()))
+    lines.append("※ 과세총액이 대장에 있는 사업장만 판정 가능(전체의 일부). 요율/방식 혼재 실측 확인.")
+
+    lines.append("")
     lines.append("=" * 50)
     lines.append("목표4. 동명이인 조사 (한 시트 내 동일성명 2회+ = 확실)")
     lines.append("=" * 50)
