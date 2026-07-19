@@ -125,8 +125,12 @@ def main():
             rel = os.path.relpath(path, DATA_ROOT)
             name_label, name_reason = name_classify(rel)
             final_label, final_reason, conflict = name_label, name_reason, False
+            # 신고서류(국세청/공단 신고임금대장)는 내용검사가 급여대장으로 못 올리게 강제 제외
+            #  — 값 체계가 다름(고용보험 0 등)이라 엔진 대조를 오염시킴
+            strict_nonledger = any(k in base for k in [
+                "국세청신고", "신고임금대장", "인건비신고", "-신고", ")-신고", "_신고", "신고.xls"])
             # 내용은 '급여대장 승격'에만 사용, 이름 명확한 파일의 근태 강등 금지
-            if ext in EXCEL_EXT:
+            if ext in EXCEL_EXT and not strict_nonledger:
                 c_label, c_reason = content_classify(path)
                 if c_label == "급여대장":
                     if name_label != "급여대장":
