@@ -33963,6 +33963,227 @@ function calStripIcon(s){
 // ============================================================
 // 법인 대시보드
 // ============================================================
+// ═══ [미리보기] 수익 분석 — 수입원별 × 담당자별 (법인 대시보드 분석 탭 · admin 전용) ═══
+// 실입금(finance_income, 개인소득 제외) 기준. 담당자 귀속은 입금 기록의 managerName(주담당).
+function RevSrcSection(props){
+  var year = props.year || (new Date()).getFullYear();
+  var vS = useState('src');   var view = vS[0], setView = vS[1];      // src | mgr | matrix
+  var pS = useState('month'); var period = pS[0], setPeriod = pS[1];  // month | year
+  var popS = useState(null);  var popup = popS[0], setPopup = popS[1];// {name, kind|null}
+
+  var KINDS = [
+    { k:'company',    label:'업체 자문', color:'#2a78d6' },
+    { k:'case',       label:'사건',      color:'#008300' },
+    { k:'consulting', label:'컨설팅',    color:'#e87ba4' },
+    { k:'fund',       label:'기금',      color:'#eda100' },
+    { k:'other',      label:'기타',      color:'#1baf7a' }
+  ];
+  var KMAP = {}; KINDS.forEach(function(kk){ KMAP[kk.k] = kk; });
+  function normKind(sk){ return KMAP[sk] && sk!=='other' ? sk : 'other'; }
+
+  var now = new Date();
+  var curYm = (year === now.getFullYear())
+    ? year + '-' + ('0'+(now.getMonth()+1)).slice(-2)
+    : year + '-12';
+  var periodLabel = (period==='month') ? (parseInt(curYm.slice(5),10)+'월') : (year+'년 누계');
+
+  var all = (dbGet('finance_income', [])||[]).filter(function(i){
+    return i && !i.isPersonalIncome && (i.date||'').slice(0,4) === String(year);
+  });
+  var scoped = (period==='month') ? all.filter(function(i){ return (i.date||'').slice(0,7)===curYm; }) : all;
+
+  // 집계: 수입원별 / 담당자별(수입원 분해 포함)
+  var bySrc = {}; KINDS.forEach(function(kk){ bySrc[kk.k]=0; });
+  var byMgr = {};
+  scoped.forEach(function(i){
+    var k = normKind(i.sourceKind), amt = i.amount||0;
+    bySrc[k] += amt;
+    var nm = i.managerName || '미분류';
+    if(!byMgr[nm]) byMgr[nm] = { total:0, per:{} };
+    byMgr[nm].total += amt;
+    byMgr[nm].per[k] = (byMgr[nm].per[k]||0) + amt;
+  });
+  var grand = KINDS.reduce(function(s,kk){ return s+bySrc[kk.k]; },0);
+  var mgrs = Object.keys(byMgr).map(function(nm){ return { name:nm, total:byMgr[nm].total, per:byMgr[nm].per }; })
+    .sort(function(a,b){ return b.total-a.total; });
+
+  // 월별 스택 데이터 (항상 연간)
+  var months = [];
+  for(var m=1;m<=12;m++){
+    var ymKey = year+'-'+('0'+m).slice(-2);
+    var per = {}; KINDS.forEach(function(kk){ per[kk.k]=0; });
+    all.forEach(function(i){ if((i.date||'').slice(0,7)===ymKey) per[normKind(i.sourceKind)] += (i.amount||0); });
+    months.push({ m:m, ym:ymKey, per:per, total:KINDS.reduce(function(s,kk){ return s+per[kk.k]; },0) });
+  }
+  var maxMonth = Math.max.apply(null, months.map(function(x){return x.total;}).concat([1]));
+
+  // 계약 기준 참고치: 활성 업체 월 자문료 합
+  var contractFix = (dbGet('companies', [])||[]).filter(function(c){ return c && c.status==='active'; })
+    .reduce(function(s,c){ return s+(parseInt(c.monthlyAdvisoryFee,10)||0); },0);
+
+  function won(v){ return fmtMoney(v)+'원'; }
+  function pct(v){ return grand>0 ? Math.round(v/grand*100)+'%' : '0%'; }
+
+  function segBtn(cur, id, label, onSet){
+    return h('button', { key:id, style:{ border:'none', cursor:'pointer', fontSize:'11px', fontWeight:700, padding:'5px 12px',
+      background: cur===id ? '#1e40af' : 'transparent', color: cur===id ? '#fff' : '#64748b', borderRadius:'7px', fontFamily:'inherit' },
+      onClick:function(){ onSet(id); } }, label);
+  }
+
+  var legend = h('div', { style:{display:'flex',flexWrap:'wrap',gap:'12px',fontSize:'10.5px',color:'#64748b',marginTop:'8px'} },
+    KINDS.map(function(kk){
+      return h('span', { key:kk.k, style:{display:'inline-flex',alignItems:'center',gap:'4px'} },
+        h('span',{style:{width:'9px',height:'9px',borderRadius:'2px',background:kk.color,display:'inline-block'}}),
+        kk.label+' '+fmtMoney(bySrc[kk.k])+' ('+pct(bySrc[kk.k])+')');
+    }));
+
+  // ── 담당자 클릭 팝업: 입금 내역 ──
+  function renderPopup(){
+    if(!popup) return null;
+    var rows = scoped.filter(function(i){
+      if((i.managerName || '미분류') !== popup.name) return false;
+      if(popup.kind && normKind(i.sourceKind) !== popup.kind) return false;
+      return true;
+    }).sort(function(a,b){ return (a.date||'') < (b.date||'') ? 1 : -1; });
+    var tot = rows.reduce(function(s,i){ return s+(i.amount||0); },0);
+    var MAX = 120, more = rows.length>MAX ? rows.length-MAX : 0;
+    return h('div', { style:{position:'fixed',inset:0,background:'rgba(15,23,42,.5)',zIndex:9000,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'},
+        onClick:function(e){ if(e.target===e.currentTarget) setPopup(null); } },
+      h('div', { style:{background:'#fff',borderRadius:'12px',width:'560px',maxWidth:'100%',maxHeight:'82vh',display:'flex',flexDirection:'column',overflow:'hidden',boxShadow:'0 20px 50px rgba(15,23,42,.3)'} },
+        h('div', { style:{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'13px 16px',borderBottom:'1px solid #eef2f7',flexShrink:0} },
+          h('div', null,
+            h('div', { style:{fontWeight:800,fontSize:'14px'} }, popup.name + ' · 수입 내역' + (popup.kind ? ' — ' + KMAP[popup.kind].label : '')),
+            h('div', { style:{fontSize:'11px',color:'#64748b',marginTop:'2px'} }, periodLabel + ' · ' + rows.length + '건')
+          ),
+          h('button', { style:{border:'none',background:'none',fontSize:'16px',color:'#94a3b8',cursor:'pointer'}, onClick:function(){ setPopup(null); } }, '✕')),
+        h('div', { style:{overflowY:'auto',padding:'4px 16px',flex:1} },
+          rows.length===0 && h('div', { style:{textAlign:'center',color:'#cbd5e1',padding:'30px',fontSize:'12px'} }, '해당 기간 입금 내역이 없습니다'),
+          rows.slice(0,MAX).map(function(i, idx){
+            var kk = KMAP[normKind(i.sourceKind)];
+            return h('div', { key:i.id||idx, style:{display:'flex',alignItems:'center',gap:'8px',padding:'7px 0',borderBottom:'1px solid #f1f5f9',fontSize:'12px'} },
+              h('span', { style:{color:'#94a3b8',width:'40px',flexShrink:0} }, (i.date||'').slice(5)),
+              h('span', { style:{background:kk.color+'22',color:kk.color,fontSize:'10px',fontWeight:700,padding:'2px 8px',borderRadius:'10px',flexShrink:0} }, kk.label),
+              h('span', { style:{flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'} },
+                (i.companyName||'-'), i.kind ? h('span',{style:{color:'#94a3b8'}}, ' · '+i.kind) : null),
+              h('span', { style:{fontWeight:700,flexShrink:0} }, fmtMoney(i.amount||0)));
+          }),
+          more>0 && h('div', { style:{textAlign:'center',color:'#94a3b8',fontSize:'11px',padding:'8px'} }, '외 '+more+'건 — 입금관리에서 전체 확인')),
+        h('div', { style:{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 16px',borderTop:'1px solid #eef2f7',background:'#f8fafc',flexShrink:0} },
+          h('span', { style:{fontSize:'12px'} }, '합계 ', h('b',{style:{fontSize:'14px'}}, won(tot)),
+            grand>0 ? h('span',{style:{color:'#94a3b8',fontSize:'11px'}}, ' · '+periodLabel+' 전체의 '+pct(tot)) : null),
+          h('button', { style:{fontSize:'11px',padding:'6px 10px',border:'1px solid #dfe4ef',borderRadius:'8px',background:'#fff',cursor:'pointer',fontFamily:'inherit'},
+            onClick:function(){ setPopup(null); try{ if(window.navigateTo) window.navigateTo('fin/income'); }catch(_){} } }, '입금관리 열기 →'))));
+  }
+
+  // ── 매트릭스 셀 색 (금액 클수록 진한 파랑) ──
+  var maxCell = 1;
+  mgrs.forEach(function(mg){ KINDS.forEach(function(kk){ var v=mg.per[kk.k]||0; if(v>maxCell) maxCell=v; }); });
+  function cellStyle(v){
+    var base = { textAlign:'right', padding:'6px 9px', fontSize:'11.5px', cursor: v>0?'pointer':'default' };
+    if(!v){ base.color='#cbd5e1'; return base; }
+    var r = v/maxCell;
+    if(r>0.66){ base.background='#85B7EB'; base.color='#042C53'; base.fontWeight=700; }
+    else if(r>0.33){ base.background='#B5D4F4'; base.color='#0C447C'; }
+    else { base.background='#E6F1FB'; base.color='#0C447C'; }
+    return base;
+  }
+
+  return h('div', { style:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',padding:'16px 20px',marginBottom:'16px'} },
+    h('div', { style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px',flexWrap:'wrap',gap:'8px'} },
+      h('div', { style:{fontWeight:700,fontSize:'13px',color:'#1e293b'} }, '💰 수익 분석 ',
+        h('span', { style:{fontSize:'10px',color:'#94a3b8',fontWeight:600} }, periodLabel+' · 실입금 기준 · 미리보기')),
+      h('div', { style:{display:'flex',gap:'8px',flexWrap:'wrap'} },
+        h('div', { style:{display:'flex',background:'#f1f5f9',borderRadius:'8px',padding:'2px'} },
+          segBtn(view,'src','수입원별',setView), segBtn(view,'mgr','담당자별',setView), segBtn(view,'matrix','교차표',setView)),
+        h('div', { style:{display:'flex',background:'#f1f5f9',borderRadius:'8px',padding:'2px'} },
+          segBtn(period,'month','이번 달',setPeriod), segBtn(period,'year','연간',setPeriod)))),
+
+    // ── 보기 1: 수입원별 ──
+    view==='src' && h('div', null,
+      h('div', { style:{display:'grid',gridTemplateColumns:IS_MOBILE?'repeat(2,1fr)':'repeat(5,1fr)',gap:'8px',marginBottom:'14px'} },
+        KINDS.map(function(kk){
+          var v = bySrc[kk.k], sub;
+          if(kk.k==='company' && contractFix>0){
+            var base = (period==='month') ? contractFix : contractFix*12;
+            sub = '계약 '+fmtMoney(base)+' · 수금 '+(base>0?Math.round(v/base*100):0)+'%';
+          } else sub = '비중 '+pct(v);
+          return h('div', { key:kk.k, style:{background:'#f8fafc',borderRadius:'8px',padding:'10px 12px',borderTop:'3px solid '+kk.color} },
+            h('div', { style:{fontSize:'11px',color:'#64748b'} }, kk.label),
+            h('div', { style:{fontSize:'14px',fontWeight:800,marginTop:'2px'} }, won(v)),
+            h('div', { style:{fontSize:'10px',color:'#94a3b8',marginTop:'2px'} }, sub));
+        })),
+      h('div', { style:{fontSize:'10.5px',color:'#94a3b8',marginBottom:'4px'} }, year+'년 월별 수입원 구성'),
+      h('div', { style:{display:'flex',alignItems:'flex-end',gap:'6px',height:'110px'} },
+        months.map(function(mo){
+          return h('div', { key:mo.m, title:mo.m+'월 '+won(mo.total),
+              style:{flex:1,display:'flex',flexDirection:'column',justifyContent:'flex-end',height:'100%'} },
+            KINDS.slice().reverse().map(function(kk){
+              var hp = mo.per[kk.k]>0 ? (mo.per[kk.k]/maxMonth*100) : 0;
+              return hp>0 ? h('div', { key:kk.k, style:{height:hp+'%',background:kk.color,marginTop:'1px',borderRadius:'1px'} }) : null;
+            }));
+        })),
+      h('div', { style:{display:'flex',gap:'6px',marginTop:'3px'} },
+        months.map(function(mo){
+          var isCur = period==='month' && mo.ym===curYm;
+          return h('div', { key:mo.m, style:{flex:1,textAlign:'center',fontSize:'9.5px',color:isCur?'#1e40af':'#94a3b8',fontWeight:isCur?800:400} }, mo.m+'월');
+        })),
+      grand>0 && h('div', { style:{display:'flex',height:'13px',borderRadius:'7px',overflow:'hidden',marginTop:'12px'} },
+        KINDS.map(function(kk){
+          var w = bySrc[kk.k]/grand*100;
+          return w>0 ? h('div', { key:kk.k, style:{width:w+'%',background:kk.color,marginRight:'2px'}, title:kk.label+' '+pct(bySrc[kk.k]) }) : null;
+        })),
+      legend),
+
+    // ── 보기 2: 담당자별 ──
+    view==='mgr' && h('div', null,
+      mgrs.length===0 && h('div', { style:{textAlign:'center',color:'#cbd5e1',padding:'26px',fontSize:'12px'} }, periodLabel+' 입금 내역이 없습니다'),
+      mgrs.map(function(mg){
+        var maxT = mgrs[0].total||1;
+        return h('div', { key:mg.name, title:'클릭하면 '+mg.name+'의 입금 내역',
+            style:{display:'flex',alignItems:'center',gap:'10px',padding:'6px 0',cursor:'pointer'},
+            onClick:function(){ setPopup({ name:mg.name, kind:null }); } },
+          h('span', { style:{width:'62px',fontSize:'12px',fontWeight:700,flexShrink:0,color:'#1e40af'} }, mg.name),
+          h('div', { style:{flex:1,display:'flex',height:'18px',borderRadius:'4px',overflow:'hidden',background:'#f8fafc'} },
+            KINDS.map(function(kk){
+              var v = mg.per[kk.k]||0;
+              return v>0 ? h('div', { key:kk.k, style:{width:(v/maxT*100)+'%',background:kk.color,marginRight:'1px'} }) : null;
+            })),
+          h('span', { style:{width:'130px',textAlign:'right',fontSize:'12px',fontWeight:700,flexShrink:0} },
+            fmtMoney(mg.total), h('span', { style:{color:'#94a3b8',fontSize:'10px',fontWeight:600} }, '  '+pct(mg.total))));
+      }),
+      legend,
+      mgrs.length>0 && h('div', { style:{fontSize:'10px',color:'#94a3b8',marginTop:'6px'} }, '이름·막대를 클릭하면 입금 내역 팝업이 열립니다 · 주담당 기준, 담당자 없는 건은 "미분류"')),
+
+    // ── 보기 3: 교차표 ──
+    view==='matrix' && h('div', { style:{overflowX:'auto'} },
+      h('table', { style:{width:'100%',borderCollapse:'collapse',fontSize:'11.5px',minWidth:'540px'} },
+        h('thead', null, h('tr', { style:{borderBottom:'1.5px solid #e2e8f0'} },
+          h('th', { style:{textAlign:'left',padding:'6px 9px',color:'#64748b',fontWeight:700} }, '담당자'),
+          KINDS.map(function(kk){ return h('th', { key:kk.k, style:{textAlign:'right',padding:'6px 9px',color:'#64748b',fontWeight:700} }, kk.label); }),
+          h('th', { style:{textAlign:'right',padding:'6px 9px',fontWeight:800,borderLeft:'1px solid #eef2f7'} }, '합계'))),
+        h('tbody', null,
+          mgrs.map(function(mg){
+            return h('tr', { key:mg.name, style:{borderBottom:'1px solid #f1f5f9'} },
+              h('td', { style:{padding:'6px 9px',fontWeight:700,color:'#1e40af',cursor:'pointer'},
+                title:'클릭하면 '+mg.name+' 전체 내역', onClick:function(){ setPopup({ name:mg.name, kind:null }); } }, mg.name),
+              KINDS.map(function(kk){
+                var v = mg.per[kk.k]||0;
+                return h('td', { key:kk.k, style:cellStyle(v),
+                  title: v>0 ? (mg.name+' × '+kk.label+' — 클릭하면 내역') : '',
+                  onClick: v>0 ? function(){ setPopup({ name:mg.name, kind:kk.k }); } : undefined },
+                  v>0 ? fmtMoney(v) : '–');
+              }),
+              h('td', { style:{textAlign:'right',padding:'6px 9px',fontWeight:800,borderLeft:'1px solid #eef2f7'} }, fmtMoney(mg.total)));
+          }),
+          h('tr', { style:{borderTop:'1.5px solid #e2e8f0'} },
+            h('td', { style:{padding:'7px 9px',fontWeight:800,color:'#64748b'} }, '합계'),
+            KINDS.map(function(kk){ return h('td', { key:kk.k, style:{textAlign:'right',padding:'7px 9px',fontWeight:800} }, fmtMoney(bySrc[kk.k])); }),
+            h('td', { style:{textAlign:'right',padding:'7px 9px',fontWeight:800,borderLeft:'1px solid #eef2f7'} }, fmtMoney(grand))))),
+      h('div', { style:{fontSize:'10px',color:'#94a3b8',marginTop:'6px'} }, '셀 색이 진할수록 금액이 큼 · 셀을 클릭하면 해당 담당자×수입원 입금 내역')),
+
+    renderPopup());
+}
+
 function CorpDashboard(props){
   var navigate = props.onNavigate || function(){};
   // 이음센터 모드: 이음센터 화면(dash/ieum)에서 캘린더만 재사용 — 탭 고정 + 이음 필터 프리셋
@@ -37489,6 +37710,9 @@ function CorpDashboard(props){
     })()
       ) // end workload 오른쪽 콘텐츠
     ), // end workload flex 컨테이너
+
+    // [미리보기] 수익 분석: 수입원별 × 담당자별 (교차표·팝업 포함)
+    IS_ADMIN && dashTab === 'analytics' && h(RevSrcSection, { year: year }),
 
     // 12개월 그래프
     IS_ADMIN && dashTab === 'analytics' && h('div', { style:{ display: IS_MOBILE ? 'block' : 'flex', gap:'10px', alignItems:'flex-start' } },
