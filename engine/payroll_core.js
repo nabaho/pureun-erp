@@ -49,19 +49,19 @@ function deriveFromGolden(emp, cfg) {
     out['고용보험'] = ROUND[c.empInsRound](emp['과세총액'] * c.empInsRate);
   }
 
-  // 3) 공제총액 = 존재하는 공제 항목 합 (고지액 모드: 연금·건보·장기는 골든값 그대로)
+  // 3) 공제총액 = 존재하는 공제 항목 합 + 기타공제(상조·가불·정산 등)
+  //    (고지액 모드: 연금·건보·장기는 골든값 그대로)
   const dedFields = ['소득세', '지방세', '국민연금', '건강보험', '장기요양', '고용보험'];
   const present = dedFields.filter((f) => emp[f] != null);
   if (present.length >= 4) { // 대부분 있어야 합산 비교 의미 있음
-    out['공제총액'] = present.reduce((s, f) => s + emp[f], 0);
-    out['공제총액_구성'] = present;
+    out['공제총액'] = present.reduce((s, f) => s + emp[f], 0) + (emp['기타공제'] || 0);
+    out['공제총액_구성'] = present.concat(emp['기타공제'] ? ['기타공제'] : []);
   }
 
-  // 4) 실수령 = 지급총액(또는 기본급 단독 구성) − 공제총액
-  const gross = emp['지급총액'] != null ? emp['지급총액']
-              : (emp['과세총액'] != null ? null : emp['기본급']); // 수당 있으면 기본급만으론 불가
-  if (gross != null && emp['공제총액'] != null) {
-    out['실수령'] = gross - emp['공제총액'];
+  // 4) 실수령 = 지급총액 − 공제총액 (골든 공제총액 우선, 없으면 엔진 합산값)
+  const dedTotal = emp['공제총액'] != null ? emp['공제총액'] : out['공제총액'];
+  if (emp['지급총액'] != null && dedTotal != null) {
+    out['실수령'] = emp['지급총액'] - dedTotal;
   }
 
   return out;

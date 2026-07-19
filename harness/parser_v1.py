@@ -28,7 +28,12 @@ FIELDS = {
     "고용보험": ["고용보험"],
     "공제총액": ["공제총액", "공제계", "공제합계", "공제금액", "공제 계"],
     "실수령":   ["차인지급액", "차인지급", "실지급액", "실수령액", "실수령", "실지급", "차감지급", "실지급총액"],
+    "지급총액": ["지급총액", "지급합계", "지급계", "급여계", "총지급액", "지급액계", "지급 합계", "지급액 계"],
 }
+
+# 기타공제(상조회비·가불·정산 등) — 공제총액 대조 정합성 위해 별도 합산 수집
+EXTRA_DED_PAT = ["정산", "가불", "상조", "조합", "학자금", "대출", "사우회", "경조",
+                 "기숙사", "기타공제", "농특", "선지급", "차감", "공제"]
 JUMIN_RE = re.compile(r'\d{6}\s*[-]?\s*\d{6,7}')
 NAME_RE = re.compile(r'^[가-힣]{2,4}$')
 NUM_RE = re.compile(r'^-?[\d,]+(\.\d+)?$')
@@ -137,8 +142,12 @@ def score_sheet(ws):
     fields = set(colmap.values())
     if len(fields) < 4:
         return None
+    # 기타공제 후보 컬럼(핵심필드 미매핑 + 공제성 키워드)
+    extra_ded = [ci for ci, h in enumerate(flat)
+                 if ci not in colmap and h and any(p in h for p in EXTRA_DED_PAT)]
     return {"data_start": data_start, "header_rows": (hstart, data_start),
-            "colmap": colmap, "fields": fields, "col_count": col_count}
+            "colmap": colmap, "fields": fields, "col_count": col_count,
+            "extra_ded": extra_ded}
 
 
 def pick_and_parse(wb):
@@ -183,6 +192,15 @@ def pick_and_parse(wb):
                     val = parse_num(row[c])
                     if val is not None:
                         emp[f] = val
+            # 기타공제 합산(상조·가불·정산 등 — 공제총액 정합성용)
+            extra = 0
+            for c in sc.get("extra_ded", []):
+                if c < len(row):
+                    v = parse_num(row[c])
+                    if v is not None:
+                        extra += v
+            if extra:
+                emp["기타공제"] = extra
             if len(emp) >= 3:  # 성명 + 숫자필드 2개+
                 employees.append(emp)
         if employees:
