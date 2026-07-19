@@ -4092,7 +4092,15 @@ function fbInit(){ if(location.protocol==='file:') return; if(typeof firebase===
   try{ if(!firebase.apps||!firebase.apps.length) firebase.initializeApp(FB_CONFIG);
     if(FB_APPCHECK_KEY && firebase.appCheck){ try{ firebase.appCheck().activate(new firebase.appCheck.ReCaptchaV3Provider(FB_APPCHECK_KEY), true); }catch(e){ console.warn('[AppCheck]',e&&e.message); } }
     fbDb=firebase.database();
-    firebase.auth().onAuthStateChanged(function(u){ fbUid=u?u.uid:null; fbUpdateUI(u); });
+    /* 통합시스템 자동로그인: 같은 주소의 다른 앱(포털·pu-erp)과 로그인 세션을 공유(LOCAL 지속).
+       → 포털에서 로그인하면 경력관리도 자동 로그인되고, Firebase가 1시간짜리 토큰을 자동 갱신하므로
+         한동안 안 써도(관리 안 해도) 세션이 풀리지 않습니다. */
+    try{ if(firebase.auth().setPersistence) firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){ console.warn('[persistence]',e&&e.message); }
+    firebase.auth().onAuthStateChanged(function(u){ fbUid=u?u.uid:null; fbUpdateUI(u);
+      /* sso=1로 들어왔는데 아직 로그인 전이면, 공유 세션이 잡힐 때까지 잠시 후 한 번 더 확인 */
+      if(!u && /[?&]sso=1/.test(location.search) && !window._ssoRetried){ window._ssoRetried=true;
+        setTimeout(function(){ try{ var cu=firebase.auth().currentUser; if(cu){ fbUid=cu.uid; fbUpdateUI(cu); } }catch(e){} }, 1500); }
+    });
   }catch(e){ console.warn('fbInit',e); } }
 function fbUpdateUI(u){ var lo=document.getElementById('fbLoggedOut'), li=document.getElementById('fbLoggedIn'), btn=document.getElementById('fbBtn');
   if(u){ if(lo)lo.style.display='none'; if(li)li.style.display=''; var w=document.getElementById('fbWho'); if(w)w.textContent=u.email||u.uid; if(btn){btn.textContent='☁ 동기화'; btn.style.color='var(--teal)';} fbLoadInfo();
