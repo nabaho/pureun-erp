@@ -906,9 +906,11 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
           <select class="tb-select" data-f="type"><option value="">전체 유형</option><option>부당해고</option><option>임금체불</option><option>산재</option><option>직장내괴롭힘</option><option>기타</option></select>
           <div class="tb-spacer"></div>
           <span class="cnt" style="font-size:11px;color:var(--text-mute)"></span>
+          <button class="btn" type="button" onclick="loadPuPerf('cases',true)">🔗 pu-erp 사건 불러오기</button>
           <button class="btn" data-act="csv">📤 CSV</button>
           <button class="btn primary" data-act="new">+ 새 사건</button>
         </div>
+        <div id="puCaseBox" style="margin-bottom:12px"></div>
         <div class="dt"></div>
       </div></section>
       <section class="page-view" id="page-consult" ondragover="pageDropOver(event,'consult')" ondragleave="pageDropLeave(event)" ondrop="pageDropFile(event,'consult')"><div class="page"><div class="page-drop-overlay" id="ovl-page-consult"><span>📎 컨설팅 문서을 놓으면 OCR 자동 등록</span></div>
@@ -933,9 +935,11 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
           <select class="tb-select" data-f="year"><option value="">전체 연도</option></select>
           <div class="tb-spacer"></div>
           <span class="cnt" style="font-size:11px;color:var(--text-mute)"></span>
+          <button class="btn" type="button" onclick="loadPuPerf('funds',true)">🔗 pu-erp 기금 불러오기</button>
           <button class="btn" data-act="csv">📤 CSV</button>
           <button class="btn primary" data-act="new">+ 새 기금</button>
         </div>
+        <div id="puFundBox" style="margin-bottom:12px"></div>
         <div class="dt"></div>
       </div></section>
       <section class="page-view" id="page-lecture" ondragover="pageDropOver(event,'lecture')" ondragleave="pageDropLeave(event)" ondrop="pageDropFile(event,'lecture')"><div class="page"><div class="page-drop-overlay" id="ovl-page-lecture"><span>📎 강의 자료을 놓으면 OCR 자동 등록</span></div>
@@ -957,9 +961,11 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
           <select class="tb-select" data-f="year"><option value="">전체 연도</option></select>
           <div class="tb-spacer"></div>
           <span class="cnt" style="font-size:11px;color:var(--text-mute)"></span>
+          <button class="btn" type="button" onclick="loadPuPerf('other_projects',true)">🔗 pu-erp 기타사업 불러오기</button>
           <button class="btn" data-act="csv">📤 CSV</button>
           <button class="btn primary" data-act="new">+ 새 기타</button>
         </div>
+        <div id="puEtcBox" style="margin-bottom:12px"></div>
         <div class="dt"></div>
       </div></section>
       <section class="page-view" id="page-settings"><div class="page">
@@ -4030,6 +4036,71 @@ async function _puLoadUserMap(){
 function _puMainMgr(c){ var sid=c.managerMain||'';
   if(!sid && Array.isArray(c.workers)){ var w=c.workers.find(function(x){return x&&x.isPrimary;})||c.workers[0]; if(w) sid=w.sid||''; }
   return sid; }
+/* pu-erp 실적 종류 통합: 컨설팅·사건·기금·기타 (같은 패턴) */
+var PU_COLLS={
+  consultings:{box:'puConsultBox',label:'컨설팅',cache:'pu_consult_cache'},
+  cases:{box:'puCaseBox',label:'사건',cache:'pu_case_cache'},
+  funds:{box:'puFundBox',label:'기금',cache:'pu_fund_cache'},
+  other_projects:{box:'puEtcBox',label:'기타',cache:'pu_etc_cache'}
+};
+function _puItemFields(coll,c){
+  var co=c.companyName||c.payee||'';
+  var type;
+  if(coll==='consultings') type=c.consultingType||c.programName||c.title||'컨설팅';
+  else if(coll==='cases') type=c.caseType||c.title||c.caseNo||'사건';
+  else if(coll==='funds') type=c.fundType||c.programName||'기금';
+  else type=c.programName||c.projectType||c.title||'기타';
+  var endRaw=c.closedDate||c.endDate||'';
+  var end=c.closedDate?String(c.closedDate).slice(0,10):(c.endDate?(String(c.endDate).slice(0,10)+' (예정)'):(c.status==='closed'?'종료':'진행중'));
+  return {yr:String(endRaw).slice(0,4)||'', co:co, type:type, end:end};
+}
+function _puCertRows(name){
+  var any=false, rows=[];
+  Object.keys(PU_COLLS).forEach(function(coll){
+    var cache=null; try{ cache=JSON.parse(LS.get(NS+PU_COLLS[coll].cache)||'null'); }catch(e){}
+    if(!cache) return; any=true;
+    ((cache.byMgr||{})[name]||[]).forEach(function(c){ var f=_puItemFields(coll,c); rows.push({kind:PU_COLLS[coll].label, yr:f.yr, co:f.co, type:f.type, end:f.end}); });
+  });
+  return any?rows:null;
+}
+async function loadPuPerf(coll,force){
+  var cfg=PU_COLLS[coll]; if(!cfg) return;
+  var box=document.getElementById(cfg.box); if(!box) return;
+  if(typeof fbDb==='undefined'||!fbDb){ if(force) toast('클라우드 로그인 후 사용하세요'); return; }
+  if(force) box.innerHTML='<div style="font-size:12px;color:var(--text-mute);padding:10px">⏳ pu-erp '+cfg.label+' 불러오는 중...</div>';
+  try{
+    await _puLoadUserMap();
+    var s=await fbDb.ref('data/'+coll).once('value'); var v=s.val();
+    if(!v){ box.innerHTML='<div style="font-size:12px;color:var(--text-mute);padding:10px">pu-erp '+cfg.label+' 데이터가 없습니다</div>'; return; }
+    var arr=(Array.isArray(v)?v:Object.keys(v).map(function(k){return v[k];})).filter(Boolean);
+    var byMgr={};
+    arr.forEach(function(c){ var sid=_puMainMgr(c); var nm=_puUserMap[String(sid)]||String(sid||'(미지정)'); (byMgr[nm]=byMgr[nm]||[]).push(c); });
+    try{ LS.set(NS+cfg.cache, JSON.stringify({at:new Date().toISOString(),byMgr:byMgr})); }catch(e){}
+    renderPuPerf(coll,byMgr);
+    if(force) toast('pu-erp '+cfg.label+' '+arr.length+'건 불러옴 (주담당 '+Object.keys(byMgr).length+'명)');
+  }catch(e){ console.warn(coll+' load',e); box.innerHTML='<div style="color:var(--red);font-size:12px;padding:10px">불러오기 실패 — 클라우드 로그인/권한을 확인하세요</div>'; if(force) toast('불러오기 실패'); }
+}
+function renderPuPerf(coll,byMgr){
+  var cfg=PU_COLLS[coll]; var box=document.getElementById(cfg.box); if(!box) return;
+  var names=Object.keys(byMgr).sort(function(a,b){return a.localeCompare(b,'ko');});
+  if(!names.length){ box.innerHTML=''; return; }
+  var html='<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">'
+    +'<div style="background:var(--soft);padding:8px 12px;font-size:12px;font-weight:700;color:var(--navy)">🔗 pu-erp '+cfg.label+' 실적 (주담당별) <span style="font-weight:400;color:var(--text-mute)">— 실시간 연동</span></div>';
+  names.forEach(function(nm){ var list=byMgr[nm];
+    var closed=list.filter(function(c){return c.closedDate||c.status==='closed';}).length;
+    var rid=(getStaffRoster().find(function(s){return s.name===nm;})||{}).id;
+    var disp=(rid && staffIsRetired(rid))?'퇴직자':nm;
+    var nmJs=String(nm).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    html+='<div style="padding:8px 12px;border-top:1px solid var(--border-soft)">'
+      +'<div style="font-weight:600;font-size:13px;margin-bottom:2px">'+escapeHtml(disp)+' <span style="font-size:11px;color:var(--text-mute);font-weight:400">— 총 '+list.length+'건 · 종료 '+closed+'건</span> <button class="btn sm" onclick="issuePerfCert(\''+nmJs+'\')">📄 실적증명서</button></div>'
+      +list.slice(0,50).map(function(c){ var f=_puItemFields(coll,c);
+        return '<div style="font-size:12px;color:var(--text-mute);padding:2px 0">• '+escapeHtml(f.co)+(f.co&&f.type?' / ':'')+escapeHtml(f.type)+(f.end?' <span style="font-size:11px">· '+escapeHtml(f.end)+'</span>':'')+'</div>';
+      }).join('')
+      +(list.length>50?'<div style="font-size:11px;color:var(--text-mute)">…외 '+(list.length-50)+'건</div>':'')
+      +'</div>';
+  });
+  box.innerHTML=html+'</div>';
+}
 async function loadPuConsulting(force){
   var box=document.getElementById('puConsultBox'); if(!box) return;
   if(typeof fbDb==='undefined' || !fbDb){ if(force) toast('클라우드 로그인 후 사용하세요'); return; }
@@ -4071,21 +4142,15 @@ function renderPuConsulting(byMgr){
 
 /* ===== 담당자별 실적증명서 (인쇄/PDF) ===== */
 function issuePerfCert(name){
-  var cache=null; try{ cache=JSON.parse(LS.get(NS+'pu_consult_cache')||'null'); }catch(e){}
-  if(!cache){ toast('먼저 [🔗 pu-erp 컨설팅 불러오기]를 눌러 실적을 불러오세요'); return; }
-  var list=((cache&&cache.byMgr)||{})[name]||[];
-  if(!list.length && !confirm(name+' 님의 불러온 컨설팅 실적이 없습니다.\n그래도 빈 증명서를 만들까요?')) return;
-  var rows=list.map(function(c,i){
-    var endRaw=c.closedDate||c.endDate||'';
-    var end=c.closedDate?String(c.closedDate).slice(0,10):(c.endDate?(String(c.endDate).slice(0,10)+' (예정)'):'진행중');
-    return {yr:String(endRaw).slice(0,4)||'', co:c.companyName||'', type:c.consultingType||c.programName||c.title||'컨설팅', end:end};
-  });
+  var rows=_puCertRows(name);
+  if(rows===null){ toast('먼저 각 실적 화면에서 [🔗 pu-erp 불러오기]를 눌러 실적을 불러오세요'); return; }
+  if(!rows.length && !confirm(name+' 님의 불러온 실적이 없습니다.\n그래도 빈 증명서를 만들까요?')) return;
   rows.sort(function(a,b){ return (b.yr||'').localeCompare(a.yr||''); });
   rows.forEach(function(r,i){ r.no=i+1; });
   var t=new Date(), y=t.getFullYear(), m=('0'+(t.getMonth()+1)).slice(-2), d=('0'+t.getDate()).slice(-2);
   var esc=escapeHtml;
-  var trs=rows.map(function(r){ return '<tr><td>'+r.no+'</td><td>'+esc(r.yr)+'</td><td style="text-align:left">'+esc(r.co)+'</td><td style="text-align:left">'+esc(r.type)+'</td><td>'+esc(r.end)+'</td></tr>'; }).join('')
-    || '<tr><td colspan="5" style="color:#888;padding:20px">불러온 컨설팅 실적이 없습니다</td></tr>';
+  var trs=rows.map(function(r){ return '<tr><td>'+r.no+'</td><td>'+esc(r.kind||'')+'</td><td>'+esc(r.yr)+'</td><td style="text-align:left">'+esc(r.co)+'</td><td style="text-align:left">'+esc(r.type)+'</td><td>'+esc(r.end)+'</td></tr>'; }).join('')
+    || '<tr><td colspan="6" style="color:#888;padding:20px">불러온 실적이 없습니다</td></tr>';
   var closed=rows.filter(function(r){return r.end.indexOf('진행중')<0 && r.end.indexOf('예정')<0;}).length;
   var html='<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>실적증명서_'+esc(name)+'</title>'
     +'<style>@page{size:A4;margin:22mm 20mm}*{box-sizing:border-box}'
@@ -4105,7 +4170,7 @@ function issuePerfCert(name){
     +'<div class="meta"><b>성　명</b> : '+esc(name)+'</div>'
     +'<div class="meta"><b>소　속</b> : 푸른노무법인</div>'
     +'<div class="stmt">위 사람은 본 법인 소속으로 아래와 같이 컨설팅 업무를 수행하였음을 증명합니다.</div>'
-    +'<table><thead><tr><th style="width:44px">연번</th><th style="width:56px">연도</th><th>사업장</th><th>컨설팅 유형</th><th style="width:120px">종료일/상태</th></tr></thead><tbody>'+trs+'</tbody></table>'
+    +'<table><thead><tr><th style="width:40px">연번</th><th style="width:60px">구분</th><th style="width:52px">연도</th><th>사업장</th><th>유형</th><th style="width:110px">종료일/상태</th></tr></thead><tbody>'+trs+'</tbody></table>'
     +'<div class="sum">총 '+rows.length+'건 (종료 '+closed+'건)</div>'
     +'<div class="foot">'+y+'년 '+m+'월 '+d+'일<div class="org">푸른노무법인　대표　(인)</div></div>'
     +'<div class="bar"><button onclick="window.print()">🖨 인쇄 / PDF 저장</button></div>'
