@@ -45,6 +45,8 @@ h1{font-size:20px;letter-spacing:-.02em;margin-bottom:4px}
 .badge.warn{background:#FBF1DE;color:var(--warn)}.badge.ok{background:#E8F3EC;color:var(--ok)}
 .note{font-size:12px;color:var(--sub);margin-top:10px;line-height:1.7}
 .pill{display:inline-block;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:2px 8px;font-size:11px;margin:2px}
+.dot{width:12px;height:12px;border-radius:50%;flex-shrink:0}
+.dot.green{background:var(--ok)}.dot.orange{background:var(--warn)}.dot.red{background:var(--bad)}
 </style>
 </head>
 <body>
@@ -112,9 +114,25 @@ var SAMPLE = [
 
 var NAV = [
   {id:'cards', label:'⚙️ 설정 카드'},
-  {id:'inbox', label:'📥 수신함', soon:true},
-  {id:'payroll', label:'💰 급여 처리', soon:true},
+  {id:'inbox', label:'📥 수신함'},
+  {id:'payroll', label:'💰 급여 처리'},
   {id:'review', label:'✅ 검토·확정', soon:true},
+];
+
+// 수신함 샘플(더미). 실제=메일 웹훅·업로드가 dbGet('inbox')에 채움.
+// 상태: 정상 / 지연(D-7 지남) / 오류(자료 불완전) / 미도착
+var INBOX_SAMPLE = [
+  {id:'i1', 사업장:'샘플상사', 유형:'근태', 도착:'D-9', 상태:'정상'},
+  {id:'i2', 사업장:'샘플식당', 유형:'급여자료', 도착:'—', 상태:'지연'},
+  {id:'i3', 사업장:'샘플제조', 유형:'근태', 도착:'D-3', 상태:'오류'},
+  {id:'i4', 사업장:'샘플카페', 유형:'—', 도착:'—', 상태:'미도착'},
+];
+// 급여 처리 샘플(더미). 실제=엔진 계산 결과가 dbGet('payroll')에 채움.
+// 신호: green(이상없음) / orange(확인필요) / red(막힘: 최저임금 미달 등)
+var PAYROLL_SAMPLE = [
+  {사업장:'샘플상사', ym:'2026-06', 직원:42, 신호:'green', 이슈:'', 확정:false},
+  {사업장:'샘플식당', ym:'2026-06', 직원:8,  신호:'orange', 이슈:'전월대비 급변 1명', 확정:false},
+  {사업장:'샘플제조', ym:'2026-06', 직원:60, 신호:'red', 이슈:'최저임금 미달 2명 — 확정 차단', 확정:false},
 ];
 
 function renderNav(){
@@ -147,6 +165,62 @@ function screenCards(){
   return html;
 }
 
+// ── 수신함 (설계: 자동태깅 + 4상태 + D-7 독촉) ──
+function screenInbox(){
+  var items = dbGet('inbox', INBOX_SAMPLE).filter(function(x){
+    return App.role==='admin' || App.mySites().indexOf(x.사업장)>=0 || true; });
+  var isSample = (dbGet('inbox', null)===null);
+  var cnt = {정상:0, 지연:0, 오류:0, 미도착:0};
+  items.forEach(function(x){ cnt[x.상태]=(cnt[x.상태]||0)+1; });
+  var sig = {정상:'green', 지연:'orange', 오류:'orange', 미도착:'red'};
+  var act = {정상:'처리 진행', 지연:'독촉 보내기', 오류:'반려·재요청', 미도착:'담당자 개입'};
+  var html = '<h1>수신함</h1><div class="sub">사업장이 보낸 자료를 자동 분류합니다'+
+    (isSample?' · <b style="color:#B26A00">샘플</b>':'')+'</div>';
+  // 3색 신호 요약
+  html += '<div style="display:flex;gap:10px;margin-bottom:14px">'+
+    sigBox('green','정상',cnt.정상)+sigBox('orange','확인필요',cnt.지연+cnt.오류)+sigBox('red','미도착',cnt.미도착)+'</div>';
+  html += '<div style="background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden">';
+  items.forEach(function(x){
+    html += '<div style="display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid var(--line)">'+
+      '<span class="dot '+sig[x.상태]+'"></span>'+
+      '<div style="flex:1"><b>'+x.사업장+'</b> <span class="pill">'+x.유형+'</span>'+
+      '<div style="font-size:12px;color:var(--sub)">도착 '+x.도착+' · '+x.상태+'</div></div>'+
+      '<button class="btn '+(x.상태==='정상'?'':'sec')+'" onclick="App.inboxAct(\''+x.id+'\',\''+x.상태+'\')">'+act[x.상태]+'</button>'+
+      '</div>';
+  });
+  html += '</div><div class="note">※ D-7까지 안 오면 자동 독촉(다채널). 끝내 미도착이면 담당자 개입(전월값 가마감/수기) — 자료 없어도 급여는 나갑니다(법정 지급일).</div>';
+  return html;
+}
+
+// ── 급여 처리 (설계: 3색 신호 + 확정은 사람 + 최저임금 미달 차단) ──
+function screenPayroll(){
+  var rows = dbGet('payroll', PAYROLL_SAMPLE);
+  var isSample = (dbGet('payroll', null)===null);
+  var html = '<h1>급여 처리</h1><div class="sub">계산 결과를 3색 신호로 확인 → 사람이 확정'+
+    (isSample?' · <b style="color:#B26A00">샘플</b>':'')+'</div>';
+  html += '<div style="background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden">';
+  rows.forEach(function(r,i){
+    var blocked = (r.신호==='red');
+    html += '<div style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)">'+
+      '<span class="dot '+r.신호+'"></span>'+
+      '<div style="flex:1"><b>'+r.사업장+'</b> <span style="font-size:12px;color:var(--sub)">'+r.ym+' · 직원 '+r.직원+'명</span>'+
+      (r.이슈?'<div style="font-size:12px;color:'+(blocked?'var(--bad)':'var(--warn)')+'">'+r.이슈+'</div>':'')+'</div>'+
+      (r.확정
+        ? '<span class="badge ok">확정됨</span> <button class="btn sec" onclick="App.payrollUndo('+i+')">되돌리기</button>'
+        : '<button class="btn'+(blocked?'':'')+'" '+(blocked?'style="background:#ccc;cursor:not-allowed" disabled title="최저임금 미달 등 해결 후 확정"':'onclick="App.payrollConfirm('+i+')"')+'>확정</button>')+
+      '</div>';
+  });
+  html += '</div><div class="note">※ 초록=이상없음, 주황=확인 후 확정, 빨강=막힘(최저임금 미달 등 해결 전 확정 불가). 확정은 되돌리기 가능(마감 전).</div>';
+  return html;
+}
+
+function sigBox(color,label,n){
+  var bg={green:'#E8F3EC',orange:'#FBF1DE',red:'#FBE9E9'}[color];
+  var fg={green:'#2E7D4F',orange:'#B26A00',red:'#C43D3D'}[color];
+  return '<div style="flex:1;background:'+bg+';color:'+fg+';border-radius:12px;padding:12px 14px">'+
+    '<div style="font-size:24px;font-weight:800">'+n+'</div><div style="font-size:12px;font-weight:600">'+label+'</div></div>';
+}
+
 function screenSoon(name){
   return '<h1>'+name+'</h1><div class="sub">3단계 다음 블록</div>'+
     '<div class="empty">이 화면은 골격만 준비됐습니다.<br>수신함/급여/검토는 인증·백엔드 연동 후 구현됩니다.<br><br>'+
@@ -159,11 +233,24 @@ function render(){
   document.getElementById('devband').style.display = (ENV==='dev') ? '' : 'none';
   var m = document.getElementById('main');
   if(App.screen==='cards') m.innerHTML = screenCards();
-  else if(App.screen==='inbox') m.innerHTML = screenSoon('수신함');
-  else if(App.screen==='payroll') m.innerHTML = screenSoon('급여 처리');
+  else if(App.screen==='inbox') m.innerHTML = screenInbox();
+  else if(App.screen==='payroll') m.innerHTML = screenPayroll();
   else m.innerHTML = screenSoon('검토·확정');
 }
 
+App.mySites = function(){ return dbGet('acl_'+this.me, []); };
+App.inboxAct = function(id, state){
+  var msg = {정상:'처리를 진행합니다.', 지연:'독촉을 다채널로 보냈습니다.',
+    오류:'사업장에 반려·재요청했습니다.', 미도착:'담당자 개입: 전월값 가마감 또는 수기 입력.'}[state];
+  alert(msg + ' (골격 데모)');
+};
+App.payrollConfirm = function(i){
+  if(!confirm('이 사업장 급여를 확정할까요? (되돌리기 가능)')) return;
+  var rows = dbGet('payroll', PAYROLL_SAMPLE); rows[i].확정 = true; dbSet('payroll', rows); render();
+};
+App.payrollUndo = function(i){
+  var rows = dbGet('payroll', PAYROLL_SAMPLE); rows[i].확정 = false; dbSet('payroll', rows); render();
+};
 App.importCards = function(){
   var inp = document.createElement('input'); inp.type='file'; inp.accept='.json';
   inp.onchange = function(e){
