@@ -39,6 +39,9 @@ def main():
     # 파싱 성공한 (사업장) 집합 + 파일경로
     parsed = json.load(open(os.path.join(OUT_DIR, "parser_output.json"), encoding="utf-8"))
     parsed_ok_paths = set(r["path"] for r in parsed if r["ok"])
+    # 실제 분류 결과(급여대장 여부)를 경로→라벨로 (path 힌트보다 정확)
+    cls = json.load(open(os.path.join(OUT_DIR, "file_classification.json"), encoding="utf-8"))
+    label_of = {r["path"]: r["label"] for r in cls}
 
     # 전 파일 스캔
     sites = defaultdict(lambda: {"handler": None, "files": 0, "ext": Counter(),
@@ -70,8 +73,8 @@ def main():
                         y = 2000 + int(yy)
                         if 2010 <= y <= 2027:
                             d["years"].add(y)
-                # 급여대장성 파일 판정(파일명/폴더 힌트)
-                is_ledger = any(k in rel for k in LEDGER_HINT)
+                # 급여대장 판정 = 실제 분류 결과 기준(정확). 미분류(비담당3인 외)만 힌트 보조.
+                is_ledger = (label_of.get(rel) == "급여대장")
                 if is_ledger:
                     if ext in (".xlsx", ".xlsm"):
                         d["ledger_xlsx"] += 1
