@@ -1773,6 +1773,26 @@ async def import_puerp(file: UploadFile = File(...), create_new: bool = True):
         return s, name2uid.get(s, "")
 
     con = connect()
+    # 재직 근로자(pu-erp users, status=active) 전체를 담당자 풀로 당겨옴
+    staff_imported = 0
+    for u in users:
+        nm = str(u.get("name", "")).strip()
+        if not nm:
+            continue
+        st = str(u.get("status", "active") or "active").lower()
+        if st not in ("active", "재직", "재직중", ""):
+            continue                       # 퇴직 등 제외
+        uid = str(u.get("sid") or u.get("id") or "").strip()
+        row = con.execute("SELECT staff_id, puerp_uid FROM staff WHERE name=?", (nm,)).fetchone()
+        if row:
+            if uid and not (row[1] or "").strip():
+                con.execute("UPDATE staff SET puerp_uid=?, active=1 WHERE staff_id=?", (uid, row[0]))
+        else:
+            n = con.execute("SELECT COUNT(*) FROM staff").fetchone()[0]
+            con.execute("INSERT INTO staff(staff_id,name,puerp_uid,active) VALUES(?,?,?,1)",
+                        (f"ST-{n + 1:03d}", nm, uid))
+        staff_imported += 1
+
     funds = rows_to_dicts(con.execute(
         "SELECT fund_id, name, short_name, rep_org, mgmt_type FROM funds").fetchall())
     by_name = {_norm_name(f["name"]): f for f in funds}
@@ -1838,7 +1858,8 @@ async def import_puerp(file: UploadFile = File(...), create_new: bool = True):
     con.commit()
     con.close()
     return {"ok": True, "scanned": len(companies),
-            "matched": matched, "created": created, "skipped": skipped}
+            "matched": matched, "created": created, "skipped": skipped,
+            "staff_imported": staff_imported}
 
 
 # ═══════════ 임원·협의회 명부·임기 (M4) ═══════════
