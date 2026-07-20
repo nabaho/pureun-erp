@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>푸른노무법인 급여 — Firebase 연결</title>
+<!--
+  급여 아웃소싱 앱 (Firebase 연결판) — 별도 프로젝트 pu-payroll
+  - pu-erp와 동일 패턴: firebase.initializeApp + database + dbGet/dbSet
+  - 테스트용 익명 인증(파일 더블클릭 작동). 추후 구글 로그인으로 전환.
+  - 데이터는 pu-payroll RTDB에만 저장(pu-erp와 완전 별개).
+-->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<style>
+:root{--navy:#2E3A8C;--violet:#7C6CE0;--ok:#2E7D4F;--warn:#B26A00;--bad:#C43D3D;
+--ink:#23263B;--sub:#6B6F87;--line:#E3E5EF;--paper:#F5F6FA;--card:#FFF;}
+*{box-sizing:border-box;margin:0}
+body{font-family:'Malgun Gothic',sans-serif;background:var(--paper);color:var(--ink);font-size:14px}
+header{background:var(--navy);color:#fff;display:flex;align-items:center;gap:14px;padding:12px 18px}
+header .logo{font-weight:800;font-size:16px}
+header .env{font-size:11px;background:#ffffff22;border:1px solid #ffffff55;border-radius:99px;padding:2px 9px}
+header .conn{margin-left:auto;font-size:12px;display:flex;align-items:center;gap:6px}
+.dotc{width:9px;height:9px;border-radius:50%;background:#bbb}.dotc.on{background:#7CFFB0}
+.layout{display:flex;min-height:calc(100vh - 46px)}
+nav{width:180px;background:#fff;border-right:1px solid var(--line);padding:14px 10px;flex-shrink:0}
+nav button{display:block;width:100%;text-align:left;border:none;background:none;border-radius:10px;padding:10px 12px;font-size:13.5px;cursor:pointer;color:var(--ink);font-family:inherit}
+nav button.on{background:var(--navy);color:#fff;font-weight:700}
+main{flex:1;padding:22px 24px;overflow:auto}
+h1{font-size:20px;margin-bottom:4px}.sub{color:var(--sub);font-size:13px;margin-bottom:16px}
+.btn{background:var(--navy);color:#fff;border:none;border-radius:10px;padding:9px 16px;cursor:pointer;font-size:13px;font-family:inherit}
+.btn.sec{background:#fff;color:var(--navy);border:1px solid var(--navy)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-top:14px}
+.c{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px}
+.c .t{font-weight:700;color:var(--navy)}.c .m{font-size:12px;color:var(--sub);margin:3px 0 8px}
+.c .kv{font-size:12.5px;margin:3px 0}.c .kv b{color:var(--sub);font-weight:600;display:inline-block;width:64px}
+.badge{font-size:11px;border-radius:99px;padding:2px 8px}.badge.warn{background:#FBF1DE;color:var(--warn)}.badge.ok{background:#E8F3EC;color:var(--ok)}
+.empty{background:#fff;border:1px dashed var(--line);border-radius:14px;padding:36px;text-align:center;color:var(--sub)}
+.note{font-size:12px;color:var(--sub);margin-top:12px;line-height:1.7}
+#gate{position:fixed;inset:0;background:var(--paper);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;z-index:9}
+#gate .box{background:#fff;border:1px solid var(--line);border-radius:16px;padding:30px 36px;text-align:center;max-width:440px}
+</style>
+</head>
+<body>
+<div id="gate"><div class="box">
+  <h1 style="color:var(--navy)">푸른노무법인 급여</h1>
+  <p id="gatemsg" class="sub" style="margin:10px 0">Firebase(pu-payroll)에 연결 중…</p>
+  <div id="gateerr" style="color:var(--bad);font-size:13px;white-space:pre-wrap"></div>
+</div></div>
+
+<header>
+  <span class="logo">푸른노무법인 급여</span><span class="env">pu-payroll</span>
+  <div class="conn"><span class="dotc" id="dotc"></span><span id="conntxt">연결 확인 중</span></div>
+</header>
+<div class="layout"><nav id="nav"></nav><main id="main"></main></div>
+
+<script>
+// ── Firebase 설정 (pu-payroll 전용) ─────────────────────────
+var FB_CONFIG = {
+  apiKey: "AIzaSyBsa5dS_xEMojmLSo_-PEYXT3CJ90Coxw8",
+  authDomain: "pu-payroll.firebaseapp.com",
+  databaseURL: "https://pu-payroll-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "pu-payroll",
+  storageBucket: "pu-payroll.firebasestorage.app",
+  messagingSenderId: "688104057606",
+  appId: "1:688104057606:web:24e51a7098f7b5b2b44c87"
+};
+var ROOT = "payroll_os";   // 이 프로젝트 안에서도 아웃소싱 전용 칸
+
+var cache = {}, fbDb = null, ready = false;
+
+function dbGet(key, fb){ return (cache[key] !== undefined && cache[key] !== null) ? cache[key] : fb; }
+function dbSet(key, val){
+  cache[key] = val;
+  if(fbDb){ fbDb.ref(ROOT + "/" + key).set(val).catch(function(e){ console.warn(e); }); }
+  render();
+}
+
+function gateHide(){ document.getElementById('gate').style.display='none'; }
+function gateErr(msg){ document.getElementById('gateerr').textContent = msg; }
+function setConn(on){ document.getElementById('dotc').className='dotc'+(on?' on':'');
+  document.getElementById('conntxt').textContent = on?'연결됨':'오프라인'; }
+
+function boot(){
+  try{
+    firebase.initializeApp(FB_CONFIG);
+    fbDb = firebase.database();
+  }catch(e){ gateErr("초기화 실패: "+e.message); return; }
+  firebase.auth().signInAnonymously().catch(function(e){
+    gateErr("로그인 실패: "+e.code+"\n→ 콘솔 Authentication에서 '익명' 로그인을 켜주세요."); });
+  firebase.auth().onAuthStateChanged(function(user){
+    if(!user) return;
+    document.getElementById('gatemsg').textContent = "자료 불러오는 중…";
+    fbDb.ref(ROOT).once('value').then(function(snap){
+      cache = snap.val() || {};
+      ready = true; setConn(true); gateHide(); render();
+      // 실시간 반영
+      fbDb.ref(ROOT).on('value', function(s){ if(ready){ cache = s.val() || {}; render(); } });
+    }).catch(function(e){
+      gateErr("DB 읽기 실패: "+e.code+"\n→ Realtime Database를 만들었는지, 규칙을 확인하세요."); });
+  });
+}
+
+// ── 화면 ─────────────────────────────────────────────────────
+var App = { role:'admin', me:'주민정', screen:'cards', go:function(s){this.screen=s;render();} };
+var NAV = [{id:'cards',label:'⚙️ 설정 카드'},{id:'inbox',label:'📥 수신함'},{id:'payroll',label:'💰 급여 처리'}];
+
+function screenCards(){
+  var cards = dbGet('site_cards', []);
+  var html = '<h1>설정 카드</h1><div class="sub">Firebase(pu-payroll)에서 불러옴 · '+cards.length+'곳</div>';
+  html += '<button class="btn sec" onclick="importCards()">설정 카드(JSON) 가져와 서버에 저장</button>';
+  if(!cards.length){
+    html += '<div class="empty" style="margin-top:14px">아직 서버에 자료가 없습니다.<br>위 버튼으로 <b>site_cards.json</b>을 불러오면 이 Firebase에 저장됩니다.</div>';
+    return html;
+  }
+  html += '<div class="cards">' + cards.map(function(c){
+    var need=(c.확인필요||[]).length;
+    return '<div class="c"><div style="display:flex;justify-content:space-between"><span class="t">'+c.사업장+'</span>'+
+      (need?'<span class="badge warn">확인필요 '+need+'</span>':'<span class="badge ok">확인완료</span>')+'</div>'+
+      '<div class="m">'+(c.담당자||'')+' · 직원 '+((c.규모||{}).직원레코드||0)+'건</div>'+
+      '<div class="kv"><b>급여일</b>'+(c.급여일||'')+'</div>'+
+      '<div class="kv"><b>산정기간</b>'+(c.산정기간||'')+'</div>'+
+      '<div class="kv"><b>고용보험</b>'+((c.고용보험||{}).단수처리||'')+'</div></div>';
+  }).join('')+'</div>';
+  return html;
+}
+function screenSimple(t,d){ return '<h1>'+t+'</h1><div class="sub">'+d+'</div><div class="empty">서버 연결됨. 이 화면은 다음 단계에서 채웁니다.</div>'; }
+
+function render(){
+  document.getElementById('nav').innerHTML = NAV.map(function(n){
+    return '<button class="'+(App.screen===n.id?'on':'')+'" onclick="App.go(\''+n.id+'\')">'+n.label+'</button>'; }).join('');
+  var m=document.getElementById('main');
+  if(App.screen==='cards') m.innerHTML=screenCards();
+  else if(App.screen==='payroll') m.innerHTML=screenSimple('급여 처리','서버 저장 급여');
+  else m.innerHTML=screenSimple('수신함','자료 수신');
+}
+
+function importCards(){
+  var inp=document.createElement('input'); inp.type='file'; inp.accept='.json';
+  inp.onchange=function(e){ var f=e.target.files[0]; if(!f)return; var r=new FileReader();
+    r.onload=function(){ try{
+      var raw=JSON.parse(r.result); var arr=Array.isArray(raw)?raw:Object.values(raw);
+      dbSet('site_cards', arr); alert('카드 '+arr.length+'개를 서버(pu-payroll)에 저장했습니다.');
+    }catch(err){ alert('JSON 오류: '+err.message); } };
+    r.readAsText(f); };
+  inp.click();
+}
+window.importCards = importCards;
+
+boot();
+</script>
+</body>
+</html>
