@@ -62,7 +62,8 @@ def main():
         if not sb:
             continue
         a = agg[sb]
-        a["handler"] = a["handler"] or r.get("handler")
+        handler = r.get("handler") or r["path"].replace("/", "\\").split("\\")[0]
+        a["handler"] = a["handler"] or handler
         for s in r["sheets"]:
             a["months"].add((os.path.basename(r["path"]), s["sheet"]))
             for e in s["employees"]:
