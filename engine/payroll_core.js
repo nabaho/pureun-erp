@@ -22,11 +22,21 @@ const ROUND = {
 // 10원 단위 절사 (지방세 실측 규칙)
 function trunc10(x) { return Math.floor(x / 10) * 10; }
 
-// 고용보험 근로자부담 요율 연도별 이력 (설계 "기준값 연도별 이력" 반영)
-//  2019.10~2022.06 = 0.8% / 2022.07~ = 0.9%
+// 연도별 기준값 — pu-erp에서 이식한 rates.json에서 로드(설계: 마스터 단방향 동기화)
+var RATES = {};
+try { RATES = require('./rates.json'); } catch (e) { RATES = {}; }
+
 function empInsRateForYear(year) {
-  if (!year) return 0.009;
-  return year <= 2021 ? 0.008 : 0.009;   // 2022 상반기 일부 경계는 근사
+  var t = RATES.empInsEE || {};
+  if (year && t[String(year)] != null) return t[String(year)];
+  return (year && year <= 2021) ? 0.008 : 0.009;   // 폴백
+}
+
+// 최저임금(시급) 연도별 — 최저임금 미달 판정용
+function minWageForYear(year) {
+  var t = RATES.minWageHourly || {};
+  if (year && t[String(year)] != null) return t[String(year)];
+  return t["2026"] || 10320;
 }
 
 // 사업장 설정 카드 기본값 (하네스 실측 기반)
@@ -94,4 +104,5 @@ function compare(emp, cfg) {
   return res;
 }
 
-module.exports = { deriveFromGolden, compare, trunc10, ROUND, DEFAULT_SITE_CONFIG, empInsRateForYear };
+module.exports = { deriveFromGolden, compare, trunc10, ROUND, DEFAULT_SITE_CONFIG,
+  empInsRateForYear, minWageForYear, RATES };
