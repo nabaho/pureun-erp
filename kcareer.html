@@ -205,6 +205,11 @@ html.dark .empty{color:var(--text-mute)}
 .page:has(> .ocr-zone) > .page-head{flex:1 1 240px;margin-bottom:0}
 .page:has(> .ocr-zone) > .ocr-zone{flex:3 1 340px;margin-bottom:0}
 .page:has(> .ocr-zone) > *:not(.page-head):not(.ocr-zone):not(.page-drop-overlay){flex-basis:100%;width:100%}
+/* 그룹 메뉴 드래그 순서변경 피드백 */
+.nav-group-btn{cursor:grab}
+.nav-group-btn:active{cursor:grabbing}
+.nav-group-btn.dragging{opacity:.45}
+.nav-group-btn.drag-over{box-shadow:inset 0 3px 0 var(--teal,#0E7C66)}
 .nav-item .star{opacity:0;font-size:13px;color:#F5C451;flex-shrink:0;padding-right:4px}
 .nav-item:hover .star{opacity:.65}
 .nav-item .star.on,.nav-item .star:hover{opacity:1}
@@ -1493,6 +1498,22 @@ function toggleAllGroups(){
 function navOrderKey(g){ return 'nod_'+encodeURIComponent(g||'').slice(0,20); }
 function getNavOrder(g){ try{return JSON.parse(LS.get(NS+navOrderKey(g))||'[]');}catch(e){return[];} }
 function setNavOrder(g,ids){ LS.set(NS+navOrderKey(g),JSON.stringify(ids)); }
+/* 좌측 상단 그룹 메뉴 순서: 마우스 드래그로 위아래 이동 + 저장 */
+function getGroupOrder(){ try{ return JSON.parse(LS.get(NS+'nav_grp_order')||'[]'); }catch(e){ return []; } }
+function setGroupOrder(arr){ LS.set(NS+'nav_grp_order', JSON.stringify(arr||[])); }
+function initGroupDrag(){
+  var nav=document.getElementById('nav'); if(!nav) return; var src=null;
+  nav.querySelectorAll('.nav-group-btn').forEach(function(b){
+    b.draggable=true;
+    b.addEventListener('dragstart',function(e){ src=b; b.classList.add('dragging'); try{e.dataTransfer.effectAllowed='move';}catch(_){} });
+    b.addEventListener('dragend',function(){ src=null; b.classList.remove('dragging'); nav.querySelectorAll('.nav-group-btn').forEach(function(x){x.classList.remove('drag-over');});
+      setGroupOrder([].map.call(nav.querySelectorAll('.nav-group-btn'),function(x){return x.dataset.g;})); });
+    b.addEventListener('dragover',function(e){ e.preventDefault(); try{e.dataTransfer.dropEffect='move';}catch(_){} nav.querySelectorAll('.nav-group-btn').forEach(function(x){x.classList.remove('drag-over');}); b.classList.add('drag-over'); });
+    b.addEventListener('dragleave',function(){ b.classList.remove('drag-over'); });
+    b.addEventListener('drop',function(e){ e.preventDefault(); b.classList.remove('drag-over');
+      if(src&&src!==b){ var arr=[].slice.call(nav.querySelectorAll('.nav-group-btn')); var si=arr.indexOf(src),ti=arr.indexOf(b); nav.insertBefore(src, si<ti?b.nextSibling:b); } });
+  });
+}
 
 function buildNav(){
   const nav=document.getElementById('nav'); nav.innerHTML='';
@@ -1504,17 +1525,17 @@ function buildNav(){
     favs.forEach(id=>{ const {label,grp}=navInfo(id); fb.appendChild(mkItem(id,label,grp,true,true)); });
     nav.appendChild(fb);
   }
-  const groups=NAV.filter(g=>g.g).map(g=>g.g);
-  NAV.forEach(grp=>{
-    if(grp.g){
-      const b=document.createElement('div'); b.className='nav-item nav-group-btn'; b.dataset.g=grp.g;
-      b.innerHTML='<span class="lbl"></span>'; b.querySelector('.lbl').textContent=grp.g;
-      b.onclick=()=>selectGroup(grp.g);
-      nav.appendChild(b);
-    } else {
-      grp.items.forEach(([id,label])=>{ footer.appendChild(mkItem(id,label,null,favs.includes(id),false)); });
-    }
+  const gord=getGroupOrder();
+  const groupEntries=NAV.filter(g=>g.g);
+  if(gord.length) groupEntries.sort((a,b)=>{ const ai=gord.indexOf(a.g),bi=gord.indexOf(b.g); if(ai<0&&bi<0)return 0; if(ai<0)return 1; if(bi<0)return -1; return ai-bi; });
+  groupEntries.forEach(grp=>{
+    const b=document.createElement('div'); b.className='nav-item nav-group-btn'; b.dataset.g=grp.g;
+    b.innerHTML='<span class="lbl"></span>'; b.querySelector('.lbl').textContent=grp.g;
+    b.onclick=()=>selectGroup(grp.g);
+    nav.appendChild(b);
   });
+  NAV.filter(g=>!g.g).forEach(grp=>{ grp.items.forEach(([id,label])=>{ footer.appendChild(mkItem(id,label,null,favs.includes(id),false)); }); });
+  _safe(initGroupDrag);
   syncGroupUI((document.querySelector('.page-view.active')||{}).id||'page-home');
 }
 function selectGroup(g){ const grp=NAV.find(x=>x.g===g); if(!grp||!grp.items.length) return;
