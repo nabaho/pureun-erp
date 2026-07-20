@@ -4240,18 +4240,39 @@ var FB_APPCHECK_KEY='6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
 var fbDb=null, fbUid=null;
 var FB_SKIP=['id_docs','id_docs_enc','id_salt','api_key','gvision_key','staff_roster','_idpin','_idmeta','_idsalt','kc_theme','_fbbase','_fbauto'];
 var _fbBase=null, _fbPushT=null, _fbWatching=false;
+/* ===== 로그인 게이트: 통합시스템 로그아웃 시 경력관리도 잠금 ===== */
+function _authGateEl(){
+  var g=document.getElementById('authGate');
+  if(!g){ g=document.createElement('div'); g.id='authGate';
+    g.style.cssText='position:fixed;inset:0;z-index:99999;background:var(--card,#fff);display:none;align-items:center;justify-content:center;text-align:center;padding:24px';
+    g.innerHTML='<div><div style="font-size:52px;margin-bottom:14px">🔒</div>'
+      +'<div style="font-size:18px;font-weight:700;color:var(--navy,#1B2A4A);margin-bottom:8px">통합시스템 로그인이 필요합니다</div>'
+      +'<div style="font-size:13px;color:#667;line-height:1.7;margin-bottom:20px">로그아웃되었거나 세션이 만료되었습니다.<br>푸른 통합시스템에서 로그인한 뒤 이용하세요.</div>'
+      +'<a href="enter.html" style="display:inline-block;text-decoration:none;background:var(--teal,#0E7C66);color:#fff;padding:11px 24px;border-radius:8px;font-size:14px;font-weight:600">🏠 통합시스템으로 이동</a></div>';
+    (document.body||document.documentElement).appendChild(g);
+  }
+  return g;
+}
+function authGate(show){ try{ _authGateEl().style.display=show?'flex':'none'; }catch(e){} }
 function fbInit(){ if(location.protocol==='file:') return; if(typeof firebase==='undefined'||!firebase.initializeApp) return;
   try{ if(!firebase.apps||!firebase.apps.length) firebase.initializeApp(FB_CONFIG);
     if(FB_APPCHECK_KEY && firebase.appCheck){ try{ firebase.appCheck().activate(new firebase.appCheck.ReCaptchaV3Provider(FB_APPCHECK_KEY), true); }catch(e){ console.warn('[AppCheck]',e&&e.message); } }
     fbDb=firebase.database();
+    authGate(true); /* 인증 확인 전 잠금 — 로그인 확인되면 해제 */
     /* 통합시스템 자동로그인: 같은 주소의 다른 앱(포털·pu-erp)과 로그인 세션을 공유(LOCAL 지속).
        → 포털에서 로그인하면 경력관리도 자동 로그인되고, Firebase가 1시간짜리 토큰을 자동 갱신하므로
          한동안 안 써도(관리 안 해도) 세션이 풀리지 않습니다. */
     try{ if(firebase.auth().setPersistence) firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){ console.warn('[persistence]',e&&e.message); }
-    firebase.auth().onAuthStateChanged(function(u){ fbUid=u?u.uid:null; fbUpdateUI(u); if(u&&typeof resolveMe==='function'){ try{ resolveMe(); }catch(e){} }
-      /* sso=1로 들어왔는데 아직 로그인 전이면, 공유 세션이 잡힐 때까지 잠시 후 한 번 더 확인 */
-      if(!u && /[?&]sso=1/.test(location.search) && !window._ssoRetried){ window._ssoRetried=true;
-        setTimeout(function(){ try{ var cu=firebase.auth().currentUser; if(cu){ fbUid=cu.uid; fbUpdateUI(cu); } }catch(e){} }, 1500); }
+    firebase.auth().onAuthStateChanged(function(u){ fbUid=u?u.uid:null; fbUpdateUI(u);
+      if(u){ authGate(false); if(typeof resolveMe==='function'){ try{ resolveMe(); }catch(e){} } }
+      else { _me={resolved:false,name:'',sid:'',role:'',isAdmin:true};
+        /* sso=1로 갓 진입한 경우엔 공유 세션이 잡힐 시간을 잠깐 준 뒤 잠금 판단 */
+        if(/[?&]sso=1/.test(location.search) && !window._ssoRetried){ window._ssoRetried=true;
+          setTimeout(function(){ try{ var cu=firebase.auth().currentUser;
+            if(cu){ fbUid=cu.uid; fbUpdateUI(cu); if(typeof resolveMe==='function') resolveMe(); authGate(false); }
+            else authGate(true); }catch(e){ authGate(true); } }, 1500); }
+        else authGate(true);
+      }
     });
   }catch(e){ console.warn('fbInit',e); } }
 function fbUpdateUI(u){ var lo=document.getElementById('fbLoggedOut'), li=document.getElementById('fbLoggedIn'), btn=document.getElementById('fbBtn');
