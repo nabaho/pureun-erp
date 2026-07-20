@@ -1345,8 +1345,14 @@ async function fbSyncDown(){
     try{
       const snap=await _fbDB.ref(node).get();
       if(snap.exists()){
+        const inc=snap.val();
+        if((lsKey==='p_cos'||lsKey==='p_scheds')&&_isBulkShrink(JSON.parse(localStorage.getItem(lsKey)||'[]'),inc)){
+          console.warn('[안전장치] 비정상 축소로 자동 반영 보류:',lsKey);
+          if(typeof toast==='function')toast(`⚠️ 클라우드의 ${lsKey==='p_cos'?'사업장':'일정'} 데이터가 비정상적으로 적어 자동 반영을 보류했습니다 (기존 데이터 유지)`,'err');
+          continue;
+        }
         _fbSuppress=true;
-        try{ lsSet(lsKey,JSON.stringify(snap.val())); }
+        try{ lsSet(lsKey,JSON.stringify(inc)); }
         finally{ _fbSuppress=false; }
       }
     }catch(e){}
@@ -1359,7 +1365,13 @@ function fbSubscribe(){
   for(const[lsKey,node]of Object.entries(FB_NODES)){
     _fbDB.ref(node).on('value',snap=>{
       if(!snap.exists())return;
-      const incoming=JSON.stringify(snap.val());
+      const val=snap.val();
+      if((lsKey==='p_cos'||lsKey==='p_scheds')&&_isBulkShrink(JSON.parse(localStorage.getItem(lsKey)||'[]'),val)){
+        console.warn('[안전장치] 실시간 비정상 축소 반영 보류:',lsKey);
+        if(typeof toast==='function')toast(`⚠️ 클라우드의 ${lsKey==='p_cos'?'사업장':'일정'} 데이터가 비정상적으로 적어 자동 반영을 보류했습니다 (기존 데이터 유지)`,'err');
+        return;
+      }
+      const incoming=JSON.stringify(val);
       if(localStorage.getItem(lsKey)===incoming)return; // 동일하면 skip
       _fbSuppress=true;
       try{ lsSet(lsKey,incoming); }
@@ -1459,9 +1471,23 @@ function getHoliday(ds){
 function getTypes(){const s=localStorage.getItem('p_types');if(!s){lsSet('p_types',JSON.stringify(DEFAULT_TYPES));return DEFAULT_TYPES;}return JSON.parse(s).map(t=>({mandatoryField:0,fullName:'',agency:'',exclusiveDay:false,...t}));}
 function setTypes(v){lsSet('p_types',JSON.stringify(v));fbPush('p_types',v);}
 function getCos(){return JSON.parse(localStorage.getItem('p_cos')||'[]');}
-function setCos(v){lsSet('p_cos',JSON.stringify(v));fbPush('p_cos',v);}
+// ===== 데이터 안전장치: 대량 삭제(비정상 축소) 감지 =====
+// 기존이 5건 이상인데 새 값이 기존의 20% 미만이면 '실수/오작동에 의한 대량 삭제'로 판단
+function _cnt(x){return Array.isArray(x)?x.length:(x&&typeof x==='object'?Object.keys(x).length:0);}
+function _isBulkShrink(oldV,newV){const o=_cnt(oldV),n=_cnt(newV);return o>=5&&n<o*0.2;}
+function setCos(v){
+  try{const old=JSON.parse(localStorage.getItem('p_cos')||'[]');
+    if(_isBulkShrink(old,v)&&!confirm(`⚠️ 사업장이 ${_cnt(old)}개 → ${_cnt(v)}개로 크게 줄어듭니다.\n실수로 데이터가 지워지는 것일 수 있습니다.\n\n정말 저장하시겠습니까?`)){return;}
+  }catch(e){}
+  lsSet('p_cos',JSON.stringify(v));fbPush('p_cos',v);
+}
 function getScheds(){return JSON.parse(localStorage.getItem('p_scheds')||'[]');}
-function setScheds(v){lsSet('p_scheds',JSON.stringify(v));fbPush('p_scheds',v);}
+function setScheds(v){
+  try{const old=JSON.parse(localStorage.getItem('p_scheds')||'[]');
+    if(_isBulkShrink(old,v)&&!confirm(`⚠️ 일정이 ${_cnt(old)}개 → ${_cnt(v)}개로 크게 줄어듭니다.\n실수로 데이터가 지워지는 것일 수 있습니다.\n\n정말 저장하시겠습니까?`)){return;}
+  }catch(e){}
+  lsSet('p_scheds',JSON.stringify(v));fbPush('p_scheds',v);
+}
 const PHOTOS={};
 
 // ===== 사진 영속 저장 (IndexedDB) =====
@@ -2266,8 +2292,8 @@ function importJson(file){
 // ===== 자동 백업 (이 기기 localStorage 스냅샷, 최근 8개) =====
 const AUTOBK_KEY='p_autobackups', AUTOBK_MAX=8;
 function autoKeepMax(){ let n=parseInt(localStorage.getItem('p_autoKeep'),10); if(!(n>=3&&n<=30))n=AUTOBK_MAX; return n; }
-function autoDlOn(){ return localStorage.getItem('p_autoDl')==='1'; } // 기본 꺼짐 (원하면 설정에서 켬)
-function autoDlFreq(){ return localStorage.getItem('p_autoDlFreq')==='weekly'?'weekly':'daily'; } // 기본 매일
+function autoDlOn(){ return localStorage.getItem('p_autoDl')!=='0'; } // 기본 켜짐 (안전 백업 · 설정에서 끌 수 있음)
+function autoDlFreq(){ return localStorage.getItem('p_autoDlFreq')==='daily'?'daily':'weekly'; } // 기본 매주 (과도한 다운로드 방지)
 function autoDownloadDaily(){
   if(!autoDlOn())return;
   let cos=[],sch=[];
