@@ -4063,6 +4063,29 @@ function _puCertRows(name){
   });
   return any?rows:null;
 }
+/* ===== 접근권한: 로그인 신원 판별 (직원 본인 / 대표 전체) ===== */
+function _sidToEmail(sid){ return String(sid||'').toLowerCase().replace(/-/g,'')+'@pureun.kr'; }
+var _me={resolved:false,name:'',sid:'',role:'',isAdmin:true}; /* 미해결 시엔 전체표시(주 사용자=대표) */
+async function resolveMe(){
+  try{
+    var cu=(typeof firebase!=='undefined'&&firebase.auth)?firebase.auth().currentUser:null;
+    if(!cu||!cu.email||typeof fbDb==='undefined'||!fbDb){ return; }
+    var em=String(cu.email).toLowerCase();
+    var s=await fbDb.ref('data/user_dir').once('value'); var v=s.val();
+    var arr=v?(Array.isArray(v)?v:Object.keys(v).map(function(k){return v[k];})):[];
+    var acct=arr.filter(Boolean).find(function(u){ return u&&u.sid&&_sidToEmail(u.sid)===em; });
+    if(acct){ _me={resolved:true,name:acct.name||'',sid:String(acct.sid||''),role:acct.role||'member',
+      isAdmin:(acct.role==='admin'||acct.role==='admin-delegate'||acct.isAdmin===true||acct.isOwner===true||acct.isFullViewer===true)}; }
+    else { _me={resolved:true,name:'',sid:'',role:'member',isAdmin:false}; }
+    /* 이미 그려진 실적 화면 갱신 */
+    Object.keys(PU_COLLS).forEach(function(coll){ var cache=null; try{ cache=JSON.parse(LS.get(NS+PU_COLLS[coll].cache)||'null'); }catch(e){} if(cache&&cache.byMgr){ try{ renderPuPerf(coll,cache.byMgr); }catch(e){} } });
+  }catch(e){ console.warn('resolveMe',e); }
+}
+/* 화면에 보일 담당자 이름: 대표/미해결=전체, 직원=본인만 */
+function _puFilterNames(names){
+  if(!_me.resolved || _me.isAdmin) return names;
+  return names.filter(function(n){ return n===_me.name; });
+}
 async function loadPuPerf(coll,force){
   var cfg=PU_COLLS[coll]; if(!cfg) return;
   var box=document.getElementById(cfg.box); if(!box) return;
@@ -4082,8 +4105,8 @@ async function loadPuPerf(coll,force){
 }
 function renderPuPerf(coll,byMgr){
   var cfg=PU_COLLS[coll]; var box=document.getElementById(cfg.box); if(!box) return;
-  var names=Object.keys(byMgr).sort(function(a,b){return a.localeCompare(b,'ko');});
-  if(!names.length){ box.innerHTML=''; return; }
+  var names=_puFilterNames(Object.keys(byMgr).sort(function(a,b){return a.localeCompare(b,'ko');}));
+  if(!names.length){ box.innerHTML=(_me.resolved&&!_me.isAdmin)?'<div style="font-size:12px;color:var(--text-mute);padding:10px">본인(주담당) 실적이 없습니다</div>':''; return; }
   var html='<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">'
     +'<div style="background:var(--soft);padding:8px 12px;font-size:12px;font-weight:700;color:var(--navy)">🔗 pu-erp '+cfg.label+' 실적 (주담당별) <span style="font-weight:400;color:var(--text-mute)">— 실시간 연동</span></div>';
   names.forEach(function(nm){ var list=byMgr[nm];
@@ -4119,8 +4142,8 @@ async function loadPuConsulting(force){
 }
 function renderPuConsulting(byMgr){
   var box=document.getElementById('puConsultBox'); if(!box) return;
-  var names=Object.keys(byMgr).sort(function(a,b){return a.localeCompare(b,'ko');});
-  if(!names.length){ box.innerHTML=''; return; }
+  var names=_puFilterNames(Object.keys(byMgr).sort(function(a,b){return a.localeCompare(b,'ko');}));
+  if(!names.length){ box.innerHTML=(_me.resolved&&!_me.isAdmin)?'<div style="font-size:12px;color:var(--text-mute);padding:10px">본인(주담당) 실적이 없습니다</div>':''; return; }
   var html='<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">'
     +'<div style="background:var(--soft);padding:8px 12px;font-size:12px;font-weight:700;color:var(--navy)">🔗 pu-erp 컨설팅 실적 (주담당별) <span style="font-weight:400;color:var(--text-mute)">— 실시간 연동 · 원본은 pu-erp에서 관리</span></div>';
   names.forEach(function(nm){ var list=byMgr[nm];
@@ -4142,6 +4165,7 @@ function renderPuConsulting(byMgr){
 
 /* ===== 담당자별 실적증명서 (인쇄/PDF) ===== */
 function issuePerfCert(name){
+  if(_me.resolved && !_me.isAdmin && name!==_me.name){ toast('본인의 실적증명서만 발급할 수 있습니다'); return; }
   var rows=_puCertRows(name);
   if(rows===null){ toast('먼저 각 실적 화면에서 [🔗 pu-erp 불러오기]를 눌러 실적을 불러오세요'); return; }
   if(!rows.length && !confirm(name+' 님의 불러온 실적이 없습니다.\n그래도 빈 증명서를 만들까요?')) return;
@@ -4207,7 +4231,7 @@ function fbInit(){ if(location.protocol==='file:') return; if(typeof firebase===
        → 포털에서 로그인하면 경력관리도 자동 로그인되고, Firebase가 1시간짜리 토큰을 자동 갱신하므로
          한동안 안 써도(관리 안 해도) 세션이 풀리지 않습니다. */
     try{ if(firebase.auth().setPersistence) firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){ console.warn('[persistence]',e&&e.message); }
-    firebase.auth().onAuthStateChanged(function(u){ fbUid=u?u.uid:null; fbUpdateUI(u);
+    firebase.auth().onAuthStateChanged(function(u){ fbUid=u?u.uid:null; fbUpdateUI(u); if(u&&typeof resolveMe==='function'){ try{ resolveMe(); }catch(e){} }
       /* sso=1로 들어왔는데 아직 로그인 전이면, 공유 세션이 잡힐 때까지 잠시 후 한 번 더 확인 */
       if(!u && /[?&]sso=1/.test(location.search) && !window._ssoRetried){ window._ssoRetried=true;
         setTimeout(function(){ try{ var cu=firebase.auth().currentUser; if(cu){ fbUid=cu.uid; fbUpdateUI(cu); } }catch(e){} }, 1500); }
