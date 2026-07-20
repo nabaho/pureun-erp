@@ -30,13 +30,30 @@ def mask_rrn_image(img_path):
     raise NotImplementedError("이미지 주민번호 마스킹 미구현 — 전송 전 필수 구현")
 
 
-# ── 2) 비전 호출 (대표님 API 키 필요 — stub) ──────────────────
+# ── 2) 비전 호출 (대표님 API 키 필요) ─────────────────────────
+def load_api_key():
+    """키를 안전하게 로드: (1)환경변수 GEMINI_API_KEY, (2)gitignore된 로컬 파일.
+    ★ 키는 코드/채팅/git 어디에도 하드코딩 금지. 이 함수가 대표님 PC에서만 읽음."""
+    k = os.environ.get("GEMINI_API_KEY")
+    if k:
+        return k
+    keyfile = os.path.join(os.path.dirname(__file__), ".secrets", "gemini.key")
+    if os.path.exists(keyfile):
+        return open(keyfile, encoding="utf-8").read().strip()
+    return None
+
 def call_vision(img_path, model):
-    """[stub] 실제로는 Gemini Flash / Claude 비전 API 호출.
-    키 세팅 후 이 함수만 구현하면 파이프라인 가동.
-    반환 예: {'employees':[{성명, 기본급, 소득세, ...}], 'confidence':0.9}"""
-    raise NotImplementedError(
-        "비전 API 키 필요. 대표님이 Gemini/Claude 키 제공 + 외부전송 동의 후 구현.")
+    """Gemini Flash / Claude 비전 호출. 키 있으면 동작.
+    ⚠ 전송 전 mask_rrn_image 필수. 유료 티어 사용(무료는 학습에 쓰일 수 있음)."""
+    key = load_api_key()
+    if not key:
+        raise RuntimeError("API 키 없음. 환경변수 GEMINI_API_KEY 또는 engine/.secrets/gemini.key 필요.")
+    # [구현 예정] google-generativeai 로 Gemini Flash 비전 호출:
+    #   import google.generativeai as genai; genai.configure(api_key=key)
+    #   model=genai.GenerativeModel('gemini-1.5-flash')
+    #   resp=model.generate_content([prompt, {'mime_type':'image/jpeg','data':masked_bytes}])
+    #   → 급여 표를 JSON으로 파싱. (주민번호 마스킹된 이미지만 전송)
+    raise NotImplementedError("call_vision 본체 미구현 — 키 확인됨. 라이브러리 설치 후 구현.")
 
 
 # ── 3) 3중 방어 검산 ─────────────────────────────────────────
