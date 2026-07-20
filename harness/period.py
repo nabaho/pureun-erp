@@ -132,6 +132,13 @@ def main():
             lines.append(f"  ... 외 {len(only_fail)-25}곳")
     lines.append("\n※ 실패 사업장은 대장에 기간 표기가 없는 곳 - 설정 카드에서 사람이 지정(설계 D1 대로).")
 
+    # 설정 카드용 JSON: 사업장 → 대표 산정기간
+    pjson = {}
+    for sb in site_patterns:
+        pjson[sb] = site_patterns[sb].most_common(1)[0][0]
+    with open(os.path.join(OUT_DIR, "period.json"), "w", encoding="utf-8") as f:
+        json.dump(pjson, f, ensure_ascii=False, indent=1)
+
     out = "\n".join(lines)
     with open(os.path.join(OUT_DIR, "period_summary.txt"), "w", encoding="utf-8") as f:
         f.write(out)

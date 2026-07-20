@@ -163,6 +163,15 @@ def main():
         lines.append("미확인(폴더명에 급여일 없음): " + ", ".join(no_payday[:20]) +
                      (" ..." if len(no_payday) > 20 else ""))
 
+    # 설정 카드 생성용 JSON 덤프
+    dump = {
+        "rounding": {k: v for k, v in rounding.items()},
+        "payday": site_payday,
+        "dupe": {k: dict(v) for k, v in dupe_by_site.items() if v},
+    }
+    with open(os.path.join(OUT_DIR, "analyze.json"), "w", encoding="utf-8") as f:
+        json.dump(dump, f, ensure_ascii=False, indent=1)
+
     out = "\n".join(lines)
     with open(os.path.join(OUT_DIR, "analyze_summary.txt"), "w", encoding="utf-8") as f:
         f.write(out)
