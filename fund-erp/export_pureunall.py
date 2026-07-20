@@ -22,7 +22,7 @@ INCLUDE = [
 ]
 # ❌ 제외 확인용 (실수 방지 검사)
 #  templates/ = 서식 원본 엑셀(사업장 실데이터 포함) → fund.db 와 동일하게 저장소 제외, 배포 시 별도 동봉
-FORBID = ["fund.db", "scan", "uploads", "__pycache__", "pureunall_package", "templates"]
+FORBID = ["fund.db", "scan", "uploads", "__pycache__", "pureunall_package", "templates", "backups"]
 
 
 def main():
