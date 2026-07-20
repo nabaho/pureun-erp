@@ -74,14 +74,30 @@
 var FB_CONFIG={apiKey:'AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA',databaseURL:'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app',projectId:'pureun-erp',appId:'1:936817166182:web:9bd31f70d0afdf5fca2aa7',messagingSenderId:'936817166182'};
 var FB_APPCHECK_KEY='6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
 var PORTAL_URL='enter.html', NS='fund_erp';
-var fbDb=null, funds={}, S={view:'home', fundId:null, tab:'info', q:''};
+var fbDb=null, funds={}, S={view:'home', fundId:null, tab:'info', q:'', year:new Date().getFullYear()};
+var ANNUAL_TMPL=[
+  ['OPS-01','매월 1~10일','전월 통장거래 가져오기 → 자동분개 검토·승인',null,false],
+  ['OPS-02','매월 말','월마감 (미분류·증빙 확인 후 잠금)',null,false],
+  ['OPS-03','분기','분기 운영점검 (기본재산 변동·증빙 누락 점검)',null,false],
+  ['OPS-04','수시','출연 약정·입금 대사 / 기본재산 변경 시 보고(별지 제10호)',null,false],
+  ['SUP-01','공고 시','공단·지자체 지원금 신청·정산',null,true],
+  ['RPT-01','9~11월','차기연도 사업계획·예산 수립, 협의회 상정',[0,'11-30'],false],
+  ['CLS-01','12월','가결산 (연말 잔액·미지급 정리)',[0,'12-31'],false],
+  ['CLS-02','익년 1~2월','결산 확정·재무제표 작성',[1,'02-15'],false],
+  ['AUD-01','익년 2월','감사 실시·감사보고서 작성',[1,'02-20'],false],
+  ['RPT-02','익년 2~3월','협의회 결산·차기 사업계획 승인',[1,'03-15'],false],
+  ['RPT-03','익년 3월','운영상황보고서(별지 제15호) 제출 — 회계연도 종료 후 3개월 이내',[1,'03-31'],false],
+  ['TAX-01','익년 3월','수익사업·원천세 신고 해당성 검토',[1,'03-31'],false]
+];
+var SUB_FIELDS=[['notice','공고·신청 메모','text'],['request_amount','신청액(원)','num'],
+  ['decided_amount','결정액(원)','num'],['paid_date','교부·입금일','date'],['spent_amount','집행액(원)','num']];
 
 var FIELDS=[['name','기금법인명','text'],['short_name','약칭','text'],['fund_type','유형','select'],['region','지역','text'],
   ['manager','담당','text'],['chairman','대표자','text'],['inka_no','인가번호','text'],['inka_date','인가일','date'],
   ['corp_reg_no','법인등록번호','text'],['reg_date','설립등기일','date'],['tax_id_no','고유번호','text'],
   ['tax_office','관할세무서','text'],['registry_office','관할등기소','text'],['address','소재지','text']];
 var KEY5=['inka_no','inka_date','corp_reg_no','reg_date','tax_id_no'];
-var TABS=[['info','기금 정보',1],['sites','참여사업장',1],['annual','연간 일정',0],['subsidy','지원금',0],
+var TABS=[['info','기금 정보',1],['sites','참여사업장',1],['annual','연간 일정',1],['subsidy','지원금',1],
   ['closing','회계·결산',0],['welfare','목적사업·대부',0],['events','변경 이벤트',0],['gen','서류 생성',0]];
 var SITE_FIELDS=[['name','상호','text'],['ceo','대표자','text'],['biz_no','사업자등록번호','text'],
   ['biz_type','업종','text'],['company_size','상시근로자수','text'],['address','소재지','text']];
@@ -180,11 +196,15 @@ function renderFund(){
     +'<div class="kv"><span>인가번호 <b>'+esc(f.inka_no||'—')+'</b></span><span>법인등록번호 <b>'+esc(f.corp_reg_no||'—')+'</b></span>'
     +'<span>고유번호 <b>'+esc(f.tax_id_no||'—')+'</b></span><span>소재지 <b>'+esc(f.address||'—')+'</b></span></div></div>';
   var tabbar='<div class="tabbar">'+TABS.map(function(t){
+    if(t[0]==='subsidy'&&f.fund_type==='사내') return '';   // 지원금은 공동 전용
     if(t[2]) return '<div class="tab'+(S.tab===t[0]?' on':'')+'" onclick="S.tab=\''+t[0]+'\';renderFund()">'+t[1]+'</div>';
     return '<div class="tab soon" title="다음 단계에서 추가">'+t[1]+' ·</div>';
   }).join('')+'</div>';
+  if(S.tab==='subsidy'&&f.fund_type==='사내') S.tab='info';
   var body = S.tab==='info' ? infoForm(f)
     : S.tab==='sites' ? sitesTab()
+    : S.tab==='annual' ? annualTab(f)
+    : S.tab==='subsidy' ? subsidyTab(f)
     : '<div class="panel muted">이 탭은 다음 단계에서 이전됩니다.</div>';
   $('app').innerHTML=head+tabbar+body;
 }
@@ -271,6 +291,82 @@ function importSites(){
     }; rd.readAsText(f);
   };
   inp.click();
+}
+
+// ── 연도 선택 (연간/지원금 공용) ──
+function yearSel(){
+  var y=new Date().getFullYear(), opts='';
+  for(var i=y+1;i>=y-3;i--) opts+='<option'+(S.year===i?' selected':'')+'>'+i+'</option>';
+  return '<select onchange="S.year=+this.value;S.annualFor=null;renderFund()" style="padding:5px 8px;border:1px solid var(--line);border-radius:7px;font-size:12.5px">'+opts+'</select>';
+}
+function fmtDeadline(dl){
+  if(!dl) return '';
+  var base=S.year+dl[0];
+  return '기한 '+base+'-'+dl[1];
+}
+
+// ── 연간 일정 (2단계) ──
+function annualTab(f){
+  var key=S.fundId+'/'+S.year;
+  if(S.annualFor!==key){
+    S.annualFor=key; S.annual=null;
+    fbDb.ref(NS+'/annual/'+S.fundId+'/'+S.year).once('value').then(function(s){ S.annual=s.val()||{}; if(S.tab==='annual'&&S.view==='fund') renderFund(); })
+      .catch(function(){ S.annual={}; if(S.tab==='annual') renderFund(); });
+    return '<div class="panel muted">불러오는 중…</div>';
+  }
+  var done=S.annual||{};
+  var items=ANNUAL_TMPL.filter(function(t){ return !(t[4] && f.fund_type==='사내'); });  // SUP는 공동만
+  var nDone=items.filter(function(t){return done[t[0]]&&done[t[0]].done;}).length;
+  var rows=items.map(function(t){
+    var d=done[t[0]]&&done[t[0]].done;
+    var dl=fmtDeadline(t[3]);
+    return '<div style="display:flex;align-items:flex-start;gap:10px;padding:9px 4px;border-bottom:1px solid var(--line)'+(d?';opacity:.55':'')+'">'
+      +'<input type="checkbox"'+(d?' checked':'')+' onchange="toggleAnnual(\''+t[0]+'\',this.checked)" style="margin-top:3px">'
+      +'<div style="flex:1"><div style="font-size:13px;font-weight:600'+(d?';text-decoration:line-through':'')+'">'+esc(t[2])+'</div>'
+      +'<div class="muted" style="font-size:11.5px">'+esc(t[1])+(dl?' · <span style="color:var(--warn)">'+dl+'</span>':'')+'</div></div></div>';
+  }).join('');
+  return '<div class="panel"><div class="row"><h2>연간 일정</h2>'+yearSel()
+    +'<span class="stat">진행 '+nDone+'/'+items.length+'</span><span style="flex:1"></span></div>'
+    +'<div style="margin-top:10px">'+rows+'</div>'
+    +'<p class="muted" style="font-size:11.5px;margin-top:10px">체크하면 완료로 저장됩니다. 운영상황보고(별지15호) 기한은 회계연도 종료 후 3개월(익년 3-31)입니다.</p></div>';
+}
+function toggleAnnual(code,on){
+  fbDb.ref(NS+'/annual/'+S.fundId+'/'+S.year+'/'+code).set({done:on,done_date:on?ymd():''})
+    .then(function(){ if(!S.annual)S.annual={}; S.annual[code]={done:on}; renderFund(); });
+}
+function ymd(){var d=new Date();function p(n){return(n<10?'0':'')+n;}return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
+
+// ── 지원금 (2단계, 공동 전용) ──
+function subsidyTab(f){
+  var yd=(f.years&&f.years[S.year]&&f.years[S.year].subsidy)||{};
+  // 참여사업장 집계 (S.sites 로드돼 있으면 사용, 아니면 로드)
+  if(S.sitesFor!==S.fundId){
+    S.sitesFor=S.fundId; S.sites=null;
+    fbDb.ref(NS+'/sites/'+S.fundId).once('value').then(function(s){S.sites=s.val()||{};if(S.tab==='subsidy')renderFund();});
+    return '<div class="panel muted">불러오는 중…</div>';
+  }
+  var act=Object.keys(S.sites||{}).map(function(k){return S.sites[k];}).filter(function(s){return s.status!=='closed';});
+  var nSite=act.length, nEmp=act.reduce(function(s,x){return s+(num(x.company_size)||0);},0);
+  var flds=SUB_FIELDS.map(function(c){
+    var v=yd[c[0]]||'';
+    return '<div class="fld'+(c[0]==='notice'?' full':'')+'"><label>'+c[1]+'</label><input id="su-'+c[0]+'" type="'+(c[2]==='date'?'date':'text')+'" value="'+esc(v)+'"></div>';
+  }).join('');
+  var dec=num(yd.decided_amount)||0, sp=num(yd.spent_amount)||0;
+  var recon = dec? (sp>dec?'<span class="chip dg">과다집행 '+(sp-dec).toLocaleString()+'원</span>':sp<dec?'<span class="chip warn">미집행 '+(dec-sp).toLocaleString()+'원</span>':'<span class="chip ok">정산 일치</span>'):'';
+  return '<div class="panel"><div class="row"><h2>지원금</h2>'+yearSel()+'<span style="flex:1"></span>'
+    +'<span class="stat">참여 '+nSite+'개사</span><span class="stat">수혜근로자 '+nEmp.toLocaleString()+'명</span></div>'
+    +'<div id="msg" class="msg"></div>'
+    +'<div class="grid" style="margin-top:12px">'+flds+'</div>'
+    +'<div class="row" style="margin-top:14px"><button class="primary" onclick="saveSubsidy()">💾 저장</button>'+recon+'</div>'
+    +'<p class="muted" style="font-size:11.5px;margin-top:8px">'+S.year+'년 지원 사업 정보. 결정액 대비 집행액으로 정산 상태가 자동 표시됩니다.</p></div>';
+}
+function saveSubsidy(){
+  var obj={}; SUB_FIELDS.forEach(function(c){var el=$('su-'+c[0]);if(el)obj[c[0]]=c[2]==='num'?(num(el.value)||''):el.value.trim();});
+  fbDb.ref(NS+'/funds/'+S.fundId+'/years/'+S.year+'/subsidy').set(obj).then(function(){
+    if(!funds[S.fundId].years)funds[S.fundId].years={}; if(!funds[S.fundId].years[S.year])funds[S.fundId].years[S.year]={};
+    funds[S.fundId].years[S.year].subsidy=obj;
+    var m=$('msg');m.className='msg ok';m.textContent='저장되었습니다.'; renderFund();
+  }).catch(function(e){var m=$('msg');m.className='msg err';m.textContent='저장 실패: '+e.message;});
 }
 
 // ── 간단 모달 ──
