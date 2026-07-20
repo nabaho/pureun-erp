@@ -81,8 +81,10 @@ var FIELDS=[['name','기금법인명','text'],['short_name','약칭','text'],['f
   ['corp_reg_no','법인등록번호','text'],['reg_date','설립등기일','date'],['tax_id_no','고유번호','text'],
   ['tax_office','관할세무서','text'],['registry_office','관할등기소','text'],['address','소재지','text']];
 var KEY5=['inka_no','inka_date','corp_reg_no','reg_date','tax_id_no'];
-var TABS=[['info','기금 정보',1],['sites','참여사업장',0],['annual','연간 일정',0],['subsidy','지원금',0],
+var TABS=[['info','기금 정보',1],['sites','참여사업장',1],['annual','연간 일정',0],['subsidy','지원금',0],
   ['closing','회계·결산',0],['welfare','목적사업·대부',0],['events','변경 이벤트',0],['gen','서류 생성',0]];
+var SITE_FIELDS=[['name','상호','text'],['ceo','대표자','text'],['biz_no','사업자등록번호','text'],
+  ['biz_type','업종','text'],['company_size','상시근로자수','text'],['address','소재지','text']];
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function $(id){return document.getElementById(id);}
@@ -181,7 +183,9 @@ function renderFund(){
     if(t[2]) return '<div class="tab'+(S.tab===t[0]?' on':'')+'" onclick="S.tab=\''+t[0]+'\';renderFund()">'+t[1]+'</div>';
     return '<div class="tab soon" title="다음 단계에서 추가">'+t[1]+' ·</div>';
   }).join('')+'</div>';
-  var body = S.tab==='info' ? infoForm(f) : '<div class="panel muted">이 탭은 다음 단계에서 이전됩니다.</div>';
+  var body = S.tab==='info' ? infoForm(f)
+    : S.tab==='sites' ? sitesTab()
+    : '<div class="panel muted">이 탭은 다음 단계에서 이전됩니다.</div>';
   $('app').innerHTML=head+tabbar+body;
 }
 function infoForm(f){
@@ -202,6 +206,83 @@ function saveInfo(){
   fbDb.ref(NS+'/funds/'+S.fundId).set(obj).then(function(){var m=$('msg');m.className='msg ok';m.textContent='저장되었습니다.';})
     .catch(function(e){var m=$('msg');m.className='msg err';m.textContent='저장 실패: '+e.message;});
 }
+
+// ── 참여사업장 (2단계) ──
+function num(v){ var n=parseInt(String(v||'').replace(/[^0-9]/g,''),10); return isNaN(n)?'':n; }
+function sitesTab(){
+  if(S.sitesFor!==S.fundId){
+    S.sitesFor=S.fundId; S.sites=null;
+    fbDb.ref(NS+'/sites/'+S.fundId).once('value').then(function(s){ S.sites=s.val()||{}; if(S.tab==='sites'&&S.view==='fund') renderFund(); })
+      .catch(function(e){ S.sites={}; if(S.tab==='sites') renderFund(); });
+    return '<div class="panel muted">불러오는 중…</div>';
+  }
+  var sites=S.sites||{};
+  var arr=Object.keys(sites).map(function(k){var o=Object.assign({},sites[k]);o._id=k;return o;})
+    .filter(function(s){return s.status!=='closed';});
+  arr.sort(function(a,b){return String(a.seq_label||'').localeCompare(String(b.seq_label||''),'ko',{numeric:true});});
+  var totalEmp=arr.reduce(function(s,x){return s+(num(x.company_size)||0);},0);
+  var rows=arr.map(function(s,i){
+    return '<tr onclick="editSite(\''+s._id+'\')"><td class="no">'+(i+1)+'</td>'
+      +'<td style="font-weight:700">'+esc(s.name||'—')+'</td><td>'+esc(s.ceo||'—')+'</td>'
+      +'<td>'+esc(s.biz_no||'—')+'</td><td>'+esc(s.biz_type||'—')+'</td>'
+      +'<td style="text-align:right">'+(num(s.company_size)||'—')+'</td>'
+      +'<td class="muted" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.address||'—')+'</td></tr>';
+  }).join('');
+  var tbl = arr.length
+    ? '<table><thead><tr><th>번호</th><th>상호</th><th>대표자</th><th>사업자번호</th><th>업종</th><th style="text-align:right">상시근로자</th><th>소재지</th></tr></thead><tbody>'+rows+'</tbody></table>'
+    : '<div class="muted" style="padding:20px 4px">등록된 참여사업장이 없습니다. [+ 사업장 추가] 또는 [📥 사업장 데이터 가져오기]로 시작하세요.</div>';
+  return '<div class="panel"><div class="row"><h2>참여사업장</h2>'
+    +'<span class="stat">'+arr.length+'개사</span><span class="stat">상시근로자 '+totalEmp.toLocaleString()+'명</span>'
+    +'<span style="flex:1"></span><button class="primary" onclick="editSite(\'\')">+ 사업장 추가</button>'
+    +(arr.length?'':' <button onclick="importSites()">📥 사업장 데이터 가져오기</button>')+'</div>'
+    +'<div style="margin-top:12px">'+tbl+'</div></div>';
+}
+function editSite(sid){
+  var s=(S.sites&&S.sites[sid])||{}; var isNew=!sid;
+  var flds=SITE_FIELDS.map(function(c){return '<div class="fld'+(c[0]==='address'?' full':'')+'"><label>'+c[1]+'</label>'
+    +'<input id="se-'+c[0]+'" type="'+c[2]+'" value="'+esc(s[c[0]]||'')+'"></div>';}).join('');
+  showModal('<h2 style="margin-bottom:10px">'+(isNew?'사업장 추가':'사업장 편집')+'</h2>'
+    +'<div class="grid">'+flds+'</div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:16px">'
+    +(isNew?'':'<button onclick="delSite(\''+sid+'\')" style="margin-right:auto;color:var(--danger)">삭제</button>')
+    +'<button onclick="closeM()">취소</button><button class="primary" onclick="saveSite(\''+sid+'\')">저장</button></div>');
+}
+function saveSite(sid){
+  var obj=Object.assign({}, (S.sites&&S.sites[sid])||{status:'active'});
+  SITE_FIELDS.forEach(function(c){var el=$('se-'+c[0]);if(el)obj[c[0]]=el.value.trim();});
+  if(!obj.name){ alert('상호를 입력하세요'); return; }
+  var ref = sid ? fbDb.ref(NS+'/sites/'+S.fundId+'/'+sid) : fbDb.ref(NS+'/sites/'+S.fundId).push();
+  ref.set(obj).then(function(){ S.sitesFor=null; closeM(); renderFund(); })
+    .catch(function(e){ alert('저장 실패: '+e.message); });
+}
+function delSite(sid){
+  if(!confirm('이 사업장을 삭제할까요?')) return;
+  fbDb.ref(NS+'/sites/'+S.fundId+'/'+sid).remove().then(function(){ S.sitesFor=null; closeM(); renderFund(); });
+}
+function importSites(){
+  var inp=document.createElement('input'); inp.type='file'; inp.accept='application/json';
+  inp.onchange=function(ev){ var f=ev.target.files&&ev.target.files[0]; if(!f) return;
+    var rd=new FileReader(); rd.onload=function(){
+      try{ var data=JSON.parse(rd.result);
+        if(!confirm('사업장 데이터를 Firebase로 가져올까요? (기금별 사업장 전체)')) return;
+        fbDb.ref(NS+'/sites').update(data).then(function(){ alert('가져오기 완료'); S.sitesFor=null; renderFund(); })
+          .catch(function(e){ alert('가져오기 실패: '+e.message); });
+      }catch(e){ alert('JSON 파싱 실패: '+e.message); }
+    }; rd.readAsText(f);
+  };
+  inp.click();
+}
+
+// ── 간단 모달 ──
+function showModal(html){
+  var m=document.createElement('div'); m.id='modalbg';
+  m.style.cssText='position:fixed;inset:0;background:rgba(20,30,50,.35);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px';
+  m.onclick=function(e){ if(e.target===m) closeM(); };
+  m.innerHTML='<div style="background:#fff;border-radius:14px;padding:20px 22px;max-width:640px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.25)">'+html+'</div>';
+  document.body.appendChild(m);
+}
+function closeM(){ var m=$('modalbg'); if(m) m.remove(); }
+document.addEventListener('keydown',function(e){ if(e.key==='Escape') closeM(); });
 </script>
 </body>
 </html>
