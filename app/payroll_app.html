@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>푸른노무법인 급여 — 앱 골격(3단계)</title>
+<!--
+  급여 아웃소싱 앱 골격 v0 (3단계 3-1)
+  - 단일 HTML · 빌드 없음 (설계 스택). 개인정보 미포함(코드). 실데이터는 런타임 로드.
+  - 핵심: dbGet/dbSet 추상화(로컬 → Firebase 교체점 1곳), 개발/운영 분리(환경 네임스페이스),
+    권한 2단계 스텁(담당자/관리자), 화면 라우터. 첫 화면 = 설정 카드.
+  - 나중에: dbGet/dbSet 내부만 Firebase RTDB로 교체하면 서버 연동(설계 D5·보안 반영).
+-->
+<style>
+:root{--navy:#2E3A8C;--navy2:#1F2963;--violet:#7C6CE0;--ok:#2E7D4F;--warn:#B26A00;--bad:#C43D3D;
+--ink:#23263B;--sub:#6B6F87;--line:#E3E5EF;--paper:#F5F6FA;--card:#FFF;}
+*{box-sizing:border-box;margin:0}
+body{font-family:'Malgun Gothic',sans-serif;background:var(--paper);color:var(--ink);font-size:14px}
+/* 개발 환경 테스트 띠 (개발/운영 분리 — 실데이터 오염 방지) */
+#devband{background:repeating-linear-gradient(45deg,#B26A00,#B26A00 12px,#8a5200 12px,#8a5200 24px);
+  color:#fff;text-align:center;font-size:12px;font-weight:700;padding:3px}
+header{background:var(--navy);color:#fff;display:flex;align-items:center;gap:14px;padding:12px 18px}
+header .logo{font-weight:800;font-size:16px;letter-spacing:-.02em}
+header .env{font-size:11px;background:#ffffff22;border:1px solid #ffffff55;border-radius:99px;padding:2px 9px}
+header .who{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:13px}
+header select{border-radius:8px;border:none;padding:5px 8px;font-family:inherit}
+.layout{display:flex;min-height:calc(100vh - 90px)}
+nav{width:180px;background:#fff;border-right:1px solid var(--line);padding:14px 10px;flex-shrink:0}
+nav button{display:block;width:100%;text-align:left;border:none;background:none;border-radius:10px;
+  padding:10px 12px;font-size:13.5px;cursor:pointer;color:var(--ink);font-family:inherit;margin-bottom:2px}
+nav button.on{background:var(--navy);color:#fff;font-weight:700}
+nav button:hover:not(.on){background:var(--paper)}
+main{flex:1;padding:22px 24px;overflow:auto}
+h1{font-size:20px;letter-spacing:-.02em;margin-bottom:4px}
+.sub{color:var(--sub);font-size:13px;margin-bottom:16px}
+.empty{background:#fff;border:1px dashed var(--line);border-radius:14px;padding:40px;text-align:center;color:var(--sub)}
+.btn{background:var(--navy);color:#fff;border:none;border-radius:10px;padding:9px 16px;cursor:pointer;font-size:13px;font-family:inherit}
+.btn.sec{background:#fff;color:var(--navy);border:1px solid var(--navy)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-top:14px}
+.c{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px}
+.c .t{font-weight:700;color:var(--navy)}
+.c .m{font-size:12px;color:var(--sub);margin:3px 0 8px}
+.c .kv{font-size:12.5px;margin:3px 0}.c .kv b{color:var(--sub);font-weight:600;display:inline-block;width:64px}
+.badge{font-size:11px;border-radius:99px;padding:2px 8px}
+.badge.warn{background:#FBF1DE;color:var(--warn)}.badge.ok{background:#E8F3EC;color:var(--ok)}
+.note{font-size:12px;color:var(--sub);margin-top:10px;line-height:1.7}
+.pill{display:inline-block;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:2px 8px;font-size:11px;margin:2px}
+</style>
+</head>
+<body>
+<div id="devband">● 개발(DEV) 환경 — 테스트 데이터 · 실제 급여와 분리됨</div>
+<header>
+  <span class="logo">푸른노무법인 급여</span>
+  <span class="env" id="envtag">DEV</span>
+  <div class="who">
+    <span id="whoami">담당자</span>
+    <label style="font-size:11px">권한
+      <select id="role" onchange="App.setRole(this.value)">
+        <option value="staff">담당자</option>
+        <option value="admin">관리자</option>
+      </select>
+    </label>
+  </div>
+</header>
+<div class="layout">
+  <nav id="nav"></nav>
+  <main id="main"></main>
+</div>
+
+<script>
+// ====================================================================
+//  저장소 추상화 (dbGet / dbSet)  ★ Firebase 교체점 — 이 두 함수 내부만 바꾸면 서버 연동
+//  개발/운영 분리: 키를 환경(dev/prod)으로 네임스페이스 → 실데이터 오염 원천 차단
+// ====================================================================
+var ENV = (location.search.indexOf('env=prod') >= 0) ? 'prod' : 'dev';
+function _k(key){ return 'pu:' + ENV + ':' + key; }
+function dbGet(key, fallback){
+  try{ var v = localStorage.getItem(_k(key)); return v==null ? fallback : JSON.parse(v); }
+  catch(e){ return fallback; }
+  // [Firebase 교체 시] return firebase.database().ref(clientScope()+'/'+key).once('value')...
+}
+function dbSet(key, value){
+  localStorage.setItem(_k(key), JSON.stringify(value));
+  // [Firebase 교체 시] firebase.database().ref(clientScope()+'/'+key).set(value)
+}
+
+// ====================================================================
+//  앱 상태 + 권한 2단계 스텁 (나중에 구글 로그인으로 교체)
+//  담당자 = 배정 사업장만 / 관리자 = 전체
+// ====================================================================
+var App = {
+  role: 'staff',
+  me: '주민정',           // 로그인 스텁: 담당자 이름 (실제=구글 계정)
+  screen: 'cards',
+  setRole: function(r){ this.role = r;
+    document.getElementById('whoami').textContent = (r==='admin'?'관리자':'담당자'); this.render(); },
+  go: function(s){ this.screen = s; this.render(); },
+  // 담당자면 자기 배정 사업장만 보이게(서버 규칙과 동일 원칙 — 여기선 UI 필터)
+  canSee: function(card){ return this.role==='admin' || (card.담당자 === this.me); },
+  render: render
+};
+
+// 샘플 카드(더미 — 코드에 개인정보 없음). 실데이터는 '가져오기'로 런타임 로드.
+var SAMPLE = [
+  {사업장:'샘플상사', 담당자:'주민정', 규모:{직원레코드:42,월수:12}, 급여일:'말일', 산정기간:'1일~말일',
+   고용보험:{단수처리:'절사',요율:'0.9%'}, 확인필요:[]},
+  {사업장:'샘플식당', 담당자:'주민정', 규모:{직원레코드:8,월수:9}, 급여일:'5일', 산정기간:'26일~25일',
+   고용보험:{단수처리:'반올림',요율:'0.9%'}, 확인필요:['급여일 확인','특수공제 등록']},
+  {사업장:'샘플제조', 담당자:'박은비', 규모:{직원레코드:60,월수:24}, 급여일:'10일', 산정기간:'1일~말일',
+   고용보험:{단수처리:'올림',요율:'0.9%'}, 확인필요:['동명이인 매칭']},
+];
+
+var NAV = [
+  {id:'cards', label:'⚙️ 설정 카드'},
+  {id:'inbox', label:'📥 수신함', soon:true},
+  {id:'payroll', label:'💰 급여 처리', soon:true},
+  {id:'review', label:'✅ 검토·확정', soon:true},
+];
+
+function renderNav(){
+  document.getElementById('nav').innerHTML = NAV.map(function(n){
+    return '<button class="'+(App.screen===n.id?'on':'')+'" onclick="App.go(\''+n.id+'\')">'+
+      n.label + (n.soon?' <span style="font-size:10px;color:#B26A00">(예정)</span>':'') + '</button>';
+  }).join('');
+}
+
+function screenCards(){
+  var cards = dbGet('site_cards', SAMPLE).filter(function(c){ return App.canSee(c); });
+  var visible = cards.length, isSample = (dbGet('site_cards', null)===null);
+  var html = '<h1>설정 카드</h1><div class="sub">'+
+    (App.role==='admin' ? '전체 사업장' : '내 담당 사업장('+App.me+')') +
+    ' · '+visible+'곳' + (isSample?' · <b style="color:#B26A00">샘플 데이터</b>':'') + '</div>';
+  html += '<button class="btn sec" onclick="App.importCards()">확정 카드(JSON) 가져오기</button>';
+  html += '<div class="cards">' + cards.map(function(c){
+    var need = c.확인필요 && c.확인필요.length;
+    return '<div class="c"><div style="display:flex;justify-content:space-between;align-items:center">'+
+      '<span class="t">'+c.사업장+'</span>'+
+      (need?'<span class="badge warn">확인필요 '+c.확인필요.length+'</span>':'<span class="badge ok">확인완료</span>')+'</div>'+
+      '<div class="m">'+c.담당자+' · 직원 '+c.규모.직원레코드+'건</div>'+
+      '<div class="kv"><b>급여일</b>'+c.급여일+'</div>'+
+      '<div class="kv"><b>산정기간</b>'+c.산정기간+'</div>'+
+      '<div class="kv"><b>고용보험</b>'+c.고용보험.단수처리+' / '+c.고용보험.요율+'</div>'+
+      (need?'<div class="note">⚠ '+c.확인필요.join(', ')+'</div>':'')+
+      '</div>';
+  }).join('') + '</div>';
+  html += '<div class="note" style="margin-top:18px">※ 담당자는 <b>배정 사업장 카드만</b> 보이고 수정 가능합니다(서버 보안규칙과 동일 원칙). 코드는 하나, 사업장 차이는 이 카드(데이터)에 담깁니다.</div>';
+  return html;
+}
+
+function screenSoon(name){
+  return '<h1>'+name+'</h1><div class="sub">3단계 다음 블록</div>'+
+    '<div class="empty">이 화면은 골격만 준비됐습니다.<br>수신함/급여/검토는 인증·백엔드 연동 후 구현됩니다.<br><br>'+
+    '<span class="pill">dbGet/dbSet 준비됨</span><span class="pill">권한 필터 준비됨</span><span class="pill">개발/운영 분리 적용됨</span></div>';
+}
+
+function render(){
+  renderNav();
+  document.getElementById('envtag').textContent = ENV.toUpperCase();
+  document.getElementById('devband').style.display = (ENV==='dev') ? '' : 'none';
+  var m = document.getElementById('main');
+  if(App.screen==='cards') m.innerHTML = screenCards();
+  else if(App.screen==='inbox') m.innerHTML = screenSoon('수신함');
+  else if(App.screen==='payroll') m.innerHTML = screenSoon('급여 처리');
+  else m.innerHTML = screenSoon('검토·확정');
+}
+
+App.importCards = function(){
+  var inp = document.createElement('input'); inp.type='file'; inp.accept='.json';
+  inp.onchange = function(e){
+    var f = e.target.files[0]; if(!f) return;
+    var r = new FileReader();
+    r.onload = function(){
+      try{
+        var raw = JSON.parse(r.result);
+        // 확정카드_확정.json 형태(객체) 또는 배열 모두 수용
+        var arr = Array.isArray(raw) ? raw : Object.values(raw);
+        dbSet('site_cards', arr);
+        alert('카드 '+arr.length+'개를 불러왔습니다.');
+        render();
+      }catch(err){ alert('JSON을 읽을 수 없습니다: '+err.message); }
+    };
+    r.readAsText(f);
+  };
+  inp.click();
+};
+
+render();
+</script>
+</body>
+</html>
