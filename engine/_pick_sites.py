@@ -10,9 +10,11 @@ def site(rel):
     if i >= len(r): return None
     s = re.sub(r'^\d+\s*[.\-]\s*', '', r[i]).strip()
     return re.sub(r'\s*[\(\[].*?[\)\]]\s*$', '', s).strip() or s
+import sys
+HANDLER = sys.argv[1] if len(sys.argv) > 1 else "주민정"
 agg = defaultdict(lambda: [0, 0, 0])
 for r in res:
-    if not r["ok"] or not r["path"].startswith("주민정"): continue
+    if not r["ok"] or not r["path"].startswith(HANDLER): continue
     sb = site(r["path"])
     for s in r["sheets"]:
         for e in s["employees"]:

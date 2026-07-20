@@ -51,10 +51,12 @@ def main():
     payday = analyze.get("payday", {})
     dupe = analyze.get("dupe", {})
 
+    STD_DED = ["소득세", "지방세", "국민연금", "건강보험", "장기요양", "고용보험"]
+
     # 사업장별 집계
     cards = {}
     agg = defaultdict(lambda: {"handler": None, "emp": 0, "months": set(),
-                               "fields": set(), "has_extra_ded": 0})
+                               "fields": set(), "has_extra_ded": 0, "gaps": []})
     for r in res:
         if not r.get("ok"):
             continue
@@ -71,9 +73,31 @@ def main():
                 a["fields"].update(e.keys())
                 if "기타공제" in e:
                     a["has_extra_ded"] += 1
+                # 미등록 공제 차액 = 골든 공제총액 − (표준6 + 기타공제 합)
+                if e.get("공제총액") is not None:
+                    parts = sum(e[f] for f in STD_DED if e.get(f) is not None) + (e.get("기타공제") or 0)
+                    if sum(1 for f in STD_DED if e.get(f) is not None) >= 4:
+                        a["gaps"].append(e["공제총액"] - parts)
+
+    def gap_summary(gaps):
+        if not gaps:
+            return {"판정": "공제총액 대조 불가(항목 부족)", "일치율": None}
+        n = len(gaps)
+        zero = sum(1 for g in gaps if g == 0)
+        nonzero = [g for g in gaps if g != 0]
+        pct = round(100 * zero / n)
+        info = {"판정": "표준6종으로 완결" if pct >= 90 else "미등록 공제 존재",
+                "완결율": f"{pct}%", "표본": n}
+        if nonzero:
+            nonzero.sort()
+            med = nonzero[len(nonzero) // 2]
+            info["미등록공제_중앙값"] = med
+            info["안내"] = "위 금액대의 사업장 특수공제(상조·기숙사·조합비 등)를 카드에 등록 필요"
+        return info
 
     for sb, a in agg.items():
         rnd = rounding.get(sb, {})
+        gapinfo = gap_summary(a["gaps"])
         card = {
             "사업장": sb,
             "담당자": a["handler"],
@@ -85,10 +109,10 @@ def main():
                 "요율": rnd.get("rate", "연도별 자동"),
                 "판정근거": f"{rnd.get('match','-')}/{rnd.get('n','-')}명 일치" if rnd else "-",
             },
-            "감지_공제항목": {
+            "공제항목": {
                 "기본6종": ["소득세", "지방세", "국민연금", "건강보험", "장기요양", "고용보험"],
                 "기타공제_감지": a["has_extra_ded"] > 0,
-                "비고": "공제총액에 사업장 특수공제(상조·기숙사 등) 있으면 여기 등록 필요",
+                "공제총액_대조": gapinfo,
             },
             "추출필드": sorted(a["fields"]),
             "주의": {
@@ -105,8 +129,8 @@ def main():
             card["확인필요"].append("고용보험 단수처리")
         if dupe.get(sb):
             card["확인필요"].append("동명이인 → 주민번호/보조키 매칭")
-        if not card["감지_공제항목"]["기타공제_감지"]:
-            card["확인필요"].append("특수 공제항목 유무 확인")
+        if gapinfo.get("판정") == "미등록 공제 존재":
+            card["확인필요"].append(f"미등록 공제 등록(추정 {gapinfo.get('미등록공제_중앙값','?')}원대)")
         cards[sb] = card
 
     with open(os.path.join(OUT_DIR, "site_cards.json"), "w", encoding="utf-8") as f:
