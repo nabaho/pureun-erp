@@ -64,6 +64,10 @@ def main():
 
     shell = inject(shell, "SAMPLE", card_list)
     shell = inject(shell, "PAYROLL_SAMPLE", payroll)
+    # 별도 저장공간(샘플앱과 충돌 방지) — 실데이터 전용 네임스페이스
+    shell = shell.replace(
+        "var ENV = (location.search.indexOf('env=prod') >= 0) ? 'prod' : 'dev';",
+        "var ENV = 'mydata';")
     # 로그인 스텁 담당자 기본값을 관리자로(혼자 다 보게)
     shell = shell.replace("role: 'staff',", "role: 'admin',")
     # 샘플 표시 문구 숨김(실제 데이터이므로)
