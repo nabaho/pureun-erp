@@ -1832,7 +1832,7 @@ function openDayModal(date){
             <div class="day-item-meta">
               <span class="day-badge" style="background:${att?.color||'#ccc'};color:#fff">${att?.name||'?'}</span>
               ${coAtts.map(c=>`<span class="day-badge" style="background:${c.color}44;color:${c.color};border:1px solid ${c.color}">+${c.name}</span>`).join('')}
-              <span class="day-badge" style="background:var(--sf2);color:var(--text)">${sc.round}회차</span>
+              <span class="day-badge" style="background:var(--sf2);color:var(--text)">${roundText(sc,'회차')}</span>
               <span class="day-badge" style="background:${sc.isField?'rgba(21,101,192,.12)':'rgba(59,130,246,.12)'};color:${sc.isField?'var(--accent)':'var(--info)'}">${ic}</span>
               ${endedDate?`<span class="day-badge" style="background:#7b8089;color:#fff;">종료일 ${endedDate}</span>`:''}
               ${hasPh?`<span class="day-ph">📷 사진 등록됨</span>`:''}
@@ -2009,20 +2009,23 @@ function openSingleModal(coId,typeId){
   const t=getTypes().find(x=>x.id===typeId);
   if(!co||!t)return;
   const maxR=getCoMaxRounds(coId,typeId);
-  const nr=nextRound(coId,typeId);
-  if(maxR>0&&nr>maxR){toast(`최대 ${maxR}회차 완료`,'err');return;}
+  const phase=curPhase(coId,typeId);
+  const phLbl=phase==='pre'?'사전진단 ':'';
+  const cap=phase==='pre'?PRE_ROUND_CAP:maxR;
+  const nr=nextRound(coId,typeId,phase);
+  if(cap>0&&nr>cap){toast(phase==='pre'?`사전진단 ${PRE_ROUND_CAP}회 완료 — '본컨설팅 시작'을 눌러 진행하세요`:`최대 ${maxR}회차 완료`,'err');return;}
   single={coId,typeId,isField:getFieldState(coId,typeId),selDate:'',calY:new Date().getFullYear(),calM:new Date().getMonth(),multi:false,picks:[]};
   q('#mSingleTitle').textContent='개별 일정 등록';
-  q('#mSingleInfo').textContent=`${co.name} · ${t.fullName||t.name} | ${nr}회차`;
-  // 기존 등록 현황 (총 회차 / 마지막 회차 날짜)
+  q('#mSingleInfo').textContent=`${co.name} · ${t.fullName||t.name} | ${phLbl}${nr}회차`;
+  // 기존 등록 현황 (현재 단계 기준 회차 / 마지막 회차 날짜)
   (function(){
-    const ex=getScheds().filter(s=>s.coId===coId&&s.typeId===typeId).sort((a,b)=>a.date<b.date?-1:1);
+    const ex=getScheds().filter(s=>s.coId===coId&&s.typeId===typeId&&schedPhase(s)===phase).sort((a,b)=>a.date<b.date?-1:1);
     const hEl=q('#mSingleHistory');
-    if(!ex.length){ hEl.innerHTML=`아직 등록된 일정이 없습니다. <b style="color:var(--accent);">1회차부터 시작</b>${maxR>0?` · 최대 ${maxR}회차`:''}`; return; }
+    if(!ex.length){ hEl.innerHTML=`${phase==='pre'?'<b style="color:var(--accent);">사전진단 단계</b> · ':''}아직 등록된 일정이 없습니다. <b style="color:var(--accent);">${phLbl}1회차부터 시작</b>${cap>0?` · 최대 ${cap}회`:''}`; return; }
     const last=ex[ex.length-1];
     const lastR=getScheds().find(s=>s.id===last.id)?.round||ex.length;
     const lf=last.isField?'📍방문':'🏢사무실';
-    hEl.innerHTML=`기존 <b style="color:var(--accent);">${ex.length}회</b> 등록됨 · 마지막 <b>${lastR}회차</b> (${last.date} ${lf})${maxR>0?` · 최대 ${maxR}회차`:''} → <b style="color:var(--accent);">다음 ${nr}회차</b>`;
+    hEl.innerHTML=`${phLbl}기존 <b style="color:var(--accent);">${ex.length}회</b> 등록됨 · 마지막 <b>${lastR}회차</b> (${last.date} ${lf})${cap>0?` · 최대 ${cap}회`:''} → <b style="color:var(--accent);">다음 ${phLbl}${nr}회차</b>`;
   })();
   qa('#mSingleField .topt').forEach(o=>o.classList.toggle('on',(o.dataset.f==='1')===single.isField));
   q('#mSingleMulti').checked=false;q('#mDragPalette').style.display='none';
@@ -2066,9 +2069,11 @@ function renderSingleCal(){
 function renderSingleSelected(){
   const sel=q('#mSingleSelected');
   if(!single.selDate){sel.textContent='날짜를 선택해주세요';return;}
-  const nr=nextRound(single.coId,single.typeId);
+  const phase=curPhase(single.coId,single.typeId);
+  const nr=nextRound(single.coId,single.typeId,phase);
   const ic=single.isField?'📍':'🏢';
-  sel.innerHTML=`<span style="background:${single.isField?'var(--accent)':'var(--info)'};color:#fff;padding:3px 12px;border-radius:10px;">${ic} ${nr}회차 · ${single.selDate}</span>`;
+  const phLbl=phase==='pre'?'사전진단 ':'';
+  sel.innerHTML=`<span style="background:${single.isField?'var(--accent)':'var(--info)'};color:#fff;padding:3px 12px;border-radius:10px;">${ic} ${phLbl}${nr}회차 · ${single.selDate}</span>`;
 }
 
 function pickSingleDate(ds){
@@ -2146,18 +2151,22 @@ function saveSingle(){
   const defCoAs=getCoAtts(co);
   const attErr=checkAttLimit(defA,single.selDate);
   if(attErr){toast(attErr,'err');return;}
+  const phase=curPhase(single.coId,single.typeId);
   scheds.push({id:newId,date:single.selDate,attId:defA,coAttIds:defCoAs,
-    coId:single.coId,typeId:single.typeId,round:0,isField:single.isField,createdBy:myId()});
+    coId:single.coId,typeId:single.typeId,round:0,phase,isField:single.isField,createdBy:myId()});
   setScheds(scheds);
+  ensurePhaseState(single.coId,single.typeId,phase);
   reorderRounds(single.coId,single.typeId);
   const finalRound=getScheds().find(s=>s.id===newId)?.round||0;
-  if(maxR>0&&finalRound>maxR){
+  const cap=phase==='pre'?PRE_ROUND_CAP:maxR;
+  if(cap>0&&finalRound>cap){
     setScheds(getScheds().filter(s=>s.id!==newId));
-    toast(`최대 ${maxR}회차 초과`,'err');return;
+    reorderRounds(single.coId,single.typeId);
+    toast(phase==='pre'?`사전진단은 최대 ${PRE_ROUND_CAP}회입니다. '본컨설팅 시작'을 눌러 진행하세요.`:`최대 ${maxR}회차 초과`,'err');return;
   }
   closeModal('mbSingle');
   renderSummaryBar();renderCal();renderDash();
-  toast(`${finalRound}회차 ${single.selDate.slice(5)} 등록됨`);
+  toast(`${phase==='pre'?'사전진단 ':''}${finalRound}회차 ${single.selDate.slice(5)} 등록됨`);
   if(single.isField&&getEnv().autoStampOnField)setTimeout(()=>openStampModal(newId),200);
 }
 
@@ -2185,11 +2194,14 @@ function saveMultiSingle(){
     const attErr=checkAttLimit(defA,ds);
     if(attErr){skipped.push(`${ds.slice(5)}(${attErr})`);continue;}
     const newId=uid();
-    scheds.push({id:newId,date:ds,attId:defA,coAttIds:defCoAs,coId:single.coId,typeId:single.typeId,round:0,isField:pk.isField,createdBy:myId()});
+    const phase=curPhase(single.coId,single.typeId);
+    scheds.push({id:newId,date:ds,attId:defA,coAttIds:defCoAs,coId:single.coId,typeId:single.typeId,round:0,phase,isField:pk.isField,createdBy:myId()});
     setScheds(scheds);
+    ensurePhaseState(single.coId,single.typeId,phase);
     reorderRounds(single.coId,single.typeId);
     const fr=getScheds().find(x=>x.id===newId)?.round||0;
-    if(maxR>0&&fr>maxR){setScheds(getScheds().filter(x=>x.id!==newId));skipped.push(`${ds.slice(5)}(최대회차초과)`);continue;}
+    const cap=phase==='pre'?PRE_ROUND_CAP:maxR;
+    if(cap>0&&fr>cap){setScheds(getScheds().filter(x=>x.id!==newId));reorderRounds(single.coId,single.typeId);skipped.push(`${ds.slice(5)}(${phase==='pre'?'사전진단 2회 초과':'최대회차초과'})`);continue;}
     okIds.push({id:newId,isField:pk.isField,date:ds});
   }
   closeModal('mbSingle');
@@ -2522,7 +2534,45 @@ function coHasAtt(co,attId){
   return getScheds().some(s=>s.coId===co.id&&(s.attId===attId||getCoAtts(s).includes(attId)));
 }
 
-function nextRound(coId,typeId){return getScheds().filter(s=>s.coId===coId&&s.typeId===typeId).length+1;}
+// ===== 사전진단/본컨설팅 단계 (일터혁신 전용) =====
+const PRE_ROUND_CAP=2; // 사전진단 최대 회차
+// 이 컨설팅 종류가 사전진단 단계를 쓰는지 (일터혁신)
+function isPrePhaseType(typeId){const ty=getTypes().find(t=>t.id===typeId);return !!ty&&(ty.id==='t1'||(ty.name||'').includes('일터혁신'));}
+// 특정 일정의 실효 단계 ('pre' | 'main'). 값 없으면 본컨설팅으로 간주(레거시)
+function schedPhase(sc){return sc&&sc.phase==='pre'?'pre':'main';}
+// 이 사업장·종류의 현재 단계 (신규 등록이 어느 단계로 들어갈지)
+function curPhase(coId,typeId){
+  if(!isPrePhaseType(typeId))return 'main';
+  const co=getCos().find(c=>c.id===coId);
+  const ps=co&&co.phaseState&&co.phaseState[typeId];
+  if(ps==='pre'||ps==='main')return ps;
+  // 미설정: 기존 일정 있으면 본컨설팅(레거시 소급 제외), 없으면 사전진단(신규)
+  return getScheds().some(s=>s.coId===coId&&s.typeId===typeId)?'main':'pre';
+}
+// 첫 등록 시 현재 단계를 사업장에 고정 (이후 curPhase가 흔들리지 않도록)
+function ensurePhaseState(coId,typeId,phase){
+  if(!isPrePhaseType(typeId))return;
+  const cos=getCos();const idx=cos.findIndex(c=>c.id===coId);if(idx===-1)return;
+  if(!cos[idx].phaseState)cos[idx].phaseState={};
+  if(cos[idx].phaseState[typeId]!==phase){cos[idx].phaseState[typeId]=phase;setCos(cos);}
+}
+// 사전진단 → 본컨설팅 전환
+function startMainPhase(coId,typeId){
+  showConfirm('본컨설팅을 시작할까요?\n이후 등록하는 일정은 본컨설팅 1회차부터 시작됩니다.',()=>{
+    const cos=getCos();const idx=cos.findIndex(c=>c.id===coId);if(idx===-1)return;
+    if(!cos[idx].phaseState)cos[idx].phaseState={};
+    cos[idx].phaseState[typeId]='main';setCos(cos);
+    renderDash();renderCal();renderSummaryBar();
+    toast('본컨설팅 단계로 전환되었습니다');
+  });
+}
+// 단계별 회차 라벨 (사전진단은 접두어, 본컨설팅은 숫자만)
+function roundText(sc,suffix){return (schedPhase(sc)==='pre'?'사전진단 ':'')+(sc.round||0)+(suffix||'회');}
+// 단계 인지 다음 회차. phase 생략 시 현재 단계 기준
+function nextRound(coId,typeId,phase){
+  if(phase===undefined)phase=curPhase(coId,typeId);
+  return getScheds().filter(s=>s.coId===coId&&s.typeId===typeId&&schedPhase(s)===phase).length+1;
+}
 
 // 사업장 커스텀 값 우선, 없으면 type 기본값
 function getCoMaxRounds(coId,typeId){
@@ -3026,6 +3076,42 @@ function renderDashTypeRows(co,types,showEnded){
     const officeDone=done.filter(s=>!s.isField).length;
     const maxR=getCoMaxRounds(co.id,tid);
     const mf=getCoMandatory(co.id,tid);
+    // 일터혁신: 사전진단·본컨설팅 단계 표시 + 전환 버튼
+    if(isPrePhaseType(tid)){
+      const phase=curPhase(co.id,tid);
+      const preDone=done.filter(s=>schedPhase(s)==='pre').length;
+      const mainDone=done.filter(s=>schedPhase(s)==='main').length;
+      const mainCap=maxR>0?maxR:(t.rounds||0);
+      const nrCur=phase==='pre'?preDone+1:mainDone+1;
+      const mainFull=mainCap>0&&mainDone>=mainCap;
+      const preFull=preDone>=PRE_ROUND_CAP;
+      const line1=`사전진단 ${Math.min(preDone,PRE_ROUND_CAP)}/${PRE_ROUND_CAP} · 본컨설팅 ${mainDone}${mainCap>0?'/'+mainCap:''}`;
+      let line2,l2col;
+      if(phase==='pre'){ line2=preFull?'사전진단 완료 — 본컨설팅을 시작하세요':`다음 사전진단 ${nrCur}회차`; l2col=preFull?'var(--ok)':'var(--accent)'; }
+      else { line2=mainFull?`✓ 본컨설팅 완료 ${mainDone}/${mainCap}`:`다음 본컨설팅 ${nrCur}회차`; l2col=mainFull?'var(--ok)':'var(--t2)'; }
+      return `<div class="drow" draggable="true" data-coid="${co.id}" data-typeid="${tid}">
+        <span class="drag-icon">⠿</span>
+        <span class="type-bar" style="background:${t.color}"></span>
+        <div class="type-info">
+          <div class="type-name">${t.fullName||t.name}</div>
+          ${t.agency?`<div style="font-size:10px;color:var(--dash-t2);font-weight:700;">${t.agency}</div>`:''}
+          <div class="round-badge" style="color:var(--t2)">${line1}</div>
+          <div class="round-badge" style="color:${l2col}">${line2}</div>
+          ${deadlineBadge(co.deadlines?.[tid])}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;">
+          <button class="co-del-btn dash-delete-btn" data-coid="${co.id}" title="사업장 삭제">삭제</button>
+          ${phase==='pre'?`<button class="phase-start-btn" data-coid="${co.id}" data-typeid="${tid}" title="본컨설팅 단계로 전환" style="padding:4px 8px;border:1.5px solid var(--accent);border-radius:7px;background:rgba(21,101,192,.08);color:var(--accent);font-weight:800;font-size:10.5px;cursor:pointer;font-family:inherit;white-space:nowrap;">▶ 본컨설팅 시작</button>`:''}
+          <div class="fmtog" data-coid="${co.id}" data-typeid="${tid}">
+            <div class="fmtog-btns">
+              <button class="fmt-btn ${isF?'on':''}" data-f="1">방문</button>
+              <button class="fmt-btn ${!isF?'on office':''}" data-f="0">사무실</button>
+            </div>
+            <div class="tog-count">📍${fieldDone}회 · 🏢${officeDone}회</div>
+          </div>
+        </div>
+      </div>`;
+    }
     const overMax=maxR>0&&nr>maxR;
     const prog=maxR>0?`${nr-1}/${maxR}회`:`${nr-1}회`;
     const fprog=mf>0?` · 방문 ${fieldDone}/${mf}회`:'';
@@ -3216,6 +3302,10 @@ function renderDash(){
   qa('#dashList .co-del-btn').forEach(b=>b.onclick=e=>{
     e.stopPropagation();deleteCo(b.dataset.coid);
   });
+  // 본컨설팅 시작 (사전진단 → 본컨설팅 전환)
+  qa('#dashList .phase-start-btn').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();startMainPhase(b.dataset.coid,b.dataset.typeid);
+  });
   // 즐겨찾기 버튼
   qa('#dashList .co-fav-btn').forEach(b=>b.onclick=e=>{
     e.stopPropagation();toggleFav(b.dataset.coid);
@@ -3340,7 +3430,7 @@ function renderTimeline(){
       return `<div class="${dotClass}" style="left:${r*100}%;" data-sid="${sc.id}" title="${escAttr(hoverTitle)}">
         <div class="gantt-dot-date">${scEndedDate?'종료 · ':''}${sc.date} · ${schedulePlaceLabel(sc)}${hasPh?' · 사진':''}</div>
         <div class="gantt-dot-inner" style="${innerStyle}">${scEndedDate?'종':sc.round}</div>
-        <div class="gantt-dot-lbl">${scEndedDate?`종료·${placeShort}`:`${sc.round}회 ${placeShort}`}</div>
+        <div class="gantt-dot-lbl">${scEndedDate?`종료·${placeShort}`:`${roundText(sc,'회')} ${placeShort}`}</div>
       </div>`;
       return `<div class="gantt-dot${isF?'':' office'}" style="left:${r*100}%;" data-sid="${sc.id}">
         <div class="gantt-dot-date">${sc.date} ${isF?'📍':'🏢'}${hasPh?' 📷':''}</div>
@@ -3484,7 +3574,7 @@ function chipHtml(sc){
   const place=schedulePlaceShort(sc);
   const statusText=ended?`종료·${place}`:place;
   const hoverTitle=scheduleHoverTitle(sc,co,ty,att,coAtts,hasPh)+(movable?'\n끌어서 날짜 이동 가능':'');
-  return `<div class="${chipClass}" draggable="${movable?'true':'false'}" data-mine="${movable?1:0}" data-ended="${ended?1:0}" style="${chipStyle}" data-sid="${sc.id}" title="${escAttr(hoverTitle)}">${ended?'🔒':' '+ic} ${statusText} [${tyShort}] ${(co?.name||'?').slice(0,4)} ${sc.round}회${hasPh?' 📷':''}${sc.memo?' 📝':''}${coAtts.length?` <span style="opacity:.8">+${coAtts.map(c=>c.name.slice(0,1)).join('')}</span>`:''}</div>`;
+  return `<div class="${chipClass}" draggable="${movable?'true':'false'}" data-mine="${movable?1:0}" data-ended="${ended?1:0}" style="${chipStyle}" data-sid="${sc.id}" title="${escAttr(hoverTitle)}">${ended?'🔒':' '+ic} ${statusText} [${tyShort}] ${(co?.name||'?').slice(0,4)} ${roundText(sc,'회')}${hasPh?' 📷':''}${sc.memo?' 📝':''}${coAtts.length?` <span style="opacity:.8">+${coAtts.map(c=>c.name.slice(0,1)).join('')}</span>`:''}</div>`;
   return `<div class="${chipClass}" draggable="${movable?'true':'false'}" data-mine="${movable?1:0}" data-ended="${ended?1:0}" style="${chipStyle}" data-sid="${sc.id}" title="${co?.name||''} · ${ty?.name||''} ${sc.round}회차 (${att?.name||''}${coAttStr})${sc.memo?'\n📝 '+sc.memo:''}${titleSuffix}">${ended?'🔒종료':ic} [${tyShort}] ${(co?.name||'?').slice(0,4)} ${sc.round}회(${sc.isField?'방문':'사무실'})${hasPh?' 📷':''}${sc.memo?' 📝':''}${coAtts.length?` <span style="opacity:.8">+${coAtts.map(c=>c.name.slice(0,1)).join('')}</span>`:''}</div>`;
 }
 
@@ -3552,10 +3642,11 @@ function moveChip(sid,newDate){
   const mxErr=checkConflictMatrix(sc.coId,sc.typeId,newDate,sid);
   if(mxErr){showBigAlert(mxErr);return;}
   // 변경 전 회차 스냅샷 → 시뮬레이션(날짜 변경 + 날짜순 재정렬) → 영향 회차 산출
+  const mvPhase=schedPhase(sc);
   const before={};
-  scheds.filter(s=>s.coId===sc.coId&&s.typeId===sc.typeId).forEach(s=>before[s.id]=s.round);
+  scheds.filter(s=>s.coId===sc.coId&&s.typeId===sc.typeId&&schedPhase(s)===mvPhase).forEach(s=>before[s.id]=s.round);
   scheds[idx].date=newDate;
-  const targets=scheds.filter(s=>s.coId===sc.coId&&s.typeId===sc.typeId).sort((a,b)=>a.date>b.date?1:-1);
+  const targets=scheds.filter(s=>s.coId===sc.coId&&s.typeId===sc.typeId&&schedPhase(s)===mvPhase).sort((a,b)=>a.date>b.date?1:-1);
   targets.forEach((s,i)=>s.round=i+1);
   const affected=targets.filter(s=>before[s.id]!==s.round).map(s=>({id:s.id,from:before[s.id],to:s.round}));
   const otherChanges=affected.filter(a=>a.id!==sid);
@@ -3811,8 +3902,15 @@ function checkExclusiveDay(coId,typeId,date,excludeId=null){
 
 function reorderRounds(coId,typeId){
   const scheds=getScheds();
-  const targets=scheds.filter(s=>s.coId===coId&&s.typeId===typeId).sort((a,b)=>a.date>b.date?1:-1);
-  targets.forEach((s,i)=>s.round=i+1);
+  const targets=scheds.filter(s=>s.coId===coId&&s.typeId===typeId);
+  if(isPrePhaseType(typeId)){
+    // 사전진단·본컨설팅을 각각 날짜순으로 1부터 독립 번호
+    ['pre','main'].forEach(ph=>{
+      targets.filter(s=>schedPhase(s)===ph).sort((a,b)=>a.date>b.date?1:-1).forEach((s,i)=>s.round=i+1);
+    });
+  }else{
+    targets.sort((a,b)=>a.date>b.date?1:-1).forEach((s,i)=>s.round=i+1);
+  }
   setScheds(scheds);
 }
 
@@ -3929,14 +4027,18 @@ function handleDrop(date,item){
   if(attErr){toast(attErr,'err');return;}
   const newId=uid();
   const scheds=getScheds();
-  scheds.push({id:newId,date,attId:defA,coAttIds:defCoAs,coId:item.coId,typeId:item.typeId,round:0,isField:item.isField,createdBy:myId()});
+  const phase=curPhase(item.coId,item.typeId);
+  scheds.push({id:newId,date,attId:defA,coAttIds:defCoAs,coId:item.coId,typeId:item.typeId,round:0,phase,isField:item.isField,createdBy:myId()});
   setScheds(scheds);
+  ensurePhaseState(item.coId,item.typeId,phase);
   reorderRounds(item.coId,item.typeId);
   const maxR=getCoMaxRounds(item.coId,item.typeId);
   const nr=getScheds().find(s=>s.id===newId)?.round||0;
-  if(maxR>0&&nr>maxR){
+  const cap=phase==='pre'?PRE_ROUND_CAP:maxR;
+  if(cap>0&&nr>cap){
     setScheds(getScheds().filter(s=>s.id!==newId));
-    toast(`${ty.name} 최대 ${maxR}회차를 초과합니다`,'err');return;
+    reorderRounds(item.coId,item.typeId);
+    toast(phase==='pre'?`사전진단은 최대 ${PRE_ROUND_CAP}회입니다. '본컨설팅 시작'을 눌러 진행하세요.`:`${ty.name} 최대 ${maxR}회차를 초과합니다`,'err');return;
   }
   renderSummaryBar();renderCal();renderDash();
   if(item.isField&&getEnv().autoStampOnField)setTimeout(()=>openStampModal(newId),200);
@@ -3952,7 +4054,7 @@ function openViewModal(sid){
   const att=getStaff().find(a=>a.id===sc.attId);
   const coAtts=coAttStaffList(sc);
   const hasPh=PHOTOS[sid]&&(PHOTOS[sid].c0||PHOTOS[sid].c1);
-  toast(`🔒 ${co?.name||'?'} · ${ty?.name||''} ${sc.round}회차 · ${att?.name||''}${coAtts.length?' +'+coAtts.map(c=>c.name).join('+'):''}${hasPh?' 📷':''} (읽기전용)`);
+  toast(`🔒 ${co?.name||'?'} · ${ty?.name||''} ${roundText(sc,'회차')} · ${att?.name||''}${coAtts.length?' +'+coAtts.map(c=>c.name).join('+'):''}${hasPh?' 📷':''} (읽기전용)`);
 }
 
 function openEndedViewModal(sid){
@@ -3976,12 +4078,13 @@ function openEditModal(sid){
   edit_selCoAtts=getCoAtts(sc); renderEditCoAtts();
   q('#mEditType').textContent=`${ty?.name||'?'}`;
   const maxR=getCoMaxRounds(sc.coId,sc.typeId);
-  const isLastRound=maxR>0&&Number(sc.round)===Number(maxR);
-  q('#mEditRound').value=isLastRound?`${sc.round}회(마지막회)`:`${sc.round}회`;
+  const cap=schedPhase(sc)==='pre'?PRE_ROUND_CAP:maxR;
+  const isLastRound=cap>0&&Number(sc.round)===Number(cap);
+  q('#mEditRound').value=isLastRound?`${roundText(sc,'회')}(마지막회)`:`${roundText(sc,'회')}`;
   const roundAlert=q('#mEditRoundAlert');
   if(roundAlert){
     roundAlert.classList.toggle('on',isLastRound);
-    roundAlert.innerHTML=isLastRound?`${sc.round}회(마지막회) <span class="req">종료처리요청</span>`:'';
+    roundAlert.innerHTML=isLastRound?`${roundText(sc,'회')}(마지막회) <span class="req">종료처리요청</span>`:'';
   }
   q('#mEditMemo').value=sc.memo||'';
   qa('#mEditTog .topt').forEach(o=>o.classList.toggle('on',(o.dataset.f==='1')===edit_isField));
