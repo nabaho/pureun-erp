@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>기금관리 (Firebase PoC)</title>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-check-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<style>
+  :root{--acc:#2563eb;--acc2:#1b4bc0;--ink:#182234;--sub:#59637a;--line:#e4e9f1;--bg:#f4f6fa;--ok:#1f7a4d;--danger:#c0392b}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Pretendard','Malgun Gothic',system-ui,sans-serif;color:var(--ink);background:#fbfcfe;font-size:14px}
+  header{display:flex;align-items:center;gap:12px;padding:10px 18px;border-bottom:1px solid var(--line);background:#fff;position:sticky;top:0;z-index:10}
+  header h1{font-size:15px;margin:0;font-weight:700}
+  header .badge{font-size:11px;background:#eef2ff;color:var(--acc2);border:1px solid #c8dafb;border-radius:999px;padding:2px 9px}
+  header .sp{flex:1}
+  header .st{font-size:12px;color:var(--sub)}
+  header .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#cbd5e1;margin-right:5px;vertical-align:middle}
+  header .dot.on{background:var(--ok)}
+  .wrap{display:grid;grid-template-columns:320px 1fr;gap:0;min-height:calc(100vh - 49px)}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+  .left{border-right:1px solid var(--line);padding:12px;background:#fff}
+  .toolbar{display:flex;gap:6px;margin-bottom:10px}
+  .toolbar input{flex:1;padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px}
+  button{font-family:inherit;font-size:13px;padding:7px 12px;border:1px solid var(--line);background:#fff;border-radius:8px;cursor:pointer}
+  button.primary{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:700}
+  button.primary:hover{background:var(--acc2)}
+  .flist{display:flex;flex-direction:column;gap:3px;max-height:calc(100vh - 150px);overflow:auto}
+  .fitem{padding:8px 10px;border:1px solid #eef1f6;border-radius:9px;cursor:pointer}
+  .fitem:hover{background:#f7f9fd;border-color:#d7e0ee}
+  .fitem.on{background:var(--bg);border-color:var(--acc)}
+  .fitem b{font-size:13px}
+  .fitem .m{font-size:11px;color:var(--sub)}
+  .tag{font-size:10px;padding:1px 7px;border-radius:8px;margin-left:6px}
+  .tag.gong{background:#e7f6ee;color:#1f7a4d}.tag.sanae{background:#eef2ff;color:#1e40af}
+  .right{padding:18px 22px}
+  .empty{color:var(--sub);padding:40px 0;text-align:center}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 18px;max-width:720px}
+  .fld{display:flex;flex-direction:column;gap:4px}
+  .fld.full{grid-column:1/-1}
+  .fld label{font-size:11.5px;color:var(--sub);font-weight:600}
+  .fld input,.fld select{padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px}
+  .row{display:flex;gap:8px;align-items:center;margin:16px 0}
+  .msg{margin:10px 0;padding:9px 13px;border-radius:8px;font-size:12.5px;display:none}
+  .msg.ok{display:block;background:#e7f6ee;color:var(--ok);border:1px solid #b6e0c8}
+  .msg.err{display:block;background:#fdeceb;color:var(--danger);border:1px solid #f0c0bc}
+  .gate{max-width:520px;margin:80px auto;text-align:center;color:var(--sub)}
+  .gate a{color:var(--acc);font-weight:700}
+  h2{font-size:16px;margin:0 0 4px}
+  .hint{font-size:12px;color:var(--sub);margin:0 0 16px}
+</style>
+</head>
+<body>
+<header>
+  <h1>🏦 기금관리</h1><span class="badge">Firebase PoC</span>
+  <span class="sp"></span>
+  <span class="st" id="conn"><span class="dot" id="dot"></span><span id="connt">연결 확인 중…</span></span>
+  <span class="st" id="who"></span>
+</header>
+
+<div id="app"><div class="gate">로그인 확인 중…</div></div>
+
+<input type="file" id="jsonfile" accept="application/json" style="display:none">
+
+<script>
+var FB_CONFIG = {
+  apiKey: 'AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA',
+  databaseURL: 'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app',
+  projectId: 'pureun-erp',
+  appId: '1:936817166182:web:9bd31f70d0afdf5fca2aa7',
+  messagingSenderId: '936817166182'
+};
+var FB_APPCHECK_KEY = '6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
+var PORTAL_URL = 'enter.html';
+var NS = 'fund_erp/funds';          // pu-erp의 'funds'(계약)와 충돌 방지용 별도 네임스페이스
+var FIELDS = [
+  ['name','기금법인명','text'],['short_name','약칭','text'],
+  ['fund_type','유형','select'],['region','지역','text'],
+  ['manager','담당','text'],['chairman','대표자','text'],
+  ['inka_no','인가번호','text'],['inka_date','인가일','date'],
+  ['corp_reg_no','법인등록번호','text'],['reg_date','설립등기일','date'],
+  ['tax_id_no','고유번호','text'],['address','소재지','text']
+];
+var fbDb=null, funds={}, selId=null, q='';
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+function $(id){ return document.getElementById(id); }
+function qp(k){ try{ return new URLSearchParams(location.search).get(k)||''; }catch(e){ return ''; } }
+
+try {
+  firebase.initializeApp(FB_CONFIG);
+  try { if(FB_APPCHECK_KEY && firebase.appCheck) firebase.appCheck().activate(new firebase.appCheck.ReCaptchaV3Provider(FB_APPCHECK_KEY), true); } catch(e){}
+  fbDb = firebase.database();
+  fbDb.ref('.info/connected').on('value', function(s){
+    var on=!!s.val(); $('dot').className='dot'+(on?' on':''); $('connt').textContent=on?'Firebase 연결됨':'오프라인';
+  });
+  firebase.auth().onAuthStateChanged(function(user){
+    if(user){ $('who').textContent=(qp('user')||user.email||'로그인됨'); boot(); }
+    else { gate(); }
+  });
+} catch(e){ $('app').innerHTML='<div class="gate">Firebase 초기화 실패: '+esc(e.message)+'</div>'; }
+
+function gate(){
+  $('app').innerHTML='<div class="gate"><h2>로그인이 필요합니다</h2>'
+    +'<p>이 페이지는 푸른 포털 로그인 세션을 사용합니다.<br>'
+    +'<a href="'+PORTAL_URL+'">푸른 포털에서 로그인</a> 후 다시 들어와 주세요.</p></div>';
+}
+
+function boot(){
+  fbDb.ref(NS).on('value', function(snap){
+    funds = snap.val() || {};
+    render();
+  }, function(err){
+    $('app').innerHTML='<div class="gate"><h2 style="color:var(--danger)">읽기 권한 오류</h2>'
+      +'<p>Firebase 규칙에서 <code>'+NS+'</code> 경로 읽기가 거부되었습니다.<br>'
+      +'('+esc(err.message)+')<br>관리자가 Realtime Database 규칙에 이 경로 권한을 추가해야 합니다.</p></div>';
+  });
+}
+
+function list(){
+  var arr=Object.keys(funds).map(function(k){ var o=Object.assign({},funds[k]); o._id=k; return o; });
+  if(q) arr=arr.filter(function(f){ return (f.name||'').indexOf(q)>=0 || (f.short_name||'').indexOf(q)>=0; });
+  arr.sort(function(a,b){ return (a.short_name||a.name||'').localeCompare(b.short_name||b.name||'','ko'); });
+  return arr;
+}
+function render(){
+  var arr=list();
+  var items=arr.map(function(f){
+    var t=f.fund_type==='사내'?'<span class="tag sanae">사내</span>':'<span class="tag gong">공동</span>';
+    return '<div class="fitem'+(f._id===selId?' on':'')+'" onclick="sel(\''+f._id+'\')">'
+      +'<b>'+esc(f.short_name||f.name||'(무명)')+'</b>'+t
+      +'<div class="m">'+esc(f.name||'')+' · 담당 '+esc(f.manager||'—')+'</div></div>';
+  }).join('');
+  $('app').innerHTML=
+    '<div class="wrap"><div class="left">'
+    +'<div class="toolbar"><input placeholder="기금명 검색" value="'+esc(q)+'" oninput="q=this.value;render()">'
+    +'<button class="primary" onclick="addFund()">+ 새 기금</button></div>'
+    +'<div style="margin-bottom:8px"><button onclick="document.getElementById(\'jsonfile\').click()">📥 JSON 가져오기</button> '
+    +'<span style="font-size:11px;color:var(--sub)">'+arr.length+'개</span></div>'
+    +'<div class="flist">'+(items||'<div class="empty" style="padding:20px">기금이 없습니다.<br>[+ 새 기금] 또는 [📥 JSON 가져오기]</div>')+'</div>'
+    +'</div><div class="right" id="detail">'+detailHtml()+'</div></div>';
+}
+function detailHtml(){
+  if(!selId || !funds[selId]) return '<div class="empty">왼쪽에서 기금을 선택하거나 새로 추가하세요.</div>';
+  var f=funds[selId];
+  var flds=FIELDS.map(function(c){
+    var v=f[c[0]]||'';
+    var inp;
+    if(c[2]==='select'){
+      inp='<select id="fd-'+c[0]+'">'+['공동','사내'].map(function(o){return '<option'+(v===o?' selected':'')+'>'+o+'</option>';}).join('')+'</select>';
+    } else {
+      inp='<input id="fd-'+c[0]+'" type="'+c[2]+'" value="'+esc(v)+'">';
+    }
+    return '<div class="fld'+(c[0]==='address'?' full':'')+'"><label>'+c[1]+'</label>'+inp+'</div>';
+  }).join('');
+  return '<h2>기금 정보</h2><p class="hint">Firebase Realtime DB(<code>'+NS+'/'+esc(selId)+'</code>)에 저장됩니다.</p>'
+    +'<div id="msg" class="msg"></div>'
+    +'<div class="grid">'+flds+'</div>'
+    +'<div class="row"><button class="primary" onclick="saveFund()">💾 저장</button>'
+    +'<button onclick="delFund()">삭제</button>'
+    +'<span style="font-size:11px;color:var(--sub)">ID: '+esc(selId)+'</span></div>';
+}
+function sel(id){ selId=id; render(); }
+function addFund(){
+  var n=Object.keys(funds).length+1;
+  var id='FUND-'+String(n).padStart(4,'0');
+  while(funds[id]){ n++; id='FUND-'+String(n).padStart(4,'0'); }
+  funds[id]={name:'새 기금', fund_type:'공동'}; selId=id; render();
+}
+function saveFund(){
+  if(!selId) return;
+  var obj={}; FIELDS.forEach(function(c){ var el=$('fd-'+c[0]); if(el) obj[c[0]]=el.value.trim?el.value.trim():el.value; });
+  fbDb.ref(NS+'/'+selId).set(obj).then(function(){
+    funds[selId]=obj; msg('저장되었습니다.','ok');
+  }).catch(function(e){ msg('저장 실패(권한 규칙 확인): '+e.message,'err'); });
+}
+function delFund(){
+  if(!selId || !confirm('이 기금을 삭제할까요?')) return;
+  fbDb.ref(NS+'/'+selId).remove().then(function(){ delete funds[selId]; selId=null; render(); })
+    .catch(function(e){ msg('삭제 실패: '+e.message,'err'); });
+}
+function msg(t,cls){ var m=$('msg'); if(!m) return; m.className='msg '+cls; m.textContent=t; }
+
+$('jsonfile').addEventListener('change', function(ev){
+  var file=ev.target.files&&ev.target.files[0]; if(!file) return;
+  var rd=new FileReader();
+  rd.onload=function(){
+    try{
+      var data=JSON.parse(rd.result);
+      var obj={};
+      (Array.isArray(data)?data:Object.values(data)).forEach(function(f){
+        var id=f.fund_id||f._id||f.id; if(!id) return;
+        var clean={}; FIELDS.forEach(function(c){ if(f[c[0]]!=null) clean[c[0]]=f[c[0]]; });
+        obj[id]=clean;
+      });
+      if(!confirm(Object.keys(obj).length+'개 기금을 Firebase로 가져올까요? (같은 ID는 덮어씀)')) return;
+      fbDb.ref(NS).update(obj).then(function(){ alert('가져오기 완료'); })
+        .catch(function(e){ alert('가져오기 실패(권한 규칙 확인): '+e.message); });
+    }catch(e){ alert('JSON 파싱 실패: '+e.message); }
+  };
+  rd.readAsText(file); ev.target.value='';
+});
+</script>
+</body>
+</html>
