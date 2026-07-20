@@ -108,8 +108,69 @@ function afterLogin(){
 function dbGet(k,fb){ return (cache[k]!=null)?cache[k]:fb; }
 function dbSet(k,v){ cache[k]=v; fbDb.ref(ROOT+'/'+k).set(v).catch(function(e){alert('저장 실패: '+e.code);}); render(); }
 
-var App={screen:'cards',go:function(s){this.screen=s;render();}};
+var App={screen:'cards',site:null,month:null,go:function(s){this.screen=s;this.site=null;this.month=null;render();}};
 var NAV=[{id:'cards',label:'⚙️ 설정 카드'},{id:'inbox',label:'📥 수신함'},{id:'payroll',label:'💰 급여 처리'}];
+var SIG={green:'#2E7D4F',orange:'#B26A00',red:'#C43D3D'};
+function won(n){ return (n==null)?'-':Number(n).toLocaleString(); }
+function lockKey(site,month){ return site+'|'+month; }
+function isLocked(site,month){ var L=dbGet('payroll_locked',{})||{}; return !!L[lockKey(site,month)]; }
+function toggleLock(site,month){ var L=dbGet('payroll_locked',{})||{}; var k=lockKey(site,month);
+  if(L[k]){ if(!confirm('확정을 되돌릴까요?')) return; delete L[k]; } else { if(!confirm(site+' '+month+' 급여를 확정할까요? (되돌리기 가능)')) return; L[k]=Date.now(); }
+  dbSet('payroll_locked', L); }
+
+function screenPayroll(){
+  var pay=dbGet('payroll',null);
+  var h='<h1>급여 처리</h1>';
+  if(!pay||!pay.sites){ h+='<div class="sub">파일럿 급여 데이터를 서버에 올리세요</div>'+
+    '<button class="btn sec" onclick="importPayroll()">파일럿 급여(JSON) 가져와 서버 저장</button>'+
+    '<div class="empty" style="margin-top:14px">_harness_out\\pilot_payroll.json 을 올리면 화담원·제이앤드씨·늘봄 급여가 표시됩니다.</div>'; return h; }
+  // 3단계 드릴다운
+  if(!App.site){
+    h+='<div class="sub">사업장 선택 · 계산 결과를 3색 신호로 확인 → 확정</div>';
+    h+='<div class="cards">';
+    Object.keys(pay.sites).forEach(function(site){
+      var recs=pay.sites[site]; var cnt={green:0,orange:0,red:0}; var locked=0;
+      recs.forEach(function(r){cnt[r.신호]=(cnt[r.신호]||0)+1; if(isLocked(site,r.월))locked++;});
+      h+='<div class="c" style="cursor:pointer" onclick="App.site=\''+site.replace(/'/g,"")+'\';render()">'+
+        '<div class="t">'+site+'</div><div class="m">'+recs.length+'개월 · 확정 '+locked+'/'+recs.length+'</div>'+
+        '<div style="display:flex;gap:6px;margin-top:6px">'+
+        ['green','orange','red'].map(function(k){return '<span style="font-size:12px;color:'+SIG[k]+'">●'+cnt[k]+'</span>';}).join('')+
+        '</div></div>';
+    });
+    h+='</div><div class="note">● 초록=이상없음 ● 주황=확인필요 ● 빨강=막힘(확정 전 해결). 사업장을 누르면 월별로 봅니다.</div>';
+    return h;
+  }
+  var recs=pay.sites[App.site]||[];
+  if(!App.month){
+    h+='<div class="sub"><a href="#" onclick="App.site=null;render();return false">← 사업장</a> · <b>'+App.site+'</b> 월별</div>';
+    h+='<div style="background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden">';
+    recs.forEach(function(r){ var lk=isLocked(App.site,r.월);
+      h+='<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line)">'+
+        '<span style="width:11px;height:11px;border-radius:50%;background:'+SIG[r.신호]+';flex-shrink:0"></span>'+
+        '<div style="flex:1;cursor:pointer" onclick="App.month=\''+r.월.replace(/'/g,"")+'\';render()"><b>'+r.월+'</b> <span style="font-size:12px;color:var(--sub)">직원 '+r.직원수+'명'+(r.이슈?' · '+r.이슈:'')+'</span></div>'+
+        (lk?'<span class="badge ok">확정됨</span> <button class="btn sec" onclick="toggleLock(\''+App.site.replace(/'/g,"")+'\',\''+r.월.replace(/'/g,"")+'\')">되돌리기</button>'
+           :'<button class="btn" '+(r.신호==='red'?'disabled style="background:#ccc" title="빨강 해결 후 확정"':'onclick="toggleLock(\''+App.site.replace(/'/g,"")+'\',\''+r.월.replace(/'/g,"")+'\')"')+'>확정</button>')+
+        '</div>';
+    });
+    h+='</div>'; return h;
+  }
+  // 직원별 상세
+  var rec=recs.filter(function(r){return r.월===App.month;})[0]||{직원:[]};
+  h+='<div class="sub"><a href="#" onclick="App.month=null;render();return false">← '+App.site+'</a> · <b>'+App.month+'</b> 직원별 ('+(rec.직원||[]).length+'명)</div>';
+  h+='<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;background:#fff">'+
+     '<tr style="background:var(--paper);text-align:right">'+['성명','기본급','과세총액','소득세','지방세','국민연금','건강보험','고용보험','공제총액','실수령'].map(function(c,i){return '<th style="padding:8px 10px;'+(i===0?'text-align:left':'')+'">'+c+'</th>';}).join('')+'</tr>';
+  (rec.직원||[]).forEach(function(e){
+    h+='<tr style="border-top:1px solid var(--line);text-align:right">'+
+      '<td style="padding:7px 10px;text-align:left;font-weight:600">'+(e.성명||'')+'</td>'+
+      ['기본급','과세총액','소득세','지방세','국민연금','건강보험','고용보험','공제총액','실수령'].map(function(k){return '<td style="padding:7px 10px">'+won(e[k])+'</td>';}).join('')+'</tr>';
+  });
+  h+='</table></div><div class="note">엔진 계산 규칙: 지방세=소득세×10% 10원절사 · 고용보험=과세×연도요율 · 연금/건보=고지액. 값은 골든(대장) 추출본.</div>';
+  return h;
+}
+function importPayroll(){var i=document.createElement('input');i.type='file';i.accept='.json';
+  i.onchange=function(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();
+   r.onload=function(){try{var raw=JSON.parse(r.result);dbSet('payroll',raw);alert('파일럿 급여 데이터 저장 완료: '+(raw.pilots||[]).join(', '));}catch(err){alert('JSON 오류: '+err.message);}};r.readAsText(f);};i.click();}
+window.importPayroll=importPayroll;window.toggleLock=toggleLock;
 function screenCards(){
   var cards=dbGet('site_cards',[]);
   var h='<h1>설정 카드</h1><div class="sub">푸른통합시스템 · payroll_os · '+cards.length+'곳</div>';
@@ -126,7 +187,9 @@ function screenCards(){
 function render(){
   document.getElementById('nav').innerHTML=NAV.map(function(n){return '<button class="'+(App.screen===n.id?'on':'')+'" onclick="App.go(\''+n.id+'\')">'+n.label+'</button>';}).join('');
   var m=document.getElementById('main');
-  m.innerHTML=App.screen==='cards'?screenCards():'<h1>'+(App.screen==='payroll'?'급여 처리':'수신함')+'</h1><div class="sub">서버 연결됨</div><div class="empty">다음 단계에서 구현</div>';
+  if(App.screen==='cards') m.innerHTML=screenCards();
+  else if(App.screen==='payroll') m.innerHTML=screenPayroll();
+  else m.innerHTML='<h1>수신함</h1><div class="sub">자료 수신·자동태깅</div><div class="empty">다음 단계에서 구현</div>';
 }
 function importCards(){var i=document.createElement('input');i.type='file';i.accept='.json';
   i.onchange=function(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();
