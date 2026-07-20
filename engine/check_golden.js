@@ -20,14 +20,23 @@ if (!siteKey) { console.log('사용: node check_golden.js "<사업장>" [절사|
 const res = JSON.parse(fs.readFileSync(path.join(OUT_DIR, 'parser_output.json'), 'utf-8'));
 const files = res.filter(r => r.ok && r.path.includes(siteKey));
 
-const cfg = { empInsRound: roundMode };
 const stat = {};   // field -> {일치, 원단위, 불일치}
 const bad = [];    // 불일치 상세
 let nEmp = 0, nSheet = 0;
 
+// 파일경로/시트명에서 귀속연도 추정 (연도별 고용보험 요율용)
+function yearOf(pathStr, sheet) {
+  let m = String(pathStr).match(/20(\d\d)/);       // 2021, 2025 ...
+  if (m) return 2000 + parseInt(m[1], 10);
+  m = String(sheet).match(/(\d\d)\s*년/) || String(pathStr).match(/(\d\d)년/);
+  if (m) return 2000 + parseInt(m[1], 10);
+  return null;
+}
+
 for (const f of files) {
   for (const s of f.sheets) {
     nSheet++;
+    const cfg = { empInsRound: roundMode, year: yearOf(f.path, s.sheet) };
     for (const e of s.employees) {
       nEmp++;
       const cmp = compare(e, cfg);

@@ -129,6 +129,10 @@ def main():
             #  — 값 체계가 다름(고용보험 0 등)이라 엔진 대조를 오염시킴
             strict_nonledger = any(k in base for k in [
                 "국세청신고", "신고임금대장", "인건비신고", "-신고", ")-신고", "_신고", "신고.xls"])
+            if strict_nonledger:
+                # 신고서류는 폴더명이 '급여'여도 급여대장에서 강등(고용보험 0 등 값 체계 상이)
+                final_label = "공단신고"
+                final_reason = "신고서류 강제제외"
             # 내용은 '급여대장 승격'에만 사용, 이름 명확한 파일의 근태 강등 금지
             if ext in EXCEL_EXT and not strict_nonledger:
                 c_label, c_reason = content_classify(path)

@@ -22,9 +22,16 @@ const ROUND = {
 // 10원 단위 절사 (지방세 실측 규칙)
 function trunc10(x) { return Math.floor(x / 10) * 10; }
 
+// 고용보험 근로자부담 요율 연도별 이력 (설계 "기준값 연도별 이력" 반영)
+//  2019.10~2022.06 = 0.8% / 2022.07~ = 0.9%
+function empInsRateForYear(year) {
+  if (!year) return 0.009;
+  return year <= 2021 ? 0.008 : 0.009;   // 2022 상반기 일부 경계는 근사
+}
+
 // 사업장 설정 카드 기본값 (하네스 실측 기반)
 const DEFAULT_SITE_CONFIG = {
-  empInsRate: 0.009,        // 고용보험 요율 (0.9% / 0.899% / 0 면제)
+  empInsRate: null,         // null이면 연도별 자동(empInsRateForYear). 값 지정 시 고정.
   empInsRound: '절사',      // 절사|올림|반올림 — 사업장별 하네스 판정값 주입
   noticeMode: true,         // 연금·건보·장기 = 고지액 모드
 };
@@ -44,9 +51,10 @@ function deriveFromGolden(emp, cfg) {
     out['지방세'] = trunc10(emp['소득세'] * 0.1);
   }
 
-  // 2) 고용보험 = 과세총액 × 요율 → 사업장 단수처리
-  if (emp['과세총액'] != null && c.empInsRate > 0) {
-    out['고용보험'] = ROUND[c.empInsRound](emp['과세총액'] * c.empInsRate);
+  // 2) 고용보험 = 과세총액 × 요율(연도별) → 사업장 단수처리
+  const rate = (c.empInsRate != null) ? c.empInsRate : empInsRateForYear(c.year);
+  if (emp['과세총액'] != null && rate > 0) {
+    out['고용보험'] = ROUND[c.empInsRound](emp['과세총액'] * rate);
   }
 
   // 3) 공제총액 = 존재하는 공제 항목 합 + 기타공제(상조·가불·정산 등)
@@ -86,4 +94,4 @@ function compare(emp, cfg) {
   return res;
 }
 
-module.exports = { deriveFromGolden, compare, trunc10, ROUND, DEFAULT_SITE_CONFIG };
+module.exports = { deriveFromGolden, compare, trunc10, ROUND, DEFAULT_SITE_CONFIG, empInsRateForYear };
