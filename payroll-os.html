@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>급여관리 — 푸른노무법인</title>
+<!--
+  급여 아웃소싱 앱 — 푸른통합시스템 타일(급여관리)
+  - pu-erp와 같은 프로젝트(pureun-erp)·같은 도메인 → 로그인(SSO)·권한(uid_roles)·App Check 공유
+  - 데이터는 payroll_os 칸에만 (pu-erp data 안 건드림)
+-->
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-check-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<style>
+:root{--navy:#2E3A8C;--violet:#7C6CE0;--ok:#2E7D4F;--warn:#B26A00;--bad:#C43D3D;
+--ink:#23263B;--sub:#6B6F87;--line:#E3E5EF;--paper:#F5F6FA;--card:#FFF;}
+*{box-sizing:border-box;margin:0}
+body{font-family:'Noto Sans KR','Malgun Gothic',sans-serif;background:var(--paper);color:var(--ink);font-size:14px}
+header{background:var(--navy);color:#fff;display:flex;align-items:center;gap:14px;padding:12px 18px}
+header .logo{font-weight:800;font-size:16px}
+header .env{font-size:11px;background:#ffffff22;border:1px solid #ffffff55;border-radius:99px;padding:2px 9px}
+header .who{margin-left:auto;font-size:12px;display:flex;align-items:center;gap:10px}
+header .out{background:#ffffff22;border:1px solid #ffffff66;color:#fff;border-radius:8px;padding:3px 10px;cursor:pointer;font-size:12px}
+.layout{display:flex;min-height:calc(100vh - 46px)}
+nav{width:180px;background:#fff;border-right:1px solid var(--line);padding:14px 10px;flex-shrink:0}
+nav button{display:block;width:100%;text-align:left;border:none;background:none;border-radius:10px;padding:10px 12px;font-size:13.5px;cursor:pointer;color:var(--ink);font-family:inherit}
+nav button.on{background:var(--navy);color:#fff;font-weight:700}
+main{flex:1;padding:22px 24px;overflow:auto}
+h1{font-size:20px;margin-bottom:4px}.sub{color:var(--sub);font-size:13px;margin-bottom:16px}
+.btn{background:var(--navy);color:#fff;border:none;border-radius:10px;padding:9px 16px;cursor:pointer;font-size:13px;font-family:inherit}
+.btn.sec{background:#fff;color:var(--navy);border:1px solid var(--navy)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-top:14px}
+.c{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px}
+.c .t{font-weight:700;color:var(--navy)}.c .m{font-size:12px;color:var(--sub);margin:3px 0 8px}
+.c .kv{font-size:12.5px;margin:3px 0}.c .kv b{color:var(--sub);font-weight:600;display:inline-block;width:64px}
+.badge{font-size:11px;border-radius:99px;padding:2px 8px}.badge.warn{background:#FBF1DE;color:var(--warn)}.badge.ok{background:#E8F3EC;color:var(--ok)}
+.empty{background:#fff;border:1px dashed var(--line);border-radius:14px;padding:36px;text-align:center;color:var(--sub)}
+#gate{position:fixed;inset:0;background:var(--paper);display:flex;align-items:center;justify-content:center;z-index:9}
+#gate .box{background:#fff;border:1px solid var(--line);border-radius:16px;padding:32px 36px;width:360px;text-align:center}
+#gate h2{color:var(--navy);font-size:20px;margin-bottom:4px}#gate p{color:var(--sub);font-size:12.5px;margin:6px 0 16px}
+#gate input{width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 12px;font-size:14px;margin-bottom:10px;font-family:inherit}
+#gate .err{color:var(--bad);font-size:12.5px;margin-top:8px;white-space:pre-wrap;text-align:left}
+</style>
+</head>
+<body>
+<div id="gate"><div class="box">
+  <h2>급여관리</h2>
+  <p id="gatep">로그인 확인 중…</p>
+  <div id="loginform" style="display:none">
+    <input id="email" type="email" placeholder="이메일" autocomplete="username">
+    <input id="pw" type="password" placeholder="비밀번호" autocomplete="current-password">
+    <button class="btn" style="width:100%" onclick="doLogin()">로그인</button>
+  </div>
+  <div class="err" id="err"></div>
+</div></div>
+
+<header>
+  <span class="logo">급여관리</span><span class="env">푸른통합시스템 · payroll_os</span>
+  <div class="who"><span id="whoami"></span><button class="out" onclick="doLogout()">로그아웃</button></div>
+</header>
+<div class="layout"><nav id="nav"></nav><main id="main"></main></div>
+
+<script>
+var FB_CONFIG = {
+  apiKey: "AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA",
+  authDomain: "pureun-erp.firebaseapp.com",
+  databaseURL: "https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "pureun-erp",
+  storageBucket: "pureun-erp.appspot.com",
+  messagingSenderId: "936817166182",
+  appId: "1:936817166182:web:9bd31f70d0afdf5fca2aa7"
+};
+var FB_APPCHECK_KEY = "6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_";
+var ROOT = "payroll_os";
+var cache = {}, fbDb = null, me = null, ready = false;
+
+firebase.initializeApp(FB_CONFIG);
+try { if(firebase.appCheck) firebase.appCheck().activate(new firebase.appCheck.ReCaptchaV3Provider(FB_APPCHECK_KEY), true); } catch(e){}
+fbDb = firebase.database();
+
+firebase.auth().onAuthStateChanged(function(user){
+  if(user){ me = user; afterLogin(); }
+  else { document.getElementById('gatep').textContent='pu-erp와 같은 계정으로 로그인하세요';
+    document.getElementById('loginform').style.display=''; }
+});
+function doLogin(){
+  var em=document.getElementById('email').value.trim(), pw=document.getElementById('pw').value;
+  document.getElementById('err').textContent='';
+  firebase.auth().signInWithEmailAndPassword(em,pw).catch(function(e){
+    document.getElementById('err').textContent=(e.code==='auth/wrong-password'||e.code==='auth/user-not-found')?'이메일 또는 비밀번호가 맞지 않습니다.':('오류: '+e.code); });
+}
+function doLogout(){ firebase.auth().signOut().then(function(){ location.reload(); }); }
+
+function afterLogin(){
+  document.getElementById('gate').style.display='none';
+  fbDb.ref('uid_roles/'+me.uid).once('value').then(function(s){
+    var r=s.val()||{}; var role=r.isAdmin?'관리자':(r.fin?'재무/급여':'일반');
+    document.getElementById('whoami').textContent=(me.email||'')+' · '+role;
+  }).catch(function(){ document.getElementById('whoami').textContent=me.email||''; });
+  fbDb.ref(ROOT).once('value').then(function(s){
+    cache=s.val()||{}; ready=true; render();
+    fbDb.ref(ROOT).on('value',function(ss){ if(ready){cache=ss.val()||{};render();} });
+  }).catch(function(e){
+    document.getElementById('main').innerHTML='<div class="empty">DB 접근 거부: '+e.code+'<br>규칙에 payroll_os 블록이 있는지, 재무/관리자 권한이 있는지 확인하세요.</div>'; });
+}
+function dbGet(k,fb){ return (cache[k]!=null)?cache[k]:fb; }
+function dbSet(k,v){ cache[k]=v; fbDb.ref(ROOT+'/'+k).set(v).catch(function(e){alert('저장 실패: '+e.code);}); render(); }
+
+var App={screen:'cards',go:function(s){this.screen=s;render();}};
+var NAV=[{id:'cards',label:'⚙️ 설정 카드'},{id:'inbox',label:'📥 수신함'},{id:'payroll',label:'💰 급여 처리'}];
+function screenCards(){
+  var cards=dbGet('site_cards',[]);
+  var h='<h1>설정 카드</h1><div class="sub">푸른통합시스템 · payroll_os · '+cards.length+'곳</div>';
+  h+='<button class="btn sec" onclick="importCards()">설정 카드(JSON) 가져와 서버 저장</button>';
+  if(!cards.length){ h+='<div class="empty" style="margin-top:14px">서버에 자료 없음. 위 버튼으로 site_cards.json 올리면 저장됩니다.</div>'; return h; }
+  h+='<div class="cards">'+cards.map(function(c){var n=(c.확인필요||[]).length;
+    return '<div class="c"><div style="display:flex;justify-content:space-between"><span class="t">'+c.사업장+'</span>'+
+    (n?'<span class="badge warn">확인필요 '+n+'</span>':'<span class="badge ok">확인완료</span>')+'</div>'+
+    '<div class="m">'+(c.담당자||'')+' · 직원 '+((c.규모||{}).직원레코드||0)+'건</div>'+
+    '<div class="kv"><b>급여일</b>'+(c.급여일||'')+'</div><div class="kv"><b>산정기간</b>'+(c.산정기간||'')+'</div>'+
+    '<div class="kv"><b>고용보험</b>'+((c.고용보험||{}).단수처리||'')+'</div></div>';}).join('')+'</div>';
+  return h;
+}
+function render(){
+  document.getElementById('nav').innerHTML=NAV.map(function(n){return '<button class="'+(App.screen===n.id?'on':'')+'" onclick="App.go(\''+n.id+'\')">'+n.label+'</button>';}).join('');
+  var m=document.getElementById('main');
+  m.innerHTML=App.screen==='cards'?screenCards():'<h1>'+(App.screen==='payroll'?'급여 처리':'수신함')+'</h1><div class="sub">서버 연결됨</div><div class="empty">다음 단계에서 구현</div>';
+}
+function importCards(){var i=document.createElement('input');i.type='file';i.accept='.json';
+  i.onchange=function(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();
+   r.onload=function(){try{var raw=JSON.parse(r.result);var a=Array.isArray(raw)?raw:Object.values(raw);dbSet('site_cards',a);alert('카드 '+a.length+'개 서버 저장 완료');}catch(err){alert('JSON 오류: '+err.message);}};r.readAsText(f);};i.click();}
+window.importCards=importCards;window.doLogin=doLogin;window.doLogout=doLogout;
+</script>
+</body>
+</html>
