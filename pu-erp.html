@@ -4014,7 +4014,10 @@ function fbInitialSync(_isRetry){
     });
     if(pulled > 0) console.log('[Firebase] 초기 동기화: '+pulled+'개 항목 적용');
     return pulled;
-  }).catch(function(e){ var _im = (e && (e.message||e.code||''))+''; if(/permission|PERMISSION_DENIED/i.test(_im) && !_isRetry && typeof firebase!=='undefined' && firebase.auth && firebase.auth().currentUser){ console.warn('[Firebase] 첫 읽기 권한오류 — 토큰 갱신 후 재시도'); return firebase.auth().currentUser.getIdToken(true).catch(function(){}).then(function(){ return new Promise(function(res){ setTimeout(res, 700); }); }).then(function(){ return fbInitialSync(true); }); } console.warn('[Firebase] 초기 동기화 실패:', _im); if(/permission|PERMISSION_DENIED/i.test(_im)){ if(typeof firebase!=='undefined' && firebase.auth && firebase.auth().currentUser){ console.warn('[Firebase] 통째 읽기 거부(권한 제한) — 키별 동기화 폴백'); return _fbInitialSyncPerKey(); } window._reloginNotice = '🔒 서버 인증이 만료되어 다시 로그인이 필요합니다.'; try { window.dispatchEvent(new CustomEvent('fb_need_relogin')); } catch(_){} } return 0; });
+  }).catch(function(e){ var _im = (e && (e.message||e.code||''))+''; if(/permission|PERMISSION_DENIED/i.test(_im) && !_isRetry && typeof firebase!=='undefined' && firebase.auth && firebase.auth().currentUser){ console.warn('[Firebase] 첫 읽기 권한오류 — 토큰 갱신 후 재시도'); return firebase.auth().currentUser.getIdToken(true).catch(function(){}).then(function(){ return new Promise(function(res){ setTimeout(res, 700); }); }).then(function(){ return fbInitialSync(true); }); } console.warn('[Firebase] 초기 동기화 실패:', _im); if(/permission|PERMISSION_DENIED/i.test(_im)){ if(typeof firebase!=='undefined' && firebase.auth && firebase.auth().currentUser){ console.warn('[Firebase] 통째 읽기 거부(권한 제한) — 키별 동기화 폴백'); return _fbInitialSyncPerKey(); } window._reloginNotice = '🔒 서버 인증이 만료되어 다시 로그인이 필요합니다.'; try { window.dispatchEvent(new CustomEvent('fb_need_relogin')); } catch(_){} } return 0; })
+    // 이 동기화(및 내부 키별폴백·재시도)에서 deferGate로 모아둔 급감 보류분을 완료 후 일괄 확인.
+    //   모든 fbInitialSync 호출부(로그인·복귀재동기화·수동새로고침)를 한 곳에서 커버한다.
+    .then(function(_n){ try { _drainShrinkQueue(); } catch(_d){} return _n; });
 }
 // ── [보안규칙 대비] 키별 초기 동기화 폴백 — data 통째 읽기가 규칙으로 거부된 일반 직원용.
 //    각 키를 개별 읽기, 권한 없는 키(재무 등)는 조용히 건너뜀. 적용은 공용 _fbApplyRecord로 통일
@@ -4230,7 +4233,7 @@ if(fbDb){
       _fbSynced = true;
       fbSetupListener();
       try { _flushPendingLocalNewer(); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
-      try { _drainShrinkQueue(); } catch(e){ window._erpErrLog && window._erpErrLog(e); } // 초기 동기화가 모아둔 급감 보류분을 완료 후 일괄 확인
+      // 급감 보류분 처리는 fbInitialSync 내부(.then trailing)에서 이미 수행됨 — 여기서 재호출 불필요.
       try { setTimeout(function(){ serverBackupDaily(false); startRecentBackupTimer(); }, 3000); } catch(e){}
     }).catch(function(e){
       console.warn('[Firebase] 초기 동기화 실패:', e && e.message);
