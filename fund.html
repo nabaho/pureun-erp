@@ -98,7 +98,16 @@ var FIELDS=[['name','기금법인명','text'],['short_name','약칭','text'],['f
   ['tax_office','관할세무서','text'],['registry_office','관할등기소','text'],['address','소재지','text']];
 var KEY5=['inka_no','inka_date','corp_reg_no','reg_date','tax_id_no'];
 var TABS=[['info','기금 정보',1],['sites','참여사업장',1],['annual','연간 일정',1],['subsidy','지원금',1],
-  ['closing','회계·결산',0],['welfare','목적사업·대부',0],['events','변경 이벤트',0],['gen','서류 생성',0]];
+  ['closing','회계·결산',0],['welfare','목적사업·대부',1],['events','변경 이벤트',1],['gen','서류 생성',0]];
+var WELF_CATS=['생활안정자금','장학금','체육문화활동','경조사비','모성보호','근로자의날','근로복지시설','대부사업','기타복지비'];
+var EVENT_KINDS={
+  site_leave:{label:'사업장 탈퇴',gong:true,steps:['탈퇴 사유 확인·정리','참여사업장 탭에서 탈퇴 처리','기본재산 총액 변경 여부 검토','필요 시 기본재산 변경보고(별지 제10호)','탈퇴 관련 서류 스캔 보관']},
+  charter:{label:'정관 변경',steps:['변경안 작성','협의회(총회) 의결·회의록','정관변경 인가신청(별지 제11호)','인가증 수령','변경등기 신청','변경 정관·등기부 스캔 보관','정관 버전 갱신']},
+  officer:{label:'임원·이사 변경',steps:['변경 대상·사유 확인','선임·해임 의결(회의록)','취임승낙서 등 등기서류 준비','임원 변경등기 신청','등기 완료 확인','임원 명부 갱신','변경 서류 스캔 보관']},
+  address:{label:'주소 이전',steps:['이전 결정·의결','소재지 변경등기 신청','기금 기본정보 소재지 수정','관할 세무서·노동청 변경 확인','변경 서류 스캔 보관']},
+  dissolve:{label:'해산·청산',steps:['해산 사유·의결','해산 인가·신고','해산등기','청산 절차·잔여재산 처리','해산통지서(별지 제14호)','청산종결등기','기록 보관 전환']},
+  etc:{label:'기타 변경',steps:['내용 확인','처리','관련 서류 스캔 보관']}
+};
 var SITE_FIELDS=[['name','상호','text'],['ceo','대표자','text'],['biz_no','사업자등록번호','text'],
   ['biz_type','업종','text'],['company_size','상시근로자수','text'],['address','소재지','text']];
 
@@ -295,6 +304,8 @@ function renderFund(){
     : S.tab==='sites' ? sitesTab()
     : S.tab==='annual' ? annualTab(f)
     : S.tab==='subsidy' ? subsidyTab(f)
+    : S.tab==='welfare' ? welfareTab(f)
+    : S.tab==='events' ? eventsTab(f)
     : '<div class="panel muted">이 탭은 다음 단계에서 이전됩니다.</div>';
   $('app').innerHTML=head+tabbar+body;
 }
@@ -458,6 +469,76 @@ function saveSubsidy(){
     var m=$('msg');m.className='msg ok';m.textContent='저장되었습니다.'; renderFund();
   }).catch(function(e){var m=$('msg');m.className='msg err';m.textContent='저장 실패: '+e.message;});
 }
+
+// ── 목적사업·대부 (3단계/중) ──
+var WELF_FIELDS=[['name','사업명','text'],['category','분류','sel'],['budget','예산(원)','num'],['spent','집행액(원)','num'],['beneficiaries','수혜자수','num']];
+function welfareTab(f){
+  var key=S.fundId+'/'+S.year;
+  if(S.welfFor!==key){ S.welfFor=key; S.welf=null;
+    fbDb.ref(NS+'/welfare/'+S.fundId+'/'+S.year).once('value').then(function(s){S.welf=s.val()||{};if(S.tab==='welfare'&&S.view==='fund')renderFund();}).catch(function(){S.welf={};if(S.tab==='welfare')renderFund();});
+    return '<div class="panel muted">불러오는 중…</div>'; }
+  var w=S.welf||{}, arr=Object.keys(w).map(function(k){var o=Object.assign({},w[k]);o._id=k;return o;});
+  var bud=arr.reduce(function(s,x){return s+(num(x.budget)||0);},0), sp=arr.reduce(function(s,x){return s+(num(x.spent)||0);},0), ben=arr.reduce(function(s,x){return s+(num(x.beneficiaries)||0);},0);
+  var rows=arr.map(function(p){
+    return '<tr onclick="editProg(\''+p._id+'\')"><td><span class="chip" style="background:var(--acc-soft);color:var(--acc2)">'+esc(p.category||'-')+'</span></td>'
+      +'<td style="font-weight:700">'+esc(p.name||'—')+'</td><td style="text-align:right">'+(num(p.budget)||0).toLocaleString()+'</td>'
+      +'<td style="text-align:right">'+(num(p.spent)||0).toLocaleString()+'</td><td style="text-align:right">'+(num(p.beneficiaries)||'—')+'</td></tr>';
+  }).join('');
+  return '<div class="panel"><div class="row"><h2>목적사업·대부</h2>'+yearSel()
+    +'<span class="stat">예산 '+bud.toLocaleString()+'원</span><span class="stat">집행 '+sp.toLocaleString()+'원</span><span class="stat">수혜 '+ben.toLocaleString()+'명</span>'
+    +'<span style="flex:1"></span><button class="primary" onclick="editProg(\'\')">+ 사업 추가</button></div>'
+    +'<div style="margin-top:12px">'+(arr.length?'<table><thead><tr><th>분류</th><th>사업명</th><th style="text-align:right">예산</th><th style="text-align:right">집행</th><th style="text-align:right">수혜자</th></tr></thead><tbody>'+rows+'</tbody></table>':'<div class="muted" style="padding:16px 4px">'+S.year+'년 등록된 목적사업이 없습니다.</div>')+'</div></div>';
+}
+function editProg(id){
+  var p=(S.welf&&S.welf[id])||{category:'생활안정자금'};
+  var flds=WELF_FIELDS.map(function(c){
+    var v=p[c[0]]||'';
+    var inp=c[2]==='sel'?'<select id="wp-'+c[0]+'">'+WELF_CATS.map(function(o){return '<option'+(v===o?' selected':'')+'>'+o+'</option>';}).join('')+'</select>':'<input id="wp-'+c[0]+'" type="text" value="'+esc(v)+'">';
+    return '<div class="fld"><label>'+c[1]+'</label>'+inp+'</div>';
+  }).join('');
+  showModal('<h2 style="margin-bottom:10px">'+(id?'사업 편집':'목적사업 추가')+'</h2><div class="grid">'+flds+'</div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:14px">'+(id?'<button onclick="delProg(\''+id+'\')" style="margin-right:auto;color:var(--danger)">삭제</button>':'')
+    +'<button onclick="closeM()">취소</button><button class="primary" onclick="saveProg(\''+id+'\')">저장</button></div>');
+}
+function saveProg(id){
+  var o={}; WELF_FIELDS.forEach(function(c){var el=$('wp-'+c[0]);if(el)o[c[0]]=c[2]==='num'?(num(el.value)||0):el.value.trim?el.value.trim():el.value;});
+  if(!o.name){alert('사업명을 입력하세요');return;}
+  var ref=id?fbDb.ref(NS+'/welfare/'+S.fundId+'/'+S.year+'/'+id):fbDb.ref(NS+'/welfare/'+S.fundId+'/'+S.year).push();
+  ref.set(o).then(function(){S.welfFor=null;closeM();renderFund();}).catch(function(e){alert('실패: '+e.message);});
+}
+function delProg(id){ if(confirm('삭제할까요?')) fbDb.ref(NS+'/welfare/'+S.fundId+'/'+S.year+'/'+id).remove().then(function(){S.welfFor=null;closeM();renderFund();}); }
+
+// ── 변경 이벤트 (3단계/중) ──
+function eventsTab(f){
+  if(S.evFor!==S.fundId){ S.evFor=S.fundId; S.ev=null;
+    fbDb.ref(NS+'/events/'+S.fundId).once('value').then(function(s){S.ev=s.val()||{};if(S.tab==='events'&&S.view==='fund')renderFund();}).catch(function(){S.ev={};if(S.tab==='events')renderFund();});
+    return '<div class="panel muted">불러오는 중…</div>'; }
+  var ev=S.ev||{}, arr=Object.keys(ev).map(function(k){var o=Object.assign({},ev[k]);o._id=k;return o;});
+  arr.sort(function(a,b){return (a.status==='완료'?1:0)-(b.status==='완료'?1:0)||(b.started_date||'').localeCompare(a.started_date||'');});
+  var opts=Object.keys(EVENT_KINDS).filter(function(k){return !(EVENT_KINDS[k].gong&&f.fund_type==='사내');}).map(function(k){return '<option value="'+k+'">'+EVENT_KINDS[k].label+'</option>';}).join('');
+  var cards=arr.map(function(e){
+    var done=e.status==='완료', steps=(e.steps||[]);
+    var dc=steps.filter(function(s){return s.done;}).length;
+    var sh=steps.map(function(s,i){return '<div style="display:flex;gap:8px;align-items:center;padding:5px 2px;border-bottom:1px solid var(--line)'+(s.done?';opacity:.55':'')+'"><input type="checkbox"'+(s.done?' checked':'')+(done?' disabled':'')+' onchange="toggleStep(\''+e._id+'\','+i+',this.checked)"><span style="font-size:12.5px'+(s.done?';text-decoration:line-through':'')+'">'+esc(s.label)+'</span></div>';}).join('');
+    return '<div class="panel" style="border-left:3px solid '+(done?'#c8d0dc':'#f59e0b')+'"><div class="row"><b>'+esc(e.kind_label||e.kind)+'</b><span class="muted">'+esc(e.title||'')+'</span>'
+      +(done?'<span class="chip ok">완료</span>':'<span class="chip warn">진행 '+dc+'/'+steps.length+'</span>')+'<span style="flex:1"></span>'
+      +(done?'<button onclick="setEv(\''+e._id+'\',\'진행\')">되돌리기</button>':'<button class="primary" onclick="setEv(\''+e._id+'\',\'완료\')">완료</button>')
+      +'<button onclick="delEv(\''+e._id+'\')" style="color:var(--danger)">삭제</button></div><div style="margin-top:8px">'+sh+'</div></div>';
+  }).join('');
+  return '<div class="panel"><div class="row" style="align-items:flex-end;gap:8px"><div><div class="muted" style="font-size:11px">변경 유형</div><select id="ev-kind" style="padding:7px 10px;border:1px solid var(--line);border-radius:8px">'+opts+'</select></div>'
+    +'<div style="flex:1"><div class="muted" style="font-size:11px">제목(선택)</div><input id="ev-title" placeholder="예: 정관 제5조 목적사업 추가" style="width:100%;padding:7px 10px;border:1px solid var(--line);border-radius:8px"></div>'
+    +'<button class="primary" onclick="createEvent()">+ 변경 이벤트 시작</button></div>'
+    +'<p class="muted" style="font-size:11.5px;margin:8px 0 0">유형을 고르면 처리 체크리스트가 자동 생성됩니다.</p></div>'
+    +(arr.length?cards:'<div class="panel muted">등록된 변경 이벤트가 없습니다. 정관변경·임원변경·탈퇴·해산 등을 여기서 관리하세요.</div>');
+}
+function createEvent(){
+  var kind=$('ev-kind').value, meta=EVENT_KINDS[kind];
+  var o={kind:kind,kind_label:meta.label,title:$('ev-title').value.trim(),status:'진행',started_date:ymd(),steps:meta.steps.map(function(l){return {label:l,done:false};})};
+  fbDb.ref(NS+'/events/'+S.fundId).push().set(o).then(function(){S.evFor=null;renderFund();}).catch(function(e){alert('실패: '+e.message);});
+}
+function toggleStep(eid,i,on){ fbDb.ref(NS+'/events/'+S.fundId+'/'+eid+'/steps/'+i+'/done').set(on).then(function(){S.evFor=null;renderFund();}); }
+function setEv(eid,st){ fbDb.ref(NS+'/events/'+S.fundId+'/'+eid+'/status').set(st).then(function(){S.evFor=null;renderFund();}); }
+function delEv(eid){ if(confirm('이 변경 이벤트를 삭제할까요?')) fbDb.ref(NS+'/events/'+S.fundId+'/'+eid).remove().then(function(){S.evFor=null;renderFund();}); }
 
 // ── 간단 모달 ──
 function showModal(html){
