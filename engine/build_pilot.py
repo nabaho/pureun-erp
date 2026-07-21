@@ -66,10 +66,22 @@ def main():
             raw = [e for e in raw if any(e.get(k) for k in AMT)]
             if not raw:
                 continue
-            # 사람당 1줄로 정리(같은 성명 중복 시 마지막=확정본 유지)
+            # 사람당 1줄로 정리(같은 성명 중복 시 '가장 잘 맞아떨어지는' 행 유지).
+            # 앱의 dedupeEmps()와 동일 기준: 항목 많고 (임금총액−공제=실수령) tie-out 우대.
+            def _score(e):
+                keys = ("기본급","과세총액","소득세","지방세","국민연금","건강보험",
+                        "장기요양","고용보험","공제총액","실수령")
+                s = sum(1 for k in keys if e.get(k) is not None)
+                g = e.get("지급총액") or e.get("과세총액") or e.get("기본급")
+                d, n = e.get("공제총액"), e.get("실수령")
+                if g is not None and d is not None and n is not None and abs(g - d - n) <= 1:
+                    s += 5
+                return s
             seen = {}
             for e in raw:
-                seen[e["성명"]] = e
+                nm = e["성명"].strip()
+                if nm not in seen or _score(e) > _score(seen[nm]):
+                    seen[nm] = e
             emps = list(seen.values())
             sig, iss = signal(emps)
             month = s["sheet"]
