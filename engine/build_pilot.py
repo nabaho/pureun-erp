@@ -57,6 +57,9 @@ def main():
         if any(d in base for d in DRAFT):
             continue  # 초안(시나리오 여러 줄) 파일은 제외 — 확정본만
         for s in r["sheets"]:
+            # 서식·양식·견본 시트 제외(샘플 데이터 — 명세서 발행 사고 방지)
+            if any(k in s["sheet"] for k in ("서식", "양식", "견본", "샘플", "sample")):
+                continue
             raw = [{k: v for k, v in e.items()} for e in s["employees"] if e.get("성명")]
             # 일용 명단의 '해당월 무근무' 행(금액 전부 0/없음) 제외 — 급여 레코드 아님
             AMT = ("기본급", "과세총액", "지급총액", "실수령", "공제총액", "소득세", "고용보험")
