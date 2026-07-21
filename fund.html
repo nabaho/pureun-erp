@@ -127,8 +127,11 @@ var EVENT_KINDS={
   dissolve:{label:'해산·청산',steps:['해산 사유·의결','해산 인가·신고','해산등기','청산 절차·잔여재산 처리','해산통지서(별지 제14호)','청산종결등기','기록 보관 전환']},
   etc:{label:'기타 변경',steps:['내용 확인','처리','관련 서류 스캔 보관']}
 };
-var SITE_FIELDS=[['name','상호','text'],['ceo','대표자','text'],['biz_no','사업자등록번호','text'],
-  ['biz_type','업종','text'],['company_size','상시근로자수','text'],['address','소재지','text']];
+var SITE_FIELDS=[['seq_label','연번','text'],['name','상호','text'],['ceo','대표자','text'],
+  ['biz_no','사업자등록번호','text'],['corp_no','법인등록번호','text'],['biz_type','업종','text'],
+  ['company_size','상시근로자수','text'],['address','소재지','text'],['note','비고','text']];
+// 담당자(연락처) 필드 — contacts JSON 배열의 대표 담당자 1명을 편집
+var CONTACT_FIELDS=[['name','담당자명','text'],['position','직위','text'],['mobile','휴대폰','text'],['email','이메일','text']];
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function $(id){return document.getElementById(id);}
@@ -444,8 +447,9 @@ function dlBuf(buf,fname){ var blob=new Blob([buf],{type:'application/vnd.openxm
   var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=fname; document.body.appendChild(a); a.click();
   setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1500); }
 function _splitPeople(txt){ return String(txt||'').split(/[,\/·]/).map(function(s){return s.trim();}).filter(Boolean); }
-function _siteContacts(s){ var c={name:'',phone:'',email:''}; try{ var cts=s.contacts; if(typeof cts==='string')cts=JSON.parse(cts);
-  if(Array.isArray(cts)&&cts.length){ c.name=cts[0].name||''; c.phone=cts[0].phone||cts[0].mobile||''; c.email=cts[0].email||''; } }catch(e){} return c; }
+function _siteContacts(s){ var c={name:'',phone:'',mobile:'',email:''}; try{ var cts=s.contacts; if(typeof cts==='string')cts=JSON.parse(cts);
+  if(Array.isArray(cts)&&cts.length){ var p=cts.filter(function(x){return x&&x.isPrimary;})[0]||cts[0];
+    c.name=p.name||''; c.mobile=p.mobile||p.phone||''; c.phone=p.phone||p.mobile||''; c.email=p.email||''; } }catch(e){} return c; }
 function _loadSites(fid){ return fbDb.ref(NS+'/sites/'+fid).once('value').then(function(s){
   var v=s.val()||{}; var a=Object.keys(v).map(function(k){var o=Object.assign({},v[k]);o._id=k;return o;});
   a=a.filter(function(x){return (x.status||'active')==='active';});
@@ -604,14 +608,17 @@ function sitesTab(){
   arr.sort(function(a,b){return String(a.seq_label||'').localeCompare(String(b.seq_label||''),'ko',{numeric:true});});
   var totalEmp=arr.reduce(function(s,x){return s+(num(x.company_size)||0);},0);
   var rows=arr.map(function(s,i){
+    var c=_siteContacts(s);
+    var contact=c.name?(esc(c.name)+(c.mobile?' · '+esc(c.mobile):'')):'—';
     return '<tr onclick="editSite(\''+s._id+'\')"><td class="no">'+(i+1)+'</td>'
       +'<td style="font-weight:700">'+esc(s.name||'—')+'</td><td>'+esc(s.ceo||'—')+'</td>'
       +'<td>'+esc(s.biz_no||'—')+'</td><td>'+esc(s.biz_type||'—')+'</td>'
       +'<td style="text-align:right">'+(num(s.company_size)||'—')+'</td>'
-      +'<td class="muted" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.address||'—')+'</td></tr>';
+      +'<td>'+contact+'</td><td class="muted">'+esc(c.email||'—')+'</td>'
+      +'<td class="muted" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.address||'—')+'</td></tr>';
   }).join('');
   var tbl = arr.length
-    ? '<table><thead><tr><th>번호</th><th>상호</th><th>대표자</th><th>사업자번호</th><th>업종</th><th style="text-align:right">상시근로자</th><th>소재지</th></tr></thead><tbody>'+rows+'</tbody></table>'
+    ? '<div style="overflow-x:auto"><table><thead><tr><th>번호</th><th>상호</th><th>대표자</th><th>사업자번호</th><th>업종</th><th style="text-align:right">상시근로자</th><th>담당자</th><th>이메일</th><th>소재지</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
     : '<div class="muted" style="padding:20px 4px">등록된 참여사업장이 없습니다. [+ 사업장 추가] 또는 [📥 사업장 데이터 가져오기]로 시작하세요.</div>';
   return '<div class="panel"><div class="row"><h2>참여사업장</h2>'
     +'<span class="stat">'+arr.length+'개사</span><span class="stat">상시근로자 '+totalEmp.toLocaleString()+'명</span>'
@@ -619,12 +626,23 @@ function sitesTab(){
     +(arr.length?'':' <button onclick="importSites()">📥 사업장 데이터 가져오기</button>')+'</div>'
     +'<div style="margin-top:12px">'+tbl+'</div></div>';
 }
+function _primaryContact(s){
+  var cts=[]; try{ cts=s&&s.contacts; if(typeof cts==='string')cts=JSON.parse(cts); }catch(e){}
+  if(!Array.isArray(cts)) cts=[];
+  var pi=0; for(var i=0;i<cts.length;i++){ if(cts[i]&&cts[i].isPrimary){pi=i;break;} }
+  return {list:cts, idx:cts.length?pi:-1, c:(cts[pi]||{})};
+}
 function editSite(sid){
   var s=(S.sites&&S.sites[sid])||{}; var isNew=!sid;
-  var flds=SITE_FIELDS.map(function(c){return '<div class="fld'+(c[0]==='address'?' full':'')+'"><label>'+c[1]+'</label>'
+  var flds=SITE_FIELDS.map(function(c){return '<div class="fld'+(c[0]==='address'||c[0]==='note'?' full':'')+'"><label>'+c[1]+'</label>'
     +'<input id="se-'+c[0]+'" type="'+c[2]+'" value="'+esc(s[c[0]]||'')+'"></div>';}).join('');
+  var pc=_primaryContact(s).c;
+  var cflds=CONTACT_FIELDS.map(function(c){return '<div class="fld"><label>'+c[1]+'</label>'
+    +'<input id="sc-'+c[0]+'" type="'+c[2]+'" value="'+esc(pc[c[0]]||(c[0]==='mobile'?(pc.phone||''):''))+'"></div>';}).join('');
   showModal('<h2 style="margin-bottom:10px">'+(isNew?'사업장 추가':'사업장 편집')+'</h2>'
     +'<div class="grid">'+flds+'</div>'
+    +'<div style="font-weight:700;font-size:12.5px;margin:14px 0 6px;color:var(--sub)">담당자 (대표 연락처)</div>'
+    +'<div class="grid">'+cflds+'</div>'
     +'<div class="row" style="justify-content:flex-end;margin-top:16px">'
     +(isNew?'':'<button onclick="delSite(\''+sid+'\')" style="margin-right:auto;color:var(--danger)">삭제</button>')
     +'<button onclick="closeM()">취소</button><button class="primary" onclick="saveSite(\''+sid+'\')">저장</button></div>');
@@ -633,6 +651,16 @@ function saveSite(sid){
   var obj=Object.assign({}, (S.sites&&S.sites[sid])||{status:'active'});
   SITE_FIELDS.forEach(function(c){var el=$('se-'+c[0]);if(el)obj[c[0]]=el.value.trim();});
   if(!obj.name){ alert('상호를 입력하세요'); return; }
+  // 담당자: 기존 contacts 배열 유지하되 대표 담당자 항목만 갱신(없으면 추가)
+  var pc=_primaryContact(obj), cv={};
+  CONTACT_FIELDS.forEach(function(c){var el=$('sc-'+c[0]);if(el)cv[c[0]]=el.value.trim();});
+  var hasContact=cv.name||cv.mobile||cv.email||cv.position;
+  var list=pc.list.slice();
+  if(hasContact){
+    var item={name:cv.name||'',position:cv.position||'',phone:'',mobile:cv.mobile||'',email:cv.email||'',isPrimary:true};
+    if(pc.idx>=0){ list[pc.idx]=Object.assign({},list[pc.idx],item); } else { list.unshift(item); }
+  } else if(pc.idx>=0){ list.splice(pc.idx,1); }   // 담당자 비우면 대표 항목 제거
+  obj.contacts=list;
   var ref = sid ? fbDb.ref(NS+'/sites/'+S.fundId+'/'+sid) : fbDb.ref(NS+'/sites/'+S.fundId).push();
   ref.set(obj).then(function(){ S.sitesFor=null; closeM(); renderFund(); })
     .catch(function(e){ alert('저장 실패: '+e.message); });
