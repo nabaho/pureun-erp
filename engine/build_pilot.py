@@ -58,6 +58,9 @@ def main():
             continue  # 초안(시나리오 여러 줄) 파일은 제외 — 확정본만
         for s in r["sheets"]:
             raw = [{k: v for k, v in e.items()} for e in s["employees"] if e.get("성명")]
+            # 일용 명단의 '해당월 무근무' 행(금액 전부 0/없음) 제외 — 급여 레코드 아님
+            AMT = ("기본급", "과세총액", "지급총액", "실수령", "공제총액", "소득세", "고용보험")
+            raw = [e for e in raw if any(e.get(k) for k in AMT)]
             if not raw:
                 continue
             # 사람당 1줄로 정리(같은 성명 중복 시 마지막=확정본 유지)

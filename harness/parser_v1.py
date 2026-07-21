@@ -19,9 +19,11 @@ FIELDS = {
     "성명":     ["성명", "이름", "성 명", "직원명"],
     "기본급":   ["기본급", "기본 급"],
     "과세총액": ["과세총액", "과세대상액", "과세대상", "과세소득금액", "과세소득", "과세금액",
-                "과세계", "과세합계", "총과세", "보수총액", "보수월액", "과세보수", "과세임금"],
-    "소득세":   ["소득세", "갑근세"],
+                "과세계", "과세합계", "총과세", "보수총액", "보수월액", "과세보수", "과세임금",
+                "임금총액", "노무비총액", "노임총액"],  # 일용 대장: 총액=과세 기반(고용보험=총액×요율 실측)
+    # 주의: 지방세를 소득세보다 먼저 — '지방소득세' 헤더가 소득세로 선점되는 것 방지
     "지방세":   ["지방소득세", "지방세", "주민세"],
+    "소득세":   ["소득세", "갑근세"],
     "국민연금": ["국민연금"],
     "건강보험": ["건강보험"],
     "장기요양": ["장기요양", "요양보험"],
@@ -30,7 +32,29 @@ FIELDS = {
     "실수령":   ["차인지급액", "차인지급", "실지급액", "실수령액", "실수령", "실지급", "차감지급", "실지급총액"],
     "지급총액": ["지급총액", "지급합계", "지급계", "급여계", "총지급액", "지급액계",
                 "지급 합계", "지급액 계", "지급액", "총지급"],
+    # 일용 대장 전용(명세서 산출용) — 새 필드
+    "일당":     ["일당", "노무비단가", "노임단가"],
+    "근무일수": ["출력일수", "총근무일수", "출역일수", "근무일수"],
 }
+
+# 짧아서 다른 항목(기타공제액·연차일수 등)과 오인되기 쉬운 라벨:
+# 공백 제거한 헤더가 '정확히' 이 값일 때만 매핑.
+FIELDS_EXACT = {"공제액": "공제총액", "공수": "근무일수", "일수": "근무일수", "단가": "일당"}
+
+# 부정어 가드: 헤더에 이 단어가 있으면 해당 필드로 매핑 금지
+# (기지급액→지급총액, 시트제목 '급여 계산'→급여계 오인 방지)
+# 주의: '비과세'는 여기 넣지 말 것 — 삼산회관류는 '비과세계' 라벨에 실제 과세총액이
+# 들어있음(실측: 기본급+수당=해당열, 엔진 고용보험 검증 96~100%). 대신 아래
+# 2단계 바인딩으로 '비과세 아닌 과세계 열'이 있으면 그쪽을 우선.
+FIELDS_NEG = {
+    "지급총액": ("기지급", "미지급", "선지급", "가지급", "계산"),
+    "공제총액": ("지각공제", "결근공제"),
+}
+
+
+def _nows(s):
+    """공백·줄바꿈 전부 제거(일용 대장 '노무비\\n총  액' 류 헤더 대응)."""
+    return re.sub(r"\s+", "", str(s)) if s is not None else ""
 
 # 기타공제 — 명확한 항목명만(과다합산 방지). '공제'·'차감' 같은 광범위 키워드 제외.
 EXTRA_DED_PAT = ["상조", "조합비", "사우회", "경조", "학자금", "가불", "기숙사비", "친목"]
@@ -73,11 +97,18 @@ def flatten_cols(rows, col_count):
 
 
 def match_field(header_text):
+    """공백·줄바꿈 무시 매칭(사전 순서 = 우선순위) + 부정어 가드 + 정확일치 라벨."""
+    ht = _nows(header_text)
+    if not ht:
+        return None
     for canon, syns in FIELDS.items():
+        if any(p in ht for p in FIELDS_NEG.get(canon, ())):
+            continue
         for s in syns:
-            if s in header_text:
+            ns = _nows(s)
+            if ns and ns in ht:
                 return canon
-    return None
+    return FIELDS_EXACT.get(ht)
 
 
 def parse_num(v):
@@ -104,6 +135,10 @@ def score_sheet(ws):
         joined = " ".join(str(c) for c in row if c is not None)
         f = set()
         for canon, syns in FIELDS.items():
+            # 일당·근무일수는 보조필드 — 점수에 넣으면 상용/일용 표가 쌓인 시트에서
+            # 일용 헤더가 상용 헤더를 이겨 상용 직원이 잘림(헤더 선택은 핵심필드만)
+            if canon in ("일당", "근무일수"):
+                continue
             if any(s in joined for s in syns):
                 f.add(canon)
         return f
@@ -135,9 +170,17 @@ def score_sheet(ws):
     col_count = max(len(r) for r in rows)
     flat = flatten_cols(header_rows, col_count)
     colmap = {}
+    prov = {}  # 께름칙한 매칭(예: '비과세계'→과세총액) — 더 나은 열 없을 때만 채택
     for ci, htext in enumerate(flat):
         f = match_field(htext)
-        if f and f not in colmap.values():
+        if not f or f in colmap.values():
+            continue
+        if f == "과세총액" and "비과세" in _nows(htext):
+            prov.setdefault(f, ci)
+            continue
+        colmap[ci] = f
+    for f, ci in prov.items():
+        if f not in colmap.values():
             colmap[ci] = f
     fields = set(colmap.values())
     if len(fields) < 4:
@@ -145,9 +188,12 @@ def score_sheet(ws):
     # 기타공제 후보 컬럼(핵심필드 미매핑 + 공제성 키워드)
     extra_ded = [ci for ci, h in enumerate(flat)
                  if ci not in colmap and h and any(p in h for p in EXTRA_DED_PAT)]
+    # 일용 대장 여부: 총액=과세=지급 동일 구조(임금총액·노무비·출역 헤더)
+    daily = any(k in _nows(h) for h in flat if h
+                for k in ("임금총액", "노무비", "출역"))
     return {"data_start": data_start, "header_rows": (hstart, data_start),
             "colmap": colmap, "fields": fields, "col_count": col_count,
-            "extra_ded": extra_ded}
+            "extra_ded": extra_ded, "daily": daily}
 
 
 def pick_and_parse(wb):
@@ -162,6 +208,7 @@ def pick_and_parse(wb):
             continue
         rows = list(ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=sc["col_count"], values_only=True))
         colmap = sc["colmap"]
+        daily = sc.get("daily") or any(k in ws.title for k in ("일용", "노임", "노무"))
         # 성명 컬럼: 헤더매핑 우선, 없으면 데이터에서 한글이름 최빈 컬럼 추정
         name_col = next((c for c, f in colmap.items() if f == "성명"), None)
         employees = []
@@ -201,6 +248,10 @@ def pick_and_parse(wb):
                         extra += v
             if extra:
                 emp["기타공제"] = extra
+            # 일용 대장: 총액 칸 하나(임금총액·노무비총액)가 과세총액으로 잡힘
+            # → 지급총액 칸이 따로 없으므로 동일값 채움(일용은 총액=과세=지급)
+            if daily and emp.get("과세총액") is not None:
+                emp.setdefault("지급총액", emp["과세총액"])
             if len(emp) >= 3:  # 성명 + 숫자필드 2개+
                 employees.append(emp)
         if employees:
