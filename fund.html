@@ -178,7 +178,9 @@ function initTop(){
   function tick(){var c=$('topclock');if(!c)return;var d=new Date();c.textContent=d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' ('+WD[d.getDay()]+') '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}
   tick();setInterval(tick,1000);
 }
-function doLogout(){ if(confirm('푸른 포털로 나가시겠어요?')) location.href=PORTAL_URL; }
+function doLogout(){ if(!confirm('로그아웃하고 푸른 포털로 나가시겠어요?'))return;
+  try{ firebase.auth().signOut().catch(function(){}).then(function(){ location.href=PORTAL_URL; }); }
+  catch(e){ location.href=PORTAL_URL; } }
 
 function go(v,id){ S.view=v; if(id!==undefined)S.fundId=id; if(v==='fund')S.tab='info'; route(); }
 function route(){
@@ -268,7 +270,8 @@ function patchFund(id,field,val){
 function renderBilling(){
   $('crumb').textContent='청구 관리';
   if(!S.billingsLoaded){ S.billingsLoaded=true;
-    fbDb.ref(NS+'/billings').on('value',function(s){S.billings=s.val()||{};if(S.view==='billing')renderBilling();});
+    fbDb.ref(NS+'/billings').on('value',function(s){S.billings=s.val()||{};if(S.view==='billing')renderBilling();},
+      function(err){ S.billingsLoaded=false; if(S.view==='billing')$('app').innerHTML='<div class="panel muted">청구 데이터를 불러오지 못했습니다: '+esc(err&&err.message||'권한 오류')+' <button onclick="renderBilling()">다시 시도</button></div>'; });
     $('app').innerHTML='<div class="panel muted">불러오는 중…</div>'; return; }
   var b=S.billings||{};
   var arr=Object.keys(b).map(function(k){var o=Object.assign({},b[k]);o._id=k;return o;});
@@ -348,7 +351,14 @@ function saveInfo(){
 }
 
 // ── 참여사업장 (2단계) ──
-function num(v){ if(v==null||v==='')return ''; var s=String(v).replace(/[^0-9.\-]/g,''); if(s===''||s==='-'||s==='.')return ''; var n=Math.round(parseFloat(s)); return isNaN(n)?'':n; }
+function num(v){ if(v==null||v==='')return ''; if(typeof v==='number')return Math.round(v);
+  var s=String(v).trim(), neg=false;
+  if(/^\(.+\)$/.test(s)){ neg=true; s=s.slice(1,-1); }            // (1,000) = 음수
+  if(/-\s*$/.test(s)){ neg=true; s=s.replace(/-\s*$/,''); }        // 1,000- = 음수
+  var plain=s.replace(/,/g,'');
+  if(/^[+-]?\d*\.?\d+e[+-]?\d+$/i.test(plain)){ var sci=parseFloat(plain); return isNaN(sci)?'':Math.round(neg?-sci:sci); } // 1E+6 지수표기
+  s=s.replace(/[^0-9.\-]/g,''); if(s===''||s==='-'||s==='.')return '';
+  var n=Math.round(parseFloat(s)); if(isNaN(n))return ''; return neg?-Math.abs(n):n; }
 function sitesTab(){
   if(S.sitesFor!==S.fundId){
     var _fid=S.fundId; S.sitesFor=_fid; S.sites=null;
@@ -450,9 +460,10 @@ function annualTab(f){
     +'<div style="margin-top:10px">'+rows+'</div>'
     +'<p class="muted" style="font-size:11.5px;margin-top:10px">체크하면 완료로 저장됩니다. 운영상황보고(별지15호) 기한은 회계연도 종료 후 3개월(익년 3-31)입니다.</p></div>';
 }
-function toggleAnnual(code,on){
-  fbDb.ref(NS+'/annual/'+S.fundId+'/'+S.year+'/'+code).set({done:on,done_date:on?ymd():''})
-    .then(function(){ if(!S.annual)S.annual={}; S.annual[code]={done:on}; renderFund(); });
+function toggleAnnual(code,on){ var _key=S.fundId+'/'+S.year;
+  fbDb.ref(NS+'/annual/'+_key+'/'+code).set({done:on,done_date:on?ymd():''})
+    .then(function(){ if(S.annualFor===_key){ if(!S.annual)S.annual={}; S.annual[code]={done:on}; } renderFund(); })
+    .catch(function(e){ alert('저장 실패: '+e.message); renderFund(); });
 }
 function ymd(){var d=new Date();function p(n){return(n<10?'0':'')+n;}return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
 
@@ -557,9 +568,9 @@ function createEvent(){
   var o={kind:kind,kind_label:meta.label,title:$('ev-title').value.trim(),status:'진행',started_date:ymd(),steps:meta.steps.map(function(l){return {label:l,done:false};})};
   fbDb.ref(NS+'/events/'+S.fundId).push().set(o).then(function(){S.evFor=null;renderFund();}).catch(function(e){alert('실패: '+e.message);});
 }
-function toggleStep(eid,i,on){ fbDb.ref(NS+'/events/'+S.fundId+'/'+eid+'/steps/'+i+'/done').set(on).then(function(){S.evFor=null;renderFund();}); }
-function setEv(eid,st){ fbDb.ref(NS+'/events/'+S.fundId+'/'+eid+'/status').set(st).then(function(){S.evFor=null;renderFund();}); }
-function delEv(eid){ if(confirm('이 변경 이벤트를 삭제할까요?')) fbDb.ref(NS+'/events/'+S.fundId+'/'+eid).remove().then(function(){S.evFor=null;renderFund();}); }
+function toggleStep(eid,i,on){ fbDb.ref(NS+'/events/'+S.fundId+'/'+eid+'/steps/'+i+'/done').set(on).then(function(){S.evFor=null;renderFund();}).catch(function(e){alert('저장 실패: '+e.message);renderFund();}); }
+function setEv(eid,st){ fbDb.ref(NS+'/events/'+S.fundId+'/'+eid+'/status').set(st).then(function(){S.evFor=null;renderFund();}).catch(function(e){alert('저장 실패: '+e.message);renderFund();}); }
+function delEv(eid){ if(confirm('이 변경 이벤트를 삭제할까요?')) fbDb.ref(NS+'/events/'+S.fundId+'/'+eid).remove().then(function(){S.evFor=null;renderFund();}).catch(function(e){alert('삭제 실패: '+e.message);}); }
 
 // ── 회계·결산 (3단계) ──
 function acctSel(id,side,cur){
@@ -607,55 +618,77 @@ function computeFin(arr){
     (acc[x.debit]=acc[x.debit]||{d:0,c:0}).d+=amt; (acc[x.credit]=acc[x.credit]||{d:0,c:0}).c+=amt;});
   var tb={}; Object.keys(acc).forEach(function(name){var v=acc[name];
     tb[name]={type:ACCT_CHART[name]||'비용',debit:v.d,credit:v.c,bal_d:Math.max(v.d-v.c,0),bal_c:Math.max(v.c-v.d,0)};});
-  function db(a){return (tb[a]||{}).bal_d||0;} function cb(a){return (tb[a]||{}).bal_c||0;}
-  var interest=cb('이자수익');
-  var purpose=['경조사비','동호회비','체육문화비','장학금','생활안정자금','기타복지비'].reduce(function(s,a){return s+db(a);},0);
-  var admin=['지급수수료','사무용품비','기타관리비'].reduce(function(s,a){return s+db(a);},0);
-  var cash=db('현금성자산')+(num(opening.cash)||0), savings=db('정기예금')+(num(opening.savings)||0);
-  var loan=db('근로자대부금')+(num(opening.loan)||0), basic=cb('기본재산')+(num(opening.basic)||0);
-  var net=interest-purpose-admin, retained=(num(opening.retained)||0)+net;
-  return {tb:tb,appr:appr.length,interest:interest,purpose:purpose,admin:admin,cash:cash,savings:savings,loan:loan,basic:basic,
-    totalAssets:cash+savings+loan,net:net,retained:retained,equity:basic+retained,opening:opening};
+  // 유형별 전 계정 집계(부호 있는 잔액) — 목록에 없는 계정도 누락 없이 대차가 맞도록
+  function sg(a){var v=tb[a]||{debit:0,credit:0};return v.debit-v.credit;}
+  var PURPOSE=['경조사비','동호회비','체육문화비','장학금','생활안정자금','기타복지비'];
+  var ADMIN=['지급수수료','사무용품비','기타관리비'];
+  var CORE_ASSET=['현금성자산','정기예금','근로자대부금'];
+  var revenue=0,purpose=0,admin=0,otherExp=0,liab=0,otherAsset=0,otherEquity=0;
+  Object.keys(tb).forEach(function(n){var v=tb[n],s=v.debit-v.credit;
+    if(v.type==='수익')revenue+=-s;
+    else if(v.type==='부채')liab+=-s;
+    else if(v.type==='자본'&&n!=='기본재산')otherEquity+=-s;
+    else if(v.type==='비용'){ if(PURPOSE.indexOf(n)>=0)purpose+=s; else if(ADMIN.indexOf(n)>=0)admin+=s; else otherExp+=s; }
+    else if(v.type==='자산'&&CORE_ASSET.indexOf(n)<0)otherAsset+=s;});
+  var interest=revenue;
+  var cash=sg('현금성자산')+(num(opening.cash)||0), savings=sg('정기예금')+(num(opening.savings)||0);
+  var loan=sg('근로자대부금')+(num(opening.loan)||0), basic=-sg('기본재산')+(num(opening.basic)||0);
+  liab+=(num(opening.reserve)||0);
+  var net=revenue-purpose-admin-otherExp, retained=(num(opening.retained)||0)+otherEquity+net;
+  var totalAssets=cash+savings+loan+otherAsset, equity=basic+retained, totalLiabEq=liab+equity;
+  return {tb:tb,appr:appr.length,interest:interest,purpose:purpose,admin:admin,otherExp:otherExp,
+    cash:cash,savings:savings,loan:loan,otherAsset:otherAsset,basic:basic,liab:liab,
+    totalAssets:totalAssets,net:net,retained:retained,equity:equity,totalLiabEq:totalLiabEq,
+    balanced:totalAssets===totalLiabEq,opening:opening};
 }
 function finPanel(arr){
   var f=computeFin(arr);
-  if(!f.appr) return '<div class="panel muted">승인된 거래가 없어 재무제표를 만들 수 없습니다. 위에서 계정 지정 후 승인하세요.</div>';
-  var tbRows=Object.keys(f.tb).sort().map(function(n){var v=f.tb[n];
-    return '<tr><td>'+esc(n)+'</td><td class="muted">'+v.type+'</td><td style="text-align:right">'+(v.bal_d?v.bal_d.toLocaleString():'')+'</td><td style="text-align:right">'+(v.bal_c?v.bal_c.toLocaleString():'')+'</td></tr>';}).join('');
   var op=f.opening||{};
   function oi(k,lbl){return '<div class="fld"><label>'+lbl+'</label><input id="op-'+k+'" value="'+esc(op[k]||'')+'" placeholder="0"></div>';}
-  return '<div class="panel"><div class="row"><h2>결산·재무제표</h2><span class="stat">승인 '+f.appr+'건 기준</span>'
+  var openingHtml='<div style="margin-top:14px"><div style="font-weight:700;margin-bottom:6px">전기이월(기초잔액) — 있으면 입력</div>'
+      +'<div class="grid" style="max-width:760px">'+oi('cash','현금성자산')+oi('savings','정기예금')+oi('loan','근로자대부금')+oi('basic','기본재산')+oi('retained','이월잉여금')+oi('reserve','고유목적사업준비금')+'</div>'
+      +'<button style="margin-top:8px" onclick="saveOpening()">💾 전기이월 저장</button></div>';
+  if(!f.appr) return '<div class="panel"><div class="muted">승인된 거래가 없어 재무제표를 만들 수 없습니다. 위에서 계정 지정 후 승인하세요.</div>'+openingHtml+'</div>';
+  var tbRows=Object.keys(f.tb).sort().map(function(n){var v=f.tb[n];
+    return '<tr><td>'+esc(n)+'</td><td class="muted">'+v.type+'</td><td style="text-align:right">'+(v.bal_d?v.bal_d.toLocaleString():'')+'</td><td style="text-align:right">'+(v.bal_c?v.bal_c.toLocaleString():'')+'</td></tr>';}).join('');
+  var balChip = f.balanced
+    ? '<span class="chip ok">✅ 대차일치</span>'
+    : '<span class="chip warn">⚠️ 대차차이 '+won(f.totalAssets-f.totalLiabEq)+' — 전기이월 확인</span>';
+  return '<div class="panel"><div class="row"><h2>결산·재무제표</h2><span class="stat">승인 '+f.appr+'건 기준</span>'+balChip
     +'<span style="flex:1"></span><button class="primary" onclick="openForm15()">📄 별지15호 보기·인쇄</button></div>'
     +'<div class="row" style="align-items:flex-start;gap:24px;margin-top:12px;flex-wrap:wrap">'
     +'<div style="min-width:280px;flex:1"><div style="font-weight:700;margin-bottom:6px">재무상태표</div><table>'
       +'<tr><td>현금성자산</td><td style="text-align:right">'+won(f.cash)+'</td></tr>'
       +'<tr><td>정기예금</td><td style="text-align:right">'+won(f.savings)+'</td></tr>'
       +'<tr><td>근로자대부금</td><td style="text-align:right">'+won(f.loan)+'</td></tr>'
+      +(f.otherAsset?'<tr><td>기타자산</td><td style="text-align:right">'+won(f.otherAsset)+'</td></tr>':'')
       +'<tr style="font-weight:700"><td>자산 총계</td><td style="text-align:right">'+won(f.totalAssets)+'</td></tr>'
+      +'<tr><td>고유목적사업준비금(부채)</td><td style="text-align:right">'+won(f.liab)+'</td></tr>'
       +'<tr><td>기본재산</td><td style="text-align:right">'+won(f.basic)+'</td></tr>'
       +'<tr><td>이월잉여금</td><td style="text-align:right">'+won(f.retained)+'</td></tr>'
-      +'<tr style="font-weight:700"><td>자본 총계</td><td style="text-align:right">'+won(f.equity)+'</td></tr></table></div>'
+      +'<tr style="font-weight:700"><td>부채·자본 총계</td><td style="text-align:right">'+won(f.totalLiabEq)+'</td></tr></table></div>'
     +'<div style="min-width:280px;flex:1"><div style="font-weight:700;margin-bottom:6px">운영성과표</div><table>'
       +'<tr><td>이자수익</td><td style="text-align:right">'+won(f.interest)+'</td></tr>'
       +'<tr><td>목적사업비</td><td style="text-align:right">'+won(f.purpose)+'</td></tr>'
       +'<tr><td>운영비(관리비)</td><td style="text-align:right">'+won(f.admin)+'</td></tr>'
+      +(f.otherExp?'<tr><td>기타비용(정기예금전입 등)</td><td style="text-align:right">'+won(f.otherExp)+'</td></tr>':'')
       +'<tr style="font-weight:700"><td>당기순이익</td><td style="text-align:right">'+won(f.net)+'</td></tr></table></div></div>'
     +'<details style="margin-top:14px"><summary style="cursor:pointer;font-weight:700">합계잔액시산표</summary>'
       +'<table style="margin-top:8px"><thead><tr><th>계정</th><th>유형</th><th style="text-align:right">차변잔액</th><th style="text-align:right">대변잔액</th></tr></thead><tbody>'+tbRows+'</tbody></table></details>'
-    +'<div style="margin-top:14px"><div style="font-weight:700;margin-bottom:6px">전기이월(기초잔액) — 있으면 입력</div>'
-      +'<div class="grid" style="max-width:760px">'+oi('cash','현금성자산')+oi('savings','정기예금')+oi('loan','근로자대부금')+oi('basic','기본재산')+oi('retained','이월잉여금')+'</div>'
-      +'<button style="margin-top:8px" onclick="saveOpening()">💾 전기이월 저장</button></div></div>';
+    +openingHtml+'</div>';
 }
 function saveOpening(){
-  var o={}; ['cash','savings','loan','basic','retained'].forEach(function(k){var el=$('op-'+k);if(el)o[k]=num(el.value)||0;});
-  fbDb.ref(NS+'/funds/'+S.fundId+'/years/'+S.year+'/opening').set(o).then(function(){
-    if(!funds[S.fundId].years)funds[S.fundId].years={}; if(!funds[S.fundId].years[S.year])funds[S.fundId].years[S.year]={};
-    funds[S.fundId].years[S.year].opening=o; renderFund(); alert('전기이월 저장됨');
+  var _fid=S.fundId,_yr=S.year;
+  var o={}; ['cash','savings','loan','basic','retained','reserve'].forEach(function(k){var el=$('op-'+k);if(el)o[k]=num(el.value)||0;});
+  fbDb.ref(NS+'/funds/'+_fid+'/years/'+_yr+'/opening').set(o).then(function(){
+    if(!funds[_fid].years)funds[_fid].years={}; if(!funds[_fid].years[_yr])funds[_fid].years[_yr]={};
+    funds[_fid].years[_yr].opening=o; renderFund(); alert('전기이월 저장됨');
   }).catch(function(e){alert('저장 실패: '+e.message);});
 }
 function openForm15(){
   var t=S.txns||{}, arr=Object.keys(t).map(function(k){return t[k];});
   var f=computeFin(arr), fd=funds[S.fundId];
+  if(!f.balanced&&!confirm('⚠️ 대차가 일치하지 않습니다 (차이 '+won(f.totalAssets-f.totalLiabEq)+').\n전기이월 입력을 확인하세요. 그래도 출력할까요?')) return;
   function k(n){return Math.round((n||0)/1000).toLocaleString();}   // 천원
   var w=window.open('','_blank'); if(!w){alert('팝업이 차단되었습니다');return;}
   w.document.write('<!doctype html><meta charset=utf-8><title>운영상황보고서(별지15호) — '+esc(fd.short_name||fd.name)+'</title>'
@@ -670,6 +703,8 @@ function openForm15(){
     +'<tr><td>근로자 대부금 잔액</td><td class=n>'+won(f.loan)+'</td><td class=n>'+k(f.loan)+'</td></tr>'
     +'<tr><td>목적사업비(복지사업 집행)</td><td class=n>'+won(f.purpose)+'</td><td class=n>'+k(f.purpose)+'</td></tr>'
     +'<tr><td>운영비(관리비)</td><td class=n>'+won(f.admin)+'</td><td class=n>'+k(f.admin)+'</td></tr>'
+    +(f.otherExp?'<tr><td>기타비용(정기예금전입 등)</td><td class=n>'+won(f.otherExp)+'</td><td class=n>'+k(f.otherExp)+'</td></tr>':'')
+    +(f.liab?'<tr><td>고유목적사업준비금(부채)</td><td class=n>'+won(f.liab)+'</td><td class=n>'+k(f.liab)+'</td></tr>':'')
     +'<tr style="font-weight:700"><td>당기순이익</td><td class=n>'+won(f.net)+'</td><td class=n>'+k(f.net)+'</td></tr>'
     +'<tr style="font-weight:700"><td>자산 총계</td><td class=n>'+won(f.totalAssets)+'</td><td class=n>'+k(f.totalAssets)+'</td></tr></table>'
     +'<p class="sub" style="margin-top:16px">※ 승인된 거래 '+f.appr+'건 + 전기이월 기준 자동 집계. 실제 제출 전 검토 필요.</p>'
@@ -686,62 +721,91 @@ function proposeAcct(memo,isDep){
 }
 function parseBank(rows){
   var hi=-1, col={};
-  function find(cells,res){for(var c=0;c<cells.length;c++){var v=String(cells[c]||'');
+  function find(cells){for(var c=0;c<cells.length;c++){var v=String(cells[c]||'');
     if(/날짜|거래일|일자|거래일시/.test(v)&&col.date==null)col.date=c;
     if(/적요|내용|의뢰인|기재|가맹점/.test(v)&&col.memo==null)col.memo=c;
-    if(/입금|맡기신/.test(v)&&!/건수|횟수/.test(v)&&col.dep==null)col.dep=c;
-    if(/출금|찾으신|지급/.test(v)&&!/건수|횟수/.test(v)&&col.wd==null)col.wd=c;
+    if(/입금|맡기신/.test(v)&&!/건수|횟수|잔액|잔고/.test(v)&&col.dep==null)col.dep=c;
+    if(/출금|찾으신|지급/.test(v)&&!/건수|횟수|잔액|잔고/.test(v)&&col.wd==null)col.wd=c;
     if(/잔액|잔고/.test(v)&&col.bal==null)col.bal=c;}}
-  for(var i=0;i<Math.min(rows.length,25);i++){ col={}; find(rows[i]);
-    if(col.dep!=null&&col.wd!=null){ hi=i; break; } }
+  var lim=Math.min(rows.length,100);
+  // 1차: 날짜열까지 있는 헤더 우선(다단 헤더 오인 방지), 2차: 입·출금열만으로 폴백
+  for(var i=0;i<lim;i++){ col={}; find(rows[i]||[]); if(col.dep!=null&&col.wd!=null&&col.date!=null){ hi=i; break; } }
+  if(hi<0) for(var i2=0;i2<lim;i2++){ col={}; find(rows[i2]||[]); if(col.dep!=null&&col.wd!=null){ hi=i2; break; } }
   if(hi<0) return null;
+  function normDate(s){ var m=String(s||'').match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
+    if(!m) return String(s||'').trim();
+    return m[1]+'-'+('0'+m[2]).slice(-2)+'-'+('0'+m[3]).slice(-2); }
   var out=[];
   for(var r=hi+1;r<rows.length;r++){ var row=rows[r]; if(!row)continue;
-    var date=col.date!=null?String(row[col.date]||'').trim():'';
+    var date=col.date!=null?normDate(row[col.date]):'';
     var memo=col.memo!=null?String(row[col.memo]||'').trim():'';
-    var dep=num(row[col.dep]), wd=num(row[col.wd]);
+    if(/^(합\s*계|소\s*계|총\s*계)/.test(memo)) continue;   // 합계·소계 행은 거래 아님
+    var dep=num(row[col.dep])||0, wd=num(row[col.wd])||0;
+    if(dep<0){ wd+=-dep; dep=0; } if(wd<0){ dep+=-wd; wd=0; } // 음수 표기 = 반대방향
     if(!date&&!memo&&!dep&&!wd) continue;
     if(!dep&&!wd) continue;
-    out.push({date:date,memo:memo,deposit:dep||0,withdraw:wd||0,balance:col.bal!=null?(num(row[col.bal])||0):0});
+    var bal=col.bal!=null?(num(row[col.bal])||0):0;
+    if(dep&&wd){ out.push({date:date,memo:memo,deposit:dep,withdraw:0,balance:bal});
+                 out.push({date:date,memo:memo,deposit:0,withdraw:wd,balance:bal}); } // 입·출 동시 행 분리(분개 누락 방지)
+    else out.push({date:date,memo:memo,deposit:dep,withdraw:wd,balance:bal});
   }
   return out;
 }
 function hkey(s){var h=0;for(var i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))|0;return 't'+(h>>>0).toString(36);}
 function importBank(){
+  var _fid=S.fundId, _yr=S.year;   // 클릭 시점 고정 — 로딩 중 기금·연도 이동해도 원래 경로에 저장
+  if(!_fid){ alert('기금을 먼저 선택하세요'); return; }
+  var _fname=(funds[_fid]&&(funds[_fid].short_name||funds[_fid].name))||_fid;
   var inp=document.createElement('input'); inp.type='file'; inp.accept='.xls,.xlsx';
   inp.onchange=function(ev){ var file=ev.target.files&&ev.target.files[0]; if(!file)return;
     var rd=new FileReader();
     rd.onload=function(){
       try{
         var wb=XLSX.read(new Uint8Array(rd.result),{type:'array'});
-        var ws=wb.Sheets[wb.SheetNames[0]];
-        var rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''});
-        var txns=parseBank(rows);
+        var txns=null;   // 첫 시트가 안내문인 파일 대응 — 거래가 나올 때까지 전 시트 시도
+        for(var si=0;si<wb.SheetNames.length;si++){
+          var rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[si]],{header:1,raw:false,defval:''});
+          var got=parseBank(rows);
+          if(got&&got.length){ txns=got; break; }
+          if(got&&!txns) txns=got;
+        }
         if(!txns){ alert('통장 형식을 인식하지 못했습니다. (입금·출금 열을 찾지 못함)'); return; }
         if(!txns.length){ alert('거래 내역이 없습니다.'); return; }
-        if(!confirm(txns.length+'건의 거래를 읽었습니다. 자동분개 제안과 함께 가져올까요?\n(이미 있는 거래는 승인·분개를 그대로 보존합니다)')) return;
-        var existing=(S.txnsFor===(S.fundId+'/'+S.year)&&S.txns)?S.txns:{};
-        var obj={}, added=0, kept=0;
-        txns.forEach(function(x){ var key=hkey(x.date+'|'+x.deposit+'|'+x.withdraw+'|'+x.memo);
-          if(existing[key]){ kept++; return; }   // 기존 거래(수동분개·승인) 보존
-          var p=proposeAcct(x.memo,x.deposit>0);
-          obj[key]={date:x.date,memo:x.memo,deposit:x.deposit,withdraw:x.withdraw,balance:x.balance,debit:p.d,credit:p.c,approved:false}; added++;
-        });
-        if(added===0){ alert('새로 추가할 거래가 없습니다. (기존 '+kept+'건은 그대로 유지)'); return; }
-        fbDb.ref(NS+'/txns/'+S.fundId+'/'+S.year).update(obj).then(function(){ S.txnsFor=null; renderFund(); alert('가져오기 완료: 신규 '+added+'건'+(kept?' · 기존 '+kept+'건 보존':'')); })
-          .catch(function(e){ alert('저장 실패: '+e.message); });
+        if(!confirm('['+_fname+' · '+_yr+'년] '+txns.length+'건의 거래를 읽었습니다. 자동분개 제안과 함께 가져올까요?\n(이미 있는 거래는 승인·분개를 그대로 보존합니다)')) return;
+        var path=NS+'/txns/'+_fid+'/'+_yr;
+        fbDb.ref(path).once('value').then(function(snap){   // 서버 최신본 기준 중복검사 — 오래된 캐시로 승인 거래 덮어쓰기 방지
+          var existing=snap.val()||{};
+          var obj={}, added=0, kept=0, seen={};
+          txns.forEach(function(x){ var base=x.date+'|'+x.deposit+'|'+x.withdraw+'|'+x.memo;
+            var n=(seen[base]=(seen[base]||0)+1);
+            var key=hkey(n>1?base+'|'+n:base);   // 같은 날 동일 금액·적요 거래도 각각 보존
+            if(existing[key]||obj[key]){ kept++; return; }
+            var p=proposeAcct(x.memo,x.deposit>0);
+            obj[key]={date:x.date,memo:x.memo,deposit:x.deposit,withdraw:x.withdraw,balance:x.balance,debit:p.d,credit:p.c,approved:false}; added++;
+          });
+          if(added===0){ alert('새로 추가할 거래가 없습니다. (기존 '+kept+'건은 그대로 유지)'); return; }
+          return fbDb.ref(path).update(obj).then(function(){ S.txnsFor=null; renderFund(); alert('['+_fname+' · '+_yr+'년] 가져오기 완료: 신규 '+added+'건'+(kept?' · 기존 '+kept+'건 보존':'')); });
+        }).catch(function(e){ alert('저장 실패: '+e.message); });
       }catch(e){ alert('파싱 실패: '+e.message); }
     };
     rd.readAsArrayBuffer(file);
   };
   inp.click();
 }
-function setTxnAcct(id,side,val){ fbDb.ref(NS+'/txns/'+S.fundId+'/'+S.year+'/'+id+'/'+side).set(val).then(function(){if(S.txns&&S.txns[id])S.txns[id][side]=val;renderFund();}); }
+function setTxnAcct(id,side,val){ var _key=S.fundId+'/'+S.year;
+  fbDb.ref(NS+'/txns/'+_key+'/'+id+'/'+side).set(val)
+    .then(function(){ if(S.txnsFor===_key&&S.txns&&S.txns[id])S.txns[id][side]=val; renderFund(); })
+    .catch(function(e){ alert('저장 실패: '+e.message); renderFund(); }); }
 function approveTxn(id,on){
-  if(on){ var x=S.txns&&S.txns[id]; if(x&&(!x.debit||!x.credit)){ alert('차변·대변 계정을 먼저 지정하세요'); renderFund(); return; } }
-  fbDb.ref(NS+'/txns/'+S.fundId+'/'+S.year+'/'+id+'/approved').set(on).then(function(){if(S.txns&&S.txns[id])S.txns[id].approved=on;renderFund();});
+  if(on){ var x=S.txns&&S.txns[id];
+    if(x&&(!x.debit||!x.credit)){ alert('차변·대변 계정을 먼저 지정하세요'); renderFund(); return; }
+    if(x&&x.debit===x.credit){ alert('차변과 대변이 같은 계정입니다 — 분개를 확인하세요'); renderFund(); return; } }
+  var _key=S.fundId+'/'+S.year;
+  fbDb.ref(NS+'/txns/'+_key+'/'+id+'/approved').set(on)
+    .then(function(){ if(S.txnsFor===_key&&S.txns&&S.txns[id])S.txns[id].approved=on; renderFund(); })
+    .catch(function(e){ alert('저장 실패: '+e.message); renderFund(); });
 }
-function delTxn(id){ if(confirm('이 거래를 삭제할까요?')) fbDb.ref(NS+'/txns/'+S.fundId+'/'+S.year+'/'+id).remove().then(function(){S.txnsFor=null;renderFund();}); }
+function delTxn(id){ if(confirm('이 거래를 삭제할까요?')) fbDb.ref(NS+'/txns/'+S.fundId+'/'+S.year+'/'+id).remove().then(function(){S.txnsFor=null;renderFund();}).catch(function(e){alert('삭제 실패: '+e.message);}); }
 
 // ── 간단 모달 ──
 function showModal(html){
