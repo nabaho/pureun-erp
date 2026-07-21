@@ -595,7 +595,86 @@ function closingTab(f){
     +'<span class="stat'+(unappr?' " style="background:var(--warn-bg);color:var(--warn)':'')+'">미승인 '+unappr+'</span>'
     +(arr.length?(gateOk?'<span class="chip ok">✅ 결산 가능 (미분류·미승인 0)</span>':'<span class="chip warn">결산 관문: 미분류·미승인 0 필요</span>'):'')+'</div>'
     +'<p class="muted" style="font-size:11.5px;margin:6px 0 0">통장 엑셀을 올리면 거래를 읽어 자동분개를 <b>제안</b>합니다. 차변/대변 계정을 확인·수정하고 승인 체크하세요.</p></div>'
-    +'<div class="panel">'+(arr.length?'<div style="overflow-x:auto"><table><thead><tr><th>일자</th><th>적요</th><th style="text-align:right">입금</th><th style="text-align:right">출금</th><th>차변</th><th>대변</th><th>승인</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<div class="muted" style="padding:16px 4px">거래가 없습니다. [📥 통장 엑셀 가져오기]로 시작하세요.</div>')+'</div>';
+    +'<div class="panel">'+(arr.length?'<div style="overflow-x:auto"><table><thead><tr><th>일자</th><th>적요</th><th style="text-align:right">입금</th><th style="text-align:right">출금</th><th>차변</th><th>대변</th><th>승인</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<div class="muted" style="padding:16px 4px">거래가 없습니다. [📥 통장 엑셀 가져오기]로 시작하세요.</div>')+'</div>'
+    +finPanel(arr);
+}
+function won(n){return (n||0).toLocaleString()+'원';}
+function computeFin(arr){
+  var yd=(funds[S.fundId]&&funds[S.fundId].years&&funds[S.fundId].years[S.year])||{}, opening=yd.opening||{};
+  var appr=arr.filter(function(x){return x.approved&&x.debit&&x.credit;});
+  var acc={};
+  appr.forEach(function(x){var amt=num(x.deposit)||num(x.withdraw)||0;
+    (acc[x.debit]=acc[x.debit]||{d:0,c:0}).d+=amt; (acc[x.credit]=acc[x.credit]||{d:0,c:0}).c+=amt;});
+  var tb={}; Object.keys(acc).forEach(function(name){var v=acc[name];
+    tb[name]={type:ACCT_CHART[name]||'비용',debit:v.d,credit:v.c,bal_d:Math.max(v.d-v.c,0),bal_c:Math.max(v.c-v.d,0)};});
+  function db(a){return (tb[a]||{}).bal_d||0;} function cb(a){return (tb[a]||{}).bal_c||0;}
+  var interest=cb('이자수익');
+  var purpose=['경조사비','동호회비','체육문화비','장학금','생활안정자금','기타복지비'].reduce(function(s,a){return s+db(a);},0);
+  var admin=['지급수수료','사무용품비','기타관리비'].reduce(function(s,a){return s+db(a);},0);
+  var cash=db('현금성자산')+(num(opening.cash)||0), savings=db('정기예금')+(num(opening.savings)||0);
+  var loan=db('근로자대부금')+(num(opening.loan)||0), basic=cb('기본재산')+(num(opening.basic)||0);
+  var net=interest-purpose-admin, retained=(num(opening.retained)||0)+net;
+  return {tb:tb,appr:appr.length,interest:interest,purpose:purpose,admin:admin,cash:cash,savings:savings,loan:loan,basic:basic,
+    totalAssets:cash+savings+loan,net:net,retained:retained,equity:basic+retained,opening:opening};
+}
+function finPanel(arr){
+  var f=computeFin(arr);
+  if(!f.appr) return '<div class="panel muted">승인된 거래가 없어 재무제표를 만들 수 없습니다. 위에서 계정 지정 후 승인하세요.</div>';
+  var tbRows=Object.keys(f.tb).sort().map(function(n){var v=f.tb[n];
+    return '<tr><td>'+esc(n)+'</td><td class="muted">'+v.type+'</td><td style="text-align:right">'+(v.bal_d?v.bal_d.toLocaleString():'')+'</td><td style="text-align:right">'+(v.bal_c?v.bal_c.toLocaleString():'')+'</td></tr>';}).join('');
+  var op=f.opening||{};
+  function oi(k,lbl){return '<div class="fld"><label>'+lbl+'</label><input id="op-'+k+'" value="'+esc(op[k]||'')+'" placeholder="0"></div>';}
+  return '<div class="panel"><div class="row"><h2>결산·재무제표</h2><span class="stat">승인 '+f.appr+'건 기준</span>'
+    +'<span style="flex:1"></span><button class="primary" onclick="openForm15()">📄 별지15호 보기·인쇄</button></div>'
+    +'<div class="row" style="align-items:flex-start;gap:24px;margin-top:12px;flex-wrap:wrap">'
+    +'<div style="min-width:280px;flex:1"><div style="font-weight:700;margin-bottom:6px">재무상태표</div><table>'
+      +'<tr><td>현금성자산</td><td style="text-align:right">'+won(f.cash)+'</td></tr>'
+      +'<tr><td>정기예금</td><td style="text-align:right">'+won(f.savings)+'</td></tr>'
+      +'<tr><td>근로자대부금</td><td style="text-align:right">'+won(f.loan)+'</td></tr>'
+      +'<tr style="font-weight:700"><td>자산 총계</td><td style="text-align:right">'+won(f.totalAssets)+'</td></tr>'
+      +'<tr><td>기본재산</td><td style="text-align:right">'+won(f.basic)+'</td></tr>'
+      +'<tr><td>이월잉여금</td><td style="text-align:right">'+won(f.retained)+'</td></tr>'
+      +'<tr style="font-weight:700"><td>자본 총계</td><td style="text-align:right">'+won(f.equity)+'</td></tr></table></div>'
+    +'<div style="min-width:280px;flex:1"><div style="font-weight:700;margin-bottom:6px">운영성과표</div><table>'
+      +'<tr><td>이자수익</td><td style="text-align:right">'+won(f.interest)+'</td></tr>'
+      +'<tr><td>목적사업비</td><td style="text-align:right">'+won(f.purpose)+'</td></tr>'
+      +'<tr><td>운영비(관리비)</td><td style="text-align:right">'+won(f.admin)+'</td></tr>'
+      +'<tr style="font-weight:700"><td>당기순이익</td><td style="text-align:right">'+won(f.net)+'</td></tr></table></div></div>'
+    +'<details style="margin-top:14px"><summary style="cursor:pointer;font-weight:700">합계잔액시산표</summary>'
+      +'<table style="margin-top:8px"><thead><tr><th>계정</th><th>유형</th><th style="text-align:right">차변잔액</th><th style="text-align:right">대변잔액</th></tr></thead><tbody>'+tbRows+'</tbody></table></details>'
+    +'<div style="margin-top:14px"><div style="font-weight:700;margin-bottom:6px">전기이월(기초잔액) — 있으면 입력</div>'
+      +'<div class="grid" style="max-width:760px">'+oi('cash','현금성자산')+oi('savings','정기예금')+oi('loan','근로자대부금')+oi('basic','기본재산')+oi('retained','이월잉여금')+'</div>'
+      +'<button style="margin-top:8px" onclick="saveOpening()">💾 전기이월 저장</button></div></div>';
+}
+function saveOpening(){
+  var o={}; ['cash','savings','loan','basic','retained'].forEach(function(k){var el=$('op-'+k);if(el)o[k]=num(el.value)||0;});
+  fbDb.ref(NS+'/funds/'+S.fundId+'/years/'+S.year+'/opening').set(o).then(function(){
+    if(!funds[S.fundId].years)funds[S.fundId].years={}; if(!funds[S.fundId].years[S.year])funds[S.fundId].years[S.year]={};
+    funds[S.fundId].years[S.year].opening=o; renderFund(); alert('전기이월 저장됨');
+  }).catch(function(e){alert('저장 실패: '+e.message);});
+}
+function openForm15(){
+  var t=S.txns||{}, arr=Object.keys(t).map(function(k){return t[k];});
+  var f=computeFin(arr), fd=funds[S.fundId];
+  function k(n){return Math.round((n||0)/1000).toLocaleString();}   // 천원
+  var w=window.open('','_blank'); if(!w){alert('팝업이 차단되었습니다');return;}
+  w.document.write('<!doctype html><meta charset=utf-8><title>운영상황보고서(별지15호) — '+esc(fd.short_name||fd.name)+'</title>'
+    +'<style>body{font-family:Malgun Gothic,sans-serif;padding:30px;color:#111}h1{font-size:18px;text-align:center}'
+    +'table{border-collapse:collapse;width:100%;margin-top:14px}th,td{border:1px solid #444;padding:7px 10px;font-size:13px}'
+    +'th{background:#f0f0f0;text-align:left}td.n{text-align:right}.sub{color:#555;font-size:12px}@media print{button{display:none}}</style>'
+    +'<h1>공동·사내근로복지기금 운영상황보고서 (별지 제15호)</h1>'
+    +'<p class="sub">기금법인: <b>'+esc(fd.name||'')+'</b> · 회계연도: '+S.year+'년 · 인가번호: '+esc(fd.inka_no||'-')+' · 고유번호: '+esc(fd.tax_id_no||'-')+'</p>'
+    +'<table><tr><th>구분</th><th>금액(원)</th><th>금액(천원)</th></tr>'
+    +'<tr><td>기본재산 총액</td><td class=n>'+won(f.basic)+'</td><td class=n>'+k(f.basic)+'</td></tr>'
+    +'<tr><td>당기 운용수익금(이자 등)</td><td class=n>'+won(f.interest)+'</td><td class=n>'+k(f.interest)+'</td></tr>'
+    +'<tr><td>근로자 대부금 잔액</td><td class=n>'+won(f.loan)+'</td><td class=n>'+k(f.loan)+'</td></tr>'
+    +'<tr><td>목적사업비(복지사업 집행)</td><td class=n>'+won(f.purpose)+'</td><td class=n>'+k(f.purpose)+'</td></tr>'
+    +'<tr><td>운영비(관리비)</td><td class=n>'+won(f.admin)+'</td><td class=n>'+k(f.admin)+'</td></tr>'
+    +'<tr style="font-weight:700"><td>당기순이익</td><td class=n>'+won(f.net)+'</td><td class=n>'+k(f.net)+'</td></tr>'
+    +'<tr style="font-weight:700"><td>자산 총계</td><td class=n>'+won(f.totalAssets)+'</td><td class=n>'+k(f.totalAssets)+'</td></tr></table>'
+    +'<p class="sub" style="margin-top:16px">※ 승인된 거래 '+f.appr+'건 + 전기이월 기준 자동 집계. 실제 제출 전 검토 필요.</p>'
+    +'<button onclick="print()" style="margin-top:20px;padding:8px 16px">인쇄 / PDF 저장</button>');
+  w.document.close();
 }
 function proposeAcct(memo,isDep){
   var m=String(memo||''), dir=isDep?'입금':'출금';
