@@ -94,3 +94,14 @@ plugin update superpowers
 ### 코딩 규칙
 - 한국어 주석 사용
 - 노무 도메인 용어 준수 (급여→임금, 직원→근로자 등)
+
+---
+
+## 기금 시스템(fund.html) 작업 규칙 — 계정·PC 간 이어가기
+근로복지기금 관리(`fund.html`, Firebase RTDB)는 여러 로그인/PC에서 이어서 개발한다.
+AI 개인 메모리는 계정마다 다르므로 **공용 상태 파일이 유일한 기준**이다.
+
+- **세션 시작 시**: `fund-erp/STATUS.md`를 읽고 `git log --oneline -20`으로 최근 변경을 확인한 뒤 이어간다.
+- **세션 종료 시**: 바뀐 내용을 `fund-erp/STATUS.md`(진행률·다음 할 일·변경 로그)에 반영하고 commit/push 한다.
+- **push 전 반드시** `git pull --rebase origin main` (원격에 급여·명함첩·달력 등 다른 작업이 자주 올라옴).
+- 실데이터(fund.db·사업장 실데이터·templates 서식엑셀·backups)는 저장소에 올리지 않는다.
