@@ -4112,7 +4112,6 @@ function _fbLocalCountForShrink(k){
 var _shrinkQueue = [];
 var _shrinkActiveKey = null;   // 지금 모달로 처리 중인 키
 var _shrinkActiveVer = 0;      // 그 키의 표시 중 버전(서버 레코드 u)
-var _shrinkActiveApply = null; // '교체' 시 실행할 최신 적용 콜백(활성 중 더 새 버전이 오면 이걸 갱신)
 // [로그인 모달폭탄 방지] defer=true면 모달을 즉시 띄우지 않고 보류 큐에만 쌓는다.
 //   초기 동기화가 대량으로 급감을 감지해도 접속 즉시 확인창이 연달아 뜨지 않고,
 //   동기화 완료 후 _drainShrinkQueue()가 펌프로 유효 항목을 하나씩 처리한다(같은 키는 최신으로 병합).
@@ -4124,11 +4123,10 @@ function _handleShrinkSync(k, oldCount, newCount, onApply, defer, ver){
   if(_shrinkKeep[k] && _shrinkKeep[k] > now) return;   // 최근 '유지' → 조용히 차단(현재 유지)
   // 지금 모달로 처리 중인 '바로 그 키'가 다시 도착한 경우:
   //   · 같거나 이전 버전(초기 동기화 보류 키의 child_added 재도착 등) → 무시(이중 모달 방지).
-  //   · 더 새 버전 → 열린 모달의 '교체' 적용분만 최신으로 갱신(새 모달 X). 옛 값 적용/스테일 방지.
-  if(_shrinkActiveKey === k){
-    if(ver > _shrinkActiveVer){ _shrinkActiveVer = ver; _shrinkActiveApply = onApply; }
-    return;
-  }
+  //   · 더 새 버전 → 드롭하지 않고 큐로 넣어(아래 병합) 현재 모달 종료 후 '정확한 수치'로 다시 확인한다.
+  //     ※ 활성 적용분을 몰래 바꾸면 모달엔 옛 건수가 뜬 채 새(더 파괴적일 수 있는) 값이 적용되는
+  //       확인/적용 불일치가 생김 — 파괴적 확인은 반드시 보이는 수치대로 적용돼야 함(코덱스 검증 반영).
+  if(_shrinkActiveKey === k && ver <= _shrinkActiveVer) return;
   // 큐 병합: 같은 키가 이미 대기 중이면 더 새(>=) 버전 값으로 교체
   var found = false;
   for(var qi=0; qi<_shrinkQueue.length; qi++){
@@ -4161,8 +4159,7 @@ function _shrinkPump(){
   _shrinkModalOpen = true;
   _shrinkActiveKey = item.k;
   _shrinkActiveVer = item.u || 0;
-  _shrinkActiveApply = item.f;   // '교체' 시 실행할 적용분(활성 중 더 새 버전 오면 갱신됨)
-  var k = item.k, newCount = item.n;
+  var k = item.k, newCount = item.n, onApply = item.f;   // 이 모달이 보여준 바로 그 버전의 적용분(불일치 없음)
   var _lc = _fbLocalCountForShrink(k);
   var oldCount = (typeof _lc === 'number') ? _lc : item.o;   // 표시는 현재 로컬 건수 우선
   var msg = '서버에서 받은 "'+k+'" 데이터가 현재('+oldCount+'건)보다 크게 줄었습니다 → '+newCount+'건.\n\n'
@@ -4171,11 +4168,10 @@ function _shrinkPump(){
     + '· 서버 값으로 교체: 정말 대량 삭제한 경우에만 선택하세요.';
   showConfirm(msg, { title:'⚠️ 데이터 급감 차단', danger:true, confirmText:'서버 값으로 교체', cancelText:'현재 데이터 유지(권장)' })
     .then(function(applyIt){
-      var _apply = _shrinkActiveApply;   // 활성 중 더 새 버전으로 갱신됐을 수 있음 → 최신 적용분 사용
       _shrinkModalOpen = false;
-      _shrinkActiveKey = null; _shrinkActiveVer = 0; _shrinkActiveApply = null;
-      if(applyIt){ try { if(_apply) _apply(); } catch(e){ window._erpErrLog && window._erpErrLog(e); } }  // 서버 값 적용(1회, 최신 버전)
-      else { _shrinkKeep[k] = Date.now() + 300000; }                                                      // 현재 유지(이 기기만)
+      _shrinkActiveKey = null; _shrinkActiveVer = 0;
+      if(applyIt){ try { onApply(); } catch(e){ window._erpErrLog && window._erpErrLog(e); } }   // 서버 값 적용(1회, 보여준 버전)
+      else { _shrinkKeep[k] = Date.now() + 300000; }                                             // 현재 유지(이 기기만)
       _shrinkPump();   // 항상 다음 항목으로 진행(스킵돼도 멈추지 않음)
     });
 }
