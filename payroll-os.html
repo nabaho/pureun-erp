@@ -42,6 +42,24 @@ h1{font-size:20px;margin-bottom:4px}.sub{color:var(--sub);font-size:13px;margin-
 #gate h2{color:var(--navy);font-size:20px;margin-bottom:4px}#gate p{color:var(--sub);font-size:12.5px;margin:6px 0 16px}
 #gate input{width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 12px;font-size:14px;margin-bottom:10px;font-family:inherit}
 #gate .err{color:var(--bad);font-size:12.5px;margin-top:8px;white-space:pre-wrap;text-align:left}
+/* ── 임금명세서 ── */
+.slip{position:relative;background:#fff;border:1px solid var(--line);border-radius:8px;max-width:840px;margin:0 0 18px;padding:30px 36px;page-break-after:always;overflow:hidden}
+.slip .shead{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid var(--navy);padding-bottom:9px}
+.slip .co{font-weight:800;font-size:15px;color:var(--navy)}
+.slip .ttl{font-size:18px;font-weight:800;letter-spacing:6px}
+.slip .meta{width:100%;border-collapse:collapse;margin:11px 0 14px;font-size:13px}
+.slip .meta td{padding:3px 0}.slip .meta b{color:var(--sub);font-weight:600;margin-right:6px}
+.slip .cols{display:flex;gap:20px}.slip .cols>div{flex:1}
+.slip .sec{font-weight:700;font-size:13px;color:var(--navy);margin-bottom:6px}
+.slip .tb{width:100%;border-collapse:collapse;font-size:13px}
+.slip .tb td{border:1px solid var(--line);padding:6px 10px}.slip .tb .n{text-align:right;font-variant-numeric:tabular-nums}
+.slip .tb .tot td{font-weight:800;background:var(--paper)}
+.slip .net{margin-top:14px;text-align:right;font-size:14px}.slip .net b{font-size:19px;color:var(--navy)}
+.slip .calc{margin-top:9px;font-size:12.5px;color:var(--sub)}
+.slip .snote{margin-top:11px;font-size:12px;background:#FBF1DE;border-radius:8px;padding:9px 12px;color:#7A5200;white-space:pre-wrap}
+.slip .foot{margin-top:15px;border-top:1px solid var(--line);padding-top:7px;font-size:11px;color:#9aa0b5}
+.slip.draft::after{content:'미확정 · 검토용';position:absolute;top:45%;left:50%;transform:translate(-50%,-50%) rotate(-24deg);font-size:52px;font-weight:800;color:rgba(196,61,61,.13);white-space:nowrap;pointer-events:none}
+@media print{header,nav,.noprint{display:none !important}body{background:#fff}main{padding:0}.layout{min-height:0}.slip{border:none;border-radius:0;max-width:none;margin:0}}
 </style>
 </head>
 <body>
@@ -112,7 +130,7 @@ function dbGet(k,fb){ return (cache[k]!=null)?cache[k]:fb; }
 function dbSet(k,v){ cache[k]=v; fbDb.ref(ROOT+'/'+k).set(v).catch(function(e){alert('저장 실패: '+e.code);}); render(); }
 
 var App={screen:'cards',site:null,month:null,go:function(s){this.screen=s;this.site=null;this.month=null;render();}};
-var NAV=[{id:'cards',label:'⚙️ 설정 카드'},{id:'inbox',label:'📥 수신함'},{id:'payroll',label:'💰 급여 처리'}];
+var NAV=[{id:'cards',label:'⚙️ 설정 카드'},{id:'inbox',label:'📥 수신함'},{id:'payroll',label:'💰 급여 처리'},{id:'slip',label:'📄 명세서'}];
 var SIG={green:'#2E7D4F',orange:'#B26A00',red:'#C43D3D'};
 function won(n){ return (n==null)?'-':Number(n).toLocaleString(); }
 function lockKey(site,month){ return site+'|'+month; }
@@ -129,7 +147,8 @@ function screenPayroll(){
     '<div class="empty" style="margin-top:14px">_harness_out\\pilot_payroll.json 을 올리면 화담원·제이앤드씨·늘봄 급여가 표시됩니다.</div>'; return h; }
   // 3단계 드릴다운
   if(!App.site){
-    h+='<div class="sub">사업장 선택 · 계산 결과를 3색 신호로 확인 → 확정</div>';
+    h+='<div class="sub">사업장 선택 · 계산 결과를 3색 신호로 확인 → 확정 '+
+       '<button class="btn sec noprint" style="margin-left:10px;padding:4px 10px;font-size:12px" onclick="importPayroll()">데이터 다시 올리기</button></div>';
     h+='<div class="cards">';
     Object.keys(pay.sites).forEach(function(site){
       var recs=pay.sites[site]; var cnt={green:0,orange:0,red:0}; var locked=0;
@@ -174,6 +193,98 @@ function importPayroll(){var i=document.createElement('input');i.type='file';i.a
   i.onchange=function(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();
    r.onload=function(){try{var raw=JSON.parse(r.result);dbSet('payroll',raw);alert('파일럿 급여 데이터 저장 완료: '+(raw.pilots||[]).join(', '));}catch(err){alert('JSON 오류: '+err.message);}};r.readAsText(f);};i.click();}
 window.importPayroll=importPayroll;window.toggleLock=toggleLock;
+
+/* ── 명세서(임금명세서) — 확정 급여 → 화이트라벨 인쇄/PDF ──
+   렌더 규칙 원본: harness engine/payslip_html.py (동일 로직 유지할 것) */
+function slipRows(e){
+  var DED=[['소득세','소득세'],['지방세','지방소득세'],['국민연금','국민연금'],['건강보험','건강보험'],
+           ['장기요양','장기요양보험'],['고용보험','고용보험'],['기타공제','기타 공제']];
+  var dedRows=[],dedSum=0;
+  DED.forEach(function(p){ if(e[p[0]]!=null){ dedRows.push([p[1],e[p[0]]]); dedSum+=e[p[0]]; } });
+  var dedTotal=(e.공제총액!=null)?e.공제총액:(dedRows.length?dedSum:null);
+  if(dedTotal!=null&&dedTotal>dedSum) dedRows.push(['기타 공제(차액)',dedTotal-dedSum]);
+  var net=(e.실수령!=null)?e.실수령:null;
+  // 임금총액: 지급총액 → (실수령+공제) 역산 → 과세총액 → 기본급 (과세엔 비과세 빠짐 → 역산 우선)
+  var gross=(e.지급총액!=null)?e.지급총액:null;
+  if(gross==null&&net!=null&&dedTotal!=null) gross=net+dedTotal;
+  if(gross==null) gross=(e.과세총액!=null)?e.과세총액:((e.기본급!=null)?e.기본급:null);
+  if(gross!=null&&net!=null&&dedTotal==null&&net>gross) gross=net;
+  var payRows=[],calc=null;
+  if(e.일당&&e.근무일수){
+    payRows.push(['노무비(일당제)',(gross!=null)?gross:e.일당*e.근무일수]);
+    calc='일당 '+won(e.일당)+'원 × '+e.근무일수+'일';
+  }else{
+    if(e.기본급!=null) payRows.push(['기본급',e.기본급]);
+    if(gross!=null&&e.기본급!=null&&gross>e.기본급) payRows.push(['그 외 지급(합산)',gross-e.기본급]);
+  }
+  if(net==null&&gross!=null&&dedTotal!=null) net=gross-dedTotal;
+  if(dedTotal==null&&gross!=null&&net!=null&&gross>=net) dedTotal=gross-net;
+  return {pay:payRows,ded:dedRows,gross:gross,dedTotal:dedTotal,net:net,calc:calc};
+}
+function paydayOf(site){
+  var cards=dbGet('site_cards',[])||[],set={};
+  cards.forEach(function(c){ var nm=String(c.사업장||'');
+    if(nm.indexOf(site)>=0||site.indexOf(nm)>=0){ if(c.급여일) set[c.급여일]=1; } });
+  var ks=Object.keys(set);
+  return ks.length===1?ks[0]:'';
+}
+function slipHTML(site,month,e,payday,notice,draft){
+  var r=slipRows(e);
+  function rows(rs){ return rs.map(function(p){return '<tr><td>'+p[0]+'</td><td class="n">'+won(p[1])+'</td></tr>';}).join(''); }
+  return '<div class="slip'+(draft?' draft':'')+'">'+
+    '<div class="shead"><div class="co">'+site+'</div><div class="ttl">임 금 명 세 서</div></div>'+
+    '<table class="meta"><tr><td><b>성명</b> '+(e.성명||'')+'</td><td><b>귀속</b> '+month+'</td><td><b>지급일</b> '+(payday||'-')+'</td></tr></table>'+
+    '<div class="cols"><div><div class="sec">지급 내역</div><table class="tb">'+rows(r.pay)+
+    '<tr class="tot"><td>임금총액</td><td class="n">'+won(r.gross)+'</td></tr></table></div>'+
+    '<div><div class="sec">공제 내역</div><table class="tb">'+rows(r.ded)+
+    '<tr class="tot"><td>공제총액</td><td class="n">'+won(r.dedTotal)+'</td></tr></table></div></div>'+
+    '<div class="net">실수령액 <b>'+won(r.net)+'</b> 원</div>'+
+    (r.calc?'<div class="calc">계산방법: '+r.calc+' = '+won(r.gross)+'원</div>':'')+
+    (notice?'<div class="snote">'+notice+'</div>':'')+
+    '<div class="foot">본 명세서는 근로기준법 제48조제2항에 따라 교부됩니다.</div></div>';
+}
+function saveNotice(){ var v=document.getElementById('slipnotice').value; dbSet('payslip_notice',v); }
+window.saveNotice=saveNotice;
+function screenSlip(){
+  var pay=dbGet('payroll',null);
+  var h='<h1>명세서</h1>';
+  if(!pay||!pay.sites){ h+='<div class="sub">급여 처리에서 데이터를 먼저 올리세요</div><div class="empty">급여 데이터가 서버에 없습니다.</div>'; return h; }
+  if(!App.site){
+    h+='<div class="sub">사업장 선택 → 월 선택 → 인쇄/PDF. 확정된 월이 정식 명세서, 미확정은 검토용 워터마크.</div><div class="cards">';
+    Object.keys(pay.sites).forEach(function(site){
+      var recs=pay.sites[site],locked=0;
+      recs.forEach(function(r){ if(isLocked(site,r.월)) locked++; });
+      h+='<div class="c" style="cursor:pointer" onclick="App.site=\''+site.replace(/'/g,"")+'\';render()">'+
+         '<div class="t">'+site+'</div><div class="m">'+recs.length+'개월 · 확정 '+locked+'</div></div>';
+    });
+    h+='</div>'; return h;
+  }
+  var recs=pay.sites[App.site]||[];
+  if(!App.month){
+    h+='<div class="sub"><a href="#" onclick="App.site=null;render();return false">← 사업장</a> · <b>'+App.site+'</b> 월 선택</div>';
+    h+='<div style="background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden">';
+    var sorted=recs.slice().sort(function(a,b){ return (isLocked(App.site,b.월)?1:0)-(isLocked(App.site,a.월)?1:0); });
+    sorted.forEach(function(r){ var lk=isLocked(App.site,r.월);
+      h+='<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);cursor:pointer" onclick="App.month=\''+r.월.replace(/'/g,"")+'\';render()">'+
+         '<div style="flex:1"><b>'+r.월+'</b> <span style="font-size:12px;color:var(--sub)">직원 '+r.직원수+'명 · '+r.파일+'</span></div>'+
+         (lk?'<span class="badge ok">확정됨</span>':'<span class="badge warn">미확정</span>')+'</div>';
+    });
+    h+='</div>'; return h;
+  }
+  var rec=recs.filter(function(r){return r.월===App.month;})[0]||{직원:[]};
+  var draft=!isLocked(App.site,App.month);
+  var notice=dbGet('payslip_notice','');
+  var payday=paydayOf(App.site);
+  h+='<div class="sub noprint"><a href="#" onclick="App.month=null;render();return false">← '+App.site+'</a> · <b>'+App.month+'</b> 명세서 '+(rec.직원||[]).length+'장 '+
+     (draft?'<span class="badge warn">미확정 — 검토용 워터마크</span>':'<span class="badge ok">확정본</span>')+
+     ' <button class="btn" style="margin-left:8px" onclick="window.print()">인쇄 / PDF 저장</button></div>';
+  h+='<div class="noprint" style="background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-bottom:14px">'+
+     '<div style="font-size:12.5px;color:var(--sub);margin-bottom:6px">명세서 하단 안내 문구(연차사용촉진 등) — 모든 명세서에 함께 인쇄됩니다</div>'+
+     '<textarea id="slipnotice" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px;font-family:inherit;font-size:12.5px" rows="2">'+String(notice).replace(/</g,'&lt;')+'</textarea>'+
+     '<button class="btn sec" style="margin-top:6px;padding:5px 12px;font-size:12px" onclick="saveNotice()">문구 저장</button></div>';
+  (rec.직원||[]).forEach(function(e){ h+=slipHTML(App.site,App.month,e,payday,notice,draft); });
+  return h;
+}
 function screenCards(){
   var cards=dbGet('site_cards',[]);
   var h='<h1>설정 카드</h1><div class="sub">푸른통합시스템 · payroll_os · '+cards.length+'곳</div>';
@@ -192,6 +303,7 @@ function render(){
   var m=document.getElementById('main');
   if(App.screen==='cards') m.innerHTML=screenCards();
   else if(App.screen==='payroll') m.innerHTML=screenPayroll();
+  else if(App.screen==='slip') m.innerHTML=screenSlip();
   else m.innerHTML='<h1>수신함</h1><div class="sub">자료 수신·자동태깅</div><div class="empty">다음 단계에서 구현</div>';
 }
 function importCards(){var i=document.createElement('input');i.type='file';i.accept='.json';
