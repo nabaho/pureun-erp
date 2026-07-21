@@ -13805,6 +13805,11 @@ function CaseManagement(props){
     if(!c) return;
     if(!canCloseDirect(c)){ erpRequestClose(c, '사건 ' + (c.caseNo||'') + ' ' + (c.companyName||'')); return; }
     erpClearCloseReq(c.id);
+    // 종료 후에도 재무관리 미입금 대기에 남을 잔액 계산 (오해 방지 안내용)
+    var _paidOf = function(kind){ return ((c.splitPayments||[]).filter(function(sp){return sp.kind===kind;}).reduce(function(s,sp){return s+(sp.amount||0);},0)); };
+    var _unpaid = [];
+    var _rFee = c.retainerFee||0; if(_rFee>0 && !c.retainerPaidDate){ var _rRem=_rFee-_paidOf('착수금'); if(_rRem>0) _unpaid.push({label:'착수금',amount:_rRem}); }
+    var _sFee = c.successFee||0; if(_sFee>0 && !c.successPaidDate){ var _sRem=_sFee-_paidOf('성공보수'); if(_sRem>0) _unpaid.push({label:'성공보수',amount:_sRem}); }
     setCloseModal({
       caseId: caseId,
       caseNo: c.caseNo,
@@ -13812,7 +13817,9 @@ function CaseManagement(props){
       successFee: c.successFee||0,
       result: c.caseResult || '',
       feeStatus: c.successFeeStatus || (((c.successFee||0) > 0 && c.successPaidDate) ? 'paid' : ''),
-      reason: c.closeReason || ''
+      reason: c.closeReason || '',
+      unpaid: _unpaid,
+      unpaidTotal: _unpaid.reduce(function(s,u){return s+u.amount;},0)
     });
   }
 
@@ -14676,6 +14683,17 @@ function CloseCaseModal(props){
         h('div', { style:{ fontSize:'11px', color:'#94a3b8', marginTop:'2px' } }, (d.caseNo||'-') + ' 의 진행을 종결하고 결과를 기록합니다')
       ),
       h('div', { className:'modal-b', style:{ padding:'16px 18px' } },
+        // 미입금 잔액 안내 — 종료해도 재무관리 미입금 대기에 계속 남는다는 점을 명시(오해 방지)
+        (d.unpaidTotal||0) > 0 && h('div', { style:{ marginBottom:'14px', padding:'10px 12px', background:'#fffbeb', border:'1px solid #fcd34d', borderRadius:'7px' } },
+          h('div', { style:{ fontSize:'12.5px', fontWeight:700, color:'#92400e', marginBottom:'4px' } },
+            '⚠️ 미입금 ' + (d.unpaid||[]).length + '건 · ' + (d.unpaidTotal||0).toLocaleString() + '원 남아 있음'),
+          h('div', { style:{ fontSize:'11.5px', color:'#854d0e', lineHeight:1.5 } },
+            (d.unpaid||[]).map(function(u){ return u.label+' '+u.amount.toLocaleString(); }).join(' · '),
+            h('br', null),
+            '종료해도 재무관리 → ⏳ 미입금 대기에 계속 표시되며, 입금확정은 재무관리에서 처리합니다.',
+            h('br', null),
+            h('span', { style:{ color:'#b45309' } }, '받을 수 없는 금액이면 아래 성공보수 처리를 “포기/회수 불능”으로 선택하세요.'))
+        ),
         // 1. 결과 선택
         h('div', { style:{ marginBottom:'14px' } },
           h('label', { style:{ display:'block', fontSize:'12px', fontWeight:700, color:'#475569', marginBottom:'6px' } }, '① 사건 결과 *'),
@@ -25754,6 +25772,7 @@ function IncomePendingTab(){
   var sd = useState('desc'); var sortDir = sd[0]; var setSortDir = sd[1];
   var cm = useState(null); var confirmModal = cm[0]; var setConfirmModal = cm[1];
   var vff = useState('all'); var vatFilter = vff[0]; var setVatFilter = vff[1];
+  var cof = useState(false); var closedOnly = cof[0]; var setClosedOnly = cof[1]; // 종료건만 보기
   var ppsS = useState(99999); var pendPageSize = ppsS[0]; var setPendPageSize = ppsS[1]; // 기본: 전체 보기
   // 종료된 업체명 set (companyName 매칭용)
   var closedCompanyNames = {};
@@ -25762,6 +25781,16 @@ function IncomePendingTab(){
     if(co.status === 'closed' && co.name) closedCompanyNames[co.name] = co.closedDate || co.closedAt || '';
     if(co.name && co.vatType) companyVatMap[co.name] = co.vatType;
   });
+  // 항목 자체의 사무관리 종료·마감 여부 (업체 종료와 별개). 종료돼도 미입금은 여기 남는다.
+  function itemClosedInfo(p){
+    var it = p.item || {};
+    if(p.store && p.store.isCase){
+      if(it.status === 'closed' || it.permanentArchived) return { closed:true, label:'사건종료', date: it.closeDate || it.permanentArchivedAt || '' };
+    } else {
+      if(it.closedDate || it.permanentArchived || it.status === 'closed') return { closed:true, label:'마감', date: it.closedDate || it.closedAt || '' };
+    }
+    return { closed:false, label:'', date:'' };
+  }
   function getVatType(p){
     var it = p && p.item ? p.item : p;
     var kind = p && p.kind;
@@ -25944,8 +25973,10 @@ function IncomePendingTab(){
   });
   var totalAmt = pending.reduce(function(s,p){return s+p.amount;},0);
 
+  var closedCount = pending.filter(function(p){ return !p.isUnrecoverable && itemClosedInfo(p).closed; }).length;
   var filtered = pending.filter(function(p){
     if(p.isUnrecoverable) return false; // 회수불능은 미납 대기에서 제외
+    if(closedOnly && !itemClosedInfo(p).closed) return false;
     if(srcFilter !== 'all' && p.store.sourceKind !== srcFilter) return false;
     if(vatFilter !== 'all'){
       var isVat = getVatType(p) === 'inclusive';
@@ -26035,7 +26066,13 @@ function IncomePendingTab(){
         return h('button', { key:s.sourceKind, onClick:function(){setSrcFilter(s.sourceKind);},
           style:{padding:'2px 7px',border:'1px solid '+(on?s.color:'#e2e8f0'),background:on?s.color:'#fff',color:on?'#fff':s.color,borderRadius:'6px',cursor:'pointer',fontSize:'11.5px',fontWeight:on?700:500} },
           s.icon + ' ' + s.label + ' (' + info.count + ')');
-      })
+      }),
+      // 종료건만 — 사무관리에서 종료·마감됐는데 입금이 안 끝난 항목만 (입금 오해 방지)
+      h('span', { style:{width:'1px',alignSelf:'stretch',background:'#e2e8f0',margin:'0 2px'} }),
+      h('button', { onClick:function(){setClosedOnly(!closedOnly);},
+        title:'사무관리에서 종료·마감됐지만 입금이 남아있는 항목만 보기',
+        style:{padding:'2px 7px',border:'1px solid '+(closedOnly?'#b45309':'#fcd34d'),background:closedOnly?'#f59e0b':'#fffbeb',color:closedOnly?'#fff':'#92400e',borderRadius:'6px',cursor:'pointer',fontSize:'11.5px',fontWeight:closedOnly?700:600} },
+        '🏁 종료건만 (' + closedCount + ')')
     ),
 
     // 검색·금액·날짜 필터
@@ -26094,7 +26131,8 @@ function IncomePendingTab(){
               pendPg.paged.map(function(p, idx){
                 var coName = p.item.companyName || '';
                 var isClosed = !!closedCompanyNames[coName];
-                return h('tr', { key:p.itemId+'-'+p.kind, style:Object.assign({borderBottom:'1px solid #f1f5f9'}, isClosed?{background:'#fef2f2'}:{}) },
+                var ci = itemClosedInfo(p);  // 항목 자체(사건/컨설팅)의 종료·마감 여부
+                return h('tr', { key:p.itemId+'-'+p.kind, style:Object.assign({borderBottom:'1px solid #f1f5f9'}, (isClosed||ci.closed)?{background:'#fffbeb'}:{}) },
                   h('td', {style:Object.assign({},tdS,{textAlign:'center',color:'#94a3b8',fontFamily:'monospace'})}, idx+1),
                   h('td', {style:tdS},
                     h('span', {style:{background:p.store.bg,color:p.store.color,padding:'2px 8px',borderRadius:'8px',fontSize:'10.5px',fontWeight:700}}, p.store.icon + ' ' + p.store.label)),
@@ -26102,10 +26140,14 @@ function IncomePendingTab(){
                     p.item.caseNo || p.item.no || '-'),
                   h('td', {style:Object.assign({},tdS,{fontWeight:700,color:'#1e293b'})},
                     coName || '-',
+                    ci.closed && h('span', {
+                      title: (ci.label==='사건종료'?'사건 종료':'마감') + (ci.date?' '+ci.date:'') + ' — 입금만 남음 (사무관리 종료 ≠ 입금 완료)',
+                      style:{marginLeft:'6px',background:'#fef3c7',color:'#92400e',border:'1px solid #fcd34d',padding:'1px 6px',borderRadius:'8px',fontSize:'10.5px',fontWeight:700,verticalAlign:'middle',whiteSpace:'nowrap'}
+                    }, '🏁 ' + ci.label + (ci.date?' '+ci.date.slice(5):'') + ' · 입금만'),
                     isClosed && h('span', {
-                      title: '종료일: ' + (closedCompanyNames[coName]||'-'),
+                      title: '업체 종료일: ' + (closedCompanyNames[coName]||'-'),
                       style:{marginLeft:'6px',background:'#fee2e2',color:'#991b1b',padding:'1px 6px',borderRadius:'8px',fontSize:'10.5px',fontWeight:700,verticalAlign:'middle'}
-                    }, '🏛️ 종료')),
+                    }, '🏛️ 업체종료')),
                   h('td', {style:Object.assign({},tdS,{color:'#475569'})},
                     (function(){
                       var subs = (p.item.managerSubs||[]).filter(function(s){return s;});
