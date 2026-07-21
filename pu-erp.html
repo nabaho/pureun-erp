@@ -4642,16 +4642,17 @@ function Sidebar(props){
   var dgS = useState(null); var dragPinIdx = dgS[0]; var setDragPinIdx = dgS[1];
   // 사이드바 뷰 모드: 'all'=전체 메뉴, 'fav'=즐겨찾기만 (상단 탭 전환)
   var svS = usePersistedState('pureun_v6_sb_view', 'all'); var sbView = svS[0]; var setSbView = svS[1];
+  var PIN_MAX = 10;
   function togglePin(menuId){
     var isPinned = pinned.indexOf(menuId) >= 0;
-    if(!isPinned && pinned.length >= 5){
-      showToast('⚠️ 즐겨찾기는 최대 5개까지 (기존 즐겨찾기 해제 후 추가하세요)');
+    if(!isPinned && pinned.length >= PIN_MAX){
+      showToast('⚠️ 즐겨찾기는 최대 '+PIN_MAX+'개까지 (기존 즐겨찾기 해제 후 추가하세요)');
       return;
     }
     var next = isPinned ? pinned.filter(function(x){return x !== menuId;}) : pinned.concat([menuId]);
     setPinned(next);
     try{ localStorage.setItem(pinKey, JSON.stringify(next)); }catch(e){ window._erpErrLog && window._erpErrLog(e); }
-    showToast(isPinned ? '⭐ 즐겨찾기 해제' : '⭐ 즐겨찾기 추가 (' + next.length + '/5)');
+    showToast(isPinned ? '⭐ 즐겨찾기 해제' : '⭐ 즐겨찾기 추가 (' + next.length + '/' + PIN_MAX + ')');
   }
   // 길게 누르기 (모바일 long-press)
   var lpTimer = null;
@@ -4808,8 +4809,18 @@ function Sidebar(props){
               h('div', { style:{ fontSize:'22px', marginBottom:'6px' } }, '⭐'),
               '즐겨찾기가 없습니다.', h('br', null),
               '전체 탭에서 메뉴 옆 ☆를 눌러 추가하세요.')
-          : h('div', { className:'sb-menu' },
-              pinnedItems.map(function(p, pIdx){
+          : (function(){
+              // 즐겨찾기를 소속 그룹별로 묶어 표시 (그룹 순서=메뉴 순서, 그룹 내=즐겨찾기 순서)
+              var byGrp = {}; var seen = [];
+              pinnedItems.forEach(function(p, idx){
+                var gid = p.grp.gid;
+                if(!byGrp[gid]){ byGrp[gid] = { name:p.grp.name, icon:p.grp.icon, items:[] }; seen.push(gid); }
+                byGrp[gid].items.push({ p:p, idx:idx });
+              });
+              var menuOrder = MENUS.map(function(g){ return g.gid; });
+              seen.sort(function(a,b){ return menuOrder.indexOf(a) - menuOrder.indexOf(b); });
+              function favItem(rec){
+                var p = rec.p, pIdx = rec.idx;
                 var badge = getMenuBadge(p.id);
                 var isDragging = dragPinIdx === pIdx;
                 return h('div', {
@@ -4847,8 +4858,17 @@ function Sidebar(props){
                     title:'즐겨찾기 해제',
                     style:{ fontSize:'11px', cursor:'pointer', color:'#fbbf24', marginLeft: badge ? '0' : 'auto', padding:'2px 6px' } }, '⭐')
                 );
-              })
-            )
+              }
+              return h('div', { className:'sb-menu' },
+                seen.map(function(gid){
+                  var g = byGrp[gid];
+                  return h('div', { key:'favg-'+gid },
+                    h('div', { style:{ padding:'6px 12px 3px', fontSize:'10px', color:'#64748b', fontWeight:700, letterSpacing:'0.3px' } }, (g.icon||'') + ' ' + g.name),
+                    g.items.map(favItem)
+                  );
+                })
+              );
+            })()
       ) :
       MENUS.map(function(grp){
         // 환경설정은 하단 고정으로 별도 렌더 → 여기서 제외
@@ -4901,7 +4921,7 @@ function Sidebar(props){
                   onMouseDown:function(e){ e.stopPropagation(); },
                   onTouchStart:function(e){ e.stopPropagation(); },
                   onTouchEnd:function(e){ e.stopPropagation(); e.preventDefault(); togglePin(item.id); },
-                  title: isPinned ? '즐겨찾기 해제' : '즐겨찾기 추가 (최대 5개)',
+                  title: isPinned ? '즐겨찾기 해제' : '즐겨찾기 추가 (최대 '+PIN_MAX+'개)',
                   style:{ fontSize:'11px', cursor:'pointer', color: isPinned ? '#fbbf24' : '#475569',
                     marginLeft: badge ? '0' : 'auto', padding:'2px 6px',
                     opacity: isPinned ? 1 : 0.6 } }, isPinned ? '⭐' : '☆'),
@@ -55030,7 +55050,7 @@ function OnboardingTour(props){
   var allSteps = [
     { sel:null, title:'👋 푸른노무법인 ERP 둘러보기', body:'주요 화면을 약 1분간 안내합니다. [다음] 버튼 또는 ESC로 진행하세요.' },
     { sel:'.sb-user', title:'내 계정 · 권한', body:'로그인한 계정과 권한입니다. 권한(관리자/노무사/사무직)에 따라 보이는 메뉴와 금액 정보가 달라집니다.', place:'right' },
-    { sel:'.sb-user button', title:'메뉴 펼치기 / 접기', body:'전체 메뉴를 펼치거나 접습니다. 자주 쓰는 메뉴는 메뉴 옆 ☆를 눌러 즐겨찾기(최대 5개)로 올려두면 편합니다.', place:'right' },
+    { sel:'.sb-user button', title:'메뉴 펼치기 / 접기', body:'전체 메뉴를 펼치거나 접습니다. 자주 쓰는 메뉴는 메뉴 옆 ☆를 눌러 즐겨찾기(최대 10개)로 올려두면 편합니다.', place:'right' },
     { sel:'.sb-grp-h[data-grp-id="dash"]', title:'📊 대시보드', body:'법인 전체 현황과 내 업무를 한눈에 봅니다. 관리자는 매출·지출·미수금, 직원은 본인 담당 업무가 표시됩니다.', place:'right' },
     { sel:'.sb-grp-h[data-grp-id="biz"]', title:'💼 사무관리', body:'모든 업무의 시작점은 계약관리입니다. 계약을 등록하면 업체·사건·컨설팅·기금으로 자동 이관·연결됩니다.', place:'right' },
     { sel:'.sb-grp-h[data-grp-id="hr"]', title:'👥 인사관리', body:'직원관리·월별급여·성과관리·근태·휴가를 처리합니다. 급여명세서와 비정규직 지급도 여기서 관리합니다.', place:'right' },
