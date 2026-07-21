@@ -8,6 +8,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <style>
@@ -79,10 +80,10 @@
 <div id="root"><div class="gate">불러오는 중…</div></div>
 
 <script>
-var FB_CONFIG={apiKey:'AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA',databaseURL:'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app',projectId:'pureun-erp',appId:'1:936817166182:web:9bd31f70d0afdf5fca2aa7',messagingSenderId:'936817166182'};
+var FB_CONFIG={apiKey:'AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA',databaseURL:'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app',projectId:'pureun-erp',storageBucket:'pureun-erp.appspot.com',appId:'1:936817166182:web:9bd31f70d0afdf5fca2aa7',messagingSenderId:'936817166182'};
 var FB_APPCHECK_KEY='6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
 var PORTAL_URL='enter.html', NS='fund_erp';
-var fbDb=null, funds={}, S={view:'home', fundId:null, tab:'info', q:'', year:new Date().getFullYear()};
+var fbDb=null, fbStore=null, funds={}, S={view:'home', fundId:null, tab:'info', q:'', year:new Date().getFullYear()};
 var ANNUAL_TMPL=[
   ['OPS-01','매월 1~10일','전월 통장거래 가져오기 → 자동분개 검토·승인',null,false],
   ['OPS-02','매월 말','월마감 (미분류·증빙 확인 후 잠금)',null,false],
@@ -149,6 +150,7 @@ try{
   firebase.initializeApp(FB_CONFIG);
   try{if(FB_APPCHECK_KEY&&firebase.appCheck)firebase.appCheck().activate(new firebase.appCheck.ReCaptchaV3Provider(FB_APPCHECK_KEY),true);}catch(e){}
   fbDb=firebase.database();
+  try{ fbStore=firebase.storage(); }catch(e){ fbStore=null; }
   firebase.auth().onAuthStateChanged(function(u){ if(u){ start(); } else { gate(); } });
 }catch(e){ $('root').innerHTML='<div class="gate">초기화 실패: '+esc(e.message)+'</div>'; }
 
@@ -168,6 +170,7 @@ function shell(){
     +'<div class="logo"><span class="ic">🏦</span><div><b>기금 통합운영</b><div class="s">푸른노무법인</div></div></div>'
     +'<div class="side-sec">메뉴</div>'
     +'<div class="sitem" id="nav-home" onclick="go(\'home\')">🏛 기금 현황</div>'
+    +'<div class="sitem" id="nav-subboard" onclick="go(\'subboard\')">🎁 지원금 관리</div>'
     +'<div class="sitem" id="nav-billing" onclick="go(\'billing\')">💰 청구 관리</div>'
     +'<div class="sitem" id="nav-forms" onclick="go(\'forms\')">📚 서식 자료실</div>'
     +'<div style="margin-top:auto;font-size:11px;color:var(--faint);padding:8px">Firebase판 · 통합운영<br>서식 채움 지원</div>'
@@ -225,8 +228,9 @@ window.addEventListener('popstate', function(ev){
   route();
 });
 function route(){
-  ['home','billing','forms'].forEach(function(v){var n=$('nav-'+v);if(n)n.className='sitem'+(S.view===v?' on':'');});
+  ['home','subboard','billing','forms'].forEach(function(v){var n=$('nav-'+v);if(n)n.className='sitem'+(S.view===v?' on':'');});
   if(S.view==='fund'&&S.fundId&&funds[S.fundId]) renderFund();
+  else if(S.view==='subboard') renderSubBoard();
   else if(S.view==='billing') renderBilling();
   else if(S.view==='forms') renderForms();
   else { S.view='home'; renderHome(); }
@@ -427,6 +431,56 @@ function patchFund(id,field,val){
     funds[id][field]=val; var b=$('lc-'+id); if(b){var n=nDone(funds[id]);b.textContent=n+'/5';b.className='chip '+(n===5?'ok':n>=3?'warn':'dg');} toast('저장됨');
   }).catch(function(e){toast('저장 실패: '+e.message,'err');});
 }
+
+// ── 지원금 일괄 보드 (연도별 공동기금 전체 한 화면 입력) ──
+function subBoardYearSel(){
+  var y=new Date().getFullYear(), opts='';
+  for(var i=y+1;i>=y-4;i--) opts+='<option'+(S.subYear===i?' selected':'')+'>'+i+'</option>';
+  return '<select onchange="S.subYear=+this.value;renderSubBoard()" style="padding:6px 9px;border:1px solid var(--line);border-radius:7px;font-size:13px">'+opts+'</select>';
+}
+function renderSubBoard(){
+  $('crumb').textContent='지원금 관리';
+  if(!S.subYear) S.subYear=S.year||new Date().getFullYear();
+  var yr=S.subYear;
+  // 공동기금(사내 제외)·운영 중만
+  var rpri={'충남':1,'경기':2};
+  var arr=Object.keys(funds).map(function(k){var o=Object.assign({},funds[k]);o._id=k;return o;})
+    .filter(function(f){return f.fund_type!=='사내'&&!isPast(f);})
+    .sort(function(a,b){return ((rpri[a.region]||9)-(rpri[b.region]||9))||(a.short_name||'').localeCompare(b.short_name||'','ko',{numeric:true});});
+  function sv(f,k){var y=(f.years&&f.years[yr]&&f.years[yr].subsidy)||{};return y[k]!=null?y[k]:'';}
+  function moneyIn(f,k){return '<input value="'+esc(sv(f,k))+'" onchange="patchSub(\''+f._id+'\',\''+k+'\',this.value,\'num\')" style="width:110px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-size:12px;text-align:right">';}
+  function dateIn(f,k){return '<input type="date" value="'+esc(sv(f,k))+'" onchange="patchSub(\''+f._id+'\',\''+k+'\',this.value,\'\')" style="padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-size:12px">';}
+  var totReq=0,totDec=0,totSp=0;
+  var rows=arr.map(function(f,i){
+    var dec=num(sv(f,'decided_amount'))||0, sp=num(sv(f,'spent_amount'))||0;
+    totReq+=num(sv(f,'request_amount'))||0; totDec+=dec; totSp+=sp;
+    var recon = dec? (sp>dec?'<span class="chip dg">과다 '+(sp-dec).toLocaleString()+'</span>':sp<dec?'<span class="chip warn">미집행 '+(dec-sp).toLocaleString()+'</span>':'<span class="chip ok">일치</span>'):'<span class="muted">—</span>';
+    return '<tr><td class="no">'+(i+1)+'</td>'
+      +'<td style="font-weight:700;cursor:pointer" onclick="openFundSubsidy(\''+f._id+'\')" title="이 기금 지원금 탭 열기">'+esc(f.short_name||f.name)+'</td>'
+      +'<td class="muted">'+esc(f.region||'')+'</td>'
+      +'<td>'+moneyIn(f,'request_amount')+'</td><td>'+moneyIn(f,'decided_amount')+'</td>'
+      +'<td>'+dateIn(f,'paid_date')+'</td><td>'+moneyIn(f,'spent_amount')+'</td>'
+      +'<td>'+recon+'</td></tr>';
+  }).join('');
+  $('app').innerHTML='<div class="panel"><div class="row"><h1>지원금 관리</h1>'+subBoardYearSel()
+    +'<span class="stat">공동기금 '+arr.length+'</span><span style="flex:1"></span></div>'
+    +'<p class="muted" style="font-size:12px;margin:6px 0 0">'+yr+'년 지원금을 <b>한 화면에서</b> 입력합니다. 칸에 입력 후 다른 칸으로 이동하면 자동 저장됩니다. 기금명 클릭 시 그 기금 지원금 탭(서류함 포함)으로 이동.</p></div>'
+    +'<div class="panel"><div style="overflow-x:auto"><table><thead><tr><th>번호</th><th>기금명</th><th>지역</th>'
+    +'<th style="text-align:right">신청액</th><th style="text-align:right">결정액</th><th>교부·입금일</th><th style="text-align:right">집행액</th><th>정산</th></tr></thead>'
+    +'<tbody>'+rows+'</tbody>'
+    +'<tfoot><tr style="font-weight:700;border-top:2px solid var(--line)"><td></td><td>합계</td><td></td>'
+    +'<td style="text-align:right">'+totReq.toLocaleString()+'</td><td style="text-align:right">'+totDec.toLocaleString()+'</td><td></td><td style="text-align:right">'+totSp.toLocaleString()+'</td><td></td></tr></tfoot>'
+    +'</table></div></div>';
+}
+function patchSub(fid,field,val,type){
+  var v = type==='num' ? (num(val)||'') : (val.trim?val.trim():val);
+  fbDb.ref(NS+'/funds/'+fid+'/years/'+S.subYear+'/subsidy/'+field).set(v).then(function(){
+    if(!funds[fid].years)funds[fid].years={}; if(!funds[fid].years[S.subYear])funds[fid].years[S.subYear]={};
+    if(!funds[fid].years[S.subYear].subsidy)funds[fid].years[S.subYear].subsidy={};
+    funds[fid].years[S.subYear].subsidy[field]=v; renderSubBoard(); toast('저장됨');
+  }).catch(function(e){toast('저장 실패: '+e.message,'err');});
+}
+function openFundSubsidy(fid){ S.year=S.subYear; _go('fund',fid); S.tab='subsidy'; renderFund(); }
 
 // ── 청구 관리 (4단계) ──
 function renderBilling(){
@@ -889,12 +943,74 @@ function subsidyTab(f){
   }).join('');
   var dec=num(yd.decided_amount)||0, sp=num(yd.spent_amount)||0;
   var recon = dec? (sp>dec?'<span class="chip dg">과다집행 '+(sp-dec).toLocaleString()+'원</span>':sp<dec?'<span class="chip warn">미집행 '+(dec-sp).toLocaleString()+'원</span>':'<span class="chip ok">정산 일치</span>'):'';
+  var hasPrev=(f.years&&f.years[S.year-1]&&f.years[S.year-1].subsidy);
   return '<div class="panel"><div class="row"><h2>지원금</h2>'+yearSel()+'<span style="flex:1"></span>'
     +'<span class="stat">참여 '+nSite+'개사</span><span class="stat">수혜근로자 '+nEmp.toLocaleString()+'명</span></div>'
-    +'<div id="msg" class="msg"></div>'
-    +'<div class="grid" style="margin-top:12px">'+flds+'</div>'
-    +'<div class="row" style="margin-top:14px"><button class="primary" onclick="saveSubsidy()">💾 저장</button>'+recon+'</div>'
-    +'<p class="muted" style="font-size:11.5px;margin-top:8px">'+S.year+'년 지원 사업 정보. 결정액 대비 집행액으로 정산 상태가 자동 표시됩니다.</p></div>';
+    +'<div class="grid" style="margin-top:12px" oninput="markDirty()" onchange="markDirty()">'+flds+'</div>'
+    +'<div class="row" style="margin-top:14px"><button class="primary" onclick="saveSubsidy()">💾 저장</button>'
+    +(hasPrev?' <button onclick="copyPrevSubsidy()" title="'+(S.year-1)+'년 지원금 값을 올해로 불러오기">↩ 작년('+(S.year-1)+') 값 불러오기</button>':'')
+    +recon+'</div>'
+    +'<p class="muted" style="font-size:11.5px;margin-top:8px">'+S.year+'년 지원 사업 정보. 결정액 대비 집행액으로 정산 상태가 자동 표시됩니다.</p></div>'
+    +subsidyDocsPanel(f);
+}
+function copyPrevSubsidy(){
+  var f=funds[S.fundId], prev=(f.years&&f.years[S.year-1]&&f.years[S.year-1].subsidy)||null;
+  if(!prev){ toast('작년 값이 없습니다','warn'); return; }
+  SUB_FIELDS.forEach(function(c){ var el=$('su-'+c[0]); if(el&&c[0]!=='paid_date') el.value=(prev[c[0]]!=null?prev[c[0]]:''); });
+  var pd=$('su-paid_date'); if(pd) pd.value='';   // 교부·입금일은 올해 새로 입력
+  markDirty(); toast((S.year-1)+'년 값을 불러왔습니다. 확인 후 저장하세요');
+}
+// ── 지원금 서류함 (연도별 파일 보관, Firebase Storage) ──
+var SUBDOC_KINDS=['공고문','신청서','참여사업장명단','결정통지','교부신청','집행·정산보고','기타'];
+function subsidyDocsPanel(f){
+  var key=S.fundId+'/'+S.year;
+  if(S.subDocFor!==key){ var _k=key; S.subDocFor=_k; S.subDocs=null;
+    fbDb.ref(NS+'/subsidy_docs/'+S.fundId+'/'+S.year).once('value').then(function(s){ if(S.subDocFor!==_k)return; S.subDocs=s.val()||{}; if(S.tab==='subsidy'&&S.view==='fund')renderFund(); })
+      .catch(function(){ if(S.subDocFor===_k)S.subDocFor=null; });
+    return '<div class="panel">'+loadingHTML('서류함 불러오는 중…')+'</div>';
+  }
+  var d=S.subDocs||{}, ids=Object.keys(d);
+  var rows=ids.map(function(id){var x=d[id];
+    return '<tr><td>'+esc(x.kind||'기타')+'</td><td><a href="'+esc(x.url||'#')+'" target="_blank" rel="noopener">'+esc(x.name||'')+'</a></td>'
+      +'<td class="muted">'+esc(x.uploaded||'')+'</td><td><button onclick="delSubDoc(\''+id+'\')" style="padding:2px 7px">×</button></td></tr>';
+  }).join('');
+  var opts=SUBDOC_KINDS.map(function(k){return '<option>'+k+'</option>';}).join('');
+  var body;
+  if(!fbStore){
+    body='<div class="msg warn">파일 보관은 Firebase Storage가 필요합니다. 관리자가 Firebase 콘솔에서 Storage를 활성화하고 규칙을 게시하면 사용할 수 있습니다.</div>';
+  } else {
+    body='<div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">'
+      +'<div class="fld" style="margin:0"><label>서류 종류</label><select id="subdoc-kind" style="padding:6px 9px;border:1px solid var(--line);border-radius:7px">'+opts+'</select></div>'
+      +'<button class="primary" onclick="uploadSubDoc()">📎 파일 올리기</button>'
+      +'<span class="muted" style="font-size:11.5px">'+S.year+'년 '+(funds[S.fundId].short_name||'')+' 지원금 서류</span></div>'
+      +(ids.length?'<div style="overflow-x:auto;margin-top:10px"><table><thead><tr><th>종류</th><th>파일</th><th>올린날</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<div class="muted" style="padding:12px 2px">올린 서류가 없습니다.</div>');
+  }
+  return '<div class="panel"><h2 style="font-size:15px">📁 지원금 서류함 <span class="muted" style="font-size:12px;font-weight:400">('+S.year+'년 · 공고·신청서·결정통지·정산보고 등)</span></h2>'+body+'</div>';
+}
+function uploadSubDoc(){
+  if(!fbStore){ toast('Storage 미설정','err'); return; }
+  var _fid=S.fundId, _yr=S.year, kind=($('subdoc-kind')&&$('subdoc-kind').value)||'기타';
+  var inp=document.createElement('input'); inp.type='file';
+  inp.onchange=function(ev){ var file=ev.target.files&&ev.target.files[0]; if(!file)return;
+    toast('업로드 중…');
+    var safe=(''+file.name).replace(/[^\w.\-가-힣()\s]/g,'_');
+    var path='fund_erp/subsidy_docs/'+_fid+'/'+_yr+'/'+Date.now()+'_'+safe;
+    var ref=fbStore.ref(path);
+    ref.put(file).then(function(){ return ref.getDownloadURL(); }).then(function(url){
+      var rec={kind:kind,name:file.name,url:url,path:path,uploaded:ymd()};
+      return fbDb.ref(NS+'/subsidy_docs/'+_fid+'/'+_yr).push().set(rec);
+    }).then(function(){ S.subDocFor=null; renderFund(); toast('올렸습니다'); })
+      .catch(function(e){ toast('업로드 실패: '+e.message,'err'); });
+  };
+  inp.click();
+}
+function delSubDoc(id){
+  var d=(S.subDocs||{})[id]; if(!d) return;
+  confirmM('이 서류를 삭제할까요?\n('+(d.name||'')+')',{ok:'삭제',danger:true}).then(function(ok){ if(!ok)return;
+    var _fid=S.fundId, _yr=S.year;
+    var done=function(){ fbDb.ref(NS+'/subsidy_docs/'+_fid+'/'+_yr+'/'+id).remove().then(function(){ S.subDocFor=null; renderFund(); toast('삭제되었습니다'); }); };
+    if(fbStore&&d.path){ fbStore.ref(d.path).delete().then(done).catch(done); } else done();
+  });
 }
 function saveSubsidy(){
   if(funds[S.fundId]&&funds[S.fundId].fund_type==='사내'){ toast('사내근로복지기금은 지원금 대상이 아닙니다','warn'); return; }
@@ -902,7 +1018,7 @@ function saveSubsidy(){
   fbDb.ref(NS+'/funds/'+S.fundId+'/years/'+S.year+'/subsidy').set(obj).then(function(){
     if(!funds[S.fundId].years)funds[S.fundId].years={}; if(!funds[S.fundId].years[S.year])funds[S.fundId].years[S.year]={};
     funds[S.fundId].years[S.year].subsidy=obj;
-    renderFund(); toast('저장되었습니다');
+    clearDirty(); renderFund(); toast('저장되었습니다');
   }).catch(function(e){toast('저장 실패: '+e.message,'err');});
 }
 
