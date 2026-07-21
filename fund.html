@@ -9,6 +9,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <style>
   :root{--acc:#2563eb;--acc2:#1b4bc0;--acc-soft:#e9f0fe;--ink:#182234;--sub:#59637a;--faint:#8b94a6;
     --line:#e4e9f1;--panel:#fff;--bg:#f4f6fa;--ok:#1f7a4d;--ok-bg:#e7f6ee;--warn:#b45309;--warn-bg:#fdf1e1;
@@ -159,8 +160,8 @@ function shell(){
     +'<div class="sitem" id="nav-home" onclick="go(\'home\')">🏛 기금 현황</div>'
     +'<div class="sitem" id="nav-ledger" onclick="go(\'ledger\')">📇 기금 대장</div>'
     +'<div class="sitem" id="nav-billing" onclick="go(\'billing\')">💰 청구 관리</div>'
-    +'<div class="sitem dim">📚 서식 자료실 <span class="soon">준비중</span></div>'
-    +'<div style="margin-top:auto;font-size:11px;color:var(--faint);padding:8px">Firebase판 · 1단계<br>나머지 기능 이전 중</div>'
+    +'<div class="sitem" id="nav-forms" onclick="go(\'forms\')">📚 서식 자료실</div>'
+    +'<div style="margin-top:auto;font-size:11px;color:var(--faint);padding:8px">Firebase판 · 통합운영<br>서식 채움 지원</div>'
     +'</div>'
     +'<div id="main"><div id="topbar"><span id="crumb">기금 현황</span>'
     +'<div id="topright"><span id="conn"><span class="dot" id="dot"></span><span id="connt">연결 확인</span></span>'
@@ -184,10 +185,11 @@ function doLogout(){ if(!confirm('로그아웃하고 푸른 포털로 나가시�
 
 function go(v,id){ S.view=v; if(id!==undefined)S.fundId=id; if(v==='fund')S.tab='info'; route(); }
 function route(){
-  ['home','ledger','billing'].forEach(function(v){var n=$('nav-'+v);if(n)n.className='sitem'+(S.view===v?' on':'');});
+  ['home','ledger','billing','forms'].forEach(function(v){var n=$('nav-'+v);if(n)n.className='sitem'+(S.view===v?' on':'');});
   if(S.view==='fund'&&S.fundId&&funds[S.fundId]) renderFund();
   else if(S.view==='ledger') renderLedger();
   else if(S.view==='billing') renderBilling();
+  else if(S.view==='forms') renderForms();
   else { S.view='home'; renderHome(); }
 }
 
@@ -306,6 +308,139 @@ function saveBilling(){
 }
 function patchBilling(id,k,v){ fbDb.ref(NS+'/billings/'+id+'/'+k).set(k==='amount'?(num(v)||0):v.trim()); }
 function delBilling(id){ if(confirm('삭제할까요?')) fbDb.ref(NS+'/billings/'+id).remove(); }
+
+// ── 서식 자료실 (설립·지원신청서 원본 채움) ──
+// 원본 법정서식 엑셀은 실데이터 미포함 빈 양식 → 브라우저 IndexedDB에 1회 저장 후 자동 사용.
+// 채움은 ExcelJS(테두리·병합·수식 보존). 통장 파싱용 SheetJS와 별개.
+var TPL={ setup:{key:'setup',label:'설립 서식(6종)',file:'2024년 근로복지기금 설립인가신청서 양식_240906.xlsx',gong:false},
+          subsidy:{key:'subsidy',label:'지원신청서',file:'2025년 공동근로복지기금지원신청서 양식(폐업 사업장 미포함).xlsx',gong:true} };
+var IDB_DB='fundErpTpl', IDB_ST='templates';
+function idbOpen(){ return new Promise(function(res,rej){ var r=indexedDB.open(IDB_DB,1);
+  r.onupgradeneeded=function(){ r.result.createObjectStore(IDB_ST); };
+  r.onsuccess=function(){res(r.result);}; r.onerror=function(){rej(r.error);}; }); }
+function idbPut(k,v){ return idbOpen().then(function(db){ return new Promise(function(res,rej){
+  var tx=db.transaction(IDB_ST,'readwrite'); tx.objectStore(IDB_ST).put(v,k);
+  tx.oncomplete=function(){res();}; tx.onerror=function(){rej(tx.error);}; }); }); }
+function idbGet(k){ return idbOpen().then(function(db){ return new Promise(function(res,rej){
+  var tx=db.transaction(IDB_ST,'readonly'); var g=tx.objectStore(IDB_ST).get(k);
+  g.onsuccess=function(){res(g.result||null);}; g.onerror=function(){rej(g.error);}; }); }); }
+function idbDel(k){ return idbOpen().then(function(db){ return new Promise(function(res){
+  var tx=db.transaction(IDB_ST,'readwrite'); tx.objectStore(IDB_ST).delete(k); tx.oncomplete=function(){res();}; }); }); }
+
+function renderForms(){
+  $('crumb').textContent='서식 자료실';
+  if(typeof ExcelJS==='undefined'){ $('app').innerHTML='<div class="panel"><h1>서식 자료실</h1><div class="msg err">ExcelJS 라이브러리 로드 실패 — 인터넷 연결을 확인하고 새로고침하세요.</div></div>'; return; }
+  // 원본 등록 상태 비동기 확인 후 재렌더
+  if(S._tplChk!==true){ S._tplChk='...';
+    Promise.all([idbGet('setup'),idbGet('subsidy')]).then(function(a){ S._tplHas={setup:!!a[0],subsidy:!!a[1]}; S._tplChk=true; if(S.view==='forms')renderForms(); })
+      .catch(function(){ S._tplHas={setup:false,subsidy:false}; S._tplChk=true; if(S.view==='forms')renderForms(); });
+    $('app').innerHTML='<div class="panel muted">불러오는 중…</div>'; return; }
+  var has=S._tplHas||{};
+  var arr=Object.keys(funds).map(function(k){var o=funds[k];return {id:k,label:(o.short_name||o.name||k),type:o.fund_type,g:grp(o),region:o.region};});
+  var rpri={'충남':1,'경기':2},order={'지역공동':1,'개별공동':2,'사내':3};
+  arr.sort(function(a,b){return (order[a.g]-order[b.g])||((rpri[a.region]||9)-(rpri[b.region]||9))||a.label.localeCompare(b.label,'ko',{numeric:true});});
+  if(!S.formFund||!funds[S.formFund]) S.formFund=arr.length?arr[0].id:'';
+  var fsel='<select id="form-fund" onchange="S.formFund=this.value;renderForms()" style="padding:6px 9px;border:1px solid var(--line);border-radius:7px;font-size:13px;min-width:260px">'
+    +arr.map(function(x){return '<option value="'+esc(x.id)+'"'+(x.id===S.formFund?' selected':'')+'>'+esc(x.label)+' ('+esc(x.type||'')+')</option>';}).join('')+'</select>';
+  var cur=funds[S.formFund]||{}, isGong=(cur.fund_type||'')==='공동';
+  function tplCard(t){
+    var reg=has[t.key];
+    var regLine=reg?'<span class="chip ok">원본 등록됨</span> <button onclick="pickTpl(\''+t.key+'\')" style="padding:3px 8px">원본 교체</button> <button onclick="clearTpl(\''+t.key+'\')" style="padding:3px 8px">삭제</button>'
+      :'<span class="chip dg">원본 미등록</span> <button class="primary" onclick="pickTpl(\''+t.key+'\')" style="padding:3px 10px">📎 원본 엑셀 등록</button>';
+    var fill='';
+    if(reg){
+      if(t.gong&&!isGong) fill='<div class="muted" style="font-size:12px;margin-top:8px">지원신청서는 공동근로복지기금 전용입니다. (선택된 기금은 '+esc(cur.fund_type||'?')+')</div>';
+      else fill='<button class="primary" style="margin-top:10px" onclick="fillForm(\''+t.key+'\')">⬇ ['+esc(cur.short_name||cur.name||'')+'] '+esc(t.label)+' 데이터 채워 받기</button>';
+    }
+    return '<div class="panel"><div class="row"><h2 style="font-size:15px">'+esc(t.label)+'</h2><span style="flex:1"></span>'+regLine+'</div>'
+      +'<p class="muted" style="font-size:11.5px;margin:6px 0 0">원본 파일: '+esc(t.file)+'</p>'+fill+'</div>';
+  }
+  $('app').innerHTML='<div class="panel"><div class="row"><h1>서식 자료실</h1><span style="flex:1"></span><label style="font-size:12px;margin-right:6px">대상 기금</label>'+fsel+'</div>'
+    +'<div style="margin-top:10px;padding:10px 12px;background:var(--warn-bg);border-radius:8px;font-size:12.5px;line-height:1.6">'
+    +'실제 <b>법정서식 원본 엑셀</b>에 이 기금 데이터를 채워 내려받습니다. 서식의 표·수식·서식은 그대로 보존됩니다.<br>'
+    +'원본 엑셀은 <b>이 브라우저에 1회 등록</b>하면 이후 자동 사용됩니다(다른 PC·브라우저에서는 다시 등록). 사업장 실데이터가 담기므로 원본은 저장소에 올리지 않습니다.<br>'
+    +'채워지지 않는 칸(회의록 안건·서술형 사업목적 등)은 내려받은 엑셀에서 직접 작성하세요.</div></div>'
+    +tplCard(TPL.setup)+tplCard(TPL.subsidy);
+}
+function pickTpl(key){
+  var inp=document.createElement('input'); inp.type='file'; inp.accept='.xlsx';
+  inp.onchange=function(ev){ var file=ev.target.files&&ev.target.files[0]; if(!file)return;
+    var rd=new FileReader();
+    rd.onload=function(){ idbPut(key,rd.result).then(function(){ S._tplChk=false; renderForms(); alert('원본 등록 완료: '+file.name); })
+      .catch(function(e){ alert('저장 실패: '+e.message); }); };
+    rd.readAsArrayBuffer(file); };
+  inp.click();
+}
+function clearTpl(key){ if(confirm('등록된 원본을 삭제할까요?')) idbDel(key).then(function(){ S._tplChk=false; renderForms(); }); }
+function dlBuf(buf,fname){ var blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=fname; document.body.appendChild(a); a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1500); }
+function _splitPeople(txt){ return String(txt||'').split(/[,\/·]/).map(function(s){return s.trim();}).filter(Boolean); }
+function _siteContacts(s){ var c={name:'',phone:'',email:''}; try{ var cts=s.contacts; if(typeof cts==='string')cts=JSON.parse(cts);
+  if(Array.isArray(cts)&&cts.length){ c.name=cts[0].name||''; c.phone=cts[0].phone||cts[0].mobile||''; c.email=cts[0].email||''; } }catch(e){} return c; }
+function _loadSites(fid){ return fbDb.ref(NS+'/sites/'+fid).once('value').then(function(s){
+  var v=s.val()||{}; var a=Object.keys(v).map(function(k){var o=Object.assign({},v[k]);o._id=k;return o;});
+  a=a.filter(function(x){return (x.status||'active')==='active';});
+  a.sort(function(x,y){return String(x.seq_label||'').localeCompare(String(y.seq_label||''),'ko',{numeric:true});}); return a; }); }
+function setC(ws,addr,val){ var c=ws.getCell(addr); if(c.type!==ExcelJS.ValueType.Formula) c.value=(val===''||val==null)?null:val; }
+function clearRange(ws,r1,r2,c1,c2){ for(var r=r1;r<=r2;r++)for(var c=c1;c<=c2;c++){ var cell=ws.getCell(r,c);
+  if(cell.type!==ExcelJS.ValueType.Formula && cell.value!=null) cell.value=null; } }
+
+function fillForm(key){
+  var fid=S.formFund, f=funds[fid]; if(!f){ alert('기금을 선택하세요'); return; }
+  idbGet(key).then(function(buf){
+    if(!buf){ alert('먼저 원본 엑셀을 등록하세요'); return; }
+    return _loadSites(fid).then(function(sites){
+      var wb=new ExcelJS.Workbook();
+      return wb.xlsx.load(buf).then(function(){
+        (key==='setup'?fillSetup:fillSubsidy)(wb,f,sites);
+        return wb.xlsx.writeBuffer();
+      }).then(function(out){
+        var nm=(f.short_name||f.name||fid).replace(/\s+/g,'');
+        dlBuf(out, nm+'_'+(key==='setup'?'설립서식':'지원신청서')+'(데이터채움).xlsx');
+      });
+    });
+  }).catch(function(e){ alert('서식 생성 실패: '+e.message); });
+}
+function fillSetup(wb,f,sites){
+  var ws=wb.getWorksheet('기금법인정보'); if(!ws) throw new Error('기금법인정보 시트를 찾을 수 없습니다');
+  var wk=_splitPeople(f.worker_committee), er=_splitPeople(f.emp_committee);
+  var repSite=f.rep_org||(sites[0]&&sites[0].name)||'';
+  setC(ws,'B3',repSite); setC(ws,'C3',f.name||''); setC(ws,'D3',f.chairman||''); setC(ws,'E3',f.address||'');
+  setC(ws,'F3',f.inka_date||''); setC(ws,'G3',f.worker_rep||wk[0]||''); setC(ws,'H3',wk[0]||''); setC(ws,'I3',er[0]||'');
+  setC(ws,'J3',f.phone||''); ['K3','L3','M3','N3'].forEach(function(a){setC(ws,a,'');});
+  var budget=num(f.contribution_total); if(budget) setC(ws,'F13',budget.toLocaleString()+'원');
+  if(f.estab_date) setC(ws,'B23',f.estab_date); if(f.meeting_date) setC(ws,'D23',f.meeting_date);
+  clearRange(ws,33,38,2,16);   // 회의록 샘플 안건 B~P (수식 제외)
+}
+function fillSubsidy(wb,f,sites){
+  if((f.fund_type||'')!=='공동') throw new Error('지원신청서는 공동근로복지기금 전용입니다');
+  var info=wb.getWorksheet('기금법인정보'); if(!info) throw new Error('기금법인정보 시트를 찾을 수 없습니다');
+  var yrs=f.years||{}, sub={};
+  Object.keys(yrs).sort().reverse().some(function(y){ if(yrs[y]&&yrs[y].subsidy){sub=yrs[y].subsidy;return true;} return false; });
+  var workerTotal=num(sub.worker_count)||sites.reduce(function(s,x){return s+(num(x.company_size)||0);},0)||'';
+  var contribution=num(f.contribution_total)||num(sub.contribution)||'';
+  var applyAmt=num(sub.apply_amount)||contribution||'';
+  setC(info,'A2',1); setC(info,'B2',f.name||''); setC(info,'C2',f.chairman||''); setC(info,'D2',f.address||'');
+  setC(info,'E2',f.phone||''); setC(info,'F2',f.inka_no||''); setC(info,'G2',f.corp_reg_no||''); setC(info,'H2',f.tax_id_no||'');
+  setC(info,'I2',f.reg_date||f.inka_date||''); setC(info,'J2',sites.length||''); setC(info,'K2',workerTotal);
+  setC(info,'L2',contribution); setC(info,'N2',applyAmt); setC(info,'S2',f.rep_org||''); setC(info,'T2',sub.author||f.manager||'');
+  ['P2','Q2','R2'].forEach(function(a){setC(info,a,'');});
+  clearRange(info,3,8,2,20);   // 다른 기금 샘플행 B~T
+  var parts=wb.getWorksheet('참여사업장정보'); if(parts){
+    sites.forEach(function(s,i){ var r=3+i, c=_siteContacts(s);
+      setC(parts,'A'+r,'1-'+(i+1)); parts.getCell(r,2).value=i+1; setC(parts,'C'+r,s.name||''); setC(parts,'D'+r,s.ceo||'');
+      setC(parts,'E'+r,s.address||''); var sz=num(s.company_size)||''; if(sz!==''){parts.getCell(r,6).value=sz;parts.getCell(r,10).value=sz;}
+      setC(parts,'G'+r,s.biz_type||''); setC(parts,'I'+r,s.biz_no||''); setC(parts,'K'+r,c.name); setC(parts,'N'+r,c.phone); setC(parts,'O'+r,c.email); });
+    if(parts.rowCount>=3+sites.length) clearRange(parts,3+sites.length,parts.rowCount,1,20);
+  }
+  var doc=wb.getWorksheet('신청서'); if(doc){
+    setC(doc,'AM3',1); var keys=[];
+    doc.getColumn(9).eachCell({includeEmpty:false},function(cell){ if(typeof cell.value==='string'&&/^\d+-\d+$/.test(cell.value.trim())) keys.push(cell); });
+    keys.sort(function(a,b){return a.row-b.row;});
+    keys.forEach(function(cell,idx){ if(cell.type!==ExcelJS.ValueType.Formula) cell.value=idx<sites.length?('1-'+(idx+1)):null; });
+  }
+}
 
 function renderFund(){
   var f=funds[S.fundId]; $('crumb').textContent=(f.short_name||f.name);
