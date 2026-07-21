@@ -172,7 +172,7 @@ function shell(){
 function initTop(){
   var el=$('topuser'); var u=qp('user'), r=qp('role');
   var fu=firebase.auth().currentUser;
-  el.innerHTML=(u||(fu&&fu.email)||'푸른노무법인')+(r?'<span class="role">'+esc(r)+'</span>':'<span class="role">기금 운영</span>');
+  el.innerHTML=esc(u||(fu&&fu.email)||'푸른노무법인')+(r?'<span class="role">'+esc(r)+'</span>':'<span class="role">기금 운영</span>');
   fbDb.ref('.info/connected').on('value',function(s){var on=!!s.val();$('dot').className='dot'+(on?' on':'');$('connt').textContent=on?'Firebase 연결됨':'오프라인';});
   var WD=['일','월','화','수','목','금','토'];function p(n){return(n<10?'0':'')+n;}
   function tick(){var c=$('topclock');if(!c)return;var d=new Date();c.textContent=d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' ('+WD[d.getDay()]+') '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}
@@ -341,19 +341,19 @@ function infoForm(f){
     +'<span class="muted" style="font-size:11px">ID '+esc(S.fundId)+' · Firebase 저장</span></div></div>';
 }
 function saveInfo(){
-  var obj=Object.assign({},funds[S.fundId]);
-  FIELDS.forEach(function(c){var el=$('fd-'+c[0]);if(el)obj[c[0]]=el.value.trim?el.value.trim():el.value;});
-  fbDb.ref(NS+'/funds/'+S.fundId).set(obj).then(function(){var m=$('msg');m.className='msg ok';m.textContent='저장되었습니다.';})
+  var patch={};
+  FIELDS.forEach(function(c){var el=$('fd-'+c[0]);if(el)patch[c[0]]=el.value.trim?el.value.trim():el.value;});
+  fbDb.ref(NS+'/funds/'+S.fundId).update(patch).then(function(){Object.assign(funds[S.fundId],patch);var m=$('msg');m.className='msg ok';m.textContent='저장되었습니다.';})
     .catch(function(e){var m=$('msg');m.className='msg err';m.textContent='저장 실패: '+e.message;});
 }
 
 // ── 참여사업장 (2단계) ──
-function num(v){ var n=parseInt(String(v||'').replace(/[^0-9]/g,''),10); return isNaN(n)?'':n; }
+function num(v){ if(v==null||v==='')return ''; var s=String(v).replace(/[^0-9.\-]/g,''); if(s===''||s==='-'||s==='.')return ''; var n=Math.round(parseFloat(s)); return isNaN(n)?'':n; }
 function sitesTab(){
   if(S.sitesFor!==S.fundId){
-    S.sitesFor=S.fundId; S.sites=null;
-    fbDb.ref(NS+'/sites/'+S.fundId).once('value').then(function(s){ S.sites=s.val()||{}; if(S.tab==='sites'&&S.view==='fund') renderFund(); })
-      .catch(function(e){ S.sites={}; if(S.tab==='sites') renderFund(); });
+    var _fid=S.fundId; S.sitesFor=_fid; S.sites=null;
+    fbDb.ref(NS+'/sites/'+_fid).once('value').then(function(s){ if(S.sitesFor!==_fid)return; S.sites=s.val()||{}; if(S.tab==='sites'&&S.view==='fund'&&S.fundId===_fid) renderFund(); })
+      .catch(function(e){ if(S.sitesFor===_fid){S.sitesFor=null;} if(S.tab==='sites'&&S.view==='fund') renderFund(); });
     return '<div class="panel muted">불러오는 중…</div>';
   }
   var sites=S.sites||{};
@@ -429,9 +429,9 @@ function fmtDeadline(dl){
 function annualTab(f){
   var key=S.fundId+'/'+S.year;
   if(S.annualFor!==key){
-    S.annualFor=key; S.annual=null;
-    fbDb.ref(NS+'/annual/'+S.fundId+'/'+S.year).once('value').then(function(s){ S.annual=s.val()||{}; if(S.tab==='annual'&&S.view==='fund') renderFund(); })
-      .catch(function(){ S.annual={}; if(S.tab==='annual') renderFund(); });
+    var _k=key; S.annualFor=_k; S.annual=null;
+    fbDb.ref(NS+'/annual/'+S.fundId+'/'+S.year).once('value').then(function(s){ if(S.annualFor!==_k)return; S.annual=s.val()||{}; if(S.tab==='annual'&&S.view==='fund') renderFund(); })
+      .catch(function(){ if(S.annualFor===_k)S.annualFor=null; if(S.tab==='annual'&&S.view==='fund') renderFund(); });
     return '<div class="panel muted">불러오는 중…</div>';
   }
   var done=S.annual||{};
@@ -461,8 +461,9 @@ function subsidyTab(f){
   var yd=(f.years&&f.years[S.year]&&f.years[S.year].subsidy)||{};
   // 참여사업장 집계 (S.sites 로드돼 있으면 사용, 아니면 로드)
   if(S.sitesFor!==S.fundId){
-    S.sitesFor=S.fundId; S.sites=null;
-    fbDb.ref(NS+'/sites/'+S.fundId).once('value').then(function(s){S.sites=s.val()||{};if(S.tab==='subsidy')renderFund();});
+    var _fid=S.fundId; S.sitesFor=_fid; S.sites=null;
+    fbDb.ref(NS+'/sites/'+_fid).once('value').then(function(s){if(S.sitesFor!==_fid)return;S.sites=s.val()||{};if(S.tab==='subsidy'&&S.view==='fund'&&S.fundId===_fid)renderFund();})
+      .catch(function(){if(S.sitesFor===_fid)S.sitesFor=null;if(S.tab==='subsidy'&&S.view==='fund')renderFund();});
     return '<div class="panel muted">불러오는 중…</div>';
   }
   var act=Object.keys(S.sites||{}).map(function(k){return S.sites[k];}).filter(function(s){return s.status!=='closed';});
@@ -481,6 +482,7 @@ function subsidyTab(f){
     +'<p class="muted" style="font-size:11.5px;margin-top:8px">'+S.year+'년 지원 사업 정보. 결정액 대비 집행액으로 정산 상태가 자동 표시됩니다.</p></div>';
 }
 function saveSubsidy(){
+  if(funds[S.fundId]&&funds[S.fundId].fund_type==='사내'){ alert('사내근로복지기금은 지원금 대상이 아닙니다.'); return; }
   var obj={}; SUB_FIELDS.forEach(function(c){var el=$('su-'+c[0]);if(el)obj[c[0]]=c[2]==='num'?(num(el.value)||''):el.value.trim();});
   fbDb.ref(NS+'/funds/'+S.fundId+'/years/'+S.year+'/subsidy').set(obj).then(function(){
     if(!funds[S.fundId].years)funds[S.fundId].years={}; if(!funds[S.fundId].years[S.year])funds[S.fundId].years[S.year]={};
@@ -493,8 +495,8 @@ function saveSubsidy(){
 var WELF_FIELDS=[['name','사업명','text'],['category','분류','sel'],['budget','예산(원)','num'],['spent','집행액(원)','num'],['beneficiaries','수혜자수','num']];
 function welfareTab(f){
   var key=S.fundId+'/'+S.year;
-  if(S.welfFor!==key){ S.welfFor=key; S.welf=null;
-    fbDb.ref(NS+'/welfare/'+S.fundId+'/'+S.year).once('value').then(function(s){S.welf=s.val()||{};if(S.tab==='welfare'&&S.view==='fund')renderFund();}).catch(function(){S.welf={};if(S.tab==='welfare')renderFund();});
+  if(S.welfFor!==key){ var _k=key; S.welfFor=_k; S.welf=null;
+    fbDb.ref(NS+'/welfare/'+S.fundId+'/'+S.year).once('value').then(function(s){if(S.welfFor!==_k)return;S.welf=s.val()||{};if(S.tab==='welfare'&&S.view==='fund')renderFund();}).catch(function(){if(S.welfFor===_k)S.welfFor=null;if(S.tab==='welfare'&&S.view==='fund')renderFund();});
     return '<div class="panel muted">불러오는 중…</div>'; }
   var w=S.welf||{}, arr=Object.keys(w).map(function(k){var o=Object.assign({},w[k]);o._id=k;return o;});
   var bud=arr.reduce(function(s,x){return s+(num(x.budget)||0);},0), sp=arr.reduce(function(s,x){return s+(num(x.spent)||0);},0), ben=arr.reduce(function(s,x){return s+(num(x.beneficiaries)||0);},0);
@@ -529,8 +531,8 @@ function delProg(id){ if(confirm('삭제할까요?')) fbDb.ref(NS+'/welfare/'+S.
 
 // ── 변경 이벤트 (3단계/중) ──
 function eventsTab(f){
-  if(S.evFor!==S.fundId){ S.evFor=S.fundId; S.ev=null;
-    fbDb.ref(NS+'/events/'+S.fundId).once('value').then(function(s){S.ev=s.val()||{};if(S.tab==='events'&&S.view==='fund')renderFund();}).catch(function(){S.ev={};if(S.tab==='events')renderFund();});
+  if(S.evFor!==S.fundId){ var _fid=S.fundId; S.evFor=_fid; S.ev=null;
+    fbDb.ref(NS+'/events/'+_fid).once('value').then(function(s){if(S.evFor!==_fid)return;S.ev=s.val()||{};if(S.tab==='events'&&S.view==='fund'&&S.fundId===_fid)renderFund();}).catch(function(){if(S.evFor===_fid)S.evFor=null;if(S.tab==='events'&&S.view==='fund')renderFund();});
     return '<div class="panel muted">불러오는 중…</div>'; }
   var ev=S.ev||{}, arr=Object.keys(ev).map(function(k){var o=Object.assign({},ev[k]);o._id=k;return o;});
   arr.sort(function(a,b){return (a.status==='완료'?1:0)-(b.status==='완료'?1:0)||(b.started_date||'').localeCompare(a.started_date||'');});
@@ -566,8 +568,8 @@ function acctSel(id,side,cur){
 }
 function closingTab(f){
   var key=S.fundId+'/'+S.year;
-  if(S.txnsFor!==key){ S.txnsFor=key; S.txns=null;
-    fbDb.ref(NS+'/txns/'+S.fundId+'/'+S.year).once('value').then(function(s){S.txns=s.val()||{};if(S.tab==='closing'&&S.view==='fund')renderFund();}).catch(function(){S.txns={};if(S.tab==='closing')renderFund();});
+  if(S.txnsFor!==key){ var _k=key; S.txnsFor=_k; S.txns=null;
+    fbDb.ref(NS+'/txns/'+S.fundId+'/'+S.year).once('value').then(function(s){if(S.txnsFor!==_k)return;S.txns=s.val()||{};if(S.tab==='closing'&&S.view==='fund')renderFund();}).catch(function(){if(S.txnsFor===_k)S.txnsFor=null;if(S.tab==='closing'&&S.view==='fund')renderFund();});
     return '<div class="panel muted">불러오는 중…</div>'; }
   var t=S.txns||{}, arr=Object.keys(t).map(function(k){var o=Object.assign({},t[k]);o._id=k;return o;});
   arr.sort(function(a,b){return String(a.date||'').localeCompare(String(b.date||''));});
@@ -608,8 +610,8 @@ function parseBank(rows){
   function find(cells,res){for(var c=0;c<cells.length;c++){var v=String(cells[c]||'');
     if(/날짜|거래일|일자|거래일시/.test(v)&&col.date==null)col.date=c;
     if(/적요|내용|의뢰인|기재|가맹점/.test(v)&&col.memo==null)col.memo=c;
-    if(/입금|맡기신|입금액|입금금액/.test(v)&&col.dep==null)col.dep=c;
-    if(/출금|찾으신|지급|출금액|출금금액/.test(v)&&col.wd==null)col.wd=c;
+    if(/입금|맡기신/.test(v)&&!/건수|횟수/.test(v)&&col.dep==null)col.dep=c;
+    if(/출금|찾으신|지급/.test(v)&&!/건수|횟수/.test(v)&&col.wd==null)col.wd=c;
     if(/잔액|잔고/.test(v)&&col.bal==null)col.bal=c;}}
   for(var i=0;i<Math.min(rows.length,25);i++){ col={}; find(rows[i]);
     if(col.dep!=null&&col.wd!=null){ hi=i; break; } }
@@ -638,12 +640,16 @@ function importBank(){
         var txns=parseBank(rows);
         if(!txns){ alert('통장 형식을 인식하지 못했습니다. (입금·출금 열을 찾지 못함)'); return; }
         if(!txns.length){ alert('거래 내역이 없습니다.'); return; }
-        if(!confirm(txns.length+'건의 거래를 읽었습니다. 자동분개 제안과 함께 가져올까요?')) return;
-        var obj={};
-        txns.forEach(function(x){ var p=proposeAcct(x.memo,x.deposit>0);
-          obj[hkey(x.date+'|'+x.deposit+'|'+x.withdraw+'|'+x.memo)]={date:x.date,memo:x.memo,deposit:x.deposit,withdraw:x.withdraw,balance:x.balance,debit:p.d,credit:p.c,approved:false};
+        if(!confirm(txns.length+'건의 거래를 읽었습니다. 자동분개 제안과 함께 가져올까요?\n(이미 있는 거래는 승인·분개를 그대로 보존합니다)')) return;
+        var existing=(S.txnsFor===(S.fundId+'/'+S.year)&&S.txns)?S.txns:{};
+        var obj={}, added=0, kept=0;
+        txns.forEach(function(x){ var key=hkey(x.date+'|'+x.deposit+'|'+x.withdraw+'|'+x.memo);
+          if(existing[key]){ kept++; return; }   // 기존 거래(수동분개·승인) 보존
+          var p=proposeAcct(x.memo,x.deposit>0);
+          obj[key]={date:x.date,memo:x.memo,deposit:x.deposit,withdraw:x.withdraw,balance:x.balance,debit:p.d,credit:p.c,approved:false}; added++;
         });
-        fbDb.ref(NS+'/txns/'+S.fundId+'/'+S.year).update(obj).then(function(){ S.txnsFor=null; renderFund(); alert('가져오기 완료: '+txns.length+'건'); })
+        if(added===0){ alert('새로 추가할 거래가 없습니다. (기존 '+kept+'건은 그대로 유지)'); return; }
+        fbDb.ref(NS+'/txns/'+S.fundId+'/'+S.year).update(obj).then(function(){ S.txnsFor=null; renderFund(); alert('가져오기 완료: 신규 '+added+'건'+(kept?' · 기존 '+kept+'건 보존':'')); })
           .catch(function(e){ alert('저장 실패: '+e.message); });
       }catch(e){ alert('파싱 실패: '+e.message); }
     };
