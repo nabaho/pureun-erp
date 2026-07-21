@@ -213,15 +213,23 @@ function fundTable(list){
 }
 // 푸른이알피 재직자 명단 — Firebase data/user_accounts/v (pu-erp와 공유). 재직(active)만.
 var _staffCache=null;
+function _normStaff(v){
+  if(!v) return []; if(!Array.isArray(v)) v=Object.keys(v).map(function(k){return v[k];});
+  var seen={};
+  return v.filter(function(u){return u&&u.sid;})
+    .filter(function(u){return !u.status||u.status==='active'||(u.status==='leave'&&u.leaveLoginAllowed===true);})
+    .filter(function(u){ if(seen[u.sid])return false; seen[u.sid]=1; return true; })
+    .map(function(u){return {sid:u.sid,name:u.name||u.sid,title:u.title||u.role||'',branch:u.branch||''};})
+    .sort(function(a,b){return (a.name||'').localeCompare(b.name||'','ko');});
+}
 function loadStaff(){
   if(_staffCache) return Promise.resolve(_staffCache);
-  return fbDb.ref('data/user_accounts/v').once('value').then(function(s){
-    var v=s.val()||[]; if(!Array.isArray(v)) v=Object.keys(v).map(function(k){return v[k];});
-    _staffCache=v.filter(function(u){return u&&u.sid&&(u.status==='active'||u.status==='leave'&&u.leaveLoginAllowed===true||!u.status);})
-      .map(function(u){return {sid:u.sid,name:u.name||u.sid,title:u.title||u.role||'',branch:u.branch||''};})
-      .sort(function(a,b){return (a.name||'').localeCompare(b.name||'','ko');});
-    return _staffCache;
-  });
+  // 1) 동일 출처(github.io/pureunall) localStorage — 푸른이알피가 채워둔 재직자, Firebase 규칙 의존 없음
+  try{ var raw=localStorage.getItem('pureun_v6_user_accounts');
+    if(raw){ var a=_normStaff(JSON.parse(raw)); if(a.length){ _staffCache=a; return Promise.resolve(a); } } }catch(e){}
+  // 2) 폴백: Firebase data/user_accounts (localStorage 비었을 때 = 이 브라우저에서 pu-erp 미실행)
+  return fbDb.ref('data/user_accounts/v').once('value').then(function(s){ _staffCache=_normStaff(s.val()); return _staffCache; })
+    .catch(function(){ _staffCache=[]; return _staffCache; });
 }
 function assignMgr(fid){
   var f=funds[fid]; if(!f) return;
@@ -531,7 +539,7 @@ function mgrMainField(f){
   if(!_staffCache){ loadStaff().then(function(){ if(S.view==='fund'&&S.tab==='info')renderFund(); }).catch(function(){ if(S.view==='fund'&&S.tab==='info')renderFund(); });
     return '<select id="fd-mgr-main" disabled><option>재직자 명단 불러오는 중…</option></select>'; }
   if(!_staffCache.length){ // 명단 로드 실패/빈 명단 → 텍스트 폴백(입력 막지 않음)
-    return '<input id="fd-mgr-text" value="'+esc(f.manager||'')+'" placeholder="예: 김혜민, 박재원(부)"><div class="muted" style="font-size:10.5px;margin-top:3px">재직자 명단을 못 불러와 직접 입력합니다.</div>'; }
+    return '<input id="fd-mgr-text" value="'+esc(f.manager||'')+'" placeholder="예: 김혜민, 박재원(부)"><div class="muted" style="font-size:10.5px;margin-top:3px">재직자 명단을 못 불러왔습니다. 이 브라우저에서 <b>푸른이알피</b>를 한 번 열면 명단이 채워집니다. <a href="#" onclick="_staffCache=null;renderFund();return false;">다시 시도</a></div>'; }
   return '<select id="fd-mgr-main"><option value="">(미지정)</option>'
     +_staffCache.map(function(u){return '<option value="'+esc(u.sid)+'"'+(u.sid===mainSid?' selected':'')+'>'+esc(u.name)+(u.title?' · '+esc(u.title):'')+'</option>';}).join('')+'</select>';
 }
