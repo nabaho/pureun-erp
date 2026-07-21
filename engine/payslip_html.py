@@ -36,15 +36,19 @@ def slip_rows(e):
     if ded_total is not None and ded_total > ded_sum:
         ded_rows.append(("기타 공제(차액)", ded_total - ded_sum))
     net = e.get("실수령")
-    # 임금총액: 지급총액 → (실수령+공제) 역산 → 과세총액 → 기본급.
-    # 과세총액엔 비과세(식대 등)가 빠져 실수령보다 작을 수 있음 → 역산을 우선.
-    gross = e.get("지급총액")
-    if gross is None and net is not None and ded_total is not None:
+    # 임금총액 = 반드시 (실수령 + 공제총액). 이 둘은 대장의 확정 하단값이라,
+    # 이걸 임금총액으로 삼으면 명세서가 항상 '임금총액 − 공제 = 실수령'으로 맞아떨어진다.
+    # (기본급/과세총액엔 비과세 식대 등이 빠져 있어 그대로 쓰면 20만원씩 안 맞는 사고가 남)
+    if net is not None and ded_total is not None:
         gross = net + ded_total
-    if gross is None:
+    elif e.get("지급총액") is not None:
+        gross = e.get("지급총액")
+    else:
         gross = e.get("과세총액") or e.get("기본급")
-    if gross is not None and net is not None and ded_total is None and net > gross:
-        gross = net  # 무공제인데 비과세 포함 실지급이 더 큰 대장(늘봄류)
+    if net is None and gross is not None and ded_total is not None:
+        net = gross - ded_total
+    if ded_total is None and gross is not None and net is not None and gross >= net:
+        ded_total = gross - net
     pay_rows, calc = [], None
     if e.get("일당") and e.get("근무일수"):
         pay_rows.append(("노무비(일당제)", gross if gross is not None else e["일당"] * e["근무일수"]))
@@ -53,11 +57,10 @@ def slip_rows(e):
         if e.get("기본급") is not None:
             pay_rows.append(("기본급", e["기본급"]))
         if gross is not None and e.get("기본급") is not None and gross > e["기본급"]:
-            pay_rows.append(("그 외 지급(합산)", gross - e["기본급"]))
-    if net is None and gross is not None and ded_total is not None:
-        net = gross - ded_total
-    if ded_total is None and gross is not None and net is not None and gross >= net:
-        ded_total = gross - net
+            # 기본급과 임금총액 차 = 수당·비과세(식대 등) 합
+            pay_rows.append(("그 외 지급(수당·비과세 등)", gross - e["기본급"]))
+        elif gross is not None and e.get("기본급") is None:
+            pay_rows.append(("지급액", gross))
     return pay_rows, ded_rows, gross, ded_total, net, calc
 
 
