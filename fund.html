@@ -623,6 +623,7 @@ function sitesTab(){
   return '<div class="panel"><div class="row"><h2>참여사업장</h2>'
     +'<span class="stat">'+arr.length+'개사</span><span class="stat">상시근로자 '+totalEmp.toLocaleString()+'명</span>'
     +'<span style="flex:1"></span><button class="primary" onclick="editSite(\'\')">+ 사업장 추가</button>'
+    +' <button onclick="pickCompany()" title="푸른이알피에 등록된 업체(모기업 등) 당겨오기">🔗 푸른이알피 업체 연결</button>'
     +' <button onclick="importSites()" title="전체 기금 사업장 일괄 가져오기(담당자 포함)">📥 사업장 데이터 가져오기</button></div>'
     +'<div style="margin-top:12px">'+tbl+'</div></div>';
 }
@@ -632,8 +633,10 @@ function _primaryContact(s){
   var pi=0; for(var i=0;i<cts.length;i++){ if(cts[i]&&cts[i].isPrimary){pi=i;break;} }
   return {list:cts, idx:cts.length?pi:-1, c:(cts[pi]||{})};
 }
-function editSite(sid){
-  var s=(S.sites&&S.sites[sid])||{}; var isNew=!sid;
+var _sitePrefill=null;
+function editSite(sid,prefill){
+  var isNew=!sid; if(isNew&&prefill){_sitePrefill=prefill;} else if(isNew){_sitePrefill=null;}
+  var s=(isNew&&prefill)?prefill:((S.sites&&S.sites[sid])||{});
   var flds=SITE_FIELDS.map(function(c){return '<div class="fld'+(c[0]==='address'||c[0]==='note'?' full':'')+'"><label>'+c[1]+'</label>'
     +'<input id="se-'+c[0]+'" type="'+c[2]+'" value="'+esc(s[c[0]]||'')+'"></div>';}).join('');
   var pc=_primaryContact(s).c;
@@ -648,7 +651,8 @@ function editSite(sid){
     +'<button onclick="closeM()">취소</button><button class="primary" onclick="saveSite(\''+sid+'\')">저장</button></div>');
 }
 function saveSite(sid){
-  var obj=Object.assign({}, (S.sites&&S.sites[sid])||{status:'active'});
+  var base = sid ? ((S.sites&&S.sites[sid])||{}) : Object.assign({status:'active'}, _sitePrefill||{});  // 신규는 연결 프리필(puerp_co_id 등) 보존
+  var obj=Object.assign({}, base);
   SITE_FIELDS.forEach(function(c){var el=$('se-'+c[0]);if(el)obj[c[0]]=el.value.trim();});
   if(!obj.name){ alert('상호를 입력하세요'); return; }
   // 담당자: 기존 contacts 배열 유지하되 대표 담당자 항목만 갱신(없으면 추가)
@@ -662,9 +666,56 @@ function saveSite(sid){
   } else if(pc.idx>=0){ list.splice(pc.idx,1); }   // 담당자 비우면 대표 항목 제거
   obj.contacts=list;
   var ref = sid ? fbDb.ref(NS+'/sites/'+S.fundId+'/'+sid) : fbDb.ref(NS+'/sites/'+S.fundId).push();
-  ref.set(obj).then(function(){ S.sitesFor=null; closeM(); renderFund(); })
+  ref.set(obj).then(function(){ _sitePrefill=null; S.sitesFor=null; closeM(); renderFund(); })
     .catch(function(e){ alert('저장 실패: '+e.message); });
 }
+// ── 푸른이알피 업체 연결(모기업 등 당겨오기) ──
+var _coCache=null;
+function _normCo(v){
+  if(!v) return []; if(!Array.isArray(v)) v=Object.keys(v).map(function(k){return v[k];});
+  var seen={};
+  return v.filter(function(c){return c&&c.name&&(c.status!=='deleted');})
+    .filter(function(c){ var id=c.id||c.bizNo||c.name; if(seen[id])return false; seen[id]=1; return true; })
+    .sort(function(a,b){return (a.name||'').localeCompare(b.name||'','ko');});
+}
+function loadCompanies(){
+  if(_coCache) return Promise.resolve(_coCache);
+  try{ var raw=localStorage.getItem('pureun_v6_companies');
+    if(raw){ var a=_normCo(JSON.parse(raw)); if(a.length){ _coCache=a; return Promise.resolve(a); } } }catch(e){}
+  return fbDb.ref('data/companies/v').once('value').then(function(s){ _coCache=_normCo(s.val()); return _coCache; })
+    .catch(function(){ _coCache=[]; return _coCache; });
+}
+function _coContacts(co){
+  var cts=co.contacts; if(typeof cts==='string'){try{cts=JSON.parse(cts);}catch(e){cts=[];}} if(!Array.isArray(cts))cts=[];
+  if(!cts.length && (co.primaryContactName||co.primaryContactPhone||co.primaryContactEmail))
+    cts=[{name:co.primaryContactName||'',position:'',phone:'',mobile:co.primaryContactPhone||'',email:co.primaryContactEmail||'',isPrimary:true}];
+  return cts;
+}
+function companyToSite(co){
+  return { name:co.name||'', ceo:co.ceo||'', biz_no:co.bizNo||'', corp_no:co.corpNo||co.corp_no||'',
+    biz_type:co.bizType||'', address:co.address||'', company_size:co.company_size||co.empCount||'',
+    note:'푸른이알피 연결', status:'active', contacts:_coContacts(co), puerp_co_id:co.id||'' };
+}
+function pickCompany(){
+  showModal('<h2 style="margin:0 0 4px">푸른이알피 업체 연결</h2>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 10px">모기업 등 이미 등록된 업체를 골라 참여사업장으로 당겨옵니다.</p>'
+    +'<input id="co-q" class="search" style="width:100%" placeholder="업체명·사업자번호 검색" oninput="renderCoList()">'
+    +'<div id="co-list" class="muted" style="margin-top:10px;max-height:360px;overflow:auto">불러오는 중…</div>');
+  loadCompanies().then(function(){ renderCoList(); }).catch(function(){ var el=$('co-list'); if(el)el.innerHTML='<div class="msg err">업체 목록을 불러오지 못했습니다.</div>'; });
+}
+function renderCoList(){
+  var el=$('co-list'); if(!el) return; var list=_coCache||[];
+  if(!list.length){ el.innerHTML='<div class="muted">푸른이알피 업체가 없습니다. 이 브라우저에서 푸른이알피를 한 번 열면 목록이 채워집니다.</div>'; return; }
+  var q=($('co-q')&&$('co-q').value||'').trim();
+  var hit=q?list.filter(function(c){return (c.name||'').indexOf(q)>=0||String(c.bizNo||'').replace(/-/g,'').indexOf(q.replace(/-/g,''))>=0;}):list;
+  if(!hit.length){ el.innerHTML='<div class="muted" style="padding:8px">일치하는 업체가 없습니다.</div>'; return; }
+  el.innerHTML=hit.slice(0,200).map(function(c){ var i=(_coCache||[]).indexOf(c);
+    return '<div onclick="chooseCompany('+i+')" style="padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer">'
+      +'<b>'+esc(c.name)+'</b>'+(c.typeCode?' <span class="muted" style="font-size:11px">'+esc(c.typeCode)+'</span>':'')
+      +'<div class="muted" style="font-size:11.5px">'+(c.ceo?'대표 '+esc(c.ceo)+' · ':'')+(c.bizNo?esc(c.bizNo)+' · ':'')+esc(c.address||'')+'</div></div>';
+  }).join('')+(hit.length>200?'<div class="muted" style="font-size:11px">…상위 200개만 표시(검색으로 좁히세요)</div>':'');
+}
+function chooseCompany(i){ var co=(_coCache||[])[i]; if(!co) return; closeM(); editSite('', companyToSite(co)); }
 function delSite(sid){
   if(!confirm('이 사업장을 삭제할까요?')) return;
   fbDb.ref(NS+'/sites/'+S.fundId+'/'+sid).remove().then(function(){ S.sitesFor=null; closeM(); renderFund(); });
