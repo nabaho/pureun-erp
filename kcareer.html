@@ -1364,6 +1364,8 @@ function set(key,arr){
   if(key==='id_docs' && hasIDPin()){ if(_idUnlocked && _idKey){ _idDocs=Array.isArray(arr)?arr.slice():[]; _persistIdDocs(); } return; }
   try{ LS.set(NS+key, JSON.stringify(arr)); if(typeof fbScheduleAuto==='function') fbScheduleAuto(key); }catch(e){ if(e.name==='QuotaExceededError'||String(e).includes('quota')||String(e).includes('storage')){ toast('⚠️ 저장공간 부족 — 환경설정 › 저장공간 관리에서 파일 삭제 필요'); console.error('Storage full:',key,e); checkStorageQuota(); } else { toast('저장 오류: '+e.message); console.error(e); } } }
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+/* onclick="fn('VALUE')" 안에 안전하게 넣기용: HTML 속성 + 홑따옴표 JS 문자열 이스케이프 (XSS 방어) */
+function _jsAttr(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\\/g,'\\\\').replace(/"/g,'&quot;').replace(/'/g,"\\'"); }
 
 /* 시드 1회 로드 (스토어가 비었을 때만) */
 function loadSeed(){
@@ -4071,9 +4073,10 @@ function renderStaffMgr(){ var box=document.getElementById('staffMgrBody'); if(!
       var statCell=retired
         ? '<span style="color:var(--red);font-size:12px">🚪 퇴직</span>'
         : '<span style="color:var(--teal);font-size:12px">● 재직</span>';
+      var sidJs=_jsAttr(s.id);
       var act=retired
-        ? '<button class="btn sm" onclick="setStaffStatus(\''+s.id+'\',\'재직\')">↩ 재직 전환</button>'
-        : '<button class="btn sm" style="color:var(--red)" onclick="staffRetire(\''+s.id+'\')">🚪 퇴직 처리</button>';
+        ? '<button class="btn sm" onclick="setStaffStatus(\''+sidJs+'\',\'재직\')">↩ 재직 전환</button>'
+        : '<button class="btn sm" style="color:var(--red)" onclick="staffRetire(\''+sidJs+'\')">🚪 퇴직 처리</button>';
       return '<tr><td class="rownum">'+(i+1)+'</td>'
         +'<td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:'+escapeHtml(s.color)+';margin-right:6px;vertical-align:middle"></span>'+nameCell+'</td>'
         +'<td>'+statCell+'</td><td>'+act+'</td></tr>';
@@ -4084,12 +4087,14 @@ function renderStaffMgr(){ var box=document.getElementById('staffMgrBody'); if(!
 /* ===== pu-erp 컨설팅 실적 연동 (data/consultings + data/user_dir, 주담당별) ===== */
 var _puUserMap=null;
 async function _puLoadUserMap(){
-  if(_puUserMap) return _puUserMap; _puUserMap={};
+  if(_puUserMap) return _puUserMap;
+  var map={};
   try{ var s=await fbDb.ref('data/user_dir').once('value'); var v=s.val();
     if(v){ var arr=Array.isArray(v)?v:Object.keys(v).map(function(k){return v[k];});
-      arr.filter(Boolean).forEach(function(u){ if(u&&u.sid) _puUserMap[String(u.sid)]=u.name||String(u.sid); }); }
+      arr.filter(Boolean).forEach(function(u){ if(u&&u.sid) map[String(u.sid)]=u.name||String(u.sid); }); }
+    _puUserMap=map; /* 응답 수신 성공 시에만 캐시 — 실패하면 캐시 안 하고 다음에 재시도 */
   }catch(e){ console.warn('user_dir load',e); }
-  return _puUserMap;
+  return _puUserMap||map;
 }
 function _puMainMgr(c){ var sid=c.managerMain||'';
   if(!sid && Array.isArray(c.workers)){ var w=c.workers.find(function(x){return x&&x.isPrimary;})||c.workers[0]; if(w) sid=w.sid||''; }
@@ -4188,7 +4193,7 @@ function renderPuPerf(coll,byMgr){
     var closed=list.filter(function(c){return c.closedDate||c.status==='closed';}).length;
     var rid=(getStaffRoster().find(function(s){return s.name===nm;})||{}).id;
     var disp=(rid && staffIsRetired(rid))?'퇴직자':nm;
-    var nmJs=String(nm).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    var nmJs=_jsAttr(nm);
     html+='<div style="padding:8px 12px;border-top:1px solid var(--border-soft)">'
       +'<div style="font-weight:600;font-size:13px;margin-bottom:2px">'+escapeHtml(disp)+' <span style="font-size:11px;color:var(--text-mute);font-weight:400">— 총 '+list.length+'건 · 종료 '+closed+'건</span> <button class="btn sm" onclick="issuePerfCert(\''+nmJs+'\')">📄 실적증명서</button></div>'
       +list.slice(0,50).map(function(c){ var f=_puItemFields(coll,c);
@@ -4225,7 +4230,7 @@ function renderPuConsulting(byMgr){
     var closed=list.filter(function(c){return c.closedDate;}).length;
     var rid=(getStaffRoster().find(function(s){return s.name===nm;})||{}).id;
     var disp=(rid && staffIsRetired(rid))?'퇴직자':nm;
-    var nmJs=String(nm).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    var nmJs=_jsAttr(nm);
     html+='<div style="padding:8px 12px;border-top:1px solid var(--border-soft)">'
       +'<div style="font-weight:600;font-size:13px;margin-bottom:2px">'+escapeHtml(disp)+' <span style="font-size:11px;color:var(--text-mute);font-weight:400">— 총 '+list.length+'건 · 종료 '+closed+'건</span> <button class="btn sm" onclick="issuePerfCert(\''+nmJs+'\')">📄 실적증명서</button></div>'
       +list.slice(0,50).map(function(c){ var t=c.consultingType||c.programName||c.title||'컨설팅'; var co=c.companyName||'';
@@ -4241,6 +4246,8 @@ function renderPuConsulting(byMgr){
 /* ===== 담당자별 실적증명서 (인쇄/PDF) ===== */
 function issuePerfCert(name){
   if(_me.resolved && !_me.isAdmin && name!==_me.name){ toast('본인의 실적증명서만 발급할 수 있습니다'); return; }
+  var _rid=(getStaffRoster().find(function(s){return s.name===name;})||{}).id;
+  if(_rid && staffIsRetired(_rid)){ toast('퇴직 직원의 실적증명서는 발급할 수 없습니다 (이름 비공개 처리됨)'); return; }
   var rows=_puCertRows(name);
   if(rows===null){ toast('먼저 각 실적 화면에서 [🔗 pu-erp 불러오기]를 눌러 실적을 불러오세요'); return; }
   if(!rows.length && !confirm(name+' 님의 불러온 실적이 없습니다.\n그래도 빈 증명서를 만들까요?')) return;
@@ -4296,7 +4303,7 @@ _safe(function(){ document.querySelectorAll('.modal-ov').forEach(function(ov){
 var FB_CONFIG={apiKey:'AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA',authDomain:'pureun-erp.firebaseapp.com',databaseURL:'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app',projectId:'pureun-erp',appId:'1:936817166182:web:9bd31f70d0afdf5fca2aa7',messagingSenderId:'936817166182'};
 var FB_APPCHECK_KEY='6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
 var fbDb=null, fbUid=null;
-var FB_SKIP=['id_docs','id_docs_enc','id_salt','api_key','gvision_key','staff_roster','_idpin','_idmeta','_idsalt','kc_theme','_fbbase','_fbauto'];
+var FB_SKIP=['id_docs','id_docs_enc','id_salt','api_key','gvision_key','staff_roster','pu_consult_cache','pu_case_cache','pu_fund_cache','pu_etc_cache','_idpin','_idmeta','_idsalt','kc_theme','_fbbase','_fbauto'];
 var _fbBase=null, _fbPushT=null, _fbWatching=false;
 /* ===== 로그인 게이트: 통합시스템 로그아웃 시 경력관리도 잠금 ===== */
 function _authGateEl(){
@@ -4339,7 +4346,7 @@ function fbInit(){ if(location.protocol==='file:') return; if(typeof firebase===
     try{ if(firebase.auth().setPersistence) firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){ console.warn('[persistence]',e&&e.message); }
     firebase.auth().onAuthStateChanged(function(u){ fbUid=u?u.uid:null; fbUpdateUI(u);
       if(u){ authGate(false); if(typeof resolveMe==='function'){ try{ resolveMe(); }catch(e){} } }
-      else { _me={resolved:false,name:'',sid:'',role:'',isAdmin:true};
+      else { _me={resolved:false,name:'',sid:'',role:'',isAdmin:true}; _fbWatching=false; _fbBase=null;
         /* sso=1로 갓 진입한 경우엔 공유 세션이 잡힐 시간을 잠깐 준 뒤 잠금 판단 */
         if(/[?&]sso=1/.test(location.search) && !window._ssoRetried){ window._ssoRetried=true;
           setTimeout(function(){ try{ var cu=firebase.auth().currentUser;
