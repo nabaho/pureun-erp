@@ -67,6 +67,9 @@
   .kv{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--sub);margin-top:6px}
   .kv b{color:var(--ink)}
   .backbtn{font-size:12.5px;color:var(--acc);cursor:pointer;background:none;border:none;padding:0;margin-bottom:8px}
+  #toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%) translateY(20px);background:#1f2937;color:#fff;padding:11px 20px;border-radius:10px;font-size:13.5px;font-weight:600;box-shadow:0 8px 30px rgba(0,0,0,.25);opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;z-index:200;max-width:80vw}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  #toast.err{background:#b91c1c}#toast.warn{background:#b45309}
 </style>
 </head>
 <body>
@@ -151,6 +154,7 @@ function gate(){ $('root').innerHTML='<div class="gate"><h2>로그인이 필요�
 function start(){
   $('root').innerHTML=shell();
   initTop();
+  try{ history.replaceState({view:'home'}, ''); }catch(e){}
   fbDb.ref(NS+'/funds').on('value', function(snap){ funds=snap.val()||{}; route(); }, function(err){
     $('app').innerHTML='<div class="panel"><h2 style="color:var(--danger)">읽기 권한 오류</h2><p class="muted">'+esc(err.message)+'</p></div>';
   });
@@ -197,7 +201,22 @@ function doLogout(){ if(!confirm('로그아웃하고 푸른 포털로 나가시�
   try{ firebase.auth().signOut().catch(function(){}).then(function(){ location.href=PORTAL_URL; }); }
   catch(e){ location.href=PORTAL_URL; } }
 
-function go(v,id){ S.view=v; if(id!==undefined)S.fundId=id; if(v==='fund')S.tab='info'; route(); }
+// ── 공통 편의: 토스트 알림 ──
+function toast(msg,type){
+  var t=$('toast'); if(!t){ t=document.createElement('div'); t.id='toast'; document.body.appendChild(t); }
+  t.textContent=msg; t.className='show'+(type==='err'?' err':(type==='warn'?' warn':''));
+  clearTimeout(window._toastT); window._toastT=setTimeout(function(){ t.className=''; }, type==='err'?3200:1800);
+}
+// ── 공통 편의: 네비게이션 + 브라우저 뒤로가기 ──
+function go(v,id){ S.view=v; if(id!==undefined)S.fundId=id; if(v==='fund')S.tab='info'; _pushHist(); route(); }
+function goTab(tab){ S.tab=tab; _pushHist(); renderFund(); }   // 기금 상세 탭 전환(히스토리 반영)
+function goBack(){ if(history.length>1) history.back(); else go('home'); }
+function _pushHist(){ try{ history.pushState({view:S.view,fundId:S.fundId,tab:S.tab,homeTab:S.homeTab}, ''); }catch(e){} }
+window.addEventListener('popstate', function(ev){
+  var st=ev.state; if(!st){ S.view='home'; route(); return; }
+  S.view=st.view||'home'; if(st.fundId!==undefined)S.fundId=st.fundId; if(st.tab)S.tab=st.tab; if(st.homeTab)S.homeTab=st.homeTab;
+  route();
+});
 function route(){
   ['home','ledger','billing','forms'].forEach(function(v){var n=$('nav-'+v);if(n)n.className='sitem'+(S.view===v?' on':'');});
   if(S.view==='fund'&&S.fundId&&funds[S.fundId]) renderFund();
@@ -281,8 +300,8 @@ function saveMgr(fid){
   var patch={ mgr_main: mainU?{sid:mainU.sid,name:mainU.name}:null, mgr_subs: subs.length?subs:null };
   patch.manager=[mainU?mainU.name:''].concat(subs.map(function(s){return s.name+'(부)';})).filter(Boolean).join(', ');  // 검색·구호환용 문자열
   fbDb.ref(NS+'/funds/'+fid).update(patch).then(function(){
-    Object.assign(funds[fid],patch); closeM(); if(S.view==='fund')renderFund(); else renderHome();
-  }).catch(function(e){ alert('저장 실패: '+e.message); });
+    Object.assign(funds[fid],patch); closeM(); if(S.view==='fund')renderFund(); else renderHome(); toast('담당자가 저장되었습니다');
+  }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
 }
 function setLifecycle(fid){
   var f=funds[fid]; if(!f) return; var cur=f.lifecycle||'운영';
@@ -312,8 +331,8 @@ function saveLifecycle(fid){
   else patch={lifecycle:t,end_date:($('lc-date').value||''),end_reason:($('lc-reason').value.trim()||'')};
   fbDb.ref(NS+'/funds/'+fid).update(patch).then(function(){
     Object.assign(funds[fid],{lifecycle:patch.lifecycle||'',end_date:patch.end_date||'',end_reason:patch.end_reason||''});
-    closeM(); if(S.view==='fund')renderFund(); else renderHome();
-  }).catch(function(e){ alert('저장 실패: '+e.message); });
+    closeM(); if(S.view==='fund')renderFund(); else renderHome(); toast('상태가 저장되었습니다');
+  }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
 }
 // 기금 생애주기: '' | '운영'(활성) / '계약종료'(재개 가능) / '기록보관'(해산·소멸)
 function isPast(f){ return f.lifecycle==='계약종료'||f.lifecycle==='기록보관'; }
@@ -403,8 +422,8 @@ function renderLedger(){
 function patchFund(id,field,val){
   val=val.trim?val.trim():val;
   fbDb.ref(NS+'/funds/'+id+'/'+field).set(val).then(function(){
-    funds[id][field]=val; var b=$('lc-'+id); if(b){var n=nDone(funds[id]);b.textContent=n+'/5';b.className='chip '+(n===5?'ok':n>=3?'warn':'dg');}
-  }).catch(function(e){alert('저장 실패: '+e.message);});
+    funds[id][field]=val; var b=$('lc-'+id); if(b){var n=nDone(funds[id]);b.textContent=n+'/5';b.className='chip '+(n===5?'ok':n>=3?'warn':'dg');} toast('저장됨');
+  }).catch(function(e){toast('저장 실패: '+e.message,'err');});
 }
 
 // ── 청구 관리 (4단계) ──
@@ -445,8 +464,8 @@ function saveBilling(){
   var o={fund_id:$('bl-fund').value,year:num($('bl-year').value)||S.year,item:$('bl-item').value.trim()||'보수',amount:num($('bl-amount').value)||0,invoice_date:'',paid_date:''};
   fbDb.ref(NS+'/billings').push().set(o).then(function(){closeM();}).catch(function(e){alert('실패: '+e.message);});
 }
-function patchBilling(id,k,v){ fbDb.ref(NS+'/billings/'+id+'/'+k).set(k==='amount'?(num(v)||0):v.trim()); }
-function delBilling(id){ if(confirm('삭제할까요?')) fbDb.ref(NS+'/billings/'+id).remove(); }
+function patchBilling(id,k,v){ fbDb.ref(NS+'/billings/'+id+'/'+k).set(k==='amount'?(num(v)||0):v.trim()).then(function(){toast('저장됨');}).catch(function(e){toast('저장 실패: '+e.message,'err');}); }
+function delBilling(id){ if(confirm('삭제할까요?')) fbDb.ref(NS+'/billings/'+id).remove().then(function(){toast('삭제되었습니다');}); }
 
 // ── 서식 자료실 (설립·지원신청서 원본 채움) ──
 // 원본 법정서식 엑셀은 실데이터 미포함 빈 양식 → 브라우저 IndexedDB에 1회 저장 후 자동 사용.
@@ -586,7 +605,7 @@ function renderFund(){
   var f=funds[S.fundId]; $('crumb').textContent=(f.short_name||f.name);
   var tags=f.fund_type==='사내'?'<span class="tag sanae">사내</span>':'<span class="tag gong">공동</span>';
   tags+=(isPast(f)?' '+lifeBadge(f):'');
-  var head='<button class="backbtn" onclick="go(\'home\')">← 기금 현황</button>'
+  var head='<button class="backbtn" onclick="goBack()">← 뒤로</button>'
     +(isPast(f)?'<div class="panel" style="background:var(--warn-bg);border-left:3px solid var(--warn);padding:8px 12px;font-size:12.5px">이 기금은 <b>'+esc(f.lifecycle)+'</b> 상태입니다'+(f.end_date?' ('+esc(f.end_date)+(f.end_reason?' · '+esc(f.end_reason):'')+')':'')+'. 집계에서 제외됩니다. <a href="#" onclick="setLifecycle(\''+S.fundId+'\');return false;">상태 변경 →</a></div>':'')
     +'<div class="panel"><div class="row"><h1>'+esc(f.short_name||f.name)+'</h1>'+tags
     +'<span style="flex:1"></span>'
@@ -596,7 +615,7 @@ function renderFund(){
     +'<span>고유번호 <b>'+esc(f.tax_id_no||'—')+'</b></span><span>소재지 <b>'+esc(f.address||'—')+'</b></span></div></div>';
   var tabbar='<div class="tabbar">'+TABS.map(function(t){
     if(t[0]==='subsidy'&&f.fund_type==='사내') return '';   // 지원금은 공동 전용
-    if(t[2]) return '<div class="tab'+(S.tab===t[0]?' on':'')+'" onclick="S.tab=\''+t[0]+'\';renderFund()">'+t[1]+'</div>';
+    if(t[2]) return '<div class="tab'+(S.tab===t[0]?' on':'')+'" onclick="goTab(\''+t[0]+'\')">'+t[1]+'</div>';
     return '<div class="tab soon" title="다음 단계에서 추가">'+t[1]+' ·</div>';
   }).join('')+'</div>';
   if(S.tab==='subsidy'&&f.fund_type==='사내') S.tab='info';
@@ -654,8 +673,8 @@ function saveInfo(){
     patch.mgr_subs=subs.length?subs:null;
     patch.manager=[mainU?mainU.name:''].concat(subs.map(function(s){return s.name+'(부)';})).filter(Boolean).join(', ');
   } else { var txt=$('fd-mgr-text'); if(txt)patch.manager=txt.value.trim(); }
-  fbDb.ref(NS+'/funds/'+S.fundId).update(patch).then(function(){Object.assign(funds[S.fundId],patch);var m=$('msg');m.className='msg ok';m.textContent='저장되었습니다.';renderFund();})
-    .catch(function(e){var m=$('msg');m.className='msg err';m.textContent='저장 실패: '+e.message;});
+  fbDb.ref(NS+'/funds/'+S.fundId).update(patch).then(function(){Object.assign(funds[S.fundId],patch);renderFund();toast('저장되었습니다');})
+    .catch(function(e){toast('저장 실패: '+e.message,'err');});
 }
 
 // ── 참여사업장 (2단계) ──
@@ -738,8 +757,8 @@ function saveSite(sid){
   } else if(pc.idx>=0){ list.splice(pc.idx,1); }   // 담당자 비우면 대표 항목 제거
   obj.contacts=list;
   var ref = sid ? fbDb.ref(NS+'/sites/'+S.fundId+'/'+sid) : fbDb.ref(NS+'/sites/'+S.fundId).push();
-  ref.set(obj).then(function(){ _sitePrefill=null; S.sitesFor=null; closeM(); renderFund(); })
-    .catch(function(e){ alert('저장 실패: '+e.message); });
+  ref.set(obj).then(function(){ _sitePrefill=null; S.sitesFor=null; closeM(); renderFund(); toast('사업장이 저장되었습니다'); })
+    .catch(function(e){ toast('저장 실패: '+e.message,'err'); });
 }
 // ── 푸른이알피 업체 연결(모기업 등 당겨오기) ──
 var _coCache=null;
@@ -790,7 +809,7 @@ function renderCoList(){
 function chooseCompany(i){ var co=(_coCache||[])[i]; if(!co) return; closeM(); editSite('', companyToSite(co)); }
 function delSite(sid){
   if(!confirm('이 사업장을 삭제할까요?')) return;
-  fbDb.ref(NS+'/sites/'+S.fundId+'/'+sid).remove().then(function(){ S.sitesFor=null; closeM(); renderFund(); });
+  fbDb.ref(NS+'/sites/'+S.fundId+'/'+sid).remove().then(function(){ S.sitesFor=null; closeM(); renderFund(); toast('삭제되었습니다'); });
 }
 function importSites(){
   var inp=document.createElement('input'); inp.type='file'; inp.accept='application/json';
@@ -798,7 +817,7 @@ function importSites(){
     var rd=new FileReader(); rd.onload=function(){
       try{ var data=JSON.parse(rd.result);
         if(!confirm('사업장 데이터를 Firebase로 가져올까요? (기금별 사업장 전체)')) return;
-        fbDb.ref(NS+'/sites').update(data).then(function(){ alert('가져오기 완료'); S.sitesFor=null; renderFund(); })
+        fbDb.ref(NS+'/sites').update(data).then(function(){ toast('가져오기 완료'); S.sitesFor=null; renderFund(); })
           .catch(function(e){ alert('가져오기 실패: '+e.message); });
       }catch(e){ alert('JSON 파싱 실패: '+e.message); }
     }; rd.readAsText(f);
@@ -881,8 +900,8 @@ function saveSubsidy(){
   fbDb.ref(NS+'/funds/'+S.fundId+'/years/'+S.year+'/subsidy').set(obj).then(function(){
     if(!funds[S.fundId].years)funds[S.fundId].years={}; if(!funds[S.fundId].years[S.year])funds[S.fundId].years[S.year]={};
     funds[S.fundId].years[S.year].subsidy=obj;
-    var m=$('msg');m.className='msg ok';m.textContent='저장되었습니다.'; renderFund();
-  }).catch(function(e){var m=$('msg');m.className='msg err';m.textContent='저장 실패: '+e.message;});
+    renderFund(); toast('저장되었습니다');
+  }).catch(function(e){toast('저장 실패: '+e.message,'err');});
 }
 
 // ── 목적사업·대부 (3단계/중) ──
@@ -1065,7 +1084,7 @@ function saveOpening(){
   var o={}; ['cash','savings','loan','basic','retained','reserve'].forEach(function(k){var el=$('op-'+k);if(el)o[k]=num(el.value)||0;});
   fbDb.ref(NS+'/funds/'+_fid+'/years/'+_yr+'/opening').set(o).then(function(){
     if(!funds[_fid].years)funds[_fid].years={}; if(!funds[_fid].years[_yr])funds[_fid].years[_yr]={};
-    funds[_fid].years[_yr].opening=o; renderFund(); alert('전기이월 저장됨');
+    funds[_fid].years[_yr].opening=o; renderFund(); toast('전기이월 저장됨');
   }).catch(function(e){alert('저장 실패: '+e.message);});
 }
 function openForm15(){
