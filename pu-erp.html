@@ -28759,6 +28759,28 @@ function IncomeDetailModal(props){
   );
 }
 
+// 지출의 '귀속월'(내용상 해당하는 월) 추출 — 지급월(date)과 다를 수 있음.
+// 급여·사업주부담·실비·이체수수료 자동항목은 id/메모에 YM이 있고, 수동 지정 accrualYM도 인정.
+var _ACCRUAL_ID_PREFIXES = ['fe-salary-','fe-employer-','fe-reimburse-','fe-bankfee-'];
+function _expenseAccrualYM(it){
+  if(!it) return '';
+  if(it.accrualYM && /^\d{4}-\d{2}$/.test(it.accrualYM)) return it.accrualYM;   // 수동 지정 우선
+  if(typeof it.id === 'string'){
+    for(var i=0;i<_ACCRUAL_ID_PREFIXES.length;i++){
+      if(it.id.indexOf(_ACCRUAL_ID_PREFIXES[i])===0){
+        var ym = it.id.slice(_ACCRUAL_ID_PREFIXES[i].length);
+        if(/^\d{4}-\d{2}$/.test(ym)) return ym;
+      }
+    }
+  }
+  // 4대보험·세금·급여성 카테고리는 메모의 YYYY-MM을 귀속월로 간주
+  var payrollCat = (it.category==='exp-employer-burden'||it.category==='exp-salary'||it.category==='exp-reimburse'||it.category==='exp-tax'||it.category==='exp-pension'||it.category==='exp-insurance');
+  if(payrollCat){
+    var m = String(it.note||'').match(/(\d{4}-\d{2})/);
+    if(m) return m[1];
+  }
+  return '';
+}
 // 사업주부담분(4대보험·산재) 출금건의 해당 월(YM)을 추출
 function _employerBurdenYM(it){
   if(it && typeof it.id === 'string' && it.id.indexOf('fe-employer-') === 0) return it.id.slice('fe-employer-'.length);
@@ -28847,6 +28869,8 @@ function FinanceExpense(){
   // 빠른 필터
   var amf = useState('all'); var amtFilter = amf[0]; var setAmtFilter = amf[1];
   var unp = useState(false); var unpaidOnly = unp[0]; var setUnpaidOnly = unp[1];
+  // 월 기준: false=지급일(실제 나간 날), true=귀속월(내용상 해당 월). 예) 4대보험 6월분을 7월 5일 납부
+  var bas = usePersistedState('exp_basis_accrual', false); var basisAccrual = bas[0]; var setBasisAccrual = bas[1];
   // 카테고리 펼침 상태
   var eg = useState({}); var openGroup = eg[0]; var setOpenGroup = eg[1];
   var es2 = useState({}); var openSubGroup = es2[0]; var setOpenSubGroup = es2[1];
@@ -29075,7 +29099,11 @@ function FinanceExpense(){
 
   // 월별 + 지점 필터링
   var monthExpenses = expenses.filter(function(it){
-    if(monthFilter && (it.date||'').slice(0,7)!==monthFilter) return false;
+    if(monthFilter){
+      // 귀속월 기준이면 귀속월(없으면 지급월)로, 아니면 지급일(date)로 비교
+      var basisYM = basisAccrual ? (_expenseAccrualYM(it) || (it.date||'').slice(0,7)) : (it.date||'').slice(0,7);
+      if(basisYM !== monthFilter) return false;
+    }
     if(branchFilter !== 'all'){
       var b = it.branch || 'cheonan';
       if(branchFilter !== b) return false;
@@ -29140,6 +29168,11 @@ function FinanceExpense(){
           style:{ padding:'3px 8px', background:'#fff', border:'1px solid #cbd5e1', borderRadius:'10px', cursor:'pointer', fontSize:'10px', fontWeight:600, color:'#475569', flexShrink:0 } }, '📊 예산'),
         h('button', { onClick:function(){setBulkFeeMode(!bulkFeeMode); setBulkSel({});},
           style:{ padding:'3px 8px', background:bulkFeeMode?'#f59e0b':'#fff', color:bulkFeeMode?'#fff':'#475569', border:'1px solid '+(bulkFeeMode?'#f59e0b':'#cbd5e1'), borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:600, flexShrink:0 } }, '🏦 수수료'),
+        // 월 기준 토글: 지급일(실제 나간 날) ↔ 귀속월(내용상 해당 월)
+        h('button', { onClick:function(){ setBasisAccrual(!basisAccrual); },
+          title: basisAccrual ? '지금: 귀속월 기준 — 이 달에 해당(귀속)하는 지출 (예: 6월분 4대보험을 7월 납부해도 6월에 표시). 클릭 시 지급일 기준으로.' : '지금: 지급일 기준 — 실제 통장에서 나간 날. 클릭 시 귀속월 기준으로.',
+          style:{ padding:'3px 8px', background:basisAccrual?'#7c3aed':'#fff', color:basisAccrual?'#fff':'#6d28d9', border:'1px solid '+(basisAccrual?'#7c3aed':'#ddd6fe'), borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:700, flexShrink:0 } },
+          basisAccrual ? '📅 귀속월 기준' : '💸 지급일 기준'),
         // ── 월 마감 잠금 토글
         (function(){
           var locked = isExpenseLocked(monthFilter);
@@ -29368,6 +29401,10 @@ function FinanceExpense(){
                   // 사업주부담분: 그 달 급여에서 근로자별 부담분 재계산(펼침 시에만)
                   var ebData = (isEB && dOpen) ? employerBurdenByWorker(_employerBurdenYM(it)) : null;
                   var canExpand = hasDetails || isEB;
+                  // 귀속월(내용상 해당 월) ≠ 지급월(실제 나간 달)이면 배지로 구분
+                  var _accYM = _expenseAccrualYM(it);
+                  var _payYM = (it.date||'').slice(0,7);
+                  var _priorAccrual = _accYM && _accYM !== _payYM;
                   return h('div',{key:it.id,style:{borderBottom:i<catItems.length-1?'1px solid #f1f5f9':'none',background:bulkSel[it.id]?'#fef3c7':(isEB?(isPaid?'#f0fdf4':'#fef3c7'):'#fff')}},
                     h('div',{style:{display:'flex',alignItems:'center',gap:'10px',padding:'10px 14px',fontSize:'12px'}},
                       canBulk ? h('input',{type:'checkbox',checked:!!bulkSel[it.id],
@@ -29378,6 +29415,8 @@ function FinanceExpense(){
                         style:{cursor:'pointer',width:'14px',color:'#2563eb',fontWeight:700,fontSize:'10px',userSelect:'none'}},dOpen?'▼':'▶')
                         : h('span',{style:{width:'14px'}}),
                       h('span',{style:{fontFamily:'monospace',color:'#64748b',minWidth:'85px'}},it.date||'-'),
+                      _priorAccrual && h('span',{title:'귀속 '+_accYM+' · 지급 '+_payYM+' — 이 지출은 '+parseInt(_accYM.slice(5),10)+'월분인데 '+parseInt(_payYM.slice(5),10)+'월에 지급됨',
+                        style:{fontSize:'10px',fontWeight:700,background:'#f5f3ff',color:'#6d28d9',border:'1px solid #ddd6fe',borderRadius:'8px',padding:'1px 6px',flexShrink:0,whiteSpace:'nowrap'}},'📅 '+parseInt(_accYM.slice(5),10)+'월분'),
                       h('span',{style:{flex:1,color:'#1e293b'}},
                         it.payee||'-',
                         it.source && acctMap[it.source] && h('span',{style:{marginLeft:'6px',fontSize:'10.5px',padding:'1px 6px',borderRadius:'8px',fontWeight:700,background:'#f8fafc',color:(acctMap[it.source].color||'#475569'),border:'1px solid #e2e8f0'}}, acctMap[it.source].label),
