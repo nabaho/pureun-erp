@@ -526,8 +526,26 @@ function renderFund(){
     : '<div class="panel muted">이 탭은 다음 단계에서 이전됩니다.</div>';
   $('app').innerHTML=head+tabbar+body;
 }
+function mgrMainField(f){
+  var mainSid=(f.mgr_main&&f.mgr_main.sid)||'';
+  if(!_staffCache){ loadStaff().then(function(){ if(S.view==='fund'&&S.tab==='info')renderFund(); }).catch(function(){ if(S.view==='fund'&&S.tab==='info')renderFund(); });
+    return '<select id="fd-mgr-main" disabled><option>재직자 명단 불러오는 중…</option></select>'; }
+  if(!_staffCache.length){ // 명단 로드 실패/빈 명단 → 텍스트 폴백(입력 막지 않음)
+    return '<input id="fd-mgr-text" value="'+esc(f.manager||'')+'" placeholder="예: 김혜민, 박재원(부)"><div class="muted" style="font-size:10.5px;margin-top:3px">재직자 명단을 못 불러와 직접 입력합니다.</div>'; }
+  return '<select id="fd-mgr-main"><option value="">(미지정)</option>'
+    +_staffCache.map(function(u){return '<option value="'+esc(u.sid)+'"'+(u.sid===mainSid?' selected':'')+'>'+esc(u.name)+(u.title?' · '+esc(u.title):'')+'</option>';}).join('')+'</select>';
+}
+function mgrSubField(f){
+  if(!_staffCache||!_staffCache.length) return '<div class="muted" style="font-size:11.5px">—</div>';
+  var subSids=(f.mgr_subs||[]).map(function(x){return x&&x.sid;}).filter(Boolean);
+  return '<div style="max-height:120px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:7px 10px">'
+    +_staffCache.map(function(u){return '<label style="display:inline-flex;align-items:center;gap:4px;margin:2px 10px 2px 0;font-size:12.5px;cursor:pointer">'
+      +'<input type="checkbox" class="fd-mgr-sub" value="'+esc(u.sid)+'"'+(subSids.indexOf(u.sid)>=0?' checked':'')+'> '+esc(u.name)+'</label>';}).join('')+'</div>';
+}
 function infoForm(f){
   var flds=FIELDS.map(function(c){
+    if(c[0]==='manager') return '<div class="fld"><label>주담당</label>'+mgrMainField(f)+'</div>'
+      +'<div class="fld full"><label>부담당 (여러 명 선택)</label>'+mgrSubField(f)+'</div>';
     var v=f[c[0]]||'', inp;
     if(c[2]==='select') inp='<select id="fd-'+c[0]+'">'+['공동','사내'].map(function(o){return '<option'+(v===o?' selected':'')+'>'+o+'</option>';}).join('')+'</select>';
     else inp='<input id="fd-'+c[0]+'" type="'+c[2]+'" value="'+esc(v)+'">';
@@ -536,12 +554,23 @@ function infoForm(f){
   return '<div class="panel"><h2>기금 정보</h2><div id="msg" class="msg"></div>'
     +'<div class="grid" style="margin-top:12px">'+flds+'</div>'
     +'<div class="row" style="margin-top:16px"><button class="primary" onclick="saveInfo()">💾 저장</button>'
-    +'<span class="muted" style="font-size:11px">ID '+esc(S.fundId)+' · Firebase 저장</span></div></div>';
+    +'<span class="muted" style="font-size:11px">담당은 푸른이알피 재직자에서 선택 · Firebase 저장</span></div></div>';
 }
 function saveInfo(){
   var patch={};
-  FIELDS.forEach(function(c){var el=$('fd-'+c[0]);if(el)patch[c[0]]=el.value.trim?el.value.trim():el.value;});
-  fbDb.ref(NS+'/funds/'+S.fundId).update(patch).then(function(){Object.assign(funds[S.fundId],patch);var m=$('msg');m.className='msg ok';m.textContent='저장되었습니다.';})
+  FIELDS.forEach(function(c){ if(c[0]==='manager')return; var el=$('fd-'+c[0]); if(el)patch[c[0]]=el.value.trim?el.value.trim():el.value; });
+  // 담당: 셀렉트가 있으면 주/부담당 저장, 없으면(폴백) 텍스트
+  var mainEl=$('fd-mgr-main');
+  if(mainEl){
+    var list=_staffCache||[]; function byId(sid){return list.filter(function(u){return u.sid===sid;})[0];}
+    var mainSid=mainEl.value, mainU=byId(mainSid);
+    var subs=[].slice.call(document.querySelectorAll('.fd-mgr-sub:checked')).map(function(c){return c.value;})
+      .filter(function(sid){return sid!==mainSid;}).map(byId).filter(Boolean).map(function(u){return {sid:u.sid,name:u.name};});
+    patch.mgr_main=mainU?{sid:mainU.sid,name:mainU.name}:null;
+    patch.mgr_subs=subs.length?subs:null;
+    patch.manager=[mainU?mainU.name:''].concat(subs.map(function(s){return s.name+'(부)';})).filter(Boolean).join(', ');
+  } else { var txt=$('fd-mgr-text'); if(txt)patch.manager=txt.value.trim(); }
+  fbDb.ref(NS+'/funds/'+S.fundId).update(patch).then(function(){Object.assign(funds[S.fundId],patch);var m=$('msg');m.className='msg ok';m.textContent='저장되었습니다.';renderFund();})
     .catch(function(e){var m=$('msg');m.className='msg err';m.textContent='저장 실패: '+e.message;});
 }
 
