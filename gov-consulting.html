@@ -1910,11 +1910,13 @@ function buildNotifications(){
       const fieldDone=done.filter(s=>s.isField).length;
       const mf=getCoMandatory(co.id,tid);
       const maxR=getCoMaxRounds(co.id,tid);
+      // 본컨설팅 진척(사전진단 제외) — 회차 대비 진행/페이스 판정용
+      const progCnt=mainPhaseScheds(done,tid).length;
       if(dl){
         const diff=Math.round((new Date(dl)-new Date(today))/(864e5));
         if(diff>=0&&diff<=warnDays){
           items.push({type:'deadline',color:diff<=7?'var(--danger)':'#cc7700',icon:'⏰',
-            title:`마감 D-${diff} · ${co.name}`,sub:`${t.name} 종료일 ${dl.slice(5)} (${done.length}/${maxR||'∞'}회 진행)`,date:dl});
+            title:`마감 D-${diff} · ${co.name}`,sub:`${t.name} 종료일 ${dl.slice(5)} (${progCnt}/${maxR||'∞'}회 진행)`,date:dl});
         }
         // 의무방문 미달 (마감 임박 시)
         if(diff>=0&&diff<=warnDays&&mf>0&&fieldDone<mf){
@@ -1923,7 +1925,7 @@ function buildNotifications(){
         }
         // 회차 진척 경고: 종료일 전 남은 회차를 다 못 끝낼 위험 (마감 한 달 전부터 미리 안내)
         if(diff>=0&&diff<=30&&maxR>0){
-          const remain=maxR-done.length;
+          const remain=maxR-progCnt;
           if(remain>0){
             const weeksLeft=Math.max(1,Math.ceil((diff+1)/7));
             const perWeek=remain/weeksLeft;
@@ -1931,7 +1933,7 @@ function buildNotifications(){
             if(perWeek>1 || (diff<=14&&remain>=2)){
               items.push({type:'pace',color:diff<=14?'var(--danger)':'#cc7700',icon:'🏃',
                 title:`회차 부족 · ${co.name}`,
-                sub:`${t.name} ${done.length}/${maxR}회 · 남은 ${remain}회를 D-${diff} 안에 (주당 약 ${perWeek.toFixed(1)}회 필요)`,date:dl});
+                sub:`${t.name} ${progCnt}/${maxR}회 · 남은 ${remain}회를 D-${diff} 안에 (주당 약 ${perWeek.toFixed(1)}회 필요)`,date:dl});
             }
           }
         }
@@ -1988,7 +1990,7 @@ function renderSummaryBar(){
       // 회차 진척 부족: 마감 30일 내 남은 회차를 주당 1회 초과로 몰아야 하면 부족으로 집계
       if(dl&&maxR>0&&!lacking){
         const diff=Math.round((new Date(dl)-new Date(today))/(864e5));
-        const remain=maxR-sc.length;
+        const remain=maxR-mainPhaseScheds(sc,tid).length;
         if(diff>=0&&diff<=30&&remain>0){
           const weeksLeft=Math.max(1,Math.ceil((diff+1)/7));
           if(remain/weeksLeft>1 || (diff<=14&&remain>=2))lacking=true;
@@ -2569,6 +2571,8 @@ const PRE_ROUND_CAP=2; // 사전진단 최대 회차
 function isPrePhaseType(typeId){const ty=getTypes().find(t=>t.id===typeId);return !!ty&&(ty.id==='t1'||(ty.name||'').includes('일터혁신'));}
 // 특정 일정의 실효 단계 ('pre' | 'main'). 값 없으면 본컨설팅으로 간주(레거시)
 function schedPhase(sc){return sc&&sc.phase==='pre'?'pre':'main';}
+// 완료·본컨설팅 진척 판정용: 일터혁신은 본컨설팅 단계만 집계(사전진단 제외). 그 외 종류는 전체.
+function mainPhaseScheds(list,typeId){return isPrePhaseType(typeId)?list.filter(s=>schedPhase(s)==='main'):list;}
 // 이 사업장·종류의 현재 단계 (신규 등록이 어느 단계로 들어갈지)
 function curPhase(coId,typeId){
   if(!isPrePhaseType(typeId))return 'main';
@@ -2743,7 +2747,8 @@ function getEndConfirmItems(){
       if(!t||t.active===false)return;
       const maxR=getCoMaxRounds(co.id,tid);
       if(maxR<=0)return;
-      const done=scheds.filter(s=>s.coId===co.id&&s.typeId===tid);
+      // 일터혁신은 본컨설팅 단계만 종료 판정에 사용(사전진단 제외) → 조기 종료 방지
+      const done=mainPhaseScheds(scheds.filter(s=>s.coId===co.id&&s.typeId===tid),tid);
       if(done.length<maxR)return;
       const fieldDone=done.filter(s=>s.isField).length;
       const mf=getCoMandatory(co.id,tid);
@@ -3435,7 +3440,8 @@ function renderTimeline(){
     const maxR=getCoMaxRounds(co.id,tid),mf=getCoMandatory(co.id,tid);
     const fieldCnt=done.filter(s=>s.isField).length;
     const officeCnt=done.filter(s=>!s.isField).length;
-    const pct=maxR>0?Math.round(done.length/maxR*100):null;
+    const progCnt=mainPhaseScheds(done,tid).length; // 본컨설팅 진척(사전진단 제외)
+    const pct=maxR>0?Math.round(progCnt/maxR*100):null;
     const dates=done.map(s=>s.date).sort();
     let barL=null,barR=null;
     if(dates.length){barL=dateToRatio(dates[0]);barR=deadline?dateToRatio(deadline):dateToRatio(dates[dates.length-1]);}
@@ -3475,7 +3481,7 @@ function renderTimeline(){
     // 왼쪽 정보
     const attName=att?.name||'';
     const dlBadge=deadline?deadlineBadgeCompact(deadline):'';
-    const roundText=maxR>0?`${done.length}/${maxR}회`:`${done.length}회`;
+    const roundText=maxR>0?`${progCnt}/${maxR}회`:`${done.length}회`;
     const statusText=ended?(co.deleted?'종료·삭제':'종료'):'';
     const metaTitle=`${t.fullName||t.name} · ${attName} · ${roundText}${statusText?' · '+statusText:''}${deadline?' · 종료일 '+deadline:''}`;
     return `<div class="gantt-row${ended?' ended-row-g':''}">
@@ -4107,13 +4113,18 @@ function openEditModal(sid){
   edit_selCoAtts=getCoAtts(sc); renderEditCoAtts();
   q('#mEditType').textContent=`${ty?.name||'?'}`;
   const maxR=getCoMaxRounds(sc.coId,sc.typeId);
-  const cap=schedPhase(sc)==='pre'?PRE_ROUND_CAP:maxR;
-  const isLastRound=cap>0&&Number(sc.round)===Number(cap);
-  q('#mEditRound').value=isLastRound?`${roundText(sc,'회')}(마지막회)`:`${roundText(sc,'회')}`;
+  const isPre=schedPhase(sc)==='pre';
+  const cap=isPre?PRE_ROUND_CAP:maxR;
+  const atCap=cap>0&&Number(sc.round)===Number(cap);
+  // 종료처리요청은 '본컨설팅' 마지막회에서만. 사전진단 마지막회는 본컨설팅 전환 안내.
+  const isLastRound=atCap&&!isPre;
+  q('#mEditRound').value=atCap?`${roundText(sc,'회')}(${isPre?'사전진단 마지막':'마지막회'})`:`${roundText(sc,'회')}`;
   const roundAlert=q('#mEditRoundAlert');
   if(roundAlert){
-    roundAlert.classList.toggle('on',isLastRound);
-    roundAlert.innerHTML=isLastRound?`${roundText(sc,'회')}(마지막회) <span class="req">종료처리요청</span>`:'';
+    roundAlert.classList.toggle('on',atCap);
+    roundAlert.innerHTML=isPre
+      ? (atCap?`사전진단 ${PRE_ROUND_CAP}회 완료 <span class="req" style="background:var(--accent)">본컨설팅 시작 가능</span>`:'')
+      : (isLastRound?`${roundText(sc,'회')}(마지막회) <span class="req">종료처리요청</span>`:'');
   }
   q('#mEditMemo').value=sc.memo||'';
   qa('#mEditTog .topt').forEach(o=>o.classList.toggle('on',(o.dataset.f==='1')===edit_isField));
