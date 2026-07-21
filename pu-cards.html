@@ -84,6 +84,13 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .rowmain .l1,.rowmain .l2{font-size:14.5px;color:#cfcfcf;margin-top:5px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rowmain .l2{color:#bdbdbd}
+/* 🏢 ERP 거래처 담당자 배지 (푸른 거래처만 표시) */
+.rowmain .erpmgr{display:inline-block;margin-top:5px;font-size:12.5px;font-weight:800;
+  color:#ffd8a8;background:rgba(230,126,34,.16);border:1px solid rgba(230,126,34,.55);
+  border-radius:8px;padding:1px 8px;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.erpmgr-box{margin:2px 0 12px;font-size:14px;font-weight:800;color:#ffd8a8;
+  background:rgba(230,126,34,.16);border:1px solid rgba(230,126,34,.55);
+  border-radius:9px;padding:8px 12px;line-height:1.4}
 .thumb{width:148px;height:88px;flex-shrink:0;border-radius:5px;background:#e9e9e9;
   display:flex;align-items:center;justify-content:center;color:#666;font-weight:800;font-size:22px;overflow:hidden}
 .thumb img{width:100%;height:100%;object-fit:cover}
@@ -100,6 +107,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
   .thumb{width:106px;height:63px;font-size:16px}
   .rowmain .nm{font-size:16.5px}
   .rowmain .l1,.rowmain .l2{font-size:12.5px;margin-top:3px}
+  .rowmain .erpmgr{font-size:11.5px;margin-top:3px;padding:1px 6px}
   #fab{width:52px;height:52px;font-size:28px;right:14px;bottom:18px}
 }
 
@@ -551,7 +559,7 @@ const Store = {
       /* 통합 이메일 로그인 (포털·ERP·컨설팅과 같은 Firebase 세션 공유) */
       if (firebase.auth){
         firebase.auth().onAuthStateChanged(u=>{
-          if (u && u.email){ hideCardsLogin(); subscribe(); }
+          if (u && u.email){ hideCardsLogin(); subscribe(); ErpMatch.load(); }
           /* 익명 세션은 건드리지 않음 — 컨설팅 등 다른 앱이 읽기용으로 쓰는 세션을
              여기서 signOut하면 그 앱이 다시 익명 로그인 → 무한 핑퐁으로 전체가 튕김 */
           else { showCardsLogin(); }
@@ -634,6 +642,71 @@ const Store = {
   delGroup(id){ Object.values(state.items).forEach(it=>{ if(it.group===id){ it.group=''; this.put(it);} });
     if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/groups/${id}`).remove();
     else { delete state.groups[id]; this._ls(); render(); } }
+};
+
+/* ══════ 🏢 ERP 거래처 담당자 매칭 ══════
+   푸른 ERP(업체관리)의 회사·담당자를 읽어와, 명함의 회사명/사업자번호가 맞으면
+   "푸른담당: OOO" 배지를 보여준다. 거래처에서 전화가 오면 ERP를 따로 검색하지 않고
+   담당 노무사를 바로 확인할 수 있다. (포털·ERP와 같은 Firebase 세션 공유) */
+const ErpMatch = {
+  ready:false, byBiz:{}, byName:{},
+  _norm(s){ return String(s||'').toLowerCase()
+      .replace(/㈜|\(주\)|주식회사|유한회사|유한책임회사|합자회사|합명회사|재단법인|사단법인|의료법인|\(재\)|\(사\)/g,'')
+      .replace(/[\s\-_.,·・()[\]{}'"]/g,''); },
+  _digits(s){ return String(s||'').replace(/[^0-9]/g,''); },
+  _arr(snapVal){
+    const v = snapVal && snapVal.v !== undefined ? snapVal.v : snapVal;
+    if (Array.isArray(v)) return v;
+    if (v && typeof v==='object') return Object.keys(v).map(k=>v[k]).filter(Boolean);
+    return [];
+  },
+  load(){
+    if (Store.mode!=='firebase' || typeof firebase==='undefined' || !firebase.database) return;
+    Promise.all([
+      firebase.database().ref('data/user_dir').once('value'),
+      firebase.database().ref('data/companies').once('value'),
+    ]).then(([du,dc])=>{
+      const dir = ErpMatch._arr(du.val()), cos = ErpMatch._arr(dc.val());
+      const nameBySid = {};
+      dir.forEach(u=>{ if(u&&u.sid) nameBySid[u.sid]=u.name||u.sid; });
+      const byBiz={}, byName={};
+      cos.forEach(co=>{
+        if(!co) return;
+        const main = co.managerMain ? (nameBySid[co.managerMain]||co.managerMain) : '';
+        const subs = (co.managerSubs||[]).map(s=>nameBySid[s]||s).filter(Boolean);
+        if(!main && !subs.length) return;              /* 담당자 없으면 배지 의미 없음 */
+        const rec = { company:co.name||'', main, subs };
+        const b = ErpMatch._digits(co.bizNo); if(b.length>=10 && !byBiz[b]) byBiz[b]=rec;
+        const n = ErpMatch._norm(co.name);    if(n && !byName[n]) byName[n]=rec;
+      });
+      ErpMatch.byBiz=byBiz; ErpMatch.byName=byName; ErpMatch.ready=true;
+      try{ render(); }catch(_){}
+    }).catch(e=>{ console.warn('[ErpMatch]', e&&e.message); });
+  },
+  /* 명함/사업자 항목 → 담당자 레코드 (없으면 null) */
+  match(it){
+    if (!ErpMatch.ready || !it) return null;
+    const b = ErpMatch._digits(it.bizno);
+    if (b.length>=10 && ErpMatch.byBiz[b]) return ErpMatch.byBiz[b];
+    const n = ErpMatch._norm(it.company);
+    if (n && ErpMatch.byName[n]) return ErpMatch.byName[n];
+    return null;
+  },
+  /* 배지 짧은 텍스트: "김보람" 또는 "김보람 +2" */
+  label(it){
+    const m = ErpMatch.match(it); if(!m) return '';
+    const primary = m.main || m.subs[0] || '';
+    const extra = (m.main ? m.subs.length : m.subs.length-1);
+    return extra>0 ? primary+' +'+extra : primary;
+  },
+  /* 담당자 전체 문자열: "주담당 김보람 · 부담당 홍길동" */
+  full(it){
+    const m = ErpMatch.match(it); if(!m) return '';
+    const parts = [];
+    if(m.main) parts.push('주담당 '+m.main);
+    if(m.subs.length) parts.push('부담당 '+m.subs.join(', '));
+    return parts.join(' · ');
+  }
 };
 
 /* ── 유틸 ── */
@@ -1044,6 +1117,7 @@ function renderList(){
       onclick="${click}">
       ${state.selMode?`<div class="selmark">${state.sel[it.id]?'✅':'⚪'}</div>`:''}
       <div class="rowmain"><div class="nm">${it.fav?'<span class="fav">⭐</span>':''}${esc(name)}${it.scope==='private'?'<span class="pv">개인</span>':''}</div>
+        ${(function(){var e=ErpMatch.label(it);return e?`<div class="erpmgr">🏢 푸른담당 ${esc(e)}</div>`:'';})()}
         ${l1?`<div class="l1">${esc(l1)}</div>`:''}
         ${l2?`<div class="l2">${esc(l2)}</div>`:''}</div>
       <div class="thumb">${th}</div></div>`;
@@ -1462,6 +1536,7 @@ function openDetail(id){
     <div class="dname">${esc(isCard?(it.name||'(이름 없음)'):(it.company||'(상호 없음)'))}</div>
     <div class="dsub">${esc(isCard ? [it.company,it.dept,it.title].filter(Boolean).join(' · ')
                                    : [it.ceo&&('대표자 '+it.ceo), fmtBizno(it.bizno)].filter(Boolean).join(' · '))}</div>
+    ${(function(){var f=ErpMatch.full(it);return f?`<div class="erpmgr-box">🏢 푸른 거래처 · ${esc(f)}</div>`:'';})()}
     ${acts}
     <div class="dlist">${rows||'<div class="empty" style="padding:20px">저장된 정보가 없습니다</div>'}</div>
     <div class="mfoot">
@@ -1518,6 +1593,7 @@ function openPcDetail(id){
         <span class="star" onclick="toggleFav('${id}')">${it.fav?'⭐':'☆'}</span></div>
       <div class="pdsub">${esc(isCard ? [it.title,it.dept,it.company].filter(Boolean).join(' / ')
                                        : [it.ceo&&('대표자 '+it.ceo), fmtBizno(it.bizno)].filter(Boolean).join(' · '))}</div>
+      ${(function(){var f=ErpMatch.full(it);return f?`<div class="erpmgr-box">🏢 푸른 거래처 · ${esc(f)}</div>`:'';})()}
       ${acts}
       <div class="pdsec">정보</div>
       ${rows || '<div class="pdrow"><div class="v" style="color:#8b98b3">저장된 정보가 없습니다</div></div>'}
