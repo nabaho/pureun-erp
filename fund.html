@@ -204,15 +204,22 @@ function mgrText(f){
   }
   return f.manager||'—';   // 구 데이터 호환
 }
+function lifeSelect(f){
+  var v=f.lifecycle||'운영';
+  function o(val){return '<option value="'+val+'"'+(v===val?' selected':'')+'>'+val+'</option>';}
+  return '<select onclick="event.stopPropagation()" onchange="setLifecycleQuick(\''+f._id+'\',this.value)" style="padding:3px 6px;border:1px solid '+(v==='운영'?'var(--line)':'#e0a0a0')+';border-radius:6px;font-size:11.5px;background:'+(v==='운영'?'#fff':'#fbf0f0')+'">'
+    +o('운영')+o('계약종료')+o('기록보관')+'</select>';
+}
 function fundRow(f,no){
   var n=nDone(f); var chip=n===5?'<span class="chip ok">정보 완비</span>':n>=3?'<span class="chip warn">정보 '+n+'/5</span>':'<span class="chip dg">정보 '+n+'/5</span>';
   return '<tr onclick="go(\'fund\',\''+f._id+'\')"><td class="no">'+no+'</td>'
     +'<td style="font-weight:700">'+esc(f.short_name||f.name)+'<div class="muted" style="font-weight:400;font-size:11.5px">'+esc(f.name||'')+'</div></td>'
-    +'<td>'+esc(mgrText(f))+'</td><td>'+esc(f.chairman||'—')+'</td><td>'+chip+'</td></tr>';
+    +'<td>'+esc(mgrText(f))+'</td><td>'+esc(f.chairman||'—')+'</td><td>'+chip+'</td>'
+    +'<td onclick="event.stopPropagation()">'+lifeSelect(f)+(f.end_date&&f.lifecycle!=='운영'?'<div class="muted" style="font-size:10.5px;margin-top:2px">'+esc(f.end_date)+(f.end_reason?' '+esc(f.end_reason):'')+'</div>':'')+'</td></tr>';
 }
 function fundTable(list){
-  return '<table><thead><tr><th>번호</th><th>기금명</th><th>담당</th><th>대표자</th><th>상태</th></tr></thead><tbody>'
-    +list.map(function(f,i){return fundRow(f,i+1);}).join('')+'</tbody></table>';
+  return '<div style="overflow-x:auto"><table><thead><tr><th>번호</th><th>기금명</th><th>담당</th><th>대표자</th><th>정보</th><th>계약관계</th></tr></thead><tbody>'
+    +list.map(function(f,i){return fundRow(f,i+1);}).join('')+'</tbody></table></div>';
 }
 // 푸른이알피 재직자 명단 — Firebase data/user_accounts/v (pu-erp와 공유). 재직(active)만.
 var _staffCache=null;
@@ -279,6 +286,15 @@ function setLifecycle(fid){
     +'<div class="row" style="justify-content:flex-end;margin-top:16px"><button onclick="closeM()">취소</button><button class="primary" onclick="saveLifecycle(\''+fid+'\')">저장</button></div>');
 }
 function _lcToggle(){ var t=$('lc-type').value, d=$('lc-detail'); if(d)d.style.display=(t==='운영')?'none':''; }
+function setLifecycleQuick(fid,val){   // 목록 인라인 드롭다운 — 즉시 반영(종료·보관 시 최초 지정일 자동 기록)
+  var f=funds[fid]||{}, patch;
+  if(val==='운영') patch={lifecycle:null};
+  else { patch={lifecycle:val}; if(!f.end_date) patch.end_date=ymd(); }
+  fbDb.ref(NS+'/funds/'+fid).update(patch).then(function(){
+    Object.assign(funds[fid],{lifecycle:patch.lifecycle||''}); if(patch.end_date)funds[fid].end_date=patch.end_date;
+    renderHome();
+  }).catch(function(e){ alert('저장 실패: '+e.message); renderHome(); });
+}
 function saveLifecycle(fid){
   var t=$('lc-type').value, patch;
   if(t==='운영') patch={lifecycle:null,end_date:null,end_reason:null};
@@ -294,13 +310,6 @@ function lifeBadge(f){
   if(f.lifecycle==='계약종료') return '<span class="chip dg">계약종료'+(f.end_date?' '+esc(f.end_date):'')+'</span>';
   if(f.lifecycle==='기록보관') return '<span class="chip" style="background:#eef;color:#556">기록보관'+(f.end_date?' '+esc(f.end_date):'')+'</span>';
   return '';
-}
-function pastRow(f,no){
-  var gl={'지역공동':'지역','개별공동':'공동','사내':'사내'}[grp(f)]||'';
-  return '<tr onclick="go(\'fund\',\''+f._id+'\')"><td class="no">'+no+'</td>'
-    +'<td style="font-weight:700">'+esc(f.short_name||f.name)+'<div class="muted" style="font-weight:400;font-size:11.5px">'+esc(f.name||'')+'</div></td>'
-    +'<td class="muted">'+gl+'</td><td>'+esc(mgrText(f))+'</td>'
-    +'<td>'+lifeBadge(f)+(f.end_reason?' <span class="muted" style="font-size:11px">'+esc(f.end_reason)+'</span>':'')+'</td></tr>';
 }
 function renderHome(){
   $('crumb').textContent='기금 현황';
@@ -332,9 +341,13 @@ function renderHome(){
   }).join('')+'</div>';
   var body;
   if(S.homeTab==='past'){
-    body='<div class="panel"><p class="muted" style="font-size:12px;margin:0 0 10px">계약 종료·해산(기록보관)된 기금입니다. 집계·오늘 할 일에서 제외되며, 기록은 보존됩니다. 기금을 열어 [상태]에서 재개할 수 있습니다.</p>'
-      +(past.length?'<div style="overflow-x:auto"><table><thead><tr><th>번호</th><th>기금명</th><th>분류</th><th>담당</th><th>상태</th></tr></thead><tbody>'
-        +past.map(function(f,i){return pastRow(f,i+1);}).join('')+'</tbody></table></div>':'<div class="muted" style="padding:12px">지난 기금이 없습니다.</div>')+'</div>';
+    var GL={'지역공동':'🏛 지역기금','개별공동':'🤝 공동기금','사내':'🏢 사내기금'};
+    var PG={'지역공동':[],'개별공동':[],'사내':[]}; past.forEach(function(f){ (PG[grp(f)]=PG[grp(f)]||[]).push(f); });
+    var secs=['지역공동','개별공동','사내'].filter(function(k){return PG[k].length;}).map(function(k){
+      return '<div class="grp-h" style="margin-top:14px">'+GL[k]+' <span class="cnt">'+PG[k].length+'</span></div>'+fundTable(PG[k]);
+    }).join('');
+    body='<div class="panel"><p class="muted" style="font-size:12px;margin:0 0 4px">계약종료·기록보관 기금을 동종(지역/공동/사내)끼리 모았습니다. 집계·오늘 할 일에서 제외되며 기록은 보존됩니다. 오른쪽 <b>계약관계</b>에서 [운영]으로 바꾸면 재개됩니다.</p>'
+      +(past.length?secs:'<div class="muted" style="padding:12px">지난 기금이 없습니다.</div>')+'</div>';
   } else {
     var cur=G[S.homeTab]||[];
     body='<div class="panel">'+(cur.length?fundTable(cur):'<div class="muted" style="padding:12px">이 분류에 기금이 없습니다.</div>')+'</div>';
