@@ -67,16 +67,14 @@ def cell(v):
     return f'<td class="{cls}">{txt}</td>'
 
 
-def main():
-    site = sys.argv[1] if len(sys.argv) > 1 else "제이앤드씨"
-    month = sys.argv[2] if len(sys.argv) > 2 else "7월"
-    fname = sys.argv[3] if len(sys.argv) > 3 else None
+def gen(site, month, fname=None):
     pilot = json.load(open(os.path.join(OUT_DIR, "pilot_payroll.json"), encoding="utf-8"))
     recs = [r for r in pilot["sites"].get(site, []) if r["월"] == month
-            and (fname is None or r["파일"] == fname)]
+            and (fname is None or fname in r["파일"])]
     if not recs:
-        print("해당 월/파일 없음"); return
-    rec = recs[0]
+        print(f"해당 월/파일 없음: {site} {month} {fname}"); return
+    # fname 미지정 시 직원 많은 레코드 우선
+    rec = max(recs, key=lambda r: r.get("직원수", 0))
     emps = rec.get("직원") or []
 
     # 검증 요약
@@ -141,6 +139,13 @@ def main():
         f.write(html)
     print("OK", out)
     print(f"직원 {len(emps)}명 / 지방세 {rate('지방세')} · 공제합 {rate('공제합')} · 실수령 {rate('실수령')}")
+
+
+def main():
+    site = sys.argv[1] if len(sys.argv) > 1 else "제이앤드씨"
+    month = sys.argv[2] if len(sys.argv) > 2 else "7월"
+    fname = sys.argv[3] if len(sys.argv) > 3 else None
+    gen(site, month, fname)
 
 
 if __name__ == "__main__":
