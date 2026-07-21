@@ -156,6 +156,26 @@ App.go=function(s){ navTo({screen:s,site:null,month:null}); };  // 기존 호출
 var NAV=[{id:'cards',label:'⚙️ 설정 카드'},{id:'inbox',label:'📥 수신함'},{id:'payroll',label:'💰 급여 처리'},{id:'slip',label:'📄 명세서'}];
 var SIG={green:'#2E7D4F',orange:'#B26A00',red:'#C43D3D'};
 function won(n){ return (n==null)?'-':Number(n).toLocaleString(); }
+/* ── 표시용 중복 정리 ──
+   같은 성명이 여러 줄(신고/실지급 시나리오·중복 추출 등)일 때 한 사람당 한 줄만 남김.
+   남길 기준 = 항목이 많고 '임금총액−공제=실수령'이 맞아떨어지는 행(가장 신뢰). */
+var DED_KEYS_=['기본급','과세총액','소득세','지방세','국민연금','건강보험','장기요양','고용보험','공제총액','실수령'];
+function empScore(e){
+  var s=0; DED_KEYS_.forEach(function(k){ if(e[k]!=null) s++; });
+  var g=e.지급총액||e.과세총액||e.기본급, d=e.공제총액, n=e.실수령;
+  if(g!=null&&d!=null&&n!=null&&Math.abs(g-d-n)<=1) s+=5;  // tie-out 우대
+  return s;
+}
+function dedupeEmps(list){
+  var by={}, order=[];
+  (list||[]).forEach(function(e){
+    var k=(e.성명||'').trim(); if(!k) return;
+    if(!(k in by)){ order.push(k); by[k]=e; }
+    else if(empScore(e)>empScore(by[k])) by[k]=e;
+  });
+  return order.map(function(k){ return by[k]; });
+}
+function empCount(r){ return (r.직원&&r.직원.length)?dedupeEmps(r.직원).length:(r.직원수||0); }
 function lockKey(site,month){ return site+'|'+month; }
 function isLocked(site,month){ var L=dbGet('payroll_locked',{})||{}; return !!L[lockKey(site,month)]; }
 function toggleLock(site,month){ var L=dbGet('payroll_locked',{})||{}; var k=lockKey(site,month);
@@ -192,7 +212,7 @@ function screenPayroll(){
     recs.forEach(function(r){ var lk=isLocked(App.site,r.월);
       h+='<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line)">'+
         '<span style="width:11px;height:11px;border-radius:50%;background:'+SIG[r.신호]+';flex-shrink:0"></span>'+
-        '<div style="flex:1;cursor:pointer" onclick="navTo({month:\''+r.월.replace(/'/g,"")+'\'})"><b>'+r.월+'</b> <span style="font-size:12px;color:var(--sub)">직원 '+r.직원수+'명'+(r.이슈?' · '+r.이슈:'')+'</span></div>'+
+        '<div style="flex:1;cursor:pointer" onclick="navTo({month:\''+r.월.replace(/'/g,"")+'\'})"><b>'+r.월+'</b> <span style="font-size:12px;color:var(--sub)">직원 '+empCount(r)+'명'+(r.파일?' · '+r.파일:'')+(r.이슈?' · '+r.이슈:'')+'</span></div>'+
         (lk?'<span class="badge ok">확정됨</span> <button class="btn sec" onclick="toggleLock(\''+App.site.replace(/'/g,"")+'\',\''+r.월.replace(/'/g,"")+'\')">되돌리기</button>'
            :'<button class="btn" '+(r.신호==='red'?'disabled style="background:#ccc" title="빨강 해결 후 확정"':'onclick="toggleLock(\''+App.site.replace(/'/g,"")+'\',\''+r.월.replace(/'/g,"")+'\')"')+'>확정</button>')+
         '</div>';
@@ -201,11 +221,14 @@ function screenPayroll(){
   }
   // 직원별 상세
   var rec=recs.filter(function(r){return r.월===App.month;})[0]||{직원:[]};
-  h+='<div class="sub"><a href="#" onclick="goBack();return false">← '+App.site+'</a> · <b>'+App.month+'</b> 직원별 ('+(rec.직원||[]).length+'명)</div>';
+  var raw=(rec.직원||[]), emps=dedupeEmps(raw);
+  var dupNote=(raw.length>emps.length)?' <span style="color:var(--warn)">(중복 '+(raw.length-emps.length)+'건 정리)</span>':'';
+  h+='<div class="sub"><a href="#" onclick="goBack();return false">← '+App.site+'</a> · <b>'+App.month+'</b> 직원별 ('+emps.length+'명)'+dupNote+'</div>';
   h+='<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;background:#fff">'+
-     '<tr style="background:var(--paper);text-align:right">'+['성명','기본급','과세총액','소득세','지방세','국민연금','건강보험','고용보험','공제총액','실수령'].map(function(c,i){return '<th style="padding:8px 10px;'+(i===0?'text-align:left':'')+'">'+c+'</th>';}).join('')+'</tr>';
-  (rec.직원||[]).forEach(function(e){
+     '<tr style="background:var(--paper);text-align:right">'+['순번','성명','기본급','과세총액','소득세','지방세','국민연금','건강보험','고용보험','공제총액','실수령'].map(function(c,i){return '<th style="padding:8px 10px;'+(i<2?'text-align:left':'')+'">'+c+'</th>';}).join('')+'</tr>';
+  emps.forEach(function(e,i){
     h+='<tr style="border-top:1px solid var(--line);text-align:right">'+
+      '<td style="padding:7px 10px;text-align:left;color:var(--sub)">'+(i+1)+'</td>'+
       '<td style="padding:7px 10px;text-align:left;font-weight:600">'+(e.성명||'')+'</td>'+
       ['기본급','과세총액','소득세','지방세','국민연금','건강보험','고용보험','공제총액','실수령'].map(function(k){return '<td style="padding:7px 10px">'+won(e[k])+'</td>';}).join('')+'</tr>';
   });
@@ -291,23 +314,24 @@ function screenSlip(){
     var sorted=recs.slice().sort(function(a,b){ return (isLocked(App.site,b.월)?1:0)-(isLocked(App.site,a.월)?1:0); });
     sorted.forEach(function(r){ var lk=isLocked(App.site,r.월);
       h+='<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);cursor:pointer" onclick="navTo({month:\''+r.월.replace(/'/g,"")+'\'})">'+
-         '<div style="flex:1"><b>'+r.월+'</b> <span style="font-size:12px;color:var(--sub)">직원 '+r.직원수+'명 · '+r.파일+'</span></div>'+
+         '<div style="flex:1"><b>'+r.월+'</b> <span style="font-size:12px;color:var(--sub)">직원 '+empCount(r)+'명 · '+r.파일+'</span></div>'+
          (lk?'<span class="badge ok">확정됨</span>':'<span class="badge warn">미확정</span>')+'</div>';
     });
     h+='</div>'; return h;
   }
   var rec=recs.filter(function(r){return r.월===App.month;})[0]||{직원:[]};
+  var slipEmps=dedupeEmps(rec.직원||[]);
   var draft=!isLocked(App.site,App.month);
   var notice=dbGet('payslip_notice','');
   var payday=paydayOf(App.site);
-  h+='<div class="sub noprint"><a href="#" onclick="goBack();return false">← '+App.site+'</a> · <b>'+App.month+'</b> 명세서 '+(rec.직원||[]).length+'장 '+
+  h+='<div class="sub noprint"><a href="#" onclick="goBack();return false">← '+App.site+'</a> · <b>'+App.month+'</b> 명세서 '+slipEmps.length+'장 '+
      (draft?'<span class="badge warn">미확정 — 검토용 워터마크</span>':'<span class="badge ok">확정본</span>')+
      ' <button class="btn" style="margin-left:8px" onclick="window.print()">인쇄 / PDF 저장</button></div>';
   h+='<div class="noprint" style="background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-bottom:14px">'+
      '<div style="font-size:12.5px;color:var(--sub);margin-bottom:6px">명세서 하단 안내 문구(연차사용촉진 등) — 모든 명세서에 함께 인쇄됩니다</div>'+
      '<textarea id="slipnotice" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px;font-family:inherit;font-size:12.5px" rows="2">'+String(notice).replace(/</g,'&lt;')+'</textarea>'+
      '<button class="btn sec" style="margin-top:6px;padding:5px 12px;font-size:12px" onclick="saveNotice()">문구 저장</button></div>';
-  (rec.직원||[]).forEach(function(e){ h+=slipHTML(App.site,App.month,e,payday,notice,draft); });
+  slipEmps.forEach(function(e){ h+=slipHTML(App.site,App.month,e,payday,notice,draft); });
   return h;
 }
 function screenCards(){
