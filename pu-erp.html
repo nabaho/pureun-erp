@@ -213,7 +213,10 @@ var BUILD_SEQ = 143;
       var KEYP='pureun_v6_';
       var CHECK=['companies','contracts','cases','consultings','funds','other_projects','payroll_monthly','user_accounts','finance_income'];
       var LABEL={companies:'업체관리',contracts:'계약관리',cases:'사건관리',consultings:'컨설팅',funds:'기금',other_projects:'기타사업',payroll_monthly:'급여',user_accounts:'직원계정',finance_income:'자문수입'};
-      var SNAPK='pureun_v6_session_selfcheck_counts'; // 기기 내 기록(동기화 제외)
+      // [코덱스 검증 반영] 스냅샷을 로그인 사용자(sid)별로 분리 — 공용 PC에서 관리자 세션의
+      //   건수(재무 포함)가 권한 다른 직원 세션과 비교돼 거짓 급감 경고가 나올 여지 차단.
+      var _scSid=''; try{ _scSid=(typeof getSessionSid==='function' && getSessionSid()) || ''; }catch(_){}
+      var SNAPK='pureun_v6_session_selfcheck_counts'+(_scSid?('_'+_scSid):''); // 기기 내 기록(사용자별, 동기화 제외)
       var prev={}; try{ prev=JSON.parse(localStorage.getItem(SNAPK)||'{}'); }catch(_){ prev={}; }
       var cur={};
       CHECK.forEach(function(k){
@@ -2461,9 +2464,16 @@ function dbSet(k, v){
         var fbValue = (DIFF_KEYS.indexOf(k) >= 0 && Array.isArray(v) && v.every(function(x){return x&&x.id;})) ? arrayToIdMap(v) : v;
         // ── 근본 급감 차단: 서버 현재 건수 대비 이 기기 데이터가 절반 이하면 = 옛 데이터 → 푸시 차단 ──
         if(Array.isArray(v)){
+          // [코덱스 검증 반영] 서버 확인 실패 시 무조건 set 하던 fail-open 제거 — 1회 재시도 후에도
+          //   실패하면 푸시 보류(fail-closed). 확인 불가 = 덮어쓸 권리 아님. (재무캐시 purge 직후
+          //   prev 없는 상태에서 작은 값이 서버를 덮는 사고 경로 차단)
+          var _pushWithSrvCheck = function(attempt){
           fbDb.ref('data/'+k).once('value').then(function(snap){
             var sv = snap.val(); var svv = sv && sv.v;
-            var srvN = svv ? (Array.isArray(svv) ? svv.length : Object.keys(svv).length) : 0;
+            // [코덱스 검증 반영] 서버 건수도 normalizeFbValue로 정규화해 로컬과 같은 기준으로 비교
+            //   (id-map은 최상위 키 수, 배열은 길이. 그 외 형태는 건수 비교 대상 아님 → 0 처리 안 함)
+            var _svNorm = null; try { _svNorm = normalizeFbValue(svv); } catch(_){ _svNorm = svv; }
+            var srvN = Array.isArray(_svNorm) ? _svNorm.length : (svv && typeof svv==='object' ? Object.keys(svv).length : 0);
             var _bulkOk2 = window._bulkDeleteIntent && (Date.now() - window._bulkDeleteIntent < 15000);
             if(srvN >= 10 && v.length < srvN * 0.5 && !_bulkOk2){
               console.warn('[데이터보호] '+k+': 서버 '+srvN+'건 > 이 기기 '+v.length+'건 — 옛 데이터로 판단, 서버 푸시 차단');
@@ -2486,7 +2496,15 @@ function dbSet(k, v){
               return;
             }
             fbDb.ref('data/'+k).set({v:fbValue, u:ts}).then(function(){ if(DIFF_KEYS.indexOf(k)>=0 && fbValue && !Array.isArray(fbValue)) _fbObjForm[k]=true; }).catch(function(e){ _metaRollback(); fbSyncFail(e); });
-          }).catch(function(){ fbDb.ref('data/'+k).set({v:fbValue, u:ts}).then(function(){ if(DIFF_KEYS.indexOf(k)>=0 && fbValue && !Array.isArray(fbValue)) _fbObjForm[k]=true; }).catch(function(e){ _metaRollback(); fbSyncFail(e); }); });
+          }).catch(function(e0){
+            if(attempt < 1){ setTimeout(function(){ _pushWithSrvCheck(attempt+1); }, 800); return; }
+            _metaRollback();
+            console.warn('[데이터보호] '+k+': 서버 상태 확인 실패 — 푸시 보류 (로컬 저장됨)');
+            try { showToast('⚠ 서버 확인 실패 — '+k+' 전송 보류 (이 기기엔 저장됨, 연결 회복 후 다시 저장하세요)'); } catch(_){}
+            fbSyncFail(e0);
+          });
+          };
+          _pushWithSrvCheck(0);
         } else {
           // 되돌림 방지(객체/스칼라 설정): 서버가 이 기기 기준보다 최신이면 덮어쓰지 말고 서버 원본을 raw 그대로 수신
           fbDb.ref('data/'+k).once('value').then(function(snap){
@@ -4036,22 +4054,52 @@ function _healServerKey(k){
     if(typeof showToast === 'function') showToast('현재 '+k+' 데이터로 서버를 교정했습니다');
   } catch(e){ window._erpErrLog && window._erpErrLog(e); }
 }
+// 급감 검사용 로컬 항목 수 조회.
+// [버그수정] 기존엔 300KB 초과 키를 정규식 "id": 개수로 근사했는데, 항목 안의 중첩 id
+// (상담기록 entries, 성과분배 등)까지 세어 로컬 건수가 몇 배로 부풀었고, 그 결과 서버의
+// 정상 데이터가 '절반 미만 급감'으로 오판돼 직원 로그인·저장 때마다 급감 경고가 반복됐음.
+// _dbCache 우선(파싱 0회), 미스 시에만 실제 파싱해 최상위 항목 수를 센다. 크기 예외 없음
+// — 가장 큰 데이터일수록 보호가 필요하므로 크다고 검사를 건너뛰지 않는다. (코덱스 검증 반영)
+function _fbLocalCountForShrink(k){
+  try {
+    var cached = _dbCache[k];
+    if(Array.isArray(cached)) return cached.length;
+    var v = JSON.parse(localStorage.getItem(KEY+k) || 'null');
+    return Array.isArray(v) ? v.length : null;
+  } catch(_){ return null; }
+}
+// [코덱스 검증 반영 1] 모달이 떠있는 동안 도착한 다른 키의 급감 이벤트는 버리지 않고 큐에 쌓아
+//   순서대로 처리 (기존엔 조용히 버려져 스테일 상태로 남았다가 다음 접속 때 또 경고가 반복됨).
+// [코덱스 검증 반영 2] '현재 데이터 유지'가 서버를 통째로 덮어쓰던 _healServerKey 자동 호출 제거
+//   — 타임스탬프 검사 없는 전체 set이라 다른 기기의 정상 삭제·변경까지 복원시키고, 두 기기가
+//   서로 '유지'를 누르면 핑퐁으로 서버를 번갈아 덮어쓰는 사고 경로였음. 유지는 이 기기에서만.
+//   서버 교정이 정말 필요하면 관리자가 콘솔에서 erpHealServerKey('키') 수동 실행.
+var _shrinkQueue = [];
 function _handleShrinkSync(k, oldCount, newCount, onApply){
   var now = Date.now();
   if(_shrinkKeep[k] && _shrinkKeep[k] > now) return;   // 최근 '유지' → 조용히 차단(현재 유지)
-  if(_shrinkModalOpen) return;                         // 다른 차단 모달 떠있으면 일단 차단
+  if(_shrinkModalOpen){
+    for(var qi=0; qi<_shrinkQueue.length; qi++){
+      if(_shrinkQueue[qi].k === k){ _shrinkQueue[qi] = {k:k, o:oldCount, n:newCount, f:onApply}; return; }
+    }
+    _shrinkQueue.push({k:k, o:oldCount, n:newCount, f:onApply});
+    return;
+  }
   _shrinkModalOpen = true;
   var msg = '서버에서 받은 "'+k+'" 데이터가 현재('+oldCount+'건)보다 크게 줄었습니다 → '+newCount+'건.\n\n'
     + '다른 PC·탭이 옛 데이터를 밀고 있을 수 있습니다.\n\n'
-    + '· 현재 데이터 유지: 내 데이터를 지키고 서버도 현재 값으로 교정합니다. (권장)\n'
+    + '· 현재 데이터 유지: 이 기기의 데이터를 그대로 둡니다. (권장)\n'
     + '· 서버 값으로 교체: 정말 대량 삭제한 경우에만 선택하세요.';
   showConfirm(msg, { title:'⚠️ 데이터 급감 차단', danger:true, confirmText:'서버 값으로 교체', cancelText:'현재 데이터 유지(권장)' })
     .then(function(applyIt){
       _shrinkModalOpen = false;
       if(applyIt){ try { onApply(); } catch(e){ window._erpErrLog && window._erpErrLog(e); } }   // 서버 값 적용(1회)
-      else { _shrinkKeep[k] = Date.now() + 300000; _healServerKey(k); }                          // 현재 유지 + 서버 교정
+      else { _shrinkKeep[k] = Date.now() + 300000; }                                             // 현재 유지(이 기기만)
+      var _next = _shrinkQueue.shift();
+      if(_next){ _handleShrinkSync(_next.k, _next.o, _next.n, _next.f); }
     });
 }
+window.erpHealServerKey = _healServerKey;  // 관리자 수동 서버 교정용 (자동 호출 금지)
 function fbSetupListener(){
   if(!fbDb) return;
   if(_fbListenerSetup) return; // 중복 등록 차단
@@ -4080,19 +4128,11 @@ function fbSetupListener(){
         _stormCheck(k);
         // #4 Tier 3: 객체 형식이면 배열화
         var arrValue = normalizeFbValue(v.v);
-        try { var _oldRaw = localStorage.getItem(KEY+k);
-          // 대용량 키는 전체 파싱 대신 항목수 근사(정규식)로 급감 검사 — 멈춤 방지
-          var _oldArr = null;
-          if(_oldRaw && _oldRaw.length > 300000){
-            var _oldCnt = (_oldRaw.match(/"id":/g) || []).length;
-            _oldArr = _oldCnt >= 10 ? { length:_oldCnt, _approx:true } : null;
-            if(_oldArr) _oldArr = Object.assign([], { length:_oldCnt });
-          } else {
-            _oldArr = _oldRaw ? JSON.parse(_oldRaw) : null;
-          }
-          if(Array.isArray(_oldArr) && Array.isArray(arrValue) && _oldArr.length >= 10 && arrValue.length < _oldArr.length * 0.5){
-            // 급감 차단: 자동 저장하지 않고 사용자 선택(현재 유지+서버교정 / 서버값 교체)
-            _handleShrinkSync(k, _oldArr.length, arrValue.length, function(){
+        try { // [버그수정] 정규식 근사 제거 — 최상위 항목 수만 비교 (_fbLocalCountForShrink 참고)
+          var _oldN = _fbLocalCountForShrink(k);
+          if(_oldN !== null && Array.isArray(arrValue) && _oldN >= 10 && arrValue.length < _oldN * 0.5){
+            // 급감 차단: 자동 저장하지 않고 사용자 선택(현재 유지 / 서버값 교체)
+            _handleShrinkSync(k, _oldN, arrValue.length, function(){
               localStorage.setItem(KEY+k, JSON.stringify(arrValue));
               localStorage.setItem(KEY+'_meta_'+k, String(v.u));
               _dbCache[k] = arrValue;
@@ -4143,17 +4183,11 @@ function fbSetupListener(){
       try {
         // #4 Tier 3: 객체 형식이면 배열화
         var arrValue = normalizeFbValue(v.v);
-        try { var _oldRaw2 = localStorage.getItem(KEY+k);
-          var _oldArr2 = null;
-          if(_oldRaw2 && _oldRaw2.length > 300000){
-            var _oldCnt2 = (_oldRaw2.match(/"id":/g) || []).length;
-            _oldArr2 = _oldCnt2 >= 10 ? Object.assign([], { length:_oldCnt2 }) : null;
-          } else {
-            _oldArr2 = _oldRaw2 ? JSON.parse(_oldRaw2) : null;
-          }
-          if(Array.isArray(_oldArr2) && Array.isArray(arrValue) && _oldArr2.length >= 10 && arrValue.length < _oldArr2.length * 0.5){
-            // 급감 차단: 자동 저장하지 않고 사용자 선택(현재 유지+서버교정 / 서버값 교체)
-            _handleShrinkSync(k, _oldArr2.length, arrValue.length, function(){
+        try { // [버그수정] 정규식 근사 제거 — 최상위 항목 수만 비교 (_fbLocalCountForShrink 참고)
+          var _oldN2 = _fbLocalCountForShrink(k);
+          if(_oldN2 !== null && Array.isArray(arrValue) && _oldN2 >= 10 && arrValue.length < _oldN2 * 0.5){
+            // 급감 차단: 자동 저장하지 않고 사용자 선택(현재 유지 / 서버값 교체)
+            _handleShrinkSync(k, _oldN2, arrValue.length, function(){
               localStorage.setItem(KEY+k, JSON.stringify(arrValue));
               localStorage.setItem(KEY+'_meta_'+k, String(v.u));
               _dbCache[k] = arrValue;
