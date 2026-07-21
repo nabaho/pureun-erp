@@ -26,10 +26,11 @@
 - 로그인은 pu-erp와 공유(같은 도메인 auth).
 - **네임스페이스 `fund_erp/*` 필수**(루트 `funds`는 pu-erp 계약용, 충돌 금지).
 - RTDB 규칙: `fund_erp` `.read/.write:"auth != null"` 게시됨.
-- 데이터: `fund_erp/funds/{fid}`(+`years/{yr}/subsidy`,`years/{yr}/opening`), `/sites/{fid}/{sid}`, `/annual/{fid}/{yr}/{code}`, `/welfare/{fid}/{yr}/{id}`, `/events/{fid}/{eid}`, `/txns/{fid}/{yr}/{hkey}`, `/billings/{id}`.
+- 데이터: `fund_erp/funds/{fid}`(+`years/{yr}/subsidy`,`years/{yr}/opening`, +담당 `mgr_main{sid,name}`·`mgr_subs[]`·`manager`문자열), `/sites/{fid}/{sid}`, `/annual/{fid}/{yr}/{code}`, `/welfare/{fid}/{yr}/{id}`, `/events/{fid}/{eid}`, `/txns/{fid}/{yr}/{hkey}`, `/billings/{id}`.
+- **담당자 명단은 pu-erp와 공유**: `data/user_accounts/v`(pu-erp 직원계정 배열) 읽어 재직(active)만 사용. ⚠️ RTDB 규칙이 `data` 경로 auth 읽기를 허용해야 함(pu-erp가 쓰므로 대개 허용됨). 담당 모달에서 "명단 로드 실패" 뜨면 규칙에 `data/user_accounts` 읽기 추가 필요.
 
 ## 3. fund.html 진행률
-**완성 ✅**: 홈(3그룹·오늘할일) · 기금대장(인라인) · 청구관리 · 기금정보 · 참여사업장 · 연간일정 · 지원금(공동) · 목적사업·대부 · 변경이벤트 · **회계·결산**(통장 SheetJS 파싱→자동분개→승인→결산관문→재무상태표·운영성과표·시산표→별지15호 인쇄) · **서식 자료실**(설립·지원신청서 원본 엑셀 데이터 채움, ExcelJS)
+**완성 ✅**: 홈(**그룹 탭**: 지역/공동/사내 전환·오늘할일·검색) · 기금대장(인라인) · 청구관리 · 기금정보 · 참여사업장 · 연간일정 · 지원금(공동) · 목적사업·대부 · 변경이벤트 · **회계·결산**(통장 SheetJS 파싱→자동분개→승인→결산관문→재무상태표·운영성과표·시산표→별지15호 인쇄) · **서식 자료실**(설립·지원신청서 원본 엑셀 데이터 채움, ExcelJS) · **담당자 지정**(주/부담당, pu-erp 재직자 선택)
 **미완성 ⬜**: docgen HTML 서류(참고용 미리보기 — 인터넷판 미이전, 실제 제출은 서식 자료실 엑셀 사용)
 
 - 구조: 전역 `S`(view/fundId/tab/year/*For 캐시)·`fbDb`·`funds`·`esc()`·`num()`·`showModal/closeM`. 탭: `infoForm/sitesTab/annualTab/subsidyTab/welfareTab/eventsTab/closingTab`. 회계: `parseBank/proposeAcct/computeFin/finPanel/openForm15`. 서식: `renderForms/pickTpl/fillForm/fillSetup/fillSubsidy`(ExcelJS+IndexedDB `fundErpTpl`). 상수: `ACCT_CHART/ACCT_RULES/ANNUAL_TMPL/EVENT_KINDS/WELF_CATS/TPL`. head: SheetJS(xlsx 0.18.5, 통장파싱)+ExcelJS(4.4.0, 서식채움) 로드.
@@ -64,3 +65,4 @@ git add fund.html && git commit -m "..." && git push origin main
 - 2026-07-20: 인터넷판 회계 결산(재무제표+별지15호)까지 완성. 코덱스 1차 검증 반영. STATUS 공용화.
 - 2026-07-21: 코덱스 2차 전체 재점검(25건 발견) → 회계 정합성 재작성(computeFin 유형별 전 계정 집계·부채/자본계정 반영·대차일치 칩·전기이월에 준비금 추가·별지15호 준비금/기타비용 행·불일치 시 출력 경고), 통장 파싱 6건(합계행 제외·잔액열 오인·다단헤더·날짜 정규화·입출 동시행 분리·같은날 동일거래 키 충돌), import 레이스 2건(기금/연도 경로 고정·서버 최신본 중복검사), 동일 차/대 승인 차단, 로그아웃 시 Firebase signOut, 쓰기실패 catch+복원 일괄, num() 음수/지수 표기. 로컬 파이썬판(accounting.py·docgen.py 결산서 준비금=순이익 임의대입 버그)도 동일 수정. node 단위테스트 23건 통과. 보류 6건은 §4-4. 사용자 실화면 검증 후 홈·대장 호수순 정렬 수정(localeCompare numeric — 충남 10호가 1호보다 앞에 오던 문제). 참고: 홈 '미완비 42개'는 버그 아님 — 완비 기준 5항목 중 인가일(inka_date)이 지원신청서 원본에 없어 충남1~7도 4/5, 대장에서 수기 입력 필요.
 - 2026-07-21: **서식 자료실 이전 완료** — 파이썬 setup-excel/subsidy-excel 로직을 브라우저로 이식. 원본 법정서식 엑셀(빈 양식)을 IndexedDB에 1회 등록 후 ExcelJS(CDN 4.4.0)로 채움 — 테두리·병합셀 1110개·VLOOKUP 수식(설립165·지원721) 전부 보존(SheetJS 커뮤니티판은 저장 시 스타일 소실하므로 ExcelJS 선택). 사이드바 '서식 자료실' 활성화. node 검증 21건 통과. 사용자 실화면 검증(원본 등록→채워받기) 대기.
+- 2026-07-21: **담당자 주/부담당 지정 + 홈 그룹 탭** — (담당) 기금 상세 헤더 [👤 담당 ✎]→모달에서 주담당1·부담당다수를 pu-erp 재직자(`data/user_accounts/v` active)에서 선택, `mgr_main/mgr_subs/manager` 저장, `mgrText()`로 표시. (홈) 세로 3그룹 나열→상단 탭 지역/공동/사내 전환(S.homeTab)으로 스크롤 축소, 검색 시 전체결과. node 검증(mgrText 4케이스). 커밋 adcf742 push. 사용자 검증: 담당 모달에서 재직자 명단 뜨는지(안 뜨면 RTDB `data` 읽기 규칙 확인).
