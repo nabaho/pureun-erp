@@ -4640,6 +4640,8 @@ function Sidebar(props){
   })());
   var pinned = pp[0]; var setPinned = pp[1];
   var dgS = useState(null); var dragPinIdx = dgS[0]; var setDragPinIdx = dgS[1];
+  // 사이드바 뷰 모드: 'all'=전체 메뉴, 'fav'=즐겨찾기만 (상단 탭 전환)
+  var svS = usePersistedState('pureun_v6_sb_view', 'all'); var sbView = svS[0]; var setSbView = svS[1];
   function togglePin(menuId){
     var isPinned = pinned.indexOf(menuId) >= 0;
     if(!isPinned && pinned.length >= 5){
@@ -4787,8 +4789,67 @@ function Sidebar(props){
           display:'flex', alignItems:'center', justifyContent:'center' } }, '✕')
     ),
     // 검색 input 제거됨 (사용자 요청)
-    // ⭐ 즐겨찾기는 사이드바 하단 도크로 이동(아래 참조) — 메뉴 그룹이 항상 맨 위에서 시작하도록
+    // ── 상단 탭: 전체 ⇄ ⭐즐겨찾기 ──
+    h('div', { style:{ display:'flex', gap:'4px', padding:'6px 10px 4px', flexShrink:0 } },
+      [{ v:'all', label:'전체' }, { v:'fav', label:'⭐ 즐겨찾기' + (pinnedItems.length ? ' ('+pinnedItems.length+')' : '') }].map(function(t){
+        var on = sbView === t.v;
+        return h('div', { key:t.v, onClick:function(){ setSbView(t.v); },
+          style:{ flex:1, textAlign:'center', cursor:'pointer', padding:'5px 6px', borderRadius:'6px',
+            fontSize:'11.5px', fontWeight:on?700:600, whiteSpace:'nowrap',
+            background: on ? '#2563eb' : '#1e293b', color: on ? '#fff' : '#94a3b8',
+            border:'1px solid ' + (on ? '#3b82f6' : '#2a3656') } }, t.label);
+      })
+    ),
     h('nav', { className:'sb-nav', style:{ flex:'1 1 auto', minHeight:0, overflowY:'auto' } },
+      // ⭐ 즐겨찾기 뷰: 즐겨찾기만 세로 목록(드래그 순서변경·우클릭 해제)
+      sbView === 'fav' ? (
+        pinnedItems.length === 0
+          ? h('div', { style:{ padding:'30px 16px', textAlign:'center', color:'#64748b', fontSize:'11.5px', lineHeight:1.6 } },
+              h('div', { style:{ fontSize:'22px', marginBottom:'6px' } }, '⭐'),
+              '즐겨찾기가 없습니다.', h('br', null),
+              '전체 탭에서 메뉴 옆 ☆를 눌러 추가하세요.')
+          : h('div', { className:'sb-menu' },
+              pinnedItems.map(function(p, pIdx){
+                var badge = getMenuBadge(p.id);
+                var isDragging = dragPinIdx === pIdx;
+                return h('div', {
+                  key:'fav-'+p.id,
+                  className:'sb-menu-item' + (current===p.id ? ' active':''),
+                  draggable: true,
+                  onDragStart:function(e){ setDragPinIdx(pIdx); e.dataTransfer.effectAllowed='move'; try{ e.dataTransfer.setData('text/plain', String(pIdx)); }catch(_){} },
+                  onDragOver:function(e){ e.preventDefault(); e.dataTransfer.dropEffect='move'; },
+                  onDrop:function(e){
+                    e.preventDefault();
+                    var from = dragPinIdx;
+                    if(from === null || from === pIdx){ setDragPinIdx(null); return; }
+                    var next = pinned.slice();
+                    var moved = next.splice(from, 1)[0];
+                    next.splice(pIdx, 0, moved);
+                    setPinned(next);
+                    try{ localStorage.setItem(pinKey, JSON.stringify(next)); }catch(e){ window._erpErrLog && window._erpErrLog(e); }
+                    setDragPinIdx(null);
+                    showToast('⭐ 즐겨찾기 순서 변경');
+                  },
+                  onDragEnd:function(){ setDragPinIdx(null); },
+                  onClick:function(){ onSelect(p.id); },
+                  onContextMenu:function(e){ e.preventDefault(); togglePin(p.id); },
+                  title:'드래그: 순서 변경 · 우클릭 또는 ⭐: 해제',
+                  style: isDragging ? { opacity:0.4 } : {},
+                  tabIndex:0
+                },
+                  h('span', { className:'mi-drag', style:{ cursor:'grab', color:'#475569', marginRight:'4px', fontSize:'10px' } }, '⋮⋮'),
+                  h('span', { className:'mi-icon' }, p.item.icon),
+                  h('span', { className:'mi-text' }, p.item.text),
+                  badge && h('span', { style:{ background:badge.color, color:'#fff', fontSize:'10.5px', padding:'1px 6px', borderRadius:'10px', fontWeight:700, marginLeft:'auto', marginRight:'4px' } }, badge.count),
+                  h('span', {
+                    onClick:function(e){ e.stopPropagation(); e.preventDefault(); togglePin(p.id); },
+                    onMouseDown:function(e){ e.stopPropagation(); },
+                    title:'즐겨찾기 해제',
+                    style:{ fontSize:'11px', cursor:'pointer', color:'#fbbf24', marginLeft: badge ? '0' : 'auto', padding:'2px 6px' } }, '⭐')
+                );
+              })
+            )
+      ) :
       MENUS.map(function(grp){
         // 환경설정은 하단 고정으로 별도 렌더 → 여기서 제외
         if(grp.gid === 'env') return null;
@@ -4829,9 +4890,7 @@ function Sidebar(props){
                 onTouchStart:onMenuTouchStart(item.id),
                 onTouchEnd:onMenuTouchEnd,
                 onContextMenu:function(e){ e.preventDefault(); togglePin(item.id); },
-                // 이미 하단 즐겨찾기 도크에 있는 항목은 흐리게(중복 안내) — 현재 보는 화면이면 흐리지 않음
-                style: (isPinned && current!==item.id) ? { opacity:0.5 } : {},
-                title: isPinned ? '⭐ 즐겨찾기(하단)에 있음' : '',
+                title: isPinned ? '⭐ 즐겨찾기 탭에 있음' : '',
                 tabIndex: 0
               },
                 h('span', { className:'mi-icon' }, item.icon),
@@ -4852,8 +4911,9 @@ function Sidebar(props){
           )
         );
       }),
-      // 최근 본 메뉴 (3개) — 유효 항목만 + 즐겨찾기 중복 제외 (없으면 섹션 자체 미표시 → 빈 줄 방지)
+      // 최근 본 메뉴 (3개) — 전체 탭에서만, 유효 항목만 + 즐겨찾기 중복 제외
       (function(){
+        if(sbView !== 'all') return null;
         var recents = (props.menuHistory || [])
           .filter(function(mid){ return pinned.indexOf(mid) < 0; })
           .map(function(mid){ var f = findMenu(mid); return f ? { mid:mid, f:f } : null; })
@@ -4874,50 +4934,6 @@ function Sidebar(props){
           })
         );
       })(),
-    ),
-    // ── ⭐ 즐겨찾기 하단 도크 (2열 칩) — env 위에 고정, marginTop:auto로 하단 밀착 ──
-    pinnedItems.length > 0 && h('div', { style:{ marginTop:'auto', flexShrink:0, borderTop:'1px solid #2a3656', padding:'8px 10px 6px' } },
-      h('div', { style:{ padding:'0 4px 5px', fontSize:'10.5px', color:'#fbbf24', fontWeight:600, letterSpacing:'0.5px' } }, '⭐ 즐겨찾기'),
-      h('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'4px' } },
-        pinnedItems.map(function(p, pIdx){
-          var badge = getMenuBadge(p.id);
-          var isDragging = dragPinIdx === pIdx;
-          var isActive = current === p.id;
-          return h('div', {
-            key:'pin-'+p.id,
-            draggable: true,
-            onDragStart:function(e){ setDragPinIdx(pIdx); e.dataTransfer.effectAllowed='move'; try{ e.dataTransfer.setData('text/plain', String(pIdx)); }catch(_){} },
-            onDragOver:function(e){ e.preventDefault(); e.dataTransfer.dropEffect='move'; },
-            onDrop:function(e){
-              e.preventDefault();
-              var from = dragPinIdx;
-              if(from === null || from === pIdx){ setDragPinIdx(null); return; }
-              var next = pinned.slice();
-              var moved = next.splice(from, 1)[0];
-              next.splice(pIdx, 0, moved);
-              setPinned(next);
-              try{ localStorage.setItem(pinKey, JSON.stringify(next)); }catch(e){ window._erpErrLog && window._erpErrLog(e); }
-              setDragPinIdx(null);
-              showToast('⭐ 즐겨찾기 순서 변경');
-            },
-            onDragEnd:function(){ setDragPinIdx(null); },
-            onClick:function(){ onSelect(p.id); },
-            onContextMenu:function(e){ e.preventDefault(); togglePin(p.id); },
-            title: p.grp.name + ' · ' + p.item.text + ' (드래그: 순서, 우클릭: 해제)',
-            tabIndex:0,
-            style:{ display:'flex', alignItems:'center', gap:'5px', minWidth:0, cursor:'pointer',
-              padding:'5px 7px', borderRadius:'6px', fontSize:'11.5px',
-              background: isActive ? '#2563eb' : '#243050',
-              color: isActive ? '#fff' : '#cbd5e1',
-              border:'1px solid ' + (isActive ? '#3b82f6' : '#2f3d5e'),
-              opacity: isDragging ? 0.4 : 1 }
-          },
-            h('span', { style:{ flexShrink:0, fontSize:'12px' } }, p.item.icon),
-            h('span', { style:{ flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, p.item.text),
-            badge && h('span', { style:{ flexShrink:0, background:badge.color, color:'#fff', fontSize:'9.5px', padding:'0 5px', borderRadius:'9px', fontWeight:700 } }, badge.count)
-          );
-        })
-      )
     ),
     // ── 환경설정 하단 고정 ──
     isMenuPermitted(CURRENT_USER, 'env/settings') && h('div', {
@@ -35490,25 +35506,6 @@ function CorpDashboard(props){
     return function(){ document.body.classList.remove('cal-screen'); };
   }, [calFit]);
   return h('div',{className:'corp-dash',style:{margin:!IS_MOBILE?(dashTab==='calendar'?'-24px':'-24px -24px 0 -24px'):'0 -10px',padding:IS_MOBILE?'4px 2px':(dashTab==='calendar'?'0':'4px 10px'),height:fitLayout?(IS_MOBILE?undefined:'calc(100vh - 46px)'):'auto',display:fitLayout?'flex':'block',flexDirection:'column',overflow:fitLayout?'hidden':'visible'}},
-
-    // ⚡ 즐겨찾기 바로가기 타일 — 사이드바 하단 즐겨찾기와 동일 목록(같은 localStorage). 다른 화면 이동 없이 대시보드에서 바로 진입
-    !ieumMode && (function(){
-      var _pins = []; try { _pins = JSON.parse(localStorage.getItem('pureun_v6_pinned_menus_'+((CURRENT_USER&&CURRENT_USER.sid)||''))||'[]'); } catch(_){ _pins = []; }
-      var _tiles = _pins.map(function(mid){ var f=findMenu(mid); return f ? {id:mid, item:f.item, grp:f.grp} : null; }).filter(Boolean);
-      if(_tiles.length === 0) return null;
-      return h('div',{style:{display:'flex',gap:'6px',flexShrink:0,overflowX:'auto',padding:IS_MOBILE?'0 0 5px':'0 0 6px',WebkitOverflowScrolling:'touch'}},
-        _tiles.map(function(t){
-          return h('div',{ key:'qt-'+t.id,
-            onClick:function(){ try{ if(window.navigateTo) window.navigateTo(t.id); }catch(_){} },
-            title: t.grp.name + ' · ' + t.item.text,
-            style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',flexShrink:0,
-              background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',padding: IS_MOBILE?'5px 10px':'6px 12px',
-              fontSize:'12px',fontWeight:700,color:'#1e293b',boxShadow:'0 1px 2px rgba(0,0,0,0.04)'} },
-            h('span',{style:{fontSize:'15px'}}, t.item.icon),
-            h('span',{style:{whiteSpace:'nowrap'}}, t.item.text));
-        })
-      );
-    })(),
 
     // 탭 전환 바 + 캘린더 필터 통합 행
     h('div',{style:{display:'flex',alignItems:'center',gap:'4px',marginBottom: IS_MOBILE?'3px':'4px',background:'#fff',padding: IS_MOBILE?'3px 6px':'4px 6px',borderRadius:'10px',border:'1px solid #e2e8f0',flexShrink:0}},
