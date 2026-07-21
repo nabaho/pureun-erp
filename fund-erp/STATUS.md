@@ -56,7 +56,7 @@ git add fund.html && git commit -m "..." && git push origin main
 ## 6. 보안 주의 (중요)
 - **저장소 금지**: `fund.db`, 사업장 실데이터, `templates/` 서식엑셀, `backups/`. (로컬 .gitignore·export FORBID로 차단.)
 - 서식 원본 엑셀은 **각 사용자가 브라우저 IndexedDB(`fundErpTpl`)에 로컬 등록** — 저장소·Firebase에 안 올라감. 로컬 원본 위치 `02_프로그램/fund-erp/templates/` 2종.
-- 시드용(로컬 gitignore): `02_프로그램/fund-erp/backups/fund_funds_export.json`(42기금), `fund_sites_export.json`(563사업장) → fund.html [가져오기]로 Firebase 1회 업로드.
+- 시드용(로컬 gitignore): `02_프로그램/fund-erp/backups/fund_funds_export.json`(42기금), `fund_sites_export.json`(563사업장, **2026-07-21 contacts 담당자 포함 재생성** — 이전 export가 contacts 누락) → fund.html 참여사업장 [📥 가져오기]로 Firebase 업로드. ⚠️ 담당자 연락처 반영하려면 이 재생성본으로 **재가져오기 1회 필요**(sites/{fid} 통째 덮어씀, site_id 동일키라 안전).
 - 실데이터 이전 현황: funds·sites는 Firebase에 올라감. annual/welfare/txns/subsidy는 사용 시 생성.
 - PII(주민번호·인감·비번) 스키마 미저장. `Downloads/푸른노무법인(4).xlsx`에 평문 비번·주민번호 — 통째 공유 금지.
 
@@ -65,4 +65,6 @@ git add fund.html && git commit -m "..." && git push origin main
 - 2026-07-20: 인터넷판 회계 결산(재무제표+별지15호)까지 완성. 코덱스 1차 검증 반영. STATUS 공용화.
 - 2026-07-21: 코덱스 2차 전체 재점검(25건 발견) → 회계 정합성 재작성(computeFin 유형별 전 계정 집계·부채/자본계정 반영·대차일치 칩·전기이월에 준비금 추가·별지15호 준비금/기타비용 행·불일치 시 출력 경고), 통장 파싱 6건(합계행 제외·잔액열 오인·다단헤더·날짜 정규화·입출 동시행 분리·같은날 동일거래 키 충돌), import 레이스 2건(기금/연도 경로 고정·서버 최신본 중복검사), 동일 차/대 승인 차단, 로그아웃 시 Firebase signOut, 쓰기실패 catch+복원 일괄, num() 음수/지수 표기. 로컬 파이썬판(accounting.py·docgen.py 결산서 준비금=순이익 임의대입 버그)도 동일 수정. node 단위테스트 23건 통과. 보류 6건은 §4-4. 사용자 실화면 검증 후 홈·대장 호수순 정렬 수정(localeCompare numeric — 충남 10호가 1호보다 앞에 오던 문제). 참고: 홈 '미완비 42개'는 버그 아님 — 완비 기준 5항목 중 인가일(inka_date)이 지원신청서 원본에 없어 충남1~7도 4/5, 대장에서 수기 입력 필요.
 - 2026-07-21: **서식 자료실 이전 완료** — 파이썬 setup-excel/subsidy-excel 로직을 브라우저로 이식. 원본 법정서식 엑셀(빈 양식)을 IndexedDB에 1회 등록 후 ExcelJS(CDN 4.4.0)로 채움 — 테두리·병합셀 1110개·VLOOKUP 수식(설립165·지원721) 전부 보존(SheetJS 커뮤니티판은 저장 시 스타일 소실하므로 ExcelJS 선택). 사이드바 '서식 자료실' 활성화. node 검증 21건 통과. 사용자 실화면 검증(원본 등록→채워받기) 대기.
-- 2026-07-21: **담당자 주/부담당 지정 + 홈 그룹 탭** — (담당) 기금 상세 헤더 [👤 담당 ✎]→모달에서 주담당1·부담당다수를 pu-erp 재직자(`data/user_accounts/v` active)에서 선택, `mgr_main/mgr_subs/manager` 저장, `mgrText()`로 표시. (홈) 세로 3그룹 나열→상단 탭 지역/공동/사내 전환(S.homeTab)으로 스크롤 축소, 검색 시 전체결과. node 검증(mgrText 4케이스). 커밋 adcf742 push. 사용자 검증: 담당 모달에서 재직자 명단 뜨는지(안 뜨면 RTDB `data` 읽기 규칙 확인).
+- 2026-07-21: **담당자 주/부담당 지정 + 홈 그룹 탭** — (담당) 기금 상세 헤더 [👤 담당 ✎]→모달에서 주담당1·부담당다수를 pu-erp 재직자에서 선택, `mgr_main/mgr_subs/manager` 저장, `mgrText()`로 표시. (홈) 세로 3그룹 나열→상단 탭 지역/공동/사내 전환(S.homeTab)으로 스크롤 축소, 검색 시 전체결과. node 검증. 커밋 adcf742 push.
+- 2026-07-21: **담당자 명단 로드 안정화** — 재직자 명단을 동일출처 localStorage(`pureun_v6_user_accounts`, pu-erp가 채움) 우선 로드 → Firebase 규칙 의존 제거, 실패 시 `data/user_accounts/v` 폴백. `_normStaff`(배열/id객체형·퇴사·중복·휴직 필터). **기금 정보 탭에 주담당 드롭다운+부담당 체크박스 셀 분리**(자유입력 제거, 재직자 선택). 커밋 9ae4a18. (전제: 그 브라우저에서 pu-erp 1회 실행돼 localStorage에 명단 존재)
+- 2026-07-21: **참여사업장 담당자(연락처) 필드 반영** — 이전 export가 `contacts` 누락→Firebase sites에 담당자 없음이 원인. ①`fund_sites_export.json` contacts(담당자명·직위·휴대폰·이메일·isPrimary)+corp_no·note 포함 재생성(526/563건 담당자). ②편집 모달에 담당자명/직위/휴대폰/이메일+연번/법인번호/비고 필드, 목록에 담당자·이메일 컬럼. saveSite는 contacts 대표항목만 갱신(부담당 보존). ③[📥 사업장 데이터 가져오기] 버튼 항상 노출. 커밋 a742c9e·b338d58. **사용자 작업 필요: 참여사업장 탭에서 재생성 export 재가져오기 1회→담당자 채워짐.** node 검증(연락처 파싱·병합).
