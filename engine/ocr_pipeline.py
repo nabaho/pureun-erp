@@ -36,11 +36,20 @@ def load_api_key():
     ★ 키는 코드/채팅/git 어디에도 하드코딩 금지. 이 함수가 대표님 PC에서만 읽음."""
     k = os.environ.get("GEMINI_API_KEY")
     if k:
-        return k
+        return _clean_key(k)
     keyfile = os.path.join(os.path.dirname(__file__), ".secrets", "gemini.key")
     if os.path.exists(keyfile):
-        return open(keyfile, encoding="utf-8").read().strip()
+        # utf-8-sig: 메모장이 붙이는 BOM(﻿)을 자동 제거(안 그러면 키 앞에 안 보이는
+        # 글자가 붙어 인증이 계속 실패함). strip()은 BOM을 못 지운다.
+        return _clean_key(open(keyfile, encoding="utf-8-sig").read())
     return None
+
+
+def _clean_key(k):
+    """키 정리: 공백·줄바꿈·BOM·실수로 붙은 따옴표 제거."""
+    if k is None:
+        return None
+    return k.strip().strip('"\'').lstrip("﻿").strip() or None
 
 def call_vision(img_path, model):
     """Gemini Flash / Claude 비전 호출. 키 있으면 동작.
