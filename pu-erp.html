@@ -28743,6 +28743,30 @@ function IncomeDetailModal(props){
   );
 }
 
+// 사업주부담분(4대보험·산재) 출금건의 해당 월(YM)을 추출
+function _employerBurdenYM(it){
+  if(it && typeof it.id === 'string' && it.id.indexOf('fe-employer-') === 0) return it.id.slice('fe-employer-'.length);
+  var m = String((it && it.note) || '').match(/(\d{4}-\d{2})/);
+  if(m) return m[1];
+  return String((it && it.date) || '').slice(0, 7);
+}
+// 그 달 급여(payroll_monthly)에서 근로자별 사업주부담분을 재계산 — 별도 저장 없이 조회
+function employerBurdenByWorker(ym){
+  var empty = { rows:[], totals:{pension:0,healthIns:0,longCare:0,empIns:0,workers:0,total:0} };
+  if(!ym) return empty;
+  var all = dbGet('payroll_monthly', []) || [];
+  var recs = all.filter(function(r){ return r && r.ym === ym && (r.status === 'paid' || r.status === 'confirmed'); });
+  if(recs.length === 0) recs = all.filter(function(r){ return r && r.ym === ym; });
+  var rows = recs.map(function(r){
+    var c = {}; try { c = calcPayroll(r) || {}; } catch(_){ c = {}; }
+    var e = c.employer || {};
+    return { name: r.empName || r.name || r.sid || '-',
+      pension:e.pension||0, healthIns:e.healthIns||0, longCare:e.longCare||0, empIns:e.empIns||0, workers:e.workers||0, total:e.total||0 };
+  }).filter(function(x){ return x.total > 0; }).sort(function(a,b){ return b.total - a.total; });
+  var totals = rows.reduce(function(t,x){ t.pension+=x.pension; t.healthIns+=x.healthIns; t.longCare+=x.longCare; t.empIns+=x.empIns; t.workers+=x.workers; t.total+=x.total; return t; }, {pension:0,healthIns:0,longCare:0,empIns:0,workers:0,total:0});
+  return { rows:rows, totals:totals };
+}
+
 // ============ 재무관리 - 출금관리 ============
 function FinanceExpense(){
   var existing = dbGet('finance_expense', []);
@@ -29325,12 +29349,16 @@ function FinanceExpense(){
                   var dKey = 'it::'+it.id;
                   var dOpen = !!openSubGroup[dKey];
                   var canBulk = bulkFeeMode && it.category!=='exp-bankfee';
+                  // 사업주부담분: 그 달 급여에서 근로자별 부담분 재계산(펼침 시에만)
+                  var ebData = (isEB && dOpen) ? employerBurdenByWorker(_employerBurdenYM(it)) : null;
+                  var canExpand = hasDetails || isEB;
                   return h('div',{key:it.id,style:{borderBottom:i<catItems.length-1?'1px solid #f1f5f9':'none',background:bulkSel[it.id]?'#fef3c7':(isEB?(isPaid?'#f0fdf4':'#fef3c7'):'#fff')}},
                     h('div',{style:{display:'flex',alignItems:'center',gap:'10px',padding:'10px 14px',fontSize:'12px'}},
                       canBulk ? h('input',{type:'checkbox',checked:!!bulkSel[it.id],
                         onChange:function(){toggleBulkSel(it.id);},
                         style:{width:'15px',height:'15px',cursor:'pointer'}})
-                      : hasDetails ? h('span',{onClick:function(){var nx=Object.assign({},openSubGroup); nx[dKey]=!dOpen; setOpenSubGroup(nx);},
+                      : canExpand ? h('span',{onClick:function(){var nx=Object.assign({},openSubGroup); nx[dKey]=!dOpen; setOpenSubGroup(nx);},
+                        title: isEB && !hasDetails ? '근로자별 사업주부담분 보기' : '',
                         style:{cursor:'pointer',width:'14px',color:'#2563eb',fontWeight:700,fontSize:'10px',userSelect:'none'}},dOpen?'▼':'▶')
                         : h('span',{style:{width:'14px'}}),
                       h('span',{style:{fontFamily:'monospace',color:'#64748b',minWidth:'85px'}},it.date||'-'),
@@ -29362,7 +29390,45 @@ function FinanceExpense(){
                           h('span',{style:{fontFamily:'monospace',fontWeight:700,color:'#1e40af',minWidth:'120px',textAlign:'right'}},(Number(d.amount)||0).toLocaleString()+'원')
                         );
                       })
-                    )
+                    ),
+                    // 사업주부담분 근로자별 내역 (그 달 급여에서 재계산)
+                    isEB && !hasDetails && dOpen && (function(){
+                      var eb = ebData || {rows:[],totals:{}};
+                      var col = { padding:'4px 8px', textAlign:'right', fontFamily:'monospace' };
+                      var hcol = { padding:'5px 8px', textAlign:'right', fontWeight:700, color:'#64748b', fontSize:'10.5px', whiteSpace:'nowrap' };
+                      function num(v){ return (v||0).toLocaleString(); }
+                      var mismatch = eb.rows.length>0 && Math.abs((eb.totals.total||0) - (it.amount||0)) > 5;
+                      return h('div',{style:{background:'#fffbeb',borderTop:'1px solid #fde68a',padding:'8px 14px 12px'}},
+                        eb.rows.length===0
+                          ? h('div',{style:{fontSize:'11.5px',color:'#92400e',padding:'6px 4px'}}, '이 달('+_employerBurdenYM(it)+') 급여 데이터를 찾지 못했습니다 — 급여관리에서 해당 월 확정 여부를 확인하세요.')
+                          : h('div',{style:{overflowX:'auto'}},
+                              h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:'11px',minWidth:'560px'}},
+                                h('thead',null,h('tr',{style:{borderBottom:'1px solid #fde68a'}},
+                                  h('th',{style:Object.assign({},hcol,{textAlign:'left'})},'근로자'),
+                                  h('th',{style:hcol},'국민연금'), h('th',{style:hcol},'건강'),
+                                  h('th',{style:hcol},'장기요양'), h('th',{style:hcol},'고용'),
+                                  h('th',{style:hcol},'산재'), h('th',{style:Object.assign({},hcol,{color:'#92400e'})},'합계'))),
+                                h('tbody',null,
+                                  eb.rows.map(function(r,ri){
+                                    return h('tr',{key:ri,style:{borderBottom:'1px dashed #fde68a'}},
+                                      h('td',{style:{padding:'4px 8px',fontWeight:600,color:'#1e293b'}}, r.name),
+                                      h('td',{style:col}, num(r.pension)), h('td',{style:col}, num(r.healthIns)),
+                                      h('td',{style:col}, num(r.longCare)), h('td',{style:col}, num(r.empIns)),
+                                      h('td',{style:col}, num(r.workers)),
+                                      h('td',{style:Object.assign({},col,{fontWeight:700,color:'#92400e'})}, num(r.total)));
+                                  })
+                                ),
+                                h('tfoot',null,h('tr',{style:{borderTop:'2px solid #fcd34d',fontWeight:700}},
+                                  h('td',{style:{padding:'5px 8px',color:'#1e293b'}},'합계 '+eb.rows.length+'명'),
+                                  h('td',{style:col}, num(eb.totals.pension)), h('td',{style:col}, num(eb.totals.healthIns)),
+                                  h('td',{style:col}, num(eb.totals.longCare)), h('td',{style:col}, num(eb.totals.empIns)),
+                                  h('td',{style:col}, num(eb.totals.workers)),
+                                  h('td',{style:Object.assign({},col,{color:'#dc2626'})}, num(eb.totals.total))))
+                              )),
+                        mismatch && h('div',{style:{fontSize:'10.5px',color:'#b45309',marginTop:'6px',padding:'0 4px'}},
+                          '⚠️ 재계산 합계('+num(eb.totals.total)+')가 출금액('+num(it.amount)+')과 다릅니다 — 확정 후 급여·요율이 바뀌었을 수 있습니다.')
+                      );
+                    })()
                   );
                 })
                 )
