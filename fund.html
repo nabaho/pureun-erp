@@ -266,20 +266,57 @@ function saveMgr(fid){
     Object.assign(funds[fid],patch); closeM(); if(S.view==='fund')renderFund(); else renderHome();
   }).catch(function(e){ alert('저장 실패: '+e.message); });
 }
+function setLifecycle(fid){
+  var f=funds[fid]; if(!f) return; var cur=f.lifecycle||'운영';
+  function opt(v,lbl){return '<option value="'+v+'"'+(cur===v?' selected':'')+'>'+lbl+'</option>';}
+  showModal('<h2 style="margin:0 0 4px">기금 상태 — '+esc(f.short_name||f.name)+'</h2>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 12px">계약이 끝났거나 기금이 해산된 경우 상태를 바꾸면 목록의 <b>지난 기금</b>으로 이동하고 집계·오늘 할 일에서 제외됩니다. 기록은 보존됩니다.</p>'
+    +'<div class="fld"><label>상태</label><select id="lc-type" onchange="_lcToggle()" style="width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:7px">'
+      +opt('운영','운영 중')+opt('계약종료','계약종료 (수임·자문 계약 종료 — 재개 가능)')+opt('기록보관','기록보관 (기금 해산·소멸)')+'</select></div>'
+    +'<div id="lc-detail" style="'+(cur==='운영'?'display:none':'')+'">'
+      +'<div class="grid" style="margin-top:12px"><div class="fld"><label>종료·해산일</label><input id="lc-date" type="date" value="'+esc(f.end_date||'')+'"></div>'
+      +'<div class="fld"><label>사유</label><input id="lc-reason" value="'+esc(f.end_reason||'')+'" placeholder="예: 자문 해지, 사업장 폐업, 해산 결의"></div></div></div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:16px"><button onclick="closeM()">취소</button><button class="primary" onclick="saveLifecycle(\''+fid+'\')">저장</button></div>');
+}
+function _lcToggle(){ var t=$('lc-type').value, d=$('lc-detail'); if(d)d.style.display=(t==='운영')?'none':''; }
+function saveLifecycle(fid){
+  var t=$('lc-type').value, patch;
+  if(t==='운영') patch={lifecycle:null,end_date:null,end_reason:null};
+  else patch={lifecycle:t,end_date:($('lc-date').value||''),end_reason:($('lc-reason').value.trim()||'')};
+  fbDb.ref(NS+'/funds/'+fid).update(patch).then(function(){
+    Object.assign(funds[fid],{lifecycle:patch.lifecycle||'',end_date:patch.end_date||'',end_reason:patch.end_reason||''});
+    closeM(); if(S.view==='fund')renderFund(); else renderHome();
+  }).catch(function(e){ alert('저장 실패: '+e.message); });
+}
+// 기금 생애주기: '' | '운영'(활성) / '계약종료'(재개 가능) / '기록보관'(해산·소멸)
+function isPast(f){ return f.lifecycle==='계약종료'||f.lifecycle==='기록보관'; }
+function lifeBadge(f){
+  if(f.lifecycle==='계약종료') return '<span class="chip dg">계약종료'+(f.end_date?' '+esc(f.end_date):'')+'</span>';
+  if(f.lifecycle==='기록보관') return '<span class="chip" style="background:#eef;color:#556">기록보관'+(f.end_date?' '+esc(f.end_date):'')+'</span>';
+  return '';
+}
+function pastRow(f,no){
+  var gl={'지역공동':'지역','개별공동':'공동','사내':'사내'}[grp(f)]||'';
+  return '<tr onclick="go(\'fund\',\''+f._id+'\')"><td class="no">'+no+'</td>'
+    +'<td style="font-weight:700">'+esc(f.short_name||f.name)+'<div class="muted" style="font-weight:400;font-size:11.5px">'+esc(f.name||'')+'</div></td>'
+    +'<td class="muted">'+gl+'</td><td>'+esc(mgrText(f))+'</td>'
+    +'<td>'+lifeBadge(f)+(f.end_reason?' <span class="muted" style="font-size:11px">'+esc(f.end_reason)+'</span>':'')+'</td></tr>';
+}
 function renderHome(){
   $('crumb').textContent='기금 현황';
   var rpri={'충남':1,'경기':2};
   function srt(a,b){return ((rpri[a.region]||9)-(rpri[b.region]||9))||(a.short_name||'').localeCompare(b.short_name||'','ko',{numeric:true});}
   var all=Object.keys(funds).map(function(k){var o=Object.assign({},funds[k]);o._id=k;return o;});
+  var active=all.filter(function(f){return !isPast(f);}), past=all.filter(isPast).sort(srt);
   var G={'지역공동':[],'개별공동':[],'사내':[]};
-  all.forEach(function(f){ (G[grp(f)]=G[grp(f)]||[]).push(f); });
+  active.forEach(function(f){ (G[grp(f)]=G[grp(f)]||[]).push(f); });
   Object.keys(G).forEach(function(k){G[k].sort(srt);});
-  var incN=all.filter(function(f){return nDone(f)<5;}).length;
+  var incN=active.filter(function(f){return nDone(f)<5;}).length;   // 지난 기금은 집계 제외
   var todo=incN?'<div class="panel" style="border-left:3px solid var(--warn)"><div class="row"><b>☀️ 오늘 할 일</b>'
     +'<span style="flex:1"></span></div><div style="margin-top:8px;padding:8px 10px;background:var(--warn-bg);border-radius:8px;cursor:pointer;font-size:13px" onclick="S.ledgerInc=true;go(\'ledger\')">📇 기금 기본정보 미완비 <b>'+incN+'개</b> — 클릭하면 대장에서 채우기 →</div></div>':'';
-  var head='<div class="panel"><div class="row"><h1>기금 현황</h1><span class="stat">'+all.length+'개</span><span style="flex:1"></span>'
+  var head='<div class="panel"><div class="row"><h1>기금 현황</h1><span class="stat">운영 '+active.length+'</span>'+(past.length?'<span class="stat">지난 '+past.length+'</span>':'')+'<span style="flex:1"></span>'
     +'<input class="search" placeholder="기금명·담당 검색" value="'+esc(S.q||'')+'" oninput="S.q=this.value;renderHome()"></div></div>';
-  // 검색 중이면 그룹 무시하고 결과만
+  // 검색 중이면 그룹 무시하고 결과만(지난 기금 포함)
   if(S.q){
     var q=S.q; var hit=all.filter(function(f){return (f.name||'').indexOf(q)>=0||(f.short_name||'').indexOf(q)>=0||mgrText(f).indexOf(q)>=0;}).sort(srt);
     $('app').innerHTML=todo+head+'<div class="panel"><div class="grp-h">🔎 검색 결과 <span class="cnt">'+hit.length+'개</span></div>'
@@ -287,12 +324,21 @@ function renderHome(){
     return;
   }
   var TL=[['지역공동','🏛 지역기금'],['개별공동','🤝 공동기금'],['사내','🏢 사내기금']];
-  if(!S.homeTab||!G[S.homeTab]) S.homeTab='지역공동';
+  if(past.length) TL.push(['past','🗂 지난 기금']);
+  if(!S.homeTab||(S.homeTab!=='past'&&!G[S.homeTab])||(S.homeTab==='past'&&!past.length)) S.homeTab='지역공동';
   var tabbar='<div class="tabbar">'+TL.map(function(t){
-    return '<div class="tab'+(S.homeTab===t[0]?' on':'')+'" onclick="S.homeTab=\''+t[0]+'\';renderHome()">'+t[1]+' <span class="cnt">'+G[t[0]].length+'</span></div>';
+    var c=t[0]==='past'?past.length:G[t[0]].length;
+    return '<div class="tab'+(S.homeTab===t[0]?' on':'')+'" onclick="S.homeTab=\''+t[0]+'\';renderHome()">'+t[1]+' <span class="cnt">'+c+'</span></div>';
   }).join('')+'</div>';
-  var cur=G[S.homeTab]||[];
-  var body='<div class="panel">'+(cur.length?fundTable(cur):'<div class="muted" style="padding:12px">이 분류에 기금이 없습니다.</div>')+'</div>';
+  var body;
+  if(S.homeTab==='past'){
+    body='<div class="panel"><p class="muted" style="font-size:12px;margin:0 0 10px">계약 종료·해산(기록보관)된 기금입니다. 집계·오늘 할 일에서 제외되며, 기록은 보존됩니다. 기금을 열어 [상태]에서 재개할 수 있습니다.</p>'
+      +(past.length?'<div style="overflow-x:auto"><table><thead><tr><th>번호</th><th>기금명</th><th>분류</th><th>담당</th><th>상태</th></tr></thead><tbody>'
+        +past.map(function(f,i){return pastRow(f,i+1);}).join('')+'</tbody></table></div>':'<div class="muted" style="padding:12px">지난 기금이 없습니다.</div>')+'</div>';
+  } else {
+    var cur=G[S.homeTab]||[];
+    body='<div class="panel">'+(cur.length?fundTable(cur):'<div class="muted" style="padding:12px">이 분류에 기금이 없습니다.</div>')+'</div>';
+  }
   $('app').innerHTML=todo+head+tabbar+body;
 }
 
@@ -517,9 +563,13 @@ function fillSubsidy(wb,f,sites){
 function renderFund(){
   var f=funds[S.fundId]; $('crumb').textContent=(f.short_name||f.name);
   var tags=f.fund_type==='사내'?'<span class="tag sanae">사내</span>':'<span class="tag gong">공동</span>';
+  tags+=(isPast(f)?' '+lifeBadge(f):'');
   var head='<button class="backbtn" onclick="go(\'home\')">← 기금 현황</button>'
+    +(isPast(f)?'<div class="panel" style="background:var(--warn-bg);border-left:3px solid var(--warn);padding:8px 12px;font-size:12.5px">이 기금은 <b>'+esc(f.lifecycle)+'</b> 상태입니다'+(f.end_date?' ('+esc(f.end_date)+(f.end_reason?' · '+esc(f.end_reason):'')+')':'')+'. 집계에서 제외됩니다. <a href="#" onclick="setLifecycle(\''+S.fundId+'\');return false;">상태 변경 →</a></div>':'')
     +'<div class="panel"><div class="row"><h1>'+esc(f.short_name||f.name)+'</h1>'+tags
-    +'<span style="flex:1"></span><span class="muted" style="cursor:pointer" onclick="assignMgr(\''+S.fundId+'\')" title="담당자 지정">👤 담당 '+esc(mgrText(f))+' ✎</span></div>'
+    +'<span style="flex:1"></span>'
+    +'<span class="muted" style="cursor:pointer;margin-right:12px" onclick="setLifecycle(\''+S.fundId+'\')" title="계약종료·기록보관 상태 관리">🔖 상태</span>'
+    +'<span class="muted" style="cursor:pointer" onclick="assignMgr(\''+S.fundId+'\')" title="담당자 지정">👤 담당 '+esc(mgrText(f))+' ✎</span></div>'
     +'<div class="kv"><span>인가번호 <b>'+esc(f.inka_no||'—')+'</b></span><span>법인등록번호 <b>'+esc(f.corp_reg_no||'—')+'</b></span>'
     +'<span>고유번호 <b>'+esc(f.tax_id_no||'—')+'</b></span><span>소재지 <b>'+esc(f.address||'—')+'</b></span></div></div>';
   var tabbar='<div class="tabbar">'+TABS.map(function(t){
