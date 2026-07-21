@@ -37202,10 +37202,29 @@ function CorpDashboard(props){
         return '';
       }
 
+      // 섹션 내 정렬·배지에 쓸 유형 문자열 (계약·사건·컨설팅·기금·기타 공통)
+      function _sectionType(it, mId){
+        try {
+          if(mId==='biz/contract') return it.contractType || '';
+          if(mId==='biz/case') return _typeLabel(it, mId) || it.caseType || '';
+          if(mId==='biz/consulting') return _typeLabel(it, mId) || it.consultingType || '';
+          if(mId==='biz/fund') return it.fundType || '';
+          if(mId==='biz/other') return it.projectType || '';
+        } catch(_){}
+        return '';
+      }
+
       function renderSection(label, icon, color, items, menuId, titleKey){
         // 검색 필터 적용
         var filteredItems = hasQuery ? items.filter(function(it){return matchQuery(it, titleKey);}) : items;
         if(filteredItems.length===0) return null;
+        // 정렬: 유형 → 업체명순 (유형 없는 항목은 뒤로), 한글·숫자 자연 정렬
+        function _name(it){ return it[titleKey] || it.title || it.companyName || it.name || ''; }
+        filteredItems = filteredItems.slice().sort(function(a,b){
+          var ta=_sectionType(a,menuId), tb=_sectionType(b,menuId);
+          if(ta!==tb){ if(!ta) return 1; if(!tb) return -1; return ta.localeCompare(tb,'ko',{numeric:true}); }
+          return _name(a).localeCompare(_name(b),'ko',{numeric:true});
+        });
         return h('div',{style:{marginBottom:'12px'}},
           h('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'6px',padding:'4px 0',borderBottom:'1px solid '+color+'33'}},
             h('span',{style:{fontSize:'13px'}},icon),
@@ -37215,14 +37234,10 @@ function CorpDashboard(props){
           h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
             filteredItems.slice(0, 30).map(function(it,i){
               var title = it[titleKey] || it.title || it.companyName || it.name || '-';
-              var typeLabel = _typeLabel(it, menuId);   // 사건/컨설팅 유형명(구분용)
-              // 1줄: 식별·종류 (회사명은 title과 다를 때만 추가)
+              var typeLabel = _sectionType(it, menuId);   // 유형명(정렬·배지 공통)
+              // 1줄: 식별·종류 (유형은 배지 열로 이동, 회사명은 title과 다를 때만 추가)
               var line1Parts = [];
               if(menuId==='biz/case' && it.caseNo) line1Parts.push('['+it.caseNo+']');
-              if(menuId==='biz/contract' && it.contractType) line1Parts.push(it.contractType);
-              else if(menuId==='biz/consulting' && it.consultingType) line1Parts.push(it.consultingType);
-              else if(menuId==='biz/fund' && it.fundType) line1Parts.push(it.fundType);
-              else if(menuId==='biz/other' && it.projectType) line1Parts.push(it.projectType);
               if(it.companyName && title !== it.companyName) line1Parts.push('🏢 '+it.companyName);
               if(menuId==='biz/contract' && it.signDate) line1Parts.push('📅 '+it.signDate);
               else if(menuId==='biz/case' && it.startDate) line1Parts.push('📅 '+it.startDate);
@@ -37251,16 +37266,24 @@ function CorpDashboard(props){
               var clientBadge = it.clientType === 'worker' ? '👤근로자 의뢰' : (it.clientType === 'both' ? '🔄회사+근로자' : (it.clientType === 'company' ? '🏢회사 의뢰' : ''));
               // 한 줄 압축: 제목 · 부가정보 · 담당자정보를 한 줄에
               var oneLine = [subLine1, subLine2].filter(Boolean).join('  ·  ');
+              var badgeBase = {fontSize:'9.5px',padding:'1px 6px',borderRadius:'8px',fontWeight:700,whiteSpace:'nowrap',justifySelf:'start',display:'inline-block',maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',boxSizing:'border-box'};
               return h('div',{key:it.id||i,
                 onClick:function(){gotoItem(menuId, title);},
-                style:{padding:'6px 10px',background:'#fff',border:'1px solid #f1f5f9',borderRadius:'10px',cursor:'pointer',display:'flex',alignItems:'center',gap:'8px',fontSize:'11.5px',transition:'all 0.1s'},
+                style:{padding:'6px 10px',background:'#fff',border:'1px solid #f1f5f9',borderRadius:'10px',cursor:'pointer',display:'grid',gridTemplateColumns:'26px 140px 82px 70px minmax(0,1fr) 130px',alignItems:'center',gap:'8px',fontSize:'11.5px',transition:'all 0.1s'},
                 onMouseEnter:function(e){e.currentTarget.style.background=color+'11';e.currentTarget.style.borderColor=color+'66';},
                 onMouseLeave:function(e){e.currentTarget.style.background='#fff';e.currentTarget.style.borderColor='#f1f5f9';}},
-                h('span',{style:{fontWeight:700,color:'#1e293b',fontSize:'12px',whiteSpace:'nowrap',flexShrink:0}},title),
-                typeLabel && h('span',{style:{fontSize:'9.5px',padding:'1px 6px',background:color+'18',color:color,border:'1px solid '+color+'55',borderRadius:'8px',fontWeight:700,whiteSpace:'nowrap',flexShrink:0}}, typeLabel),
-                clientBadge && h('span',{style:{fontSize:'9.5px',padding:'1px 6px',background: it.clientType==='worker' ? '#fff7ed' : '#eff6ff', color: it.clientType==='worker' ? '#9a3412' : '#1e40af', border:'1px solid '+(it.clientType==='worker' ? '#fed7aa' : '#bfdbfe'), borderRadius:'8px', fontWeight:700, whiteSpace:'nowrap', flexShrink:0}}, clientBadge),
-                h('span',{style:{flex:1,minWidth:0,fontSize:'10.5px',color: subLine2 ? '#475569' : '#94a3b8',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}, oneLine || '사업장 담당자(실무자) 미입력 — 업체관리에서 입력'),
-                h('span',{style:{fontSize:'10.5px',padding:'2px 6px',background:color+'22',color:color,borderRadius:'8px',fontWeight:700,whiteSpace:'nowrap',flexShrink:0}},mgrText(it)||'미지정')
+                // 번호
+                h('span',{style:{fontSize:'10.5px',fontFamily:'monospace',fontWeight:700,color:'#94a3b8',textAlign:'right'}}, (i+1)),
+                // 제목
+                h('span',{style:{fontWeight:700,color:'#1e293b',fontSize:'12px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},title),
+                // 유형 배지 (없으면 빈 셀로 열 유지)
+                typeLabel ? h('span',{style:Object.assign({},badgeBase,{background:color+'18',color:color,border:'1px solid '+color+'55'})}, typeLabel) : h('span'),
+                // 의뢰인 배지 (없으면 빈 셀로 열 유지)
+                clientBadge ? h('span',{style:Object.assign({},badgeBase,{background: it.clientType==='worker' ? '#fff7ed' : '#eff6ff', color: it.clientType==='worker' ? '#9a3412' : '#1e40af', border:'1px solid '+(it.clientType==='worker' ? '#fed7aa' : '#bfdbfe')})}, clientBadge) : h('span'),
+                // 담당자정보 (사업장 실무자·연락처)
+                h('span',{style:{minWidth:0,fontSize:'10.5px',color: subLine2 ? '#475569' : '#94a3b8',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}, oneLine || '담당자정보 미입력'),
+                // 담당자
+                h('span',{style:{fontSize:'10.5px',padding:'2px 6px',background:color+'22',color:color,borderRadius:'8px',fontWeight:700,whiteSpace:'nowrap',justifySelf:'start',display:'inline-block',maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',boxSizing:'border-box'}},mgrText(it)||'미지정')
               );
             }),
             filteredItems.length>30 && h('div',{style:{fontSize:'10.5px',color:'#94a3b8',textAlign:'center',padding:'4px'}}, '+ '+(filteredItems.length-30)+'건 더 (모듈에서 확인)')
@@ -37412,9 +37435,12 @@ function CorpDashboard(props){
             })()
           ),
 
-          // ─ 우측: 상세 ─
-          h('div', { style:{ overflow:'hidden' } },
-            // 헤더
+          // ─ 우측: 상세 ─ (자체 스크롤 박스: 헤더 틀고정용)
+          h('div', { style:{ overflowX:'hidden',
+            maxHeight: window.innerWidth<=480 ? 'none' : 'calc(100vh - 40px)',
+            overflowY: window.innerWidth<=480 ? 'visible' : 'auto',
+            alignSelf:'start' } },
+            // 헤더 (스크롤 시 상단 고정)
             h('div',{style:{padding:'8px 10px',background:isAll?'#ffedd5':(selStaff?'#f1f5f9':'#f8fafc'),borderLeft:'4px solid '+(isAll?'#f59e0b':(selStaff?staffColorMap[selStaff.sid]||'#1e40af':'#cbd5e1')),borderRadius:'6px',marginBottom:'12px',display:'flex',alignItems:'center',gap:'10px',
               position: window.innerWidth<=480 ? 'static' : 'sticky', top:'0', zIndex: window.innerWidth<=480 ? 0 : 20, boxShadow: window.innerWidth<=480 ? 'none' : '0 2px 8px rgba(0,0,0,0.08)'}},
               h('div',{style:{flex:1}},
