@@ -193,36 +193,96 @@ function route(){
   else { S.view='home'; renderHome(); }
 }
 
+function mgrText(f){
+  if(f.mgr_main||f.mgr_subs){
+    var main=(f.mgr_main&&f.mgr_main.name)||'';
+    var subs=(f.mgr_subs||[]).map(function(s){return (s&&s.name)||'';}).filter(Boolean);
+    return [main].concat(subs.map(function(n){return n+'(부)';})).filter(Boolean).join(', ')||'—';
+  }
+  return f.manager||'—';   // 구 데이터 호환
+}
+function fundRow(f,no){
+  var n=nDone(f); var chip=n===5?'<span class="chip ok">정보 완비</span>':n>=3?'<span class="chip warn">정보 '+n+'/5</span>':'<span class="chip dg">정보 '+n+'/5</span>';
+  return '<tr onclick="go(\'fund\',\''+f._id+'\')"><td class="no">'+no+'</td>'
+    +'<td style="font-weight:700">'+esc(f.short_name||f.name)+'<div class="muted" style="font-weight:400;font-size:11.5px">'+esc(f.name||'')+'</div></td>'
+    +'<td>'+esc(mgrText(f))+'</td><td>'+esc(f.chairman||'—')+'</td><td>'+chip+'</td></tr>';
+}
+function fundTable(list){
+  return '<table><thead><tr><th>번호</th><th>기금명</th><th>담당</th><th>대표자</th><th>상태</th></tr></thead><tbody>'
+    +list.map(function(f,i){return fundRow(f,i+1);}).join('')+'</tbody></table>';
+}
+// 푸른이알피 재직자 명단 — Firebase data/user_accounts/v (pu-erp와 공유). 재직(active)만.
+var _staffCache=null;
+function loadStaff(){
+  if(_staffCache) return Promise.resolve(_staffCache);
+  return fbDb.ref('data/user_accounts/v').once('value').then(function(s){
+    var v=s.val()||[]; if(!Array.isArray(v)) v=Object.keys(v).map(function(k){return v[k];});
+    _staffCache=v.filter(function(u){return u&&u.sid&&(u.status==='active'||u.status==='leave'&&u.leaveLoginAllowed===true||!u.status);})
+      .map(function(u){return {sid:u.sid,name:u.name||u.sid,title:u.title||u.role||'',branch:u.branch||''};})
+      .sort(function(a,b){return (a.name||'').localeCompare(b.name||'','ko');});
+    return _staffCache;
+  });
+}
+function assignMgr(fid){
+  var f=funds[fid]; if(!f) return;
+  showModal('<h2 style="margin:0 0 4px">담당자 지정 — '+esc(f.short_name||f.name)+'</h2>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 12px">푸른이알피 재직자 명단에서 선택합니다. 주담당 1명, 부담당 여러 명.</p>'
+    +'<div id="mgrbody" class="muted">재직자 명단 불러오는 중…</div>');
+  loadStaff().then(function(list){
+    var body=$('mgrbody'); if(!body) return;
+    var mainSid=(f.mgr_main&&f.mgr_main.sid)||'';
+    var subSids=(f.mgr_subs||[]).map(function(x){return x&&x.sid;}).filter(Boolean);
+    if(!list.length){ body.innerHTML='<div class="msg err">재직자 명단을 불러오지 못했습니다. 푸른이알피에서 직원계정이 등록되어 있는지 확인하세요.</div>'; return; }
+    var mainSel='<select id="mgr-main" style="width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:7px"><option value="">(미지정)</option>'
+      +list.map(function(u){return '<option value="'+esc(u.sid)+'"'+(u.sid===mainSid?' selected':'')+'>'+esc(u.name)+(u.title?' · '+esc(u.title):'')+(u.branch?' ('+esc(u.branch)+')':'')+'</option>';}).join('')+'</select>';
+    var subChk=list.map(function(u){return '<label style="display:inline-flex;align-items:center;gap:5px;margin:3px 10px 3px 0;font-size:13px;cursor:pointer">'
+      +'<input type="checkbox" class="mgr-sub" value="'+esc(u.sid)+'"'+(subSids.indexOf(u.sid)>=0?' checked':'')+'> '+esc(u.name)+'</label>';}).join('');
+    body.innerHTML='<div class="fld"><label>주담당</label>'+mainSel+'</div>'
+      +'<div class="fld" style="margin-top:12px"><label>부담당 (여러 명 선택 가능)</label><div style="max-height:180px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-top:4px">'+subChk+'</div></div>'
+      +'<div class="row" style="justify-content:flex-end;margin-top:16px"><button onclick="closeM()">취소</button><button class="primary" onclick="saveMgr(\''+fid+'\')">저장</button></div>';
+  }).catch(function(e){ var body=$('mgrbody'); if(body) body.innerHTML='<div class="msg err">명단 로드 실패: '+esc(e.message)+'</div>'; });
+}
+function saveMgr(fid){
+  var list=_staffCache||[]; function byId(sid){return list.filter(function(u){return u.sid===sid;})[0];}
+  var mainSid=$('mgr-main')?$('mgr-main').value:'';
+  var mainU=byId(mainSid);
+  var subs=[].slice.call(document.querySelectorAll('.mgr-sub:checked')).map(function(c){return c.value;})
+    .filter(function(sid){return sid!==mainSid;}).map(byId).filter(Boolean)
+    .map(function(u){return {sid:u.sid,name:u.name};});
+  var patch={ mgr_main: mainU?{sid:mainU.sid,name:mainU.name}:null, mgr_subs: subs.length?subs:null };
+  patch.manager=[mainU?mainU.name:''].concat(subs.map(function(s){return s.name+'(부)';})).filter(Boolean).join(', ');  // 검색·구호환용 문자열
+  fbDb.ref(NS+'/funds/'+fid).update(patch).then(function(){
+    Object.assign(funds[fid],patch); closeM(); if(S.view==='fund')renderFund(); else renderHome();
+  }).catch(function(e){ alert('저장 실패: '+e.message); });
+}
 function renderHome(){
   $('crumb').textContent='기금 현황';
-  var arr=Object.keys(funds).map(function(k){var o=Object.assign({},funds[k]);o._id=k;return o;});
-  if(S.q) arr=arr.filter(function(f){return (f.name||'').indexOf(S.q)>=0||(f.short_name||'').indexOf(S.q)>=0||(f.manager||'').indexOf(S.q)>=0;});
-  var rpri={'충남':1,'경기':2},order={'지역공동':1,'개별공동':2,'사내':3};
-  arr.sort(function(a,b){return (order[grp(a)]-order[grp(b)])||((rpri[a.region]||9)-(rpri[b.region]||9))||(a.short_name||'').localeCompare(b.short_name||'','ko',{numeric:true});});
-  var GL={'지역공동':'🏛 지역기금','개별공동':'🤝 공동기금','사내':'🏢 사내기금'};
-  var html='', lastG=null, num=0;
-  arr.forEach(function(f){
-    var g=grp(f);
-    if(g!==lastG){ if(lastG!==null) html+='</tbody></table>'; lastG=g; num=0;
-      var cnt=arr.filter(function(x){return grp(x)===g;}).length;
-      html+='<div class="grp-h">'+GL[g]+' <span class="cnt">'+cnt+'개</span></div>'
-        +'<table><thead><tr><th>번호</th><th>기금명</th><th>담당</th><th>대표자</th><th>상태</th></tr></thead><tbody>';
-    }
-    num++;
-    var n=nDone(f); var chip=n===5?'<span class="chip ok">정보 완비</span>':n>=3?'<span class="chip warn">정보 '+n+'/5</span>':'<span class="chip dg">정보 '+n+'/5</span>';
-    html+='<tr onclick="go(\'fund\',\''+f._id+'\')"><td class="no">'+num+'</td>'
-      +'<td style="font-weight:700">'+esc(f.short_name||f.name)+'<div class="muted" style="font-weight:400;font-size:11.5px">'+esc(f.name||'')+'</div></td>'
-      +'<td>'+esc(f.manager||'—')+'</td><td>'+esc(f.chairman||'—')+'</td><td>'+chip+'</td></tr>';
-  });
-  if(lastG!==null) html+='</tbody></table>'; else html='<div class="panel muted">기금이 없습니다.</div>';
-  var all=Object.keys(funds).map(function(k){return funds[k];});
+  var rpri={'충남':1,'경기':2};
+  function srt(a,b){return ((rpri[a.region]||9)-(rpri[b.region]||9))||(a.short_name||'').localeCompare(b.short_name||'','ko',{numeric:true});}
+  var all=Object.keys(funds).map(function(k){var o=Object.assign({},funds[k]);o._id=k;return o;});
+  var G={'지역공동':[],'개별공동':[],'사내':[]};
+  all.forEach(function(f){ (G[grp(f)]=G[grp(f)]||[]).push(f); });
+  Object.keys(G).forEach(function(k){G[k].sort(srt);});
   var incN=all.filter(function(f){return nDone(f)<5;}).length;
   var todo=incN?'<div class="panel" style="border-left:3px solid var(--warn)"><div class="row"><b>☀️ 오늘 할 일</b>'
     +'<span style="flex:1"></span></div><div style="margin-top:8px;padding:8px 10px;background:var(--warn-bg);border-radius:8px;cursor:pointer;font-size:13px" onclick="S.ledgerInc=true;go(\'ledger\')">📇 기금 기본정보 미완비 <b>'+incN+'개</b> — 클릭하면 대장에서 채우기 →</div></div>':'';
-  $('app').innerHTML=todo+'<div class="panel"><div class="row"><h1>기금 현황</h1>'
-    +'<span class="stat">'+arr.length+'개</span><span style="flex:1"></span>'
-    +'<input class="search" placeholder="기금명·담당 검색" value="'+esc(S.q)+'" oninput="S.q=this.value;renderHome()"></div></div>'
-    +'<div class="panel">'+html+'</div>';
+  var head='<div class="panel"><div class="row"><h1>기금 현황</h1><span class="stat">'+all.length+'개</span><span style="flex:1"></span>'
+    +'<input class="search" placeholder="기금명·담당 검색" value="'+esc(S.q||'')+'" oninput="S.q=this.value;renderHome()"></div></div>';
+  // 검색 중이면 그룹 무시하고 결과만
+  if(S.q){
+    var q=S.q; var hit=all.filter(function(f){return (f.name||'').indexOf(q)>=0||(f.short_name||'').indexOf(q)>=0||mgrText(f).indexOf(q)>=0;}).sort(srt);
+    $('app').innerHTML=todo+head+'<div class="panel"><div class="grp-h">🔎 검색 결과 <span class="cnt">'+hit.length+'개</span></div>'
+      +(hit.length?fundTable(hit):'<div class="muted" style="padding:12px">일치하는 기금이 없습니다.</div>')+'</div>';
+    return;
+  }
+  var TL=[['지역공동','🏛 지역기금'],['개별공동','🤝 공동기금'],['사내','🏢 사내기금']];
+  if(!S.homeTab||!G[S.homeTab]) S.homeTab='지역공동';
+  var tabbar='<div class="tabbar">'+TL.map(function(t){
+    return '<div class="tab'+(S.homeTab===t[0]?' on':'')+'" onclick="S.homeTab=\''+t[0]+'\';renderHome()">'+t[1]+' <span class="cnt">'+G[t[0]].length+'</span></div>';
+  }).join('')+'</div>';
+  var cur=G[S.homeTab]||[];
+  var body='<div class="panel">'+(cur.length?fundTable(cur):'<div class="muted" style="padding:12px">이 분류에 기금이 없습니다.</div>')+'</div>';
+  $('app').innerHTML=todo+head+tabbar+body;
 }
 
 // ── 기금 대장 (4단계) ──
@@ -447,7 +507,7 @@ function renderFund(){
   var tags=f.fund_type==='사내'?'<span class="tag sanae">사내</span>':'<span class="tag gong">공동</span>';
   var head='<button class="backbtn" onclick="go(\'home\')">← 기금 현황</button>'
     +'<div class="panel"><div class="row"><h1>'+esc(f.short_name||f.name)+'</h1>'+tags
-    +'<span style="flex:1"></span><span class="muted">담당 '+esc(f.manager||'—')+'</span></div>'
+    +'<span style="flex:1"></span><span class="muted" style="cursor:pointer" onclick="assignMgr(\''+S.fundId+'\')" title="담당자 지정">👤 담당 '+esc(mgrText(f))+' ✎</span></div>'
     +'<div class="kv"><span>인가번호 <b>'+esc(f.inka_no||'—')+'</b></span><span>법인등록번호 <b>'+esc(f.corp_reg_no||'—')+'</b></span>'
     +'<span>고유번호 <b>'+esc(f.tax_id_no||'—')+'</b></span><span>소재지 <b>'+esc(f.address||'—')+'</b></span></div></div>';
   var tabbar='<div class="tabbar">'+TABS.map(function(t){
