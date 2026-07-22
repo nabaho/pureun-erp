@@ -69,6 +69,79 @@
     return lines.join("\n");
   }
 
-  if (typeof module !== "undefined" && module.exports) module.exports = { extractHwpText };
-  else global.extractHwpText = extractHwpText;
+  // ── HWPX (ZIP + XML) ──
+  function _entities(s) {
+    return s.replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+            .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(+d))
+            .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+            .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
+  }
+
+  /** ZIP에서 이름이 filterRe에 맞는 항목만 압축 해제해 {name: Uint8Array} 반환 */
+  function _readZip(u8, pakoLib, filterRe) {
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    let eocd = -1;
+    for (let i = u8.length - 22; i >= 0 && i > u8.length - 22 - 65536; i--) {
+      if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error("HWPX(ZIP) 구조가 아닙니다.");
+    const cdCount = dv.getUint16(eocd + 10, true);
+    let p = dv.getUint32(eocd + 16, true);
+    const dec = new TextDecoder("utf-8");
+    const out = {};
+    for (let e = 0; e < cdCount && p + 46 <= u8.length; e++) {
+      if (dv.getUint32(p, true) !== 0x02014b50) break;
+      const method = dv.getUint16(p + 10, true);
+      const compSize = dv.getUint32(p + 20, true);
+      const nameLen = dv.getUint16(p + 28, true);
+      const extraLen = dv.getUint16(p + 30, true);
+      const commentLen = dv.getUint16(p + 32, true);
+      const lhOff = dv.getUint32(p + 42, true);
+      const name = dec.decode(u8.subarray(p + 46, p + 46 + nameLen));
+      if (filterRe.test(name)) {
+        const lhNameLen = dv.getUint16(lhOff + 26, true);
+        const lhExtraLen = dv.getUint16(lhOff + 28, true);
+        const start = lhOff + 30 + lhNameLen + lhExtraLen;
+        const comp = u8.subarray(start, start + compSize);
+        out[name] = method === 0 ? comp : getPako(pakoLib).inflateRaw(comp);
+      }
+      p += 46 + nameLen + extraLen + commentLen;
+    }
+    return out;
+  }
+
+  /** ArrayBuffer(.hwpx) → 본문 텍스트 (Contents/sectionN.xml의 <hp:t> 문단 단위 결합) */
+  function extractHwpxText(arrayBuffer, pakoLib) {
+    const u8 = new Uint8Array(arrayBuffer);
+    const secRe = /Contents\/section\d+\.xml$/i;
+    const entries = _readZip(u8, pakoLib, secRe);
+    const names = Object.keys(entries).sort(
+      (a, b) => (+a.match(/section(\d+)\.xml/i)[1]) - (+b.match(/section(\d+)\.xml/i)[1]));
+    if (!names.length) throw new Error("HWPX 본문(Contents/section)을 찾을 수 없습니다.");
+    const dec = new TextDecoder("utf-8");
+    const lines = [];
+    for (const n of names) {
+      const xml = dec.decode(entries[n]);
+      // 문단(<hp:p …>) 단위로 나누고, 각 문단의 <hp:t> 텍스트를 결합
+      const paras = xml.split(/<hp:p[\s>]/);
+      for (let i = 1; i < paras.length; i++) {
+        const runs = paras[i].match(/<hp:t[^>]*>([\s\S]*?)<\/hp:t>/g) || [];
+        const text = runs.map(r => _entities(r.replace(/<hp:t[^>]*>/, "").replace(/<\/hp:t>/, "")
+                                              .replace(/<[^>]+>/g, ""))).join("");
+        lines.push(text);
+      }
+    }
+    return lines.join("\n");
+  }
+
+  /** 확장자/매직바이트로 HWP(CFB) vs HWPX(ZIP) 자동 판별 후 텍스트 추출 */
+  async function extractDocText(arrayBuffer, XLSXlib, pakoLib) {
+    const u8 = new Uint8Array(arrayBuffer);
+    if (u8[0] === 0x50 && u8[1] === 0x4b) return extractHwpxText(arrayBuffer, pakoLib);   // "PK" = ZIP/HWPX
+    return extractHwpText(arrayBuffer, XLSXlib, pakoLib);                                  // CFB = HWP 5.0
+  }
+
+  const api = { extractHwpText, extractHwpxText, extractDocText };
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  else Object.assign(global, api);
 })(typeof globalThis !== "undefined" ? globalThis : this);
