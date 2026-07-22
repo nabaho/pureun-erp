@@ -153,7 +153,7 @@ window.addEventListener('popstate',function(ev){
   // 시작점보다 더 뒤로 = 브라우저 기본(앱 이탈/포털) 허용
 });
 App.go=function(s){ navTo({screen:s,site:null,month:null}); };  // 기존 호출부 호환(탭 이동)
-var NAV=[{id:'cards',label:'⚙️ 설정 카드'},{id:'inbox',label:'📥 수신함'},{id:'payroll',label:'💰 급여 처리'},{id:'slip',label:'📄 명세서'}];
+var NAV=[{id:'cards',label:'⚙️ 설정 카드'},{id:'inbox',label:'📥 수신함'},{id:'payroll',label:'💰 급여 처리'},{id:'slip',label:'📄 명세서'},{id:'report',label:'📑 신고'}];
 var SIG={green:'#2E7D4F',orange:'#B26A00',red:'#C43D3D'};
 function won(n){ return (n==null)?'-':Number(n).toLocaleString(); }
 /* ── 표시용 중복 정리 ──
@@ -360,6 +360,95 @@ function siteReceived(pay, site, mnum){
   got.forEach(function(r){ if(r.신호==='red')sig='red'; else if(r.신호==='orange'&&sig!=='red')sig='orange'; });
   return {n:got.length, sig:sig};
 }
+/* ── 신고(파생신고 1호): 일용직 근로내용확인신고 초안 ──
+   근거: 근로내용확인신고서 필요값(성명·근로일수·보수지급기초일수·일평균시간·보수총액·임금총액·
+   소득세·지방소득세)이 파싱된 일용 데이터에 존재. 렌더 규칙 원본: engine/build_daily_report.py */
+function dailyReportRows(emps){
+  var rows=[];
+  (emps||[]).forEach(function(e){
+    var days=e.근무일수; if(!days) return;
+    var daily=e.일당, hourly=e.시급; if(!daily&&!hourly) return;
+    var pay=(e.과세총액!=null)?e.과세총액:e.지급총액;
+    var expect,unit,kind;
+    if(daily){ expect=daily*days; unit=daily; kind='일당'; }
+    else { var hrs=e.근무시간; expect=hrs?hourly*hrs:null; unit=hourly; kind='시급'; }
+    if(pay==null) pay=expect;
+    var chk;
+    if(expect==null) chk='확인(시간 미상)';
+    else if(Math.abs(expect-pay)<=1) chk='일치';
+    else if(pay>expect) chk='확인(+'+won(pay-expect)+' 주휴·야간?)';
+    else chk='확인('+kind+'×근무='+won(expect)+')';
+    rows.push({성명:e.성명||'',근로일수:days,기초일수:days,단가구분:kind,단가:unit,
+      일평균시간:(e.평균시간!=null)?Math.round(e.평균시간*100)/100:null,
+      보수총액:pay,임금총액:(e.지급총액!=null)?e.지급총액:pay,
+      소득세:e.소득세,지방소득세:e.지방세,검산:chk});
+  });
+  return rows;
+}
+function copyReportTSV(site,month){
+  var pay=dbGet('payroll',null);
+  var rec=(((pay||{}).sites||{})[site]||[]).filter(function(r){return r.월===month;})[0];
+  if(!rec){ alert('데이터 없음'); return; }
+  var rows=dailyReportRows(dedupeEmps(rec.직원||[]));
+  var head=['성명','근로일수','보수지급기초일수','일평균시간','보수총액(과세소득)','임금총액','소득세','지방소득세'];
+  var tsv=[head.join('\t')].concat(rows.map(function(x){
+    return [x.성명,x.근로일수,x.기초일수,(x.일평균시간!=null?x.일평균시간:''),
+            (x.보수총액!=null?x.보수총액:''),(x.임금총액!=null?x.임금총액:''),
+            (x.소득세!=null?x.소득세:''),(x.지방소득세!=null?x.지방소득세:'')].join('\t');
+  })).join('\n');
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(tsv).then(function(){alert('신고 초안 '+rows.length+'명 복사됨 — 엑셀/EDI에 붙여넣으세요.');},function(){alert(tsv);});
+  } else alert(tsv);
+}
+window.copyReportTSV=copyReportTSV;
+function screenReport(){
+  var pay=dbGet('payroll',null);
+  var h='<h1>신고 — 일용 근로내용확인신고 초안</h1>';
+  if(!pay||!pay.sites){ h+='<div class="sub">급여 데이터를 먼저 올리세요</div><div class="empty">급여 데이터가 서버에 없습니다.</div>'; return h; }
+  if(!App.site){
+    h+='<div class="sub">사업장 선택 → 신고월 → 초안 확인·복사. 일용(일당·시급) 있는 달만 표시됩니다.</div><div class="cards">';
+    Object.keys(pay.sites).forEach(function(site){
+      var months=(pay.sites[site]||[]).filter(function(r){return dailyReportRows(r.직원||[]).length>0;});
+      if(!months.length) return;
+      var tot=months.reduce(function(a,r){return a+dailyReportRows(r.직원||[]).length;},0);
+      h+='<div class="c" style="cursor:pointer" onclick="navTo({site:\''+site.replace(/'/g,"")+'\'})">'+
+         '<div class="t">'+site+'</div><div class="m">신고월 '+months.length+'건 · 일용 연 '+tot+'명</div></div>';
+    });
+    h+='</div>'; return h;
+  }
+  var recs=(pay.sites[App.site]||[]).filter(function(r){return dailyReportRows(r.직원||[]).length>0;});
+  if(!App.month){
+    h+='<div class="sub"><a href="#" onclick="goBack();return false">← 사업장</a> · <b>'+App.site+'</b> 신고월 선택</div>';
+    h+='<div style="background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden">';
+    recs.forEach(function(r){ var n=dailyReportRows(dedupeEmps(r.직원||[])).length;
+      h+='<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);cursor:pointer" onclick="navTo({month:\''+r.월.replace(/'/g,"")+'\'})">'+
+         '<div style="flex:1"><b>'+r.월+'</b> <span style="font-size:12px;color:var(--sub)">일용 '+n+'명 · '+r.파일+'</span></div></div>';
+    });
+    h+='</div>'; return h;
+  }
+  var rec=recs.filter(function(r){return r.월===App.month;})[0]||{직원:[]};
+  var rows=dailyReportRows(dedupeEmps(rec.직원||[]));
+  var nOk=rows.filter(function(x){return x.검산==='일치';}).length;
+  h+='<div class="sub"><a href="#" onclick="goBack();return false">← '+App.site+'</a> · <b>'+App.month+'</b> 일용 '+rows.length+'명 · 검산 일치 '+nOk+'/'+rows.length+
+     ' <button class="btn" style="margin-left:8px" onclick="copyReportTSV(\''+App.site.replace(/'/g,"")+'\',\''+App.month.replace(/'/g,"")+'\')">EDI 붙여넣기용 복사</button></div>';
+  h+='<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;background:#fff">'+
+     '<tr style="background:var(--paper);text-align:right">'+['순번','성명','근로일수','기초일수','일평균시간','단가','보수총액','임금총액','소득세','지방소득세','검산'].map(function(c,i){return '<th style="padding:8px 10px;'+(i<2?'text-align:left':'')+'">'+c+'</th>';}).join('')+'</tr>';
+  rows.forEach(function(x,i){
+    var warn=x.검산!=='일치';
+    h+='<tr style="border-top:1px solid var(--line);text-align:right">'+
+      '<td style="padding:7px 10px;text-align:left;color:var(--sub)">'+(i+1)+'</td>'+
+      '<td style="padding:7px 10px;text-align:left;font-weight:600">'+x.성명+'</td>'+
+      '<td style="padding:7px 10px">'+x.근로일수+'</td><td style="padding:7px 10px">'+x.기초일수+'</td>'+
+      '<td style="padding:7px 10px">'+(x.일평균시간!=null?x.일평균시간:'-')+'</td>'+
+      '<td style="padding:7px 10px">'+won(x.단가)+'<span style="color:var(--sub);font-size:10.5px">/'+x.단가구분+'</span></td>'+
+      '<td style="padding:7px 10px">'+won(x.보수총액)+'</td><td style="padding:7px 10px">'+won(x.임금총액)+'</td>'+
+      '<td style="padding:7px 10px">'+won(x.소득세)+'</td><td style="padding:7px 10px">'+won(x.지방소득세)+'</td>'+
+      '<td style="padding:7px 10px;color:'+(warn?'var(--warn)':'var(--ok)')+';font-weight:600">'+x.검산+'</td></tr>';
+  });
+  h+='</table></div><div class="note">주민등록번호는 시스템에 저장하지 않음 → 공단 제출 시 대행기관 명부에서 성명 매칭. '+
+     '"확인(+N 주휴·야간?)"은 단가×근무보다 커서 주휴·야간수당이 포함된 정상 케이스일 수 있음(원본 대조). 근로일자 달력(o표시)은 원본 대장 출역표 사용.</div>';
+  return h;
+}
 /* ── 자동 태깅: 도착 자료(파일명/제목/보낸이) → 사업장·월·종류 추론 ──
    메일 웹훅이 payroll_os/inbox/{id}에 {ts,filename,subject,from}만 써주면, 이 로직이 태깅. */
 function inboxLog(){ var v=dbGet('inbox',{}); return (v&&typeof v==='object'&&!Array.isArray(v))?v:{}; }
@@ -499,6 +588,7 @@ function render(){
   if(App.screen==='cards') m.innerHTML=screenCards();
   else if(App.screen==='payroll') m.innerHTML=screenPayroll();
   else if(App.screen==='slip') m.innerHTML=screenSlip();
+  else if(App.screen==='report') m.innerHTML=screenReport();
   else m.innerHTML=screenInbox();
 }
 function importCards(){var i=document.createElement('input');i.type='file';i.accept='.json';
