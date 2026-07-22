@@ -473,6 +473,15 @@ body.pc #pcDetail{display:flex}
       <h2><span id="pcTitle">전체 명함</span> <em id="pcCount">0개</em></h2>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <select id="pcRegion" onchange="state.region=this.value;state.page=0;render()" title="회사주소 기준 지역으로 거르기"></select>
+        <select id="pcErp" onchange="state.erpFilter=this.value;state.page=0;render()" title="푸른이알피 업체관리 연결 기준으로 거르기 (자문·급여·노조·기금 자동 분류)">
+          <option value="">ERP 전체</option>
+          <option value="자문">ERP·자문</option>
+          <option value="급여">ERP·급여</option>
+          <option value="노조">ERP·노조</option>
+          <option value="기금">ERP·기금</option>
+          <option value="linked">ERP 연결만</option>
+          <option value="none">ERP 미연결</option>
+        </select>
         <button id="incompleteBtn" class="pctool" onclick="this.classList.toggle('on');state.onlyIncomplete=!state.onlyIncomplete;state.page=0;render()" title="전화·이메일이 모두 있지 않은 명함만 보기 (빠진 정보 채우기용)">정보 부족만</button>
         <button id="privateBtn" class="pctool" onclick="this.classList.toggle('on');state.onlyPrivate=!state.onlyPrivate;state.page=0;render()" title="개인으로 지정한 명함만 보기">개인만</button>
         <div style="position:relative">
@@ -535,7 +544,7 @@ const FIREBASE_CONFIG = {
 const DB_ROOT = 'pucards';
 const GEMINI_KEY_LS = 'pucards_gemini_key';
 
-const state = { tab:'card', group:'all', owner:'all', region:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, colOrder:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, onlyPrivate:false, unlocked:{}, items:{}, groups:{}, trash:{} };
+const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, colOrder:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, onlyPrivate:false, unlocked:{}, items:{}, groups:{}, trash:{} };
 
 /* ── 데이터 계층 ── */
 const Store = {
@@ -674,8 +683,11 @@ const ErpMatch = {
         if(!co) return;
         const main = co.managerMain ? (nameBySid[co.managerMain]||co.managerMain) : '';
         const subs = (co.managerSubs||[]).map(s=>nameBySid[s]||s).filter(Boolean);
-        if(!main && !subs.length) return;              /* 담당자 없으면 배지 의미 없음 */
-        const rec = { company:co.name||'', main, subs };
+        /* 유형(자문/급여/노조/기금)·실무담당자명 — 담당 노무사가 없어도 유형 배지는 의미 있음 */
+        const rec = { company:co.name||'', main, subs,
+          type: co.typeCode||'',
+          contact: ErpMatch._norm(co.primaryContactName||co.contactName||'') };
+        if(!main && !subs.length && !rec.type) return;
         const b = ErpMatch._digits(co.bizNo); if(b.length>=10 && !byBiz[b]) byBiz[b]=rec;
         const n = ErpMatch._norm(co.name);    if(n && !byName[n]) byName[n]=rec;
       });
@@ -706,6 +718,14 @@ const ErpMatch = {
     if(m.main) parts.push('주담당 '+m.main);
     if(m.subs.length) parts.push('부담당 '+m.subs.join(', '));
     return parts.join(' · ');
+  },
+  /* ERP 업체 유형: '자문'|'급여'|'노조'|'기금'|'' */
+  type(it){ const m = ErpMatch.match(it); return (m && m.type) || ''; },
+  /* 이 명함 주인이 그 업체의 실무 담당자로 등록돼 있는가 */
+  isContact(it){
+    const m = ErpMatch.match(it); if(!m || !m.contact) return false;
+    const n = ErpMatch._norm(it.name); if(!n) return false;
+    return m.contact === n || m.contact.indexOf(n) === 0;   /* '유석주이사' 같은 직책 붙은 표기 허용 */
   }
 };
 
@@ -1004,6 +1024,13 @@ function listItems(){
       if (state.onlyEmail && !it.email) return false;
       if (state.onlyIncomplete && (it.mobile||it.tel||it.companyTel) && it.email) return false;
       if (state.onlyPrivate && it.scope!=='private') return false;
+      /* ERP 연결 필터: 자문/급여/노조/기금(유형) · linked(연결만) · none(미연결) */
+      if (state.erpFilter){
+        const m = ErpMatch.match(it);
+        if (state.erpFilter==='none'){ if(m) return false; }
+        else if (state.erpFilter==='linked'){ if(!m) return false; }
+        else { if(!m || (m.type||'')!==state.erpFilter) return false; }
+      }
       return true;
     });
   /* 중복만 보기 */
@@ -2822,10 +2849,18 @@ function renderPCTable(){
     const i = start + pi;
     const chk=`<td onclick="event.stopPropagation()"><input type="checkbox" ${state.sel[it.id]?'checked':''} onchange="toggleSel('${it.id}')"></td>`;
     const dup = isDup(it) ? `<span class="dup">⚠중복</span>` : '';
+    /* ERP 연결 배지: 업체 유형(자문/급여/노조/기금) + 실무담당 여부 (업체관리 실시간 매칭) */
+    const erpBadge = (function(){
+      const t = ErpMatch.type(it); if(!t && !ErpMatch.match(it)) return '';
+      const cMap = { '자문':'#1e40af', '급여':'#166534', '노조':'#6d28d9', '기금':'#92400e' };
+      let h = t ? `<span title="푸른이알피 업체관리 연결 · ${esc(ErpMatch.full(it))}" style="display:inline-block;background:${cMap[t]||'#475569'}18;color:${cMap[t]||'#475569'};border:1px solid ${cMap[t]||'#475569'}44;border-radius:8px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap">ERP·${esc(t)}</span>` : '';
+      if (ErpMatch.isContact(it)) h += ` <span title="업체관리에 이 명함 주인이 실무 담당자로 등록됨" style="display:inline-block;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:8px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap">실무담당</span>`;
+      return h;
+    })();
     const actCell = `<td onclick="event.stopPropagation()" style="text-align:center;white-space:nowrap">
         <button onclick="openEditor(state.items['${it.id}'])" title="수정" style="border:none;background:none;cursor:pointer;font-size:14px;padding:3px 5px">✏️</button>
         <button onclick="delItem('${it.id}')" title="삭제" style="border:none;background:none;cursor:pointer;font-size:14px;padding:3px 5px">🗑</button></td>`;
-    rows += `<tr draggable="true" ondragstart="onRowDrag(event,'${it.id}')" onclick="openDetail('${it.id}')" oncontextmenu="openRowMenu(event,'${it.id}')">${chk}<td class="num">${i+1}</td>${order.map(k=>TD[k](it)).join('')}<td class="dt">${dup}</td>${actCell}</tr>`;
+    rows += `<tr draggable="true" ondragstart="onRowDrag(event,'${it.id}')" onclick="openDetail('${it.id}')" oncontextmenu="openRowMenu(event,'${it.id}')">${chk}<td class="num">${i+1}</td>${order.map(k=>TD[k](it)).join('')}<td class="dt" style="white-space:nowrap">${erpBadge}${erpBadge&&dup?' ':''}${dup}</td>${actCell}</tr>`;
   });
   if (!rows) rows = `<tr><td class="pcempty" colspan="${order.length+4}">등록된 항목이 없습니다 — 우측 상단 [＋ 명함 등록] 또는 이미지·PDF를 화면에 끌어다 놓으세요. (Ctrl+V 붙여넣기 가능)</td></tr>`;
   $('pcTable').innerHTML = `${colg}<thead>${thead}</thead><tbody>${rows}</tbody>`;
@@ -2865,6 +2900,11 @@ if (IS_PC){
   $('pcRoot').hidden = false;
 }
 loadColPrefs();
+/* URL ?q= 딥링크: 푸른이알피 업체관리의 📇 명함 버튼에서 검색어를 들고 진입 */
+try{
+  const _uq = new URLSearchParams(location.search).get('q');
+  if(_uq){ const _s=$('search'); if(_s) _s.value=_uq; const _ps=$('pcSearch'); if(_ps) _ps.value=_uq; }
+}catch(e){}
 /* 폴더 계층 폐지: 기존에 parent(하위폴더)였던 폴더를 모두 최상위로 1회 정리 */
 setTimeout(()=>{
   try{
