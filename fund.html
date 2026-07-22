@@ -387,7 +387,8 @@ function renderHome(){
   var head='<div class="panel"><div class="row"><h1>기금 현황</h1><span class="stat">운영 '+active.length+'</span>'+(past.length?'<span class="stat">지난 '+past.length+'</span>':'')
     +(incN?'<span class="stat" style="background:var(--warn-bg);color:var(--warn)">미완비 '+incN+'</span>':'')+'<span style="flex:1"></span>'
     +(edit?'<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;margin-right:6px"><input type="checkbox"'+(S.homeInc?' checked':'')+' onchange="S.homeInc=this.checked;renderHome()"> 미완비만</label>':'')
-    +(edit?'<button onclick="bulkRegistry()" title="소재지로 전체 기금 관할등기소 자동 추정" style="margin-right:6px">🏛 관할등기소 일괄</button>':'')
+    +(edit?'<button onclick="bulkRegistry()" title="소재지로 전체 기금 관할등기소 자동 추정" style="margin-right:6px">🏛 등기소 일괄</button>':'')
+    +(edit?'<button onclick="bulkTax()" title="소재지로 전체 기금 관할세무서 자동 추정" style="margin-right:6px">🏢 세무서 일괄</button>':'')
     +'<button class="'+(edit?'primary':'')+'" onclick="S.homeEdit=!S.homeEdit;renderHome()" title="핵심 기본정보(인가번호·설립일 등) 직접 입력">'+(edit?'✓ 입력 종료':'✏️ 정보 채우기')+'</button>'
     +'<input class="search" placeholder="기금명·담당 검색" value="'+esc(S.q||'')+'" oninput="S.q=this.value;renderHome()"></div>'
     +(edit?'<p class="muted" style="font-size:12px;margin:6px 0 0">칸에 바로 입력하면 자동 저장됩니다. 빨간 테두리=빈 칸. 완비 기준 5항목: 인가번호·인가일·법인등록번호·설립등기일·고유번호. [🏛 관할등기소 일괄]=소재지로 전 기금 등기소 추정(확인 필요).</p>':'')+'</div>';
@@ -473,6 +474,27 @@ function guessRegistry(address){
   var sido=_SIDO_ABBR[m[1]]||m[1], sgg=m[2];
   return REGISTRY_MAP[sido+' '+sgg]||'';
 }
+// 관할세무서 — 확실한 시·군·구만(강남구·칠곡 등 복수세무서 지역은 미매핑→수기)
+var TAX_MAP={
+  '충남 천안시':'천안세무서','충남 아산시':'아산세무서','충남 서산시':'서산세무서',
+  '충남 서천군':'홍성세무서','충남 예산군':'홍성세무서','충남 청양군':'홍성세무서','충남 홍성군':'홍성세무서',
+  '충남 보령시':'홍성세무서','충남 공주시':'공주세무서','충남 논산시':'공주세무서','충남 부여군':'공주세무서',
+  '충남 당진시':'서산세무서','충남 태안군':'서산세무서',
+  '충북 청주시':'청주세무서','충북 충주시':'충주세무서','충북 제천시':'제천세무서',
+  '대전 서구':'서대전세무서','대전 유성구':'서대전세무서','대전 중구':'대전세무서','대전 동구':'대전세무서','대전 대덕구':'대전세무서',
+  '경기 수원시':'수원세무서','경기 안산시':'안산세무서','경기 평택시':'평택세무서','경기 안성시':'평택세무서',
+  '경기 양주시':'의정부세무서','경기 의정부시':'의정부세무서','경기 남양주시':'남양주세무서',
+  '경기 고양시':'고양세무서','경기 파주시':'파주세무서',
+  '대구 달서구':'서대구세무서','대구 달성군':'서대구세무서',
+  '서울 강동구':'강동세무서','서울 강서구':'강서세무서','서울 송파구':'잠실세무서'
+};
+function guessTax(address){
+  var a=String(address||'').trim(); if(!a) return '';
+  var m=a.match(/(\S+?(?:도|특별시|광역시|특별자치시|특별자치도))\s+(\S+?(?:시|군|구))/);
+  if(!m) return '';
+  var sido=_SIDO_ABBR[m[1]]||m[1], sgg=m[2];
+  return TAX_MAP[sido+' '+sgg]||'';
+}
 function fillRegistry(){
   var addr=($('fd-address')&&$('fd-address').value)||funds[S.fundId].address||'';
   var g=guessRegistry(addr);
@@ -507,6 +529,42 @@ function applyBulkRegistry(){
   fbDb.ref(NS+'/funds').update(updates).then(function(){
     plan.forEach(function(p){ if(funds[p.id]) funds[p.id].registry_office=p.office; });
     window._regPlan=null; closeM(); renderHome(); toast(plan.length+'개 관할등기소 채움 — 확인 필요');
+  }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
+}
+function fillTaxOffice(){
+  var addr=($('fd-address')&&$('fd-address').value)||funds[S.fundId].address||'';
+  var g=guessTax(addr);
+  if(!g){ toast('소재지로 관할세무서를 찾지 못했습니다. 직접 입력하세요','warn'); return; }
+  var el=$('fd-tax_office'); if(el){ el.value=g; markDirty(); }
+  toast('추정: '+g+' — 홈택스(hometax.go.kr)에서 확인 후 저장','warn');
+}
+// 전체 기금 관할세무서 일괄 추정 — 미리보기 후 적용(빈 칸만)
+function bulkTax(){
+  var arr=Object.keys(funds).map(function(k){return Object.assign({_id:k},funds[k]);});
+  var plan=[], nomap=[], skip=0;
+  arr.forEach(function(f){
+    if((f.tax_office||'').trim()){ skip++; return; }
+    if(!(f.address||'').trim()) return;
+    var g=guessTax(f.address);
+    if(g) plan.push({id:f._id,name:f.short_name||f.name,office:g});
+    else nomap.push(f.short_name||f.name);
+  });
+  if(!plan.length){ toast('자동 채울 대상이 없습니다(빈 칸+매핑 가능 기금 없음)','warn'); return; }
+  var rows=plan.map(function(p){return '<tr><td style="font-weight:600">'+esc(p.name)+'</td><td>'+esc(p.office)+'</td></tr>';}).join('');
+  showModal('<h2 style="margin:0 0 4px">관할세무서 일괄 채우기</h2>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 10px"><b>추정값</b>입니다(세무서 관할은 구·읍면동으로 갈리는 경우가 있어 특히 확인 필요). 실제 관할은 홈택스(hometax.go.kr)에서 확인하세요. <b>비어 있는 '+plan.length+'개</b>만 채웁니다(이미 채워진 '+skip+'개는 유지).'
+    +(nomap.length?'<br>매핑 없어 제외 '+nomap.length+'개: '+esc(nomap.slice(0,8).join(', '))+(nomap.length>8?' 외':''):'')+'</p>'
+    +'<div style="max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:8px"><table><thead><tr><th>기금</th><th>추정 관할세무서</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">취소</button><button class="primary" onclick="applyBulkTax()">'+plan.length+'개 채우기</button></div>');
+  window._taxPlan=plan;
+}
+function applyBulkTax(){
+  var plan=window._taxPlan||[]; if(!plan.length){ closeM(); return; }
+  var updates={};
+  plan.forEach(function(p){ updates[p.id+'/tax_office']=p.office; });
+  fbDb.ref(NS+'/funds').update(updates).then(function(){
+    plan.forEach(function(p){ if(funds[p.id]) funds[p.id].tax_office=p.office; });
+    window._taxPlan=null; closeM(); renderHome(); toast(plan.length+'개 관할세무서 채움 — 확인 필요');
   }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
 }
 function patchFund(id,field,val){
@@ -788,6 +846,8 @@ function infoForm(f){
     if(c[2]==='select') inp='<select id="fd-'+c[0]+'">'+['공동','사내'].map(function(o){return '<option'+(v===o?' selected':'')+'>'+o+'</option>';}).join('')+'</select>';
     else if(c[0]==='registry_office') inp='<div style="display:flex;gap:5px"><input id="fd-'+c[0]+'" type="text" value="'+esc(v)+'" style="flex:1">'
       +'<button type="button" onclick="fillRegistry()" title="소재지로 관할등기소 자동 추정(확인 필요)" style="white-space:nowrap;padding:0 10px;cursor:pointer">🔍 소재지로</button></div>';
+    else if(c[0]==='tax_office') inp='<div style="display:flex;gap:5px"><input id="fd-'+c[0]+'" type="text" value="'+esc(v)+'" style="flex:1">'
+      +'<button type="button" onclick="fillTaxOffice()" title="소재지로 관할세무서 자동 추정(확인 필요)" style="white-space:nowrap;padding:0 10px;cursor:pointer">🔍 소재지로</button></div>';
     else inp='<input id="fd-'+c[0]+'" type="'+c[2]+'" value="'+esc(v)+'">';
     return '<div class="fld'+(c[0]==='address'?' full':'')+'"><label>'+c[1]+'</label>'+inp+'</div>';
   }).join('');
