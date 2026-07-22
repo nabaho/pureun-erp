@@ -55,9 +55,106 @@
     }
   };
 
+  // ══════════ 2부: 서류 생성 (브라우저 전용 — html2canvas/jsPDF/XLSX는 호출 페이지가 CDN 로드) ══════════
+  var IS_BROWSER = (typeof document !== 'undefined');
+
+  // A4 1페이지 서식 공통 래퍼 (맑은 고딕 렌더 → 래스터화라 폰트 임베드 불필요)
+  function pageWrap(inner) {
+    return '<div style="width:794px;min-height:1123px;padding:70px 60px;background:#fff;' +
+      "font-family:'Malgun Gothic','맑은 고딕',sans-serif;font-size:14px;line-height:1.9;color:#111;box-sizing:border-box\">" +
+      inner + '</div>';
+  }
+  function personVars(person, caseMeta) {
+    return {
+      '이름': person.name, '주민등록번호': person.idNo, '주소': person.addr,
+      '근로자연락처': person.phone || '',
+      '회사명': (caseMeta && caseMeta.company) || '', '작성일': (person.consentAt || '').slice(0, 10)
+    };
+  }
+  function sigBlock(person) {
+    return '<div style="margin-top:40px;text-align:right">' +
+      '<span style="font-size:14px">위임인: ' + person.name + ' </span>' +
+      '<img src="' + person.sigPng + '" style="height:60px;vertical-align:middle;border-bottom:1px solid #999">' +
+      '<span style="font-size:12px;color:#555"> (서명)</span></div>';
+  }
+
+  // 위임약정서 + 위임장 (1인분, 1페이지)
+  function buildDelegationHtml(person, caseMeta) {
+    var v = personVars(person, caseMeta);
+    return pageWrap(
+      '<h2 style="text-align:center;font-size:22px;letter-spacing:8px;margin-bottom:24px">위 임 장</h2>' +
+      '<div style="white-space:pre-wrap">' + fillVars(ESIGN_FORMS.delegation.body, v).replace(/\{\{[^}]+\}\}/g, '________') + '</div>' +
+      '<hr style="margin:26px 0;border:none;border-top:1px dashed #999">' +
+      '<h3 style="text-align:center;font-size:16px;margin-bottom:14px">' + ESIGN_FORMS.delegationAgreement.title + '</h3>' +
+      '<div style="white-space:pre-wrap;font-size:12.5px;line-height:1.7">' + fillVars(ESIGN_FORMS.delegationAgreement.body, v).replace(/\{\{[^}]+\}\}/g, '________') + '</div>' +
+      sigBlock(person) +
+      '<div style="margin-top:16px;font-size:12px;color:#555">작성일: ' + v['작성일'] + ' · 전자제출(푸른노무법인 전자위임 시스템)</div>'
+    );
+  }
+
+  // 개인정보 수집·이용·제공 동의서 (1인분)
+  function buildConsentHtml(person, caseMeta) {
+    var v = personVars(person, caseMeta);
+    return pageWrap(
+      '<h2 style="text-align:center;font-size:20px;margin-bottom:24px">' + ESIGN_FORMS.privacyConsent.title + '</h2>' +
+      '<div style="white-space:pre-wrap">' + fillVars(ESIGN_FORMS.privacyConsent.body, v).replace(/\{\{[^}]+\}\}/g, '________') + '</div>' +
+      '<div style="margin-top:24px">동의 일시: ' + String(person.consentAt || '').replace('T', ' ').slice(0, 16) + ' (전자 동의)</div>' +
+      sigBlock(person)
+    );
+  }
+
+  // HTML 배열 → 각 1페이지 PDF (pu-erp buildPayslipPdfBase64 패턴: 화면 밖 렌더 → html2canvas → jsPDF)
+  async function htmlPagesToPdf(htmlArray, fileName) {
+    if (!IS_BROWSER) throw new Error('브라우저 전용');
+    var pdf = new jspdf.jsPDF({ unit: 'pt', format: 'a4' }); // 595 x 842pt
+    for (var i = 0; i < htmlArray.length; i++) {
+      var host = document.createElement('div');
+      host.style.cssText = 'position:fixed;left:-9999px;top:0;z-index:-1';
+      host.innerHTML = htmlArray[i];
+      document.body.appendChild(host);
+      var canvas = await html2canvas(host.firstChild, { scale: 1.5, useCORS: true, backgroundColor: '#ffffff' });
+      host.remove();
+      var imgH = 842, imgW = Math.min(595, canvas.width / canvas.height * 842);
+      if (i > 0) pdf.addPage();
+      pdf.addImage(canvas.toDataURL('image/jpeg', 0.85), 'JPEG', (595 - imgW) / 2, 0, imgW, imgH);
+    }
+    pdf.save(fileName);
+  }
+
+  // 진정인 연명부 XLSX
+  function downloadRosterXlsx(persons, caseMeta) {
+    var rows = persons.map(function (p, i) {
+      return { '순번': i + 1, '성명': p.name, '주민등록번호': p.idNo, '연락처': p.phone,
+        '주소': p.addr, '입사일': p.joinDate || '', '퇴사일': p.leaveDate || '', '입금계좌': p.bank };
+    });
+    var ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{wch:5},{wch:10},{wch:16},{wch:15},{wch:40},{wch:11},{wch:11},{wch:24}];
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '진정인 연명부');
+    XLSX.writeFile(wb, ((caseMeta && caseMeta.title) || '사건') + '_진정인연명부.xlsx');
+  }
+
+  // 체불/체당금 정리 XLSX — 기존 소액체당금 정리 엑셀 열 구조(개인정보 + 월별 체불 + 퇴직금 + 합계)
+  function downloadArrearsXlsx(persons, arrearsMap, caseMeta) {
+    var rows = persons.map(function (p, i) {
+      var a = (arrearsMap && arrearsMap[p._subId]) || {};
+      var m1 = +a.month1 || 0, m2 = +a.month2 || 0, m3 = +a.month3 || 0, sev = +a.severance || 0;
+      return { '순번': i + 1, '성명': p.name, '주민등록번호': p.idNo, '연락처': p.phone, '주소': p.addr,
+        '입사일': p.joinDate || '', '퇴사일': p.leaveDate || '', '입금계좌': p.bank,
+        '체불임금(1개월차)': m1, '체불임금(2개월차)': m2, '체불임금(3개월차)': m3,
+        '체불퇴직금': sev, '체불총액': m1 + m2 + m3 + sev };
+    });
+    var ws = XLSX.utils.json_to_sheet(rows);
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '체불임금정리');
+    XLSX.writeFile(wb, ((caseMeta && caseMeta.title) || '사건') + '_체불임금정리.xlsx');
+  }
+
   var api = {
     fmtIdNo: fmtIdNo, validateIdNo: validateIdNo, maskIdNo: maskIdNo,
-    fillVars: fillVars, ESIGN_FORMS: ESIGN_FORMS
+    fillVars: fillVars, ESIGN_FORMS: ESIGN_FORMS,
+    buildDelegationHtml: buildDelegationHtml, buildConsentHtml: buildConsentHtml,
+    htmlPagesToPdf: htmlPagesToPdf, downloadRosterXlsx: downloadRosterXlsx, downloadArrearsXlsx: downloadArrearsXlsx
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.EsignDocs = api;
