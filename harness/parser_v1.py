@@ -41,7 +41,34 @@ FIELDS = {
     "시급":     ["시급"],
     "근무시간": ["총근무시간", "총근로시간"],
     "평균시간": ["평균시간", "일평균근로시간"],
+    # 날짜 필드(취득·상실 신고용) — 값은 parse_date로 ISO 문자열 저장
+    # '입.퇴사일' 통합 열은 입사일로(값이 대개 입사일). 퇴사일 오바인딩은 FIELDS_NEG로 차단.
+    "입사일":   ["입사일", "입사년월일", "입 사 일", "취득일", "입.퇴사일", "입/퇴사일", "입퇴사일"],
+    "퇴사일":   ["퇴사일", "퇴사년월일", "퇴 사 일", "퇴직일", "상실일"],
 }
+
+DATE_FIELDS = {"입사일", "퇴사일"}
+
+
+def parse_date(v):
+    """셀 값 → 'YYYY-MM-DD' (datetime 객체·'YY.MM.DD'·'YYYY-MM-DD' 등). 아니면 None."""
+    if v is None:
+        return None
+    import datetime
+    if isinstance(v, (datetime.datetime, datetime.date)):
+        return v.strftime("%Y-%m-%d")
+    s = str(v).strip()
+    if s in ("", "-", "—"):
+        return None
+    m = re.match(r'^(\d{2,4})\s*[.\-/년]\s*(\d{1,2})\s*[.\-/월]\s*(\d{1,2})', s)
+    if not m:
+        return None
+    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if y < 100:
+        y += 2000 if y < 70 else 1900
+    if not (1 <= mo <= 12 and 1 <= d <= 31):
+        return None
+    return f"{y:04d}-{mo:02d}-{d:02d}"
 
 # 짧아서 다른 항목(기타공제액·연차일수 등)과 오인되기 쉬운 라벨:
 # 공백 제거한 헤더가 '정확히' 이 값일 때만 매핑.
@@ -55,6 +82,7 @@ FIELDS_EXACT = {"공제액": "공제총액", "공수": "근무일수", "일수":
 FIELDS_NEG = {
     "지급총액": ("기지급", "미지급", "선지급", "가지급", "계산"),
     "공제총액": ("지각공제", "결근공제"),
+    "퇴사일":   ("입퇴", "입.퇴", "입/퇴", "입,퇴", "입사일("),  # 통합/병기 라벨은 입사일이 우선
 }
 
 
@@ -143,7 +171,7 @@ def score_sheet(ws):
         for canon, syns in FIELDS.items():
             # 보조필드는 점수에서 제외 — 상용/일용 표가 쌓인 시트에서
             # 일용 헤더가 상용 헤더를 이겨 상용 직원이 잘림(헤더 선택은 핵심필드만)
-            if canon in ("일당", "근무일수", "시급", "근무시간", "평균시간"):
+            if canon in ("일당", "근무일수", "시급", "근무시간", "평균시간", "입사일", "퇴사일"):
                 continue
             if any(s in joined for s in syns):
                 f.add(canon)
@@ -256,7 +284,7 @@ def pick_and_parse(wb):
                 if f == "성명":
                     continue
                 if c < len(row):
-                    val = parse_num(row[c])
+                    val = parse_date(row[c]) if f in DATE_FIELDS else parse_num(row[c])
                     if val is not None:
                         emp[f] = val
             # 기타공제 합산(상조·가불·정산 등 — 공제총액 정합성용)
