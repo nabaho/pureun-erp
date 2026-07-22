@@ -150,18 +150,123 @@ def _clean_key(k):
         return None
     return k.strip().strip('"\'').lstrip("﻿").strip() or None
 
-def call_vision(img_path, model):
-    """Gemini Flash / Claude 비전 호출. 키 있으면 동작.
-    ⚠ 전송 전 mask_rrn_image 필수. 유료 티어 사용(무료는 학습에 쓰일 수 있음)."""
+# 모델명은 바뀔 수 있음 → 환경변수로 교체 가능(기본값은 2026 기준 합리값).
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")          # 1차(저가)
+GEMINI_MODEL_VERIFY = os.environ.get("GEMINI_MODEL_VERIFY", "gemini-2.5-pro")  # 재판독(교차검증)
+GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+
+VISION_PROMPT = (
+    "너는 한국 급여대장/노임대장 판독기다. 이미지의 표를 읽어 직원별 급여를 JSON으로만 반환하라.\n"
+    "규칙: (1) 주민번호는 검게 마스킹되어 있으니 무시. (2) 금액은 콤마 없는 정수, 없으면 null.\n"
+    "(3) 성명 외 항목: 기본급·과세총액·소득세·지방세·국민연금·건강보험·장기요양·고용보험·"
+    "공제총액·실수령·일당·근무일수·연말정산(음수=환급). (4) 합계/소계 행은 제외.\n"
+    "형식: {\"employees\":[{\"성명\":\"...\",\"기본급\":숫자|null, ...}, ...]}\n"
+    "설명 없이 JSON만 출력."
+)
+
+
+def _render_png_bytes(path, page=0, dpi=170):
+    """PDF/이미지 → PNG 바이트(마스킹된 파일을 비전에 보낼 형태)."""
+    import fitz
+    doc = fitz.open(path)
+    try:
+        pg = doc[page]
+        return pg.get_pixmap(dpi=dpi).tobytes("png")
+    finally:
+        doc.close()
+
+
+def _page_count(path):
+    import fitz
+    doc = fitz.open(path)
+    try:
+        return doc.page_count
+    finally:
+        doc.close()
+
+
+def _gemini_vision(png_bytes, prompt, model, key, timeout=60):
+    """Gemini generateContent REST 호출(마스킹된 PNG 1장 + 프롬프트) → 모델 텍스트."""
+    import urllib.request, base64
+    body = json.dumps({
+        "contents": [{"parts": [
+            {"text": prompt},
+            {"inline_data": {"mime_type": "image/png",
+                             "data": base64.b64encode(png_bytes).decode()}}]}],
+        "generationConfig": {"temperature": 0, "response_mime_type": "application/json"},
+    }).encode("utf-8")
+    url = GEMINI_ENDPOINT.format(model=model, key=key)
+    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        resp = json.loads(r.read().decode("utf-8"))
+    try:
+        return resp["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError):
+        raise RuntimeError("Gemini 응답 파싱 실패: " + json.dumps(resp)[:300])
+
+
+def _num(v):
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return v
+    s = str(v).replace(",", "").replace(" ", "").strip()
+    if s in ("", "-", "—", "null", "None"):
+        return None
+    try:
+        f = float(s)
+        return int(f) if f == int(f) else f
+    except ValueError:
+        return None
+
+
+NUM_FIELDS = ["기본급", "과세총액", "소득세", "지방세", "국민연금", "건강보험", "장기요양",
+              "고용보험", "공제총액", "실수령", "일당", "근무일수", "연말정산", "지급총액"]
+
+
+def parse_vision_json(text):
+    """모델 응답 텍스트 → 정규화된 직원 리스트. ```json 펜스·잡텍스트 방어."""
+    t = (text or "").strip()
+    if "```" in t:                       # 코드펜스 제거
+        t = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", t.strip("`\n "), flags=re.M)
+    i, j = t.find("{"), t.rfind("}")
+    if i >= 0 and j > i:
+        t = t[i:j + 1]
+    data = json.loads(t)
+    emps = data.get("employees") if isinstance(data, dict) else data
+    SUM_ROWS = {"합계", "소계", "총계", "합 계", "총 계", "계", "누계"}
+    out = []
+    for e in emps or []:
+        nm = str(e.get("성명", "")).strip()
+        if not nm or nm.replace(" ", "") in {s.replace(" ", "") for s in SUM_ROWS}:
+            continue  # 합계/소계 행 방어(모델이 실수로 넣어도 제외)
+        rec = {"성명": nm}
+        for k in NUM_FIELDS:
+            n = _num(e.get(k))
+            if n is not None:
+                rec[k] = n
+        out.append(rec)
+    return out
+
+
+def call_vision(masked_path, model=GEMINI_MODEL):
+    """마스킹된 파일을 Gemini 비전으로 판독 → {employees, confidence, raw, model}.
+    ⚠ 반드시 mask_for_transfer 통과본만 넘길 것. 키 없으면 RuntimeError.
+    confidence = 행합계 검산(지급-공제=실수령) 통과 비율(모델 자체보고보다 신뢰)."""
     key = load_api_key()
     if not key:
         raise RuntimeError("API 키 없음. 환경변수 GEMINI_API_KEY 또는 engine/.secrets/gemini.key 필요.")
-    # [구현 예정] google-generativeai 로 Gemini Flash 비전 호출:
-    #   import google.generativeai as genai; genai.configure(api_key=key)
-    #   model=genai.GenerativeModel('gemini-1.5-flash')
-    #   resp=model.generate_content([prompt, {'mime_type':'image/jpeg','data':masked_bytes}])
-    #   → 급여 표를 JSON으로 파싱. (주민번호 마스킹된 이미지만 전송)
-    raise NotImplementedError("call_vision 본체 미구현 — 키 확인됨. 라이브러리 설치 후 구현.")
+    employees, raws = [], []
+    for p in range(_page_count(masked_path)):
+        png = _render_png_bytes(masked_path, page=p)
+        txt = _gemini_vision(png, VISION_PROMPT, model, key)
+        raws.append(txt)
+        employees.extend(parse_vision_json(txt))
+    checks = [check_row_sum(e) for e in employees]
+    checkable = [c for c in checks if c is not None]
+    conf = (sum(1 for c in checkable if c) / len(checkable)) if checkable else 0.0
+    return {"employees": employees, "confidence": round(conf, 3),
+            "model": model, "raw": raws, "n_checkable": len(checkable)}
 
 
 # ── 3) 3중 방어 검산 ─────────────────────────────────────────
@@ -173,11 +278,19 @@ def check_row_sum(emp):
     return abs((g - d) - n) <= 10
 
 def cross_model(res_a, res_b):
-    """② 2모델 비교: Gemini vs Claude 결과 불일치 항목 → 사람 확인."""
+    """② 2모델 비교: 두 판독 결과를 성명 기준 정렬해 필드 불일치 목록 반환.
+    입력은 call_vision 결과({employees:[...]}) 또는 직원 리스트 모두 허용."""
+    def emps(r):
+        lst = r.get("employees") if isinstance(r, dict) else r
+        return {str(e.get("성명", "")).strip(): e for e in (lst or []) if e.get("성명")}
+    a, b = emps(res_a), emps(res_b)
     diffs = []
-    for k in set(res_a) | set(res_b):
-        if res_a.get(k) != res_b.get(k):
-            diffs.append(k)
+    for nm in set(a) | set(b):
+        if nm not in a or nm not in b:
+            diffs.append({"성명": nm, "사유": "한쪽에만 있음"}); continue
+        for k in NUM_FIELDS:
+            if a[nm].get(k) != b[nm].get(k):
+                diffs.append({"성명": nm, "항목": k, "a": a[nm].get(k), "b": b[nm].get(k)})
     return diffs
 
 def confidence_gate(conf, threshold=0.9):
@@ -205,13 +318,15 @@ def mask_for_transfer(path):
 def process_image(path):
     """한 장 처리 흐름(골격). 실제 판독은 call_vision(API 키) 구현 후.
     1) 마스킹(통과 못 하면 전송 안 함) 2) 1차 Gemini 3) 저확신 시 재판독 4) 3중검산 5) 사람큐"""
-    masked = mask_for_transfer(path)           # 전송 전 마스킹(실패 시 예외=전송 안 함)
-    a = call_vision(masked, "gemini-flash")    # 1차(저가) — 키 필요
-    if not confidence_gate(a.get("confidence", 0)):
-        b = call_vision(masked, "claude")      # 재판독(저확신만)
-        if cross_model(a, b):
-            return {"status": "사람확인", "a": a, "b": b}
-    return {"status": "ok", "result": a}
+    masked = mask_for_transfer(path)              # 전송 전 마스킹(실패 시 예외=전송 안 함)
+    a = call_vision(masked, GEMINI_MODEL)         # 1차(저가) — 키 필요
+    if confidence_gate(a.get("confidence", 0)):
+        return {"status": "ok", "result": a}
+    b = call_vision(masked, GEMINI_MODEL_VERIFY)  # 재판독(저확신만, 상위 모델)
+    diffs = cross_model(a, b)
+    if diffs:
+        return {"status": "사람확인", "a": a, "b": b, "diffs": diffs}
+    return {"status": "ok", "result": b}          # 두 모델 일치 → 재판독 결과 채택
 
 
 def main():
