@@ -782,12 +782,16 @@ function renderForms(){
     return '<div class="panel"><div class="row"><h2 style="font-size:15px">'+esc(t.label)+'</h2><span style="flex:1"></span>'+regLine+'</div>'
       +'<p class="muted" style="font-size:11.5px;margin:6px 0 0">원본 파일: '+esc(t.file)+'</p>'+fill+'</div>';
   }
+  var docCards='<div class="panel"><h2 style="font-size:15px">📝 생성 서식 (미리보기·편집)</h2>'
+    +'<p class="muted" style="font-size:11.5px;margin:6px 0 10px">이 기금 데이터로 초안을 만들고, 팝업에서 <b>직접 수정</b>·저장·인쇄합니다. (참고용 초안 — 공식 제출은 위 원본 엑셀·법정서식 사용)</p>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:8px">'
+    +DOC_KINDS.map(function(d){return '<button onclick="previewDoc(\''+d[0]+'\')" style="padding:7px 12px">👁 '+esc(d[1])+'</button>';}).join('')
+    +'</div></div>';
   $('app').innerHTML='<div class="panel"><div class="row"><h1>서식 자료실</h1><span style="flex:1"></span><label style="font-size:12px;margin-right:6px">대상 기금</label>'+fsel+'</div>'
     +'<div style="margin-top:10px;padding:10px 12px;background:var(--warn-bg);border-radius:8px;font-size:12.5px;line-height:1.6">'
     +'실제 <b>법정서식 원본 엑셀</b>에 이 기금 데이터를 채워 내려받습니다. 서식의 표·수식·서식은 그대로 보존됩니다.<br>'
-    +'원본 엑셀은 <b>이 브라우저에 1회 등록</b>하면 이후 자동 사용됩니다(다른 PC·브라우저에서는 다시 등록). 사업장 실데이터가 담기므로 원본은 저장소에 올리지 않습니다.<br>'
-    +'채워지지 않는 칸(회의록 안건·서술형 사업목적 등)은 내려받은 엑셀에서 직접 작성하세요.</div></div>'
-    +tplCard(TPL.setup)+tplCard(TPL.subsidy);
+    +'원본 엑셀은 <b>이 브라우저에 1회 등록</b>하면 이후 자동 사용됩니다(다른 PC·브라우저에서는 다시 등록). 사업장 실데이터가 담기므로 원본은 저장소에 올리지 않습니다.</div></div>'
+    +docCards+tplCard(TPL.setup)+tplCard(TPL.subsidy);
 }
 function pickTpl(key){
   var inp=document.createElement('input'); inp.type='file'; inp.accept='.xlsx';
@@ -815,6 +819,153 @@ function _loadSites(fid){ return fbDb.ref(NS+'/sites/'+fid).once('value').then(f
 function setC(ws,addr,val){ var c=ws.getCell(addr); if(c.type!==ExcelJS.ValueType.Formula) c.value=(val===''||val==null)?null:val; }
 function clearRange(ws,r1,r2,c1,c2){ for(var r=r1;r<=r2;r++)for(var c=c1;c<=c2;c++){ var cell=ws.getCell(r,c);
   if(cell.type!==ExcelJS.ValueType.Formula && cell.value!=null) cell.value=null; } }
+
+// ═══════════ 서식 생성(미리보기·편집) — 파이썬 docgen 이식(설립 6종) ═══════════
+var DOC_KINDS=[['charter','정관'],['minutes','설립준비위원회 회의록'],['agreement','설립합의서'],
+  ['inka','설립인가신청서(별지 제7호 초안)'],['contrib','기금출연확인서'],['bizplan','사업계획서(연도)']];
+function dgV(x,w){ var s=String(x==null?'':x).trim(); return s?esc(s):'＿'.repeat(w||8); }
+function dgWon(x){ var n=num(x); return (n===''||n==null)?'＿＿＿＿＿＿':Number(n).toLocaleString(); }
+function dgToday(){ var d=new Date(); return d.getFullYear()+'년 &nbsp; '+(d.getMonth()+1)+'월 &nbsp; '+d.getDate()+'일'; }
+function dgDocCss(){ return "body{font-family:'Batang','바탕',serif;max-width:760px;margin:0 auto;line-height:1.9;font-size:13.5px;color:#111}"
+  +"h1{text-align:center;font-size:21px;letter-spacing:6px;margin:24px 0}h2{font-size:15px;margin:20px 0 6px;text-align:center;letter-spacing:3px}"
+  +".right{text-align:right}.center{text-align:center}table{border-collapse:collapse;width:100%;margin:10px 0}"
+  +"td,th{border:1px solid #333;padding:6px 10px;font-size:13px}th{background:#f3f3f3;font-weight:700}"
+  +".sign{margin-top:30px;text-align:right;line-height:2.4}.note{color:#888;font-size:11px}"; }
+function docBody(kind,f,sites){
+  sites=sites||[];
+  var fname=esc(f.name||''), chairman=(f.chairman||''), ftype=f.fund_type||'공동';
+  var officers=(Array.isArray(f.officers)&&f.officers.length)?f.officers:[{role:'이사장',name:chairman}];
+  var note="<p class='note'>※ 초안 자동생성본 — 제출 전 담당자 검토 필수. 밑줄 공란은 수기 기입. 이 창에서 바로 수정할 수 있습니다.</p>";
+  if(kind==='charter'){
+    var arts=(Array.isArray(f.welfare_items)&&f.welfare_items.length)?f.welfare_items:['근로자의 생활안정자금 및 주택자금 등의 대부','장학금·재난구호금의 지급','경조사비 및 의료비 지원','체육·문화활동 및 근로자의 날 행사 지원','그 밖에 근로자의 생활안정과 복지증진에 필요한 사업'];
+    return note+"<h1>"+fname+" 정관</h1>"
+      +"<h2>제1장 총칙</h2>"
+      +"<p><b>제1조(명칭)</b> 이 기금법인의 명칭은 \""+dgV(f.name,14)+"\"이라 한다.</p>"
+      +"<p><b>제2조(목적)</b> 이 기금법인은 「근로복지기본법」에 따라 참여사업장 근로자의 생활안정과 복지증진에 기여함을 목적으로 한다.</p>"
+      +"<p><b>제3조(사무소)</b> 이 기금법인의 주된 사무소는 "+dgV(f.address,20)+"에 둔다.</p>"
+      +"<p><b>제4조(사업)</b> 이 기금법인은 다음 각 호의 사업을 행한다.</p>"
+      +"<p>"+arts.map(function(a,i){return '&nbsp;&nbsp;'+(i+1)+'. '+esc(a);}).join('<br>')+"</p>"
+      +"<h2>제2장 기금 및 회계</h2>"
+      +"<p><b>제5조(기본재산)</b> 이 기금법인의 기본재산은 참여사업장 출연금으로 하며, 설립 시 출연금은 "+dgWon(f.contribution_total)+"원으로 한다.</p>"
+      +"<p><b>제6조(회계연도)</b> 이 기금법인의 회계연도는 매년 1월 1일부터 12월 31일까지로 한다.</p>"
+      +"<h2>제3장 임원 및 협의회</h2>"
+      +"<p><b>제7조(임원)</b> 이 기금법인에 이사장 1명을 포함한 이사와 감사를 둔다.</p>"
+      +"<table><tr><th style='width:110px'>직위</th><th>성명</th></tr>"
+      +officers.map(function(o){return "<tr><td class='center'>"+dgV(o.role,4)+"</td><td>"+dgV(o.name,4)+"</td></tr>";}).join('')+"</table>"
+      +"<p><b>제8조(협의회)</b> 기금협의회는 노사 각 동수로 구성하며, 예산·결산·사업계획 등 주요 사항을 심의·의결한다.</p>"
+      +"<h2>부칙</h2><p>이 정관은 고용노동부장관의 설립인가를 받은 날부터 시행한다.</p>"
+      +"<p class='center'>"+dgToday()+"</p>";
+  }
+  if(kind==='minutes'){
+    return note+"<h1>설립준비위원회 회의록</h1>"
+      +"<table><tr><th style='width:120px'>일시</th><td>"+dgV(f.meeting_date,12)+"</td></tr>"
+      +"<tr><th>장소</th><td>"+dgV(f.meeting_place||f.address,18)+"</td></tr>"
+      +"<tr><th>참석</th><td>사용자측 위원 "+dgV(f.emp_committee,10)+" / 근로자측 위원 "+dgV(f.worker_committee,10)+"</td></tr></table>"
+      +"<h2>안건</h2><p>1. "+fname+" 설립에 관한 사항<br>2. 정관 제정에 관한 사항<br>3. 임원 선출에 관한 사항<br>4. 기금출연 확정에 관한 사항<br>5. 기타 설립 관련 사항</p>"
+      +"<h2>심의 결과</h2><p>제1호: 위원 전원 찬성으로 \""+fname+"\" 설립을 의결하였다.<br>"
+      +"제2호: 정관(안)을 원안대로 의결하였다.<br>제3호: 이사장에 "+dgV(chairman)+"을(를) 선출하였다.<br>"
+      +"제4호: 설립 출연금을 "+dgWon(f.contribution_total)+"원으로 확정하였다.<br>제5호: 기타 설립 관련 제반 사항은 이사장에게 위임하기로 의결하였다.</p>"
+      +"<p class='center'>"+dgToday()+"</p>"
+      +"<div class='sign'>위원장(이사장): "+dgV(chairman)+" (인)<br>근로자대표: ＿＿＿＿＿＿ (인)<br>사용자대표: ＿＿＿＿＿＿ (인)</div>";
+  }
+  if(kind==='agreement'){
+    return note+"<h1>설 립 합 의 서</h1>"
+      +"<p>아래 당사자들은 「근로복지기본법」에 따라 <b>"+dgV(f.name,14)+"</b>을(를) 설립하기로 합의한다.</p>"
+      +"<h2>제1조 (명칭)</h2><p>이 기금법인의 명칭은 \""+dgV(f.name,14)+"\"이라 한다.</p>"
+      +"<h2>제2조 (목적사업)</h2><p>"+dgV(f.purpose||'근로자의 생활안정 및 복지증진을 위한 사업',24)+"</p>"
+      +"<h2>제3조 (출연금)</h2><p>참여사업장은 기금법인 설립 시 합계 "+dgWon(f.contribution_total)+"원을 출연한다.</p>"
+      +"<h2>제4조 (기금협의회)</h2><p>기금협의회는 노사 동수로 구성하며, 이사장은 "+dgV(chairman)+"(으)로 한다.</p>"
+      +"<p class='center'>"+dgToday()+"</p>"
+      +"<div class='sign'>참여사업장 대표 (별첨 명부와 같음) 각 (인)<br>근로자대표: ＿＿＿＿＿＿ (인)</div>"
+      +"<h2>별첨: 참여사업장 명부 ("+sites.length+"개소)</h2>"
+      +"<table><tr><th style='width:40px'>번호</th><th>상호</th><th>대표자</th><th>사업자등록번호</th></tr>"
+      +sites.map(function(s,i){return "<tr><td class='center'>"+(i+1)+"</td><td>"+esc(s.name||'')+"</td><td>"+dgV(s.ceo,4)+"</td><td>"+dgV(s.biz_no,12)+"</td></tr>";}).join('')+"</table>";
+  }
+  if(kind==='inka'){
+    var cs=ftype==='사내'?'[V]':'[ ]', cg=ftype==='공동'?'[V]':'[ ]';
+    function wrows(side,names){ if(!names.length)names=['']; return names.map(function(nm,i){
+      return "<tr><td class='center'>"+(i===0?side:'')+"</td><td>"+dgV(nm,6)+"</td><td>＿＿＿＿＿＿</td><td>＿＿＿＿</td></tr>";}).join(''); }
+    var wk=_splitPeople(f.worker_committee), er=_splitPeople(f.emp_committee);
+    return note+"<p class='right'>■ 근로복지기본법 시행규칙 [별지 제7호서식]</p>"
+      +"<h1>"+cs+" 사내근로복지기금법인 &nbsp; "+cg+" 공동근로복지기금법인<br>설립인가신청서</h1>"
+      +"<table><tr><th colspan='4' style='background:#e8e8e8'>기금법인</th></tr>"
+      +"<tr><th style='width:120px'>명칭</th><td>"+dgV(f.name,16)+"</td><th style='width:90px'>전화번호</th><td>"+dgV(f.phone,8)+"</td></tr>"
+      +"<tr><th>주사무소 소재지</th><td colspan='3'>"+dgV(f.address,24)+"</td></tr>"
+      +"<tr><th colspan='4' style='background:#e8e8e8'>대표자</th></tr>"
+      +"<tr><th>성명(한글)</th><td>"+dgV(chairman)+"</td><th>성명(한자)</th><td>＿＿＿＿</td></tr>"
+      +"<tr><th>생년월일</th><td>＿＿＿＿＿＿</td><th>직책</th><td>"+dgV(f.rep_position||'이사장',4)+"</td></tr></table>"
+      +"<h2>설립준비위원회 위원</h2><table><tr><th style='width:70px'>구분</th><th>성명</th><th>생년월일</th><th>직책</th></tr>"
+      +wrows('근로자측',wk)+wrows('사용자측',er)+"</table>"
+      +"<p>「근로복지기본법」 제52조제5항ㆍ제86조의15 및 같은 법 시행규칙 제20조에 따라 위와 같이 설립인가를 신청합니다.</p>"
+      +"<p class='center'>"+dgToday()+"</p><div class='sign'>신청인 대표: "+dgV(chairman)+" (서명 또는 인)</div>"
+      +"<p>"+dgV(f.labor_office||'○○지방고용노동청(○○지청)',10)+"장 귀하</p>"
+      +"<h2>첨부서류</h2><p>1. 정관 1부<br>2. 설립준비위원 재직증명 등 1부<br>3. 출연확인서 또는 재산목록 1부<br>4. 사업계획서 및 예산서 1부</p>";
+  }
+  if(kind==='contrib'){
+    var target=(ftype==='공동'&&sites.length)?sites:[{name:f.rep_org||'',ceo:'',biz_no:'',address:''}];
+    return note+target.map(function(s){
+      return "<h1>기금출연확인서</h1><table>"
+        +"<tr><th style='width:130px'>출연 사업장</th><td>"+dgV(s.name,14)+"</td></tr>"
+        +"<tr><th>대표자</th><td>"+dgV(s.ceo)+" (인)</td></tr>"
+        +"<tr><th>사업자등록번호</th><td>"+dgV(s.biz_no,13)+"</td></tr>"
+        +"<tr><th>소재지</th><td>"+dgV(s.address,20)+"</td></tr>"
+        +"<tr><th>기금법인명</th><td>"+fname+"</td></tr>"
+        +"<tr><th>출연금액</th><td>"+dgWon(s.contribution)+" 원</td></tr>"
+        +"<tr><th>출연 예정일</th><td>"+dgV(f.estab_date,12)+"</td></tr>"
+        +"<tr><th>출연 방법</th><td>금전 출연 (기금법인 계좌 입금)</td></tr></table>"
+        +"<p>위와 같이 기금출연을 확약·확인합니다.</p><p class='center'>"+dgToday()+"</p>"
+        +"<div class='sign'>출연자: "+dgV(s.name,10)+" 대표 "+dgV(s.ceo)+" (인)</div>";
+    }).join("<hr style='margin:30px 0;border:none;border-top:1px dashed #aaa'>");
+  }
+  if(kind==='bizplan'){
+    var emp=sites.reduce(function(a,s){return a+(num(s.company_size)||0);},0);
+    return note+"<h1>"+fname+"<br>사 업 계 획 서 ("+S.year+"년도)</h1>"
+      +"<h2>Ⅰ. 기금법인 개요</h2><table>"
+      +"<tr><th style='width:130px'>기금법인명</th><td>"+fname+"</td></tr>"
+      +"<tr><th>소재지</th><td>"+dgV(f.address,20)+"</td></tr>"
+      +"<tr><th>대표자(이사장)</th><td>"+dgV(chairman)+"</td></tr>"
+      +"<tr><th>참여사업장</th><td>"+sites.length+"개소</td></tr>"
+      +"<tr><th>수혜 근로자 수</th><td>"+emp.toLocaleString()+"명</td></tr>"
+      +"<tr><th>기본재산(출연금)</th><td>"+dgWon(f.contribution_total)+" 원</td></tr></table>"
+      +"<h2>Ⅱ. 목적사업 계획</h2><p>"+dgV(f.biz_plan||'1. 명절 선물비 등 복리후생비 지급<br>2. 경조사비 지원<br>3. 체육·문화활동비 지원',30)+"</p>"
+      +"<h2>Ⅲ. 수지예산 (단위: 원)</h2><table>"
+      +"<tr><th>수입 — 출연금</th><td class='right'>"+dgWon(f.contribution_total)+"</td></tr>"
+      +"<tr><th>수입 — 이자수익(예상)</th><td class='right'>"+dgWon(f.interest_est)+"</td></tr>"
+      +"<tr><th>지출 — 목적사업비</th><td class='right'>"+dgWon(f.purpose_budget)+"</td></tr>"
+      +"<tr><th>지출 — 일반관리비</th><td class='right'>"+dgWon(f.admin_budget)+"</td></tr></table>"
+      +"<p class='center'>"+dgToday()+"</p><div class='sign'>"+fname+"<br>이사장 "+dgV(chairman)+" (인)</div>";
+  }
+  return '<p class="muted">준비 중인 서식입니다.</p>';
+}
+function previewDoc(kind){
+  var f=funds[S.formFund]; if(!f){ toast('기금을 선택하세요','warn'); return; }
+  var label=(DOC_KINDS.filter(function(x){return x[0]===kind;})[0]||['',''])[1];
+  showModal('<div class="row"><h2 style="margin:0">'+esc(label)+' — '+esc(f.short_name||f.name)+'</h2><span style="flex:1"></span>'
+    +'<button onclick="printDoc()">🖨 인쇄/PDF</button> <button onclick="resetDoc(\''+kind+'\')">↺ 원본</button> '
+    +'<button class="primary" onclick="saveDocEdit(\''+kind+'\')">💾 저장</button></div>'
+    +'<p class="muted" style="font-size:11.5px;margin:6px 0">아래 내용을 직접 클릭해 수정하세요. [저장]하면 이 기금 서식으로 보관되고, 다음에 열면 저장본이 나옵니다.</p>'
+    +'<div id="docwrap" style="border:1px solid var(--line);border-radius:8px;max-height:64vh;overflow:auto;padding:14px;background:#fff">'+loadingHTML()+'</div>');
+  S._docKind=kind;
+  fbDb.ref(NS+'/doc_edits/'+S.formFund+'/'+kind).once('value').then(function(snap){
+    var edited=snap.val();
+    if(edited&&edited.html){ _showDocHTML(edited.html); return; }
+    return _loadSites(S.formFund).then(function(sites){ _showDocHTML('<style>'+dgDocCss()+'</style>'+docBody(kind,f,sites)); });
+  }).catch(function(e){ var w=$('docwrap'); if(w)w.innerHTML='<div class="msg err">'+esc(e.message)+'</div>'; });
+}
+function _showDocHTML(html){ var w=$('docwrap'); if(!w)return;
+  w.innerHTML='<div id="doced" contenteditable="true" style="outline:none">'+html+'</div>'; }
+function saveDocEdit(kind){ var ed=$('doced'); if(!ed){ return; }
+  fbDb.ref(NS+'/doc_edits/'+S.formFund+'/'+kind).set({html:ed.innerHTML,saved:ymd()})
+    .then(function(){ toast('서식 저장됨'); }).catch(function(e){ toast('저장 실패: '+e.message,'err'); }); }
+function resetDoc(kind){ var f=funds[S.formFund];
+  confirmM('수정 내용을 버리고 원본(자동생성)으로 되돌릴까요?',{ok:'원본으로',danger:true}).then(function(ok){ if(!ok)return;
+    fbDb.ref(NS+'/doc_edits/'+S.formFund+'/'+kind).remove().then(function(){
+      _loadSites(S.formFund).then(function(sites){ _showDocHTML('<style>'+dgDocCss()+'</style>'+docBody(kind,f,sites)); toast('원본으로 되돌렸습니다'); }); });
+  }); }
+function printDoc(){ var ed=$('doced'); if(!ed)return;
+  var w=window.open('','_blank'); if(!w){ toast('팝업이 차단되었습니다','err'); return; }
+  w.document.write('<!doctype html><meta charset=utf-8><style>'+dgDocCss()+'@media print{@page{margin:16mm}}</style>'+ed.innerHTML);
+  w.document.close(); setTimeout(function(){ w.print(); },300); }
 
 function fillForm(key){
   var fid=S.formFund, f=funds[fid]; if(!f){ toast('기금을 선택하세요','warn'); return; }
