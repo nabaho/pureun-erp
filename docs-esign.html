@@ -311,6 +311,70 @@ function delSub(subId) {
     showToast('삭제 실패 — 다시 시도해 주세요');
   });
 }
+
+// ── 체불내역 입력 (근로자에게 받지 않고 노무사가 입력 — 설계 §8.1) ──
+var arrearsCache = {};
+
+function renderDetailActions() {
+  $('detailActions').innerHTML = '<button class="btn btn-sub" onclick="openArrears()">💰 체불내역</button>';
+  // Task 12가 이 함수를 교체하며 서류 생성 버튼 추가
+}
+
+async function openArrears() {
+  var snap = await db.ref('esign/cases/' + curCaseId + '/arrears').once('value');
+  arrearsCache = snap.val() || {};
+  var bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = '<div class="modal" style="max-width:760px">'
+    + '<h3 style="margin-bottom:4px">체불내역 입력 (원 단위)</h3>'
+    + '<div style="font-size:12px;color:#64748b;margin-bottom:10px">엑셀에서 [성명·1개월차·2개월차·3개월차·퇴직금] 열을 복사해 아래 표에 붙여넣기(Ctrl+V)해도 됩니다. 성명으로 매칭합니다.</div>'
+    + '<table id="arrTable"><thead><tr><th>성명</th><th>체불임금 1개월차</th><th>2개월차</th><th>3개월차</th><th>체불퇴직금</th></tr></thead><tbody>'
+    + decrypted.filter(function (d) { return d._reviewState !== 'error'; }).map(function (d) {
+      var a = arrearsCache[d._subId] || {};
+      function cell(k) { return '<td><input data-sub="' + d._subId + '" data-k="' + k + '" type="text" inputmode="numeric" style="width:110px;text-align:right" value="' + (a[k] || '') + '"></td>'; }
+      return '<tr><td style="font-weight:700">' + EsignDocs.esc(d.name) + '</td>' + cell('month1') + cell('month2') + cell('month3') + cell('severance') + '</tr>';
+    }).join('')
+    + '</tbody></table>'
+    + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">'
+    + '<button class="btn btn-sub" id="arrCancel">취소</button>'
+    + '<button class="btn btn-pri" id="arrSave">저장</button></div></div>';
+  document.body.appendChild(bg);
+
+  // 엑셀 붙여넣기: 첫 열 성명 매칭 (utils.js parseExcelPaste)
+  bg.querySelector('#arrTable').addEventListener('paste', function (e) {
+    var rows = parseExcelPaste(e.clipboardData.getData('text'));
+    if (rows.length < 1 || rows[0].length < 2) return;
+    e.preventDefault();
+    var byName = {};
+    decrypted.forEach(function (d) { byName[d.name] = d._subId; });
+    var hit = 0;
+    rows.forEach(function (r) {
+      var sid = byName[String(r[0]).trim()];
+      if (!sid) return;
+      ['month1', 'month2', 'month3', 'severance'].forEach(function (k, idx) {
+        var inp = bg.querySelector('input[data-sub="' + sid + '"][data-k="' + k + '"]');
+        if (inp && r[idx + 1] != null) inp.value = String(r[idx + 1]).replace(/[^0-9]/g, '');
+      });
+      hit++;
+    });
+    showToast(hit + '명 매칭되었습니다');
+  });
+
+  bg.querySelector('#arrCancel').onclick = function () { bg.remove(); };
+  bg.querySelector('#arrSave').onclick = async function () {
+    var out = {};
+    bg.querySelectorAll('#arrTable input').forEach(function (inp) {
+      var sid = inp.dataset.sub, k = inp.dataset.k;
+      var v = parseInt(inp.value.replace(/[^0-9]/g, ''), 10) || 0;
+      if (!out[sid]) out[sid] = {};
+      out[sid][k] = v;
+    });
+    await db.ref('esign/cases/' + curCaseId + '/arrears').set(out);
+    arrearsCache = out;
+    bg.remove();
+    showToast('✅ 체불내역이 저장되었습니다');
+  };
+}
 </script>
 </body>
 </html>
