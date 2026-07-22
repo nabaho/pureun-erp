@@ -48,6 +48,14 @@
 
   <!-- 2단계: 인적사항 -->
   <div class="step" id="step2">
+    <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:12px;margin-bottom:6px">
+      <button type="button" id="btnOcr" style="width:100%;padding:11px;border:1px solid #d97706;border-radius:8px;
+        background:#fff;color:#b45309;font-size:14px;font-weight:700;cursor:pointer">📷 신분증 촬영으로 자동 입력 (선택)</button>
+      <div style="font-size:11.5px;color:#92400e;margin-top:6px">
+        인식은 휴대폰 안에서만 처리되며 <b>사진은 저장·전송되지 않습니다.</b> 인식 결과를 꼭 확인·수정해 주세요.</div>
+      <input type="file" id="ocrFile" accept="image/*" capture="environment" style="display:none">
+      <div id="ocrStatus" style="display:none;font-size:12.5px;color:#b45309;margin-top:6px"></div>
+    </div>
     <label>성명 <span class="req">*</span></label>
     <input type="text" id="fName" autocomplete="name">
     <label>주민등록번호(외국인등록번호) <span class="req">*</span></label>
@@ -292,6 +300,71 @@ $('btnSubmit').onclick = async function () {
   }
   submitting = false;
 };
+
+// ── 신분증 촬영 자동입력 (온디바이스 Tesseract — 외부 서버 전송 없음, 사진 즉시 폐기) ──
+var tessLoading = null;
+function loadTesseract() { // 지연 로드 (~10MB 한글 데이터, 첫 사용 시)
+  if (window.Tesseract) return Promise.resolve();
+  if (tessLoading) return tessLoading;
+  tessLoading = new Promise(function (res, rej) {
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@4.1.4/dist/tesseract.min.js';
+    s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+  return tessLoading;
+}
+$('btnOcr').onclick = function () { $('ocrFile').click(); };
+$('ocrFile').addEventListener('change', async function () {
+  var file = this.files && this.files[0];
+  this.value = ''; // input 초기화 (같은 파일 재선택 가능 + 참조 제거)
+  if (!file) return;
+  var st = $('ocrStatus');
+  st.style.display = 'block';
+  st.textContent = '인식 준비 중… (첫 사용 시 10초 정도 걸립니다)';
+  var cv = null;
+  try {
+    await loadTesseract();
+    // 다운스케일(최대 1600px) — 속도·메모리 절약
+    var img = await createImageBitmap(file);
+    var scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+    cv = document.createElement('canvas');
+    cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
+    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+    img.close();
+    st.textContent = '신분증을 읽는 중…';
+    var out = await Tesseract.recognize(cv, 'kor', {
+      logger: function (m) { if (m.status === 'recognizing text') st.textContent = '신분증을 읽는 중… ' + Math.round(m.progress * 100) + '%'; }
+    });
+    var text = (out && out.data && out.data.text) || '';
+    // 주민번호: 6-7 숫자 패턴
+    var mId = text.match(/(\d{6})\s*[-–—]?\s*(\d{7})/);
+    if (mId) { $('fIdNo').value = mId[1] + '-' + mId[2]; }
+    // 이름: 주민번호 앞줄에서 한글 2~5자 (주민등록증 레이아웃: 이름이 번호 위)
+    var lines = text.split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+    for (var i = 0; i < lines.length; i++) {
+      if (mId && lines[i].includes(mId[1])) {
+        for (var j = i - 1; j >= 0; j--) {
+          var mName = lines[j].match(/[가-힣]{2,5}/);
+          if (mName && !/주민등록증|운전면허|경기|서울|도지사|청장/.test(lines[j])) { $('fName').value = $('fName').value || mName[0]; break; }
+        }
+        // 주소: 번호 다음 줄들 중 '시|도|군|구' 포함 첫 줄
+        for (var k = i + 1; k < lines.length; k++) {
+          if (/[가-힣]+(시|도)\s|[가-힣]+(구|군|시)\s/.test(lines[k] + ' ')) { $('fAddr').value = $('fAddr').value || lines[k]; break; }
+        }
+        break;
+      }
+    }
+    st.textContent = mId ? '✅ 인식 완료 — 내용을 확인하고 틀린 부분은 고쳐 주세요'
+      : '인식하지 못했습니다. 직접 입력해 주세요.';
+  } catch (e) {
+    st.textContent = '인식에 실패했습니다. 직접 입력해 주세요.';
+  } finally {
+    // 사진 즉시 폐기 — 어디에도 저장·전송하지 않음
+    if (cv) { cv.width = 1; cv.height = 1; cv = null; }
+    file = null;
+  }
+});
 </script>
 </body>
 </html>
