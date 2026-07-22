@@ -58,6 +58,9 @@
   // ══════════ 2부: 서류 생성 (브라우저 전용 — html2canvas/jsPDF/XLSX는 호출 페이지가 CDN 로드) ══════════
   var IS_BROWSER = (typeof document !== 'undefined');
 
+  // HTML 이스케이프 — 근로자 입력 자유텍스트가 innerHTML로 렌더될 때 XSS 방지
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); }
+
   // A4 1페이지 서식 공통 래퍼 (맑은 고딕 렌더 → 래스터화라 폰트 임베드 불필요)
   function pageWrap(inner) {
     return '<div style="width:794px;min-height:1123px;padding:70px 60px;background:#fff;' +
@@ -66,14 +69,14 @@
   }
   function personVars(person, caseMeta) {
     return {
-      '이름': person.name, '주민등록번호': person.idNo, '주소': person.addr,
-      '근로자연락처': person.phone || '',
-      '회사명': (caseMeta && caseMeta.company) || '', '작성일': (person.consentAt || '').slice(0, 10)
+      '이름': esc(person.name), '주민등록번호': esc(person.idNo), '주소': esc(person.addr),
+      '근로자연락처': esc(person.phone || ''),
+      '회사명': esc((caseMeta && caseMeta.company) || ''), '작성일': esc((person.consentAt || '').slice(0, 10))
     };
   }
   function sigBlock(person) {
     return '<div style="margin-top:40px;text-align:right">' +
-      '<span style="font-size:14px">위임인: ' + person.name + ' </span>' +
+      '<span style="font-size:14px">위임인: ' + esc(person.name) + ' </span>' +
       '<img src="' + person.sigPng + '" style="height:60px;vertical-align:middle;border-bottom:1px solid #999">' +
       '<span style="font-size:12px;color:#555"> (서명)</span></div>';
   }
@@ -98,7 +101,7 @@
     return pageWrap(
       '<h2 style="text-align:center;font-size:20px;margin-bottom:24px">' + ESIGN_FORMS.privacyConsent.title + '</h2>' +
       '<div style="white-space:pre-wrap">' + fillVars(ESIGN_FORMS.privacyConsent.body, v).replace(/\{\{[^}]+\}\}/g, '________') + '</div>' +
-      '<div style="margin-top:24px">동의 일시: ' + String(person.consentAt || '').replace('T', ' ').slice(0, 16) + ' (전자 동의)</div>' +
+      '<div style="margin-top:24px">동의 일시: ' + esc(String(person.consentAt || '').replace('T', ' ').slice(0, 16)) + ' (전자 동의)</div>' +
       sigBlock(person)
     );
   }
