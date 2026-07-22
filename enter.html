@@ -1075,7 +1075,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       snap.forEach(function(ch){ var v = ch.val(); v._id = ch.key; arr.push(v); });
       arr.reverse();
       SG._all = arr;
-      SG.listShown = 30;
+      SG.listShown = 30; SG.listPeriod = 'all';
       sgRenderList();
       // 예전 건의(sg_meta 없던 시절) 백필 — 관리자가 목록을 열 때 조용히 보충
       if(sgIsAdmin()){
@@ -1107,10 +1107,26 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     var totalDone = arr.length - totalOpen;
     // 상태 필터 칩
     var FILTERS = [['open','미처리 '+totalOpen],['done','완료 '+totalDone],['all','전체 '+arr.length]];
-    var chips = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' + FILTERS.map(function(f){
+    var chips = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">' + FILTERS.map(function(f){
       var on = SG.listStatus === f[0];
       return '<button data-f="'+f[0]+'" class="sg-flt" style="border:1.5px solid '+(on?'#1e40af':'#dfe4ef')+';background:'+(on?'#1e40af':'#fff')+';color:'+(on?'#fff':'#475569')+';border-radius:16px;padding:5px 13px;font-size:12.5px;font-weight:700;cursor:pointer">'+f[1]+'</button>';
     }).join('') + '</div>';
+    // 기간 필터 (완료·전체 조회 시 유용). 완료면 완료일, 아니면 등록일 기준
+    if(!SG.listPeriod) SG.listPeriod='all';
+    var PERIODS=[['all','전체'],['year','올해'],['30d','최근 30일']];
+    var periodChips = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' + PERIODS.map(function(p){
+      var on = SG.listPeriod===p[0];
+      return '<button data-p="'+p[0]+'" class="sg-per" style="border:1px solid '+(on?'#0f766e':'#dfe4ef')+';background:'+(on?'#0f766e':'#fff')+';color:'+(on?'#fff':'#64748b')+';border-radius:14px;padding:4px 11px;font-size:11.5px;font-weight:700;cursor:pointer">'+p[1]+'</button>';
+    }).join('') + '</div>';
+    // 기간 컷오프
+    var _now=new Date(), _curY=_now.getFullYear(), _cut30=_now.getTime()-30*86400000;
+    function _inPeriod(s){
+      if(SG.listPeriod==='all') return true;
+      var d = (s.status==='done' ? (s.repliedAt||s.createdAt) : s.createdAt) || 0;
+      if(SG.listPeriod==='30d') return d>=_cut30;
+      if(SG.listPeriod==='year') return new Date(d).getFullYear()===_curY;
+      return true;
+    }
     // 검색
     var searchBox = '<input id="sgListSearch" type="text" placeholder="🔍 제목·내용·작성자 검색" value="'+sgEsc(SG.listQ||'')+'" style="width:100%;box-sizing:border-box;border:1.5px solid #dfe4ef;border-radius:9px;padding:8px 11px;font-size:.86rem;margin-bottom:10px">';
     // 관리자 요약
@@ -1124,6 +1140,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     var list = arr.filter(function(s){
       if(SG.listStatus==='open' && s.status==='done') return false;
       if(SG.listStatus==='done' && s.status!=='done') return false;
+      if(!_inPeriod(s)) return false;
       if(q){ var hay = ((s.title||'')+' '+(s.content||'')+' '+(s.author||'')).toLowerCase(); if(hay.indexOf(q)<0) return false; }
       return true;
     });
@@ -1147,9 +1164,12 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     }).join('') : '<div class="sg-empty">'+(arr.length? '조건에 맞는 건의가 없습니다.' : '아직 등록된 건의가 없습니다.<br>불편한 점을 자유롭게 남겨주세요.')+'</div>';
     var moreBtn = (list.length > shown)
       ? '<button id="sgMore" class="sg-btn ghost" style="margin-top:8px">더 보기 ('+(list.length-shown)+'건 남음)</button>' : '';
-    wrap.innerHTML = sumHtml + chips + searchBox + listHtml + moreBtn;
+    wrap.innerHTML = sumHtml + chips + periodChips + searchBox + listHtml + moreBtn;
     Array.prototype.forEach.call(wrap.querySelectorAll('.sg-flt'), function(el){
       el.addEventListener('click', function(){ SG.listStatus = el.dataset.f; SG.listShown = PAGE; sgRenderList(); });
+    });
+    Array.prototype.forEach.call(wrap.querySelectorAll('.sg-per'), function(el){
+      el.addEventListener('click', function(){ SG.listPeriod = el.dataset.p; SG.listShown = PAGE; sgRenderList(); });
     });
     var si = $('sgListSearch');
     if(si) si.addEventListener('input', function(){ SG.listQ = si.value; SG.listShown = PAGE; var pos=si.selectionStart; sgRenderList(); var s2=$('sgListSearch'); if(s2){ s2.focus(); try{ s2.setSelectionRange(pos,pos); }catch(_){} } });
