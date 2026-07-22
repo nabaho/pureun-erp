@@ -932,7 +932,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     { key:'cards', name:'명함첩' }, { key:'portal', name:'포털' }, { key:'etc', name:'기타' }
   ];
   var SG_STATUS = { new:{t:'접수',c:'sg-st-new'}, ing:{t:'검토중',c:'sg-st-ing'}, done:{t:'완료',c:'sg-st-done'} };
-  var SG = { name:'', email:'', role:'member', draftCat:'erp', draftImgs:[] };
+  var SG = { name:'', email:'', role:'member', draftCat:'erp', draftImgs:[], _all:[], listStatus:'open', listQ:'', replyDraftImgs:[] };
 
   window.sgSetUser = function(acct){
     SG.name = acct ? acct.name : ((auth.currentUser && auth.currentUser.email) || '사용자');
@@ -994,8 +994,9 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       $('sgDoneBody').innerHTML = items.map(function(it){
         return '<div class="sgd-item">'
           + '<div class="sgd-t"><span class="sg-badge sg-b-'+(it.cat||'etc')+'">'+sgEsc(sgCatName(it.cat))+'</span>'+sgEsc(it.title||'')+'</div>'
-          + '<div class="sgd-r">'+(it.reply ? sgEsc(it.reply) : '처리가 완료되었습니다.')+'</div>'
-          + '</div>';
+          + '<div class="sgd-r">'+(it.reply ? sgEsc(it.reply) : '처리가 완료되었습니다.')
+          + ((it.replyImages&&it.replyImages.length)? '<div style="margin-top:8px">'+it.replyImages.map(function(u){return '<img src="'+u+'" style="max-width:100%;border-radius:8px;margin-top:6px;display:block">';}).join('')+'</div>':'')
+          + '</div></div>';
       }).join('');
       $('sgDoneModal').style.display = 'flex';
       $('sgDoneOk').onclick = function(){
@@ -1043,6 +1044,22 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       el.addEventListener('click', function(){ SG.draftImgs.splice(+el.dataset.i, 1); sgRenderThumbs(); });
     });
   }
+  // 답변(대표) 캡처 첨부 — 별도 배열
+  function sgAddReplyImgs(files){
+    var arr = Array.prototype.slice.call(files).filter(function(f){ return f.type && f.type.indexOf('image/')===0; });
+    arr.slice(0, 3 - SG.replyDraftImgs.length).forEach(function(f){
+      sgCompress(f, function(dataUrl){ if(dataUrl){ SG.replyDraftImgs.push(dataUrl); sgRenderReplyThumbs(); } });
+    });
+  }
+  function sgRenderReplyThumbs(){
+    var box = $('sgReplyThumbs'); if(!box) return;
+    box.innerHTML = SG.replyDraftImgs.map(function(u, i){
+      return '<div class="sg-th"><img src="'+u+'"><span class="del" data-i="'+i+'">✕</span></div>';
+    }).join('');
+    Array.prototype.forEach.call(box.querySelectorAll('.del'), function(el){
+      el.addEventListener('click', function(){ SG.replyDraftImgs.splice(+el.dataset.i, 1); sgRenderReplyThumbs(); });
+    });
+  }
 
   function sgOpen(){ $('sgModal').style.display = 'flex'; try{ if(typeof _sgDrag!=='undefined'){ _sgDrag.x=0; _sgDrag.y=0; var _b=$('sgModal').querySelector('.box'); if(_b) _b.style.transform=''; } }catch(_){} sgViewList(); }
   function sgCloseModal(){ $('sgModal').style.display = 'none'; }
@@ -1057,29 +1074,8 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       var arr = [];
       snap.forEach(function(ch){ var v = ch.val(); v._id = ch.key; arr.push(v); });
       arr.reverse();
-      var wrap = $('sgListWrap'); if(!wrap) return;
-      if(!arr.length){ wrap.innerHTML = '<div class="sg-empty">아직 등록된 건의가 없습니다.<br>불편한 점을 자유롭게 남겨주세요.</div>'; return; }
-      // 작성자별 건수 집계 (이미 받아온 목록에서 계산 — 추가 읽기 없음)
-      var byAuthor = {};
-      arr.forEach(function(s){ var k = s.author || '?'; byAuthor[k] = (byAuthor[k]||0) + 1; });
-      // 관리자 요약: 총·미처리·사람별 건수 (대표 전용)
-      var sumHtml = '';
-      if(sgIsAdmin()){
-        var open = arr.filter(function(s){ return s.status !== 'done'; }).length;
-        var per = Object.keys(byAuthor).map(function(k){ return sgEsc(k)+' '+byAuthor[k]+'건'; }).join(' · ');
-        sumHtml = '<div class="sg-sum">👑 총 '+arr.length+'건 · 미처리 <b>'+open+'건</b><br>'+per+'</div>';
-      }
-      wrap.innerHTML = sumHtml + arr.map(function(s){
-        var st = SG_STATUS[s.status] || SG_STATUS.new;
-        var shots = (s.images && s.images.length) ? ' · 📎 '+s.images.length : '';
-        var rep = s.reply ? ' · 답변 ✔' : '';
-        var cnt = byAuthor[s.author || '?'];
-        return '<div class="sg-item" data-id="'+s._id+'">'
-          + '<div class="r1"><span class="sg-badge sg-b-'+(s.cat||'etc')+'">'+sgEsc(sgCatName(s.cat))+'</span>'
-          + '<span class="sg-st '+st.c+'">'+st.t+'</span></div>'
-          + '<div class="sg-itl">'+sgEsc(s.title)+'</div>'
-          + '<div class="sg-meta">'+sgEsc(s.author||'')+' ('+cnt+'건) · '+sgFmt(s.createdAt)+shots+rep+'</div></div>';
-      }).join('');
+      SG._all = arr;
+      sgRenderList();
       // 예전 건의(sg_meta 없던 시절) 백필 — 관리자가 목록을 열 때 조용히 보충
       if(sgIsAdmin()){
         db.ref('data/sg_meta').once('value').then(function(ms){
@@ -1094,11 +1090,61 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
           });
         }).catch(function(){});
       }
-      Array.prototype.forEach.call(wrap.querySelectorAll('.sg-item'), function(el){
-        el.addEventListener('click', function(){ sgViewDetail(el.dataset.id); });
-      });
     }).catch(function(err){
       var wrap = $('sgListWrap'); if(wrap) wrap.innerHTML = '<div class="sg-empty">불러오기 실패. 잠시 후 다시 시도해주세요.</div>';
+    });
+  }
+
+  // 목록 렌더 (상태 필터 + 검색) — SG._all 기준, 재조회 없음
+  function sgRenderList(){
+    var wrap = $('sgListWrap'); if(!wrap) return;
+    var arr = SG._all || [];
+    // 작성자별 총건수 (필터 무관)
+    var byAuthor = {};
+    arr.forEach(function(s){ var k = s.author || '?'; byAuthor[k] = (byAuthor[k]||0) + 1; });
+    var totalOpen = arr.filter(function(s){ return s.status !== 'done'; }).length;
+    var totalDone = arr.length - totalOpen;
+    // 상태 필터 칩
+    var FILTERS = [['open','미처리 '+totalOpen],['done','완료 '+totalDone],['all','전체 '+arr.length]];
+    var chips = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' + FILTERS.map(function(f){
+      var on = SG.listStatus === f[0];
+      return '<button data-f="'+f[0]+'" class="sg-flt" style="border:1.5px solid '+(on?'#1e40af':'#dfe4ef')+';background:'+(on?'#1e40af':'#fff')+';color:'+(on?'#fff':'#475569')+';border-radius:16px;padding:5px 13px;font-size:12.5px;font-weight:700;cursor:pointer">'+f[1]+'</button>';
+    }).join('') + '</div>';
+    // 검색
+    var searchBox = '<input id="sgListSearch" type="text" placeholder="🔍 제목·내용·작성자 검색" value="'+sgEsc(SG.listQ||'')+'" style="width:100%;box-sizing:border-box;border:1.5px solid #dfe4ef;border-radius:9px;padding:8px 11px;font-size:.86rem;margin-bottom:10px">';
+    // 관리자 요약
+    var sumHtml = '';
+    if(sgIsAdmin()){
+      var per = Object.keys(byAuthor).map(function(k){ return sgEsc(k)+' '+byAuthor[k]+'건'; }).join(' · ');
+      sumHtml = '<div class="sg-sum">👑 총 '+arr.length+'건 · 미처리 <b>'+totalOpen+'건</b><br>'+per+'</div>';
+    }
+    // 필터·검색 적용
+    var q = (SG.listQ||'').trim().toLowerCase();
+    var list = arr.filter(function(s){
+      if(SG.listStatus==='open' && s.status==='done') return false;
+      if(SG.listStatus==='done' && s.status!=='done') return false;
+      if(q){ var hay = ((s.title||'')+' '+(s.content||'')+' '+(s.author||'')).toLowerCase(); if(hay.indexOf(q)<0) return false; }
+      return true;
+    });
+    var listHtml = list.length ? list.map(function(s){
+      var st = SG_STATUS[s.status] || SG_STATUS.new;
+      var shots = (s.images && s.images.length) ? ' · 📎 '+s.images.length : '';
+      var rep = s.reply ? ' · 답변 ✔' : '';
+      var cnt = byAuthor[s.author || '?'];
+      return '<div class="sg-item" data-id="'+s._id+'">'
+        + '<div class="r1"><span class="sg-badge sg-b-'+(s.cat||'etc')+'">'+sgEsc(sgCatName(s.cat))+'</span>'
+        + '<span class="sg-st '+st.c+'">'+st.t+'</span></div>'
+        + '<div class="sg-itl">'+sgEsc(s.title)+'</div>'
+        + '<div class="sg-meta">'+sgEsc(s.author||'')+' ('+cnt+'건) · '+sgFmt(s.createdAt)+shots+rep+'</div></div>';
+    }).join('') : '<div class="sg-empty">'+(arr.length? '조건에 맞는 건의가 없습니다.' : '아직 등록된 건의가 없습니다.<br>불편한 점을 자유롭게 남겨주세요.')+'</div>';
+    wrap.innerHTML = sumHtml + chips + searchBox + listHtml;
+    Array.prototype.forEach.call(wrap.querySelectorAll('.sg-flt'), function(el){
+      el.addEventListener('click', function(){ SG.listStatus = el.dataset.f; sgRenderList(); });
+    });
+    var si = $('sgListSearch');
+    if(si) si.addEventListener('input', function(){ SG.listQ = si.value; var pos=si.selectionStart; sgRenderList(); var s2=$('sgListSearch'); if(s2){ s2.focus(); try{ s2.setSelectionRange(pos,pos); }catch(_){} } });
+    Array.prototype.forEach.call(wrap.querySelectorAll('.sg-item'), function(el){
+      el.addEventListener('click', function(){ sgViewDetail(el.dataset.id); });
     });
   }
 
@@ -1110,6 +1156,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       '<label>어느 프로그램인가요?</label><div class="sg-cats" id="sgCatSel">'
       + SG_CATS.map(function(c){ return '<span class="sg-cat'+(c.key==='erp'?' on':'')+'" data-k="'+c.key+'">'+c.name+'</span>'; }).join('') + '</div>'
       + '<label>제목</label><input type="text" id="sgInTitle" placeholder="예: 업체관리에서 저장이 안 됩니다">'
+      + '<div id="sgSimilar"></div>'
       + '<label>내용 (어떤 상황에서 무슨 문제가 생겼나요?)</label>'
       + '<textarea id="sgInBody" placeholder="어떤 화면에서 무엇을 하다가 발생했는지 자세히 적을수록 빠르게 고칠 수 있습니다."></textarea>'
       + '<label>스크린샷 (선택, 최대 3장) — 캡처 후 Ctrl+V 또는 클릭해서 선택</label>'
@@ -1138,6 +1185,39 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     });
     $('sgSubmit').addEventListener('click', sgSubmit);
     $('sgBackList').addEventListener('click', sgViewList);
+    // 유사(중복) 건의 표시 — 제목·내용 입력 시
+    $('sgInTitle').addEventListener('input', sgRenderSimilar);
+    $('sgInBody').addEventListener('input', sgRenderSimilar);
+    if(!(SG._all && SG._all.length)){
+      db.ref('data/suggestions').orderByChild('createdAt').once('value').then(function(snap){
+        var arr=[]; snap.forEach(function(ch){ var v=ch.val(); v._id=ch.key; arr.push(v); }); arr.reverse();
+        SG._all=arr; sgRenderSimilar();
+      }).catch(function(){});
+    }
+  }
+  function sgTokens(s){
+    var toks = String(s||'').toLowerCase().split(/[^0-9a-z가-힣]+/).filter(function(w){ return w.length>=2; });
+    return toks.filter(function(w,i){ return toks.indexOf(w)===i; });
+  }
+  function sgRenderSimilar(){
+    var box = $('sgSimilar'); if(!box) return;
+    var toks = sgTokens(($('sgInTitle')?$('sgInTitle').value:'')+' '+($('sgInBody')?$('sgInBody').value:''));
+    if(toks.length<1){ box.innerHTML=''; return; }
+    var scored = (SG._all||[]).map(function(s){
+      var st = sgTokens((s.title||'')+' '+(s.content||''));
+      var sh = 0; toks.forEach(function(w){ if(st.indexOf(w)>=0) sh++; });
+      return { s:s, sh:sh };
+    }).filter(function(x){ return x.sh>=1; }).sort(function(a,b){ return b.sh-a.sh; }).slice(0,3);
+    if(!scored.length){ box.innerHTML=''; return; }
+    box.innerHTML = '<div style="border:1px solid #fde68a;background:#fffbeb;border-radius:9px;padding:8px 10px;margin:8px 0">'
+      + '<div style="font-size:.76rem;font-weight:800;color:#92400e;margin-bottom:5px">💡 비슷한 지난 건의 '+scored.length+'건 — 이미 접수·처리된 내용인지 확인해보세요</div>'
+      + scored.map(function(x){ var st=SG_STATUS[x.s.status]||SG_STATUS.new;
+          return '<div class="sgSimIt" data-id="'+x.s._id+'" style="cursor:pointer;font-size:.8rem;padding:3px 0;color:#334155"><span class="sg-st '+st.c+'" style="font-size:.68rem">'+st.t+'</span> '+sgEsc(x.s.title||'')+'</div>';
+        }).join('')
+      + '</div>';
+    Array.prototype.forEach.call(box.querySelectorAll('.sgSimIt'), function(el){
+      el.addEventListener('click', function(){ sgViewDetail(el.dataset.id); });
+    });
   }
 
   function sgSubmit(){
@@ -1183,10 +1263,13 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       if(s.images && s.images.length){
         html += s.images.map(function(u){ return '<img class="sg-shot" src="'+u+'" data-full="'+u+'">'; }).join('');
       }
-      if(s.reply){
-        html += '<div class="sg-reply"><b>👑 대표 답변</b>'+(s.repliedAt?' · '+sgFmt(s.repliedAt):'')+'<br>'+sgEsc(s.reply)+'</div>';
+      if(s.reply || (s.replyImages && s.replyImages.length)){
+        html += '<div class="sg-reply"><b>👑 대표 답변</b>'+(s.repliedAt?' · '+sgFmt(s.repliedAt):'')+'<br>'+sgEsc(s.reply||'')
+          + ((s.replyImages&&s.replyImages.length)? '<div style="margin-top:8px">'+s.replyImages.map(function(u){return '<img class="sg-shot" src="'+u+'" data-full="'+u+'">';}).join('')+'</div>':'')
+          + '</div>';
       }
       if(sgIsAdmin()){
+        SG.replyDraftImgs = (s.replyImages||[]).slice();   // 기존 답변 캡처 로드
         html += '<div style="border-top:1px solid #eef2f7;margin-top:16px;padding-top:14px">'
           + '<label style="color:#1e40af;font-size:.76rem;font-weight:700;display:block;margin-bottom:5px">👑 대표 전용 · 상태 변경</label>'
           + '<div class="sg-cats" id="sgStSel">'
@@ -1194,7 +1277,11 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
           + '</div>'
           + '<label style="color:#1e40af;font-size:.76rem;font-weight:700;display:block;margin:12px 0 5px">답변 / 메모</label>'
           + '<textarea id="sgReplyIn" placeholder="확인 결과나 처리 상황을 적어주세요">'+sgEsc(s.reply||'')+'</textarea>'
-          + '<button class="sg-btn" id="sgSaveAdmin">저장</button></div>';
+          + '<label style="color:#1e40af;font-size:.72rem;font-weight:700;display:block;margin:10px 0 5px">해결 캡처 (선택, 최대 3장) — 클릭 선택 또는 Ctrl+V</label>'
+          + '<div class="sg-drop" id="sgReplyDrop">📎 여기를 클릭해 캡처 선택 · 또는 Ctrl+V로 붙여넣기</div>'
+          + '<div class="sg-thumbs" id="sgReplyThumbs"></div>'
+          + '<input type="file" id="sgReplyFile" accept="image/*" multiple style="display:none">'
+          + '<button class="sg-btn" id="sgSaveAdmin" style="margin-top:10px">저장</button></div>';
       }
       html += '<button class="sg-btn ghost" id="sgBackList2" style="margin-top:10px">← 목록으로</button>';
       bd.innerHTML = html;
@@ -1203,6 +1290,23 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       });
       $('sgBackList2').addEventListener('click', sgViewList);
       if(sgIsAdmin()){
+        sgRenderReplyThumbs();
+        (function(){
+          var rdrop=$('sgReplyDrop'), rfile=$('sgReplyFile');
+          if(rdrop && rfile){
+            rdrop.addEventListener('click', function(){ rfile.click(); });
+            rfile.addEventListener('change', function(e){ sgAddReplyImgs(e.target.files); rfile.value=''; });
+            rdrop.addEventListener('dragover', function(e){ e.preventDefault(); rdrop.classList.add('hi'); });
+            rdrop.addEventListener('dragleave', function(){ rdrop.classList.remove('hi'); });
+            rdrop.addEventListener('drop', function(e){ e.preventDefault(); rdrop.classList.remove('hi'); if(e.dataTransfer.files) sgAddReplyImgs(e.dataTransfer.files); });
+          }
+          var rin=$('sgReplyIn');
+          if(rin) rin.addEventListener('paste', function(e){
+            var items=(e.clipboardData||{}).items||[]; var imgs=[];
+            for(var i=0;i<items.length;i++){ if(items[i].type&&items[i].type.indexOf('image/')===0){ var f=items[i].getAsFile(); if(f) imgs.push(f); } }
+            if(imgs.length){ e.preventDefault(); sgAddReplyImgs(imgs); }
+          });
+        })();
         var newStatus = s.status || 'new';
         Array.prototype.forEach.call($('sgStSel').children, function(el){
           el.addEventListener('click', function(){ newStatus = el.dataset.k; Array.prototype.forEach.call($('sgStSel').children, function(x){ x.classList.toggle('on', x===el); }); });
@@ -1210,14 +1314,15 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
         $('sgSaveAdmin').addEventListener('click', function(){
           var btn = $('sgSaveAdmin'); btn.disabled = true; btn.textContent = '저장 중…';
           var reply = ($('sgReplyIn').value||'').trim();
-          db.ref('data/suggestions/'+id).update({ status:newStatus, reply:reply, repliedAt:Date.now() })
+          var replyImages = SG.replyDraftImgs.slice();
+          db.ref('data/suggestions/'+id).update({ status:newStatus, reply:reply, replyImages:replyImages, repliedAt:Date.now() })
             .then(function(){
               db.ref('data/sg_meta/'+id).update({ status:newStatus }).catch(function(){});
-              // 완료 처리 → 건의자에게 해결 알림 기록 (다음 로그인 때 팝업)
+              // 완료 처리 → 건의자에게 해결 알림 기록 (다음 로그인 때 팝업, 캡처 포함)
               if(s.authorEmail){
                 var rref = db.ref('data/sg_resolved/'+sgEmailKey(s.authorEmail)+'/'+id);
                 if(newStatus === 'done'){
-                  rref.set({ title:s.title||'', reply:reply, cat:s.cat||'etc', at:Date.now(), seen:false }).catch(function(){});
+                  rref.set({ title:s.title||'', reply:reply, replyImages:replyImages, cat:s.cat||'etc', at:Date.now(), seen:false }).catch(function(){});
                 } else {
                   rref.remove().catch(function(){});   // 완료 취소 시 알림 회수
                 }
