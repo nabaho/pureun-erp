@@ -256,7 +256,42 @@ var sigPad = (function () {
   };
 })();
 
-// btnSubmit 핸들러는 Task 6에서 연결
+// ── 암호화 제출 ──
+var submitting = false;
+$('btnSubmit').onclick = async function () {
+  if (submitting) return;
+  if (sigPad.isEmpty()) { alert('서명을 해주세요.'); return; }
+  var r = collectForm();
+  if (!r.ok) { alert(r.msg); showStep(2); return; }
+
+  // 같은 기기 재제출 1차 방어 (서버는 암호문이라 중복을 알 수 없음 — 관리화면에서 2차 감지)
+  try {
+    if (localStorage.getItem('esign_done_' + caseId) === '1'
+      && !confirm('이 기기에서 이미 제출한 기록이 있습니다. 다시 제출할까요?')) return;
+  } catch (e) {}
+
+  submitting = true;
+  this.textContent = '암호화 전송 중…'; this.disabled = true;
+  var btn = this;
+  try {
+    var data = r.data;
+    data.consentAt = new Date().toISOString(); // 동의 일시 (동의서 기재용)
+    data.sigPng = sigPad.toDataURL();
+    var sealed = await EsignCrypto.encryptSubmission(data, caseMeta.pubKey);
+    await db.ref('esign/cases/' + caseId + '/submissions').push({
+      enc: sealed.enc, encKey: sealed.encKey, iv: sealed.iv,
+      t: linkToken,
+      submittedAt: firebase.database.ServerValue.TIMESTAMP,
+      reviewState: 'pending'
+    });
+    try { localStorage.setItem('esign_done_' + caseId, '1'); } catch (e) {}
+    showStep(4);
+  } catch (e) {
+    alert('전송에 실패했습니다. 네트워크를 확인한 뒤 다시 시도해 주세요.\n(' + (e && e.message || e) + ')');
+    btn.textContent = '제출하기'; btn.disabled = false;
+  }
+  submitting = false;
+};
 </script>
 </body>
 </html>
