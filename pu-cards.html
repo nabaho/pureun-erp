@@ -677,8 +677,12 @@ const ErpMatch = {
         const main = co.managerMain ? (nameBySid[co.managerMain]||co.managerMain) : '';
         const subs = (co.managerSubs||[]).map(s=>nameBySid[s]||s).filter(Boolean);
         /* 유형(자문/급여/노조/기금)·실무담당자명 — 담당 노무사가 없어도 유형 배지는 의미 있음 */
+        /* 업체 퇴사(종료·이탈) 여부 — 업체관리 status가 종료/해지/비활성이면 left */
+        const _st = String(co.status||'');
         const rec = { company:co.name||'', main, subs,
           type: co.typeCode||'',
+          status: _st,
+          left: (_st==='inactive'||_st==='terminated'||_st==='closed'),
           contact: ErpMatch._norm(co.primaryContactName||co.contactName||'') };
         if(!main && !subs.length && !rec.type) return;
         const b = ErpMatch._digits(co.bizNo); if(b.length>=10 && !byBiz[b]) byBiz[b]=rec;
@@ -733,32 +737,46 @@ const ErpMatch = {
       if(!ErpMatch.ready) return;
       const items = Object.values(state.items||{});
       if(!items.length) return;
-      const gs = Object.values(state.groups||{});
-      const byNm = nm => gs.find(x=>x && String(x.name||'').replace(/\s/g,'')===nm);
-      /* 1) 업체관리 폴더 확보: 없으면 구 자문사 폴더 이름 변경, 그것도 없으면 생성 */
-      let g = byNm('업체관리');
-      if(!g){
-        const old = byNm('자문사');
-        if(old){ old.name='업체관리'; Store.putGroup(old); g=old; }
-        else { g={id:uid(), name:'업체관리', order:Date.now()}; Store.putGroup(g); state.groups[g.id]=g; }
+      const byNm = nm => Object.values(state.groups||{}).find(x=>x && String(x.name||'').replace(/\s/g,'')===nm);
+      /* 구 '자문사' 폴더는 '업체관리'로 이름 변경 (1회) */
+      const oldA = byNm('자문사'); if(oldA && !byNm('업체관리')){ oldA.name='업체관리'; Store.putGroup(oldA); }
+      /* 대상 폴더 지연 생성 */
+      const cache={};
+      function ensure(nm){
+        if(cache[nm]) return cache[nm];
+        let g = byNm(nm);
+        if(!g){ g={id:uid(), name:nm, order:Date.now()}; Store.putGroup(g); state.groups[g.id]=g; }
+        cache[nm]=g; return g;
       }
+      /* 자동 관리 대상 폴더(여기 있으면 상태 변화에 따라 재배치 허용) */
+      const AUTO_NAMES=['업체관리','업체퇴사','자문사','급여','기금','노조'];
+      const autoIds = new Set(Object.values(state.groups||{}).filter(g=>g&&AUTO_NAMES.indexOf(String(g.name||'').replace(/\s/g,''))>=0).map(g=>g.id));
       let n=0;
-      /* 2) 이전 유형별 자동 폴더(급여/기금/노조) → 업체관리로 1회 이동 (자동 배정분만) */
-      ['급여','기금','노조'].forEach(nm=>{
-        const og = byNm(nm); if(!og || og.id===g.id) return;
-        let moved=0;
-        items.forEach(it=>{ if(it && it.erpAutoFoldered && it.group===og.id){ it.group=g.id; it.updatedAt=Date.now(); Store.put(it); moved++; n++; } });
-        /* 자동 생성했던 폴더가 비면 정리 */
-        if(moved>0 && !items.some(it=>it && it.group===og.id)){ try{ Store.delGroup(og.id); delete state.groups[og.id]; }catch(_){} }
-      });
-      /* 3) 폴더 미지정 + ERP 매칭 → 업체관리 폴더 */
       items.forEach(it=>{
-        if(!it || (it.group||'')!=='' || it.erpAutoFoldered) return;
-        const t = ErpMatch.type(it);
-        if(['자문','급여','노조','기금'].indexOf(t)<0) return;
-        it.group=g.id; it.erpAutoFoldered=1; it.updatedAt=Date.now(); Store.put(it); n++;
+        if(!it) return;
+        const m = ErpMatch.match(it);
+        const matched = !!m && ['자문','급여','노조','기금'].indexOf(m.type)>=0;
+        const targetNm = matched ? (m.left ? '업체퇴사' : '업체관리') : null;
+        if(it.erpAutoFoldered){
+          /* 자동 배정분: 현재 자동 폴더 안에 있을 때만 상태 따라 재배치 (사용자가 딴 폴더로 옮겼으면 존중) */
+          if(targetNm && autoIds.has(it.group)){
+            const tg = ensure(targetNm);
+            if(it.group !== tg.id){ it.group=tg.id; it.updatedAt=Date.now(); Store.put(it); n++; }
+          }
+          return;
+        }
+        /* 미지정 + 매칭 → 대상 폴더로 자동 배정 */
+        if((it.group||'')==='' && targetNm){
+          const tg = ensure(targetNm);
+          it.group=tg.id; it.erpAutoFoldered=1; it.updatedAt=Date.now(); Store.put(it); n++;
+        }
       });
-      if(n>0){ toast('🗂 업체관리 폴더 자동 분류 '+n+'건'); try{ render(); }catch(_){}}
+      /* 비게 된 구 자동 폴더 정리 */
+      ['급여','기금','노조','자문사'].forEach(nm=>{
+        const og = byNm(nm); if(!og) return;
+        if(!items.some(it=>it && it.group===og.id)){ try{ Store.delGroup(og.id); delete state.groups[og.id]; }catch(_){} }
+      });
+      if(n>0){ toast('🗂 업체 폴더 자동 분류/이동 '+n+'건'); try{ render(); }catch(_){}}
     }catch(e){ console.warn('[autoFolder]', e&&e.message); }
   }
 };
@@ -2889,6 +2907,8 @@ function renderPCTable(){
       const cMap = { '자문':'#1e40af', '급여':'#166534', '노조':'#6d28d9', '기금':'#92400e' };
       let h = t ? `<span title="푸른이알피 업체관리 연결 · ${esc(ErpMatch.full(it))}" style="display:inline-block;background:${cMap[t]||'#475569'}18;color:${cMap[t]||'#475569'};border:1px solid ${cMap[t]||'#475569'}44;border-radius:8px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap">ERP·${esc(t)}</span>` : '';
       if (ErpMatch.isContact(it)) h += ` <span title="업체관리에 이 명함 주인이 실무 담당자로 등록됨" style="display:inline-block;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:8px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap">실무담당</span>`;
+      const _m = ErpMatch.match(it);
+      if (_m && _m.left) h += ` <span title="업체관리에서 종료·해지된 거래처 (업체퇴사)" style="display:inline-block;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;border-radius:8px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap">🚪 퇴사</span>`;
       return h;
     })();
     const actCell = `<td onclick="event.stopPropagation()" style="text-align:center;white-space:nowrap">
