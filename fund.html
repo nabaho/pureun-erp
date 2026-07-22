@@ -167,6 +167,7 @@ function start(){
 function shell(){
   return '<div id="side">'
     +'<div class="logo"><span class="ic">🏦</span><div><b>기금 통합운영</b><div class="s">푸른노무법인</div></div></div>'
+    +'<button onclick="newFund()" style="margin:0 10px 10px;padding:8px;width:calc(100% - 20px);background:var(--acc);color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer">＋ 새 기금 등록</button>'
     +'<div class="side-sec">메뉴</div>'
     +'<div class="sitem" id="nav-home" onclick="go(\'home\')">🏛 기금 현황</div>'
     +'<div class="sitem" id="nav-billing" onclick="go(\'billing\')">💰 청구 관리</div>'
@@ -301,6 +302,52 @@ function loadStaff(){
   // 2) 폴백: Firebase data/user_accounts (localStorage 비었을 때 = 이 브라우저에서 pu-erp 미실행)
   return fbDb.ref('data/user_accounts/v').once('value').then(function(s){ _staffCache=_normStaff(s.val()); return _staffCache; })
     .catch(function(){ _staffCache=[]; return _staffCache; });
+}
+// ── 새 기금 등록 ──
+function nextFundId(){
+  var mx=0; Object.keys(funds).forEach(function(k){ var m=/^FUND-(\d+)$/.exec(k); if(m){var n=+m[1]; if(n>mx)mx=n;} });
+  return 'FUND-'+('0000'+(mx+1)).slice(-4);
+}
+function newFund(){
+  showModal('<h2 style="margin:0 0 4px">새 기금 등록</h2>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 12px">신규(설립부터) 또는 기존(이미 설립·운영 중) 기금을 등록합니다. 담당은 푸른이알피 재직자에서 선택.</p>'
+    +'<div class="grid">'
+    +'<div class="fld full"><label>기금법인명 *</label><input id="nf-name" placeholder="예: 더행복한충남공동근로복지기금"></div>'
+    +'<div class="fld"><label>약칭</label><input id="nf-short" placeholder="예: 충남 1호"></div>'
+    +'<div class="fld"><label>유형</label><select id="nf-type"><option>공동</option><option>사내</option></select></div>'
+    +'<div class="fld"><label>지역(지역공동만)</label><input id="nf-region" placeholder="예: 충남 / 경기 (개별·사내는 비움)"></div>'
+    +'<div class="fld"><label>진행 구분</label><select id="nf-entry"><option value="new">신규(설립부터)</option><option value="existing">기존(운영부터)</option></select></div>'
+    +'</div>'
+    +'<div class="fld" style="margin-top:10px"><label>주담당</label><div id="nf-mgrwrap"><select id="nf-mgr" disabled><option>재직자 불러오는 중…</option></select></div></div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:16px"><button onclick="closeM()">취소</button><button class="primary" onclick="createFund()">등록</button></div>');
+  loadStaff().then(function(list){
+    var w=$('nf-mgrwrap'); if(!w) return;
+    if(!list.length){ w.innerHTML='<input id="nf-mgr-text" placeholder="담당자명(재직자 명단 없음)">'; return; }
+    w.innerHTML='<select id="nf-mgr"><option value="">(미지정)</option>'
+      +list.map(function(u){return '<option value="'+esc(u.sid)+'" data-name="'+esc(u.name)+'">'+esc(u.name)+(u.title?' · '+esc(u.title):'')+'</option>';}).join('')+'</select>';
+  }).catch(function(){});
+}
+function createFund(){
+  var name=($('nf-name')&&$('nf-name').value.trim())||'';
+  if(!name){ toast('기금법인명을 입력하세요','warn'); return; }
+  var dup=Object.keys(funds).some(function(k){return (funds[k].name||'')===name;});
+  if(dup){ toast('같은 이름의 기금이 이미 있습니다','err'); return; }
+  var type=$('nf-type').value, region=$('nf-region').value.trim();
+  var entry=$('nf-entry').value;
+  var short=($('nf-short')&&$('nf-short').value.trim())||name.slice(0,12);
+  var rec={ name:name, short_name:short, fund_type:type, region:(type==='공동'?region:''),
+    entry_mode:entry, created_at:ymd() };
+  if(entry==='new') rec.setup_stage='설립준비';   // 신규=설립 진행 표시
+  // 담당
+  var sel=$('nf-mgr');
+  if(sel&&sel.value){ var op=sel.options[sel.selectedIndex]; var nm=op.getAttribute('data-name')||op.text;
+    rec.mgr_main={sid:sel.value,name:nm}; rec.manager=nm; }
+  else { var tx=$('nf-mgr-text'); if(tx&&tx.value.trim()){ rec.manager=tx.value.trim(); } }
+  var fid=nextFundId();
+  fbDb.ref(NS+'/funds/'+fid).set(rec).then(function(){
+    funds[fid]=rec; closeM(); S.fundId=fid; S.tab='info'; _go('fund',fid);
+    toast('새 기금 등록: '+short+(entry==='new'?' (설립부터)':' (운영부터)'));
+  }).catch(function(e){ toast('등록 실패: '+e.message,'err'); });
 }
 function assignMgr(fid){
   var f=funds[fid]; if(!f) return;
@@ -814,6 +861,7 @@ function renderFund(){
   var f=funds[S.fundId]; $('crumb').textContent=(f.short_name||f.name);
   var tags=f.fund_type==='사내'?'<span class="tag sanae">사내</span>':'<span class="tag gong">공동</span>';
   tags+=(isPast(f)?' '+lifeBadge(f):'');
+  tags+=(f.setup_stage==='설립준비'?' <span class="chip warn">🏗 설립 진행</span>':'');
   var head=(isPast(f)?'<div class="panel" style="background:var(--warn-bg);border-left:3px solid var(--warn);padding:8px 12px;font-size:12.5px">이 기금은 <b>'+esc(f.lifecycle)+'</b> 상태입니다'+(f.end_date?' ('+esc(f.end_date)+(f.end_reason?' · '+esc(f.end_reason):'')+')':'')+'. 집계에서 제외됩니다. <a href="#" onclick="setLifecycle(\''+S.fundId+'\');return false;">상태 변경 →</a></div>':'')
     +'<div class="panel"><div class="row"><h1>'+esc(f.short_name||f.name)+'</h1>'+tags
     +'<span style="flex:1"></span>'
