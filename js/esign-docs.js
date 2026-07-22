@@ -155,7 +155,7 @@
 
   var api = {
     fmtIdNo: fmtIdNo, validateIdNo: validateIdNo, maskIdNo: maskIdNo,
-    fillVars: fillVars, ESIGN_FORMS: ESIGN_FORMS,
+    fillVars: fillVars, ESIGN_FORMS: ESIGN_FORMS, esc: esc,
     buildDelegationHtml: buildDelegationHtml, buildConsentHtml: buildConsentHtml,
     htmlPagesToPdf: htmlPagesToPdf, downloadRosterXlsx: downloadRosterXlsx, downloadArrearsXlsx: downloadArrearsXlsx
   };

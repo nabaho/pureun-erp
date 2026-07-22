@@ -174,8 +174,14 @@ async function openCase(caseId) {
   var c = casesCache[caseId]; if (!c) return;
   var pw = prompt('사건 비밀번호를 입력하세요 (사건 생성 시 설정)');
   if (!pw) return;
+  var protSnap;
   try {
-    var protSnap = await db.ref('esign/cases/' + caseId + '/secret/encPrivKey').once('value');
+    protSnap = await db.ref('esign/cases/' + caseId + '/secret/encPrivKey').once('value');
+  } catch (e) {
+    showToast('사건 정보를 불러올 수 없습니다 — 네트워크를 확인해 주세요');
+    return;
+  }
+  try {
     curPrivKey = await EsignCrypto.unprotectPrivKey(protSnap.val(), pw);
   } catch (e) {
     showToast('❌ 비밀번호가 올바르지 않습니다');
@@ -200,6 +206,7 @@ async function refreshSubs() {
       d._subId = id; d._submittedAt = s.submittedAt || 0; d._reviewState = s.reviewState || 'pending';
       decrypted.push(d);
     } catch (e) {
+      if (window.console) console.error('제출 복호화 실패', id, e);
       decrypted.push({ _subId: id, _submittedAt: s.submittedAt || 0, _reviewState: 'error', name: '(복호화 실패)', idNo: '', phone: '' });
     }
   }
@@ -226,9 +233,9 @@ function renderDetail() {
       var dup = d.idNo && cnt[d.idNo] > 1 ? ' <span class="badge" style="background:#fef3c7;color:#92400e">중복</span>' : '';
       return '<tr>'
         + '<td>' + (i + 1) + '</td>'
-        + '<td style="font-weight:700">' + d.name + dup + '</td>'
-        + '<td onclick="this.textContent=\'' + (d.idNo || '') + '\'" style="cursor:pointer" title="클릭하면 전체 표시">' + EsignDocs.maskIdNo(d.idNo) + '</td>'
-        + '<td>' + (d.phone || '') + '</td>'
+        + '<td style="font-weight:700">' + EsignDocs.esc(d.name) + dup + '</td>'
+        + '<td class="rrnCell" data-full="' + EsignDocs.esc(d.idNo || '') + '" style="cursor:pointer" title="클릭하면 전체 표시">' + EsignDocs.esc(EsignDocs.maskIdNo(d.idNo)) + '</td>'
+        + '<td>' + EsignDocs.esc(d.phone || '') + '</td>'
         + '<td>' + (d._submittedAt ? new Date(d._submittedAt).toLocaleString('ko-KR') : '') + '</td>'
         + '<td><a href="javascript:void(0)" onclick="cycleReview(\'' + d._subId + '\')">' + (RS_LABEL[d._reviewState] || d._reviewState) + '</a></td>'
         + '<td><button class="btn btn-sub" onclick="showPerson(\'' + d._subId + '\')">상세</button> '
@@ -236,6 +243,10 @@ function renderDetail() {
         + '</tr>';
     }).join('')
     + '</tbody></table></div>';
+  // RRN 마스킹 셀 클릭 시 전체 표시 — textContent 대입이라 HTML 파싱 없이 안전
+  $('viewDetail').querySelectorAll('.rrnCell').forEach(function (td) {
+    td.onclick = function () { this.textContent = this.dataset.full; };
+  });
   if (typeof renderDetailActions === 'function') renderDetailActions(); // Task 11·12
 }
 function closeDetail() {
@@ -247,8 +258,13 @@ function closeDetail() {
 // 검토상태 순환: pending → confirmed → hold → pending
 function cycleReview(subId) {
   var d = decrypted.find(function (x) { return x._subId === subId; }); if (!d) return;
-  var next = { pending: 'confirmed', confirmed: 'hold', hold: 'pending' }[d._reviewState] || 'pending';
-  db.ref('esign/cases/' + curCaseId + '/submissions/' + subId + '/reviewState').set(next);
+  var prev = d._reviewState;
+  var next = { pending: 'confirmed', confirmed: 'hold', hold: 'pending' }[prev] || 'pending';
+  db.ref('esign/cases/' + curCaseId + '/submissions/' + subId + '/reviewState').set(next).catch(function (e) {
+    showToast('저장 실패 — 다시 시도해 주세요');
+    d._reviewState = prev;
+    renderDetail();
+  });
   d._reviewState = next;
   renderDetail();
 }
@@ -260,15 +276,15 @@ function showPerson(subId) {
   bg.className = 'modal-bg';
   bg.onclick = function (e) { if (e.target === bg) bg.remove(); };
   bg.innerHTML = '<div class="modal">'
-    + '<h3 style="margin-bottom:10px">' + d.name + '</h3>'
+    + '<h3 style="margin-bottom:10px">' + EsignDocs.esc(d.name) + '</h3>'
     + '<table>'
-    + '<tr><th>주민등록번호</th><td>' + d.idNo + '</td></tr>'
-    + '<tr><th>연락처</th><td>' + d.phone + '</td></tr>'
-    + '<tr><th>주소</th><td>' + (d.addr || '') + '</td></tr>'
-    + '<tr><th>입금계좌</th><td>' + (d.bank || '') + '</td></tr>'
+    + '<tr><th>주민등록번호</th><td>' + EsignDocs.esc(d.idNo) + '</td></tr>'
+    + '<tr><th>연락처</th><td>' + EsignDocs.esc(d.phone) + '</td></tr>'
+    + '<tr><th>주소</th><td>' + EsignDocs.esc(d.addr || '') + '</td></tr>'
+    + '<tr><th>입금계좌</th><td>' + EsignDocs.esc(d.bank || '') + '</td></tr>'
     + '<tr><th>입사일</th><td>' + (d.joinDate || '-') + '</td></tr>'
     + '<tr><th>퇴사일</th><td>' + (d.leaveDate || '-') + '</td></tr>'
-    + '<tr><th>동의일시</th><td>' + String(d.consentAt || '').replace('T', ' ').slice(0, 16) + '</td></tr>'
+    + '<tr><th>동의일시</th><td>' + EsignDocs.esc(String(d.consentAt || '').replace('T', ' ').slice(0, 16)) + '</td></tr>'
     + '<tr><th>서명</th><td>' + (d.sigPng ? '<img src="' + d.sigPng + '" style="height:70px;border:1px solid #e5e7eb;border-radius:6px">' : '-') + '</td></tr>'
     + '</table>'
     + '<div style="text-align:right;margin-top:12px"><button class="btn btn-sub" onclick="this.closest(\'.modal-bg\').remove()">닫기</button></div></div>';
@@ -285,8 +301,12 @@ function delSub(subId) {
     decrypted = decrypted.filter(function (x) { return x._subId !== subId; });
     renderDetail();
     showToastUndo('제출 1건을 삭제했습니다', function () {
-      db.ref('esign/cases/' + curCaseId + '/submissions/' + subId).set(snapCache).then(refreshSubs).then(renderDetail);
+      db.ref('esign/cases/' + curCaseId + '/submissions/' + subId).set(snapCache).then(refreshSubs).then(renderDetail).catch(function (e) {
+        showToast('삭제 실패 — 다시 시도해 주세요');
+      });
     });
+  }).catch(function (e) {
+    showToast('삭제 실패 — 다시 시도해 주세요');
   });
 }
 </script>
