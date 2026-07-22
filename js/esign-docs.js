@@ -75,9 +75,14 @@
     };
   }
   function sigBlock(person) {
+    // sigPng는 근로자(worker) 측에서 암호화 전에 임의 조작 가능한 값 —
+    // data:image/png;base64, 형식이 아니면 서명 이미지를 렌더하지 않고 빈 서명란으로 대체 (XSS 방지, 관리자 모달 showPerson()과 동일 검증)
+    var okSig = person.sigPng && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(person.sigPng);
     return '<div style="margin-top:40px;text-align:right">' +
       '<span style="font-size:14px">위임인: ' + esc(person.name) + ' </span>' +
-      '<img src="' + person.sigPng + '" style="height:60px;vertical-align:middle;border-bottom:1px solid #999">' +
+      (okSig
+        ? '<img src="' + person.sigPng + '" style="height:60px;vertical-align:middle;border-bottom:1px solid #999">'
+        : '<span style="display:inline-block;width:160px;border-bottom:1px solid #999">&nbsp;</span>') +
       '<span style="font-size:12px;color:#555"> (서명)</span></div>';
   }
 
