@@ -693,6 +693,9 @@ const ErpMatch = {
       });
       ErpMatch.byBiz=byBiz; ErpMatch.byName=byName; ErpMatch.ready=true;
       try{ render(); }catch(_){}
+      /* 자문사 폴더 자동 분류 — 명함 데이터가 늦게 로드될 수 있어 4초 뒤 한 번 더(멱등) */
+      ErpMatch.autoFolder();
+      setTimeout(()=>ErpMatch.autoFolder(), 4000);
     }).catch(e=>{ console.warn('[ErpMatch]', e&&e.message); });
   },
   /* 명함/사업자 항목 → 담당자 레코드 (없으면 null) */
@@ -726,6 +729,25 @@ const ErpMatch = {
     const m = ErpMatch.match(it); if(!m || !m.contact) return false;
     const n = ErpMatch._norm(it.name); if(!n) return false;
     return m.contact === n || m.contact.indexOf(n) === 0;   /* '유석주이사' 같은 직책 붙은 표기 허용 */
+  },
+  /* ERP '자문' 매칭 명함 → '자문사' 폴더 자동 분류.
+     - 폴더 미지정 명함만 (기존 폴더 배정은 절대 안 건드림)
+     - 한 번 자동 배정한 명함은 erpAutoFoldered 표시 → 사용자가 빼면 다시 안 넣음 */
+  autoFolder(){
+    try{
+      if(!ErpMatch.ready) return;
+      const items = Object.values(state.items||{});
+      if(!items.length) return;
+      let g = Object.values(state.groups||{}).find(x=>x && String(x.name||'').replace(/\s/g,'')==='자문사');
+      if(!g){ g={id:uid(), name:'자문사', order:Date.now()}; Store.putGroup(g); state.groups[g.id]=g; }
+      let n=0;
+      items.forEach(it=>{
+        if(!it || (it.group||'')!=='' || it.erpAutoFoldered) return;
+        if(ErpMatch.type(it)!=='자문') return;
+        it.group=g.id; it.erpAutoFoldered=1; it.updatedAt=Date.now(); Store.put(it); n++;
+      });
+      if(n>0){ toast('🗂 자문사 폴더 자동 분류 '+n+'건'); try{ render(); }catch(_){}}
+    }catch(e){ console.warn('[autoFolder]', e&&e.message); }
   }
 };
 
