@@ -146,7 +146,7 @@ td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
       </div>
     </div>
   </div>
-  <div class="note">⚠ 시제품 — 저장은 브라우저 localStorage(임시, Firebase 교체 예정). HWP 업로드·파싱은 브라우저 안에서만 처리되며 외부로 전송되지 않습니다.<br>원본 렌더 미리보기(rhwp WASM)는 웹서버(http) 환경에서 동작하고, 파일로 직접 열면 텍스트 미리보기로 대체됩니다.<br>본 결과는 규칙 기반 자동 검토이며 최종 판단은 공인노무사의 검토를 거쳐야 합니다.</div>
+  <div class="note">저장: 포털 로그인 시 Firebase 공용 보관함에 저장·실시간 동기화(모든 노무사 공유), 로그인 전엔 이 브라우저에만 임시 보관. HWP 파싱은 브라우저 안에서만 처리되어 외부로 전송되지 않습니다.<br>원본 렌더 미리보기(rhwp WASM)는 웹서버(http) 환경에서 동작하고, 파일로 직접 열면 텍스트 미리보기로 대체됩니다.<br>본 결과는 규칙 기반 자동 검토이며 최종 판단은 공인노무사의 검토를 거쳐야 합니다.</div>
 </div>
 
 <div class="overlay" id="ov-daejo"><div class="modal">
@@ -404,30 +404,41 @@ function updateWho(){const el=$("who");if(!el)return;
   if(FBUSER){el.innerHTML=(FBUSER.displayName||FBUSER.email||"사용자")+' <b>· 로그인됨</b>';}
   else if(FBDB){el.innerHTML='<b style="color:#b45309">로그인 필요</b> — 포털에서 접속';}
   else{el.innerHTML='<b>로컬 데모</b> (localStorage)';}}
+const fbKey=s=>String(s||"").replace(/[.#$\[\]\/\s]/g,"_").slice(0,120)||"unknown";
 function loadArch(){try{return JSON.parse(localStorage.getItem(ARCH_KEY))||[]}catch(e){return[]}}
 function setLocal(a){localStorage.setItem(ARCH_KEY,JSON.stringify(a));updateArchCnt();}
-function saveArch(a){setLocal(a);
-  if(FBDB&&FBUSER){const o={};a.forEach(r=>o[r.id]=r);FBDB.ref("rules_mgmt/archive").set(o).catch(e=>console.warn("Firebase 저장 실패:",e));}}
-function pullArch(){if(!FBDB||!FBUSER)return;
-  FBDB.ref("rules_mgmt/archive").once("value").then(s=>{const v=s.val()||{};
+/* 레코드 1건 단위 저장 — 보관함 전체를 덮어쓰지 않으므로 여러 노무사 동시 저장 안전 */
+function putRecord(rec){
+  const arr=loadArch();const i=arr.findIndex(r=>r.id===rec.id);
+  if(i>=0)arr[i]=rec;else arr.unshift(rec);
+  setLocal(arr);
+  if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/archive/"+rec.id).set(rec).catch(e=>console.warn("Firebase 저장 실패:",e));
+}
+function removeRecord(id){
+  setLocal(loadArch().filter(r=>r.id!==id));
+  if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/archive/"+id).remove().catch(e=>console.warn("Firebase 삭제 실패:",e));
+}
+/* 실시간 동기화 — 한 명이 저장하면 다른 사람 화면도 자동 갱신 */
+function subscribeArch(){if(!FBDB||!FBUSER)return;
+  FBDB.ref("rules_mgmt/archive").on("value",s=>{const v=s.val()||{};
     const arr=Object.values(v).sort((a,b)=>(b.savedAt||"").localeCompare(a.savedAt||""));
     setLocal(arr);if(document.querySelector("#ov-arch.on"))renderArch($("arch-q").value);
-  }).catch(e=>console.warn("Firebase 불러오기 실패:",e));}
+  },e=>console.warn("Firebase 동기화 실패:",e));}
 function updateArchCnt(){const n=loadArch().length;$("arch-cnt").textContent=n?`(${n})`:"";}
 try{if(window.firebase){firebase.initializeApp(FB_CONFIG);FBDB=firebase.database();
-  firebase.auth().onAuthStateChanged(u=>{FBUSER=u;updateWho();if(u)pullArch();});
+  firebase.auth().onAuthStateChanged(u=>{FBUSER=u;updateWho();
+    if(u)subscribeArch();else if(FBDB)FBDB.ref("rules_mgmt/archive").off();});
 }}catch(e){console.warn("Firebase 초기화 건너뜀:",e);}
 updateWho();
 $("save").addEventListener("click",()=>{
   if(!LAST)return;
   // 대조표를 열어 편집·채택했다면 그 상태를, 아니면 새로 생성해 저장
   const rows=CUR_ROWS.length?CUR_ROWS:buildDaejo(LAST.res,LAST.terms);
-  const arr=loadArch();
-  const rec={id:"rec_"+Date.now(),site:LAST.site,bizno:LAST.bizno,size:LAST.size,conds:LAST.conds,asof:LAST.asof,
-    savedAt:new Date().toISOString().slice(0,16).replace("T"," "),summary:LAST.summary,daejo:rows,states:CUR_STATE};
-  const i=arr.findIndex(r=>r.site===rec.site);
-  if(i>=0)arr[i]=rec;else arr.unshift(rec);
-  saveArch(arr);
+  // 사업장당 안정적 ID(사업자번호 우선, 없으면 사업장명) → 재검토 시 같은 항목 갱신
+  const rec={id:"site_"+fbKey(LAST.bizno||LAST.site),site:LAST.site,bizno:LAST.bizno,size:LAST.size,conds:LAST.conds,asof:LAST.asof,
+    savedAt:new Date().toISOString().slice(0,16).replace("T"," "),savedBy:(FBUSER&&(FBUSER.displayName||FBUSER.email))||"",
+    summary:LAST.summary,daejo:rows,states:CUR_STATE};
+  putRecord(rec);
   const c=stateCounts(rows);
   alert(`'${LAST.site}' 규정이 보관함에 저장되었습니다.\n위반의심 ${LAST.summary.위반의심} · 누락 ${LAST.summary.누락} · 대조표 채택 ${c.채택} / 보류 ${c.보류} / 제외 ${c.제외}`);
 });
@@ -439,14 +450,14 @@ function renderArch(q){
   arr.forEach(r=>{const tr=document.createElement("tr");
     tr.innerHTML=`<td><b>${r.site}</b><br><span style="color:var(--mute);font-size:11px">${r.bizno||""}</span></td>
       <td>${r.size}</td><td><span class="astat">위반 ${r.summary.위반의심} · 누락 ${r.summary.누락} · 대조표 ${r.daejo.length}행</span></td>
-      <td style="color:var(--sub);font-size:12px">${r.savedAt}</td>
+      <td style="color:var(--sub);font-size:12px">${r.savedAt}${r.savedBy?`<br><span style="color:var(--mute);font-size:10.5px">${r.savedBy}</span>`:""}</td>
       <td style="text-align:right;white-space:nowrap"><button class="mini" data-open="${r.id}">대조표 열기</button> <button class="mini" data-del="${r.id}" style="color:#dc2626;border-color:#f3c0c0">삭제</button></td>`;
     tb.appendChild(tr);});
   tb.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>{
     const r=loadArch().find(x=>x.id===b.dataset.open);
     if(r){$("ov-arch").classList.remove("on");CUR_ROWS=r.daejo;showDaejo(r.daejo,`${r.site} · 저장 ${r.savedAt} · (보관함)`,false,r.states||{});}});
   tb.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
-    if(confirm("삭제하시겠습니까?")){saveArch(loadArch().filter(x=>x.id!==b.dataset.del));renderArch($("arch-q").value);}});
+    if(confirm("삭제하시겠습니까?")){removeRecord(b.dataset.del);renderArch($("arch-q").value);}});
 }
 $("open-arch").addEventListener("click",()=>{renderArch("");$("ov-arch").classList.add("on");});
 $("arch-q").addEventListener("input",e=>renderArch(e.target.value));
