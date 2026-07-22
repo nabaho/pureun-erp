@@ -389,6 +389,32 @@ function dailyReportRows(emps){
   });
   return rows;
 }
+/* 취득·상실: 입사일/퇴사일의 월이 신고월과 같은 직원 추출(연도는 표기해 사람이 확인) */
+function hireLossRows(emps, mLabel){
+  var mn=monthNum(mLabel), out=[];
+  (emps||[]).forEach(function(e){
+    var pay=(e.과세총액!=null)?e.과세총액:((e.지급총액!=null)?e.지급총액:e.기본급);
+    var h=e.입사일, l=e.퇴사일;
+    if(h&&parseInt(h.slice(5,7),10)===mn)
+      out.push({구분:'취득',성명:e.성명||'',일자:h,보수월액:pay,비고:(e.일당||e.시급)?'일용':'상용'});
+    if(l&&parseInt(l.slice(5,7),10)===mn)
+      out.push({구분:'상실',성명:e.성명||'',일자:l,보수월액:pay,비고:(e.일당||e.시급)?'일용':'상용'});
+  });
+  out.sort(function(a,b){ return a.구분===b.구분?(a.일자<b.일자?-1:1):(a.구분==='취득'?-1:1); });
+  return out;
+}
+function copyHireTSV(site,month){
+  var pay=dbGet('payroll',null);
+  var recs=(((pay||{}).sites||{})[site]||[]).filter(function(r){return r.월===month;});
+  var emps=[]; recs.forEach(function(r){ emps=emps.concat(dedupeEmps(r.직원||[])); });
+  var rows=hireLossRows(dedupeEmps(emps),month);
+  var tsv=[['구분','성명','일자','보수월액','비고'].join('\t')].concat(rows.map(function(x){
+    return [x.구분,x.성명,x.일자,(x.보수월액!=null?x.보수월액:''),x.비고].join('\t');})).join('\n');
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(tsv).then(function(){alert('취득·상실 초안 '+rows.length+'건 복사됨');},function(){alert(tsv);});
+  } else alert(tsv);
+}
+window.copyHireTSV=copyHireTSV;
 function copyReportTSV(site,month){
   var pay=dbGet('payroll',null);
   var rec=(((pay||{}).sites||{})[site]||[]).filter(function(r){return r.월===month;})[0];
@@ -405,30 +431,59 @@ function copyReportTSV(site,month){
   } else alert(tsv);
 }
 window.copyReportTSV=copyReportTSV;
+function reportKindBtns(){
+  var k=App.reportKind||'daily';
+  function b(id,label){ return '<button class="btn'+(k===id?'':' sec')+'" style="padding:6px 14px;font-size:12.5px" onclick="App.reportKind=\''+id+'\';App.site=null;App.month=null;render()">'+label+'</button>'; }
+  return '<div style="display:flex;gap:8px;margin-bottom:12px">'+b('daily','일용 매월신고')+b('hire','취득·상실')+'</div>';
+}
+function reportRowsOf(rec, kind){
+  var emps=dedupeEmps(rec.직원||[]);
+  return (kind==='hire')?hireLossRows(emps,rec.월):dailyReportRows(emps);
+}
 function screenReport(){
-  var pay=dbGet('payroll',null);
-  var h='<h1>신고 — 일용 근로내용확인신고 초안</h1>';
+  var pay=dbGet('payroll',null), kind=App.reportKind||'daily';
+  var h='<h1>신고 — '+(kind==='hire'?'4대보험 취득·상실 초안':'일용 근로내용확인신고 초안')+'</h1>';
   if(!pay||!pay.sites){ h+='<div class="sub">급여 데이터를 먼저 올리세요</div><div class="empty">급여 데이터가 서버에 없습니다.</div>'; return h; }
   if(!App.site){
-    h+='<div class="sub">사업장 선택 → 신고월 → 초안 확인·복사. 일용(일당·시급) 있는 달만 표시됩니다.</div><div class="cards">';
+    h+='<div class="sub">'+(kind==='hire'?'입사일·퇴사일이 신고월에 속한 직원을 자동 추출합니다(연도는 표에서 확인).':'사업장 선택 → 신고월 → 초안 확인·복사. 일용(일당·시급) 있는 달만 표시됩니다.')+'</div>'+reportKindBtns()+'<div class="cards">';
     Object.keys(pay.sites).forEach(function(site){
-      var months=(pay.sites[site]||[]).filter(function(r){return dailyReportRows(r.직원||[]).length>0;});
+      var months=(pay.sites[site]||[]).filter(function(r){return reportRowsOf(r,kind).length>0;});
       if(!months.length) return;
-      var tot=months.reduce(function(a,r){return a+dailyReportRows(r.직원||[]).length;},0);
+      var tot=months.reduce(function(a,r){return a+reportRowsOf(r,kind).length;},0);
       h+='<div class="c" style="cursor:pointer" onclick="navTo({site:\''+site.replace(/'/g,"")+'\'})">'+
-         '<div class="t">'+site+'</div><div class="m">신고월 '+months.length+'건 · 일용 연 '+tot+'명</div></div>';
+         '<div class="t">'+site+'</div><div class="m">신고월 '+months.length+'건 · '+(kind==='hire'?'취득·상실 '+tot+'건':'일용 연 '+tot+'명')+'</div></div>';
     });
     h+='</div>'; return h;
   }
-  var recs=(pay.sites[App.site]||[]).filter(function(r){return dailyReportRows(r.직원||[]).length>0;});
+  var recs=(pay.sites[App.site]||[]).filter(function(r){return reportRowsOf(r,kind).length>0;});
   if(!App.month){
-    h+='<div class="sub"><a href="#" onclick="goBack();return false">← 사업장</a> · <b>'+App.site+'</b> 신고월 선택</div>';
+    h+='<div class="sub"><a href="#" onclick="goBack();return false">← 사업장</a> · <b>'+App.site+'</b> 신고월 선택</div>'+reportKindBtns();
     h+='<div style="background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden">';
-    recs.forEach(function(r){ var n=dailyReportRows(dedupeEmps(r.직원||[])).length;
+    recs.forEach(function(r){ var n=reportRowsOf(r,kind).length;
       h+='<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);cursor:pointer" onclick="navTo({month:\''+r.월.replace(/'/g,"")+'\'})">'+
-         '<div style="flex:1"><b>'+r.월+'</b> <span style="font-size:12px;color:var(--sub)">일용 '+n+'명 · '+r.파일+'</span></div></div>';
+         '<div style="flex:1"><b>'+r.월+'</b> <span style="font-size:12px;color:var(--sub)">'+(kind==='hire'?'취득·상실 '+n+'건':'일용 '+n+'명')+' · '+r.파일+'</span></div></div>';
     });
     h+='</div>'; return h;
+  }
+  if(kind==='hire'){
+    var rec2=recs.filter(function(r){return r.월===App.month;})[0]||{직원:[]};
+    var hrows=hireLossRows(dedupeEmps(rec2.직원||[]),App.month);
+    h+='<div class="sub"><a href="#" onclick="goBack();return false">← '+App.site+'</a> · <b>'+App.month+'</b> 취득·상실 '+hrows.length+'건 '+
+       '<button class="btn" style="margin-left:8px" onclick="copyHireTSV(\''+App.site.replace(/'/g,"")+'\',\''+App.month.replace(/'/g,"")+'\')">EDI 붙여넣기용 복사</button></div>';
+    h+='<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;background:#fff">'+
+       '<tr style="background:var(--paper)">'+['구분','성명','일자','보수월액','비고'].map(function(c){return '<th style="padding:8px 10px;text-align:left">'+c+'</th>';}).join('')+'</tr>';
+    hrows.forEach(function(x){
+      h+='<tr style="border-top:1px solid var(--line)">'+
+        '<td style="padding:7px 10px;font-weight:700;color:'+(x.구분==='취득'?'var(--ok)':'var(--bad)')+'">'+x.구분+'</td>'+
+        '<td style="padding:7px 10px;font-weight:600">'+x.성명+'</td>'+
+        '<td style="padding:7px 10px">'+x.일자+'</td>'+
+        '<td style="padding:7px 10px;text-align:right">'+won(x.보수월액)+'</td>'+
+        '<td style="padding:7px 10px;color:var(--sub)">'+x.비고+'</td></tr>';
+    });
+    h+='</table></div><div class="note">추출 기준: 입사일/퇴사일의 "월"이 신고월과 같은 직원(대장 기재 기준). '+
+       '연도가 지난해면 이미 신고된 건일 수 있으니 일자를 확인하세요. 보수월액=대장 과세총액(취득신고의 월평균보수 참고값). '+
+       '일용 표시는 근로내용확인신고로 갈음되는 경우가 많으니 대상 여부를 확인하세요. 주민번호는 대행기관 명부에서 성명 매칭.</div>';
+    return h;
   }
   var rec=recs.filter(function(r){return r.월===App.month;})[0]||{직원:[]};
   var rows=dailyReportRows(dedupeEmps(rec.직원||[]));
