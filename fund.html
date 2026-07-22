@@ -387,9 +387,10 @@ function renderHome(){
   var head='<div class="panel"><div class="row"><h1>기금 현황</h1><span class="stat">운영 '+active.length+'</span>'+(past.length?'<span class="stat">지난 '+past.length+'</span>':'')
     +(incN?'<span class="stat" style="background:var(--warn-bg);color:var(--warn)">미완비 '+incN+'</span>':'')+'<span style="flex:1"></span>'
     +(edit?'<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;margin-right:6px"><input type="checkbox"'+(S.homeInc?' checked':'')+' onchange="S.homeInc=this.checked;renderHome()"> 미완비만</label>':'')
+    +(edit?'<button onclick="bulkRegistry()" title="소재지로 전체 기금 관할등기소 자동 추정" style="margin-right:6px">🏛 관할등기소 일괄</button>':'')
     +'<button class="'+(edit?'primary':'')+'" onclick="S.homeEdit=!S.homeEdit;renderHome()" title="핵심 기본정보(인가번호·설립일 등) 직접 입력">'+(edit?'✓ 입력 종료':'✏️ 정보 채우기')+'</button>'
     +'<input class="search" placeholder="기금명·담당 검색" value="'+esc(S.q||'')+'" oninput="S.q=this.value;renderHome()"></div>'
-    +(edit?'<p class="muted" style="font-size:12px;margin:6px 0 0">칸에 바로 입력하면 자동 저장됩니다. 빨간 테두리=빈 칸. 완비 기준 5항목: 인가번호·인가일·법인등록번호·설립등기일·고유번호.</p>':'')+'</div>';
+    +(edit?'<p class="muted" style="font-size:12px;margin:6px 0 0">칸에 바로 입력하면 자동 저장됩니다. 빨간 테두리=빈 칸. 완비 기준 5항목: 인가번호·인가일·법인등록번호·설립등기일·고유번호. [🏛 관할등기소 일괄]=소재지로 전 기금 등기소 추정(확인 필요).</p>':'')+'</div>';
   // 검색 중이면 그룹 무시하고 결과만(지난 기금 포함)
   if(S.q){
     var q=S.q; var hit=all.filter(function(f){return (f.name||'').indexOf(q)>=0||(f.short_name||'').indexOf(q)>=0||mgrText(f).indexOf(q)>=0;}).sort(srt);
@@ -478,6 +479,35 @@ function fillRegistry(){
   if(!g){ toast('소재지로 관할등기소를 찾지 못했습니다. 직접 입력하세요','warn'); return; }
   var el=$('fd-registry_office'); if(el){ el.value=g; markDirty(); }
   toast('추정: '+g+' — 인터넷등기소(iros.go.kr)에서 확인 후 저장','warn');
+}
+// 전체 기금 관할등기소 일괄 추정 — 미리보기 후 적용(빈 칸만 채움)
+function bulkRegistry(){
+  var arr=Object.keys(funds).map(function(k){return Object.assign({_id:k},funds[k]);});
+  var plan=[], nomap=[], skip=0;
+  arr.forEach(function(f){
+    if((f.registry_office||'').trim()){ skip++; return; }   // 이미 있으면 건드리지 않음
+    if(!(f.address||'').trim()) return;
+    var g=guessRegistry(f.address);
+    if(g) plan.push({id:f._id,name:f.short_name||f.name,office:g});
+    else nomap.push(f.short_name||f.name);
+  });
+  if(!plan.length){ toast('자동 채울 대상이 없습니다(빈 칸+매핑 가능 기금 없음)','warn'); return; }
+  var rows=plan.map(function(p){return '<tr><td style="font-weight:600">'+esc(p.name)+'</td><td>'+esc(p.office)+'</td></tr>';}).join('');
+  showModal('<h2 style="margin:0 0 4px">관할등기소 일괄 채우기</h2>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 10px"><b>추정값</b>입니다. 소재지의 시·군·구 기준이며 실제 관할은 대법원 인터넷등기소(iros.go.kr)에서 확인하세요. <b>비어 있는 '+plan.length+'개</b>만 채웁니다(기존 값·이미 채워진 '+skip+'개는 유지).'
+    +(nomap.length?'<br>매핑 없어 제외 '+nomap.length+'개: '+esc(nomap.slice(0,8).join(', '))+(nomap.length>8?' 외':''):'')+'</p>'
+    +'<div style="max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:8px"><table><thead><tr><th>기금</th><th>추정 관할등기소</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">취소</button><button class="primary" onclick="applyBulkRegistry()">'+plan.length+'개 채우기</button></div>');
+  window._regPlan=plan;
+}
+function applyBulkRegistry(){
+  var plan=window._regPlan||[]; if(!plan.length){ closeM(); return; }
+  var updates={};
+  plan.forEach(function(p){ updates[p.id+'/registry_office']=p.office; });
+  fbDb.ref(NS+'/funds').update(updates).then(function(){
+    plan.forEach(function(p){ if(funds[p.id]) funds[p.id].registry_office=p.office; });
+    window._regPlan=null; closeM(); renderHome(); toast(plan.length+'개 관할등기소 채움 — 확인 필요');
+  }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
 }
 function patchFund(id,field,val){
   val=val.trim?val.trim():val;
