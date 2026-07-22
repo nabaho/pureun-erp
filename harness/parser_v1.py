@@ -28,6 +28,8 @@ FIELDS = {
     "건강보험": ["건강보험"],
     "장기요양": ["장기요양", "요양보험"],
     "고용보험": ["고용보험"],
+    # 연말/중도정산 정산액(부호 그대로: 음수=환급, 양수=추가징수). 공제란에 표시.
+    "연말정산": ["연말정산", "중도정산", "연말정산세액", "연말정산정산액"],
     "공제총액": ["공제총액", "공제계", "공제합계", "공제금액", "공제 계"],
     "실수령":   ["차인지급액", "차인지급", "실지급액", "실수령액", "실수령", "실지급", "차감지급", "실지급총액"],
     "지급총액": ["지급총액", "지급합계", "지급계", "급여계", "총지급액", "지급액계",
@@ -527,10 +529,15 @@ def run_all():
     out = "\n".join(lines)
     with open(os.path.join(OUT_DIR, "parser_coverage.txt"), "w", encoding="utf-8") as f:
         f.write(out)
+    # 콘솔이 cp949면 특수문자(—·⚠ 등)에서 죽으므로 인코딩 불가 문자는 버리고 출력(파일은 정상).
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     try:
         print(out)
     except UnicodeEncodeError:
-        print("(콘솔 인코딩 — parser_coverage.txt 참조)")
+        print("(coverage printed to parser_coverage.txt)")
 
 
 if __name__ == "__main__":
