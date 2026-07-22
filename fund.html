@@ -274,8 +274,9 @@ function lifeSelect(f){
 function fundRow(f,no){
   var n=nDone(f); var chip=n===5?'<span class="chip ok">정보 완비</span>':n>=3?'<span class="chip warn">정보 '+n+'/5</span>':'<span class="chip dg">정보 '+n+'/5</span>';
   var subn=mgrSubNames(f);
+  var setupB=(f.setup_stage==='설립준비')?' <span class="chip warn" style="font-size:10px">🏗 설립중</span>':'';
   return '<tr onclick="go(\'fund\',\''+f._id+'\')"><td class="no">'+no+'</td>'
-    +'<td style="font-weight:700">'+esc(f.short_name||f.name)+'<div class="muted" style="font-weight:400;font-size:11.5px">'+esc(f.name||'')+'</div></td>'
+    +'<td style="font-weight:700">'+esc(f.short_name||f.name)+setupB+'<div class="muted" style="font-weight:400;font-size:11.5px">'+esc(f.name||'')+'</div></td>'
     +'<td>'+esc(mgrMainName(f)||'—')+'</td>'
     +'<td class="muted">'+(subn?esc(subn):'—')+'</td>'
     +'<td>'+esc(f.chairman||'—')+'</td><td>'+chip+'</td>'
@@ -446,7 +447,9 @@ function renderHome(){
   var todo='';
   var edit=!!S.homeEdit;
   var incN=active.filter(function(f){return nDone(f)<5;}).length;
+  var setupN=active.filter(function(f){return f.setup_stage==='설립준비';}).length;
   var head='<div class="panel"><div class="row"><h1>기금 현황</h1><span class="stat">운영 '+active.length+'</span>'+(past.length?'<span class="stat">지난 '+past.length+'</span>':'')
+    +(setupN?'<span class="stat" style="background:var(--warn-bg);color:var(--warn)">🏗 설립중 '+setupN+'</span>':'')
     +(incN?'<span class="stat" style="background:var(--warn-bg);color:var(--warn)">미완비 '+incN+'</span>':'')+'<span style="flex:1"></span>'
     +(edit?'<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;margin-right:6px"><input type="checkbox"'+(S.homeInc?' checked':'')+' onchange="S.homeInc=this.checked;renderHome()"> 미완비만</label>':'')
     +(edit?'<button onclick="bulkRegistry()" title="소재지로 전체 기금 관할등기소 자동 추정" style="margin-right:6px">🏛 등기소 일괄</button>':'')
@@ -1334,8 +1337,18 @@ function setupTab(f){
   return '<div class="panel"><div class="row"><h2>🏗 설립 진행</h2><span class="stat">'+nDoneN+'/'+steps.length+' 완료</span>'
     +'<span style="flex:1"></span>'+(nDoneN>=steps.length?'<button class="primary" onclick="finishSetup()">✅ 운영 전환</button>':'')+'</div>'
     +'<div style="height:8px;background:var(--line);border-radius:4px;margin:10px 0;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:var(--acc)"></div></div>'
-    +'<p class="muted" style="font-size:12px;margin:0 0 8px">신규 설립 절차입니다. 단계를 체크하며 진행하고, 모두 완료되면 [운영 전환]으로 정식 운영 기금이 됩니다. (인가번호·등기 등은 [기금 정보] 탭에 입력)</p>'
-    +'<div>'+rows+'</div></div>';
+    +'<p class="muted" style="font-size:12px;margin:0 0 8px">신규 설립 절차입니다. 중간에 나가도 이 상태로 저장되며, 목록에서 <b>🏗 설립중</b> 표시로 다시 찾아 이어서 진행할 수 있습니다. 12단계 완료 시 [운영 전환]으로 정식 운영 기금이 됩니다. (인가번호·등기 등은 [기금 정보] 탭에 입력)</p>'
+    +'<div>'+rows+'</div>'
+    +'<div class="row" style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px"><span class="muted" style="font-size:11.5px;flex:1">잘못 만든 기금이면 설립을 취소하고 삭제할 수 있습니다(설립 진행 중인 기금만).</span>'
+    +'<button onclick="cancelSetup()" style="color:var(--danger)">🗑 설립 취소·삭제</button></div></div>';
+}
+function cancelSetup(){ var _fid=S.fundId, f=funds[_fid]; if(!f) return;
+  confirmM('이 기금(설립 진행 중)을 취소하고 완전히 삭제할까요?\n"'+(f.short_name||f.name)+'"\n※ 되돌릴 수 없습니다. 이미 입력한 정보·사업장도 함께 삭제됩니다.',{ok:'삭제',danger:true}).then(function(ok){ if(!ok)return;
+    if(f.setup_stage!=='설립준비'){ toast('설립 진행 중인 기금만 삭제할 수 있습니다','warn'); return; }
+    var up={}; up['funds/'+_fid]=null; up['sites/'+_fid]=null; up['annual/'+_fid]=null; up['subsidy_docs/'+_fid]=null; up['doc_edits/'+_fid]=null;
+    fbDb.ref(NS).update(up).then(function(){ delete funds[_fid]; _go('home'); toast('설립 취소·삭제되었습니다'); })
+      .catch(function(e){ toast('삭제 실패: '+e.message,'err'); });
+  });
 }
 function toggleSetup(code,on){ var _fid=S.fundId;
   fbDb.ref(NS+'/funds/'+_fid+'/setup/'+code).set({done:on,date:on?ymd():''}).then(function(){
