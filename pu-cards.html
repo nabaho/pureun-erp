@@ -473,15 +473,6 @@ body.pc #pcDetail{display:flex}
       <h2><span id="pcTitle">전체 명함</span> <em id="pcCount">0개</em></h2>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <select id="pcRegion" onchange="state.region=this.value;state.page=0;render()" title="회사주소 기준 지역으로 거르기"></select>
-        <select id="pcErp" onchange="state.erpFilter=this.value;state.page=0;render()" title="푸른이알피 업체관리 연결 기준으로 거르기 (자문·급여·노조·기금 자동 분류)">
-          <option value="">ERP 전체</option>
-          <option value="자문">ERP·자문</option>
-          <option value="급여">ERP·급여</option>
-          <option value="노조">ERP·노조</option>
-          <option value="기금">ERP·기금</option>
-          <option value="linked">ERP 연결만</option>
-          <option value="none">ERP 미연결</option>
-        </select>
         <button id="incompleteBtn" class="pctool" onclick="this.classList.toggle('on');state.onlyIncomplete=!state.onlyIncomplete;state.page=0;render()" title="전화·이메일이 모두 있지 않은 명함만 보기 (빠진 정보 채우기용)">정보 부족만</button>
         <button id="privateBtn" class="pctool" onclick="this.classList.toggle('on');state.onlyPrivate=!state.onlyPrivate;state.page=0;render()" title="개인으로 지정한 명함만 보기">개인만</button>
         <div style="position:relative">
@@ -499,6 +490,8 @@ body.pc #pcDetail{display:flex}
           <option value="date">등록일순</option><option value="name">가나다순</option></select>
       </div>
     </div>
+    <!-- ERP 유형 탭: 푸른이알피 업체관리와 매칭된 명함을 자문·급여·노조·기금별로 관리 -->
+    <div id="pcErpTabs" style="display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 8px"></div>
     <div id="pcFilters" style="display:flex;gap:8px;flex-wrap:wrap"></div>
     <div id="pcSel"></div>
     <div id="pcTableWrap"><table id="pcTable"></table></div>
@@ -730,37 +723,42 @@ const ErpMatch = {
     const n = ErpMatch._norm(it.name); if(!n) return false;
     return m.contact === n || m.contact.indexOf(n) === 0;   /* '유석주이사' 같은 직책 붙은 표기 허용 */
   },
-  /* ERP 유형 매칭 명함 → 유형별 폴더 자동 분류 (자문→자문사, 급여/기금/노조→동명 폴더).
-     - 폴더 미지정 명함만 (기존 폴더 배정은 절대 안 건드림)
+  /* ERP 매칭 명함(자문·급여·노조·기금) → '업체관리' 폴더 자동 분류.
+     유형별 구분은 메인화면 ERP 탭에서 관리. (구 자문사 폴더는 업체관리로 이름 변경,
+     이전에 급여/기금/노조 폴더로 자동 배정된 명함은 업체관리로 1회 이동)
+     - 폴더 미지정 명함만 (기존 수동 폴더 배정은 절대 안 건드림)
      - 한 번 자동 배정한 명함은 erpAutoFoldered 표시 → 사용자가 빼면 다시 안 넣음 */
   autoFolder(){
     try{
       if(!ErpMatch.ready) return;
       const items = Object.values(state.items||{});
       if(!items.length) return;
-      const FOLDER_BY_TYPE = { '자문':'자문사', '급여':'급여', '기금':'기금', '노조':'노조' };
-      const gByType = {};   /* 유형 → 폴더 (필요할 때만 생성) */
-      function folderFor(type){
-        if(gByType[type]) return gByType[type];
-        const nm = FOLDER_BY_TYPE[type]; if(!nm) return null;
-        let g = Object.values(state.groups||{}).find(x=>x && String(x.name||'').replace(/\s/g,'')===nm);
-        if(!g){ g={id:uid(), name:nm, order:Date.now()}; Store.putGroup(g); state.groups[g.id]=g; }
-        gByType[type]=g; return g;
+      const gs = Object.values(state.groups||{});
+      const byNm = nm => gs.find(x=>x && String(x.name||'').replace(/\s/g,'')===nm);
+      /* 1) 업체관리 폴더 확보: 없으면 구 자문사 폴더 이름 변경, 그것도 없으면 생성 */
+      let g = byNm('업체관리');
+      if(!g){
+        const old = byNm('자문사');
+        if(old){ old.name='업체관리'; Store.putGroup(old); g=old; }
+        else { g={id:uid(), name:'업체관리', order:Date.now()}; Store.putGroup(g); state.groups[g.id]=g; }
       }
-      const cnt = {};
+      let n=0;
+      /* 2) 이전 유형별 자동 폴더(급여/기금/노조) → 업체관리로 1회 이동 (자동 배정분만) */
+      ['급여','기금','노조'].forEach(nm=>{
+        const og = byNm(nm); if(!og || og.id===g.id) return;
+        let moved=0;
+        items.forEach(it=>{ if(it && it.erpAutoFoldered && it.group===og.id){ it.group=g.id; it.updatedAt=Date.now(); Store.put(it); moved++; n++; } });
+        /* 자동 생성했던 폴더가 비면 정리 */
+        if(moved>0 && !items.some(it=>it && it.group===og.id)){ try{ Store.delGroup(og.id); delete state.groups[og.id]; }catch(_){} }
+      });
+      /* 3) 폴더 미지정 + ERP 매칭 → 업체관리 폴더 */
       items.forEach(it=>{
         if(!it || (it.group||'')!=='' || it.erpAutoFoldered) return;
-        const t = ErpMatch.type(it); if(!FOLDER_BY_TYPE[t]) return;
-        const g = folderFor(t); if(!g) return;
-        it.group=g.id; it.erpAutoFoldered=1; it.updatedAt=Date.now(); Store.put(it);
-        cnt[t]=(cnt[t]||0)+1;
+        const t = ErpMatch.type(it);
+        if(['자문','급여','노조','기금'].indexOf(t)<0) return;
+        it.group=g.id; it.erpAutoFoldered=1; it.updatedAt=Date.now(); Store.put(it); n++;
       });
-      const total = Object.values(cnt).reduce((a,b)=>a+b,0);
-      if(total>0){
-        const parts = Object.keys(cnt).map(t=>FOLDER_BY_TYPE[t]+' '+cnt[t]);
-        toast('🗂 폴더 자동 분류 '+total+'건 ('+parts.join(' · ')+')');
-        try{ render(); }catch(_){}
-      }
+      if(n>0){ toast('🗂 업체관리 폴더 자동 분류 '+n+'건'); try{ render(); }catch(_){}}
     }catch(e){ console.warn('[autoFolder]', e&&e.message); }
   }
 };
@@ -2916,7 +2914,23 @@ function renderPCTable(){
       + btn('다음 ▶', state.page+1, state.page>=totalPages-1);
   } else pager.innerHTML='';
 }
-function renderPC(){ renderPCSide(); renderPCTable(); }
+/* ERP 유형 탭 (자문·급여·노조·기금) — 업체관리 매칭 건수 포함 */
+function renderErpTabs(){
+  const el=$('pcErpTabs'); if(!el) return;
+  if(!ErpMatch.ready){ el.innerHTML=''; return; }
+  const all=Object.values(state.items).filter(x=>x&&x.kind===state.tab);
+  const cnt={ '자문':0,'급여':0,'노조':0,'기금':0, none:0 };
+  all.forEach(it=>{ const m=ErpMatch.match(it); if(m){ const t=m.type||''; if(cnt[t]!==undefined) cnt[t]++; } else cnt.none++; });
+  const tabs=[['','전체 '+all.length.toLocaleString()],
+    ['자문','🏢 자문 '+cnt['자문']],['급여','💰 급여 '+cnt['급여']],
+    ['노조','🤝 노조 '+cnt['노조']],['기금','🏦 기금 '+cnt['기금']],
+    ['none','미연결 '+cnt.none.toLocaleString()]];
+  el.innerHTML=tabs.map(([v,label])=>{
+    const on=(state.erpFilter||'')===v;
+    return `<button onclick="state.erpFilter='${v}';state.page=0;render()" title="푸른이알피 업체관리 유형 기준 자동 분류" style="border:1.5px solid ${on?'#1e40af':'#dde3ee'};background:${on?'#1e40af':'#fff'};color:${on?'#fff':'#33415e'};border-radius:18px;padding:6px 14px;font-weight:700;font-size:12.5px;cursor:pointer">${label}</button>`;
+  }).join('');
+}
+function renderPC(){ renderPCSide(); renderErpTabs(); renderPCTable(); }
 
 /* 헤더 클릭 정렬: 같은 칸 누르면 방향 토글 */
 function sortBy(key){
