@@ -197,9 +197,23 @@ def score_sheet(ws):
     # 일용 대장 여부: 총액=과세=지급 동일 구조(임금총액·노무비·출역 헤더)
     daily = any(k in _nows(h) for h in flat if h
                 for k in ("임금총액", "노무비", "출역"))
+    # 근로일자 달력: 헤더가 '1'~'31' 또는 'N일'인 미매핑 열 → {열: 일}.
+    # 서산점류(1/16 두 줄 겹침 헤더 "1 16")는 순수 숫자가 아니라 자동 제외(미지원).
+    daymap = {}
+    for ci, h in enumerate(flat):
+        if ci in colmap or not h:
+            continue
+        hs = _nows(h)
+        m = re.fullmatch(r"(\d{1,2})일?", hs)
+        if m and 1 <= int(m.group(1)) <= 31:
+            d = int(m.group(1))
+            if d not in daymap.values():
+                daymap[ci] = d
+    if len(daymap) < 10:      # 달력이라 보기 어려우면(우연한 숫자열) 버림
+        daymap = {}
     return {"data_start": data_start, "header_rows": (hstart, data_start),
             "colmap": colmap, "fields": fields, "col_count": col_count,
-            "extra_ded": extra_ded, "daily": daily}
+            "extra_ded": extra_ded, "daily": daily, "daymap": daymap}
 
 
 def pick_and_parse(wb):
@@ -254,6 +268,19 @@ def pick_and_parse(wb):
                         extra += v
             if extra:
                 emp["기타공제"] = extra
+            # 근로일자 달력(1~31 열의 출근 표시 → 날짜 목록). 표시: 숫자>0 또는 o/○/√/출 류.
+            if sc.get("daymap"):
+                MARKS = {"o", "0.5", "ㅇ", "○", "●", "√", "v", "x", "출", "유"}
+                days = []
+                for c, d in sc["daymap"].items():
+                    if c >= len(row) or row[c] is None:
+                        continue
+                    v = row[c]
+                    n = parse_num(v)
+                    if (n is not None and n > 0) or (n is None and str(v).strip().lower() in MARKS):
+                        days.append(d)
+                if days:
+                    emp["근로일자"] = sorted(days)
             # 일용 대장: 총액 칸 하나(임금총액·노무비총액)가 과세총액으로 잡힘
             # → 지급총액 칸이 따로 없으므로 동일값 채움(일용은 총액=과세=지급)
             if daily and emp.get("과세총액") is not None:

@@ -50,10 +50,16 @@ def daily_rows(emps):
             chk = f"확인(+{won(pay - expect)} 주휴·야간?)"
         else:
             chk = f"확인({kind}×근무={won(expect)})"
+        cal = e.get("근로일자") or []
+        if cal and len(cal) != days:
+            chk = (chk + " · " if chk != "일치" else "") + f"달력{len(cal)}≠일수{days}"
+            if chk.startswith("달력"):
+                chk = "확인(" + chk + ")"
         rows.append({
             "성명": e.get("성명", ""),
             "근로일수": days,
             "보수지급기초일수": days,
+            "근로일자": cal,                    # 신고서 달력(o표시)용 실제 근무 날짜
             "단가구분": kind,
             "단가": unit,
             "일평균시간": e.get("평균시간"),   # 신고서 '일평균 근로시간'
@@ -102,8 +108,10 @@ def render_html(site, rec):
     for i, x in enumerate(rec["직원"], 1):
         cls = "ok" if x["검산"] == "일치" else "warn"
         avg = x.get("일평균시간")
+        cal = ",".join(str(d) for d in x.get("근로일자") or []) or "-"
         rows += (f'<tr><td class="c">{i}</td><td class="l">{x["성명"]}</td>'
                  f'<td class="c">{x["근로일수"]}</td><td class="c">{x["보수지급기초일수"]}</td>'
+                 f'<td class="c" style="font-size:11px;max-width:150px">{cal}</td>'
                  f'<td class="c">{avg if avg is not None else "-"}</td>'
                  f'<td>{won(x["단가"])}<span style="color:#9aa0b5;font-size:10.5px">/{x["단가구분"]}</span></td>'
                  f'<td>{won(x["보수총액"])}</td><td>{won(x["임금총액"])}</td>'
@@ -111,13 +119,13 @@ def render_html(site, rec):
                  f'<td class="c {cls}">{x["검산"]}</td></tr>')
     return (f'<div class="box"><h1>근로내용확인신고 초안 — {site} {rec["월"]}</h1>'
             f'<div class="sub">원본: {rec["파일"]} · 일용 {rec["직원수"]}명 · 검산 일치 {rec["검산일치"]}/{rec["직원수"]}</div>'
-            f'<table><tr><th>연번</th><th>성명</th><th>근로일수</th><th>보수지급기초일수</th><th>일평균시간</th>'
+            f'<table><tr><th>연번</th><th>성명</th><th>근로일수</th><th>보수지급기초일수</th><th>근로일자</th><th>일평균시간</th>'
             f'<th>단가</th><th>보수총액(과세소득)</th><th>임금총액</th><th>소득세</th><th>지방소득세</th><th>검산</th></tr>'
             f'{rows}</table>'
             f'<div class="note"><b>초안 사용법</b>: 주민등록번호는 시스템에 저장하지 않으므로 공단 제출 시 '
-            f'대행기관 명부에서 성명으로 매칭해 채우세요. "확인" 표시는 일당×일수와 보수총액이 달라 '
-            f'주휴·비과세 등이 섞였을 수 있는 행입니다(원본 대장 확인). 근로일자(달력 o표시)는 '
-            f'원본 대장의 출역표를 그대로 옮기세요 — 다음 단계에서 자동화 예정.</div></div>')
+            f'대행기관 명부에서 성명으로 매칭해 채우세요. "확인" 표시는 일당×일수와 보수총액이 다르거나 '
+            f'(주휴·비과세 가능) 달력 표시 수와 근무일수가 다른 행입니다(원본 대장 확인). '
+            f'근로일자 열이 신고서의 달력(o표시)에 해당합니다 — 대장 출역표에서 자동 추출.</div></div>')
 
 
 def main():
