@@ -336,6 +336,72 @@ function screenSlip(){
   slipEmps.forEach(function(e){ h+=slipHTML(App.site,App.month,e,payday,notice,draft); });
   return h;
 }
+/* ── 수신함: 사업장별 자료 수신 현황(정상/미도착/지연/오류) + D-7 독촉 ──
+   메일 도메인 연결 시 실제 메일 도착으로 자동 태깅 대체. 지금은 급여데이터 유무로 자동 판정. */
+function monthNum(s){ var m=String(s||'').match(/(\d{1,2})\s*월/); return m?parseInt(m[1],10):null; }
+function dueDayOf(card){
+  var g=String((card&&card.급여일)||'');
+  if(/말일/.test(g)) return 'last';
+  var m=g.match(/(\d{1,2})/); return m?parseInt(m[1],10):null;
+}
+function inboxRoster(pay){
+  var cards=dbGet('site_cards',[])||[], seen={}, out=[];
+  cards.forEach(function(c){ if(c.사업장&&!seen[c.사업장]){ seen[c.사업장]=1;
+    out.push({site:c.사업장,담당자:c.담당자||'',급여일:c.급여일||'',card:c}); } });
+  Object.keys((pay&&pay.sites)||{}).forEach(function(s){ if(!seen[s]){ seen[s]=1;
+    out.push({site:s,담당자:'',급여일:'',card:null}); } });
+  return out;
+}
+function siteReceived(pay, site, mnum){
+  var recs=((pay&&pay.sites)||{})[site]||[];
+  var got=recs.filter(function(r){ return mnum==null || monthNum(r.월)===mnum; });
+  if(!got.length) return null;
+  var sig='green';
+  got.forEach(function(r){ if(r.신호==='red')sig='red'; else if(r.신호==='orange'&&sig!=='red')sig='orange'; });
+  return {n:got.length, sig:sig};
+}
+function screenInbox(){
+  var pay=dbGet('payroll',null), now=new Date();
+  if(!App.inboxMonth) App.inboxMonth=(now.getMonth()+1)+'월';
+  var mnum=monthNum(App.inboxMonth);
+  var h='<h1>수신함</h1><div class="sub">사업장 자료 수신 현황 · 안 온 곳은 D-7 독촉 (메일 도메인 연결 시 자동 태깅)</div>';
+  h+='<div class="noprint" style="margin-bottom:12px">기준 월 <input value="'+App.inboxMonth.replace(/"/g,'')+'" style="width:80px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-family:inherit" onchange="App.inboxMonth=this.value;render()"> <span style="font-size:12px;color:var(--sub)">예: 7월</span></div>';
+  if(!pay||!pay.sites){ h+='<div class="empty">급여 데이터가 없어 수신 현황을 만들 수 없습니다. 급여 처리에서 먼저 데이터를 올리세요.</div>'; return h; }
+  var roster=inboxRoster(pay), cnt={정상:0,오류:0,지연:0,미도착:0}, rows='';
+  roster.forEach(function(o){
+    var rec=siteReceived(pay,o.site,mnum), due=dueDayOf(o.card), dday=null, dueTxt='';
+    if(due!=null){
+      var y=now.getFullYear(), mo=now.getMonth();
+      var dd=(due==='last')?new Date(y,mo+1,0).getDate():due;
+      dday=Math.round((new Date(y,mo,dd)-new Date(y,mo,now.getDate()))/86400000);
+      dueTxt=(due==='last'?'말일':due+'일')+(dday>=0?' (D-'+dday+')':' (지남)');
+    }
+    var status,color;
+    if(rec){ if(rec.sig==='green'){status='정상';color=SIG.green;} else {status='오류';color=SIG.red;} }
+    else { if(dday!=null&&dday<0){status='지연';color=SIG.red;} else {status='미도착';color=SIG.orange;} }
+    cnt[status]++;
+    var urge=(status==='지연')||(status==='미도착'&&dday!=null&&dday<=7);
+    rows+='<div style="display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--line)">'+
+      '<span style="width:60px;font-size:11.5px;color:#fff;background:'+color+';border-radius:99px;padding:3px 0;text-align:center;flex-shrink:0">'+status+'</span>'+
+      '<div style="flex:1"><b>'+o.site+'</b> <span style="font-size:12px;color:var(--sub)">'+(o.담당자?o.담당자+' · ':'')+(o.급여일?'급여일 '+dueTxt:'급여일 미지정')+'</span></div>'+
+      (urge?'<button class="btn sec" style="padding:5px 10px;font-size:12px" onclick="copyDunning(\''+o.site.replace(/'/g,"")+'\')">독촉 문구 복사</button>':'')+
+      '</div>';
+  });
+  h+='<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">'+
+     [['정상','#E8F3EC'],['미도착','#FBF1DE'],['지연','#FBE3E3'],['오류','#FBE3E3']].map(function(k){
+       return '<span class="badge" style="background:'+k[1]+'">'+k[0]+' '+cnt[k[0]]+'</span>';}).join('')+'</div>';
+  h+='<div style="background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden">'+rows+'</div>';
+  h+='<div class="note">판정: 급여데이터 있으면 정상(문제 시 오류), 없으면 미도착·급여일 지나면 지연. 메일 도메인 연결 시 실제 메일 도착으로 자동 태깅됩니다.</div>';
+  return h;
+}
+function copyDunning(site){
+  var m=App.inboxMonth||'';
+  var txt='['+site+'] 담당자님, 안녕하세요. 푸른노무법인입니다.\n'+m+' 급여 처리를 위한 자료(급여대장·근태 등)가 아직 도착하지 않았습니다.\n원활한 급여일 처리를 위해 회신 부탁드립니다. 감사합니다.';
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(function(){alert('독촉 문구를 복사했습니다. 메일/문자에 붙여넣으세요.\n\n'+txt);},function(){alert(txt);});
+  } else alert(txt);
+}
+window.copyDunning=copyDunning;
 function screenCards(){
   var cards=dbGet('site_cards',[]);
   var h='<h1>설정 카드</h1><div class="sub">푸른통합시스템 · payroll_os · '+cards.length+'곳</div>';
@@ -356,7 +422,7 @@ function render(){
   if(App.screen==='cards') m.innerHTML=screenCards();
   else if(App.screen==='payroll') m.innerHTML=screenPayroll();
   else if(App.screen==='slip') m.innerHTML=screenSlip();
-  else m.innerHTML='<h1>수신함</h1><div class="sub">자료 수신·자동태깅</div><div class="empty">다음 단계에서 구현</div>';
+  else m.innerHTML=screenInbox();
 }
 function importCards(){var i=document.createElement('input');i.type='file';i.accept='.json';
   i.onchange=function(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();
