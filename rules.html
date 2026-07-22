@@ -98,6 +98,13 @@ tr.g-excl td{opacity:.38}
 tr.g-hold td{opacity:.65}
 td.editable{outline:1px dashed #c7d2e8;outline-offset:-3px;cursor:text}
 td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
+.rev-intro{font-size:12.5px;color:var(--sub);background:#f6f9ff;border:1px solid var(--line);border-radius:10px;padding:11px 14px;margin-bottom:14px;line-height:1.7}
+.rev-item{border:1px solid var(--line);border-left-width:4px;border-radius:9px;padding:11px 14px;margin-bottom:12px}
+.rev-item.ins{border-left-color:var(--warn)} .rev-item.amd{border-left-color:var(--danger)}
+.rev-h{font-size:14px;margin-bottom:7px} .rev-h b{margin-left:4px}
+.rev-old{font-size:11.5px;color:var(--mute);margin-top:5px;font-style:italic}
+.rev-txt{font-size:13px;line-height:1.85;white-space:pre-wrap;color:#2b3240;background:#fafcff;border-radius:8px;padding:10px 12px}
+.rev-why{font-size:11px;color:var(--sub);margin-top:6px}
 @media(max-width:900px){.grid{grid-template-columns:1fr}}
 #upBtn{border:1.5px dashed #b9c6e0;background:rgba(255,255,255,.7);color:var(--accent);}
 #upBtn:hover{border-color:var(--accent);background:#fff;}
@@ -165,7 +172,18 @@ td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
   <div class="body"><table class="daejo" id="daejo-tbl"></table></div>
   <div class="foot">
     <button class="btn ghost" data-close>닫기</button>
+    <button class="btn ghost" id="show-rev">변경 결과 보기 →</button>
+    <button class="btn ghost" id="dl-doc-daejo">한글(.doc) 다운로드</button>
     <button class="btn" id="dl-xlsx">xlsx 다운로드</button>
+  </div>
+</div></div>
+
+<div class="overlay" id="ov-rev"><div class="modal">
+  <h2>변경 결과 · 개정안 조문 <span class="tag" id="rev-sub" style="font-size:12px;color:var(--mute);font-weight:400"></span><span class="x" data-close>×</span></h2>
+  <div class="body" id="rev-body"></div>
+  <div class="foot">
+    <button class="btn ghost" data-close>닫기</button>
+    <button class="btn" id="dl-doc-rev">한글(.doc) 다운로드</button>
   </div>
 </div></div>
 
@@ -420,6 +438,101 @@ function downloadXlsx(rows,ctx){
     a.download=`신구대조표_${ctx.asof}.csv`;a.click();
   }
 }
+
+/* ── 변경 결과(개정안 조문): 채택된 변경을 조문 단위로 결합 ── */
+function revisionFromRows(rows,state){
+  const byRid={},order=[];
+  rows.forEach(r=>{
+    if(!byRid[r.rid]){byRid[r.rid]={title:"",kind:"",reason:"",before:"",parts:[]};order.push(r.rid);}
+    const g=byRid[r.rid];
+    if(r.label){g.title=r.label;g.kind=r.kind;g.reason=r.reason;g.before=r.before;}
+    if(r.after)g.parts.push(r.after);
+  });
+  return order.filter(rid=>(state[rid]||"채택")==="채택")
+    .map(rid=>{const g=byRid[rid];return {rid,title:g.title,kind:g.kind,reason:g.reason,before:g.before,text:g.parts.join("\n")};});
+}
+function showRevision(){
+  if(!CUR_ROWS.length){alert("먼저 신구대조표를 생성하세요.");return;}
+  const changes=revisionFromRows(CUR_ROWS,CUR_STATE);
+  const body=$("rev-body");body.innerHTML="";
+  if(!changes.length){body.innerHTML='<div class="empty">채택된 변경이 없습니다.</div>';}
+  const 개정=changes.filter(c=>c.kind==="개정").length,신설=changes.filter(c=>c.kind==="신설").length;
+  const intro=document.createElement("div");intro.className="rev-intro";
+  intro.innerHTML=`아래는 <b>채택된 변경(개정 ${개정} · 신설 ${신설})</b>을 반영한 조문입니다. 그 밖의 조문은 현행 유지됩니다.<br>신설 조문의 위치·조번호는 노무사가 최종 배치하십시오.`;
+  body.appendChild(intro);
+  changes.forEach(c=>{
+    const d=document.createElement("div");d.className="rev-item "+(c.kind==="신설"?"ins":"amd");
+    d.innerHTML=`<div class="rev-h"><span class="badge ${c.kind==="신설"?"miss":"s"}">${c.kind}</span> <b>${escapeH(c.title)}</b>
+      ${c.kind==="개정"&&c.before&&c.before!=="신설"?`<div class="rev-old">현행: ${escapeH(c.before)}</div>`:""}</div>
+      <div class="rev-txt">${escapeH(c.text)}</div>
+      <div class="rev-why">근거: ${escapeH(c.reason)}</div>`;
+    body.appendChild(d);
+  });
+  $("rev-sub").textContent=`${LAST?LAST.site:""} · 채택 ${changes.length}건`;
+  $("ov-rev").classList.add("on");
+}
+$("show-rev").addEventListener("click",showRevision);
+
+/* ── 한글(.doc = RTF) 생성: 라이브러리 없이, 한글이 그대로 열고 편집 ── */
+function rtfEsc(s){
+  let o="";for(const ch of String(s||"")){
+    const c=ch.codePointAt(0);
+    if(ch==="\\"||ch==="{"||ch==="}")o+="\\"+ch;
+    else if(ch==="\n")o+="\\par ";
+    else if(c<128)o+=ch;
+    else o+="\\u"+(c>32767?c-65536:c)+"?";
+  }return o;
+}
+const RTF_HEAD="{\\rtf1\\ansi\\ansicpg949\\deff0{\\fonttbl{\\f0\\fnil\\fcharset129 \\'b8\\'bc\\'c0\\'ba\\'20\\'b0\\'ed\\'b5\\'f0;}}\\f0\\fs20 ";
+function rtfCell(text,w,x,bold){ // 셀 정의는 row 시작부의 \cellx로, 여기선 내용만
+  return "\\intbl "+(bold?"\\b ":"")+rtfEsc(text)+(bold?"\\b0":"")+"\\cell ";
+}
+function rtfTableDoc(title,sub,headers,rows,widths){
+  // widths: 트윕 단위 누적 경계
+  let bounds=[],acc=0;widths.forEach(w=>{acc+=w;bounds.push(acc);});
+  const rowRtf=(cells,bold)=>{
+    let r="\\trowd\\trgaph80";bounds.forEach(b=>r+="\\clbrdrt\\brdrs\\clbrdrl\\brdrs\\clbrdrb\\brdrs\\clbrdrr\\brdrs\\cellx"+b);
+    cells.forEach(c=>r+="\\intbl\\ql "+(bold?"\\b ":"")+rtfEsc(c)+(bold?"\\b0 ":" ")+"\\cell ");
+    return r+"\\row ";
+  };
+  let out=RTF_HEAD+"\\qc\\b\\fs28 "+rtfEsc(title)+"\\b0\\fs20\\par "+rtfEsc(sub)+"\\par\\par \\ql ";
+  out+=rowRtf(headers,true);
+  rows.forEach(r=>out+=rowRtf(r,false));
+  return out+"}";
+}
+function rtfPlainDoc(title,sub,blocks){
+  // blocks: [{head, old, text, why}]
+  let out=RTF_HEAD+"\\qc\\b\\fs28 "+rtfEsc(title)+"\\b0\\fs20\\par "+rtfEsc(sub)+"\\par\\par \\ql ";
+  blocks.forEach(b=>{
+    out+="\\b "+rtfEsc(b.head)+"\\b0\\par ";
+    if(b.old)out+="\\i "+rtfEsc(b.old)+"\\i0\\par ";
+    out+=rtfEsc(b.text)+"\\par ";
+    if(b.why)out+="\\fs16 "+rtfEsc(b.why)+"\\fs20\\par ";
+    out+="\\par ";
+  });
+  return out+"}";
+}
+function dlDoc(rtf,fname){
+  const blob=new Blob(["﻿"+rtf],{type:"application/msword"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=fname;a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+$("dl-doc-daejo").addEventListener("click",()=>{
+  const adopted=CUR_ROWS.filter(r=>groupState(r.rid)==="채택");
+  if(!adopted.length){alert("채택된 항목이 없습니다.");return;}
+  const rows=adopted.map(r=>[r.label,r.before==="신설"?"신 설":r.before,r.after,r.reason]);
+  const rtf=rtfTableDoc(`${LAST.site} 취업규칙 개정 신구대조표`,`검토기준일 ${LAST.asof} · 규칙집 v2`,
+    ["변경조항","변경 전","변경 후","변경이유"],rows,[2400,3400,4200,2600]);
+  dlDoc(rtf,`신구대조표_${LAST.site.replace(/[()\s—📄]/g,"")}_${LAST.asof.replace(/-/g,"")}.doc`);
+});
+$("dl-doc-rev").addEventListener("click",()=>{
+  const changes=revisionFromRows(CUR_ROWS,CUR_STATE);
+  if(!changes.length){alert("채택된 변경이 없습니다.");return;}
+  const blocks=changes.map(c=>({head:`[${c.kind}] ${c.title}`,
+    old:(c.kind==="개정"&&c.before&&c.before!=="신설")?`현행: ${c.before}`:"",text:c.text,why:`근거: ${c.reason}`}));
+  const rtf=rtfPlainDoc(`${LAST.site} 취업규칙 개정안 조문`,`검토기준일 ${LAST.asof} · 채택 ${changes.length}건 · 신설 조번호·위치는 최종 검토 필요`,blocks);
+  dlDoc(rtf,`개정안조문_${LAST.site.replace(/[()\s—📄]/g,"")}_${LAST.asof.replace(/-/g,"")}.doc`);
+});
 
 /* 저장 계층: 로그인 시 Firebase 공용 금고(source of truth) + localStorage 캐시, 아니면 localStorage만 */
 let FBDB=null, FBUSER=null;
