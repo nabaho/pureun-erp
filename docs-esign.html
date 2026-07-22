@@ -167,7 +167,128 @@ function shareCase(caseId) {
   $('shClose').onclick = function () { bg.remove(); };
 }
 
-function openCase(caseId) { showToast('사건 상세는 다음 단계에서 구현'); } // Task 10에서 교체
+// ── 사건 상세 (복호화 세션) ──
+var curCaseId = null, curPrivKey = null, decrypted = [];
+
+async function openCase(caseId) {
+  var c = casesCache[caseId]; if (!c) return;
+  var pw = prompt('사건 비밀번호를 입력하세요 (사건 생성 시 설정)');
+  if (!pw) return;
+  try {
+    var protSnap = await db.ref('esign/cases/' + caseId + '/secret/encPrivKey').once('value');
+    curPrivKey = await EsignCrypto.unprotectPrivKey(protSnap.val(), pw);
+  } catch (e) {
+    showToast('❌ 비밀번호가 올바르지 않습니다');
+    return;
+  }
+  curCaseId = caseId;
+  await refreshSubs();
+  $('viewList').style.display = 'none';
+  $('viewDetail').style.display = 'block';
+  renderDetail();
+}
+
+// 제출 전체 복호화 (실패 건은 표시만 하고 건너뜀)
+async function refreshSubs() {
+  var snap = await db.ref('esign/cases/' + curCaseId + '/submissions').once('value');
+  var subs = snap.val() || {};
+  decrypted = [];
+  for (var id in subs) {
+    var s = subs[id];
+    try {
+      var d = await EsignCrypto.decryptSubmission({ enc: s.enc, encKey: s.encKey, iv: s.iv }, curPrivKey);
+      d._subId = id; d._submittedAt = s.submittedAt || 0; d._reviewState = s.reviewState || 'pending';
+      decrypted.push(d);
+    } catch (e) {
+      decrypted.push({ _subId: id, _submittedAt: s.submittedAt || 0, _reviewState: 'error', name: '(복호화 실패)', idNo: '', phone: '' });
+    }
+  }
+  decrypted.sort(function (a, b) { return a._submittedAt - b._submittedAt; });
+}
+
+var RS_LABEL = { pending: '⏳ 대기', confirmed: '✅ 확인', hold: '⚠ 보류', error: '❌ 오류' };
+
+function renderDetail() {
+  var m = (casesCache[curCaseId] || {}).meta || {};
+  // 중복 감지: 동일 주민번호 2건 이상
+  var cnt = {};
+  decrypted.forEach(function (d) { if (d.idNo) cnt[d.idNo] = (cnt[d.idNo] || 0) + 1; });
+  $('viewDetail').innerHTML =
+    '<div class="card"><div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">'
+    + '<button class="btn btn-sub" onclick="closeDetail()">← 목록</button>'
+    + '<b style="flex:1;font-size:15px">' + (m.title || '') + ' <span style="color:#64748b;font-weight:400">— 제출 '
+    + decrypted.length + '명</span></b>'
+    + '<button class="btn btn-sub" onclick="shareCase(curCaseId)">🔗 링크</button>'
+    + '<span id="detailActions"></span>' // Task 11·12가 버튼 추가
+    + '</div>'
+    + '<table><thead><tr><th>#</th><th>성명</th><th>주민등록번호</th><th>연락처</th><th>제출일시</th><th>상태</th><th></th></tr></thead><tbody>'
+    + decrypted.map(function (d, i) {
+      var dup = d.idNo && cnt[d.idNo] > 1 ? ' <span class="badge" style="background:#fef3c7;color:#92400e">중복</span>' : '';
+      return '<tr>'
+        + '<td>' + (i + 1) + '</td>'
+        + '<td style="font-weight:700">' + d.name + dup + '</td>'
+        + '<td onclick="this.textContent=\'' + (d.idNo || '') + '\'" style="cursor:pointer" title="클릭하면 전체 표시">' + EsignDocs.maskIdNo(d.idNo) + '</td>'
+        + '<td>' + (d.phone || '') + '</td>'
+        + '<td>' + (d._submittedAt ? new Date(d._submittedAt).toLocaleString('ko-KR') : '') + '</td>'
+        + '<td><a href="javascript:void(0)" onclick="cycleReview(\'' + d._subId + '\')">' + (RS_LABEL[d._reviewState] || d._reviewState) + '</a></td>'
+        + '<td><button class="btn btn-sub" onclick="showPerson(\'' + d._subId + '\')">상세</button> '
+        + '<button class="btn btn-danger" onclick="delSub(\'' + d._subId + '\')">삭제</button></td>'
+        + '</tr>';
+    }).join('')
+    + '</tbody></table></div>';
+  if (typeof renderDetailActions === 'function') renderDetailActions(); // Task 11·12
+}
+function closeDetail() {
+  curCaseId = null; curPrivKey = null; decrypted = []; // 복호화 세션 종료 — 메모리 정리
+  $('viewDetail').style.display = 'none';
+  $('viewList').style.display = 'block';
+}
+
+// 검토상태 순환: pending → confirmed → hold → pending
+function cycleReview(subId) {
+  var d = decrypted.find(function (x) { return x._subId === subId; }); if (!d) return;
+  var next = { pending: 'confirmed', confirmed: 'hold', hold: 'pending' }[d._reviewState] || 'pending';
+  db.ref('esign/cases/' + curCaseId + '/submissions/' + subId + '/reviewState').set(next);
+  d._reviewState = next;
+  renderDetail();
+}
+
+// 개인 상세 (서명 미리보기)
+function showPerson(subId) {
+  var d = decrypted.find(function (x) { return x._subId === subId; }); if (!d) return;
+  var bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.onclick = function (e) { if (e.target === bg) bg.remove(); };
+  bg.innerHTML = '<div class="modal">'
+    + '<h3 style="margin-bottom:10px">' + d.name + '</h3>'
+    + '<table>'
+    + '<tr><th>주민등록번호</th><td>' + d.idNo + '</td></tr>'
+    + '<tr><th>연락처</th><td>' + d.phone + '</td></tr>'
+    + '<tr><th>주소</th><td>' + (d.addr || '') + '</td></tr>'
+    + '<tr><th>입금계좌</th><td>' + (d.bank || '') + '</td></tr>'
+    + '<tr><th>입사일</th><td>' + (d.joinDate || '-') + '</td></tr>'
+    + '<tr><th>퇴사일</th><td>' + (d.leaveDate || '-') + '</td></tr>'
+    + '<tr><th>동의일시</th><td>' + String(d.consentAt || '').replace('T', ' ').slice(0, 16) + '</td></tr>'
+    + '<tr><th>서명</th><td>' + (d.sigPng ? '<img src="' + d.sigPng + '" style="height:70px;border:1px solid #e5e7eb;border-radius:6px">' : '-') + '</td></tr>'
+    + '</table>'
+    + '<div style="text-align:right;margin-top:12px"><button class="btn btn-sub" onclick="this.closest(\'.modal-bg\').remove()">닫기</button></div></div>';
+  document.body.appendChild(bg);
+}
+
+// 삭제 (Undo 토스트 — utils.js showToastUndo)
+function delSub(subId) {
+  var snapCache = null;
+  db.ref('esign/cases/' + curCaseId + '/submissions/' + subId).once('value').then(function (s) {
+    snapCache = s.val();
+    return db.ref('esign/cases/' + curCaseId + '/submissions/' + subId).remove();
+  }).then(function () {
+    decrypted = decrypted.filter(function (x) { return x._subId !== subId; });
+    renderDetail();
+    showToastUndo('제출 1건을 삭제했습니다', function () {
+      db.ref('esign/cases/' + curCaseId + '/submissions/' + subId).set(snapCache).then(refreshSubs).then(renderDetail);
+    });
+  });
+}
 </script>
 </body>
 </html>
