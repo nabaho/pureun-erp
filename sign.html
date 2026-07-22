@@ -189,6 +189,9 @@ $('btnToSign').onclick = function () {
   if (!r.ok) { err.textContent = '⚠ ' + r.msg; err.style.display = 'block'; return; }
   err.style.display = 'none';
   showStep(3);
+  // step3가 display:none → block으로 바뀐 직후에 실제 크기로 재설정
+  // (showStep은 CSS 클래스만 토글하며 window resize 이벤트를 발생시키지 않음)
+  sigPad.resize();
 };
 $('btnBack').onclick = function () { showStep(2); };
 
@@ -204,13 +207,26 @@ var sigPad = (function () {
 
   function resize() {
     var r = cv.getBoundingClientRect();
+    // step3가 아직 display:none인 동안(로드 시점 등)에는 0×0이 되므로 재설정하지 않음.
+    // 실제 표시 시점에는 btnToSign 핸들러가 sigPad.resize()를 다시 호출해 정상 크기로 잡는다.
+    if (r.width === 0 || r.height === 0) return;
     var dpr = window.devicePixelRatio || 1;
+    var hadContent = strokes > 0;
+    // 서명 중 실제 window resize(모바일 키보드 표시/회전 등)가 발생해도 그려진 내용을 보존
+    var snapshot = hadContent ? cv.toDataURL('image/png') : null;
     cv.width = Math.round(r.width * dpr);
     cv.height = Math.round(r.height * dpr);
     ctx = cv.getContext('2d');
     ctx.scale(dpr, dpr);
     ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#1e293b';
-    strokes = 0; // 리사이즈되면 내용이 지워지므로 초기화
+    if (hadContent && snapshot) {
+      var img = new Image();
+      img.onload = function () { ctx.drawImage(img, 0, 0, r.width, r.height); };
+      img.src = snapshot;
+      // strokes는 그대로 유지 — 여기서 초기화하면 서명이 있음에도 isEmpty()가 true가 되어버림
+    } else {
+      strokes = 0; // 내용이 없을 때만 초기화
+    }
   }
   resize();
   window.addEventListener('resize', resize);
@@ -235,7 +251,8 @@ var sigPad = (function () {
   return {
     isEmpty: function () { return strokes < 5; }, // 점 하나 찍은 수준은 서명으로 인정하지 않음
     toDataURL: function () { return cv.toDataURL('image/png'); },
-    clear: function () { $('sigClear').onclick(); }
+    clear: function () { $('sigClear').onclick(); },
+    resize: resize // step3 표시 직후 실제 크기로 재설정하기 위해 외부(btnToSign 핸들러)에 노출
   };
 })();
 
