@@ -52,6 +52,9 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.18.5/package/dist/xlsx.full.min.js"></script>
 <script src="js/utils.js"></script>
 <script src="js/esign-crypto.js"></script>
 <script src="js/esign-docs.js"></script>
@@ -316,8 +319,61 @@ function delSub(subId) {
 var arrearsCache = {};
 
 function renderDetailActions() {
-  $('detailActions').innerHTML = '<button class="btn btn-sub" onclick="openArrears()">💰 체불내역</button>';
-  // Task 12가 이 함수를 교체하며 서류 생성 버튼 추가
+  var m = (casesCache[curCaseId] || {}).meta || {};
+  $('detailActions').innerHTML =
+    '<button class="btn btn-sub" onclick="openArrears()">💰 체불내역</button> '
+    + '<button class="btn btn-pri" onclick="genDocs()">📑 서류 일괄 생성</button> '
+    + (m.status === 'active'
+      ? '<button class="btn btn-sub" onclick="closeCase()">사건 마감</button>'
+      : '<button class="btn btn-danger" onclick="purgeCase()">🗑 제출 데이터 파기</button>');
+}
+
+// 서류 4종 생성 — 확인(confirmed)된 제출만 (없으면 오류 제외 전체)
+async function genDocs() {
+  var m = (casesCache[curCaseId] || {}).meta || {};
+  var pool = decrypted.filter(function (d) { return d._reviewState === 'confirmed'; });
+  if (!pool.length) pool = decrypted.filter(function (d) { return d._reviewState !== 'error'; });
+  if (!pool.length) { showToast('생성할 제출이 없습니다'); return; }
+  showToast('서류 생성 중… (' + pool.length + '명)');
+  // 최신 체불내역 로드
+  var snap = await db.ref('esign/cases/' + curCaseId + '/arrears').once('value');
+  arrearsCache = snap.val() || {};
+  // ① 개인별 위임장 PDF (전원 1파일, 1인 1페이지)
+  await EsignDocs.htmlPagesToPdf(
+    pool.map(function (d) { return EsignDocs.buildDelegationHtml(d, m); }),
+    (m.title || '사건') + '_위임장.pdf');
+  // ② 개인정보 동의서 PDF
+  await EsignDocs.htmlPagesToPdf(
+    pool.map(function (d) { return EsignDocs.buildConsentHtml(d, m); }),
+    (m.title || '사건') + '_개인정보동의서.pdf');
+  // ③ 진정인 연명부 XLSX
+  EsignDocs.downloadRosterXlsx(pool, m);
+  // ④ 체불/체당금 정리 XLSX
+  EsignDocs.downloadArrearsXlsx(pool, arrearsCache, m);
+  showToast('✅ 서류 4종 다운로드 완료');
+}
+
+// 사건 마감 (신규 제출 차단 — RTDB 규칙의 status==='active' 조건)
+function closeCase() {
+  customConfirm('사건을 마감할까요?\n마감하면 근로자 링크로 더 이상 제출할 수 없습니다.', function () {
+    db.ref('esign/cases/' + curCaseId + '/meta/status').set('closed').then(function () {
+      showToast('사건이 마감되었습니다'); renderDetail();
+    });
+  });
+}
+
+// 제출 데이터 파기 (개인정보보호법 파기 의무 — 서류 다운로드 후 실행)
+function purgeCase() {
+  customConfirm('제출된 개인정보(암호문 포함)를 영구 파기할까요?\n\n⚠ 되돌릴 수 없습니다. 필요한 서류를 먼저 [서류 일괄 생성]으로 내려받았는지 확인하세요.', function () {
+    Promise.all([
+      db.ref('esign/cases/' + curCaseId + '/submissions').remove(),
+      db.ref('esign/cases/' + curCaseId + '/arrears').remove(),
+      db.ref('esign/cases/' + curCaseId + '/meta/status').set('purged')
+    ]).then(function () {
+      showToast('제출 데이터가 파기되었습니다');
+      closeDetail();
+    });
+  });
 }
 
 async function openArrears() {
