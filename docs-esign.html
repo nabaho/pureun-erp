@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>문서관리 — 집단체불 계약서 전자송부</title>
+<!-- 관리자(노무사) 페이지: 사건 관리·제출 취합·서류 생성. 로그인 필수. -->
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Malgun Gothic','맑은 고딕',sans-serif;background:#f1f5f9;color:#1e293b;font-size:14px}
+  .top{background:#1e293b;color:#fff;padding:12px 20px;display:flex;align-items:center;gap:12px}
+  .top h1{font-size:16px;flex:1}
+  .top a{color:#cbd5e1;font-size:12.5px;text-decoration:none}
+  .main{max-width:1100px;margin:20px auto;padding:0 16px}
+  .card{background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(15,23,42,.08);padding:18px;margin-bottom:14px}
+  .btn{padding:9px 16px;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer}
+  .btn-pri{background:#1e40af;color:#fff}
+  .btn-sub{background:#f1f5f9;color:#475569;border:1px solid #cbd5e1}
+  .btn-danger{background:#fee2e2;color:#b91c1c;border:1px solid #fecaca}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:9px 10px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:13px}
+  th{background:#f8fafc;color:#475569;font-size:12px}
+  input,select{padding:9px 11px;border:1px solid #cbd5e1;border-radius:8px;font-size:13.5px}
+  label{display:block;font-size:12.5px;font-weight:700;color:#334155;margin:12px 0 4px}
+  .modal-bg{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}
+  .modal{background:#fff;border-radius:12px;max-width:520px;width:100%;padding:22px;max-height:90vh;overflow-y:auto}
+  .badge{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11.5px;font-weight:700}
+  .b-active{background:#dcfce7;color:#166534}.b-closed{background:#f1f5f9;color:#64748b}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>📄 문서관리 — 집단체불 계약서 전자송부</h1>
+  <span id="whoami" style="font-size:12.5px;color:#94a3b8"></span>
+  <a href="enter.html">← 포털</a>
+</div>
+<div class="main">
+  <div class="card" id="viewList">
+    <div style="display:flex;align-items:center;margin-bottom:12px">
+      <b style="flex:1;font-size:15px">사건 목록</b>
+      <button class="btn btn-pri" id="btnNewCase">+ 새 사건</button>
+    </div>
+    <table>
+      <thead><tr><th>사건명</th><th>회사</th><th>제출</th><th>상태</th><th>생성일</th><th></th></tr></thead>
+      <tbody id="caseRows"><tr><td colspan="6" style="color:#94a3b8">불러오는 중…</td></tr></tbody>
+    </table>
+  </div>
+  <div id="viewDetail" style="display:none"></div> <!-- Task 10 -->
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.18.5/package/dist/xlsx.full.min.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/esign-crypto.js"></script>
+<script src="js/esign-docs.js"></script>
+<script>
+'use strict';
+var FB_CONFIG = {
+  apiKey: 'AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA',
+  databaseURL: 'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app',
+  projectId: 'pureun-erp',
+  appId: '1:936817166182:web:9bd31f70d0afdf5fca2aa7',
+  messagingSenderId: '936817166182'
+};
+firebase.initializeApp(FB_CONFIG);
+var db = firebase.database();
+var $ = function (id) { return document.getElementById(id); };
+var curUser = null;
+var casesCache = {};
+
+// ── 로그인 가드 (직원 이메일 계정 필수 — 익명/미로그인은 포털로) ──
+firebase.auth().onAuthStateChanged(function (u) {
+  if (!u || !u.email) { location.href = 'enter.html'; return; }
+  curUser = u;
+  $('whoami').textContent = u.email.split('@')[0];
+  loadCases();
+});
+
+// ── 사건 목록 ──
+function loadCases() {
+  db.ref('esign/cases').on('value', function (snap) {
+    casesCache = snap.val() || {};
+    var ids = Object.keys(casesCache).sort(function (a, b) {
+      return ((casesCache[b].meta || {}).createdAt || 0) - ((casesCache[a].meta || {}).createdAt || 0);
+    });
+    var tb = $('caseRows');
+    if (!ids.length) { tb.innerHTML = '<tr><td colspan="6" style="color:#94a3b8">사건이 없습니다. [+ 새 사건]으로 시작하세요.</td></tr>'; return; }
+    tb.innerHTML = ids.map(function (id) {
+      var c = casesCache[id], m = c.meta || {};
+      var n = Object.keys(c.submissions || {}).length;
+      return '<tr>'
+        + '<td><a href="javascript:void(0)" onclick="openCase(\'' + id + '\')" style="color:#1e40af;font-weight:700">' + (m.title || '(제목 없음)') + '</a></td>'
+        + '<td>' + (m.company || '') + '</td>'
+        + '<td><b>' + n + '</b>명</td>'
+        + '<td><span class="badge b-' + (m.status === 'active' ? 'active' : 'closed') + '">' + (m.status || '') + '</span></td>'
+        + '<td>' + (m.createdAt ? localYMD(new Date(m.createdAt)) : '') + '</td>'
+        + '<td><button class="btn btn-sub" onclick="shareCase(\'' + id + '\')">🔗 링크</button></td>'
+        + '</tr>';
+    }).join('');
+  });
+}
+
+// ── 새 사건 생성 ──
+$('btnNewCase').onclick = function () {
+  var bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = '<div class="modal">'
+    + '<h3 style="margin-bottom:6px">새 사건 만들기</h3>'
+    + '<label>사건명 *</label><input id="ncTitle" style="width:100%" placeholder="예: ○○산업 임금체불(2026)">'
+    + '<label>회사명(피진정인) *</label><input id="ncCompany" style="width:100%">'
+    + '<label>대표자/주소 등</label><input id="ncResp" style="width:100%">'
+    + '<label>사건 비밀번호 * (제출 열람용)</label><input id="ncPw" type="password" style="width:100%">'
+    + '<label>사건 비밀번호 확인 *</label><input id="ncPw2" type="password" style="width:100%">'
+    + '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px;margin-top:12px;font-size:12.5px;color:#b91c1c">'
+    + '⚠ 이 비밀번호를 잊으면 <b>제출된 개인정보를 영구히 복구할 수 없습니다.</b> 안전한 곳에 별도 보관하세요.</div>'
+    + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">'
+    + '<button class="btn btn-sub" id="ncCancel">취소</button>'
+    + '<button class="btn btn-pri" id="ncOk">사건 생성</button></div></div>';
+  document.body.appendChild(bg);
+  $('ncCancel').onclick = function () { bg.remove(); };
+  $('ncOk').onclick = async function () {
+    var title = $('ncTitle').value.trim(), company = $('ncCompany').value.trim();
+    var pw = $('ncPw').value, pw2 = $('ncPw2').value;
+    if (!title || !company) { showToast('사건명과 회사명을 입력하세요'); return; }
+    if (pw.length < 6) { showToast('비밀번호는 6자 이상으로 하세요'); return; }
+    if (pw !== pw2) { showToast('비밀번호 확인이 일치하지 않습니다'); return; }
+    this.textContent = '키 생성 중…'; this.disabled = true;
+    var keys = await EsignCrypto.generateCaseKeys();
+    var prot = await EsignCrypto.protectPrivKey(keys.privKeyJwk, pw);
+    var ref = db.ref('esign/cases').push();
+    await ref.child('meta').set({
+      title: title, company: company, respondent: $('ncResp').value.trim(),
+      ownerSid: curUser.email.split('@')[0],
+      pubKey: keys.pubKeyJwk, linkToken: EsignCrypto.randomToken(),
+      createdAt: firebase.database.ServerValue.TIMESTAMP, status: 'active'
+    });
+    await ref.child('secret/encPrivKey').set(prot);
+    bg.remove();
+    showToast('✅ 사건이 생성되었습니다 — [🔗 링크]로 근로자에게 공유하세요');
+  };
+};
+
+// ── 링크·QR 공유 ──
+function shareCase(caseId) {
+  var m = (casesCache[caseId] || {}).meta || {};
+  var url = location.origin + location.pathname.replace(/docs-esign\.html$/, 'sign.html')
+    + '?case=' + caseId + '&t=' + (m.linkToken || '');
+  var bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = '<div class="modal" style="text-align:center">'
+    + '<h3>' + (m.title || '') + '</h3>'
+    + '<div id="qrBox" style="display:flex;justify-content:center;margin:16px 0"></div>'
+    + '<input readonly value="' + url + '" style="width:100%;font-size:12px;color:#475569" onclick="this.select()">'
+    + '<div style="display:flex;gap:8px;justify-content:center;margin-top:14px">'
+    + '<button class="btn btn-pri" id="shCopy">📋 링크 복사</button>'
+    + '<button class="btn btn-sub" id="shShare">📤 공유(카톡)</button>'
+    + '<button class="btn btn-sub" id="shClose">닫기</button></div></div>';
+  document.body.appendChild(bg);
+  new QRCode($('qrBox'), { text: url, width: 180, height: 180 });
+  $('shCopy').onclick = function () { copyToClipboard(url); };
+  $('shShare').onclick = function () {
+    if (navigator.share) navigator.share({ title: m.title, text: '푸른노무법인 전자위임장 제출 링크입니다.', url: url });
+    else copyToClipboard(url);
+  };
+  $('shClose').onclick = function () { bg.remove(); };
+}
+
+// ── 사건 상세 (복호화 세션) ──
+var curCaseId = null, curPrivKey = null, decrypted = [];
+
+async function openCase(caseId) {
+  var c = casesCache[caseId]; if (!c) return;
+  var pw = prompt('사건 비밀번호를 입력하세요 (사건 생성 시 설정)');
+  if (!pw) return;
+  var protSnap;
+  try {
+    protSnap = await db.ref('esign/cases/' + caseId + '/secret/encPrivKey').once('value');
+  } catch (e) {
+    showToast('사건 정보를 불러올 수 없습니다 — 네트워크를 확인해 주세요');
+    return;
+  }
+  try {
+    curPrivKey = await EsignCrypto.unprotectPrivKey(protSnap.val(), pw);
+  } catch (e) {
+    showToast('❌ 비밀번호가 올바르지 않습니다');
+    return;
+  }
+  curCaseId = caseId;
+  await refreshSubs();
+  $('viewList').style.display = 'none';
+  $('viewDetail').style.display = 'block';
+  renderDetail();
+}
+
+// 제출 전체 복호화 (실패 건은 표시만 하고 건너뜀)
+async function refreshSubs() {
+  var snap = await db.ref('esign/cases/' + curCaseId + '/submissions').once('value');
+  var subs = snap.val() || {};
+  decrypted = [];
+  for (var id in subs) {
+    var s = subs[id];
+    try {
+      var d = await EsignCrypto.decryptSubmission({ enc: s.enc, encKey: s.encKey, iv: s.iv }, curPrivKey);
+      d._subId = id; d._submittedAt = s.submittedAt || 0; d._reviewState = s.reviewState || 'pending';
+      decrypted.push(d);
+    } catch (e) {
+      if (window.console) console.error('제출 복호화 실패', id, e);
+      decrypted.push({ _subId: id, _submittedAt: s.submittedAt || 0, _reviewState: 'error', name: '(복호화 실패)', idNo: '', phone: '' });
+    }
+  }
+  decrypted.sort(function (a, b) { return a._submittedAt - b._submittedAt; });
+}
+
+var RS_LABEL = { pending: '⏳ 대기', confirmed: '✅ 확인', hold: '⚠ 보류', error: '❌ 오류' };
+
+function renderDetail() {
+  var m = (casesCache[curCaseId] || {}).meta || {};
+  // 중복 감지: 동일 주민번호 2건 이상
+  var cnt = {};
+  decrypted.forEach(function (d) { if (d.idNo) cnt[d.idNo] = (cnt[d.idNo] || 0) + 1; });
+  $('viewDetail').innerHTML =
+    '<div class="card"><div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">'
+    + '<button class="btn btn-sub" onclick="closeDetail()">← 목록</button>'
+    + '<b style="flex:1;font-size:15px">' + (m.title || '') + ' <span style="color:#64748b;font-weight:400">— 제출 '
+    + decrypted.length + '명</span></b>'
+    + '<button class="btn btn-sub" onclick="shareCase(curCaseId)">🔗 링크</button>'
+    + '<span id="detailActions"></span>' // Task 11·12가 버튼 추가
+    + '</div>'
+    + '<table><thead><tr><th>#</th><th>성명</th><th>주민등록번호</th><th>연락처</th><th>제출일시</th><th>상태</th><th></th></tr></thead><tbody>'
+    + decrypted.map(function (d, i) {
+      var dup = d.idNo && cnt[d.idNo] > 1 ? ' <span class="badge" style="background:#fef3c7;color:#92400e">중복</span>' : '';
+      return '<tr>'
+        + '<td>' + (i + 1) + '</td>'
+        + '<td style="font-weight:700">' + EsignDocs.esc(d.name) + dup + '</td>'
+        + '<td class="rrnCell" data-full="' + EsignDocs.esc(d.idNo || '') + '" style="cursor:pointer" title="클릭하면 전체 표시">' + EsignDocs.esc(EsignDocs.maskIdNo(d.idNo)) + '</td>'
+        + '<td>' + EsignDocs.esc(d.phone || '') + '</td>'
+        + '<td>' + (d._submittedAt ? new Date(d._submittedAt).toLocaleString('ko-KR') : '') + '</td>'
+        + '<td><a href="javascript:void(0)" onclick="cycleReview(\'' + d._subId + '\')">' + EsignDocs.esc(RS_LABEL[d._reviewState] || d._reviewState) + '</a></td>'
+        + '<td><button class="btn btn-sub" onclick="showPerson(\'' + d._subId + '\')">상세</button> '
+        + '<button class="btn btn-danger" onclick="delSub(\'' + d._subId + '\')">삭제</button></td>'
+        + '</tr>';
+    }).join('')
+    + '</tbody></table></div>';
+  // RRN 마스킹 셀 클릭 시 전체 표시 — textContent 대입이라 HTML 파싱 없이 안전
+  $('viewDetail').querySelectorAll('.rrnCell').forEach(function (td) {
+    td.onclick = function () { this.textContent = this.dataset.full; };
+  });
+  if (typeof renderDetailActions === 'function') renderDetailActions(); // Task 11·12
+}
+function closeDetail() {
+  curCaseId = null; curPrivKey = null; decrypted = []; // 복호화 세션 종료 — 메모리 정리
+  $('viewDetail').style.display = 'none';
+  $('viewList').style.display = 'block';
+}
+
+// 검토상태 순환: pending → confirmed → hold → pending
+function cycleReview(subId) {
+  var d = decrypted.find(function (x) { return x._subId === subId; }); if (!d) return;
+  var prev = d._reviewState;
+  var next = { pending: 'confirmed', confirmed: 'hold', hold: 'pending' }[prev] || 'pending';
+  db.ref('esign/cases/' + curCaseId + '/submissions/' + subId + '/reviewState').set(next).catch(function (e) {
+    showToast('저장 실패 — 다시 시도해 주세요');
+    d._reviewState = prev;
+    renderDetail();
+  });
+  d._reviewState = next;
+  renderDetail();
+}
+
+// 개인 상세 (서명 미리보기)
+function showPerson(subId) {
+  var d = decrypted.find(function (x) { return x._subId === subId; }); if (!d) return;
+  // sigPng는 근로자가 임의 조작 가능한 평문(암호문 자체는 형식 검증 대상이 아님) — 정상 PNG data URL 형식만 허용
+  var okSig = d.sigPng && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(d.sigPng);
+  var bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.onclick = function (e) { if (e.target === bg) bg.remove(); };
+  bg.innerHTML = '<div class="modal">'
+    + '<h3 style="margin-bottom:10px">' + EsignDocs.esc(d.name) + '</h3>'
+    + '<table>'
+    + '<tr><th>주민등록번호</th><td>' + EsignDocs.esc(d.idNo) + '</td></tr>'
+    + '<tr><th>연락처</th><td>' + EsignDocs.esc(d.phone) + '</td></tr>'
+    + '<tr><th>주소</th><td>' + EsignDocs.esc(d.addr || '') + '</td></tr>'
+    + '<tr><th>입금계좌</th><td>' + EsignDocs.esc(d.bank || '') + '</td></tr>'
+    + '<tr><th>입사일</th><td>' + (d.joinDate ? EsignDocs.esc(d.joinDate) : '-') + '</td></tr>'
+    + '<tr><th>퇴사일</th><td>' + (d.leaveDate ? EsignDocs.esc(d.leaveDate) : '-') + '</td></tr>'
+    + '<tr><th>동의일시</th><td>' + EsignDocs.esc(String(d.consentAt || '').replace('T', ' ').slice(0, 16)) + '</td></tr>'
+    + '<tr><th>서명</th><td>' + (okSig ? '<img src="' + d.sigPng + '" style="height:70px;border:1px solid #e5e7eb;border-radius:6px">' : '-') + '</td></tr>'
+    + '</table>'
+    + '<div style="text-align:right;margin-top:12px"><button class="btn btn-sub" onclick="this.closest(\'.modal-bg\').remove()">닫기</button></div></div>';
+  document.body.appendChild(bg);
+}
+
+// 삭제 (Undo 토스트 — utils.js showToastUndo)
+function delSub(subId) {
+  var snapCache = null;
+  db.ref('esign/cases/' + curCaseId + '/submissions/' + subId).once('value').then(function (s) {
+    snapCache = s.val();
+    return db.ref('esign/cases/' + curCaseId + '/submissions/' + subId).remove();
+  }).then(function () {
+    decrypted = decrypted.filter(function (x) { return x._subId !== subId; });
+    renderDetail();
+    showToastUndo('제출 1건을 삭제했습니다', function () {
+      db.ref('esign/cases/' + curCaseId + '/submissions/' + subId).set(snapCache).then(refreshSubs).then(renderDetail).catch(function (e) {
+        showToast('삭제 실패 — 다시 시도해 주세요');
+      });
+    });
+  }).catch(function (e) {
+    showToast('삭제 실패 — 다시 시도해 주세요');
+  });
+}
+
+// ── 체불내역 입력 (근로자에게 받지 않고 노무사가 입력 — 설계 §8.1) ──
+var arrearsCache = {};
+
+function renderDetailActions() {
+  var m = (casesCache[curCaseId] || {}).meta || {};
+  $('detailActions').innerHTML =
+    '<button class="btn btn-sub" onclick="openArrears()">💰 체불내역</button> '
+    + '<button class="btn btn-pri" onclick="genDocs()">📑 서류 일괄 생성</button> '
+    + (m.status === 'active'
+      ? '<button class="btn btn-sub" onclick="closeCase()">사건 마감</button>'
+      : '<button class="btn btn-danger" onclick="purgeCase()">🗑 제출 데이터 파기</button>');
+}
+
+// 서류 4종 생성 — 확인(confirmed)된 제출만 (없으면 오류 제외 전체)
+async function genDocs() {
+  var m = (casesCache[curCaseId] || {}).meta || {};
+  var pool = decrypted.filter(function (d) { return d._reviewState === 'confirmed'; });
+  if (!pool.length) pool = decrypted.filter(function (d) { return d._reviewState !== 'error'; });
+  if (!pool.length) { showToast('생성할 제출이 없습니다'); return; }
+  try {
+    showToast('서류 생성 중… (' + pool.length + '명)');
+    // 최신 체불내역 로드
+    var snap = await db.ref('esign/cases/' + curCaseId + '/arrears').once('value');
+    arrearsCache = snap.val() || {};
+    // ① 개인별 위임장 PDF (전원 1파일, 1인 1페이지)
+    await EsignDocs.htmlPagesToPdf(
+      pool.map(function (d) { return EsignDocs.buildDelegationHtml(d, m); }),
+      (m.title || '사건') + '_위임장.pdf');
+    // ② 개인정보 동의서 PDF
+    await EsignDocs.htmlPagesToPdf(
+      pool.map(function (d) { return EsignDocs.buildConsentHtml(d, m); }),
+      (m.title || '사건') + '_개인정보동의서.pdf');
+    // ③ 진정인 연명부 XLSX
+    EsignDocs.downloadRosterXlsx(pool, m);
+    // ④ 체불/체당금 정리 XLSX
+    EsignDocs.downloadArrearsXlsx(pool, arrearsCache, m);
+    showToast('✅ 서류 4종 다운로드 완료');
+  } catch (e) {
+    showToast('서류 생성 실패 — 다시 시도해 주세요');
+  }
+}
+
+// 사건 마감 (신규 제출 차단 — RTDB 규칙의 status==='active' 조건)
+function closeCase() {
+  customConfirm('사건을 마감할까요?\n마감하면 근로자 링크로 더 이상 제출할 수 없습니다.', function () {
+    db.ref('esign/cases/' + curCaseId + '/meta/status').set('closed').then(function () {
+      showToast('사건이 마감되었습니다'); renderDetail();
+    }).catch(function () {
+      showToast('마감 실패 — 다시 시도해 주세요');
+    });
+  });
+}
+
+// 제출 데이터 파기 (개인정보보호법 파기 의무 — 서류 다운로드 후 실행)
+function purgeCase() {
+  customConfirm('제출된 개인정보(암호문 포함)를 영구 파기할까요?\n\n⚠ 되돌릴 수 없습니다. 필요한 서류를 먼저 [서류 일괄 생성]으로 내려받았는지 확인하세요.', function () {
+    Promise.all([
+      db.ref('esign/cases/' + curCaseId + '/submissions').remove(),
+      db.ref('esign/cases/' + curCaseId + '/arrears').remove(),
+      db.ref('esign/cases/' + curCaseId + '/meta/status').set('purged')
+    ]).then(function () {
+      showToast('제출 데이터가 파기되었습니다');
+      closeDetail();
+    }).catch(function () {
+      showToast('파기 실패 — 다시 시도해 주세요. 일부만 삭제되었을 수 있습니다');
+    });
+  });
+}
+
+async function openArrears() {
+  var snap = await db.ref('esign/cases/' + curCaseId + '/arrears').once('value');
+  arrearsCache = snap.val() || {};
+  var bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = '<div class="modal" style="max-width:760px">'
+    + '<h3 style="margin-bottom:4px">체불내역 입력 (원 단위)</h3>'
+    + '<div style="font-size:12px;color:#64748b;margin-bottom:10px">엑셀에서 [성명·1개월차·2개월차·3개월차·퇴직금] 열을 복사해 아래 표에 붙여넣기(Ctrl+V)해도 됩니다. 성명으로 매칭합니다.</div>'
+    + '<table id="arrTable"><thead><tr><th>성명</th><th>체불임금 1개월차</th><th>2개월차</th><th>3개월차</th><th>체불퇴직금</th></tr></thead><tbody>'
+    + decrypted.filter(function (d) { return d._reviewState !== 'error'; }).map(function (d) {
+      var a = arrearsCache[d._subId] || {};
+      function cell(k) { return '<td><input data-sub="' + d._subId + '" data-k="' + k + '" type="text" inputmode="numeric" style="width:110px;text-align:right" value="' + (a[k] || '') + '"></td>'; }
+      return '<tr><td style="font-weight:700">' + EsignDocs.esc(d.name) + '</td>' + cell('month1') + cell('month2') + cell('month3') + cell('severance') + '</tr>';
+    }).join('')
+    + '</tbody></table>'
+    + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">'
+    + '<button class="btn btn-sub" id="arrCancel">취소</button>'
+    + '<button class="btn btn-pri" id="arrSave">저장</button></div></div>';
+  document.body.appendChild(bg);
+
+  // 엑셀 붙여넣기: 첫 열 성명 매칭 (utils.js parseExcelPaste)
+  bg.querySelector('#arrTable').addEventListener('paste', function (e) {
+    var rows = parseExcelPaste(e.clipboardData.getData('text'));
+    if (rows.length < 1 || rows[0].length < 2) return;
+    e.preventDefault();
+    var byName = {};
+    decrypted.forEach(function (d) { byName[d.name] = d._subId; });
+    var hit = 0;
+    rows.forEach(function (r) {
+      var sid = byName[String(r[0]).trim()];
+      if (!sid) return;
+      ['month1', 'month2', 'month3', 'severance'].forEach(function (k, idx) {
+        var inp = bg.querySelector('input[data-sub="' + sid + '"][data-k="' + k + '"]');
+        if (inp && r[idx + 1] != null) inp.value = String(r[idx + 1]).replace(/[^0-9]/g, '');
+      });
+      hit++;
+    });
+    showToast(hit + '명 매칭되었습니다');
+  });
+
+  bg.querySelector('#arrCancel').onclick = function () { bg.remove(); };
+  bg.querySelector('#arrSave').onclick = async function () {
+    var out = {};
+    bg.querySelectorAll('#arrTable input').forEach(function (inp) {
+      var sid = inp.dataset.sub, k = inp.dataset.k;
+      var v = parseInt(inp.value.replace(/[^0-9]/g, ''), 10) || 0;
+      if (!out[sid]) out[sid] = {};
+      out[sid][k] = v;
+    });
+    await db.ref('esign/cases/' + curCaseId + '/arrears').update(out);
+    arrearsCache = out;
+    bg.remove();
+    showToast('✅ 체불내역이 저장되었습니다');
+  };
+}
+</script>
+</body>
+</html>
