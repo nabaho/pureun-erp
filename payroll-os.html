@@ -360,14 +360,75 @@ function siteReceived(pay, site, mnum){
   got.forEach(function(r){ if(r.신호==='red')sig='red'; else if(r.신호==='orange'&&sig!=='red')sig='orange'; });
   return {n:got.length, sig:sig};
 }
+/* ── 자동 태깅: 도착 자료(파일명/제목/보낸이) → 사업장·월·종류 추론 ──
+   메일 웹훅이 payroll_os/inbox/{id}에 {ts,filename,subject,from}만 써주면, 이 로직이 태깅. */
+function inboxLog(){ var v=dbGet('inbox',{}); return (v&&typeof v==='object'&&!Array.isArray(v))?v:{}; }
+function siteNamesFor(pay){
+  var names=[], cards=dbGet('site_cards',[])||[];
+  cards.forEach(function(c){ if(c.사업장&&names.indexOf(c.사업장)<0) names.push(c.사업장); });
+  Object.keys((pay&&pay.sites)||{}).forEach(function(s){ if(names.indexOf(s)<0) names.push(s); });
+  return names;
+}
+function guessSite(text, names){
+  text=String(text||''); var hit=null;
+  names.slice().sort(function(a,b){return b.length-a.length;}).forEach(function(n){
+    if(hit||!n) return;
+    var core=String(n).replace(/\(.*?\)|㈜|주식회사|\s/g,'');
+    if(text.indexOf(n)>=0||(core&&text.indexOf(core)>=0)) hit=n;
+  });
+  return hit;
+}
+function guessMonth(text){
+  text=String(text||'');
+  var m=text.match(/(\d{1,2})\s*월/); if(m) return parseInt(m[1],10)+'월';        // 'N월' 우선
+  m=text.match(/(?:^|[^\d])(\d{2})[.\-](\d{1,2})(?![\d.\-])/);                     // 'YY.MM' (귀속)
+  if(m){ var mm=parseInt(m[2],10); if(mm>=1&&mm<=12) return mm+'월'; }
+  return null;
+}
+function guessKind(text){
+  text=String(text||'');
+  if(/명세서/.test(text)) return '급여명세서';
+  if(/급여|노임|임금|노무대장|급상여|대장/.test(text)) return '급여대장';
+  if(/근태|출근|근무|출역|시간/.test(text)) return '근태';
+  if(/신고|공단|취득|상실|확인신고/.test(text)) return '신고서류';
+  return '기타';
+}
+function tagIncoming(item){
+  var pay=dbGet('payroll',null);
+  var text=[item&&item.filename,item&&item.subject,item&&item.from].filter(Boolean).join(' ');
+  return {사업장:guessSite(text,siteNamesFor(pay)), 월:guessMonth(text), 종류:guessKind(text)};
+}
+function arrivalFor(site, mLabel){
+  var map=inboxLog(), mn=monthNum(mLabel);
+  return Object.keys(map).some(function(id){ var a=map[id];
+    var s=a.사업장||tagIncoming(a).사업장, mo=a.월||tagIncoming(a).월;
+    return s===site && (mn==null||monthNum(mo)===mn); });
+}
+function logArrival(){
+  var fn=prompt('도착한 파일명 또는 메일 제목을 붙여넣으세요.\n예) 화담원 아산점_25년 07월_급여대장.xlsx');
+  if(!fn) return;
+  var tag=tagIncoming({filename:fn}), map=inboxLog(), id='m'+Date.now();
+  map[id]={ts:Date.now(), filename:fn, 사업장:tag.사업장||'', 월:tag.월||'', 종류:tag.종류, 상태:'도착', 출처:'수동'};
+  dbSet('inbox', map);
+  alert('자동 태깅 결과\n사업장: '+(tag.사업장||'(미인식 — 목록에서 수정)')+'\n월: '+(tag.월||'(미인식)')+'\n종류: '+tag.종류);
+}
+function editArrival(id){
+  var map=inboxLog(), a=map[id]; if(!a) return;
+  var v=prompt('사업장|월 형식으로 수정 (예: 화담원|7월)', (a.사업장||'')+'|'+(a.월||''));
+  if(v==null) return; var p=v.split('|');
+  a.사업장=(p[0]||'').trim(); a.월=(p[1]||'').trim(); map[id]=a; dbSet('inbox', map);
+}
+function delArrival(id){ var map=inboxLog(); if(map[id]&&confirm('이 수신 기록을 삭제할까요?')){ delete map[id]; dbSet('inbox', map); } }
+window.logArrival=logArrival; window.editArrival=editArrival; window.delArrival=delArrival;
 function screenInbox(){
   var pay=dbGet('payroll',null), now=new Date();
   if(!App.inboxMonth) App.inboxMonth=(now.getMonth()+1)+'월';
   var mnum=monthNum(App.inboxMonth);
-  var h='<h1>수신함</h1><div class="sub">사업장 자료 수신 현황 · 안 온 곳은 D-7 독촉 (메일 도메인 연결 시 자동 태깅)</div>';
-  h+='<div class="noprint" style="margin-bottom:12px">기준 월 <input value="'+App.inboxMonth.replace(/"/g,'')+'" style="width:80px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-family:inherit" onchange="App.inboxMonth=this.value;render()"> <span style="font-size:12px;color:var(--sub)">예: 7월</span></div>';
+  var h='<h1>수신함</h1><div class="sub">사업장 자료 수신 현황 · 자동 태깅 + D-7 독촉 (메일 도메인 연결 시 도착 자동 기록)</div>';
+  h+='<div class="noprint" style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">기준 월 <input value="'+App.inboxMonth.replace(/"/g,'')+'" style="width:80px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-family:inherit" onchange="App.inboxMonth=this.value;render()"><span style="font-size:12px;color:var(--sub)">예: 7월</span><button class="btn sec" style="padding:6px 12px;font-size:12px" onclick="logArrival()">＋ 자료 도착 기록</button></div>';
   if(!pay||!pay.sites){ h+='<div class="empty">급여 데이터가 없어 수신 현황을 만들 수 없습니다. 급여 처리에서 먼저 데이터를 올리세요.</div>'; return h; }
-  var roster=inboxRoster(pay), cnt={정상:0,오류:0,지연:0,미도착:0}, rows='';
+  var C={정상:SIG.green,도착:'#2E3A8C',미도착:SIG.orange,지연:SIG.red,오류:SIG.red};
+  var roster=inboxRoster(pay), cnt={정상:0,도착:0,미도착:0,지연:0,오류:0}, rows='';
   roster.forEach(function(o){
     var rec=siteReceived(pay,o.site,mnum), due=dueDayOf(o.card), dday=null, dueTxt='';
     if(due!=null){
@@ -376,22 +437,38 @@ function screenInbox(){
       dday=Math.round((new Date(y,mo,dd)-new Date(y,mo,now.getDate()))/86400000);
       dueTxt=(due==='last'?'말일':due+'일')+(dday>=0?' (D-'+dday+')':' (지남)');
     }
-    var status,color;
-    if(rec){ if(rec.sig==='green'){status='정상';color=SIG.green;} else {status='오류';color=SIG.red;} }
-    else { if(dday!=null&&dday<0){status='지연';color=SIG.red;} else {status='미도착';color=SIG.orange;} }
+    var status;
+    if(rec){ status=(rec.sig==='green')?'정상':'오류'; }
+    else if(arrivalFor(o.site,App.inboxMonth)){ status='도착'; }   // 자료 왔고 처리 대기
+    else { status=(dday!=null&&dday<0)?'지연':'미도착'; }
     cnt[status]++;
     var urge=(status==='지연')||(status==='미도착'&&dday!=null&&dday<=7);
     rows+='<div style="display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--line)">'+
-      '<span style="width:60px;font-size:11.5px;color:#fff;background:'+color+';border-radius:99px;padding:3px 0;text-align:center;flex-shrink:0">'+status+'</span>'+
+      '<span style="width:60px;font-size:11.5px;color:#fff;background:'+C[status]+';border-radius:99px;padding:3px 0;text-align:center;flex-shrink:0">'+status+'</span>'+
       '<div style="flex:1"><b>'+o.site+'</b> <span style="font-size:12px;color:var(--sub)">'+(o.담당자?o.담당자+' · ':'')+(o.급여일?'급여일 '+dueTxt:'급여일 미지정')+'</span></div>'+
       (urge?'<button class="btn sec" style="padding:5px 10px;font-size:12px" onclick="copyDunning(\''+o.site.replace(/'/g,"")+'\')">독촉 문구 복사</button>':'')+
       '</div>';
   });
   h+='<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">'+
-     [['정상','#E8F3EC'],['미도착','#FBF1DE'],['지연','#FBE3E3'],['오류','#FBE3E3']].map(function(k){
+     [['정상','#E8F3EC'],['도착','#E6E9F7'],['미도착','#FBF1DE'],['지연','#FBE3E3'],['오류','#FBE3E3']].map(function(k){
        return '<span class="badge" style="background:'+k[1]+'">'+k[0]+' '+cnt[k[0]]+'</span>';}).join('')+'</div>';
   h+='<div style="background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden">'+rows+'</div>';
-  h+='<div class="note">판정: 급여데이터 있으면 정상(문제 시 오류), 없으면 미도착·급여일 지나면 지연. 메일 도메인 연결 시 실제 메일 도착으로 자동 태깅됩니다.</div>';
+  // 최근 수신 기록(자동 태깅 결과) — 웹훅/수동 등록분
+  var map=inboxLog(), ids=Object.keys(map).sort(function(a,b){return (map[b].ts||0)-(map[a].ts||0);});
+  if(ids.length){
+    h+='<h1 style="font-size:16px;margin-top:22px">최근 수신 기록 <span style="font-size:12px;color:var(--sub);font-weight:400">자동 태깅 · '+ids.length+'건</span></h1>';
+    h+='<div style="background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden">';
+    ids.slice(0,30).forEach(function(id){ var a=map[id], t=(a.사업장&&a.월)?a:Object.assign({},a,tagIncoming(a));
+      h+='<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line);font-size:12.5px">'+
+        '<span style="flex:1"><b>'+(t.사업장||'<span style=color:'+SIG.red+'>사업장?</span>')+'</b> · '+(t.월||'<span style=color:'+SIG.red+'>월?</span>')+' · '+(a.종류||'기타')+' <span style="color:var(--sub)">'+(a.filename||'')+'</span></span>'+
+        '<button class="btn sec" style="padding:4px 9px;font-size:11.5px" onclick="editArrival(\''+id+'\')">수정</button>'+
+        '<button class="btn sec" style="padding:4px 9px;font-size:11.5px" onclick="delArrival(\''+id+'\')">삭제</button>'+
+        '</div>';
+    });
+    h+='</div>';
+  }
+  h+='<div class="note">판정: 급여데이터 있으면 정상(문제 시 오류), 자료만 도착=도착(처리대기), 없으면 미도착·급여일 지나면 지연. '+
+     '<b>메일 웹훅 연결법</b>: 메일 서비스가 <code>payroll_os/inbox/{id}</code>에 {ts,filename,subject,from}을 쓰면 이 목록에 자동 태깅되어 나타납니다.</div>';
   return h;
 }
 function copyDunning(site){
