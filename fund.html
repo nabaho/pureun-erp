@@ -174,9 +174,24 @@ function start(){
   $('root').innerHTML=shell();
   initTop();
   try{ history.replaceState({view:'home'}, ''); }catch(e){}
-  fbDb.ref(NS+'/funds').on('value', function(snap){ funds=snap.val()||{}; route(); }, function(err){
+  fbDb.ref(NS+'/funds').on('value', function(snap){ funds=snap.val()||{};
+    if(appHasFocus()){ S._pendingRender=true; return; }   // 입력 중엔 재렌더 보류(값 소실 방지)
+    route();
+  }, function(err){
     $('app').innerHTML='<div class="panel"><h2 style="color:var(--danger)">읽기 권한 오류</h2><p class="muted">'+esc(err.message)+'</p></div>';
   });
+  // 입력 포커스가 빠지면 보류된 재렌더 반영
+  document.addEventListener('focusout', function(){ setTimeout(function(){
+    if(S._pendingRender && !appHasFocus()){ S._pendingRender=false; route(); }
+  }, 150); });
+}
+function appHasFocus(){ var ae=document.activeElement, app=$('app');
+  return !!(ae && app && app.contains(ae) && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)); }
+function refreshAll(){
+  // .once() 캐시만 초기화(funds·billings는 live 리스너라 이미 최신)
+  ['sitesFor','annualFor','welfFor','evFor','txnsFor'].forEach(function(k){ S[k]=null; });
+  S._pendingRender=false;
+  route();
 }
 
 function shell(){
@@ -192,6 +207,7 @@ function shell(){
     +'<div id="main"><div id="topbar"><span id="crumb">기금 현황</span>'
     +'<div id="topright"><span id="conn"><span class="dot" id="dot"></span><span id="connt">연결 확인</span></span>'
     +'<span id="topuser"></span><span id="topclock">—</span>'
+    +'<button onclick="refreshAll()" title="서버에서 다시 불러오기" style="padding:5px 9px;border:1px solid var(--line);background:#fff;border-radius:8px;cursor:pointer">↻</button>'
     +'<button id="logoutbtn" onclick="doLogout()">로그아웃</button></div></div>'
     +'<div id="app"></div></div>';
 }
@@ -1800,6 +1816,14 @@ function closingTab(f){
   var dep=arr.reduce(function(s,x){return s+(num(x.deposit)||0);},0), wd=arr.reduce(function(s,x){return s+(num(x.withdraw)||0);},0);
   var unclass=arr.filter(function(x){return !x.debit||!x.credit;}).length, unappr=arr.filter(function(x){return !x.approved;}).length;
   var gateOk = arr.length && unclass===0 && unappr===0;
+  // ⑷ 통장 잔액 대사: 마지막 거래의 통장 잔액 vs (전기이월 현금 + 입금 - 출금)
+  var _yd=(funds[S.fundId]&&funds[S.fundId].years&&funds[S.fundId].years[S.year])||{};
+  var openCash=num((_yd.opening||{}).cash)||0, lastBal=arr.length?num(arr[arr.length-1].balance):'';
+  var calcBal=openCash+dep-wd;
+  var reconChip=(arr.length&&lastBal!==''&&lastBal!=null)
+    ? (Math.abs(lastBal-calcBal)<1 ? '<span class="chip ok">통장잔액 대사 ✅</span>'
+       : '<span class="chip warn">통장잔액 대사 차이 '+won(lastBal-calcBal)+' (전기이월 현금 확인)</span>')
+    : '';
   var rows=arr.map(function(x){
     return '<tr'+(x.approved?' style="background:#f6faf7"':'')+'><td style="white-space:nowrap">'+esc(x.date||'')+'</td>'
       +'<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(x.memo||'')+'">'+esc(x.memo||'')+'</td>'
@@ -1817,7 +1841,7 @@ function closingTab(f){
     +'<span class="stat">거래 '+arr.length+'건</span>'
     +'<span class="stat'+(unclass?' " style="background:var(--warn-bg);color:var(--warn)':'')+'">미분류 '+unclass+'</span>'
     +'<span class="stat'+(unappr?' " style="background:var(--warn-bg);color:var(--warn)':'')+'">미승인 '+unappr+'</span>'
-    +(arr.length?(gateOk?'<span class="chip ok">✅ 결산 가능 (미분류·미승인 0)</span>':'<span class="chip warn">결산 관문: 미분류·미승인 0 필요</span>'):'')+'</div>'
+    +(arr.length?(gateOk?'<span class="chip ok">✅ 결산 가능 (미분류·미승인 0)</span>':'<span class="chip warn">결산 관문: 미분류·미승인 0 필요</span>'):'')+reconChip+'</div>'
     +'<p class="muted" style="font-size:11.5px;margin:6px 0 0">통장 엑셀을 올리면 거래를 읽어 자동분개를 <b>제안</b>합니다. 차변/대변 계정을 확인·수정하고 승인 체크하세요.</p></div>'
     +'<div class="panel">'+(arr.length?'<div style="overflow-x:auto"><table><thead><tr><th>일자</th><th>적요</th><th style="text-align:right">입금</th><th style="text-align:right">출금</th><th>차변</th><th>대변</th><th>승인</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<div class="muted" style="padding:16px 4px">거래가 없습니다. [📥 통장 엑셀 가져오기]로 시작하세요.</div>')+'</div>'
     +finPanel(arr);
@@ -1862,7 +1886,12 @@ function finPanel(arr){
       +'<div class="grid" style="max-width:760px">'+oi('cash','현금성자산')+oi('savings','정기예금')+oi('loan','근로자대부금')+oi('basic','기본재산')+oi('retained','이월잉여금')+oi('reserve','고유목적사업준비금')+'</div>'
       +'<button style="margin-top:8px" onclick="saveOpening()">💾 전기이월 저장</button></div>';
   if(!f.appr) return '<div class="panel"><div class="muted">승인된 거래가 없어 재무제표를 만들 수 없습니다. 위에서 계정 지정 후 승인하세요.</div>'+openingHtml+'</div>';
-  var tbRows=Object.keys(f.tb).sort().map(function(n){var v=f.tb[n];
+  // ⑻ 전기이월(기초잔액)을 시산표 맨 위에 표시 — 재무상태표와 대차가 맞는 이유를 드러냄
+  var openMap=[['현금성자산',op.cash],['정기예금',op.savings],['근로자대부금',op.loan],['기본재산',op.basic],['이월잉여금',op.retained],['고유목적사업준비금',op.reserve]];
+  var openRows=openMap.filter(function(m){return num(m[1]);}).map(function(m){
+    var typ=ACCT_CHART[m[0]]||'자본', v=num(m[1])||0, isDr=(typ==='자산'||typ==='비용');
+    return '<tr style="color:#8b94a6"><td>'+m[0]+' <span style="font-size:10px">(전기이월)</span></td><td class="muted">'+typ+'</td><td style="text-align:right">'+(isDr?v.toLocaleString():'')+'</td><td style="text-align:right">'+(isDr?'':v.toLocaleString())+'</td></tr>';}).join('');
+  var tbRows=openRows+Object.keys(f.tb).sort().map(function(n){var v=f.tb[n];
     return '<tr><td>'+esc(n)+'</td><td class="muted">'+v.type+'</td><td style="text-align:right">'+(v.bal_d?v.bal_d.toLocaleString():'')+'</td><td style="text-align:right">'+(v.bal_c?v.bal_c.toLocaleString():'')+'</td></tr>';}).join('');
   var balChip = f.balanced
     ? '<span class="chip ok">✅ 대차일치</span>'
