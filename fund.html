@@ -107,6 +107,21 @@ var FIELDS=[['name','기금법인명','text'],['short_name','약칭','text'],['f
 var KEY5=['inka_no','inka_date','corp_reg_no','reg_date','tax_id_no'];
 var TABS=[['info','기금 정보',1],['sites','참여사업장',1],['annual','연간 일정',1],['subsidy','지원금',1],
   ['closing','회계·결산',1],['welfare','목적사업·대부',1],['events','변경 이벤트',1],['gen','서류 생성',0]];
+// 기금 설립 진행 체크리스트 (신규 기금) — [코드, 단계명, 공동전용?]
+var EST_TMPL=[
+  ['EST-01','상담·유형 판정(사내/공동)·수임 계약',false],
+  ['EST-02','참여사업장 모집·확정 (참여사업장 탭 등록)',true],
+  ['EST-03','설립준비위원회 구성 — 노사 동수 확인',false],
+  ['EST-04','출연 계획·재산목록 확정 (기금 정보 입력)',false],
+  ['EST-05','정관 작성 (서식 자료실)',false],
+  ['EST-06','설립준비위 회의 의결·날인 (회의록)',false],
+  ['EST-07','설립인가신청서(별지 제7호) 제출',false],
+  ['EST-08','인가증 수령 → 인가번호·인가일 등록',false],
+  ['EST-09','설립등기 — 인가 후 3주 이내',false],
+  ['EST-10','법인등록번호·고유번호 발급 등록',false],
+  ['EST-11','법인 계좌 개설·인감 관리',false],
+  ['EST-12','최초 출연금 입금 확인 → 운영 전환',false]
+];
 var ACCT_CHART={'현금성자산':'자산','정기예금':'자산','근로자대부금':'자산','고유목적사업준비금1':'부채','고유목적사업준비금2':'부채','기본재산':'자본','이월잉여금':'자본','이자수익':'수익','경조사비':'비용','동호회비':'비용','체육문화비':'비용','장학금':'비용','생활안정자금':'비용','기타복지비':'비용','지급수수료':'비용','사무용품비':'비용','기타관리비':'비용','정기예금전입':'비용'};
 var ACCTS=Object.keys(ACCT_CHART);
 var ACCT_RULES=[
@@ -345,7 +360,7 @@ function createFund(){
   else { var tx=$('nf-mgr-text'); if(tx&&tx.value.trim()){ rec.manager=tx.value.trim(); } }
   var fid=nextFundId();
   fbDb.ref(NS+'/funds/'+fid).set(rec).then(function(){
-    funds[fid]=rec; closeM(); S.fundId=fid; S.tab='info'; _go('fund',fid);
+    funds[fid]=rec; closeM(); S.fundId=fid; S.tab=(entry==='new'?'setup':'info'); _go('fund',fid); S.tab=(entry==='new'?'setup':'info'); renderFund();
     toast('새 기금 등록: '+short+(entry==='new'?' (설립부터)':' (운영부터)'));
   }).catch(function(e){ toast('등록 실패: '+e.message,'err'); });
 }
@@ -869,13 +884,18 @@ function renderFund(){
     +'<span class="muted" style="cursor:pointer" onclick="assignMgr(\''+S.fundId+'\')" title="담당자 지정">👤 담당 '+esc(mgrText(f))+' ✎</span></div>'
     +'<div class="kv"><span>인가번호 <b>'+esc(f.inka_no||'—')+'</b></span><span>법인등록번호 <b>'+esc(f.corp_reg_no||'—')+'</b></span>'
     +'<span>고유번호 <b>'+esc(f.tax_id_no||'—')+'</b></span><span>소재지 <b>'+esc(f.address||'—')+'</b></span></div></div>';
-  var tabbar='<div class="tabbar">'+TABS.map(function(t){
+  var setupMode=(f.setup_stage==='설립준비');
+  var tabbar='<div class="tabbar">'
+    +(setupMode?'<div class="tab'+(S.tab==='setup'?' on':'')+'" onclick="goTab(\'setup\')">🏗 설립 진행</div>':'')
+    +TABS.map(function(t){
     if(t[0]==='subsidy'&&f.fund_type==='사내') return '';   // 지원금은 공동 전용
     if(t[2]) return '<div class="tab'+(S.tab===t[0]?' on':'')+'" onclick="goTab(\''+t[0]+'\')">'+t[1]+'</div>';
     return '<div class="tab soon" title="다음 단계에서 추가">'+t[1]+' ·</div>';
   }).join('')+'</div>';
   if(S.tab==='subsidy'&&f.fund_type==='사내') S.tab='info';
-  var body = S.tab==='info' ? infoForm(f)
+  if(S.tab==='setup'&&!setupMode) S.tab='info';
+  var body = S.tab==='setup' ? setupTab(f)
+    : S.tab==='info' ? infoForm(f)
     : S.tab==='sites' ? sitesTab()
     : S.tab==='annual' ? annualTab(f)
     : S.tab==='subsidy' ? subsidyTab(f)
@@ -900,6 +920,37 @@ function mgrSubField(f){
   return '<div style="max-height:120px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:7px 10px">'
     +_staffCache.map(function(u){return '<label style="display:inline-flex;align-items:center;gap:4px;margin:2px 10px 2px 0;font-size:12.5px;cursor:pointer">'
       +'<input type="checkbox" class="fd-mgr-sub" value="'+esc(u.sid)+'"'+(subSids.indexOf(u.sid)>=0?' checked':'')+'> '+esc(u.name)+'</label>';}).join('')+'</div>';
+}
+// ── 기금 설립 진행 (신규 기금 대시보드) ──
+function setupTab(f){
+  var steps=EST_TMPL.filter(function(t){ return !(t[2]&&f.fund_type==='사내'); });   // 사내는 참여사업장 단계 제외
+  var done=f.setup||{};
+  var nDoneN=steps.filter(function(t){return done[t[0]]&&done[t[0]].done;}).length;
+  var pct=Math.round(nDoneN/steps.length*100);
+  var rows=steps.map(function(t,i){
+    var d=done[t[0]]&&done[t[0]].done;
+    return '<div style="display:flex;align-items:flex-start;gap:10px;padding:9px 4px;border-bottom:1px solid var(--line)">'
+      +'<input type="checkbox"'+(d?' checked':'')+' onchange="toggleSetup(\''+t[0]+'\',this.checked)" style="margin-top:2px;width:16px;height:16px">'
+      +'<div style="flex:1"><div style="font-weight:600'+(d?';color:var(--sub);text-decoration:line-through':'')+'">'+(i+1)+'. '+esc(t[1])+'</div>'
+      +(d&&done[t[0]].date?'<div class="muted" style="font-size:11px">완료 '+esc(done[t[0]].date)+'</div>':'')+'</div></div>';
+  }).join('');
+  return '<div class="panel"><div class="row"><h2>🏗 설립 진행</h2><span class="stat">'+nDoneN+'/'+steps.length+' 완료</span>'
+    +'<span style="flex:1"></span>'+(nDoneN>=steps.length?'<button class="primary" onclick="finishSetup()">✅ 운영 전환</button>':'')+'</div>'
+    +'<div style="height:8px;background:var(--line);border-radius:4px;margin:10px 0;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:var(--acc)"></div></div>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 8px">신규 설립 절차입니다. 단계를 체크하며 진행하고, 모두 완료되면 [운영 전환]으로 정식 운영 기금이 됩니다. (인가번호·등기 등은 [기금 정보] 탭에 입력)</p>'
+    +'<div>'+rows+'</div></div>';
+}
+function toggleSetup(code,on){ var _fid=S.fundId;
+  fbDb.ref(NS+'/funds/'+_fid+'/setup/'+code).set({done:on,date:on?ymd():''}).then(function(){
+    if(!funds[_fid].setup)funds[_fid].setup={}; funds[_fid].setup[code]={done:on,date:on?ymd():''}; renderFund();
+  }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
+}
+function finishSetup(){ var _fid=S.fundId;
+  confirmM('설립 절차를 완료하고 운영 기금으로 전환할까요?',{ok:'운영 전환'}).then(function(ok){ if(!ok)return;
+    fbDb.ref(NS+'/funds/'+_fid+'/setup_stage').set(null).then(function(){
+      funds[_fid].setup_stage=''; S.tab='info'; renderFund(); toast('운영 기금으로 전환되었습니다');
+    }).catch(function(e){ toast('전환 실패: '+e.message,'err'); });
+  });
 }
 function infoForm(f){
   var flds=FIELDS.map(function(c){
