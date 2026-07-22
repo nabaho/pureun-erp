@@ -6,6 +6,7 @@
 ```json
 "esign": {
   "cases": {
+    ".read": "auth != null && auth.token.email != null",
     "$caseId": {
       "meta": {
         ".read": "auth != null",
@@ -36,6 +37,7 @@
 ```
 
 설계 의도:
+- `cases` 상위에 직원 `.read` 부여: 관리자 화면이 사건 **목록**을 조회(`db.ref('esign/cases').on`)하려면 상위 경로 read가 필요. 이게 없으면 목록이 "불러오는 중…"에서 멈춘다. 직원 read는 하위(meta·submissions·secret·arrears)로 cascade되며, 익명은 이 상위 read를 만족하지 못하므로 목록·제출을 읽을 수 없다(익명의 meta 개별 읽기는 하위 `meta/.read`로만 허용).
 - 익명 인증 사용자는 사건 meta를 읽고(폼 표시·pubKey·linkToken), 제출을 **생성만** 할 수 있다.
   기존 제출을 읽거나(read 불가) 수정·삭제할 수 없다 → 근로자 간 개인정보 노출 원천 차단.
 - 생성 시 `t`(링크 토큰)가 meta/linkToken과 일치해야 하고 사건이 active여야 한다 → 무작위 스팸 완화.
