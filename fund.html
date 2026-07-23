@@ -362,8 +362,13 @@ function newFund(){
 function createFund(){
   var name=($('nf-name')&&$('nf-name').value.trim())||'';
   if(!name){ toast('기금법인명을 입력하세요','warn'); return; }
-  var dup=Object.keys(funds).some(function(k){return (funds[k].name||'')===name;});
-  if(dup){ toast('같은 이름의 기금이 이미 있습니다','err'); return; }
+  var dupId=Object.keys(funds).filter(function(k){return (funds[k].name||'')===name;})[0];
+  if(dupId){ var df=funds[dupId];
+    var where=df.setup_stage==='설립준비'?'설립중':(isPast(df)?(df.lifecycle||'지난'):'운영');
+    var loc={'지역공동':'지역기금','개별공동':'공동기금','사내':'사내기금'}[grp(df)]||'';
+    toast('이미 있는 기금입니다: '+(df.short_name||df.name)+' ('+loc+'·'+where+') — 등록 취소하고 그 기금을 엽니다','warn');
+    closeM(); S.fundId=dupId; S.tab=(df.setup_stage==='설립준비'?'setup':'info'); _go('fund',dupId); S.tab=(df.setup_stage==='설립준비'?'setup':'info'); renderFund();
+    return; }
   var type=$('nf-type').value, region=$('nf-region').value.trim();
   var entry=$('nf-entry').value;
   var short=($('nf-short')&&$('nf-short').value.trim())||name.slice(0,12);
@@ -465,7 +470,7 @@ function renderHome(){
   var incN=active.filter(function(f){return nDone(f)<5;}).length;
   var setupN=active.filter(function(f){return f.setup_stage==='설립준비';}).length;
   var head='<div class="panel"><div class="row"><h1>기금 현황</h1><span class="stat">운영 '+active.length+'</span>'+(past.length?'<span class="stat">지난 '+past.length+'</span>':'')
-    +(setupN?'<span class="stat" style="background:var(--warn-bg);color:var(--warn)">🏗 설립중 '+setupN+'</span>':'')
+    +(setupN?'<span class="stat" style="background:var(--warn-bg);color:var(--warn);cursor:pointer" onclick="showSetupFunds()" title="설립 진행 중 기금 목록 보기">🏗 설립중 '+setupN+'</span>':'')
     +(incN?'<span class="stat" style="background:var(--warn-bg);color:var(--warn)">미완비 '+incN+'</span>':'')+'<span style="flex:1"></span>'
     +(edit?'<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;margin-right:6px"><input type="checkbox"'+(S.homeInc?' checked':'')+' onchange="S.homeInc=this.checked;renderHome()"> 미완비만</label>':'')
     +(edit?'<button onclick="bulkRegistry()" title="소재지로 전체 기금 관할등기소 자동 추정" style="margin-right:6px">🏛 등기소 일괄</button>':'')
@@ -1358,14 +1363,34 @@ function setupTab(f){
     +'<div class="row" style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px"><span class="muted" style="font-size:11.5px;flex:1">잘못 만든 기금이면 설립을 취소하고 삭제할 수 있습니다(설립 진행 중인 기금만).</span>'
     +'<button onclick="cancelSetup()" style="color:var(--danger)">🗑 설립 취소·삭제</button></div></div>';
 }
-function cancelSetup(){ var _fid=S.fundId, f=funds[_fid]; if(!f) return;
+function cancelSetup(){ _deleteSetupFund(S.fundId,true); }
+function _deleteSetupFund(fid,goHome){ var f=funds[fid]; if(!f) return;
   confirmM('이 기금(설립 진행 중)을 취소하고 완전히 삭제할까요?\n"'+(f.short_name||f.name)+'"\n※ 되돌릴 수 없습니다. 이미 입력한 정보·사업장도 함께 삭제됩니다.',{ok:'삭제',danger:true}).then(function(ok){ if(!ok)return;
     if(f.setup_stage!=='설립준비'){ toast('설립 진행 중인 기금만 삭제할 수 있습니다','warn'); return; }
-    var up={}; up['funds/'+_fid]=null; up['sites/'+_fid]=null; up['annual/'+_fid]=null; up['subsidy_docs/'+_fid]=null; up['doc_edits/'+_fid]=null;
-    fbDb.ref(NS).update(up).then(function(){ delete funds[_fid]; _go('home'); toast('설립 취소·삭제되었습니다'); })
+    var up={}; up['funds/'+fid]=null; up['sites/'+fid]=null; up['annual/'+fid]=null; up['subsidy_docs/'+fid]=null; up['doc_edits/'+fid]=null;
+    fbDb.ref(NS).update(up).then(function(){ delete funds[fid]; if(goHome){_go('home');}else{renderHome();showSetupFunds();} toast('설립 취소·삭제되었습니다'); })
       .catch(function(e){ toast('삭제 실패: '+e.message,'err'); });
   });
 }
+// 설립 진행 중 기금 목록 — 헤더 [🏗 설립중] 클릭 시
+function showSetupFunds(){
+  var list=Object.keys(funds).filter(function(k){return funds[k].setup_stage==='설립준비';})
+    .map(function(k){return Object.assign({_id:k},funds[k]);});
+  if(!list.length){ toast('설립 진행 중인 기금이 없습니다','warn'); return; }
+  var rows=list.map(function(f){
+    var done=f.setup||{}; var steps=EST_TMPL.filter(function(t){return !(t[2]&&f.fund_type==='사내');});
+    var nd=steps.filter(function(t){return done[t[0]]&&done[t[0]].done;}).length;
+    return '<tr><td style="font-weight:700">'+esc(f.short_name||f.name)+'<div class="muted" style="font-size:11px;font-weight:400">'+esc(f.name||'')+' · '+esc(f.fund_type||'')+(f.region?' · '+esc(f.region):'')+'</div></td>'
+      +'<td class="center">'+nd+'/'+steps.length+'</td>'
+      +'<td style="white-space:nowrap"><button class="primary" onclick="closeM();openSetup(\''+f._id+'\')" style="padding:3px 9px">열기</button> '
+      +'<button onclick="_deleteSetupFund(\''+f._id+'\',false)" style="padding:3px 9px;color:var(--danger)">삭제</button></td></tr>';
+  }).join('');
+  showModal('<h2 style="margin:0 0 4px">🏗 설립 진행 중 기금 ('+list.length+')</h2>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 10px">[등록]까지 마친 신규 기금입니다. 열어서 이어서 진행하거나, 잘못 만든 것은 삭제하세요.</p>'
+    +'<div style="overflow-x:auto"><table><thead><tr><th>기금</th><th>진행</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">닫기</button></div>');
+}
+function openSetup(fid){ S.fundId=fid; S.tab='setup'; _go('fund',fid); S.tab='setup'; renderFund(); }
 function toggleSetup(code,on){ var _fid=S.fundId;
   fbDb.ref(NS+'/funds/'+_fid+'/setup/'+code).set({done:on,date:on?ymd():''}).then(function(){
     if(!funds[_fid].setup)funds[_fid].setup={}; funds[_fid].setup[code]={done:on,date:on?ymd():''}; renderFund();
