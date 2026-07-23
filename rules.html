@@ -74,7 +74,8 @@ select,input[type=date]{font-family:inherit;font-size:13px;height:36px;padding:0
 .overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:50;padding:24px}
 .overlay.on{display:flex}
 .modal{background:#fff;border-radius:16px;max-width:1000px;width:100%;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 70px rgba(15,23,42,.35)}
-.modal h2{margin:0;padding:16px 22px;font-size:16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+.modal h2{margin:0;padding:16px 22px;font-size:16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;cursor:move;user-select:none;touch-action:none}
+.modal h2 .x{cursor:pointer}
 .modal h2 .x{margin-left:auto;cursor:pointer;color:var(--mute);font-size:20px;line-height:1}
 .modal .body{overflow:auto;padding:18px 22px}
 .modal .foot{padding:12px 22px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end;background:#fafcff}
@@ -177,6 +178,9 @@ td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
       <span style="font-size:12px;color:var(--mute)">보기:</span>
       <button class="stbtn" id="flt-changed">변경 항목만</button>
       <button class="stbtn" id="flt-all">전체 조문</button>
+      <span style="font-size:12px;color:var(--mute);margin-left:10px">방식:</span>
+      <button class="stbtn" id="mode-partial" title="기존 조번호 유지 · 신설은 가지번호(제N조의n) · 삭제는 결번">일부개정</button>
+      <button class="stbtn" id="mode-full" title="최종 순서대로 제1조부터 전면 재번호 · 삭제 조문 제외">전부개정</button>
       <button class="btn ghost" id="add-ins" style="height:30px;font-size:12px;margin-left:auto">+ 신설 조문 추가</button>
     </div>
     <table class="daejo" id="daejo-tbl"></table>
@@ -365,7 +369,7 @@ async function openFullPreview(){
   if(HWP_BUFS[key] && window.renderHwpPreview){
     box.textContent="⏳ 원본 렌더링 중…";
     try{ box.textContent=""; var inner=document.createElement("div"); inner.style.cssText="background:#fff;padding:20px;max-width:900px;margin:0 auto";
-      box.appendChild(inner); await window.renderHwpPreview(HWP_BUFS[key], inner); return; }
+      box.appendChild(inner); await window.renderHwpPreview(HWP_BUFS[key], inner, 0); return; }   // 0 = 전 페이지
     catch(e){ console.warn("rhwp 전체 렌더 실패, 텍스트 폴백:", e); }
   }
   box.innerHTML='<div style="background:#fff;padding:24px;max-width:820px;margin:0 auto;white-space:pre-wrap;font-size:13px;line-height:1.8;font-family:\'Noto Sans KR\',sans-serif">'+escapeH(txt)+'</div>';
@@ -399,19 +403,66 @@ function buildItems(res,terms,arts){
     const t=TPL_BY_RULE[f.rule.id]; if(!t||seen.has(t.tid))continue; seen.add(t.tid);
     const after=fillTpl(t.text,terms);
     if(f.status==="위반의심"&&f.hit){ if(!amend[f.hit.label])amend[f.hit.label]={after,reason:t.reason}; }
-    else inserts.push({id:"ins_"+t.tid,label:t.title,before:"신설",after,orig:"",reason:t.reason,suggested:true,del:false});
+    // 신설: 번호는 개정방식에 따라 자동 부여(일부개정=가지번호). 기본 위치는 맨 끝, 편집에서 조정
+    else inserts.push({id:"ins_"+t.tid,title:t.title,label:"",num:null,sub:null,insertAfter:"__end__",before:"신설",after,orig:"",reason:t.reason,suggested:true,del:false});
   }
   const items=arts.map(a=>{
     const before=a.body.replace(/\s+/g," ").trim();
     const sug=amend[a.label];
-    return {id:"art_"+a.label,label:a.label+(a.title?" ("+a.title+")":""),
+    return {id:"art_"+a.label,num:a.num,sub:a.sub,title:a.title,insertAfter:null,
+      label:a.label+(a.title?" ("+a.title+")":""),
       before,after:sug?sug.after:before,orig:before,reason:sug?sug.reason:"",suggested:!!sug,del:false};
   });
   return items.concat(inserts);
 }
+/* ── 개정방식별 순서·조번호 계산 (일부개정=가지번호·결번 / 전부개정=순차 재번호) ── */
+let REV_MODE="partial";   // "partial"=일부개정, "full"=전부개정
+function computeOrdered(items){
+  const existing=items.filter(it=>it.orig!==""), inserts=items.filter(it=>it.orig==="");
+  const byAnchor={},trailing=[];
+  inserts.forEach(it=>{ const a=it.insertAfter;
+    if(a&&a!=="__end__"&&existing.some(e=>e.id===a))(byAnchor[a]=byAnchor[a]||[]).push(it);
+    else trailing.push(it); });
+  const out=[];
+  existing.forEach(it=>{ out.push(it); (byAnchor[it.id]||[]).forEach(x=>out.push(x)); });
+  trailing.forEach(x=>out.push(x));
+  return out;
+}
+function numberedView(items,mode){
+  const ordered=computeOrdered(items);
+  if(mode==="full"){   // 전부개정: 삭제 제외하고 최종 순서대로 제1조부터
+    let n=0;
+    return ordered.map(it=> it.del ? {it,no:"—"} : {it,no:"제"+(++n)+"조"});
+  }
+  // 일부개정: 기존 번호 유지, 신설=가지번호, 삭제=번호 유지(결번)
+  const subNext={}; let maxMain=0;
+  items.forEach(it=>{ if(it.orig!==""&&it.num){ subNext[it.num]=Math.max(subNext[it.num]||0,it.sub||0); if(it.num>maxMain)maxMain=it.num; } });
+  return ordered.map(it=>{
+    if(it.orig!=="") return {it,no:"제"+it.num+"조"+(it.sub?"의"+it.sub:"")};
+    const anchor=items.find(x=>x.id===it.insertAfter);
+    if(anchor&&anchor.num){ const A=anchor.num,k=(subNext[A]||1)+1; subNext[A]=k; return {it,no:"제"+A+"조의"+k}; }   // 가지번호는 의2부터(본조=의1)
+    return {it,no:"제"+(++maxMain)+"조"};   // 맨 끝 → 새 본조번호
+  });
+}
+function viewLabel(v){ return v.no+(v.it.title?" ("+v.it.title+")":""); }
+/* 보관함 재오픈 등에서 옛 항목(번호·제목 없음) 정규화 — 라벨에서 조번호·제목 복원 */
+function parseLabelNo(label){
+  const m=String(label||"").match(/^제\s*(\d+)\s*조(?:\s*의\s*(\d+))?/);
+  const tm=String(label||"").match(/[(（]([^)）]*)[)）]\s*$/);
+  return {num:m?+m[1]:null, sub:(m&&m[2])?+m[2]:null, title:tm?tm[1].trim():""};
+}
+function normalizeItems(items){
+  return (items||[]).map(it=>{
+    const o=Object.assign({},it);
+    if(o.orig===""){ o.num=null;o.sub=null; if(!o.title)o.title=parseLabelNo(o.label).title||o.label||"신설 조문"; if(o.insertAfter===undefined)o.insertAfter="__end__"; }
+    else{ if(o.num==null){const p=parseLabelNo(o.label);o.num=p.num;o.sub=p.sub;if(!o.title)o.title=p.title;} if(o.insertAfter===undefined)o.insertAfter=null; }
+    return o;
+  });
+}
 function changedItems(){ return CUR_ITEMS.filter(it=>itemKind(it)!=="유지"); }
-function daejoRows(){ return changedItems().map(it=>{const k=itemKind(it);
-  return {label:it.label,kind:k,before:it.orig===""?"신설":it.orig,after:it.del?"〈삭제〉":it.after,reason:it.reason};}); }
+function daejoRows(){ return numberedView(CUR_ITEMS,REV_MODE).filter(v=>itemKind(v.it)!=="유지").map(v=>{
+  const it=v.it,k=itemKind(it);
+  return {label:viewLabel(v),kind:k,before:it.orig===""?"신설":it.orig,after:it.del?"〈삭제〉":it.after,reason:it.reason};}); }
 function KIND_BADGE(k){return k==="신설"?"miss":(k==="삭제"?"up":(k==="개정"?"s":"man"));}
 function openEditor(){
   renderEditor();
@@ -419,22 +470,32 @@ function openEditor(){
 }
 function renderEditor(){
   const t=$("daejo-tbl");
-  t.innerHTML='<thead><tr><th style="width:15%">조문 / 처리</th><th style="width:30%">현행 (변경 전)</th><th style="width:37%">변경 후 (클릭하여 편집)</th><th style="width:18%">변경이유 / 조치</th></tr></thead>';
+  t.innerHTML='<thead><tr><th style="width:17%">조문 / 처리</th><th style="width:28%">현행 (변경 전)</th><th style="width:37%">변경 후 (클릭하여 편집)</th><th style="width:18%">변경이유 / 조치</th></tr></thead>';
   const tb=document.createElement("tbody");
-  const list=CUR_FILTER==="all"?CUR_ITEMS:CUR_ITEMS.filter(it=>itemKind(it)!=="유지");
+  const view=numberedView(CUR_ITEMS,REV_MODE);
+  const anchors=view.filter(v=>v.it.orig!=="");   // 신설 위치 지정용 현행 조문 목록(번호 포함)
+  const list=CUR_FILTER==="all"?view:view.filter(v=>itemKind(v.it)!=="유지");
   if(!list.length)tb.innerHTML='<tr><td colspan="4" class="c">'+(CUR_FILTER==="all"?"조문이 없습니다.":"변경 항목이 없습니다. ‘전체 조문’에서 직접 수정할 수 있습니다.")+'</td></tr>';
-  list.forEach(it=>{
-    const k=itemKind(it),i=CUR_ITEMS.indexOf(it);
+  list.forEach(v=>{
+    const it=v.it,k=itemKind(it),i=CUR_ITEMS.indexOf(it);
     const tr=document.createElement("tr");
     tr.className=it.del?"g-excl":(k==="유지"?"g-hold":"");
-    const canEdit=!it.del;
-    tr.innerHTML=`<td class="rlabel">${escapeH(it.label)}<br><span class="badge ${KIND_BADGE(k)}">${k}</span>${it.suggested?'<br><span class="pill">자동제안</span>':""}
+    const canEdit=!it.del, isIns=it.orig==="";
+    let posSel="";
+    if(isIns){   // 신설: 삽입 위치 드롭다운(일부개정=가지번호 자동)
+      const opts=anchors.map(a=>`<option value="${a.it.id}" ${it.insertAfter===a.it.id?"selected":""}>${escapeH(a.no)} 뒤</option>`).join("");
+      posSel=`<div class="stbtns" style="margin-top:5px"><span style="font-size:10.5px;color:var(--mute)">위치</span>
+        <select class="possel" data-i="${i}" style="font-size:11px;height:26px;min-width:118px;padding:0 4px">
+          ${opts}<option value="__end__" ${(!it.insertAfter||it.insertAfter==="__end__")?"selected":""}>맨 끝(새 조)</option>
+        </select></div>`;
+    }
+    tr.innerHTML=`<td class="rlabel"><b>${escapeH(v.no)}</b>${it.title?" "+escapeH("("+it.title+")"):""}<br><span class="badge ${KIND_BADGE(k)}">${k}</span>${it.suggested?'<br><span class="pill">자동제안</span>':""}
         <div class="stbtns">
           ${it.suggested&&!it.del?`<button class="stbtn" data-act="revert" data-i="${i}" title="현행 그대로 두기">현행유지</button>`:""}
           <button class="stbtn ${it.del?"on-excl":""}" data-act="del" data-i="${i}">${it.del?"삭제취소":"삭제"}</button>
-        </div></td>
+        </div>${posSel}</td>
       <td>${it.orig===""?'<span class="c">신 설</span>':escapeH(it.before)}</td>
-      <td class="${canEdit?"editable":""}" ${canEdit?'contenteditable="true"':""} data-i="${i}">${escapeH(it.after)}</td>
+      <td class="${canEdit?"editable":""}" ${canEdit?'contenteditable="true"':""} data-i="${i}">${(it.del&&REV_MODE==="partial")?'<span class="c">삭 제</span>':escapeH(it.after)}</td>
       <td class="rreason">${escapeH(it.reason)}</td>`;
     tb.appendChild(tr);
   });
@@ -448,8 +509,11 @@ function renderEditor(){
     if(b.dataset.act==="revert"){it.after=it.orig;it.suggested=false;}
     renderEditor();
   });
+  tb.querySelectorAll("select.possel").forEach(s=>s.onchange=()=>{ CUR_ITEMS[+s.dataset.i].insertAfter=s.value; renderEditor(); });
   $("flt-changed").className="stbtn"+(CUR_FILTER==="changed"?" on-adopt":"");
   $("flt-all").className="stbtn"+(CUR_FILTER==="all"?" on-adopt":"");
+  if($("mode-partial"))$("mode-partial").className="stbtn"+(REV_MODE==="partial"?" on-adopt":"");
+  if($("mode-full"))$("mode-full").className="stbtn"+(REV_MODE==="full"?" on-adopt":"");
   refreshDaejoSub();
 }
 function refreshDaejoSub(){
@@ -461,9 +525,11 @@ $("mk-daejo").addEventListener("click",()=>{
 });
 $("flt-changed").addEventListener("click",()=>{CUR_FILTER="changed";renderEditor();});
 $("flt-all").addEventListener("click",()=>{CUR_FILTER="all";renderEditor();});
+$("mode-partial").addEventListener("click",()=>{REV_MODE="partial";renderEditor();});
+$("mode-full").addEventListener("click",()=>{REV_MODE="full";renderEditor();});
 $("add-ins").addEventListener("click",()=>{
-  const label=prompt("신설 조문 제목 (예: 제53조의2 (재택근무))","");if(label===null)return;
-  CUR_ITEMS.push({id:"ins_new"+(++INS_SEQ),label:label||"신설 조문",before:"신설",after:"",orig:"",reason:"직접 신설",suggested:false,del:false});
+  const title=prompt("신설 조문 제목만 입력하세요 (번호는 위치에 따라 자동 부여, 예: 재택근무)","");if(title===null)return;
+  CUR_ITEMS.push({id:"ins_new"+(++INS_SEQ),title:title||"신설 조문",label:"",num:null,sub:null,insertAfter:"__end__",before:"신설",after:"",orig:"",reason:"직접 신설",suggested:false,del:false});
   CUR_FILTER="all";renderEditor();
 });
 $("dl-xlsx").addEventListener("click",()=>{
@@ -488,22 +554,23 @@ function downloadXlsx(rows,ctx){
 /* ── 변경 결과(개정안 전문): 삭제 제외한 모든 조문의 최종 문안 ── */
 function showRevision(){
   if(!CUR_ITEMS.length){alert("먼저 조문 검토·편집을 생성하세요.");return;}
-  const kept=CUR_ITEMS.filter(it=>!it.del);
+  const view=numberedView(CUR_ITEMS,REV_MODE);
+  const shown=REV_MODE==="full"?view.filter(v=>!v.it.del):view;   // 전부개정: 삭제 제외 / 일부개정: 삭제는 결번 표기
   const body=$("rev-body");body.innerHTML="";
   const 개정=CUR_ITEMS.filter(it=>itemKind(it)==="개정").length,신설=CUR_ITEMS.filter(it=>itemKind(it)==="신설").length,삭제=CUR_ITEMS.filter(it=>itemKind(it)==="삭제").length;
   const intro=document.createElement("div");intro.className="rev-intro";
-  intro.innerHTML=`<b>변경 후 취업규칙 전문</b> — 개정 ${개정} · 신설 ${신설} · 삭제 ${삭제} 반영. 변경된 조문은 색으로 표시됩니다.<br>신설 조문의 위치·조번호는 노무사가 최종 배치하십시오.`;
+  intro.innerHTML=`<b>변경 후 취업규칙 전문</b> — ${REV_MODE==="partial"?"일부개정":"전부개정"} · 개정 ${개정} · 신설 ${신설} · 삭제 ${삭제} 반영. 변경된 조문은 색으로 표시됩니다.<br>${REV_MODE==="partial"?"신설은 가지번호(제N조의n), 삭제는 결번으로 표기됩니다. 위치·번호는 편집 화면에서 조정하세요.":"최종 순서대로 제1조부터 재번호됩니다."}`;
   body.appendChild(intro);
-  kept.forEach(it=>{
-    const k=itemKind(it);
-    const d=document.createElement("div");d.className="rev-item "+(k==="신설"?"ins":(k==="개정"?"amd":"keep"));
-    d.innerHTML=`<div class="rev-h">${k!=="유지"?`<span class="badge ${KIND_BADGE(k)}">${k}</span> `:""}<b>${escapeH(it.label)}</b>
-      ${k==="개정"?`<div class="rev-old">현행: ${escapeH(it.before)}</div>`:""}</div>
-      <div class="rev-txt">${escapeH(it.after)}</div>
-      ${it.reason?`<div class="rev-why">근거: ${escapeH(it.reason)}</div>`:""}`;
+  shown.forEach(v=>{
+    const it=v.it,k=itemKind(it),isDelP=it.del&&REV_MODE==="partial";
+    const d=document.createElement("div");d.className="rev-item "+(isDelP?"keep":(k==="신설"?"ins":(k==="개정"?"amd":"keep")));
+    d.innerHTML=`<div class="rev-h">${k!=="유지"?`<span class="badge ${KIND_BADGE(k)}">${k}</span> `:""}<b>${escapeH(viewLabel(v))}</b>
+      ${(k==="개정"&&!isDelP)?`<div class="rev-old">현행: ${escapeH(it.before)}</div>`:""}</div>
+      <div class="rev-txt">${isDelP?"삭제":escapeH(it.after)}</div>
+      ${(it.reason&&!isDelP)?`<div class="rev-why">근거: ${escapeH(it.reason)}</div>`:""}`;
     body.appendChild(d);
   });
-  $("rev-sub").textContent=`${LAST?LAST.site:""} · 조문 ${kept.length}개`;
+  $("rev-sub").textContent=`${LAST?LAST.site:""} · 조문 ${shown.length}개 · ${REV_MODE==="partial"?"일부개정":"전부개정"}`;
   $("ov-rev").classList.add("on");
 }
 $("show-rev").addEventListener("click",showRevision);
@@ -560,11 +627,12 @@ $("dl-doc-daejo").addEventListener("click",()=>{
   dlDoc(rtf,`신구대조표_${LAST.site.replace(/[()\s—📄]/g,"")}_${LAST.asof.replace(/-/g,"")}.doc`);
 });
 $("dl-doc-rev").addEventListener("click",()=>{
-  const kept=CUR_ITEMS.filter(it=>!it.del);
-  if(!kept.length){alert("조문이 없습니다.");return;}
-  const blocks=kept.map(it=>{const k=itemKind(it);return {head:(k!=="유지"?`[${k}] `:"")+it.label,
-    old:k==="개정"?`현행: ${it.before}`:"",text:it.after,why:it.reason?`근거: ${it.reason}`:""};});
-  const rtf=rtfPlainDoc(`${LAST.site} 취업규칙 (변경 후 전문)`,`검토기준일 ${LAST.asof} · 조문 ${kept.length}개 · 신설 조번호·위치는 최종 검토 필요`,blocks);
+  const view=numberedView(CUR_ITEMS,REV_MODE);
+  const shown=REV_MODE==="full"?view.filter(v=>!v.it.del):view;
+  if(!shown.length){alert("조문이 없습니다.");return;}
+  const blocks=shown.map(v=>{const it=v.it,k=itemKind(it),isDelP=it.del&&REV_MODE==="partial";return {head:(k!=="유지"?`[${k}] `:"")+viewLabel(v),
+    old:(k==="개정"&&!isDelP)?`현행: ${it.before}`:"",text:isDelP?"삭제":it.after,why:(it.reason&&!isDelP)?`근거: ${it.reason}`:""};});
+  const rtf=rtfPlainDoc(`${LAST.site} 취업규칙 (변경 후 전문)`,`검토기준일 ${LAST.asof} · ${REV_MODE==="partial"?"일부개정":"전부개정"} · 조문 ${shown.length}개`,blocks);
   dlDoc(rtf,`취업규칙_변경후_${LAST.site.replace(/[()\s—📄]/g,"")}_${LAST.asof.replace(/-/g,"")}.doc`);
 });
 
@@ -609,7 +677,7 @@ $("save").addEventListener("click",()=>{
   // 사업장당 안정적 ID(사업자번호 우선, 없으면 사업장명) → 재검토 시 같은 항목 갱신
   const rec={id:"site_"+fbKey(LAST.bizno||LAST.site),site:LAST.site,bizno:LAST.bizno,size:LAST.size,conds:LAST.conds,asof:LAST.asof,
     savedAt:new Date().toISOString().slice(0,16).replace("T"," "),savedBy:(FBUSER&&(FBUSER.displayName||FBUSER.email))||"",
-    summary:LAST.summary,items,changed:changedCnt};
+    summary:LAST.summary,items,changed:changedCnt,mode:REV_MODE};
   putRecord(rec);
   const 개정=items.filter(it=>itemKind(it)==="개정").length,신설=items.filter(it=>itemKind(it)==="신설").length,삭제=items.filter(it=>itemKind(it)==="삭제").length;
   alert(`'${LAST.site}' 규정이 보관함에 저장되었습니다.\n개정 ${개정} · 신설 ${신설} · 삭제 ${삭제} (전체 ${items.length}개 조)`);
@@ -630,17 +698,45 @@ function renderArch(q){
     if(!r)return;
     $("ov-arch").classList.remove("on");
     LAST={site:r.site,bizno:r.bizno,size:r.size,conds:r.conds||[],asof:r.asof,summary:r.summary,arts:[]};
-    // 신모델(items) 우선, 구모델(daejo rows)은 변환
-    CUR_ITEMS = r.items ? r.items.map(it=>Object.assign({},it))
-      : (r.daejo||[]).filter(x=>x.label).map((x,i)=>({id:"old_"+i,label:x.label,before:x.before,after:x.after,orig:x.before==="신설"?"":x.before,reason:x.reason,suggested:false,del:false}));
+    REV_MODE=r.mode||"partial";
+    // 신모델(items) 우선, 구모델(daejo rows)은 변환 — 옛 항목은 라벨에서 번호·제목 복원
+    CUR_ITEMS = normalizeItems( r.items ? r.items
+      : (r.daejo||[]).filter(x=>x.label).map((x,i)=>({id:"old_"+i,label:x.label,before:x.before,after:x.after,orig:x.before==="신설"?"":x.before,reason:x.reason,suggested:false,del:false})) );
     CUR_FILTER="changed";openEditor();});
   tb.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
     if(confirm("삭제하시겠습니까?")){removeRecord(b.dataset.del);renderArch($("arch-q").value);}});
 }
 $("open-arch").addEventListener("click",()=>{renderArch("");$("ov-arch").classList.add("on");});
 $("arch-q").addEventListener("input",e=>renderArch(e.target.value));
-document.querySelectorAll("[data-close]").forEach(x=>x.onclick=e=>e.target.closest(".overlay").classList.remove("on"));
-document.querySelectorAll(".overlay").forEach(o=>o.onclick=e=>{if(e.target===o)o.classList.remove("on");});
+/* 오버레이 닫기 — 닫을 때 모달 위치(드래그 이동분) 초기화해 다음엔 중앙에서 열림 */
+function closeOverlay(o){ o.classList.remove("on"); const m=o.querySelector(".modal"); if(m){m.style.transform="";m._dx=0;m._dy=0;} }
+document.querySelectorAll("[data-close]").forEach(x=>x.onclick=e=>closeOverlay(e.target.closest(".overlay")));
+document.querySelectorAll(".overlay").forEach(o=>o.onclick=e=>{if(e.target===o)closeOverlay(o);});
+/* 모달 드래그 이동 — 헤더(h2)를 잡고 팝업 창을 마우스로 옮김. PDF iframe이 이벤트를 삼키지 않게 드래그 중엔 pointer-events 차단 */
+(function(){
+  let drag=null;
+  document.addEventListener("mousedown",e=>{
+    const h2=e.target.closest(".modal>h2"); if(!h2)return;
+    if(e.target.closest(".x,button,a,input,[data-close]"))return;   // 닫기·버튼·링크 클릭은 드래그 제외
+    const modal=h2.parentElement;
+    drag={modal,sx:e.clientX,sy:e.clientY,ox:modal._dx||0,oy:modal._dy||0};
+    modal.querySelectorAll("iframe").forEach(f=>f.style.pointerEvents="none");
+    document.body.style.userSelect="none";
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove",e=>{
+    if(!drag)return;
+    const dx=drag.ox+(e.clientX-drag.sx), dy=drag.oy+(e.clientY-drag.sy);
+    drag.modal._dx=dx; drag.modal._dy=dy;
+    drag.modal.style.transform="translate("+dx+"px,"+dy+"px)";
+  });
+  document.addEventListener("mouseup",()=>{
+    if(!drag)return;
+    drag.modal.querySelectorAll("iframe").forEach(f=>f.style.pointerEvents="");
+    document.body.style.userSelect="";
+    drag=null;
+  });
+})();
 siteSel.addEventListener("change",renderPreview);
 $("run").addEventListener("click",run);
 renderPreview();updateArchCnt();
@@ -655,10 +751,12 @@ try{
   const mod=await import("./vendor/rhwp-core/rhwp.js");
   await mod.default({module_or_path:new URL("./vendor/rhwp-core/rhwp_bg.wasm",import.meta.url)});
   const {HwpDocument}=mod;
-  window.renderHwpPreview=async(buf,container)=>{
+  // maxPages: 표시할 최대 쪽수(기본 3, 0/Infinity=전체). 전체보기는 전 페이지 렌더.
+  window.renderHwpPreview=async(buf,container,maxPages=3)=>{
     const doc=new HwpDocument(new Uint8Array(buf));
     try{
-      const total=doc.pageCount(),pages=Math.min(total,3);
+      const total=doc.pageCount();
+      const pages=(!maxPages||maxPages>=total)?total:Math.min(total,maxPages);
       container.innerHTML="";
       for(let p=0;p<pages;p++){
         const div=document.createElement("div");
@@ -670,7 +768,7 @@ try{
       if(total>pages){
         const more=document.createElement("div");
         more.style.cssText="text-align:center;color:#94a3b8;font-size:12px;padding:8px";
-        more.textContent=`… 외 ${total-pages}쪽 (미리보기는 3쪽까지)`;
+        more.textContent=`… 외 ${total-pages}쪽 · 전체는 ⛶ 전체보기에서 확인`;
         container.appendChild(more);
       }
     }finally{doc.free();}
