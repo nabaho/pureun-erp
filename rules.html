@@ -102,7 +102,7 @@ td.editable{outline:1px dashed #c7d2e8;outline-offset:-3px;cursor:text}
 td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
 .rev-intro{font-size:12.5px;color:var(--sub);background:#f6f9ff;border:1px solid var(--line);border-radius:10px;padding:11px 14px;margin-bottom:14px;line-height:1.7}
 .rev-item{border:1px solid var(--line);border-left-width:4px;border-radius:9px;padding:11px 14px;margin-bottom:12px}
-.rev-item.ins{border-left-color:var(--warn)} .rev-item.amd{border-left-color:var(--danger)}
+.rev-item.ins{border-left-color:var(--warn)} .rev-item.amd{border-left-color:var(--danger)} .rev-item.keep{border-left-color:var(--line)}
 .rev-h{font-size:14px;margin-bottom:7px} .rev-h b{margin-left:4px}
 .rev-old{font-size:11.5px;color:var(--mute);margin-top:5px;font-style:italic}
 .rev-txt{font-size:13px;line-height:1.85;white-space:pre-wrap;color:#2b3240;background:#fafcff;border-radius:8px;padding:10px 12px}
@@ -169,9 +169,17 @@ td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
   <div class="note">저장: 포털 로그인 시 Firebase 공용 보관함에 저장·실시간 동기화(모든 노무사 공유), 로그인 전엔 이 브라우저에만 임시 보관. HWP 파싱은 브라우저 안에서만 처리되어 외부로 전송되지 않습니다.<br>원본 렌더 미리보기(rhwp WASM)는 웹서버(http) 환경에서 동작하고, 파일로 직접 열면 텍스트 미리보기로 대체됩니다.<br>본 결과는 규칙 기반 자동 검토이며 최종 판단은 공인노무사의 검토를 거쳐야 합니다.</div>
 </div>
 
-<div class="overlay" id="ov-daejo"><div class="modal">
-  <h2>신구대조표 <span class="tag" id="daejo-sub" style="font-size:12px;color:var(--mute);font-weight:400"></span><span class="x" data-close>×</span></h2>
-  <div class="body"><table class="daejo" id="daejo-tbl"></table></div>
+<div class="overlay" id="ov-daejo"><div class="modal" style="max-width:1180px">
+  <h2>조문 검토·편집 (신구대조) <span class="tag" id="daejo-sub" style="font-size:12px;color:var(--mute);font-weight:400"></span><span class="x" data-close>×</span></h2>
+  <div class="body">
+    <div id="daejo-tools" style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+      <span style="font-size:12px;color:var(--mute)">보기:</span>
+      <button class="stbtn" id="flt-changed">변경 항목만</button>
+      <button class="stbtn" id="flt-all">전체 조문</button>
+      <button class="btn ghost" id="add-ins" style="height:30px;font-size:12px;margin-left:auto">+ 신설 조문 추가</button>
+    </div>
+    <table class="daejo" id="daejo-tbl"></table>
+  </div>
   <div class="foot">
     <button class="btn ghost" data-close>닫기</button>
     <button class="btn ghost" id="show-rev">변경 결과 보기 →</button>
@@ -250,31 +258,10 @@ function detectTerms(text){
   return {회사:"회사",근로자:best};
 }
 const fillTpl=(txt,terms)=>txt.replace(/\{회사\}/g,terms.회사).replace(/\{근로자\}/g,terms.근로자);
-function buildDaejo(res,terms){
-  const rows=[];
-  const targets=res.filter(f=>(f.status==="위반의심"||f.status==="누락")&&TPL_BY_RULE[f.rule.id]);
-  const seen=new Set();   // 같은 템플릿을 여러 규칙이 공유해도 1회만 (예: B8·D3 → 임금명세서)
-  for(const f of targets){
-    const t=TPL_BY_RULE[f.rule.id];
-    if(seen.has(t.tid))continue; seen.add(t.tid);
-    const rid=t.tid;
-    const after=fillTpl(t.text,terms);
-    const before=(f.status==="누락")?"신설":(f.hit?f.hit.body.replace(/\s+/g," ").slice(0,160):"현행 조문");
-    const parts=after.split(/(?=[①②③④⑤⑥⑦⑧⑨⑩⑪⑫])/).map(s=>s.trim()).filter(Boolean);
-    if(parts.length<=1){
-      rows.push({label:t.title,kind:f.status==="누락"?"신설":"개정",before,after,reason:t.reason,rid});
-    } else {
-      parts.forEach((p,i)=>rows.push({label:i===0?t.title:"",kind:i===0?(f.status==="누락"?"신설":"개정"):"",
-        before:f.status==="누락"?"신설":(i===0?before:""),after:p,reason:i===0?t.reason:"",rid}));
-    }
-  }
-  return rows;
-}
-
 const $=id=>document.getElementById(id);
 const siteSel=$("site");
 Object.keys(SITE_MAP).forEach(k=>{const o=document.createElement("option");o.value=k;o.textContent=SITE_MAP[k];siteSel.appendChild(o);});
-let LAST=null,CUR_ROWS=[];
+let LAST=null;
 const HWP_BUFS={},PDF_URLS={}; let upSeq=0;
 
 /* ── 파일 업로드 (HWP·HWPX·PDF·TXT) ── */
@@ -373,72 +360,93 @@ function run(){
   for(const f of shown){const[cc,bc]=CLS[f.status];const d=document.createElement("div");d.className="fitem "+cc;
     d.innerHTML=`<div class="top"><span class="badge ${bc}">${f.status}</span><span class="name">${f.rule.id} ${f.rule.name}</span>${f.loc?`<span class="loc">@${f.loc}</span>`:""}<span class="pill">${f.rule.category}</span></div><div class="meta">${f.rule.law} · ${f.note}</div>`;
     box.appendChild(d);}
-  LAST={key,site:SITE_MAP[key],bizno:SITE_BIZNO[key],size,conds:[...conds],asof,summary:cnt,res,terms:detectTerms(txt)};
+  LAST={key,site:SITE_MAP[key],bizno:SITE_BIZNO[key],size,conds:[...conds],asof,summary:cnt,res,terms:detectTerms(txt),arts};
+  CUR_ITEMS=[];
   $("mk-daejo").disabled=false;$("save").disabled=false;
 }
 
 function escapeH(s){return(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>");}
-/* ── 대조표: 채택/보류/제외 + 문안 인라인 편집 ── */
-let CUR_STATE={},CUR_SUBBASE="",CUR_EDITABLE=true;
-const ST_CLS={채택:"on-adopt",보류:"on-hold",제외:"on-excl"};
-function groupState(rid){return CUR_STATE[rid]||"채택";}
-function stateCounts(rows){
-  const rids=[...new Set(rows.map(r=>r.rid))];
-  const c={채택:0,보류:0,제외:0};rids.forEach(rid=>c[groupState(rid)]++);return c;
+/* ── 전체 조문 편집 모델: 현행 조문 전체 + 자동 개정 제안 + 신설 ── */
+let CUR_ITEMS=[], CUR_FILTER="changed", INS_SEQ=0;
+function itemKind(it){ if(it.del)return "삭제"; if(it.orig==="")return "신설"; return (it.after||"").trim()!==(it.orig||"").trim()?"개정":"유지"; }
+function buildItems(res,terms,arts){
+  const amend={},inserts=[],seen=new Set();
+  for(const f of res){
+    if(f.status!=="위반의심"&&f.status!=="누락")continue;
+    const t=TPL_BY_RULE[f.rule.id]; if(!t||seen.has(t.tid))continue; seen.add(t.tid);
+    const after=fillTpl(t.text,terms);
+    if(f.status==="위반의심"&&f.hit){ if(!amend[f.hit.label])amend[f.hit.label]={after,reason:t.reason}; }
+    else inserts.push({id:"ins_"+t.tid,label:t.title,before:"신설",after,orig:"",reason:t.reason,suggested:true,del:false});
+  }
+  const items=arts.map(a=>{
+    const before=a.body.replace(/\s+/g," ").trim();
+    const sug=amend[a.label];
+    return {id:"art_"+a.label,label:a.label+(a.title?" ("+a.title+")":""),
+      before,after:sug?sug.after:before,orig:before,reason:sug?sug.reason:"",suggested:!!sug,del:false};
+  });
+  return items.concat(inserts);
 }
-function showDaejo(rows,subBase,editable=true,states=null){
-  CUR_EDITABLE=editable;
-  if(states)CUR_STATE=Object.assign({},states);
-  CUR_SUBBASE=subBase;
-  renderDaejoTable(rows);
+function changedItems(){ return CUR_ITEMS.filter(it=>itemKind(it)!=="유지"); }
+function daejoRows(){ return changedItems().map(it=>{const k=itemKind(it);
+  return {label:it.label,kind:k,before:it.orig===""?"신설":it.orig,after:it.del?"〈삭제〉":it.after,reason:it.reason};}); }
+function KIND_BADGE(k){return k==="신설"?"miss":(k==="삭제"?"up":(k==="개정"?"s":"man"));}
+function openEditor(){
+  renderEditor();
   $("ov-daejo").classList.add("on");
 }
-function renderDaejoTable(rows){
+function renderEditor(){
   const t=$("daejo-tbl");
-  t.innerHTML='<thead><tr><th style="width:18%">변경조항 / 처리</th><th style="width:29%">변경 전</th><th style="width:34%">변경 후 (클릭하여 편집)</th><th style="width:16%">변경이유</th></tr></thead>';
+  t.innerHTML='<thead><tr><th style="width:15%">조문 / 처리</th><th style="width:30%">현행 (변경 전)</th><th style="width:37%">변경 후 (클릭하여 편집)</th><th style="width:18%">변경이유 / 조치</th></tr></thead>';
   const tb=document.createElement("tbody");
-  if(!rows.length)tb.innerHTML='<tr><td colspan="4" class="c">자동 제안할 개정·신설 항목이 없습니다.</td></tr>';
-  rows.forEach((r,idx)=>{
-    const st=groupState(r.rid);
+  const list=CUR_FILTER==="all"?CUR_ITEMS:CUR_ITEMS.filter(it=>itemKind(it)!=="유지");
+  if(!list.length)tb.innerHTML='<tr><td colspan="4" class="c">'+(CUR_FILTER==="all"?"조문이 없습니다.":"변경 항목이 없습니다. ‘전체 조문’에서 직접 수정할 수 있습니다.")+'</td></tr>';
+  list.forEach(it=>{
+    const k=itemKind(it),i=CUR_ITEMS.indexOf(it);
     const tr=document.createElement("tr");
-    tr.className=st==="제외"?"g-excl":(st==="보류"?"g-hold":"");
-    let first="";
-    if(r.label){
-      first=escapeH(r.label)+(r.kind?`<br><span class="pill">${r.kind}</span>`:"");
-      if(CUR_EDITABLE){
-        first+=`<div class="stbtns">`+["채택","보류","제외"].map(s=>
-          `<button class="stbtn ${st===s?ST_CLS[s]:""}" data-st="${s}" data-rid="${r.rid}">${s}</button>`).join("")+`</div>`;
-      }else{
-        first+=`<div class="stbtns"><span class="stbtn ${ST_CLS[st]}">${st}</span></div>`;
-      }
-    }
-    const canEdit=CUR_EDITABLE&&st!=="제외";
-    tr.innerHTML=`<td class="rlabel">${first}</td>
-      <td>${r.before==="신설"?'<span class="c">신 설</span>':escapeH(r.before)}</td>
-      <td class="${canEdit?"editable":""}" ${canEdit?'contenteditable="true"':""} data-idx="${idx}">${escapeH(r.after)}</td>
-      <td class="rreason">${escapeH(r.reason)}</td>`;
+    tr.className=it.del?"g-excl":(k==="유지"?"g-hold":"");
+    const canEdit=!it.del;
+    tr.innerHTML=`<td class="rlabel">${escapeH(it.label)}<br><span class="badge ${KIND_BADGE(k)}">${k}</span>${it.suggested?'<br><span class="pill">자동제안</span>':""}
+        <div class="stbtns">
+          ${it.suggested&&!it.del?`<button class="stbtn" data-act="revert" data-i="${i}" title="현행 그대로 두기">현행유지</button>`:""}
+          <button class="stbtn ${it.del?"on-excl":""}" data-act="del" data-i="${i}">${it.del?"삭제취소":"삭제"}</button>
+        </div></td>
+      <td>${it.orig===""?'<span class="c">신 설</span>':escapeH(it.before)}</td>
+      <td class="${canEdit?"editable":""}" ${canEdit?'contenteditable="true"':""} data-i="${i}">${escapeH(it.after)}</td>
+      <td class="rreason">${escapeH(it.reason)}</td>`;
     tb.appendChild(tr);
   });
   t.appendChild(tb);
-  // 상태 버튼
-  tb.querySelectorAll(".stbtn[data-rid]").forEach(b=>b.onclick=()=>{
-    CUR_STATE[b.dataset.rid]=b.dataset.st;renderDaejoTable(rows);
-  });
-  // 인라인 편집 반영
   tb.querySelectorAll("td.editable").forEach(td=>td.addEventListener("input",()=>{
-    rows[+td.dataset.idx].after=td.innerText;
+    CUR_ITEMS[+td.dataset.i].after=td.innerText; refreshDaejoSub();
   }));
-  const c=stateCounts(rows);
-  $("daejo-sub").textContent=`${CUR_SUBBASE} · 채택 ${c.채택} / 보류 ${c.보류} / 제외 ${c.제외}`;
+  tb.querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>{
+    const it=CUR_ITEMS[+b.dataset.i];
+    if(b.dataset.act==="del")it.del=!it.del;
+    if(b.dataset.act==="revert"){it.after=it.orig;it.suggested=false;}
+    renderEditor();
+  });
+  $("flt-changed").className="stbtn"+(CUR_FILTER==="changed"?" on-adopt":"");
+  $("flt-all").className="stbtn"+(CUR_FILTER==="all"?" on-adopt":"");
+  refreshDaejoSub();
+}
+function refreshDaejoSub(){
+  let 개정=0,신설=0,삭제=0;CUR_ITEMS.forEach(it=>{const k=itemKind(it);if(k==="개정")개정++;else if(k==="신설")신설++;else if(k==="삭제")삭제++;});
+  $("daejo-sub").textContent=`${LAST?LAST.site:""} · 전체 ${CUR_ITEMS.length}개 조 · 개정 ${개정} · 신설 ${신설} · 삭제 ${삭제}`;
 }
 $("mk-daejo").addEventListener("click",()=>{
-  if(!LAST)return;CUR_ROWS=buildDaejo(LAST.res,LAST.terms);CUR_STATE={};
-  showDaejo(CUR_ROWS,`${LAST.site} · 개정 ${CUR_ROWS.filter(r=>r.kind==="개정").length} · 신설 ${CUR_ROWS.filter(r=>r.kind==="신설").length}`,true);
+  if(!LAST)return;CUR_ITEMS=buildItems(LAST.res,LAST.terms,LAST.arts);CUR_FILTER="changed";openEditor();
+});
+$("flt-changed").addEventListener("click",()=>{CUR_FILTER="changed";renderEditor();});
+$("flt-all").addEventListener("click",()=>{CUR_FILTER="all";renderEditor();});
+$("add-ins").addEventListener("click",()=>{
+  const label=prompt("신설 조문 제목 (예: 제53조의2 (재택근무))","");if(label===null)return;
+  CUR_ITEMS.push({id:"ins_new"+(++INS_SEQ),label:label||"신설 조문",before:"신설",after:"",orig:"",reason:"직접 신설",suggested:false,del:false});
+  CUR_FILTER="all";renderEditor();
 });
 $("dl-xlsx").addEventListener("click",()=>{
-  const adopted=CUR_ROWS.filter(r=>groupState(r.rid)==="채택");
-  if(!adopted.length){alert("채택된 항목이 없습니다. 항목을 '채택'으로 표시한 뒤 다운로드하세요.");return;}
-  downloadXlsx(adopted,LAST);
+  const rows=daejoRows();
+  if(!rows.length){alert("변경된 조문이 없습니다.");return;}
+  downloadXlsx(rows,LAST);
 });
 function downloadXlsx(rows,ctx){
   const aoa=[[`${ctx.site} 취업규칙 개정 신구대조표`,"","",""],[`검토기준일 ${ctx.asof} · 규칙집 v2`,"","",""],["변경조항","변경 전","변경 후","변경이유"]];
@@ -446,7 +454,7 @@ function downloadXlsx(rows,ctx){
   if(typeof XLSX!=="undefined"){
     const ws=XLSX.utils.aoa_to_sheet(aoa);ws["!cols"]=[{wch:22},{wch:34},{wch:40},{wch:24}];
     const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"신구대조표");
-    XLSX.writeFile(wb,`신구대조표_${ctx.site.replace(/[()\s—]/g,"")}_${ctx.asof.replace(/-/g,"")}.xlsx`);
+    XLSX.writeFile(wb,`신구대조표_${ctx.site.replace(/[()\s—📄]/g,"")}_${ctx.asof.replace(/-/g,"")}.xlsx`);
   }else{
     const csv=aoa.map(r=>r.map(c=>`"${(c||"").replace(/"/g,'""')}"`).join(",")).join("\n");
     const a=document.createElement("a");a.href="data:text/csv;charset=utf-8,﻿"+encodeURIComponent(csv);
@@ -454,36 +462,25 @@ function downloadXlsx(rows,ctx){
   }
 }
 
-/* ── 변경 결과(개정안 조문): 채택된 변경을 조문 단위로 결합 ── */
-function revisionFromRows(rows,state){
-  const byRid={},order=[];
-  rows.forEach(r=>{
-    if(!byRid[r.rid]){byRid[r.rid]={title:"",kind:"",reason:"",before:"",parts:[]};order.push(r.rid);}
-    const g=byRid[r.rid];
-    if(r.label){g.title=r.label;g.kind=r.kind;g.reason=r.reason;g.before=r.before;}
-    if(r.after)g.parts.push(r.after);
-  });
-  return order.filter(rid=>(state[rid]||"채택")==="채택")
-    .map(rid=>{const g=byRid[rid];return {rid,title:g.title,kind:g.kind,reason:g.reason,before:g.before,text:g.parts.join("\n")};});
-}
+/* ── 변경 결과(개정안 전문): 삭제 제외한 모든 조문의 최종 문안 ── */
 function showRevision(){
-  if(!CUR_ROWS.length){alert("먼저 신구대조표를 생성하세요.");return;}
-  const changes=revisionFromRows(CUR_ROWS,CUR_STATE);
+  if(!CUR_ITEMS.length){alert("먼저 조문 검토·편집을 생성하세요.");return;}
+  const kept=CUR_ITEMS.filter(it=>!it.del);
   const body=$("rev-body");body.innerHTML="";
-  if(!changes.length){body.innerHTML='<div class="empty">채택된 변경이 없습니다.</div>';}
-  const 개정=changes.filter(c=>c.kind==="개정").length,신설=changes.filter(c=>c.kind==="신설").length;
+  const 개정=CUR_ITEMS.filter(it=>itemKind(it)==="개정").length,신설=CUR_ITEMS.filter(it=>itemKind(it)==="신설").length,삭제=CUR_ITEMS.filter(it=>itemKind(it)==="삭제").length;
   const intro=document.createElement("div");intro.className="rev-intro";
-  intro.innerHTML=`아래는 <b>채택된 변경(개정 ${개정} · 신설 ${신설})</b>을 반영한 조문입니다. 그 밖의 조문은 현행 유지됩니다.<br>신설 조문의 위치·조번호는 노무사가 최종 배치하십시오.`;
+  intro.innerHTML=`<b>변경 후 취업규칙 전문</b> — 개정 ${개정} · 신설 ${신설} · 삭제 ${삭제} 반영. 변경된 조문은 색으로 표시됩니다.<br>신설 조문의 위치·조번호는 노무사가 최종 배치하십시오.`;
   body.appendChild(intro);
-  changes.forEach(c=>{
-    const d=document.createElement("div");d.className="rev-item "+(c.kind==="신설"?"ins":"amd");
-    d.innerHTML=`<div class="rev-h"><span class="badge ${c.kind==="신설"?"miss":"s"}">${c.kind}</span> <b>${escapeH(c.title)}</b>
-      ${c.kind==="개정"&&c.before&&c.before!=="신설"?`<div class="rev-old">현행: ${escapeH(c.before)}</div>`:""}</div>
-      <div class="rev-txt">${escapeH(c.text)}</div>
-      <div class="rev-why">근거: ${escapeH(c.reason)}</div>`;
+  kept.forEach(it=>{
+    const k=itemKind(it);
+    const d=document.createElement("div");d.className="rev-item "+(k==="신설"?"ins":(k==="개정"?"amd":"keep"));
+    d.innerHTML=`<div class="rev-h">${k!=="유지"?`<span class="badge ${KIND_BADGE(k)}">${k}</span> `:""}<b>${escapeH(it.label)}</b>
+      ${k==="개정"?`<div class="rev-old">현행: ${escapeH(it.before)}</div>`:""}</div>
+      <div class="rev-txt">${escapeH(it.after)}</div>
+      ${it.reason?`<div class="rev-why">근거: ${escapeH(it.reason)}</div>`:""}`;
     body.appendChild(d);
   });
-  $("rev-sub").textContent=`${LAST?LAST.site:""} · 채택 ${changes.length}건`;
+  $("rev-sub").textContent=`${LAST?LAST.site:""} · 조문 ${kept.length}개`;
   $("ov-rev").classList.add("on");
 }
 $("show-rev").addEventListener("click",showRevision);
@@ -533,20 +530,19 @@ function dlDoc(rtf,fname){
   setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
 $("dl-doc-daejo").addEventListener("click",()=>{
-  const adopted=CUR_ROWS.filter(r=>groupState(r.rid)==="채택");
-  if(!adopted.length){alert("채택된 항목이 없습니다.");return;}
-  const rows=adopted.map(r=>[r.label,r.before==="신설"?"신 설":r.before,r.after,r.reason]);
+  const rows=daejoRows().map(r=>[r.label,r.before==="신설"?"신 설":r.before,r.after,r.reason]);
+  if(!rows.length){alert("변경된 조문이 없습니다.");return;}
   const rtf=rtfTableDoc(`${LAST.site} 취업규칙 개정 신구대조표`,`검토기준일 ${LAST.asof} · 규칙집 v2`,
     ["변경조항","변경 전","변경 후","변경이유"],rows,[2400,3400,4200,2600]);
   dlDoc(rtf,`신구대조표_${LAST.site.replace(/[()\s—📄]/g,"")}_${LAST.asof.replace(/-/g,"")}.doc`);
 });
 $("dl-doc-rev").addEventListener("click",()=>{
-  const changes=revisionFromRows(CUR_ROWS,CUR_STATE);
-  if(!changes.length){alert("채택된 변경이 없습니다.");return;}
-  const blocks=changes.map(c=>({head:`[${c.kind}] ${c.title}`,
-    old:(c.kind==="개정"&&c.before&&c.before!=="신설")?`현행: ${c.before}`:"",text:c.text,why:`근거: ${c.reason}`}));
-  const rtf=rtfPlainDoc(`${LAST.site} 취업규칙 개정안 조문`,`검토기준일 ${LAST.asof} · 채택 ${changes.length}건 · 신설 조번호·위치는 최종 검토 필요`,blocks);
-  dlDoc(rtf,`개정안조문_${LAST.site.replace(/[()\s—📄]/g,"")}_${LAST.asof.replace(/-/g,"")}.doc`);
+  const kept=CUR_ITEMS.filter(it=>!it.del);
+  if(!kept.length){alert("조문이 없습니다.");return;}
+  const blocks=kept.map(it=>{const k=itemKind(it);return {head:(k!=="유지"?`[${k}] `:"")+it.label,
+    old:k==="개정"?`현행: ${it.before}`:"",text:it.after,why:it.reason?`근거: ${it.reason}`:""};});
+  const rtf=rtfPlainDoc(`${LAST.site} 취업규칙 (변경 후 전문)`,`검토기준일 ${LAST.asof} · 조문 ${kept.length}개 · 신설 조번호·위치는 최종 검토 필요`,blocks);
+  dlDoc(rtf,`취업규칙_변경후_${LAST.site.replace(/[()\s—📄]/g,"")}_${LAST.asof.replace(/-/g,"")}.doc`);
 });
 
 /* 저장 계층: 로그인 시 Firebase 공용 금고(source of truth) + localStorage 캐시, 아니면 localStorage만 */
@@ -584,15 +580,16 @@ try{if(window.firebase){firebase.initializeApp(FB_CONFIG);FBDB=firebase.database
 updateWho();
 $("save").addEventListener("click",()=>{
   if(!LAST)return;
-  // 대조표를 열어 편집·채택했다면 그 상태를, 아니면 새로 생성해 저장
-  const rows=CUR_ROWS.length?CUR_ROWS:buildDaejo(LAST.res,LAST.terms);
+  // 편집 화면을 연 적 없으면(=편집 안 함) 자동 제안 기준 모델을 만들어 저장
+  const items=CUR_ITEMS.length?CUR_ITEMS:buildItems(LAST.res,LAST.terms,LAST.arts);
+  const changedCnt=items.filter(it=>itemKind(it)!=="유지").length;
   // 사업장당 안정적 ID(사업자번호 우선, 없으면 사업장명) → 재검토 시 같은 항목 갱신
   const rec={id:"site_"+fbKey(LAST.bizno||LAST.site),site:LAST.site,bizno:LAST.bizno,size:LAST.size,conds:LAST.conds,asof:LAST.asof,
     savedAt:new Date().toISOString().slice(0,16).replace("T"," "),savedBy:(FBUSER&&(FBUSER.displayName||FBUSER.email))||"",
-    summary:LAST.summary,daejo:rows,states:CUR_STATE};
+    summary:LAST.summary,items,changed:changedCnt};
   putRecord(rec);
-  const c=stateCounts(rows);
-  alert(`'${LAST.site}' 규정이 보관함에 저장되었습니다.\n위반의심 ${LAST.summary.위반의심} · 누락 ${LAST.summary.누락} · 대조표 채택 ${c.채택} / 보류 ${c.보류} / 제외 ${c.제외}`);
+  const 개정=items.filter(it=>itemKind(it)==="개정").length,신설=items.filter(it=>itemKind(it)==="신설").length,삭제=items.filter(it=>itemKind(it)==="삭제").length;
+  alert(`'${LAST.site}' 규정이 보관함에 저장되었습니다.\n개정 ${개정} · 신설 ${신설} · 삭제 ${삭제} (전체 ${items.length}개 조)`);
 });
 function renderArch(q){
   const arr=loadArch().filter(r=>!q||r.site.includes(q)||(r.bizno||"").includes(q));
@@ -601,13 +598,19 @@ function renderArch(q){
   $("arch-sub").textContent=`${loadArch().length}개 보관`;
   arr.forEach(r=>{const tr=document.createElement("tr");
     tr.innerHTML=`<td><b>${r.site}</b><br><span style="color:var(--mute);font-size:11px">${r.bizno||""}</span></td>
-      <td>${r.size}</td><td><span class="astat">위반 ${r.summary.위반의심} · 누락 ${r.summary.누락} · 대조표 ${r.daejo.length}행</span></td>
+      <td>${r.size}</td><td><span class="astat">위반 ${r.summary.위반의심} · 누락 ${r.summary.누락} · 변경 ${(r.changed!=null?r.changed:(r.daejo?r.daejo.length:0))}건</span></td>
       <td style="color:var(--sub);font-size:12px">${r.savedAt}${r.savedBy?`<br><span style="color:var(--mute);font-size:10.5px">${r.savedBy}</span>`:""}</td>
       <td style="text-align:right;white-space:nowrap"><button class="mini" data-open="${r.id}">대조표 열기</button> <button class="mini" data-del="${r.id}" style="color:#dc2626;border-color:#f3c0c0">삭제</button></td>`;
     tb.appendChild(tr);});
   tb.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>{
     const r=loadArch().find(x=>x.id===b.dataset.open);
-    if(r){$("ov-arch").classList.remove("on");CUR_ROWS=r.daejo;showDaejo(r.daejo,`${r.site} · 저장 ${r.savedAt} · (보관함)`,false,r.states||{});}});
+    if(!r)return;
+    $("ov-arch").classList.remove("on");
+    LAST={site:r.site,bizno:r.bizno,size:r.size,conds:r.conds||[],asof:r.asof,summary:r.summary,arts:[]};
+    // 신모델(items) 우선, 구모델(daejo rows)은 변환
+    CUR_ITEMS = r.items ? r.items.map(it=>Object.assign({},it))
+      : (r.daejo||[]).filter(x=>x.label).map((x,i)=>({id:"old_"+i,label:x.label,before:x.before,after:x.after,orig:x.before==="신설"?"":x.before,reason:x.reason,suggested:false,del:false}));
+    CUR_FILTER="changed";openEditor();});
   tb.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
     if(confirm("삭제하시겠습니까?")){removeRecord(b.dataset.del);renderArch($("arch-q").value);}});
 }
