@@ -396,17 +396,24 @@ function hireLossRows(emps, mLabel){
     var pay=(e.과세총액!=null)?e.과세총액:((e.지급총액!=null)?e.지급총액:e.기본급);
     var h=e.입사일, l=e.퇴사일;
     if(h&&parseInt(h.slice(5,7),10)===mn)
-      out.push({구분:'취득',성명:e.성명||'',일자:h,보수월액:pay,비고:(e.일당||e.시급)?'일용':'상용'});
+      out.push({구분:'취득',성명:e.성명||'',일자:h,보수월액:pay,비고:isDailyEmp(e)?'일용':'상용'});
     if(l&&parseInt(l.slice(5,7),10)===mn)
-      out.push({구분:'상실',성명:e.성명||'',일자:l,보수월액:pay,비고:(e.일당||e.시급)?'일용':'상용'});
+      out.push({구분:'상실',성명:e.성명||'',일자:l,보수월액:pay,비고:isDailyEmp(e)?'일용':'상용'});
   });
   out.sort(function(a,b){ return a.구분===b.구분?(a.일자<b.일자?-1:1):(a.구분==='취득'?-1:1); });
   return out;
 }
 /* 명단 비교(추정): 전월 명단 대비 사라짐=상실추정 / 새로 나타남(입사일 없음)=취득추정.
    상용만 비교(일용은 매달 들고남이 정상 → 근로내용확인신고 영역). 연도는 파일명에서. */
+function isDailyEmp(e){
+  // 일용 판별: 일당제 or (시급제이면서 기본급 없음).
+  // 상용 대장에도 통상시급 열이 있어 '시급 보유'만으로 일용 취급하면 상용이 명단에서 빠짐.
+  return !!(e.일당||(e.시급&&e.기본급==null));
+}
 function ymOf(rec){
-  var mn=monthNum(rec.월); if(mn==null) return null;
+  var mn=monthNum(rec.월);
+  if(mn==null) mn=monthNum(guessMonth(rec.파일)||'');   // 시트명이 '급여대장' 등일 때 파일명에서
+  if(mn==null) return null;
   var f=String(rec.파일||''), y=null, m;
   m=f.match(/(20\d{2})\s*년?/); if(m) y=parseInt(m[1],10);
   if(y==null){ m=f.match(/(?:^|[^\d])(\d{2})\s*년/); if(m) y=2000+parseInt(m[1],10); }
@@ -420,11 +427,13 @@ function rosterMaps(pay, site){
     var ym=ymOf(r); if(!ym) return;
     var k=ym.y+'-'+ym.m, g=byYM[k]=byYM[k]||{names:{},emp:{}};
     dedupeEmps(r.직원||[]).forEach(function(e){
-      if(e.일당||e.시급) return;                       // 상용만
+      if(isDailyEmp(e)) return;                       // 상용만
       var nm=(e.성명||'').trim(); if(!nm) return;
       g.names[nm]=1; if(!g.emp[nm]) g.emp[nm]=e;
     });
   });
+  // 상용이 한 명도 없는 달(일용 파일만 온 달)은 명단 아님 → 제거(전원 상실추정 오탐 방지)
+  Object.keys(byYM).forEach(function(k){ if(!Object.keys(byYM[k].names).length) delete byYM[k]; });
   return byYM;
 }
 function rosterDiffRows(pay, site, mLabel){
@@ -461,6 +470,53 @@ function hireAllRows(pay, site, month){
   var emps=[]; recs.forEach(function(r){ emps=emps.concat(dedupeEmps(r.직원||[])); });
   return hireLossRows(dedupeEmps(emps),month).concat(rosterDiffRows(pay,site,month));
 }
+/* ── 연차 관리(파생 4호): 재직자 법정 연차 발생일수 초안 ──
+   근로기준법 60조: 1년미만 월개근 1일(최대11) / 1년이상 15일+2년마다 1일 가산(최대25).
+   입사일 기준 산정(회계연도 방식 사업장은 설정 필요 — 화면 명시). 사용·잔여는 근태 영역. */
+function annualLeaveOf(hire, base){
+  var h=new Date(hire); if(isNaN(h.getTime())) return null;
+  var years=base.getFullYear()-h.getFullYear();
+  var anniv=new Date(base.getFullYear(), h.getMonth(), h.getDate());
+  if(anniv>base) years--;
+  var months=(base.getFullYear()-h.getFullYear())*12+(base.getMonth()-h.getMonth());
+  if(base.getDate()<h.getDate()) months--;
+  var days, note='';
+  if(years<1){ days=Math.min(Math.max(months,0),11); note='1년 미만: 월 개근 시 1일(개근 가정 최대치)'; }
+  else { days=Math.min(15+Math.floor((years-1)/2),25); }
+  var next=new Date(base.getFullYear(), h.getMonth(), h.getDate());
+  if(next<=base) next=new Date(base.getFullYear()+1, h.getMonth(), h.getDate());
+  function iso(d){ return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
+  return {근속년:Math.max(years,0), 발생일수:days, 다음발생일:iso(next), 비고:note};
+}
+function leaveRows(pay, site, base){
+  var E=empIndex(pay,site);
+  if(!E.yms.length) return [];
+  var latest=E.yms[E.yms.length-1], out=[];
+  Object.keys(E.ix).forEach(function(nm){
+    var e=E.ix[nm][latest]; if(!e) return;          // 최신 월 명단의 재직자만
+    if(e.입사일){
+      var a=annualLeaveOf(e.입사일, base);
+      out.push({성명:nm,입사일:e.입사일,근속년:a.근속년,발생일수:a.발생일수,다음발생일:a.다음발생일,비고:a.비고});
+    } else {
+      out.push({성명:nm,입사일:'-',근속년:null,발생일수:null,다음발생일:'-',비고:'입사일 미상 — 대장/명부 확인'});
+    }
+  });
+  out.sort(function(a,b){return a.성명<b.성명?-1:1;});
+  var lm=Math.floor(latest/100)+'년 '+(latest%100)+'월';
+  return {rows:out, 기준명단:lm};
+}
+function copyLeaveTSV(site){
+  var r=leaveRows(dbGet('payroll',null),site,new Date());
+  var rows=r.rows||[];
+  var tsv=[['성명','입사일','근속(년)','발생 연차','다음 발생일','비고'].join('\t')]
+    .concat(rows.map(function(x){ return [x.성명,x.입사일,(x.근속년!=null?x.근속년:''),
+      (x.발생일수!=null?x.발생일수:''),x.다음발생일,(x.비고||'')].join('\t');})).join('\n');
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(tsv).then(function(){alert('연차 현황 '+rows.length+'명 복사됨');},function(){alert(tsv);});
+  } else alert(tsv);
+}
+window.copyLeaveTSV=copyLeaveTSV;
+
 /* ── 퇴직정산(파생 3호): 퇴사자(정식+추정)의 퇴직금 추정 초안 ──
    평균임금 = 마지막 3개월 임금총액 ÷ 그 3개월 역일수, 퇴직금 = 평균임금×30×(재직일수÷365).
    초안 수준: 상여·연차수당 가산 등 정밀 규칙은 노무사 확인(화면 명시). 상용만. */
@@ -470,10 +526,11 @@ function empIndex(pay, site){
   var ix={}, yms={};
   (((pay||{}).sites||{})[site]||[]).forEach(function(r){
     var ym=ymOf(r); if(!ym) return;
-    var k=ym.y*100+ym.m; yms[k]=1;
+    var k=ym.y*100+ym.m;
     dedupeEmps(r.직원||[]).forEach(function(e){
-      if(e.일당||e.시급) return;
+      if(isDailyEmp(e)) return;
       var nm=(e.성명||'').trim(); if(!nm) return;
+      yms[k]=1;                                        // 상용이 실재하는 달만 명단으로 인정
       ix[nm]=ix[nm]||{}; if(!ix[nm][k]) ix[nm][k]=e;
     });
   });
@@ -567,7 +624,7 @@ window.copyReportTSV=copyReportTSV;
 function reportKindBtns(){
   var k=App.reportKind||'daily';
   function b(id,label){ return '<button class="btn'+(k===id?'':' sec')+'" style="padding:6px 14px;font-size:12.5px" onclick="App.reportKind=\''+id+'\';App.site=null;App.month=null;render()">'+label+'</button>'; }
-  return '<div style="display:flex;gap:8px;margin-bottom:12px">'+b('daily','일용 매월신고')+b('hire','취득·상실')+b('sever','퇴직정산')+'</div>';
+  return '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">'+b('daily','일용 매월신고')+b('hire','취득·상실')+b('sever','퇴직정산')+b('leave','연차 현황')+'</div>';
 }
 function reportRowsOf(rec, kind){
   var emps=dedupeEmps(rec.직원||[]);
@@ -585,26 +642,49 @@ function hireMonths(pay, site){
 }
 function screenReport(){
   var pay=dbGet('payroll',null), kind=App.reportKind||'daily';
-  var TITLE={daily:'일용 근로내용확인신고 초안',hire:'4대보험 취득·상실 초안',sever:'퇴직정산(퇴직금 추정) 초안'};
+  var TITLE={daily:'일용 근로내용확인신고 초안',hire:'4대보험 취득·상실 초안',sever:'퇴직정산(퇴직금 추정) 초안',leave:'연차 발생 현황(입사일 기준)'};
   var h='<h1>신고 — '+TITLE[kind]+'</h1>';
   if(!pay||!pay.sites){ h+='<div class="sub">급여 데이터를 먼저 올리세요</div><div class="empty">급여 데이터가 서버에 없습니다.</div>'; return h; }
   if(!App.site){
     var SUB={hire:'입사일·퇴사일이 신고월에 속한 직원을 자동 추출합니다(연도는 표에서 확인).',
              sever:'퇴사자(정식+추정)의 평균임금·퇴직금 추정을 자동 계산합니다(1년 미만 제외).',
+             leave:'최신 월 명단의 재직자별 법정 연차 발생일수(입사일 기준)를 계산합니다.',
              daily:'사업장 선택 → 신고월 → 초안 확인·복사. 일용(일당·시급) 있는 달만 표시됩니다.'};
     h+='<div class="sub">'+SUB[kind]+'</div>'+reportKindBtns()+'<div class="cards">';
     Object.keys(pay.sites).forEach(function(site){
       var nMonths, tot;
       if(kind==='hire'){ var hm=hireMonths(pay,site); nMonths=hm.length; tot=hm.reduce(function(a,x){return a+x.n;},0); }
       else if(kind==='sever'){ var sm=severMonths(pay,site); nMonths=sm.length; tot=sm.reduce(function(a,x){return a+x.n;},0); }
+      else if(kind==='leave'){ var lr=leaveRows(pay,site,new Date()); tot=(lr.rows||[]).length; nMonths=tot?1:0; }
       else { var months=(pay.sites[site]||[]).filter(function(r){return reportRowsOf(r,kind).length>0;});
              nMonths=months.length; tot=months.reduce(function(a,r){return a+reportRowsOf(r,kind).length;},0); }
       if(!nMonths) return;
-      var UNIT={hire:'취득·상실 '+tot+'건',sever:'퇴사자 '+tot+'명',daily:'일용 연 '+tot+'명'};
+      var UNIT={hire:'취득·상실 '+tot+'건',sever:'퇴사자 '+tot+'명',daily:'일용 연 '+tot+'명',leave:'재직 상용 '+tot+'명'};
       h+='<div class="c" style="cursor:pointer" onclick="navTo({site:\''+site.replace(/'/g,"")+'\'})">'+
-         '<div class="t">'+site+'</div><div class="m">신고월 '+nMonths+'건 · '+UNIT[kind]+'</div></div>';
+         '<div class="t">'+site+'</div><div class="m">'+(kind==='leave'?UNIT[kind]:'신고월 '+nMonths+'건 · '+UNIT[kind])+'</div></div>';
     });
     h+='</div>'; return h;
+  }
+  if(kind==='leave'){
+    var L=leaveRows(pay,App.site,new Date()), lrows=L.rows||[];
+    h+='<div class="sub"><a href="#" onclick="goBack();return false">← 사업장</a> · <b>'+App.site+'</b> 재직 상용 '+lrows.length+'명 <span style="color:var(--sub)">(기준 명단: '+L.기준명단+')</span> '+
+       '<button class="btn" style="margin-left:8px" onclick="copyLeaveTSV(\''+App.site.replace(/'/g,"")+'\')">현황표 복사</button></div>';
+    h+='<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;background:#fff">'+
+       '<tr style="background:var(--paper);text-align:right">'+['성명','입사일','근속(년)','발생 연차','다음 발생일','비고'].map(function(c,i){return '<th style="padding:8px 10px;'+(i<2?'text-align:left':'')+'">'+c+'</th>';}).join('')+'</tr>';
+    lrows.forEach(function(x){
+      h+='<tr style="border-top:1px solid var(--line);text-align:right">'+
+        '<td style="padding:7px 10px;text-align:left;font-weight:600">'+x.성명+'</td>'+
+        '<td style="padding:7px 10px;text-align:left">'+x.입사일+'</td>'+
+        '<td style="padding:7px 10px">'+(x.근속년!=null?x.근속년:'-')+'</td>'+
+        '<td style="padding:7px 10px;font-weight:700;color:var(--navy)">'+(x.발생일수!=null?x.발생일수+'일':'-')+'</td>'+
+        '<td style="padding:7px 10px">'+x.다음발생일+'</td>'+
+        '<td style="padding:7px 10px;text-align:left;font-size:11.5px;color:'+(x.비고?'var(--warn)':'var(--sub)')+'">'+(x.비고||'')+'</td></tr>';
+    });
+    h+='</table></div><div class="note"><b>발생 기준 초안</b> — 근로기준법 60조(1년미만 월개근 1일 최대11 / '+
+       '1년이상 15일+2년마다 1일, 최대 25일), 입사일 기준. 회계연도 방식 사업장은 별도 환산 필요. '+
+       '사용·잔여 일수는 근태 자료 연동 후 제공. 연차사용촉진(사용기한 6개월 전 1차·2개월 전 2차 서면 촉구)의 '+
+       '기준일은 다음 발생일 참조. 명세서 하단 촉진 문구는 명세서 탭에서 설정.</div>';
+    return h;
   }
   if(!App.month){
     h+='<div class="sub"><a href="#" onclick="goBack();return false">← 사업장</a> · <b>'+App.site+'</b> 신고월 선택</div>'+reportKindBtns();
