@@ -11,7 +11,9 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
 <script src="vendor/pako.min.js"></script>
-<script src="hwp_extract.js?v=3"></script>
+<script src="vendor/pdf.min.js"></script>
+<script>if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc="vendor/pdf.worker.min.js";</script>
+<script src="hwp_extract.js?v=4"></script>
 <style>
 :root{
   --accent:#1e40af; --accent2:#2563eb; --bg:#e2e8f0; --ink:#202124; --sub:#475569; --mute:#94a3b8;
@@ -119,7 +121,7 @@ td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
 </style>
 </head>
 <body>
-<div id="dropOverlay"><div class="box"><div class="ic">📄</div><b>여기에 놓으면 업로드</b><span>취업규칙 HWP · HWPX · TXT 파일을 끌어다 놓으세요</span></div></div>
+<div id="dropOverlay"><div class="box"><div class="ic">📄</div><b>여기에 놓으면 업로드</b><span>취업규칙 HWP · HWPX · PDF · TXT 파일을 끌어다 놓으세요</span></div></div>
 <header>
   <div class="logo">푸</div>
   <div class="wm">푸른노무법인<small>PUREUN · LLF</small></div>
@@ -134,8 +136,8 @@ td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
   <div class="toolbar">
     <div class="fld"><label>사업장 (규정 보관)</label><select id="site"></select></div>
     <div class="fld"><label>취업규칙 파일</label>
-      <button class="btn ghost" id="upBtn" style="height:36px" title="클릭하거나 파일을 이 창에 끌어다 놓으세요">📄 HWP·HWPX·TXT 업로드 · 끌어다 놓기</button>
-      <input type="file" id="upload-input" accept=".hwp,.hwpx,.txt" style="display:none"></div>
+      <button class="btn ghost" id="upBtn" style="height:36px" title="클릭하거나 파일을 이 창에 끌어다 놓으세요">📄 HWP·HWPX·PDF·TXT 업로드 · 끌어다 놓기</button>
+      <input type="file" id="upload-input" accept=".hwp,.hwpx,.pdf,.txt" style="display:none"></div>
     <div class="fld"><label>상시 근로자 규모</label>
       <select id="size"><option value="5인미만">5인 미만</option><option value="5인이상">5~9인</option><option value="10인이상" selected>10~29인</option><option value="30인이상">30인 이상</option></select></div>
     <div class="fld"><label>적용 조건</label>
@@ -273,23 +275,30 @@ const $=id=>document.getElementById(id);
 const siteSel=$("site");
 Object.keys(SITE_MAP).forEach(k=>{const o=document.createElement("option");o.value=k;o.textContent=SITE_MAP[k];siteSel.appendChild(o);});
 let LAST=null,CUR_ROWS=[];
-const HWP_BUFS={}; let upSeq=0;
+const HWP_BUFS={},PDF_URLS={}; let upSeq=0;
 
-/* ── 파일 업로드 (실제 HWP/TXT) ── */
+/* ── 파일 업로드 (HWP·HWPX·PDF·TXT) ── */
 async function loadFile(file){
   const name=file.name, ext=name.toLowerCase().split(".").pop();
   try{
-    let text, buf=null;
+    let text, buf=null, pdf=false;
     if(ext==="hwp"||ext==="hwpx"){
       buf=await file.arrayBuffer();
       text=await extractDocText(buf);   // HWP(CFB)·HWPX(ZIP) 자동 판별
+    }else if(ext==="pdf"){
+      buf=await file.arrayBuffer(); pdf=true;
+      text=await extractDocText(buf.slice(0));   // pdf.js
+      if(text.replace(/\s/g,"").length<20){
+        alert("이 PDF는 텍스트가 없는 스캔본(이미지)으로 보입니다.\n원본 미리보기는 되지만 자동 검토는 제한됩니다. (OCR 미지원)");
+      }
     }else if(ext==="txt"){
       const raw=await file.arrayBuffer();
       text=new TextDecoder("utf-8",{fatal:true}).decode(raw);
-    }else{ alert("HWP·HWPX·TXT 파일만 지원합니다. (DOCX·PDF는 추후 지원)"); return; }
+    }else{ alert("HWP·HWPX·PDF·TXT 파일만 지원합니다. (DOCX는 추후 지원)"); return; }
     const key="U"+(++upSeq);
     SAMPLES[key]=text; SITE_MAP[key]="📄 "+name; SITE_BIZNO[key]="";
-    if(buf) HWP_BUFS[key]=buf;
+    if(pdf){ PDF_URLS[key]=URL.createObjectURL(new Blob([buf],{type:"application/pdf"})); }
+    else if(buf) HWP_BUFS[key]=buf;
     const o=document.createElement("option");o.value=key;o.textContent=SITE_MAP[key];
     siteSel.appendChild(o); siteSel.value=key;
     renderPreview();
@@ -327,11 +336,17 @@ async function renderPreview(){
   const key=siteSel.value, txt=SAMPLES[key]||"";
   const n=parseArticles(txt).length;
   const pv=$("preview");
-  // HWP 원본이 있으면 rhwp WASM 렌더 시도, 실패 시 텍스트 폴백
   let rendered=false;
-  if(HWP_BUFS[key] && window.renderHwpPreview){
+  // PDF 원본: 브라우저 내장 뷰어(iframe)로 원본 표시
+  if(PDF_URLS[key]){
+    pv.innerHTML=`<iframe src="${PDF_URLS[key]}" style="width:100%;height:540px;border:0;border-radius:8px"></iframe>`;
+    $("pv-tag").textContent="— 조 "+n+"개 파싱 · PDF 원본"+(n===0?" (스캔본 가능성 — 검토 제한)":"");
+    rendered=true;
+  }
+  // HWP/HWPX 원본이 있으면 rhwp WASM 렌더 시도, 실패 시 텍스트 폴백
+  if(!rendered && HWP_BUFS[key] && window.renderHwpPreview){
     try{
-      pv.textContent="⏳ HWP 렌더링 중…";
+      pv.textContent="⏳ 원본 렌더링 중…";
       await window.renderHwpPreview(HWP_BUFS[key], pv);
       $("pv-tag").textContent="— 조 "+n+"개 파싱 · rhwp 원본 렌더";
       rendered=true;

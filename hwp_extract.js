@@ -134,14 +134,38 @@
     return lines.join("\n");
   }
 
-  /** 확장자/매직바이트로 HWP(CFB) vs HWPX(ZIP) 자동 판별 후 텍스트 추출 */
-  async function extractDocText(arrayBuffer, XLSXlib, pakoLib) {
+  /** ArrayBuffer(.pdf) → 텍스트. pdf.js 사용. 텍스트층 없는 스캔본이면 빈 문자열에 가까움 */
+  async function extractPdfText(arrayBuffer, pdfjs) {
+    const lib = pdfjs || global.pdfjsLib;
+    if (!lib) throw new Error("pdf.js 라이브러리가 필요합니다.");
+    const doc = await lib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+    const pages = [];
+    for (let p = 1; p <= doc.numPages; p++) {
+      const page = await doc.getPage(p);
+      const tc = await page.getTextContent();
+      // y좌표로 줄 묶기 (같은 줄 → 이어붙이고, 줄 바뀌면 개행)
+      let line = [], lastY = null, out = [];
+      for (const it of tc.items) {
+        const y = it.transform[5];
+        if (lastY !== null && Math.abs(y - lastY) > 3) { out.push(line.join("")); line = []; }
+        line.push(it.str);
+        lastY = y;
+      }
+      if (line.length) out.push(line.join(""));
+      pages.push(out.join("\n"));
+    }
+    return pages.join("\n");
+  }
+
+  /** 확장자/매직바이트로 HWP(CFB)·HWPX(ZIP)·PDF 자동 판별 후 텍스트 추출 */
+  async function extractDocText(arrayBuffer, XLSXlib, pakoLib, pdfjs) {
     const u8 = new Uint8Array(arrayBuffer);
+    if (u8[0] === 0x25 && u8[1] === 0x50 && u8[2] === 0x44 && u8[3] === 0x46) return extractPdfText(arrayBuffer, pdfjs); // "%PDF"
     if (u8[0] === 0x50 && u8[1] === 0x4b) return extractHwpxText(arrayBuffer, pakoLib);   // "PK" = ZIP/HWPX
     return extractHwpText(arrayBuffer, XLSXlib, pakoLib);                                  // CFB = HWP 5.0
   }
 
-  const api = { extractHwpText, extractHwpxText, extractDocText };
+  const api = { extractHwpText, extractHwpxText, extractPdfText, extractDocText };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else Object.assign(global, api);
 })(typeof globalThis !== "undefined" ? globalThis : this);
