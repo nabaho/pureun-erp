@@ -461,6 +461,84 @@ function hireAllRows(pay, site, month){
   var emps=[]; recs.forEach(function(r){ emps=emps.concat(dedupeEmps(r.직원||[])); });
   return hireLossRows(dedupeEmps(emps),month).concat(rosterDiffRows(pay,site,month));
 }
+/* ── 퇴직정산(파생 3호): 퇴사자(정식+추정)의 퇴직금 추정 초안 ──
+   평균임금 = 마지막 3개월 임금총액 ÷ 그 3개월 역일수, 퇴직금 = 평균임금×30×(재직일수÷365).
+   초안 수준: 상여·연차수당 가산 등 정밀 규칙은 노무사 확인(화면 명시). 상용만. */
+function grossOf(e){ var r=slipRows(e); return r.gross; }
+function empIndex(pay, site){
+  // 상용 직원의 (연-월)별 기록: {성명: {ym: emp}}, ymList
+  var ix={}, yms={};
+  (((pay||{}).sites||{})[site]||[]).forEach(function(r){
+    var ym=ymOf(r); if(!ym) return;
+    var k=ym.y*100+ym.m; yms[k]=1;
+    dedupeEmps(r.직원||[]).forEach(function(e){
+      if(e.일당||e.시급) return;
+      var nm=(e.성명||'').trim(); if(!nm) return;
+      ix[nm]=ix[nm]||{}; if(!ix[nm][k]) ix[nm][k]=e;
+    });
+  });
+  return {ix:ix, yms:Object.keys(yms).map(Number).sort(function(a,b){return a-b;})};
+}
+function daysInYM(k){ var y=Math.floor(k/100), m=k%100; return new Date(y,m,0).getDate(); }
+function ymAdd(k,delta){ var y=Math.floor(k/100), m=k%100-1+delta; return (y+Math.floor(m/12))*100+(m%12+12)%12+1; }
+function severRows(pay, site, mLabel){
+  var mn=monthNum(mLabel); if(mn==null) return [];
+  var E=empIndex(pay,site), out=[];
+  E.yms.forEach(function(k){
+    if(k%100!==mn) return;
+    var pk=ymAdd(k,-1); if(E.yms.indexOf(pk)<0) return;
+    Object.keys(E.ix).forEach(function(nm){
+      var rec=E.ix[nm], leave=null, kindTxt=null;
+      var e=rec[k]||rec[pk]||{};
+      if(e.퇴사일&&parseInt(e.퇴사일.slice(5,7),10)===mn){ leave=e.퇴사일; kindTxt='정식(퇴사일)'; }
+      else if(rec[pk]&&!rec[k]&&!rec[pk].퇴사일){ var pd=daysInYM(pk);   // 퇴사일 기재자는 그 달에 정식 처리(중복 방지)
+        leave=Math.floor(pk/100)+'-'+('0'+(pk%100)).slice(-2)+'-'+('0'+pd).slice(-2); kindTxt='추정(명단 사라짐)'; }
+      if(!leave) return;
+      var hire=null; Object.keys(rec).forEach(function(kk){ if(!hire&&rec[kk].입사일) hire=rec[kk].입사일; });
+      var flags=[];
+      // 마지막 근무월(임금 있는 최근 달)부터 3개월 수집
+      var lastK=rec[k]?k:pk, months=[], sum=0, days=0, kk=lastK;
+      for(var i=0;i<3;i++){ var em=rec[kk];
+        if(em){ var g=grossOf(em); if(g!=null){ months.push(kk); sum+=g; days+=daysInYM(kk); } }
+        kk=ymAdd(kk,-1); }
+      if(months.length<3) flags.push('임금자료 '+months.length+'개월뿐');
+      var avg=(days>0)?sum/days:null;
+      var tenure=null, sever=null, target='';
+      if(hire){
+        var d1=new Date(hire), d2=new Date(leave);
+        tenure=Math.round((d2-d1)/86400000)+1;
+        if(tenure<365){ target='대상 아님(1년 미만)'; }
+        else if(avg!=null){ sever=Math.round(avg*30*tenure/365); target='대상'; }
+        else { target='계산불가(임금자료 없음)'; }
+      } else { flags.push('입사일 미상 — 근속 계산 불가'); target='계산불가'; }
+      out.push({성명:nm,입사일:hire||'-',마지막근무:leave,근거:kindTxt,
+        재직일수:tenure,개월수:months.length,임금3개월:sum||null,평균임금:(avg!=null)?Math.round(avg):null,
+        퇴직금추정:sever,대상:target,플래그:flags.join(' · ')});
+    });
+  });
+  out.sort(function(a,b){return a.성명<b.성명?-1:1;});
+  return out;
+}
+function severMonths(pay, site){
+  var seen={}, out=[];
+  (((pay||{}).sites||{})[site]||[]).forEach(function(r){
+    if(seen[r.월]) return; seen[r.월]=1;
+    var n=severRows(pay,site,r.월).length;
+    if(n>0) out.push({월:r.월,n:n});
+  });
+  return out;
+}
+function copySeverTSV(site,month){
+  var rows=severRows(dbGet('payroll',null),site,month);
+  var tsv=[['성명','입사일','마지막근무','근거','재직일수','3개월임금','평균임금(일)','퇴직금추정','대상','확인'].join('\t')]
+    .concat(rows.map(function(x){ return [x.성명,x.입사일,x.마지막근무,x.근거,(x.재직일수!=null?x.재직일수:''),
+      (x.임금3개월!=null?x.임금3개월:''),(x.평균임금!=null?x.평균임금:''),(x.퇴직금추정!=null?x.퇴직금추정:''),x.대상,(x.플래그||'')].join('\t');
+    })).join('\n');
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(tsv).then(function(){alert('퇴직정산 초안 '+rows.length+'건 복사됨');},function(){alert(tsv);});
+  } else alert(tsv);
+}
+window.copySeverTSV=copySeverTSV;
 function copyHireTSV(site,month){
   var rows=hireAllRows(dbGet('payroll',null),site,month);
   var tsv=[['구분','성명','일자','보수월액','비고'].join('\t')].concat(rows.map(function(x){
@@ -489,7 +567,7 @@ window.copyReportTSV=copyReportTSV;
 function reportKindBtns(){
   var k=App.reportKind||'daily';
   function b(id,label){ return '<button class="btn'+(k===id?'':' sec')+'" style="padding:6px 14px;font-size:12.5px" onclick="App.reportKind=\''+id+'\';App.site=null;App.month=null;render()">'+label+'</button>'; }
-  return '<div style="display:flex;gap:8px;margin-bottom:12px">'+b('daily','일용 매월신고')+b('hire','취득·상실')+'</div>';
+  return '<div style="display:flex;gap:8px;margin-bottom:12px">'+b('daily','일용 매월신고')+b('hire','취득·상실')+b('sever','퇴직정산')+'</div>';
 }
 function reportRowsOf(rec, kind){
   var emps=dedupeEmps(rec.직원||[]);
@@ -507,28 +585,35 @@ function hireMonths(pay, site){
 }
 function screenReport(){
   var pay=dbGet('payroll',null), kind=App.reportKind||'daily';
-  var h='<h1>신고 — '+(kind==='hire'?'4대보험 취득·상실 초안':'일용 근로내용확인신고 초안')+'</h1>';
+  var TITLE={daily:'일용 근로내용확인신고 초안',hire:'4대보험 취득·상실 초안',sever:'퇴직정산(퇴직금 추정) 초안'};
+  var h='<h1>신고 — '+TITLE[kind]+'</h1>';
   if(!pay||!pay.sites){ h+='<div class="sub">급여 데이터를 먼저 올리세요</div><div class="empty">급여 데이터가 서버에 없습니다.</div>'; return h; }
   if(!App.site){
-    h+='<div class="sub">'+(kind==='hire'?'입사일·퇴사일이 신고월에 속한 직원을 자동 추출합니다(연도는 표에서 확인).':'사업장 선택 → 신고월 → 초안 확인·복사. 일용(일당·시급) 있는 달만 표시됩니다.')+'</div>'+reportKindBtns()+'<div class="cards">';
+    var SUB={hire:'입사일·퇴사일이 신고월에 속한 직원을 자동 추출합니다(연도는 표에서 확인).',
+             sever:'퇴사자(정식+추정)의 평균임금·퇴직금 추정을 자동 계산합니다(1년 미만 제외).',
+             daily:'사업장 선택 → 신고월 → 초안 확인·복사. 일용(일당·시급) 있는 달만 표시됩니다.'};
+    h+='<div class="sub">'+SUB[kind]+'</div>'+reportKindBtns()+'<div class="cards">';
     Object.keys(pay.sites).forEach(function(site){
       var nMonths, tot;
       if(kind==='hire'){ var hm=hireMonths(pay,site); nMonths=hm.length; tot=hm.reduce(function(a,x){return a+x.n;},0); }
+      else if(kind==='sever'){ var sm=severMonths(pay,site); nMonths=sm.length; tot=sm.reduce(function(a,x){return a+x.n;},0); }
       else { var months=(pay.sites[site]||[]).filter(function(r){return reportRowsOf(r,kind).length>0;});
              nMonths=months.length; tot=months.reduce(function(a,r){return a+reportRowsOf(r,kind).length;},0); }
       if(!nMonths) return;
+      var UNIT={hire:'취득·상실 '+tot+'건',sever:'퇴사자 '+tot+'명',daily:'일용 연 '+tot+'명'};
       h+='<div class="c" style="cursor:pointer" onclick="navTo({site:\''+site.replace(/'/g,"")+'\'})">'+
-         '<div class="t">'+site+'</div><div class="m">신고월 '+nMonths+'건 · '+(kind==='hire'?'취득·상실 '+tot+'건':'일용 연 '+tot+'명')+'</div></div>';
+         '<div class="t">'+site+'</div><div class="m">신고월 '+nMonths+'건 · '+UNIT[kind]+'</div></div>';
     });
     h+='</div>'; return h;
   }
   if(!App.month){
     h+='<div class="sub"><a href="#" onclick="goBack();return false">← 사업장</a> · <b>'+App.site+'</b> 신고월 선택</div>'+reportKindBtns();
     h+='<div style="background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden">';
-    if(kind==='hire'){
-      hireMonths(pay,App.site).forEach(function(x){
+    if(kind==='hire'||kind==='sever'){
+      var list=(kind==='hire')?hireMonths(pay,App.site):severMonths(pay,App.site);
+      list.forEach(function(x){
         h+='<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);cursor:pointer" onclick="navTo({month:\''+x.월.replace(/'/g,"")+'\'})">'+
-           '<div style="flex:1"><b>'+x.월+'</b> <span style="font-size:12px;color:var(--sub)">취득·상실 '+x.n+'건(추정 포함)</span></div></div>';
+           '<div style="flex:1"><b>'+x.월+'</b> <span style="font-size:12px;color:var(--sub)">'+(kind==='hire'?'취득·상실 '+x.n+'건(추정 포함)':'퇴사자 '+x.n+'명')+'</span></div></div>';
       });
     } else {
       (pay.sites[App.site]||[]).filter(function(r){return reportRowsOf(r,kind).length>0;}).forEach(function(r){
@@ -538,6 +623,30 @@ function screenReport(){
       });
     }
     h+='</div>'; return h;
+  }
+  if(kind==='sever'){
+    var srows=severRows(pay,App.site,App.month);
+    h+='<div class="sub"><a href="#" onclick="goBack();return false">← '+App.site+'</a> · <b>'+App.month+'</b> 퇴사자 '+srows.length+'명 '+
+       '<button class="btn" style="margin-left:8px" onclick="copySeverTSV(\''+App.site.replace(/'/g,"")+'\',\''+App.month.replace(/'/g,"")+'\')">정산표 복사</button></div>';
+    h+='<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;background:#fff">'+
+       '<tr style="background:var(--paper);text-align:right">'+['성명','입사일','마지막근무','근거','재직일수','3개월임금','평균임금(일)','퇴직금 추정','대상/확인'].map(function(c,i){return '<th style="padding:8px 10px;'+(i<4?'text-align:left':'')+'">'+c+'</th>';}).join('')+'</tr>';
+    srows.forEach(function(x){
+      var warn=(x.대상.indexOf('계산불가')>=0)||x.플래그;
+      h+='<tr style="border-top:1px solid var(--line);text-align:right'+(x.근거.indexOf('추정')>=0?';background:#FBF7EC':'')+'">'+
+        '<td style="padding:7px 10px;text-align:left;font-weight:600">'+x.성명+'</td>'+
+        '<td style="padding:7px 10px;text-align:left">'+x.입사일+'</td>'+
+        '<td style="padding:7px 10px;text-align:left">'+x.마지막근무+'</td>'+
+        '<td style="padding:7px 10px;text-align:left;font-size:11.5px;color:var(--sub)">'+x.근거+'</td>'+
+        '<td style="padding:7px 10px">'+(x.재직일수!=null?x.재직일수+'일':'-')+'</td>'+
+        '<td style="padding:7px 10px">'+won(x.임금3개월)+'</td>'+
+        '<td style="padding:7px 10px">'+won(x.평균임금)+'</td>'+
+        '<td style="padding:7px 10px;font-weight:700;color:var(--navy)">'+won(x.퇴직금추정)+'</td>'+
+        '<td style="padding:7px 10px;text-align:left;font-size:11.5px;color:'+(warn?'var(--warn)':'var(--ok)')+'">'+x.대상+(x.플래그?' · '+x.플래그:'')+'</td></tr>';
+    });
+    h+='</table></div><div class="note"><b>추정 초안입니다.</b> 평균임금=마지막 3개월 임금총액÷그 3개월 역일수, '+
+       '퇴직금=평균임금×30×(재직일수÷365). 상여금·연차수당 가산, 통상임금 비교, 평균임금 산정 제외기간 등 '+
+       '정밀 규칙은 반영 전 — 반드시 노무사 확인 후 확정하세요. 노란 배경=명단 사라짐 추정(휴직 등 가능). 상용만 대상.</div>';
+    return h;
   }
   if(kind==='hire'){
     var hrows=hireAllRows(pay,App.site,App.month);
