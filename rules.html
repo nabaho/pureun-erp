@@ -396,6 +396,36 @@ function escapeH(s){return(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").rep
 /* ── 전체 조문 편집 모델: 현행 조문 전체 + 자동 개정 제안 + 신설 ── */
 let CUR_ITEMS=[], CUR_FILTER="changed", INS_SEQ=0;
 function itemKind(it){ if(it.del)return "삭제"; if(it.orig==="")return "신설"; return (it.after||"").trim()!==(it.orig||"").trim()?"개정":"유지"; }
+/* ── 조문 체계(표준취업규칙 장 구성) 기반 신설 위치 자동 배치 ──
+   신설 조문을 '같은 주제(장)의 마지막 형제 조문' 뒤에 배치. 매칭 실패 시 맨 끝. */
+const PLACE_GROUPS=[
+  {re:/(괴롭힘)/, sib:["괴롭힘","복무","고충","징계"]},
+  {re:/(성희롱)/, sib:["성희롱","복무","고충","교육"]},
+  {re:/(출산|임산부|난임|태아|모성|육아|수유|임신)/, sib:["임산부","출산","모성","여성","보호","휴가"]},
+  {re:/(경조|병가|생리|돌봄|가족돌봄|휴직)/, sib:["휴가","휴직","연차","경조","병가"]},
+  {re:/(연차|휴가)/, sib:["연차","휴가","휴일"]},
+  {re:/(공휴일|휴일)/, sib:["휴일","공휴일","휴가"]},
+  {re:/(임금|급여|명세|수당|상여|가족수당)/, sib:["임금","급여","수당","상여","보수"]},
+  {re:/(퇴직급여|퇴직금)/, sib:["퇴직급여","퇴직금","퇴직"]},
+  {re:/(퇴직|해고|정년)/, sib:["퇴직","해고","정년"]},
+  {re:/(근로시간|연장|야간|교대|탄력|간주|휴게|보상휴가)/, sib:["근로시간","휴게","근무","연장"]},
+  {re:/(교육|연수)/, sib:["교육","연수"]},
+  {re:/(안전|보건|재해|산업재해)/, sib:["안전","보건","재해"]},
+  {re:/(채용|수습|근로계약|전형)/, sib:["채용","수습","근로계약","전형"]},
+  {re:/(징계|표창|포상|제재)/, sib:["징계","표창","포상","제재"]},
+];
+function suggestInsertAfter(title, kws, arts){
+  if(!arts||!arts.length) return "__end__";
+  const hay=stripWs(String(title||"")+" "+(kws||[]).join(" "));
+  const grp=PLACE_GROUPS.find(g=>g.re.test(hay));
+  const sibs=(grp?grp.sib:(kws||[])).map(stripWs).filter(k=>k.length>=2);
+  if(!sibs.length) return "__end__";
+  let best=null,bestScore=0;
+  arts.forEach(a=>{ const t=stripWs(a.title||""), b=a.bodyNs||"";
+    let s=0; sibs.forEach(k=>{ if(t.includes(k))s+=3; else if(b.includes(k))s+=1; });
+    if(s>bestScore){bestScore=s;best=a;} else if(s===bestScore&&bestScore>0){best=a;} });   // 동점이면 더 뒤(마지막 형제) 뒤에 배치
+  return bestScore>0 ? ("art_"+best.label) : "__end__";
+}
 function buildItems(res,terms,arts){
   const amend={},inserts=[],seen=new Set();
   for(const f of res){
@@ -404,7 +434,8 @@ function buildItems(res,terms,arts){
     const after=fillTpl(t.text,terms);
     if(f.status==="위반의심"&&f.hit){ if(!amend[f.hit.label])amend[f.hit.label]={after,reason:t.reason}; }
     // 신설: 번호는 개정방식에 따라 자동 부여(일부개정=가지번호). 기본 위치는 맨 끝, 편집에서 조정
-    else inserts.push({id:"ins_"+t.tid,title:t.title,label:"",num:null,sub:null,insertAfter:"__end__",before:"신설",after,orig:"",reason:t.reason,suggested:true,del:false,sug:after});
+    else { const rec=suggestInsertAfter(t.title,f.rule.keywords,arts);
+      inserts.push({id:"ins_"+t.tid,title:t.title,label:"",num:null,sub:null,insertAfter:rec,rec,before:"신설",after,orig:"",reason:t.reason,suggested:true,del:false,sug:after}); }
   }
   const items=arts.map(a=>{
     const before=a.body.replace(/\s+/g," ").trim();
@@ -482,12 +513,15 @@ function renderEditor(){
     tr.className=it.del?"g-excl":(k==="유지"?"g-hold":"");
     const canEdit=!it.del, isIns=it.orig==="";
     let posSel="";
-    if(isIns){   // 신설: 삽입 위치 드롭다운(일부개정=가지번호 자동)
-      const opts=anchors.map(a=>`<option value="${a.it.id}" ${it.insertAfter===a.it.id?"selected":""}>${escapeH(a.no)} 뒤</option>`).join("");
-      posSel=`<div class="stbtns" style="margin-top:5px"><span style="font-size:10.5px;color:var(--mute)">위치</span>
-        <select class="possel" data-i="${i}" style="font-size:11px;height:26px;min-width:118px;padding:0 4px">
+    if(isIns){   // 신설: 삽입 위치 드롭다운(제목 포함·추천 표시, 일부개정=가지번호 자동)
+      const optLabel=a=>escapeH(a.no)+(a.it.title?" ("+escapeH(a.it.title)+")":"");
+      const opts=anchors.map(a=>`<option value="${a.it.id}" ${it.insertAfter===a.it.id?"selected":""}>${optLabel(a)} 뒤${it.rec===a.it.id?"  ⭐추천":""}</option>`).join("");
+      const ra=(it.rec&&it.rec!=="__end__")?anchors.find(a=>a.it.id===it.rec):null;
+      const recBtn=(ra&&it.insertAfter!==it.rec)?`<button class="stbtn on-adopt" data-act="userec" data-i="${i}" title="추천 위치로 이동">⭐추천: ${optLabel(ra)} 뒤</button>`:"";
+      posSel=`<div class="stbtns" style="margin-top:5px;flex-wrap:wrap"><span style="font-size:10.5px;color:var(--mute)">위치</span>
+        <select class="possel" data-i="${i}" style="font-size:11px;height:26px;min-width:160px;max-width:230px;padding:0 4px">
           ${opts}<option value="__end__" ${(!it.insertAfter||it.insertAfter==="__end__")?"selected":""}>맨 끝(새 조)</option>
-        </select></div>`;
+        </select>${recBtn}</div>`;
     }
     tr.innerHTML=`<td class="rlabel"><b>${escapeH(v.no)}</b>${it.title?" "+escapeH("("+it.title+")"):""}<br><span class="badge ${KIND_BADGE(k)}">${k}</span>${it.suggested?'<br><span class="pill">자동제안</span>':""}
         <div class="stbtns">
@@ -509,6 +543,7 @@ function renderEditor(){
     if(b.dataset.act==="del")it.del=!it.del;
     if(b.dataset.act==="revert"){it.after=it.orig;it.suggested=false;}
     if(b.dataset.act==="restore"){it.after=it.sug;it.suggested=true;}   // 자동제안 문안 복원
+    if(b.dataset.act==="userec"){it.insertAfter=it.rec;}   // 추천 위치로 이동
     renderEditor();
   });
   tb.querySelectorAll("select.possel").forEach(s=>s.onchange=()=>{ CUR_ITEMS[+s.dataset.i].insertAfter=s.value; renderEditor(); });
