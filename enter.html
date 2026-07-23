@@ -507,7 +507,8 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     var _watchdog = setTimeout(function(){
       if(_settled) return;
       showErr('응답이 없어 화면을 새로 고칩니다. 잠시 후 다시 로그인해 주세요.');
-      setTimeout(function(){ location.replace(location.pathname + '?v=' + Date.now()); }, 900);
+      // 12초~12.9초 사이 로그인 성공 시 새로고침 취소 (이중 실행 방지)
+      setTimeout(function(){ if(_settled) return; location.replace(location.pathname + '?v=' + Date.now()); }, 900);
     }, 12000);
 
     auth.setPersistence(persistence).catch(function(){ /* 지속성 설정 실패해도 로그인은 진행 */ }).then(function(){
@@ -534,8 +535,8 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
           navigator.credentials.store(new window.PasswordCredential({ id: id, password: pw, name: id })).catch(function(){});
         }
       } catch(_c){}
-      _handled = true;
-      enterPortal(cred.user);
+      // onAuthStateChanged가 먼저 포털을 열었을 수 있으므로 중복 진입 방지
+      if(!_handled){ _handled = true; enterPortal(cred.user); }
     }).catch(function(err){
       _settled = true; clearTimeout(_watchdog);
       $('loginBtn').disabled = false;
@@ -993,9 +994,9 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       items.sort(function(a,b){ return (a.at||0) - (b.at||0); });
       $('sgDoneBody').innerHTML = items.map(function(it){
         return '<div class="sgd-item">'
-          + '<div class="sgd-t"><span class="sg-badge sg-b-'+(it.cat||'etc')+'">'+sgEsc(sgCatName(it.cat))+'</span>'+sgEsc(it.title||'')+'</div>'
+          + '<div class="sgd-t"><span class="sg-badge sg-b-'+sgCatClass(it.cat)+'">'+sgEsc(sgCatName(it.cat))+'</span>'+sgEsc(it.title||'')+'</div>'
           + '<div class="sgd-r">'+(it.reply ? sgEsc(it.reply) : '처리가 완료되었습니다.')
-          + ((it.replyImages&&it.replyImages.length)? '<div style="margin-top:8px">'+it.replyImages.map(function(u){return '<img src="'+u+'" style="max-width:100%;border-radius:8px;margin-top:6px;display:block">';}).join('')+'</div>':'')
+          + ((it.replyImages&&it.replyImages.length)? '<div style="margin-top:8px">'+it.replyImages.map(function(u){var su=sgImgSrc(u);return su?'<img src="'+su+'" style="max-width:100%;border-radius:8px;margin-top:6px;display:block">':'';}).join('')+'</div>':'')
           + '</div></div>';
       }).join('');
       $('sgDoneModal').style.display = 'flex';
@@ -1010,6 +1011,10 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
   }
   function sgCatName(k){ var c = SG_CATS.find(function(x){return x.key===k;}); return c ? c.name : '기타'; }
   function sgEsc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(m){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]; }); }
+  // 카테고리 코드는 CSS class로 들어가므로 알려진 값만 허용(속성 이탈 XSS 차단)
+  function sgCatClass(c){ return /^[a-z]+$/.test(String(c||'')) ? c : 'etc'; }
+  // 이미지 src: http(s)·data:image 만 허용하고 따옴표 이스케이프(속성 이탈 XSS 차단)
+  function sgImgSrc(u){ u=String(u||''); return /^(https?:|data:image\/)/i.test(u) ? sgEsc(u) : ''; }
   function sgFmt(ts){ if(!ts) return ''; var d=new Date(ts); var p=function(n){return String(n).padStart(2,'0');}; return (d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes()); }
 
   function sgCompress(file, cb){
@@ -1038,7 +1043,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
   function sgRenderThumbs(){
     var box = $('sgThumbs'); if(!box) return;
     box.innerHTML = SG.draftImgs.map(function(u, i){
-      return '<div class="sg-th"><img src="'+u+'"><span class="del" data-i="'+i+'">✕</span></div>';
+      return '<div class="sg-th"><img src="'+sgImgSrc(u)+'"><span class="del" data-i="'+i+'">✕</span></div>';
     }).join('');
     Array.prototype.forEach.call(box.querySelectorAll('.del'), function(el){
       el.addEventListener('click', function(){ SG.draftImgs.splice(+el.dataset.i, 1); sgRenderThumbs(); });
@@ -1054,7 +1059,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
   function sgRenderReplyThumbs(){
     var box = $('sgReplyThumbs'); if(!box) return;
     box.innerHTML = SG.replyDraftImgs.map(function(u, i){
-      return '<div class="sg-th"><img src="'+u+'"><span class="del" data-i="'+i+'">✕</span></div>';
+      return '<div class="sg-th"><img src="'+sgImgSrc(u)+'"><span class="del" data-i="'+i+'">✕</span></div>';
     }).join('');
     Array.prototype.forEach.call(box.querySelectorAll('.del'), function(el){
       el.addEventListener('click', function(){ SG.replyDraftImgs.splice(+el.dataset.i, 1); sgRenderReplyThumbs(); });
@@ -1293,11 +1298,11 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
         + '<div style="font-size:1rem;font-weight:800;margin-bottom:8px">'+sgEsc(s.title)+'</div>'
         + '<div style="font-size:.86rem;color:#334155;line-height:1.7;white-space:pre-wrap">'+sgEsc(s.content)+'</div>';
       if(s.images && s.images.length){
-        html += s.images.map(function(u){ return '<img class="sg-shot" src="'+u+'" data-full="'+u+'">'; }).join('');
+        html += s.images.map(function(u){ var su=sgImgSrc(u); return su?'<img class="sg-shot" src="'+su+'" data-full="'+su+'">':''; }).join('');
       }
       if(s.reply || (s.replyImages && s.replyImages.length)){
         html += '<div class="sg-reply"><b>👑 대표 답변</b>'+(s.repliedAt?' · '+sgFmt(s.repliedAt):'')+'<br>'+sgEsc(s.reply||'')
-          + ((s.replyImages&&s.replyImages.length)? '<div style="margin-top:8px">'+s.replyImages.map(function(u){return '<img class="sg-shot" src="'+u+'" data-full="'+u+'">';}).join('')+'</div>':'')
+          + ((s.replyImages&&s.replyImages.length)? '<div style="margin-top:8px">'+s.replyImages.map(function(u){var su=sgImgSrc(u);return su?'<img class="sg-shot" src="'+su+'" data-full="'+su+'">':'';}).join('')+'</div>':'')
           + '</div>';
       }
       if(sgIsAdmin()){
