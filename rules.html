@@ -709,6 +709,43 @@ try{if(window.firebase){firebase.initializeApp(FB_CONFIG);FBDB=firebase.database
     if(u)subscribeArch();else if(FBDB)FBDB.ref("rules_mgmt/archive").off();});
 }}catch(e){console.warn("Firebase 초기화 건너뜀:",e);}
 updateWho();
+/* ── 원본 파일 보존(A): 저장 시 텍스트+원본(base64)을 별도 노드에 함께 저장 → 재오픈 시 원본 미리보기 복원.
+   큰 파일(>2MB)은 자동으로 텍스트만 보존. ── */
+const ORIG_KEY="pureun_rules_orig_v1", MAX_ORIG_BYTES=2*1024*1024;
+function bufToB64(buf){let bin="",b=new Uint8Array(buf),CH=0x8000;for(let i=0;i<b.length;i+=CH)bin+=String.fromCharCode.apply(null,b.subarray(i,i+CH));return btoa(bin);}
+function b64ToBuf(s){const bin=atob(s),n=bin.length,b=new Uint8Array(n);for(let i=0;i<n;i++)b[i]=bin.charCodeAt(i);return b.buffer;}
+function loadOrigLocal(){try{return JSON.parse(localStorage.getItem(ORIG_KEY))||{}}catch(e){return{}}}
+function buildOrig(key){
+  const name=(SITE_MAP[key]||"").replace(/^📄\s*/,""), buf=HWP_BUFS[key];
+  let b64=null,truncated=false;
+  if(buf){ if(buf.byteLength<=MAX_ORIG_BYTES)b64=bufToB64(buf); else truncated=true; }
+  return {name,ext:(name.split(".").pop()||"").toLowerCase(),text:SAMPLES[key]||"",b64,isPdf:!!PDF_URLS[key],truncated};
+}
+function putOrig(id,orig){
+  if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/orig/"+id).set(orig).catch(e=>console.warn("원본 FB 저장 실패:",e));
+  const map=loadOrigLocal(); map[id]=orig;
+  try{localStorage.setItem(ORIG_KEY,JSON.stringify(map));}
+  catch(e){ map[id]={...orig,b64:null,truncated:true}; try{localStorage.setItem(ORIG_KEY,JSON.stringify(map));}catch(_){} }
+}
+async function getOrig(id){
+  if(FBDB&&FBUSER){try{const s=await FBDB.ref("rules_mgmt/orig/"+id).once("value");if(s.exists())return s.val();}catch(e){console.warn("원본 로드 실패:",e);}}
+  return loadOrigLocal()[id]||null;
+}
+async function restoreOrig(id,site){
+  const o=await getOrig(id); if(!o)return null;
+  const key="R_"+id;
+  SAMPLES[key]=o.text||""; SITE_MAP[key]="📄 "+(o.name||site||"원본"); SITE_BIZNO[key]="";
+  delete HWP_BUFS[key]; if(PDF_URLS[key]){URL.revokeObjectURL(PDF_URLS[key]);delete PDF_URLS[key];}
+  if(o.b64){ const buf=b64ToBuf(o.b64);
+    if(o.isPdf)PDF_URLS[key]=URL.createObjectURL(new Blob([buf],{type:"application/pdf"}));
+    else HWP_BUFS[key]=buf;
+  }
+  let opt=[...siteSel.options].find(x=>x.value===key);
+  if(!opt){opt=document.createElement("option");opt.value=key;siteSel.appendChild(opt);}
+  opt.textContent=SITE_MAP[key]; siteSel.value=key;
+  await renderPreview();
+  return key;
+}
 $("save").addEventListener("click",()=>{
   if(!LAST)return;
   // 편집 화면을 연 적 없으면(=편집 안 함) 자동 제안 기준 모델을 만들어 저장
@@ -719,8 +756,13 @@ $("save").addEventListener("click",()=>{
     savedAt:new Date().toISOString().slice(0,16).replace("T"," "),savedBy:(FBUSER&&(FBUSER.displayName||FBUSER.email))||"",
     summary:LAST.summary,items,changed:changedCnt,mode:REV_MODE};
   putRecord(rec);
+  // 원본 파일도 함께 보존 → 재오픈·로그아웃 후에도 원본 미리보기 복원
+  let origMsg="";
+  if(LAST.key){ try{ const o=buildOrig(LAST.key); putOrig(rec.id,o);
+    origMsg = o.truncated ? "\n※ 원본 파일이 커서(2MB↑) 텍스트만 보존됩니다." : (o.b64?"\n원본 파일 보존됨 — 재오픈 시 미리보기 복원.":"\n원본 텍스트 보존됨.");
+  }catch(e){ console.warn("원본 저장 건너뜀:",e); } }
   const 개정=items.filter(it=>itemKind(it)==="개정").length,신설=items.filter(it=>itemKind(it)==="신설").length,삭제=items.filter(it=>itemKind(it)==="삭제").length;
-  alert(`'${LAST.site}' 규정이 보관함에 저장되었습니다.\n개정 ${개정} · 신설 ${신설} · 삭제 ${삭제} (전체 ${items.length}개 조)`);
+  alert(`'${LAST.site}' 규정이 보관함에 저장되었습니다.\n개정 ${개정} · 신설 ${신설} · 삭제 ${삭제} (전체 ${items.length}개 조)`+origMsg);
 });
 function renderArch(q){
   const arr=loadArch().filter(r=>!q||r.site.includes(q)||(r.bizno||"").includes(q));
@@ -733,11 +775,14 @@ function renderArch(q){
       <td style="color:var(--sub);font-size:12px">${r.savedAt}${r.savedBy?`<br><span style="color:var(--mute);font-size:10.5px">${r.savedBy}</span>`:""}</td>
       <td style="text-align:right;white-space:nowrap"><button class="mini" data-open="${r.id}">대조표 열기</button> <button class="mini" data-del="${r.id}" style="color:#dc2626;border-color:#f3c0c0">삭제</button></td>`;
     tb.appendChild(tr);});
-  tb.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>{
+  tb.querySelectorAll("[data-open]").forEach(b=>b.onclick=async()=>{
     const r=loadArch().find(x=>x.id===b.dataset.open);
     if(!r)return;
     $("ov-arch").classList.remove("on");
-    LAST={site:r.site,bizno:r.bizno,size:r.size,conds:r.conds||[],asof:r.asof,summary:r.summary,arts:[]};
+    // 원본 파일 복원 → 원본 미리보기·조문 재파싱
+    let key=null,arts=[];
+    try{ key=await restoreOrig(r.id,r.site); if(key)arts=parseArticles(SAMPLES[key]||""); }catch(e){ console.warn("원본 복원 실패:",e); }
+    LAST={key,site:r.site,bizno:r.bizno,size:r.size,conds:r.conds||[],asof:r.asof,summary:r.summary,arts};
     REV_MODE=r.mode||"partial";
     // 신모델(items) 우선, 구모델(daejo rows)은 변환 — 옛 항목은 라벨에서 번호·제목 복원
     CUR_ITEMS = normalizeItems( r.items ? r.items
