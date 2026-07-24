@@ -104,7 +104,15 @@ table.daejo .rreason{color:var(--sub);font-size:11px}
 .pick-art .pa-h{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12.5px}
 .pick-art .pa-chk{font-size:10.5px;color:var(--mute);white-space:nowrap}
 .pick-art.on .pa-chk{color:#0f766e;font-weight:700}
-.pick-art .pa-b{font-size:11.5px;color:var(--sub);line-height:1.55;margin-top:5px;max-height:58px;overflow:hidden}
+.pick-art .pa-b{font-size:11.5px;color:var(--sub);line-height:1.6;margin-top:5px;white-space:pre-wrap}
+.pick-art.editing{border-style:solid;border-color:var(--accent2);background:#f6f9ff}
+.artedit{border:1.5px dashed #14b8a6;border-radius:12px;background:#f0fdfa;padding:12px 14px;margin:12px 16px 0}
+.artedit .ae-h{display:flex;align-items:center;justify-content:space-between;font-size:13px;margin-bottom:6px}
+.artedit .ae-h .x{cursor:pointer;color:var(--mute);font-size:18px;line-height:1}
+.artedit .ae-lbl{font-size:10.5px;color:var(--mute);font-weight:600;margin:7px 0 3px}
+.artedit .ae-before{font-size:12px;line-height:1.6;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 10px;max-height:140px;overflow:auto;white-space:pre-wrap}
+.artedit textarea{width:100%;min-height:130px;font-family:inherit;font-size:12.5px;line-height:1.6;border:1px solid #99d5cc;border-radius:8px;padding:8px 10px;box-sizing:border-box;resize:vertical;background:#fff}
+.artedit .ae-btns{display:flex;gap:8px;justify-content:flex-end;margin-top:8px;align-items:center}
 .sample-banner{background:#fffbeb;border:1px solid #fcd34d;color:#92400e;font-size:11.5px;font-weight:600;border-radius:8px;padding:7px 11px;margin-bottom:10px;line-height:1.55;white-space:normal}
 table.arch{width:100%;border-collapse:collapse;font-size:13px}
 table.arch th{text-align:left;color:var(--mute);font-size:11px;font-weight:600;padding:6px 10px;border-bottom:1px solid var(--line)}
@@ -169,12 +177,24 @@ td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
     <div class="pane">
       <h3>원본 미리보기 <span class="tag" id="pv-tag">— 조 0개</span>
         <button class="btn ghost" id="pv-full" style="float:right;padding:3px 10px;font-size:11.5px" onclick="openFullPreview()">⛶ 전체보기</button>
-        <button class="btn ghost" id="pv-pick" style="float:right;padding:3px 10px;font-size:11.5px;margin-right:6px">✎ 조문 선택</button></h3>
+        <button class="btn ghost" id="pv-pick" style="float:right;padding:3px 10px;font-size:11.5px;margin-right:6px">✎ 조문 선택</button>
+        <button class="btn ghost" id="pv-view" style="float:right;padding:3px 10px;font-size:11.5px;margin-right:6px">📄 원문 보기</button></h3>
       <div class="preview" id="preview"></div>
     </div>
     <div id="split" title="드래그하여 좌우 너비 조절"></div>
     <div class="pane">
       <h3>자동 검토 결과 <span class="tag">규칙집 v2 · 77항목</span></h3>
+      <div class="artedit" id="art-edit" style="display:none">
+        <div class="ae-h"><b id="ae-title">조문 편집</b><span class="x" id="ae-close" title="닫기">×</span></div>
+        <div class="ae-lbl">현행 (변경 전)</div>
+        <div class="ae-before" id="ae-before"></div>
+        <div class="ae-lbl">변경 후 — 편집하세요</div>
+        <textarea id="ae-after"></textarea>
+        <div class="ae-btns">
+          <button class="stbtn" id="ae-revert" title="변경 후를 현행 그대로 되돌림">현행으로 되돌리기</button>
+          <button class="btn" id="ae-apply" style="height:32px;font-size:12.5px;padding:0 16px">신구대조표에 반영</button>
+        </div>
+      </div>
       <div class="summary">
         <div class="stat s"><div class="n" id="c-s">0</div><div class="l">위반의심</div></div>
         <div class="stat m"><div class="n" id="c-miss">0</div><div class="l">누락</div></div>
@@ -314,6 +334,9 @@ const siteSel=$("site");
 Object.keys(SITE_MAP).forEach(k=>{const o=document.createElement("option");o.value=k;o.textContent=SITE_MAP[k];siteSel.appendChild(o);});
 let LAST=null;
 let PICK_MODE=false; const PICK_SET=new Set();   // 원본 미리보기 조문 선택 모드
+let PV_VIEW="arts";   // 미리보기 기본: 전체 조문 박스("arts") / 원문 렌더("raw")
+let CUR_KEY=null;     // CUR_ITEMS가 어느 문서(key) 기준인지
+let AE_LABEL=null;    // 오른쪽 패널에서 편집 중인 조문 라벨
 const HWP_BUFS={},PDF_URLS={}; let upSeq=0;
 
 /* ── 파일 업로드 (HWP·HWPX·PDF·TXT) ── */
@@ -340,14 +363,14 @@ async function loadFile(file){
     else if(buf) HWP_BUFS[key]=buf;
     const o=document.createElement("option");o.value=key;o.textContent=SITE_MAP[key];
     siteSel.appendChild(o); siteSel.value=key;
-    renderPreview();
+    resetReviewUI();renderPreview();
   }catch(e){
     if(e instanceof TypeError && ext==="txt"){ // cp949 재시도
       try{ const raw=await file.arrayBuffer();
         const text=new TextDecoder("euc-kr").decode(raw);
         const key="U"+(++upSeq); SAMPLES[key]=text; SITE_MAP[key]="📄 "+name; SITE_BIZNO[key]="";
         const o=document.createElement("option");o.value=key;o.textContent=SITE_MAP[key];
-        siteSel.appendChild(o); siteSel.value=key; renderPreview(); return;
+        siteSel.appendChild(o); siteSel.value=key; resetReviewUI();renderPreview(); return;
       }catch(_){}
     }
     alert("파일을 읽지 못했습니다: "+(e.message||e));
@@ -373,10 +396,17 @@ const ORD={"위반의심":0,"누락":1,"시행예정":2,"수동확인":3,"적합
 
 async function renderPreview(){
   const key=siteSel.value, txt=SAMPLES[key]||"";
-  const n=parseArticles(txt).length;
+  const arts=parseArticles(txt), n=arts.length;
   const pv=$("preview");
   if($("pv-pick"))$("pv-pick").textContent=PICK_MODE?"✕ 일반 보기":"✎ 조문 선택";
+  if($("pv-view"))$("pv-view").textContent=PV_VIEW==="arts"?"📄 원문 보기":"▦ 조문 보기";
   if(PICK_MODE){ renderArticlePicker(); return; }
+  // 기본: 전체 조문 점선 박스 보기 — 클릭하면 오른쪽에서 바로 편집
+  if(PV_VIEW==="arts" && n>0){
+    renderArticleBoxes(arts);
+    $("pv-tag").textContent="— 전체 "+n+"개 조문 · 클릭하여 수정"+(isSample(key)?" · 샘플":"");
+    return;
+  }
   let rendered=false;
   // PDF 원본: 브라우저 내장 뷰어(iframe)로 원본 표시
   if(PDF_URLS[key]){
@@ -400,9 +430,51 @@ async function renderPreview(){
     pv.appendChild(document.createTextNode(txt));
     $("pv-tag").textContent="— 조 "+n+"개 파싱"+(HWP_BUFS[key]?" · 텍스트 폴백":"")+(isSample(key)?" · 샘플":"");
   }
+}
+/* 사업장·파일이 바뀔 때만 우측 검토 상태 초기화 (보기 전환 시에는 유지) */
+function resetReviewUI(){
+  CUR_ITEMS=[];CUR_KEY=null;AE_LABEL=null;
+  const ae=$("art-edit");if(ae)ae.style.display="none";
   $("mk-daejo").disabled=true;$("save").disabled=true;
   $("findings").innerHTML='<div class="empty">사업장을 고르고 <b>취업규칙 검토</b>를 누르세요.</div>';
   ["c-s","c-miss","c-man","c-up"].forEach(i=>$(i).textContent="0");
+}
+/* ── 기본 보기: 전체 조문을 점선 박스로 — 클릭하면 오른쪽 패널에서 바로 편집 ── */
+function renderArticleBoxes(arts){
+  const key=siteSel.value, pv=$("preview");
+  pv.innerHTML=(isSample(key)?'<div class="sample-banner">🧪 샘플 화면 — 데모용 가상 취업규칙입니다.</div>':'')
+    +'<div style="font-size:11.5px;color:var(--sub);margin-bottom:8px;line-height:1.6">조문을 <b>클릭</b>하면 오른쪽에서 바로 수정할 수 있습니다.</div><div id="artbox-list"></div>';
+  const list=$("artbox-list");
+  arts.forEach(a=>{
+    const box=document.createElement("div");
+    box.className="pick-art"+(AE_LABEL===a.label?" editing":"");
+    box.dataset.label=a.label;
+    const body=a.body.replace(/^제\s*\d+\s*조(?:\s*의\s*\d+)?\s*[(（][^)）\n]*[)）]?/,"").trim();
+    box.innerHTML=`<div class="pa-h"><b>${escapeH(a.label)}${a.title?" ("+escapeH(a.title)+")":""}</b><span class="pa-chk">✎ 수정</span></div><div class="pa-b">${escapeH(body)}</div>`;
+    box.onclick=()=>openArtEdit(a);
+    list.appendChild(box);
+  });
+}
+/* 편집 모델 준비: 검토 전이라도 조문 편집이 가능하도록 최소 컨텍스트 구성 */
+function ensureItems(){
+  const key=siteSel.value, txt=SAMPLES[key]||"", arts=parseArticles(txt);
+  if(!LAST){
+    LAST={key,site:SITE_MAP[key]||"원본",bizno:SITE_BIZNO[key]||"",size:$("size").value,conds:[],asof:$("asof").value,
+      summary:{위반의심:0,누락:0,수동확인:0,시행예정:0},res:[],arts,terms:detectTerms(txt),addendum:extractAddendum(txt)};
+  }else if(!LAST.arts||!LAST.arts.length){LAST.arts=arts;}
+  if(!CUR_ITEMS.length||CUR_KEY!==key){
+    CUR_ITEMS=buildItems(LAST.res||[],LAST.terms||detectTerms(txt),LAST.arts);CUR_KEY=key;
+  }
+}
+function openArtEdit(a){
+  ensureItems();
+  const it=CUR_ITEMS.find(x=>x.id==="art_"+a.label); if(!it)return;
+  AE_LABEL=a.label;
+  $("ae-title").textContent=a.label+(a.title?" ("+a.title+")":"")+" — 조문 편집";
+  $("ae-before").textContent=it.orig;
+  $("ae-after").value=it.after;
+  $("art-edit").style.display="block";
+  document.querySelectorAll("#artbox-list .pick-art").forEach(b=>b.classList.toggle("editing",b.dataset.label===a.label));
 }
 /* ── 조문 선택 모드: 원본 조문을 점선 박스로 표시 → 클릭 선택 → 신구대조표에 검토·수정 대상으로 추가 ── */
 function renderArticlePicker(){
@@ -434,8 +506,8 @@ function renderArticlePicker(){
 function addPickedToDaejo(){
   if(!PICK_SET.size)return;
   const key=siteSel.value, txt=SAMPLES[key]||"", arts=parseArticles(txt);
-  if(!CUR_ITEMS.length) CUR_ITEMS = buildItems((LAST&&LAST.res)?LAST.res:[], (LAST&&LAST.terms)?LAST.terms:detectTerms(txt), arts);
-  if(!LAST) LAST={key,site:SITE_MAP[key]||"원본",bizno:SITE_BIZNO[key]||"",size:$("size").value,conds:[],asof:$("asof").value,summary:{위반의심:0,누락:0,수동확인:0,시행예정:0},arts,terms:detectTerms(txt)};
+  if(!CUR_ITEMS.length||CUR_KEY!==key){ CUR_ITEMS = buildItems((LAST&&LAST.res)?LAST.res:[], (LAST&&LAST.terms)?LAST.terms:detectTerms(txt), arts); CUR_KEY=key; }
+  if(!LAST) LAST={key,site:SITE_MAP[key]||"원본",bizno:SITE_BIZNO[key]||"",size:$("size").value,conds:[],asof:$("asof").value,summary:{위반의심:0,누락:0,수동확인:0,시행예정:0},arts,terms:detectTerms(txt),addendum:extractAddendum(txt)};
   else LAST.arts=arts;
   PICK_SET.forEach(label=>{
     const it=CUR_ITEMS.find(x=>x.id==="art_"+label);
@@ -475,7 +547,11 @@ function run(){
     d.innerHTML=`<div class="top"><span class="badge ${bc}">${f.status}</span><span class="name">${f.rule.id} ${f.rule.name}</span>${f.loc?`<span class="loc">@${f.loc}</span>`:""}<span class="pill">${f.rule.category}</span></div><div class="meta">${f.rule.law} · ${f.note}</div>`;
     box.appendChild(d);}
   LAST={key,site:SITE_MAP[key],bizno:SITE_BIZNO[key],size,conds:[...conds],asof,summary:cnt,res,terms:detectTerms(txt),arts,addendum:extractAddendum(txt)};
-  CUR_ITEMS=[];
+  // 검토 실행: 자동제안 반영해 편집 모델 재구성 — 오른쪽 패널에서 한 수동 수정은 보존
+  const manual={};
+  if(CUR_KEY===key)CUR_ITEMS.forEach(it=>{ if(it.orig!==""&&!it.suggested&&(it.after||"").trim()!==(it.orig||"").trim())manual[it.id]=it.after; });
+  CUR_ITEMS=buildItems(res,LAST.terms,arts);CUR_KEY=key;
+  Object.keys(manual).forEach(id=>{ const it=CUR_ITEMS.find(x=>x.id===id); if(it&&!it.suggested)it.after=manual[id]; });
   $("mk-daejo").disabled=false;$("save").disabled=false;
 }
 
@@ -683,7 +759,10 @@ function refreshDaejoSub(){
   $("daejo-sub").textContent=`${LAST?LAST.site:""} · 전체 ${CUR_ITEMS.length}개 조 · 개정 ${개정} · 신설 ${신설} · 삭제 ${삭제} · 검토 ${검토}`;
 }
 $("mk-daejo").addEventListener("click",()=>{
-  if(!LAST)return;CUR_ITEMS=buildItems(LAST.res,LAST.terms,LAST.arts);CUR_FILTER="changed";openEditor();
+  if(!LAST)return;
+  // 오른쪽 패널 수동 수정 등 기존 편집 모델이 있으면 그대로 사용, 없을 때만 생성
+  if(!CUR_ITEMS.length||CUR_KEY!==LAST.key){CUR_ITEMS=buildItems(LAST.res,LAST.terms,LAST.arts);CUR_KEY=LAST.key;}
+  CUR_FILTER="changed";openEditor();
 });
 $("flt-changed").addEventListener("click",()=>{CUR_FILTER="changed";renderEditor();});
 $("flt-all").addEventListener("click",()=>{CUR_FILTER="all";renderEditor();});
@@ -934,7 +1013,7 @@ $("save").addEventListener("click",()=>{
   putRecord(rec);
   // 원본 파일도 함께 보존 → 재오픈·로그아웃 후에도 원본 미리보기 복원
   let origMsg="";
-  if(LAST.key){ try{ const o=buildOrig(LAST.key); putOrig(rec.id,o);
+  if(LAST.key&&SAMPLES[LAST.key]!==undefined){ try{ const o=buildOrig(LAST.key); putOrig(rec.id,o);
     origMsg = o.truncated ? "\n※ 원본 파일이 커서(2MB↑) 텍스트만 보존됩니다." : (o.b64?"\n원본 파일 보존됨 — 재오픈 시 미리보기 복원.":"\n원본 텍스트 보존됨.");
   }catch(e){ console.warn("원본 저장 건너뜀:",e); } }
   const 개정=items.filter(it=>itemKind(it)==="개정").length,신설=items.filter(it=>itemKind(it)==="신설").length,삭제=items.filter(it=>itemKind(it)==="삭제").length;
@@ -964,6 +1043,7 @@ function renderArch(q){
     // 신모델(items) 우선, 구모델(daejo rows)은 변환 — 옛 항목은 라벨에서 번호·제목 복원
     CUR_ITEMS = normalizeItems( r.items ? r.items
       : (r.daejo||[]).filter(x=>x.label).map((x,i)=>({id:"old_"+i,label:x.label,before:x.before,after:x.after,orig:x.before==="신설"?"":x.before,reason:x.reason,suggested:false,del:false})) );
+    CUR_KEY=key||("arch_"+r.id);   // 저장본 편집 모델 보호 — 다른 곳에서 재생성하지 않도록
     CUR_FILTER="changed";openEditor();});
   tb.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
     if(confirm("삭제하시겠습니까?")){removeRecord(b.dataset.del);renderArch($("arch-q").value);}});
@@ -1021,8 +1101,23 @@ document.querySelectorAll(".overlay").forEach(o=>o.onclick=e=>{if(e.target===o)c
   document.addEventListener("mouseup",()=>{if(on){on=false;sp.classList.remove("on");document.body.style.userSelect="";document.body.style.cursor="";}});
   sp.addEventListener("dblclick",()=>{apply(0.5);localStorage.setItem(KEY,"0.5");});   // 더블클릭=반반 초기화
 })();
-siteSel.addEventListener("change",()=>{PICK_MODE=false;PICK_SET.clear();renderPreview();});
+siteSel.addEventListener("change",()=>{PICK_MODE=false;PICK_SET.clear();resetReviewUI();renderPreview();});
 $("pv-pick").addEventListener("click",()=>{ PICK_MODE=!PICK_MODE; if(!PICK_MODE)PICK_SET.clear(); renderPreview(); });
+$("pv-view").addEventListener("click",()=>{ PV_VIEW=(PV_VIEW==="arts")?"raw":"arts"; PICK_MODE=false; renderPreview(); });
+/* 우측 조문 편집 카드 */
+$("ae-close").addEventListener("click",()=>{ $("art-edit").style.display="none"; AE_LABEL=null;
+  document.querySelectorAll("#artbox-list .editing").forEach(b=>b.classList.remove("editing")); });
+$("ae-revert").addEventListener("click",()=>{ if(!AE_LABEL)return;
+  const it=CUR_ITEMS.find(x=>x.id==="art_"+AE_LABEL); if(it)$("ae-after").value=it.orig; });
+$("ae-apply").addEventListener("click",()=>{
+  if(!AE_LABEL)return; ensureItems();
+  const it=CUR_ITEMS.find(x=>x.id==="art_"+AE_LABEL); if(!it)return;
+  const v=$("ae-after").value;
+  it.after=v.trim()?v:it.orig;
+  if(it.suggested&&(it.after||"").trim()!==(it.sug||"").trim())it.suggested=false;   // 수동 수정이 자동제안을 대체
+  $("mk-daejo").disabled=false;$("save").disabled=false;
+  const btn=$("ae-apply"),t=btn.textContent;btn.textContent="반영됨 ✓";setTimeout(()=>btn.textContent=t,1200);
+});
 $("run").addEventListener("click",run);
 renderPreview();updateArchCnt();
 </script>
