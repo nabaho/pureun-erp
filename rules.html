@@ -106,6 +106,8 @@ table.daejo .rreason{color:var(--sub);font-size:11px}
 .pick-art.on .pa-chk{color:#0f766e;font-weight:700}
 .pick-art .pa-b{font-size:11.5px;color:var(--sub);line-height:1.6;margin-top:5px;white-space:pre-wrap}
 .pick-art.editing{border-style:solid;border-color:var(--accent2);background:#f6f9ff}
+.pick-art.dragging{opacity:.45}
+.pane.droptarget{outline:2.5px dashed var(--accent2);outline-offset:-3px;background:rgba(37,99,235,.04)}
 .artedit{border:1.5px dashed #14b8a6;border-radius:12px;background:#f0fdfa;padding:12px 14px;margin:12px 16px 0}
 .artedit .ae-h{display:flex;align-items:center;justify-content:space-between;font-size:13px;margin-bottom:6px}
 .artedit .ae-h .x{cursor:pointer;color:var(--mute);font-size:18px;line-height:1}
@@ -182,7 +184,7 @@ td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
       <div class="preview" id="preview"></div>
     </div>
     <div id="split" title="드래그하여 좌우 너비 조절"></div>
-    <div class="pane">
+    <div class="pane" id="right-pane">
       <h3>자동 검토 결과 <span class="tag">규칙집 v2 · 77항목</span></h3>
       <div class="artedit" id="art-edit" style="display:none">
         <div class="ae-h"><b id="ae-title">조문 편집</b><span class="x" id="ae-close" title="닫기">×</span></div>
@@ -337,6 +339,7 @@ let PICK_MODE=false; const PICK_SET=new Set();   // 원본 미리보기 조문 �
 let PV_VIEW="arts";   // 미리보기 기본: 전체 조문 박스("arts") / 원문 렌더("raw")
 let CUR_KEY=null;     // CUR_ITEMS가 어느 문서(key) 기준인지
 let AE_LABEL=null;    // 오른쪽 패널에서 편집 중인 조문 라벨
+let DRAG_ART=null;    // 드래그 중인 조문 라벨(박스→오른쪽 패널)
 const HWP_BUFS={},PDF_URLS={}; let upSeq=0;
 
 /* ── 파일 업로드 (HWP·HWPX·PDF·TXT) ── */
@@ -452,6 +455,13 @@ function renderArticleBoxes(arts){
     const body=a.body.replace(/^제\s*\d+\s*조(?:\s*의\s*\d+)?\s*[(（][^)）\n]*[)）]?/,"").trim();
     box.innerHTML=`<div class="pa-h"><b>${escapeH(a.label)}${a.title?" ("+escapeH(a.title)+")":""}</b><span class="pa-chk">✎ 수정</span></div><div class="pa-b">${escapeH(body)}</div>`;
     box.onclick=()=>openArtEdit(a);
+    // 오른쪽 패널로 드래그해서 편집 열기
+    box.draggable=true;
+    box.title="클릭 또는 오른쪽 패널로 드래그하면 수정할 수 있습니다";
+    box.addEventListener("dragstart",e=>{DRAG_ART=a.label;box.classList.add("dragging");
+      e.dataTransfer.setData("text/plain",a.label);e.dataTransfer.effectAllowed="copy";});
+    box.addEventListener("dragend",()=>{DRAG_ART=null;box.classList.remove("dragging");
+      const rp=$("right-pane");if(rp)rp.classList.remove("droptarget");});
     list.appendChild(box);
   });
 }
@@ -1104,6 +1114,17 @@ document.querySelectorAll(".overlay").forEach(o=>o.onclick=e=>{if(e.target===o)c
 siteSel.addEventListener("change",()=>{PICK_MODE=false;PICK_SET.clear();resetReviewUI();renderPreview();});
 $("pv-pick").addEventListener("click",()=>{ PICK_MODE=!PICK_MODE; if(!PICK_MODE)PICK_SET.clear(); renderPreview(); });
 $("pv-view").addEventListener("click",()=>{ PV_VIEW=(PV_VIEW==="arts")?"raw":"arts"; PICK_MODE=false; renderPreview(); });
+/* 조문 박스 → 오른쪽 패널로 드래그하면 편집 열기 */
+(function(){
+  const rp=$("right-pane"); if(!rp)return;
+  rp.addEventListener("dragover",e=>{ if(!DRAG_ART)return; e.preventDefault(); e.dataTransfer.dropEffect="copy"; rp.classList.add("droptarget"); });
+  rp.addEventListener("dragleave",e=>{ if(!rp.contains(e.relatedTarget))rp.classList.remove("droptarget"); });
+  rp.addEventListener("drop",e=>{ if(!DRAG_ART)return; e.preventDefault(); rp.classList.remove("droptarget");
+    const label=DRAG_ART; DRAG_ART=null;
+    const a=parseArticles(SAMPLES[siteSel.value]||"").find(x=>x.label===label);
+    if(a)openArtEdit(a);
+  });
+})();
 /* 우측 조문 편집 카드 */
 $("ae-close").addEventListener("click",()=>{ $("art-edit").style.display="none"; AE_LABEL=null;
   document.querySelectorAll("#artbox-list .editing").forEach(b=>b.classList.remove("editing")); });
