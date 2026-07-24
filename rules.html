@@ -14,6 +14,7 @@
 <script src="vendor/pdf.min.js"></script>
 <script>if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc="vendor/pdf.worker.min.js";</script>
 <script src="hwp_extract.js?v=4"></script>
+<script src="hwpx_gen.js?v=1"></script>
 <style>
 :root{
   --accent:#1e40af; --accent2:#2563eb; --bg:#e2e8f0; --ink:#202124; --sub:#475569; --mute:#94a3b8;
@@ -207,7 +208,7 @@ td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
   <div class="foot">
     <button class="btn ghost" data-close>닫기</button>
     <button class="btn ghost" id="show-rev">변경 결과 보기 →</button>
-    <button class="btn ghost" id="dl-doc-daejo">한글(.doc) 다운로드</button>
+    <button class="btn ghost" id="dl-doc-daejo">한글(.hwpx) 다운로드</button>
     <button class="btn" id="dl-xlsx">xlsx 다운로드</button>
   </div>
 </div></div>
@@ -217,7 +218,7 @@ td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
   <div class="body" id="rev-body"></div>
   <div class="foot">
     <button class="btn ghost" data-close>닫기</button>
-    <button class="btn" id="dl-doc-rev">한글(.doc) 다운로드</button>
+    <button class="btn" id="dl-doc-rev">한글(.hwpx) 다운로드</button>
   </div>
 </div></div>
 
@@ -760,16 +761,25 @@ function rtfPlainDoc(title,sub,blocks){
   return out+"}";
 }
 function dlDoc(rtf,fname){
-  const blob=new Blob(["﻿"+rtf],{type:"application/msword"});
+  // RTF는 반드시 {\rtf1 로 시작해야 함 — BOM을 붙이면 워드·한글이 일반 텍스트로 오인
+  const blob=new Blob([rtf],{type:"application/msword"});
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=fname;a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
 $("dl-doc-daejo").addEventListener("click",()=>{
-  const rows=daejoRows().map(r=>[r.label,r.before==="신설"?"신 설":r.before,r.after,r.reason]);
+  const rows=daejoRows().map(r=>[r.label+(r.kind?"\n["+r.kind+"]":""),r.before==="신설"?"신 설":r.before,r.after,r.reason]);
   if(!rows.length){alert("변경된 조문이 없습니다.");return;}
-  const rtf=rtfTableDoc(`${LAST.site} 취업규칙 개정 신구대조표`,`검토기준일 ${LAST.asof} · 규칙집 v2`,
-    ["변경조항","변경 전","변경 후","변경이유"],rows,[2400,3400,4200,2600]);
-  dlDoc(rtf,`신구대조표_${LAST.site.replace(/[()\s—📄]/g,"")}_${LAST.asof.replace(/-/g,"")}.doc`);
+  const base=`신구대조표_${LAST.site.replace(/[()\s—📄]/g,"")}_${LAST.asof.replace(/-/g,"")}`;
+  try{   // 한글 HWPX 직접 생성 (실패 시 RTF .doc 폴백)
+    const body=HWPX.para(`${LAST.site} 취업규칙 개정 신구대조표`)
+      +HWPX.para(`검토기준일 ${LAST.asof} · 규칙집 v2 · ${REV_MODE==="partial"?"일부개정":"전부개정"}`)+HWPX.para("")
+      +HWPX.tablePara([["변경조항","변경 전","변경 후","변경이유"]].concat(rows),[7000,12500,14020,9000]);
+    HWPX.download(body,base+".hwpx");
+  }catch(e){ console.warn("hwpx 생성 실패 — RTF(.doc) 폴백:",e);
+    const rtf=rtfTableDoc(`${LAST.site} 취업규칙 개정 신구대조표`,`검토기준일 ${LAST.asof} · 규칙집 v2`,
+      ["변경조항","변경 전","변경 후","변경이유"],rows.map(r=>[String(r[0]).replace(/\n/g," "),r[1],r[2],r[3]]),[2400,3400,4200,2600]);
+    dlDoc(rtf,base+".doc");
+  }
 });
 $("dl-doc-rev").addEventListener("click",()=>{
   const view=numberedView(CUR_ITEMS,REV_MODE);
@@ -779,8 +789,19 @@ $("dl-doc-rev").addEventListener("click",()=>{
     let why=(it.reason&&!isDelP)?`근거: ${it.reason}`:""; if(it.reviewNote&&!isDelP)why+=(why?"\n":"")+`검토 권고: ${it.reviewNote}`;
     return {head:(k!=="유지"?`[${k}] `:"")+viewLabel(v),
     old:(k==="개정"&&!isDelP)?`현행: ${it.before}`:"",text:isDelP?"삭제":it.after,why};});
-  const rtf=rtfPlainDoc(`${LAST.site} 취업규칙 (변경 후 전문)`,`검토기준일 ${LAST.asof} · ${REV_MODE==="partial"?"일부개정":"전부개정"} · 조문 ${shown.length}개`,blocks);
-  dlDoc(rtf,`취업규칙_변경후_${LAST.site.replace(/[()\s—📄]/g,"")}_${LAST.asof.replace(/-/g,"")}.doc`);
+  const title=`${LAST.site} 취업규칙 (변경 후 전문)`, sub=`검토기준일 ${LAST.asof} · ${REV_MODE==="partial"?"일부개정":"전부개정"} · 조문 ${shown.length}개`;
+  const base=`취업규칙_변경후_${LAST.site.replace(/[()\s—📄]/g,"")}_${LAST.asof.replace(/-/g,"")}`;
+  try{   // 한글 HWPX 직접 생성 (실패 시 RTF .doc 폴백)
+    let body=HWPX.para(title)+HWPX.para(sub)+HWPX.para("");
+    blocks.forEach(b=>{ body+=HWPX.para(b.head);
+      if(b.old)body+=HWPX.para(b.old);
+      body+=HWPX.para(b.text||"(검토 후 작성)");
+      if(b.why)body+=HWPX.para(b.why);
+      body+=HWPX.para(""); });
+    HWPX.download(body,base+".hwpx");
+  }catch(e){ console.warn("hwpx 생성 실패 — RTF(.doc) 폴백:",e);
+    dlDoc(rtfPlainDoc(title,sub,blocks),base+".doc");
+  }
 });
 
 /* 저장 계층: 로그인 시 Firebase 공용 금고(source of truth) + localStorage 캐시, 아니면 localStorage만 */
