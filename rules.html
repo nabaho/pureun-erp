@@ -835,10 +835,30 @@ $("dl-doc-rev").addEventListener("click",()=>{
 /* 저장 계층: 로그인 시 Firebase 공용 금고(source of truth) + localStorage 캐시, 아니면 localStorage만 */
 let FBDB=null, FBUSER=null;
 const FB_CONFIG={apiKey:'AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA',databaseURL:'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app',projectId:'pureun-erp',appId:'1:936817166182:web:9bd31f70d0afdf5fca2aa7',messagingSenderId:'936817166182'};
+let FBNAME=null;   // 직원명부에서 찾은 한글 이름
 function updateWho(){const el=$("who");if(!el)return;
-  if(FBUSER){el.innerHTML=(FBUSER.displayName||FBUSER.email||"사용자")+' <b>· 로그인됨</b>';}
+  if(FBUSER){el.innerHTML=escapeH(FBNAME||FBUSER.displayName||FBUSER.email||"사용자")+' <b>· 로그인됨</b>';}
   else if(FBDB){el.innerHTML='<b style="color:#b45309">로그인 필요</b> — 포털에서 접속';}
   else{el.innerHTML='<b>로컬 데모</b> (localStorage)';}}
+/* 로그인 이메일 → 직원명부(data/user_dir)에서 한글 이름 조회 (포털 enter.html과 동일 경로) */
+const sidToEmail=sid=>String(sid||'').toLowerCase().replace(/-/g,'')+'@pureun.kr';
+function resolveUserName(){
+  if(!FBDB||!FBUSER)return;
+  const em=(FBUSER.email||'').toLowerCase();
+  const match=raw=>{
+    let list=(raw&&raw.v!==undefined)?raw.v:raw;
+    if(list&&!Array.isArray(list)&&typeof list==='object')list=Object.values(list);
+    return Array.isArray(list)?(list.find(x=>x&&sidToEmail(x.sid)===em)||null):null;
+  };
+  FBDB.ref('data/user_dir').once('value').then(s=>{
+    const a=match(s.val()); if(a)return a;
+    return FBDB.ref('data/user_accounts').once('value').then(s2=>match(s2.val())).catch(()=>null);
+  }).catch(()=>FBDB.ref('data/user_accounts').once('value').then(s2=>match(s2.val())).catch(()=>null))
+  .then(a=>{
+    if(!a){try{a=match(JSON.parse(localStorage.getItem('pureun_v6_user_accounts')||'null'));}catch(e){}}
+    if(a&&a.name){FBNAME=a.name;updateWho();}
+  });
+}
 const fbKey=s=>String(s||"").replace(/[.#$\[\]\/\s]/g,"_").slice(0,120)||"unknown";
 function loadArch(){try{return JSON.parse(localStorage.getItem(ARCH_KEY))||[]}catch(e){return[]}}
 function setLocal(a){localStorage.setItem(ARCH_KEY,JSON.stringify(a));updateArchCnt();}
@@ -861,8 +881,8 @@ function subscribeArch(){if(!FBDB||!FBUSER)return;
   },e=>console.warn("Firebase 동기화 실패:",e));}
 function updateArchCnt(){const n=loadArch().length;$("arch-cnt").textContent=n?`(${n})`:"";}
 try{if(window.firebase){firebase.initializeApp(FB_CONFIG);FBDB=firebase.database();
-  firebase.auth().onAuthStateChanged(u=>{FBUSER=u;updateWho();
-    if(u)subscribeArch();else if(FBDB)FBDB.ref("rules_mgmt/archive").off();});
+  firebase.auth().onAuthStateChanged(u=>{FBUSER=u;FBNAME=null;updateWho();
+    if(u){subscribeArch();resolveUserName();}else if(FBDB)FBDB.ref("rules_mgmt/archive").off();});
 }}catch(e){console.warn("Firebase 초기화 건너뜀:",e);}
 updateWho();
 /* ── 원본 파일 보존(A): 저장 시 텍스트+원본(base64)을 별도 노드에 함께 저장 → 재오픈 시 원본 미리보기 복원.
@@ -909,7 +929,7 @@ $("save").addEventListener("click",()=>{
   const changedCnt=items.filter(it=>itemKind(it)!=="유지").length;
   // 사업장당 안정적 ID(사업자번호 우선, 없으면 사업장명) → 재검토 시 같은 항목 갱신
   const rec={id:"site_"+fbKey(LAST.bizno||LAST.site),site:LAST.site,bizno:LAST.bizno,size:LAST.size,conds:LAST.conds,asof:LAST.asof,
-    savedAt:new Date().toISOString().slice(0,16).replace("T"," "),savedBy:(FBUSER&&(FBUSER.displayName||FBUSER.email))||"",
+    savedAt:new Date().toISOString().slice(0,16).replace("T"," "),savedBy:(FBUSER&&(FBNAME||FBUSER.displayName||FBUSER.email))||"",
     summary:LAST.summary,items,changed:changedCnt,mode:REV_MODE,addendum:LAST.addendum||""};
   putRecord(rec);
   // 원본 파일도 함께 보존 → 재오픈·로그아웃 후에도 원본 미리보기 복원
