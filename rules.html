@@ -86,6 +86,13 @@ table.daejo td.c{text-align:center;color:var(--mute)}
 table.daejo .rlabel{white-space:nowrap;font-weight:600}
 table.daejo .rreason{color:var(--sub);font-size:11px}
 .arch-search{width:100%;height:38px;padding:0 12px;border:1px solid #cdd6e6;border-radius:9px;font-family:inherit;font-size:13px;margin-bottom:12px}
+.pick-art{border:1.5px dashed #b9c6e0;border-radius:9px;padding:9px 11px;margin:7px 2px;cursor:pointer;background:#fff;transition:border-color .12s,background .12s}
+.pick-art:hover{border-color:var(--accent2);background:#f6f9ff}
+.pick-art.on{border-style:solid;border-color:#14b8a6;background:#f0fdfa}
+.pick-art .pa-h{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12.5px}
+.pick-art .pa-chk{font-size:10.5px;color:var(--mute);white-space:nowrap}
+.pick-art.on .pa-chk{color:#0f766e;font-weight:700}
+.pick-art .pa-b{font-size:11.5px;color:var(--sub);line-height:1.55;margin-top:5px;max-height:58px;overflow:hidden}
 table.arch{width:100%;border-collapse:collapse;font-size:13px}
 table.arch th{text-align:left;color:var(--mute);font-size:11px;font-weight:600;padding:6px 10px;border-bottom:1px solid var(--line)}
 table.arch td{padding:9px 10px;border-bottom:1px solid var(--line)}
@@ -150,7 +157,8 @@ td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
   <div class="grid">
     <div class="pane">
       <h3>원본 미리보기 <span class="tag" id="pv-tag">— 조 0개</span>
-        <button class="btn ghost" id="pv-full" style="float:right;padding:3px 10px;font-size:11.5px" onclick="openFullPreview()">⛶ 전체보기</button></h3>
+        <button class="btn ghost" id="pv-full" style="float:right;padding:3px 10px;font-size:11.5px" onclick="openFullPreview()">⛶ 전체보기</button>
+        <button class="btn ghost" id="pv-pick" style="float:right;padding:3px 10px;font-size:11.5px;margin-right:6px">✎ 조문 선택</button></h3>
       <div class="preview" id="preview"></div>
     </div>
     <div class="pane">
@@ -275,6 +283,7 @@ const $=id=>document.getElementById(id);
 const siteSel=$("site");
 Object.keys(SITE_MAP).forEach(k=>{const o=document.createElement("option");o.value=k;o.textContent=SITE_MAP[k];siteSel.appendChild(o);});
 let LAST=null;
+let PICK_MODE=false; const PICK_SET=new Set();   // 원본 미리보기 조문 선택 모드
 const HWP_BUFS={},PDF_URLS={}; let upSeq=0;
 
 /* ── 파일 업로드 (HWP·HWPX·PDF·TXT) ── */
@@ -336,6 +345,8 @@ async function renderPreview(){
   const key=siteSel.value, txt=SAMPLES[key]||"";
   const n=parseArticles(txt).length;
   const pv=$("preview");
+  if($("pv-pick"))$("pv-pick").textContent=PICK_MODE?"✕ 일반 보기":"✎ 조문 선택";
+  if(PICK_MODE){ renderArticlePicker(); return; }
   let rendered=false;
   // PDF 원본: 브라우저 내장 뷰어(iframe)로 원본 표시
   if(PDF_URLS[key]){
@@ -359,6 +370,45 @@ async function renderPreview(){
   $("mk-daejo").disabled=true;$("save").disabled=true;
   $("findings").innerHTML='<div class="empty">사업장을 고르고 <b>취업규칙 검토</b>를 누르세요.</div>';
   ["c-s","c-miss","c-man","c-up"].forEach(i=>$(i).textContent="0");
+}
+/* ── 조문 선택 모드: 원본 조문을 점선 박스로 표시 → 클릭 선택 → 신구대조표에 검토·수정 대상으로 추가 ── */
+function renderArticlePicker(){
+  const key=siteSel.value, txt=SAMPLES[key]||"", arts=parseArticles(txt), pv=$("preview");
+  $("pv-tag").textContent="— 조문 선택 모드 · "+arts.length+"개 조";
+  if(!arts.length){ pv.innerHTML='<div class="empty">조문을 인식하지 못했습니다. (스캔 PDF 등은 텍스트가 없어 선택 불가)</div>'; return; }
+  pv.innerHTML='<div style="font-size:11.5px;color:var(--sub);margin-bottom:8px;line-height:1.6">수정이 필요한 조문을 <b>클릭</b>해 선택한 뒤, 아래 버튼으로 신구대조표에 넣어 편집하세요.</div><div id="pick-list"></div>'
+    +'<div style="position:sticky;bottom:0;background:rgba(248,251,255,.96);border-top:1px solid var(--line);padding:9px 6px;margin-top:6px;display:flex;gap:8px;align-items:center;justify-content:space-between">'
+    +'<span id="pick-cnt" style="font-size:12px;color:var(--sub)">선택 0개</span>'
+    +'<button class="btn" id="pick-add" style="height:32px;font-size:12.5px;padding:0 14px" disabled>선택 조문 → 신구대조표에 추가</button></div>';
+  const list=$("pick-list");
+  arts.forEach(a=>{
+    const box=document.createElement("div");
+    box.className="pick-art"+(PICK_SET.has(a.label)?" on":"");
+    const body=a.body.replace(/^제\s*\d+\s*조(?:\s*의\s*\d+)?\s*[(（][^)）\n]*[)）]?/,"").replace(/\s+/g," ").trim();
+    box.innerHTML=`<div class="pa-h"><b>${escapeH(a.label)}${a.title?" ("+escapeH(a.title)+")":""}</b><span class="pa-chk">${PICK_SET.has(a.label)?"✓ 수정 필요":"클릭하여 선택"}</span></div><div class="pa-b">${escapeH(body.slice(0,220))}${body.length>220?"…":""}</div>`;
+    box.onclick=()=>{
+      const on=PICK_SET.has(a.label);
+      if(on){PICK_SET.delete(a.label);box.classList.remove("on");}else{PICK_SET.add(a.label);box.classList.add("on");}
+      box.querySelector(".pa-chk").textContent=PICK_SET.has(a.label)?"✓ 수정 필요":"클릭하여 선택";
+      $("pick-cnt").textContent="선택 "+PICK_SET.size+"개"; $("pick-add").disabled=!PICK_SET.size;
+    };
+    list.appendChild(box);
+  });
+  $("pick-cnt").textContent="선택 "+PICK_SET.size+"개"; $("pick-add").disabled=!PICK_SET.size;
+  $("pick-add").onclick=addPickedToDaejo;
+}
+function addPickedToDaejo(){
+  if(!PICK_SET.size)return;
+  const key=siteSel.value, txt=SAMPLES[key]||"", arts=parseArticles(txt);
+  if(!CUR_ITEMS.length) CUR_ITEMS = buildItems((LAST&&LAST.res)?LAST.res:[], (LAST&&LAST.terms)?LAST.terms:detectTerms(txt), arts);
+  if(!LAST) LAST={key,site:SITE_MAP[key]||"원본",bizno:SITE_BIZNO[key]||"",size:$("size").value,conds:[],asof:$("asof").value,summary:{위반의심:0,누락:0,수동확인:0,시행예정:0},arts,terms:detectTerms(txt)};
+  else LAST.arts=arts;
+  PICK_SET.forEach(label=>{
+    const it=CUR_ITEMS.find(x=>x.id==="art_"+label);
+    if(it){ it.review=true; const tag="수동 지정 — 검토·수정 필요"; it.reviewNote=it.reviewNote?(it.reviewNote.includes(tag)?it.reviewNote:it.reviewNote+" / "+tag):tag; }
+  });
+  PICK_SET.clear(); renderArticlePicker();   // 선택 표시 초기화(모드는 유지 — 닫으면 이어서 선택 가능)
+  CUR_FILTER="changed"; openEditor();
 }
 /* 원본 전체 보기 — 높이 제한 없이 전체 페이지 표시 */
 async function openFullPreview(){
@@ -442,12 +492,17 @@ function buildItems(res,terms,arts){
       else { const rec=suggestInsertAfter(t.title,f.rule.keywords,arts);
         inserts.push({id:"ins_"+t.tid,title:t.title,label:"",num:null,sub:null,insertAfter:rec,rec,before:"신설",after,orig:"",reason:t.reason,suggested:true,del:false,sug:after}); }
     }
-    // 수동확인(관련 조문 있는 것): 현행 조문 + opinion 검토 권고를 대조표에 표시
-    else if(f.status==="수동확인" && f.hit){
+    // 수동확인: 관련 조문 있으면 현행+권고, 없으면 신설 검토 행으로 추가
+    else if(f.status==="수동확인"){
       const note=f.rule.opinion||f.rule.criterion||"검토자 직접 판단 필요";
       const rz=(f.rule.law||"")+(f.rule.criterion?" · "+f.rule.criterion:"");
-      if(!review[f.hit.label]) review[f.hit.label]={notes:[],reason:rz};
-      review[f.hit.label].notes.push((f.rule.name||"")+" — "+note);
+      if(f.hit){
+        if(!review[f.hit.label]) review[f.hit.label]={notes:[],reason:rz};
+        review[f.hit.label].notes.push((f.rule.name||"")+" — "+note);
+      }else{   // 관련 조문 미발견 → 신설(검토) 행: 위치 자동 추천, 내용은 노무사가 작성
+        const rec=suggestInsertAfter(f.rule.name,f.rule.keywords,arts);
+        inserts.push({id:"chkins_"+f.rule.id,title:f.rule.name,label:"",num:null,sub:null,insertAfter:rec,rec,before:"신설",after:"",orig:"",reason:rz,suggested:false,del:false,review:true,reviewNote:(f.rule.name||"")+" — "+note});
+      }
     }
   }
   const items=arts.map(a=>{
@@ -620,7 +675,7 @@ function showRevision(){
     const d=document.createElement("div");d.className="rev-item "+(isDelP?"keep":(k==="신설"?"ins":(k==="개정"?"amd":"keep")));
     d.innerHTML=`<div class="rev-h">${k!=="유지"?`<span class="badge ${KIND_BADGE(k)}">${k}</span> `:""}<b>${escapeH(viewLabel(v))}</b>
       ${(k==="개정"&&!isDelP)?`<div class="rev-old">현행: ${escapeH(it.before)}</div>`:""}</div>
-      <div class="rev-txt">${isDelP?"삭제":escapeH(it.after)}</div>
+      <div class="rev-txt">${isDelP?"삭제":(it.after?escapeH(it.after):'<span style="color:#94a3b8">(검토 후 작성)</span>')}</div>
       ${(it.reason&&!isDelP)?`<div class="rev-why">근거: ${escapeH(it.reason)}</div>`:""}
       ${(it.reviewNote&&!isDelP)?`<div class="rev-why" style="color:#0f766e">💡 검토 권고: ${escapeH(it.reviewNote)}</div>`:""}`;
     body.appendChild(d);
@@ -843,7 +898,8 @@ document.querySelectorAll(".overlay").forEach(o=>o.onclick=e=>{if(e.target===o)c
     drag=null;
   });
 })();
-siteSel.addEventListener("change",renderPreview);
+siteSel.addEventListener("change",()=>{PICK_MODE=false;PICK_SET.clear();renderPreview();});
+$("pv-pick").addEventListener("click",()=>{ PICK_MODE=!PICK_MODE; if(!PICK_MODE)PICK_SET.clear(); renderPreview(); });
 $("run").addEventListener("click",run);
 renderPreview();updateArchCnt();
 </script>
