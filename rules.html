@@ -398,7 +398,9 @@ function run(){
 function escapeH(s){return(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>");}
 /* ── 전체 조문 편집 모델: 현행 조문 전체 + 자동 개정 제안 + 신설 ── */
 let CUR_ITEMS=[], CUR_FILTER="changed", INS_SEQ=0;
-function itemKind(it){ if(it.del)return "삭제"; if(it.orig==="")return "신설"; return (it.after||"").trim()!==(it.orig||"").trim()?"개정":"유지"; }
+function itemKind(it){ if(it.del)return "삭제"; if(it.orig==="")return "신설";
+  if(it.review && (it.after||"").trim()===(it.orig||"").trim()) return "검토";   // 수동확인 권고(미편집)
+  return (it.after||"").trim()!==(it.orig||"").trim()?"개정":"유지"; }
 /* ── 조문 체계(표준취업규칙 장 구성) 기반 신설 위치 자동 배치 ──
    신설 조문을 '같은 주제(장)의 마지막 형제 조문' 뒤에 배치. 매칭 실패 시 맨 끝. */
 const PLACE_GROUPS=[
@@ -430,22 +432,33 @@ function suggestInsertAfter(title, kws, arts){
   return bestScore>0 ? ("art_"+best.label) : "__end__";
 }
 function buildItems(res,terms,arts){
-  const amend={},inserts=[],seen=new Set();
+  const amend={},review={},inserts=[],seen=new Set();
   for(const f of res){
-    if(f.status!=="위반의심"&&f.status!=="누락")continue;
-    const t=TPL_BY_RULE[f.rule.id]; if(!t||seen.has(t.tid))continue; seen.add(t.tid);
-    const after=fillTpl(t.text,terms);
-    if(f.status==="위반의심"&&f.hit){ if(!amend[f.hit.label])amend[f.hit.label]={after,reason:t.reason}; }
-    // 신설: 번호는 개정방식에 따라 자동 부여(일부개정=가지번호). 기본 위치는 맨 끝, 편집에서 조정
-    else { const rec=suggestInsertAfter(t.title,f.rule.keywords,arts);
-      inserts.push({id:"ins_"+t.tid,title:t.title,label:"",num:null,sub:null,insertAfter:rec,rec,before:"신설",after,orig:"",reason:t.reason,suggested:true,del:false,sug:after}); }
+    if(f.status==="위반의심"||f.status==="누락"){
+      const t=TPL_BY_RULE[f.rule.id]; if(!t||seen.has(t.tid))continue; seen.add(t.tid);
+      const after=fillTpl(t.text,terms);
+      if(f.status==="위반의심"&&f.hit){ if(!amend[f.hit.label])amend[f.hit.label]={after,reason:t.reason}; }
+      // 신설: 번호는 개정방식에 따라 자동 부여(일부개정=가지번호). 위치는 조문 체계 기반 자동 추천
+      else { const rec=suggestInsertAfter(t.title,f.rule.keywords,arts);
+        inserts.push({id:"ins_"+t.tid,title:t.title,label:"",num:null,sub:null,insertAfter:rec,rec,before:"신설",after,orig:"",reason:t.reason,suggested:true,del:false,sug:after}); }
+    }
+    // 수동확인(관련 조문 있는 것): 현행 조문 + opinion 검토 권고를 대조표에 표시
+    else if(f.status==="수동확인" && f.hit){
+      const note=f.rule.opinion||f.rule.criterion||"검토자 직접 판단 필요";
+      const rz=(f.rule.law||"")+(f.rule.criterion?" · "+f.rule.criterion:"");
+      if(!review[f.hit.label]) review[f.hit.label]={notes:[],reason:rz};
+      review[f.hit.label].notes.push((f.rule.name||"")+" — "+note);
+    }
   }
   const items=arts.map(a=>{
     const before=a.body.replace(/\s+/g," ").trim();
-    const sug=amend[a.label];
-    return {id:"art_"+a.label,num:a.num,sub:a.sub,title:a.title,insertAfter:null,
-      label:a.label+(a.title?" ("+a.title+")":""),
-      before,after:sug?sug.after:before,orig:before,reason:sug?sug.reason:"",suggested:!!sug,del:false,sug:(sug?sug.after:null)};
+    const sug=amend[a.label], rev=review[a.label];
+    const it={id:"art_"+a.label,num:a.num,sub:a.sub,title:a.title,insertAfter:null,
+      label:a.label+(a.title?" ("+a.title+")":""),before,orig:before,del:false};
+    if(sug){ it.after=sug.after; it.reason=sug.reason; it.suggested=true; it.sug=sug.after; }
+    else { it.after=before; it.reason=rev?rev.reason:""; it.suggested=false; }
+    if(rev){ it.review=true; it.reviewNote=rev.notes.join(" / "); }
+    return it;
   });
   return items.concat(inserts);
 }
@@ -496,7 +509,8 @@ function normalizeItems(items){
 function changedItems(){ return CUR_ITEMS.filter(it=>itemKind(it)!=="유지"); }
 function daejoRows(){ return numberedView(CUR_ITEMS,REV_MODE).filter(v=>itemKind(v.it)!=="유지").map(v=>{
   const it=v.it,k=itemKind(it);
-  return {label:viewLabel(v),kind:k,before:it.orig===""?"신설":it.orig,after:it.del?"〈삭제〉":it.after,reason:it.reason};}); }
+  return {label:viewLabel(v),kind:k,before:it.orig===""?"신설":it.orig,after:it.del?"〈삭제〉":it.after,
+    reason:it.reason+(it.reviewNote?" 〔검토권고: "+it.reviewNote+"〕":"")};}); }
 function KIND_BADGE(k){return k==="신설"?"miss":(k==="삭제"?"up":(k==="개정"?"s":"man"));}
 function openEditor(){
   renderEditor();
@@ -534,7 +548,7 @@ function renderEditor(){
         </div>${posSel}</td>
       <td>${it.orig===""?'<span class="c">신 설</span>':escapeH(it.before)}</td>
       <td class="${canEdit?"editable":""}" ${canEdit?'contenteditable="true"':""} data-i="${i}">${(it.del&&REV_MODE==="partial")?'<span class="c">삭 제</span>':escapeH(it.after)}</td>
-      <td class="rreason">${escapeH(it.reason)}</td>`;
+      <td class="rreason">${escapeH(it.reason)}${it.reviewNote?`<div style="margin-top:5px;color:#0f766e;font-size:11px;line-height:1.55;background:#f0fdfa;border-left:3px solid #14b8a6;padding:4px 7px;border-radius:5px">💡 검토 권고: ${escapeH(it.reviewNote)}</div>`:""}</td>`;
     tb.appendChild(tr);
   });
   t.appendChild(tb);
@@ -557,8 +571,8 @@ function renderEditor(){
   refreshDaejoSub();
 }
 function refreshDaejoSub(){
-  let 개정=0,신설=0,삭제=0;CUR_ITEMS.forEach(it=>{const k=itemKind(it);if(k==="개정")개정++;else if(k==="신설")신설++;else if(k==="삭제")삭제++;});
-  $("daejo-sub").textContent=`${LAST?LAST.site:""} · 전체 ${CUR_ITEMS.length}개 조 · 개정 ${개정} · 신설 ${신설} · 삭제 ${삭제}`;
+  let 개정=0,신설=0,삭제=0,검토=0;CUR_ITEMS.forEach(it=>{const k=itemKind(it);if(k==="개정")개정++;else if(k==="신설")신설++;else if(k==="삭제")삭제++;else if(k==="검토")검토++;});
+  $("daejo-sub").textContent=`${LAST?LAST.site:""} · 전체 ${CUR_ITEMS.length}개 조 · 개정 ${개정} · 신설 ${신설} · 삭제 ${삭제} · 검토 ${검토}`;
 }
 $("mk-daejo").addEventListener("click",()=>{
   if(!LAST)return;CUR_ITEMS=buildItems(LAST.res,LAST.terms,LAST.arts);CUR_FILTER="changed";openEditor();
@@ -607,7 +621,8 @@ function showRevision(){
     d.innerHTML=`<div class="rev-h">${k!=="유지"?`<span class="badge ${KIND_BADGE(k)}">${k}</span> `:""}<b>${escapeH(viewLabel(v))}</b>
       ${(k==="개정"&&!isDelP)?`<div class="rev-old">현행: ${escapeH(it.before)}</div>`:""}</div>
       <div class="rev-txt">${isDelP?"삭제":escapeH(it.after)}</div>
-      ${(it.reason&&!isDelP)?`<div class="rev-why">근거: ${escapeH(it.reason)}</div>`:""}`;
+      ${(it.reason&&!isDelP)?`<div class="rev-why">근거: ${escapeH(it.reason)}</div>`:""}
+      ${(it.reviewNote&&!isDelP)?`<div class="rev-why" style="color:#0f766e">💡 검토 권고: ${escapeH(it.reviewNote)}</div>`:""}`;
     body.appendChild(d);
   });
   $("rev-sub").textContent=`${LAST?LAST.site:""} · 조문 ${shown.length}개 · ${REV_MODE==="partial"?"일부개정":"전부개정"}`;
@@ -670,8 +685,10 @@ $("dl-doc-rev").addEventListener("click",()=>{
   const view=numberedView(CUR_ITEMS,REV_MODE);
   const shown=REV_MODE==="full"?view.filter(v=>!v.it.del):view;
   if(!shown.length){alert("조문이 없습니다.");return;}
-  const blocks=shown.map(v=>{const it=v.it,k=itemKind(it),isDelP=it.del&&REV_MODE==="partial";return {head:(k!=="유지"?`[${k}] `:"")+viewLabel(v),
-    old:(k==="개정"&&!isDelP)?`현행: ${it.before}`:"",text:isDelP?"삭제":it.after,why:(it.reason&&!isDelP)?`근거: ${it.reason}`:""};});
+  const blocks=shown.map(v=>{const it=v.it,k=itemKind(it),isDelP=it.del&&REV_MODE==="partial";
+    let why=(it.reason&&!isDelP)?`근거: ${it.reason}`:""; if(it.reviewNote&&!isDelP)why+=(why?"\n":"")+`검토 권고: ${it.reviewNote}`;
+    return {head:(k!=="유지"?`[${k}] `:"")+viewLabel(v),
+    old:(k==="개정"&&!isDelP)?`현행: ${it.before}`:"",text:isDelP?"삭제":it.after,why};});
   const rtf=rtfPlainDoc(`${LAST.site} 취업규칙 (변경 후 전문)`,`검토기준일 ${LAST.asof} · ${REV_MODE==="partial"?"일부개정":"전부개정"} · 조문 ${shown.length}개`,blocks);
   dlDoc(rtf,`취업규칙_변경후_${LAST.site.replace(/[()\s—📄]/g,"")}_${LAST.asof.replace(/-/g,"")}.doc`);
 });
