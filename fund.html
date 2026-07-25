@@ -11,6 +11,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<script src="hwpx_gen.js?v=1"></script>
 <style>
   :root{--acc:#2563eb;--acc2:#1b4bc0;--acc-soft:#e9f0fe;--ink:#182234;--sub:#59637a;--faint:#8b94a6;
     --line:#e4e9f1;--panel:#fff;--bg:#f4f6fa;--ok:#1f7a4d;--ok-bg:#e7f6ee;--warn:#b45309;--warn-bg:#fdf1e1;
@@ -1209,7 +1210,7 @@ function previewDoc(kind){
   var f=funds[S.formFund]; if(!f){ toast('기금을 선택하세요','warn'); return; }
   var label=docLabel(kind);
   showModal('<div class="row"><h2 style="margin:0">'+esc(label)+' — '+esc(f.short_name||f.name)+'</h2><span style="flex:1"></span>'
-    +'<button onclick="printDoc()">🖨 인쇄/PDF</button> <button onclick="resetDoc(\''+kind+'\')">↺ 원본</button> '
+    +'<button onclick="printDoc()">🖨 인쇄/PDF</button> <button onclick="docToHwpx(\''+kind+'\')" title="화면에서 편집한 내용 그대로 한글 파일로 저장 — 한글 프로그램이 없어도 생성됩니다">📄 한글(HWPX)</button> <button onclick="resetDoc(\''+kind+'\')">↺ 원본</button> '
     +'<button class="primary" onclick="saveDocEdit(\''+kind+'\')">💾 저장</button></div>'
     +'<p class="muted" style="font-size:11.5px;margin:6px 0">아래 내용을 직접 클릭해 수정하세요. [저장]하면 이 기금 서식으로 보관되고, 다음에 열면 저장본이 나옵니다.</p>'
     +'<div id="docwrap" style="border:1px solid var(--line);border-radius:8px;max-height:64vh;overflow:auto;padding:14px;background:#fff">'+loadingHTML()+'</div>');
@@ -1230,6 +1231,43 @@ function resetDoc(kind){ var f=funds[S.formFund];
     fbDb.ref(NS+'/doc_edits/'+S.formFund+'/'+kind).remove().then(function(){
       _loadSites(S.formFund).then(function(sites){ _showDocHTML('<style>'+dgDocCss()+'</style>'+docBody(kind,f,sites)); toast('원본으로 되돌렸습니다'); }); });
   }); }
+/* ── 생성 서식 → 한글(HWPX) 저장 ──
+   화면에서 편집한 내용(#doced) 그대로 문단·표로 변환. 한글 프로그램 없이도 생성된다.
+   문단+표 조립 방식이라 관공서 별지서식의 정밀 격자·도장란까지는 재현하지 않는다.
+   (양식 그대로 제출해야 하면 기존 [🖨 인쇄/PDF] 또는 원본 엑셀 채움을 쓴다.) */
+function docToHwpx(kind){
+  var ed=$('doced'); if(!ed){ toast('문서를 먼저 여세요','warn'); return; }
+  if(typeof HWPX==='undefined'){ toast('한글 변환 모듈을 불러오지 못했습니다 — 새로고침 후 다시 시도','err'); return; }
+  var f=funds[S.formFund]||{};
+  try{
+    HWPX.setPage({landscape:false});          // 서식은 A4 세로
+    var body='';
+    Array.prototype.forEach.call(ed.querySelectorAll('h1,h2,h3,p,table'), function(el){
+      if(el.tagName!=='TABLE' && el.closest('table')) return;   // 표 안 문단은 표에서 함께 처리
+      if(el.tagName==='TABLE'){
+        var rows=[];
+        Array.prototype.forEach.call(el.rows, function(tr){
+          rows.push(Array.prototype.map.call(tr.cells, function(c){
+            return String(c.innerText||c.textContent||'').replace(/ /g,' ').replace(/\s*\n\s*/g,'\n').trim();
+          }));
+        });
+        if(!rows.length) return;
+        var n=Math.max.apply(null, rows.map(function(r){ return r.length; }));   // 병합셀 대비 열 수 정규화
+        rows=rows.map(function(r){ var q=r.slice(0,n); while(q.length<n) q.push(''); return q; });
+        var ratios=[]; for(var i=0;i<n;i++) ratios.push(1);
+        body+=HWPX.tablePara(rows, HWPX.cols(ratios))+HWPX.para('');
+      } else {
+        var t=String(el.textContent||'').replace(/ /g,' ').replace(/\s+/g,' ').trim();
+        if(!t) return;
+        body+=HWPX.para(t, (el.tagName==='H1'||el.tagName==='H2'||el.tagName==='H3')?'90':'0');
+      }
+    });
+    if(!body){ toast('내보낼 내용이 없습니다','warn'); return; }
+    var name=((f.short_name||f.name||'기금')+'_'+docLabel(kind)+'_'+ymd()+'.hwpx').replace(/[\\/:*?"<>|]/g,'_');
+    HWPX.download(body, name);
+    toast('한글 파일로 저장했습니다');
+  }catch(e){ toast('한글 변환 실패: '+((e&&e.message)||e),'err'); }
+}
 function printDoc(){ var ed=$('doced'); if(!ed)return;
   var w=window.open('','_blank'); if(!w){ toast('팝업이 차단되었습니다','err'); return; }
   w.document.write('<!doctype html><meta charset=utf-8><style>'+dgDocCss()+'@media print{@page{margin:16mm}}</style>'+ed.innerHTML);
