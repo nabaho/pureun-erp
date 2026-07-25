@@ -14,7 +14,9 @@ const TPL_HPF="<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\" ?><op
 
 const esc=s=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 /* 레이아웃 상수(HWPUNIT): 10pt 글자 = 1000, 줄 높이 = vertsize1000 + spacing600 */
-const CH=1000, LH=1600, CELL_PAD=1020, CELL_VPAD=282;
+/* LH: 줄 높이 = 글자 1000 × 문단 줄간격 130%(paraPr 0의 lineSpacing) = 1300
+   TBL_SLACK: 표 outMargin(283×2)+테두리 여유 — 표가 본문폭을 넘어 잘리지 않도록 확보 */
+const CH=1000, LH=1300, CELL_PAD=1020, CELL_VPAD=282, TBL_SLACK=900;
 const BODY_W_P=42520, BODY_W_L=72852;
 /* 용지 방향: setPage({landscape:true}) 를 문서 조립 전에 호출 (신구대조표=가로, 조문 전문=세로) */
 let LANDSCAPE=false;
@@ -153,7 +155,7 @@ function download(bodyXml,fname){
 }
 /* 열 비율(합 1)을 본문 폭에 맞춘 실제 열폭으로 변환 */
 function cols(ratios){
-  const W=bodyW(), sum=ratios.reduce(function(a,b){return a+b;},0);
+  const W=bodyW()-TBL_SLACK, sum=ratios.reduce(function(a,b){return a+b;},0);
   const ws=ratios.map(function(r){return Math.floor(W*r/sum);});
   ws[ws.length-1]=W-ws.slice(0,-1).reduce(function(a,b){return a+b;},0);
   return ws;
