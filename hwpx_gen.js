@@ -20,28 +20,30 @@ const BODY_W_P=42520, BODY_W_L=72852;
 let LANDSCAPE=false;
 function setPage(o){ LANDSCAPE=!!(o&&o.landscape); return api; }
 function bodyW(){ return LANDSCAPE?BODY_W_L:BODY_W_P; }
-/* 문자열의 표시 폭(전각=1000, 반각=500)으로 줄 수 추정 */
-function visualWidth(s){
-  let w=0;
-  for(const ch of String(s||"")){
-    const c=ch.codePointAt(0);
-    w += (c<0x1100 || (c>=0x2000&&c<0x2500)) ? CH*0.5 : CH;   // 라틴·숫자·기호는 반각으로 계산
+/* 글자 폭(HWPUNIT): 라틴·숫자·기호는 반각, 한글·한자는 전각 */
+function charW(c){ return (c<0x1100 || (c>=0x2000&&c<0x2500)) ? CH*0.5 : CH; }
+/* 줄바꿈 위치 계산 → 각 줄의 시작 문자 인덱스 배열(실제 한글도 lineseg.textpos에 이 값을 기록) */
+function wrapPositions(text,horzsize){
+  const s=String(text==null?"":text), per=Math.max(CH,horzsize);
+  const starts=[0]; let w=0, i=0;
+  for(const ch of s){
+    const cw=charW(ch.codePointAt(0));
+    if(w+cw>per && i>starts[starts.length-1]){ starts.push(i); w=cw; }
+    else w+=cw;
+    i+=ch.length;   // 서로게이트 페어 고려한 UTF-16 인덱스
   }
-  return w;
+  return starts;
 }
-function lineCount(text,widthPx){
-  const per=Math.max(CH, widthPx);
-  return Math.max(1, Math.ceil(visualWidth(text)/per));
-}
-/* linesegarray: 실제 줄 수만큼 lineseg 생성 (한글이 레이아웃을 정확히 잡도록) */
+/* linesegarray: 줄마다 textpos(줄 시작 문자 위치)·vertpos(줄 높이 누적)를 정확히 기록 */
 function linesegs(text,horzsize){
-  const n=lineCount(text,horzsize);
+  const starts=wrapPositions(text,horzsize);
   let out='<hp:linesegarray>';
-  for(let i=0;i<n;i++){
-    out+='<hp:lineseg textpos="0" vertpos="'+(i*LH)+'" vertsize="1000" textheight="1000" baseline="850" spacing="600" horzpos="0" horzsize="'+horzsize+'" flags="393216"/>';
-  }
+  starts.forEach(function(tp,i){
+    out+='<hp:lineseg textpos="'+tp+'" vertpos="'+(i*LH)+'" vertsize="1000" textheight="1000" baseline="850" spacing="600" horzpos="0" horzsize="'+horzsize+'" flags="393216"/>';
+  });
   return out+'</hp:linesegarray>';
 }
+function lineCount(text,horzsize){ return wrapPositions(text,horzsize).length; }
 /* 문단: \n 은 문단 분리 */
 function para(text,charPr){
   const cp=charPr||"0";
