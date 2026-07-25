@@ -172,6 +172,15 @@ td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
   <span class="user" id="who">로그인 확인 중…</span>
   <a class="hbtn" href="enter.html">← 포털로</a>
 </header>
+<!-- 임시저장 복원 안내 — 새로고침·창 닫힘으로 잃은 작업을 이어서 하도록 -->
+<div id="wip-bar" style="display:none;align-items:center;gap:10px;margin:10px 16px 0;padding:10px 14px;
+  background:#fff7ed;border:1px solid #fdba74;border-radius:10px;font-size:13px;color:#9a3412">
+  <b>💾 임시저장된 작업이 있습니다</b>
+  <span id="wip-info" style="color:#b45309"></span>
+  <span style="flex:1"></span>
+  <button class="btn" id="wip-restore" style="padding:6px 12px">이어서 작업</button>
+  <button class="btn ghost" id="wip-discard" style="padding:6px 12px">지우기</button>
+</div>
 
 <div class="wrap">
 
@@ -745,7 +754,7 @@ function renderEditor(){
   });
   t.appendChild(tb);
   tb.querySelectorAll("td.editable").forEach(td=>td.addEventListener("input",()=>{
-    CUR_ITEMS[+td.dataset.i].after=td.innerText; refreshDaejoSub();
+    CUR_ITEMS[+td.dataset.i].after=td.innerText; refreshDaejoSub(); saveWip();   // 타이핑도 임시저장
   }));
   tb.querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>{
     const it=CUR_ITEMS[+b.dataset.i];
@@ -763,6 +772,7 @@ function renderEditor(){
   if($("mode-partial"))$("mode-partial").className="stbtn"+(REV_MODE==="partial"?" on-adopt":"");
   if($("mode-full"))$("mode-full").className="stbtn"+(REV_MODE==="full"?" on-adopt":"");
   refreshDaejoSub();
+  saveWip();   // 조문 조작·모드 변경·위치 변경 등 모든 편집을 임시저장
 }
 function refreshDaejoSub(){
   let 개정=0,신설=0,삭제=0,검토=0;CUR_ITEMS.forEach(it=>{const k=itemKind(it);if(k==="개정")개정++;else if(k==="신설")신설++;else if(k==="삭제")삭제++;else if(k==="검토")검토++;});
@@ -951,6 +961,50 @@ function resolveUserName(){
   });
 }
 const fbKey=s=>String(s||"").replace(/[.#$\[\]\/\s]/g,"_").slice(0,120)||"unknown";
+/* ══════ 임시저장(WIP) — 새로고침·창 닫힘으로 작업이 날아가지 않게 ══════
+   [보관함에 저장]을 누르기 전 상태(검토 결과 + 조문별 개정안 편집)는 메모리에만 있어
+   F5 한 번에 사라졌다. 편집할 때마다 이 브라우저에 임시 보관하고, 다음 방문 시 복원을 제안한다.
+   보관함에 정식 저장하면 임시본은 지운다. */
+const WIP_KEY="pureun_rules_wip_v1";
+let _wipT=null;
+function saveWip(){                       // 편집 중 호출 — 1.5초 디바운스
+  if(_wipT)clearTimeout(_wipT);
+  _wipT=setTimeout(function(){
+    try{
+      if(!LAST||!CUR_ITEMS.length)return;
+      const txt=(LAST.key&&SAMPLES[LAST.key])?SAMPLES[LAST.key]:"";
+      const rec={site:LAST.site,bizno:LAST.bizno,size:LAST.size,conds:LAST.conds||[],asof:LAST.asof,
+        summary:LAST.summary,items:CUR_ITEMS,mode:REV_MODE,addendum:LAST.addendum||"",
+        key:LAST.key||"",txt:txt,at:Date.now()};
+      localStorage.setItem(WIP_KEY,JSON.stringify(rec));
+    }catch(e){ console.warn("임시저장 실패(용량 초과 등):",e); }   // 실패해도 작업은 계속
+  },1500);
+}
+function clearWip(){ try{ localStorage.removeItem(WIP_KEY); }catch(e){} const b=$("wip-bar"); if(b)b.style.display="none"; }
+function loadWip(){ try{ return JSON.parse(localStorage.getItem(WIP_KEY)||"null"); }catch(e){ return null; } }
+/* 페이지 열릴 때 임시본이 있으면 배너로 복원 제안 */
+(function initWip(){
+  const w=loadWip(); if(!w||!w.items||!w.items.length)return;
+  const bar=$("wip-bar"); if(!bar)return;
+  const min=Math.max(0,Math.round((Date.now()-(w.at||0))/60000));
+  const when=min<1?"방금 전":(min<60?min+"분 전":Math.round(min/60)+"시간 전");
+  $("wip-info").textContent=`${w.site||"이름 없는 사업장"} · 조문 ${w.items.length}개 · ${when}`;
+  bar.style.display="flex";
+  $("wip-restore").onclick=function(){
+    if(w.key&&w.txt)SAMPLES[w.key]=w.txt;                       // 원문 복원 → 조문 재파싱 가능
+    const arts=w.txt?parseArticles(w.txt):[];
+    LAST={key:(w.key&&w.txt)?w.key:null,site:w.site,bizno:w.bizno,size:w.size,conds:w.conds||[],
+      asof:w.asof,summary:w.summary,arts:arts,addendum:w.addendum||""};
+    REV_MODE=w.mode||"partial";
+    CUR_ITEMS=normalizeItems(w.items);
+    CUR_KEY=LAST.key||("wip_"+(w.at||0));                        // 편집 모델 보호(재생성 방지)
+    CUR_FILTER="changed";
+    bar.style.display="none";
+    $("mk-daejo").disabled=false; $("save").disabled=false;      // 저장·대조표 버튼 살리기
+    openEditor();
+  };
+  $("wip-discard").onclick=function(){ if(confirm("임시저장된 작업을 지울까요?"))clearWip(); };
+})();
 function loadArch(){try{return JSON.parse(localStorage.getItem(ARCH_KEY))||[]}catch(e){return[]}}
 function setLocal(a){localStorage.setItem(ARCH_KEY,JSON.stringify(a));updateArchCnt();}
 /* 레코드 1건 단위 저장 — 보관함 전체를 덮어쓰지 않으므로 여러 노무사 동시 저장 안전 */
@@ -1028,6 +1082,7 @@ $("save").addEventListener("click",()=>{
   if(LAST.key&&SAMPLES[LAST.key]!==undefined){ try{ const o=buildOrig(LAST.key); putOrig(rec.id,o);
     origMsg = o.truncated ? "\n※ 원본 파일이 커서(2MB↑) 텍스트만 보존됩니다." : (o.b64?"\n원본 파일 보존됨 — 재오픈 시 미리보기 복원.":"\n원본 텍스트 보존됨.");
   }catch(e){ console.warn("원본 저장 건너뜀:",e); } }
+  clearWip();   // 정식 보관됐으니 임시본 제거
   const 개정=items.filter(it=>itemKind(it)==="개정").length,신설=items.filter(it=>itemKind(it)==="신설").length,삭제=items.filter(it=>itemKind(it)==="삭제").length;
   alert(`'${LAST.site}' 규정이 보관함에 저장되었습니다.\n개정 ${개정} · 신설 ${신설} · 삭제 ${삭제} (전체 ${items.length}개 조)`+origMsg);
 });
