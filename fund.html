@@ -467,15 +467,18 @@ function renderHome(){
   function srt(a,b){return ((rpri[a.region]||9)-(rpri[b.region]||9))||(a.short_name||'').localeCompare(b.short_name||'','ko',{numeric:true});}
   var all=Object.keys(funds).map(function(k){var o=Object.assign({},funds[k]);o._id=k;return o;});
   var active=all.filter(function(f){return !isPast(f);}), past=all.filter(isPast).sort(srt);
+  var isSetup=function(f){return f.setup_stage==='설립준비';};
+  var setup=active.filter(isSetup).sort(srt);              // 설립중 = 별도 분류
+  var live=active.filter(function(f){return !isSetup(f);});// 운영(설립완료)만 유형 그룹화
   var G={'지역공동':[],'개별공동':[],'사내':[]};
-  active.forEach(function(f){ (G[grp(f)]=G[grp(f)]||[]).push(f); });
+  live.forEach(function(f){ (G[grp(f)]=G[grp(f)]||[]).push(f); });
   Object.keys(G).forEach(function(k){G[k].sort(srt);});
   var todo='';
   var edit=!!S.homeEdit;
-  var incN=active.filter(function(f){return nDone(f)<5;}).length;
-  var setupN=active.filter(function(f){return f.setup_stage==='설립준비';}).length;
-  var head='<div class="panel"><div class="row"><h1>기금 현황</h1><span class="stat">운영 '+active.length+'</span>'+(past.length?'<span class="stat">지난 '+past.length+'</span>':'')
-    +(setupN?'<span class="stat" style="background:var(--warn-bg);color:var(--warn);cursor:pointer" onclick="showSetupFunds()" title="설립 진행 중 기금 목록 보기">🏗 설립중 '+setupN+'</span>':'')
+  var incN=live.filter(function(f){return nDone(f)<5;}).length; // 설립중 제외(신규라 당연히 미완비)
+  var setupN=setup.length;
+  var head='<div class="panel"><div class="row"><h1>기금 현황</h1><span class="stat">운영 '+live.length+'</span>'+(past.length?'<span class="stat">지난 '+past.length+'</span>':'')
+    +(setupN?'<span class="stat" style="background:var(--warn-bg);color:var(--warn);cursor:pointer" onclick="S.homeTab=\'setup\';renderHome()" title="설립 진행 중 기금만 보기">🏗 설립중 '+setupN+'</span>':'')
     +(incN?'<span class="stat" style="background:var(--warn-bg);color:var(--warn)">미완비 '+incN+'</span>':'')+'<span style="flex:1"></span>'
     +(edit?'<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;margin-right:6px"><input type="checkbox"'+(S.homeInc?' checked':'')+' onchange="S.homeInc=this.checked;renderHome()"> 미완비만</label>':'')
     +(edit?'<button onclick="bulkRegistry()" title="소재지로 전체 기금 관할등기소 자동 추정" style="margin-right:6px">🏛 등기소 일괄</button>':'')
@@ -491,21 +494,25 @@ function renderHome(){
     return;
   }
   var TL=[['지역공동','🏛 지역기금'],['개별공동','🤝 공동기금'],['사내','🏢 사내기금']];
+  if(setup.length) TL.push(['setup','🏗 설립중']);
   if(past.length) TL.push(['past','🗂 지난 기금']);
-  if(!S.homeTab||(S.homeTab!=='past'&&!G[S.homeTab])||(S.homeTab==='past'&&!past.length)) S.homeTab='지역공동';
+  if(!S.homeTab || (S.homeTab==='setup'&&!setup.length) || (S.homeTab==='past'&&!past.length) || (['지역공동','개별공동','사내'].indexOf(S.homeTab)>=0&&!G[S.homeTab])) S.homeTab='지역공동';
   var tabbar='<div class="tabbar">'+TL.map(function(t){
-    var c=t[0]==='past'?past.length:G[t[0]].length;
+    var c=t[0]==='past'?past.length:(t[0]==='setup'?setup.length:G[t[0]].length);
     return '<div class="tab'+(S.homeTab===t[0]?' on':'')+'" onclick="S.homeTab=\''+t[0]+'\';renderHome()">'+t[1]+' <span class="cnt">'+c+'</span></div>';
   }).join('')+'</div>';
   var body;
-  if(S.homeTab==='past'){
-    var GL={'지역공동':'🏛 지역기금','개별공동':'🤝 공동기금','사내':'🏢 사내기금'};
-    function catSecs(items){   // 상태 섹션 안에서 동종(지역/공동/사내)끼리 하위 그룹
-      var PG={'지역공동':[],'개별공동':[],'사내':[]}; items.forEach(function(f){ (PG[grp(f)]=PG[grp(f)]||[]).push(f); });
-      return ['지역공동','개별공동','사내'].filter(function(k){return PG[k].length;}).map(function(k){
-        return '<div class="grp-h" style="margin:10px 0 4px 10px;font-size:12.5px;color:var(--sub)">'+GL[k]+' <span class="cnt">'+PG[k].length+'</span></div>'+fundTable(PG[k]);
-      }).join('');
-    }
+  var GL={'지역공동':'🏛 지역기금','개별공동':'🤝 공동기금','사내':'🏢 사내기금'};
+  function catSecs(items,ed){   // 섹션 안에서 동종(지역/공동/사내)끼리 하위 그룹
+    var PG={'지역공동':[],'개별공동':[],'사내':[]}; items.forEach(function(f){ (PG[grp(f)]=PG[grp(f)]||[]).push(f); });
+    return ['지역공동','개별공동','사내'].filter(function(k){return PG[k].length;}).map(function(k){
+      return '<div class="grp-h" style="margin:10px 0 4px 10px;font-size:12.5px;color:var(--sub)">'+GL[k]+' <span class="cnt">'+PG[k].length+'</span></div>'+fundTable(PG[k],ed);
+    }).join('');
+  }
+  if(S.homeTab==='setup'){
+    body='<div class="panel"><p class="muted" style="font-size:12px;margin:0 0 6px">🏗 <b>설립 진행 중</b>인 기금입니다(인가·등기 절차). 운영 집계·미완비에서 제외됩니다. 기금을 열어 <b>[🏗 설립 진행]</b> 단계를 모두 마치면 [✅ 운영 전환]으로 운영 기금이 됩니다. 유형별로 나눠 보여줍니다.</p>'
+      +(setup.length?catSecs(setup,edit):'<div class="muted" style="padding:12px">설립 중인 기금이 없습니다.</div>')+'</div>';
+  } else if(S.homeTab==='past'){
     var LS=[['계약종료','📄 계약종료','수임·자문 계약만 끝남 · 재개 가능'],['기록보관','🗄 기록보관','기금 해산·소멸']];
     var secs=LS.map(function(L){
       var items=past.filter(function(f){return f.lifecycle===L[0];});
