@@ -375,6 +375,7 @@ async function loadFile(file){
     else if(buf) HWP_BUFS[key]=buf;
     const o=document.createElement("option");o.value=key;o.textContent=SITE_MAP[key];
     siteSel.appendChild(o); siteSel.value=key;
+    saveWorkFromUpload(key,buf,pdf);   // F5·재접속에도 유지되도록 즉시 보관
     resetReviewUI();renderPreview();
   }catch(e){
     if(e instanceof TypeError && ext==="txt"){ // cp949 재시도
@@ -382,7 +383,7 @@ async function loadFile(file){
         const text=new TextDecoder("euc-kr").decode(raw);
         const key="U"+(++upSeq); SAMPLES[key]=text; SITE_MAP[key]="📄 "+name; SITE_BIZNO[key]="";
         const o=document.createElement("option");o.value=key;o.textContent=SITE_MAP[key];
-        siteSel.appendChild(o); siteSel.value=key; resetReviewUI();renderPreview(); return;
+        siteSel.appendChild(o); siteSel.value=key; saveWorkFromUpload(key,null,false); resetReviewUI();renderPreview(); return;
       }catch(_){}
     }
     alert("파일을 읽지 못했습니다: "+(e.message||e));
@@ -571,6 +572,7 @@ function run(){
   if(CUR_KEY===key)CUR_ITEMS.forEach(it=>{ if(it.orig!==""&&!it.suggested&&(it.after||"").trim()!==(it.orig||"").trim())manual[it.id]=it.after; });
   CUR_ITEMS=buildItems(res,LAST.terms,arts);CUR_KEY=key;
   Object.keys(manual).forEach(id=>{ const it=CUR_ITEMS.find(x=>x.id===id); if(it&&!it.suggested)it.after=manual[id]; });
+  saveWorkState();
   $("mk-daejo").disabled=false;$("save").disabled=false;
 }
 
@@ -777,6 +779,7 @@ function renderEditor(){
 function refreshDaejoSub(){
   let 개정=0,신설=0,삭제=0,검토=0;CUR_ITEMS.forEach(it=>{const k=itemKind(it);if(k==="개정")개정++;else if(k==="신설")신설++;else if(k==="삭제")삭제++;else if(k==="검토")검토++;});
   $("daejo-sub").textContent=`${LAST?LAST.site:""} · 전체 ${CUR_ITEMS.length}개 조 · 개정 ${개정} · 신설 ${신설} · 삭제 ${삭제} · 검토 ${검토}`;
+  saveWorkState();   // 편집할 때마다 이 브라우저에 자동 보관(F5에도 유지)
 }
 $("mk-daejo").addEventListener("click",()=>{
   if(!LAST)return;
@@ -1067,6 +1070,55 @@ async function restoreOrig(id,site){
   await renderPreview();
   return key;
 }
+/* ── 작업 세션 자동 보관: 업로드 파일·편집 상태를 이 브라우저에 저장 → F5·재접속에도 유지 ── */
+const WORK_KEY="pureun_rules_work_v1";
+function saveWorkFromUpload(key,buf,isPdf){
+  const name=(SITE_MAP[key]||"").replace(/^📄\s*/,"");
+  const mk=b64=>({orig:{name,ext:(name.split(".").pop()||"").toLowerCase(),text:SAMPLES[key]||"",b64,isPdf:!!isPdf,truncated:!b64&&!!buf},savedAt:new Date().toISOString()});
+  try{
+    let b64=null;
+    if(buf&&buf.byteLength<=MAX_ORIG_BYTES)b64=bufToB64(buf);
+    localStorage.setItem(WORK_KEY,JSON.stringify(mk(b64)));
+  }catch(e){ try{localStorage.setItem(WORK_KEY,JSON.stringify(mk(null)));}catch(_){console.warn("작업 보관 실패(용량):",e);} }
+}
+function saveWorkState(){
+  try{
+    const raw=localStorage.getItem(WORK_KEY); if(!raw)return;
+    const w=JSON.parse(raw); if(!w||!w.orig)return;
+    if(!LAST||!LAST.key||SAMPLES[LAST.key]===undefined)return;
+    if(("📄 "+w.orig.name)!==SITE_MAP[LAST.key])return;   // 보관 중인 작업 문서일 때만 상태 갱신
+    w.state={items:CUR_ITEMS,mode:REV_MODE,size:LAST.size,asof:LAST.asof};
+    localStorage.setItem(WORK_KEY,JSON.stringify(w));
+  }catch(e){}
+}
+async function restoreWork(){
+  try{
+    const raw=localStorage.getItem(WORK_KEY); if(!raw)return;
+    const w=JSON.parse(raw); if(!w||!w.orig||(!w.orig.text&&!w.orig.b64))return;
+    const o=w.orig, key="W1";
+    SAMPLES[key]=o.text||""; SITE_MAP[key]="📄 "+(o.name||"작업 문서"); SITE_BIZNO[key]="";
+    if(o.b64){ const buf=b64ToBuf(o.b64);
+      if(o.isPdf)PDF_URLS[key]=URL.createObjectURL(new Blob([buf],{type:"application/pdf"}));
+      else HWP_BUFS[key]=buf; }
+    const opt=document.createElement("option");opt.value=key;opt.textContent=SITE_MAP[key];
+    siteSel.appendChild(opt); siteSel.value=key;
+    if(w.state){ if(w.state.size)$("size").value=w.state.size; if(w.state.asof)$("asof").value=w.state.asof; }
+    await renderPreview();
+    const txt=SAMPLES[key]||"";
+    LAST={key,site:SITE_MAP[key],bizno:"",size:$("size").value,conds:[],asof:$("asof").value,
+      summary:{위반의심:0,누락:0,수동확인:0,시행예정:0},res:[],arts:parseArticles(txt),terms:detectTerms(txt),addendum:extractAddendum(txt)};
+    if(w.state&&Array.isArray(w.state.items)&&w.state.items.length){
+      CUR_ITEMS=normalizeItems(w.state.items);CUR_KEY=key;REV_MODE=w.state.mode||"partial";
+      $("mk-daejo").disabled=false;$("save").disabled=false;
+    }
+    // 복원 안내 배너
+    const pv=$("preview");
+    const note=document.createElement("div");note.className="sample-banner";
+    note.style.cssText="background:#f0fdfa;border-color:#99d5cc;color:#0f766e";
+    note.textContent="↺ 이전 작업이 복원되었습니다 — "+(o.name||"")+((w.state&&w.state.items&&w.state.items.length)?" · 편집 내용 포함":"")+(o.truncated?" (파일이 커서 텍스트만 보관됨)":"");
+    pv.insertBefore(note,pv.firstChild);
+  }catch(e){console.warn("작업 복원 실패:",e);}
+}
 $("save").addEventListener("click",()=>{
   if(!LAST)return;
   // 편집 화면을 연 적 없으면(=편집 안 함) 자동 제안 기준 모델을 만들어 저장
@@ -1194,10 +1246,12 @@ $("ae-apply").addEventListener("click",()=>{
   it.after=v.trim()?v:it.orig;
   if(it.suggested&&(it.after||"").trim()!==(it.sug||"").trim())it.suggested=false;   // 수동 수정이 자동제안을 대체
   $("mk-daejo").disabled=false;$("save").disabled=false;
+  saveWorkState();
   const btn=$("ae-apply"),t=btn.textContent;btn.textContent="반영됨 ✓";setTimeout(()=>btn.textContent=t,1200);
 });
 $("run").addEventListener("click",run);
 renderPreview();updateArchCnt();
+restoreWork();   // F5·재접속 시 업로드 파일·편집 상태 자동 복원
 if($("rb-tag"))$("rb-tag").textContent="규칙집 v3 · "+RULES.length+"항목";
 </script>
 <script type="module">
