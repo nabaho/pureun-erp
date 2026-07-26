@@ -46,7 +46,8 @@ FORMS = [
     ('sub_contrib',     '기금출연확인서(지원신청용)', os.path.join(B2, '4_지원금신청', '8. 기금출연확인서.hwp')),
     ('sub_oath',        '서약서',                os.path.join(B2, '4_지원금신청', '9. 서약서.hwp')),
     ('sub_welfare_plan','복지사업계획서',        os.path.join(B2, '4_지원금신청', '10. 복지사업계획서.hwp')),
-    ('sub_bizplan',     '사업계획서(지원신청용)', os.path.join(B2, '4_지원금신청', '11.  사업계획서.hwp')),
+    # ※ 지원금 '11. 사업계획서'는 ①인가 bizplan과 동일 서식(일치율 78.8%, 차이는 빈양식↔2020년 작성예시)
+    #    → 빈 양식인 bizplan을 정본으로 쓰고 중복 변환하지 않는다. DOC_SUB에서도 bizplan 키를 참조.
     ('sub_assets',      '재산목록표',            os.path.join(B2, '4_지원금신청', '12. 재산목록표.hwp')),
     ('sub_payment',     '지원금 지급신청서(계좌)', os.path.join(B2, '4_지원금신청', '13. 사내(공동)근로복지기금 지원금 지급신청서(계좌 작성할것).hwp')),
     # ⑥ 공단 인센티브
