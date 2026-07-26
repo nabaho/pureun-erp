@@ -1034,7 +1034,10 @@ function subscribeArch(){if(!FBDB||!FBUSER)return;
 function updateArchCnt(){const n=loadArch().length;$("arch-cnt").textContent=n?`(${n})`:"";}
 try{if(window.firebase){firebase.initializeApp(FB_CONFIG);FBDB=firebase.database();
   firebase.auth().onAuthStateChanged(u=>{FBUSER=u;FBNAME=null;updateWho();
-    if(u){subscribeArch();resolveUserName();}else if(FBDB)FBDB.ref("rules_mgmt/archive").off();});
+    if(u){subscribeArch();resolveUserName();
+      checkCloudWorkSession();   // 재로그인 시 계정에 남은 작업 세션 이어받기
+      pushWorkToCloud(true);     // 로그인 전 로컬에만 있던 작업을 계정에 올려 다른 기기에서도 이어갈 수 있게
+    }else if(FBDB)FBDB.ref("rules_mgmt/archive").off();});
 }}catch(e){console.warn("Firebase 초기화 건너뜀:",e);}
 updateWho();
 /* ── 원본 파일 보존(A): 저장 시 텍스트+원본(base64)을 별도 노드에 함께 저장 → 재오픈 시 원본 미리보기 복원.
@@ -1084,12 +1087,15 @@ function updateWorkBadge(){
   const t=w.savedAt?new Date(w.savedAt):null;
   const hhmm=t?(" · "+String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0")+" 기준"):"";
   const editCnt=(w.state&&Array.isArray(w.state.items))?w.state.items.filter(it=>itemKind(it)!=="유지").length:0;
-  $("work-badge-txt").textContent="💾 임시저장됨 — "+(w.orig.name||"작업 문서")+(editCnt?" · 편집 "+editCnt+"건":"")+hhmm+" (이 브라우저에만 보관, 저장 전이라도 새로고침 시 유지)";
+  const where=(FBDB&&FBUSER)?"계정에 연결 보관 — 자동로그아웃·다른 PC에서도 이어서 작업 가능":"이 브라우저에만 보관 — 로그인하면 계정에 연결됩니다";
+  $("work-badge-txt").textContent="💾 임시저장됨 — "+(w.orig.name||"작업 문서")+(editCnt?" · 편집 "+editCnt+"건":"")+hhmm+" ("+where+")";
   box.style.display="flex";
 }
 $("work-clear").addEventListener("click",()=>{
   if(!confirm("임시저장된 작업 내용을 지우시겠습니까?\n(보관함에 정식 저장한 내용은 영향 없습니다)"))return;
   localStorage.removeItem(WORK_KEY);
+  if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/worksession/"+FBUSER.uid).remove().catch(()=>{});
+  clearTimeout(_cloudWorkTimer);
   updateWorkBadge();
 });
 function saveWorkFromUpload(key,buf,isPdf){
@@ -1101,6 +1107,7 @@ function saveWorkFromUpload(key,buf,isPdf){
     localStorage.setItem(WORK_KEY,JSON.stringify(mk(b64)));
   }catch(e){ try{localStorage.setItem(WORK_KEY,JSON.stringify(mk(null)));}catch(_){console.warn("작업 보관 실패(용량):",e);} }
   updateWorkBadge();
+  pushWorkToCloud(true);   // 새 파일 업로드는 드문 이벤트 → 즉시 클라우드 반영
 }
 function saveWorkState(){
   try{
@@ -1113,36 +1120,90 @@ function saveWorkState(){
     localStorage.setItem(WORK_KEY,JSON.stringify(w));
   }catch(e){}
   updateWorkBadge();
+  pushWorkToCloud(false);   // 편집은 잦음 → 디바운스(6초)로 클라우드 반영
+}
+/* 작업 객체(w={orig,state,savedAt}) → 화면에 적용. 로컬 복원·클라우드 복원 공용 */
+async function applyWorkObject(w,opts){
+  opts=opts||{};
+  if(!w||!w.orig||(!w.orig.text&&!w.orig.b64))return;
+  const o=w.orig, key="W1";
+  SAMPLES[key]=o.text||""; SITE_MAP[key]="📄 "+(o.name||"작업 문서"); SITE_BIZNO[key]="";
+  delete HWP_BUFS[key]; if(PDF_URLS[key]){URL.revokeObjectURL(PDF_URLS[key]);delete PDF_URLS[key];}
+  if(o.b64){ const buf=b64ToBuf(o.b64);
+    if(o.isPdf)PDF_URLS[key]=URL.createObjectURL(new Blob([buf],{type:"application/pdf"}));
+    else HWP_BUFS[key]=buf; }
+  let opt=[...siteSel.options].find(x=>x.value===key);
+  if(!opt){opt=document.createElement("option");opt.value=key;siteSel.appendChild(opt);}
+  opt.textContent=SITE_MAP[key]; siteSel.value=key;
+  if(w.state){ if(w.state.size)$("size").value=w.state.size; if(w.state.asof)$("asof").value=w.state.asof; }
+  await renderPreview();
+  const txt=SAMPLES[key]||"";
+  LAST={key,site:SITE_MAP[key],bizno:"",size:$("size").value,conds:[],asof:$("asof").value,
+    summary:{위반의심:0,누락:0,수동확인:0,시행예정:0},res:[],arts:parseArticles(txt),terms:detectTerms(txt),addendum:extractAddendum(txt)};
+  CUR_ITEMS=[];CUR_KEY=null;
+  if(w.state&&Array.isArray(w.state.items)&&w.state.items.length){
+    CUR_ITEMS=normalizeItems(w.state.items);CUR_KEY=key;REV_MODE=w.state.mode||"partial";
+    $("mk-daejo").disabled=false;$("save").disabled=false;
+  }
+  try{localStorage.setItem(WORK_KEY,JSON.stringify(w));}catch(e){}   // 클라우드에서 왔으면 로컬에도 반영
+  const pv=$("preview");
+  const note=document.createElement("div");note.className="sample-banner";
+  note.style.cssText="background:#f0fdfa;border-color:#99d5cc;color:#0f766e";
+  const src=opts.source==="cloud"?"☁ 다른 기기(계정)에서 ":"↺ ";
+  note.textContent=src+"이전 작업이 복원되었습니다 — "+(o.name||"")+((w.state&&w.state.items&&w.state.items.length)?" · 편집 내용 포함":"")+(o.truncated?" (파일이 커서 텍스트만 보관됨)":"");
+  pv.insertBefore(note,pv.firstChild);
+  updateWorkBadge();
 }
 async function restoreWork(){
   try{
     const raw=localStorage.getItem(WORK_KEY); if(!raw)return;
-    const w=JSON.parse(raw); if(!w||!w.orig||(!w.orig.text&&!w.orig.b64))return;
-    const o=w.orig, key="W1";
-    SAMPLES[key]=o.text||""; SITE_MAP[key]="📄 "+(o.name||"작업 문서"); SITE_BIZNO[key]="";
-    if(o.b64){ const buf=b64ToBuf(o.b64);
-      if(o.isPdf)PDF_URLS[key]=URL.createObjectURL(new Blob([buf],{type:"application/pdf"}));
-      else HWP_BUFS[key]=buf; }
-    const opt=document.createElement("option");opt.value=key;opt.textContent=SITE_MAP[key];
-    siteSel.appendChild(opt); siteSel.value=key;
-    if(w.state){ if(w.state.size)$("size").value=w.state.size; if(w.state.asof)$("asof").value=w.state.asof; }
-    await renderPreview();
-    const txt=SAMPLES[key]||"";
-    LAST={key,site:SITE_MAP[key],bizno:"",size:$("size").value,conds:[],asof:$("asof").value,
-      summary:{위반의심:0,누락:0,수동확인:0,시행예정:0},res:[],arts:parseArticles(txt),terms:detectTerms(txt),addendum:extractAddendum(txt)};
-    if(w.state&&Array.isArray(w.state.items)&&w.state.items.length){
-      CUR_ITEMS=normalizeItems(w.state.items);CUR_KEY=key;REV_MODE=w.state.mode||"partial";
-      $("mk-daejo").disabled=false;$("save").disabled=false;
-    }
-    // 복원 안내 배너
-    const pv=$("preview");
-    const note=document.createElement("div");note.className="sample-banner";
-    note.style.cssText="background:#f0fdfa;border-color:#99d5cc;color:#0f766e";
-    note.textContent="↺ 이전 작업이 복원되었습니다 — "+(o.name||"")+((w.state&&w.state.items&&w.state.items.length)?" · 편집 내용 포함":"")+(o.truncated?" (파일이 커서 텍스트만 보관됨)":"");
-    pv.insertBefore(note,pv.firstChild);
-    updateWorkBadge();
+    const w=JSON.parse(raw);
+    await applyWorkObject(w,{source:"local"});
   }catch(e){console.warn("작업 복원 실패:",e);}
 }
+/* ── 계정 연결 클라우드 동기화: 로그인된 사람이면 작업 세션을 Firebase(uid별)에도 미러링 →
+   다른 PC·자동로그아웃 후 재로그인해도 이어서 시작 가능. 로컬(이 브라우저)이 1차, 클라우드는 보조. ── */
+let _cloudWorkTimer=null;
+function pushWorkToCloud(immediate){
+  if(!FBDB||!FBUSER)return;
+  clearTimeout(_cloudWorkTimer);
+  const doPush=()=>{
+    let w=null; try{const raw=localStorage.getItem(WORK_KEY); if(raw)w=JSON.parse(raw);}catch(e){}
+    if(!w||!w.orig)return;
+    FBDB.ref("rules_mgmt/worksession/"+FBUSER.uid).set(w).catch(e=>console.warn("클라우드 작업 보관 실패:",e));
+  };
+  if(immediate)doPush(); else _cloudWorkTimer=setTimeout(doPush,6000);
+}
+function showCloudRestoreBanner(cw){
+  const pv=$("preview"); if(!pv||document.getElementById("cloud-restore-note"))return;
+  const t=cw.savedAt?new Date(cw.savedAt):null;
+  const when=t?(t.getMonth()+1)+"/"+t.getDate()+" "+String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0"):"";
+  const note=document.createElement("div");note.id="cloud-restore-note";note.className="sample-banner";
+  note.style.cssText="background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;display:flex;align-items:center;gap:8px;flex-wrap:wrap";
+  note.innerHTML=`<span>☁ 다른 기기(또는 이전 세션)에 작업 중이던 "${escapeH(cw.orig.name||"")}"이(가) 있습니다`+(when?` (${when} 기준)`:"")+`</span>
+    <button class="stbtn on-adopt" id="cloud-restore-btn" style="margin-left:auto">불러오기</button>
+    <span class="x" id="cloud-restore-dismiss" title="닫기">×</span>`;
+  pv.insertBefore(note,pv.firstChild);
+  $("cloud-restore-btn").onclick=async()=>{ note.remove(); await applyWorkObject(cw,{source:"cloud"}); };
+  $("cloud-restore-dismiss").onclick=()=>note.remove();
+}
+async function checkCloudWorkSession(){
+  if(!FBDB||!FBUSER)return;
+  try{
+    const snap=await FBDB.ref("rules_mgmt/worksession/"+FBUSER.uid).once("value");
+    if(!snap.exists())return;
+    const cw=snap.val(); if(!cw||!cw.orig)return;
+    let local=null; try{const raw=localStorage.getItem(WORK_KEY); if(raw)local=JSON.parse(raw);}catch(e){}
+    const cloudNewer=!local||!local.savedAt||(cw.savedAt&&cw.savedAt>local.savedAt);
+    const nothingLoadedYet=!LAST||!LAST.key||SAMPLES[LAST.key]===undefined;
+    if(!cloudNewer)return;   // 로컬이 더 최신 → 다음 편집 시 자동으로 클라우드에 다시 올라감
+    if(!local||nothingLoadedYet) await applyWorkObject(cw,{source:"cloud"});   // 잃을 로컬 작업 없음 → 바로 복원
+    else showCloudRestoreBanner(cw);   // 이미 뭔가 진행 중 → 조용히 덮지 않고 선택하게
+  }catch(e){console.warn("클라우드 작업 확인 실패:",e);}
+}
+/* 탭이 백그라운드로 갈 때(자동로그아웃 위험 구간) 즉시 클라우드로 플러시 */
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="hidden")pushWorkToCloud(true); });
+window.addEventListener("beforeunload",()=>{ pushWorkToCloud(true); });
 $("save").addEventListener("click",()=>{
   if(!LAST)return;
   // 편집 화면을 연 적 없으면(=편집 안 함) 자동 제안 기준 모델을 만들어 저장
