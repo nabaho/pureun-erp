@@ -778,7 +778,10 @@ function delBilling(id){ confirmM('이 청구 항목을 삭제할까요?',{ok:'�
 // 원본 법정서식 엑셀은 실데이터 미포함 빈 양식 → 브라우저 IndexedDB에 1회 저장 후 자동 사용.
 // 채움은 ExcelJS(테두리·병합·수식 보존). 통장 파싱용 SheetJS와 별개.
 var TPL={ setup:{key:'setup',label:'설립 서식(6종)',file:'2024년 근로복지기금 설립인가신청서 양식_240906.xlsx',gong:false},
-          subsidy:{key:'subsidy',label:'지원신청서',file:'2025년 공동근로복지기금지원신청서 양식(폐업 사업장 미포함).xlsx',gong:true} };
+          subsidy:{key:'subsidy',label:'지원신청서',file:'2025년 공동근로복지기금지원신청서 양식(폐업 사업장 미포함).xlsx',gong:true},
+          // 참여사업장별 출연확인서 — 기업정보 시트를 참여사업장으로 채우면 확인서가 VLOOKUP으로 뽑힘
+          contribx:{key:'contribx',label:'기금출연확인서(사업장별)',file:'기금출연확인서 양식(빈양식).xlsx',gong:false,
+                    hint:'참여사업장 목록으로 [기업정보] 시트를 채웁니다. 확인서 시트의 <b>연번(CJ3)</b>을 바꾸면 해당 사업장 확인서가 나옵니다. 대표자·근로자 생년월일은 개인정보라 저장하지 않으니 엑셀에서 직접 입력하세요.'} };
 var IDB_DB='fundErpTpl', IDB_ST='templates';
 function idbOpen(){ return new Promise(function(res,rej){ var r=indexedDB.open(IDB_DB,1);
   r.onupgradeneeded=function(){ r.result.createObjectStore(IDB_ST); };
@@ -798,9 +801,9 @@ function renderForms(){
   // 원본 등록 상태 비동기 확인 후 재렌더
   if(S._tplChk!==true){ S._tplChk='...';
     var _hk=DOC_ALL.map(function(d){return d[0];});
-    Promise.all([idbGet('setup'),idbGet('subsidy')].concat(_hk.map(function(k){return idbGet('hwp:'+k);})))
-      .then(function(a){ S._tplHas={setup:!!a[0],subsidy:!!a[1]}; S._hwpHas={}; _hk.forEach(function(k,i){S._hwpHas[k]=!!a[2+i];}); S._tplChk=true; if(S.view==='forms')renderForms(); })
-      .catch(function(){ S._tplHas={setup:false,subsidy:false}; S._hwpHas={}; S._tplChk=true; if(S.view==='forms')renderForms(); });
+    Promise.all([idbGet('setup'),idbGet('subsidy'),idbGet('contribx')].concat(_hk.map(function(k){return idbGet('hwp:'+k);})))
+      .then(function(a){ S._tplHas={setup:!!a[0],subsidy:!!a[1],contribx:!!a[2]}; S._hwpHas={}; _hk.forEach(function(k,i){S._hwpHas[k]=!!a[3+i];}); S._tplChk=true; if(S.view==='forms')renderForms(); })
+      .catch(function(){ S._tplHas={setup:false,subsidy:false,contribx:false}; S._hwpHas={}; S._tplChk=true; if(S.view==='forms')renderForms(); });
     $('app').innerHTML='<div class="panel">'+loadingHTML()+'</div>'; return; }
   var has=S._tplHas||{};
   // 모드: 'fund'=기금 상세 📑 서식에서 진입(실데이터·개별 저장) / 'library'=사이드바(신규 설립 샘플·공통서식 편집)
@@ -826,7 +829,8 @@ function renderForms(){
       else fill='<div class="muted" style="font-size:12px;margin-top:8px">실데이터 채움·엑셀 보기는 <b>기금 현황 → 기금 클릭 → 📑 서식</b>에서 합니다. (여기는 샘플 영역)</div>';
     }
     return '<div class="panel"><div class="row"><h2 style="font-size:15px">'+esc(t.label)+'</h2><span style="flex:1"></span>'+regLine+'</div>'
-      +'<p class="muted" style="font-size:11.5px;margin:6px 0 0">원본 파일: '+esc(t.file)+'</p>'+fill+'</div>';
+      +'<p class="muted" style="font-size:11.5px;margin:6px 0 0">원본 파일: '+esc(t.file)+'</p>'
+      +(t.hint?'<p class="muted" style="font-size:11.5px;margin:4px 0 0">'+t.hint+'</p>':'')+fill+'</div>';
   }
   function formRow(d,i){
     var kind=d[0], label=(i+1)+'. '+d[1], reg=(S._hwpHas||{})[kind], on=(S._sideKind===kind);
@@ -861,7 +865,7 @@ function renderForms(){
     body='<div class="panel"><div class="row"><h2 style="font-size:15px">① 노동부 설립인가 서식</h2>'+typeChip+'<span style="flex:1"></span>'+bulkBtn+'</div>'
       +inkaBatch+hwpNote+inkaList.map(formRow).join('')
       +(isGong?'':'<p class="muted" style="font-size:11.5px;margin:8px 0 0">※ 설립합의서는 공동기금(2개 이상 사업장) 전용이라 사내기금 목록에서 제외됩니다.</p>')
-      +'</div>'+tplCard(TPL.setup);
+      +'</div>'+tplCard(TPL.setup)+tplCard(TPL.contribx);
   } else if(S.formPhase==='reg'){
     body='<div class="panel"><div class="row"><h2 style="font-size:15px">② 법인 설립등기 서식</h2>'+typeChip+'<span style="flex:1"></span>'+bulkBtn+'</div>'+hwpNote
       +docsFor(DOC_REG,cur.fund_type||'공동').map(formRow).join('')+'</div>';
@@ -1593,7 +1597,8 @@ function _fillWbBuffer(key){
     return _loadSites(fid).then(function(sites){
       var wb=new ExcelJS.Workbook();
       return wb.xlsx.load(buf).then(function(){
-        (key==='setup'?fillSetup:fillSubsidy)(wb,f,sites);
+        if(key==='contribx') fillContribXls(wb,f,sites);
+        else (key==='setup'?fillSetup:fillSubsidy)(wb,f,sites);
         return wb.xlsx.writeBuffer();
       });
     });
@@ -1638,6 +1643,31 @@ function fillSetup(wb,f,sites){
   var budget=num(f.contribution_total); if(budget) setC(ws,'F13',budget.toLocaleString()+'원');
   if(f.estab_date) setC(ws,'B23',f.estab_date); if(f.meeting_date) setC(ws,'D23',f.meeting_date);
   clearRange(ws,33,38,2,16);   // 회의록 샘플 안건 B~P (수식 제외)
+}
+/* 기금출연확인서(사업장별) — [기업정보] 시트를 참여사업장으로 채우면
+   확인서 시트가 연번(CJ3) 기준 VLOOKUP으로 해당 사업장 확인서를 만든다.
+   출연금 = 상시근로자수 × 1인당 출연단가(fund.contrib_per_worker, 기본 400,000).
+   ※ 대표자·근로자 생년월일은 개인정보라 시스템에 저장하지 않음 → 빈 칸(엑셀에서 직접 입력). */
+function fillContribXls(wb,f,sites){
+  var info=wb.getWorksheet('기업정보'); if(!info) throw new Error('기업정보 시트를 찾을 수 없습니다');
+  var rate=num(f.contrib_per_worker)||400000;
+  sites.forEach(function(s,i){
+    var r=2+i;
+    info.getCell(r,1).value=i+1;
+    setC(info,'B'+r,s.name||''); setC(info,'C'+r,s.ceo||'');
+    var n=num(s.company_size)||0;
+    if(n) info.getCell(r,8).value=n;
+    var amt=info.getCell(r,9);
+    if(amt.type!==ExcelJS.ValueType.Formula) amt.value=n?n*rate:null;
+  });
+  if(info.rowCount>=2+sites.length) clearRange(info,2+sites.length,info.rowCount,1,9);
+  var doc=wb.getWorksheet('6.기금출연확인서');
+  if(doc) doc.eachRow({includeEmpty:false},function(row){
+    row.eachCell({includeEmpty:false},function(c){
+      if(typeof c.value==='string'&&c.value.indexOf('{{기금명}}')>=0)
+        c.value=c.value.split('{{기금명}}').join(f.name||'');
+    });
+  });
 }
 function fillSubsidy(wb,f,sites){
   if((f.fund_type||'')!=='공동') throw new Error('지원신청서는 공동근로복지기금 전용입니다');
