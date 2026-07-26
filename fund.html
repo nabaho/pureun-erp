@@ -207,7 +207,7 @@ function shell(){
     +'<div class="side-sec">메뉴</div>'
     +'<div class="sitem" id="nav-home" onclick="go(\'home\')">🏛 기금 현황</div>'
     +'<div class="sitem" id="nav-billing" onclick="go(\'billing\')">💰 청구 관리</div>'
-    +'<div class="sitem" id="nav-forms" onclick="go(\'forms\')">📚 서식 자료실</div>'
+    +'<div class="sitem" id="nav-forms" onclick="S.formsCtx=\'library\';go(\'forms\')">📚 서식 자료실</div>'
     +'<div style="margin-top:auto;font-size:11px;color:var(--faint);padding:8px">Firebase판 · 통합운영<br>서식 채움 지원</div>'
     +'</div>'
     +'<div id="main"><div id="topbar"><span id="crumb">기금 현황</span>'
@@ -802,13 +802,18 @@ function renderForms(){
       .catch(function(){ S._tplHas={setup:false,subsidy:false}; S._hwpHas={}; S._tplChk=true; if(S.view==='forms')renderForms(); });
     $('app').innerHTML='<div class="panel">'+loadingHTML()+'</div>'; return; }
   var has=S._tplHas||{};
-  var arr=Object.keys(funds).map(function(k){var o=funds[k];return {id:k,label:(o.short_name||o.name||k),type:o.fund_type,g:grp(o),region:o.region};});
-  var rpri={'충남':1,'경기':2},order={'지역공동':1,'개별공동':2,'사내':3};
-  arr.sort(function(a,b){return (order[a.g]-order[b.g])||((rpri[a.region]||9)-(rpri[b.region]||9))||a.label.localeCompare(b.label,'ko',{numeric:true});});
-  if(!S.formFund||!funds[S.formFund]) S.formFund=arr.length?arr[0].id:'';
-  var fsel='<select id="form-fund" onchange="S.formFund=this.value;renderForms()" style="padding:6px 9px;border:1px solid var(--line);border-radius:7px;font-size:13px;min-width:260px">'
-    +arr.map(function(x){return '<option value="'+esc(x.id)+'"'+(x.id===S.formFund?' selected':'')+'>'+esc(x.label)+' ('+esc(x.type||'')+')</option>';}).join('')+'</select>';
-  var cur=funds[S.formFund]||{}, isGong=(cur.fund_type||'')==='공동';
+  // 모드: 'fund'=기금 상세 📑 서식에서 진입(실데이터·개별 저장) / 'library'=사이드바(신규 설립 샘플·공통서식 편집)
+  var fundMode=(S.formsCtx==='fund'&&!!funds[S.formFund]);
+  if(!fundMode){ S.formsCtx='library'; if(S.sampleType!=='사내')S.sampleType='공동'; }
+  var cur=curForm(), isGong=(cur.fund_type||'')==='공동';
+  var fsel;
+  if(fundMode){
+    fsel='<button onclick="backToFund()" style="padding:5px 12px">← '+esc(cur.short_name||cur.name||'')+' 기금 상세로</button>';
+  } else {
+    fsel='<span style="display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden">'
+      +'<button onclick="S.sampleType=\'공동\';renderForms()" style="padding:5px 14px;border:none'+(isGong?';background:var(--acc);color:#fff;font-weight:700':';background:transparent')+'">공동기금 샘플</button>'
+      +'<button onclick="S.sampleType=\'사내\';renderForms()" style="padding:5px 14px;border:none'+(!isGong?';background:var(--acc);color:#fff;font-weight:700':';background:transparent')+'">사내기금 샘플</button></span>';
+  }
   function tplCard(t){
     var reg=has[t.key];
     var regLine=reg?'<span class="chip ok">원본 등록됨</span> <button onclick="pickTpl(\''+t.key+'\')" style="padding:3px 8px">원본 교체</button> <button onclick="clearTpl(\''+t.key+'\')" style="padding:3px 8px">삭제</button>'
@@ -816,7 +821,8 @@ function renderForms(){
     var fill='';
     if(reg){
       if(t.gong&&!isGong) fill='<div class="muted" style="font-size:12px;margin-top:8px">지원신청서는 공동근로복지기금 전용입니다. (선택된 기금은 '+esc(cur.fund_type||'?')+')</div>';
-      else fill='<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="primary" onclick="fillForm(\''+t.key+'\')">⬇ ['+esc(cur.short_name||cur.name||'')+'] '+esc(t.label)+' 데이터 채워 받기</button><button onclick="previewExcel(\''+t.key+'\')">👁 엑셀 화면에서 보기</button></div>';
+      else if(fundMode) fill='<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="primary" onclick="fillForm(\''+t.key+'\')">⬇ ['+esc(cur.short_name||cur.name||'')+'] '+esc(t.label)+' 데이터 채워 받기</button><button onclick="previewExcel(\''+t.key+'\')">👁 엑셀 화면에서 보기</button></div>';
+      else fill='<div class="muted" style="font-size:12px;margin-top:8px">실데이터 채움·엑셀 보기는 <b>기금 현황 → 기금 클릭 → 📑 서식</b>에서 합니다. (여기는 샘플 영역)</div>';
     }
     return '<div class="panel"><div class="row"><h2 style="font-size:15px">'+esc(t.label)+'</h2><span style="flex:1"></span>'+regLine+'</div>'
       +'<p class="muted" style="font-size:11.5px;margin:6px 0 0">원본 파일: '+esc(t.file)+'</p>'+fill+'</div>';
@@ -847,7 +853,7 @@ function renderForms(){
     var inkaBatch='<div style="padding:10px 12px;background:var(--warn-bg);border-radius:8px;margin-bottom:10px;font-size:12.5px;line-height:1.6">'
       +'<b>📗 공식 제출은 엑셀이 형태 100% 보존</b> — 인가 6종을 <b>한 번에</b> 채워 받으세요.'+(isSetupFund?' <span class="chip warn" style="font-size:10px">설립중 기금</span>':'')+'<br>'
       +'<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">'
-      +(setupReg?'<button class="primary" onclick="fillForm(\'setup\')" style="padding:5px 12px">⬇ 인가 6종 엑셀 한번에 채워받기</button><button onclick="previewExcel(\'setup\')" style="padding:5px 12px">👁 엑셀 화면에서 보기</button>':'<button class="primary" onclick="pickTpl(\'setup\')" style="padding:5px 12px">📎 설립 6종 원본 엑셀 등록(최초 1회)</button>')
+      +(setupReg?(fundMode?'<button class="primary" onclick="fillForm(\'setup\')" style="padding:5px 12px">⬇ 인가 6종 엑셀 한번에 채워받기</button><button onclick="previewExcel(\'setup\')" style="padding:5px 12px">👁 엑셀 화면에서 보기</button>':'<span class="chip ok">원본 등록됨 — 실데이터 채움은 기금의 📑 서식에서</span>'):'<button class="primary" onclick="pickTpl(\'setup\')" style="padding:5px 12px">📎 설립 6종 원본 엑셀 등록(최초 1회)</button>')
       +'<button onclick="sidePreviewAll()" style="padding:5px 12px">🖨 전체 초안(6종) 미리보기</button>'
       +'</div></div>';
     var inkaList=docsFor(DOC_KINDS,cur.fund_type||'공동');
@@ -868,9 +874,11 @@ function renderForms(){
       +hwpNote+docsFor(DOC_OPS,cur.fund_type||'공동').map(formRow).join('')
       +'<div style="max-width:680px;margin-top:10px">'
       +opsRow('현행 정관 (편집)','<button onclick="selectForm(\'charter\')" style="padding:4px 10px">👁 편집</button> '+((S._hwpHas||{}).charter?'<button class="primary" onclick="openHwpEditor(\'charter\')" style="padding:4px 9px">📄 HWP 편집</button>':'<button onclick="pickHwp(\'charter\')" style="padding:4px 9px">⬆ .hwp 등록</button>'))
-      +opsRow('운영상황보고서(별지15호)·결산서','<button class="primary" onclick="gotoFundTab(\'closing\')" style="padding:4px 10px">📊 회계·결산에서 생성 →</button>')
-      +opsRow('정관변경·임원변경 서식','<button class="primary" onclick="gotoFundTab(\'events\')" style="padding:4px 10px">🔁 변경 이벤트로 →</button>')
-      +opsRow('연간 일정·총회/협의회','<button onclick="gotoFundTab(\'annual\')" style="padding:4px 10px">📅 연간 일정으로 →</button>')
+      +(fundMode
+        ? opsRow('운영상황보고서(별지15호)·결산서','<button class="primary" onclick="gotoFundTab(\'closing\')" style="padding:4px 10px">📊 회계·결산에서 생성 →</button>')
+          +opsRow('정관변경·임원변경 서식','<button class="primary" onclick="gotoFundTab(\'events\')" style="padding:4px 10px">🔁 변경 이벤트로 →</button>')
+          +opsRow('연간 일정·총회/협의회','<button onclick="gotoFundTab(\'annual\')" style="padding:4px 10px">📅 연간 일정으로 →</button>')
+        : opsRow('운영상황보고서·결산서·변경이벤트','<span class="muted" style="font-size:12px">실데이터 기반 — 각 기금의 <b>📑 서식</b>/해당 탭에서</span>'))
       +'</div></div>';
   } else if(S.formPhase==='incent'){
     body='<div class="panel"><div class="row"><h2 style="font-size:15px">⑥ 근로복지공단 인센티브 <span class="chip warn" style="font-size:10px">공동 전용</span></h2><span style="flex:1"></span>'+bulkBtn+'</div>'
@@ -879,11 +887,16 @@ function renderForms(){
   } else {
     body='<div class="panel"><div class="row"><h2 style="font-size:15px">⑤ 지원금 신청 서식 <span class="chip warn" style="font-size:10px">공동 전용</span></h2><span style="flex:1"></span>'+bulkBtn+'</div>'
       +'<p class="muted" style="font-size:12px;margin:6px 0 10px">매년 지원금 신청 시 제출하는 서식 묶음입니다. 금액·참여사업장은 <b>지원금 입력</b> 탭 데이터로 채워집니다.</p>'
-      +opsRow('지원금 데이터 입력','<button class="primary" onclick="gotoFundTab(\'subsidy\')" style="padding:4px 10px">📊 지원금 입력으로 →</button>')
+      +(fundMode?opsRow('지원금 데이터 입력','<button class="primary" onclick="gotoFundTab(\'subsidy\')" style="padding:4px 10px">📊 지원금 입력으로 →</button>'):'')
       +hwpNote+DOC_SUB.map(formRow).join('')+'</div>'+tplCard(TPL.subsidy);
   }
-  $('app').innerHTML='<div class="panel"><div class="row"><h1>서식 자료실</h1><span style="flex:1"></span><label style="font-size:12px;margin-right:6px">대상 기금</label>'+fsel+'</div>'
-    +'<p class="muted" style="font-size:12px;margin:8px 0 0">기금 생애주기 단계별로 서식을 모았습니다 — <b>인가 → 법인설립 → 운영</b>, 매년 <b>지원금</b>. 왼쪽에서 서식을 고르면 <b>오른쪽에서 바로 보고 수정·저장</b>합니다.</p></div>'
+  $('crumb').textContent=fundMode?((cur.short_name||cur.name)+' — 서식'):'서식 자료실 (샘플)';
+  var hdr=fundMode
+    ? '<div class="panel"><div class="row"><h1>📑 '+esc(cur.short_name||cur.name)+' — 서식</h1><span class="chip '+(isGong?'warn':'dg')+'" style="font-size:11px">'+esc(cur.fund_type||'')+'</span><span style="flex:1"></span>'+fsel+'</div>'
+      +'<p class="muted" style="font-size:12px;margin:8px 0 0"><b>이 기금의 데이터</b>로 채워진 서식을 보고 수정·저장·출력합니다. [💾 이 기금]=이 기금 전용 저장 · [💾 공통]=유형 전체 기본서식.</p></div>'
+    : '<div class="panel"><div class="row"><h1>서식 자료실 <span class="chip warn" style="font-size:11px;vertical-align:middle">신규 설립 샘플</span></h1><span style="flex:1"></span>'+fsel+'</div>'
+      +'<p class="muted" style="font-size:12px;margin:8px 0 0"><b>신규 기금 설립용 샘플(견본)</b> 영역입니다. 여기서 서식을 다듬어 [💾 공동/사내 공통]으로 저장하면 <b>모든 기금의 기본서식</b>이 됩니다. 각 기금의 실제 서식(데이터 채움·개별 저장)은 <b>기금 현황 → 기금 클릭 → 📑 서식</b>에서.</p></div>';
+  $('app').innerHTML=hdr
     +'<div id="formSplit" style="display:flex;align-items:stretch;flex-wrap:wrap">'
     +'<div id="formLeft" style="width:'+(S.formSplitW?S.formSplitW+'px':'46%')+';min-width:300px">'+phBar+body+'</div>'
     +'<div id="formGutter" onmousedown="startFormDrag(event)" title="드래그해서 좌우 크기 조절" style="width:10px;flex:none;cursor:col-resize;display:flex;align-items:center;justify-content:center"><div style="width:3px;height:44px;background:var(--line);border-radius:3px"></div></div>'
@@ -906,6 +919,13 @@ function endFormDrag(){ _formDrag=null; document.body.style.cursor=''; document.
   window.removeEventListener('mousemove',onFormDrag); window.removeEventListener('mouseup',endFormDrag); }
 // 서식 자료실 → 선택 기금의 상세 탭으로 이동
 function gotoFundTab(tab){ var id=S.formFund; if(!id||!funds[id]){ toast('대상 기금을 먼저 선택하세요','warn'); return; } S.view='fund'; S.fundId=id; S.tab=tab; _pushHist(); route(); }
+// 현재 서식 컨텍스트의 기금 객체 — 기금 모드면 실제 기금, 샘플 모드면 가상 샘플(빈 값은 ＿＿로 표시됨)
+function curForm(){ if(S.formsCtx==='fund'&&funds[S.formFund]) return funds[S.formFund];
+  var t=(S.sampleType==='사내')?'사내':'공동';
+  return {_sample:true, fund_type:t, name:'(샘플) 신규 '+t+'근로복지기금', short_name:'신규 '+t+' 샘플'}; }
+// 기금 상세 [📑 서식] → 그 기금의 서식 화면
+function openFundDocs(){ S.formFund=S.fundId; S.formsCtx='fund'; _go('forms'); }
+function backToFund(){ _go('fund',S.formFund); }
 function pickTpl(key){
   var inp=document.createElement('input'); inp.type='file'; inp.accept='.xlsx';
   inp.onchange=function(ev){ var file=ev.target.files&&ev.target.files[0]; if(!file)return;
@@ -1391,7 +1411,7 @@ function docBody(kind,f,sites){
   return '<p class="muted">준비 중인 서식입니다.</p>';
 }
 function previewDoc(kind){
-  var f=funds[S.formFund]; if(!f){ toast('기금을 선택하세요','warn'); return; }
+  var f=curForm();
   var label=docLabel(kind), ftype=(f.fund_type==='사내')?'사내':'공동';
   showModal('<div class="row"><h2 style="margin:0">'+esc(label)+' — '+esc(f.short_name||f.name)+'</h2><span id="docLayerBadge" class="chip" style="font-size:10px">…</span><span style="flex:1"></span>'
     +'<button onclick="printDoc()">🖨 인쇄/PDF</button> <button onclick="docToHwpx(\''+kind+'\')" title="화면에서 편집한 내용 그대로 한글 파일로 저장 — 한글 프로그램이 없어도 생성됩니다">📄 한글(HWPX)</button> <button onclick="resetDoc(\''+kind+'\')">↺ 되돌리기</button> '
@@ -1407,9 +1427,9 @@ function _showDocHTML(html){ var w=$('docwrap'); if(!w)return;
   html=String(html||'').replace(/<style[\s\S]*?<\/style>/gi,'');
   w.innerHTML='<div id="doced" contenteditable="true" style="outline:none"><style>'+dgDocCssIn()+'</style>'+html+'</div>'; }
 // ── 서식 저장 3계층: 개별 기금(doc_edits/{fid}) > 유형 공통(doc_edits_type/{공동|사내}) > 자동생성 ──
-function _docCtx(kind){ var f=funds[S.formFund]||{}; var ftype=(f.fund_type==='사내')?'사내':'공동';
+function _docCtx(kind){ var f=curForm(); var ftype=(f.fund_type==='사내')?'사내':'공동';
   return { f:f, ftype:ftype,
-    fundRef: fbDb.ref(NS+'/doc_edits/'+S.formFund+'/'+kind),
+    fundRef: f._sample?null:fbDb.ref(NS+'/doc_edits/'+S.formFund+'/'+kind),   // 샘플 모드엔 개별 저장 없음
     typeRef: fbDb.ref(NS+'/doc_edits_type/'+ftype+'/'+kind) }; }
 function _setDocLayer(layer,ftype){ S._docLayer=layer;
   var b=$('docLayerBadge'); if(!b)return;
@@ -1418,11 +1438,12 @@ function _setDocLayer(layer,ftype){ S._docLayer=layer;
   else { b.textContent='자동생성'; b.className='chip'; } }
 // 공통 로더: 자동생성 먼저 표시 → 유형 공통본 → 개별 저장본 순으로 덮어씀(우선순위 역순 적용)
 function _loadDocInto(kind){ var c=_docCtx(kind), f=c.f;
-  return _loadSites(S.formFund).then(function(sites){
+  var sitesP=f._sample?Promise.resolve([]):_loadSites(S.formFund);
+  return sitesP.then(function(sites){
     _showDocHTML(docBody(kind,f,sites)); _setDocLayer('gen',c.ftype);
     return Promise.all([
       c.typeRef.once('value').then(function(s){return s.val();}).catch(function(){return null;}),
-      c.fundRef.once('value').then(function(s){return s.val();}).catch(function(){return null;})
+      c.fundRef?c.fundRef.once('value').then(function(s){return s.val();}).catch(function(){return null;}):Promise.resolve(null)
     ]).then(function(a){ var t=a[0],fd=a[1];
       if(fd&&fd.html){ _showDocHTML(fd.html); _setDocLayer('fund',c.ftype); }
       else if(t&&t.html){ _showDocHTML(t.html); _setDocLayer('type',c.ftype); }
@@ -1430,6 +1451,7 @@ function _loadDocInto(kind){ var c=_docCtx(kind), f=c.f;
   }).catch(function(e){ var w=$('docwrap'); if(w)w.innerHTML='<div class="msg err" style="padding:12px">서식 생성 오류: '+esc((e&&e.message)||e)+'</div>'; });
 }
 function saveDocEdit(kind){ var ed=$('doced'); if(!ed){ return; } var c=_docCtx(kind);
+  if(!c.fundRef){ toast('샘플 모드입니다 — [💾 '+c.ftype+' 공통]으로 저장하세요','warn'); return; }
   c.fundRef.set({html:ed.innerHTML,saved:ymd()})
     .then(function(){ _setDocLayer('fund',c.ftype); toast('이 기금 서식으로 저장됨'); })
     .catch(function(e){ toast('저장 실패: '+e.message,'err'); }); }
@@ -1451,27 +1473,28 @@ function resetDoc(kind){ var c=_docCtx(kind);
 function sidePreview(kind){
   var side=$('formSide');
   if(!side){ previewDoc(kind); return; }               // 사이드 패널 없으면 팝업 폴백
-  var f=funds[S.formFund];
-  if(!f){ side.innerHTML='<p class="msg err" style="padding:16px">상단에서 <b>대상 기금</b>을 먼저 선택하세요.</p>'; return; }
+  var f=curForm();
   S._sideKind=kind; S._docKind=kind; var label=docLabel(kind);
-  var ftype=(f.fund_type==='사내')?'사내':'공동';
+  var ftype=(f.fund_type==='사내')?'사내':'공동', smp=!!f._sample;
   side.innerHTML='<div class="row" style="margin-bottom:6px;flex-wrap:wrap;gap:4px"><h2 style="margin:0;font-size:14px">'+esc(label)+' <span class="muted" style="font-weight:400;font-size:11px">'+esc(f.short_name||f.name||'')+'</span></h2><span id="docLayerBadge" class="chip" style="font-size:10px">…</span><span style="flex:1"></span>'
     +'<button onclick="printDoc()" style="padding:3px 8px" title="인쇄/PDF">🖨</button> <button onclick="docToHwpx(\''+kind+'\')" style="padding:3px 8px" title="한글(HWPX)로 저장">📄</button> <button onclick="resetDoc(\''+kind+'\')" style="padding:3px 8px" title="저장본 삭제(개별→공통→자동생성 순으로 되돌림)">↺</button> '
-    +'<button onclick="saveDocType(\''+kind+'\')" style="padding:3px 10px" title="모든 '+ftype+'기금의 기본서식으로 저장">💾 '+ftype+' 공통</button>'
-    +'<button class="primary" onclick="saveDocEdit(\''+kind+'\')" style="padding:3px 10px" title="이 기금에만 저장">💾 이 기금</button></div>'
-    +'<p class="muted" style="font-size:11px;margin:0 0 6px">내용 클릭해 수정 → <b>[💾 이 기금]</b>=이 기금 전용 저장 · <b>[💾 '+ftype+' 공통]</b>=모든 '+ftype+'기금 기본으로 저장. 격자·도장란 그대로 필요하면 엑셀/HWP.</p>'
+    +'<button '+(smp?'class="primary" ':'')+'onclick="saveDocType(\''+kind+'\')" style="padding:3px 10px" title="모든 '+ftype+'기금의 기본서식으로 저장">💾 '+ftype+' 공통</button>'
+    +(smp?'':'<button class="primary" onclick="saveDocEdit(\''+kind+'\')" style="padding:3px 10px" title="이 기금에만 저장">💾 이 기금</button>')+'</div>'
+    +'<p class="muted" style="font-size:11px;margin:0 0 6px">'+(smp
+      ?'샘플(견본) 편집 중 — <b>[💾 '+ftype+' 공통]</b>으로 저장하면 모든 '+ftype+'기금의 기본서식이 됩니다.'
+      :'내용 클릭해 수정 → <b>[💾 이 기금]</b>=이 기금 전용 저장 · <b>[💾 '+ftype+' 공통]</b>=모든 '+ftype+'기금 기본으로 저장. 격자·도장란 그대로 필요하면 엑셀/HWP.')+'</p>'
     +'<div id="docwrap" style="border:1px solid var(--line);border-radius:8px;max-height:72vh;overflow:auto;padding:14px;background:#fff">'+loadingHTML()+'</div>';
   _loadDocInto(kind);   // 자동생성 → 유형 공통본 → 개별 저장본 순 표시
 }
 // 새 기금 일괄: 인가 6종 전체 초안을 한 화면에 쌓아 미리보기·인쇄(#doced 재사용 → printDoc 그대로)
 function sidePreviewAll(){
-  var f=funds[S.formFund]; if(!f){ toast('기금을 선택하세요','warn'); return; }
+  var f=curForm();
   var side=$('formSide'); if(!side)return;
   side.innerHTML='<div class="row" style="margin-bottom:6px"><h2 style="margin:0;font-size:14px">설립 인가 6종 — 전체 초안</h2><span style="flex:1"></span><button class="primary" onclick="printDoc()" style="padding:3px 10px">🖨 전체 인쇄</button></div>'
     +'<p class="muted" style="font-size:11px;margin:0 0 6px">기금 기본정보로 채운 6종 초안입니다. 인쇄 시 서식마다 페이지가 나뉩니다. (공식 제출은 엑셀 채움 권장)</p>'
     +'<div id="docwrap" style="border:1px solid var(--line);border-radius:8px;max-height:72vh;overflow:auto;padding:14px;background:#fff">'+loadingHTML()+'</div>';
-  _loadSites(S.formFund).then(function(sites){
-    var inner=DOC_KINDS.map(function(d){ return '<div style="page-break-after:always;margin-bottom:24px;border-bottom:2px dashed #ccc;padding-bottom:16px">'+docBody(d[0],f,sites)+'</div>'; }).join('');
+  (f._sample?Promise.resolve([]):_loadSites(S.formFund)).then(function(sites){
+    var inner=docsFor(DOC_KINDS,f.fund_type||'공동').map(function(d){ return '<div style="page-break-after:always;margin-bottom:24px;border-bottom:2px dashed #ccc;padding-bottom:16px">'+docBody(d[0],f,sites)+'</div>'; }).join('');
     var w=$('docwrap'); if(w) w.innerHTML='<div id="doced"><style>'+dgDocCssIn()+'</style>'+inner+'</div>';
   }).catch(function(e){ var w=$('docwrap'); if(w)w.innerHTML='<div class="msg err">'+esc(e.message)+'</div>'; });
 }
@@ -1524,6 +1547,7 @@ function printDoc(){ var ed=$('doced'); if(!ed)return;
 // 원본 엑셀 + 기금 데이터 → 채워진 워크북 버퍼 (받기·미리보기 공용)
 function _fillWbBuffer(key){
   var fid=S.formFund, f=funds[fid];
+  if(curForm()._sample) return Promise.reject(new Error('샘플 모드 — 실데이터 채움은 기금 현황 → 기금 → 📑 서식에서'));
   if(!f) return Promise.reject(new Error('기금을 선택하세요'));
   return idbGet(key).then(function(buf){
     if(!buf) throw new Error('먼저 원본 엑셀을 등록하세요');
@@ -1624,7 +1648,7 @@ function renderFund(){
     if(t[0]==='subsidy'&&f.fund_type==='사내') return '';   // 지원금은 공동 전용
     if(t[2]) return '<div class="tab'+(S.tab===t[0]?' on':'')+'" onclick="goTab(\''+t[0]+'\')">'+t[1]+'</div>';
     return '<div class="tab soon" title="다음 단계에서 추가">'+t[1]+' ·</div>';
-  }).join('')+'</div>';
+  }).join('')+'<div class="tab" onclick="openFundDocs()" title="이 기금 데이터로 채워진 서식 보기·수정·출력 (인가~인센티브 전 단계)">📑 서식</div></div>';
   if(S.tab==='subsidy'&&f.fund_type==='사내') S.tab='info';
   if(S.tab==='setup'&&!setupMode) S.tab='info';
   var body = S.tab==='setup' ? setupTab(f)
