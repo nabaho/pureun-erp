@@ -293,7 +293,8 @@ function shell(){
     +'<div class="sitem" id="nav-ho" onclick="go(\'ho\')">🔄 인수인계 <span class="cnt" id="cnt-ho"></span></div>'
     +'<div class="sitem" id="nav-archive" onclick="go(\'archive\')">🗄 보관함 <span class="cnt" id="cnt-ar"></span></div>'
     +'<div style="margin-top:auto">'
-    +'<div class="sitem" onclick="importModal()" style="font-size:12px">📥 이관 가져오기</div>'
+    +'<div class="sitem" onclick="puerpModal()" style="font-size:12px">🔗 푸른이알피 업무 가져오기</div>'
+    +'<div class="sitem" onclick="importModal()" style="font-size:12px">📥 엑셀 이관 가져오기</div>'
     +'<div style="font-size:11px;color:var(--faint);padding:8px">주간 업무기록 · Firebase<br>기록은 자동 저장됩니다</div></div>'
     +'</div>'
     +'<div id="main"><div id="topbar"><span id="crumb">내 업무</span>'
@@ -820,6 +821,7 @@ function renderDrawer(){
   h+='</div>';
   h+='<div class="dfoot">'
     +'<button onclick="itemModal(\''+id+'\')">✏️ 수정</button>'
+    +(it.src==='puerp'&&it.ref?'<button onclick="openPuerp(\''+esc(it.ref.type)+'\')" title="푸른이알피 해당 메뉴로 이동">🔗 푸른이알피</button>':'')
     +'<button onclick="handoverModal(\''+id+'\')">🔄 담당 변경</button>'
     +(it.state==='done'
       ?'<button onclick="restoreItem(\''+id+'\')">↩ 진행으로 복구</button>'
@@ -1377,6 +1379,165 @@ function renderArchive(){
   });
   h+='</tbody></table></div>';
   app.innerHTML=h;
+}
+
+/* ── 푸른이알피 담당 업무 가져오기 (계약·사건·컨설팅·기금·기타) ── */
+// pu-erp는 localStorage(pureun_v6_*)에 마스터를 캐시함 — 같은 출처라 그대로 읽는다.
+function _ls(key){
+  try{ var raw=localStorage.getItem('pureun_v6_'+key); if(!raw) return null;
+    var v=JSON.parse(raw); if(v&&!Array.isArray(v)&&typeof v==='object') v=Object.keys(v).map(function(k){return v[k];});
+    return Array.isArray(v)?v:null; }catch(e){ return null; }
+}
+// 종료 판정 — pu-erp isItemClosed와 동일 기준
+function _peClosed(x){
+  if(!x) return true;
+  if(x.permanentArchived||x.archived) return true;
+  if(x.closedDate||x.closedAt||x.closeDate) return true;
+  var st=String(x.status||'');
+  return st==='closed'||st==='cancelled'||st==='transferred';
+}
+// pu-erp 유형명 → 업무시트 표준 구분 (엑셀 이관과 같은 규칙)
+function normCat(raw,title){
+  var s=String((raw||'')+' '+(title||'')).replace(/\s/g,'');
+  if(/산재/.test(s)) return '산재';
+  if(/체불|체당/.test(s)) return '체불';
+  if(/부당|부해/.test(s)) return '부해';
+  if(/괴롭힘|직괴/.test(s)) return '조사';
+  if(/행심|행정심판/.test(s)) return '행심';
+  if(/기금|공동근로복지/.test(s)) return '기금';
+  if(/노사|노조/.test(s)) return '노사';
+  if(/급여/.test(s)) return '급여';
+  if(/산안|안전/.test(s)) return '산안';
+  if(/지원금/.test(s)) return '지원';
+  if(/컨설팅|일터|구조혁신|비즈니스|현장클리닉|현클|기술보호|가족친화|상공회의소|자율점검|징계위원회|근로계약서|통상임금/.test(s)) return '컨설팅';
+  if(/인사|규정|취업규칙/.test(s)) return '인사';
+  if(/조사/.test(s)) return '조사';
+  return '기타';
+}
+function _normCo(s){ return String(s||'').replace(/\(주\)|㈜|주식회사|\(유\)|유한회사|[\s·.,\-()]/g,'').toLowerCase(); }
+function _peDue(x){
+  var ds=(x.deadlines||[]).map(function(d){return d&&d.date;}).filter(Boolean).sort();
+  if(ds.length){ var t=todayStr(); var up=ds.filter(function(d){return d>=t;}); return up[0]||ds[ds.length-1]; }
+  return x.contractEndDate||'';
+}
+// 5종 마스터 → 업무시트 항목 후보
+function puerpCandidates(){
+  var users=_ls('user_accounts')||[];              // 이름 해석용(퇴직자 포함)
+  var sid2name={}; users.forEach(function(u){ if(u&&u.sid) sid2name[u.sid]=u.name||u.sid; });
+  var SRC=[
+    ['contract','계약',_ls('contracts'),function(x){return x.contractNo||'';},function(x){return x.title||x.contractType||'';},function(x){return x.contractType||x.consultingType||x.caseType||x.fundType||x.programName||'';}],
+    ['case','사건',_ls('cases'),function(x){return x.caseNo||'';},function(x){return x.title||x.caseName||'';},function(x){return x.typeName||x.caseType||'';}],
+    ['consulting','컨설팅',_ls('consultings'),function(x){return x.consultNo||x.no||'';},function(x){return x.title||x.programName||'';},function(x){return x.typeName||x.consultingType||x.programName||'';}],
+    ['fund','기금',_ls('funds'),function(x){return x.fundNo||x.no||'';},function(x){return x.title||x.fundName||'';},function(x){return x.fundType||'기금';}],
+    ['other','기타',_ls('other_projects'),function(x){return x.projectNo||x.no||'';},function(x){return x.title||x.projectName||'';},function(x){return x.programName||'';}]
+  ];
+  var out=[], any=false;
+  SRC.forEach(function(s){
+    var arr=s[2]; if(!arr) return; any=true;
+    arr.forEach(function(x){
+      if(!x||!x.id||_peClosed(x)) return;
+      var co=x.companyName||x.fundName||x.targetName||'';
+      var kind=s[5](x), title=s[4](x);
+      var mgr=sid2name[x.managerMain]||'';
+      var subs=(x.managerSubs||[]).map(function(sd){return sid2name[sd]||'';}).filter(Boolean);
+      out.push({ pid:'PE-'+s[0]+'-'+String(x.id).replace(/[.#$/\[\]\s]/g,'_'),
+        kindLabel:s[1], no:s[3](x)||'', cat:normCat(kind,title),
+        company:co, title:(title||kind||co||'무제'), officer:(x.jurisdiction&&x.jurisdiction.officer)||'',
+        client:x.payee||'', mgr:mgr, mgrSid:x.managerMain||'', subs:subs,
+        due:_peDue(x), start:x.receiveDate||x.contractStartDate||'',
+        ref:{type:s[0],id:String(x.id)} });
+    });
+  });
+  return any?out:null;
+}
+function puerpModal(){
+  var cand=puerpCandidates();
+  if(cand===null){
+    showModal('<h2 style="margin:0 0 10px">🔗 푸른이알피 업무 가져오기</h2>'
+      +'<p class="muted" style="font-size:12.5px;line-height:1.7">이 브라우저에 푸른이알피 데이터가 없습니다.<br>'
+      +'같은 브라우저에서 <b>푸른이알피를 한 번 열었다가</b> 다시 시도해 주세요. (데이터가 브라우저에 캐시된 뒤 읽습니다)</p>'
+      +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">닫기</button>'
+      +'<button class="primary" onclick="window.open(\'pu-erp.html?sso=1\',\'_blank\')">푸른이알피 열기</button></div>');
+    return;
+  }
+  if(!cand.length){
+    showModal('<h2 style="margin:0 0 10px">🔗 푸른이알피 업무 가져오기</h2>'
+      +'<p class="muted" style="font-size:12.5px">가져올 진행 중 업무가 없습니다 (종료된 건은 제외합니다).</p>'
+      +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">닫기</button></div>');
+    return;
+  }
+  // 분류: 이미 가져옴 / 겹침(엑셀 이관건과 기업명 일치) / 신규
+  var byRef={}, exByCo={};
+  allItems().forEach(function(it){
+    if(it.src==='puerp'&&it.ref&&it.ref.id) byRef[it.ref.type+'|'+it.ref.id]=it;
+    var c=_normCo(it.company); if(c) (exByCo[c]=exByCo[c]||[]).push(it);
+  });
+  var done=[], dup=[], neu=[];
+  cand.forEach(function(c){
+    if(byRef[c.ref.type+'|'+c.ref.id]){ done.push(c); return; }
+    var m=exByCo[_normCo(c.company)]||[];
+    if(m.length){ c._match=m; dup.push(c); } else neu.push(c);
+  });
+  S._peCand={}; cand.forEach(function(c){ S._peCand[c.pid]=c; });
+  function row(c,checked,extra){
+    return '<label style="display:flex;gap:8px;align-items:flex-start;padding:6px 2px;border-bottom:1px solid var(--line);font-size:12.5px;cursor:pointer">'
+      +'<input type="checkbox" class="pechk" value="'+esc(c.pid)+'"'+(checked?' checked':'')+' style="margin-top:3px">'
+      +'<span style="flex:1;min-width:0">'+catBadge(c.cat)
+      +' <b>'+esc(c.company||c.client||'—')+'</b> <span class="muted">'+esc(c.title)+'</span>'
+      +'<div class="muted" style="font-size:11px">'+esc(c.kindLabel)+(c.no?' '+esc(c.no):'')
+      +(c.mgr?' · 담당 '+esc(c.mgr):' · <span style="color:var(--warn)">담당 미지정</span>')
+      +(c.due?' · 기한 '+esc(c.due):'')+'</div>'+(extra||'')+'</span></label>';
+  }
+  var h='<h2 style="margin:0 0 6px">🔗 푸른이알피 업무 가져오기</h2>'
+    +'<p class="muted" style="font-size:12.5px;margin:0 0 12px">계약·사건·컨설팅·기금·기타에서 <b>진행 중</b>인 '+cand.length+'건을 찾았습니다. '
+    +'관리번호는 푸른이알피 번호를 그대로 씁니다.</p>';
+  if(dup.length){
+    h+='<div style="background:var(--warn-bg);border:1px solid #f0c68a;border-radius:9px;padding:10px 12px;margin-bottom:10px">'
+      +'<div style="font-size:12.5px;font-weight:800;color:var(--warn);margin-bottom:4px">⚠ 이미 있는 업무와 기업명이 겹치는 '+dup.length+'건 — 기본 제외</div>'
+      +'<div class="muted" style="font-size:11.5px;margin-bottom:6px">같은 건이면 그대로 두세요(체크 안 함). 다른 건이면 체크해서 별도로 등록합니다.</div>'
+      +'<div style="max-height:210px;overflow-y:auto">'
+      +dup.map(function(c){
+        return row(c,false,'<div style="font-size:11px;color:var(--warn);margin-top:2px">↔ 기존: '
+          +c._match.slice(0,2).map(function(m){return esc((m.title||'')+(m.no?' ('+m.no+')':''));}).join(' / ')
+          +(c._match.length>2?' 외 '+(c._match.length-2)+'건':'')+'</div>');
+      }).join('')+'</div></div>';
+  }
+  h+='<div style="font-size:12.5px;font-weight:800;margin:10px 0 2px">✅ 새로 가져올 '+neu.length+'건</div>';
+  h+=neu.length?('<div style="max-height:260px;overflow-y:auto">'+neu.map(function(c){return row(c,true);}).join('')+'</div>')
+    :'<div class="muted" style="font-size:12px;padding:8px 2px">새로 가져올 건이 없습니다.</div>';
+  if(done.length) h+='<div class="muted" style="font-size:11.5px;margin-top:10px">🔁 이미 가져온 '+done.length+'건은 목록에서 제외했습니다.</div>';
+  h+='<div id="pe-msg" class="muted" style="font-size:12px;min-height:18px;margin-top:8px"></div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:6px"><button onclick="closeM()">취소</button>'
+    +'<button class="primary" onclick="runPuerpImport()">선택한 건 가져오기</button></div>';
+  showModal(h);
+}
+// 푸른이알피 해당 메뉴로 이동 (pu-erp는 #menu= 딥링크를 지원)
+function openPuerp(type){
+  var MENU={contract:'biz/contract',case:'biz/case',consulting:'biz/consulting',fund:'biz/fund',other:'biz/other'};
+  window.open('pu-erp.html?sso=1#menu='+encodeURIComponent(MENU[type]||'biz/case'),'_blank');
+}
+function runPuerpImport(){
+  var sel=[].slice.call(document.querySelectorAll('.pechk')).filter(function(c){return c.checked;}).map(function(c){return c.value;});
+  var msg=$('pe-msg');
+  if(!sel.length){ if(msg)msg.textContent='선택된 건이 없습니다.'; return; }
+  loadStaff().then(function(st){
+    var name2sid={}; st.forEach(function(u){ name2sid[u.name]=u.sid; });
+    var up={}, n=0;
+    sel.forEach(function(pid){
+      var c=(S._peCand||{})[pid]; if(!c) return;
+      var rec={ no:c.no||(S.year+'-'+c.cat+'-PE'), cat:c.cat, company:c.company||'', client:c.client||'',
+        officer:c.officer||'', title:c.title||'', due:c.due||'', start:c.start||'', status:'진행중',
+        mgr_main:{sid:c.mgrSid||name2sid[c.mgr]||'',name:c.mgr||''},
+        mgr_subs:(c.subs||[]).map(function(nm){return {sid:name2sid[nm]||'',name:nm};}),
+        src:'puerp', ref:c.ref, created_at:new Date().toISOString() };
+      up[NS+'/items/'+S.year+'/'+c.pid]=rec; n++;
+    });
+    if(!n){ if(msg)msg.textContent='가져올 건이 없습니다.'; return; }
+    if(msg)msg.textContent='등록 중… ('+n+'건)';
+    fbDb.ref().update(up).then(function(){
+      closeM(); toast('🔗 푸른이알피에서 '+n+'건 가져옴'); route();
+    }).catch(function(e){ if(msg)msg.textContent='실패: '+e.message; });
+  });
 }
 
 /* ── 엑셀 이관 JSON 가져오기 ── */
