@@ -259,7 +259,16 @@ function goTab(tab){ _leaveGuard().then(function(ok){ if(!ok)return; S.tab=tab; 
 function goBack(){ _leaveGuard().then(function(ok){ if(!ok)return; if(history.length>1) history.back(); else _go('home'); }); }
 function _pushHist(){ try{ history.pushState({view:S.view,fundId:S.fundId,tab:S.tab,homeTab:S.homeTab}, ''); }catch(e){} }
 window.addEventListener('popstate', function(ev){
-  clearDirty();   // 브라우저 뒤로가기는 확인 없이 이동(beforeunload가 새로고침/닫기는 커버)
+  // 미저장 변경이 있으면 확인 — 취소 시 원래 화면으로 되돌림(히스토리 복구)
+  if(_dirty){
+    var back={view:S.view,fundId:S.fundId,tab:S.tab,homeTab:S.homeTab};
+    confirmM('저장하지 않은 변경이 있습니다.\n저장하지 않고 이동할까요?',{ok:'이동',danger:true}).then(function(ok){
+      if(ok){ clearDirty(); var st2=ev.state||{view:'home'};
+        S.view=st2.view||'home'; if(st2.fundId!==undefined)S.fundId=st2.fundId; if(st2.tab)S.tab=st2.tab; if(st2.homeTab)S.homeTab=st2.homeTab; route(); }
+      else { try{ history.pushState(back,''); }catch(e){} }   // 머무르기
+    });
+    return;
+  }
   var st=ev.state; if(!st){ S.view='home'; route(); return; }
   S.view=st.view||'home'; if(st.fundId!==undefined)S.fundId=st.fundId; if(st.tab)S.tab=st.tab; if(st.homeTab)S.homeTab=st.homeTab;
   route();
@@ -273,19 +282,22 @@ function route(){
 }
 
 function mgrText(f){
-  if(f.mgr_main||f.mgr_subs){
+  if(_hasMgrStruct(f)){
     var main=(f.mgr_main&&f.mgr_main.name)||'';
     var subs=(f.mgr_subs||[]).map(function(s){return (s&&s.name)||'';}).filter(Boolean);
     return [main].concat(subs.map(function(n){return n+'(부)';})).filter(Boolean).join(', ')||'—';
   }
   return f.manager||'—';   // 구 데이터 호환
 }
+function _hasMgrStruct(f){   // 빈 배열([])은 구조화 데이터로 보지 않음 — manager 폴백 유지
+  return !!(f.mgr_main&&f.mgr_main.name)||!!(f.mgr_subs&&f.mgr_subs.length);
+}
 function mgrMainName(f){
-  if(f.mgr_main||f.mgr_subs) return (f.mgr_main&&f.mgr_main.name)||'';
+  if(_hasMgrStruct(f)) return (f.mgr_main&&f.mgr_main.name)||'';
   return f.manager||'';   // 구 데이터: 통 문자열을 주담당 칸에 표시
 }
 function mgrSubNames(f){
-  if(f.mgr_main||f.mgr_subs) return (f.mgr_subs||[]).map(function(s){return (s&&s.name)||'';}).filter(Boolean).join(', ');
+  if(_hasMgrStruct(f)) return (f.mgr_subs||[]).map(function(s){return (s&&s.name)||'';}).filter(Boolean).join(', ');
   return '';
 }
 function lifeSelect(f){
@@ -345,8 +357,10 @@ function loadStaff(){
 // ── 새 기금 등록 ──
 function nextFundId(){
   var mx=0; Object.keys(funds).forEach(function(k){ var m=/^FUND-(\d+)$/.exec(k); if(m){var n=+m[1]; if(n>mx)mx=n;} });
-  return 'FUND-'+('0000'+(mx+1)).slice(-4);
+  var n=mx+1, s=String(n);
+  return 'FUND-'+(s.length>=4?s:('0000'+s).slice(-4));   // 9999 초과해도 자릿수 늘려 충돌 방지
 }
+var _normName=function(s){ return String(s||'').replace(/\s+/g,'').trim(); };   // 공백 무시 비교
 function newFund(){
   showModal('<h2 style="margin:0 0 4px">새 기금 등록</h2>'
     +'<p class="muted" style="font-size:12px;margin:0 0 12px">신규(설립부터) 또는 기존(이미 설립·운영 중) 기금을 등록합니다. 담당은 푸른이알피 재직자에서 선택.</p>'
@@ -369,7 +383,7 @@ function newFund(){
 function createFund(){
   var name=($('nf-name')&&$('nf-name').value.trim())||'';
   if(!name){ toast('기금법인명을 입력하세요','warn'); return; }
-  var dupId=Object.keys(funds).filter(function(k){return (funds[k].name||'')===name;})[0];
+  var dupId=Object.keys(funds).filter(function(k){return _normName(funds[k].name)===_normName(name);})[0];
   if(dupId){ var df=funds[dupId];
     var where=df.setup_stage==='설립준비'?'설립중':(isPast(df)?(df.lifecycle||'지난'):'운영');
     var loc={'지역공동':'지역기금','개별공동':'공동기금','사내':'사내기금'}[grp(df)]||'';
@@ -387,11 +401,20 @@ function createFund(){
   if(sel&&sel.value){ var op=sel.options[sel.selectedIndex]; var nm=op.getAttribute('data-name')||op.text;
     rec.mgr_main={sid:sel.value,name:nm}; rec.manager=nm; }
   else { var tx=$('nf-mgr-text'); if(tx&&tx.value.trim()){ rec.manager=tx.value.trim(); } }
-  var fid=nextFundId();
-  fbDb.ref(NS+'/funds/'+fid).set(rec).then(function(){
-    funds[fid]=rec; closeM(); S.fundId=fid; S.tab=(entry==='new'?'setup':'info'); _go('fund',fid); S.tab=(entry==='new'?'setup':'info'); renderFund();
-    toast('새 기금 등록: '+short+(entry==='new'?' (설립부터)':' (운영부터)'));
-  }).catch(function(e){ toast('등록 실패: '+e.message,'err'); });
+  // 동시 등록 충돌 방지 — 빈 ID를 찾을 때까지 트랜잭션으로 선점(이미 있으면 다음 번호)
+  var tryN=0;
+  (function claim(fid){
+    if(tryN++>50){ toast('등록 실패: ID 할당 충돌','err'); return; }
+    fbDb.ref(NS+'/funds/'+fid).transaction(function(cur){ return cur===null?rec:undefined; }, function(err,committed){
+      if(err){ toast('등록 실패: '+err.message,'err'); return; }
+      if(!committed){                                    // 이미 그 ID가 있음 → 다음 번호로 재시도
+        var m=/^FUND-(\d+)$/.exec(fid), n=m?(+m[1]+1):1, s=String(n);
+        claim('FUND-'+(s.length>=4?s:('0000'+s).slice(-4))); return;
+      }
+      funds[fid]=rec; closeM(); S.fundId=fid; S.tab=(entry==='new'?'setup':'info'); _go('fund',fid); S.tab=(entry==='new'?'setup':'info'); renderFund();
+      toast('새 기금 등록: '+short+(entry==='new'?' (설립부터)':' (운영부터)'));
+    });
+  })(nextFundId());
 }
 function assignMgr(fid){
   var f=funds[fid]; if(!f) return;
@@ -601,6 +624,14 @@ var TAX_MAP={
   // 서울(단일 세무서 구만; 강남구는 역삼·삼성·강남 복수라 수기)
   '서울 강서구':'강서세무서','서울 강동구':'강동세무서'
 };
+// 등록면허세 신고 관할 지자체(시·군·구청) — 소재지에서 추출. 세무서와 다름.
+function _localGovFromAddr(addr){
+  var a=String(addr||'').trim(); if(!a) return '';
+  var m=a.match(/(\S+?(?:도|특별시|광역시|특별자치시|특별자치도))\s+(\S+?시)\s+(\S+?구)/);
+  if(m) return m[2]+' '+m[3]+'청';                       // 예: 청주시 상당구청
+  var m2=a.match(/(\S+?(?:도|특별시|광역시|특별자치시|특별자치도))\s+(\S+?(?:시|군|구))/);
+  return m2?(m2[2]+'청'):'';                              // 예: 예산군청 / 강남구청
+}
 function guessTax(address){
   var a=String(address||'').trim(); if(!a) return '';
   var sm=a.match(/(\S+?(?:도|특별시|광역시|특별자치시|특별자치도))\s+(\S+?시)\s+(\S+?구)/);   // 시+구(수원·청주 등)
@@ -637,13 +668,21 @@ function bulkRegistry(){
     +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">취소</button><button class="primary" onclick="applyBulkRegistry()">'+plan.length+'개 채우기</button></div>');
   window._regPlan=plan;
 }
-function applyBulkRegistry(){
-  var plan=window._regPlan||[]; if(!plan.length){ closeM(); return; }
-  var updates={};
-  plan.forEach(function(p){ updates[p.id+'/registry_office']=p.office; });
-  fbDb.ref(NS+'/funds').update(updates).then(function(){
-    plan.forEach(function(p){ if(funds[p.id]) funds[p.id].registry_office=p.office; });
-    window._regPlan=null; closeM(); renderHome(); toast(plan.length+'개 관할등기소 채움 — 확인 필요');
+function applyBulkRegistry(){ _applyBulkOffice(window._regPlan,'registry_office','관할등기소',function(){window._regPlan=null;}); }
+// 공용 적용기 — 적용 직전 서버 현재값 재확인해 '아직 빈 칸'만 채움(그 사이 입력분 보호)
+function _applyBulkOffice(plan,field,label,clearPlan){
+  plan=plan||[]; if(!plan.length){ closeM(); return; }
+  fbDb.ref(NS+'/funds').once('value').then(function(s){
+    var cur=s.val()||{}, updates={}, n=0, skip=0;
+    plan.forEach(function(p){ var c=cur[p.id]; if(!c) return;
+      if(String(c[field]||'').trim()){ skip++; return; }    // 그 사이 채워졌으면 건너뜀
+      updates[p.id+'/'+field]=p.office; n++; });
+    if(!n){ closeM(); toast('채울 대상이 없습니다(이미 입력됨 '+skip+'건)','warn'); return; }
+    return fbDb.ref(NS+'/funds').update(updates).then(function(){
+      plan.forEach(function(p){ if(funds[p.id]&&updates[p.id+'/'+field]!==undefined) funds[p.id][field]=p.office; });
+      if(clearPlan)clearPlan(); closeM(); renderHome();
+      toast(n+'개 '+label+' 채움'+(skip?' · '+skip+'건은 이미 입력돼 건너뜀':'')+' — 확인 필요');
+    });
   }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
 }
 function fillTaxOffice(){
@@ -673,15 +712,7 @@ function bulkTax(){
     +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">취소</button><button class="primary" onclick="applyBulkTax()">'+plan.length+'개 채우기</button></div>');
   window._taxPlan=plan;
 }
-function applyBulkTax(){
-  var plan=window._taxPlan||[]; if(!plan.length){ closeM(); return; }
-  var updates={};
-  plan.forEach(function(p){ updates[p.id+'/tax_office']=p.office; });
-  fbDb.ref(NS+'/funds').update(updates).then(function(){
-    plan.forEach(function(p){ if(funds[p.id]) funds[p.id].tax_office=p.office; });
-    window._taxPlan=null; closeM(); renderHome(); toast(plan.length+'개 관할세무서 채움 — 확인 필요');
-  }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
-}
+function applyBulkTax(){ _applyBulkOffice(window._taxPlan,'tax_office','관할세무서',function(){window._taxPlan=null;}); }
 function patchFund(id,field,val){
   val=val.trim?val.trim():val;
   fbDb.ref(NS+'/funds/'+id+'/'+field).set(val).then(function(){
@@ -695,7 +726,7 @@ function subBoardPanel(){
   // 공동기금(사내 제외)·운영 중만
   var rpri={'충남':1,'경기':2};
   var arr=Object.keys(funds).map(function(k){var o=Object.assign({},funds[k]);o._id=k;return o;})
-    .filter(function(f){return f.fund_type!=='사내'&&!isPast(f);})
+    .filter(function(f){return f.fund_type!=='사내'&&!isPast(f)&&f.setup_stage!=='설립준비';})
     .sort(function(a,b){return ((rpri[a.region]||9)-(rpri[b.region]||9))||(a.short_name||'').localeCompare(b.short_name||'','ko',{numeric:true});});
   function sv(f,k){var y=(f.years&&f.years[yr]&&f.years[yr].subsidy)||{};return y[k]!=null?y[k]:'';}
   function moneyIn(f,k){return '<input value="'+esc(sv(f,k))+'" onchange="patchSub(\''+f._id+'\',\''+k+'\',this.value,\'num\')" style="width:110px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-size:12px;text-align:right">';}
@@ -723,12 +754,18 @@ function subBoardPanel(){
     +'</table></div></div>';
 }
 function patchSub(fid,field,val,type){
-  var v = type==='num' ? (num(val)||'') : (val.trim?val.trim():val);
+  var raw=(val==null?'':String(val)).trim();
+  var v = type==='num' ? (raw===''?'':(num(raw)===''?'':num(raw))) : raw;   // 0도 정상 저장(빈칸과 구분)
   var _yr=S.year;
   fbDb.ref(NS+'/funds/'+fid+'/years/'+_yr+'/subsidy/'+field).set(v).then(function(){
-    if(!funds[fid].years)funds[fid].years={}; if(!funds[fid].years[_yr])funds[fid].years[_yr]={};
-    if(!funds[fid].years[_yr].subsidy)funds[fid].years[_yr].subsidy={};
-    funds[fid].years[_yr].subsidy[field]=v; if(S.view==='fund')renderFund(); toast('저장됨');
+    var t=funds[fid]; if(!t) return;
+    if(!t.years)t.years={}; if(!t.years[_yr])t.years[_yr]={};
+    if(!t.years[_yr].subsidy)t.years[_yr].subsidy={};
+    t.years[_yr].subsidy[field]=v;
+    // 입력 중 재렌더 방지 — 포커스가 보드 입력칸에 있으면 화면은 그대로 두고 값만 반영
+    var ae=document.activeElement, typing=ae&&(ae.tagName==='INPUT'||ae.tagName==='TEXTAREA');
+    if(!typing&&S.view==='fund') renderFund();
+    toast('저장됨');
   }).catch(function(e){toast('저장 실패: '+e.message,'err');});
 }
 function openFundSubsidy(fid){ S.fundId=fid; S.tab='subsidy'; _pushHist(); renderFund(); }
@@ -1443,7 +1480,7 @@ function docBody(kind,f,sites){
       +"<tr><th>등록면허세</th><td class='right'>"+dgWon(reg.license_tax)+" 원</td></tr>"
       +"<tr><th>지방교육세</th><td class='right'>"+dgWon(reg.edu_tax)+" 원</td></tr>"
       +"<tr><th>합계</th><td class='right'>"+(tot===''?'＿＿＿＿＿＿':Number(tot).toLocaleString())+" 원</td></tr>"
-      +"<tr><th>관할 지자체</th><td>"+dgV(f.tax_office,14)+"</td></tr></table>"
+      +"<tr><th>관할 지자체(시·군·구청)</th><td>"+dgV(reg.local_gov||_localGovFromAddr(f.address),14)+"</td></tr></table>"
       +"<p class='center'>"+dgToday()+"</p><div class='sign'>신고인: "+dgV(chairman)+" (인)</div>";
   }
   if(kind==='reg_proxy'){
@@ -1467,10 +1504,27 @@ function previewDoc(kind){
   S._docKind=kind;
   _loadDocInto(kind);
 }
+// 저장된 서식 HTML 살균 — 스크립트·이벤트핸들러·위험 URL 제거(저장형 XSS 차단)
+function sanitizeDocHTML(html){
+  var s=String(html||'');
+  s=s.replace(/<style[\s\S]*?<\/style>/gi,'')          // 전역 style 유출 차단
+     .replace(/<script[\s\S]*?<\/script>/gi,'')
+     .replace(/<\/?(iframe|object|embed|link|meta|form|base)\b[^>]*>/gi,'');
+  var box=document.createElement('div'); box.innerHTML=s;
+  var all=box.querySelectorAll('*');
+  for(var i=0;i<all.length;i++){ var el=all[i];
+    for(var j=el.attributes.length-1;j>=0;j--){ var a=el.attributes[j], n=a.name.toLowerCase(), v=String(a.value||'');
+      if(n.indexOf('on')===0) el.removeAttribute(a.name);                                  // onerror/onclick 등
+      else if((n==='href'||n==='src'||n==='xlink:href')&&/^\s*(javascript|data(?!:image\/(png|jpe?g|gif|webp|svg\+xml);)|vbscript):/i.test(v)) el.removeAttribute(a.name);
+      else if(n==='style'&&/expression\s*\(|javascript:/i.test(v)) el.removeAttribute(a.name);
+    }
+  }
+  return box.innerHTML;
+}
 function _showDocHTML(html){ var w=$('docwrap'); if(!w)return;
-  // 전역 <style>(body{...} 등) 제거 — 페이지 전체로 새는 것 차단. 저장된 옛 서식에 박힌 것도 정화.
-  html=String(html||'').replace(/<style[\s\S]*?<\/style>/gi,'');
-  w.innerHTML='<div id="doced" contenteditable="true" style="outline:none"><style>'+dgDocCssIn()+'</style>'+html+'</div>'; }
+  w.innerHTML='<div id="doced" contenteditable="true" style="outline:none"><style>'+dgDocCssIn()+'</style>'+sanitizeDocHTML(html)+'</div>';
+  var ed=$('doced'); if(ed&&!ed._dirtyBound){ ed._dirtyBound=1; ed.addEventListener('input',function(){ markDirty(); }); }
+}
 // ── 서식 저장 3계층: 개별 기금(doc_edits/{fid}) > 유형 공통(doc_edits_type/{공동|사내}) > 자동생성 ──
 function _docCtx(kind){ var f=curForm(); var ftype=(f.fund_type==='사내')?'사내':'공동';
   return { f:f, ftype:ftype,
@@ -1483,17 +1537,21 @@ function _setDocLayer(layer,ftype){ S._docLayer=layer;
   else { b.textContent='자동생성'; b.className='chip'; } }
 // 공통 로더: 자동생성 먼저 표시 → 유형 공통본 → 개별 저장본 순으로 덮어씀(우선순위 역순 적용)
 function _loadDocInto(kind){ var c=_docCtx(kind), f=c.f;
+  var token=(S._docToken=(S._docToken||0)+1);          // 최신 요청만 화면에 반영(늦은 응답 무시)
+  var mine=function(){ return S._docToken===token && S._docKind===kind; };
+  S._docKind=kind; S._docLayer=null;
   var sitesP=f._sample?Promise.resolve([]):_loadSites(S.formFund);
   return sitesP.then(function(sites){
+    if(!mine())return;
     _showDocHTML(docBody(kind,f,sites)); _setDocLayer('gen',c.ftype);
     return Promise.all([
       c.typeRef.once('value').then(function(s){return s.val();}).catch(function(){return null;}),
       c.fundRef?c.fundRef.once('value').then(function(s){return s.val();}).catch(function(){return null;}):Promise.resolve(null)
-    ]).then(function(a){ var t=a[0],fd=a[1];
+    ]).then(function(a){ if(!mine())return; var t=a[0],fd=a[1];
       if(fd&&fd.html){ _showDocHTML(fd.html); _setDocLayer('fund',c.ftype); }
       else if(t&&t.html){ _showDocHTML(t.html); _setDocLayer('type',c.ftype); }
     });
-  }).catch(function(e){ var w=$('docwrap'); if(w)w.innerHTML='<div class="msg err" style="padding:12px">서식 생성 오류: '+esc((e&&e.message)||e)+'</div>'; });
+  }).catch(function(e){ if(!mine())return; var w=$('docwrap'); if(w)w.innerHTML='<div class="msg err" style="padding:12px">서식 생성 오류: '+esc((e&&e.message)||e)+'</div>'; });
 }
 function saveDocEdit(kind){ var ed=$('doced'); if(!ed){ return; } var c=_docCtx(kind);
   if(!c.fundRef){ toast('샘플 모드입니다 — [💾 '+c.ftype+' 공통]으로 저장하세요','warn'); return; }
@@ -1506,6 +1564,7 @@ function saveDocType(kind){ var ed=$('doced'); if(!ed){ return; } var c=_docCtx(
       .then(function(){ if(S._docLayer!=='fund')_setDocLayer('type',c.ftype); toast(c.ftype+'기금 공통 기본서식으로 저장됨'); })
       .catch(function(e){ toast('저장 실패: '+e.message,'err'); }); }); }
 function resetDoc(kind){ var c=_docCtx(kind);
+  if(S._docKind!==kind||S._docLayer==null){ toast('서식을 불러오는 중입니다 — 잠시 후 다시','warn'); return; }   // 로딩 중 오삭제 방지
   if(S._docLayer==='fund'){
     confirmM('이 기금의 개별 저장본을 삭제할까요?\n('+c.ftype+' 공통 수정본이 있으면 그것이, 없으면 자동생성이 표시됩니다)',{ok:'개별본 삭제',danger:true}).then(function(ok){ if(!ok)return;
       c.fundRef.remove().then(function(){ toast('개별 저장본 삭제'); _loadDocInto(kind); }); });
@@ -1586,7 +1645,7 @@ function _docToHwpxRun(kind){
 }
 function printDoc(){ var ed=$('doced'); if(!ed)return;
   var w=window.open('','_blank'); if(!w){ toast('팝업이 차단되었습니다','err'); return; }
-  w.document.write('<!doctype html><meta charset=utf-8><style>'+dgDocCss()+'@media print{@page{margin:16mm}}</style>'+ed.innerHTML);
+  w.document.write('<!doctype html><meta charset=utf-8><style>'+dgDocCss()+'@media print{@page{margin:16mm}}</style>'+sanitizeDocHTML(ed.innerHTML));
   w.document.close(); setTimeout(function(){ w.print(); },300); }
 
 // 원본 엑셀 + 기금 데이터 → 채워진 워크북 버퍼 (받기·미리보기 공용)
@@ -1788,10 +1847,19 @@ function setupTab(f){
 function cancelSetup(){ _deleteSetupFund(S.fundId,true); }
 function _deleteSetupFund(fid,goHome){ var f=funds[fid]; if(!f) return;
   confirmM('이 기금(설립 진행 중)을 취소하고 완전히 삭제할까요?\n"'+(f.short_name||f.name)+'"\n※ 되돌릴 수 없습니다. 이미 입력한 정보·사업장도 함께 삭제됩니다.',{ok:'삭제',danger:true}).then(function(ok){ if(!ok)return;
-    if(f.setup_stage!=='설립준비'){ toast('설립 진행 중인 기금만 삭제할 수 있습니다','warn'); return; }
-    var up={}; up['funds/'+fid]=null; up['sites/'+fid]=null; up['annual/'+fid]=null; up['subsidy_docs/'+fid]=null; up['doc_edits/'+fid]=null;
-    fbDb.ref(NS).update(up).then(function(){ delete funds[fid]; if(goHome){_go('home');}else{renderHome();showSetupFunds();} toast('설립 취소·삭제되었습니다'); })
-      .catch(function(e){ toast('삭제 실패: '+e.message,'err'); });
+    // 서버 최신값 재확인 — 확인창 떠 있는 동안 다른 탭에서 운영 전환됐을 수 있음
+    fbDb.ref(NS+'/funds/'+fid+'/setup_stage').once('value').then(function(s){
+      if(s.val()!=='설립준비'){ toast('이미 운영 전환된 기금입니다 — 삭제 취소','warn'); return; }
+      var up={}; up['funds/'+fid]=null; up['sites/'+fid]=null; up['annual/'+fid]=null;
+      up['subsidy_docs/'+fid]=null; up['doc_edits/'+fid]=null; up['welfare/'+fid]=null; up['events/'+fid]=null; up['txns/'+fid]=null;
+      return fbDb.ref(NS).update(up).then(function(){
+        // 이 기금 청구 항목도 정리
+        return fbDb.ref(NS+'/billings').once('value').then(function(bs){
+          var b=bs.val()||{}, del={}; Object.keys(b).forEach(function(k){ if(b[k]&&b[k].fund_id===fid) del[k]=null; });
+          return Object.keys(del).length?fbDb.ref(NS+'/billings').update(del):null;
+        }).catch(function(){});
+      }).then(function(){ delete funds[fid]; closeM(); if(goHome){_go('home');}else{renderHome();showSetupFunds();} toast('설립 취소·삭제되었습니다'); });
+    }).catch(function(e){ toast('삭제 실패: '+e.message,'err'); });
   });
 }
 // 설립 진행 중 기금 목록 — 헤더 [🏗 설립중] 클릭 시
@@ -1815,13 +1883,23 @@ function showSetupFunds(){
 function openSetup(fid){ S.fundId=fid; S.tab='setup'; _go('fund',fid); S.tab='setup'; renderFund(); }
 function toggleSetup(code,on){ var _fid=S.fundId;
   fbDb.ref(NS+'/funds/'+_fid+'/setup/'+code).set({done:on,date:on?ymd():''}).then(function(){
-    if(!funds[_fid].setup)funds[_fid].setup={}; funds[_fid].setup[code]={done:on,date:on?ymd():''}; renderFund();
+    var t=funds[_fid]; if(!t) return;   // 다른 탭에서 삭제됐으면 로컬 반영 생략(유령 객체 방지)
+    if(!t.setup)t.setup={}; t.setup[code]={done:on,date:on?ymd():''};
+    if(S.fundId===_fid) renderFund();
   }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
 }
-function finishSetup(){ var _fid=S.fundId;
+function finishSetup(){ var _fid=S.fundId, f0=funds[_fid]; if(!f0) return;
   confirmM('설립 절차를 완료하고 운영 기금으로 전환할까요?',{ok:'운영 전환'}).then(function(ok){ if(!ok)return;
-    fbDb.ref(NS+'/funds/'+_fid+'/setup_stage').set(null).then(function(){
-      funds[_fid].setup_stage=''; S.tab='info'; renderFund(); toast('운영 기금으로 전환되었습니다');
+    // 서버 최신 체크 상태로 완료 여부 재검증(다른 탭에서 해제됐을 수 있음)
+    fbDb.ref(NS+'/funds/'+_fid+'/setup').once('value').then(function(s){
+      var done=s.val()||{}, steps=EST_TMPL.filter(function(t){return !(t[2]&&f0.fund_type==='사내');});
+      var nd=steps.filter(function(t){return done[t[0]]&&done[t[0]].done;}).length;
+      if(nd<steps.length){ toast('아직 미완료 단계가 있습니다 ('+nd+'/'+steps.length+')','warn');
+        if(funds[_fid]) funds[_fid].setup=done; if(S.fundId===_fid)renderFund(); return; }
+      return fbDb.ref(NS+'/funds/'+_fid+'/setup_stage').set(null).then(function(){
+        if(funds[_fid]) funds[_fid].setup_stage='';
+        if(S.fundId===_fid){ S.tab='info'; renderFund(); } toast('운영 기금으로 전환되었습니다');
+      });
     }).catch(function(e){ toast('전환 실패: '+e.message,'err'); });
   });
 }
@@ -2169,12 +2247,18 @@ function delSubDoc(id){
   });
 }
 function saveSubsidy(){
-  if(funds[S.fundId]&&funds[S.fundId].fund_type==='사내'){ toast('사내근로복지기금은 지원금 대상이 아닙니다','warn'); return; }
-  var obj={}; SUB_FIELDS.forEach(function(c){var el=$('su-'+c[0]);if(el)obj[c[0]]=c[2]==='num'?(num(el.value)||''):el.value.trim();});
-  fbDb.ref(NS+'/funds/'+S.fundId+'/years/'+S.year+'/subsidy').set(obj).then(function(){
-    if(!funds[S.fundId].years)funds[S.fundId].years={}; if(!funds[S.fundId].years[S.year])funds[S.fundId].years[S.year]={};
-    funds[S.fundId].years[S.year].subsidy=obj;
-    clearDirty(); renderFund(); toast('저장되었습니다');
+  var _fid=S.fundId, _yr=S.year;   // 저장 시점 고정 — 응답 전 기금·연도 이동해도 원래 대상에 반영
+  if(funds[_fid]&&funds[_fid].fund_type==='사내'){ toast('사내근로복지기금은 지원금 대상이 아닙니다','warn'); return; }
+  var obj={}; SUB_FIELDS.forEach(function(c){var el=$('su-'+c[0]); if(!el)return;
+    var raw=String(el.value==null?'':el.value).trim();
+    obj[c[0]] = c[2]==='num' ? (raw===''?'':(num(raw)===''?'':num(raw))) : raw;   // 0도 정상 저장
+  });
+  fbDb.ref(NS+'/funds/'+_fid+'/years/'+_yr+'/subsidy').set(obj).then(function(){
+    var t=funds[_fid]; if(!t) return;
+    if(!t.years)t.years={}; if(!t.years[_yr])t.years[_yr]={};
+    t.years[_yr].subsidy=obj;
+    if(S.fundId===_fid&&S.year===_yr){ clearDirty(); renderFund(); }
+    toast('저장되었습니다');
   }).catch(function(e){toast('저장 실패: '+e.message,'err');});
 }
 
