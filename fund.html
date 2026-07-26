@@ -346,13 +346,16 @@ function _normStaff(v){
     .sort(function(a,b){return String(a.sid||'').localeCompare(String(b.sid||''),'en',{numeric:true});});  // 푸른이알피 사번 순
 }
 function loadStaff(){
-  if(_staffCache) return Promise.resolve(_staffCache);
+  if(_staffCache&&_staffCache.length) return Promise.resolve(_staffCache);   // 빈 결과는 캐시하지 않음(복구 시 재조회)
   // 1) 동일 출처(github.io/pureunall) localStorage — 푸른이알피가 채워둔 재직자, Firebase 규칙 의존 없음
   try{ var raw=localStorage.getItem('pureun_v6_user_accounts');
     if(raw){ var a=_normStaff(JSON.parse(raw)); if(a.length){ _staffCache=a; return Promise.resolve(a); } } }catch(e){}
-  // 2) 폴백: Firebase data/user_accounts (localStorage 비었을 때 = 이 브라우저에서 pu-erp 미실행)
-  return fbDb.ref('data/user_accounts/v').once('value').then(function(s){ _staffCache=_normStaff(s.val()); return _staffCache; })
-    .catch(function(){ _staffCache=[]; return _staffCache; });
+  // 2) 폴백: Firebase — 일반 직원도 읽을 수 있는 공개 명부 data/user_dir 우선, 실패 시 data/user_accounts
+  var rd=function(p){ return fbDb.ref(p).once('value').then(function(s){ return _normStaff(s.val()); }).catch(function(){ return []; }); };
+  return rd('data/user_dir/v').then(function(a){ if(a.length){ _staffCache=a; return a; }
+    return rd('data/user_dir').then(function(b){ if(b.length){ _staffCache=b; return b; }
+      return rd('data/user_accounts/v').then(function(c){ _staffCache=c; return c; }); });
+  });
 }
 // ── 새 기금 등록 ──
 function nextFundId(){
@@ -590,12 +593,20 @@ var REGISTRY_MAP={
 var _SIDO_ABBR={'충청남도':'충남','충청북도':'충북','경상남도':'경남','경상북도':'경북','전라남도':'전남','전라북도':'전북',
   '경기도':'경기','강원도':'강원','강원특별자치도':'강원','제주특별자치도':'제주','서울특별시':'서울','부산광역시':'부산',
   '대구광역시':'대구','인천광역시':'인천','광주광역시':'광주','대전광역시':'대전','울산광역시':'울산','세종특별자치시':'세종','전북특별자치도':'전북'};
+// 소재지 → [시도약자, 시군구, 구] — 정식(충청남도)·축약(충남) 표기 모두 인식
+function _addrParts(address){
+  var a=String(address||'').trim(); if(!a) return null;
+  var full=/(\S+?(?:도|특별시|광역시|특별자치시|특별자치도))\s+(\S+?시)\s+(\S+?구)/.exec(a)
+        || /(\S+?(?:도|특별시|광역시|특별자치시|특별자치도))\s+(\S+?(?:시|군|구))/.exec(a);
+  if(full) return {sido:_SIDO_ABBR[full[1]]||full[1], sgg:full[2], gu:(full[3]||'')};
+  var abbrs=Object.keys(_SIDO_ABBR).map(function(k){return _SIDO_ABBR[k];});   // 충남·경기·대전 …
+  var m2=/^(\S{2,4})\s+(\S+?시)\s+(\S+?구)/.exec(a) || /^(\S{2,4})\s+(\S+?(?:시|군|구))/.exec(a);
+  if(m2 && abbrs.indexOf(m2[1])>=0) return {sido:m2[1], sgg:m2[2], gu:(m2[3]||'')};
+  return null;
+}
 function guessRegistry(address){
-  var a=String(address||'').trim(); if(!a) return '';
-  var m=a.match(/(\S+?(?:도|특별시|광역시|특별자치시|특별자치도))\s+(\S+?(?:시|군|구))/);
-  if(!m) return '';
-  var sido=_SIDO_ABBR[m[1]]||m[1], sgg=m[2];
-  return REGISTRY_MAP[sido+' '+sgg]||'';
+  var p=_addrParts(address); if(!p) return '';
+  return REGISTRY_MAP[p.sido+' '+p.sgg]||'';
 }
 // 관할세무서 — 국세청/위키백과 관할구역으로 검증(2026-07). 구 단위로 갈리는 시는 '시 구' 키.
 // 강남구(역삼/삼성/강남 복수) 등 동 단위 분할 지역은 미매핑→수기.
@@ -626,20 +637,13 @@ var TAX_MAP={
 };
 // 등록면허세 신고 관할 지자체(시·군·구청) — 소재지에서 추출. 세무서와 다름.
 function _localGovFromAddr(addr){
-  var a=String(addr||'').trim(); if(!a) return '';
-  var m=a.match(/(\S+?(?:도|특별시|광역시|특별자치시|특별자치도))\s+(\S+?시)\s+(\S+?구)/);
-  if(m) return m[2]+' '+m[3]+'청';                       // 예: 청주시 상당구청
-  var m2=a.match(/(\S+?(?:도|특별시|광역시|특별자치시|특별자치도))\s+(\S+?(?:시|군|구))/);
-  return m2?(m2[2]+'청'):'';                              // 예: 예산군청 / 강남구청
+  var p=_addrParts(addr); if(!p) return '';
+  return p.gu ? (p.sgg+' '+p.gu+'청') : (p.sgg+'청');     // 예: 청주시 상당구청 / 예산군청 / 강남구청
 }
 function guessTax(address){
-  var a=String(address||'').trim(); if(!a) return '';
-  var sm=a.match(/(\S+?(?:도|특별시|광역시|특별자치시|특별자치도))\s+(\S+?시)\s+(\S+?구)/);   // 시+구(수원·청주 등)
-  if(sm){ var sd=_SIDO_ABBR[sm[1]]||sm[1]; var k=sd+' '+sm[2]+' '+sm[3]; if(TAX_MAP[k]) return TAX_MAP[k]; }
-  var m=a.match(/(\S+?(?:도|특별시|광역시|특별자치시|특별자치도))\s+(\S+?(?:시|군|구))/);
-  if(!m) return '';
-  var sido=_SIDO_ABBR[m[1]]||m[1];
-  return TAX_MAP[sido+' '+m[2]]||'';
+  var p=_addrParts(address); if(!p) return '';
+  if(p.gu){ var k=p.sido+' '+p.sgg+' '+p.gu; if(TAX_MAP[k]) return TAX_MAP[k]; }   // 시+구(수원·청주 등)
+  return TAX_MAP[p.sido+' '+p.sgg]||'';
 }
 function fillRegistry(){
   var addr=($('fd-address')&&$('fd-address').value)||funds[S.fundId].address||'';
@@ -835,12 +839,12 @@ function idbDel(k){ return idbOpen().then(function(db){ return new Promise(funct
 function renderForms(){
   $('crumb').textContent='서식 자료실';
   if(typeof ExcelJS==='undefined'){ $('app').innerHTML='<div class="panel"><h1>서식 자료실</h1><div class="msg err">ExcelJS 라이브러리 로드 실패 — 인터넷 연결을 확인하고 새로고침하세요.</div></div>'; return; }
-  // 원본 등록 상태 비동기 확인 후 재렌더
-  if(S._tplChk!==true){ S._tplChk='...';
+  // 원본 등록 상태 비동기 확인 후 재렌더 (엑셀 원본·HWP 원본 어느 쪽이 바뀌어도 재조회)
+  if(S._tplChk!==true||S._hwpChk===false){ S._tplChk='...'; S._hwpChk='...';
     var _hk=DOC_ALL.map(function(d){return d[0];});
     Promise.all([idbGet('setup'),idbGet('subsidy'),idbGet('contribx')].concat(_hk.map(function(k){return idbGet('hwp:'+k);})))
-      .then(function(a){ S._tplHas={setup:!!a[0],subsidy:!!a[1],contribx:!!a[2]}; S._hwpHas={}; _hk.forEach(function(k,i){S._hwpHas[k]=!!a[3+i];}); S._tplChk=true; if(S.view==='forms')renderForms(); })
-      .catch(function(){ S._tplHas={setup:false,subsidy:false,contribx:false}; S._hwpHas={}; S._tplChk=true; if(S.view==='forms')renderForms(); });
+      .then(function(a){ S._tplHas={setup:!!a[0],subsidy:!!a[1],contribx:!!a[2]}; S._hwpHas={}; _hk.forEach(function(k,i){S._hwpHas[k]=!!a[3+i];}); S._tplChk=true; S._hwpChk=true; if(S.view==='forms')renderForms(); })
+      .catch(function(){ S._tplHas={setup:false,subsidy:false,contribx:false}; S._hwpHas={}; S._tplChk=true; S._hwpChk=true; if(S.view==='forms')renderForms(); });
     $('app').innerHTML='<div class="panel">'+loadingHTML()+'</div>'; return; }
   var has=S._tplHas||{};
   // 모드: 'fund'=기금 상세 📑 서식에서 진입(실데이터·개별 저장) / 'library'=사이드바(신규 설립 샘플·공통서식 편집)
@@ -1020,10 +1024,13 @@ function pickHwpBulk(){
     var matched=plan.filter(function(p){return p[0];});
     if(!matched.length){ toast('파일명에서 서식을 못 알아냈어요 — 서식별 [등록]으로 개별 등록하세요','warn'); return; }
     Promise.all(matched.map(function(p){ return new Promise(function(res){ var rd=new FileReader();
-      rd.onload=function(){ idbPut('hwp:'+p[0],rd.result).then(res).catch(res); }; rd.onerror=function(){res();}; rd.readAsArrayBuffer(p[1]); }); }))
-      .then(function(){ S._hwpChk=false; if(S.view==='forms')renderForms();
+      rd.onload=function(){ idbPut('hwp:'+p[0],rd.result).then(function(){res(true);}).catch(function(){res(false);}); };
+      rd.onerror=function(){res(false);}; rd.readAsArrayBuffer(p[1]); }); }))
+      .then(function(oks){ S._hwpChk=false; if(S.view==='forms')renderForms();
+        var okN=oks.filter(Boolean).length, failN=oks.length-okN;      // 실제 저장 성공분만 집계
         var un=plan.filter(function(p){return !p[0];}).map(function(p){return p[1].name;});
-        toast(matched.length+'개 자동 등록'+(un.length?' · 미매칭 '+un.length+'개는 개별 등록':'')); }); };
+        if(!okN){ toast('저장 실패 — 브라우저 저장공간(IndexedDB)을 확인하세요','err'); return; }
+        toast(okN+'개 자동 등록'+(failN?' · 실패 '+failN+'개':'')+(un.length?' · 미매칭 '+un.length+'개는 개별 등록':''), failN?'warn':''); }); };
   inp.click();
 }
 var _hwpEditor=null, _hwpName='서식';
@@ -1850,6 +1857,13 @@ function _deleteSetupFund(fid,goHome){ var f=funds[fid]; if(!f) return;
     // 서버 최신값 재확인 — 확인창 떠 있는 동안 다른 탭에서 운영 전환됐을 수 있음
     fbDb.ref(NS+'/funds/'+fid+'/setup_stage').once('value').then(function(s){
       if(s.val()!=='설립준비'){ toast('이미 운영 전환된 기금입니다 — 삭제 취소','warn'); return; }
+      // Storage 업로드 파일 먼저 정리(메타 삭제 전이라 경로를 알 수 있음)
+      return fbDb.ref(NS+'/subsidy_docs/'+fid).once('value').then(function(ds){
+        var d=ds.val()||{}, paths=[];
+        Object.keys(d).forEach(function(yr){ var y=d[yr]||{}; Object.keys(y).forEach(function(id){ if(y[id]&&y[id].path)paths.push(y[id].path); }); });
+        if(!fbStore||!paths.length) return null;
+        return Promise.all(paths.map(function(p){ return fbStore.ref(p).delete().catch(function(){}); }));
+      }).catch(function(){}).then(function(){
       var up={}; up['funds/'+fid]=null; up['sites/'+fid]=null; up['annual/'+fid]=null;
       up['subsidy_docs/'+fid]=null; up['doc_edits/'+fid]=null; up['welfare/'+fid]=null; up['events/'+fid]=null; up['txns/'+fid]=null;
       return fbDb.ref(NS).update(up).then(function(){
@@ -1859,6 +1873,7 @@ function _deleteSetupFund(fid,goHome){ var f=funds[fid]; if(!f) return;
           return Object.keys(del).length?fbDb.ref(NS+'/billings').update(del):null;
         }).catch(function(){});
       }).then(function(){ delete funds[fid]; closeM(); if(goHome){_go('home');}else{renderHome();showSetupFunds();} toast('설립 취소·삭제되었습니다'); });
+      });
     }).catch(function(e){ toast('삭제 실패: '+e.message,'err'); });
   });
 }
