@@ -195,6 +195,8 @@ var HO_FIELDS=[
   ['files','⑤ 자료 위치','파일·카톡방·서류철·이메일 스레드']];
 var LV_TYPES=['퇴사','휴직','연차','기타'];
 var HO_OVERDUE_DAYS=5;   // 인수 확인 지연 → 대표 배지
+// AI(2단계) — 푸른이알피 기존 프록시 재사용(Anthropic Messages API 형식). 최신 모델 우선, 프록시 호환용 폴백.
+var AI_MODELS=['claude-opus-5','claude-sonnet-4-20250514'];
 
 var fbDb=null;
 var S={view:'my', week:null, f:null, me:null, year:new Date().getFullYear(), drawerId:null, teamMgr:'', teamCat:'', teamNolog:false, calMon:null, noteOpen:false};
@@ -774,11 +776,24 @@ function renderDrawer(){
     +'<span>'+(S.noteOpen?'▾':'▸')+'</span>📦 인수인계 노트'
     +'<span class="st2" style="color:'+(nd?'var(--ok)':'#c9536b')+'">'+(nd?'작성됨'+(n3.at?' · '+esc(n3.at):''):'미작성')+'</span></div>';
   if(S.noteOpen){
+    if(aiProxyUrl()){
+      h+='<div class="aibar"><button class="aibtn" id="ai-draft" onclick="aiDraft(\''+id+'\')">✨ AI 초안</button>'
+        +'<button class="aibtn" id="ai-ask" onclick="aiInterview(\''+id+'\')">🎤 AI 인터뷰</button>'
+        +'<span class="muted" style="font-size:10.5px;align-self:center">기록을 읽어 초안을 만들고, 기록에 없는 부분을 질문합니다</span></div>';
+    }
     h+='<div class="hb">';
     HO_FIELDS.forEach(function(f){
       h+='<div><label>'+esc(f[1])+'</label><textarea id="hn-'+f[0]+'" placeholder="'+esc(f[2])+'" rows="2" onchange="saveHoNote(\''+id+'\')">'+esc(n3[f[0]]||'')+'</textarea></div>';
     });
-    h+='<div class="muted" style="font-size:10.5px">칸에서 나가면 자동 저장 · 담당이 바뀌어도 노트는 업무에 남습니다'+(n3.byName?' · 마지막 작성 '+esc(n3.byName):'')+'</div></div>';
+    if((n3.qa||[]).length){
+      h+='<div><label>🎤 인터뷰 답변</label>';
+      n3.qa.forEach(function(p){
+        h+='<div class="qa"><div class="q">'+esc(p.q)+'</div><div style="font-size:12px;color:#334155">'+esc(p.a)+'</div></div>';
+      });
+      h+='</div>';
+    }
+    h+='<div class="muted" style="font-size:10.5px">칸에서 나가면 자동 저장 · 담당이 바뀌어도 노트는 업무에 남습니다'
+      +(n3.byName?' · 마지막 작성 '+esc(n3.byName):'')+(n3.ai?' · AI 초안 사용':'')+'</div></div>';
   }
   h+='</div>';
   h+='<input class="dinput" id="dlog" placeholder="기록 추가… (Enter로 저장, 오늘 날짜)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();drawerAdd(\''+id+'\',this)}">';
@@ -885,13 +900,137 @@ function confirmHo(id){
   });
 }
 function saveHoNote(id){
-  var note={by:(S.me&&S.me.sid)||'',byName:(S.me&&S.me.name)||'',at:todayStr()};
-  HO_FIELDS.forEach(function(f){ var el=$('hn-'+f[0]); note[f[0]]=el?el.value.trim():''; });
+  // 기존 노트에 병합 — AI 인터뷰 답변(qa) 등 다른 키가 지워지지 않도록
+  var note=Object.assign({},(items[id]&&items[id].ho_note)||{},
+    {by:(S.me&&S.me.sid)||'',byName:(S.me&&S.me.name)||'',at:todayStr()});
+  HO_FIELDS.forEach(function(f){ var el=$('hn-'+f[0]); if(el) note[f[0]]=el.value.trim(); });
   patchItem(id,{ho_note:note}).then(function(){
     toast('📦 노트 저장됨');
     var st2=document.querySelector('.honote .st2');
     if(st2){ var nd=noteDone(items[id]); st2.textContent=nd?('작성됨 · '+note.at):'미작성'; st2.style.color=nd?'var(--ok)':'#c9536b'; }
   });
+}
+
+/* ── AI 2단계: 노트 초안 + 인터뷰 (푸른이알피 프록시 재사용) ── */
+function aiProxyUrl(){
+  try{
+    var raw=localStorage.getItem('pureun_v6_setting_ai_proxy_url')||localStorage.getItem('pureun_v6_ai_proxy_url')||'';
+    if(!raw) return '';
+    if(raw.charAt(0)==='"'){ try{ return JSON.parse(raw); }catch(e){ return raw.replace(/^"|"$/g,''); } }
+    return raw;
+  }catch(e){ return ''; }
+}
+function aiConsent(){
+  if(localStorage.getItem('work_ai_ok')==='1') return Promise.resolve(true);
+  return confirmM('AI 기능을 쓰면 이 업무의 진행 기록·기업명·의뢰인 정보가 회사에 설정된 AI 서비스로 전송됩니다.\n\n의뢰인 개인정보가 포함될 수 있으니 대표님이 승인한 경우에만 사용하세요.\n\n계속할까요? (이 브라우저에서 한 번만 묻습니다)',{ok:'동의하고 사용'})
+    .then(function(ok){ if(ok) localStorage.setItem('work_ai_ok','1'); return ok; });
+}
+function aiCall(system,userText){
+  var url=aiProxyUrl();
+  if(!url) return Promise.reject(new Error('AI 프록시 주소가 없습니다 — 푸른이알피 설정에서 먼저 등록하세요'));
+  var i=0;
+  function attempt(){
+    return fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({model:AI_MODELS[i],max_tokens:8000,system:system,
+        messages:[{role:'user',content:userText}]})})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(d&&d.error) throw new Error(d.error.message||'AI 오류');
+        var t=d.reply||d.text||((d.content||[]).filter(function(b){return b.type==='text';}).map(function(b){return b.text;}).join(''));
+        if(!t) throw new Error('AI 응답이 비어 있습니다');
+        return t;
+      })
+      .catch(function(e){
+        if(i<AI_MODELS.length-1){ i++; return attempt(); }   // 프록시가 모델을 제한하면 다음 모델로
+        throw e;
+      });
+  }
+  return attempt();
+}
+function aiJson(text){
+  var s=String(text||''), a=s.indexOf('{'), b=s.lastIndexOf('}');
+  if(a<0||b<a) throw new Error('AI 응답을 해석할 수 없습니다');
+  return JSON.parse(s.slice(a,b+1));
+}
+function aiContext(id){
+  var it=items[id]||{}, logs=itemLogsCache[id]||{};
+  var arr=Object.keys(logs).map(function(k){return logs[k];})
+    .sort(function(a,b){return (a.d||'').localeCompare(b.d||'');});
+  var L=['[업무]','구분: '+(it.cat||''),'기업/대상: '+(it.company||it.client||''),
+    '업무명: '+(it.title||''),'의뢰인: '+(it.client||'—'),'상대기관 담당: '+(it.officer||'—'),
+    '관리번호: '+(it.no||''),'시작일: '+(it.start||'—'),'기한: '+(it.due||'—'),
+    '상태: '+(it.status||''),'담당: '+((it.mgr_main&&it.mgr_main.name)||'—'),
+    '다음 할 일: '+((it.next&&it.next.text)||'—')+' '+((it.next&&it.next.date)||''),
+    '','[진행 기록 — 오래된 순, 총 '+arr.length+'건]'];
+  arr.forEach(function(l){ L.push((l.d||'')+' : '+(l.t||'')+(l.byName?' ('+l.byName+')':'')); });
+  return L.join('\n');
+}
+var AI_SYS_DRAFT='당신은 한국 노무법인의 인수인계 문서 작성을 돕는 조수입니다. 주어진 업무 정보와 진행 기록만 근거로 인수인계 노트 초안을 작성하세요.\n'
+  +'규칙: ① 기록에 없는 사실을 추측하거나 만들어내지 마세요. 근거가 없으면 그 항목에 "기록에 없음 — 확인 필요"라고 쓰세요. ② 후임 담당자가 읽는다고 가정해 간결한 한국어 서술로 쓰세요. ③ 날짜는 기록의 날짜를 그대로 인용하세요.\n'
+  +'다른 설명 없이 JSON만 출력: {"sit":"현재 상황 한 문단","todo":"다음 할 일과 기한","ppl":"관계자 특이사항(기록에서 드러나는 것만)","warn":"주의점","files":"자료 위치(기록에 언급된 것만)"}';
+var AI_SYS_ASK='당신은 한국 노무법인의 인수인계를 돕는 인터뷰어입니다. 진행 기록을 읽고, 기록만으로는 후임이 알 수 없는 "빈칸"을 찾아 담당자에게 물을 질문을 만드세요.\n'
+  +'좋은 질문: 대응 방향이 바뀐 지점의 배경, 의뢰인·상대기관의 성향이나 연락 방법, 기록에 없는 주의점, 자료의 실제 위치, 후임이 놓치기 쉬운 함정.\n'
+  +'나쁜 질문: 기록에 이미 답이 있는 것, 일반론, 예/아니오로 끝나는 것.\n'
+  +'규칙: 질문 3~5개, 각 한 문장, 기록의 구체적 사실(날짜·상대방·행위)을 인용해 맥락을 밝히세요.\n'
+  +'다른 설명 없이 JSON만 출력: {"questions":["질문1","질문2","질문3"]}';
+
+function aiDraft(id){
+  aiConsent().then(function(ok){ if(!ok)return;
+    var btn=$('ai-draft'); if(btn){ btn.disabled=true; btn.textContent='✨ 초안 작성 중…'; }
+    loadItemLogs(id).then(function(){ return aiCall(AI_SYS_DRAFT,aiContext(id)); })
+    .then(function(txt){
+      var d=aiJson(txt);
+      showModal('<h2 style="margin:0 0 6px">✨ AI 인수인계 노트 초안</h2>'
+        +'<p class="muted" style="font-size:12px;margin:0 0 12px">기록을 근거로 만든 <b>초안</b>입니다. 반드시 읽고 고친 뒤 적용하세요. 기록에 없는 내용은 "확인 필요"로 표시됩니다.</p>'
+        +HO_FIELDS.map(function(f){
+          return '<div class="aidraft"><label>'+esc(f[1])+'</label><textarea id="ad-'+f[0]+'" rows="3">'+esc(d[f[0]]||'')+'</textarea></div>';
+        }).join('')
+        +'<div class="row" style="justify-content:flex-end;margin-top:6px"><button onclick="closeM()">취소</button>'
+        +'<button class="primary" onclick="applyAiDraft(\''+id+'\')">노트에 적용</button></div>');
+    }).catch(function(e){ toast('AI 실패: '+e.message,'err'); })
+    .then(function(){ var b=$('ai-draft'); if(b){ b.disabled=false; b.textContent='✨ AI 초안'; } });
+  });
+}
+function applyAiDraft(id){
+  var note=Object.assign({},(items[id]&&items[id].ho_note)||{});
+  HO_FIELDS.forEach(function(f){ var el=$('ad-'+f[0]); if(el) note[f[0]]=el.value.trim(); });
+  note.by=(S.me&&S.me.sid)||''; note.byName=(S.me&&S.me.name)||''; note.at=todayStr(); note.ai=1;
+  patchItem(id,{ho_note:note}).then(function(){ closeM(); toast('📦 노트에 적용됨 — 확인 후 보완하세요');
+    S.noteOpen=true; renderDrawer(); route(); });
+}
+function aiInterview(id){
+  aiConsent().then(function(ok){ if(!ok)return;
+    var btn=$('ai-ask'); if(btn){ btn.disabled=true; btn.textContent='🎤 질문 준비 중…'; }
+    loadItemLogs(id).then(function(){ return aiCall(AI_SYS_ASK,aiContext(id)); })
+    .then(function(txt){
+      var qs=(aiJson(txt).questions||[]).filter(Boolean).slice(0,5);
+      if(!qs.length) throw new Error('질문을 만들지 못했습니다');
+      var prev=(items[id]&&items[id].ho_note&&items[id].ho_note.qa)||[];
+      showModal('<h2 style="margin:0 0 6px">🎤 AI 인수인계 인터뷰</h2>'
+        +'<p class="muted" style="font-size:12px;margin:0 0 12px">기록만으로는 후임이 알 수 없는 부분을 AI가 찾아 질문했습니다. 아는 것만 답해도 됩니다 — 답변은 인수인계서에 함께 실립니다.</p>'
+        +qs.map(function(q,i){
+          var old=(prev.filter(function(p){return p.q===q;})[0]||{}).a||'';
+          return '<div class="qa"><div class="q">Q'+(i+1)+'. '+esc(q)+'</div>'
+            +'<textarea id="aq-'+i+'" rows="2" placeholder="답변 (모르면 비워 두세요)">'+esc(old)+'</textarea>'
+            +'<input type="hidden" id="aqq-'+i+'" value="'+esc(q)+'"></div>';
+        }).join('')
+        +'<div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="closeM()">취소</button>'
+        +'<button class="primary" onclick="saveAiQa(\''+id+'\','+qs.length+')">답변 저장</button></div>');
+    }).catch(function(e){ toast('AI 실패: '+e.message,'err'); })
+    .then(function(){ var b=$('ai-ask'); if(b){ b.disabled=false; b.textContent='🎤 AI 인터뷰'; } });
+  });
+}
+function saveAiQa(id,n){
+  var qa=[];
+  for(var i=0;i<n;i++){
+    var q=$('aqq-'+i), a=$('aq-'+i);
+    if(q&&a&&a.value.trim()) qa.push({q:q.value,a:a.value.trim()});
+  }
+  if(!qa.length){ toast('답변이 없습니다','warn'); return; }
+  var note=Object.assign({},(items[id]&&items[id].ho_note)||{});
+  note.qa=qa; note.by=(S.me&&S.me.sid)||''; note.byName=(S.me&&S.me.name)||''; note.at=todayStr();
+  patchItem(id,{ho_note:note}).then(function(){ closeM(); toast('🎤 인터뷰 답변 '+qa.length+'건 저장');
+    S.noteOpen=true; renderDrawer(); route(); });
 }
 
 /* ── 인수인계 화면 (부재 관리·체크아웃·문서철) ── */
@@ -975,6 +1114,38 @@ function renderHo(){
       }
       h+='</div>';
     });
+    // ⚠ 퇴직자·명단 외 담당자의 잔여 업무 — 부재 등록 없이도 여기서 인계 처리
+    var actNames={}; st.forEach(function(u){ actNames[u.name]=1; });
+    var orphan={};
+    openItems().forEach(function(it){
+      var nm=(it.mgr_main&&it.mgr_main.name)||'';
+      if(!nm||actNames[nm]) return;
+      if(leaving[(it.mgr_main&&it.mgr_main.sid)||'']&&!leaving[it.mgr_main.sid].done) return;  // 부재 카드에서 이미 처리 중
+      (orphan[nm]=orphan[nm]||[]).push(it);
+    });
+    var onames=Object.keys(orphan).sort();
+    if(onames.length){
+      h+='<div class="hocard" style="border-color:#e6a19a"><div class="hct"><b style="color:var(--danger)">⚠ 재직자 명단에 없는 담당자의 잔여 업무</b>'
+        +'<span class="muted" style="font-size:11.5px">퇴직·이관 후 남은 건입니다. 후임을 지정하거나 완료 처리하세요.</span></div>';
+      onames.forEach(function(nm){
+        var arr=orphan[nm];
+        h+='<div style="font-weight:800;font-size:12.5px;margin:10px 0 4px">👤 '+esc(nm)+' — '+arr.length+'건</div>'
+          +'<div style="overflow-x:auto"><table><thead><tr><th style="width:52px">구분</th><th>기업 / 업무</th>'
+          +'<th style="width:64px">노트</th><th style="width:170px">후임 지정</th></tr></thead><tbody>';
+        arr.forEach(function(it){
+          h+='<tr><td>'+catBadge(it.cat)+'</td>'
+            +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
+            +'<div class="sub">'+esc(it.title||'')+(it.last?' · 최근 '+esc(md(it.last.d)):'')+'</div></td>'
+            +'<td>'+(noteDone(it)?'<span class="ck">✓</span>':'<span class="ckno">미작성</span>')+'</td>'
+            +'<td onclick="event.stopPropagation()"><select onchange="assignSuccessor(\''+it._id+'\',this)" style="padding:3px 6px;border:1px solid var(--line);border-radius:6px;font-size:12px">'
+            +'<option value="">후임 선택…</option>'
+            +st.map(function(u){return '<option value="'+esc(u.sid)+'" data-name="'+esc(u.name)+'">'+esc(u.name)+'</option>';}).join('')
+            +'</select></td></tr>';
+        });
+        h+='</tbody></table></div>';
+      });
+      h+='</div>';
+    }
     // 문서철 — 보관된 인수인계서
     var dk=Object.keys(docs).sort().reverse();
     h+='<div class="panel"><h2 style="margin-bottom:8px">📁 문서철 — 보관된 인수인계서 '+(dk.length?dk.length+'건':'')+'</h2>';
@@ -1037,6 +1208,9 @@ function _hoDocHTML(rec){
     var n=x.note||{};
     HO_FIELDS.forEach(function(f){
       h+='<div class="q">'+esc(f[1])+'</div><div class="a'+(n[f[0]]?'':' none')+'">'+esc(n[f[0]]||'(미작성)')+'</div>';
+    });
+    (n.qa||[]).forEach(function(p){
+      h+='<div class="q">◇ '+esc(p.q)+'</div><div class="a">'+esc(p.a)+'</div>';
     });
   });
   h+='<p class="mt" style="margin-top:26px">인계자: '+esc(rec.name)+' (서명) &nbsp;&nbsp;&nbsp; 확인(대표): (서명)</p></body></html>';
