@@ -51,11 +51,27 @@ function lineCount(text,horzsize){ return wrapPositions(text,horzsize).length; }
 /* 문단: \n 은 문단 분리 */
 function para(text,charPr,opt){
   const cp=charPr||"0", brk=!!(opt&&opt.pageBreak);   // pageBreak: 이 문단부터 새 페이지(제출 서류 묶음용)
+  const pp=(opt&&opt.paraPr!=null)?String(opt.paraPr):"0";   // 문단 스타일(정렬·여백·줄간격)
   return String(text==null?"":text).split("\n").map(function(line,idx){
     const pb=(brk&&idx===0)?"1":"0";
-    return '<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="'+pb+'" columnBreak="0" merged="0"><hp:run charPrIDRef="'+cp+'"><hp:t>'+esc(line)+'</hp:t></hp:run>'+linesegs(line,bodyW())+'</hp:p>';
+    return '<hp:p id="0" paraPrIDRef="'+pp+'" styleIDRef="0" pageBreak="'+pb+'" columnBreak="0" merged="0"><hp:run charPrIDRef="'+cp+'"><hp:t>'+esc(line)+'</hp:t></hp:run>'+linesegs(line,bodyW())+'</hp:p>';
   }).join("");
 }
+/* ── 문서 서식 프리셋 — 산출물 공통(템플릿에 이미 정의된 스타일 사용) ──
+   PP: 문단(정렬·여백·줄간격) / CP: 글자(크기·굵기) */
+const PP={center:16, chap:12, art:12, body:13, plain:0};   // 12=위여백1200·아래300, 13=아래여백700, 모두 160%
+const CP={title:"5", head:"6", bold:"7", body:"0", small:"2"};   // 16pt / 11pt / 10pt굵게 / 10pt / 9pt
+function docTitle(text,opt){ return para(text,CP.title,Object.assign({paraPr:PP.center},opt||{})); }
+function docSub(text){ return para(text,CP.body,{paraPr:PP.center}); }
+function chapter(text){ return para(text,CP.head,{paraPr:PP.chap}); }
+/* 조 제목(굵게·위 여백) + 본문(아래 여백) */
+function article(title,body){
+  let s=para(title,CP.bold,{paraPr:PP.art});
+  if(body!=null&&String(body).length) s+=para(body,CP.body,{paraPr:PP.body});
+  return s;
+}
+function bodyPara(text,opt){ return para(text,CP.body,Object.assign({paraPr:PP.body},opt||{})); }
+function spacer(){ return para("",CP.body,{paraPr:PP.plain}); }
 /* 셀 내부 문단 — 반환: {xml, lines} (행 높이 계산에 줄 수 사용) */
 function cellParaInfo(text,w,cp){
   const hz=Math.max(CH, w-CELL_PAD);
@@ -182,7 +198,8 @@ function cols(ratios){
   ws[ws.length-1]=W-ws.slice(0,-1).reduce(function(a,b){return a+b;},0);
   return ws;
 }
-const api={esc:esc,para:para,tablePara:tablePara,sectionXml:sectionXml,build:build,download:download,cols:cols,setPage:setPage,bodyW:bodyW,BOLD:BOLD};
+const api={esc:esc,para:para,tablePara:tablePara,sectionXml:sectionXml,build:build,download:download,cols:cols,setPage:setPage,bodyW:bodyW,BOLD:BOLD,
+  PP:PP,CP:CP,docTitle:docTitle,docSub:docSub,chapter:chapter,article:article,bodyPara:bodyPara,spacer:spacer};
 if(typeof window!=="undefined")window.HWPX=api;
 if(typeof module!=="undefined"&&module.exports)module.exports=api;
 })();

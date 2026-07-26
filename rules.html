@@ -236,6 +236,7 @@ td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
         <div class="stat h"><div class="n" id="c-man">0</div><div class="l">수동확인</div></div>
         <div class="stat u"><div class="n" id="c-up">0</div><div class="l">시행예정</div></div>
       </div>
+      <div id="erp-badge" style="display:none;font-size:11.5px;color:var(--sub);background:#f0fdfa;border:1px solid #99f6e4;border-radius:9px;padding:8px 12px;margin:0 16px 8px;line-height:1.6"></div>
       <div class="findings" id="findings"><div class="empty">사업장을 고르고 <b>취업규칙 검토</b>를 누르세요.</div></div>
       <div class="rowbtns">
         <button class="btn ghost" id="mk-daejo" disabled>신구대조표 생성</button>
@@ -422,13 +423,68 @@ function consentDoc(site,asof,summary,hits){
     +"\n\n■ 동의 근로자 (과반수 확인)"+docsetSign(12)
     +"\n\n※ 재적 근로자 수 ______명 / 동의 근로자 수 ______명 (과반수 여부 확인)";
 }
+/* 조문 텍스트 → 한글 서식 블록: 장 제목 / 제N조(제목)+본문 분리 후 스타일 적용 */
+function hwpxArticleBlock(text){
+  const t=String(text==null?"":text).trim();
+  if(!t) return HWPX.spacer();
+  if(/^제\s*\d+\s*장/.test(t) && t.length<=40) return HWPX.chapter(t);
+  const m=t.match(/^(제\s*\d+\s*조(?:\s*의\s*\d+)?\s*(?:[(（][^)）\n]{0,40}[)）])?)\s*([\s\S]*)$/);
+  return m ? HWPX.article(m[1].trim(), m[2].trim()) : HWPX.bodyPara(t);
+}
+
+/* ── 고용노동부 별지 제15호서식(취업규칙 신고서·변경신고서) — 표 형식 ──
+   사업장 정보는 ERP(data/companies)에서 자동 채움. 실패 시 null 반환 → 텍스트 초안 폴백 */
+function applyFormHwpx(site,asof,pageBreak){
+  try{
+    const c=(typeof SITE_INFO!=="undefined"&&SITE_INFO)||{};
+    const chk=(on)=>on?"[√]":"[  ]";
+    const isChange=REV_MODE==="partial";
+    const W=HWPX.cols([.18,.32,.18,.32]);
+    const emp=c.empTotal||(LAST&&LAST.size?LAST.size:"");
+    const rows=[
+      ["사업장명", c.name||site.replace(/^[📄🏢〔샘플〕]+\s*/u,""), "사업의 종류", c.bizType||c.industry||""],
+      ["대표자 성명", c.ceo||"", "사업자등록번호", c.bizNo||""],
+      ["소재지", (c.address||"")+(c.addressDetail?" "+c.addressDetail:""), "전화번호", c.phone||c.tel||""],
+      ["근로자 수", (emp?emp+"명":"")+(c.male||c.female?`  (남 ${c.male||"__"}명 / 여 ${c.female||"__"}명)`:"  (남 ____명 / 여 ____명)"),
+       "노동조합원 수", c.unionCount||"명"],
+      ["의견청취일\n또는 동의일", fmtKDate(asof), "시행 예정일", fmtKDate(asof)],
+    ];
+    let x=HWPX.docTitle("취업규칙 "+(isChange?"변경신고서":"신고서"),{pageBreak:!!pageBreak});
+    x+=HWPX.docSub(chk(!isChange)+" 신고서    "+chk(isChange)+" 변경신고서   〔근로기준법 시행규칙 별지 제15호서식〕");
+    x+=HWPX.spacer();
+    x+=HWPX.tablePara([["구분","내용","구분","내용"]].concat(rows),W);
+    x+=HWPX.spacer();
+    x+=HWPX.bodyPara("「근로기준법」 제93조 및 같은 법 시행규칙 제15조에 따라 위와 같이 취업규칙을 "
+      +(isChange?"변경신고합니다.":"신고합니다."));
+    x+=HWPX.spacer();
+    x+=HWPX.para("첨부서류",HWPX.BOLD,{paraPr:HWPX.PP.art});
+    x+=HWPX.tablePara([
+      ["1. 취업규칙"+(isChange?"(변경 전과 변경 후의 내용을 비교한 서류를 포함합니다)":"")+" 1부", chk(DOCSET.full||DOCSET.daejo)],
+      ["2. 근로자의 과반수를 대표하는 노동조합 또는 근로자 과반수의 의견을 들었음을 증명하는 자료 1부", chk(DOCSET.opinion)],
+      ["3. 근로자의 과반수를 대표하는 노동조합 또는 근로자 과반수의 동의를 받았음을 증명하는 자료 1부(근로자에게 불리하게 변경하는 경우에만 해당합니다)", chk(DOCSET.consent)],
+      ["※ 수수료 없음 · 처리기간 1일", ""],
+    ],HWPX.cols([.88,.12]));
+    x+=HWPX.spacer();
+    x+=HWPX.docSub(fmtKDate(asof));
+    x+=HWPX.spacer();
+    x+=HWPX.bodyPara("신고인(사용자)          "+(c.ceo||"____________")+"          (서명 또는 인)");
+    x+=HWPX.bodyPara("대리인                  ____________          (서명 또는 인)");
+    x+=HWPX.spacer();
+    x+=HWPX.docSub((c.laborOffice||"____________")+" 지방고용노동청(지청)장  귀하");
+    return x;
+  }catch(e){ console.warn("신고서 서식 생성 실패 — 텍스트 폴백:",e); return null; }
+}
+
 function applyDoc(site,asof){
   return "취업규칙 "+(REV_MODE==="partial"?"[ ] 신고서   [√] 변경신고서":"[√] 신고서   [ ] 변경신고서")
     +"\n(근로기준법 시행규칙 별지 제15호서식)"
     +"\n\n■ 사업장 개요"
-    +"\n사업장명: "+site
-    +"\n소재지: ____________________________  전화: ____________"
-    +"\n대표자 성명: ____________   업종: ____________"
+    +"\n사업장명: "+((SITE_INFO&&SITE_INFO.name)||site)
+    +"\n소재지: "+((SITE_INFO&&(SITE_INFO.address+(SITE_INFO.addressDetail?" "+SITE_INFO.addressDetail:"")))||"____________________________")
+      +"  전화: "+((SITE_INFO&&SITE_INFO.phone)||"____________")
+    +"\n대표자 성명: "+((SITE_INFO&&SITE_INFO.ceo)||"____________")
+      +"   업종: "+((SITE_INFO&&(SITE_INFO.bizType||SITE_INFO.industry))||"____________")
+      +"   사업자등록번호: "+((SITE_INFO&&SITE_INFO.bizNo)||"____________")
     +"\n상시 근로자 수: "+(LAST&&LAST.size?LAST.size:"____")+"   (남 ____명 / 여 ____명)"
     +"\n\n■ 신고 내용"
     +"\n신고 사유: 취업규칙 "+(REV_MODE==="partial"?"일부 개정":"전부 개정")
@@ -818,6 +874,7 @@ function run(){
   if(CUR_KEY===key)CUR_ITEMS.forEach(it=>{ if(it.orig!==""&&!it.suggested&&(it.after||"").trim()!==(it.orig||"").trim())manual[it.id]=it.after; });
   CUR_ITEMS=buildItems(res,LAST.terms,arts);CUR_KEY=key;
   Object.keys(manual).forEach(id=>{ const it=CUR_ITEMS.find(x=>x.id===id); if(it&&!it.suggested)it.after=manual[id]; });
+  matchErpSite();            // 푸른이알피 업체 정보 자동 연동(소재지·대표자 등)
   saveWorkState();
   autoSaveArchive("검토");   // 검토 결과까지 보관함에 자동 반영
   $("mk-daejo").disabled=false;$("save").disabled=false;
@@ -1355,23 +1412,27 @@ $("dl-docset").addEventListener("click",()=>{
   try{
     HWPX.setPage({landscape:PAGE_LAND});
     let body="", first=true;
-    const head=t=>{ const p=HWPX.para(t,HWPX.BOLD,{pageBreak:!first}); first=false; return p+HWPX.para(""); };
-    if(DOCSET.apply) body+=head(`${site} 취업규칙 ${REV_MODE==="partial"?"변경":""}신고서`)+HWPX.para(applyDoc(site,asof));
+    const head=t=>{ const p=HWPX.docTitle(t,{pageBreak:!first}); first=false; return p+HWPX.spacer(); };
+    if(DOCSET.apply){                       // 고용노동부 별지 제15호서식(표) — 실패 시 텍스트 초안
+      const form=applyFormHwpx(site,asof,!first);
+      body+=form||(head(`${site} 취업규칙 ${REV_MODE==="partial"?"변경":""}신고서`)+HWPX.bodyPara(applyDoc(site,asof)));
+      first=false;
+    }
     if(DOCSET.daejo){
       const rows=daejoRows().map(r=>[r.label+(r.kind?"\n["+r.kind+"]":""),r.before==="신설"?"신 설":r.before,r.after,r.reason]);
-      body+=head(`${site} 취업규칙 개정 신구대조표`)+HWPX.para(`검토기준일 ${asof} · ${sum}`)+HWPX.para("")
-        +(rows.length?HWPX.tablePara([["변경조항","변경 전","변경 후","변경이유"]].concat(rows),HWPX.cols(daejoCols())):HWPX.para("변경 항목 없음"));
+      body+=head(`${site} 취업규칙 개정 신구대조표`)+HWPX.docSub(`검토기준일 ${asof} · ${sum}`)+HWPX.spacer()
+        +(rows.length?HWPX.tablePara([["변경조항","변경 전","변경 후","변경이유"]].concat(rows),HWPX.cols(daejoCols())):HWPX.bodyPara("변경 항목 없음"));
     }
     if(DOCSET.full){
-      body+=head(`${site} 취업규칙`)+HWPX.para(`${REV_MODE==="partial"?"일부개정":"전부개정"} · 시행 ${fmtKDate(asof)}`)+HWPX.para("");
+      body+=head(`${site} 취업규칙`)+HWPX.docSub(`${REV_MODE==="partial"?"일부개정":"전부개정"} · 시행 ${fmtKDate(asof)}`)+HWPX.spacer();
       shown.filter(v=>!(v.it.orig===""&&!String(v.it.after||"").trim())).forEach(v=>{
-        body+=HWPX.para(v.it.del?(v.no+" 삭제"):articleText(v))+HWPX.para("");
+        body+=v.it.del?HWPX.article(v.no+" 삭제",""):hwpxArticleBlock(articleText(v));
       });
-      body+=HWPX.para("")+HWPX.para("부   칙",HWPX.BOLD);
-      ad.lines.forEach(l=>body+=HWPX.para(l)); body+=HWPX.para(ad.entry);
+      body+=HWPX.chapter("부   칙");
+      ad.lines.forEach(l=>body+=HWPX.bodyPara(l)); body+=HWPX.bodyPara(ad.entry);
     }
-    if(DOCSET.opinion) body+=head("근로자 의견청취서")+HWPX.para(opinionDoc(site,asof,sum).split("\n").slice(1).join("\n").trim());
-    if(DOCSET.consent) body+=head("취업규칙 불이익 변경 동의서")+HWPX.para(consentDoc(site,asof,sum,hits).split("\n").slice(1).join("\n").trim());
+    if(DOCSET.opinion) body+=head("근로자 의견청취서")+HWPX.bodyPara(opinionDoc(site,asof,sum).split("\n").slice(1).join("\n").trim());
+    if(DOCSET.consent) body+=head("취업규칙 불이익 변경 동의서")+HWPX.bodyPara(consentDoc(site,asof,sum,hits).split("\n").slice(1).join("\n").trim());
     const fname=`취업규칙제출서류_${site.replace(/[()\s—📄🏢\/\\:*?"<>|]/gu,"")}_${asof.replace(/-/g,"")}.hwpx`;
     HWPX.download(body,fname);
     $("ov-docset").classList.remove("on");
@@ -1396,11 +1457,11 @@ $("dl-doc-rev").addEventListener("click",()=>{
   });
   try{   // 한글 HWPX 직접 생성 (실패 시 RTF .doc 폴백)
     HWPX.setPage({landscape:PAGE_LAND});   // 조문 전문도 선택한 용지 방향 따름(기본 A4 세로)
-    let body=HWPX.para(title,HWPX.BOLD)+HWPX.para(sub)+HWPX.para("");
-    paras.forEach(p=>{ body+=HWPX.para(p)+HWPX.para(""); });
-    body+=HWPX.para("")+HWPX.para("부   칙",HWPX.BOLD);
-    ad.lines.forEach(l=>body+=HWPX.para(l));
-    body+=HWPX.para(ad.entry);
+    let body=HWPX.docTitle(title)+HWPX.docSub(sub)+HWPX.spacer();
+    paras.forEach(p=>{ body+=hwpxArticleBlock(p); });
+    body+=HWPX.chapter("부   칙");
+    ad.lines.forEach(l=>body+=HWPX.bodyPara(l));
+    body+=HWPX.bodyPara(ad.entry);
     HWPX.download(body,base+".hwpx");
   }catch(e){ console.warn("hwpx 생성 실패 — RTF(.doc) 폴백:",e);
     const blocks=paras.map(p=>({head:"",old:"",text:p,why:""}));
@@ -1481,11 +1542,60 @@ function subscribeArch(){if(!FBDB||!FBUSER)return;
 function updateArchCnt(){const n=loadArch().length;$("arch-cnt").textContent=n?`(${n})`:"";}
 try{if(window.firebase){firebase.initializeApp(FB_CONFIG);FBDB=firebase.database();
   firebase.auth().onAuthStateChanged(u=>{FBUSER=u;FBNAME=null;updateWho();
-    if(u){subscribeArch();resolveUserName();
+    if(u){subscribeArch();resolveUserName();loadErpCompanies();
       checkCloudWorkSession();   // 재로그인 시 계정에 남은 작업 세션 이어받기
       pushWorkToCloud(true);     // 로그인 전 로컬에만 있던 작업을 계정에 올려 다른 기기에서도 이어갈 수 있게
     }else if(FBDB)FBDB.ref("rules_mgmt/archive").off();});
 }}catch(e){console.warn("Firebase 초기화 건너뜀:",e);}
+
+/* ══════════ 푸른이알피 업체관리(data/companies) 연동 ══════════
+   사업장명·사업자번호로 자동 매칭해 대표자·소재지·업종·근로자수를 채운다.
+   → 신고서·의견청취서·동의서에 재입력 없이 반영. */
+let ERP_COS=[], SITE_INFO=null;
+const _norm=s=>String(s||"").toLowerCase().replace(/[\s\-㈜()（）]|주식회사|유한회사|\(주\)/g,"");
+const _digits=s=>String(s||"").replace(/[^0-9]/g,"");
+function loadErpCompanies(){
+  if(!FBDB)return;
+  FBDB.ref("data/companies").once("value").then(s=>{
+    const v=s.val(); ERP_COS=Array.isArray(v)?v.filter(Boolean):Object.values(v||{}).filter(Boolean);
+    console.info("ERP 업체",ERP_COS.length,"건 로드");
+    if(LAST)matchErpSite();       // 이미 검토 중이면 즉시 매칭
+  }).catch(e=>console.warn("ERP 업체 로드 실패:",e));
+}
+/* 현재 사업장에 맞는 ERP 업체 찾기 (사업자번호 우선 → 상호명) */
+function findErpCompany(name,bizNo){
+  const b=_digits(bizNo);
+  if(b.length>=10){ const hit=ERP_COS.find(c=>_digits(c.bizNo)===b); if(hit)return hit; }
+  const n=_norm(String(name||"").replace(/^[📄🏢]\s*/u,"").replace(/〔샘플〕/g,""));
+  if(n.length<2)return null;
+  return ERP_COS.find(c=>_norm(c.name)===n)||ERP_COS.find(c=>n&&_norm(c.name)&&(_norm(c.name).includes(n)||n.includes(_norm(c.name))))||null;
+}
+function matchErpSite(){
+  if(!LAST)return null;
+  const c=findErpCompany(LAST.site,LAST.bizno);
+  SITE_INFO=c?{
+    name:c.name||"", bizNo:c.bizNo||"", ceo:c.ceo||c.ceoName||"",
+    address:c.address||"", addressDetail:c.addressDetail||"",
+    phone:c.phone||c.tel||"", bizType:c.bizType||"", industry:c.industry||"",
+    empTotal:c.employmentInsuredCount||c.companySize||"", laborOffice:c.laborOffice||""
+  }:null;
+  showErpBadge();
+  return SITE_INFO;
+}
+function showErpBadge(){
+  const el=$("erp-badge"); if(!el)return;
+  if(SITE_INFO){
+    el.style.display="";
+    el.innerHTML=`🏢 ERP 연동됨 — <b>${escapeH(SITE_INFO.name)}</b>`
+      +(SITE_INFO.ceo?` · 대표 ${escapeH(SITE_INFO.ceo)}`:"")
+      +(SITE_INFO.bizNo?` · ${escapeH(SITE_INFO.bizNo)}`:"")
+      +(SITE_INFO.address?`<br><span style="color:var(--mute)">${escapeH(SITE_INFO.address)}${SITE_INFO.addressDetail?" "+escapeH(SITE_INFO.addressDetail):""}</span>`:"")
+      +` <span style="color:var(--mute)">— 신고서·의견서에 자동 반영</span>`;
+  }else if(ERP_COS.length&&LAST){
+    el.style.display="";
+    el.innerHTML=`<span style="color:var(--warn)">🏢 ERP 업체관리에서 '${escapeH(String(LAST.site||"").replace(/^[📄🏢]\s*/u,""))}'을(를) 찾지 못했습니다</span> <span style="color:var(--mute)">— 신고서의 소재지·대표자는 공란으로 출력됩니다</span>`;
+  }else el.style.display="none";
+}
 updateWho();
 /* ── 원본 파일 보존(A): 저장 시 텍스트+원본(base64)을 별도 노드에 함께 저장 → 재오픈 시 원본 미리보기 복원.
    큰 파일(>2MB)은 자동으로 텍스트만 보존. ── */
