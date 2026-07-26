@@ -98,6 +98,14 @@ table.daejo td{border:1px solid var(--line);padding:6px 8px;vertical-align:top;l
 table.daejo td.c{text-align:center;color:var(--mute)}
 table.daejo .rlabel{font-weight:600;font-size:11.5px}
 table.daejo .rreason{color:var(--sub);font-size:11px}
+.rzedit{min-height:20px;font-size:11px;line-height:1.55;color:var(--ink);outline:1px dashed #c7d2e8;outline-offset:-2px;border-radius:4px;padding:3px 5px;cursor:text;white-space:pre-wrap}
+.rzedit:focus{outline:2px solid var(--accent2);background:#f6f9ff}
+.rzedit:empty::before{content:"클릭해 변경이유 입력";color:var(--mute)}
+.rzchips{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px}
+.rzchip{font-size:9.5px;padding:2px 6px;border-radius:10px;border:1px solid #c7d2e8;background:#fff;color:var(--accent);cursor:pointer;font-family:inherit;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rzchip:hover{background:#eef2ff}
+.rzchip.note{border-color:#99d5cc;color:#0f766e}
+.rzchip.x{border-color:#f3c0c0;color:#b91c1c}
 .arch-search{width:100%;height:38px;padding:0 12px;border:1px solid #cdd6e6;border-radius:9px;font-family:inherit;font-size:13px;margin-bottom:12px}
 .pick-art{border:1.5px dashed #b9c6e0;border-radius:9px;padding:9px 11px;margin:7px 2px;cursor:pointer;background:#fff;transition:border-color .12s,background .12s}
 .pick-art:hover{border-color:var(--accent2);background:#f6f9ff}
@@ -230,6 +238,7 @@ td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
       <span style="font-size:12px;color:var(--mute);margin-left:10px">용지:</span>
       <button class="stbtn" id="pg-portrait" title="A4 세로 — 기본. 조문 전문·일반 제출용">A4 세로</button>
       <button class="stbtn" id="pg-landscape" title="A4 가로 — 조문이 길어 4열이 좁을 때(대조표 가독성↑)">A4 가로</button>
+      <button class="stbtn" id="inc-note" style="margin-left:10px" title="켜면 다운로드 문서(한글·엑셀)의 변경이유에 💡검토 권고까지 포함됩니다. 제출용은 끈 상태를 권장합니다.">💡 검토권고 문서 포함</button>
       <button class="btn ghost" id="add-ins" style="height:30px;font-size:12px;margin-left:auto">+ 신설 조문 추가</button>
     </div>
     <table class="daejo" id="daejo-tbl"></table>
@@ -684,6 +693,7 @@ function buildItems(res,terms,arts){
 /* ── 개정방식별 순서·조번호 계산 (일부개정=가지번호·결번 / 전부개정=순차 재번호) ── */
 let REV_MODE="partial";   // "partial"=일부개정, "full"=전부개정
 let PAGE_LAND=false;      // 용지 방향: false=A4 세로(기본), true=A4 가로 — 한글·엑셀 산출물 공통
+let INC_NOTE=false;       // 💡검토 권고를 다운로드 문서에 포함할지(기본 제외 — 제출용 문서엔 내부 메모 불필요)
 /* 방향별 열 비율 — 세로는 좁으니 조항·이유 칸을 줄이고 본문 칸을 넓게 */
 function daejoCols(){ return PAGE_LAND?[1.5,2.9,3.4,2.2]:[1.4,3.0,3.2,1.9]; }
 function computeOrdered(items){
@@ -744,10 +754,17 @@ function normalizeItems(items){
   });
 }
 function changedItems(){ return CUR_ITEMS.filter(it=>itemKind(it)!=="유지"); }
+/* 문서에 실릴 변경이유 — 노무사가 직접 쓴 값(reasonEdit)이 있으면 그것만, 없으면 자동 근거.
+   💡검토 권고는 내부 메모라 기본 제외하고, [검토권고 문서 포함]을 켤 때만 덧붙인다. */
+function docReason(it){
+  const base=(it.reasonEdit!==undefined&&it.reasonEdit!==null)?String(it.reasonEdit):(it.reason||"");
+  if(!INC_NOTE||!it.reviewNote)return base;
+  return base?(base+" 〔검토권고: "+it.reviewNote+"〕"):("검토권고: "+it.reviewNote);
+}
 function daejoRows(){ return numberedView(CUR_ITEMS,REV_MODE).filter(v=>itemKind(v.it)!=="유지").map(v=>{
   const it=v.it,k=itemKind(it);
   return {label:viewLabel(v),kind:k,before:it.orig===""?"신설":it.orig,after:it.del?"〈삭제〉":it.after,
-    reason:it.reason+(it.reviewNote?" 〔검토권고: "+it.reviewNote+"〕":"")};}); }
+    reason:docReason(it)};}); }
 function KIND_BADGE(k){return k==="신설"?"miss":(k==="삭제"?"up":(k==="개정"?"s":"man"));}
 function openEditor(){
   renderEditor();
@@ -787,17 +804,36 @@ function renderEditor(){
         </div>${posSel}</td>
       <td>${it.orig===""?'<span class="c">신 설</span>':escapeH(it.before)}</td>
       <td class="${canEdit?"editable":""}" ${canEdit?'contenteditable="true"':""} data-i="${i}">${(it.del&&REV_MODE==="partial")?'<span class="c">삭 제</span>':escapeH(it.after)}</td>
-      <td class="rreason">${escapeH(it.reason)}${it.reviewNote?`<div style="margin-top:4px;color:#0f766e;font-size:10.5px;line-height:1.5;background:#f0fdfa;border-left:3px solid #14b8a6;padding:3px 6px;border-radius:5px">💡 ${escapeH(it.reviewNote)}</div>`:""}</td>`;
+      <td class="rreason">
+        <div class="rzedit" contenteditable="true" data-i="${i}" title="클릭해 변경이유를 직접 쓰거나 지우세요. 아래 근거 칩을 눌러 넣을 수 있습니다.">${escapeH(docReason(it).replace(/\s*〔검토권고:[^〕]*〕/g,""))}</div>
+        ${(it.reason||it.reviewNote)?`<div class="rzchips">
+          ${it.reason?`<button class="rzchip" data-act="rz-add" data-i="${i}" data-kind="law" title="이 근거를 변경이유에 넣기">+ ${escapeH(it.reason.length>40?it.reason.slice(0,40)+"…":it.reason)}</button>`:""}
+          ${it.reviewNote?`<button class="rzchip note" data-act="rz-add" data-i="${i}" data-kind="note" title="검토 권고를 변경이유에 넣기(문서에도 표시됨)">+💡 검토권고</button>`:""}
+          <button class="rzchip x" data-act="rz-clear" data-i="${i}" title="변경이유 비우기">비우기</button>
+        </div>`:""}
+        ${it.reviewNote?`<div style="margin-top:4px;color:#0f766e;font-size:10.5px;line-height:1.5;background:#f0fdfa;border-left:3px solid #14b8a6;padding:3px 6px;border-radius:5px">💡 ${escapeH(it.reviewNote)}<div style="color:var(--mute);font-size:9.5px;margin-top:2px">참고용 — ${INC_NOTE?"문서에 포함됨":"문서에는 안 들어감"}</div></div>`:""}
+      </td>`;
     tb.appendChild(tr);
   });
   t.appendChild(tb);
   tb.querySelectorAll("td.editable").forEach(td=>td.addEventListener("input",()=>{
     CUR_ITEMS[+td.dataset.i].after=td.innerText; refreshDaejoSub(); saveWip();   // 타이핑도 임시저장
   }));
+  // 변경이유 직접 편집 — 저장값(reasonEdit)에 담아 문서에 그대로 반영
+  tb.querySelectorAll(".rzedit").forEach(el=>el.addEventListener("input",()=>{
+    CUR_ITEMS[+el.dataset.i].reasonEdit=el.innerText.trim(); saveWorkState();
+  }));
   tb.querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>{
     const it=CUR_ITEMS[+b.dataset.i];
     if(b.dataset.act==="up"){moveItem(it,-1);return;}
     if(b.dataset.act==="down"){moveItem(it,1);return;}
+    if(b.dataset.act==="rz-add"){   // 근거·검토권고를 변경이유에 덧붙이기
+      const add=(b.dataset.kind==="note")?("검토권고: "+(it.reviewNote||"")):(it.reason||"");
+      const cur=(it.reasonEdit!==undefined&&it.reasonEdit!==null)?String(it.reasonEdit):(it.reason||"");
+      it.reasonEdit=(cur&&cur.indexOf(add)<0)?(cur+" / "+add):(cur?cur:add);
+      renderEditor();saveWorkState();return;
+    }
+    if(b.dataset.act==="rz-clear"){ it.reasonEdit=""; renderEditor();saveWorkState();return; }
     if(b.dataset.act==="del")it.del=!it.del;
     if(b.dataset.act==="revert"){it.after=it.orig;it.suggested=false;}
     if(b.dataset.act==="restore"){it.after=it.sug;it.suggested=true;}   // 자동제안 문안 복원
@@ -811,6 +847,7 @@ function renderEditor(){
   if($("mode-full"))$("mode-full").className="stbtn"+(REV_MODE==="full"?" on-adopt":"");
   if($("pg-portrait"))$("pg-portrait").className="stbtn"+(!PAGE_LAND?" on-adopt":"");
   if($("pg-landscape"))$("pg-landscape").className="stbtn"+(PAGE_LAND?" on-adopt":"");
+  if($("inc-note"))$("inc-note").className="stbtn"+(INC_NOTE?" on-adopt":"");
   refreshDaejoSub();
   saveWip();   // 조문 조작·모드 변경·위치 변경 등 모든 편집을 임시저장
 }
@@ -827,6 +864,7 @@ $("mk-daejo").addEventListener("click",()=>{
 });
 $("flt-changed").addEventListener("click",()=>{CUR_FILTER="changed";renderEditor();});
 $("flt-all").addEventListener("click",()=>{CUR_FILTER="all";renderEditor();});
+$("inc-note").addEventListener("click",()=>{INC_NOTE=!INC_NOTE;renderEditor();saveWorkState();});
 $("pg-portrait").addEventListener("click",()=>{PAGE_LAND=false;renderEditor();saveWorkState();});
 $("pg-landscape").addEventListener("click",()=>{PAGE_LAND=true;renderEditor();saveWorkState();});
 $("mode-partial").addEventListener("click",()=>{REV_MODE="partial";renderEditor();});
@@ -1159,7 +1197,7 @@ function saveWorkState(){
     // 보관 중인 작업 문서일 때만 상태 갱신 — 표시명(📄 파일명 / 🏢 사업장명)이 아니라 원본 파일명으로 비교
     const curFile=SITE_FILE[LAST.key]||String(SITE_MAP[LAST.key]||"").replace(/^[📄🏢]\s*/u,"");
     if(w.orig.name&&curFile&&w.orig.name!==curFile)return;
-    w.state={items:CUR_ITEMS,mode:REV_MODE,land:PAGE_LAND,size:LAST.size,asof:LAST.asof};
+    w.state={items:CUR_ITEMS,mode:REV_MODE,land:PAGE_LAND,note:INC_NOTE,size:LAST.size,asof:LAST.asof};
     w.savedAt=new Date().toISOString();
     localStorage.setItem(WORK_KEY,JSON.stringify(w));
   }catch(e){}
@@ -1182,7 +1220,7 @@ async function applyWorkObject(w,opts){
   let opt=[...siteSel.options].find(x=>x.value===key);
   if(!opt){opt=document.createElement("option");opt.value=key;siteSel.appendChild(opt);}
   opt.textContent=SITE_MAP[key]; siteSel.value=key;
-  if(w.state){ if(w.state.size)$("size").value=w.state.size; if(w.state.asof)$("asof").value=w.state.asof; PAGE_LAND=!!w.state.land; }
+  if(w.state){ if(w.state.size)$("size").value=w.state.size; if(w.state.asof)$("asof").value=w.state.asof; PAGE_LAND=!!w.state.land; INC_NOTE=!!w.state.note; }
   await renderPreview();
   const txt=SAMPLES[key]||"";
   LAST={key,site:SITE_MAP[key],bizno:"",size:$("size").value,conds:[],asof:$("asof").value,
