@@ -172,16 +172,6 @@ td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
   <span class="user" id="who">로그인 확인 중…</span>
   <a class="hbtn" href="enter.html">← 포털로</a>
 </header>
-<!-- 임시저장 복원 안내 — 새로고침·창 닫힘으로 잃은 작업을 이어서 하도록 -->
-<div id="wip-bar" style="display:none;align-items:center;gap:10px;margin:10px 16px 0;padding:10px 14px;
-  background:#fff7ed;border:1px solid #fdba74;border-radius:10px;font-size:13px;color:#9a3412">
-  <b>💾 임시저장된 작업이 있습니다</b>
-  <span id="wip-info" style="color:#b45309"></span>
-  <span style="flex:1"></span>
-  <button class="btn" id="wip-restore" style="padding:6px 12px">이어서 작업</button>
-  <button class="btn ghost" id="wip-discard" style="padding:6px 12px">지우기</button>
-</div>
-
 <div class="wrap">
 
   <div class="grid" id="grid">
@@ -846,7 +836,7 @@ function downloadXlsx(rows,ctx){
   if(typeof XLSX!=="undefined"){
     const ws=XLSX.utils.aoa_to_sheet(aoa);ws["!cols"]=[{wch:22},{wch:34},{wch:40},{wch:24}];
     const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"신구대조표");
-    XLSX.writeFile(wb,`신구대조표_${siteLabel().replace(/[()\s—📄🏢\/\\:*?"<>|]/g,"")}_${ctx.asof.replace(/-/g,"")}.xlsx`);
+    XLSX.writeFile(wb,`신구대조표_${siteLabel().replace(/[()\s—📄🏢\/\\:*?"<>|]/gu,"")}_${ctx.asof.replace(/-/g,"")}.xlsx`);
   }else{
     const csv=aoa.map(r=>r.map(c=>`"${(c||"").replace(/"/g,'""')}"`).join(",")).join("\n");
     const a=document.createElement("a");a.href="data:text/csv;charset=utf-8,﻿"+encodeURIComponent(csv);
@@ -935,7 +925,7 @@ $("dl-doc-daejo").addEventListener("click",()=>{
   const rows=daejoRows().map(r=>[r.label+(r.kind?"\n["+r.kind+"]":""),r.before==="신설"?"신 설":r.before,r.after,r.reason]);
   if(!rows.length){alert("변경된 조문이 없습니다.");return;}
   const dsite=siteLabel();   // 본문에서 인식된 회사명 우선
-  const base=`신구대조표_${dsite.replace(/[()\s—📄🏢\/\\:*?"<>|]/g,"")}_${LAST.asof.replace(/-/g,"")}`;
+  const base=`신구대조표_${dsite.replace(/[()\s—📄🏢\/\\:*?"<>|]/gu,"")}_${LAST.asof.replace(/-/g,"")}`;
   try{   // 한글 HWPX 직접 생성 (실패 시 RTF .doc 폴백) — 대조표는 A4 가로
     HWPX.setPage({landscape:true});
     const body=HWPX.para(`${dsite} 취업규칙 개정 신구대조표`,HWPX.BOLD)
@@ -966,7 +956,7 @@ $("dl-doc-rev").addEventListener("click",()=>{
   const site=siteLabel();
   const title=`${site} 취업규칙`;
   const sub=`${REV_MODE==="partial"?"일부개정":"전부개정"} · 시행 ${fmtKDate(LAST.asof)}`;
-  const base=`취업규칙_${site.replace(/[()\s—📄🏢\/\\:*?"<>|]/g,"")}_${LAST.asof.replace(/-/g,"")}`;
+  const base=`취업규칙_${site.replace(/[()\s—📄🏢\/\\:*?"<>|]/gu,"")}_${LAST.asof.replace(/-/g,"")}`;
   const ad=composeAddendum();   // 부칙: 기존 이력 승계 + 이번 시행일
   // 문안이 비어 있는 신설(검토 대상)은 규정 문서에 넣지 않음 — 신구대조표에서 작성 후 반영
   const emptyIns=shown.filter(v=>v.it.orig===""&&!String(v.it.after||"").trim()).length;
@@ -1019,50 +1009,27 @@ function resolveUserName(){
   });
 }
 const fbKey=s=>String(s||"").replace(/[.#$\[\]\/\s]/g,"_").slice(0,120)||"unknown";
-/* ══════ 임시저장(WIP) — 새로고침·창 닫힘으로 작업이 날아가지 않게 ══════
-   [보관함에 저장]을 누르기 전 상태(검토 결과 + 조문별 개정안 편집)는 메모리에만 있어
-   F5 한 번에 사라졌다. 편집할 때마다 이 브라우저에 임시 보관하고, 다음 방문 시 복원을 제안한다.
-   보관함에 정식 저장하면 임시본은 지운다. */
+/* ══════ 임시저장은 아래 '작업 세션 자동 보관'(WORK_KEY) 하나로 통합 ══════
+   과거 WIP(pureun_rules_wip_v1)에 남은 작업이 있으면 1회 이관 후 제거한다.
+   (WORK 쪽이 원본 파일 바이너리·계정 클라우드 동기화까지 포함하는 상위 기능) */
 const WIP_KEY="pureun_rules_wip_v1";
-let _wipT=null;
-function saveWip(){                       // 편집 중 호출 — 1.5초 디바운스
-  if(_wipT)clearTimeout(_wipT);
-  _wipT=setTimeout(function(){
-    try{
-      if(!LAST||!CUR_ITEMS.length)return;
-      const txt=(LAST.key&&SAMPLES[LAST.key])?SAMPLES[LAST.key]:"";
-      const rec={site:LAST.site,bizno:LAST.bizno,size:LAST.size,conds:LAST.conds||[],asof:LAST.asof,
-        summary:LAST.summary,items:CUR_ITEMS,mode:REV_MODE,addendum:LAST.addendum||"",
-        key:LAST.key||"",txt:txt,at:Date.now()};
-      localStorage.setItem(WIP_KEY,JSON.stringify(rec));
-    }catch(e){ console.warn("임시저장 실패(용량 초과 등):",e); }   // 실패해도 작업은 계속
-  },1500);
+function saveWip(){ saveWorkState(); }          // 기존 호출부 호환 — 통합 저장으로 위임
+function clearWip(){ try{ localStorage.removeItem(WIP_KEY); }catch(e){} }
+function migrateWip(){
+  let w=null; try{ w=JSON.parse(localStorage.getItem(WIP_KEY)||"null"); }catch(e){}
+  if(!w||!w.items||!w.items.length){ clearWip(); return; }
+  try{
+    let cur=null; try{ cur=JSON.parse(localStorage.getItem(WORK_KEY)||"null"); }catch(e){}
+    const curAt=cur&&cur.savedAt?Date.parse(cur.savedAt):0;
+    if(curAt>=(w.at||0)){ clearWip(); return; }   // 통합 저장본이 더 최신 → 옛 임시본 폐기
+    const name=String(w.site||"작업 문서").replace(/^[🏢📄]\s*/u,"");
+    const rec={orig:{name,site:(w.txt?detectSiteName(w.txt):"")||name,ext:"",text:w.txt||"",b64:null,isPdf:false,truncated:!w.txt},
+      state:{items:w.items,mode:w.mode||"partial",size:w.size,asof:w.asof},
+      savedAt:new Date(w.at||Date.now()).toISOString()};
+    localStorage.setItem(WORK_KEY,JSON.stringify(rec));
+  }catch(e){ console.warn("임시저장 이관 실패:",e); }
+  clearWip();
 }
-function clearWip(){ try{ localStorage.removeItem(WIP_KEY); }catch(e){} const b=$("wip-bar"); if(b)b.style.display="none"; }
-function loadWip(){ try{ return JSON.parse(localStorage.getItem(WIP_KEY)||"null"); }catch(e){ return null; } }
-/* 페이지 열릴 때 임시본이 있으면 배너로 복원 제안 */
-(function initWip(){
-  const w=loadWip(); if(!w||!w.items||!w.items.length)return;
-  const bar=$("wip-bar"); if(!bar)return;
-  const min=Math.max(0,Math.round((Date.now()-(w.at||0))/60000));
-  const when=min<1?"방금 전":(min<60?min+"분 전":Math.round(min/60)+"시간 전");
-  $("wip-info").textContent=`${w.site||"이름 없는 사업장"} · 조문 ${w.items.length}개 · ${when}`;
-  bar.style.display="flex";
-  $("wip-restore").onclick=function(){
-    if(w.key&&w.txt)SAMPLES[w.key]=w.txt;                       // 원문 복원 → 조문 재파싱 가능
-    const arts=w.txt?parseArticles(w.txt):[];
-    LAST={key:(w.key&&w.txt)?w.key:null,site:w.site,bizno:w.bizno,size:w.size,conds:w.conds||[],
-      asof:w.asof,summary:w.summary,arts:arts,addendum:w.addendum||""};
-    REV_MODE=w.mode||"partial";
-    CUR_ITEMS=normalizeItems(w.items);
-    CUR_KEY=LAST.key||("wip_"+(w.at||0));                        // 편집 모델 보호(재생성 방지)
-    CUR_FILTER="changed";
-    bar.style.display="none";
-    $("mk-daejo").disabled=false; $("save").disabled=false;      // 저장·대조표 버튼 살리기
-    openEditor();
-  };
-  $("wip-discard").onclick=function(){ if(confirm("임시저장된 작업을 지울까요?"))clearWip(); };
-})();
 function loadArch(){try{return JSON.parse(localStorage.getItem(ARCH_KEY))||[]}catch(e){return[]}}
 function setLocal(a){localStorage.setItem(ARCH_KEY,JSON.stringify(a));updateArchCnt();}
 /* 레코드 1건 단위 저장 — 보관함 전체를 덮어쓰지 않으므로 여러 노무사 동시 저장 안전 */
@@ -1098,7 +1065,7 @@ function bufToB64(buf){let bin="",b=new Uint8Array(buf),CH=0x8000;for(let i=0;i<
 function b64ToBuf(s){const bin=atob(s),n=bin.length,b=new Uint8Array(n);for(let i=0;i<n;i++)b[i]=bin.charCodeAt(i);return b.buffer;}
 function loadOrigLocal(){try{return JSON.parse(localStorage.getItem(ORIG_KEY))||{}}catch(e){return{}}}
 function buildOrig(key){
-  const name=(SITE_MAP[key]||"").replace(/^[📄🏢]\s*/,""), buf=HWP_BUFS[key];
+  const name=(SITE_MAP[key]||"").replace(/^[📄🏢]\s*/u,""), buf=HWP_BUFS[key];
   let b64=null,truncated=false;
   if(buf){ if(buf.byteLength<=MAX_ORIG_BYTES)b64=bufToB64(buf); else truncated=true; }
   return {name,ext:(name.split(".").pop()||"").toLowerCase(),text:SAMPLES[key]||"",b64,isPdf:!!PDF_URLS[key],truncated};
@@ -1151,7 +1118,7 @@ $("work-clear").addEventListener("click",()=>{
   updateWorkBadge();
 });
 function saveWorkFromUpload(key,buf,isPdf){
-  const name=(SITE_MAP[key]||"").replace(/^[📄🏢]\s*/,"");
+  const name=(SITE_MAP[key]||"").replace(/^[📄🏢]\s*/u,"");
   const mk=b64=>({orig:{name:(SITE_FILE[key]||name),site:SITE_NAME[key]||"",ext:((SITE_FILE[key]||name).split(".").pop()||"").toLowerCase(),text:SAMPLES[key]||"",b64,isPdf:!!isPdf,truncated:!b64&&!!buf},savedAt:new Date().toISOString()});
   try{
     let b64=null;
@@ -1262,7 +1229,7 @@ window.addEventListener("beforeunload",()=>{ pushWorkToCloud(true); });
 /* 보관함 저장 본체 — silent=true면 알림 없이 저장(자동 저장용). 사업장명은 인식된 이름 우선 */
 function siteLabel(){
   if(!LAST)return "";
-  return (SITE_NAME[LAST.key]||String(LAST.site||"").replace(/^[🏢📄]\s*/,"")||"미지정 사업장");
+  return (SITE_NAME[LAST.key]||String(LAST.site||"").replace(/^[🏢📄]\s*/u,"")||"미지정 사업장");
 }
 function doSaveArchive(silent){
   if(!LAST)return null;
@@ -1417,6 +1384,7 @@ $("ae-apply").addEventListener("click",()=>{
 });
 $("run").addEventListener("click",run);
 renderPreview();updateArchCnt();
+migrateWip();    // 옛 임시저장(WIP)이 남아 있으면 통합 저장으로 이관
 restoreWork();   // F5·재접속 시 업로드 파일·편집 상태 자동 복원
 updateWorkBadge();   // 복원 대상이 없어도 배지는 즉시 반영(비동기 restoreWork 완료 전 안전)
 if($("rb-tag"))$("rb-tag").textContent="규칙집 v3 · "+RULES.length+"항목";
