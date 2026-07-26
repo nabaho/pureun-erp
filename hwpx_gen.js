@@ -49,10 +49,11 @@ function linesegs(text,horzsize){
 }
 function lineCount(text,horzsize){ return wrapPositions(text,horzsize).length; }
 /* 문단: \n 은 문단 분리 */
-function para(text,charPr){
-  const cp=charPr||"0";
-  return String(text==null?"":text).split("\n").map(function(line){
-    return '<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="'+cp+'"><hp:t>'+esc(line)+'</hp:t></hp:run>'+linesegs(line,bodyW())+'</hp:p>';
+function para(text,charPr,opt){
+  const cp=charPr||"0", brk=!!(opt&&opt.pageBreak);   // pageBreak: 이 문단부터 새 페이지(제출 서류 묶음용)
+  return String(text==null?"":text).split("\n").map(function(line,idx){
+    const pb=(brk&&idx===0)?"1":"0";
+    return '<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="'+pb+'" columnBreak="0" merged="0"><hp:run charPrIDRef="'+cp+'"><hp:t>'+esc(line)+'</hp:t></hp:run>'+linesegs(line,bodyW())+'</hp:p>';
   }).join("");
 }
 /* 셀 내부 문단 — 반환: {xml, lines} (행 높이 계산에 줄 수 사용) */

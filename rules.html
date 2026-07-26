@@ -14,7 +14,7 @@
 <script src="vendor/pdf.min.js"></script>
 <script>if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc="vendor/pdf.worker.min.js";</script>
 <script src="hwp_extract.js?v=4"></script>
-<script src="hwpx_gen.js?v=6"></script>
+<script src="hwpx_gen.js?v=7"></script>
 <script src="xlsx_gen.js?v=2"></script>
 <style>
 :root{
@@ -254,9 +254,24 @@ td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
 <div class="overlay" id="ov-rev"><div class="modal">
   <h2>변경 결과 · 개정안 조문 <span class="tag" id="rev-sub" style="font-size:12px;color:var(--mute);font-weight:400"></span><span class="x" data-close>×</span></h2>
   <div class="body" id="rev-body"></div>
+  <div class="foot" style="flex-wrap:wrap;gap:8px">
+    <button class="btn ghost" data-close>닫기</button>
+    <button class="btn ghost" id="open-docset">📎 제출 서류 세트</button>
+    <button class="btn" id="dl-doc-rev">한글(.hwpx) 다운로드</button>
+  </div>
+</div></div>
+
+<div class="overlay" id="ov-docset"><div class="modal" style="max-width:760px">
+  <h2>📎 제출 서류 세트 <span class="tag" id="docset-sub" style="font-size:12px;color:var(--mute);font-weight:400"></span><span class="x" data-close>×</span></h2>
+  <div class="body">
+    <div id="docset-warn"></div>
+    <p class="muted" style="font-size:12px;line-height:1.7;margin:0 0 10px">근로기준법 시행규칙 제15조 — 취업규칙 신고 시 <b>①전문+변경 전후 비교</b>, <b>②의견을 들었음을 입증하는 자료</b>가 필요하고, <b>불이익 변경이면 ③동의를 받았음을 증명하는 자료</b>를 더합니다. 선택한 서류를 <b>페이지를 나눠 한 파일</b>로 만듭니다.</p>
+    <div id="docset-list" style="display:flex;flex-direction:column;gap:8px"></div>
+    <p class="muted" style="font-size:11px;margin:12px 0 0;line-height:1.6">※ 서명·재적/동의 인원 등 공란은 출력 후 수기 기입하십시오. 신고서는 별지 제15호 서식의 기재사항을 담은 초안이며, 관할 지청 제출 시 서식 원본과 대조해 확인하십시오.</p>
+  </div>
   <div class="foot">
     <button class="btn ghost" data-close>닫기</button>
-    <button class="btn" id="dl-doc-rev">한글(.hwpx) 다운로드</button>
+    <button class="btn" id="dl-docset">📎 선택 서류 한 파일로 받기</button>
   </div>
 </div></div>
 
@@ -313,6 +328,88 @@ function extractAddendum(text){
   return t.slice(m.index+m[0].length).trim();
 }
 function fmtKDate(iso){const p=String(iso||"").split("-").map(Number);return p[0]?p[0]+"년 "+p[1]+"월 "+p[2]+"일":iso;}
+/* ══════ 제출 서류 세트 — 근로기준법 시행규칙 §15(취업규칙 신고 시 첨부서류) ══════
+   ① 취업규칙 전문 + 변경 전후 비교(신구대조표) ② 의견청취서(항상 필수)
+   ③ 동의서(불이익 변경 시에만) + 취업규칙(변경)신고서[별지 제15호] */
+let DOCSET={apply:true,daejo:true,full:true,opinion:true,consent:false};   // 첨부 선택(동의서는 불이익 변경 시 켬)
+/* 불이익 변경 가능성 자동 판단 보조 — 삭제·축소·기준 하향 신호를 잡아 표시(최종 판단은 노무사) */
+const DISADV_WORDS=["삭제","폐지","축소","감액","단축","인하","제한","불이익","해지","박탈","감봉","축소한다","줄인다"];
+function disadvantageScan(){
+  const hits=[];
+  numberedView(CUR_ITEMS,REV_MODE).forEach(v=>{
+    const it=v.it,k=itemKind(it);
+    if(k==="유지"||k==="검토")return;
+    const reasons=[];
+    if(it.del)reasons.push("조문 삭제");
+    else if(k==="개정"){
+      const a=String(it.orig||""),b=String(it.after||"");
+      if(b.length<a.length*0.75)reasons.push("분량 대폭 축소");
+      const w=DISADV_WORDS.filter(x=>b.indexOf(x)>=0&&a.indexOf(x)<0);
+      if(w.length)reasons.push("문구: "+w.join("·"));
+      // 수치 하향(일수·비율·금액)
+      const na=(a.match(/\d+/g)||[]).map(Number), nb=(b.match(/\d+/g)||[]).map(Number);
+      if(na.length&&nb.length&&Math.max(...nb)<Math.max(...na))reasons.push("수치 하향("+Math.max(...na)+"→"+Math.max(...nb)+")");
+    }
+    if(reasons.length)hits.push({no:v.no,title:it.title||"",kind:k,why:reasons.join(", ")});
+  });
+  return hits;
+}
+function docsetSign(n){   // 서명란 — 근로자 과반수 확인용
+  let s="";
+  for(let i=0;i<(n||5);i++)s+="\n소속 ________  성명 ____________  (서명 또는 인)";
+  return s;
+}
+function opinionDoc(site,asof,summary){
+  return "근로자 의견청취서"
+    +"\n\n1. 사업장명: "+site
+    +"\n2. 의견 청취 대상: 취업규칙 "+(REV_MODE==="partial"?"일부":"전부")+" 개정(안)"
+    +"\n3. 개정 내용: "+summary
+    +"\n4. 의견 청취 일자: "+fmtKDate(asof)
+    +"\n\n위 취업규칙 개정(안)에 대하여 근로기준법 제94조 제1항에 따라 근로자 과반수의 의견을 청취하였음을 확인합니다."
+    +"\n\n■ 근로자 대표(또는 과반수 노동조합) 의견"
+    +"\n   □ 이의 없음    □ 다음과 같은 의견 있음"
+    +"\n   의견: ______________________________________________"
+    +"\n\n"+fmtKDate(asof)
+    +"\n\n근로자 대표  성명 ____________  (서명 또는 인)"
+    +"\n과반수 노동조합  명칭 ____________  대표자 ____________  (서명 또는 인)"
+    +"\n\n■ 의견 청취에 참여한 근로자"+docsetSign(8);
+}
+function consentDoc(site,asof,summary,hits){
+  const list=(hits&&hits.length)?hits.map(h=>"   · "+h.no+(h.title?"("+h.title+")":"")+" — "+h.kind).join("\n"):"   · (해당 조문을 기재하십시오)";
+  return "취업규칙 불이익 변경 동의서"
+    +"\n\n1. 사업장명: "+site
+    +"\n2. 변경 대상: 취업규칙 "+(REV_MODE==="partial"?"일부":"전부")+" 개정(안)"
+    +"\n3. 불이익 변경에 해당하는 사항\n"+list
+    +"\n4. 변경 내용 요약: "+summary
+    +"\n5. 시행 예정일: "+fmtKDate(asof)
+    +"\n\n위 취업규칙 변경은 근로자에게 불이익한 변경에 해당하므로, 근로기준법 제94조 제1항 단서에 따라"
+    +"\n근로자 과반수(또는 근로자 과반수로 조직된 노동조합)의 동의를 받아 시행합니다."
+    +"\n본인은 위 변경 내용을 충분히 설명받고 이해하였으며, 이에 동의합니다."
+    +"\n\n"+fmtKDate(asof)
+    +"\n\n■ 동의 근로자 (과반수 확인)"+docsetSign(12)
+    +"\n\n※ 재적 근로자 수 ______명 / 동의 근로자 수 ______명 (과반수 여부 확인)";
+}
+function applyDoc(site,asof){
+  return "취업규칙 "+(REV_MODE==="partial"?"[ ] 신고서   [√] 변경신고서":"[√] 신고서   [ ] 변경신고서")
+    +"\n(근로기준법 시행규칙 별지 제15호서식)"
+    +"\n\n■ 사업장 개요"
+    +"\n사업장명: "+site
+    +"\n소재지: ____________________________  전화: ____________"
+    +"\n대표자 성명: ____________   업종: ____________"
+    +"\n상시 근로자 수: "+(LAST&&LAST.size?LAST.size:"____")+"   (남 ____명 / 여 ____명)"
+    +"\n\n■ 신고 내용"
+    +"\n신고 사유: 취업규칙 "+(REV_MODE==="partial"?"일부 개정":"전부 개정")
+    +"\n시행 예정일: "+fmtKDate(asof)
+    +"\n\n■ 첨부서류 (근로기준법 시행규칙 제15조)"
+    +"\n  1. 취업규칙 전문 1부"+(DOCSET.full?" [√]":" [ ]")
+    +"\n  2. 변경 전후 비교표(신구대조표) 1부"+(DOCSET.daejo?" [√]":" [ ]")
+    +"\n  3. 근로자 과반수의 의견을 들었음을 입증하는 자료 1부"+(DOCSET.opinion?" [√]":" [ ]")
+    +"\n  4. 근로자 과반수의 동의를 받았음을 증명하는 자료 1부(불이익 변경 시)"+(DOCSET.consent?" [√]":" [ ]")
+    +"\n\n위와 같이 취업규칙을 신고합니다."
+    +"\n\n"+fmtKDate(asof)
+    +"\n\n신고인(사용자)  성명 ____________  (서명 또는 인)"
+    +"\n\n____________지방고용노동청(지청)장 귀하";
+}
 function composeAddendum(){
   const prev=(LAST&&LAST.addendum)||"";
   const lines=prev?prev.split("\n").map(s=>s.trim()).filter(Boolean):[];
@@ -1009,6 +1106,77 @@ function articleText(v){
   const head=v.no+(it.title?"("+it.title+")":"");
   return t?(head+" "+t):head;
 }
+/* ── 제출 서류 세트 패널 ── */
+function docsetSummary(){
+  let 개정=0,신설=0,삭제=0;CUR_ITEMS.forEach(it=>{const k=itemKind(it);if(k==="개정")개정++;else if(k==="신설")신설++;else if(k==="삭제")삭제++;});
+  return `${REV_MODE==="partial"?"일부개정":"전부개정"} · 개정 ${개정} · 신설 ${신설} · 삭제 ${삭제}`;
+}
+function renderDocset(){
+  const hits=disadvantageScan();
+  const site=siteLabel();
+  $("docset-sub").textContent=`${site} · ${docsetSummary()}`;
+  // 불이익 변경 자동 판단 보조
+  const warn=$("docset-warn");
+  if(hits.length){
+    warn.innerHTML=`<div class="sample-banner" style="background:#fef2f2;border-color:#fca5a5;color:#b91c1c">
+      ⚠ <b>불이익 변경 가능성 ${hits.length}건</b> — 동의서가 필요할 수 있습니다(근로기준법 §94① 단서, 동의 없는 불이익 변경은 무효).
+      <div style="margin-top:6px;font-weight:400;font-size:11px;line-height:1.6;max-height:120px;overflow:auto">
+      ${hits.map(h=>`· <b>${escapeH(h.no)}</b>${h.title?" ("+escapeH(h.title)+")":""} — ${escapeH(h.why)}`).join("<br>")}</div>
+      <div style="margin-top:6px;font-weight:400;font-size:11px">최종 판단은 노무사가 하십시오. 아래에서 <b>동의서</b>를 함께 선택할 수 있습니다.</div></div>`;
+    if(DOCSET.consent===false&&!DOCSET._touched)DOCSET.consent=true;   // 자동 제안(사용자가 손대면 그 선택 유지)
+  }else{
+    warn.innerHTML=`<div class="sample-banner" style="background:#f0fdfa;border-color:#99d5cc;color:#0f766e">✔ 자동 점검 결과 불이익 변경 신호는 발견되지 않았습니다 — 통상 <b>의견청취서</b>만으로 신고할 수 있습니다. (판단은 노무사 확인 필요)</div>`;
+  }
+  const ITEMS=[
+    ["apply","취업규칙 (변경)신고서 [별지 제15호]","사업장 개요·신고 사유·첨부서류 목록 — 제출 표지"],
+    ["daejo","신구대조표 (변경 전후 비교)","시행규칙 §15 ① — 변경신고 시 필수"],
+    ["full","취업규칙 전문 (개정 반영)","시행규칙 §15 ① — 전문 1부"],
+    ["opinion","근로자 의견청취서","시행규칙 §15 ② — <b>항상 필수</b>. 과반수 의견 청취 입증"],
+    ["consent","근로자 동의서 (불이익 변경)","시행규칙 §15 ③ — 불이익 변경 시에만"]
+  ];
+  $("docset-list").innerHTML=ITEMS.map(([k,label,desc])=>
+    `<label style="display:flex;gap:9px;align-items:flex-start;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:${DOCSET[k]?"#f6f9ff":"#fff"};cursor:pointer">
+      <input type="checkbox" data-ds="${k}" ${DOCSET[k]?"checked":""} style="margin-top:2px">
+      <span><b style="font-size:13px">${label}</b><br><span class="muted" style="font-size:11px">${desc}</span></span></label>`).join("");
+  $("docset-list").querySelectorAll("[data-ds]").forEach(c=>c.onchange=()=>{
+    DOCSET[c.dataset.ds]=c.checked; DOCSET._touched=true; renderDocset(); });
+}
+$("open-docset").addEventListener("click",()=>{
+  if(!CUR_ITEMS.length){alert("먼저 조문 검토·편집을 생성하세요.");return;}
+  renderDocset(); $("ov-docset").classList.add("on");
+});
+$("dl-docset").addEventListener("click",()=>{
+  const sel=["apply","daejo","full","opinion","consent"].filter(k=>DOCSET[k]);
+  if(!sel.length){alert("첨부할 서류를 선택하세요.");return;}
+  const site=siteLabel(), asof=LAST.asof, sum=docsetSummary(), hits=disadvantageScan();
+  const view=numberedView(CUR_ITEMS,REV_MODE);
+  const shown=REV_MODE==="full"?view.filter(v=>!v.it.del):view;
+  const ad=composeAddendum();
+  try{
+    HWPX.setPage({landscape:PAGE_LAND});
+    let body="", first=true;
+    const head=t=>{ const p=HWPX.para(t,HWPX.BOLD,{pageBreak:!first}); first=false; return p+HWPX.para(""); };
+    if(DOCSET.apply) body+=head(`${site} 취업규칙 ${REV_MODE==="partial"?"변경":""}신고서`)+HWPX.para(applyDoc(site,asof));
+    if(DOCSET.daejo){
+      const rows=daejoRows().map(r=>[r.label+(r.kind?"\n["+r.kind+"]":""),r.before==="신설"?"신 설":r.before,r.after,r.reason]);
+      body+=head(`${site} 취업규칙 개정 신구대조표`)+HWPX.para(`검토기준일 ${asof} · ${sum}`)+HWPX.para("")
+        +(rows.length?HWPX.tablePara([["변경조항","변경 전","변경 후","변경이유"]].concat(rows),HWPX.cols(daejoCols())):HWPX.para("변경 항목 없음"));
+    }
+    if(DOCSET.full){
+      body+=head(`${site} 취업규칙`)+HWPX.para(`${REV_MODE==="partial"?"일부개정":"전부개정"} · 시행 ${fmtKDate(asof)}`)+HWPX.para("");
+      shown.filter(v=>!(v.it.orig===""&&!String(v.it.after||"").trim())).forEach(v=>{
+        body+=HWPX.para(v.it.del?(v.no+" 삭제"):articleText(v))+HWPX.para("");
+      });
+      body+=HWPX.para("")+HWPX.para("부   칙",HWPX.BOLD);
+      ad.lines.forEach(l=>body+=HWPX.para(l)); body+=HWPX.para(ad.entry);
+    }
+    if(DOCSET.opinion) body+=head("근로자 의견청취서")+HWPX.para(opinionDoc(site,asof,sum).split("\n").slice(1).join("\n").trim());
+    if(DOCSET.consent) body+=head("취업규칙 불이익 변경 동의서")+HWPX.para(consentDoc(site,asof,sum,hits).split("\n").slice(1).join("\n").trim());
+    const fname=`취업규칙제출서류_${site.replace(/[()\s—📄🏢\/\\:*?"<>|]/gu,"")}_${asof.replace(/-/g,"")}.hwpx`;
+    HWPX.download(body,fname);
+    $("ov-docset").classList.remove("on");
+  }catch(e){ console.warn("제출 서류 생성 실패:",e); alert("서류 생성에 실패했습니다: "+(e.message||e)); }
+});
 $("dl-doc-rev").addEventListener("click",()=>{
   const view=numberedView(CUR_ITEMS,REV_MODE);
   const shown=REV_MODE==="full"?view.filter(v=>!v.it.del):view;
