@@ -816,7 +816,7 @@ function renderForms(){
     var fill='';
     if(reg){
       if(t.gong&&!isGong) fill='<div class="muted" style="font-size:12px;margin-top:8px">지원신청서는 공동근로복지기금 전용입니다. (선택된 기금은 '+esc(cur.fund_type||'?')+')</div>';
-      else fill='<button class="primary" style="margin-top:10px" onclick="fillForm(\''+t.key+'\')">⬇ ['+esc(cur.short_name||cur.name||'')+'] '+esc(t.label)+' 데이터 채워 받기</button>';
+      else fill='<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="primary" onclick="fillForm(\''+t.key+'\')">⬇ ['+esc(cur.short_name||cur.name||'')+'] '+esc(t.label)+' 데이터 채워 받기</button><button onclick="previewExcel(\''+t.key+'\')">👁 엑셀 화면에서 보기</button></div>';
     }
     return '<div class="panel"><div class="row"><h2 style="font-size:15px">'+esc(t.label)+'</h2><span style="flex:1"></span>'+regLine+'</div>'
       +'<p class="muted" style="font-size:11.5px;margin:6px 0 0">원본 파일: '+esc(t.file)+'</p>'+fill+'</div>';
@@ -843,7 +843,7 @@ function renderForms(){
     var inkaBatch='<div style="padding:10px 12px;background:var(--warn-bg);border-radius:8px;margin-bottom:10px;font-size:12.5px;line-height:1.6">'
       +'<b>📗 공식 제출은 엑셀이 형태 100% 보존</b> — 인가 6종을 <b>한 번에</b> 채워 받으세요.'+(isSetupFund?' <span class="chip warn" style="font-size:10px">설립중 기금</span>':'')+'<br>'
       +'<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">'
-      +(setupReg?'<button class="primary" onclick="fillForm(\'setup\')" style="padding:5px 12px">⬇ 인가 6종 엑셀 한번에 채워받기</button>':'<button class="primary" onclick="pickTpl(\'setup\')" style="padding:5px 12px">📎 설립 6종 원본 엑셀 등록(최초 1회)</button>')
+      +(setupReg?'<button class="primary" onclick="fillForm(\'setup\')" style="padding:5px 12px">⬇ 인가 6종 엑셀 한번에 채워받기</button><button onclick="previewExcel(\'setup\')" style="padding:5px 12px">👁 엑셀 화면에서 보기</button>':'<button class="primary" onclick="pickTpl(\'setup\')" style="padding:5px 12px">📎 설립 6종 원본 엑셀 등록(최초 1회)</button>')
       +'<button onclick="sidePreviewAll()" style="padding:5px 12px">🖨 전체 초안(6종) 미리보기</button>'
       +'</div></div>';
     body='<div class="panel"><div class="row"><h2 style="font-size:15px">① 노동부 설립인가 서식</h2><span style="flex:1"></span>'+bulkBtn+'</div>'
@@ -1415,6 +1415,10 @@ function sidePreviewAll(){
    문단+표 조립 방식이라 관공서 별지서식의 정밀 격자·도장란까지는 재현하지 않는다.
    (양식 그대로 제출해야 하면 기존 [🖨 인쇄/PDF] 또는 원본 엑셀 채움을 쓴다.) */
 function docToHwpx(kind){
+  confirmM('한글(HWPX) 저장은 화면 초안을 문단·표로 재조립한 것입니다.\n별지 서식의 정밀 격자·체크박스·도장란은 원본과 다르게 보일 수 있습니다.\n\n원본 모양 그대로 필요하면:\n· 엑셀 채워받기(인가 6종·지원신청서 — 형태 100%)\n· 📄 HWP 편집(원본 .hwp 등록 후)\n\n그래도 HWPX로 저장할까요?',{ok:'HWPX 저장'})
+    .then(function(ok){ if(ok)_docToHwpxRun(kind); });
+}
+function _docToHwpxRun(kind){
   var ed=$('doced'); if(!ed){ toast('문서를 먼저 여세요','warn'); return; }
   if(typeof HWPX==='undefined'){ toast('한글 변환 모듈을 불러오지 못했습니다 — 새로고침 후 다시 시도','err'); return; }
   var f=funds[S.formFund]||{};
@@ -1452,22 +1456,50 @@ function printDoc(){ var ed=$('doced'); if(!ed)return;
   w.document.write('<!doctype html><meta charset=utf-8><style>'+dgDocCss()+'@media print{@page{margin:16mm}}</style>'+ed.innerHTML);
   w.document.close(); setTimeout(function(){ w.print(); },300); }
 
-function fillForm(key){
-  var fid=S.formFund, f=funds[fid]; if(!f){ toast('기금을 선택하세요','warn'); return; }
-  idbGet(key).then(function(buf){
-    if(!buf){ toast('먼저 원본 엑셀을 등록하세요','warn'); return; }
+// 원본 엑셀 + 기금 데이터 → 채워진 워크북 버퍼 (받기·미리보기 공용)
+function _fillWbBuffer(key){
+  var fid=S.formFund, f=funds[fid];
+  if(!f) return Promise.reject(new Error('기금을 선택하세요'));
+  return idbGet(key).then(function(buf){
+    if(!buf) throw new Error('먼저 원본 엑셀을 등록하세요');
     return _loadSites(fid).then(function(sites){
       var wb=new ExcelJS.Workbook();
       return wb.xlsx.load(buf).then(function(){
         (key==='setup'?fillSetup:fillSubsidy)(wb,f,sites);
         return wb.xlsx.writeBuffer();
-      }).then(function(out){
-        var nm=(f.short_name||f.name||fid).replace(/\s+/g,'');
-        dlBuf(out, nm+'_'+(key==='setup'?'설립서식':'지원신청서')+'(데이터채움).xlsx');
       });
     });
-  }).catch(function(e){ toast('서식 생성 실패: '+e.message,'err'); });
+  }).then(function(out){
+    var nm=(f.short_name||f.name||fid).replace(/\s+/g,'');
+    return {out:out, fname:nm+'_'+(key==='setup'?'설립서식':'지원신청서')+'(데이터채움).xlsx'};
+  });
 }
+function fillForm(key){
+  _fillWbBuffer(key).then(function(r){ dlBuf(r.out, r.fname); })
+    .catch(function(e){ toast('서식 생성 실패: '+e.message,'err'); });
+}
+// 채워진 엑셀을 오른쪽 패널에서 바로 보기(시트 탭, 읽기전용 근사 — 값·병합은 표시, 세부 테두리·색은 실제 파일 기준)
+function previewExcel(key,sheetIdx){
+  var side=$('formSide'); if(!side){ toast('미리보기 영역이 없습니다','warn'); return; }
+  if(typeof XLSX==='undefined'){ toast('엑셀 뷰어 로드 실패 — 새로고침하세요','err'); return; }
+  side.innerHTML='<div class="row"><h2 style="margin:0;font-size:14px">📗 엑셀 미리보기</h2><span style="flex:1"></span></div>'+loadingHTML('엑셀 채우는 중…');
+  _fillWbBuffer(key).then(function(r){
+    S._xlsPrev={key:key, out:r.out, fname:r.fname};
+    var wb=XLSX.read(new Uint8Array(r.out),{type:'array'});
+    var si=Math.max(0,Math.min(sheetIdx||0, wb.SheetNames.length-1));
+    var tabs=wb.SheetNames.map(function(n,i){
+      return '<button onclick="previewExcelSheet('+i+')" style="padding:3px 9px'+(i===si?';background:var(--warn-bg);border-color:var(--warn);font-weight:700':'')+'">'+esc(n)+'</button>';
+    }).join(' ');
+    var html=XLSX.utils.sheet_to_html(wb.Sheets[wb.SheetNames[si]],{editable:false});
+    side.innerHTML='<div class="row" style="flex-wrap:wrap;gap:4px;margin-bottom:6px"><h2 style="margin:0;font-size:14px">📗 '+esc(r.fname)+'</h2><span style="flex:1"></span>'
+      +'<button class="primary" onclick="dlBuf(S._xlsPrev.out,S._xlsPrev.fname)" style="padding:3px 10px">⬇ 이 파일 받기</button></div>'
+      +'<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">'+tabs+'</div>'
+      +'<p class="muted" style="font-size:11px;margin:0 0 6px">읽기전용 미리보기(값·병합 확인용). 수정은 [⬇ 받기] 후 <b>엑셀에서</b> — 원본 표·수식·서식이 100% 보존됩니다.</p>'
+      +'<div style="border:1px solid var(--line);border-radius:8px;max-height:68vh;overflow:auto;background:#fff;padding:6px" class="xlsprev">'+html+'</div>'
+      +'<style>.xlsprev table{border-collapse:collapse;font-size:12px}.xlsprev td{border:1px solid #ccc;padding:3px 6px;white-space:pre-wrap;min-width:28px}</style>';
+  }).catch(function(e){ side.innerHTML='<div class="msg err" style="margin:10px">'+esc(e.message)+'</div>'; });
+}
+function previewExcelSheet(i){ if(S._xlsPrev) previewExcel(S._xlsPrev.key,i); }
 function fillSetup(wb,f,sites){
   var ws=wb.getWorksheet('기금법인정보'); if(!ws) throw new Error('기금법인정보 시트를 찾을 수 없습니다');
   var wk=_splitPeople(f.worker_committee), er=_splitPeople(f.emp_committee);

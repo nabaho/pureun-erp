@@ -62,6 +62,7 @@ git add fund.html && git commit -m "..." && git push origin main
 
 ---
 ## 변경 로그 (세션 끝에 한 줄씩 추가)
+- 2026-07-26: **[fund.html] 엑셀 화면 미리보기 + HWPX 저장 안내 가드** — ① fillForm 채움 로직을 `_fillWbBuffer(key)`로 분리, `previewExcel(key)`: 채워진 엑셀을 SheetJS(sheet_to_html)로 **오른쪽 패널에서 시트 탭별 읽기전용 미리보기**(값·병합 확인용, [⬇ 이 파일 받기] 동반). 인가 배너·설립6종/지원신청서 카드에 [👁 엑셀 화면에서 보기] 추가. ② 사용자 질문 "한글에 원본이 왜 안 나오나" 대응: docToHwpx에 confirmM 가드 — HWPX는 문단·표 재조립이라 별지 격자·도장란 재현 불가, 원본 그대로는 엑셀채움/HWP편집 안내 후 진행. node 문법 통과.
 - 2026-07-26: **[fund.html] 서식 CSS 전역 누출 수정(화면 깨짐 근본 원인)** — dgDocCss()의 `body{max-width:760px;margin:0 auto}`·`h1{letter-spacing}` 등 전역 선택자가 사이드패널 <style>로 상시 삽입되며 **앱 전체가 760px로 압축·자간 벌어짐**(사용자 "또 이상하다" 스크린샷 증상). 해결: `dgDocCssIn()`(#doced 스코프판) 신설, `_showDocHTML`이 들어오는 html의 <style> 전부 제거(저장된 옛 서식에 박힌 전역 CSS도 정화) 후 스코프판 주입, sidePreviewAll도 스코프판. printDoc(새창)은 기존 전역 dgDocCss 유지(정상). node 문법 통과.
 - 2026-07-26: **[fund.html] 서식 이름 클릭=오른쪽 미리보기(근본 재설계)** — [👁 미리보기·편집] 버튼 제거, **서식 행(이름) 전체 클릭** → `selectForm(kind)`(S._sideKind 저장→renderForms→끝에서 sidePreview 자동 호출). 선택 행 하이라이트(warn-bg+좌측바+"▶ 오른쪽에 표시 중"), 재렌더·탭전환·기금변경 후에도 선택 서식 오른쪽 유지. HWP 버튼들은 stopPropagation으로 행클릭과 분리. ops정관·지원신청서도 selectForm. node 문법 통과.
 - 2026-07-26: **[fund.html] 서식 사이드패널 보강 + 좌우 드래그 리사이저** — sidePreview: 기금 미선택 시 패널에 안내 표시, **생성서식(docBody) 먼저 렌더 후 저장본 덮어쓰기**(doc_edits 조회 실패해도 서식은 보이게), 폴백 순서 정리. 좌우 2단 사이 `#formGutter` 추가 → `startFormDrag/onFormDrag/endFormDrag`로 좌측폭(`S.formSplitW`) 마우스 드래그 조절(재렌더에도 유지). 사용자 보고 "미리보기 클릭 시 우측 미표시" 대응 — 코드는 배포본에 정상 존재 확인(라이브 grep), 런타임 견고화로 처리. node 문법 통과. 사용자 하드리프레시 후 재확인 필요.
