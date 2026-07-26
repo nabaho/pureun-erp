@@ -3049,7 +3049,7 @@ function renderCareer(name){ const cfg=CAREER_CFG[name]; if(!cfg) return;
   let data=get(cfg.store); if(cfg.filter) data=data.filter(cfg.filter);
   // 중복 의심 감지 및 배지
   var _dupGrp={}; data.forEach(function(r){ var k=dupKey(r); (_dupGrp[k]=_dupGrp[k]||[]).push(r.id); });
-  var _dupIds=new Set(); Object.values(_dupGrp).forEach(function(ids){ if(ids.length>1) ids.forEach(function(id){ _dupIds.add(id); }); });
+  var _dupIds=new Set(); Object.keys(_dupGrp).forEach(function(k){ var ids=_dupGrp[k]; if(ids.length>1 && !dupDismissed(name,k)) ids.forEach(function(id){ _dupIds.add(id); }); });
   var dupBadgeEl=sec.querySelector('.dup-badge-bar');
   if(_dupIds.size>0){
     if(!dupBadgeEl){ dupBadgeEl=document.createElement('div'); dupBadgeEl.className='dup-badge-bar'; dupBadgeEl.style.cssText='background:#FEF3C7;border:1px solid #F6D860;border-radius:6px;padding:7px 12px;margin-bottom:10px;font-size:12px;display:flex;align-items:center;gap:10px'; const dt=sec.querySelector('.dt'); if(dt) dt.before(dupBadgeEl); }
@@ -3236,8 +3236,15 @@ function dupKey(r){
   // 기관명 앞 10자 + 직책 조합으로 키 생성 (부분 일치 허용)
   var org=norm(r.org||'').slice(0,10);
   var title=norm(r.titleVal||r.title||r.topic||r.project||r.kind||'').slice(0,6);
-  return org+'|'+title;
+  var d=String(r.issueDate||r.date||r.period||r.year||'').replace(/[^0-9]/g,'').slice(0,8); /* 날짜/시기 포함 — 시기가 다르면 중복 아님 */
+  return org+'|'+title+'|'+d;
 }
+/* 중복 검사 제외 목록: '중복 아님'으로 확정한 묶음은 다음부터 검사에서 제외(저장) */
+function getDupDismiss(){ try{ return JSON.parse(LS.get(NS+'dup_dismiss')||'[]'); }catch(e){ return []; } }
+function dupDismissed(page,k){ return getDupDismiss().indexOf(page+'||'+k)>=0; }
+function dupDismiss(k){ var page=_dupPage; if(!page) return; var arr=getDupDismiss(); var dk=page+'||'+k;
+  if(arr.indexOf(dk)<0){ arr.push(dk); LS.set(NS+'dup_dismiss',JSON.stringify(arr)); if(typeof fbScheduleAuto==='function') fbScheduleAuto('dup_dismiss'); }
+  renderDup(); if(CAREER_CFG&&CAREER_CFG[page]) renderCareer(page); toast('이 묶음은 중복검사에서 제외됩니다'); }
 function dupSimilar(a, b){
   var oa=(a.org||a.bank||'').replace(/[\s\-·\(\)]/g,'').toLowerCase();
   var ob=(b.org||b.bank||'').replace(/[\s\-·\(\)]/g,'').toLowerCase();
@@ -3251,13 +3258,13 @@ function openDupManager(page){ _dupPage=page; renderDup(); document.getElementBy
 function closeDup(){ document.getElementById('modalDup').classList.remove('open'); _dupPage=null; }
 function renderDup(){ const page=_dupPage; const data=getDupData(page);
   var groups={}; data.forEach(function(r){ var k=dupKey(r); (groups[k]=groups[k]||[]).push(r); });
-  var dups=Object.keys(groups).map(function(k){return groups[k];}).filter(function(g){return g.length>1;});
+  var dups=Object.keys(groups).map(function(k){return groups[k];}).filter(function(g){return g.length>1 && !dupDismissed(page,dupKey(g[0]));});
   var body=document.getElementById('dupBody');
   if(!dups.length){ body.innerHTML='<div class="empty">🎉 중복 항목이 없습니다</div>'; return; }
-  body.innerHTML='<div style="font-size:12px;color:var(--text-mute);margin-bottom:10px">같은 기관·내용으로 묶인 중복 후보입니다. <b>기준으로 합치기</b> = 선택 항목에 나머지 내용을 합치고 나머지 삭제.</div>'
+  body.innerHTML='<div style="font-size:12px;color:var(--text-mute);margin-bottom:10px">같은 기관·내용·<b>시기(날짜)</b>가 모두 같은 것만 중복 후보로 봅니다. 시기가 다르면 중복이 아닙니다. <b>기준으로 합치기</b> = 나머지를 합치고 삭제 · <b>중복 아님</b> = 다음부터 검사 제외.</div>'
    + dups.map(function(g){
      var label=(g[0].org||g[0].bank||'-')+' · '+(g[0].titleVal||g[0].title||g[0].kind||g[0].number||'-');
-     return '<div class="card" style="margin-bottom:12px"><div style="font-weight:600;color:var(--navy);margin-bottom:8px">'+label+' <span style="color:var(--amber)">('+g.length+'건 중복)</span></div>'
+     return '<div class="card" style="margin-bottom:12px"><div style="font-weight:600;color:var(--navy);margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span>'+label+' <span style="color:var(--amber)">('+g.length+'건)</span></span><button class="btn sm" style="margin-left:auto" onclick="dupDismiss(\''+_jsAttr(dupKey(g[0]))+'\')">✋ 중복 아님(다음부터 제외)</button></div>'
        + g.map(function(r){
            var info=[r.id, formatDate(r.issueDate||r.date)||r.year||'', r.number||''].filter(Boolean).join(' · ');
            var hasFile=fileExists(r.id);
