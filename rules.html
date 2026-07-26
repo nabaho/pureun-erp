@@ -227,6 +227,9 @@ td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
       <span style="font-size:12px;color:var(--mute);margin-left:10px">방식:</span>
       <button class="stbtn" id="mode-partial" title="기존 조번호 유지 · 신설은 가지번호(제N조의n) · 삭제는 결번">일부개정</button>
       <button class="stbtn" id="mode-full" title="최종 순서대로 제1조부터 전면 재번호 · 삭제 조문 제외">전부개정</button>
+      <span style="font-size:12px;color:var(--mute);margin-left:10px">용지:</span>
+      <button class="stbtn" id="pg-portrait" title="A4 세로 — 기본. 조문 전문·일반 제출용">A4 세로</button>
+      <button class="stbtn" id="pg-landscape" title="A4 가로 — 조문이 길어 4열이 좁을 때(대조표 가독성↑)">A4 가로</button>
       <button class="btn ghost" id="add-ins" style="height:30px;font-size:12px;margin-left:auto">+ 신설 조문 추가</button>
     </div>
     <table class="daejo" id="daejo-tbl"></table>
@@ -680,6 +683,9 @@ function buildItems(res,terms,arts){
 }
 /* ── 개정방식별 순서·조번호 계산 (일부개정=가지번호·결번 / 전부개정=순차 재번호) ── */
 let REV_MODE="partial";   // "partial"=일부개정, "full"=전부개정
+let PAGE_LAND=false;      // 용지 방향: false=A4 세로(기본), true=A4 가로 — 한글·엑셀 산출물 공통
+/* 방향별 열 비율 — 세로는 좁으니 조항·이유 칸을 줄이고 본문 칸을 넓게 */
+function daejoCols(){ return PAGE_LAND?[1.5,2.9,3.4,2.2]:[1.4,3.0,3.2,1.9]; }
 function computeOrdered(items){
   const existing=items.filter(it=>it.orig!==""), inserts=items.filter(it=>it.orig==="");
   const byAnchor={},trailing=[],leading=[];
@@ -803,6 +809,8 @@ function renderEditor(){
   $("flt-all").className="stbtn"+(CUR_FILTER==="all"?" on-adopt":"");
   if($("mode-partial"))$("mode-partial").className="stbtn"+(REV_MODE==="partial"?" on-adopt":"");
   if($("mode-full"))$("mode-full").className="stbtn"+(REV_MODE==="full"?" on-adopt":"");
+  if($("pg-portrait"))$("pg-portrait").className="stbtn"+(!PAGE_LAND?" on-adopt":"");
+  if($("pg-landscape"))$("pg-landscape").className="stbtn"+(PAGE_LAND?" on-adopt":"");
   refreshDaejoSub();
   saveWip();   // 조문 조작·모드 변경·위치 변경 등 모든 편집을 임시저장
 }
@@ -819,6 +827,8 @@ $("mk-daejo").addEventListener("click",()=>{
 });
 $("flt-changed").addEventListener("click",()=>{CUR_FILTER="changed";renderEditor();});
 $("flt-all").addEventListener("click",()=>{CUR_FILTER="all";renderEditor();});
+$("pg-portrait").addEventListener("click",()=>{PAGE_LAND=false;renderEditor();saveWorkState();});
+$("pg-landscape").addEventListener("click",()=>{PAGE_LAND=true;renderEditor();saveWorkState();});
 $("mode-partial").addEventListener("click",()=>{REV_MODE="partial";renderEditor();});
 $("mode-full").addEventListener("click",()=>{REV_MODE="full";renderEditor();});
 $("add-ins").addEventListener("click",()=>{
@@ -841,7 +851,7 @@ function downloadXlsx(rows,ctx){
     try{
       XLSXGEN.download({sheet:"신구대조표",title:`${site} 취업규칙 개정 신구대조표`,
         sub:`검토기준일 ${ctx.asof} · 규칙집 v3 · ${REV_MODE==="partial"?"일부개정":"전부개정"}`,
-        headers,rows:body,colRatios:[1.4,3.0,3.2,1.9],landscape:false},fname+".xlsx");   // A4 세로 기준
+        headers,rows:body,colRatios:daejoCols(),landscape:PAGE_LAND},fname+".xlsx");   // 용지 방향 선택(기본 A4 세로)
       return;
     }catch(e){ console.warn("xlsx 생성 실패 — SheetJS 폴백:",e); }
   }
@@ -939,11 +949,11 @@ $("dl-doc-daejo").addEventListener("click",()=>{
   if(!rows.length){alert("변경된 조문이 없습니다.");return;}
   const dsite=siteLabel();   // 본문에서 인식된 회사명 우선
   const base=`신구대조표_${dsite.replace(/[()\s—📄🏢\/\\:*?"<>|]/gu,"")}_${LAST.asof.replace(/-/g,"")}`;
-  try{   // 한글 HWPX 직접 생성 (실패 시 RTF .doc 폴백) — 모든 산출물 A4 세로 기준
-    HWPX.setPage({landscape:false});
+  try{   // 한글 HWPX 직접 생성 (실패 시 RTF .doc 폴백) — 용지 방향은 편집창에서 선택(기본 A4 세로)
+    HWPX.setPage({landscape:PAGE_LAND});
     const body=HWPX.para(`${dsite} 취업규칙 개정 신구대조표`,HWPX.BOLD)
       +HWPX.para(`검토기준일 ${LAST.asof} · 규칙집 v3 · ${REV_MODE==="partial"?"일부개정":"전부개정"}`)+HWPX.para("")
-      +HWPX.tablePara([["변경조항","변경 전","변경 후","변경이유"]].concat(rows),HWPX.cols([1.4,3.0,3.2,1.9]));
+      +HWPX.tablePara([["변경조항","변경 전","변경 후","변경이유"]].concat(rows),HWPX.cols(daejoCols()));
     HWPX.download(body,base+".hwpx");
   }catch(e){ console.warn("hwpx 생성 실패 — RTF(.doc) 폴백:",e);
     const rtf=rtfTableDoc(`${dsite} 취업규칙 개정 신구대조표`,`검토기준일 ${LAST.asof} · 규칙집 v3`,
@@ -979,7 +989,7 @@ $("dl-doc-rev").addEventListener("click",()=>{
     return articleText(v);
   });
   try{   // 한글 HWPX 직접 생성 (실패 시 RTF .doc 폴백)
-    HWPX.setPage({landscape:false});   // 조문 전문은 A4 세로
+    HWPX.setPage({landscape:PAGE_LAND});   // 조문 전문도 선택한 용지 방향 따름(기본 A4 세로)
     let body=HWPX.para(title,HWPX.BOLD)+HWPX.para(sub)+HWPX.para("");
     paras.forEach(p=>{ body+=HWPX.para(p)+HWPX.para(""); });
     body+=HWPX.para("")+HWPX.para("부   칙",HWPX.BOLD);
@@ -1146,8 +1156,10 @@ function saveWorkState(){
     const raw=localStorage.getItem(WORK_KEY); if(!raw)return;
     const w=JSON.parse(raw); if(!w||!w.orig)return;
     if(!LAST||!LAST.key||SAMPLES[LAST.key]===undefined)return;
-    if(("📄 "+w.orig.name)!==SITE_MAP[LAST.key])return;   // 보관 중인 작업 문서일 때만 상태 갱신
-    w.state={items:CUR_ITEMS,mode:REV_MODE,size:LAST.size,asof:LAST.asof};
+    // 보관 중인 작업 문서일 때만 상태 갱신 — 표시명(📄 파일명 / 🏢 사업장명)이 아니라 원본 파일명으로 비교
+    const curFile=SITE_FILE[LAST.key]||String(SITE_MAP[LAST.key]||"").replace(/^[📄🏢]\s*/u,"");
+    if(w.orig.name&&curFile&&w.orig.name!==curFile)return;
+    w.state={items:CUR_ITEMS,mode:REV_MODE,land:PAGE_LAND,size:LAST.size,asof:LAST.asof};
     w.savedAt=new Date().toISOString();
     localStorage.setItem(WORK_KEY,JSON.stringify(w));
   }catch(e){}
@@ -1170,7 +1182,7 @@ async function applyWorkObject(w,opts){
   let opt=[...siteSel.options].find(x=>x.value===key);
   if(!opt){opt=document.createElement("option");opt.value=key;siteSel.appendChild(opt);}
   opt.textContent=SITE_MAP[key]; siteSel.value=key;
-  if(w.state){ if(w.state.size)$("size").value=w.state.size; if(w.state.asof)$("asof").value=w.state.asof; }
+  if(w.state){ if(w.state.size)$("size").value=w.state.size; if(w.state.asof)$("asof").value=w.state.asof; PAGE_LAND=!!w.state.land; }
   await renderPreview();
   const txt=SAMPLES[key]||"";
   LAST={key,site:SITE_MAP[key],bizno:"",size:$("size").value,conds:[],asof:$("asof").value,
