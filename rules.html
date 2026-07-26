@@ -190,6 +190,10 @@ td.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
         <button class="btn ghost" id="pv-full" style="float:right;padding:3px 10px;font-size:11.5px" onclick="openFullPreview()">⛶ 전체보기</button>
         <button class="btn ghost" id="pv-pick" style="float:right;padding:3px 10px;font-size:11.5px;margin-right:6px">✎ 조문 선택</button>
         <button class="btn ghost" id="pv-view" style="float:right;padding:3px 10px;font-size:11.5px;margin-right:6px">📄 원문 보기</button></h3>
+      <div id="work-badge" style="display:none;margin:0 0 10px;padding:8px 12px;background:#fffbeb;border:1px solid #fcd34d;border-radius:9px;font-size:12px;color:#92400e;align-items:center;gap:8px;flex-wrap:wrap">
+        <span id="work-badge-txt">💾 임시저장됨 — 이 브라우저에만 보관, 저장 전이라 새로고침해도 유지됩니다</span>
+        <button class="stbtn" id="work-clear" style="margin-left:auto;color:#b91c1c;border-color:#f3c0c0" title="임시저장 내용을 지웁니다">임시저장 지우기</button>
+      </div>
       <div class="preview" id="preview"></div>
     </div>
     <div id="split" title="드래그하여 좌우 너비 조절"></div>
@@ -1072,6 +1076,22 @@ async function restoreOrig(id,site){
 }
 /* ── 작업 세션 자동 보관: 업로드 파일·편집 상태를 이 브라우저에 저장 → F5·재접속에도 유지 ── */
 const WORK_KEY="pureun_rules_work_v1";
+/* 임시저장 배지 — 저장 전이라도 화면에 항상 상태 표시, 지울 때만 '임시저장 지우기' 버튼 사용 */
+function updateWorkBadge(){
+  const box=$("work-badge"); if(!box)return;
+  let w=null; try{const raw=localStorage.getItem(WORK_KEY); if(raw)w=JSON.parse(raw);}catch(e){}
+  if(!w||!w.orig){ box.style.display="none"; return; }
+  const t=w.savedAt?new Date(w.savedAt):null;
+  const hhmm=t?(" · "+String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0")+" 기준"):"";
+  const editCnt=(w.state&&Array.isArray(w.state.items))?w.state.items.filter(it=>itemKind(it)!=="유지").length:0;
+  $("work-badge-txt").textContent="💾 임시저장됨 — "+(w.orig.name||"작업 문서")+(editCnt?" · 편집 "+editCnt+"건":"")+hhmm+" (이 브라우저에만 보관, 저장 전이라도 새로고침 시 유지)";
+  box.style.display="flex";
+}
+$("work-clear").addEventListener("click",()=>{
+  if(!confirm("임시저장된 작업 내용을 지우시겠습니까?\n(보관함에 정식 저장한 내용은 영향 없습니다)"))return;
+  localStorage.removeItem(WORK_KEY);
+  updateWorkBadge();
+});
 function saveWorkFromUpload(key,buf,isPdf){
   const name=(SITE_MAP[key]||"").replace(/^📄\s*/,"");
   const mk=b64=>({orig:{name,ext:(name.split(".").pop()||"").toLowerCase(),text:SAMPLES[key]||"",b64,isPdf:!!isPdf,truncated:!b64&&!!buf},savedAt:new Date().toISOString()});
@@ -1080,6 +1100,7 @@ function saveWorkFromUpload(key,buf,isPdf){
     if(buf&&buf.byteLength<=MAX_ORIG_BYTES)b64=bufToB64(buf);
     localStorage.setItem(WORK_KEY,JSON.stringify(mk(b64)));
   }catch(e){ try{localStorage.setItem(WORK_KEY,JSON.stringify(mk(null)));}catch(_){console.warn("작업 보관 실패(용량):",e);} }
+  updateWorkBadge();
 }
 function saveWorkState(){
   try{
@@ -1088,8 +1109,10 @@ function saveWorkState(){
     if(!LAST||!LAST.key||SAMPLES[LAST.key]===undefined)return;
     if(("📄 "+w.orig.name)!==SITE_MAP[LAST.key])return;   // 보관 중인 작업 문서일 때만 상태 갱신
     w.state={items:CUR_ITEMS,mode:REV_MODE,size:LAST.size,asof:LAST.asof};
+    w.savedAt=new Date().toISOString();
     localStorage.setItem(WORK_KEY,JSON.stringify(w));
   }catch(e){}
+  updateWorkBadge();
 }
 async function restoreWork(){
   try{
@@ -1117,6 +1140,7 @@ async function restoreWork(){
     note.style.cssText="background:#f0fdfa;border-color:#99d5cc;color:#0f766e";
     note.textContent="↺ 이전 작업이 복원되었습니다 — "+(o.name||"")+((w.state&&w.state.items&&w.state.items.length)?" · 편집 내용 포함":"")+(o.truncated?" (파일이 커서 텍스트만 보관됨)":"");
     pv.insertBefore(note,pv.firstChild);
+    updateWorkBadge();
   }catch(e){console.warn("작업 복원 실패:",e);}
 }
 $("save").addEventListener("click",()=>{
@@ -1252,6 +1276,7 @@ $("ae-apply").addEventListener("click",()=>{
 $("run").addEventListener("click",run);
 renderPreview();updateArchCnt();
 restoreWork();   // F5·재접속 시 업로드 파일·편집 상태 자동 복원
+updateWorkBadge();   // 복원 대상이 없어도 배지는 즉시 반영(비동기 restoreWork 완료 전 안전)
 if($("rb-tag"))$("rb-tag").textContent="규칙집 v3 · "+RULES.length+"항목";
 </script>
 <script type="module">
