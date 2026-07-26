@@ -796,8 +796,10 @@ function renderForms(){
   if(typeof ExcelJS==='undefined'){ $('app').innerHTML='<div class="panel"><h1>서식 자료실</h1><div class="msg err">ExcelJS 라이브러리 로드 실패 — 인터넷 연결을 확인하고 새로고침하세요.</div></div>'; return; }
   // 원본 등록 상태 비동기 확인 후 재렌더
   if(S._tplChk!==true){ S._tplChk='...';
-    Promise.all([idbGet('setup'),idbGet('subsidy')]).then(function(a){ S._tplHas={setup:!!a[0],subsidy:!!a[1]}; S._tplChk=true; if(S.view==='forms')renderForms(); })
-      .catch(function(){ S._tplHas={setup:false,subsidy:false}; S._tplChk=true; if(S.view==='forms')renderForms(); });
+    var _hk=DOC_KINDS.concat(DOC_REG).map(function(d){return d[0];});
+    Promise.all([idbGet('setup'),idbGet('subsidy')].concat(_hk.map(function(k){return idbGet('hwp:'+k);})))
+      .then(function(a){ S._tplHas={setup:!!a[0],subsidy:!!a[1]}; S._hwpHas={}; _hk.forEach(function(k,i){S._hwpHas[k]=!!a[2+i];}); S._tplChk=true; if(S.view==='forms')renderForms(); })
+      .catch(function(){ S._tplHas={setup:false,subsidy:false}; S._hwpHas={}; S._tplChk=true; if(S.view==='forms')renderForms(); });
     $('app').innerHTML='<div class="panel">'+loadingHTML()+'</div>'; return; }
   var has=S._tplHas||{};
   var arr=Object.keys(funds).map(function(k){var o=funds[k];return {id:k,label:(o.short_name||o.name||k),type:o.fund_type,g:grp(o),region:o.region};});
@@ -827,11 +829,24 @@ function renderForms(){
     +(isGong?'<div style="font-size:12px;font-weight:700;color:var(--sub);margin:14px 0 6px">③ 지원금 (공동 전용)</div><div style="display:flex;flex-wrap:wrap;gap:8px">'+docBtns([['subsidy','공동근로복지기금 지원신청서(초안)']],false)+'</div>':'')
     +'<p class="muted" style="font-size:11.5px;margin-top:12px">📊 <b>운영상황보고서(별지15호)·결산서</b>는 실제 재무데이터로 만들어야 하므로 [기금 상세 → 회계·결산] 탭에서 생성·인쇄합니다.</p>'
     +'</div>';
+  function hwpRow(d,i){
+    var kind=d[0], label=(i+1)+'. '+d[1], reg=(S._hwpHas||{})[kind];
+    return '<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--line)">'
+      +'<span style="flex:1;font-size:12.5px">'+esc(label)+'</span>'
+      +(reg?'<span class="chip ok" style="font-size:10px">HWP 등록됨</span> <button class="primary" onclick="openHwpEditor(\''+kind+'\')" style="padding:3px 9px">📄 편집</button> <button onclick="pickHwp(\''+kind+'\')" style="padding:3px 8px">교체</button> <button onclick="clearHwp(\''+kind+'\')" style="padding:3px 8px">삭제</button>'
+        :'<span class="chip dg" style="font-size:10px">미등록</span> <button onclick="pickHwp(\''+kind+'\')" style="padding:3px 9px">⬆ 원본 .hwp 등록</button>')
+      +'</div>';
+  }
+  var hwpPanel='<div class="panel"><div class="row"><h2 style="font-size:15px">📄 실제 HWP 서식 (브라우저에서 편집·저장)</h2><span style="flex:1"></span><button class="primary" onclick="pickHwpBulk()" style="padding:4px 10px">📁 여러 .hwp 한번에 등록</button><span class="chip warn" style="font-size:10px">외부 편집기(rhwp)</span></div>'
+    +'<p class="muted" style="font-size:11.5px;margin:6px 0 10px">폴더의 <b>실제 .hwp 원본</b>을 서식별로 <b>1회 등록</b>(이 브라우저에 저장)하면, [📄 편집]에서 rhwp 편집기로 열어 수정하고 <b>.hwp / .hwpx로 내려받기</b> 합니다. 원본 서식 그대로라 한글에서 100% 호환됩니다. 데이터 자동채움은 없어 편집기 오른쪽 [기금 데이터]를 참고해 입력합니다. (편집은 브라우저 안에서만 처리 — 서버 업로드 없음)</p>'
+    +'<div style="font-size:12px;font-weight:700;color:var(--sub);margin:4px 0 4px">① 노동부 인가 시 필요서류</div>'+DOC_KINDS.map(hwpRow).join('')
+    +'<div style="font-size:12px;font-weight:700;color:var(--sub);margin:12px 0 4px">② 법인 설립등기 시 필요자료</div>'+DOC_REG.map(hwpRow).join('')
+    +'</div>';
   $('app').innerHTML='<div class="panel"><div class="row"><h1>서식 자료실</h1><span style="flex:1"></span><label style="font-size:12px;margin-right:6px">대상 기금</label>'+fsel+'</div>'
     +'<div style="margin-top:10px;padding:10px 12px;background:var(--warn-bg);border-radius:8px;font-size:12.5px;line-height:1.6">'
     +'실제 <b>법정서식 원본 엑셀</b>에 이 기금 데이터를 채워 내려받습니다. 서식의 표·수식·서식은 그대로 보존됩니다.<br>'
     +'원본 엑셀은 <b>이 브라우저에 1회 등록</b>하면 이후 자동 사용됩니다(다른 PC·브라우저에서는 다시 등록). 사업장 실데이터가 담기므로 원본은 저장소에 올리지 않습니다.</div></div>'
-    +docCards+tplCard(TPL.setup)+tplCard(TPL.subsidy);
+    +docCards+hwpPanel+tplCard(TPL.setup)+tplCard(TPL.subsidy);
 }
 function pickTpl(key){
   var inp=document.createElement('input'); inp.type='file'; inp.accept='.xlsx';
@@ -845,6 +860,84 @@ function pickTpl(key){
   inp.click();
 }
 function clearTpl(key){ confirmM('등록된 원본 서식을 삭제할까요?',{ok:'삭제',danger:true}).then(function(ok){ if(ok) idbDel(key).then(function(){ S._tplChk=false; renderForms(); toast('삭제되었습니다'); }); }); }
+
+// ═══════════ 실제 HWP 서식 — 원본 .hwp 등록 + 브라우저 편집(rhwp)·저장 ═══════════
+// 저장은 IndexedDB('hwp:'+kind), 편집기는 rhwp studio(iframe)+@rhwp/editor(esm.sh). 데이터 자동채움 없음(수동 편집).
+var RHWP_EDITOR_URL='https://esm.sh/@rhwp/editor';
+function pickHwp(kind){
+  var inp=document.createElement('input'); inp.type='file'; inp.accept='.hwp,.hwpx';
+  inp.onchange=function(ev){ var file=ev.target.files&&ev.target.files[0]; if(!file)return;
+    var rd=new FileReader();
+    rd.onload=function(){ idbPut('hwp:'+kind,rd.result).then(function(){ S._hwpChk=false;
+      if(S.view==='forms')renderForms(); toast('원본 HWP 등록: '+file.name); })
+      .catch(function(e){ toast('저장 실패: '+e.message,'err'); }); };
+    rd.readAsArrayBuffer(file); };
+  inp.click();
+}
+function clearHwp(kind){ confirmM('등록된 원본 HWP를 삭제할까요?',{ok:'삭제',danger:true}).then(function(ok){ if(ok) idbDel('hwp:'+kind).then(function(){ S._hwpChk=false; renderForms(); toast('삭제되었습니다'); }); }); }
+// 여러 .hwp를 파일명으로 서식에 자동 매칭해 일괄 등록
+function pickHwpBulk(){
+  var inp=document.createElement('input'); inp.type='file'; inp.accept='.hwp,.hwpx'; inp.multiple=true;
+  inp.onchange=function(ev){ var files=Array.prototype.slice.call(ev.target.files||[]); if(!files.length)return;
+    var RULES=[['reg_sealpaper',['인감대지','대지']],['reg_sealcard',['인감카드','카드']],['reg_seal',['인감']],
+      ['reg_roster',['협의회명부','명부']],['reg_apply',['설립등기','등기신청','특수법인']],['reg_accept',['취임','승낙']],
+      ['reg_license',['등록면허','면허세']],['reg_proxy',['위임']],['inka',['인가신청']],['agreement',['합의']],
+      ['charter',['정관']],['minutes',['준비위','회의록']],['contrib',['출연']],['bizplan',['사업계획']]];
+    var used={}, plan=[];
+    files.forEach(function(f){ var n=f.name, hit=null;
+      for(var i=0;i<RULES.length;i++){ var k=RULES[i][0]; if(used[k])continue;
+        var ok = (k==='reg_seal') ? (n.indexOf('인감')>=0&&n.indexOf('신고')>=0) : RULES[i][1].some(function(w){return n.indexOf(w)>=0;});
+        if(ok){ hit=k; break; } }
+      if(hit){ used[hit]=1; plan.push([hit,f]); } else plan.push([null,f]); });
+    var matched=plan.filter(function(p){return p[0];});
+    if(!matched.length){ toast('파일명에서 서식을 못 알아냈어요 — 서식별 [등록]으로 개별 등록하세요','warn'); return; }
+    Promise.all(matched.map(function(p){ return new Promise(function(res){ var rd=new FileReader();
+      rd.onload=function(){ idbPut('hwp:'+p[0],rd.result).then(res).catch(res); }; rd.onerror=function(){res();}; rd.readAsArrayBuffer(p[1]); }); }))
+      .then(function(){ S._hwpChk=false; if(S.view==='forms')renderForms();
+        var un=plan.filter(function(p){return !p[0];}).map(function(p){return p[1].name;});
+        toast(matched.length+'개 자동 등록'+(un.length?' · 미매칭 '+un.length+'개는 개별 등록':'')); }); };
+  inp.click();
+}
+var _hwpEditor=null, _hwpName='서식';
+function openHwpEditor(kind){
+  idbGet('hwp:'+kind).then(function(buf){
+    if(!buf){ toast('먼저 이 서식의 원본 .hwp를 등록하세요','warn'); return; }
+    var label=docLabel(kind); _hwpName=label;
+    var f=funds[S.formFund]||{};
+    var ref=[['기금법인명',f.name],['약칭',f.short_name],['대표자',f.chairman],['소재지',f.address],
+      ['인가번호',f.inka_no],['인가일',f.inka_date],['법인등록번호',f.corp_reg_no],['설립등기일',f.reg_date],['고유번호',f.tax_id_no]]
+      .filter(function(r){return r[1];}).map(function(r){return '<div style="margin-bottom:6px"><span style="color:var(--sub);font-size:11px">'+esc(r[0])+'</span><br><b style="font-size:12.5px;user-select:all">'+esc(r[1])+'</b></div>';}).join('')
+      ||'<div class="muted" style="font-size:12px">이 기금의 기본정보가 아직 비어 있습니다.</div>';
+    var m=document.createElement('div'); m.id='hwpModal';
+    m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;flex-direction:column;padding:14px';
+    m.innerHTML='<div style="display:flex;align-items:center;gap:8px;background:var(--bg,#fff);padding:9px 12px;border-radius:9px 9px 0 0">'
+      +'<b style="font-size:14px">📄 HWP 편집 — '+esc(label)+'</b>'
+      +'<span style="font-size:11.5px;color:var(--sub)">rhwp 편집기(외부) · 자료는 브라우저 안에서만 처리</span><span style="flex:1"></span>'
+      +'<button class="primary" onclick="hwpExport(\'hwp\')">💾 .hwp로 저장</button>'
+      +'<button onclick="hwpExport(\'hwpx\')">💾 .hwpx로 저장</button>'
+      +'<button onclick="closeHwp()">✖ 닫기</button></div>'
+      +'<div style="flex:1;display:flex;min-height:0;background:#fff;border-radius:0 0 9px 9px;overflow:hidden">'
+      +'<div id="hwpHost" style="flex:1;min-width:0"></div>'
+      +'<div style="width:230px;border-left:1px solid var(--line,#eee);padding:12px;overflow:auto"><div style="font-size:12px;font-weight:700;margin-bottom:8px">📋 ['+esc(f.short_name||f.name||'')+'] 데이터<br><span style="font-weight:400;color:var(--sub);font-size:10.5px">클릭해 복사 후 서식에 붙여넣기</span></div>'+ref+'</div></div>'
+      +'<div id="hwpStat" style="background:#111;color:#9f9;font-size:11px;padding:5px 12px;border-radius:0 0 9px 9px">편집기 불러오는 중…</div>';
+    document.body.appendChild(m);
+    var stat=function(t){ var s=$('hwpStat'); if(s)s.textContent=t; };
+    import(RHWP_EDITOR_URL).then(function(mod){ stat('편집기 초기화 중…'); return mod.createEditor('#hwpHost'); })
+      .then(function(ed){ _hwpEditor=ed; stat('원본 HWP 로드 중…'); return ed.loadFile(buf,label+'.hwp'); })
+      .then(function(r){ stat('로드 완료 · '+((r&&r.pageCount)||'?')+'쪽 · 편집 후 [💾 저장]으로 .hwp/.hwpx 내려받기'); })
+      .catch(function(e){ stat('편집기 로드 실패: '+(e&&e.message||e)+' — 인터넷/차단 여부 확인'); });
+  });
+}
+function hwpExport(fmt){
+  if(!_hwpEditor){ toast('편집기가 아직 준비되지 않았습니다','warn'); return; }
+  var p=(fmt==='hwpx')?_hwpEditor.exportHwpx():_hwpEditor.exportHwp();
+  p.then(function(bytes){ var blob=new Blob([bytes],{type:fmt==='hwpx'?'application/vnd.hancom.hwpx':'application/x-hwp'});
+    var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=_hwpName+'.'+fmt;
+    document.body.appendChild(a); a.click(); setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1500);
+    toast('내보내기 완료: '+_hwpName+'.'+fmt); })
+   .catch(function(e){ toast('내보내기 실패: '+(e&&e.message||e),'err'); });
+}
+function closeHwp(){ if(_hwpEditor){ try{_hwpEditor.destroy();}catch(e){} _hwpEditor=null; } var m=$('hwpModal'); if(m)m.remove(); }
 function dlBuf(buf,fname){ var blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
   var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=fname; document.body.appendChild(a); a.click();
   setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1500); }
