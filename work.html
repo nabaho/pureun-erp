@@ -142,6 +142,22 @@
   #drawer .dfoot{border-top:1px solid var(--line);padding:10px 18px;display:flex;gap:8px;flex-wrap:wrap}
   #drawer .dfoot button{font-size:12px;padding:6px 10px}
 
+  /* 인수인계 */
+  .honote{margin:0 18px 4px;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .honote .hh{display:flex;align-items:center;gap:7px;padding:8px 12px;background:var(--bg);font-size:12px;font-weight:700;cursor:pointer;color:var(--sub)}
+  .honote .hh .st2{margin-left:auto;font-size:10.5px;font-weight:600}
+  .honote .hb{padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+  .honote label{font-size:11px;font-weight:700;color:var(--sub)}
+  .honote textarea{width:100%;border:1px solid var(--line);border-radius:7px;padding:6px 9px;font-size:12px;resize:vertical;min-height:34px}
+  .honote textarea:focus{outline:none;border-color:var(--acc)}
+  .recvbtn{display:block;margin:10px 18px 0;padding:9px;background:var(--ok);border:none;color:#fff;border-radius:9px;font-weight:700;font-size:13px;cursor:pointer;text-align:center}
+  .ck{color:var(--ok);font-weight:800}.ckno{color:#c9536b;font-weight:800}
+  .hocard{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:14px}
+  .hocard .hct{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:8px}
+  .hocard .hct b{font-size:14.5px}
+  .lvtag{font-size:10.5px;font-weight:800;border-radius:9px;padding:1px 9px;background:var(--warn-bg);color:var(--warn)}
+  .pbar{flex:1;min-width:120px;height:7px;background:var(--bg);border:1px solid var(--line);border-radius:5px;overflow:hidden}
+  .pbar i{display:block;height:100%;background:var(--acc)}
   .fld{display:flex;flex-direction:column;gap:4px}.fld.full{grid-column:1/-1}
   .fld label{font-size:11.5px;color:var(--sub);font-weight:600}
   .fld input,.fld select{padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px}
@@ -170,8 +186,19 @@ var CAT_LIST=Object.keys(CATS);
 // 진행 상태 — 푸른이알피 마이데스크와 동일 용어
 var STATUSES=[['진행중','#dbeafe','#1e40af'],['대기응답','#ede9fe','#5b21b6'],['검토','#fef3c7','#854d0e'],['대기','#f1f5f9','#64748b'],['보류','#fee2e2','#991b1b']];
 
+// 인수인계 노트 5문항 (평상시에도 작성 가능 — 정책 2026-07-26)
+var HO_FIELDS=[
+  ['sit','① 현재 상황','사건이 무엇이고 지금 어디까지 왔나 (한 문단)'],
+  ['todo','② 다음 할 일·기한','놓치면 안 되는 것, 데드라인'],
+  ['ppl','③ 관계자 특이사항','의뢰인 성향·감독관 스타일·연락 잘 되는 방법'],
+  ['warn','④ 주의점','하면 안 되는 것·민감한 부분·과거 실수'],
+  ['files','⑤ 자료 위치','파일·카톡방·서류철·이메일 스레드']];
+var LV_TYPES=['퇴사','휴직','연차','기타'];
+var HO_OVERDUE_DAYS=5;   // 인수 확인 지연 → 대표 배지
+
 var fbDb=null;
-var S={view:'my', week:null, f:null, me:null, year:new Date().getFullYear(), drawerId:null, teamMgr:'', teamCat:'', teamNolog:false, calMon:null};
+var S={view:'my', week:null, f:null, me:null, year:new Date().getFullYear(), drawerId:null, teamMgr:'', teamCat:'', teamNolog:false, calMon:null, noteOpen:false};
+var leaving={};            // leaving/{sid} live — 부재(퇴사·휴직·연차) 예정
 var items={};              // items/{year} live
 var wkCache={};            // {weekKey:{itemId:{logId:log}}}
 var wkLoaded={};           // {weekKey:true}
@@ -226,6 +253,8 @@ function start(){
     },function(err){ $('app').innerHTML='<div class="panel"><h2 style="color:var(--danger)">읽기 권한 오류</h2><p class="muted">'
       +esc(err.message)+'</p><p class="muted">Firebase 규칙에 work_erp 블록이 필요합니다 (관리자에게 문의).</p></div>'; });
     watchWeek();
+    fbDb.ref(NS+'/leaving').on('value',function(snap){ leaving=snap.val()||{};
+      if(appHasFocus()){ S._pend=true; return; } route(); });
   });
   document.addEventListener('focusout',function(){ setTimeout(function(){
     if(S._pend&&!appHasFocus()){ S._pend=false; route(); } },150); });
@@ -259,6 +288,7 @@ function shell(){
     +'<div class="side-sec">메뉴</div>'
     +'<div class="sitem" id="nav-my" onclick="go(\'my\')">📝 내 업무 <span class="cnt" id="cnt-my"></span></div>'
     +'<div class="sitem" id="nav-team" onclick="go(\'team\')">👥 팀 전체</div>'
+    +'<div class="sitem" id="nav-ho" onclick="go(\'ho\')">🔄 인수인계 <span class="cnt" id="cnt-ho"></span></div>'
     +'<div class="sitem" id="nav-archive" onclick="go(\'archive\')">🗄 보관함 <span class="cnt" id="cnt-ar"></span></div>'
     +'<div style="margin-top:auto">'
     +'<div class="sitem" onclick="importModal()" style="font-size:12px">📥 이관 가져오기</div>'
@@ -391,16 +421,40 @@ function go(v){ S.view=v; S.f=null; try{history.pushState({view:v},'');}catch(e)
 function goBack(){ if(history.length>1) history.back(); else { S.view='my'; route(); } }
 window.addEventListener('popstate',function(ev){ var st=ev.state; S.view=(st&&st.view)||'my'; route(); });
 function route(){
-  ['my','team','archive'].forEach(function(v){var n=$('nav-'+v);if(n)n.className='sitem'+(S.view===v?' on':'');});
-  var crumbs={my:'내 업무',team:'팀 전체',archive:'보관함'};
+  ['my','team','ho','archive'].forEach(function(v){var n=$('nav-'+v);if(n)n.className='sitem'+(S.view===v?' on':'');});
+  var crumbs={my:'내 업무',team:'팀 전체',ho:'인수인계',archive:'보관함'};
   var c=$('crumb'); if(c)c.textContent=crumbs[S.view]||'업무시트';
   var qw=$('qwrap'); if(qw)qw.style.display=(S.view==='my'||S.view==='team')?'':'none';
   var cm=$('cnt-my'); if(cm)cm.textContent=myOpen().length||'';
   var ca=$('cnt-ar'); if(ca)ca.textContent=allItems().filter(function(it){return it.state==='done';}).length||'';
+  var ch=$('cnt-ho'); if(ch){ var n2=hoBadgeCount(); ch.textContent=n2||''; ch.style.color=n2?'#c0392b':''; ch.style.fontWeight=n2?'800':''; }
   if(S.view==='team') renderTeam();
+  else if(S.view==='ho') renderHo();
   else if(S.view==='archive') renderArchive();
   else { S.view='my'; renderMy(); }
   if(S.drawerId) renderDrawer();
+}
+function isAdmin(){ return !!(S.me&&/대표/.test(S.me.title||''))||/대표/.test(qp('role')||''); }
+function noteDone(it){ var n=it.ho_note||{};
+  return !!String((n.sit||'')+(n.todo||'')+(n.ppl||'')+(n.warn||'')+(n.files||'')).trim(); }
+function hoPendingToMe(){ return openItems().filter(function(it){ return it.ho&&!it.ho.confirmed&&it.ho.to&&
+  ((S.me.sid&&it.ho.to.sid===S.me.sid)||it.ho.to.name===S.me.name); }); }
+function hoOverdue(){ var lim=Date.now()-HO_OVERDUE_DAYS*86400000;
+  return openItems().filter(function(it){ return it.ho&&!it.ho.confirmed&&it.ho.at&&new Date(it.ho.at).getTime()<lim; }); }
+function activeLeavings(){ return Object.keys(leaving).map(function(k){var l=leaving[k];l._sid=k;return l;})
+  .filter(function(l){return !l.done;}).sort(function(a,b){return (a.date||'').localeCompare(b.date||'');}); }
+function hoBadgeCount(){
+  var n=hoPendingToMe().length;                    // 내가 받을 인수 대기
+  if(isAdmin()) n+=activeLeavings().length+hoOverdue().length;   // 대표: 부재 진행 + 확인 지연
+  return n;
+}
+// 부재자 기준 인수인계 대상: 아직 내 담당이거나, 나에게서 넘어간 건
+function leavingItems(sid,name){
+  return openItems().filter(function(it){
+    var m=it.mgr_main||{};
+    if((sid&&m.sid===sid)||(name&&m.name===name)) return true;
+    return !!(it.ho&&it.ho.from&&((sid&&it.ho.from.sid===sid)||(name&&it.ho.from.name===name)));
+  });
 }
 
 /* ── 데이터 접근 ── */
@@ -484,8 +538,10 @@ function renderMy(){
     var da=itemDue(a)||'9999', db2=itemDue(b)||'9999';
     return da.localeCompare(db2)||String(a.no||'').localeCompare(String(b.no||''),'en',{numeric:true});
   });
+  var recv=hoPendingToMe();
   var list=mine;
   if(S.f==='due')list=fc.due; else if(S.f==='nolog')list=fc.nolog; else if(S.f==='next')list=fc.next;
+  else if(S.f==='recv')list=recv;
   var meSel='';
   loadStaff().then(function(st){ var el=$('meSel'); if(!el||!st.length)return;
     el.innerHTML=st.map(function(u){return '<option value="'+esc(u.sid)+'"'+(S.me&&S.me.sid===u.sid?' selected':'')+'>'+esc(u.name)+'</option>';}).join('');
@@ -502,8 +558,18 @@ function renderMy(){
     +fcardHTML('due','🔥 기한 임박 D-7',fc.due.length,'danger')
     +fcardHTML('nolog','✍ 이번 주 미기록',fc.nolog.length+'<small>/'+mine.length+'건</small>','amber')
     +fcardHTML('next','📌 다음 할 일 도래',fc.next.length,'')
+    +(recv.length?fcardHTML('recv','📥 인수 확인 대기',recv.length,'amber'):'')
     +'<div class="fcard" style="cursor:default"><div class="l">이번 주 완료</div><div class="v">'+fc.done.length+'<small>건</small></div></div>'
     +'</div>';
+  // 내 부재(퇴사·휴직·연차) 예정 → 인수인계 진행 배너
+  var myLv=S.me&&(leaving[S.me.sid]||null);
+  if(myLv&&!myLv.done){
+    var miss=mine.filter(function(it){return !noteDone(it);}).length;
+    var dd2=dday(myLv.date);
+    h+='<div class="histbanner">🚪 <b>'+esc(myLv.type||'부재')+' 예정 '+(dd2===null?'':(dd2>=0?'D-'+dd2:'지남'))+'</b>'
+      +' — 인수인계 노트 미작성 <b>'+miss+'건</b> / 진행 '+mine.length+'건. 각 업무를 열어 📦 노트를 작성하세요.'
+      +'<span class="back" onclick="go(\'ho\')">인수인계 현황 →</span></div>';
+  }
   if(!isCurWeek()){
     h+='<div class="histbanner">🕘 <b>'+esc(weekLabel(S.week))+'</b> 열람 중 — 이 주에 기록하면 그 주 기록으로 저장됩니다 (실제 입력일 병기)'
       +'<span class="back" onclick="setWeek(null)">이번 주로 →</span></div>';
@@ -537,7 +603,8 @@ function rowHTML(it){
   return '<tr>'
     +'<td>'+catBadge(it.cat)+'</td>'
     +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
-    +'<div class="sub">'+esc(it.title||'')+(it.no?' · '+esc(it.no):'')+'</div></td>'
+    +'<div class="sub">'+esc(it.title||'')+(it.no?' · '+esc(it.no):'')
+    +(it.ho&&!it.ho.confirmed?' <span style="color:#b45309;font-weight:800;font-size:10px">📥 인수 확인 필요</span>':'')+'</div></td>'
     +'<td>'+stChip(it.status||'진행중',it._id)+'</td>'
     +'<td>'+lastHtml+'</td>'
     +'<td class="wkcell">'+logHtml
@@ -694,6 +761,26 @@ function renderDrawer(){
     +'</div></div>';
   h+='<div class="nextbox">☐ 다음 할 일 — <input type="text" id="dx-text" value="'+esc(it.next&&it.next.text||'')+'" placeholder="예: 이유서 제출" onchange="saveNext(\''+id+'\')">'
     +'<input type="date" id="dx-date" value="'+esc(it.next&&it.next.date||'')+'" onchange="saveNext(\''+id+'\')"></div>';
+  // 인수 확인 대기 — 후임(나)에게 확인 버튼
+  if(it.ho&&!it.ho.confirmed){
+    var toMe=it.ho.to&&((S.me.sid&&it.ho.to.sid===S.me.sid)||it.ho.to.name===S.me.name);
+    if(toMe) h+='<button class="recvbtn" onclick="confirmHo(\''+id+'\')">📥 인수 확인 — 노트와 타임라인을 확인했습니다</button>';
+    else h+='<div class="nextbox" style="background:#fdf1e1">📥 인수 확인 대기 중 — 후임 '+esc(it.ho.to&&it.ho.to.name||'—')
+      +' ('+esc((it.ho.at||'').slice(0,10))+' 지정'+(it.ho.from?', 전임 '+esc(it.ho.from.name||''):'')+')</div>';
+  }
+  // 인수인계 노트 (평상시에도 작성 — 정책②)
+  var nd=noteDone(it), n3=it.ho_note||{};
+  h+='<div class="honote"><div class="hh" onclick="S.noteOpen=!S.noteOpen;renderDrawer()">'
+    +'<span>'+(S.noteOpen?'▾':'▸')+'</span>📦 인수인계 노트'
+    +'<span class="st2" style="color:'+(nd?'var(--ok)':'#c9536b')+'">'+(nd?'작성됨'+(n3.at?' · '+esc(n3.at):''):'미작성')+'</span></div>';
+  if(S.noteOpen){
+    h+='<div class="hb">';
+    HO_FIELDS.forEach(function(f){
+      h+='<div><label>'+esc(f[1])+'</label><textarea id="hn-'+f[0]+'" placeholder="'+esc(f[2])+'" rows="2" onchange="saveHoNote(\''+id+'\')">'+esc(n3[f[0]]||'')+'</textarea></div>';
+    });
+    h+='<div class="muted" style="font-size:10.5px">칸에서 나가면 자동 저장 · 담당이 바뀌어도 노트는 업무에 남습니다'+(n3.byName?' · 마지막 작성 '+esc(n3.byName):'')+'</div></div>';
+  }
+  h+='</div>';
   h+='<input class="dinput" id="dlog" placeholder="기록 추가… (Enter로 저장, 오늘 날짜)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();drawerAdd(\''+id+'\',this)}">';
   h+='<div id="feed">';
   if(!logs){ h+=loadingHTML('이력 불러오는 중…'); }
@@ -761,10 +848,13 @@ function deleteItem(id){
 function handoverModal(id){
   var it=items[id]; if(!it)return;
   loadStaff().then(function(st){
+    // 부담당이 있으면 승계 1순위로 기본 선택 (정책④)
+    var preSid=(it.mgr_subs&&it.mgr_subs[0]&&it.mgr_subs[0].sid)||(it.mgr_main&&it.mgr_main.sid)||'';
     showModal('<h2 style="margin:0 0 10px">🔄 담당 변경 (인수인계)</h2>'
-      +'<p class="muted" style="font-size:12.5px;margin:0 0 12px">「'+esc(it.company||'')+' — '+esc(it.title||'')+'」의 주담당을 변경합니다.<br>모든 기록·타임라인이 새 담당에게 그대로 승계됩니다.</p>'
+      +'<p class="muted" style="font-size:12.5px;margin:0 0 12px">「'+esc(it.company||'')+' — '+esc(it.title||'')+'」의 주담당을 변경합니다.<br>모든 기록·타임라인·노트가 새 담당에게 승계되고, 새 담당의 <b>인수 확인</b>을 기다립니다.'
+      +(it.mgr_subs&&it.mgr_subs[0]?'<br>부담당 <b>'+esc(it.mgr_subs[0].name)+'</b>이(가) 승계 1순위로 선택되어 있습니다.':'')+'</p>'
       +'<div class="fld"><label>새 주담당</label><select id="ho-sel">'
-      +st.map(function(u){return '<option value="'+esc(u.sid)+'" data-name="'+esc(u.name)+'"'+((it.mgr_main&&it.mgr_main.sid)===u.sid?' selected':'')+'>'+esc(u.name)+(u.title?' · '+esc(u.title):'')+'</option>';}).join('')
+      +st.map(function(u){return '<option value="'+esc(u.sid)+'" data-name="'+esc(u.name)+'"'+(preSid===u.sid?' selected':'')+'>'+esc(u.name)+(u.title?' · '+esc(u.title):'')+'</option>';}).join('')
       +'</select></div>'
       +'<div class="row" style="justify-content:flex-end;margin-top:16px"><button onclick="closeM()">취소</button>'
       +'<button class="primary" onclick="doHandover(\''+id+'\')">변경</button></div>');
@@ -772,12 +862,207 @@ function handoverModal(id){
 }
 function doHandover(id){
   var sel=$('ho-sel'); if(!sel)return;
-  var it=items[id]; var old=(it.mgr_main&&it.mgr_main.name)||'—';
   var sid=sel.value, name=sel.options[sel.selectedIndex].getAttribute('data-name');
-  if((it.mgr_main&&it.mgr_main.sid)===sid){ closeM(); return; }
-  patchItem(id,{mgr_main:{sid:sid,name:name}}).then(function(){
-    addLog(id,'담당 '+old+' → '+name,todayStr(),'ho');
-    closeM(); toast('🔄 담당 변경: '+name); renderDrawer(); route();
+  closeM(); _handoverTo(id,sid,name);
+}
+function _handoverTo(id,sid,name){
+  var it=items[id]; if(!it)return;
+  if((it.mgr_main&&it.mgr_main.sid)===sid){ return; }
+  var old={sid:(it.mgr_main&&it.mgr_main.sid)||'',name:(it.mgr_main&&it.mgr_main.name)||'—'};
+  var subs=(it.mgr_subs||[]).filter(function(s){return s.sid!==sid;});   // 새 주담당은 부담당에서 제외
+  patchItem(id,{mgr_main:{sid:sid,name:name},mgr_subs:subs,
+    ho:{from:old,to:{sid:sid,name:name},at:new Date().toISOString(),confirmed:false}}).then(function(){
+    addLog(id,'담당 '+old.name+' → '+name+' (인수 확인 대기)',todayStr(),'ho');
+    toast('🔄 담당 변경: '+name+' — 인수 확인 대기'); if(S.drawerId===id)renderDrawer(); route();
+  });
+}
+function confirmHo(id){
+  var it=items[id]; if(!it||!it.ho)return;
+  var ho=Object.assign({},it.ho,{confirmed:true,confirmed_at:new Date().toISOString()});
+  patchItem(id,{ho:ho}).then(function(){
+    addLog(id,'인수 확인 — '+((S.me&&S.me.name)||''),todayStr(),'ho');
+    toast('📥 인수 확인 완료'); renderDrawer(); route();
+  });
+}
+function saveHoNote(id){
+  var note={by:(S.me&&S.me.sid)||'',byName:(S.me&&S.me.name)||'',at:todayStr()};
+  HO_FIELDS.forEach(function(f){ var el=$('hn-'+f[0]); note[f[0]]=el?el.value.trim():''; });
+  patchItem(id,{ho_note:note}).then(function(){
+    toast('📦 노트 저장됨');
+    var st2=document.querySelector('.honote .st2');
+    if(st2){ var nd=noteDone(items[id]); st2.textContent=nd?('작성됨 · '+note.at):'미작성'; st2.style.color=nd?'var(--ok)':'#c9536b'; }
+  });
+}
+
+/* ── 인수인계 화면 (부재 관리·체크아웃·문서철) ── */
+function renderHo(){
+  var app=$('app'); if(!app)return;
+  app.innerHTML=loadingHTML();
+  Promise.all([loadStaff(),fbDb.ref(NS+'/handover_docs').once('value').then(function(s){return s.val()||{};}).catch(function(){return {};})])
+  .then(function(rr){ var st=rr[0], docs=rr[1]; S._hodocs=docs;
+    var admin=isAdmin();
+    var lvs=activeLeavings();
+    var h='<div class="row"><h1>인수인계</h1><span class="muted" style="font-size:12.5px">퇴사·휴직·연차 등 부재 전 업무 인계 관리</span></div>';
+    // 등록 폼 (대표만 — 정책⑥)
+    if(admin){
+      h+='<div class="panel"><h2 style="margin-bottom:10px">🚪 부재 예정 등록</h2>'
+        +'<div class="row" style="flex-wrap:wrap">'
+        +'<select id="lv-sid" style="padding:6px 9px;border:1px solid var(--line);border-radius:7px">'
+        +st.map(function(u){return '<option value="'+esc(u.sid)+'" data-name="'+esc(u.name)+'">'+esc(u.name)+(u.title?' · '+esc(u.title):'')+'</option>';}).join('')+'</select>'
+        +'<select id="lv-type" style="padding:6px 9px;border:1px solid var(--line);border-radius:7px">'
+        +LV_TYPES.map(function(t){return '<option>'+t+'</option>';}).join('')+'</select>'
+        +'<input id="lv-date" type="date" style="padding:6px 9px;border:1px solid var(--line);border-radius:7px">'
+        +'<input id="lv-note" placeholder="메모 (선택)" style="padding:6px 9px;border:1px solid var(--line);border-radius:7px;min-width:160px">'
+        +'<button class="primary" onclick="addLeaving()">등록</button></div>'
+        +'<div class="muted" style="font-size:11.5px;margin-top:7px">등록하면 당사자 화면에 인수인계 배너가 뜨고, 아래에 체크아웃 현황이 생깁니다.</div></div>';
+    } else {
+      h+='<div class="panel muted" style="font-size:12.5px">부재 예정 등록은 대표만 가능합니다. 아래에서 진행 현황을 볼 수 있습니다.</div>';
+    }
+    // 인수 확인 지연 (대표 배지 — 정책③)
+    var od=hoOverdue();
+    if(od.length){
+      h+='<div class="panel" style="border-color:#e6a19a"><h2 style="color:var(--danger);margin-bottom:8px">⏰ 인수 확인 지연 ('+HO_OVERDUE_DAYS+'일 경과) — '+od.length+'건</h2>';
+      od.forEach(function(it){
+        var days=Math.floor((Date.now()-new Date(it.ho.at).getTime())/86400000);
+        h+='<div class="row" style="font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--line)">'+catBadge(it.cat)
+          +'<span class="itc" onclick="openDrawer(\''+it._id+'\')" style="font-weight:700;cursor:pointer">'+esc(it.company||'')+' — '+esc(it.title||'')+'</span>'
+          +'<span class="muted">'+esc(it.ho.from&&it.ho.from.name||'')+' → <b>'+esc(it.ho.to&&it.ho.to.name||'')+'</b> · '+days+'일째 미확인</span></div>';
+      });
+      h+='</div>';
+    }
+    // 진행 중 부재 카드
+    if(!lvs.length) h+='<div class="panel muted" style="font-size:12.5px">진행 중인 부재 예정이 없습니다.</div>';
+    lvs.forEach(function(lv){
+      var its=leavingItems(lv._sid,lv.name);
+      var nNote=its.filter(noteDone).length;
+      var nAsg=its.filter(function(it){return it.ho&&it.ho.from&&(it.ho.from.sid===lv._sid||it.ho.from.name===lv.name);}).length;
+      var nCf=its.filter(function(it){return it.ho&&it.ho.confirmed&&it.ho.from&&(it.ho.from.sid===lv._sid||it.ho.from.name===lv.name);}).length;
+      var tot=its.length, pct=tot?Math.round(nCf/tot*100):100;
+      var dd2=dday(lv.date);
+      h+='<div class="hocard"><div class="hct"><b>👤 '+esc(lv.name)+'</b><span class="lvtag">'+esc(lv.type)+' '+esc(lv.date||'')+(dd2!==null?' (D'+(dd2>=0?'-'+dd2:'+'+(-dd2))+')':'')+'</span>'
+        +'<span class="pbar"><i style="width:'+pct+'%"></i></span>'
+        +'<span class="muted" style="font-size:11.5px;font-variant-numeric:tabular-nums">노트 '+nNote+'/'+tot+' · 후임 '+nAsg+'/'+tot+' · 확인 '+nCf+'/'+tot+'</span>'
+        +'<button onclick="printHoDoc(\''+lv._sid+'\')" style="font-size:11.5px">🖨 인수인계서</button>'
+        +(admin?'<button class="primary" onclick="doneLeaving(\''+lv._sid+'\')" style="font-size:11.5px">📁 문서철 보관·완료</button>':'')
+        +(admin?'<button onclick="cancelLeaving(\''+lv._sid+'\')" style="font-size:11.5px;color:var(--danger);border-color:#e6a19a">취소</button>':'')
+        +'</div>';
+      if(!tot) h+='<div class="muted" style="font-size:12px">잔여 진행 건이 없습니다 — 인수인계 완료 가능.</div>';
+      else{
+        h+='<div style="overflow-x:auto"><table><thead><tr><th style="width:52px">구분</th><th>기업 / 업무</th>'
+          +'<th style="width:64px">노트</th><th style="width:170px">후임</th><th style="width:64px">인수 확인</th></tr></thead><tbody>';
+        its.forEach(function(it){
+          var asg=it.ho&&it.ho.from&&(it.ho.from.sid===lv._sid||it.ho.from.name===lv.name);
+          var stillMine=(it.mgr_main&&(it.mgr_main.sid===lv._sid||it.mgr_main.name===lv.name));
+          var sucSel;
+          if(stillMine){
+            var pre=(it.mgr_subs&&it.mgr_subs[0]&&it.mgr_subs[0].sid)||'';
+            sucSel='<select onchange="assignSuccessor(\''+it._id+'\',this)" style="padding:3px 6px;border:1px solid var(--line);border-radius:6px;font-size:12px">'
+              +'<option value="">후임 선택'+(pre?'':'…')+'</option>'
+              +st.filter(function(u){return u.sid!==lv._sid;}).map(function(u){
+                return '<option value="'+esc(u.sid)+'" data-name="'+esc(u.name)+'"'+(pre===u.sid?' selected':'')+'>'+esc(u.name)+(pre===u.sid?' (부담당)':'')+'</option>';}).join('')
+              +'</select>'+(pre?' <button style="font-size:10.5px;padding:2px 7px" onclick="assignSuccessor(\''+it._id+'\',this.previousElementSibling)">지정</button>':'');
+          } else {
+            sucSel='<b>'+esc(it.mgr_main&&it.mgr_main.name||'—')+'</b>';
+          }
+          h+='<tr><td>'+catBadge(it.cat)+'</td>'
+            +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
+            +'<div class="sub">'+esc(it.title||'')+'</div></td>'
+            +'<td>'+(noteDone(it)?'<span class="ck">✓</span>':'<span class="ckno">미작성</span>')+'</td>'
+            +'<td onclick="event.stopPropagation()">'+sucSel+'</td>'
+            +'<td>'+(it.ho&&it.ho.confirmed?'<span class="ck">✓</span>':(asg?'<span style="color:var(--warn);font-weight:700">대기</span>':'—'))+'</td></tr>';
+        });
+        h+='</tbody></table></div>';
+      }
+      h+='</div>';
+    });
+    // 문서철 — 보관된 인수인계서
+    var dk=Object.keys(docs).sort().reverse();
+    h+='<div class="panel"><h2 style="margin-bottom:8px">📁 문서철 — 보관된 인수인계서 '+(dk.length?dk.length+'건':'')+'</h2>';
+    if(!dk.length) h+='<div class="muted" style="font-size:12px">아직 보관된 인수인계서가 없습니다. 부재 완료 처리 시 자동 보관됩니다.</div>';
+    dk.forEach(function(k){ var d3=docs[k];
+      h+='<div class="row" style="font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--line)">'
+        +'<b>'+esc(d3.name||'')+'</b><span class="lvtag">'+esc(d3.type||'')+'</span>'
+        +'<span class="muted">'+esc(d3.date||'')+' · 업무 '+((d3.items||[]).length)+'건 · 보관 '+esc((d3.saved_at||'').slice(0,10))+'</span>'
+        +'<span style="flex:1"></span><button style="font-size:11.5px" onclick="printHoDocArchived(\''+esc(k)+'\')">🖨 보기·인쇄</button></div>';
+    });
+    h+='</div>';
+    app.innerHTML=h;
+  });
+}
+function addLeaving(){
+  var sel=$('lv-sid'); if(!sel)return;
+  var sid=sel.value, name=sel.options[sel.selectedIndex].getAttribute('data-name');
+  var date=$('lv-date').value;
+  if(!date){ toast('예정일을 선택하세요','warn'); return; }
+  if(leaving[sid]&&!leaving[sid].done){ toast(name+'은(는) 이미 부재 진행 중입니다','warn'); return; }
+  fbDb.ref(NS+'/leaving/'+sid).set({name:name,type:$('lv-type').value,date:date,
+    note:$('lv-note').value.trim(),created_at:new Date().toISOString(),done:false})
+    .then(function(){ toast('🚪 부재 예정 등록: '+name); })
+    .catch(function(e){ toast('등록 실패: '+e.message,'err'); });
+}
+function cancelLeaving(sid){
+  confirmM('이 부재 예정을 취소(삭제)할까요?\n작성된 노트·인수 기록은 그대로 남습니다.',{ok:'취소 처리',danger:true}).then(function(ok){
+    if(!ok)return;
+    fbDb.ref(NS+'/leaving/'+sid).remove().then(function(){ toast('부재 예정 취소됨'); });
+  });
+}
+function assignSuccessor(id,selEl){
+  if(!selEl||selEl.tagName!=='SELECT')return;
+  var sid=selEl.value; if(!sid)return;
+  var name=selEl.options[selEl.selectedIndex].getAttribute('data-name');
+  _handoverTo(id,sid,name);
+}
+function _hoDocRec(sid){
+  var lv=leaving[sid]||{}; var its=leavingItems(sid,lv.name);
+  return { sid:sid, name:lv.name||'', type:lv.type||'', date:lv.date||'',
+    saved_at:new Date().toISOString(),
+    items:its.map(function(it){ return { no:it.no||'', cat:it.cat||'', company:it.company||'', client:it.client||'',
+      officer:it.officer||'', title:it.title||'', note:it.ho_note||null,
+      toName:(it.ho&&it.ho.to&&it.ho.to.name)||(it.mgr_main&&it.mgr_main.name)||'',
+      confirmed:!!(it.ho&&it.ho.confirmed) }; }) };
+}
+function _hoDocHTML(rec){
+  var css='body{font-family:Malgun Gothic,sans-serif;font-size:13px;color:#111;margin:34px}h1{font-size:19px}h2{font-size:14px;border-top:2px solid #333;padding-top:10px;margin:22px 0 6px}'
+    +'.mt{color:#555;font-size:12px}.q{font-weight:700;font-size:12px;margin-top:7px}.a{margin:2px 0 0;white-space:pre-wrap}'
+    +'.none{color:#999}.hd{display:flex;justify-content:space-between;border-bottom:2px solid #333;padding-bottom:8px}'
+    +'@media print{h2{page-break-inside:avoid}}';
+  var h='<html><head><meta charset="utf-8"><title>인수인계서 — '+esc(rec.name)+'</title><style>'+css+'</style></head><body>'
+    +'<div class="hd"><h1>인수인계서</h1><div class="mt">푸른노무법인 · 업무시트</div></div>'
+    +'<p class="mt">담당자 <b>'+esc(rec.name)+'</b> · 사유 '+esc(rec.type)+' · 예정일 '+esc(rec.date)
+    +' · 대상 업무 '+rec.items.length+'건 · 작성 '+esc((rec.saved_at||'').slice(0,10))+'</p>';
+  rec.items.forEach(function(x,i){
+    h+='<h2>'+(i+1)+'. ['+esc(x.cat)+'] '+esc(x.company||x.client||'')+' — '+esc(x.title)+'</h2>'
+      +'<div class="mt">'+esc(x.no)+(x.client?' · 의뢰인 '+esc(x.client):'')+(x.officer?' · 상대기관 '+esc(x.officer):'')
+      +' · 후임 <b>'+esc(x.toName||'미지정')+'</b>'+(x.confirmed?' (인수 확인됨)':' (확인 대기)')+'</div>';
+    var n=x.note||{};
+    HO_FIELDS.forEach(function(f){
+      h+='<div class="q">'+esc(f[1])+'</div><div class="a'+(n[f[0]]?'':' none')+'">'+esc(n[f[0]]||'(미작성)')+'</div>';
+    });
+  });
+  h+='<p class="mt" style="margin-top:26px">인계자: '+esc(rec.name)+' (서명) &nbsp;&nbsp;&nbsp; 확인(대표): (서명)</p></body></html>';
+  return h;
+}
+function _openPrint(html){
+  var w=window.open('','_blank'); if(!w){ toast('팝업이 차단되었습니다','warn'); return; }
+  w.document.write(html); w.document.close(); setTimeout(function(){ try{w.print();}catch(e){} },400);
+}
+function printHoDoc(sid){ _openPrint(_hoDocHTML(_hoDocRec(sid))); }
+function printHoDocArchived(k){ var d=(S._hodocs||{})[k]; if(d)_openPrint(_hoDocHTML(d)); }
+function doneLeaving(sid){
+  var lv=leaving[sid]||{}; var its=leavingItems(sid,lv.name);
+  var un=its.filter(function(it){return !(it.ho&&it.ho.confirmed)||((it.mgr_main||{}).sid===sid);}).length;
+  var msg='「'+ (lv.name||'') +' · '+(lv.type||'')+'」 인수인계를 완료 처리합니다.\n'
+    +'인수인계서가 문서철에 보관됩니다.'+(un?'\n\n⚠ 아직 인수 확인이 안 된 업무 '+un+'건이 있습니다.':'');
+  confirmM(msg,{ok:'완료·보관',danger:un>0}).then(function(ok){
+    if(!ok)return;
+    var rec=_hoDocRec(sid);
+    var key='HD-'+sid.replace(/[.#$/\[\]]/g,'_')+'-'+todayStr();
+    var up={};
+    up[NS+'/handover_docs/'+key]=rec;
+    up[NS+'/leaving/'+sid+'/done']=true;
+    up[NS+'/leaving/'+sid+'/done_at']=new Date().toISOString();
+    fbDb.ref().update(up).then(function(){ toast('📁 인수인계서 보관·완료'); route(); })
+      .catch(function(e){ toast('실패: '+e.message,'err'); });
   });
 }
 
