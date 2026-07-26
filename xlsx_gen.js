@@ -10,6 +10,22 @@ const esc=s=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").rep
 /* A4 인쇄 폭(여백 15mm 제외) ≈ 267mm(가로) / 180mm(세로). 엑셀 열너비 1 ≈ 2.0mm */
 const WIDTH_UNITS={landscape:133,portrait:90};
 const COL=i=>{let s="",n=i+1;while(n>0){const m=(n-1)%26;s=String.fromCharCode(65+m)+s;n=Math.floor((n-1)/26);}return s;};
+/* 행 높이 계산 — 엑셀은 파일에 행 높이가 없으면 wrapText라도 자동 확장하지 않아 내용이 잘린다.
+   글자 폭(한글 2·영숫자 1, 열너비 단위)로 줄 수를 세어 pt 높이를 직접 지정한다. */
+const LINE_PT=13.5, PAD_PT=4, MAX_PT=409;   // 409pt = 엑셀 행 높이 상한
+function visW(s){ let w=0; for(const ch of String(s==null?"":s)){ const c=ch.codePointAt(0);
+  w += (c<0x1100||(c>=0x2000&&c<0x2500))?1:2; } return w; }
+function lineCount(text,colWidth){
+  const per=Math.max(4,colWidth-1.6);   // 셀 좌우 여백 감안
+  let n=0;
+  String(text==null?"":text).split("\n").forEach(function(seg){ n+=Math.max(1,Math.ceil(visW(seg)/per)); });
+  return Math.max(1,n);
+}
+function rowHeight(cells,widths){
+  let mx=1;
+  cells.forEach(function(c,i){ const n=lineCount(c,widths[i]||10); if(n>mx)mx=n; });
+  return Math.min(MAX_PT, Math.round((mx*LINE_PT+PAD_PT)*10)/10);
+}
 
 const CT=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`;
@@ -38,8 +54,8 @@ function sheetXml(opt){
   const total=WIDTH_UNITS[land?"landscape":"portrait"];
   const ratios=opt.colRatios&&opt.colRatios.length===cols?opt.colRatios:opt.headers.map(()=>1);
   const sum=ratios.reduce((a,b)=>a+b,0);
-  let colsXml="<cols>";
-  ratios.forEach((r,i)=>{ const w=Math.max(6,Math.round(total*r/sum*10)/10);
+  let colsXml="<cols>"; const widths=[];
+  ratios.forEach((r,i)=>{ const w=Math.max(6,Math.round(total*r/sum*10)/10); widths.push(w);
     colsXml+=`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`; });
   colsXml+="</cols>";
   const last=COL(cols-1);
@@ -51,9 +67,10 @@ function sheetXml(opt){
       Array.from({length:cols-1},(_,i)=>`<c r="${COL(i+1)}${r}" s="${S_SUB}"/>`).join("")+`</row>`;
     merges.push(`A${r}:${last}${r}`); r++; }
   const headRow=r;
-  rowsXml+=`<row r="${r}" ht="22" customHeight="1">`+opt.headers.map((h,i)=>cell(COL(i)+r,S_HEAD,h)).join("")+`</row>`; r++;
+  rowsXml+=`<row r="${r}" ht="${rowHeight(opt.headers,widths)}" customHeight="1">`+opt.headers.map((h,i)=>cell(COL(i)+r,S_HEAD,h)).join("")+`</row>`; r++;
   (opt.rows||[]).forEach(row=>{
-    rowsXml+=`<row r="${r}">`+opt.headers.map((_,i)=>cell(COL(i)+r,S_BODY,row[i])).join("")+`</row>`; r++;
+    // 행 높이를 내용에 맞춰 명시 — 없으면 엑셀이 한 줄로 표시해 조문이 잘린다
+    rowsXml+=`<row r="${r}" ht="${rowHeight(row,widths)}" customHeight="1">`+opt.headers.map((_,i)=>cell(COL(i)+r,S_BODY,row[i])).join("")+`</row>`; r++;
   });
   const merge=merges.length?`<mergeCells count="${merges.length}">`+merges.map(m=>`<mergeCell ref="${m}"/>`).join("")+`</mergeCells>`:"";
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
