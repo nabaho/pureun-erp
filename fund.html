@@ -12,6 +12,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="hwpx_gen.js?v=1"></script>
+<script src="fund_forms.js?v=1"></script>
 <style>
   :root{--acc:#2563eb;--acc2:#1b4bc0;--acc-soft:#e9f0fe;--ink:#182234;--sub:#59637a;--faint:#8b94a6;
     --line:#e4e9f1;--panel:#fff;--bg:#f4f6fa;--ok:#1f7a4d;--ok-bg:#e7f6ee;--warn:#b45309;--warn-bg:#fdf1e1;
@@ -1078,8 +1079,8 @@ function dgDocCss(){ return "body{font-family:'Batang','바탕',serif;max-width:
 function dgDocCssIn(){ var s="#doced";
   return s+"{font-family:'Batang','바탕',serif;max-width:760px;margin:0 auto;line-height:1.9;font-size:13.5px;color:#111}"
   +s+" h1{text-align:center;font-size:21px;letter-spacing:6px;margin:24px 0}"+s+" h2{font-size:15px;margin:20px 0 6px;text-align:center;letter-spacing:3px}"
-  +s+" .right{text-align:right}"+s+" .center{text-align:center}"+s+" table{border-collapse:collapse;width:100%;margin:10px 0}"
-  +s+" td,"+s+" th{border:1px solid #333;padding:6px 10px;font-size:13px}"+s+" th{background:#f3f3f3;font-weight:700}"
+  +s+" .right{text-align:right}"+s+" .center{text-align:center}"+s+" table{border-collapse:collapse;width:100%;margin:10px 0;table-layout:fixed}"
+  +s+" td,"+s+" th{border:1px solid #333;padding:4px 5px;font-size:12px;word-break:break-all;vertical-align:middle}"+s+" th{background:#f3f3f3;font-weight:700}"
   +s+" .sign{margin-top:30px;text-align:right;line-height:2.4}"+s+" .note{color:#888;font-size:11px}"; }
 // 표준 정관 — 공동근로복지기금(배경공동 인가본 기준, 6장 42조)
 function charterGong(f,sites){
@@ -1205,8 +1206,44 @@ function charterSane(f){
   P.push("<div class='sign'>근로자측 위원 근로자대표 "+ch+" (인)<br>사용자측 위원 대표이사 ＿＿＿＿ (인)</div>");
   return P.join('');
 }
+/* ── 원본 .hwp에서 변환한 법정서식(fund_forms.js: window.HWP_FORMS) ──
+   03_과거자료 원본을 파싱해 문단·표 격자를 그대로 옮긴 템플릿. 라벨 옆 빈 칸에 기금 데이터를 채운다.
+   구조가 원본과 동일하므로 "폴더 서식과 다르다" 문제가 없다. (정밀 인쇄는 여전히 엑셀/HWP 권장) */
+var FORM_FILL=[   // [라벨 정규식, 값 함수] — 표에서 라벨 셀 다음의 빈 셀에 채움
+  [/^명\s*칭$/, function(f){return f.name;}],
+  [/^주사무소\s*소재지$/, function(f){return f.address;}],
+  [/^소재지$/, function(f){return f.address;}],
+  [/^전화번호$/, function(f){return f.phone;}],
+  [/^성명\(한글\)$/, function(f){return f.chairman;}],
+  [/^생년월일$/, function(f){return '';}],
+  [/^직\s*책$/, function(f){return f.chairman?'이사장':'';}],
+  [/^접수일$/, function(f){return '';}]
+];
+function hwpFormHTML(kind,f,sites){
+  var ftype=(f.fund_type==='사내')?'사내':'공동';
+  var key=(kind==='charter'&&ftype==='사내')?'charter_sane':kind;   // 정관은 공동/사내 원본이 다름
+  var T=(window.HWP_FORMS||{})[key]; if(!T) return null;
+  var html=String(T).replace(/\{\{FUND\}\}/g, esc(f.name||'＿＿＿＿＿＿＿＿'));
+  // 사내/공동 체크박스 전환 (원본은 공동에 [V])
+  if(ftype==='사내') html=html.replace(/\[ \] 사내근로복지기금법인/g,'[V] 사내근로복지기금법인')
+                              .replace(/\[V\] 공동근로복지기금법인/g,'[ ] 공동근로복지기금법인');
+  var d=document.createElement('div'); d.innerHTML=html;
+  var tds=d.querySelectorAll('td');
+  for(var i=0;i<tds.length;i++){
+    var t=(tds[i].textContent||'').trim(); if(!t) continue;
+    for(var k=0;k<FORM_FILL.length;k++){
+      if(!FORM_FILL[k][0].test(t)) continue;
+      var v=FORM_FILL[k][1](f); if(!v) break;
+      var nx=tds[i].nextElementSibling;
+      if(nx && !(nx.textContent||'').trim()){ nx.textContent=v; }
+      break;
+    }
+  }
+  return "<p class='note'>※ <b>원본 서식 그대로 변환</b>(03_과거자료 .hwp) — 라벨 옆 칸은 기금 데이터 자동 채움. 빈칸은 수기 기입. 이 창에서 바로 수정하세요.</p>"+d.innerHTML;
+}
 function docBody(kind,f,sites){
   sites=sites||[];
+  var _real=hwpFormHTML(kind,f,sites); if(_real) return _real;   // 원본 변환본 우선
   var fname=esc(f.name||''), chairman=(f.chairman||''), ftype=f.fund_type||'공동';
   var officers=(Array.isArray(f.officers)&&f.officers.length)?f.officers:[{role:'이사장',name:chairman}];
   var note="<p class='note'>※ 초안 자동생성본 — 제출 전 담당자 검토 필수. 밑줄 공란은 수기 기입. 이 창에서 바로 수정할 수 있습니다.</p>";
