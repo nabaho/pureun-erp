@@ -1392,31 +1392,61 @@ function docBody(kind,f,sites){
 }
 function previewDoc(kind){
   var f=funds[S.formFund]; if(!f){ toast('기금을 선택하세요','warn'); return; }
-  var label=docLabel(kind);
-  showModal('<div class="row"><h2 style="margin:0">'+esc(label)+' — '+esc(f.short_name||f.name)+'</h2><span style="flex:1"></span>'
-    +'<button onclick="printDoc()">🖨 인쇄/PDF</button> <button onclick="docToHwpx(\''+kind+'\')" title="화면에서 편집한 내용 그대로 한글 파일로 저장 — 한글 프로그램이 없어도 생성됩니다">📄 한글(HWPX)</button> <button onclick="resetDoc(\''+kind+'\')">↺ 원본</button> '
-    +'<button class="primary" onclick="saveDocEdit(\''+kind+'\')">💾 저장</button></div>'
-    +'<p class="muted" style="font-size:11.5px;margin:6px 0">아래 내용을 직접 클릭해 수정하세요. [저장]하면 이 기금 서식으로 보관되고, 다음에 열면 저장본이 나옵니다.</p>'
+  var label=docLabel(kind), ftype=(f.fund_type==='사내')?'사내':'공동';
+  showModal('<div class="row"><h2 style="margin:0">'+esc(label)+' — '+esc(f.short_name||f.name)+'</h2><span id="docLayerBadge" class="chip" style="font-size:10px">…</span><span style="flex:1"></span>'
+    +'<button onclick="printDoc()">🖨 인쇄/PDF</button> <button onclick="docToHwpx(\''+kind+'\')" title="화면에서 편집한 내용 그대로 한글 파일로 저장 — 한글 프로그램이 없어도 생성됩니다">📄 한글(HWPX)</button> <button onclick="resetDoc(\''+kind+'\')">↺ 되돌리기</button> '
+    +'<button onclick="saveDocType(\''+kind+'\')" title="모든 '+ftype+'기금의 기본서식으로 저장">💾 '+ftype+' 공통</button> '
+    +'<button class="primary" onclick="saveDocEdit(\''+kind+'\')">💾 이 기금</button></div>'
+    +'<p class="muted" style="font-size:11.5px;margin:6px 0">내용 클릭해 수정 → [💾 이 기금]=이 기금 전용 · [💾 '+ftype+' 공통]=모든 '+ftype+'기금 기본서식.</p>'
     +'<div id="docwrap" style="border:1px solid var(--line);border-radius:8px;max-height:64vh;overflow:auto;padding:14px;background:#fff">'+loadingHTML()+'</div>');
   S._docKind=kind;
-  fbDb.ref(NS+'/doc_edits/'+S.formFund+'/'+kind).once('value').then(function(snap){
-    var edited=snap.val();
-    if(edited&&edited.html){ _showDocHTML(edited.html); return; }
-    return _loadSites(S.formFund).then(function(sites){ _showDocHTML('<style>'+dgDocCss()+'</style>'+docBody(kind,f,sites)); });
-  }).catch(function(e){ var w=$('docwrap'); if(w)w.innerHTML='<div class="msg err">'+esc(e.message)+'</div>'; });
+  _loadDocInto(kind);
 }
 function _showDocHTML(html){ var w=$('docwrap'); if(!w)return;
   // 전역 <style>(body{...} 등) 제거 — 페이지 전체로 새는 것 차단. 저장된 옛 서식에 박힌 것도 정화.
   html=String(html||'').replace(/<style[\s\S]*?<\/style>/gi,'');
   w.innerHTML='<div id="doced" contenteditable="true" style="outline:none"><style>'+dgDocCssIn()+'</style>'+html+'</div>'; }
-function saveDocEdit(kind){ var ed=$('doced'); if(!ed){ return; }
-  fbDb.ref(NS+'/doc_edits/'+S.formFund+'/'+kind).set({html:ed.innerHTML,saved:ymd()})
-    .then(function(){ toast('서식 저장됨'); }).catch(function(e){ toast('저장 실패: '+e.message,'err'); }); }
-function resetDoc(kind){ var f=funds[S.formFund];
-  confirmM('수정 내용을 버리고 원본(자동생성)으로 되돌릴까요?',{ok:'원본으로',danger:true}).then(function(ok){ if(!ok)return;
-    fbDb.ref(NS+'/doc_edits/'+S.formFund+'/'+kind).remove().then(function(){
-      _loadSites(S.formFund).then(function(sites){ _showDocHTML('<style>'+dgDocCss()+'</style>'+docBody(kind,f,sites)); toast('원본으로 되돌렸습니다'); }); });
-  }); }
+// ── 서식 저장 3계층: 개별 기금(doc_edits/{fid}) > 유형 공통(doc_edits_type/{공동|사내}) > 자동생성 ──
+function _docCtx(kind){ var f=funds[S.formFund]||{}; var ftype=(f.fund_type==='사내')?'사내':'공동';
+  return { f:f, ftype:ftype,
+    fundRef: fbDb.ref(NS+'/doc_edits/'+S.formFund+'/'+kind),
+    typeRef: fbDb.ref(NS+'/doc_edits_type/'+ftype+'/'+kind) }; }
+function _setDocLayer(layer,ftype){ S._docLayer=layer;
+  var b=$('docLayerBadge'); if(!b)return;
+  if(layer==='fund'){ b.textContent='개별 저장본'; b.className='chip ok'; }
+  else if(layer==='type'){ b.textContent=ftype+'기금 공통 수정본'; b.className='chip warn'; }
+  else { b.textContent='자동생성'; b.className='chip'; } }
+// 공통 로더: 자동생성 먼저 표시 → 유형 공통본 → 개별 저장본 순으로 덮어씀(우선순위 역순 적용)
+function _loadDocInto(kind){ var c=_docCtx(kind), f=c.f;
+  return _loadSites(S.formFund).then(function(sites){
+    _showDocHTML(docBody(kind,f,sites)); _setDocLayer('gen',c.ftype);
+    return Promise.all([
+      c.typeRef.once('value').then(function(s){return s.val();}).catch(function(){return null;}),
+      c.fundRef.once('value').then(function(s){return s.val();}).catch(function(){return null;})
+    ]).then(function(a){ var t=a[0],fd=a[1];
+      if(fd&&fd.html){ _showDocHTML(fd.html); _setDocLayer('fund',c.ftype); }
+      else if(t&&t.html){ _showDocHTML(t.html); _setDocLayer('type',c.ftype); }
+    });
+  }).catch(function(e){ var w=$('docwrap'); if(w)w.innerHTML='<div class="msg err" style="padding:12px">서식 생성 오류: '+esc((e&&e.message)||e)+'</div>'; });
+}
+function saveDocEdit(kind){ var ed=$('doced'); if(!ed){ return; } var c=_docCtx(kind);
+  c.fundRef.set({html:ed.innerHTML,saved:ymd()})
+    .then(function(){ _setDocLayer('fund',c.ftype); toast('이 기금 서식으로 저장됨'); })
+    .catch(function(e){ toast('저장 실패: '+e.message,'err'); }); }
+function saveDocType(kind){ var ed=$('doced'); if(!ed){ return; } var c=_docCtx(kind);
+  confirmM('현재 내용을 ['+c.ftype+'기금 공통 기본서식]으로 저장합니다.\n앞으로 모든 '+c.ftype+'기금에서 이 서식의 기본으로 쓰입니다.\n(개별 기금 저장본이 있는 기금은 개별본이 우선)',{ok:c.ftype+' 공통으로 저장'}).then(function(ok){ if(!ok)return;
+    c.typeRef.set({html:ed.innerHTML,saved:ymd()})
+      .then(function(){ if(S._docLayer!=='fund')_setDocLayer('type',c.ftype); toast(c.ftype+'기금 공통 기본서식으로 저장됨'); })
+      .catch(function(e){ toast('저장 실패: '+e.message,'err'); }); }); }
+function resetDoc(kind){ var c=_docCtx(kind);
+  if(S._docLayer==='fund'){
+    confirmM('이 기금의 개별 저장본을 삭제할까요?\n('+c.ftype+' 공통 수정본이 있으면 그것이, 없으면 자동생성이 표시됩니다)',{ok:'개별본 삭제',danger:true}).then(function(ok){ if(!ok)return;
+      c.fundRef.remove().then(function(){ toast('개별 저장본 삭제'); _loadDocInto(kind); }); });
+  } else if(S._docLayer==='type'){
+    confirmM('['+c.ftype+'기금 공통 기본서식]을 삭제하고 자동생성 원본으로 되돌립니다.\n모든 '+c.ftype+'기금에 적용됩니다.',{ok:'공통본 삭제',danger:true}).then(function(ok){ if(!ok)return;
+      c.typeRef.remove().then(function(){ toast('공통 기본서식 삭제'); _loadDocInto(kind); }); });
+  } else { toast('이미 자동생성 원본입니다'); }
+}
 // 서식 자료실 우측 사이드 패널에 렌더(팝업 대신 "옆에서 보기"). #docwrap/#doced 재사용 → 저장·인쇄·HWPX 그대로 동작.
 function sidePreview(kind){
   var side=$('formSide');
@@ -1424,18 +1454,14 @@ function sidePreview(kind){
   var f=funds[S.formFund];
   if(!f){ side.innerHTML='<p class="msg err" style="padding:16px">상단에서 <b>대상 기금</b>을 먼저 선택하세요.</p>'; return; }
   S._sideKind=kind; S._docKind=kind; var label=docLabel(kind);
-  side.innerHTML='<div class="row" style="margin-bottom:6px;flex-wrap:wrap;gap:4px"><h2 style="margin:0;font-size:14px">'+esc(label)+' <span class="muted" style="font-weight:400;font-size:11px">'+esc(f.short_name||f.name||'')+'</span></h2><span style="flex:1"></span>'
-    +'<button onclick="printDoc()" style="padding:3px 8px" title="인쇄/PDF">🖨</button> <button onclick="docToHwpx(\''+kind+'\')" style="padding:3px 8px" title="한글(HWPX)로 저장">📄</button> <button onclick="resetDoc(\''+kind+'\')" style="padding:3px 8px" title="원본으로">↺</button> '
-    +'<button class="primary" onclick="saveDocEdit(\''+kind+'\')" style="padding:3px 10px">💾 저장</button></div>'
-    +'<p class="muted" style="font-size:11px;margin:0 0 6px">내용을 클릭해 직접 수정 → [저장]. 격자·도장란 그대로 필요하면 엑셀/HWP를 쓰세요.</p>'
+  var ftype=(f.fund_type==='사내')?'사내':'공동';
+  side.innerHTML='<div class="row" style="margin-bottom:6px;flex-wrap:wrap;gap:4px"><h2 style="margin:0;font-size:14px">'+esc(label)+' <span class="muted" style="font-weight:400;font-size:11px">'+esc(f.short_name||f.name||'')+'</span></h2><span id="docLayerBadge" class="chip" style="font-size:10px">…</span><span style="flex:1"></span>'
+    +'<button onclick="printDoc()" style="padding:3px 8px" title="인쇄/PDF">🖨</button> <button onclick="docToHwpx(\''+kind+'\')" style="padding:3px 8px" title="한글(HWPX)로 저장">📄</button> <button onclick="resetDoc(\''+kind+'\')" style="padding:3px 8px" title="저장본 삭제(개별→공통→자동생성 순으로 되돌림)">↺</button> '
+    +'<button onclick="saveDocType(\''+kind+'\')" style="padding:3px 10px" title="모든 '+ftype+'기금의 기본서식으로 저장">💾 '+ftype+' 공통</button>'
+    +'<button class="primary" onclick="saveDocEdit(\''+kind+'\')" style="padding:3px 10px" title="이 기금에만 저장">💾 이 기금</button></div>'
+    +'<p class="muted" style="font-size:11px;margin:0 0 6px">내용 클릭해 수정 → <b>[💾 이 기금]</b>=이 기금 전용 저장 · <b>[💾 '+ftype+' 공통]</b>=모든 '+ftype+'기금 기본으로 저장. 격자·도장란 그대로 필요하면 엑셀/HWP.</p>'
     +'<div id="docwrap" style="border:1px solid var(--line);border-radius:8px;max-height:72vh;overflow:auto;padding:14px;background:#fff">'+loadingHTML()+'</div>';
-  // 생성 서식을 먼저 렌더(항상 보이게) → 이후 저장본이 있으면 덮어씀
-  _loadSites(S.formFund).then(function(sites){
-    _showDocHTML('<style>'+dgDocCss()+'</style>'+docBody(kind,f,sites));
-    return fbDb.ref(NS+'/doc_edits/'+S.formFund+'/'+kind).once('value')
-      .then(function(snap){ var ed=snap&&snap.val(); if(ed&&ed.html)_showDocHTML(ed.html); })
-      .catch(function(){});   // 저장본 조회 실패해도 생성 서식은 그대로
-  }).catch(function(e){ var w=$('docwrap'); if(w)w.innerHTML='<div class="msg err" style="padding:12px">서식 생성 오류: '+esc((e&&e.message)||e)+'</div>'; });
+  _loadDocInto(kind);   // 자동생성 → 유형 공통본 → 개별 저장본 순 표시
 }
 // 새 기금 일괄: 인가 6종 전체 초안을 한 화면에 쌓아 미리보기·인쇄(#doced 재사용 → printDoc 그대로)
 function sidePreviewAll(){
