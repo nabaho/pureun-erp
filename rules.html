@@ -817,7 +817,7 @@ function renderEditor(){
 }
 function refreshDaejoSub(){
   let 개정=0,신설=0,삭제=0,검토=0;CUR_ITEMS.forEach(it=>{const k=itemKind(it);if(k==="개정")개정++;else if(k==="신설")신설++;else if(k==="삭제")삭제++;else if(k==="검토")검토++;});
-  $("daejo-sub").textContent=`${LAST?LAST.site:""} · 전체 ${CUR_ITEMS.length}개 조 · 개정 ${개정} · 신설 ${신설} · 삭제 ${삭제} · 검토 ${검토}`;
+  $("daejo-sub").textContent=`${LAST?siteLabel():""} · 전체 ${CUR_ITEMS.length}개 조 · 개정 ${개정} · 신설 ${신설} · 삭제 ${삭제} · 검토 ${검토}`;
   saveWorkState();   // 편집할 때마다 이 브라우저에 자동 보관(F5에도 유지)
 }
 $("mk-daejo").addEventListener("click",()=>{
@@ -841,12 +841,12 @@ $("dl-xlsx").addEventListener("click",()=>{
   downloadXlsx(rows,LAST);
 });
 function downloadXlsx(rows,ctx){
-  const aoa=[[`${ctx.site} 취업규칙 개정 신구대조표`,"","",""],[`검토기준일 ${ctx.asof} · 규칙집 v3`,"","",""],["변경조항","변경 전","변경 후","변경이유"]];
+  const aoa=[[`${siteLabel()} 취업규칙 개정 신구대조표`,"","",""],[`검토기준일 ${ctx.asof} · 규칙집 v3`,"","",""],["변경조항","변경 전","변경 후","변경이유"]];
   rows.forEach(r=>aoa.push([r.label,r.before,r.after,r.reason]));
   if(typeof XLSX!=="undefined"){
     const ws=XLSX.utils.aoa_to_sheet(aoa);ws["!cols"]=[{wch:22},{wch:34},{wch:40},{wch:24}];
     const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"신구대조표");
-    XLSX.writeFile(wb,`신구대조표_${ctx.site.replace(/[()\s—📄🏢]/g,"")}_${ctx.asof.replace(/-/g,"")}.xlsx`);
+    XLSX.writeFile(wb,`신구대조표_${siteLabel().replace(/[()\s—📄🏢\/\\:*?"<>|]/g,"")}_${ctx.asof.replace(/-/g,"")}.xlsx`);
   }else{
     const csv=aoa.map(r=>r.map(c=>`"${(c||"").replace(/"/g,'""')}"`).join(",")).join("\n");
     const a=document.createElement("a");a.href="data:text/csv;charset=utf-8,﻿"+encodeURIComponent(csv);
@@ -881,7 +881,7 @@ function showRevision(){
     <div class="rev-txt">${ad.lines.length?escapeH(ad.lines.join("\n"))+"<br>":""}<b style="color:#0f766e">${escapeH(ad.entry)}</b></div>
     <div class="rev-why">기존 부칙(개정·시행 이력)은 그대로 승계되며, 이번 개정 시행일 항목이 추가됩니다. 시행일 = 검토 기준일(${escapeH(LAST?LAST.asof:"")}) — 필요 시 기준일을 바꿔 다시 생성하세요.</div>`;
   body.appendChild(adv);
-  $("rev-sub").textContent=`${LAST?LAST.site:""} · 조문 ${shown.length}개 · ${REV_MODE==="partial"?"일부개정":"전부개정"} · 부칙 ${ad.lines.length+1}항`;
+  $("rev-sub").textContent=`${LAST?siteLabel():""} · 조문 ${shown.length}개 · ${REV_MODE==="partial"?"일부개정":"전부개정"} · 부칙 ${ad.lines.length+1}항`;
   $("ov-rev").classList.add("on");
 }
 $("show-rev").addEventListener("click",showRevision);
@@ -934,45 +934,61 @@ function dlDoc(rtf,fname){
 $("dl-doc-daejo").addEventListener("click",()=>{
   const rows=daejoRows().map(r=>[r.label+(r.kind?"\n["+r.kind+"]":""),r.before==="신설"?"신 설":r.before,r.after,r.reason]);
   if(!rows.length){alert("변경된 조문이 없습니다.");return;}
-  const base=`신구대조표_${LAST.site.replace(/[()\s—📄🏢]/g,"")}_${LAST.asof.replace(/-/g,"")}`;
+  const dsite=siteLabel();   // 본문에서 인식된 회사명 우선
+  const base=`신구대조표_${dsite.replace(/[()\s—📄🏢\/\\:*?"<>|]/g,"")}_${LAST.asof.replace(/-/g,"")}`;
   try{   // 한글 HWPX 직접 생성 (실패 시 RTF .doc 폴백) — 대조표는 A4 가로
     HWPX.setPage({landscape:true});
-    const body=HWPX.para(`${LAST.site} 취업규칙 개정 신구대조표`,HWPX.BOLD)
+    const body=HWPX.para(`${dsite} 취업규칙 개정 신구대조표`,HWPX.BOLD)
       +HWPX.para(`검토기준일 ${LAST.asof} · 규칙집 v3 · ${REV_MODE==="partial"?"일부개정":"전부개정"}`)+HWPX.para("")
       +HWPX.tablePara([["변경조항","변경 전","변경 후","변경이유"]].concat(rows),HWPX.cols([1.5,2.9,3.4,2.2]));
     HWPX.download(body,base+".hwpx");
   }catch(e){ console.warn("hwpx 생성 실패 — RTF(.doc) 폴백:",e);
-    const rtf=rtfTableDoc(`${LAST.site} 취업규칙 개정 신구대조표`,`검토기준일 ${LAST.asof} · 규칙집 v3`,
+    const rtf=rtfTableDoc(`${dsite} 취업규칙 개정 신구대조표`,`검토기준일 ${LAST.asof} · 규칙집 v3`,
       ["변경조항","변경 전","변경 후","변경이유"],rows.map(r=>[String(r[0]).replace(/\n/g," "),r[1],r[2],r[3]]),[2400,3400,4200,2600]);
     dlDoc(rtf,base+".doc");
   }
 });
+/* 조문 본문을 최종 조번호에 맞춰 정리 — 원본 문안 그대로 쓰되 앞머리 조번호·제목만 새 번호로 통일 */
+function articleText(v){
+  const it=v.it;
+  let t=String(it.after||"").replace(/\s+$/,"");
+  const m=t.match(/^\s*제\s*\d+\s*조(?:\s*의\s*\d+)?\s*[(（][^)）\n]{0,40}[)）]?\s*/);
+  if(m)t=t.slice(m[0].length);          // 원본 번호·제목 제거(중복 방지)
+  t=t.replace(/^\s+/,"");
+  const head=v.no+(it.title?"("+it.title+")":"");
+  return t?(head+" "+t):head;
+}
 $("dl-doc-rev").addEventListener("click",()=>{
   const view=numberedView(CUR_ITEMS,REV_MODE);
   const shown=REV_MODE==="full"?view.filter(v=>!v.it.del):view;
   if(!shown.length){alert("조문이 없습니다.");return;}
-  const blocks=shown.map(v=>{const it=v.it,k=itemKind(it),isDelP=it.del&&REV_MODE==="partial";
-    let why=(it.reason&&!isDelP)?`근거: ${it.reason}`:""; if(it.reviewNote&&!isDelP)why+=(why?"\n":"")+`검토 권고: ${it.reviewNote}`;
-    return {head:(k!=="유지"?`[${k}] `:"")+viewLabel(v),
-    old:(k==="개정"&&!isDelP)?`현행: ${it.before}`:"",text:isDelP?"삭제":it.after,why};});
-  const title=`${LAST.site} 취업규칙 (변경 후 전문)`, sub=`검토기준일 ${LAST.asof} · ${REV_MODE==="partial"?"일부개정":"전부개정"} · 조문 ${shown.length}개`;
-  const base=`취업규칙_변경후_${LAST.site.replace(/[()\s—📄🏢]/g,"")}_${LAST.asof.replace(/-/g,"")}`;
+  // 변경 후 전문 = 원본 규정 기반의 순수 취업규칙 (검토 태그·근거·권고는 넣지 않음 — 그건 신구대조표에서 확인)
+  const site=siteLabel();
+  const title=`${site} 취업규칙`;
+  const sub=`${REV_MODE==="partial"?"일부개정":"전부개정"} · 시행 ${fmtKDate(LAST.asof)}`;
+  const base=`취업규칙_${site.replace(/[()\s—📄🏢\/\\:*?"<>|]/g,"")}_${LAST.asof.replace(/-/g,"")}`;
   const ad=composeAddendum();   // 부칙: 기존 이력 승계 + 이번 시행일
+  // 문안이 비어 있는 신설(검토 대상)은 규정 문서에 넣지 않음 — 신구대조표에서 작성 후 반영
+  const emptyIns=shown.filter(v=>v.it.orig===""&&!String(v.it.after||"").trim()).length;
+  const paras=shown.filter(v=>!(v.it.orig===""&&!String(v.it.after||"").trim())).map(v=>{
+    const it=v.it;
+    if(it.del)return v.no+" 삭제";                                   // 일부개정: 결번 표기
+    return articleText(v);
+  });
   try{   // 한글 HWPX 직접 생성 (실패 시 RTF .doc 폴백)
     HWPX.setPage({landscape:false});   // 조문 전문은 A4 세로
     let body=HWPX.para(title,HWPX.BOLD)+HWPX.para(sub)+HWPX.para("");
-    blocks.forEach(b=>{ body+=HWPX.para(b.head,HWPX.BOLD);
-      if(b.old)body+=HWPX.para(b.old);
-      body+=HWPX.para(b.text||"(검토 후 작성)");
-      if(b.why)body+=HWPX.para(b.why);
-      body+=HWPX.para(""); });
-    body+=HWPX.para("부   칙",HWPX.BOLD);
+    paras.forEach(p=>{ body+=HWPX.para(p)+HWPX.para(""); });
+    body+=HWPX.para("")+HWPX.para("부   칙",HWPX.BOLD);
     ad.lines.forEach(l=>body+=HWPX.para(l));
     body+=HWPX.para(ad.entry);
     HWPX.download(body,base+".hwpx");
   }catch(e){ console.warn("hwpx 생성 실패 — RTF(.doc) 폴백:",e);
-    dlDoc(rtfPlainDoc(title,sub,blocks.concat([{head:"부 칙",old:"",text:ad.lines.concat([ad.entry]).join("\n"),why:""}])),base+".doc");
+    const blocks=paras.map(p=>({head:"",old:"",text:p,why:""}));
+    blocks.push({head:"부   칙",old:"",text:ad.lines.concat([ad.entry]).join("\n"),why:""});
+    dlDoc(rtfPlainDoc(title,sub,blocks),base+".doc");
   }
+  if(emptyIns)setTimeout(()=>alert(`'${title}' 문서를 저장했습니다.\n※ 문안이 비어 있는 신설 검토 항목 ${emptyIns}건은 규정 문서에 포함하지 않았습니다.\n   신구대조표에서 문안을 작성하면 다음 저장 시 포함됩니다.`),300);
 });
 
 /* 저장 계층: 로그인 시 Firebase 공용 금고(source of truth) + localStorage 캐시, 아니면 localStorage만 */
