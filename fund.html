@@ -796,7 +796,7 @@ function renderForms(){
   if(typeof ExcelJS==='undefined'){ $('app').innerHTML='<div class="panel"><h1>서식 자료실</h1><div class="msg err">ExcelJS 라이브러리 로드 실패 — 인터넷 연결을 확인하고 새로고침하세요.</div></div>'; return; }
   // 원본 등록 상태 비동기 확인 후 재렌더
   if(S._tplChk!==true){ S._tplChk='...';
-    var _hk=DOC_KINDS.concat(DOC_REG).map(function(d){return d[0];});
+    var _hk=DOC_ALL.map(function(d){return d[0];});
     Promise.all([idbGet('setup'),idbGet('subsidy')].concat(_hk.map(function(k){return idbGet('hwp:'+k);})))
       .then(function(a){ S._tplHas={setup:!!a[0],subsidy:!!a[1]}; S._hwpHas={}; _hk.forEach(function(k,i){S._hwpHas[k]=!!a[2+i];}); S._tplChk=true; if(S.view==='forms')renderForms(); })
       .catch(function(){ S._tplHas={setup:false,subsidy:false}; S._hwpHas={}; S._tplChk=true; if(S.view==='forms')renderForms(); });
@@ -830,10 +830,14 @@ function renderForms(){
         :'<button onclick="pickHwp(\''+kind+'\')" style="padding:4px 9px">⬆ 원본 .hwp 등록</button>')
       +'</span></div>';
   }
-  var PH=[['inka','① 인가'],['reg','② 법인설립'],['ops','③ 운영'],['subsidy','④ 지원금']];
-  if(['inka','reg','ops','subsidy'].indexOf(S.formPhase)<0) S.formPhase='inka';
+  // 단계 탭 — 기금 생애주기 순서. 공동 전용 단계(지원금·인센티브)는 사내 기금에서 숨김
+  var PH=[['inka','① 인가'],['reg','② 법인설립'],['tax','③ 고유번호증'],['ops','④ 운영']];
+  if(isGong) PH=PH.concat([['subsidy','⑤ 지원금'],['incent','⑥ 인센티브']]);
+  if(PH.map(function(p){return p[0];}).indexOf(S.formPhase)<0) S.formPhase='inka';
   var phBar='<div class="tabbar">'+PH.map(function(p){return '<div class="tab'+(S.formPhase===p[0]?' on':'')+'" onclick="S.formPhase=\''+p[0]+'\';renderForms()">'+p[1]+'</div>';}).join('')+'</div>';
   var bulkBtn='<button class="primary" onclick="pickHwpBulk()" style="padding:4px 10px">📁 여러 .hwp 한번에 등록</button>';
+  // 공동/사내 기본서식을 구분해 보여주는 표시
+  var typeChip='<span class="chip '+(isGong?'warn':'dg')+'" style="font-size:10.5px;margin-left:6px">'+esc(cur.fund_type||'?')+'기금 기본서식</span>';
   var hwpNote='<p class="muted" style="font-size:11.5px;margin:2px 0 8px"><b>👁 미리보기·편집</b>=데이터 채운 HTML 초안(수정·인쇄·HWPX 저장) · <b>📄 HWP 편집</b>=원본 .hwp 등록 후 rhwp 편집기로 열어 .hwp/.hwpx 저장(원본 서식 그대로). HWP는 이 브라우저에 1회 등록.</p>';
   function opsRow(title,btns){ return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line);flex-wrap:wrap"><span style="flex:1;min-width:180px;font-weight:600">'+title+'</span>'+btns+'</div>'; }
   var body;
@@ -846,28 +850,37 @@ function renderForms(){
       +(setupReg?'<button class="primary" onclick="fillForm(\'setup\')" style="padding:5px 12px">⬇ 인가 6종 엑셀 한번에 채워받기</button><button onclick="previewExcel(\'setup\')" style="padding:5px 12px">👁 엑셀 화면에서 보기</button>':'<button class="primary" onclick="pickTpl(\'setup\')" style="padding:5px 12px">📎 설립 6종 원본 엑셀 등록(최초 1회)</button>')
       +'<button onclick="sidePreviewAll()" style="padding:5px 12px">🖨 전체 초안(6종) 미리보기</button>'
       +'</div></div>';
-    body='<div class="panel"><div class="row"><h2 style="font-size:15px">① 노동부 설립인가 서식</h2><span style="flex:1"></span>'+bulkBtn+'</div>'
-      +inkaBatch+hwpNote+DOC_KINDS.map(formRow).join('')+'</div>'+tplCard(TPL.setup);
+    var inkaList=docsFor(DOC_KINDS,cur.fund_type||'공동');
+    body='<div class="panel"><div class="row"><h2 style="font-size:15px">① 노동부 설립인가 서식</h2>'+typeChip+'<span style="flex:1"></span>'+bulkBtn+'</div>'
+      +inkaBatch+hwpNote+inkaList.map(formRow).join('')
+      +(isGong?'':'<p class="muted" style="font-size:11.5px;margin:8px 0 0">※ 설립합의서는 공동기금(2개 이상 사업장) 전용이라 사내기금 목록에서 제외됩니다.</p>')
+      +'</div>'+tplCard(TPL.setup);
   } else if(S.formPhase==='reg'){
-    body='<div class="panel"><div class="row"><h2 style="font-size:15px">② 법인 설립등기 서식</h2><span style="flex:1"></span>'+bulkBtn+'</div>'+hwpNote
-      +DOC_REG.map(formRow).join('')+'</div>';
+    body='<div class="panel"><div class="row"><h2 style="font-size:15px">② 법인 설립등기 서식</h2>'+typeChip+'<span style="flex:1"></span>'+bulkBtn+'</div>'+hwpNote
+      +docsFor(DOC_REG,cur.fund_type||'공동').map(formRow).join('')+'</div>';
+  } else if(S.formPhase==='tax'){
+    body='<div class="panel"><div class="row"><h2 style="font-size:15px">③ 고유번호증(세무서) 서식</h2>'+typeChip+'<span style="flex:1"></span>'+bulkBtn+'</div>'
+      +'<p class="muted" style="font-size:12px;margin:6px 0 10px">설립등기 후 <b>관할 세무서</b>에 법인설립신고·사업자등록(고유번호증) 신청 시 필요한 서식입니다. 사무소를 무상 사용하는 경우 전대 사용동의서를 함께 제출합니다.</p>'
+      +hwpNote+docsFor(DOC_TAX,cur.fund_type||'공동').map(formRow).join('')+'</div>';
   } else if(S.formPhase==='ops'){
-    body='<div class="panel"><h2 style="font-size:15px">③ 운영 단계 서식</h2>'
-      +'<p class="muted" style="font-size:12px;margin:6px 0 12px">운영 서식은 <b>실제 재무데이터·변경이력</b>을 바탕으로 만들어집니다. 아래에서 해당 탭으로 이동해 생성·수정하세요.</p>'
-      +'<div style="max-width:680px">'
+    body='<div class="panel"><div class="row"><h2 style="font-size:15px">④ 운영 단계 서식</h2>'+typeChip+'<span style="flex:1"></span>'+bulkBtn+'</div>'
+      +'<p class="muted" style="font-size:12px;margin:6px 0 10px">운영 중 제출·발급하는 서식입니다. 결산·변경이력이 필요한 서식은 아래 링크로 해당 탭에서 생성하세요.</p>'
+      +hwpNote+docsFor(DOC_OPS,cur.fund_type||'공동').map(formRow).join('')
+      +'<div style="max-width:680px;margin-top:10px">'
       +opsRow('현행 정관 (편집)','<button onclick="selectForm(\'charter\')" style="padding:4px 10px">👁 편집</button> '+((S._hwpHas||{}).charter?'<button class="primary" onclick="openHwpEditor(\'charter\')" style="padding:4px 9px">📄 HWP 편집</button>':'<button onclick="pickHwp(\'charter\')" style="padding:4px 9px">⬆ .hwp 등록</button>'))
       +opsRow('운영상황보고서(별지15호)·결산서','<button class="primary" onclick="gotoFundTab(\'closing\')" style="padding:4px 10px">📊 회계·결산에서 생성 →</button>')
       +opsRow('정관변경·임원변경 서식','<button class="primary" onclick="gotoFundTab(\'events\')" style="padding:4px 10px">🔁 변경 이벤트로 →</button>')
       +opsRow('연간 일정·총회/협의회','<button onclick="gotoFundTab(\'annual\')" style="padding:4px 10px">📅 연간 일정으로 →</button>')
       +'</div></div>';
+  } else if(S.formPhase==='incent'){
+    body='<div class="panel"><div class="row"><h2 style="font-size:15px">⑥ 근로복지공단 인센티브 <span class="chip warn" style="font-size:10px">공동 전용</span></h2><span style="flex:1"></span>'+bulkBtn+'</div>'
+      +'<p class="muted" style="font-size:12px;margin:6px 0 10px">공동근로복지기금 설립·운영 지원에 따른 <b>비용청구(별지 제11호의2)</b> 서식입니다.</p>'
+      +hwpNote+DOC_INCENT.map(formRow).join('')+'</div>';
   } else {
-    if(isGong){
-      body='<div class="panel"><h2 style="font-size:15px">④ 지원금 서식 (공동 전용)</h2>'
-        +opsRow('공동근로복지기금 지원신청서','<button onclick="selectForm(\'subsidy\')" style="padding:4px 10px">👁 미리보기·편집</button> <button class="primary" onclick="gotoFundTab(\'subsidy\')" style="padding:4px 10px">📊 지원금 입력으로 →</button>')
-        +'</div>'+tplCard(TPL.subsidy);
-    } else {
-      body='<div class="panel"><h2 style="font-size:15px">④ 지원금 서식</h2><p class="muted" style="font-size:12.5px;margin-top:8px">지원금은 <b>공동근로복지기금 전용</b>입니다. 선택된 기금은 '+esc(cur.fund_type||'?')+'이라 해당 없음.</p></div>';
-    }
+    body='<div class="panel"><div class="row"><h2 style="font-size:15px">⑤ 지원금 신청 서식 <span class="chip warn" style="font-size:10px">공동 전용</span></h2><span style="flex:1"></span>'+bulkBtn+'</div>'
+      +'<p class="muted" style="font-size:12px;margin:6px 0 10px">매년 지원금 신청 시 제출하는 서식 묶음입니다. 금액·참여사업장은 <b>지원금 입력</b> 탭 데이터로 채워집니다.</p>'
+      +opsRow('지원금 데이터 입력','<button class="primary" onclick="gotoFundTab(\'subsidy\')" style="padding:4px 10px">📊 지원금 입력으로 →</button>')
+      +hwpNote+DOC_SUB.map(formRow).join('')+'</div>'+tplCard(TPL.subsidy);
   }
   $('app').innerHTML='<div class="panel"><div class="row"><h1>서식 자료실</h1><span style="flex:1"></span><label style="font-size:12px;margin-right:6px">대상 기금</label>'+fsel+'</div>'
     +'<p class="muted" style="font-size:12px;margin:8px 0 0">기금 생애주기 단계별로 서식을 모았습니다 — <b>인가 → 법인설립 → 운영</b>, 매년 <b>지원금</b>. 왼쪽에서 서식을 고르면 <b>오른쪽에서 바로 보고 수정·저장</b>합니다.</p></div>'
@@ -924,10 +937,18 @@ function clearHwp(kind){ confirmM('등록된 원본 HWP를 삭제할까요?',{ok
 function pickHwpBulk(){
   var inp=document.createElement('input'); inp.type='file'; inp.accept='.hwp,.hwpx'; inp.multiple=true;
   inp.onchange=function(ev){ var files=Array.prototype.slice.call(ev.target.files||[]); if(!files.length)return;
+    // 파일명 → 서식 자동 매칭. 구체적인 규칙을 앞에 둬야 함(예: '기금사용내용' 회의록이 '준비위 회의록'으로 가지 않게)
     var RULES=[['reg_sealpaper',['인감대지','대지']],['reg_sealcard',['인감카드','카드']],['reg_seal',['인감']],
       ['reg_roster',['협의회명부','명부']],['reg_apply',['설립등기','등기신청','특수법인']],['reg_accept',['취임','승낙']],
-      ['reg_license',['등록면허','면허세']],['reg_proxy',['위임']],['inka',['인가신청']],['agreement',['합의']],
-      ['charter',['정관']],['minutes',['준비위','회의록']],['contrib',['출연']],['bizplan',['사업계획']]];
+      ['reg_license',['등록면허','면허세']],['reg_proxy',['위임장']],
+      ['tax_bizreg',['법인설립신고','사업자등록신청']],['tax_sublease',['전대']],['tax_lease',['임대차']],['tax_hometax',['홈텍스','홈택스']],
+      ['sub_required',['필요서류']],['sub_checklist',['체크리스트','자율점검']],['sub_oath',['서약']],
+      ['sub_welfare_plan',['복지사업계획']],['sub_assets',['재산목록']],['sub_payment',['지급신청']],
+      ['subsidy',['지원신청서','지원금지원신청','기금지원신청']],['incent_cost',['비용청구','11호의2']],
+      ['ops_asset_change',['재산변동']],['ops_donation_list',['발급명세']],['ops_donation_receipt',['기부금영수증','기부금 영수증']],
+      ['ops_minutes_scope',['사용범위']],['ops_minutes_use',['기금사용내용','사용내용']],
+      ['inka',['인가신청']],['agreement',['합의']],
+      ['charter',['정관']],['minutes',['준비위','회의록']],['contrib',['출연']],['sub_bizplan',['사업계획서(지원']],['bizplan',['사업계획']]];
     var used={}, plan=[];
     files.forEach(function(f){ var n=f.name, hit=null;
       for(var i=0;i<RULES.length;i++){ var k=RULES[i][0]; if(used[k])continue;
@@ -1000,13 +1021,31 @@ function clearRange(ws,r1,r2,c1,c2){ for(var r=r1;r<=r2;r++)for(var c=c1;c<=c2;c
 
 // ═══════════ 서식 생성(미리보기·편집) — 파이썬 docgen 이식(설립 6종) ═══════════
 // ① 노동부 인가 시 필요서류 — 03_과거자료\설립관련과거자료\1.노동부인가시필요서류 번호순(1~6)
-var DOC_KINDS=[['inka','설립인가신청서(별지 제7호)'],['agreement','설립합의서'],['charter','정관'],
+// 3번째 값 = 적용 기금유형: 없으면 공통, '공동'/'사내'는 해당 유형 전용
+var DOC_KINDS=[['inka','설립인가신청서(별지 제7호)'],['agreement','설립합의서','공동'],['charter','정관'],
   ['minutes','설립준비위원회 회의록'],['contrib','기금출연확인서'],['bizplan','사업계획서(연도)']];
 // ② 법인 설립등기 시 필요자료 — 03_과거자료\설립관련과거자료\2.법인설립시필요자료 번호순(1~7)+등록면허세(부속)
 var DOC_REG=[['reg_apply','특수법인 설립등기신청서'],['reg_accept','취임승낙서'],['reg_roster','협의회 명부'],
   ['reg_seal','인감·개인 신고서'],['reg_sealpaper','인감대지'],['reg_sealcard','인감카드 (재)발급신청서'],
   ['reg_proxy','위임장(등기)'],['reg_license','등록면허세 신고서']];
-function docLabel(kind){ var all=DOC_KINDS.concat(DOC_REG); var m=all.filter(function(x){return x[0]===kind;})[0]; return m?m[1]:kind; }
+// ③ 고유번호증(세무서) — 과거자료 '3. 고유번호증 발급시 필요자료' 기준
+var DOC_TAX=[['tax_bizreg','법인설립신고 및 사업자등록신청서'],['tax_lease','임대차계약서(사무소)'],
+  ['tax_sublease','부동산 전대 사용동의서'],['tax_hometax','홈택스 이용신청서']];
+// ④ 운영 단계 제출·발급 서식 — 과거자료 '6. 운영관련'
+var DOC_OPS=[['ops_asset_change','재산변동상황보고서(설립 이후·노동부)'],['ops_minutes_use','협의회 회의록(기금사용내용)'],
+  ['ops_minutes_scope','협의회 회의록(기금사용범위 변경)'],['ops_donation_receipt','기부금영수증(기금법인 발급)'],
+  ['ops_donation_list','기부금영수증 발급명세서']];
+// ⑤ 지원금 신청(공동 전용) — 과거자료 '4. 지원금신청' 번호순
+var DOC_SUB=[['sub_required','지원금 신청 시 필요서류(안내)','공동'],['subsidy','공동근로복지기금 지원신청서','공동'],
+  ['sub_checklist','공동자율점검 체크리스트','공동'],['sub_contrib','기금출연확인서(지원신청용)','공동'],
+  ['sub_oath','서약서','공동'],['sub_welfare_plan','복지사업계획서','공동'],['sub_bizplan','사업계획서(지원신청용)','공동'],
+  ['sub_assets','재산목록표','공동'],['sub_payment','지원금 지급신청서(계좌)','공동']];
+// ⑥ 근로복지공단 인센티브 — 과거자료 '5. 공단인센티브청구'
+var DOC_INCENT=[['incent_cost','비용청구서(별지 제11호의2)','공동']];
+var DOC_ALL=[].concat(DOC_KINDS,DOC_REG,DOC_TAX,DOC_OPS,DOC_SUB,DOC_INCENT);
+/* 선택 기금 유형에 맞는 서식만 — 공동/사내 기본서식을 따로 검토 */
+function docsFor(list,ftype){ return list.filter(function(d){ return !d[2]||d[2]===ftype; }); }
+function docLabel(kind){ var m=DOC_ALL.filter(function(x){return x[0]===kind;})[0]; return m?m[1]:kind; }
 function dgV(x,w){ var s=String(x==null?'':x).trim(); return s?esc(s):'＿'.repeat(w||8); }
 function dgWon(x){ var n=num(x); return (n===''||n==null)?'＿＿＿＿＿＿':Number(n).toLocaleString(); }
 function dgToday(){ var d=new Date(); return d.getFullYear()+'년 &nbsp; '+(d.getMonth()+1)+'월 &nbsp; '+d.getDate()+'일'; }
