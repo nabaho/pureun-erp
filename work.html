@@ -1386,8 +1386,12 @@ function renderTeam(){
   var app=$('app'); if(!app)return;
   var wk=weekKeyOf(S.week);
   if(!wkLoaded[wk]){ app.innerHTML=loadingHTML('주간 기록 불러오는 중…'); watchWeek(); return; }
-  var open=openItems();
-  var totLogs=0; Object.keys(wkCache[wk]||{}).forEach(function(iid){ totLogs+=Object.keys(wkCache[wk][iid]).length; });
+  var open=openItems(), today=todayStr();
+  // 이 주 기록 줄 수 — 진행 중인 건만 센다(삭제된 건의 고아 기록이 섞이지 않게)
+  var openIds={}; open.forEach(function(it){ openIds[it._id]=1; });
+  var totLogs=0; Object.keys(wkCache[wk]||{}).forEach(function(iid){
+    if(openIds[iid]) totLogs+=Object.keys(wkCache[wk][iid]).length; });
+  var stale=open.filter(function(it){ var ld=(it.last&&it.last.d)||''; return !ld||_dayDiff(today,ld)>=14; });
   var nolog=open.filter(function(it){return wkLogsOf(it._id,wk).length===0;});
   var due7=open.filter(function(it){var n=dday(itemDue(it));return n!==null&&n<=7;});
   var doneWk=allItems().filter(function(it){return it.state==='done'&&it.done_date&&inWeek(it.done_date,S.week);});
@@ -1404,53 +1408,122 @@ function renderTeam(){
   h+='<div class="focus">'
     +'<div class="fcard" style="cursor:default"><div class="l">진행 중</div><div class="v">'+open.length+'<small>건</small></div></div>'
     +'<div class="fcard" style="cursor:default"><div class="l">이 주 기록</div><div class="v">'+totLogs+'<small>줄</small></div></div>'
-    +'<div class="fcard amber" style="cursor:default"><div class="l">미기록 진행 건</div><div class="v">'+nolog.length+'<small>건</small></div></div>'
-    +'<div class="fcard danger" style="cursor:default"><div class="l">기한 임박 D-7</div><div class="v">'+due7.length+'<small>건</small></div></div>'
+    +'<div class="fcard'+(S.teamNolog?' amber on':' amber')+'" onclick="S.teamNolog=!S.teamNolog;renderTeam()" title="클릭하면 이 건만 봅니다"><div class="l">이 주 미기록</div><div class="v">'+nolog.length+'<small>건</small></div></div>'
+    +'<div class="fcard'+(S.teamStale?' amber on':' amber')+'" onclick="S.teamStale=!S.teamStale;renderTeam()" title="마지막 기록이 2주 이상 지난 건 — 클릭하면 이 건만"><div class="l">2주+ 방치</div><div class="v">'+stale.length+'<small>건</small></div></div>'
+    +'<div class="fcard danger'+(S.teamDue==='d7'?' on':'')+'" onclick="S.teamDue=(S.teamDue===\'d7\'?\'\':\'d7\');renderTeam()" title="클릭하면 이 건만 봅니다"><div class="l">기한 임박 D-7</div><div class="v">'+due7.length+'<small>건</small></div></div>'
     +'<div class="fcard" style="cursor:default"><div class="l">이 주 완료</div><div class="v">'+doneWk.length+'<small>건</small></div></div>'
     +'</div>';
-  h+='<div class="row" style="margin-bottom:10px;flex-wrap:wrap">'
+  h+='<div class="row" style="margin-bottom:8px;flex-wrap:wrap">'
     +'<select onchange="S.teamMgr=this.value;renderTeam()" style="padding:5px 9px;border:1px solid var(--line);border-radius:7px;font-size:12.5px">'
     +'<option value="">담당 전체</option>'+names.map(function(n){return '<option'+(S.teamMgr===n?' selected':'')+'>'+esc(n)+'</option>';}).join('')+'</select>'
-    +'<select onchange="S.teamCat=this.value;renderTeam()" style="padding:5px 9px;border:1px solid var(--line);border-radius:7px;font-size:12.5px">'
-    +'<option value="">구분 전체</option>'+CAT_LIST.map(function(c){return '<option'+(S.teamCat===c?' selected':'')+'>'+c+'</option>';}).join('')+'</select>'
-    +'<span class="chipbtn'+(S.teamNolog?' on':'')+'" onclick="S.teamNolog=!S.teamNolog;renderTeam()">미기록만</span>'
+    +catSelect(S.teamCat,'S.teamCat=this.value;renderTeam()')
+    +'<select onchange="S.teamSt=this.value;renderTeam()" style="padding:5px 9px;border:1px solid var(--line);border-radius:7px;font-size:12.5px">'
+    +'<option value="">상태 전체</option>'
+    +STATUSES.map(function(s){return '<option'+(S.teamSt===s[0]?' selected':'')+'>'+s[0]+'</option>';}).join('')+'</select>'
+    +'<select onchange="S.teamDue=this.value;renderTeam()" style="padding:5px 9px;border:1px solid var(--line);border-radius:7px;font-size:12.5px">'
+    +[['','기한 전체'],['over','기한 지남'],['d7','임박 D-7'],['none','기한 없음']].map(function(o){
+        return '<option value="'+o[0]+'"'+(S.teamDue===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select>'
     +qBox('renderTeam')
-    +((S.teamMgr||S.teamCat||S.teamNolog||S.q)?'<span class="chipbtn" onclick="S.teamMgr=\'\';S.teamCat=\'\';S.teamNolog=false;S.q=\'\';renderTeam()">필터 초기화</span>':'')
+    +'</div>'
+    +'<div class="row" style="margin-bottom:10px;flex-wrap:wrap">'
+    +'<span class="chipbtn'+(S.teamNolog?' on':'')+'" onclick="S.teamNolog=!S.teamNolog;renderTeam()" title="선택한 주에 기록이 없는 건만">이 주 미기록만</span>'
+    +'<span class="chipbtn'+(S.teamStale?' on':'')+'" onclick="S.teamStale=!S.teamStale;renderTeam()" title="마지막 기록이 2주 이상 지난 건 — 방치 신호">2주+ 방치만</span>'
+    +'<span class="chipbtn'+(S.teamFlat?' on':'')+'" onclick="S.teamFlat=!S.teamFlat;renderTeam()" title="담당자 구분 없이 한 표로 — 정렬에 유용">평면 보기</span>'
+    +(S.teamFlat?'':'<span class="chipbtn" onclick="teamFoldAll(true)">전체 접기</span><span class="chipbtn" onclick="teamFoldAll(false)">전체 펼치기</span>')
+    +'<span class="muted" style="font-size:12px">정렬: '+esc(TEAM_SORTS[S.teamSort||'due'])+(S.teamDesc?' ▼':' ▲')+' (열 제목 클릭)</span>'
+    +((S.teamMgr||S.teamCat||S.teamSt||S.teamDue||S.teamNolog||S.teamStale||S.q)
+      ?'<span class="chipbtn" onclick="teamReset()">필터 초기화</span>':'')
     +'</div>';
   if(!isCurWeek()) h+='<div class="histbanner">🕘 <b>'+esc(weekLabel(S.week))+'</b> 열람 중<span class="back" onclick="setWeek(null)">이번 주로 →</span></div>';
-  h+='<div class="panel" style="padding:0;overflow-x:auto"><table><thead><tr>'
-    +'<th class="rowno">#</th>'
-    +'<th style="width:56px">구분</th><th style="min-width:130px">기업 / 의뢰인</th><th style="min-width:130px">업무명</th>'
-    +'<th style="color:var(--acc2)">이 주 실적</th><th style="width:110px">다음 할 일</th></tr></thead><tbody>';
-  var shown=0;
-  names.forEach(function(nm){
-    if(S.teamMgr&&S.teamMgr!==nm) return;
-    var arr=groups[nm].filter(function(it){ return !S.teamCat||it.cat===S.teamCat; });
-    if(S.teamNolog) arr=arr.filter(function(it){return wkLogsOf(it._id,wk).length===0;});
-    if(S.q) arr=arr.filter(function(it){return matchQ(it,S.q);});
-    if(!arr.length) return;
-    shown+=arr.length;
-    var rec=groups[nm].filter(function(it){return wkLogsOf(it._id,wk).length>0;}).length;
-    h+='<tr class="grp-h"><td colspan="6">👤 '+esc(nm)+' — 진행 '+groups[nm].length+'건'
-      +(arr.length!==groups[nm].length?' <span class="muted" style="font-weight:600">(조건 '+arr.length+'건)</span>':'')
-      +' <span class="pct">이 주 기록 '+rec+'/'+groups[nm].length+'</span></td></tr>';
-    arr.sort(function(a,b){ return (itemDue(a)||'9999').localeCompare(itemDue(b)||'9999'); });
-    arr.forEach(function(it,i){            // 번호는 담당자별로 1번부터
+  // 필터 적용
+  function pass(it){
+    if(S.teamCat&&it.cat!==S.teamCat) return false;
+    if(S.teamSt&&(it.status||'진행중')!==S.teamSt) return false;
+    if(S.teamNolog&&wkLogsOf(it._id,wk).length) return false;
+    if(S.teamStale){ var ld=(it.last&&it.last.d)||''; if(ld&&_dayDiff(today,ld)<14) return false; }
+    if(S.teamDue){
+      var d=dday(itemDue(it));
+      if(S.teamDue==='none'&&d!==null) return false;
+      if(S.teamDue==='over'&&!(d!==null&&d<0)) return false;
+      if(S.teamDue==='d7'&&!(d!==null&&d>=0&&d<=7)) return false;
+    }
+    if(S.q&&!matchQ(it,S.q)) return false;
+    return true;
+  }
+  var TH=[['cat','구분','width:56px'],['co','기업 / 의뢰인','min-width:130px'],['title','업무명','min-width:130px'],
+          ['log','이 주 실적','color:var(--acc2)'],['last','최근 기록','min-width:150px'],['due','다음 할 일','width:110px']];
+  h+='<div class="panel" style="padding:0;overflow-x:auto"><table><thead><tr><th class="rowno">#</th>'
+    +TH.map(function(c){
+        var on=(S.teamSort||'due')===c[0];
+        return '<th style="'+c[2]+';cursor:pointer'+(on?';color:var(--acc2)':'')+'" onclick="teamSort(\''+c[0]+'\')" title="클릭하면 이 열로 정렬">'
+          +esc(c[1])+(on?(S.teamDesc?' ▼':' ▲'):'')+'</th>';
+      }).join('')
+    +'</tr></thead><tbody>';
+  function rowsOf(arr,perGroup){
+    return arr.map(function(it,i){
       var logs=wkLogsOf(it._id,wk);
       var logHtml=logs.length?logs.map(function(l){return '<div class="wklog"><span class="d">'+esc(md(l.d))+'</span>'+esc(l.t)+'</div>';}).join('')
+        :'<span class="muted" style="font-size:12px">—</span>';
+      var ld=(it.last&&it.last.d)||'';
+      var stale=ld&&_dayDiff(today,ld)>=14;
+      var lastHtml=it.last?('<span class="last">'+esc(it.last.t)+' <span class="ago"'
+          +(stale?' style="color:var(--warn);font-weight:700"':'')+'>· '+esc(md(ld))+'</span></span>')
         :'<span class="muted" style="font-size:12px">기록 없음</span>';
       var nx=it.next&&it.next.text?ddayHTML(it.next.date,it.next.text):(it.due?ddayHTML(it.due,'기한'):'<span class="muted">—</span>');
-      h+='<tr>'+tdNo(i+1)+'<td>'+catBadge(it.cat)+'</td>'
+      return '<tr>'+tdNo(i+1)+'<td>'+catBadge(it.cat)+'</td>'
         +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
+        +(perGroup?'':'<div class="sub">'+esc((it.mgr_main&&it.mgr_main.name)||'담당 미지정')+'</div>')
         +(it.officer?'<div class="sub">'+esc(it.officer)+'</div>':'')+'</td>'
         +'<td style="font-size:12.5px">'+esc(it.title||'')+'</td>'
-        +'<td>'+logHtml+'</td><td>'+nx+'</td></tr>';
+        +'<td>'+logHtml+'</td><td>'+lastHtml+'</td><td>'+nx+'</td></tr>';
+    }).join('');
+  }
+  var shown=0;
+  if(S.teamFlat){                                    // 평면 보기 — 한 표로 정렬
+    var flat=open.filter(pass); flat=teamSortArr(flat,wk); shown=flat.length;
+    h+=rowsOf(flat,false);
+  }else{
+    names.forEach(function(nm){
+      if(S.teamMgr&&S.teamMgr!==nm) return;
+      var arr=groups[nm].filter(pass);
+      if(!arr.length) return;
+      shown+=arr.length;
+      var rec=groups[nm].filter(function(it){return wkLogsOf(it._id,wk).length>0;}).length;
+      var fold=!!(S.teamFold||{})[nm];
+      h+='<tr class="grp-h" style="cursor:pointer" onclick="teamFold(\''+escJ(nm)+'\')"><td colspan="7">'
+        +(fold?'▸':'▾')+' 👤 '+esc(nm)+' — 진행 '+groups[nm].length+'건'
+        +(arr.length!==groups[nm].length?' <span class="muted" style="font-weight:600">(조건 '+arr.length+'건)</span>':'')
+        +' <span class="pct">이 주 기록 '+rec+'/'+groups[nm].length+'</span></td></tr>';
+      if(!fold) h+=rowsOf(teamSortArr(arr,wk),true);
     });
-  });
-  if(!shown) h+='<tr><td colspan="6" class="moremark">조건에 맞는 업무가 없습니다. 필터를 바꿔 보세요.</td></tr>';
+  }
+  if(!shown) h+='<tr><td colspan="7" class="moremark">조건에 맞는 업무가 없습니다. 필터를 바꿔 보세요.</td></tr>';
   h+='</tbody></table></div>';
+  h+='<div class="muted" style="font-size:12px;margin-top:8px">조건에 맞는 업무 '+shown+' / 전체 '+open.length+'건</div>';
   app.innerHTML=h;
 }
+var TEAM_SORTS={cat:'구분',co:'기업',title:'업무명',log:'이 주 실적',last:'최근 기록',due:'기한'};
+function teamSort(k){ if((S.teamSort||'due')===k) S.teamDesc=!S.teamDesc; else { S.teamSort=k; S.teamDesc=false; } renderTeam(); }
+function teamSortArr(arr,wk){
+  var k=S.teamSort||'due', dir=S.teamDesc?-1:1;
+  function key(it){
+    if(k==='cat') return it.cat||'';
+    if(k==='co') return it.company||it.client||'';
+    if(k==='title') return it.title||'';
+    if(k==='log') return String(wkLogsOf(it._id,wk).length).padStart(3,'0');
+    if(k==='last') return (it.last&&it.last.d)||'0000-00-00';
+    return itemDue(it)||'9999-99-99';            // 기한 없는 건은 뒤로
+  }
+  return arr.slice().sort(function(a,b){
+    var r=String(key(a)).localeCompare(String(key(b)),'ko');
+    return (r||String(a.no||'').localeCompare(String(b.no||''),'en',{numeric:true}))*dir;
+  });
+}
+function teamFold(nm){ S.teamFold=S.teamFold||{}; S.teamFold[nm]=!S.teamFold[nm]; renderTeam(); }
+function teamFoldAll(on){ S.teamFold={};
+  if(on) openItems().forEach(function(it){ S.teamFold[(it.mgr_main&&it.mgr_main.name)||'(담당 미지정)']=1; });
+  renderTeam(); }
+function teamReset(){ S.teamMgr=''; S.teamCat=''; S.teamSt=''; S.teamDue=''; S.teamNolog=false; S.teamStale=false; S.q=''; renderTeam(); }
 
 /* ── 업무량 (사람별 비교·관리) ── */
 // 최근 n주 기록을 모두 로드
