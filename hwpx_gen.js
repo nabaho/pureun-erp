@@ -21,8 +21,8 @@ const CH=1000, LH=1300, CELL_PAD=1020, CELL_VPAD=282, TBL_SLACK=900;
 const BOLD="7", HEADFILL="4";   // 굵은 charPr·머리행 배경 borderFill (템플릿 시퀀스에 이어 부여)
 const BODY_W_P=42520, BODY_W_L=72852;
 /* 용지 방향: setPage({landscape:true}) 를 문서 조립 전에 호출 (신구대조표=가로, 조문 전문=세로) */
-let LANDSCAPE=false;
-function setPage(o){ LANDSCAPE=!!(o&&o.landscape); return api; }
+let LANDSCAPE=false, PAGENUM=true;   // PAGENUM: 쪽번호(하단 가운데) 삽입
+function setPage(o){ LANDSCAPE=!!(o&&o.landscape); if(o&&o.pageNum!=null)PAGENUM=!!o.pageNum; return api; }
 function bodyW(){ return LANDSCAPE?BODY_W_L:BODY_W_P; }
 /* 글자 폭(HWPUNIT): 라틴·숫자·기호는 반각, 한글·한자는 전각 */
 function charW(c){ return (c<0x1100 || (c>=0x2000&&c<0x2500)) ? CH*0.5 : CH; }
@@ -117,7 +117,9 @@ function tablePara(rows,widths){
 }
 /* 본문 XML(문단들) → section0.xml 전문 */
 function sectionXml(bodyXml){
-  return (LANDSCAPE?TPL_SEC_PRE_L:TPL_SEC_PRE)+'<hp:t/></hp:run>'+linesegs("",bodyW())+'</hp:p>'+bodyXml+'</hs:sec>';
+  /* 쪽번호: 구역 첫 문단에 '쪽 번호 매기기' 컨트롤을 넣어 모든 쪽 하단 가운데에 표시 */
+  const pn=PAGENUM?'<hp:ctrl><hp:pageNumCtrl pos="BOTTOM_CENTER" formatType="DIGIT" sideChar=""/></hp:ctrl>':'';
+  return (LANDSCAPE?TPL_SEC_PRE_L:TPL_SEC_PRE)+pn+'<hp:t/></hp:run>'+linesegs("",bodyW())+'</hp:p>'+bodyXml+'</hs:sec>';
 }
 
 /* ── ZIP ── 실제 한글 파일과 동일한 구성: mimetype·version.xml·PrvImage.png는 무압축,

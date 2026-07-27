@@ -423,6 +423,58 @@ function consentDoc(site,asof,summary,hits){
     +"\n\n■ 동의 근로자 (과반수 확인)"+docsetSign(12)
     +"\n\n※ 재적 근로자 수 ______명 / 동의 근로자 수 ______명 (과반수 여부 확인)";
 }
+/* ══════════ 법인 표준 양식 (실제 납품 서식 기준) ══════════
+   의견서·동의서: 순번·직책·성명·(의견)·서명날인 표 + 대상총인원 집계 + "○○ 대표 귀하"
+   변경신고서: 근로기준법 시행규칙 별지 제15호서식 레이아웃
+   ERP(SITE_INFO)에서 사업장명·대표자·소재지·업종·사업자번호를 자동으로 채운다. */
+function siteName(fallback){
+  return (SITE_INFO&&SITE_INFO.name)||String(fallback||"").replace(/^[📄🏢]\s*/u,"").replace(/〔샘플〕/g,"");
+}
+function signRows(n){                 // 순번·직책·성명·서명날인 빈 행
+  const rows=[]; for(let i=1;i<=n;i++)rows.push([String(i),"","",""]);
+  return rows;
+}
+/* 근로자 의견청취서 — 법인 양식 */
+function opinionFormHwpx(site,asof,summary,pageBreak){
+  try{
+    const nm=siteName(site);
+    let x=HWPX.docTitle("의  견  서",{pageBreak:!!pageBreak});
+    x+=HWPX.spacer();
+    x+=HWPX.bodyPara(`${fmtKDate(asof)}자로 회사가 제시한 변경된 취업규칙에 대하여 그 내용을 확인한 후 이의가 없으므로 아래와 같이 의견서를 제출합니다.`);
+    x+=HWPX.bodyPara(`※ 대상: 취업규칙 ${REV_MODE==="partial"?"일부":"전부"} 개정(안) — ${summary}`);
+    x+=HWPX.spacer();
+    x+=HWPX.tablePara([["순번","직책","성  명","서명날인"]].concat(signRows(20)),HWPX.cols([.12,.26,.32,.30]));
+    x+=HWPX.bodyPara("(대상총인원: ______명,  서명날인 인원: ______명)");
+    x+=HWPX.spacer();
+    x+=HWPX.docSub(fmtKDate(asof));
+    x+=HWPX.spacer();
+    x+=HWPX.docSub(`${nm} 대표  귀하`);
+    return x;
+  }catch(e){ console.warn("의견서 서식 생성 실패:",e); return null; }
+}
+/* 취업규칙 불이익 변경 동의서 — 법인 양식(의견 내용: 동의/반대 열 포함) */
+function consentFormHwpx(site,asof,summary,hits,pageBreak){
+  try{
+    const nm=siteName(site);
+    let x=HWPX.docTitle("동  의  서",{pageBreak:!!pageBreak});
+    x+=HWPX.spacer();
+    x+=HWPX.bodyPara(`${fmtKDate(asof)}자로 회사가 제시한 취업규칙에 이의가 없으므로 다음과 같이 동의서를 제출합니다.`);
+    if(hits&&hits.length)
+      x+=HWPX.bodyPara("※ 불이익 변경에 해당하는 사항: "+hits.map(h=>h.label||h).join(" / "));
+    x+=HWPX.bodyPara(`※ 변경 내용 요약: ${summary}   ·   시행 예정일: ${fmtKDate(asof)}`);
+    x+=HWPX.spacer();
+    const rows=[["순번","직책","성  명","의견 내용\n(동의 / 반대)","서명날인"]];
+    for(let i=1;i<=20;i++)rows.push([String(i),"","","",""]);
+    x+=HWPX.tablePara(rows,HWPX.cols([.10,.20,.24,.24,.22]));
+    x+=HWPX.bodyPara("(대상총인원: ______명,  서명날인 인원: ______명)");
+    x+=HWPX.spacer();
+    x+=HWPX.docSub(fmtKDate(asof));
+    x+=HWPX.spacer();
+    x+=HWPX.docSub(`${nm} 대표  귀하`);
+    return x;
+  }catch(e){ console.warn("동의서 서식 생성 실패:",e); return null; }
+}
+
 /* 조문 텍스트 → 한글 서식 블록: 장 제목 / 제N조(제목)+본문 분리 후 스타일 적용 */
 function hwpxArticleBlock(text){
   const t=String(text==null?"":text).trim();
@@ -437,40 +489,46 @@ function hwpxArticleBlock(text){
 function applyFormHwpx(site,asof,pageBreak){
   try{
     const c=(typeof SITE_INFO!=="undefined"&&SITE_INFO)||{};
-    const chk=(on)=>on?"[√]":"[  ]";
     const isChange=REV_MODE==="partial";
-    const W=HWPX.cols([.18,.32,.18,.32]);
-    const emp=c.empTotal||(LAST&&LAST.size?LAST.size:"");
-    const rows=[
-      ["사업장명", c.name||site.replace(/^[📄🏢〔샘플〕]+\s*/u,""), "사업의 종류", c.bizType||c.industry||""],
-      ["대표자 성명", c.ceo||"", "사업자등록번호", c.bizNo||""],
-      ["소재지", (c.address||"")+(c.addressDetail?" "+c.addressDetail:""), "전화번호", c.phone||c.tel||""],
-      ["근로자 수", (emp?emp+"명":"")+(c.male||c.female?`  (남 ${c.male||"__"}명 / 여 ${c.female||"__"}명)`:"  (남 ____명 / 여 ____명)"),
-       "노동조합원 수", c.unionCount||"명"],
-      ["의견청취일\n또는 동의일", fmtKDate(asof), "시행 예정일", fmtKDate(asof)],
-    ];
-    let x=HWPX.docTitle("취업규칙 "+(isChange?"변경신고서":"신고서"),{pageBreak:!!pageBreak});
-    x+=HWPX.docSub(chk(!isChange)+" 신고서    "+chk(isChange)+" 변경신고서   〔근로기준법 시행규칙 별지 제15호서식〕");
+    const emp=c.empTotal||"";
+    let x=HWPX.para("■ 근로기준법 시행규칙 [별지 제15호서식]",HWPX.CP.small,{paraPr:HWPX.PP.plain,pageBreak:!!pageBreak});
+    x+=HWPX.docTitle("취업규칙 "+(isChange?"변경신고서":"신고서"));
+    x+=HWPX.para("※ [  ]에는 해당되는 곳에 √ 표시를 합니다.",HWPX.CP.small,{paraPr:HWPX.PP.plain});
     x+=HWPX.spacer();
-    x+=HWPX.tablePara([["구분","내용","구분","내용"]].concat(rows),W);
+    x+=HWPX.tablePara([["접수번호","","접수일","","처리기간","1일"]],HWPX.cols([.14,.20,.14,.20,.14,.18]));
     x+=HWPX.spacer();
-    x+=HWPX.bodyPara("「근로기준법」 제93조 및 같은 법 시행규칙 제15조에 따라 위와 같이 취업규칙을 "
-      +(isChange?"변경신고합니다.":"신고합니다."));
-    x+=HWPX.spacer();
-    x+=HWPX.para("첨부서류",HWPX.BOLD,{paraPr:HWPX.PP.art});
+    x+=HWPX.para("신고내용",HWPX.BOLD,{paraPr:HWPX.PP.art});
     x+=HWPX.tablePara([
-      ["1. 취업규칙"+(isChange?"(변경 전과 변경 후의 내용을 비교한 서류를 포함합니다)":"")+" 1부", chk(DOCSET.full||DOCSET.daejo)],
-      ["2. 근로자의 과반수를 대표하는 노동조합 또는 근로자 과반수의 의견을 들었음을 증명하는 자료 1부", chk(DOCSET.opinion)],
-      ["3. 근로자의 과반수를 대표하는 노동조합 또는 근로자 과반수의 동의를 받았음을 증명하는 자료 1부(근로자에게 불리하게 변경하는 경우에만 해당합니다)", chk(DOCSET.consent)],
-      ["※ 수수료 없음 · 처리기간 1일", ""],
-    ],HWPX.cols([.88,.12]));
+      ["사업장명", c.name||siteName(site), "사업의 종류", c.bizType||c.industry||""],
+      ["대표자 성명", c.ceo||"", "생년월일", c.ceoBirth||""],
+      ["사업자등록번호", c.bizNo||"", "전화번호", c.phone||c.tel||""],
+      ["소재지", (c.address||"")+(c.addressDetail?" "+c.addressDetail:""), "", ""],
+      ["근로자수", (emp?emp+"명":"____명")+"   (남 ____명, 여 ____명)", "노동조합원수", "____명"],
+      ["의견청취일\n또는 동의일", fmtKDate(asof), "시행 예정일", fmtKDate(asof)],
+    ],HWPX.cols([.18,.34,.18,.30]));
+    x+=HWPX.spacer();
+    x+=HWPX.bodyPara("「근로기준법」 제93조와 같은 법 시행규칙 제15조에 따라 위와 같이 취업규칙을 "
+      +(isChange?"변경 신고합니다.":"신고합니다."));
     x+=HWPX.spacer();
     x+=HWPX.docSub(fmtKDate(asof));
     x+=HWPX.spacer();
-    x+=HWPX.bodyPara("신고인(사용자)          "+(c.ceo||"____________")+"          (서명 또는 인)");
-    x+=HWPX.bodyPara("대리인                  ____________          (서명 또는 인)");
+    x+=HWPX.tablePara([
+      ["신청인", (c.ceo||"")+"          (서명 또는 인)"],
+      ["대리인", "          (서명 또는 인)"],
+    ],HWPX.cols([.18,.82]));
     x+=HWPX.spacer();
-    x+=HWPX.docSub((c.laborOffice||"____________")+" 지방고용노동청(지청)장  귀하");
+    x+=HWPX.docSub((c.laborOffice?c.laborOffice:"____________")+" 지방고용노동청(지청)장  귀하");
+    x+=HWPX.spacer();
+    x+=HWPX.tablePara([
+      ["첨부서류",
+       "1. 취업규칙"+(isChange?" (변경신고 하는 경우에는 변경 전과 변경 후의 내용을 비교한 서류)":"")+"\n"
+       +"2. 근로자의 과반수를 대표하는 노동조합 또는 근로자 과반수의 의견을 들었음을 증명하는 자료\n"
+       +"3. 근로자의 과반수를 대표하는 노동조합 또는 근로자 과반수의 동의를 받았음을 증명하는 자료\n"
+       +"   (근로자에게 불리하게 변경하는 경우에만 첨부합니다.)",
+       "수수료","없음"],
+    ],HWPX.cols([.14,.62,.12,.12]));
+    x+=HWPX.spacer();
+    x+=HWPX.para("210mm×297mm[일반용지 70g/㎡(재활용품)]",HWPX.CP.small,{paraPr:HWPX.PP.center});
     return x;
   }catch(e){ console.warn("신고서 서식 생성 실패 — 텍스트 폴백:",e); return null; }
 }
@@ -1431,8 +1489,16 @@ $("dl-docset").addEventListener("click",()=>{
       body+=HWPX.chapter("부   칙");
       ad.lines.forEach(l=>body+=HWPX.bodyPara(l)); body+=HWPX.bodyPara(ad.entry);
     }
-    if(DOCSET.opinion) body+=head("근로자 의견청취서")+HWPX.bodyPara(opinionDoc(site,asof,sum).split("\n").slice(1).join("\n").trim());
-    if(DOCSET.consent) body+=head("취업규칙 불이익 변경 동의서")+HWPX.bodyPara(consentDoc(site,asof,sum,hits).split("\n").slice(1).join("\n").trim());
+    if(DOCSET.opinion){          // 법인 표준 의견서 양식(표) — 실패 시 텍스트
+      const f=opinionFormHwpx(site,asof,sum,!first);
+      body+=f||(head("근로자 의견청취서")+HWPX.bodyPara(opinionDoc(site,asof,sum).split("\n").slice(1).join("\n").trim()));
+      first=false;
+    }
+    if(DOCSET.consent){          // 법인 표준 동의서 양식(표) — 실패 시 텍스트
+      const f=consentFormHwpx(site,asof,sum,hits,!first);
+      body+=f||(head("취업규칙 불이익 변경 동의서")+HWPX.bodyPara(consentDoc(site,asof,sum,hits).split("\n").slice(1).join("\n").trim()));
+      first=false;
+    }
     const fname=`취업규칙제출서류_${site.replace(/[()\s—📄🏢\/\\:*?"<>|]/gu,"")}_${asof.replace(/-/g,"")}.hwpx`;
     HWPX.download(body,fname);
     $("ov-docset").classList.remove("on");
