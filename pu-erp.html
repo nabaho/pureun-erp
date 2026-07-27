@@ -63776,6 +63776,28 @@ function App(){
     return function(){ clearTimeout(to); try { off && off(); } catch(_){} };
   }, [isLoggedIn]);
 
+  // ── [포털 시작화면] 로그인이 필요한 상태면 통합 포털(enter.html)로 보낸다 ──
+  // 로그인은 언제나 포털 한 곳에서 하도록 통일 (앱마다 따로 로그인 → 서로 다른 화면에서 시작되던 문제).
+  // 탈출구: 주소 뒤에 ?login=1 을 붙이면 이 앱 자체 로그인 화면을 그대로 쓴다 (포털 장애 시 대비).
+  var forceLocalLogin = /[?&]login=1/.test(location.search);
+  var pwS = useState(!isLoggedIn && !forceLocalLogin && location.protocol !== 'file:');
+  var portalWait = pwS[0]; var setPortalWait = pwS[1];
+  useEffect(function(){
+    if(isLoggedIn || forceLocalLogin || location.protocol === 'file:'){ setPortalWait(false); return; }
+    if(ssoWait) return;   // 포털 경유(sso=1) 자동로그인 대기 중 — 끝나면 다시 판단
+    // 로그인 화면 대신 흰 화면을 잠깐 띄우고, 세션 복구·자동로그인이 끝날 시간을 준 뒤 판단
+    var t = setTimeout(function(){
+      if(isValidSession()){ setPortalWait(false); return; }          // 이 앱에 이미 세션 있음
+      try {
+        if(typeof firebase !== 'undefined' && firebase.auth && firebase.auth().currentUser) return;   // 자동로그인 진행 중 → 더 기다림
+      } catch(_){}
+      location.replace('enter.html?v=' + Math.floor(Date.now()/600000));   // 10분 버킷 캐시 우회
+    }, 1500);
+    // 자동로그인이 끝내 실패하면(명부에 없는 계정 등) 흰 화면에 갇히지 않게 자체 로그인 화면으로 되돌린다
+    var giveUp = setTimeout(function(){ setPortalWait(false); }, 9000);
+    return function(){ clearTimeout(t); clearTimeout(giveUp); };
+  }, [isLoggedIn, ssoWait]);
+
   function handleLogout(opts){
     try { if(typeof clearPresence === 'function') clearPresence(); } catch(_){}
     clearSession();
@@ -63846,7 +63868,7 @@ function App(){
     ),
     isLoggedIn
       ? h(ERPMain, { onLogout: function(){ handleLogout({ reload:true }); } })
-      : (ssoWait
+      : ((ssoWait || portalWait)
           ? h('div', { style:{ position:'fixed', inset:0, background:'#eef1f7', zIndex:9999 } })
           : h(LoginScreen, { onLogin: handleLogin }))
   );
