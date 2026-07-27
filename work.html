@@ -222,6 +222,26 @@
   .fe .dt{width:58px;flex-shrink:0;color:var(--faint);font-size:10.5px;font-variant-numeric:tabular-nums}
   .fe .tx{flex:1;color:#334155;word-break:break-word}
   .fe .by{font-size:10px;color:var(--faint);margin-left:5px}
+  .wklog .by{font-size:9.5px;font-weight:700;color:#7c5bb0;background:#f3f0fd;border-radius:3px;padding:0 4px}
+  /* 드로어 블록: 사업장 담당자 · 담당(주/부) */
+  .dbox{margin:10px 18px 0;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .dbox .bh{display:flex;align-items:center;gap:7px;padding:7px 12px;background:var(--bg);font-size:12px;font-weight:700;color:var(--sub)}
+  .dbox .bh .r{margin-left:auto;font-size:10.5px;font-weight:600;color:var(--faint)}
+  .dbox .bb{padding:9px 12px;display:flex;flex-direction:column;gap:7px}
+  .pc{display:flex;align-items:center;gap:8px;font-size:12.5px;flex-wrap:wrap}
+  .pc .nm{font-weight:700}
+  .pc .rk{font-size:10.5px;font-weight:700;background:#eef2f8;color:var(--sub);border-radius:4px;padding:1px 6px}
+  .pc a{color:var(--acc);font-weight:700;text-decoration:none;font-variant-numeric:tabular-nums}
+  .pc a:hover{text-decoration:underline}
+  .pc .src{margin-left:auto;font-size:10px;color:var(--faint)}
+  .c3{display:grid;grid-template-columns:1.1fr .6fr 1.1fr;gap:6px}
+  .c3 input{padding:5px 8px;border:1px solid var(--line);border-radius:6px;font-size:12px;min-width:0}
+  .c3 input:focus{outline:none;border-color:var(--acc);box-shadow:0 0 0 2px rgba(37,99,235,.1)}
+  .subrow{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+  .subchip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;
+    background:#f3f0fd;color:#5b21b6;border-radius:12px;padding:2px 9px}
+  .subchip .x{cursor:pointer;opacity:.5;font-weight:800}.subchip .x:hover{opacity:1}
+  .subrow select{padding:3px 8px;border:1px dashed #c3cfe0;background:#fff;border-radius:12px;font-size:11.5px;color:var(--sub);cursor:pointer}
   .fe .del{color:#e2b4b4;cursor:pointer;font-size:11px;visibility:hidden}
   .fe:hover .del{visibility:visible}
   .fe.hov .tx{background:#fffdf5;border:1px dashed #fbbf24;border-radius:7px;padding:4px 9px;color:#854d0e;font-size:11.5px}
@@ -600,8 +620,11 @@ function wkLogsOf(itemId,wk){ wk=wk||weekKeyOf(S.week); var w=wkCache[wk]||{}; v
 /* ── 검색·필터 공통 ── */
 function matchQ(it,q){
   if(!q) return true; q=String(q).toLowerCase();
+  var ct=it.contact||{};
   return [it.company,it.client,it.title,it.no,it.officer,it.cat,
-          (it.mgr_main&&it.mgr_main.name),(it.last&&it.last.t)]
+          (it.mgr_main&&it.mgr_main.name),(it.last&&it.last.t),
+          ct.name,ct.rank,ct.phone]
+    .concat((it.mgr_subs||[]).map(function(s){return s&&s.name;}))
     .some(function(s){ return String(s||'').toLowerCase().indexOf(q)>=0; });
 }
 // 검색창: 입력 중 재렌더로 포커스가 날아가지 않게 디바운스 후 커서 복원
@@ -813,8 +836,11 @@ function setWeek(mon){ S.week=mon||curMonday(); S.f=null; watchWeek(); closeCal(
 function shiftWeek(n){ setWeek(addDays(S.week,n*7)); }
 function rowHTML(it,no){
   var logs=wkLogsOf(it._id);
+  // 공동 작업이 보이도록, 내가 아닌 사람이 쓴 기록에는 작성자를 붙인다
   var logHtml=logs.map(function(l){
-    return '<div class="wklog"><span class="d">'+esc(md(l.d))+'</span>'+esc(l.t)+(l.k==='ho'?' 🔄':'')+'</div>'; }).join('');
+    return '<div class="wklog"><span class="d">'+esc(md(l.d))+'</span>'+esc(l.t)
+      +(l.byName&&l.byName!==(S.me&&S.me.name)?' <span class="by">'+esc(l.byName)+'</span>':'')
+      +(l.k==='ho'?' 🔄':'')+'</div>'; }).join('');
   var lastHtml=it.last?'<span class="last">'+esc(it.last.t)+' <span class="ago">· '+esc(md(it.last.d))+'</span></span>':'<span class="last" style="color:#c4a15a">기록 없음</span>';
   var nx=it.next&&it.next.text?ddayHTML(it.next.date,it.next.text):(it.due?ddayHTML(it.due,'기한'):'<span class="muted">—</span>');
   return '<tr>'
@@ -1007,7 +1033,6 @@ function renderDrawer(){
   var it=items[S.drawerId]; if(!it){ closeDrawer(); return; }
   var id=S.drawerId;
   var logs=itemLogsCache[id];
-  var mine=isMine(it);
   var subs=(it.mgr_subs||[]).map(function(s){return s.name;}).filter(Boolean).join(', ');
   var h='<div class="dh"><div class="row1">'+catBadge(it.cat)
     +'<span class="ttl">'+esc(it.company||it.client||'')+' — '+esc(it.title||'')+'</span>'
@@ -1021,6 +1046,7 @@ function renderDrawer(){
     +'</div></div>';
   h+='<div class="nextbox">☐ 다음 할 일 — <input type="text" id="dx-text" value="'+esc(it.next&&it.next.text||'')+'" placeholder="예: 이유서 제출" onchange="saveNext(\''+id+'\')">'
     +'<input type="date" id="dx-date" value="'+esc(it.next&&it.next.date||'')+'" onchange="saveNext(\''+id+'\')"></div>';
+  h+=dPeopleHTML(id,it);
   // 인수 확인 대기 — 후임(나)에게 확인 버튼
   if(it.ho&&!it.ho.confirmed){
     var toMe=it.ho.to&&((S.me.sid&&it.ho.to.sid===S.me.sid)||it.ho.to.name===S.me.name);
@@ -1622,6 +1648,110 @@ function calLoadSrc(){
   return _calLoading;
 }
 function calName(sid){ return (_peU2N&&_peU2N[sid])||''; }
+
+/* ── 사업장 담당자 (푸른이알피 업체관리 읽기 전용 + 건별 직접 입력) ──────
+   pu-erp companies[].contacts[] = {name, role, phone, fax, email, isPrimary}
+   (옛 contactName/contactPhone은 pu-erp가 contacts[0]으로 마이그레이션한다)
+   업체 담당자와 이 건 담당자가 다를 수 있으므로(인사담당 ↔ 안전담당)
+   item.contact{name,rank,phone}에 건별로 따로 적을 수 있게 둔다. */
+var coSrc=null, _coT=null;
+function coLoad(){
+  if(coSrc) return Promise.resolve(coSrc);
+  if(_coT) return _coT;
+  _coT=fbDb.ref('data/companies/v').once('value')
+    .then(function(s){ coSrc=_peArr(s.val())||[]; _coT=null; return coSrc; })
+    .catch(function(){ coSrc=_ls('companies')||[]; _coT=null; return coSrc; });
+  return _coT;
+}
+// co_id(푸른이알피 companyId) 우선, 없으면 정규화한 업체명으로 찾는다
+function coFind(it){
+  if(!coSrc||!coSrc.length||!it) return null;
+  if(it.co_id){
+    var b=coSrc.filter(function(c){ return c&&c.id===it.co_id; })[0];
+    if(b) return b;
+  }
+  var n=_normCo(it.company); if(!n) return null;
+  return coSrc.filter(function(c){ return c&&_normCo(c.name||c.companyName)===n; })[0]||null;
+}
+function coContacts(it){
+  var c=coFind(it); if(!c) return [];
+  if(c.contacts&&c.contacts.length) return c.contacts.filter(Boolean);
+  if(c.contactName||c.contactPhone) return [{name:c.contactName||'',role:'',phone:c.contactPhone||''}];
+  return [];
+}
+function telHref(p){ return String(p||'').replace(/[^0-9+]/g,''); }
+// 드로어: 사업장 담당자 + 담당(주/부). 부담당은 여기서 여러 명 지정한다
+// (등록 폼은 1명만 고를 수 있어 연동 건의 공동작업자를 늘릴 수단이 없었다)
+function dPeopleHTML(id,it){
+  if(!coSrc) coLoad().then(function(){ if(S.drawerId===id) renderDrawer(); });
+  var cs=coContacts(it), mc=it.contact||{};
+  var h='<div class="dbox"><div class="bh">👤 사업장 담당자'
+    +'<span class="r">'+(coSrc===null?'업체 자료 불러오는 중…'
+      :(cs.length?'푸른이알피 업체관리 '+cs.length+'명':'푸른이알피 업체관리에 등록 없음'))+'</span></div><div class="bb">';
+  cs.slice(0,5).forEach(function(c){
+    h+='<div class="pc"><span class="nm">'+esc(c.name||'—')+'</span>'
+      +(c.role?'<span class="rk">'+esc(c.role)+'</span>':'')
+      +(c.phone?'<a href="tel:'+esc(telHref(c.phone))+'">'+esc(c.phone)+'</a>'
+              :'<span class="muted" style="font-size:11.5px">연락처 없음</span>')
+      +(c.email?'<span class="muted" style="font-size:11px">'+esc(c.email)+'</span>':'')
+      +'<span class="src">업체관리</span></div>';
+  });
+  h+='<div class="c3">'
+    +'<input id="ct-nm" value="'+esc(mc.name||'')+'" placeholder="이 건 담당자 이름" onchange="saveContact(\''+escJ(id)+'\')">'
+    +'<input id="ct-rk" value="'+esc(mc.rank||'')+'" placeholder="직급" onchange="saveContact(\''+escJ(id)+'\')">'
+    +'<input id="ct-ph" value="'+esc(mc.phone||'')+'" placeholder="연락처" onchange="saveContact(\''+escJ(id)+'\')">'
+    +'</div>'
+    +'<div class="muted" style="font-size:10.5px">업체 담당자와 다르면 여기에 적습니다 (예: 인사담당 ↔ 안전담당). '
+    +'위 목록은 푸른이알피 업체관리 자료로 <b>읽기 전용</b>입니다.</div>'
+    +'</div></div>';
+  var subs=(it.mgr_subs||[]).filter(function(s){return s&&(s.name||s.sid);});
+  h+='<div class="dbox"><div class="bh">👥 담당<span class="r">부담당도 이 업무의 기록을 씁니다</span></div><div class="bb">'
+    +'<div class="subrow"><span class="muted" style="font-size:11.5px;min-width:44px">주담당</span>'
+    +'<span class="subchip" style="background:var(--acc-soft);color:var(--acc2)">'
+    +esc((it.mgr_main&&it.mgr_main.name)||'미지정')+'</span></div>'
+    +'<div class="subrow"><span class="muted" style="font-size:11.5px;min-width:44px">부담당</span>'
+    +(subs.length?subs.map(function(s,i){
+        return '<span class="subchip">'+esc(s.name||s.sid)
+          +'<span class="x" onclick="subDel(\''+escJ(id)+'\','+i+')" title="부담당에서 제외">✕</span></span>';
+      }).join('')
+      :'<span class="muted" style="font-size:11.5px">없음</span>')
+    +'<select onchange="subAdd(\''+escJ(id)+'\',this)" title="부담당을 추가하면 그 사람의 내 업무에도 나타납니다">'
+    +'<option value="">＋ 부담당 추가</option>'+_subOpts(it)+'</select>'
+    +'</div></div></div>';
+  return h;
+}
+function _subOpts(it){
+  var used={};
+  if(it.mgr_main&&it.mgr_main.sid) used[it.mgr_main.sid]=1;
+  (it.mgr_subs||[]).forEach(function(s){ if(s&&s.sid) used[s.sid]=1; });
+  return (_staffCache||[]).filter(function(u){ return !used[u.sid]; })
+    .map(function(u){ return '<option value="'+esc(u.sid)+'" data-n="'+esc(u.name)+'">'+esc(u.name)+'</option>'; }).join('');
+}
+function saveContact(id){
+  var g=function(k){ var e=$(k); return e?e.value.trim():''; };
+  var nm=g('ct-nm'), rk=g('ct-rk'), ph=g('ct-ph');
+  patchItem(id,{contact:(nm||rk||ph)?{name:nm,rank:rk,phone:ph}:null})
+    .then(function(ok){ if(ok) toast('👤 담당자 저장됨'); });
+}
+function subAdd(id,sel){
+  var sid=sel.value; if(!sid) return;
+  var nm=sel.options[sel.selectedIndex].getAttribute('data-n')||'';
+  var arr=((items[id]||{}).mgr_subs||[]).slice();
+  if(arr.some(function(s){ return s&&s.sid===sid; })){ sel.value=''; return; }
+  arr.push({sid:sid,name:nm});
+  patchItem(id,{mgr_subs:arr}).then(function(ok){
+    if(!ok) return;
+    toast('👥 부담당 추가 — '+nm+' 님의 내 업무에도 나타납니다');
+    renderDrawer(); route();
+  });
+}
+function subDel(id,i){
+  var arr=((items[id]||{}).mgr_subs||[]).slice();
+  var g=arr.splice(i,1)[0]||{};
+  patchItem(id,{mgr_subs:arr}).then(function(ok){
+    if(!ok) return; toast('부담당 제외 — '+(g.name||'')); renderDrawer(); route();
+  });
+}
 function calBase(){ return new Date((S.calDate||todayStr())+'T00:00:00'); }
 function calRange(){
   var d=calBase(), days=[], i;
@@ -2215,7 +2345,7 @@ var PE_DEF=[
   ['fund','기금',function(x){return x.fundNo||x.no||'';},function(x){return x.title||x.fundName||'';},function(x){return x.fundType||'기금';}],
   ['other','기타',function(x){return x.projectNo||x.no||'';},function(x){return x.title||x.projectName||'';},function(x){return x.programName||'';}]
 ];
-var PE_MIRROR=['no','cat','company','client','officer','title','due','start'];
+var PE_MIRROR=['no','cat','company','client','officer','title','due','start','co_id'];
 var peMaster={};                                   // {유형:[레코드]} — 읽기 실패한 유형은 키가 없다
 var peState={since:null,at:null,n:0,err:''};
 var _peU2N=null, _peT=null, _peBusy=false, _peWatching=false;
@@ -2249,6 +2379,7 @@ function _peCandOf(t,label,dNo,dTitle,dKind,x,sid2name){
   return { pid:'PE-'+t+'-'+safeKey(x.id), kindLabel:label, no:dNo(x)||'', cat:normCat(kind,title),
     company:co, title:(title||kind||co||'무제'), officer:(x.jurisdiction&&x.jurisdiction.officer)||'',
     client:x.payee||'', mgr:sid2name[x.managerMain]||'', mgrSid:x.managerMain||'',
+    co_id:x.companyId||'',                        // 업체 담당자 조회용 — 이름 매칭보다 정확하다
     subs:(x.managerSubs||[]).map(function(sd){return sid2name[sd]||'';}).filter(Boolean),
     due:_peDue(x), start:x.receiveDate||x.contractStartDate||'',
     ref:{type:t,id:String(x.id)} };
@@ -2376,6 +2507,7 @@ function peAutoSync(){
       m.mgr=mSid+'/'+(c.mgr||''); m.subs=(c.subs||[]).join('|');
       var rec={ no:c.no||(S.year+'-'+c.cat+'-PE'), cat:c.cat, company:c.company||'', client:c.client||'',
         officer:c.officer||'', title:c.title||'', due:c.due||'', start:c.start||'', status:'진행중',
+        co_id:c.co_id||'',                        // pe_m에만 있고 항목에 없으면 이후 미러가 건너뛴다
         mgr_main:has?{sid:mSid,name:c.mgr||''}:(ceo?{sid:ceo.sid,name:ceo.name}:{sid:'',name:''}),
         mgr_subs:(c.subs||[]).map(function(n){return {sid:name2sid[n]||'',name:n};}),
         src:'puerp', ref:c.ref, pe_auto:true, pe_m:m, created_at:new Date().toISOString() };
@@ -2562,7 +2694,7 @@ function runPuerpImport(){
       m.mgr=mSid+'/'+(c.mgr||''); m.subs=(c.subs||[]).join('|');
       var rec={ no:c.no||(S.year+'-'+c.cat+'-PE'), cat:c.cat, company:c.company||'', client:c.client||'',
         officer:c.officer||'', title:c.title||'', due:c.due||'', start:c.start||'', status:'진행중',
-        mgr_main:{sid:mSid,name:c.mgr||''},
+        co_id:c.co_id||'', mgr_main:{sid:mSid,name:c.mgr||''},
         mgr_subs:(c.subs||[]).map(function(nm){return {sid:name2sid[nm]||'',name:nm};}),
         src:'puerp', ref:c.ref, pe_m:m, created_at:new Date().toISOString() };
       up[NS+'/items/'+c.pid]=rec; n++;
