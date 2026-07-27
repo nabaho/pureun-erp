@@ -257,6 +257,7 @@ function refreshAll(){
   ['sitesFor','annualFor','welfFor','evFor','txnsFor','subDocFor'].forEach(function(k){ S[k]=null; });
   S._dbEdits=undefined;              // 서식 현황(저장본) 재조회
   S._tplChk=false; S._hwpChk=false;  // 원본 엑셀·HWP 등록 상태 재조회
+  _peCache=null;                     // 푸른이알피 연동 청구 재조회
   S._pendingRender=false;
   route();
 }
@@ -898,6 +899,108 @@ function patchSub(fid,field,val,type){
 function openFundSubsidy(fid){ S.fundId=fid; S.tab='subsidy'; _pushHist(); renderFund(); }
 
 // ── 청구 관리 (4단계) ──
+/* ══ 푸른이알피(pu-erp) 기금 청구 연동 ══
+   원본은 푸른이알피 소유 — 여기서는 **읽기만** 한다(쓰면 사무관리 원장이 깨진다).
+   · data/funds/v          : 기금 계약(계약금 contractFee/contractPaid, 잔금 balanceFee/balancePaid)
+   · data/finance_income/v : 입금 확정 매출 중 sourceKind==='fund'
+   미입금은 계약 쪽 플래그로, 입금완료는 매출 기록으로 잡는다(푸른이알피 입금관리와 같은 기준 → 이중계상 없음).
+   연결 보정값만 우리 네임스페이스 fund_erp/puerp_link 에 저장한다. */
+var _peCache=null;
+function _peNorm(v){ if(!v) return []; if(!Array.isArray(v)) v=Object.keys(v).map(function(k){return v[k];}); return v.filter(Boolean); }
+function _peLocal(key){ try{ return _peNorm(JSON.parse(localStorage.getItem('pureun_v6_'+key)||'null')); }catch(e){ return []; } }
+function _peRead(key){   // ① Firebase(최신) ② 같은 출처 localStorage(푸른이알피가 채워둔 값) 폴백
+  return fbDb.ref('data/'+key+'/v').once('value').then(function(s){
+    var a=_peNorm(s.val()); return a.length?a:_peLocal(key);
+  }).catch(function(){ return _peLocal(key); });
+}
+function loadPuerp(force){
+  if(_peCache&&!force) return Promise.resolve(_peCache);
+  return Promise.all([_peRead('funds'),_peRead('finance_income'),
+      fbDb.ref(NS+'/puerp_link').once('value').then(function(s){return s.val()||{};}).catch(function(){return {};})
+    ]).then(function(r){
+    _peCache={ projects:r[0].filter(function(x){return x&&x.id&&!x._deleted;}),
+               income:r[1].filter(function(x){return x&&x.sourceKind==='fund'&&!x._deleted;}),
+               link:r[2] };
+    return _peCache; });
+}
+// 기금명 비교용 정규화 — 법인 표기·'근로복지기금' 같은 공통어를 걷어낸다
+function _mkey(s){ return String(s||'').replace(/\(주\)|㈜|주식회사|사단법인|재단법인|유한회사/g,'')
+  .replace(/공동근로복지기금|사내근로복지기금|근로복지기금/g,'').replace(/[\s\-·_()\[\]]/g,'').toLowerCase(); }
+function _dg10(s){ return String(s||'').replace(/\D/g,''); }
+/* pu-erp 기금 계약 1건 → fund_erp 기금 id. ①수동 지정 ②사업자번호 ③기금명 완전일치 ④부분일치(후보 1개일 때만) */
+function linkPuerp(p,link){
+  var man=(link||{})[p.id]; if(man) return man==='__none__'?null:(funds[man]?man:null);
+  var ids=Object.keys(funds).filter(function(k){return !isTrashed(funds[k]);});
+  // 기금은 사업자등록번호가 아니라 **고유번호(tax_id_no)**로 계산서를 받는다(법인등록번호도 대비).
+  var bz=_dg10(p.bizNo);
+  if(bz.length>=10){
+    var h=ids.filter(function(k){ var f=funds[k];
+      return _dg10(f.tax_id_no)===bz||_dg10(f.biz_no)===bz||_dg10(f.corp_reg_no)===bz; })[0];
+    if(h) return h; }
+  var pk=_mkey(p.companyName||p.name); if(pk.length<2) return null;
+  var exact=ids.filter(function(k){ return _mkey(funds[k].name)===pk||_mkey(funds[k].short_name)===pk; })[0];
+  if(exact) return exact;
+  var part=ids.filter(function(k){ var a=_mkey(funds[k].name),b=_mkey(funds[k].short_name);
+    return (a&&a.length>1&&(a.indexOf(pk)>=0||pk.indexOf(a)>=0))||(b&&b.length>1&&(b.indexOf(pk)>=0||pk.indexOf(b)>=0)); });
+  return part.length===1?part[0]:null;   // 후보가 둘 이상이면 자동 연결하지 않고 사용자에게 맡긴다
+}
+/* 청구 항목 도출 — 대기(계약 미입금) + 완료(확정 매출) */
+function puerpRows(pe){
+  var byId={}; pe.projects.forEach(function(p){ byId[p.id]=p; });
+  var wait=[], done=[];
+  pe.projects.forEach(function(p){
+    var fid=linkPuerp(p,pe.link);
+    [['계약금',p.contractFee,p.contractPaid,p.contractDate],
+     ['잔금',  p.balanceFee, p.balancePaid, p.startDate]].forEach(function(c){
+      if(!(num(c[1])>0)||c[2]) return;                      // 금액 없거나 이미 입금확정 → 대기 아님
+      wait.push({pid:p.id,fund_id:fid,no:p.no||'',company:p.companyName||'',bizNo:p.bizNo||'',
+        item:c[0],amount:num(c[1]),date:c[3]||'',mgr:p.managerMain||p.mgrMain||'',pstatus:p.status||''});
+    });
+  });
+  pe.income.forEach(function(x){
+    var p=byId[x.sourceId];
+    done.push({pid:x.sourceId||'',iid:x.id,fund_id:p?linkPuerp(p,pe.link):null,no:(p&&p.no)||'',
+      company:x.companyName||(p&&p.companyName)||'',bizNo:(p&&p.bizNo)||'',
+      item:x.kind||'기금수수료',amount:num(x.amount),paid_date:x.date||'',
+      vat:x.vatIncluded?'포함':'별도',mgr:x.managerName||''});
+  });
+  wait.sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
+  done.sort(function(a,b){return (b.paid_date||'').localeCompare(a.paid_date||'');});
+  return {wait:wait,done:done};
+}
+function _peFundCell(r){
+  if(r.fund_id&&funds[r.fund_id]) return '<span style="font-weight:700">'+esc(funds[r.fund_id].short_name||funds[r.fund_id].name)+'</span>'
+    +' <button onclick="peLinkAsk(\''+r.pid+'\')" title="연결 바꾸기" style="padding:1px 6px;font-size:10px">🔗</button>';
+  return '<span class="chip dg" style="font-size:10px">미연결</span>'
+    +' <button onclick="peLinkAsk(\''+r.pid+'\')" style="padding:1px 7px;font-size:10.5px">🔗 연결</button>';
+}
+function peLinkAsk(pid){
+  var pe=_peCache; if(!pe)return;
+  var p=pe.projects.filter(function(x){return x.id===pid;})[0]; if(!p){ toast('푸른이알피 계약을 찾을 수 없습니다','warn'); return; }
+  var cur=(pe.link||{})[pid]||'';
+  var opts='<option value="">— 자동 판단에 맡김 —</option>'
+    +Object.keys(funds).filter(function(k){return !isTrashed(funds[k]);})
+      .sort(function(a,b){return (funds[a].short_name||funds[a].name||'').localeCompare(funds[b].short_name||funds[b].name||'');})
+      .map(function(k){return '<option value="'+k+'"'+(cur===k?' selected':'')+'>'+esc(funds[k].short_name||funds[k].name)+'</option>';}).join('')
+    +'<option value="__none__"'+(cur==='__none__'?' selected':'')+'>❌ 기금 아님(연결 안 함)</option>';
+  showModal('<h2 style="margin-bottom:6px">푸른이알피 계약 연결</h2>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 10px">푸른이알피 <b>'+esc(p.companyName||p.name||pid)+'</b>'
+    +(p.no?' ('+esc(p.no)+')':'')+(p.bizNo?' · 사업자 '+esc(p.bizNo):'')+'<br>이 계약의 청구를 어느 기금으로 볼지 지정합니다. 푸른이알피 원본은 바뀌지 않습니다.</p>'
+    +'<div class="fld"><label>연결할 기금</label><select id="pe-fund">'+opts+'</select></div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">취소</button>'
+    +'<button class="primary" onclick="peLinkSave(\''+pid+'\')">저장</button></div>');
+}
+function peLinkSave(pid){
+  var v=$('pe-fund').value;
+  var ref=fbDb.ref(NS+'/puerp_link/'+pid);
+  (v?ref.set(v):ref.remove()).then(function(){
+    if(_peCache){ if(v)_peCache.link[pid]=v; else delete _peCache.link[pid]; }
+    closeM(); toast(v?'연결을 저장했습니다':'자동 판단으로 되돌렸습니다'); renderBilling();
+  }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
+}
+function peReload(){ _peCache=null; S.peTab=S.peTab||'wait'; toast('푸른이알피에서 다시 불러옵니다'); renderBilling(); }
+function peTab(t){ S.peTab=t; renderBilling(); }
+
 function renderBilling(){
   $('crumb').textContent='청구 관리';
   if(!S.billingsLoaded){ S.billingsLoaded=true;
@@ -919,12 +1022,75 @@ function renderBilling(){
       +'<td>'+ip('amount')+'</td><td>'+ip('invoice_date','date')+'</td><td>'+ip('paid_date','date')+'</td><td>'+st+'</td>'
       +'<td><button onclick="delBilling(\''+r._id+'\')">삭제</button></td></tr>';
   }).join('');
-  $('app').innerHTML='<div class="panel"><div class="row"><h1>청구 관리</h1><span class="stat">'+arr.length+'건</span>'
-    +'<span class="stat">합계 '+tot.toLocaleString()+'원</span><span class="stat" style="background:var(--ok-bg);color:var(--ok)">입금 '+paid.toLocaleString()+'원</span>'
+  var own='<div class="panel"><div class="row"><h2 style="font-size:15px">② 기금 시스템 자체 청구</h2>'
+    +'<span class="stat">'+arr.length+'건</span><span class="stat">합계 '+tot.toLocaleString()+'원</span>'
+    +'<span class="stat" style="background:var(--ok-bg);color:var(--ok)">입금 '+paid.toLocaleString()+'원</span>'
     +'<span style="flex:1"></span><button class="primary" onclick="addBilling()">+ 청구 추가</button></div>'
-    +'<p class="muted" style="font-size:12px;margin:6px 0 0">금액은 부가세 별도 공급가. 계산서일·입금일 입력 시 상태 자동 변경.'
-    +(trashedN?' <span class="chip warn" style="font-size:10px">삭제 보관 기금 청구 '+trashedN+'건 제외됨</span>':'')+'</p></div>'
-    +'<div class="panel">'+(arr.length?'<table><thead><tr><th>기금 · 항목</th><th>금액(원)</th><th>계산서일</th><th>입금일</th><th>상태</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>':'<div class="muted">청구 건이 없습니다. [+ 청구 추가]</div>')+'</div>';
+    +'<p class="muted" style="font-size:12px;margin:6px 0 8px">결산·운영상황보고 보수처럼 <b>기금 시스템에서 직접 관리</b>하는 청구입니다. 금액은 부가세 별도 공급가, 계산서일·입금일 입력 시 상태 자동 변경.'
+    +(trashedN?' <span class="chip warn" style="font-size:10px">삭제 보관 기금 청구 '+trashedN+'건 제외됨</span>':'')+'</p>'
+    +(arr.length?'<div style="overflow-x:auto"><table><thead><tr><th>기금 · 항목</th><th>금액(원)</th><th>계산서일</th><th>입금일</th><th>상태</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+                :'<div class="muted" style="padding:8px 0">청구 건이 없습니다. [+ 청구 추가]</div>')+'</div>';
+  $('app').innerHTML='<div class="panel"><div class="row"><h1>청구 관리</h1>'
+    +'<span style="flex:1"></span><button onclick="peReload()" title="푸른이알피에서 다시 불러오기">↻ 연동 새로고침</button></div>'
+    +'<p class="muted" style="font-size:12px;margin:6px 0 0">푸른이알피 <b>기금관리</b>에 등록된 청구를 자동으로 끌어와 <b>①</b>에 모으고, 기금 시스템에서 직접 만드는 청구는 <b>②</b>에서 관리합니다.</p></div>'
+    +'<div id="peBox"><div class="panel">'+loadingHTML()+'</div></div>'+own;
+  renderPuerpBox();
+}
+/* ── ① 푸른이알피 연동 청구 (읽기 전용) ── */
+function renderPuerpBox(){
+  // 담당 이름 표시용 재직자 명단 — 늦게 와도 한 번만 다시 그린다(캐시가 즉시 resolve되므로 무한 재귀 방지 플래그 필요)
+  if(!_staffCache&&!S._peStaffWait){ S._peStaffWait=1;
+    loadStaff().then(function(){ if(S.view==='billing'&&$('peBox')) renderPuerpBox(); }).catch(function(){}); }
+  loadPuerp().then(function(pe){
+    var box=$('peBox'); if(!box||S.view!=='billing') return;
+    var R=puerpRows(pe);
+    var tab=S.peTab||'wait';
+    // 삭제 보관된 기금으로 연결된 건은 다른 화면과 기준을 맞춰 제외
+    function keep(r){ return !(r.fund_id&&funds[r.fund_id]&&isTrashed(funds[r.fund_id])); }
+    var wait=R.wait.filter(keep), done=R.done.filter(keep);
+    var unl=wait.filter(function(r){return !r.fund_id;}).concat(done.filter(function(r){return !r.fund_id;}));
+    var sumW=wait.reduce(function(s,x){return s+x.amount;},0), sumD=done.reduce(function(s,x){return s+x.amount;},0);
+    var src=(pe.projects.length||pe.income.length)?'':'<span class="chip warn" style="font-size:10px">푸른이알피 데이터를 읽지 못했습니다 — 권한 또는 미등록</span>';
+    // 담당은 푸른이알피 사번(P-001)으로 들어온다 → 재직자 명단으로 이름 표시(명단 미로드 시 사번 그대로)
+    function mgrN(sid){ if(!sid) return '—';
+      var me=(_staffCache||[]).filter(function(u){return u.sid===sid;})[0];
+      return esc(me?me.name:sid); }
+    function rowW(r){
+      return '<tr><td>'+_peFundCell(r)+'</td>'
+        +'<td>'+esc(r.company||'—')+'<div class="muted mo" style="font-size:11px">'+esc(r.no||'')+(r.bizNo?' · '+esc(r.bizNo):'')+'</div></td>'
+        +'<td>'+esc(r.item)+'</td><td style="text-align:right;font-variant-numeric:tabular-nums">'+r.amount.toLocaleString()+'</td>'
+        +'<td class="mo muted">'+esc(r.date||'—')+'</td>'
+        +'<td><span class="chip dg" style="font-size:10px">미입금</span>'+(r.pstatus==='closed'?' <span class="chip warn" style="font-size:10px">사무관리 종료</span>':'')+'</td>'
+        +'<td class="mo muted">'+mgrN(r.mgr)+'</td></tr>';
+    }
+    function rowD(r){
+      return '<tr><td>'+_peFundCell(r)+'</td>'
+        +'<td>'+esc(r.company||'—')+'<div class="muted mo" style="font-size:11px">'+esc(r.no||'')+'</div></td>'
+        +'<td>'+esc(r.item)+'</td><td style="text-align:right;font-variant-numeric:tabular-nums">'+r.amount.toLocaleString()+'</td>'
+        +'<td class="muted">'+esc(r.paid_date||'—')+'</td>'
+        +'<td><span class="chip ok" style="font-size:10px">입금완료</span> <span class="muted mo" style="font-size:10.5px">부가세 '+esc(r.vat)+'</span></td>'
+        +'<td class="mo muted">'+esc(r.mgr||'—')+'</td></tr>';
+    }
+    var head='<tr><th>기금</th><th>푸른이알피 업체</th><th>항목</th><th style="text-align:right">금액(원)</th>'
+      +'<th'+(tab==='wait'?' class="mo"':'')+'>'+(tab==='wait'?'계약일':'입금일')+'</th><th>상태</th><th class="mo">담당</th></tr>';
+    var list=(tab==='wait')?wait:(tab==='done'?done:unl);
+    var body=list.length
+      ? '<div style="overflow-x:auto"><table><thead>'+head+'</thead><tbody>'
+        +list.map(function(r){ return (tab==='done'||r.iid)?rowD(r):rowW(r); }).join('')+'</tbody></table></div>'
+      : '<div class="muted" style="padding:10px 0">'+(tab==='unl'?'연결되지 않은 청구가 없습니다 — 전부 기금에 붙었습니다.':'해당 건이 없습니다.')+'</div>';
+    function tb(k,lbl,n){ return '<div class="tab'+(tab===k?' on':'')+'" onclick="peTab(\''+k+'\')">'+lbl+' <b>'+n+'</b></div>'; }
+    box.innerHTML='<div class="panel"><div class="row"><h2 style="font-size:15px">① 푸른이알피 연동 청구</h2>'
+      +'<span class="stat">계약 '+pe.projects.length+'건</span>'
+      +'<span class="stat" style="background:var(--danger-bg);color:var(--danger)">미입금 '+sumW.toLocaleString()+'원</span>'
+      +'<span class="stat" style="background:var(--ok-bg);color:var(--ok)">입금 '+sumD.toLocaleString()+'원</span>'
+      +'<span style="flex:1"></span>'+src+'</div>'
+      +'<p class="muted" style="font-size:12px;margin:6px 0 0">푸른이알피 <b>기금관리</b>의 계약금·잔금(미입금)과 확정 매출을 그대로 읽어옵니다. <b>여기서는 수정하지 않습니다</b> — 금액·입금 처리는 푸른이알피에서. 기금 연결은 사업자등록번호 → 기금명 순으로 자동 판단하고, 애매하면 [🔗 연결]로 지정합니다.</p>'
+      +'<div class="tabbar" style="margin:10px 0 8px">'+tb('wait','미입금',wait.length)+tb('done','입금완료',done.length)
+      +(unl.length?tb('unl','⚠ 미연결',unl.length):'')+'</div>'+body+'</div>';
+  }).catch(function(e){
+    var box=$('peBox'); if(box) box.innerHTML='<div class="panel"><div class="msg err">푸른이알피 연동 실패: '+esc((e&&e.message)||e)
+      +' <button onclick="peReload()">다시 시도</button></div></div>';
+  });
 }
 function addBilling(){
   var opts=Object.keys(funds).filter(function(k){return !isTrashed(funds[k]);}).map(function(k){return '<option value="'+k+'">'+esc(funds[k].short_name||funds[k].name)+'</option>';}).join('');
