@@ -268,7 +268,7 @@ function appHasFocus(){ var ae=document.activeElement, app=$('app');
   return !!(ae && app && app.contains(ae) && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)); }
 function refreshAll(){
   // .once() 캐시만 초기화(funds·billings는 live 리스너라 이미 최신)
-  ['sitesFor','annualFor','welfFor','evFor','txnsFor','subDocFor'].forEach(function(k){ S[k]=null; });
+  ['sitesFor','annualFor','welfFor','evFor','txnsFor','subDocFor','txnsPrevFor'].forEach(function(k){ S[k]=null; });
   S._dbEdits=undefined;              // 서식 현황(저장본) 재조회
   S._tplChk=false; S._hwpChk=false;  // 원본 엑셀·HWP 등록 상태 재조회
   _peCache=null;                     // 푸른이알피 연동 청구 재조회
@@ -3405,6 +3405,276 @@ function acctSel(id,side,cur){
   return '<select onchange="setTxnAcct(\''+id+'\',\''+side+'\',this.value)" style="padding:3px 5px;border:1px solid '+(cur?'#d6dae3':'#f0a8a8')+';border-radius:5px;font-size:11.5px">'
     +'<option value="">(미분류)</option>'+ACCTS.map(function(a){return '<option'+(cur===a?' selected':'')+'>'+a+'</option>';}).join('')+'</select>';
 }
+/* ══════════ 회계장부 (더존식) ══════════
+   승인된 거래를 원천으로 분개장 → 계정별원장 → 월계표 → 합계잔액시산표 → 재무제표(전기 대비)
+   순서로 파생시킨다. 숫자는 어디서 봐도 같은 원천에서 나온다.
+   전기이월(opening)은 각 장부의 '기초' 한 줄로 들어가 잔액이 이어진다. */
+var OPEN_ACCT={cash:'현금성자산',savings:'정기예금',loan:'근로자대부금',
+               basic:'기본재산',retained:'이월잉여금',reserve:'고유목적사업준비금1'};
+function acctType(n){ return ACCT_CHART[n]||'비용'; }
+function isDrAcct(n){ var t=acctType(n); return t==='자산'||t==='비용'; }   // 차변 잔액 계정
+function _openingOf(fid,yr){
+  var yd=(funds[fid]&&funds[fid].years&&funds[fid].years[yr])||{}; return yd.opening||{};
+}
+/* 승인 거래 → 분개 배열. 한 거래 = 차변 1 / 대변 1 (통장 기반이라 단순분개) */
+function journalOf(arr){
+  return (arr||[]).filter(function(x){return x.approved&&x.debit&&x.credit;})
+    .map(function(x){ return {date:String(x.date||''),memo:String(x.memo||''),
+      debit:x.debit,credit:x.credit,amount:num(x.deposit)||num(x.withdraw)||0,id:x._id}; })
+    .sort(function(a,b){ return a.date.localeCompare(b.date)||String(a.id).localeCompare(String(b.id)); });
+}
+/* 계정별 발생액 — {계정:{d,c}} (전기이월 제외, 당기 발생분만) */
+function acctMoves(jr){
+  var m={};
+  jr.forEach(function(e){
+    (m[e.debit]=m[e.debit]||{d:0,c:0}).d+=e.amount;
+    (m[e.credit]=m[e.credit]||{d:0,c:0}).c+=e.amount;
+  });
+  return m;
+}
+/* 전기이월을 계정별 차/대로 환산 */
+function openingMoves(op){
+  var m={};
+  Object.keys(OPEN_ACCT).forEach(function(k){
+    var v=num(op[k])||0; if(!v) return;
+    var n=OPEN_ACCT[k];
+    m[n]=m[n]||{d:0,c:0};
+    if(isDrAcct(n)) m[n].d+=v; else m[n].c+=v;
+  });
+  return m;
+}
+function _yr(){ return +S.year; }
+/* 전기 거래 로딩 — 비교용. 연도가 바뀌면 다시 읽는다(중복 호출 방지 키) */
+function loadPrevTxns(){
+  var fid=S.fundId, py=_yr()-1, key=fid+'/'+py;
+  if(S.txnsPrevFor===key) return;
+  S.txnsPrevFor=key; S.txnsPrev=null;
+  fbDb.ref(NS+'/txns/'+fid+'/'+py).once('value').then(function(s){
+    if(S.txnsPrevFor!==key) return;
+    S.txnsPrev=s.val()||{};
+    if(S.tab==='closing'&&S.view==='fund') renderFund();
+  }).catch(function(){ if(S.txnsPrevFor===key) S.txnsPrev={}; });
+}
+function prevArr(){
+  var t=S.txnsPrev; if(!t) return null;                  // null=아직 로딩 중
+  return Object.keys(t).map(function(k){var o=Object.assign({},t[k]);o._id=k;return o;});
+}
+function _n(v){ return (v||0).toLocaleString(); }
+function _nz(v){ return v?_n(v):''; }                    // 0은 빈칸(장부 관례)
+
+// ── 하위 탭 ──
+var CLOSE_SUBS=[['txn','거래·분개입력'],['journal','분개장'],['ledger','계정별원장'],
+                ['monthly','월계표'],['tb','합계잔액시산표'],['fin','재무제표·전기대비']];
+function closeSub(k){ S.closeSub=k; renderFund(); }
+function closeSubBar(){
+  if(CLOSE_SUBS.map(function(x){return x[0];}).indexOf(S.closeSub)<0) S.closeSub='txn';
+  return '<div class="tabbar" style="margin:10px 0 12px">'+CLOSE_SUBS.map(function(x){
+    return '<div class="tab'+(S.closeSub===x[0]?' on':'')+'" onclick="closeSub(\''+x[0]+'\')">'+x[1]+'</div>';
+  }).join('')+'</div>';
+}
+// ── 분개장 ──
+function journalView(arr){
+  var jr=journalOf(arr);
+  if(!jr.length) return '<div class="panel"><div class="muted" style="padding:10px">승인된 분개가 없습니다. [거래·분개입력]에서 계정을 지정하고 승인하세요.</div></div>';
+  var tot=jr.reduce(function(s,e){return s+e.amount;},0);
+  var rows='', prevDate=null, dayN=0, daySum=0, no=0;
+  function dayLine(){
+    if(prevDate===null||dayN<2) return '';
+    return '<tr style="background:var(--bg);font-size:11.5px;color:var(--sub)"><td colspan="2">'+esc(prevDate)+' 소계 ('+dayN+'건)</td>'
+      +'<td></td><td style="text-align:right">'+_n(daySum)+'</td><td></td><td style="text-align:right">'+_n(daySum)+'</td></tr>';
+  }
+  jr.forEach(function(e){
+    if(e.date!==prevDate){ rows+=dayLine(); prevDate=e.date; dayN=0; daySum=0; }
+    dayN++; daySum+=e.amount; no++;
+    rows+='<tr><td class="no">'+no+'</td><td style="white-space:nowrap">'+esc(e.date)+'</td>'
+      +'<td>'+esc(e.debit)+'</td><td style="text-align:right">'+_n(e.amount)+'</td>'
+      +'<td>'+esc(e.credit)+'</td><td style="text-align:right">'+_n(e.amount)+'</td>'
+      +'<td class="muted mo" style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(e.memo)+'">'+esc(e.memo)+'</td></tr>';
+  });
+  rows+=dayLine();
+  return '<div class="panel"><div class="row"><h2 style="font-size:15px">분개장</h2>'+hlp('close.journal')
+    +'<span class="stat">'+jr.length+'건</span><span class="stat">차·대 각 '+_n(tot)+'원</span>'
+    +'<span style="flex:1"></span><button onclick="printLedger(\'journal\')">🖨 인쇄</button></div>'
+    +'<div style="overflow-x:auto;margin-top:8px"><table><thead><tr><th>번호</th><th>일자</th>'
+    +'<th>차변 계정</th><th style="text-align:right">차변</th><th>대변 계정</th><th style="text-align:right">대변</th>'
+    +'<th class="mo">적요</th></tr></thead><tbody>'+rows
+    +'<tr style="font-weight:700;border-top:2px solid var(--ink)"><td colspan="3">합계</td>'
+    +'<td style="text-align:right">'+_n(tot)+'</td><td></td><td style="text-align:right">'+_n(tot)+'</td><td class="mo"></td></tr>'
+    +'</tbody></table></div></div>';
+}
+// ── 계정별원장 ──
+function ledgerView(arr){
+  var jr=journalOf(arr), op=_openingOf(S.fundId,S.year);
+  var used={}; jr.forEach(function(e){ used[e.debit]=1; used[e.credit]=1; });
+  Object.keys(openingMoves(op)).forEach(function(n){ used[n]=1; });
+  var names=Object.keys(used).sort();
+  if(!names.length) return '<div class="panel"><div class="muted" style="padding:10px">원장에 표시할 계정이 없습니다.</div></div>';
+  if(names.indexOf(S.ledAcct)<0) S.ledAcct=names[0];
+  var acct=S.ledAcct, dr=isDrAcct(acct);
+  var sel='<select onchange="S.ledAcct=this.value;renderFund()" style="padding:5px 8px;border:1px solid var(--line);border-radius:7px;font-size:12.5px">'
+    +names.map(function(n){return '<option value="'+esc(n)+'"'+(n===acct?' selected':'')+'>'+esc(n)+' ('+acctType(n)+')</option>';}).join('')+'</select>';
+  var om=openingMoves(op)[acct]||{d:0,c:0};
+  var bal=om.d-om.c, sumD=om.d, sumC=om.c;
+  var rows='';
+  if(om.d||om.c) rows+='<tr style="color:var(--faint)"><td>—</td><td>전기이월</td>'
+    +'<td style="text-align:right">'+_nz(om.d)+'</td><td style="text-align:right">'+_nz(om.c)+'</td>'
+    +'<td style="text-align:right">'+_n(dr?bal:-bal)+'</td></tr>';
+  jr.forEach(function(e){
+    if(e.debit!==acct&&e.credit!==acct) return;
+    var d=(e.debit===acct)?e.amount:0, c=(e.credit===acct)?e.amount:0;
+    sumD+=d; sumC+=c; bal+=d-c;
+    var other=(e.debit===acct)?e.credit:e.debit;
+    rows+='<tr><td style="white-space:nowrap">'+esc(e.date)+'</td>'
+      +'<td>'+esc(e.memo||other)+' <span class="muted mo" style="font-size:11px">('+esc(other)+')</span></td>'
+      +'<td style="text-align:right">'+_nz(d)+'</td><td style="text-align:right">'+_nz(c)+'</td>'
+      +'<td style="text-align:right;font-variant-numeric:tabular-nums">'+_n(dr?bal:-bal)+'</td></tr>';
+  });
+  var endBal=dr?bal:-bal;
+  return '<div class="panel"><div class="row" style="flex-wrap:wrap"><h2 style="font-size:15px">계정별원장</h2>'+hlp('close.ledger')+sel
+    +'<span class="chip" style="font-size:10px">'+(dr?'차변 잔액 계정':'대변 잔액 계정')+'</span>'
+    +'<span style="flex:1"></span><span class="stat">기말잔액 '+_n(endBal)+'원</span>'
+    +'<button onclick="printLedger(\'ledger\')">🖨 인쇄</button></div>'
+    +'<div style="overflow-x:auto;margin-top:8px"><table><thead><tr><th>일자</th><th>적요(상대계정)</th>'
+    +'<th style="text-align:right">차변</th><th style="text-align:right">대변</th><th style="text-align:right">잔액</th></tr></thead><tbody>'+rows
+    +'<tr style="font-weight:700;border-top:2px solid var(--ink)"><td colspan="2">합계 / 기말잔액</td>'
+    +'<td style="text-align:right">'+_n(sumD)+'</td><td style="text-align:right">'+_n(sumC)+'</td>'
+    +'<td style="text-align:right">'+_n(endBal)+'</td></tr></tbody></table></div></div>';
+}
+// ── 월계표 (계정 × 월) ──
+function monthlyView(arr){
+  var jr=journalOf(arr);
+  if(!jr.length) return '<div class="panel"><div class="muted" style="padding:10px">승인된 분개가 없어 월계표를 만들 수 없습니다.</div></div>';
+  var M={}, mUsed={};
+  jr.forEach(function(e){
+    var mo=+String(e.date).slice(5,7)||0; if(mo<1||mo>12) return;
+    mUsed[mo]=1;
+    [[e.debit,1],[e.credit,-1]].forEach(function(p){
+      var n=p[0], sign=p[1]*(isDrAcct(n)?1:-1);        // 그 계정이 늘어난 방향을 +로
+      (M[n]=M[n]||{})[mo]=((M[n]||{})[mo]||0)+sign*e.amount;
+    });
+  });
+  var months=[]; for(var i=1;i<=12;i++) if(mUsed[i]) months.push(i);
+  var names=Object.keys(M).sort(function(a,b){
+    var order={'자산':1,'부채':2,'자본':3,'수익':4,'비용':5};
+    return (order[acctType(a)]||9)-(order[acctType(b)]||9)||a.localeCompare(b);
+  });
+  var head='<tr><th>계정</th><th class="mo">유형</th>'+months.map(function(m){return '<th style="text-align:right">'+m+'월</th>';}).join('')
+    +'<th style="text-align:right">합계</th></tr>';
+  var rows=names.map(function(n){
+    var tot=0;
+    var tds=months.map(function(m){ var v=M[n][m]||0; tot+=v;
+      return '<td style="text-align:right'+(v<0?';color:var(--danger)':'')+'">'+_nz(v)+'</td>'; }).join('');
+    return '<tr><td style="font-weight:600">'+esc(n)+'</td><td class="muted mo">'+acctType(n)+'</td>'+tds
+      +'<td style="text-align:right;font-weight:700">'+_n(tot)+'</td></tr>';
+  }).join('');
+  return '<div class="panel"><div class="row"><h2 style="font-size:15px">월계표</h2>'+hlp('close.monthly')
+    +'<span class="stat">'+months.length+'개월 발생</span><span style="flex:1"></span>'
+    +'<button onclick="printLedger(\'monthly\')">🖨 인쇄</button></div>'
+    +'<p class="muted" style="font-size:11.5px;margin:6px 0 0">+ = 그 계정이 늘어난 방향</p>'
+    +'<div style="overflow-x:auto;margin-top:8px"><table><thead>'+head+'</thead><tbody>'+rows+'</tbody></table></div></div>';
+}
+// ── 합계잔액시산표 (제출 서식과 같은 4열) ──
+function tbRowsOf(arr,fid,yr){
+  var jr=journalOf(arr), mv=acctMoves(jr), om=openingMoves(_openingOf(fid,yr));
+  var all={}; Object.keys(mv).forEach(function(n){all[n]=1;}); Object.keys(om).forEach(function(n){all[n]=1;});
+  var order={'자산':1,'부채':2,'자본':3,'수익':4,'비용':5};
+  return Object.keys(all).sort(function(a,b){
+      return (order[acctType(a)]||9)-(order[acctType(b)]||9)||a.localeCompare(b);
+    }).map(function(n){
+    var m=mv[n]||{d:0,c:0}, o=om[n]||{d:0,c:0};
+    var d=m.d+o.d, c=m.c+o.c, net=d-c;
+    return {name:n,type:acctType(n),sumD:d,sumC:c,balD:net>0?net:0,balC:net<0?-net:0};
+  });
+}
+function tbView(arr){
+  var R=tbRowsOf(arr,S.fundId,S.year);
+  if(!R.length) return '<div class="panel"><div class="muted" style="padding:10px">시산표를 만들 자료가 없습니다.</div></div>';
+  var T=R.reduce(function(a,r){a.sumD+=r.sumD;a.sumC+=r.sumC;a.balD+=r.balD;a.balC+=r.balC;return a;},{sumD:0,sumC:0,balD:0,balC:0});
+  var ok=(T.balD===T.balC)&&(T.sumD===T.sumC);
+  var rows=R.map(function(r){
+    return '<tr><td style="text-align:right">'+_nz(r.sumD)+'</td><td style="text-align:right;font-weight:600">'+_nz(r.balD)+'</td>'
+      +'<td style="text-align:center">'+esc(r.name)+' <span class="muted mo" style="font-size:10.5px">'+r.type+'</span></td>'
+      +'<td style="text-align:right;font-weight:600">'+_nz(r.balC)+'</td><td style="text-align:right">'+_nz(r.sumC)+'</td></tr>';
+  }).join('');
+  return '<div class="panel"><div class="row"><h2 style="font-size:15px">합계잔액시산표</h2>'+hlp('close.tb')
+    +'<span class="muted" style="font-size:12px">'+S.year+'년 12월 31일 현재</span>'
+    +(ok?'<span class="chip ok" style="font-size:10px">✅ 차·대 일치</span>':'<span class="chip dg" style="font-size:10px">⚠ 차·대 불일치</span>')
+    +'<span style="flex:1"></span><button onclick="printLedger(\'tb\')">🖨 인쇄</button></div>'
+    +'<div style="overflow-x:auto;margin-top:8px"><table><thead>'
+    +'<tr><th colspan="2" style="text-align:center;background:var(--bg)">차 변</th><th style="text-align:center">계정과목</th>'
+    +'<th colspan="2" style="text-align:center;background:var(--bg)">대 변</th></tr>'
+    +'<tr><th style="text-align:right">합계</th><th style="text-align:right">잔액</th><th></th>'
+    +'<th style="text-align:right">잔액</th><th style="text-align:right">합계</th></tr></thead><tbody>'+rows
+    +'<tr style="font-weight:700;border-top:2px solid var(--ink)"><td style="text-align:right">'+_n(T.sumD)+'</td>'
+    +'<td style="text-align:right">'+_n(T.balD)+'</td><td style="text-align:center">합계</td>'
+    +'<td style="text-align:right">'+_n(T.balC)+'</td><td style="text-align:right">'+_n(T.sumC)+'</td></tr>'
+    +'</tbody></table></div></div>';
+}
+// ── 재무제표 · 전기 대비 비교 ──
+function _cmpRow(lbl,cur,prv,bold){
+  var d=cur-prv, pct=prv?((d/Math.abs(prv))*100):null;
+  var col=d>0?'var(--ok)':(d<0?'var(--danger)':'var(--faint)');
+  return '<tr'+(bold?' style="font-weight:700;background:var(--bg)"':'')+'><td>'+lbl+'</td>'
+    +'<td style="text-align:right;font-variant-numeric:tabular-nums">'+_n(cur)+'</td>'
+    +'<td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--sub)">'+_n(prv)+'</td>'
+    +'<td style="text-align:right;color:'+col+'">'+(d>0?'+':'')+_n(d)+'</td>'
+    +'<td class="mo" style="text-align:right;color:'+col+'">'+(pct===null?(cur?'신규':'—'):((d>0?'+':'')+pct.toFixed(1)+'%'))+'</td></tr>';
+}
+function finCompareView(arr){
+  loadPrevTxns();
+  var cur=computeFin(arr,S.fundId,S.year);
+  var pa=prevArr(), py=_yr()-1;
+  if(pa===null) return '<div class="panel">'+loadingHTML()+'<div class="muted" style="font-size:12px">'+py+'년 자료를 불러오는 중…</div></div>';
+  var prv=computeFin(pa,S.fundId,py);
+  var hasPrev=prv.appr>0||Object.keys(prv.opening||{}).length>0;
+  var head='<thead><tr><th>과목</th><th style="text-align:right">'+S.year+'년 (당기)</th>'
+    +'<th style="text-align:right">'+py+'년 (전기)</th><th style="text-align:right">증감</th><th class="mo" style="text-align:right">증감률</th></tr></thead>';
+  var bs='<div style="min-width:320px;flex:1"><div style="font-weight:700;margin-bottom:6px">재무상태표</div>'
+    +'<table>'+head+'<tbody>'
+    +_cmpRow('현금및현금성자산',cur.cash,prv.cash)
+    +_cmpRow('정기예금',cur.savings,prv.savings)
+    +_cmpRow('근로자대부금',cur.loan,prv.loan)
+    +(cur.otherAsset||prv.otherAsset?_cmpRow('기타자산',cur.otherAsset,prv.otherAsset):'')
+    +_cmpRow('자산총계',cur.totalAssets,prv.totalAssets,1)
+    +_cmpRow('고유목적사업준비금',cur.liab,prv.liab)
+    +_cmpRow('기본재산',cur.basic,prv.basic)
+    +_cmpRow('이월잉여금',cur.retained,prv.retained)
+    +_cmpRow('부채·자본총계',cur.totalLiabEq,prv.totalLiabEq,1)
+    +'</tbody></table></div>';
+  var is='<div style="min-width:320px;flex:1"><div style="font-weight:700;margin-bottom:6px">손익계산서(운영성과표)</div>'
+    +'<table>'+head+'<tbody>'
+    +_cmpRow('사업수익(이자 등)',cur.interest,prv.interest)
+    +_cmpRow('목적사업비',cur.purpose,prv.purpose)
+    +_cmpRow('일반관리비',cur.admin,prv.admin)
+    +(cur.otherExp||prv.otherExp?_cmpRow('기타비용',cur.otherExp,prv.otherExp):'')
+    +_cmpRow('당기순이익',cur.net,prv.net,1)
+    +'</tbody></table></div>';
+  var warn=cur.balanced?'<span class="chip ok" style="font-size:10px">✅ 대차일치</span>'
+    :'<span class="chip dg" style="font-size:10px">⚠ 대차차이 '+won(cur.totalAssets-cur.totalLiabEq)+'</span>';
+  return '<div class="panel"><div class="row" style="flex-wrap:wrap"><h2 style="font-size:15px">재무제표 · 전기 대비</h2>'+hlp('close.fin')+warn
+    +(hasPrev?'':'<span class="chip warn" style="font-size:10px">'+py+'년 자료 없음 — 전기는 0으로 표시</span>')
+    +'<span style="flex:1"></span><button onclick="printLedger(\'fin\')">🖨 인쇄</button>'
+    +'<button class="primary" onclick="openForm15()">📄 별지15호</button></div>'
+    +'<div class="row" style="align-items:flex-start;gap:22px;margin-top:12px;flex-wrap:wrap">'+bs+is+'</div></div>';
+}
+// 장부 인쇄 — 지금 보고 있는 표를 A4 가로로 그대로
+function printLedger(kind){
+  var box=$('closeBody'); if(!box){ toast('인쇄할 표가 없습니다','warn'); return; }
+  var fd=funds[S.fundId]||{}, tbl=box.querySelectorAll('table');
+  if(!tbl.length){ toast('인쇄할 표가 없습니다','warn'); return; }
+  var LBL={journal:'분개장',ledger:'계정별원장',monthly:'월계표',tb:'합계잔액시산표',fin:'재무제표(전기 대비)'};
+  var w=window.open('','_blank'); if(!w){ toast('팝업이 차단되었습니다','err'); return; }
+  var body=''; Array.prototype.forEach.call(tbl,function(t){ body+='<table>'+t.innerHTML+'</table>'; });
+  w.document.write('<!doctype html><meta charset=utf-8><title>'+esc(LBL[kind]||'장부')+' — '+esc(fd.short_name||fd.name||'')+'</title>'
+    +'<style>@page{size:A4 landscape;margin:12mm}body{font-family:Malgun Gothic,sans-serif;color:#111}'
+    +'h1{font-size:16px;margin:0 0 2px}p.sub{font-size:11px;color:#555;margin:0 0 10px}'
+    +'table{border-collapse:collapse;width:100%;margin-bottom:14px}th,td{border:1px solid #999;padding:3px 6px;font-size:10.5px}'
+    +'th{background:#eee}.mo{display:table-cell}@media print{button{display:none}}</style>'
+    +'<h1>'+esc(LBL[kind]||'장부')+'</h1>'
+    +'<p class="sub">'+esc(fd.name||'')+' · '+S.year+'년도 · 출력 '+ymd()+'</p>'+body
+    +'<button onclick="print()" style="padding:8px 16px">인쇄 / PDF 저장</button>');
+  w.document.close();
+}
 function closingTab(f){
   var key=S.fundId+'/'+S.year;
   if(S.txnsFor!==key){ var _k=key; S.txnsFor=_k; S.txns=null;
@@ -3441,13 +3711,30 @@ function closingTab(f){
     +'<span class="stat'+(unclass?' " style="background:var(--warn-bg);color:var(--warn)':'')+'">미분류 '+unclass+'</span>'
     +'<span class="stat'+(unappr?' " style="background:var(--warn-bg);color:var(--warn)':'')+'">미승인 '+unappr+'</span>'
     +(arr.length?(gateOk?'<span class="chip ok">✅ 결산 가능 (미분류·미승인 0)</span>':'<span class="chip warn">결산 관문: 미분류·미승인 0 필요</span>'):'')+reconChip+'</div>'
-    +'</div>'
-    +'<div class="panel">'+(arr.length?'<div style="overflow-x:auto"><table><thead><tr><th>일자</th><th>적요</th><th style="text-align:right">입금</th><th style="text-align:right">출금</th><th>차변</th><th>대변</th><th>승인</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<div class="muted" style="padding:16px 4px">거래가 없습니다. [📥 통장 엑셀 가져오기]로 시작하세요.</div>')+'</div>'
-    +finPanel(arr);
+    +closeSubBar()+'</div>'
+    +'<div id="closeBody">'+closeBodyHTML(arr,rows)+'</div>';
+}
+/* 하위 탭 본문 — 어느 장부를 보든 원천(승인 분개)은 같다 */
+function closeBodyHTML(arr,rows){
+  switch(S.closeSub){
+    case 'journal': return journalView(arr);
+    case 'ledger':  return ledgerView(arr);
+    case 'monthly': return monthlyView(arr);
+    case 'tb':      return tbView(arr);
+    case 'fin':     return finCompareView(arr);
+    default:
+      return '<div class="panel">'+(arr.length
+          ? '<div style="overflow-x:auto"><table><thead><tr><th>일자</th><th>적요</th><th style="text-align:right">입금</th><th style="text-align:right">출금</th><th>차변</th><th>대변</th><th>승인</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+          : '<div class="muted" style="padding:16px 4px">거래가 없습니다. [📥 통장 엑셀 가져오기]로 시작하세요.</div>')+'</div>'
+        +finPanel(arr);
+  }
 }
 function won(n){return (n||0).toLocaleString()+'원';}
-function computeFin(arr){
-  var yd=(funds[S.fundId]&&funds[S.fundId].years&&funds[S.fundId].years[S.year])||{}, opening=yd.opening||{};
+/* 재무 집계 — 연도를 파라미터로 받는다(전기 대비 비교에서 지난해도 계산해야 함).
+   인수를 생략하면 지금 보고 있는 기금·연도(기존 호출부 호환). */
+function computeFin(arr,fid,yr){
+  fid=fid||S.fundId; yr=yr||S.year;
+  var yd=(funds[fid]&&funds[fid].years&&funds[fid].years[yr])||{}, opening=yd.opening||{};
   var appr=arr.filter(function(x){return x.approved&&x.debit&&x.credit;});
   var acc={};
   appr.forEach(function(x){var amt=num(x.deposit)||num(x.withdraw)||0;
@@ -3700,7 +3987,22 @@ var HELP={
  'doc.read':{t:'서류 자동 판독',h:'<p><b>전자문서 PDF</b>는 글자를 그대로 읽어 <b>정확</b>합니다.</p>'
    +'<p><b>스캔본·사진</b>은 OCR로 읽습니다(최초 1회 한국어 데이터 약 15MB 내려받기). <b>오독이 있을 수 있으니 반드시 확인</b>하세요.</p>'
    +'<p>판독 결과는 [아래 칸에 반영]을 눌러야 입력되고, 저장은 별도입니다.</p>'},
- 'close.bank':{t:'통장 자동분개',h:'<p>통장 엑셀을 올리면 거래를 읽어 자동분개를 <b>제안</b>합니다.</p><p>차변/대변 계정을 확인·수정하고 <b>승인</b>에 체크하세요 — 승인한 것만 결산에 반영됩니다.</p>'},
+ 'close.bank':{t:'통장 자동분개',h:'<p>통장 엑셀을 올리면 거래를 읽어 자동분개를 <b>제안</b>합니다.</p><p>차변/대변 계정을 확인·수정하고 <b>승인</b>에 체크하세요 — 승인한 것만 결산에 반영됩니다.</p>'
+   +'<p><b>장부는 모두 이 승인 분개에서 나옵니다</b> — 분개장 → 계정별원장 → 월계표 → 시산표 → 재무제표 순으로 파생되므로, 어느 화면에서 봐도 숫자가 같습니다.</p>'},
+ 'close.journal':{t:'분개장',h:'<p>승인된 거래를 <b>일자순</b>으로 차변·대변 한 쌍씩 보여줍니다.</p>'
+   +'<p>같은 날 거래가 2건 이상이면 <b>일자 소계</b>가 붙습니다. 맨 아래 합계는 차변·대변이 반드시 같아야 합니다.</p>'},
+ 'close.ledger':{t:'계정별원장',h:'<p>계정 하나를 골라 그 계정의 거래만 <b>잔액이 이어지도록</b> 봅니다.</p>'
+   +'<p>맨 위 회색 줄이 <b>전기이월</b>이고, 그 아래로 잔액이 누적됩니다.</p>'
+   +'<p>잔액 방향은 계정 성격에 따릅니다 — <b>자산·비용</b>은 차변 잔액, <b>부채·자본·수익</b>은 대변 잔액.</p>'},
+ 'close.monthly':{t:'월계표',h:'<p>계정별로 <b>월별 발생액</b>을 한 표에 펼칩니다. 어느 달에 무엇이 늘고 줄었는지 한눈에 보입니다.</p>'
+   +'<p>부호는 그 계정이 <b>늘어난 방향</b>을 +로 잡습니다(자산·비용은 차변 증가, 부채·자본·수익은 대변 증가). 빨간 음수는 감소입니다.</p>'
+   +'<p>거래가 없는 달은 열이 생기지 않습니다.</p>'},
+ 'close.tb':{t:'합계잔액시산표',h:'<p>제출 서식과 같은 <b>4열</b>(차변 합계·잔액 / 계정과목 / 대변 잔액·합계)로 만듭니다.</p>'
+   +'<p>전기이월도 합계에 포함됩니다. 맨 아래 <b>차변 합계=대변 합계</b>, <b>차변 잔액=대변 잔액</b>이 맞아야 결산이 성립합니다.</p>'
+   +'<p>불일치가 뜨면 전기이월 입력이나 미승인 거래를 먼저 확인하세요.</p>'},
+ 'close.fin':{t:'재무제표 · 전기 대비',h:'<p>재무상태표·손익계산서를 <b>당기와 전기를 나란히</b> 놓고 증감액·증감률까지 계산합니다.</p>'
+   +'<p>전기 숫자는 <b>지난해 승인 분개 + 지난해 전기이월</b>로 그 자리에서 다시 계산한 것입니다 — 따로 입력하지 않습니다.</p>'
+   +'<p>지난해 자료가 없으면 전기는 0으로 표시되고 안내 배지가 붙습니다.</p>'},
  'close.report':{t:'운영상황보고',h:'<p>체크하면 완료로 저장됩니다.</p><p>운영상황보고(별지15호) 기한은 <b>회계연도 종료 후 3개월</b>(익년 3월 31일)입니다.</p>'},
  'sub.incent':{t:'공단 인센티브 현황',h:'<p>근로복지공단 지원 사업 정보입니다.</p><p><b>결정액 대비 집행액</b>으로 정산 상태가 자동 표시됩니다.</p>'},
  'sub.fill':{t:'지원신청서 자동 채움',h:'<p>공단 원본 양식에 이 기금의 <b>법인정보·참여사업장 명단</b>을 자동으로 채워 내려받습니다.</p>'
