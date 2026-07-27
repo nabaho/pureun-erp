@@ -79,6 +79,21 @@
   .wklog .d{color:var(--faint);font-size:10.5px;margin-right:4px;font-variant-numeric:tabular-nums}
   .wkin{width:100%;border:1px solid #c9d6f2;border-radius:6px;padding:5px 8px;font-size:12.5px;background:#fff;margin-top:2px}
   .wkin:focus{outline:none;border-color:var(--acc);box-shadow:0 0 0 2px rgba(37,99,235,.12)}
+  /* 컴팩트 요약 스트립 + 한 줄 필터바 */
+  .statbar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:0 0 8px;font-size:12px;color:var(--sub)}
+  .statbar b{font-size:14.5px;color:var(--ink);font-variant-numeric:tabular-nums}
+  .statbar .sep{color:#d7dde8}
+  .sb{border:1px solid var(--line);background:#fff;border-radius:13px;padding:2px 9px;cursor:pointer;white-space:nowrap;font-weight:600;font-variant-numeric:tabular-nums}
+  .sb:hover{border-color:#b9c4d4}
+  .sb.on{background:var(--acc2);border-color:var(--acc2);color:#fff}
+  .sb.am{border-color:#fde68a;background:#fffdf5;color:var(--warn)}
+  .sb.am.on{background:var(--warn);border-color:var(--warn);color:#fff}
+  .sb.dg{border-color:#fecaca;background:#fff7f7;color:var(--danger)}
+  .sb.dg.on{background:var(--danger);border-color:var(--danger);color:#fff}
+  .fbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+  .fbar select{padding:4px 7px;border:1px solid var(--line);border-radius:7px;font-size:12px;color:var(--sub);background:#fff}
+  .fbar .chipbtn{padding:3px 9px;font-size:11.5px}
+  #qbox{padding:4px 9px;border:1px solid var(--line);border-radius:7px;font-size:12px;min-width:190px}
   .endbtn{font-size:11px;padding:3px 9px;border:1px solid #cbd5e1;background:#fff;color:var(--sub);border-radius:6px;cursor:pointer;white-space:nowrap}
   .endbtn:hover{background:var(--ok-bg);border-color:#9ccdb4;color:var(--ok)}
   .endbtn .lk{margin-left:2px;font-size:9.5px}
@@ -280,6 +295,7 @@ function start(){
     fbDb.ref(NS+'/pesync').on('value',function(snap){ pesync=snap.val()||{};
       if(appHasFocus()){ S._pend=true; return; }
       if(S.view==='archive') route(); },function(){ pesync={}; });
+    peWatch();                                   // 푸른이알피 등록 → 자동 연동
   });
   document.addEventListener('focusout',function(){ setTimeout(function(){
     if(S._pend&&!appHasFocus()){ S._pend=false; route(); } },150); });
@@ -317,7 +333,7 @@ function shell(){
     +'<div class="sitem" id="nav-ho" onclick="go(\'ho\')">🔄 인수인계 <span class="cnt" id="cnt-ho"></span></div>'
     +'<div class="sitem" id="nav-archive" onclick="go(\'archive\')">🗄 보관함 <span class="cnt" id="cnt-ar"></span></div>'
     +'<div style="margin-top:auto">'
-    +'<div class="sitem nw" onclick="puerpModal()" title="계약·사건·컨설팅·기금·기타에서 담당 업무 가져오기">🔗 푸른이알피 가져오기</div>'
+    +'<div class="sitem nw" onclick="puerpModal()" title="자동 연동 상태 확인 · 기준일 이전 백로그 1회 정리">🔗 푸른이알피 연동</div>'
     +'<div class="sitem nw" onclick="importModal()" title="엑셀 이관 JSON 파일 불러오기">📥 엑셀 가져오기</div>'
     +'<div style="font-size:11px;color:var(--faint);padding:8px">주간 업무기록 · Firebase<br>기록은 자동 저장됩니다</div></div>'
     +'</div>'
@@ -540,6 +556,13 @@ function catSelect(cur,handler){
 function tdNo(n){ return '<td class="rowno">'+n+'</td>'; }
 function catBadge(cat){ var c=CATS[cat]||CATS['기타'];
   return '<span class="badge" style="background:'+c[0]+';color:'+c[1]+'">'+esc(cat||'기타')+'</span>'; }
+// 푸른이알피 연동 이상만 표시한다 (정상 연동은 종료 버튼의 🔗로 이미 드러난다)
+function peFlag(it){
+  var h='';
+  if(it.pe_gone) h+=' <span style="color:var(--danger);font-weight:800;font-size:10px" title="푸른이알피에서 원본이 삭제되었습니다. 이 업무와 기록은 그대로 보존됩니다.">⚠ 원본 없음</span>';
+  if(it.pe_nomgr) h+=' <span style="color:var(--warn);font-weight:800;font-size:10px" title="푸른이알피에 주담당이 없어 대표에게 배치했습니다. 푸른이알피에서 담당을 지정하면 자동으로 옮겨집니다.">담당 미지정</span>';
+  return h;
+}
 function stChip(st,id,active){ var s=STATUSES.filter(function(x){return x[0]===st;})[0]||STATUSES[0];
   var dim=active===false?'opacity:.35;':'';
   return '<span class="status" style="background:'+s[1]+';color:'+s[2]+';'+dim+'"'+(id?' onclick="cycleStatus(\''+id+'\');event.stopPropagation()"':'')+'>'+esc(s[0])+'</span>'; }
@@ -700,7 +723,8 @@ function rowHTML(it,no){
     +'<td>'+catBadge(it.cat)+'</td>'
     +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
     +'<div class="sub">'+esc(it.title||'')+(it.no?' · '+esc(it.no):'')
-    +(it.ho&&!it.ho.confirmed?' <span style="color:#b45309;font-weight:800;font-size:10px">📥 인수 확인 필요</span>':'')+'</div></td>'
+    +(it.ho&&!it.ho.confirmed?' <span style="color:#b45309;font-weight:800;font-size:10px">📥 인수 확인 필요</span>':'')
+    +peFlag(it)+'</div></td>'
     +'<td>'+stChip(it.status||'진행중',it._id)+'</td>'
     +'<td>'+lastHtml+'</td>'
     +'<td class="wkcell">'+logHtml
@@ -886,7 +910,8 @@ function renderDrawer(){
     +'<span class="ttl">'+esc(it.company||it.client||'')+' — '+esc(it.title||'')+'</span>'
     +'<span class="x" onclick="closeDrawer()">✕</span></div>'
     +'<div class="meta2">'+esc(it.no||'')+(it.client?' · 의뢰인 '+esc(it.client):'')+(it.start?' · 시작 '+esc(it.start):'')
-    +' · 담당 '+esc((it.mgr_main&&it.mgr_main.name)||'—')+(subs?' <span style="color:#a78bda">(공동 '+esc(subs)+')</span>':'')+'</div>'
+    +' · 담당 '+esc((it.mgr_main&&it.mgr_main.name)||'—')+(subs?' <span style="color:#a78bda">(공동 '+esc(subs)+')</span>':'')
+    +peFlag(it)+'</div>'
     +'<div class="chips">'
     +STATUSES.map(function(s){ return '<span class="status" style="background:'+s[1]+';color:'+s[2]+';'+((it.status||'진행중')===s[0]?'':'opacity:.35;')
       +'" onclick="patchItem(\''+id+'\',{status:\''+s[0]+'\'}).then(function(ok){if(!ok)return;renderDrawer();route();})">'+s[0]+'</span>'; }).join('')
@@ -1526,7 +1551,7 @@ function renderTeam(){
         +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
         +(perGroup?'':'<div class="sub">'+esc((it.mgr_main&&it.mgr_main.name)||'담당 미지정')+'</div>')
         +(it.officer?'<div class="sub">'+esc(it.officer)+'</div>':'')+'</td>'
-        +'<td style="font-size:12.5px">'+esc(it.title||'')+'</td>'
+        +'<td style="font-size:12.5px">'+esc(it.title||'')+peFlag(it)+'</td>'
         +'<td>'+logHtml+'</td><td>'+lastHtml+'</td><td>'+nx+'</td>'
         +'<td style="text-align:center"><button class="endbtn" onclick="event.stopPropagation();completeItem(\''+escJ(it._id)+'\')" '
         +'title="이 업무를 종료해 보관함으로 옮깁니다'+(peLinked(it)?' (푸른이알피 종료 연동)':'')+'">종료'
@@ -1814,49 +1839,216 @@ function _peDue(x){
   if(ds.length){ var t=todayStr(); var up=ds.filter(function(d){return d>=t;}); return up[0]||ds[ds.length-1]; }
   return x.contractEndDate||'';
 }
-// 5종 마스터 → 업무시트 항목 후보
+/* ── 푸른이알피 마스터 읽기 ─────────────────────────────────────────
+   RTDB `data/{키}/v`를 직접 읽는다. 예전엔 localStorage(pureun_v6_*)만 봐서
+   같은 브라우저에서 푸른이알피를 한 번 열지 않으면 후보가 0건이었다.
+   저장형태는 키마다 배열/객체로 다르므로 _peArr가 둘 다 받아 정규화한다.
+   ⚠ 읽기만 한다 — 마스터 쓰기는 pu-erp의 dbPatch만 담당한다. */
+var PE_KEYS={contract:'contracts',case:'cases',consulting:'consultings',fund:'funds',other:'other_projects'};
+var PE_DEF=[
+  ['contract','계약',function(x){return x.contractNo||'';},function(x){return x.title||x.contractType||'';},function(x){return x.contractType||x.consultingType||x.caseType||x.fundType||x.programName||'';}],
+  ['case','사건',function(x){return x.caseNo||'';},function(x){return x.title||x.caseName||'';},function(x){return x.typeName||x.caseType||'';}],
+  ['consulting','컨설팅',function(x){return x.consultNo||x.no||'';},function(x){return x.title||x.programName||'';},function(x){return x.typeName||x.consultingType||x.programName||'';}],
+  ['fund','기금',function(x){return x.fundNo||x.no||'';},function(x){return x.title||x.fundName||'';},function(x){return x.fundType||'기금';}],
+  ['other','기타',function(x){return x.projectNo||x.no||'';},function(x){return x.title||x.projectName||'';},function(x){return x.programName||'';}]
+];
+var PE_MIRROR=['no','cat','company','client','officer','title','due','start'];
+var peMaster={};                                   // {유형:[레코드]} — 읽기 실패한 유형은 키가 없다
+var peState={since:null,at:null,n:0,err:''};
+var _peU2N=null, _peT=null, _peBusy=false, _peWatching=false;
+
+function _peArr(v){
+  if(v&&!Array.isArray(v)&&typeof v==='object') v=Object.keys(v).map(function(k){return v[k];});
+  return Array.isArray(v)?v.filter(Boolean):null;
+}
+// 이름 해석용 sid→이름 (퇴직자 포함 — loadStaff는 재직자만 주므로 따로 읽는다)
+function peUsers(){
+  if(_peU2N) return Promise.resolve(_peU2N);
+  function fin(arr){ var m={}; (arr||[]).forEach(function(u){ if(u&&u.sid) m[u.sid]=u.name||u.sid; }); _peU2N=m; return m; }
+  var l=_ls('user_accounts'); if(l) return Promise.resolve(fin(l));
+  return fbDb.ref('data/user_accounts/v').once('value')
+    .then(function(s){ return fin(_peArr(s.val())); }).catch(function(){ return fin([]); });
+}
+function peLoadAll(){
+  return Promise.all(PE_DEF.map(function(d){
+    return fbDb.ref('data/'+PE_KEYS[d[0]]+'/v').once('value')
+      .then(function(s){ return [d[0],_peArr(s.val())]; })
+      .catch(function(){ return [d[0],_ls(PE_KEYS[d[0]])]; });   // 권한/네트워크 실패 → 캐시 폴백
+  })).then(function(rows){
+    rows.forEach(function(r){ if(r[1]) peMaster[r[0]]=r[1]; });
+    return peMaster;
+  });
+}
+// 마스터 1건 → 업무시트 항목 후보
+function _peCandOf(t,label,dNo,dTitle,dKind,x,sid2name){
+  var co=x.companyName||x.fundName||x.targetName||'';
+  var kind=dKind(x), title=dTitle(x);
+  return { pid:'PE-'+t+'-'+safeKey(x.id), kindLabel:label, no:dNo(x)||'', cat:normCat(kind,title),
+    company:co, title:(title||kind||co||'무제'), officer:(x.jurisdiction&&x.jurisdiction.officer)||'',
+    client:x.payee||'', mgr:sid2name[x.managerMain]||'', mgrSid:x.managerMain||'',
+    subs:(x.managerSubs||[]).map(function(sd){return sid2name[sd]||'';}).filter(Boolean),
+    due:_peDue(x), start:x.receiveDate||x.contractStartDate||'',
+    ref:{type:t,id:String(x.id)} };
+}
+// 5종 마스터 → 미종료 후보 전체. null = 한 유형도 못 읽음
 function puerpCandidates(){
-  var users=_ls('user_accounts')||[];              // 이름 해석용(퇴직자 포함)
-  var sid2name={}; users.forEach(function(u){ if(u&&u.sid) sid2name[u.sid]=u.name||u.sid; });
-  var SRC=[
-    ['contract','계약',_ls('contracts'),function(x){return x.contractNo||'';},function(x){return x.title||x.contractType||'';},function(x){return x.contractType||x.consultingType||x.caseType||x.fundType||x.programName||'';}],
-    ['case','사건',_ls('cases'),function(x){return x.caseNo||'';},function(x){return x.title||x.caseName||'';},function(x){return x.typeName||x.caseType||'';}],
-    ['consulting','컨설팅',_ls('consultings'),function(x){return x.consultNo||x.no||'';},function(x){return x.title||x.programName||'';},function(x){return x.typeName||x.consultingType||x.programName||'';}],
-    ['fund','기금',_ls('funds'),function(x){return x.fundNo||x.no||'';},function(x){return x.title||x.fundName||'';},function(x){return x.fundType||'기금';}],
-    ['other','기타',_ls('other_projects'),function(x){return x.projectNo||x.no||'';},function(x){return x.title||x.projectName||'';},function(x){return x.programName||'';}]
-  ];
-  var out=[], any=false;
-  SRC.forEach(function(s){
-    var arr=s[2]; if(!arr) return; any=true;
+  var sid2name=_peU2N||{}, out=[], any=false;
+  PE_DEF.forEach(function(d){
+    var arr=peMaster[d[0]]; if(!arr) return; any=true;
     arr.forEach(function(x){
       if(!x||!x.id||_peClosed(x)) return;
-      var co=x.companyName||x.fundName||x.targetName||'';
-      var kind=s[5](x), title=s[4](x);
-      var mgr=sid2name[x.managerMain]||'';
-      var subs=(x.managerSubs||[]).map(function(sd){return sid2name[sd]||'';}).filter(Boolean);
-      out.push({ pid:'PE-'+s[0]+'-'+safeKey(x.id),
-        kindLabel:s[1], no:s[3](x)||'', cat:normCat(kind,title),
-        company:co, title:(title||kind||co||'무제'), officer:(x.jurisdiction&&x.jurisdiction.officer)||'',
-        client:x.payee||'', mgr:mgr, mgrSid:x.managerMain||'', subs:subs,
-        due:_peDue(x), start:x.receiveDate||x.contractStartDate||'',
-        ref:{type:s[0],id:String(x.id)} });
+      out.push(_peCandOf(d[0],d[1],d[2],d[3],d[4],x,sid2name));
     });
   });
   return any?out:null;
 }
+// 마스터 + 사용자 준비
+function peReady(){ return Promise.all([peLoadAll(),peUsers()]); }
+
+/* ── 자동 연동 엔진 ─────────────────────────────────────────────────
+   ① 기준일(config/pe_since)이 없으면 = 최초 실행. 현재 있는 모든 건을
+      pe_seen에 "이미 본 것"으로만 적고 항목은 만들지 않는다.
+      → 엑셀 이관 163건과 겹치는 백로그가 쏟아지는 것을 막는다.
+      (pu-erp 레코드에 등록일 필드가 없어 날짜 비교가 불가능하므로 id 스냅샷을 쓴다)
+   ② 기준일 이후 새로 등록된 건(pe_seen에 없는 건)만 자동 생성한다.
+   ③ 푸른이알피 소유 필드는 pe_m 스냅샷과 비교해 "푸른이알피에서 실제로
+      바뀐 경우에만" 갱신한다. → 여기서 사람이 고친 값이 조용히 안 덮인다.
+   ④ 종료·재개는 pu-erp의 pesync 엔진 담당 — 여기서 손대지 않는다. */
+function peWatch(){
+  if(_peWatching) return; _peWatching=true;
+  // data/{키}/u = 그 키의 변경 타임스탬프 1개. 본문 대신 이것만 구독해 트래픽을 줄인다.
+  PE_DEF.forEach(function(d){
+    fbDb.ref('data/'+PE_KEYS[d[0]]+'/u').on('value',function(){ peBump(); },function(){});
+  });
+  peBump();                                        // u 노드가 없는 경우에도 최초 1회는 돌린다
+}
+function peBump(){
+  clearTimeout(_peT);
+  _peT=setTimeout(function(){ peLoadAll().then(peAutoSync); },1000);   // 5개 구독이 몰려 와도 1회만
+}
+function peAutoSync(){
+  if(_peBusy) return Promise.resolve();
+  if(!PE_DEF.some(function(d){return !!peMaster[d[0]];})) return Promise.resolve();
+  _peBusy=true;
+  return Promise.all([
+    peUsers(), loadStaff(),
+    fbDb.ref(NS+'/pe_seen').once('value').then(function(s){return s.val()||{};}).catch(function(){return null;}),
+    fbDb.ref(NS+'/config/pe_since').once('value').then(function(s){return s.val()||'';}).catch(function(){return null;})
+  ]).then(function(r){
+    var sid2name=r[0], staff=r[1], seen=r[2], since=r[3];
+    if(seen===null||since===null){ peState.err='연동 설정을 읽지 못했습니다'; return; }
+    peState.err=''; peState.since=since||'';
+    var name2sid={}; staff.forEach(function(u){ name2sid[u.name]=u.sid; });
+    var ceo=staff.filter(function(u){return /대표/.test(u.title||'');})[0]||null;
+
+    // 현재 마스터 상태: live=존재하는 전체 id, cand=미종료 후보
+    var cand=[], live={};
+    PE_DEF.forEach(function(d){
+      var arr=peMaster[d[0]]; if(!arr) return;
+      live[d[0]]={};
+      arr.forEach(function(x){
+        if(!x||!x.id) return;
+        live[d[0]][safeKey(String(x.id))]=1;
+        if(_peClosed(x)) return;
+        cand.push(_peCandOf(d[0],d[1],d[2],d[3],d[4],x,sid2name));
+      });
+    });
+    var up={};
+
+    // ① 최초 실행 — 기준선만 기록하고 끝낸다
+    if(!since){
+      var t0=todayStr();
+      Object.keys(live).forEach(function(t){
+        Object.keys(live[t]).forEach(function(k){ up[NS+'/pe_seen/'+t+'/'+k]=true; });
+      });
+      up[NS+'/config/pe_since']=t0;
+      return fbDb.ref().update(up).then(function(){
+        peState.since=t0; peState.at=new Date().toISOString();
+        toast('🔗 자동 연동 시작 — 오늘부터 푸른이알피에 등록되는 건이 자동으로 들어옵니다');
+      });
+    }
+
+    // ② 기존 연동건: 원본 존재 여부 + 소유 필드 미러
+    var byRef={}, candByRef={};
+    allItems().forEach(function(it){ if(peLinked(it)) byRef[it.ref.type+'|'+safeKey(it.ref.id)]=it; });
+    cand.forEach(function(c){ candByRef[c.ref.type+'|'+safeKey(c.ref.id)]=c; });
+    Object.keys(byRef).forEach(function(k){
+      var it=byRef[k], P=NS+'/items/'+it._id+'/';
+      // 원본 삭제 감지 — 그 유형을 실제로 읽어냈을 때만 판단한다(읽기 실패로 전건 오표시 방지)
+      if(live[it.ref.type]){
+        var gone=!live[it.ref.type][safeKey(it.ref.id)];
+        if(gone&&!it.pe_gone) up[P+'pe_gone']=true;
+        if(!gone&&it.pe_gone) up[P+'pe_gone']=null;
+      }
+      var c=candByRef[k]; if(!c) return;            // 종료된 건 → 미러 안 함(종료는 pesync 담당)
+      var m=it.pe_m||{}, nm={};
+      PE_MIRROR.forEach(function(f){
+        nm[f]=c[f]||'';
+        if(String(m[f]||'')!==nm[f]) up[P+f]=nm[f];
+      });
+      var mSid=c.mgrSid||name2sid[c.mgr]||'', has=!!(mSid||c.mgr);
+      nm.mgr=mSid+'/'+(c.mgr||''); nm.subs=(c.subs||[]).join('|');
+      if(String(m.mgr||'')!==nm.mgr){
+        up[P+'mgr_main']=has?{sid:mSid,name:c.mgr||''}:(ceo?{sid:ceo.sid,name:ceo.name}:{sid:'',name:''});
+        up[P+'pe_nomgr']=has?null:true;             // 담당 미지정 → 대표에게 배치하고 표시
+      }
+      if(String(m.subs||'')!==nm.subs)
+        up[P+'mgr_subs']=(c.subs||[]).map(function(n){return {sid:name2sid[n]||'',name:n};});
+      if(JSON.stringify(m)!==JSON.stringify(nm)) up[P+'pe_m']=nm;
+    });
+
+    // ③ 신규 자동 생성 — pe_seen에 없는 건만 (사용자가 지운 건은 seen에 남아 되살아나지 않는다)
+    var made=0;
+    cand.forEach(function(c){
+      var t=c.ref.type, rk=safeKey(c.ref.id);
+      if(seen[t]&&seen[t][rk]) return;
+      up[NS+'/pe_seen/'+t+'/'+rk]=true;
+      if(byRef[t+'|'+rk]) return;                   // 이미 수동으로 가져온 건
+      var mSid=c.mgrSid||name2sid[c.mgr]||'', has=!!(mSid||c.mgr);
+      var m={}; PE_MIRROR.forEach(function(f){ m[f]=c[f]||''; });
+      m.mgr=mSid+'/'+(c.mgr||''); m.subs=(c.subs||[]).join('|');
+      var rec={ no:c.no||(S.year+'-'+c.cat+'-PE'), cat:c.cat, company:c.company||'', client:c.client||'',
+        officer:c.officer||'', title:c.title||'', due:c.due||'', start:c.start||'', status:'진행중',
+        mgr_main:has?{sid:mSid,name:c.mgr||''}:(ceo?{sid:ceo.sid,name:ceo.name}:{sid:'',name:''}),
+        mgr_subs:(c.subs||[]).map(function(n){return {sid:name2sid[n]||'',name:n};}),
+        src:'puerp', ref:c.ref, pe_auto:true, pe_m:m, created_at:new Date().toISOString() };
+      if(!has) rec.pe_nomgr=true;
+      up[NS+'/items/'+c.pid]=rec; made++;
+    });
+
+    if(!Object.keys(up).length){ peState.at=new Date().toISOString(); return; }
+    return fbDb.ref().update(up).then(function(){
+      peState.at=new Date().toISOString(); peState.n=made;
+      if(made) toast('🔗 푸른이알피에서 '+made+'건 자동 연동');
+    });
+  }).catch(function(e){ peState.err=e&&e.message||'동기화 실패'; console.warn('[peAutoSync]',e); })
+    .then(function(){ _peBusy=false; });
+}
 function puerpModal(){
+  showModal('<h2 style="margin:0 0 10px">🔗 푸른이알피 연동</h2><p class="muted" style="font-size:12.5px">마스터를 불러오는 중…</p>');
+  peReady().then(_puerpModal);
+}
+function _peStatusHTML(){
+  var s=peState;
+  return '<div style="background:var(--bg2,#f6f8fb);border:1px solid var(--line);border-radius:9px;padding:9px 12px;font-size:12px;margin-bottom:12px">'
+    +(s.since?'<b>자동 연동 켜짐</b> · 기준일 '+esc(s.since)+' — 이 날 이후 푸른이알피에 등록된 건은 <b>담당자 내 업무에 자동으로</b> 들어옵니다.'
+             :'<b style="color:var(--warn)">자동 연동 준비 중</b> — 잠시 후 기준일이 설정됩니다.')
+    +(s.err?'<div style="color:var(--danger);margin-top:3px">⚠ '+esc(s.err)+'</div>':'')
+    +'<div class="muted" style="margin-top:3px">아래 목록은 <b>기준일 이전에 등록된 백로그</b>입니다 — 한 번만 정리하면 됩니다.</div></div>';
+}
+function _puerpModal(){
   var cand=puerpCandidates();
   if(cand===null){
-    showModal('<h2 style="margin:0 0 10px">🔗 푸른이알피 업무 가져오기</h2>'
-      +'<p class="muted" style="font-size:12.5px;line-height:1.7">이 브라우저에 푸른이알피 데이터가 없습니다.<br>'
-      +'같은 브라우저에서 <b>푸른이알피를 한 번 열었다가</b> 다시 시도해 주세요. (데이터가 브라우저에 캐시된 뒤 읽습니다)</p>'
+    showModal('<h2 style="margin:0 0 10px">🔗 푸른이알피 연동</h2>'
+      +'<p class="muted" style="font-size:12.5px;line-height:1.7">푸른이알피 마스터를 읽지 못했습니다.<br>'
+      +'Firebase 규칙에서 <code>data</code> 읽기 권한을 확인하거나, 같은 브라우저에서 <b>푸른이알피를 한 번 열고</b> 다시 시도해 주세요.</p>'
       +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">닫기</button>'
       +'<button class="primary" onclick="window.open(\'pu-erp.html?sso=1\',\'_blank\')">푸른이알피 열기</button></div>');
     return;
   }
   if(!cand.length){
-    showModal('<h2 style="margin:0 0 10px">🔗 푸른이알피 업무 가져오기</h2>'
-      +'<p class="muted" style="font-size:12.5px">가져올 진행 중 업무가 없습니다 (종료된 건은 제외합니다).</p>'
+    showModal('<h2 style="margin:0 0 10px">🔗 푸른이알피 연동</h2>'+_peStatusHTML()
+      +'<p class="muted" style="font-size:12.5px">정리할 백로그가 없습니다 (종료된 건은 제외합니다).</p>'
       +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">닫기</button></div>');
     return;
   }
@@ -1882,7 +2074,7 @@ function puerpModal(){
       +(c.mgr?' · 담당 '+esc(c.mgr):' · <span style="color:var(--warn)">담당 미지정</span>')
       +(c.due?' · 기한 '+esc(c.due):'')+'</div>'+(extra||'')+'</span></label>';
   }
-  var h='<h2 style="margin:0 0 6px">🔗 푸른이알피 업무 가져오기</h2>'
+  var h='<h2 style="margin:0 0 8px">🔗 푸른이알피 연동</h2>'+_peStatusHTML()
     +'<p class="muted" style="font-size:12.5px;margin:0 0 12px">계약·사건·컨설팅·기금·기타에서 <b>진행 중</b>인 '+cand.length+'건을 찾았습니다. '
     +'관리번호는 푸른이알피 번호를 그대로 씁니다.</p>';
   if(dup.length){
@@ -1928,12 +2120,18 @@ function runPuerpImport(){
     var up={}, n=0;
     sel.forEach(function(pid){
       var c=(S._peCand||{})[pid]; if(!c) return;
+      var mSid=c.mgrSid||name2sid[c.mgr]||'';
+      // pe_m = 푸른이알피 소유 필드 스냅샷. 자동 연동이 이 값과 비교해
+      // "푸른이알피에서 바뀐 필드만" 갱신하므로, 가져오는 시점에 함께 찍어 둔다.
+      var m={}; PE_MIRROR.forEach(function(f){ m[f]=c[f]||''; });
+      m.mgr=mSid+'/'+(c.mgr||''); m.subs=(c.subs||[]).join('|');
       var rec={ no:c.no||(S.year+'-'+c.cat+'-PE'), cat:c.cat, company:c.company||'', client:c.client||'',
         officer:c.officer||'', title:c.title||'', due:c.due||'', start:c.start||'', status:'진행중',
-        mgr_main:{sid:c.mgrSid||name2sid[c.mgr]||'',name:c.mgr||''},
+        mgr_main:{sid:mSid,name:c.mgr||''},
         mgr_subs:(c.subs||[]).map(function(nm){return {sid:name2sid[nm]||'',name:nm};}),
-        src:'puerp', ref:c.ref, created_at:new Date().toISOString() };
+        src:'puerp', ref:c.ref, pe_m:m, created_at:new Date().toISOString() };
       up[NS+'/items/'+c.pid]=rec; n++;
+      up[NS+'/pe_seen/'+c.ref.type+'/'+safeKey(c.ref.id)]=true;
     });
     if(!n){ if(msg)msg.textContent='가져올 건이 없습니다.'; return; }
     if(msg)msg.textContent='등록 중… ('+n+'건)';
