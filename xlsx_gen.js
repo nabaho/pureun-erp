@@ -68,9 +68,20 @@ function sheetXml(opt){
     merges.push(`A${r}:${last}${r}`); r++; }
   const headRow=r;
   rowsXml+=`<row r="${r}" ht="${rowHeight(opt.headers,widths)}" customHeight="1">`+opt.headers.map((h,i)=>cell(COL(i)+r,S_HEAD,h)).join("")+`</row>`; r++;
+  /* 셀 값은 문자열 또는 {t,rowSpan} — rowSpan은 세로 병합(신구대조표의 변경조항·변경이유),
+     null은 위 셀에 병합돼 자리만 차지한다 */
+  const txt=v=>(v&&typeof v==="object")?String(v.t==null?"":v.t):(v==null?"":String(v));
   (opt.rows||[]).forEach(row=>{
-    // 행 높이를 내용에 맞춰 명시 — 없으면 엑셀이 한 줄로 표시해 조문이 잘린다
-    rowsXml+=`<row r="${r}" ht="${rowHeight(row,widths)}" customHeight="1">`+opt.headers.map((_,i)=>cell(COL(i)+r,S_BODY,row[i])).join("")+`</row>`; r++;
+    // 행 높이를 내용에 맞춰 명시 — 없으면 엑셀이 한 줄로 표시해 조문이 잘린다.
+    // 병합 셀은 그 행 하나로 높이를 정하면 안 되므로 높이 계산에서 제외한다.
+    const hCells=opt.headers.map((_,i)=>{ const v=row[i];
+      return (v&&typeof v==="object"&&(v.rowSpan||1)>1)?"":txt(v); });
+    rowsXml+=`<row r="${r}" ht="${rowHeight(hCells,widths)}" customHeight="1">`
+      +opt.headers.map((_,i)=>{ const v=row[i];
+        if(v===null||v===undefined)return `<c r="${COL(i)}${r}" s="${S_BODY}"/>`;   // 병합에 덮인 자리도 서식은 유지
+        if(typeof v==="object"&&(v.rowSpan||1)>1) merges.push(`${COL(i)}${r}:${COL(i)}${r+v.rowSpan-1}`);
+        return cell(COL(i)+r,S_BODY,txt(v));
+      }).join("")+`</row>`; r++;
   });
   const merge=merges.length?`<mergeCells count="${merges.length}">`+merges.map(m=>`<mergeCell ref="${m}"/>`).join("")+`</mergeCells>`:"";
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

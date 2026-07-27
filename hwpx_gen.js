@@ -19,7 +19,9 @@ const esc=s=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").rep
    TBL_SLACK: 표 outMargin(283×2)+테두리 여유 — 표가 본문폭을 넘어 잘리지 않도록 확보 */
 const CH=1200;                        /* 기본 글자크기 12pt — header.xml charPr height=1200과 반드시 일치 */
 const LH=Math.round(CH*1.3);          /* 줄 높이 = 글자크기 × 줄간격 130%(paraPr 0) */
-const VSZ=CH, BASE=Math.round(CH*0.85), SPC=Math.round(CH*0.6);   /* lineseg 수치도 글자크기에서 파생 */
+const VSZ=CH, BASE=Math.round(CH*0.85), SPC=LH-VSZ;   /* lineseg 수치는 글자크기에서 파생 */
+/* SPC는 반드시 LH-VSZ 여야 한다 — vertsize+spacing이 줄높이와 어긋나면
+   병합 셀처럼 한글이 재계산을 건너뛰는 곳에서 줄간격이 벌어진다(19.2pt vs 15.6pt) */
 const CELL_PAD=1020, CELL_VPAD=282, TBL_SLACK=900;
 const BOLD="7", HEADFILL="4";   // 굵은 charPr·머리행 배경 borderFill (템플릿 시퀀스에 이어 부여)
 const BODY_W_P=42520, BODY_W_L=72852;
@@ -86,32 +88,54 @@ function cellParaInfo(text,w,cp){
   });
   return {xml:xml, lines:total};
 }
-/* 표: rows=string[][] (rows[0]=머리행 — 굵게+회색배경), widths=열폭(hwpunit, 합계≈42520) */
+/* 표: rows=cell[][] (rows[0]=머리행 — 굵게+회색배경), widths=열폭(hwpunit)
+   cell = 문자열 | {t:문자열, rowSpan:n} | null(위쪽 셀에 세로 병합되어 자리만 차지)
+   세로 병합은 신구대조표에 필수 — 한 조문이 항 단위로 여러 행에 걸칠 때
+   변경조항·변경이유가 행마다 쪼개지면 어느 조문의 무슨 이유인지 읽을 수 없다. */
+function cellOf(c){
+  if(c===null||c===undefined)return null;                      // 병합으로 덮인 자리
+  if(typeof c==="object")return {t:String(c.t==null?"":c.t), rs:Math.max(1,c.rowSpan||1)};
+  return {t:String(c), rs:1};
+}
 function tablePara(rows,widths){
   const colCnt=widths.length,rowCnt=rows.length;
   const totalW=widths.reduce(function(a,b){return a+b;},0);
-  /* 1단계: 셀 XML·줄 수 계산 → 행 높이 = 그 행 최대 줄 수 기준 (실제 한글도 내용에 맞춘 높이를 저장) */
+  const grid=rows.map(function(cells){ return cells.map(cellOf); });
+  /* 1단계: 셀 XML·줄 수 계산 → 행 높이는 그 행에서 끝나는(rs=1) 셀들의 최대 줄 수 기준 */
   const cellInfo=[], rowH=[];
-  rows.forEach(function(cells,r){
-    const infos=cells.map(function(c,ci){ return cellParaInfo(c,widths[ci],r===0?BOLD:"0"); });
+  grid.forEach(function(cells,r){
+    const infos=cells.map(function(c,ci){ return c?cellParaInfo(c.t,widths[ci],r===0?BOLD:"0"):null; });
     cellInfo.push(infos);
-    let maxLines=1; infos.forEach(function(i){ if(i.lines>maxLines)maxLines=i.lines; });
+    let maxLines=1;
+    infos.forEach(function(inf,ci){ const c=cells[ci];
+      if(inf&&c&&c.rs===1&&inf.lines>maxLines)maxLines=inf.lines; });
     rowH.push(maxLines*LH+CELL_VPAD);
   });
+  /* 2단계: 병합 셀이 병합 구간에 안 들어가면 마지막 행을 늘려 잘림을 막는다 */
+  grid.forEach(function(cells,r){
+    cells.forEach(function(c,ci){
+      if(!c||c.rs<2)return;
+      const need=cellInfo[r][ci].lines*LH+CELL_VPAD;
+      let have=0; for(var k=r;k<Math.min(rowCnt,r+c.rs);k++)have+=rowH[k];
+      if(need>have){ const last=Math.min(rowCnt,r+c.rs)-1; rowH[last]+=(need-have); }
+    });
+  });
   const tblH=rowH.reduce(function(a,b){return a+b;},0);
-  /* 2단계: 표 XML 조립 */
+  /* 3단계: 표 XML 조립 */
   let t='<hp:tbl id="0" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="1" rowCnt="'+rowCnt+'" colCnt="'+colCnt+'" cellSpacing="0" borderFillIDRef="3" noAdjust="0">'
     +'<hp:sz width="'+totalW+'" widthRelTo="ABSOLUTE" height="'+tblH+'" heightRelTo="ABSOLUTE" protect="0"/>'
     +'<hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
     +'<hp:outMargin left="283" right="283" top="283" bottom="283"/><hp:inMargin left="510" right="510" top="141" bottom="141"/>';
-  rows.forEach(function(cells,r){
+  grid.forEach(function(cells,r){
     t+='<hp:tr>';
     cells.forEach(function(c,ci){
+      if(!c)return;                                            // 병합으로 덮인 자리는 tc를 내지 않는다
       const w=widths[ci], head=(r===0);
+      let h=0; for(var k=r;k<Math.min(rowCnt,r+c.rs);k++)h+=rowH[k];
       t+='<hp:tc name="" header="'+(head?1:0)+'" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="'+(head?HEADFILL:"3")+'">'
         +'<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="'+(head?"CENTER":"TOP")+'" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
         +cellInfo[r][ci].xml
-        +'</hp:subList><hp:cellAddr colAddr="'+ci+'" rowAddr="'+r+'"/><hp:cellSpan colSpan="1" rowSpan="1"/><hp:cellSz width="'+w+'" height="'+rowH[r]+'"/><hp:cellMargin left="510" right="510" top="141" bottom="141"/></hp:tc>';
+        +'</hp:subList><hp:cellAddr colAddr="'+ci+'" rowAddr="'+r+'"/><hp:cellSpan colSpan="1" rowSpan="'+c.rs+'"/><hp:cellSz width="'+w+'" height="'+h+'"/><hp:cellMargin left="510" right="510" top="141" bottom="141"/></hp:tc>';
     });
     t+='</hp:tr>';
   });

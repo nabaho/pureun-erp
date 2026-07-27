@@ -14,8 +14,8 @@
 <script src="vendor/pdf.min.js"></script>
 <script>if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc="vendor/pdf.worker.min.js";</script>
 <script src="hwp_extract.js?v=4"></script>
-<script src="hwpx_gen.js?v=8"></script>
-<script src="xlsx_gen.js?v=2"></script>
+<script src="hwpx_gen.js?v=9"></script>
+<script src="xlsx_gen.js?v=3"></script>
 <style>
 :root{
   --accent:#1e40af; --accent2:#2563eb; --bg:#e2e8f0; --ink:#202124; --sub:#475569; --mute:#94a3b8;
@@ -243,7 +243,7 @@ table.daejo td.dj2{padding:0}
 </style>
 </head>
 <body>
-<div id="dropOverlay"><div class="box"><div class="ic">📄</div><b>여기에 놓으면 업로드</b><span>취업규칙 HWP · HWPX · PDF · TXT 파일을 끌어다 놓으세요</span></div></div>
+<div id="dropOverlay"><div class="box"><div class="ic">📄</div><b>여기에 놓으면 업로드</b><span>취업규칙 HWP · HWPX · DOCX · ODT · RTF · PDF · TXT 파일을 끌어다 놓으세요</span></div></div>
 <header>
   <div class="logo">푸</div>
   <div class="wm">푸른노무법인<small>PUREUN · LLF</small></div>
@@ -251,8 +251,8 @@ table.daejo td.dj2{padding:0}
   <div class="toolbar">
     <div class="fld"><label>사업장 (규정 보관)</label><select id="site"></select></div>
     <div class="fld"><label>취업규칙 파일</label>
-      <button class="btn ghost" id="upBtn" title="클릭하거나 파일을 이 창에 끌어다 놓으세요">📄 HWP·HWPX·PDF·TXT 업로드</button>
-      <input type="file" id="upload-input" accept=".hwp,.hwpx,.pdf,.txt" style="display:none"></div>
+      <button class="btn ghost" id="upBtn" title="클릭하거나 파일을 이 창에 끌어다 놓으세요">📄 취업규칙 파일 업로드</button>
+      <input type="file" id="upload-input" accept=".hwp,.hwpx,.docx,.doc,.odt,.rtf,.pdf,.txt" style="display:none"></div>
     <div class="fld"><label>상시 근로자 규모</label>
       <select id="size"><option value="5인미만">5인 미만</option><option value="5인이상">5~9인</option><option value="10인이상" selected>10~29인</option><option value="30인이상">30인 이상</option></select></div>
     <div class="fld"><label>검토 기준일</label><input type="date" id="asof" value="2026-07-21"></div>
@@ -923,7 +923,7 @@ let DRAG_ART=null;    // 드래그 중인 조문 라벨(박스→오른쪽 패�
 const HWP_BUFS={},PDF_URLS={}; let upSeq=0;
 const SITE_FILE={},SITE_NAME={};   // key별 원본 파일명 / 인식된 사업장명
 
-/* ── 파일 업로드 (HWP·HWPX·PDF·TXT) ── */
+/* ── 파일 업로드 (HWP·HWPX·DOCX·ODT·RTF·PDF·TXT) ── */
 /* ── 진행 중 작업이 있을 때 새 취업규칙으로 넘어가기 ──
    임시저장(자동 저장) 슬롯은 문서 1건뿐이라, 새 파일을 올리면 그 슬롯이 새 문서로 바뀐다.
    넘어가기 전에 진행 중 작업을 보관함에 확정 저장해 두면 나중에 대시보드·보관함에서 그대로 이어갈 수 있다. */
@@ -945,9 +945,13 @@ async function loadFile(file){
   const name=file.name, ext=name.toLowerCase().split(".").pop();
   try{
     let text, buf=null, pdf=false;
-    if(ext==="hwp"||ext==="hwpx"){
+    if(ext==="hwp"||ext==="hwpx"||ext==="docx"||ext==="doc"||ext==="odt"||ext==="rtf"){
       buf=await file.arrayBuffer();
-      text=await extractDocText(buf);   // HWP(CFB)·HWPX(ZIP) 자동 판별
+      text=await extractDocText(buf);   // HWP(CFB)·HWPX·DOCX·ODT·RTF 자동 판별
+      if(String(text||"").replace(/\s/g,"").length<20){
+        if(ext==="doc") throw new Error("옛 워드(.doc) 이진 형식은 읽지 못했습니다.\n워드에서 [다른 이름으로 저장] → .docx 로 저장한 뒤 올려 주세요.");
+        throw new Error("본문 텍스트를 찾지 못했습니다. 파일이 손상되었거나 그림만 있는 문서일 수 있습니다.");
+      }
     }else if(ext==="pdf"){
       buf=await file.arrayBuffer(); pdf=true;
       text=await extractDocText(buf.slice(0));   // pdf.js
@@ -957,7 +961,7 @@ async function loadFile(file){
     }else if(ext==="txt"){
       const raw=await file.arrayBuffer();
       text=new TextDecoder("utf-8",{fatal:true}).decode(raw);
-    }else{ alert("HWP·HWPX·PDF·TXT 파일만 지원합니다. (DOCX는 추후 지원)"); return; }
+    }else{ alert("지원 형식: HWP · HWPX · DOCX · ODT · RTF · PDF · TXT\n(옛 .doc 이진 형식은 워드에서 .docx로 저장해 올려 주세요)"); return; }
     const key="U"+(++upSeq);
     const site=detectSiteName(text);   // 본문에서 사업장명 인식
     SAMPLES[key]=text; SITE_MAP[key]=(site?"🏢 "+site:"📄 "+name); SITE_BIZNO[key]="";
@@ -1513,8 +1517,9 @@ let RZ_NONE=false;        // 변경이유·조치를 문서에서 전체 제외(
 /* 신구대조표 열폭 — 변경 전/후는 같은 폭(항의 줄 위치가 좌우로 일치하도록).
    [전체 미반영]이면 변경이유 열을 빼고 그 폭을 본문 두 열에 나눈다. */
 function daejoCols(){
-  if(RZ_NONE) return PAGE_LAND?[1.5,4.25,4.25]:[1.4,4.05,4.05];
-  return PAGE_LAND?[1.5,3.15,3.15,2.2]:[1.4,3.1,3.1,1.9];
+  if(RZ_NONE) return PAGE_LAND?[1.5,4.25,4.25]:[1.45,4.0,4.0];
+  // 변경조항은 '제25조 / [검토]'만 들어가면 되므로 좁게, 변경이유는 근거 문장이 들어가므로 넓게
+  return PAGE_LAND?[1.35,3.2,3.2,2.25]:[1.45,3.05,3.05,2.0];
 }
 /* 앵커가 삭제된 조문이면 그 앞의 살아있는 조문으로 옮긴다.
    삭제된 조문은 결번이 되므로 그 번호에 가지번호(제N조의n)를 매달 수 없다. */
@@ -1705,17 +1710,30 @@ function daejoRowsAligned(){
   daejoRows().forEach(r=>{
     const isPlain=(r.before==="신설"||r.after==="〈삭제〉");
     const al=isPlain?null:alignParas(r.before,r.after);
-    if(!al||al.length<2){ out.push(r); return; }
+    if(!al||al.length<2){ out.push(Object.assign({},r,{span:1})); return; }
     al.forEach((p,i)=>out.push({
       label:i===0?r.label:"", kind:i===0?r.kind:"",
       before:p.b||(p.a?"〈신설〉":""), after:p.a||(p.b?"〈삭제〉":""),   // 한쪽에만 있는 항은 신설/삭제로 표기
-      reason:i===0?r.reason:"", noText:i===0?r.noText:false
+      reason:i===0?r.reason:"", noText:i===0?r.noText:false,
+      span:i===0?al.length:0            // 조문 첫 행에만 병합 행수(0=위 셀에 병합됨)
     }));
   });
   return out;
 }
 /* 신구대조표 표 구성 — [전체 미반영]이면 변경이유 열 자체를 뺀다(화면·문서 동일) */
 function daejoHeaders(){ return RZ_NONE?["변경조항","변경 전","변경 후"]:["변경조항","변경 전","변경 후","변경이유"]; }
+/* 문서용 표 본문 — 변경조항·변경이유는 조문당 한 셀로 세로 병합한다.
+   항 단위로 행이 갈리는데 그 두 열까지 행마다 쪼개지면 어느 조문의 무슨 이유인지 읽을 수 없다. */
+function daejoBodyMerged(){
+  const rows=daejoRowsAligned().filter(r=>!r.noText);
+  return rows.map(r=>{
+    const label=r.span?(r.label+(r.kind?"\n["+r.kind+"]":"")):null;
+    const cell=(t,n)=>n>1?{t:t,rowSpan:n}:t;
+    const c=[r.span?cell(label,r.span):null, r.before==="신설"?"신 설":r.before, r.after];
+    if(!RZ_NONE)c.push(r.span?cell(r.reason,r.span):null);
+    return c;
+  });
+}
 function daejoBody(){
   return daejoRowsAligned().filter(r=>!r.noText).map(r=>{   // 문안 없는 신설은 제출 문서에서 제외
     const c=[r.label+(r.kind?"\n["+r.kind+"]":""), r.before==="신설"?"신 설":r.before, r.after];
@@ -1899,7 +1917,7 @@ function downloadXlsx(_ignored,ctx){
     try{
       XLSXGEN.download({sheet:"신구대조표",title:`${site} 취업규칙 개정 신구대조표`,
         sub:`검토기준일 ${ctx.asof} · 규칙집 v3 · ${REV_MODE==="partial"?"일부개정":"전부개정"}`,
-        headers,rows:body,colRatios:daejoCols(),landscape:PAGE_LAND},fname+".xlsx");   // 용지 방향 선택(기본 A4 세로)
+        headers,rows:daejoBodyMerged(),colRatios:daejoCols(),landscape:PAGE_LAND},fname+".xlsx");   // 용지 방향 선택(기본 A4 세로)
       return;
     }catch(e){ console.warn("xlsx 생성 실패 — SheetJS 폴백:",e); }
   }
@@ -2003,7 +2021,7 @@ $("dl-doc-daejo").addEventListener("click",()=>{
     HWPX.setPage({landscape:PAGE_LAND});
     const body=HWPX.docTitle(`${dsite} 취업규칙 개정 신구대조표`)   // 제목·부제는 가운데
       +HWPX.docSub(`검토기준일 ${LAST.asof} · 규칙집 v3 · ${REV_MODE==="partial"?"일부개정":"전부개정"}`)+HWPX.spacer()
-      +HWPX.tablePara([headers].concat(rows),HWPX.cols(daejoCols()));
+      +HWPX.tablePara([headers].concat(daejoBodyMerged()),HWPX.cols(daejoCols()));   /* 변경조항·변경이유 세로 병합 */
     HWPX.download(body,base+".hwpx");
   }catch(e){ console.warn("hwpx 생성 실패 — RTF(.doc) 폴백:",e);
     const w=[2400,3800,3800,2600].slice(0,headers.length);
@@ -2168,7 +2186,7 @@ $("dl-docset").addEventListener("click",()=>{
     if(DOCSET.daejo){
       const rows=daejoBody();   // 항 단위 줄맞춤 + [전체 미반영] 시 변경이유 열 제외
       body+=head(`${site} 취업규칙 개정 신구대조표`)+HWPX.docSub(`검토기준일 ${asof} · ${sum}`)+HWPX.spacer()
-        +(rows.length?HWPX.tablePara([daejoHeaders()].concat(rows),HWPX.cols(daejoCols())):HWPX.bodyPara("변경 항목 없음"));
+        +(rows.length?HWPX.tablePara([daejoHeaders()].concat(daejoBodyMerged()),HWPX.cols(daejoCols())):HWPX.bodyPara("변경 항목 없음"));
     }
     if(DOCSET.full){
       body+=head(`${site} 취업규칙`)+HWPX.docSub(`${REV_MODE==="partial"?"일부개정":"전부개정"} · 시행 ${fmtKDate(asof)}`)+HWPX.spacer();

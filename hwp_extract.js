@@ -157,15 +157,82 @@
     return pages.join("\n");
   }
 
-  /** 확장자/매직바이트로 HWP(CFB)·HWPX(ZIP)·PDF 자동 판별 후 텍스트 추출 */
-  async function extractDocText(arrayBuffer, XLSXlib, pakoLib, pdfjs) {
+  /** ArrayBuffer(.docx) → 본문 텍스트 (word/document.xml, <w:p> 문단 단위) */
+  function extractDocxText(arrayBuffer, pakoLib) {
     const u8 = new Uint8Array(arrayBuffer);
+    const entries = _readZip(u8, pakoLib, /^word\/document\.xml$/i);
+    const raw = entries["word/document.xml"];
+    if (!raw) throw new Error("DOCX 본문(word/document.xml)을 찾을 수 없습니다.");
+    const xml = new TextDecoder("utf-8").decode(raw);
+    const paras = xml.split(/<w:p[\s>]/);
+    const lines = [];
+    for (let i = 1; i < paras.length; i++) {
+      const seg = paras[i];
+      // <w:t>글자</w:t> 를 모으고, <w:tab/>·<w:br/>는 공백/개행으로
+      const t = seg.replace(/<w:tab\b[^>]*\/?>/g, "\t").replace(/<w:br\b[^>]*\/?>/g, "\n");
+      const runs = t.match(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g) || [];
+      lines.push(_entities(runs.map(r => r.replace(/<w:t[^>]*>/, "").replace(/<\/w:t>/, "")).join("")));
+    }
+    return lines.join("\n");
+  }
+
+  /** ArrayBuffer(.odt) → 본문 텍스트 (content.xml, <text:p>/<text:h> 문단 단위) */
+  function extractOdtText(arrayBuffer, pakoLib) {
+    const u8 = new Uint8Array(arrayBuffer);
+    const entries = _readZip(u8, pakoLib, /^content\.xml$/i);
+    const raw = entries["content.xml"];
+    if (!raw) throw new Error("ODT 본문(content.xml)을 찾을 수 없습니다.");
+    const xml = new TextDecoder("utf-8").decode(raw);
+    const paras = xml.split(/<text:(?:p|h)[\s>]/);
+    const lines = [];
+    for (let i = 1; i < paras.length; i++) {
+      const end = paras[i].search(/<\/text:(?:p|h)>/);
+      const seg = end >= 0 ? paras[i].slice(0, end) : paras[i];
+      lines.push(_entities(seg.replace(/<text:tab\b[^>]*\/?>/g, "\t").replace(/<[^>]+>/g, "")));
+    }
+    return lines.join("\n");
+  }
+
+  /** RTF 텍스트 → 본문. 한글·워드가 저장한 .doc(RTF)와 .rtf 모두 해당 */
+  function extractRtfText(arrayBuffer) {
+    let s = new TextDecoder("latin1").decode(new Uint8Array(arrayBuffer));
+    s = s.replace(/\{\\\*[\s\S]*?\}/g, "");                       // 주석·서식 정의 그룹 제거
+    s = s.replace(/\\u(-?\d+)\s?\??/g, (_, n) => String.fromCharCode((+n + 65536) % 65536));  // \uN? 유니코드
+    s = s.replace(/\\'([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));    // \'XX (cp949 바이트)
+    s = s.replace(/\\par[d]?\b/g, "\n").replace(/\\line\b/g, "\n").replace(/\\tab\b/g, "\t");
+    s = s.replace(/\\[a-zA-Z]+-?\d*\s?/g, "").replace(/[{}]/g, "");
+    return s.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  /** ZIP 안에 무엇이 들었는지 보고 HWPX·DOCX·ODT를 가른다 */
+  function _zipKind(u8, pakoLib) {
+    const names = Object.keys(_readZip(u8, pakoLib, /^(Contents\/section0\.xml|word\/document\.xml|content\.xml|mimetype)$/i));
+    if (names.some(n => /^word\/document\.xml$/i.test(n))) return "docx";
+    if (names.some(n => /^Contents\/section0\.xml$/i.test(n))) return "hwpx";
+    if (names.some(n => /^content\.xml$/i.test(n))) return "odt";
+    return "hwpx";   // 판단 못 하면 기존 경로(HWPX)로
+  }
+
+  /** 확장자/매직바이트로 HWP(CFB)·HWPX·DOCX·ODT·RTF·PDF 자동 판별 후 텍스트 추출 */
+  async function extractDocText(arrayBuffer, XLSXlib, pakoLib, pdfjs) {
+    let u8 = new Uint8Array(arrayBuffer);
+    // UTF-8 BOM이 앞에 붙은 파일도 있다(옛 내보내기가 만든 RTF) — 건너뛰고 판별한다
+    if (u8[0] === 0xef && u8[1] === 0xbb && u8[2] === 0xbf) {
+      arrayBuffer = arrayBuffer.slice(3); u8 = new Uint8Array(arrayBuffer);
+    }
     if (u8[0] === 0x25 && u8[1] === 0x50 && u8[2] === 0x44 && u8[3] === 0x46) return extractPdfText(arrayBuffer, pdfjs); // "%PDF"
-    if (u8[0] === 0x50 && u8[1] === 0x4b) return extractHwpxText(arrayBuffer, pakoLib);   // "PK" = ZIP/HWPX
+    // "{\rtf" — 한글·워드가 저장한 .doc(RTF)도 여기로 들어온다
+    if (u8[0] === 0x7b && u8[1] === 0x5c && u8[2] === 0x72 && u8[3] === 0x74 && u8[4] === 0x66) return extractRtfText(arrayBuffer);
+    if (u8[0] === 0x50 && u8[1] === 0x4b) {                       // "PK" = ZIP → HWPX·DOCX·ODT
+      const kind = _zipKind(u8, pakoLib);
+      if (kind === "docx") return extractDocxText(arrayBuffer, pakoLib);
+      if (kind === "odt") return extractOdtText(arrayBuffer, pakoLib);
+      return extractHwpxText(arrayBuffer, pakoLib);
+    }
     return extractHwpText(arrayBuffer, XLSXlib, pakoLib);                                  // CFB = HWP 5.0
   }
 
-  const api = { extractHwpText, extractHwpxText, extractPdfText, extractDocText };
+  const api = { extractHwpText, extractHwpxText, extractDocxText, extractOdtText, extractRtfText, extractPdfText, extractDocText };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else Object.assign(global, api);
 })(typeof globalThis !== "undefined" ? globalThis : this);
