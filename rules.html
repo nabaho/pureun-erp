@@ -80,6 +80,16 @@ select,input[type=date]{font-family:inherit;font-size:13px;height:36px;padding:0
 .badge{font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:20px}
 .badge.s{background:#fee2e2;color:#b91c1c} .badge.miss{background:#fef3c7;color:#92400e}
 .badge.man{background:#eef2f7;color:#475569} .badge.up{background:#ede9fe;color:#6d28d9}
+/* 시행예정 — 시행일이 한눈에 들어오게. D-일수까지 함께 표시 */
+.eff{display:inline-flex;align-items:center;gap:5px;background:#f5f3ff;border:1px solid #c4b5fd;color:#5b21b6;
+  border-radius:8px;padding:2px 9px;font-size:12px;font-weight:700;letter-spacing:.2px}
+.eff .d{background:#6d28d9;color:#fff;border-radius:6px;padding:1px 6px;font-size:10.5px;font-weight:700}
+.eff.soon{background:#fff7ed;border-color:#fdba74;color:#9a3412}
+.eff.soon .d{background:#ea580c}
+.eff.past{background:#fef2f2;border-color:#fca5a5;color:#b91c1c}
+.eff.past .d{background:#b91c1c}
+.effmini{color:#6d28d9;font-weight:700;background:#f5f3ff;border-radius:5px;padding:0 5px}
+.effmini.soon{color:#9a3412;background:#fff7ed} .effmini.past{color:#b91c1c;background:#fef2f2}
 .fitem .name{font-size:13px;font-weight:600} .fitem .loc{font-size:11px;color:var(--accent2)}
 .fitem .meta{font-size:11.5px;color:var(--sub);margin-top:4px}
 .empty{color:var(--mute);text-align:center;padding:40px;font-size:13px}
@@ -293,7 +303,8 @@ table.daejo td.dj2{padding:0}
         <button class="btn ghost" id="pv-view" style="float:right;padding:3px 10px;font-size:11.5px;margin-right:6px">📄 원문 보기</button></h3>
       <div id="work-badge" style="display:none;margin:0 0 10px;padding:8px 12px;background:#fffbeb;border:1px solid #fcd34d;border-radius:9px;font-size:12px;color:#92400e;align-items:center;gap:8px;flex-wrap:wrap">
         <span id="work-badge-txt">💾 임시저장됨 — 이 브라우저에만 보관, 저장 전이라 새로고침해도 유지됩니다</span>
-        <button class="stbtn" id="work-clear" style="margin-left:auto;color:#b91c1c;border-color:#f3c0c0" title="임시저장 내용을 지웁니다">임시저장 지우기</button>
+        <button class="stbtn on-adopt" id="work-new" style="margin-left:auto" title="지금 작업을 보관함에 저장한 뒤 다른 취업규칙을 새로 시작합니다">＋ 다른 취업규칙 시작</button>
+        <button class="stbtn" id="work-clear" style="color:#b91c1c;border-color:#f3c0c0" title="임시저장 내용을 지웁니다">임시저장 지우기</button>
       </div>
       <div class="preview" id="preview"></div>
     </div>
@@ -913,7 +924,24 @@ const HWP_BUFS={},PDF_URLS={}; let upSeq=0;
 const SITE_FILE={},SITE_NAME={};   // key별 원본 파일명 / 인식된 사업장명
 
 /* ── 파일 업로드 (HWP·HWPX·PDF·TXT) ── */
+/* ── 진행 중 작업이 있을 때 새 취업규칙으로 넘어가기 ──
+   임시저장(자동 저장) 슬롯은 문서 1건뿐이라, 새 파일을 올리면 그 슬롯이 새 문서로 바뀐다.
+   넘어가기 전에 진행 중 작업을 보관함에 확정 저장해 두면 나중에 대시보드·보관함에서 그대로 이어갈 수 있다. */
+function confirmSwitchDoc(what){
+  let w=null; try{const raw=localStorage.getItem(WORK_KEY); if(raw)w=JSON.parse(raw);}catch(e){}
+  if(!w||!w.orig)return true;                       // 진행 중 작업 없음
+  const cnt=(w.state&&Array.isArray(w.state.items))?w.state.items.filter(it=>itemKind(it)!=="유지").length:0;
+  const who=(w.orig.site||w.orig.name||"작업 문서");
+  const canArch=!!(LAST&&LAST.key&&!isSample(LAST.key));
+  const msg=`진행 중인 작업이 있습니다 — ${who}${cnt?` (편집 ${cnt}건)`:""}\n\n`
+    +(canArch?"[확인] 보관함에 저장하고 "+what+"\n[취소] 그대로 두기(작업 계속)"
+             :"※ 이 작업은 데모 샘플이라 보관함에 저장되지 않습니다.\n[확인] 버리고 "+what+"\n[취소] 그대로 두기");
+  if(!confirm(msg))return false;
+  if(canArch){ try{ doSaveArchive(true); }catch(e){ console.warn("전환 전 보관 실패:",e); } }
+  return true;
+}
 async function loadFile(file){
+  if(!confirmSwitchDoc("새 취업규칙 열기"))return;
   const name=file.name, ext=name.toLowerCase().split(".").pop();
   try{
     let text, buf=null, pdf=false;
@@ -969,6 +997,29 @@ $("upload-input").addEventListener("change",e=>{if(e.target.files[0])loadFile(e.
   });
 })();
 const CLS={"위반의심":["s","s"],"누락":["miss","miss"],"수동확인":["man","man"],"시행예정":["up","up"]};
+/* ── 시행일 강조 ──
+   시행예정 항목은 '언제부터'가 핵심 정보다. 기준일까지 남은 일수로 색을 나눠 눈에 띄게 한다.
+   90일 이내=주황(임박), 지남=빨강(이미 시행 — 즉시 반영 필요), 그 밖=보라 */
+/* 기준일 — renderFindings는 run() 안에서 LAST 대입 전에 불리므로 입력칸 값을 함께 본다 */
+function asofNow(){ return (LAST&&LAST.asof)||(($("asof")&&$("asof").value)||""); }
+function effDays(eff,asof){
+  const a=Date.parse(String(eff||"").replace(/\./g,"-")), b=Date.parse(String(asof||"").replace(/\./g,"-"));
+  if(isNaN(a)||isNaN(b))return null;
+  return Math.round((a-b)/86400000);
+}
+function effCls(d){ return d===null?"":(d<0?"past":(d<=90?"soon":"")); }
+function effChip(eff,asof){
+  if(!eff)return "";
+  const d=effDays(eff,asof), c=effCls(d);
+  const tag=d===null?"":(d<0?"D+"+(-d):(d===0?"D-DAY":"D-"+d));
+  const msg=d===null?"":(d<0?" · 이미 시행됨":(d<=90?" · 시행 임박":""));
+  return `<span class="eff ${c}" title="시행일${msg}">📅 ${escapeH(eff)} 시행${tag?`<span class="d">${tag}</span>`:""}</span>`;
+}
+function effMini(eff,asof){
+  if(!eff)return "";
+  const d=effDays(eff,asof);
+  return `<span class="effmini ${effCls(d)}">${escapeH(eff)} 시행${d!==null?(d<0?" (D+"+(-d)+")":(d===0?" (D-DAY)":" (D-"+d+")")):""}</span>`;
+}
 const ORD={"위반의심":0,"누락":1,"시행예정":2,"수동확인":3,"적합":4};
 
 async function renderPreview(){
@@ -1135,7 +1186,9 @@ function renderFindings(){
   else if(!shown.length){ box.innerHTML='<div class="empty">'+escapeH(FS_STATUS)+' 항목이 없습니다.</div>'; }
   shown.forEach((f,i)=>{const[cc,bc]=CLS[f.status];const d=document.createElement("div");d.className="fitem "+cc;
     d.dataset.di=i; d.title="클릭하면 현행 조문과 개선안을 비교해 검토합니다";
-    d.innerHTML=`<div class="top"><span class="badge ${bc}">${f.status}</span><span class="name">${f.rule.id} ${f.rule.name}</span>${f.loc?`<span class="loc">@${f.loc}</span>`:""}<span class="pill">${f.rule.category}</span><span class="dec" data-dec="${i}"></span></div><div class="meta">${f.rule.law} · ${f.note}</div>`;
+    // 시행일이 있는 규칙은 상태(시행예정·수동확인 등)와 무관하게 시행일을 눈에 띄게 표시
+    const eff=f.rule.effective?effMini(f.rule.effective,asofNow()):"";
+    d.innerHTML=`<div class="top"><span class="badge ${bc}">${f.status}</span><span class="name">${f.rule.id} ${f.rule.name}</span>${f.loc?`<span class="loc">@${f.loc}</span>`:""}<span class="pill">${f.rule.category}</span>${eff}<span class="dec" data-dec="${i}"></span></div><div class="meta">${f.rule.law} · ${eff?escapeH(String(f.note).replace(f.rule.effective+" 시행 예정","").trim())||"시행 전 대비 검토":f.note}</div>`;
     d.onclick=()=>openDetail(i);
     box.appendChild(d);});
   // 필터 바·카드 강조
@@ -1280,9 +1333,10 @@ function renderDetail(){
   const body=$("dt-body");
   body.innerHTML=`
     <div class="dt-head">
-      <div><span class="badge ${bc}">${f.status}</span> <b style="font-size:15px">${f.rule.id} ${escapeH(f.rule.name)}</b>
-        ${f.loc?`<span class="loc" style="margin-left:6px">@${f.loc}</span>`:""}
-        <span class="pill">${f.rule.category}</span></div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span class="badge ${bc}">${f.status}</span> <b style="font-size:15px">${f.rule.id} ${escapeH(f.rule.name)}</b>
+        ${f.loc?`<span class="loc">@${f.loc}</span>`:""}
+        <span class="pill">${f.rule.category}</span>
+        ${f.rule.effective?effChip(f.rule.effective,asofNow()):""}</div>
       <div class="why"><b>근거</b> ${escapeH(f.rule.law)}<br>
         <b>판정</b> ${escapeH(f.note||"")}${f.rule.criterion?`<br><b>기준</b> ${escapeH(f.rule.criterion)}`:""}
         ${f.rule.opinion?`<br><b>권고</b> ${escapeH(f.rule.opinion)}`:""}</div>
@@ -2359,6 +2413,17 @@ function updateWorkBadge(){
   $("work-badge-txt").textContent="💾 자동 저장됨 — "+who+(editCnt?" · 편집 "+editCnt+"건":"")+hhmm+" · 보관함에도 자동 반영 ("+where+")";
   box.style.display="flex";
 }
+/* 다른 취업규칙 시작 — 지금 작업을 보관함에 확정 저장하고 임시저장 슬롯을 비운 뒤 새 파일 선택 */
+$("work-new").addEventListener("click",()=>{
+  if(!confirmSwitchDoc("다른 취업규칙 시작"))return;
+  localStorage.removeItem(WORK_KEY);
+  if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/worksession/"+FBUSER.uid).remove().catch(()=>{});
+  clearTimeout(_cloudWorkTimer);
+  CUR_ITEMS=[]; CUR_KEY=""; LAST=null; ALL_FINDINGS=[]; DT_LIST=[]; FS_STATUS="";
+  updateWorkBadge(); resetReviewUI(); renderFindings();
+  alert("지금까지의 작업은 보관함에 저장했습니다.\n새 취업규칙 파일을 올리거나 보관함에서 다른 사업장을 열어 이어가세요.");
+  const fi=$("upload-input"); if(fi)fi.click();
+});
 $("work-clear").addEventListener("click",()=>{
   if(!confirm("임시저장된 작업 내용을 지우시겠습니까?\n(보관함에 정식 저장한 내용은 영향 없습니다)"))return;
   localStorage.removeItem(WORK_KEY);
