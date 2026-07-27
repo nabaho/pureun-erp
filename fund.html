@@ -27,6 +27,12 @@
   .sitem:hover{background:var(--bg)}.sitem.on{background:var(--acc-soft);color:var(--acc2);font-weight:700}
   .sitem.dim{color:#b7bfce;cursor:default}.sitem.dim:hover{background:none}
   .sitem .soon{font-size:9.5px;margin-left:auto;color:#b7bfce;border:1px solid #e4e9f1;border-radius:6px;padding:0 5px}
+  /* 메뉴 순서 드래그 — ⋮⋮ 손잡이는 평소 흐리게, 항목에 올리면 진하게 */
+  #navlist{display:flex;flex-direction:column;gap:4px;touch-action:pan-y}
+  .sitem .gr{color:#dbe1ea;font-size:11px;letter-spacing:-1px;cursor:grab;user-select:none;flex:none}
+  .sitem:hover .gr{color:#9aa5b6}
+  .sitem.navdrag{background:var(--acc-soft);box-shadow:0 6px 18px rgba(37,99,235,.22);opacity:.95;cursor:grabbing}
+  .sitem.navdrag .gr{cursor:grabbing}
   .side-sec{font-size:10.5px;letter-spacing:.1em;color:var(--faint);padding:12px 8px 4px;text-transform:uppercase}
   #main{margin-left:216px;min-height:100vh}
   #topbar{position:sticky;top:0;z-index:15;background:rgba(255,255,255,.9);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:9px 22px;display:flex;align-items:center;gap:12px;font-size:13px}
@@ -238,6 +244,7 @@ function gate(){ $('root').innerHTML='<div class="gate"><h2>로그인이 필요�
 function start(){
   $('root').innerHTML=shell();
   initTop();
+  bindNavDrag(); loadNavOrder();      // 사이드바 메뉴 순서(사용자가 드래그로 정한 순서) 복원
   try{ history.replaceState({view:'home'}, ''); }catch(e){}
   fbDb.ref(NS+'/funds').on('value', function(snap){ funds=snap.val()||{};
     if(appHasFocus()){ S._pendingRender=true; return; }   // 입력 중엔 재렌더 보류(값 소실 방지)
@@ -266,11 +273,13 @@ function shell(){
   return '<div id="side">'
     +'<div class="logo"><span class="ic">🏦</span><div><b>기금 통합운영</b><div class="s">푸른노무법인</div></div></div>'
     +'<button onclick="newFund()" style="margin:0 10px 10px;padding:8px;width:calc(100% - 20px);background:var(--acc);color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer">＋ 새 기금 등록</button>'
-    +'<div class="side-sec">메뉴</div>'
-    +'<div class="sitem" id="nav-home" onclick="go(\'home\')">🏛 기금 현황</div>'
-    +'<div class="sitem" id="nav-billing" onclick="go(\'billing\')">💰 청구 관리</div>'
-    +'<div class="sitem" id="nav-docsboard" onclick="go(\'docsboard\')" title="전체 기금 서식 준비 현황 한눈에 비교">🗂 서식 현황</div>'
-    +'<div class="sitem" id="nav-forms" onclick="S.formsCtx=\'library\';S.formsHost=null;S._sideKind=null;go(\'forms\')" title="전사 표준서식 관리(견본 편집·원본 등록·공통 저장)">📚 서식 자료실</div>'
+    +'<div class="side-sec">메뉴 <span style="font-size:9.5px;font-weight:400;text-transform:none;color:var(--faint)">· 끌어서 순서 변경</span></div>'
+    +'<div id="navlist">'
+    +'<div class="sitem" data-nav="1" id="nav-home" onclick="go(\'home\')" title="드래그: 메뉴 순서 변경"><span class="gr">⋮⋮</span>🏛 기금 현황</div>'
+    +'<div class="sitem" data-nav="1" id="nav-billing" onclick="go(\'billing\')" title="드래그: 메뉴 순서 변경"><span class="gr">⋮⋮</span>💰 청구 관리</div>'
+    +'<div class="sitem" data-nav="1" id="nav-docsboard" onclick="go(\'docsboard\')" title="전체 기금 서식 준비 현황 한눈에 비교 · 드래그로 순서 변경"><span class="gr">⋮⋮</span>🗂 서식 현황</div>'
+    +'<div class="sitem" data-nav="1" id="nav-forms" onclick="S.formsCtx=\'library\';S.formsHost=null;S._sideKind=null;go(\'forms\')" title="전사 표준서식 관리(견본 편집·원본 등록·공통 저장) · 드래그로 순서 변경"><span class="gr">⋮⋮</span>📚 서식 자료실</div>'
+    +'</div>'
     +'<div style="margin-top:auto;font-size:11px;color:var(--faint);padding:8px">Firebase판 · 통합운영<br>서식 채움 지원</div>'
     +'</div>'
     +'<div id="sideveil" onclick="closeSide()"></div>'
@@ -282,6 +291,76 @@ function shell(){
     +'<div id="app"></div></div>';
 }
 
+/* ══ 사이드바 메뉴 순서 드래그 ══
+   자주 쓰는 메뉴를 위로 끌어올려 저장한다. 마우스·손가락 모두 되게 Pointer Events를 쓴다
+   (HTML5 dragstart는 터치에서 동작하지 않음).
+   저장: localStorage(즉시 적용) + Firebase fund_erp/ui_prefs/{uid}/nav_order(다른 PC에서도 유지). */
+var NAV_LS='fund_nav_order_v1';
+function _navIds(){ var l=$('navlist'); return l?Array.prototype.map.call(l.querySelectorAll('.sitem[data-nav]'),function(e){return e.id;}):[]; }
+function applyNavOrder(order){
+  var l=$('navlist'); if(!l||!order||!order.length) return;
+  order.forEach(function(id){ var el=document.getElementById(id); if(el&&el.parentNode===l) l.appendChild(el); });
+}
+function _navUid(){ try{ var u=firebase.auth().currentUser; return (u&&u.uid)||''; }catch(e){ return ''; } }
+function loadNavOrder(){
+  try{ var raw=localStorage.getItem(NAV_LS); if(raw) applyNavOrder(JSON.parse(raw)); }catch(e){}   // ① 즉시
+  var uid=_navUid(); if(!uid||!fbDb) return;
+  fbDb.ref(NS+'/ui_prefs/'+uid+'/nav_order').once('value').then(function(s){        // ② 다른 PC에서 바꾼 순서 반영
+    var o=s.val(); if(!o||!o.length) return;
+    applyNavOrder(o); try{ localStorage.setItem(NAV_LS,JSON.stringify(o)); }catch(e){}
+  }).catch(function(){});
+}
+function saveNavOrder(){
+  var o=_navIds(); if(!o.length) return;
+  try{ localStorage.setItem(NAV_LS,JSON.stringify(o)); }catch(e){}
+  var uid=_navUid();
+  if(uid&&fbDb) fbDb.ref(NS+'/ui_prefs/'+uid+'/nav_order').set(o).catch(function(){});   // 실패해도 이 기기에는 남는다
+  toast('메뉴 순서를 저장했습니다');
+}
+/* 끌고 있는 항목을 포인터 위치에 맞는 자리로 실제로 옮긴다 — 형제의 중간선을 넘으면 그 앞으로.
+   끌리는 대로 즉시 보이므로 별도의 자리표시자(placeholder)가 필요 없다. */
+function _navPlace(list,el,clientY){
+  var items=Array.prototype.filter.call(list.querySelectorAll('.sitem[data-nav]'),function(x){return x!==el;});
+  for(var i=0;i<items.length;i++){
+    var r=items[i].getBoundingClientRect();
+    if(clientY < r.top+r.height/2){ list.insertBefore(el,items[i]); return i; }
+  }
+  list.appendChild(el); return items.length;
+}
+var _navDrag=null, _navMoved=false;
+function bindNavDrag(){
+  var l=$('navlist'); if(!l||l._navBound) return; l._navBound=1;
+  l.addEventListener('pointerdown',function(e){
+    if(e.button!==undefined&&e.button!==0) return;                 // 왼쪽 버튼(또는 터치)만
+    var it=e.target.closest&&e.target.closest('.sitem[data-nav]'); if(!it) return;
+    _navDrag={el:it,startY:e.clientY,h:it.offsetHeight}; _navMoved=false;
+    try{ l.setPointerCapture(e.pointerId); }catch(_){}
+  });
+  l.addEventListener('pointermove',function(e){
+    if(!_navDrag) return;
+    var dy=e.clientY-_navDrag.startY;
+    if(!_navMoved){
+      if(Math.abs(dy)<5) return;                                   // 5px 넘기 전엔 그냥 클릭으로 본다
+      _navMoved=true; _navDrag.el.classList.add('navdrag'); document.body.style.userSelect='none';
+    }
+    e.preventDefault();
+    _navPlace(l,_navDrag.el,e.clientY);
+  });
+  function end(e){
+    if(!_navDrag) return;
+    var moved=_navMoved, el=_navDrag.el;
+    _navDrag=null; _navMoved=false;
+    el.classList.remove('navdrag'); document.body.style.userSelect='';
+    try{ l.releasePointerCapture(e.pointerId); }catch(_){}
+    if(!moved) return;                                             // 안 움직였으면 평소처럼 화면 이동(onclick)
+    // 끌어서 옮긴 경우엔 뒤따르는 click이 화면을 바꾸지 않게 한 번만 삼킨다
+    var swallow=function(ev){ ev.stopPropagation(); ev.preventDefault(); };
+    document.addEventListener('click',swallow,true);
+    setTimeout(function(){ document.removeEventListener('click',swallow,true); },0);
+    saveNavOrder();
+  }
+  l.addEventListener('pointerup',end); l.addEventListener('pointercancel',end);
+}
 /* ── 모바일 서랍 메뉴 ── 좁은 화면에서 사이드바를 밀어넣고 ☰로 여닫는다 */
 function toggleSide(){ document.body.classList.toggle('sideopen'); }
 function closeSide(){ document.body.classList.remove('sideopen'); }
