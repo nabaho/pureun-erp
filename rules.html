@@ -355,7 +355,8 @@ table.daejo td.dj2{padding:0}
       <button class="stbtn" id="mode-partial" title="기존 조번호 유지 · 신설은 가지번호(제N조의n) · 삭제는 결번">일부개정</button>
       <button class="stbtn" id="mode-full" title="최종 순서대로 제1조부터 전면 재번호 · 삭제 조문 제외">전부개정</button>
       <span style="font-size:12px;color:var(--mute);margin-left:10px">용지:</span>
-      <button class="stbtn" id="pg-portrait" title="A4 세로 — 기본. 조문 전문·일반 제출용">A4 세로</button>
+      <button class="stbtn" id="pg-auto" title="조문 길이를 재서 세로로도 읽을 만하면 세로, 문장이 토막나면 가로를 자동으로 씁니다">자동</button>
+      <button class="stbtn" id="pg-portrait" title="A4 세로 — 조문 전문·일반 제출용">A4 세로</button>
       <button class="stbtn" id="pg-landscape" title="A4 가로 — 조문이 길어 4열이 좁을 때(대조표 가독성↑)">A4 가로</button>
       <button class="stbtn" id="inc-note" style="margin-left:10px" title="켜면 다운로드 문서(한글·엑셀)의 변경이유에 💡검토 권고까지 포함됩니다. 제출용은 끈 상태를 권장합니다.">💡 검토권고 문서 포함</button>
       <span style="font-size:12px;color:var(--mute);margin-left:10px">변경이유:</span>
@@ -1516,10 +1517,55 @@ let RZ_NONE=false;        // 변경이유·조치를 문서에서 전체 제외(
 /* 방향별 열 비율 — 세로는 좁으니 조항·이유 칸을 줄이고 본문 칸을 넓게 */
 /* 신구대조표 열폭 — 변경 전/후는 같은 폭(항의 줄 위치가 좌우로 일치하도록).
    [전체 미반영]이면 변경이유 열을 빼고 그 폭을 본문 두 열에 나눈다. */
-function daejoCols(){
-  if(RZ_NONE) return PAGE_LAND?[1.5,4.25,4.25]:[1.45,4.0,4.0];
+function daejoColsFor(land){
+  if(RZ_NONE) return land?[1.5,4.25,4.25]:[1.45,4.0,4.0];
   // 변경조항은 '제25조 / [검토]'만 들어가면 되므로 좁게, 변경이유는 근거 문장이 들어가므로 넓게
-  return PAGE_LAND?[1.35,3.2,3.2,2.25]:[1.45,3.05,3.05,2.0];
+  return land?[1.35,3.2,3.2,2.25]:[1.45,3.05,3.05,2.0];
+}
+function daejoCols(){ return daejoColsFor(PAGE_LAND); }
+
+/* ── 용지 방향 자동 판단 ──
+   내용을 실제로 재서 정한다. 신구대조표는 4열이라 A4 세로 12pt에서는 한 줄에 8~10자밖에
+   안 들어가 문장이 토막나는 일이 잦다. 열마다 '한 줄에 들어가는 한글 글자 수'를 계산해
+   세로로도 읽을 만하면 세로, 아니면 가로를 쓴다. (사용자가 버튼을 누르면 그 선택을 지킨다) */
+const BODY_W_P=42520, BODY_W_L=72852, TBL_SLACK=900, CELL_PAD=1020, CH_W=1200;
+const CPL_OK=12;   // 한 줄에 이 정도는 들어가야 문장이 토막나지 않는다
+function charLen(s){   // 라틴·숫자·기호는 반각으로 세어 실제 폭에 가깝게
+  let n=0; for(const ch of String(s||"")){ const c=ch.codePointAt(0);
+    n+=(c<0x1100||(c>=0x2000&&c<0x2500))?0.5:1; } return n;
+}
+function orientMetrics(land){
+  const ratios=daejoColsFor(land), W=(land?BODY_W_L:BODY_W_P)-TBL_SLACK;
+  const sum=ratios.reduce((a,b)=>a+b,0);
+  const cpl=ratios.map(r=>Math.max(1,Math.floor((Math.floor(W*r/sum)-CELL_PAD)/CH_W)));
+  const rows=daejoBodyMerged();
+  let lines=0, worst=Infinity, worstCol=0;
+  rows.forEach(r=>{
+    let mx=1;
+    r.forEach((c,i)=>{ if(c===null||c===undefined)return;
+      const span=(typeof c==="object")?(c.rowSpan||1):1;
+      const need=Math.ceil(charLen((typeof c==="object")?c.t:c)/cpl[i]);
+      if(span===1&&need>mx)mx=need;
+      if(i>0&&charLen((typeof c==="object")?c.t:c)>cpl[i]&&cpl[i]<worst){worst=cpl[i];worstCol=i;}
+    });
+    lines+=mx;
+  });
+  if(worst===Infinity)worst=Math.min.apply(null,cpl.slice(1));
+  return {cpl,lines,minCpl:worst,worstCol,pages:Math.max(1,Math.ceil(lines/(land?30:46)))};
+}
+/* 자동 판단 결과 + 사람이 읽을 이유 */
+function autoOrient(){
+  const p=orientMetrics(false);
+  if(p.minCpl>=CPL_OK) return {land:false,why:`세로로도 한 줄 ${p.minCpl}자 — 세로`};
+  const l=orientMetrics(true);
+  if(l.minCpl>p.minCpl) return {land:true,why:`세로는 한 줄 ${p.minCpl}자로 좁아 가로(한 줄 ${l.minCpl}자)`};
+  return {land:false,why:`가로도 나아지지 않아 세로(한 줄 ${p.minCpl}자)`};
+}
+let PAGE_AUTO=true;      // 용지 방향 자동 판단(사용자가 세로·가로 버튼을 누르면 false로 고정)
+let PAGE_WHY="";
+function applyAutoOrient(){
+  if(!PAGE_AUTO){ PAGE_WHY=""; return; }
+  try{ const a=autoOrient(); PAGE_LAND=a.land; PAGE_WHY=a.why; }catch(e){ PAGE_WHY=""; }
 }
 /* 앵커가 삭제된 조문이면 그 앞의 살아있는 조문으로 옮긴다.
    삭제된 조문은 결번이 되므로 그 번호에 가지번호(제N조의n)를 매달 수 없다. */
@@ -1853,8 +1899,10 @@ function renderEditor(){
   $("flt-all").className="stbtn"+(CUR_FILTER==="all"?" on-adopt":"");
   if($("mode-partial"))$("mode-partial").className="stbtn"+(REV_MODE==="partial"?" on-adopt":"");
   if($("mode-full"))$("mode-full").className="stbtn"+(REV_MODE==="full"?" on-adopt":"");
-  if($("pg-portrait"))$("pg-portrait").className="stbtn"+(!PAGE_LAND?" on-adopt":"");
-  if($("pg-landscape"))$("pg-landscape").className="stbtn"+(PAGE_LAND?" on-adopt":"");
+  applyAutoOrient();   // '자동'이면 내용을 재서 용지 방향을 정한다
+  if($("pg-auto"))$("pg-auto").className="stbtn"+(PAGE_AUTO?" on-adopt":"");
+  if($("pg-portrait"))$("pg-portrait").className="stbtn"+((!PAGE_AUTO&&!PAGE_LAND)?" on-adopt":"");
+  if($("pg-landscape"))$("pg-landscape").className="stbtn"+((!PAGE_AUTO&&PAGE_LAND)?" on-adopt":"");
   if($("inc-note"))$("inc-note").className="stbtn"+(INC_NOTE?" on-adopt":"");
   if($("rz-none"))$("rz-none").className="stbtn"+(RZ_NONE?" on-excl":"");
   refreshDaejoSub();
@@ -1863,7 +1911,8 @@ function renderEditor(){
 function refreshDaejoSub(){
   let 개정=0,신설=0,삭제=0,검토=0;CUR_ITEMS.forEach(it=>{const k=itemKind(it);if(!inDaejo(it))return;const k2=k;if(k2==="개정")개정++;else if(k2==="신설")신설++;else if(k2==="삭제")삭제++;else if(k2==="검토")검토++;});
   const pend=branchPending().length, noTxt=daejoDocSkipped(), off=CUR_ITEMS.filter(it=>it.orig===""&&it.optIn===false).length;
-  const warn=(pend?` · <b style="color:#b45309">⚠ 번호 확인 ${pend}</b>`:"")
+  const pg=PAGE_AUTO?` · <span style="color:var(--accent)" title="용지 자동 판단">📄 ${PAGE_LAND?"A4 가로":"A4 세로"}${PAGE_WHY?" ("+escapeH(PAGE_WHY)+")":""}</span>`:"";
+  const warn=pg+(pend?` · <b style="color:#b45309">⚠ 번호 확인 ${pend}</b>`:"")
     +(noTxt?` · <b style="color:#b91c1c">문안 미작성 ${noTxt}</b>`:"")
     +(off?` · <span style="color:var(--mute)">선택 미포함 ${off}</span>`:"")
     +(NO_ART_RULES.length?` · <span style="color:var(--mute)" title="${escapeH(NO_ART_RULES.map(r=>r.id+" "+r.name).join(" / "))}">조문화 대상 아님 ${NO_ART_RULES.length}</span>`:"");
@@ -1893,8 +1942,9 @@ $("rz-reset").addEventListener("click",()=>{
   if(!confirm("직접 편집한 변경이유를 모두 지우고 자동 근거로 되돌립니다. 계속할까요?"))return;
   CUR_ITEMS.forEach(it=>{delete it.reasonEdit;}); RZ_NONE=false; renderEditor(); saveWorkState();
 });
-$("pg-portrait").addEventListener("click",()=>{PAGE_LAND=false;renderEditor();saveWorkState();});
-$("pg-landscape").addEventListener("click",()=>{PAGE_LAND=true;renderEditor();saveWorkState();});
+$("pg-auto").addEventListener("click",()=>{PAGE_AUTO=true;renderEditor();saveWorkState();});
+$("pg-portrait").addEventListener("click",()=>{PAGE_AUTO=false;PAGE_LAND=false;renderEditor();saveWorkState();});
+$("pg-landscape").addEventListener("click",()=>{PAGE_AUTO=false;PAGE_LAND=true;renderEditor();saveWorkState();});
 $("mode-partial").addEventListener("click",()=>{REV_MODE="partial";renderEditor();});
 $("mode-full").addEventListener("click",()=>{REV_MODE="full";renderEditor();});
 $("add-ins").addEventListener("click",()=>{
@@ -1905,6 +1955,7 @@ $("add-ins").addEventListener("click",()=>{
 $("dl-xlsx").addEventListener("click",()=>{
   if(!daejoRows().length){alert("변경된 조문이 없습니다.");return;}
   if(!docGateOk())return;
+  applyAutoOrient();   // 용지 자동 판단 반영
   downloadXlsx(null,LAST);
 });
 function downloadXlsx(_ignored,ctx){
@@ -2012,6 +2063,7 @@ function dlDoc(rtf,fname){
   setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
 $("dl-doc-daejo").addEventListener("click",()=>{
+  applyAutoOrient();   // 용지 자동 판단 반영
   const headers=daejoHeaders(), rows=daejoBody();   // 항 단위 줄맞춤 + [전체 미반영] 시 변경이유 열 제외
   if(!rows.length){alert("변경된 조문이 없습니다.");return;}
   if(!docGateOk())return;
@@ -2170,6 +2222,7 @@ $("dl-docset").addEventListener("click",()=>{
   const sel=["apply","daejo","full","opinion","consent"].filter(k=>DOCSET[k]);
   if(!sel.length){alert("첨부할 서류를 선택하세요.");return;}
   if((DOCSET.daejo||DOCSET.full)&&!docGateOk())return;
+  applyAutoOrient();   // 용지 자동 판단 반영
   const site=siteLabel(), asof=LAST.asof, sum=docsetSummary(), hits=disadvantageScan();
   const view=numberedView(CUR_ITEMS,REV_MODE);
   const shown=(REV_MODE==="full"?view.filter(v=>!v.it.del):view).filter(v=>inDaejo(v.it));   /* 선택 미포함 신설 제외 */
@@ -2468,7 +2521,7 @@ function saveWorkState(){
     // 보관 중인 작업 문서일 때만 상태 갱신 — 표시명(📄 파일명 / 🏢 사업장명)이 아니라 원본 파일명으로 비교
     const curFile=SITE_FILE[LAST.key]||String(SITE_MAP[LAST.key]||"").replace(/^[📄🏢]\s*/u,"");
     if(w.orig.name&&curFile&&w.orig.name!==curFile)return;
-    w.state={items:CUR_ITEMS,mode:REV_MODE,land:PAGE_LAND,note:INC_NOTE,rzNone:RZ_NONE,size:LAST.size,asof:LAST.asof};
+    w.state={items:CUR_ITEMS,mode:REV_MODE,land:PAGE_LAND,pauto:PAGE_AUTO,note:INC_NOTE,rzNone:RZ_NONE,size:LAST.size,asof:LAST.asof};
     w.savedAt=new Date().toISOString();
     localStorage.setItem(WORK_KEY,JSON.stringify(w));
   }catch(e){}
@@ -2491,7 +2544,7 @@ async function applyWorkObject(w,opts){
   let opt=[...siteSel.options].find(x=>x.value===key);
   if(!opt){opt=document.createElement("option");opt.value=key;siteSel.appendChild(opt);}
   opt.textContent=SITE_MAP[key]; siteSel.value=key;
-  if(w.state){ if(w.state.size)$("size").value=w.state.size; if(w.state.asof)$("asof").value=w.state.asof; PAGE_LAND=!!w.state.land; INC_NOTE=!!w.state.note; RZ_NONE=!!w.state.rzNone; }
+  if(w.state){ if(w.state.size)$("size").value=w.state.size; if(w.state.asof)$("asof").value=w.state.asof; PAGE_LAND=!!w.state.land; PAGE_AUTO=(w.state.pauto!==false); INC_NOTE=!!w.state.note; RZ_NONE=!!w.state.rzNone; }
   await renderPreview();
   const txt=SAMPLES[key]||"";
   LAST={key,site:SITE_MAP[key],bizno:"",size:$("size").value,conds:[],asof:$("asof").value,
