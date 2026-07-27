@@ -8,6 +8,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
+<script src="hwpx_gen.js?v=7"></script>
 <style>
 :root{--navy:#1B2A4A;--teal:#0E7C66;--orange:#e67e22;--line:#e2e8f0;--bg:#eef1f7;--card:#fff;--mute:#64748b;--txt:#1e293b}
 *{box-sizing:border-box}
@@ -121,8 +122,10 @@ button{font-family:inherit;cursor:pointer}
     <button onclick="newDoc()">＋<span class="lbl"> 새 문서</span></button>
     <button onclick="openLoad()">📂<span class="lbl"> 불러오기</span></button>
     <button class="pri" onclick="saveDoc()">💾<span class="lbl"> 저장</span></button>
+    <button class="pri" onclick="exportHwpx()" title="한글 파일(.hwpx)로 저장 — A4 세로">📕<span class="lbl"> 한글</span></button>
     <button onclick="exportWord()">📄<span class="lbl"> 워드</span></button>
     <button class="warn" onclick="window.print()">🖨<span class="lbl"> 인쇄·PDF</span></button>
+    <button onclick="sendToReview()" title="작성한 취업규칙을 규정관리로 넘겨 92항목 자동 검토">🔍<span class="lbl"> 검토로</span></button>
   </div>
   <div class="body">
     <div class="panel" id="panel"></div>
@@ -445,6 +448,50 @@ function delDoc(id){ if(!confirm('이 취업규칙을 삭제할까요?')) return
   else { var all=lsDocs(); delete all[id]; localStorage.setItem('chwieop_docs',JSON.stringify(all)); openLoad(); toast('삭제했습니다'); }
 }
 
+/* ══════ 한글(.hwpx) 내보내기 — A4 세로 기준. 규정관리(rules.html)와 같은 생성기 사용 ══════ */
+function exportHwpx(){
+  if(countOn()===0){ toast('포함할 조항이 없습니다'); return; }
+  if(!window.HWPX){ toast('한글 생성기를 불러오지 못했습니다 — 워드로 저장하세요'); return; }
+  try{
+    var H=window.HWPX; H.setPage({landscape:false});           // 취업규칙 전문은 A4 세로
+    var co=doc.info.company||'';
+    var body=H.para('취 업 규 칙',H.BOLD)+H.para(co)+H.para('');
+    var artNo=0;
+    STD.forEach(function(ch){ if(!chapOn(ch))return;
+      var onArts=ch.arts.filter(function(a){return artOn(ch,a);}); if(!onArts.length)return;
+      body+=H.para(ch.c==='부칙'?'부      칙':ch.c,H.BOLD)+H.para('');
+      onArts.forEach(function(a){ artNo++;
+        body+=H.para('제'+artNo+'조 ('+applyMergeText(curTitle(a))+') '+applyMergeText(curBody(a)))+H.para('');
+      });
+    });
+    body+=H.para('')+H.para(applyMergeText('{시행일}')+' 제정')+H.para(co+'  대표 '+(doc.info.ceo||'')+' (인)');
+    var safe=String(co||'회사').replace(/[()\s—📄🏢\/\\:*?"<>|]/gu,'');
+    H.download(body,'취업규칙_'+safe+'.hwpx');
+    toast('📕 한글 파일을 내려받았습니다 (A4 세로)');
+  }catch(e){ console.warn('hwpx 생성 실패:',e); toast('한글 생성 실패 — 워드로 저장하세요'); }
+}
+/* ══════ 규정관리(검토)로 넘기기 — 작성한 취업규칙을 92항목 자동 검토에 태운다 ══════ */
+function sendToReview(){
+  if(countOn()===0){ toast('포함할 조항이 없습니다'); return; }
+  var co=doc.info.company||'';
+  var txt='취 업 규 칙\n'+co+'\n\n';
+  var artNo=0;
+  STD.forEach(function(ch){ if(!chapOn(ch))return;
+    var onArts=ch.arts.filter(function(a){return artOn(ch,a);}); if(!onArts.length)return;
+    txt+=(ch.c==='부칙'?'부      칙':ch.c)+'\n';
+    onArts.forEach(function(a){ artNo++;
+      txt+='제'+artNo+'조('+applyMergeText(curTitle(a))+') '+applyMergeText(curBody(a))+'\n';
+    });
+    txt+='\n';
+  });
+  try{
+    localStorage.setItem('pureun_rules_handoff_v1',JSON.stringify({
+      name:'취업규칙_'+(co||'작성본')+'.txt', site:co, text:txt, at:new Date().toISOString()
+    }));
+    toast('규정관리로 넘깁니다 — 자동 검토가 실행됩니다');
+    setTimeout(function(){ location.href='rules.html'; },600);
+  }catch(e){ toast('넘기기 실패: '+(e.message||e)); }
+}
 /* ══════ 워드(.doc) 내보내기 ══════ */
 function exportWord(){
   if(countOn()===0){ toast('포함할 조항이 없습니다'); return; }
@@ -462,7 +509,7 @@ function exportWord(){
   });
   body+='<br><p style="text-align:right">'+esc(applyMergeText('{시행일}'))+' 제정<br>'+esc(doc.info.company||'')+'  대표 '+esc(doc.info.ceo||'')+' (인)</p>';
   var html='<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><style>body{font-family:"Malgun Gothic";font-size:11pt;line-height:1.7}h1{font-size:20pt}h2{font-size:13pt;margin-top:18pt}</style></head><body>'+body+'</body></html>';
-  var blob=new Blob(['﻿'+html],{type:'application/msword'});
+  var blob=new Blob([html],{type:'application/msword'});   /* BOM 제거 — 붙이면 워드가 서식을 인식하지 못함 */
   var url=URL.createObjectURL(blob); var a=document.createElement('a');
   a.href=url; a.download='취업규칙_'+(doc.info.company||'회사')+'.doc'; document.body.appendChild(a); a.click();
   setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); },500);
