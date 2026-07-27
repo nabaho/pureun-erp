@@ -1867,10 +1867,14 @@ function openSettings(){
         ? '🟢 Firebase 연결됨 — 전 직원 실시간 공유 중'
         : '🟠 데모 모드 — 이 기기에만 저장됩니다.<br>파일 상단 FIREBASE_CONFIG에 pu-erp의 설정을 붙여넣으면 공유가 시작됩니다.' }</div></div>
     <div class="field"><label>Gemini API 키 (AI 자동 추출)</label>
+      <div style="font-size:13px;padding:2px 2px 8px;line-height:1.6">현재 상태: ${
+        localStorage.getItem(GEMINI_KEY_LS) ? '🟢 이 기기에 키 저장됨'
+        : (_sharedGKey ? '🟢 회사 공유 키 사용 중' : '🔴 키 없음 — 자동입력 꺼짐') }</div>
       <input id="set_gkey" type="password" value="${esc(key)}" placeholder="AIza...">
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink);margin-top:8px;font-weight:400">
         <input type="checkbox" id="set_gshare" ${_sharedGKey?'checked':''}> 이 키를 모든 기기(직원 폰·푸른카메라 포함)에 공유</label>
-      <div style="font-size:12px;color:var(--sub);margin-top:6px;line-height:1.7">
+      <button class="btn ghost" style="width:100%;margin-top:10px" onclick="testGemini()">🔌 AI 연결 테스트 (키가 되는지 확인)</button>
+      <div style="font-size:12px;color:var(--sub);margin-top:8px;line-height:1.7">
         무료 발급: <b>aistudio.google.com/apikey</b> → 로그인 → [API 키 만들기] → 복사해 붙여넣기.<br>
         <b>공유 체크</b>를 하면 회사 전체 기기에서 자동인식이 켜집니다. 체크 안 하면 이 기기에만 저장됩니다.</div></div>
     <div class="mfoot">
@@ -1890,6 +1894,25 @@ async function saveSettings(){
     toast(v?'AI 키가 저장되었습니다 — 이제 촬영하면 자동 추출됩니다':'AI 키를 지웠습니다');
   }
   $('setBg').classList.remove('open');
+}
+/* AI 키가 실제로 되는지 확인 — 입력칸의 키(없으면 저장된 키)로 시험 호출 */
+async function testGemini(){
+  const key = (($('set_gkey')&&$('set_gkey').value.trim()) || geminiKey() || '');
+  if(!key){ alert('❌ AI 키가 없습니다.\n\n위 칸에 키(AIza...)를 붙여넣고 다시 눌러 보세요.'); return; }
+  toast('AI 연결 확인 중…',8000);
+  try{
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(key)}`,
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:'OK'}]}]})});
+    if(r.ok){ toast(''); alert('✅ AI 연결 정상입니다!\n\n[저장]을 누른 뒤 명함을 찍으면 이름·회사·전화가 자동으로 채워집니다.'); return; }
+    let msg=''; try{ const j=await r.json(); msg=(j.error&&j.error.message)||''; }catch(_){}
+    toast('');
+    if(r.status===400 && /API key not valid/i.test(msg))
+      alert('❌ 키가 올바르지 않습니다.\n\n구글에서 키를 다시 복사해 넣어 주세요. (오타·일부만 복사된 경우가 많습니다)');
+    else if(r.status===403)
+      alert('❌ 이 키는 Gemini(자동인식)를 쓸 수 없게 막혀 있습니다.\n\n원인은 둘 중 하나예요:\n1) 키에 제한이 걸림(예: Vision/Calendar 전용)\n2) 그 프로젝트에 Gemini API가 안 켜짐\n\n가장 쉬운 해결: aistudio.google.com/apikey 에서 제한 없는 새 키를 만들어 넣으세요.\n\n('+r.status+') '+msg);
+    else
+      alert('❌ 연결 실패 ('+r.status+')\n'+msg+'\n\n인터넷 연결을 확인하거나 새 키로 다시 시도해 주세요.');
+  }catch(e){ toast(''); alert('❌ 네트워크 오류: '+((e&&e.message)||'')+'\n\n인터넷 연결을 확인해 주세요.'); }
 }
 
 /* ════════════ 📷 인앱 카메라: 가이드 틀 + 앞/뒷면 연속 촬영 ════════════ */
