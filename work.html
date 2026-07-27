@@ -211,6 +211,11 @@ var itemLogsCache={};      // {itemId:{logId:log}}
 var _staffCache=null,_coCache=null,_watchWkRef=null,_watchWkKey=null;
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+// 인라인 핸들러의 JS 문자열 리터럴에 값을 넣을 때 — JS 이스케이프 후 HTML 이스케이프.
+// esc()만 쓰면 작은따옴표가 안 막혀서 이름에 ' 이 있으면 핸들러가 깨진다.
+function escJ(s){return esc(String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"));}
+// Firebase 키 금지문자 + 인라인 핸들러를 깨뜨리는 문자를 근원에서 제거
+function safeKey(s){return String(s==null?'':s).replace(/[.#$/\[\]\u0000-\u001F\u007F'"`\\\s]/g,'_');}
 function $(id){return document.getElementById(id);}
 function qp(k){try{return new URLSearchParams(location.search).get(k)||'';}catch(e){return '';}}
 function pad(n){return (n<10?'0':'')+n;}
@@ -256,7 +261,7 @@ function start(){
   initTop();
   try{ history.replaceState({view:'my'}, ''); }catch(e){}
   resolveMe().then(function(){
-    fbDb.ref(NS+'/items/'+S.year).on('value',function(snap){ items=snap.val()||{};
+    fbDb.ref(NS+'/items').on('value',function(snap){ items=snap.val()||{};
       if(appHasFocus()){ S._pend=true; return; } route();
       if(!S._hashDone){ S._hashDone=1; openFromHash(); }   // 푸른이알피 → #item= 딥링크
     },function(err){ $('app').innerHTML='<div class="panel"><h2 style="color:var(--danger)">읽기 권한 오류</h2><p class="muted">'
@@ -541,7 +546,7 @@ function addLog(itemId,text,dateStr,kind){
   up[NS+'/logs/'+y+'/'+wk+'/'+itemId+'/'+lid]=log;
   up[NS+'/itemlogs/'+itemId+'/'+lid]=Object.assign({w:wk},log);
   var it=items[itemId];
-  if(it&&(!it.last||String(it.last.d||'')<=dateStr)) up[NS+'/items/'+S.year+'/'+itemId+'/last']={d:dateStr,t:text};
+  if(it&&(!it.last||String(it.last.d||'')<=dateStr)) up[NS+'/items/'+itemId+'/last']={d:dateStr,t:text};
   return fbDb.ref().update(up).then(function(){
     if(!wkCache[wk])wkCache[wk]={}; if(!wkCache[wk][itemId])wkCache[wk][itemId]={};
     wkCache[wk][itemId][lid]=log;
@@ -564,15 +569,17 @@ function delLog(itemId,lid){
         .filter(function(x){return !x.k;})
         .sort(function(a,b){return (b.d||'').localeCompare(a.d||'');});
       var nl=rest[0]?{d:rest[0].d,t:rest[0].t}:null;
-      fbDb.ref(NS+'/items/'+S.year+'/'+itemId+'/last').set(nl);
+      fbDb.ref(NS+'/items/'+itemId+'/last').set(nl);
       if(items[itemId]) items[itemId].last=nl;
       toast('삭제됨'); renderDrawer(); route();
     }).catch(function(e){ toast('삭제 실패: '+e.message,'err'); });
   });
 }
-function patchItem(id,obj){ return fbDb.ref(NS+'/items/'+S.year+'/'+id).update(obj)
-  .then(function(){ Object.assign(items[id]||{},obj); })
-  .catch(function(e){ toast('저장 실패: '+e.message,'err'); }); }
+// 저장 성공 여부를 반환한다. 호출부는 반드시 if(!ok)return; 으로 가드할 것 —
+// 예전엔 실패를 삼키고 resolve 해서 "저장 실패" 토스트와 "✅ 완료"가 같이 뜨는 문제가 있었다.
+function patchItem(id,obj){ return fbDb.ref(NS+'/items/'+id).update(obj)
+  .then(function(){ Object.assign(items[id]||{},obj); return true; })
+  .catch(function(e){ toast('저장 실패: '+e.message,'err'); return false; }); }
 
 /* ── 내 업무 화면 ── */
 function focusCounts(){
@@ -712,13 +719,13 @@ function cycleStatus(id){
   var it=items[id]; if(!it)return;
   var idx=STATUSES.findIndex(function(s){return s[0]===(it.status||'진행중');});
   var next=STATUSES[(idx+1)%STATUSES.length][0];
-  patchItem(id,{status:next}).then(function(){ route(); });
+  patchItem(id,{status:next}).then(function(ok){ if(!ok)return; route(); });
 }
 function completeItem(id){
   var it=items[id]; if(!it)return;
   confirmM('「'+(it.company||'')+' — '+(it.title||'')+'」\n완료 처리하고 보관함으로 이동할까요?',{ok:'완료'}).then(function(ok){
     if(!ok){ route(); return; }
-    patchItem(id,{state:'done',done_date:todayStr(),status:'완료'}).then(function(){ toast('✅ 완료 — 보관함으로 이동'); route(); });
+    patchItem(id,{state:'done',done_date:todayStr(),status:'완료'}).then(function(ok){ if(!ok){route();return;} toast('✅ 완료 — 보관함으로 이동'); route(); });
   });
 }
 
@@ -835,7 +842,7 @@ function renderDrawer(){
     +' · 담당 '+esc((it.mgr_main&&it.mgr_main.name)||'—')+(subs?' <span style="color:#a78bda">(공동 '+esc(subs)+')</span>':'')+'</div>'
     +'<div class="chips">'
     +STATUSES.map(function(s){ return '<span class="status" style="background:'+s[1]+';color:'+s[2]+';'+((it.status||'진행중')===s[0]?'':'opacity:.35;')
-      +'" onclick="patchItem(\''+id+'\',{status:\''+s[0]+'\'}).then(function(){renderDrawer();route();})">'+s[0]+'</span>'; }).join('')
+      +'" onclick="patchItem(\''+id+'\',{status:\''+s[0]+'\'}).then(function(ok){if(!ok)return;renderDrawer();route();})">'+s[0]+'</span>'; }).join('')
     +'</div></div>';
   h+='<div class="nextbox">☐ 다음 할 일 — <input type="text" id="dx-text" value="'+esc(it.next&&it.next.text||'')+'" placeholder="예: 이유서 제출" onchange="saveNext(\''+id+'\')">'
     +'<input type="date" id="dx-date" value="'+esc(it.next&&it.next.date||'')+'" onchange="saveNext(\''+id+'\')"></div>';
@@ -896,7 +903,7 @@ function renderDrawer(){
   h+='</div>';
   h+='<div class="dfoot">'
     +'<button onclick="itemModal(\''+id+'\')">✏️ 수정</button>'
-    +(it.src==='puerp'&&it.ref?'<button onclick="openPuerp(\''+esc(it.ref.type)+'\')" title="푸른이알피 해당 메뉴로 이동">🔗 푸른이알피</button>':'')
+    +(it.src==='puerp'&&it.ref?'<button onclick="openPuerp(\''+escJ(it.ref.type)+'\')" title="푸른이알피 해당 메뉴로 이동">🔗 푸른이알피</button>':'')
     +'<button onclick="handoverModal(\''+id+'\')">🔄 담당 변경</button>'
     +(it.state==='done'
       ?'<button onclick="restoreItem(\''+id+'\')">↩ 진행으로 복구</button>'
@@ -913,17 +920,17 @@ function drawerAdd(id,inp){
 }
 function saveNext(id){
   var t=$('dx-text'),d=$('dx-date'); if(!t)return;
-  patchItem(id,{next:{text:t.value.trim(),date:d.value||''}}).then(function(){ toast('다음 할 일 저장'); route(); });
+  patchItem(id,{next:{text:t.value.trim(),date:d.value||''}}).then(function(ok){ if(!ok)return; toast('다음 할 일 저장'); route(); });
 }
 function restoreItem(id){
-  patchItem(id,{state:null,done_date:null,status:'진행중'}).then(function(){ toast('↩ 진행으로 복구'); renderDrawer(); route(); });
+  patchItem(id,{state:null,done_date:null,status:'진행중'}).then(function(ok){ if(!ok)return; toast('↩ 진행으로 복구'); renderDrawer(); route(); });
 }
 function deleteItem(id){
   var it=items[id]||{};
   confirmM('「'+(it.company||'')+' — '+(it.title||'')+'」\n업무와 모든 기록을 삭제합니다. 되돌릴 수 없습니다.',{ok:'삭제',danger:true}).then(function(ok){
     if(!ok)return;
     var up={};
-    up[NS+'/items/'+S.year+'/'+id]=null;
+    up[NS+'/items/'+id]=null;
     up[NS+'/itemlogs/'+id]=null;
     // 주별 기록도 제거 (itemlogs 캐시 기준)
     loadItemLogs(id).then(function(logs){
@@ -963,7 +970,8 @@ function _handoverTo(id,sid,name){
   var old={sid:(it.mgr_main&&it.mgr_main.sid)||'',name:(it.mgr_main&&it.mgr_main.name)||'—'};
   var subs=(it.mgr_subs||[]).filter(function(s){return s.sid!==sid;});   // 새 주담당은 부담당에서 제외
   patchItem(id,{mgr_main:{sid:sid,name:name},mgr_subs:subs,
-    ho:{from:old,to:{sid:sid,name:name},at:new Date().toISOString(),confirmed:false}}).then(function(){
+    ho:{from:old,to:{sid:sid,name:name},at:new Date().toISOString(),confirmed:false}}).then(function(ok){
+    if(!ok)return;   // 담당 변경이 실패했으면 감사 로그를 남기지 않는다
     addLog(id,'담당 '+old.name+' → '+name+' (인수 확인 대기)',todayStr(),'ho');
     toast('🔄 담당 변경: '+name+' — 인수 확인 대기'); if(S.drawerId===id)renderDrawer(); route();
   });
@@ -971,7 +979,7 @@ function _handoverTo(id,sid,name){
 function confirmHo(id){
   var it=items[id]; if(!it||!it.ho)return;
   var ho=Object.assign({},it.ho,{confirmed:true,confirmed_at:new Date().toISOString()});
-  patchItem(id,{ho:ho}).then(function(){
+  patchItem(id,{ho:ho}).then(function(ok){ if(!ok)return;
     addLog(id,'인수 확인 — '+((S.me&&S.me.name)||''),todayStr(),'ho');
     toast('📥 인수 확인 완료'); renderDrawer(); route();
   });
@@ -981,7 +989,8 @@ function saveHoNote(id){
   var note=Object.assign({},(items[id]&&items[id].ho_note)||{},
     {by:(S.me&&S.me.sid)||'',byName:(S.me&&S.me.name)||'',at:todayStr()});
   HO_FIELDS.forEach(function(f){ var el=$('hn-'+f[0]); if(el) note[f[0]]=el.value.trim(); });
-  patchItem(id,{ho_note:note}).then(function(){
+  patchItem(id,{ho_note:note}).then(function(ok){
+    if(!ok)return;
     toast('📦 노트 저장됨');
     var st2=document.querySelector('.honote .st2');
     if(st2){ var nd=noteDone(items[id]); st2.textContent=nd?('작성됨 · '+note.at):'미작성'; st2.style.color=nd?'var(--ok)':'#c9536b'; }
@@ -1072,7 +1081,7 @@ function applyAiDraft(id){
   var note=Object.assign({},(items[id]&&items[id].ho_note)||{});
   HO_FIELDS.forEach(function(f){ var el=$('ad-'+f[0]); if(el) note[f[0]]=el.value.trim(); });
   note.by=(S.me&&S.me.sid)||''; note.byName=(S.me&&S.me.name)||''; note.at=todayStr(); note.ai=1;
-  patchItem(id,{ho_note:note}).then(function(){ closeM(); toast('📦 노트에 적용됨 — 확인 후 보완하세요');
+  patchItem(id,{ho_note:note}).then(function(ok){ if(!ok)return; closeM(); toast('📦 노트에 적용됨 — 확인 후 보완하세요');
     S.noteOpen=true; renderDrawer(); route(); });
 }
 function aiInterview(id){
@@ -1106,7 +1115,7 @@ function saveAiQa(id,n){
   if(!qa.length){ toast('답변이 없습니다','warn'); return; }
   var note=Object.assign({},(items[id]&&items[id].ho_note)||{});
   note.qa=qa; note.by=(S.me&&S.me.sid)||''; note.byName=(S.me&&S.me.name)||''; note.at=todayStr();
-  patchItem(id,{ho_note:note}).then(function(){ closeM(); toast('🎤 인터뷰 답변 '+qa.length+'건 저장');
+  patchItem(id,{ho_note:note}).then(function(ok){ if(!ok)return; closeM(); toast('🎤 인터뷰 답변 '+qa.length+'건 저장');
     S.noteOpen=true; renderDrawer(); route(); });
 }
 
@@ -1231,7 +1240,7 @@ function renderHo(){
       h+='<div class="row" style="font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--line)">'
         +'<b>'+esc(d3.name||'')+'</b><span class="lvtag">'+esc(d3.type||'')+'</span>'
         +'<span class="muted">'+esc(d3.date||'')+' · 업무 '+((d3.items||[]).length)+'건 · 보관 '+esc((d3.saved_at||'').slice(0,10))+'</span>'
-        +'<span style="flex:1"></span><button style="font-size:11.5px" onclick="printHoDocArchived(\''+esc(k)+'\')">🖨 보기·인쇄</button></div>';
+        +'<span style="flex:1"></span><button style="font-size:11.5px" onclick="printHoDocArchived(\''+escJ(k)+'\')">🖨 보기·인쇄</button></div>';
     });
     h+='</div>';
     app.innerHTML=h;
@@ -1307,7 +1316,7 @@ function doneLeaving(sid){
   confirmM(msg,{ok:'완료·보관',danger:un>0}).then(function(ok){
     if(!ok)return;
     var rec=_hoDocRec(sid);
-    var key='HD-'+sid.replace(/[.#$/\[\]]/g,'_')+'-'+todayStr();
+    var key='HD-'+safeKey(sid)+'-'+todayStr();
     var up={};
     up[NS+'/handover_docs/'+key]=rec;
     up[NS+'/leaving/'+sid+'/done']=true;
@@ -1362,11 +1371,11 @@ function saveItem(editId){
   if(sSel.value) rec.mgr_subs=[{sid:sSel.value,name:sSel.options[sSel.selectedIndex].getAttribute('data-name')||''}];
   else rec.mgr_subs=[];
   if(editId){
-    patchItem(editId,rec).then(function(){ closeM(); toast('저장됨'); renderDrawer(); route(); });
+    patchItem(editId,rec).then(function(ok){ if(!ok)return; closeM(); toast('저장됨'); renderDrawer(); route(); });
   }else{
     var id=rid('W');
     rec.no=genNo(cat); rec.status='진행중'; rec.start=todayStr(); rec.created_at=new Date().toISOString();
-    fbDb.ref(NS+'/items/'+S.year+'/'+id).set(rec).then(function(){
+    fbDb.ref(NS+'/items/'+id).set(rec).then(function(){
       items[id]=rec; closeM(); toast('✅ 등록: '+rec.no); route();
     }).catch(function(e){ toast('등록 실패: '+e.message,'err'); });
   }
@@ -1523,7 +1532,7 @@ function renderStats(){
     if(!list.length) h+='<tr><td colspan="10" class="moremark">집계할 업무가 없습니다.</td></tr>';
     list.forEach(function(r,i){
       var rc=r.rate>=80?'var(--ok)':r.rate>=50?'var(--warn)':'var(--danger)';
-      h+='<tr style="cursor:pointer" onclick="setView(\'\',\''+esc(r.name)+'\');go(\'my\')" title="이 담당자의 업무 보기">'
+      h+='<tr style="cursor:pointer" onclick="setView(\'\',\''+escJ(r.name)+'\');go(\'my\')" title="이 담당자의 업무 보기">'
         +tdNo(i+1)
         +'<td style="font-weight:700">'+esc(r.name)+'</td>'
         +'<td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:700">'+r.open+'</td>'
@@ -1644,7 +1653,7 @@ function puerpCandidates(){
       var kind=s[5](x), title=s[4](x);
       var mgr=sid2name[x.managerMain]||'';
       var subs=(x.managerSubs||[]).map(function(sd){return sid2name[sd]||'';}).filter(Boolean);
-      out.push({ pid:'PE-'+s[0]+'-'+String(x.id).replace(/[.#$/\[\]\s]/g,'_'),
+      out.push({ pid:'PE-'+s[0]+'-'+safeKey(x.id),
         kindLabel:s[1], no:s[3](x)||'', cat:normCat(kind,title),
         company:co, title:(title||kind||co||'무제'), officer:(x.jurisdiction&&x.jurisdiction.officer)||'',
         client:x.payee||'', mgr:mgr, mgrSid:x.managerMain||'', subs:subs,
@@ -1743,7 +1752,7 @@ function runPuerpImport(){
         mgr_main:{sid:c.mgrSid||name2sid[c.mgr]||'',name:c.mgr||''},
         mgr_subs:(c.subs||[]).map(function(nm){return {sid:name2sid[nm]||'',name:nm};}),
         src:'puerp', ref:c.ref, created_at:new Date().toISOString() };
-      up[NS+'/items/'+S.year+'/'+c.pid]=rec; n++;
+      up[NS+'/items/'+c.pid]=rec; n++;
     });
     if(!n){ if(msg)msg.textContent='가져올 건이 없습니다.'; return; }
     if(msg)msg.textContent='등록 중… ('+n+'건)';
@@ -1769,26 +1778,29 @@ function importModal(){
     +'<div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="closeM()">닫기</button>'
     +'<button class="primary" onclick="runImport()">가져오기</button></div>');
 }
-// 엑셀 이관분 삭제 — 업무 + 건별 기록(itemlogs) + 주별 기록(logs)까지 정리
-function wipeExcel(msg){
+// 엑셀 이관분 삭제 경로만 만들어 반환한다 — 커밋하지 않는다.
+// 삭제와 새 데이터 등록을 한 번의 update()로 묶어야, 업로드가 실패해도 기존 데이터가 남는다.
+// (예전엔 삭제를 먼저 커밋해서, 이후 실패 시 옛 데이터가 영구히 사라질 수 있었다.)
+function excelWipePaths(msg){
   var ex=excelImported();
-  if(!ex.length) return Promise.resolve(0);
-  if(msg) msg.textContent='기존 이관분 '+ex.length+'건 삭제 중…';
-  return Promise.all(ex.map(function(it){ return loadItemLogs(it._id).then(function(lg){ return {id:it._id,lg:lg||{}}; }); }))
+  if(!ex.length) return Promise.resolve({paths:{},ids:[],n:0});
+  if(msg) msg.textContent='기존 이관분 '+ex.length+'건 확인 중…';
+  // 삭제 직전 최신 상태를 서버에서 다시 읽는다(캐시된 목록이 오래되어 주별 기록이 남는 문제 방지)
+  return Promise.all(ex.map(function(it){
+      return fbDb.ref(NS+'/itemlogs/'+it._id).once('value')
+        .then(function(s){ return {id:it._id,lg:s.val()||{}}; })
+        .catch(function(){ return {id:it._id,lg:itemLogsCache[it._id]||{}}; });
+    }))
     .then(function(arr){
-      var up={};
+      var paths={};
       arr.forEach(function(o){
-        up[NS+'/items/'+S.year+'/'+o.id]=null;
-        up[NS+'/itemlogs/'+o.id]=null;
+        paths[NS+'/items/'+o.id]=null;
+        paths[NS+'/itemlogs/'+o.id]=null;
         Object.keys(o.lg).forEach(function(lid){
-          var w=o.lg[lid]&&o.lg[lid].w; if(w) up[NS+'/logs/'+weekYear(w)+'/'+w+'/'+o.id+'/'+lid]=null;
+          var w=o.lg[lid]&&o.lg[lid].w; if(w) paths[NS+'/logs/'+weekYear(w)+'/'+w+'/'+o.id+'/'+lid]=null;
         });
       });
-      return fbDb.ref().update(up).then(function(){
-        arr.forEach(function(o){ delete items[o.id]; delete itemLogsCache[o.id];
-          Object.keys(wkCache).forEach(function(w2){ if(wkCache[w2][o.id]) delete wkCache[w2][o.id]; }); });
-        return ex.length;
-      });
+      return {paths:paths,ids:arr.map(function(o){return o.id;}),n:ex.length};
     });
 }
 function runImport(){
@@ -1800,22 +1812,40 @@ function runImport(){
     try{ data=JSON.parse(rd.result); }catch(e){ msg.textContent='JSON 파싱 실패: '+e.message; return; }
     var arr=data.items||data;
     if(!Array.isArray(arr)){ msg.textContent='형식 오류: items 배열이 없습니다.'; return; }
-    // 이관 키 중복 사전 검사 — 중복이면 서로 덮어써 건수가 줄어든다
-    var kseen={}, kdup=0;
-    arr.forEach(function(r){ if(!r||!r.xk)return; if(kseen[r.xk])kdup++; else kseen[r.xk]=1; });
-    if(kdup){ msg.innerHTML='<b style="color:var(--danger)">중단: 이관 키가 '+kdup+'건 중복입니다.</b> '
-      +'그대로 넣으면 '+kdup+'건이 서로 덮어써 사라집니다. 추출 스크립트를 다시 실행해 받은 파일을 쓰세요.'; return; }
+    // 키 사전 검사 — 원본 xk가 아니라 "실제로 쓰일 Firebase 키"로 검사해야 한다.
+    // safeKey가 금지문자를 '_'로 바꾸므로 a.b 와 a#b 는 같은 키가 되어 서로 덮어쓴다.
+    var kseen={}, kdup=0, kbad=0, dupEx=[];
+    arr.forEach(function(r){
+      if(!r||!r.xk){ kbad++; return; }
+      var k=safeKey(r.xk);
+      if(!k||k.replace(/_/g,'')===''){ kbad++; return; }
+      if(kseen[k]){ kdup++; if(dupEx.length<3) dupEx.push(r.xk); } else kseen[k]=1;
+    });
+    if(kdup||kbad){
+      msg.innerHTML='<b style="color:var(--danger)">중단: 이관 키에 문제가 있습니다.</b>'
+        +(kdup?' 변환 후 키 중복 '+kdup+'건'+(dupEx.length?' (예: '+esc(dupEx.join(', '))+')':''):'')
+        +(kbad?' · 키 없음/사용불가 '+kbad+'건':'')
+        +'<div class="muted" style="font-size:11.5px;margin-top:4px">그대로 넣으면 그만큼 서로 덮어써 사라집니다. 추출 스크립트를 다시 실행해 받은 파일을 쓰세요.</div>';
+      return;
+    }
     var wipe=$('imp-wipe')&&$('imp-wipe').checked;
-    (wipe?wipeExcel(msg):Promise.resolve(0)).then(function(){ return loadStaff(); }).then(function(st){
+    (wipe?excelWipePaths(msg):Promise.resolve({paths:{},ids:[],n:0})).then(function(w){
+      return loadStaff().then(function(st){ return {w:w,st:st}; });
+    }).then(function(ctx){
+      var w=ctx.w, st=ctx.st;
       var byName={}; st.forEach(function(u){byName[u.name]=u;});
+      // 삭제 경로를 먼저 담고, 아래에서 새 데이터를 같은 객체에 쌓아 한 번에 커밋한다
       var up={}, nItems=0, nLogs=0, skip=0;
-      var seqs={};   // 이관 관리번호 채번(구분별) — 기존 items 스캔
-      allItems().forEach(function(it){ var m=/^(\d{4})-(.+)-(\d+)$/.exec(it.no||'');
+      var wipedIds={}; w.ids.forEach(function(x){ wipedIds[x]=1; });
+      Object.keys(w.paths).forEach(function(k){ up[k]=null; });
+      var seqs={};   // 이관 관리번호 채번(구분별) — 기존 items 스캔(지울 것은 제외)
+      allItems().forEach(function(it){ if(wipedIds[it._id]) return;
+        var m=/^(\d{4})-(.+)-(\d+)$/.exec(it.no||'');
         if(m&&m[1]==String(S.year)){ var k2=m[2]; seqs[k2]=Math.max(seqs[k2]||0,+m[3]); } });
       arr.forEach(function(r){
         if(!r||!r.xk) return;
-        var id='X-'+String(r.xk).replace(/[.#$/\[\]\s]/g,'_');
-        if(items[id]){ skip++; return; }
+        var id='X-'+safeKey(r.xk);
+        if(items[id]&&!wipedIds[id]){ skip++; return; }   // 지울 대상이면 새로 넣는다
         var cat=CATS[r.cat]?r.cat:'기타';
         seqs[cat]=(seqs[cat]||0)+1;
         var mgr=byName[r.mgr]||{sid:'',name:r.mgr||''};
@@ -1837,14 +1867,16 @@ function runImport(){
           if(!last||last.d<=lg.d) last={d:lg.d,t:lg.t};
         });
         if(last) rec.last=last;
-        up[NS+'/items/'+S.year+'/'+id]=rec;
+        up[NS+'/items/'+id]=rec;
         nItems++;
       });
       if(!nItems){ msg.textContent='새로 가져올 건이 없습니다 (중복 '+skip+'건 건너뜀).'; return; }
-      msg.textContent='등록 중… ('+nItems+'건, 기록 '+nLogs+'줄)';
+      msg.textContent='등록 중… ('+(w.n?'기존 '+w.n+'건 교체, ':'')+nItems+'건, 기록 '+nLogs+'줄)';
+      // 삭제(null)와 등록을 한 번의 update로 — 실패하면 아무것도 바뀌지 않는다
       fbDb.ref().update(up).then(function(){
         msg.textContent='';
-        toast('✅ 이관 완료: 업무 '+nItems+'건, 기록 '+nLogs+'줄'+(skip?' (중복 '+skip+' 건너뜀)':''));
+        toast('✅ 이관 완료: 업무 '+nItems+'건, 기록 '+nLogs+'줄'
+          +(w.n?' (기존 '+w.n+'건 교체)':'')+(skip?' (중복 '+skip+' 건너뜀)':''));
         wkCache={}; wkLoaded={}; itemLogsCache={}; _watchWkKey=null; watchWeek();
         closeM(); route();
       }).catch(function(e){ msg.textContent='업로드 실패: '+e.message; });
