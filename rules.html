@@ -166,6 +166,16 @@ table.daejo td.dj2{padding:0}
 .djgrid>.dja.editable{outline:1px dashed #c7d2e8;outline-offset:-3px;cursor:text}
 .djgrid>.dja.editable:focus{outline:2px solid var(--accent2);background:#f6f9ff}
 .djnone{color:var(--mute);font-size:10.5px}
+/* 조문 재지정 — 잘못 연결된 조문을 검토 카드에서 바로 바꾸고 그 판단을 기억 */
+.rasgn{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-weight:400}
+.rasgn select{font-size:11px;height:24px;max-width:210px;padding:0 4px;border:1px solid #cdd6e6;border-radius:6px;font-family:inherit;color:var(--accent);background:#fff;cursor:pointer}
+.rasgn-on{font-size:10px;color:#0f766e;background:#f0fdfa;border:1px solid #99d5cc;border-radius:9px;padding:1px 6px}
+/* 신설 조문 확인 체크(가지번호 위치·번호 / 선택 신설 포함 여부) */
+.ckline{display:flex;align-items:center;gap:4px;font-size:10.5px;color:var(--sub);margin-top:4px;cursor:pointer;font-weight:400}
+.ckline.ok{color:#0f766e}
+.ckline input{width:13px;height:13px;margin:0;cursor:pointer}
+.mfrow{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:12px;padding:7px 2px;border-bottom:1px solid var(--line)}
+.mfrow .stbtn{margin-left:auto}
 .rev-intro{font-size:12.5px;color:var(--sub);background:#f6f9ff;border:1px solid var(--line);border-radius:10px;padding:11px 14px;margin-bottom:14px;line-height:1.7}
 /* 지적사항 상세 검토 */
 .fitem{cursor:pointer}
@@ -357,6 +367,7 @@ table.daejo td.dj2{padding:0}
   <div class="foot" style="flex-wrap:wrap;gap:8px">
     <button class="btn ghost" id="dt-prev">← 이전</button>
     <button class="btn ghost" id="dt-next">다음 →</button>
+    <button class="btn ghost" id="dt-mfix" title="사람이 지정·제외한 조문 연결 목록(전 사업장 공용)">📌 교정 기억</button>
     <span style="flex:1"></span>
     <button class="btn ghost" data-close>닫기</button>
     <button class="btn" id="dt-to-daejo">검토 끝 · 신구대조표로 →</button>
@@ -681,28 +692,83 @@ function expandKw(kw){
   return [...out].map(stripWs).filter(Boolean);
 }
 const GENERIC_TITLE=/목적|정의|적용범위|용어|명칭|총칙/;   // 여러 용어가 나열되는 총칙성 조문
-const HIT_MIN=6;   // 이 점수 미만이면 '관련 조문 없음'으로 처리(잘못 연결하는 것보다 낫다)
-function scoreArticle(a,ks){
+const HIT_MIN=6;    // 제목 근거가 있을 때의 최소 점수(미만이면 '관련 조문 없음' — 잘못 연결하는 것보다 낫다)
+const BODY_MIN=8;   // 제목 근거 없이 본문만으로 연결할 때의 최소 점수(우연 매칭 차단)
+
+/* ── 상위개념 규칙이 하위개념 조문을 가로채는 문제 ──
+   '출산휴가'(포괄) 규칙이 '배우자출산휴가'(별개 제도) 조문을 제목 일치로 낚아채는 일이 있었다.
+   (근기법 §74 출산전후휴가 ≠ §74의2 배우자 출산휴가 — 완전히 다른 제도)
+   규칙 92개의 키워드를 서로 대조해 '내 키워드를 품은 더 긴 용어'를 규칙별로 미리 구해 두고,
+   조문 제목이 그 더 구체적인 용어를 담고 있으면 제목 일치를 인정하지 않는다.
+   동의어(성희롱↔직장내성희롱)는 '더 구체적'이 아니므로 제외한다. */
+const synPair=(x,y)=>expandKw([x]).includes(y)||expandKw([y]).includes(x);
+let SPEC_KW=null;
+function specKw(id){
+  if(!SPEC_KW){
+    SPEC_KW={};
+    const all=RULES.map(r=>({id:r.id,ks:expandKw(r.keywords)}));
+    all.forEach(a=>{ const set=new Set();
+      a.ks.forEach(ka=>all.forEach(b=>{ if(b.id===a.id)return;
+        b.ks.forEach(kb=>{ if(kb!==ka&&kb.includes(ka)&&!synPair(ka,kb))set.add(kb); }); }));
+      SPEC_KW[a.id]=[...set];
+    });
+  }
+  return SPEC_KW[id]||[];
+}
+function scoreArticle(a,ks,spec){
   const t=stripWs(a.title||""), b=a.bodyNs||"";
   let s=0, matched=0, titleHit=0;
   ks.forEach(k=>{
-    if(t.includes(k)){ s+=14; titleHit++; matched++; }            // 제목 일치 = 가장 강한 신호
+    // 제목이 더 구체적인 다른 제도의 용어를 담고 있으면 제목 일치로 인정하지 않는다
+    const usurped=(spec||[]).some(sk=>sk!==k&&sk.includes(k)&&t.includes(sk));
+    if(t.includes(k)&&!usurped){ s+=14; titleHit++; matched++; }   // 제목 일치 = 가장 강한 신호
     else if(b.includes(k)){ const cnt=b.split(k).length-1;
-      s+=2+Math.min(2,Math.log2(cnt+1)); matched++; }            // 본문 등장(빈도 가중, 상한 둠)
+      const strong=k.length>=5;                                   // 정식 법정용어가 본문에 그대로
+      s+=(strong?8:2)+Math.min(2,Math.log2(cnt+1)); matched++; }  // 본문 등장(빈도 가중, 상한 둠)
   });
   if(titleHit)s+=4;                                               // 제목이 맞은 조문을 본문 다수매칭보다 우선
   if(matched>1)s+=2*(matched-1);                                  // 여러 키워드가 함께 맞으면 가산
   if(GENERIC_TITLE.test(t))s-=6;                                  // 목적·정의 조항은 감점
   if(b.length>700)s-=1;                                           // 긴 조문의 우연 매칭 감쇠
-  return s;
+  return {score:s,titleHit:titleHit};
 }
-function bestHit(arts,kw){
+/* ── 조문 연결 교정 기억 (전 사업장 공용) ──
+   점수 계산만으로는 못 맞히는 건이 남는다(예: 주지의무 규칙의 근거 단어가 조문 제목에 없음).
+   검토 화면에서 사람이 조문을 한 번 다시 지정하면 (규칙ID ↔ 조문제목) 쌍으로 기억해
+   다음부터 자동 적용한다. 조문 제목은 사업장이 달라도 대체로 같으므로 다른 사업장에도 통한다.
+   저장: Firebase 공용 노드 rules_mgmt/matchfix + localStorage 미러(오프라인·file:// 대비). */
+const MFIX_KEY="pureun_rules_matchfix_v1";
+let MFIX={};                       // {규칙ID:{ban:{조문제목키:{by,at}}, pin:{조문제목키:{by,at}}}}
+const tkey=t=>stripWs(t||"");
+function mfixLoad(){ try{ MFIX=JSON.parse(localStorage.getItem(MFIX_KEY)||"{}")||{}; }catch(e){ MFIX={}; } }
+mfixLoad();
+function mfixPersist(){
+  try{ localStorage.setItem(MFIX_KEY,JSON.stringify(MFIX)); }catch(e){}
+  if(typeof FBDB!=="undefined"&&FBDB&&typeof FBUSER!=="undefined"&&FBUSER)
+    FBDB.ref("rules_mgmt/matchfix").set(MFIX).catch(e=>console.warn("교정 기억 저장 실패:",e));
+}
+function mfixSet(ruleId,kind,title,on){
+  const k=tkey(title); if(!ruleId||!k)return;
+  MFIX[ruleId]=MFIX[ruleId]||{}; MFIX[ruleId][kind]=MFIX[ruleId][kind]||{};
+  if(on)MFIX[ruleId][kind][k]={by:(typeof MY_NAME!=="undefined"&&MY_NAME)||"",at:new Date().toISOString().slice(0,10),title:String(title)};
+  else delete MFIX[ruleId][kind][k];
+  mfixPersist();
+}
+function mfixCount(){ let n=0; Object.keys(MFIX).forEach(r=>["ban","pin"].forEach(k=>{ n+=Object.keys((MFIX[r]&&MFIX[r][k])||{}).length; })); return n; }
+
+function bestHit(arts,kw,ruleId){
   const ks=expandKw(kw); if(!ks.length)return null;
-  let best=null,bs=0;
-  (arts||[]).forEach(a=>{ const s=scoreArticle(a,ks); if(s>bs){bs=s;best=a;} });
-  return bs>=HIT_MIN?best:null;
+  const fx=(ruleId&&MFIX[ruleId])||null;
+  // ① 사람이 지정한 조문(pin)이 이 문서에 있으면 그것으로 확정
+  if(fx&&fx.pin){ const p=(arts||[]).find(a=>fx.pin[tkey(a.title)]); if(p)return p; }
+  // ② 사람이 '이 조문 아님'이라 한 조문(ban)은 후보에서 제외
+  const pool=(fx&&fx.ban)?(arts||[]).filter(a=>!fx.ban[tkey(a.title)]):(arts||[]);
+  const spec=ruleId?specKw(ruleId):[];
+  let best=null,bs=0,bh=0;
+  pool.forEach(a=>{ const x=scoreArticle(a,ks,spec); if(x.score>bs){bs=x.score;best=a;bh=x.titleHit;} });
+  return bs>=(bh?HIT_MIN:BODY_MIN)?best:null;
 }
-function firstHit(arts,kw){ return bestHit(arts,kw); }   // 기존 호출부 호환
+function firstHit(arts,kw,ruleId){ return bestHit(arts,kw,ruleId); }   // 기존 호출부 호환
 function allHits(arts,kw){const ks=kw.map(stripWs).filter(Boolean);return arts.filter(a=>ks.some(k=>a.bodyNs.includes(k)));}
 
 /* ── 값비교 자동판정 (engine/numcheck.py 이식 — 양쪽 결과 동일해야 함) ──
@@ -772,7 +838,7 @@ function evaluate(arts,size,conds,asof){
   const out=[];
   for(const r of RULES){
     if(!applies(r,size,conds))continue;
-    const hit=r.keywords.length?firstHit(arts,r.keywords):null,found=!!hit,fut=isFuture(r,asof);
+    const hit=r.keywords.length?firstHit(arts,r.keywords,r.id):null,found=!!hit,fut=isFuture(r,asof);
     let status,note,loc=hit?hit.label:"";
     if(r.type==="수동확인"){status="수동확인";note="검토자 직접 판단 필요";}
     else if(r.type==="존재여부"){status=found?"적합":(fut?"시행예정":"누락");note=found?"관련 조항 존재":(fut?r.effective+" 시행 예정":"관련 조항 미발견");}
@@ -1132,6 +1198,36 @@ function openDetail(i){
   DT_IDX=Math.max(0,Math.min(i,DT_LIST.length-1));
   renderDetail(); $("ov-detail").classList.add("on");
 }
+/* 조문 재지정 드롭다운 — 잘못 연결된 조문을 그 자리에서 바로잡고, 그 판단을 기억한다 */
+function reassignSel(f){
+  const cands=(LAST&&LAST.arts)||[];
+  if(!cands.length)return "";
+  const nowT=f.hit?tkey(f.hit.title):"";
+  const opts=cands.map(a=>`<option value="${escapeH(a.label)}" ${tkey(a.title)===nowT?"selected":""}>${escapeH(a.label)}${a.title?" ("+escapeH(a.title)+")":""}</option>`).join("");
+  const fixed=f.hit&&MFIX[f.rule.id]&&MFIX[f.rule.id].pin&&MFIX[f.rule.id].pin[nowT];
+  return `<span class="rasgn"><select id="dt-rasgn" title="이 규칙이 검토할 조문을 직접 지정합니다. 한 번 고치면 다음 검토·다른 사업장에도 자동 적용됩니다.">
+      <option value="">${f.hit?"조문 바꾸기…":"조문 지정하기…"}</option>
+      <option value="__none__">관련 조문 없음(신설 대상)</option>${opts}</select>${fixed?'<span class="rasgn-on" title="사람이 지정한 연결입니다">📌 지정됨</span>':""}</span>`;
+}
+function applyReassign(f,val){
+  const rid=f.rule.id, oldT=f.hit?f.hit.title:"";
+  if(val==="__none__"){
+    if(!oldT){alert("이미 연결된 조문이 없습니다.");return;}
+    if(!confirm(`「${f.rule.id} ${f.rule.name}」은 「${oldT}」 조문과 무관하다고 기억하고, 관련 조문 없음(신설 대상)으로 처리합니다.\n이 판단은 다음 검토와 다른 사업장에도 적용됩니다. 계속할까요?`))return;
+    mfixSet(rid,"ban",oldT,true); mfixSet(rid,"pin",oldT,false);
+  }else{
+    const a=((LAST&&LAST.arts)||[]).find(x=>x.label===val); if(!a)return;
+    if(tkey(a.title)===tkey(oldT))return;
+    if(!confirm(`「${f.rule.id} ${f.rule.name}」의 검토 대상을 「${a.label}${a.title?" ("+a.title+")":""}」로 지정합니다.${oldT?`\n기존 연결 「${oldT}」은 이 규칙과 무관하다고 기억합니다.`:""}\n이 판단은 다음 검토와 다른 사업장에도 적용됩니다. 계속할까요?`))return;
+    if(oldT)mfixSet(rid,"ban",oldT,true);
+    mfixSet(rid,"pin",a.title,true); mfixSet(rid,"ban",a.title,false);
+  }
+  run();                          // 교정을 반영해 검토 전체 재실행(수동 수정 문안은 보존됨)
+  const j=ALL_FINDINGS.findIndex(x=>x.rule.id===rid);
+  FS_STATUS=""; renderFindings();
+  if(j>=0){ DT_IDX=DT_LIST.findIndex(x=>x.rule.id===rid); if(DT_IDX<0)DT_IDX=0; renderDetail(); }
+  else { $("ov-detail").classList.remove("on"); alert("교정을 반영했습니다. 이 규칙은 더 이상 지적 사항이 아닙니다."); }
+}
 function renderDetail(){
   const f=DT_LIST[DT_IDX]; if(!f)return;
   const it=itemForFinding(f);
@@ -1151,7 +1247,7 @@ function renderDetail(){
         ${f.rule.opinion?`<br><b>권고</b> ${escapeH(f.rule.opinion)}`:""}</div>
     </div>
     <div class="dt-cols">
-      <div class="dt-col"><h4>📄 현행 조문 ${cur?`<span class="loc">${escapeH((it&&it.label)||"")}</span>`:""}</h4>
+      <div class="dt-col"><h4>📄 현행 조문 ${cur?`<span class="loc">${escapeH((it&&it.label)||"")}</span>`:""}${reassignSel(f)}</h4>
         <div class="dt-box old">${cur?escapeH(cur):'<span class="dt-none">해당 조문 없음 — 신설 대상입니다.</span>'}</div></div>
       <div class="dt-col"><h4>✏️ 개선안 <span style="font-weight:400;color:var(--mute)">(클릭하여 편집)</span></h4>
         <div class="dt-box new" id="dt-new" contenteditable="true">${sug?escapeH(sug):""}</div>
@@ -1170,6 +1266,8 @@ function renderDetail(){
     if((it.decision||"")==="반영"||it.orig==="") it.after=ed.innerText;
     saveWorkState();
   });
+  const rs=$("dt-rasgn");
+  if(rs)rs.addEventListener("change",()=>{ const v=rs.value; rs.value=""; if(v)applyReassign(f,v); });
   body.querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{
     applyDecision(f,b.dataset.d); refreshDecBadges();
     if(DT_IDX<DT_LIST.length-1){DT_IDX++;renderDetail();}else renderDetail();
@@ -1177,6 +1275,31 @@ function renderDetail(){
   $("dt-prog").textContent=`${DT_IDX+1} / ${DT_LIST.length}  ·  결정 ${DT_LIST.filter(x=>decisionOf(x)).length}건`;
   $("dt-prev").disabled=DT_IDX===0; $("dt-next").disabled=DT_IDX===DT_LIST.length-1;
 }
+/* 교정 기억 관리 — 잘못 저장한 지정·제외를 되돌린다(공용이므로 전원에게 반영됨) */
+$("dt-mfix").addEventListener("click",()=>{
+  const rows=[];
+  Object.keys(MFIX).forEach(rid=>{
+    const r=RULES.find(x=>x.id===rid);
+    ["pin","ban"].forEach(k=>Object.keys((MFIX[rid]&&MFIX[rid][k])||{}).forEach(tk=>{
+      const v=MFIX[rid][k][tk];
+      rows.push({rid,name:r?r.name:"(삭제된 규칙)",kind:k,title:(v&&v.title)||tk,by:(v&&v.by)||"",at:(v&&v.at)||""});
+    }));
+  });
+  if(!rows.length){ alert("저장된 교정 기억이 없습니다.\n검토 화면의 ‘조문 바꾸기’로 조문을 다시 지정하면 이곳에 쌓입니다."); return; }
+  const html=rows.map((x,i)=>`<div class="mfrow"><span class="badge ${x.kind==="pin"?"s":"up"}">${x.kind==="pin"?"지정":"제외"}</span>
+      <b>${escapeH(x.rid)}</b> ${escapeH(x.name)} <span style="color:var(--mute)">→</span> ${escapeH(x.title)}
+      <span style="color:var(--mute);font-size:10.5px">${escapeH(x.by)} ${escapeH(x.at)}</span>
+      <button class="stbtn on-excl" data-mf="${i}">되돌리기</button></div>`).join("");
+  const box=$("dt-body"); const prev=box.innerHTML;
+  box.innerHTML=`<div style="font-size:12px;color:var(--sub);margin-bottom:10px">사람이 지정(📌)하거나 제외한 조문 연결 ${rows.length}건 — <b>전 사업장 공용</b>입니다. 되돌리면 자동 판정으로 돌아갑니다.</div>${html}
+    <div style="margin-top:14px"><button class="btn ghost" id="mf-back">← 검토로 돌아가기</button></div>`;
+  box.querySelectorAll("[data-mf]").forEach(b=>b.onclick=()=>{
+    const x=rows[+b.dataset.mf];
+    if(!confirm(`「${x.rid} ${x.name} → ${x.title}」 ${x.kind==="pin"?"지정":"제외"}을 되돌립니다. 계속할까요?`))return;
+    mfixSet(x.rid,x.kind,x.title,false); run(); renderFindings(); $("dt-mfix").click();
+  });
+  $("mf-back").onclick=()=>{ box.innerHTML=prev; renderDetail(); };
+});
 $("dt-prev").addEventListener("click",()=>{if(DT_IDX>0){DT_IDX--;renderDetail();}});
 $("dt-next").addEventListener("click",()=>{if(DT_IDX<DT_LIST.length-1){DT_IDX++;renderDetail();}});
 $("dt-to-daejo").addEventListener("click",()=>{
@@ -1218,8 +1341,22 @@ function suggestInsertAfter(title, kws, arts){
     if(s>bestScore){bestScore=s;best=a;} else if(s===bestScore&&bestScore>0){best=a;} });   // 동점이면 더 뒤(마지막 형제) 뒤에 배치
   return bestScore>0 ? ("art_"+best.label) : "__end__";
 }
+/* ── 신설 항목 성질 분류 ──
+   문안 없는 신설이 대조표에 무더기로 들어가던 문제를 성질별로 갈라 정리한다.
+   B(문안 작성 필요): 필수기재·강행규정·권장·최신개정 — 조문으로 넣어야 하나 문안은 노무사가 쓴다
+   C(선택 신설): 타법령·조건부 — 옮겨 적어도 되고 안 적어도 위법 아님 → 기본 제외, 켜면 포함
+   D(조문화 대상 아님): 절차(의견청취·신고), 근로자대표 서면합의 사항(탄력·선택근로 등)
+                       → 취업규칙 조문으로 성립하지 않으므로 신설 행을 만들지 않는다 */
+const NO_ARTICLE_RE=/서면합의|근로자대표/;
+function insertGrade(r){
+  if(r.category==="절차")return "D";
+  if(NO_ARTICLE_RE.test((r.opinion||"")+(r.criterion||"")))return "D";
+  if(r.category==="타법령"||r.category==="조건부")return "C";
+  return "B";
+}
+let NO_ART_RULES=[];   // 조문화 대상이 아니어서 대조표에서 뺀 항목(화면에 건수 안내)
 function buildItems(res,terms,arts){
-  const amend={},review={},inserts=[],seen=new Set();
+  const amend={},review={},inserts=[],seen=new Set(),noArt=[];
   for(const f of res){
     if(f.status==="위반의심"||f.status==="누락"){
       const t=TPL_BY_RULE[f.rule.id]; if(!t||seen.has(t.tid))continue; seen.add(t.tid);
@@ -1236,9 +1373,12 @@ function buildItems(res,terms,arts){
       if(f.hit){
         if(!review[f.hit.label]) review[f.hit.label]={notes:[],reason:rz};
         review[f.hit.label].notes.push((f.rule.name||"")+" — "+note);
-      }else{   // 관련 조문 미발견 → 신설(검토) 행: 위치 자동 추천, 내용은 노무사가 작성
+      }else{   // 관련 조문 미발견 → 성질에 따라 신설 행을 만들지 결정(문안 없는 신설 남발 방지)
+        const g=insertGrade(f.rule);
+        if(g==="D"){ noArt.push(f.rule); continue; }   // 조문화 대상 아님(절차·근로자대표 서면합의) — 지적사항 목록에만 남김
         const rec=suggestInsertAfter(f.rule.name,f.rule.keywords,arts);
-        inserts.push({id:"chkins_"+f.rule.id,title:f.rule.name,label:"",num:null,sub:null,insertAfter:rec,rec,before:"신설",after:"",orig:"",reason:rz,suggested:false,del:false,review:true,reviewNote:(f.rule.name||"")+" — "+note});
+        inserts.push({id:"chkins_"+f.rule.id,title:f.rule.name,label:"",num:null,sub:null,insertAfter:rec,rec,before:"신설",after:"",orig:"",reason:rz,suggested:false,del:false,review:true,reviewNote:(f.rule.name||"")+" — "+note,
+          grade:g,needText:true,optIn:g==="C"?false:true});   // C=선택 신설(기본 제외), B=문안 작성 필요
       }
     }
   }
@@ -1252,6 +1392,7 @@ function buildItems(res,terms,arts){
     if(rev){ it.review=true; it.reviewNote=rev.notes.join(" / "); }
     return it;
   });
+  NO_ART_RULES=noArt;
   return items.concat(inserts);
 }
 /* ── 개정방식별 순서·조번호 계산 (일부개정=가지번호·결번 / 전부개정=순차 재번호) ── */
@@ -1266,10 +1407,19 @@ function daejoCols(){
   if(RZ_NONE) return PAGE_LAND?[1.5,4.25,4.25]:[1.4,4.05,4.05];
   return PAGE_LAND?[1.5,3.15,3.15,2.2]:[1.4,3.1,3.1,1.9];
 }
+/* 앵커가 삭제된 조문이면 그 앞의 살아있는 조문으로 옮긴다.
+   삭제된 조문은 결번이 되므로 그 번호에 가지번호(제N조의n)를 매달 수 없다. */
+function liveAnchor(existing,id){
+  let i=existing.findIndex(e=>e.id===id);
+  if(i<0)return null;
+  while(i>=0&&existing[i].del)i--;             // 삭제 조문을 건너 앞으로
+  return i>=0?existing[i].id:"__start__";      // 앞이 전부 삭제면 맨 앞
+}
 function computeOrdered(items){
   const existing=items.filter(it=>it.orig!==""), inserts=items.filter(it=>it.orig==="");
   const byAnchor={},trailing=[],leading=[];
-  inserts.forEach(it=>{ const a=it.insertAfter;
+  inserts.forEach(it=>{ const a0=it.insertAfter;
+    const a=(a0&&a0!=="__end__"&&a0!=="__start__")?liveAnchor(existing,a0):a0;
     if(a==="__start__")leading.push(it);
     else if(a&&a!=="__end__"&&existing.some(e=>e.id===a))(byAnchor[a]=byAnchor[a]||[]).push(it);
     else trailing.push(it); });
@@ -1301,9 +1451,13 @@ function numberedView(items,mode){
   // 일부개정: 기존 번호 유지, 신설=가지번호, 삭제=번호 유지(결번)
   const subNext={}; let maxMain=0;
   items.forEach(it=>{ if(it.orig!==""&&it.num){ subNext[it.num]=Math.max(subNext[it.num]||0,it.sub||0); if(it.num>maxMain)maxMain=it.num; } });
+  const existing=items.filter(x=>x.orig!=="");
   return ordered.map(it=>{
     if(it.orig!=="") return {it,no:"제"+it.num+"조"+(it.sub?"의"+it.sub:"")};
-    const anchor=items.find(x=>x.id===it.insertAfter);
+    // 신설하지 않는 것(삭제·선택 미포함)은 애초에 존재하지 않으므로 가지번호를 소비하지 않는다(뒤 조문이 당겨짐)
+    if(it.del||it.optIn===false) return {it,no:"—"};
+    const aid=liveAnchor(existing,it.insertAfter)||it.insertAfter;   // 삭제된 앵커는 앞의 살아있는 조문으로
+    const anchor=existing.find(x=>x.id===aid);
     if(anchor&&anchor.num){ const A=anchor.num,k=(subNext[A]||1)+1; subNext[A]=k; return {it,no:"제"+A+"조의"+k}; }   // 가지번호는 의2부터(본조=의1)
     return {it,no:"제"+(++maxMain)+"조"};   // 맨 끝 → 새 본조번호
   });
@@ -1332,10 +1486,21 @@ function docReason(it){
   if(!INC_NOTE||!it.reviewNote)return base;
   return base?(base+" 〔검토권고: "+it.reviewNote+"〕"):("검토권고: "+it.reviewNote);
 }
-function daejoRows(){ return numberedView(CUR_ITEMS,REV_MODE).filter(v=>itemKind(v.it)!=="유지").map(v=>{
+/* 선택 신설(등급 C — 타법령·조건부)은 노무사가 [신설함]을 켜야 대조표에 들어간다 */
+const inDaejo=it=>!(it.orig===""&&it.optIn===false);
+function daejoRows(){ return numberedView(CUR_ITEMS,REV_MODE).filter(v=>itemKind(v.it)!=="유지"&&inDaejo(v.it)).map(v=>{
   const it=v.it,k=itemKind(it);
   return {label:viewLabel(v),kind:k,before:it.orig===""?"신설":it.orig,after:it.del?"〈삭제〉":it.after,
-    reason:docReason(it)};}); }
+    reason:docReason(it),noText:it.orig===""&&!String(it.after||"").trim()&&!it.del};}); }
+/* 문서(한글·엑셀)용 행 — 문안이 비어 있는 신설은 제출 문서에서 뺀다(빈칸 조문은 성립하지 않음) */
+function daejoDocSkipped(){ return daejoRows().filter(r=>r.noText).length; }
+/* 가지번호(제N조의n) 신설 중 위치·번호 확인이 안 된 건수 — 개별 노무사 판단 사항 */
+function branchPending(){
+  if(REV_MODE!=="partial")return [];
+  return numberedView(CUR_ITEMS,REV_MODE)
+    .filter(v=>v.it.orig===""&&!v.it.del&&inDaejo(v.it)&&/조의\d+$/.test(v.no)&&!v.it.numOk)
+    .map(v=>v.no+(v.it.title?" ("+v.it.title+")":""));
+}
 /* ══════ 항(①②③) 단위 줄맞춤 ══════
    변경 전/후를 한 덩어리로 넣으면 ①②③ 위치가 서로 어긋나 비교가 어렵다.
    같은 항끼리 같은 행에 오도록 조문을 항 단위로 쪼갠다. */
@@ -1380,7 +1545,7 @@ function daejoRowsAligned(){
     al.forEach((p,i)=>out.push({
       label:i===0?r.label:"", kind:i===0?r.kind:"",
       before:p.b||(p.a?"〈신설〉":""), after:p.a||(p.b?"〈삭제〉":""),   // 한쪽에만 있는 항은 신설/삭제로 표기
-      reason:i===0?r.reason:""
+      reason:i===0?r.reason:"", noText:i===0?r.noText:false
     }));
   });
   return out;
@@ -1388,7 +1553,7 @@ function daejoRowsAligned(){
 /* 신구대조표 표 구성 — [전체 미반영]이면 변경이유 열 자체를 뺀다(화면·문서 동일) */
 function daejoHeaders(){ return RZ_NONE?["변경조항","변경 전","변경 후"]:["변경조항","변경 전","변경 후","변경이유"]; }
 function daejoBody(){
-  return daejoRowsAligned().map(r=>{
+  return daejoRowsAligned().filter(r=>!r.noText).map(r=>{   // 문안 없는 신설은 제출 문서에서 제외
     const c=[r.label+(r.kind?"\n["+r.kind+"]":""), r.before==="신설"?"신 설":r.before, r.after];
     if(!RZ_NONE)c.push(r.reason);
     return c;
@@ -1443,8 +1608,16 @@ function renderEditor(){
           ${opts}<option value="__end__" ${(!it.insertAfter||it.insertAfter==="__end__")?"selected":""}>맨 끝(새 조)</option>
         </select>${recBtn}</div>`;
     }
+    // 가지번호(제N조의n) 신설 = 위치·번호가 개별 판단 사항 → 확인 체크, 미확인은 주황 배지
+    const isBranch=isIns&&!it.del&&REV_MODE==="partial"&&/조의\d+$/.test(v.no);
+    const noText=isIns&&!it.del&&!String(it.after||"").trim();
     tr.innerHTML=`<td class="rlabel"><b>${escapeH(v.no)}</b>${it.title?" "+escapeH("("+it.title+")"):""}
-        <div style="margin-top:3px;display:flex;gap:4px;align-items:center;flex-wrap:wrap"><span class="badge ${KIND_BADGE(k)}">${k}</span>${it.suggested?'<span class="pill">자동제안</span>':""}</div>
+        <div style="margin-top:3px;display:flex;gap:4px;align-items:center;flex-wrap:wrap"><span class="badge ${KIND_BADGE(k)}">${k}</span>${it.suggested?'<span class="pill">자동제안</span>':""}
+          ${it.grade==="C"?`<span class="pill" title="타법령·조건부 사항 — 옮겨 적어도 되고 안 적어도 위법은 아닙니다">선택</span>`:""}
+          ${noText?'<span class="badge miss" title="조문 문안이 비어 있습니다. 작성하지 않으면 제출 문서에서 빠집니다">문안 작성 필요</span>':""}
+          ${isBranch&&!it.numOk?'<span class="badge up" title="가지번호는 위치·번호가 실무 판단 사항입니다. 확인해 주세요">⚠ 번호 확인</span>':""}</div>
+        ${isIns&&it.grade==="C"?`<label class="ckline" title="이 사항을 조문으로 신설할지 노무사가 정합니다"><input type="checkbox" data-act="optin" data-i="${i}" ${it.optIn?"checked":""}> 이 조문 신설함</label>`:""}
+        ${isBranch?`<label class="ckline${it.numOk?" ok":""}"><input type="checkbox" data-act="numok" data-i="${i}" ${it.numOk?"checked":""}> 위치·번호 확인</label>`:""}
         <div class="stbtns" style="flex-wrap:wrap">
           ${CUR_FILTER==="all"?`<button class="stbtn" data-act="up" data-i="${i}" title="한 칸 위로 이동">▲</button><button class="stbtn" data-act="down" data-i="${i}" title="한 칸 아래로 이동">▼</button>`:""}
           ${it.suggested&&!it.del?`<button class="stbtn" data-act="revert" data-i="${i}" title="자동제안을 버리고 현행 그대로 두기">현행유지</button>`:""}
@@ -1485,6 +1658,8 @@ function renderEditor(){
       renderEditor();saveWorkState();return;
     }
     if(b.dataset.act==="rz-clear"){ it.reasonEdit=""; renderEditor();saveWorkState();return; }
+    if(b.dataset.act==="optin"){ it.optIn=!it.optIn; renderEditor();refreshDaejoSub();return; }   // 선택 신설 포함/제외
+    if(b.dataset.act==="numok"){ it.numOk=!it.numOk; renderEditor();refreshDaejoSub();return; }   // 가지번호 위치·번호 확인
     if(b.dataset.act==="del")it.del=!it.del;
     if(b.dataset.act==="revert"){it.after=it.orig;it.suggested=false;}
     if(b.dataset.act==="restore"){it.after=it.sug;it.suggested=true;}   // 자동제안 문안 복원
@@ -1504,9 +1679,23 @@ function renderEditor(){
   saveWip();   // 조문 조작·모드 변경·위치 변경 등 모든 편집을 임시저장
 }
 function refreshDaejoSub(){
-  let 개정=0,신설=0,삭제=0,검토=0;CUR_ITEMS.forEach(it=>{const k=itemKind(it);if(k==="개정")개정++;else if(k==="신설")신설++;else if(k==="삭제")삭제++;else if(k==="검토")검토++;});
-  $("daejo-sub").textContent=`${LAST?siteLabel():""} · 전체 ${CUR_ITEMS.length}개 조 · 개정 ${개정} · 신설 ${신설} · 삭제 ${삭제} · 검토 ${검토}`;
+  let 개정=0,신설=0,삭제=0,검토=0;CUR_ITEMS.forEach(it=>{const k=itemKind(it);if(!inDaejo(it))return;const k2=k;if(k2==="개정")개정++;else if(k2==="신설")신설++;else if(k2==="삭제")삭제++;else if(k2==="검토")검토++;});
+  const pend=branchPending().length, noTxt=daejoDocSkipped(), off=CUR_ITEMS.filter(it=>it.orig===""&&it.optIn===false).length;
+  const warn=(pend?` · <b style="color:#b45309">⚠ 번호 확인 ${pend}</b>`:"")
+    +(noTxt?` · <b style="color:#b91c1c">문안 미작성 ${noTxt}</b>`:"")
+    +(off?` · <span style="color:var(--mute)">선택 미포함 ${off}</span>`:"")
+    +(NO_ART_RULES.length?` · <span style="color:var(--mute)" title="${escapeH(NO_ART_RULES.map(r=>r.id+" "+r.name).join(" / "))}">조문화 대상 아님 ${NO_ART_RULES.length}</span>`:"");
+  $("daejo-sub").innerHTML=`${LAST?escapeH(siteLabel()):""} · 전체 ${CUR_ITEMS.length}개 조 · 개정 ${개정} · 신설 ${신설} · 삭제 ${삭제} · 검토 ${검토}${warn}`;
   saveWorkState();   // 편집할 때마다 이 브라우저에 자동 보관(F5에도 유지)
+}
+/* 문서 내려받기 전 확인 — 미확인 가지번호·문안 미작성은 반드시 알리고 진행 여부를 묻는다 */
+function docGateOk(){
+  const pend=branchPending(), noTxt=daejoDocSkipped();
+  if(!pend.length&&!noTxt)return true;
+  let m="";
+  if(pend.length)m+=`⚠ 위치·번호가 확인되지 않은 가지번호 신설 ${pend.length}건:\n   ${pend.slice(0,8).join("\n   ")}${pend.length>8?"\n   …":""}\n\n`;
+  if(noTxt)m+=`• 문안이 비어 있는 신설 ${noTxt}건은 제출 문서에서 제외됩니다.\n\n`;
+  return confirm(m+"그래도 내려받을까요?");
 }
 $("mk-daejo").addEventListener("click",()=>{
   if(!LAST)return;
@@ -1533,6 +1722,7 @@ $("add-ins").addEventListener("click",()=>{
 });
 $("dl-xlsx").addEventListener("click",()=>{
   if(!daejoRows().length){alert("변경된 조문이 없습니다.");return;}
+  if(!docGateOk())return;
   downloadXlsx(null,LAST);
 });
 function downloadXlsx(_ignored,ctx){
@@ -1566,7 +1756,7 @@ function downloadXlsx(_ignored,ctx){
 function showRevision(){
   if(!CUR_ITEMS.length){alert("먼저 조문 검토·편집을 생성하세요.");return;}
   const view=numberedView(CUR_ITEMS,REV_MODE);
-  const shown=REV_MODE==="full"?view.filter(v=>!v.it.del):view;   // 전부개정: 삭제 제외 / 일부개정: 삭제는 결번 표기
+  const shown=(REV_MODE==="full"?view.filter(v=>!v.it.del):view).filter(v=>inDaejo(v.it));   /* 선택 미포함 신설 제외 */   // 전부개정: 삭제 제외 / 일부개정: 삭제는 결번 표기
   const body=$("rev-body");body.innerHTML="";
   const 개정=CUR_ITEMS.filter(it=>itemKind(it)==="개정").length,신설=CUR_ITEMS.filter(it=>itemKind(it)==="신설").length,삭제=CUR_ITEMS.filter(it=>itemKind(it)==="삭제").length;
   const intro=document.createElement("div");intro.className="rev-intro";
@@ -1642,6 +1832,7 @@ function dlDoc(rtf,fname){
 $("dl-doc-daejo").addEventListener("click",()=>{
   const headers=daejoHeaders(), rows=daejoBody();   // 항 단위 줄맞춤 + [전체 미반영] 시 변경이유 열 제외
   if(!rows.length){alert("변경된 조문이 없습니다.");return;}
+  if(!docGateOk())return;
   const dsite=siteLabel();   // 본문에서 인식된 회사명 우선
   const base=`신구대조표_${dsite.replace(/[()\s—📄🏢\/\\:*?"<>|]/gu,"")}_${LAST.asof.replace(/-/g,"")}`;
   try{   // 한글 HWPX 직접 생성 (실패 시 RTF .doc 폴백) — 용지 방향은 편집창에서 선택(기본 A4 세로)
@@ -1796,9 +1987,10 @@ $("open-docset").addEventListener("click",()=>{
 $("dl-docset").addEventListener("click",()=>{
   const sel=["apply","daejo","full","opinion","consent"].filter(k=>DOCSET[k]);
   if(!sel.length){alert("첨부할 서류를 선택하세요.");return;}
+  if((DOCSET.daejo||DOCSET.full)&&!docGateOk())return;
   const site=siteLabel(), asof=LAST.asof, sum=docsetSummary(), hits=disadvantageScan();
   const view=numberedView(CUR_ITEMS,REV_MODE);
-  const shown=REV_MODE==="full"?view.filter(v=>!v.it.del):view;
+  const shown=(REV_MODE==="full"?view.filter(v=>!v.it.del):view).filter(v=>inDaejo(v.it));   /* 선택 미포함 신설 제외 */
   const ad=composeAddendum();
   try{
     HWPX.setPage({landscape:PAGE_LAND});
@@ -1839,7 +2031,7 @@ $("dl-docset").addEventListener("click",()=>{
 });
 $("dl-doc-rev").addEventListener("click",()=>{
   const view=numberedView(CUR_ITEMS,REV_MODE);
-  const shown=REV_MODE==="full"?view.filter(v=>!v.it.del):view;
+  const shown=(REV_MODE==="full"?view.filter(v=>!v.it.del):view).filter(v=>inDaejo(v.it));   /* 선택 미포함 신설 제외 */
   if(!shown.length){alert("조문이 없습니다.");return;}
   // 변경 후 전문 = 원본 규정 기반의 순수 취업규칙 (검토 태그·근거·권고는 넣지 않음 — 그건 신구대조표에서 확인)
   const site=siteLabel();
@@ -1939,9 +2131,18 @@ function subscribeArch(){if(!FBDB||!FBUSER)return;
     setLocal(arr);if(document.querySelector("#ov-arch.on"))renderArch($("arch-q").value);
   },e=>console.warn("Firebase 동기화 실패:",e));}
 function updateArchCnt(){const n=loadArch().length;$("arch-cnt").textContent=n?`(${n})`:"";}
+/* 조문 연결 교정 기억 동기화 — 노무사 누가 고쳐도 전원이 같은 교정 결과를 쓴다 */
+function subscribeMfix(){if(!FBDB||!FBUSER)return;
+  FBDB.ref("rules_mgmt/matchfix").on("value",s=>{
+    const v=s.val(); if(!v)return;
+    // 서버 기준으로 맞추되, 아직 올라가지 않은 로컬 교정은 남긴다(항목 단위 병합)
+    Object.keys(v).forEach(rid=>{ MFIX[rid]=MFIX[rid]||{};
+      ["ban","pin"].forEach(k=>{ if(v[rid][k])MFIX[rid][k]=Object.assign({},v[rid][k],MFIX[rid][k]); }); });
+    try{ localStorage.setItem(MFIX_KEY,JSON.stringify(MFIX)); }catch(e){}
+  },e=>console.warn("교정 기억 동기화 실패:",e));}
 try{if(window.firebase){firebase.initializeApp(FB_CONFIG);FBDB=firebase.database();
   firebase.auth().onAuthStateChanged(u=>{FBUSER=u;FBNAME=null;updateWho();
-    if(u){subscribeArch();resolveUserName();loadErpCompanies();
+    if(u){subscribeArch();subscribeMfix();resolveUserName();loadErpCompanies();
       checkCloudWorkSession();   // 재로그인 시 계정에 남은 작업 세션 이어받기
       pushWorkToCloud(true);     // 로그인 전 로컬에만 있던 작업을 계정에 올려 다른 기기에서도 이어갈 수 있게
     }else if(FBDB)FBDB.ref("rules_mgmt/archive").off();});
