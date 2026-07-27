@@ -935,12 +935,12 @@ function parseInka(txt){
     var re=new RegExp('(?:'+SIDO+')[가-힣]{0,4}\\s*[가-힣]{2,7}(?:시|군|구)(?![가-힣])','g'), mm, last=-1;
     while((mm=re.exec(s))) last=mm.index;          // 이름에도 '충남' 등이 있으므로 마지막 매치를 주소 시작으로
     if(last>0){
-      o.address=s.slice(last).replace(/\s+/g,' ').trim();
-      var nm=s.slice(0,last).replace(/\s+/g,'');
-      if(nm) o.name=nm.replace(/기금호(\d+)/,'기금$1호');   // "기금호1" → "기금1호"(글자 순서 뒤바뀜 보정)
+      o.address=_cleanAddr(s.slice(last))||s.slice(last).replace(/\s+/g,' ').trim();
+      var nm=_cleanName(s.slice(0,last).replace(/기금호(\d+)/,'기금$1호'));   // "기금호1"→"기금1호"(순서 뒤바뀜 보정)
+      if(nm) o.name=nm;
     }else{
-      var only=s.replace(/\s+/g,'');
-      if(/기금/.test(only)) o.name=only.replace(/기금호(\d+)/,'기금$1호');
+      var nm2=_cleanName(s.replace(/기금호(\d+)/,'기금$1호'));
+      if(nm2&&/기금/.test(nm2)) o.name=nm2;
     }
   }
   return o;
@@ -957,17 +957,109 @@ function parseCorpReg(txt){
   m=flat.match(/관할등기소\s*([가-힣]+지방법원[가-힣]*\s*[가-힣]*등기소?)/); if(m) o.registry_office=m[1].replace(/\s+/g,' ').trim();
   return o;
 }
-// ── 고유번호증 판독 ──
+/* ── 고유번호증 판독 ──
+   OCR 텍스트는 글자 사이에 잡음이 낀다("단 _ 체 . 명 :", "소 _ OX:") → 라벨을 느슨하게 매칭한다. */
+function _loose(s){ return s.split('').map(function(c){return c+'[\\s_.,:：]*';}).join(''); }
 function parseTaxId(txt){
   var flat=_flat(txt), o={};
-  var m=flat.match(/(?:고유번호|등록번호)\s*:?\s*(\d{3}\s*-\s*\d{2}\s*-\s*\d{5})/);
-  if(m) o.tax_id_no=m[1].replace(/\s/g,'');
-  m=flat.match(/([가-힣]+)\s*세무서장/); if(m) o.tax_office=m[1]+'세무서';
+  var m=flat.match(/(\d{3})\s*-\s*(\d{2})\s*-\s*(\d{5})/);           // 고유번호(3-2-5)
+  if(m) o.tax_id_no=m[1]+'-'+m[2]+'-'+m[3];
+  m=flat.match(new RegExp(_loose('법인등록번호')+'[:：]?\\s*(\\d{6})\\s*-\\s*(\\d{7})'));
+  if(!m) m=flat.match(/(\d{6})\s*-\s*(\d{7})/);                     // 라벨 오독 대비
+  if(m) o.corp_reg_no=m[1]+'-'+m[2];
+  m=flat.match(new RegExp(_loose('단체명')+'[:：]\\s*(.+?)(?=\\s*'+_loose('대표')+'|\\s*'+_loose('법인')+'|$)'));
+  if(m){ var nm=_cleanName(m[1]); if(nm) o.name=nm; }
+  // '대표자'가 '내표자'로 오독되는 일이 잦아 첫 글자를 느슨하게 둔다
+  m=flat.match(/[대내]\s*[_.]*\s*표\s*[_.]*\s*자\s*[_.]*\s*성\s*[_.]*\s*명\s*[:：]?\s*([가-힣]{2,5})/);
+  if(m) o.chairman=m[1];
+  // 소재지 — 뒤따르는 '발급사유'는 '발 = 사 유'처럼 깨져 나오므로 느슨하게 끊는다
+  m=flat.match(/소\s*[_.]*\s*재?\s*[가-힣A-Za-z]{0,3}\s*[:：]\s*(.+?)(?=\s*발\s*[^가-힣]{0,4}\s*(?:급|사)\s*[_.]*\s*(?:사\s*)?유|\s*\(유의|$)/);
+  if(m){ var ad=_cleanAddr(m[1]); if(ad) o.address=ad; }
+  m=flat.match(/([가-힣]{2,6})\s*세무서장?/); if(m) o.tax_office=m[1]+'세무서';
   return o;
+}
+/* OCR 잡음 정리 — 깨진 라틴문자·기호 덩어리를 걷어낸다 */
+function _cleanName(s){
+  var t=String(s||'').replace(/[^가-힣0-9()·\s]/g,' ').replace(/\s+/g,'').trim();
+  var m=t.match(/^(.*?기금\d*호?)/);                 // '…기금[N호]'까지만
+  return m?m[1]:(t.length<=30?t:'');
+}
+function _cleanAddr(s){
+  var t=String(s||'').replace(/[^가-힣0-9()~,\-\s]/g,' ').replace(/\s+/g,' ').trim();
+  t=t.replace(/\s*발\s*(?:급)?\s*사?\s*유.*$/,'').trim();      // '발급사유 신규' 꼬리 제거
+  return t.length>=6&&t.length<=100?t:'';
 }
 var DOC_PARSE={ inka:{label:'고용노동부 설립인가증',fn:parseInka},
                 corpreg:{label:'법인 등기사항전부증명서',fn:parseCorpReg},
                 taxid:{label:'고유번호증',fn:parseTaxId} };
+
+/* ═══════════ 스캔 문서 OCR (tesseract.js) ═══════════
+   스캔본은 글자가 없어 그림을 글자로 바꿔야 한다. 첫 사용 때만 엔진·한국어 데이터를 내려받는다(약 15MB).
+   전처리(3배 확대 + 흑백 2치화)가 정확도를 크게 좌우한다 — 등기부의 노란 보안무늬가 사라져야 숫자가 읽힌다.
+   실측: 고유번호증·인가증 스캔은 핵심 항목이 정확히 읽히고, 등기부는 날짜는 읽히나 법인등록번호는 자주 실패. */
+var OCR_CDN='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+var _ocrLoad=null;
+function ocrReady(){
+  if(typeof Tesseract!=='undefined') return Promise.resolve();
+  if(_ocrLoad) return _ocrLoad;
+  _ocrLoad=new Promise(function(res,rej){
+    var s=document.createElement('script'); s.src=OCR_CDN;
+    s.onload=function(){res();}; s.onerror=function(){ _ocrLoad=null; rej(new Error('OCR 엔진을 내려받지 못했습니다(인터넷 확인)')); };
+    document.head.appendChild(s);
+  });
+  return _ocrLoad;
+}
+// 캔버스 흑백 2치화 — 보안무늬·배경색 제거
+function _binarize(cv,thr){
+  thr=thr||170;
+  var g=cv.getContext('2d'), im=g.getImageData(0,0,cv.width,cv.height), d=im.data;
+  for(var i=0;i<d.length;i+=4){
+    var v=(d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114)>thr?255:0;
+    d[i]=d[i+1]=d[i+2]=v;
+  }
+  g.putImageData(im,0,0); return cv;
+}
+// PDF 첫 N쪽 → 2치화 캔버스 배열
+function pdfPageCanvases(buf,maxPages){
+  return pdfjsLib.getDocument({data:buf}).promise.then(function(doc){
+    var n=Math.min(doc.numPages,maxPages||2), jobs=[];
+    for(var i=1;i<=n;i++) jobs.push(doc.getPage(i).then(function(pg){
+      var vp=pg.getViewport({scale:3});                 // 3배 ≈ 216dpi
+      var cv=document.createElement('canvas'); cv.width=vp.width; cv.height=vp.height;
+      return pg.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise.then(function(){ return _binarize(cv); });
+    }));
+    return Promise.all(jobs);
+  });
+}
+// 이미지 파일 → 2치화 캔버스
+function imgCanvas(file){
+  return new Promise(function(res,rej){
+    var img=new Image(), url=URL.createObjectURL(file);
+    img.onload=function(){
+      var sc=Math.min(2200/img.width,1)||1, w=Math.round(img.width*(sc<1?1:1.6)), h=Math.round(img.height*(w/img.width));
+      var cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+      cv.getContext('2d').drawImage(img,0,0,w,h); URL.revokeObjectURL(url); res(_binarize(cv));
+    };
+    img.onerror=function(){ URL.revokeObjectURL(url); rej(new Error('이미지를 열 수 없습니다')); };
+    img.src=url;
+  });
+}
+// 캔버스들 OCR → 합친 텍스트
+function ocrCanvases(cvs,onStat){
+  return ocrReady().then(function(){
+    onStat&&onStat('OCR 엔진 준비 중…');
+    return Tesseract.createWorker('kor+eng',1,{logger:function(m){
+      if(m.status==='recognizing text') onStat&&onStat('글자 인식 중 '+Math.round((m.progress||0)*100)+'%');
+      else if(/download|load/i.test(m.status||'')) onStat&&onStat('한국어 데이터 내려받는 중… (최초 1회)');
+    }});
+  }).then(function(w){
+    var texts=[];
+    return cvs.reduce(function(p,cv,i){
+      return p.then(function(){ onStat&&onStat((i+1)+'/'+cvs.length+'쪽 인식 중…');
+        return w.recognize(cv).then(function(r){ texts.push((r.data&&r.data.text)||''); }); });
+    },Promise.resolve()).then(function(){ return w.terminate().then(function(){ return texts.join('\n'); }); });
+  });
+}
 var IDB_DB='fundErpTpl', IDB_ST='templates';
 function idbOpen(){ return new Promise(function(res,rej){ var r=indexedDB.open(IDB_DB,1);
   r.onupgradeneeded=function(){ r.result.createObjectStore(IDB_ST); };
@@ -2191,8 +2283,9 @@ function infoForm(f){
     +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">'
     +'<div style="flex:1;min-width:210px">'+dropZone('dz-inka','설립인가증','인가번호·인가일·대표자·소재지','.pdf,image/*')+'</div>'
     +'<div style="flex:1;min-width:210px">'+dropZone('dz-corpreg','법인 등기부등본','법인등록번호·설립등기일','.pdf,image/*')+'</div>'
-    +'<div style="flex:1;min-width:210px">'+dropZone('dz-taxid','고유번호증','고유번호·관할세무서','.pdf,image/*')+'</div>'
-    +'</div><div id="docIntakeOut" style="margin-top:10px"></div></div>'
+    +'<div style="flex:1;min-width:210px">'+dropZone('dz-taxid','고유번호증','고유번호·법인등록번호·대표자','.pdf,image/*')+'</div>'
+    +'</div><p class="muted" style="font-size:11.5px;margin:8px 0 0">전자문서 PDF는 글자를 그대로 읽어 <b>정확</b>합니다. 스캔본·사진은 <b>OCR</b>로 읽으며(최초 1회 한국어 데이터 내려받기 약 15MB) <b>오독이 있을 수 있으니 반드시 확인</b>하세요.</p>'
+    +'<div id="docIntakeOut" style="margin-top:10px"></div></div>'
     +'<div class="panel"><h2>기금 정보</h2>'
     +'<div class="grid" style="margin-top:12px" oninput="markDirty()" onchange="markDirty()">'+flds+'</div>'
     +'<div class="row" style="margin-top:16px"><button class="primary" onclick="saveInfo()">💾 저장</button>'
@@ -2204,29 +2297,37 @@ function bindDocIntake(){
     _dzHandler[p[0]]=function(files){ readDocInto(p[0],p[1],files[0]); };
   });
 }
-var _docFound={};
+var _docFound={}, _docOcr=false;
 function readDocInto(zid,kind,file){
   if(!file) return;
-  var def=DOC_PARSE[kind], nm=file.name||'';
-  dzStat(zid,'<span class="muted">읽는 중… '+esc(nm)+'</span>');
-  if(!/\.pdf$/i.test(nm)){
-    dzStat(zid,'<span style="color:var(--warn)">이미지 파일은 글자를 읽을 수 없습니다.</span><br><span class="muted" style="font-size:11px">PDF로 저장해 올리거나 아래 칸에 직접 입력하세요.</span>');
-    return;
-  }
+  var def=DOC_PARSE[kind], nm=file.name||'', isPdf=/\.pdf$/i.test(nm);
+  var stat=function(h){ dzStat(zid,h); };
+  var done=function(txt,viaOcr){
+    var got=def.fn(txt), keys=Object.keys(got).filter(function(k){return got[k];});
+    if(!keys.length){ stat('<span style="color:var(--warn)">글자는 읽었지만 항목을 못 찾았습니다</span>'
+      +(viaOcr?'<br><span class="muted" style="font-size:11px">스캔 상태가 나쁘면 인식이 어렵습니다 — 직접 입력하세요.</span>':'')); return; }
+    stat('<span style="color:#0a7">✓ '+keys.length+'개 항목 판독'+(viaOcr?' <span class="chip warn" style="font-size:10px">OCR</span>':'')+'</span>');
+    if(viaOcr) _docOcr=true;
+    Object.assign(_docFound,got); renderDocIntake();
+  };
+  var fail=function(e){ stat('<span style="color:var(--danger)">읽기 실패: '+esc((e&&e.message)||e)+'</span>'); };
+  var ocrPath=function(bufOrFile){    // 스캔 → 그림을 글자로
+    stat('<span class="muted">스캔 문서 — OCR 시작…</span>');
+    var prep = isPdf ? pdfPageCanvases(bufOrFile,2) : imgCanvas(bufOrFile).then(function(c){return [c];});
+    prep.then(function(cvs){ return ocrCanvases(cvs,function(m){ stat('<span class="muted">'+esc(m)+'</span>'); }); })
+        .then(function(t){ done(t,true); }).catch(fail);
+  };
+  if(!isPdf){ ocrPath(file); return; }
+  stat('<span class="muted">읽는 중… '+esc(nm)+'</span>');
   var rd=new FileReader();
   rd.onload=function(){
-    pdfText(new Uint8Array(rd.result)).then(function(txt){
-      if(!txt||txt.replace(/\s/g,'').length<40){
-        dzStat(zid,'<span style="color:var(--warn)">스캔 이미지라 글자가 없습니다</span><br><span class="muted" style="font-size:11px">'+esc(def.label)+' 원본이 스캔본이면 자동 판독이 안 됩니다 — 아래 칸에 직접 입력하세요.</span>');
-        return;
-      }
-      var got=def.fn(txt), keys=Object.keys(got).filter(function(k){return got[k];});
-      if(!keys.length){ dzStat(zid,'<span style="color:var(--warn)">글자는 읽었지만 항목을 못 찾았습니다</span>'); return; }
-      dzStat(zid,'<span style="color:var(--ok,#0a7)">✓ '+keys.length+'개 항목 판독</span>');
-      Object.assign(_docFound,got); renderDocIntake();
-    }).catch(function(e){ dzStat(zid,'<span style="color:var(--danger)">읽기 실패: '+esc(e.message||e)+'</span>'); });
+    var buf=new Uint8Array(rd.result);
+    pdfText(buf).then(function(txt){
+      if(txt&&txt.replace(/\s/g,'').length>=40) done(txt,false);   // 텍스트 PDF — 100% 정확
+      else ocrPath(buf);                                           // 스캔 PDF → OCR
+    }).catch(function(){ ocrPath(buf); });
   };
-  rd.onerror=function(){ dzStat(zid,'<span style="color:var(--danger)">파일을 열 수 없습니다</span>'); };
+  rd.onerror=function(){ stat('<span style="color:var(--danger)">파일을 열 수 없습니다</span>'); };
   rd.readAsArrayBuffer(file);
 }
 function renderDocIntake(){
@@ -2234,11 +2335,12 @@ function renderDocIntake(){
   var LBL={}; FIELDS.forEach(function(c){LBL[c[0]]=c[1];});
   var ks=Object.keys(_docFound).filter(function(k){return _docFound[k];});
   if(!ks.length){ box.innerHTML=''; return; }
-  box.innerHTML='<div style="border:1px solid var(--acc);border-radius:9px;padding:10px 12px;background:#f4f8ff">'
+  box.innerHTML='<div style="border:1px solid '+(_docOcr?'var(--warn)':'var(--acc)')+';border-radius:9px;padding:10px 12px;background:'+(_docOcr?'var(--warn-bg)':'#f4f8ff')+'">'
     +'<div class="row" style="margin-bottom:6px"><b style="font-size:13px">판독 결과 '+ks.length+'건</b>'
+    +(_docOcr?'<span class="chip warn" style="font-size:10px;margin-left:6px">OCR — 오독 가능, 꼭 확인</span>':'')
     +'<span class="muted" style="font-size:11.5px;margin-left:6px">확인 후 [반영]을 누르면 아래 칸에 들어갑니다(저장은 별도)</span>'
     +'<span style="flex:1"></span><button class="primary" onclick="applyDocFound()" style="padding:4px 12px">↓ 아래 칸에 반영</button>'
-    +'<button onclick="_docFound={};renderDocIntake()" style="padding:4px 10px;margin-left:4px">지우기</button></div>'
+    +'<button onclick="_docFound={};_docOcr=false;renderDocIntake()" style="padding:4px 10px;margin-left:4px">지우기</button></div>'
     +'<div style="display:flex;flex-wrap:wrap;gap:8px">'
     +ks.map(function(k){ return '<span style="background:#fff;border:1px solid var(--line);border-radius:7px;padding:4px 9px;font-size:12px">'
       +'<span class="muted">'+esc(LBL[k]||k)+'</span> <b style="user-select:all">'+esc(_docFound[k])+'</b></span>'; }).join('')
