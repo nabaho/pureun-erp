@@ -79,6 +79,13 @@
   .wklog .d{color:var(--faint);font-size:10.5px;margin-right:4px;font-variant-numeric:tabular-nums}
   .wkin{width:100%;border:1px solid #c9d6f2;border-radius:6px;padding:5px 8px;font-size:12.5px;background:#fff;margin-top:2px}
   .wkin:focus{outline:none;border-color:var(--acc);box-shadow:0 0 0 2px rgba(37,99,235,.12)}
+  .endbtn{font-size:11px;padding:3px 9px;border:1px solid #cbd5e1;background:#fff;color:var(--sub);border-radius:6px;cursor:pointer;white-space:nowrap}
+  .endbtn:hover{background:var(--ok-bg);border-color:#9ccdb4;color:var(--ok)}
+  .endbtn .lk{margin-left:2px;font-size:9.5px}
+  .pesync{font-size:10px;font-weight:700;border-radius:4px;padding:1px 5px;white-space:nowrap}
+  .pesync.done{background:var(--ok-bg);color:var(--ok)}
+  .pesync.wait{background:var(--warn-bg);color:var(--warn)}
+  .pesync.off{background:var(--bg);color:var(--faint)}
   td.rowno{color:var(--faint);width:34px;text-align:right;font-variant-numeric:tabular-nums;font-size:11.5px;padding-right:8px}
   th.rowno{width:34px;text-align:right;padding-right:8px}
   .grp-h td{background:var(--bg);font-weight:800;font-size:12.5px;padding:6px 10px}
@@ -204,6 +211,7 @@ var AI_MODELS=['claude-opus-5','claude-sonnet-4-20250514'];
 var fbDb=null;
 var S={view:'my', week:null, f:null, me:null, year:new Date().getFullYear(), drawerId:null, teamMgr:'', teamCat:'', teamNolog:false, calMon:null, noteOpen:false};
 var leaving={};            // leaving/{sid} live — 부재(퇴사·휴직·연차) 예정
+var pesync={};             // pesync/{type}-{id} live — 푸른이알피 종료 상태 동기화 스냅샷
 var items={};              // items/{year} live
 var wkCache={};            // {weekKey:{itemId:{logId:log}}}
 var wkLoaded={};           // {weekKey:true}
@@ -269,6 +277,9 @@ function start(){
     watchWeek();
     fbDb.ref(NS+'/leaving').on('value',function(snap){ leaving=snap.val()||{};
       if(appHasFocus()){ S._pend=true; return; } route(); });
+    fbDb.ref(NS+'/pesync').on('value',function(snap){ pesync=snap.val()||{};
+      if(appHasFocus()){ S._pend=true; return; }
+      if(S.view==='archive') route(); },function(){ pesync={}; });
   });
   document.addEventListener('focusout',function(){ setTimeout(function(){
     if(S._pend&&!appHasFocus()){ S._pend=false; route(); } },150); });
@@ -666,7 +677,7 @@ function renderMy(){
     +'<th style="width:56px">구분</th><th style="min-width:150px">기업 / 업무</th><th style="width:70px">상태</th>'
     +'<th style="min-width:150px">최근 기록</th>'
     +'<th style="color:var(--acc2)">'+(isCurWeek()?'이번 주':'그 주')+' <span style="font-weight:400;text-transform:none">'+esc(weekLabel(S.week).split('·')[1]||'')+' — 칸에 바로 입력, Enter 저장</span></th>'
-    +'<th style="width:120px">다음 할 일</th><th style="width:46px">완료</th></tr></thead><tbody>';
+    +'<th style="width:120px">다음 할 일</th><th style="width:58px;text-align:center">종료</th></tr></thead><tbody>';
   if(!list.length) h+='<tr><td colspan="8" class="moremark">조건에 맞는 업무가 없습니다. 필터를 바꿔 보세요.</td></tr>';
   list.forEach(function(it,i){ h+=rowHTML(it,i+1); });
   h+='</tbody></table></div>';
@@ -696,7 +707,7 @@ function rowHTML(it,no){
     +'<input class="wkin" data-id="'+it._id+'" placeholder="'+(isCurWeek()?'이번 주 기록…':'그 주 기록 보완…')+'" onkeydown="wkKey(event,this)">'
     +'</td>'
     +'<td>'+nx+'</td>'
-    +'<td style="text-align:center"><input type="checkbox" onclick="event.stopPropagation();completeItem(\''+it._id+'\')" title="완료 → 보관함"></td>'
+    +'<td style="text-align:center"><button class="endbtn" onclick="event.stopPropagation();completeItem(\''+escJ(it._id)+'\')" title="이 업무를 종료해 보관함으로 옮깁니다'+(peLinked(it)?' (푸른이알피 종료 연동)':'')+'">종료'+(peLinked(it)?'<span class="lk">🔗</span>':'')+'</button></td>'
     +'</tr>';
 }
 function wkKey(e,inp){
@@ -721,13 +732,49 @@ function cycleStatus(id){
   var next=STATUSES[(idx+1)%STATUSES.length][0];
   patchItem(id,{status:next}).then(function(ok){ if(!ok)return; route(); });
 }
+/* ── 업무 종료 ── 푸른이알피에서 가져온 건이면 그쪽 사건도 함께 종료할지 묻는다 */
+var PE_KIND={contract:'계약',case:'사건',consulting:'컨설팅',fund:'기금',other:'기타사업'};
+function peLinked(it){ return !!(it&&it.src==='puerp'&&it.ref&&it.ref.type&&it.ref.id); }
 function completeItem(id){
   var it=items[id]; if(!it)return;
-  confirmM('「'+(it.company||'')+' — '+(it.title||'')+'」\n완료 처리하고 보관함으로 이동할까요?',{ok:'완료'}).then(function(ok){
-    if(!ok){ route(); return; }
-    patchItem(id,{state:'done',done_date:todayStr(),status:'완료'}).then(function(ok){ if(!ok){route();return;} toast('✅ 완료 — 보관함으로 이동'); route(); });
-  });
+  var head='「'+(it.company||it.client||'')+' — '+(it.title||'')+'」';
+  if(!peLinked(it)){
+    confirmM(head+'\n종료 처리하고 보관함으로 옮길까요?',{ok:'업무 종료'}).then(function(ok){
+      if(!ok){ route(); return; } doComplete(id,false);
+    });
+    return;
+  }
+  var kind=PE_KIND[it.ref.type]||it.ref.type;
+  showModal('<h2 style="margin:0 0 8px">✓ 업무 종료</h2>'
+    +'<p style="font-size:13px;margin:0 0 4px"><b>'+esc(head)+'</b></p>'
+    +'<p class="muted" style="font-size:12.5px;margin:0 0 12px">종료하면 보관함으로 옮겨지고, 기록과 인수인계 노트는 그대로 남습니다.</p>'
+    +'<label style="display:flex;gap:8px;align-items:flex-start;background:var(--acc-soft);border:1px solid #c7d7fe;border-radius:9px;padding:10px 12px;font-size:12.5px;cursor:pointer">'
+    +'<input type="checkbox" id="cl-pe" checked style="margin-top:3px">'
+    +'<span>푸른이알피의 <b>'+esc(kind)+(it.no?' '+esc(it.no):'')+'</b>와 <b>양방향 동기화</b>'
+    +'<div class="muted" style="font-size:11px;margin-top:3px">누군가 푸른이알피 <b>나의 업무</b>를 열 때 맞춰집니다. '
+    +'어느 쪽에서 종료·재개해도 반대쪽이 따라오고, 이미 같은 상태면 아무것도 바꾸지 않습니다. '
+    +'체크를 풀면 이 업무는 앞으로 푸른이알피와 연동하지 않습니다.</div></span></label>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM();route()">취소</button>'
+    +'<button class="primary" onclick="doComplete(\''+escJ(id)+'\',$(\'cl-pe\').checked)">업무 종료</button></div>');
 }
+// 종료/재개는 양방향 동기화 대상. state_at 이 "이 쪽에서 마지막으로 바뀐 시각"이고,
+// 푸른이알피가 나의 업무를 열 때 work_erp/pesync 스냅샷과 비교해 변한 쪽을 반대편에 반영한다.
+function setState(id,done,alsoPe,msg){
+  var it=items[id]||{}, now=new Date().toISOString();
+  var patch={ state:done?'done':null, done_date:done?todayStr():null,
+    status:done?'완료':'진행중', state_at:now };
+  if(peLinked(it)&&alsoPe!==undefined) patch.pe_nosync=alsoPe?null:true;
+  var up={}; Object.keys(patch).forEach(function(k){ up[NS+'/items/'+id+'/'+k]=patch[k]; });
+  return fbDb.ref().update(up).then(function(){
+    Object.assign(items[id]||{},patch);
+    var linked=peLinked(it)&&!patch.pe_nosync;
+    if(linked) addLog(id,(done?'업무 종료':'업무 재개')+' — 푸른이알피 '+(PE_KIND[it.ref.type]||'')+' 동기화 대상',todayStr(),'ho');
+    closeM(); toast(msg+(linked?' · 푸른이알피와 동기화 예정':''));
+    if(done&&S.drawerId===id) closeDrawer();
+    route();
+  }).catch(function(e){ toast('실패: '+e.message,'err'); route(); });
+}
+function doComplete(id,alsoPe){ return setState(id,true,alsoPe,'✅ 종료 — 보관함으로 이동'); }
 
 /* ── 빠른 기록 바 ── */
 var _qbPick=0,_qbMatches=[];
@@ -907,7 +954,7 @@ function renderDrawer(){
     +'<button onclick="handoverModal(\''+id+'\')">🔄 담당 변경</button>'
     +(it.state==='done'
       ?'<button onclick="restoreItem(\''+id+'\')">↩ 진행으로 복구</button>'
-      :'<button onclick="completeItem(\''+id+'\')">✓ 완료</button>')
+      :'<button onclick="completeItem(\''+escJ(id)+'\')">✓ 업무 종료'+(peLinked(it)?' 🔗':'')+'</button>')
     +'<span style="flex:1"></span>'
     +'<button style="color:var(--danger);border-color:#e6a19a" onclick="deleteItem(\''+id+'\')">🗑 삭제</button>'
     +'</div>';
@@ -923,7 +970,11 @@ function saveNext(id){
   patchItem(id,{next:{text:t.value.trim(),date:d.value||''}}).then(function(ok){ if(!ok)return; toast('다음 할 일 저장'); route(); });
 }
 function restoreItem(id){
-  patchItem(id,{state:null,done_date:null,status:'진행중'}).then(function(ok){ if(!ok)return; toast('↩ 진행으로 복구'); renderDrawer(); route(); });
+  var it=items[id]||{};
+  if(!peLinked(it)||it.pe_nosync) return setState(id,false,undefined,'↩ 진행으로 재개');
+  confirmM('「'+(it.company||it.client||'')+' — '+(it.title||'')+'」\n\n진행으로 재개합니다.\n'
+    +'푸른이알피의 '+(PE_KIND[it.ref.type]||'')+'도 종료 해제됩니다.',{ok:'재개'})
+    .then(function(ok){ if(!ok)return; setState(id,false,true,'↩ 진행으로 재개'); });
 }
 function deleteItem(id){
   var it=items[id]||{};
@@ -1458,6 +1509,7 @@ function renderTeam(){
         return '<th style="'+c[2]+';cursor:pointer'+(on?';color:var(--acc2)':'')+'" onclick="teamSort(\''+c[0]+'\')" title="클릭하면 이 열로 정렬">'
           +esc(c[1])+(on?(S.teamDesc?' ▼':' ▲'):'')+'</th>';
       }).join('')
+    +'<th style="width:58px;text-align:center">종료</th>'
     +'</tr></thead><tbody>';
   function rowsOf(arr,perGroup){
     return arr.map(function(it,i){
@@ -1475,7 +1527,10 @@ function renderTeam(){
         +(perGroup?'':'<div class="sub">'+esc((it.mgr_main&&it.mgr_main.name)||'담당 미지정')+'</div>')
         +(it.officer?'<div class="sub">'+esc(it.officer)+'</div>':'')+'</td>'
         +'<td style="font-size:12.5px">'+esc(it.title||'')+'</td>'
-        +'<td>'+logHtml+'</td><td>'+lastHtml+'</td><td>'+nx+'</td></tr>';
+        +'<td>'+logHtml+'</td><td>'+lastHtml+'</td><td>'+nx+'</td>'
+        +'<td style="text-align:center"><button class="endbtn" onclick="event.stopPropagation();completeItem(\''+escJ(it._id)+'\')" '
+        +'title="이 업무를 종료해 보관함으로 옮깁니다'+(peLinked(it)?' (푸른이알피 종료 연동)':'')+'">종료'
+        +(peLinked(it)?'<span class="lk">🔗</span>':'')+'</button></td></tr>';
     }).join('');
   }
   var shown=0;
@@ -1490,14 +1545,14 @@ function renderTeam(){
       shown+=arr.length;
       var rec=groups[nm].filter(function(it){return wkLogsOf(it._id,wk).length>0;}).length;
       var fold=!!(S.teamFold||{})[nm];
-      h+='<tr class="grp-h" style="cursor:pointer" onclick="teamFold(\''+escJ(nm)+'\')"><td colspan="7">'
+      h+='<tr class="grp-h" style="cursor:pointer" onclick="teamFold(\''+escJ(nm)+'\')"><td colspan="8">'
         +(fold?'▸':'▾')+' 👤 '+esc(nm)+' — 진행 '+groups[nm].length+'건'
         +(arr.length!==groups[nm].length?' <span class="muted" style="font-weight:600">(조건 '+arr.length+'건)</span>':'')
         +' <span class="pct">이 주 기록 '+rec+'/'+groups[nm].length+'</span></td></tr>';
       if(!fold) h+=rowsOf(teamSortArr(arr,wk),true);
     });
   }
-  if(!shown) h+='<tr><td colspan="7" class="moremark">조건에 맞는 업무가 없습니다. 필터를 바꿔 보세요.</td></tr>';
+  if(!shown) h+='<tr><td colspan="8" class="moremark">조건에 맞는 업무가 없습니다. 필터를 바꿔 보세요.</td></tr>';
   h+='</tbody></table></div>';
   h+='<div class="muted" style="font-size:12px;margin-top:8px">조건에 맞는 업무 '+shown+' / 전체 '+open.length+'건</div>';
   app.innerHTML=h;
@@ -1630,40 +1685,93 @@ function renderStats(){
   }).catch(function(e){ if($('app'))$('app').innerHTML='<div class="panel">집계 실패: '+esc(e.message)+'</div>'; });
 }
 
-/* ── 보관함 ── */
+/* ── 보관함 — 종료된 업무를 담당자별로 관리 ── */
+function _mgrOf(it){ return (it.mgr_main&&it.mgr_main.name)||'(담당 미지정)'; }
+function peSyncBadge(it){
+  if(!peLinked(it)) return '';
+  if(it.pe_nosync) return '<span class="pesync off" title="이 업무는 푸른이알피와 연동하지 않습니다">연동 안 함</span>';
+  var st=(pesync[it.ref.type+'-'+safeKey(it.ref.id)]||{});
+  if(st.synced_at&&st.pe_closed===true) return '<span class="pesync done" title="푸른이알피도 종료됨 · '+esc((st.synced_at||'').slice(0,10))+'">🔗 반영됨</span>';
+  return '<span class="pesync wait" title="푸른이알피 나의 업무를 열 때 반영됩니다">🔗 반영 대기</span>';
+}
+function arReset(){ S.arMgr=''; S.arCat=''; S.arPeriod=''; S.q=''; renderArchive(); }
+function arFold(nm){ S.arFold=S.arFold||{}; S.arFold[nm]=!S.arFold[nm]; renderArchive(); }
 function renderArchive(){
   var app=$('app'); if(!app)return;
   var all=allItems().filter(function(it){return it.state==='done';})
     .sort(function(a,b){return (b.done_date||'').localeCompare(a.done_date||'');});
-  var mgrs={}; all.forEach(function(it){ var n=(it.mgr_main&&it.mgr_main.name)||'(미지정)'; mgrs[n]=1; });
-  var done=all;
-  if(S.arMgr) done=done.filter(function(it){return ((it.mgr_main&&it.mgr_main.name)||'(미지정)')===S.arMgr;});
-  if(S.arCat) done=done.filter(function(it){return (it.cat||'기타')===S.arCat;});
-  if(S.q)     done=done.filter(function(it){return matchQ(it,S.q);});
-  var h='<div class="row"><h1>보관함</h1><span class="muted" style="font-size:12.5px">완료된 업무 '
-    +(done.length!==all.length?done.length+' / '+all.length:all.length)+'건 — 검색·통계에는 계속 포함됩니다</span></div>';
-  if(!all.length){ app.innerHTML=h+'<div class="panel" style="text-align:center;color:var(--sub);padding:40px">완료된 업무가 없습니다.</div>'; return; }
+  var today=todayStr();
+  var mgrs={}; all.forEach(function(it){ mgrs[_mgrOf(it)]=1; });
+  var names=Object.keys(mgrs).sort();
+  // 기간 필터 경계
+  var from='';
+  if(S.arPeriod==='m1') from=ymd(addDays(new Date(),-30));
+  else if(S.arPeriod==='m3') from=ymd(addDays(new Date(),-90));
+  else if(S.arPeriod==='y') from=(new Date().getFullYear())+'-01-01';
+  function pass(it){
+    if(S.arMgr&&_mgrOf(it)!==S.arMgr) return false;
+    if(S.arCat&&(it.cat||'기타')!==S.arCat) return false;
+    if(from&&(it.done_date||'')<from) return false;
+    if(S.q&&!matchQ(it,S.q)) return false;
+    return true;
+  }
+  var done=all.filter(pass);
+  var h='<div class="row" style="flex-wrap:wrap"><h1>보관함</h1>'
+    +'<span class="muted" style="font-size:12.5px">종료된 업무 — 기록·인수인계 노트는 그대로 남고 통계에도 계속 포함됩니다</span></div>';
+  if(!all.length){ app.innerHTML=h+'<div class="panel" style="text-align:center;color:var(--sub);padding:40px">종료된 업무가 없습니다.</div>'; return; }
+  // 담당자별 종료 건수 요약 (클릭 = 그 사람만)
+  h+='<div class="focus">'
+    +'<div class="fcard'+(S.arMgr?'':' on')+'" onclick="S.arMgr=\'\';renderArchive()"><div class="l">전체</div><div class="v">'+all.length+'<small>건</small></div></div>'
+    +names.map(function(nm){
+        var c=all.filter(function(it){return _mgrOf(it)===nm;}).length;
+        return '<div class="fcard'+(S.arMgr===nm?' on':'')+'" onclick="S.arMgr='+(S.arMgr===nm?'\'\'':'\''+escJ(nm)+'\'')+';renderArchive()">'
+          +'<div class="l">'+esc(nm)+'</div><div class="v">'+c+'<small>건</small></div></div>';
+      }).join('')
+    +'</div>';
   h+='<div class="row" style="flex-wrap:wrap;margin-bottom:10px">'
     +qBox('renderArchive')
-    +'<select onchange="S.arMgr=this.value;renderArchive()" style="padding:5px 9px;border:1px solid var(--line);border-radius:7px;font-size:12.5px">'
-    +'<option value="">담당 전체</option>'+Object.keys(mgrs).sort().map(function(n){return '<option'+(S.arMgr===n?' selected':'')+'>'+esc(n)+'</option>';}).join('')+'</select>'
     +catSelect(S.arCat,'S.arCat=this.value;renderArchive()')
-    +((S.arMgr||S.arCat||S.q)?'<span class="chipbtn" onclick="S.arMgr=\'\';S.arCat=\'\';S.q=\'\';renderArchive()">필터 초기화</span>':'')
+    +'<select onchange="S.arPeriod=this.value;renderArchive()" style="padding:5px 9px;border:1px solid var(--line);border-radius:7px;font-size:12.5px">'
+    +[['','기간 전체'],['m1','최근 30일'],['m3','최근 90일'],['y','올해']].map(function(o){
+        return '<option value="'+o[0]+'"'+(S.arPeriod===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select>'
+    +(viewingSelf()?'':'<span class="chipbtn" onclick="S.arMgr=\''+escJ(S.vname||'')+'\';renderArchive()">'+esc(S.vname||'')+' 것만</span>')
+    +'<span class="chipbtn'+(S.arFlat?' on':'')+'" onclick="S.arFlat=!S.arFlat;renderArchive()">담당 묶음 해제</span>'
+    +((S.arMgr||S.arCat||S.arPeriod||S.q)?'<span class="chipbtn" onclick="arReset()">필터 초기화</span>':'')
     +'</div>';
   h+='<div class="panel" style="padding:0;overflow-x:auto"><table><thead><tr>'
-    +'<th class="rowno">#</th>'
-    +'<th style="width:56px">구분</th><th>기업 / 업무</th><th style="width:90px">담당</th><th style="width:90px">완료일</th><th style="width:150px">마지막 기록</th><th style="width:70px"></th></tr></thead><tbody>';
-  if(!done.length) h+='<tr><td colspan="7" class="moremark">조건에 맞는 업무가 없습니다.</td></tr>';
-  done.forEach(function(it,i){
-    h+='<tr>'+tdNo(i+1)+'<td>'+catBadge(it.cat)+'</td>'
-      +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
-      +'<div class="sub">'+esc(it.title||'')+(it.no?' · '+esc(it.no):'')+'</div></td>'
-      +'<td style="font-size:12.5px">'+esc((it.mgr_main&&it.mgr_main.name)||'—')+'</td>'
-      +'<td style="font-size:12.5px;font-variant-numeric:tabular-nums">'+esc(it.done_date||'')+'</td>'
-      +'<td>'+(it.last?'<span class="last">'+esc(it.last.t)+'</span>':'—')+'</td>'
-      +'<td><button style="font-size:11px;padding:3px 8px" onclick="restoreItem(\''+it._id+'\')">↩ 복구</button></td></tr>';
-  });
+    +'<th class="rowno">#</th><th style="width:56px">구분</th><th>기업 / 업무</th>'
+    +(S.arFlat||S.arMgr?'<th style="width:90px">담당</th>':'')
+    +'<th style="width:92px">종료일</th><th style="width:110px">푸른이알피</th>'
+    +'<th style="width:160px">마지막 기록</th><th style="width:72px"></th></tr></thead><tbody>';
+  var COLS=(S.arFlat||S.arMgr)?8:7;
+  function rowsOf(arr){
+    return arr.map(function(it,i){
+      return '<tr>'+tdNo(i+1)+'<td>'+catBadge(it.cat)+'</td>'
+        +'<td class="itc" onclick="openDrawer(\''+escJ(it._id)+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
+        +'<div class="sub">'+esc(it.title||'')+(it.no?' · '+esc(it.no):'')+'</div></td>'
+        +((S.arFlat||S.arMgr)?'<td style="font-size:12.5px">'+esc(_mgrOf(it))+'</td>':'')
+        +'<td style="font-size:12.5px;font-variant-numeric:tabular-nums">'+esc(it.done_date||'—')+'</td>'
+        +'<td>'+(peSyncBadge(it)||'<span class="muted" style="font-size:11px">—</span>')+'</td>'
+        +'<td>'+(it.last?'<span class="last">'+esc(it.last.t)+' <span class="ago">· '+esc(md(it.last.d))+'</span></span>':'<span class="muted" style="font-size:12px">기록 없음</span>')+'</td>'
+        +'<td><button class="endbtn" onclick="event.stopPropagation();restoreItem(\''+escJ(it._id)+'\')" title="진행으로 되돌립니다'
+        +(peLinked(it)&&!it.pe_nosync?' (푸른이알피도 종료 해제)':'')+'">↩ 재개</button></td></tr>';
+    }).join('');
+  }
+  if(!done.length){ h+='<tr><td colspan="'+COLS+'" class="moremark">조건에 맞는 업무가 없습니다.</td></tr>'; }
+  else if(S.arFlat||S.arMgr){ h+=rowsOf(done); }
+  else {
+    names.forEach(function(nm){
+      var arr=done.filter(function(it){return _mgrOf(it)===nm;});
+      if(!arr.length) return;
+      var fold=!!(S.arFold||{})[nm];
+      h+='<tr class="grp-h" style="cursor:pointer" onclick="arFold(\''+escJ(nm)+'\')"><td colspan="'+COLS+'">'
+        +(fold?'▸':'▾')+' 👤 '+esc(nm)+' — 종료 '+arr.length+'건'
+        +'<span class="pct">최근 종료 '+esc(arr[0].done_date||'—')+'</span></td></tr>';
+      if(!fold) h+=rowsOf(arr);
+    });
+  }
   h+='</tbody></table></div>';
+  h+='<div class="muted" style="font-size:12px;margin-top:8px">조건에 맞는 종료 업무 '+done.length+' / 전체 '+all.length+'건</div>';
   app.innerHTML=h;
 }
 
