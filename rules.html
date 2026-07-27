@@ -192,6 +192,21 @@ table.daejo td.dj2{padding:0}
 .dt-box.new{border-color:#bbf7d0;background:#f8fffb}
 .dt-box.new:focus{outline:2px solid var(--accent2)}
 .dt-none{color:var(--mute);font-style:italic}
+/* 항 단위 좌우 비교 — 같은 그리드 행에 놓아 현행/개선 항의 줄 위치가 일치한다 */
+.dtpair{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--line);border-radius:9px;overflow:hidden;max-height:52vh;overflow-y:auto;background:#fff}
+.dtpair>div{padding:9px 11px;font-size:12.5px;line-height:1.8;white-space:pre-wrap;word-break:break-word;border-top:1px solid var(--line)}
+.dtpair>div:nth-child(1),.dtpair>div:nth-child(2){border-top:0}
+.dtpair>.dtb{border-right:1px solid var(--line);background:#fafafa;color:#475569}
+.dtpair>.dtb.cut{text-decoration:line-through;color:#b91c1c;background:#fef4f4}
+.dtpair>.dta{background:#f8fffb}
+.dtpair>.dta.empty{background:#fcfcfd}
+.dtpair>.dta.muted{background:#fafafa;color:var(--mute)}
+.dtpair>.dta:focus{outline:2px solid var(--accent2);outline-offset:-2px}
+.pbtns{display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-top:6px}
+.pbtn{font-size:10px;padding:2px 7px;border-radius:10px;border:1px solid #cdd6e6;background:#fff;color:var(--sub);cursor:pointer;font-family:inherit}
+.pbtn:hover{background:#eef2ff}
+.pbtn.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.pbtn.x.on{background:#b91c1c;border-color:#b91c1c}
 .dt-acts{display:flex;gap:8px;align-items:center;margin-top:14px;flex-wrap:wrap}
 .dt-acts .hint{font-size:11.5px;color:var(--mute);margin-left:auto}
 .dtbtn{font-family:inherit;font-size:13px;font-weight:600;padding:8px 18px;border-radius:9px;border:1px solid var(--line);background:#fff;color:var(--sub);cursor:pointer}
@@ -1177,7 +1192,8 @@ function applyDecision(f,dec){
   it.decision=dec;
   if(dec==="반영"){
     it.del=false;
-    if(it.sug) it.after=it.sug;          // 제안 문안 적용
+    // 항 단위 병합 — 개선안이 다루지 않는 현행 항(유산·사산휴가 등)이 사라지지 않게 한다
+    if(it.sug) it.after=(it.orig!=="")?mergeParas(it.orig,it.sug,it.paraPick):it.sug;
     if(it.orig!=="") it.suggested=true;
   }else if(dec==="해당없음"){
     if(it.orig===""){ it.del=true; }     // 신설 제안 → 제외
@@ -1228,6 +1244,31 @@ function applyReassign(f,val){
   if(j>=0){ DT_IDX=DT_LIST.findIndex(x=>x.rule.id===rid); if(DT_IDX<0)DT_IDX=0; renderDetail(); }
   else { $("ov-detail").classList.remove("on"); alert("교정을 반영했습니다. 이 규칙은 더 이상 지적 사항이 아닙니다."); }
 }
+/* ── 항 단위 좌우 비교 ──
+   현행 항과 개선 항을 내용이 대응하는 것끼리 같은 줄에 놓고, 행마다 처리를 고른다.
+   짝 있는 행: 개선안으로 바꿈 / 현행 유지    현행만: 유지 / 이 항 삭제    개선안만: 추가 / 빼기
+   이 선택을 합쳐 최종 문안을 만들므로, 개선안이 다루지 않는 현행 항이 유실되지 않는다. */
+function paraCompare(it,cur,sug){
+  if(!cur) return `<div class="dt-box new" id="dt-new" contenteditable="true">${sug?escapeH(sug):""}</div>`;
+  const rows=alignParas(cur,sug||"");
+  if(!rows||!sug) return `<div class="dtpair"><div class="dtb">${escapeH(cur)}</div>
+    <div class="dta" id="dt-new" contenteditable="true">${sug?escapeH(sug):'<span class="dt-none">개선안 없음 — 직접 작성</span>'}</div></div>`;
+  if(!it.paraPick||it.paraPick.length!==rows.length) it.paraPick=rows.map(r=>r.a?"a":"b");
+  let h='<div class="dtpair">';
+  rows.forEach((r,i)=>{
+    const sel=it.paraPick[i], both=!!(r.b&&r.a);
+    const st=both?(sel==="a"?["개정","s"]:["현행 유지","man"])
+      :(r.b?(sel==="off"?["삭제","up"]:["유지","man"]):(sel==="off"?["빼기","up"]:["신설","miss"]));
+    const btn=both
+      ?`<button class="pbtn${sel==="a"?" on":""}" data-pp="${i}" data-v="a">개선안으로</button><button class="pbtn${sel==="b"?" on":""}" data-pp="${i}" data-v="b">현행 유지</button>`
+      :(r.b?`<button class="pbtn${sel!=="off"?" on":""}" data-pp="${i}" data-v="b">유지</button><button class="pbtn x${sel==="off"?" on":""}" data-pp="${i}" data-v="off">이 항 삭제</button>`
+           :`<button class="pbtn${sel!=="off"?" on":""}" data-pp="${i}" data-v="a">추가</button><button class="pbtn x${sel==="off"?" on":""}" data-pp="${i}" data-v="off">빼기</button>`);
+    h+=`<div class="dtb${sel==="off"&&!r.a?" cut":""}">${r.b?escapeH(r.b):'<span class="dt-none">— 현행에 없음</span>'}</div>`
+      +`<div class="dta${r.a?"":" empty"}${sel==="b"?" muted":""}"${r.a?' contenteditable="true" data-pa="'+i+'"':""}>${r.a?escapeH(r.a):'<span class="dt-none">— 개선안에 없음(유지 대상)</span>'}
+         <div class="pbtns"><span class="badge ${st[1]}">${st[0]}</span>${both&&r.sim<0.45?'<span class="pill" title="내용 유사도가 낮습니다 — 정말 대응되는 항인지 확인하세요">확인</span>':""}${btn}</div></div>`;
+  });
+  return h+"</div>";
+}
 function renderDetail(){
   const f=DT_LIST[DT_IDX]; if(!f)return;
   const it=itemForFinding(f);
@@ -1246,11 +1287,10 @@ function renderDetail(){
         <b>판정</b> ${escapeH(f.note||"")}${f.rule.criterion?`<br><b>기준</b> ${escapeH(f.rule.criterion)}`:""}
         ${f.rule.opinion?`<br><b>권고</b> ${escapeH(f.rule.opinion)}`:""}</div>
     </div>
-    <div class="dt-cols">
-      <div class="dt-col"><h4>📄 현행 조문 ${cur?`<span class="loc">${escapeH((it&&it.label)||"")}</span>`:""}${reassignSel(f)}</h4>
-        <div class="dt-box old">${cur?escapeH(cur):'<span class="dt-none">해당 조문 없음 — 신설 대상입니다.</span>'}</div></div>
-      <div class="dt-col"><h4>✏️ 개선안 <span style="font-weight:400;color:var(--mute)">(클릭하여 편집)</span></h4>
-        <div class="dt-box new" id="dt-new" contenteditable="true">${sug?escapeH(sug):""}</div>
+    <div class="dt-cols" style="grid-template-columns:1fr">
+      <div class="dt-col"><h4>📄 현행 조문 ${cur?`<span class="loc">${escapeH((it&&it.label)||"")}</span>`:""}${reassignSel(f)}
+        <span style="font-weight:400;color:var(--mute);margin-left:8px">↔ ✏️ 개선안 (클릭하여 편집)</span></h4>
+        ${paraCompare(it,cur,sug)}
         ${!sug?'<div style="font-size:11.5px;color:var(--mute);margin-top:5px">자동 제안 문안이 없는 항목입니다. 직접 작성하시면 신구대조표에 반영됩니다.</div>':""}</div>
     </div>
     <div class="dt-acts">
@@ -1259,12 +1299,27 @@ function renderDetail(){
       <button class="dtbtn x ${dec==="해당없음"?"on":""}" data-d="해당없음">${isNew?"신설 안 함":"현행 유지"}</button>
       <span class="hint">결정하면 자동 저장되고 신구대조표에 반영됩니다</span>
     </div>`;
-  // 개선안 편집 → 모델 반영
+  // 개선안 편집 → 모델 반영 (항이 나뉜 경우는 항 칸을 순서대로 다시 합친다)
   const ed=$("dt-new");
   if(ed&&it) ed.addEventListener("input",()=>{
     it.sug=ed.innerText;
-    if((it.decision||"")==="반영"||it.orig==="") it.after=ed.innerText;
+    if((it.decision||"")==="반영"||it.orig==="") it.after=mergeOrSug(it);
     saveWorkState();
+  });
+  body.querySelectorAll("[data-pa]").forEach(el=>el.addEventListener("input",()=>{
+    const parts=[...body.querySelectorAll("[data-pa]")].map(x=>{
+      const c=x.cloneNode(true); const t=c.querySelector(".pbtns"); if(t)t.remove();
+      return c.innerText.replace(/\s+$/,"");
+    }).filter(x=>x.trim());
+    it.sug=parts.join("\n");
+    if((it.decision||"")==="반영") it.after=mergeOrSug(it);
+    saveWorkState();
+  }));
+  // 항별 처리 선택 — 고르면 바로 최종 문안에 반영
+  body.querySelectorAll("[data-pp]").forEach(b=>b.onclick=()=>{
+    it.paraPick[+b.dataset.pp]=b.dataset.v;
+    if((it.decision||"")==="반영") it.after=mergeOrSug(it);
+    saveWorkState(); renderDetail();
   });
   const rs=$("dt-rasgn");
   if(rs)rs.addEventListener("change",()=>{ const v=rs.value; rs.value=""; if(v)applyReassign(f,v); });
@@ -1518,22 +1573,77 @@ function splitParas(text){
     return {no:m?m[1]:"", text:p};
   });
 }
-/* 변경 전/후를 같은 항 번호끼리 짝지어 행 배열로 */
+/* ── 항 짝짓기: 번호가 아니라 내용으로 ──
+   번호로만 짝지으면 개선안이 항을 줄여 쓴 경우 엉뚱한 항이 나란히 놓인다
+   (예: 현행②'유산 경험자 분할사용' ↔ 개선②'유급 60일' — 개선②는 실제로 현행⑤에 대응).
+   한글 법령 문장은 표기·어미가 조금씩 달라 2-gram 자카드 유사도가 잘 맞고,
+   조문 안의 항 순서는 유지되므로 순서보존 최적정렬(Needleman-Wunsch)로 짝짓는다. */
+function normP(s){ return String(s||"").replace(new RegExp("["+CIRC+"]","g"),"").replace(/[\s·,.()（）「」]/g,""); }
+function bigrams(s){ const g=new Set(); for(let i=0;i<s.length-1;i++)g.add(s.slice(i,i+2)); return g; }
+function simRatio(a,b){
+  const A=bigrams(normP(a)),B=bigrams(normP(b));
+  if(!A.size||!B.size)return 0;
+  let inter=0; A.forEach(x=>{ if(B.has(x))inter++; });
+  return inter/(A.size+B.size-inter);
+}
+const PAIR_MIN=0.28;   // 이 미만은 서로 다른 항으로 본다(무관한 항을 억지로 붙이지 않음)
+function pairParas(B,A){
+  const n=B.length,m=A.length;
+  const sc=Array.from({length:n+1},()=>new Float64Array(m+1));
+  const bk=Array.from({length:n+1},()=>new Int8Array(m+1));
+  for(let i=1;i<=n;i++)bk[i][0]=1;
+  for(let j=1;j<=m;j++)bk[0][j]=2;
+  for(let i=1;i<=n;i++)for(let j=1;j<=m;j++){
+    const s=simRatio(B[i-1].text,A[j-1].text);
+    const diag=sc[i-1][j-1]+(s>=PAIR_MIN?s:-1e-9), up=sc[i-1][j], left=sc[i][j-1];
+    if(diag>=up&&diag>=left){sc[i][j]=diag;bk[i][j]=0;}
+    else if(up>=left){sc[i][j]=up;bk[i][j]=1;}
+    else {sc[i][j]=left;bk[i][j]=2;}
+  }
+  const rows=[]; let i=n,j=m;
+  while(i>0||j>0){
+    const d=(i>0&&j>0)?bk[i][j]:(i>0?1:2);
+    if(d===0){ rows.unshift({b:B[i-1],a:A[j-1],sim:simRatio(B[i-1].text,A[j-1].text)}); i--; j--; }
+    else if(d===1){ rows.unshift({b:B[i-1],a:null,sim:0}); i--; }
+    else { rows.unshift({b:null,a:A[j-1],sim:0}); j--; }
+  }
+  return rows;
+}
+/* 변경 전/후를 내용이 대응하는 항끼리 짝지어 행 배열로 */
 function alignParas(before,after){
   const B=splitParas(before), A=splitParas(after);
   if(B.length<2&&A.length<2)return null;               // 항 구분이 없으면 기존대로 한 행
-  const order=[], seen=new Set();
-  const push=n=>{ const k=n||"_"; if(!seen.has(k)){seen.add(k);order.push(n);} };
-  // 머리(번호 없는 부분)를 먼저, 그 다음 ①②③ 순
-  B.forEach(p=>{ if(!p.no)push(""); }); A.forEach(p=>{ if(!p.no)push(""); });
-  const nums=[...new Set(B.concat(A).map(p=>p.no).filter(Boolean))]
-    .sort((x,y)=>CIRC.indexOf(x)-CIRC.indexOf(y)||String(x).localeCompare(String(y),undefined,{numeric:true}));
-  nums.forEach(push);
-  return order.map(no=>({
-    no,
-    b:B.filter(p=>p.no===no).map(p=>p.text).join("\n"),
-    a:A.filter(p=>p.no===no).map(p=>p.text).join("\n")
+  return pairParas(B,A).map(r=>({
+    no:(r.b&&r.b.no)||(r.a&&r.a.no)||"",
+    b:r.b?r.b.text:"", a:r.a?r.a.text:"", sim:r.sim
   })).filter(r=>r.b||r.a);
+}
+/* ── 개선안 반영 = 항 단위 병합 ──
+   통째로 바꾸면 개선안이 다루지 않는 현행 항(유산·사산휴가, 시간외근로 금지 등)이 사라진다.
+   짝지어진 항만 개선 문안으로 바꾸고 나머지 현행 항은 살린다.
+   항 번호는 현행 번호를 유지한다 — 본문의 '제N항' 상호참조가 깨지지 않게. */
+function paraPickDefault(r){ return r.a?"a":"b"; }
+const mergeOrSug=it=>(it.orig!=="")?mergeParas(it.orig,it.sug,it.paraPick):String(it.sug||"");
+function mergeParas(orig,sug,pick){
+  const B=splitParas(orig), A=splitParas(sug);
+  if(B.length<2&&A.length<2)return String(sug||"");    // 항 구분이 없으면 기존처럼 통째 교체
+  const rows=pairParas(B,A);
+  let maxIdx=-1; B.forEach(p=>{const k=CIRC.indexOf(p.no); if(k>maxIdx)maxIdx=k;});
+  const lead=new RegExp("^["+CIRC+"]\\s*");
+  const out=[];
+  rows.forEach((r,i)=>{
+    const sel=(pick&&pick[i])||paraPickDefault(r);
+    if(sel==="off")return;                             // 이 항 빼기
+    if(sel==="a"&&r.a){
+      let t=r.a.text;
+      if(r.b&&r.b.no) t=t.replace(lead,r.b.no+" ");     // 대체되는 현행 항의 번호를 그대로 씀
+      else if(!r.b){ maxIdx++; t=(CIRC[maxIdx]?CIRC[maxIdx]+" ":"")+t.replace(lead,""); }
+      out.push(t);
+    }
+    else if(r.b) out.push(r.b.text);
+    else if(r.a) out.push(r.a.text);
+  });
+  return out.join("\n");
 }
 /* 문서용 행 — 항 단위로 펼쳐 변경 전/후 위치를 맞춘다(첫 행에만 조항·이유 표기) */
 function daejoRowsAligned(){
