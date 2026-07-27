@@ -536,6 +536,13 @@ const FIREBASE_CONFIG = {
 
 const DB_ROOT = 'pucards';
 const GEMINI_KEY_LS = 'pucards_gemini_key';
+/* AI 키: 이 기기 로컬 키 우선, 없으면 회사 공유 키(config/geminiKey) 사용 */
+let _sharedGKey='';
+function geminiKey(){ return (localStorage.getItem(GEMINI_KEY_LS)||'') || _sharedGKey || ''; }
+function loadSharedGKey(){
+  try{ Store.db && Store.db.ref(DB_ROOT+'/config/geminiKey').once('value')
+    .then(s=>{ _sharedGKey = s.val()||''; }).catch(()=>{}); }catch(_){}
+}
 
 const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, colOrder:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, onlyPrivate:false, unlocked:{}, items:{}, groups:{}, trash:{} };
 
@@ -561,7 +568,7 @@ const Store = {
       /* 통합 이메일 로그인 (포털·ERP·컨설팅과 같은 Firebase 세션 공유) */
       if (firebase.auth){
         firebase.auth().onAuthStateChanged(u=>{
-          if (u && u.email){ hideCardsLogin(); subscribe(); ErpMatch.load(); }
+          if (u && u.email){ hideCardsLogin(); subscribe(); ErpMatch.load(); loadSharedGKey(); }
           /* 익명 세션은 건드리지 않음 — 컨설팅 등 다른 앱이 읽기용으로 쓰는 세션을
              여기서 signOut하면 그 앱이 다시 익명 로그인 → 무한 핑퐁으로 전체가 튕김 */
           else { showCardsLogin(); }
@@ -1381,7 +1388,7 @@ async function pumpQueue(){
     const photo = await fileToImage(f);
     const thumb = await makeThumb(photo);
     let pre={};
-    if (localStorage.getItem(GEMINI_KEY_LS)){
+    if (geminiKey()){
       toast('🤖 AI가 정보를 읽고 있습니다…',15000);
       try{ pre = await aiExtract(photo, state.tab); }
       catch(e){ console.error(e); toast('AI 추출 실패 — 직접 입력해주세요'); }
@@ -1399,11 +1406,12 @@ async function fileToImage(f){
   return shrink(img);
 }
 function shrink(img){
-  const M=1400, r=Math.min(1, M/Math.max(img.width,img.height));
+  /* OCR 정확도·선명도를 위해 넉넉한 해상도·화질 유지 (최대 1600px, 품질 .85) */
+  const M=1600, r=Math.min(1, M/Math.max(img.width,img.height));
   const c=document.createElement('canvas');
   c.width=Math.round(img.width*r); c.height=Math.round(img.height*r);
   c.getContext('2d').drawImage(img,0,0,c.width,c.height);
-  return c.toDataURL('image/jpeg',.8);
+  return c.toDataURL('image/jpeg',.85);
 }
 /* 목록용 썸네일(약 5~10KB) — 목록 로딩을 가볍게 유지 */
 function makeThumb(dataUrl){
@@ -1446,7 +1454,7 @@ window.addEventListener('paste',e=>{
 
 /* ════════════ AI 자동 추출 (Gemini) ════════════ */
 async function aiExtract(dataUrl, kind){
-  const key=localStorage.getItem(GEMINI_KEY_LS);
+  const key=geminiKey();
   const prompt = kind==='card'
     ? `이 명함 이미지에서 정보를 추출해 JSON으로만 답하세요. 키: name(이름), company(회사명), dept(부서), title(직책), mobile(휴대폰), tel(직통전화), fax(개인팩스), email(이메일), companyTel(회사 대표번호), companyFax(회사 팩스), companyAddr(회사 주소), website(홈페이지), address(개인 주소), memo(기타 정보). 없는 값은 빈 문자열. 전화번호는 010-1234-5678 형식. JSON 외 텍스트 금지.`
     : `이 사업자등록증 이미지에서 정보를 추출해 JSON으로만 답하세요. 키: company(상호/법인명), ceo(대표자), bizno(사업자등록번호), corpno(법인등록번호), openDate(개업연월일), bizType(업태), bizItem(종목), companyTel(대표번호), companyFax(팩스), address(사업장 소재지), memo(기타). 없는 값은 빈 문자열. JSON 외 텍스트 금지.`;
@@ -1816,30 +1824,45 @@ function openSettings(){
       <div style="font-size:14px;padding:4px 2px;line-height:1.7">${ Store.mode==='firebase'
         ? '🟢 Firebase 연결됨 — 전 직원 실시간 공유 중'
         : '🟠 데모 모드 — 이 기기에만 저장됩니다.<br>파일 상단 FIREBASE_CONFIG에 pu-erp의 설정을 붙여넣으면 공유가 시작됩니다.' }</div></div>
-    <div class="field"><label>Gemini API 키 (AI 자동 추출 · 이 기기에만 저장)</label>
+    <div class="field"><label>Gemini API 키 (AI 자동 추출)</label>
       <input id="set_gkey" type="password" value="${esc(key)}" placeholder="AIza...">
-      <div style="font-size:12px;color:var(--sub);margin-top:5px;line-height:1.7">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink);margin-top:8px;font-weight:400">
+        <input type="checkbox" id="set_gshare" ${_sharedGKey?'checked':''}> 이 키를 모든 기기(직원 폰·푸른카메라 포함)에 공유</label>
+      <div style="font-size:12px;color:var(--sub);margin-top:6px;line-height:1.7">
         무료 발급: <b>aistudio.google.com/apikey</b> → 로그인 → [API 키 만들기] → 복사해 붙여넣기.<br>
-        키는 이 브라우저에만 저장되며 공유 데이터·코드에 포함되지 않습니다.</div></div>
+        <b>공유 체크</b>를 하면 회사 전체 기기에서 자동인식이 켜집니다. 체크 안 하면 이 기기에만 저장됩니다.</div></div>
     <div class="mfoot">
       <button class="btn ghost" onclick="setBg.classList.remove('open')">닫기</button>
       <button class="btn primary" onclick="saveSettings()">저장</button></div>`;
   $('setBg').classList.add('open');
 }
-function saveSettings(){
+async function saveSettings(){
   const v=$('set_gkey').value.trim();
+  const share=$('set_gshare') && $('set_gshare').checked;
   if(v) localStorage.setItem(GEMINI_KEY_LS,v); else localStorage.removeItem(GEMINI_KEY_LS);
+  if(v && share && Store.mode==='firebase'){
+    try{ await Store.db.ref(DB_ROOT+'/config/geminiKey').set(v); _sharedGKey=v;
+      toast('AI 키를 모든 기기에 공유했습니다 — 이제 어느 기기서든 자동 추출됩니다'); }
+    catch(e){ toast('공유 저장 실패: '+((e&&e.message)||'')); }
+  } else {
+    toast(v?'AI 키가 저장되었습니다 — 이제 촬영하면 자동 추출됩니다':'AI 키를 지웠습니다');
+  }
   $('setBg').classList.remove('open');
-  toast(v?'AI 키가 저장되었습니다 — 이제 촬영하면 자동 추출됩니다':'AI 키를 지웠습니다');
 }
 
 /* ════════════ 📷 인앱 카메라: 가이드 틀 + 앞/뒷면 연속 촬영 ════════════ */
-let camStream=null, camStage='front', camFront=null;
+let camStream=null, camStage='front', camFront=null, camTrack=null, imageCapture=null;
 async function openCamera(){
   try{
     camStream = await navigator.mediaDevices.getUserMedia({
-      video:{ facingMode:'environment', width:{ideal:2560}, height:{ideal:1440} }, audio:false });
-  }catch(e){ cameraInput.click(); return; }   /* 권한 거부·미지원 → 폰 기본 카메라로 폴백 */
+      video:{ facingMode:{ideal:'environment'}, width:{ideal:3840}, height:{ideal:2160} }, audio:false });
+  }catch(e){
+    try{ camStream = await navigator.mediaDevices.getUserMedia({ video:{facingMode:'environment'}, audio:false }); }
+    catch(e2){ cameraInput.click(); return; }   /* 권한 거부·미지원 → 폰 기본 카메라로 폴백 */
+  }
+  camTrack = camStream.getVideoTracks()[0];
+  try{ await camTrack.applyConstraints({ advanced:[{focusMode:'continuous'}] }); }catch(_){}
+  try{ imageCapture = ('ImageCapture' in window) ? new ImageCapture(camTrack) : null; }catch(_){ imageCapture=null; }
   camStage='front'; camFront=null;
   $('camlabel').textContent='앞면';
   $('camask').style.display='none';
@@ -1848,27 +1871,50 @@ async function openCamera(){
 }
 function closeCamera(){
   if (camStream){ camStream.getTracks().forEach(t=>t.stop()); camStream=null; }
+  camTrack=null; imageCapture=null;
   $('cambg').classList.remove('open');
 }
 function camPickGallery(){ closeCamera(); fileInput.click(); }
 function camOther(){ closeCamera(); cameraInput.click(); }   /* 폰 기본 카메라 */
-function camShot(){
+/* 화면 탭 → 그 지점으로 초점 (지원 기기) */
+$('camvid') && $('camvid').addEventListener('click', async e=>{
+  if(!camTrack) return;
+  const r=e.target.getBoundingClientRect();
+  const x=(e.clientX-r.left)/r.width, y=(e.clientY-r.top)/r.height;
+  try{ await camTrack.applyConstraints({ advanced:[{focusMode:'single-shot', pointsOfInterest:[{x,y}]}] });
+       toast('초점 맞추는 중…',800); }catch(_){}
+});
+async function camShot(){
   const v=$('camvid');
   if (!v.videoWidth) return;
+  toast('촬영 중…',1200);
+  /* 가능하면 고해상도 스틸 촬영(선명), 아니면 미리보기 프레임 캡처 */
+  let srcImg=v, sw=v.videoWidth, sh=v.videoHeight;
+  if(imageCapture){
+    try{
+      const blob=await imageCapture.takePhoto();
+      const url=URL.createObjectURL(blob);
+      srcImg=await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=url; });
+      URL.revokeObjectURL(url);
+      sw=srcImg.naturalWidth||srcImg.width; sh=srcImg.naturalHeight||srcImg.height;
+    }catch(_){ srcImg=v; sw=v.videoWidth; sh=v.videoHeight; }
+  }
   /* 가이드 틀 영역만 잘라내기 (object-fit:cover 좌표 보정) */
-  const vw=v.videoWidth, vh=v.videoHeight;
   const e=v.getBoundingClientRect(), f=$('camframe').getBoundingClientRect();
-  const scale=Math.max(e.width/vw, e.height/vh);
+  const scale=Math.max(e.width/v.videoWidth, e.height/v.videoHeight);
   const visW=e.width/scale, visH=e.height/scale;
-  const offX=(vw-visW)/2, offY=(vh-visH)/2;
-  const fx=offX+(f.left-e.left)/scale, fy=offY+(f.top-e.top)/scale;
-  const fw=f.width/scale, fh=f.height/scale;
+  const offX=(v.videoWidth-visW)/2, offY=(v.videoHeight-visH)/2;
+  let fx=offX+(f.left-e.left)/scale, fy=offY+(f.top-e.top)/scale;
+  let fw=f.width/scale, fh=f.height/scale;
+  /* 스틸 해상도가 미리보기와 다르면 비례 보정 */
+  const rx=sw/v.videoWidth, ry=sh/v.videoHeight;
+  fx*=rx; fy*=ry; fw*=rx; fh*=ry;
   const c=document.createElement('canvas');
   c.width=Math.max(1,Math.round(fw)); c.height=Math.max(1,Math.round(fh));
-  c.getContext('2d').drawImage(v, fx,fy,fw,fh, 0,0,c.width,c.height);
+  c.getContext('2d').drawImage(srcImg, fx,fy,fw,fh, 0,0,c.width,c.height);
   const img=new Image();
   img.onload=()=>afterShot(shrink(img));
-  img.src=c.toDataURL('image/jpeg',.92);
+  img.src=c.toDataURL('image/jpeg',.95);
 }
 function afterShot(dataUrl){
   if (camStage==='front'){ camFront=dataUrl; $('camask').style.display='flex'; }
@@ -1883,7 +1929,7 @@ async function startEditorFromCamera(front, back){
   toast('이미지 처리 중…',9000);
   const thumb=await makeThumb(front);
   let pre={};
-  if (localStorage.getItem(GEMINI_KEY_LS)){
+  if (geminiKey()){
     toast('🤖 AI가 정보를 읽고 있습니다…',15000);
     try{ pre=await aiExtract(front, state.tab); }
     catch(e){ console.error(e); toast('AI 추출 실패 — 직접 입력해주세요'); }
