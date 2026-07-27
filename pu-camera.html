@@ -247,6 +247,47 @@ function shrink(img){
   c.getContext('2d').drawImage(img,0,0,c.width,c.height);
   return c.toDataURL('image/jpeg',.85);
 }
+/* 자동 선명도·명암 보정 — 흐릿하거나 어두운 명함 글자를 또렷하게 (자동) */
+function enhance(dataUrl){
+  return new Promise(res=>{
+    const img=new Image();
+    img.onload=()=>{
+      try{
+        const w=img.width, h=img.height;
+        const c=document.createElement('canvas'); c.width=w; c.height=h;
+        const ctx=c.getContext('2d'); ctx.drawImage(img,0,0);
+        const im=ctx.getImageData(0,0,w,h), d=im.data, total=w*h;
+        /* 1) 자동 명암: 밝기 2~98% 구간을 0~255로 늘려 대비를 살림 */
+        const hist=new Uint32Array(256);
+        for(let i=0;i<d.length;i+=4){ hist[(d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114)|0]++; }
+        const cut=total*0.02; let acc=0, lo=0, hi=255;
+        for(let i=0;i<256;i++){ acc+=hist[i]; if(acc>=cut){ lo=i; break; } }
+        acc=0; for(let i=255;i>=0;i--){ acc+=hist[i]; if(acc>=cut){ hi=i; break; } }
+        if(hi-lo<32){ lo=0; hi=255; }
+        const lut=new Uint8Array(256);
+        for(let i=0;i<256;i++){ const v=(i-lo)*255/(hi-lo); lut[i]=v<0?0:v>255?255:v; }
+        for(let i=0;i<d.length;i+=4){ d[i]=lut[d[i]]; d[i+1]=lut[d[i+1]]; d[i+2]=lut[d[i+2]]; }
+        /* 2) 언샤프(선명): 라플라시안 가중으로 윤곽 강화 */
+        const out=new Uint8ClampedArray(d), amt=0.7, W4=w*4;
+        for(let y=1;y<h-1;y++){
+          for(let x=1;x<w-1;x++){
+            const o=(y*w+x)*4;
+            for(let ch=0;ch<3;ch++){
+              const p=o+ch;
+              const lap=4*d[p]-d[p-4]-d[p+4]-d[p-W4]-d[p+W4];
+              const v=d[p]+amt*lap;
+              out[p]=v<0?0:v>255?255:v;
+            }
+          }
+        }
+        im.data.set(out); ctx.putImageData(im,0,0);
+        res(c.toDataURL('image/jpeg',.9));
+      }catch(e){ res(dataUrl); }   /* 실패 시 원본 그대로 */
+    };
+    img.onerror=()=>res(dataUrl);
+    img.src=dataUrl;
+  });
+}
 function makeThumb(dataUrl){
   return new Promise(res=>{ const i=new Image();
     i.onload=()=>{ const M=320, r=Math.min(1, M/Math.max(i.width,i.height));
@@ -365,6 +406,8 @@ const WIDE=['email','companyAddr','address','memo'];
 let draft=null;   /* {photo, thumb, photo2, thumb2} */
 
 async function startConfirm(dataUrl){
+  toast('선명하게 다듬는 중…',5000);
+  try{ dataUrl = await enhance(dataUrl); }catch(_){}
   draft={ photo:dataUrl, thumb:'', photo2:'', thumb2:'' };
   draft.thumb = await makeThumb(dataUrl);
   renderConfirm({});               /* 빈 칸 먼저 보여주고 */
