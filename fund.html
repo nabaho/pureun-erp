@@ -11,6 +11,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="hwpx_gen.js?v=7"></script>
 <script src="fund_forms.js?v=1"></script>
 <style>
@@ -871,6 +872,102 @@ var TPL={ setup:{key:'setup',label:'설립 서식(6종)',file:'2024년 근로복
           // 참여사업장별 출연확인서 — 기업정보 시트를 참여사업장으로 채우면 확인서가 VLOOKUP으로 뽑힘
           contribx:{key:'contribx',label:'기금출연확인서(사업장별)',file:'기금출연확인서 양식(빈양식).xlsx',gong:false,
                     hint:'참여사업장 목록으로 [기업정보] 시트를 채웁니다. 확인서 시트의 <b>연번(CJ3)</b>을 바꾸면 해당 사업장 확인서가 나옵니다. 대표자·근로자 생년월일은 개인정보라 저장하지 않으니 엑셀에서 직접 입력하세요.'} };
+/* ═══════════ 문서 끌어놓기(드래그앤드롭) → 자동 판독 ═══════════
+   · 모든 업로드의 기본은 마우스 드래그. 클릭해서 파일 선택도 함께 지원.
+   · PDF는 pdf.js로 글자를 직접 읽는다(좌표 기준 정렬 — 표 레이아웃에서 순서가 섞이는 것 방지).
+     고용노동부 인가증은 전자문서라 글자가 심겨 있어 OCR 없이 100% 정확히 읽힌다.
+   · 스캔 이미지(등기부·고유번호증 다수)는 글자가 없어 자동 판독 불가 → 미리보기만 띄워 수기 입력을 돕는다. */
+function dropZone(id,label,hint,accept){
+  return '<div id="'+id+'" class="dropz" ondragover="dzOver(event,1)" ondragleave="dzOver(event,0)" ondrop="dzDrop(event,\''+id+'\')" onclick="dzPick(\''+id+'\',\''+accept+'\')" '
+    +'style="border:2px dashed var(--line);border-radius:10px;padding:16px;text-align:center;cursor:pointer;background:#fbfcfe;transition:.15s">'
+    +'<div style="font-size:13px;font-weight:700">⬇ '+label+'</div>'
+    +'<div class="muted" style="font-size:11.5px;margin-top:4px">여기로 <b>끌어다 놓기</b> · 또는 클릭해 선택'+(hint?'<br>'+hint:'')+'</div>'
+    +'<div id="'+id+'-stat" style="font-size:11.5px;margin-top:6px"></div></div>';
+}
+function dzOver(e,on){ e.preventDefault(); e.stopPropagation();
+  var d=e.currentTarget; d.style.borderColor=on?'var(--acc)':'var(--line)'; d.style.background=on?'#eef4ff':'#fbfcfe'; }
+function dzDrop(e,id){ dzOver(e,0);
+  var fs=(e.dataTransfer&&e.dataTransfer.files)||[]; if(fs.length) _dzHandler[id]&&_dzHandler[id](Array.prototype.slice.call(fs)); }
+function dzPick(id,accept){ var inp=document.createElement('input'); inp.type='file'; if(accept)inp.accept=accept; inp.multiple=true;
+  inp.onchange=function(ev){ var fs=Array.prototype.slice.call(ev.target.files||[]); if(fs.length)_dzHandler[id]&&_dzHandler[id](fs); }; inp.click(); }
+var _dzHandler={};
+function dzStat(id,html){ var s=$(id+'-stat'); if(s)s.innerHTML=html; }
+
+// PDF → 좌표 정렬 텍스트. 텍스트 레이어가 없으면 '' 반환(=스캔 이미지)
+function pdfText(buf){
+  if(typeof pdfjsLib==='undefined') return Promise.reject(new Error('PDF 라이브러리 로드 실패 — 새로고침하세요'));
+  try{ pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; }catch(e){}
+  return pdfjsLib.getDocument({data:buf}).promise.then(function(doc){
+    var n=Math.min(doc.numPages,5), jobs=[];
+    for(var i=1;i<=n;i++) jobs.push(doc.getPage(i).then(function(pg){ return pg.getTextContent(); }));
+    return Promise.all(jobs).then(function(cs){
+      return cs.map(function(c){
+        var items=c.items.filter(function(it){return (it.str||'').trim();})
+          .map(function(it){ return {s:it.str, x:it.transform[4], y:it.transform[5]}; });
+        items.sort(function(a,b){ var dy=b.y-a.y; if(Math.abs(dy)>3) return dy; return a.x-b.x; });  // 위→아래, 좌→우
+        var out='',lastY=null;
+        items.forEach(function(it){ if(lastY!==null&&Math.abs(it.y-lastY)>3) out+='\n'; out+=it.s+' '; lastY=it.y; });
+        return out;
+      }).join('\n');
+    });
+  });
+}
+function _flat(t){ return String(t||'').replace(/ /g,' ').replace(/\s+/g,' '); }
+// ── 인가증 판독 ──
+function parseInka(txt){
+  var t=String(txt||''), flat=_flat(t), o={};
+  var m=flat.match(/인가번호\s*제?\s*(\d{3,4}\s*-\s*20\d{2}\s*-\s*\d{1,3})\s*호/);
+  if(m) o.inka_no=m[1].replace(/\s/g,'');
+  var ds=flat.match(/20\d{2}\s*[.년]\s*\d{1,2}\s*[.월]\s*\d{1,2}\s*[.일]?/g);
+  if(ds&&ds.length){ var p=ds[ds.length-1].match(/(20\d{2})\D+(\d{1,2})\D+(\d{1,2})/);
+    if(p) o.inka_date=p[1]+'-'+('0'+p[2]).slice(-2)+'-'+('0'+p[3]).slice(-2); }
+  m=flat.match(/대표자\s*성명\s*:?\s*([가-힣]{2,5})/);
+  if(m) o.chairman=m[1];
+  /* 기금명·소재지 — 인가증은 라벨과 값이 엇갈려 추출된다.
+     실제 예: "1. 기금법인 명칭: 충남공동근로복지기금8호 충청남도 당진시 … (송악읍 2. 주사무소 소재지: 한진리) 3. 대표자 …"
+     → ① 명칭~대표자 구간을 잘라 ② 소재지 라벨만 지우고 ③ 주소 시작(시·도+시/군/구)에서 이름/주소를 가른다. */
+  var seg=flat.match(/기금법인\s*명칭\s*:?\s*(.*?)(?=\d\s*\.\s*대표자|대표자\s*성명|$)/);
+  if(seg){
+    var s=seg[1].replace(/\d\s*\.\s*주사무소\s*소재지\s*:?/g,' ').replace(/\s+/g,' ').trim();
+    var SIDO='서울특별시|부산광역시|대구광역시|인천광역시|광주광역시|대전광역시|울산광역시|세종특별자치시'
+      +'|충청북도|충청남도|전라북도|전라남도|경상북도|경상남도|경기도|강원특별자치도|강원도|제주특별자치도'
+      +'|서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주';
+    var re=new RegExp('(?:'+SIDO+')[가-힣]{0,4}\\s*[가-힣]{2,7}(?:시|군|구)(?![가-힣])','g'), mm, last=-1;
+    while((mm=re.exec(s))) last=mm.index;          // 이름에도 '충남' 등이 있으므로 마지막 매치를 주소 시작으로
+    if(last>0){
+      o.address=s.slice(last).replace(/\s+/g,' ').trim();
+      var nm=s.slice(0,last).replace(/\s+/g,'');
+      if(nm) o.name=nm.replace(/기금호(\d+)/,'기금$1호');   // "기금호1" → "기금1호"(글자 순서 뒤바뀜 보정)
+    }else{
+      var only=s.replace(/\s+/g,'');
+      if(/기금/.test(only)) o.name=only.replace(/기금호(\d+)/,'기금$1호');
+    }
+  }
+  return o;
+}
+// ── 등기사항전부증명서 판독 (텍스트 PDF일 때) ──
+function parseCorpReg(txt){
+  var flat=_flat(txt), o={};
+  var m=flat.match(/등록번호\s*(\d{6}\s*-\s*\d{7})/); if(m) o.corp_reg_no=m[1].replace(/\s/g,'');
+  m=flat.match(/법인성립연월일\s*(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/);
+  if(m) o.reg_date=m[1]+'-'+('0'+m[2]).slice(-2)+'-'+('0'+m[3]).slice(-2);
+  m=flat.match(/설립인?허?가?연월일\s*(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/);
+  if(m) o.inka_date=m[1]+'-'+('0'+m[2]).slice(-2)+'-'+('0'+m[3]).slice(-2);
+  m=flat.match(/주사무소\s*(.+?)(?=\s*목\s*적|\s*공고|$)/); if(m) o.address=m[1].trim();
+  m=flat.match(/관할등기소\s*([가-힣]+지방법원[가-힣]*\s*[가-힣]*등기소?)/); if(m) o.registry_office=m[1].replace(/\s+/g,' ').trim();
+  return o;
+}
+// ── 고유번호증 판독 ──
+function parseTaxId(txt){
+  var flat=_flat(txt), o={};
+  var m=flat.match(/(?:고유번호|등록번호)\s*:?\s*(\d{3}\s*-\s*\d{2}\s*-\s*\d{5})/);
+  if(m) o.tax_id_no=m[1].replace(/\s/g,'');
+  m=flat.match(/([가-힣]+)\s*세무서장/); if(m) o.tax_office=m[1]+'세무서';
+  return o;
+}
+var DOC_PARSE={ inka:{label:'고용노동부 설립인가증',fn:parseInka},
+                corpreg:{label:'법인 등기사항전부증명서',fn:parseCorpReg},
+                taxid:{label:'고유번호증',fn:parseTaxId} };
 var IDB_DB='fundErpTpl', IDB_ST='templates';
 function idbOpen(){ return new Promise(function(res,rej){ var r=indexedDB.open(IDB_DB,1);
   r.onupgradeneeded=function(){ r.result.createObjectStore(IDB_ST); };
@@ -2088,10 +2185,74 @@ function infoForm(f){
     else inp='<input id="fd-'+c[0]+'" type="'+c[2]+'" value="'+esc(v)+'">';
     return '<div class="fld'+(c[0]==='address'?' full':'')+'"><label>'+c[1]+'</label>'+inp+'</div>';
   }).join('');
-  return '<div class="panel"><h2>기금 정보</h2>'
+  setTimeout(bindDocIntake,0);   // 렌더 후 드롭존 핸들러 연결
+  return '<div class="panel"><div class="row"><h2 style="margin:0">📥 서류 끌어놓기 → 자동 입력</h2>'
+    +'<span class="muted" style="font-size:11.5px;margin-left:8px">인가증·등기부·고유번호증을 올리면 읽어서 아래 칸을 채웁니다</span></div>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">'
+    +'<div style="flex:1;min-width:210px">'+dropZone('dz-inka','설립인가증','인가번호·인가일·대표자·소재지','.pdf,image/*')+'</div>'
+    +'<div style="flex:1;min-width:210px">'+dropZone('dz-corpreg','법인 등기부등본','법인등록번호·설립등기일','.pdf,image/*')+'</div>'
+    +'<div style="flex:1;min-width:210px">'+dropZone('dz-taxid','고유번호증','고유번호·관할세무서','.pdf,image/*')+'</div>'
+    +'</div><div id="docIntakeOut" style="margin-top:10px"></div></div>'
+    +'<div class="panel"><h2>기금 정보</h2>'
     +'<div class="grid" style="margin-top:12px" oninput="markDirty()" onchange="markDirty()">'+flds+'</div>'
     +'<div class="row" style="margin-top:16px"><button class="primary" onclick="saveInfo()">💾 저장</button>'
     +'<span class="muted" style="font-size:11px">담당은 푸른이알피 재직자에서 선택 · Ctrl+S로도 저장 · Firebase 저장</span></div></div>';
+}
+/* 서류 끌어놓기 → 판독 → 값 확인 후 폼에 반영 (저장은 [💾 저장] 눌러야 확정) */
+function bindDocIntake(){
+  [['dz-inka','inka'],['dz-corpreg','corpreg'],['dz-taxid','taxid']].forEach(function(p){
+    _dzHandler[p[0]]=function(files){ readDocInto(p[0],p[1],files[0]); };
+  });
+}
+var _docFound={};
+function readDocInto(zid,kind,file){
+  if(!file) return;
+  var def=DOC_PARSE[kind], nm=file.name||'';
+  dzStat(zid,'<span class="muted">읽는 중… '+esc(nm)+'</span>');
+  if(!/\.pdf$/i.test(nm)){
+    dzStat(zid,'<span style="color:var(--warn)">이미지 파일은 글자를 읽을 수 없습니다.</span><br><span class="muted" style="font-size:11px">PDF로 저장해 올리거나 아래 칸에 직접 입력하세요.</span>');
+    return;
+  }
+  var rd=new FileReader();
+  rd.onload=function(){
+    pdfText(new Uint8Array(rd.result)).then(function(txt){
+      if(!txt||txt.replace(/\s/g,'').length<40){
+        dzStat(zid,'<span style="color:var(--warn)">스캔 이미지라 글자가 없습니다</span><br><span class="muted" style="font-size:11px">'+esc(def.label)+' 원본이 스캔본이면 자동 판독이 안 됩니다 — 아래 칸에 직접 입력하세요.</span>');
+        return;
+      }
+      var got=def.fn(txt), keys=Object.keys(got).filter(function(k){return got[k];});
+      if(!keys.length){ dzStat(zid,'<span style="color:var(--warn)">글자는 읽었지만 항목을 못 찾았습니다</span>'); return; }
+      dzStat(zid,'<span style="color:var(--ok,#0a7)">✓ '+keys.length+'개 항목 판독</span>');
+      Object.assign(_docFound,got); renderDocIntake();
+    }).catch(function(e){ dzStat(zid,'<span style="color:var(--danger)">읽기 실패: '+esc(e.message||e)+'</span>'); });
+  };
+  rd.onerror=function(){ dzStat(zid,'<span style="color:var(--danger)">파일을 열 수 없습니다</span>'); };
+  rd.readAsArrayBuffer(file);
+}
+function renderDocIntake(){
+  var box=$('docIntakeOut'); if(!box) return;
+  var LBL={}; FIELDS.forEach(function(c){LBL[c[0]]=c[1];});
+  var ks=Object.keys(_docFound).filter(function(k){return _docFound[k];});
+  if(!ks.length){ box.innerHTML=''; return; }
+  box.innerHTML='<div style="border:1px solid var(--acc);border-radius:9px;padding:10px 12px;background:#f4f8ff">'
+    +'<div class="row" style="margin-bottom:6px"><b style="font-size:13px">판독 결과 '+ks.length+'건</b>'
+    +'<span class="muted" style="font-size:11.5px;margin-left:6px">확인 후 [반영]을 누르면 아래 칸에 들어갑니다(저장은 별도)</span>'
+    +'<span style="flex:1"></span><button class="primary" onclick="applyDocFound()" style="padding:4px 12px">↓ 아래 칸에 반영</button>'
+    +'<button onclick="_docFound={};renderDocIntake()" style="padding:4px 10px;margin-left:4px">지우기</button></div>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:8px">'
+    +ks.map(function(k){ return '<span style="background:#fff;border:1px solid var(--line);border-radius:7px;padding:4px 9px;font-size:12px">'
+      +'<span class="muted">'+esc(LBL[k]||k)+'</span> <b style="user-select:all">'+esc(_docFound[k])+'</b></span>'; }).join('')
+    +'</div></div>';
+}
+function applyDocFound(){
+  var n=0;
+  Object.keys(_docFound).forEach(function(k){
+    var el=$('fd-'+k); if(!el||!_docFound[k]) return;
+    el.value=_docFound[k]; n++;
+    el.style.background='#eefbf3'; setTimeout(function(){el.style.background='';},1400);
+  });
+  markDirty();
+  toast(n?(n+'개 항목을 채웠습니다 — 확인 후 [💾 저장]'):'반영할 칸을 찾지 못했습니다',n?'':'warn');
 }
 function saveInfo(){
   var patch={};
@@ -2145,10 +2306,13 @@ function sitesTab(){
   var tbl = arr.length
     ? '<div style="overflow-x:auto"><table><thead><tr><th>번호</th><th>상호</th><th>대표자</th><th>사업자번호</th><th>업종</th><th style="text-align:right">상시근로자</th><th>담당자</th><th>이메일</th><th>소재지</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
     : '<div class="muted" style="padding:20px 4px">등록된 참여사업장이 없습니다. [+ 사업장 추가] 또는 [📥 사업장 데이터 가져오기]로 시작하세요.</div>';
+  setTimeout(bindSiteXlsx,0);
   return '<div class="panel"><div class="row"><h2>참여사업장</h2>'
     +'<span class="stat">'+arr.length+'개사</span><span class="stat">상시근로자 '+totalEmp.toLocaleString()+'명</span>'
     +'<span style="flex:1"></span><button class="primary" onclick="editSite(\'\')">+ 사업장 추가</button>'
-    +' <button onclick="importSites()" title="전체 기금 사업장 일괄 가져오기(담당자 포함)">📥 사업장 데이터 가져오기</button></div>'
+    +' <button onclick="importSites()" title="전체 기금 사업장 일괄 가져오기(담당자 포함)">📥 백업(JSON) 가져오기</button></div>'
+    +'<div style="margin-top:10px">'+dropZone('dz-sites','엑셀로 사업장 한번에 등록','상호·대표자·사업자번호·상시근로자·소재지 열을 자동으로 찾습니다','.xlsx,.xls,.csv')+'</div>'
+    +'<div id="siteXlsxOut"></div>'
     +'<div style="margin-top:12px">'+tbl+'</div></div>';
 }
 function _primaryContact(s){
@@ -2243,6 +2407,107 @@ function chooseCompany(i){ var co=(_coCache||[])[i]; if(!co) return; closeM(); e
 function delSite(sid){
   confirmM('이 사업장을 삭제할까요?',{ok:'삭제',danger:true}).then(function(ok){ if(!ok)return;
     fbDb.ref(NS+'/sites/'+S.fundId+'/'+sid).remove().then(function(){ S.sitesFor=null; closeM(); renderFund(); toast('삭제되었습니다'); }); });
+}
+/* ── 참여사업장 엑셀 끌어놓기 → 열 자동 인식 → 미리보기 → 일괄 등록 ── */
+function _digits(v){ return String(v==null?'':v).replace(/\D/g,''); }   // 사업자번호 비교용(구분기호 무시)
+var SITE_COLMAP=[
+  ['name',        ['상호','사업장명','회사명','업체명','기업명','사업장','회사']],
+  ['ceo',         ['대표자','대표','대표이사','성명']],
+  ['biz_no',      ['사업자등록번호','사업자번호','사업자','등록번호']],
+  ['biz_type',    ['업종','업태','종목']],
+  ['company_size',['상시근로자','근로자수','인원','상시','직원수','근로자']],
+  ['address',     ['소재지','주소','사업장주소']],
+  ['seq_label',   ['번호','연번','순번','no']]
+];
+function _pickCol(headers,cands){
+  for(var i=0;i<headers.length;i++){
+    var h=String(headers[i]||'').replace(/\s/g,'');
+    for(var j=0;j<cands.length;j++) if(h && h.indexOf(cands[j].replace(/\s/g,''))>=0) return i;
+  }
+  return -1;
+}
+function bindSiteXlsx(){ _dzHandler['dz-sites']=function(files){ readSiteXlsx(files[0]); }; }
+var _sitePend=null;
+function readSiteXlsx(file){
+  if(!file) return;
+  if(typeof XLSX==='undefined'){ dzStat('dz-sites','<span style="color:var(--danger)">엑셀 라이브러리 로드 실패 — 새로고침</span>'); return; }
+  dzStat('dz-sites','<span class="muted">읽는 중… '+esc(file.name||'')+'</span>');
+  var rd=new FileReader();
+  rd.onload=function(){
+    try{
+      var wb=XLSX.read(new Uint8Array(rd.result),{type:'array'});
+      var best=null;
+      wb.SheetNames.forEach(function(sn){
+        var rows=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,raw:false,defval:''});
+        // 헤더행 찾기 — '상호/사업장명/회사명' 계열이 있는 첫 줄
+        for(var r=0;r<Math.min(rows.length,15);r++){
+          if(_pickCol(rows[r],SITE_COLMAP[0][1])>=0){
+            var map={}; SITE_COLMAP.forEach(function(m){ var i=_pickCol(rows[r],m[1]); if(i>=0)map[m[0]]=i; });
+            if(!best||Object.keys(map).length>Object.keys(best.map).length) best={sheet:sn,rows:rows,hdr:r,map:map};
+            break;
+          }
+        }
+      });
+      if(!best){ dzStat('dz-sites','<span style="color:var(--warn)">사업장 표를 못 찾았습니다</span><br><span class="muted" style="font-size:11px">첫 행에 <b>상호</b>(또는 사업장명·회사명) 열이 있어야 합니다.</span>'); return; }
+      var out=[];
+      for(var r=best.hdr+1;r<best.rows.length;r++){
+        var row=best.rows[r]; if(!row) continue;
+        var o={};
+        Object.keys(best.map).forEach(function(k){ o[k]=String(row[best.map[k]]==null?'':row[best.map[k]]).trim(); });
+        if(!o.name) continue;
+        if(/합\s*계|소\s*계|총\s*계/.test(o.name)) continue;      // 합계행 제외
+        o.company_size=String(num(o.company_size)||'');
+        out.push(o);
+      }
+      if(!out.length){ dzStat('dz-sites','<span style="color:var(--warn)">데이터 행이 없습니다</span>'); return; }
+      _sitePend={list:out,sheet:best.sheet,cols:Object.keys(best.map)};
+      dzStat('dz-sites','<span style="color:var(--ok,#0a7)">✓ '+out.length+'개 사업장 인식 ('+esc(best.sheet)+')</span>');
+      renderSitePend();
+    }catch(e){ dzStat('dz-sites','<span style="color:var(--danger)">읽기 실패: '+esc(e.message||e)+'</span>'); }
+  };
+  rd.readAsArrayBuffer(file);
+}
+function renderSitePend(){
+  var box=$('siteXlsxOut'); if(!box) return;
+  if(!_sitePend){ box.innerHTML=''; return; }
+  var L=_sitePend.list, show=L.slice(0,8);
+  var LBL={name:'상호',ceo:'대표자',biz_no:'사업자번호',biz_type:'업종',company_size:'상시근로자',address:'소재지',seq_label:'번호'};
+  box.innerHTML='<div style="border:1px solid var(--acc);border-radius:9px;padding:10px 12px;background:#f4f8ff;margin-top:10px">'
+    +'<div class="row" style="margin-bottom:6px"><b style="font-size:13px">'+L.length+'개 사업장 인식</b>'
+    +'<span class="muted" style="font-size:11.5px;margin-left:6px">인식된 열: '+_sitePend.cols.map(function(c){return LBL[c]||c;}).join(' · ')+'</span>'
+    +'<span style="flex:1"></span><button class="primary" onclick="commitSiteXlsx()" style="padding:4px 12px">＋ '+L.length+'개 등록</button>'
+    +'<button onclick="_sitePend=null;renderSitePend();dzStat(\'dz-sites\',\'\')" style="padding:4px 10px;margin-left:4px">취소</button></div>'
+    +'<div style="overflow-x:auto"><table style="font-size:12px"><thead><tr><th>상호</th><th>대표자</th><th>사업자번호</th><th>업종</th><th style="text-align:right">근로자</th><th>소재지</th></tr></thead><tbody>'
+    +show.map(function(s){ return '<tr><td style="font-weight:600">'+esc(s.name)+'</td><td>'+esc(s.ceo||'—')+'</td><td>'+esc(s.biz_no||'—')
+      +'</td><td>'+esc(s.biz_type||'—')+'</td><td style="text-align:right">'+esc(s.company_size||'—')+'</td>'
+      +'<td class="muted" style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.address||'—')+'</td></tr>'; }).join('')
+    +'</tbody></table></div>'+(L.length>show.length?'<div class="muted" style="font-size:11.5px;margin-top:4px">…외 '+(L.length-show.length)+'개</div>':'')
+    +'<div class="muted" style="font-size:11.5px;margin-top:6px">기존 사업장은 그대로 두고 <b>추가</b>합니다. 같은 사업자번호는 건너뜁니다.</div></div>';
+}
+function commitSiteXlsx(){
+  if(!_sitePend||!_sitePend.list.length) return;
+  var fid=S.fundId, list=_sitePend.list, cur=S.sites||{};
+  var haveBiz={}; Object.keys(cur).forEach(function(k){ var b=_digits(cur[k].biz_no||''); if(b)haveBiz[b]=1; });
+  var add={}, n=0, skip=0, base=Object.keys(cur).length;
+  list.forEach(function(s){
+    var b=_digits(s.biz_no||'');
+    if(b&&haveBiz[b]){ skip++; return; }
+    if(b) haveBiz[b]=1;
+    var id=fbDb.ref(NS+'/sites/'+fid).push().key;
+    n++;
+    add[id]={name:s.name,ceo:s.ceo||'',biz_no:s.biz_no||'',biz_type:s.biz_type||'',
+             company_size:s.company_size||'',address:s.address||'',
+             seq_label:s.seq_label||String(base+n),status:'active'};
+  });
+  if(!n){ toast('추가할 사업장이 없습니다(모두 중복)','warn'); return; }
+  confirmM(n+'개 사업장을 등록할까요?'+(skip?('\n(사업자번호 중복 '+skip+'개는 건너뜁니다)'):''),{ok:n+'개 등록'}).then(function(ok){
+    if(!ok) return;
+    fbDb.ref(NS+'/sites/'+fid).update(add).then(function(){
+      _sitePend=null; S.sitesFor=null;   // 다시 불러오기
+      if(S.view==='fund'&&S.tab==='sites') renderFund();
+      toast(n+'개 사업장이 등록되었습니다'+(skip?(' · 중복 '+skip+'개 건너뜀'):''));
+    }).catch(function(e){ toast('등록 실패: '+e.message,'err'); });
+  });
 }
 function importSites(){
   var inp=document.createElement('input'); inp.type='file'; inp.accept='application/json';
