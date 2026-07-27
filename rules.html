@@ -985,9 +985,51 @@ function confirmSwitchDoc(what){
   if(canArch){ try{ doSaveArchive(true); }catch(e){ console.warn("전환 전 보관 실패:",e); } }
   return true;
 }
+/* ── 잘못 드래그한 업로드 되돌리기 ──
+   파일을 올리면 보관함 기록·원본(공용 Firebase)·임시저장·드롭다운 항목이 한꺼번에 생긴다.
+   실수로 올렸을 때 그 다섯 가지를 한 번에 지워 올리기 전 상태로 되돌린다. */
+let LAST_UPLOAD=null;   // {key, prevKey, name, id} — id는 첫 보관 시 doSaveArchive가 채운다
+function showUploadUndo(key){
+  const pv=$("preview"); if(!pv)return;
+  const old=document.getElementById("up-undo"); if(old)old.remove();
+  const note=document.createElement("div");
+  note.id="up-undo"; note.className="sample-banner";
+  note.style.cssText="background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;display:flex;align-items:center;gap:8px;flex-wrap:wrap";
+  note.innerHTML=`<span>📄 <b>${escapeH(SITE_FILE[key]||"")}</b> 을(를) 올렸습니다 — 잘못 올리셨나요?</span>
+    <button class="stbtn" id="up-undo-btn" style="margin-left:auto;color:#b91c1c;border-color:#f3c0c0"
+      title="이 파일이 만든 보관함 기록·원본·임시저장·목록 항목을 모두 지웁니다">↩ 이 업로드 취소</button>
+    <span class="x" id="up-undo-x" title="닫기" style="cursor:pointer;color:var(--mute)">×</span>`;
+  pv.insertBefore(note,pv.firstChild);
+  $("up-undo-btn").onclick=cancelUpload;
+  $("up-undo-x").onclick=()=>note.remove();
+}
+async function cancelUpload(){
+  const u=LAST_UPLOAD; if(!u){alert("되돌릴 업로드가 없습니다.");return;}
+  const what=["사업장 드롭다운 항목",u.id?"보관함 기록과 원본 파일(공용)":null,"임시저장 작업 세션","검토 결과"].filter(Boolean);
+  if(!confirm(`'${u.name}' 업로드를 취소합니다.\n\n지워지는 것:\n · ${what.join("\n · ")}\n\n`
+    +(u.id?"보관함 기록과 원본은 공용 저장소에서도 지워져 다른 노무사 화면에서도 사라집니다.\n되돌릴 수 없습니다. ":"")+"계속할까요?"))return;
+  if(u.id)removeRecord(u.id);                        // 보관함 기록 + 원본(공용 포함)
+  try{ localStorage.removeItem(WORK_KEY); }catch(e){}
+  if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/worksession/"+FBUSER.uid).remove().catch(()=>{});
+  clearTimeout(_cloudWorkTimer);
+  // 메모리·드롭다운 정리
+  delete SAMPLES[u.key]; delete SITE_MAP[u.key]; delete SITE_BIZNO[u.key];
+  delete SITE_FILE[u.key]; delete SITE_NAME[u.key]; delete HWP_BUFS[u.key];
+  if(PDF_URLS[u.key]){ try{URL.revokeObjectURL(PDF_URLS[u.key]);}catch(e){} delete PDF_URLS[u.key]; }
+  const opt=[...siteSel.options].find(o=>o.value===u.key); if(opt)opt.remove();
+  siteSel.value=(u.prevKey&&SAMPLES[u.prevKey]!==undefined)?u.prevKey:(siteSel.options[0]?siteSel.options[0].value:"");
+  CUR_ITEMS=[];CUR_KEY="";LAST=null;ALL_FINDINGS=[];DT_LIST=[];FS_STATUS="";
+  LAST_UPLOAD=null;
+  const n=document.getElementById("up-undo"); if(n)n.remove();
+  // resetReviewUI가 '사업장을 고르고 취업규칙 검토를 누르세요' 안내로 되돌린다
+  // (renderFindings를 뒤에 부르면 '지적 사항 없음 — 적합'으로 덮여 검토한 것처럼 보인다)
+  resetReviewUI(); updateWorkBadge(); renderDash(); await renderPreview();
+  alert("업로드를 취소했습니다.");
+}
 async function loadFile(file){
   if(!confirmSwitchDoc("새 취업규칙 열기"))return;
   const name=file.name, ext=name.toLowerCase().split(".").pop();
+  const prevKey=siteSel.value;
   try{
     let text, buf=null, pdf=false;
     if(ext==="hwp"||ext==="hwpx"||ext==="docx"||ext==="doc"||ext==="odt"||ext==="rtf"){
@@ -1016,8 +1058,10 @@ async function loadFile(file){
     const o=document.createElement("option");o.value=key;o.textContent=SITE_MAP[key];
     siteSel.appendChild(o); siteSel.value=key;
     saveWorkFromUpload(key,buf,pdf);   // F5·재접속에도 유지되도록 즉시 보관
-    resetReviewUI();renderPreview();
+    LAST_UPLOAD={key,prevKey,name,id:null};   // 잘못 올렸을 때 되돌릴 수 있게 기억
+    resetReviewUI();await renderPreview();
     autoSaveArchive("업로드");   // 보관함에 자동 저장(검토 전이라도 원본·사업장 보존)
+    showUploadUndo(key);         // 실수 되돌리기 안내 — 원본 미리보기 위에 한 줄
   }catch(e){
     if(e instanceof TypeError && ext==="txt"){ // cp949 재시도
       try{ const raw=await file.arrayBuffer();
@@ -2402,6 +2446,12 @@ function putRecord(rec){
 function removeRecord(id){
   setLocal(loadArch().filter(r=>r.id!==id));
   if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/archive/"+id).remove().catch(e=>console.warn("Firebase 삭제 실패:",e));
+  removeOrig(id);   // 기록만 지우고 원본(base64)을 남기면 공용 저장소에 고아 데이터가 쌓인다
+}
+/* 보관된 원본 파일 삭제 — 로컬 미러와 공용 노드를 함께 정리 */
+function removeOrig(id){
+  const map=loadOrigLocal(); if(map[id]){ delete map[id]; try{localStorage.setItem(ORIG_KEY,JSON.stringify(map));}catch(e){} }
+  if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/orig/"+id).remove().catch(e=>console.warn("원본 삭제 실패:",e));
 }
 /* 실시간 동기화 — 한 명이 저장하면 다른 사람 화면도 자동 갱신 */
 function subscribeArch(){if(!FBDB||!FBUSER)return;
@@ -2673,6 +2723,8 @@ function doSaveArchive(silent){
     savedAt:new Date().toISOString().slice(0,16).replace("T"," "),savedBy:(FBUSER&&(FBNAME||FBUSER.displayName||FBUSER.email))||"",
     summary:LAST.summary,items,changed:changedCnt,mode:REV_MODE,addendum:LAST.addendum||""};
   putRecord(rec);
+  // 이 업로드가 만든 기록 id를 기억 — [이 업로드 취소]가 지울 대상
+  if(LAST_UPLOAD&&LAST_UPLOAD.key===LAST.key&&!LAST_UPLOAD.id)LAST_UPLOAD.id=rec.id;
   // 원본 파일도 함께 보존 → 재오픈·로그아웃 후에도 원본 미리보기 복원
   let origMsg="";
   if(LAST.key&&SAMPLES[LAST.key]!==undefined){ try{ const o=buildOrig(LAST.key); putOrig(rec.id,o);
