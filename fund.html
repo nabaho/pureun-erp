@@ -270,7 +270,9 @@ function appHasFocus(){ var ae=document.activeElement, app=$('app');
   return !!(ae && app && app.contains(ae) && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)); }
 function refreshAll(){
   // .once() 캐시만 초기화(funds·billings는 live 리스너라 이미 최신)
-  ['sitesFor','annualFor','welfFor','evFor','txnsFor','subDocFor','txnsPrevFor'].forEach(function(k){ S[k]=null; });
+  ['sitesFor','annualFor','welfFor','evFor','txnsFor','subDocFor','txnsPrevFor',
+   'f15For','ysFor','syFor'].forEach(function(k){ S[k]=null; });
+  S.cbLoaded=0;                      // 결산 대장 재조회
   S._dbEdits=undefined;              // 서식 현황(저장본) 재조회
   S._tplChk=false; S._hwpChk=false;  // 원본 엑셀·HWP 등록 상태 재조회
   _peCache=null;                     // 푸른이알피 연동 청구 재조회
@@ -286,6 +288,7 @@ function shell(){
     +'<div id="navlist">'
     +'<div class="sitem" data-nav="1" id="nav-home" onclick="go(\'home\')" title="드래그: 메뉴 순서 변경"><span class="gr">⋮⋮</span>🏛 기금 현황</div>'
     +'<div class="sitem" data-nav="1" id="nav-billing" onclick="go(\'billing\')" title="드래그: 메뉴 순서 변경"><span class="gr">⋮⋮</span>💰 청구 관리</div>'
+    +'<div class="sitem" data-nav="1" id="nav-closeboard" onclick="go(\'closeboard\')" title="기금×연도 결산·보고서 진행 상태 한눈에 · 드래그로 순서 변경"><span class="gr">⋮⋮</span>📊 결산 대장</div>'
     +'<div class="sitem" data-nav="1" id="nav-docsboard" onclick="go(\'docsboard\')" title="전체 기금 서식 준비 현황 한눈에 비교 · 드래그로 순서 변경"><span class="gr">⋮⋮</span>🗂 서식 현황</div>'
     +'<div class="sitem" data-nav="1" id="nav-forms" onclick="S.formsCtx=\'library\';S.formsHost=null;S._sideKind=null;go(\'forms\')" title="전사 표준서식 관리(견본 편집·원본 등록·공통 저장) · 드래그로 순서 변경"><span class="gr">⋮⋮</span>📚 서식 자료실</div>'
     +'</div>'
@@ -428,10 +431,11 @@ window.addEventListener('popstate', function(ev){
   route();
 });
 function route(){
-  ['home','billing','docsboard','forms'].forEach(function(v){var n=$('nav-'+v);if(n)n.className='sitem'+(S.view===v?' on':'');});
+  ['home','billing','closeboard','docsboard','forms'].forEach(function(v){var n=$('nav-'+v);if(n)n.className='sitem'+(S.view===v?' on':'');});
   if(S.view!=='fund'&&S.formsHost==='fundDocsHost') S.formsHost=null;   // 기금 밖으로 나가면 임베드 해제
   if(S.view==='fund'&&S.fundId&&funds[S.fundId]) renderFund();
   else if(S.view==='billing') renderBilling();
+  else if(S.view==='closeboard') renderCloseBoard();
   else if(S.view==='docsboard') renderDocsBoard();
   else if(S.view==='forms') renderForms();
   else { S.view='home'; renderHome(); }
@@ -2909,7 +2913,8 @@ function sitesTab(){
     +' <button onclick="importSites()" title="전체 기금 사업장 일괄 가져오기(담당자 포함)">📥 백업(JSON) 가져오기</button></div>'
     +'<div style="margin-top:10px">'+dropZone('dz-sites','엑셀로 사업장 한번에 등록','상호·대표자·사업자번호·상시근로자·소재지 열을 자동으로 찾습니다','.xlsx,.xls,.csv')+'</div>'
     +'<div id="siteXlsxOut"></div>'
-    +'<div style="margin-top:12px">'+tbl+'</div></div>';
+    +'<div style="margin-top:12px">'+tbl+'</div></div>'
+    +sitesYearPanel(arr);
 }
 function _primaryContact(s){
   var cts=[]; try{ cts=s&&s.contacts; if(typeof cts==='string')cts=JSON.parse(cts); }catch(e){}
@@ -2990,6 +2995,69 @@ function companyToSite(co){
   return { name:co.name||'', ceo:co.ceo||'', biz_no:co.bizNo||'', corp_no:co.corpNo||co.corp_no||'',
     biz_type:co.bizType||'', address:co.address||'', company_size:co.company_size||co.empCount||'',
     note:'푸른이알피 연결', status:'active', contacts:_coContacts(co), puerp_co_id:co.id||'' };
+}
+/* ══ 사업장 연도별 기록 ══ site_years/{기금}/{연도}/{사업장} = {contrib 출연금, workers 근로자수, benef 수혜자수}
+   사업장 명부(sites)는 현재 상태 1벌만 두고, 해마다 달라지는 값은 여기에 따로 쌓는다. */
+var SY_COLS=[['contrib','출연금(원)'],['workers','상시근로자(명)'],['benef','수혜자(명)']];
+function syLoad(){
+  var fid=S.fundId, yr=S.year, key=fid+'/'+yr;
+  if(S.syFor===key) return true;
+  S.syFor=key; S.sy=null;
+  fbDb.ref(NS+'/site_years/'+fid+'/'+yr).once('value').then(function(s){
+    if(S.syFor!==key) return;
+    S.sy=s.val()||{};
+    if(S.tab==='sites'&&S.view==='fund') renderFund();
+  }).catch(function(){ if(S.syFor===key) S.sy={}; });
+  return false;
+}
+function sySet(sid,k,v){
+  var fid=S.fundId, yr=S.year, val=num(v)||0;
+  fbDb.ref(NS+'/site_years/'+fid+'/'+yr+'/'+sid+'/'+k).set(val||null).then(function(){
+    S.sy=S.sy||{}; S.sy[sid]=S.sy[sid]||{}; S.sy[sid][k]=val;
+    S.f15For=null; toast('저장됨');
+  }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
+}
+function syCopyPrev(){
+  var fid=S.fundId, yr=S.year;
+  confirmM((yr-1)+'년 사업장 연도별 값을 '+yr+'년으로 불러올까요?\n이미 입력된 '+yr+'년 값은 그대로 둡니다.',{ok:'불러오기'}).then(function(ok){
+    if(!ok)return;
+    fbDb.ref(NS+'/site_years/'+fid+'/'+(yr-1)).once('value').then(function(s){
+      var prev=s.val()||{}, cur=S.sy||{}, up={}, n=0;
+      Object.keys(prev).forEach(function(sid){
+        SY_COLS.forEach(function(c){
+          var pv=num(prev[sid][c[0]])||0;
+          if(pv&&!num((cur[sid]||{})[c[0]])){ up[sid+'/'+c[0]]=pv; n++; }
+        });
+      });
+      if(!n){ toast((yr-1)+'년에 가져올 값이 없습니다','warn'); return; }
+      fbDb.ref(NS+'/site_years/'+fid+'/'+yr).update(up).then(function(){
+        S.syFor=null; S.f15For=null; renderFund(); toast(n+'개 값을 불러왔습니다');
+      });
+    });
+  });
+}
+function sitesYearPanel(arr){
+  if(!syLoad()) return '<div class="panel">'+loadingHTML()+'</div>';
+  var sy=S.sy||{};
+  var tot={contrib:0,workers:0,benef:0};
+  var rows=arr.map(function(s){
+    var d=sy[s._id]||{};
+    var tds=SY_COLS.map(function(c){
+      tot[c[0]]+=num(d[c[0]])||0;
+      return '<td><input value="'+esc(d[c[0]]||'')+'" placeholder="0" onchange="sySet(\''+s._id+'\',\''+c[0]+'\',this.value)" '
+        +'style="width:110px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;font-size:12px;text-align:right"></td>';
+    }).join('');
+    return '<tr><td style="font-weight:600">'+esc(s.name||'—')+(s.partner?' <span class="chip warn" style="font-size:9.5px">협력</span>':'')+'</td>'+tds+'</tr>';
+  }).join('');
+  return '<div class="panel"><div class="row" style="flex-wrap:wrap"><h2 style="font-size:15px">사업장 연도별 기록</h2>'+hlp('site.years')
+    +'<span class="muted" style="font-size:12px">'+S.year+'년</span>'+yearSel()
+    +'<span class="stat">출연 '+_n(tot.contrib)+'원</span><span class="stat">근로자 '+_n(tot.workers)+'명</span>'
+    +'<span style="flex:1"></span><button onclick="syCopyPrev()">↩ 작년 값 불러오기</button></div>'
+    +(arr.length?'<div style="overflow-x:auto;margin-top:8px"><table><thead><tr><th>사업장</th>'
+      +SY_COLS.map(function(c){return '<th>'+c[1]+'</th>';}).join('')+'</tr></thead><tbody>'+rows
+      +'<tr style="font-weight:700;border-top:2px solid var(--ink)"><td>합계</td><td style="text-align:right">'+_n(tot.contrib)+'</td>'
+      +'<td style="text-align:right">'+_n(tot.workers)+'</td><td style="text-align:right">'+_n(tot.benef)+'</td></tr></tbody></table></div>'
+      :'<div class="muted" style="padding:10px">사업장을 먼저 등록하세요.</div>')+'</div>';
 }
 /* 협력업체 표시 — 별지15호 ⑩ 집계용. 그 사업장 1건만 건드린다(형제 필드 보존) */
 function setSitePartner(sid,on){
@@ -3478,7 +3546,7 @@ function _nz(v){ return v?_n(v):''; }                    // 0은 빈칸(장부 �
 // ── 하위 탭 ──
 var CLOSE_SUBS=[['txn','거래·분개입력'],['journal','분개장'],['ledger','계정별원장'],
                 ['monthly','월계표'],['tb','합계잔액시산표'],['fin','재무제표·전기대비'],
-                ['f15','운영상황보고서']];
+                ['years','연도별 비교'],['f15','운영상황보고서']];
 function closeSub(k){ S.closeSub=k; renderFund(); }
 function closeSubBar(){
   if(CLOSE_SUBS.map(function(x){return x[0];}).indexOf(S.closeSub)<0) S.closeSub='txn';
@@ -3778,18 +3846,21 @@ function buildF15(arr,fid,yr,rep,sites,welf){
 function f15Load(){
   var fid=S.fundId, yr=S.year, key=fid+'/'+yr;
   if(S.f15For===key) return true;
-  S.f15For=key; S.f15Rep=null; S.f15Sites=null; S.f15Welf=null;
+  S.f15For=key; S.f15Rep=null; S.f15Sites=null; S.f15Welf=null; S.f15Close=null;
   Promise.all([
-    fbDb.ref(NS+'/closing/'+fid+'/'+yr+'/report').once('value').then(function(s){return s.val()||{};}).catch(function(){return {};}),
+    // closing 노드 전체를 읽는다 — report(입력값) + locked(확정 상태)를 함께 쓰기 위해
+    fbDb.ref(NS+'/closing/'+fid+'/'+yr).once('value').then(function(s){return s.val()||{};}).catch(function(){return {};}),
     _loadSites(fid).catch(function(){return [];}),
     fbDb.ref(NS+'/welfare/'+fid+'/'+yr).once('value').then(function(s){var v=s.val()||{};return Object.keys(v).map(function(k){return v[k];});}).catch(function(){return [];})
   ]).then(function(r){
     if(S.f15For!==key) return;
-    S.f15Rep=r[0]; S.f15Sites=r[1]||[]; S.f15Welf=r[2]||[];
+    S.f15Close=r[0]||{}; S.f15Rep=S.f15Close.report||{}; S.f15Sites=r[1]||[]; S.f15Welf=r[2]||[];
     if(S.tab==='closing'&&S.view==='fund') renderFund();
   });
   return false;
 }
+function _isLocked(){ return !!(S.f15Close&&S.f15Close.locked); }
+function _lockInfo(){ var c=S.f15Close||{}; return (c.locked_at||'')+(c.locked_by?' · '+c.locked_by:''); }
 function f15Save(){
   var fid=S.fundId, yr=S.year, o=Object.assign({},S.f15Rep||{});
   ['biz_type','capital','partner_workers','use_ratio','run_trust','run_secu','run_own','run_reit',
@@ -3828,8 +3899,11 @@ function f15View(arr){
   return '<div class="panel"><div class="row" style="flex-wrap:wrap"><h2 style="font-size:15px">운영상황보고서 (별지 제15호)</h2>'+hlp('close.f15')
     +'<span class="chip" style="font-size:10px">'+R.head.type+'근로복지기금법인</span>'
     +'<span class="muted" style="font-size:12px">'+S.year+'년도 · 단위 천원</span>'
+    +(_isLocked()?'<span class="chip ok" style="font-size:10px">🔒 확정 '+esc(_lockInfo())+'</span>':'')
     +'<span style="flex:1"></span><button onclick="makeClosingWb()" title="과거 제출본과 같은 시트 구성으로 결산서+사업계획서 워크북 생성">📗 결산서 워크북 받기</button>'
-    +'<button class="primary" onclick="printF15()">📄 서식 그대로 인쇄</button></div>'
+    +'<button class="primary" onclick="printF15()">📄 서식 그대로 인쇄</button>'
+    +(_isLocked()?'<button onclick="unlockClosing()">🔓 확정 해제</button>':'<button class="primary" onclick="lockClosing()" title="이 시점 수치를 스냅샷으로 보존 — 결산 대장·연도별 비교에 사용">🔒 결산 확정</button>')
+    +hlp('close.lock')+'</div>'
     +'<div class="row" style="gap:18px;align-items:flex-start;margin-top:12px;flex-wrap:wrap">'
     +'<div style="min-width:300px;flex:1"><div style="font-weight:700;margin-bottom:6px">기본재산 현황 ⑫~⑳ (천원)</div><table>'
       +'<tr><td>⑫ 직전 회계연도 말</td><td style="text-align:right">'+_n(_k1000(R.bfOpen))+'</td></tr>'
@@ -4244,6 +4318,152 @@ function makeClosingWb(){
     toast('결산서 워크북을 내려받았습니다');
   }).catch(function(e){ toast('생성 실패: '+((e&&e.message)||e),'err'); });
 }
+/* ══════════ 결산 확정(잠금) · 연도별 대장 · 연도별 비교 ══════════
+   확정하면 그 시점 수치를 closing/{기금}/{연도}에 스냅샷으로 남긴다.
+   이후 대장·연도별 비교는 스냅샷을 읽으므로 여러 연도를 빠르게 나란히 볼 수 있고,
+   나중에 거래를 손대도 '제출한 그 숫자'가 보존된다. */
+function closeSnapshot(arr,fid,yr,rep,sites,welf){
+  var fin=computeFin(arr,fid,yr), R=buildF15(arr,fid,yr,rep,sites,welf);
+  return {
+    cash:fin.cash, savings:fin.savings, loan:fin.loan, otherAsset:fin.otherAsset,
+    assets:fin.totalAssets, liab:fin.liab, basic:fin.basic, retained:fin.retained,
+    equity:fin.equity, liabEq:fin.totalLiabEq, balanced:!!fin.balanced,
+    revenue:fin.interest, purpose:fin.purpose, admin:fin.admin, otherExp:fin.otherExp, net:fin.net,
+    contrib_employer:R.bf.employer, contrib_other:R.bf.other, bf_end:R.bfEnd, bf_use:R.bf.use,
+    benef:R.subCnt, workers:R.head.workers, partner:R.head.partner,
+    loan_amt:R.loanAmt, loan_benef:R.loanBenef,
+    txn_n:journalOf(arr).length
+  };
+}
+function lockClosing(){
+  var fid=S.fundId, yr=S.year;
+  var t=S.txns||{}, arr=Object.keys(t).map(function(k){var o=Object.assign({},t[k]);o._id=k;return o;});
+  var fin=computeFin(arr,fid,yr);
+  if(!journalOf(arr).length){ toast('승인된 분개가 없습니다','warn'); return; }
+  var msg=yr+'년 결산을 확정합니다.\n확정 시점의 수치가 스냅샷으로 보존되어 결산 대장·연도별 비교에 쓰입니다.'
+    +(fin.balanced?'':'\n\n⚠️ 대차가 맞지 않습니다 (차이 '+won(fin.totalAssets-fin.totalLiabEq)+') — 전기이월을 먼저 확인하세요.');
+  confirmM(msg,{ok:'결산 확정',danger:!fin.balanced}).then(function(ok){ if(!ok)return;
+    var snap=closeSnapshot(arr,fid,yr,S.f15Rep,S.f15Sites,S.f15Welf);
+    fbDb.ref(NS+'/closing/'+fid+'/'+yr).update({
+      locked:true, locked_at:ymd(), locked_by:(S.user||''), fin:snap
+    }).then(function(){ S.f15For=null; S.ledgerIdx=null; renderFund(); toast(yr+'년 결산이 확정되었습니다'); })
+      .catch(function(e){ toast('확정 실패: '+e.message,'err'); });
+  });
+}
+function unlockClosing(){
+  var fid=S.fundId, yr=S.year;
+  confirmM(yr+'년 결산 확정을 해제할까요?\n스냅샷은 남고 잠금만 풀립니다(다시 확정하면 갱신).',{ok:'확정 해제',danger:true}).then(function(ok){
+    if(!ok)return;
+    fbDb.ref(NS+'/closing/'+fid+'/'+yr).update({locked:null,locked_at:null,locked_by:null}).then(function(){
+      S.f15For=null; S.ledgerIdx=null; renderFund(); toast('확정이 해제되었습니다');
+    }).catch(function(e){ toast('실패: '+e.message,'err'); });
+  });
+}
+/* ── 연도별 비교 (한 기금의 여러 연도) ── 확정 스냅샷을 우선 쓰고, 없는 연도는 거래를 읽어 계산 */
+function loadYearSeries(){
+  var fid=S.fundId, key=fid;
+  if(S.ysFor===key) return true;
+  S.ysFor=key; S.ys=null;
+  var yNow=new Date().getFullYear(), years=[];
+  for(var y=yNow;y>=yNow-5;y--) years.push(y);
+  fbDb.ref(NS+'/closing/'+fid).once('value').then(function(s){
+    var cl=s.val()||{};
+    // 스냅샷이 없는 연도는 거래를 직접 읽어 계산(연 6회 이하)
+    var need=years.filter(function(y){ return !(cl[y]&&cl[y].fin); });
+    return Promise.all(need.map(function(y){
+      return fbDb.ref(NS+'/txns/'+fid+'/'+y).once('value')
+        .then(function(ts){ var v=ts.val()||{};
+          var a=Object.keys(v).map(function(k){var o=Object.assign({},v[k]);o._id=k;return o;});
+          return {y:y, fin:a.length?closeSnapshot(a,fid,y,(cl[y]||{}).report,[],[]):null};
+        }).catch(function(){ return {y:y, fin:null}; });
+    })).then(function(rs){
+      var out={};
+      years.forEach(function(y){ out[y]={locked:!!(cl[y]&&cl[y].locked), fin:(cl[y]&&cl[y].fin)||null}; });
+      rs.forEach(function(r){ if(r.fin) out[r.y]={locked:false, fin:r.fin, live:true}; });
+      if(S.ysFor!==key) return;
+      S.ys={years:years, data:out};
+      if(S.tab==='closing'&&S.view==='fund') renderFund();
+    });
+  }).catch(function(){ if(S.ysFor===key) S.ys={years:years,data:{}}; });
+  return false;
+}
+var YS_ROWS=[
+  ['자산총계','assets'],['현금및현금성자산','cash'],['정기예금','savings'],['근로자대부금','loan'],
+  ['고유목적사업준비금','liab'],['기본재산','basic'],['이월잉여금','retained'],
+  ['사업수익','revenue'],['목적사업비','purpose'],['일반관리비','admin'],['당기순이익','net'],
+  ['사업주 출연','contrib_employer'],['사업주 외 출연','contrib_other'],['기본재산 사용','bf_use'],
+  ['수혜자수(명)','benef'],['근로자수(명)','workers'],['승인 분개(건)','txn_n']
+];
+function yearsView(){
+  if(!loadYearSeries()) return '<div class="panel">'+loadingHTML()+'</div>';
+  var Y=S.ys.years.slice().reverse(), D=S.ys.data;
+  var have=Y.filter(function(y){ return D[y]&&D[y].fin; });
+  if(!have.length) return '<div class="panel"><div class="muted" style="padding:12px">비교할 연도 자료가 없습니다. 거래를 등록하거나 결산을 확정하세요.</div></div>';
+  var head='<tr><th>과목</th>'+Y.map(function(y){
+    var d=D[y]||{};
+    return '<th style="text-align:right">'+y+(d.locked?' <span class="chip ok" style="font-size:9px">확정</span>':(d.fin?' <span class="chip warn" style="font-size:9px">작성중</span>':''))+'</th>';
+  }).join('')+'</tr>';
+  var rows=YS_ROWS.map(function(r){
+    var tds=Y.map(function(y,i){
+      var d=D[y]&&D[y].fin, v=d?(d[r[1]]||0):null;
+      var prevY=Y[i+1], pd=prevY&&D[prevY]&&D[prevY].fin, pv=pd?(pd[r[1]]||0):null;
+      var arrow='';
+      if(v!==null&&pv!==null&&pv!==v){
+        var up=v>pv;
+        arrow='<span style="font-size:9.5px;color:'+(up?'var(--ok)':'var(--danger)')+'"> '+(up?'▲':'▼')+'</span>';
+      }
+      return '<td style="text-align:right;font-variant-numeric:tabular-nums">'+(v===null?'<span class="muted">—</span>':_n(v)+arrow)+'</td>';
+    }).join('');
+    return '<tr><td style="font-weight:600">'+r[0]+'</td>'+tds+'</tr>';
+  }).join('');
+  return '<div class="panel"><div class="row" style="flex-wrap:wrap"><h2 style="font-size:15px">연도별 비교</h2>'+hlp('close.years')
+    +'<span class="stat">'+have.length+'개 연도</span><span style="flex:1"></span>'
+    +'<button onclick="S.ysFor=null;renderFund()">↻ 다시 계산</button>'
+    +'<button onclick="printLedger(\'years\')">🖨 인쇄</button></div>'
+    +'<div style="overflow-x:auto;margin-top:8px"><table><thead>'+head+'</thead><tbody>'+rows+'</tbody></table></div></div>';
+}
+/* ── 결산 대장 (기금 × 연도) ── 사이드바 메뉴. closing 전체를 한 번 읽어 상태를 깐다 */
+function renderCloseBoard(){
+  $('crumb').textContent='결산 대장';
+  if(!S.cbLoaded){
+    S.cbLoaded=1;
+    fbDb.ref(NS+'/closing').once('value').then(function(s){
+      S.cb=s.val()||{}; if(S.view==='closeboard') renderCloseBoard();
+    }).catch(function(e){ S.cbLoaded=0;
+      if(S.view==='closeboard') $('app').innerHTML='<div class="panel"><div class="msg err">결산 자료를 읽지 못했습니다: '+esc(e.message)+' <button onclick="renderCloseBoard()">다시 시도</button></div></div>';
+    });
+    $('app').innerHTML='<div class="panel">'+loadingHTML()+'</div>'; return;
+  }
+  var cb=S.cb||{}, yNow=new Date().getFullYear(), Y=[];
+  for(var y=yNow;y>=yNow-5;y--) Y.push(y);
+  var list=Object.keys(funds).filter(function(k){ return !isTrashed(funds[k])&&funds[k].setup_stage!=='설립준비'; })
+    .sort(function(a,b){ return (funds[a].short_name||funds[a].name||'').localeCompare(funds[b].short_name||funds[b].name||''); });
+  var nLock=0,nDraft=0;
+  var rows=list.map(function(fid,i){
+    var f=funds[fid], c=cb[fid]||{};
+    var tds=Y.map(function(y){
+      var d=c[y]||{};
+      if(d.locked){ nLock++;
+        return '<td style="text-align:center;cursor:pointer" onclick="goClosing(\''+fid+'\','+y+')" title="확정 '+esc(d.locked_at||'')+' · 자산 '+_n((d.fin||{}).assets||0)+'원">'
+          +'<span class="chip ok" style="font-size:10px">확정</span></td>'; }
+      if(d.fin||d.report){ nDraft++;
+        return '<td style="text-align:center;cursor:pointer" onclick="goClosing(\''+fid+'\','+y+')" title="작성 중"><span class="chip warn" style="font-size:10px">작성중</span></td>'; }
+      return '<td style="text-align:center;cursor:pointer;color:var(--faint)" onclick="goClosing(\''+fid+'\','+y+')" title="자료 없음 — 눌러서 작성">·</td>';
+    }).join('');
+    return '<tr><td class="no">'+(i+1)+'</td><td style="font-weight:700;cursor:pointer" onclick="go(\'fund\',\''+fid+'\')">'
+      +esc(f.short_name||f.name)+'<div class="muted mo" style="font-weight:400;font-size:11px">'+esc(f.name||'')+'</div></td>'+tds+'</tr>';
+  }).join('');
+  $('app').innerHTML='<div class="panel"><div class="row" style="flex-wrap:wrap"><h1>결산 대장</h1>'+hlp('board.close')
+    +'<span class="stat">기금 '+list.length+'</span>'
+    +'<span class="stat" style="background:var(--ok-bg);color:var(--ok)">확정 '+nLock+'</span>'
+    +'<span class="stat" style="background:var(--warn-bg);color:var(--warn)">작성중 '+nDraft+'</span>'
+    +'<span style="flex:1"></span><button onclick="S.cbLoaded=0;renderCloseBoard()">↻ 새로고침</button></div></div>'
+    +'<div class="panel">'+(list.length
+      ? '<div style="overflow-x:auto"><table><thead><tr><th>번호</th><th>기금</th>'
+        +Y.map(function(y){return '<th style="text-align:center">'+y+'</th>';}).join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>'
+      : '<div class="muted" style="padding:12px">기금이 없습니다.</div>')+'</div>';
+}
+function goClosing(fid,yr){ S.year=yr; S.closeSub='fin'; S.txnsFor=null; S.f15For=null; _go('fund',fid); S.tab='closing'; renderFund(); }
 // 장부 인쇄 — 지금 보고 있는 표를 A4 가로로 그대로
 function printLedger(kind){
   var box=$('closeBody'); if(!box){ toast('인쇄할 표가 없습니다','warn'); return; }
@@ -4309,6 +4529,7 @@ function closeBodyHTML(arr,rows){
     case 'monthly': return monthlyView(arr);
     case 'tb':      return tbView(arr);
     case 'fin':     return finCompareView(arr);
+    case 'years':   return yearsView();
     case 'f15':     return f15View(arr);
     default:
       return '<div class="panel">'+(arr.length
@@ -4566,6 +4787,16 @@ var HELP={
  'close.fin':{t:'재무제표 · 전기 대비',h:'<p>재무상태표·손익계산서를 <b>당기와 전기를 나란히</b> 놓고 증감액·증감률까지 계산합니다.</p>'
    +'<p>전기 숫자는 <b>지난해 승인 분개 + 지난해 전기이월</b>로 그 자리에서 다시 계산한 것입니다 — 따로 입력하지 않습니다.</p>'
    +'<p>지난해 자료가 없으면 전기는 0으로 표시되고 안내 배지가 붙습니다.</p>'},
+ 'close.years':{t:'연도별 비교',h:'<p>한 기금의 <b>여러 연도를 나란히</b> 놓고 자산·기본재산·목적사업비·순이익·수혜자수의 흐름을 봅니다.</p>'
+   +'<p><b>확정</b> 배지가 붙은 연도는 결산 확정 당시의 <b>스냅샷</b>을 그대로 보여줍니다 — 나중에 거래를 손대도 제출했던 숫자가 바뀌지 않습니다.</p>'
+   +'<p><b>작성중</b>은 지금 거래에서 계산한 값이라 바뀔 수 있습니다.</p>'
+   +'<p>▲▼는 <b>직전 연도 대비</b> 증감 방향입니다.</p>'},
+ 'board.close':{t:'결산 대장',h:'<p>전체 기금 × 최근 6개 연도의 <b>결산·보고서 진행 상태</b>를 한 표로 봅니다.</p>'
+   +'<p><b>확정</b> = 결산을 확정해 스냅샷이 남은 연도<br><b>작성중</b> = 자료는 있으나 미확정<br><b>·</b> = 자료 없음</p>'
+   +'<p>칸을 누르면 그 기금의 그 연도 <b>회계·결산</b> 화면으로 바로 들어갑니다.</p>'},
+ 'close.lock':{t:'결산 확정',h:'<p>확정하면 그 시점의 재무·보고서 수치가 <b>스냅샷</b>으로 저장됩니다.</p>'
+   +'<p>이후 거래를 수정해도 확정된 숫자는 그대로 남아, <b>제출한 값과 화면 값이 어긋나는 일</b>을 막습니다.</p>'
+   +'<p>대차가 맞지 않으면 경고가 뜨지만, 확인 후 진행할 수는 있습니다.</p><p>해제하면 잠금만 풀리고 스냅샷은 남습니다.</p>'},
  'close.f15':{t:'운영상황보고서 (별지 제15호)',h:'<p>고용노동부에 제출하는 <b>정식 2쪽 서식</b>을 장부에서 만들어 냅니다. 단위는 <b>천원</b>입니다.</p>'
    +'<p><b>자동으로 채워지는 것</b></p><ul>'
    +'<li>①~⑥ 기금법인 정보 — 기금 정보 탭</li>'
@@ -4581,6 +4812,10 @@ var HELP={
  'sub.incent':{t:'공단 인센티브 현황',h:'<p>근로복지공단 지원 사업 정보입니다.</p><p><b>결정액 대비 집행액</b>으로 정산 상태가 자동 표시됩니다.</p>'},
  'sub.fill':{t:'지원신청서 자동 채움',h:'<p>공단 원본 양식에 이 기금의 <b>법인정보·참여사업장 명단</b>을 자동으로 채워 내려받습니다.</p>'
    +'<p>서술칸(사업목적 등)은 내려받은 뒤 직접 작성하세요.</p><p>원본 엑셀은 한 번 등록하면 이 브라우저에 저장됩니다.</p>'},
+ 'site.years':{t:'사업장 연도별 기록',h:'<p>사업장 명부는 <b>현재 상태 한 벌</b>만 두고, 해마다 달라지는 값은 여기에 연도별로 쌓습니다.</p>'
+   +'<p><b>출연금</b> — 그 해 이 사업장이 낸 금액<br><b>상시근로자</b> — 그 해 기준 인원<br><b>수혜자</b> — 그 해 복지혜택을 받은 인원</p>'
+   +'<p>칸에서 벗어나면 자동 저장됩니다. 위 연도 선택으로 다른 해를 보고, [작년 값 불러오기]로 <b>비어 있는 칸만</b> 채울 수 있습니다(이미 넣은 값은 건드리지 않습니다).</p>'
+   +'<p>별지15호 ⑨⑩ 근로자 수는 사업장 명부의 상시근로자와 협력 체크에서 나옵니다 — 여기 값은 연도별 추이·검증용입니다.</p>'},
  'site.pull':{t:'등록 업체에서 당겨오기',h:'<p>모기업 등 <b>이미 등록된 업체</b>를 골라 참여사업장으로 당겨옵니다.</p><p>사업자등록번호가 같은 사업장은 중복 등록되지 않습니다.</p>'},
  'newfund':{t:'새 기금 등록',h:'<p><b>신규</b>(설립부터) 또는 <b>기존</b>(이미 설립·운영 중) 기금을 등록합니다.</p><p>담당은 푸른이알피 <b>재직자</b>에서 선택합니다.</p>'},
  'mgr':{t:'담당자 지정',h:'<p>푸른이알피 재직자 명단에서 선택합니다.</p><p><b>주담당 1명</b>, <b>부담당은 여러 명</b> 지정할 수 있습니다.</p>'}
