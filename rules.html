@@ -138,6 +138,20 @@ table.daejo .rreason{color:var(--sub);font-size:11px}
 .artedit .ae-btns{display:flex;gap:8px;justify-content:flex-end;margin-top:8px;align-items:center}
 .sample-banner{background:#fffbeb;border:1px solid #fcd34d;color:#92400e;font-size:11.5px;font-weight:600;border-radius:8px;padding:7px 11px;margin-bottom:10px;line-height:1.55;white-space:normal}
 .panel-card{background:var(--card);border:1px solid var(--card-bd);border-radius:12px;padding:8px 12px;margin-bottom:10px;box-shadow:0 4px 16px rgba(30,58,138,.05)}
+/* 사업장 목록 — 상태별 묶음 + 묶음마다 가로 한 줄(높이가 사업장 수와 무관하게 고정) */
+.dgrp-head{display:flex;align-items:center;gap:6px;padding:4px 3px;cursor:pointer;border-bottom:1px solid #f1f5f9;user-select:none}
+.dgrp-head:hover{background:#f6f9ff}
+.dgrp-head .dg-ar{color:var(--mute);font-size:10px;width:9px}
+.dgrp-head .dg-t{font-size:11.5px;font-weight:700}
+.dgrp-head .dg-hint{font-size:10px;color:var(--mute);margin-left:2px}
+.dstrip{display:flex;gap:5px;overflow-x:auto;overflow-y:hidden;padding:6px 2px 7px;scrollbar-width:thin}
+.dstrip::-webkit-scrollbar{height:7px}
+.dstrip::-webkit-scrollbar-thumb{background:#cdd6e6;border-radius:4px}
+.dchip{flex:0 0 auto;display:flex;align-items:baseline;gap:5px;border:1px solid var(--line);background:#fff;
+  border-radius:7px;padding:4px 9px;cursor:pointer;transition:border-color .12s,background .12s}
+.dchip:hover{border-color:var(--accent2);background:#f6f9ff}
+.dchip .dc-name{font-size:11.5px;font-weight:700;white-space:nowrap}
+.dchip .dc-n{font-size:10.5px;color:var(--mute);white-space:nowrap}
 .dashrow{display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:7px;cursor:pointer;font-size:11.5px;border-bottom:1px solid #f1f5f9}
 .dashrow:hover{background:#f6f9ff}
 .dashrow .ds-name{font-weight:700;font-size:12px;min-width:0;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -277,7 +291,7 @@ table.daejo td.dj2{padding:0}
       <button class="btn ghost" id="dash-upload" style="height:26px;font-size:11.5px;padding:0 10px" title="기존 취업규칙 파일 업로드">📄 업로드</button>
       <button class="btn ghost" id="dash-hide" style="height:26px;font-size:11.5px;padding:0 8px" title="접기">✕</button>
     </div>
-    <div id="dash-list" style="overflow:auto;max-height:150px;margin-top:6px"></div>
+    <div id="dash-list" style="overflow-y:auto;max-height:200px;margin-top:6px"></div>
   </div>
   <div id="dash-open-bar" style="display:none;margin-bottom:10px">
     <button class="btn ghost" id="dash-show" style="height:30px;font-size:12px;padding:0 12px">🏢 사업장 규정 현황 열기</button>
@@ -2697,7 +2711,8 @@ function dashRows(){
     const arts=v.rec?(v.rec.items||[]).filter(it=>it.orig!=="").length:(v.draft?"–":"–");
     return {key:k,site:v.site,bizno:v.bizno,rec:v.rec,draft:v.draft,stage:st,arts,
       at:(v.rec&&v.rec.savedAt)||(v.draft&&v.draft.savedAt)||""};
-  }).sort((a,b)=>(a.stage.step-b.stage.step)||String(b.at).localeCompare(String(a.at)));
+  // 묶음 안에서는 오래 방치된 사업장을 앞에 — 손 안 댄 건이 뒤로 밀려 누락되지 않게
+  }).sort((a,b)=>(a.stage.step-b.stage.step)||String(a.at).localeCompare(String(b.at)));
 }
 /* 한 칸 검색 — 사업장·사업자번호·파일명·담당자·저장일 + 보관된 원본 조문 본문까지 */
 function dashMatch(r,q){
@@ -2714,6 +2729,13 @@ function dashMatch(r,q){
   if(o&&String(o.text||"").toLowerCase().includes(k))return true;
   return false;
 }
+/* 묶음 순서 — 손대야 하는 것부터. 끝난 것(신고완료)·아직 파일 없는 것(작성중)은 기본 접힘 */
+const DASH_ORDER=["amending","reviewed","draft","filed","none"];
+const DGRP_DEFAULT={amending:true,reviewed:true,draft:false,filed:false,none:false};
+const DGRP_KEY="pureun_rules_dashgrp_v1";
+let DASH_VIEW=[];
+function dashGrpState(){ try{ return Object.assign({},DGRP_DEFAULT,JSON.parse(localStorage.getItem(DGRP_KEY)||"{}")); }catch(e){ return Object.assign({},DGRP_DEFAULT); } }
+function dashGrpOpen(k){ const s=dashGrpState(); return s[k]!==false&&!!s[k]; }
 function renderDash(){
   const box=$("dash"); if(!box)return;
   const q=($("dash-q")&&$("dash-q").value||"").trim();
@@ -2725,22 +2747,40 @@ function renderDash(){
   if(cnt.draft)parts.push("작성 "+cnt.draft); if(cnt.reviewed)parts.push("검토 "+cnt.reviewed);
   if(cnt.amending)parts.push("개정 "+cnt.amending); if(cnt.filed)parts.push("신고 "+cnt.filed);
   $("dash-sum").textContent=all.length+"곳"+(parts.length?" · "+parts.join(" · "):"");
-  // 한 사업장 = 한 줄
+  /* ── 상태별 묶음 + 묶음마다 가로 한 줄 ──
+     한 사업장 = 한 줄이면 40곳에 1,100px가 넘어 화면을 다 먹었다.
+     상태로 갈라 묶고 각 묶음을 가로 스크롤 한 줄로 두면 사업장 수와 무관하게 높이가 고정된다.
+     칩은 이름+조문수만 두고 나머지(저장일·다음 할 일·사업자번호)는 말풍선으로 넘긴다. */
   const list=$("dash-list");
   if(!rows.length){ list.innerHTML='<div style="font-size:11.5px;color:var(--mute);padding:8px 2px">'
     +(q?"검색 결과 없음":"등록된 사업장이 없습니다 — [＋ 신규]로 시작하세요.")+'</div>'; return; }
-  list.innerHTML=rows.map((r,i)=>{
-    const bars=[1,2,3,4].map(n=>`<i class="${r.stage.step>=n?"on":""}"></i>`).join("");
-    return `<div class="dashrow" data-i="${i}" title="${escapeH(r.site)}${r.bizno?" · "+escapeH(r.bizno):""} — ${escapeH(r.stage.next)}">
-      <span class="ds-name">${escapeH(shortSite(r.site))}</span>
-      <span class="stg ${r.stage.k}">${r.stage.t}</span>
-      <span class="stepbar">${bars}</span>
-      <span class="ds-meta">${r.arts!=="–"?r.arts+"조":"–"}</span>
-      <span class="ds-meta">${escapeH((r.at||"").slice(5,10)||"–")}</span>
-      <span class="ds-next">${escapeH(r.stage.next)}</span>
-    </div>`;
-  }).join("");
-  list.querySelectorAll(".dashrow").forEach(el=>el.onclick=()=>dashOpen(rows[+el.dataset.i]));
+  DASH_VIEW=rows;
+  const chip=r=>{
+    const i=DASH_VIEW.indexOf(r);
+    const tip=[shortSite(r.site),r.bizno,r.arts!=="–"?r.arts+"조":"",(r.at||"").slice(0,10),"→ "+r.stage.next]
+      .filter(Boolean).join(" · ");
+    return `<div class="dchip" data-i="${i}" title="${escapeH(tip)}">
+      <span class="dc-name">${escapeH(shortSite(r.site))}</span>${r.arts!=="–"?`<span class="dc-n">${r.arts}조</span>`:""}</div>`;
+  };
+  if(q){   // 검색 중에는 묶음 없이 결과만 한 줄로
+    list.innerHTML=`<div class="dgrp-head"><span class="dg-t">검색 결과</span><span class="stg none">${rows.length}</span></div>
+      <div class="dstrip">${rows.map(chip).join("")}</div>`;
+  }else{
+    list.innerHTML=DASH_ORDER.map(k=>{
+      const g=rows.filter(r=>r.stage.k===k); if(!g.length)return "";
+      const open=dashGrpOpen(k), st=g[0].stage;
+      return `<div class="dgrp-head" data-g="${k}" title="누르면 접거나 펼칩니다">
+          <span class="dg-ar">${open?"▾":"▸"}</span><span class="dg-t">${escapeH(st.t)}</span>
+          <span class="stg ${k}">${g.length}</span>${open?"":'<span class="dg-hint">눌러서 펼치기</span>'}
+        </div>${open?`<div class="dstrip">${g.map(chip).join("")}</div>`:""}`;
+    }).join("");
+  }
+  list.querySelectorAll(".dchip").forEach(el=>el.onclick=()=>dashOpen(DASH_VIEW[+el.dataset.i]));
+  list.querySelectorAll(".dgrp-head[data-g]").forEach(el=>el.onclick=()=>{
+    const k=el.dataset.g, s=dashGrpState(); s[k]=!dashGrpOpen(k);
+    try{localStorage.setItem(DGRP_KEY,JSON.stringify(s));}catch(e){}
+    renderDash();
+  });
 }
 /* 목록에 길게 나오는 파일명 대신 짧은 사업장 이름으로 */
 function shortSite(s){
