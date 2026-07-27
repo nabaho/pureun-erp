@@ -92,6 +92,17 @@ select,input[type=date]{font-family:inherit;font-size:13px;height:36px;padding:0
 .effmini.soon{color:#9a3412;background:#fff7ed} .effmini.past{color:#b91c1c;background:#fef2f2}
 .fitem .name{font-size:13px;font-weight:600} .fitem .loc{font-size:11px;color:var(--accent2)}
 .fitem .meta{font-size:11.5px;color:var(--sub);margin-top:4px}
+/* 목록에서 바로 결정 — 팝업을 열지 않고 처리한다 */
+.fitem{display:flex;align-items:center;gap:10px}
+.fitem .fi-main{flex:1;min-width:0}
+.fi-act{display:flex;flex-direction:column;gap:3px;flex:0 0 auto}
+.qd{font-size:10.5px;padding:3px 8px;border-radius:6px;border:1px solid #cdd6e6;background:#fff;color:var(--sub);
+  cursor:pointer;font-family:inherit;white-space:nowrap;min-width:74px;text-align:center;transition:background .12s,border-color .12s}
+.qd:hover{background:#eef2ff;border-color:var(--accent2)}
+.qd.a.on{background:#dcfce7;border-color:#86efac;color:#166534;font-weight:700}
+.qd.h.on{background:#fef3c7;border-color:#fcd34d;color:#92400e;font-weight:700}
+.qd.x.on{background:#fee2e2;border-color:#fca5a5;color:#b91c1c;font-weight:700}
+@media(max-width:900px){.fitem{flex-wrap:wrap}.fi-act{flex-direction:row;width:100%}.qd{flex:1;min-width:0}}
 .empty{color:var(--mute);text-align:center;padding:40px;font-size:13px}
 .pill{display:inline-block;font-size:10.5px;background:#eef2f7;color:#475569;border-radius:20px;padding:2px 9px;margin-left:6px}
 .rowbtns{display:flex;gap:8px;padding:10px 18px;border-top:1px solid var(--line);background:rgba(255,255,255,.4)}
@@ -1270,6 +1281,17 @@ async function openFullPreview(){
 }
 let ALL_FINDINGS=[], FS_STATUS="";   // 자동 검토 결과 전체 / 요약 카드로 고른 상태 필터
 /* 검토 결과 목록 렌더 — 요약 카드를 누르면 그 상태만 골라 하나씩 비교할 수 있다 */
+/* ── 목록 오른쪽 끝 빠른 결정 ──
+   팝업을 열지 않고 목록에서 바로 반영·보류·제외를 고른다.
+   상세 팝업과 같은 모델(CUR_ITEMS)에 쓰이므로 신구대조표까지 그대로 이어진다. */
+function quickDec(f,i){
+  const it=itemForFinding(f);
+  if(!it)return "";                    // 조문화 대상이 아닌 항목(절차·근로자대표 서면합의)은 결정 대상이 없다
+  const isNew=it.orig==="", dec=decisionOf(f);
+  const B=(v,t,cls)=>`<button class="qd ${cls}${dec===v?" on":""}" data-qd="${v}" data-i="${i}">${t}</button>`;
+  return `<div class="fi-act" title="여기서 고른 결정이 신구대조표에 그대로 반영됩니다">
+    ${B("반영",isNew?"신설 반영":"개선안 반영","a")}${B("보류","보류","h")}${B("해당없음",isNew?"신설 안 함":"현행 유지","x")}</div>`;
+}
 function renderFindings(){
   const box=$("findings"); if(!box)return;
   const shown=FS_STATUS?ALL_FINDINGS.filter(f=>f.status===FS_STATUS):ALL_FINDINGS;
@@ -1281,9 +1303,20 @@ function renderFindings(){
     d.dataset.di=i; d.title="클릭하면 현행 조문과 개선안을 비교해 검토합니다";
     // 시행일이 있는 규칙은 상태(시행예정·수동확인 등)와 무관하게 시행일을 눈에 띄게 표시
     const eff=f.rule.effective?effMini(f.rule.effective,asofNow()):"";
-    d.innerHTML=`<div class="top"><span class="badge ${bc}">${f.status}</span><span class="name">${f.rule.id} ${f.rule.name}</span>${f.loc?`<span class="loc">@${f.loc}</span>`:""}<span class="pill">${f.rule.category}</span>${eff}<span class="dec" data-dec="${i}"></span></div><div class="meta">${f.rule.law} · ${eff?escapeH(String(f.note).replace(f.rule.effective+" 시행 예정","").trim())||"시행 전 대비 검토":f.note}</div>`;
-    d.onclick=()=>openDetail(i);
+    d.innerHTML=`<div class="fi-main">
+        <div class="top"><span class="badge ${bc}">${f.status}</span><span class="name">${f.rule.id} ${f.rule.name}</span>${f.loc?`<span class="loc">@${f.loc}</span>`:""}<span class="pill">${f.rule.category}</span>${eff}<span class="dec" data-dec="${i}"></span></div>
+        <div class="meta">${f.rule.law} · ${eff?escapeH(String(f.note).replace(f.rule.effective+" 시행 예정","").trim())||"시행 전 대비 검토":f.note}</div>
+      </div>${quickDec(f,i)}`;
+    d.onclick=e=>{ if(e.target.closest("[data-qd]"))return; openDetail(i); };
     box.appendChild(d);});
+  // 목록에서 바로 결정 — 팝업을 열지 않고 처리(줄 클릭은 그대로 상세 비교로)
+  box.querySelectorAll("[data-qd]").forEach(b=>b.onclick=e=>{
+    e.stopPropagation();
+    const f=DT_LIST[+b.dataset.i]; if(!f)return;
+    applyDecision(f,b.dataset.qd);
+    const box2=$("findings"), y=box2.scrollTop;
+    renderFindings(); box2.scrollTop=y;    // 다시 그리되 보던 위치는 유지
+  });
   // 필터 바·카드 강조
   const bar=$("fs-bar");
   if(bar){
@@ -1294,6 +1327,7 @@ function renderFindings(){
   document.querySelectorAll(".summary .stat[data-fs]").forEach(el=>
     el.classList.toggle("on", FS_STATUS===el.dataset.fs));
   if(typeof refreshDecChips==="function")refreshDecChips();
+  refreshDecBadges();   // 목록에서 결정했을 때도 '✓ 반영' 배지가 함께 갱신되도록
 }
 function setFindingFilter(st){ FS_STATUS=(FS_STATUS===st)?"":st; renderFindings(); }
 function run(){
@@ -1304,13 +1338,13 @@ function run(){
   const cnt={위반의심:0,누락:0,수동확인:0,시행예정:0,적합:0};res.forEach(f=>cnt[f.status]++);
   $("c-s").textContent=cnt.위반의심;$("c-miss").textContent=cnt.누락;$("c-man").textContent=cnt.수동확인;$("c-up").textContent=cnt.시행예정;
   ALL_FINDINGS=res.filter(f=>f.status!=="적합").sort((a,b)=>ORD[a.status]-ORD[b.status]||a.rule.id.localeCompare(b.rule.id));
-  renderFindings();
   LAST={key,site:SITE_MAP[key],bizno:SITE_BIZNO[key],size,conds:[...conds],asof,summary:cnt,res,terms:detectTerms(txt),arts,addendum:extractAddendum(txt)};
   // 검토 실행: 자동제안 반영해 편집 모델 재구성 — 오른쪽 패널에서 한 수동 수정은 보존
   const manual={};
   if(CUR_KEY===key)CUR_ITEMS.forEach(it=>{ if(it.orig!==""&&!it.suggested&&(it.after||"").trim()!==(it.orig||"").trim())manual[it.id]=it.after; });
   CUR_ITEMS=buildItems(res,LAST.terms,arts);CUR_KEY=key;
   Object.keys(manual).forEach(id=>{ const it=CUR_ITEMS.find(x=>x.id===id); if(it&&!it.suggested)it.after=manual[id]; });
+  renderFindings();           // 편집 모델(CUR_ITEMS)이 준비된 뒤에 그린다 — 목록의 빠른 결정 버튼이 모델을 참조한다
   matchErpSite();            // 푸른이알피 업체 정보 자동 연동(소재지·대표자 등)
   saveWorkState();
   autoSaveArchive("검토");   // 검토 결과까지 보관함에 자동 반영
@@ -1326,7 +1360,7 @@ let DT_LIST=[], DT_IDX=0;
 function itemForFinding(f){
   const t=TPL_BY_RULE[f.rule.id];
   if(f.status==="위반의심"&&f.hit) return CUR_ITEMS.find(x=>x.id==="art_"+f.hit.label);
-  if(f.status==="누락"&&t)         return CUR_ITEMS.find(x=>x.id==="ins_"+t.tid);
+  if(f.status==="누락")            return CUR_ITEMS.find(x=>x.id===(t?"ins_"+t.tid:"miss_"+f.rule.id));
   if(f.status==="수동확인")
     return f.hit ? CUR_ITEMS.find(x=>x.id==="art_"+f.hit.label)
                  : CUR_ITEMS.find(x=>x.id==="chkins_"+f.rule.id);
@@ -1561,7 +1595,22 @@ function buildItems(res,terms,arts){
   const amend={},review={},inserts=[],seen=new Set(),noArt=[];
   for(const f of res){
     if(f.status==="위반의심"||f.status==="누락"){
-      const t=TPL_BY_RULE[f.rule.id]; if(!t||seen.has(t.tid))continue; seen.add(t.tid);
+      const t=TPL_BY_RULE[f.rule.id];
+      if(!t){
+        // 자동 문안 템플릿이 없는 누락(92개 규칙 중 57개) — 예전엔 신설 행을 아예 만들지 않아
+        // 지적만 뜨고 대조표에는 아무것도 안 들어갔다. 문안 없는 신설 검토 행으로 남긴다.
+        if(f.status==="누락"){
+          const g=insertGrade(f.rule);
+          if(g==="D"){ noArt.push(f.rule); continue; }
+          const rec=suggestInsertAfter(f.rule.name,f.rule.keywords,arts);
+          inserts.push({id:"miss_"+f.rule.id,title:f.rule.name,label:"",num:null,sub:null,insertAfter:rec,rec,
+            before:"신설",after:"",orig:"",reason:(f.rule.law||""),suggested:false,del:false,review:true,
+            reviewNote:(f.rule.name||"")+" — "+(f.rule.opinion||f.rule.criterion||"조항 신설 필요"),
+            grade:g,needText:true,optIn:g==="C"?false:true});
+        }
+        continue;
+      }
+      if(seen.has(t.tid))continue; seen.add(t.tid);
       const after=fillTpl(t.text,terms);
       if(f.status==="위반의심"&&f.hit){ if(!amend[f.hit.label])amend[f.hit.label]={after,reason:t.reason}; }
       // 신설: 번호는 개정방식에 따라 자동 부여(일부개정=가지번호). 위치는 조문 체계 기반 자동 추천
@@ -1735,7 +1784,9 @@ function docReason(it){
   return base?(base+" 〔검토권고: "+it.reviewNote+"〕"):("검토권고: "+it.reviewNote);
 }
 /* 선택 신설(등급 C — 타법령·조건부)은 노무사가 [신설함]을 켜야 대조표에 들어간다 */
-const inDaejo=it=>!(it.orig===""&&it.optIn===false);
+/* 신설하지 않기로 한 것(신설 안 함·선택 미포함)은 애초에 없던 조문이므로 대조표에서 빠진다.
+   현행 조문의 삭제(orig!=='')는 결번 표기가 필요하므로 남긴다. */
+const inDaejo=it=>!(it.orig===""&&(it.optIn===false||it.del));
 function daejoRows(){ return numberedView(CUR_ITEMS,REV_MODE).filter(v=>itemKind(v.it)!=="유지"&&inDaejo(v.it)).map(v=>{
   const it=v.it,k=itemKind(it);
   return {label:viewLabel(v),kind:k,before:it.orig===""?"신설":it.orig,after:it.del?"〈삭제〉":it.after,
