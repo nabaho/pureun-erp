@@ -358,7 +358,11 @@ function parseArticles(text){
   const arts=[];
   for(let k=0;k<ms.length;k++){
     const s=ms[k].i,e=k+1<ms.length?ms[k+1].i:Math.min(text.length,boundary);
-    const body=text.slice(s,e).trim();
+    let body=text.slice(s,e).trim();
+    // 다음 장(章)·절 제목이 앞 조문 본문 끝에 붙는 것을 잘라낸다 —
+    // 그대로 두면 "제27조(최저임금)" 본문에 "제7장 퇴직·해고 및 정년"이 섞여 매칭이 엉킨다.
+    const cm=body.match(/\n[ \t]*제\s*\d+\s*[장절][^\n]*$/);
+    if(cm)body=body.slice(0,cm.index).trim();
     const tm=body.match(/^제\s*\d+\s*조(?:\s*의\s*\d+)?\s*[(（]([^)）\n]{0,40})[)）]/);
     arts.push({num:ms[k].num,sub:ms[k].sub,label:"제"+ms[k].num+"조"+(ms[k].sub?"의"+ms[k].sub:""),title:tm?tm[1].trim():"",body,bodyNs:stripWs(body)});
   }
@@ -579,7 +583,44 @@ function composeAddendum(){
 const SIZE_RANK={"5인미만":0,"5인이상":1,"10인이상":2,"30인이상":3},RULE_MIN={"전체":0,"5인이상":1,"10인이상":2,"30인이상":3};
 const applies=(r,size,conds)=>((SIZE_RANK[size]||0)>=(RULE_MIN[r.scope]||0))&&(!r.condition||r.condition==="공통"||conds.has(r.condition));
 const isFuture=(r,asof)=>r.effective&&r.effective>asof;
-function firstHit(arts,kw){const ks=kw.map(stripWs).filter(Boolean);for(const a of arts)if(ks.some(k=>a.bodyNs.includes(k)))return a;return null;}
+/* ── 조문 매칭 ──
+   예전엔 키워드가 본문에 있으면 '첫 조문'을 그대로 잡아, 앞쪽 조문이 그 단어를 스치듯
+   언급하기만 해도 엉뚱하게 연결됐다(예: 퇴직 규칙 → 최저임금 조문).
+   지금은 후보를 모두 점수화해 가장 잘 맞는 조문만 고르고, 점수가 낮으면 연결하지 않는다. */
+const LAW_SYN={   // 법령 용어 동의어 — 표기가 달라도 같은 조문을 찾도록
+  "출산전후휴가":["산전후휴가","출산휴가"],"생리휴가":["보건휴가"],"육아시간":["수유시간"],
+  "임금":["급여","보수","월급"],"해고":["면직","해임"],"휴게":["휴게시간","점심시간"],
+  "퇴직급여":["퇴직금"],"괴롭힘":["직장내괴롭힘","갑질"],"성희롱":["직장내성희롱"],
+  "연차유급휴가":["연차휴가","연차"],"근로시간":["소정근로시간","근무시간"],"징계":["제재","처분"]
+};
+function expandKw(kw){
+  const out=new Set();
+  (kw||[]).forEach(k=>{ out.add(k); (LAW_SYN[k]||[]).forEach(s=>out.add(s)); });
+  return [...out].map(stripWs).filter(Boolean);
+}
+const GENERIC_TITLE=/목적|정의|적용범위|용어|명칭|총칙/;   // 여러 용어가 나열되는 총칙성 조문
+const HIT_MIN=6;   // 이 점수 미만이면 '관련 조문 없음'으로 처리(잘못 연결하는 것보다 낫다)
+function scoreArticle(a,ks){
+  const t=stripWs(a.title||""), b=a.bodyNs||"";
+  let s=0, matched=0, titleHit=0;
+  ks.forEach(k=>{
+    if(t.includes(k)){ s+=14; titleHit++; matched++; }            // 제목 일치 = 가장 강한 신호
+    else if(b.includes(k)){ const cnt=b.split(k).length-1;
+      s+=2+Math.min(2,Math.log2(cnt+1)); matched++; }            // 본문 등장(빈도 가중, 상한 둠)
+  });
+  if(titleHit)s+=4;                                               // 제목이 맞은 조문을 본문 다수매칭보다 우선
+  if(matched>1)s+=2*(matched-1);                                  // 여러 키워드가 함께 맞으면 가산
+  if(GENERIC_TITLE.test(t))s-=6;                                  // 목적·정의 조항은 감점
+  if(b.length>700)s-=1;                                           // 긴 조문의 우연 매칭 감쇠
+  return s;
+}
+function bestHit(arts,kw){
+  const ks=expandKw(kw); if(!ks.length)return null;
+  let best=null,bs=0;
+  (arts||[]).forEach(a=>{ const s=scoreArticle(a,ks); if(s>bs){bs=s;best=a;} });
+  return bs>=HIT_MIN?best:null;
+}
+function firstHit(arts,kw){ return bestHit(arts,kw); }   // 기존 호출부 호환
 function allHits(arts,kw){const ks=kw.map(stripWs).filter(Boolean);return arts.filter(a=>ks.some(k=>a.bodyNs.includes(k)));}
 
 /* ── 값비교 자동판정 (engine/numcheck.py 이식 — 양쪽 결과 동일해야 함) ──
