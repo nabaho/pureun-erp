@@ -125,8 +125,9 @@
       // 문단(<hp:p …>) 단위로 나누고, 각 문단의 <hp:t> 텍스트를 결합
       const paras = xml.split(/<hp:p[\s>]/);
       for (let i = 1; i < paras.length; i++) {
-        const runs = paras[i].match(/<hp:t[^>]*>([\s\S]*?)<\/hp:t>/g) || [];
-        const text = runs.map(r => _entities(r.replace(/<hp:t[^>]*>/, "").replace(/<\/hp:t>/, "")
+        // 태그 이름이 정확히 hp:t 인 것만 — <hp:t[^>]*> 는 <hp:tbl>·<hp:tc>·<hp:tr>도 함께 걸린다
+        const runs = paras[i].match(/<hp:t(?:\s[^>]*)?>([\s\S]*?)<\/hp:t>/g) || [];
+        const text = runs.map(r => _entities(r.replace(/<hp:t(?:\s[^>]*)?>/, "").replace(/<\/hp:t>/, "")
                                               .replace(/<[^>]+>/g, ""))).join("");
         lines.push(text);
       }
@@ -170,8 +171,10 @@
       const seg = paras[i];
       // <w:t>글자</w:t> 를 모으고, <w:tab/>·<w:br/>는 공백/개행으로
       const t = seg.replace(/<w:tab\b[^>]*\/?>/g, "\t").replace(/<w:br\b[^>]*\/?>/g, "\n");
-      const runs = t.match(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g) || [];
-      lines.push(_entities(runs.map(r => r.replace(/<w:t[^>]*>/, "").replace(/<\/w:t>/, "")).join("")));
+      // 태그 이름이 정확히 w:t 인 것만 — <w:t[^>]*> 로 두면 <w:top …/>·<w:tblPr>처럼
+      // t 로 시작하는 다른 태그까지 걸려 서식 XML이 본문에 섞인다
+      const runs = t.match(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g) || [];
+      lines.push(_entities(runs.map(r => r.replace(/<w:t(?:\s[^>]*)?>/, "").replace(/<\/w:t>/, "")).join("")));
     }
     return lines.join("\n");
   }
@@ -197,6 +200,9 @@
   function extractRtfText(arrayBuffer) {
     let s = new TextDecoder("latin1").decode(new Uint8Array(arrayBuffer));
     s = s.replace(/\{\\\*[\s\S]*?\}/g, "");                       // 주석·서식 정의 그룹 제거
+    // 글꼴·색·스타일 표는 본문이 아니다 — 남겨두면 "맑은 고딕;" 같은 잔여물이 본문 앞에 붙는다
+    s = s.replace(/\{\\(?:fonttbl|colortbl|stylesheet|listtable|listoverridetable|info)[\s\S]*?\}\s*\}/g, "")
+         .replace(/\{\\(?:fonttbl|colortbl|stylesheet|info)[^{}]*\}/g, "");
     s = s.replace(/\\u(-?\d+)\s?\??/g, (_, n) => String.fromCharCode((+n + 65536) % 65536));  // \uN? 유니코드
     s = s.replace(/\\'([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));    // \'XX (cp949 바이트)
     s = s.replace(/\\par[d]?\b/g, "\n").replace(/\\line\b/g, "\n").replace(/\\tab\b/g, "\t");

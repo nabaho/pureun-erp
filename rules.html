@@ -467,13 +467,25 @@ const TPL_BY_RULE = {};
 TPLS.forEach(t=>t.ruleIds.forEach(rid=>{ if(!TPL_BY_RULE[rid]) TPL_BY_RULE[rid]=t; }));
 
 const stripWs = s => (s||"").replace(/\s+/g,"");
+/* ── 조 제목 괄호 ──
+   취업규칙은 사무소마다 조 제목 괄호가 다르다: 제5조(목적) · 제5조【목적】 · 제5조[목적] 등.
+   예전엔 ( （ 만 인정해 【 】를 쓰는 문서(실측: 103개 헤딩 중 96개가 【 】)에서
+   조문이 하나로 뭉쳐 나왔다. 아래 쌍을 모두 인정한다. */
+const BR_OPEN="(（\\[【〔〈《「『｛{";
+const BR_CLOSE=")）\\]】〕〉》」』｝}";
+const RE_HEAD=new RegExp("^[ \\t]*제\\s*(\\d+)\\s*조(?:\\s*의\\s*(\\d+))?(?=[ \\t]*["+BR_OPEN+"]|[ \\t]|$)","gm");
+const RE_TITLE=new RegExp("^제\\s*\\d+\\s*조(?:\\s*의\\s*\\d+)?\\s*["+BR_OPEN+"]([^"+BR_CLOSE+"\\n]{0,40})["+BR_CLOSE+"]");
+/* 조문 본문 앞머리의 '제N조(제목)'을 떼어낼 때 쓰는 패턴 */
+const RE_HEAD_STRIP=new RegExp("^\\s*제\\s*\\d+\\s*조(?:\\s*의\\s*\\d+)?\\s*(?:["+BR_OPEN+"][^"+BR_CLOSE+"\\n]{0,40}["+BR_CLOSE+"]?)?\\s*");
+/* 조 제목과 본문을 나눌 때 — 1그룹=제N조(제목), 2그룹=본문 */
+const RE_HEAD_SPLIT=new RegExp("^(제\\s*\\d+\\s*조(?:\\s*의\\s*\\d+)?\\s*(?:["+BR_OPEN+"][^"+BR_CLOSE+"\\n]{0,40}["+BR_CLOSE+"])?)\\s*([\\s\\S]*)$");
 function parseArticles(text){
   text=text.replace(/\r\n?/g,"\n");
   // 부칙(附則) 헤딩 이후 조문은 부칙 조문 → 본칙 검토·대조에서 제외
   const bm=text.match(/^[ \t]*(부\s*칙|附\s*則)/m);
   const boundary=bm?bm.index:Infinity;
   // 줄 머리 조 헤딩만 인정 — 본문 속 "법 제93조에 따라" 등 인용 제외
-  const re=/^[ \t]*제\s*(\d+)\s*조(?:\s*의\s*(\d+))?(?=[ \t]*[(（]|[ \t]|$)/gm; let m,ms=[];
+  const re=new RegExp(RE_HEAD.source,"gm"); let m,ms=[];
   while((m=re.exec(text))) if(m.index<boundary) ms.push({i:m.index,num:+m[1],sub:m[2]?+m[2]:null});
   const arts=[];
   for(let k=0;k<ms.length;k++){
@@ -483,7 +495,7 @@ function parseArticles(text){
     // 그대로 두면 "제27조(최저임금)" 본문에 "제7장 퇴직·해고 및 정년"이 섞여 매칭이 엉킨다.
     const cm=body.match(/\n[ \t]*제\s*\d+\s*[장절][^\n]*$/);
     if(cm)body=body.slice(0,cm.index).trim();
-    const tm=body.match(/^제\s*\d+\s*조(?:\s*의\s*\d+)?\s*[(（]([^)）\n]{0,40})[)）]/);
+    const tm=body.match(RE_TITLE);
     arts.push({num:ms[k].num,sub:ms[k].sub,label:"제"+ms[k].num+"조"+(ms[k].sub?"의"+ms[k].sub:""),title:tm?tm[1].trim():"",body,bodyNs:stripWs(body)});
   }
   return arts;
@@ -614,7 +626,7 @@ function hwpxArticleBlock(text){
   const t=String(text==null?"":text).trim();
   if(!t) return HWPX.spacer();
   if(/^제\s*\d+\s*장/.test(t) && t.length<=40) return HWPX.chapter(t);
-  const m=t.match(/^(제\s*\d+\s*조(?:\s*의\s*\d+)?\s*(?:[(（][^)）\n]{0,40}[)）])?)\s*([\s\S]*)$/);
+  const m=t.match(RE_HEAD_SPLIT);
   return m ? HWPX.article(m[1].trim(), m[2].trim()) : HWPX.bodyPara(t);
 }
 
@@ -1089,7 +1101,7 @@ function renderArticleBoxes(arts){
     const box=document.createElement("div");
     box.className="pick-art"+(AE_LABEL===a.label?" editing":"");
     box.dataset.label=a.label;
-    const body=a.body.replace(/^제\s*\d+\s*조(?:\s*의\s*\d+)?\s*[(（][^)）\n]*[)）]?/,"").trim();
+    const body=a.body.replace(RE_HEAD_STRIP,"").trim();
     box.innerHTML=`<div class="pa-h"><b>${escapeH(a.label)}${a.title?" ("+escapeH(a.title)+")":""}</b><span class="pa-chk">✎ 수정</span></div><div class="pa-b">${escapeH(body)}</div>`;
     box.onclick=()=>openArtEdit(a);
     // 오른쪽 패널로 드래그해서 편집 열기
@@ -1137,7 +1149,7 @@ function renderArticlePicker(){
   arts.forEach(a=>{
     const box=document.createElement("div");
     box.className="pick-art"+(PICK_SET.has(a.label)?" on":"");
-    const body=a.body.replace(/^제\s*\d+\s*조(?:\s*의\s*\d+)?\s*[(（][^)）\n]*[)）]?/,"").replace(/\s+/g," ").trim();
+    const body=a.body.replace(RE_HEAD_STRIP,"").replace(/\s+/g," ").trim();
     box.innerHTML=`<div class="pa-h"><b>${escapeH(a.label)}${a.title?" ("+escapeH(a.title)+")":""}</b><span class="pa-chk">${PICK_SET.has(a.label)?"✓ 수정 필요":"클릭하여 선택"}</span></div><div class="pa-b">${escapeH(body.slice(0,220))}${body.length>220?"…":""}</div>`;
     box.onclick=()=>{
       const on=PICK_SET.has(a.label);
@@ -2086,7 +2098,7 @@ $("dl-doc-daejo").addEventListener("click",()=>{
 function articleText(v){
   const it=v.it;
   let t=String(it.after||"").replace(/\s+$/,"");
-  const m=t.match(/^\s*제\s*\d+\s*조(?:\s*의\s*\d+)?\s*[(（][^)）\n]{0,40}[)）]?\s*/);
+  const m=t.match(RE_HEAD_STRIP);
   if(m)t=t.slice(m[0].length);          // 원본 번호·제목 제거(중복 방지)
   t=t.replace(/^\s+/,"");
   const head=v.no+(it.title?"("+it.title+")":"");
