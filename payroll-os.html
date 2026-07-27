@@ -154,7 +154,7 @@ window.addEventListener('popstate',function(ev){
 });
 App.go=function(s){ navTo({screen:s,site:null,month:null}); };  // 기존 호출부 호환(탭 이동)
 var NAV=[{id:'cards',label:'⚙️ 설정 카드'},{id:'inbox',label:'📥 수신함'},{id:'payroll',label:'💰 급여 처리'},{id:'slip',label:'📄 명세서'},{id:'report',label:'📑 신고'}];
-var SIG={green:'#2E7D4F',orange:'#B26A00',red:'#C43D3D'};
+var SIG={green:'#2E7D4F',orange:'#B26A00',red:'#C43D3D',gray:'#8a8f98'};
 function won(n){ return (n==null)?'-':Number(n).toLocaleString(); }
 /* ── 표시용 중복 정리 ──
    같은 성명이 여러 줄(신고/실지급 시나리오·중복 추출 등)일 때 한 사람당 한 줄만 남김.
@@ -182,6 +182,38 @@ function toggleLock(site,month){ var L=dbGet('payroll_locked',{})||{}; var k=loc
   if(L[k]){ if(!confirm('확정을 되돌릴까요?')) return; delete L[k]; } else { if(!confirm(site+' '+month+' 급여를 확정할까요? (되돌리기 가능)')) return; L[k]=Date.now(); }
   dbSet('payroll_locked', L); }
 
+/* ── 예외 중심 검토: 데이터 완전성 반영 신호 + 초록 일괄확정 + 필터 ──
+   원본 신호(r.신호)는 엔진 계산 결과. 여기서 표시용으로 보정:
+   핵심값(총지급·공제·실수령)이 절반 이상 채워지지 않으면 초록 대신 회색(데이터부족=확인필요).
+   → 초록불이 진짜로 믿을 수 있어야 [초록 전부 확정]이 안전하다. */
+var CORE_GROSS_=['과세총액','지급총액','기본급'];
+function recComplete(r){
+  var emps=dedupeEmps(r.직원||[]); if(!emps.length) return false;
+  var ok=0; emps.forEach(function(e){
+    var net=e.실수령!=null, ded=e.공제총액!=null,
+        gross=CORE_GROSS_.some(function(k){return e[k]!=null;});
+    if(net&&ded&&gross) ok++;
+  });
+  return ok>=Math.ceil(emps.length*0.5);
+}
+function effSig(r){
+  if(r.신호==='red') return 'red';
+  if(!recComplete(r)) return 'gray';
+  return r.신호||'green';
+}
+function sigLabel(s){ return {green:'이상없음',orange:'확인필요',red:'막힘',gray:'데이터부족'}[s]||s; }
+function lockAllGreen(site){
+  var pay=dbGet('payroll',null); if(!pay||!pay.sites) return;
+  var recs=pay.sites[site]||[];
+  var t=recs.filter(function(r){return effSig(r)==='green'&&!isLocked(site,r.월);});
+  if(!t.length){ alert('일괄 확정할 초록(이상없음) 항목이 없습니다. 남은 건 확인이 필요합니다.'); return; }
+  if(!confirm(site+' — 초록(이상없음) '+t.length+'건을 한 번에 확정할까요?\n(주황·빨강·데이터부족은 제외됩니다. 되돌리기 가능)')) return;
+  var L=dbGet('payroll_locked',{})||{};
+  t.forEach(function(r){ L[lockKey(site,r.월)]=Date.now(); });
+  dbSet('payroll_locked', L);
+}
+function toggleOnlyReview(){ App.onlyReview=!App.onlyReview; render(); }
+
 function screenPayroll(){
   var pay=dbGet('payroll',null);
   var h='<h1>급여 처리</h1>';
@@ -194,29 +226,47 @@ function screenPayroll(){
        '<button class="btn sec noprint" style="margin-left:10px;padding:4px 10px;font-size:12px" onclick="importPayroll()">데이터 다시 올리기</button></div>';
     h+='<div class="cards">';
     Object.keys(pay.sites).forEach(function(site){
-      var recs=pay.sites[site]; var cnt={green:0,orange:0,red:0}; var locked=0;
-      recs.forEach(function(r){cnt[r.신호]=(cnt[r.신호]||0)+1; if(isLocked(site,r.월))locked++;});
+      var recs=pay.sites[site]; var cnt={green:0,orange:0,red:0,gray:0}; var locked=0, review=0;
+      recs.forEach(function(r){ var s=effSig(r); cnt[s]=(cnt[s]||0)+1;
+        if(isLocked(site,r.월)) locked++; else if(s!=='green') review++; });
+      var badge = review>0 ? '<span style="color:#B26A00;font-weight:700">검토 '+review+'건</span>'
+                           : '<span style="color:#2E7D4F">검토할 것 없음 ✓</span>';
       h+='<div class="c" style="cursor:pointer" onclick="navTo({site:\''+site.replace(/'/g,"")+'\'})">'+
-        '<div class="t">'+site+'</div><div class="m">'+recs.length+'개월 · 확정 '+locked+'/'+recs.length+'</div>'+
-        '<div style="display:flex;gap:6px;margin-top:6px">'+
-        ['green','orange','red'].map(function(k){return '<span style="font-size:12px;color:'+SIG[k]+'">●'+cnt[k]+'</span>';}).join('')+
+        '<div class="t">'+site+'</div>'+
+        '<div class="m">'+recs.length+'개월 · 확정 '+locked+'/'+recs.length+' · '+badge+'</div>'+
+        '<div style="display:flex;gap:8px;margin-top:6px;font-size:12px;flex-wrap:wrap">'+
+        ['green','orange','red','gray'].map(function(k){return cnt[k]?'<span style="color:'+SIG[k]+'">●'+cnt[k]+' '+sigLabel(k)+'</span>':'';}).join('')+
         '</div></div>';
     });
-    h+='</div><div class="note">● 초록=이상없음 ● 주황=확인필요 ● 빨강=막힘(확정 전 해결). 사업장을 누르면 월별로 봅니다.</div>';
+    h+='</div><div class="note">● 이상없음 ● 확인필요 ● 막힘(확정 전 해결) ● 데이터부족. '+
+       '<b>「검토 N건」 숫자만</b> 신경 쓰면 됩니다. 사업장을 눌러 → [초록 전부 확정]으로 안전한 건 한 번에 끝내고, 나머지만 눈으로 보세요.</div>';
     return h;
   }
   var recs=pay.sites[App.site]||[];
   if(!App.month){
+    var sEsc=App.site.replace(/'/g,"");
+    var greenN=recs.filter(function(r){return effSig(r)==='green'&&!isLocked(App.site,r.월);}).length;
+    var reviewN=recs.filter(function(r){return effSig(r)!=='green'&&!isLocked(App.site,r.월);}).length;
     h+='<div class="sub"><a href="#" onclick="goBack();return false">← 사업장</a> · <b>'+App.site+'</b> 월별</div>';
+    h+='<div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">'+
+       '<button class="btn" '+(greenN?'':'disabled style="background:#ccc"')+' onclick="lockAllGreen(\''+sEsc+'\')">● 초록(이상없음) '+greenN+'건 전부 확정</button>'+
+       '<button class="btn sec" onclick="toggleOnlyReview()">'+(App.onlyReview?'전체 보기':'검토 필요만 보기 ('+reviewN+')')+'</button>'+
+       '<span style="font-size:12px;color:var(--sub)">초록은 버튼으로 한 번에 · 나머지만 눈으로 확인</span>'+
+       '</div>';
     h+='<div style="background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden">';
-    recs.forEach(function(r){ var lk=isLocked(App.site,r.월);
+    var shown=0;
+    recs.forEach(function(r){ var lk=isLocked(App.site,r.월); var s=effSig(r);
+      if(App.onlyReview && (lk || s==='green')) return;   // 검토 필요만: 확정·초록 숨김
+      shown++;
+      var extra=(s==='gray')?' · <span style="color:'+SIG.gray+'">데이터부족(확인)</span>':'';
       h+='<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line)">'+
-        '<span style="width:11px;height:11px;border-radius:50%;background:'+SIG[r.신호]+';flex-shrink:0"></span>'+
-        '<div style="flex:1;cursor:pointer" onclick="navTo({month:\''+r.월.replace(/'/g,"")+'\'})"><b>'+r.월+'</b> <span style="font-size:12px;color:var(--sub)">직원 '+empCount(r)+'명'+(r.파일?' · '+r.파일:'')+(r.이슈?' · '+r.이슈:'')+'</span></div>'+
-        (lk?'<span class="badge ok">확정됨</span> <button class="btn sec" onclick="toggleLock(\''+App.site.replace(/'/g,"")+'\',\''+r.월.replace(/'/g,"")+'\')">되돌리기</button>'
-           :'<button class="btn" '+(r.신호==='red'?'disabled style="background:#ccc" title="빨강 해결 후 확정"':'onclick="toggleLock(\''+App.site.replace(/'/g,"")+'\',\''+r.월.replace(/'/g,"")+'\')"')+'>확정</button>')+
+        '<span title="'+sigLabel(s)+'" style="width:11px;height:11px;border-radius:50%;background:'+SIG[s]+';flex-shrink:0"></span>'+
+        '<div style="flex:1;cursor:pointer" onclick="navTo({month:\''+r.월.replace(/'/g,"")+'\'})"><b>'+r.월+'</b> <span style="font-size:12px;color:var(--sub)">직원 '+empCount(r)+'명'+(r.파일?' · '+r.파일:'')+extra+(r.이슈?' · '+r.이슈:'')+'</span></div>'+
+        (lk?'<span class="badge ok">확정됨</span> <button class="btn sec" onclick="toggleLock(\''+sEsc+'\',\''+r.월.replace(/'/g,"")+'\')">되돌리기</button>'
+           :'<button class="btn" '+(s==='red'?'disabled style="background:#ccc" title="빨강 해결 후 확정"':'onclick="toggleLock(\''+sEsc+'\',\''+r.월.replace(/'/g,"")+'\')"')+'>확정</button>')+
         '</div>';
     });
+    if(!shown) h+='<div class="empty" style="padding:20px">'+(App.onlyReview?'검토할 항목이 없습니다. 모두 확정했거나 이상없음입니다. 👍':'표시할 월이 없습니다.')+'</div>';
     h+='</div>'; return h;
   }
   // 직원별 상세
@@ -239,6 +289,7 @@ function importPayroll(){var i=document.createElement('input');i.type='file';i.a
   i.onchange=function(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();
    r.onload=function(){try{var raw=JSON.parse(r.result);dbSet('payroll',raw);alert('파일럿 급여 데이터 저장 완료: '+(raw.pilots||[]).join(', '));}catch(err){alert('JSON 오류: '+err.message);}};r.readAsText(f);};i.click();}
 window.importPayroll=importPayroll;window.toggleLock=toggleLock;
+window.lockAllGreen=lockAllGreen;window.toggleOnlyReview=toggleOnlyReview;
 
 /* ── 명세서(임금명세서) — 확정 급여 → 화이트라벨 인쇄/PDF ──
    렌더 규칙 원본: harness engine/payslip_html.py (동일 로직 유지할 것) */
