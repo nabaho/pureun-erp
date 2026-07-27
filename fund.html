@@ -3828,7 +3828,8 @@ function f15View(arr){
   return '<div class="panel"><div class="row" style="flex-wrap:wrap"><h2 style="font-size:15px">운영상황보고서 (별지 제15호)</h2>'+hlp('close.f15')
     +'<span class="chip" style="font-size:10px">'+R.head.type+'근로복지기금법인</span>'
     +'<span class="muted" style="font-size:12px">'+S.year+'년도 · 단위 천원</span>'
-    +'<span style="flex:1"></span><button class="primary" onclick="printF15()">📄 서식 그대로 인쇄</button></div>'
+    +'<span style="flex:1"></span><button onclick="makeClosingWb()" title="과거 제출본과 같은 시트 구성으로 결산서+사업계획서 워크북 생성">📗 결산서 워크북 받기</button>'
+    +'<button class="primary" onclick="printF15()">📄 서식 그대로 인쇄</button></div>'
     +'<div class="row" style="gap:18px;align-items:flex-start;margin-top:12px;flex-wrap:wrap">'
     +'<div style="min-width:300px;flex:1"><div style="font-weight:700;margin-bottom:6px">기본재산 현황 ⑫~⑳ (천원)</div><table>'
       +'<tr><td>⑫ 직전 회계연도 말</td><td style="text-align:right">'+_n(_k1000(R.bfOpen))+'</td></tr>'
@@ -3967,6 +3968,281 @@ function printF15(){
     +'</style>'+p1+p2
     +'<button onclick="print()" style="position:fixed;right:16px;top:16px;padding:9px 16px;font-size:13px">인쇄 / PDF 저장</button>');
   w.document.close();
+}
+/* ══════════ 결산서 워크북 자동 생성 ══════════
+   과거 제출본과 같은 시트 구성으로, 우리 장부 값에서 워크북을 만든다.
+   과거 파일은 '계정별 보조부'의 블록 위치가 기금마다 달라 시산표 참조가 손배선(!L21, !X10 …)돼
+   있었다 — 그 위치에 값만 밀어넣으면 조용히 틀린다. 그래서 채우는 대신 **생성**한다.
+   배치가 매년 동일해지고, 숫자는 화면 장부와 같은 함수에서 나온다. */
+var CLOSE_SHEETS=['표지','운영상황보고서','분개','계정별 보조부','합계잔액시산표',
+  '1. 재무상태표 (기금)','1-2손익계산서','1-3 이익잉여금처분계산서',
+  '2.익년도사업계획서','3. 예산편성안','추정손익계산서','추정재무상태표',
+  '부문별예산','목적사업계획서','기금운영계획서','기본재산총액변경'];
+function _xlTitle(ws,text,span){
+  var r=ws.getRow(1); r.getCell(2).value=text; r.getCell(2).font={bold:true,size:14};
+  r.height=24; ws.mergeCells(1,2,1,Math.max(3,span||6));
+}
+function _xlHead(ws,row,labels,startCol){
+  var r=ws.getRow(row), c0=startCol||2;
+  labels.forEach(function(t,i){
+    var c=r.getCell(c0+i); c.value=t;
+    c.font={bold:true,size:10}; c.alignment={horizontal:'center',vertical:'middle'};
+    c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFF0F0F0'}};
+    c.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}};
+  });
+  return r;
+}
+function _xlRow(ws,row,vals,opt){
+  opt=opt||{}; var r=ws.getRow(row), c0=opt.col||2;
+  vals.forEach(function(v,i){
+    var c=r.getCell(c0+i); c.value=(v===''||v===null||v===undefined)?null:v;
+    c.font={size:10,bold:!!opt.bold};
+    c.border={top:{style:'hair'},bottom:{style:'hair'},left:{style:'hair'},right:{style:'hair'}};
+    if(typeof v==='number'){ c.numFmt='#,##0'; c.alignment={horizontal:'right'}; }
+  });
+  if(opt.fill) r.eachCell(function(c){ c.fill={type:'pattern',pattern:'solid',fgColor:{argb:opt.fill}}; });
+  return r;
+}
+function _xlWidths(ws,ws_widths){ ws_widths.forEach(function(w,i){ ws.getColumn(i+1).width=w; }); }
+/* 결산 워크북 생성 — arr=당기 거래, prev=전기 거래(비교·추정용) */
+function buildClosingWb(fid,yr,arr,prevA,rep,sites,welf){
+  var wb=new ExcelJS.Workbook();
+  wb.creator='푸른노무법인 기금 통합운영'; wb.created=new Date();
+  var f=funds[fid]||{}, fname=f.name||fid;
+  var fin=computeFin(arr,fid,yr), prv=computeFin(prevA||[],fid,yr-1);
+  var jr=journalOf(arr), TB=tbRowsOf(arr,fid,yr);
+  var R=buildF15(arr,fid,yr,rep,sites,welf);
+  var K=_k1000;
+
+  // ① 표지
+  var s=wb.addWorksheet('표지'); _xlWidths(s,[3,46,14,14,14]);
+  s.getRow(9).getCell(1).value=fname; s.getRow(9).getCell(1).font={bold:true,size:18};
+  s.getRow(10).getCell(1).value=yr+'년도 결산서 및 '+(yr+1)+'년도 사업계획서';
+  s.getRow(10).getCell(1).font={size:13};
+  s.getRow(14).getCell(1).value='작성: 푸른노무법인';
+  s.getRow(15).getCell(1).value='출력일: '+ymd();
+
+  // ② 운영상황보고서 (별지15호 요지 — 정식 서식은 화면 인쇄로)
+  s=wb.addWorksheet('운영상황보고서'); _xlWidths(s,[3,42,20,20,20]);
+  _xlTitle(s,'운영상황 보고서 ('+yr+'년) — 단위: 천원',5);
+  var rw=3;
+  [['① 기금법인명',R.head.name],['② 인가번호',R.head.inka],['③ 설립등기일',R.head.reg],
+   ['④ 전화번호',R.head.tel],['⑤ 소재지',R.head.addr],
+   ['⑥ 회계연도',yr+'-'+R.head.fy_s+' ~ '+yr+'-'+R.head.fy_e],
+   ['⑦ 대표자',R.head.ceo],['⑧ 업종',R.head.biz],
+   ['⑨ 근로자 수(명)',R.head.workers],['⑩ 협력업체 근로자 수(명)',R.head.partner],
+   ['⑪ 납입자본금(천원)',R.head.capital],
+   ['⑫ 직전 회계연도 말 기본재산',K(R.bfOpen)],['⑬ 사업주 출연',K(R.bf.employer)],
+   ['⑭ 수익금ㆍ이월금 전입',K(R.bf.income)],['⑮ 사업주 외의 자 출연',K(R.bf.other)],
+   ['⑯ 기금법인 합병',K(R.bf.merge)],['⑰ 기본재산 사용',K(R.bf.use)],
+   ['⑱ 기금법인 분할 등',K(R.bf.split)],['⑲ 소계',K(R.bfInc-R.bfDec)],
+   ['⑳ 해당 회계연도 말 기본재산',K(R.bfEnd)],
+   ['㉑ 금융회사 예입ㆍ예탁',K(R.run.deposit)],['㉗ 근로자 대부',K(R.run.loan)],
+   ['㉘ 합계',K(R.run.total)],['㉙ 기금운용 수익금',K(R.src.income)],
+   ['㉚ 출연금액의 100분의 '+R.ratio,K(R.src.contrib)],['㉟ 재원 합계',K(R.src.total)]
+  ].forEach(function(p){ _xlRow(s,rw++,[p[0],p[1]]); });
+  rw++; _xlHead(s,rw++,['사업실적 (천원, 명)','금액','수혜자수']);
+  R.items.forEach(function(x){ _xlRow(s,rw++,[x.no+'. '+x.label,K(x.amt),x.cnt]); });
+  _xlRow(s,rw++,['59. 소계',K(R.subAmt),R.subCnt],{bold:true});
+  _xlRow(s,rw++,['대부사업',K(R.loanAmt),R.loanBenef]);
+  _xlRow(s,rw++,['60. 기금 운영비',K(R.admin),'']);
+  _xlRow(s,rw++,['61. 잔액',K(R.rest),'']);
+  _xlRow(s,rw++,['62. 합계',K(R.total),''],{bold:true});
+
+  // ③ 분개
+  s=wb.addWorksheet('분개'); _xlWidths(s,[3,13,7,20,16,7,20,16,30]);
+  _xlTitle(s,yr+'년 거래 분개',8);
+  _xlHead(s,3,['일자','구분','차변 계정','금액','구분','대변 계정','금액','적요']);
+  rw=4;
+  jr.forEach(function(e){ _xlRow(s,rw++,[e.date,'(차)',e.debit,e.amount,'(대)',e.credit,e.amount,e.memo]); });
+  var jt=jr.reduce(function(a,e){return a+e.amount;},0);
+  _xlRow(s,rw++,['합계','','',jt,'','',jt,''],{bold:true,fill:'FFF6F6F6'});
+
+  // ④ 계정별 보조부 — 계정마다 세로로 이어붙인다(블록 격자 배치를 쓰지 않음: 참조가 밀리지 않게)
+  s=wb.addWorksheet('계정별 보조부'); _xlWidths(s,[3,13,26,16,16,16]);
+  _xlTitle(s,'계정별 보조부',6); rw=3;
+  var byAcct={};
+  jr.forEach(function(e){ (byAcct[e.debit]=byAcct[e.debit]||[]).push({e:e,d:e.amount,c:0});
+                          (byAcct[e.credit]=byAcct[e.credit]||[]).push({e:e,d:0,c:e.amount}); });
+  var om0=openingMoves(_openingOf(fid,yr));
+  Object.keys(byAcct).concat(Object.keys(om0).filter(function(n){return !byAcct[n];})).forEach(function(n){
+    var r0=_xlRow(s,rw++,[n+'  ('+acctType(n)+')']); r0.getCell(2).font={bold:true,size:11};
+    _xlHead(s,rw++,['일자','적요','차변','대변','잔액']);
+    var o=om0[n]||{d:0,c:0}, bal=o.d-o.c, dr=isDrAcct(n), sd=o.d, sc=o.c;
+    if(o.d||o.c) _xlRow(s,rw++,['','전기이월',o.d||null,o.c||null,dr?bal:-bal]);
+    (byAcct[n]||[]).forEach(function(x){
+      sd+=x.d; sc+=x.c; bal+=x.d-x.c;
+      var other=(x.e.debit===n)?x.e.credit:x.e.debit;
+      _xlRow(s,rw++,[x.e.date,(x.e.memo||other)+' ('+other+')',x.d||null,x.c||null,dr?bal:-bal]);
+    });
+    _xlRow(s,rw++,['','계',sd,sc,dr?bal:-bal],{bold:true});
+    rw++;
+  });
+
+  // ⑤ 합계잔액시산표
+  s=wb.addWorksheet('합계잔액시산표'); _xlWidths(s,[3,16,16,30,16,16]);
+  _xlTitle(s,'합계잔액시산표',6);
+  s.getRow(2).getCell(2).value=yr+'년 12월 31일 현재';
+  _xlHead(s,4,['차변 합계','차변 잔액','계정과목','대변 잔액','대변 합계']);
+  rw=5; var TT={sumD:0,balD:0,balC:0,sumC:0};
+  TB.forEach(function(t){ TT.sumD+=t.sumD; TT.balD+=t.balD; TT.balC+=t.balC; TT.sumC+=t.sumC;
+    _xlRow(s,rw++,[t.sumD||null,t.balD||null,t.name,t.balC||null,t.sumC||null]); });
+  _xlRow(s,rw++,[TT.sumD,TT.balD,'합계',TT.balC,TT.sumC],{bold:true,fill:'FFF6F6F6'});
+
+  // ⑥ 재무상태표 (당기·전기)
+  s=wb.addWorksheet('1. 재무상태표 (기금)'); _xlWidths(s,[3,34,18,18,18]);
+  _xlTitle(s,'재무상태표',5);
+  s.getRow(2).getCell(2).value=yr+'년 12월 31일 현재 · '+fname;
+  _xlHead(s,4,['과목',yr+'년(당기)',(yr-1)+'년(전기)','증감']);
+  rw=5;
+  function bsRow(lbl,a,b,bold){ _xlRow(s,rw++,[lbl,a,b,a-b],{bold:bold}); }
+  bsRow('Ⅰ. 유동자산','','','');
+  bsRow('  1) 현금및현금성자산',fin.cash,prv.cash);
+  bsRow('  2) 정기예금',fin.savings,prv.savings);
+  bsRow('Ⅱ. 비유동자산','','','');
+  bsRow('  1) 근로자 대부금',fin.loan,prv.loan);
+  if(fin.otherAsset||prv.otherAsset) bsRow('  2) 기타자산',fin.otherAsset,prv.otherAsset);
+  bsRow('자산총계',fin.totalAssets,prv.totalAssets,true);
+  bsRow('Ⅲ. 비유동부채','','','');
+  bsRow('  1) 고유목적사업준비금',fin.liab,prv.liab);
+  bsRow('부채총계',fin.liab,prv.liab,true);
+  bsRow('Ⅳ. 자본금','','','');
+  bsRow('  1) 기본재산',fin.basic,prv.basic);
+  bsRow('  2) 이월잉여금',fin.retained,prv.retained);
+  bsRow('자본총계',fin.equity,prv.equity,true);
+  bsRow('부채와 자본총계',fin.totalLiabEq,prv.totalLiabEq,true);
+  rw++;
+  _xlRow(s,rw++,['*주1. 고유목적사업준비금1은 법인세법 제29조에 의한 준비금']);
+  _xlRow(s,rw++,['*주2. 고유목적사업준비금2는 근로복지기본법 제62조제2항에 의한 사업비 재원']);
+
+  // ⑦ 손익계산서
+  s=wb.addWorksheet('1-2손익계산서'); _xlWidths(s,[3,34,18,18,18]);
+  _xlTitle(s,'손익계산서',5);
+  s.getRow(2).getCell(2).value=yr+'년 1월 1일부터 '+yr+'년 12월 31일까지';
+  _xlHead(s,4,['과목',yr+'년(당기)',(yr-1)+'년(전기)','증감']);
+  rw=5;
+  function isRow(lbl,a,b,bold){ _xlRow(s,rw++,[lbl,a,b,a-b],{bold:bold}); }
+  isRow('Ⅰ. 사업수익','','','');
+  isRow('  가. 이자수익',fin.interest,prv.interest);
+  isRow('Ⅱ. 고유목적사업비용','','','');
+  PURPOSE_ACCTS.forEach(function(a){
+    var t=TB.filter(function(x){return x.name===a;})[0];
+    var pt=tbRowsOf(prevA||[],fid,yr-1).filter(function(x){return x.name===a;})[0];
+    var v=t?t.balD:0, pv=pt?pt.balD:0;
+    if(v||pv) isRow('  '+a,v,pv);
+  });
+  isRow('  목적사업비 소계',fin.purpose,prv.purpose,true);
+  isRow('Ⅲ. 일반관리비',fin.admin,prv.admin);
+  if(fin.otherExp||prv.otherExp) isRow('Ⅳ. 기타비용',fin.otherExp,prv.otherExp);
+  isRow('당기순이익',fin.net,prv.net,true);
+
+  // ⑧ 이익잉여금처분계산서
+  s=wb.addWorksheet('1-3 이익잉여금처분계산서'); _xlWidths(s,[3,34,18,18]);
+  _xlTitle(s,'이익잉여금처분계산서',4);
+  _xlHead(s,4,['과목',yr+'년(당기)',(yr-1)+'년(전기)']); rw=5;
+  _xlRow(s,rw++,['Ⅰ. 미처분이익잉여금',fin.retained,prv.retained]);
+  _xlRow(s,rw++,['  1) 전기이월이익잉여금',num((fin.opening||{}).retained)||0,num((prv.opening||{}).retained)||0]);
+  _xlRow(s,rw++,['  2) 당기순이익',fin.net,prv.net]);
+  _xlRow(s,rw++,['Ⅱ. 이익잉여금처분액',0,0]);
+  _xlRow(s,rw++,['Ⅲ. 차기이월이익잉여금',fin.retained,prv.retained],{bold:true});
+
+  // ⑨ 익년도 사업계획서 · ⑩ 예산편성안 — 당기 실적을 기준선으로 깔고 예산칸은 비워 둔다
+  s=wb.addWorksheet('2.익년도사업계획서'); _xlWidths(s,[3,34,18,18,30]);
+  _xlTitle(s,(yr+1)+'년도 사업계획서',5);
+  _xlHead(s,4,['구분',yr+'년 실적',(yr+1)+'년 계획','비고']); rw=5;
+  R.items.forEach(function(x){ _xlRow(s,rw++,[x.label,x.amt,null,'']); });
+  _xlRow(s,rw++,['목적사업비 소계',R.subAmt,null,''],{bold:true});
+  _xlRow(s,rw++,['기금 운영비',R.admin,null,'']);
+  _xlRow(s,rw++,['합계',R.subAmt+R.admin,null,''],{bold:true});
+
+  s=wb.addWorksheet('3. 예산편성안'); _xlWidths(s,[3,34,18,18,18]);
+  _xlTitle(s,(yr+1)+'년도 예산편성안',5);
+  _xlHead(s,4,['과목',yr+'년 결산',(yr+1)+'년 예산','증감']); rw=5;
+  _xlRow(s,rw++,['수입 — 기금운용 수익',fin.interest,null,null]);
+  _xlRow(s,rw++,['수입 — 출연금',R.bf.employer+R.bf.other,null,null]);
+  _xlRow(s,rw++,['수입 — 이월금',fin.retained,null,null]);
+  _xlRow(s,rw++,['수입 합계',fin.interest+R.bf.employer+R.bf.other+fin.retained,null,null],{bold:true});
+  _xlRow(s,rw++,['지출 — 목적사업비',fin.purpose,null,null]);
+  _xlRow(s,rw++,['지출 — 일반관리비',fin.admin,null,null]);
+  _xlRow(s,rw++,['지출 합계',fin.purpose+fin.admin,null,null],{bold:true});
+
+  // ⑪ 추정손익계산서 · ⑫ 추정재무상태표
+  s=wb.addWorksheet('추정손익계산서'); _xlWidths(s,[3,34,18,18]);
+  _xlTitle(s,(yr+1)+'년도 추정손익계산서',4);
+  _xlHead(s,4,['과목',yr+'년 실적',(yr+1)+'년 추정']); rw=5;
+  _xlRow(s,rw++,['사업수익(이자 등)',fin.interest,null]);
+  _xlRow(s,rw++,['고유목적사업비용',fin.purpose,null]);
+  _xlRow(s,rw++,['일반관리비',fin.admin,null]);
+  _xlRow(s,rw++,['당기순이익',fin.net,null],{bold:true});
+
+  s=wb.addWorksheet('추정재무상태표'); _xlWidths(s,[3,34,18,18]);
+  _xlTitle(s,(yr+1)+'년도 추정재무상태표',4);
+  _xlHead(s,4,['과목',yr+'년 말 실적',(yr+1)+'년 말 추정']); rw=5;
+  [['현금및현금성자산',fin.cash],['정기예금',fin.savings],['근로자대부금',fin.loan],
+   ['자산총계',fin.totalAssets],['고유목적사업준비금',fin.liab],['기본재산',fin.basic],
+   ['이월잉여금',fin.retained],['부채와 자본총계',fin.totalLiabEq]].forEach(function(p,i){
+    _xlRow(s,rw++,[p[0],p[1],null],{bold:(p[0].indexOf('총계')>=0)});
+  });
+
+  // ⑬ 부문별예산
+  s=wb.addWorksheet('부문별예산'); _xlWidths(s,[3,30,18,18,18,18]);
+  _xlTitle(s,(yr+1)+'년도 부문별 예산',6);
+  _xlHead(s,4,['부문',yr+'년 실적','수혜자수',(yr+1)+'년 예산','비고']); rw=5;
+  R.items.forEach(function(x){ _xlRow(s,rw++,[x.label,x.amt,x.cnt,null,'']); });
+  _xlRow(s,rw++,['대부사업',R.loanAmt,R.loanBenef,null,'']);
+  _xlRow(s,rw++,['합계',R.subAmt+R.loanAmt,R.subCnt+R.loanBenef,null,''],{bold:true});
+
+  // ⑭ 목적사업계획서 — 목적사업·대부 탭 내역
+  s=wb.addWorksheet('목적사업계획서'); _xlWidths(s,[3,20,30,18,18,14]);
+  _xlTitle(s,(yr+1)+'년도 목적사업계획서',6);
+  _xlHead(s,4,['분류','사업명',yr+'년 예산',yr+'년 집행','수혜자수']); rw=5;
+  (welf||[]).forEach(function(w){
+    _xlRow(s,rw++,[w.category||'',w.name||'',num(w.budget)||0,num(w.spent)||0,num(w.beneficiaries)||0]);
+  });
+  if(!(welf||[]).length) _xlRow(s,rw++,['—','목적사업 등록 내역 없음','','','']);
+
+  // ⑮ 기금운영계획서
+  s=wb.addWorksheet('기금운영계획서'); _xlWidths(s,[3,34,18,18]);
+  _xlTitle(s,(yr+1)+'년도 기금운영계획서',4);
+  _xlHead(s,4,['운용방법',yr+'년 말',(yr+1)+'년 계획']); rw=5;
+  [['금융회사 예입ㆍ예탁',R.run.deposit],['투자신탁 수익증권',R.run.trust],
+   ['유가증권 매입',R.run.secu],['자사주 유상증자 참여',R.run.own],
+   ['부동산투자회사 주식',R.run.reit],['기타',R.run.etc],['근로자 대부',R.run.loan],
+   ['합계',R.run.total]].forEach(function(p){ _xlRow(s,rw++,[p[0],p[1],null],{bold:p[0]==='합계'}); });
+
+  // ⑯ 기본재산총액변경
+  s=wb.addWorksheet('기본재산총액변경'); _xlWidths(s,[3,13,30,16,16,16]);
+  _xlTitle(s,'기본재산 총액 변경 내역',6);
+  _xlHead(s,4,['일자','적요','증가','감소','누계']); rw=5;
+  var run0=R.bfOpen;
+  _xlRow(s,rw++,['','전기이월',null,null,run0]);
+  R.bfList.slice().sort(function(a,b){return a.date.localeCompare(b.date);}).forEach(function(b){
+    var inc=(b.dir==='증가')?b.amount:0, dec=(b.dir==='감소')?b.amount:0;
+    run0+=inc-dec;
+    _xlRow(s,rw++,[b.date,b.memo+' ['+(BF_KINDS.filter(function(x){return x[0]===b.kind;})[0]||['','?'])[1]+']',inc||null,dec||null,run0]);
+  });
+  _xlRow(s,rw++,['','기말 기본재산 총액',R.bfInc,R.bfDec,R.bfEnd],{bold:true,fill:'FFF6F6F6'});
+  return wb;
+}
+function makeClosingWb(){
+  if(typeof ExcelJS==='undefined'){ toast('ExcelJS 로드 실패 — 새로고침 후 다시','err'); return; }
+  var fid=S.fundId, yr=S.year;
+  var t=S.txns||{}, arr=Object.keys(t).map(function(k){var o=Object.assign({},t[k]);o._id=k;return o;});
+  if(!journalOf(arr).length){ toast('승인된 분개가 없습니다 — 먼저 거래를 승인하세요','warn'); return; }
+  toast('결산서 워크북을 만드는 중…');
+  Promise.all([
+    fbDb.ref(NS+'/txns/'+fid+'/'+(yr-1)).once('value').then(function(s){var v=s.val()||{};return Object.keys(v).map(function(k){var o=Object.assign({},v[k]);o._id=k;return o;});}).catch(function(){return [];}),
+    fbDb.ref(NS+'/closing/'+fid+'/'+yr+'/report').once('value').then(function(s){return s.val()||{};}).catch(function(){return {};}),
+    _loadSites(fid).catch(function(){return [];}),
+    fbDb.ref(NS+'/welfare/'+fid+'/'+yr).once('value').then(function(s){var v=s.val()||{};return Object.keys(v).map(function(k){return v[k];});}).catch(function(){return [];})
+  ]).then(function(r){
+    var wb=buildClosingWb(fid,yr,arr,r[0],r[1],r[2],r[3]);
+    return wb.xlsx.writeBuffer();
+  }).then(function(buf){
+    var f=funds[fid]||{}, nm=(f.short_name||f.name||fid).replace(/\s+/g,'');
+    dlBuf(buf,yr+' '+nm+'-결산서+'+(yr+1)+'사업계획서.xlsx');
+    toast('결산서 워크북을 내려받았습니다');
+  }).catch(function(e){ toast('생성 실패: '+((e&&e.message)||e),'err'); });
 }
 // 장부 인쇄 — 지금 보고 있는 표를 A4 가로로 그대로
 function printLedger(kind){
