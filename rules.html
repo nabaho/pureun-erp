@@ -97,6 +97,7 @@ select,input[type=date]{font-family:inherit;font-size:13px;height:36px;padding:0
 .fitem .meta{font-size:11.5px;color:var(--sub);margin-top:4px}
 /* 목록에서 바로 결정 — 팝업을 열지 않고 처리한다 */
 .fitem{display:flex;align-items:center;gap:10px}
+.fi-no{flex:0 0 26px;align-self:stretch;display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:700;color:var(--mute);background:#f6f8fc;border-right:1px solid var(--line);border-radius:5px 0 0 5px;margin:-9px 0 -9px -12px}
 .fitem .fi-main{flex:1;min-width:0}
 .fi-act{display:flex;flex-direction:column;gap:3px;flex:0 0 auto}
 .qd{font-size:10.5px;padding:3px 8px;border-radius:6px;border:1px solid #cdd6e6;background:#fff;color:var(--sub);
@@ -422,6 +423,7 @@ table.daejo td.dj2{padding:0}
         <button class="stbtn" id="fs-clear">전체 보기</button>
       </div>
       <div id="erp-badge" style="display:none;font-size:11.5px;color:var(--sub);background:#f0fdfa;border:1px solid #99f6e4;border-radius:9px;padding:8px 12px;margin:0 16px 8px;line-height:1.6"></div>
+      <div id="dec-note" style="display:none;font-size:11.5px;color:var(--sub);background:#fffbeb;border:1px solid #fde68a;border-radius:9px;padding:7px 12px;margin:0 16px 8px;line-height:1.7"></div>
       <div class="findings" id="findings"><div class="empty">사업장을 고르고 <b>취업규칙 검토</b>를 누르세요.</div></div>
       <div class="rowbtns" style="flex-wrap:wrap;align-items:center">
         <span style="font-size:11.5px;color:var(--mute)">개정방식</span>
@@ -1350,7 +1352,7 @@ async function openFullPreview(){
   }
   box.innerHTML='<div style="background:#fff;padding:24px;max-width:820px;margin:0 auto;white-space:pre-wrap;font-size:13px;line-height:1.8;font-family:\'Noto Sans KR\',sans-serif">'+escapeH(txt)+'</div>';
 }
-let ALL_FINDINGS=[], FS_STATUS="";   // 자동 검토 결과 전체 / 요약 카드로 고른 상태 필터
+let ALL_FINDINGS=[], FS_STATUS="", FS_TODO=false;   // 검토 결과 전체 / 상태 필터 / 미결정만 보기
 /* 검토 결과 목록 렌더 — 요약 카드를 누르면 그 상태만 골라 하나씩 비교할 수 있다 */
 /* ── 목록 오른쪽 끝 빠른 결정 ──
    팝업을 열지 않고 목록에서 바로 반영·보류·제외를 고른다.
@@ -1393,7 +1395,8 @@ function quickDec(f,i){
 }
 function renderFindings(){
   const box=$("findings"); if(!box)return;
-  const shown=FS_STATUS?ALL_FINDINGS.filter(f=>f.status===FS_STATUS):ALL_FINDINGS;
+  let shown=FS_STATUS?ALL_FINDINGS.filter(f=>f.status===FS_STATUS):ALL_FINDINGS;
+  if(FS_TODO)shown=shown.filter(f=>!decisionOf(f));      // 아직 판단하지 않은 항목만
   DT_LIST=shown;
   box.innerHTML="";
   if(!ALL_FINDINGS.length){ box.innerHTML='<div class="empty">지적 사항 없음 — 적합</div>'; }
@@ -1402,7 +1405,7 @@ function renderFindings(){
     d.dataset.di=i; d.title="클릭하면 현행 조문과 개선안을 비교해 검토합니다";
     // 시행일이 있는 규칙은 상태(시행예정·수동확인 등)와 무관하게 시행일을 눈에 띄게 표시
     const eff=f.rule.effective?effMini(f.rule.effective,asofNow()):"";
-    d.innerHTML=`<div class="fi-main">
+    d.innerHTML=`<div class="fi-no">${i+1}</div><div class="fi-main">
         <div class="top"><span class="badge ${bc}">${f.status}</span><span class="name">${f.rule.id} ${f.rule.name}</span>${f.loc?`<span class="loc">@${f.loc}</span>`:""}<span class="pill">${f.rule.category}</span>${eff}<span class="dec" data-dec="${i}"></span></div>
         <div class="meta">${posHint(f)}${f.rule.law} · ${eff?escapeH(String(f.note).replace(f.rule.effective+" 시행 예정","").trim())||"시행 전 대비 검토":f.note}</div>
       </div>${quickDec(f,i)}`;
@@ -1439,6 +1442,24 @@ function renderFindings(){
   syncRevBtns();        // 개정방식 버튼 상태
 }
 function setFindingFilter(st){ FS_STATUS=(FS_STATUS===st)?"":st; renderFindings(); }
+/* 지난 검토 결정이 복원되었음을 알리고, 미결정만 보기 버튼을 노출 */
+function showDecNote(nRestored){
+  const el=$("dec-note"); if(!el)return;
+  const todo=ALL_FINDINGS.filter(f=>!decisionOf(f)).length;
+  el.style.display="";
+  el.innerHTML=`↺ 지난 검토 결정 <b>${nRestored}건</b>을 되살렸습니다 — 새로 볼 항목 <b>${todo}건</b>`
+    +` <button class="stbtn" id="dec-todo" style="margin-left:6px">${FS_TODO?"전체 보기":"미결정만 보기"}</button>`
+    +` <button class="stbtn" id="dec-reset" style="margin-left:4px" title="이 사업장의 지난 결정 기록을 지웁니다">이력 지우기</button>`;
+  const b1=$("dec-todo"), b2=$("dec-reset");
+  if(b1)b1.onclick=()=>{ FS_TODO=!FS_TODO; renderFindings(); showDecNote(nRestored); };
+  if(b2)b2.onclick=()=>{
+    if(!confirm("이 사업장의 지난 검토 결정 기록을 지웁니다.\n다음 검토부터 모든 항목을 처음부터 확인합니다."))return;
+    const sk=siteDecKey(), st=loadDecStore(); delete st[sk]; saveDecStore(st);
+    if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/decisions/"+sk).remove().catch(function(){});
+    el.style.display="none"; FS_TODO=false;
+    CUR_ITEMS.forEach(it=>{ delete it.decision; }); renderFindings();
+  };
+}
 function run(){
   const key=siteSel.value,txt=SAMPLES[key]||"";
   const arts=parseArticles(txt),size=$("size").value;
@@ -1453,7 +1474,9 @@ function run(){
   if(CUR_KEY===key)CUR_ITEMS.forEach(it=>{ if(it.orig!==""&&!it.suggested&&(it.after||"").trim()!==(it.orig||"").trim())manual[it.id]=it.after; });
   CUR_ITEMS=buildItems(res,LAST.terms,arts);CUR_KEY=key;
   Object.keys(manual).forEach(id=>{ const it=CUR_ITEMS.find(x=>x.id===id); if(it&&!it.suggested)it.after=manual[id]; });
+  const restored=restoreDecisions();   // 지난 검토에서 내린 결정(해당없음 등)을 되살린다
   renderFindings();           // 편집 모델(CUR_ITEMS)이 준비된 뒤에 그린다 — 목록의 빠른 결정 버튼이 모델을 참조한다
+  if(restored)showDecNote(restored);
   matchErpSite();            // 푸른이알피 업체 정보 자동 연동(소재지·대표자 등)
   saveWorkState();
   autoSaveArchive("검토");   // 검토 결과까지 보관함에 자동 반영
@@ -1475,10 +1498,51 @@ function itemForFinding(f){
                  : CUR_ITEMS.find(x=>x.id==="chkins_"+f.rule.id);
   return null;
 }
+/* ══════════ 검토 이력(사업장별 결정 기억) ══════════
+   같은 사업장을 다시 검토할 때 이미 판단한 항목을 처음부터 다시 보지 않게 한다.
+   규칙ID 단위로 결정(반영/보류/해당없음)을 사업장별로 보관하고 검토 실행 시 자동 복원한다.
+   특히 '해당없음'(노조 없음 → 단협 항목, 예비군 조항은 두지 않음 등)은 다음 검토에도 유지된다. */
+const DEC_KEY="pureun_rules_decisions_v1";
+function siteDecKey(){
+  if(!LAST)return "";
+  const nm=String(LAST.site||"").replace(/^[^\w가-힣(]+\s*/u,"");
+  return "site_"+fbKey(LAST.bizno||nm);
+}
+function loadDecStore(){ try{ return JSON.parse(localStorage.getItem(DEC_KEY))||{}; }catch(e){ return {}; } }
+function saveDecStore(o){ try{ localStorage.setItem(DEC_KEY,JSON.stringify(o)); }catch(e){} }
+function rememberDecision(ruleId,dec){
+  const sk=siteDecKey(); if(!sk||!ruleId)return;
+  const st=loadDecStore(); st[sk]=st[sk]||{};
+  if(dec) st[sk][ruleId]={dec:dec,at:new Date().toISOString().slice(0,10)};
+  else delete st[sk][ruleId];
+  saveDecStore(st);
+  if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/decisions/"+sk).set(st[sk]).catch(function(){});
+}
+function pastDecisions(){ const sk=siteDecKey(); return (sk&&loadDecStore()[sk])||{}; }
+/* 검토 실행 후: 지난 검토에서 내린 결정을 되살린다 */
+function restoreDecisions(){
+  const past=pastDecisions(); let n=0;
+  for(const f of ALL_FINDINGS){
+    const rec=past[f.rule.id]; if(!rec||!rec.dec)continue;
+    const it=itemForFinding(f); if(!it||it.decision)continue;
+    applyDecision(f,rec.dec,true); n++;
+  }
+  return n;
+}
+/* 로그인 시 계정에 저장된 결정 이력을 로컬과 합친다(다른 PC에서 내린 결정 이어받기) */
+function pullDecisions(){
+  if(!FBDB||!FBUSER)return;
+  FBDB.ref("rules_mgmt/decisions").once("value").then(function(s){
+    const v=s.val()||{}, st=loadDecStore();
+    Object.keys(v).forEach(function(sk){ st[sk]=Object.assign({},v[sk],st[sk]); });
+    saveDecStore(st);
+  }).catch(function(){});
+}
 function decisionOf(f){ const it=itemForFinding(f); return (it&&it.decision)||""; }
-function applyDecision(f,dec){
+function applyDecision(f,dec,fromHistory){
   const it=itemForFinding(f); if(!it)return;
   it.decision=dec;
+  if(!fromHistory) rememberDecision(f.rule.id,dec);   // 사업장별 이력에 기록
   if(dec==="반영"){
     it.del=false;
     // 항 단위 병합 — 개선안이 다루지 않는 현행 항(유산·사산휴가 등)이 사라지지 않게 한다
@@ -2787,7 +2851,7 @@ function subscribeMfix(){if(!FBDB||!FBUSER)return;
   },e=>console.warn("교정 기억 동기화 실패:",e));}
 try{if(window.firebase){firebase.initializeApp(FB_CONFIG);FBDB=firebase.database();
   firebase.auth().onAuthStateChanged(u=>{FBUSER=u;FBNAME=null;updateWho();
-    if(u){subscribeArch();subscribeMfix();resolveUserName();loadErpCompanies();
+    if(u){subscribeArch();subscribeMfix();resolveUserName();loadErpCompanies();pullDecisions();
       checkCloudWorkSession();   // 재로그인 시 계정에 남은 작업 세션 이어받기
       pushWorkToCloud(true);     // 로그인 전 로컬에만 있던 작업을 계정에 올려 다른 기기에서도 이어갈 수 있게
     }else if(FBDB)FBDB.ref("rules_mgmt/archive").off();});
