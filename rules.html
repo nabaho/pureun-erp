@@ -1260,7 +1260,7 @@ function renderArticleBoxes(arts){
     box.className="pick-art"+(AE_LABEL===a.label?" editing":"");
     box.dataset.label=a.label;
     const body=a.body.replace(RE_HEAD_STRIP,"").trim();
-    box.innerHTML=`<div class="pa-h"><b>${escapeH(a.label)}${a.title?" ("+escapeH(a.title)+")":""}</b><span class="pa-chk">✎ 수정</span></div><div class="pa-b">${escapeH(body)}</div>`;
+    box.innerHTML=`<div class="pa-h"><b>${escapeH(a.label)}${a.title?" ("+escapeH(a.title)+")":""}</b><span class="pa-chk">✎ 수정</span></div><div class="pa-b">${escapeH(breakHo(body))}</div>`;
     box.onclick=()=>openArtEdit(a);
     // 오른쪽 패널로 드래그해서 편집 열기
     box.draggable=true;
@@ -1308,7 +1308,7 @@ function renderArticlePicker(){
     const box=document.createElement("div");
     box.className="pick-art"+(PICK_SET.has(a.label)?" on":"");
     const body=a.body.replace(RE_HEAD_STRIP,"").replace(/\s+/g," ").trim();
-    box.innerHTML=`<div class="pa-h"><b>${escapeH(a.label)}${a.title?" ("+escapeH(a.title)+")":""}</b><span class="pa-chk">${PICK_SET.has(a.label)?"✓ 수정 필요":"클릭하여 선택"}</span></div><div class="pa-b">${escapeH(body.slice(0,220))}${body.length>220?"…":""}</div>`;
+    box.innerHTML=`<div class="pa-h"><b>${escapeH(a.label)}${a.title?" ("+escapeH(a.title)+")":""}</b><span class="pa-chk">${PICK_SET.has(a.label)?"✓ 수정 필요":"클릭하여 선택"}</span></div><div class="pa-b">${escapeH(breakHo(body).slice(0,220))}${body.length>220?"…":""}</div>`;
     box.onclick=()=>{
       const on=PICK_SET.has(a.label);
       if(on){PICK_SET.delete(a.label);box.classList.remove("on");}else{PICK_SET.add(a.label);box.classList.add("on");}
@@ -2055,8 +2055,20 @@ function branchPending(){
    변경 전/후를 한 덩어리로 넣으면 ①②③ 위치가 서로 어긋나 비교가 어렵다.
    같은 항끼리 같은 행에 오도록 조문을 항 단위로 쪼갠다. */
 const CIRC="①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
+/* ── 호(1. 2. 3.)·목(가. 나. 다.)을 각각 한 줄로 ──
+   한 항 안에 호가 줄줄이 이어지면 좌우 비교가 어렵다. 호 앞에 줄바꿈을 넣어 한 줄씩 읽히게 한다.
+   날짜(2026. 7. 21.)·소수(1.5)·조문 인용(제93조 제1호)은 건드리지 않는다. */
+const MOK="가나다라마바사아자차카타파하";   // 목 기호로 쓰이는 글자(가·나·다…) — 일반 한글과 구분
+function breakHo(text){
+  let t=String(text==null?"":text);
+  // 숫자 호: "N. " 앞에 줄바꿈. 단 날짜(2026. 7. 21.)처럼 '숫자.' 뒤에 오는 것은 제외
+  t=t.replace(/(?<!\d\s?\.)\s+(\d{1,2})\.\s+(?=[^\d\s])/g, "\n$1. ");
+  // 목: 가.~하. (한 글자 + 마침표)
+  t=t.replace(new RegExp("\\s+(["+MOK+"])\\.\\s+(?=[^\\s])","g"), "\n$1. ");
+  return t.replace(/\n{2,}/g,"\n");
+}
 function splitParas(text){
-  const t=String(text==null?"":text).replace(/\s+$/,"");
+  const t=breakHo(String(text==null?"":text)).replace(/\s+$/,"");
   if(!t)return [];
   // ①②③ 우선, 없으면 "1. 2. 3." 형태
   const hasCirc=new RegExp("["+CIRC+"]").test(t);
@@ -2146,7 +2158,8 @@ function daejoRowsAligned(){
   daejoRows().forEach(r=>{
     const isPlain=(r.before==="신설"||r.after==="〈삭제〉");
     const al=isPlain?null:alignParas(r.before,r.after);
-    if(!al||al.length<2){ out.push(Object.assign({},r,{span:1})); return; }
+    if(!al||al.length<2){   // 항이 하나뿐인 조문도 호·목은 한 줄씩 끊어 출력
+      out.push(Object.assign({},r,{before:breakHo(r.before),after:breakHo(r.after),span:1})); return; }
     al.forEach((p,i)=>out.push({
       label:i===0?r.label:"", kind:i===0?r.kind:"",
       before:p.b||(p.a?"〈신설〉":""), after:p.a||(p.b?"〈삭제〉":""),   // 한쪽에만 있는 항은 신설/삭제로 표기
@@ -2186,7 +2199,8 @@ function openEditor(){
    각 항이 같은 그리드 행에 오게 하면 좌우 높이가 자동으로 일치한다(박스 크기도 동일). */
 function alignedCell(it,i){
   const canEdit=!it.del, isIns=it.orig==="", isDel=it.del&&REV_MODE==="partial";
-  const bTxt=isIns?"":String(it.before||""), aTxt=isDel?"":String(it.after||"");
+  // 호(1. 2. 3.)·목(가. 나.)을 한 줄씩 끊어 좌우 비교가 쉽게 한다
+  const bTxt=isIns?"":breakHo(String(it.before||"")), aTxt=isDel?"":breakHo(String(it.after||""));
   const ed=canEdit?' contenteditable="true"':"", cls=canEdit?" editable":"";
   const al=(isIns||isDel)?null:alignParas(bTxt,aTxt);
   let g="";
@@ -2390,7 +2404,7 @@ function showRevision(){
     const d=document.createElement("div");d.className="rev-item "+(isDelP?"keep":(k==="신설"?"ins":(k==="개정"?"amd":"keep")));
     d.innerHTML=`<div class="rev-h">${k!=="유지"?`<span class="badge ${KIND_BADGE(k)}">${k}</span> `:""}<b>${escapeH(viewLabel(v))}</b>
       ${(k==="개정"&&!isDelP)?`<div class="rev-old">현행: ${escapeH(it.before)}</div>`:""}</div>
-      <div class="rev-txt">${isDelP?"삭제":(it.after?escapeH(it.after):'<span style="color:#94a3b8">(검토 후 작성)</span>')}</div>
+      <div class="rev-txt">${isDelP?"삭제":(it.after?escapeH(breakHo(it.after)):'<span style="color:#94a3b8">(검토 후 작성)</span>')}</div>
       ${(it.reason&&!isDelP)?`<div class="rev-why">근거: ${escapeH(it.reason)}</div>`:""}
       ${(it.reviewNote&&!isDelP)?`<div class="rev-why" style="color:#0f766e">💡 검토 권고: ${escapeH(it.reviewNote)}</div>`:""}`;
     body.appendChild(d);
