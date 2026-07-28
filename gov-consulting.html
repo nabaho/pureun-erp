@@ -1613,7 +1613,7 @@ async function logPhoto(action,sid,slotIdx,prevDurl){
     arr.push({
       t:new Date().toISOString(),
       action, sid, slot:slotIdx,
-      slotName: slotIdx===0?'입장':slotIdx===1?'활동':`추가 ${slotIdx-1}`,
+      slotName: sc?slotLabelText(sc,slotIdx):(slotIdx===0?'입장':slotIdx===1?'활동':`추가 ${slotIdx-1}`),
       co: co?.name||'?', ty: ty?.name||'?', round: sc?.round||0,
       who: getSession()?.name||'',
       prevThumb: thumb
@@ -1659,12 +1659,30 @@ function extraPhotoCount(sc){
   if(!(n>=0))n=0;
   return Math.min(MAX_EXTRA_PHOTOS,Math.round(n));
 }
-function totalSlotCount(sc){ return baseSlotCount(sc)+extraPhotoCount(sc); }
+// 추가 슬롯은 항상 인덱스 2부터 시작. 1장 모드에선 c1을 비워둬 촬영 모달의
+// 정적 슬롯(#pd1/#rf1, 활동용·숨김)과 ID가 충돌하지 않게 한다.
+const EXTRA_START=2;
+function totalSlotCount(sc){
+  const base=baseSlotCount(sc), extra=extraPhotoCount(sc);
+  return extra>0 ? EXTRA_START+extra : base;
+}
+// 슬롯 라벨 단일 출처
+function slotLabelText(sc,i){
+  const base=baseSlotCount(sc);
+  if(i<base)return base===1?'현장':(i===0?'입장':'활동');
+  if(i<EXTRA_START)return '미사용';
+  return '추가 '+(i-EXTRA_START+1);
+}
+function slotFileLabel(sc,i){
+  const base=baseSlotCount(sc);
+  if(i<base)return base===1?'현장사진':(i===0?'시작사진':'끝사진');
+  return '추가'+(i-EXTRA_START+1)+'사진';
+}
 // 슬롯 정의 목록: [{i,key,label,kind}]  kind: 'base'|'extra'
 function photoSlotDefs(sc){
   const base=baseSlotCount(sc), extra=extraPhotoCount(sc), defs=[];
   for(let i=0;i<base;i++)defs.push({i,key:'c'+i,okey:'o'+i,label:base===1?'📍 현장':(i===0?'📍 입장(시작)':'🔧 활동(끝)'),kind:'base'});
-  for(let j=0;j<extra;j++){const i=base+j;defs.push({i,key:'c'+i,okey:'o'+i,label:`🖼️ 추가 ${j+1}`,kind:'extra'});}
+  for(let j=0;j<extra;j++){const i=EXTRA_START+j;defs.push({i,key:'c'+i,okey:'o'+i,label:`🖼️ 추가 ${j+1}`,kind:'extra'});}
   return defs;
 }
 function schedHasPhoto(sid){ const p=PHOTOS[sid]; if(!p)return false; for(const k in p){ if(/^c\d+$/.test(k)&&p[k])return true; } return false; }
@@ -1685,7 +1703,8 @@ function renderPhotoGal(){
     const slotArr=[];
     for(let i=0;i<maxI;i++){
       const isBase=i<base;
-      const lbl=isBase?(base===1?'현장':(i===0?'입장':'활동')):`추가 ${i-base+1}`;
+      if(!isBase&&i<EXTRA_START&&!p['c'+i])continue; // 1장 모드의 비어있는 미사용 슬롯은 숨김
+      const lbl=slotLabelText(sc,i);
       const col=i===0?'var(--accent)':(i===1&&isBase?'#b37700':'var(--t2)');
       const bg=i===0?'rgba(21,101,192,.12)':(i===1&&isBase?'rgba(255,159,28,.16)':'var(--sf2)');
       slotArr.push(['c'+i,lbl,col,bg]);
@@ -1734,12 +1753,12 @@ async function galZip(){
   const zip=new JSZip();
   scheds.forEach(sc=>{
     const co=cos.find(c=>c.id===sc.coId), ty=types.find(t=>t.id===sc.typeId), att=staff.find(a=>a.id===sc.attId);
-    const p=PHOTOS[sc.id]||{}, base=baseSlotCount(sc);
+    const p=PHOTOS[sc.id]||{};
+    const ph=schedPhase(sc)==='pre'?'사전진단':'';
     Object.keys(p).filter(k=>/^c\d+$/.test(k)&&p[k]).sort((a,b)=>+a.slice(1)-+b.slice(1)).forEach(k=>{
       const i=+k.slice(1);
-      const lbl=i<base?(base===1?'현장사진':(i===0?'시작사진':'끝사진')):`추가${i-base+1}사진`;
       const b64=p[k].toDataURL('image/jpeg',.92).split(',')[1];
-      zip.file(`${date}_${co?.name||'사업장'}_${ty?.name||'컨설팅'}_${sc.round||0}회_${lbl}.jpg`,b64,{base64:true});
+      zip.file(`${date}_${co?.name||'사업장'}_${ty?.name||'컨설팅'}_${ph}${sc.round||0}회_${slotFileLabel(sc,i)}.jpg`,b64,{base64:true});
     });
   });
   const blob=await zip.generateAsync({type:'blob'});
@@ -1767,11 +1786,7 @@ function renderPhotoLog(){
   }).join('');
 }
 // 일정 수정창: 저장된 타임스탬프 사진(합성본+원본) 미리보기 — 캐시 없으면 DB에서 직접 로드
-function slotLabelByIdx(sc,i){
-  const base=baseSlotCount(sc);
-  if(i<base)return base===1?'현장':(i===0?'입장(시작)':'활동(끝)');
-  return `추가 ${i-base+1}`;
-}
+function slotLabelByIdx(sc,i){ return slotLabelText(sc,i); }
 function renderEditPhotos(sid,sc){
   const phDiv=q('#mEditPhotos'); if(!phDiv)return;
   const layout=phDiv.closest('.edit-layout');
@@ -1802,14 +1817,18 @@ function renderEditPhotos(sid,sc){
   }
   const grid=q('#mEditPhGrid'); if(!grid)return;
   grid.innerHTML='';
+  // 렌더 토큰: 개수를 빠르게 바꾸면 이전 비동기 루프가 현재 목록에 카드를 덧붙여
+  // 중복 표시되던 문제 방지 — 최신 호출만 DOM에 반영한다.
+  const myToken=++_editPhRenderToken;
   (async()=>{
     for(const d of defs){
+      if(myToken!==_editPhRenderToken)return; // 더 최신 렌더가 시작됨 → 중단
       let stamped=null;
       const cv=PHOTOS[sid]&&PHOTOS[sid][d.key];
       if(cv){try{stamped=cv.toDataURL('image/jpeg',.6);}catch(e){}}
       if(!stamped)stamped=await getPhotoFromDB(sid,d.key);
       const orig=await getPhotoFromDB(sid,d.okey);
-      const fn=`${tyNm}_${co?.name||'사업장'}_${sc?.round||'N'}회_${d.label.replace(/[^가-힣0-9]/g,'')}.jpg`.replace(/'/g,'');
+      const fn=`${tyNm}_${co?.name||'사업장'}_${schedPhase(sc)==='pre'?'사전진단':''}${sc?.round||'N'}회_${slotFileLabel(sc,d.i)}.jpg`.replace(/'/g,'');
       const cell=document.createElement('div');
       if(stamped){
         let h=`<div class="edit-photo-card"><div class="edit-photo-label">${d.label}</div>`;
@@ -1830,22 +1849,36 @@ function renderEditPhotos(sid,sc){
       } else if(d.kind==='base'){
         cell.innerHTML=`<div class="edit-photo-card" style="opacity:.75;"><div class="edit-photo-label">${d.label}</div><div class="edit-photo-empty">미등록<br><span style="font-size:9px;">촬영은 '📷 사진 등록'</span></div></div>`;
       } else { continue; }
+      if(myToken!==_editPhRenderToken)return; // 붙이기 직전 재확인
       grid.appendChild(cell);
     }
   })();
 }
+let _editPhRenderToken=0;
 // 추가 사진 개수 조절 (스테퍼)
 function stepExtraPhotos(sid,delta){
   const sc=getScheds().find(s=>s.id===sid); if(!sc)return;
   if(!canEdit(sc)){toast('본인 컨설팅만 변경할 수 있습니다','err');return;}
-  const base=baseSlotCount(sc), cur=extraPhotoCount(sc);
+  const cur=extraPhotoCount(sc);
   let next=Math.min(MAX_EXTRA_PHOTOS,Math.max(0,cur+delta));
   if(next===cur)return;
-  // 줄일 때: 사라질 슬롯에 사진이 있으면 막기(오폰 방지)
-  if(next<cur){
-    for(let i=base+next;i<base+cur;i++){ if(PHOTOS[sid]&&PHOTOS[sid]['c'+i]){toast(`먼저 '추가 ${i-base+1}' 사진을 삭제하세요`,'err');return;} }
-  }
   const whole=q('#mEditPhWhole')?.checked;
+  // 줄일 때: 사라질 슬롯에 사진이 있으면 막기 (사진이 관리 불가 상태로 남는 것 방지)
+  // '이 컨설팅 전체 적용'이면 같은 사업장·종류의 다른 회차까지 모두 확인한다.
+  if(next<cur){
+    const targets=whole
+      ? getScheds().filter(s=>s.coId===sc.coId&&s.typeId===sc.typeId)
+      : [sc];
+    for(const tsc of targets){
+      const p=PHOTOS[tsc.id]; if(!p)continue;
+      for(let i=EXTRA_START+next;i<EXTRA_START+cur;i++){
+        if(p['c'+i]){
+          const who=(tsc.id===sid)?'':`${tsc.round||0}회차의 `;
+          toast(`먼저 ${who}'추가 ${i-EXTRA_START+1}' 사진을 삭제하세요`,'err');return;
+        }
+      }
+    }
+  }
   if(whole){
     const cos=getCos(); const idx=cos.findIndex(c=>c.id===sc.coId);
     if(idx>=0){ if(!cos[idx].extraPhotos)cos[idx].extraPhotos={}; cos[idx].extraPhotos[sc.typeId]=next; setCos(cos); }
@@ -2042,11 +2075,12 @@ function buildNotifications(){
       const t=types.find(x=>x.id===tid);if(!t)return;
       const dl=co.deadlines?.[tid];
       const done=getScheds().filter(s=>s.coId===co.id&&s.typeId===tid);
-      const fieldDone=done.filter(s=>s.isField).length;
       const mf=getCoMandatory(co.id,tid);
       const maxR=getCoMaxRounds(co.id,tid);
-      // 본컨설팅 진척(사전진단 제외) — 회차 대비 진행/페이스 판정용
-      const progCnt=mainPhaseScheds(done,tid).length;
+      // 본컨설팅 기준(사전진단 제외) — 진척·의무방문 판정을 종료확인과 일치시킴
+      const mainDoneList=mainPhaseScheds(done,tid);
+      const progCnt=mainDoneList.length;
+      const fieldDone=mainDoneList.filter(s=>s.isField).length;
       if(dl){
         const diff=Math.round((new Date(dl)-new Date(today))/(864e5));
         if(diff>=0&&diff<=warnDays){
@@ -2121,11 +2155,12 @@ function renderSummaryBar(){
       if(dl){const diff=Math.round((new Date(dl)-new Date(today))/(864e5));if(diff>=0&&diff<=14)warn++;}
       const mf=getCoMandatory(co.id,tid);
       const maxR=getCoMaxRounds(co.id,tid);
-      let lacking=(mf>0&&sc.filter(s=>s.isField).length<mf);
+      const mainList=mainPhaseScheds(sc,tid); // 본컨설팅 기준(사전진단 제외)
+      let lacking=(mf>0&&mainList.filter(s=>s.isField).length<mf);
       // 회차 진척 부족: 마감 30일 내 남은 회차를 주당 1회 초과로 몰아야 하면 부족으로 집계
       if(dl&&maxR>0&&!lacking){
         const diff=Math.round((new Date(dl)-new Date(today))/(864e5));
-        const remain=maxR-mainPhaseScheds(sc,tid).length;
+        const remain=maxR-mainList.length;
         if(diff>=0&&diff<=30&&remain>0){
           const weeksLeft=Math.max(1,Math.ceil((diff+1)/7));
           if(remain/weeksLeft>1 || (diff<=14&&remain>=2))lacking=true;
@@ -2256,7 +2291,10 @@ function pickSingleDate(ds){
 }
 function calcMultiRounds(){
   // 기존 일정 날짜 + picks 날짜를 합쳐 날짜순 정렬 → 각 picks의 회차 산출
-  const exist=getScheds().filter(s=>s.coId===single.coId&&s.typeId===single.typeId).map(s=>s.date);
+  // 단계(사전진단/본컨설팅)가 있는 컨설팅은 '현재 단계' 일정만 기준으로 계산해야
+  // 미리보기 회차와 실제 저장 회차가 일치한다.
+  const _ph=curPhase(single.coId,single.typeId);
+  const exist=getScheds().filter(s=>s.coId===single.coId&&s.typeId===single.typeId&&schedPhase(s)===_ph).map(s=>s.date);
   const all=[...exist,...single.picks.map(p=>p.date)].sort((a,b)=>a<b?-1:1);
   const map={};
   single.picks.forEach(pk=>{ map[pk.date]=all.indexOf(pk.date)+1; });
@@ -4730,15 +4768,23 @@ async function simpleStampFile(sid,slotIdx,file,t){
   const origDurl=await new Promise(res=>{const r=new FileReader();r.onload=e=>res(e.target.result);r.onerror=()=>res(null);r.readAsDataURL(file);});
   if(!origDurl){toast('사진을 읽을 수 없습니다','err');return false;}
   const img=new Image();
-  await new Promise(res=>{img.onload=res;img.onerror=res;img.src=origDurl;});
+  const okImg=await new Promise(res=>{img.onload=()=>res(true);img.onerror=()=>res(false);img.src=origDurl;});
+  // 손상 파일·미지원 형식(HEIC 등)은 여기서 중단 — 진행하면 크기 0으로 합성이 깨짐
+  if(!okImg||!(img.naturalWidth>0)||!(img.naturalHeight>0)){
+    toast('이 형식의 사진은 열 수 없습니다 (JPG·PNG로 변환 후 등록해주세요)','err');return false;
+  }
   try{ if(document.fonts){ await Promise.all([document.fonts.load("900 16px 'Noto Sans KR'"),document.fonts.load("16px 'LogoCasual'")]); } }catch(e){}
-  const cv=simpleStampCanvas(img,ds,t||{h:10,m:0},'bottom-left');
+  let cv;
+  try{ cv=simpleStampCanvas(img,ds,t||{h:10,m:0},'bottom-left'); }
+  catch(e){ console.warn('간편 도장 합성 실패',e); toast('사진 합성에 실패했습니다','err'); return false; }
   const key='c'+slotIdx, okey='o'+slotIdx;
   const prev=await getPhotoFromDB(sid,key);
   if(!PHOTOS[sid])PHOTOS[sid]={};
   PHOTOS[sid][key]=cv;
   await savePhotoToDB(sid,key,cv.toDataURL('image/jpeg',.92));
   await savePhotoToDB(sid,okey,origDurl);
+  // 중복 사진 지문 등록 (촬영 모달 경로와 동일하게 — 다른 회차 재사용 시 경고되도록)
+  try{ const h=await hashDataUrl(origDurl); if(h)addPhotoHash(h,sc); }catch(e){}
   logPhoto(prev?'replace':'add', sid, slotIdx, prev);
   return true;
 }
@@ -4779,7 +4825,7 @@ function openStampModal(sid){
   // 사진 1장 모드: 유형에 '사진 1장' 켜짐 OR 이름/기관에 '비즈니스지원단' 포함 → 시작(c0) 한 장만
   ST.single=!!(ty&&ty.onePhoto)||tn.includes('비즈니스지원단');
   // 총 슬롯 수: 단일 1장, 그 외 입장·활동(2) + 추가 N
-  const n=ST.single?1:totalSlotCount(sc);
+  const n=totalSlotCount(sc); // 1장 모드도 추가 슬롯이 있으면 그만큼 확장 (c1은 미사용)
   ST.n=n;
   ST.photos=Array(n).fill(null);ST.times=Array(n).fill(null);ST.done=Array(n).fill(false);
   ST.pHash=Array(n).fill(null);ST.pDurl=Array(n).fill(null);
@@ -4904,7 +4950,10 @@ function renderPDs(){
   if(!ST.view)ST.view=[{ox:.5,oy:.5,z:1},{ox:.5,oy:.5,z:1}];
   const _n=ST.n||(ST.single?1:2);
   for(let i=0;i<_n;i++){
-    const d=q(`#pd${i}`);if(!d)continue;const lbl=ST.single?'📷 사진':(i===0?'📍 입장':i===1?'🔧 활동':'🖼️ 추가 '+(i-1));
+    const _sc=getScheds().find(s=>s.id===ST.sid);
+    if(ST.single&&i>=1&&i<EXTRA_START)continue;             // 1장 모드의 미사용 슬롯 건너뜀
+    const d=q(`#pd${i}`);if(!d)continue;
+    const lbl=(i===0?(ST.single?'📷 사진':'📍 입장'):i===1?'🔧 활동':'🖼️ ')+(i>=EXTRA_START?slotLabelText(_sc,i):'');
     if(ST.photos[i]){
       d.classList.add('filled');
       d.onclick=null;
@@ -4941,22 +4990,36 @@ function drawPdPreview(idx){
   ctx.drawImage(img,dx,dy,dw,dh);
 }
 // 업로드 칸 편집: 끌기 이동 + 휠/슬라이더 줌. 조정 시 합성본도 다시 그림
+// 사진 끌기: window 리스너를 슬롯마다 새로 붙이면 누적되므로 전역에서 1회만 등록하고
+// 현재 끌고 있는 대상만 _phDrag에 담아 처리한다.
+let _phDrag=null;
+(function bindGlobalPhotoDrag(){
+  const canvasOf=d=>q(d.kind==='pd'?`#pdcv${d.idx}`:`#cv${d.idx}`);
+  window.addEventListener('mousemove',e=>{
+    if(!_phDrag)return;
+    const cv=canvasOf(_phDrag); if(!cv){_phDrag=null;return;}
+    if(!ST.view||!ST.view[_phDrag.idx])return;
+    const rect=cv.getBoundingClientRect(), v=ST.view[_phDrag.idx];
+    v.ox=Math.min(1,Math.max(0,v.ox-(e.clientX-_phDrag.lx)/rect.width/(v.z||1)));
+    v.oy=Math.min(1,Math.max(0,v.oy-(e.clientY-_phDrag.ly)/rect.height/(v.z||1)));
+    _phDrag.lx=e.clientX;_phDrag.ly=e.clientY;
+    const i=_phDrag.idx;
+    if(_phDrag.kind==='pd'){ drawPdPreview(i); if(ST.done[i]&&ST.times[i])drawStamp(i); }
+    else if(ST.done[i]&&ST.photos[i]&&ST.times[i])drawStamp(i);
+  });
+  window.addEventListener('mouseup',()=>{
+    if(!_phDrag)return;
+    const cv=canvasOf(_phDrag); if(cv)cv.style.cursor='grab';
+    _phDrag=null;
+  });
+})();
 function attachPdAdjust(idx){
   const cv=q(`#pdcv${idx}`); if(!cv)return;
   if(!ST.view[idx])ST.view[idx]={ox:.5,oy:.5,z:1};
   cv.style.cursor='grab';
-  let dragging=false,lx=0,ly=0,moved=false;
   const sync=()=>{ drawPdPreview(idx); if(ST.done[idx]&&ST.times[idx])drawStamp(idx); };
   cv.onclick=e=>{e.preventDefault();e.stopPropagation();};
-  cv.onmousedown=e=>{dragging=true;moved=false;lx=e.clientX;ly=e.clientY;cv.style.cursor='grabbing';e.preventDefault();e.stopPropagation();};
-  window.addEventListener('mousemove',e=>{
-    if(!dragging)return; moved=true;
-    const rect=cv.getBoundingClientRect(),v=ST.view[idx];
-    v.ox=Math.min(1,Math.max(0,v.ox-(e.clientX-lx)/rect.width/(v.z||1)));
-    v.oy=Math.min(1,Math.max(0,v.oy-(e.clientY-ly)/rect.height/(v.z||1)));
-    lx=e.clientX;ly=e.clientY; sync();
-  });
-  window.addEventListener('mouseup',()=>{if(dragging){dragging=false;cv.style.cursor='grab';}});
+  cv.onmousedown=e=>{_phDrag={idx,kind:'pd',lx:e.clientX,ly:e.clientY};cv.style.cursor='grabbing';e.preventDefault();e.stopPropagation();};
   cv.onwheel=e=>{e.preventDefault();const v=ST.view[idx];v.z=Math.min(4,Math.max(1,(v.z||1)*(e.deltaY<0?1.1:0.9)));const zi=q(`#pdzoom${idx}`);if(zi)zi.value=Math.round(v.z*100);sync();};
   const zoom=q(`#pdzoom${idx}`);
   if(zoom){
@@ -4964,24 +5027,27 @@ function attachPdAdjust(idx){
     zoom.onmousedown=e=>e.stopPropagation();
     zoom.oninput=e=>{e.stopPropagation();ST.view[idx].z=(+e.target.value)/100;sync();};
   }
-  // 터치(모바일) 끌기
-  cv.ontouchstart=e=>{if(e.touches.length===1){dragging=true;lx=e.touches[0].clientX;ly=e.touches[0].clientY;}};
+  // 터치(모바일) 끌기 — 요소 핸들러라 재할당되므로 누적되지 않음
+  let tDrag=false,tx=0,ty=0;
+  cv.ontouchstart=e=>{if(e.touches.length===1){tDrag=true;tx=e.touches[0].clientX;ty=e.touches[0].clientY;}};
   cv.ontouchmove=e=>{
-    if(!dragging||e.touches.length!==1)return; e.preventDefault();
+    if(!tDrag||e.touches.length!==1)return; e.preventDefault();
     const rect=cv.getBoundingClientRect(),v=ST.view[idx];
-    v.ox=Math.min(1,Math.max(0,v.ox-(e.touches[0].clientX-lx)/rect.width/(v.z||1)));
-    v.oy=Math.min(1,Math.max(0,v.oy-(e.touches[0].clientY-ly)/rect.height/(v.z||1)));
-    lx=e.touches[0].clientX;ly=e.touches[0].clientY; sync();
+    v.ox=Math.min(1,Math.max(0,v.ox-(e.touches[0].clientX-tx)/rect.width/(v.z||1)));
+    v.oy=Math.min(1,Math.max(0,v.oy-(e.touches[0].clientY-ty)/rect.height/(v.z||1)));
+    tx=e.touches[0].clientX;ty=e.touches[0].clientY; sync();
   };
-  cv.ontouchend=()=>{dragging=false;};
+  cv.ontouchend=()=>{tDrag=false;};
 }
 
 function renderRFs(){
   const _n=ST.n||(ST.single?1:2);
   for(let i=0;i<_n;i++){
+    if(ST.single&&i>=1&&i<EXTRA_START)continue;             // 1장 모드의 미사용 슬롯 건너뜀
     const r=q(`#rf${i}`);if(!r)continue;
+    const _sc=getScheds().find(s=>s.id===ST.sid);
     if(ST.done[i]){
-      r.innerHTML=`<span class="rtag">${ST.single?'사진':(i===0?'입장':i===1?'활동':'추가 '+(i-1))} ✓</span>
+      r.innerHTML=`<span class="rtag">${slotLabelText(_sc,i)} ✓</span>
         <button class="rf-save" data-ri="${i}" title="저장">💾</button>
         <button class="rf-redo" data-ri="${i}" title="다시 등록">🔄</button>
         <button class="rf-del" data-ri="${i}" title="삭제">✕</button>
@@ -5003,7 +5069,8 @@ function renderRFs(){
         const sc=getScheds().find(s=>s.id===ST.sid);
         const co=getCos().find(c=>c.id===sc?.coId);
         const tyNm=getTypes().find(t=>t.id===sc?.typeId)?.name||'컨설팅';
-        const fn=`${tyNm}_${co?.name||'?'}_${sc?.round||'N'}회_${ri===0?'시작사진':ri===1?'끝사진':'추가'+(ri-1)+'사진'}.jpg`;
+        const ph=schedPhase(sc)==='pre'?'사전진단':'';
+        const fn=`${tyNm}_${co?.name||'?'}_${ph}${sc?.round||'N'}회_${slotFileLabel(sc,ri)}.jpg`;
         await saveCanvasAs(cv,fn);
         renderCal();
       };
@@ -5015,7 +5082,7 @@ function renderRFs(){
         ST.photos[ri]=null;ST.done[ri]=false;ST.times[ri]=null;
         if(PHOTOS[ST.sid])PHOTOS[ST.sid][`c${ri}`]=null;
         deleteOnePhotoFromDB(ST.sid,`c${ri}`);
-        renderPDs();renderRFs();renderCal();toast(`${ri===0?'입장':ri===1?'활동':'추가 '+(ri-1)} 사진 삭제`);
+        renderPDs();renderRFs();renderCal();toast(`${slotLabelText(getScheds().find(s=>s.id===ST.sid),ri)} 사진 삭제`);
       };
       // 다시 등록: 사진만 새로 선택 (시각 유지)
       r.querySelector('.rf-redo').onclick=e=>{
@@ -5096,19 +5163,9 @@ function attachPhotoAdjust(idx){
   if(!ST.view)ST.view=[{ox:.5,oy:.5,z:1},{ox:.5,oy:.5,z:1}];
   if(!ST.view[idx])ST.view[idx]={ox:.5,oy:.5,z:1};
   cv.style.cursor='grab'; cv.title='끌어서 위치 이동 · 휠로 확대/축소';
-  let dragging=false,lx=0,ly=0;
   const redraw=()=>{ if(ST.done[idx]&&ST.photos[idx]&&ST.times[idx])drawStamp(idx); };
-  cv.onmousedown=e=>{ dragging=true;lx=e.clientX;ly=e.clientY;cv.style.cursor='grabbing';e.preventDefault(); };
-  window.addEventListener('mousemove',e=>{
-    if(!dragging)return;
-    const rect=cv.getBoundingClientRect();
-    const v=ST.view[idx];
-    // 화면 이동량 → 이미지 중심비율 변화 (보이는 폭 대비)
-    v.ox=Math.min(1,Math.max(0, v.ox - (e.clientX-lx)/rect.width/(v.z||1) ));
-    v.oy=Math.min(1,Math.max(0, v.oy - (e.clientY-ly)/rect.height/(v.z||1) ));
-    lx=e.clientX;ly=e.clientY; redraw();
-  });
-  window.addEventListener('mouseup',()=>{ if(dragging){dragging=false;cv.style.cursor='grab';} });
+  // 끌기 처리는 전역 리스너(_phDrag)가 담당 — 슬롯마다 window 리스너를 붙이지 않음
+  cv.onmousedown=e=>{ _phDrag={idx,kind:'rf',lx:e.clientX,ly:e.clientY};cv.style.cursor='grabbing';e.preventDefault(); };
   cv.onwheel=e=>{
     e.preventDefault();
     const v=ST.view[idx];
@@ -5255,8 +5312,8 @@ async function saveStamp(){
   const sc=getScheds().find(s=>s.id===ST.sid);
   const co=getCos().find(c=>c.id===sc?.coId);
   const tyNm=getTypes().find(t=>t.id===sc?.typeId)?.name||'컨설팅';
-  const slug=`${tyNm}_${co?.name||'?'}_${sc?.round||'N'}회`;
-  const lblFn=i=>i===0?'시작사진':i===1?'끝사진':'추가'+(i-1)+'사진';
+  const slug=`${tyNm}_${co?.name||'?'}_${schedPhase(sc)==='pre'?'사전진단':''}${sc?.round||'N'}회`;
+  const lblFn=i=>slotFileLabel(sc,i);
   if(!PHOTOS[ST.sid])PHOTOS[ST.sid]={};
   // 1) 앱 내부 저장 (IndexedDB) — 합성 결과 + 원본 모두 저장, 지문 등록 + 이력
   for(let i=0;i<N;i++){
@@ -5289,12 +5346,13 @@ async function exportZip(){
     const co=sc?cos.find(c=>c.id===sc.coId):null;
     const ty=sc?types.find(t=>t.id===sc.typeId):null;
     const sub=zip.folder(`${co?.name||'사업장'}_${ty?.name||'컨설팅'}`);
-    const p=PHOTOS[sid]||{}, base=baseSlotCount(sc);
+    const p=PHOTOS[sid]||{};
+    // 단계(사전진단/본컨설팅)를 파일명에 포함 — 같은 회차 번호끼리 덮어써 사진이 사라지던 문제 방지
+    const ph=schedPhase(sc)==='pre'?'사전진단':'';
     Object.keys(p).filter(k=>/^c\d+$/.test(k)&&p[k]).sort((a,b)=>+a.slice(1)-+b.slice(1)).forEach(k=>{
       const i=+k.slice(1);
-      const lbl=i<base?(base===1?'현장사진':(i===0?'시작사진':'끝사진')):`추가${i-base+1}사진`;
       const b64=p[k].toDataURL('image/jpeg',.92).split(',')[1];
-      sub.file(`${ty?.name||'컨설팅'}_${co?.name||'?'}_${sc?.round||0}회_${lbl}.jpg`,b64,{base64:true});
+      sub.file(`${ty?.name||'컨설팅'}_${co?.name||'?'}_${ph}${sc?.round||0}회_${slotFileLabel(sc,i)}.jpg`,b64,{base64:true});
     });
   });
   const blob=await zip.generateAsync({type:'blob'});
