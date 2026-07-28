@@ -986,27 +986,66 @@ function cycleStatus(id){
 /* ── 업무 종료 ── 푸른이알피에서 가져온 건이면 그쪽 사건도 함께 종료할지 묻는다 */
 var PE_KIND={contract:'계약',case:'사건',consulting:'컨설팅',fund:'기금',other:'기타사업'};
 function peLinked(it){ return !!(it&&it.src==='puerp'&&it.ref&&it.ref.type&&it.ref.id); }
+/* 종료 = 암묵지를 건질 마지막 기회. 기억이 가장 선명한 시점이므로 회고 3문항을
+   여기에 둔다(선택). 종료 후 AI가 기록·노트·회고를 읽어 지식 카드 후보를 뽑는다. */
+var RETRO_FIELDS=[
+  ['diff','다시 한다면 무엇을 다르게 하겠습니까','예: 처음부터 임금대장 원본을 요구했어야 했다'],
+  ['unexp','예상하지 못한 것은 무엇이었습니까','예: 감독관이 서면 대신 대면 조사를 요구했다'],
+  ['pass','다음 사람이 꼭 알아야 할 것','예: 이 업체는 대표 결재가 있어야 자료가 나온다']
+];
 function completeItem(id){
   var it=items[id]; if(!it)return;
   var head='「'+(it.company||it.client||'')+' — '+(it.title||'')+'」';
-  if(!peLinked(it)){
-    confirmM(head+'\n종료 처리하고 보관함으로 옮길까요?',{ok:'업무 종료'}).then(function(ok){
-      if(!ok){ route(); return; } doComplete(id,false);
-    });
-    return;
-  }
-  var kind=PE_KIND[it.ref.type]||it.ref.type;
+  var linked=peLinked(it), kind=linked?(PE_KIND[it.ref.type]||it.ref.type):'';
+  var r=(it.ho_note&&it.ho_note.retro)||{};
   showModal('<h2 style="margin:0 0 8px">✓ 업무 종료</h2>'
     +'<p style="font-size:13px;margin:0 0 4px"><b>'+esc(head)+'</b></p>'
     +'<p class="muted" style="font-size:12.5px;margin:0 0 12px">종료하면 보관함으로 옮겨지고, 기록과 인수인계 노트는 그대로 남습니다.</p>'
-    +'<label style="display:flex;gap:8px;align-items:flex-start;background:var(--acc-soft);border:1px solid #c7d7fe;border-radius:9px;padding:10px 12px;font-size:12.5px;cursor:pointer">'
-    +'<input type="checkbox" id="cl-pe" checked style="margin-top:3px">'
-    +'<span>푸른이알피의 <b>'+esc(kind)+(it.no?' '+esc(it.no):'')+'</b>와 <b>양방향 동기화</b>'
-    +'<div class="muted" style="font-size:11px;margin-top:3px">누군가 푸른이알피 <b>나의 업무</b>를 열 때 맞춰집니다. '
-    +'어느 쪽에서 종료·재개해도 반대쪽이 따라오고, 이미 같은 상태면 아무것도 바꾸지 않습니다. '
-    +'체크를 풀면 이 업무는 앞으로 푸른이알피와 연동하지 않습니다.</div></span></label>'
+    +(linked
+      ?'<label style="display:flex;gap:8px;align-items:flex-start;background:var(--acc-soft);border:1px solid #c7d7fe;border-radius:9px;padding:10px 12px;font-size:12.5px;cursor:pointer">'
+        +'<input type="checkbox" id="cl-pe" checked style="margin-top:3px">'
+        +'<span>푸른이알피의 <b>'+esc(kind)+(it.no?' '+esc(it.no):'')+'</b>와 <b>양방향 동기화</b>'
+        +'<div class="muted" style="font-size:11px;margin-top:3px">누군가 푸른이알피 <b>나의 업무</b>를 열 때 맞춰집니다. '
+        +'어느 쪽에서 종료·재개해도 반대쪽이 따라오고, 이미 같은 상태면 아무것도 바꾸지 않습니다. '
+        +'체크를 풀면 이 업무는 앞으로 푸른이알피와 연동하지 않습니다.</div></span></label>'
+      :'')
+    +'<div class="dbox" style="margin:12px 0 0"><div class="bh">🧠 마무리 회고'
+    +'<span class="r">선택 — 지금이 기억이 가장 선명합니다</span></div><div class="bb">'
+    +RETRO_FIELDS.map(function(f){
+        return '<div><label style="font-size:11px;font-weight:700;color:var(--sub)">'+esc(f[1])+'</label>'
+          +'<textarea id="rt-'+f[0]+'" rows="2" placeholder="'+esc(f[2])+'" '
+          +'style="width:100%;box-sizing:border-box;padding:6px 9px;border:1px solid var(--line);border-radius:7px;font-size:12.5px;font-family:inherit;margin-top:3px">'
+          +esc(r[f[0]]||'')+'</textarea></div>';
+      }).join('')
+    +'<div class="muted" style="font-size:10.5px">비워 두고 종료해도 됩니다. 적으면 이 내용에서 '
+    +'<b>지식 카드</b>를 뽑아 다음에 같은 업체·감독관·유형을 만날 때 따라옵니다.</div>'
+    +'</div></div>'
     +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM();route()">취소</button>'
-    +'<button class="primary" onclick="doComplete(\''+escJ(id)+'\',$(\'cl-pe\').checked)">업무 종료</button></div>');
+    +'<button class="primary" onclick="doCompleteWithRetro(\''+escJ(id)+'\','+(linked?'1':'0')+')">업무 종료</button></div>');
+}
+// 회고를 먼저 저장한 뒤 종료하고, AI가 붙어 있으면 지식 수확을 제안한다
+function doCompleteWithRetro(id,linked){
+  var r={}, any=false;
+  RETRO_FIELDS.forEach(function(f){
+    var el=$('rt-'+f[0]); var v=el?el.value.trim():'';
+    r[f[0]]=v; if(v) any=true;
+  });
+  var alsoPe=linked?!!(($('cl-pe')||{}).checked):false;
+  var pre=Promise.resolve(true);
+  if(any){
+    // 기존 노트에 병합 — AI 인터뷰 답변(qa) 등이 지워지지 않도록
+    var note=Object.assign({},(items[id]&&items[id].ho_note)||{});
+    note.retro=Object.assign({},note.retro||{},r,
+      {by:(S.me&&S.me.sid)||'',byName:(S.me&&S.me.name)||'',at:todayStr()});
+    pre=patchItem(id,{ho_note:note});
+  }
+  pre.then(function(ok){
+    if(!ok) return;
+    return doComplete(id,linked?alsoPe:undefined).then(function(){
+      if(aiProxyUrl()&&(any||Object.keys(itemLogsCache[id]||{}).length||noteDone(items[id]||{})))
+        setTimeout(function(){ kbHarvest(id); },500);
+    });
+  });
 }
 // 종료/재개는 양방향 동기화 대상. state_at 이 "이 쪽에서 마지막으로 바뀐 시각"이고,
 // 푸른이알피가 나의 업무를 열 때 work_erp/pesync 스냅샷과 비교해 변한 쪽을 반대편에 반영한다.
@@ -1181,6 +1220,22 @@ function renderDrawer(){
           +'title="이 내용을 사람·업체·유형에 붙여 다음에도 쓰기">↗ 지식으로</span>':'')
         +'</label><textarea id="hn-'+f[0]+'" placeholder="'+esc(f[2])+'" rows="2" onchange="saveHoNote(\''+id+'\')">'+esc(v)+'</textarea></div>';
     });
+    // 마무리 회고 — 종료 모달에서 받지만, 이후에도 여기서 고치고 승격할 수 있게 노출
+    var rt=n3.retro||{};
+    h+='<div><label style="color:#7c5bb0">🧠 마무리 회고'
+      +(rt.at?' <span class="muted" style="font-weight:400">· '+esc(rt.at)+(rt.byName?' '+esc(rt.byName):'')+'</span>':'')
+      +'</label></div>';
+    RETRO_FIELDS.forEach(function(f){
+      var v=rt[f[0]]||'';
+      h+='<div><label>'+esc(f[1])
+        +(v.trim()?'<span class="prm" onclick="kbPromote(\''+escJ(id)+'\',$(\'rt2-'+f[0]+'\').value,\'마무리 회고\')" '
+          +'title="이 내용을 사람·업체·유형에 붙여 다음에도 쓰기">↗ 지식으로</span>':'')
+        +'</label><textarea id="rt2-'+f[0]+'" placeholder="'+esc(f[2])+'" rows="2" onchange="saveRetro(\''+escJ(id)+'\')">'+esc(v)+'</textarea></div>';
+    });
+    if(aiProxyUrl()){
+      h+='<div class="aibar" style="margin-top:2px"><button class="aibtn" onclick="kbHarvest(\''+escJ(id)+'\')">📚 지식 뽑기</button>'
+        +'<span class="muted" style="font-size:10.5px;align-self:center">기록·노트·회고에서 다음에도 쓸 지식을 골라 카드로 제안합니다</span></div>';
+    }
     if((n3.qa||[]).length){
       h+='<div><label>🎤 인터뷰 답변</label>';
       n3.qa.forEach(function(p){
@@ -1303,6 +1358,15 @@ function confirmHo(id){
     toast('📥 인수 확인 완료'); renderDrawer(); route();
   });
 }
+function saveRetro(id){
+  // ho_note 안의 retro만 갈아끼운다 — 5문항·qa가 지워지지 않도록 병합
+  var note=Object.assign({},(items[id]&&items[id].ho_note)||{});
+  var r=Object.assign({},note.retro||{});
+  RETRO_FIELDS.forEach(function(f){ var el=$('rt2-'+f[0]); if(el) r[f[0]]=el.value.trim(); });
+  r.by=(S.me&&S.me.sid)||''; r.byName=(S.me&&S.me.name)||''; r.at=todayStr();
+  note.retro=r;
+  patchItem(id,{ho_note:note}).then(function(ok){ if(ok) toast('🧠 회고 저장됨'); });
+}
 function saveHoNote(id){
   // 기존 노트에 병합 — AI 인터뷰 답변(qa) 등 다른 키가 지워지지 않도록
   var note=Object.assign({},(items[id]&&items[id].ho_note)||{},
@@ -1378,6 +1442,101 @@ var AI_SYS_ASK='당신은 한국 노무법인의 인수인계를 돕는 인터�
   +'나쁜 질문: 기록에 이미 답이 있는 것, 일반론, 예/아니오로 끝나는 것.\n'
   +'규칙: 질문 3~5개, 각 한 문장, 기록의 구체적 사실(날짜·상대방·행위)을 인용해 맥락을 밝히세요.\n'
   +'다른 설명 없이 JSON만 출력: {"questions":["질문1","질문2","질문3"]}';
+var AI_SYS_HARVEST='당신은 한국 노무법인의 지식관리 조수입니다. 종료된 업무의 진행 기록·인수인계 노트·마무리 회고를 읽고, '
+  +'앞으로 다른 사건에서도 다시 쓸 수 있는 지식만 골라 카드로 정리하세요.\n'
+  +'붙일 대상은 넷 중 하나입니다. kind와 kl(대상 이름)을 정확히 채우세요.\n'
+  +'  person = 감독관·조사관·업체 담당자 등 사람 (kl은 자료에 나온 사람 이름)\n'
+  +'  company = 그 사업장 (kl은 업체명)\n'
+  +'  cat = 업무 유형 (kl은 주어진 구분 값 그대로)\n'
+  +'  office = 지청·공단 지사 등 기관 (kl은 자료에 나온 기관명)\n'
+  +'규칙: ① 자료에 없는 사실을 만들지 마세요. ② 이 건에서만 통하는 일회성 사실(특정 날짜의 일정, 이 사건의 금액·결과)은 제외하세요 — '
+  +'다음에 또 쓸 수 있는 것만 남깁니다. ③ kl은 반드시 자료에 등장한 이름이어야 합니다. 추측한 이름은 쓰지 마세요. '
+  +'④ 사람 카드는 인물 평가가 아니라 행동 지침으로 쓰세요. "까다롭다"가 아니라 "서면만 보내면 보완 요구가 잦다 — 통화로 먼저 설명하면 빠르다"처럼 씁니다. '
+  +'⑤ 남길 값어치가 없으면 빈 배열을 반환하세요. 억지로 채우지 마세요.\n'
+  +'카드는 최대 6장, 제목은 한 줄, 내용은 두세 문장. '
+  +'다른 설명 없이 JSON만 출력: {"cards":[{"kind":"person","kl":"대상 이름","t":"한 줄 제목","x":"내용"}]}';
+
+function aiHarvestContext(id){
+  var it=items[id]||{}, n=it.ho_note||{}, r=n.retro||{};
+  var L=[aiContext(id)];
+  var got=false;
+  HO_FIELDS.forEach(function(f){
+    if(String(n[f[0]]||'').trim()){ if(!got){ L.push('','[인수인계 노트]'); got=true; } L.push(f[1]+': '+n[f[0]]); }
+  });
+  (n.qa||[]).forEach(function(p){ if(p&&p.a) L.push('Q '+p.q+' → A '+p.a); });
+  var rg=false;
+  RETRO_FIELDS.forEach(function(f){
+    if(String(r[f[0]]||'').trim()){ if(!rg){ L.push('','[마무리 회고]'); rg=true; } L.push(f[1]+': '+r[f[0]]); }
+  });
+  L.push('','[cat 값으로 쓸 구분]: '+(it.cat||''));
+  return L.join('\n');
+}
+function kbHarvest(id){
+  aiConsent().then(function(ok){ if(!ok)return;
+    showModal('<h2 style="margin:0 0 6px">✨ 남길 지식 뽑기</h2>'
+      +'<div class="loading"><span class="spin"></span>기록·노트·회고를 읽고 있습니다…</div>');
+    loadItemLogs(id).then(function(){ return aiCall(AI_SYS_HARVEST,aiHarvestContext(id)); })
+    .then(function(txt){
+      var cards=(aiJson(txt).cards||[]).filter(function(c){ return c&&c.t&&c.kl; }).slice(0,6);
+      var it=items[id]||{};
+      S._kbSrc={item:id,title:(it.company||'')+(it.title?' '+it.title:'')};
+      if(!cards.length){
+        showModal('<h2 style="margin:0 0 6px">✨ 남길 지식 뽑기</h2>'
+          +'<p class="muted" style="font-size:12.5px;line-height:1.7">이 건에서 <b>다음에도 쓸 수 있는 지식</b>은 찾지 못했습니다.<br>'
+          +'기록이 사실 경과만 담고 있으면 정상입니다 — 억지로 만들지 않도록 해 두었습니다.</p>'
+          +'<div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="closeM()">닫기</button></div>');
+        return;
+      }
+      S._hv=cards;
+      showModal('<h2 style="margin:0 0 6px">✨ 남길 지식 '+cards.length+'건 제안</h2>'
+        +'<p class="muted" style="font-size:12px;margin:0 0 10px">AI가 <b>제안</b>한 것입니다. 대상과 문장을 확인·수정한 뒤 저장하세요. '
+        +'사람 카드는 인물 평가가 아니라 <b>행동 지침</b>으로 다듬어 주세요.</p>'
+        +cards.map(function(c,i){
+          return '<div style="border:1px solid var(--line);border-radius:9px;padding:9px 11px;margin-bottom:8px">'
+            +'<label style="display:flex;gap:7px;align-items:center;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:6px">'
+            +'<input type="checkbox" class="hvchk" id="hv-'+i+'" checked> 이 카드 저장</label>'
+            +'<div style="display:grid;grid-template-columns:96px 1fr;gap:6px;margin-bottom:5px">'
+            +'<select id="hv-k'+i+'">'+KB_KINDS.map(function(k){
+                return '<option value="'+k[0]+'"'+(c.kind===k[0]?' selected':'')+'>'+k[2]+' '+k[1]+'</option>'; }).join('')+'</select>'
+            +'<input id="hv-l'+i+'" value="'+esc(c.kl||'')+'" placeholder="대상 이름">'
+            +'</div>'
+            +'<input id="hv-t'+i+'" value="'+esc(c.t||'')+'" placeholder="한 줄 제목" style="width:100%;box-sizing:border-box;margin-bottom:5px">'
+            +'<textarea id="hv-x'+i+'" rows="2" placeholder="내용" style="width:100%;box-sizing:border-box;font-family:inherit">'+esc(c.x||'')+'</textarea>'
+            +'</div>';
+        }).join('')
+        +'<div id="hv-msg" class="muted" style="font-size:12px;min-height:17px"></div>'
+        +'<div class="row" style="justify-content:flex-end"><button onclick="closeM()">건너뛰기</button>'
+        +'<button class="primary" onclick="kbHarvestSave()">선택한 카드 저장</button></div>');
+    })
+    .catch(function(e){
+      showModal('<h2 style="margin:0 0 6px">✨ 남길 지식 뽑기</h2>'
+        +'<p style="color:var(--danger);font-size:12.5px">'+esc(e.message||'실패')+'</p>'
+        +'<p class="muted" style="font-size:12px">업무는 이미 종료되었습니다. 지식은 나중에 보관함에서 업무를 열어 ↗로 직접 올릴 수 있습니다.</p>'
+        +'<div class="row" style="justify-content:flex-end;margin-top:10px"><button onclick="closeM()">닫기</button></div>');
+    });
+  });
+}
+function kbHarvestSave(){
+  var up={}, n=0, msg=$('hv-msg');
+  (S._hv||[]).forEach(function(c,i){
+    var chk=$('hv-'+i); if(!chk||!chk.checked) return;
+    var kind=(($('hv-k'+i)||{}).value)||c.kind||'person';
+    var kl=(($('hv-l'+i)||{}).value||'').trim();
+    var t=(($('hv-t'+i)||{}).value||'').trim();
+    var x=(($('hv-x'+i)||{}).value||'').trim();
+    if(!kl||!t) return;
+    var key=kbKey(kl); if(!key) return;
+    up[NS+'/kb/'+kind+'/'+key+'/'+rid('K')]={t:t,x:x,kl:kl,
+      by:(S.me&&S.me.sid)||'',byName:(S.me&&S.me.name)||'',
+      at:new Date().toISOString(),src:S._kbSrc||null,ai:1};
+    n++;
+  });
+  if(!n){ if(msg)msg.textContent='저장할 카드가 없습니다 (대상 이름과 제목은 비울 수 없습니다).'; return; }
+  if(msg)msg.textContent='저장 중… ('+n+'건)';
+  fbDb.ref().update(up).then(function(){
+    closeM(); toast('📚 지식 '+n+'건 저장'); route();
+  }).catch(function(e){ if(msg)msg.textContent='실패: '+e.message; });
+}
 
 function aiDraft(id){
   aiConsent().then(function(ok){ if(!ok)return;
@@ -1930,6 +2089,7 @@ function kbCardHTML(c,opt){
     +'<div class="kt"><span class="ktag">'+esc(KB_KLBL[c._kind]||c._kind)+'</span>'
     +'<span class="kkey">'+esc(c.kl||c._key)+'</span>'
     +'<span style="flex:1;min-width:0">'+esc(c.t)+'</span>'
+    +(c.ai?'<span class="ktag" style="background:#f3f0fd;color:#5b21b6" title="AI가 제안한 뒤 사람이 확인해 저장한 카드">AI 제안</span>':'')
     +(bad?'<span class="kbad">⚠ 정정 요청</span>':(old?'<span class="kwarn">⚠ 2년 경과</span>':''))
     +'</div>'
     +(c.x?'<div class="kx">'+esc(c.x)+'</div>':'')
