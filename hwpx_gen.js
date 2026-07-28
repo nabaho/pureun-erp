@@ -148,8 +148,12 @@ function tablePara(rows,widths,opts){
 /* 본문 XML(문단들) → section0.xml 전문 */
 function sectionXml(bodyXml){
   /* 쪽번호: 구역 첫 문단에 '쪽 번호 매기기' 컨트롤을 넣어 모든 쪽 하단 가운데에 표시 */
-  const pn=PAGENUM?'<hp:ctrl><hp:pageNumCtrl pos="BOTTOM_CENTER" formatType="DIGIT" sideChar=""/></hp:ctrl>':'';
-  return (LANDSCAPE?TPL_SEC_PRE_L:TPL_SEC_PRE)+pn+'<hp:t/></hp:run>'+linesegs("",bodyW())+'</hp:p>'+bodyXml+'</hs:sec>';
+  /* 요소명은 hp:pageNum (rhwp HWPX 파서 확인). 제어문자는 XML에 넣을 수 없어
+     <hp:ctrl> 요소 자체가 컨트롤 위치를 나타낸다. */
+  const pn=PAGENUM
+    ? '<hp:ctrl><hp:pageNum pos="BOTTOM_CENTER" formatType="DIGIT" sideChar=""/></hp:ctrl><hp:t/>'
+    : '<hp:t/>';
+  return (LANDSCAPE?TPL_SEC_PRE_L:TPL_SEC_PRE)+pn+'</hp:run>'+linesegs("",bodyW())+'</hp:p>'+bodyXml+'</hs:sec>';
 }
 
 /* ── ZIP ── 실제 한글 파일과 동일한 구성: mimetype·version.xml·PrvImage.png는 무압축,
