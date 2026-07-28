@@ -752,6 +752,7 @@ function renderHome(){
     +(edit?'<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;margin-right:6px"><input type="checkbox"'+(S.homeInc?' checked':'')+' onchange="S.homeInc=this.checked;renderHome()"> 미완비만</label>':'')
     +(edit?'<button onclick="bulkRegistry()" title="소재지로 전체 기금 관할등기소 자동 추정" style="margin-right:6px">🏛 등기소 일괄</button>':'')
     +(edit?'<button onclick="bulkTax()" title="소재지로 전체 기금 관할세무서 자동 추정" style="margin-right:6px">🏢 세무서 일괄</button>':'')
+    +(edit?'<button class="primary" onclick="importFundsInfo()" title="로컬 프로그램에서 뽑은 기금 기본정보 JSON을 한 번에 반영(빈 칸만 채움)" style="margin-right:6px">📥 기금정보 가져오기</button>':'')
     +'<button class="'+(edit?'primary':'')+'" onclick="S.homeEdit=!S.homeEdit;renderHome()" title="핵심 기본정보(인가번호·설립일 등) 직접 입력">'+(edit?'✓ 입력 종료':'✏️ 정보 채우기')+'</button>'
     +'<input class="search" placeholder="기금명·담당 검색" value="'+esc(S.q||'')+'" oninput="S.q=this.value;renderHome()"></div>'
     +(edit?'<p class="muted" style="font-size:11.5px;margin:6px 0 0">칸에 입력하면 자동 저장 · 빨간 테두리=빈 칸 '+hlp('home.fill')+'</p>':'')
@@ -902,6 +903,93 @@ function fillRegistry(){
   if(!g){ toast('소재지로 관할등기소를 찾지 못했습니다. 직접 입력하세요','warn'); return; }
   var el=$('fd-registry_office'); if(el){ el.value=g; markDirty(); }
   toast('추정: '+g+' — 인터넷등기소(iros.go.kr)에서 확인 후 저장','warn');
+}
+/* ══ 기금 기본정보 일괄 가져오기 ══
+   로컬 프로그램(fund.db)에서 뽑은 JSON({FUND-0001:{인가번호…}, …})을 한 번에 반영한다.
+   · 기본은 **빈 칸만 채움** — 웹에서 직접 입력한 값을 덮지 않는다.
+   · 이름·약칭·유형은 신원 필드라 덮어쓰기 모드에서도 채우기만 한다(오인 개명·유형변경 방지).
+   · 연도별 데이터(years)·담당(mgr_*)·설립(setup)·계약관계(lifecycle) 등은 아예 손대지 않는다. */
+var IMP_FIELDS=['inka_no','inka_date','corp_reg_no','reg_date','registry_office','tax_id_no','tax_office',
+  'address','phone','chairman','labor_office','fy_start_md','fy_end_md','region','status'];
+var IMP_IDENTITY=['name','short_name','fund_type'];    // 채우기만(덮어쓰기 제외)
+function importFundsInfo(){
+  var inp=document.createElement('input'); inp.type='file'; inp.accept='application/json,.json';
+  inp.onchange=function(ev){ var file=ev.target.files&&ev.target.files[0]; if(!file)return;
+    var rd=new FileReader();
+    rd.onload=function(){
+      var data; try{ data=JSON.parse(rd.result); }catch(e){ toast('JSON을 읽지 못했습니다: '+e.message,'err'); return; }
+      if(!data||typeof data!=='object'||Array.isArray(data)){ toast('형식이 다릅니다 — {기금ID:{항목…}} 형태여야 합니다','err'); return; }
+      _impPreview(data, file.name);
+    };
+    rd.readAsText(file);
+  };
+  inp.click();
+}
+function _impNorm(s){ return String(s==null?'':s).replace(/\s+/g,'').trim(); }
+function _impMatch(key, rec){          // ① ID 일치 ② 기금법인명 정확 일치(공백 무시)
+  if(funds[key]&&!isTrashed(funds[key])) return key;
+  var nm=_impNorm(rec&&rec.name); if(!nm) return '';
+  var hit=Object.keys(funds).filter(function(k){ return !isTrashed(funds[k]) && _impNorm(funds[k].name)===nm; });
+  return hit.length===1?hit[0]:'';     // 동명이 둘 이상이면 자동 매칭하지 않음(사람이 판단)
+}
+function _impPlan(data, over){
+  var plan=[], unmatched=[], totalCells=0;
+  Object.keys(data).forEach(function(key){
+    var rec=data[key]||{}, fid=_impMatch(key,rec);
+    if(!fid){ unmatched.push(rec.name||key); return; }
+    var cur=funds[fid]||{}, set={}, names=[];
+    IMP_FIELDS.forEach(function(f){
+      var v=rec[f]; if(v==null||String(v).trim()==='') return;
+      var has=String(cur[f]==null?'':cur[f]).trim()!=='';
+      if(has&&!over) return;                       // 빈 칸만 채움
+      if(has&&String(cur[f]).trim()===String(v).trim()) return;   // 동일값은 건너뜀
+      set[f]=String(v).trim(); names.push(f);
+    });
+    IMP_IDENTITY.forEach(function(f){              // 신원 필드는 항상 채우기만
+      var v=rec[f]; if(v==null||String(v).trim()==='') return;
+      if(String(cur[f]==null?'':cur[f]).trim()!=='') return;
+      set[f]=String(v).trim(); names.push(f+'(신규)');
+    });
+    if(names.length){ plan.push({fid:fid,label:(cur.short_name||cur.name||fid),set:set,names:names}); totalCells+=names.length; }
+  });
+  return {plan:plan, unmatched:unmatched, cells:totalCells};
+}
+function _impPreview(data, fname){
+  window._impData=data;
+  var over=!!S._impOver, r=_impPlan(data,over);
+  var LBL={inka_no:'인가번호',inka_date:'인가일',corp_reg_no:'법인등록번호',reg_date:'설립등기일',
+    registry_office:'관할등기소',tax_id_no:'고유번호',tax_office:'관할세무서',address:'소재지',phone:'전화',
+    chairman:'대표자',labor_office:'관할노동청',fy_start_md:'회계연도시작',fy_end_md:'회계연도종료',region:'지역',status:'상태'};
+  var rows=r.plan.slice(0,60).map(function(p){
+    return '<tr><td style="font-weight:600;white-space:nowrap">'+esc(p.label)+'</td>'
+      +'<td class="muted" style="font-size:11.5px">'+esc(p.names.map(function(n){return LBL[n.replace('(신규)','')]||n;}).join(', '))+'</td>'
+      +'<td class="center">'+p.names.length+'</td></tr>';
+  }).join('');
+  showModal('<h2 style="margin:0 0 4px">📥 기금 기본정보 가져오기</h2>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 8px">파일: <b>'+esc(fname||'')+'</b> · 대상 기금 <b>'+r.plan.length+'</b>개 · 채울 항목 <b>'+r.cells+'</b>칸'
+    +(r.unmatched.length?'<br>매칭 실패 '+r.unmatched.length+'건(기금ID·기금법인명 불일치): '+esc(r.unmatched.slice(0,6).join(', '))+(r.unmatched.length>6?' 외':''):'')+'</p>'
+    +'<label style="font-size:12px;display:flex;align-items:center;gap:6px;margin:0 0 10px;cursor:pointer">'
+    +'<input type="checkbox"'+(over?' checked':'')+' onchange="S._impOver=this.checked;_impPreview(window._impData,'+JSON.stringify(fname||'')+')"> '
+    +'<span>이미 값이 있는 칸도 <b>덮어쓰기</b> (기본: 빈 칸만 채움 — 웹에서 입력한 값 보호)</span></label>'
+    +(r.plan.length
+      ? '<div style="max-height:44vh;overflow:auto;border:1px solid var(--line);border-radius:8px"><table><thead><tr><th>기금</th><th>채울 항목</th><th class="center">칸</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+        +(r.plan.length>60?'<p class="muted" style="font-size:11px;margin:6px 0 0">…상위 60개만 표시(전체 '+r.plan.length+'개 적용)</p>':'')
+      : '<div class="msg warn">채울 항목이 없습니다. (이미 모두 입력돼 있거나 파일이 비어 있음)</div>')
+    +'<p class="muted" style="font-size:11px;margin:8px 0 0">※ 연도별 결산·지원금·담당자·설립 진행·계약관계 데이터는 건드리지 않습니다. 이름·약칭·유형은 비어 있을 때만 채웁니다.</p>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">취소</button>'
+    +(r.plan.length?'<button class="primary" onclick="_impApply()">'+r.plan.length+'개 기금에 반영</button>':'')+'</div>');
+}
+function _impApply(){
+  var data=window._impData; if(!data){ closeM(); return; }
+  var r=_impPlan(data,!!S._impOver);
+  if(!r.plan.length){ closeM(); toast('반영할 항목이 없습니다','warn'); return; }
+  var up={};
+  r.plan.forEach(function(p){ Object.keys(p.set).forEach(function(f){ up[p.fid+'/'+f]=p.set[f]; }); });
+  fbDb.ref(NS+'/funds').update(up).then(function(){
+    r.plan.forEach(function(p){ Object.assign(funds[p.fid], p.set); });
+    window._impData=null; closeM(); renderHome();
+    toast(r.plan.length+'개 기금 · '+r.cells+'칸 반영 완료');
+  }).catch(function(e){ toast('반영 실패: '+e.message,'err'); });
 }
 // 전체 기금 관할등기소 일괄 추정 — 미리보기 후 적용(빈 칸만 채움)
 function bulkRegistry(){
