@@ -1220,7 +1220,7 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
       </div>
     </div>
     <div class="mfoot">
-      <button class="btn btn-s" id="mStampSizeReset" title="창 크기를 기본값으로" style="margin-right:auto;background:transparent;border:1.5px solid var(--border);color:var(--t2);font-size:11px;">↔ 크기 초기화</button>
+      <button class="btn btn-s" id="mStampSizeReset" title="창 크기를 사진 수에 맞게 자동으로" style="margin-right:auto;background:transparent;border:1.5px solid var(--border);color:var(--t2);font-size:11px;">↔ 자동 맞춤</button>
       <button class="btn btn-s" id="mStampSkip">나중에</button>
       <button class="btn btn-p" id="mStampSave">💾 저장 후 닫기</button>
       <div class="stamp-resize-hint" title="모서리를 끌어 크기 조절"></div>
@@ -4802,44 +4802,89 @@ function applyStampSize(){
   const el=stampModalEl(); if(!el)return;
   let s=null; try{ s=JSON.parse(localStorage.getItem('p_stampSize')||'null'); }catch(e){}
   if(s&&s.w>300&&s.h>280){
+    _stampManual=true;   // 사용자가 정한 크기 유지 (자동 맞춤 끔)
+    _stampAutoAt=Date.now();
     el.style.width=Math.min(s.w,window.innerWidth-20)+'px';
     el.style.height=Math.min(s.h,window.innerHeight-20)+'px';
-  }else{ el.style.width=''; el.style.height=''; }
+  }else{ _stampManual=false; el.style.width=''; el.style.height=''; }
 }
 function resetStampSize(){
   const el=stampModalEl(); if(!el)return;
+  _stampManual=false;
   el.style.width=''; el.style.height='';
   try{ localStorage.removeItem('p_stampSize'); }catch(e){}
   layoutStampGrids(ST.n||2);
-  toast('창 크기를 기본값으로 되돌렸습니다');
+  toast('창 크기를 내용에 맞게 자동으로 맞췄습니다');
 }
-let _stampRO=null,_stampSaveT=null;
-function watchStampResize(){
-  const el=stampModalEl(); if(!el||typeof ResizeObserver==='undefined')return;
-  if(_stampRO)return; // 한 번만 연결
-  _stampRO=new ResizeObserver(()=>{
-    if(!q('#mbStamp')?.classList.contains('open'))return;
+let _stampRO=null,_stampDragT=null;
+// 모서리 손잡이를 끌기 시작하면: 수동 모드로 전환 → 끄는 동안 재배치 → 놓으면 크기 기억
+function beginStampResize(){
+  _stampManual=true;
+  clearInterval(_stampDragT);
+  _stampDragT=setInterval(()=>{ if(q('#mbStamp')?.classList.contains('open'))layoutStampGrids(ST.n||2); },120);
+  const end=()=>{
+    window.removeEventListener('pointerup',end); window.removeEventListener('mouseup',end);
+    clearInterval(_stampDragT); _stampDragT=null;
+    const el=stampModalEl(); if(!el)return;
+    const r=el.getBoundingClientRect();
+    el.style.width=Math.round(r.width)+'px';
+    el.style.height=Math.round(r.height)+'px';
     layoutStampGrids(ST.n||2);
-    clearTimeout(_stampSaveT);
-    _stampSaveT=setTimeout(()=>{
-      const r=el.getBoundingClientRect();
-      lsSet('p_stampSize',JSON.stringify({w:Math.round(r.width),h:Math.round(r.height)}));
-    },400);
-  });
-  _stampRO.observe(el);
+    lsSet('p_stampSize',JSON.stringify({w:Math.round(r.width),h:Math.round(r.height)}));
+  };
+  window.addEventListener('pointerup',end); window.addEventListener('mouseup',end);
 }
-// 사진 칸 배치: 폭에 맞게 최대한 한 줄로, 칸은 정사각·최대 340px
+function watchStampResize(){
+  const el=stampModalEl(); if(!el)return;
+  if(!el._stampBound){
+    el._stampBound=true;
+    // 오른쪽 아래 모서리(손잡이) 영역에서 누르면 크기 조절 시작으로 간주
+    const onDown=e=>{
+      const r=el.getBoundingClientRect();
+      if(e.clientX>=r.right-24 && e.clientY>=r.bottom-24) beginStampResize();
+    };
+    el.addEventListener('pointerdown',onDown);
+    el.addEventListener('mousedown',onDown);
+  }
+  // 보조: ResizeObserver를 지원하면 실시간으로도 반영 (지원 안 해도 위 경로로 동작)
+  if(typeof ResizeObserver!=='undefined' && !_stampRO){
+    _stampRO=new ResizeObserver(()=>{
+      if(!q('#mbStamp')?.classList.contains('open'))return;
+      if(Date.now()-_stampAutoAt<350)return; // 자동 맞춤으로 인한 변화는 무시(루프 방지)
+      if(!_stampManual)return;               // 사용자가 끌기 시작한 뒤에만 반응
+      layoutStampGrids(ST.n||2);
+    });
+    _stampRO.observe(el);
+  }
+}
+// 사진 칸 배치: 줄을 균등하게 나눠 빈칸을 없애고, 자동 모드면 창 폭도 내용에 맞춤
+// (예: 6장 → 5+1 대신 3+3, 2장이면 창이 사진 폭까지 줄어듦)
+let _stampManual=false, _stampAutoAt=0;
 function layoutStampGrids(n){
+  const modal=stampModalEl();
   const pairs=document.querySelectorAll('#mbStamp .ph-pair');
-  if(!pairs.length)return;
-  const GAP=10, CELL_MIN=230, CELL_MAX=(n===1?420:340);
-  const avail=pairs[0].parentElement?.clientWidth||pairs[0].clientWidth||900;
-  let cols=Math.max(1,Math.floor((avail+GAP)/(CELL_MIN+GAP)));
-  cols=Math.min(cols,n);
-  pairs.forEach(p=>{
-    p.style.gridTemplateColumns=`repeat(${cols},minmax(0,1fr))`;
-    p.style.maxWidth=(cols*CELL_MAX+(cols-1)*GAP)+'px';
-  });
+  if(!modal||!pairs.length)return;
+  const GAP=10, CELL_MIN=240, CELL_MAX=(n===1?420:340);
+  const bodyEl=modal.querySelector('.mbody');
+  const bs=bodyEl?getComputedStyle(bodyEl):null;
+  const padX=bs?(parseFloat(bs.paddingLeft)+parseFloat(bs.paddingRight)):40;
+  const maxModalW=Math.min(1400, window.innerWidth*0.97);
+  // 자동 모드면 '최대 창 폭' 기준으로 계산, 수동(사용자가 크기 조절)이면 현재 폭 기준
+  const avail=_stampManual
+    ? (pairs[0].parentElement?.clientWidth||pairs[0].clientWidth||600)
+    : Math.max(240, maxModalW-padX-2);
+  // 한 줄에 들어갈 수 있는 최대 개수 → 줄 수 → 줄당 개수(균등 분배)
+  let cols=Math.max(1,Math.min(n,Math.floor((avail+GAP)/(CELL_MIN+GAP))));
+  const rows=Math.ceil(n/cols);
+  cols=Math.ceil(n/rows);
+  const cell=Math.min(CELL_MAX,Math.floor((avail-(cols-1)*GAP)/cols));
+  const gridW=cols*cell+(cols-1)*GAP;
+  pairs.forEach(p=>{ p.style.gridTemplateColumns=`repeat(${cols},minmax(0,1fr))`; p.style.maxWidth=gridW+'px'; });
+  if(!_stampManual){ // 내용 폭에 맞춰 창 크기 자동 (오른쪽 빈 공간 제거)
+    _stampAutoAt=Date.now();
+    modal.style.width=Math.max(360,Math.min(maxModalW,gridW+padX+2))+'px';
+    modal.style.height='';
+  }
 }
 window.addEventListener('resize',()=>{ if(q('#mbStamp')?.classList.contains('open'))layoutStampGrids(ST.n||2); });
 
