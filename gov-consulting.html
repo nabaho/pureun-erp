@@ -335,7 +335,11 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 /* STAMP */
 .sp-layout{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
 @media(max-width:680px){.sp-layout{grid-template-columns:1fr;}}
-.modal.stamp-modal{width:min(1400px,97vw);max-width:min(1400px,97vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;}
+.modal.stamp-modal{width:min(1400px,97vw);max-width:min(1400px,97vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;resize:both;min-width:360px;min-height:320px;}
+/* 오른쪽 아래 모서리 크기조절 손잡이 (마우스로 끌기) */
+.stamp-resize-hint{position:absolute;right:2px;bottom:2px;width:18px;height:18px;pointer-events:none;opacity:.55;z-index:5;
+  background:linear-gradient(135deg,transparent 0 45%,var(--t2) 45% 55%,transparent 55% 70%,var(--t2) 70% 80%,transparent 80%);}
+.stamp-modal .mfoot{position:relative;}
 .stamp-modal .mbody{padding:20px;overflow:auto;}
 .stamp-modal .mfoot{padding:12px 20px;}
 .stamp-modal .sp-layout{grid-template-columns:1fr;gap:18px;}
@@ -1216,8 +1220,10 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
       </div>
     </div>
     <div class="mfoot">
+      <button class="btn btn-s" id="mStampSizeReset" title="창 크기를 기본값으로" style="margin-right:auto;background:transparent;border:1.5px solid var(--border);color:var(--t2);font-size:11px;">↔ 크기 초기화</button>
       <button class="btn btn-s" id="mStampSkip">나중에</button>
       <button class="btn btn-p" id="mStampSave">💾 저장 후 닫기</button>
+      <div class="stamp-resize-hint" title="모서리를 끌어 크기 조절"></div>
     </div>
   </div>
 </div>
@@ -1227,12 +1233,15 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 
 <script>
 // ===== localStorage 안전 래퍼 (용량 초과 방지) =====
-const LS_VALID_KEYS=['p_staff','p_types','p_cos','p_scheds','p_env','p_fieldState','p_lastUserId','p_lastLoginEmail','p_session','p_autoSession','p_loginFails','p_loginLock','p_roundlog','p_favCos','p_autobackups','p_autoDl','p_autoKeep','p_lastAutoDl','p_autoDlFreq','p_dashW','p_dashHintSeen','p_dashMCollapsed','p_dashMineFirst','p_photoHashes','p_conflictMatrix','p_conflictMigrated','p_calMode','p_attFilter','p_dashAtt','p_dashStatus','p_endedYear'];
+const LS_VALID_KEYS=['p_staff','p_types','p_cos','p_scheds','p_env','p_fieldState','p_lastUserId','p_lastLoginEmail','p_session','p_autoSession','p_loginFails','p_loginLock','p_roundlog','p_favCos','p_autobackups','p_autoDl','p_autoKeep','p_lastAutoDl','p_autoDlFreq','p_dashW','p_dashHintSeen','p_dashMCollapsed','p_dashMineFirst','p_photoHashes','p_photoLog','p_stampSize','p_conflictMatrix','p_conflictMigrated','p_calMode','p_attFilter','p_dashAtt','p_dashStatus','p_endedYear'];
+// 사용자별 동적 키(접두사 매칭) — 예: p_endConfirmHidden_<userId>
+const LS_VALID_PREFIXES=['p_endConfirmHidden_'];
+function lsKeyValid(k){ return LS_VALID_KEYS.includes(k)||LS_VALID_PREFIXES.some(p=>k.startsWith(p)); }
 // 시작 시: 이 앱의 잔재 키(p_ 접두사인데 목록에 없는 것)만 제거 — 다른 앱(포털·ERP 등) 키는 절대 건드리지 않음
 (function cleanupLS(){
   try{
     Object.keys(localStorage).forEach(k=>{
-      if(k.startsWith('p_') && !LS_VALID_KEYS.includes(k))localStorage.removeItem(k);
+      if(k.startsWith('p_') && !lsKeyValid(k))localStorage.removeItem(k);
     });
   }catch(e){}
 })();
@@ -1241,7 +1250,7 @@ function lsSet(key,value){
   catch(e){
     // 용량 초과 시 잔재 제거 후 1회 재시도
     try{
-      Object.keys(localStorage).forEach(k=>{if(k.startsWith('p_') && !LS_VALID_KEYS.includes(k))localStorage.removeItem(k);});
+      Object.keys(localStorage).forEach(k=>{if(k.startsWith('p_') && !lsKeyValid(k))localStorage.removeItem(k);});
       localStorage.setItem(key,value);return true;
     }catch(e2){
       console.warn('저장 용량 초과:',key);
@@ -4783,7 +4792,41 @@ function openStampModal(sid){
   var _upT=q('#spUploadTitle'); if(_upT)_upT.textContent='📁 사진 업로드 ('+n+'장)';
   renderPDs();renderRFs();renderRangeOpts();buildSpPos();buildSpColors();
   q('#mbStamp').classList.add('open');
-  layoutStampGrids(n); // 열린 뒤 실제 폭 기준으로 열 수 계산
+  applyStampSize();          // 저장해둔 창 크기 복원
+  layoutStampGrids(n);       // 열린 뒤 실제 폭 기준으로 열 수 계산
+  watchStampResize();        // 마우스로 크기 조절 시 재배치·기억
+}
+// ===== 촬영 모달 크기 조절 (모서리 드래그) =====
+function stampModalEl(){ return document.querySelector('#mbStamp .stamp-modal'); }
+function applyStampSize(){
+  const el=stampModalEl(); if(!el)return;
+  let s=null; try{ s=JSON.parse(localStorage.getItem('p_stampSize')||'null'); }catch(e){}
+  if(s&&s.w>300&&s.h>280){
+    el.style.width=Math.min(s.w,window.innerWidth-20)+'px';
+    el.style.height=Math.min(s.h,window.innerHeight-20)+'px';
+  }else{ el.style.width=''; el.style.height=''; }
+}
+function resetStampSize(){
+  const el=stampModalEl(); if(!el)return;
+  el.style.width=''; el.style.height='';
+  try{ localStorage.removeItem('p_stampSize'); }catch(e){}
+  layoutStampGrids(ST.n||2);
+  toast('창 크기를 기본값으로 되돌렸습니다');
+}
+let _stampRO=null,_stampSaveT=null;
+function watchStampResize(){
+  const el=stampModalEl(); if(!el||typeof ResizeObserver==='undefined')return;
+  if(_stampRO)return; // 한 번만 연결
+  _stampRO=new ResizeObserver(()=>{
+    if(!q('#mbStamp')?.classList.contains('open'))return;
+    layoutStampGrids(ST.n||2);
+    clearTimeout(_stampSaveT);
+    _stampSaveT=setTimeout(()=>{
+      const r=el.getBoundingClientRect();
+      lsSet('p_stampSize',JSON.stringify({w:Math.round(r.width),h:Math.round(r.height)}));
+    },400);
+  });
+  _stampRO.observe(el);
 }
 // 사진 칸 배치: 폭에 맞게 최대한 한 줄로, 칸은 정사각·최대 340px
 function layoutStampGrids(n){
@@ -5507,6 +5550,7 @@ function bind(){
   q('#mStampCls').onclick=()=>{_photoQueue=[];closeModal('mbStamp');};
   q('#mStampSkip').onclick=()=>{closeModal('mbStamp');if(_photoQueue&&_photoQueue.length)setTimeout(runPhotoQueue,250);};
   q('#mStampSave').onclick=saveStamp;
+  q('#mStampSizeReset').onclick=resetStampSize;
   qa('.tg-btn').forEach(b=>b.onclick=()=>applyTimes(b.dataset.slot));
   qa('.apply-btn').forEach(b=>b.onclick=()=>applyManualTime(+b.dataset.i));
   q('#photoFi').onchange=e=>{const f=e.target.files[0];if(f)loadStampImg(ST.slot,f);e.target.value='';};
