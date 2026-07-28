@@ -533,10 +533,11 @@ function _normStaff(v){
     .sort(function(a,b){return String(a.sid||'').localeCompare(String(b.sid||''),'en',{numeric:true});});  // 푸른이알피 사번 순
 }
 function loadStaff(){
-  if(_staffCache&&_staffCache.length) return Promise.resolve(_staffCache);   // 빈 결과는 캐시하지 않음(복구 시 재조회)
-  // 1) 동일 출처(github.io/pureunall) localStorage — 푸른이알피가 채워둔 재직자, Firebase 규칙 의존 없음
+  // 1) 동일 출처(github.io/pureunall) localStorage — 푸른이알피가 채워둔 재직자, Firebase 규칙 의존 없음.
+  //    매번 다시 읽는다 — 다른 탭에서 퇴사 처리 등으로 갱신돼도 이 화면이 낡은 명단을 계속 쓰지 않게(캐시 고정 방지).
   try{ var raw=localStorage.getItem('pureun_v6_user_accounts');
     if(raw){ var a=_normStaff(JSON.parse(raw)); if(a.length){ _staffCache=a; return Promise.resolve(a); } } }catch(e){}
+  if(_staffCache&&_staffCache.length) return Promise.resolve(_staffCache);   // localStorage 없을 때만 이전 조회분 재사용(빈 결과는 캐시 안 함)
   // 2) 폴백: Firebase — 일반 직원도 읽을 수 있는 공개 명부 data/user_dir 우선, 실패 시 data/user_accounts
   var rd=function(p){ return fbDb.ref(p).once('value').then(function(s){ return _normStaff(s.val()); }).catch(function(){ return []; }); };
   return rd('data/user_dir/v').then(function(a){ if(a.length){ _staffCache=a; return a; }
@@ -3244,10 +3245,13 @@ function importSites(){
 }
 
 // ── 연도 선택 (연간/지원금 공용) ──
+// 연도 전환 — 미저장 변경이 있으면 확인 후 이동(취소 시 원래 연도로 되돌림)
+function changeYear(v){ _leaveGuard().then(function(ok){ if(!ok){ renderFund(); return; }
+  S.year=+v; S.annualFor=null; renderFund(); }); }
 function yearSel(){
   var y=new Date().getFullYear(), opts='';
   for(var i=y+1;i>=y-3;i--) opts+='<option'+(S.year===i?' selected':'')+'>'+i+'</option>';
-  return '<select onchange="S.year=+this.value;S.annualFor=null;renderFund()" style="padding:5px 8px;border:1px solid var(--line);border-radius:7px;font-size:12.5px">'+opts+'</select>';
+  return '<select onchange="changeYear(this.value)" style="padding:5px 8px;border:1px solid var(--line);border-radius:7px;font-size:12.5px">'+opts+'</select>';
 }
 function fmtDeadline(dl){
   if(!dl) return '';
@@ -3288,10 +3292,12 @@ function ymd(){var d=new Date();function p(n){return(n<10?'0':'')+n;}return d.ge
 
 // ── 지원금 (공동 전용) — 근로복지공단 지원 신청 전 과정을 하위 탭으로 ──
 var SUB_TABS=[['apply','📋 신청·정산'],['docs','📁 서류함'],['excel','📥 신청서 엑셀'],['board','🗂 전체 보드']];
+// 지원금 하위탭 전환 — 미저장 입력이 있으면 확인 후 이동(그냥 바꾸면 입력이 사라짐)
+function goSubTab(t){ _leaveGuard().then(function(ok){ if(!ok)return; S.subTab=t; renderFund(); }); }
 function subsidyTab(f){
   if(!S.subTab||!SUB_TABS.some(function(t){return t[0]===S.subTab;})) S.subTab='apply';
   var bar='<div class="tabbar" style="margin:0 0 12px">'+SUB_TABS.map(function(t){
-    return '<div class="tab'+(S.subTab===t[0]?' on':'')+'" onclick="S.subTab=\''+t[0]+'\';renderFund()" style="font-size:12.5px;padding:6px 11px">'+t[1]+'</div>';
+    return '<div class="tab'+(S.subTab===t[0]?' on':'')+'" onclick="goSubTab(\''+t[0]+'\')" style="font-size:12.5px;padding:6px 11px">'+t[1]+'</div>';
   }).join('')+'</div>';
   var body = S.subTab==='docs' ? subsidyDocsPanel(f)
     : S.subTab==='excel' ? subsidyExcelPanel(f)
