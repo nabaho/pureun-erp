@@ -4728,11 +4728,33 @@ async function simpleStampFile(sid,slotIdx,file,t){
   return true;
 }
 
+// 촬영 모달의 추가 슬롯 DOM 동적 생성 (입장/활동 이후 c2..). 매 오픈마다 재생성.
+function buildStampExtraSlots(n){
+  const upPair=q('#pd0')?.parentElement, rfPair=q('#rf0')?.parentElement;
+  if(upPair)upPair.querySelectorAll('.pd-extra').forEach(e=>e.remove());
+  if(rfPair)rfPair.querySelectorAll('.rf-extra').forEach(e=>e.remove());
+  let extraT=q('#spExtraTimes');
+  if(extraT)extraT.innerHTML='';
+  else { extraT=document.createElement('div'); extraT.id='spExtraTimes'; const anchor=q('#mh1')?.closest('.mt-row'); if(anchor)anchor.after(extraT); }
+  for(let i=2;i<n;i++){
+    if(upPair){ const pd=document.createElement('div'); pd.className='pd pd-extra'; pd.id='pd'+i; pd.dataset.i=i;
+      pd.innerHTML=`<span class="pbadge">🖼️ 추가 ${i-1}</span><div><div class="d-ico">📷</div><div class="d-hint">사진 ${i+1}</div></div>`;
+      upPair.appendChild(pd); }
+    if(rfPair){ const rf=document.createElement('div'); rf.className='rf rf-extra'; rf.id='rf'+i;
+      rf.innerHTML=`<div class="re">사진 ${i+1}<br>미준비</div>`; rfPair.appendChild(rf); }
+    if(extraT){ const row=document.createElement('div'); row.className='mt-row';
+      row.innerHTML=`<span style="font-size:10px;font-weight:800;color:var(--t2);">🖼️ 추가 ${i-1}</span>
+        <input class="tminput" id="mh${i}" type="number" min="0" max="23" value="10">
+        <span style="font-weight:900;text-align:center;">:</span>
+        <input class="tminput" id="mm${i}" type="number" min="0" max="59" value="00">
+        <button class="apply-btn" data-i="${i}">적용</button>`;
+      extraT.appendChild(row);
+      const ab=row.querySelector('.apply-btn'); if(ab)ab.onclick=()=>applyManualTime(i);
+    }
+  }
+}
 function openStampModal(sid){
-  ST.sid=sid;ST.photos=[null,null];ST.times=[null,null];ST.done=[false,false];ST.pos='bottom-left';ST.color='#ffb347';ST.slot=0;ST.pHash=[null,null];ST.pDurl=[null,null];ST.view=[{ox:.5,oy:.5,z:1},{ox:.5,oy:.5,z:1}];
-  // 이미 저장된 사진이 있으면 done 플래그 복원
-  const saved=PHOTOS[sid];
-  if(saved){if(saved.c0)ST.done[0]=true;if(saved.c1)ST.done[1]=true;}
+  ST.sid=sid;ST.pos='bottom-left';ST.color='#ffb347';ST.slot=0;
   const sc=getScheds().find(s=>s.id===sid);
   const co=sc?getCos().find(c=>c.id===sc.coId):null;
   const ty=sc?getTypes().find(t=>t.id===sc.typeId):null;
@@ -4742,8 +4764,18 @@ function openStampModal(sid){
   ST.rangeHr=(tn.includes('능률협회')&&tn.includes('산업일자리전환'))?6:2;
   // 사진 1장 모드: 유형에 '사진 1장' 켜짐 OR 이름/기관에 '비즈니스지원단' 포함 → 시작(c0) 한 장만
   ST.single=!!(ty&&ty.onePhoto)||tn.includes('비즈니스지원단');
+  // 총 슬롯 수: 단일 1장, 그 외 입장·활동(2) + 추가 N
+  const n=ST.single?1:totalSlotCount(sc);
+  ST.n=n;
+  ST.photos=Array(n).fill(null);ST.times=Array(n).fill(null);ST.done=Array(n).fill(false);
+  ST.pHash=Array(n).fill(null);ST.pDurl=Array(n).fill(null);
+  ST.view=Array.from({length:n},()=>({ox:.5,oy:.5,z:1}));
+  // 이미 저장된 사진이 있으면 done 플래그 복원
+  const saved=PHOTOS[sid];
+  if(saved){ for(let i=0;i<n;i++){ if(saved['c'+i])ST.done[i]=true; } }
   q('#mbStamp').classList.toggle('single', ST.single);
-  var _upT=q('#spUploadTitle'); if(_upT)_upT.textContent='📁 사진 업로드 ('+(ST.single?'1장':'2장')+')';
+  buildStampExtraSlots(n);
+  var _upT=q('#spUploadTitle'); if(_upT)_upT.textContent='📁 사진 업로드 ('+n+'장)';
   renderPDs();renderRFs();renderRangeOpts();buildSpPos();buildSpColors();
   q('#mbStamp').classList.add('open');
 }
@@ -4762,9 +4794,9 @@ function buildSpColors(){
 
 function renderPDs(){
   if(!ST.view)ST.view=[{ox:.5,oy:.5,z:1},{ox:.5,oy:.5,z:1}];
-  const _n=ST.single?1:2;
+  const _n=ST.n||(ST.single?1:2);
   for(let i=0;i<_n;i++){
-    const d=q(`#pd${i}`);const lbl=ST.single?'📷 사진':(i===0?'📍 입장':'🔧 활동');
+    const d=q(`#pd${i}`);if(!d)continue;const lbl=ST.single?'📷 사진':(i===0?'📍 입장':i===1?'🔧 활동':'🖼️ 추가 '+(i-1));
     if(ST.photos[i]){
       d.classList.add('filled');
       d.onclick=null;
@@ -4837,11 +4869,11 @@ function attachPdAdjust(idx){
 }
 
 function renderRFs(){
-  const _n=ST.single?1:2;
+  const _n=ST.n||(ST.single?1:2);
   for(let i=0;i<_n;i++){
-    const r=q(`#rf${i}`);
+    const r=q(`#rf${i}`);if(!r)continue;
     if(ST.done[i]){
-      r.innerHTML=`<span class="rtag">${ST.single?'사진':(i===0?'입장':'활동')} ✓</span>
+      r.innerHTML=`<span class="rtag">${ST.single?'사진':(i===0?'입장':i===1?'활동':'추가 '+(i-1))} ✓</span>
         <button class="rf-save" data-ri="${i}" title="저장">💾</button>
         <button class="rf-redo" data-ri="${i}" title="다시 등록">🔄</button>
         <button class="rf-del" data-ri="${i}" title="삭제">✕</button>
@@ -4863,7 +4895,7 @@ function renderRFs(){
         const sc=getScheds().find(s=>s.id===ST.sid);
         const co=getCos().find(c=>c.id===sc?.coId);
         const tyNm=getTypes().find(t=>t.id===sc?.typeId)?.name||'컨설팅';
-        const fn=`${tyNm}_${co?.name||'?'}_${sc?.round||'N'}회_${ri===0?'시작사진':'끝사진'}.jpg`;
+        const fn=`${tyNm}_${co?.name||'?'}_${sc?.round||'N'}회_${ri===0?'시작사진':ri===1?'끝사진':'추가'+(ri-1)+'사진'}.jpg`;
         await saveCanvasAs(cv,fn);
         renderCal();
       };
@@ -4875,7 +4907,7 @@ function renderRFs(){
         ST.photos[ri]=null;ST.done[ri]=false;ST.times[ri]=null;
         if(PHOTOS[ST.sid])PHOTOS[ST.sid][`c${ri}`]=null;
         deleteOnePhotoFromDB(ST.sid,`c${ri}`);
-        renderPDs();renderRFs();renderCal();toast(`${ri===0?'입장':'활동'} 사진 삭제`);
+        renderPDs();renderRFs();renderCal();toast(`${ri===0?'입장':ri===1?'활동':'추가 '+(ri-1)} 사진 삭제`);
       };
       // 다시 등록: 사진만 새로 선택 (시각 유지)
       r.querySelector('.rf-redo').onclick=e=>{
@@ -4946,8 +4978,10 @@ function applyTimes(slot){
   const base=(ST.rangeHr||2)*60;
   const g=base-15+Math.floor(Math.random()*31); // base-15 ~ base+15
   let t=f+g; if(t>1439)t=1439;
-  ST.times=[{h:Math.floor(f/60),m:f%60},{h:Math.floor(t/60),m:t%60}];
-  ST.done=[true,true];renderRFs();
+  // 입장/활동만 설정 (추가 슬롯 상태 보존 — 배열 통째 교체 금지)
+  ST.times[0]={h:Math.floor(f/60),m:f%60};
+  ST.times[1]={h:Math.floor(t/60),m:t%60};
+  ST.done[0]=true;ST.done[1]=true;renderRFs();
 }
 function attachPhotoAdjust(idx){
   const cv=q(`#cv${idx}`); if(!cv)return;
@@ -5108,14 +5142,16 @@ function drawStamp(idx){
 }
 
 async function saveStamp(){
-  if(!ST.done[0]&&!ST.done[1]){toast('합성 사진이 없습니다','err');return;}
+  const N=ST.n||2;
+  if(!ST.done.some(Boolean)){toast('합성 사진이 없습니다','err');return;}
   const sc=getScheds().find(s=>s.id===ST.sid);
   const co=getCos().find(c=>c.id===sc?.coId);
   const tyNm=getTypes().find(t=>t.id===sc?.typeId)?.name||'컨설팅';
   const slug=`${tyNm}_${co?.name||'?'}_${sc?.round||'N'}회`;
-  if(!PHOTOS[ST.sid])PHOTOS[ST.sid]={c0:null,c1:null};
+  const lblFn=i=>i===0?'시작사진':i===1?'끝사진':'추가'+(i-1)+'사진';
+  if(!PHOTOS[ST.sid])PHOTOS[ST.sid]={};
   // 1) 앱 내부 저장 (IndexedDB) — 합성 결과 + 원본 모두 저장, 지문 등록 + 이력
-  for(const i of [0,1]){
+  for(let i=0;i<N;i++){
     if(!ST.done[i])continue;
     const cv=q(`#cv${i}`);if(!cv)continue;
     const prev=await getPhotoFromDB(ST.sid,`c${i}`); // 변경 전 사진(있으면 교체)
@@ -5128,11 +5164,10 @@ async function saveStamp(){
   closeModal('mbStamp');renderCal();
   if(_photoQueue&&_photoQueue.length)setTimeout(runPhotoQueue,250);
   // 2) 파일 저장 (위치 선택, 순차)
-  for(const i of [0,1]){
+  for(let i=0;i<N;i++){
     if(!ST.done[i])continue;
     const cv=q(`#cv${i}`)||PHOTOS[ST.sid][`c${i}`];if(!cv)continue;
-    const fn=`${slug}_${i===0?'시작사진':'끝사진'}.jpg`;
-    await saveCanvasAs(cv,fn);
+    await saveCanvasAs(cv,`${slug}_${lblFn(i)}.jpg`);
   }
 }
 
