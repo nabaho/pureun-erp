@@ -2035,9 +2035,53 @@ window.erpBackupFull = function(){
     a.download = 'pureun_erp_전체백업_'+todayYMD()+'.json';
     a.click();
     setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
+    // 백업 이력 기록 — 기한 점검(erpBackupCheck)이 이걸 보고 알림을 멈춘다
+    try {
+      var _hist = dbGet('backup_history', []) || [];
+      _hist.unshift({ id:Date.now(), ts:new Date().toISOString(), kind:'full', status:'success',
+        size:blob.size, fileName:a.download, keyCount:n });
+      dbSet('backup_history', _hist.slice(0, 50));
+    } catch(_){}
     try { showToast('전체 백업 다운로드 완료 ('+n+'개 항목) — 구글 드라이브에 보관하세요'); } catch(_){}
     console.log('✅ 전체 백업 다운로드 완료:', n, '개 항목');
   } catch(e){ console.log('❌ 전체 백업 실패:', e.message); try { showToast('백업 실패: '+e.message); } catch(_){} }
+};
+
+// ── 백업 기한 점검 (랜섬웨어·기기 고장 대비) ─────────────────────────────────
+// 환경설정의 백업 주기(daily/weekly/monthly)는 설정만 있고 실제로 동작하지 않았다.
+// 브라우저는 사용자가 누르지 않으면 파일을 저장할 수 없으므로(그리고 매일 자동
+// 내려받으면 다운로드 폴더에 쌓인다), '기한이 지나면 알려주고 한 번에 받게' 한다.
+// 받은 파일은 반드시 이 PC 밖(구글 드라이브·외장하드)에 두어야 랜섬웨어에 안전하다.
+window.erpBackupCheck = function(force){
+  try {
+    if(!(CURRENT_USER && (CURRENT_USER.isAdmin || CURRENT_USER.isSubAdmin))) return;   // 관리자만
+    var CK = 'pureun_v6_backup_chk';
+    if(!force){                                        // 하루 1회만 확인 (로그인마다 귀찮게 하지 않음)
+      try { if(Date.now() - (parseInt(localStorage.getItem(CK)||'0',10)) < 86400000) return; } catch(e){}
+    }
+    var cfg = dbGet('backup_config', null) || { schedule:'daily' };
+    var DAYS = { daily:1, weekly:7, monthly:30 };
+    var limit = DAYS[cfg.schedule] || 1;
+
+    var hist = dbGet('backup_history', []) || [];
+    var last = 0;
+    hist.forEach(function(r){
+      if(!r || r.status !== 'success') return;
+      var t = Date.parse(r.ts || '');
+      if(t && t > last) last = t;
+    });
+    try { localStorage.setItem(CK, String(Date.now())); } catch(e){}
+
+    var days = last ? Math.floor((Date.now() - last) / 86400000) : null;
+    if(days !== null && days < limit) return;          // 기한 안 지남 → 조용히 넘어감
+
+    var msg = (days === null)
+      ? '아직 한 번도 백업하지 않았습니다.'
+      : '마지막 백업이 ' + days + '일 전입니다. (설정: ' + limit + '일마다)';
+    window.erpAlert && erpAlert('warn', '💾 데이터 백업이 필요합니다', msg,
+      '환경설정 → 백업에서 [지금 백업]을 누르고, 받은 파일을 구글 드라이브나 외장하드에 보관하세요. ' +
+      '이 PC 안에만 두면 랜섬웨어에 걸렸을 때 함께 잠깁니다.');
+  } catch(e){ window._erpErrLog && window._erpErrLog(e); }
 };
 
 // ── 엑셀 일련번호 날짜 → ISO 일괄 정정 (콘솔: erpFixSerialDates() 미리보기 / erpFixSerialDates(true) 적용) ──
@@ -54462,6 +54506,8 @@ function LoginScreen(props){
         setSession(acct.sid);
         setLoading(false);
         onLogin(acct.sid);
+        // 백업 기한 점검 (관리자·하루 1회) — 데이터 로딩을 방해하지 않게 잠시 뒤
+        setTimeout(function(){ try { window.erpBackupCheck && window.erpBackupCheck(); } catch(_){} }, 6000);
       }
       if(!pw){ _loginFail(); return; }
       // 인증 먼저 → 그 다음 서버에서 계정 동기화·확인 (새 컴퓨터에서도 로그인 가능)
