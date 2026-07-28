@@ -108,6 +108,16 @@ select,input[type=date]{font-family:inherit;font-size:13px;height:36px;padding:0
 .pos:hover{background:var(--accent);border-color:var(--accent);color:#fff}
 .pos.none{color:#92400e;background:#fef3c7;border-color:#fcd34d;cursor:default}
 .pos.none:hover{background:#fef3c7;color:#92400e}
+.posedit{font-size:10px;padding:1px 6px;border-radius:6px;border:1px solid #cdd6e6;background:#fff;color:var(--sub);
+  cursor:pointer;font-family:inherit;margin-right:6px;white-space:nowrap}
+.posedit:hover{background:var(--accent);border-color:var(--accent);color:#fff}
+.posrow{display:flex;align-items:center;gap:9px;font-size:12px;padding:6px 4px;border-bottom:1px solid #f1f5f9;cursor:pointer}
+.posrow:hover{background:#f6f9ff}
+.posrow.on{background:#f0fdfa;border-color:#99d5cc}
+.posrow .pr-no{font-weight:700;width:74px;white-space:nowrap}
+.posrow .pr-t{color:var(--sub);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.posrow .pr-tag{font-size:10px;color:var(--mute);white-space:nowrap}
+.posrow .pr-tag.now{color:#0f766e;font-weight:700} .posrow .pr-tag.rec{color:var(--accent);font-weight:700}
 /* 강조는 JS가 인라인 스타일로 넣는다(.pick-art의 border 축약 선언에 덮이지 않게) */
 @media(max-width:900px){.fitem{flex-wrap:wrap}.fi-act{flex-direction:row;width:100%}.qd{flex:1;min-width:0}}
 .empty{color:var(--mute);text-align:center;padding:40px;font-size:13px}
@@ -329,6 +339,31 @@ table.daejo td.dj2{padding:0}
     </div>
     <div class="foot"><button class="btn ghost" data-close>닫기</button></div>
   </div></div>
+
+  <!-- 신설 위치 고르기 — 자동 추천이 맞지 않을 때 다른 조문 뒤로 옮긴다 -->
+  <div class="overlay" id="ov-pos"><div class="modal" style="max-width:520px">
+    <h2>어느 조문 뒤에 넣을까요 <span id="pos-sub" style="font-size:12px;color:var(--mute);font-weight:400"></span><span class="x" data-close>×</span></h2>
+    <div class="body" style="max-height:62vh">
+      <input id="pos-q" class="arch-search" placeholder="조문 번호·제목·본문 검색">
+      <div id="pos-list"></div>
+    </div>
+    <div class="foot">
+      <button class="btn ghost" id="pos-end">맨 끝(새 조)</button>
+      <button class="btn ghost" id="pos-rec">추천으로 되돌리기</button>
+      <span style="flex:1"></span><button class="btn ghost" data-close>닫기</button>
+    </div>
+  </div></div>
+
+  <!-- 조문번호 정리 — 전부개정 기준 재번호 + 본문 인용 치환 미리보기 -->
+  <div class="overlay" id="ov-renum"><div class="modal" style="max-width:680px">
+    <h2>조문번호 정리 <span id="rn-sub" style="font-size:12px;color:var(--mute);font-weight:400"></span><span class="x" data-close>×</span></h2>
+    <div class="body" style="max-height:64vh"><div id="rn-body"></div></div>
+    <div class="foot">
+      <button class="btn ghost" data-close>취소</button>
+      <span style="flex:1"></span>
+      <button class="btn" id="rn-apply">정리 적용</button>
+    </div>
+  </div></div>
   <div id="dash-open-bar" style="display:none;margin-bottom:10px">
     <button class="btn ghost" id="dash-show" style="height:30px;font-size:12px;padding:0 12px">🏢 사업장 규정 현황 열기</button>
   </div>
@@ -385,7 +420,12 @@ table.daejo td.dj2{padding:0}
       </div>
       <div id="erp-badge" style="display:none;font-size:11.5px;color:var(--sub);background:#f0fdfa;border:1px solid #99f6e4;border-radius:9px;padding:8px 12px;margin:0 16px 8px;line-height:1.6"></div>
       <div class="findings" id="findings"><div class="empty">사업장을 고르고 <b>취업규칙 검토</b>를 누르세요.</div></div>
-      <div class="rowbtns">
+      <div class="rowbtns" style="flex-wrap:wrap;align-items:center">
+        <span style="font-size:11.5px;color:var(--mute)">개정방식</span>
+        <button class="stbtn" id="rv-partial" title="기존 조번호 유지 · 신설은 가지번호(제N조의n) · 삭제는 결번">일부개정</button>
+        <button class="stbtn" id="rv-full" title="최종 순서대로 제1조부터 전면 재번호 · 삭제 조문 제외">전부개정</button>
+        <button class="stbtn" id="rv-renum" title="전부개정 기준으로 제1조부터 다시 매기고, 본문 속 '제N조' 인용도 새 번호로 바꿉니다">🔢 조문번호 정리</button>
+        <span style="flex:1"></span>
         <button class="btn ghost" id="mk-daejo" disabled>신구대조표 생성</button>
         <button class="btn orange" id="save" disabled>보관함에 저장</button>
       </div>
@@ -1303,9 +1343,11 @@ function posHint(f){
     return `<span class="pos" data-go="${escapeH(lab)}" title="클릭하면 왼쪽 원본에서 이 조문을 보여줍니다">📍 ${escapeH(it.label||lab)}</span>`;
   }
   const a=CUR_ITEMS.find(x=>x.id===(it.insertAfter||it.rec));
-  if(!a)return `<span class="pos none" title="비슷한 조문을 찾지 못했습니다 — 편집 화면에서 위치를 직접 고르세요">📍 위치 미정(맨 끝)</span>`;
+  if(!a)return `<span class="pos none" title="비슷한 조문을 찾지 못해 맨 끝에 붙습니다 — [위치 바꾸기]로 직접 고르세요">📍 위치 미정(맨 끝)</span>`
+    +`<button class="posedit" data-pos="${f.rule.id}" title="원본을 보고 들어갈 자리를 고릅니다">위치 바꾸기</button>`;
   return `<span class="pos" data-go="${escapeH(bareLabel(a.label))}"
-    title="이 조문 뒤에 신설하도록 추천합니다. 클릭하면 왼쪽 원본에서 기존 조문을 확인할 수 있습니다">📍 ${escapeH(a.label)} 뒤</span>`;
+      title="이 조문 뒤에 신설하도록 추천합니다. 클릭하면 왼쪽 원본에서 기존 조문을 확인할 수 있습니다">📍 ${escapeH(a.label)} 뒤</span>`
+    +`<button class="posedit" data-pos="${f.rule.id}" title="원본을 보고 다른 조문 뒤로 옮깁니다">위치 바꾸기</button>`;
 }
 function focusPreviewArticle(label){
   const el=document.querySelector('#artbox-list [data-label="'+label+'"]');
@@ -1340,11 +1382,16 @@ function renderFindings(){
         <div class="top"><span class="badge ${bc}">${f.status}</span><span class="name">${f.rule.id} ${f.rule.name}</span>${f.loc?`<span class="loc">@${f.loc}</span>`:""}<span class="pill">${f.rule.category}</span>${eff}<span class="dec" data-dec="${i}"></span></div>
         <div class="meta">${posHint(f)}${f.rule.law} · ${eff?escapeH(String(f.note).replace(f.rule.effective+" 시행 예정","").trim())||"시행 전 대비 검토":f.note}</div>
       </div>${quickDec(f,i)}`;
-    d.onclick=e=>{ if(e.target.closest("[data-qd],[data-go]"))return; openDetail(i); };
+    d.onclick=e=>{ if(e.target.closest("[data-qd],[data-go],[data-pos]"))return; openDetail(i); };
     box.appendChild(d);});
   // 위치 칩 클릭 — 왼쪽 원본에서 그 조문으로 이동(줄 클릭·결정 버튼과 분리)
   box.querySelectorAll("[data-go]").forEach(el=>el.onclick=e=>{
     e.stopPropagation(); focusPreviewArticle(el.dataset.go);
+  });
+  // 위치 바꾸기 — 원본을 보고 다른 조문 뒤로 옮긴다
+  box.querySelectorAll("[data-pos]").forEach(el=>el.onclick=e=>{
+    e.stopPropagation();
+    const f=DT_LIST.find(x=>x.rule.id===el.dataset.pos); if(f)openPosPicker(f);
   });
   // 목록에서 바로 결정 — 팝업을 열지 않고 처리(줄 클릭은 그대로 상세 비교로)
   box.querySelectorAll("[data-qd]").forEach(b=>b.onclick=e=>{
@@ -1365,6 +1412,7 @@ function renderFindings(){
     el.classList.toggle("on", FS_STATUS===el.dataset.fs));
   if(typeof refreshDecChips==="function")refreshDecChips();
   refreshDecBadges();   // 목록에서 결정했을 때도 '✓ 반영' 배지가 함께 갱신되도록
+  syncRevBtns();        // 개정방식 버튼 상태
 }
 function setFindingFilter(st){ FS_STATUS=(FS_STATUS===st)?"":st; renderFindings(); }
 function run(){
@@ -1573,6 +1621,132 @@ $("dt-mfix").addEventListener("click",()=>{
   });
   $("mf-back").onclick=()=>{ box.innerHTML=prev; renderDetail(); };
 });
+
+/* ══════════ 신설 위치 바꾸기 ══════════
+   자동 추천이 늘 맞지는 않는다. 원본을 보고 다른 조문 뒤로 옮길 수 있어야 한다.
+   조문이 100개가 넘는 규칙집이 많아 드롭다운 대신 검색되는 목록으로 고른다. */
+let POS_TARGET=null;
+function openPosPicker(f){
+  const it=itemForFinding(f); if(!it||it.orig!==""){alert("신설 항목만 위치를 정할 수 있습니다.");return;}
+  POS_TARGET=it;
+  $("pos-sub").textContent=(f.rule.id+" "+f.rule.name).slice(0,40);
+  $("pos-q").value=""; renderPosList();
+  $("ov-pos").classList.add("on");
+}
+function renderPosList(){
+  const q=($("pos-q").value||"").trim().toLowerCase();
+  const arts=numberedView(CUR_ITEMS,REV_MODE).filter(v=>v.it.orig!=="");
+  const rows=arts.filter(v=>{
+    if(!q)return true;
+    return (v.no+" "+(v.it.title||"")+" "+(v.it.orig||"")).toLowerCase().includes(q);
+  });
+  const box=$("pos-list");
+  box.innerHTML=rows.length?rows.map(v=>{
+    const cur=POS_TARGET&&POS_TARGET.insertAfter===v.it.id, rec=POS_TARGET&&POS_TARGET.rec===v.it.id;
+    return `<div class="posrow${cur?" on":""}" data-id="${escapeH(v.it.id)}" title="${escapeH(String(v.it.orig||"").slice(0,120))}">
+      <span class="pr-no">${escapeH(v.no)}</span>
+      <span class="pr-t">${escapeH(v.it.title||"")}</span>
+      ${cur?'<span class="pr-tag now">현재</span>':(rec?'<span class="pr-tag rec">추천</span>':'<span class="pr-tag">이 뒤에</span>')}
+    </div>`;}).join("")
+    :'<div style="font-size:12px;color:var(--mute);padding:14px 2px">검색 결과 없음</div>';
+  box.querySelectorAll(".posrow").forEach(el=>el.onclick=()=>setPos(el.dataset.id));
+}
+function setPos(id){
+  if(!POS_TARGET)return;
+  POS_TARGET.insertAfter=id;
+  $("ov-pos").classList.remove("on");
+  renderFindings(); if(document.querySelector("#ov-daejo.on"))renderEditor();
+  saveWorkState();
+}
+
+/* ══════════ 조문번호 정리(전부개정) ══════════
+   전부개정은 이미 제1조부터 순차 재번호된다. 남는 문제는 본문 속 '제N조' 인용이
+   옛 번호로 남는 것 — 실제 규칙집에서 10~20건씩 나온다. 그걸 새 번호로 함께 바꾼다. */
+let CUR_RENUM=false;
+function renumberMap(){
+  const map={};
+  numberedView(CUR_ITEMS,"full").forEach(v=>{
+    const it=v.it; if(it.orig===""||!it.num)return;         // 신설은 옛 번호가 없다
+    const oldNo="제"+it.num+"조"+(it.sub?"의"+it.sub:"");
+    if(v.no&&v.no!=="—"&&v.no!==oldNo)map[oldNo]=v.no;
+  });
+  return map;
+}
+/* 바로 앞에 법령 이름이 붙은 인용(근로기준법 제50조)은 건드리지 않는다 — 바꾸면 명백한 오류 */
+const LAW_BEFORE=/(법|령|규칙|법률|조례|협약|시행령|시행규칙)\s*$/;
+function retargetRefs(text,map){
+  let n=0;
+  const out=String(text||"").replace(/제\s*(\d+)\s*조(?:\s*의\s*(\d+))?/g,(m,a,b,off,src)=>{
+    if(LAW_BEFORE.test(src.slice(Math.max(0,off-10),off)))return m;
+    const key="제"+(+a)+"조"+(b?"의"+(+b):"");
+    if(!map[key])return m;
+    n++; return map[key];
+  });
+  return {text:out,n:n};
+}
+function openRenumber(){
+  if(!CUR_ITEMS.length){alert("먼저 취업규칙 검토를 실행하세요.");return;}
+  if(CUR_RENUM&&!confirm("이미 한 번 정리했습니다. 다시 적용하면 인용이 어긋날 수 있습니다.\n그래도 계속할까요?"))return;
+  const map=renumberMap();
+  const rows=numberedView(CUR_ITEMS,"full").map(v=>{
+    const it=v.it, oldNo=it.orig===""?"—":("제"+it.num+"조"+(it.sub?"의"+it.sub:""));
+    const r=retargetRefs(String(it.after||"").replace(RE_HEAD_STRIP,""),map);
+    return {oldNo,newNo:v.no,title:it.title||"",ins:it.orig==="",refs:r.n,changed:oldNo!==v.no};
+  });
+  const refTotal=rows.reduce((a,b)=>a+b.refs,0);
+  const numChanged=rows.filter(r=>r.changed&&!r.ins).length;
+  $("rn-sub").textContent=`번호 변경 ${numChanged}개 · 본문 인용 ${refTotal}건`;
+  $("rn-body").innerHTML=
+    `<div class="sample-banner" style="background:#eff6ff;border-color:#93c5fd;color:#1d4ed8">
+      전부개정 기준으로 <b>제1조부터 다시 매기고</b>, 본문 속 '제N조' 인용 <b>${refTotal}건</b>을 새 번호로 바꿉니다.
+      「근로기준법 제50조」처럼 법령을 가리키는 인용은 바꾸지 않습니다.</div>
+     <table class="daejo" style="font-size:11.5px"><thead><tr>
+       <th style="width:15%">현행</th><th style="width:15%">정리 후</th><th>조문 제목</th><th style="width:22%">본문 인용</th></tr></thead><tbody>`
+    +rows.map(r=>`<tr>
+      <td class="${r.ins?"c":""}">${escapeH(r.oldNo)}</td>
+      <td><b style="color:${r.changed?"var(--accent)":"inherit"}">${escapeH(r.newNo)}</b></td>
+      <td>${escapeH(r.title)}${r.ins?' <span class="badge miss">신설</span>':""}</td>
+      <td class="rreason">${r.refs?`<b style="color:#b45309">${r.refs}건 바뀜</b>`:"–"}</td></tr>`).join("")
+    +`</tbody></table>`;
+  $("ov-renum").classList.add("on");
+}
+function applyRenumber(){
+  const map=renumberMap();
+  const newNo={}; numberedView(CUR_ITEMS,"full").forEach(v=>{ newNo[v.it.id]=v.no; });
+  let touched=0,total=0,heads=0;
+  CUR_ITEMS.forEach(it=>{
+    const raw=String(it.after||"");
+    const head=(raw.match(RE_HEAD_STRIP)||[""])[0];
+    const r=retargetRefs(raw.slice(head.length),map);
+    // 조문 앞머리도 새 번호로 — 안 바꾸면 대조표의 '변경조항'과 본문 머리가 어긋난다
+    let nh=head;
+    if(head&&newNo[it.id]&&newNo[it.id]!=="—"){
+      const h2=head.replace(/^(\s*)제\s*\d+\s*조(?:\s*의\s*\d+)?/,"$1"+newNo[it.id]);
+      if(h2!==head){ nh=h2; heads++; }
+    }
+    if(r.n||nh!==head) it.after=nh+r.text;
+    if(r.n){ touched++; total+=r.n; }
+  });
+  REV_MODE="full"; CUR_RENUM=true;
+  $("ov-renum").classList.remove("on");
+  renderFindings(); if(document.querySelector("#ov-daejo.on"))renderEditor();
+  saveWorkState(); syncRevBtns();
+  alert(`조문번호를 정리했습니다.\n· 전부개정으로 전환해 제1조부터 다시 매김\n· 조문 앞머리 ${heads}개를 새 번호로 변경\n· 본문 인용 ${total}건을 ${touched}개 조문에서 새 번호로 변경\n\n「근로기준법 제50조」처럼 법령을 가리키는 인용은 그대로 두었습니다.`);
+}
+function syncRevBtns(){
+  if($("rv-partial"))$("rv-partial").className="stbtn"+(REV_MODE==="partial"?" on-adopt":"");
+  if($("rv-full"))$("rv-full").className="stbtn"+(REV_MODE==="full"?" on-adopt":"");
+}
+$("rv-partial").addEventListener("click",()=>{REV_MODE="partial";syncRevBtns();renderFindings();if(document.querySelector("#ov-daejo.on"))renderEditor();saveWorkState();});
+$("rv-full").addEventListener("click",()=>{REV_MODE="full";syncRevBtns();renderFindings();if(document.querySelector("#ov-daejo.on"))renderEditor();saveWorkState();});
+$("rv-renum").addEventListener("click",openRenumber);
+$("rn-apply").addEventListener("click",applyRenumber);
+$("pos-q").addEventListener("input",renderPosList);
+$("pos-end").addEventListener("click",()=>setPos("__end__"));
+$("pos-rec").addEventListener("click",()=>{ if(POS_TARGET)setPos(POS_TARGET.rec||"__end__"); });
+/* 로드 시점에 syncRevBtns()를 부르면 아직 선언 전인 REV_MODE에 걸려 스크립트가 통째로 멈춘다.
+   버튼 상태는 renderFindings에서 맞춘다. */
+
 $("dt-prev").addEventListener("click",()=>{if(DT_IDX>0){DT_IDX--;renderDetail();}});
 $("dt-next").addEventListener("click",()=>{if(DT_IDX<DT_LIST.length-1){DT_IDX++;renderDetail();}});
 $("dt-to-daejo").addEventListener("click",()=>{
