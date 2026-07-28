@@ -79,6 +79,12 @@
   #toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%) translateY(20px);background:#1f2937;color:#fff;padding:11px 20px;border-radius:10px;font-size:13.5px;font-weight:600;box-shadow:0 8px 30px rgba(0,0,0,.25);opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;z-index:200;max-width:80vw}
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
   #toast.err{background:#b91c1c}#toast.warn{background:#b45309}
+  /* 보기 전환(세그먼트) — 같은 목록에 열만 바꾸는 스위치 */
+  .segbar{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:#fff}
+  .seg{border:none;background:#fff;padding:5px 13px;font-size:12.5px;color:var(--sub);cursor:pointer;border-radius:0;border-right:1px solid var(--line)}
+  .seg:last-child{border-right:none}
+  .seg:hover{background:var(--bg)}
+  .seg.on{background:var(--acc);color:#fff;font-weight:700}
   /* 도움말 ⓘ — 설명을 화면에 깔지 않고 눌러서 보게 한다 */
   .hbtn{font-size:11px;line-height:1.5;padding:1px 6px;border:1px solid var(--line);background:#fff;border-radius:999px;color:var(--faint);cursor:pointer;flex:none;vertical-align:middle}
   .hbtn:hover{background:var(--acc-soft);color:var(--acc2);border-color:#c7d9f8}
@@ -288,8 +294,8 @@ function shell(){
     +'<div id="navlist">'
     +'<div class="sitem" data-nav="1" id="nav-home" onclick="go(\'home\')" title="드래그: 메뉴 순서 변경"><span class="gr">⋮⋮</span>🏛 기금 현황</div>'
     +'<div class="sitem" data-nav="1" id="nav-billing" onclick="go(\'billing\')" title="드래그: 메뉴 순서 변경"><span class="gr">⋮⋮</span>💰 청구 관리</div>'
-    +'<div class="sitem" data-nav="1" id="nav-closeboard" onclick="go(\'closeboard\')" title="기금×연도 결산·보고서 진행 상태 한눈에 · 드래그로 순서 변경"><span class="gr">⋮⋮</span>📊 결산 대장</div>'
-    +'<div class="sitem" data-nav="1" id="nav-docsboard" onclick="go(\'docsboard\')" title="전체 기금 서식 준비 현황 한눈에 비교 · 드래그로 순서 변경"><span class="gr">⋮⋮</span>🗂 서식 현황</div>'
+    /* 서식 현황·결산 대장은 기금 현황과 같은 42개 목록이라 별도 메뉴를 없앴다.
+       기금 현황의 [보기] 전환으로 들어간다(같은 목록, 열만 교체). */
     +'<div class="sitem" data-nav="1" id="nav-forms" onclick="S.formsCtx=\'library\';S.formsHost=null;S._sideKind=null;go(\'forms\')" title="전사 표준서식 관리(견본 편집·원본 등록·공통 저장) · 드래그로 순서 변경"><span class="gr">⋮⋮</span>📚 서식 자료실</div>'
     +'</div>'
     +'<div style="margin-top:auto;font-size:11px;color:var(--faint);padding:8px">Firebase판 · 통합운영<br>서식 채움 지원</div>'
@@ -435,12 +441,13 @@ window.addEventListener('popstate', function(ev){
   route();
 });
 function route(){
-  ['home','billing','closeboard','docsboard','forms'].forEach(function(v){var n=$('nav-'+v);if(n)n.className='sitem'+(S.view===v?' on':'');});
+  // 없어진 메뉴(docsboard/closeboard)로 들어오면 기금 현황의 해당 보기로 돌린다(옛 링크·기록 호환)
+  if(S.view==='docsboard'){ S.view='home'; S.homeView='docs'; }
+  if(S.view==='closeboard'){ S.view='home'; S.homeView='close'; }
+  ['home','billing','forms'].forEach(function(v){var n=$('nav-'+v);if(n)n.className='sitem'+(S.view===v?' on':'');});
   if(S.view!=='fund'&&S.formsHost==='fundDocsHost') S.formsHost=null;   // 기금 밖으로 나가면 임베드 해제
   if(S.view==='fund'&&S.fundId&&funds[S.fundId]) renderFund();
   else if(S.view==='billing') renderBilling();
-  else if(S.view==='closeboard') renderCloseBoard();
-  else if(S.view==='docsboard') renderDocsBoard();
   else if(S.view==='forms') renderForms();
   else { S.view='home'; renderHome(); }
 }
@@ -699,6 +706,27 @@ function lifeBadge(f){
   if(f.lifecycle==='기록보관') return '<span class="chip" style="background:#eef;color:#556">기록보관'+(f.end_date?' '+esc(f.end_date):'')+'</span>';
   return '';
 }
+/* ══ 기금 현황 '보기' 전환 ══
+   기금 목록은 하나. 그룹 탭(지역/공동/사내/설립중/지난/삭제)으로 **어느 기금**을 볼지 고르고,
+   보기 전환으로 **무엇을** 볼지 고른다(기본정보 / 서식 준비 / 결산).
+   같은 목록에 열만 바뀌므로 기금 목록 화면을 여러 개 둘 필요가 없다. */
+var HOME_VIEWS=[['basic','기본정보'],['docs','서식 준비'],['close','결산']];
+function homeView(v){ S.homeView=v; renderHome(); }
+function homeViewBar(){
+  if(HOME_VIEWS.map(function(x){return x[0];}).indexOf(S.homeView)<0) S.homeView='basic';
+  return '<div class="row" style="gap:0;margin:10px 0 0"><span class="muted" style="font-size:11.5px;margin-right:8px">보기</span>'
+    +'<div class="segbar">'+HOME_VIEWS.map(function(x){
+      return '<button class="seg'+(S.homeView===x[0]?' on':'')+'" onclick="homeView(\''+x[0]+'\')">'+x[1]+'</button>';
+    }).join('')+'</div>'+hlp('home.view')+'</div>';
+}
+/* 목록 하나에 보기만 갈아끼운다 — 기본정보는 기존 표(하위 그룹 나누기 포함),
+   서식 준비·결산은 같은 목록에 열만 바꿔 매트릭스로 */
+function homeBody(list,edit,mode,secFn){
+  if(S.homeView==='docs')  return docsMatrixHTML(list);
+  if(S.homeView==='close') return closeMatrixHTML(list);
+  if(secFn) return '<div class="panel">'+secFn(list,edit,mode)+'</div>';
+  return '<div class="panel">'+fundTable(list,edit,mode)+'</div>';
+}
 function renderHome(){
   $('crumb').textContent='기금 현황';
   var rpri={'충남':1,'경기':2};
@@ -725,12 +753,14 @@ function renderHome(){
     +(edit?'<button onclick="bulkTax()" title="소재지로 전체 기금 관할세무서 자동 추정" style="margin-right:6px">🏢 세무서 일괄</button>':'')
     +'<button class="'+(edit?'primary':'')+'" onclick="S.homeEdit=!S.homeEdit;renderHome()" title="핵심 기본정보(인가번호·설립일 등) 직접 입력">'+(edit?'✓ 입력 종료':'✏️ 정보 채우기')+'</button>'
     +'<input class="search" placeholder="기금명·담당 검색" value="'+esc(S.q||'')+'" oninput="S.q=this.value;renderHome()"></div>'
-    +(edit?'<p class="muted" style="font-size:11.5px;margin:6px 0 0">칸에 입력하면 자동 저장 · 빨간 테두리=빈 칸 '+hlp('home.fill')+'</p>':'')+'</div>';
+    +(edit?'<p class="muted" style="font-size:11.5px;margin:6px 0 0">칸에 입력하면 자동 저장 · 빨간 테두리=빈 칸 '+hlp('home.fill')+'</p>':'')
+    +homeViewBar()+'</div>';
   // 검색 중이면 그룹 무시하고 결과만(지난 기금 포함)
   if(S.q){
     var q=S.q; var hit=all.filter(function(f){return (f.name||'').indexOf(q)>=0||(f.short_name||'').indexOf(q)>=0||mgrText(f).indexOf(q)>=0;}).sort(srt);
     $('app').innerHTML=todo+head+'<div class="panel"><div class="grp-h">🔎 검색 결과 <span class="cnt">'+hit.length+'개</span></div>'
-      +(hit.length?fundTable(hit,edit):'<div class="muted" style="padding:12px">일치하는 기금이 없습니다.</div>')+'</div>';
+      +(hit.length?'':'<div class="muted" style="padding:12px">일치하는 기금이 없습니다.</div>')+'</div>'
+      +(hit.length?homeBody(hit,edit,''):'');   // 검색 결과에도 같은 보기 전환이 적용된다
     return;
   }
   var TL=[['지역공동','🏛 지역기금'],['개별공동','🤝 공동기금'],['사내','🏢 사내기금']];
@@ -752,24 +782,28 @@ function renderHome(){
   }
   if(S.homeTab==='setup'){
     body='<div class="panel"><p class="muted" style="font-size:11.5px;margin:0 0 6px">🏗 인가·등기 절차 중 — 운영 집계에서 제외 '+hlp('home.setup')+'</p>'
-      +(setup.length?catSecs(setup,edit,'setup'):'<div class="muted" style="padding:12px">설립 중인 기금이 없습니다.</div>')+'</div>';
+      +(setup.length?'':'<div class="muted" style="padding:12px">설립 중인 기금이 없습니다.</div>')+'</div>'
+      +(setup.length?homeBody(setup,edit,'setup',catSecs):'');
   } else if(S.homeTab==='trash'){
     body='<div class="panel"><p class="muted" style="font-size:11.5px;margin:0 0 6px">🗑 데이터는 그대로 보관 — 복원 가능 '+hlp('home.trash')+'</p>'
-      +(trash.length?fundTable(trash,false,'trash'):'<div class="muted" style="padding:12px">삭제 보관된 기금이 없습니다.</div>')+'</div>';
+      +(trash.length?'':'<div class="muted" style="padding:12px">삭제 보관된 기금이 없습니다.</div>')+'</div>'
+      +(trash.length?homeBody(trash,false,'trash'):'');
   } else if(S.homeTab==='past'){
     var LS=[['계약종료','📄 계약종료','수임·자문 계약만 끝남 · 재개 가능'],['기록보관','🗄 기록보관','기금 해산·소멸']];
-    var secs=LS.map(function(L){
+    var secs=(S.homeView!=='basic')?homeBody(past,false,''):LS.map(function(L){
       var items=past.filter(function(f){return f.lifecycle===L[0];});
       if(!items.length) return '';
       return '<div style="margin-top:18px"><div style="font-weight:800;font-size:15px;display:flex;align-items:center;gap:8px">'+L[1]+' <span class="stat">'+items.length+'</span></div>'
         +'<div class="muted" style="font-size:11.5px;margin:2px 0 6px">'+L[2]+'</div>'+catSecs(items)+'</div>';
     }).join('');
     body='<div class="panel"><p class="muted" style="font-size:11.5px;margin:0 0 4px">집계에서 제외 · 기록은 보존 '+hlp('home.past')+'</p>'
-      +(past.length?secs:'<div class="muted" style="padding:12px">지난 기금이 없습니다.</div>')+'</div>';
+      +(past.length?(S.homeView==='basic'?secs:''):'<div class="muted" style="padding:12px">지난 기금이 없습니다.</div>')+'</div>'
+      +(past.length&&S.homeView!=='basic'?secs:'');
   } else {
     var cur=(G[S.homeTab]||[]).slice();
     if(edit&&S.homeInc) cur=cur.filter(function(f){return nDone(f)<5;});
-    body='<div class="panel">'+(cur.length?fundTable(cur,edit):'<div class="muted" style="padding:12px">'+(edit&&S.homeInc?'미완비 기금이 없습니다.':'이 분류에 기금이 없습니다.')+'</div>')+'</div>';
+    body=cur.length?homeBody(cur,edit,'')
+      :'<div class="panel"><div class="muted" style="padding:12px">'+(edit&&S.homeInc?'미완비 기금이 없습니다.':'이 분류에 기금이 없습니다.')+'</div></div>';
   }
   $('app').innerHTML=todo+head+tabbar+body;
 }
@@ -1708,22 +1742,19 @@ function docsFor(list,ftype){ return list.filter(function(d){ return !d[2]||d[2]
 var DOC_PHASES=[['kinds','① 인가',function(){return DOC_KINDS;}],['reg','② 법인설립',function(){return DOC_REG;}],
   ['tax','③ 고유번호증',function(){return DOC_TAX;}],['ops','④ 운영',function(){return DOC_OPS;}],
   ['sub','⑤ 지원금',function(){return DOC_SUB;}],['incent','⑥ 인센티브',function(){return DOC_INCENT;}]];
-function renderDocsBoard(){
-  $('crumb').textContent='서식 현황';
+/* 서식 준비 매트릭스 — 기금 현황의 '보기: 서식 준비'에서 쓴다.
+   목록(list)은 호출한 쪽에서 이미 그룹·검색으로 걸러 넘겨준다(같은 기금 목록에 열만 바뀌는 구조). */
+function docsMatrixHTML(list){
   if(!S.dbPhase||!DOC_PHASES.some(function(p){return p[0]===S.dbPhase;})) S.dbPhase='kinds';
   var ph=DOC_PHASES.filter(function(p){return p[0]===S.dbPhase;})[0];
   var cols=ph[2]();
   // 저장본(개별) 1회 조회 → 캐시
   if(S._dbEdits===undefined){ S._dbEdits=null;
-    fbDb.ref(NS+'/doc_edits').once('value').then(function(s){ S._dbEdits=s.val()||{}; if(S.view==='docsboard')renderDocsBoard(); })
-      .catch(function(){ S._dbEdits={}; if(S.view==='docsboard')renderDocsBoard(); });
+    fbDb.ref(NS+'/doc_edits').once('value').then(function(s){ S._dbEdits=s.val()||{}; if(S.view==='home')renderHome(); })
+      .catch(function(){ S._dbEdits={}; if(S.view==='home')renderHome(); });
   }
   var edits=S._dbEdits;
-  var rpri={'충남':1,'경기':2};
-  var arr=Object.keys(funds).map(function(k){var o=Object.assign({},funds[k]);o._id=k;return o;})
-    .filter(function(f){ if(isPast(f)||isTrashed(f))return false;
-      if(S.dbType&&S.dbType!=='전체'&&(f.fund_type||'')!==S.dbType) return false; return true; })
-    .sort(function(a,b){return ((rpri[a.region]||9)-(rpri[b.region]||9))||(a.short_name||'').localeCompare(b.short_name||'','ko',{numeric:true});});
+  var arr=list||[];                       // 그룹·검색은 기금 현황이 이미 적용해서 넘겨준다
   var hwp=S._hwpHas||{};
   if(S._tplChk!==true){   // HWP 등록 상태도 필요 → 없으면 조회
     var _hk=DOC_ALL.map(function(d){return d[0];});
@@ -1731,7 +1762,7 @@ function renderDocsBoard(){
       Promise.all(_hk.map(function(k){return idbGet('hwp:'+k);})).then(function(a){
         S._hwpHas={}; _hk.forEach(function(k,i){S._hwpHas[k]=!!a[i];}); S._tplChk=true; S._hwpChk=true;
         S._tplHas=S._tplHas||{setup:false,subsidy:false,contribx:false};
-        if(S.view==='docsboard')renderDocsBoard(); }).catch(function(){ S._tplChk=true; if(S.view==='docsboard')renderDocsBoard(); });
+        if(S.view==='home')renderHome(); }).catch(function(){ S._tplChk=true; if(S.view==='home')renderHome(); });
     }
   }
   function cell(f,kind){
@@ -1753,20 +1784,15 @@ function renderDocsBoard(){
       +'<td class="center"><span class="chip '+(apps.length&&doneN>=apps.length?'ok':(doneN?'warn':'dg'))+'" style="font-size:10.5px">'+doneN+'/'+apps.length+'</span></td>'
       +cols.map(function(d){return cell(f,d[0]);}).join('')+'</tr>';
   }).join('');
-  var phBar='<div class="tabbar">'+DOC_PHASES.map(function(p){
-    return '<div class="tab'+(S.dbPhase===p[0]?' on':'')+'" onclick="S.dbPhase=\''+p[0]+'\';renderDocsBoard()">'+p[1]+' <span class="cnt">'+p[2]().length+'</span></div>';
+  var phBar='<div class="tabbar" style="margin:0 0 8px">'+DOC_PHASES.map(function(p){
+    return '<div class="tab'+(S.dbPhase===p[0]?' on':'')+'" onclick="S.dbPhase=\''+p[0]+'\';renderHome()">'+p[1]+' <span class="cnt">'+p[2]().length+'</span></div>';
   }).join('')+'</div>';
-  var typeSel=['전체','공동','사내'].map(function(t){
-    return '<button onclick="S.dbType=\''+t+'\';renderDocsBoard()" style="padding:4px 12px;border:1px solid var(--line);border-radius:7px;margin-right:4px'+((S.dbType||'전체')===t?';background:var(--acc);color:#fff;font-weight:700':'')+'">'+t+'</button>';
-  }).join('');
-  $('app').innerHTML='<div class="panel"><div class="row"><h1>🗂 서식 현황</h1><span class="stat">기금 '+arr.length+'</span><span style="flex:1"></span>'
-    +typeSel
-    +'<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;margin-left:8px"><input type="checkbox"'+(onlyMissing?' checked':'')+' onchange="S.dbMissing=this.checked;renderDocsBoard()"> 미완성만</label></div>'
-    +'<p class="muted" style="font-size:12px;margin:8px 0 0">전체 기금의 서식 준비 상태를 한눈에 비교합니다. '
-    +'<b>🟢</b> 개별 저장본 있음 · <b>📎</b> 원본 HWP 등록(전사 공통) · <b>⚪</b> 미작성(자동생성 초안만) · <b>·</b> 해당 없음(유형 불일치). '
-    +'칸을 클릭하면 그 기금의 그 서식으로 바로 이동합니다.</p></div>'
+  return '<div class="panel"><div class="row" style="flex-wrap:wrap"><h2 style="font-size:15px">서식 준비 상태</h2>'+hlp('home.docs')
+    +'<span class="stat">기금 '+arr.length+'</span>'
+    +'<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox"'+(onlyMissing?' checked':'')+' onchange="S.dbMissing=this.checked;renderHome()"> 미완성만</label>'
+    +'<span style="flex:1"></span><span class="muted mo" style="font-size:11px">🟢 저장본 · 📎 HWP · ⚪ 미작성</span></div>'
     +phBar
-    +'<div class="panel">'+(edits===null?loadingHTML('저장본 확인 중…')
+    +(edits===null?loadingHTML('저장본 확인 중…')
       :'<div style="overflow-x:auto"><table><thead><tr><th>번호</th><th>기금</th><th class="center">진행</th>'
         +cols.map(function(d){return '<th class="center" style="font-size:10.5px;white-space:nowrap" title="'+esc(d[1])+'">'+esc(String(d[1]).replace(/\s*\(.*\)$/,'').slice(0,10))+'</th>';}).join('')
         +'</tr></thead><tbody>'+(rows||'<tr><td colspan="'+(cols.length+3)+'" class="center muted" style="padding:16px">'+(onlyMissing?'모두 완성되었습니다.':'표시할 기금이 없습니다.')+'</td></tr>')+'</tbody></table></div>')
@@ -4426,22 +4452,23 @@ function yearsView(){
     +'<button onclick="printLedger(\'years\')">🖨 인쇄</button></div>'
     +'<div style="overflow-x:auto;margin-top:8px"><table><thead>'+head+'</thead><tbody>'+rows+'</tbody></table></div></div>';
 }
-/* ── 결산 대장 (기금 × 연도) ── 사이드바 메뉴. closing 전체를 한 번 읽어 상태를 깐다 */
-function renderCloseBoard(){
-  $('crumb').textContent='결산 대장';
+/* 결산 매트릭스 (기금 × 연도) — 기금 현황의 '보기: 결산'에서 쓴다.
+   closing 전체를 1회만 읽어 상태를 깐다(기금별 반복 조회 없음). */
+function closeMatrixHTML(list0){
   if(!S.cbLoaded){
     S.cbLoaded=1;
     fbDb.ref(NS+'/closing').once('value').then(function(s){
-      S.cb=s.val()||{}; if(S.view==='closeboard') renderCloseBoard();
-    }).catch(function(e){ S.cbLoaded=0;
-      if(S.view==='closeboard') $('app').innerHTML='<div class="panel"><div class="msg err">결산 자료를 읽지 못했습니다: '+esc(e.message)+' <button onclick="renderCloseBoard()">다시 시도</button></div></div>';
+      S.cb=s.val()||{}; if(S.view==='home') renderHome();
+    }).catch(function(e){ S.cbLoaded=0; S.cbErr=(e&&e.message)||'권한 오류';
+      if(S.view==='home') renderHome();
     });
-    $('app').innerHTML='<div class="panel">'+loadingHTML()+'</div>'; return;
+    return '<div class="panel">'+loadingHTML('결산 상태 확인 중…')+'</div>';
   }
+  if(S.cbErr) return '<div class="panel"><div class="msg err">결산 자료를 읽지 못했습니다: '+esc(S.cbErr)
+    +' <button onclick="S.cbErr=null;S.cbLoaded=0;renderHome()">다시 시도</button></div></div>';
   var cb=S.cb||{}, yNow=new Date().getFullYear(), Y=[];
   for(var y=yNow;y>=yNow-5;y--) Y.push(y);
-  var list=Object.keys(funds).filter(function(k){ return !isTrashed(funds[k])&&funds[k].setup_stage!=='설립준비'; })
-    .sort(function(a,b){ return (funds[a].short_name||funds[a].name||'').localeCompare(funds[b].short_name||funds[b].name||''); });
+  var list=(list0||[]).map(function(f){return f._id;});
   var nLock=0,nDraft=0;
   var rows=list.map(function(fid,i){
     var f=funds[fid], c=cb[fid]||{};
@@ -4457,15 +4484,15 @@ function renderCloseBoard(){
     return '<tr><td class="no">'+(i+1)+'</td><td style="font-weight:700;cursor:pointer" onclick="go(\'fund\',\''+fid+'\')">'
       +esc(f.short_name||f.name)+'<div class="muted mo" style="font-weight:400;font-size:11px">'+esc(f.name||'')+'</div></td>'+tds+'</tr>';
   }).join('');
-  $('app').innerHTML='<div class="panel"><div class="row" style="flex-wrap:wrap"><h1>결산 대장</h1>'+hlp('board.close')
+  return '<div class="panel"><div class="row" style="flex-wrap:wrap"><h2 style="font-size:15px">결산 현황</h2>'+hlp('board.close')
     +'<span class="stat">기금 '+list.length+'</span>'
     +'<span class="stat" style="background:var(--ok-bg);color:var(--ok)">확정 '+nLock+'</span>'
     +'<span class="stat" style="background:var(--warn-bg);color:var(--warn)">작성중 '+nDraft+'</span>'
-    +'<span style="flex:1"></span><button onclick="S.cbLoaded=0;renderCloseBoard()">↻ 새로고침</button></div></div>'
-    +'<div class="panel">'+(list.length
-      ? '<div style="overflow-x:auto"><table><thead><tr><th>번호</th><th>기금</th>'
+    +'<span style="flex:1"></span><button onclick="S.cbLoaded=0;renderHome()">↻ 새로고침</button></div>'
+    +(list.length
+      ? '<div style="overflow-x:auto;margin-top:8px"><table><thead><tr><th>번호</th><th>기금</th>'
         +Y.map(function(y){return '<th style="text-align:center">'+y+'</th>';}).join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>'
-      : '<div class="muted" style="padding:12px">기금이 없습니다.</div>')+'</div>';
+      : '<div class="muted" style="padding:12px">이 분류에 기금이 없습니다.</div>')+'</div>';
 }
 function goClosing(fid,yr){ S.year=yr; S.closeSub='fin'; S.txnsFor=null; S.f15For=null; _go('fund',fid); S.tab='closing'; renderFund(); }
 // 장부 인쇄 — 지금 보고 있는 표를 A4 가로로 그대로
@@ -4795,7 +4822,13 @@ var HELP={
    +'<p><b>확정</b> 배지가 붙은 연도는 결산 확정 당시의 <b>스냅샷</b>을 그대로 보여줍니다 — 나중에 거래를 손대도 제출했던 숫자가 바뀌지 않습니다.</p>'
    +'<p><b>작성중</b>은 지금 거래에서 계산한 값이라 바뀔 수 있습니다.</p>'
    +'<p>▲▼는 <b>직전 연도 대비</b> 증감 방향입니다.</p>'},
- 'board.close':{t:'결산 대장',h:'<p>전체 기금 × 최근 6개 연도의 <b>결산·보고서 진행 상태</b>를 한 표로 봅니다.</p>'
+ 'home.view':{t:'보기 전환',h:'<p>기금 목록은 <b>하나</b>입니다. 위 탭으로 <b>어느 기금</b>을 볼지 고르고, 보기 전환으로 <b>무엇을</b> 볼지 고릅니다.</p>'
+   +'<p><b>기본정보</b> — 담당·대표자·정보 완비도·계약관계<br><b>서식 준비</b> — 기금별 서식 작성 상태<br><b>결산</b> — 연도별 결산 확정 상태</p>'
+   +'<p>목록 화면을 여러 개 두지 않고 <b>열만 바꿉니다</b>. 그래서 지역·공동·사내 같은 분류와 검색이 세 보기 모두에 그대로 적용됩니다.</p>'},
+ 'home.docs':{t:'서식 준비 상태',h:'<p>지금 분류에 속한 기금들의 <b>서식 작성 상태</b>를 한눈에 비교합니다.</p>'
+   +'<p><b>🟢</b> 개별 저장본 있음<br><b>📎</b> 원본 HWP 등록(전사 공통)<br><b>⚪</b> 미작성(자동생성 초안만)<br><b>·</b> 해당 없음(공동/사내 유형 불일치)</p>'
+   +'<p>단계 탭(인가·등기·고유번호증·운영·지원금·인센티브)으로 열을 바꾸고, 칸을 누르면 그 기금의 그 서식으로 바로 갑니다.</p>'},
+ 'board.close':{t:'결산 현황',h:'<p>지금 분류에 속한 기금들의 <b>최근 6개 연도 결산 상태</b>를 한 표로 봅니다.</p>'
    +'<p><b>확정</b> = 결산을 확정해 스냅샷이 남은 연도<br><b>작성중</b> = 자료는 있으나 미확정<br><b>·</b> = 자료 없음</p>'
    +'<p>칸을 누르면 그 기금의 그 연도 <b>회계·결산</b> 화면으로 바로 들어갑니다.</p>'},
  'close.lock':{t:'결산 확정',h:'<p>확정하면 그 시점의 재무·보고서 수치가 <b>스냅샷</b>으로 저장됩니다.</p>'
