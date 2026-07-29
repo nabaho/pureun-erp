@@ -314,6 +314,7 @@ table.daejo td.dj2{padding:0}
   </div>
   <span class="spacer"></span>
   <button class="hbtn" id="open-arch">📁 보관함 <span id="arch-cnt"></span></button>
+  <span class="logoutTimer" title="무활동 시 자동 로그아웃까지 남은 시간 — 화면을 조작하면 다시 60분" style="display:none;align-items:center;gap:4px;font-size:12px;font-weight:700;color:var(--accent);background:#eef4ff;border:1px solid #c7d2e8;border-radius:20px;padding:3px 10px;margin-right:2px"></span>
   <span class="user" id="who">로그인 확인 중…</span>
   <a class="hbtn" href="enter.html">← 포털로</a>
 </header>
@@ -3513,6 +3514,60 @@ try{
   };
   console.info("rhwp WASM 미리보기 준비 완료");
 }catch(e){console.warn("rhwp WASM 미로드(file:// 등) — 텍스트 미리보기 사용:",e);}
+</script>
+
+<script>
+/* ===== 자동 로그아웃 (무활동 60분) — 푸른통합 공통 방식 =====
+   ERP·명함첩·컨설팅과 localStorage('pu_last_active')를 공유하므로
+   어느 앱에서 활동해도 함께 연장된다. 로그아웃 직전 검토 작업을 저장한다. */
+(function(){
+  var LIMIT=60*60*1000, WARN=2*60*1000, AKEY='pu_last_active';
+  var warnBox=null, tick=null;
+  function loggedIn(){ try{ var u=firebase.auth().currentUser; return !!(u&&u.email); }catch(e){ return false; } }
+  function now(){ return Date.now(); }
+  function getLast(){ try{ var v=parseInt(localStorage.getItem(AKEY)||'0',10); return v>0?v:now(); }catch(e){ return now(); } }
+  function markActive(){ try{ localStorage.setItem(AKEY,String(now())); }catch(e){} hideWarn(); }
+  function fmt(ms){ if(ms<0)ms=0; var s=Math.floor(ms/1000); return ('0'+Math.floor(s/60)).slice(-2)+':'+('0'+(s%60)).slice(-2); }
+  function saveBeforeLogout(){          /* 검토 중이던 작업을 잃지 않게 저장 */
+    try{ if(typeof saveWorkState==='function') saveWorkState(); }catch(_){}
+    try{ if(typeof autoSaveArchive==='function' && typeof LAST!=='undefined' && LAST) autoSaveArchive('자동로그아웃'); }catch(_){}
+  }
+  function doAutoLogout(){
+    saveBeforeLogout();
+    try{
+      try{ firebase.auth().signOut(); }catch(_){}
+      var ov=document.createElement('div'); ov.style.cssText='position:fixed;inset:0;background:#eef1f7;z-index:2147483647;'; document.body.appendChild(ov);
+      setTimeout(function(){ location.replace('enter.html?v='+now()); }, 200);
+    }catch(_){ location.replace('enter.html'); }
+  }
+  function showWarn(remMs){
+    if(!warnBox){
+      warnBox=document.createElement('div');
+      warnBox.style.cssText='position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:2147483646;background:#fff;border:1px solid #fca5a5;border-radius:12px;padding:14px 18px;box-shadow:0 14px 40px rgba(20,30,80,.22);display:flex;align-items:center;gap:14px;font-size:13px;color:#202124;';
+      var msg=document.createElement('span'); msg.id='pu-warn-msg'; msg.style.fontWeight='600';
+      var btn=document.createElement('button'); btn.textContent='계속 사용';
+      btn.style.cssText='padding:7px 16px;border:none;background:#1e40af;color:#fff;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;';
+      btn.addEventListener('click', markActive);
+      warnBox.appendChild(msg); warnBox.appendChild(btn); document.body.appendChild(warnBox);
+    }
+    warnBox.style.display='flex';
+    var m=document.getElementById('pu-warn-msg');
+    if(m) m.textContent='⏱ 미사용으로 곧 로그아웃됩니다 ('+fmt(remMs)+' 남음) — 검토 중인 작업은 저장됩니다';
+  }
+  function hideWarn(){ if(warnBox) warnBox.style.display='none'; }
+  ['mousemove','mousedown','keydown','touchstart','scroll','click'].forEach(function(ev){
+    window.addEventListener(ev, markActive, {passive:true, capture:true});
+  });
+  try{ if(!localStorage.getItem(AKEY)) markActive(); }catch(e){}
+  tick=setInterval(function(){
+    var badges=document.querySelectorAll('.logoutTimer');
+    if(!loggedIn()){ badges.forEach(function(b){ b.style.display='none'; }); hideWarn(); return; }
+    var rem=LIMIT-(now()-getLast());
+    badges.forEach(function(b){ b.style.display='inline-flex'; b.textContent='⏱ '+fmt(rem); });
+    if(rem<=0){ clearInterval(tick); doAutoLogout(); return; }
+    if(rem<=WARN){ showWarn(rem); } else { hideWarn(); }
+  }, 1000);
+})();
 </script>
 </body>
 </html>
