@@ -441,10 +441,12 @@ table.daejo td.dj2{padding:0}
         <span style="flex:1"></span>
         <button class="btn ghost" id="mk-daejo" disabled>신구대조표 생성</button>
         <button class="btn orange" id="save" disabled>보관함에 저장</button>
+        <button class="btn" id="save-done" disabled title="검토를 마쳤음을 표시합니다. 완료 후에는 다른 노무사도 보관함에서 열어 볼 수 있습니다">✅ 검토 완료</button>
       </div>
     </div>
   </div>
-  <div class="note">저장: 포털 로그인 시 Firebase 공용 보관함에 저장·실시간 동기화(모든 노무사 공유), 로그인 전엔 이 브라우저에만 임시 보관. HWP 파싱은 브라우저 안에서만 처리되어 외부로 전송되지 않습니다.<br>원본 렌더 미리보기(rhwp WASM)는 웹서버(http) 환경에서 동작하고, 파일로 직접 열면 텍스트 미리보기로 대체됩니다.<br>본 결과는 규칙 기반 자동 검토이며 최종 판단은 공인노무사의 검토를 거쳐야 합니다.</div>
+  <div id="ro-banner" style="display:none;margin:10px 0 0;padding:9px 13px;background:#fff7ed;border:1px solid #fdba74;border-radius:9px;font-size:12px;color:#9a3412;line-height:1.6"></div>
+  <div class="note">저장: 포털 로그인 시 Firebase 보관함에 저장·실시간 동기화. <b>검토한 담당자만 그 사업장 규정을 고칠 수 있고</b>, [✅ 검토 완료]로 표시한 뒤에야 다른 노무사가 열어 볼 수 있습니다. 로그인 전엔 이 브라우저에만 임시 보관. HWP 파싱은 브라우저 안에서만 처리되어 외부로 전송되지 않습니다.<br>원본 렌더 미리보기(rhwp WASM)는 웹서버(http) 환경에서 동작하고, 파일로 직접 열면 텍스트 미리보기로 대체됩니다.<br>본 결과는 규칙 기반 자동 검토이며 최종 판단은 공인노무사의 검토를 거쳐야 합니다.</div>
 </div>
 
 <div class="overlay" id="ov-daejo"><div class="modal" style="max-width:1180px">
@@ -551,7 +553,7 @@ table.daejo td.dj2{padding:0}
   <h2>📁 규정 보관함 <span class="tag" id="arch-sub" style="font-size:12px;color:var(--mute);font-weight:400"></span><span class="x" data-close>×</span></h2>
   <div class="body">
     <input class="arch-search" id="arch-q" placeholder="사업장명·사업자번호로 검색">
-    <table class="arch"><thead><tr><th>사업장</th><th>규모</th><th>검토 요약</th><th>저장일</th><th></th></tr></thead><tbody id="arch-body"></tbody></table>
+    <table class="arch"><thead><tr><th>사업장</th><th>규모</th><th>검토 요약</th><th>담당자 · 상태</th><th></th></tr></thead><tbody id="arch-body"></tbody></table>
     <div class="empty" id="arch-empty" style="display:none">보관된 규정이 없습니다.</div>
   </div>
   <div class="foot"><button class="btn ghost" data-close>닫기</button></div>
@@ -1255,7 +1257,9 @@ async function renderPreview(){
 function resetReviewUI(){
   CUR_ITEMS=[];CUR_KEY=null;AE_LABEL=null;
   const ae=$("art-edit");if(ae)ae.style.display="none";
+  setReadOnly(false);   // 새 검토를 시작하면 열람전용 해제 (버튼은 아래에서 다시 잠근다)
   $("mk-daejo").disabled=true;$("save").disabled=true;
+  { const b=$("save-done"); if(b){b.disabled=true;b.textContent="✅ 검토 완료";} }
   $("findings").innerHTML='<div class="empty">사업장을 고르고 <b>취업규칙 검토</b>를 누르세요.</div>';
   ["c-s","c-miss","c-man","c-up"].forEach(i=>$(i).textContent="0");
 }
@@ -1488,7 +1492,7 @@ function run(){
   matchErpSite();            // 푸른이알피 업체 정보 자동 연동(소재지·대표자 등)
   saveWorkState();
   autoSaveArchive("검토");   // 검토 결과까지 보관함에 자동 반영
-  $("mk-daejo").disabled=false;$("save").disabled=false;
+  $("mk-daejo").disabled=false;$("save").disabled=!!READONLY;updateDoneBtn();
 }
 
 function escapeH(s){return(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>");}
@@ -2862,14 +2866,61 @@ function migrateWip(){
 }
 function loadArch(){try{return JSON.parse(localStorage.getItem(ARCH_KEY))||[]}catch(e){return[]}}
 function setLocal(a){localStorage.setItem(ARCH_KEY,JSON.stringify(a));updateArchCnt();}
+/* ══════ 담당자(소유) 규칙 ══════
+   검토한 사람만 그 사업장 규정을 고칠 수 있고, [검토 완료] 이후에만 남에게 보인다.
+   담당자 정보가 없는 옛 기록은 잠기면 아무도 못 여니 '공용'으로 두고 여는 사람이 담당자가 된다.
+   ※ 브라우저 쪽 통제이므로, 완전한 차단이 필요하면 Firebase 보안규칙도 함께 걸어야 한다. */
+const myEmail=()=>String((FBUSER&&FBUSER.email)||"").toLowerCase();
+const myName=()=>(FBUSER&&(FBNAME||FBUSER.displayName||FBUSER.email))||"";
+const isOwner=r=>!r||!r.owner||r.owner===myEmail();
+const isDone=r=>!!(r&&r.status==="완료");
+const canOpen=r=>isOwner(r)||isDone(r);            // 남의 것은 완료본만 열람
+/* 목록·대시보드에 보일 기록 — 내 것 전부 + 남의 완료본 */
+function visibleArch(){ return loadArch().filter(canOpen); }
+let READONLY=false;                                 // 남의 완료본을 열람 중인가
+function setReadOnly(on,rec){
+  READONLY=!!on;
+  const b=$("ro-banner");
+  if(b){
+    b.style.display=on?"block":"none";
+    if(on)b.innerHTML="🔒 <b>열람 전용</b> — "+escapeH((rec&&(rec.ownerName||rec.owner))||"다른 노무사")
+      +" 담당 사업장의 <b>검토 완료본</b>입니다. 내용 확인·서류 출력은 되지만 저장·개정은 담당자만 할 수 있습니다.";
+  }
+  const ready=!!(LAST&&LAST.arts&&LAST.arts.length);
+  const sv=$("save"); if(sv)sv.disabled=on?true:!ready;      // 해제하면 담당자 권한을 되돌려 준다
+  const ae=$("ae-apply"); if(ae)ae.disabled=on;              // 대조표 보기는 되지만 조문 수정은 막는다
+  if(on){ const d=$("save-done"); if(d)d.disabled=true; } else updateDoneBtn();
+}
 /* 레코드 1건 단위 저장 — 보관함 전체를 덮어쓰지 않으므로 여러 노무사 동시 저장 안전 */
 function putRecord(rec){
-  const arr=loadArch();const i=arr.findIndex(r=>r.id===rec.id);
+  const arr=loadArch(), i=arr.findIndex(r=>r.id===rec.id), prev=i>=0?arr[i]:null;
+  if(prev&&prev.owner&&prev.owner!==myEmail()){      // 남의 사업장은 덮어쓰지 않는다
+    console.warn("다른 담당자의 기록이라 저장하지 않음:",rec.id); return false;
+  }
+  rec.owner=(prev&&prev.owner)||myEmail()||"";       // 처음 검토한 사람이 담당자
+  rec.ownerName=(prev&&prev.owner)?(prev.ownerName||""):(myName()||(prev&&prev.ownerName)||"");
+  if(rec.status==null)rec.status=(prev&&prev.status)||"작업중";
+  if(prev&&prev.doneAt&&rec.status==="완료"&&!rec.doneAt){ rec.doneAt=prev.doneAt; rec.doneBy=prev.doneBy; }
   if(i>=0)arr[i]=rec;else arr.unshift(rec);
   setLocal(arr);
   if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/archive/"+rec.id).set(rec).catch(e=>console.warn("Firebase 저장 실패:",e));
+  return true;
+}
+/* 완료 표시 켜기·끄기 — 담당자만 */
+function setRecordDone(id,done){
+  const arr=loadArch(), r=arr.find(x=>x.id===id);
+  if(!r)return false;
+  if(!isOwner(r)){ alert("담당자만 상태를 바꿀 수 있습니다."); return false; }
+  r.status=done?"완료":"작업중";
+  if(done){ r.doneAt=new Date().toISOString().slice(0,16).replace("T"," "); r.doneBy=myName(); }
+  else { delete r.doneAt; delete r.doneBy; }
+  setLocal(arr);
+  if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/archive/"+id).set(r).catch(e=>console.warn("상태 저장 실패:",e));
+  return true;
 }
 function removeRecord(id){
+  const r=loadArch().find(x=>x.id===id);
+  if(r&&!isOwner(r)){ console.warn("담당자가 아니라 삭제하지 않음:",id); return; }
   setLocal(loadArch().filter(r=>r.id!==id));
   if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/archive/"+id).remove().catch(e=>console.warn("Firebase 삭제 실패:",e));
   removeOrig(id);   // 기록만 지우고 원본(base64)을 남기면 공용 저장소에 고아 데이터가 쌓인다
@@ -2884,8 +2935,9 @@ function subscribeArch(){if(!FBDB||!FBUSER)return;
   FBDB.ref("rules_mgmt/archive").on("value",s=>{const v=s.val()||{};
     const arr=Object.values(v).sort((a,b)=>(b.savedAt||"").localeCompare(a.savedAt||""));
     setLocal(arr);if(document.querySelector("#ov-arch.on"))renderArch($("arch-q").value);
+    updateDoneBtn();
   },e=>console.warn("Firebase 동기화 실패:",e));}
-function updateArchCnt(){const n=loadArch().length;$("arch-cnt").textContent=n?`(${n})`:"";}
+function updateArchCnt(){const n=visibleArch().length;$("arch-cnt").textContent=n?`(${n})`:"";}
 /* 조문 연결 교정 기억 동기화 — 노무사 누가 고쳐도 전원이 같은 교정 결과를 쓴다 */
 function subscribeMfix(){if(!FBDB||!FBUSER)return;
   FBDB.ref("rules_mgmt/matchfix").on("value",s=>{
@@ -3072,7 +3124,7 @@ async function applyWorkObject(w,opts){
   CUR_ITEMS=[];CUR_KEY=null;
   if(w.state&&Array.isArray(w.state.items)&&w.state.items.length){
     CUR_ITEMS=normalizeItems(w.state.items);CUR_KEY=key;REV_MODE=w.state.mode||"partial";
-    $("mk-daejo").disabled=false;$("save").disabled=false;
+    $("mk-daejo").disabled=false;$("save").disabled=!!READONLY;updateDoneBtn();
   }
   try{localStorage.setItem(WORK_KEY,JSON.stringify(w));}catch(e){}   // 클라우드에서 왔으면 로컬에도 반영
   const pv=$("preview");
@@ -3140,6 +3192,7 @@ function siteLabel(){
 }
 function doSaveArchive(silent){
   if(!LAST)return null;
+  if(READONLY){ if(!silent)alert("열람 전용입니다 — 담당자만 저장할 수 있습니다."); return null; }
   // 편집 화면을 연 적 없으면(=편집 안 함) 자동 제안 기준 모델을 만들어 저장
   const items=CUR_ITEMS.length?CUR_ITEMS:buildItems(LAST.res||[],LAST.terms||{회사:"회사",근로자:"근로자"},LAST.arts||[]);
   const changedCnt=items.filter(it=>itemKind(it)!=="유지").length;
@@ -3148,7 +3201,12 @@ function doSaveArchive(silent){
   const rec={id:"site_"+fbKey(LAST.bizno||site),site,bizno:LAST.bizno,file:SITE_FILE[LAST.key]||"",size:LAST.size,conds:LAST.conds,asof:LAST.asof,
     savedAt:new Date().toISOString().slice(0,16).replace("T"," "),savedBy:(FBUSER&&(FBNAME||FBUSER.displayName||FBUSER.email))||"",
     summary:LAST.summary,items,changed:changedCnt,mode:REV_MODE,addendum:LAST.addendum||""};
-  putRecord(rec);
+  const prev=loadArch().find(r=>r.id===rec.id);
+  if(prev)rec.status=prev.status||"작업중";            // 저장한다고 완료 표시가 풀리지 않게
+  if(!putRecord(rec)){
+    if(!silent)alert(`'${site}'은(는) ${(prev&&(prev.ownerName||prev.owner))||"다른 노무사"} 담당 사업장이라 저장할 수 없습니다.`);
+    return null;
+  }
   // 이 업로드가 만든 기록 id를 기억 — [이 업로드 취소]가 지울 대상
   if(LAST_UPLOAD&&LAST_UPLOAD.key===LAST.key&&!LAST_UPLOAD.id)LAST_UPLOAD.id=rec.id;
   // 원본 파일도 함께 보존 → 재오픈·로그아웃 후에도 원본 미리보기 복원
@@ -3166,6 +3224,7 @@ function doSaveArchive(silent){
 /* 자동 저장 — 업로드·검토·편집 시 알림 없이 보관함 갱신(디바운스) */
 let _autoSaveT=null,_autoSaveLast="";
 function autoSaveArchive(reason,immediate){
+  if(READONLY)return;                                  // 남의 완료본 열람 중에는 건드리지 않는다
   const key=siteSel.value;
   if(!key||SAMPLES[key]===undefined||isSample(key))return;   // 데모 샘플은 보관함에 저장하지 않음
   ensureItems();   // 업로드 직후(검토 전)라도 LAST·조문 모델을 구성해 보관
@@ -3179,6 +3238,30 @@ function autoSaveArchive(reason,immediate){
   if(immediate)run(); else _autoSaveT=setTimeout(run,4000);
 }
 $("save").addEventListener("click",()=>{ doSaveArchive(false); });
+$("save-done").addEventListener("click",()=>{
+  const rec=doSaveArchive(true);                       // 최신 내용을 먼저 보관
+  if(!rec)return;
+  const cur=loadArch().find(r=>r.id===rec.id);
+  if(isDone(cur)){
+    if(!confirm(`'${rec.site}' 검토 완료를 해제할까요?\n\n해제하면 다른 노무사 보관함에서 다시 보이지 않습니다.`))return;
+    if(setRecordDone(rec.id,false))alert("작업중으로 되돌렸습니다.");
+  }else{
+    if(!confirm(`'${rec.site}' 검토를 완료로 표시할까요?\n\n· 다른 노무사도 보관함에서 열어 볼 수 있게 됩니다(열람 전용)\n· 개정은 담당자인 ${myName()||"본인"}만 계속할 수 있습니다`))return;
+    if(setRecordDone(rec.id,true))alert(`'${rec.site}' 검토 완료로 저장했습니다.\n이제 다른 노무사도 보관함에서 열어 볼 수 있습니다.`);
+  }
+  updateDoneBtn();
+});
+/* 현재 사업장의 상태에 맞춰 버튼 글자를 바꾼다 */
+function updateDoneBtn(){
+  const b=$("save-done"); if(!b)return;
+  if(READONLY||!LAST){ b.disabled=true; b.textContent="✅ 검토 완료"; return; }
+  const id="site_"+fbKey(LAST.bizno||siteLabel());
+  const rec=loadArch().find(r=>r.id===id);
+  const done=isDone(rec);
+  b.disabled=!(LAST&&LAST.arts&&LAST.arts.length)||!isOwner(rec);
+  b.textContent=done?"↩ 완료 해제":"✅ 검토 완료";
+  b.classList.toggle("orange",!done);
+}
 /* ══════ 사업장 규정 대시보드 ══════
    보관함(rules_mgmt/archive) + 작성기 문서(chwieop/docs) + ERP 사업장(data/companies)을
    사업자번호 우선으로 묶어, 작성→검토→개정→제출 4단계 진행 상태를 한눈에 보여준다. */
@@ -3196,7 +3279,7 @@ function dashStage(rec,draft){
 }
 function dashRows(){
   const byKey={};
-  loadArch().forEach(r=>{ byKey[dashKey(r.bizno,r.site)]={rec:r,site:r.site,bizno:r.bizno||""}; });
+  visibleArch().forEach(r=>{ byKey[dashKey(r.bizno,r.site)]={rec:r,site:r.site,bizno:r.bizno||""}; });
   Object.keys(DASH_DRAFTS).forEach(k=>{
     const d=DASH_DRAFTS[k], key=dashKey((d.info&&d.info.bizno)||"",(d.info&&d.info.company)||d.name||"");
     if(!byKey[key])byKey[key]={site:(d.info&&d.info.company)||d.name||"이름 없음",bizno:(d.info&&d.info.bizno)||""};
@@ -3332,20 +3415,35 @@ function loadDrafts(){
   } else done();
 }
 function renderArch(q){
-  const arr=loadArch().filter(r=>!q||r.site.includes(q)||(r.bizno||"").includes(q));
+  /* 내 담당 사업장 전부 + 남의 '검토 완료'본만 보인다 */
+  const all=visibleArch();
+  const arr=all.filter(r=>!q||r.site.includes(q)||(r.bizno||"").includes(q));
   const tb=$("arch-body");tb.innerHTML="";
   $("arch-empty").style.display=arr.length?"none":"block";
-  $("arch-sub").textContent=`${loadArch().length}개 보관`;
-  arr.forEach(r=>{const tr=document.createElement("tr");
+  const mine=all.filter(isOwner).length;
+  $("arch-sub").textContent=`${all.length}개 보관 (내 담당 ${mine} · 남의 완료본 ${all.length-mine})`;
+  arr.forEach(r=>{
+    const own=isOwner(r), done=isDone(r);
+    const badge=done
+      ? '<span class="badge" style="background:#dcfce7;color:#166534">완료</span>'
+      : '<span class="badge" style="background:#fef3c7;color:#92400e">작업중</span>';
+    const whoTxt=own?"내 담당":(r.ownerName||r.owner||"담당자 미상");
+    const tr=document.createElement("tr");
     tr.innerHTML=`<td><b>${r.site}</b><br><span style="color:var(--mute);font-size:11px">${r.bizno||r.file||""}</span></td>
       <td>${r.size}</td><td><span class="astat">위반 ${r.summary.위반의심} · 누락 ${r.summary.누락} · 변경 ${(r.changed!=null?r.changed:(r.daejo?r.daejo.length:0))}건</span></td>
-      <td style="color:var(--sub);font-size:12px">${r.savedAt}${r.savedBy?`<br><span style="color:var(--mute);font-size:10.5px">${r.savedBy}</span>`:""}</td>
-      <td style="text-align:right;white-space:nowrap"><button class="mini" data-open="${r.id}">대조표 열기</button> <button class="mini" data-del="${r.id}" style="color:#dc2626;border-color:#f3c0c0">삭제</button></td>`;
+      <td style="color:var(--sub);font-size:12px">${badge} ${escapeH(whoTxt)}<br>
+        <span style="color:var(--mute);font-size:10.5px">${r.savedAt}${done&&r.doneAt?" · 완료 "+r.doneAt:""}</span></td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="mini" data-open="${r.id}">${own?"대조표 열기":"🔒 열람"}</button>
+        ${own?`<button class="mini" data-done="${r.id}" title="${done?"작업중으로 되돌립니다":"완료로 표시하면 다른 노무사도 열어 볼 수 있습니다"}">${done?"완료 해제":"✅ 완료"}</button>
+        <button class="mini" data-del="${r.id}" style="color:#dc2626;border-color:#f3c0c0">삭제</button>`:""}</td>`;
     tb.appendChild(tr);});
   tb.querySelectorAll("[data-open]").forEach(b=>b.onclick=async()=>{
     const r=loadArch().find(x=>x.id===b.dataset.open);
     if(!r)return;
+    if(!canOpen(r)){ alert("아직 검토가 끝나지 않은 다른 담당자의 사업장입니다."); return; }
     $("ov-arch").classList.remove("on");
+    setReadOnly(!isOwner(r),r);              // 남의 완료본은 열람 전용
     // 원본 파일 복원 → 원본 미리보기·조문 재파싱
     let key=null,arts=[];
     try{ key=await restoreOrig(r.id,r.site); if(key)arts=parseArticles(SAMPLES[key]||""); }catch(e){ console.warn("원본 복원 실패:",e); }
@@ -3356,8 +3454,17 @@ function renderArch(q){
     CUR_ITEMS = normalizeItems( r.items ? r.items
       : (r.daejo||[]).filter(x=>x.label).map((x,i)=>({id:"old_"+i,label:x.label,before:x.before,after:x.after,orig:x.before==="신설"?"":x.before,reason:x.reason,suggested:false,del:false})) );
     CUR_KEY=key||("arch_"+r.id);   // 저장본 편집 모델 보호 — 다른 곳에서 재생성하지 않도록
+    updateDoneBtn();
     CUR_FILTER="changed";openEditor();});
+  tb.querySelectorAll("[data-done]").forEach(b=>b.onclick=()=>{
+    const r=loadArch().find(x=>x.id===b.dataset.done); if(!r)return;
+    const to=!isDone(r);
+    if(!confirm(to?`'${r.site}'을(를) 검토 완료로 표시할까요?\n다른 노무사도 보관함에서 열어 볼 수 있게 됩니다(열람 전용).`
+                  :`'${r.site}' 완료를 해제할까요?\n다른 노무사 보관함에서 다시 보이지 않습니다.`))return;
+    if(setRecordDone(r.id,to)){ renderArch($("arch-q").value); updateDoneBtn(); }});
   tb.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
+    const r=loadArch().find(x=>x.id===b.dataset.del);
+    if(r&&!isOwner(r)){ alert("담당자만 삭제할 수 있습니다."); return; }
     if(confirm("삭제하시겠습니까?")){removeRecord(b.dataset.del);renderArch($("arch-q").value);}});
 }
 $("open-arch").addEventListener("click",()=>{renderArch("");$("ov-arch").classList.add("on");});
@@ -3433,12 +3540,13 @@ $("ae-close").addEventListener("click",()=>{ $("art-edit").style.display="none";
 $("ae-revert").addEventListener("click",()=>{ if(!AE_LABEL)return;
   const it=CUR_ITEMS.find(x=>x.id==="art_"+AE_LABEL); if(it)$("ae-after").value=it.orig; });
 $("ae-apply").addEventListener("click",()=>{
+  if(READONLY){ alert("열람 전용입니다 — 개정은 담당자만 할 수 있습니다."); return; }
   if(!AE_LABEL)return; ensureItems();
   const it=CUR_ITEMS.find(x=>x.id==="art_"+AE_LABEL); if(!it)return;
   const v=$("ae-after").value;
   it.after=v.trim()?v:it.orig;
   if(it.suggested&&(it.after||"").trim()!==(it.sug||"").trim())it.suggested=false;   // 수동 수정이 자동제안을 대체
-  $("mk-daejo").disabled=false;$("save").disabled=false;
+  $("mk-daejo").disabled=false;$("save").disabled=!!READONLY;updateDoneBtn();
   saveWorkState();
   autoSaveArchive("편집");
   const btn=$("ae-apply"),t=btn.textContent;btn.textContent="반영됨 ✓";setTimeout(()=>btn.textContent=t,1200);
