@@ -2948,13 +2948,28 @@ function putRecord(rec){
   rec.year=String(rec.asof||"").slice(0,4);
   if(prev&&prev.doneAt){ rec.doneAt=prev.doneAt; rec.doneBy=prev.doneBy; }
   if(i>=0)arr[i]=rec;else arr.unshift(rec);
-  setLocal(arr);
+  setLocal(arr); storePut(rec);
   const path=fbPath(rec);
   if(FBDB&&path)FBDB.ref(path).set(stripLocal(rec)).catch(e=>console.warn("Firebase 저장 실패:",e));
   return true;
 }
 /* 저장소에 넣지 않을 화면용 항목 제거 — 경로에 이미 들어 있는 값이라 중복이다 */
 function stripLocal(rec){ const o=Object.assign({},rec); delete o.store; delete o.rev; delete o.siteKey; return o; }
+/* 서버에 쓴 내용을 메모리 사본에도 즉시 반영 — 알림을 기다리는 사이 목록이 비지 않게 */
+function storePut(rec){
+  const v=stripLocal(rec), sk=rec.siteKey||siteKeyOf(rec.id);
+  if(rec.rev){ STORE.done[sk]=STORE.done[sk]||{}; STORE.done[sk][rec.rev]=v; }
+  else if(rec.store==="legacy"){ STORE.legacy[rec.id]=v; }
+  else { STORE.wip[sk]=v; }
+}
+function storeDel(rec){
+  if(!rec)return;
+  const sk=rec.siteKey||siteKeyOf(rec.id);
+  if(rec.rev){ if(STORE.done[sk]){ delete STORE.done[sk][rec.rev];
+      if(!Object.keys(STORE.done[sk]).length)delete STORE.done[sk]; } }
+  else if(rec.store==="legacy"){ delete STORE.legacy[rec.id]; }
+  else { delete STORE.wip[sk]; }
+}
 /* 완료 표시 = 작업중 자리에서 완료 자리로 옮긴다(해제는 반대) */
 function setRecordDone(id,done){
   const arr=loadArch(), r=arr.find(x=>x.id===id);
@@ -2976,6 +2991,7 @@ function setRecordDone(id,done){
   next.year=String(next.asof||"").slice(0,4);
   const to=fbPath(next);
   setLocal(loadArch().filter(x=>x.id!==oldId).concat([next]));
+  storeDel(r); storePut(next);
   moveOrig(oldId,next.id);
   if(FBDB&&to){
     FBDB.ref(to).set(stripLocal(next))
@@ -2988,7 +3004,7 @@ function setRecordDone(id,done){
 function removeRecord(id){
   const r=loadArch().find(x=>x.id===id);
   if(r&&!isOwner(r)){ console.warn("담당자가 아니라 삭제하지 않음:",id); return; }
-  setLocal(loadArch().filter(x=>x.id!==id));
+  setLocal(loadArch().filter(x=>x.id!==id)); storeDel(r);
   const path=r?fbPath(r):null;
   if(FBDB&&path)FBDB.ref(path).remove().catch(e=>console.warn("Firebase 삭제 실패:",e));
   removeOrig(id);   // 기록만 지우고 원본(base64)을 남기면 공용 저장소에 고아 데이터가 쌓인다
@@ -3038,14 +3054,35 @@ function adoptLegacy(id,silent){
     .catch(e=>console.warn("이관 실패:",e));
   return true;
 }
+/* 브라우저에만 있던 기록을 클라우드로 올린다 — 1회 보충.
+   보안규칙이 없던 동안에는 클라우드 저장이 막혀 브라우저에만 쌓였다.
+   규칙이 살아난 뒤 첫 동기화에서 서버(빈 값)로 목록을 덮어쓰면 그게 사라지므로,
+   덮어쓰기 전에 서버에 없는 내 기록을 먼저 올린다. */
+let _backfilled=false;
+function backfillLocal(pre){
+  if(_backfilled||!FBDB||!FBUSER)return;
+  _backfilled=true;
+  const server={}; mergeStores().forEach(r=>{server[r.id]=1;});
+  const mine=(pre||[]).filter(r=>r&&r.id&&!server[r.id]&&isOwner(r));
+  if(!mine.length)return;
+  mine.forEach(r=>{
+    const sk=siteKeyOf(r.id);
+    putRecord(Object.assign({},r,{id:sk,siteKey:sk,rev:null,store:"wip",status:"작업중"}));
+  });
+  console.info("브라우저에만 있던 보관함 기록",mine.length,"건을 클라우드에 올렸습니다");
+}
 /* 실시간 동기화 — 내 작업중 + 전원 완료본. 남의 작업중은 서버가 아예 안 내려준다. */
 function subscribeArch(){if(!FBDB||!FBUSER)return;
-  const apply=()=>{ setLocal(mergeStores());
+  let pre=[]; try{ pre=JSON.parse(localStorage.getItem(ARCH_KEY))||[]; }catch(e){}   // 덮어쓰기 전 사본
+  const got={wip:false,done:false};
+  const apply=()=>{
+    if(got.wip&&got.done)backfillLocal(pre);      // 서버 상태를 다 받은 뒤 한 번만
+    setLocal(mergeStores());
     if(document.querySelector("#ov-arch.on"))renderArch($("arch-q").value);
     updateDoneBtn(); };
-  FBDB.ref("rules_mgmt/wip/"+FBUSER.uid).on("value",s=>{STORE.wip=s.val()||{};apply();},
+  FBDB.ref("rules_mgmt/wip/"+FBUSER.uid).on("value",s=>{STORE.wip=s.val()||{};got.wip=true;apply();},
     e=>console.warn("작업중 동기화 실패:",e));
-  FBDB.ref("rules_mgmt/done").on("value",s=>{STORE.done=s.val()||{};apply();},
+  FBDB.ref("rules_mgmt/done").on("value",s=>{STORE.done=s.val()||{};got.done=true;apply();},
     e=>console.warn("완료본 동기화 실패:",e));
   FBDB.ref("rules_mgmt/archive").once("value").then(s=>{STORE.legacy=s.val()||{};apply();migrateLegacy();})
     .catch(e=>console.warn("예전 보관함 읽기 실패:",e));
