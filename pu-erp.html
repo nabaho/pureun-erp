@@ -2555,6 +2555,91 @@ function erpRestoreBackupFile(diff){
 window.erpDiffBackupFile = erpDiffBackupFile;
 window.erpRestoreBackupFile = erpRestoreBackupFile;
 
+// ── 저장공간 진단 & 이미지 정리(IndexedDB 이전) ──
+//   증상: "❌ 계약 저장 실패" / 저장이 조용히 안 됨 → localStorage 한도(보통 5MB) 초과가 원인.
+//   원인 대부분은 레코드 안에 인라인으로 박힌 base64 이미지(명함 cardImg·사업자등록증 bizLicenseImg).
+//   ImgStore(IndexedDB)로 옮기고 필드에는 'idb:...' 참조만 남긴다 — 화면은 AsyncImg가 그대로 렌더.
+function erpStorageReport(){
+  var rows = [], total = 0;
+  try {
+    for(var i=0;i<localStorage.length;i++){
+      var fk = localStorage.key(i); if(!fk) continue;
+      var raw = localStorage.getItem(fk) || '';
+      var len = raw.length + fk.length; total += len;
+      var imgBytes = 0;
+      if(raw.indexOf('data:image') >= 0){
+        var m = raw.match(/data:image[^"]{100,}/g) || [];
+        imgBytes = m.reduce(function(s,x){ return s + x.length; }, 0);
+      }
+      rows.push({ key:fk, chars:len, imgChars:imgBytes });
+    }
+  } catch(e){}
+  rows.sort(function(a,b){ return b.chars - a.chars; });
+  var imgTotal = rows.reduce(function(s,r){ return s + r.imgChars; }, 0);
+  var rep = { totalChars:total, totalMB:+(total/1048576).toFixed(2), imgChars:imgTotal, imgMB:+(imgTotal/1048576).toFixed(2), top:rows.slice(0,12), near: total > 4.2*1048576 };
+  console.log('[ERP 저장공간] 총 ' + rep.totalMB + 'MB (이미지 ' + rep.imgMB + 'MB)', rep.top);
+  return rep;
+}
+window.erpStorageReport = erpStorageReport;
+
+var IMG_MIGRATE_STORES = ['contracts','consultings','funds','other_projects','cases','companies'];
+// 레코드 안의 base64 이미지를 IDB로 옮기고 'idb:' 참조로 교체 (재귀 — cardImg/bizLicenseImg 등 모든 문자열 필드)
+async function _imgMigrateObj(obj, ownerType, ownerId, stat){
+  if(obj == null || typeof obj !== 'object') return obj;
+  if(Array.isArray(obj)){
+    for(var i=0;i<obj.length;i++){ obj[i] = await _imgMigrateObj(obj[i], ownerType, ownerId, stat); }
+    return obj;
+  }
+  var keys = Object.keys(obj);
+  for(var k=0;k<keys.length;k++){
+    var key = keys[k], v = obj[key];
+    if(typeof v === 'string'){
+      if(v.indexOf('data:image') === 0 && v.length > 2000){
+        try {
+          var ref = await ImgStore.save(v, { ownerType:ownerType, ownerId:ownerId });
+          if(ref){ obj[key] = ref; stat.moved++; stat.chars += v.length; }
+        } catch(e){ stat.failed++; }
+      }
+    } else if(v && typeof v === 'object'){
+      obj[key] = await _imgMigrateObj(v, ownerType, ownerId, stat);
+    }
+  }
+  return obj;
+}
+async function erpMigrateImagesToIdb(){
+  var stat = { moved:0, failed:0, chars:0, byStore:{} };
+  if(typeof ImgStore === 'undefined' || !ImgStore || typeof idbBulkPut !== 'function'){
+    console.warn('[이미지정리] IndexedDB 헬퍼 없음');
+    return { error:'IndexedDB 사용 불가 — 이미지 정리를 할 수 없습니다' , moved:0 };
+  }
+  for(var s=0;s<IMG_MIGRATE_STORES.length;s++){
+    var store = IMG_MIGRATE_STORES[s];
+    var arr = dbGet(store, []) || [];
+    if(!Array.isArray(arr) || !arr.length) continue;
+    var before = stat.moved;
+    var changed = [];
+    for(var i=0;i<arr.length;i++){
+      var rec = arr[i];
+      if(!rec || !rec.id) continue;
+      var raw = '';
+      try { raw = JSON.stringify(rec); } catch(_){ continue; }
+      if(raw.indexOf('data:image') < 0) continue;      // 이 레코드엔 인라인 이미지 없음
+      var copy = JSON.parse(raw);
+      copy = await _imgMigrateObj(copy, store, rec.id, stat);
+      changed.push(copy);
+    }
+    if(changed.length){
+      // 이미지가 빠져 크기가 줄어든 레코드만 저장 → localStorage 여유 확보
+      if(dbUpsertMany(store, changed)) stat.byStore[store] = stat.moved - before;
+      else stat.failed += changed.length;
+    }
+  }
+  stat.freedMB = +(stat.chars/1048576).toFixed(2);
+  console.log('[이미지정리] 결과', stat);
+  return stat;
+}
+window.erpMigrateImagesToIdb = erpMigrateImagesToIdb;
+
 // 선택 복원 — 오직 추가. 기존 레코드는 수정·삭제하지 않음.
 async function erpRestoreLostRecords(candidates){
   var res = { restored:0, failed:[], byStore:{} };
@@ -10597,6 +10682,29 @@ function ContractManagement(){
     })(),
     ),
     // 칸반 보드 (3컬럼 / 단독 보기)
+    // [필터 경고 배너] 담당·부담당·검색 등으로 숨겨진 계약이 있으면 알림 + 원클릭 해제
+    (function(){
+      var af = [];
+      if(mgrFilter !== 'all') af.push('담당 ' + (mgrFilter === 'mine' ? '나' : ((typeof sidToName === 'function' && sidToName(mgrFilter)) || mgrFilter)));
+      if(subMgrFilter !== 'all') af.push('부담당 ' + ((typeof sidToName === 'function' && sidToName(subMgrFilter)) || subMgrFilter));
+      if(monthOnly) af.push('이번 달만');
+      if(query) af.push('검색 "' + query + '"');
+      var scoped = contracts.filter(function(c){ return isActiveContract(c); }).length;
+      var hidden = scoped - filtered.length;
+      if(af.length === 0 || hidden <= 0) return null;
+      return h('div', { style:{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap',
+        background:'#fffbeb', border:'1px solid #fcd34d', borderRadius:'8px', padding:'9px 12px', margin:'0 0 8px' } },
+        h('span', { style:{ fontSize:'12.5px', fontWeight:800, color:'#92400e' } },
+          '⚠️ 필터 적용 중 — ' + hidden + '건이 화면에서 숨겨졌습니다'),
+        h('span', { style:{ fontSize:'11.5px', color:'#a16207' } }, '(' + af.join(' · ') + ')'),
+        h('span', { style:{ fontSize:'11px', color:'#a16207' } }, '· 전체 ' + scoped + '건 중 ' + filtered.length + '건 표시'),
+        h('div', { style:{ flex:1 } }),
+        h('button', { onClick:function(){ setMgrFilter('all'); setSubMgrFilter('all'); setQuery(''); try { setMonthOnly(false); } catch(_){} },
+          title:'모든 필터를 해제하고 전체를 표시합니다',
+          style:{ background:'#f59e0b', color:'#fff', border:'none', padding:'6px 14px', borderRadius:'6px', fontSize:'12px', fontWeight:700, cursor:'pointer', flexShrink:0 } },
+          '✕ 필터 해제 (전체 보기)')
+      );
+    })(),
     h('div', { style:{ display:'grid', gridTemplateColumns: window.innerWidth<=768?'1fr':(focusCol==='all'?'repeat(3, 1fr)':'1fr'), gap:'8px' } },
       CONTRACT_STATUS.filter(function(s){ return focusCol==='all' || s.v===focusCol; }).map(function(s){
         var allStageCards = byStatus[s.v] || [];
@@ -14856,6 +14964,23 @@ function CaseManagement(props){
     }
     return true;
   });
+  // [필터 가시성] 담당·유형·월·검색으로 숨겨진 건수 — 데이터 유실로 오해하지 않도록 배너 표시
+  var _scopedCount = cases.filter(function(c){
+    if(c && c._deleted) return false;
+    if(statusFilter !== 'closed' && c.status === 'closed') return false;
+    if(statusFilter !== 'all' && statusFilter !== 'open' && c.status !== statusFilter) return false;
+    return true;
+  }).length;
+  var _activeFilters = [];
+  if(mgrFilter !== 'all') _activeFilters.push('담당 ' + ((typeof sidToName === 'function' && sidToName(mgrFilter)) || mgrFilter));
+  if(subMgrFilter !== 'all') _activeFilters.push('부담당 ' + ((typeof sidToName === 'function' && sidToName(subMgrFilter)) || subMgrFilter));
+  if(typeFilter !== 'all') _activeFilters.push('유형 ' + typeFilter);
+  if(monthOnly) _activeFilters.push('이번 달만');
+  if(query) _activeFilters.push('검색 "' + query + '"');
+  function _resetCaseFilters(){
+    setStatusFilter('open'); setTypeFilter('all'); setMgrFilter('all'); setSubMgrFilter('all');
+    setQuery(''); try { setMonthOnly(false); } catch(_){}
+  }
 
   // 정렬 적용
   if(sortBy.key){
@@ -15030,6 +15155,19 @@ function CaseManagement(props){
           style:{ background:'#fff', color:'#16a34a', border:'1px solid #86efac', padding:'6px 12px', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer', marginRight:'4px' } }, '📥 엑셀'),
         h(PageSizeSelector, { pageSize:casePageSize, setPageSize:setCasePageSize, setPage:pgCase.setPage })
       ),
+    // [필터 경고 배너] 필터로 숨겨진 사건이 있으면 알림 + 원클릭 해제
+    (_activeFilters.length > 0 && (_scopedCount - filtered.length) > 0) && h('div', {
+      style:{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap',
+        background:'#fffbeb', border:'1px solid #fcd34d', borderRadius:'8px', padding:'9px 12px', margin:'0 0 8px' } },
+      h('span', { style:{ fontSize:'12.5px', fontWeight:800, color:'#92400e' } },
+        '⚠️ 필터 적용 중 — ' + (_scopedCount - filtered.length) + '건이 화면에서 숨겨졌습니다'),
+      h('span', { style:{ fontSize:'11.5px', color:'#a16207' } }, '(' + _activeFilters.join(' · ') + ')'),
+      h('span', { style:{ fontSize:'11px', color:'#a16207' } }, '· 전체 ' + _scopedCount + '건 중 ' + filtered.length + '건 표시'),
+      h('div', { style:{ flex:1 } }),
+      h('button', { onClick:_resetCaseFilters, title:'모든 필터를 해제하고 전체를 표시합니다',
+        style:{ background:'#f59e0b', color:'#fff', border:'none', padding:'6px 14px', borderRadius:'6px', fontSize:'12px', fontWeight:700, cursor:'pointer', flexShrink:0 } },
+        '✕ 필터 해제 (전체 보기)')
+    ),
     (window.IS_MOBILE || window.innerWidth <= 768)
     ? h('div', { style:{ display:'flex', flexDirection:'column', gap:'6px' } },
         filtered.length === 0
@@ -24806,6 +24944,24 @@ function LostRecordsModal(props){
   var bo = useState(false); var bkOpen = bo[0]; var setBkOpen = bo[1];
   var rk = useState(''); var rowBusy = rk[0]; var setRowBusy = rk[1];
   var pu = useState(false); var pushBusy = pu[0]; var setPushBusy = pu[1];
+  var stg = useState(function(){ try { return erpStorageReport(); } catch(_){ return null; } });
+  var storage = stg[0]; var setStorage = stg[1];
+  var imb = useState(false); var imgBusy = imb[0]; var setImgBusy = imb[1];
+  async function runImgMigrate(){
+    if(imgBusy) return;
+    if(!(await popConfirm('레코드 안에 박혀 있는 이미지(명함·사업자등록증)를 브라우저 내부 저장소(IndexedDB)로 옮깁니다.\n\n→ 이미지는 화면에서 그대로 보입니다\n→ 저장공간이 확보되어 "저장 실패"가 해결됩니다\n→ 데이터는 삭제되지 않습니다\n\n진행할까요?'))) return;
+    setImgBusy(true);
+    showToast('🧹 이미지 정리 중… (잠시 걸립니다)');
+    try {
+      var r = await erpMigrateImagesToIdb();
+      if(r.error) showToast('❌ ' + r.error);
+      else if(!r.moved) showToast('정리할 인라인 이미지가 없습니다');
+      else showToast('✅ 이미지 ' + r.moved + '개 이전 완료 — 약 ' + r.freedMB + 'MB 확보' + (r.failed ? (' / 실패 ' + r.failed) : ''));
+      try { setStorage(erpStorageReport()); } catch(_){}
+      runScan();
+    } catch(e){ showToast('❌ 이미지 정리 실패: ' + (e && e.message || '')); }
+    setImgBusy(false);
+  }
   var bf = useState(null); var bkDiff = bf[0]; var setBkDiff = bf[1];      // 백업파일 비교 결과
   var bfb = useState(false); var bkBusy = bfb[0]; var setBkBusy = bfb[1];
   function onBackupFile(e){
@@ -24951,6 +25107,27 @@ function LostRecordsModal(props){
       ),
       rep.error ? h('div', { style:{fontSize:'11.5px',color:'#b91c1c',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'6px',padding:'8px 12px',marginBottom:'10px'} }, '⚠️ ' + rep.error) : null,
       fxr.error ? h('div', { style:{fontSize:'11.5px',color:'#b91c1c',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'6px',padding:'8px 12px',marginBottom:'10px',fontWeight:700} }, '⚠️ ' + fxr.error) : null,
+
+      // ── ⓞ 저장공간 경고 (localStorage 한도 초과 = 저장 실패의 직접 원인) ──
+      storage ? h('div', { style:{ marginBottom:'14px', padding:'10px 12px', borderRadius:'8px',
+        background: storage.near ? '#fef2f2' : '#f0fdf4', border:'1px solid ' + (storage.near ? '#fca5a5' : '#bbf7d0') } },
+        h('div', { style:{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap' } },
+          h('span', { style:{ fontWeight:800, fontSize:'12.5px', color: storage.near ? '#b91c1c' : '#166534' } },
+            (storage.near ? '⚠️ 저장공간 부족 — ' : '💾 저장공간 ') + storage.totalMB + 'MB / 약 5MB'),
+          h('span', { style:{ fontSize:'11.5px', color: storage.near ? '#b91c1c' : '#15803d' } },
+            '이미지가 ' + storage.imgMB + 'MB 차지'),
+          h('div', { style:{ flex:1 } }),
+          storage.imgMB > 0.2 ? h('button', { onClick:runImgMigrate, disabled:imgBusy,
+            title:'명함·사업자등록증 이미지를 IndexedDB로 옮겨 저장공간을 확보합니다 (이미지는 그대로 보입니다)',
+            style:{ padding:'6px 14px', background: imgBusy ? '#f1f5f9' : '#b91c1c', color: imgBusy ? '#94a3b8' : '#fff',
+              border:'none', borderRadius:'6px', fontSize:'12px', fontWeight:700, cursor: imgBusy ? 'default' : 'pointer', flexShrink:0 } },
+            imgBusy ? '정리 중…' : '🧹 이미지 정리 (공간 확보)') : null
+        ),
+        storage.near ? h('div', { style:{ fontSize:'11px', color:'#b91c1c', marginTop:'5px' } },
+          '저장공간이 꽉 차면 "❌ 계약 저장 실패"가 나고 변경이 저장되지 않습니다. 위 [🧹 이미지 정리]를 먼저 실행하세요.') : null,
+        h('div', { style:{ fontSize:'10.5px', color:'#64748b', marginTop:'5px' } },
+          '큰 항목: ' + (storage.top||[]).slice(0,4).map(function(t){ return t.key.replace('pureun_v6_','') + ' ' + Math.round(t.chars/1024) + 'KB'; }).join(' · '))
+      ) : null,
 
       // ── ① 로컬 vs 서버 건수 대조 ──
       h('div', { style:{marginBottom:'14px'} },
