@@ -23,8 +23,12 @@ const VSZ=CH, BASE=Math.round(CH*0.85), SPC=LH-VSZ;   /* lineseg 수치는 글�
 /* SPC는 반드시 LH-VSZ 여야 한다 — vertsize+spacing이 줄높이와 어긋나면
    병합 셀처럼 한글이 재계산을 건너뛰는 곳에서 줄간격이 벌어진다(19.2pt vs 15.6pt) */
 const CELL_PAD=1020, CELL_VPAD=282, TBL_SLACK=900;
+/* 쪽마다 빼 둘 여유(표 바깥 여백·반올림 몫)와, 첫 쪽에서 제목·부제가 차지하는 몫 */
+const PAGE_SLACK=Math.round(1200*1.3)*2, FIRST_USED=Math.round(1200*1.3)*5;
 const BOLD="7", HEADFILL="4";   // 굵은 charPr·머리행 배경 borderFill (템플릿 시퀀스에 이어 부여)
 const BODY_W_P=42520, BODY_W_L=72852;
+/* 본문 세로 가용 높이 = 용지높이 − 위·아래 여백 − 머리말·꼬리말 (header.xml pagePr와 일치) */
+const BODY_H_P=84188-5668-4252-4252-4252, BODY_H_L=59528-5668-4252-4252-4252;
 /* 용지 방향: setPage({landscape:true}) 를 문서 조립 전에 호출 (신구대조표=가로, 조문 전문=세로) */
 let LANDSCAPE=false, PAGENUM=true;   // PAGENUM: 쪽번호(하단 가운데) 삽입
 function setPage(o){ LANDSCAPE=!!(o&&o.landscape); if(o&&o.pageNum!=null)PAGENUM=!!o.pageNum; return api; }
@@ -104,8 +108,9 @@ function tablePara(rows,widths,opts){
        opts.softBottom : 아래 테두리 없음 (조문의 마지막 항 이전) */
   const soft=new Set((opts&&opts.softTop)||[]);
   const softB=new Set((opts&&opts.softBottom)||[]);
-  const fillOf=function(r){
-    const t=soft.has(r), b=softB.has(r);
+  /* 쪽으로 끊긴 자리는 조문 안이라도 실선으로 닫는다 — 안 그러면 쪽 아래가 뚫려 보인다 */
+  const fillOf=function(r,cutTop,cutBottom){
+    const t=soft.has(r)&&!cutTop, b=softB.has(r)&&!cutBottom;
     return t&&b?"7":(t?"5":(b?"6":"3"));
   };
   const colCnt=widths.length,rowCnt=rows.length;
@@ -130,37 +135,66 @@ function tablePara(rows,widths,opts){
       if(need>have){ const last=Math.min(rowCnt,r+c.rs)-1; rowH[last]+=(need-have); }
     });
   });
-  const tblH=rowH.reduce(function(a,b){return a+b;},0);
-  /* 3단계: 표 XML 조립 */
-  let t='<hp:tbl id="0" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="1" rowCnt="'+rowCnt+'" colCnt="'+colCnt+'" cellSpacing="0" borderFillIDRef="3" noAdjust="0">'
-    +'<hp:sz width="'+totalW+'" widthRelTo="ABSOLUTE" height="'+tblH+'" heightRelTo="ABSOLUTE" protect="0"/>'
-    +'<hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
-    +'<hp:outMargin left="283" right="283" top="283" bottom="283"/><hp:inMargin left="510" right="510" top="141" bottom="141"/>';
-  grid.forEach(function(cells,r){
-    t+='<hp:tr>';
-    cells.forEach(function(c,ci){
-      if(!c)return;                                            // 병합으로 덮인 자리는 tc를 내지 않는다
-      const w=widths[ci], head=(r===0);
-      let h=0; for(var k=r;k<Math.min(rowCnt,r+c.rs);k++)h+=rowH[k];
-      t+='<hp:tc name="" header="'+(head?1:0)+'" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="'+(head?HEADFILL:fillOf(r))+'">'
-        +'<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="'+(head?"CENTER":"TOP")+'" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
-        +cellInfo[r][ci].xml
-        +'</hp:subList><hp:cellAddr colAddr="'+ci+'" rowAddr="'+r+'"/><hp:cellSpan colSpan="1" rowSpan="'+c.rs+'"/><hp:cellSz width="'+w+'" height="'+h+'"/><hp:cellMargin left="510" right="510" top="141" bottom="141"/></hp:tc>';
+  /* 3단계: 쪽 크기에 맞춰 표를 나눈다 ─ 조문 경계에서만 끊으면
+     쪽 아래에 늘 실선이 남아 표가 닫혀 보이고, 조문이 두 쪽에 걸쳐 잘리지도 않는다.
+     opts.groupStart: 새 조문이 시작하는 행 번호 목록(머리행 0 제외). 없으면 나누지 않는다. */
+  const bodyH=(LANDSCAPE?BODY_H_L:BODY_H_P)-PAGE_SLACK;
+  function chunks(){
+    const starts=(opts&&opts.groupStart)||null;
+    if(!starts||!starts.length)return [[1,rowCnt-1]];
+    const safe={}; starts.forEach(function(r){ safe[r]=1; });
+    /* 첫 쪽만 제목·부제가 표 위에 있으므로 그만큼 덜 들어간다 */
+    let avail=bodyH-((opts&&opts.used!=null)?opts.used:FIRST_USED);
+    const out=[]; let a=1, acc=rowH[0], lastSafe=-1;
+    for(var r=1;r<rowCnt;r++){
+      if(r>a&&safe[r])lastSafe=r;                     // 이 행 앞에서 끊으면 조문이 안 잘린다
+      if(acc+rowH[r]>avail&&r>a){
+        const cut=(lastSafe>a?lastSafe:r);             // 조문 경계 우선, 없으면 현재 행
+        out.push([a,cut-1]); a=cut; lastSafe=-1; avail=bodyH;
+        acc=rowH[0]; for(var k=a;k<=r;k++)acc+=rowH[k];
+      }else acc+=rowH[r];
+    }
+    out.push([a,rowCnt-1]);
+    return out.filter(function(c){ return c[1]>=c[0]; });
+  }
+  /* 행 묶음 하나를 표 XML로 — 머리행은 쪽마다 다시 넣는다 */
+  function oneTable(a,b){
+    const idx=[0]; for(var r=a;r<=b;r++)idx.push(r);
+    const h=idx.reduce(function(t,r){ return t+rowH[r]; },0);
+    let t='<hp:tbl id="0" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="TABLE" repeatHeader="1" rowCnt="'+idx.length+'" colCnt="'+colCnt+'" cellSpacing="0" borderFillIDRef="3" noAdjust="0">'
+      +'<hp:sz width="'+totalW+'" widthRelTo="ABSOLUTE" height="'+h+'" heightRelTo="ABSOLUTE" protect="0"/>'
+      +'<hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+      +'<hp:outMargin left="283" right="283" top="283" bottom="283"/><hp:inMargin left="510" right="510" top="141" bottom="141"/>';
+    idx.forEach(function(r,lr){
+      t+='<hp:tr>';
+      grid[r].forEach(function(c,ci){
+        if(!c)return;                                            // 병합으로 덮인 자리는 tc를 내지 않는다
+        const w=widths[ci], head=(r===0);
+        let ch=0; for(var k=r;k<Math.min(b+1,r+c.rs);k++)ch+=rowH[k];
+        t+='<hp:tc name="" header="'+(head?1:0)+'" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="'+(head?HEADFILL:fillOf(r,r===a,r===b))+'">'
+          +'<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="'+(head?"CENTER":"TOP")+'" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
+          +cellInfo[r][ci].xml
+          +'</hp:subList><hp:cellAddr colAddr="'+ci+'" rowAddr="'+lr+'"/><hp:cellSpan colSpan="1" rowSpan="'+Math.min(c.rs,b-r+1)+'"/><hp:cellSz width="'+w+'" height="'+ch+'"/><hp:cellMargin left="510" right="510" top="141" bottom="141"/></hp:tc>';
+      });
+      t+='</hp:tr>';
     });
-    t+='</hp:tr>';
-  });
-  t+='</hp:tbl>';
-  return '<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0">'+t+'<hp:t/></hp:run>'+linesegs("",bodyW())+'</hp:p>';
+    return t+'</hp:tbl>';
+  }
+  return chunks().map(function(c,n){
+    return '<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="'+(n?1:0)+'" columnBreak="0" merged="0"><hp:run charPrIDRef="0">'
+      +oneTable(c[0],c[1])+'<hp:t/></hp:run>'+linesegs("",bodyW())+'</hp:p>';
+  }).join("");
 }
 /* 본문 XML(문단들) → section0.xml 전문 */
-function sectionXml(bodyXml){
+function sectionXml(bodyXml,land){
   /* 쪽번호: 구역 첫 문단에 '쪽 번호 매기기' 컨트롤을 넣어 모든 쪽 하단 가운데에 표시 */
   /* 요소명은 hp:pageNum (rhwp HWPX 파서 확인). 제어문자는 XML에 넣을 수 없어
      <hp:ctrl> 요소 자체가 컨트롤 위치를 나타낸다. */
   const pn=PAGENUM
     ? '<hp:ctrl><hp:pageNum pos="BOTTOM_CENTER" formatType="DIGIT" sideChar=""/></hp:ctrl><hp:t/>'
     : '<hp:t/>';
-  return (LANDSCAPE?TPL_SEC_PRE_L:TPL_SEC_PRE)+pn+'</hp:run>'+linesegs("",bodyW())+'</hp:p>'+bodyXml+'</hs:sec>';
+  const L=(land==null?LANDSCAPE:!!land);
+  return (L?TPL_SEC_PRE_L:TPL_SEC_PRE)+pn+'</hp:run>'+linesegs("",L?BODY_W_L:BODY_W_P)+'</hp:p>'+bodyXml+'</hs:sec>';
 }
 
 /* ── ZIP ── 실제 한글 파일과 동일한 구성: mimetype·version.xml·PrvImage.png는 무압축,
@@ -212,23 +246,42 @@ function prvText(bodyXml){
     .replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&amp;/g,"&");
   return t.replace(/\n{2,}/g,"\n").trim().slice(0,1000);
 }
-function build(bodyXml){
+/* 서류마다 용지 방향이 다르면 구역(section)을 나눠야 한다 —
+   한 구역 안에서는 가로·세로를 섞을 수 없다. 신구대조표만 가로, 나머지는 세로. */
+function hpfFor(n){
+  let items="", refs="";
+  for(let i=0;i<n;i++){
+    items+='<opf:item id="section'+i+'" href="Contents/section'+i+'.xml" media-type="application/xml"/>';
+    refs+='<opf:itemref idref="section'+i+'" linear="yes"/>';
+  }
+  return TPL_HPF
+    .replace('<opf:item id="section0" href="Contents/section0.xml" media-type="application/xml"/>', items)
+    .replace('<opf:itemref idref="section0" linear="yes"/>', refs);
+}
+function build(input){
+  /* input: 본문 XML 문자열 | [{body, landscape}] */
+  const secs=Array.isArray(input)?input.filter(function(x){return x&&x.body;})
+                                 :[{body:String(input==null?"":input),landscape:LANDSCAPE}];
+  if(!secs.length)secs.push({body:"",landscape:LANDSCAPE});
   // 파일 구성·순서·압축을 실제 한글 저장본과 동일하게 맞춘다
-  return zipWrite([
+  const files=[
     {name:"mimetype",data:"application/hwp+zip",store:true},
     {name:"version.xml",data:TPL_VERSION,store:true},
-    {name:"Contents/header.xml",data:TPL_HEADER},
-    {name:"Contents/section0.xml",data:sectionXml(bodyXml)},
-    {name:"Preview/PrvText.txt",data:prvText(bodyXml)},
-    {name:"settings.xml",data:TPL_SETTINGS},
-    {name:"Preview/PrvImage.png",data:b64ToU8(TPL_PRVIMG),store:true},
-    {name:"META-INF/container.xml",data:TPL_CONTAINER},
-    {name:"Contents/content.hpf",data:TPL_HPF},
-    {name:"META-INF/manifest.xml",data:TPL_MANIFEST}
-  ]);
+    {name:"Contents/header.xml",data:TPL_HEADER}
+  ];
+  secs.forEach(function(sc,i){
+    files.push({name:"Contents/section"+i+".xml",data:sectionXml(sc.body,sc.landscape)});
+  });
+  files.push({name:"Preview/PrvText.txt",data:prvText(secs.map(function(sc){return sc.body;}).join(""))});
+  files.push({name:"settings.xml",data:TPL_SETTINGS});
+  files.push({name:"Preview/PrvImage.png",data:b64ToU8(TPL_PRVIMG),store:true});
+  files.push({name:"META-INF/container.xml",data:TPL_CONTAINER});
+  files.push({name:"Contents/content.hpf",data:hpfFor(secs.length)});
+  files.push({name:"META-INF/manifest.xml",data:TPL_MANIFEST});
+  return zipWrite(files);
 }
-function download(bodyXml,fname){
-  const u8=build(bodyXml);
+function download(input,fname){
+  const u8=build(input);
   const a=document.createElement("a");
   a.href=URL.createObjectURL(new Blob([u8],{type:"application/hwp+zip"}));
   a.download=fname;a.click();
