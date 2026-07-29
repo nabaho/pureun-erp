@@ -8962,6 +8962,73 @@ function transferContract(contract){
 }
 
 
+// ============ 계약관리로 복귀 (역이관) ============
+// 모듈(사건/컨설팅/기금/기타)에서 계약관리(계약확정)로 항목을 되돌린다.
+// 계약에서 이관된 항목(sourceContractNo 보유)만 대상. transferContract 의 역방향.
+async function returnToContract(storeKey, itemId){
+  try {
+    var kindMap  = { cases:'case', consultings:'consulting', funds:'fund', other_projects:'other' };
+    var labelMap = { cases:'사건관리', consultings:'컨설팅관리', funds:'기금관리', other_projects:'기타사업' };
+    var kindV = kindMap[storeKey];
+    var storeLabel = labelMap[storeKey] || storeKey;
+    if(!kindV){ if(typeof showToast==='function') showToast('❌ 알 수 없는 모듈'); return; }
+    var arr = dbGet(storeKey, []);
+    var item = arr.find(function(x){ return x && x.id === itemId; });
+    if(!item){ if(typeof showToast==='function') showToast('❌ 항목을 찾을 수 없습니다'); return; }
+
+    var okConfirm = await popConfirm('이 항목을 계약관리로 되돌리시겠습니까?\n→ 계약관리(계약확정)에 다시 생성\n→ 이 모듈에서는 제거됩니다');
+    if(!okConfirm) return;
+
+    var typeCode = item.typeCode || '';
+    var amount = item.retainerFee || item.contractFee || item.fee || 0;
+    var _typeCodes = {}; _typeCodes[kindV] = typeCode;
+    var _amounts = {};   _amounts[kindV] = amount;
+    var newContract = {
+      id: 'ct-' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+      contractNo: item.sourceContractNo || genContractNo(),
+      kinds: [kindV],
+      typeCodes: _typeCodes,
+      amounts: _amounts,
+      companyName: item.companyName || '',
+      bizNo: item.bizNo || '',
+      company: {
+        name: item.companyName, bizNo: item.bizNo, ceo: item.ceo, ceo2: item.ceo2,
+        zipcode: item.zipcode, address: item.address, phone: item.phone, fax: item.fax,
+        email: item.email, bizType: item.bizType, bizCategory: item.bizCategory,
+        companySize: item.companySize, employmentInsuredCount: item.employmentInsuredCount,
+        injuryInsuredCount: item.injuryInsuredCount,
+        contacts: (item.contacts || []).slice(),
+        workers: (item.workers || []).slice()
+      },
+      managerMain: item.managerMain,
+      managerSubs: (item.managerSubs || []).slice(),
+      signDate: item.receiveDate || item.startDate || item.estDate || '',
+      successFee: item.successFee || item.balanceFee || 0,
+      successFeeType: item.successFeeType || 'amount',
+      status: 'signed',
+      note: '[' + storeLabel + ']에서 계약관리로 복귀',
+      createdAt: new Date().toISOString(),
+      updatedAt: Date.now()
+    };
+
+    if(!dbUpsert('contracts', newContract)){ if(typeof showToast==='function') showToast('❌ 계약관리 생성 실패'); return; }
+    if(!dbRemove(storeKey, itemId)){
+      // 롤백: 방금 생성한 계약 제거 (모듈 원본은 그대로 유지)
+      dbRemove('contracts', newContract.id);
+      if(typeof showToast==='function') showToast('❌ 복귀 실패 — 원본 제거 실패로 취소되었습니다');
+      return;
+    }
+    if(typeof showToast==='function') showToast('↩ 계약관리로 복귀됨 — 계약관리에서 확인하세요');
+    if(typeof window.navigateTo === 'function'){
+      setTimeout(function(){ try{ window.navigateTo('biz/contract'); }catch(_){} }, 500);
+    }
+  } catch(e){
+    console.error('[returnToContract]', e && e.message);
+    try{ if(typeof showToast==='function') showToast('❌ 복귀 중 오류: ' + ((e && e.message) || String(e))); }catch(_){}
+  }
+}
+
+
 // ============ 공용 월 네비게이션 (UI 통일) ============
 // props: onPrev, onNext, label, [onToday], [todayActive]
 function MonthNav(props){
@@ -14526,6 +14593,10 @@ function CaseManagement(props){
                   h('div', { style:{ display:'flex', flexDirection:'column', gap:'3px', alignItems:'center' } },
                     h('button', { onClick:function(){ openEdit(c); },
                       style:{ background:'#dbeafe', color:'#1e40af', border:'1px solid #93c5fd', padding:'2px 8px', borderRadius:'5px', fontSize:'10.5px', fontWeight:600, cursor:'pointer', minWidth:'46px' } }, '수정'),
+                    c.sourceContractNo
+                      ? h('button', { onClick:function(e){ e.stopPropagation(); returnToContract('cases', c.id); }, title:'계약관리로 되돌리기',
+                          style:{ background:'#f1f5f9', color:'#475569', border:'1px solid #cbd5e1', padding:'2px 8px', borderRadius:'5px', fontSize:'10.5px', fontWeight:600, cursor:'pointer', minWidth:'46px' } }, '↩ 복귀')
+                      : null,
                     c.status !== 'closed'
                       ? h('button', { onClick:function(){ closeCase(c.id); },
                           style:{ background:'#fef3c7', color:'#854d0e', border:'1px solid #fde68a', padding:'2px 8px', borderRadius:'5px', fontSize:'10.5px', fontWeight:600, cursor:'pointer', minWidth:'46px' } }, '종료')
@@ -40871,6 +40942,10 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                     h('div', { style:{ display:'flex', flexDirection:'column', gap:'3px', alignItems:'center' } },
                       h('button', { onClick:function(){ setEditModal(Object.assign({}, it)); },
                         style:{ background:'#dbeafe', color:'#1e40af', border:'1px solid #93c5fd', padding:'2px 8px', borderRadius:'5px', fontSize:'10.5px', fontWeight:600, cursor:'pointer', minWidth:'46px' } }, '수정'),
+                      it.sourceContractNo
+                        ? h('button', { onClick:function(e){ e.stopPropagation(); returnToContract(props.storageKey, it.id); }, title:'계약관리로 되돌리기',
+                            style:{ background:'#f1f5f9', color:'#475569', border:'1px solid #cbd5e1', padding:'2px 8px', borderRadius:'5px', fontSize:'10.5px', fontWeight:600, cursor:'pointer', minWidth:'46px' } }, '↩ 복귀')
+                        : null,
                       it.status !== 'closed'
                         ? h('button', { onClick:function(){ closeItem(it.id); },
                             style:{ background:'#fef3c7', color:'#854d0e', border:'1px solid #fde68a', padding:'2px 8px', borderRadius:'5px', fontSize:'10.5px', fontWeight:600, cursor:'pointer', minWidth:'46px' } }, '종료')
