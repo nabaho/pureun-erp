@@ -242,7 +242,8 @@ var EVENT_KINDS={
 };
 var SITE_FIELDS=[['seq_label','연번','text'],['name','상호','text'],['ceo','대표자','text'],
   ['biz_no','사업자등록번호','text'],['corp_no','법인등록번호','text'],['biz_type','업종','text'],
-  ['company_size','상시근로자수','text'],['address','소재지','text'],['note','비고','text']];
+  ['company_size','상시근로자수','text'],['contrib','기본 출연금(원)','text'],
+  ['address','소재지','text'],['note','비고','text']];
 // 별지15호 ⑩ 협력업체 근로자 수 집계용 — 사업장을 협력업체로 표시(빈값=원청)
 var SITE_PARTNER_FIELD=['partner','협력업체 여부'];
 // 담당자(연락처) 필드 — contacts JSON 배열의 대표 담당자 1명을 편집
@@ -3301,8 +3302,8 @@ function syLoad(){
   fbDb.ref(NS+'/site_years/'+fid+'/'+yr).once('value').then(function(s){
     if(S.syFor!==key) return;
     S.sy=s.val()||{};
-    if(S.tab==='sites'&&S.view==='fund') renderFund();
-  }).catch(function(){ if(S.syFor===key) S.sy={}; });
+    if((S.tab==='sites'||S.tab==='subsidy')&&S.view==='fund') renderFund();   // 지원금 한도 계산도 출연금을 쓴다
+  }).catch(function(){ if(S.syFor===key){ S.sy={}; if((S.tab==='sites'||S.tab==='subsidy')&&S.view==='fund') renderFund(); } });
   return false;
 }
 function sySet(sid,k,v){
@@ -3555,7 +3556,66 @@ function toggleAnnual(code,on){ var _key=S.fundId+'/'+S.year;
 function ymd(){var d=new Date();function p(n){return(n<10?'0':'')+n;}return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
 
 // ── 지원금 (공동 전용) — 근로복지공단 지원 신청 전 과정을 하위 탭으로 ──
-var SUB_TABS=[['apply','📋 신청·정산'],['docs','📁 서류함'],['excel','📥 신청서 엑셀'],['board','🗂 전체 보드']];
+var SUB_TABS=[['plan','🧮 한도·점수'],['apply','📋 신청·정산'],['docs','📁 제출서류'],['excel','📥 신청서 엑셀'],['board','🗂 전체 보드']];
+
+/* ══════════ 지원금 — 근로복지공단 지원사업 규칙 ══════════
+   출처: 「2025년 근로복지기금 지원사업 시행 안내」(근로복지넷 공지) + 별지 제3호의2 심사위원회 평가표.
+   원본은 03_과거자료/2025년/2025년_근로복지기금_지원사업_안내/ 에 있다.
+   ※ 해마다 바뀌는 값(1인당 한도·접수기간)은 연도별로 둔다 — 새 시행계획이 나오면 여기만 고친다.
+   ※ 평가표 배점은 **2024년판** 기준이다. 2025년에 정성 30→40점(소규모기업 기여도 신설),
+      정량 70→60점(①25→15점, ③1인당 기지원액 삭제→참여기업 1개소당 평균 근로자수 신설)으로
+      개정됐으므로, 최신 평가표를 받으면 SUB_RUBRIC를 교체해야 한다. 화면에도 그렇게 알린다. */
+var SUB_RULE={
+  '2025':{ per_worker:930000, apply_period:'상반기 3.4.~4.18. (하반기는 별도 공지)', rubric:'2024' },
+  '2024':{ per_worker:930000, apply_period:'상반기 (연도별 공고 확인)', rubric:'2024' }
+};
+function subRule(y){ return SUB_RULE[String(y)]||SUB_RULE['2025']; }
+// 지원요건(출연 주체)별 구간 한도 — 고시 제8·9조
+var SUB_REQ=[['1','둘 이상의 기업이 공동기금에 출연'],['2','대기업(원청)이 중소기업 공동기금에 출연'],['3','지방자치단체가 중소기업 공동기금에 출연']];
+var SUB_BAND={ '1':[200000000,500000000,1000000000,2000000000],     // 2억·5억·10억·20억 (기간 3·3·4·5년)
+               '2':[200000000,300000000,500000000,1000000000],      // 2억·3억·5억·10억 (매년 한도내)
+               '3':[200000000,400000000,600000000] };               // 2억·4억·6억 (설립일부터 3년)
+var SUB_BAND_LBL={ '1':['2억','5억','10억','20억'],'2':['2억','3억','5억','10억'],'3':['2억','4억','6억'] };
+/* 구간은 '참여 사업장 수 **또는** 근로자 수'라서 둘 중 유리한(높은) 구간을 쓴다. */
+function subTier(nSite,nEmp,type){
+  var sc = type==='3'?[10,30]:[5,10,30], ec = type==='3'?[500,1000]:[100,500,1000];
+  var i=0; while(i<sc.length && nSite>=sc[i]) i++;
+  var j=0; while(j<ec.length && nEmp>=ec[j]) j++;
+  return Math.max(i,j);
+}
+// 평가표 정량 항목 — 점수(1~5, 0=지원 배제)
+function _subP1(ratio){ return ratio>=2?5:ratio>=1.75?4:ratio>=1.5?3:ratio>=1.25?2:ratio>=1?1:0; }  // ①출연÷신청
+function _subP2a(r){ return r<.5?5:r<.6?4:r<.7?3:r<.8?2:r<.9?1:0; }        // ②-1 최다 기업 근로자 비중
+function _subP2b(r){ return r<.7?5:r<.75?4:r<.8?3:r<.85?2:r<.9?1:0; }      // ②-2 상위 3개소 비중(참여 10개소 이상만)
+function _subP3(v){ return v<=400000?5:v<=600000?4:v<=800000?3:v<=1000000?2:1; }  // ③1인당 이미 지원받은 금액
+function _subP4(n){ return n>=30?5:n>=10?4:n>=5?3:n>=3?2:n>=2?1:0; }      // ④참여 기업 수
+/* 지원금 산정 — 한도 3중 제약과 심사점수 차등지원율을 함께 계산한다.
+   한도: ㉮구간 한도 ㉯근로자 1인당 한도×근로자수 ㉰출연(예정)금 100% → 셋 중 가장 작은 값
+   지원율: 80점↑ 100% / 60~80 75% / 40~60 50% / 40미만 배제 */
+function subsidyCalc(o){
+  var rule=subRule(o.year), type=String(o.type||'1');
+  var nSite=num(o.nSite)||0, nEmp=num(o.nEmp)||0, contrib=num(o.contrib)||0, apply=num(o.apply)||0;
+  var tier=subTier(nSite,nEmp,type);
+  var band=(SUB_BAND[type]||SUB_BAND['1'])[tier]||0, bandLbl=(SUB_BAND_LBL[type]||[])[tier]||'-';
+  if(type==='1'&&nSite>=50&&nEmp>=1500){ band=3000000000; bandLbl='30억(지역·산업단위)'; }
+  var perW=nEmp*rule.per_worker;
+  var maxApply=Math.min(band,perW,contrib||Infinity);
+  if(!isFinite(maxApply)) maxApply=Math.min(band,perW);
+  var ratio=apply>0?contrib/apply:0;
+  var p1=_subP1(ratio);
+  var p2a=_subP2a(nEmp?(num(o.maxEmp)||0)/nEmp:1);
+  var p2b=nSite>=10?_subP2b(nEmp?(num(o.top3)||0)/nEmp:1):5;   // ②-2는 참여 10개소 이상만 적용
+  var p2=Math.min(p2a,p2b), p3=_subP3(num(o.prevPerWorker)||0), p4=_subP4(nSite);
+  var excluded=(p1===0||p2===0||p4===0);
+  var qual=Math.max(0,Math.min(30,num(o.qual)||0));
+  var score=p1*5+p2*3+p3*3+p4*3+qual;
+  var rate=score>=80?1:score>=60?.75:score>=40?.5:0;
+  var expect=(excluded||!apply)?0:Math.min(Math.round(apply*rate),band,perW);
+  return {tier:tier,band:band,bandLbl:bandLbl,perWorkerLimit:perW,perWorker:rule.per_worker,
+    maxApply:maxApply,ratio:ratio,p1:p1,p2:p2,p2a:p2a,p2b:p2b,p3:p3,p4:p4,qual:qual,
+    score:score,rate:rate,expect:expect,excluded:excluded,
+    quant:p1*5+p2*3+p3*3+p4*3};
+}
 // 지원금 하위탭 전환 — 미저장 입력이 있으면 확인 후 이동(그냥 바꾸면 입력이 사라짐)
 function goSubTab(t){ _leaveGuard().then(function(ok){ if(!ok)return; S.subTab=t; renderFund(); }); }
 function subsidyTab(f){
@@ -3563,7 +3623,8 @@ function subsidyTab(f){
   var bar='<div class="tabbar" style="margin:0 0 12px">'+SUB_TABS.map(function(t){
     return '<div class="tab'+(S.subTab===t[0]?' on':'')+'" onclick="goSubTab(\''+t[0]+'\')" style="font-size:12.5px;padding:6px 11px">'+t[1]+'</div>';
   }).join('')+'</div>';
-  var body = S.subTab==='docs' ? subsidyDocsPanel(f)
+  var body = S.subTab==='plan' ? subsidyPlanPanel(f)
+    : S.subTab==='docs' ? subsidyDocsPanel(f)
     : S.subTab==='excel' ? subsidyExcelPanel(f)
     : S.subTab==='board' ? subBoardPanel()
     : subsidyApplyPanel(f);
@@ -3594,6 +3655,159 @@ function subsidyApplyPanel(f){
     +(hasPrev?' <button onclick="copyPrevSubsidy()" title="'+(S.year-1)+'년 지원금 값을 올해로 불러오기">↩ 작년('+(S.year-1)+') 값 불러오기</button>':'')
     +recon+'</div></div>';
 }
+/* ══ 지원금 ① 한도·점수 ══
+   우리가 이미 가진 데이터(참여사업장 상시근로자수·출연금)로 세 한도와 예상 심사점수를 계산한다.
+   핵심은 **신청액을 얼마로 쓰느냐**다 — 신청액이 커지면 출연÷신청 비율이 떨어져 점수가 깎이고,
+   점수가 한 구간(80/60/40점) 아래로 내려가면 지원율이 100%→75%→50%로 뚝 떨어져
+   신청액을 올렸는데 받는 돈이 오히려 줄어든다. 출연금보다 많이 신청하면 아예 배제된다.
+   그래서 시나리오 표로 기대 수령액이 가장 큰 신청액을 찾아 준다. */
+function _subPlanAgg(f){
+  var act=Object.keys(S.sites||{}).map(function(k){ var s=S.sites[k]; return Object.assign({_id:k},s); })
+    .filter(function(s){ return s.status!=='closed'; });
+  var sy=S.sy||{};
+  var emps=act.map(function(s){ return num(s.company_size)||0; }).sort(function(a,b){return b-a;});
+  var nYear=0, nBase=0;
+  var contrib=act.reduce(function(t,s){
+    var y=num((sy[s._id]||{}).contrib)||0;                 // 그 해 값이 있으면 우선
+    if(y){ nYear++; return t+y; }
+    var b=num(s.contrib)||0; if(b) nBase++;
+    return t+b;
+  },0);
+  return { nSite:act.length, nEmp:emps.reduce(function(a,b){return a+b;},0),
+    maxEmp:emps[0]||0, top3:emps.slice(0,3).reduce(function(a,b){return a+b;},0),
+    contrib:contrib, nYear:nYear, nBase:nBase, noContrib:act.length-nYear-nBase };
+}
+// ③ 1인당 이미 지원받은 금액 — 지난 연도 결정액 ÷ 그 해 근로자수의 누계(근로자수 자료가 없으면 현재 인원으로 추정)
+function _subPrevPerWorker(f,nEmp){
+  var ys=(f&&f.years)||{}, sum=0;
+  Object.keys(ys).forEach(function(y){
+    if(+y>=S.year) return;
+    var d=num(((ys[y]||{}).subsidy||{}).decided_amount)||0;
+    if(d&&nEmp) sum+=d/nEmp;
+  });
+  return Math.round(sum);
+}
+function subsidyPlanPanel(f){
+  if(f.fund_type==='사내') return '<div class="panel"><div class="msg warn">사내근로복지기금은 공동기금 지원사업 대상이 아닙니다.</div></div>';
+  if(S.sitesFor!==S.fundId){
+    var _fid=S.fundId; S.sitesFor=_fid; S.sites=null;
+    fbDb.ref(NS+'/sites/'+_fid).once('value').then(function(s){ if(S.sitesFor!==_fid)return; S.sites=s.val()||{}; if(S.tab==='subsidy'&&S.view==='fund'&&S.fundId===_fid)renderFund(); })
+      .catch(function(){ if(S.sitesFor===_fid)S.sitesFor=null; if(S.tab==='subsidy'&&S.view==='fund')renderFund(); });
+    return '<div class="panel">'+loadingHTML()+'</div>';
+  }
+  if(!syLoad()) return '<div class="panel">'+loadingHTML('출연금 불러오는 중…')+'</div>';
+  var yd=(f.years&&f.years[S.year]&&f.years[S.year].subsidy)||{};
+  var g=_subPlanAgg(f); g.year=S.year;
+  var type=String(yd.req_type||'1');
+  var qual=(yd.qual_score!=null&&yd.qual_score!=='')?num(yd.qual_score):18;
+  var prev=(yd.prev_per_worker!=null&&yd.prev_per_worker!=='')?num(yd.prev_per_worker):_subPrevPerWorker(f,g.nEmp);
+  var apply=num(yd.request_amount)||0;
+  S._planBase=Object.assign({},g,{type:type});
+  var rule=subRule(S.year);
+  var c=subsidyCalc(Object.assign({},g,{type:type,apply:apply,qual:qual,prevPerWorker:prev}));
+  var W=function(v){ return (v||0).toLocaleString(); };
+  var reqOpts=SUB_REQ.map(function(r){ return '<option value="'+r[0]+'"'+(type===r[0]?' selected':'')+'>'+r[1]+'</option>'; }).join('');
+
+  var limitRows=''
+    +'<tr><td>㉮ 구간 한도</td><td style="text-align:right">'+W(c.band)+'</td><td class="muted">참여 '+g.nSite+'개소 · 근로자 '+W(g.nEmp)+'명 → '+esc(c.bandLbl)+' 구간</td></tr>'
+    +'<tr><td>㉯ 근로자 1인당 한도</td><td style="text-align:right">'+W(c.perWorkerLimit)+'</td><td class="muted">'+W(g.nEmp)+'명 × '+W(c.perWorker)+'원('+S.year+'년 기준)</td></tr>'
+    +'<tr><td>㉰ 출연(예정)금 100%</td><td style="text-align:right">'+W(g.contrib)+'</td><td class="muted">'
+      +(g.contrib?('연도값 '+g.nYear+'건 + 기본값 '+g.nBase+'건'+(g.noContrib?' · 미입력 '+g.noContrib+'개사':'')):'<b style="color:var(--dg)">출연금이 입력되지 않았습니다</b> — 참여사업장 탭 [연도별 기록]의 출연금 또는 사업장 [기본 출연금]')+'</td></tr>'
+    +'<tr style="background:var(--ok-bg,#f0fdf4);font-weight:700"><td>최대 신청 가능액</td><td style="text-align:right">'+W(c.maxApply)+'</td><td class="muted">셋 중 가장 작은 값</td></tr>';
+
+  var scn='<tbody id="sp-scn">'+_subScnRows(g,type,qual,prev,apply)+'</tbody>';
+
+  return '<div class="panel"><div class="row"><h2 style="font-size:15px">🧮 지원 한도</h2>'+hlp('sub.calc')+yearSel()+'<span style="flex:1"></span>'
+    +'<span class="stat">참여 '+g.nSite+'개사</span><span class="stat">근로자 '+W(g.nEmp)+'명</span></div>'
+    +'<div class="row" style="margin:10px 0 6px;gap:8px;align-items:flex-end"><div class="fld" style="margin:0;min-width:280px"><label>지원요건(출연 주체)</label>'
+    +'<select id="sp-req" onchange="subPlanRecalc()">'+reqOpts+'</select></div>'
+    +'<span class="muted" style="font-size:11px">접수: '+esc(rule.apply_period)+'</span></div>'
+    +'<div style="overflow-x:auto"><table><thead><tr><th>한도</th><th style="text-align:right;width:150px">금액(원)</th><th>근거</th></tr></thead><tbody>'+limitRows+'</tbody></table></div>'
+    +'</div>'
+
+    +'<div class="panel"><div class="row"><h2 style="font-size:15px">📊 예상 심사점수</h2>'
+    +'<span class="chip warn" style="font-size:10px">2024년 평가표 배점</span>'+hlp('sub.score')+'</div>'
+    +'<div class="grid" style="margin-top:10px">'
+    +'<div class="fld"><label>신청액(원) — 저장하면 신청·정산에 반영</label><input id="sp-apply" type="text" value="'+esc(apply||'')+'" oninput="subPlanRecalc()"></div>'
+    +'<div class="fld"><label>정성평가(사업계획 30점) — 심사위원 재량</label><input id="sp-qual" type="text" value="'+esc(qual)+'" oninput="subPlanRecalc()"></div>'
+    +'<div class="fld"><label>③ 1인당 이미 지원받은 금액(원)</label><input id="sp-prev" type="text" value="'+esc(prev)+'" oninput="subPlanRecalc()"></div>'
+    +'</div>'
+    +'<div style="overflow-x:auto;margin-top:10px"><table><thead><tr><th>항목</th><th style="width:70px;text-align:right">점수</th><th>계산 근거</th></tr></thead>'
+    +'<tbody id="sp-score">'+_subScoreRows(g,c)+'</tbody></table></div>'
+    +'<div class="row" style="margin-top:12px"><button class="primary" onclick="saveSubPlan()">💾 저장</button>'
+    +'<span class="muted" style="font-size:11px">2025년에 배점이 개정(정성 30→40, ①25→15, ③삭제→참여기업 1개소당 평균 근로자수)됐습니다. 최신 평가표를 받으면 배점을 교체해야 정확합니다.</span></div></div>'
+
+    +'<div class="panel"><div class="row"><h2 style="font-size:15px">🎯 신청액별 기대 수령액</h2>'+hlp('sub.opt')+'</div>'
+    +'<p class="muted" style="font-size:11.5px;margin:6px 0 8px">지원율이 80·60·40점에서 계단처럼 떨어지므로 <b>신청액을 올리면 오히려 덜 받는 구간</b>이 생깁니다. 출연금보다 많이 신청하면 배제됩니다.</p>'
+    +'<div style="overflow-x:auto"><table><thead><tr><th style="text-align:right">신청액</th><th style="text-align:right">출연÷신청</th><th style="text-align:right">①</th><th style="text-align:right">총점</th><th style="text-align:right">지원율</th><th style="text-align:right">예상 수령액</th><th></th></tr></thead>'+scn+'</table></div></div>';
+}
+function _subScoreRows(g,c){
+  var pct=function(a,b){ return b?((a/b*100).toFixed(1)+'%'):'-'; };
+  var r=[
+    ['① 출연(예정)금 ÷ 신청액', c.p1*5+'/25', c.ratio?(c.ratio.toFixed(2)+'배 → '+c.p1+'점 × 5'):'신청액을 입력하세요'],
+    ['② 근로자수 편중', c.p2*3+'/15', '최다 기업 '+g.maxEmp+'/'+g.nEmp+' = '+pct(g.maxEmp,g.nEmp)+' → '+c.p2a+'점'
+      +(g.nSite>=10?(' · 상위 3개소 '+g.top3+'/'+g.nEmp+' = '+pct(g.top3,g.nEmp)+' → '+c.p2b+'점 (낮은 쪽 반영)'):' · 상위 3개소 기준은 참여 10개소 이상만 적용')],
+    ['③ 1인당 이미 지원받은 금액', c.p3*3+'/15', c.p3+'점 × 3 (2025년 개정으로 삭제된 항목)'],
+    ['④ 참여 기업 수', c.p4*3+'/15', g.nSite+'개사 → '+c.p4+'점 × 3'],
+    ['정성평가(사업계획)', c.qual+'/30', '사업계획·정책부합성·복지개선 정도 — 심사위원 평가']
+  ];
+  var body=r.map(function(x){ return '<tr><td>'+x[0]+'</td><td style="text-align:right;font-weight:600">'+x[1]+'</td><td class="muted">'+esc(x[2])+'</td></tr>'; }).join('');
+  var badge=c.excluded?'<span class="chip dg">지원 배제</span>':'<span class="chip '+(c.rate===1?'ok':'warn')+'">지원율 '+Math.round(c.rate*100)+'%</span>';
+  body+='<tr style="font-weight:700;background:var(--warn-bg,#fffbeb)"><td>합계</td><td style="text-align:right">'+c.score+'/100</td><td>'+badge
+    +(c.excluded?' <span class="muted" style="font-weight:400">'+(c.p1===0?'출연금이 신청액보다 적습니다':c.p2===0?'한 기업 근로자가 90% 이상입니다':'참여 기업이 2개소 미만입니다')+'</span>':'')
+    +' <span class="muted" style="font-weight:400">예상 수령 '+(c.expect||0).toLocaleString()+'원</span></td></tr>';
+  return body;
+}
+function _subScnRows(g,type,qual,prev,cur){
+  var cands=[], contrib=num(g.contrib)||0;
+  [2,1.75,1.5,1.25,1].forEach(function(d){ if(contrib) cands.push(Math.floor(contrib/d)); });
+  var base=subsidyCalc(Object.assign({},g,{type:type,apply:1,qual:qual,prevPerWorker:prev}));
+  cands.push(base.maxApply);
+  if(cur) cands.push(num(cur)||0);
+  cands=cands.filter(function(v){ return v>0 && v<=base.maxApply; })
+    .filter(function(v,i,a){ return a.indexOf(v)===i; }).sort(function(a,b){return a-b;});
+  if(!cands.length) return '<tr><td colspan="7" class="muted" style="padding:12px">출연금을 입력하면 시나리오를 계산합니다.</td></tr>';
+  var rows=cands.map(function(a){ return {a:a,c:subsidyCalc(Object.assign({},g,{type:type,apply:a,qual:qual,prevPerWorker:prev}))}; });
+  var best=rows.reduce(function(m,x){ return (!m||x.c.expect>m.c.expect)?x:m; },null);
+  return rows.map(function(x){
+    var on=(x===best), same=(num(cur)===x.a);
+    return '<tr'+(on?' style="background:var(--ok-bg,#f0fdf4);font-weight:600"':'')+'>'
+      +'<td style="text-align:right">'+x.a.toLocaleString()+'</td>'
+      +'<td style="text-align:right">'+x.c.ratio.toFixed(2)+'</td>'
+      +'<td style="text-align:right">'+(x.c.p1*5)+'</td>'
+      +'<td style="text-align:right">'+x.c.score+'</td>'
+      +'<td style="text-align:right">'+(x.c.excluded?'배제':Math.round(x.c.rate*100)+'%')+'</td>'
+      +'<td style="text-align:right">'+(x.c.expect||0).toLocaleString()+'</td>'
+      +'<td>'+(on?'<span class="chip ok" style="font-size:10px">추천</span> ':'')
+      +(same?'<span class="chip" style="font-size:10px">현재</span>':'<button onclick="subPlanUse('+x.a+')" style="padding:1px 7px;font-size:11px">이 금액</button>')+'</td></tr>';
+  }).join('');
+}
+function _subPlanRead(){
+  var g=S._planBase||{}; if(!g.nSite&&!g.nEmp) return null;
+  var el=function(id){ var e=$(id); return e?e.value:''; };
+  return { g:g, type:String(el('sp-req')||g.type||'1'), qual:num(el('sp-qual'))||0,
+    prev:num(el('sp-prev'))||0, apply:num(el('sp-apply'))||0 };
+}
+function subPlanRecalc(){
+  var v=_subPlanRead(); if(!v) return;
+  var c=subsidyCalc(Object.assign({},v.g,{type:v.type,apply:v.apply,qual:v.qual,prevPerWorker:v.prev}));
+  var s=$('sp-score'); if(s) s.innerHTML=_subScoreRows(v.g,c);
+  var n=$('sp-scn'); if(n) n.innerHTML=_subScnRows(v.g,v.type,v.qual,v.prev,v.apply);
+  markDirty();
+}
+function subPlanUse(a){ var e=$('sp-apply'); if(!e)return; e.value=a; subPlanRecalc(); toast('신청액 '+a.toLocaleString()+'원 — [저장]을 누르면 신청·정산에 반영됩니다'); }
+function saveSubPlan(){
+  var v=_subPlanRead(); if(!v){ toast('계산할 데이터가 없습니다','warn'); return; }
+  var _fid=S.fundId, _yr=S.year;
+  var obj={ req_type:v.type, qual_score:v.qual, prev_per_worker:v.prev };
+  if(v.apply) obj.request_amount=v.apply;
+  fbDb.ref(NS+'/funds/'+_fid+'/years/'+_yr+'/subsidy').update(obj).then(function(){
+    var t=funds[_fid]; if(t){ if(!t.years)t.years={}; if(!t.years[_yr])t.years[_yr]={};
+      t.years[_yr].subsidy=Object.assign({},t.years[_yr].subsidy||{},obj); }
+    if(S.fundId===_fid&&S.year===_yr){ clearDirty(); renderFund(); }
+    toast('저장되었습니다');
+  }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
+}
 function subsidyExcelPanel(f){
   // 서식 자료실의 지원신청서 원본(IndexedDB) 상태 확인 후 이 기금 데이터로 채워 다운로드
   if(S._subTplChk!==true){ S._subTplChk='...';
@@ -3620,30 +3834,167 @@ function copyPrevSubsidy(){
 }
 // ── 지원금 서류함 (연도별 파일 보관, Firebase Storage) ──
 var SUBDOC_KINDS=['공고문','신청서','참여사업장명단','결정통지','교부신청','집행·정산보고','기타'];
+/* ══ 공동기금 지원 신청 제출서류 ══
+   출처: 「2025년 근로복지기금 지원사업 시행 안내」 참고사항 — 공동기금 11종(사내기금은 14종).
+   scope 'site'인 3종은 **참여사마다 각 1부**라 32개사면 96장이 된다 — 그래서 사업장별 격자를 따로 둔다.
+   form: 우리 시스템이 서식을 만들어 주는 것(서식 탭에서 생성·인쇄). */
+var SUB_REQ_DOCS=[
+  {k:'apply', n:'1. 지원신청서', scope:'fund', form:'subsidy', note:'별지 제1호의2 — [신청서 엑셀] 탭에서 데이터 채워 받기'},
+  {k:'sme',   n:'2. 중소기업확인서', scope:'site', note:'참여사마다 각 1부 (상생형 중견기업은 중견기업확인서)'},
+  {k:'charter',n:'3. 기금법인 정관', scope:'fund', form:'charter', note:'서식 탭에서 생성'},
+  {k:'bizplan',n:'4. 해당 연도 사업계획서', scope:'fund', form:'bizplan', note:'기금법인 사업계획서(인가 서식과 동일)'},
+  {k:'subplan',n:'5. 지원금 관련 사업계획서', scope:'fund', form:'sub_welfare_plan', note:'별지 제2호의2 — 개정 서식 필수(엑셀 양식에도 포함)'},
+  {k:'reg',   n:'6. 법인등기부등본 사본', scope:'site', note:'참여사 각 1부 + 기금법인 1부'},
+  {k:'bizno', n:'7. 사업자등록증 사본', scope:'site', note:'참여사마다 각 1부'},
+  {k:'taxid', n:'8. 기금법인 고유번호증 사본', scope:'fund', note:'세무서 발급 — 기금 정보의 고유번호'},
+  {k:'contrib',n:'9. 출연확인(약정)서 또는 재산목록', scope:'fund', form:'sub_contrib', note:'서식 탭에서 생성'},
+  {k:'oath',  n:'10. 서약서', scope:'fund', form:'sub_oath', note:'서식 탭에서 생성'},
+  {k:'chk',   n:'11. 체크리스트', scope:'fund', form:'sub_checklist', note:'공동자율점검 체크리스트 — 서식 탭에서 생성'},
+  // 과거 제출 실무에서 함께 낸 것들(공단 요청 시)
+  {k:'remit', n:'＋ 회사별 송금내역·기금 입금내역', scope:'fund', opt:1, note:'출연금이 실제로 들어왔음을 보이는 자료'},
+  {k:'bank',  n:'＋ 기금법인 계좌사본', scope:'fund', opt:1, note:'지원금 지급신청 단계에서 필요'}
+];
+var SUB_SITE_DOCS=[['sme','중소기업확인서'],['reg','등기부등본'],['bizno','사업자등록증']];
 function subsidyDocsPanel(f){
+  if(f.fund_type==='사내') return '<div class="panel"><div class="msg warn">사내근로복지기금은 공동기금 지원사업 대상이 아닙니다.</div></div>';
   var key=S.fundId+'/'+S.year;
-  if(S.subDocFor!==key){ var _k=key; S.subDocFor=_k; S.subDocs=null;
-    fbDb.ref(NS+'/subsidy_docs/'+S.fundId+'/'+S.year).once('value').then(function(s){ if(S.subDocFor!==_k)return; S.subDocs=s.val()||{}; if(S.tab==='subsidy'&&S.view==='fund')renderFund(); })
-      .catch(function(){ if(S.subDocFor===_k)S.subDocFor=null; });
+  // 사업장 명부 + 체크 상태 + 업로드 목록을 함께 쓴다
+  if(S.sitesFor!==S.fundId){
+    var _f=S.fundId; S.sitesFor=_f; S.sites=null;
+    fbDb.ref(NS+'/sites/'+_f).once('value').then(function(s){ if(S.sitesFor!==_f)return; S.sites=s.val()||{}; if(S.tab==='subsidy'&&S.view==='fund'&&S.fundId===_f)renderFund(); })
+      .catch(function(){ if(S.sitesFor===_f)S.sitesFor=null; if(S.tab==='subsidy'&&S.view==='fund')renderFund(); });
+    return '<div class="panel">'+loadingHTML()+'</div>';
+  }
+  if(S.subChkFor!==key){ var _k=key; S.subChkFor=_k; S.subChk=null;
+    fbDb.ref(NS+'/subsidy_chk/'+S.fundId+'/'+S.year).once('value').then(function(s){ if(S.subChkFor!==_k)return; S.subChk=s.val()||{}; if(S.tab==='subsidy'&&S.view==='fund')renderFund(); })
+      .catch(function(){ if(S.subChkFor===_k){ S.subChk={}; if(S.tab==='subsidy'&&S.view==='fund')renderFund(); } });
+    return '<div class="panel">'+loadingHTML('제출서류 상태 불러오는 중…')+'</div>';
+  }
+  if(S.subDocFor!==key){ var _k2=key; S.subDocFor=_k2; S.subDocs=null;
+    fbDb.ref(NS+'/subsidy_docs/'+S.fundId+'/'+S.year).once('value').then(function(s){ if(S.subDocFor!==_k2)return; S.subDocs=s.val()||{}; if(S.tab==='subsidy'&&S.view==='fund')renderFund(); })
+      .catch(function(){ if(S.subDocFor===_k2){ S.subDocs={}; if(S.tab==='subsidy'&&S.view==='fund')renderFund(); } });
     return '<div class="panel">'+loadingHTML('서류함 불러오는 중…')+'</div>';
   }
-  var d=S.subDocs||{}, ids=Object.keys(d);
-  var rows=ids.map(function(id){var x=d[id];
+  var chk=S.subChk||{}, fchk=chk.fund||{}, schk=chk.site||{};
+  var act=Object.keys(S.sites||{}).map(function(k){ return Object.assign({_id:k},S.sites[k]); })
+    .filter(function(s){ return s.status!=='closed'; })
+    .sort(function(a,b){ return String(a.seq_label||'').localeCompare(String(b.seq_label||''),'ko',{numeric:true}); });
+
+  // ── 기금 단위 11종(+선택 2종) ──
+  var need=SUB_REQ_DOCS.filter(function(d){ return !d.opt; });
+  var fundDocs=SUB_REQ_DOCS.filter(function(d){ return d.scope==='fund'; });
+  var frows=fundDocs.map(function(d){
+    var on=!!fchk[d.k];
+    return '<tr><td style="width:26px"><input type="checkbox"'+(on?' checked':'')+' onchange="subChkFund(\''+d.k+'\',this.checked)"></td>'
+      +'<td'+(on?' style="color:#166534;font-weight:600"':'')+'>'+esc(d.n)+(d.opt?' <span class="chip" style="font-size:9.5px">선택</span>':'')+'</td>'
+      +'<td class="muted" style="font-size:11.5px">'+esc(d.note||'')+'</td>'
+      +'<td>'+(d.form?'<button onclick="openFundDoc(\''+S.fundId+'\',\''+d.form+'\')" style="padding:1px 7px;font-size:11px">📄 서식</button>':'')+'</td></tr>';
+  }).join('');
+  var fDone=fundDocs.filter(function(d){ return !d.opt&&fchk[d.k]; }).length;
+  var fNeed=fundDocs.filter(function(d){ return !d.opt; }).length;
+
+  // ── 참여사별 3종 격자 ──
+  var srows=act.map(function(s){
+    var d=schk[s._id]||{};
+    var tds=SUB_SITE_DOCS.map(function(c){
+      return '<td style="text-align:center"><input type="checkbox"'+(d[c[0]]?' checked':'')+' onchange="subChkSite(\''+s._id+'\',\''+c[0]+'\',this.checked)"></td>';
+    }).join('');
+    var miss=SUB_SITE_DOCS.filter(function(c){ return !d[c[0]]; }).length;
+    return '<tr'+(miss?'':' style="background:var(--ok-bg,#f0fdf4)"')+'><td class="muted" style="width:44px">'+esc(s.seq_label||'')+'</td>'
+      +'<td>'+esc(s.name||'')+'</td><td style="text-align:right" class="mo">'+((num(s.company_size)||0).toLocaleString())+'</td>'+tds
+      +'<td style="text-align:center">'+(miss?'<span class="chip dg" style="font-size:10px">'+miss+'건 부족</span>':'<span class="chip ok" style="font-size:10px">완비</span>')+'</td></tr>';
+  }).join('');
+  var colDone=SUB_SITE_DOCS.map(function(c){ return act.filter(function(s){ return (schk[s._id]||{})[c[0]]; }).length; });
+  var missSites=act.filter(function(s){ var d=schk[s._id]||{}; return SUB_SITE_DOCS.some(function(c){ return !d[c[0]]; }); });
+  var totalNeed=act.length*SUB_SITE_DOCS.length, totalDone=colDone.reduce(function(a,b){return a+b;},0);
+
+  // ── 업로드 파일(기존 서류함) ──
+  var dd=S.subDocs||{}, ids=Object.keys(dd);
+  var urows=ids.map(function(id){ var x=dd[id];
     return '<tr><td>'+esc(x.kind||'기타')+'</td><td><a href="'+esc(x.url||'#')+'" target="_blank" rel="noopener">'+esc(x.name||'')+'</a></td>'
       +'<td class="muted">'+esc(x.uploaded||'')+'</td><td><button onclick="delSubDoc(\''+id+'\')" style="padding:2px 7px">×</button></td></tr>';
   }).join('');
   var opts=SUBDOC_KINDS.map(function(k){return '<option>'+k+'</option>';}).join('');
-  var body;
-  if(!fbStore){
-    body='<div class="msg warn">파일 보관은 Firebase Storage가 필요합니다. 관리자가 Firebase 콘솔에서 Storage를 활성화하고 규칙을 게시하면 사용할 수 있습니다.</div>';
-  } else {
-    body='<div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">'
-      +'<div class="fld" style="margin:0"><label>서류 종류</label><select id="subdoc-kind" style="padding:6px 9px;border:1px solid var(--line);border-radius:7px">'+opts+'</select></div>'
-      +'<button class="primary" onclick="uploadSubDoc()">📎 파일 올리기</button>'
-      +'<span class="muted" style="font-size:11.5px">'+S.year+'년 '+(funds[S.fundId].short_name||'')+' 지원금 서류</span></div>'
-      +(ids.length?'<div style="overflow-x:auto;margin-top:10px"><table><thead><tr><th>종류</th><th>파일</th><th>올린날</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<div class="muted" style="padding:12px 2px">올린 서류가 없습니다.</div>');
-  }
-  return '<div class="panel"><h2 style="font-size:15px">📁 지원금 서류함 <span class="muted" style="font-size:12px;font-weight:400">('+S.year+'년 · 공고·신청서·결정통지·정산보고 등)</span></h2>'+body+'</div>';
+
+  return '<div class="panel"><div class="row"><h2 style="font-size:15px">📁 제출서류 — 기금 단위</h2>'+hlp('sub.docs')+yearSel()+'<span style="flex:1"></span>'
+    +'<span class="muted" style="font-size:11px">공식 11종 = 기금 단위 '+fNeed+'종 + 참여사별 '+SUB_SITE_DOCS.length+'종</span>'
+    +'<span class="stat'+(fDone===fNeed?' ok':'')+'">'+fDone+'/'+fNeed+'종</span></div>'
+    +'<div style="overflow-x:auto;margin-top:8px"><table><tbody>'+frows+'</tbody></table></div></div>'
+
+    +'<div class="panel"><div class="row"><h2 style="font-size:15px">🏢 참여사별 제출서류</h2>'
+    +'<span class="muted" style="font-size:11px">중소기업확인서·등기부등본·사업자등록증은 참여사마다 각 1부</span><span style="flex:1"></span>'
+    +'<span class="stat'+(totalDone===totalNeed&&totalNeed?' ok':'')+'">'+totalDone+'/'+totalNeed+'장</span></div>'
+    +(act.length
+      ? '<div class="row" style="margin:8px 0;gap:6px;flex-wrap:wrap">'
+        +SUB_SITE_DOCS.map(function(c,i){ return '<button onclick="subChkCol(\''+c[0]+'\')" style="padding:2px 8px;font-size:11px" title="이 열 전체 켜기/끄기">'+esc(c[1])+' '+colDone[i]+'/'+act.length+'</button>'; }).join('')
+        +(missSites.length?'<span style="flex:1"></span><button onclick="subCopyMissing()" style="padding:2px 8px;font-size:11px" title="미제출 사업장 명단을 복사(연락용)">📋 미제출 '+missSites.length+'개사 명단</button>':'')
+        +'</div>'
+        +'<div style="overflow-x:auto"><table><thead><tr><th>번호</th><th>사업장</th><th style="text-align:right" class="mo">근로자</th>'
+        +SUB_SITE_DOCS.map(function(c){return '<th style="text-align:center">'+esc(c[1])+'</th>';}).join('')+'<th style="text-align:center">상태</th></tr></thead><tbody>'+srows+'</tbody></table></div>'
+      : '<div class="muted" style="padding:12px 2px">참여사업장이 없습니다 — 참여사업장 탭에서 먼저 등록하세요.</div>')
+    +'</div>'
+
+    +'<div class="panel"><h2 style="font-size:15px">📎 파일 보관 <span class="muted" style="font-size:12px;font-weight:400">('+S.year+'년 · 공고·신청서·결정통지·정산보고 등)</span></h2>'
+    +(!fbStore
+      ? '<div class="msg warn">파일 보관은 Firebase Storage가 필요합니다.</div>'
+      : '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:8px">'
+        +'<div class="fld" style="margin:0"><label>서류 종류</label><select id="subdoc-kind" style="padding:6px 9px;border:1px solid var(--line);border-radius:7px">'+opts+'</select></div>'
+        +'<button class="primary" onclick="uploadSubDoc()">📎 파일 올리기</button></div>'
+        +(ids.length?'<div style="overflow-x:auto;margin-top:10px"><table><thead><tr><th>종류</th><th>파일</th><th>올린날</th><th></th></tr></thead><tbody>'+urows+'</tbody></table></div>':'<div class="muted" style="padding:12px 2px">올린 서류가 없습니다.</div>'))
+    +'</div>';
+}
+function _subChkPath(){ return NS+'/subsidy_chk/'+S.fundId+'/'+S.year; }
+function subChkFund(k,on){
+  var _f=S.fundId,_y=S.year;
+  fbDb.ref(_subChkPath()+'/fund/'+k).set(on?1:null).then(function(){
+    if(S.fundId!==_f||S.year!==_y) return;
+    S.subChk=S.subChk||{}; S.subChk.fund=S.subChk.fund||{};
+    if(on) S.subChk.fund[k]=1; else delete S.subChk.fund[k];
+    renderFund();
+  }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
+}
+function subChkSite(sid,k,on){
+  var _f=S.fundId,_y=S.year;
+  fbDb.ref(_subChkPath()+'/site/'+sid+'/'+k).set(on?1:null).then(function(){
+    if(S.fundId!==_f||S.year!==_y) return;
+    S.subChk=S.subChk||{}; S.subChk.site=S.subChk.site||{}; S.subChk.site[sid]=S.subChk.site[sid]||{};
+    if(on) S.subChk.site[sid][k]=1; else delete S.subChk.site[sid][k];
+    renderFund();
+  }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
+}
+// 열 전체 켜기/끄기 — 다 켜져 있으면 끄고, 아니면 모두 켠다
+function subChkCol(k){
+  var act=Object.keys(S.sites||{}).filter(function(id){ return (S.sites[id]||{}).status!=='closed'; });
+  if(!act.length) return;
+  var schk=(S.subChk||{}).site||{};
+  var allOn=act.every(function(id){ return (schk[id]||{})[k]; });
+  var up={}; act.forEach(function(id){ up[id+'/'+k]=allOn?null:1; });
+  var _f=S.fundId,_y=S.year;
+  fbDb.ref(_subChkPath()+'/site').update(up).then(function(){
+    if(S.fundId!==_f||S.year!==_y) return;
+    S.subChk=S.subChk||{}; S.subChk.site=S.subChk.site||{};
+    act.forEach(function(id){ S.subChk.site[id]=S.subChk.site[id]||{}; if(allOn) delete S.subChk.site[id][k]; else S.subChk.site[id][k]=1; });
+    renderFund(); toast(allOn?'전체 해제':'전체 체크');
+  }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
+}
+// 미제출 사업장 명단 — 담당자 연락처까지 붙여 클립보드로(독촉 연락용)
+function subCopyMissing(){
+  var schk=(S.subChk||{}).site||{};
+  var lines=Object.keys(S.sites||{}).map(function(id){ return Object.assign({_id:id},S.sites[id]); })
+    .filter(function(s){ return s.status!=='closed'; })
+    .map(function(s){
+      var d=schk[s._id]||{}, miss=SUB_SITE_DOCS.filter(function(c){ return !d[c[0]]; }).map(function(c){ return c[1]; });
+      if(!miss.length) return null;
+      var ct=(s.contacts&&s.contacts[0])||{};
+      return [s.seq_label||'',s.name||'',miss.join('·'),ct.name||'',ct.mobile||ct.phone||'',ct.email||''].join('\t');
+    }).filter(Boolean);
+  if(!lines.length){ toast('미제출 사업장이 없습니다'); return; }
+  var txt='연번\t사업장\t미제출\t담당자\t연락처\t이메일\n'+lines.join('\n');
+  var ta=document.createElement('textarea'); ta.value=txt; ta.style.position='fixed'; ta.style.left='-9999px';
+  document.body.appendChild(ta); ta.select();
+  try{ document.execCommand('copy'); toast(lines.length+'개사 명단을 복사했습니다 — 엑셀·메일에 붙여넣기'); }
+  catch(e){ toast('복사 실패','err'); }
+  ta.remove();
 }
 function uploadSubDoc(){
   if(!fbStore){ toast('Storage 미설정','err'); return; }
@@ -5042,6 +5393,22 @@ var HELP={
    +'<p>실제 관할은 <b>대법원 인터넷등기소(iros.go.kr)</b>에서 확인하세요.</p><p><b>비어 있는 기금만</b> 채웁니다 — 이미 값이 있는 기금은 그대로 둡니다.</p>'},
  'bulk.tax':{t:'관할 세무서 일괄 추정',h:'<p>여기 값은 <b>추정값</b>입니다. 세무서 관할은 같은 시·군·구 안에서도 <b>구·읍면동으로 갈리는 경우</b>가 있어 특히 확인이 필요합니다.</p>'
    +'<p>실제 관할은 <b>홈택스(hometax.go.kr)</b>에서 확인하세요.</p><p><b>비어 있는 기금만</b> 채웁니다.</p>'},
+ 'sub.calc':{t:'지원 한도 계산',h:'<p>근로복지공단 공동기금 지원은 <b>세 한도 중 가장 작은 금액</b>까지만 받을 수 있습니다.</p>'
+   +'<p><b>㉮ 구간 한도</b> — 참여 사업장 수 <b>또는</b> 근로자 수로 정해집니다(둘 중 유리한 구간). 출연 주체(기업/대기업/지자체)에 따라 표가 다릅니다.<br>'
+   +'<b>㉯ 1인당 한도</b> — 근로자 1인당 금액 × 근로자 수. 2025년은 930,000원입니다.<br>'
+   +'<b>㉰ 출연(예정)금 100%</b> — 낸 돈보다 많이 받을 수는 없습니다.</p>'
+   +'<p>출연금은 <b>참여사업장 탭 → 연도별 기록</b>의 출연금을 먼저 쓰고, 없으면 사업장 명부의 <b>기본 출연금</b>을 씁니다.</p>'
+   +'<p>근거: 2025년 근로복지기금 지원사업 시행 안내(근로복지넷), 고시 제8·9조.</p>'},
+ 'sub.score':{t:'예상 심사점수',h:'<p>심사 100점 중 <b>정량 70점은 우리 데이터로 자동 계산</b>됩니다 — 출연금÷신청액, 근로자수 편중, 참여 기업 수.</p>'
+   +'<p><b>정성 30점</b>은 심사위원 재량이라 직접 넣습니다(실제 사례에서 18~28점).</p>'
+   +'<p><b>배제 사유</b>: 출연금보다 많이 신청 / 한 기업 근로자가 90% 이상 / 참여 2개소 미만.</p>'
+   +'<p>⚠ 이 배점은 <b>2024년 평가표</b> 기준입니다. 2025년에 정성 30→40점, 정량 70→60점(①25→15점, ③1인당 기지원액 삭제→참여기업 1개소당 평균 근로자수)으로 개정됐으니 최신 평가표를 받아 배점을 교체해야 정확합니다.</p>'},
+ 'sub.opt':{t:'신청액을 얼마로 쓸까',h:'<p>지원율은 점수에 따라 <b>계단식</b>입니다 — 80점↑ 100%, 60~80점 75%, 40~60점 50%, 40점 미만 배제.</p>'
+   +'<p>신청액을 올리면 <b>출연금÷신청액</b>이 낮아져 ①점수가 깎이고, 점수가 한 칸 내려가면 지원율이 뚝 떨어집니다. 그래서 <b>신청액을 올렸는데 받는 돈이 줄어드는 구간</b>이 생깁니다.</p>'
+   +'<p>표에서 <b>예상 수령액이 가장 큰 행</b>이 추천입니다. [이 금액] 버튼으로 신청액에 넣고 저장하세요.</p>'},
+ 'sub.docs':{t:'제출서류 관리',h:'<p>공동기금 지원 신청 제출서류는 <b>11종</b>입니다(사내기금은 14종).</p>'
+   +'<p>이 중 <b>중소기업확인서·법인등기부등본·사업자등록증은 참여사마다 각 1부</b>라, 32개사면 96장이 됩니다. 그래서 아래 격자에서 사업장별로 따로 체크합니다.</p>'
+   +'<p>[📄 서식] 버튼이 있는 것은 이 시스템이 만들어 줍니다. [📋 미제출 명단]으로 담당자 연락처까지 복사해 독촉할 수 있습니다.</p>'},
  'bulk.labor':{t:'관할 노동청 일괄 추정',h:'<p>기금 설립·변경 <b>인가신청서의 수신처</b>(「○○지방고용노동청(○○지청)장 귀하」)로 쓰입니다.</p>'
    +'<p>고용노동부 직제의 관할구역으로 뽑은 <b>추정값</b>입니다. 서울·경기·충남·충북·대전만 매핑돼 있고 나머지는 비워 둡니다.</p>'
    +'<p><b>서산지청</b>은 2025-12-30 서산출장소에서 승격돼 서산시·태안군을 맡습니다(옛 자료에는 보령지청으로 나옵니다).</p>'
