@@ -1952,6 +1952,31 @@ function _a4Page(no){
   f.textContent='- '+no+' -';
   p.appendChild(b); p.appendChild(f); return p;
 }
+/* 표가 한 장에 안 들어가면 행 단위로 자른다.
+   이 장에 들어갈 만큼만 남기고, 나머지 행을 담은 같은 모양의 표를 돌려준다(다음 장에서 이어짐).
+   머리행(thead)이 있으면 이어지는 장에도 복사해 붙여 표가 무슨 표인지 알 수 있게 한다.
+   한 행조차 안 들어가면 되돌리고 null — 부르는 쪽이 통째로 다음 장으로 넘긴다. */
+function _splitTableToFit(tbl,body,limit){
+  var rows=[];
+  Array.prototype.forEach.call(tbl.rows,function(r){ if(r.closest('table')===tbl) rows.push({r:r,p:r.parentNode}); });
+  var head=tbl.querySelector(':scope > thead');
+  var movable=rows.filter(function(x){ return !head||x.p!==head; });        // 머리행은 남긴다
+  if(movable.length<2) return null;
+  var moved=[];
+  while(movable.length>1 && body.scrollHeight>limit){                       // 최소 한 행은 남긴다
+    var last=movable.pop(); last.r.remove(); moved.unshift(last);
+  }
+  if(!moved.length) return null;
+  if(body.scrollHeight>limit){                                              // 그래도 안 들어감 → 원복
+    moved.forEach(function(x){ x.p.appendChild(x.r); });
+    return null;
+  }
+  var rest=tbl.cloneNode(false);                                            // 테두리·너비 등 표 속성 유지
+  if(head) rest.appendChild(head.cloneNode(true));                          // 머리행 반복
+  var tb=document.createElement('tbody'); rest.appendChild(tb);
+  moved.forEach(function(x){ tb.appendChild(x.r); });
+  return rest;
+}
 function paginateDoc(rawHTML){
   var ed=$('doced'); if(!ed) return;
   var holder=document.createElement('div'); holder.innerHTML=rawHTML||'';
@@ -1973,16 +1998,23 @@ function paginateDoc(rawHTML){
   blocks.forEach(function(nodes){
     no++; var page=_a4Page(no); ed.appendChild(page); pages.push(page);
     var body=page.querySelector('.a4b'), limit=body.clientHeight;
-    nodes.forEach(function(nd){
-      if(nd.nodeType===3 && !String(nd.nodeValue||'').trim()) return;      // 공백 텍스트 무시
+    var queue=nodes.slice(), guard=0;
+    while(queue.length && ++guard<4000){
+      var nd=queue.shift();
+      if(nd.nodeType===3 && !String(nd.nodeValue||'').trim()) continue;    // 공백 텍스트 무시
       body.appendChild(nd);
-      if(limit>0 && body.scrollHeight>limit && body.childNodes.length>1){   // 넘치면 다음 장으로
-        body.removeChild(nd);
-        no++; page=_a4Page(no); ed.appendChild(page); pages.push(page);
-        body=page.querySelector('.a4b'); limit=body.clientHeight;
-        body.appendChild(nd);
-      }
-    });
+      if(!(limit>0 && body.scrollHeight>limit)) continue;                  // 들어갔다
+      // 넘쳤다 → ① 표면 행 단위로 잘라 이 장을 채우고 남은 행은 다음 장으로
+      var rest=(nd.nodeType===1&&nd.tagName==='TABLE')?_splitTableToFit(nd,body,limit):null;
+      if(rest){ queue.unshift(rest); }
+      else if(body.childNodes.length>1){ body.removeChild(nd); queue.unshift(nd); }   // ② 통째로 다음 장
+      else if(!queue.length){ continue; }                                  // ③ 혼자서도 안 들어감(마지막) → 그 장에 두고 넘침 표시
+      no++; page=_a4Page(no); ed.appendChild(page); pages.push(page);      // 다음 장 준비
+      body=page.querySelector('.a4b'); limit=body.clientHeight;
+    }
+    // 내용이 하나도 안 담긴 빈 장은 버린다(앞 장이 꽉 차서 만들어진 뒤 남은 게 없을 때)
+    var last=pages[pages.length-1], lb=last&&last.querySelector('.a4b');
+    if(lb && !lb.childNodes.length && pages.length>1){ last.remove(); pages.pop(); no--; }
   });
   // 총 쪽수 표기 + 넘침 검사
   pages.forEach(function(p,i){
