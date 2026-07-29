@@ -2498,6 +2498,63 @@ async function erpScanLostRecords(){
   });
   return report;
 }
+// ── 백업 JSON 파일 ↔ 현재 데이터 비교·복원 ──
+//    지원 형태: ①앱 내보내기/스냅샷 {ts|exportedAt, data:{'pureun_v6_<키>':'<json문자열>'}}
+//               ②서버 백업 스냅샷 {savedAt, data:{'<키>': <값>}}
+//    다른 기기(폰 등)에서 받은 백업으로 이 기기에 없는 레코드만 되살릴 때 사용.
+function _bkNormalizeFile(fileObj){
+  var out = {};
+  var d = (fileObj && fileObj.data) ? fileObj.data : fileObj;
+  if(!d || typeof d !== 'object') return out;
+  Object.keys(d).forEach(function(rawK){
+    var k = (rawK.indexOf(KEY) === 0) ? rawK.slice(KEY.length) : rawK;
+    if(k.indexOf('_meta_') === 0) return;
+    var v = d[rawK];
+    if(typeof v === 'string'){ try { v = JSON.parse(v); } catch(_){ return; } }
+    out[k] = v;
+  });
+  return out;
+}
+// 파일과 현재 데이터를 id로 비교 → 이 기기에 없는 레코드 목록
+function erpDiffBackupFile(fileObj){
+  var data = _bkNormalizeFile(fileObj);
+  var res = { stores:[], total:0, ts:(fileObj && (fileObj.ts || fileObj.savedAt || fileObj.exportedAt)) || null };
+  LOST_SCAN_STORES.forEach(function(store){
+    var arr = data[store];
+    if(!Array.isArray(arr)) return;
+    var cur = dbGet(store, []) || [];
+    var have = {}; cur.forEach(function(x){ if(x && x.id) have[x.id] = 1; });
+    var missing = arr.filter(function(x){ return x && x.id && x._deleted !== true && !have[x.id]; });
+    res.stores.push({ store:store, label:(LOST_STORE_LABELS[store] || store),
+      backup:arr.length, current:cur.length, missing:missing, missingCount:missing.length });
+    res.total += missing.length;
+  });
+  return res;
+}
+// 추가 전용 복원 — 기존 레코드는 수정·삭제하지 않음. dbUpsertMany → dbSet(트랜잭션 병합)으로 서버에도 반영.
+function erpRestoreBackupFile(diff){
+  var out = { restored:0, byStore:{}, failed:[] };
+  if(!diff || !diff.stores) return out;
+  diff.stores.forEach(function(s){
+    if(!s.missing || !s.missing.length) return;
+    var cur = dbGet(s.store, []) || [];
+    var have = {}; cur.forEach(function(x){ if(x && x.id) have[x.id] = 1; });
+    var add = s.missing.filter(function(x){ return !have[x.id]; }).map(function(x){
+      var c = Object.assign({}, x);
+      c._restoredFrom = 'backupFile' + (diff.ts ? (':' + diff.ts) : '');
+      c._restoredAt = (new Date()).toISOString();
+      return c;
+    });
+    if(!add.length) return;
+    if(dbUpsertMany(s.store, add)){ out.restored += add.length; out.byStore[s.store] = add.length; }
+    else out.failed.push(s.label);
+  });
+  console.log('[ERP] 백업파일 복원 결과', out);
+  return out;
+}
+window.erpDiffBackupFile = erpDiffBackupFile;
+window.erpRestoreBackupFile = erpRestoreBackupFile;
+
 // 선택 복원 — 오직 추가. 기존 레코드는 수정·삭제하지 않음.
 async function erpRestoreLostRecords(candidates){
   var res = { restored:0, failed:[], byStore:{} };
@@ -24749,6 +24806,42 @@ function LostRecordsModal(props){
   var bo = useState(false); var bkOpen = bo[0]; var setBkOpen = bo[1];
   var rk = useState(''); var rowBusy = rk[0]; var setRowBusy = rk[1];
   var pu = useState(false); var pushBusy = pu[0]; var setPushBusy = pu[1];
+  var bf = useState(null); var bkDiff = bf[0]; var setBkDiff = bf[1];      // 백업파일 비교 결과
+  var bfb = useState(false); var bkBusy = bfb[0]; var setBkBusy = bfb[1];
+  function onBackupFile(e){
+    var f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if(!f) return;
+    setBkBusy(true); setBkDiff(null);
+    var rd = new FileReader();
+    rd.onload = function(ev){
+      try {
+        var obj = JSON.parse(String(ev.target.result));
+        var d = erpDiffBackupFile(obj);
+        d.fileName = f.name;
+        setBkDiff(d);
+        showToast(d.total > 0 ? ('📂 이 기기에 없는 레코드 ' + d.total + '건 발견') : '📂 차이 없음 — 이 파일의 모든 레코드가 이미 있습니다');
+      } catch(err){ showToast('❌ 파일을 읽을 수 없습니다: ' + (err && err.message || '')); }
+      setBkBusy(false);
+    };
+    rd.onerror = function(){ showToast('❌ 파일 읽기 실패'); setBkBusy(false); };
+    rd.readAsText(f);
+  }
+  async function doRestoreBackupFile(){
+    if(!bkDiff || bkDiff.total === 0) return;
+    if(!(await popConfirm('백업 파일에만 있는 ' + bkDiff.total + '건을 이 기기와 서버에 추가 복원합니다.\n\n→ 추가만 합니다 — 기존 데이터는 수정·삭제하지 않음\n\n진행할까요?'))) return;
+    setBkBusy(true);
+    try {
+      var r = erpRestoreBackupFile(bkDiff);
+      var parts = Object.keys(r.byStore).map(function(s){ return (LOST_STORE_LABELS[s]||s) + ' ' + r.byStore[s]; });
+      showToast(r.restored > 0
+        ? ('✅ 복원 완료 ' + r.restored + '건 (' + parts.join(' · ') + ')' + (r.failed.length ? ' / 실패 ' + r.failed.join(',') : ''))
+        : '복원할 항목이 없습니다');
+      setBkDiff(null);
+      runScan(); runForensics(kw);
+    } catch(e){ showToast('❌ 복원 실패: ' + (e && e.message || '')); }
+    setBkBusy(false);
+  }
   async function runPushLocalOnly(){
     if(pushBusy) return;
     if(!(await popConfirm('이 기기에만 있는(서버에 없는) 데이터를 서버로 올립니다.\n\n→ 추가만 합니다 — 서버의 기존 데이터는 수정·삭제하지 않음\n→ 다른 PC들은 새로고침하면 받아집니다\n\n진행할까요?'))) return;
@@ -24893,6 +24986,44 @@ function LostRecordsModal(props){
             style:{padding:'6px 14px',background:pushBusy?'#f1f5f9':'#1e40af',color:pushBusy?'#94a3b8':'#fff',border:'none',borderRadius:'6px',fontSize:'12px',fontWeight:700,cursor:pushBusy?'default':'pointer'} },
             pushBusy ? '업로드 중…' : '📤 이 기기에만 있는 데이터 서버로 올리기'),
           h('span', { style:{fontSize:'10.5px',color:'#64748b'} }, '추가 전용 — 서버 기존 데이터는 수정·삭제하지 않음. 폰에만 보이는 데이터가 있으면 그 폰에서 실행하세요.')
+        ),
+        // ── 백업 파일로 비교·복원 (다른 기기에서 받은 백업 JSON) ──
+        h('div', { style:{marginTop:'10px',padding:'10px 12px',background:'#f0f9ff',border:'1px solid #bae6fd',borderRadius:'6px'} },
+          h('div', { style:{fontWeight:700,fontSize:'12px',color:'#075985',marginBottom:'5px'} }, '📂 백업 파일로 비교·복원 (폰에서 받은 백업 등)'),
+          h('div', { style:{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'} },
+            h('input', { type:'file', accept:'.json,application/json', onChange:onBackupFile,
+              style:{fontSize:'11.5px'} }),
+            bkBusy ? h('span', { style:{fontSize:'11px',color:'#64748b'} }, '처리 중…') : null
+          ),
+          bkDiff ? h('div', { style:{marginTop:'8px'} },
+            h('div', { style:{fontSize:'11px',color:'#075985',marginBottom:'5px'} },
+              (bkDiff.fileName || '백업') + (bkDiff.ts ? (' · ' + _fxTime(bkDiff.ts)) : '') + ' — 이 기기에 없는 레코드 ' + bkDiff.total + '건'),
+            h('table', { className:'dt', style:{fontSize:'11.5px'} },
+              h('thead', null, h('tr', null,
+                h('th', { style:{width:'90px'} }, '종류'),
+                h('th', { className:'ac', style:{width:'70px'} }, '백업'),
+                h('th', { className:'ac', style:{width:'70px'} }, '현재'),
+                h('th', { className:'ac', style:{width:'80px'} }, '없는 건'),
+                h('th', null, '예시 (번호·업체)')
+              )),
+              h('tbody', null,
+                bkDiff.stores.map(function(s){
+                  return h('tr', { key:s.store, style:{background: s.missingCount > 0 ? '#fef2f2' : '#fff'} },
+                    h('td', { style:{fontWeight:600,color:'#475569'} }, s.label),
+                    h('td', { className:'ac', style:{fontFamily:'monospace'} }, String(s.backup)),
+                    h('td', { className:'ac', style:{fontFamily:'monospace'} }, String(s.current)),
+                    h('td', { className:'ac', style:{fontFamily:'monospace',fontWeight: s.missingCount?800:400, color: s.missingCount?'#b91c1c':'#94a3b8'} }, String(s.missingCount)),
+                    h('td', { style:{fontSize:'10.5px',color:'#475569'} },
+                      s.missing.slice(0,4).map(function(x){ return (x.no||x.caseNo||x.contractNo||x.id) + '(' + (x.companyName||x.name||'-') + ')'; }).join(', ')
+                      + (s.missingCount > 4 ? (' 외 ' + (s.missingCount-4) + '건') : ''))
+                  );
+                })
+              )
+            ),
+            bkDiff.total > 0 ? h('button', { onClick:doRestoreBackupFile, disabled:bkBusy,
+              style:{marginTop:'8px',padding:'6px 16px',background:bkBusy?'#f1f5f9':'#0369a1',color:bkBusy?'#94a3b8':'#fff',border:'none',borderRadius:'6px',fontSize:'12px',fontWeight:700,cursor:bkBusy?'default':'pointer'} },
+              '↩ 없는 ' + bkDiff.total + '건 복원 (추가 전용)') : null
+          ) : null
         )
       ),
 
