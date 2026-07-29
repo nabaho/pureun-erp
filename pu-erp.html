@@ -2527,7 +2527,35 @@ function dbSet(k, v){
             // ── 되돌림 방지: 서버가 이 기기의 마지막 동기화보다 최신이면 = 다른 곳에서 먼저 저장됨 → 옛 화면 덮어쓰기 차단, 서버 최신을 받아옴 ──
             var _srvU = (sv && typeof sv.u === 'number') ? sv.u : 0;
             if(_srvU > _preMeta && !_bulkOk2){
-              console.warn('[되돌림방지] '+k+': 서버('+_srvU+')가 이 기기 기준('+_preMeta+')보다 최신 — 옛 화면의 덮어쓰기 차단, 서버 최신 수신');
+              console.warn('[되돌림방지] '+k+': 서버('+_srvU+')가 이 기기 기준('+_preMeta+')보다 최신 — 옛 화면의 덮어쓰기 차단');
+              // [핵심수정] 기존엔 서버값으로 로컬을 덮어써 "방금 저장한 항목"이 사라졌다.
+              //   (계약 이관 직후 컨설팅·사건 레코드가 조용히 없어지던 근본 원인 — dbUpsert는 이미 true를
+              //    반환해 이관은 성공으로 처리되고 계약만 아카이브돼 데이터가 유실됨)
+              //   → 서버 최신을 받아온 뒤 이번 변경분(prev→v 델타)만 다시 얹어 병합하고 서버로 push.
+              var _srvArr = null;
+              try { _srvArr = normalizeFbValue(sv.v); } catch(_){ _srvArr = null; }
+              var _diffM = (Array.isArray(_srvArr) && Array.isArray(prev) && Array.isArray(v)) ? computeArrayDiff(prev, v) : null;
+              if(_diffM && (_diffM.upserts.length || _diffM.removes.length)){
+                try {
+                  var _mMap = {}, _mOrder = [];
+                  _srvArr.forEach(function(x){ if(x && x.id){ if(!_mMap[x.id]) _mOrder.push(x.id); _mMap[x.id] = x; } });
+                  _diffM.upserts.forEach(function(x){ if(x && x.id){ if(!_mMap[x.id]) _mOrder.push(x.id); _mMap[x.id] = x; } });
+                  _diffM.removes.forEach(function(id){ if(_mMap[id]) delete _mMap[id]; });
+                  var _merged = _mOrder.map(function(id){ return _mMap[id]; }).filter(Boolean);
+                  var _ts2 = Date.now();
+                  localStorage.setItem(KEY+k, JSON.stringify(_merged));
+                  localStorage.setItem(KEY+'_meta_'+k, String(_ts2));
+                  _dbCache[k] = _merged;
+                  var _fbMerged = (DIFF_KEYS.indexOf(k) >= 0 && _merged.every(function(x){return x && x.id;})) ? arrayToIdMap(_merged) : _merged;
+                  fbDb.ref('data/'+k).set({v:_fbMerged, u:_ts2})
+                    .then(function(){ if(DIFF_KEYS.indexOf(k)>=0 && _fbMerged && !Array.isArray(_fbMerged)) _fbObjForm[k]=true; })
+                    .catch(function(e){ fbSyncFail(e); });
+                  try { if(typeof _scheduleFbChanged === 'function') _scheduleFbChanged(k); } catch(_){}
+                  try { showToast('🔄 다른 기기의 최신 데이터와 병합됨 — 방금 변경도 유지됩니다'); } catch(_){}
+                  return;
+                } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+              }
+              // 병합 불가(배열 아님·id 없음 등) → 기존 동작: 서버 최신 수신 + 재확인 안내
               try {
                 var _good = normalizeFbValue(sv.v);
                 localStorage.setItem(KEY+k, JSON.stringify(_good));
@@ -9402,6 +9430,21 @@ function ContractManagement(){
     // [P1] 부분 이관 방지: 선택 종류 수만큼 결과가 안 나오면 아카이브하지 않음(데이터 유실·오아카이브 차단)
     if(results.length < kindsList.length){
       showToast('❌ 이관 일부 실패 ('+results.length+'/'+kindsList.length+') — 계약은 그대로 두었습니다. 새로고침 후 다시 시도하세요');
+      return;
+    }
+    // [안전망] 서버 동기화 가드(되돌림방지 등)가 비동기로 로컬 저장을 되돌릴 수 있으므로,
+    //   실제로 저장됐는지 확인한 뒤에만 계약을 아카이브한다. 확인 실패 시 계약을 그대로 남겨 재시도 가능.
+    showToast('저장 확인 중…');
+    await new Promise(function(r){ setTimeout(r, 1800); });
+    var _storeOfV = { company:'companies', 'case':'cases', consulting:'consultings', fund:'funds', other:'other_projects' };
+    var _missing = results.filter(function(r){
+      if(r.type === 'consult' || !r.id) return false;
+      var st = _storeOfV[r.type]; if(!st) return false;
+      return !(dbGet(st, []) || []).some(function(x){ return x && x.id === r.id; });
+    });
+    if(_missing.length > 0){
+      console.error('[이관 검증 실패]', _missing);
+      showToast('❌ 이관 저장 확인 실패 (' + _missing.map(function(m){ return m.no; }).join(', ') + ') — 계약을 그대로 두었습니다. 새로고침(Ctrl+Shift+R) 후 다시 이관하세요');
       return;
     }
     var transferSummary = results.map(function(r){ return r.type + ':' + r.no; }).join(', ');
