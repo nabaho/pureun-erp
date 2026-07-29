@@ -1,90 +1,63 @@
-// ════════════════════════════════════════════════════════════════════
-//  규정관리(rules.html) Firebase 실시간 데이터베이스 보안규칙
-//  프로젝트 pureun-erp / 리전 asia-southeast1
-//
-//  ⚠ 이 파일을 통째로 붙여넣지 마십시오.
-//     아래 "rules_mgmt" 블록만 기존 규칙의 "rules" 안에 끼워 넣으십시오.
-//     같은 DB를 ERP·명함첩·기금·이음·전자서명이 함께 쓰고 있어,
-//     전체를 덮어쓰면 다른 모듈이 한꺼번에 멈춥니다.
-//
-//  넣는 곳: Firebase 콘솔 → Realtime Database → 규칙
-//  넣기 전에 반드시 현재 규칙 전문을 복사해 보관하십시오.
-//
-//  ── 저장 구조 ────────────────────────────────────────────────────
-//   wip/{uid}/{사업장키}      작업중  — 담당자 본인만 (경로가 uid라 서버가 강제)
-//   done/{사업장키}/{회차}    완료본  — 전원 읽기, 담당자만 쓰기
-//   orig/{기록id}             원본파일 — 전원 읽기, 담당자만 쓰기
-//   archive/{id}              예전 보관함 — 이관용(담당자만 쓰기·삭제)
-//
-//  사업장을 뿌리로 두고 그 아래 개정 회차를 쌓습니다.
-//  연도는 회차의 속성(asof)이라 연도별 조회는 걸러 보면 되지만,
-//  사업장별 이력은 구조로 만들지 않으면 나중에 못 만듭니다.
-// ════════════════════════════════════════════════════════════════════
+// 규정관리 보안규칙 — 이 두 블록만 기존 규칙의 "rules" 안에 끼워 넣으십시오.
+// 합쳐 놓은 전체 파일이 필요하면 firebase-rules-전체(붙여넣기용).json 을 쓰십시오.
+// 담당자 대조는 계정 uid(ownerUid) 기준 — 푸른 기존 규칙과 같은 방식입니다.
 {
   "rules": {
-
     "rules_mgmt": {
-
-      // ── 작업중 (완료 전) ───────────────────────────────────────
-      //  경로에 uid가 들어가므로 남의 작업중은 읽기 자체가 서버에서 막힌다.
-      //  목록 조회도 자기 uid 아래만 하므로 남의 것은 내려오지 않는다.
       "wip": {
         "$uid": {
-          ".read":  "auth != null && auth.uid === $uid",
+          ".read": "auth != null && auth.uid === $uid",
           ".write": "auth != null && auth.uid === $uid",
           "$site": {
             ".validate": "newData.hasChildren(['site','asof'])"
           }
         }
       },
-
-      // ── 완료본 (개정 회차) ─────────────────────────────────────
-      //  읽기: 로그인한 노무사 전원 — 완료된 것만 여기 있으므로 공개해도 된다.
-      //  쓰기: 그 기록의 담당자(owner)만.
       "done": {
         ".read": "auth != null",
         "$site": {
           "$rev": {
-            ".write": "auth != null && ( !data.exists() || data.child('owner').val() === auth.token.email ) && ( !newData.exists() || newData.child('owner').val() === auth.token.email )",
-            ".validate": "newData.hasChildren(['site','owner','asof'])",
-            "owner":  { ".validate": "newData.val() === auth.token.email" },
-            "status": { ".validate": "newData.val() === '완료'" }
+            ".write": "auth != null && ( !data.exists() || data.child('ownerUid').val() === auth.uid || root.child('uid_roles').child(auth.uid).child('isAdmin').val() == true ) && ( !newData.exists() || newData.child('ownerUid').val() === auth.uid )",
+            ".validate": "newData.hasChildren(['site','asof','ownerUid'])",
+            "ownerUid": {
+              ".validate": "newData.val() === auth.uid"
+            },
+            "status": {
+              ".validate": "newData.val() === '완료'"
+            }
           }
         }
       },
-
-      // ── 원본 파일(base64) ──────────────────────────────────────
-      //  기록에 담당자를 함께 적어 두고 그 사람만 쓰게 한다.
       "orig": {
         ".read": "auth != null",
         "$id": {
-          ".write": "auth != null && ( !data.exists() || !data.child('owner').exists() || data.child('owner').val() === auth.token.email )"
+          ".write": "auth != null && ( !data.exists() || !data.child('ownerUid').exists() || data.child('ownerUid').val() === auth.uid || root.child('uid_roles').child(auth.uid).child('isAdmin').val() == true )"
         }
       },
-
-      // ── 예전 보관함 (이관 대상) ────────────────────────────────
-      //  새 구조로 옮기는 동안만 쓴다. 담당자만 쓰기·삭제.
-      //  담당자 표시가 없는 옛 기록은 먼저 가져가는 사람이 담당자가 된다.
       "archive": {
         ".read": "auth != null",
         "$id": {
-          ".write": "auth != null && ( !data.exists() || !data.child('owner').exists() || data.child('owner').val() === '' || data.child('owner').val() === auth.token.email )"
+          ".write": "auth != null && ( !data.exists() || !data.child('ownerUid').exists() || data.child('ownerUid').val() === auth.uid || root.child('uid_roles').child(auth.uid).child('isAdmin').val() == true )"
         }
       },
-
-      // ── 작업 세션(임시저장) ────────────────────────────────────
       "worksession": {
         "$uid": {
-          ".read":  "auth != null && auth.uid === $uid",
+          ".read": "auth != null && auth.uid === $uid",
           ".write": "auth != null && auth.uid === $uid"
         }
       },
-
-      // ── 반복 확인 생략 기억 / 조문 연결 교정 ───────────────────
-      //  법인 공동 지식이라 전원 공유가 맞다(설계 의도)
-      "decisions": { ".read": "auth != null", ".write": "auth != null" },
-      "matchfix":  { ".read": "auth != null", ".write": "auth != null" }
+      "decisions": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      },
+      "matchfix": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "chwieop": {
+      ".read": "auth != null",
+      ".write": "auth != null"
     }
-
   }
 }

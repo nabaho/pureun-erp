@@ -2874,9 +2874,18 @@ function setLocal(a){localStorage.setItem(ARCH_KEY,JSON.stringify(a));updateArch
 /* 저장은 로그인 이메일 원본 그대로 — 보안규칙이 auth.token.email 과 정확히 대조한다.
    화면에서 견줄 때만 대소문자를 무시한다. */
 const myEmail=()=>String((FBUSER&&FBUSER.email)||"");
+const myUid=()=>String((FBUSER&&FBUSER.uid)||"");
 const myName=()=>(FBUSER&&(FBNAME||FBUSER.displayName||FBUSER.email))||"";
 const sameUser=(a,b)=>String(a||"").toLowerCase()===String(b||"").toLowerCase();
-const isOwner=r=>!r||!r.owner||sameUser(r.owner,myEmail());
+/* 담당자 대조는 계정 uid 기준 — 푸른 규칙이 모두 auth.uid 를 쓰고, uid 는
+   이메일과 달리 대소문자·주소 변경에 흔들리지 않는다.
+   uid 가 없던 옛 기록만 이메일로 견준다. */
+const isOwner=r=>{
+  if(!r)return true;
+  if(r.ownerUid)return r.ownerUid===myUid();
+  if(r.owner)return sameUser(r.owner,myEmail());
+  return true;                                     // 담당자 표시가 없는 옛 기록은 공용
+};
 const isDone=r=>!!(r&&r.status==="완료");
 const canOpen=r=>isOwner(r)||isDone(r);            // 남의 것은 완료본만 열람
 /* 목록·대시보드에 보일 기록 — 내 것 전부 + 남의 완료본 */
@@ -2926,14 +2935,15 @@ function mergeStores(){
 /* 레코드 1건 단위 저장 — 보관함 전체를 덮어쓰지 않으므로 여러 노무사 동시 저장 안전 */
 function putRecord(rec){
   const arr=loadArch(), i=arr.findIndex(r=>r.id===rec.id), prev=i>=0?arr[i]:null;
-  if(prev&&prev.owner&&!sameUser(prev.owner,myEmail())){   // 남의 사업장은 덮어쓰지 않는다
+  if(prev&&!isOwner(prev)){                          // 남의 사업장은 덮어쓰지 않는다
     console.warn("다른 담당자의 기록이라 저장하지 않음:",rec.id); return false;
   }
   rec.siteKey=rec.siteKey||siteKeyOf(rec.id);
   rec.rev=(prev&&prev.rev)||rec.rev||null;
   rec.store=rec.rev?"done":((prev&&prev.store==="legacy")?"legacy":"wip");
-  rec.owner=(prev&&prev.owner)||myEmail()||"";       // 처음 검토한 사람이 담당자
-  rec.ownerName=(prev&&prev.owner)?(prev.ownerName||""):(myName()||(prev&&prev.ownerName)||"");
+  rec.ownerUid=(prev&&prev.ownerUid)||myUid()||"";   // 처음 검토한 사람이 담당자
+  rec.owner=(prev&&prev.owner)||myEmail()||"";
+  rec.ownerName=(prev&&prev.ownerUid)?(prev.ownerName||""):(myName()||(prev&&prev.ownerName)||"");
   rec.status=rec.rev?"완료":"작업중";
   rec.year=String(rec.asof||"").slice(0,4);
   if(prev&&prev.doneAt){ rec.doneAt=prev.doneAt; rec.doneBy=prev.doneBy; }
@@ -2950,7 +2960,7 @@ function setRecordDone(id,done){
   const arr=loadArch(), r=arr.find(x=>x.id===id);
   if(!r)return false;
   if(!isOwner(r)){ alert("담당자만 상태를 바꿀 수 있습니다."); return false; }
-  if(!r.owner){ r.owner=myEmail(); r.ownerName=r.ownerName||myName(); }   // 옛 기록 — 지금 사람이 담당자
+  if(!r.ownerUid){ r.ownerUid=myUid(); r.owner=r.owner||myEmail(); r.ownerName=r.ownerName||myName(); }
   if(done===!!r.rev)return true;                                          // 이미 그 상태
   const from=fbPath(r), oldId=r.id, sk=r.siteKey||siteKeyOf(r.id);
   const next=Object.assign({},r,{siteKey:sk});
@@ -3006,7 +3016,7 @@ function moveOrig(fromId,toId){
    담당자 표시가 없는 옛 기록은 목록에서 [내 담당으로 가져오기]로 직접 가져간다. */
 function migrateLegacy(){
   const mine=Object.keys(STORE.legacy||{}).filter(id=>{
-    const r=STORE.legacy[id]; return r&&r.owner&&sameUser(r.owner,myEmail());
+    const r=STORE.legacy[id]; return r&&(r.ownerUid||r.owner)&&isOwner(r);
   });
   if(!mine.length)return;
   mine.forEach(id=>adoptLegacy(id,true));
@@ -3014,10 +3024,10 @@ function migrateLegacy(){
 }
 function adoptLegacy(id,silent){
   const src=(STORE.legacy||{})[id]; if(!src)return false;
-  if(src.owner&&!sameUser(src.owner,myEmail())){ if(!silent)alert("담당자만 가져올 수 있습니다."); return false; }
+  if(!isOwner(src)){ if(!silent)alert("담당자만 가져올 수 있습니다."); return false; }
   const sk=siteKeyOf(id);
   const rec=Object.assign({},src,{id:sk,siteKey:sk,rev:null,store:"wip",
-    owner:src.owner||myEmail(),ownerName:src.ownerName||myName(),
+    ownerUid:src.ownerUid||myUid(),owner:src.owner||myEmail(),ownerName:src.ownerName||myName(),
     status:"작업중",year:String(src.asof||"").slice(0,4)});
   delete rec.doneAt; delete rec.doneBy;
   if(!FBDB||!FBUSER)return false;
@@ -3121,7 +3131,7 @@ function buildOrig(key){
 }
 function putOrig(id,orig){
   /* 담당자를 함께 적어 둔다 — 보안규칙이 이 값으로 쓰기 권한을 가른다 */
-  orig=Object.assign({},orig,{owner:myEmail()});
+  orig=Object.assign({},orig,{ownerUid:myUid(),owner:myEmail()});
   if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/orig/"+id).set(orig).catch(e=>console.warn("원본 FB 저장 실패:",e));
   const map=loadOrigLocal(); map[id]=orig;
   try{localStorage.setItem(ORIG_KEY,JSON.stringify(map));}
@@ -3539,7 +3549,8 @@ function renderArch(q){
       ? '<span class="badge" style="background:#e5e7eb;color:#374151">예전 기록</span>'
       : done ? '<span class="badge" style="background:#dcfce7;color:#166534">완료</span>'
              : '<span class="badge" style="background:#fef3c7;color:#92400e">작업중</span>';
-    const whoTxt=legacy&&!r.owner?"담당자 미지정":(own?"내 담당":(r.ownerName||r.owner||"담당자 미상"));
+    const noOwner=!r.ownerUid&&!r.owner;
+    const whoTxt=legacy&&noOwner?"담당자 미지정":(own?"내 담당":(r.ownerName||r.owner||"담당자 미상"));
     const same=(r.site===prevSite); prevSite=r.site;
     const tr=document.createElement("tr");
     tr.innerHTML=`<td>${same?'<span style="color:var(--mute)">↳ 같은 사업장</span>':`<b>${r.site}</b>`}
@@ -3549,7 +3560,7 @@ function renderArch(q){
         <span style="color:var(--mute);font-size:10.5px">${r.savedAt}${done&&r.doneAt?" · 완료 "+r.doneAt:""}</span></td>
       <td style="text-align:right;white-space:nowrap">
         <button class="mini" data-open="${r.id}">${own?"대조표 열기":"🔒 열람"}</button>
-        ${legacy&&!r.owner?`<button class="mini" data-adopt="${r.id}" title="예전 보관함에 남은 기록을 내 담당으로 옮깁니다">내 담당으로 가져오기</button>`:""}
+        ${legacy&&noOwner?`<button class="mini" data-adopt="${r.id}" title="예전 보관함에 남은 기록을 내 담당으로 옮깁니다">내 담당으로 가져오기</button>`:""}
         ${own&&!legacy?`<button class="mini" data-done="${r.id}" title="${done?"작업중으로 되돌립니다":"완료로 표시하면 다른 노무사도 열어 볼 수 있습니다"}">${done?"완료 해제":"✅ 완료"}</button>`:""}
         ${own?`<button class="mini" data-del="${r.id}" style="color:#dc2626;border-color:#f3c0c0">삭제</button>`:""}</td>`;
     tb.appendChild(tr);});
