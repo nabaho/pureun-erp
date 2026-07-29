@@ -168,6 +168,7 @@ var FB_CONFIG={apiKey:'AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA',databaseURL:'htt
 var FB_APPCHECK_KEY='6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
 var PORTAL_URL='enter.html', NS='fund_erp';
 var fbDb=null, fbStore=null, funds={}, S={view:'home', fundId:null, tab:'info', q:'', year:new Date().getFullYear()};
+var _fbOnline=false;   // Firebase 실시간 연결 여부 — 끊긴 상태의 빈 목록을 '데이터 없음'으로 오해하지 않게 쓴다
 var ANNUAL_TMPL=[
   ['OPS-01','매월 1~10일','전월 통장거래 가져오기 → 자동분개 검토·승인',null,false],
   ['OPS-02','매월 말','월마감 (미분류·증빙 확인 후 잠금)',null,false],
@@ -271,6 +272,7 @@ function start(){
   bindNavDrag(); loadNavOrder();      // 사이드바 메뉴 순서(사용자가 드래그로 정한 순서) 복원
   try{ history.replaceState({view:'home'}, ''); }catch(e){}
   fbDb.ref(NS+'/funds').on('value', function(snap){ funds=snap.val()||{};
+    if(snap.exists()||_fbOnline) S._fundsSynced=true;   // 서버 값을 받은 뒤에만 '기금 없음'이라고 말한다
     if(appHasFocus()){ S._pendingRender=true; return; }   // 입력 중엔 재렌더 보류(값 소실 방지)
     route();
   }, function(err){
@@ -283,6 +285,15 @@ function start(){
 }
 function appHasFocus(){ var ae=document.activeElement, app=$('app');
   return !!(ae && app && app.contains(ae) && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)); }
+/* 연결이 끊긴 채 그려진 화면임을 분명히 알린다.
+   Firebase는 오프라인이면 리스너를 로컬 빈 캐시(null)로 한 번 깨우므로, 이 경고가 없으면
+   목록이 0건으로 보여 데이터가 지워진 것으로 오해하게 된다. 실제 데이터는 서버에 그대로 있다. */
+function offlineBanner(){
+  if(_fbOnline) return '';
+  return '<div class="msg err" style="margin-bottom:10px"><b>Firebase에 연결되지 않았습니다.</b> '
+    +'아래 목록은 <b>서버에서 받은 값이 아닙니다</b> — 데이터가 지워진 것이 아니라 아직 못 읽은 상태입니다. '
+    +'인터넷 연결을 확인하고 <button onclick="location.reload()" style="padding:1px 8px;font-size:11.5px">새로고침</button>하세요.</div>';
+}
 function refreshAll(){
   // .once() 캐시만 초기화(funds·billings는 live 리스너라 이미 최신)
   ['sitesFor','annualFor','welfFor','evFor','txnsFor','subDocFor','txnsPrevFor',
@@ -410,7 +421,17 @@ function initTop(){
       if(me) _setTopUser(me.name, r||me.title||'기금 운영');
     }).catch(function(){});
   }
-  fbDb.ref('.info/connected').on('value',function(s){var on=!!s.val();$('dot').className='dot'+(on?' on':'');$('connt').textContent=on?'Firebase 연결됨':'오프라인';});
+  /* 연결 상태 — 오프라인이면 Firebase SDK가 **로컬 빈 캐시(null)**로 리스너를 한 번 깨운다.
+     그래서 연결이 안 된 채로 화면이 그려지면 "기금이 없습니다"가 떠서 데이터가 지워진 것처럼 보인다.
+     연결이 붙는 순간 서버 값이 다시 와서 목록이 채워지므로, 연결 상태 변화 때 다시 그린다. */
+  fbDb.ref('.info/connected').on('value',function(s){
+    var on=!!s.val(); _fbOnline=on;
+    var d=$('dot'), t=$('connt');
+    if(d) d.className='dot'+(on?' on':'');
+    if(t) t.textContent=on?'Firebase 연결됨':'오프라인';
+    if(on) S._fundsSynced=true;                       // 서버와 붙었으면 이후 스냅샷은 실제 데이터
+    if(!appHasFocus() && $('app')) route();           // 배너·빈 목록 문구 갱신(입력 중엔 보류)
+  });
   var WD=['일','월','화','수','목','금','토'];function p(n){return(n<10?'0':'')+n;}
   function tick(){var c=$('topclock');if(!c)return;var d=new Date();c.textContent=d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' ('+WD[d.getDay()]+') '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}
   tick();setInterval(tick,1000);
@@ -755,7 +776,7 @@ function renderHome(){
   var edit=!!S.homeEdit;
   var incN=live.filter(function(f){return nDone(f)<5;}).length; // 설립중 제외(신규라 당연히 미완비)
   var setupN=setup.length;
-  var head='<div class="panel"><div class="row"><h1>기금 현황</h1><span class="stat">운영 '+live.length+'</span>'+(past.length?'<span class="stat">지난 '+past.length+'</span>':'')
+  var head=offlineBanner()+'<div class="panel"><div class="row"><h1>기금 현황</h1><span class="stat">운영 '+live.length+'</span>'+(past.length?'<span class="stat">지난 '+past.length+'</span>':'')
     +(setupN?'<span class="stat" style="background:var(--warn-bg);color:var(--warn);cursor:pointer" onclick="S.homeTab=\'setup\';renderHome()" title="설립 진행 중 기금만 보기">🏗 설립중 '+setupN+'</span>':'')
     +(incN?'<span class="stat" style="background:var(--warn-bg);color:var(--warn)">미완비 '+incN+'</span>':'')+'<span style="flex:1"></span>'
     +(edit?'<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;margin-right:6px"><input type="checkbox"'+(S.homeInc?' checked':'')+' onchange="S.homeInc=this.checked;renderHome()"> 미완비만</label>':'')
@@ -816,7 +837,9 @@ function renderHome(){
     var cur=(G[S.homeTab]||[]).slice();
     if(edit&&S.homeInc) cur=cur.filter(function(f){return nDone(f)<5;});
     body=cur.length?homeBody(cur,edit,'')
-      :'<div class="panel"><div class="muted" style="padding:12px">'+(edit&&S.homeInc?'미완비 기금이 없습니다.':'이 분류에 기금이 없습니다.')+'</div></div>';
+      :'<div class="panel"><div class="muted" style="padding:12px">'
+        +(!S._fundsSynced ? '아직 서버에서 목록을 받지 못했습니다 — 연결을 확인하는 중입니다.'
+          : edit&&S.homeInc ? '미완비 기금이 없습니다.' : '이 분류에 기금이 없습니다.')+'</div></div>';
   }
   $('app').innerHTML=todo+head+tabbar+body;
 }
