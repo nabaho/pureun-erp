@@ -2566,6 +2566,11 @@ function dbSet(k, v){
       // 쓰기 실패 시 meta를 원복 — 실패했는데 meta만 올라가면 이 기기가 '더 최신'으로 오인되어
       // 나중에 옛 데이터를 서버로 미는 과거회귀 사고의 씨앗이 됨
       var _metaRollback = function(){ try { localStorage.setItem(KEY+'_meta_'+k, String(_preMeta)); } catch(_){} };
+      // [코덱스 Q2 검증 반영] 전송 실패 표시 — _metaRollback은 meta만 되돌리고 로컬 배열은 그대로 남기므로,
+      //   나중에 원격값이 그 변경을 조용히 지우던 문제가 있었다. 이 표시가 있으면 원격 적용 시
+      //   '로컬에만 있는 레코드'를 다시 살려 재전송한다(_fbApplyRecord 참고). 가드로 의도적으로 막은
+      //   경우(0건·급감·옛데이터)에는 표시하지 않는다 — 되살리면 안 되는 값일 수 있으므로.
+      var _markPending = function(){ try { (window._fbPendingKeys = window._fbPendingKeys || {})[k] = true; } catch(_){} };
 
       // ── 자동 Diff Sync (핵심 5개 키) — 1단계: 변경 개수 무관 항상 건별 저장 ──
       // #4 Tier 3: id 키 기반 부분 업데이트 (인덱스 충돌 제거) — 삭제도 가능
@@ -2605,7 +2610,7 @@ function dbSet(k, v){
             if(id) updates['data/'+k+'/v/'+id] = null;
           });
           updates['data/'+k+'/u'] = ts;
-          try { fbDb.ref().update(updates).catch(function(e){ _metaRollback(); fbSyncFail(e); }); diffApplied = true; } catch(e){ _metaRollback(); window._erpErrLog && window._erpErrLog(e); }
+          try { fbDb.ref().update(updates).catch(function(e){ _metaRollback(); _markPending(); fbSyncFail(e); }); diffApplied = true; } catch(e){ _metaRollback(); window._erpErrLog && window._erpErrLog(e); }
         }
       }
 
@@ -2662,21 +2667,24 @@ function dbSet(k, v){
               try { window.erpAlert && erpAlert('danger', '옛 데이터 푸시 차단: '+k, '이 기기 데이터('+v.length+'건)가 서버 현재('+srvN+'건)보다 훨씬 적어, 옛 데이터가 서버를 덮어쓰는 것을 막았습니다.', '다른 탭을 봤다가 이 화면으로 돌아오면 자동으로 서버 최신을 받아옵니다. 그 후 다시 작업하세요. 의도한 대량 삭제면 콘솔에 erpAllowBulk() 입력 후 다시 저장.'); } catch(_){}
               _metaRollback(); return;
             }
-            // ── 되돌림 방지: 서버가 이 기기의 마지막 동기화보다 최신이면 = 다른 곳에서 먼저 저장됨 → 옛 화면 덮어쓰기 차단, 서버 최신을 받아옴 ──
+            // ── 저장 방식 결정 ──
+            // [코덱스 2차검증 P1] 전체 노드 set()은 이 탭이 아직 못 받은 "다른 사람이 방금 추가한 레코드"를
+            //   지운다(서버 20건 vs 로컬 15건처럼 급감 가드도 통과 → 5건 소실). 이것이 다른 노무사가
+            //   입력한 데이터가 사라지던 경로다. → id 있는 배열이면 서버가 최신이 아니어도 '항상'
+            //   트랜잭션 병합(내 변경분만 서버 현재값에 얹기)으로 저장한다. 전체 덮어쓰기는 레거시 형태만.
             var _srvU = (sv && typeof sv.u === 'number') ? sv.u : 0;
-            if(_srvU > _preMeta && !_bulkOk2){
-              console.warn('[되돌림방지] '+k+': 서버('+_srvU+')가 이 기기 기준('+_preMeta+')보다 최신 — 옛 화면의 덮어쓰기 차단');
-              // [핵심수정] 기존엔 서버값으로 로컬을 덮어써 "방금 저장한 항목"이 사라졌다.
-              //   (계약 이관 직후 컨설팅·사건 레코드가 조용히 없어지던 근본 원인 — dbUpsert는 이미 true를
-              //    반환해 이관은 성공으로 처리되고 계약만 아카이브돼 데이터가 유실됨)
-              //   → 서버 최신을 받아온 뒤 이번 변경분(prev→v 델타)만 다시 얹어 병합하고 서버로 push.
-              var _srvArr = null;
-              try { _srvArr = normalizeFbValue(sv.v); } catch(_){ _srvArr = null; }
-              // [코덱스 검증 반영] 서버 항목에 id가 없으면 병합 대상에서 누락되므로 병합 금지(유실 방지)
-              var _canMerge = Array.isArray(_srvArr) && Array.isArray(prev) && Array.isArray(v)
-                && _srvArr.every(function(x){ return x && x.id; });
-              var _diffM = _canMerge ? computeArrayDiff(prev, v) : null;
-              if(_diffM && (_diffM.upserts.length || _diffM.removes.length)){
+            var _srvNewer = (_srvU > _preMeta) && !_bulkOk2;
+            var _srvArr = null;
+            try { _srvArr = normalizeFbValue(sv.v); } catch(_){ _srvArr = null; }
+            // 서버 항목에 id가 없으면 병합 과정에서 누락되므로 병합 금지(유실 방지)
+            var _canMerge = Array.isArray(_srvArr) && Array.isArray(prev) && Array.isArray(v)
+              && _srvArr.every(function(x){ return x && x.id; });
+            var _diffM = _canMerge ? computeArrayDiff(prev, v) : null;
+            if(_diffM && !_diffM.upserts.length && !_diffM.removes.length){
+              _metaRollback(); return;   // 실질 변경 없음 → 푸시 불필요(무의미한 전체 덮어쓰기 방지)
+            }
+            if(_diffM){
+              if(_srvNewer) console.warn('[되돌림방지] '+k+': 서버('+_srvU+') > 기기('+_preMeta+') — 병합 저장으로 처리');
                 // [코덱스 검증 반영] 원자적 트랜잭션으로 병합 — 읽기~쓰기 사이 다른 기기 변경이 지워지는 문제 차단.
                 //   안전가드(0건·급감·id)를 '실제 병합 결과' 기준으로 트랜잭션 안에서 재검사하고 위반 시 중단.
                 var _guardMsg = '';
@@ -2700,16 +2708,23 @@ function dbSet(k, v){
                   return { v: outV, u: newTs };
                 }, function(err, committed, snap){
                   if(err || !committed || !snap){
-                    console.warn('[되돌림방지] '+k+': 병합 트랜잭션 미완료' + (_guardMsg ? ' ('+_guardMsg+' 가드)' : '') + ' — 서버 최신 수신');
-                    try {
-                      var _g2 = normalizeFbValue(sv.v);
-                      localStorage.setItem(KEY+k, JSON.stringify(_g2));
-                      localStorage.setItem(KEY+'_meta_'+k, String(_srvU));
-                      _dbCache[k] = _g2;
-                      _fbObjForm[k] = !!(sv.v && typeof sv.v==='object' && !Array.isArray(sv.v));
-                      if(typeof _scheduleFbChanged === 'function') _scheduleFbChanged(k);
-                    } catch(_){}
-                    try { showToast('⚠ 병합 실패' + (_guardMsg ? ' ('+_guardMsg+' 보호)' : '') + ' — 서버 최신으로 갱신했습니다. 방금 변경을 다시 확인하세요'); } catch(_){}
+                    console.warn('[병합저장] '+k+': 트랜잭션 미완료' + (_guardMsg ? ' ('+_guardMsg+' 가드)' : ''));
+                    if(_srvNewer){
+                      // 서버가 더 최신 → 서버값 수신(로컬 변경은 재확인 필요)
+                      try {
+                        var _g2 = normalizeFbValue(sv.v);
+                        localStorage.setItem(KEY+k, JSON.stringify(_g2));
+                        localStorage.setItem(KEY+'_meta_'+k, String(_srvU));
+                        _dbCache[k] = _g2;
+                        _fbObjForm[k] = !!(sv.v && typeof sv.v==='object' && !Array.isArray(sv.v));
+                        if(typeof _scheduleFbChanged === 'function') _scheduleFbChanged(k);
+                      } catch(_){}
+                      try { showToast('⚠ 병합 실패' + (_guardMsg ? ' ('+_guardMsg+' 보호)' : '') + ' — 서버 최신으로 갱신했습니다. 방금 변경을 다시 확인하세요'); } catch(_){}
+                    } else {
+                      // 서버가 최신이 아님 → 로컬(방금 변경)을 유지하고 meta만 되돌려 다음 저장 때 재시도
+                      _metaRollback(); _markPending();
+                      try { showToast('⚠ 서버 저장 실패' + (_guardMsg ? ' ('+_guardMsg+' 보호)' : '') + ' — 이 기기엔 남아있습니다. 다시 저장해 주세요'); } catch(_){}
+                    }
                     return;
                   }
                   try {
@@ -2725,7 +2740,8 @@ function dbSet(k, v){
                 });
                 return;
               }
-              // 병합 불가(배열 아님·id 없음 등) → 기존 동작: 서버 최신 수신 + 재확인 안내
+            // 병합 불가(배열 아님·서버 항목에 id 없음 등) + 서버가 더 최신 → 서버 최신 수신 + 재확인 안내
+            if(_srvNewer){
               try {
                 var _good = normalizeFbValue(sv.v);
                 localStorage.setItem(KEY+k, JSON.stringify(_good));
@@ -2737,10 +2753,10 @@ function dbSet(k, v){
               try { showToast('🔄 다른 기기의 최신 데이터로 갱신됨 — 방금 변경은 다시 확인하세요'); } catch(_){}
               return;
             }
-            fbDb.ref('data/'+k).set({v:fbValue, u:ts}).then(function(){ if(DIFF_KEYS.indexOf(k)>=0 && fbValue && !Array.isArray(fbValue)) _fbObjForm[k]=true; }).catch(function(e){ _metaRollback(); fbSyncFail(e); });
+            fbDb.ref('data/'+k).set({v:fbValue, u:ts}).then(function(){ if(DIFF_KEYS.indexOf(k)>=0 && fbValue && !Array.isArray(fbValue)) _fbObjForm[k]=true; }).catch(function(e){ _metaRollback(); _markPending(); fbSyncFail(e); });
           }).catch(function(e0){
             if(attempt < 1){ setTimeout(function(){ _pushWithSrvCheck(attempt+1); }, 800); return; }
-            _metaRollback();
+            _metaRollback(); _markPending();
             console.warn('[데이터보호] '+k+': 서버 상태 확인 실패 — 푸시 보류 (로컬 저장됨)');
             try { showToast('⚠ 서버 확인 실패 — '+k+' 전송 보류 (이 기기엔 저장됨, 연결 회복 후 다시 저장하세요)'); } catch(_){}
             fbSyncFail(e0);
@@ -2763,8 +2779,8 @@ function dbSet(k, v){
               try { showToast('🔄 다른 기기의 최신 설정으로 갱신됨 — 방금 변경은 다시 확인하세요'); } catch(_){}
               return;
             }
-            fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(function(e){ _metaRollback(); fbSyncFail(e); });
-          }).catch(function(){ fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(function(e){ _metaRollback(); fbSyncFail(e); }); });
+            fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(function(e){ _metaRollback(); _markPending(); fbSyncFail(e); });
+          }).catch(function(){ fbDb.ref('data/'+k).set({v:fbValue, u:ts}).catch(function(e){ _metaRollback(); _markPending(); fbSyncFail(e); }); });
         }
       }
     } catch(e){ window._erpErrLog && window._erpErrLog(e); }
@@ -4227,7 +4243,27 @@ function _fbApplyRecord(k, v, opts){
           return false; // 게이트 결정 대기 — 즉시 적용/카운트 아님
         }
       } catch(_e){}
+      // [코덱스 Q2 P1] 서버 전송이 실패해 로컬에만 남아있던 변경이 원격값에 덮여 조용히 사라지던 문제.
+      //   → 원격 적용 전에 '로컬에만 있는 레코드'를 보관해, 적용 후 추가(추가 전용)로 되살리고 재전송한다.
+      var _pendKeep = [];
+      try {
+        if(window._fbPendingKeys && window._fbPendingKeys[k] && Array.isArray(arrValue)){
+          var _lb = dbGet(k, null);
+          if(Array.isArray(_lb)){
+            var _rmap = {};
+            arrValue.forEach(function(x){ if(x && x.id) _rmap[x.id] = 1; });
+            _pendKeep = _lb.filter(function(x){ return x && x.id && !_rmap[x.id]; });
+          }
+        }
+      } catch(_pk){}
       _write(arrValue, v.u, opts.notify);
+      if(_pendKeep.length > 0){
+        console.warn('[동기화보호] '+k+': 서버 미반영 로컬 '+_pendKeep.length+'건 되살려 재전송');
+        try { showToast('↩ 서버에 반영되지 않았던 '+_pendKeep.length+'건을 다시 저장합니다 ('+k+')'); } catch(_){}
+        setTimeout(function(){
+          try { dbSet(k, (dbGet(k, []) || []).concat(_pendKeep)); } catch(_e4){ window._erpErrLog && window._erpErrLog(_e4); }
+        }, 0);
+      }
       return true;
     } catch(e){ window._erpErrLog && window._erpErrLog(e); return false; }
   } else if(opts.selfHeal && v.v && typeof v.v === 'object' && !Array.isArray(v.v)){
