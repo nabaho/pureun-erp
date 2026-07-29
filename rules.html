@@ -1257,6 +1257,7 @@ async function renderPreview(){
 function resetReviewUI(){
   CUR_ITEMS=[];CUR_KEY=null;AE_LABEL=null;
   const ae=$("art-edit");if(ae)ae.style.display="none";
+  OPEN_REC=null;        // 새 검토는 내 작업중 자리에 저장한다
   setReadOnly(false);   // 새 검토를 시작하면 열람전용 해제 (버튼은 아래에서 다시 잠근다)
   $("mk-daejo").disabled=true;$("save").disabled=true;
   { const b=$("save-done"); if(b){b.disabled=true;b.textContent="✅ 검토 완료";} }
@@ -2894,39 +2895,92 @@ function setReadOnly(on,rec){
   const ae=$("ae-apply"); if(ae)ae.disabled=on;              // 대조표 보기는 되지만 조문 수정은 막는다
   if(on){ const d=$("save-done"); if(d)d.disabled=true; } else updateDoneBtn();
 }
+/* ══════ 저장 위치 ══════
+   rules_mgmt/wip/{uid}/{사업장키}    작업중 — 경로가 uid라 서버가 남의 접근을 막는다
+   rules_mgmt/done/{사업장키}/{회차}  완료본 — 전원 읽기, 담당자만 쓰기
+   rules_mgmt/archive/{id}            예전 보관함 — 담당자가 열면 위 구조로 옮긴다
+   사업장을 뿌리로 두고 개정 회차를 쌓는다(연도는 회차의 속성). */
+let STORE={wip:{},done:{},legacy:{}};
+let OPEN_REC=null;   // 보관함에서 연 기록 id — 완료 회차면 '사업장키@회차'
+const siteKeyOf=id=>String(id||"").split("@")[0];
+const revStamp=()=>new Date().toISOString().replace(/[-:T]/g,"").slice(0,12);
+function fbPath(rec){
+  if(!FBUSER)return null;
+  if(rec.rev)return "rules_mgmt/done/"+rec.siteKey+"/"+rec.rev;
+  if(rec.store==="legacy")return "rules_mgmt/archive/"+rec.id;
+  return "rules_mgmt/wip/"+FBUSER.uid+"/"+rec.siteKey;
+}
+/* 세 저장소를 한 목록으로 합친다 — 화면·대시보드는 예전처럼 평평한 배열만 본다 */
+function mergeStores(){
+  const out=[];
+  Object.keys(STORE.wip||{}).forEach(sk=>{ const r=STORE.wip[sk]; if(!r)return;
+    out.push(Object.assign({},r,{siteKey:sk,rev:null,id:sk,store:"wip",status:"작업중"})); });
+  Object.keys(STORE.done||{}).forEach(sk=>{ const revs=STORE.done[sk]||{};
+    Object.keys(revs).forEach(rv=>{ const r=revs[rv]; if(!r)return;
+      out.push(Object.assign({},r,{siteKey:sk,rev:rv,id:sk+"@"+rv,store:"done",status:"완료"})); }); });
+  Object.keys(STORE.legacy||{}).forEach(id=>{ const r=STORE.legacy[id]; if(!r)return;
+    out.push(Object.assign({},r,{siteKey:siteKeyOf(id),rev:null,id:id,store:"legacy",
+      status:r.status||"작업중"})); });
+  return out.sort((a,b)=>(b.savedAt||"").localeCompare(a.savedAt||""));
+}
 /* 레코드 1건 단위 저장 — 보관함 전체를 덮어쓰지 않으므로 여러 노무사 동시 저장 안전 */
 function putRecord(rec){
   const arr=loadArch(), i=arr.findIndex(r=>r.id===rec.id), prev=i>=0?arr[i]:null;
   if(prev&&prev.owner&&!sameUser(prev.owner,myEmail())){   // 남의 사업장은 덮어쓰지 않는다
     console.warn("다른 담당자의 기록이라 저장하지 않음:",rec.id); return false;
   }
+  rec.siteKey=rec.siteKey||siteKeyOf(rec.id);
+  rec.rev=(prev&&prev.rev)||rec.rev||null;
+  rec.store=rec.rev?"done":((prev&&prev.store==="legacy")?"legacy":"wip");
   rec.owner=(prev&&prev.owner)||myEmail()||"";       // 처음 검토한 사람이 담당자
   rec.ownerName=(prev&&prev.owner)?(prev.ownerName||""):(myName()||(prev&&prev.ownerName)||"");
-  if(rec.status==null)rec.status=(prev&&prev.status)||"작업중";
-  if(prev&&prev.doneAt&&rec.status==="완료"&&!rec.doneAt){ rec.doneAt=prev.doneAt; rec.doneBy=prev.doneBy; }
+  rec.status=rec.rev?"완료":"작업중";
+  rec.year=String(rec.asof||"").slice(0,4);
+  if(prev&&prev.doneAt){ rec.doneAt=prev.doneAt; rec.doneBy=prev.doneBy; }
   if(i>=0)arr[i]=rec;else arr.unshift(rec);
   setLocal(arr);
-  if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/archive/"+rec.id).set(rec).catch(e=>console.warn("Firebase 저장 실패:",e));
+  const path=fbPath(rec);
+  if(FBDB&&path)FBDB.ref(path).set(stripLocal(rec)).catch(e=>console.warn("Firebase 저장 실패:",e));
   return true;
 }
-/* 완료 표시 켜기·끄기 — 담당자만 */
+/* 저장소에 넣지 않을 화면용 항목 제거 — 경로에 이미 들어 있는 값이라 중복이다 */
+function stripLocal(rec){ const o=Object.assign({},rec); delete o.store; delete o.rev; delete o.siteKey; return o; }
+/* 완료 표시 = 작업중 자리에서 완료 자리로 옮긴다(해제는 반대) */
 function setRecordDone(id,done){
   const arr=loadArch(), r=arr.find(x=>x.id===id);
   if(!r)return false;
   if(!isOwner(r)){ alert("담당자만 상태를 바꿀 수 있습니다."); return false; }
   if(!r.owner){ r.owner=myEmail(); r.ownerName=r.ownerName||myName(); }   // 옛 기록 — 지금 사람이 담당자
-  r.status=done?"완료":"작업중";
-  if(done){ r.doneAt=new Date().toISOString().slice(0,16).replace("T"," "); r.doneBy=myName(); }
-  else { delete r.doneAt; delete r.doneBy; }
-  setLocal(arr);
-  if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/archive/"+id).set(r).catch(e=>console.warn("상태 저장 실패:",e));
+  if(done===!!r.rev)return true;                                          // 이미 그 상태
+  const from=fbPath(r), oldId=r.id, sk=r.siteKey||siteKeyOf(r.id);
+  const next=Object.assign({},r,{siteKey:sk});
+  if(done){
+    next.rev="r"+String(r.asof||"").replace(/-/g,"")+"_"+revStamp();
+    next.store="done"; next.status="완료";
+    next.doneAt=new Date().toISOString().slice(0,16).replace("T"," "); next.doneBy=myName();
+  }else{
+    next.rev=null; next.store="wip"; next.status="작업중";
+    delete next.doneAt; delete next.doneBy;
+  }
+  next.id=next.rev?sk+"@"+next.rev:sk;
+  next.year=String(next.asof||"").slice(0,4);
+  const to=fbPath(next);
+  setLocal(loadArch().filter(x=>x.id!==oldId).concat([next]));
+  moveOrig(oldId,next.id);
+  if(FBDB&&to){
+    FBDB.ref(to).set(stripLocal(next))
+      .then(()=>{ if(from&&from!==to)return FBDB.ref(from).remove(); })
+      .catch(e=>console.warn("상태 저장 실패:",e));
+  }
+  if(OPEN_REC===oldId)OPEN_REC=next.id;
   return true;
 }
 function removeRecord(id){
   const r=loadArch().find(x=>x.id===id);
   if(r&&!isOwner(r)){ console.warn("담당자가 아니라 삭제하지 않음:",id); return; }
-  setLocal(loadArch().filter(r=>r.id!==id));
-  if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/archive/"+id).remove().catch(e=>console.warn("Firebase 삭제 실패:",e));
+  setLocal(loadArch().filter(x=>x.id!==id));
+  const path=r?fbPath(r):null;
+  if(FBDB&&path)FBDB.ref(path).remove().catch(e=>console.warn("Firebase 삭제 실패:",e));
   removeOrig(id);   // 기록만 지우고 원본(base64)을 남기면 공용 저장소에 고아 데이터가 쌓인다
 }
 /* 보관된 원본 파일 삭제 — 로컬 미러와 공용 노드를 함께 정리 */
@@ -2934,13 +2988,58 @@ function removeOrig(id){
   const map=loadOrigLocal(); if(map[id]){ delete map[id]; try{localStorage.setItem(ORIG_KEY,JSON.stringify(map));}catch(e){} }
   if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/orig/"+id).remove().catch(e=>console.warn("원본 삭제 실패:",e));
 }
-/* 실시간 동기화 — 한 명이 저장하면 다른 사람 화면도 자동 갱신 */
+/* 완료·해제로 기록 자리가 바뀌면 원본도 함께 옮긴다 —
+   안 옮기면 옛 회차를 열었을 때 최신 원본이 딸려 나온다 */
+function moveOrig(fromId,toId){
+  if(fromId===toId)return;
+  const map=loadOrigLocal();
+  if(map[fromId]){ map[toId]=map[fromId]; delete map[fromId];
+    try{localStorage.setItem(ORIG_KEY,JSON.stringify(map));}catch(e){} }
+  if(!FBDB||!FBUSER)return;
+  FBDB.ref("rules_mgmt/orig/"+fromId).once("value").then(s=>{
+    if(!s.exists())return;
+    return FBDB.ref("rules_mgmt/orig/"+toId).set(s.val())
+      .then(()=>FBDB.ref("rules_mgmt/orig/"+fromId).remove());
+  }).catch(e=>console.warn("원본 이동 실패:",e));
+}
+/* 예전 보관함 → 새 구조로 이관. 내 담당인 것만 자동으로 옮긴다.
+   담당자 표시가 없는 옛 기록은 목록에서 [내 담당으로 가져오기]로 직접 가져간다. */
+function migrateLegacy(){
+  const mine=Object.keys(STORE.legacy||{}).filter(id=>{
+    const r=STORE.legacy[id]; return r&&r.owner&&sameUser(r.owner,myEmail());
+  });
+  if(!mine.length)return;
+  mine.forEach(id=>adoptLegacy(id,true));
+  console.info("예전 보관함",mine.length,"건 이관");
+}
+function adoptLegacy(id,silent){
+  const src=(STORE.legacy||{})[id]; if(!src)return false;
+  if(src.owner&&!sameUser(src.owner,myEmail())){ if(!silent)alert("담당자만 가져올 수 있습니다."); return false; }
+  const sk=siteKeyOf(id);
+  const rec=Object.assign({},src,{id:sk,siteKey:sk,rev:null,store:"wip",
+    owner:src.owner||myEmail(),ownerName:src.ownerName||myName(),
+    status:"작업중",year:String(src.asof||"").slice(0,4)});
+  delete rec.doneAt; delete rec.doneBy;
+  if(!FBDB||!FBUSER)return false;
+  FBDB.ref("rules_mgmt/wip/"+FBUSER.uid+"/"+sk).set(stripLocal(rec))
+    .then(()=>FBDB.ref("rules_mgmt/archive/"+id).remove())
+    .then(()=>{ delete STORE.legacy[id]; STORE.wip[sk]=stripLocal(rec); if(id!==sk)moveOrig(id,sk);
+      setLocal(mergeStores()); if(document.querySelector("#ov-arch.on"))renderArch($("arch-q").value); })
+    .catch(e=>console.warn("이관 실패:",e));
+  return true;
+}
+/* 실시간 동기화 — 내 작업중 + 전원 완료본. 남의 작업중은 서버가 아예 안 내려준다. */
 function subscribeArch(){if(!FBDB||!FBUSER)return;
-  FBDB.ref("rules_mgmt/archive").on("value",s=>{const v=s.val()||{};
-    const arr=Object.values(v).sort((a,b)=>(b.savedAt||"").localeCompare(a.savedAt||""));
-    setLocal(arr);if(document.querySelector("#ov-arch.on"))renderArch($("arch-q").value);
-    updateDoneBtn();
-  },e=>console.warn("Firebase 동기화 실패:",e));}
+  const apply=()=>{ setLocal(mergeStores());
+    if(document.querySelector("#ov-arch.on"))renderArch($("arch-q").value);
+    updateDoneBtn(); };
+  FBDB.ref("rules_mgmt/wip/"+FBUSER.uid).on("value",s=>{STORE.wip=s.val()||{};apply();},
+    e=>console.warn("작업중 동기화 실패:",e));
+  FBDB.ref("rules_mgmt/done").on("value",s=>{STORE.done=s.val()||{};apply();},
+    e=>console.warn("완료본 동기화 실패:",e));
+  FBDB.ref("rules_mgmt/archive").once("value").then(s=>{STORE.legacy=s.val()||{};apply();migrateLegacy();})
+    .catch(e=>console.warn("예전 보관함 읽기 실패:",e));
+}
 function updateArchCnt(){const n=visibleArch().length;$("arch-cnt").textContent=n?`(${n})`:"";}
 /* 조문 연결 교정 기억 동기화 — 노무사 누가 고쳐도 전원이 같은 교정 결과를 쓴다 */
 function subscribeMfix(){if(!FBDB||!FBUSER)return;
@@ -2956,7 +3055,7 @@ try{if(window.firebase){firebase.initializeApp(FB_CONFIG);FBDB=firebase.database
     if(u){subscribeArch();subscribeMfix();resolveUserName();loadErpCompanies();pullDecisions();
       checkCloudWorkSession();   // 재로그인 시 계정에 남은 작업 세션 이어받기
       pushWorkToCloud(true);     // 로그인 전 로컬에만 있던 작업을 계정에 올려 다른 기기에서도 이어갈 수 있게
-    }else if(FBDB)FBDB.ref("rules_mgmt/archive").off();});
+    }else if(FBDB){ ["wip","done"].forEach(k=>FBDB.ref("rules_mgmt/"+k).off()); STORE={wip:{},done:{},legacy:{}}; }});
 }}catch(e){console.warn("Firebase 초기화 건너뜀:",e);}
 
 /* ══════════ 푸른이알피 업체관리(data/companies) 연동 ══════════
@@ -3021,6 +3120,8 @@ function buildOrig(key){
   return {name,ext:(name.split(".").pop()||"").toLowerCase(),text:SAMPLES[key]||"",b64,isPdf:!!PDF_URLS[key],truncated};
 }
 function putOrig(id,orig){
+  /* 담당자를 함께 적어 둔다 — 보안규칙이 이 값으로 쓰기 권한을 가른다 */
+  orig=Object.assign({},orig,{owner:myEmail()});
   if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/orig/"+id).set(orig).catch(e=>console.warn("원본 FB 저장 실패:",e));
   const map=loadOrigLocal(); map[id]=orig;
   try{localStorage.setItem(ORIG_KEY,JSON.stringify(map));}
@@ -3202,11 +3303,13 @@ function doSaveArchive(silent){
   const changedCnt=items.filter(it=>itemKind(it)!=="유지").length;
   const site=siteLabel();
   // 사업장당 안정적 ID(사업자번호 우선, 없으면 사업장명) → 재검토 시 같은 항목 갱신
-  const rec={id:"site_"+fbKey(LAST.bizno||site),site,bizno:LAST.bizno,file:SITE_FILE[LAST.key]||"",size:LAST.size,conds:LAST.conds,asof:LAST.asof,
+  const sk="site_"+fbKey(LAST.bizno||site);
+  // 보관함에서 완료 회차를 열어 고치는 중이면 그 회차에, 아니면 내 작업중 자리에 저장
+  const tid=(OPEN_REC&&siteKeyOf(OPEN_REC)===sk)?OPEN_REC:sk;
+  const rec={id:tid,siteKey:sk,rev:(tid===sk?null:tid.split("@")[1]),site,bizno:LAST.bizno,file:SITE_FILE[LAST.key]||"",size:LAST.size,conds:LAST.conds,asof:LAST.asof,
     savedAt:new Date().toISOString().slice(0,16).replace("T"," "),savedBy:(FBUSER&&(FBNAME||FBUSER.displayName||FBUSER.email))||"",
     summary:LAST.summary,items,changed:changedCnt,mode:REV_MODE,addendum:LAST.addendum||""};
   const prev=loadArch().find(r=>r.id===rec.id);
-  if(prev)rec.status=prev.status||"작업중";            // 저장한다고 완료 표시가 풀리지 않게
   if(!putRecord(rec)){
     if(!silent)alert(`'${site}'은(는) ${(prev&&(prev.ownerName||prev.owner))||"다른 노무사"} 담당 사업장이라 저장할 수 없습니다.`);
     return null;
@@ -3259,8 +3362,9 @@ $("save-done").addEventListener("click",()=>{
 function updateDoneBtn(){
   const b=$("save-done"); if(!b)return;
   if(READONLY||!LAST){ b.disabled=true; b.textContent="✅ 검토 완료"; return; }
-  const id="site_"+fbKey(LAST.bizno||siteLabel());
-  const rec=loadArch().find(r=>r.id===id);
+  const sk="site_"+fbKey(LAST.bizno||siteLabel());
+  const arr=loadArch();
+  const rec=(OPEN_REC&&arr.find(r=>r.id===OPEN_REC))||arr.find(r=>r.id===sk)||null;
   const done=isDone(rec);
   b.disabled=!(LAST&&LAST.arts&&LAST.arts.length)||!isOwner(rec);
   b.textContent=done?"↩ 완료 해제":"✅ 검토 완료";
@@ -3424,24 +3528,34 @@ function renderArch(q){
   const arr=all.filter(r=>!q||r.site.includes(q)||(r.bizno||"").includes(q));
   const tb=$("arch-body");tb.innerHTML="";
   $("arch-empty").style.display=arr.length?"none":"block";
-  const mine=all.filter(isOwner).length;
-  $("arch-sub").textContent=`${all.length}개 보관 (내 담당 ${mine} · 남의 완료본 ${all.length-mine})`;
+  const mine=all.filter(isOwner).length, sites=new Set(all.map(r=>r.siteKey||r.id)).size;
+  $("arch-sub").textContent=`사업장 ${sites}곳 · 기록 ${all.length}건 (내 담당 ${mine} · 남의 완료본 ${all.length-mine})`;
+  /* 같은 사업장의 개정 회차는 시행일 최신순으로 붙여 보여 준다 */
+  arr.sort((a,b)=>(a.site||"").localeCompare(b.site||"")||(b.asof||"").localeCompare(a.asof||""));
+  let prevSite="";
   arr.forEach(r=>{
-    const own=isOwner(r), done=isDone(r);
-    const badge=done
-      ? '<span class="badge" style="background:#dcfce7;color:#166534">완료</span>'
-      : '<span class="badge" style="background:#fef3c7;color:#92400e">작업중</span>';
-    const whoTxt=own?"내 담당":(r.ownerName||r.owner||"담당자 미상");
+    const own=isOwner(r), done=isDone(r), legacy=(r.store==="legacy");
+    const badge=legacy
+      ? '<span class="badge" style="background:#e5e7eb;color:#374151">예전 기록</span>'
+      : done ? '<span class="badge" style="background:#dcfce7;color:#166534">완료</span>'
+             : '<span class="badge" style="background:#fef3c7;color:#92400e">작업중</span>';
+    const whoTxt=legacy&&!r.owner?"담당자 미지정":(own?"내 담당":(r.ownerName||r.owner||"담당자 미상"));
+    const same=(r.site===prevSite); prevSite=r.site;
     const tr=document.createElement("tr");
-    tr.innerHTML=`<td><b>${r.site}</b><br><span style="color:var(--mute);font-size:11px">${r.bizno||r.file||""}</span></td>
+    tr.innerHTML=`<td>${same?'<span style="color:var(--mute)">↳ 같은 사업장</span>':`<b>${r.site}</b>`}
+        <br><span style="color:var(--mute);font-size:11px">${done&&r.asof?"시행 "+r.asof:(r.bizno||r.file||"")}</span></td>
       <td>${r.size}</td><td><span class="astat">위반 ${r.summary.위반의심} · 누락 ${r.summary.누락} · 변경 ${(r.changed!=null?r.changed:(r.daejo?r.daejo.length:0))}건</span></td>
       <td style="color:var(--sub);font-size:12px">${badge} ${escapeH(whoTxt)}<br>
         <span style="color:var(--mute);font-size:10.5px">${r.savedAt}${done&&r.doneAt?" · 완료 "+r.doneAt:""}</span></td>
       <td style="text-align:right;white-space:nowrap">
         <button class="mini" data-open="${r.id}">${own?"대조표 열기":"🔒 열람"}</button>
-        ${own?`<button class="mini" data-done="${r.id}" title="${done?"작업중으로 되돌립니다":"완료로 표시하면 다른 노무사도 열어 볼 수 있습니다"}">${done?"완료 해제":"✅ 완료"}</button>
-        <button class="mini" data-del="${r.id}" style="color:#dc2626;border-color:#f3c0c0">삭제</button>`:""}</td>`;
+        ${legacy&&!r.owner?`<button class="mini" data-adopt="${r.id}" title="예전 보관함에 남은 기록을 내 담당으로 옮깁니다">내 담당으로 가져오기</button>`:""}
+        ${own&&!legacy?`<button class="mini" data-done="${r.id}" title="${done?"작업중으로 되돌립니다":"완료로 표시하면 다른 노무사도 열어 볼 수 있습니다"}">${done?"완료 해제":"✅ 완료"}</button>`:""}
+        ${own?`<button class="mini" data-del="${r.id}" style="color:#dc2626;border-color:#f3c0c0">삭제</button>`:""}</td>`;
     tb.appendChild(tr);});
+  tb.querySelectorAll("[data-adopt]").forEach(b=>b.onclick=()=>{
+    if(!confirm("이 기록을 내 담당으로 가져올까요?\n이후에는 본인만 고칠 수 있습니다."))return;
+    adoptLegacy(b.dataset.adopt,false); });
   tb.querySelectorAll("[data-open]").forEach(b=>b.onclick=async()=>{
     const r=loadArch().find(x=>x.id===b.dataset.open);
     if(!r)return;
@@ -3458,6 +3572,7 @@ function renderArch(q){
     CUR_ITEMS = normalizeItems( r.items ? r.items
       : (r.daejo||[]).filter(x=>x.label).map((x,i)=>({id:"old_"+i,label:x.label,before:x.before,after:x.after,orig:x.before==="신설"?"":x.before,reason:x.reason,suggested:false,del:false})) );
     CUR_KEY=key||("arch_"+r.id);   // 저장본 편집 모델 보호 — 다른 곳에서 재생성하지 않도록
+    OPEN_REC=r.id;                 // 이 자리(작업중/완료 회차)에 되저장한다
     updateDoneBtn();
     CUR_FILTER="changed";openEditor();});
   tb.querySelectorAll("[data-done]").forEach(b=>b.onclick=()=>{
