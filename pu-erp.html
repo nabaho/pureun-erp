@@ -41608,6 +41608,21 @@ function ProjectManagementShared(props){
     }
     return true;
   });
+  // [필터 가시성] 담당·유형·월·검색 필터 때문에 숨겨진 건수를 계산 — 데이터가 사라진 것으로 오해하지 않도록 배너에 표시
+  var _scopedCount = items.filter(function(it){
+    if(statusFilter !== 'closed' && it.status === 'closed') return false;
+    if(statusFilter !== 'all' && statusFilter !== 'open' && it.status !== statusFilter) return false;
+    return true;
+  }).length;
+  var _activeFilters = [];
+  if(mgrFilter !== 'all') _activeFilters.push('담당 ' + ((typeof sidToName === 'function' && sidToName(mgrFilter)) || mgrFilter));
+  if(subMgrFilter !== 'all') _activeFilters.push('부담당 ' + ((typeof sidToName === 'function' && sidToName(subMgrFilter)) || subMgrFilter));
+  if(typeFilter !== 'all'){
+    var _tfObj = types.find(function(t){ return t.code === typeFilter; });
+    _activeFilters.push('유형 ' + ((_tfObj && _tfObj.name) || typeFilter));
+  }
+  if(monthOnly) _activeFilters.push('이번 달만');
+  if(query) _activeFilters.push('검색 "' + query + '"');
   // 정렬 적용
   if(sortBy.key){
     var sortKeyMap = {
@@ -41870,6 +41885,22 @@ function ProjectManagementShared(props){
       h('button', { onClick:exportExcel,
         style:{ background:'#fff', color:'#16a34a', border:'1px solid #86efac', padding:'7px 12px', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer' } }, '📥 엑셀'),
       h(PageSizeSelector, { pageSize:projPageSize, setPageSize:setProjPageSize, setPage:pgConsult.setPage })
+    ),
+    // [필터 경고 배너] 필터로 숨겨진 건이 있으면 눈에 띄게 알림 + 원클릭 해제
+    (_activeFilters.length > 0 && (_scopedCount - filtered.length) > 0) && h('div', {
+      style:{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap',
+        background:'#fffbeb', border:'1px solid #fcd34d', borderRadius:'8px',
+        padding:'9px 12px', margin:'0 0 8px' } },
+      h('span', { style:{ fontSize:'12.5px', fontWeight:800, color:'#92400e' } },
+        '⚠️ 필터 적용 중 — ' + (_scopedCount - filtered.length) + '건이 화면에서 숨겨졌습니다'),
+      h('span', { style:{ fontSize:'11.5px', color:'#a16207' } }, '(' + _activeFilters.join(' · ') + ')'),
+      h('span', { style:{ fontSize:'11px', color:'#a16207' } }, '· 전체 ' + _scopedCount + '건 중 ' + filtered.length + '건 표시'),
+      h('div', { style:{ flex:1 } }),
+      h('button', { onClick:resetProjView,
+        title:'모든 필터를 해제하고 전체를 표시합니다',
+        style:{ background:'#f59e0b', color:'#fff', border:'none', padding:'6px 14px',
+          borderRadius:'6px', fontSize:'12px', fontWeight:700, cursor:'pointer', flexShrink:0 } },
+        '✕ 필터 해제 (전체 보기)')
     ),
     // 테이블 — 모바일 카드뷰 / PC 테이블
     window.innerWidth <= 768
@@ -56995,9 +57026,20 @@ function App(){
     }
   }, []);
 
+  // 로그인 시 '담당자 필터'를 항상 전체로 초기화.
+  //   필터가 기기별로 저장돼 남아 있으면(예: 담당 김동현) 다른 담당의 데이터가 안 보여
+  //   "데이터가 사라졌다"고 오해하게 된다. 로그인 후 필요하면 다시 걸어서 쓰도록 한다.
+  function resetMgrFilters(){
+    try {
+      var keys = ['contract_mgr_filter','contract_submgr_filter','case_mgr_filter','case_submgr_filter'];
+      ['consulting','fund','other'].forEach(function(kind){ keys.push('proj_'+kind+'_mgr'); keys.push('proj_'+kind+'_submgr'); });
+      keys.forEach(function(k){ try { localStorage.removeItem('pureun_v6_ui_' + k); } catch(_){} });
+    } catch(_){}
+  }
   function handleLogin(sid){
     setSession(sid);
     refreshCurrentUser();
+    try { resetMgrFilters(); } catch(_){}   // 담당 필터 초기화(전체 담당으로 시작)
     setIsLoggedIn(true);
     try { recordUidRole(sid); } catch(_){}  // Firebase 보안규칙용 uid→role 매핑 자동기록 (규칙 미적용 상태에선 무해)
     try { _purgeFinCacheIfNoPerm(sid); } catch(_){}  // 재무권한 없는 직원: 기기에 남은 재무 캐시 삭제
