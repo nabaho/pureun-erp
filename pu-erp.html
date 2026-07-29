@@ -2534,26 +2534,58 @@ function dbSet(k, v){
               //   → 서버 최신을 받아온 뒤 이번 변경분(prev→v 델타)만 다시 얹어 병합하고 서버로 push.
               var _srvArr = null;
               try { _srvArr = normalizeFbValue(sv.v); } catch(_){ _srvArr = null; }
-              var _diffM = (Array.isArray(_srvArr) && Array.isArray(prev) && Array.isArray(v)) ? computeArrayDiff(prev, v) : null;
+              // [코덱스 검증 반영] 서버 항목에 id가 없으면 병합 대상에서 누락되므로 병합 금지(유실 방지)
+              var _canMerge = Array.isArray(_srvArr) && Array.isArray(prev) && Array.isArray(v)
+                && _srvArr.every(function(x){ return x && x.id; });
+              var _diffM = _canMerge ? computeArrayDiff(prev, v) : null;
               if(_diffM && (_diffM.upserts.length || _diffM.removes.length)){
-                try {
-                  var _mMap = {}, _mOrder = [];
-                  _srvArr.forEach(function(x){ if(x && x.id){ if(!_mMap[x.id]) _mOrder.push(x.id); _mMap[x.id] = x; } });
-                  _diffM.upserts.forEach(function(x){ if(x && x.id){ if(!_mMap[x.id]) _mOrder.push(x.id); _mMap[x.id] = x; } });
-                  _diffM.removes.forEach(function(id){ if(_mMap[id]) delete _mMap[id]; });
-                  var _merged = _mOrder.map(function(id){ return _mMap[id]; }).filter(Boolean);
-                  var _ts2 = Date.now();
-                  localStorage.setItem(KEY+k, JSON.stringify(_merged));
-                  localStorage.setItem(KEY+'_meta_'+k, String(_ts2));
-                  _dbCache[k] = _merged;
-                  var _fbMerged = (DIFF_KEYS.indexOf(k) >= 0 && _merged.every(function(x){return x && x.id;})) ? arrayToIdMap(_merged) : _merged;
-                  fbDb.ref('data/'+k).set({v:_fbMerged, u:_ts2})
-                    .then(function(){ if(DIFF_KEYS.indexOf(k)>=0 && _fbMerged && !Array.isArray(_fbMerged)) _fbObjForm[k]=true; })
-                    .catch(function(e){ fbSyncFail(e); });
-                  try { if(typeof _scheduleFbChanged === 'function') _scheduleFbChanged(k); } catch(_){}
+                // [코덱스 검증 반영] 원자적 트랜잭션으로 병합 — 읽기~쓰기 사이 다른 기기 변경이 지워지는 문제 차단.
+                //   안전가드(0건·급감·id)를 '실제 병합 결과' 기준으로 트랜잭션 안에서 재검사하고 위반 시 중단.
+                var _guardMsg = '';
+                fbDb.ref('data/'+k).transaction(function(cur){
+                  var curArr = [];
+                  if(cur && cur.v !== undefined){
+                    try { curArr = normalizeFbValue(cur.v); } catch(_e2){ return; }
+                  }
+                  if(!Array.isArray(curArr)) return;                                   // 형태 불명 → 중단
+                  if(!curArr.every(function(x){ return x && x.id; })) return;           // id 없는 서버 항목 보호 → 중단
+                  var _m = {}, _order = [];
+                  curArr.forEach(function(x){ if(!_m[x.id]) _order.push(x.id); _m[x.id] = x; });
+                  _diffM.upserts.forEach(function(x){ if(x && x.id){ if(!_m[x.id]) _order.push(x.id); _m[x.id] = x; } });
+                  _diffM.removes.forEach(function(id){ if(_m[id]) delete _m[id]; });
+                  var merged = _order.map(function(id){ return _m[id]; }).filter(Boolean);
+                  if(merged.length === 0 && curArr.length > 0){ _guardMsg = '0건'; return; }
+                  if(curArr.length >= 10 && merged.length < curArr.length * 0.5 && !_bulkOk2){ _guardMsg = '급감'; return; }
+                  // 시계 오차에도 버전이 단조 증가하도록 (서버 u+1 과 현재시각 중 큰 값)
+                  var newTs = Math.max(((cur && typeof cur.u === 'number') ? cur.u : 0) + 1, Date.now());
+                  var outV = (DIFF_KEYS.indexOf(k) >= 0 && merged.every(function(x){ return x && x.id; })) ? arrayToIdMap(merged) : merged;
+                  return { v: outV, u: newTs };
+                }, function(err, committed, snap){
+                  if(err || !committed || !snap){
+                    console.warn('[되돌림방지] '+k+': 병합 트랜잭션 미완료' + (_guardMsg ? ' ('+_guardMsg+' 가드)' : '') + ' — 서버 최신 수신');
+                    try {
+                      var _g2 = normalizeFbValue(sv.v);
+                      localStorage.setItem(KEY+k, JSON.stringify(_g2));
+                      localStorage.setItem(KEY+'_meta_'+k, String(_srvU));
+                      _dbCache[k] = _g2;
+                      _fbObjForm[k] = !!(sv.v && typeof sv.v==='object' && !Array.isArray(sv.v));
+                      if(typeof _scheduleFbChanged === 'function') _scheduleFbChanged(k);
+                    } catch(_){}
+                    try { showToast('⚠ 병합 실패' + (_guardMsg ? ' ('+_guardMsg+' 보호)' : '') + ' — 서버 최신으로 갱신했습니다. 방금 변경을 다시 확인하세요'); } catch(_){}
+                    return;
+                  }
+                  try {
+                    var _sval = snap.val() || {};
+                    var _okArr = normalizeFbValue(_sval.v);
+                    localStorage.setItem(KEY+k, JSON.stringify(_okArr));
+                    localStorage.setItem(KEY+'_meta_'+k, String(typeof _sval.u === 'number' ? _sval.u : Date.now()));
+                    _dbCache[k] = _okArr;
+                    _fbObjForm[k] = !!(_sval.v && typeof _sval.v === 'object' && !Array.isArray(_sval.v));
+                    if(typeof _scheduleFbChanged === 'function') _scheduleFbChanged(k);
+                  } catch(_){}
                   try { showToast('🔄 다른 기기의 최신 데이터와 병합됨 — 방금 변경도 유지됩니다'); } catch(_){}
-                  return;
-                } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+                });
+                return;
               }
               // 병합 불가(배열 아님·id 없음 등) → 기존 동작: 서버 최신 수신 + 재확인 안내
               try {
@@ -9378,6 +9410,9 @@ function ContractManagement(){
   async function doTransfer(id){
     var ct = contracts.find(function(x){return x.id===id;});
     if(!ct) return;
+    // [코덱스 검증 반영] 서버 확인 대기 중 재클릭으로 중복 생성되던 문제 — 계약별 진행중 잠금
+    if(!window._transferInFlight) window._transferInFlight = {};
+    if(window._transferInFlight[id]){ showToast('⏳ 이 계약은 이관 처리 중입니다 — 잠시만 기다려 주세요'); return; }
     var kindsList = (ct.kinds && ct.kinds.length) ? ct.kinds.slice() : (ct.kind ? [ct.kind] : []);
     // [버그방지] 알수없는/중복 종류 제거 (임시저장 누수 대비)
     var _VK = CONTRACT_KINDS.map(function(x){ return x.v; });
@@ -9415,38 +9450,60 @@ function ContractManagement(){
       return;
     }
     if(!(await popConfirm('계약 ' + ct.contractNo + ' (' + ct.companyName + ')을 이관하시겠습니까?\n\n→ ' + labels + '\n→ 상태: 이관완료\n→ 칸반에서 사라짐'))) return;
+    window._transferInFlight[id] = true;
+    var _unlockTransfer = function(){ try { delete window._transferInFlight[id]; } catch(_u){} };
     var results;
     try {
       results = transferContract(ct);
     } catch(err){
       console.error('[이관 오류]', err);
       showToast('❌ 이관 처리 중 오류: ' + (err && err.message ? err.message : '알 수 없는 오류'));
-      return;
+      _unlockTransfer(); return;
     }
     if(!results || results.length === 0){
       showToast('❌ 이관 실패: 결과 없음 (계약유형 확인 필요)');
-      return;
+      _unlockTransfer(); return;
     }
     // [P1] 부분 이관 방지: 선택 종류 수만큼 결과가 안 나오면 아카이브하지 않음(데이터 유실·오아카이브 차단)
     if(results.length < kindsList.length){
       showToast('❌ 이관 일부 실패 ('+results.length+'/'+kindsList.length+') — 계약은 그대로 두었습니다. 새로고침 후 다시 시도하세요');
-      return;
+      _unlockTransfer(); return;
     }
-    // [안전망] 서버 동기화 가드(되돌림방지 등)가 비동기로 로컬 저장을 되돌릴 수 있으므로,
-    //   실제로 저장됐는지 확인한 뒤에만 계약을 아카이브한다. 확인 실패 시 계약을 그대로 남겨 재시도 가능.
-    showToast('저장 확인 중…');
-    await new Promise(function(r){ setTimeout(r, 1800); });
+    // [안전망 · 코덱스 검증 반영] 로컬 캐시는 네트워크 전송 전에 이미 기록되므로 로컬 확인만으론
+    //   "서버에 실제 저장됨"을 보장하지 못한다. → 서버(data/{store})를 직접 읽어 대상 레코드 존재를
+    //   확인한 뒤에만 계약을 아카이브한다. 확인 실패 시 계약을 그대로 남겨 재시도 가능(유실 차단).
+    showToast('서버 저장 확인 중…');
     var _storeOfV = { company:'companies', 'case':'cases', consulting:'consultings', fund:'funds', other:'other_projects' };
-    var _missing = results.filter(function(r){
-      if(r.type === 'consult' || !r.id) return false;
-      var st = _storeOfV[r.type]; if(!st) return false;
-      return !(dbGet(st, []) || []).some(function(x){ return x && x.id === r.id; });
-    });
+    async function _verifySaved(store, itemId){
+      var _online = (typeof fbDb !== 'undefined') && fbDb && (typeof fbConnected === 'undefined' || fbConnected);
+      if(!_online){
+        // 오프라인: 서버 확인 불가 → 로컬 저장만 확인 (연결 회복 시 동기화됨)
+        return (dbGet(store, []) || []).some(function(x){ return x && x.id === itemId; });
+      }
+      for(var attempt = 0; attempt < 4; attempt++){
+        await new Promise(function(r){ setTimeout(r, 900); });
+        try {
+          var snap = await fbDb.ref('data/' + store).once('value');
+          var val = snap.val();
+          var arr = (val && val.v !== undefined) ? normalizeFbValue(val.v) : [];
+          if(Array.isArray(arr) && arr.some(function(x){ return x && x.id === itemId; })) return true;
+        } catch(_e){ /* 일시 오류 → 재시도 */ }
+      }
+      return false;
+    }
+    var _missing = [];
+    for(var _vi = 0; _vi < results.length; _vi++){
+      var _r = results[_vi];
+      if(_r.type === 'consult' || !_r.id) continue;
+      var _st = _storeOfV[_r.type]; if(!_st) continue;
+      if(!(await _verifySaved(_st, _r.id))) _missing.push(_r);
+    }
     if(_missing.length > 0){
       console.error('[이관 검증 실패]', _missing);
-      showToast('❌ 이관 저장 확인 실패 (' + _missing.map(function(m){ return m.no; }).join(', ') + ') — 계약을 그대로 두었습니다. 새로고침(Ctrl+Shift+R) 후 다시 이관하세요');
-      return;
+      showToast('❌ 서버 저장 확인 실패 (' + _missing.map(function(m){ return m.no; }).join(', ') + ') — 계약을 그대로 두었습니다. 새로고침(Ctrl+Shift+R) 후 다시 이관하세요');
+      _unlockTransfer(); return;
     }
+    _unlockTransfer();   // 검증 통과 — 이후 아카이브/이동 단계
     var transferSummary = results.map(function(r){ return r.type + ':' + r.no; }).join(', ');
     try {
       archiveContract(Object.assign({}, ct, { transferredTo: transferSummary }), '이관완료');
