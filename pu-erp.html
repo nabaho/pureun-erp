@@ -2640,6 +2640,70 @@ async function erpMigrateImagesToIdb(){
 }
 window.erpMigrateImagesToIdb = erpMigrateImagesToIdb;
 
+// ── 저장 직후 자동 슬림화 (디바운스) — 어느 화면에서 이미지를 넣어도 localStorage엔 참조만 남게 ──
+var _imgSlimTimers = {};
+var _imgSlimBusy = false;
+function _scheduleImgSlim(k){
+  if(IMG_MIGRATE_STORES.indexOf(k) < 0) return;     // 대상 스토어만
+  if(_imgSlimBusy) return;                          // 진행 중이면 생략(재귀 방지)
+  if(_imgSlimTimers[k]) clearTimeout(_imgSlimTimers[k]);
+  _imgSlimTimers[k] = setTimeout(function(){ _imgSlimTimers[k] = null; _slimKeyImages(k); }, 1500);
+}
+async function _slimKeyImages(k){
+  if(_imgSlimBusy) return;
+  if(typeof ImgStore === 'undefined' || !ImgStore || typeof idbBulkPut !== 'function') return;
+  _imgSlimBusy = true;
+  try {
+    var arr = dbGet(k, []) || [];
+    if(Array.isArray(arr)){
+      var stat = { moved:0, failed:0, chars:0 };
+      var changed = [];
+      for(var i=0;i<arr.length;i++){
+        var rec = arr[i]; if(!rec || !rec.id) continue;
+        var raw = ''; try { raw = JSON.stringify(rec); } catch(_){ continue; }
+        if(raw.indexOf('data:image') < 0) continue;
+        var copy = JSON.parse(raw);
+        copy = await _imgMigrateObj(copy, k, rec.id, stat);
+        changed.push(copy);
+      }
+      if(changed.length && stat.moved > 0){
+        dbUpsertMany(k, changed);
+        console.log('[자동 슬림화] ' + k + ': 이미지 ' + stat.moved + '개 → IndexedDB (약 ' + Math.round(stat.chars/1024) + 'KB 확보)');
+      }
+    }
+  } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+  _imgSlimBusy = false;
+}
+
+// ── 접속 시 저장공간 자동 점검: 한도에 가까우면 조용히 이미지 정리(세션 1회) ──
+(function(){
+  try {
+    var tries = 0;
+    var t = setInterval(function(){
+      tries++;
+      var ready = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.sid) && typeof erpStorageReport === 'function';
+      if(!ready){ if(tries > 60) clearInterval(t); return; }
+      clearInterval(t);
+      setTimeout(function(){
+        try {
+          if(sessionStorage.getItem('pureun_v6_img_autoslim_done')) return;
+          var rep = erpStorageReport();
+          if(!rep || !rep.near || rep.imgMB < 0.3) return;          // 여유 있으면 건드리지 않음
+          sessionStorage.setItem('pureun_v6_img_autoslim_done', '1');
+          console.warn('[자동 슬림화] 저장공간 ' + rep.totalMB + 'MB — 이미지 ' + rep.imgMB + 'MB 자동 정리 시작');
+          try { showToast('🧹 저장공간 확보 중… 이미지를 내부 저장소로 자동 정리합니다'); } catch(_){}
+          erpMigrateImagesToIdb().then(function(r){
+            if(r && r.moved > 0){
+              var after = erpStorageReport();
+              try { showToast('✅ 자동 정리 완료 — 이미지 ' + r.moved + '개 이전, 사용량 ' + (after ? after.totalMB + 'MB' : '감소')); } catch(_){}
+            }
+          }).catch(function(){});
+        } catch(_){}
+      }, 6000);   // 초기 로딩·동기화가 끝난 뒤 실행
+    }, 1000);
+  } catch(e){}
+})();
+
 // 선택 복원 — 오직 추가. 기존 레코드는 수정·삭제하지 않음.
 async function erpRestoreLostRecords(candidates){
   var res = { restored:0, failed:[], byStore:{} };
@@ -3084,10 +3148,37 @@ function dbSet(k, v){
   catch(e){
     window._erpErrLog && window._erpErrLog(e);
     var _quota = e && (e.name === 'QuotaExceededError' || e.code === 22 || /quota|exceeded/i.test(e.message||''));
+    // [자동복구] 저장공간 초과 = 대부분 레코드에 인라인으로 박힌 base64 이미지 때문.
+    //   사용자가 매번 수동 정리하지 않도록 자동으로 이미지를 IndexedDB로 옮긴 뒤 저장을 1회 재시도한다.
+    if(_quota && !window._erpQuotaFixing){
+      window._erpQuotaFixing = true;
+      try { showToast('⚠ 저장공간 부족 — 이미지를 자동 정리하고 다시 저장합니다…'); } catch(_){}
+      (function(_pk, _pv){
+        setTimeout(function(){
+          var done = function(){
+            window._erpQuotaFixing = false;
+            var ok2 = false;
+            try { ok2 = dbSet(_pk, _pv); } catch(_){}
+            try { showToast(ok2 ? '✅ 자동 정리 후 저장 완료 — 화면을 새로고침하면 반영됩니다'
+                                : '❌ 자동 정리 후에도 저장 실패 — 환경설정 → 시스템 → 유실 데이터 검사·복원에서 저장공간을 확인하세요'); } catch(_){}
+            if(ok2){ try { window.dispatchEvent(new CustomEvent('pureun-saved', { detail:{ key:_pk, at:Date.now() } })); } catch(_){} }
+          };
+          try {
+            if(typeof erpMigrateImagesToIdb === 'function'){
+              erpMigrateImagesToIdb().then(done).catch(done);
+            } else done();
+          } catch(_){ done(); }
+        }, 0);
+      })(k, v);
+      return false;
+    }
     try { showToast(_quota ? '⚠ 저장 공간 부족 — 변경사항이 저장되지 않았습니다! 이미지 등 정리 필요' : '⚠ 저장 실패 — 변경사항이 저장되지 않았습니다'); } catch(_){}
     return false;
   }
   _dbCache[k] = v; // 메모리 캐시 갱신
+  // [자동 슬림화] 방금 저장한 값에 인라인 base64 이미지가 있으면 잠시 후 IndexedDB로 자동 이전.
+  //   어느 화면에서 이미지를 넣어도 localStorage에는 참조만 남아 용량이 다시 차지 않는다.
+  if(newJson.indexOf('data:image') >= 0) { try { _scheduleImgSlim(k); } catch(_){} }
   try { window.dispatchEvent(new CustomEvent('pureun-saved', { detail:{ key:k, at:Date.now() } })); } catch(_){}
   scheduleAutoSnap(); // 자동 스냅샷 예약
 
