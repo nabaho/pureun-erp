@@ -1309,12 +1309,44 @@ var _presenceKey = null;       // 내 presence 키 = 기기ID + 계정(sid) → 
 var _presencePayload = null;   // 하트비트 시 통째로 다시 쓰기 위한 내 정보
 var _presenceSubbed = false;   // 전체 구독 1회만
 var _presenceCollapsed = !!window.IS_MOBILE;   // 폰: 기본 접힘(작은 알약) → 탭하면 펼침
+// sid(사번) → 이름 공용 해석기. 공개 명부(user_dir) → 직원계정(user_accounts) → 시드 → 현재 세션 순.
+//   어느 화면에서도 사번(P-007 등)이 그대로 노출되지 않도록 이 함수를 쓴다.
+function sidToName(sid){
+  if(!sid) return '';
+  try {
+    var dir = dbGet('user_dir', []) || [];
+    for(var i=0;i<dir.length;i++){ if(dir[i] && dir[i].sid === sid && dir[i].name) return dir[i].name; }
+  } catch(_){}
+  try {
+    var accs = dbGet('user_accounts', []) || [];
+    for(var j=0;j<accs.length;j++){ if(accs[j] && accs[j].sid === sid && accs[j].name) return accs[j].name; }
+  } catch(_){}
+  try {
+    if(typeof USERS_SEED !== 'undefined' && USERS_SEED){
+      for(var m=0;m<USERS_SEED.length;m++){ if(USERS_SEED[m] && USERS_SEED[m].sid === sid && USERS_SEED[m].name) return USERS_SEED[m].name; }
+    }
+  } catch(_){}
+  try { if(typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.sid === sid && CURRENT_USER.name) return CURRENT_USER.name; } catch(_){}
+  return '';
+}
+try { window.erpSidToName = sidToName; } catch(_){}
+// presence 표시용 이름 — 상대 기기가 이름을 못 찾아 사번으로 기록했어도 내 쪽에서 이름으로 바꿔 표시
+function _presenceName(p){
+  var nm = (p && p.name) ? String(p.name) : '';
+  var looksSid = !!nm && (/^[A-Za-z]{1,3}-?\d{2,}$/.test(nm) || (p && p.sid && nm === p.sid));
+  if(!nm || looksSid){
+    var r = sidToName(p && p.sid);
+    if(r) return r;
+  }
+  return nm || (p && p.sid) || '?';
+}
 function _writePresence(){
   if(!_presenceRef) return;
   // 이름/sid는 매 기록마다 '현재 세션'에서 새로 확인 → 낡은 CURRENT_USER로 인한 오표시 방지(자가복구)
   var sid = (typeof getSessionSid === 'function' ? getSessionSid() : '') || (_presencePayload && _presencePayload.sid) || '';
   var u = (sid && typeof buildCurrentUser === 'function') ? buildCurrentUser(sid) : null;
-  var name = (u && u.name) || (CURRENT_USER && CURRENT_USER.sid === sid && CURRENT_USER.name) || (_presencePayload && _presencePayload.name) || sid || '';
+  // 사번이 이름으로 기록되지 않도록 sidToName 폴백 추가 (명부 미수신 기기 대비)
+  var name = (u && u.name) || (CURRENT_USER && CURRENT_USER.sid === sid && CURRENT_USER.name) || sidToName(sid) || (_presencePayload && _presencePayload.name) || sid || '';
   var loginAt = (_presencePayload && _presencePayload.loginAt) || Date.now();
   _presenceRef.set({ sid:sid, name:name, device:DEVICE_NAME, loginAt:loginAt, lastSeen:Date.now() }).catch(function(){});
 }
@@ -1393,7 +1425,7 @@ function _renderPresencePanel(){
         list.forEach(function(p){
           var mine = (p.devId === _presenceKey);
           var isPhone = (p.device && p.device.indexOf('폰') >= 0);
-          mh += '<div style="font-size:11px;line-height:1.55;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:'+(mine?'#94a3b8':'#334155')+'">'+(isPhone?'📱':'💻')+' '+_esc(p.name)+(mine?' (나)':'')+'</div>';
+          mh += '<div style="font-size:11px;line-height:1.55;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:'+(mine?'#94a3b8':'#334155')+'">'+(isPhone?'📱':'💻')+' '+_esc(_presenceName(p))+(mine?' (나)':'')+'</div>';
         });
         panel.innerHTML = mh;
       }
@@ -1403,7 +1435,7 @@ function _renderPresencePanel(){
     list.forEach(function(p){
       var mine = (p.devId === _presenceKey);
       var isPhone = (p.device && p.device.indexOf('폰') >= 0);
-      html += '<div style="font-size:11.5px;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:'+(mine?'#94a3b8':'#334155')+'">'+(isPhone?'📱 폰':'💻 PC')+' · '+_esc(p.name)+(mine?' (나)':'')+'</div>';
+      html += '<div style="font-size:11.5px;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:'+(mine?'#94a3b8':'#334155')+'">'+(isPhone?'📱 폰':'💻 PC')+' · '+_esc(_presenceName(p))+(mine?' (나)':'')+'</div>';
     });
     panel.innerHTML = html;
   } catch(e){ window._erpErrLog && window._erpErrLog(e); }
