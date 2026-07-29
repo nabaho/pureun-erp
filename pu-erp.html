@@ -2329,6 +2329,144 @@ function startRecentBackupTimer(){
 }
 window.erpRecentBackupNow = function(){ serverBackupRecent(); console.log('수시 백업 시도'); };
 
+// ── 유실 데이터 검사·선택 복원 (동기화 오류로 조용히 사라진 레코드 회수) ──
+//    서버 백업 보관함(serverBackups·serverBackupsRecent)과 현재 데이터를 id로 비교해
+//    "백업에는 있는데 지금은 없는" 레코드만 골라낸다. 복원은 오직 추가(additive) — 기존 레코드는 손대지 않음.
+var LOST_SCAN_STORES = ['contracts','cases','consultings','funds','other_projects','companies'];
+var LOST_STORE_LABELS = { contracts:'계약', cases:'사건', consultings:'컨설팅', funds:'기금', other_projects:'기타사업', companies:'업체' };
+var LOST_SCAN_MAX_DAILY = 8;   // 대역폭 보호: 일간 백업은 최신 8개만
+var LOST_SCAN_MAX_RECENT = 8;  // 수시 백업도 최신 8개만
+
+// 보관함의 스냅샷 키 목록(최신→과거)을 경량 인덱스에서 뽑는다.
+// 인덱스가 없는 구버전 보관함이면 보관함을 1회 통째로 읽고 그 스냅샷을 캐시로 재사용(중복 수신 방지).
+async function _lostLoadSnapKeys(indexPath, fullPath, limit){
+  try {
+    var s = await fbDb.ref(indexPath).once('value');
+    var idx = (s && s.val()) || {};
+    var ks = Object.keys(idx);
+    if(ks.length){
+      ks.sort().reverse();               // YYYY-MM-DD·13자리 ms 모두 사전순=시간순
+      ks = ks.slice(0, limit);
+      var meta = {};
+      ks.forEach(function(k){ meta[k] = { savedAt:(idx[k] || {}).savedAt || '' }; });
+      return { keys:ks, cache:{}, meta:meta };
+    }
+  } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+  try {
+    var fs2 = await fbDb.ref(fullPath).once('value');
+    var full = (fs2 && fs2.val()) || {};
+    var ks2 = Object.keys(full).sort().reverse().slice(0, limit);
+    var cache = {}, meta2 = {};
+    ks2.forEach(function(k){ cache[k] = full[k]; meta2[k] = { savedAt:(full[k] || {}).savedAt || '' }; });
+    return { keys:ks2, cache:cache, meta:meta2 };
+  } catch(e2){ window._erpErrLog && window._erpErrLog(e2); }
+  return { keys:[], cache:{}, meta:{} };
+}
+// 스냅샷 정렬용 시각 (savedAt 우선 → 수시키는 ms 숫자 → 일간키는 날짜 파싱)
+function _lostSnapTs(q){
+  var t = q.savedAt ? Date.parse(q.savedAt) : NaN;
+  if(!isNaN(t)) return t;
+  t = parseInt(q.fbKey, 10);
+  if(!isNaN(t) && String(q.fbKey).length >= 12) return t;
+  t = Date.parse(q.fbKey);
+  return isNaN(t) ? 0 : t;
+}
+async function erpScanLostRecords(){
+  var report = { candidates:[], scanned:{ daily:0, recent:0 }, storesChecked:LOST_SCAN_STORES.slice() };
+  if(typeof fbDb === 'undefined' || !fbDb){ report.error = 'Firebase 미연결 — 서버 백업을 읽을 수 없습니다'; return report; }
+  // 현재 보유 id 맵
+  var curIds = {};
+  LOST_SCAN_STORES.forEach(function(st){
+    var m = {};
+    (dbGet(st, []) || []).forEach(function(x){ if(x && x.id) m[x.id] = true; });
+    curIds[st] = m;
+  });
+  // 휴지통(trash_bin)에 담긴 원본 id — 의도적으로 버린 것이므로 "유실"이 아니다
+  var trashIds = {};
+  (dbGet('trash_bin', []) || []).forEach(function(t){
+    if(t && t.item && t.item.id) trashIds[t.item.id] = true;
+  });
+
+  var dailyInfo = await _lostLoadSnapKeys('serverBackupsIndex', 'serverBackups', LOST_SCAN_MAX_DAILY);
+  var recentInfo = await _lostLoadSnapKeys('serverBackupsRecentIndex', 'serverBackupsRecent', LOST_SCAN_MAX_RECENT);
+  var queue = [];
+  recentInfo.keys.forEach(function(k){
+    queue.push({ kind:'recent', path:'serverBackupsRecent', fbKey:k, savedAt:(recentInfo.meta[k] || {}).savedAt || '', cached:recentInfo.cache[k] });
+  });
+  dailyInfo.keys.forEach(function(k){
+    queue.push({ kind:'daily', path:'serverBackups', fbKey:k, savedAt:(dailyInfo.meta[k] || {}).savedAt || '', cached:dailyInfo.cache[k] });
+  });
+  queue.sort(function(a,b){ return _lostSnapTs(b) - _lostSnapTs(a); }); // 최신→과거
+
+  var seen = {}; // store/id — 더 최근 백업에서 이미 채택한 건 건너뜀(최신 버전 우선)
+  for(var qi=0; qi<queue.length; qi++){
+    var q = queue[qi];
+    var snap = q.cached;
+    if(!snap){
+      try {
+        var ss = await fbDb.ref(q.path + '/' + q.fbKey).once('value');
+        snap = (ss && ss.val()) || null;
+      } catch(e3){ window._erpErrLog && window._erpErrLog(e3); continue; }
+    }
+    if(!snap || !snap.data) continue;
+    if(q.kind === 'daily') report.scanned.daily++; else report.scanned.recent++;
+    var savedAt = snap.savedAt || q.savedAt || '';
+    var label = (q.kind === 'daily') ? q.fbKey
+              : (savedAt ? new Date(savedAt).toLocaleString('sv-SE').slice(5,16) : q.fbKey);
+    var snapKey = q.kind + ':' + q.fbKey;
+    LOST_SCAN_STORES.forEach(function(st){
+      var arr = snap.data[st];
+      if(!Array.isArray(arr)) return;
+      arr.forEach(function(it){
+        if(!it || typeof it.id !== 'string' || !it.id) return;
+        if(it._deleted === true) return;          // 소프트 삭제(휴지통) = 의도된 삭제
+        if(curIds[st][it.id]) return;             // 지금도 있음
+        if(trashIds[it.id]) return;               // trash_bin에 있음 = 의도된 삭제
+        var sk = st + '/' + it.id;
+        if(seen[sk]) return;
+        seen[sk] = true;
+        report.candidates.push({ store:st, id:it.id, item:it, snapKey:snapKey, snapLabel:label, savedAt:savedAt });
+      });
+    });
+  }
+  // 보기 좋게: 종류 순 → 최신 백업 순
+  report.candidates.sort(function(a,b){
+    var d = LOST_SCAN_STORES.indexOf(a.store) - LOST_SCAN_STORES.indexOf(b.store);
+    if(d) return d;
+    return (b.savedAt || '') < (a.savedAt || '') ? -1 : 1;
+  });
+  return report;
+}
+// 선택 복원 — 오직 추가. 기존 레코드는 수정·삭제하지 않음.
+async function erpRestoreLostRecords(candidates){
+  var res = { restored:0, failed:[], byStore:{} };
+  if(!Array.isArray(candidates) || candidates.length === 0) return res;
+  var nowIso = new Date().toISOString();
+  var groups = {};
+  candidates.forEach(function(c){
+    if(!c || !c.store || !c.item || typeof c.item.id !== 'string' || !c.item.id) return;
+    var cur = dbGet(c.store, []) || [];
+    // 재확인: 그 사이 다시 나타났으면 건너뜀 (기존 데이터 보호)
+    if(cur.some(function(x){ return x && x.id === c.item.id; })) return;
+    if(!groups[c.store]) groups[c.store] = [];
+    groups[c.store].push(Object.assign({}, c.item, { _restoredFrom: c.snapKey || '', _restoredAt: nowIso }));
+  });
+  var stores = Object.keys(groups);
+  for(var i=0; i<stores.length; i++){
+    var st = stores[i];
+    var byId = {}, items = [];
+    groups[st].forEach(function(it){ if(!byId[it.id]){ byId[it.id] = 1; items.push(it); } });
+    if(!items.length) continue;
+    var ok = false;
+    try { ok = dbUpsertMany(st, items); } catch(e){ window._erpErrLog && window._erpErrLog(e); ok = false; }
+    if(ok){ res.restored += items.length; res.byStore[st] = items.length; }
+    else { res.failed.push({ store:st, count:items.length }); }
+  }
+  return res;
+}
+window.erpScanLostRecords = erpScanLostRecords;
+window.erpRestoreLostRecords = erpRestoreLostRecords;
+
 // ── 서버에서 강제로 받아오기 (읽기 전용, _meta 무시) — 콘솔: erpPullFromServer() / 환경설정 버튼 ──
 window.erpPullFromServer = function(){
   if(typeof fbDb === 'undefined' || !fbDb){ try{ showToast('Firebase 미연결 — 받아올 수 없습니다'); }catch(_){ alert('Firebase 미연결'); } return; }
@@ -24163,8 +24301,122 @@ function SystemMonitoringSection(){
   );
 }
 
+// ── 유실 데이터 검사·선택 복원 모달 (환경설정 → 시스템) ──
+function LostRecordsModal(props){
+  useEscClose(props.onClose);
+  var ss = useState({ loading:true, report:null }); var scan = ss[0]; var setScan = ss[1];
+  var cs = useState({}); var checked = cs[0]; var setChecked = cs[1];
+  var bs = useState(false); var busy = bs[0]; var setBusy = bs[1];
+  var users = getActiveUsers();
+  function userName(sid){ var u=users.find(function(x){return x.sid===sid;}); return u?u.name:sid||'-'; }
+
+  function runScan(){
+    setScan({ loading:true, report:null });
+    erpScanLostRecords().then(function(rep){
+      var ck = {};
+      (rep.candidates || []).forEach(function(c){ ck[c.store+'/'+c.id] = true; }); // 기본 전체 선택
+      setChecked(ck);
+      setScan({ loading:false, report:rep });
+    }).catch(function(e){
+      window._erpErrLog && window._erpErrLog(e);
+      setScan({ loading:false, report:{ candidates:[], scanned:{daily:0,recent:0}, storesChecked:[], error:'검사 중 오류가 발생했습니다' } });
+    });
+  }
+  useEffect(function(){ runScan(); }, []);
+
+  var rep = scan.report || {};
+  var cands = rep.candidates || [];
+  var selCount = cands.filter(function(c){ return checked[c.store+'/'+c.id]; }).length;
+
+  function toggle(c){
+    var k = c.store+'/'+c.id;
+    var next = Object.assign({}, checked); next[k] = !next[k];
+    setChecked(next);
+  }
+  function toggleAll(){
+    var allOn = selCount === cands.length && cands.length > 0;
+    var next = {};
+    cands.forEach(function(c){ next[c.store+'/'+c.id] = !allOn; });
+    setChecked(next);
+  }
+  async function doRestore(){
+    var list = cands.filter(function(c){ return checked[c.store+'/'+c.id]; });
+    if(!list.length){ showToast('복원할 항목을 선택하세요'); return; }
+    if(!(await popConfirm('선택한 ' + list.length + '건을 복원하시겠습니까?\n\n기존 데이터는 수정·삭제하지 않고, 사라진 항목만 추가합니다.'))) return;
+    setBusy(true);
+    var res;
+    try { res = await erpRestoreLostRecords(list); }
+    catch(e){ window._erpErrLog && window._erpErrLog(e); setBusy(false); showToast('복원 중 오류가 발생했습니다'); return; }
+    setBusy(false);
+    showToast(res.failed.length
+      ? ('복원 ' + res.restored + '건 / 실패 ' + res.failed.length + '개 종류')
+      : ('✅ ' + res.restored + '건 복원됨'));
+    runScan();
+  }
+
+  return h('div', { onClick:props.onClose,
+    style:{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.5)',zIndex:9300,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'} },
+    h('div', { onClick:function(e){e.stopPropagation();},
+      style:{background:'#fff',borderRadius:'10px',padding:'20px',width:'94%',maxWidth:'960px',maxHeight:'85vh',overflow:'auto',boxShadow:'0 12px 40px rgba(0,0,0,0.25)'} },
+      h('div', { style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'14px'} },
+        h('div', null,
+          h('div', { style:{fontWeight:800,fontSize:'15px',color:'#1e293b'} },
+            scan.loading ? '🔍 유실 데이터 검사' : ('🔍 백업에서 발견된 사라진 데이터 ' + cands.length + '건')),
+          h('div', { style:{fontSize:'11px',color:'#64748b',marginTop:'2px'} },
+            '복원은 추가만 합니다 — 기존 데이터는 건드리지 않음'
+            + (scan.loading ? '' : ' · 검사한 백업: 일간 ' + ((rep.scanned&&rep.scanned.daily)||0) + '개 / 수시 ' + ((rep.scanned&&rep.scanned.recent)||0) + '개'))),
+        h('button', { onClick:props.onClose, style:{border:'none',background:'none',fontSize:'18px',color:'#94a3b8',cursor:'pointer'} }, '✕')
+      ),
+      rep.error ? h('div', { style:{fontSize:'11.5px',color:'#b91c1c',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'6px',padding:'8px 12px',marginBottom:'10px'} }, '⚠️ ' + rep.error) : null,
+      scan.loading
+        ? h('div', { style:{padding:'40px',textAlign:'center',color:'#64748b',fontSize:'12.5px'} }, '백업 확인 중…')
+        : (cands.length === 0
+            ? h('div', { style:{padding:'40px',textAlign:'center',color:'#166534',fontSize:'12.5px',fontWeight:600} }, '✅ 백업과 비교해 사라진 데이터가 없습니다')
+            : h('table', { className:'dt', style:{ fontSize:'11.5px' } },
+                h('thead', null, h('tr', null,
+                  h('th', { className:'ac', style:{width:'40px'} },
+                    h('input', { type:'checkbox', checked:(selCount===cands.length && cands.length>0), onChange:toggleAll })),
+                  h('th', { style:{width:'80px'} }, '종류'),
+                  h('th', null, '번호'),
+                  h('th', null, '업체명'),
+                  h('th', { style:{width:'80px'} }, '담당'),
+                  h('th', { style:{width:'130px'} }, '백업시각')
+                )),
+                h('tbody', null,
+                  cands.map(function(c){
+                    var it = c.item || {};
+                    var k = c.store+'/'+c.id;
+                    var on = !!checked[k];
+                    return h('tr', { key:k, style:{background: on ? '#f0fdf4' : '#fff'} },
+                      h('td', { className:'ac' },
+                        h('input', { type:'checkbox', checked:on, onChange:function(){ toggle(c); } })),
+                      h('td', { style:{fontWeight:600,color:'#475569'} }, LOST_STORE_LABELS[c.store] || c.store),
+                      h('td', { style:{fontFamily:'monospace',fontWeight:700,color:'#2563eb'} }, it.no || it.caseNo || it.contractNo || '-'),
+                      h('td', null, it.companyName || it.name || '-'),
+                      h('td', null, it.managerMain ? userName(it.managerMain) : '-'),
+                      h('td', { style:{fontSize:'10.5px',color:'#64748b',fontFamily:'monospace'} },
+                        (c.savedAt || '').slice(0,16).replace('T',' ') || c.snapLabel || '-')
+                    );
+                  })
+                )
+              )
+          ),
+      h('div', { style:{display:'flex',justifyContent:'flex-end',gap:'6px',marginTop:'14px'} },
+        cands.length > 0 ? h('button', { onClick:toggleAll,
+          style:{padding:'7px 12px',background:'#f1f5f9',color:'#475569',border:'1px solid #cbd5e1',borderRadius:'6px',fontSize:'12px',fontWeight:600,cursor:'pointer'} }, '전체 선택/해제') : null,
+        cands.length > 0 ? h('button', { onClick:doRestore, disabled:busy,
+          style:{padding:'7px 12px',background: busy ? '#e2e8f0' : '#dcfce7',color:'#166534',border:'1px solid #86efac',borderRadius:'6px',fontSize:'12px',fontWeight:700,cursor: busy ? 'default' : 'pointer'} },
+          busy ? '복원 중…' : ('↩ 선택 복원 (' + selCount + ')')) : null,
+        h('button', { onClick:props.onClose,
+          style:{padding:'7px 12px',background:'#fff',color:'#475569',border:'1px solid #cbd5e1',borderRadius:'6px',fontSize:'12px',fontWeight:600,cursor:'pointer'} }, '닫기')
+      )
+    )
+  );
+}
+
 function SystemMasters(){
   var ts = useState(0); var activeTab = ts[0]; var setActiveTab = ts[1];
+  var lo = useState(false); var lostOpen = lo[0]; var setLostOpen = lo[1];
   var TABS = [
     { label:'⚙️ 앱 설정',        comp: AppSettingsSection },
     { label:'🗺️ 시스템 맵',      comp: SystemMapSection },
@@ -24179,6 +24431,13 @@ function SystemMasters(){
   return h('div', { className:'env-section', style:{ maxWidth:'100%' } },
     h('div', null,
     h('div', { className:'desc' }, '앱 설정·JSON 수동 백업·NAS 자동 백업·데이터 관리·모니터링을 관리합니다.'),
+    // ★ 유실 데이터 검사·복원 — 서버 백업과 비교해 사라진 계약·사건·컨설팅·기금·기타사업·업체를 추가 복원
+    h('div', { style:{ marginBottom:'12px' } },
+      h('button', { onClick:function(){ setLostOpen(true); },
+        style:{ padding:'8px 14px', background:'#fef2f2', color:'#b91c1c', border:'1px solid #fecaca',
+          borderRadius:'6px', fontSize:'12.5px', fontWeight:700, cursor:'pointer' } }, '🔍 유실 데이터 검사·복원'),
+      h('span', { style:{ fontSize:'11px', color:'#64748b', marginLeft:'8px' } }, '서버 백업과 비교해 사라진 데이터를 찾아 선택 복원 (기존 데이터는 건드리지 않음)')
+    ),
     h('div', { style:{ display:'flex', flexWrap:'wrap', gap:'4px', marginBottom:'16px', borderBottom:'2px solid #e5e7eb' } },
       TABS.filter(function(t){ return !t.adminOnly || isAdminByUser(CURRENT_USER); }).map(function(t, i){
         var realIdx = TABS.indexOf(t);
@@ -24191,7 +24450,8 @@ function SystemMasters(){
             marginBottom:'-2px', whiteSpace:'nowrap' } }, t.label);
       })
     ),
-    h(TABS[activeTab] && TABS[activeTab].comp || TABS[0].comp, null)
+    h(TABS[activeTab] && TABS[activeTab].comp || TABS[0].comp, null),
+    lostOpen && h(LostRecordsModal, { onClose:function(){ setLostOpen(false); } })
     )
   );
 }
