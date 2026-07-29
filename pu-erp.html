@@ -2828,6 +2828,45 @@ async function erpPushLocalOnly(){
 }
 window.erpPushLocalOnly = erpPushLocalOnly;
 
+// ── URL에 ?fixsync=1 이 있으면: 로그인·동기화 완료 후 이 기기에만 있는 데이터를 자동으로 서버 업로드 ──
+//    폰처럼 "이 기기엔 보이는데 서버엔 없는" 상태를 링크 한 번으로 복구하기 위한 진입점.
+//    추가 전용(erpPushLocalOnly)이라 서버 기존 데이터는 절대 지우지 않는다.
+(function(){
+  try {
+    if(!/[?&]fixsync=1/.test(location.search)) return;
+    var tries = 0;
+    var timer = setInterval(function(){
+      tries++;
+      var ready = (typeof fbDb !== 'undefined' && fbDb)
+        && (typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.sid)
+        && typeof window.erpPushLocalOnly === 'function'
+        && window._fbSynced === true;
+      if(!ready){ if(tries > 90) clearInterval(timer); return; }   // 최대 90초 대기
+      clearInterval(timer);
+      try { showToast('📤 동기화 복구 시작 — 이 기기에만 있는 데이터를 서버로 올립니다'); } catch(_){}
+      setTimeout(function(){
+        window.erpPushLocalOnly().then(function(r){
+          var msg;
+          if(r && r.error) msg = '업로드 실패: ' + r.error;
+          else if(!r || r.total === 0) msg = '이 기기에만 있는 데이터가 없습니다 (서버와 일치)';
+          else {
+            var parts = Object.keys(r.pushed).map(function(s){ return (LOST_STORE_LABELS[s] || s) + ' ' + r.pushed[s] + '건'; });
+            msg = '서버로 올린 데이터: 총 ' + r.total + '건\n' + parts.join('\n');
+          }
+          if(r && r.skipped && r.skipped.length) msg += '\n건너뜀: ' + r.skipped.join(', ');
+          try { showToast('📤 ' + msg.split('\n').join(' · ')); } catch(_){}
+          try {
+            if(window.erpAlert) erpAlert('info', '📤 동기화 복구 결과', msg, '다른 PC에서 새로고침(Ctrl+Shift+R)하면 반영됩니다.');
+            else alert(msg);
+          } catch(_){}
+        }).catch(function(e){
+          try { showToast('❌ 업로드 실패: ' + (e && e.message || '')); } catch(_){}
+        });
+      }, 2500);
+    }, 1000);
+  } catch(e){}
+})();
+
 // ── 서버에서 강제로 받아오기 (읽기 전용, _meta 무시) — 콘솔: erpPullFromServer() / 환경설정 버튼 ──
 window.erpPullFromServer = function(){
   if(typeof fbDb === 'undefined' || !fbDb){ try{ showToast('Firebase 미연결 — 받아올 수 없습니다'); }catch(_){ alert('Firebase 미연결'); } return; }
