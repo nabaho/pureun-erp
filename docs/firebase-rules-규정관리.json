@@ -1,0 +1,60 @@
+// ════════════════════════════════════════════════════════════════════
+//  규정관리(rules.html) Firebase 실시간 데이터베이스 보안규칙
+//  프로젝트 pureun-erp / 리전 asia-southeast1
+//
+//  ⚠ 이 파일을 통째로 붙여넣지 마십시오.
+//     아래 "rules_mgmt" 블록만 기존 규칙의 "rules" 안에 끼워 넣으십시오.
+//     같은 DB를 ERP·명함첩·기금·이음·전자서명이 함께 쓰고 있어,
+//     전체를 덮어쓰면 다른 모듈이 한꺼번에 멈춥니다.
+//
+//  넣는 곳: Firebase 콘솔 → Realtime Database → 규칙
+//  넣기 전에 반드시 현재 규칙 전문을 복사해 보관하십시오.
+// ════════════════════════════════════════════════════════════════════
+{
+  "rules": {
+
+    "rules_mgmt": {
+
+      // ── 보관함 기록 ────────────────────────────────────────────
+      //  읽기: 로그인한 노무사 전원
+      //  쓰기: 그 사업장 담당자(owner)만
+      //  담당자 표시가 없는 옛 기록은 먼저 저장하는 사람이 담당자가 된다
+      "archive": {
+        ".read": "auth != null",
+
+        "$id": {
+          ".write": "auth != null && ( !data.exists() || !data.child('owner').exists() || data.child('owner').val() === '' || data.child('owner').val() === auth.token.email ) && ( !newData.exists() || newData.child('owner').val() === auth.token.email )",
+
+          // 담당자 칸이 빠진 채로 덮어쓰이는 것을 막는다
+          ".validate": "newData.hasChildren(['id','site','owner'])",
+          "owner":  { ".validate": "newData.val() === auth.token.email" },
+          "status": { ".validate": "newData.val() === '작업중' || newData.val() === '완료'" }
+        }
+      },
+
+      // ── 원본 파일(base64) ──────────────────────────────────────
+      //  같은 id의 보관함 기록 담당자만 쓰기·삭제
+      "orig": {
+        ".read": "auth != null",
+        "$id": {
+          ".write": "auth != null && ( !root.child('rules_mgmt/archive').child($id).child('owner').exists() || root.child('rules_mgmt/archive').child($id).child('owner').val() === '' || root.child('rules_mgmt/archive').child($id).child('owner').val() === auth.token.email )"
+        }
+      },
+
+      // ── 작업 세션(임시저장) ────────────────────────────────────
+      //  본인 것만. 남의 작업 세션은 읽지도 쓰지도 못한다.
+      "worksession": {
+        "$uid": {
+          ".read":  "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid"
+        }
+      },
+
+      // ── 반복 확인 생략 기억 / 조문 연결 교정 ───────────────────
+      //  법인 공동 지식이라 전원 공유가 맞다(설계 의도)
+      "decisions": { ".read": "auth != null", ".write": "auth != null" },
+      "matchfix":  { ".read": "auth != null", ".write": "auth != null" }
+    }
+
+  }
+}
