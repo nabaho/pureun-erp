@@ -1599,7 +1599,8 @@ var fbAuthReady = false;    // 인증 완료 여부
 var _fbSynced = false;      // Firebase 초기 동기화 완료(또는 시도 종료) 여부 — 시드 게이팅용
 function fbSeedAllowed(){ return !fbDb || _fbSynced; }  // 오프라인이거나 동기화 끝난 뒤에만 user_accounts 시드 허용
 // 동기화 제외 키 (메타·세션·임시값)
-var FB_EXCLUDE = ['_meta_','session','current_menu','open_groups','dark_mode','corp_dash_tab','sidebar_collapsed','login_'];
+// (bank_ledger_draft = 거래내역 화면의 업로드 작업분 — 기기별 임시값이라 서버로 올리지 않는다)
+var FB_EXCLUDE = ['_meta_','session','current_menu','open_groups','dark_mode','corp_dash_tab','sidebar_collapsed','login_','bank_ledger_draft'];
 function fbShouldSync(k){
   if(!k) return false;
   for(var i=0; i<FB_EXCLUDE.length; i++){ if(k.indexOf(FB_EXCLUDE[i])===0) return false; }
@@ -1624,7 +1625,8 @@ var FB_ALL_SYNC_KEYS = [
   'locked_contract_months','locked_irregular_months',
   'policy_leave','policy_loa','policy_perf','policy_special_leave','policy_vat',
   'pension_policy','security_perms',
-  'payroll_irregular','contract_forms','dc_contributions','biz_cases'
+  'payroll_irregular','contract_forms','dc_contributions','biz_cases',
+  'payer_aliases'
 ];
 // App Check reCAPTCHA v3 사이트키 — Firebase 콘솔에서 발급 후 따옴표 안에 붙여넣기 (비어있으면 비활성, 동작에 영향 없음)
 var FB_APPCHECK_KEY = '6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
@@ -4014,6 +4016,62 @@ function erpLcsLen(a, b){
   return best;
 }
 
+// ── 입금자 별칭 학습 (적요 ≠ 업체명일 때 1회 수동매칭으로 기억) ──
+// 저장형태: payer_aliases = { <erpNormName(적요)>: {companyName, companyId, count, lastAt, samples[≤3]} }
+var PAYER_ALIAS_KEY = 'payer_aliases';
+
+function erpAliasStore(){
+  var v = dbGet(PAYER_ALIAS_KEY, {});
+  return (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+}
+
+// 적요 → 학습된 별칭 엔트리 (없으면 null)
+function erpAliasCompany(memo){
+  var key = erpNormName(memo);
+  if(!key) return null;
+  var st = erpAliasStore();
+  return st[key] || null;
+}
+
+// 수동 매칭 확정 시 호출 — 적요와 업체명이 다르면 그 관계를 기억한다
+function erpLearnPayerAlias(memo, cand){
+  try {
+    var raw = String(memo===null||memo===undefined?'':memo).trim();
+    if(!raw) return false;
+    var coName = (cand && (cand.companyName || (cand.item && cand.item.companyName))) || '';
+    if(!coName) return false;
+    var key = erpNormName(raw);
+    if(!key) return false;
+    if(key === erpNormName(coName)) return false;   // 적요=업체명이면 배울 것이 없음
+
+    var st = erpAliasStore();
+    var cur = st[key];
+    var coId = (cand && (cand.companyId || (cand.item && (cand.item.companyId || cand.item.id)))) || '';
+    if(cur && erpNormName(cur.companyName) === erpNormName(coName)){
+      cur.count = (parseInt(cur.count,10)||0) + 1;
+      cur.lastAt = new Date().toISOString();
+      if(coId) cur.companyId = coId;
+      var sm = (cur.samples || []).slice();
+      if(sm.indexOf(raw) < 0) sm.unshift(raw);
+      cur.samples = sm.slice(0,3);
+      st[key] = cur;
+    } else {
+      // 신규 또는 다른 업체로 재학습 (최근 확정을 신뢰)
+      st[key] = { companyName:coName, companyId:coId, count:1,
+                  lastAt:new Date().toISOString(), samples:[raw] };
+    }
+    dbSet(PAYER_ALIAS_KEY, st);
+    return true;
+  } catch(e){ if(window._erpErrLog) window._erpErrLog(e); return false; }
+}
+
+function erpForgetPayerAlias(key){
+  var st = erpAliasStore();
+  if(!st.hasOwnProperty(key)) return false;
+  delete st[key];
+  return dbSet(PAYER_ALIAS_KEY, st) !== false;
+}
+
 // 매칭 신뢰도 색상 (배지·칩 공용)
 function erpMatchLevelColor(level){
   if(level==='high') return {bg:'#dcfce7', fg:'#15803d', bd:'#bbf7d0'};
@@ -4059,6 +4117,24 @@ function erpMatchScore(txn, cand){
       var lcs = erpLcsLen(tn, cn);
       if(lcs >= 3){ nameScore = 60; reasons.push('이름 부분 일치'); }
       else if(lcs >= 2){ nameScore = 35; reasons.push('이름 유사'); }
+    }
+  }
+
+  // ── 입금자 별칭 학습분 / 레코드의 입금자(예금주) 필드로 이름 점수 보강 ──
+  // (둘 다 없으면 위의 기본 동작 그대로)
+  if(tn){
+    var _al = null;
+    try { _al = erpAliasCompany(txn.memo); } catch(_e){ _al = null; }
+    if(_al && _al.companyName && cn && erpNormName(_al.companyName) === cn){
+      if(nameScore < 100){ nameScore = 100; }
+      reasons.push('입금자 별칭 학습됨');
+    }
+    var _pn = erpNormName((cand.item && cand.item.payerName) || cand.payerName || '');
+    if(_pn){
+      var _ps = 0;
+      if(tn === _pn) _ps = 100;
+      else if((tn.length >= 2 && _pn.indexOf(tn) >= 0) || (_pn.length >= 2 && tn.indexOf(_pn) >= 0)) _ps = 85;
+      if(_ps > nameScore){ nameScore = _ps; reasons.push('입금자명 일치'); }
     }
   }
 
@@ -4161,6 +4237,10 @@ window.erpNormName = erpNormName;
 window.erpMatchScore = erpMatchScore;
 window.erpMatchTxnToPending = erpMatchTxnToPending;
 window.erpAutoMarkCompanyIncome = erpAutoMarkCompanyIncome;
+window.erpLearnPayerAlias = erpLearnPayerAlias;
+window.erpAliasCompany = erpAliasCompany;
+window.erpAliasStore = erpAliasStore;
+window.erpForgetPayerAlias = erpForgetPayerAlias;
 
 // ============ 보안·무결성 유틸리티 ============
 // 사용 예: CryptoEngine.generateId('co'), await CryptoEngine.hash(pw)
@@ -7564,6 +7644,7 @@ function ContractModal(props){
     endDate: '',                        // 계약 종료일 (자문/컨설팅용)
     successFee:0,
     successFeeType:'amount',
+    payerName:'',                       // 입금자(예금주) — 업체명과 다르게 입금될 때만 사용
     vatType: 'separate',                // 'separate'(별도) | 'inclusive'(포함)
     journals: [],                       // 활동 일지 [{id, date, by, content}]
     status:'consult',
@@ -9324,6 +9405,10 @@ function ContractModal(props){
           );
         })
       ),
+      // 입금자(예금주) — 통장 적요가 업체명과 다를 때 입력하면 거래내역 자동매칭이 이 이름으로도 대조한다
+      fld('입금자(예금주)',
+        h('input', { type:'text', value:f.payerName || '', onChange:setSimple('payerName'),
+          placeholder:'업체명과 다르게 입금될 때만 입력 (예: 모회사·협회·대표자 개인)' })),
       fld('계약일',
         h(KoreanDatePicker, { value:f.signDate, onChange:setSimple('signDate') })),
       // 계약기간 (자문/컨설팅/기금/기타에서 주로 사용)
@@ -9897,6 +9982,7 @@ function transferContract(contract){
         receiveDate: contract.signDate, dueDate: '', closeDate: '',
         jurisdiction: { org:'', officer:'', phone:'', email:'' },
         retainerFee: amount, retainerPaidDate: '',
+        payerName: contract.payerName || '',      // 입금자(예금주) 승계
         successFee: contract.successFee || 0,
         successFeeType: contract.successFeeType || 'amount',
         successPaidDate: '',
@@ -9969,6 +10055,7 @@ function transferContract(contract){
       managerMain: contract.managerMain,
       managerSubs: contract.managerSubs || [],
       startDate: contract.signDate, endDate: '',
+      payerName: contract.payerName || '',        // 입금자(예금주) 승계
       fee: amount,
       // 컨설팅: 계약금 = amount(착수금), 잔금 = successFee(성공보수)
       // 기타: 착수금 = amount, 성공보수 = successFee
@@ -10051,6 +10138,7 @@ async function returnToContract(storeKey, itemId){
       managerMain: item.managerMain,
       managerSubs: (item.managerSubs || []).slice(),
       signDate: item.receiveDate || item.startDate || item.estDate || '',
+      payerName: item.payerName || '',            // 입금자(예금주) 승계 (역이관)
       successFee: item.successFee || item.balanceFee || 0,
       successFeeType: item.successFeeType || 'amount',
       status: 'signed',
@@ -14400,6 +14488,7 @@ function CaseEditModal(props){
       contacts:[], managerMain:'', managerSubs:[],
       receiveDate:todayYMD(), dueDate:'', closeDate:'',
       retainerFee:0, retainerPaidDate:'', successFee:0, successFeeType:'amount', successPaidDate:'',
+      payerName:'',   // 입금자(예금주) — 업체명과 다르게 입금될 때만 사용
       judgment:{org:'',officer:'',phone:'',email:''}, status:'pending', note:''
     };
     // 회사 기본정보가 비어있으면 계약/업체에서 보완
@@ -14743,6 +14832,11 @@ function CaseEditModal(props){
               h('label', { style:{ display:'block', fontSize:'11px', fontWeight:600, color:'#475569', marginBottom:'4px' } }, '종결일'),
               h(KoreanDatePicker, { value:f.closeDate||'', onChange:setV('closeDate') }))
           ),
+          // 입금자(예금주) — 통장 적요가 업체명과 다를 때 입력 (거래내역 자동매칭에 사용)
+          h('div', { className:'fld' }, h('label', null, '입금자(예금주)'),
+            h('input', { type:'text', value:f.payerName || '', onChange:setV('payerName'),
+              placeholder:'업체명과 다르게 입금될 때만 입력 (예: 모회사·협회·대표자 개인)',
+              style:inputS })),
           // 착수금
           h('div', { className:'fld' }, h('label', null, '착수금'),
             h('div', { style:{ display:'flex', gap:'6px', alignItems:'center' } },
@@ -16252,6 +16346,7 @@ function CaseDetailModal(props){
     title:'수임료',
     bg:'#fef9c3', border:'#fde68a', headColor:'#854d0e', headBorder:'#ca8a04',
     rows:[
+      c.payerName ? ['입금자', h('span', { style:{ fontWeight:700, color:'#1d4ed8' } }, c.payerName)] : null,
       ['착수금', h('span', { style:{ fontFamily:'monospace', fontWeight:700, color: retainerPaid ? '#059669' : '#1e293b' } },
         fmtAmtWon(c.retainerFee, c) + (canSeeAmount(c) && retainerPaid ? ' ✓ 입금' : ''))],
       canSeeAmount(c) && retainerPaid && c.retainerPaidDate ? ['착수금 입금일', h('span', { style:{ fontFamily:'monospace', color:'#059669' } }, c.retainerPaidDate)] : null,
@@ -25200,6 +25295,66 @@ function SystemMonitoringSection(){
   );
 }
 
+// ── 입금자 별칭 관리 모달 (환경설정 → 시스템) ──
+// 거래내역에서 수동 매칭할 때 학습된 "적요 → 업체" 관계를 확인·삭제한다.
+function PayerAliasModal(props){
+  useEscClose(props.onClose);
+  var rf = useState(0); var refresh = rf[0]; var setRefresh = rf[1];
+  var store = erpAliasStore();
+  var list = Object.keys(store).map(function(k){
+    var v = store[k] || {};
+    return { key:k, companyName:v.companyName||'-', count:parseInt(v.count,10)||0,
+             lastAt:v.lastAt||'', samples:(v.samples||[]) };
+  }).sort(function(a,b){ return (b.lastAt||'').localeCompare(a.lastAt||''); });
+
+  async function del(row){
+    if(!(await popConfirm('⚠️ "' + (row.samples[0]||row.key) + ' → ' + row.companyName + '" 별칭을 삭제하시겠습니까?'))) return;
+    erpForgetPayerAlias(row.key);
+    showToast('삭제됨');
+    setRefresh(refresh+1);
+  }
+
+  return h('div', { onClick:props.onClose,
+    style:{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.5)',zIndex:9300,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'} },
+    h('div', { onClick:function(e){e.stopPropagation();},
+      style:{background:'#fff',borderRadius:'10px',padding:'20px',width:'92%',maxWidth:'820px',maxHeight:'85vh',overflow:'auto',boxShadow:'0 12px 40px rgba(0,0,0,0.25)'} },
+      h('div', { style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'14px'} },
+        h('div', null,
+          h('div', { style:{fontWeight:800,fontSize:'15px',color:'#1e293b'} }, '👤 입금자 별칭 (' + list.length + '건)'),
+          h('div', { style:{fontSize:'11px',color:'#64748b',marginTop:'2px'} }, '거래내역에서 적요와 업체명이 다른 입금을 수동 확정할 때 자동 학습됩니다 (다음부터 자동 매칭)')),
+        h('button', { onClick:props.onClose, style:{border:'none',background:'none',fontSize:'18px',color:'#94a3b8',cursor:'pointer'} }, '✕')
+      ),
+      list.length === 0
+        ? h('div', { style:{padding:'40px',textAlign:'center',color:'#94a3b8',fontSize:'12.5px'} }, '학습된 별칭이 없습니다')
+        : h('table', { className:'dt' },
+            h('thead', null, h('tr', null,
+              h('th', null, '적요 (입금자)'),
+              h('th', null, '업체'),
+              h('th', { className:'ac' }, '횟수'),
+              h('th', null, '최근일'),
+              h('th', { className:'ac', style:{width:'80px'} }, '관리')
+            )),
+            h('tbody', null,
+              list.map(function(row){
+                return h('tr', { key:row.key },
+                  h('td', null,
+                    h('div', { style:{fontWeight:700,color:'#1e293b'} }, row.samples[0] || row.key),
+                    row.samples.length > 1 && h('div', { style:{fontSize:'10px',color:'#94a3b8'} }, row.samples.slice(1).join(' · '))),
+                  h('td', { style:{color:'#1d4ed8',fontWeight:600} }, row.companyName),
+                  h('td', { className:'ac', style:{fontFamily:'monospace'} }, row.count + '회'),
+                  h('td', { style:{fontSize:'10.5px',color:'#64748b',fontFamily:'monospace'} }, (row.lastAt||'').slice(0,16).replace('T',' ') || '-'),
+                  h('td', { className:'ac' },
+                    h('button', { onClick:function(){del(row);},
+                      style:{padding:'3px 8px',background:'#fee2e2',color:'#dc2626',border:'1px solid #fca5a5',borderRadius:'5px',fontSize:'10.5px',fontWeight:600,cursor:'pointer'} }, '✕ 삭제')
+                  )
+                );
+              })
+            )
+          )
+    )
+  );
+}
+
 // ── 유실 데이터 검사·선택 복원 모달 (환경설정 → 시스템) ──
 function LostRecordsModal(props){
   useEscClose(props.onClose);
@@ -25617,6 +25772,7 @@ function LostRecordsModal(props){
 function SystemMasters(){
   var ts = useState(0); var activeTab = ts[0]; var setActiveTab = ts[1];
   var lo = useState(false); var lostOpen = lo[0]; var setLostOpen = lo[1];
+  var pa = useState(false); var aliasOpen = pa[0]; var setAliasOpen = pa[1];
   var TABS = [
     { label:'⚙️ 앱 설정',        comp: AppSettingsSection },
     { label:'🗺️ 시스템 맵',      comp: SystemMapSection },
@@ -25638,6 +25794,13 @@ function SystemMasters(){
           borderRadius:'6px', fontSize:'12.5px', fontWeight:700, cursor:'pointer' } }, '🔍 유실 데이터 검사·복원'),
       h('span', { style:{ fontSize:'11px', color:'#64748b', marginLeft:'8px' } }, '서버 백업과 비교해 사라진 데이터를 찾아 선택 복원 (기존 데이터는 건드리지 않음)')
     ),
+    // ★ 입금자 별칭 관리 — 거래내역 수동 매칭으로 학습된 "적요 → 업체" 관계 확인·삭제
+    h('div', { style:{ marginBottom:'12px' } },
+      h('button', { onClick:function(){ setAliasOpen(true); },
+        style:{ padding:'8px 14px', background:'#eff6ff', color:'#1d4ed8', border:'1px solid #bfdbfe',
+          borderRadius:'6px', fontSize:'12.5px', fontWeight:700, cursor:'pointer' } }, '👤 입금자 별칭 관리'),
+      h('span', { style:{ fontSize:'11px', color:'#64748b', marginLeft:'8px' } }, '적요가 업체명과 다른 입금을 한 번 수동 확정하면 자동 학습 (다음부터 자동 매칭)')
+    ),
     h('div', { style:{ display:'flex', flexWrap:'wrap', gap:'4px', marginBottom:'16px', borderBottom:'2px solid #e5e7eb' } },
       TABS.filter(function(t){ return !t.adminOnly || isAdminByUser(CURRENT_USER); }).map(function(t, i){
         var realIdx = TABS.indexOf(t);
@@ -25651,7 +25814,8 @@ function SystemMasters(){
       })
     ),
     h(TABS[activeTab] && TABS[activeTab].comp || TABS[0].comp, null),
-    lostOpen && h(LostRecordsModal, { onClose:function(){ setLostOpen(false); } })
+    lostOpen && h(LostRecordsModal, { onClose:function(){ setLostOpen(false); } }),
+    aliasOpen && h(PayerAliasModal, { onClose:function(){ setAliasOpen(false); } })
     )
   );
 }
@@ -26729,6 +26893,17 @@ function findMenu(id){
 // ══════════════════════════════════════════════
 // 📒 거래내역 — 하나은행 통장·하나카드 업로드
 // ══════════════════════════════════════════════
+// 업로드한 거래내역 초안 저장 키 — 화면을 벗어나도 유지되고, 업체입금 자동표시도 이 값을 쓴다.
+// (행은 텍스트 몇 필드만 남겨 저장 — 이미지·원본 시트는 저장하지 않음)
+var BANK_DRAFT_KEY = 'bank_ledger_draft';
+function _bankDraftSlimRow(r, type){
+  return { _k:String(r._k), type:type, date:r.date||'', memo:r.memo||'', note:r.note||'',
+           amount:parseInt(r.amount,10)||0, balance:parseInt(r.balance,10)||0 };
+}
+function _bankDraftEmpty(){
+  return { fileName:'', uploadedAt:'', type:'bank', colMap:{}, rows:[], inMatch:{}, expCat:{} };
+}
+
 function FinanceLedger(){
   // ── 미입금 대기 목록 ──
   var pending = [];
@@ -26766,6 +26941,64 @@ function FinanceLedger(){
   var expCatS=useState({});    var expCat=expCatS[0];   var setExpCat=expCatS[1];
   var dragS=useState(false);   var dragOver=dragS[0];   var setDragOver=dragS[1];
   var sugOpenS=useState({});   var sugOpen=sugOpenS[0]; var setSugOpen=sugOpenS[1]; // 후보 펼침 (행별)
+  var ldTabS=usePersistedState('ledger_tab','inc'); var ldTab=ldTabS[0]; var setLdTab=ldTabS[1]; // 입금/출금 탭
+  var upAtS=useState('');      var upAt=upAtS[0];       var setUpAt=upAtS[1];       // 업로드 시각 (초안 복원용)
+  var restS=useState(false);   var restored=restS[0];   var setRestored=restS[1];   // 저장된 초안에서 복원됨
+  var draftTimer=useRef(null);   // 초안 저장 디바운스
+  var draftReady=useRef(false);  // 복원 완료 전에는 저장하지 않음
+
+  // ── 초안 복원 (마운트 1회) — 화면을 벗어났다 돌아와도 업로드분이 살아있게 ──
+  useEffect(function(){
+    try{
+      var d = dbGet(BANK_DRAFT_KEY, null);
+      if(d && d.rows && d.rows.length){
+        var inc=[], exp=[];
+        d.rows.forEach(function(x){
+          if(!x) return;
+          var row={_k:String(x._k), date:x.date||'', memo:x.memo||'', note:x.note||'',
+                   amount:parseInt(x.amount,10)||0, balance:parseInt(x.balance,10)||0};
+          if(x.type==='expense') exp.push(row); else inc.push(row);
+        });
+        if(inc.length || exp.length){
+          setRows({inc:inc, exp:exp, colMap:d.colMap||{}, hdrRow:[]});
+          setInMatch(d.inMatch||{});
+          setExpCat(d.expCat||{});
+          if(d.type) setFileType(d.type);
+          setFName(d.fileName||'');
+          setUpAt(d.uploadedAt||'');
+          setRestored(true);
+        }
+      }
+    }catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+    draftReady.current = true;
+  }, []);
+
+  // ── 초안 저장 (업로드·매칭선택·행삭제·확정 모두 자동 반영, 600ms 디바운스) ──
+  useEffect(function(){
+    if(!draftReady.current) return;
+    if(!rows) return;   // 업로드 전이거나 비운 상태 — 저장할 것이 없음
+    if(draftTimer.current) clearTimeout(draftTimer.current);
+    draftTimer.current = setTimeout(function(){
+      draftTimer.current = null;
+      try{
+        var flat=[];
+        (rows.inc||[]).forEach(function(x){ flat.push(_bankDraftSlimRow(x,'income')); });
+        (rows.exp||[]).forEach(function(x){ flat.push(_bankDraftSlimRow(x,'expense')); });
+        dbSet(BANK_DRAFT_KEY, { fileName:fName||'', uploadedAt:upAt||'', type:fileType||'bank',
+                                colMap:(rows.colMap)||{}, rows:flat,
+                                inMatch:inMatch||{}, expCat:expCat||{} });
+      }catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+    }, 600);
+  }, [rows, inMatch, expCat, fName, upAt, fileType]);
+
+  async function clearDraft(){
+    if(!(await popConfirm('업로드한 거래내역을 모두 비웁니다.\n\n→ 이미 확정·등록한 입금/출금은 그대로 유지됩니다'))) return;
+    if(draftTimer.current){ clearTimeout(draftTimer.current); draftTimer.current=null; }
+    try{ dbSet(BANK_DRAFT_KEY, _bankDraftEmpty()); }catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+    setRows(null); setDetected(null); setInMatch({}); setExpCat({}); setSugOpen({});
+    setFName(''); setUpAt(''); setRestored(false);
+    showToast('🗑 거래내역을 비웠습니다');
+  }
 
   // ── 유연한 컬럼 감지 파서 ──
   function detectColumns(headerRow){
@@ -26830,6 +27063,7 @@ function FinanceLedger(){
       showToast('❌ Excel 파일(.xlsx, .xls)만 가능합니다'); return;
     }
     setBusy(true); setFName(file.name); setRows(null); setDetected(null);
+    setRestored(false); setSugOpen({});   // 새 파일은 기존 초안을 대체
     var reader = new FileReader();
     reader.onload = function(ev){
       try{
@@ -26846,6 +27080,8 @@ function FinanceLedger(){
           if(ms.length === 1) auto[row._k] = ms[0].id;
         });
         setInMatch(auto);
+        setExpCat({});                            // 이전 파일의 카테고리 선택 초기화
+        setUpAt(new Date().toISOString());        // 초안 저장용 업로드 시각
         showToast('✅ 입금 '+result.inc.length+'건 / 출금 '+result.exp.length+'건 인식 (자동매칭 '+Object.keys(auto).length+'건)');
       } catch(err){ showToast('❌ 오류: '+err.message); }
       setBusy(false);
@@ -26905,14 +27141,31 @@ function FinanceLedger(){
   var inMatchedCnt  = rows ? rows.inc.filter(function(r){return inMatch[r._k];}).length : 0;
   var expReadyCnt   = rows ? rows.exp.filter(function(r){return expCat[r._k];}).length  : 0;
 
-  // ── 자동 매칭 추천 (행별 상위 3후보) ──
+  // ── 입금/출금 탭 (한 번에 한 섹션만 렌더 — 스크롤·렌더 비용 절감) ──
+  var incCnt = rows ? rows.inc.length : 0;
+  var expCnt = rows ? rows.exp.length : 0;
+  // 저장된 탭에 행이 없으면 반대쪽을 보여준다 (빈 화면 방지)
+  var ldTabEff = ldTab;
+  if(ldTabEff==='exp' && expCnt===0 && incCnt>0) ldTabEff='inc';
+  else if(ldTabEff==='inc' && incCnt===0 && expCnt>0) ldTabEff='exp';
+  function ledgerTabBtn(v, label, cnt, todo){
+    var on = ldTabEff===v;
+    return h('button',{key:v, onClick:function(){setLdTab(v);},
+      style:{padding:'5px 14px', borderRadius:'16px', cursor:'pointer', whiteSpace:'nowrap', flexShrink:0,
+        border: on?'1px solid #1e40af':'1px solid #cbd5e1',
+        background: on?'#1e40af':'#fff', color: on?'#fff':'#64748b',
+        fontWeight: on?700:500, fontSize:'12px'}},
+      label+' ('+cnt+')'+(todo>0?' · 미처리 '+todo:''));
+  }
+
+  // ── 자동 매칭 추천 (행별 상위 3후보) — 입금 탭에서만 계산 (출금 탭에서는 불필요) ──
   var incSug = {};
-  if(rows) rows.inc.forEach(function(row){
+  if(rows && ldTabEff==='inc') rows.inc.forEach(function(row){
     incSug[row._k] = erpMatchTxnToPending({date:row.date, amount:row.amount, memo:row.memo||row.note||''}, pending, 3);
   });
   function bestSug(k){ var s=incSug[k]; return s&&s.length?s[0]:null; }
   // 선택된 매칭이 '고신뢰' 추천 그대로인 행들 (일괄 확정 대상)
-  var highReadyKeys = rows ? rows.inc.filter(function(row){
+  var highReadyKeys = (rows && ldTabEff==='inc') ? rows.inc.filter(function(row){
     var b=bestSug(row._k);
     return b && b.level==='high' && inMatch[row._k]===b.cand.id;
   }).map(function(row){return row._k;}) : [];
@@ -26968,6 +27221,20 @@ function FinanceLedger(){
         '인터넷뱅킹·카드사 → 거래내역 → 엑셀 저장')
     ),
 
+    // ── 저장된 초안 안내 (1줄) — 파일명·업로드시각·미처리 건수 + 비우기 ──
+    rows && h('div',{style:{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',
+      background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'6px',padding:'4px 10px',marginBottom:'6px'}},
+      h('span',{style:{fontSize:'11px',color:'#475569',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'420px'}},
+        '📂 '+(fName||'업로드분')
+        +' · '+((upAt||'').slice(0,16).replace('T',' ') || '-')
+        +' · 미처리 '+((rows.inc||[]).length+(rows.exp||[]).length)+'건'),
+      restored && h('span',{style:{fontSize:'10px',color:'#1d4ed8',background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'1px 6px',fontWeight:700,whiteSpace:'nowrap'}},'저장분 복원'),
+      h('div',{style:{flex:1}}),
+      h('button',{onClick:clearDraft,
+        title:'업로드한 거래내역만 비웁니다 (확정·등록분은 유지)',
+        style:{padding:'3px 9px',background:'#fef2f2',color:'#b91c1c',border:'1px solid #fecaca',borderRadius:'5px',fontSize:'10.5px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'🗑 내역 비우기')
+    ),
+
     // ── 컬럼 감지 결과 표시 (1줄) ──
     detected && h('div',{style:{background:'#f0f9ff',border:'1px solid #bfdbfe',borderRadius:'6px',padding:'3px 10px',marginBottom:'6px',fontSize:'11px',color:'#1d4ed8',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},
       '📋 감지된 컬럼: ',
@@ -26983,17 +27250,16 @@ function FinanceLedger(){
 
       // 요약
       h('div',{style:{display:'flex',gap:'8px',marginBottom:'12px',flexWrap:'wrap',alignItems:'center'}},
-        rows.inc.length>0 && h('div',{style:{background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:'6px',padding:'4px 12px',fontSize:'11.5px',fontWeight:700,color:'#16a34a'}},
-          '💰 입금 '+rows.inc.length+'건 (매칭 '+inMatchedCnt+'건)'),
-        rows.exp.length>0 && h('div',{style:{background:'#fef3c7',border:'1px solid #fde68a',borderRadius:'6px',padding:'4px 12px',fontSize:'11.5px',fontWeight:700,color:'#92400e'}},
-          '💸 출금 '+rows.exp.length+'건 (등록대기 '+expReadyCnt+'건)'),
+        // ── 입금/출금 탭 (건수·미처리 건수 포함) ──
+        incCnt>0 && ledgerTabBtn('inc','💰 입금', incCnt, incCnt-inMatchedCnt),
+        expCnt>0 && ledgerTabBtn('exp','💸 출금', expCnt, expCnt-expReadyCnt),
         h('div',{style:{flex:1}}),
-        rows.inc.length>0 && h('button',{
+        ldTabEff==='inc' && rows.inc.length>0 && h('button',{
           onClick:runAutoMatch,
           title:'적요·금액·날짜를 대조해 고신뢰 후보를 자동 선택합니다',
           style:{padding:'6px 14px',background:'#1d4ed8',color:'#fff',border:'none',borderRadius:'6px',fontSize:'12px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}
         },'🤖 자동 매칭'),
-        highReadyKeys.length>0 && h('button',{
+        ldTabEff==='inc' && highReadyKeys.length>0 && h('button',{
           onClick:async function(){
             if(!(await popConfirm('고신뢰 추천 '+highReadyKeys.length+'건을 입금확정합니다.'))) return;
             var ok=0, ng=0, done=[];
@@ -27001,27 +27267,27 @@ function FinanceLedger(){
               if(highReadyKeys.indexOf(row._k)<0) return;
               var pItem=pending.find(function(p){return p.id===inMatch[row._k];});
               if(!pItem){ng++;return;}
-              try{ saveIncome(row,pItem); ok++; done.push(row._k); }catch(_e){ ng++; }
+              try{ saveIncome(row,pItem); erpLearnPayerAlias(row.memo||row.note||'', pItem); ok++; done.push(row._k); }catch(_e){ ng++; }
             });
             done.forEach(function(k){removeRow(k,'inc');});
             showToast('✅ 고신뢰 확정 '+ok+'건'+(ng?' · 실패 '+ng+'건':''));
           },
           style:{padding:'6px 14px',background:'#15803d',color:'#fff',border:'none',borderRadius:'6px',fontSize:'12px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}
         },'✅ 고신뢰 일괄 확정 ('+highReadyKeys.length+')'),
-        inMatchedCnt>0 && h('button',{
+        ldTabEff==='inc' && inMatchedCnt>0 && h('button',{
           onClick:async function(){
             if(!(await popConfirm('매칭된 입금 '+inMatchedCnt+'건을 일괄 확정합니다.'))) return;
             var done=[];
             rows.inc.forEach(function(row){
               var pItem=pending.find(function(p){return p.id===inMatch[row._k];});
-              if(pItem){saveIncome(row,pItem);done.push(row._k);}
+              if(pItem){saveIncome(row,pItem);erpLearnPayerAlias(row.memo||row.note||'', pItem);done.push(row._k);}
             });
             done.forEach(function(k){removeRow(k,'inc');});
             showToast('✅ 입금 '+done.length+'건 확정');
           },
           style:{padding:'6px 14px',background:'#16a34a',color:'#fff',border:'none',borderRadius:'6px',fontSize:'12px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}
         },'✅ 입금 '+inMatchedCnt+'건 전체확정'),
-        expReadyCnt>0 && h('button',{
+        ldTabEff==='exp' && expReadyCnt>0 && h('button',{
           onClick:async function(){
             if(!(await popConfirm('카테고리 선택된 출금 '+expReadyCnt+'건을 등록합니다.'))) return;
             var done=[];
@@ -27035,8 +27301,8 @@ function FinanceLedger(){
         },'💸 출금 '+expReadyCnt+'건 전체등록')
       ),
 
-      // ── 입금 테이블 ──
-      rows.inc.length>0 && h('div',{style:{marginBottom:'16px'}},
+      // ── 입금 테이블 (입금 탭에서만 렌더) ──
+      ldTabEff==='inc' && rows.inc.length>0 && h('div',{style:{marginBottom:'16px'}},
         h('div',{style:{fontWeight:700,fontSize:'12px',color:'#16a34a',marginBottom:'6px',padding:'4px 10px',background:'#f0fdf4',borderRadius:'5px',display:'flex',alignItems:'center',gap:'8px'}},
           '💰 입금 내역 — 미입금 항목과 매칭 후 확정'),
         h('div',{style:{overflowX:'auto'}},
@@ -27107,8 +27373,10 @@ function FinanceLedger(){
                   pItem
                     ? h('button',{onClick:async function(){
                         if(!(await popConfirm(pItem.companyName+' '+row.amount.toLocaleString()+'원 입금확정'))) return;
-                        saveIncome(row,pItem); removeRow(row._k,'inc');
-                        showToast('✅ 입금확정');
+                        saveIncome(row,pItem);
+                        var _learned = erpLearnPayerAlias(row.memo||row.note||'', pItem);
+                        removeRow(row._k,'inc');
+                        showToast(_learned ? '✅ 입금확정 · 입금자 별칭 학습됨' : '✅ 입금확정');
                       },style:{padding:'4px 10px',background:'#16a34a',color:'#fff',border:'none',borderRadius:'5px',fontSize:'11px',fontWeight:700,cursor:'pointer'}},'✅ 확정')
                     : h('span',{style:{fontSize:'10px',color:'#94a3b8'}},'선택 필요'),
                   ' ',
@@ -27121,8 +27389,8 @@ function FinanceLedger(){
         )
       ),
 
-      // ── 출금 테이블 ──
-      rows.exp.length>0 && h('div',null,
+      // ── 출금 테이블 (출금 탭에서만 렌더) ──
+      ldTabEff==='exp' && rows.exp.length>0 && h('div',null,
         h('div',{style:{fontWeight:700,fontSize:'12px',color:'#92400e',marginBottom:'6px',padding:'4px 10px',background:'#fef3c7',borderRadius:'5px'}},
           '💸 출금 내역 — 카테고리 선택 후 출금관리 등록'),
         h('div',{style:{overflowX:'auto'}},
@@ -29016,7 +29284,10 @@ function IncomeCompanyTab(){
 
   // ── 🤖 통장내역(거래내역 저장분)으로 자동 입금표시 후보 찾기 ──
   function openAutoMark(){
-    var txns = dbGet(TXN_KEY, []) || [];
+    // 거래내역 화면에 업로드해 둔 초안(bank_ledger_draft)을 우선 사용 — 없으면 저장된 거래내역(bank_txn)
+    var draft = dbGet(BANK_DRAFT_KEY, null);
+    var draftRows = (draft && draft.rows && draft.rows.length) ? draft.rows : null;
+    var txns = draftRows || (dbGet(TXN_KEY, []) || []);
     var incTxns = txns.filter(function(t){ return t && t.type==='income'; });
     if(!incTxns.length){
       showToast('⚠️ 저장된 거래내역이 없습니다 — 입출금관리 ▸ 거래내역에서 통장 엑셀을 먼저 업로드하세요');
@@ -43197,6 +43468,10 @@ function ProjectEditModal(props){
             h('div', { style:{ display:'flex', gap:'6px' } },
               h(KoreanDatePicker, { value:f.startDate || f.estDate || '', onChange:setStartDate, style:{ flex:1 } }),
               h(KoreanDatePicker, { value:f.endDate || '', onChange:set('endDate'), style:{ flex:1 } }))),
+          // 입금자(예금주) — 통장 적요가 업체명과 다를 때 입력 (거래내역 자동매칭에 사용)
+          h('div', { className:'fld' }, h('label', null, '입금자(예금주)'),
+            h('input', { type:'text', value:f.payerName || '', onChange:set('payerName'),
+              placeholder:'업체명과 다르게 입금될 때만 입력 (예: 모회사·협회·대표자 개인)' })),
           h('div', { className:'fld' }, h('label', null, '계약금'),
             h('div', { style:{ display:'flex', alignItems:'center', gap:'8px' } },
               h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
@@ -43251,13 +43526,14 @@ function ProjectDetailModal(props){
       ['기간', (f.startDate || f.estDate || '-') + ' ~ ' + (f.endDate || '-')],
       ['계약금', h('span', { style:{ fontFamily:'monospace', fontWeight:700, color:'#059669' } }, (f.contractFee||0).toLocaleString() + '원')],
       ['잔금', h('span', { style:{ fontFamily:'monospace', fontWeight:700, color:'#059669' } }, (f.balanceFee||0).toLocaleString() + '원')],
+      f.payerName ? ['입금자', h('span', { style:{ fontWeight:700, color:'#1d4ed8' } }, f.payerName)] : null,
       ['상태', h('span', {
         style:{
           background: f.status === 'closed' ? '#dcfce7' : f.status === 'progress' ? '#dbeafe' : '#fef9c3',
           color: f.status === 'closed' ? '#166534' : f.status === 'progress' ? '#1e40af' : '#854d0e',
           fontSize:'11px', padding:'2px 8px', borderRadius:'4px', fontWeight:700
         } }, f.status === 'closed' ? '종료' : f.status === 'progress' ? '진행중' : '대기')]
-    ]
+    ].filter(function(x){ return x; })
   };
   return h(UnifiedDetailModal, {
     cur: f,
