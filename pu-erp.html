@@ -2307,10 +2307,11 @@ function serverBackupDaily(force){
     })
     .then(function(s){
       if(!s) return;
-      var dates = Object.keys(s.val() || {}).sort(); // YYYY-MM-DD는 사전순=시간순
-      if(dates.length > 30){
+      var dates = Object.keys(s.val() || {}).sort(); // YYYY-MM-DD(-pm)는 사전순=시간순
+      // 아침+저녁 하루 2회 체계 → 60개 보관 = 약 30일치
+      if(dates.length > 60){
         var updates = {};
-        dates.slice(0, dates.length - 30).forEach(function(dd){ updates['serverBackups/'+dd] = null; updates['serverBackupsIndex/'+dd] = null; });
+        dates.slice(0, dates.length - 60).forEach(function(dd){ updates['serverBackups/'+dd] = null; updates['serverBackupsIndex/'+dd] = null; });
         return fbDb.ref().update(updates);
       }
     })
@@ -2358,8 +2359,36 @@ function startRecentBackupTimer(){
   // [보안규칙 대비] 수시 백업도 관리자·위임관리인 기기에서만 (불완전 백업 방지)
   if(!(CURRENT_USER && (CURRENT_USER.isAdmin || CURRENT_USER.isSubAdmin))) return;
   window._recentBackupTimer = setInterval(serverBackupRecent, RECENT_BACKUP_INTERVAL_MIN * 60 * 1000);
+  // 저녁 백업 체크도 함께 시작 (10분 간격) + 즉시 1회
+  if(!window._pmBackupTimer){
+    window._pmBackupTimer = setInterval(serverBackupEvening, 10 * 60 * 1000);
+    try { serverBackupEvening(); } catch(_){}
+  }
 }
 window.erpRecentBackupNow = function(){ serverBackupRecent(); console.log('수시 백업 시도'); };
+
+// ── 저녁 자동백업: 17시 이후 하루 1회, serverBackups/{YYYY-MM-DD}-pm 에 저장 ──
+//    아침(접속 시 일간 백업) + 저녁 2회 체계로 하루 데이터가 통째로 보존된다.
+//    앱이 열려 있어야 동작(웹앱 특성) — 관리자 기기 어느 하나라도 켜져 있으면 기록됨.
+function serverBackupEvening(){
+  try {
+    if(typeof fbDb === 'undefined' || !fbDb) return;
+    if(!(CURRENT_USER && (CURRENT_USER.isAdmin || CURRENT_USER.isSubAdmin))) return;
+    var now = new Date();
+    if(now.getHours() < 17) return;                       // 저녁 17시 이후에만
+    var ymd = now.toLocaleDateString('sv-SE');
+    if(localStorage.getItem('pureun_v6_last_server_backup_pm') === ymd) return;   // 하루 1회
+    var snap = buildBackupSnapshot();
+    var hasData = SERVER_BACKUP_KEYS.some(function(k){ return Array.isArray(snap.data[k]) && snap.data[k].length > 0; });
+    if(!hasData) return;
+    var key = ymd + '-pm';
+    var w = {}; w['serverBackups/' + key] = snap; w['serverBackupsIndex/' + key] = { savedAt:snap.savedAt, summary:_snapSummary(snap.data) };
+    fbDb.ref().update(w).then(function(){
+      localStorage.setItem('pureun_v6_last_server_backup_pm', ymd);
+      console.log('[ERP] 서버 저녁백업 저장: ' + key);
+    }).catch(function(e){ window._erpErrLog && window._erpErrLog(e); });
+  } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+}
 
 // ── 유실 데이터 검사·선택 복원 (동기화 오류로 조용히 사라진 레코드 회수) ──
 //    서버 백업 보관함(serverBackups·serverBackupsRecent)과 현재 데이터를 id로 비교해
@@ -2738,6 +2767,66 @@ window.erpDataForensicsLog = async function(keyword){
   catch(e){ console.error('[ERP 포렌식] 실패', e); return null; }
   return rep;
 };
+
+// ── 이 기기에만 있는 데이터 → 서버 안전 업로드 (추가 전용 병합) ──
+//    폰 등 한 기기의 저장이 서버에 도달하지 못해 "폰엔 보이는데 PC엔 없는" 상태를 복구.
+//    id 기준으로 서버에 없는 레코드만 트랜잭션으로 얹는다 — 서버의 기존 레코드는 절대 수정·삭제하지 않음.
+async function erpPushLocalOnly(){
+  var out = { pushed:{}, total:0, skipped:[], error:null };
+  if(typeof fbDb === 'undefined' || !fbDb){ out.error = 'Firebase 미연결'; return out; }
+  for(var si = 0; si < LOST_SCAN_STORES.length; si++){
+    var store = LOST_SCAN_STORES[si];
+    try {
+      var local = (dbGet(store, []) || []).filter(function(x){ return x && x.id && x._deleted !== true; });
+      if(!local.length) continue;
+      var snap = await fbDb.ref('data/' + store).once('value');
+      var sval = snap.val();
+      var srvArr = (sval && sval.v !== undefined) ? normalizeFbValue(sval.v) : [];
+      if(!Array.isArray(srvArr)){ out.skipped.push(store + ':서버형태불명'); continue; }
+      var srvIds = {}; srvArr.forEach(function(x){ if(x && x.id) srvIds[x.id] = 1; });
+      var missing = local.filter(function(x){ return !srvIds[x.id]; });
+      if(!missing.length) continue;
+      // 원자적 병합: 트랜잭션 안에서 다시 확인하고 없는 것만 추가 (기존 항목 무수정)
+      var _res = await new Promise(function(resolve){
+        fbDb.ref('data/' + store).transaction(function(cur){
+          var curArr = [];
+          if(cur && cur.v !== undefined){
+            try { curArr = normalizeFbValue(cur.v); } catch(_e){ return; }
+          }
+          if(!Array.isArray(curArr)) return;                                  // 형태 불명 → 중단
+          var have = {}; curArr.forEach(function(x){ if(x && x.id) have[x.id] = 1; });
+          var add = missing.filter(function(x){ return !have[x.id]; });
+          if(!add.length) return;                                             // 이미 다 있음 → 중단(변경 없음)
+          var merged = curArr.concat(add);
+          var newTs = Math.max(((cur && typeof cur.u === 'number') ? cur.u : 0) + 1, Date.now());
+          var outV = (typeof DIFF_KEYS !== 'undefined' && DIFF_KEYS.indexOf(store) >= 0 && merged.every(function(x){ return x && x.id; })) ? arrayToIdMap(merged) : merged;
+          return { v: outV, u: newTs };
+        }, function(err, committed, snap2){
+          if(err){ resolve({ ok:false, err:err }); return; }
+          resolve({ ok:!!committed, snap:snap2 });
+        });
+      });
+      if(_res.ok && _res.snap){
+        var fin = _res.snap.val() || {};
+        var finArr = normalizeFbValue(fin.v);
+        // 로컬도 서버 확정본으로 정렬 + meta 갱신 (즉시 재充돌 방지)
+        try {
+          localStorage.setItem(KEY + store, JSON.stringify(finArr));
+          localStorage.setItem(KEY + '_meta_' + store, String(typeof fin.u === 'number' ? fin.u : Date.now()));
+          _dbCache[store] = finArr;
+          if(typeof _scheduleFbChanged === 'function') _scheduleFbChanged(store);
+        } catch(_){}
+        out.pushed[store] = missing.length;
+        out.total += missing.length;
+      } else if(!_res.ok && _res.err){
+        out.skipped.push(store + ':' + (_res.err.message || '트랜잭션 실패'));
+      }
+    } catch(e){ out.skipped.push(store + ':' + (e && e.message || '오류')); }
+  }
+  console.log('[ERP] 기기→서버 업로드 결과', out);
+  return out;
+}
+window.erpPushLocalOnly = erpPushLocalOnly;
 
 // ── 서버에서 강제로 받아오기 (읽기 전용, _meta 무시) — 콘솔: erpPullFromServer() / 환경설정 버튼 ──
 window.erpPullFromServer = function(){
@@ -24620,6 +24709,23 @@ function LostRecordsModal(props){
   var ks = useState(''); var kw = ks[0]; var setKw = ks[1];
   var bo = useState(false); var bkOpen = bo[0]; var setBkOpen = bo[1];
   var rk = useState(''); var rowBusy = rk[0]; var setRowBusy = rk[1];
+  var pu = useState(false); var pushBusy = pu[0]; var setPushBusy = pu[1];
+  async function runPushLocalOnly(){
+    if(pushBusy) return;
+    if(!(await popConfirm('이 기기에만 있는(서버에 없는) 데이터를 서버로 올립니다.\n\n→ 추가만 합니다 — 서버의 기존 데이터는 수정·삭제하지 않음\n→ 다른 PC들은 새로고침하면 받아집니다\n\n진행할까요?'))) return;
+    setPushBusy(true);
+    try {
+      var r = await erpPushLocalOnly();
+      if(r.error){ showToast('❌ ' + r.error); }
+      else if(r.total === 0){ showToast('이 기기에만 있는 데이터가 없습니다 (서버와 일치)'); }
+      else {
+        var parts = Object.keys(r.pushed).map(function(s){ return (LOST_STORE_LABELS[s]||s) + ' ' + r.pushed[s]; });
+        showToast('📤 서버로 올림: ' + r.total + '건 (' + parts.join(' · ') + ')' + (r.skipped.length ? ' / 건너뜀 ' + r.skipped.length : ''));
+      }
+      runForensics(kw);
+    } catch(e){ showToast('❌ 업로드 실패: ' + (e && e.message || '')); }
+    setPushBusy(false);
+  }
   var users = getActiveUsers();
   function userName(sid){ var u=users.find(function(x){return x.sid===sid;}); return u?u.name:sid||'-'; }
 
@@ -24741,7 +24847,14 @@ function LostRecordsModal(props){
                   );
                 })
               )
-            )
+            ),
+        // 이 기기에만 있는 데이터 서버 업로드 (폰에는 보이는데 PC에는 없을 때 → 폰에서 이 버튼)
+        h('div', { style:{marginTop:'8px',display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'} },
+          h('button', { onClick:runPushLocalOnly, disabled:pushBusy,
+            style:{padding:'6px 14px',background:pushBusy?'#f1f5f9':'#1e40af',color:pushBusy?'#94a3b8':'#fff',border:'none',borderRadius:'6px',fontSize:'12px',fontWeight:700,cursor:pushBusy?'default':'pointer'} },
+            pushBusy ? '업로드 중…' : '📤 이 기기에만 있는 데이터 서버로 올리기'),
+          h('span', { style:{fontSize:'10.5px',color:'#64748b'} }, '추가 전용 — 서버 기존 데이터는 수정·삭제하지 않음. 폰에만 보이는 데이터가 있으면 그 폰에서 실행하세요.')
+        )
       ),
 
       // ── ② 키워드 전수 검색 (로컬·서버·백업·휴지통) ──
