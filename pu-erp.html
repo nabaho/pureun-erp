@@ -8513,14 +8513,19 @@ function ContractModal(props){
       f._restoredFromDraft != null && h('div', {
         style:{ margin:'10px 16px 0', padding:'8px 12px', background:'#fef3c7', border:'1px solid #fde68a', borderRadius:'6px', display:'flex', alignItems:'center', justifyContent:'space-between', gap:'10px', fontSize:'11.5px' } },
         h('div', { style:{ color:'#92400e', fontWeight:600 } },
-          '📋 임시저장 자동 복원됨 (' + f._restoredFromDraft + '분 전' + (props.cur ? ' · 수정 중 저장본' : '') + ')'),
+          '📋 이전 작성분 복원됨 (' + f._restoredFromDraft + '분 전' + (props.cur ? ' · 수정 중 저장본' : '') + ')',
+          // 복원된 종류를 명시 — 새 계약인데 예전 종류가 섞여있으면 바로 알아채도록
+          (f.kinds && f.kinds.length) ? h('span', { style:{ marginLeft:'6px', fontWeight:700, color:'#b45309' } },
+            '· 종류: ' + f.kinds.map(function(v){ return kindInfo(v).label; }).join(', ')) : null,
+          !props.cur ? h('span', { style:{ display:'block', color:'#a16207', fontWeight:500, marginTop:'2px' } },
+            '새 계약을 시작하려면 [🆕 새로 시작]을 누르세요 (종류가 이전 값으로 남아있을 수 있습니다)') : null),
         h('button', { onClick:function(){
             try{ localStorage.removeItem(DRAFT_KEY); }catch(_e){}
             setF(init);
-            showToast('🗑 임시저장 삭제 — 원래 데이터로');
+            showToast(props.cur ? '🗑 임시저장 삭제 — 원래 데이터로' : '🆕 새 계약으로 초기화');
           },
-          style:{ padding:'3px 10px', background:'#fff', color:'#92400e', border:'1px solid #fde68a', borderRadius:'4px', cursor:'pointer', fontSize:'10.5px', fontWeight:700 } },
-          '🗑 원래대로')
+          style:{ padding:'3px 10px', background:'#fff', color:'#92400e', border:'1px solid #fde68a', borderRadius:'4px', cursor:'pointer', fontSize:'10.5px', fontWeight:700, flexShrink:0 } },
+          props.cur ? '🗑 원래대로' : '🆕 새로 시작')
       ),
       // ── 자동저장 상태 표시 (저장된 경우만)
       autoSaveStatus && f._restoredFromDraft == null && h('div', {
@@ -8728,7 +8733,10 @@ function ContractModal(props){
 // contract.kinds 배열을 돌면서 각 종류별로 데이터 생성
 // 반환: [{type, no, id}, ...] 결과 배열
 function transferContract(contract){
-  var kinds = contract.kinds || (contract.kind ? [contract.kind] : []);
+  var kinds = (contract.kinds && contract.kinds.length) ? contract.kinds.slice() : (contract.kind ? [contract.kind] : []);
+  // [버그방지] 임시저장 누수로 섞인 종류가 이중 생성되던 문제 — 알수없는/중복 종류 제거
+  var _VALID_KINDS = CONTRACT_KINDS.map(function(x){ return x.v; });
+  kinds = kinds.filter(function(v, i){ return _VALID_KINDS.indexOf(v) >= 0 && kinds.indexOf(v) === i; });
   var results = [];
   var typeCodes = contract.typeCodes || {};
   var amounts = contract.amounts || {};
@@ -9271,7 +9279,10 @@ function ContractManagement(){
   async function doTransfer(id){
     var ct = contracts.find(function(x){return x.id===id;});
     if(!ct) return;
-    var kindsList = ct.kinds || (ct.kind ? [ct.kind] : []);
+    var kindsList = (ct.kinds && ct.kinds.length) ? ct.kinds.slice() : (ct.kind ? [ct.kind] : []);
+    // [버그방지] 알수없는/중복 종류 제거 (임시저장 누수 대비)
+    var _VK = CONTRACT_KINDS.map(function(x){ return x.v; });
+    kindsList = kindsList.filter(function(v,i){ return _VK.indexOf(v)>=0 && kindsList.indexOf(v)===i; });
     if(kindsList.length === 0){ showToast('계약유형 없음'); return; }
     var labels = kindsList.map(function(v){ var k = kindInfo(v); return k.icon + ' ' + k.label; }).join(', ');
     // 중복검사: 이 계약이 실제 이관될 대상 모듈만 검사 (타 모듈 잔여 레코드로 인한 오차단 방지)
