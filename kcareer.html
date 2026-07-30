@@ -1253,7 +1253,19 @@ const LS={
 /* ===== 코어: 데이터 계층 ===== */
 const NS='cm3_';
 const SEED = window.__SEED__ || {};
-const RHWP_STUDIO_URL = LS.get(NS+'rhwp_url') || 'https://nabaho.github.io/rhwp-studio/';
+/* 포털 공용 설정(data/app_config) — 대표가 포털 ⚙설정에서 한 번 넣으면 모든 앱이 함께 쓴다.
+   이 기기에 직접 넣은 값이 있으면 그쪽이 우선. 값은 로그인 후 비동기로 채워지므로
+   상수가 아니라 함수로 읽는다. */
+var PU_CFG = {};
+function puCfgLoad(){
+  try{
+    if(typeof fbDb==='undefined' || !fbDb) return;
+    fbDb.ref('data/app_config').once('value')
+      .then(function(s){ PU_CFG = s.val() || {}; })
+      .catch(function(){});   /* 권한·네트워크 실패해도 기존 동작 유지 */
+  }catch(e){}
+}
+function rhwpStudioUrl(){ return LS.get(NS+'rhwp_url') || PU_CFG.rhwpStudioUrl || 'https://nabaho.github.io/rhwp-studio/'; }
 
 /* ===== 내장 HWP/HWPX 편집기 (외부 의존성 없음) ===== */
 async function createEditor(containerSel, options={}){
@@ -1361,7 +1373,7 @@ async function createEditor(containerSel, options={}){
 }
 
 async function openHwpEditor(containerSel, buffer, name){
-  _rhwp = await createEditor(containerSel, { studioUrl: RHWP_STUDIO_URL });
+  _rhwp = await createEditor(containerSel, { studioUrl: rhwpStudioUrl() });
   if(buffer) await _rhwp.loadFile(buffer, name||'document.hwpx');
 }
 function get(key){
@@ -3420,7 +3432,7 @@ function bindCareer(){ Object.keys(CAREER_CFG).forEach(name=>{ const sec=documen
 /* ===== OCR 자동등록 (기존 이식) ===== */
 function getApiKey(){ return LS.get(NS+'api_key')||''; }
 function getGVisionKey(){ return LS.get(NS+'gvision_key')||''; }
-function getGeminiKey(){ return LS.get(NS+'gemini_key')||''; }
+function getGeminiKey(){ return LS.get(NS+'gemini_key') || PU_CFG.geminiKey || ''; }
 /* Gemini(무료) 멀티모달 OCR — 이미지/PDF를 직접 읽어 JSON 반환 */
 async function _geminiOCR(prompt,b64,mt){ var key=getGeminiKey(); if(!key) return null;
   try{ var body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mt,data:b64}}]}],generationConfig:{temperature:0,maxOutputTokens:1500}};
@@ -3606,7 +3618,7 @@ async function testApiConnection(){
   box.innerHTML=results.map(r=>`<div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--border)">${r}</div>`).join('');
 }
 function initApiTab(){ const gv=document.getElementById('apiGV'),an=document.getElementById('apiAN'),rh=document.getElementById('apiRH'),st=document.getElementById('apiStat'),gm=document.getElementById('apiGM'); if(!gv) return;
-  gv.value=LS.get(NS+'gvision_key')||''; an.value=LS.get(NS+'api_key')||''; rh.value=LS.get(NS+'rhwp_url')||RHWP_STUDIO_URL; if(gm) gm.value=LS.get(NS+'gemini_key')||'';
+  gv.value=LS.get(NS+'gvision_key')||''; an.value=LS.get(NS+'api_key')||''; rh.value=LS.get(NS+'rhwp_url')||rhwpStudioUrl(); if(gm) gm.value=LS.get(NS+'gemini_key')||'';
   // 로드 시 항상 마스킹 상태 유지
   gv.type='password'; an.type='password'; if(gm) gm.type='password';
   const badge=()=>st.textContent=((gm&&gm.value)?'🟢 Gemini(무료) 연동':an.value?'🟢 Claude 연동':gv.value?'🟡 Vision만':'🔴 미설정');
@@ -4418,7 +4430,7 @@ function _bootHold(){
 function fbInit(){ if(location.protocol==='file:') return; if(typeof firebase==='undefined'||!firebase.initializeApp) return;
   try{ if(!firebase.apps||!firebase.apps.length) firebase.initializeApp(FB_CONFIG);
     if(FB_APPCHECK_KEY && firebase.appCheck){ try{ firebase.appCheck().activate(new firebase.appCheck.ReCaptchaV3Provider(FB_APPCHECK_KEY), true); }catch(e){ console.warn('[AppCheck]',e&&e.message); } }
-    fbDb=firebase.database();
+    fbDb=firebase.database(); puCfgLoad();
     _bootHold(); /* 인증 확인 전: 잠금창 대신 스플래시 유지 (확인되면 authGate가 정리) */
     /* 통합시스템 자동로그인: 같은 주소의 다른 앱(포털·pu-erp)과 로그인 세션을 공유(LOCAL 지속).
        → 포털에서 로그인하면 경력관리도 자동 로그인되고, Firebase가 1시간짜리 토큰을 자동 갱신하므로
