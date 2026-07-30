@@ -4102,6 +4102,15 @@ function erpAliasCompany(memo){
   return st[key] || null;
 }
 
+// 적요 → 그 적요로 학습된 횟수 (모르는 적요면 0)
+// 정리 전/후 적요 모두 조회한다 (erpMatchScore의 별칭 조회와 같은 순서)
+function erpAliasCount(memo){
+  try {
+    var e = erpAliasCompany(memo) || erpAliasCompany(erpCleanMemo(memo));
+    return e ? (parseInt(e.count, 10) || 0) : 0;
+  } catch(e){ if(window._erpErrLog) window._erpErrLog(e); return 0; }
+}
+
 // 수동 매칭 확정 시 호출 — 적요와 업체명이 다르면 그 관계를 기억한다
 function erpLearnPayerAlias(memo, cand){
   try {
@@ -4447,6 +4456,260 @@ try {
   });
 } catch(_fpe){ }
 
+// ── 세금계산서 발행분 색인 ──
+// "계산서를 끊은 금액이 그대로 들어왔다"는 것은 적요가 엉뚱해도 그 업체가 맞다는 강한 신호다.
+// 발행분은 두 곳에 나뉘어 있다.
+//   1) finance_invoice (수동 발행분) — dbGet 동기 조회, 부가세 별도면 예상 입금 = 금액×1.1
+//   2) IndexedDB invoice_history (홈택스 매출 세금계산서 업로드분) — supply=공급가액, 예상 입금 = ×1.1
+//      비동기라 렌더를 막지 않고, 도착하면 색인에 합친 뒤 'pureun-invidx'로 알려 다시 그리게 한다.
+//   무효화: 'pureun-saved'(finance_invoice·finance_income) + 60초 TTL (금액지문과 동일 방침)
+var _erpInvByAmt  = null;   // { 예상입금액(원표기 금액도 함께): [entry] }
+var _erpInvByName = null;   // { erpNormName(업체명): [entry] }
+var _erpInvByBand = null;   // { Math.floor(금액/1000): [entry] } — ±1,100원 오차 조회용
+var _erpInvAt     = 0;
+var _erpInvWinC   = {};     // 금액+날짜 → 관문(60일) 통과 목록 캐시 (행×후보 재조회 O(1))
+var _erpInvMC     = {};     // 금액+날짜+업체명 → erpInvoiceMatch 결과 캐시 (다시 그릴 때 재계산 없음)
+var _erpInvAnyC   = {};     // 금액+날짜 → 90일 안 발행분 존재 여부 캐시
+var _erpInvArch   = null;   // 홈택스 아카이브 (IndexedDB에서 1회만 읽어 재사용)
+var _erpInvArchLoading = false;
+var INV_ARCH_MAX  = 20000;  // 이보다 많으면 최근 24개월분만 색인 (메모리·탐색량 상한)
+var INV_ARCH_MONTHS = 24;
+
+function erpResetInvoiceIndex(){
+  _erpInvByAmt = null; _erpInvByName = null; _erpInvByBand = null; _erpInvAt = 0;
+  _erpInvWinC = {}; _erpInvMC = {}; _erpInvAnyC = {};
+}
+
+// 홈택스 아카이브(비동기분)까지 색인에 들어왔는지 — 미발급 경고는 이게 true일 때만 낸다
+function erpInvoiceIndexReady(){ return !!_erpInvArch; }
+
+function _erpInvMonthsAgo(months){
+  var d = new Date();
+  d.setMonth(d.getMonth() - (parseInt(months, 10) || 0));
+  return d.toISOString().slice(0, 10);
+}
+
+// IndexedDB 아카이브 1회 로딩 (렌더 경로를 막지 않는다 — 도착하면 이벤트로 알린다)
+function _erpInvArchLoad(){
+  if(_erpInvArch || _erpInvArchLoading) return;
+  _erpInvArchLoading = true;
+  function done(arr, note){
+    _erpInvArch = arr || [];
+    _erpInvArchLoading = false;
+    erpResetInvoiceIndex();                       // 다음 조회 때 아카이브까지 합쳐 다시 만든다
+    if(note) console.info(note);
+    try { window.dispatchEvent(new CustomEvent('pureun-invidx', { detail:{ count:_erpInvArch.length } })); } catch(_de){ }
+  }
+  try {
+    idbGetAll('invoice_history').then(function(list){
+      var arr = Array.isArray(list) ? list : [];
+      var note = '';
+      if(arr.length > INV_ARCH_MAX){
+        var cut = _erpInvMonthsAgo(INV_ARCH_MONTHS);
+        var kept = arr.filter(function(r){ return r && String(r.date || '') >= cut; });
+        note = '[세금계산서 색인] 발행이력 ' + arr.length + '건 중 최근 ' + INV_ARCH_MONTHS + '개월 '
+             + kept.length + '건만 사용 (' + (arr.length - kept.length) + '건 제외)';
+        arr = kept;
+      }
+      done(arr, note);
+    })['catch'](function(err){
+      done([], '[세금계산서 색인] 발행이력을 읽지 못했습니다: ' + ((err && err.message) || err));
+    });
+  } catch(e){ done([], '[세금계산서 색인] 발행이력 조회 실패'); }
+}
+
+function _erpInvBuild(){
+  if(_erpInvByAmt && (Date.now() - _erpInvAt) < 60000) return;
+  _erpInvArchLoad();                              // 아직 안 읽었으면 여기서 시작 (기다리지 않는다)
+  var byAmt = {}, byName = {}, byBand = {};
+
+  // 이미 입금된 계산서 판정용 — 업체별 입금액 목록 (미수금관리와 같은 기준을 예상 입금액까지 확장)
+  var paidByName = {};
+  var incs = dbGet('finance_income', []) || [];
+  if(!Array.isArray(incs)) incs = [];
+  incs.forEach(function(i){
+    if(!i) return;
+    var nm = erpNormName(i.companyName);
+    if(!nm) return;
+    var a = parseInt(i.amount, 10) || 0;
+    if(a <= 0) return;
+    if(!paidByName[nm]) paidByName[nm] = [];
+    paidByName[nm].push(a);
+  });
+
+  function put(map, k, e){ if(!map[k]) map[k] = []; map[k].push(e); }
+  function add(e){
+    if(!e || !(e.expect > 0)) return;
+    var nm = erpNormName(e.company);
+    e.nkey = nm;
+    var lst = nm ? paidByName[nm] : null;
+    e.paid = !!(lst && lst.some(function(a){
+      return Math.abs(a - e.expect) < 100 || Math.abs(a - e.amount) < 100;
+    }));
+    put(byAmt, e.expect, e);
+    put(byBand, Math.floor(e.expect / 1000), e);
+    if(e.amount !== e.expect){                    // 원표기 금액(공급가액·부가세포함액)으로도 찾히게
+      put(byAmt, e.amount, e);
+      put(byBand, Math.floor(e.amount / 1000), e);
+    }
+    if(nm) put(byName, nm, e);
+  }
+
+  // 1) 수동 발행분 (동기) — 부가세 별도면 실제 입금은 ×1.1
+  var ivs = dbGet('finance_invoice', []) || [];
+  if(!Array.isArray(ivs)) ivs = [];
+  ivs.forEach(function(iv){
+    if(!iv) return;
+    if(iv.status && iv.status !== '발행') return;
+    var amt = parseInt(iv.amount, 10) || 0;
+    if(amt <= 0) return;
+    var exp = (iv.vatType === 'separate' || iv.vatType === 'exclusive') ? Math.round(amt * 1.1) : amt;
+    add({ company:String(iv.companyName || ''), date:String(iv.issueDate || '').slice(0, 10),
+          amount:amt, expect:exp, source:'manual', item:String(iv.itemName || iv.note || '') });
+  });
+
+  // 2) 홈택스 업로드분 (아카이브) — supply=공급가액이므로 예상 입금은 항상 ×1.1
+  (_erpInvArch || []).forEach(function(r){
+    if(!r) return;
+    var sup = parseInt(r.supply, 10) || 0;
+    if(sup <= 0) return;
+    add({ company:String(r.company || ''), date:String(r.date || '').slice(0, 10),
+          amount:sup, expect:Math.round(sup * 1.1), source:'hometax', item:String(r.item || '') });
+  });
+
+  _erpInvByAmt = byAmt; _erpInvByName = byName; _erpInvByBand = byBand;
+  _erpInvWinC = {}; _erpInvMC = {}; _erpInvAnyC = {}; _erpInvAt = Date.now();
+}
+
+// 발급일 → 입금일 경과일수 (모르면 null, 음수면 발급이 입금보다 나중)
+function _erpInvGap(issueDate, txnDate){
+  var d1 = String(issueDate || '').slice(0, 10), d2 = String(txnDate || '').slice(0, 10);
+  if(d1.length < 8 || d2.length < 8) return null;
+  var t1 = new Date(d1).getTime(), t2 = new Date(d2).getTime();
+  if(isNaN(t1) || isNaN(t2)) return null;
+  return Math.round((t2 - t1) / 86400000);
+}
+
+// 금액으로 후보 뽑기 — 정확일치 버킷이 있으면 그것만(O(1)), 없을 때만 ±1,100원 밴드 3~4칸
+var INV_BAND_SCAN_MAX = 60;
+function _erpInvCands(tAmt){
+  var hit = _erpInvByAmt[tAmt];
+  if(hit && hit.length) return hit;
+  var res = [];
+  var b0 = Math.floor((tAmt - 1100) / 1000), b1 = Math.floor((tAmt + 1100) / 1000);
+  for(var b = b0; b <= b1; b++){
+    var arr = _erpInvByBand[b];
+    if(!arr) continue;
+    for(var i = 0; i < arr.length; i++){
+      var e = arr[i];
+      if(Math.abs(e.expect - tAmt) <= 1100 || Math.abs(e.amount - tAmt) <= 1100){
+        if(res.indexOf(e) < 0) res.push(e);
+        if(res.length >= INV_BAND_SCAN_MAX) return res;
+      }
+    }
+  }
+  return res;
+}
+
+// 금액+날짜 관문(발급 ≤ 입금, 60일 이내)을 통과한 발행분 — 금액+날짜 단위로 캐시해 후보마다 재계산하지 않는다
+function _erpInvWindow(tAmt, tDate){
+  var ck = tAmt + '|' + tDate;
+  if(_erpInvWinC.hasOwnProperty(ck)) return _erpInvWinC[ck];
+  var out = [];
+  _erpInvCands(tAmt).forEach(function(e){
+    var gap = _erpInvGap(e.date, tDate);
+    if(gap === null || gap < 0 || gap > 60) return;
+    out.push({ e:e, gap:gap, exact:(e.expect === tAmt || e.amount === tAmt) });
+  });
+  out.sort(function(a, b){
+    if(a.exact !== b.exact) return a.exact ? -1 : 1;
+    return a.gap - b.gap;
+  });
+  _erpInvWinC[ck] = out;
+  return out;
+}
+
+// txn={date,amount} + (선택)업체명 → 가장 잘 맞는 미입금 발행분 {entry, score, why} (없으면 null)
+// score: 금액 정확일치 100 · ±1,100원 85
+// 같은 (금액·날짜·업체명) 조회는 결과를 기억한다 — 체크박스 토글 등으로 다시 그릴 때 공짜가 된다
+var INV_NAME_SCAN_MAX = 40;      // 이름 대조는 관문 통과분 앞쪽 40건까지 (정확일치·최근 발급 순으로 정렬돼 있다)
+function erpInvoiceMatch(txn, candCompanyName){
+  try {
+    txn = txn || {};
+    var tAmt = parseInt(txn.amount, 10) || 0;
+    if(tAmt <= 0) return null;
+    _erpInvBuild();
+    var tDate = String(txn.date || '').slice(0, 10);
+    var nkey = candCompanyName ? erpNormName(candCompanyName) : '';
+    var mk = tAmt + '|' + tDate + '|' + nkey;
+    if(_erpInvMC.hasOwnProperty(mk)) return _erpInvMC[mk];
+    var win = _erpInvWindow(tAmt, tDate);
+    var hit = null;
+    var lim = Math.min(win.length, INV_NAME_SCAN_MAX);
+    for(var i = 0; i < lim; i++){
+      var w = win[i], e = w.e;
+      if(e.paid) continue;                                     // 이미 입금된 계산서는 후보에서 제외
+      if(nkey){
+        if(!e.nkey) continue;
+        if(_erpNameCmp(nkey, e.nkey).score < 85) continue;
+      }
+      hit = { entry:e, score:(w.exact ? 100 : 85), gap:w.gap,
+              why:'🧾 세금계산서 일치 (' + e.date + ')' };
+      break;
+    }
+    _erpInvMC[mk] = hit;
+    return hit;
+  } catch(e){ if(window._erpErrLog) window._erpErrLog(e); return null; }
+}
+
+// 업체명을 따지지 않고 금액·기간만으로 미입금 발행분 후보 목록 (미입금 항목에 고신뢰 추천이 없는 행용)
+function erpInvoiceSuggest(txn, limit){
+  var out = [];
+  try {
+    txn = txn || {};
+    var tAmt = parseInt(txn.amount, 10) || 0;
+    if(tAmt <= 0) return out;
+    _erpInvBuild();
+    var win = _erpInvWindow(tAmt, String(txn.date || '').slice(0, 10));
+    var lim = parseInt(limit, 10) || 3;
+    for(var i = 0; i < win.length && out.length < lim; i++){
+      if(win[i].e.paid) continue;                              // 이미 입금된 계산서 제외
+      out.push({ entry:win[i].e, score:(win[i].exact ? 100 : 85), gap:win[i].gap });
+    }
+  } catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+  return out;
+}
+
+// 그 금액의 발행분이 90일 안에 하나라도 있는지 (입금 여부 무관) — '계산서 미발급?' 경고 판정용
+function erpInvoiceAny(txn){
+  try {
+    txn = txn || {};
+    var tAmt = parseInt(txn.amount, 10) || 0;
+    if(tAmt <= 0) return null;
+    _erpInvBuild();
+    var tDate = String(txn.date || '').slice(0, 10);
+    var ck = tAmt + '|' + tDate;
+    if(_erpInvAnyC.hasOwnProperty(ck)) return _erpInvAnyC[ck];
+    var found = null;
+    var cands = _erpInvCands(tAmt);
+    for(var i = 0; i < cands.length; i++){
+      var gap = _erpInvGap(cands[i].date, tDate);
+      if(gap === null || gap < 0 || gap > 90) continue;
+      found = cands[i]; break;
+    }
+    _erpInvAnyC[ck] = found;
+    return found;
+  } catch(e){ if(window._erpErrLog) window._erpErrLog(e); return null; }
+}
+
+// finance_invoice·finance_income이 바뀌면 색인을 버린다 (아카이브 캐시는 그대로 재사용)
+try {
+  window.addEventListener('pureun-saved', function(ev){
+    var k = ev && ev.detail && ev.detail.key;
+    if(k === 'finance_invoice' || k === 'finance_income') erpResetInvoiceIndex();
+  });
+} catch(_ive){ }
+
 // ── 합산 입금 조합 탐색 (여러 건을 한 번에 입금) ──
 // txn 1건 = 미입금 2~maxItems건의 합계일 때 조합을 찾는다. 탐색량은 후보 40건·2만회로 못박아 멈추지 않는 일이 없게 한다.
 function erpFindCombo(txn, pendingArr, maxItems){
@@ -4640,6 +4903,17 @@ function erpMatchScore(txn, cand){
     (_fp.reasons || []).forEach(function(rs){ if(rs) reasons.push(rs); });
   }
 
+  // ── 세금계산서 발행분 대조 — 이름 대체 신호 (금액지문과 같은 방식으로 접어 넣는다) ──
+  // 색인은 금액 해시라 후보 1건당 O(1) 조회 (금액+날짜 단위 캐시)
+  var _inv = null;
+  try { _inv = erpInvoiceMatch(txn, cand.companyName); } catch(_ie){ _inv = null; }
+  var _invScore = (_inv && _inv.score) || 0;
+  if(_inv){
+    var _invName = Math.round(_invScore * 0.9);
+    if(_invName > effNameScore) effNameScore = _invName;
+    reasons.push(_inv.why);
+  }
+
   // ── 날짜 점수 (없으면 중립 50) ──
   var it = cand.item || {};
   var expDate = it.receiveDate || it.startDate || it.estDate || it.contractDate || '';
@@ -4658,26 +4932,66 @@ function erpMatchScore(txn, cand){
 
   var total = Math.round(amountScore*0.55 + effNameScore*0.35 + dateScore*0.10);
   // 금액이 전혀 안 맞고 이름도 확실하지 않으면 추천하지 않음
-  // (단, 금액지문 90점 이상이면 '금액+이력'만으로도 신원이 확인되므로 예외)
-  if(amountScore === 0 && nameScore < 85 && !(_fp && _fp.score >= 90)) total = 0;
+  // (단, 금액지문 90점 이상이면 '금액+이력'만으로도 신원이 확인되므로 예외 — 세금계산서 일치도 동일)
+  if(amountScore === 0 && nameScore < 85 && !(_fp && _fp.score >= 90) && !(_invScore >= 90)) total = 0;
+  // 발행한 세금계산서와 업체·금액이 정확히 맞으면 고신뢰로 본다 —
+  // 통계적 패턴(금액지문)이 아니라 실제 발행 문서이므로 적요가 무의미해도(dateScore가 끌어내려도) 신원이 확정된다
+  if(total > 0 && _invScore >= 100 && total < 90) total = 90;
   var level = total >= 90 ? 'high' : total >= 70 ? 'mid' : total >= 50 ? 'low' : 'none';
 
   return { score:total, reasons:reasons, amountKind:amountKind, level:level,
            amountScore:amountScore, nameScore:nameScore, dateScore:dateScore,
-           effNameScore:effNameScore, fpScore:(_fp && _fp.score) || 0 };
+           effNameScore:effNameScore, fpScore:(_fp && _fp.score) || 0,
+           invScore:_invScore };
 }
 
 // 한 건의 거래내역에 대한 상위 후보 목록
 function erpMatchTxnToPending(txn, pendingArr, limit){
   var lim = limit || 3;
   var out = [];
+  var tAmt = parseInt(txn && txn.amount, 10) || 0;
   (pendingArr || []).forEach(function(cand){
     var r = erpMatchScore(txn, cand);
     if(r.score > 0) out.push({ cand:cand, score:r.score, reasons:r.reasons, level:r.level,
-                               amountScore:r.amountScore, nameScore:r.nameScore });
+                               amountScore:r.amountScore, nameScore:r.nameScore,
+                               txnAmount:tAmt });
   });
   out.sort(function(a,b){ return b.score - a.score; });
   return out.slice(0, lim);
+}
+
+// ── 자동 정리(1클릭 승인) 3중 관문 ──
+// ① 학습 3회 이상 · ② 금액 완전일치 또는 부가세 ×1.1 · ③ 신뢰도 90점 이상
+// 세 관문을 모두 통과한 행만 '자동 정리 대상'이 된다 (하나라도 걸리면 사람이 본다).
+
+// txn 금액 = 후보 금액, 또는 후보 금액의 부가세 포함액(×1.1)인가
+// 부가세 판정은 ±2원 오차를 두되 나누기로 되짚어 같은 금액이 나올 때만 인정한다
+// (한 방향만 보면 999,999원처럼 '반올림하면 우연히 맞는' 금액까지 통과해 자동 정리가 위험해진다)
+function erpAmountExact(txnAmt, candAmt){
+  var t = parseInt(txnAmt, 10) || 0, c = parseInt(candAmt, 10) || 0;
+  if(t <= 0 || c <= 0) return false;
+  if(t === c) return true;
+  var vat = Math.round(c * 1.1);
+  if(t === vat) return true;
+  return Math.abs(t - vat) <= 2 && Math.round(t / 1.1) === c;
+}
+
+// sug = erpMatchTxnToPending의 상위 후보 1건 · memo = 통장 적요 · txnAmt = 입금액(없으면 sug.txnAmount)
+function erpAutoTidyOk(sug, memo, txnAmt){
+  try {
+    if(!sug || !sug.cand) return false;
+    // ③ 신뢰도 90점 이상
+    if((parseInt(sug.score, 10) || 0) < 90) return false;
+    // ② 금액 정확일치 (또는 부가세 ×1.1)
+    var amt = (txnAmt === undefined || txnAmt === null) ? sug.txnAmount : txnAmt;
+    if(!erpAmountExact(amt, sug.cand.amount)) return false;
+    // ① 같은 업체로 3회 이상 학습된 적요
+    var al = erpAliasCompany(memo) || erpAliasCompany(erpCleanMemo(memo));
+    if(!al || !al.companyName) return false;
+    if((parseInt(al.count, 10) || 0) < 3) return false;
+    if(erpNormName(al.companyName) !== erpNormName(sug.cand.companyName)) return false;
+    return true;
+  } catch(e){ if(window._erpErrLog) window._erpErrLog(e); return false; }
 }
 
 // 통장 입금내역 ↔ 자문료(업체입금) 자동 대조 — 저장은 하지 않고 후보만 반환
@@ -4745,9 +5059,17 @@ window.erpLearnPayerAlias = erpLearnPayerAlias;
 window.erpAliasCompany = erpAliasCompany;
 window.erpAliasStore = erpAliasStore;
 window.erpForgetPayerAlias = erpForgetPayerAlias;
+window.erpAliasCount = erpAliasCount;
 window.erpCleanMemo = erpCleanMemo;
 window.erpAmountFingerprint = erpAmountFingerprint;
 window.erpResetFingerprintIndex = erpResetFingerprintIndex;
+window.erpInvoiceMatch = erpInvoiceMatch;
+window.erpInvoiceSuggest = erpInvoiceSuggest;
+window.erpInvoiceAny = erpInvoiceAny;
+window.erpInvoiceIndexReady = erpInvoiceIndexReady;
+window.erpResetInvoiceIndex = erpResetInvoiceIndex;
+window.erpAmountExact = erpAmountExact;
+window.erpAutoTidyOk = erpAutoTidyOk;
 window.erpFindCombo = erpFindCombo;
 window.erpFindComboCached = erpFindComboCached;
 window.erpLearnExpenseCat = erpLearnExpenseCat;
@@ -27867,6 +28189,9 @@ function FinanceLedger(){
   var restS=useState(false);   var restored=restS[0];   var setRestored=restS[1];   // 저장된 초안에서 복원됨
   var cmsRowS=useState(null);  var cmsRow=cmsRowS[0];   var setCmsRow=cmsRowS[1];   // CMS 일괄이체 매칭 대상 행
   var hideDupS=usePersistedState('ledger_hide_dup', true); var hideDup=hideDupS[0]; var setHideDup=hideDupS[1]; // 이미 처리된 행 숨기기
+  var atExS=useState({});      var atEx=atExS[0];       var setAtEx=atExS[1];       // 자동 정리에서 제외한 행 (체크 해제분)
+  var atOpenS=useState(true);  var atOpen=atOpenS[0];   var setAtOpen=atOpenS[1];   // 자동 정리 미리보기 펼침 (기본 펼침)
+  var invTickS=useState(0);    var invTick=invTickS[0]; var setInvTick=invTickS[1]; // 세금계산서 아카이브 로딩 완료 신호
   var draftTimer=useRef(null);   // 초안 저장 디바운스
   var draftReady=useRef(false);  // 복원 완료 전에는 저장하지 않음
 
@@ -27897,6 +28222,14 @@ function FinanceLedger(){
       }
     }catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
     draftReady.current = true;
+  }, []);
+
+  // ── 세금계산서 아카이브(IndexedDB) 로딩 완료 → 한 번 다시 그려 계산서 후보·배지를 반영 ──
+  // 색인 자체는 렌더 중에 동기 발행분만으로 먼저 만들어지고, 아카이브는 도착한 뒤 합쳐진다
+  useEffect(function(){
+    function onInvIdx(){ setInvTick(function(v){ return v + 1; }); }
+    window.addEventListener('pureun-invidx', onInvIdx);
+    return function(){ window.removeEventListener('pureun-invidx', onInvIdx); };
   }, []);
 
   // ── 초안 저장 (업로드·매칭선택·행삭제·확정 모두 자동 반영, 600ms 디바운스) ──
@@ -28114,12 +28447,51 @@ function FinanceLedger(){
   // 이미 처리된 행(_dup)은 추천도 계산하지 않는다 (제외 대상 + 계산 절약)
   var incSug = {};
   var isCmsMemo = {};
+  var autoTidyKeys = [];    // 3중 관문 통과 (자동 정리 대상) — 같은 패스에서 함께 계산
+  var autoTidySet = {};     // 행별 O(1) 조회용 (배지 표시)
+  var atAlias = {};         // 행별 학습 횟수 (미리보기 '학습 ×N')
+  var invSug = {};          // 행별 세금계산서 후보 1건 (고신뢰 추천이 없는 행만)
+  var invNone = {};         // 행별 '계산서 미발급?' 의심
+  var incByK = {};          // _k → row (자동 정리 미리보기에서 행을 되찾기 위함)
+  var pendById = {};        // id → 미입금 후보 (행마다 find 하지 않도록 한 번만 만든다)
+  pending.forEach(function(p){ pendById[p.id]=p; });
+  // 자문료(월 고정) 건은 업체 주기로 계산서를 끊으므로 '미발급' 경고에서 제외한다
+  function _isAdvisoryPend(p){
+    if(!p) return false;
+    var it=p.item||{};
+    if(it.typeCode==='자문') return true;
+    if((parseInt(it.monthlyAdvisoryFee,10)||0)>0) return true;
+    return /자문/.test(String(p.label||''));
+  }
   if(rows && ldTabEff==='inc') incAll.forEach(function(row){
+    incByK[row._k] = row;
     if(row._dup) return;
-    isCmsMemo[row._k] = erpIsCmsMemo(row.memo||row.note||'');
-    incSug[row._k] = erpMatchTxnToPending({date:row.date, amount:row.amount, memo:row.memo||row.note||''}, pending, 3);
+    var _memo = row.memo||row.note||'';
+    var _cms = erpIsCmsMemo(_memo);
+    isCmsMemo[row._k] = _cms;
+    var _sg = erpMatchTxnToPending({date:row.date, amount:row.amount, memo:_memo}, pending, 3);
+    incSug[row._k] = _sg;
+    var _b = _sg.length ? _sg[0] : null;
+    // ── 자동 정리 3중 관문 (학습 3회↑ · 금액 정확일치 · 신뢰도 90↑) ──
+    // 사용자가 이미 다른 후보를 골라둔 행은 그 선택을 존중해 대상에서 뺀다
+    if(_b && (!inMatch[row._k] || inMatch[row._k]===_b.cand.id)
+          && erpAutoTidyOk(_b, _memo, row.amount)){
+      autoTidyKeys.push(row._k); autoTidySet[row._k]=1; atAlias[row._k]=erpAliasCount(_memo);
+    }
+    // ── 세금계산서 (금액 해시 O(1) 조회) ──
+    // 고신뢰 추천이 있으면 그쪽이 우선이므로 계산서 후보는 찾지 않는다
+    if(!(_b && _b.level==='high')){
+      var _iv = erpInvoiceSuggest({date:row.date, amount:row.amount}, 1);
+      if(_iv.length) invSug[row._k] = _iv[0];
+    }
+    // 미발급 의심 — CMS 일괄이체·자문료 건·아카이브 미로딩 시에는 경고하지 않는다 (오탐 방지)
+    if(!_cms && erpInvoiceIndexReady()){
+      var _selP = pendById[inMatch[row._k]] || (_b && _b.level==='high' ? _b.cand : null);
+      if(!_isAdvisoryPend(_selP) && !erpInvoiceAny({date:row.date, amount:row.amount})) invNone[row._k]=1;
+    }
   });
   function bestSug(k){ var s=incSug[k]; return s&&s.length?s[0]:null; }
+  var autoTidyPick = autoTidyKeys.filter(function(k){ return !atEx[k]; });   // 체크된 것만 확정 대상
   // ── 합산 입금 조합 ──
   // 적요가 화이트리스트(🧩 합계 후보 적용 적요)에 걸릴 때만 탐색한다 — 나머지는 건별 판단이 맞고,
   // 탐색 자체를 건너뛰니 속도도 이득. 단일 고신뢰 추천이 있는 행도 탐색하지 않는다.
@@ -28320,6 +28692,73 @@ function FinanceLedger(){
         },'💸 출금 '+expReadyCnt+'건 전체등록')
       ),
 
+      // ── 🤖 자동 정리 (1클릭 승인) ──
+      // 3중 관문(학습 3회↑ · 금액 정확일치 · 신뢰도 90↑)을 모두 통과한 행만 모아 한 번에 승인받는다.
+      // 완전 자동이 아니라 '보고 나서 확정' — 체크를 풀면 그 행만 빠진다.
+      ldTabEff==='inc' && autoTidyKeys.length>0 && h('div',{style:{background:'#eff6ff',border:'1px solid #bfdbfe',
+        borderRadius:'8px',padding:'7px 12px',marginBottom:'8px'}},
+        h('div',{style:{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}},
+          h('span',{style:{fontSize:'12px',fontWeight:800,color:'#1d4ed8'}},
+            '🤖 자동 정리 가능 '+autoTidyKeys.length+'건'),
+          h('span',{style:{fontSize:'10.5px',color:'#3b82f6',fontWeight:600}},
+            '— 학습 3회↑ · 금액 정확일치 · 신뢰도 90↑'),
+          h('span',{onClick:function(){setAtOpen(!atOpen);},
+            style:{fontSize:'10.5px',color:'#1d4ed8',fontWeight:700,cursor:'pointer'}},
+            (atOpen?'▴ 접기':'▾ 펼치기')),
+          h('div',{style:{flex:1}}),
+          h('button',{
+            onClick:async function(){
+              var keys=autoTidyKeys.filter(function(k){ return !atEx[k]; });
+              if(!keys.length){ showToast('선택된 행이 없습니다'); return; }
+              var _skip=autoTidyKeys.length-keys.length;
+              if(!(await popConfirm('자동 정리 대상 '+keys.length+'건을 입금확정합니다.'
+                    +(_skip?'\n(체크 해제 '+_skip+'건은 제외)':'')
+                    +'\n\n→ 학습 3회↑ · 금액 정확일치 · 신뢰도 90↑ 를 모두 통과한 행입니다'))) return;
+              var ok=0, ng=0, done=[];
+              incAll.forEach(function(row){
+                if(row._dup) return;
+                if(keys.indexOf(row._k)<0) return;
+                var b=bestSug(row._k);
+                var pItem=b?(pendById[b.cand.id]||b.cand):null;
+                if(!pItem){ng++;return;}
+                try{ saveIncome(row,pItem); erpLearnPayerAlias(row.memo||row.note||'', pItem);
+                     erpMarkBankRowProcessed(row,'income',pItem.companyName+' '+pItem.label);
+                     ok++; done.push(row._k); }catch(_e){ ng++; }
+              });
+              done.forEach(function(k){removeRow(k,'inc');});
+              setAtEx({});
+              showToast('🤖 자동 정리 '+ok+'건 확정'+(ng?' · 실패 '+ng+'건':''));
+            },
+            title:'학습 3회 이상 · 금액 정확일치 · 신뢰도 90점 이상을 모두 만족한 행만 모았습니다',
+            style:{padding:'5px 12px',background:'#1d4ed8',color:'#fff',border:'none',borderRadius:'6px',
+              fontSize:'11.5px',fontWeight:800,cursor:'pointer',whiteSpace:'nowrap'}},
+            '✅ 선택 '+autoTidyPick.length+'건 일괄 확정')
+        ),
+        atOpen && h('div',{style:{marginTop:'5px',display:'flex',flexDirection:'column',gap:'2px'}},
+          autoTidyKeys.slice(0,20).map(function(k){
+            var r=incByK[k]; if(!r) return null;
+            var b=bestSug(k);
+            return h('label',{key:k,style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',
+              fontSize:'10.5px',color:'#1e40af',background:'#fff',border:'1px solid #dbeafe',
+              borderRadius:'5px',padding:'2px 7px'}},
+              h('input',{type:'checkbox',checked:!atEx[k],onChange:function(){
+                var n=Object.assign({},atEx);
+                if(n[k]) delete n[k]; else n[k]=1;
+                setAtEx(n);
+              }}),
+              h('span',{style:{color:'#64748b'}},r.date),
+              h('span',{style:{fontWeight:700,whiteSpace:'nowrap'}},(r.amount||0).toLocaleString()+'원'),
+              h('span',{style:{color:'#475569',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'160px'}},r.memo||r.note||'-'),
+              h('span',{style:{color:'#94a3b8'}},'→'),
+              h('span',{style:{fontWeight:700}},b?(b.cand.companyName+' '+b.cand.label):'-'),
+              h('span',{style:{color:'#2563eb',fontWeight:700}},'(학습 ×'+(atAlias[k]||0)+')')
+            );
+          }),
+          autoTidyKeys.length>20 && h('div',{style:{fontSize:'10.5px',color:'#64748b',padding:'1px 7px'}},
+            '… 외 '+(autoTidyKeys.length-20)+'건')
+        )
+      ),
+
       // ── 입금 테이블 (입금 탭에서만 렌더) ──
       ldTabEff==='inc' && incList.length>0 && h('div',{style:{marginBottom:'16px'}},
         h('div',{style:{fontWeight:700,fontSize:'12px',color:'#16a34a',marginBottom:'6px',padding:'4px 10px',background:'#f0fdf4',borderRadius:'5px',display:'flex',alignItems:'center',gap:'8px'}},
@@ -28342,6 +28781,8 @@ function FinanceLedger(){
               var sugOpened=!!sugOpen[row._k];
               var cbs=comboOf(row); var cb=(cbs&&cbs.length)?cbs[0]:null;   // 합산 입금 후보 (화이트리스트 적요 + 고신뢰 단일추천 없을 때만)
               var isCms=!!isCmsMemo[row._k];                                 // CMS 일괄이체(더빌이체) 적요
+              var ivc=invSug[row._k]||null;                                  // 세금계산서 발행분 후보 (고신뢰 추천 없을 때만)
+              var ivNone=!!invNone[row._k];                                  // 그 금액의 계산서를 90일 안에서 못 찾음
               var dupInfo=row._dup?erpIsBankRowProcessed(row):null;
               function pickSug(pid){ var nm=Object.assign({},inMatch); nm[row._k]=pid; setInMatch(nm); }
               return h('tr',{key:row._k,style:{background:pItem?'#f0fdf4':'#fff',opacity:row._dup?0.55:1}},
@@ -28353,7 +28794,12 @@ function FinanceLedger(){
                   row._dup && h('div',{title:'처리 대상: '+((dupInfo&&dupInfo.target)||'-')+'\n환경설정 ▸ 입금자 별칭 관리에서 이 기록을 지우면 다시 처리할 수 있습니다',
                     style:{marginTop:'2px',display:'inline-block',background:'#fffbeb',color:'#b45309',
                       border:'1px solid #fde68a',borderRadius:'8px',padding:'0 5px',fontSize:'9.5px',fontWeight:700}},
-                    '⚠️ 이미 처리됨'+(dupInfo&&dupInfo.at?' ('+String(dupInfo.at).slice(0,10)+')':''))),
+                    '⚠️ 이미 처리됨'+(dupInfo&&dupInfo.at?' ('+String(dupInfo.at).slice(0,10)+')':'')),
+                  // 계산서 미발급 의심 (오탐이 있을 수 있어 조용한 회색 배지로 둔다)
+                  ivNone && h('div',{title:'이 금액의 세금계산서 발행분을 최근 90일 안에서 찾지 못했습니다.\n\n· 아직 세금계산서를 발행하지 않은 건일 수 있습니다\n· 매출이 아닌 입금(환급·이자·대체 등)일 수도 있습니다\n\n※ 참고용 표시입니다 (자문료 CMS 일괄이체는 제외)',
+                    style:{marginTop:'2px',display:'inline-block',background:'#f8fafc',color:'#94a3b8',
+                      border:'1px solid #e2e8f0',borderRadius:'8px',padding:'0 5px',fontSize:'9.5px',fontWeight:600}},
+                    '⚠️ 계산서 미발급?')),
                 h('td',{style:tdS},
                   // ── CMS 일괄이체는 업체 체크 방식으로 매칭 (아래 드롭다운은 예전 방식으로 그대로 남겨둠) ──
                   isCms && h('button',{onClick:function(){setCmsRow(row);},
@@ -28385,6 +28831,11 @@ function FinanceLedger(){
                       style:{background:bc.bg,color:bc.fg,border:'1px solid '+bc.bd,borderRadius:'8px',
                         padding:'1px 6px',fontSize:'10px',fontWeight:700,cursor:'pointer'}},
                       '추천 '+best.score+'% · '+best.reasons.join('·')),
+                    autoTidySet[row._k] && h('span',{
+                      title:'학습 '+(atAlias[row._k]||0)+'회 · 금액 정확일치 · 신뢰도 '+best.score+'점 — 위의 [🤖 자동 정리]에서 한 번에 확정할 수 있습니다',
+                      style:{background:'#eff6ff',color:'#1d4ed8',border:'1px solid #bfdbfe',borderRadius:'8px',
+                        padding:'1px 6px',fontSize:'10px',fontWeight:700,whiteSpace:'nowrap'}},
+                      '🤖 자동정리 대상'),
                     sugs.length>=2 && h('span',{onClick:function(){
                         var n=Object.assign({},sugOpen);
                         if(n[row._k]) delete n[row._k]; else n[row._k]=1;
@@ -28430,6 +28881,41 @@ function FinanceLedger(){
                       style:{background:'#eef2ff',color:'#4338ca',border:'1px solid #c7d2fe',borderRadius:'8px',
                         padding:'1px 6px',fontSize:'10px',fontWeight:700,cursor:'pointer'}},
                       '🧩 합계 후보: '+cb.reason+' ('+cb.cands.map(function(c){return c.companyName;}).join('·')+')')
+                  ),
+                  // ── 세금계산서 후보 — 미입금 항목에는 없지만 발행한 계산서 금액과 맞는 입금 ──
+                  // 확정하면 원천(사건·계약)이 없으므로 성과급 분배 없는 '기타입금'으로 기록한다
+                  ivc && h('div',{style:{marginTop:'3px'}},
+                    h('span',{onClick:async function(){
+                        var e=ivc.entry;
+                        var msg='입금 '+row.amount.toLocaleString()+'원을 발행한 세금계산서와 매칭해 기타입금으로 등록합니다.\n\n'
+                              +'· 업체: '+e.company+'\n'
+                              +'· 발급일: '+e.date+(ivc.gap?' ('+ivc.gap+'일 전)':'')+'\n'
+                              +'· 계산서 금액: '+(e.amount||0).toLocaleString()+'원'
+                              +(e.expect!==e.amount?' → 예상 입금 '+(e.expect||0).toLocaleString()+'원':'')
+                              +(e.item?'\n· 품목: '+e.item:'')
+                              +'\n\n→ 미입금 항목이 아니므로 성과급 분배 없는 기타입금으로 기록됩니다.';
+                        if(!(await popConfirm(msg))) return;
+                        try{
+                          // dbUpsert는 실패 시 예외가 아니라 false를 반환한다 — 저장 확인 후에만 행을 소진한다
+                          var _ok = dbUpsert('finance_income', {id:'fi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+                            companyName:e.company, amount:row.amount, date:row.date||todayYMD(),
+                            memo:'[하나은행] '+(row.memo||'')+' / 🧾 세금계산서 매칭',
+                            sourceKind:'other', sourceId:'',
+                            perfShares:[], confirmedAt:new Date().toISOString(), confirmedBy:CURRENT_USER?CURRENT_USER.sid:''});
+                          if(_ok === false){ showToast('❌ 입금 저장 실패 — 행을 유지합니다'); return; }
+                          erpMarkBankRowProcessed(row,'income','🧾 '+e.company);
+                          removeRow(row._k,'inc');
+                          showToast('✅ 기타입금 등록 · '+e.company);
+                        }catch(_e){ showToast('❌ 등록 실패: '+_e.message); }
+                      },
+                      title:'세금계산서 발행분과 금액·기간이 맞습니다'
+                            +'\n· '+ivc.entry.company+' / 발급 '+ivc.entry.date
+                            +' / 계산서 '+(ivc.entry.amount||0).toLocaleString()+'원'
+                            +(ivc.entry.source==='hometax'?' (홈택스 업로드분)':' (수동 발행분)')
+                            +'\n클릭하면 기타입금으로 등록합니다',
+                      style:{background:'#ecfeff',color:'#0e7490',border:'1px solid #a5f3fc',borderRadius:'8px',
+                        padding:'1px 6px',fontSize:'10px',fontWeight:700,cursor:'pointer'}},
+                      '🧾 계산서 후보: '+ivc.entry.company+' · '+ivc.entry.date+' · '+(ivc.entry.expect||0).toLocaleString()+'원')
                   )
                 ),
                 h('td',{style:Object.assign({},tdS,{whiteSpace:'nowrap'})},
