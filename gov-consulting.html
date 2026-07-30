@@ -1156,7 +1156,7 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 <style>
 /* 사진 1장 모드: 활동(끝) 슬롯 관련 요소 숨김 + 단일 컬럼 */
 #mbStamp.single #pd1, #mbStamp.single #rf1, #mbStamp.single .slot1only{ display:none !important; }
-#mbStamp.single .ph-pair{ grid-template-columns:minmax(0,420px) !important; }
+#mbStamp.single.no-extra .ph-pair{ grid-template-columns:minmax(0,420px) !important; }
 </style>
 <!-- STAMP MODAL -->
 <div class="mb" id="mbStamp">
@@ -1233,7 +1233,7 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 
 <script>
 // ===== localStorage 안전 래퍼 (용량 초과 방지) =====
-const LS_VALID_KEYS=['p_staff','p_types','p_cos','p_scheds','p_env','p_fieldState','p_lastUserId','p_lastLoginEmail','p_session','p_autoSession','p_loginFails','p_loginLock','p_roundlog','p_favCos','p_autobackups','p_autoDl','p_autoKeep','p_lastAutoDl','p_autoDlFreq','p_dashW','p_dashHintSeen','p_dashMCollapsed','p_dashMineFirst','p_photoHashes','p_photoLog','p_stampSize','p_conflictMatrix','p_conflictMigrated','p_calMode','p_attFilter','p_dashAtt','p_dashStatus','p_endedYear'];
+const LS_VALID_KEYS=['p_staff','p_types','p_cos','p_scheds','p_env','p_fieldState','p_lastUserId','p_lastLoginEmail','p_session','p_autoSession','p_loginFails','p_loginLock','p_roundlog','p_favCos','p_autobackups','p_autoDl','p_autoKeep','p_lastAutoDl','p_autoDlFreq','p_dashW','p_dashHintSeen','p_dashMCollapsed','p_dashMineFirst','p_photoHashes','p_photoLog','p_stampSize','p_slotMigrated','p_conflictMatrix','p_conflictMigrated','p_calMode','p_attFilter','p_dashAtt','p_dashStatus','p_endedYear'];
 // 사용자별 동적 키(접두사 매칭) — 예: p_endConfirmHidden_<userId>
 const LS_VALID_PREFIXES=['p_endConfirmHidden_'];
 function lsKeyValid(k){ return LS_VALID_KEYS.includes(k)||LS_VALID_PREFIXES.some(p=>k.startsWith(p)); }
@@ -1579,6 +1579,32 @@ async function loadPhotosFromDB(){
     }
     if(keys.length)renderCal();
   }catch(e){console.warn('사진 복원 실패',e);}
+  finally{ _photosLoaded=true; }
+}
+let _photosLoaded=false; // IndexedDB 사진 복원 완료 여부 (축소 검사 안전장치)
+
+// 1장 모드 슬롯 재배치 마이그레이션 (1회)
+// 예전에는 1장 모드의 추가 사진이 c1부터 저장됐으나, 지금은 c2부터 사용한다(c1은 예약).
+// 남아 있는 c1 이후 사진을 한 칸씩 뒤로 밀어 라벨 오류·덮어쓰기를 방지한다.
+async function migrateSinglePhotoSlots(){
+  if(localStorage.getItem('p_slotMigrated')==='1')return;
+  try{
+    for(const sc of getScheds()){
+      if(!isSinglePhotoSched(sc))continue;
+      if(!(await getPhotoFromDB(sc.id,'c1')))continue; // 옮길 것이 없으면 통과
+      // 뒤에서부터 밀어야 덮어쓰지 않음
+      for(let i=PHOTO_MAX_SLOTS-2;i>=1;i--){
+        for(const pfx of ['c','o']){
+          const v=await getPhotoFromDB(sc.id,pfx+i);
+          if(v){ await savePhotoToDB(sc.id,pfx+(i+1),v); await deleteOnePhotoFromDB(sc.id,pfx+i); }
+        }
+      }
+      console.info('사진 슬롯 재배치:',sc.id);
+    }
+    lsSet('p_slotMigrated','1');
+    for(const k in PHOTOS)delete PHOTOS[k];
+    await loadPhotosFromDB();
+  }catch(e){ console.warn('사진 슬롯 마이그레이션 실패',e); }
 }
 
 // IndexedDB에서 사진 1건 직접 읽기 (dataURL 또는 null)
@@ -1713,7 +1739,7 @@ function renderPhotoGal(){
       const cv=PHOTOS[sc.id]&&PHOTOS[sc.id][k];
       if(cv){
         const thumb=cv.toDataURL('image/jpeg',.7);
-        const fn=`${date}_${ty?.name||'컨설팅'}_${co?.name||'사업장'}_${sc.round||0}회_${lbl}.jpg`;
+        const fn=`${date}_${ty?.name||'컨설팅'}_${co?.name||'사업장'}_${schedPhase(sc)==='pre'?'사전진단':''}${sc.round||0}회_${slotFileLabel(sc,+k.slice(1))}.jpg`;
         return `<div style="border:1px solid var(--border);border-radius:12px;overflow:hidden;">
           <div style="aspect-ratio:4/3;background:#000;cursor:zoom-in;" onclick="galView('${sc.id}','${k}','${escAttr(fn)}')"><img src="${thumb}" alt="${lbl} 사진" style="width:100%;height:100%;object-fit:cover;display:block;"></div>
           <div style="padding:6px 8px;display:flex;align-items:center;justify-content:space-between;">
@@ -1866,6 +1892,8 @@ function stepExtraPhotos(sid,delta){
   // 줄일 때: 사라질 슬롯에 사진이 있으면 막기 (사진이 관리 불가 상태로 남는 것 방지)
   // '이 컨설팅 전체 적용'이면 같은 사업장·종류의 다른 회차까지 모두 확인한다.
   if(next<cur){
+    // 사진 복원이 끝나기 전에는 캐시가 비어 있어 오판할 수 있으므로 잠시 막는다
+    if(!_photosLoaded){ toast('사진을 불러오는 중입니다. 잠시 후 다시 시도해주세요','err'); return; }
     const targets=whole
       ? getScheds().filter(s=>s.coId===sc.coId&&s.typeId===sc.typeId)
       : [sc];
@@ -4833,13 +4861,17 @@ function openStampModal(sid){
   // 이미 저장된 사진이 있으면 done 플래그 복원
   const saved=PHOTOS[sid];
   if(saved){ for(let i=0;i<n;i++){ if(saved['c'+i])ST.done[i]=true; } }
+  // 실제로 화면에 보이는 칸 수 (1장 모드의 예약된 c1은 제외) — 표시·레이아웃 기준
+  const visN=photoSlotDefs(sc).length;
+  ST.visN=visN;
   q('#mbStamp').classList.toggle('single', ST.single);
+  q('#mbStamp').classList.toggle('no-extra', extraPhotoCount(sc)===0);
   buildStampExtraSlots(n);
-  var _upT=q('#spUploadTitle'); if(_upT)_upT.textContent='📁 사진 업로드 ('+n+'장)';
+  var _upT=q('#spUploadTitle'); if(_upT)_upT.textContent='📁 사진 업로드 ('+visN+'장)';
   renderPDs();renderRFs();renderRangeOpts();buildSpPos();buildSpColors();
   q('#mbStamp').classList.add('open');
   applyStampSize();          // 저장해둔 창 크기 복원
-  layoutStampGrids(n);       // 열린 뒤 실제 폭 기준으로 열 수 계산
+  layoutStampGrids(visN);    // 열린 뒤 실제 폭 기준으로 열 수 계산 (보이는 칸 기준)
   watchStampResize();        // 마우스로 크기 조절 시 재배치·기억
 }
 // ===== 촬영 모달 크기 조절 (모서리 드래그) =====
@@ -4859,7 +4891,7 @@ function resetStampSize(){
   _stampManual=false;
   el.style.width=''; el.style.height='';
   try{ localStorage.removeItem('p_stampSize'); }catch(e){}
-  layoutStampGrids(ST.n||2);
+  layoutStampGrids(ST.visN||ST.n||2);
   toast('창 크기를 내용에 맞게 자동으로 맞췄습니다');
 }
 let _stampRO=null,_stampDragT=null;
@@ -4867,7 +4899,7 @@ let _stampRO=null,_stampDragT=null;
 function beginStampResize(){
   _stampManual=true;
   clearInterval(_stampDragT);
-  _stampDragT=setInterval(()=>{ if(q('#mbStamp')?.classList.contains('open'))layoutStampGrids(ST.n||2); },120);
+  _stampDragT=setInterval(()=>{ if(q('#mbStamp')?.classList.contains('open'))layoutStampGrids(ST.visN||ST.n||2); },120);
   const end=()=>{
     window.removeEventListener('pointerup',end); window.removeEventListener('mouseup',end);
     clearInterval(_stampDragT); _stampDragT=null;
@@ -4875,7 +4907,7 @@ function beginStampResize(){
     const r=el.getBoundingClientRect();
     el.style.width=Math.round(r.width)+'px';
     el.style.height=Math.round(r.height)+'px';
-    layoutStampGrids(ST.n||2);
+    layoutStampGrids(ST.visN||ST.n||2);
     lsSet('p_stampSize',JSON.stringify({w:Math.round(r.width),h:Math.round(r.height)}));
   };
   window.addEventListener('pointerup',end); window.addEventListener('mouseup',end);
@@ -4898,7 +4930,7 @@ function watchStampResize(){
       if(!q('#mbStamp')?.classList.contains('open'))return;
       if(Date.now()-_stampAutoAt<350)return; // 자동 맞춤으로 인한 변화는 무시(루프 방지)
       if(!_stampManual)return;               // 사용자가 끌기 시작한 뒤에만 반응
-      layoutStampGrids(ST.n||2);
+      layoutStampGrids(ST.visN||ST.n||2);
     });
     _stampRO.observe(el);
   }
@@ -4914,7 +4946,8 @@ function layoutStampGrids(n){
   const bodyEl=modal.querySelector('.mbody');
   const bs=bodyEl?getComputedStyle(bodyEl):null;
   const padX=bs?(parseFloat(bs.paddingLeft)+parseFloat(bs.paddingRight)):40;
-  const maxModalW=Math.min(1400, window.innerWidth*0.97);
+  const vw=Math.max(320, window.innerWidth||1200); // 뷰포트가 0/미정으로 보고되는 경우 방어
+  const maxModalW=Math.min(1400, vw*0.97);
   // 자동 모드면 '최대 창 폭' 기준으로 계산, 수동(사용자가 크기 조절)이면 현재 폭 기준
   const avail=_stampManual
     ? (pairs[0].parentElement?.clientWidth||pairs[0].clientWidth||600)
@@ -4932,7 +4965,7 @@ function layoutStampGrids(n){
     modal.style.height='';
   }
 }
-window.addEventListener('resize',()=>{ if(q('#mbStamp')?.classList.contains('open'))layoutStampGrids(ST.n||2); });
+window.addEventListener('resize',()=>{ if(q('#mbStamp')?.classList.contains('open'))layoutStampGrids(ST.visN||ST.n||2); });
 
 function buildSpPos(){
   let h='';
@@ -5804,7 +5837,7 @@ function init(){
     q('#mbLogin')?.classList.add('sso-wait');
     setTimeout(()=>q('#mbLogin')?.classList.remove('sso-wait'),6000);  // 6초 내 자동로그인 없으면 카드 표시
   }
-  loadPhotosFromDB();
+  loadPhotosFromDB().then(migrateSinglePhotoSlots);
   fbInit();
   applyMobileLayout();
   initDashResizer();
