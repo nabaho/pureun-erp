@@ -14,7 +14,7 @@
 <script src="vendor/pdf.min.js"></script>
 <script>if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc="vendor/pdf.worker.min.js";</script>
 <script src="hwp_extract.js?v=4"></script>
-<script src="hwpx_gen.js?v=10"></script>
+<script src="hwpx_gen.js?v=11"></script>
 <script src="xlsx_gen.js?v=3"></script>
 <style>
 :root{
@@ -475,7 +475,6 @@ table.daejo td.dj2{padding:0}
     <button class="btn ghost" data-close>닫기</button>
     <button class="btn ghost" id="show-rev">변경 결과 보기 →</button>
     <button class="btn ghost" id="open-final2" title="기존·대조·변경규칙과 제출서류를 한 화면에서 확인">✅ 최종 확인</button>
-    <button class="btn ghost" id="open-final2">✅ 최종 확인(3종)</button>
     <button class="btn ghost" id="dl-doc-daejo">한글(.hwpx) 다운로드</button>
     <button class="btn" id="dl-xlsx">xlsx 다운로드</button>
   </div>
@@ -486,8 +485,7 @@ table.daejo td.dj2{padding:0}
   <div class="body" id="rev-body"></div>
   <div class="foot" style="flex-wrap:wrap;gap:8px">
     <button class="btn ghost" data-close>닫기</button>
-    <button class="btn ghost" id="open-final">✅ 최종 확인(3종)</button>
-    <button class="btn ghost" id="open-final">✅ 최종 확인</button>
+    <button class="btn ghost" id="open-final" title="기존·대조·변경규칙과 제출서류를 한 화면에서 확인">✅ 최종 확인</button>
     <button class="btn ghost" id="open-docset">📎 제출 서류 세트</button>
     <button class="btn" id="dl-doc-rev">한글(.hwpx) 다운로드</button>
   </div>
@@ -694,6 +692,20 @@ function consentDoc(site,asof,summary,hits){
 function siteName(fallback){
   return (SITE_INFO&&SITE_INFO.name)||String(fallback||"").replace(/^[📄🏢]\s*/u,"").replace(/〔샘플〕/g,"");
 }
+/* 서명 행 수 — ERP 근로자수가 있으면 그에 맞추고(여유 10%), 없으면 20행.
+   과반수 서명이 필요하므로 인원보다 모자라면 안 된다. */
+function signCount(){
+  const c=(typeof SITE_INFO!=="undefined"&&SITE_INFO)||{};
+  const n=parseInt(String(c.empTotal||"").replace(/[^0-9]/g,""),10);
+  if(!n||n<1)return 20;
+  return Math.min(200, Math.max(10, Math.ceil(n*1.1)));
+}
+/* 여러 쪽 서명 표 — 행마다 끊어도 되므로 groupStart 로 쪽 나눔을 맡기면
+   쪽마다 표가 실선으로 닫히고 머리행이 반복된다 */
+function signTableOpts(rowCnt){
+  const g=[]; for(let i=1;i<=rowCnt;i++)g.push(i);
+  return {center:true, groupStart:g};
+}
 function signRows(n){                 // 순번·직책·성명·서명날인 빈 행
   const rows=[]; for(let i=1;i<=n;i++)rows.push([String(i),"","",""]);
   return rows;
@@ -707,7 +719,9 @@ function opinionFormHwpx(site,asof,summary,pageBreak){
     x+=HWPX.bodyPara(`${fmtKDate(asof)}자로 회사가 제시한 변경된 취업규칙에 대하여 그 내용을 확인한 후 이의가 없으므로 아래와 같이 의견서를 제출합니다.`);
     x+=HWPX.bodyPara(`※ 대상: 취업규칙 ${REV_MODE==="partial"?"일부":"전부"} 개정(안) — ${summary}`);
     x+=HWPX.spacer();
-    x+=HWPX.tablePara([["순번","직책","성  명","서명날인"]].concat(signRows(20)),HWPX.cols([.12,.26,.32,.30]));
+    const sn=signCount();
+    x+=HWPX.tablePara([["순번","직책","성  명","서명날인"]].concat(signRows(sn)),
+      HWPX.cols([.12,.26,.32,.30]),signTableOpts(sn));
     x+=HWPX.bodyPara("(대상총인원: ______명,  서명날인 인원: ______명)");
     x+=HWPX.spacer();
     x+=HWPX.docSub(fmtKDate(asof));
@@ -727,9 +741,10 @@ function consentFormHwpx(site,asof,summary,hits,pageBreak){
       x+=HWPX.bodyPara("※ 불이익 변경에 해당하는 사항: "+hits.map(h=>h.label||h).join(" / "));
     x+=HWPX.bodyPara(`※ 변경 내용 요약: ${summary}   ·   시행 예정일: ${fmtKDate(asof)}`);
     x+=HWPX.spacer();
+    const sn=signCount();
     const rows=[["순번","직책","성  명","의견 내용\n(동의 / 반대)","서명날인"]];
-    for(let i=1;i<=20;i++)rows.push([String(i),"","","",""]);
-    x+=HWPX.tablePara(rows,HWPX.cols([.10,.20,.24,.24,.22]));
+    for(let i=1;i<=sn;i++)rows.push([String(i),"","","",""]);
+    x+=HWPX.tablePara(rows,HWPX.cols([.10,.20,.24,.24,.22]),signTableOpts(sn));
     x+=HWPX.bodyPara("(대상총인원: ______명,  서명날인 인원: ______명)");
     x+=HWPX.spacer();
     x+=HWPX.docSub(fmtKDate(asof));
@@ -3707,6 +3722,55 @@ $("open-arch").addEventListener("click",()=>{renderArch("");$("ov-arch").classLi
 $("arch-q").addEventListener("input",e=>renderArch(e.target.value));
 /* 오버레이 닫기 — 닫을 때 모달 위치(드래그 이동분) 초기화해 다음엔 중앙에서 열림 */
 function closeOverlay(o){ o.classList.remove("on"); const m=o.querySelector(".modal"); if(m){m.style.transform="";m._dx=0;m._dy=0;} }
+/* ══════ 팝업은 항상 하나만 ══════
+   비교대조 → 최종 확인 → 제출 서류 → 미리보기처럼 팝업 위에 팝업이 쌓여
+   혼란스러웠다. 새 팝업이 열리면 열려 있던 팝업을 잠시 내리고,
+   닫으면 이전 팝업으로 자동 복귀한다(뒤로 가기).
+   class 변화를 감시하므로 호출부를 고칠 필요가 없고 새 팝업에도 자동 적용.
+   관리자가 스스로 만든 변화는 expected 에 적어 두고 감시에서 건너뛴다 —
+   안 그러면 자기 변화를 남의 변화로 오인해 무한 반복한다. */
+(function(){
+  const stack=[];                     // 잠시 내려둔 팝업 id (아래→위 순)
+  const expected=new Set();           // 관리자가 만들 변화 "id:1|0"
+  function setOn(o,on){
+    if(o.classList.contains("on")===on)return;
+    expected.add(o.id+":"+(on?1:0));
+    o.classList.toggle("on",on);
+  }
+  function markReturn(o){
+    const h2=o.querySelector(".modal>h2"); if(!h2)return;
+    let b=h2.querySelector(".ov-back");
+    if(!b){ b=document.createElement("span"); b.className="ov-back";
+      b.style.cssText="font-size:11px;font-weight:500;color:var(--mute);margin-left:8px";
+      h2.insertBefore(b,h2.querySelector(".x")); }
+    b.textContent=stack.length?"(닫으면 이전 화면으로 돌아갑니다)":"";
+  }
+  new MutationObserver(muts=>{
+    muts.forEach(mu=>{
+      const o=mu.target;
+      if(!o.classList||!o.classList.contains("overlay")||!o.id||o.id==="dropOverlay")return;
+      const was=(" "+(mu.oldValue||"")+" ").indexOf(" on ")>=0;
+      const is=o.classList.contains("on");
+      if(was===is)return;
+      const key=o.id+":"+(is?1:0);
+      if(expected.has(key)){ expected.delete(key); return; }   // 관리자 자신의 변화
+      if(is){                                    // 사용자가 새 팝업을 엶 → 다른 팝업 내림
+        document.querySelectorAll(".overlay.on").forEach(x=>{
+          if(x===o||!x.id||x.id==="dropOverlay")return;
+          setOn(x,false);
+          const k=stack.indexOf(x.id); if(k>=0)stack.splice(k,1);
+          stack.push(x.id);
+        });
+        const k=stack.indexOf(o.id); if(k>=0)stack.splice(k,1);
+        markReturn(o);
+      }else{                                     // 사용자가 팝업을 닫음 → 이전 복귀
+        const prev=stack.pop();
+        if(prev){ const po=document.getElementById(prev);
+          if(po){ setOn(po,true); markReturn(po); } }
+      }
+    });
+  }).observe(document.body,{subtree:true,attributes:true,attributeFilter:["class"],attributeOldValue:true});
+})();
 document.querySelectorAll("[data-close]").forEach(x=>x.onclick=e=>closeOverlay(e.target.closest(".overlay")));
 document.querySelectorAll(".overlay").forEach(o=>o.onclick=e=>{if(e.target===o)closeOverlay(o);});
 /* 모달 드래그 이동 — 헤더(h2)를 잡고 팝업 창을 마우스로 옮김. PDF iframe이 이벤트를 삼키지 않게 드래그 중엔 pointer-events 차단 */
