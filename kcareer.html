@@ -2907,7 +2907,7 @@ function openForm(page,editId,showPrev){ const def=FORM_DEFS[page]; if(!def) ret
   }).join('')+'</div>';
   const modal=document.querySelector('#modalForm .modal');
   if(showPrev && editId && fileExists(editId)){
-    $('modalBody').innerHTML='<div class="form-split"><div class="fs-prev"><div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:6px;display:flex;align-items:center;gap:8px">첨부 원본 <button type="button" class="btn sm" onclick="reOcrForm()" style="margin-left:auto">🔍 다시 읽기(OCR)</button></div><div id="fsPrevBox"><div style="text-align:center;padding:30px;color:#999">⏳ 원본 로딩 중...</div></div></div><div class="fs-form">'+fields+'</div></div>';
+    $('modalBody').innerHTML='<div class="form-split"><div class="fs-prev"><div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">첨부 원본 <span style="margin-left:auto;display:flex;gap:6px"><button type="button" class="btn sm" onclick="reOcrForm()">🔍 다시 읽기(OCR)</button><button type="button" class="btn sm" onclick="extractTextForm()">📄 원문 텍스트</button></span></div><div id="fsPrevBox"><div style="text-align:center;padding:30px;color:#999">⏳ 원본 로딩 중...</div></div><div id="fsTextBox" style="margin-top:8px"></div></div><div class="fs-form">'+fields+'</div></div>';
     if(modal) modal.classList.add('wide'); _renderFormPreview(editId);
   } else { $('modalBody').innerHTML=fields; if(modal) modal.classList.remove('wide'); }
   $('modalForm').classList.add('open');
@@ -2939,6 +2939,29 @@ async function reOcrForm(){
     var es=document.getElementById('ff-periodStart'), ee=document.getElementById('ff-periodEnd'); if(es&&s) es.value=s; if(ee&&e) ee.value=e; }
   var yv=document.getElementById('ff-year'); if(yv&&parsed.year) yv.value=parsed.year;
   toast('✅ 다시 읽었습니다 — 내용 확인 후 [저장] 하세요');
+}
+/* 원본의 원문 텍스트를 추출해 선택 가능한 칸에 표시 → 드래그 복사 후 입력칸에 붙여넣기 */
+async function extractTextForm(){
+  if(!_formCtx || !_formCtx.editId){ toast('저장된 항목에서 열어야 합니다'); return; }
+  var apiKey=getApiKey(),gvKey=getGVisionKey(),geminiKey=getGeminiKey();
+  if(!apiKey&&!gvKey&&!geminiKey){ toast('API 키가 필요합니다 — 환경설정 › API키 설정'); return; }
+  var box=document.getElementById('fsTextBox'); if(box) box.innerHTML='<div style="color:#999;font-size:12px;padding:8px">⏳ 원문 텍스트 추출 중...</div>';
+  var f=await getFileAsync(_formCtx.editId);
+  if(!f||!f.base64){ toast('첨부 원본이 없습니다'); if(box) box.innerHTML=''; return; }
+  var ext=(f.ext||'').toLowerCase(); if(['hwp','hwpx'].indexOf(ext)>=0){ toast('HWP는 텍스트 추출 불가'); if(box) box.innerHTML=''; return; }
+  var isPDF=ext==='pdf', mt=isPDF?'application/pdf':ext==='png'?'image/png':'image/jpeg', b64=f.base64;
+  var tp='이 문서에 적힌 모든 글자를 원문 그대로, 줄바꿈 유지하며 빠짐없이 출력하세요. 설명·요약 없이 문서 텍스트만.';
+  var text='';
+  if(geminiKey){ try{ var r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key='+encodeURIComponent(geminiKey),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:tp},{inline_data:{mime_type:mt,data:b64}}]}],generationConfig:{temperature:0,maxOutputTokens:2048}})});
+    if(r.ok){ var d=await r.json(); text=((((d.candidates||[])[0]||{}).content||{}).parts||[]).map(function(p){return p.text||'';}).join(''); } }catch(e){ console.warn('gemini text',e); } }
+  if(!text && gvKey && !isPDF){ try{ var vr=await fetch('https://vision.googleapis.com/v1/images:annotate?key='+encodeURIComponent(gvKey),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requests:[{image:{content:b64},features:[{type:'DOCUMENT_TEXT_DETECTION'}]}]})});
+    if(vr.ok){ var vd=await vr.json(); text=(vd.responses&&vd.responses[0]&&vd.responses[0].fullTextAnnotation&&vd.responses[0].fullTextAnnotation.text)||''; } }catch(e){} }
+  if(!text && apiKey){ try{ var content=[isPDF?{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}}:{type:'image',source:{type:'base64',media_type:mt,data:b64}},{type:'text',text:tp}];
+    var resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:2048,messages:[{role:'user',content}]})});
+    if(resp.ok){ var rd=await resp.json(); text=rd.content.map(function(c){return c.text||'';}).join(''); } }catch(e){} }
+  if(!text){ toast('텍스트 추출 실패 — 키·크레딧 확인'); if(box) box.innerHTML=''; return; }
+  if(box) box.innerHTML='<div style="font-size:11px;color:var(--text-mute);margin:2px 0 4px">📄 원문 텍스트 — 필요한 부분을 <b>드래그해 복사(Ctrl+C)</b> 후 오른쪽 입력칸에 <b>붙여넣기(Ctrl+V)</b></div><textarea readonly style="width:100%;height:170px;font-size:12px;line-height:1.6;padding:8px;border:1px solid var(--border);border-radius:8px;resize:vertical;background:#fff;color:#111">'+escapeHtml(text)+'</textarea>';
+  toast('✅ 원문 텍스트 추출됨 — 드래그해서 복사하세요');
 }
 function _renderFormPreview(id){
   const render=function(f){ const box=document.getElementById('fsPrevBox'); if(!box) return; const ext=(f.ext||'').toLowerCase();
