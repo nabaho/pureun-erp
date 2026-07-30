@@ -15,6 +15,7 @@
 <script>if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc="vendor/pdf.worker.min.js";</script>
 <script src="hwp_extract.js?v=4"></script>
 <script src="hwpx_gen.js?v=11"></script>
+<script src="std_2026.js?v=1"></script>
 <script src="xlsx_gen.js?v=3"></script>
 <style>
 :root{
@@ -636,8 +637,20 @@ const RE_TITLE=new RegExp("^제\\s*\\d+\\s*조(?:\\s*의\\s*\\d+)?\\s*["+BR_OPEN
 const RE_HEAD_STRIP=new RegExp("^\\s*제\\s*\\d+\\s*조(?:\\s*의\\s*\\d+)?\\s*(?:["+BR_OPEN+"][^"+BR_CLOSE+"\\n]{0,40}["+BR_CLOSE+"]?)?\\s*");
 /* 조 제목과 본문을 나눌 때 — 1그룹=제N조(제목), 2그룹=본문 */
 const RE_HEAD_SPLIT=new RegExp("^(제\\s*\\d+\\s*조(?:\\s*의\\s*\\d+)?\\s*(?:["+BR_OPEN+"][^"+BR_CLOSE+"\\n]{0,40}["+BR_CLOSE+"])?)\\s*([\\s\\S]*)$");
+/* ── 목차(차례) 줄 제거 ──
+   목차가 있는 문서에서는 목차 줄이 조문으로 잡히고(본문이 아니라 목차가 파싱됨),
+   목차 안의 '부 칙'이 부칙 경계로 잡혀 본문 전체가 잘려 나간다(노동부 표준취업규칙 실측).
+   목차 줄은 '제N조(제목) … 7'처럼 짧고 끝이 쪽번호다 — 그 형태만 걷어낸다. */
+const RE_TOC_LINE=new RegExp("^[ \\t]*(?:제\\s*\\d+\\s*[조장절](?:\\s*의\\s*\\d+)?|부\\s*칙|附\\s*則)"
+  +"[^\\n]{0,44}?[ \\t.·…]*\\d{1,3}[ \\t]*$","gm");
+function stripToc(text){
+  const lines=text.split("\n");
+  let hits=0; lines.forEach(l=>{ RE_TOC_LINE.lastIndex=0; if(RE_TOC_LINE.test(l))hits++; });
+  if(hits<8)return text;                       // 목차라고 볼 만큼 많지 않으면 손대지 않는다
+  return lines.filter(l=>{ RE_TOC_LINE.lastIndex=0; return !RE_TOC_LINE.test(l); }).join("\n");
+}
 function parseArticles(text){
-  text=text.replace(/\r\n?/g,"\n");
+  text=stripToc(String(text||"").replace(/\r\n?/g,"\n"));
   // 부칙(附則) 헤딩 이후 조문은 부칙 조문 → 본칙 검토·대조에서 제외
   const bm=text.match(/^[ \t]*(부\s*칙|附\s*則)/m);
   const boundary=bm?bm.index:Infinity;
@@ -3702,6 +3715,16 @@ const STD_KEY="pureun_std_rules_v1";
 let STD={};                                   // {연도:{year,name,savedAt,savedBy,text}}
 function stdLocal(){ try{return JSON.parse(localStorage.getItem(STD_KEY))||{};}catch(e){return{};} }
 function stdSaveLocal(){ try{localStorage.setItem(STD_KEY,JSON.stringify(STD));}catch(e){} }
+/* 노동부 2026년 표준취업규칙은 저장소에 함께 넣어 두었다(std_2026.js) —
+   아무도 올리지 않아도 처음부터 대조에 쓸 수 있고, 담당자가 로그인하면 공용으로 올라간다. */
+function stdSeedBundled(){
+  if(typeof STD_2026==="undefined"||!STD_2026||!STD_2026.text)return false;
+  if(STD[STD_2026.year])return false;                      // 이미 있으면 건드리지 않는다(사람이 올린 것 우선)
+  let arts=0; try{ arts=parseArticles(STD_2026.text).length; }catch(e){}
+  STD[STD_2026.year]={year:STD_2026.year,name:STD_2026.name,text:STD_2026.text,arts:arts,
+    savedAt:"동봉본",savedBy:"고용노동부 배포본",source:STD_2026.source,url:STD_2026.url};
+  stdSaveLocal(); return true;
+}
 async function stdLoad(){
   STD=stdLocal();
   if(FBDB&&FBUSER){
@@ -3709,6 +3732,8 @@ async function stdLoad(){
       const v=snap.val()||{}; Object.keys(v).forEach(y=>{STD[y]=v[y];}); stdSaveLocal();
     }catch(e){ console.warn("표준규칙 불러오기 실패:",e); }
   }
+  // 공용에도 없으면 동봉본으로 채우고, 로그인 상태면 공용으로 올려 전원이 쓰게 한다
+  if(stdSeedBundled()&&FBDB&&FBUSER)stdPut(STD[STD_2026.year]);
 }
 function stdPut(rec){
   STD[rec.year]=rec; stdSaveLocal();
