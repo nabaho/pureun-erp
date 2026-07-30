@@ -2085,6 +2085,7 @@ function openMenu(){
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');backupNow()">💾 지금 백업 (JSON 저장)</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');restoreInput.click()">📂 백업 복원 (JSON 불러오기)</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openDedup()">🧹 중복 정리</button>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');openSimilar()">🔍 유사 항목 검사</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');cleanEmpty()">🧽 빈 명함 정리</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openTrash()">🗑 휴지통 (삭제 명함 30일 보관)</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openMaterialShelf()">📎 자료함</button>
@@ -2438,8 +2439,13 @@ function previewImport(rows,fname){
       파일: <b style="color:var(--ink)">${esc(fname)}</b><br>
       발견된 연락처 <b style="color:var(--ink)">${rows.length.toLocaleString()}</b>건<br>
       · 신규 등록 <b style="color:var(--green)">${add.toLocaleString()}</b>건<br>
-      · 기존 항목과 합침(빈 칸만 채움) <b style="color:var(--orange)">${merge.toLocaleString()}</b>건<br>
+      · 이미 있는 중복 <b style="color:var(--orange)">${merge.toLocaleString()}</b>건<br>
       모두 <b style="color:var(--ink)">명함</b> 탭으로 들어갑니다.</p>
+    <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--ink);background:#f4f9ff;border:1px solid #cfe0fb;border-radius:10px;padding:11px 12px;line-height:1.6;cursor:pointer">
+      <input type="checkbox" id="imp_skipdup" checked style="margin-top:2px">
+      <span><b>중복은 건너뛰기</b> (권장) — 이미 있는 명함은 <b>그대로 두고</b> 새 명함 <b>${add.toLocaleString()}건만</b> 추가합니다.<br>
+      <span style="color:var(--sub);font-size:12px">체크를 풀면: 중복 항목의 빈 칸을 새 데이터로 채워 넣습니다(합침).</span></span>
+    </label>
     <div class="mfoot">
       <button class="btn ghost" onclick="impBg.classList.remove('open')">취소</button>
       <button class="btn primary" onclick="runImport()">가져오기 시작</button></div>`;
@@ -2447,6 +2453,7 @@ function previewImport(rows,fname){
   $('impBg').classList.add('open');
 }
 async function runImport(){
+  const skipDup = !($('imp_skipdup') && $('imp_skipdup').checked===false);   /* 기본: 중복 건너뛰기 */
   $('impBg').classList.remove('open');
   const rows=pendingImport||[]; pendingImport=null;
   if (Store.mode==='local' && rows.length>300 &&
@@ -2455,11 +2462,12 @@ async function runImport(){
   let friendG = Object.values(state.groups).find(g=>g.name==='지인');
   if (!friendG){ friendG={id:uid(), name:'지인', order:Date.now()}; Store.putGroup(friendG); }
   const map=buildKeyMap();
-  const updates={}; let add=0,merge=0,i=0;
+  const updates={}; let add=0,merge=0,skip=0,i=0;
   for (const r of rows){
     i++;
     const exId=matchExisting(r,map);
     if (exId){
+      if (skipDup){ skip++; continue; }   /* 중복 완전 배제 — 기존 항목 안 건드림 */
       const ex = updates[exId] || {...state.items[exId]};
       Object.keys(r).forEach(k=>{ if(r[k] && !ex[k]) ex[k]=r[k]; });
       ex.updatedAt=Date.now(); updates[exId]=ex; merge++;
@@ -2484,10 +2492,10 @@ async function runImport(){
       toast(`저장 중… ${Math.min(s+100,ids.length).toLocaleString()}/${ids.length.toLocaleString()}`,4000);
       await new Promise(r=>setTimeout(r,120));   // 과부하 방지로 살짝 쉼
     }
-    toast(`✅ 가져오기 완료 — 저장 ${ok.toLocaleString()}건${fail?`, 실패 ${fail}건(다시 시도하세요)`:''}`,7000);
+    toast(`✅ 가져오기 완료 — 신규 ${ok.toLocaleString()}건 추가${skip?`, 중복 ${skip.toLocaleString()}건 건너뜀`:''}${merge?`, 합침 ${merge.toLocaleString()}건`:''}${fail?`, 실패 ${fail}건(다시 시도하세요)`:''}`,7000);
     return;
   } else { Object.assign(state.items, updates); Store._ls(); render(); }
-  toast(`✅ 가져오기 완료 — 신규 ${add.toLocaleString()}건, 합침 ${merge.toLocaleString()}건`,6000);
+  toast(`✅ 가져오기 완료 — 신규 ${add.toLocaleString()}건${skip?`, 중복 ${skip.toLocaleString()}건 건너뜀`:''}${merge?`, 합침 ${merge.toLocaleString()}건`:''}`,6000);
 }
 
 /* ════════════ 🧹 중복 정리 ════════════ */
@@ -2557,6 +2565,78 @@ async function autoMergeAll(){
     if (++i%10===0) toast(`병합 중… ${i}/${groups.length}`,3000); }
   $('dedupBg').classList.remove('open'); render();
   toast(`✅ ${i}묶음 병합 완료`,5000);
+}
+
+/* ════════════ 🔍 유사 항목 검사 (완전중복은 아니지만 같은 사람일 수 있는 명함) ════════════ */
+const _simNorm  = s => String(s||'').toLowerCase().replace(/\s/g,'');
+const _tail8    = s => { const d=digits(s); return d.length>=8 ? d.slice(-8) : ''; };
+const _emailDom = s => { const m=String(s||'').toLowerCase().match(/@([^@\s]+)$/); return m?m[1]:''; };
+function _simIgnoreSet(){ try{ return new Set(JSON.parse(localStorage.getItem('pucards_sim_ignore')||'[]')); }catch(_){ return new Set(); } }
+function _simIgnoreSave(set){ try{ localStorage.setItem('pucards_sim_ignore', JSON.stringify([...set].slice(-5000))); }catch(_){} }
+const _pairSig = (a,b) => [a,b].sort().join('~');
+function _isExactDup(a,b){ const ka=new Set(rowKeys(a)); return rowKeys(b).some(k=>ka.has(k)); }
+/* 같은 사람일 가능성이 있으나 완전중복은 아닌지 판단 */
+function _isSimilar(a,b){
+  if(_isExactDup(a,b)) return false;   /* 완전중복은 '중복 정리'가 담당 */
+  const nEq=_simNorm(a.name)    && _simNorm(a.name)===_simNorm(b.name);
+  const cEq=_simNorm(a.company) && _simNorm(a.company)===_simNorm(b.company);
+  const tEq=_tail8(a.mobile)    && _tail8(a.mobile)===_tail8(b.mobile);
+  const dEq=_emailDom(a.email)  && _emailDom(a.email)===_emailDom(b.email);
+  const cEmpty=!_simNorm(a.company) || !_simNorm(b.company);
+  /* 같은 이름 + (같은 회사/전화뒤8/이메일도메인/한쪽 회사없음)  또는  전화뒤8 같고 이름·회사 중 하나 일치 */
+  return !!((nEq && (cEq||tEq||dEq||cEmpty)) || (tEq && (nEq||cEq)));
+}
+function findSimilarGroups(){
+  const arr=Object.values(state.items).filter(it=>it && it.kind==='card');
+  const ignore=_simIgnoreSet();
+  /* 후보 축소: 이름·전화뒤8 버킷 안에서만 비교(전수비교 회피) */
+  const buckets={};
+  const addB=(k,it)=>{ if(!k) return; (buckets[k]=buckets[k]||[]).push(it); };
+  arr.forEach(it=>{ addB('n'+_simNorm(it.name), it); addB('t'+_tail8(it.mobile), it); });
+  const parent={}; arr.forEach(it=>parent[it.id]=it.id);
+  const find=x=>parent[x]===x?x:(parent[x]=find(parent[x]));
+  const uni=(a,b)=>{ parent[find(a)]=find(b); };
+  const pairSeen=new Set(); let unioned=0;
+  Object.values(buckets).forEach(items=>{
+    if(items.length<2 || items.length>40) return;   /* 흔한 이름 등 너무 큰 묶음은 스킵(노이즈·성능) */
+    for(let i=0;i<items.length;i++) for(let j=i+1;j<items.length;j++){
+      const a=items[i], b=items[j]; const sig=_pairSig(a.id,b.id);
+      if(pairSeen.has(sig)) continue; pairSeen.add(sig);
+      if(ignore.has(sig)) continue;
+      if(_isSimilar(a,b)){ if(find(a.id)!==find(b.id)){ uni(a.id,b.id); unioned++; } }
+    }
+  });
+  if(!unioned) return [];
+  const g={};
+  arr.forEach(it=>{ const r=find(it.id); (g[r]=g[r]||[]).push(it); });
+  return Object.values(g).filter(x=>x.length>1);
+}
+function openSimilar(){
+  const groups=findSimilarGroups();
+  if(!groups.length) return toast('유사한 명함이 없습니다 👍');
+  let h=`<div class="mhead"><b>🔍 유사 항목 — ${groups.length}묶음</b>
+    <button class="iconbtn" onclick="dedupBg.classList.remove('open')">✕</button></div>
+    <p style="font-size:12.5px;color:var(--sub);line-height:1.7;margin-bottom:10px">
+    완전 중복은 아니지만 <b>같은 사람일 수 있는</b> 명함이에요 (이름 같고 회사·전화가 조금 다르거나, 번호 형식만 다른 경우 등).<br>
+    같은 사람이면 <b>병합</b>, 다른 사람이면 <b>무시</b>하세요. (무시하면 이 기기에서 다시 안 뜹니다)</p>`;
+  groups.slice(0,100).forEach(gr=>{
+    const rows=gr.map(x=>`${esc(x.name||'(이름없음)')} · ${esc(x.company||'회사없음')} · ${esc(x.mobile||x.email||'')}`).join('<br>');
+    const ids=gr.map(x=>x.id).join(',');
+    h+=`<div class="ditem" style="align-items:center"><div class="v">
+      <span style="font-size:12.5px;color:var(--ink);line-height:1.8">${rows}</span></div>
+      <div style="display:flex;flex-direction:column;gap:6px;flex:none;margin-left:8px">
+        <button class="btn primary" style="padding:7px 14px" onclick="mergeSimilar('${ids}')">병합</button>
+        <button class="btn ghost" style="padding:7px 14px" onclick="ignoreSimilar('${ids}')">무시</button>
+      </div></div>`;
+  });
+  if(groups.length>100) h+=`<p style="color:var(--sub);font-size:12px;padding:8px 2px">…외 ${groups.length-100}묶음</p>`;
+  $('dedupM').innerHTML=h; $('dedupBg').classList.add('open');
+}
+async function mergeSimilar(csv){ await mergeGroup(csv.split(',')); toast('병합 완료'); openSimilar(); }
+function ignoreSimilar(csv){
+  const ids=csv.split(','); const set=_simIgnoreSet();
+  for(let i=0;i<ids.length;i++) for(let j=i+1;j<ids.length;j++) set.add(_pairSig(ids[i],ids[j]));
+  _simIgnoreSave(set); toast('이 묶음을 무시했습니다'); openSimilar();
 }
 
 /* ════════════ 📤 엑셀 내보내기 ════════════ */
