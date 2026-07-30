@@ -27937,7 +27937,273 @@ function erpAddCompanyIncome(co, month, year, date, note){
   } catch(e){ if(window._erpErrLog) window._erpErrLog(e); return false; }
 }
 
-// props: {row, onClose, onApplied(적용수, 제외수), addIncome?}
+// ══════════════════════════════════════════════
+// 🏦 CMS 자동 감지 — 입금 이력으로 자동이체 업체 찾기
+// ══════════════════════════════════════════════
+// 실제로는 나이스빌 CMS로 자문료를 걷고 있는데(통장 적요 '더빌이체NNNN') 업체관리의
+// CMS 체크를 아무도 켜지 않아 업체입금 CMS 열이 전부 '-'로 보인다.
+// 지금까지의 입금 이력(적요·입금일 규칙)으로 자동이체 업체를 추정해 미리보기 후 일괄 체크한다.
+var CMS_NOTE_RE = /나이스빌\s*CMS|CMS\s*일괄이체|CMS/i;
+// 월 자동이체가 아닌 납부방식 — 업체관리 규약(선납·건별·분기별)은 감지 대상에서 뺀다
+var CMS_PAYDAY_SKIP = ['선납','건별','분기별'];
+
+// 가장 잦은 일자 (동수면 작은 일자). 없으면 0
+function _erpCmsDayMode(days){
+  var cnt = {};
+  (days||[]).forEach(function(d){ if(d) cnt[d] = (cnt[d]||0) + 1; });
+  var best = 0, bestN = 0;
+  Object.keys(cnt).map(function(k){ return parseInt(k,10); })
+    .sort(function(a,b){ return a-b; })
+    .forEach(function(d){ if(cnt[d] > bestN){ bestN = cnt[d]; best = d; } });
+  return best;
+}
+
+// 감지 결과: [{id,name,fee,curCms,curPayDay,suggestPayDay,level,why,months,dates}] — 근거가 센 것부터
+function erpDetectCmsCompanies(){
+  try {
+    var companies = dbGet('companies', []) || [];
+    var incomes = dbGet('finance_income', []) || [];
+    if(!Array.isArray(companies) || !companies.length) return [];
+
+    // 최근 18개월 경계 (YYYY-MM 문자열 비교)
+    var _n = new Date();
+    var _lim = new Date(_n.getFullYear(), _n.getMonth() - 17, 1);
+    var limYm = _lim.getFullYear() + '-' + ('0' + (_lim.getMonth()+1)).slice(-2);
+
+    // ① 입금이력을 업체명으로 한 번만 색인 (업체마다 다시 훑지 않는다)
+    var idx = {};
+    for(var i=0; i<incomes.length; i++){
+      var it = incomes[i];
+      if(!it || it.sourceKind !== 'company' || !it.companyName) continue;
+      var ds = String(it.date || '');
+      if(ds.length < 10) continue;                       // YYYY-MM-DD 아닌 건 제외
+      var e = idx[it.companyName];
+      if(!e) e = idx[it.companyName] = { cmsCnt:0, cmsDays:[], days:[], dates:[] };
+      var dayN = parseInt(ds.slice(8,10), 10) || 0;
+      if(CMS_NOTE_RE.test(String(it.note || ''))){ e.cmsCnt++; e.cmsDays.push(dayN); }
+      if(ds.slice(0,7) >= limYm){ e.days.push(dayN); e.dates.push(ds); }
+    }
+
+    // ② 업체별 판정
+    var out = [];
+    for(var c=0; c<companies.length; c++){
+      var co = companies[c];
+      if(!co || !co.id || !co.name || co.status !== 'active') continue;
+      if(['자문','급여','노조','기금'].indexOf(co.typeCode) < 0) continue;
+      if((co.monthlyAdvisoryFee || 0) <= 0) continue;
+      var pdRaw = String(co.taxInvoicePaymentDay || '');
+      if(CMS_PAYDAY_SKIP.indexOf(pdRaw) >= 0) continue;  // 선납·건별·분기별 = 월 자동이체 아님
+      var ev = idx[co.name];
+      if(!ev) continue;
+
+      var days = ev.days.slice().sort(function(a,b){ return a-b; });
+      var mode = _erpCmsDayMode(ev.days.length ? ev.days : ev.cmsDays);
+      var pdDigits = pdRaw.replace(/[^0-9]/g, '');
+      var level = '', why = '', suggest = mode || '';
+
+      if(ev.cmsCnt > 0){
+        // 확실 — 적요에 나이스빌CMS / CMS 일괄이체 흔적이 있는 입금이 있다
+        level = 'sure';
+        why = 'CMS 입금 이력 ' + ev.cmsCnt + '건';
+      } else if(days.length >= 3){
+        var spread = days[days.length-1] - days[0];
+        // 말일(30·31일) 이체는 다음달 1일로 밀릴 수 있어 28일↑ / 2일↓ 묶음도 규칙으로 본다
+        var endCluster = days.every(function(d){ return d >= 28 || d <= 2; });
+        if(spread <= 2){
+          level = 'likely';
+          why = '매월 ' + (mode || days[0]) + '일 규칙 입금 ' + days.length + '회';
+        } else if(endCluster){
+          level = 'likely';
+          why = '말일 규칙 입금 ' + days.length + '회';
+          suggest = pdDigits ? (parseInt(pdDigits,10) || '') : (mode || '');
+        }
+      }
+      if(!level) continue;
+
+      out.push({
+        id: co.id, name: co.name, fee: co.monthlyAdvisoryFee || 0,
+        curCms: !!co.isCMS,
+        curPayDay: String(co.cmsPayDay || '') || pdRaw,
+        suggestPayDay: suggest || '',
+        level: level, why: why,
+        months: (ev.days.length || ev.cmsCnt),
+        dates: ev.dates.slice(-12)
+      });
+    }
+    // 근거가 센 것 → 이력 많은 것 → 자문료 큰 것 순
+    out.sort(function(a,b){
+      var r = (a.level==='sure'?0:1) - (b.level==='sure'?0:1);
+      if(r) return r;
+      if((b.months||0) !== (a.months||0)) return (b.months||0) - (a.months||0);
+      return (b.fee||0) - (a.fee||0);
+    });
+    return out;
+  } catch(e){ if(window._erpErrLog) window._erpErrLog(e); return []; }
+}
+
+// 선택한 후보 → companies 갱신 배열. 이체일(cmsPayDay)은 비어 있을 때만 채운다(덮어쓰기 금지)
+function erpBuildCmsPatch(rows){
+  var all = dbGet('companies', []) || [];
+  if(!Array.isArray(all)) return [];
+  var want = {};
+  (rows||[]).forEach(function(r){ if(r && r.id) want[r.id] = r; });
+  var changed = [];
+  all.forEach(function(co){
+    if(!co || !co.id || !want[co.id]) return;
+    changed.push(Object.assign({}, co, {
+      isCMS: true,
+      cmsPayDay: co.cmsPayDay || want[co.id].suggestPayDay || ''
+    }));
+  });
+  return changed;
+}
+
+window.erpDetectCmsCompanies = erpDetectCmsCompanies;
+window.erpBuildCmsPatch = erpBuildCmsPatch;
+window.CMS_NOTE_RE = CMS_NOTE_RE;
+
+// props: {onClose, onApplied(등록수)}
+function CmsDetectModal(props){
+  useEscClose(props.onClose);
+
+  // 감지는 열 때 한 번만 (렌더마다 다시 훑지 않도록)
+  var rowsRef = useRef(null);
+  if(!rowsRef.current) rowsRef.current = erpDetectCmsCompanies();
+  var rows = rowsRef.current;
+
+  // 기본 체크 — 이미 CMS로 설정된 업체만 빼고 전부
+  var _def = {};
+  rows.forEach(function(r){ if(!r.curCms) _def[r.id] = 1; });
+  var ckS = useState(_def);  var chk = ckS[0];  var setChk = ckS[1];
+  var bS  = useState(false); var busy = bS[0];  var setBusy = bS[1];
+
+  var sel = rows.filter(function(r){ return !!chk[r.id]; });
+
+  function toggle(id){
+    var n = Object.assign({}, chk);
+    if(n[id]) delete n[id]; else n[id] = 1;
+    setChk(n);
+  }
+  function selectAll(){ var n={}; rows.forEach(function(r){ n[r.id]=1; }); setChk(n); }
+  function selectNone(){ setChk({}); }
+  function selectSure(){ var n={}; rows.forEach(function(r){ if(r.level==='sure') n[r.id]=1; }); setChk(n); }
+
+  async function apply(){
+    if(!sel.length || busy) return;
+    var msg = 'CMS 자동이체 업체로 ' + sel.length + '곳을 등록합니다.\n\n'
+            + sel.slice(0,12).map(function(r){
+                return '· ' + r.name + (r.suggestPayDay ? ' (이체일 '+r.suggestPayDay+'일)' : '');
+              }).join('\n')
+            + (sel.length>12 ? '\n· … 외 '+(sel.length-12)+'곳' : '')
+            + '\n\n⚠️ 업체관리의 CMS 체크·이체일 데이터가 실제로 바뀝니다.\n(이체일은 비어 있는 업체만 채웁니다)';
+    if(!(await popConfirm(msg))) return;
+    setBusy(true);
+    var changed = erpBuildCmsPatch(sel);
+    if(!changed.length){ setBusy(false); showToast('❌ 적용할 업체를 찾지 못했습니다'); return; }
+    var ok = dbUpsertMany('companies', changed);
+    setBusy(false);
+    if(ok === false){ showToast('❌ CMS 등록 저장 실패 — 다시 시도해 주세요'); return; }
+    showToast('✅ ' + changed.length + '곳 CMS 등록됨');
+    if(props.onApplied) props.onApplied(changed.length);
+  }
+
+  var thS={padding:'6px 8px',fontSize:'11px',fontWeight:700,color:'#64748b',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',textAlign:'left',position:'sticky',top:0};
+  var tdS={padding:'5px 8px',fontSize:'11.5px',borderBottom:'1px solid #f1f5f9'};
+
+  function badge(lv){
+    var on = lv==='sure';
+    return h('span',{style:{display:'inline-block',padding:'1px 6px',borderRadius:'10px',fontSize:'9.5px',fontWeight:800,
+      marginLeft:'6px', background:on?'#dbeafe':'#fef3c7', color:on?'#1e40af':'#92400e'}}, on?'확실':'추정');
+  }
+
+  return h('div',{onClick:props.onClose,
+    style:{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.5)',zIndex:9350,
+      display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}},
+    h('div',{onClick:function(e){e.stopPropagation();},
+      style:{background:'#fff',borderRadius:'10px',padding:'16px',width:'94%',maxWidth:'760px',
+        maxHeight:'88vh',display:'flex',flexDirection:'column',gap:'8px',boxShadow:'0 12px 40px rgba(0,0,0,0.25)'}},
+
+      // 제목
+      h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'8px'}},
+        h('div',null,
+          h('div',{style:{fontWeight:800,fontSize:'14.5px',color:'#1e293b'}},
+            '🏦 CMS 자동 감지 — 입금 이력으로 자동이체 업체 찾기'),
+          h('div',{style:{fontSize:'11px',color:'#64748b',marginTop:'2px'}},
+            '입금 이력(적요·입금일 규칙)으로 추정한 결과이므로 참고용입니다 — 적용 후 업체관리에서 개별 수정할 수 있습니다')),
+        h('button',{onClick:props.onClose,style:{border:'none',background:'none',fontSize:'18px',color:'#94a3b8',cursor:'pointer'}},'✕')
+      ),
+
+      rows.length === 0
+        ? h('div',{style:{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'8px',
+            padding:'22px 16px',textAlign:'center',color:'#64748b',fontSize:'12px',lineHeight:'1.7'}},
+            h('div',{style:{fontSize:'26px',marginBottom:'6px'}},'🔍'),
+            h('div',{style:{fontWeight:700,color:'#475569',marginBottom:'4px'}},'규칙적인 입금 패턴을 찾지 못했습니다'),
+            h('div',null,'CMS 적요(나이스빌CMS·CMS 일괄이체) 이력이 없고, 매월 같은 날 입금된 기록도 부족합니다.'),
+            h('div',null,'입금 이력이 3개월 이상 쌓이면 자동으로 감지됩니다.')
+          )
+        : h('div',null,
+            // 선택 도구
+            h('div',{style:{display:'flex',gap:'5px',alignItems:'center',flexWrap:'wrap',marginBottom:'6px'}},
+              h('button',{onClick:selectAll,
+                style:{padding:'3px 9px',border:'1px solid #cbd5e1',borderRadius:'10px',background:'#fff',cursor:'pointer',fontSize:'10.5px',fontWeight:600}},'전체 선택'),
+              h('button',{onClick:selectNone,
+                style:{padding:'3px 9px',border:'1px solid #cbd5e1',borderRadius:'10px',background:'#fff',cursor:'pointer',fontSize:'10.5px',fontWeight:600}},'전체 해제'),
+              h('button',{onClick:selectSure,
+                style:{padding:'3px 9px',border:'1px solid #bfdbfe',borderRadius:'10px',background:'#eff6ff',color:'#1e40af',cursor:'pointer',fontSize:'10.5px',fontWeight:700}},'확실만 선택'),
+              h('span',{style:{fontSize:'10.5px',color:'#94a3b8'}},'감지 '+rows.length+'곳')
+            ),
+            // 표
+            h('div',{style:{border:'1px solid #e2e8f0',borderRadius:'6px',overflow:'auto',maxHeight:'46vh'}},
+              h('table',{style:{width:'100%',borderCollapse:'collapse'}},
+                h('thead',null,h('tr',null,
+                  h('th',{style:Object.assign({},thS,{width:'30px',textAlign:'center'})},''),
+                  h('th',{style:thS},'사업장'),
+                  h('th',{style:Object.assign({},thS,{textAlign:'right'})},'자문료'),
+                  h('th',{style:thS},'근거'),
+                  h('th',{style:Object.assign({},thS,{textAlign:'center'})},'현재 CMS'),
+                  h('th',{style:Object.assign({},thS,{textAlign:'center'})},'적용될 이체일')
+                )),
+                h('tbody',null, rows.map(function(r){
+                  var on = !!chk[r.id];
+                  var dim = r.curCms;
+                  return h('tr',{key:r.id,style:{background:on?'#f8fafc':'#fff',opacity:dim?0.6:1}},
+                    h('td',{style:Object.assign({},tdS,{textAlign:'center'})},
+                      h('input',{type:'checkbox',checked:on,onChange:function(){toggle(r.id);},style:{cursor:'pointer'}})),
+                    h('td',{style:Object.assign({},tdS,{fontWeight:600,color:'#1e293b'})},r.name),
+                    h('td',{style:Object.assign({},tdS,{textAlign:'right',fontFamily:'monospace',color:'#059669',fontWeight:700})},
+                      (r.fee||0).toLocaleString()+'원'),
+                    h('td',{style:Object.assign({},tdS,{color:'#475569'})}, r.why, badge(r.level)),
+                    h('td',{style:Object.assign({},tdS,{textAlign:'center'})},
+                      dim ? h('span',{style:{fontSize:'10px',color:'#2563eb',fontWeight:700}},'이미 설정됨')
+                          : h('span',{style:{color:'#cbd5e1',fontSize:'10px'}},'-')),
+                    h('td',{style:Object.assign({},tdS,{textAlign:'center',fontWeight:700,color:'#2563eb'})},
+                      r.suggestPayDay ? r.suggestPayDay+'일' : h('span',{style:{color:'#cbd5e1',fontWeight:400}},'-'))
+                  );
+                }))
+              )
+            ),
+            // 선택 현황
+            h('div',{style:{marginTop:'7px',padding:'6px 10px',borderRadius:'6px',fontSize:'12px',fontWeight:700,
+              background: sel.length?'#f0fdf4':'#f8fafc', border:'1px solid '+(sel.length?'#bbf7d0':'#e2e8f0'),
+              color: sel.length?'#15803d':'#475569'}},
+              '선택 '+sel.length+'곳 — CMS 체크 + 이체일 자동 입력')
+          ),
+
+      // 버튼
+      h('div',{style:{display:'flex',gap:'8px',justifyContent:'flex-end',marginTop:'2px'}},
+        h('button',{onClick:props.onClose,
+          style:{padding:'7px 14px',border:'1px solid #cbd5e1',borderRadius:'6px',background:'#fff',cursor:'pointer',fontSize:'12px'}},'닫기'),
+        rows.length>0 && h('button',{onClick:apply,disabled:!sel.length||busy,
+          style:{padding:'7px 16px',border:'none',borderRadius:'6px',
+            background:(sel.length&&!busy)?'#2563eb':'#94a3b8',color:'#fff',fontWeight:700,
+            cursor:(sel.length&&!busy)?'pointer':'not-allowed',fontSize:'12px'}},
+          busy ? '⏳ 등록중' : ('✅ '+sel.length+'곳 CMS 등록'))
+      )
+    )
+  );
+}
+
+// props: {row, onClose, onApplied(적용수, 제외수, CMS등록수), addIncome?}
 function CmsMatchModal(props){
   useEscClose(props.onClose);
   var row = props.row || {};
@@ -28028,6 +28294,7 @@ function CmsMatchModal(props){
     if(!(await popConfirm(msg))) return;
     setBusy(true);
     var ok=0, skip=0;
+    var okNames = [];
     sel.forEach(function(n){
       var co = byName[n];
       if(!co) return;
@@ -28035,10 +28302,30 @@ function CmsMatchModal(props){
       var d = ymd || todayYMD();
       if(props.addIncome){ props.addIncome(co, month, d, 'CMS 일괄이체 자동매칭'); }
       else if(!erpAddCompanyIncome(co, month, year, d, 'CMS 일괄이체 자동매칭')){ skip++; return; }
-      paidMap[n] = 1; ok++;
+      paidMap[n] = 1; ok++; okNames.push(n);
     });
+    // ── CMS 일괄이체로 들어온 업체 = 실제 CMS 자동이체 업체 → 업체관리 CMS 체크를 켜 둔다 ──
+    // (입금 기록이 실제로 만들어진 업체만, 루프가 끝난 뒤 한 번에 저장)
+    var cmsSet = 0;
+    if(okNames.length){
+      try {
+        var _all = dbGet('companies', []) || [];
+        var _want = {};
+        okNames.forEach(function(n){ _want[n] = 1; });
+        var _chg = [];
+        _all.forEach(function(c){
+          if(!c || !c.id || !_want[c.name]) return;
+          if(c.isCMS && c.cmsPayDay) return;                       // 이미 다 설정됨 — 건드리지 않는다
+          _chg.push(Object.assign({}, c, {
+            isCMS: true,
+            cmsPayDay: c.cmsPayDay || (refDay || '')               // 이체일은 비어 있을 때만 입금일로 채움
+          }));
+        });
+        if(_chg.length && dbUpsertMany('companies', _chg) !== false) cmsSet = _chg.length;
+      } catch(_ce){ if(window._erpErrLog) window._erpErrLog(_ce); }
+    }
     setBusy(false);
-    if(props.onApplied) props.onApplied(ok, skip);
+    if(props.onApplied) props.onApplied(ok, skip, cmsSet);
   }
 
   var thS={padding:'6px 8px',fontSize:'11px',fontWeight:700,color:'#64748b',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',textAlign:'left',position:'sticky',top:0};
@@ -29022,7 +29309,7 @@ function FinanceLedger(){
     // ── CMS 일괄이체 매칭 모달 (적요가 '더빌이체' 등일 때) ──
     cmsRow && h(CmsMatchModal, { row:cmsRow,
       onClose:function(){ setCmsRow(null); },
-      onApplied:function(n, skipped){
+      onApplied:function(n, skipped, cmsSet){
         var _r = cmsRow;
         setCmsRow(null);
         if(n > 0){
@@ -29030,7 +29317,8 @@ function FinanceLedger(){
           removeRow(_r._k, 'inc');
         }
         showToast(n > 0
-          ? ('✅ CMS 일괄이체 '+n+'곳 입금표시' + (skipped ? ' · 이미 입금됨 '+skipped+'곳 제외' : ''))
+          ? ('✅ CMS 일괄이체 '+n+'곳 입금표시' + (skipped ? ' · 이미 입금됨 '+skipped+'곳 제외' : '')
+             + (cmsSet ? ' · CMS 등록 '+cmsSet+'곳' : ''))
           : ('처리된 업체가 없습니다' + (skipped ? ' — 이미 입금됨 '+skipped+'곳 제외' : '')));
       } })
   );
@@ -30726,6 +31014,10 @@ function IncomeCompanyTab(){
   var cmsFS = useState('all'); var cmsFilter = cmsFS[0]; var setCmsFilter = cmsFS[1];
   // 통장 자동 입금표시 모달 {applied, review, checked}
   var amS = useState(null); var autoMarkModal = amS[0]; var setAutoMarkModal = amS[1];
+  // 🏦 CMS 자동 감지 모달
+  var cdS = useState(false); var cmsDetectOpen = cdS[0]; var setCmsDetectOpen = cdS[1];
+  // 업체(companies)를 바꿨을 때 CMS 열을 다시 그리기 위한 리비전 — allCompanies는 렌더마다 dbGet으로 읽는다
+  var crS = useState(0); var coRev = crS[0]; var setCoRev = crS[1];
 
   var MONTHS = [1,2,3,4,5,6,7,8,9,10,11,12];
   var nowYear = (new Date()).getFullYear();
@@ -30877,6 +31169,20 @@ function IncomeCompanyTab(){
       });
       showToast(co.name+' '+(date||'').slice(5)+' 입금확정');
     }
+  }
+
+  // ── 🏦 CMS 자동이체로 확정한 업체는 업체관리 CMS 체크를 켜 둔다 (이체일은 비어 있을 때만) ──
+  // SOURCE_LIST는 이름만 들고 있으므로 실제 업체 레코드(id)를 이름으로 되찾아 patch한다.
+  function markCompanyCms(co, ymd){
+    try {
+      var rec = allCompanies.find(function(c){ return c && c.name === co.name; });
+      if(!rec || !rec.id) return;
+      if(rec.isCMS && rec.cmsPayDay) return;               // 이미 다 설정됨
+      var day = parseInt(String(ymd||'').slice(8,10), 10) || 0;
+      var f = { isCMS:true };
+      if(!rec.cmsPayDay && day) f.cmsPayDay = day;
+      if(dbPatch('companies', rec.id, f)) setCoRev(coRev+1);
+    } catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
   }
 
   // ── 🤖 통장내역(거래내역 저장분)으로 자동 입금표시 후보 찾기 ──
@@ -31608,6 +31914,12 @@ function IncomeCompanyTab(){
           disabled: importState.status !== 'idle',
           onChange:handleAdvisoryImport, style:{display:'none'}})
       ),
+      // 🏦 CMS 자동 감지 — 입금 이력으로 자동이체 업체를 찾아 CMS 체크를 일괄 적용
+      h('button',{onClick:function(){setCmsDetectOpen(true);},
+        style:{background:'#0ea5e9',color:'#fff',border:'none',padding:'3px 8px',borderRadius:'4px',
+          fontSize:'10.5px',fontWeight:700,cursor:'pointer',flexShrink:0,whiteSpace:'nowrap'},
+        title:'지금까지의 입금 이력(적요·입금일 규칙)으로 CMS 자동이체 업체를 찾아 미리보기 후 일괄 체크합니다'},
+        '🏦 CMS 자동 감지'),
       h('label',{
         style: Object.assign({
           color:'#fff', border: cmsOver ? '2px dashed #93c5fd' : nicesDragActive ? '2px solid #93c5fd' : 'none',
@@ -31864,6 +32176,7 @@ function IncomeCompanyTab(){
                       var payD = co.cmsPayDay || co.payDay;
                       var dt = payD ? calcDate(ym2, payD) : ym2+'-15';
                       addIncome(co, m, dt, '[나이스빌CMS] 수동확정');
+                      markCompanyCms(co, dt);   // 나이스빌 CMS로 확정 → CMS 업체로 기록
                       setNicesDragActive(false); setNicesDragHover(null);
                     } : undefined,
                     title: nicesDragActive && !paid
@@ -31922,6 +32235,11 @@ function IncomeCompanyTab(){
       '🏦 입금할 월 셀에 드롭하세요 — 나이스빌 CMS 즉시 확정'),
     h(CellPopup),
     h(CMSPanel),
+    // ── 🏦 CMS 자동 감지 모달 ──
+    cmsDetectOpen && h(CmsDetectModal, {
+      onClose:function(){ setCmsDetectOpen(false); },
+      onApplied:function(){ setCmsDetectOpen(false); setCoRev(coRev+1); refreshIncomes(); }
+    }),
     // 셀 우클릭 메뉴
     cellCtxMenu && h('div', { onClick:function(){setCellCtxMenu(null);},
       style:{position:'fixed',top:0,left:0,right:0,bottom:0,zIndex:9700} },
