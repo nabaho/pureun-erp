@@ -771,8 +771,10 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
   // ══════════ 타일 순서: 드래그 이동 + 고정 (사용자별, 기기 간 동기화) ══════════
   var tilePrefs = { order: null, locked: false, homeApp: null };
   var _curRole = 'member';   // 현재 로그인 사용자 역할 (바로가기 권한 판정용)
-  function tilePrefLocalKey(){ return 'pu_portal_tiles_' + sgEmailKey((auth.currentUser && auth.currentUser.email) || ''); }
-  function tilePrefPath(){ return 'data/portal_prefs/' + sgEmailKey((auth.currentUser && auth.currentUser.email) || '_'); }
+  function tilePrefLocalKey(){ return 'pu_portal_tiles_uid_' + ((auth.currentUser && auth.currentUser.uid) || '_'); }
+  function tilePrefLegacyLocalKey(){ return 'pu_portal_tiles_' + sgEmailKey((auth.currentUser && auth.currentUser.email) || ''); }
+  function tilePrefPath(){ return 'data/portal_prefs_uid/' + ((auth.currentUser && auth.currentUser.uid) || '_'); }
+  function tilePrefLegacyPath(){ return 'data/portal_prefs/' + sgEmailKey((auth.currentUser && auth.currentUser.email) || '_'); }
 
   function saveTilePrefs(){
     try { localStorage.setItem(tilePrefLocalKey(), JSON.stringify(tilePrefs)); } catch(e){}
@@ -838,7 +840,12 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     if(isMobile()){ btn.style.display = 'none'; $('tileHint').style.display = 'none'; }
     // 1) 로컬 캐시로 즉시 적용 (깜빡임 없이) — 캐시 없으면 기본값으로 리셋(이전 사용자 설정 잔존 방지)
     try {
-      var p = JSON.parse(localStorage.getItem(tilePrefLocalKey()) || 'null');
+      var rawPref = localStorage.getItem(tilePrefLocalKey());
+      if(!rawPref){
+        rawPref = localStorage.getItem(tilePrefLegacyLocalKey());
+        if(rawPref) localStorage.setItem(tilePrefLocalKey(), rawPref);  // 이메일 키 → UID 키 1회 이전
+      }
+      var p = JSON.parse(rawPref || 'null');
       tilePrefs = p ? { order: p.order || null, locked: !!p.locked, homeApp: p.homeApp || null }
                     : { order: null, locked: false, homeApp: null };
     } catch(e){}
@@ -867,6 +874,14 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     if(auth.currentUser){
       db.ref(tilePrefPath()).once('value').then(function(s){
         var p = s.val();
+        if(p) return p;
+        // 기존 이메일 키 설정을 UID 경로로 1회 이전
+        return db.ref(tilePrefLegacyPath()).once('value').then(function(oldSnap){
+          var oldPref = oldSnap.val();
+          if(oldPref) db.ref(tilePrefPath()).set(oldPref).catch(function(){});
+          return oldPref;
+        }).catch(function(){ return null; });
+      }).then(function(p){
         var norm = function(o){ return JSON.stringify({order:o.order||null,locked:!!o.locked,homeApp:o.homeApp||null}); };
         if(p && norm(p) !== norm(tilePrefs)){
           tilePrefs = { order: p.order || null, locked: !!p.locked, homeApp: p.homeApp || null };
@@ -986,9 +1001,10 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
   ];
   var SG_GROUPS = [{ g:'app', label:'프로그램' }, { g:'biz', label:'업무·기타' }];
   var SG_STATUS = { new:{t:'접수',c:'sg-st-new'}, ing:{t:'검토중',c:'sg-st-ing'}, done:{t:'완료',c:'sg-st-done'} };
-  var SG = { name:'', email:'', role:'member', draftCat:'erp', draftImgs:[], _all:[], listStatus:'open', listQ:'', replyDraftImgs:[] };
+  var SG = { uid:'', name:'', email:'', role:'member', draftCat:'erp', draftImgs:[], _all:[], listStatus:'open', listQ:'', replyDraftImgs:[] };
 
   window.sgSetUser = function(acct){
+    SG.uid = (auth.currentUser && auth.currentUser.uid) || '';
     SG.name = acct ? acct.name : ((auth.currentUser && auth.currentUser.email) || '사용자');
     SG.email = (auth.currentUser && auth.currentUser.email) || '';
     SG.role = acct ? acct.role : 'member';
@@ -1015,6 +1031,37 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
   function sgIsAdmin(){ return SG.role === 'admin'; }
   // Firebase 경로 금지문자(. # $ [ ] /)를 치환해 이메일을 키로 사용
   function sgEmailKey(email){ return String(email||'').toLowerCase().replace(/[.#$\[\]\/]/g, ','); }
+  function sgResolvedUidPath(uid){ return 'data/sg_resolved_uid/' + String(uid||'_'); }
+  function sgResolvedLegacyPath(email){ return 'data/sg_resolved/' + sgEmailKey(email); }
+  // 기존 이메일 경로와 새 UID 경로를 함께 읽고 기존 데이터는 UID 경로로 자동 이전한다.
+  function sgLoadOwnResolved(){
+    var jobs = [];
+    if(SG.email) jobs.push(db.ref(sgResolvedLegacyPath(SG.email)).once('value').then(function(s){ return {kind:'legacy',val:s.val()||{}}; }).catch(function(){ return {kind:'legacy',val:{}}; }));
+    if(SG.uid) jobs.push(db.ref(sgResolvedUidPath(SG.uid)).once('value').then(function(s){ return {kind:'uid',val:s.val()||{}}; }).catch(function(){ return {kind:'uid',val:{}}; }));
+    return Promise.all(jobs).then(function(parts){
+      var legacy={}, current={};
+      parts.forEach(function(p){ if(p.kind==='legacy') legacy=p.val; else current=p.val; });
+      if(SG.uid && Object.keys(legacy).length){
+        var missing={};
+        Object.keys(legacy).forEach(function(id){ if(!current[id]) missing[id]=legacy[id]; });
+        if(Object.keys(missing).length) db.ref(sgResolvedUidPath(SG.uid)).update(missing).catch(function(){});
+      }
+      var merged={};
+      Object.keys(legacy).forEach(function(id){ merged[id]=legacy[id]; });
+      Object.keys(current).forEach(function(id){ merged[id]=current[id]; }); // UID 경로가 최신값
+      return merged;
+    });
+  }
+  function sgFindAuthorUid(s){
+    if(s && s.authorUid) return Promise.resolve(s.authorUid);
+    var email=String((s&&s.authorEmail)||'').toLowerCase();
+    if(!email) return Promise.resolve('');
+    return db.ref('uid_roles').once('value').then(function(snap){
+      var found='';
+      snap.forEach(function(ch){ var v=ch.val()||{}; if(!found && sidToEmail(v.sid)===email) found=ch.key; });
+      return found;
+    }).catch(function(){ return ''; });
+  }
 
   // ── 버튼 숫자 배지: admin=미처리(접수+검토중) 건수 / 일반=내 미확인 해결 건수 ──
   // sg_meta·sg_resolved는 이미지 없는 경량 노드라 로그인마다 읽어도 가볍다.
@@ -1029,9 +1076,9 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
         var n = 0; snap.forEach(function(ch){ var v = ch.val(); if(v && v.status !== 'done') n++; });
         sgSetBadge(n);
       }).catch(function(){});
-    } else if(SG.email){
-      db.ref('data/sg_resolved/'+sgEmailKey(SG.email)).once('value').then(function(snap){
-        var n = 0; snap.forEach(function(ch){ if(!(ch.val()||{}).seen) n++; });
+    } else if(SG.email || SG.uid){
+      sgLoadOwnResolved().then(function(records){
+        var n = 0; Object.keys(records).forEach(function(id){ if(!(records[id]||{}).seen) n++; });
         sgSetBadge(n);
       }).catch(function(){});
     }
@@ -1078,11 +1125,10 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
 
   // ── 해결 알림: 내 건의가 완료 처리되면 로그인 직후 팝업 (확인하면 다시 안 뜸) ──
   function sgCheckResolved(){
-    if(!SG.email) return;
-    var key = sgEmailKey(SG.email);
-    db.ref('data/sg_resolved/'+key).once('value').then(function(snap){
+    if(!SG.email && !SG.uid) return;
+    sgLoadOwnResolved().then(function(records){
       var items = [];
-      snap.forEach(function(ch){ var v = ch.val()||{}; if(!v.seen){ v._id = ch.key; items.push(v); } });
+      Object.keys(records).forEach(function(id){ var v=records[id]||{}; if(!v.seen){ v._id=id; items.push(v); } });
       if(!items.length) return;
       items.sort(function(a,b){ return (a.at||0) - (b.at||0); });
       $('sgDoneBody').innerHTML = items.map(function(it){
@@ -1096,7 +1142,8 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       $('sgDoneOk').onclick = function(){
         var upd = {};
         items.forEach(function(it){ upd[it._id+'/seen'] = true; });
-        db.ref('data/sg_resolved/'+key).update(upd).catch(function(){});
+        var path = SG.uid ? sgResolvedUidPath(SG.uid) : sgResolvedLegacyPath(SG.email);
+        db.ref(path).update(upd).catch(function(){});
         $('sgDoneModal').style.display = 'none';
         sgUpdateBadge();
       };
@@ -1104,10 +1151,15 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
   }
   function sgCatName(k){ var c = SG_CATS.find(function(x){return x.key===k;}); return c ? c.name : '기타'; }
   function sgEsc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(m){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]; }); }
-  // 카테고리 코드는 CSS class로 들어가므로 알려진 값만 허용(속성 이탈 XSS 차단)
-  function sgCatClass(c){ return /^[a-z]+$/.test(String(c||'')) ? c : 'etc'; }
-  // 이미지 src: http(s)·data:image 만 허용하고 따옴표 이스케이프(속성 이탈 XSS 차단)
-  function sgImgSrc(u){ u=String(u||''); return /^(https?:|data:image\/)/i.test(u) ? sgEsc(u) : ''; }
+  // 카테고리 코드는 CSS class로 들어가므로 실제 등록된 키만 허용(속성 이탈 XSS 차단)
+  function sgCatClass(c){ return SG_CATS.some(function(x){ return x.key === c; }) ? c : 'etc'; }
+  // 이미지 URL 원문 검증: HTTPS 또는 직접 생성한 래스터 data URL만 허용(SVG·속성 주입 차단)
+  function sgImgUrl(u){
+    u = String(u||'');
+    return /^(https:\/\/|data:image\/(?:png|jpe?g|gif|webp);base64,)/i.test(u) && !/[\u0000-\u001f"'<>]/.test(u) ? u : '';
+  }
+  // innerHTML 속성에 넣을 때만 별도로 HTML 이스케이프
+  function sgImgSrc(u){ var safe=sgImgUrl(u); return safe ? sgEsc(safe) : ''; }
   function sgFmt(ts){ if(!ts) return ''; var d=new Date(ts); var p=function(n){return String(n).padStart(2,'0');}; return (d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes()); }
 
   function sgCompress(file, cb){
@@ -1182,7 +1234,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
           arr.forEach(function(s){
             if(!have[s._id]){
               db.ref('data/sg_meta/'+s._id).set({
-                author: s.author||'', authorEmail: s.authorEmail||'',
+                author: s.author||'', authorEmail: s.authorEmail||'', authorUid: s.authorUid||'',
                 status: s.status||'new', cat: s.cat||'etc', title: s.title||'', createdAt: s.createdAt||0
               }).catch(function(){});
             }
@@ -1255,7 +1307,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       var cnt = byAuthor[s.author || '?'];
       var when = (SG.listStatus==='done' && s.repliedAt) ? ('완료 '+sgFmt(s.repliedAt)) : sgFmt(s.createdAt);
       return '<div class="sg-item" data-id="'+s._id+'">'
-        + '<div class="r1"><span class="sg-badge sg-b-'+(s.cat||'etc')+'">'+sgEsc(sgCatName(s.cat))+'</span>'
+        + '<div class="r1"><span class="sg-badge sg-b-'+sgCatClass(s.cat)+'">'+sgEsc(sgCatName(s.cat))+'</span>'
         + '<span class="sg-st '+st.c+'">'+st.t+'</span></div>'
         + '<div class="sg-itl">'+sgEsc(s.title)+'</div>'
         + '<div class="sg-meta">'+sgEsc(s.author||'')+' ('+cnt+'건) · '+when+shots+rep+'</div></div>';
@@ -1366,14 +1418,14 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     var rec = {
       cat: SG.draftCat, title: title, content: content,
       images: SG.draftImgs.slice(),
-      author: SG.name, authorEmail: SG.email,
+      author: SG.name, authorEmail: SG.email, authorUid: SG.uid,
       status: 'new', reply: '', createdAt: Date.now()
     };
     var ref = db.ref('data/suggestions').push();
     ref.set(rec).then(function(){
       // 경량 메타 병행 기록 — 배지·관리자 요약이 이미지 포함 원본을 안 읽게
       db.ref('data/sg_meta/'+ref.key).set({
-        author: rec.author, authorEmail: rec.authorEmail,
+        author: rec.author, authorEmail: rec.authorEmail, authorUid: rec.authorUid,
         status: 'new', cat: rec.cat, title: rec.title, createdAt: rec.createdAt
       }).catch(function(){});
       SG.draftImgs = []; sgViewList();
@@ -1392,7 +1444,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       var st = SG_STATUS[s.status] || SG_STATUS.new;
       $('sgTitle').textContent = '💬 건의 상세';
       var html = '<div class="r1" style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'
-        + '<span class="sg-badge sg-b-'+(s.cat||'etc')+'">'+sgEsc(sgCatName(s.cat))+'</span>'
+        + '<span class="sg-badge sg-b-'+sgCatClass(s.cat)+'">'+sgEsc(sgCatName(s.cat))+'</span>'
         + '<span class="sg-st '+st.c+'">'+st.t+'</span>'
         + '<span style="font-size:.72rem;color:#94a3b8;margin-left:auto">'+sgEsc(s.author||'')+' · '+sgFmt(s.createdAt)+'</span></div>'
         + '<div style="font-size:1rem;font-weight:800;margin-bottom:8px">'+sgEsc(s.title)+'</div>'
@@ -1428,7 +1480,27 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       html += '<button class="sg-btn ghost" id="sgBackList2" style="margin-top:10px">← 목록으로</button>';
       bd.innerHTML = html;
       Array.prototype.forEach.call(bd.querySelectorAll('.sg-shot'), function(im){
-        im.addEventListener('click', function(){ var w=window.open(''); if(w) w.document.write('<img src="'+im.dataset.full+'" style="max-width:100%">'); });
+        im.addEventListener('click', function(){
+          var src = sgImgUrl(im.dataset.full);
+          if(!src) return;
+          var w = window.open('', '_blank');
+          if(!w) return;
+          try { w.opener = null; } catch(_){}
+          w.document.title = '첨부 이미지';
+          w.document.body.style.margin = '0';
+          w.document.body.style.background = '#0f172a';
+          w.document.body.style.display = 'flex';
+          w.document.body.style.minHeight = '100vh';
+          w.document.body.style.alignItems = 'center';
+          w.document.body.style.justifyContent = 'center';
+          var full = w.document.createElement('img');
+          full.src = src;
+          full.alt = '건의 첨부 이미지';
+          full.style.maxWidth = '100%';
+          full.style.maxHeight = '100vh';
+          full.style.objectFit = 'contain';
+          w.document.body.appendChild(full);
+        });
       });
       $('sgBackList2').addEventListener('click', sgViewList);
       if(sgIsAdmin()){
@@ -1481,13 +1553,17 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
             .then(function(){
               db.ref('data/sg_meta/'+id).update({ status:newStatus }).catch(function(){});
               // 완료 처리 → 건의자에게 해결 알림 기록 (다음 로그인 때 팝업, 캡처 포함)
-              if(s.authorEmail){
-                var rref = db.ref('data/sg_resolved/'+sgEmailKey(s.authorEmail)+'/'+id);
-                if(newStatus === 'done'){
-                  rref.set({ title:s.title||'', reply:reply, replyImages:replyImages, cat:s.cat||'etc', at:Date.now(), seen:false }).catch(function(){});
-                } else {
-                  rref.remove().catch(function(){});   // 완료 취소 시 알림 회수
-                }
+              if(s.authorEmail || s.authorUid){
+                sgFindAuthorUid(s).then(function(authorUid){
+                  var rootPath = authorUid ? sgResolvedUidPath(authorUid) : sgResolvedLegacyPath(s.authorEmail);
+                  var rref = db.ref(rootPath+'/'+id);
+                  if(authorUid && !s.authorUid) db.ref('data/suggestions/'+id+'/authorUid').set(authorUid).catch(function(){});
+                  if(newStatus === 'done'){
+                    rref.set({ title:s.title||'', reply:reply, replyImages:replyImages, cat:sgCatClass(s.cat), at:Date.now(), seen:false }).catch(function(){});
+                  } else {
+                    rref.remove().catch(function(){});   // 완료 취소 시 알림 회수
+                  }
+                });
               }
               sgUpdateBadge();
               sgViewList();
