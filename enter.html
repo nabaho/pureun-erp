@@ -731,6 +731,53 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       .then(function(acct){ _show(acct || _matchLocal()); });
   }
 
+  // ── 프로그램 창 관리자 ──
+  // 프로그램마다 고정된 창 이름을 사용한다. 포털을 새로고침해 메모리 참조가 사라져도
+  // window.open('', 이름)으로 이미 열려 있는 창을 다시 찾아 새 창 생성을 막는다.
+  var portalAppWindows = Object.create(null);
+  function portalAppWindowName(key){
+    return 'pureun-' + String(key || '').replace(/[^a-z0-9_-]/gi, '');
+  }
+  function portalAppUrlMatches(ref, url){
+    try {
+      var current = new URL(ref.location.href, location.href);
+      var expected = new URL(url, location.href);
+      return current.origin === expected.origin && current.pathname === expected.pathname;
+    } catch(e){
+      return false;
+    }
+  }
+  function navigatePortalApp(ref, url){
+    try { ref.location.replace(url); }
+    catch(e){ try { ref.location.href = url; } catch(_){} }
+  }
+  function openPortalApp(app, url){
+    var winName = portalAppWindowName(app.key);
+    var ref = portalAppWindows[app.key];
+
+    // 같은 포털 화면에서 이미 확보한 프로그램 창: 재로딩 없이 포커스만 이동한다.
+    try {
+      if(ref && !ref.closed){
+        if(!portalAppUrlMatches(ref, url)) navigatePortalApp(ref, url);
+        ref.focus();
+        return ref;
+      }
+    } catch(e){}
+
+    // 포털 새로고침 후에도 고정 창 이름으로 기존 프로그램 창을 복구한다.
+    try { ref = window.open('', winName); } catch(e){ ref = null; }
+    if(!ref){
+      alert('팝업이 차단되어 프로그램을 열 수 없습니다.\n이 사이트의 팝업을 허용해 주세요.');
+      return null;
+    }
+    portalAppWindows[app.key] = ref;
+
+    // 새로 생성된 about:blank 창 또는 다른 화면일 때만 프로그램 주소로 이동한다.
+    if(!portalAppUrlMatches(ref, url)) navigatePortalApp(ref, url);
+    try { ref.focus(); } catch(e){}
+    return ref;
+  }
+
   function renderPortal(acct){
     var name = acct ? acct.name : (auth.currentUser && auth.currentUser.email) || '사용자';
     var role = acct ? acct.role : 'member';
@@ -751,6 +798,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       a.className = 'tile';
       a.dataset.key = app.key;
       a.href = app.url + (app.url.indexOf('?') >= 0 ? '&' : '?') + 'sso=1' + extra;
+      if(!isMobile()) a.target = portalAppWindowName(app.key);
       // 로컬 앱(기금관리 등, localhost 실행)은 폰에서 열 수 없음 → 이동 대신 안내
       var mobileLocal = isMobile() && app.local;
       a.innerHTML =
@@ -770,18 +818,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
           ev.preventDefault();
           var _v = Math.floor(Date.now() / 600000);  // 10분 버킷 캐시 우회
           var url = app.url + (app.url.indexOf('?') >= 0 ? '&' : '?') + 'sso=1&v=' + _v + extra;
-          var winName = 'pureun-' + app.key;
-          // 이미 열어둔 창이 살아있으면 그 창으로 이동+포커스(새 탭 안 만듦), 없으면 새로 연다
-          var ref = window._puWins && window._puWins[app.key];
-          try {
-            if(ref && !ref.closed){ ref.location.href = url; ref.focus(); }
-            else {
-              var w = window.open(url, winName);
-              window._puWins = window._puWins || {};
-              window._puWins[app.key] = w;
-              if(w) w.focus();
-            }
-          } catch(_){ window.open(url, winName); }
+          openPortalApp(app, url);
         });
       }
       tiles.appendChild(a);
