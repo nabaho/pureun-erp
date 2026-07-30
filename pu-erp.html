@@ -8398,9 +8398,11 @@ function searchPastCompanies(query){
     var ids = Object.keys(idx);
     if(!ids.length) return;
     function normCo(s){ return (s||'').toLowerCase().replace(/[\s\-㈜()]|주식회사/g,''); }
-    function toContact(x, primary){
+    // srcId = 명함첩 원본 카드 id (조용히 저장 — 오직 사용자가 '수동 새로고침' 누를 때만 사용, 자동연동 아님)
+    function toContact(x, primary, srcId){
       return { id:'pc'+Math.random().toString(36).slice(2,9), name:x.n||'', role:x.ti||'',
-        phone:(x.m||x.t||''), bizPhone:(x.ct||''), email:(x.e||''), isPrimary:!!primary };
+        phone:(x.m||x.t||''), bizPhone:(x.ct||''), email:(x.e||''), isPrimary:!!primary,
+        pcId:(srcId||''), pcFrom:'명함첩' };
     }
     // 회사별 사업자등록증 레코드(대표·사업자번호 보강용)
     var bizByCo = {};
@@ -8414,14 +8416,13 @@ function searchPastCompanies(query){
       if(!hit) continue;
       var biz = bizByCo[normCo(r.c)] || {};
       if(isBiz){
-        var people = ids.map(function(kk){ return idx[kk]; })
-          .filter(function(x){ return x && x.k==='card' && normCo(x.c)===normCo(r.c); });
+        var peopleIds = ids.filter(function(kk){ var x=idx[kk]; return x && x.k==='card' && normCo(x.c)===normCo(r.c); });
         results.push({
           source:'명함첩', sourceColor:'#1d4ed8', sourceBg:'#dbeafe',
           sourceId:'pc-'+ids[i], label:(r.c||'')+' · 사업자등록증', bizNo:(r.bz||''), date:'',
           company:{ name:r.c||'', bizNo:r.bz||'', ceo:r.ceo||'', address:r.ad||'',
             phone:r.ct||'', fax:'', email:'', bizType:'', bizCategory:'', companySize:'',
-            contacts: people.map(function(p,pi){ return toContact(p, pi===0); }) }
+            contacts: peopleIds.map(function(kk,pi){ return toContact(idx[kk], pi===0, kk); }) }
         });
       } else {
         results.push({
@@ -8431,7 +8432,7 @@ function searchPastCompanies(query){
           bizNo:(biz.bz||''), date:'',
           company:{ name:r.c||'', bizNo:biz.bz||'', ceo:biz.ceo||'', address:(r.ad||biz.ad||''),
             phone:r.ct||'', fax:'', email:'', bizType:'', bizCategory:'', companySize:'',
-            contacts:[ toContact(r, true) ] }
+            contacts:[ toContact(r, true, ids[i]) ] }
         });
       }
       added++;
@@ -8809,7 +8810,9 @@ function ContractModal(props){
       companySize: src.companySize || '',
       employmentInsuredCount: src.employmentInsuredCount || 0,
       injuryInsuredCount: src.injuryInsuredCount || 0,
-      contacts: (src.contacts && src.contacts.length > 0) ? src.contacts.slice() : f.company.contacts,
+      contacts: (src.contacts && src.contacts.length > 0)
+        ? src.contacts.map(function(c){ return c.pcId ? Object.assign({}, c, { pcAt: c.pcAt || (new Date()).toISOString().slice(0,10) }) : c; })
+        : f.company.contacts,
       workers: (src.workers && src.workers.length > 0) ? src.workers.slice() : (f.company.workers || []),
       businessCardImg: src.businessCardImg || f.company.businessCardImg || '',
       bizLicenseImg: src.bizLicenseImg || f.company.bizLicenseImg || ''
@@ -8821,6 +8824,20 @@ function ContractModal(props){
     }); });
     setPastSearch(false);
     showToast('"' + (src.name || '회사') + '" 정보 불러옴 (' + picked.source + ')');
+  }
+
+  // 담당자를 명함첩 최신정보로 수동 갱신 (자동연동 아님 — 사용자가 버튼 누를 때만)
+  function refreshContactFromPucards(ci){
+    var cs = f.company.contacts.slice();
+    var ct = Object.assign({}, cs[ci]);
+    if(!ct.pcId){ showToast('명함첩에서 가져온 담당자가 아닙니다'); return; }
+    var r = (window.pucardsIdx||{})[ct.pcId];
+    if(!r){ showToast('명함첩에서 찾을 수 없습니다 (삭제되었을 수 있음) — 기존 정보를 유지합니다'); return; }
+    ct.name = r.n||''; ct.role = r.ti||''; ct.phone = (r.m||r.t||''); ct.bizPhone = (r.ct||''); ct.email = (r.e||'');
+    ct.pcAt = (new Date()).toISOString().slice(0,10);
+    cs[ci] = ct;
+    setF(function(prev){ return Object.assign({}, prev, { company: Object.assign({}, prev.company, { contacts: cs }) }); });
+    showToast('명함첩 최신정보로 갱신했습니다: ' + (ct.name||''));
   }
 
   // 사업자번호 onBlur 자동 매칭 토스트
@@ -10058,6 +10075,13 @@ function ContractModal(props){
             (f.company.contacts||[]).length > 1 && h('button', { type:'button', onClick:function(){ removeContact(idx); },
               style:{ background:'#fef2f2', color:'#dc2626', border:'1px solid #fecaca', borderRadius:'4px', width:'24px', height:'24px', fontSize:'13px', cursor:'pointer' } }, '×')
           ),
+          // 명함첩에서 가져온 담당자: 출처·시점 표시 + 수동 새로고침 (자동연동 안 됨)
+          ct.pcId && h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap', fontSize:'10px', color:'#1d4ed8', background:'#eff6ff', border:'1px solid #dbeafe', borderRadius:'4px', padding:'4px 8px', marginBottom:'6px' } },
+            h('span', null, '📇 명함첩에서 ' + (ct.pcAt || '') + ' 가져옴 · 자동연동 안 됨(퇴사·승진 시 아래 버튼으로 직접 갱신)'),
+            h('div', { style:{ flex:1 } }),
+            h('button', { type:'button', onClick:function(){ refreshContactFromPucards(idx); },
+              style:{ background:'#dbeafe', color:'#1e40af', border:'1px solid #bfdbfe', borderRadius:'4px', padding:'2px 8px', fontSize:'10px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
+              '🔄 명함첩 최신정보로 새로고침')),
           locked && h('div', { style:{ fontSize:'10.5px', color:'#1e40af', marginBottom:'6px', background:'#eff6ff', padding:'4px 8px', borderRadius:'4px' } },
             '🔒 회사정보(대표자/연락처)와 동기화 중 - 회사정보 수정 시 자동 반영. 해제하려면 위 체크박스 해제.'),
           // 담당자 명함 드롭존
