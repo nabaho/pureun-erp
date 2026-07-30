@@ -1155,7 +1155,10 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 
 <style>
 /* 사진 1장 모드: 활동(끝) 슬롯 관련 요소 숨김 + 단일 컬럼 */
-#mbStamp.single #pd1, #mbStamp.single #rf1, #mbStamp.single .slot1only{ display:none !important; }
+/* 1장 모드에선 두 번째 슬롯을 숨김 — 단, 예전 방식으로 c1에 저장된 사진이 있으면 보여준다 */
+#mbStamp.single:not(.has-legacy) #pd1, #mbStamp.single:not(.has-legacy) #rf1, #mbStamp.single .slot1only{ display:none !important; }
+/* 1장 모드: 오전/오후 랜덤은 입장~활동 2장 전용이라 숨김 (누르면 항상 오류) */
+#mbStamp.single .tg-row{ display:none !important; }
 #mbStamp.single.no-extra .ph-pair{ grid-template-columns:minmax(0,420px) !important; }
 </style>
 <!-- STAMP MODAL -->
@@ -1578,33 +1581,16 @@ async function loadPhotosFromDB(){
       PHOTOS[sid][ck]=cv;
     }
     if(keys.length)renderCal();
+    _photosLoaded=true; // 정상 완료일 때만 — 실패 시 false로 남겨 축소 가드가 계속 막도록
   }catch(e){console.warn('사진 복원 실패',e);}
-  finally{ _photosLoaded=true; }
 }
 let _photosLoaded=false; // IndexedDB 사진 복원 완료 여부 (축소 검사 안전장치)
 
-// 1장 모드 슬롯 재배치 마이그레이션 (1회)
-// 예전에는 1장 모드의 추가 사진이 c1부터 저장됐으나, 지금은 c2부터 사용한다(c1은 예약).
-// 남아 있는 c1 이후 사진을 한 칸씩 뒤로 밀어 라벨 오류·덮어쓰기를 방지한다.
-async function migrateSinglePhotoSlots(){
-  if(localStorage.getItem('p_slotMigrated')==='1')return;
-  try{
-    for(const sc of getScheds()){
-      if(!isSinglePhotoSched(sc))continue;
-      if(!(await getPhotoFromDB(sc.id,'c1')))continue; // 옮길 것이 없으면 통과
-      // 뒤에서부터 밀어야 덮어쓰지 않음
-      for(let i=PHOTO_MAX_SLOTS-2;i>=1;i--){
-        for(const pfx of ['c','o']){
-          const v=await getPhotoFromDB(sc.id,pfx+i);
-          if(v){ await savePhotoToDB(sc.id,pfx+(i+1),v); await deleteOnePhotoFromDB(sc.id,pfx+i); }
-        }
-      }
-      console.info('사진 슬롯 재배치:',sc.id);
-    }
-    lsSet('p_slotMigrated','1');
-    for(const k in PHOTOS)delete PHOTOS[k];
-    await loadPhotosFromDB();
-  }catch(e){ console.warn('사진 슬롯 마이그레이션 실패',e); }
+// 1장 모드 레거시 슬롯 호환
+// 예전에는 1장 모드의 추가 사진이 c1부터 저장됐고, 지금은 c2부터 쓴다(c1은 예약).
+// 사진을 '옮기지 않고' 옛 위치를 그대로 인식한다 — 이동 중 유실·덮어쓰기 위험을 없애기 위함.
+function hasLegacySingleSlot(sc){
+  return !!sc && baseSlotCount(sc)===1 && !!(PHOTOS[sc.id]&&PHOTOS[sc.id].c1);
 }
 
 // IndexedDB에서 사진 1건 직접 읽기 (dataURL 또는 null)
@@ -1690,24 +1676,29 @@ function extraPhotoCount(sc){
 const EXTRA_START=2;
 function totalSlotCount(sc){
   const base=baseSlotCount(sc), extra=extraPhotoCount(sc);
-  return extra>0 ? EXTRA_START+extra : base;
+  let n = extra>0 ? EXTRA_START+extra : base;
+  if(hasLegacySingleSlot(sc))n=Math.max(n,2); // 옛 c1을 포함하려면 인덱스 폭이 2 이상이어야 함
+  return n;
 }
 // 슬롯 라벨 단일 출처
 function slotLabelText(sc,i){
   const base=baseSlotCount(sc);
   if(i<base)return base===1?'현장':(i===0?'입장':'활동');
-  if(i<EXTRA_START)return '미사용';
+  if(i<EXTRA_START)return '추가(이전)';   // 1장 모드에서 예전 방식으로 c1에 저장된 사진
   return '추가 '+(i-EXTRA_START+1);
 }
 function slotFileLabel(sc,i){
   const base=baseSlotCount(sc);
   if(i<base)return base===1?'현장사진':(i===0?'시작사진':'끝사진');
+  if(i<EXTRA_START)return '추가이전사진';
   return '추가'+(i-EXTRA_START+1)+'사진';
 }
 // 슬롯 정의 목록: [{i,key,label,kind}]  kind: 'base'|'extra'
 function photoSlotDefs(sc){
   const base=baseSlotCount(sc), extra=extraPhotoCount(sc), defs=[];
   for(let i=0;i<base;i++)defs.push({i,key:'c'+i,okey:'o'+i,label:base===1?'📍 현장':(i===0?'📍 입장(시작)':'🔧 활동(끝)'),kind:'base'});
+  // 옛 위치(c1)에 사진이 남아 있으면 그대로 보여줌 — 새 사진은 이 자리에 저장하지 않음
+  if(hasLegacySingleSlot(sc))defs.push({i:1,key:'c1',okey:'o1',label:'🖼️ 추가(이전)',kind:'legacy'});
   for(let j=0;j<extra;j++){const i=EXTRA_START+j;defs.push({i,key:'c'+i,okey:'o'+i,label:`🖼️ 추가 ${j+1}`,kind:'extra'});}
   return defs;
 }
@@ -4865,7 +4856,8 @@ function openStampModal(sid){
   const visN=photoSlotDefs(sc).length;
   ST.visN=visN;
   q('#mbStamp').classList.toggle('single', ST.single);
-  q('#mbStamp').classList.toggle('no-extra', extraPhotoCount(sc)===0);
+  q('#mbStamp').classList.toggle('no-extra', visN<=1);
+  q('#mbStamp').classList.toggle('has-legacy', hasLegacySingleSlot(sc));
   buildStampExtraSlots(n);
   var _upT=q('#spUploadTitle'); if(_upT)_upT.textContent='📁 사진 업로드 ('+visN+'장)';
   renderPDs();renderRFs();renderRangeOpts();buildSpPos();buildSpColors();
@@ -4984,9 +4976,10 @@ function renderPDs(){
   const _n=ST.n||(ST.single?1:2);
   for(let i=0;i<_n;i++){
     const _sc=getScheds().find(s=>s.id===ST.sid);
-    if(ST.single&&i>=1&&i<EXTRA_START)continue;             // 1장 모드의 미사용 슬롯 건너뜀
+    // 1장 모드의 예약 슬롯(c1)은 건너뜀 — 단, 예전 방식으로 저장된 사진이 있으면 표시
+    if(ST.single&&i>=1&&i<EXTRA_START&&!(PHOTOS[ST.sid]&&PHOTOS[ST.sid]['c'+i]))continue;
     const d=q(`#pd${i}`);if(!d)continue;
-    const lbl=(i===0?(ST.single?'📷 사진':'📍 입장'):i===1?'🔧 활동':'🖼️ ')+(i>=EXTRA_START?slotLabelText(_sc,i):'');
+    const lbl=(i===0?(ST.single?'📷 ':'📍 '):(i===1&&!ST.single)?'🔧 ':'🖼️ ')+slotLabelText(_sc,i);
     if(ST.photos[i]){
       d.classList.add('filled');
       d.onclick=null;
@@ -5076,7 +5069,8 @@ function attachPdAdjust(idx){
 function renderRFs(){
   const _n=ST.n||(ST.single?1:2);
   for(let i=0;i<_n;i++){
-    if(ST.single&&i>=1&&i<EXTRA_START)continue;             // 1장 모드의 미사용 슬롯 건너뜀
+    // 1장 모드의 예약 슬롯(c1)은 건너뜀 — 단, 예전 방식으로 저장된 사진이 있으면 표시
+    if(ST.single&&i>=1&&i<EXTRA_START&&!(PHOTOS[ST.sid]&&PHOTOS[ST.sid]['c'+i]))continue;
     const r=q(`#rf${i}`);if(!r)continue;
     const _sc=getScheds().find(s=>s.id===ST.sid);
     if(ST.done[i]){
@@ -5837,7 +5831,7 @@ function init(){
     q('#mbLogin')?.classList.add('sso-wait');
     setTimeout(()=>q('#mbLogin')?.classList.remove('sso-wait'),6000);  // 6초 내 자동로그인 없으면 카드 표시
   }
-  loadPhotosFromDB().then(migrateSinglePhotoSlots);
+  loadPhotosFromDB();
   fbInit();
   applyMobileLayout();
   initDashResizer();
