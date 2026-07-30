@@ -1627,7 +1627,7 @@ var FB_ALL_SYNC_KEYS = [
   'pension_policy','security_perms',
   'payroll_irregular','contract_forms','dc_contributions','biz_cases',
   'payer_aliases','expense_cat_aliases',
-  'bank_processed','combo_whitelist'
+  'bank_processed','combo_whitelist','cms_ledger'
 ];
 // App Check reCAPTCHA v3 사이트키 — Firebase 콘솔에서 발급 후 따옴표 안에 붙여넣기 (비어있으면 비활성, 동작에 영향 없음)
 var FB_APPCHECK_KEY = '6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
@@ -28062,6 +28062,336 @@ window.erpDetectCmsCompanies = erpDetectCmsCompanies;
 window.erpBuildCmsPatch = erpBuildCmsPatch;
 window.CMS_NOTE_RE = CMS_NOTE_RE;
 
+// ══════════════════════════════════════════════
+// 🏦 나이스빌(NiceBill) CMS 출금 결과 내역 — 실데이터 파서
+// ══════════════════════════════════════════════
+// 나이스빌에서 내려받은 'CMS 출금 결과 내역' 엑셀을 그대로 읽어 업체별 자문료 수납 결과를 만든다.
+//   출금일     = 업체 통장에서 돈이 빠진 날
+//   정산예정일 = 그 돈이 푸른노무법인 통장에 들어오는 날 (= 통장 적요 '더빌이체NNNN' 입금일)
+//   → 같은 정산예정일의 납부금액 합계 = 그 날 통장 입금액
+// 저장 키(cms_ledger)는 다른 PC에서도 더빌이체 매칭에 쓰이므로 FB_ALL_SYNC_KEYS에 넣는다.
+var CMS_LEDGER_KEY = 'cms_ledger';
+var CMS_LEDGER_MAX = 1500;              // 용량 가드 — 최신 1,500건까지만 보관
+
+// 헤더 글자 → 내부 필드 (긴 것·고유한 것부터 — '출금일'과 '출금기관/출금번호'가 섞이지 않게)
+var NB_HDR_MAP = [
+  ['회원명','name'], ['납부금액','amount'],
+  ['정산예정일','setdate'], ['취소일','canceldate'], ['출금일','wdate'],
+  ['수수료','fee'], ['상태','status'], ['사업자번호','bizNo'], ['회원코드','code'],
+  ['출금기관','bank'], ['출금번호','acct'], ['상품명','product'], ['비고','note']
+];
+function _nbNorm(v){ return String(v===null||v===undefined?'':v).replace(/\s+/g,''); }
+function _nbDigits(v){ return String(v===null||v===undefined?'':v).replace(/[^0-9]/g,''); }
+
+// 시트 첫 20행에서 '회원명 + 납부금액' 헤더 행을 찾는다 → {hdr, col:{…}} / 못 찾으면 null
+function erpDetectNicebillSheet(raw){
+  if(!raw || !raw.length) return null;
+  var lim = Math.min(raw.length, 20);
+  for(var i=0; i<lim; i++){
+    var r = raw[i];
+    if(!r || !r.length) continue;
+    var cells = [], ci;
+    for(ci=0; ci<r.length; ci++) cells.push(_nbNorm(r[ci]));
+    var hasName = false, hasAmt = false;
+    for(ci=0; ci<cells.length; ci++){
+      if(cells[ci] === '회원명') hasName = true;
+      if(cells[ci] === '납부금액') hasAmt = true;
+    }
+    if(!hasName || !hasAmt) continue;          // 이 두 열이 없으면 나이스빌 파일이 아니다
+    var col = {};
+    for(ci=0; ci<cells.length; ci++){
+      var s = cells[ci];
+      if(!s) continue;
+      for(var m=0; m<NB_HDR_MAP.length; m++){
+        var key = NB_HDR_MAP[m][0], fld = NB_HDR_MAP[m][1];
+        if(col[fld] !== undefined) continue;   // 먼저 나온 열을 쓴다
+        // 회원명·납부금액은 정확히 일치할 때만, 나머지는 표기 변형(indexOf)까지 허용
+        var hit = (fld === 'name' || fld === 'amount') ? (s === key) : (s.indexOf(key) >= 0);
+        if(hit){ col[fld] = ci; break; }
+      }
+    }
+    if(col.name === undefined || col.amount === undefined) continue;
+    return { hdr:i, col:col };
+  }
+  return null;
+}
+
+// 상태 문자열의 대괄호 사유 (자동출금·자동재출금은 사유가 아니라 방식이므로 건너뜀)
+function _nbReason(s){
+  var ms = String(s===null||s===undefined?'':s).match(/\[([^\]]*)\]/g) || [];
+  for(var i=0; i<ms.length; i++){
+    var t = _nbNorm(ms[i].slice(1, -1));
+    if(!t || t === '자동출금' || t === '자동재출금') continue;
+    return t;
+  }
+  return '';
+}
+// 상태 → ok / pending / fail (대괄호 앞 첫 낱말로 판정)
+function _nbStatusOf(s){
+  var lead = _nbNorm(String(s===null||s===undefined?'':s).split('[')[0]);
+  if(lead.indexOf('출금성공') === 0) return 'ok';
+  if(lead.indexOf('출금실패') === 0) return 'fail';
+  return 'pending';                             // 출금중 [자동출금] 등
+}
+// 정렬·중복제거용 기준일 (정산예정일 없으면 출금일)
+function _nbRowDay(r){ return String((r && (r.setdate || r.wdate)) || ''); }
+// 행 지문 — 같은 파일을 다시 올려도 누적되지 않게
+function _nbRowSig(r){
+  return String(r.wdate||'') + '|' + _nbNorm(r.name) + '|' + (parseInt(r.amount,10)||0) + '|' + String(r.code||'');
+}
+
+// ok 행을 정산예정일로 묶는다 → {'2026-07-22':{amount,count,names[]}} (통장 더빌이체 입금과 대조하는 표)
+function erpNbGroupByDate(rows){
+  var by = {};
+  (rows || []).forEach(function(r){
+    if(!r || r.status !== 'ok') return;
+    var d = String(r.setdate || '').slice(0, 10);
+    if(!d) return;                              // 정산예정일 미정은 통장 대조에 쓸 수 없다
+    var e = by[d];
+    if(!e) e = by[d] = { amount:0, count:0, names:[] };
+    e.amount += parseInt(r.amount, 10) || 0;
+    e.count++;
+    e.names.push(r.name || '');
+  });
+  return by;
+}
+// 집계 {ok,pending,fail,total,okAmt}
+function erpNbStat(rows){
+  var st = { ok:0, pending:0, fail:0, total:0, okAmt:0 };
+  (rows || []).forEach(function(r){
+    if(!r) return;
+    st.total++;
+    if(r.status === 'ok'){ st.ok++; st.okAmt += parseInt(r.amount, 10) || 0; }
+    else if(r.status === 'fail') st.fail++;
+    else st.pending++;
+  });
+  return st;
+}
+
+// 시트 → {rows, byDate, stat}
+function erpParseNicebill(raw, det){
+  var out = { rows:[], byDate:{}, stat:{ ok:0, pending:0, fail:0, total:0, okAmt:0 } };
+  if(!raw || !det || !det.col) return out;
+  var col = det.col;
+  function cell(r, k){
+    var i = col[k];
+    if(i === undefined) return '';
+    var v = r[i];
+    return (v === undefined || v === null) ? '' : v;
+  }
+  var rows = [];
+  for(var j = det.hdr + 1; j < raw.length; j++){
+    var r = raw[j];
+    if(!r) continue;
+    var name = String(cell(r, 'name')).trim();
+    if(!name) continue;                                            // 회원명 없는 행(소계·공백) 제외
+    var amount = parseInt(_nbDigits(cell(r, 'amount')), 10) || 0;
+    if(amount <= 0) continue;
+    var wdate  = _excelToISO(cell(r, 'wdate'));
+    var setdate= _excelToISO(cell(r, 'setdate'));
+    var cancel = _excelToISO(cell(r, 'canceldate'));
+    var stRaw  = String(cell(r, 'status')).trim();
+    var status, reason;
+    if(cancel && cancel.length >= 8){ status = 'fail'; reason = '취소'; }   // 취소일이 찍힌 행 = 취소분
+    else { status = _nbStatusOf(stRaw); reason = _nbReason(stRaw); }
+    rows.push({
+      _k: 'nb' + j,
+      wdate: (wdate && wdate.length >= 8) ? wdate : '',
+      setdate: (setdate && setdate.length >= 8) ? setdate : '',
+      name: name,
+      bizNo: _nbDigits(cell(r, 'bizNo')),                          // 882-81-00643 / 4268103187 모두 숫자만으로
+      amount: amount,
+      fee: parseInt(_nbDigits(cell(r, 'fee')), 10) || 0,
+      statusRaw: stRaw,
+      status: status,
+      reason: reason,
+      code: String(cell(r, 'code')).trim(),
+      bank: String(cell(r, 'bank')).trim()
+    });
+  }
+  out.rows = rows;
+  out.byDate = erpNbGroupByDate(rows);
+  out.stat = erpNbStat(rows);
+  return out;
+}
+
+// ── 회원명·사업자번호 → ERP 업체 색인 (파싱 1회만 만든다 — 행마다 업체목록을 훑지 않도록) ──
+function erpNicebillCoIndex(){
+  var idx = { byNorm:{}, byBiz:{}, list:[], cache:{} };
+  var all = dbGet('companies', []) || [];
+  if(!Array.isArray(all)) return idx;
+  for(var i=0; i<all.length; i++){
+    var c = all[i];
+    if(!c || !c.id || !c.name || c.status !== 'active') continue;
+    var e = {
+      id: c.id, name: c.name, norm: erpNormName(c.name), biz: _nbDigits(c.bizNo),
+      fee: parseInt(c.monthlyAdvisoryFee, 10) || 0,
+      payDay: String(c.taxInvoicePaymentDay || ''),
+      mainSid: c.managerMain || '',
+      isCMS: !!c.isCMS, cmsPayDay: String(c.cmsPayDay || '')
+    };
+    idx.list.push(e);
+    if(e.norm && !idx.byNorm[e.norm]) idx.byNorm[e.norm] = e;
+    if(e.biz.length >= 10 && !idx.byBiz[e.biz]) idx.byBiz[e.biz] = e;
+  }
+  return idx;
+}
+
+// 회원명(+사업자번호) → ERP 업체 / 없으면 null
+// ① 이름 정규화 정확일치 → ② 사업자번호 일치 → ③ 이름 유사도 88↑ → ④ 학습된 입금자 별칭
+function erpNicebillMatchCo(idx, name, bizNo){
+  if(!idx) return null;
+  var nm = erpNormName(name);
+  var bz = _nbDigits(bizNo);
+  var ck = nm + '|' + bz;
+  if(idx.cache && idx.cache.hasOwnProperty(ck)) return idx.cache[ck];
+  var hit = null;
+  if(nm && idx.byNorm[nm]) hit = idx.byNorm[nm];
+  if(!hit && bz.length >= 10 && idx.byBiz[bz]) hit = idx.byBiz[bz];
+  if(!hit && nm){
+    var best = null, bestSc = 0;
+    for(var i=0; i<idx.list.length; i++){
+      var o = idx.list[i];
+      if(!o.norm) continue;
+      var sc = _erpNameCmp(nm, o.norm).score;
+      if(sc > bestSc){ bestSc = sc; best = o; }
+    }
+    if(best && bestSc >= 88) hit = best;                 // 오연결 방지 — 부분포함(85)은 채택하지 않는다
+  }
+  if(!hit){
+    var al = erpAliasCompany(name) || erpAliasCompany(erpCleanMemo(name));
+    if(al && al.companyName){
+      var an = erpNormName(al.companyName);
+      if(an && idx.byNorm[an]) hit = idx.byNorm[an];
+    }
+  }
+  if(idx.cache){
+    if(Object.keys(idx.cache).length > 4000) idx.cache = {};
+    idx.cache[ck] = hit;
+  }
+  return hit;
+}
+
+// 행 배열에 ERP 업체(co)를 붙인다 — 색인은 한 번만 만든다. 반환: 연결된 행 수
+function erpNicebillAttachCo(rows, idx){
+  var ix = idx || erpNicebillCoIndex();
+  var n = 0;
+  (rows || []).forEach(function(r){
+    if(!r) return;
+    r.co = erpNicebillMatchCo(ix, r.name, r.bizNo);
+    if(r.co) n++;
+  });
+  return n;
+}
+
+// ── 저장 (cms_ledger) — 슬림 행만, 지문으로 중복 제거, 최신 1,500건 ──
+function erpNbSlimRow(r){
+  return { _k:String(r._k||''), wdate:r.wdate||'', setdate:r.setdate||'', name:r.name||'',
+           bizNo:r.bizNo||'', amount:parseInt(r.amount,10)||0, fee:parseInt(r.fee,10)||0,
+           statusRaw:r.statusRaw||'', status:r.status||'', reason:r.reason||'',
+           code:r.code||'', bank:r.bank||'' };
+}
+function erpCmsLedgerGet(){
+  var v = dbGet(CMS_LEDGER_KEY, null);
+  if(!v || !Array.isArray(v.rows)) return null;
+  return v;
+}
+// 새로 올린 행을 기존 보관분과 합쳐 저장 (같은 파일을 다시 올려도 늘어나지 않는다)
+function erpCmsLedgerSave(fileName, uploadedAt, newRows){
+  try {
+    var cur = erpCmsLedgerGet();
+    var merged = [], have = {};
+    // 같은 지문이 한 파일에 두 번 나올 수 있다 (동일금액 중복출금 시도) → 출현순서로 #1, #2 … 를 붙인다.
+    // 순서 기준이 같으므로 같은 파일을 다시 올려도 키가 같아 중복으로 늘어나지 않는다.
+    function addAll(rows){
+      var seq = {};
+      (rows || []).forEach(function(r){
+        if(!r || !r.name) return;
+        var sig = _nbRowSig(r);
+        var i = seq[sig] || 0; seq[sig] = i + 1;
+        var k = i ? (sig + '#' + i) : sig;
+        if(have[k]) return;                        // 같은 출금일·회원·금액·회원코드 = 같은 행
+        have[k] = 1;
+        var s = erpNbSlimRow(r);
+        s._k = k;                                  // 저장분의 키는 지문 (파일 행번호는 파일마다 달라짐)
+        merged.push(s);
+      });
+    }
+    addAll(newRows);
+    if(cur) addAll(cur.rows);
+    merged.sort(function(a, b){
+      var da = _nbRowDay(a), db = _nbRowDay(b);
+      if(da !== db) return da < db ? 1 : -1;        // 최신 정산예정일(없으면 출금일)이 위
+      return (b.amount || 0) - (a.amount || 0);
+    });
+    if(merged.length > CMS_LEDGER_MAX) merged = merged.slice(0, CMS_LEDGER_MAX);
+    var payload = { fileName:String(fileName || (cur && cur.fileName) || ''),
+                    uploadedAt:String(uploadedAt || (new Date()).toISOString()),
+                    rows:merged };
+    if(dbSet(CMS_LEDGER_KEY, payload) === false) return null;
+    return payload;
+  } catch(e){ if(window._erpErrLog) window._erpErrLog(e); return null; }
+}
+
+// 합계가 입금액과 맞는가 — 정확일치 / ±1,100원(이체수수료 등) / 부가세(×1.1) 차이
+function _nbAmtFits(sum, want){
+  var s = parseInt(sum,10)||0, w = parseInt(want,10)||0;
+  if(!s || !w) return false;
+  if(s === w) return true;
+  if(Math.abs(s - w) <= 1100) return true;
+  if(Math.abs(Math.round(s * 1.1) - w) <= 10) return true;
+  return false;
+}
+function _nbShiftDay(ymd, delta){
+  var s = String(ymd || '').slice(0, 10);
+  if(s.length < 10) return '';
+  var d = new Date(s + 'T00:00:00Z');
+  if(isNaN(d)) return '';
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth()+1)).slice(-2) + '-' + ('0' + d.getUTCDate()).slice(-2);
+}
+// 통장 더빌이체 입금 1건 → 그 날 정산예정 CMS 실데이터 {rows,total,date,exact,diff} / 없으면 null
+// 정확한 날을 먼저 보고, 없거나 금액이 안 맞으면 ±1일까지 본다. 금액이 안 맞아도 그 날 묶음은 돌려준다(차액 표시용).
+function erpCmsLedgerForDeposit(date, amount){
+  try {
+    var cur = erpCmsLedgerGet();
+    if(!cur || !cur.rows.length) return null;
+    var base = String(date || '').slice(0, 10);
+    if(base.length < 10) return null;
+    var want = parseInt(amount, 10) || 0;
+    var days = [base, _nbShiftDay(base, 1), _nbShiftDay(base, -1)];
+    var all = cur.rows, fallback = null;
+    for(var d=0; d<days.length; d++){
+      var day = days[d];
+      if(!day) continue;
+      var rows = [], total = 0;
+      for(var i=0; i<all.length; i++){
+        var r = all[i];
+        if(!r || r.status !== 'ok') continue;
+        if(String(r.setdate || '').slice(0, 10) !== day) continue;
+        rows.push(r); total += parseInt(r.amount, 10) || 0;
+      }
+      if(!rows.length) continue;
+      var res = { rows:rows, total:total, date:day, exact:_nbAmtFits(total, want), diff:(want - total) };
+      if(res.exact) return res;
+      if(!fallback) fallback = res;
+    }
+    return fallback;
+  } catch(e){ if(window._erpErrLog) window._erpErrLog(e); return null; }
+}
+
+window.erpDetectNicebillSheet = erpDetectNicebillSheet;
+window.erpParseNicebill = erpParseNicebill;
+window.erpNbGroupByDate = erpNbGroupByDate;
+window.erpNbStat = erpNbStat;
+window.erpNicebillCoIndex = erpNicebillCoIndex;
+window.erpNicebillMatchCo = erpNicebillMatchCo;
+window.erpNicebillAttachCo = erpNicebillAttachCo;
+window.erpCmsLedgerGet = erpCmsLedgerGet;
+window.erpCmsLedgerSave = erpCmsLedgerSave;
+window.erpCmsLedgerForDeposit = erpCmsLedgerForDeposit;
+window.CMS_LEDGER_KEY = CMS_LEDGER_KEY;
+
 // props: {onClose, onApplied(등록수)}
 function CmsDetectModal(props){
   useEscClose(props.onClose);
@@ -28248,8 +28578,42 @@ function CmsMatchModal(props){
   var hS  = useState('');    var hint = hS[0];         var setHint = hS[1];
   var bS  = useState(false); var busy = bS[0];         var setBusy = bS[1];
 
-  // ── 자동 추천 — 자문료 합계가 입금액과 맞는 조합을 찾아 미리 체크 ──
+  // ── 🏦 나이스빌 CMS 실데이터 (cms_ledger) — 있으면 추정 조합보다 이쪽이 정답이다 ──
+  // 열 때 한 번만 (색인도 1회) — 회원명을 ERP 업체로 풀어 이 입금을 이루는 업체 목록을 만든다
+  var nbRef = useRef(null);
+  if(nbRef.current === null){
+    var _nbInfo = erpCmsLedgerForDeposit(ymd, amount);
+    if(_nbInfo && _nbInfo.rows && _nbInfo.rows.length){
+      var _nbIdx = erpNicebillCoIndex();
+      var _items = [], _pick = [], _seen = {}, _noLink = 0;
+      _nbInfo.rows.forEach(function(r){
+        var co = erpNicebillMatchCo(_nbIdx, r.name, r.bizNo);
+        var cn = co ? co.name : '';
+        var inPool = !!(cn && byName[cn]);
+        if(!cn) _noLink++;
+        _items.push({ name:r.name, coName:cn, amount:parseInt(r.amount,10)||0,
+                      inPool:inPool, paid:!!(cn && paidMap[cn]) });
+        if(inPool && !paidMap[cn] && !_seen[cn]){ _seen[cn] = 1; _pick.push(cn); }
+      });
+      nbRef.current = { info:_nbInfo, items:_items, pick:_pick, noLink:_noLink };
+    } else nbRef.current = false;
+  }
+  var nbData = nbRef.current || null;
+
+  // CMS 실데이터대로 체크 (버튼·최초 자동선택에서 공용)
+  function nbApplyPick(){
+    if(!nbData || !nbData.pick.length) return false;
+    var m = {};
+    nbData.pick.forEach(function(n){ m[n] = 1; });
+    setChk(m);
+    setHint('🏦 나이스빌 CMS 실데이터 '+nbData.pick.length+'곳 · 정산예정일 '+nbData.info.date
+            + (nbData.info.exact ? ' — 입금액과 일치' : ' (합계 '+nbData.info.total.toLocaleString()+'원 · 차액 '+nbData.info.diff.toLocaleString()+'원)'));
+    return true;
+  }
+
+  // ── 자동 추천 — ① CMS 실데이터가 있으면 그대로, ② 없으면 자문료 합계 조합 추정(기존 방식) ──
   useEffect(function(){
+    if(nbApplyPick()) return;
     var cands = pool.filter(function(c){ return !paidMap[c.name]; });
     var r = erpFindFeeSubset(amount, cands, refDay);
     if(r && r.cands && r.cands.length){
@@ -28367,6 +28731,43 @@ function CmsMatchModal(props){
         background: sel.length?'#eff6ff':'#fffbeb', color: sel.length?'#1d4ed8':'#b45309',
         border:'1px solid '+(sel.length?'#bfdbfe':'#fde68a')}}, hint),
 
+      // ── 🏦 나이스빌 CMS 실데이터 패널 (cms_ledger에 그 정산예정일 자료가 있을 때만) ──
+      nbData && h('div',{style:{background:'#eff6ff',border:'1.5px solid #93c5fd',borderRadius:'8px',padding:'7px 11px'}},
+        h('div',{style:{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}},
+          h('span',{style:{fontSize:'12px',fontWeight:800,color:'#1d4ed8'}},
+            '🏦 나이스빌 CMS 실데이터 — 정산예정일 '+nbData.info.date
+            +' · '+nbData.items.length+'건 · 합계 '+nbData.info.total.toLocaleString()+'원'),
+          nbData.info.exact
+            ? h('span',{style:{fontSize:'10.5px',fontWeight:800,color:'#15803d',background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:'8px',padding:'1px 7px'}},'✓ 입금액과 일치')
+            : h('span',{style:{fontSize:'10.5px',fontWeight:800,color:'#b91c1c',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'8px',padding:'1px 7px'}},
+                '⚠️ 차액 '+nbData.info.diff.toLocaleString()+'원'),
+          nbData.noLink>0 && h('span',{style:{fontSize:'10.5px',fontWeight:700,color:'#b45309',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'8px',padding:'1px 7px'}},
+            '⚠️ 미연결 '+nbData.noLink+'곳'),
+          h('div',{style:{flex:1}}),
+          h('button',{onClick:nbApplyPick,disabled:!nbData.pick.length,
+            title:'나이스빌 CMS 출금성공 내역에 있는 업체만 정확히 체크합니다 (추정 조합 대신)',
+            style:{padding:'5px 12px',border:'none',borderRadius:'6px',fontSize:'11.5px',fontWeight:800,
+              background: nbData.pick.length?'#1d4ed8':'#cbd5e1', color:'#fff',
+              cursor: nbData.pick.length?'pointer':'not-allowed',whiteSpace:'nowrap'}},
+            '✅ CMS 내역대로 '+nbData.pick.length+'곳 확정')
+        ),
+        h('div',{style:{marginTop:'5px',display:'flex',gap:'4px',flexWrap:'wrap',maxHeight:'104px',overflowY:'auto'}},
+          nbData.items.map(function(it,ii){
+            var bad = !it.coName;
+            return h('span',{key:ii,
+              title: bad ? '이 회원명과 같은 ERP 업체를 찾지 못했습니다 — 아래 목록에서 직접 체크하세요'
+                         : (it.paid ? '이미 입금표시된 업체입니다' : (it.inPool ? 'ERP 업체: '+it.coName : 'ERP 업체: '+it.coName+' (자문료 미등록 — 아래 목록에 없음)')),
+              style:{fontSize:'10.5px',fontWeight:700,borderRadius:'8px',padding:'1px 7px',whiteSpace:'nowrap',
+                background: bad?'#fef2f2':(it.paid?'#f8fafc':'#fff'),
+                color: bad?'#b91c1c':(it.paid?'#94a3b8':'#1e40af'),
+                border:'1px solid '+(bad?'#fecaca':(it.paid?'#e2e8f0':'#dbeafe'))}},
+              it.name + (it.coName && erpNormName(it.coName)!==erpNormName(it.name) ? ' → '+it.coName : '')
+              + ' ' + it.amount.toLocaleString()+'원'
+              + (bad ? ' · 연결 안 됨' : (it.paid ? ' · 이미입금' : (it.inPool ? '' : ' · 목록없음'))));
+          })
+        )
+      ),
+
       totalBar(),
 
       // 검색 + 전체 해제
@@ -28475,6 +28876,10 @@ function FinanceLedger(){
   var upAtS=useState('');      var upAt=upAtS[0];       var setUpAt=upAtS[1];       // 업로드 시각 (초안 복원용)
   var restS=useState(false);   var restored=restS[0];   var setRestored=restS[1];   // 저장된 초안에서 복원됨
   var cmsRowS=useState(null);  var cmsRow=cmsRowS[0];   var setCmsRow=cmsRowS[1];   // CMS 일괄이체 매칭 대상 행
+  var nbS=useState(null);      var nb=nbS[0];           var setNb=nbS[1];           // 🏦 나이스빌 CMS 파싱분 {fileName,uploadedAt,rows,byDate,stat,linked}
+  var nbRestS=useState(false); var nbRestored=nbRestS[0]; var setNbRestored=nbRestS[1]; // 보관분(cms_ledger)에서 복원됨
+  var nbFailS=useState(false); var nbFailOnly=nbFailS[0]; var setNbFailOnly=nbFailS[1]; // 출금실패만 보기
+  var nbBusyS=useState(false); var nbBusy=nbBusyS[0];   var setNbBusy=nbBusyS[1];   // CMS 일괄처리 중
   var hideDupS=usePersistedState('ledger_hide_dup', true); var hideDup=hideDupS[0]; var setHideDup=hideDupS[1]; // 이미 처리된 행 숨기기
   var atExS=useState({});      var atEx=atExS[0];       var setAtEx=atExS[1];       // 자동 정리에서 제외한 행 (체크 해제분)
   var atOpenS=useState(true);  var atOpen=atOpenS[0];   var setAtOpen=atOpenS[1];   // 자동 정리 미리보기 펼침 (기본 펼침)
@@ -28509,6 +28914,20 @@ function FinanceLedger(){
       }
     }catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
     draftReady.current = true;
+  }, []);
+
+  // ── 🏦 나이스빌 CMS 보관분 복원 (마운트 1회) — 다른 PC에서 올린 분도 그대로 쓴다 ──
+  useEffect(function(){
+    try{
+      var c = erpCmsLedgerGet();
+      if(c && c.rows && c.rows.length){
+        var rs = c.rows.map(function(x){ return erpNbSlimRow(x); });
+        var linked = erpNicebillAttachCo(rs);                 // 업체 색인은 여기서 1회만
+        setNb({ fileName:c.fileName||'', uploadedAt:c.uploadedAt||'', rows:rs,
+                byDate:erpNbGroupByDate(rs), stat:erpNbStat(rs), linked:linked });
+        setNbRestored(true);
+      }
+    }catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
   }, []);
 
   // ── 세금계산서 아카이브(IndexedDB) 로딩 완료 → 한 번 다시 그려 계산서 후보·배지를 반영 ──
@@ -28563,9 +28982,10 @@ function FinanceLedger(){
     return map;
   }
 
-  function parseFile(wb, type){
+  // rawIn: 이미 읽어둔 시트 배열 (나이스빌 자동감지에서 한 번 읽은 것을 재사용 — 없으면 여기서 읽는다)
+  function parseFile(wb, type, rawIn){
     var sheet=wb.Sheets[wb.SheetNames[0]];
-    var raw=XLSX.utils.sheet_to_json(sheet,{header:1,defval:''});
+    var raw=rawIn || XLSX.utils.sheet_to_json(sheet,{header:1,defval:''});
     // 헤더 행 탐색
     var hdr=-1, colMap={};
     for(var i=0;i<Math.min(raw.length,20);i++){
@@ -28622,7 +29042,34 @@ function FinanceLedger(){
     reader.onload = function(ev){
       try{
         var wb = XLSX.read(ev.target.result, {type:'array'});
-        var result = parseFile(wb, fileType);
+        // ── 🏦 나이스빌 CMS 파일인지 먼저 본다 (라디오가 '은행 통장'이어도 자동 인식) ──
+        var _sh0 = wb.Sheets[wb.SheetNames[0]];
+        var _raw0 = XLSX.utils.sheet_to_json(_sh0, {header:1, defval:''});
+        var _nbDet = erpDetectNicebillSheet(_raw0);
+        if(_nbDet){
+          var _p = erpParseNicebill(_raw0, _nbDet);
+          if(!_p.rows.length){
+            showToast('❌ 나이스빌 CMS 파일에서 읽을 행이 없습니다 (회원명·납부금액을 확인해주세요)');
+            setBusy(false); return;
+          }
+          var _saved = erpCmsLedgerSave(file.name, new Date().toISOString(), _p.rows) || null;
+          var _rows = _saved ? _saved.rows.map(function(x){ return erpNbSlimRow(x); }) : _p.rows;
+          var _linked = erpNicebillAttachCo(_rows);            // 업체 색인은 파싱당 1회
+          setFileType('nicebill');
+          setNb({ fileName:file.name, uploadedAt:(_saved && _saved.uploadedAt) || new Date().toISOString(),
+                  rows:_rows, byDate:erpNbGroupByDate(_rows), stat:erpNbStat(_rows), linked:_linked });
+          setNbRestored(false); setNbFailOnly(false);
+          showToast('🏦 나이스빌 CMS 파일로 인식했습니다 — 성공 '+_p.stat.ok+'건 · 진행 '+_p.stat.pending+'건 · 실패 '+_p.stat.fail+'건');
+          var _un = _rows.length - _linked;
+          if(_un > 0) setTimeout(function(){ showToast('⚠️ ERP 업체와 연결되지 않은 행 '+_un+'건 — 회원명을 확인해주세요'); }, 900);
+          if(!_saved) setTimeout(function(){ showToast('⚠️ CMS 내역 저장에 실패했습니다 (화면에는 표시됩니다)'); }, 1600);
+          setBusy(false); return;
+        }
+        if(fileType === 'nicebill'){
+          showToast('❌ 나이스빌 CMS 형식이 아닙니다 (회원명·납부금액 열을 찾지 못했습니다)');
+          setBusy(false); return;
+        }
+        var result = parseFile(wb, fileType, _raw0);
         if(!result){
           showToast('❌ 컬럼을 인식하지 못했습니다. 파일 형식을 확인해주세요.');
           setBusy(false); return;
@@ -28825,6 +29272,126 @@ function FinanceLedger(){
     showToast('자동 매칭: 확정후보 '+hi+'건 · 검토필요 '+rev+'건');
   }
 
+  // ══════════════════════════════════════════════
+  // 🏦 나이스빌 CMS 내역 — 집계·묶음·일괄처리
+  // ══════════════════════════════════════════════
+  var nbStat = (nb && nb.stat) || { ok:0, pending:0, fail:0, total:0, okAmt:0 };
+  var nbUnlinked = nb ? nb.rows.filter(function(r){ return !r.co; }).length : 0;
+  var nbOkLinked = nb ? nb.rows.filter(function(r){ return r.status==='ok' && r.co; }) : [];
+  var nbCoCnt = 0;
+  if(nb){ var _cs = {}; nb.rows.forEach(function(r){ if(r.co) _cs[r.co.id] = 1; }); nbCoCnt = Object.keys(_cs).length; }
+
+  // 정산예정일 묶음 (내림차순 · 미정은 맨 아래) — nb가 바뀔 때만 다시 만든다
+  var nbGrpRef = useRef(null);
+  if(nb && (!nbGrpRef.current || nbGrpRef.current.src !== nb)){
+    var _by = {};
+    nb.rows.forEach(function(r){
+      var d = String(r.setdate || '');
+      var g = _by[d];
+      if(!g) g = _by[d] = { date:d, rows:[], amount:0, okAmt:0, ok:0, fail:0, pending:0 };
+      g.rows.push(r);
+      g.amount += parseInt(r.amount,10) || 0;
+      if(r.status==='ok'){ g.ok++; g.okAmt += parseInt(r.amount,10) || 0; }
+      else if(r.status==='fail') g.fail++;
+      else g.pending++;
+    });
+    var _gs = Object.keys(_by).map(function(k){ return _by[k]; });
+    _gs.sort(function(a,b){
+      if(!a.date) return 1;                      // 정산예정일 미정 → 맨 아래
+      if(!b.date) return -1;
+      return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0);
+    });
+    nbGrpRef.current = { src:nb, groups:_gs };
+  }
+  var nbGroups = (nb && nbGrpRef.current) ? nbGrpRef.current.groups : [];
+  var nbDateCnt = nbGroups.filter(function(g){ return !!g.date; }).length;
+
+  // 업체관리 CMS 체크·이체일 기록 (이체일은 비어 있을 때만 출금일의 일자로 채운다)
+  function nbWriteCmsFlags(rows){
+    try{
+      var want = {}, dayOf = {};
+      (rows||[]).forEach(function(r){
+        if(!r || !r.co) return;
+        want[r.co.id] = 1;
+        if(!dayOf[r.co.id]) dayOf[r.co.id] = parseInt(String(r.wdate||'').slice(8,10),10) || '';
+      });
+      if(!Object.keys(want).length) return 0;
+      var all = dbGet('companies', []) || [];
+      var chg = [];
+      all.forEach(function(c){
+        if(!c || !c.id || !want[c.id]) return;
+        if(c.isCMS && c.cmsPayDay) return;                 // 이미 다 설정됨 — 건드리지 않는다
+        chg.push(Object.assign({}, c, { isCMS:true, cmsPayDay: c.cmsPayDay || (dayOf[c.id] || '') }));
+      });
+      if(!chg.length) return 0;
+      if(dbUpsertMany('companies', chg) === false){ showToast('❌ 업체 CMS 등록 저장에 실패했습니다'); return 0; }
+      return chg.length;
+    }catch(e){ if(window._erpErrLog) window._erpErrLog(e); return 0; }
+  }
+
+  // ✅ 출금성공 행 → 업체입금(자문료) 입금표시 + CMS 등록
+  async function nbMarkIncome(){
+    if(!nb || nbBusy) return;
+    if(!nbOkLinked.length){ showToast('입금표시할 출금성공 행이 없습니다'); return; }
+    var okAmt = nbOkLinked.reduce(function(s,r){ return s + (parseInt(r.amount,10)||0); }, 0);
+    if(!(await popConfirm('나이스빌 CMS 출금성공 '+nbOkLinked.length+'건 (합계 '+okAmt.toLocaleString()+'원)을\n'
+          + '정산예정일 기준으로 업체 자문료 입금표시합니다.\n\n'
+          + '→ 이미 입금표시된 업체·월은 자동으로 빠집니다'
+          + (nbUnlinked ? '\n→ ERP 업체와 연결되지 않은 '+nbUnlinked+'건은 제외됩니다' : '')))) return;
+    setNbBusy(true);
+    var _users = getActiveUsers();
+    function _uName(sid){ var u=_users.find(function(x){return x.sid===sid;}); return u?u.name:''; }
+    var lockCache = {};
+    var okN = 0, skipN = 0, lockN = 0, doneRows = [];
+    nbOkLinked.forEach(function(r){
+      var d = r.setdate || r.wdate;                        // 정산예정일 우선 (실제 입금일) · 없으면 출금일
+      if(!d || d.length < 10){ skipN++; return; }
+      var y = parseInt(d.slice(0,4),10) || 0;
+      var m = parseInt(d.slice(5,7),10) || 0;
+      if(!y || !m){ skipN++; return; }
+      var ym = y + '-' + ('0'+m).slice(-2);
+      if(!lockCache.hasOwnProperty(ym)){
+        lockCache[ym] = (typeof isIncomeLocked === 'function') ? !!isIncomeLocked(ym) : false;
+      }
+      if(lockCache[ym]){ lockN++; return; }                // 마감월은 건너뛴다 (행마다 토스트가 뜨지 않게)
+      var co = { name:r.co.name, fee:(parseInt(r.amount,10) || r.co.fee || 0),
+                 payDay:r.co.payDay || '', mainSid:r.co.mainSid || '', mainName:_uName(r.co.mainSid) };
+      if(erpAddCompanyIncome(co, m, y, d, '[나이스빌CMS] ' + (r.statusRaw||''))){ okN++; doneRows.push(r); }
+      else skipN++;                                        // 이미 입금됨 · 저장 실패
+    });
+    var cmsSet = doneRows.length ? nbWriteCmsFlags(doneRows) : 0;
+    setNbBusy(false);
+    showToast('✅ 입금표시 '+okN+'건 · 이미입금 '+skipN+'건 제외 · CMS 등록 '+cmsSet+'곳'
+              + (lockN ? ' (마감월 '+lockN+'건 제외)' : ''));
+  }
+
+  // 🏦 업체관리 CMS 체크만 (입금은 건드리지 않음)
+  async function nbRegisterCmsOnly(){
+    if(!nb || nbBusy) return;
+    var linked = nb.rows.filter(function(r){ return !!r.co; });
+    if(!linked.length){ showToast('ERP 업체와 연결된 행이 없습니다'); return; }
+    if(!(await popConfirm('나이스빌 CMS 내역에 있는 업체 '+nbCoCnt+'곳을\n업체관리에서 CMS 자동이체로 등록합니다.\n\n'
+          + '→ 입금 기록은 만들지 않습니다\n→ 이체일은 비어 있을 때만 출금일로 채웁니다'))) return;
+    setNbBusy(true);
+    var n = nbWriteCmsFlags(linked);
+    setNbBusy(false);
+    showToast(n ? ('🏦 CMS 등록 '+n+'곳') : '이미 모두 CMS로 등록되어 있습니다');
+  }
+
+  // 🗑 보관된 CMS 내역 비우기
+  async function nbClear(){
+    if(!(await popConfirm('보관된 나이스빌 CMS 내역을 모두 비웁니다.\n\n→ 이미 만들어진 입금표시·CMS 등록은 그대로 유지됩니다'))) return;
+    try{ dbSet(CMS_LEDGER_KEY, { fileName:'', uploadedAt:'', rows:[] }); }catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+    setNb(null); setNbRestored(false); setNbFailOnly(false); setFName('');
+    showToast('🗑 CMS 내역을 비웠습니다');
+  }
+
+  function nbChip(txt, bg, fg, bd, title){
+    return h('span',{title:title||'',
+      style:{fontSize:'11.5px',fontWeight:800,color:fg,background:bg,border:'1px solid '+bd,
+        borderRadius:'14px',padding:'3px 10px',whiteSpace:'nowrap'}}, txt);
+  }
+
   return h('div',{style:{padding:'0 2px'}},
 
     // ── 파일 유형 선택 + 드래그앤드롭 업로드 바 (컴팩트 1줄) ──
@@ -28843,6 +29410,9 @@ function FinanceLedger(){
         h('input',{type:'radio',name:'ledgerType',checked:fileType==='bank',onChange:function(){setFileType('bank');setRows(null);setDetected(null);}}),'🏦 은행 통장'),
       h('label',{style:{display:'flex',alignItems:'center',gap:'4px',cursor:'pointer',fontSize:'11.5px',whiteSpace:'nowrap',fontWeight:fileType==='card'?700:400,color:fileType==='card'?'#2563eb':'#64748b'}},
         h('input',{type:'radio',name:'ledgerType',checked:fileType==='card',onChange:function(){setFileType('card');setRows(null);setDetected(null);}}),'💳 카드'),
+      h('label',{title:'나이스빌 → CMS 출금 결과 내역 엑셀 (회원명·납부금액·정산예정일)',
+        style:{display:'flex',alignItems:'center',gap:'4px',cursor:'pointer',fontSize:'11.5px',whiteSpace:'nowrap',fontWeight:fileType==='nicebill'?700:400,color:fileType==='nicebill'?'#7c3aed':'#64748b'}},
+        h('input',{type:'radio',name:'ledgerType',checked:fileType==='nicebill',onChange:function(){setFileType('nicebill');setRows(null);setDetected(null);}}),'🏦 나이스빌 CMS'),
       h('span',{style:{width:'1px',height:'18px',background:'#e2e8f0'}}),
       // 드롭존 (1줄)
       h('span',{style:{fontSize:'17px',lineHeight:1}}, busy ? '⏳' : dragOver ? '📂' : '📥'),
@@ -28856,11 +29426,24 @@ function FinanceLedger(){
       ),
       fName && h('span',{style:{fontSize:'11px',color:'#64748b',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'200px'}},fName),
       !rows && !busy && h('span',{style:{fontSize:'11px',color:'#94a3b8',marginLeft:'auto',whiteSpace:'nowrap'}},
-        '인터넷뱅킹·카드사 → 거래내역 → 엑셀 저장')
+        fileType==='nicebill' ? '나이스빌 → CMS 출금결과 내역 → 엑셀 저장' : '인터넷뱅킹·카드사 → 거래내역 → 엑셀 저장')
+    ),
+
+    // ── 🏦 보관된 CMS 내역 안내 (통장·카드 화면일 때만 — 클릭하면 CMS 내역으로 이동) ──
+    fileType!=='nicebill' && nb && nb.rows.length>0 && h('div',{style:{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',
+      background:'#f5f3ff',border:'1px solid #ddd6fe',borderRadius:'6px',padding:'4px 10px',marginBottom:'6px'}},
+      h('span',{style:{fontSize:'11px',color:'#6d28d9',fontWeight:700,whiteSpace:'nowrap'}},
+        '🏦 보관된 나이스빌 CMS 내역 '+nb.rows.length+'건'
+        + (nbDateCnt ? ' · 정산예정일 '+nbDateCnt+'일' : '')
+        + ' — 더빌이체 입금 매칭에 함께 쓰입니다'),
+      h('div',{style:{flex:1}}),
+      h('button',{onClick:function(){ setFileType('nicebill'); },
+        style:{padding:'3px 10px',background:'#7c3aed',color:'#fff',border:'none',borderRadius:'5px',
+          fontSize:'10.5px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'저장분 보기')
     ),
 
     // ── 저장된 초안 안내 (1줄) — 파일명·업로드시각·미처리 건수 + 비우기 ──
-    rows && h('div',{style:{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',
+    fileType!=='nicebill' && rows && h('div',{style:{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',
       background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'6px',padding:'4px 10px',marginBottom:'6px'}},
       h('span',{style:{fontSize:'11px',color:'#475569',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'420px'}},
         '📂 '+(fName||'업로드분')
@@ -28882,7 +29465,7 @@ function FinanceLedger(){
     ),
 
     // ── 컬럼 감지 결과 표시 (1줄) ──
-    detected && h('div',{style:{background:'#f0f9ff',border:'1px solid #bfdbfe',borderRadius:'6px',padding:'3px 10px',marginBottom:'6px',fontSize:'11px',color:'#1d4ed8',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},
+    fileType!=='nicebill' && detected && h('div',{style:{background:'#f0f9ff',border:'1px solid #bfdbfe',borderRadius:'6px',padding:'3px 10px',marginBottom:'6px',fontSize:'11px',color:'#1d4ed8',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},
       '📋 감지된 컬럼: ',
       Object.entries(detected).map(function(e,i){
         var label={date:'날짜',dep:'입금',wdw:'출금',memo:'적요',note:'메모',bal:'잔액',time:'시간'};
@@ -28891,8 +29474,124 @@ function FinanceLedger(){
       h('span',{style:{color:'#94a3b8'}},'※ 컬럼이 다르면 알려주세요')
     ),
 
+    // ══════════════════════════════════════════════
+    // 🏦 나이스빌 CMS 내역 (입금/출금 표 대신 이 섹션을 보여준다)
+    // ══════════════════════════════════════════════
+    fileType==='nicebill' && !nb && !busy && h('div',{style:{background:'#faf5ff',border:'1px dashed #ddd6fe',
+      borderRadius:'8px',padding:'18px',textAlign:'center',color:'#7c3aed',fontSize:'12px',fontWeight:600}},
+      '🏦 나이스빌 → CMS 출금 결과 내역을 엑셀로 내려받아 올려주세요',
+      h('div',{style:{marginTop:'4px',fontSize:'11px',color:'#a78bfa',fontWeight:500}},
+        '회원명 · 납부금액 · 출금일 · 정산예정일 · 상태 열을 읽습니다 (정산예정일 합계 = 통장 더빌이체 입금액)')
+    ),
+
+    fileType==='nicebill' && nb && h('div',null,
+
+      // ── 파일·보관 안내 ──
+      h('div',{style:{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',
+        background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'6px',padding:'4px 10px',marginBottom:'6px'}},
+        h('span',{style:{fontSize:'11px',color:'#475569',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'420px'}},
+          '📂 '+(nb.fileName||'보관분')
+          +' · '+((nb.uploadedAt||'').slice(0,16).replace('T',' ') || '-')
+          +' · 보관 '+nb.rows.length+'건'),
+        nbRestored && h('span',{style:{fontSize:'10px',color:'#6d28d9',background:'#f5f3ff',border:'1px solid #ddd6fe',borderRadius:'8px',padding:'1px 6px',fontWeight:700,whiteSpace:'nowrap'}},'저장분 복원'),
+        h('div',{style:{flex:1}}),
+        h('button',{onClick:nbClear,
+          title:'보관된 CMS 내역만 비웁니다 (입금표시·CMS 등록분은 유지)',
+          style:{padding:'3px 9px',background:'#fef2f2',color:'#b91c1c',border:'1px solid #fecaca',borderRadius:'5px',fontSize:'10.5px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'🗑 내역 비우기')
+      ),
+
+      // ── 요약 칩 + 일괄 버튼 ──
+      h('div',{style:{display:'flex',gap:'6px',marginBottom:'10px',flexWrap:'wrap',alignItems:'center'}},
+        nbChip('✅ 출금성공 '+nbStat.ok+'건 · 합계 '+nbStat.okAmt.toLocaleString()+'원','#f0fdf4','#15803d','#bbf7d0','업체 통장에서 정상 출금된 건 — 정산예정일에 법인 통장으로 입금됩니다'),
+        nbChip('⏳ 출금중 '+nbStat.pending+'건','#fffbeb','#b45309','#fde68a','아직 결과가 나오지 않은 건 (자동재출금 대기 포함)'),
+        nbChip('❌ 출금실패 '+nbStat.fail+'건','#fef2f2','#b91c1c','#fecaca','잔액부족·지급정지·취소 등 — 후속 조치가 필요합니다'),
+        nbChip('📅 정산예정일 '+nbDateCnt+'일','#eff6ff','#1d4ed8','#bfdbfe','정산예정일별 납부금액 합계가 통장 더빌이체 입금액과 맞아야 합니다'),
+        nbUnlinked>0 && nbChip('⚠️ 미연결 '+nbUnlinked+'곳','#fff7ed','#c2410c','#fed7aa','회원명·사업자번호로 ERP 업체를 찾지 못한 행입니다'),
+        h('div',{style:{flex:1}}),
+        nbStat.fail>0 && h('button',{onClick:function(){ setNbFailOnly(!nbFailOnly); },
+          style:{padding:'6px 12px',border:'1px solid '+(nbFailOnly?'#b91c1c':'#fecaca'),borderRadius:'6px',fontSize:'11.5px',fontWeight:700,
+            background: nbFailOnly?'#b91c1c':'#fef2f2', color: nbFailOnly?'#fff':'#b91c1c',cursor:'pointer',whiteSpace:'nowrap'}},
+          (nbFailOnly?'↩ 전체 보기':'❌ 출금실패 '+nbStat.fail+'건 보기')),
+        nbCoCnt>0 && h('button',{onClick:nbRegisterCmsOnly,disabled:nbBusy,
+          title:'입금은 건드리지 않고 업체관리의 CMS 자동이체 체크만 켭니다',
+          style:{padding:'6px 12px',background:'#f5f3ff',color:'#6d28d9',border:'1px solid #ddd6fe',borderRadius:'6px',
+            fontSize:'11.5px',fontWeight:700,cursor:nbBusy?'wait':'pointer',whiteSpace:'nowrap'}},
+          '🏦 CMS 등록만 ('+nbCoCnt+'곳)'),
+        nbOkLinked.length>0 && h('button',{onClick:nbMarkIncome,disabled:nbBusy,
+          title:'출금성공 행을 정산예정일 기준으로 업체 자문료 입금표시합니다 (이미 입금된 업체·월은 제외)',
+          style:{padding:'6px 14px',background:nbBusy?'#94a3b8':'#16a34a',color:'#fff',border:'none',borderRadius:'6px',
+            fontSize:'12px',fontWeight:700,cursor:nbBusy?'wait':'pointer',whiteSpace:'nowrap'}},
+          nbBusy ? '⏳ 처리중' : ('✅ 출금성공 '+nbOkLinked.length+'건 입금표시'))
+      ),
+
+      // ── 정산예정일별 표 ──
+      h('div',{style:{overflowX:'auto'}},
+        h('table',{style:{width:'100%',borderCollapse:'collapse'}},
+          h('thead',null,h('tr',null,
+            h('th',{style:Object.assign({},thS,{width:'34px',textAlign:'right'})},'#'),
+            h('th',{style:thS},'출금일'),
+            h('th',{style:thS},'정산예정일'),
+            h('th',{style:Object.assign({},thS,{minWidth:'180px'})},'회원명'),
+            h('th',{style:Object.assign({},thS,{textAlign:'right'})},'납부금액'),
+            h('th',{style:thS},'상태'),
+            h('th',{style:thS},'처리')
+          )),
+          h('tbody',null, (function(){
+            var out = [], seq = 0;
+            nbGroups.forEach(function(g){
+              var list = nbFailOnly ? g.rows.filter(function(r){ return r.status==='fail'; }) : g.rows;
+              if(!list.length) return;
+              // 묶음 머리 — 이 합계가 통장 더빌이체 입금액과 맞아야 한다
+              out.push(h('tr',{key:'g'+(g.date||'none'),style:{background:'#f1f5f9'}},
+                h('td',{style:Object.assign({},tdS,{fontWeight:800,color:'#334155',fontSize:'11px'}),colSpan:7},
+                  (g.date ? '📅 정산예정일 '+g.date : '📅 정산예정일 미정')
+                  + ' · '+list.length+'건'
+                  + (g.ok ? ' · 출금성공 '+g.ok+'건 합계 '+g.okAmt.toLocaleString()+'원' : '')
+                  + (g.fail ? ' · 실패 '+g.fail+'건' : '')
+                  + (g.pending ? ' · 진행 '+g.pending+'건' : ''))));
+              list.forEach(function(r){
+                seq++;
+                var sc = r.status==='ok' ? {bg:'#f0fdf4',fg:'#15803d',bd:'#bbf7d0'}
+                       : r.status==='fail' ? {bg:'#fef2f2',fg:'#b91c1c',bd:'#fecaca'}
+                       : {bg:'#fffbeb',fg:'#b45309',bd:'#fde68a'};
+                var diffName = r.co && erpNormName(r.co.name)!==erpNormName(r.name);
+                out.push(h('tr',{key:r._k,style:{background:'#fff'}},
+                  h('td',{style:Object.assign({},tdS,{textAlign:'right',color:'#94a3b8',fontSize:'10.5px',fontVariantNumeric:'tabular-nums'})},seq),
+                  h('td',{style:Object.assign({},tdS,{color:'#64748b',whiteSpace:'nowrap'})},r.wdate||'-'),
+                  h('td',{style:Object.assign({},tdS,{whiteSpace:'nowrap',fontWeight:r.setdate?700:400,color:r.setdate?'#1d4ed8':'#cbd5e1'})},r.setdate||'미정'),
+                  h('td',{style:Object.assign({},tdS,{color:'#1e293b'})},
+                    h('div',{style:{fontWeight:600}},r.name),
+                    r.co
+                      ? (diffName && h('div',{style:{fontSize:'10px',color:'#2563eb'}},'→ '+r.co.name))
+                      : h('div',{title:'회원명·사업자번호로 ERP 업체를 찾지 못했습니다 — 업체관리의 이름을 확인하거나 통장 매칭에서 한 번 수동 연결하면 학습됩니다',
+                          style:{display:'inline-block',marginTop:'2px',background:'#fff7ed',color:'#c2410c',
+                            border:'1px solid #fed7aa',borderRadius:'8px',padding:'0 5px',fontSize:'9.5px',fontWeight:700}},'연결 안 됨')),
+                  h('td',{style:Object.assign({},tdS,{textAlign:'right',fontFamily:'monospace',fontWeight:700,whiteSpace:'nowrap',
+                    color:r.status==='ok'?'#15803d':'#475569'})},(r.amount||0).toLocaleString()+'원'),
+                  h('td',{style:tdS},
+                    h('span',{title:r.statusRaw||'',
+                      style:{fontSize:'10.5px',fontWeight:700,color:sc.fg,background:sc.bg,border:'1px solid '+sc.bd,
+                        borderRadius:'8px',padding:'1px 7px',whiteSpace:'nowrap'}},
+                      (r.status==='ok'?'✅ 출금성공':(r.status==='fail'?'❌ 출금실패':'⏳ 출금중'))
+                      + (r.reason ? ' · '+r.reason : ''))),
+                  h('td',{style:Object.assign({},tdS,{color:'#94a3b8',fontSize:'10.5px'})},
+                    r.status==='ok'
+                      ? (r.co ? '입금표시 대상' : '업체 연결 필요')
+                      : (r.status==='fail' ? '후속 조치 필요' : '결과 대기'))
+                ));
+              });
+            });
+            if(!out.length) out.push(h('tr',{key:'empty'},
+              h('td',{colSpan:7,style:{padding:'26px',textAlign:'center',color:'#94a3b8',fontSize:'12px'}},
+                nbFailOnly ? '출금실패 행이 없습니다' : '표시할 행이 없습니다')));
+            return out;
+          })())
+        )
+      )
+    ),
+
     // ── 파싱 결과 ──
-    rows && h('div',null,
+    fileType!=='nicebill' && rows && h('div',null,
 
       // 요약
       h('div',{style:{display:'flex',gap:'8px',marginBottom:'12px',flexWrap:'wrap',alignItems:'center'}},
