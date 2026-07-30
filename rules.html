@@ -274,6 +274,9 @@ table.daejo td.dj2{padding:0}
 .ckline{display:flex;align-items:center;gap:4px;font-size:10.5px;color:var(--sub);margin-top:4px;cursor:pointer;font-weight:400}
 .ckline.ok{color:#0f766e}
 .ckline input{width:13px;height:13px;margin:0;cursor:pointer}
+.sdrow{border:1px solid var(--line);border-radius:9px;margin:8px 2px;overflow:hidden;background:#fff}
+.sdrow .sd-h{display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f8fafc;border-bottom:1px solid var(--line);font-size:12.5px;flex-wrap:wrap}
+.sdrow .dtpair{border:0;border-radius:0;max-height:none}
 .mfrow{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:12px;padding:7px 2px;border-bottom:1px solid var(--line)}
 .mfrow .stbtn{margin-left:auto}
 .rev-intro{font-size:12.5px;color:var(--sub);background:#f6f9ff;border:1px solid var(--line);border-radius:10px;padding:11px 14px;margin-bottom:14px;line-height:1.7}
@@ -604,9 +607,16 @@ table.daejo td.dj2{padding:0}
       <button class="btn ghost" id="std-up" style="height:34px;font-size:12.5px">📄 표준규칙 파일 등록 (HWP·HWPX·PDF·TXT)</button>
       <input type="file" id="std-file" accept=".hwp,.hwpx,.docx,.odt,.rtf,.pdf,.txt" style="display:none">
       <span class="muted" style="font-size:11px">같은 연도에 다시 올리면 교체됩니다</span>
+      <a class="hbtn" href="https://www.moel.go.kr/policy/policydata/list.do" target="_blank" rel="noopener"
+         style="font-size:11.5px;padding:5px 10px;text-decoration:none">노동부 정책자료 열기 ↗</a>
+      <span id="std-need" style="display:none;font-size:11px;font-weight:700;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:20px;padding:3px 10px"></span>
     </div>
     <table class="arch"><thead><tr><th style="width:70px">연도</th><th>문서</th><th>등록</th><th></th></tr></thead><tbody id="std-body"></tbody></table>
     <div class="empty" id="std-empty" style="display:none">보관된 표준취업규칙이 없습니다 — 노동부 발표 파일을 등록하세요.</div>
+    <div id="std-bundled-warn" style="display:none;margin-top:10px" class="sample-banner">
+      ⚠ 동봉된 2026년 표준규칙 파일(<code>std_2026.js</code>)을 불러오지 못했습니다 —
+      새로 고침(Ctrl+F5)하거나 노동부 파일을 직접 등록하세요.
+    </div>
   </div>
   <div class="foot"><button class="btn ghost" data-close>닫기</button></div>
 </div></div>
@@ -624,6 +634,26 @@ table.daejo td.dj2{padding:0}
         <th style="width:44%">표준취업규칙</th><th style="width:44%">사업장 규정</th><th>판정</th></tr></thead>
         <tbody id="stdcmp-body"></tbody></table>
     </div>
+  </div>
+  <div class="foot"><button class="btn ghost" data-close>닫기</button></div>
+</div></div>
+
+<!-- 표준규칙 연도 간 비교 — 노동부가 무엇을 바꿨는지 보고, 필요한 것만 사업장에 반영 -->
+<div class="overlay" id="ov-stddiff"><div class="modal" style="max-width:1060px">
+  <h2>📘 표준규칙 연도 비교 <span class="tag" id="sd-sub" style="font-size:12px;color:var(--mute);font-weight:400"></span><span class="x" data-close>×</span></h2>
+  <div class="body">
+    <div id="sd-sum" style="margin-bottom:10px;font-size:12.5px"></div>
+    <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center;flex-wrap:wrap">
+      <button class="stbtn" data-sdf="">전체</button>
+      <button class="stbtn" data-sdf="변경">변경</button>
+      <button class="stbtn" data-sdf="신설">신설</button>
+      <button class="stbtn" data-sdf="삭제">삭제</button>
+      <span style="flex:1"></span>
+      <button class="stbtn" id="sd-all">모두 선택</button>
+      <button class="stbtn" id="sd-none">선택 해제</button>
+      <button class="btn" id="sd-apply" style="height:28px;font-size:12px;padding:0 12px">선택 항목 사업장에 반영</button>
+    </div>
+    <div style="max-height:58vh;overflow:auto"><div id="sd-body"></div></div>
   </div>
   <div class="foot"><button class="btn ghost" data-close>닫기</button></div>
 </div></div>
@@ -3773,6 +3803,16 @@ function renderStd(){
   const years=Object.keys(STD).sort((a,b)=>b.localeCompare(a));
   $("std-sub").textContent=years.length?years.length+"개 연도 보관":"";
   $("std-empty").style.display=years.length?"none":"block";
+  // 동봉본이 안 실렸으면 그 사실을 드러낸다(그냥 '없습니다'로 두면 원인을 알 수 없다)
+  const bw=$("std-bundled-warn"); if(bw)bw.style.display=(typeof STD_2026==="undefined")?"block":"none";
+  // 검토 기준일 연도의 표준규칙이 없으면 알린다 — 매년 새 판이 나오는데 놓치기 쉽다
+  const cy=String(asofNow()||"").slice(0,4), need=$("std-need");
+  if(need){
+    if(cy&&!STD[cy]){ need.style.display="inline-block";
+      need.textContent=cy+"년판 미등록"+(years.length?` — 현재 기준 ${years[0]}년판`:"");
+      need.title=cy+"년 표준취업규칙이 보관되어 있지 않습니다. 노동부 정책자료에서 받아 등록하세요.";
+    } else need.style.display="none";
+  }
   const tb=$("std-body"); tb.innerHTML="";
   years.forEach(y=>{ const r=STD[y]; const tr=document.createElement("tr");
     tr.innerHTML=`<td><b>${escapeH(y)}</b></td>
@@ -3780,10 +3820,13 @@ function renderStd(){
       <td style="font-size:11.5px;color:var(--sub)">${escapeH(r.savedBy||"")}<br><span class="muted" style="font-size:10.5px">${escapeH(r.savedAt||"")}</span></td>
       <td style="text-align:right;white-space:nowrap">
         <button class="mini" data-stdcmp="${y}" title="현재 검토 중인 사업장 규정과 조문 대조">↔ 사업장과 비교</button>
+        ${(function(){ const prev=years.filter(x=>x<y).sort().pop();
+          return prev?`<button class="mini" data-stddiff="${y}" data-prev="${prev}" title="${prev}년판과 무엇이 달라졌는지 비교합니다">↕ ${prev}년과 비교</button>`:""; })()}
         <button class="mini" data-stdview="${y}">원문</button>
         <button class="mini" data-stddel="${y}" style="color:#dc2626;border-color:#f3c0c0">삭제</button></td>`;
     tb.appendChild(tr); });
   tb.querySelectorAll("[data-stdcmp]").forEach(b=>b.onclick=()=>stdCompare(b.dataset.stdcmp));
+  tb.querySelectorAll("[data-stddiff]").forEach(b=>b.onclick=()=>stdYearDiff(b.dataset.prev,b.dataset.stddiff));
   tb.querySelectorAll("[data-stdview]").forEach(b=>b.onclick=()=>{
     const r=STD[b.dataset.stdview]; if(!r)return;
     $("full-sub").textContent=`표준취업규칙 ${b.dataset.stdview}`;
@@ -3792,6 +3835,124 @@ function renderStd(){
   tb.querySelectorAll("[data-stddel]").forEach(b=>b.onclick=()=>{
     if(confirm(b.dataset.stddel+"년 표준취업규칙을 삭제할까요? (법인 공동 보관에서 삭제됩니다)")){ stdDel(b.dataset.stddel); renderStd(); }});
 }
+
+/* ══════════ 표준규칙 연도 간 비교 ══════════
+   노동부 표준취업규칙은 매년 바뀐다. 어느 조문이 어떻게 달라졌는지 봐야
+   사업장 규정에 무엇을 반영할지 판단할 수 있다.
+   조번호는 해마다 밀리므로 제목으로 짝짓고(stdMatchArticle과 같은 방식),
+   짝지어진 조문은 본문이 달라졌는지 비교한다. */
+let SD_ROWS=[], SD_FILT="", SD_YEARS={old:"",now:""};
+function sdBody(a){ return stripWs(String(a.body||"").replace(RE_HEAD_STRIP,"")); }
+function stdYearDiff(oldY,newY){
+  const A=STD[oldY], B=STD[newY];
+  if(!A||!B){ alert("비교할 연도의 표준규칙이 없습니다."); return; }
+  const oldArts=parseArticles(A.text||""), newArts=parseArticles(B.text||"");
+  const used=new Set(); SD_ROWS=[];
+  // 새 판 기준으로 옛 판에서 같은 제목을 찾는다
+  newArts.forEach(na=>{
+    const m=stdMatchArticle(na,oldArts,used);
+    if(m){ used.add(m.a.label);
+      const same=sdBody(na)===sdBody(m.a);
+      if(!same)SD_ROWS.push({kind:"변경",now:na,old:m.a,how:m.how});
+    }else SD_ROWS.push({kind:"신설",now:na,old:null,how:""});
+  });
+  // 옛 판에만 있던 조문 = 새 판에서 빠짐
+  oldArts.forEach(oa=>{ if(!used.has(oa.label))SD_ROWS.push({kind:"삭제",now:null,old:oa,how:""}); });
+  // 기본 선택: 변경·신설만(삭제는 사업장 조문을 지우라는 뜻이 아니라 판단이 필요)
+  SD_ROWS.forEach(r=>{ r.pick=(r.kind!=="삭제"); });
+  SD_YEARS={old:oldY,now:newY}; SD_FILT="";
+  const c={변경:0,신설:0,삭제:0}; SD_ROWS.forEach(r=>c[r.kind]++);
+  $("sd-sub").textContent=`${oldY}년판(조 ${oldArts.length}) → ${newY}년판(조 ${newArts.length})`;
+  $("sd-sum").innerHTML=`달라진 조문 <b>${SD_ROWS.length}</b>건 — `
+    +`변경 <b style="color:#b45309">${c.변경}</b> · 신설 <b style="color:#166534">${c.신설}</b> · 새 판에서 빠짐 <b style="color:#b91c1c">${c.삭제}</b>`
+    +`<br><span class="muted" style="font-size:11px">제목으로 짝지어 본문을 견줍니다. 조번호는 해마다 밀리므로 번호가 아니라 제목이 기준입니다.`
+    +` ‘빠짐’이 곧 삭제 대상은 아닙니다 — 사업장 사정에 따라 그대로 두어야 할 조문도 있습니다.</span>`;
+  renderSdDiff();
+  $("ov-stddiff").classList.add("on");
+}
+const SD_BADGE={변경:"s",신설:"miss",삭제:"up"};
+function renderSdDiff(){
+  const box=$("sd-body");
+  const rows=SD_FILT?SD_ROWS.filter(r=>r.kind===SD_FILT):SD_ROWS;
+  document.querySelectorAll("[data-sdf]").forEach(b=>b.className="stbtn"+(b.dataset.sdf===SD_FILT?" on-adopt":""));
+  if(!rows.length){ box.innerHTML='<div class="empty">해당 항목이 없습니다.</div>'; return; }
+  box.innerHTML=rows.map(r=>{
+    const i=SD_ROWS.indexOf(r);
+    const t=(r.now||r.old);
+    const al=(r.kind==="변경")?alignParas(String(r.old.body||""),String(r.now.body||"")):null;
+    let cmp;
+    if(al&&al.length>1){
+      cmp='<div class="dtpair">'+al.map(p=>
+        `<div class="dtb">${p.b?escapeH(p.b):'<span class="dt-none">— 없음</span>'}</div>`
+        +`<div class="dta">${p.a?escapeH(p.a):'<span class="dt-none">— 빠짐</span>'}</div>`).join("")+'</div>';
+    }else{
+      cmp='<div class="dtpair">'
+        +`<div class="dtb">${r.old?escapeH(r.old.body):'<span class="dt-none">— '+escapeH(SD_YEARS.old)+'년판에 없음</span>'}</div>`
+        +`<div class="dta">${r.now?escapeH(r.now.body):'<span class="dt-none">— '+escapeH(SD_YEARS.now)+'년판에서 빠짐</span>'}</div>`
+        +'</div>';
+    }
+    return `<div class="sdrow">
+      <div class="sd-h">
+        <label class="ckline"><input type="checkbox" data-sdp="${i}" ${r.pick?"checked":""}> 반영</label>
+        <span class="badge ${SD_BADGE[r.kind]}">${r.kind}</span>
+        <b>${escapeH(t.label)}${t.title?" ("+escapeH(t.title)+")":""}</b>
+        ${r.how&&r.how!=="제목 일치"?`<span class="pill" title="제목이 완전히 같지 않아 유사도로 짝지었습니다">${escapeH(r.how)}</span>`:""}
+        <span class="muted" style="font-size:10.5px;margin-left:auto">${escapeH(SD_YEARS.old)} → ${escapeH(SD_YEARS.now)}</span>
+      </div>${cmp}</div>`;
+  }).join("");
+  box.querySelectorAll("[data-sdp]").forEach(c=>c.onchange=()=>{ SD_ROWS[+c.dataset.sdp].pick=c.checked; });
+}
+/* ── 고른 변경분을 사업장 규정에 반영 ──
+   사업장에 그 조문이 있으면 개정 제안, 없으면 신설 제안으로 편집 모델에 넣는다.
+   그러면 결정 → 신구대조표 → 신고서류까지 기존 흐름을 그대로 탄다. */
+function sdApply(){
+  if(READONLY){ alert("열람 전용입니다 — 담당자만 반영할 수 있습니다."); return; }
+  if(!LAST||!LAST.arts||!LAST.arts.length){ alert("먼저 사업장을 골라 [취업규칙 검토]를 실행하세요."); return; }
+  if(!CUR_ITEMS.length){ alert("먼저 [취업규칙 검토]를 실행하세요."); return; }
+  const picked=SD_ROWS.filter(r=>r.pick&&r.now);          // 새 판 문안이 있는 것만 반영 대상
+  if(!picked.length){ alert("반영할 항목을 고르세요.\n('새 판에서 빠짐'은 넣을 문안이 없어 제외됩니다)"); return; }
+  const used=new Set(), amend=[], ins=[];
+  picked.forEach(r=>{
+    const m=stdMatchArticle(r.now,LAST.arts,used,true);   // strict: 제목이 맞는 조문에만 문안을 넣는다
+    if(m){ used.add(m.a.label); amend.push({row:r,site:m.a}); } else ins.push({row:r});
+  });
+  if(!confirm(`${SD_YEARS.now}년판 표준규칙에서 고른 ${picked.length}건을 ${siteLabel()}에 반영합니다.\n`
+    +` · 개정 제안 ${amend.length}건(사업장에 있는 조문)\n · 신설 제안 ${ins.length}건(사업장에 없는 조문)\n\n`
+    +"편집 모델에 제안으로 들어가며, 반영 여부는 항목별로 다시 고를 수 있습니다. 계속할까요?"))return;
+  /* 표준 문안의 앞머리 '제61조(퇴직급여제도의 설정)'는 떼고 쓴다.
+     안 떼면 항 병합이 그것을 새 항으로 오인해 '② 제61조 (…)'처럼 조 제목이 항 안에 박힌다. */
+  const bodyOf=a=>String(a.body||"").replace(RE_HEAD_STRIP,"").trim();
+  let a=0,b=0;
+  amend.forEach(({row,site})=>{
+    const it=CUR_ITEMS.find(x=>x.id==="art_"+site.label); if(!it)return;
+    // 현행 문안을 바로 덮지 않는다 — 개선안으로만 걸어 두고 좌우 비교 후 결정하게 한다
+    it.sug=bodyOf(row.now); it.suggested=true;
+    it.reason=(it.reason?it.reason+" / ":"")+`고용노동부 ${SD_YEARS.now}년 표준취업규칙 ${row.now.label} 반영 제안`;
+    delete it.decision; delete it.paraPick;
+    a++;
+  });
+  ins.forEach(({row})=>{
+    const id="std_"+SD_YEARS.now+"_"+row.now.label;
+    if(CUR_ITEMS.some(x=>x.id===id))return;
+    const txt=bodyOf(row.now);
+    const rec=suggestInsertAfter(row.now.title,[row.now.title],LAST.arts);
+    CUR_ITEMS.push({id:id,title:row.now.title||row.now.label,label:"",num:null,sub:null,
+      insertAfter:rec,rec:rec,before:"신설",after:txt,orig:"",
+      reason:`고용노동부 ${SD_YEARS.now}년 표준취업규칙 ${row.now.label} 신설 제안`,
+      suggested:true,del:false,sug:txt,grade:"B",optIn:true});
+    b++;
+  });
+  $("ov-stddiff").classList.remove("on");
+  CUR_FILTER="changed"; renderFindings(); saveWorkState();
+  if(document.querySelector("#ov-daejo.on"))renderEditor(); else openEditor();
+  alert(`표준규칙 ${SD_YEARS.now}년판을 반영했습니다.\n · 개정 제안 ${a}건 (현행 문안은 그대로 두고 개선안으로 걸어 두었습니다)\n · 신설 제안 ${b}건\n\n`
+    +"조문 검토·편집 화면에서 현행↔표준 문안을 좌우로 비교하고 [개선안 반영]으로 확정하세요.");
+}
+document.querySelectorAll("[data-sdf]").forEach(b=>b.onclick=()=>{ SD_FILT=b.dataset.sdf; renderSdDiff(); });
+$("sd-all").addEventListener("click",()=>{ SD_ROWS.forEach(r=>{ if(r.now)r.pick=true; }); renderSdDiff(); });
+$("sd-none").addEventListener("click",()=>{ SD_ROWS.forEach(r=>r.pick=false); renderSdDiff(); });
+$("sd-apply").addEventListener("click",sdApply);
+
 $("open-std").addEventListener("click",async()=>{ await stdLoad(); renderStd(); $("ov-std").classList.add("on"); });
 $("std-up").addEventListener("click",()=>$("std-file").click());
 $("std-file").addEventListener("change",async e=>{
@@ -3818,15 +3979,24 @@ $("std-file").addEventListener("change",async e=>{
    제목으로 잇는다: 조번호는 문서마다 다르지만 제목(목적·휴일·해고…)은 안정적이다.
    정규화 후 ①완전 일치 ②포함 관계 ③본문 키워드로 차례로 찾는다. */
 const _tnorm=t=>String(t||"").replace(/[\s·ㆍ,()]/g,"").replace(/등$/,"");
-function stdMatchArticle(sa,siteArts,used){
+function stdMatchArticle(sa,siteArts,used,strict){
   const tn=_tnorm(sa.title);
   if(!tn)return null;
   let hit=siteArts.find(a=>!used.has(a.label)&&_tnorm(a.title)===tn);
   if(hit)return {a:hit,how:"제목 일치"};
+  /* 제목 유사 — 한쪽이 다른 쪽에 들어가는 것만으로는 부족하다.
+     '퇴직'(2자)이 '퇴직급여제도의설정'(10자)에 포함된다고 같은 조문일 수는 없다.
+     짧은 쪽이 긴 쪽의 절반(문안을 실제로 바꾸는 strict에서는 60%) 이상일 때만 같은 조문으로 본다. */
+  const ratio=strict?0.6:0.5;
   hit=siteArts.find(a=>{const an=_tnorm(a.title);
-    return !used.has(a.label)&&an&&tn.length>=2&&an.length>=2&&(an.includes(tn)||tn.includes(an));});
+    if(used.has(a.label)||!an||tn.length<2||an.length<2)return false;
+    if(!(an.includes(tn)||tn.includes(an)))return false;
+    return Math.min(an.length,tn.length)/Math.max(an.length,tn.length)>=ratio;});
   if(hit)return {a:hit,how:"제목 유사"};
-  // 본문 키워드: 표준 제목이 사업장 본문에 있고 그 조가 아직 안 쓰였으면 후보
+  /* '본문 언급'은 "이 조문이 아마 관련 있다"는 힌트 수준이다.
+     대조표에 보여줄 때는 쓸 만하지만, 문안을 실제로 바꾸는 반영에는 쓰면 안 된다
+     (표준 제61조 퇴직급여가 사업장 제36조 '퇴직'에 붙어 엉뚱한 문안이 들어갔다). */
+  if(strict)return null;
   hit=siteArts.find(a=>!used.has(a.label)&&tn.length>=3&&stripWs(a.body||"").includes(tn));
   if(hit)return {a:hit,how:"본문 언급"};
   return null;
