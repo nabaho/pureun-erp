@@ -48,11 +48,13 @@ function wrapPositions(text,horzsize){
   return starts;
 }
 /* linesegarray: 줄마다 textpos(줄 시작 문자 위치)·vertpos(줄 높이 누적)를 정확히 기록 */
-function linesegs(text,horzsize){
-  const starts=wrapPositions(text,horzsize);
+function linesegs(text,horzsize,vertBase){
+  /* vertBase: 한 칸(셀) 안에서 앞 문단들이 이미 쓴 높이.
+     문단마다 0에서 시작하면 셀 안 여러 문단이 같은 자리에 겹쳐 그려진다. */
+  const starts=wrapPositions(text,horzsize), v0=vertBase||0;
   let out='<hp:linesegarray>';
   starts.forEach(function(tp,i){
-    out+='<hp:lineseg textpos="'+tp+'" vertpos="'+(i*LH)+'" vertsize="'+VSZ+'" textheight="'+VSZ+'" baseline="'+BASE+'" spacing="'+SPC+'" horzpos="0" horzsize="'+horzsize+'" flags="393216"/>';
+    out+='<hp:lineseg textpos="'+tp+'" vertpos="'+(v0+i*LH)+'" vertsize="'+VSZ+'" textheight="'+VSZ+'" baseline="'+BASE+'" spacing="'+SPC+'" horzpos="0" horzsize="'+horzsize+'" flags="393216"/>';
   });
   return out+'</hp:linesegarray>';
 }
@@ -87,8 +89,9 @@ function cellParaInfo(text,w,cp){
   const lines=String(text==null?"":text).split("\n");
   let xml="", total=0;
   lines.forEach(function(line){
+    const base=total*LH;                     // 앞 문단이 쓴 높이만큼 내려서 시작
     total+=lineCount(line,hz);
-    xml+='<hp:p id="0" paraPrIDRef="17" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="'+(cp||"0")+'"><hp:t>'+esc(line)+'</hp:t></hp:run>'+linesegs(line,hz)+'</hp:p>';
+    xml+='<hp:p id="0" paraPrIDRef="17" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="'+(cp||"0")+'"><hp:t>'+esc(line)+'</hp:t></hp:run>'+linesegs(line,hz,base)+'</hp:p>';
   });
   return {xml:xml, lines:total};
 }
@@ -96,10 +99,12 @@ function cellParaInfo(text,w,cp){
    cell = 문자열 | {t:문자열, rowSpan:n} | null(위쪽 셀에 세로 병합되어 자리만 차지)
    세로 병합은 신구대조표에 필수 — 한 조문이 항 단위로 여러 행에 걸칠 때
    변경조항·변경이유가 행마다 쪼개지면 어느 조문의 무슨 이유인지 읽을 수 없다. */
+/* cell = 문자열 | {t, rowSpan, colSpan, fill:"head", bold:true} | null(병합으로 덮인 자리) */
 function cellOf(c){
   if(c===null||c===undefined)return null;                      // 병합으로 덮인 자리
-  if(typeof c==="object")return {t:String(c.t==null?"":c.t), rs:Math.max(1,c.rowSpan||1)};
-  return {t:String(c), rs:1};
+  if(typeof c==="object")return {t:String(c.t==null?"":c.t), rs:Math.max(1,c.rowSpan||1),
+    cs:Math.max(1,c.colSpan||1), fill:c.fill||"", bold:!!c.bold};
+  return {t:String(c), rs:1, cs:1, fill:"", bold:false};
 }
 function tablePara(rows,widths,opts){
   /* 조문 안 항 사이 가로선을 없앤다.
@@ -113,13 +118,20 @@ function tablePara(rows,widths,opts){
     const t=soft.has(r)&&!cutTop, b=softB.has(r)&&!cutBottom;
     return t&&b?"7":(t?"5":(b?"6":"3"));
   };
+  const noHead=!!(opts&&opts.noHead);          // 첫 줄을 머리행으로 취급하지 않는다(신고서 서식)
   const colCnt=widths.length,rowCnt=rows.length;
+  /* 가로 병합된 칸의 실제 폭 = 덮는 열들의 폭 합 */
+  const wOf=function(ci,cs){ let w=0; for(var k=ci;k<Math.min(colCnt,ci+(cs||1));k++)w+=widths[k]; return w; };
   const totalW=widths.reduce(function(a,b){return a+b;},0);
   const grid=rows.map(function(cells){ return cells.map(cellOf); });
   /* 1단계: 셀 XML·줄 수 계산 → 행 높이는 그 행에서 끝나는(rs=1) 셀들의 최대 줄 수 기준 */
   const cellInfo=[], rowH=[];
   grid.forEach(function(cells,r){
-    const infos=cells.map(function(c,ci){ return c?cellParaInfo(c.t,widths[ci],r===0?BOLD:"0"):null; });
+    const infos=cells.map(function(c,ci){
+      if(!c)return null;
+      const cp=(c.bold||(r===0&&!noHead))?BOLD:"0";
+      return cellParaInfo(c.t,wOf(ci,c.cs),cp);
+    });
     cellInfo.push(infos);
     let maxLines=1;
     infos.forEach(function(inf,ci){ const c=cells[ci];
@@ -169,12 +181,12 @@ function tablePara(rows,widths,opts){
       t+='<hp:tr>';
       grid[r].forEach(function(c,ci){
         if(!c)return;                                            // 병합으로 덮인 자리는 tc를 내지 않는다
-        const w=widths[ci], head=(r===0);
+        const w=wOf(ci,c.cs), head=(r===0&&!noHead), shade=head||c.fill==="head";
         let ch=0; for(var k=r;k<Math.min(b+1,r+c.rs);k++)ch+=rowH[k];
-        t+='<hp:tc name="" header="'+(head?1:0)+'" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="'+(head?HEADFILL:fillOf(r,r===a,r===b))+'">'
+        t+='<hp:tc name="" header="'+(head?1:0)+'" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="'+(shade?HEADFILL:fillOf(r,r===a,r===b))+'">'
           +'<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="'+(head?"CENTER":"TOP")+'" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
           +cellInfo[r][ci].xml
-          +'</hp:subList><hp:cellAddr colAddr="'+ci+'" rowAddr="'+lr+'"/><hp:cellSpan colSpan="1" rowSpan="'+Math.min(c.rs,b-r+1)+'"/><hp:cellSz width="'+w+'" height="'+ch+'"/><hp:cellMargin left="510" right="510" top="141" bottom="141"/></hp:tc>';
+          +'</hp:subList><hp:cellAddr colAddr="'+ci+'" rowAddr="'+lr+'"/><hp:cellSpan colSpan="'+c.cs+'" rowSpan="'+Math.min(c.rs,b-r+1)+'"/><hp:cellSz width="'+w+'" height="'+ch+'"/><hp:cellMargin left="510" right="510" top="141" bottom="141"/></hp:tc>';
       });
       t+='</hp:tr>';
     });

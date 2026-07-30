@@ -14,7 +14,7 @@
 <script src="vendor/pdf.min.js"></script>
 <script>if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc="vendor/pdf.worker.min.js";</script>
 <script src="hwp_extract.js?v=4"></script>
-<script src="hwpx_gen.js?v=9"></script>
+<script src="hwpx_gen.js?v=10"></script>
 <script src="xlsx_gen.js?v=3"></script>
 <style>
 :root{
@@ -751,47 +751,65 @@ function hwpxArticleBlock(text){
 /* ── 고용노동부 별지 제15호서식(취업규칙 신고서·변경신고서) — 표 형식 ──
    사업장 정보는 ERP(data/companies)에서 자동 채움. 실패 시 null 반환 → 텍스트 초안 폴백 */
 function applyFormHwpx(site,asof,pageBreak){
+  /* 고용노동부 별지 제15호서식(개정 2018. 6. 29.) 그대로.
+     인쇄 문구·칸 구성은 국가법령정보센터 서식 원본을 옮긴 것이므로 함부로 바꾸지 말 것.
+     빈칸은 제출 후 수기 기입하는 자리다(서식에 원래 비어 있다). */
   try{
     const c=(typeof SITE_INFO!=="undefined"&&SITE_INFO)||{};
-    const isChange=REV_MODE==="partial";
+    const isChange=REV_MODE==="partial";           // 일부개정 = 변경신고
+    const chk=on=>on?"[√]":"[  ]";
+    /* 열 너비는 라벨 글자 수 기준(12pt=1200unit/자 + 칸 여백 1020, rhwp 실측상 5% 여유).
+       접수 줄과 신고내용 표를 나눈 것은 '처리기간'(접수 줄)과 '노동조합원수'(신고내용)가
+       같은 열폭을 다퉈 어느 한쪽이 접히기 때문이다. */
+    const W1=HWPX.cols([.15,.22,.12,.21,.15,.15]);   // 접수번호·접수일·처리기간
+    const W=HWPX.cols([.19,.21,.10,.22,.14,.14]);    // 신고내용 (3열 라벨 '노동조합원수' 6자)
+    const S=n=>({t:"",colSpan:n});
     const emp=c.empTotal||"";
-    let x=HWPX.para("■ 근로기준법 시행규칙 [별지 제15호서식]",HWPX.CP.small,{paraPr:HWPX.PP.plain,pageBreak:!!pageBreak});
-    x+=HWPX.docTitle("취업규칙 "+(isChange?"변경신고서":"신고서"));
+    const addr=(c.address||"")+(c.addressDetail?" "+c.addressDetail:"");
+    const phone=c.phone||c.tel||"";
+
+    let x=HWPX.para("■ 근로기준법 시행규칙 [별지 제15호서식] <개정 2018. 6. 29.>",
+      HWPX.CP.small,{paraPr:HWPX.PP.plain,pageBreak:!!pageBreak});
+    x+=HWPX.docTitle("취업규칙 "+chk(!isChange)+"신고서");
+    x+=HWPX.para(chk(isChange)+"변경신고서",HWPX.CP.title,{paraPr:HWPX.PP.center});
     x+=HWPX.para("※ [  ]에는 해당되는 곳에 √ 표시를 합니다.",HWPX.CP.small,{paraPr:HWPX.PP.plain});
-    x+=HWPX.spacer();
-    x+=HWPX.tablePara([["접수번호","","접수일","","처리기간","1일"]],HWPX.cols([.14,.20,.14,.20,.14,.18]));
-    x+=HWPX.spacer();
-    x+=HWPX.para("신고내용",HWPX.BOLD,{paraPr:HWPX.PP.art});
+    /* 접수 → 신고내용을 한 표로 이어 붙인다(서식과 같은 모양) */
     x+=HWPX.tablePara([
-      ["사업장명", c.name||siteName(site), "사업의 종류", c.bizType||c.industry||""],
-      ["대표자 성명", c.ceo||"", "생년월일", c.ceoBirth||""],
-      ["사업자등록번호", c.bizNo||"", "전화번호", c.phone||c.tel||""],
-      ["소재지", (c.address||"")+(c.addressDetail?" "+c.addressDetail:""), "", ""],
-      ["근로자수", (emp?emp+"명":"____명")+"   (남 ____명, 여 ____명)", "노동조합원수", "____명"],
-      ["의견청취일\n또는 동의일", fmtKDate(asof), "시행 예정일", fmtKDate(asof)],
-    ],HWPX.cols([.18,.34,.18,.30]));
-    x+=HWPX.spacer();
+      ["접수번호",{t:"",colSpan:1},"접수일",{t:"",colSpan:1},"처리기간","1일"],
+    ],W1,{noHead:true});
+    x+=HWPX.tablePara([
+      [{t:"신고내용",colSpan:6,fill:"head",bold:true},null,null,null,null,null],
+      ["사업장명",{t:c.name||siteName(site),colSpan:2},null,"사업의 종류",{t:c.bizType||c.industry||"",colSpan:2},null],
+      ["대표자 성명",{t:c.ceo||"",colSpan:2},null,"생년월일",{t:c.ceoBirth||"",colSpan:2},null],
+      ["소재지",{t:addr+"\n(전화번호 : "+(phone||"                    ")+")",colSpan:5},null,null,null,null],
+      ["근로자수",{t:(emp?emp:"____")+"명   (남 ____명, 여 ____명)",colSpan:2},null,"노동조합원수",{t:"____명",colSpan:2},null],
+      [{t:"의견청취일\n또는 동의일",colSpan:1},{t:fmtKDate(asof),colSpan:5},null,null,null,null],
+    ],W,{noHead:true});
     x+=HWPX.bodyPara("「근로기준법」 제93조와 같은 법 시행규칙 제15조에 따라 위와 같이 취업규칙을 "
-      +(isChange?"변경 신고합니다.":"신고합니다."));
-    x+=HWPX.spacer();
+      +chk(!isChange)+"신고, "+chk(isChange)+"변경신고 합니다.");
     x+=HWPX.docSub(fmtKDate(asof));
-    x+=HWPX.spacer();
     x+=HWPX.tablePara([
-      ["신청인", (c.ceo||"")+"          (서명 또는 인)"],
-      ["대리인", "          (서명 또는 인)"],
-    ],HWPX.cols([.18,.82]));
-    x+=HWPX.spacer();
-    x+=HWPX.docSub((c.laborOffice?c.laborOffice:"____________")+" 지방고용노동청(지청)장  귀하");
-    x+=HWPX.spacer();
+      ["신청인",{t:(c.ceo||"")+"          (서명 또는 인)",colSpan:5},null,null,null,null],
+      ["대리인",{t:"          (서명 또는 인)",colSpan:5},null,null,null,null],
+    ],W,{noHead:true});
+    x+=HWPX.bodyPara((c.laborOffice||"○○")+"지방고용노동청(지청)장  귀하");
+    /* 첨부서류·수수료 — 서식 하단 안내 영역(작은 글자) */
     x+=HWPX.tablePara([
-      ["첨부서류",
-       "1. 취업규칙"+(isChange?" (변경신고 하는 경우에는 변경 전과 변경 후의 내용을 비교한 서류)":"")+"\n"
-       +"2. 근로자의 과반수를 대표하는 노동조합 또는 근로자 과반수의 의견을 들었음을 증명하는 자료\n"
-       +"3. 근로자의 과반수를 대표하는 노동조합 또는 근로자 과반수의 동의를 받았음을 증명하는 자료\n"
-       +"   (근로자에게 불리하게 변경하는 경우에만 첨부합니다.)",
-       "수수료","없음"],
-    ],HWPX.cols([.14,.62,.12,.12]));
-    x+=HWPX.spacer();
+      [{t:"첨부서류",fill:"head",bold:true},
+       {t:"1. 취업규칙(변경신고 하는 경우에는 변경 전과 변경 후의 내용을 비교한 서류를 포함한다)\n"
+         +"2. 근로자의 과반수를 대표하는 노동조합 또는 근로자 과반수의 의견을 들었음을 증명하는 자료\n"
+         +"3. 근로자의 과반수를 대표하는 노동조합 또는 근로자 과반수의 동의를 받았음을 증명하는 자료\n"
+         +"   (근로자에게 불리하게 변경하는 경우에만 첨부합니다.)",colSpan:4},null,null,null,
+       {t:"수수료\n없음",fill:"head"}],
+    ],HWPX.cols([.14,.18,.18,.18,.18,.14]),{noHead:true});
+    x+=HWPX.para("처 리 절 차",HWPX.CP.small,{paraPr:HWPX.PP.center});
+    x+=HWPX.tablePara([
+      ["신청서 제출","→","접  수","→","내용검토","→","결  재","→","통  보"],
+    ],HWPX.cols([.20,.03,.18,.03,.18,.03,.17,.03,.15]),{noHead:true});
+    x+=HWPX.tablePara([
+      ["신청인","","지방고용노동청(지청)장 (민원실)","","지방고용노동청(지청)장 (근로개선지도과)","","지방고용노동청(지청)장 (청장·지청장)","","신청인"],
+    ],HWPX.cols([.13,.02,.23,.02,.23,.02,.23,.02,.10]),{noHead:true});
+    x+=HWPX.para("※ 변경명령: 법령 또는 단체협약에 저촉되는 경우",HWPX.CP.small,{paraPr:HWPX.PP.plain});
     x+=HWPX.para("210mm×297mm[일반용지 70g/㎡(재활용품)]",HWPX.CP.small,{paraPr:HWPX.PP.center});
     return x;
   }catch(e){ console.warn("신고서 서식 생성 실패 — 텍스트 폴백:",e); return null; }
