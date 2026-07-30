@@ -3059,10 +3059,12 @@ function renderCareer(name){ const cfg=CAREER_CFG[name]; if(!cfg) return;
   // 중복 의심 감지 및 배지
   var _dupGrp={}; data.forEach(function(r){ var k=dupKey(r); (_dupGrp[k]=_dupGrp[k]||[]).push(r.id); });
   var _dupIds=new Set(); Object.keys(_dupGrp).forEach(function(k){ var ids=_dupGrp[k]; if(ids.length>1 && !dupDismissed(name,k)) ids.forEach(function(id){ _dupIds.add(id); }); });
+  var _loose={}; data.forEach(function(r){ var lk=_dupLooseKey(r); (_loose[lk]=_loose[lk]||[]).push(r); });
+  var _simCount=0; Object.keys(_loose).forEach(function(lk){ var g=_loose[lk]; if(g.length>1 && !dupDismissed(name,'sim:'+lk)){ var dk={}; g.forEach(function(r){dk[dupKey(r)]=1;}); if(Object.keys(dk).length>1) _simCount++; } });
   var dupBadgeEl=sec.querySelector('.dup-badge-bar');
-  if(_dupIds.size>0){
+  if(_dupIds.size>0 || _simCount>0){
     if(!dupBadgeEl){ dupBadgeEl=document.createElement('div'); dupBadgeEl.className='dup-badge-bar'; dupBadgeEl.style.cssText='background:#FEF3C7;border:1px solid #F6D860;border-radius:6px;padding:7px 12px;margin-bottom:10px;font-size:12px;display:flex;align-items:center;gap:10px'; const dt=sec.querySelector('.dt'); if(dt) dt.before(dupBadgeEl); }
-    dupBadgeEl.innerHTML='⚠️ <b>중복 의심 '+_dupIds.size+'건</b> 감지됨 &nbsp; <a href="#" onclick="openDupManager(\''+name+'\');return false" style="color:#92400E;font-weight:600;text-decoration:underline">🔀 중복관리 열기</a>';
+    dupBadgeEl.innerHTML=(_dupIds.size>0?'🔴 <b>중복 '+_dupIds.size+'건</b>':'')+(_simCount>0?((_dupIds.size>0?' · ':'')+'<span style="color:#92400E">🟡 유사 '+_simCount+'묶음</span>'):'')+' &nbsp; <a href="#" onclick="openDupManager(\''+name+'\');return false" style="color:#92400E;font-weight:600;text-decoration:underline">🔀 중복관리 열기</a>';
   } else { if(dupBadgeEl) dupBadgeEl.remove(); }
   const yrSel=sec.querySelector('[data-f="year"]');
   if(yrSel){ const yrs=[...new Set(data.map(r=>r.year||(r.issueDate||r.date||'').slice(0,4)).filter(Boolean))].sort().reverse();
@@ -3262,8 +3264,9 @@ function _dupDismissedSection(page,data){
   if(!keys.length) return '';
   return '<div style="margin-top:14px;border-top:1px dashed var(--border);padding-top:10px"><div style="font-size:12px;font-weight:600;color:var(--text-mute);margin-bottom:8px">✋ 중복검사 제외된 묶음 ('+keys.length+') — 되돌리면 다시 검사합니다</div>'
     + keys.map(function(k){
-        var recs=(data||[]).filter(function(r){return dupKey(r)===k;});
-        var label=recs.length?((recs[0].org||recs[0].bank||'-')+' · '+(recs[0].titleVal||recs[0].title||recs[0].kind||recs[0].number||'-')+' ('+recs.length+'건)'):('제외 항목 ('+k+')');
+        var isSim=k.indexOf('sim:')===0; var mk=isSim?k.slice(4):k;
+        var recs=(data||[]).filter(function(r){return (isSim?_dupLooseKey(r):dupKey(r))===mk;});
+        var label=(isSim?'[유사] ':'')+(recs.length?((recs[0].org||recs[0].bank||'-')+' · '+(recs[0].titleVal||recs[0].title||recs[0].kind||recs[0].number||'-')+' ('+recs.length+'건)'):('제외 항목 ('+mk+')'));
         return '<div style="display:flex;gap:8px;align-items:center;font-size:12px;padding:5px 0"><span style="flex:1">'+escapeHtml(label)+'</span><button class="btn sm" onclick="dupUndismiss(\''+_jsAttr(k)+'\')">↩ 되돌리기(다시 검사)</button></div>';
       }).join('')
     + '</div>';
@@ -3279,26 +3282,33 @@ function getDupData(page){ if(CAREER_CFG&&CAREER_CFG[page]){ let d=get(CAREER_CF
 function getDupStore(page){ if(CAREER_CFG&&CAREER_CFG[page]) return CAREER_CFG[page].store; if(page==='personal_doc') return 'personal'; if(page==='account') return 'account'; if(page==='id_doc') return 'id_docs'; return page; }
 function openDupManager(page){ _dupPage=page; renderDup(); document.getElementById('modalDup').classList.add('open'); }
 function closeDup(){ document.getElementById('modalDup').classList.remove('open'); _dupPage=null; }
+function _dupLooseKey(r){ function norm(s){ return (s||'').replace(/[\s\-·\(\)「」『』《》【】]/g,'').toLowerCase(); }
+  if(r.bank!==undefined) return norm(r.bank)+'|'+norm(r.number);
+  return norm(r.org||'').slice(0,10)+'|'+norm(r.titleVal||r.title||r.topic||r.project||r.kind||'').slice(0,6); }
+function _dupRow(r){ var info=[r.id, formatDate(r.issueDate||r.date)||r.year||'', r.number||''].filter(Boolean).join(' · '); var hasFile=fileExists(r.id);
+  return '<div style="display:flex;gap:6px;align-items:center;font-size:12px;padding:6px 0;border-top:1px solid var(--border);flex-wrap:wrap">'
+    +'<span class="id-chip">'+escapeHtml(r.id)+'</span><span style="flex:1;min-width:100px">'+escapeHtml(info)+'</span>'
+    +(hasFile?'<span style="color:var(--teal);font-size:11px">📎원본</span>':'')
+    +'<button class="btn sm primary" onclick="mergeInto(\''+_jsAttr(r.id)+'\')">✅ 기준으로 합치기</button>'
+    +'<button class="btn sm" onclick="dupDel(\''+_jsAttr(r.id)+'\')" style="color:#fff;background:var(--red);border-color:var(--red)">🗑 삭제</button></div>'; }
 function renderDup(){ const page=_dupPage; const data=getDupData(page);
   var groups={}; data.forEach(function(r){ var k=dupKey(r); (groups[k]=groups[k]||[]).push(r); });
   var dups=Object.keys(groups).map(function(k){return groups[k];}).filter(function(g){return g.length>1 && !dupDismissed(page,dupKey(g[0]));});
+  var loose={}; data.forEach(function(r){ var lk=_dupLooseKey(r); (loose[lk]=loose[lk]||[]).push(r); });
+  var sims=Object.keys(loose).map(function(lk){return loose[lk];}).filter(function(g){ if(g.length<2) return false; var dk={}; g.forEach(function(r){dk[dupKey(r)]=1;}); return Object.keys(dk).length>1 && !dupDismissed(page,'sim:'+_dupLooseKey(g[0])); });
   var body=document.getElementById('dupBody');
-  if(!dups.length){ body.innerHTML='<div class="empty">🎉 중복 항목이 없습니다</div>'+_dupDismissedSection(page,data); return; }
-  body.innerHTML='<div style="font-size:12px;color:var(--text-mute);margin-bottom:10px">같은 기관·내용·<b>시기(날짜)</b>가 모두 같은 것만 중복 후보로 봅니다. 시기가 다르면 중복이 아닙니다. <b>기준으로 합치기</b> = 나머지를 합치고 삭제 · <b>중복 아님</b> = 다음부터 검사 제외.</div>'
-   + dups.map(function(g){
-     var label=(g[0].org||g[0].bank||'-')+' · '+(g[0].titleVal||g[0].title||g[0].kind||g[0].number||'-');
-     return '<div class="card" style="margin-bottom:12px"><div style="font-weight:600;color:var(--navy);margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span>'+label+' <span style="color:var(--amber)">('+g.length+'건)</span></span><button class="btn sm" style="margin-left:auto" onclick="dupDismiss(\''+_jsAttr(dupKey(g[0]))+'\')">✋ 중복 아님(다음부터 제외)</button></div>'
-       + g.map(function(r){
-           var info=[r.id, formatDate(r.issueDate||r.date)||r.year||'', r.number||''].filter(Boolean).join(' · ');
-           var hasFile=fileExists(r.id);
-           return '<div style="display:flex;gap:6px;align-items:center;font-size:12px;padding:6px 0;border-top:1px solid var(--border);flex-wrap:wrap">'
-             +'<span class="id-chip">'+r.id+'</span><span style="flex:1;min-width:100px">'+info+'</span>'
-             +(hasFile?'<span style="color:var(--teal);font-size:11px">📎원본</span>':'')
-             +'<button class="btn sm primary" onclick="mergeInto(\''+r.id+'\')">✅ 기준으로 합치기</button>'
-             +'<button class="btn sm" onclick="dupDel(\''+r.id+'\')" style="color:#fff;background:var(--red);border-color:var(--red)">🗑 삭제</button>'
-             +'</div>';
-         }).join('')+'</div>';
-     }).join('')+_dupDismissedSection(page,data);
+  if(!dups.length && !sims.length){ body.innerHTML='<div class="empty">🎉 중복·유사 항목이 없습니다</div>'+_dupDismissedSection(page,data); return; }
+  var html='<div style="font-size:12px;color:var(--text-mute);margin-bottom:10px">🔴 <b>중복</b> = 기관·내용·<b>시기까지 완전 일치</b>(합쳐도 되는 것) &nbsp; 🟡 <b>유사</b> = 기관·내용은 같지만 <b>시기가 달라 별개 문서</b>일 수 있음(확인용).</div>';
+  if(dups.length){ html+='<div style="font-size:13px;font-weight:700;color:var(--red);margin:6px 0 8px">🔴 중복 (완전 일치) '+dups.length+'묶음</div>'
+    + dups.map(function(g){ var label=(g[0].org||g[0].bank||'-')+' · '+(g[0].titleVal||g[0].title||g[0].kind||g[0].number||'-');
+      return '<div class="card" style="margin-bottom:12px;border-color:#F3B4A6"><div style="font-weight:600;color:var(--navy);margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span>'+escapeHtml(label)+' <span style="color:var(--red)">('+g.length+'건 완전일치)</span></span><button class="btn sm" style="margin-left:auto" onclick="dupDismiss(\''+_jsAttr(dupKey(g[0]))+'\')">✋ 중복 아님(제외)</button></div>'
+        + g.map(_dupRow).join('')+'</div>'; }).join(''); }
+  if(sims.length){ html+='<div style="font-size:13px;font-weight:700;color:#BA7517;margin:16px 0 8px">🟡 유사 (기관·내용 같음 · 시기 다름) '+sims.length+'묶음 <span style="font-weight:400;font-size:11px;color:var(--text-mute)">— 대부분 별개 문서입니다. 필요할 때만 확인</span></div>'
+    + sims.map(function(g){ var label=(g[0].org||g[0].bank||'-')+' · '+(g[0].titleVal||g[0].title||g[0].kind||g[0].number||'-'); var sk='sim:'+_dupLooseKey(g[0]);
+      g=g.slice().sort(function(a,b){return String(b.issueDate||b.date||b.year||'').localeCompare(String(a.issueDate||a.date||a.year||''));});
+      return '<div class="card" style="margin-bottom:12px;border-color:#F6D860;background:#FFFDF5"><div style="font-weight:600;color:var(--navy);margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span>'+escapeHtml(label)+' <span style="color:#BA7517">(유사 '+g.length+'건 · 시기 다름)</span></span><button class="btn sm" style="margin-left:auto" onclick="dupDismiss(\''+_jsAttr(sk)+'\')">✋ 유사 숨기기(제외)</button></div>'
+        + g.map(_dupRow).join('')+'</div>'; }).join(''); }
+  body.innerHTML=html + _dupDismissedSection(page,data);
 }
 function dupDel(id){ if(!confirm('이 항목을 삭제할까요?\n(첨부 원본도 함께 삭제됩니다)')) return;
   const page=_dupPage, store=getDupStore(page); set(store, get(store).filter(function(x){return x.id!==id;})); deleteFile(id);
