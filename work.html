@@ -258,6 +258,25 @@
   .prm{font-size:10px;font-weight:700;color:var(--acc);cursor:pointer;opacity:.6;margin-left:5px;white-space:nowrap}
   .prm:hover{opacity:1;text-decoration:underline}
   .kbempty{font-size:11.5px;color:var(--faint);padding:6px 2px}
+  /* 진행 단계 (하위 할 일) */
+  .prog{height:5px;background:#eef2f8;border-radius:3px;overflow:hidden;margin:1px 0 8px}
+  .prog i{display:block;height:100%;background:var(--acc);border-radius:3px;transition:width .2s}
+  .sg{font-size:11px;font-weight:800;color:var(--sub);margin:9px 0 2px;display:flex;align-items:center;gap:6px}
+  .sg:first-child{margin-top:0}
+  .sg .gn{font-size:10px;font-weight:700;color:var(--faint)}
+  .st1{display:flex;align-items:center;gap:7px;padding:3px 0;font-size:12.5px}
+  .st1 input[type=checkbox]{cursor:pointer;flex-shrink:0;width:14px;height:14px}
+  .st1 .tx{flex:1;min-width:0;word-break:break-word}
+  .st1.on .tx{color:var(--faint);text-decoration:line-through}
+  .st1 input[type=date]{border:1px solid var(--line);border-radius:5px;font-size:10.5px;padding:1px 4px;color:var(--sub);background:#fff}
+  .st1 .sa{font-size:10px;font-weight:700;color:var(--acc);cursor:pointer;opacity:0;white-space:nowrap}
+  .st1 .sx{font-size:11px;color:var(--danger);cursor:pointer;opacity:0}
+  .st1:hover .sa,.st1:hover .sx{opacity:.65}
+  .st1 .sa:hover,.st1 .sx:hover{opacity:1;text-decoration:underline}
+  .stadd{font-size:11px;color:var(--acc);cursor:pointer;padding:3px 0;font-weight:700}
+  .stadd:hover{text-decoration:underline}
+  .stchip{font-size:10px;font-weight:800;border-radius:4px;padding:1px 6px;background:#e0f2fe;color:#075985;white-space:nowrap}
+  .stchip.done{background:var(--ok-bg);color:var(--ok)}
   .subrow select{padding:3px 8px;border:1px dashed #c3cfe0;background:#fff;border-radius:12px;font-size:11.5px;color:var(--sub);cursor:pointer}
   .fe .del{color:#e2b4b4;cursor:pointer;font-size:11px;visibility:hidden}
   .fe:hover .del{visibility:visible}
@@ -395,6 +414,9 @@ function start(){
       if(S.view==='archive') route(); },function(){ pesync={}; });
     fbDb.ref(NS+'/kb').on('value',function(snap){ kb=snap.val()||{};
       if(appHasFocus()){ S._pend=true; return; } route(); },function(){ kb={}; });
+    fbDb.ref(NS+'/steps').on('value',function(snap){ steps=snap.val()||{};
+      if(appHasFocus()){ S._pend=true; return; } route(); },function(){ steps={}; });
+    fbDb.ref(NS+'/tpl').on('value',function(snap){ tpls=snap.val()||{}; },function(){ tpls={}; });
     peWatch();                                   // 푸른이알피 등록 → 자동 연동
     calLoadPrefs().then(function(){ route(); }); // 캘린더 개인 설정(보임·보기·레이어)
   });
@@ -1128,7 +1150,7 @@ function rowHTML(it,no){
         +esc((it.mgr_main&&it.mgr_main.name)||'미지정')+' — 나는 부담당(공동)입니다">공동 · 주 '
         +esc((it.mgr_main&&it.mgr_main.name)||'미지정')+'</span>':'')
     +(it.ho&&!it.ho.confirmed?' <span style="color:#b45309;font-weight:800;font-size:10px">📥 인수 확인 필요</span>':'')
-    +peFlag(it)+'</div></td>'
+    +stepChip(it._id)+peFlag(it)+'</div></td>'
     +'<td>'+stChip(it.status||'진행중',it._id)+'</td>'
     +'<td>'+lastHtml+'</td>'
     +'<td class="wkcell">'+logHtml
@@ -1360,6 +1382,7 @@ function renderDrawer(){
     +'</div></div>';
   h+='<div class="nextbox">☐ 다음 할 일 — <input type="text" id="dx-text" value="'+esc(it.next&&it.next.text||'')+'" placeholder="예: 이유서 제출" onchange="saveNext(\''+id+'\')">'
     +'<input type="date" id="dx-date" value="'+esc(it.next&&it.next.date||'')+'" onchange="saveNext(\''+id+'\')"></div>';
+  h+=dStepsHTML(id,it);
   h+=dPeopleHTML(id,it);
   // 관련 지식 — 같은 업체·유형·관계자에서 얻은 카드가 자동으로 따라온다
   var rel=kbRelated(it);
@@ -2036,6 +2059,242 @@ function saveItem(editId){
   }
 }
 
+/* ── 진행 단계 = 하위 할 일 + 유형별 템플릿 ──────────────────────────
+   업무 1건에 `다음 할 일` 하나만 적을 수 있어 "부당해고는 이 순서로"를 담을
+   곳이 없었다. 사건을 열면 해야 할 일이 순서대로 깔려 있게 한다.
+   `work_erp/steps/{업무ID}/{단계ID}` = {t제목, g묶음이름, o순서, done, d기한, by, at}
+   items와 분리한 이유: 체크 한 번에 items 전체가 모든 화면으로 다시 밀려가는 것을
+   막는다. 전체 용량이 작아(건당 8개 × 80B) live 구독해도 부담이 없고,
+   목록의 진행률·캘린더 표시가 항상 최신이라 별도 집계 필드가 필요 없다.
+   ⚠ 기본 템플릿은 박재원 노무사 노션 화면에 있는 부당해고 단계 그대로다.
+     다른 유형은 만들어 넣지 않는다 — 절차를 지어내면 안 된다.
+     실제 업무의 단계를 [템플릿으로 저장]해 늘려 간다. */
+var TPL_BUILTIN=[
+  {id:'_buhae', cat:'부해', name:'부당해고 구제신청', src:'기본 제공',
+   g:[['1. 수임 및 노동위원회 접수',
+       ['상담일지 작성','위임 및 서류 날인','자료수집','조사관 배정 확인 또는 초기 연락','초기 서면 및 대리인 서류 제출']],
+      ['2. 서면 공방',
+       ['입증 자료수집','상대방 서면 수령 및 검토','서면 작성 및 제출']]]}
+];
+var steps={}, tpls={};
+
+function stepsOf(id){
+  var o=steps[id]||{};
+  return Object.keys(o).map(function(k){ var s=o[k]; if(!s||!s.t) return null; s._id=k; return s; })
+    .filter(Boolean)
+    .sort(function(a,b){ return (a.o||0)-(b.o||0)||String(a.t).localeCompare(String(b.t),'ko'); });
+}
+function stepProg(id){
+  var a=stepsOf(id);
+  return {d:a.filter(function(s){return s.done;}).length, t:a.length};
+}
+function stepChip(id){
+  var p=stepProg(id); if(!p.t) return '';
+  return ' <span class="stchip'+(p.d===p.t?' done':'')+'" title="진행 단계 '+p.d+'/'+p.t+'">'
+    +(p.d===p.t?'✓ ':'')+p.d+'/'+p.t+'</span>';
+}
+// 내장 + 사용자 저장 템플릿
+function tplAll(){
+  var out=TPL_BUILTIN.slice();
+  Object.keys(tpls||{}).forEach(function(k){
+    var t=tpls[k]; if(t&&t.name&&t.g&&t.g.length){ t=Object.assign({},t); t.id=k; out.push(t); }
+  });
+  return out;
+}
+function tplFor(cat){
+  var all=tplAll();
+  var hit=all.filter(function(t){ return t.cat&&t.cat===cat; });
+  return hit.concat(all.filter(function(t){ return hit.indexOf(t)<0; }));
+}
+function _stepPaths(id,groups){
+  // groups = [[묶음이름,[제목,...]], ...] → 저장 경로
+  var up={}, o=0;
+  groups.forEach(function(g,gi){
+    (g[1]||[]).forEach(function(t){
+      o++;
+      up[NS+'/steps/'+id+'/'+rid('S')]={t:t,g:g[0],o:(gi+1)*1000+o,done:0,d:''};
+    });
+  });
+  return up;
+}
+function applyTpl(id,tplId){
+  var t=tplAll().filter(function(x){return x.id===tplId;})[0];
+  if(!t){ toast('템플릿을 찾을 수 없습니다','warn'); return; }
+  var cur=stepsOf(id);
+  var go=function(){
+    var up=_stepPaths(id,t.g);
+    var n=Object.keys(up).length;
+    fbDb.ref().update(up).then(function(){
+      closeM(); toast('✅ '+t.name+' — 단계 '+n+'개를 깔았습니다'); renderDrawer(); route();
+    }).catch(function(e){ toast('실패: '+e.message,'err'); });
+  };
+  if(!cur.length){ go(); return; }
+  confirmM('이미 단계 '+cur.length+'개가 있습니다.\n\n템플릿의 단계를 <b>뒤에 덧붙입니다</b>. 계속할까요?'
+    .replace(/<[^>]+>/g,''),{ok:'덧붙이기'}).then(function(ok){ if(ok) go(); });
+}
+function stepToggle(id,sid){
+  var s=(steps[id]||{})[sid]; if(!s) return;
+  var done=s.done?0:1;
+  var up={};
+  up[NS+'/steps/'+id+'/'+sid+'/done']=done;
+  up[NS+'/steps/'+id+'/'+sid+'/by']=done?((S.me&&S.me.name)||''):null;
+  up[NS+'/steps/'+id+'/'+sid+'/at']=done?todayStr():null;
+  fbDb.ref().update(up).catch(function(e){ toast('실패: '+e.message,'err'); });
+}
+function stepDate(id,sid,v){
+  fbDb.ref(NS+'/steps/'+id+'/'+sid+'/d').set(v||null)
+    .catch(function(e){ toast('실패: '+e.message,'err'); });
+}
+function stepAdd(id,group){
+  var el=$('sa-'+safeKey(group)); var t=el?el.value.trim():'';
+  if(!t) return;
+  var same=stepsOf(id).filter(function(s){return s.g===group;});
+  var last=same.length?same[same.length-1].o:0;
+  var base=last||(stepsOf(id).length+1)*1000;
+  fbDb.ref(NS+'/steps/'+id+'/'+rid('S')).set({t:t,g:group,o:base+1,done:0,d:''})
+    .then(function(){ if(el)el.value=''; renderDrawer(); route();
+      setTimeout(function(){ var e2=$('sa-'+safeKey(group)); if(e2)e2.focus(); },50); })
+    .catch(function(e){ toast('실패: '+e.message,'err'); });
+}
+function stepDel(id,sid){
+  fbDb.ref(NS+'/steps/'+id+'/'+sid).remove().catch(function(e){ toast('실패: '+e.message,'err'); });
+}
+function stepToNext(id,sid){
+  var s=(steps[id]||{})[sid]; if(!s) return;
+  patchItem(id,{next:{date:s.d||'',text:s.t}}).then(function(ok){
+    if(!ok) return; toast('📌 다음 할 일로 — '+s.t); renderDrawer(); route();
+  });
+}
+function stepClear(id){
+  confirmM('이 업무의 진행 단계를 모두 지울까요?\n\n되돌릴 수 없습니다.',{ok:'모두 삭제',danger:true})
+    .then(function(ok){ if(!ok)return;
+      fbDb.ref(NS+'/steps/'+id).remove()
+        .then(function(){ toast('단계를 모두 지웠습니다'); renderDrawer(); route(); })
+        .catch(function(e){ toast('실패: '+e.message,'err'); });
+    });
+}
+// 실제로 쓴 단계를 템플릿으로 만들어 다음 사건부터 재사용한다
+function saveAsTpl(id){
+  var it=items[id]||{}, arr=stepsOf(id);
+  if(!arr.length){ toast('저장할 단계가 없습니다','warn'); return; }
+  var gs=[], idx={};
+  arr.forEach(function(s){
+    var g=s.g||'단계';
+    if(idx[g]===undefined){ idx[g]=gs.length; gs.push([g,[]]); }
+    gs[idx[g]][1].push(s.t);
+  });
+  showModal('<h2 style="margin:0 0 6px">📋 템플릿으로 저장</h2>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 11px">지금 이 업무의 단계 '+arr.length+'개를 <b>본보기</b>로 저장합니다. '
+    +'다음에 같은 유형의 사건을 맡으면 이 순서를 그대로 깔 수 있습니다.</p>'
+    +'<div class="fld" style="margin-bottom:9px"><label>템플릿 이름</label>'
+    +'<input id="tp-n" value="'+esc(it.title||it.cat||'')+'" placeholder="예: 부당해고 구제신청"></div>'
+    +'<div class="fld" style="margin-bottom:9px"><label>어느 구분에서 추천할까요</label>'
+    +catSelect(it.cat||'','').replace('<select ','<select id="tp-c" ')+'</div>'
+    +'<div style="background:var(--bg);border-radius:8px;padding:9px 11px;font-size:11.5px;color:var(--sub);max-height:180px;overflow:auto">'
+    +gs.map(function(g){ return '<b>'+esc(g[0])+'</b><br>'+g[1].map(function(t){return '· '+esc(t);}).join('<br>'); }).join('<br><br>')
+    +'</div>'
+    +'<div id="tp-msg" class="muted" style="font-size:12px;min-height:17px;margin-top:6px"></div>'
+    +'<div class="row" style="justify-content:flex-end"><button onclick="closeM()">취소</button>'
+    +'<button class="primary" onclick="saveTplGo()">템플릿 저장</button></div>');
+  S._tplG=gs;
+}
+function saveTplGo(){
+  var n=(($('tp-n')||{}).value||'').trim(), c=(($('tp-c')||{}).value||'');
+  var msg=$('tp-msg');
+  if(!n){ if(msg)msg.textContent='템플릿 이름을 적어 주세요.'; return; }
+  fbDb.ref(NS+'/tpl/'+rid('T')).set({name:n,cat:c,g:S._tplG||[],
+    by:(S.me&&S.me.sid)||'',byName:(S.me&&S.me.name)||'',at:new Date().toISOString()})
+    .then(function(){ closeM(); toast('📋 템플릿 저장 — '+n); })
+    .catch(function(e){ if(msg)msg.textContent='실패: '+e.message; });
+}
+function tplDel(tid){
+  confirmM('이 템플릿을 삭제할까요?\n\n이미 깔아 놓은 단계는 그대로 남습니다.',{ok:'삭제',danger:true})
+    .then(function(ok){ if(!ok)return;
+      fbDb.ref(NS+'/tpl/'+tid).remove().then(function(){ toast('템플릿 삭제됨'); }); });
+}
+function tplModal(id){
+  var it=items[id]||{}, list=tplFor(it.cat||'');
+  showModal('<h2 style="margin:0 0 6px">✅ 진행 단계 깔기</h2>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 11px">사건 유형에 맞는 <b>할 일 순서</b>를 한 번에 깝니다. '
+    +'깔고 나서 자유롭게 고치고 더할 수 있습니다.</p>'
+    +(list.length?list.map(function(t){
+        var n=t.g.reduce(function(a,g){return a+(g[1]||[]).length;},0);
+        var own=t.by===(S.me&&S.me.sid)||isAdmin();
+        return '<div style="border:1px solid var(--line);border-radius:9px;padding:9px 11px;margin-bottom:7px">'
+          +'<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">'
+          +(t.cat?catBadge(t.cat):'')+'<b style="font-size:13px">'+esc(t.name)+'</b>'
+          +'<span class="muted" style="font-size:11px">'+n+'개 · '+esc(t.src||('만든이 '+(t.byName||'')))+'</span>'
+          +'<span style="flex:1"></span>'
+          +(t.id.charAt(0)!=='_'&&own?'<span class="prm" style="color:var(--danger)" onclick="tplDel(\''+escJ(t.id)+'\')">삭제</span>':'')
+          +'<button class="primary" style="padding:3px 11px;font-size:12px" onclick="applyTpl(\''+escJ(id)+'\',\''+escJ(t.id)+'\')">이걸로 깔기</button>'
+          +'</div>'
+          +'<div class="muted" style="font-size:11px;margin-top:5px;line-height:1.6">'
+          +t.g.map(function(g){ return '<b>'+esc(g[0])+'</b> — '+esc((g[1]||[]).join(' · ')); }).join('<br>')
+          +'</div></div>';
+      }).join('')
+      :'<div class="kbempty">아직 템플릿이 없습니다.</div>')
+    +'<div class="muted" style="font-size:11px;margin-top:8px">쓸 만한 템플릿이 없으면 아래 <b>＋ 단계 추가</b>로 직접 만들고, '
+    +'다 만든 뒤 <b>📋 템플릿으로 저장</b>을 누르면 다음부터 골라 쓸 수 있습니다.</div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:10px"><button onclick="closeM()">닫기</button></div>');
+}
+function dStepsHTML(id,it){
+  var arr=stepsOf(id), p=stepProg(id);
+  var h='<div class="dbox"><div class="bh">✅ 진행 단계'
+    +'<span class="r">'+(p.t?p.d+' / '+p.t+' 완료':'아직 없음')+'</span></div><div class="bb">';
+  if(!arr.length){
+    h+='<div class="kbempty">이 사건에서 해야 할 일을 <b>순서대로</b> 깔아 두면, 다음에 뭘 할지 찾지 않아도 됩니다.</div>'
+      +'<div class="row"><button class="primary" style="padding:4px 12px;font-size:12px" onclick="tplModal(\''+escJ(id)+'\')">✅ 단계 깔기</button>'
+      +'<span class="stadd" onclick="stepAddGroup(\''+escJ(id)+'\')">＋ 직접 만들기</span></div>';
+    return h+'</div></div>';
+  }
+  h+='<div class="prog"><i style="width:'+(p.t?Math.round(p.d/p.t*100):0)+'%"></i></div>';
+  var gs=[], idx={};
+  arr.forEach(function(s){
+    var g=s.g||'단계';
+    if(idx[g]===undefined){ idx[g]=gs.length; gs.push([g,[]]); }
+    gs[idx[g]][1].push(s);
+  });
+  gs.forEach(function(g){
+    var dn=g[1].filter(function(s){return s.done;}).length;
+    h+='<div class="sg">'+esc(g[0])+'<span class="gn">'+dn+'/'+g[1].length+'</span></div>';
+    g[1].forEach(function(s){
+      h+='<div class="st1'+(s.done?' on':'')+'">'
+        +'<input type="checkbox"'+(s.done?' checked':'')+' onclick="stepToggle(\''+escJ(id)+'\',\''+escJ(s._id)+'\')">'
+        +'<span class="tx" title="'+(s.done&&s.by?esc(s.by+' · '+(s.at||'')+' 완료'):'')+'">'+esc(s.t)+'</span>'
+        +'<input type="date" value="'+esc(s.d||'')+'" onchange="stepDate(\''+escJ(id)+'\',\''+escJ(s._id)+'\',this.value)" title="기한 — 넣으면 캘린더에 표시됩니다">'
+        +(s.done?'':'<span class="sa" onclick="stepToNext(\''+escJ(id)+'\',\''+escJ(s._id)+'\')" title="이 단계를 다음 할 일로">📌</span>')
+        +'<span class="sx" onclick="stepDel(\''+escJ(id)+'\',\''+escJ(s._id)+'\')" title="삭제">✕</span>'
+        +'</div>';
+    });
+    h+='<input class="wkin" id="sa-'+safeKey(g[0])+'" placeholder="＋ 이 묶음에 할 일 추가 (Enter)" '
+      +'onkeydown="if(event.key===\'Enter\'){event.preventDefault();stepAdd(\''+escJ(id)+'\',\''+escJ(g[0])+'\')}">';
+  });
+  h+='<div class="row" style="margin-top:9px;gap:6px">'
+    +'<span class="stadd" onclick="stepAddGroup(\''+escJ(id)+'\')">＋ 묶음 추가</span>'
+    +'<span class="stadd" onclick="tplModal(\''+escJ(id)+'\')">템플릿 더 깔기</span>'
+    +'<span class="stadd" onclick="saveAsTpl(\''+escJ(id)+'\')">📋 템플릿으로 저장</span>'
+    +'<span style="flex:1"></span>'
+    +'<span class="stadd" style="color:var(--danger)" onclick="stepClear(\''+escJ(id)+'\')">모두 지우기</span>'
+    +'</div>';
+  return h+'</div></div>';
+}
+function stepAddGroup(id){
+  showModal('<h2 style="margin:0 0 6px">＋ 묶음 추가</h2>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 10px">여러 할 일을 담는 단계 이름입니다. 예: <b>1. 수임 및 노동위원회 접수</b></p>'
+    +'<div class="fld"><label>묶음 이름</label><input id="sg-n" placeholder="예: 3. 심문회의 준비"></div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="closeM()">취소</button>'
+    +'<button class="primary" onclick="stepAddGroupGo(\''+escJ(id)+'\')">추가</button></div>');
+  setTimeout(function(){ var e=$('sg-n'); if(e)e.focus(); },60);
+}
+function stepAddGroupGo(id){
+  var n=(($('sg-n')||{}).value||'').trim();
+  if(!n){ toast('묶음 이름을 적어 주세요','warn'); return; }
+  var arr=stepsOf(id), base=arr.length?(arr[arr.length-1].o||0):0;
+  fbDb.ref(NS+'/steps/'+id+'/'+rid('S')).set({t:'첫 할 일',g:n,o:base+1000,done:0,d:''})
+    .then(function(){ closeM(); toast('묶음 추가 — '+n); renderDrawer(); route(); })
+    .catch(function(e){ toast('실패: '+e.message,'err'); });
+}
+
 /* ── 캘린더 (월·주·일 + 레이어 체크) ─────────────────────────────────
    레이어 = 데이터 소스. 각자 체크해 켜고 끄고, 선택은 work_erp/prefs/{사번}에
    저장되므로 사람마다 다르게 볼 수 있다(대표는 전원 겹쳐 보기, 담당자는 자기 것만).
@@ -2047,6 +2306,7 @@ function saveItem(editId){
 var CAL_LAYERS=[
   ['due', '업무 기한',  '#dc2626', 1],
   ['next','다음 할 일', '#7c3aed', 1],
+  ['step','진행 단계',  '#0284c7', 1],
   ['log', '주간 기록',  '#0f766e', 0],
   ['sch', '일정',       '#2563eb', 1],
   ['att', '휴가·근태',  '#0891b2', 1],
@@ -2400,6 +2660,14 @@ function calBuild(R){
     if(L.next&&it.next&&it.next.date)
       add(it.next.date,{k:'next',t:'📌 '+(it.next.text||'할 일'),s:co,c:'#7c3aed',it:it._id,drag:1});
   });
+  // 진행 단계 — 기한을 넣은 미완료 단계만 (완료된 것까지 깔리면 달력이 지저분해진다)
+  if(L.step) openItems().forEach(function(it){
+    if(!teamWide&&!isOf(it,who)) return;
+    stepsOf(it._id).forEach(function(s){
+      if(s.done||!s.d||!map[s.d]) return;
+      add(s.d,{k:'step',t:'☐ '+s.t,s:(it.company||it.title||'')+(s.g?' · '+s.g:''),c:'#0284c7',it:it._id});
+    });
+  });
   if(L.log) calWeekKeys(R).forEach(function(wk){
     Object.keys(wkCache[wk]||{}).forEach(function(iid){
       var it=items[iid]; if(!it) return;
@@ -2660,7 +2928,7 @@ function renderTeam(){
         +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
         +(perGroup?'':'<div class="sub">'+esc((it.mgr_main&&it.mgr_main.name)||'담당 미지정')+'</div>')
         +(it.officer?'<div class="sub">'+esc(it.officer)+'</div>':'')+'</td>'
-        +'<td style="font-size:12.5px">'+esc(it.title||'')+peFlag(it)+'</td>'
+        +'<td style="font-size:12.5px">'+esc(it.title||'')+stepChip(it._id)+peFlag(it)+'</td>'
         +'<td>'+logHtml+'</td><td>'+lastHtml+'</td><td>'+nx+'</td>'
         +'<td style="text-align:center"><button class="endbtn" onclick="event.stopPropagation();completeItem(\''+escJ(it._id)+'\')" '
         +'title="이 업무를 종료해 보관함으로 옮깁니다'+(peLinked(it)?' (푸른이알피 종료 연동)':'')+'">종료'
