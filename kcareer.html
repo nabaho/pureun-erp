@@ -1064,7 +1064,11 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
             </div>
           </div>
         </div>
-        <div class="tabpanel" id="tab-data"><div class="desc">시드(기본 데이터) 복원</div>
+        <div class="tabpanel" id="tab-data"><div class="desc">원본 보호 · 시드(기본 데이터) 복원</div>
+          <div class="card" style="margin-bottom:12px"><div class="rc-h">🔒 원본 파일 삭제 보호</div>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" id="origLockChk"> <b>원본 삭제 보호 켜기</b></label>
+            <div style="font-size:12px;color:var(--text-mute);margin-top:6px">켜면 🗑원본 버튼을 눌러도 첨부 원본이 삭제되지 않습니다(실수 방지). 정말 삭제할 때만 잠시 끄세요.</div>
+          </div>
           <div class="card"><div style="font-size:13px;margin-bottom:10px">초기 제공 데이터(위촉장·자격증·컨설팅 등)를 다시 불러옵니다. 같은 ID는 덮어쓰고, 직접 추가한 항목은 유지됩니다.</div>
             <button class="btn" id="dtReseed">시드 데이터 다시 불러오기</button></div>
         </div>
@@ -3045,7 +3049,9 @@ function rowActions(id,store,label,page){ const has=fileExists(id), L=(label||''
     `<button class="btn sm" onclick="memoRec('${store}','${id}','${page}')">💬</button>`+
     `<button class="btn sm" style="color:#fff;background:var(--red);border-color:var(--red)" onclick="delRec('${store}','${id}','${page}')">🗑 삭제</button></span>`;
 }
-function deleteAttach(id,page){ if(!confirm('첨부 원본만 삭제합니다.\n레코드 내용(기관·날짜 등)은 그대로 유지됩니다.\n삭제 후 📎 첨부 또는 드래그로 다시 올릴 수 있습니다.')) return;
+function origLocked(){ return LS.get(NS+'orig_lock')!=='0'; } /* 기본값 = 보호 켜짐 */
+function deleteAttach(id,page){ if(origLocked()){ toast('🔒 원본 보호가 켜져 있습니다 — 환경설정 › 데이터 관리에서 끈 뒤 삭제하세요'); return; }
+  if(!confirm('첨부 원본만 삭제합니다.\n레코드 내용(기관·날짜 등)은 그대로 유지됩니다.\n삭제 후 📎 첨부 또는 드래그로 다시 올릴 수 있습니다.')) return;
   deleteFile(id); renderCareer(page); toast('원본 삭제됨 — 다시 첨부해 주세요'); }
 function renderCareer(name){ const cfg=CAREER_CFG[name]; if(!cfg) return;
   const sec=document.getElementById('page-'+name); if(!sec) return;
@@ -3385,21 +3391,21 @@ function getGVisionKey(){ return LS.get(NS+'gvision_key')||''; }
 function getGeminiKey(){ return LS.get(NS+'gemini_key')||''; }
 /* Gemini(무료) 멀티모달 OCR — 이미지/PDF를 직접 읽어 JSON 반환 */
 async function _geminiOCR(prompt,b64,mt){ var key=getGeminiKey(); if(!key) return null;
-  try{ var body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mt,data:b64}}]}],generationConfig:{temperature:0,maxOutputTokens:800}};
+  try{ var body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mt,data:b64}}]}],generationConfig:{temperature:0,maxOutputTokens:1500}};
     var r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key='+encodeURIComponent(key),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!r.ok){ console.warn('Gemini',r.status,await r.text().catch(function(){return'';})); return {err:'Gemini '+r.status}; }
     var d=await r.json(); var raw=((((d.candidates||[])[0]||{}).content||{}).parts||[]).map(function(p){return p.text||'';}).join('').replace(/```json|```/g,'').trim();
     var m=raw.match(/\{[\s\S]*\}/); return m?{parsed:JSON.parse(m[0])}:null;
   }catch(e){ console.warn('Gemini',e); return null; } }
 const PAGE_OCR_PROMPT={
-  wiccok:`이 문서를 분석하여 JSON으로만 답하세요:\n{"docType":"위촉장","org":"발급기관","titleVal":"직책 또는 내용","issueDate":"YYYY.MM.DD","period":"YYYY.MM.DD ~ YYYY.MM.DD","year":"YYYY","note":"문서번호"}\n없는 항목은 빈 문자열. JSON만.`,
-  award:`이 표창장/포상장을 분석하여 JSON으로만 답하세요:\n{"docType":"표창","org":"수여기관","titleVal":"표창 또는 포상 내용","issueDate":"YYYY.MM.DD","year":"YYYY","note":"문서번호"}\n없는 항목은 빈 문자열. JSON만.`,
-  license:`이 자격증을 분석하여 JSON으로만 답하세요:\n{"title":"자격명","org":"발급기관","date":"YYYY.MM.DD","num":"증명번호","note":"비고"}\n없는 항목은 빈 문자열. JSON만.`,
-  complete:`이 수료증/이수증을 분석하여 JSON으로만 답하세요:\n{"title":"과정명(수료/이수)","org":"발급기관","date":"YYYY.MM.DD","num":"증명번호","note":"비고"}\n없는 항목은 빈 문자열. JSON만.`,
-  edu:`이 졸업증명서/학위증을 분석하여 JSON으로만 답하세요:\n{"school":"학교명","degree":"학위/과정","period":"YYYY ~ YYYY","graduated":"졸업/수료/재학","year":"YYYY","date":"YYYY.MM.DD"}\n없는 항목은 빈 문자열. JSON만.`,
-  personal_doc:`이 신분증/운전면허증/주민등록증/통장사본/사진 등을 분석하여 JSON으로만 답하세요:\n{"kind":"종류(신분증/운전면허증/주민등록증/통장사본/사진/기타 중 하나)","name":"이름 또는 문서 제목","number":"번호(주민번호앞7자리/면허번호/계좌번호 등, 없으면 빈문자)","memo":""}\n없는 항목은 빈 문자열. JSON만.`,
-  account:`이 통장사본/계좌 이미지를 분석하여 JSON으로만 답하세요:\n{"bank":"은행명","number":"계좌번호","holder":"예금주","memo":""}\n없는 항목은 빈 문자열. JSON만.`,
-  id_doc:`이 신분증/운전면허증/주민등록증/여권/통장사본을 분석하여 JSON으로만 답하세요:\n{"kind":"종류(신분증/운전면허증/주민등록증/여권/통장사본/기타 중 하나)","name":"이름/성명","number":"주민번호앞7자리 또는 면허번호 또는 계좌번호","expiry":"만료일(YYYY.MM.DD, 없으면 빈문자)","memo":""}\n없는 항목은 빈 문자열. JSON만.`
+  wiccok:`이 문서(위촉장·협약서·임명장)를 아주 꼼꼼히 읽고 JSON으로만 답하세요. 문서에 적힌 날짜를 그대로 정확히 옮기고, 추측하거나 지어내지 마세요. 날짜는 반드시 YYYY.MM.DD 형식으로.\n{"docType":"위촉장/협약서/임명장 중 해당","org":"발급·위촉 기관의 전체 명칭","titleVal":"직책 또는 위촉 내용","issueDate":"발급일(문서에 적힌 날짜) YYYY.MM.DD","period":"위촉기간이 있으면 시작일 ~ 종료일 (YYYY.MM.DD ~ YYYY.MM.DD)","year":"발급연도 YYYY","note":"문서번호(제○호 등)"}\n※ 발급일과 위촉기간(시작·종료)은 서로 다를 수 있으니 각각 정확히 구분해 읽으세요. 없는 항목만 빈 문자열. 다른 말 없이 JSON만.`,
+  award:`이 표창장/포상장/감사장을 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 문서 그대로 정확히(YYYY.MM.DD).\n{"docType":"표창/포상/감사장 중 해당","org":"수여기관 전체 명칭","titleVal":"표창·포상 명칭 또는 공적 내용","issueDate":"수여일 YYYY.MM.DD","year":"YYYY","note":"문서번호(제○호)"}\n없는 항목만 빈 문자열. JSON만.`,
+  license:`이 자격증/면허증을 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜·번호는 그대로 정확히.\n{"title":"자격·면허 명칭","org":"발급기관 전체 명칭","date":"취득/발급일 YYYY.MM.DD","num":"자격증/등록 번호","note":"등급·비고"}\n없는 항목만 빈 문자열. JSON만.`,
+  complete:`이 수료증/이수증을 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 그대로 정확히.\n{"title":"과정명(수료/이수)","org":"발급기관 전체 명칭","date":"수료일 YYYY.MM.DD","num":"증명번호","note":"교육시간·비고"}\n없는 항목만 빈 문자열. JSON만.`,
+  edu:`이 졸업증명서/학위증을 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 그대로 정확히.\n{"school":"학교명 전체","degree":"학위/전공/과정","period":"재학기간 YYYY ~ YYYY (있으면)","graduated":"졸업/수료/재학 중","year":"졸업연도 YYYY","date":"졸업일 YYYY.MM.DD"}\n없는 항목만 빈 문자열. JSON만.`,
+  personal_doc:`이 신분증/운전면허증/주민등록증/통장사본/사진 등을 꼼꼼히 읽고 JSON으로만 답하세요. 번호는 그대로 정확히.\n{"kind":"종류(신분증/운전면허증/주민등록증/통장사본/사진/기타 중 하나)","name":"이름 또는 문서 제목","number":"번호(주민번호앞7자리/면허번호/계좌번호 등, 없으면 빈문자)","memo":""}\n없는 항목만 빈 문자열. JSON만.`,
+  account:`이 통장사본/계좌 이미지를 꼼꼼히 읽고 JSON으로만 답하세요. 계좌번호는 숫자 하나도 틀리지 않게 정확히.\n{"bank":"은행명","number":"계좌번호(전체)","holder":"예금주","memo":""}\n없는 항목만 빈 문자열. JSON만.`,
+  id_doc:`이 신분증/운전면허증/주민등록증/여권/통장사본을 꼼꼼히 읽고 JSON으로만 답하세요. 번호·만료일은 그대로 정확히.\n{"kind":"종류(신분증/운전면허증/주민등록증/여권/통장사본/기타 중 하나)","name":"이름/성명","number":"주민번호앞7자리 또는 면허번호 또는 계좌번호","expiry":"만료일(YYYY.MM.DD, 없으면 빈문자)","memo":""}\n없는 항목만 빈 문자열. JSON만.`
 };
 function wiccokId(type,year){ const db=get('wiccok'),pre=type+year+'-'; let n=1; while(db.some(r=>r.id===pre+String(n).padStart(3,'0'))) n++; return pre+String(n).padStart(3,'0'); }
 function nextId(prefix,store){ const db=get(store); let n=1; const mk=()=>prefix+String(n).padStart(4,'0'); while(db.some(r=>r.id===mk())) n++; return mk(); }
@@ -3432,6 +3438,7 @@ async function saveOCRRecord(page,parsed,file,ext,b64){
   saveFileUnified(recId,{id:recId,name:file.name,ext,size:file.size,base64:b64,savedAt:new Date().toISOString()});
   return recId; }
 async function ocrDrop(files,page){ files=[...files]; if(!files.length) return;
+  files.sort(function(a,b){ return String(a.name).localeCompare(String(b.name),'ko',{numeric:true}); }); /* 여러 개 올릴 때 파일명(날짜) 순서대로 처리 */
   const apiKey=getApiKey(),gvKey=getGVisionKey(),geminiKey=getGeminiKey();
   if(!apiKey&&!gvKey&&!geminiKey){ toast('API 키 필요 — 환경설정→API키 설정'); return; }
   let done=0,failed=0,apiErr=null;
@@ -3446,12 +3453,12 @@ async function ocrDrop(files,page){ files=[...files]; if(!files.length) return;
     if(!parsed && geminiKey){ const gj=await _geminiOCR(prompt,b64,mt); if(gj){ if(gj.parsed) parsed=gj.parsed; else if(gj.err) apiErr=gj.err; } }
     if(gvKey&&!isPDF){ try{ const r=await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${gvKey}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requests:[{image:{content:b64},features:[{type:'DOCUMENT_TEXT_DETECTION'}]}]})});
       if(r.ok){ const d=await r.json(); const text=d.responses?.[0]?.fullTextAnnotation?.text||d.responses?.[0]?.textAnnotations?.[0]?.description||'';
-        if(text&&apiKey){ const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:600,messages:[{role:'user',content:`다음 OCR 텍스트를 분석하세요:\n${text.slice(0,2000)}\n\n${prompt}`}]})});
+        if(text&&apiKey){ const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:1200,messages:[{role:'user',content:`다음 OCR 텍스트를 분석하세요:\n${text.slice(0,2000)}\n\n${prompt}`}]})});
           if(resp.ok){ const rd=await resp.json(); const raw=rd.content.map(c=>c.text||'').join('').replace(/```json|```/g,'').trim(); const m=raw.match(/\{[\s\S]*\}/); if(m) parsed=JSON.parse(m[0]); }
           else{ apiErr='Claude '+resp.status; console.warn('Claude',resp.status,await resp.text().catch(()=>'')); } } }
       else{ apiErr='Vision '+r.status; console.warn('Vision',r.status); } }catch(e){ console.warn('Vision',e); } }
     if(!parsed&&apiKey){ try{ const content=[isPDF?{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}}:{type:'image',source:{type:'base64',media_type:mt,data:b64}},{type:'text',text:prompt}];
-      const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:600,messages:[{role:'user',content}]})});
+      const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:1200,messages:[{role:'user',content}]})});
       if(resp.ok){ const rd=await resp.json(); const raw=rd.content.map(c=>c.text||'').join('').replace(/```json|```/g,'').trim(); const m=raw.match(/\{[\s\S]*\}/); if(m) parsed=JSON.parse(m[0]); }
       else{ apiErr='Claude '+resp.status; console.warn('Claude',resp.status,await resp.text().catch(()=>'')); } }catch(e){ console.warn('Claude',e); } }
     if(parsed&&(parsed.org||parsed.title||parsed.school||parsed.name||parsed.bank||parsed.kind)){ await saveOCRRecord(page,parsed,file,ext,b64); done++; toast(`✅ ${(parsed.org||parsed.title||parsed.school||parsed.name||parsed.bank||parsed.kind||'').slice(0,20)}`); }
@@ -3848,7 +3855,7 @@ function renderPersonalDocs(){ const box=document.getElementById('piDocs'); if(!
       +'</span></td></tr>'; }).join('')+'</tbody></table>';
 }
 async function dropPersonalDoc(id,file){ await saveAttach(id,file); renderPersonalDocs(); openForm('personal_doc',id,true); }
-function delPersonalFile(id){ if(!confirm('첨부 원본만 삭제합니다. 레코드는 유지됩니다.')) return; deleteFile(id); renderPersonalDocs(); toast('원본 삭제됨'); }
+function delPersonalFile(id){ if(origLocked()){ toast('🔒 원본 보호가 켜져 있습니다 — 환경설정 › 데이터 관리에서 끈 뒤 삭제하세요'); return; } if(!confirm('첨부 원본만 삭제합니다. 레코드는 유지됩니다.')) return; deleteFile(id); renderPersonalDocs(); toast('원본 삭제됨'); }
 function attachPersonalDoc(id){ const inp=document.createElement('input'); inp.type='file'; inp.accept='.pdf,.jpg,.jpeg,.png';
   inp.onchange=async()=>{ const f=inp.files[0]; if(!f) return; await saveAttach(id,f); renderPersonalDocs(); openForm('personal_doc',id,true); }; inp.click(); }
 function addPersonalDoc(){ const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*,.pdf';
@@ -3873,7 +3880,7 @@ function renderAccounts(){ const box=document.getElementById('acList'); if(!box)
   box.querySelectorAll('tbody tr').forEach(function(tr){ const onc=tr.getAttribute('onclick')||''; const m=onc.match(/openForm\('account','([^']+)'/); if(m){ tr.removeAttribute('onclick'); tr.style.cursor='pointer'; tr.addEventListener('click',function(e){ if(e.target.closest('button,a,input,select,textarea,.btn')) return; openEditDrawer('account', m[1]); }); } });
 }
 async function dropAccountDoc(id,file){ await saveAttach(id,file); renderAccounts(); toast('원본 첨부됨'); }
-function delAccountFile(id){ if(!confirm('첨부 원본만 삭제합니다. 계좌 정보는 유지됩니다.')) return; deleteFile(id); renderAccounts(); toast('원본 삭제됨'); }
+function delAccountFile(id){ if(origLocked()){ toast('🔒 원본 보호가 켜져 있습니다 — 환경설정 › 데이터 관리에서 끈 뒤 삭제하세요'); return; } if(!confirm('첨부 원본만 삭제합니다. 계좌 정보는 유지됩니다.')) return; deleteFile(id); renderAccounts(); toast('원본 삭제됨'); }
 function attachAccountDoc(id){ const inp=document.createElement('input'); inp.type='file'; inp.accept='.pdf,.jpg,.jpeg,.png';
   inp.onchange=async()=>{ const f=inp.files[0]; if(!f) return; await saveAttach(id,f); renderAccounts(); }; inp.click(); }
 function editAccount(id){ openForm('account',id); }
@@ -3965,7 +3972,7 @@ function renderIDDocs(){
 }
 function openIDDoc(id){ if(!FORM_DEFS.id_doc) return; const has=!!getFile(id); openForm('id_doc',id,has); }
 async function dropIDDoc(id,file){ if(!file) return; await saveAttach(id,file); renderIDDocs(); toast('첨부됨'); }
-function delIDFile(id){ if(!confirm('첨부 원본만 삭제합니다.')) return; deleteFile(id); renderIDDocs(); toast('원본 삭제됨'); }
+function delIDFile(id){ if(origLocked()){ toast('🔒 원본 보호가 켜져 있습니다 — 환경설정 › 데이터 관리에서 끈 뒤 삭제하세요'); return; } if(!confirm('첨부 원본만 삭제합니다.')) return; deleteFile(id); renderIDDocs(); toast('원본 삭제됨'); }
 function attachIDDoc(id){ const inp=document.createElement('input'); inp.type='file'; inp.accept='.pdf,.jpg,.jpeg,.png';
   inp.onchange=async()=>{ const f=inp.files[0]; if(!f) return; await saveAttach(id,f); renderIDDocs(); openForm('id_doc',id,true); }; inp.click(); }
 function delIDDoc(id){ if(!confirm('이 항목을 삭제하시겠습니까?')) return; set('id_docs',get('id_docs').filter(x=>x.id!==id)); deleteFile(id); renderIDDocs(); toast('삭제됨'); }
@@ -4053,6 +4060,7 @@ function initSettings(){
   const acFile=document.getElementById('acFileInput'); if(acFile){ acFile.onchange=async()=>{ await ocrDrop(acFile.files,'account'); renderAccounts(); acFile.value=''; }; }
   const acZone=document.querySelector('#tab-account .ocr-zone'); if(acZone){ acZone.onclick=()=>{ const inp=document.getElementById('acFileInput'); if(inp) inp.click(); }; acZone.ondragover=e=>{ e.preventDefault(); acZone.classList.add('drag'); }; acZone.ondragleave=()=>acZone.classList.remove('drag'); acZone.ondrop=async e=>{ e.preventDefault(); acZone.classList.remove('drag'); await ocrDrop(e.dataTransfer.files,'account'); renderAccounts(); }; }
   const dt=document.getElementById('dtReseed'); if(dt) dt.onclick=reseed;
+  const olc=document.getElementById('origLockChk'); if(olc){ olc.checked=origLocked(); olc.onchange=function(){ LS.set(NS+'orig_lock', olc.checked?'1':'0'); toast(olc.checked?'🔒 원본 보호 켜짐':'🔓 원본 보호 꺼짐 — 이제 원본 삭제 가능'); }; }
   // 사진 보관함
   const gIn=document.getElementById('galleryInput'); const gDrop=document.getElementById('galleryDrop');
   if(gIn) gIn.onchange=()=>{ addGalleryPhotos(gIn.files); gIn.value=''; };
