@@ -3638,6 +3638,48 @@ function loadDrafts(){
       Object.keys(v).forEach(k=>{DASH_DRAFTS[k]=v[k];}); done(); }).catch(done);
   } else done();
 }
+/* 현재 편집 모델에서 '변경 후 전문' 텍스트를 만든다 — 한글 다운로드와 같은 내용.
+   부칙에 이번 회차의 시행 문구까지 넣어, 다음 개정에서 이력으로 이어진다. */
+function revisedTextOf(){
+  const view=numberedView(CUR_ITEMS,REV_MODE);
+  const shown=(REV_MODE==="full"?view.filter(v=>!v.it.del):view).filter(v=>inDaejo(v.it));
+  if(!shown.length)return null;
+  const paras=shown.filter(v=>!(v.it.orig===""&&!String(v.it.after||"").trim())).map(v=>{
+    return v.it.del?(v.no+" 삭제"):articleText(v);
+  });
+  const ad=composeAddendum();
+  return `${siteName(LAST.site)} 취업규칙 (${fmtKDate(LAST.asof)} ${REV_MODE==="full"?"전부":"일부"}개정)\n\n`
+    +paras.join("\n\n")
+    +"\n\n부 칙\n"+ad.lines.concat([ad.entry]).join("\n");
+}
+/* 완료 회차 → 다음 개정 시작: 변경후 전문을 새 원본으로 투입하고 바로 검토 */
+async function startNextRevision(id){
+  const r=loadArch().find(x=>x.id===id); if(!r)return;
+  const sk=r.siteKey||siteKeyOf(r.id);
+  const hasWip=loadArch().some(x=>(x.siteKey||siteKeyOf(x.id))===sk&&x.status==="작업중");
+  if(!confirm(`'${r.site}' ${r.asof} 완료본의 [변경 후 전문]을 새 개정의 원본으로 가져옵니다.`
+    +(hasWip?"\n※ 이 사업장의 작업중 기록이 있습니다 — 새 검토를 저장하면 덮어씁니다.":"")
+    +"\n\n계속할까요?"))return;
+  // 완료본의 편집 모델을 잠시 현재 문맥으로 — 전문 생성에 필요한 값들
+  LAST={key:null,site:r.site,bizno:r.bizno,size:r.size,conds:r.conds||[],asof:r.asof,
+    summary:r.summary,arts:[],addendum:r.addendum||""};
+  REV_MODE=r.mode||"partial";
+  CUR_ITEMS=normalizeItems(r.items||[]);
+  const txt=revisedTextOf();
+  if(!txt){alert("이 회차에는 전문을 만들 조문이 없습니다.");return;}
+  // 새 원본으로 등록 → 사업장 선택 → 검토 실행 (업로드와 같은 경로)
+  const key="NX_"+Date.now();
+  SAMPLES[key]=txt; SITE_MAP[key]="🏢 "+siteName(r.site); SITE_BIZNO[key]=r.bizno||"";
+  delete HWP_BUFS[key];
+  const opt=document.createElement("option"); opt.value=key; opt.textContent=SITE_MAP[key];
+  siteSel.appendChild(opt); siteSel.value=key;
+  OPEN_REC=null; setReadOnly(false);
+  if(r.size&&$("size"))$("size").value=r.size;
+  $("ov-arch").classList.remove("on");
+  siteSel.dispatchEvent(new Event("change"));      // 검토 화면 초기화 + 원본 미리보기
+  await new Promise(res=>setTimeout(res,150));
+  $("run").click();                                 // 새 기준으로 즉시 자동 검토
+}
 function renderArch(q){
   /* 내 담당 사업장 전부 + 남의 '검토 완료'본만 보인다 */
   const all=visibleArch();
@@ -3667,6 +3709,7 @@ function renderArch(q){
       <td style="text-align:right;white-space:nowrap">
         <button class="mini" data-open="${r.id}">${own?"대조표 열기":"🔒 열람"}</button>
         ${legacy&&noOwner?`<button class="mini" data-adopt="${r.id}" title="예전 보관함에 남은 기록을 내 담당으로 옮깁니다">내 담당으로 가져오기</button>`:""}
+        ${done?`<button class="mini" data-next="${r.id}" title="이 완료본의 [변경 후 전문]을 원본으로 새 개정 검토를 시작합니다">→ 새 개정 시작</button>`:""}
         ${own&&!legacy?`<button class="mini" data-done="${r.id}" title="${done?"작업중으로 되돌립니다":"완료로 표시하면 다른 노무사도 열어 볼 수 있습니다"}">${done?"완료 해제":"✅ 완료"}</button>`:""}
         ${own?`<button class="mini" data-del="${r.id}" style="color:#dc2626;border-color:#f3c0c0">삭제</button>`:""}</td>`;
     tb.appendChild(tr);});
@@ -3692,6 +3735,7 @@ function renderArch(q){
     OPEN_REC=r.id;                 // 이 자리(작업중/완료 회차)에 되저장한다
     updateDoneBtn();
     CUR_FILTER="changed";openEditor();});
+  tb.querySelectorAll("[data-next]").forEach(b=>b.onclick=()=>startNextRevision(b.dataset.next));
   tb.querySelectorAll("[data-done]").forEach(b=>b.onclick=()=>{
     const r=loadArch().find(x=>x.id===b.dataset.done); if(!r)return;
     const to=!isDone(r);
