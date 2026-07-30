@@ -549,6 +549,19 @@ table.daejo td.dj2{padding:0}
   <div class="body" id="full-body" style="overflow:auto;background:#f4f6fa"></div>
 </div></div>
 
+<div class="overlay" id="ov-docpv"><div class="modal" style="max-width:1000px">
+  <h2>📄 서식 미리보기 <span class="tag" id="docpv-sub" style="font-size:12px;color:var(--mute);font-weight:400"></span><span class="x" data-close>×</span></h2>
+  <div class="body" style="background:#eef1f7">
+    <div id="docpv-note" style="margin:0 0 10px;font-size:11.5px;color:var(--sub);line-height:1.6"></div>
+    <div id="docpv-pages" style="max-height:62vh;overflow:auto;padding:2px"></div>
+  </div>
+  <div class="foot">
+    <button class="stbtn" id="docpv-all" style="margin-right:auto">전체 쪽 보기</button>
+    <button class="btn ghost" data-close>닫기</button>
+    <button class="btn orange" id="docpv-dl">⬇ 이 서식 받기</button>
+  </div>
+</div></div>
+
 <div class="overlay" id="ov-arch"><div class="modal">
   <h2>📁 규정 보관함 <span class="tag" id="arch-sub" style="font-size:12px;color:var(--mute);font-weight:400"></span><span class="x" data-close>×</span></h2>
   <div class="body">
@@ -2684,12 +2697,15 @@ function renderDocset(){
         <span><b style="font-size:13px">${label}</b> <span class="muted" style="font-size:10.5px">· ${k==="daejo"&&PAGE_LAND?"가로":"세로"}</span><br>
         <span class="muted" style="font-size:11px">${desc}</span></span>
       </label>
+      <button class="stbtn" data-pv1="${k}" title="내려받을 한글 파일을 그대로 미리 봅니다" style="flex:0 0 auto;white-space:nowrap">👁 미리보기</button>
       <button class="stbtn" data-dl1="${k}" title="이 서식만 한글 파일로 내려받습니다" style="flex:0 0 auto;white-space:nowrap">⬇ 따로 받기</button>
     </div>`).join("");
   $("docset-list").querySelectorAll("[data-ds]").forEach(c=>c.onchange=()=>{
     DOCSET[c.dataset.ds]=c.checked; DOCSET._touched=true; renderDocset(); });
   $("docset-list").querySelectorAll("[data-dl1]").forEach(b=>b.onclick=e=>{
     e.preventDefault(); e.stopPropagation(); downloadOneDoc(b.dataset.dl1); });
+  $("docset-list").querySelectorAll("[data-pv1]").forEach(b=>b.onclick=e=>{
+    e.preventDefault(); e.stopPropagation(); previewDoc(b.dataset.pv1); });
 }
 $("open-final").addEventListener("click",openFinal);
 if($("open-final2"))$("open-final2").addEventListener("click",openFinal);
@@ -2772,6 +2788,41 @@ function downloadOneDoc(key){
     HWPX.download(secs,`${DOC_LABEL[key]}_${docFileBase()}.hwpx`);
   }catch(e){ console.warn("서식 생성 실패:",e); alert("생성에 실패했습니다: "+(e.message||e)); }
 }
+/* 서식 미리보기 — 내려받을 파일을 그대로 렌더한다.
+   HTML로 흉내 내면 서식을 고칠 때마다 실제 문서와 어긋나므로,
+   같은 조립기(docSections)로 만든 .hwpx 를 rhwp 로 렌더해 보여 준다. */
+let PV_KEY=null, PV_ALL=false;
+async function previewDoc(key,all){
+  if(!CUR_ITEMS.length){alert("먼저 조문 검토·편집을 생성하세요.");return;}
+  if((key==="daejo"||key==="full")&&!docGateOk())return;
+  PV_KEY=key; PV_ALL=!!all;
+  const box=$("docpv-pages"), note=$("docpv-note");
+  $("docpv-sub").textContent=DOC_LABEL[key]||"";
+  $("ov-docpv").classList.add("on");
+  box.innerHTML='<div class="empty">불러오는 중…</div>';
+  note.textContent="";
+  try{
+    applyAutoOrient();
+    const secs=docSections({[key]:true});
+    if(!secs.length){ box.innerHTML='<div class="empty">생성할 내용이 없습니다.</div>'; return; }
+    const land=secs[0].landscape;
+    const u8=HWPX.build(secs);
+    if(typeof window.renderHwpPreview!=="function"){
+      box.innerHTML='<div class="empty">이 환경에서는 렌더 미리보기를 쓸 수 없습니다 — [이 서식 받기]로 한글에서 확인하세요.</div>';
+      return;
+    }
+    await window.renderHwpPreview(u8.buffer, box, PV_ALL?0:3);
+    const pages=box.querySelectorAll("svg").length;
+    note.innerHTML=`용지 <b>${land?"가로":"세로"}</b> · 파일 크기 ${Math.round(u8.length/1024)}KB`
+      +` · 실제 내려받을 한글 파일을 그대로 렌더한 화면입니다(쪽번호·정렬 포함)`;
+    $("docpv-all").style.display=PV_ALL?"none":"";
+  }catch(e){
+    console.warn("서식 미리보기 실패:",e);
+    box.innerHTML='<div class="empty">미리보기를 만들지 못했습니다 — '+escapeH(e.message||String(e))+'</div>';
+  }
+}
+$("docpv-all").addEventListener("click",()=>{ if(PV_KEY)previewDoc(PV_KEY,true); });
+$("docpv-dl").addEventListener("click",()=>{ if(PV_KEY)downloadOneDoc(PV_KEY); });
 $("dl-docset").addEventListener("click",()=>{
   const keys=["apply","daejo","full","opinion","consent"].filter(k=>DOCSET[k]);
   if(!keys.length){alert("첨부할 서류를 선택하세요.");return;}
