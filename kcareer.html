@@ -3553,7 +3553,7 @@ function initApiTab(){ const gv=document.getElementById('apiGV'),an=document.get
   gv.type='password'; an.type='password';
   const badge=()=>st.textContent=(an.value?'🟢 Claude 연동':gv.value?'🟡 Vision만':'🔴 미설정');
   badge();
-  document.getElementById('apiSave').onclick=()=>{ LS.set(NS+'gvision_key',gv.value.trim()); LS.set(NS+'api_key',an.value.trim()); LS.set(NS+'rhwp_url',rh.value.trim()); badge(); toast('API 키 저장됨'); };
+  document.getElementById('apiSave').onclick=()=>{ LS.set(NS+'gvision_key',gv.value.trim()); LS.set(NS+'api_key',an.value.trim()); LS.set(NS+'rhwp_url',rh.value.trim()); badge(); if(typeof fbSaveApiKeys==='function') fbSaveApiKeys(); toast('API 키 저장됨 (클라우드에도 보관 — 업데이트해도 유지)'); };
 }
 
 /* ===== 환경설정: 개인정보·계좌·데이터·백업 ===== */
@@ -4366,7 +4366,7 @@ function fbInit(){ if(location.protocol==='file:') return; if(typeof firebase===
          한동안 안 써도(관리 안 해도) 세션이 풀리지 않습니다. */
     try{ if(firebase.auth().setPersistence) firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){ console.warn('[persistence]',e&&e.message); }
     firebase.auth().onAuthStateChanged(function(u){ fbUid=u?u.uid:null; fbUpdateUI(u);
-      if(u){ authGate(false); if(typeof resolveMe==='function'){ try{ resolveMe(); }catch(e){} } }
+      if(u){ authGate(false); if(typeof resolveMe==='function'){ try{ resolveMe(); }catch(e){} } if(typeof fbLoadApiKeys==='function'){ try{ fbLoadApiKeys(); }catch(e){} } }
       else { _me={resolved:false,name:'',sid:'',role:'',isAdmin:true}; _fbWatching=false; _fbBase=null;
         /* sso=1로 갓 진입한 경우엔 공유 세션이 잡힐 시간을 잠깐 준 뒤 잠금 판단 */
         if(/[?&]sso=1/.test(location.search) && !window._ssoRetried){ window._ssoRetried=true;
@@ -4395,9 +4395,19 @@ function fbLogoutConfirm(){
   fbLogout(); }
 function fbGatherLS(){ var o={}; for(var i=0;i<localStorage.length;i++){ var k=localStorage.key(i); if(!k||k.indexOf(NS)!==0) continue; var bare=k.slice(NS.length); if(FB_SKIP.indexOf(bare)>=0) continue; o[bare]=localStorage.getItem(k); } return o; }
 function fbDeviceLabel(){ return (/Mobile|Android|iPhone/i.test(navigator.userAgent)?'폰':'PC'); }
+/* API 키 개인 클라우드 보관 (kcareer/{uid}/_secrets — 본인 계정만 열람, 업데이트·기기변경에도 유지) */
+function fbSaveApiKeys(){ if(typeof fbDb==='undefined'||!fbDb||!fbUid) return;
+  try{ fbDb.ref('kcareer/'+fbUid+'/_secrets').set({ api_key:LS.get(NS+'api_key')||'', gvision_key:LS.get(NS+'gvision_key')||'', rhwp_url:LS.get(NS+'rhwp_url')||'', at:Date.now() }).catch(function(){}); }catch(e){} }
+function fbLoadApiKeys(){ if(typeof fbDb==='undefined'||!fbDb||!fbUid) return;
+  try{ fbDb.ref('kcareer/'+fbUid+'/_secrets').once('value').then(function(s){ var v=s.val(); if(!v) return; var restored=false;
+    if(v.api_key && !LS.get(NS+'api_key')){ LS.set(NS+'api_key', v.api_key); restored=true; }
+    if(v.gvision_key && !LS.get(NS+'gvision_key')){ LS.set(NS+'gvision_key', v.gvision_key); restored=true; }
+    if(v.rhwp_url && !LS.get(NS+'rhwp_url')){ LS.set(NS+'rhwp_url', v.rhwp_url); }
+    if(restored){ var an=document.getElementById('apiAN'); if(an) an.value=LS.get(NS+'api_key')||''; var gv=document.getElementById('apiGV'); if(gv) gv.value=LS.get(NS+'gvision_key')||''; toast('API 키를 클라우드에서 복원했습니다'); }
+  }).catch(function(){}); }catch(e){} }
 function fbPush(){ if(!fbUid){ toast('먼저 로그인하세요'); return; } if(!fbDb) return;
   var at=Date.now(); fbSetBase(at); var data=fbGatherLS(); var payload={ls:data, at:at, device:fbDeviceLabel(), keys:Object.keys(data).length};
-  fbDb.ref('kcareer/'+fbUid).set(payload).then(function(){ toast('클라우드에 저장됨 ('+payload.keys+'개 항목)'); fbShowInfo(payload); fbHideNotice(); }).catch(function(ex){ toast('저장 실패: '+((ex&&ex.message)||ex)); }); }
+  fbDb.ref('kcareer/'+fbUid).update(payload).then(function(){ toast('클라우드에 저장됨 ('+payload.keys+'개 항목)'); fbShowInfo(payload); fbHideNotice(); }).catch(function(ex){ toast('저장 실패: '+((ex&&ex.message)||ex)); }); }
 function fbPull(){ if(!fbUid){ toast('먼저 로그인하세요'); return; } if(!fbDb) return;
   fbDb.ref('kcareer/'+fbUid).once('value').then(function(snap){ var v=snap.val();
     if(!v||!v.ls){ toast('클라우드에 저장된 데이터가 없습니다 — 먼저 한 기기에서 저장하세요'); return; }
@@ -4425,7 +4435,7 @@ function fbAutoPush(){ if(!fbUid||!fbDb||!fbAutoOn()) return;
   fbDb.ref('kcareer/'+fbUid+'/at').once('value').then(function(s){ var cloudAt=s.val()||0;
     if(_fbBase!=null && cloudAt>_fbBase){ fbShowNotice(); return; }
     var at=Date.now(); fbSetBase(at); var data=fbGatherLS(); var payload={ls:data,at:at,device:fbDeviceLabel(),keys:Object.keys(data).length};
-    fbDb.ref('kcareer/'+fbUid).set(payload).then(function(){ var b=document.getElementById('fbBtn'); if(b){ var t=b.textContent; b.textContent='☁ 저장됨'; setTimeout(function(){ if(b.textContent==='☁ 저장됨') b.textContent=t; },1500); } }).catch(function(){});
+    fbDb.ref('kcareer/'+fbUid).update(payload).then(function(){ var b=document.getElementById('fbBtn'); if(b){ var t=b.textContent; b.textContent='☁ 저장됨'; setTimeout(function(){ if(b.textContent==='☁ 저장됨') b.textContent=t; },1500); } }).catch(function(){});
   }).catch(function(){}); }
 
 _safe(loadSeed); _safe(loadCustomNav); _safe(buildNav); _safe(initTabs); _safe(()=>initDocCreate('resume')); _safe(()=>initDocStore('resume')); _safe(()=>initDocCreate('profile')); _safe(()=>initDocStore('profile')); _safe(()=>initDocCreate('certdoc')); _safe(()=>initDocStore('certdoc')); _safe(bindCareer); _safe(initApiTab); _safe(initSettings); _safe(seedStamps); _safe(fbInit);
