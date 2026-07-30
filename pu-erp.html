@@ -1652,6 +1652,9 @@ try {
             fbAuthReady = true;
             try { window.dispatchEvent(new CustomEvent('fb_auth_ready', {detail: user.uid})); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
             try { initDeviceLock(); } catch(_){}  // 서버 기반 기기 잠금 시작
+            // 명함첩 경량 검색 인덱스(pucards/idx) 로드 — 계약창 "과거 회사 불러오기"에서 명함첩 검색용
+            try { if(!window._pcIdxHooked){ window._pcIdxHooked=true; window.pucardsIdx={};
+              fbDb.ref('pucards/idx').on('value', function(s){ window.pucardsIdx = s.val() || {}; }); } } catch(_){}
           } else {
             fbAuthUid = null;
             fbAuthReady = false;
@@ -8389,6 +8392,51 @@ function searchPastCompanies(query){
       }
     });
   });
+  // 명함첩(pucards/idx) — 회사 사업자정보 + 소속 직원(담당자)
+  (function(){
+    var idx = window.pucardsIdx || {};
+    var ids = Object.keys(idx);
+    if(!ids.length) return;
+    function normCo(s){ return (s||'').toLowerCase().replace(/[\s\-㈜()]|주식회사/g,''); }
+    function toContact(x, primary){
+      return { id:'pc'+Math.random().toString(36).slice(2,9), name:x.n||'', role:x.ti||'',
+        phone:(x.m||x.t||''), bizPhone:(x.ct||''), email:(x.e||''), isPrimary:!!primary };
+    }
+    // 회사별 사업자등록증 레코드(대표·사업자번호 보강용)
+    var bizByCo = {};
+    ids.forEach(function(k){ var r=idx[k]; if(r && r.k==='biz' && r.c){ bizByCo[normCo(r.c)] = r; } });
+    var added = 0;
+    for(var i=0;i<ids.length && added<50;i++){
+      var r = idx[ids[i]]; if(!r) continue;
+      var isBiz = (r.k==='biz');
+      // 회사명/사업자번호로 매칭, 명함은 사람 이름으로도 매칭
+      var hit = isBiz ? match(r.c, r.bz) : (match(r.c, r.bz) || (r.n && match(r.n, '')));
+      if(!hit) continue;
+      var biz = bizByCo[normCo(r.c)] || {};
+      if(isBiz){
+        var people = ids.map(function(kk){ return idx[kk]; })
+          .filter(function(x){ return x && x.k==='card' && normCo(x.c)===normCo(r.c); });
+        results.push({
+          source:'명함첩', sourceColor:'#1d4ed8', sourceBg:'#dbeafe',
+          sourceId:'pc-'+ids[i], label:(r.c||'')+' · 사업자등록증', bizNo:(r.bz||''), date:'',
+          company:{ name:r.c||'', bizNo:r.bz||'', ceo:r.ceo||'', address:r.ad||'',
+            phone:r.ct||'', fax:'', email:'', bizType:'', bizCategory:'', companySize:'',
+            contacts: people.map(function(p,pi){ return toContact(p, pi===0); }) }
+        });
+      } else {
+        results.push({
+          source:'명함첩', sourceColor:'#1d4ed8', sourceBg:'#dbeafe',
+          sourceId:'pc-'+ids[i],
+          label:(r.n||'(이름없음)')+(r.c?' · '+r.c:'')+(r.ti?' · '+r.ti:''),
+          bizNo:(biz.bz||''), date:'',
+          company:{ name:r.c||'', bizNo:biz.bz||'', ceo:biz.ceo||'', address:(r.ad||biz.ad||''),
+            phone:r.ct||'', fax:'', email:'', bizType:'', bizCategory:'', companySize:'',
+            contacts:[ toContact(r, true) ] }
+        });
+      }
+      added++;
+    }
+  })();
   // 종료된 항목 우선 노출 (최신순)
   results.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
   return results;
@@ -8416,7 +8464,7 @@ function PastCompanySearchModal(props){
           placeholder:'🔍 회사명 또는 사업자번호로 검색 (2글자 이상)',
           style:{ width:'100%', padding:'5px 8px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'11.5px' } }),
         h('div', { style:{ fontSize:'10.5px', color:'#94a3b8', marginTop:'4px' } },
-          '계약관리 / 업체관리 / 사건 / 컨설팅 / 기금 / 기타사업 통합 검색')
+          '계약관리 / 업체관리 / 사건 / 컨설팅 / 기금 / 기타사업 / 명함첩 통합 검색')
       ),
       h('div', { style:{ flex:1, overflow:'auto', padding:'8px' } },
         !query ? h('div', { style:{ padding:'16px', textAlign:'center', color:'#94a3b8', fontSize:'12px' } }, '회사명 또는 사업자번호를 입력하세요')

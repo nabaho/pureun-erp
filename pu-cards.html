@@ -544,6 +544,44 @@ function loadSharedGKey(){
     .then(s=>{ _sharedGKey = s.val()||''; }).catch(()=>{}); }catch(_){}
 }
 
+/* ══════ 경량 검색 인덱스(pucards/idx) — 푸른이알피 계약창에서 회사·담당자 검색용 ══════
+   사진 없이 이름·회사·전화만 담아 가볍게 유지(전체 1MB 이하). 저장/삭제 시 함께 갱신. */
+function idxRecord(it){
+  if(!it) return null;
+  const r={}; const put=(k,v)=>{ v=(v==null?'':String(v)).trim(); if(v) r[k]=v; };
+  put('n', it.name); put('c', it.company); put('m', it.mobile); put('t', it.tel);
+  put('e', it.email); put('ti', it.title); put('d', it.dept); put('ct', it.companyTel);
+  put('ad', it.kind==='biz' ? it.address : it.companyAddr);
+  if(it.kind==='biz'){ put('bz', it.bizno); put('ceo', it.ceo); }
+  r.k = (it.kind==='biz') ? 'biz' : 'card';
+  if(!r.n && !r.c && !r.bz) return null;   /* 검색에 쓸 정보가 없으면 기록 안 함 */
+  return r;
+}
+function writeIdx(it){
+  try{ if(Store.mode!=='firebase' || !it || !it.id) return;
+    const r=idxRecord(it);
+    if(r) Store.db.ref(DB_ROOT+'/idx/'+it.id).set(r);
+    else Store.db.ref(DB_ROOT+'/idx/'+it.id).remove();
+  }catch(_){}
+}
+function removeIdx(id){ try{ if(Store.mode==='firebase') Store.db.ref(DB_ROOT+'/idx/'+id).remove(); }catch(_){} }
+function backfillIdx(){
+  try{
+    if(Store.mode!=='firebase' || Store._idxDone) return;
+    Store._idxDone=true;
+    const items=Object.values(state.items||{}); if(!items.length){ Store._idxDone=false; return; }
+    Store.db.ref(DB_ROOT+'/idx').once('value').then(s=>{
+      const existCount=Object.keys(s.val()||{}).length;
+      if(existCount >= items.length*0.9) return;   /* 이미 대부분 있으면 스킵 */
+      const all={};
+      items.forEach(it=>{ if(it&&it.id){ const r=idxRecord(it); if(r) all[it.id]=r; } });
+      Store.db.ref(DB_ROOT+'/idx').set(all)
+        .then(()=>console.log('[idx] 백필 완료', Object.keys(all).length))
+        .catch(e=>console.warn('[idx] 백필 실패', e&&e.message));
+    }).catch(()=>{});
+  }catch(_){}
+}
+
 const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, colOrder:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, onlyPrivate:false, unlocked:{}, items:{}, groups:{}, trash:{} };
 
 /* ── 데이터 계층 ── */
@@ -560,7 +598,8 @@ const Store = {
       this.mode = 'firebase';
       modeBadge.textContent='실시간 공유'; modeBadge.classList.add('live');
       const subscribe = () => {
-        this.db.ref(DB_ROOT+'/items').on('value', s => { state.items = s.val()||{}; render(); });
+        this.db.ref(DB_ROOT+'/items').on('value', s => { state.items = s.val()||{}; render();
+          if(!Store._idxDone){ setTimeout(backfillIdx, 3000); } });
         this.db.ref(DB_ROOT+'/groups').on('value', s => { state.groups = s.val()||{}; render(); });
         this.db.ref(DB_ROOT+'/trash').on('value', s => { state.trash = s.val()||{};
           if(!Store._trashPurgeDone){ Store._trashPurgeDone=true; setTimeout(purgeTrash, 2000); } });
@@ -589,7 +628,7 @@ const Store = {
   _ls(){ localStorage.setItem('pucards_local_items', JSON.stringify(state.items));
          localStorage.setItem('pucards_local_groups', JSON.stringify(state.groups)); },
   put(it){ it.updatedAt = Date.now();
-    if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/items/${it.id}`).set(it);
+    if (this.mode==='firebase'){ this.db.ref(`${DB_ROOT}/items/${it.id}`).set(it); writeIdx(it); }
     else { state.items[it.id]=it; this._ls(); render(); } },
   /* 삭제 = 휴지통으로 이동 (30일 보관). 사진도 함께 보관 */
   async del(id){
@@ -601,6 +640,7 @@ const Store = {
       await this.db.ref(`${DB_ROOT}/trash/${id}`).set(rec);
       this.delPhoto(id); this.delPhoto(id+'_b');
       this.db.ref(`${DB_ROOT}/items/${id}`).remove();
+      removeIdx(id);
     } else {
       const t=JSON.parse(localStorage.getItem('pucards_local_trash')||'{}'); t[id]=rec;
       try{ localStorage.setItem('pucards_local_trash', JSON.stringify(t)); }catch(e){}
