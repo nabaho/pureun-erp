@@ -76,11 +76,43 @@
     return { level: 'submission' };
   }
 
+  /* ===== 연도·기관·건 키 =====
+     7번 폴더 파일은 '위촉장.jpg'처럼 맨몸 이름이 많아 연도·기관을 경로에서 얻어야 한다. */
+  var CASE_ROOT = '7. 컨설턴트,위원신청등';
+
+  function pickYear(name, relPath, mtimeISO) {
+    var m = String(name == null ? '' : name).match(/(20\d{2})/);
+    if (m) return { year: m[1], from: 'name', needCheck: false };
+    var p = String(relPath == null ? '' : relPath).match(/(20\d{2})년/);
+    if (p) return { year: p[1], from: 'path', needCheck: false };
+    var t = String(mtimeISO == null ? '' : mtimeISO).match(/^(\d{4})/);
+    if (t) return { year: t[1], from: 'mtime', needCheck: true };
+    return { year: '', from: 'none', needCheck: true };
+  }
+
+  function orgFromCaseDir(dirName) {
+    return String(dirName == null ? '' : dirName)
+      .replace(/^\s*20\d{2}\s*년?/, '')        // 앞쪽 연도(2019, 2019년)
+      .replace(/^[\s.\-_]+/, '')               // 뒤따르는 구분자
+      .trim();
+  }
+
+  // 7번 폴더의 '연도/건' 2단계까지를 건 키로 본다. 그 밖은 파일 1개 = 1건.
+  function caseKeyOf(relPath) {
+    var segs = String(relPath == null ? '' : relPath).split('/');
+    if (segs[0] === CASE_ROOT && segs.length >= 4) return segs.slice(0, 3).join('/');
+    return null;
+  }
+
   var api = {
+    CASE_ROOT: CASE_ROOT,
     extOf: extOf,
     isIgnoredFile: isIgnoredFile,
     cleanCore: cleanCore,
-    classify: classify
+    classify: classify,
+    pickYear: pickYear,
+    orgFromCaseDir: orgFromCaseDir,
+    caseKeyOf: caseKeyOf
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.KcareerScan = api;

@@ -75,3 +75,40 @@ test('classify: 제외 파일은 ignore', () => {
   assert.equal(KS.classify('4NZFL.DOCX').level, 'ignore');
   assert.equal(KS.classify('.~lock.경력증명서 서류목록.xlsx#').level, 'ignore');
 });
+
+test('pickYear: 파일명 → 경로 → 수정일 순서로 연도를 정한다', () => {
+  assert.deepEqual(
+    KS.pickYear('2015 체당금국선노무사 위촉장 (2015.12.17).pdf', '1. 위촉장/2015 체당금국선노무사 위촉장 (2015.12.17).pdf', '2015-12-17T00:00:00.000Z'),
+    { year: '2015', from: 'name', needCheck: false });
+  assert.deepEqual(
+    KS.pickYear('위촉장.jpg', '7. 컨설턴트,위원신청등/2019년/2019경제진흥원컨설턴트/위촉장.jpg', '2020-01-02T00:00:00.000Z'),
+    { year: '2019', from: 'path', needCheck: false });
+  assert.deepEqual(
+    KS.pickYear('실적증명서.hwp', '6. 컨설팅 실적증명/실적증명서.hwp', '2024-03-05T00:00:00.000Z'),
+    { year: '2024', from: 'mtime', needCheck: true });
+  assert.deepEqual(
+    KS.pickYear('실적증명서.hwp', '6. 컨설팅 실적증명/실적증명서.hwp', ''),
+    { year: '', from: 'none', needCheck: true });
+});
+
+test('orgFromCaseDir: 건 폴더명 앞쪽 연도·번호를 떼고 기관을 뽑는다', () => {
+  assert.equal(KS.orgFromCaseDir('2019경제진흥원컨설턴트'), '경제진흥원컨설턴트');
+  assert.equal(KS.orgFromCaseDir('2019 충남 도청사업'), '충남 도청사업');
+  assert.equal(KS.orgFromCaseDir('2024 경영평가위원모집'), '경영평가위원모집');
+  assert.equal(KS.orgFromCaseDir('2019. 일터혁신자료'), '일터혁신자료');
+  assert.equal(KS.orgFromCaseDir('2018청소년권익센타'), '청소년권익센타');
+});
+
+test('caseKeyOf: 7번 폴더의 연도/건 폴더만 건으로 묶는다', () => {
+  assert.equal(
+    KS.caseKeyOf('7. 컨설턴트,위원신청등/2019년/2019경제진흥원컨설턴트/위촉장.jpg'),
+    '7. 컨설턴트,위원신청등/2019년/2019경제진흥원컨설턴트');
+  assert.equal(
+    KS.caseKeyOf('7. 컨설턴트,위원신청등/2019년/2019경제진흥원컨설턴트/하위/더깊은/파일.pdf'),
+    '7. 컨설턴트,위원신청등/2019년/2019경제진흥원컨설턴트');
+  // 연도 폴더 직속 낱파일은 건이 아니다 (파일 1개 = 1건)
+  assert.equal(KS.caseKeyOf('7. 컨설턴트,위원신청등/2019년/낱파일.pdf'), null);
+  // 다른 폴더는 건 묶음 대상이 아니다
+  assert.equal(KS.caseKeyOf('1. 위촉장/2015 체당금국선노무사 위촉장 (2015.12.17).pdf'), null);
+  assert.equal(KS.caseKeyOf('권형하_전체이력현황.xlsx'), null);
+});
