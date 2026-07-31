@@ -37230,11 +37230,16 @@ function MyDeskV2(props){
         // 다음 전체 저장에 덮여 사라지므로, 여기서 푸른이알피가 자기 손으로 쓴다.
         var PP = dbGet('project_progress', []) || [];
         if(!Array.isArray(PP)) PP = [];
-        var ppDirty = 0, toPg = 0;
+        var ppDirty = 0, toPg = 0, toPeC = [];
         function wsProg(wid){                              // 진행 단계 → 퍼센트
           var o = ST[wid] || {}, t = 0, d = 0;
           Object.keys(o).forEach(function(k){ var s = o[k]; if(s && s.t){ t++; if(s.done) d++; } });
           return t ? Math.round(d / t * 100) : null;
+        }
+        function pcOf(pe){                                 // 그 건의 사업장 담당자 첫 번째
+          var c = (pe && pe.company && pe.company.contacts) || [];
+          for(var i = 0; i < c.length; i++){ if(c[i] && (c[i].name || c[i].phone)) return c[i]; }
+          return null;
         }
         function ppFind(type, id){
           for(var i = 0; i < PP.length; i++){
@@ -37278,6 +37283,9 @@ function MyDeskV2(props){
           if(!snap.synced_at){                             // 기준선만 기록
             up['work_erp/pesync/' + key] = { type:w.ref.type, id:w.ref.id, work_id:wid,
               pe_closed:peClosed, ws_done:wsDone, st:wst, nt:wnt, nd:wnd, br:wbr,
+              ti:String(w.title || ''), cl:String(w.client || ''),
+              cn:String((pcOf(pe) || {}).name || ''), cr:String((pcOf(pe) || {}).role || ''),
+              cp:String((pcOf(pe) || {}).phone || ''),
               pg:(pct === null ? '' : String(pct)), synced_at:now, note:'기준선' };
             return;
           }
@@ -37352,8 +37360,58 @@ function MyDeskV2(props){
             if(nbr !== wbr){ up['work_erp/items/' + wid + '/brief'] = nbr || null; toWs++; }
             if(nbr !== pbr) toPeB.push({ store:store, id:w.ref.id, brief:nbr });
           }
+          // ── 기본정보(업무명·의뢰인·사업장 담당자) 양방향 ──
+          // 진행 필드와 달리 사람별 기록이 아니므로 담당자·종료 여부와 무관하게 맞춘다.
+          // 업체명·사업자번호·관리번호·유형·금액은 계약서·세금계산서와 엮여 있어 제외한다.
+          var pc0 = pcOf(pe) || {};
+          var wti = String(w.title || ''), pti = String(pe.title || '');
+          var wcl = String(w.client || ''), pcl = String(pe.payee || '');
+          var wc0 = w.contact || {};
+          var wcn = String(wc0.name || ''), wcr = String(wc0.rank || ''), wcp = String(wc0.phone || '');
+          var pcn = String(pc0.name || ''), pcr = String(pc0.role || ''), pcp = String(pc0.phone || '');
+          var cNewer = String(w.up_at || '') > String(pe.updatedAt || '');
+          var bw = {}, bp = {};
+          function bpick(sv, wv, pv, k){
+            var v = pick3(sv, wv, pv, cNewer);
+            if(v === null) return wv;                       // 변화 없음 — 지금 값 유지
+            if(v !== wv) bw[k] = v;
+            if(v !== pv) bp[k] = v;
+            return v;
+          }
+          var sti = bpick(snap.ti, wti, pti, 'ti');
+          var scl = bpick(snap.cl, wcl, pcl, 'cl');
+          var scn = bpick(snap.cn, wcn, pcn, 'cn');
+          var scr = bpick(snap.cr, wcr, pcr, 'cr');
+          var scp = bpick(snap.cp, wcp, pcp, 'cp');
+          if(bw.ti !== undefined){ up['work_erp/items/' + wid + '/title'] = bw.ti; toWs++; }
+          if(bw.cl !== undefined){ up['work_erp/items/' + wid + '/client'] = bw.cl; toWs++; }
+          if(bw.cn !== undefined || bw.cr !== undefined || bw.cp !== undefined){
+            up['work_erp/items/' + wid + '/contact'] =
+              (scn || scr || scp) ? { name:scn, rank:scr, phone:scp } : null;
+            toWs++;
+          }
+          var cpf = {};
+          if(bp.ti !== undefined) cpf.title = bp.ti;
+          if(bp.cl !== undefined) cpf.payee = bp.cl;
+          if(bp.cn !== undefined || bp.cr !== undefined || bp.cp !== undefined){
+            // company를 통째로 갈지 않고 첫 담당자만 바꿔 나머지 연락처를 지킨다
+            var comp = Object.assign({}, pe.company || {});
+            var cl2 = (comp.contacts || []).slice();
+            var i0 = -1;
+            for(var ci = 0; ci < cl2.length; ci++){
+              if(cl2[ci] && (cl2[ci].name || cl2[ci].phone)){ i0 = ci; break; }
+            }
+            var c0 = Object.assign({}, i0 >= 0 ? cl2[i0] : { isPrimary:true });
+            if(!c0.id) c0.id = 'mc-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+            c0.name = scn; c0.role = scr; c0.phone = scp;
+            if(i0 >= 0) cl2[i0] = c0; else cl2.unshift(c0);
+            comp.contacts = cl2;
+            cpf.company = comp;
+          }
+          if(Object.keys(cpf).length) toPeC.push({ store:store, id:w.ref.id, fields:cpf });
           up['work_erp/pesync/' + key] = { type:w.ref.type, id:w.ref.id, work_id:wid,
-            pe_closed:want, ws_done:want, st:sst, nt:snt, nd:snd, br:sbr, pg:spg, synced_at:now };
+            pe_closed:want, ws_done:want, st:sst, nt:snt, nd:snd, br:sbr, pg:spg,
+            ti:sti, cl:scl, cn:scn, cr:scr, cp:scp, synced_at:now };
         });
         // 푸른이알피 쪽은 dbPatch로 (저장형태 안전)
         var okPe = 0;
@@ -37366,6 +37424,10 @@ function MyDeskV2(props){
         // 업무 요약 역방향 — 종료 반영과 같은 레코드면 한 번 더 patch 되지만 필드가 겹치지 않아 안전하다
         toPeB.forEach(function(t){
           try{ if(dbPatch(t.store, t.id, { brief:t.brief })) okPe++; }catch(e){}
+        });
+        // 기본정보 역방향 — 필드가 겹치지 않아 같은 레코드에 두 번 patch 되어도 안전하다
+        toPeC.forEach(function(t){
+          try{ if(dbPatch(t.store, t.id, t.fields)) okPe++; }catch(e){}
         });
         // project_progress는 배열 통째 저장 — 푸른이알피 자신의 dbSet으로만 쓴다
         if(ppDirty){ try{ dbSet('project_progress', PP); }catch(e){ toPg = 0; } }
