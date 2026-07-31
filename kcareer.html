@@ -390,6 +390,7 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
+<script src="js/kcareer-scan.js"></script>
 </head>
 <body>
 <div id="pu-boot-splash" style="position:fixed;inset:0;z-index:2147483000;background:#eef1f7;display:flex;align-items:center;justify-content:center">
@@ -1069,6 +1070,22 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
             <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" id="origLockChk"> <b>원본 삭제 보호 켜기</b></label>
             <div style="font-size:12px;color:var(--text-mute);margin-top:6px">켜면 🗑원본 버튼을 눌러도 첨부 원본이 삭제되지 않습니다(실수 방지). 정말 삭제할 때만 잠시 끄세요.</div>
           </div>
+          <div class="card" style="margin-bottom:12px"><div class="rc-h">📁 서류 폴더 연결 (원본을 복사하지 않고 경로만 참조)</div>
+            <div style="font-size:12px;color:var(--text-mute);margin-bottom:10px">서류 폴더를 한 번 지정하면 앱이 파일 이름·크기만 읽어 목록을 만듭니다. 원본은 볼 때만 그 자리에서 읽으므로 저장공간을 쓰지 않습니다. 폴더는 읽기 전용으로만 열립니다.</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn" id="btnFsConnect" onclick="fsConnectFolder()">📁 서류 폴더 연결</button>
+              <button class="btn" id="btnFsScan" onclick="openScanPreview()">🔍 서류 폴더 스캔</button>
+              <button class="btn" id="btnFsUndo" onclick="fsUndoLast()">↩ 이번 스캔 되돌리기</button>
+            </div>
+            <div id="fsUnsupported" style="display:none;font-size:12px;color:#BA7517;margin-top:8px">이 브라우저는 폴더 연결을 지원하지 않습니다 — Chrome 또는 Edge 데스크톱에서 열어주세요.</div>
+          </div>
+          <script>
+            /* 미지원 브라우저에서는 폴더 연결 UI를 숨긴다 (설계서 13) */
+            if(typeof window.showDirectoryPicker !== 'function'){
+              ['btnFsConnect','btnFsScan','btnFsUndo'].forEach(function(id){ var b=document.getElementById(id); if(b) b.style.display='none'; });
+              var _fsU=document.getElementById('fsUnsupported'); if(_fsU) _fsU.style.display='';
+            }
+          </script>
           <div class="card"><div style="font-size:13px;margin-bottom:10px">초기 제공 데이터(위촉장·자격증·컨설팅 등)를 다시 불러옵니다. 같은 ID는 덮어쓰고, 직접 추가한 항목은 유지됩니다.</div>
             <button class="btn" id="dtReseed">시드 데이터 다시 불러오기</button></div>
         </div>
@@ -1470,6 +1487,69 @@ function _refreshAttachUI(){ try{
   if(typeof renderPersonalDocs==='function') renderPersonalDocs();
   if(typeof renderIDDocs==='function' && (!hasIDPin()||_idUnlocked)) renderIDDocs();
 }catch(e){ console.warn('refresh attach',e); } }
+
+/* ===== 서류 폴더 연결 (File System Access API) =====
+   원본을 복사하지 않고 경로만 참조한다. 폴더는 항상 읽기(read) 전용으로만 연다. */
+var _fsRoot = null;                       /* FileSystemDirectoryHandle (이 기기 한정) */
+
+function fsSupported(){ return typeof window.showDirectoryPicker === 'function'; }
+
+function _openFsDB(){ return new Promise(function(res, rej){
+  var req = indexedDB.open('kcareer_fs', 1);
+  req.onupgradeneeded = function(e){ e.target.result.createObjectStore('handles', {keyPath:'key'}); };
+  req.onsuccess = function(e){ res(e.target.result); };
+  req.onerror = function(){ rej(req.error); };
+}); }
+
+async function fsSaveRoot(handle){
+  try{ var db = await _openFsDB();
+    return new Promise(function(res){
+      var tx = db.transaction('handles','readwrite');   /* IndexedDB 쓰기 — 원본 폴더가 아니다 */
+      tx.objectStore('handles').put({key:'rootDir', handle:handle});
+      tx.oncomplete = function(){ res(true); }; tx.onerror = function(){ res(false); };
+    });
+  }catch(e){ console.error('fsSaveRoot',e); return false; }
+}
+
+async function fsLoadRoot(){
+  try{ var db = await _openFsDB();
+    return new Promise(function(res){
+      var req = db.transaction('handles','readonly').objectStore('handles').get('rootDir');
+      req.onsuccess = function(){ res(req.result ? req.result.handle : null); };
+      req.onerror = function(){ res(null); };
+    });
+  }catch(e){ return null; }
+}
+
+/* 권한 확인 — 읽기만. 'prompt'면 사용자 클릭(제스처) 안에서 호출돼야 승인창이 뜬다. */
+async function fsEnsurePermission(handle){
+  if(!handle) return false;
+  var opt = {mode:'read'};
+  try{
+    if(await handle.queryPermission(opt) === 'granted') return true;
+    return (await handle.requestPermission(opt)) === 'granted';
+  }catch(e){ return false; }
+}
+
+async function fsConnectFolder(){
+  if(!fsSupported()){ toast('이 브라우저는 폴더 연결을 지원하지 않습니다 — Chrome 또는 Edge에서 열어주세요'); return null; }
+  try{
+    var h = await window.showDirectoryPicker({id:'kcareer-docs', mode:'read'});
+    _fsRoot = h; await fsSaveRoot(h);
+    toast('✅ 서류 폴더 연결됨: ' + h.name);
+    return h;
+  }catch(e){
+    if(e && e.name === 'AbortError') return null;      /* 사용자가 취소 */
+    toast('폴더 연결 실패: ' + e.message); return null;
+  }
+}
+
+async function fsRoot(){
+  if(_fsRoot && await fsEnsurePermission(_fsRoot)) return _fsRoot;
+  var h = await fsLoadRoot();
+  if(h && await fsEnsurePermission(h)){ _fsRoot = h; return h; }
+  return null;
+}
 
 /* localStorage → IDB 마이그레이션 (최초 1회) */
 async function migrateFilesToIDB(){
