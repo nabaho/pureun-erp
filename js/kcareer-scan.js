@@ -104,8 +104,75 @@
     return null;
   }
 
+  /* ===== 레코드 조립 =====
+     3,691개를 파일 단위로 넣으면 목록이 못 쓰게 되므로 7번은 건 폴더 단위로 묶는다.
+     승격된 파일은 건의 첨부 목록에도 그대로 남긴다(경로 참조라 복제가 아니다). */
+  function buildRecords(files, opts) {
+    opts = opts || {};
+    var scanId = opts.scanId || 'S0';
+    var out = { promotions: [], maybes: [], submissions: [], copies: [], ignored: 0 };
+    var copySeen = {};       // name|size → 최초 relPath
+    var caseMap = {};        // caseKey → 건 레코드
+    var caseOrder = [];
+
+    (files || []).forEach(function (f) {
+      if (isIgnoredFile(f.name)) { out.ignored++; return; }
+
+      var ck = f.name + '|' + f.size;
+      if (copySeen[ck]) { out.copies.push({ name: f.name, relPath: f.relPath, sameAs: copySeen[ck] }); return; }
+      copySeen[ck] = f.relPath;
+
+      var caseKey = caseKeyOf(f.relPath);
+      var y = pickYear(f.name, f.relPath, f.mtime);
+      var org = caseKey ? orgFromCaseDir(caseKey.split('/')[2]) : '';
+      var c = classify(f.name);
+
+      if (caseKey) {
+        if (!caseMap[caseKey]) {
+          caseMap[caseKey] = {
+            caseDir: caseKey, year: y.year, org: org, title: caseKey.split('/')[2],
+            files: [], promoted: [], fileCount: 0, src: 'fs', scanId: scanId
+          };
+          caseOrder.push(caseKey);
+        }
+        caseMap[caseKey].files.push({
+          name: f.name, relPath: f.relPath, size: f.size, mtime: f.mtime, ext: extOf(f.name)
+        });
+      }
+
+      if (c.level === 'sure') {
+        out.promotions.push({
+          store: c.store, type: c.type, titleHint: c.titleHint,
+          name: f.name, relPath: f.relPath, fileSize: f.size, fileMtime: f.mtime,
+          year: y.year, yearFrom: y.from, needCheck: y.needCheck,
+          org: org, fromCase: caseKey || '', src: 'fs', scanId: scanId
+        });
+        if (caseKey) caseMap[caseKey].promoted.push(f.relPath);
+      } else if (c.level === 'maybe') {
+        out.maybes.push({
+          name: f.name, relPath: f.relPath, fileSize: f.size, fileMtime: f.mtime,
+          year: y.year, org: org, fromCase: caseKey || '', src: 'fs', scanId: scanId
+        });
+      } else if (!caseKey) {
+        out.submissions.push({
+          caseDir: '', year: y.year, org: '', title: cleanCore(f.name),
+          files: [{ name: f.name, relPath: f.relPath, size: f.size, mtime: f.mtime, ext: extOf(f.name) }],
+          fileCount: 1, promoted: [], src: 'fs', scanId: scanId
+        });
+      }
+    });
+
+    caseOrder.forEach(function (k) {
+      var c = caseMap[k];
+      c.fileCount = c.files.length;
+      out.submissions.push(c);
+    });
+    return out;
+  }
+
   var api = {
     CASE_ROOT: CASE_ROOT,
+    buildRecords: buildRecords,
     extOf: extOf,
     isIgnoredFile: isIgnoredFile,
     cleanCore: cleanCore,

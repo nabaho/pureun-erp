@@ -112,3 +112,59 @@ test('caseKeyOf: 7번 폴더의 연도/건 폴더만 건으로 묶는다', () =>
   assert.equal(KS.caseKeyOf('1. 위촉장/2015 체당금국선노무사 위촉장 (2015.12.17).pdf'), null);
   assert.equal(KS.caseKeyOf('권형하_전체이력현황.xlsx'), null);
 });
+
+const FIXTURE = [
+  // 1번 폴더 — 파일 1개 = 1건, 승격
+  { name: '2015 체당금국선노무사 위촉장 (2015.12.17).pdf', relPath: '1. 위촉장/2015 체당금국선노무사 위촉장 (2015.12.17).pdf', size: 100, mtime: '2015-12-17T00:00:00.000Z' },
+  // 1번 폴더 — ⚪ 제출서류
+  { name: '위촉장 목록.xlsx', relPath: '1. 위촉장/위촉장 목록.xlsx', size: 200, mtime: '2020-01-01T00:00:00.000Z' },
+  // 7번 건 폴더 — 승격 1건 + 잡음 1건
+  { name: '위촉장.jpg', relPath: '7. 컨설턴트,위원신청등/2019년/2019경제진흥원컨설턴트/위촉장.jpg', size: 300, mtime: '2020-05-05T00:00:00.000Z' },
+  { name: '신청서.hwp', relPath: '7. 컨설턴트,위원신청등/2019년/2019경제진흥원컨설턴트/신청서.hwp', size: 400, mtime: '2019-03-03T00:00:00.000Z' },
+  // 7번 연도 직속 낱파일 — 건이 아니다
+  { name: '공고문.hwp', relPath: '7. 컨설턴트,위원신청등/2020년/공고문.hwp', size: 500, mtime: '2020-02-02T00:00:00.000Z' },
+  // 사본 — 위 위촉장.jpg와 name+size 동일
+  { name: '위촉장.jpg', relPath: '7. 컨설턴트,위원신청등/2020년/2020충남도청/위촉장.jpg', size: 300, mtime: '2020-06-06T00:00:00.000Z' },
+  // 제외 파일
+  { name: '4NZFL.DOCX', relPath: '1. 위촉장/4NZFL.DOCX', size: 0, mtime: '2026-07-30T00:00:00.000Z' }
+];
+
+test('buildRecords: 제외·사본을 걸러내고 승격·보류·제출서류로 나눈다', () => {
+  const r = KS.buildRecords(FIXTURE, { scanId: 'S-TEST' });
+  assert.equal(r.ignored, 1);
+  assert.equal(r.copies.length, 1);
+  assert.equal(r.copies[0].sameAs, '7. 컨설턴트,위원신청등/2019년/2019경제진흥원컨설턴트/위촉장.jpg');
+  assert.equal(r.promotions.length, 2);
+  assert.equal(r.maybes.length, 0);
+});
+
+test('buildRecords: 승격 레코드에 연도·기관·출처가 채워진다', () => {
+  const r = KS.buildRecords(FIXTURE, { scanId: 'S-TEST' });
+  const fromCase = r.promotions.find((p) => p.relPath.startsWith('7. '));
+  assert.equal(fromCase.store, 'wiccok');
+  assert.equal(fromCase.type, '위촉장');
+  assert.equal(fromCase.year, '2019');            // 파일명에 연도 없음 → 경로에서
+  assert.equal(fromCase.yearFrom, 'path');
+  assert.equal(fromCase.org, '경제진흥원컨설턴트');
+  assert.equal(fromCase.fromCase, '7. 컨설턴트,위원신청등/2019년/2019경제진흥원컨설턴트');
+  assert.equal(fromCase.src, 'fs');
+  assert.equal(fromCase.scanId, 'S-TEST');
+});
+
+test('buildRecords: 7번은 건 단위, 승격된 파일도 건 첨부에 남는다', () => {
+  const r = KS.buildRecords(FIXTURE, { scanId: 'S-TEST' });
+  const kase = r.submissions.find((s) => s.caseDir.endsWith('2019경제진흥원컨설턴트'));
+  assert.equal(kase.fileCount, 2);                                  // 위촉장.jpg + 신청서.hwp
+  assert.equal(kase.year, '2019');
+  assert.equal(kase.org, '경제진흥원컨설턴트');
+  assert.deepEqual(kase.promoted, ['7. 컨설턴트,위원신청등/2019년/2019경제진흥원컨설턴트/위촉장.jpg']);
+});
+
+test('buildRecords: 건 밖 제출서류는 파일 1개 = 1건, 승격된 파일은 제출서류를 만들지 않는다', () => {
+  const r = KS.buildRecords(FIXTURE, { scanId: 'S-TEST' });
+  const paths = r.submissions.map((s) => s.caseDir || s.files[0].relPath);
+  assert.ok(paths.includes('1. 위촉장/위촉장 목록.xlsx'));
+  assert.ok(paths.includes('7. 컨설턴트,위원신청등/2020년/공고문.hwp'));
+  assert.ok(!paths.includes('1. 위촉장/2015 체당금국선노무사 위촉장 (2015.12.17).pdf'));
+  assert.equal(r.submissions.length, 3);          // 건 1개 + 낱파일 2개
+});
