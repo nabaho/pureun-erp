@@ -734,16 +734,22 @@ const ErpMatch = {
         /* 유형(자문/급여/노조/기금)·실무담당자명 — 담당 노무사가 없어도 유형 배지는 의미 있음 */
         /* 업체 퇴사(종료·이탈) 여부 — 업체관리 status가 종료/해지/비활성이면 left */
         const _st = String(co.status||'');
+        /* 대표자·담당자 이름 수집 (연결·배지·불일치 점검용) */
+        const _contactsRaw = [ ...((co.contacts||[]).map(c=>c&&c.name)), co.primaryContactName, co.contactName ].filter(Boolean);
         const rec = { company:co.name||'', main, subs,
           type: co.typeCode||'',
           status: _st,
           left: (_st==='inactive'||_st==='terminated'||_st==='closed'),
-          contact: ErpMatch._norm(co.primaryContactName||co.contactName||'') };
-        if(!main && !subs.length && !rec.type) return;
+          contact: ErpMatch._norm(co.primaryContactName||co.contactName||''),
+          ceoRaw: co.ceo||'', ceo2Raw: co.ceo2||'', contactsRaw: _contactsRaw,
+          ceo: ErpMatch._norm(co.ceo||''), ceo2: ErpMatch._norm(co.ceo2||''),
+          contacts: _contactsRaw.map(x=>ErpMatch._norm(x)).filter(Boolean),
+          bizNo: co.bizNo||'' };
+        if(!main && !subs.length && !rec.type && !rec.ceo && !rec.contacts.length) return;
         const b = ErpMatch._digits(co.bizNo); if(b.length>=10 && !byBiz[b]) byBiz[b]=rec;
         const n = ErpMatch._norm(co.name);    if(n && !byName[n]) byName[n]=rec;
       });
-      ErpMatch.byBiz=byBiz; ErpMatch.byName=byName; ErpMatch.ready=true;
+      ErpMatch.byBiz=byBiz; ErpMatch.byName=byName; ErpMatch.companies=cos; ErpMatch.ready=true;
       try{ render(); }catch(_){}
       /* 자문사 폴더 자동 분류 — 명함 데이터가 늦게 로드될 수 있어 4초 뒤 한 번 더(멱등) */
       ErpMatch.autoFolder();
@@ -781,6 +787,15 @@ const ErpMatch = {
     const m = ErpMatch.match(it); if(!m || !m.contact) return false;
     const n = ErpMatch._norm(it.name); if(!n) return false;
     return m.contact === n || m.contact.indexOf(n) === 0;   /* '유석주이사' 같은 직책 붙은 표기 허용 */
+  },
+  /* 이 명함 주인이 그 업체의 ERP '대표자'인지 '담당자'인지 — 'ceo' | 'contact' | '' */
+  _nameHit(a,b){ if(!a||!b) return false; return a===b || a.indexOf(b)===0 || b.indexOf(a)===0; },
+  role(it){
+    const m = ErpMatch.match(it); if(!m) return '';
+    const n = ErpMatch._norm(it.name); if(!n) return '';
+    if(ErpMatch._nameHit(m.ceo,n) || ErpMatch._nameHit(m.ceo2,n)) return 'ceo';
+    if((m.contacts||[]).some(c=>ErpMatch._nameHit(c,n))) return 'contact';
+    return '';
   },
   /* ERP 매칭 명함(자문·급여·노조·기금) → '업체관리' 폴더 자동 분류.
      유형별 구분은 메인화면 ERP 탭에서 관리. (구 자문사 폴더는 업체관리로 이름 변경,
@@ -2094,6 +2109,7 @@ function openMenu(){
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');restoreInput.click()">📂 백업 복원 (JSON 불러오기)</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openDedup()">🧹 중복 정리</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openSimilar()">🔍 유사 항목 검사</button>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');openErpNameCheck()">🔗 ERP 대표자·담당자 대조</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');cleanEmpty()">🧽 빈 명함 정리</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openTrash()">🗑 휴지통 (삭제 명함 30일 보관)</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openMaterialShelf()">📎 자료함</button>
@@ -2647,6 +2663,52 @@ function ignoreSimilar(csv){
   _simIgnoreSave(set); toast('이 묶음을 무시했습니다'); openSimilar();
 }
 
+/* ════════════ 🔗 ERP 대표자·담당자 대조 (업체관리에 있는데 명함첩에 없는 이름 찾기) ════════════ */
+function findErpNameMismatch(){
+  if(!ErpMatch.ready || !ErpMatch.companies) return null;
+  const cards=Object.values(state.items).filter(it=>it&&it.kind==='card'&&it.name);
+  const cardsByCo={};
+  cards.forEach(it=>{ const k=ErpMatch._norm(it.company); if(k) (cardsByCo[k]=cardsByCo[k]||[]).push(it); });
+  const rows=[];
+  ErpMatch.companies.forEach(co=>{
+    if(!co) return;
+    const erpNames=[];
+    if(co.ceo)  erpNames.push({role:'대표자', name:co.ceo});
+    if(co.ceo2) erpNames.push({role:'대표자2', name:co.ceo2});
+    [ ...((co.contacts||[]).map(c=>c&&c.name)), co.primaryContactName, co.contactName ]
+      .filter(Boolean).forEach(nm=>erpNames.push({role:'담당자', name:nm}));
+    if(!erpNames.length) return;
+    let coCards=(cardsByCo[ErpMatch._norm(co.name)]||[]).slice();
+    const bd=ErpMatch._digits(co.bizNo);
+    if(bd.length>=10) cards.forEach(it=>{ if(ErpMatch._digits(it.bizno)===bd && coCards.indexOf(it)<0) coCards.push(it); });
+    const cardNames=coCards.map(it=>ErpMatch._norm(it.name)).filter(Boolean);
+    const missing=erpNames.filter(en=>{ const nn=ErpMatch._norm(en.name); if(!nn) return false;
+      return !cardNames.some(cn=>ErpMatch._nameHit(cn,nn)); });
+    if(missing.length) rows.push({ company:co.name||'(회사명없음)', bizNo:co.bizNo||'',
+      missing:missing.map(m=>m.role+': '+m.name), haveCards:coCards.length });
+  });
+  return rows;
+}
+function openErpNameCheck(){
+  if(Store.mode!=='firebase') return toast('ERP 연결(Firebase) 상태에서만 대조할 수 있습니다');
+  if(!ErpMatch.ready) return toast('ERP 업체관리 데이터를 불러오는 중입니다. 잠시 후 다시 눌러 주세요.');
+  const rows=findErpNameMismatch();
+  if(!rows) return toast('ERP 데이터를 아직 못 읽었습니다. 잠시 후 다시 시도하세요.');
+  if(!rows.length) return toast('불일치 없음 — ERP 대표자·담당자가 모두 명함첩에 있습니다 👍');
+  rows.sort((a,b)=>b.missing.length-a.missing.length);
+  let h=`<div class="mhead"><b>🔗 ERP 대표자·담당자 대조 — ${rows.length}개 회사</b>
+    <button class="iconbtn" onclick="dedupBg.classList.remove('open')">✕</button></div>
+    <p style="font-size:12.5px;color:var(--sub);line-height:1.7;margin-bottom:10px">
+    푸른이알피 업체관리엔 <b>등록돼 있는데 명함첩엔 없는</b> 대표자·담당자예요. 명함을 추가하거나 이름 철자를 맞추면 연결됩니다.</p>`;
+  rows.slice(0,200).forEach(r=>{
+    h+=`<div class="ditem"><div class="v"><b>${esc(r.company)}</b>${r.bizNo?` <span style="color:var(--sub);font-size:11px">${esc(fmtBizno(r.bizNo))}</span>`:''}<br>
+      <span style="color:var(--orange);font-size:12.5px">명함첩에 없음 — ${esc(r.missing.join(', '))}</span>
+      <span style="color:var(--sub);font-size:11.5px"> · 이 회사 명함 ${r.haveCards}장</span></div></div>`;
+  });
+  if(rows.length>200) h+=`<p style="color:var(--sub);font-size:12px;padding:8px 2px">…외 ${rows.length-200}개 회사</p>`;
+  $('dedupM').innerHTML=h; $('dedupBg').classList.add('open');
+}
+
 /* ════════════ 📤 엑셀 내보내기 ════════════ */
 async function exportXlsx(){
   await needXLSX();
@@ -3146,7 +3208,11 @@ function renderPCTable(){
       const t = ErpMatch.type(it); if(!t && !ErpMatch.match(it)) return '';
       const cMap = { '자문':'#1e40af', '급여':'#166534', '노조':'#6d28d9', '기금':'#92400e' };
       let h = t ? `<span title="푸른이알피 업체관리 연결 · ${esc(ErpMatch.full(it))}" style="display:inline-block;background:${cMap[t]||'#475569'}18;color:${cMap[t]||'#475569'};border:1px solid ${cMap[t]||'#475569'}44;border-radius:8px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap">ERP·${esc(t)}</span>` : '';
-      if (ErpMatch.isContact(it)) h += ` <span title="업체관리에 이 명함 주인이 실무 담당자로 등록됨" style="display:inline-block;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:8px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap">실무담당</span>`;
+      /* 이 사람이 그 회사의 ERP 대표자/담당자인지 */
+      const _role = ErpMatch.role(it);
+      if (_role==='ceo') h += ` <span title="이 명함 주인이 푸른이알피 업체관리에 이 회사 대표자로 등록됨" style="display:inline-block;background:#e0e7ff;color:#3730a3;border:1px solid #a5b4fc;border-radius:8px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap">🏢 대표자</span>`;
+      else if (_role==='contact') h += ` <span title="이 명함 주인이 푸른이알피 업체관리에 이 회사 담당자로 등록됨" style="display:inline-block;background:#dcfce7;color:#166534;border:1px solid #86efac;border-radius:8px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap">🏢 담당자</span>`;
+      else if (ErpMatch.isContact(it)) h += ` <span title="업체관리에 이 명함 주인이 실무 담당자로 등록됨" style="display:inline-block;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:8px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap">실무담당</span>`;
       const _m = ErpMatch.match(it);
       if (_m && _m.left) h += ` <span title="업체관리에서 종료·해지된 거래처 (업체퇴사)" style="display:inline-block;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;border-radius:8px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap">🚪 퇴사</span>`;
       return h;
