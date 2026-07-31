@@ -14,7 +14,7 @@
 <script src="vendor/pdf.min.js"></script>
 <script>if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc="vendor/pdf.worker.min.js";</script>
 <script src="hwp_extract.js?v=4"></script>
-<script src="hwpx_gen.js?v=11"></script>
+<script src="hwpx_gen.js?v=12"></script>
 <script src="std_2026.js?v=1"></script>
 <script src="xlsx_gen.js?v=3"></script>
 <style>
@@ -584,14 +584,22 @@ table.daejo td.dj2{padding:0}
   <div class="body" id="full-body" style="overflow:auto;background:#f4f6fa"></div>
 </div></div>
 
-<div class="overlay" id="ov-docpv"><div class="modal" style="max-width:1000px">
+<div class="overlay" id="ov-docpv"><div class="modal" style="max-width:1180px">
   <h2>📄 서식 미리보기 <span class="tag" id="docpv-sub" style="font-size:12px;color:var(--mute);font-weight:400"></span><span class="x" data-close>×</span></h2>
   <div class="body" style="background:#eef1f7">
-    <div id="docpv-note" style="margin:0 0 10px;font-size:11.5px;color:var(--sub);line-height:1.6"></div>
-    <div id="docpv-pages" style="max-height:62vh;overflow:auto;padding:2px"></div>
+    <div id="docpv-note" style="margin:0 0 8px;font-size:11.5px;color:var(--sub);line-height:1.6"></div>
+    <!-- 한 쪽 맞춤: A4 한 장이 스크롤 없이 화면에 다 들어오도록 높이에 맞춰 축소한다 -->
+    <div id="docpv-pages" style="height:74vh;overflow:auto;padding:2px;text-align:center"></div>
   </div>
   <div class="foot">
-    <button class="stbtn" id="docpv-all" style="margin-right:auto">전체 쪽 보기</button>
+    <label style="margin-right:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--sub)">보기
+      <select id="docpv-fit" style="font-size:12px;padding:4px 6px;border:1px solid var(--line);border-radius:6px">
+        <option value="page">한 쪽 맞춤(스크롤 없음)</option>
+        <option value="width">폭 맞춤</option>
+        <option value="100">실제 크기</option>
+      </select>
+    </label>
+    <button class="stbtn" id="docpv-all">전체 쪽 보기</button>
     <button class="btn ghost" data-close>닫기</button>
     <button class="btn orange" id="docpv-dl">⬇ 이 서식 받기</button>
   </div>
@@ -865,12 +873,34 @@ function consentFormHwpx(site,asof,summary,hits,pageBreak){
 }
 
 /* 조문 텍스트 → 한글 서식 블록: 장 제목 / 제N조(제목)+본문 분리 후 스타일 적용 */
+/* 조문 본문을 항(①②③)·호(1. 2.)·목(가. 나.) 단위로 문단을 나눈다.
+   안 나누면 한글 파일에서 조문 전체가 한 덩어리로 붙어 나온다(노동부 원본은 항마다 줄이 바뀐다). */
+function breakClauses(text){
+  let t=String(text==null?"":text).replace(/\s+$/,"");
+  t=t.replace(new RegExp("\\s*(?=["+CIRC+"])","g"),"\n");   // 항 앞에서 줄바꿈
+  t=breakHo(t);                                             // 호·목 앞에서 줄바꿈
+  return t.split("\n").map(x=>x.trim()).filter(Boolean).join("\n");
+}
+/* 항·호·목 앞 공백 — 노동부 표준취업규칙 원본은 항 2칸·호 3칸·목 4칸으로 들여 쓴다
+   (문단 서식은 조문과 같고, 들여쓰기는 이 공백으로만 낸다) */
+function padClause(line){
+  const s=String(line==null?"":line).trim();
+  if(!s) return s;
+  if(new RegExp("^["+CIRC+"]").test(s)) return "  "+s;
+  if(/^\d{1,2}\s*[.)]/.test(s)) return "   "+s;
+  if(new RegExp("^["+MOK+"]\\s*[.)]").test(s)) return "    "+s;
+  return "  "+s;
+}
 function hwpxArticleBlock(text){
   const t=String(text==null?"":text).trim();
   if(!t) return HWPX.spacer();
   if(/^제\s*\d+\s*장/.test(t) && t.length<=40) return HWPX.chapter(t);
   const m=t.match(RE_HEAD_SPLIT);
-  return m ? HWPX.article(m[1].trim(), m[2].trim()) : HWPX.bodyPara(t);
+  if(!m) return HWPX.bodyPara(breakClauses(t));
+  // 조 제목 + 첫 항을 한 문단으로(제목만 굵게), 그 뒤 항·호는 각각 문단으로 — 원본과 같은 모양
+  const parts=breakClauses(m[2].trim()).split("\n");
+  const rest=parts.length?" "+parts.shift().trim():"";
+  return HWPX.articleRun({title:m[1].trim(),rest:rest},parts.map(padClause));
 }
 
 /* ── 고용노동부 별지 제15호서식(취업규칙 신고서·변경신고서) — 표 형식 ──
@@ -2958,6 +2988,7 @@ async function previewDoc(key,all){
     }
     await window.renderHwpPreview(u8.buffer, box, PV_ALL?0:3);
     const pages=box.querySelectorAll("svg").length;
+    fitDocPv();                                     // 한 쪽이 화면에 다 들어오게 배율 조정
     note.innerHTML=`용지 <b>${land?"가로":"세로"}</b> · 파일 크기 ${Math.round(u8.length/1024)}KB`
       +` · 실제 내려받을 한글 파일을 그대로 렌더한 화면입니다(쪽번호·정렬 포함)`;
     $("docpv-all").style.display=PV_ALL?"none":"";
@@ -2966,6 +2997,22 @@ async function previewDoc(key,all){
     box.innerHTML='<div class="empty">미리보기를 만들지 못했습니다 — '+escapeH(e.message||String(e))+'</div>';
   }
 }
+/* 서식 미리보기 배율 — rhwp가 만든 SVG는 폭 100%로 들어와 A4 세로 한 장이 화면을 넘긴다.
+   'page'는 쪽 비율을 보고 세로까지 들어오는 폭으로 줄여 스크롤 없이 한 화면에 담는다. */
+let PV_FIT="page";
+function fitDocPv(){
+  const box=$("docpv-pages"); if(!box)return;
+  const svgs=[...box.querySelectorAll("svg")]; if(!svgs.length)return;
+  const vb=(svgs[0].getAttribute("viewBox")||"").trim().split(/[\s,]+/).map(Number);
+  const pw=(vb.length===4&&vb[2])||svgs[0].clientWidth, ph=(vb.length===4&&vb[3])||svgs[0].clientHeight;
+  const availW=Math.max(120,box.clientWidth-8), availH=Math.max(120,box.clientHeight-8);
+  let w=availW;
+  if(PV_FIT==="100") w=pw||availW;
+  else if(PV_FIT==="page"&&pw&&ph) w=Math.min(availW, availH*pw/ph);
+  svgs.forEach(s=>{ s.style.width=Math.round(w)+"px"; s.style.height="auto"; s.style.maxWidth="none"; });
+}
+$("docpv-fit").addEventListener("change",e=>{ PV_FIT=e.target.value; fitDocPv(); });
+window.addEventListener("resize",()=>{ if($("ov-docpv").classList.contains("on"))fitDocPv(); });
 $("docpv-all").addEventListener("click",()=>{ if(PV_KEY)previewDoc(PV_KEY,true); });
 $("docpv-dl").addEventListener("click",()=>{ if(PV_KEY)downloadOneDoc(PV_KEY); });
 $("dl-docset").addEventListener("click",()=>{
