@@ -447,6 +447,12 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       <p class="cfg-help">푸른이알피 도우미 · 업무관리 AI가 사용. 유료 키(Claude)를 서버에 두고
         브라우저에는 두지 않기 위한 통로입니다.</p>
 
+      <label for="cfgIdle">자동 로그아웃 시간 (분)</label>
+      <input type="number" id="cfgIdle" min="10" max="480" step="10" placeholder="60" autocomplete="off" style="width:120px">
+      <p class="cfg-help">아무 조작이 없을 때 자동으로 로그아웃되는 시간. 포털 · 푸른이알피 · 명함첩 ·
+        규정관리 · 컨설팅 일정에 함께 적용됩니다. <b>비워두면 60분</b>이고,
+        안전을 위해 10분~480분(8시간) 범위만 적용됩니다.</p>
+
       <p class="cfg-warn">🔒 <b>유료 키(Claude · Google Vision)는 여기 두지 않습니다.</b>
         브라우저에 두면 누구나 복사할 수 있어 요금이 새어나갈 수 있습니다. 위 프록시로 처리하세요.</p>
     </div>
@@ -506,6 +512,11 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
   firebase.initializeApp(FB_CONFIG);
   var auth = firebase.auth();
   var db = firebase.database();
+  /* 포털 공용 설정(data/app_config) — 대표가 포털 설정에서 넣은 값을 각 앱이 함께 쓴다 */
+  try{ db.ref("data/app_config").once("value").then(function(s){
+    window.PU_CFG = s.val() || {};
+    try{ window.dispatchEvent(new CustomEvent("pu-cfg",{detail:window.PU_CFG})); }catch(_){}
+  }).catch(function(){}); }catch(e){}
 
   // ── 앱 레지스트리 (역할별 노출) ──
   // roles: 이 앱을 볼 수 있는 역할. null = 전원.
@@ -1118,6 +1129,13 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
   // ── 유휴 자동 로그아웃 (ERP와 동일한 공유 타이머 'pu_last_active', 60분) ──
   (function(){
     var LIMIT = 60*60*1000, AKEY = 'pu_last_active';
+  /* 포털 공용 설정의 자동 로그아웃 시간 반영 — 10~480분만 인정, 그 밖이면 기본값 유지 */
+  function _applyIdleCfg(c){
+    var m = c && parseInt(c.idleMinutes, 10);
+    if(m >= 10 && m <= 480) LIMIT = m*60*1000;
+  }
+  try{ _applyIdleCfg(window.PU_CFG); }catch(e){}            /* 이미 로드됐으면 즉시 */
+  try{ window.addEventListener('pu-cfg', function(ev){ _applyIdleCfg(ev.detail); }); }catch(e){}
     // 활동 기록: mousemove는 초당 수백 번 발생 → 매번 동기 localStorage.setItem 하면
     // (ERP와 공유하는 대용량 localStorage에서) 메인스레드가 멈춘다. 10초에 한 번만 기록(유휴 판정은 60분 단위라 충분).
     var _lastMark = 0;
@@ -1194,7 +1212,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
   //  · 버튼은 관리자에게만 보인다. 규칙상 저장 자체는 로그인 사용자면 가능하므로
   //    화면에서 감추는 것이 1차 방어이고, 값이 무료 키라 유출 피해가 없다.
   var CFG_PATH = 'data/app_config';
-  var CFG_FIELDS = [['cfgGemini','geminiKey'], ['cfgNts','ntsKey'], ['cfgRhwp','rhwpStudioUrl'], ['cfgProxy','aiProxyUrl']];
+  var CFG_FIELDS = [['cfgGemini','geminiKey'], ['cfgNts','ntsKey'], ['cfgRhwp','rhwpStudioUrl'], ['cfgProxy','aiProxyUrl'], ['cfgIdle','idleMinutes']];
 
   function cfgShowFab(){ var b = $('cfgFab'); if(b) b.style.display = sgIsAdmin() ? 'inline-flex' : 'none'; }
 
@@ -1216,6 +1234,16 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     if(!sgIsAdmin()) return;
     var rec = { savedAt: new Date().toISOString(), savedBy: SG.name || '' };
     CFG_FIELDS.forEach(function(f){ rec[f[1]] = ($(f[0]).value || '').trim(); });
+    // 자동 로그아웃 시간은 잘못 넣으면 업무 중 튕기거나 아예 안 잠기므로 여기서 막는다.
+    // (각 앱에서도 같은 범위로 한 번 더 거른다 — 이중 안전장치)
+    if(rec.idleMinutes){
+      var _m = parseInt(rec.idleMinutes, 10);
+      if(!(_m >= 10 && _m <= 480)){
+        $('cfgStat').textContent = '자동 로그아웃 시간은 10~480분 사이로 넣어주세요 (비우면 60분)';
+        return;
+      }
+      rec.idleMinutes = String(_m);
+    }
     $('cfgSave').disabled = true; $('cfgStat').textContent = '저장 중…';
     db.ref(CFG_PATH).set(rec).then(function(){
       $('cfgStat').textContent = '저장됐습니다 — 각 프로그램에서 새로고침하면 반영됩니다';
