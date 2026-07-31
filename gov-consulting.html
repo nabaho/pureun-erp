@@ -4600,56 +4600,117 @@ function govStaffIdByName(name){
   const s=getStaff().find(a=>String(a.name||'').replace(/\s/g,'')===n);
   return s?s.id:'';
 }
-// ERP 컨설팅 1건의 유형 코드
+const _en=s=>String(s||'').replace(/[\s()（）·,]/g,'');
+// ERP 컨설팅 1건의 유형 키.
+// 코드가 없는 레코드가 많아서, 코드 → 이름 → 약칭 순으로 찾고
+// 그래도 없으면 이름 자체를 키(name:xxx)로 써서 연결할 수 있게 한다.
 function erpConsCode(c){
-  if(c&&c.typeCodes&&c.typeCodes.consulting)return c.typeCodes.consulting;
-  const nm=String((c&&(c.consultingType||c.programName))||'').replace(/\s/g,'');
+  if(!c)return '';
+  const tc=c.typeCodes||{};
+  const code=tc.consulting||tc.consult||c.typeCode||'';
+  if(code)return code;
+  const raw=c.consultingType||c.programName||c.type||'';
+  const nm=_en(raw);
   if(!nm)return '';
-  const t=ERP.types.find(t=>String(t.name||'').replace(/\s/g,'')===nm);
-  return t?t.code:'';
+  const t=ERP.types.find(t=>_en(t.name)===nm||_en(t.short)===nm);
+  return t?t.code:('name:'+nm);
+}
+// 컨설팅 원본의 유형 표기(사람이 보는 값)
+function erpConsRawType(c){
+  if(!c)return '';
+  const raw=c.consultingType||c.programName||c.type||'';
+  if(raw)return String(raw);
+  const tc=c.typeCodes||{}; const code=tc.consulting||tc.consult||c.typeCode||'';
+  const t=ERP.types.find(x=>x.code===code);
+  return t?(t.name||code):(code||'');
 }
 function erpTypeLabel(code){
   const t=ERP.types.find(x=>x.code===code);
-  if(!t)return code||'(유형 없음)';
-  return (t.name||'')+(t.agency?` (${t.agency})`:'');
+  if(t)return (t.name||'')+(t.agency?` (${t.agency})`:'');
+  if(String(code).startsWith('name:'))return String(code).slice(5);
+  return code||'(유형 없음)';
 }
-// 자동 추천: 수행기관 일치 > 이름 포함 관계 > 약칭 일치
+// 연결표에 보여줄 유형 목록 = ERP 유형 등록분 + 실제 컨설팅에서 발견된 유형
+// (ERP 유형 목록에 없는 값으로 저장된 컨설팅도 연결할 수 있게 함)
+function erpMappableTypes(){
+  const list=ERP.types.map(t=>({code:t.code,short:t.short||'',name:t.name||'',agency:t.agency||'',cnt:0,extra:false}));
+  const idx={}; list.forEach(x=>idx[x.code]=x);
+  ERP.consultings.forEach(c=>{
+    if(c&&(c.closedDate||c.closedAt))return;
+    const code=erpConsCode(c); if(!code)return;
+    if(idx[code]){ idx[code].cnt++; return; }
+    const raw=erpConsRawType(c)||erpTypeLabel(code);
+    const item={code,short:'',name:raw,agency:'',cnt:1,extra:true};
+    idx[code]=item; list.push(item);
+  });
+  // 사용 건수 많은 순 → 이름순
+  return list.sort((a,b)=>(b.cnt-a.cnt)||String(a.name).localeCompare(String(b.name)));
+}
+// 두 글자쌍 기반 유사도(Dice). '일터혁신컨설팅' vs '일터상생혁신컨설팅' 처럼
+// 중간에 글자가 끼어도 잡아내기 위함.
+function _bigrams(s){const a=[];for(let i=0;i<s.length-1;i++)a.push(s.slice(i,i+2));return a;}
+function _simDice(a,b){
+  a=_en(a); b=_en(b);
+  if(!a||!b)return 0;
+  if(a===b)return 1;
+  const A=_bigrams(a),B=_bigrams(b);
+  if(!A.length||!B.length)return 0;
+  const m={}; A.forEach(x=>m[x]=(m[x]||0)+1);
+  let hit=0; B.forEach(x=>{ if(m[x]>0){m[x]--;hit++;} });
+  return 2*hit/(A.length+B.length);
+}
+let _erpLowConf={}; // 유사도로 추천한 항목(사람 확인 필요)
+// 자동 추천: 수행기관 일치 > 이름 일치 > 포함 관계 > 약칭 일치 > 이름 유사도
 function erpSuggestMap(){
   const map=getErpTypeMap(), gTypes=getTypes().filter(t=>t.active!==false);
   const norm=s=>String(s||'').replace(/[\s()（）·,]/g,'');
-  ERP.types.forEach(et=>{
+  erpMappableTypes().forEach(et=>{
     if(map[et.code])return; // 이미 연결된 건 건드리지 않음
     const en=norm(et.name), ea=norm(et.agency), es=norm(et.short);
     let hit=gTypes.find(g=>ea&&norm(g.agency)&&norm(g.agency)===ea); // 수행기관 완전 일치
     if(!hit)hit=gTypes.find(g=>{const gn=norm(g.fullName||g.name);return gn&&en&&(gn===en);});
     if(!hit)hit=gTypes.find(g=>{const gn=norm(g.fullName||g.name);return gn&&en&&(gn.includes(en)||en.includes(gn));});
     if(!hit)hit=gTypes.find(g=>es&&norm(g.name)===es);
+    if(!hit){ // 마지막: 이름 유사도 (0.5 이상만, 사람 확인 필요로 표시)
+      let best=null,bs=0;
+      gTypes.forEach(g=>{
+        const s=Math.max(_simDice(et.name,g.fullName||g.name),_simDice(et.name,g.name));
+        if(s>bs){bs=s;best=g;}
+      });
+      if(best&&bs>=0.5){ hit=best; _erpLowConf[et.code]=Math.round(bs*100); }
+    }
     if(hit)map[et.code]=hit.id;
   });
   setErpTypeMap(map);
   renderErpMap();
-  toast('비슷한 종류를 추천해 연결했습니다. 확인 후 저장하세요.');
+  const low=Object.keys(_erpLowConf).length;
+  toast(low?`추천 완료 — 확인 필요 ${low}건은 노란 표시를 확인하세요`:'비슷한 종류를 추천해 연결했습니다. 확인 후 저장하세요.');
 }
 function renderErpMap(){
   const st=q('#erpStatus'), body=q('#erpMapBody'); if(!body)return;
   if(ERP.err){ st.innerHTML=`<span style="color:var(--danger);font-weight:700;">불러오기 실패: ${ERP.err}</span> — 클라우드 연결(🟢) 확인 후 다시 시도하세요.`; body.innerHTML=''; return; }
   if(!ERP.loaded){ st.textContent='ERP 데이터를 불러오는 중…'; body.innerHTML=''; return; }
   const map=getErpTypeMap(), gTypes=getTypes().filter(t=>t.active!==false);
-  const linked=ERP.types.filter(t=>map[t.code]).length;
-  st.innerHTML=`ERP 컨설팅 유형 <b>${ERP.types.length}</b>개 · 연결됨 <b style="color:var(--ok)">${linked}</b> · 미연결 <b style="color:#cc7700">${ERP.types.length-linked}</b>
+  const rows=erpMappableTypes();
+  const linked=rows.filter(t=>map[t.code]).length;
+  const usable=rows.filter(t=>t.cnt>0).length;
+  st.innerHTML=`ERP 컨설팅 유형 <b>${rows.length}</b>개(사용 중 ${usable}) · 연결됨 <b style="color:var(--ok)">${linked}</b> · 미연결 <b style="color:#cc7700">${rows.length-linked}</b>
     <span style="color:var(--t2)"> · ERP 컨설팅 ${ERP.consultings.length}건 · 출처 ${ERP.src==='local'?'이 브라우저의 푸른ERP':'클라우드'}</span>`;
-  if(!ERP.types.length){ body.innerHTML=`<div style="padding:28px;text-align:center;color:var(--t2);font-size:13px;">ERP에 등록된 컨설팅 유형이 없습니다</div>`; return; }
+  if(!rows.length){ body.innerHTML=`<div style="padding:28px;text-align:center;color:var(--t2);font-size:13px;">ERP에 등록된 컨설팅 유형이 없습니다</div>`; return; }
   const opts=g=>gTypes.map(t=>`<option value="${t.id}" ${g===t.id?'selected':''}>${t.name}${t.agency?' ('+t.agency+')':''}</option>`).join('');
   body.innerHTML=`<div style="display:grid;grid-template-columns:1fr 26px 1fr;gap:8px;align-items:center;padding:9px 12px;background:var(--sf2);font-size:11px;font-weight:800;color:var(--t2);">
-      <span>푸른ERP 컨설팅 유형</span><span></span><span>정부컨설팅 종류</span></div>`+
-    ERP.types.map(et=>`<div style="display:grid;grid-template-columns:1fr 26px 1fr;gap:8px;align-items:center;padding:8px 12px;border-top:1px solid var(--border);">
+      <span>푸른ERP 컨설팅 유형 <span style="font-weight:600;">(괄호는 실제 사용 건수)</span></span><span></span><span>정부컨설팅 종류</span></div>`+
+    rows.map(et=>`<div style="display:grid;grid-template-columns:1fr 26px 1fr;gap:8px;align-items:center;padding:8px 12px;border-top:1px solid var(--border);${et.cnt?'':'opacity:.6;'}">
       <div style="min-width:0;">
-        <span style="font-size:10.5px;font-weight:800;background:rgba(21,101,192,.1);color:var(--accent);padding:1px 7px;border-radius:6px;">${et.short||''}</span>
-        <span style="font-size:13px;font-weight:700;margin-left:4px;">${et.name||''}</span>
+        ${et.short?`<span style="font-size:10.5px;font-weight:800;background:rgba(21,101,192,.1);color:var(--accent);padding:1px 7px;border-radius:6px;">${et.short}</span>`:''}
+        <span style="font-size:13px;font-weight:700;margin-left:${et.short?'4px':'0'};">${et.name||'(이름 없음)'}</span>
+        ${et.cnt?`<span style="font-size:11px;font-weight:800;color:var(--ok);margin-left:5px;">${et.cnt}건</span>`:`<span style="font-size:10.5px;color:var(--t2);margin-left:5px;">사용 없음</span>`}
+        ${et.extra?`<span style="font-size:10px;color:var(--t2);margin-left:5px;">ERP 유형목록에 없음</span>`:''}
+        ${_erpLowConf[et.code]?`<div style="font-size:10.5px;color:#cc7700;font-weight:700;margin-top:2px;">⚠️ 이름이 비슷해 추천함(${_erpLowConf[et.code]}%) — 맞는지 확인해주세요</div>`:''}
         ${et.agency?`<div style="font-size:10.5px;color:var(--t2);margin-top:2px;">${et.agency}</div>`:''}
       </div>
       <div style="text-align:center;color:var(--t2);">→</div>
-      <select data-erpcode="${et.code}" class="erp-map-sel" style="width:100%;height:32px;border:1.5px solid var(--border);border-radius:8px;padding:0 8px;font-family:inherit;color:var(--text);background:var(--surface);">
+      <select data-erpcode="${escAttr(et.code)}" class="erp-map-sel" style="width:100%;height:32px;border:1.5px solid var(--border);border-radius:8px;padding:0 8px;font-family:inherit;color:var(--text);background:var(--surface);">
         <option value="">— 가져오지 않음 —</option>${opts(map[et.code]||'')}
       </select>
     </div>`).join('');
@@ -4675,8 +4736,8 @@ function erpBuildPlan(){
     const subNms=(c.managerSubs||[]).map(erpSidName).filter(Boolean);
     const mainId=govStaffIdByName(mainNm);
     const subIds=subNms.map(govStaffIdByName).filter(Boolean);
-    const row={erpId:c.id,name:nm,code,govType,mainNm,subNms,mainId,subIds};
-    if(!govType){ row.status='skip'; row.note='연결 안 된 종류'; }
+    const row={erpId:c.id,name:nm,code,govType,mainNm,subNms,mainId,subIds,rawType:erpConsRawType(c)};
+    if(!govType){ row.status='skip'; row.note=code?'연결 안 된 종류':'ERP에 컨설팅 유형이 비어 있음'; }
     else{
       const exist=cos.find(x=>norm(x.name)===norm(nm)&&!x.deleted);
       if(exist&&(exist.types||[]).includes(govType)){ row.status='exists'; row.note='이미 있음'; row.coId=exist.id; }
@@ -4714,7 +4775,7 @@ function openErpImport(){
         return `<tr style="border-top:1px solid var(--border);${can?'':'opacity:.62;'}">
           <td style="padding:8px 10px;"><input type="checkbox" class="erp-imp-ck" data-i="${i}" ${can?'checked':'disabled'} style="width:15px;height:15px;"></td>
           <td style="padding:8px 10px;font-weight:700;">${r.name}</td>
-          <td style="padding:8px 10px;">${gt?gt.name:'-'}${r.code?`<div style="font-size:10.5px;color:var(--t2);">← ${erpTypeLabel(r.code)}</div>`:''}</td>
+          <td style="padding:8px 10px;">${gt?gt.name:'<span style="color:#cc7700;">미연결</span>'}<div style="font-size:10.5px;color:var(--t2);">← ${r.rawType||erpTypeLabel(r.code)||'(ERP 유형 없음)'}</div></td>
           <td style="padding:8px 10px;">${r.mainId?r.mainNm:`<span style="color:#cc7700;">${r.mainNm||'미지정'}</span>`}${r.subNms.length?` <span style="color:var(--t2);">+${r.subNms.join('+')}</span>`:''}</td>
           <td style="padding:8px 10px;"><span style="font-size:10.5px;font-weight:800;background:${bg};color:${col};padding:2px 8px;border-radius:8px;">${lbl}</span>
             <div style="font-size:10.5px;color:var(--t2);margin-top:2px;">${r.note}</div></td>
