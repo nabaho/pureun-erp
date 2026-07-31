@@ -242,6 +242,10 @@ table.daejo .rreason{color:var(--sub);font-size:11px}
 .stepbar{display:inline-flex;gap:2px;vertical-align:middle}
 .stepbar i{width:16px;height:5px;border-radius:3px;background:#e2e8f0;display:inline-block}
 .stepbar i.on{background:var(--accent2)}
+/* 바뀐 낱말 — 변경 전 칸은 빠진 말(붉은 취소선), 변경 후 칸은 넣은 말(파란 밑줄).
+   변경 후 칸은 클릭하면 표시를 걷어내므로 편집에 방해되지 않는다. */
+.wd-del{background:#fdecec;color:#8f2222;text-decoration:line-through;border-radius:3px;padding:0 1px}
+.wd-add{background:#e6f1fb;color:#0c447c;text-decoration:underline;text-underline-offset:2px;border-radius:3px;padding:0 1px}
 /* 최종 확인 — ①②③을 한 화면에 이어 붙인다. 구역 머리는 스크롤해도 위에 붙어 있어
    지금 어느 구역을 보는지 알 수 있고, 끝까지 보면 초록(확인함)으로 바뀐다. */
 .fin-h{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:8px;
@@ -502,6 +506,8 @@ table.daejo td.dj2{padding:0}
       <span style="font-size:12px;color:var(--mute)">보기:</span>
       <button class="stbtn" id="flt-changed">변경 항목만</button>
       <button class="stbtn" id="flt-all">전체 조문</button>
+      <button class="stbtn" id="wd-on" style="margin-left:10px" title="변경 전/후에서 바뀐 낱말만 색으로 짚어 줍니다. 변경 후 칸을 클릭하면 표시가 걷히고 그냥 편집됩니다.">🔍 바뀐 낱말</button>
+      <span id="wd-legend" style="font-size:11px;color:var(--mute)"><span class="wd-del">빠진 말</span> <span class="wd-add">넣은 말</span></span>
       <span style="font-size:12px;color:var(--mute);margin-left:10px">방식:</span>
       <button class="stbtn" id="mode-partial" title="기존 조번호 유지 · 신설은 가지번호(제N조의n) · 삭제는 결번">일부개정</button>
       <button class="stbtn" id="mode-full" title="최종 순서대로 제1조부터 전면 재번호 · 삭제 조문 제외">전부개정</button>
@@ -2394,6 +2400,53 @@ function normalizeItems(items){
   });
 }
 function changedItems(){ return CUR_ITEMS.filter(it=>itemKind(it)!=="유지"); }
+/* ── 바뀐 낱말 찾기 ──
+   변경 전/후를 어절(빈칸) 단위로 견주어 [{t,op}] 로 돌려준다. op: ""같음 / "-"빠짐 / "+"넣음.
+   글자 단위로 자르면 조사·어미가 잘게 쪼개져 읽기 어렵다. 어절 단위면
+   '여 성인 → 여성인'처럼 낱말 안에서만 바뀐 것도 그 낱말만 통째로 짚어 준다.
+   토큰이 너무 많으면(WD_MAX↑) 비교를 건너뛴다 — 화면이 멈추는 것보다 표시를 포기하는 게 낫다.
+   신설·삭제처럼 한쪽이 통째로 없는 자리는 부르는 쪽에서 걸러 낸다(온통 색이 되면 못 읽는다). */
+const WD_MAX=400, WD_KEY="pureun_rules_worddiff_v1";
+let WD_ON=(function(){ try{ return localStorage.getItem(WD_KEY)!=="0"; }catch(e){ return true; } })();
+const WD_MARK=/^(신\s*설|〈신설〉|〈삭제〉|삭\s*제)$/;
+function wdTokens(s){ return String(s==null?"":s).split(/(\s+)/).filter(x=>x!==""); }
+function wdDiff(before,after){
+  const b=String(before==null?"":before).trim(), a=String(after==null?"":after).trim();
+  if(!b||!a||WD_MARK.test(b)||WD_MARK.test(a))return null;   // 신설·삭제는 비교 대상이 아니다
+  if(b===a)return null;                                      // 바뀐 게 없으면 표시하지 않는다
+  const A=wdTokens(before), B=wdTokens(after);
+  if(A.length>WD_MAX||B.length>WD_MAX)return null;
+  const n=A.length, m=B.length, w=m+1;
+  const dp=new Uint16Array((n+1)*w);                          // 뒤에서부터 채우는 LCS 표
+  for(let i=n-1;i>=0;i--)for(let j=m-1;j>=0;j--)
+    dp[i*w+j]=(A[i]===B[j])?dp[(i+1)*w+j+1]+1:Math.max(dp[(i+1)*w+j],dp[i*w+j+1]);
+  const out=[];
+  const push=(t,op)=>{ if(!t)return; const p=out[out.length-1];
+    if(p&&p.op===op)p.t+=t; else out.push({t:t,op:op}); };
+  let i=0,j=0;
+  while(i<n&&j<m){
+    if(A[i]===B[j]){ push(A[i],""); i++; j++; }
+    else if(dp[(i+1)*w+j]>=dp[i*w+j+1]){ push(A[i],"-"); i++; }
+    else { push(B[j],"+"); j++; }
+  }
+  while(i<n)push(A[i++],"-");
+  while(j<m)push(B[j++],"+");
+  return out.some(s=>s.op)?out:null;
+}
+/* 한쪽 칸에 넣을 조각만 골라 낸다 — side "b"(변경 전)는 빠진 말, "a"(변경 후)는 넣은 말 */
+function wdPick(segs,side){
+  const keep=side==="b"?"-":"+";
+  return segs.filter(s=>s.op===""||s.op===keep);
+}
+function wdHtml(segs,side){
+  const cls=side==="b"?"wd-del":"wd-add";
+  return wdPick(segs,side).map(s=>s.op?`<span class="${cls}">${escapeH(s.t)}</span>`:escapeH(s.t)).join("");
+}
+/* 한글 파일용 — 바뀐 조각만 다른 글자 서식(취소선·밑줄)으로 낸다 */
+function wdRuns(segs,side){
+  const cp=side==="b"?HWPX.CP.del:HWPX.CP.add;
+  return wdPick(segs,side).map(s=>({t:s.t,cp:s.op?cp:"0"}));
+}
 /* 문서에 실릴 변경이유 — 노무사가 직접 쓴 값(reasonEdit)이 있으면 그것만, 없으면 자동 근거.
    💡검토 권고는 내부 메모라 기본 제외하고, [검토권고 문서 포함]을 켤 때만 덧붙인다. */
 function docReason(it){
@@ -2560,7 +2613,13 @@ function daejoBodyMerged(){
   return rows.map(r=>{
     const label=r.span?(r.label+(r.kind?"\n["+r.kind+"]":"")):null;
     const cell=(t,n)=>n>1?{t:t,rowSpan:n}:t;
-    const c=[r.span?cell(label,r.span):null, r.before==="신설"?"신 설":r.before, r.after];
+    /* 바뀐 낱말은 한글 파일에도 남긴다 — 빠진 말은 취소선, 넣은 말은 밑줄.
+       지청에 내는 대조표에서도 어디가 바뀌었는지 바로 보인다(실무 관행). */
+    const d=WD_ON?wdDiff(r.before,r.after):null;
+    /* t 는 그대로 둔다 — 엑셀·용지 방향 계산처럼 글자만 보는 곳이 있다(runs 는 한글에서만 쓴다) */
+    const bc=d?{t:r.before,runs:wdRuns(d,"b")}:(r.before==="신설"?"신 설":r.before);
+    const ac=d?{t:r.after,runs:wdRuns(d,"a")}:r.after;
+    const c=[r.span?cell(label,r.span):null, bc, ac];
     if(!RZ_NONE)c.push(r.span?cell(r.reason,r.span):null);
     return c;
   });
@@ -2585,14 +2644,19 @@ function alignedCell(it,i){
   const bTxt=isIns?"":breakHo(String(it.before||"")), aTxt=isDel?"":breakHo(String(it.after||""));
   const ed=canEdit?' contenteditable="true"':"", cls=canEdit?" editable":"";
   const al=(isIns||isDel)?null:alignParas(bTxt,aTxt);
+  /* 바뀐 낱말 표시 — 변경 후 칸은 편집 칸이라 markup 이 들어가면 편집이 꼬인다.
+     그래서 표시한 칸에는 data-wd 를 달고, 누르기 시작할 때 표시를 걷어낸다(아래 mousedown). */
+  const wd=(b,a)=>WD_ON?wdDiff(b,a):null;
   let g="";
   if(!al||al.length<2){
-    g=`<div class="djb">${isIns?'<span class="c">신 설</span>':escapeH(bTxt)}</div>`
-     +`<div class="dja${cls}"${ed} data-i="${i}" data-p="all">${isDel?'<span class="c">삭 제</span>':escapeH(aTxt)}</div>`;
+    const d=(isIns||isDel)?null:wd(bTxt,aTxt);
+    g=`<div class="djb">${isIns?'<span class="c">신 설</span>':(d?wdHtml(d,"b"):escapeH(bTxt))}</div>`
+     +`<div class="dja${cls}"${ed} data-i="${i}" data-p="all"${d?' data-wd="1"':""}>${isDel?'<span class="c">삭 제</span>':(d?wdHtml(d,"a"):escapeH(aTxt))}</div>`;
   }else{
     al.forEach((p,pi)=>{
-      g+=`<div class="djb">${p.b?escapeH(p.b):'<span class="djnone">— 없음</span>'}</div>`
-       +`<div class="dja${cls}"${ed} data-i="${i}" data-p="${pi}" data-ph="${escapeH(p.no||"")}">${escapeH(p.a)}</div>`;
+      const d=wd(p.b,p.a);
+      g+=`<div class="djb">${p.b?(d?wdHtml(d,"b"):escapeH(p.b)):'<span class="djnone">— 없음</span>'}</div>`
+       +`<div class="dja${cls}"${ed} data-i="${i}" data-p="${pi}" data-ph="${escapeH(p.no||"")}"${d?' data-wd="1"':""}>${d?wdHtml(d,"a"):escapeH(p.a)}</div>`;
     });
   }
   return `<td class="dj2" colspan="2"><div class="djgrid">${g}</div></td>`;
@@ -2657,6 +2721,15 @@ function renderEditor(){
     const parts=[...tb.querySelectorAll('.dja.editable[data-i="'+i+'"]')].map(x=>x.innerText.replace(/\s+$/,"")).filter(x=>x.trim());
     CUR_ITEMS[i].after=parts.join("\n"); refreshDaejoSub(); saveWip();   // 타이핑도 임시저장
   }));
+  /* 바뀐 낱말 표시가 붙은 편집 칸을 누르면 표시를 걷어낸다.
+     mousedown 은 캐럿이 자리잡기 전에 오므로, 바꾼 뒤 이어지는 클릭이 순수 텍스트에 캐럿을 놓는다.
+     (Tab 으로 들어올 때를 위해 focus 도 함께 걸어 둔다) */
+  const wdStrip=el=>{ if(!el.dataset.wd)return;
+    el.textContent=el.innerText.replace(/\s+$/,""); delete el.dataset.wd; };
+  tb.querySelectorAll(".dja.editable[data-wd]").forEach(el=>{
+    el.addEventListener("mousedown",()=>wdStrip(el));
+    el.addEventListener("focus",()=>wdStrip(el));
+  });
   // 변경이유 직접 편집 — 저장값(reasonEdit)에 담아 문서에 그대로 반영
   tb.querySelectorAll(".rzedit").forEach(el=>el.addEventListener("input",()=>{
     CUR_ITEMS[+el.dataset.i].reasonEdit=el.innerText.trim(); saveWorkState();
@@ -2691,6 +2764,8 @@ function renderEditor(){
   if($("pg-landscape"))$("pg-landscape").className="stbtn"+((!PAGE_AUTO&&PAGE_LAND)?" on-adopt":"");
   if($("inc-note"))$("inc-note").className="stbtn"+(INC_NOTE?" on-adopt":"");
   if($("rz-none"))$("rz-none").className="stbtn"+(RZ_NONE?" on-excl":"");
+  if($("wd-on"))$("wd-on").className="stbtn"+(WD_ON?" on-adopt":"");
+  if($("wd-legend"))$("wd-legend").style.display=WD_ON?"":"none";
   refreshDaejoSub();
   saveWip();   // 조문 조작·모드 변경·위치 변경 등 모든 편집을 임시저장
 }
@@ -2723,6 +2798,10 @@ $("mk-daejo").addEventListener("click",()=>{
 $("flt-changed").addEventListener("click",()=>{CUR_FILTER="changed";renderEditor();});
 $("flt-all").addEventListener("click",()=>{CUR_FILTER="all";renderEditor();});
 $("inc-note").addEventListener("click",()=>{INC_NOTE=!INC_NOTE;renderEditor();saveWorkState();});
+$("wd-on").addEventListener("click",()=>{
+  WD_ON=!WD_ON; try{ localStorage.setItem(WD_KEY,WD_ON?"1":"0"); }catch(e){}
+  renderEditor();
+});
 $("rz-none").addEventListener("click",()=>{RZ_NONE=!RZ_NONE;renderEditor();saveWorkState();});
 $("rz-reset").addEventListener("click",()=>{
   if(!confirm("직접 편집한 변경이유를 모두 지우고 자동 근거로 되돌립니다. 계속할까요?"))return;
@@ -2912,13 +2991,17 @@ function finSec2(){
   if(!rows.length)return {meta:"변경 없음",
     html:'<div style="font-size:12px;color:var(--mute);padding:8px 0">변경 항목이 없습니다.</div>'};
   const bw=RZ_NONE?42:31.5;
+  const cut=s=>String(s==null?"":s).slice(0,300);
   return {meta:`변경 ${cnt}건 · ${REV_MODE==="partial"?"일부개정":"전부개정"}`,
     html:`<table class="daejo" style="font-size:11.5px"><thead><tr><th style="width:16%">변경조항</th><th style="width:${bw}%">변경 전</th><th style="width:${bw}%">변경 후</th>${RZ_NONE?"":'<th style="width:21%">변경이유</th>'}</tr></thead><tbody>`
-      +rows.map(r=>`<tr><td class="rlabel">${escapeH(r.label)}${r.kind?`<br><span class="badge ${KIND_BADGE(r.kind)}">${r.kind}</span>`:""}</td>
+      +rows.map(r=>{
+        const b=cut(r.before), a=cut(r.after);
+        const d=WD_ON?wdDiff(b,a):null;      // 바뀐 낱말을 여기서도 같은 색으로 짚는다
+        return `<tr><td class="rlabel">${escapeH(r.label)}${r.kind?`<br><span class="badge ${KIND_BADGE(r.kind)}">${r.kind}</span>`:""}</td>
         <td class="dj2" colspan="2"><div class="djgrid">
-          <div class="djb">${r.before==="신설"?'<span class="c">신 설</span>':(r.before?escapeH(String(r.before).slice(0,300)):'<span class="djnone">— 없음</span>')}</div>
-          <div>${escapeH(String(r.after).slice(0,300))}</div></div></td>
-        ${RZ_NONE?"":`<td class="rreason">${escapeH(r.reason)}</td>`}</tr>`).join("")
+          <div class="djb">${r.before==="신설"?'<span class="c">신 설</span>':(b?(d?wdHtml(d,"b"):escapeH(b)):'<span class="djnone">— 없음</span>')}</div>
+          <div>${d?wdHtml(d,"a"):escapeH(a)}</div></div></td>
+        ${RZ_NONE?"":`<td class="rreason">${escapeH(r.reason)}</td>`}</tr>`;}).join("")
       +`</tbody></table>`};
 }
 /* ③ 변경 규칙 전문 + 제출 서류 목록 */
