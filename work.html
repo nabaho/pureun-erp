@@ -1190,6 +1190,11 @@ function renderMy(){
     h+='<div class="histbanner">🕘 <b>'+esc(weekLabel(S.week))+'</b> 열람 중 — 이 주에 기록하면 그 주 기록으로 저장됩니다 (실제 입력일 병기)'
       +'<span class="back" onclick="setWeek(null)">이번 주로 →</span></div>';
   }
+  // 업무 이름이 비어 유형만 보이는 건 — 한 화면에서 몰아 적게 안내한다
+  var nb=mine.filter(needBrief).length;
+  if(nb) h+='<div class="histbanner">✏️ 업무 이름이 비어 있어 <b>유형만</b> 보이는 업무가 <b>'+nb+'건</b>입니다. '
+    +'푸른이알피 <b>업무 요약</b> 칸이 비어 있어서입니다.'
+    +'<span class="back" onclick="briefFillModal()">한 번에 적기 →</span></div>';
   // 푸른이알피에 주담당인데 아직 업무시트에 없는 건 → 1차 연결 안내 (기준일 이전 백로그)
   var unl=peMineUnlinked();
   if(unl&&unl.length){
@@ -1254,7 +1259,7 @@ function rowHTML(it,no){
     +tdNo(no||'')
     +'<td>'+catBadge(it.cat)+'</td>'
     +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
-    +'<div class="sub">'+esc(it.title||'')+(it.no?' · '+esc(it.no):'')
+    +'<div class="sub">'+nameCell(it)+(it.no?' · '+esc(it.no):'')
     +(roleOf(it,viewer())==='sub'
       ?' <span class="badge" style="background:#ede9fe;color:#5b21b6" title="주담당은 '
         +esc((it.mgr_main&&it.mgr_main.name)||'미지정')+' — 나는 부담당(공동)입니다">공동 · 주 '
@@ -1482,7 +1487,8 @@ function renderDrawer(){
   var logs=itemLogsCache[id];
   var subs=(it.mgr_subs||[]).map(function(s){return s.name;}).filter(Boolean).join(', ');
   var h='<div class="dh"><div class="row1">'+catBadge(it.cat)
-    +'<span class="ttl">'+esc(it.company||it.client||'')+' — '+esc(it.title||'')+'</span>'
+    +'<span class="ttl">'+esc(it.company||it.client||'')
+    +(itemName(it)?' — '+esc(itemName(it)):'')+'</span>'
     +'<span class="x" onclick="closeDrawer()">✕</span></div>'
     +'<div class="meta2">'+esc(it.no||'')+(it.client?' · 의뢰인 '+esc(it.client):'')+(it.start?' · 시작 '+esc(it.start):'')
     +' · 담당 '+esc((it.mgr_main&&it.mgr_main.name)||'—')+(subs?' <span style="color:#a78bda">(공동 '+esc(subs)+')</span>':'')
@@ -3071,7 +3077,7 @@ function renderTeam(){
         +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
         +(perGroup?'':'<div class="sub">'+esc((it.mgr_main&&it.mgr_main.name)||'담당 미지정')+'</div>')
         +(it.officer?'<div class="sub">'+esc(it.officer)+'</div>':'')+'</td>'
-        +'<td style="font-size:12.5px">'+esc(it.title||'')+stepChip(it._id)+peFlag(it)+'</td>'
+        +'<td style="font-size:12.5px">'+nameCell(it)+stepChip(it._id)+peFlag(it)+'</td>'
         +'<td>'+logHtml+'</td><td>'+lastHtml+'</td><td>'+nx+'</td>'
         +'<td style="text-align:center"><button class="endbtn" onclick="event.stopPropagation();completeItem(\''+escJ(it._id)+'\')" '
         +'title="이 업무를 종료해 보관함으로 옮깁니다'+(peLinked(it)?' (푸른이알피 종료 연동)':'')+'">종료'
@@ -3293,7 +3299,7 @@ function renderArchive(){
     return arr.map(function(it,i){
       return '<tr>'+tdNo(i+1)+'<td>'+catBadge(it.cat)+'</td>'
         +'<td class="itc" onclick="openDrawer(\''+escJ(it._id)+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
-        +'<div class="sub">'+esc(it.title||'')+(it.no?' · '+esc(it.no):'')+'</div></td>'
+        +'<div class="sub">'+esc(itemName(it))+(it.no?' · '+esc(it.no):'')+'</div></td>'
         +((S.arFlat||S.arMgr)?'<td style="font-size:12.5px">'+esc(_mgrOf(it))+'</td>':'')
         +'<td style="font-size:12.5px;font-variant-numeric:tabular-nums">'+esc(it.done_date||'—')+'</td>'
         +'<td>'+(peSyncBadge(it)||'<span class="muted" style="font-size:11px">—</span>')+'</td>'
@@ -3398,6 +3404,95 @@ function briefLine(it){
   var b=briefTrim(it&&it.brief); if(!b) return '';
   return '<div class="sub" style="color:#1d4ed8" title="업무 요약 — 푸른이알피와 서로 반영됩니다">✏️ '+esc(b)+'</div>';
 }
+/* 목록에 보일 업무 이름.
+   푸른이알피 계약·기타사업은 업무명 칸이 비어 있는 경우가 많다. 예전에는 그때
+   회사명을 넣어서 기업 칸과 똑같은 글자가 두 번 나왔다. 이제 이렇게 찾는다:
+   ① 업무 요약(brief) — 가장 구체적이고 푸른이알피와 양방향이다
+   ② 업무명(title)
+   ③ 유형(cat) — 최소한 "기술보호"처럼은 보이게
+   ③으로 떨어진 건은 옅게 그리고 바로 적을 수 있는 버튼을 붙인다. */
+function itemName(it){
+  if(!it) return '';
+  return briefTrim(it.brief)||String(it.title||'').trim()||String(it.cat||'').trim()||'';
+}
+function needBrief(it){ return !!it&&!briefTrim(it.brief)&&!String(it.title||'').trim(); }
+function nameCell(it){
+  var b=briefTrim(it.brief);
+  if(b) return '<span title="업무 요약 — 푸른이알피와 서로 반영됩니다">'+esc(b)+'</span>';
+  var t=String(it.title||'').trim();
+  if(t) return esc(t);
+  return '<span class="muted" title="업무명·업무 요약이 비어 있어 유형으로 표시합니다">'+esc(it.cat||'—')+'</span>'
+    +'<span class="prm" onclick="event.stopPropagation();briefEdit(\''+escJ(it._id)+'\')" '
+    +'title="이 업무의 이름을 적습니다 — 푸른이알피에도 반영됩니다">✏️ 이름 적기</span>';
+}
+// 업무 요약 한 건 입력 (푸른이알피 업무 요약 칸과 같은 값)
+function briefEdit(id){
+  var it=items[id]; if(!it) return;
+  showModal('<h2 style="margin:0 0 6px">✏️ 업무 이름</h2>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 10px">'+esc(it.company||'')
+    +' · '+esc(it.no||'')+'<br>푸른이알피의 <b>업무 요약</b> 칸과 같은 값입니다 — 여기서 적으면 그쪽에도 반영됩니다.</p>'
+    +'<div class="fld"><label>업무 이름 (최대 '+BRIEF_MAX+'자)</label>'
+    +'<input id="bf-t" maxlength="'+BRIEF_MAX+'" value="'+esc(briefTrim(it.brief))+'" '
+    +'placeholder="예: 기술보호 컨설팅 / 일터혁신 컨설팅 / 퇴직금 미지급 진정"></div>'
+    +'<div id="bf-msg" class="muted" style="font-size:12px;min-height:17px;margin-top:6px"></div>'
+    +'<div class="row" style="justify-content:flex-end"><button onclick="closeM()">취소</button>'
+    +'<button class="primary" onclick="briefSave(\''+escJ(id)+'\')">저장</button></div>');
+  setTimeout(function(){ var e=$('bf-t'); if(e){ e.focus(); e.setSelectionRange(e.value.length,e.value.length); } },60);
+}
+function briefSave(id){
+  var v=briefTrim((($('bf-t')||{}).value)||'');
+  patchItem(id,{brief:v||null}).then(function(ok){
+    if(!ok) return;
+    closeM(); toast(v?('✏️ '+v):'업무 이름 지움'); renderDrawer(); route();
+  });
+}
+/* 이름 없는 건을 한 화면에서 몰아 적는다 — 41건을 하나씩 열 수는 없다 */
+function briefFillModal(){
+  var arr=openItems().filter(needBrief)
+    .sort(function(a,b){ return String(_mgrOf(a)).localeCompare(String(_mgrOf(b)),'ko')
+      ||String(a.company||'').localeCompare(String(b.company||''),'ko'); });
+  if(!arr.length){
+    showModal('<h2 style="margin:0 0 10px">✏️ 업무 이름 채우기</h2>'
+      +'<p class="muted" style="font-size:12.5px">이름이 비어 있는 업무가 없습니다.</p>'
+      +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">닫기</button></div>');
+    return;
+  }
+  S._bf=arr.map(function(it){ return it._id; });
+  var h='<h2 style="margin:0 0 6px">✏️ 업무 이름 채우기 — '+arr.length+'건</h2>'
+    +'<p class="muted" style="font-size:12.5px;margin:0 0 10px">푸른이알피에 <b>업무 요약</b>이 비어 있어 유형만 보이는 건입니다. '
+    +'여기에 적으면 목록의 업무명이 되고 <b>푸른이알피에도 반영</b>됩니다. '
+    +'빈 칸은 그냥 두면 됩니다.</p>'
+    +'<div style="max-height:52vh;overflow-y:auto">';
+  arr.forEach(function(it,i){
+    h+='<div style="display:grid;grid-template-columns:1fr 1.3fr;gap:7px;align-items:center;padding:4px 0;border-bottom:1px solid var(--line)">'
+      +'<div style="font-size:12px;min-width:0">'+catBadge(it.cat)
+      +' <b>'+esc(it.company||'—')+'</b>'
+      +'<div class="muted" style="font-size:10.5px">'+esc(it.no||'')+' · '+esc(_mgrOf(it))+'</div></div>'
+      +'<input id="bf-'+i+'" maxlength="'+BRIEF_MAX+'" placeholder="'+esc(it.cat||'')+' 컨설팅" '
+      +'style="padding:5px 9px;border:1px solid var(--line);border-radius:7px;font-size:12.5px;min-width:0">'
+      +'</div>';
+  });
+  h+='</div><div id="bf-msg" class="muted" style="font-size:12px;min-height:18px;margin-top:8px"></div>'
+    +'<div class="row" style="justify-content:flex-end"><button onclick="closeM()">취소</button>'
+    +'<button class="primary" onclick="briefFillSave()">적은 것 저장</button></div>';
+  showModal(h);
+  setTimeout(function(){ var e=$('bf-0'); if(e)e.focus(); },60);
+}
+function briefFillSave(){
+  var ids=S._bf||[], up={}, n=0, msg=$('bf-msg'), now=new Date().toISOString();
+  ids.forEach(function(id,i){
+    var v=briefTrim((($('bf-'+i)||{}).value)||'');
+    if(!v) return;
+    up[NS+'/items/'+id+'/brief']=v;
+    up[NS+'/items/'+id+'/up_at']=now;
+    n++;
+  });
+  if(!n){ if(msg)msg.textContent='적은 것이 없습니다.'; return; }
+  if(msg)msg.textContent='저장 중… ('+n+'건)';
+  fbDb.ref().update(up).then(function(){
+    closeM(); toast('✏️ 업무 이름 '+n+'건 저장 — 푸른이알피에도 반영됩니다'); route();
+  }).catch(function(e){ if(msg)msg.textContent='실패: '+e.message; });
+}
 var peMaster={};                                   // {유형:[레코드]} — 읽기 실패한 유형은 키가 없다
 var peState={since:null,at:null,n:0,err:''};
 var _peU2N=null, _peT=null, _peBusy=false, _peWatching=false;
@@ -3429,7 +3524,10 @@ function _peCandOf(t,label,dNo,dTitle,dKind,x,sid2name){
   var co=x.companyName||x.fundName||x.targetName||'';
   var kind=dKind(x), title=dTitle(x);
   return { pid:'PE-'+t+'-'+safeKey(x.id), kindLabel:label, no:dNo(x)||'', cat:peCat(t,x,label,kind),
-    company:co, title:(title||kind||co||'무제'), officer:(x.jurisdiction&&x.jurisdiction.officer)||'',
+    // ⚠ 회사명을 업무명으로 쓰지 않는다 — 기업 칸과 똑같이 보이고,
+    //   기본정보 양방향이 그 값을 푸른이알피 title에 되돌려써 마스터가 더러워진다.
+    //   비면 비운 채로 두고 화면에서 업무 요약·유형으로 대신 보여준다(itemName).
+    company:co, title:(title||kind||''), officer:(x.jurisdiction&&x.jurisdiction.officer)||'',
     brief:briefTrim(x.brief),
     client:x.payee||'', mgr:sid2name[x.managerMain]||'', mgrSid:x.managerMain||'',
     co_id:x.companyId||'',                        // 업체 담당자 조회용 — 이름 매칭보다 정확하다
