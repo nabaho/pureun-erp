@@ -826,6 +826,7 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-s" id="erpReloadBtn">🔄 ERP에서 불러오기</button>
         <button class="btn btn-s" id="erpAutoMapBtn">✨ 비슷한 것 자동 추천</button>
+        <button class="btn btn-s" id="erpRenameBtn" style="border:1.5px solid var(--info);color:var(--info);">✏️ 종류 이름 ERP 기준으로</button>
         <button class="btn btn-p" id="erpSaveMapBtn">연결 저장</button>
       </div>
     </div>
@@ -1033,6 +1034,32 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
   <div style="display:flex;gap:8px;">
     <button id="pvDl" style="padding:9px 18px;border:none;border-radius:9px;background:var(--info);color:#fff;font-weight:800;cursor:pointer;font-family:inherit;font-size:13px;">⬇ 다운로드</button>
     <button onclick="closeModal('mbPhotoView')" style="padding:9px 18px;border:none;border-radius:9px;background:rgba(255,255,255,.22);color:#fff;font-weight:800;cursor:pointer;font-family:inherit;font-size:13px;">닫기</button>
+  </div>
+</div>
+
+<!-- ERP 기준 종류 이름 변경 미리보기 -->
+<div class="mb" id="mbErpRename">
+  <div class="modal" style="max-width:760px;max-height:88vh;display:flex;flex-direction:column;">
+    <div class="mhead" style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);">
+      <div>
+        <div style="font-size:15px;font-weight:800;">✏️ 종류 이름을 푸른ERP 기준으로 변경</div>
+        <div style="font-size:11px;color:var(--t2);margin-top:2px;">연결된 종류만 바꿉니다. 최대회차·의무방문·사진1장·하루1건·같은날 규칙은 그대로 유지됩니다.</div>
+      </div>
+      <button class="mclose" onclick="closeModal('mbErpRename')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--t2);">✕</button>
+    </div>
+    <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:16px;flex-wrap:wrap;font-size:12px;">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="erpRnShort" checked style="width:15px;height:15px;"> 약칭</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="erpRnFull" checked style="width:15px;height:15px;"> 전체 이름</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="erpRnAgency" style="width:15px;height:15px;"> 수행기관 <span style="color:#cc7700;">(두 앱이 다름 — 기본 꺼짐)</span></label>
+    </div>
+    <div id="erpRnBody" style="overflow:auto;flex:1;"></div>
+    <div class="mfoot" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+      <span style="font-size:11px;color:var(--t2);">캘린더·대시보드 표시도 함께 바뀝니다. 일정 데이터는 건드리지 않습니다.</span>
+      <span style="display:flex;gap:8px;">
+        <button class="btn btn-s" onclick="closeModal('mbErpRename')">취소</button>
+        <button class="btn btn-p" id="erpRnApply">선택 항목 이름 변경</button>
+      </span>
+    </div>
   </div>
 </div>
 
@@ -4721,6 +4748,84 @@ function erpSaveMap(){
   setErpTypeMap(map); renderErpMap();
   toast('연결을 저장했습니다');
 }
+// ===== 종류 이름을 ERP 기준으로 변경 (이름만 바꾸고 규칙은 유지) =====
+let _erpRnPlan=[];
+function erpBuildRenamePlan(){
+  const map=getErpTypeMap(), rows=erpMappableTypes(), types=getTypes();
+  const byGov={}; // govTypeId → 후보 ERP 유형들
+  rows.forEach(et=>{ const g=map[et.code]; if(!g)return; (byGov[g]=byGov[g]||[]).push(et); });
+  return types.filter(t=>t.active!==false).map(t=>{
+    const cands=(byGov[t.id]||[]).slice().sort((a,b)=>b.cnt-a.cnt); // 많이 쓰는 것 우선
+    const src=cands[0]||null;
+    return {
+      id:t.id, curShort:t.name||'', curFull:t.fullName||'', curAgency:t.agency||'',
+      src, multi:cands.length>1, cands,
+      newShort:src?(src.short||src.name||''):'', newFull:src?(src.name||''):'', newAgency:src?(src.agency||''):''
+    };
+  });
+}
+function erpRenameOpen(){
+  if(!ERP.loaded){ toast('먼저 ERP에서 불러오기를 실행하세요','err'); return; }
+  const map=getErpTypeMap();
+  if(!Object.keys(map).length){ toast('먼저 종류를 연결하고 저장하세요','err'); return; }
+  _erpRnPlan=erpBuildRenamePlan();
+  renderErpRename();
+  q('#mbErpRename').classList.add('open');
+}
+function renderErpRename(){
+  const doShort=q('#erpRnShort')?.checked, doFull=q('#erpRnFull')?.checked, doAg=q('#erpRnAgency')?.checked;
+  const rowsHtml=_erpRnPlan.map((r,i)=>{
+    const can=!!r.src;
+    // 실제로 바뀌는 값이 있는지
+    const chg=can&&((doShort&&r.newShort&&r.newShort!==r.curShort)||(doFull&&r.newFull&&r.newFull!==r.curFull)||(doAg&&r.newAgency&&r.newAgency!==r.curAgency));
+    const line=(on,cur,nw)=>{
+      if(!on||!nw)return `<div style="font-size:11px;color:var(--t2);">${cur||'-'} <span style="opacity:.6">(그대로)</span></div>`;
+      if(nw===cur)return `<div style="font-size:11px;color:var(--t2);">${cur} <span style="opacity:.6">(같음)</span></div>`;
+      return `<div style="font-size:11.5px;color:var(--info);font-weight:700;">${nw}</div>`;
+    };
+    return `<tr style="border-top:1px solid var(--border);${chg?'':'opacity:.6;'}">
+      <td style="padding:8px 10px;"><input type="checkbox" class="erp-rn-ck" data-i="${i}" ${chg?'checked':'disabled'} style="width:15px;height:15px;"></td>
+      <td style="padding:8px 10px;">
+        <b style="font-size:13px;">${r.curShort}</b>
+        <div style="font-size:11px;color:var(--t2);">${r.curFull||'-'}</div>
+        <div style="font-size:10.5px;color:var(--t2);">${r.curAgency||''}</div>
+      </td>
+      <td style="padding:8px 10px;">
+        ${can?`${line(doShort,r.curShort,r.newShort)}${line(doFull,r.curFull,r.newFull)}${doAg?line(true,r.curAgency,r.newAgency):''}
+          ${r.multi?`<div style="font-size:10.5px;color:#cc7700;font-weight:700;margin-top:3px;">⚠️ ERP ${r.cands.length}종이 연결됨 — 가장 많이 쓰는 '${r.src.name}' 기준</div>`:''}`
+          :`<span style="font-size:11.5px;color:var(--t2);">연결된 ERP 유형 없음 — 그대로 둠</span>`}
+      </td>
+    </tr>`;
+  }).join('');
+  q('#erpRnBody').innerHTML=`<table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+    <thead><tr style="background:var(--sf2);">
+      <th style="padding:8px 10px;width:36px;"><input type="checkbox" id="erpRnAll" checked style="width:15px;height:15px;"></th>
+      <th style="padding:8px 10px;text-align:left;">지금 (정부컨설팅)</th>
+      <th style="padding:8px 10px;text-align:left;">바뀔 이름 (푸른ERP)</th>
+    </tr></thead><tbody>${rowsHtml}</tbody></table>`;
+  const all=q('#erpRnAll');
+  if(all)all.onclick=()=>qa('.erp-rn-ck:not([disabled])').forEach(c=>c.checked=all.checked);
+}
+function erpRenameApply(){
+  const doShort=q('#erpRnShort').checked, doFull=q('#erpRnFull').checked, doAg=q('#erpRnAgency').checked;
+  const picks=[...qa('.erp-rn-ck')].filter(c=>c.checked&&!c.disabled).map(c=>_erpRnPlan[+c.dataset.i]).filter(r=>r&&r.src);
+  if(!picks.length){ toast('변경할 항목을 선택하세요','err'); return; }
+  showConfirm(`${picks.length}개 종류의 이름을 푸른ERP 기준으로 바꿀까요?\n(회차·의무방문 등 규칙은 그대로 유지됩니다)`,()=>{
+    const types=getTypes(); let n=0;
+    picks.forEach(r=>{
+      const idx=types.findIndex(t=>t.id===r.id); if(idx<0)return;
+      if(doShort&&r.newShort)types[idx].name=r.newShort;
+      if(doFull&&r.newFull)types[idx].fullName=r.newFull;
+      if(doAg&&r.newAgency)types[idx].agency=r.newAgency;
+      n++;
+    });
+    setTypes(types);
+    closeModal('mbErpRename');
+    renderSettings();renderDash();renderCal();renderSummaryBar();
+    toast(`${n}개 종류 이름을 변경했습니다`);
+  });
+}
+
 // ===== 사업장 가져오기 =====
 let _erpPlan=[];
 function erpBuildPlan(){
@@ -5928,6 +6033,9 @@ function bind(){
   q('#erpSaveMapBtn').onclick=erpSaveMap;
   q('#erpImportBtn').onclick=openErpImport;
   q('#erpImpApply').onclick=erpApplyImport;
+  q('#erpRenameBtn').onclick=erpRenameOpen;
+  q('#erpRnApply').onclick=erpRenameApply;
+  ['erpRnShort','erpRnFull','erpRnAgency'].forEach(id=>{ const el=q('#'+id); if(el)el.onchange=renderErpRename; });
   q('#tlAttFilter').innerHTML=`<option value="">전체</option>`+getStaff().map(a=>`<option value="${a.id}">${a.name}</option>`).join('');
   q('#tlAttFilter').onchange=renderTimeline;
   q('#tlTypeFilter').onchange=renderTimeline;
