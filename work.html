@@ -367,6 +367,21 @@ var HO_FIELDS=[
   ['ppl','③ 관계자 특이사항','의뢰인 성향·감독관 스타일·연락 잘 되는 방법'],
   ['warn','④ 주의점','하면 안 되는 것·민감한 부분·과거 실수'],
   ['files','⑤ 자료 위치','파일·카톡방·서류철·이메일 스레드']];
+/* 끝낸 방식 — 푸른이알피 status와 1:1. 한 칸에 섞으면 통계가 무너진다.
+   ('취하'는 결과이지 끝낸 방식이 아니다 — 취하로 끝나도 우리 업무는 정상 종료다) */
+var END_WAYS=[
+  ['done','종료','일이 끝났습니다','closed',  '#e7f6ee','#1f7a4d'],
+  ['cancel','취소','진행하지 않기로 했습니다','cancelled','#fee2e2','#b91c1c'],
+  ['transfer','이관','다른 곳으로 넘겼습니다','transferred','#dcfce7','#059669']
+];
+var END_BY_PE={}; END_WAYS.forEach(function(w){ END_BY_PE[w[3]]=w[0]; });
+var END_BY_KEY={}; END_WAYS.forEach(function(w){ END_BY_KEY[w[0]]=w; });
+function endWay(it){ return (it&&END_BY_KEY[it.end_way]?it.end_way:'done'); }
+function endLabel(it){ return (END_BY_KEY[endWay(it)]||END_WAYS[0])[1]; }
+function endBadge(it){
+  var w=END_BY_KEY[endWay(it)]||END_WAYS[0];
+  return '<span class="badge" style="background:'+w[4]+';color:'+w[5]+'" title="'+esc(w[2])+'">'+w[1]+'</span>';
+}
 var LV_TYPES=['퇴사','휴직','연차','기타'];
 var HO_OVERDUE_DAYS=5;   // 인수 확인 지연 → 대표 배지
 // AI(2단계) — 푸른이알피 기존 프록시 재사용(Anthropic Messages API 형식). 최신 모델 우선, 프록시 호환용 폴백.
@@ -489,7 +504,7 @@ function shell(){
     +'<div class="sitem" id="nav-stats" onclick="go(\'stats\')">📊 업무량</div>'
     +'<div class="sitem" id="nav-kb" onclick="go(\'kb\')" title="업무에서 얻은 암묵지 — 사람·업체·유형·기관별">📚 지식 <span class="cnt" id="cnt-kb"></span></div>'
     +'<div class="sitem" id="nav-ho" onclick="go(\'ho\')">🔄 인수인계 <span class="cnt" id="cnt-ho"></span></div>'
-    +'<div class="sitem" id="nav-archive" onclick="go(\'archive\')">🗄 보관함 <span class="cnt" id="cnt-ar"></span></div>'
+    +'<div class="sitem" id="nav-archive" onclick="go(\'archive\')" title="종료·취소·이관된 업무">✅ 종료 <span class="cnt" id="cnt-ar"></span></div>'
     +'<div style="margin-top:auto">'
     +'<div class="sitem nw" onclick="searchModal()" title="노트·회고·기록·지식 본문까지 찾기 (Ctrl+K)">🔎 전체 검색 <span style="opacity:.5;font-size:10px">⌃K</span></div>'
     +'<div class="sitem nw" onclick="puerpModal()" title="자동 연동 상태 확인 · 기준일 이전 백로그 1회 정리">🔗 푸른이알피 연동</div>'
@@ -638,7 +653,7 @@ function goBack(){ if(history.length>1) history.back(); else { S.view='my'; rout
 window.addEventListener('popstate',function(ev){ var st=ev.state; S.view=(st&&st.view)||'my'; route(); });
 function route(){
   ['my','team','stats','kb','ho','archive'].forEach(function(v){var n=$('nav-'+v);if(n)n.className='sitem'+(S.view===v?' on':'');});
-  var crumbs={my:'내 업무',team:'팀 전체',stats:'업무량',kb:'지식',ho:'인수인계',archive:'보관함'};
+  var crumbs={my:'내 업무',team:'팀 전체',stats:'업무량',kb:'지식',ho:'인수인계',archive:'종료'};
   var c=$('crumb'); if(c)c.textContent=crumbs[S.view]||'업무관리';
   var qw=$('qwrap'); if(qw)qw.style.display=(S.view==='my'||S.view==='team')?'':'none';
   var cm=$('cnt-my'); if(cm)cm.textContent=viewOpen().length||'';
@@ -1278,7 +1293,7 @@ function rowHTML(it,no){
     +'<input class="wkin" data-id="'+it._id+'" placeholder="'+(isCurWeek()?'이번 주 기록…':'그 주 기록 보완…')+'" onkeydown="wkKey(event,this)">'
     +'</td>'
     +'<td>'+nx+'</td>'
-    +'<td style="text-align:center"><button class="endbtn" onclick="event.stopPropagation();completeItem(\''+escJ(it._id)+'\')" title="이 업무를 종료해 보관함으로 옮깁니다'+(peLinked(it)?' (푸른이알피 종료 연동)':'')+'">종료'+(peLinked(it)?'<span class="lk">🔗</span>':'')+'</button></td>'
+    +'<td style="text-align:center"><button class="endbtn" onclick="event.stopPropagation();completeItem(\''+escJ(it._id)+'\')" title="이 업무를 끝내고 종료 화면으로 옮깁니다'+(peLinked(it)?' (푸른이알피 종료 연동)':'')+'">종료'+(peLinked(it)?'<span class="lk">🔗</span>':'')+'</button></td>'
     +'</tr>';
 }
 function wkKey(e,inp){
@@ -1320,7 +1335,20 @@ function completeItem(id){
   var r=(it.ho_note&&it.ho_note.retro)||{};
   showModal('<h2 style="margin:0 0 8px">✓ 업무 종료</h2>'
     +'<p style="font-size:13px;margin:0 0 4px"><b>'+esc(head)+'</b></p>'
-    +'<p class="muted" style="font-size:12.5px;margin:0 0 12px">종료하면 보관함으로 옮겨지고, 기록과 인수인계 노트는 그대로 남습니다.</p>'
+    +'<p class="muted" style="font-size:12.5px;margin:0 0 10px">종료하면 <b>종료</b> 화면으로 옮겨지고, 기록과 인수인계 노트는 그대로 남습니다.</p>'
+    // 끝낸 방식 — 푸른이알피 상태와 1:1로 맞춰지고, 재개할 때 원래대로 되돌리는 근거가 된다
+    +'<div class="dbox" style="margin:0 0 10px"><div class="bh">어떻게 끝났나요'
+    +'<span class="r">푸른이알피에도 그대로 반영됩니다</span></div><div class="bb">'
+    +END_WAYS.map(function(w,i){
+        return '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;cursor:pointer;padding:2px 0">'
+          +'<input type="radio" name="endway" value="'+w[0]+'"'+(i?'':' checked')
+          +' onchange="endWayPick(this.value)">'
+          +'<span class="badge" style="background:'+w[4]+';color:'+w[5]+'">'+w[1]+'</span>'
+          +'<span class="muted">'+esc(w[2])+'</span></label>';
+      }).join('')
+    +'<input id="cl-to" placeholder="어디로 넘겼는지 (기관·사무소·담당자)" '
+    +'style="display:none;padding:5px 9px;border:1px solid var(--line);border-radius:7px;font-size:12.5px;margin-top:3px">'
+    +'</div></div>'
     +(linked
       ?'<label style="display:flex;gap:8px;align-items:flex-start;background:var(--acc-soft);border:1px solid #c7d7fe;border-radius:9px;padding:10px 12px;font-size:12.5px;cursor:pointer">'
         +'<input type="checkbox" id="cl-pe" checked style="margin-top:3px">'
@@ -1343,6 +1371,14 @@ function completeItem(id){
     +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM();route()">취소</button>'
     +'<button class="primary" onclick="doCompleteWithRetro(\''+escJ(id)+'\','+(linked?'1':'0')+')">업무 종료</button></div>');
 }
+function endWayPick(v){
+  var e=$('cl-to'); if(e) e.style.display=(v==='transfer')?'':'none';
+  if(v==='transfer') setTimeout(function(){ var e2=$('cl-to'); if(e2)e2.focus(); },40);
+}
+function _pickedWay(){
+  var r=document.querySelector('input[name="endway"]:checked');
+  return (r&&END_BY_KEY[r.value])?r.value:'done';
+}
 // 회고를 먼저 저장한 뒤 종료하고, AI가 붙어 있으면 지식 수확을 제안한다
 function doCompleteWithRetro(id,linked){
   var r={}, any=false;
@@ -1351,6 +1387,7 @@ function doCompleteWithRetro(id,linked){
     r[f[0]]=v; if(v) any=true;
   });
   var alsoPe=linked?!!(($('cl-pe')||{}).checked):false;
+  var way=_pickedWay(), to=(($('cl-to')||{}).value||'').trim();
   var pre=Promise.resolve(true);
   if(any){
     // 기존 노트에 병합 — AI 인터뷰 답변(qa) 등이 지워지지 않도록
@@ -1361,7 +1398,7 @@ function doCompleteWithRetro(id,linked){
   }
   pre.then(function(ok){
     if(!ok) return;
-    return doComplete(id,linked?alsoPe:undefined).then(function(){
+    return doComplete(id,linked?alsoPe:undefined,way,to).then(function(){
       if(aiProxyUrl()&&(any||Object.keys(itemLogsCache[id]||{}).length||noteDone(items[id]||{})))
         setTimeout(function(){ kbHarvest(id); },500);
     });
@@ -1369,10 +1406,15 @@ function doCompleteWithRetro(id,linked){
 }
 // 종료/재개는 양방향 동기화 대상. state_at 이 "이 쪽에서 마지막으로 바뀐 시각"이고,
 // 푸른이알피가 나의 업무를 열 때 work_erp/pesync 스냅샷과 비교해 변한 쪽을 반대편에 반영한다.
-function setState(id,done,alsoPe,msg){
+function setState(id,done,alsoPe,msg,way,to){
   var it=items[id]||{}, now=new Date().toISOString();
+  var w=END_BY_KEY[way]?way:'done';
   var patch={ state:done?'done':null, done_date:done?todayStr():null,
-    status:done?'완료':'진행중', state_at:now };
+    status:done?(END_BY_KEY[w][1]):'진행중', state_at:now,
+    // 끝낸 방식은 종료할 때만 찍고, 재개해도 지우지 않는다 —
+    // 원래 취소였는지 이관이었는지를 잃으면 푸른이알피 상태를 되돌릴 수 없다
+    end_way:done?w:(it.end_way||null),
+    end_to:done?(w==='transfer'?(to||''):null):(it.end_to||null) };
   if(peLinked(it)&&alsoPe!==undefined) patch.pe_nosync=alsoPe?null:true;
   var up={}; Object.keys(patch).forEach(function(k){ up[NS+'/items/'+id+'/'+k]=patch[k]; });
   return fbDb.ref().update(up).then(function(){
@@ -1384,7 +1426,10 @@ function setState(id,done,alsoPe,msg){
     route();
   }).catch(function(e){ toast('실패: '+e.message,'err'); route(); });
 }
-function doComplete(id,alsoPe){ return setState(id,true,alsoPe,'✅ 종료 — 보관함으로 이동'); }
+function doComplete(id,alsoPe,way,to){
+  var w=END_BY_KEY[way]?way:'done';
+  return setState(id,true,alsoPe,'✅ '+END_BY_KEY[w][1]+' — 종료 화면으로 이동',w,to);
+}
 
 /* ── 빠른 기록 바 ── */
 var _qbPick=0,_qbMatches=[];
@@ -3088,7 +3133,7 @@ function renderTeam(){
         +'<td style="font-size:12.5px">'+nameCell(it)+stepChip(it._id)+peFlag(it)+'</td>'
         +'<td>'+logHtml+'</td><td>'+lastHtml+'</td><td>'+nx+'</td>'
         +'<td style="text-align:center"><button class="endbtn" onclick="event.stopPropagation();completeItem(\''+escJ(it._id)+'\')" '
-        +'title="이 업무를 종료해 보관함으로 옮깁니다'+(peLinked(it)?' (푸른이알피 종료 연동)':'')+'">종료'
+        +'title="이 업무를 끝내고 종료 화면으로 옮깁니다'+(peLinked(it)?' (푸른이알피 종료 연동)':'')+'">종료'
         +(peLinked(it)?'<span class="lk">🔗</span>':'')+'</button></td></tr>';
     }).join('');
   }
@@ -3253,7 +3298,7 @@ function peSyncBadge(it){
   if(st.synced_at&&st.pe_closed===true) return '<span class="pesync done" title="푸른이알피도 종료됨 · '+esc((st.synced_at||'').slice(0,10))+'">🔗 반영됨</span>';
   return '<span class="pesync wait" title="푸른이알피 나의 업무를 열 때 반영됩니다">🔗 반영 대기</span>';
 }
-function arReset(){ S.arMgr=''; S.arCat=''; S.arPeriod=''; S.q=''; renderArchive(); }
+function arReset(){ S.arMgr=''; S.arCat=''; S.arPeriod=''; S.q=''; S.arWay=''; renderArchive(); }
 function arFold(nm){ S.arFold=S.arFold||{}; S.arFold[nm]=!S.arFold[nm]; renderArchive(); }
 function renderArchive(){
   var app=$('app'); if(!app)return;
@@ -3268,6 +3313,7 @@ function renderArchive(){
   else if(S.arPeriod==='m3') from=ymd(addDays(new Date(),-90));
   else if(S.arPeriod==='y') from=(new Date().getFullYear())+'-01-01';
   function pass(it){
+    if(S.arWay&&endWay(it)!==S.arWay) return false;
     if(S.arMgr&&_mgrOf(it)!==S.arMgr) return false;
     if(S.arCat&&(it.cat||'기타')!==S.arCat) return false;
     if(from&&(it.done_date||'')<from) return false;
@@ -3275,9 +3321,20 @@ function renderArchive(){
     return true;
   }
   var done=all.filter(pass);
-  var h='<div class="row" style="flex-wrap:wrap"><h1>보관함</h1>'
-    +'<span class="muted" style="font-size:12.5px">종료된 업무 — 기록·인수인계 노트는 그대로 남고 통계에도 계속 포함됩니다</span></div>';
-  if(!all.length){ app.innerHTML=h+'<div class="panel" style="text-align:center;color:var(--sub);padding:40px">종료된 업무가 없습니다.</div>'; return; }
+  var h='<div class="row" style="flex-wrap:wrap"><h1>종료</h1>'
+    +'<span class="muted" style="font-size:12.5px">끝난 업무 — 기록·인수인계 노트는 그대로 남고 통계에도 계속 포함됩니다</span></div>';
+  if(!all.length){ app.innerHTML=h+'<div class="panel" style="text-align:center;color:var(--sub);padding:40px">끝난 업무가 없습니다.</div>'; return; }
+  // 끝낸 방식별 — 종료·취소·이관을 한 덩어리로 두면 실적 셈이 틀어진다
+  h+='<div class="statbar">'
+    +'<span class="sb'+(S.arWay?'':' on')+'" onclick="S.arWay=\'\';renderArchive()" title="전부 보기">전체 '+all.length+'</span>'
+    +END_WAYS.map(function(w){
+        var c=all.filter(function(it){ return endWay(it)===w[0]; }).length;
+        if(!c&&w[0]!=='done') return '';
+        return '<span class="sb'+(S.arWay===w[0]?' on':'')+'" onclick="S.arWay='
+          +(S.arWay===w[0]?'\'\'':'\''+w[0]+'\'')+';renderArchive()" title="'+esc(w[2])+'">'
+          +w[1]+' '+c+'</span>';
+      }).join('')
+    +'</div>';
   // 담당자별 종료 건수 요약 1줄 (클릭 = 그 사람만)
   h+='<div class="statbar">'
     +'<span class="sb'+(S.arMgr?'':' on')+'" onclick="S.arMgr=\'\';renderArchive()" title="전체 보기">전체 '+all.length+'</span>'
@@ -3295,19 +3352,20 @@ function renderArchive(){
         return '<option value="'+o[0]+'"'+(S.arPeriod===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select>'
     +'<span class="chipbtn'+(S.arFlat?' on':'')+'" onclick="S.arFlat=!S.arFlat;renderArchive()" title="담당자 묶음을 풀고 한 표로">평면</span>'
     +'<span class="muted" style="font-size:11.5px">'+(done.length!==all.length?done.length+' / '+all.length:all.length)+'건</span>'
-    +((S.arMgr||S.arCat||S.arPeriod||S.q)?'<span class="chipbtn on" onclick="arReset()" title="모든 필터 해제">✕ 필터</span>':'')
+    +((S.arMgr||S.arCat||S.arPeriod||S.q||S.arWay)?'<span class="chipbtn on" onclick="arReset()" title="모든 필터 해제">✕ 필터</span>':'')
     +'</div>';
   h+='<div class="panel" style="padding:0;overflow-x:auto"><table><thead><tr>'
-    +'<th class="rowno">#</th><th style="width:56px">구분</th><th>기업 / 업무</th>'
+    +'<th class="rowno">#</th><th style="width:52px">방식</th><th style="width:56px">구분</th><th>기업 / 업무</th>'
     +(S.arFlat||S.arMgr?'<th style="width:90px">담당</th>':'')
     +'<th style="width:92px">종료일</th><th style="width:110px">푸른이알피</th>'
     +'<th style="width:160px">마지막 기록</th><th style="width:72px"></th></tr></thead><tbody>';
-  var COLS=(S.arFlat||S.arMgr)?8:7;
+  var COLS=(S.arFlat||S.arMgr)?9:8;
   function rowsOf(arr){
     return arr.map(function(it,i){
-      return '<tr>'+tdNo(i+1)+'<td>'+catBadge(it.cat)+'</td>'
+      return '<tr>'+tdNo(i+1)+'<td>'+endBadge(it)+'</td><td>'+catBadge(it.cat)+'</td>'
         +'<td class="itc" onclick="openDrawer(\''+escJ(it._id)+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
-        +'<div class="sub">'+esc(itemName(it))+(it.no?' · '+esc(it.no):'')+'</div></td>'
+        +'<div class="sub">'+esc(itemName(it))+(it.no?' · '+esc(it.no):'')
+        +(endWay(it)==='transfer'&&it.end_to?' <span class="muted">→ '+esc(it.end_to)+'</span>':'')+'</div></td>'
         +((S.arFlat||S.arMgr)?'<td style="font-size:12.5px">'+esc(_mgrOf(it))+'</td>':'')
         +'<td style="font-size:12.5px;font-variant-numeric:tabular-nums">'+esc(it.done_date||'—')+'</td>'
         +'<td>'+(peSyncBadge(it)||'<span class="muted" style="font-size:11px">—</span>')+'</td>'
@@ -3349,13 +3407,18 @@ function _peClosed(x){
   var st=String(x.status||'');
   return st==='closed'||st==='cancelled'||st==='transferred';
 }
-// pu-erp 유형명 → 업무시트 표준 구분 (엑셀 이관과 같은 규칙)
-/* 구분 = 푸른이알피 유형 그대로.
-   예전엔 normCat()으로 우리 13종에 억지로 끼워 맞춰서 대부분 '기타'로 뭉개졌다
-   (기술보호·산일능률·인사서산·이음센터 같은 실제 유형이 전부 기타가 됐다).
-   ① 유형 필드(typeName·contractType…) → ② 관리번호 접두어 → ③ 종류 이름 순으로 찾는다.
-   ②를 쓰는 이유: 기타사업은 유형 필드가 비어 있고 관리번호에만 사업명이 들어 있다
-   (예: 기술보호-2026-006). */
+/* 푸른이알피가 어떻게 끝냈는지 → 우리 끝낸 방식.
+   status가 정본이고, 없으면 종료 사유 문구에서 읽는다(옛 자료 대비).
+   끝나지 않은 건은 빈 문자열. */
+function peEndWay(x){
+  if(!x) return '';
+  var st=String(x.status||'');
+  if(END_BY_PE[st]) return END_BY_PE[st];
+  var r=String(x.closedReason||x.closeReason||'');
+  if(/취소/.test(r)) return 'cancel';
+  if(/이관/.test(r)) return 'transfer';
+  return _peClosed(x)?'done':'';
+}
 /* 유형 — 현장클리닉·기술보호·임금체불·직장내괴롭힘 대리 같은 실제 업무 종류.
    구분(cat)이 아니라 업무명 자리에 쓴다. 못 찾으면 빈 문자열을 돌려주고,
    화면에서 [✏️ 이름 적기]로 사람이 채운다 — 억지로 만들어 넣지 않는다. */
@@ -3544,7 +3607,7 @@ function _peCandOf(t,label,dNo,dTitle,dKind,x,sid2name){
   var kind=dKind(x), title=dTitle(x);
   // 구분 = 사무관리 메뉴 5종, 업무명 자리에 쓸 유형은 ptype에 따로 담는다
   return { pid:'PE-'+t+'-'+safeKey(x.id), kindLabel:label, no:dNo(x)||'',
-    cat:label, ptype:peType(t,x,kind),
+    cat:label, ptype:peType(t,x,kind), end_way:peEndWay(x),
     // ⚠ 회사명을 업무명으로 쓰지 않는다 — 기업 칸과 똑같이 보이고,
     //   기본정보 양방향이 그 값을 푸른이알피 title에 되돌려써 마스터가 더러워진다.
     //   비면 비운 채로 두고 화면에서 업무 요약·유형으로 대신 보여준다(itemName).
@@ -3650,6 +3713,17 @@ function peAutoSync(){
         var gone=!live[it.ref.type][safeKey(it.ref.id)];
         if(gone&&!it.pe_gone) up[P+'pe_gone']=true;
         if(!gone&&it.pe_gone) up[P+'pe_gone']=null;
+      }
+      // 이미 종료된 건의 "끝낸 방식"을 푸른이알피에서 한 번 당겨온다.
+      // 종료 상태 자체는 pesync가 담당하고, 여기서는 방식(종료·취소·이관)만 채운다.
+      // 이미 값이 있으면 건드리지 않는다 — 사람이 고른 것을 덮지 않기 위해서다.
+      if(it.state==='done'&&!it.end_way){
+        var rec=peRec(it), w=rec?peEndWay(rec):'';
+        if(w){
+          up[P+'end_way']=w;
+          if(w==='transfer'&&rec.transferredTo) up[P+'end_to']=String(rec.transferredTo);
+          up[P+'status']=(END_BY_KEY[w]||END_WAYS[0])[1];
+        }
       }
       var c=candByRef[k]; if(!c) return;            // 종료된 건 → 미러 안 함(종료는 pesync 담당)
       var m=it.pe_m||{}, nm={};

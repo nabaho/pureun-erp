@@ -38211,12 +38211,22 @@ function MyDeskV2(props){
               }
             } else want = peChanged ? peClosed : wsDone;
             if(want !== peClosed){                          // 푸른이알피 반영
-              toPe.push({ store:store, id:w.ref.id, close:want, name:(pe.companyName || pe.title || w.ref.id) });
+              toPe.push({ store:store, id:w.ref.id, close:want, way:String(w.end_way || 'done'),
+                to:String(w.end_to || ''), name:(pe.companyName || pe.title || w.ref.id) });
             }
             if(want !== wsDone){                            // 업무시트 반영
               up['work_erp/items/' + wid + '/state'] = want ? 'done' : null;
               up['work_erp/items/' + wid + '/done_date'] = want ? wsToday() : null;
-              up['work_erp/items/' + wid + '/status'] = want ? '완료' : '진행중';
+              // 푸른이알피 status에서 끝낸 방식을 그대로 옮긴다
+              var pw = pe.status === 'cancelled' ? 'cancel'
+                     : pe.status === 'transferred' ? 'transfer' : 'done';
+              up['work_erp/items/' + wid + '/status'] =
+                want ? (pw === 'cancel' ? '취소' : pw === 'transfer' ? '이관' : '종료') : '진행중';
+              if(want){
+                up['work_erp/items/' + wid + '/end_way'] = pw;
+                if(pw === 'transfer' && pe.transferredTo)
+                  up['work_erp/items/' + wid + '/end_to'] = String(pe.transferredTo);
+              }
               up['work_erp/items/' + wid + '/state_at'] = now;
               toWs++;
             }
@@ -38326,10 +38336,21 @@ function MyDeskV2(props){
         });
         // 푸른이알피 쪽은 dbPatch로 (저장형태 안전)
         var okPe = 0;
+        // 끝낸 방식 → 푸른이알피 상태. 한 덩어리로 'closed'만 쓰면 취소·이관 구분이 사라진다.
+        var WS_WAY = { done:{ st:'closed', r:'종료' }, cancel:{ st:'cancelled', r:'취소' },
+                       transfer:{ st:'transferred', r:'이관완료' } };
         toPe.forEach(function(t){
-          var f = t.close
-            ? { closedDate: wsToday(), status: 'closed', closeReason: '업무시트에서 종료' }
-            : { closedDate: null, closedAt: null, closeDate: null, status: 'progress' };
+          var f;
+          if(t.close){
+            var m = WS_WAY[t.way] || WS_WAY.done;
+            f = { closedDate: wsToday(), closedAt: (new Date()).toISOString(),
+                  status: m.st, closeReason: m.r + ' (업무관리)', closedReason: m.r };
+            if(t.way === 'transfer' && t.to) f.transferredTo = t.to;
+          } else {
+            // 재개 — 종료 표시만 걷어낸다. 예전엔 status를 무조건 'progress'로 덮어
+            // 원래 취소·이관이었다는 사실이 사라졌다.
+            f = { closedDate: null, closedAt: null, closeDate: null, status: 'progress' };
+          }
           try{ if(dbPatch(t.store, t.id, f)) okPe++; }catch(e){}
         });
         // 업무 요약 역방향 — 종료 반영과 같은 레코드면 한 번 더 patch 되지만 필드가 겹치지 않아 안전하다
