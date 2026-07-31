@@ -223,6 +223,11 @@
   .fe .tx{flex:1;color:#334155;word-break:break-word}
   .fe .by{font-size:10px;color:var(--faint);margin-left:5px}
   .wklog .by{font-size:9.5px;font-weight:700;color:#7c5bb0;background:#f3f0fd;border-radius:3px;padding:0 4px}
+  .wklog .ed{font-size:9px;color:var(--faint)}
+  .wklog .lgx{font-size:10px;color:var(--faint);cursor:pointer;margin-left:5px;opacity:0;transition:opacity .1s}
+  .wklog:hover .lgx{opacity:.65}
+  .wklog .lgx:hover{opacity:1;color:var(--acc);text-decoration:none}
+  .wklog .lgx.dl:hover{color:var(--danger)}
   /* 드로어 블록: 사업장 담당자 · 담당(주/부) */
   .dbox{margin:10px 18px 0;border:1px solid var(--line);border-radius:9px;overflow:hidden}
   .dbox .bh{display:flex;align-items:center;gap:7px;padding:7px 12px;background:var(--bg);font-size:12px;font-weight:700;color:var(--sub)}
@@ -1003,25 +1008,99 @@ function addLog(itemId,text,dateStr,kind){
     toast('기록 저장됨'); return true;
   }).catch(function(e){ toast('저장 실패: '+e.message,'err'); return false; });
 }
+// 기록을 고치거나 지울 수 있는 사람 — 쓴 본인과 대표
+function canLog(l){
+  if(!l) return false;
+  return isAdmin()||l.by===(S.me&&S.me.sid)||l.byName===(S.me&&S.me.name);
+}
+// 기록 줄에 붙는 ✎ ✕ (표의 주간 칸·드로어 공통)
+function logBtns(itemId,l){
+  if(!canLog(l)) return '';
+  var a=escJ(itemId), b=escJ(l._id||'');
+  return '<span class="lgx" onclick="event.stopPropagation();editLog(\''+a+'\',\''+b+'\')" title="이 기록 고치기">✎</span>'
+    +'<span class="lgx dl" onclick="event.stopPropagation();delLog(\''+a+'\',\''+b+'\')" title="이 기록 지우기">✕</span>';
+}
+/* 기록 수정 — 내용과 날짜를 고친다.
+   날짜를 바꾸면 주차가 달라질 수 있으므로 옛 주차에서 지우고 새 주차에 다시 넣는다.
+   기록은 주차별(logs)과 건별(itemlogs) 두 곳에 있어 한 번의 update로 함께 옮긴다. */
+function editLog(itemId,lid){
+  loadItemLogs(itemId).then(function(){
+    var l=(itemLogsCache[itemId]||{})[lid];
+    if(!l){ toast('기록을 찾을 수 없습니다','warn'); return; }
+    if(!canLog(l)){ toast('본인이 쓴 기록만 고칠 수 있습니다','warn'); return; }
+    showModal('<h2 style="margin:0 0 6px">✎ 기록 고치기</h2>'
+      +'<p class="muted" style="font-size:12px;margin:0 0 11px">'
+      +esc((items[itemId]&&(items[itemId].company||items[itemId].title))||'')
+      +(l.byName?' · 작성 '+esc(l.byName):'')+(l.at?' '+esc(String(l.at).slice(0,10)):'')+'</p>'
+      +'<div class="fld" style="margin-bottom:9px"><label>내용</label>'
+      +'<textarea id="lg-t" rows="3" style="padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;font-family:inherit">'
+      +esc(l.t||'')+'</textarea></div>'
+      +'<div class="fld" style="margin-bottom:4px"><label>날짜</label>'
+      +'<input type="date" id="lg-d" value="'+esc(l.d||'')+'"></div>'
+      +'<div class="muted" style="font-size:11px">날짜를 바꾸면 그 날이 속한 주의 기록으로 옮겨집니다.</div>'
+      +'<div id="lg-msg" class="muted" style="font-size:12px;min-height:17px;margin-top:6px"></div>'
+      +'<div class="row" style="justify-content:flex-end">'
+      +'<button style="color:var(--danger);border-color:#e6a19a" onclick="closeM();delLog(\''+escJ(itemId)+'\',\''+escJ(lid)+'\')">🗑 삭제</button>'
+      +'<span style="flex:1"></span><button onclick="closeM()">취소</button>'
+      +'<button class="primary" onclick="saveLogEdit(\''+escJ(itemId)+'\',\''+escJ(lid)+'\')">저장</button></div>');
+    setTimeout(function(){ var e=$('lg-t'); if(e){ e.focus(); e.setSelectionRange(e.value.length,e.value.length); } },60);
+  });
+}
+function saveLogEdit(itemId,lid){
+  var msg=$('lg-msg');
+  var t=(($('lg-t')||{}).value||'').trim(), d=(($('lg-d')||{}).value||'').trim();
+  if(!t){ if(msg)msg.textContent='내용을 비울 수 없습니다. 지우려면 삭제를 누르세요.'; return; }
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(d)){ if(msg)msg.textContent='날짜를 확인해 주세요.'; return; }
+  var l=(itemLogsCache[itemId]||{})[lid];
+  if(!l){ if(msg)msg.textContent='기록을 찾을 수 없습니다.'; return; }
+  var oldWk=l.w||weekKeyOf(mondayOf(new Date((l.d||d)+'T00:00:00')));
+  var newWk=weekKeyOf(mondayOf(new Date(d+'T00:00:00')));
+  var base={d:d,t:t,by:l.by||'',byName:l.byName||'',at:l.at||new Date().toISOString(),
+    ed_at:new Date().toISOString(),ed_by:(S.me&&S.me.name)||''};
+  if(l.k) base.k=l.k;
+  var up={};
+  up[NS+'/itemlogs/'+itemId+'/'+lid]=Object.assign({w:newWk},base);
+  if(oldWk&&oldWk!==newWk) up[NS+'/logs/'+weekYear(oldWk)+'/'+oldWk+'/'+itemId+'/'+lid]=null;
+  up[NS+'/logs/'+weekYear(newWk)+'/'+newWk+'/'+itemId+'/'+lid]=base;
+  if(msg)msg.textContent='저장 중…';
+  fbDb.ref().update(up).then(function(){
+    if(itemLogsCache[itemId]) itemLogsCache[itemId][lid]=Object.assign({w:newWk},base);
+    if(oldWk&&wkCache[oldWk]&&wkCache[oldWk][itemId]) delete wkCache[oldWk][itemId][lid];
+    if(wkCache[newWk]){ if(!wkCache[newWk][itemId]) wkCache[newWk][itemId]={};
+      wkCache[newWk][itemId][lid]=base; }
+    return refreshLast(itemId);
+  }).then(function(){
+    closeM(); toast('✎ 기록 수정됨'); renderDrawer(); route();
+  }).catch(function(e){ if(msg)msg.textContent='실패: '+e.message; });
+}
+// 마지막 기록 한 줄 다시 계산 — 인수인계 기록(k)은 제외
+function refreshLast(itemId){
+  var rest=Object.keys(itemLogsCache[itemId]||{}).map(function(k){ return itemLogsCache[itemId][k]; })
+    .filter(function(x){ return x&&!x.k; })
+    .sort(function(a,b){ return (b.d||'').localeCompare(a.d||''); });
+  var nl=rest[0]?{d:rest[0].d,t:rest[0].t}:null;
+  if(items[itemId]) items[itemId].last=nl;
+  return fbDb.ref(NS+'/items/'+itemId+'/last').set(nl);
+}
 function delLog(itemId,lid){
   confirmM('이 기록을 삭제할까요?',{ok:'삭제',danger:true}).then(function(ok){ if(!ok)return;
-    var l=(itemLogsCache[itemId]||{})[lid]; var wk=l&&l.w;
-    var up={};
-    up[NS+'/itemlogs/'+itemId+'/'+lid]=null;
-    if(wk) up[NS+'/logs/'+weekYear(wk)+'/'+wk+'/'+itemId+'/'+lid]=null;
-    fbDb.ref().update(up).then(function(){
-      if(itemLogsCache[itemId]) delete itemLogsCache[itemId][lid];
-      if(wk&&wkCache[wk]&&wkCache[wk][itemId]) delete wkCache[wk][itemId][lid];
-      // last 재계산
-      var rest=Object.keys(itemLogsCache[itemId]||{}).map(function(k){return itemLogsCache[itemId][k];})
-        .filter(function(x){return !x.k;})
-        .sort(function(a,b){return (b.d||'').localeCompare(a.d||'');});
-      var nl=rest[0]?{d:rest[0].d,t:rest[0].t}:null;
-      fbDb.ref(NS+'/items/'+itemId+'/last').set(nl);
-      if(items[itemId]) items[itemId].last=nl;
-      toast('삭제됨'); renderDrawer(); route();
-    }).catch(function(e){ toast('삭제 실패: '+e.message,'err'); });
+    // 캐시가 없으면 주차를 몰라 옛 기록이 남고, last 재계산도 틀린다 — 먼저 읽는다
+    loadItemLogs(itemId).then(function(){ _delLog(itemId,lid); });
   });
+}
+function _delLog(itemId,lid){
+  var l=(itemLogsCache[itemId]||{})[lid]; var wk=l&&l.w;
+  if(l&&!canLog(l)){ toast('본인이 쓴 기록만 지울 수 있습니다','warn'); return; }
+  var up={};
+  up[NS+'/itemlogs/'+itemId+'/'+lid]=null;
+  if(wk) up[NS+'/logs/'+weekYear(wk)+'/'+wk+'/'+itemId+'/'+lid]=null;
+  fbDb.ref().update(up).then(function(){
+    if(itemLogsCache[itemId]) delete itemLogsCache[itemId][lid];
+    if(wk&&wkCache[wk]&&wkCache[wk][itemId]) delete wkCache[wk][itemId][lid];
+    return refreshLast(itemId);
+  }).then(function(){
+    toast('기록 삭제됨'); renderDrawer(); route();
+  }).catch(function(e){ toast('삭제 실패: '+e.message,'err'); });
 }
 // 저장 성공 여부를 반환한다. 호출부는 반드시 if(!ok)return; 으로 가드할 것 —
 // 예전엔 실패를 삼키고 resolve 해서 "저장 실패" 토스트와 "✅ 완료"가 같이 뜨는 문제가 있었다.
@@ -1167,7 +1246,8 @@ function rowHTML(it,no){
   var logHtml=logs.map(function(l){
     return '<div class="wklog"><span class="d">'+esc(md(l.d))+'</span>'+esc(l.t)
       +(l.byName&&l.byName!==(S.me&&S.me.name)?' <span class="by">'+esc(l.byName)+'</span>':'')
-      +(l.k==='ho'?' 🔄':'')+'</div>'; }).join('');
+      +(l.ed_at?' <span class="ed" title="'+esc((l.ed_by||'')+' '+String(l.ed_at).slice(0,10)+' 수정')+'">(수정)</span>':'')
+      +(l.k==='ho'?' 🔄':'')+logBtns(it._id,l)+'</div>'; }).join('');
   var lastHtml=it.last?'<span class="last">'+esc(it.last.t)+' <span class="ago">· '+esc(md(it.last.d))+'</span></span>':'<span class="last" style="color:#c4a15a">기록 없음</span>';
   var nx=it.next&&it.next.text?ddayHTML(it.next.date,it.next.text):(it.due?ddayHTML(it.due,'기한'):'<span class="muted">—</span>');
   return '<tr>'
@@ -1493,13 +1573,16 @@ function renderDrawer(){
         var mo=mondayOfKey(l.w); var lab=(l.w===curWk)?'이번 주 · '+weekLabel(mo).split('· ')[1]:weekLabel(mo);
         h+='<div class="wksep">'+esc(lab)+'</div>'; }
       var late=l.at&&l.d&&l.at.slice(0,10)>l.d?' <span class="by">(보완 '+esc(md(l.at.slice(0,10)))+' 입력)</span>':'';
-      var canDel=l.by===(S.me&&S.me.sid)||l.byName===(S.me&&S.me.name);
+      var canDel=canLog(l);
       h+='<div class="fe'+(l.k==='ho'?' hov':'')+'"><span class="dt">'+esc(md(l.d))+'</span>'
         +'<span class="tx">'+(l.k==='ho'?'🔄 ':'')+esc(l.t)
         +(l.byName&&l.byName!==(S.me&&S.me.name)?'<span class="by">'+esc(l.byName)+'</span>':'')+late
+        +(l.ed_at?'<span class="by" title="'+esc((l.ed_by||'')+' '+String(l.ed_at).slice(0,10)+' 수정')+'">(수정)</span>':'')
         +'<span class="prm" onclick="kbPromote(\''+escJ(id)+'\',\''+escJ(l.t||'')+'\',\''+escJ(md(l.d)+' 기록')+'\')" '
-        +'title="이 기록을 지식으로 올리기">↗</span></span>'
-        +(canDel?'<span class="del" onclick="delLog(\''+id+'\',\''+l._id+'\')">✕</span>':'')+'</div>';
+        +'title="이 기록을 지식으로 올리기">↗</span>'
+        +(canDel?'<span class="prm" onclick="editLog(\''+escJ(id)+'\',\''+escJ(l._id)+'\')" title="이 기록 고치기">✎</span>':'')
+        +'</span>'
+        +(canDel?'<span class="del" onclick="delLog(\''+escJ(id)+'\',\''+escJ(l._id)+'\')">✕</span>':'')+'</div>';
     });
   }
   h+='</div>';
@@ -2974,7 +3057,9 @@ function renderTeam(){
   function rowsOf(arr,perGroup){
     return arr.map(function(it,i){
       var logs=wkLogsOf(it._id,wk);
-      var logHtml=logs.length?logs.map(function(l){return '<div class="wklog"><span class="d">'+esc(md(l.d))+'</span>'+esc(l.t)+'</div>';}).join('')
+      var logHtml=logs.length?logs.map(function(l){
+          return '<div class="wklog"><span class="d">'+esc(md(l.d))+'</span>'+esc(l.t)
+            +(l.ed_at?' <span class="ed">(수정)</span>':'')+logBtns(it._id,l)+'</div>'; }).join('')
         :'<span class="muted" style="font-size:12px">—</span>';
       var ld=(it.last&&it.last.d)||'';
       var stale=ld&&_dayDiff(today,ld)>=14;
