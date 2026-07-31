@@ -16134,6 +16134,118 @@ function CompanyEditModal(props){
   );
 }
 
+// ============ 업체 상세 — 다른 프로그램에서 이 업체 찾기 ============
+// 업무관리·컨설팅일정·기금관리·명함첩은 저장소가 각자 따로다. 여기서 읽어와 한 자리에 모은다.
+// 읽기만 한다 — 여기서 고치지 않는다. 못 읽으면 그 줄만 빠지고 상세 화면은 그대로 뜬다.
+var OA_APPS = [
+  { key:'work',  label:'업무관리',   path:'work_erp/items', color:'#5b21b6', bg:'#ede9fe',
+    idKeys:['co_id','companyId'], bizKeys:['bizNo'], nameKeys:['company'],
+    keep:function(x){ return x && x.state !== 'done'; },     // 종료된 업무는 뺀다
+    text:function(x){
+      var t = x.title || x.no || '업무';
+      if(x.next && x.next.text) t += ' · 다음 ' + (x.next.date ? String(x.next.date).slice(5) + ' ' : '') + x.next.text;
+      else if(x.status) t += ' · ' + x.status;
+      return t; },
+    open:function(x){ return 'work.html?sso=1#item=' + encodeURIComponent(x._k); } },
+  { key:'scal',  label:'컨설팅일정', path:'scal_cos', color:'#0e7490', bg:'#cffafe',
+    idKeys:['co_id','erp_co_id','puerp_co_id','companyId'], bizKeys:['bizNo','biz_no'],
+    nameKeys:['name','companyName','site'],
+    text:function(x){ return (x.name || x.companyName || '사업장') + (x.memo ? ' · ' + x.memo : ''); },
+    open:function(){ return 'gov-consulting.html?sso=1'; } },
+  { key:'fund',  label:'기금관리',   path:'fund_erp/funds', color:'#854d0e', bg:'#fef3c7',
+    idKeys:['puerp_co_id','co_id','companyId'], bizKeys:['biz_no','bizNo'],
+    nameKeys:['name','site_name','companyName'],
+    text:function(x){ return (x.name || x.site_name || '기금')
+      + (x.status === 'active' ? ' · 운영중' : (x.status ? ' · ' + x.status : '')); },
+    open:function(){ return 'fund.html?sso=1'; } },
+  // 명함첩은 카드 전체(수천 장)를 받지 않는다. 로그인할 때 이미 받아 둔 경량 색인(pucards/idx)을 쓴다.
+  // 색인 레코드: {k:'card'|'biz', c:회사명, n:이름, ti:직책, bz:사업자번호}
+  { key:'cards', label:'명함첩',     path:null, color:'#9d174d', bg:'#fce7f3',
+    local:function(){ return (typeof window !== 'undefined' && window.pucardsIdx) || null; },
+    idKeys:[], bizKeys:['bz'], nameKeys:['c'],
+    keep:function(x){ return x && x.k === 'card'; },
+    text:function(x){ return (x.n || '이름 없음') + (x.ti ? ' ' + x.ti : ''); },
+    group:true,                                              // 명함은 여러 장을 한 줄로 묶는다
+    open:function(x, co){ return 'pu-cards.html?sso=1&q=' + encodeURIComponent(co.name || ''); } }
+];
+// 업체와 레코드가 같은 회사인지 — ID > 사업자번호 > 이름 순 (CompanyRef 와 같은 규칙)
+function oaMatch(co, x, app){
+  if(!co || !x) return '';
+  for(var i = 0; i < app.idKeys.length; i++){
+    var v = x[app.idKeys[i]];
+    if(v && co.id && v === co.id) return 'id';
+  }
+  var cb = CompanyRef._normBiz(co.bizNo);
+  if(cb) for(var j = 0; j < app.bizKeys.length; j++){
+    if(CompanyRef._normBiz(x[app.bizKeys[j]]) === cb) return 'biz';
+  }
+  var cn = CompanyRef._norm(co.name);
+  if(cn) for(var k = 0; k < app.nameKeys.length; k++){
+    if(CompanyRef._norm(x[app.nameKeys[k]]) === cn) return 'name';
+  }
+  return '';
+}
+function oaOpen(url){ try{ window.open(url, '_blank'); }catch(e){ window._erpErrLog && window._erpErrLog(e); } }
+// 읽어온 4개 결과 → 화면에 뿌릴 줄 목록. 순수 함수라 따로 시험할 수 있다.
+// res[i] 가 null 이면 그 앱은 못 읽은 것 — 줄을 만들지 않고 실패로만 센다.
+function oaBuildRows(co, res){
+  var rows = [], failed = 0;
+  OA_APPS.forEach(function(app, i){
+    var v = res[i];
+    if(v === null || v === undefined){ failed++; return; }
+    var list = [];
+    if(Array.isArray(v)) v.forEach(function(x, n){ if(x) list.push(Object.assign({ _k:String(n) }, x)); });
+    else if(typeof v === 'object') Object.keys(v).forEach(function(k){ if(v[k]) list.push(Object.assign({ _k:k }, v[k])); });
+    var hit = list.filter(function(x){
+      if(app.keep && !app.keep(x)) return false;
+      return !!oaMatch(co, x, app);
+    });
+    if(!hit.length) return;
+    if(app.group){
+      var names = hit.slice(0, 3).map(function(x){ return app.text(x); }).join(' · ');
+      rows.push({ app:app, text:names + (hit.length > 3 ? ' 외 ' + (hit.length - 3) + '명' : ''),
+        url:app.open(hit[0], co) });
+    } else {
+      hit.slice(0, 4).forEach(function(x){
+        rows.push({ app:app, text:app.text(x), url:app.open(x, co) });
+      });
+      if(hit.length > 4) rows.push({ app:app, text:'외 ' + (hit.length - 4) + '건',
+        url:app.open(hit[0], co) });
+    }
+  });
+  return { rows:rows, allFailed: failed === OA_APPS.length };
+}
+
+// 다른 프로그램 4곳을 한 번에 읽어 이 업체 건만 골라낸다
+function useOtherApps(co){
+  var s = useState({ loading:true, rows:[], err:'' });
+  var st = s[0], setSt = s[1];
+  useEffect(function(){
+    var alive = true;
+    if(!co || !co.id){ setSt({ loading:false, rows:[], err:'' }); return; }
+    if(typeof fbDb === 'undefined' || !fbDb){
+      setSt({ loading:false, rows:[], err:'서버에 연결되지 않아 불러오지 못했습니다' }); return;
+    }
+    setSt({ loading:true, rows:[], err:'' });
+    function rd(app){
+      if(app.local) return Promise.resolve(app.local());   // 이미 메모리에 있는 것(명함첩 색인)
+      return fbDb.ref(app.path).once('value')
+        .then(function(x){ return x.val(); })
+        .catch(function(){ return null; });          // 권한·네트워크 실패는 조용히 넘긴다
+    }
+    Promise.all(OA_APPS.map(function(a){ return rd(a); })).then(function(res){
+      if(!alive) return;
+      var built = oaBuildRows(co, res);
+      setSt({ loading:false, rows:built.rows,
+        err: built.allFailed ? '다른 프로그램을 읽지 못했습니다' : '' });
+    }).catch(function(){
+      if(alive) setSt({ loading:false, rows:[], err:'불러오는 중 오류가 났습니다' });
+    });
+    return function(){ alive = false; };
+  }, [co && co.id]);
+  return st;
+}
+
 // 업체 상세보기 모달 (읽기 전용 + 관련 업무 조회)
 function CompanyDetailModal(props){
   useEscClose(props.onClose);
@@ -16151,6 +16263,8 @@ function CompanyDetailModal(props){
   function matchCompany(item){
     return CompanyRef.matches(item, co);
   }
+  // 다른 프로그램(업무관리·컨설팅일정·기금관리·명함첩) — 서버에서 읽어온다
+  var oa = useOtherApps(co);
   var cases = dbGet('cases', []).filter(matchCompany);
   var consultings = dbGet('consultings', []).filter(matchCompany);
   var funds = dbGet('funds', []).filter(matchCompany);
@@ -16261,6 +16375,31 @@ function CompanyDetailModal(props){
             })),
           (cases.length + consultings.length + funds.length + contracts.length) === 0 &&
             h('div', { style:{ color:'#94a3b8', fontSize:'11.5px', textAlign:'center', padding:'10px' } }, '관련 업무 없음')
+        ),
+        // 다른 프로그램 (업무관리·컨설팅일정·기금관리·명함첩) — 읽기 전용
+        h('div', { style:{ marginBottom:'8px' } },
+          h('div', { style:{ fontSize:'12.5px', fontWeight:700, color:'#1e40af', marginBottom:'6px', borderBottom:'2px solid #2563eb', paddingBottom:'4px' } },
+            '🔗 다른 프로그램' + (oa.rows.length ? ' (' + oa.rows.length + ')' : '')),
+          oa.loading
+            ? h('div', { style:{ color:'#94a3b8', fontSize:'11.5px', textAlign:'center', padding:'10px' } }, '불러오는 중…')
+            : (oa.err
+                ? h('div', { style:{ color:'#b45309', fontSize:'11.5px', textAlign:'center', padding:'10px' } }, '⚠ ' + oa.err)
+                : (oa.rows.length
+                    ? h('div', null, oa.rows.map(function(r, i){
+                        return h('div', { key:r.app.key + i,
+                          style:{ display:'grid', gridTemplateColumns:'auto 1fr auto', gap:'8px', alignItems:'center',
+                            padding:'5px 8px', background:'#f8fafc', borderRadius:'5px', marginBottom:'3px' } },
+                          h('span', { style:{ fontSize:'10px', background:r.app.bg, color:r.app.color,
+                            padding:'2px 8px', borderRadius:'8px', fontWeight:700, whiteSpace:'nowrap' } }, r.app.label),
+                          h('span', { style:{ fontSize:'11px', color:'#1e293b', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, r.text),
+                          h('button', { onClick:function(){ oaOpen(r.url); }, title:'그 프로그램에서 열기',
+                            style:{ background:'none', border:'none', color:'#2563eb', fontSize:'10.5px',
+                              fontWeight:700, cursor:'pointer', whiteSpace:'nowrap', padding:'2px 4px' } }, '열기 ↗'));
+                      }))
+                    : h('div', { style:{ color:'#94a3b8', fontSize:'11.5px', textAlign:'center', padding:'10px' } },
+                        '다른 프로그램에 이 업체 기록이 없습니다'))),
+          !oa.loading && !oa.err && h('div', { style:{ fontSize:'10px', color:'#cbd5e1', marginTop:'4px' } },
+            '보기만 합니다 · 사업자번호 › 업체 ID › 이름 순으로 찾습니다')
         ),
         // 비고
         co.note && h('div', { style:{ background:'#fef9c3', border:'1px solid #fde68a', borderRadius:'4px', padding:'8px 12px', fontSize:'11.5px', color:'#854d0e' } },
