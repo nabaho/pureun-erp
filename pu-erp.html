@@ -1600,7 +1600,10 @@ var _fbSynced = false;      // Firebase 초기 동기화 완료(또는 시도 �
 function fbSeedAllowed(){ return !fbDb || _fbSynced; }  // 오프라인이거나 동기화 끝난 뒤에만 user_accounts 시드 허용
 // 동기화 제외 키 (메타·세션·임시값)
 // (bank_ledger_draft = 거래내역 화면의 업로드 작업분 — 기기별 임시값이라 서버로 올리지 않는다)
-var FB_EXCLUDE = ['_meta_','session','current_menu','open_groups','dark_mode','corp_dash_tab','sidebar_collapsed','login_','bank_ledger_draft'];
+// co_merge_log — 중복 합치기 되돌리기용 기록. 이 PC에서 합친 것을 이 PC에서 되돌리는 용도라
+// 서버에 올릴 필요가 없다. 여러 건을 연달아 합치면 1분에 수차례 쓰기가 생겨
+// '동기화 충돌 의심' 경고가 잘못 뜨기도 한다. (co_merge_skip 은 "다른 회사임" 판단이라 공유한다)
+var FB_EXCLUDE = ['_meta_','session','current_menu','open_groups','dark_mode','corp_dash_tab','sidebar_collapsed','login_','bank_ledger_draft','co_merge_log'];
 function fbShouldSync(k){
   if(!k) return false;
   for(var i=0; i<FB_EXCLUDE.length; i++){ if(k.indexOf(FB_EXCLUDE[i])===0) return false; }
@@ -5319,7 +5322,18 @@ var CompanyRef = {
 // 자동 병합은 하지 않는다 — 이름이 같아도 정말 다른 회사인 경우가 있다(지점이 여러 개인 신협 등).
 // 중복이 생기는 주 경로는 위 registerIfMissing 의 자동 등록(co-auto-*, 사업자번호 없음)이다.
 var CO_MERGE_SKIP = 'co_merge_skip';   // {그룹키: true} — "다른 회사임"으로 표시해 다시 안 묻는 것
-var CO_MERGE_LOG  = 'co_merge_log';    // 되돌리기용 기록
+var CO_MERGE_LOG  = 'co_merge_log';    // 되돌리기용 기록 (이 PC에만 — FB_EXCLUDE)
+// 합칠 때 빈 칸을 채워 줄 항목과 화면에 보여 줄 우리말 이름.
+// 여기 있는 것만 채운다. 영문 필드명이 화면에 새어 나가지 않게 이름표를 짝지어 둔다.
+var CO_FIELD_LABEL = {
+  bizNo:'사업자번호', ceo:'대표자', ceo2:'대표자2', zipcode:'우편번호', address:'주소',
+  phone:'전화', fax:'팩스', email:'이메일', bizType:'업태', bizCategory:'종목',
+  companySize:'규모', industry:'업종', managerMain:'담당',
+  primaryContactName:'담당자 이름', primaryContactPhone:'담당자 연락처', primaryContactEmail:'담당자 이메일',
+  contractStartDate:'계약 시작일', contractEndDate:'계약 종료일',
+  monthlyAdvisoryFee:'월 자문료', typeCode:'유형'
+};
+function coFieldLabel(f){ return CO_FIELD_LABEL[f] || f; }
 
 function coIsAuto(c){ return !!(c && (String(c.id||'').indexOf('co-auto-') === 0 ||
   /^자동 등록/.test(String(c.note||'')))); }
@@ -5406,9 +5420,7 @@ function coMergePreview(keepId, dropIds){
   var drops = dropIds.map(function(id){ return cos.find(function(c){ return c && c.id === id; }); }).filter(Boolean);
   // 빈 칸만 상대 값으로 채운다 — 이미 값이 있으면 건드리지 않는다
   var fill = {};
-  var FIELDS = ['bizNo','ceo','ceo2','zipcode','address','phone','fax','email','bizType','bizCategory',
-    'companySize','industry','managerMain','primaryContactName','primaryContactPhone','primaryContactEmail',
-    'contractStartDate','contractEndDate','monthlyAdvisoryFee','typeCode'];
+  var FIELDS = Object.keys(CO_FIELD_LABEL);
   FIELDS.forEach(function(f){
     var cur = keep[f];
     if(cur !== undefined && cur !== null && cur !== '' && cur !== 0) return;
@@ -5625,8 +5637,7 @@ function CoMergeModal(props){
                 h('div', null, '합치면 — ', h('b', null, pv.keep.name), ' 하나만 남습니다.'),
                 Object.keys(pv.fill).length
                   ? h('div', null, '비어 있던 ',
-                      h('b', null, Object.keys(pv.fill).map(function(f){
-                        var m = FLD.find(function(x){ return x[1]===f; }); return m ? m[0] : f; }).join('·')),
+                      h('b', null, Object.keys(pv.fill).map(coFieldLabel).join('·')),
                       ' 를 상대 값으로 채웁니다.')
                   : h('div', { style:{ color:'#64748b' } }, '채울 빈 칸은 없습니다.'),
                 pv.moves.length
