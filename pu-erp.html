@@ -5412,6 +5412,48 @@ function coRefStores(){
   return out;
 }
 
+// 업체가 사무대행인가 — 전용 등록(status)이든 자문 겸업(isSuboffice)이든
+function coIsSub(c){ return !!(c && (c.status === 'suboffice' || c.isSuboffice)); }
+// 합칠 때 남는 업체가 이어받아야 할 사무대행 관련 값
+function coSubRoleFill(keep, drops){
+  var f = {};
+  if(!drops.some(coIsSub)) return f;                 // 사라지는 쪽에 사무대행이 없으면 할 일 없음
+  if(!coIsSub(keep)) f.isSuboffice = true;           // 남는 쪽에 표시를 달아 사무대행 탭에 계속 나오게
+  // 지점·관리번호 등 사무대행 화면에서만 쓰는 값도 비어 있으면 가져온다
+  ['branch','subofficeNo','mgmtNo'].forEach(function(k){
+    if(keep[k] !== undefined && keep[k] !== null && keep[k] !== '') return;
+    for(var i = 0; i < drops.length; i++){
+      var v = drops[i][k];
+      if(v !== undefined && v !== null && v !== ''){ f[k] = v; return; }
+    }
+  });
+  return f;
+}
+// 보수총액신고(wage_reports[연도][업체id])에서 사라질 업체를 가리키는 기록 찾기
+function coWageMoves(keepId, dropIds){
+  var out = [];
+  var wr = dbGet('wage_reports', {}) || {};
+  Object.keys(wr).forEach(function(year){
+    var y = wr[year]; if(!y || typeof y !== 'object') return;
+    dropIds.forEach(function(id){
+      if(y[id] !== undefined && y[id] !== null) out.push({ year:year, from:id, data:y[id] });
+    });
+  });
+  return out;
+}
+// 보수총액신고 기록을 남는 업체로 옮긴다. 남는 쪽에 이미 있으면 덮지 않는다.
+function coWageApply(keepId, wageMoves){
+  if(!wageMoves || !wageMoves.length) return 0;
+  var wr = dbGet('wage_reports', {}) || {}, n = 0;
+  wageMoves.forEach(function(m){
+    var y = wr[m.year]; if(!y) return;
+    if(y[keepId] === undefined || y[keepId] === null){ y[keepId] = m.data; n++; }
+    delete y[m.from];
+  });
+  if(n || wageMoves.length) dbSet('wage_reports', wr);
+  return n;
+}
+
 // 합치면 무엇이 바뀌는지 미리 계산 (아무것도 저장하지 않는다)
 function coMergePreview(keepId, dropIds){
   var cos = dbGet('companies', []) || [];
@@ -5429,6 +5471,12 @@ function coMergePreview(keepId, dropIds){
       if(v !== undefined && v !== null && v !== '' && v !== 0){ fill[f] = v; break; }
     }
   });
+  // ── 사무대행 역할은 반드시 이어받는다 ──
+  // 같은 회사를 자문으로도, 사무대행으로도 따로 등록해 둔 것이 중복의 큰 축이다.
+  // 업체관리는 한 업체가 둘 다일 수 있게 isSuboffice 를 이미 지원한다(사무대행 탭이 이 값도 본다).
+  // 이걸 안 넘기면 합친 뒤 사무대행 탭에서 사라진다.
+  var roleFill = coSubRoleFill(keep, drops);
+  Object.keys(roleFill).forEach(function(k){ fill[k] = roleFill[k]; });
   // 참조 재지정 대상
   var moves = [];
   coRefStores().forEach(function(store){
@@ -5440,7 +5488,10 @@ function coMergePreview(keepId, dropIds){
       }
     });
   });
-  return { keep:keep, drops:drops, fill:fill, moves:moves };
+  // 보수총액신고는 wage_reports[연도][업체id] 라 업체를 지우면 기록이 붕 뜬다 — 남는 업체로 옮긴다
+  var wageMoves = coWageMoves(keepId, dropIds);
+  return { keep:keep, drops:drops, fill:fill, moves:moves, wageMoves:wageMoves,
+    subRole:Object.keys(roleFill).length > 0 };
 }
 
 // 실제 합치기. 되돌릴 수 있도록 바뀐 값을 전부 기록한다.
@@ -5452,8 +5503,12 @@ function coMergeApply(keepId, dropIds){
     by:(typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.name) || '',
     keepId:keepId, keepName:pv.keep.name,
     keepBefore:{}, dropRecords:pv.drops.map(function(d){ return JSON.parse(JSON.stringify(d)); }),
-    moves:pv.moves.slice() };
-  Object.keys(pv.fill).forEach(function(f){ undo.keepBefore[f] = pv.keep[f]; });
+    moves:pv.moves.slice(), wageMoves:(pv.wageMoves||[]).slice() };
+  // 원래 없던 칸은 undefined 인데, 기록을 저장할 때 JSON이 undefined 를 통째로 버린다.
+  // 그러면 되돌릴 때 "원래 없었다"는 사실이 사라져 채운 값이 그대로 남는다. null 로 남긴다.
+  Object.keys(pv.fill).forEach(function(f){
+    undo.keepBefore[f] = (pv.keep[f] === undefined ? null : pv.keep[f]);
+  });
 
   // 1) 남길 업체의 빈 칸 채우기
   if(Object.keys(pv.fill).length){
@@ -5477,7 +5532,9 @@ function coMergeApply(keepId, dropIds){
     _coLogPush(undo);
     return null;
   }
-  // 3) 중복 업체 제거 (원본은 undo 에 남아 있다)
+  // 3) 보수총액신고 기록 이전 (업체를 지우기 전에)
+  try{ coWageApply(keepId, pv.wageMoves); }catch(e){ window._erpErrLog && window._erpErrLog(e); }
+  // 4) 중복 업체 제거 (원본은 undo 에 남아 있다)
   var okDel = true;
   dropIds.forEach(function(id){ if(!dbRemove('companies', id)) okDel = false; });
   if(!okDel) showToast('⚠ 일부 업체 삭제 실패 — 업체관리에서 확인해 주세요');
@@ -5501,16 +5558,72 @@ function coMergeUndo(logId){
   if(!e){ showToast('❌ 기록을 찾을 수 없습니다'); return false; }
   (e.dropRecords || []).forEach(function(rec){ dbUpsert('companies', rec); });
   (e.moves || []).forEach(function(m){ dbPatch(m.store, m.id, { companyId:m.from }); });
+  // 보수총액신고 기록 되돌리기 — 옮겨 간 것을 원래 업체로
+  if((e.wageMoves || []).length){
+    try{
+      var wr = dbGet('wage_reports', {}) || {};
+      e.wageMoves.forEach(function(m){
+        var y = wr[m.year] = wr[m.year] || {};
+        y[m.from] = m.data;
+        if(JSON.stringify(y[e.keepId]) === JSON.stringify(m.data)) delete y[e.keepId];
+      });
+      dbSet('wage_reports', wr);
+    }catch(_e){ window._erpErrLog && window._erpErrLog(_e); }
+  }
   if(e.keepBefore && Object.keys(e.keepBefore).length){
     var back = {};
     Object.keys(e.keepBefore).forEach(function(f){
-      back[f] = (e.keepBefore[f] === undefined ? '' : e.keepBefore[f]);
+      var v = e.keepBefore[f];
+      back[f] = (v === undefined || v === null) ? '' : v;   // null = 원래 없던 칸 → 빈 값으로
     });
     dbPatch('companies', e.keepId, back);
   }
   dbSet(CO_MERGE_LOG, log.filter(function(x){ return x && x.id !== logId; }));
   showToast('↩ 되돌렸습니다 — 업체 ' + (e.dropRecords||[]).length + '개 복구, 참조 ' + (e.moves||[]).length + '건 원복');
   return true;
+}
+
+// ── 이 고침 이전에 합친 건 되살리기 ──
+// 사라진 쪽이 사무대행이었는데 남은 쪽에 표시가 안 붙어 사무대행 탭에서 빠진 업체를 찾는다.
+// 되돌리기 기록(dropRecords)에 원본이 통째로 남아 있어 되살릴 수 있다.
+function coFindLostSubRole(){
+  var log = dbGet(CO_MERGE_LOG, []) || [];
+  if(!Array.isArray(log) || !log.length) return [];
+  var byId = {};
+  (dbGet('companies', []) || []).forEach(function(c){ if(c && c.id) byId[c.id] = c; });
+  var wr = dbGet('wage_reports', {}) || {};
+  var out = [];
+  log.forEach(function(e){
+    if(!e || !e.keepId) return;
+    var keep = byId[e.keepId]; if(!keep) return;      // 남은 업체가 없으면(되돌렸으면) 건너뜀
+    var drops = e.dropRecords || [];
+    if(!drops.some(coIsSub)) return;                   // 사라진 쪽에 사무대행이 없었으면 문제 없음
+    var need = coSubRoleFill(keep, drops);
+    var wm = [];
+    drops.forEach(function(d){
+      if(!d || !d.id) return;
+      Object.keys(wr).forEach(function(y){
+        if(wr[y] && wr[y][d.id] !== undefined && wr[y][d.id] !== null){
+          wm.push({ year:y, from:d.id, data:wr[y][d.id] });
+        }
+      });
+    });
+    if(Object.keys(need).length || wm.length){
+      out.push({ logId:e.id, keepId:e.keepId, name:keep.name, fill:need, wageMoves:wm });
+    }
+  });
+  return out;
+}
+function coRepairSubRole(){
+  var items = coFindLostSubRole(), nCo = 0, nWage = 0;
+  items.forEach(function(it){
+    if(Object.keys(it.fill).length && dbPatch('companies', it.keepId, it.fill)) nCo++;
+    if(it.wageMoves.length){
+      try{ nWage += coWageApply(it.keepId, it.wageMoves); }
+      catch(e){ window._erpErrLog && window._erpErrLog(e); }
+    }
+  });
+  return { total:items.length, companies:nCo, wage:nWage, names:items.map(function(x){ return x.name; }) };
 }
 
 // ============ 중복 업체 정리 화면 ============
@@ -5617,7 +5730,8 @@ function CoMergeModal(props){
                       h('input', { type:'radio', checked:isKeep, onChange:function(){ setKeepId(c.id); },
                         style:{ width:'14px', height:'14px', margin:0 } }),
                       h('span', { style:{ fontSize:'11.5px', fontWeight:700, color:isKeep?'#2563eb':'#64748b' } }, '이쪽을 남긴다'),
-                      coIsAuto(c) && h('span', { style:{ fontSize:'9.5px', background:'#fef3c7', color:'#92400e', padding:'1px 6px', borderRadius:'8px', fontWeight:700 } }, '자동등록')
+                      coIsAuto(c) && h('span', { style:{ fontSize:'9.5px', background:'#fef3c7', color:'#92400e', padding:'1px 6px', borderRadius:'8px', fontWeight:700 } }, '자동등록'),
+                      coIsSub(c) && h('span', { style:{ fontSize:'9.5px', background:'#fef9c3', color:'#854d0e', padding:'1px 6px', borderRadius:'8px', fontWeight:700 } }, '🏛️ 사무대행')
                     ),
                     h('table', { style:{ width:'100%', fontSize:'11.5px', tableLayout:'fixed' } },
                       h('tbody', null, FLD.map(function(f){
@@ -5645,7 +5759,11 @@ function CoMergeModal(props){
                       h('span', { style:{ color:'#475569' } },
                         pv.moves.slice(0,6).map(function(m){ return m.store + ' ' + m.label; }).join(', ')
                         + (pv.moves.length > 6 ? ' 외 ' + (pv.moves.length-6) + '건' : '')))
-                  : h('div', { style:{ color:'#64748b' } }, '옮겨질 연결 건은 없습니다.')
+                  : h('div', { style:{ color:'#64748b' } }, '옮겨질 연결 건은 없습니다.'),
+                pv.subRole && h('div', { style:{ color:'#854d0e', fontWeight:700 } },
+                  '🏛️ 사무대행 표시를 이어받아 사무대행 탭에도 계속 나옵니다.'),
+                (pv.wageMoves && pv.wageMoves.length) ? h('div', { style:{ color:'#854d0e' } },
+                  '🧾 보수총액신고 ' + pv.wageMoves.length + '건도 함께 옮깁니다.') : null
               ),
 
               // 버튼
@@ -13924,8 +14042,28 @@ function CompanyManagement(){
   var dupS = useState(function(){ try{ return coDupGroups().length; }
     catch(e){ console.warn('[중복정리] 집계 실패', e); return 0; } });
   var dupCount = dupS[0]; var setDupCount = dupS[1];
-  function recountDup(){ try{ setDupCount(coDupGroups().length); }
-    catch(e){ console.warn('[중복정리] 집계 실패', e); setDupCount(0); } }
+  // ★ 사무대행 표시 복구 — 이 고침 이전에 합쳐서 사무대행 탭에서 빠진 업체
+  var lsS = useState(function(){ try{ return coFindLostSubRole().length; }
+    catch(e){ console.warn('[사무대행복구] 집계 실패', e); return 0; } });
+  var lostSub = lsS[0]; var setLostSub = lsS[1];
+  function recountDup(){
+    try{ setDupCount(coDupGroups().length); }
+    catch(e){ console.warn('[중복정리] 집계 실패', e); setDupCount(0); }
+    try{ setLostSub(coFindLostSubRole().length); }
+    catch(e){ console.warn('[사무대행복구] 집계 실패', e); setLostSub(0); }
+  }
+  async function doRepairSub(){
+    var found = coFindLostSubRole();
+    if(!found.length){ showToast('복구할 것이 없습니다'); return; }
+    var sample = found.slice(0,5).map(function(x){ return '· ' + x.name; }).join('\n');
+    var ok = await popConfirm('사무대행 표시가 빠진 업체 ' + found.length + '개를 되살립니다.\n\n'
+      + sample + (found.length > 5 ? '\n· 외 ' + (found.length-5) + '개' : '')
+      + '\n\n→ 이 업체들이 사무대행 탭에 다시 나옵니다\n→ 보수총액신고 기록도 함께 옮깁니다\n→ 업체를 새로 만들지는 않습니다');
+    if(!ok) return;
+    var r = coRepairSubRole();
+    showToast('🏛️ 복구 완료 — 업체 ' + r.companies + '개, 보수총액신고 ' + r.wage + '건');
+    refreshCompanies(); recountDup();
+  }
   function toggleSel(id){ setSelIds(function(prev){ var n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n; }); }
   function selectAll(){ setSelIds(new Set(pg.paged.map(function(c){return c.id;}))); }
   function clearSel(){ setSelIds(new Set()); }
@@ -14543,6 +14681,11 @@ function CompanyManagement(){
             style:{ padding:'9px 12px', background:'#fff7ed', color:'#9a3412', border:'1px solid #fdba74',
               borderRadius:'8px', fontSize:'12px', fontWeight:700, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' } },
             '🔀 중복 정리 ' + dupCount),
+          lostSub > 0 && h('button', { onClick:doRepairSub,
+            className:'erp-tip', 'data-tip':'합치면서 사무대행 표시가 딸려오지 않은 업체를 사무대행 탭에 되살립니다',
+            style:{ padding:'9px 12px', background:'#fef3c7', color:'#854d0e', border:'1px solid #fbbf24',
+              borderRadius:'8px', fontSize:'12px', fontWeight:700, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' } },
+            '🏛️ 사무대행 복구 ' + lostSub),
           selIds.size > 0 && h('button', {
             onClick:function(){ setBulkMgrModal(true); },
             style:{ padding:'9px 14px', background:'#2563eb', color:'#fff', border:'none',
@@ -14712,6 +14855,13 @@ function CompanyManagement(){
           background:'#fff7ed', color:'#9a3412', border:'1px solid #fdba74', cursor:'pointer',
           whiteSpace:'nowrap', marginRight:'6px' } },
         '🔀 중복 정리 ' + dupCount),
+      // 사무대행 표시 복구 — 합치면서 사무대행 탭에서 빠진 업체가 있을 때만 나타난다
+      lostSub > 0 && h('button', { onClick:doRepairSub,
+        className:'erp-tip', 'data-tip':'합치면서 사무대행 표시가 딸려오지 않은 업체를 사무대행 탭에 되살립니다',
+        style:{ padding:'6px 12px', fontSize:'11.5px', fontWeight:700, borderRadius:'5px',
+          background:'#fef3c7', color:'#854d0e', border:'1px solid #fbbf24', cursor:'pointer',
+          whiteSpace:'nowrap', marginRight:'6px' } },
+        '🏛️ 사무대행 표시 복구 ' + lostSub),
       // 더보기 (⋯): 컬럼 · 엑셀 · 페이지수
       h('div', { style:{ position:'relative' } },
         h('button', { onClick:function(e){ e.stopPropagation(); setMoreMenuOpen(!moreMenuOpen); setFilterMenuOpen(false); },
