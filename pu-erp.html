@@ -5314,6 +5314,349 @@ var CompanyRef = {
   }
 };
 
+// ============ 중복 업체 정리 ============
+// 이름이 같은데 따로 등록된 업체를 사람이 직접 확인하고 합친다.
+// 자동 병합은 하지 않는다 — 이름이 같아도 정말 다른 회사인 경우가 있다(지점이 여러 개인 신협 등).
+// 중복이 생기는 주 경로는 위 registerIfMissing 의 자동 등록(co-auto-*, 사업자번호 없음)이다.
+var CO_MERGE_SKIP = 'co_merge_skip';   // {그룹키: true} — "다른 회사임"으로 표시해 다시 안 묻는 것
+var CO_MERGE_LOG  = 'co_merge_log';    // 되돌리기용 기록
+
+function coIsAuto(c){ return !!(c && (String(c.id||'').indexOf('co-auto-') === 0 ||
+  /^자동 등록/.test(String(c.note||'')))); }
+function coHead(s){ return String(s||'').replace(/\s+/g,'').slice(0,10); }
+
+// 한 그룹(같은 이름 업체들)의 신뢰도 — 높을수록 "같은 회사가 확실"
+// 사업자번호가 서로 다르게 둘 다 있으면 다른 회사 신호이므로 conflict 로 따로 뺀다.
+function coGroupScore(g){
+  var s = 0, conflict = false, why = [];
+  var bizes = g.map(function(c){ return CompanyRef._normBiz(c.bizNo); }).filter(Boolean);
+  var uniqBiz = bizes.filter(function(b,i){ return bizes.indexOf(b) === i; });
+  if(uniqBiz.length > 1){ conflict = true; why.push('사업자번호가 서로 다름'); }
+  else if(uniqBiz.length === 1 && bizes.length < g.length){ s += 1; why.push('한쪽만 사업자번호 있음'); }
+  function allSame(f){
+    var v = g.map(f).filter(Boolean);
+    return v.length === g.length && v.every(function(x){ return x === v[0]; });
+  }
+  if(allSame(function(c){ return String(c.ceo||'').trim(); })) { s += 2; why.push('대표자 같음'); }
+  if(allSame(function(c){ return coHead(c.address); }))        { s += 2; why.push('주소 같음'); }
+  if(allSame(function(c){ return String(c.phone||'').replace(/\D/g,''); })) { s += 1; why.push('전화 같음'); }
+  if(g.some(coIsAuto)) { s += 1; why.push('한쪽이 자동 등록된 업체'); }
+  return { score:s, conflict:conflict, why:why };
+}
+
+// 이름이 같은 현재 업체 묶음. 확실한 것부터 위로.
+function coDupGroups(){
+  var cos = dbGet('companies', []) || [];
+  var skip = dbGet(CO_MERGE_SKIP, {}) || {};
+  var byName = {};
+  cos.forEach(function(c){
+    if(!c || !c.id) return;
+    var n = CompanyRef._norm(c.name); if(!n) return;
+    (byName[n] = byName[n] || []).push(c);
+  });
+  var out = [];
+  Object.keys(byName).forEach(function(n){
+    var g = byName[n]; if(g.length < 2) return;
+    var key = n + '|' + g.map(function(c){ return c.id; }).sort().join('|');
+    if(skip[key]) return;
+    var sc = coGroupScore(g);
+    // 남길 쪽 기본값: 사업자번호 있는 것 > 자동등록 아닌 것 > 먼저 만들어진 것
+    var sorted = g.slice().sort(function(a,b){
+      var ab = CompanyRef._normBiz(a.bizNo) ? 1 : 0, bb = CompanyRef._normBiz(b.bizNo) ? 1 : 0;
+      if(ab !== bb) return bb - ab;
+      var aa = coIsAuto(a) ? 1 : 0, ba = coIsAuto(b) ? 1 : 0;
+      if(aa !== ba) return aa - ba;
+      return String(a.createdAt||'').localeCompare(String(b.createdAt||''));
+    });
+    out.push({ key:key, name:g[0].name, list:sorted, keepId:sorted[0].id,
+      score:sc.score, conflict:sc.conflict, why:sc.why });
+  });
+  // 확실한 것 먼저 → 사업자번호 충돌(다른 회사 의심)은 맨 뒤
+  out.sort(function(a,b){
+    if(a.conflict !== b.conflict) return a.conflict ? 1 : -1;
+    if(b.score !== a.score) return b.score - a.score;
+    return String(a.name||'').localeCompare(String(b.name||''));
+  });
+  return out;
+}
+
+// companyId 를 담고 있는 저장소를 localStorage에서 직접 찾는다.
+// 목록을 손으로 관리하면 새 저장소가 생겼을 때 빠뜨린다.
+function coRefStores(){
+  var out = [];
+  try{
+    for(var i = 0; i < localStorage.length; i++){
+      var lk = localStorage.key(i);
+      if(!lk || lk.indexOf(KEY) !== 0) continue;
+      var name = lk.slice(KEY.length);
+      if(name.charAt(0) === '_' || name.indexOf('session') === 0) continue;
+      var v = safeParse(localStorage.getItem(lk), null);
+      if(!Array.isArray(v)) continue;
+      if(v.some(function(x){ return x && typeof x === 'object' && x.companyId; })) out.push(name);
+    }
+  }catch(e){ window._erpErrLog && window._erpErrLog(e); }
+  return out;
+}
+
+// 합치면 무엇이 바뀌는지 미리 계산 (아무것도 저장하지 않는다)
+function coMergePreview(keepId, dropIds){
+  var cos = dbGet('companies', []) || [];
+  var keep = cos.find(function(c){ return c && c.id === keepId; });
+  if(!keep) return null;
+  var drops = dropIds.map(function(id){ return cos.find(function(c){ return c && c.id === id; }); }).filter(Boolean);
+  // 빈 칸만 상대 값으로 채운다 — 이미 값이 있으면 건드리지 않는다
+  var fill = {};
+  var FIELDS = ['bizNo','ceo','ceo2','zipcode','address','phone','fax','email','bizType','bizCategory',
+    'companySize','industry','managerMain','primaryContactName','primaryContactPhone','primaryContactEmail',
+    'contractStartDate','contractEndDate','monthlyAdvisoryFee','typeCode'];
+  FIELDS.forEach(function(f){
+    var cur = keep[f];
+    if(cur !== undefined && cur !== null && cur !== '' && cur !== 0) return;
+    for(var i = 0; i < drops.length; i++){
+      var v = drops[i][f];
+      if(v !== undefined && v !== null && v !== '' && v !== 0){ fill[f] = v; break; }
+    }
+  });
+  // 참조 재지정 대상
+  var moves = [];
+  coRefStores().forEach(function(store){
+    var arr = dbGet(store, []) || [];
+    arr.forEach(function(x){
+      if(x && x.companyId && dropIds.indexOf(x.companyId) >= 0){
+        moves.push({ store:store, id:x.id, from:x.companyId,
+          label:(x.no || x.contractNo || x.caseNo || x.title || x.companyName || x.id) });
+      }
+    });
+  });
+  return { keep:keep, drops:drops, fill:fill, moves:moves };
+}
+
+// 실제 합치기. 되돌릴 수 있도록 바뀐 값을 전부 기록한다.
+function coMergeApply(keepId, dropIds){
+  var pv = coMergePreview(keepId, dropIds);
+  if(!pv) return null;
+  var undo = { id:'mg-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+    at:new Date().toISOString(),
+    by:(typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.name) || '',
+    keepId:keepId, keepName:pv.keep.name,
+    keepBefore:{}, dropRecords:pv.drops.map(function(d){ return JSON.parse(JSON.stringify(d)); }),
+    moves:pv.moves.slice() };
+  Object.keys(pv.fill).forEach(function(f){ undo.keepBefore[f] = pv.keep[f]; });
+
+  // 1) 남길 업체의 빈 칸 채우기
+  if(Object.keys(pv.fill).length){
+    if(!dbPatch('companies', keepId, pv.fill)){ showToast('❌ 업체 정보 채우기 실패 — 합치기를 중단했습니다'); return null; }
+  }
+  // 2) 참조 재지정 (저장소별로 모아서 한 번씩)
+  var byStore = {};
+  pv.moves.forEach(function(m){ (byStore[m.store] = byStore[m.store] || []).push(m); });
+  var moved = 0, failStore = null;
+  Object.keys(byStore).forEach(function(store){
+    if(failStore) return;
+    byStore[store].forEach(function(m){
+      if(dbPatch(store, m.id, { companyId:keepId })) moved++;
+      else failStore = store;
+    });
+  });
+  if(failStore){
+    showToast('❌ ' + failStore + ' 재지정 실패 — 합치기를 중단했습니다. 되돌리기에서 복구하세요');
+    // 여기까지 한 것은 기록해 두어야 되돌릴 수 있다
+    undo.partial = true;
+    _coLogPush(undo);
+    return null;
+  }
+  // 3) 중복 업체 제거 (원본은 undo 에 남아 있다)
+  var okDel = true;
+  dropIds.forEach(function(id){ if(!dbRemove('companies', id)) okDel = false; });
+  if(!okDel) showToast('⚠ 일부 업체 삭제 실패 — 업체관리에서 확인해 주세요');
+  undo.moved = moved;
+  _coLogPush(undo);
+  return undo;
+}
+
+function _coLogPush(entry){
+  var log = dbGet(CO_MERGE_LOG, []) || [];
+  if(!Array.isArray(log)) log = [];
+  log.unshift(entry);
+  if(log.length > 200) log = log.slice(0, 200);
+  dbSet(CO_MERGE_LOG, log);
+}
+
+// 되돌리기 — 지운 업체를 되살리고, 옮긴 참조와 채운 칸을 원래대로
+function coMergeUndo(logId){
+  var log = dbGet(CO_MERGE_LOG, []) || [];
+  var e = log.find(function(x){ return x && x.id === logId; });
+  if(!e){ showToast('❌ 기록을 찾을 수 없습니다'); return false; }
+  (e.dropRecords || []).forEach(function(rec){ dbUpsert('companies', rec); });
+  (e.moves || []).forEach(function(m){ dbPatch(m.store, m.id, { companyId:m.from }); });
+  if(e.keepBefore && Object.keys(e.keepBefore).length){
+    var back = {};
+    Object.keys(e.keepBefore).forEach(function(f){
+      back[f] = (e.keepBefore[f] === undefined ? '' : e.keepBefore[f]);
+    });
+    dbPatch('companies', e.keepId, back);
+  }
+  dbSet(CO_MERGE_LOG, log.filter(function(x){ return x && x.id !== logId; }));
+  showToast('↩ 되돌렸습니다 — 업체 ' + (e.dropRecords||[]).length + '개 복구, 참조 ' + (e.moves||[]).length + '건 원복');
+  return true;
+}
+
+// ============ 중복 업체 정리 화면 ============
+// 한 쌍(또는 세 개)씩 나란히 놓고 사람이 판단한다. 일괄 자동 병합은 만들지 않는다.
+function CoMergeModal(props){
+  useEscClose(props.onClose);
+  var gS = useState(function(){ return coDupGroups(); });
+  var groups = gS[0]; var setGroups = gS[1];
+  var iS = useState(0); var idx = iS[0]; var setIdx = iS[1];
+  var kS = useState(''); var keepId = kS[0]; var setKeepId = kS[1];
+  var doneS = useState(0); var doneN = doneS[0]; var setDoneN = doneS[1];
+  var lastS = useState(null); var last = lastS[0]; var setLast = lastS[1];
+
+  var g = groups[idx] || null;
+  useEffect(function(){ if(g) setKeepId(g.keepId); }, [g && g.key]);
+
+  var pv = (g && keepId) ? coMergePreview(keepId, g.list.filter(function(c){ return c.id !== keepId; })
+    .map(function(c){ return c.id; })) : null;
+
+  function refresh(){
+    var next = coDupGroups();
+    setGroups(next);
+    if(idx >= next.length) setIdx(Math.max(0, next.length - 1));
+  }
+  function doMerge(){
+    if(!g || !keepId) return;
+    var drops = g.list.filter(function(c){ return c.id !== keepId; }).map(function(c){ return c.id; });
+    var res = coMergeApply(keepId, drops);
+    if(!res){ refresh(); return; }
+    setLast(res);
+    setDoneN(doneN + 1);
+    showToast('✅ 합쳤습니다 — ' + res.keepName + ' (참조 ' + (res.moved||0) + '건 이동)');
+    refresh();
+    if(props.onChanged) props.onChanged();
+  }
+  function doSkip(){ setIdx(Math.min(idx + 1, groups.length - 1)); }
+  function doNotSame(){
+    if(!g) return;
+    var skip = dbGet(CO_MERGE_SKIP, {}) || {};
+    skip[g.key] = true;
+    dbSet(CO_MERGE_SKIP, skip);
+    showToast('기억했습니다 — 이 쌍은 다시 묻지 않습니다');
+    refresh();
+  }
+
+  var FLD = [['이름','name'],['사업자번호','bizNo'],['대표자','ceo'],['주소','address'],
+             ['전화','phone'],['담당','managerMain'],['유형','typeCode'],['등록','createdAt']];
+  // userName 은 컴포넌트마다 따로 있는 지역 함수라 여기서 쓸 수 없다 — 직접 찾는다(퇴직자 포함)
+  function sidName(sid){
+    if(!sid) return '';
+    var us = dbGet('user_accounts', []) || [];
+    var u = us.find(function(x){ return x && x.sid === sid; });
+    return u ? (u.name || sid) : sid;
+  }
+  function val(c, f){
+    var v = c[f];
+    if(f === 'managerMain') return v ? sidName(v) : '';
+    if(f === 'createdAt') return String(v||'').slice(0,10);
+    return v == null ? '' : String(v);
+  }
+  // 값이 서로 다른 칸만 색으로 표시한다 — 같은 칸까지 칠하면 눈이 피로하다
+  function cellBg(f, c){
+    if(!g) return '';
+    var vs = g.list.map(function(x){ return val(x, f); });
+    var same = vs.every(function(x){ return x === vs[0]; });
+    if(same) return '';
+    var mine = val(c, f);
+    if(!mine) return '#fef2f2';                       // 이쪽이 비었다
+    if(c.id !== keepId && !val(pv ? pv.keep : c, f)) return '#f0fdf4';  // 남길 쪽이 비어 여기서 가져온다
+    return '#fefce8';                                  // 그냥 다르다
+  }
+
+  return h('div', { className:'modal-bg', onClick:function(e){ if(e.target===e.currentTarget) props.onClose(); } },
+    h('div', { className:'modal', style:{ maxWidth:'860px', width:'94vw' } },
+      h('div', { className:'modal-h' },
+        h('div', { className:'t' }, '🔀 중복 업체 정리'),
+        h('button', { className:'x', onClick:props.onClose }, '×')),
+      h('div', { className:'modal-b', style:{ maxHeight:'72vh', overflowY:'auto' } },
+
+        !groups.length
+          ? h('div', { style:{ padding:'36px 12px', textAlign:'center', color:'#64748b', fontSize:'13px' } },
+              doneN ? '✅ 모두 정리했습니다 — ' + doneN + '건 합침' : '✅ 이름이 겹치는 업체가 없습니다')
+          : h('div', null,
+              // 진행 + 신뢰도
+              h('div', { style:{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'10px', flexWrap:'wrap' } },
+                h('span', { style:{ fontSize:'13px', fontWeight:700, color:'#0f172a' } }, g.name),
+                g.conflict
+                  ? h('span', { style:{ fontSize:'10.5px', background:'#fee2e2', color:'#b91c1c', padding:'2px 8px', borderRadius:'10px', fontWeight:700 } },
+                      '⚠ 사업자번호가 달라 — 다른 회사일 수 있습니다')
+                  : h('span', { style:{ fontSize:'10.5px', background:'#dcfce7', color:'#166534', padding:'2px 8px', borderRadius:'10px', fontWeight:700 } },
+                      (g.why.length ? g.why.join(' · ') : '이름만 같음')),
+                h('span', { style:{ marginLeft:'auto', fontSize:'11.5px', color:'#64748b' } },
+                  (idx+1) + ' / ' + groups.length + (doneN ? '  (합침 ' + doneN + ')' : ''))
+              ),
+
+              // 업체 카드들
+              h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(240px, 1fr))', gap:'10px' } },
+                g.list.map(function(c){
+                  var isKeep = c.id === keepId;
+                  return h('div', { key:c.id, onClick:function(){ setKeepId(c.id); },
+                    style:{ background:'#fff', border:isKeep?'2px solid #2563eb':'1px solid #e2e8f0',
+                      borderRadius:'10px', padding:'10px', cursor:'pointer' } },
+                    h('label', { style:{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'8px', cursor:'pointer' } },
+                      h('input', { type:'radio', checked:isKeep, onChange:function(){ setKeepId(c.id); },
+                        style:{ width:'14px', height:'14px', margin:0 } }),
+                      h('span', { style:{ fontSize:'11.5px', fontWeight:700, color:isKeep?'#2563eb':'#64748b' } }, '이쪽을 남긴다'),
+                      coIsAuto(c) && h('span', { style:{ fontSize:'9.5px', background:'#fef3c7', color:'#92400e', padding:'1px 6px', borderRadius:'8px', fontWeight:700 } }, '자동등록')
+                    ),
+                    h('table', { style:{ width:'100%', fontSize:'11.5px', tableLayout:'fixed' } },
+                      h('tbody', null, FLD.map(function(f){
+                        var v = val(c, f[1]);
+                        return h('tr', { key:f[1], style:{ background:cellBg(f[1], c) } },
+                          h('td', { style:{ color:'#64748b', padding:'3px 4px', width:'64px' } }, f[0]),
+                          h('td', { style:{ padding:'3px 4px', wordBreak:'break-all' } },
+                            v || h('span', { style:{ color:'#cbd5e1', fontStyle:'italic' } }, '비어 있음')));
+                      }))
+                    )
+                  );
+                })
+              ),
+
+              // 합치면 무엇이 바뀌나
+              pv && h('div', { style:{ background:'#eff6ff', borderRadius:'8px', padding:'10px 12px', marginTop:'10px', fontSize:'12px', color:'#1e40af', lineHeight:1.7 } },
+                h('div', null, '합치면 — ', h('b', null, pv.keep.name), ' 하나만 남습니다.'),
+                Object.keys(pv.fill).length
+                  ? h('div', null, '비어 있던 ',
+                      h('b', null, Object.keys(pv.fill).map(function(f){
+                        var m = FLD.find(function(x){ return x[1]===f; }); return m ? m[0] : f; }).join('·')),
+                      ' 를 상대 값으로 채웁니다.')
+                  : h('div', { style:{ color:'#64748b' } }, '채울 빈 칸은 없습니다.'),
+                pv.moves.length
+                  ? h('div', null, h('b', null, pv.moves.length + '건'), ' 이 남는 업체로 옮겨집니다 — ',
+                      h('span', { style:{ color:'#475569' } },
+                        pv.moves.slice(0,6).map(function(m){ return m.store + ' ' + m.label; }).join(', ')
+                        + (pv.moves.length > 6 ? ' 외 ' + (pv.moves.length-6) + '건' : '')))
+                  : h('div', { style:{ color:'#64748b' } }, '옮겨질 연결 건은 없습니다.')
+              ),
+
+              // 버튼
+              h('div', { style:{ display:'flex', gap:'8px', marginTop:'12px', flexWrap:'wrap', alignItems:'center' } },
+                h('button', { className:'btn-primary', onClick:doMerge }, '합치기'),
+                h('button', { className:'btn-secondary', onClick:doSkip, disabled: idx >= groups.length-1 }, '건너뛰기'),
+                h('button', { className:'btn-secondary', onClick:doNotSame,
+                  style:{ background:'#fff7ed', color:'#9a3412', borderColor:'#fed7aa' } }, '다른 회사임 · 다시 안 물음'),
+                last && h('button', { className:'btn-secondary', onClick:function(){
+                    if(coMergeUndo(last.id)){ setLast(null); setDoneN(Math.max(0, doneN-1)); refresh(); if(props.onChanged) props.onChanged(); }
+                  }, style:{ marginLeft:'auto', background:'#f1f5f9', color:'#475569' } }, '↩ 방금 합친 것 되돌리기')
+              )
+            )
+      ),
+      h('div', { className:'modal-f' },
+        h('span', { style:{ fontSize:'11px', color:'#94a3b8', marginRight:'auto' } },
+          '합친 기록은 되돌릴 수 있게 보관됩니다'),
+        h('button', { className:'btn-secondary', onClick:props.onClose }, '닫기'))
+    ));
+}
+// ============ 중복 업체 정리 화면 끝 ============
+
 // #1 자동 입력 (Auto-fill): 업체 ID로 사업자번호·대표자·주소·담당자 자동 채우기
 //    사용: var co = AutoFill.fromCompanyId('co-adv-001'); → 사건 등록 시 자동 채움
 var AutoFill = {
@@ -13565,6 +13908,11 @@ function CompanyManagement(){
   // ★ 일괄 주담당 배정
   var selS = useState(new Set()); var selIds = selS[0]; var setSelIds = selS[1];
   var bulkMgrS = useState(null); var bulkMgrModal = bulkMgrS[0]; var setBulkMgrModal = bulkMgrS[1];
+  // ★ 중복 업체 정리 — 이름이 겹치는 업체가 있을 때만 버튼이 보인다
+  var mgS = useState(false); var mergeOpen = mgS[0]; var setMergeOpen = mgS[1];
+  var dupS = useState(function(){ try{ return coDupGroups().length; }catch(e){ return 0; } });
+  var dupCount = dupS[0]; var setDupCount = dupS[1];
+  function recountDup(){ try{ setDupCount(coDupGroups().length); }catch(e){ setDupCount(0); } }
   function toggleSel(id){ setSelIds(function(prev){ var n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n; }); }
   function selectAll(){ setSelIds(new Set(pg.paged.map(function(c){return c.id;}))); }
   function clearSel(){ setSelIds(new Set()); }
@@ -14176,6 +14524,12 @@ function CompanyManagement(){
           h('button', { onClick:exportExcel,
             style:{ padding:'9px 11px', background:'#fff', color:'#16a34a', border:'1px solid #16a34a',
               borderRadius:'8px', fontSize:'13px', fontWeight:700, cursor:'pointer', flexShrink:0 } }, '📥'),
+          // 이름이 겹치는 업체가 있을 때만 나타난다. 다 정리하면 사라진다.
+          dupCount > 0 && h('button', { onClick:function(){ setMergeOpen(true); },
+            className:'erp-tip', 'data-tip':'같은 이름으로 따로 등록된 업체를 한 쌍씩 확인하고 합칩니다',
+            style:{ padding:'9px 12px', background:'#fff7ed', color:'#9a3412', border:'1px solid #fdba74',
+              borderRadius:'8px', fontSize:'12px', fontWeight:700, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' } },
+            '🔀 중복 정리 ' + dupCount),
           selIds.size > 0 && h('button', {
             onClick:function(){ setBulkMgrModal(true); },
             style:{ padding:'9px 14px', background:'#2563eb', color:'#fff', border:'none',
@@ -14784,6 +15138,11 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
         showToast('수정됨');
       },
       onClose: function(){ setEditModal(null); }
+    }),
+    // 중복 업체 정리 모달
+    mergeOpen && h(CoMergeModal, {
+      onChanged: function(){ refreshCompanies(); recountDup(); },
+      onClose: function(){ setMergeOpen(false); refreshCompanies(); recountDup(); }
     }),
     // 상세보기 모달
     // ★ 일괄 주담당 배정 모달
