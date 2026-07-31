@@ -39,6 +39,25 @@ test('폴더 연결 함수가 있다', () => {
   assert.match(source, /async function fsRoot\(\)/);
 });
 
+test('폴더 연결 UI는 환경설정이 숨겨진 계정에서도 닿는 곳에 있다', () => {
+  // 환경설정(page-settings)은 applyPerfAccess가 비관리자에게 숨긴다.
+  // 그래서 항상 보이는 위촉장 페이지의 '⋯ 더보기'에도 같은 버튼이 있어야 한다.
+  const wiccok = source.slice(
+    source.indexOf('<section class="page-view" id="page-wiccok"'),
+    source.indexOf('<div class="dt" data-tbl="wiccok">')
+  );
+  assert.ok(wiccok.length > 0, '위촉장 페이지 마크업을 찾을 수 없습니다');
+  assert.match(wiccok, /onclick="fsConnectFolder\(\)"/);
+  assert.match(wiccok, /onclick="openScanPreview\(\)"/);
+  assert.match(wiccok, /onclick="fsUndoLast\(\)"/);
+});
+
+test('미지원 브라우저 숨김은 클래스로 두 위치를 한 번에 처리한다', () => {
+  assert.match(source, /document\.querySelectorAll\('\.fs-ui'\)/);
+  // id 기반 숨김이 남아 있으면 한쪽만 숨겨져 버린다
+  assert.ok(!/\['btnFsConnect','btnFsScan','btnFsUndo'\]/.test(source));
+});
+
 test('스캔은 파일 내용을 읽지 않는다 — 스캔 함수에 arrayBuffer 사용이 없어야 한다', () => {
   const m = source.match(/async function fsScanAll\([\s\S]*?\n\}/);
   assert.ok(m, 'fsScanAll 함수가 있어야 합니다');
