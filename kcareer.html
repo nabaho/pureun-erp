@@ -1192,6 +1192,13 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
     <div class="modal-foot"><button class="btn" id="bulkCancel">닫기</button><button class="btn primary" id="bulkSave" style="display:none">매칭 저장</button></div>
   </div>
 </div>
+<div class="modal-ov" id="modalScan">
+  <div class="modal" style="width:720px">
+    <div class="modal-h">🔍 서류 폴더 스캔 결과 — 아직 저장되지 않았습니다</div>
+    <div class="modal-b" id="scanBody"></div>
+    <div class="modal-foot"><button class="btn" onclick="closeScan()">닫기 (저장 안 함)</button><button class="btn primary" onclick="fsCommitScan()">등록</button></div>
+  </div>
+</div>
 <div class="modal-ov" id="modalResume">
   <div class="modal">
     <div class="modal-h">이력서 보관 정보</div>
@@ -1550,6 +1557,94 @@ async function fsRoot(){
   if(h && await fsEnsurePermission(h)){ _fsRoot = h; return h; }
   return null;
 }
+
+/* ===== 폴더 스캔 =====
+   이름·크기·수정일만 읽는다. 내용(arrayBuffer)을 읽으면 OneDrive 클라우드 파일이 전부 내려온다. */
+async function fsScanAll(onProgress){
+  var root = await fsRoot();
+  if(!root){ toast('먼저 환경설정 › 데이터 관리에서 서류 폴더를 연결하세요'); return null; }
+  var files = [], n = 0;
+  async function walk(dir, prefix){
+    for await (var ent of dir.entries()){
+      var name = ent[0], h = ent[1];
+      if(h.kind === 'directory'){ await walk(h, prefix ? prefix + '/' + name : name); continue; }
+      try{
+        var f = await h.getFile();     /* 메타데이터만 사용 — 내용은 읽지 않는다 */
+        files.push({ name:name, relPath:(prefix ? prefix + '/' : '') + name,
+                     size:f.size, mtime:new Date(f.lastModified).toISOString() });
+      }catch(e){ console.warn('스캔 건너뜀', prefix, name, e); }
+      if((++n % 200) === 0 && onProgress) onProgress(n);
+    }
+  }
+  await walk(root, '');
+  if(onProgress) onProgress(n);
+  return files;
+}
+
+/* 이미 등록된 파일 건너뛰기 — 경로+크기+수정일이 같으면 같은 파일로 본다 */
+function fsKnownKeys(){
+  var map = {};
+  function add(r){
+    if(r && r.src === 'fs' && r.relPath) map[r.relPath + '|' + r.fileSize + '|' + r.fileMtime] = true;
+    if(r && r.files) r.files.forEach(function(f){ map[f.relPath + '|' + f.size + '|' + f.mtime] = true; });
+  }
+  ['wiccok','cert','certdoc','submission'].forEach(function(k){ get(k).forEach(add); });
+  return map;
+}
+
+/* ===== 미리보기 — 저장하지 않는다 ===== */
+var _scanCtx = null;
+
+async function openScanPreview(){
+  var files = await fsScanAll(function(n){ toast('스캔 중… ' + n + '개'); });
+  if(!files) return;
+  var scanId = 'S' + new Date().toISOString().slice(0,10).replace(/-/g,'') + '-' + String(Date.now()).slice(-4);
+  var known = fsKnownKeys();
+  var fresh = files.filter(function(f){ return !known[f.relPath + '|' + f.size + '|' + f.mtime]; });
+  var r = KcareerScan.buildRecords(fresh, {scanId: scanId});
+  _scanCtx = { scanId:scanId, all:files, fresh:fresh, r:r, pickMaybe:{} };
+  renderScanPreview();
+  $('modalScan').classList.add('open');
+}
+
+function renderScanPreview(){
+  if(!_scanCtx) return;
+  var r = _scanCtx.r, skipped = _scanCtx.all.length - _scanCtx.fresh.length;
+  var h = '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">'
+    + _scanCard('🟢 확실', r.promotions.length, 'var(--teal)')
+    + _scanCard('🟡 애매', r.maybes.length, '#BA7517')
+    + _scanCard('⚪ 제출서류', r.submissions.length, 'var(--text-mute)')
+    + '</div>'
+    + '<div style="font-size:12px;color:var(--text-mute);margin-bottom:10px">'
+    + '전체 ' + _scanCtx.all.length + '개 · 이미 등록돼 건너뜀 ' + skipped
+    + ' · 제외(임시파일) ' + r.ignored + ' · 사본 ' + r.copies.length + '건'
+    + '</div>'
+    + '<div style="font-size:12px;font-weight:600;margin:10px 0 6px">🟢 자동 승격 (' + r.promotions.length + ')</div>'
+    + r.promotions.slice(0,50).map(function(p){
+        return '<div style="font-size:12px;padding:4px 0;border-bottom:1px solid var(--border-soft)">'
+          + '<span class="tag navy">' + escapeHtml(p.type || p.titleHint || p.store) + '</span> '
+          + escapeHtml(p.year) + ' · ' + escapeHtml(p.name) + '</div>';
+      }).join('')
+    + (r.promotions.length > 50 ? '<div style="font-size:11px;color:var(--text-mute);padding:4px 0">…외 ' + (r.promotions.length - 50) + '건</div>' : '')
+    + '<div style="font-size:12px;font-weight:600;margin:14px 0 6px;color:#BA7517">🟡 확인해서 올릴 것 (' + r.maybes.length + ') — 체크한 것만 승격됩니다</div>'
+    + r.maybes.map(function(m, i){
+        return '<label style="display:flex;gap:6px;align-items:center;font-size:12px;padding:3px 0">'
+          + '<input type="checkbox" data-maybe="' + i + '"' + (_scanCtx.pickMaybe[i] ? ' checked' : '') + '>'
+          + '<span>' + escapeHtml(m.year) + ' · ' + escapeHtml(m.name) + '</span></label>';
+      }).join('');
+  $('scanBody').innerHTML = h;
+  Array.prototype.forEach.call($('scanBody').querySelectorAll('[data-maybe]'), function(cb){
+    cb.onchange = function(){ _scanCtx.pickMaybe[cb.getAttribute('data-maybe')] = cb.checked; };
+  });
+}
+
+function _scanCard(label, n, color){
+  return '<div class="card" style="flex:1;min-width:90px;text-align:center">'
+    + '<div style="font-size:20px;font-weight:700;color:' + color + '">' + n + '</div>'
+    + '<div style="font-size:11px;color:var(--text-mute)">' + label + '</div></div>';
+}
+
+function closeScan(){ $('modalScan').classList.remove('open'); _scanCtx = null; }
 
 /* localStorage → IDB 마이그레이션 (최초 1회) */
 async function migrateFilesToIDB(){
