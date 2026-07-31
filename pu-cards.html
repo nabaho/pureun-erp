@@ -1903,21 +1903,35 @@ async function sendToErp(id){
   if (Store.mode!=='firebase') return toast('ERP 연동은 Firebase 연결 후 가능합니다');
   if (!it.company) return toast('회사명이 없어 거래처로 등록할 수 없습니다');
   try{
-    const snap = await Store.db.ref('companies').once('value');
-    const cos = snap.val();
-    const list = Array.isArray(cos) ? cos.slice() : (cos ? Object.values(cos) : []);
+    /* 푸른이알피 업체는 data/companies/{v:목록, u:갱신시각} 에 있다.
+       예전에는 루트 companies 에 썼는데 그 노드는 아무도 읽지 않아 등록해도 나타나지 않았다. */
+    const db = firebase.database();
+    const snap = await db.ref('data/companies').once('value');
+    const wrap = snap.val();
+    const raw  = (wrap && wrap.v !== undefined) ? wrap.v : wrap;   // 배열형·객체형 둘 다 쓰인다
+    const list = Array.isArray(raw) ? raw.filter(Boolean)
+               : (raw && typeof raw === 'object' ? Object.keys(raw).map(k=>raw[k]).filter(Boolean) : []);
     const nBiz=erpNormBiz(it.bizno), nName=erpNormName(it.company);
     const exist = list.find(c=> (nBiz && erpNormBiz(c.bizNo)===nBiz) || (nName && erpNormName(c.name)===nName));
     if (exist) return toast(`이미 ERP 거래처에 있습니다: ${exist.name}`);
-    if (!confirm(`'${it.company}'를 ERP 거래처로 등록할까요?`)) return;
+    /* 사업자번호 없이 등록하면 이름으로만 이어져 나중에 같은 회사가 두 번 생긴다 — 미리 알린다 */
+    const warn = nBiz ? '' : '\n\n⚠ 이 명함에는 사업자번호가 없습니다.\n사업자번호 없이 등록하면 나중에 같은 회사가 두 번 생길 수 있습니다.\n업체관리에서 사업자번호를 채워 주세요.';
+    if (!confirm(`'${it.company}'를 ERP 거래처로 등록할까요?${warn}`)) return;
     /* ERP companies 레코드 형태(필드명 일치): name·bizNo·ceo·phone·email·address·manager */
-    const rec = { id:'co-'+Date.now()+'-'+Math.random().toString(36).slice(2,6),
+    const now = Date.now();
+    const rec = { id:'co-'+now.toString(36)+Math.random().toString(36).slice(2,6),
       name: it.company, bizNo: it.bizno||'', ceo: '',
       phone: it.tel || it.mobile || '', email: it.email||'',
       address: it.address||'', manager: it.owner||'',
-      _fromCard: it.id, createdAt: Date.now() };
-    if (Array.isArray(cos)){ list.push(rec); await Store.db.ref('companies').set(list); }
-    else { await Store.db.ref('companies/'+rec.id).set(rec); }
+      _fromCard: it.id, createdAt: now, updatedAt: now };
+    const up = {};
+    if (raw && !Array.isArray(raw) && typeof raw === 'object'){
+      up['data/companies/v/'+rec.id] = rec;              // 객체형 — 건별 쓰기(푸른이알피 dbUpsert와 동일)
+    } else {
+      up['data/companies/v'] = list.concat([rec]);       // 배열형 — 통째 쓰기(푸른이알피 dbSet과 동일)
+    }
+    up['data/companies/u'] = now;                        // 갱신시각 — 푸른이알피가 이걸 보고 다시 읽는다
+    await db.ref().update(up);
     toast(`✅ ERP 거래처로 등록했습니다: ${it.company}`);
   }catch(e){ console.error(e); toast('ERP 등록 실패 — 권한 또는 연결을 확인하세요'); }
 }
