@@ -282,6 +282,12 @@
   .stadd:hover{text-decoration:underline}
   .stchip{font-size:10px;font-weight:800;border-radius:4px;padding:1px 6px;background:#e0f2fe;color:#075985;white-space:nowrap}
   .stchip.done{background:var(--ok-bg);color:var(--ok)}
+  /* 담당자 묶음 접기 화살표 — 누를 수 있다는 것이 보여야 한다 */
+  .grp-h .fold{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;
+    border-radius:5px;background:#fff;border:1px solid var(--line);color:var(--sub);font-size:10px;
+    margin-right:4px;vertical-align:middle}
+  .grp-h:hover .fold{background:var(--acc-soft);border-color:#c7d7fe;color:var(--acc2)}
+  .grp-h:hover{background:#f7faff}
   .subrow select{padding:3px 8px;border:1px dashed #c3cfe0;background:#fff;border-radius:12px;font-size:11.5px;color:var(--sub);cursor:pointer}
   .fe .del{color:#e2b4b4;cursor:pointer;font-size:11px;visibility:hidden}
   .fe:hover .del{visibility:visible}
@@ -349,6 +355,8 @@ var KIND_SET={'업체':1,'사건':1,'컨설팅':1,'기금':1,'기타사업':1};
 function isKind(c){ return !!KIND_SET[String(c||'').trim()]; }
 function catList(){
   var seen={}, out=[];
+  // 사무관리 5종을 먼저 — 새 업무를 만들 때 이 다섯 중에서 고르는 것이 기본이다
+  Object.keys(KIND_SET).forEach(function(c){ if(!seen[c]){seen[c]=1;out.push(c);} });
   Object.keys(CATS).forEach(function(c){ if(!seen[c]){seen[c]=1;out.push(c);} });
   try{
     Object.keys(items||{}).forEach(function(k){
@@ -1180,6 +1188,8 @@ function renderMy(){
   if(S.myRole) list=list.filter(function(it){return roleOf(it,viewer())===S.myRole;});
   if(S.myCat) list=list.filter(function(it){return (it.cat||'기타')===S.myCat;});
   if(S.mySt)  list=list.filter(function(it){return (it.status||'진행중')===S.mySt;});
+  if(S.myPt)  list=list.filter(function(it){return itemName(it)===S.myPt;});
+  if(S.myDue) list=list.filter(function(it){ return dueMatch(it,S.myDue); });
   if(S.q)     list=list.filter(function(it){return matchQ(it,S.q);});
   var opts=ownerOptions();
   var h='<div class="row" style="flex-wrap:wrap">'
@@ -1258,8 +1268,16 @@ function renderMy(){
     +'<select onchange="S.mySt=this.value;renderMy()" title="상태로 좁히기">'
     +'<option value="">상태 전체</option>'
     +STATUSES.map(function(s){return '<option'+(S.mySt===s[0]?' selected':'')+'>'+s[0]+'</option>';}).join('')+'</select>'
+    // 기한 필터 — 팀 전체에는 있는데 내 업무에는 없어 "지난 것부터" 훑을 수가 없었다
+    +'<select onchange="S.myDue=this.value;renderMy()" title="기한으로 좁히기">'
+    +DUE_OPTS.map(function(o){ return '<option value="'+o[0]+'"'+(S.myDue===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join('')
+    +'</select>'
+    +'<select onchange="S.myPt=this.value;renderMy()" title="업무명(유형)으로 좁히기">'
+    +'<option value="">업무명 전체</option>'
+    +ptList(mine).map(function(p){ return '<option'+(S.myPt===p?' selected':'')+'>'+esc(p)+'</option>'; }).join('')
+    +'</select>'
     +'<span class="muted" style="font-size:11.5px">'+(list.length!==total?list.length+' / '+total:total)+'건</span>'
-    +((S.myCat||S.mySt||S.q||S.f||S.myRole)
+    +((S.myCat||S.mySt||S.q||S.f||S.myRole||S.myDue||S.myPt)
       ?'<span class="chipbtn on" onclick="myReset()" title="모든 필터 해제">✕ 필터</span>':'')
     +'</div>';
   h+='<div class="panel" style="padding:0;overflow-x:auto"><table><thead><tr>'
@@ -1280,7 +1298,25 @@ function sbHTML(key,label,val,cls){
 }
 function setFocus(k){ S.f=(S.f===k)?null:k; renderMy(); }
 function myRole(r){ S.myRole=(S.myRole===r)?'':r; renderMy(); }
-function myReset(){ S.myCat=''; S.mySt=''; S.q=''; S.f=null; S.myRole=''; renderMy(); }
+function myReset(){ S.myCat=''; S.mySt=''; S.q=''; S.f=null; S.myRole=''; S.myDue=''; S.myPt=''; renderMy(); }
+// 기한 조건 — 내 업무·팀 전체가 같은 선택지, 같은 규칙을 쓰도록 한 곳에 모았다
+var DUE_OPTS=[['','기한 전체'],['over','기한 지남'],['d7','임박 D-7'],['d30','한 달 안'],['none','기한 없음']];
+function dueMatch(it,mode){
+  var d=dday(itemDue(it));
+  if(mode==='none') return d===null;
+  if(mode==='over') return d!==null&&d<0;
+  if(mode==='d7')   return d!==null&&d>=0&&d<=7;
+  if(mode==='d30')  return d!==null&&d>=0&&d<=30;
+  return true;
+}
+// 목록에 실제로 쓰인 업무명(유형)만 모아 필터 선택지로 준다
+function ptList(arr){
+  var seen={}, out=[];
+  (arr||[]).forEach(function(it){
+    var n=itemName(it); if(n&&!seen[n]){ seen[n]=1; out.push(n); }
+  });
+  return out.sort(function(a,b){ return a.localeCompare(b,'ko'); });
+}
 function setWeek(mon){ S.week=mon||curMonday(); S.f=null; watchWeek(); closeCal(); route(); }
 function shiftWeek(n){ setWeek(addDays(S.week,n*7)); }
 function rowHTML(it,no){
@@ -2251,7 +2287,15 @@ function itemModal(editId){
       +'<div class="fld"><label>주담당</label><select id="if-mgr">'+mgrOpts(mainSel)+'</select></div>'
       +'<div class="fld"><label>부담당 (공동작업자)</label><select id="if-sub"><option value="">(없음)</option>'+mgrOpts(subSel)+'</select></div>'
       +'</div>'
-      +(it?'':'<div style="font-size:12px;color:var(--ok);background:var(--ok-bg);border-radius:7px;padding:7px 11px;margin-top:11px">✓ 관리번호 자동 부여: <b id="if-no">'+genNo(catList()[0])+'</b> — 연도-구분-연번</div>')
+      +(it?(peLinked(it)
+          ?'<div style="font-size:12px;color:var(--acc2);background:var(--acc-soft);border-radius:7px;padding:7px 11px;margin-top:11px">'
+            +'🔗 푸른이알피 <b>'+esc(PE_KIND[it.ref.type]||'')+(it.no?' '+esc(it.no):'')+'</b>와 연결된 업무입니다. '
+            +'업무명·의뢰인·업무 요약은 <b>양쪽이 서로 반영</b>됩니다.</div>'
+          :'')
+        :'<div style="font-size:12px;color:var(--ok);background:var(--ok-bg);border-radius:7px;padding:7px 11px;margin-top:11px">'
+          +'✓ 관리번호 자동 부여: <b id="if-no">'+genNo(catList()[0])+'</b> — 연도-구분-연번<br>'
+          +'<span style="color:var(--sub)">푸른이알피에 없는 <b>자체 업무</b>로 만들어집니다. 여기서만 관리되고 푸른이알피에는 생기지 않습니다.<br>'
+          +'나중에 푸른이알피에 같은 건이 등록되면 <b>🔗 푸른이알피 연동 → 짝짓기</b>로 이어 붙일 수 있습니다.</span></div>')
       +'<div class="row" style="justify-content:flex-end;margin-top:16px"><button onclick="closeM()">취소</button>'
       +'<button class="primary" onclick="saveItem('+(it?'\''+editId+'\'':'null')+')">'+(it?'저장':'등록')+'</button></div>');
     if(!it){ $('if-cat').addEventListener('change',function(){ var n=$('if-no'); if(n)n.textContent=genNo(this.value); }); }
@@ -3124,7 +3168,7 @@ function renderTeam(){
     +'<option value="">상태 전체</option>'
     +STATUSES.map(function(s){return '<option'+(S.teamSt===s[0]?' selected':'')+'>'+s[0]+'</option>';}).join('')+'</select>'
     +'<select onchange="S.teamDue=this.value;renderTeam()" title="기한으로 좁히기">'
-    +[['','기한 전체'],['over','기한 지남'],['d7','임박 D-7'],['none','기한 없음']].map(function(o){
+    +DUE_OPTS.map(function(o){
         return '<option value="'+o[0]+'"'+(S.teamDue===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select>'
     +'<span class="chipbtn'+(S.teamFlat?' on':'')+'" onclick="S.teamFlat=!S.teamFlat;renderTeam()" title="담당자 묶음을 풀고 한 표로 — 정렬에 유용">평면</span>'
     +(S.teamFlat?'':'<span class="chipbtn" onclick="teamFoldAll('+(folded?'false':'true')+')" title="담당자 묶음 접기·펼치기">'+(folded?'▾ 펼치기':'▸ 접기')+'</span>')
@@ -3138,12 +3182,7 @@ function renderTeam(){
     if(S.teamSt&&(it.status||'진행중')!==S.teamSt) return false;
     if(S.teamNolog&&wkLogsOf(it._id,wk).length) return false;
     if(S.teamStale){ var ld=(it.last&&it.last.d)||''; if(ld&&_dayDiff(today,ld)<14) return false; }
-    if(S.teamDue){
-      var d=dday(itemDue(it));
-      if(S.teamDue==='none'&&d!==null) return false;
-      if(S.teamDue==='over'&&!(d!==null&&d<0)) return false;
-      if(S.teamDue==='d7'&&!(d!==null&&d>=0&&d<=7)) return false;
-    }
+    if(S.teamDue&&!dueMatch(it,S.teamDue)) return false;
     if(S.q&&!matchQ(it,S.q)) return false;
     return true;
   }
@@ -3193,8 +3232,9 @@ function renderTeam(){
       shown+=arr.length;
       var rec=groups[nm].filter(function(it){return wkLogsOf(it._id,wk).length>0;}).length;
       var fold=!!(S.teamFold||{})[nm];
-      h+='<tr class="grp-h" style="cursor:pointer" onclick="teamFold(\''+escJ(nm)+'\')"><td colspan="8">'
-        +(fold?'▸':'▾')+' 👤 '+esc(nm)+' — 진행 '+groups[nm].length+'건'
+      h+='<tr class="grp-h" style="cursor:pointer" onclick="teamFold(\''+escJ(nm)+'\')" '
+        +'title="'+(fold?'펼치기':'접기')+' — 이 줄을 누르세요"><td colspan="8">'
+        +'<span class="fold">'+(fold?'▸':'▾')+'</span> 👤 '+esc(nm)+' — 진행 '+groups[nm].length+'건'
         +(arr.length!==groups[nm].length?' <span class="muted" style="font-weight:600">(조건 '+arr.length+'건)</span>':'')
         +' <span class="pct">이 주 기록 '+rec+'/'+groups[nm].length+'</span></td></tr>';
       if(!fold) h+=rowsOf(teamSortArr(arr,wk),true);
