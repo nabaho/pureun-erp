@@ -28,10 +28,17 @@
   }
 
   /* ===== 이름 정리 =====
-     발급일 괄호와 사본 연번을 떼어, 뒤에서 '이름 끝 단어'를 정확히 볼 수 있게 만든다. */
+     발급일 괄호와 연번을 떼어, 뒤에서 '이름 끝 단어'를 정확히 볼 수 있게 만든다.
+
+     앞쪽 정리 연번을 떼는 이유: 같은 충남도청 표창장이 실제 폴더에
+     '2018충남도청- 표창장' · '7-1. 2018충남도청- 표창장' · '9-1.충남도청- 표창장' · '18. 충남도청- 표창장'
+     으로 흩어져 있다. 연번을 남기면 서로 다른 서류로 보여 중복관리가 잡지 못한다.
+     ⚠ 앞이 연도(19xx·20xx)면 연번이 아니므로 떼지 않는다. */
   function cleanCore(name) {
     return String(name == null ? '' : name)
       .replace(/\.[^.]+$/, '')                                        // 확장자
+      .replace(/^\s*\d{1,3}(?:[-.]\d{1,3})+\s*\.?\s*/, '')            // 7-1. · 9-3 · 10-2 · 1-1.
+      .replace(/^\s*\d{1,3}\s*[.\-]\s*/, '')                          // 18. · 4. · 2.
       .replace(/\(\s*20\d{2}[.\-]\d{1,2}[.\-]\d{1,2}\s*\)/g, '')      // (2015.05.07)
       .replace(/\s*\(\d+\)\s*$/, '')                                  // (1) (2) 사본 연번
       .replace(/[\s_\-]+$/, '')
@@ -118,15 +125,13 @@
     (files || []).forEach(function (f) {
       if (isIgnoredFile(f.name)) { out.ignored++; return; }
 
-      var ck = f.name + '|' + f.size;
-      if (copySeen[ck]) { out.copies.push({ name: f.name, relPath: f.relPath, sameAs: copySeen[ck] }); return; }
-      copySeen[ck] = f.relPath;
-
       var caseKey = caseKeyOf(f.relPath);
       var y = pickYear(f.name, f.relPath, f.mtime);
       var org = caseKey ? orgFromCaseDir(caseKey.split('/')[2]) : '';
-      var c = classify(f.name);
 
+      /* 건 첨부 목록에는 사본도 남긴다.
+         같은 자격증을 여러 사업에 냈다는 사실 자체가 기록이므로, 사본을 빼면
+         '그 사업에 무엇을 냈는지'가 사라진다. 사본은 승격에서만 제외한다. */
       if (caseKey) {
         if (!caseMap[caseKey]) {
           caseMap[caseKey] = {
@@ -139,6 +144,12 @@
           name: f.name, relPath: f.relPath, size: f.size, mtime: f.mtime, ext: extOf(f.name)
         });
       }
+
+      var ck = f.name + '|' + f.size;
+      if (copySeen[ck]) { out.copies.push({ name: f.name, relPath: f.relPath, sameAs: copySeen[ck] }); return; }
+      copySeen[ck] = f.relPath;
+
+      var c = classify(f.name);
 
       if (c.level === 'sure') {
         out.promotions.push({

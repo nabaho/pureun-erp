@@ -22,8 +22,27 @@ test('isIgnoredFile: 실제 서류는 읽는다', () => {
 test('cleanCore: 확장자·발급일 괄호·사본 연번을 떼고 끝을 다듬는다', () => {
   assert.equal(KS.cleanCore('2015 체당금국선노무사 위촉장 (2015.12.17).pdf'), '2015 체당금국선노무사 위촉장');
   assert.equal(KS.cleanCore('충남지회 회장 위촉장 (2).pdf'), '충남지회 회장 위촉장');
-  assert.equal(KS.cleanCore('4. 협약서.hwp'), '4. 협약서');
+  assert.equal(KS.cleanCore('4. 협약서.hwp'), '협약서');
   assert.equal(KS.cleanCore('위촉장_.jpg'), '위촉장');
+});
+
+test('cleanCore: 앞쪽 정리 연번을 뗀다 — 같은 서류가 여러 건으로 갈라지지 않게', () => {
+  // 실제 폴더에 같은 충남도청 표창장이 연번만 다르게 4가지로 들어 있다
+  assert.equal(KS.cleanCore('7-1. 2018충남도청(양승조)- 표창장.pdf'), '2018충남도청(양승조)- 표창장');
+  assert.equal(KS.cleanCore('9-1.충남도청- 표창장.pdf'), '충남도청- 표창장');
+  assert.equal(KS.cleanCore('18. 충남도청- 표창장.pdf'), '충남도청- 표창장');
+  assert.equal(KS.cleanCore('10-2해양수산부(조승환)_표창장.pdf'), '해양수산부(조승환)_표창장');
+  assert.equal(KS.cleanCore('9-3해양수산부_표창장.pdf'), '해양수산부_표창장');
+  assert.equal(KS.cleanCore('12. 충남지회 회장 위촉장.pdf'), '충남지회 회장 위촉장');
+  assert.equal(KS.cleanCore('1-1. (신청서)사업장방문교육신청서(수강생작성).hwp'), '(신청서)사업장방문교육신청서(수강생작성)');
+});
+
+test('cleanCore 회귀: 앞이 연도면 연번으로 보고 떼지 않는다', () => {
+  assert.equal(KS.cleanCore('2015 체당금국선노무사 위촉장.pdf'), '2015 체당금국선노무사 위촉장');
+  assert.equal(KS.cleanCore('2023 일터혁신.png'), '2023 일터혁신');
+  assert.equal(KS.cleanCore('2023-2024 기술보호 실적증명서.pdf'), '2023-2024 기술보호 실적증명서');
+  assert.equal(KS.cleanCore('20150507 위촉장.pdf'), '20150507 위촉장');
+  assert.equal(KS.cleanCore('1999 옛자료 위촉장.pdf'), '1999 옛자료 위촉장');
 });
 
 test('extOf: 소문자 확장자', () => {
@@ -166,5 +185,17 @@ test('buildRecords: 건 밖 제출서류는 파일 1개 = 1건, 승격된 파일
   assert.ok(paths.includes('1. 위촉장/위촉장 목록.xlsx'));
   assert.ok(paths.includes('7. 컨설턴트,위원신청등/2020년/공고문.hwp'));
   assert.ok(!paths.includes('1. 위촉장/2015 체당금국선노무사 위촉장 (2015.12.17).pdf'));
-  assert.equal(r.submissions.length, 3);          // 건 1개 + 낱파일 2개
+  assert.equal(r.submissions.length, 4);          // 건 2개 + 낱파일 2개
+});
+
+test('buildRecords: 사본도 건 첨부 목록에는 남는다 — 그 사업에 무엇을 냈는지가 정보다', () => {
+  const r = KS.buildRecords(FIXTURE, { scanId: 'S-TEST' });
+  // 2020충남도청 건은 사본 1개로만 이뤄져 있지만 건 자체는 만들어져야 한다
+  const copyOnly = r.submissions.find((s) => s.caseDir.endsWith('2020충남도청'));
+  assert.ok(copyOnly, '사본만 있는 건도 목록에 남아야 합니다');
+  assert.equal(copyOnly.fileCount, 1);
+  assert.deepEqual(copyOnly.promoted, []);        // 사본은 승격하지 않는다
+  // 승격은 여전히 2건뿐 — 사본이 위촉장 목록을 오염시키지 않는다
+  assert.equal(r.promotions.length, 2);
+  assert.equal(r.copies.length, 1);
 });
