@@ -382,6 +382,24 @@ function endBadge(it){
   var w=END_BY_KEY[endWay(it)]||END_WAYS[0];
   return '<span class="badge" style="background:'+w[4]+';color:'+w[5]+'" title="'+esc(w[2])+'">'+w[1]+'</span>';
 }
+/* 사건 결과 — 푸른이알피 caseResult와 같은 값. 끝낸 방식과는 다른 축이다.
+   '취하'는 결과이지 끝낸 방식이 아니다 — 취하로 끝나도 업무는 정상 종료다. */
+var CASE_RESULTS=[
+  ['win','승소','✓','#dcfce7','#166534'],
+  ['lose','패소','✗','#fee2e2','#991b1b'],
+  ['settlement','조정','⇄','#fef3c7','#854d0e'],
+  ['withdrawn','취하','↩','#f1f5f9','#475569'],
+  ['other','기타','·','#f8fafc','#64748b']
+];
+var RES_BY_KEY={}; CASE_RESULTS.forEach(function(r){ RES_BY_KEY[r[0]]=r; });
+// 결과를 물을 업무인가 — 푸른이알피 사건이거나 구분이 사건인 건
+function hasResult(it){
+  return !!it&&((it.ref&&it.ref.type==='case')||String(it.cat||'')==='사건');
+}
+function resBadge(it){
+  var r=RES_BY_KEY[it&&it.end_result]; if(!r) return '';
+  return ' <span class="badge" style="background:'+r[3]+';color:'+r[4]+'" title="사건 결과">'+r[2]+r[1]+'</span>';
+}
 var LV_TYPES=['퇴사','휴직','연차','기타'];
 var HO_OVERDUE_DAYS=5;   // 인수 확인 지연 → 대표 배지
 // AI(2단계) — 푸른이알피 기존 프록시 재사용(Anthropic Messages API 형식). 최신 모델 우선, 프록시 호환용 폴백.
@@ -1348,6 +1366,18 @@ function completeItem(id){
       }).join('')
     +'<input id="cl-to" placeholder="어디로 넘겼는지 (기관·사무소·담당자)" '
     +'style="display:none;padding:5px 9px;border:1px solid var(--line);border-radius:7px;font-size:12.5px;margin-top:3px">'
+    // 사건 결과는 끝낸 방식과 다른 축이다 — 사건일 때만 묻는다
+    +(hasResult(it)
+      ?'<div style="border-top:1px solid var(--line);margin-top:7px;padding-top:7px">'
+        +'<label style="font-size:11px;font-weight:700;color:var(--sub)">사건 결과 <span class="muted" style="font-weight:400">선택</span></label>'
+        +'<div class="row" style="gap:5px;margin-top:4px" id="cl-res">'
+        +'<span class="chipbtn'+(it.end_result?'':' on')+'" data-r="" onclick="resPick(this)">없음</span>'
+        +CASE_RESULTS.map(function(r){
+            return '<span class="chipbtn'+(it.end_result===r[0]?' on':'')+'" data-r="'+r[0]+'" '
+              +'onclick="resPick(this)" style="border-color:'+r[4]+'33">'+r[2]+' '+r[1]+'</span>';
+          }).join('')
+        +'</div></div>'
+      :'')
     +'</div></div>'
     +(linked
       ?'<label style="display:flex;gap:8px;align-items:flex-start;background:var(--acc-soft);border:1px solid #c7d7fe;border-radius:9px;padding:10px 12px;font-size:12.5px;cursor:pointer">'
@@ -1379,6 +1409,17 @@ function _pickedWay(){
   var r=document.querySelector('input[name="endway"]:checked');
   return (r&&END_BY_KEY[r.value])?r.value:'done';
 }
+function resPick(el){
+  var box=$('cl-res'); if(!box) return;
+  [].slice.call(box.querySelectorAll('.chipbtn')).forEach(function(c){ c.classList.remove('on'); });
+  el.classList.add('on');
+}
+function _pickedRes(){
+  var box=$('cl-res'); if(!box) return '';
+  var on=box.querySelector('.chipbtn.on');
+  var v=on?on.getAttribute('data-r'):'';
+  return RES_BY_KEY[v]?v:'';
+}
 // 회고를 먼저 저장한 뒤 종료하고, AI가 붙어 있으면 지식 수확을 제안한다
 function doCompleteWithRetro(id,linked){
   var r={}, any=false;
@@ -1387,7 +1428,7 @@ function doCompleteWithRetro(id,linked){
     r[f[0]]=v; if(v) any=true;
   });
   var alsoPe=linked?!!(($('cl-pe')||{}).checked):false;
-  var way=_pickedWay(), to=(($('cl-to')||{}).value||'').trim();
+  var way=_pickedWay(), to=(($('cl-to')||{}).value||'').trim(), res=_pickedRes();
   var pre=Promise.resolve(true);
   if(any){
     // 기존 노트에 병합 — AI 인터뷰 답변(qa) 등이 지워지지 않도록
@@ -1398,7 +1439,7 @@ function doCompleteWithRetro(id,linked){
   }
   pre.then(function(ok){
     if(!ok) return;
-    return doComplete(id,linked?alsoPe:undefined,way,to).then(function(){
+    return doComplete(id,linked?alsoPe:undefined,way,to,res).then(function(){
       if(aiProxyUrl()&&(any||Object.keys(itemLogsCache[id]||{}).length||noteDone(items[id]||{})))
         setTimeout(function(){ kbHarvest(id); },500);
     });
@@ -1406,7 +1447,7 @@ function doCompleteWithRetro(id,linked){
 }
 // 종료/재개는 양방향 동기화 대상. state_at 이 "이 쪽에서 마지막으로 바뀐 시각"이고,
 // 푸른이알피가 나의 업무를 열 때 work_erp/pesync 스냅샷과 비교해 변한 쪽을 반대편에 반영한다.
-function setState(id,done,alsoPe,msg,way,to){
+function setState(id,done,alsoPe,msg,way,to,res){
   var it=items[id]||{}, now=new Date().toISOString();
   var w=END_BY_KEY[way]?way:'done';
   var patch={ state:done?'done':null, done_date:done?todayStr():null,
@@ -1414,7 +1455,9 @@ function setState(id,done,alsoPe,msg,way,to){
     // 끝낸 방식은 종료할 때만 찍고, 재개해도 지우지 않는다 —
     // 원래 취소였는지 이관이었는지를 잃으면 푸른이알피 상태를 되돌릴 수 없다
     end_way:done?w:(it.end_way||null),
-    end_to:done?(w==='transfer'?(to||''):null):(it.end_to||null) };
+    end_to:done?(w==='transfer'?(to||''):null):(it.end_to||null),
+    // 사건 결과도 재개해서 지우지 않는다 — 다시 종료할 때 되돌릴 근거다
+    end_result:done?(RES_BY_KEY[res]?res:null):(it.end_result||null) };
   if(peLinked(it)&&alsoPe!==undefined) patch.pe_nosync=alsoPe?null:true;
   var up={}; Object.keys(patch).forEach(function(k){ up[NS+'/items/'+id+'/'+k]=patch[k]; });
   return fbDb.ref().update(up).then(function(){
@@ -1426,9 +1469,10 @@ function setState(id,done,alsoPe,msg,way,to){
     route();
   }).catch(function(e){ toast('실패: '+e.message,'err'); route(); });
 }
-function doComplete(id,alsoPe,way,to){
+function doComplete(id,alsoPe,way,to,res){
   var w=END_BY_KEY[way]?way:'done';
-  return setState(id,true,alsoPe,'✅ '+END_BY_KEY[w][1]+' — 종료 화면으로 이동',w,to);
+  var r=RES_BY_KEY[res];
+  return setState(id,true,alsoPe,'✅ '+END_BY_KEY[w][1]+(r?' · '+r[1]:'')+' — 종료 화면으로 이동',w,to,res);
 }
 
 /* ── 빠른 기록 바 ── */
@@ -3298,7 +3342,7 @@ function peSyncBadge(it){
   if(st.synced_at&&st.pe_closed===true) return '<span class="pesync done" title="푸른이알피도 종료됨 · '+esc((st.synced_at||'').slice(0,10))+'">🔗 반영됨</span>';
   return '<span class="pesync wait" title="푸른이알피 나의 업무를 열 때 반영됩니다">🔗 반영 대기</span>';
 }
-function arReset(){ S.arMgr=''; S.arCat=''; S.arPeriod=''; S.q=''; S.arWay=''; renderArchive(); }
+function arReset(){ S.arMgr=''; S.arCat=''; S.arPeriod=''; S.q=''; S.arWay=''; S.arRes=''; renderArchive(); }
 function arFold(nm){ S.arFold=S.arFold||{}; S.arFold[nm]=!S.arFold[nm]; renderArchive(); }
 function renderArchive(){
   var app=$('app'); if(!app)return;
@@ -3314,6 +3358,7 @@ function renderArchive(){
   else if(S.arPeriod==='y') from=(new Date().getFullYear())+'-01-01';
   function pass(it){
     if(S.arWay&&endWay(it)!==S.arWay) return false;
+    if(S.arRes&&String(it.end_result||'')!==S.arRes) return false;
     if(S.arMgr&&_mgrOf(it)!==S.arMgr) return false;
     if(S.arCat&&(it.cat||'기타')!==S.arCat) return false;
     if(from&&(it.done_date||'')<from) return false;
@@ -3334,6 +3379,19 @@ function renderArchive(){
           +(S.arWay===w[0]?'\'\'':'\''+w[0]+'\'')+';renderArchive()" title="'+esc(w[2])+'">'
           +w[1]+' '+c+'</span>';
       }).join('')
+    // 사건 결과는 다른 축 — 결과가 붙은 건이 있을 때만 보여준다
+    +(function(){
+        var any=all.filter(function(it){ return !!it.end_result; }).length;
+        if(!any) return '';
+        return '<span class="sep">|</span>'
+          +CASE_RESULTS.map(function(r){
+              var c=all.filter(function(it){ return it.end_result===r[0]; }).length;
+              if(!c) return '';
+              return '<span class="sb'+(S.arRes===r[0]?' on':'')+'" onclick="S.arRes='
+                +(S.arRes===r[0]?'\'\'':'\''+r[0]+'\'')+';renderArchive()" title="사건 결과">'
+                +r[2]+' '+r[1]+' '+c+'</span>';
+            }).join('');
+      })()
     +'</div>';
   // 담당자별 종료 건수 요약 1줄 (클릭 = 그 사람만)
   h+='<div class="statbar">'
@@ -3352,7 +3410,7 @@ function renderArchive(){
         return '<option value="'+o[0]+'"'+(S.arPeriod===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select>'
     +'<span class="chipbtn'+(S.arFlat?' on':'')+'" onclick="S.arFlat=!S.arFlat;renderArchive()" title="담당자 묶음을 풀고 한 표로">평면</span>'
     +'<span class="muted" style="font-size:11.5px">'+(done.length!==all.length?done.length+' / '+all.length:all.length)+'건</span>'
-    +((S.arMgr||S.arCat||S.arPeriod||S.q||S.arWay)?'<span class="chipbtn on" onclick="arReset()" title="모든 필터 해제">✕ 필터</span>':'')
+    +((S.arMgr||S.arCat||S.arPeriod||S.q||S.arWay||S.arRes)?'<span class="chipbtn on" onclick="arReset()" title="모든 필터 해제">✕ 필터</span>':'')
     +'</div>';
   h+='<div class="panel" style="padding:0;overflow-x:auto"><table><thead><tr>'
     +'<th class="rowno">#</th><th style="width:52px">방식</th><th style="width:56px">구분</th><th>기업 / 업무</th>'
@@ -3362,7 +3420,7 @@ function renderArchive(){
   var COLS=(S.arFlat||S.arMgr)?9:8;
   function rowsOf(arr){
     return arr.map(function(it,i){
-      return '<tr>'+tdNo(i+1)+'<td>'+endBadge(it)+'</td><td>'+catBadge(it.cat)+'</td>'
+      return '<tr>'+tdNo(i+1)+'<td>'+endBadge(it)+resBadge(it)+'</td><td>'+catBadge(it.cat)+'</td>'
         +'<td class="itc" onclick="openDrawer(\''+escJ(it._id)+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
         +'<div class="sub">'+esc(itemName(it))+(it.no?' · '+esc(it.no):'')
         +(endWay(it)==='transfer'&&it.end_to?' <span class="muted">→ '+esc(it.end_to)+'</span>':'')+'</div></td>'
@@ -3418,6 +3476,11 @@ function peEndWay(x){
   if(/취소/.test(r)) return 'cancel';
   if(/이관/.test(r)) return 'transfer';
   return _peClosed(x)?'done':'';
+}
+// 푸른이알피 사건 결과 — 값 이름이 같으므로 그대로 쓴다
+function peResult(x){
+  var v=String((x&&x.caseResult)||'').trim();
+  return RES_BY_KEY[v]?v:'';
 }
 /* 유형 — 현장클리닉·기술보호·임금체불·직장내괴롭힘 대리 같은 실제 업무 종류.
    구분(cat)이 아니라 업무명 자리에 쓴다. 못 찾으면 빈 문자열을 돌려주고,
@@ -3717,12 +3780,18 @@ function peAutoSync(){
       // 이미 종료된 건의 "끝낸 방식"을 푸른이알피에서 한 번 당겨온다.
       // 종료 상태 자체는 pesync가 담당하고, 여기서는 방식(종료·취소·이관)만 채운다.
       // 이미 값이 있으면 건드리지 않는다 — 사람이 고른 것을 덮지 않기 위해서다.
-      if(it.state==='done'&&!it.end_way){
-        var rec=peRec(it), w=rec?peEndWay(rec):'';
-        if(w){
-          up[P+'end_way']=w;
-          if(w==='transfer'&&rec.transferredTo) up[P+'end_to']=String(rec.transferredTo);
-          up[P+'status']=(END_BY_KEY[w]||END_WAYS[0])[1];
+      if(it.state==='done'&&(!it.end_way||!it.end_result)){
+        var rec=peRec(it);
+        if(rec){
+          if(!it.end_way){
+            var w=peEndWay(rec);
+            if(w){
+              up[P+'end_way']=w;
+              if(w==='transfer'&&rec.transferredTo) up[P+'end_to']=String(rec.transferredTo);
+              up[P+'status']=(END_BY_KEY[w]||END_WAYS[0])[1];
+            }
+          }
+          if(!it.end_result){ var rr=peResult(rec); if(rr) up[P+'end_result']=rr; }
         }
       }
       var c=candByRef[k]; if(!c) return;            // 종료된 건 → 미러 안 함(종료는 pesync 담당)
