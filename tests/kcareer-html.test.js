@@ -177,6 +177,56 @@ test('fsUndoScan은 붙인 기존 레코드를 지우지 않고 경로만 뗀다
   assert.equal(old.attachedScanId, undefined);
 });
 
+test('제출서류 목록이 CAREER_CFG에 등록돼 있다', () => {
+  assert.match(source, /submission:\s*\{\s*store:\s*'submission'/);
+  assert.match(source, /qFields:\s*\['org','title','caseDir'\]/);
+});
+
+test('제출서류 스토어가 빈 스토어 초기화 목록에 들어가 있다', () => {
+  // 새 기기에서 get('submission')이 터지지 않도록 loadSeed가 빈 배열을 깔아줘야 한다
+  const m = source.match(/\['license','complete'[\s\S]{0,300}?\]\.forEach/);
+  assert.ok(m, 'loadSeed의 스토어 초기화 배열을 찾을 수 없습니다');
+  assert.match(m[0], /'submission'/);
+});
+
+test('제출서류 페이지와 사이드바 메뉴가 있다', () => {
+  assert.match(source, /<section class="page-view" id="page-submission">/);
+  assert.match(source, /\['page-submission','제출서류'\]/);
+});
+
+test('승격 버튼 함수가 있다', () => {
+  assert.match(source, /function promoteSubmissionFile\(/);
+});
+
+test('제출서류 건을 열면 그 안 서류 목록이 나온다', () => {
+  assert.match(source, /function openSubmissionFiles\(/);
+  assert.match(source, /<div class="modal-ov" id="modalSub">/);
+  const src = funcSource('openSubmissionFiles');
+  assert.match(src, /openLocalOriginal/, '건 안에서 원본을 열 수 있어야 합니다');
+  assert.match(src, /promoteSubmissionFile/, '건 안에서 승격할 수 있어야 합니다');
+});
+
+test('로컬 원본 열기가 있고 실패해도 데이터를 건드리지 않는다', () => {
+  const src = funcSource('openLocalOriginal');
+  assert.match(src, /다시 스캔/);
+  assert.ok(!/\bset\(/.test(src), '열람 실패로 데이터를 건드리면 안 됩니다');
+});
+
+test('rowActions는 fs 레코드에 다운로드·원본삭제를 주지 않는다', () => {
+  const src = funcSource('rowActions');
+  assert.match(src, /isFs/);
+  assert.match(src, /openLocalOriginal/);
+  // fs 분기가 base64용 버튼보다 앞에 와야 한다
+  assert.ok(src.indexOf('isFs?') < src.indexOf('downloadFile'));
+});
+
+test('원본 없는 항목만 필터와 중복관리 표시가 fs 레코드를 인식한다', () => {
+  assert.ok(!/rows\.filter\(function\(r\)\{ return !fileExists\(r\.id\); \}\)/.test(source),
+    '원본 없는 항목만 필터가 fs 레코드를 원본 없음으로 취급하면 안 됩니다');
+  const dup = funcSource('_dupRow');
+  assert.match(dup, /hasOriginal\(r\)/);
+});
+
 test('fsUndoScan은 scanId가 일치하는 레코드만 지운다', () => {
   const store = { wiccok: [], cert: [], certdoc: [], submission: [] };
   const ctx = {

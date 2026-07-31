@@ -1001,6 +1001,17 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
         <div id="puEtcBox" style="margin-bottom:12px"></div>
         <div class="dt"></div>
       </div></section>
+      <section class="page-view" id="page-submission"><div class="page">
+        <div class="page-head"><div class="page-title">📥 제출서류</div><div class="page-desc">신청서·제출서류를 건 단위로 보관 — 위촉장 › ⋯ 더보기 › 서류 폴더 스캔으로 등록됩니다</div></div>
+        <div class="toolbar">
+          <input class="tb-input" data-f="q" placeholder="기관·건 이름 검색" style="min-width:220px">
+          <select class="tb-select" data-f="year"><option value="">전체 연도</option></select>
+          <div class="tb-spacer"></div>
+          <span class="cnt" style="font-size:11px;color:var(--text-mute)"></span>
+          <button class="btn" data-act="csv">📤 CSV</button>
+        </div>
+        <div class="dt" data-tbl="submission"></div>
+      </div></section>
       <section class="page-view" id="page-settings"><div class="page">
         <h2>환경설정</h2><div class="desc">개인정보·계좌·API·데이터·백업 관리</div>
         <div class="tabrow">
@@ -1203,6 +1214,13 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
     <div class="modal-h">🔍 서류 폴더 스캔 결과 — 아직 저장되지 않았습니다</div>
     <div class="modal-b" id="scanBody"></div>
     <div class="modal-foot"><button class="btn" onclick="closeScan()">닫기 (저장 안 함)</button><button class="btn primary" onclick="fsCommitScan()">등록</button></div>
+  </div>
+</div>
+<div class="modal-ov" id="modalSub">
+  <div class="modal" style="width:720px">
+    <div class="modal-h">📥 이 건에 낸 서류</div>
+    <div class="modal-b" id="subBody"></div>
+    <div class="modal-foot"><button class="btn" onclick="closeSub()">닫기</button></div>
   </div>
 </div>
 <div class="modal-ov" id="modalResume">
@@ -1421,7 +1439,7 @@ function loadSeed(){
   const map = { wiccok:'wiccok', cert:'cert', consult:'consult', lecture:'lecture', case:'case' };
   if(!LS.get(NS+'_seeded')){
     Object.keys(map).forEach(k=>{ if(SEED[k]) set(map[k], SEED[k]); });
-    ['license','complete','award','edu','fund','etc','meetfee','etcfee','resume','profile','certdoc','personal','account','id_docs','gallery'].forEach(k=>{ if(!LS.get(NS+k)) set(k,[]); });
+    ['license','complete','award','edu','fund','etc','meetfee','etcfee','resume','profile','certdoc','personal','account','id_docs','gallery','submission'].forEach(k=>{ if(!LS.get(NS+k)) set(k,[]); });
     LS.set(NS+'_seeded','1');
   }
 }
@@ -1807,7 +1825,82 @@ function fsUndoScan(scanId){
   });
 }
 
-/* 환경설정 › 데이터 관리의 '↩ 이번 스캔 되돌리기' 버튼 진입점 */
+/* ===== 로컬 원본 열람 =====
+   경로를 따라 그때 읽어 새 탭에 띄운다. OneDrive 클라우드 파일은 이 시점에만 내려온다. */
+async function openLocalOriginal(relPath){
+  var root = await fsRoot();
+  if(!root){ toast('이 기기에는 서류 폴더가 연결돼 있지 않습니다 — 위촉장 › ⋯ 더보기 › 서류 폴더 연결'); return; }
+  try{
+    var segs = String(relPath).split('/'), dir = root;
+    for(var i = 0; i < segs.length - 1; i++) dir = await dir.getDirectoryHandle(segs[i]);
+    var fh = await dir.getFileHandle(segs[segs.length - 1]);
+    var f = await fh.getFile();
+    var url = URL.createObjectURL(f);
+    window.open(url, '_blank');
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+  }catch(e){
+    console.warn('openLocalOriginal', relPath, e);
+    toast('원본을 못 찾았습니다 — 파일이 이동·삭제되었을 수 있습니다. 다시 스캔하세요');
+  }
+}
+
+/* 레코드 하나로 두 보관방식을 모두 처리하는 단일 입구 */
+async function openOriginal(r){
+  if(!r) return;
+  if(r.src === 'fs'){ await openLocalOriginal(r.relPath); return; }
+  var f = await getFileAsync(r.id);
+  if(!f || !f.base64){ toast('첨부 원본이 없습니다'); return; }
+  var url = URL.createObjectURL(new Blob([b64ToAb(f.base64)], {type:'application/octet-stream'}));
+  window.open(url, '_blank');
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+}
+
+/* ===== 제출서류 건 열기 — 그 사업에 낸 서류 목록 ===== */
+function openSubmissionFiles(id){
+  var s = get('submission').find(function(x){ return x.id === id; });
+  if(!s){ toast('건을 찾을 수 없습니다'); return; }
+  var promoted = s.promoted || [];
+  var head = '<div style="font-size:12px;color:var(--text-mute);margin-bottom:10px">'
+    + escapeHtml([s.year, s.org].filter(Boolean).join(' · ')) + ' · 서류 ' + (s.fileCount || 0) + '개'
+    + (s.caseDir ? '<div style="margin-top:4px;word-break:break-all">' + escapeHtml(s.caseDir) + '</div>' : '')
+    + '</div>';
+  var list = (s.files || []).map(function(f){
+    var isP = promoted.indexOf(f.relPath) >= 0;
+    return '<div style="display:flex;gap:6px;align-items:center;font-size:12px;padding:6px 0;border-top:1px solid var(--border);flex-wrap:wrap">'
+      + '<span style="flex:1;min-width:140px;word-break:break-all">' + escapeHtml(f.name) + '</span>'
+      + '<span style="color:var(--text-mute);white-space:nowrap">' + Math.round((f.size || 0) / 1024) + 'KB</span>'
+      + '<button class="btn sm" onclick="openLocalOriginal(\'' + _jsAttr(f.relPath) + '\')">📄 원본</button>'
+      + (isP ? '<span style="color:var(--teal);font-size:11px;white-space:nowrap">✅ 승격됨</span>'
+             : '<button class="btn sm primary" onclick="promoteSubmissionFile(\'' + _jsAttr(s.id) + '\',\'' + _jsAttr(f.relPath) + '\')">⬆ 위촉장으로</button>')
+      + '</div>';
+  }).join('');
+  $('subBody').innerHTML = head + (list || '<div style="font-size:12px;color:var(--text-mute)">서류가 없습니다</div>');
+  $('modalSub').classList.add('open');
+}
+function closeSub(){ $('modalSub').classList.remove('open'); }
+
+/* 제출서류 안의 파일 1개를 위촉장 목록으로 올린다 (판정이 놓친 결과물을 손으로 구제) */
+function promoteSubmissionFile(subId, relPath){
+  var subs = get('submission'), s = subs.find(function(x){ return x.id === subId; });
+  if(!s){ toast('건을 찾을 수 없습니다'); return; }
+  var f = (s.files || []).find(function(x){ return x.relPath === relPath; });
+  if(!f){ toast('파일을 찾을 수 없습니다'); return; }
+  var db = get('wiccok');
+  db.unshift({ id: wiccokId('위촉장', s.year || ''), type:'위촉장', org: s.org || '',
+    titleVal: KcareerScan.cleanCore(f.name), issuer:'', issueDate:'', period:'',
+    year: s.year || '', note:'(수동 승격)', fname: f.name,
+    src:'fs', relPath: f.relPath, fileSize: f.size, fileMtime: f.mtime,
+    fromCase: s.caseDir || '', needCheck:true, scanId: s.scanId || '',
+    savedAt: new Date().toISOString() });
+  set('wiccok', db);
+  s.promoted = (s.promoted || []).concat([relPath]);
+  set('submission', subs);
+  try{ renderCareer('wiccok'); renderCareer('submission'); }catch(e){}
+  openSubmissionFiles(subId);   /* 서랍 새로 그려서 '승격됨' 표시 반영 */
+  toast('✅ 위촉장 목록으로 올렸습니다 — 종류·발급일을 편집창에서 확인하세요');
+}
+
+/* 위촉장 › ⋯ 더보기의 '↩ 이번 스캔 되돌리기' 버튼 진입점 */
 function fsUndoLast(){
   var sid = fsLastScanId();
   if(!sid){ toast('되돌릴 스캔 기록이 없습니다'); return; }
@@ -1850,7 +1943,7 @@ let NAV=[
   {g:'이력서관리', items:[['page-quickcv','⚡ 빠른 이력서(PDF)'],['page-resume-hub','이력서 생성·보관'],['page-profile','프로필 작성보관'],['page-certdoc','경력증명서 보관']]},
   {g:'회의·비용관리', items:[['page-meetfee','회의등비용신청'],['page-etcfee','기타비용신청']]},
   {g:'경력관리', items:[['page-wiccok','위촉장'],['page-license','자격증'],['page-complete','수료증'],['page-award','표창 및 포상'],['page-edu','학력']]},
-  {g:'실적관리', items:[['page-case','사건실적'],['page-consult','컨설팅실적'],['page-fund','기금실적'],['page-lecture','강의실적'],['page-etc','기타실적']]},
+  {g:'실적관리', items:[['page-case','사건실적'],['page-consult','컨설팅실적'],['page-fund','기금실적'],['page-lecture','강의실적'],['page-etc','기타실적'],['page-submission','제출서류']]},
   {g:null, items:[['page-settings','환경설정']]},
 ];
 function navState(){ try{ return JSON.parse(LS.get(NS+'nav_state')||'{}'); }catch(e){ return {}; } }
@@ -3378,26 +3471,26 @@ const CAREER_CFG={
       <td style="white-space:nowrap">${formatDate(r.issueDate)||r.year||'-'}</td>
       <td style="font-size:11px;white-space:nowrap">${formatDate(r.periodStart||sp[0])||'-'}</td>
       <td style="font-size:11px;white-space:nowrap">${formatDate(r.periodEnd||sp[1])||'-'}</td>
-      <td onclick="event.stopPropagation()">${rowActions(r.id,'wiccok',r.org||r.titleVal,p)}</td></tr>`;}},
+      <td onclick="event.stopPropagation()">${rowActions(r.id,'wiccok',r.org||r.titleVal,p,r)}</td></tr>`;}},
   award:{store:'wiccok',filter:r=>r.type==='표창'||r.type==='포상',qFields:['org','titleVal','issuer'],
     cols:['ID','유형','수여기관','수여자','내용','수상일','문서번호','관리'],
     row:(r,p)=>`<tr style="cursor:pointer"><td><span class="id-chip">${r.id}</span></td><td><span class="tag amber">${r.type}</span></td>
       <td><strong>${r.org||'-'}</strong></td><td style="font-size:11px;color:var(--text-mute)">${r.issuer||'-'}</td>
       <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.titleVal||'-'}</td>
       <td>${formatDate(r.issueDate)||r.year||'-'}</td>
-      <td style="font-size:11px;color:var(--text-mute)">${r.note||'-'}</td><td onclick="event.stopPropagation()">${rowActions(r.id,'wiccok',r.org||r.titleVal,p)}</td></tr>`},
+      <td style="font-size:11px;color:var(--text-mute)">${r.note||'-'}</td><td onclick="event.stopPropagation()">${rowActions(r.id,'wiccok',r.org||r.titleVal,p,r)}</td></tr>`},
   license:{store:'cert',filter:r=>!/수료|이수/.test(r.title||''),qFields:['title','org','issuer','num'],
     cols:['ID','자격명','발급기관','발급자','취득일','자격번호','관리'],
     row:(r,p)=>`<tr style="cursor:pointer"><td><span class="id-chip">${r.id}</span></td><td><strong>${r.title||'-'}</strong></td>
       <td>${r.org||'-'}</td><td style="font-size:11px;color:var(--text-mute)">${r.issuer||'-'}</td>
       <td>${formatDate(r.date)||'-'}</td><td style="font-size:11px;color:var(--text-mute)">${r.num||'-'}</td>
-      <td onclick="event.stopPropagation()">${rowActions(r.id,'cert',r.title,p)}</td></tr>`},
+      <td onclick="event.stopPropagation()">${rowActions(r.id,'cert',r.title,p,r)}</td></tr>`},
   complete:{store:'cert',filter:r=>/수료|이수/.test(r.title||''),qFields:['title','org','issuer'],
     cols:['ID','과정명','발급기관','발급자','수료일','이수시간','관리'],
     row:(r,p)=>`<tr style="cursor:pointer"><td><span class="id-chip">${r.id}</span></td><td><strong>${r.title||'-'}</strong></td>
       <td>${r.org||'-'}</td><td style="font-size:11px;color:var(--text-mute)">${r.issuer||'-'}</td>
       <td>${formatDate(r.date)||'-'}</td><td style="font-size:11px;color:var(--text-mute)">${r.duration?r.duration+'h':'-'}</td>
-      <td onclick="event.stopPropagation()">${rowActions(r.id,'cert',r.title,p)}</td></tr>`},
+      <td onclick="event.stopPropagation()">${rowActions(r.id,'cert',r.title,p,r)}</td></tr>`},
   edu:{store:'edu',qFields:['school','degree','major'],
     cols:['ID','학교명','학과·전공','학위','재학기간','졸업구분','관리'],
     row:(r,p)=>`<tr style="cursor:pointer"><td><span class="id-chip">${r.id}</span></td><td><strong>${r.school||'-'}</strong></td>
@@ -3434,6 +3527,16 @@ const CAREER_CFG={
     row:(r,p)=>`<tr style="cursor:pointer"><td><span class="id-chip">${r.id}</span></td><td>${r.type||'-'}</td>
       <td><strong>${r.org||'-'}</strong></td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.project||'-'}</td><td>${r.year||'-'}</td>
       <td onclick="event.stopPropagation()">${rowActions(r.id,'etc',r.org,p)}</td></tr>`},
+  /* 제출서류 — 7번 폴더의 '건' 단위. 스캔으로만 등록되고 원본은 경로 참조다. */
+  submission:{store:'submission',qFields:['org','title','caseDir'],
+    cols:['ID','연도','기관·사업','건 이름','서류','승격','관리'],
+    row:(r,p)=>`<tr style="cursor:pointer" onclick="openSubmissionFiles('${_jsAttr(r.id)}')"><td><span class="id-chip">${r.id}</span></td>
+      <td>${r.year||'-'}</td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><strong>${escapeHtml(r.org||'-')}</strong></td>
+      <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.title||'-')}</td>
+      <td style="white-space:nowrap">${r.fileCount||0}개</td>
+      <td style="font-size:11px;color:var(--teal)">${(r.promoted||[]).length?('승격 '+(r.promoted||[]).length):'-'}</td>
+      <td onclick="event.stopPropagation()">${rowActions(r.id,'submission',r.title,p,r)}</td></tr>`},
   meetfee:{store:'meetfee',qFields:['content','org','type'],
     cols:['ID','일자','구분','내용/사유','금액','지출처/수령인','관리'],
     row:(r,p)=>`<tr style="cursor:pointer"><td><span class="id-chip">${r.id}</span></td><td>${formatDate(r.date)||'-'}</td>
@@ -3447,10 +3550,13 @@ const CAREER_CFG={
       <td style="text-align:right">${r.amt?Number(r.amt).toLocaleString('ko-KR')+'원':'-'}</td><td>${r.org||'-'}</td>
       <td onclick="event.stopPropagation()">${rowActions(r.id,'etcfee',r.content,p)}</td></tr>`},
 };
-function rowActions(id,store,label,page){ const has=fileExists(id), L=(label||'').replace(/['"]/g,'');
+/* rec를 넘기면 로컬 폴더 참조(src:'fs') 레코드도 원본 있는 것으로 판정한다.
+   fs 레코드는 base64가 없으므로 다운로드·원본삭제 대신 '원본 열기'만 준다. */
+function rowActions(id,store,label,page,rec){ const isFs=!!(rec&&rec.src==='fs'&&rec.relPath), has=rec?hasOriginal(rec):fileExists(id), L=(label||'').replace(/['"]/g,'');
   return '<span style="display:inline-flex;gap:3px">'+
 
-    (has?`<button class="btn sm" style="background:var(--navy);color:#fff;border-color:var(--navy)" onclick="openEditDrawer('${page}','${id}')">📄 보기·편집</button><button class="btn sm" style="background:var(--teal);color:#fff;border-color:var(--teal)" onclick="downloadFile('${id}')">⬇</button><button class="btn sm" onclick="deleteAttach('${id}','${page}')" title="원본만 삭제 후 재업로드" style="color:var(--red);font-size:11px">🗑원본</button>`
+    (isFs?`<button class="btn sm" style="background:var(--navy);color:#fff;border-color:var(--navy)" onclick="openLocalOriginal('${_jsAttr(rec.relPath)}')" title="폴더에서 바로 열기">📄 원본</button>`
+      :has?`<button class="btn sm" style="background:var(--navy);color:#fff;border-color:var(--navy)" onclick="openEditDrawer('${page}','${id}')">📄 보기·편집</button><button class="btn sm" style="background:var(--teal);color:#fff;border-color:var(--teal)" onclick="downloadFile('${id}')">⬇</button><button class="btn sm" onclick="deleteAttach('${id}','${page}')" title="원본만 삭제 후 재업로드" style="color:var(--red);font-size:11px">🗑원본</button>`
         :`<button class="btn sm" onclick="attachRec('${id}','${store}','${page}')">📎 첨부</button>`)+
     `<button class="btn sm" onclick="memoRec('${store}','${id}','${page}')">💬</button>`+
     `<button class="btn sm" style="color:#fff;background:var(--red);border-color:var(--red)" onclick="delRec('${store}','${id}','${page}')">🗑 삭제</button></span>`;
@@ -3486,8 +3592,8 @@ function renderCareer(name){ const cfg=CAREER_CFG[name]; if(!cfg) return;
     rows=keyed.map(function(o){return o.r;}); }
   else { rows.sort((a,b)=>(b.issueDate||b.date||b.year||'').localeCompare(a.issueDate||a.date||a.year||'')); }
   const cntEl=sec.querySelector('.cnt'); if(cntEl) cntEl.textContent=rows.length+'건';
-  const missingCount=rows.filter(function(r){ return !fileExists(r.id); }).length;
-  if(_noFileOnly[name]) rows=rows.filter(function(r){ return !fileExists(r.id); });
+  const missingCount=rows.filter(function(r){ return !hasOriginal(r); }).length;
+  if(_noFileOnly[name]) rows=rows.filter(function(r){ return !hasOriginal(r); });
   const nofileBar='<div class="nofile-bar"><button type="button" class="nofile-btn'+(_noFileOnly[name]?' active':'')+'" onclick="toggleNoFile(\''+name+'\')">📎 원본 없는 항목만'+(missingCount?' ('+missingCount+')':'')+'</button>'+(_noFileOnly[name]?'<span style="font-size:11px;color:var(--text-mute);margin-left:8px">행을 열어 원본을 첨부하세요</span>':'')+'</div>';
   const box=sec.querySelector('.dt');
   const raw=(_pageLimit[name]==null)?20:_pageLimit[name]; const limit=raw<0?rows.length:raw; const view=rows.slice(0,limit);
@@ -3688,7 +3794,7 @@ function closeDup(){ document.getElementById('modalDup').classList.remove('open'
 function _dupLooseKey(r){ function norm(s){ return (s||'').replace(/[\s\-·\(\)「」『』《》【】]/g,'').toLowerCase(); }
   if(r.bank!==undefined) return norm(r.bank)+'|'+norm(r.number);
   return norm(r.org||'').slice(0,10)+'|'+norm(r.titleVal||r.title||r.topic||r.project||r.kind||'').slice(0,6); }
-function _dupRow(r){ var info=[r.id, formatDate(r.issueDate||r.date)||r.year||'', r.number||''].filter(Boolean).join(' · '); var hasFile=fileExists(r.id);
+function _dupRow(r){ var info=[r.id, formatDate(r.issueDate||r.date)||r.year||'', r.number||''].filter(Boolean).join(' · '); var hasFile=hasOriginal(r);
   return '<div style="display:flex;gap:6px;align-items:center;font-size:12px;padding:6px 0;border-top:1px solid var(--border);flex-wrap:wrap">'
     +'<span class="id-chip">'+escapeHtml(r.id)+'</span><span style="flex:1;min-width:100px">'+escapeHtml(info)+'</span>'
     +(hasFile?'<span style="color:var(--teal);font-size:11px">📎원본</span>':'')
