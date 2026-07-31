@@ -52,6 +52,24 @@ test('폴더 연결 UI는 환경설정이 숨겨진 계정에서도 닿는 곳�
   assert.match(wiccok, /onclick="fsUndoLast\(\)"/);
 });
 
+test('원본 보호 토글도 환경설정 밖에서 닿는다', () => {
+  const wiccok = source.slice(
+    source.indexOf('<section class="page-view" id="page-wiccok"'),
+    source.indexOf('<div class="dt" data-tbl="wiccok">')
+  );
+  assert.match(wiccok, /onclick="toggleOrigLock\(\)"/);
+  assert.match(source, /function toggleOrigLock\(\)/);
+  assert.match(source, /function refreshOrigLockBtns\(\)/);
+});
+
+test('닿을 수 없는 환경설정으로 안내하지 않는다', () => {
+  // 환경설정은 applyPerfAccess가 비관리자에게 숨긴다. 그 안으로 보내면 막다른 길이 된다.
+  assert.ok(!/원본 보호가 켜져 있습니다 — 환경설정/.test(source),
+    '원본 보호 안내가 환경설정을 가리키면 안 됩니다');
+  assert.ok(!/환경설정 › 데이터 관리에서 서류 폴더를 연결/.test(source),
+    '폴더 연결 안내가 환경설정을 가리키면 안 됩니다');
+});
+
 test('미지원 브라우저 숨김은 클래스로 두 위치를 한 번에 처리한다', () => {
   assert.match(source, /document\.querySelectorAll\('\.fs-ui'\)/);
   // id 기반 숨김이 남아 있으면 한쪽만 숨겨져 버린다
