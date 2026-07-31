@@ -243,6 +243,17 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
 .cfg-note{font-size:.76rem;color:#1e40af;background:#eff6ff;border-radius:8px;padding:9px 11px;margin:0 0 6px;line-height:1.6;}
 .cfg-warn{font-size:.72rem;color:#9a3412;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:9px 11px;margin:16px 0 0;line-height:1.6;}
 .cfg-stat{font-size:.72rem;color:#64748b;}
+/* 그 밖의 설정 — 대표가 직접 항목을 늘릴 수 있는 자유 칸 */
+.cfg-extra{margin-top:18px;padding-top:14px;border-top:1px dashed #dfe4ef;}
+.cfg-extra-hd{display:flex;align-items:center;gap:8px;margin-bottom:4px;}
+.cfg-extra-hd b{font-size:.8rem;color:#334155;}
+#cfgAdd{margin-left:auto;padding:5px 11px;border:1.5px solid #dfe4ef;background:#fff;border-radius:8px;font-size:.72rem;font-weight:700;color:#1e40af;cursor:pointer;font-family:inherit;}
+#cfgAdd:hover{border-color:#1e40af;}
+.cfg-x{display:flex;gap:6px;align-items:center;margin-top:6px;}
+.cfg-x input.k{width:34%;flex-shrink:0;}
+.cfg-x input.v{flex:1;min-width:0;}
+.cfg-x button{flex-shrink:0;padding:8px 10px;border:1.5px solid #fecaca;background:#fff;color:#dc2626;border-radius:9px;font-size:.74rem;font-weight:700;cursor:pointer;font-family:inherit;}
+.cfg-empty{font-size:.72rem;color:#cbd5e1;padding:8px 0;}
 #sgModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:70;align-items:center;justify-content:center;padding:16px;}
 #sgModal .box{background:#fff;border-radius:16px;width:520px;max-width:100%;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 50px rgba(15,23,42,.3);}
 #sgModal .hd{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid #eef2f7;flex-shrink:0;}
@@ -452,6 +463,16 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       <p class="cfg-help">아무 조작이 없을 때 자동으로 로그아웃되는 시간. 포털 · 푸른이알피 · 명함첩 ·
         규정관리 · 컨설팅 일정에 함께 적용됩니다. <b>비워두면 60분</b>이고,
         안전을 위해 10분~480분(8시간) 범위만 적용됩니다.</p>
+
+      <div class="cfg-extra">
+        <div class="cfg-extra-hd">
+          <b>그 밖의 설정</b>
+          <button type="button" id="cfgAdd">＋ 항목 추가</button>
+        </div>
+        <p class="cfg-help" style="margin:0 0 6px">새 서비스 키나 주소가 생기면 여기에 <b>이름과 값</b>을 넣어 미리 보관해 두세요.
+          프로그램이 실제로 그 값을 쓰게 하려면 담당자에게 <b>이름만 알려주시면</b> 됩니다.</p>
+        <div id="cfgExtraList"></div>
+      </div>
 
       <p class="cfg-warn">🔒 <b>유료 키(Claude · Google Vision)는 여기 두지 않습니다.</b>
         브라우저에 두면 누구나 복사할 수 있어 요금이 새어나갈 수 있습니다. 위 프록시로 처리하세요.</p>
@@ -1221,13 +1242,55 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     CFG_FIELDS.forEach(function(f){ $(f[0]).value = ''; });
     $('cfgStat').textContent = '불러오는 중…';
     $('cfgModal').style.display = 'flex';
+    try{ _cfgDrag.reset(); }catch(_){}   // 지난번에 옮겨둔 위치는 초기화 — 항상 가운데서 열림
     db.ref(CFG_PATH).once('value').then(function(s){
       var v = s.val() || {};
       CFG_FIELDS.forEach(function(f){ $(f[0]).value = v[f[1]] || ''; });
+      cfgRenderExtra(v.extra || {});
       $('cfgStat').textContent = v.savedAt
         ? ('마지막 저장: ' + String(v.savedAt).slice(0,16).replace('T',' ') + (v.savedBy ? ' · ' + v.savedBy : ''))
         : '아직 저장된 값이 없습니다';
     }).catch(function(e){ $('cfgStat').textContent = '불러오기 실패: ' + (e && e.message || ''); });
+  }
+
+  // ── 그 밖의 설정: 대표가 직접 이름·값을 추가하는 자유 칸 ──
+  //  새 서비스가 생겼을 때 코드를 고치지 않고도 값을 먼저 보관해 둘 수 있다.
+  //  (그 값을 실제로 쓰려면 해당 프로그램에 읽는 코드 한 줄이 필요하다 — 담당자에게 이름만 알려주면 된다)
+  function cfgAddExtraRow(k, v){
+    var wrap = $('cfgExtraList');
+    var empty = wrap.querySelector('.cfg-empty'); if(empty) empty.remove();
+    var row = document.createElement('div');
+    row.className = 'cfg-x';
+    row.innerHTML = '<input type="text" class="k" placeholder="이름 (예: kakaoKey)" autocomplete="off">'
+                  + '<input type="text" class="v" placeholder="값" autocomplete="off">'
+                  + '<button type="button" title="이 항목 삭제">✕</button>';
+    row.querySelector('.k').value = k || '';
+    row.querySelector('.v').value = v || '';
+    row.querySelector('button').addEventListener('click', function(){
+      row.remove();
+      if(!wrap.querySelector('.cfg-x')) cfgRenderExtra({});
+    });
+    wrap.appendChild(row);
+    return row;
+  }
+  function cfgRenderExtra(obj){
+    var wrap = $('cfgExtraList'); if(!wrap) return;
+    wrap.innerHTML = '';
+    var keys = Object.keys(obj || {});
+    if(!keys.length){ wrap.innerHTML = '<div class="cfg-empty">추가된 항목이 없습니다</div>'; return; }
+    keys.sort().forEach(function(k){ cfgAddExtraRow(k, obj[k]); });
+  }
+  function cfgCollectExtra(){
+    var out = {}, bad = null;
+    Array.prototype.forEach.call(document.querySelectorAll('#cfgExtraList .cfg-x'), function(row){
+      var k = (row.querySelector('.k').value || '').trim();
+      var v = (row.querySelector('.v').value || '').trim();
+      if(!k) return;                                     // 이름 없는 줄은 그냥 건너뜀
+      // Firebase 경로에 쓸 수 없는 문자 차단 (. # $ [ ] /)
+      if(/[.#$\[\]\/]/.test(k)){ bad = k; return; }
+      out[k] = v;
+    });
+    return { obj: out, bad: bad };
   }
   function cfgClose(){ var m = $('cfgModal'); if(m) m.style.display = 'none'; }
   function cfgSave(){
@@ -1244,6 +1307,12 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       }
       rec.idleMinutes = String(_m);
     }
+    var ex = cfgCollectExtra();
+    if(ex.bad){
+      $('cfgStat').textContent = '항목 이름에 . # $ [ ] / 는 쓸 수 없습니다 — "' + ex.bad + '"';
+      return;
+    }
+    rec.extra = ex.obj;
     $('cfgSave').disabled = true; $('cfgStat').textContent = '저장 중…';
     db.ref(CFG_PATH).set(rec).then(function(){
       $('cfgStat').textContent = '저장됐습니다 — 각 프로그램에서 새로고침하면 반영됩니다';
@@ -1436,7 +1505,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     });
   }
 
-  function sgOpen(){ $('sgModal').style.display = 'flex'; try{ if(typeof _sgDrag!=='undefined'){ _sgDrag.x=0; _sgDrag.y=0; var _b=$('sgModal').querySelector('.box'); if(_b) _b.style.transform=''; } }catch(_){} sgViewList(); setTimeout(function(){ $('sgClose').focus(); }, 0); }
+  function sgOpen(){ $('sgModal').style.display = 'flex'; try{ _sgDrag.reset(); }catch(_){} sgViewList(); setTimeout(function(){ $('sgClose').focus(); }, 0); }
   function sgCloseModal(){ $('sgModal').style.display = 'none'; }
 
   function sgViewList(){
@@ -1807,6 +1876,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
   $('cfgClose').addEventListener('click', cfgClose);
   $('cfgCancel').addEventListener('click', cfgClose);
   $('cfgSave').addEventListener('click', cfgSave);
+  $('cfgAdd').addEventListener('click', function(){ cfgAddExtraRow('', '').querySelector('.k').focus(); });
   $('cfgModal').addEventListener('click', function(e){ if(e.target === $('cfgModal')) cfgClose(); });
   Array.prototype.forEach.call(document.querySelectorAll('.cfg-eye'), function(b){
     b.addEventListener('click', function(){
@@ -1834,28 +1904,39 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     }
   });
 
-  // 건의 모달 헤더 드래그 이동 (마우스)
-  var _sgDrag = { x:0, y:0, dragging:false, sx:0, sy:0 };
-  (function(){
-    var modal = $('sgModal'); if(!modal) return;
+  // ── 팝업 헤더를 잡고 끌어 옮기기 (공용) ──
+  //  창이 화면 밖으로 완전히 나가지 않도록 가장자리에서 멈춘다.
+  //  반환값의 reset() 을 창 열 때 호출하면 다음엔 다시 가운데서 열린다.
+  function makeDraggable(modalId){
+    var modal = $(modalId); if(!modal) return { reset:function(){} };
     var hd = modal.querySelector('.hd'), box = modal.querySelector('.box');
-    if(!hd || !box) return;
+    if(!hd || !box) return { reset:function(){} };
+    var st = { x:0, y:0, dragging:false, sx:0, sy:0 };
     hd.style.cursor = 'move'; hd.style.userSelect = 'none';
     hd.addEventListener('mousedown', function(e){
-      if(e.target.closest('.x')) return;              // 닫기 버튼은 제외
-      _sgDrag.dragging = true;
-      _sgDrag.sx = e.clientX - _sgDrag.x;
-      _sgDrag.sy = e.clientY - _sgDrag.y;
+      if(e.target.closest('button')) return;          // 닫기 등 버튼은 제외
+      st.dragging = true; st.sx = e.clientX - st.x; st.sy = e.clientY - st.y;
       e.preventDefault();
     });
     window.addEventListener('mousemove', function(e){
-      if(!_sgDrag.dragging) return;
-      _sgDrag.x = e.clientX - _sgDrag.sx;
-      _sgDrag.y = e.clientY - _sgDrag.sy;
-      box.style.transform = 'translate(' + _sgDrag.x + 'px,' + _sgDrag.y + 'px)';
+      if(!st.dragging) return;
+      var nx = e.clientX - st.sx, ny = e.clientY - st.sy;
+      var r = box.getBoundingClientRect();
+      var baseL = r.left - st.x, baseT = r.top - st.y;   // 옮기기 전(가운데) 위치
+      var M = 40;                                        // 화면 가장자리에 최소 40px 은 남긴다
+      // 좌우: 창이 화면 밖으로 완전히 사라지지 않게
+      st.x = Math.max(Math.min(nx, window.innerWidth - M - baseL), M - r.width - baseL);
+      // 위: 헤더가 화면 위로 넘어가지 않게 / 아래: 40px 은 보이게
+      st.y = Math.max(Math.min(ny, window.innerHeight - M - baseT), -baseT);
+      box.style.transform = 'translate(' + st.x + 'px,' + st.y + 'px)';
     });
-    window.addEventListener('mouseup', function(){ _sgDrag.dragging = false; });
-  })();
+    window.addEventListener('mouseup', function(){ st.dragging = false; });
+    return { reset:function(){ st.x = 0; st.y = 0; box.style.transform = ''; } };
+  }
+  var _sgDrag = makeDraggable('sgModal');      // 건의함
+  var _cfgDrag = makeDraggable('cfgModal');    // 시스템 설정
+  makeDraggable('sgPendModal');                // 관리자 미처리 알림
+  makeDraggable('sgDoneModal');                // 해결 알림
 
 })();
 </script>
