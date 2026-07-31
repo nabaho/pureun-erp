@@ -52,6 +52,25 @@ test('폴더 연결 UI는 환경설정이 숨겨진 계정에서도 닿는 곳�
   assert.match(wiccok, /onclick="fsUndoLast\(\)"/);
 });
 
+test('권한 판별은 uid_roles를 먼저 본다', () => {
+  const src = funcSource('resolveMe');
+  const iRoles = src.indexOf("uid_roles/");
+  const iDir = src.indexOf("data/user_dir");
+  assert.ok(iRoles >= 0, 'uid_roles를 읽어야 합니다');
+  assert.ok(iRoles < iDir, 'uid_roles를 이메일 규칙 조회보다 먼저 봐야 합니다');
+  assert.match(src, /roles\.isAdmin===true/);
+});
+
+test('신원을 못 알아내면 잠그지 않고 전체표시로 둔다', () => {
+  const src = funcSource('resolveMe');
+  // 예전 코드는 매칭 실패 시 isAdmin:false로 잠가 대표가 환경설정에서 밀려났다
+  assert.ok(!/role:'member',isAdmin:false\}/.test(src.replace(/\s/g, '')) ||
+            /isAdmin:true\}/.test(src.replace(/\s/g, '')),
+    '매칭 실패 시 관리자로 두어야 합니다');
+  const tail = src.slice(src.lastIndexOf('} else {'));
+  assert.match(tail, /isAdmin:\s*true/);
+});
+
 test('원본 보호 토글도 환경설정 밖에서 닿는다', () => {
   const wiccok = source.slice(
     source.indexOf('<section class="page-view" id="page-wiccok"'),
