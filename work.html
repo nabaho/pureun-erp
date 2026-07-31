@@ -328,7 +328,9 @@ var CATS={
   '산재':['#fee2e2','#b91c1c'],'산안':['#dbeafe','#1d4ed8'],'기금':['#dbeafe','#1d4ed8'],
   '노사':['#dcfce7','#166534'],'지원':['#fef3c7','#92400e'],'조사':['#ccfbf1','#0f766e'],
   '행심':['#fef3c7','#92400e'],'급여':['#ecfccb','#3f6212'],'컨설팅':['#dbeafe','#1d4ed8'],
-  '기타':['#f1f5f9','#475569']};
+  '기타':['#f1f5f9','#475569'],
+  // 구분 = 푸른이알피 사무관리 메뉴 5종 (2026-07-31 확정) — 사건·기금·컨설팅은 위와 이름이 같다
+  '업체':['#e0f2fe','#075985'],'사건':['#fee2e2','#b91c1c'],'기타사업':['#f3e8ff','#6b21a8']};
 // 구분은 푸른이알피 유형을 그대로 쓴다. 아래 13종은 색을 고정해 둔 것뿐이고,
 // 목록에 없는 유형이 와도 이름에서 색을 만들어 항상 같은 색으로 보여준다.
 var CAT_PALETTE=[
@@ -947,7 +949,7 @@ function wkLogsOf(itemId,wk){ wk=wk||weekKeyOf(S.week); var w=wkCache[wk]||{}; v
 function matchQ(it,q){
   if(!q) return true; q=String(q).toLowerCase();
   var ct=it.contact||{};
-  return [it.company,it.client,it.title,it.no,it.officer,it.cat,
+  return [it.company,it.client,it.title,it.no,it.officer,it.cat,it.ptype,it.brief,
           (it.mgr_main&&it.mgr_main.name),(it.last&&it.last.t),
           ct.name,ct.rank,ct.phone]
     .concat((it.mgr_subs||[]).map(function(s){return s&&s.name;}))
@@ -2654,7 +2656,9 @@ function kbRelated(it){
   var out=[], seen={};
   function add(arr){ arr.forEach(function(c){
     var k=c._kind+'|'+c._key+'|'+c._id; if(seen[k]) return; seen[k]=1; out.push(c); }); }
-  if(it.cat) add(kbCards('cat',kbKey(it.cat)));
+  // 플레이북은 업무 유형(부당해고·임금체불…)에 붙는다. 구분(업체·사건…)은 너무 넓다
+  var pk=String(it.ptype||'').trim()||String(it.cat||'').trim();
+  if(pk) add(kbCards('cat',kbKey(pk)));
   var ck=kbCoKey(it); if(ck) add(kbCards('company',ck));
   [it.officer,it.client,(it.contact&&it.contact.name)]
     .concat(coContacts(it).map(function(c){ return c&&c.name; }))
@@ -2700,7 +2704,8 @@ function kbPromote(itemId,text,srcLabel){
     .concat(coContacts(it).map(function(c){ return c&&c.name; }))
     .filter(Boolean).forEach(function(n){ names[n]=1; });
   var nameList=Object.keys(names);
-  var pre={person:nameList[0]||'',company:it.company||'',cat:it.cat||'',office:''};
+  var pre={person:nameList[0]||'',company:it.company||'',
+    cat:String(it.ptype||'').trim()||it.cat||'',office:''};
   S._kbPre=pre;
   var body=String(text||'').trim();
   showModal('<h2 style="margin:0 0 6px">↗ 지식으로 올리기</h2>'
@@ -3348,14 +3353,17 @@ function _peClosed(x){
    ① 유형 필드(typeName·contractType…) → ② 관리번호 접두어 → ③ 종류 이름 순으로 찾는다.
    ②를 쓰는 이유: 기타사업은 유형 필드가 비어 있고 관리번호에만 사업명이 들어 있다
    (예: 기술보호-2026-006). */
-function peCat(t,x,label,kind){
+/* 유형 — 현장클리닉·기술보호·임금체불·직장내괴롭힘 대리 같은 실제 업무 종류.
+   구분(cat)이 아니라 업무명 자리에 쓴다. 못 찾으면 빈 문자열을 돌려주고,
+   화면에서 [✏️ 이름 적기]로 사람이 채운다 — 억지로 만들어 넣지 않는다. */
+function peType(t,x,kind){
   var v=String(x.typeName||x.caseType||x.contractType||x.consultingType
     ||x.fundType||x.projectType||x.programName||kind||'').trim();
   if(v) return v;
+  // 기타사업은 유형 칸이 비고 관리번호에만 사업명이 있다 (기술보호-2026-006)
   var no=String(x.caseNo||x.contractNo||x.consultNo||x.fundNo||x.projectNo||x.no||'').replace(/\s/g,'');
   var m=/^([^\-\d]{2,})/.exec(no);
-  if(m) return m[1];
-  return label||'기타';
+  return m?m[1]:'';
 }
 // (엑셀 이관 초기에 쓰던 13종 정규화 — 지금은 쓰지 않는다. 과거 데이터 해석용으로 남겨 둔다)
 function normCat(raw,title){
@@ -3387,14 +3395,16 @@ function _peDue(x){
    저장형태는 키마다 배열/객체로 다르므로 _peArr가 둘 다 받아 정규화한다.
    ⚠ 읽기만 한다 — 마스터 쓰기는 pu-erp의 dbPatch만 담당한다. */
 var PE_KEYS={contract:'contracts',case:'cases',consulting:'consultings',fund:'funds',other:'other_projects'};
+// 라벨 = 푸른이알피 사무관리 메뉴 5종. 이것이 목록의 "구분"이 된다.
+// (유형 — 현장클리닉·기술보호·임금체불 등 — 은 ptype에 따로 담아 업무명으로 쓴다)
 var PE_DEF=[
-  ['contract','계약',function(x){return x.contractNo||'';},function(x){return x.title||x.contractType||'';},function(x){return x.contractType||x.consultingType||x.caseType||x.fundType||x.programName||'';}],
+  ['contract','업체',function(x){return x.contractNo||'';},function(x){return x.title||x.contractType||'';},function(x){return x.contractType||x.consultingType||x.caseType||x.fundType||x.programName||'';}],
   ['case','사건',function(x){return x.caseNo||'';},function(x){return x.title||x.caseName||'';},function(x){return x.typeName||x.caseType||'';}],
   ['consulting','컨설팅',function(x){return x.consultNo||x.no||'';},function(x){return x.title||x.programName||'';},function(x){return x.typeName||x.consultingType||x.programName||'';}],
   ['fund','기금',function(x){return x.fundNo||x.no||'';},function(x){return x.title||x.fundName||'';},function(x){return x.fundType||'기금';}],
-  ['other','기타',function(x){return x.projectNo||x.no||'';},function(x){return x.title||x.projectName||'';},function(x){return x.programName||'';}]
+  ['other','기타사업',function(x){return x.projectNo||x.no||'';},function(x){return x.title||x.projectName||'';},function(x){return x.programName||'';}]
 ];
-var PE_MIRROR=['no','cat','company','client','officer','title','due','start','co_id'];
+var PE_MIRROR=['no','cat','ptype','company','client','officer','title','due','start','co_id'];
 // 업무 요약 — 푸른이알피와 양방향이라 PE_MIRROR(푸른이알피가 일방적으로 덮는 필드)에 넣지 않는다.
 // 처음 연결할 때만 씨앗으로 가져오고, 이후 변경은 pesync가 양쪽을 비교해 맞춘다.
 var BRIEF_MAX=40;
@@ -3413,15 +3423,21 @@ function briefLine(it){
    ③으로 떨어진 건은 옅게 그리고 바로 적을 수 있는 버튼을 붙인다. */
 function itemName(it){
   if(!it) return '';
-  return briefTrim(it.brief)||String(it.title||'').trim()||String(it.cat||'').trim()||'';
+  return briefTrim(it.brief)||String(it.title||'').trim()||String(it.ptype||'').trim()||'';
 }
-function needBrief(it){ return !!it&&!briefTrim(it.brief)&&!String(it.title||'').trim(); }
+function needBrief(it){
+  return !!it&&!briefTrim(it.brief)&&!String(it.title||'').trim()&&!String(it.ptype||'').trim();
+}
 function nameCell(it){
   var b=briefTrim(it.brief);
   if(b) return '<span title="업무 요약 — 푸른이알피와 서로 반영됩니다">'+esc(b)+'</span>';
   var t=String(it.title||'').trim();
   if(t) return esc(t);
-  return '<span class="muted" title="업무명·업무 요약이 비어 있어 유형으로 표시합니다">'+esc(it.cat||'—')+'</span>'
+  var p=String(it.ptype||'').trim();
+  if(p) return '<span title="푸른이알피 유형">'+esc(p)+'</span>'
+    +'<span class="prm" onclick="event.stopPropagation();briefEdit(\''+escJ(it._id)+'\')" '
+    +'title="더 구체적으로 적으려면 누르세요 — 푸른이알피 업무 요약에도 반영됩니다">✏️</span>';
+  return '<span class="muted" title="유형·업무명·업무 요약이 모두 비어 있습니다">—</span>'
     +'<span class="prm" onclick="event.stopPropagation();briefEdit(\''+escJ(it._id)+'\')" '
     +'title="이 업무의 이름을 적습니다 — 푸른이알피에도 반영됩니다">✏️ 이름 적기</span>';
 }
@@ -3523,7 +3539,9 @@ function peLoadAll(){
 function _peCandOf(t,label,dNo,dTitle,dKind,x,sid2name){
   var co=x.companyName||x.fundName||x.targetName||'';
   var kind=dKind(x), title=dTitle(x);
-  return { pid:'PE-'+t+'-'+safeKey(x.id), kindLabel:label, no:dNo(x)||'', cat:peCat(t,x,label,kind),
+  // 구분 = 사무관리 메뉴 5종, 업무명 자리에 쓸 유형은 ptype에 따로 담는다
+  return { pid:'PE-'+t+'-'+safeKey(x.id), kindLabel:label, no:dNo(x)||'',
+    cat:label, ptype:peType(t,x,kind),
     // ⚠ 회사명을 업무명으로 쓰지 않는다 — 기업 칸과 똑같이 보이고,
     //   기본정보 양방향이 그 값을 푸른이알피 title에 되돌려써 마스터가 더러워진다.
     //   비면 비운 채로 두고 화면에서 업무 요약·유형으로 대신 보여준다(itemName).
@@ -3656,7 +3674,7 @@ function peAutoSync(){
       var mSid=c.mgrSid||name2sid[c.mgr]||'', has=!!(mSid||c.mgr);
       var m={}; PE_MIRROR.forEach(function(f){ m[f]=c[f]||''; });
       m.mgr=mSid+'/'+(c.mgr||''); m.subs=(c.subs||[]).join('|');
-      var rec={ no:c.no||(S.year+'-'+c.cat+'-PE'), cat:c.cat, company:c.company||'', client:c.client||'',
+      var rec={ no:c.no||(S.year+'-'+c.cat+'-PE'), cat:c.cat, ptype:c.ptype||'', company:c.company||'', client:c.client||'',
         officer:c.officer||'', title:c.title||'', due:c.due||'', start:c.start||'', status:'진행중',
         brief:c.brief||'',                        // 업무 요약 씨앗 — 이후에는 pesync가 양방향으로 맞춘다
         co_id:c.co_id||'',                        // pe_m에만 있고 항목에 없으면 이후 미러가 건너뛴다
@@ -3862,7 +3880,7 @@ function runMatch(){
     up[P+'src']='puerp'; up[P+'ref']=c.ref; up[P+'pe_m']=m;
     // 업무 요약은 비어 있을 때만 씨앗을 넣는다 — 업무관리에서 이미 쓴 요약을 덮지 않는다
     if(c.brief && !briefTrim((items[iid]||{}).brief)) up[P+'brief']=c.brief;
-    up[P+'co_id']=c.co_id||''; up[P+'cat']=c.cat; up[P+'no']=c.no||'';
+    up[P+'co_id']=c.co_id||''; up[P+'cat']=c.cat; up[P+'ptype']=c.ptype||''; up[P+'no']=c.no||'';
     up[P+'up_at']=new Date().toISOString();
     up[NS+'/pe_seen/'+c.ref.type+'/'+safeKey(c.ref.id)]=true;
     n++;
@@ -4043,7 +4061,7 @@ function runPuerpImport(){
       // "푸른이알피에서 바뀐 필드만" 갱신하므로, 가져오는 시점에 함께 찍어 둔다.
       var m={}; PE_MIRROR.forEach(function(f){ m[f]=c[f]||''; });
       m.mgr=mSid+'/'+(c.mgr||''); m.subs=(c.subs||[]).join('|');
-      var rec={ no:c.no||(S.year+'-'+c.cat+'-PE'), cat:c.cat, company:c.company||'', client:c.client||'',
+      var rec={ no:c.no||(S.year+'-'+c.cat+'-PE'), cat:c.cat, ptype:c.ptype||'', company:c.company||'', client:c.client||'',
         officer:c.officer||'', title:c.title||'', due:c.due||'', start:c.start||'', status:'진행중',
         brief:c.brief||'',                        // 업무 요약 씨앗 — 이후에는 pesync가 양방향으로 맞춘다
         co_id:c.co_id||'', mgr_main:{sid:mSid,name:c.mgr||''},
