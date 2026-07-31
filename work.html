@@ -1180,7 +1180,8 @@ function rowHTML(it,no){
         +esc((it.mgr_main&&it.mgr_main.name)||'미지정')+' — 나는 부담당(공동)입니다">공동 · 주 '
         +esc((it.mgr_main&&it.mgr_main.name)||'미지정')+'</span>':'')
     +(it.ho&&!it.ho.confirmed?' <span style="color:#b45309;font-weight:800;font-size:10px">📥 인수 확인 필요</span>':'')
-    +stepChip(it._id)+peFlag(it)+'</div></td>'
+    +stepChip(it._id)+peFlag(it)+'</div>'
+    +briefLine(it)+'</td>'
     +'<td>'+stChip(it.status||'진행중',it._id)+'</td>'
     +'<td>'+lastHtml+'</td>'
     +'<td class="wkcell">'+logHtml
@@ -1406,6 +1407,7 @@ function renderDrawer(){
     +'<div class="meta2">'+esc(it.no||'')+(it.client?' · 의뢰인 '+esc(it.client):'')+(it.start?' · 시작 '+esc(it.start):'')
     +' · 담당 '+esc((it.mgr_main&&it.mgr_main.name)||'—')+(subs?' <span style="color:#a78bda">(공동 '+esc(subs)+')</span>':'')
     +peFlag(it)+'</div>'
+    +(briefTrim(it.brief)?'<div class="meta2" style="color:#1d4ed8;font-weight:700">✏️ '+esc(briefTrim(it.brief))+'</div>':'')
     +'<div class="chips">'
     +STATUSES.map(function(s){ return '<span class="status" style="background:'+s[1]+';color:'+s[2]+';'+((it.status||'진행중')===s[0]?'':'opacity:.35;')
       +'" onclick="patchItem(\''+id+'\',{status:\''+s[0]+'\'}).then(function(ok){if(!ok)return;renderDrawer();route();})">'+s[0]+'</span>'; }).join('')
@@ -1658,7 +1660,8 @@ function aiContext(id){
   var arr=Object.keys(logs).map(function(k){return logs[k];})
     .sort(function(a,b){return (a.d||'').localeCompare(b.d||'');});
   var L=['[업무]','구분: '+(it.cat||''),'기업/대상: '+(it.company||it.client||''),
-    '업무명: '+(it.title||''),'의뢰인: '+(it.client||'—'),'상대기관 담당: '+(it.officer||'—'),
+    '업무명: '+(it.title||''),'업무 요약: '+(briefTrim(it.brief)||'—'),
+    '의뢰인: '+(it.client||'—'),'상대기관 담당: '+(it.officer||'—'),
     '관리번호: '+(it.no||''),'시작일: '+(it.start||'—'),'기한: '+(it.due||'—'),
     '상태: '+(it.status||''),'담당: '+((it.mgr_main&&it.mgr_main.name)||'—'),
     '다음 할 일: '+((it.next&&it.next.text)||'—')+' '+((it.next&&it.next.date)||''),
@@ -2060,6 +2063,8 @@ function itemModal(editId){
       +'<div class="fld"><label>의뢰인 / 연락처</label><input id="if-client" value="'+esc(it&&it.client||'')+'" placeholder="예: 홍길동 010-…"></div>'
       +'<div class="fld"><label>상대기관 담당 (감독관 등)</label><input id="if-officer" value="'+esc(it&&it.officer||'')+'" placeholder="예: 강진형 감독관"></div>'
       +'<div class="fld full"><label>업무명 *</label><input id="if-title" value="'+esc(it&&it.title||'')+'" placeholder="예: 산재(어깨) — 요양급여 신청"></div>'
+      +'<div class="fld full"><label>✏️ 업무 요약 <span class="muted" style="font-weight:400">— 어떤 업무를 중심으로 하는지 한 줄 (푸른이알피와 서로 반영)</span></label>'
+      +'<input id="if-brief" maxlength="'+BRIEF_MAX+'" value="'+esc(it&&it.brief||'')+'" placeholder="예: 퇴직금·연차수당 미지급 진정 → 노동청 대리"></div>'
       +'<div class="fld"><label>주담당</label><select id="if-mgr">'+mgrOpts(mainSel)+'</select></div>'
       +'<div class="fld"><label>부담당 (공동작업자)</label><select id="if-sub"><option value="">(없음)</option>'+mgrOpts(subSel)+'</select></div>'
       +'</div>'
@@ -2076,7 +2081,7 @@ function saveItem(editId){
   var cat=$('if-cat').value;
   var mSel=$('if-mgr'), sSel=$('if-sub');
   var rec={ cat:cat, company:co, client:$('if-client').value.trim(), officer:$('if-officer').value.trim(),
-    title:title, due:$('if-due').value||'',
+    title:title, due:$('if-due').value||'', brief:briefTrim($('if-brief').value),
     mgr_main:{sid:mSel.value,name:mSel.options[mSel.selectedIndex].getAttribute('data-name')||''} };
   if(sSel.value) rec.mgr_subs=[{sid:sSel.value,name:sSel.options[sSel.selectedIndex].getAttribute('data-name')||''}];
   else rec.mgr_subs=[];
@@ -3278,6 +3283,15 @@ var PE_DEF=[
   ['other','기타',function(x){return x.projectNo||x.no||'';},function(x){return x.title||x.projectName||'';},function(x){return x.programName||'';}]
 ];
 var PE_MIRROR=['no','cat','company','client','officer','title','due','start','co_id'];
+// 업무 요약 — 푸른이알피와 양방향이라 PE_MIRROR(푸른이알피가 일방적으로 덮는 필드)에 넣지 않는다.
+// 처음 연결할 때만 씨앗으로 가져오고, 이후 변경은 pesync가 양쪽을 비교해 맞춘다.
+var BRIEF_MAX=40;
+function briefTrim(v){ return String(v==null?'':v).replace(/\s+/g,' ').trim().slice(0,BRIEF_MAX); }
+// 목록에서 업무명 아래 한 줄로 보이는 업무 요약. 비어 있으면 아무것도 그리지 않는다.
+function briefLine(it){
+  var b=briefTrim(it&&it.brief); if(!b) return '';
+  return '<div class="sub" style="color:#1d4ed8" title="업무 요약 — 푸른이알피와 서로 반영됩니다">✏️ '+esc(b)+'</div>';
+}
 var peMaster={};                                   // {유형:[레코드]} — 읽기 실패한 유형은 키가 없다
 var peState={since:null,at:null,n:0,err:''};
 var _peU2N=null, _peT=null, _peBusy=false, _peWatching=false;
@@ -3310,6 +3324,7 @@ function _peCandOf(t,label,dNo,dTitle,dKind,x,sid2name){
   var kind=dKind(x), title=dTitle(x);
   return { pid:'PE-'+t+'-'+safeKey(x.id), kindLabel:label, no:dNo(x)||'', cat:peCat(t,x,label,kind),
     company:co, title:(title||kind||co||'무제'), officer:(x.jurisdiction&&x.jurisdiction.officer)||'',
+    brief:briefTrim(x.brief),
     client:x.payee||'', mgr:sid2name[x.managerMain]||'', mgrSid:x.managerMain||'',
     co_id:x.companyId||'',                        // 업체 담당자 조회용 — 이름 매칭보다 정확하다
     subs:(x.managerSubs||[]).map(function(sd){return sid2name[sd]||'';}).filter(Boolean),
@@ -3439,6 +3454,7 @@ function peAutoSync(){
       m.mgr=mSid+'/'+(c.mgr||''); m.subs=(c.subs||[]).join('|');
       var rec={ no:c.no||(S.year+'-'+c.cat+'-PE'), cat:c.cat, company:c.company||'', client:c.client||'',
         officer:c.officer||'', title:c.title||'', due:c.due||'', start:c.start||'', status:'진행중',
+        brief:c.brief||'',                        // 업무 요약 씨앗 — 이후에는 pesync가 양방향으로 맞춘다
         co_id:c.co_id||'',                        // pe_m에만 있고 항목에 없으면 이후 미러가 건너뛴다
         mgr_main:has?{sid:mSid,name:c.mgr||''}:(ceo?{sid:ceo.sid,name:ceo.name}:{sid:'',name:''}),
         mgr_subs:(c.subs||[]).map(function(n){return {sid:name2sid[n]||'',name:n};}),
@@ -3640,6 +3656,8 @@ function runMatch(){
     var m={}; PE_MIRROR.forEach(function(f){ m[f]=c[f]||''; });
     m.mgr=(c.mgrSid||'')+'/'+(c.mgr||''); m.subs=(c.subs||[]).join('|');
     up[P+'src']='puerp'; up[P+'ref']=c.ref; up[P+'pe_m']=m;
+    // 업무 요약은 비어 있을 때만 씨앗을 넣는다 — 업무관리에서 이미 쓴 요약을 덮지 않는다
+    if(c.brief && !briefTrim((items[iid]||{}).brief)) up[P+'brief']=c.brief;
     up[P+'co_id']=c.co_id||''; up[P+'cat']=c.cat; up[P+'no']=c.no||'';
     up[P+'up_at']=new Date().toISOString();
     up[NS+'/pe_seen/'+c.ref.type+'/'+safeKey(c.ref.id)]=true;
@@ -3823,6 +3841,7 @@ function runPuerpImport(){
       m.mgr=mSid+'/'+(c.mgr||''); m.subs=(c.subs||[]).join('|');
       var rec={ no:c.no||(S.year+'-'+c.cat+'-PE'), cat:c.cat, company:c.company||'', client:c.client||'',
         officer:c.officer||'', title:c.title||'', due:c.due||'', start:c.start||'', status:'진행중',
+        brief:c.brief||'',                        // 업무 요약 씨앗 — 이후에는 pesync가 양방향으로 맞춘다
         co_id:c.co_id||'', mgr_main:{sid:mSid,name:c.mgr||''},
         mgr_subs:(c.subs||[]).map(function(nm){return {sid:name2sid[nm]||'',name:nm};}),
         src:'puerp', ref:c.ref, pe_m:m, created_at:new Date().toISOString() };
