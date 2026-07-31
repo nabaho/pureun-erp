@@ -1094,7 +1094,8 @@ function renderMy(){
   if(unl&&unl.length){
     h+='<div class="histbanner">🔗 푸른이알피에 <b>'+esc(S.vname||'이 사람')+' 님이 주담당</b>인 업무 '
       +'<b>'+unl.length+'건</b>이 아직 연결되지 않았습니다.'
-      +'<span class="back" onclick="puerpMineModal()">주담당 업무 연결 →</span></div>';
+      +(isAdmin()?'<span class="back" onclick="puerpAllModal()" style="margin-left:auto" title="전 직원의 주담당 업무를 한 번에 연결합니다">전 직원 한 번에 →</span>':'')
+      +'<span class="back" onclick="puerpMineModal()"'+(isAdmin()?' style="margin-left:6px"':'')+'>이 사람만 연결 →</span></div>';
   }
   if(!mine.length){
     h+='<div class="panel" style="text-align:center;color:var(--sub);padding:40px">'
@@ -3432,6 +3433,82 @@ function peMineUnlinked(){
     return (who.sid&&c.mgrSid===who.sid)||(who.name&&c.mgr&&c.mgr===who.name);
   });
 }
+// 전 직원의 주담당 미연결 건. 대표가 한 번에 붙일 때 쓴다
+function peAllUnlinked(){
+  var cand=puerpCandidates(); if(!cand) return null;
+  var linked={};
+  allItems().forEach(function(it){ if(peLinked(it)) linked[it.ref.type+'|'+safeKey(it.ref.id)]=1; });
+  return cand.filter(function(c){
+    if(linked[c.ref.type+'|'+safeKey(c.ref.id)]) return false;
+    return !!(c.mgrSid||c.mgr);                 // 주담당이 지정된 건만
+  });
+}
+// 전 직원 주담당을 한 번에 연결 — 담당자별로 묶고, 엑셀 이관분과 겹치는 건은 기본 해제
+function puerpAllModal(){
+  showModal('<h2 style="margin:0 0 10px">🔗 주담당 업무 일괄 연결</h2><p class="muted" style="font-size:12.5px">불러오는 중…</p>');
+  peReady().then(function(){
+    var unl=peAllUnlinked();
+    if(unl===null||!unl.length){
+      showModal('<h2 style="margin:0 0 10px">🔗 주담당 업무 일괄 연결</h2>'
+        +'<p class="muted" style="font-size:12.5px">'+(unl===null?'푸른이알피 마스터를 읽지 못했습니다.':'연결할 주담당 업무가 없습니다.')+'</p>'
+        +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">닫기</button></div>');
+      return;
+    }
+    // 엑셀 이관분(연동 안 된 기존 항목)과 기업명이 겹치면 같은 건일 수 있다
+    var exByCo={};
+    allItems().forEach(function(it){
+      if(peLinked(it)) return;
+      var c=_normCo(it.company); if(c) (exByCo[c]=exByCo[c]||[]).push(it);
+    });
+    S._peCand={}; unl.forEach(function(c){ S._peCand[c.pid]=c; });
+    var g={}, dupN=0;
+    unl.forEach(function(c){
+      c._match=exByCo[_normCo(c.company)]||[];
+      if(c._match.length) dupN++;
+      var nm=c.mgr||'(담당 미지정)';
+      (g[nm]=g[nm]||[]).push(c);
+    });
+    var names=Object.keys(g).sort(function(a,b){ return g[b].length-g[a].length||a.localeCompare(b,'ko'); });
+    var h='<h2 style="margin:0 0 6px">🔗 주담당 업무 일괄 연결</h2>'
+      +'<p class="muted" style="font-size:12.5px;margin:0 0 10px">푸른이알피에서 <b>주담당이 지정된 진행 중 업무 '+unl.length+'건</b>이 '
+      +'아직 업무관리에 없습니다. 연결하면 각자의 <b>내 업무</b>에 나타나고 주간 기록을 쓸 수 있으며, '
+      +'상태·다음 할 일·진행률이 푸른이알피와 맞춰집니다.</p>';
+    if(dupN) h+='<div style="background:var(--warn-bg);border:1px solid #f0c68a;border-radius:9px;padding:9px 12px;font-size:12px;color:#854d0e;margin-bottom:10px">'
+      +'⚠ 이 중 <b>'+dupN+'건</b>은 이미 있는 업무와 기업명이 겹칩니다 — <b>기본 해제</b>해 두었습니다. '
+      +'같은 건이면 그대로 두시고, 다른 건이면 체크하세요.</div>';
+    h+='<div style="max-height:44vh;overflow-y:auto">';
+    names.forEach(function(nm){
+      var arr=g[nm], neu=arr.filter(function(c){return !c._match.length;}).length;
+      h+='<div style="display:flex;align-items:center;gap:7px;margin:10px 0 3px">'
+        +'<b style="font-size:13px">'+esc(nm)+'</b>'
+        +'<span class="muted" style="font-size:11px">'+arr.length+'건'+(arr.length-neu?' · 겹침 '+(arr.length-neu):'')+'</span>'
+        +'<span class="chipbtn" onclick="peChkGroup(\''+escJ(nm)+'\',1)">모두 선택</span>'
+        +'<span class="chipbtn" onclick="peChkGroup(\''+escJ(nm)+'\',0)">모두 해제</span></div>';
+      arr.forEach(function(c){
+        var dup=c._match.length>0;
+        h+='<label style="display:flex;gap:8px;align-items:flex-start;padding:5px 2px;border-bottom:1px solid var(--line);font-size:12.5px;cursor:pointer">'
+          +'<input type="checkbox" class="pechk" data-g="'+esc(nm)+'" value="'+esc(c.pid)+'"'+(dup?'':' checked')+' style="margin-top:3px">'
+          +'<span style="flex:1;min-width:0">'+catBadge(c.cat)
+          +' <b>'+esc(c.company||c.client||'—')+'</b> <span class="muted">'+esc(c.title)+'</span>'
+          +'<div class="muted" style="font-size:11px">'+esc(c.kindLabel)+(c.no?' '+esc(c.no):'')
+          +(c.due?' · 기한 '+esc(c.due):'')
+          +(dup?' · <span style="color:var(--warn);font-weight:700">겹침: '
+              +esc(c._match.slice(0,2).map(function(m){return m.title||'';}).join(' / '))+'</span>':'')
+          +'</div></span></label>';
+      });
+    });
+    h+='</div>'
+      +'<div id="pe-msg" class="muted" style="font-size:12px;min-height:18px;margin-top:8px"></div>'
+      +'<div class="row" style="justify-content:flex-end;margin-top:4px"><button onclick="closeM()">취소</button>'
+      +'<button class="primary" onclick="runPuerpImport()">선택한 건 연결</button></div>';
+    showModal(h);
+  });
+}
+function peChkGroup(nm,on){
+  [].slice.call(document.querySelectorAll('.pechk')).forEach(function(c){
+    if(c.getAttribute('data-g')===nm) c.checked=!!on;
+  });
+}
 // 내 업무 1차 구성 = 푸른이알피 주담당 업무. 기준일과 무관하게 백로그까지 연결한다
 // (기준일은 엑셀 이관분과 겹치는 대량 유입을 막기 위한 것이므로, 겹침만 짚어 주면 된다)
 function puerpMineModal(){
@@ -3534,7 +3611,13 @@ function _puerpModal(){
       +(c.mgr?' · 담당 '+esc(c.mgr):' · <span style="color:var(--warn)">담당 미지정</span>')
       +(c.due?' · 기한 '+esc(c.due):'')+'</div>'+(extra||'')+'</span></label>';
   }
+  var allUnl=(peAllUnlinked()||[]).length;
   var h='<h2 style="margin:0 0 8px">🔗 푸른이알피 연동</h2>'+_peStatusHTML()
+    +(allUnl?'<div style="display:flex;align-items:center;gap:9px;background:var(--acc-soft);border:1px solid #c7d7fe;'
+      +'border-radius:9px;padding:10px 12px;margin-bottom:11px;flex-wrap:wrap">'
+      +'<span style="font-size:12.5px;flex:1;min-width:180px"><b>주담당이 지정된 '+allUnl+'건</b>이 아직 연결되지 않았습니다.<br>'
+      +'<span class="muted" style="font-size:11.5px">연결하면 각자 내 업무에 나타나고, 상태·다음 할 일·진행률이 푸른이알피와 맞춰집니다.</span></span>'
+      +'<button class="primary" onclick="puerpAllModal()">한 번에 연결 →</button></div>':'')
     +'<p class="muted" style="font-size:12.5px;margin:0 0 12px">계약·사건·컨설팅·기금·기타에서 <b>진행 중</b>인 '+cand.length+'건을 찾았습니다. '
     +'관리번호는 푸른이알피 번호를 그대로 씁니다.</p>';
   if(dup.length){
