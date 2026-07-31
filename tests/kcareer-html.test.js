@@ -57,3 +57,48 @@ test('스캔 과정에서 OCR API를 호출하지 않는다', () => {
   assert.ok(m, 'fsScanAll 함수가 있어야 합니다');
   assert.ok(!/anthropic|googleapis|_geminiOCR/.test(m[0]));
 });
+
+function funcSource(name) {
+  const m = source.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n\\}'));
+  assert.ok(m, name + ' 함수가 있어야 합니다');
+  return m[0];
+}
+
+test('fsCommitScan은 신규 필드를 붙여 저장한다', () => {
+  const src = funcSource('fsCommitScan');
+  assert.match(src, /src:\s*'fs'/);
+  assert.match(src, /relPath/);
+  assert.match(src, /scanId/);
+});
+
+test('fsCommitScan은 스토어별로 한 번만 쓴다 — 레코드마다 set을 부르지 않는다', () => {
+  const src = funcSource('fsCommitScan');
+  // 레코드 반복문 안에서 set()을 부르면 수백 번 재저장 + Firebase 반복 푸시가 된다
+  ['r.promotions.forEach', 'picked.forEach', 'r.submissions.forEach'].forEach((head) => {
+    const i = src.indexOf(head);
+    assert.ok(i >= 0, head + ' 반복문이 있어야 합니다');
+    const end = src.indexOf('\n  });', i);
+    assert.ok(end > i, head + ' 반복문의 끝을 찾을 수 없습니다');
+    const block = src.slice(i, end);
+    assert.ok(!/\bset\(/.test(block), head + ' 안에서 set()을 부르면 안 됩니다');
+  });
+  // 저장은 스토어 목록을 도는 단 한 곳에서만 일어난다
+  assert.match(src, /\['wiccok','cert','certdoc','submission'\]\.forEach\(function\s*\(k\)\s*\{\s*set\(k, buf\[k\]\);/);
+});
+
+test('fsUndoScan은 scanId가 일치하는 레코드만 지운다', () => {
+  const store = { wiccok: [], cert: [], certdoc: [], submission: [] };
+  const ctx = {
+    get: (k) => store[k].slice(),
+    set: (k, v) => { store[k] = v; },
+    toast: () => {},
+    renderCareer: () => {},
+    CAREER_CFG: {},
+    confirm: () => true
+  };
+  store.wiccok = [
+    { id: 'A', scanId: 'S1' }, { id: 'B', scanId: 'S2' }, { id: 'C' }
+  ];
+  vm.runInNewContext(funcSource('fsUndoScan') + '\nfsUndoScan("S1");', ctx);
+  assert.deepEqual(store.wiccok.map((r) => r.id), ['B', 'C']);
+});
