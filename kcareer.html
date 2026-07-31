@@ -1459,6 +1459,13 @@ function getFile(id){
 /* 첨부 존재 여부(동기): _cache 미적재라도 IDB 인덱스로 판정 */
 function fileExists(id){ return _cache[id]!=null || _fileIdSet.has(id) || localStorage.getItem(NS+'pf_meta_'+id)!=null; }
 
+/* 원본 존재 판정 — fs 레코드는 경로, 기존 레코드는 IndexedDB base64 */
+function hasOriginal(r){
+  if(!r) return false;
+  if(r.src === 'fs') return !!r.relPath;
+  return fileExists(r.id);
+}
+
 async function getFileAsync(id){
   if(_cache[id]) return _cache[id];
   try{ const db=await _openIDB(); return new Promise(function(res){
@@ -1608,7 +1615,15 @@ async function openScanPreview(){
   var known = fsKnownKeys();
   var fresh = files.filter(function(f){ return !known[f.relPath + '|' + f.size + '|' + f.mtime]; });
   var r = KcareerScan.buildRecords(fresh, {scanId: scanId});
-  _scanCtx = { scanId:scanId, all:files, fresh:fresh, r:r, pickMaybe:{} };
+  /* 저장 전에 '새로 등록 / 기존에 붙임'을 미리 세어 보여준다.
+     get()은 localStorage에서 새로 파싱한 사본을 주므로 여기서 고쳐도 실제 데이터는 안 바뀐다. */
+  var pbuf = { wiccok: get('wiccok'), cert: get('cert'), certdoc: get('certdoc'), submission: get('submission') };
+  var willAttach = 0;
+  r.promotions.forEach(function(p){
+    var t = fsFindAttachTarget(p, pbuf);
+    if(t){ t.src = 'fs'; t.relPath = p.relPath; willAttach++; }   /* 같은 레코드에 두 번 붙지 않게 표시만 */
+  });
+  _scanCtx = { scanId:scanId, all:files, fresh:fresh, r:r, pickMaybe:{}, willAttach:willAttach };
   renderScanPreview();
   $('modalScan').classList.add('open');
 }
@@ -1625,6 +1640,10 @@ function renderScanPreview(){
     + '전체 ' + _scanCtx.all.length + '개 · 이미 등록돼 건너뜀 ' + skipped
     + ' · 제외(임시파일) ' + r.ignored + ' · 사본 ' + r.copies.length + '건'
     + '</div>'
+    + '<div style="font-size:12px;background:#F3F8F6;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:10px">'
+    + '🟢 ' + r.promotions.length + '건 중 <b>새로 등록 ' + (r.promotions.length - (_scanCtx.willAttach||0)) + '건</b>'
+    + ' · <b>이미 있는 레코드에 원본만 붙임 ' + (_scanCtx.willAttach||0) + '건</b>'
+    + '<div style="color:var(--text-mute);margin-top:4px">원본 없이 등록돼 있던 위촉장·표창에는 새 줄을 만들지 않고 원본 경로만 연결합니다. 되돌리면 그 레코드는 지우지 않고 경로만 뗍니다.</div></div>'
     + '<div style="font-size:12px;font-weight:600;margin:10px 0 6px">🟢 자동 승격 (' + r.promotions.length + ')</div>'
     + r.promotions.slice(0,50).map(function(p){
         return '<div style="font-size:12px;padding:4px 0;border-bottom:1px solid var(--border-soft)">'
@@ -1660,9 +1679,30 @@ function _fsTitleFor(p){
   return core;
 }
 
+/* 승격 전에 '원본 없는 기존 레코드'를 파일명으로 찾는다.
+   찾으면 새 레코드를 만들지 않고 그 레코드에 경로만 붙인다.
+   이미 등록된 위촉장·표창 86건과 폴더 실제 파일이 상당수 겹치므로,
+   이 단계가 없으면 같은 서류가 두 줄씩 생긴다. */
+function fsFindAttachTarget(p, buf){
+  var page = p.store === 'wiccok' ? ((p.type === '표창' || p.type === '포상') ? 'award' : 'wiccok')
+           : p.store === 'cert'   ? (p.titleHint === '수료' ? 'complete' : 'license')
+           : 'certdoc';
+  var all = buf[p.store] || [], db = all;
+  if(p.store === 'wiccok'){
+    db = (page === 'award')
+      ? all.filter(function(r){ return r.type === '표창' || r.type === '포상'; })
+      : all.filter(function(r){ return r.type !== '표창' && r.type !== '포상'; });
+  }
+  var hit = matchByFilename({name: p.name}, db, page);
+  if(!hit) return null;
+  /* matchByFilename은 사본을 돌려주므로, 버퍼 안의 원래 객체를 찾아야 값을 붙일 수 있다 */
+  var target = all.find(function(r){ return r.id === hit.id; });
+  return (target && !hasOriginal(target)) ? target : null;
+}
+
 function fsCommitScan(){
   if(!_scanCtx){ toast('스캔 결과가 없습니다'); return; }
-  var r = _scanCtx.r, scanId = _scanCtx.scanId, n = 0;
+  var r = _scanCtx.r, scanId = _scanCtx.scanId, n = 0, attached = 0;
   var picked = r.maybes.filter(function(m, i){ return !!_scanCtx.pickMaybe[i]; });
 
   /* 스토어별로 한 번만 읽고 한 번만 쓴다.
@@ -1682,8 +1722,17 @@ function fsCommitScan(){
     return mk();
   }
 
-  /* 1) 🟢 승격 → 기존 목록 */
+  /* 1) 🟢 승격 → 기존 목록.
+     먼저 원본 없는 기존 레코드에 붙여보고, 없을 때만 새로 만든다(중복 방지). */
   r.promotions.forEach(function(p){
+    var hit = fsFindAttachTarget(p, buf);
+    if(hit){
+      hit.src = 'fs'; hit.relPath = p.relPath;
+      hit.fileSize = p.fileSize; hit.fileMtime = p.fileMtime;
+      if(!hit.fname) hit.fname = p.name;
+      hit.attachedScanId = scanId;   /* 되돌릴 때 레코드는 남기고 경로만 뗀다 */
+      attached++; return;
+    }
     var rec;
     if(p.store === 'wiccok'){
       rec = { id: _bufIdWiccok(p.type || '위촉장', p.year || ''), type: p.type || '위촉장',
@@ -1727,7 +1776,7 @@ function fsCommitScan(){
   ['wiccok','license','complete','certdoc','submission'].forEach(function(p){
     try{ if(CAREER_CFG[p]) renderCareer(p); }catch(e){}
   });
-  toast('✅ ' + n + '건 등록 완료 — 되돌리려면 환경설정 › 데이터 관리 › 이번 스캔 되돌리기');
+  toast('✅ 새로 등록 ' + n + '건, 기존 레코드에 원본 붙임 ' + attached + '건 — 되돌리려면 ⋯ 더보기 › 이번 스캔 되돌리기');
 }
 
 function fsLastScanId(){ return LS.get(NS + 'last_scan_id') || ''; }
@@ -1735,13 +1784,24 @@ function fsLastScanId(){ return LS.get(NS + 'last_scan_id') || ''; }
 /* ===== 스캔 단위 되돌리기 ===== */
 function fsUndoScan(scanId){
   if(!scanId) return;
-  var total = 0;
+  var removed = 0, detached = 0;
   ['wiccok','cert','certdoc','submission'].forEach(function(k){
-    var db = get(k), left = db.filter(function(r){ return r.scanId !== scanId; });
-    total += db.length - left.length;
-    if(left.length !== db.length) set(k, left);
+    var db = get(k);
+    /* 1) 이번 스캔이 만든 레코드는 지운다 */
+    var left = db.filter(function(r){ return r.scanId !== scanId; });
+    var cut = db.length - left.length;
+    /* 2) 이번 스캔이 원본만 붙인 기존 레코드는 경로만 뗀다 — 레코드는 원래 있던 것이다 */
+    var det = 0;
+    left.forEach(function(r){
+      if(r.attachedScanId === scanId){
+        delete r.src; delete r.relPath; delete r.fileSize; delete r.fileMtime; delete r.attachedScanId;
+        det++;
+      }
+    });
+    removed += cut; detached += det;
+    if(cut || det) set(k, left);
   });
-  toast(total + '건을 되돌렸습니다');
+  toast('되돌렸습니다 — 새로 만든 ' + removed + '건 삭제, 원본만 붙인 ' + detached + '건은 경로 해제');
   ['wiccok','license','complete','certdoc','submission'].forEach(function(p){
     try{ if(CAREER_CFG[p]) renderCareer(p); }catch(e){}
   });
@@ -3832,7 +3892,7 @@ function matchByFilename(file,db,page){
     if(page==='award'&&/표창|포상|상장/.test(fname)) score+=10;
     if(page==='wiccok'&&/위촉|협약/.test(fname)) score+=10;
     if((page==='license'||page==='complete')&&/자격|수료|이수/.test(fname)) score+=10;
-    if(fileExists(r.id)) score-=100;
+    if(hasOriginal(r)) score-=100;   /* base64든 로컬 경로든 이미 원본이 있으면 뒤로 */
     if(score>bestScore&&score>=50){ bestScore=score; best={...r,_score:score}; } }
   return best;
 }

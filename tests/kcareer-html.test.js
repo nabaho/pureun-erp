@@ -105,6 +105,78 @@ test('fsCommitScan은 스토어별로 한 번만 쓴다 — 레코드마다 set�
   assert.match(src, /\['wiccok','cert','certdoc','submission'\]\.forEach\(function\s*\(k\)\s*\{\s*set\(k, buf\[k\]\);/);
 });
 
+test('hasOriginal은 fs 레코드와 기존 base64 레코드를 모두 처리한다', () => {
+  const ctx = { fileExists: (id) => id === 'HAS' };
+  vm.runInNewContext(funcSource('hasOriginal'), ctx);
+  assert.equal(ctx.hasOriginal({ src: 'fs', relPath: '1. 위촉장/a.pdf' }), true);
+  assert.equal(ctx.hasOriginal({ src: 'fs', relPath: '' }), false);
+  assert.equal(ctx.hasOriginal({ id: 'HAS' }), true);          // 기존 레코드(src 없음)
+  assert.equal(ctx.hasOriginal({ id: 'NOPE' }), false);
+  assert.equal(ctx.hasOriginal(null), false);
+});
+
+test('matchByFilename은 fs 원본이 붙은 레코드도 이미 첨부된 것으로 본다', () => {
+  // fileExists는 base64만 보므로 fs 레코드에 두 번째 파일이 붙어버린다
+  const src = funcSource('matchByFilename');
+  assert.match(src, /hasOriginal\(r\)/);
+  assert.ok(!/fileExists\(r\.id\)/.test(src));
+});
+
+test('fsFindAttachTarget은 원본 없는 기존 레코드만 돌려준다', () => {
+  const buf = {
+    wiccok: [
+      { id: 'W1', type: '위촉장', org: '충청남도', year: '2025' },        // 원본 없음 → 대상
+      { id: 'W2', type: '위촉장', org: '충청남도', year: '2025', src: 'fs', relPath: 'x/y.pdf' } // 이미 있음
+    ]
+  };
+  const ctx = {
+    // 첫 인자 이름으로 골라주는 최소 스텁
+    matchByFilename: (file, db) => db.find((r) => file.name.includes(r.org)) || null,
+    hasOriginal: (r) => (r.src === 'fs' ? !!r.relPath : false)
+  };
+  vm.runInNewContext(funcSource('fsFindAttachTarget'), ctx);
+
+  const hit = ctx.fsFindAttachTarget({ store: 'wiccok', type: '위촉장', name: '2025 충청남도 위촉장.pdf' }, buf);
+  assert.ok(hit, '원본 없는 레코드를 찾아야 합니다');
+  assert.equal(hit.id, 'W1');
+  assert.ok(hit === buf.wiccok[0], '사본이 아니라 버퍼 안의 원래 객체를 돌려줘야 붙일 수 있습니다');
+
+  // 이미 원본이 있는 레코드만 남으면 null
+  const buf2 = { wiccok: [buf.wiccok[1]] };
+  assert.equal(ctx.fsFindAttachTarget({ store: 'wiccok', type: '위촉장', name: '2025 충청남도 위촉장.pdf' }, buf2), null);
+});
+
+test('fsCommitScan은 새 레코드를 만들기 전에 기존 레코드 붙이기를 먼저 시도한다', () => {
+  const src = funcSource('fsCommitScan');
+  const iAttach = src.indexOf('fsFindAttachTarget');
+  const iNew = src.indexOf('_bufIdWiccok(p.type');
+  assert.ok(iAttach >= 0, '붙이기 시도가 있어야 합니다');
+  assert.ok(iNew > iAttach, '새 레코드 생성보다 붙이기가 먼저여야 합니다');
+  assert.match(src, /attachedScanId/);
+});
+
+test('fsUndoScan은 붙인 기존 레코드를 지우지 않고 경로만 뗀다', () => {
+  const store = {
+    wiccok: [
+      { id: 'NEW', scanId: 'S1' },                                        // 이번 스캔이 만든 것 → 삭제
+      { id: 'OLD', src: 'fs', relPath: 'a/b.pdf', attachedScanId: 'S1' }, // 원래 있던 것 → 경로만 해제
+      { id: 'KEEP', scanId: 'S2' }
+    ],
+    cert: [], certdoc: [], submission: []
+  };
+  const ctx = {
+    get: (k) => store[k].slice(),
+    set: (k, v) => { store[k] = v; },
+    toast: () => {}, renderCareer: () => {}, CAREER_CFG: {}
+  };
+  vm.runInNewContext(funcSource('fsUndoScan') + '\nfsUndoScan("S1");', ctx);
+  assert.deepEqual(store.wiccok.map((r) => r.id), ['OLD', 'KEEP']);
+  const old = store.wiccok.find((r) => r.id === 'OLD');
+  assert.equal(old.relPath, undefined, '경로가 떨어져야 합니다');
+  assert.equal(old.src, undefined);
+  assert.equal(old.attachedScanId, undefined);
+});
+
 test('fsUndoScan은 scanId가 일치하는 레코드만 지운다', () => {
   const store = { wiccok: [], cert: [], certdoc: [], submission: [] };
   const ctx = {
