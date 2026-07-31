@@ -37134,11 +37134,40 @@ function MyDeskV2(props){
       if(typeof fbDb === 'undefined' || !fbDb) return;
       Promise.all([
         fbDb.ref('work_erp/items').once('value'),
-        fbDb.ref('work_erp/pesync').once('value')
+        fbDb.ref('work_erp/pesync').once('value'),
+        fbDb.ref('work_erp/steps').once('value')
       ]).then(function(res){
         if(done) return;
-        var W = res[0].val() || {}, SN = res[1].val() || {};
+        var W = res[0].val() || {}, SN = res[1].val() || {}, ST = res[2].val() || {};
         var up = {}, toPe = [], toWs = 0, now = new Date().toISOString();
+        // 진행 필드는 project_progress(배열 통째 저장)에 담긴다 — 업무시트가 직접 쓰면
+        // 다음 전체 저장에 덮여 사라지므로, 여기서 푸른이알피가 자기 손으로 쓴다.
+        var PP = dbGet('project_progress', []) || [];
+        if(!Array.isArray(PP)) PP = [];
+        var ppDirty = 0, toPg = 0;
+        function wsProg(wid){                              // 진행 단계 → 퍼센트
+          var o = ST[wid] || {}, t = 0, d = 0;
+          Object.keys(o).forEach(function(k){ var s = o[k]; if(s && s.t){ t++; if(s.done) d++; } });
+          return t ? Math.round(d / t * 100) : null;
+        }
+        function ppFind(type, id){
+          for(var i = 0; i < PP.length; i++){
+            var p = PP[i];
+            if(p && p.sid === sid && p.projectType === type && p.projectId === id) return i;
+          }
+          return -1;
+        }
+        // 스냅샷과 비교해 한쪽만 바뀌었으면 그쪽, 양쪽이 다르게 바뀌었으면 최근 쪽.
+        // 바뀐 게 없으면 null을 돌려 아무것도 건드리지 않는다.
+        function pick3(sv, wv, pv, wNewer){
+          sv = String(sv == null ? '' : sv);
+          var wc = (wv !== sv), pc = (pv !== sv);
+          if(!wc && !pc) return null;
+          if(wc && !pc) return wv;
+          if(pc && !wc) return pv;
+          if(wv === pv) return wv;
+          return wNewer ? wv : pv;
+        }
         Object.keys(W).forEach(function(wid){
           var w = W[wid];
           if(!w || !w.ref || !w.ref.type || !w.ref.id || w.pe_nosync) return;
@@ -37150,33 +37179,84 @@ function MyDeskV2(props){
           var key = w.ref.type + '-' + wsSafeKey(w.ref.id);
           var snap = SN[key] || {};
           var peClosed = isItemClosed(pe), wsDone = (w.state === 'done');
+          // 진행 필드는 담당자 본인 것만 맞춘다 — project_progress가 사람별 기록이라
+          // 남의 행을 여기서 만들거나 고치면 안 된다.
+          var mine = !!(w.mgr_main && w.mgr_main.sid && w.mgr_main.sid === sid);
+          var pi = mine ? ppFind(w.ref.type, w.ref.id) : -1;
+          var pp = pi >= 0 ? PP[pi] : null;
+          var wst = String(w.status || ''), wnt = String((w.next && w.next.text) || ''), wnd = String((w.next && w.next.date) || '');
+          var pst = String((pp && pp.status) || ''), pnt = String((pp && pp.nextAction) || ''), pnd = String((pp && pp.nextDate) || '');
+          var pct = wsProg(wid);
           if(!snap.synced_at){                             // 기준선만 기록
             up['work_erp/pesync/' + key] = { type:w.ref.type, id:w.ref.id, work_id:wid,
-              pe_closed:peClosed, ws_done:wsDone, synced_at:now, note:'기준선' };
+              pe_closed:peClosed, ws_done:wsDone, st:wst, nt:wnt, nd:wnd,
+              pg:(pct === null ? '' : String(pct)), synced_at:now, note:'기준선' };
             return;
           }
           var peChanged = (peClosed !== !!snap.pe_closed), wsChanged = (wsDone !== !!snap.ws_done);
-          if(!peChanged && !wsChanged) return;
-          var want;                                        // 최종적으로 맞출 상태
-          if(peChanged && wsChanged){
-            if(peClosed === wsDone) want = peClosed;        // 양쪽이 같아졌으면 스냅샷만 갱신
-            else {                                          // 충돌 — 더 최근에 바뀐 쪽을 따른다
-              var peAt = String(pe.updatedAt || pe.closedDate || ''), wsAt = String(w.state_at || w.done_date || '');
-              want = (peAt > wsAt) ? peClosed : wsDone;
+          var want = peClosed;                             // 아무 변화 없으면 지금 상태 유지
+          if(peChanged || wsChanged){
+            if(peChanged && wsChanged){
+              if(peClosed === wsDone) want = peClosed;      // 양쪽이 같아졌으면 스냅샷만 갱신
+              else {                                        // 충돌 — 더 최근에 바뀐 쪽을 따른다
+                var peAt = String(pe.updatedAt || pe.closedDate || ''), wsAt = String(w.state_at || w.done_date || '');
+                want = (peAt > wsAt) ? peClosed : wsDone;
+              }
+            } else want = peChanged ? peClosed : wsDone;
+            if(want !== peClosed){                          // 푸른이알피 반영
+              toPe.push({ store:store, id:w.ref.id, close:want, name:(pe.companyName || pe.title || w.ref.id) });
             }
-          } else want = peChanged ? peClosed : wsDone;
-          if(want !== peClosed){                            // 푸른이알피 반영
-            toPe.push({ store:store, id:w.ref.id, close:want, name:(pe.companyName || pe.title || w.ref.id) });
+            if(want !== wsDone){                            // 업무시트 반영
+              up['work_erp/items/' + wid + '/state'] = want ? 'done' : null;
+              up['work_erp/items/' + wid + '/done_date'] = want ? wsToday() : null;
+              up['work_erp/items/' + wid + '/status'] = want ? '완료' : '진행중';
+              up['work_erp/items/' + wid + '/state_at'] = now;
+              toWs++;
+            }
           }
-          if(want !== wsDone){                              // 업무시트 반영
-            up['work_erp/items/' + wid + '/state'] = want ? 'done' : null;
-            up['work_erp/items/' + wid + '/done_date'] = want ? wsToday() : null;
-            up['work_erp/items/' + wid + '/status'] = want ? '완료' : '진행중';
-            up['work_erp/items/' + wid + '/state_at'] = now;
-            toWs++;
+          // ── 진행 필드(상태·다음 액션·다음 날짜) 양방향 ──
+          var sst = wst, snt = wnt, snd = wnd, spg = (pct === null ? '' : String(pct));
+          if(mine && !want){                                // 종료된 건은 진행 필드를 맞추지 않는다
+            var wNewer = String(w.up_at || w.state_at || '') > String((pp && pp.updatedAt) || '');
+            var nst = pick3(snap.st, wst, pst, wNewer);
+            var nnt = pick3(snap.nt, wnt, pnt, wNewer);
+            var nnd = pick3(snap.nd, wnd, pnd, wNewer);
+            var pf = {};
+            if(nst !== null){ sst = nst;
+              if(nst !== wst){ up['work_erp/items/' + wid + '/status'] = nst; toWs++; }
+              if(nst !== pst) pf.status = nst; }
+            if(nnt !== null || nnd !== null){
+              var fnt = (nnt === null ? wnt : nnt), fnd = (nnd === null ? wnd : nnd);
+              snt = fnt; snd = fnd;
+              if(fnt !== wnt || fnd !== wnd){
+                up['work_erp/items/' + wid + '/next'] = (fnt || fnd) ? { text:fnt, date:fnd } : null;
+                toWs++;
+              }
+              if(fnt !== pnt) pf.nextAction = fnt;
+              if(fnd !== pnd) pf.nextDate = fnd;
+            }
+            // 진행률은 업무시트의 진행 단계에서 계산한다 — 단계가 있을 때만 밀어 넣는다.
+            // (단계가 없으면 푸른이알피에서 손으로 넣은 값을 그대로 둔다)
+            if(pct !== null && pp && Number(pp.progress || 0) !== pct) pf.progress = pct;
+            if(pct !== null && !pp) pf.progress = pct;
+            // 메모는 비어 있을 때만 최근 기록 한 줄로 채운다 — 사람이 쓴 메모를 덮지 않는다
+            if(w.last && w.last.t && !(pp && String(pp.note || '').trim())) pf.note = String(w.last.t);
+            if(Object.keys(pf).length){
+              if(pi >= 0) PP[pi] = Object.assign({}, pp, pf, { updatedAt:now });
+              else PP.unshift(Object.assign({
+                id:'pp-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+                sid:sid, projectType:w.ref.type, projectId:w.ref.id,
+                projectNo:(pe.caseNo || pe.contractNo || pe.consultNo || pe.fundNo || pe.projectNo || pe.no || ''),
+                projectName:(pe.title || pe.caseName || pe.programName || ''),
+                companyName:(pe.companyName || pe.fundName || pe.targetName || ''),
+                progress:0, status:'', nextAction:'', nextDate:'', note:'',
+                createdAt:now
+              }, pf, { updatedAt:now }));
+              ppDirty = 1; toPg++;
+            }
           }
           up['work_erp/pesync/' + key] = { type:w.ref.type, id:w.ref.id, work_id:wid,
-            pe_closed:want, ws_done:want, synced_at:now };
+            pe_closed:want, ws_done:want, st:sst, nt:snt, nd:snd, pg:spg, synced_at:now };
         });
         // 푸른이알피 쪽은 dbPatch로 (저장형태 안전)
         var okPe = 0;
@@ -37186,12 +37266,14 @@ function MyDeskV2(props){
             : { closedDate: null, closedAt: null, closeDate: null, status: 'progress' };
           try{ if(dbPatch(t.store, t.id, f)) okPe++; }catch(e){}
         });
+        // project_progress는 배열 통째 저장 — 푸른이알피 자신의 dbSet으로만 쓴다
+        if(ppDirty){ try{ dbSet('project_progress', PP); }catch(e){ toPg = 0; } }
         var paths = Object.keys(up);
-        if(!paths.length && !okPe) return;
+        if(!paths.length && !okPe && !toPg) return;
         (paths.length ? fbDb.ref().update(up) : Promise.resolve()).then(function(){
-          if(okPe || toWs){
-            try{ showToast('🔗 업무시트 동기화 — 푸른이알피 ' + okPe + '건, 업무시트 ' + toWs + '건 반영'); }catch(e){}
-            if(okPe) setRfk(Date.now());
+          if(okPe || toWs || toPg){
+            try{ showToast('🔗 업무관리 동기화 — 푸른이알피 ' + (okPe + toPg) + '건, 업무관리 ' + toWs + '건 반영'); }catch(e){}
+            if(okPe || toPg) setRfk(Date.now());
           }
         }).catch(function(){});
       }).catch(function(){});
