@@ -2420,11 +2420,32 @@ function coFind(it){
   var n=_normCo(it.company); if(!n) return null;
   return coSrc.filter(function(c){ return c&&_normCo(c.name||c.companyName)===n; })[0]||null;
 }
-function coContacts(it){
-  var c=coFind(it); if(!c) return [];
-  if(c.contacts&&c.contacts.length) return c.contacts.filter(Boolean);
-  if(c.contactName||c.contactPhone) return [{name:c.contactName||'',role:'',phone:c.contactPhone||''}];
+// 연동된 푸른이알피 원본 레코드
+function peRec(it){
+  if(!it||!peLinked(it)) return null;
+  var arr=peMaster[it.ref.type]; if(!arr) return null;
+  for(var i=0;i<arr.length;i++){ if(arr[i]&&String(arr[i].id)===String(it.ref.id)) return arr[i]; }
+  return null;
+}
+// 담당자는 두 곳에 있다.
+//  ① 그 사업 레코드 안의 company.contacts — 푸른이알피 수정화면의 "회사정보" 상자
+//  ② 업체관리(companies) 마스터
+// ①이 그 건에 실제로 쓰는 연락처이므로 먼저 본다. 예전엔 ②만 봐서 담당자가
+// 버젓이 있는데도 "업체관리에 등록 없음"으로 나왔다.
+function _cList(o){
+  if(!o) return [];
+  if(o.contacts&&o.contacts.length) return o.contacts.filter(function(c){ return c&&(c.name||c.phone||c.email); });
+  if(o.contactName||o.contactPhone)
+    return [{name:o.contactName||'',role:'',phone:o.contactPhone||'',email:o.contactEmail||''}];
   return [];
+}
+function coContacts(it){
+  var r=peRec(it);
+  var a=_cList(r&&r.company);
+  if(a.length){ a.forEach(function(c){ c._src='이 건'; }); return a; }
+  var b=_cList(coFind(it));
+  b.forEach(function(c){ c._src='업체관리'; });
+  return b;
 }
 function telHref(p){ return String(p||'').replace(/[^0-9+]/g,''); }
 // 드로어: 사업장 담당자 + 담당(주/부). 부담당은 여기서 여러 명 지정한다
@@ -2433,15 +2454,15 @@ function dPeopleHTML(id,it){
   if(!coSrc) coLoad().then(function(){ if(S.drawerId===id) renderDrawer(); });
   var cs=coContacts(it), mc=it.contact||{};
   var h='<div class="dbox"><div class="bh">👤 사업장 담당자'
-    +'<span class="r">'+(coSrc===null?'업체 자료 불러오는 중…'
-      :(cs.length?'푸른이알피 업체관리 '+cs.length+'명':'푸른이알피 업체관리에 등록 없음'))+'</span></div><div class="bb">';
+    +'<span class="r">'+(cs.length?'푸른이알피 '+(cs[0]._src||'')+' '+cs.length+'명'
+      :(peLinked(it)?'푸른이알피에 등록 없음':'푸른이알피와 연동되지 않은 업무'))+'</span></div><div class="bb">';
   cs.slice(0,5).forEach(function(c){
     h+='<div class="pc"><span class="nm">'+esc(c.name||'—')+'</span>'
       +(c.role?'<span class="rk">'+esc(c.role)+'</span>':'')
       +(c.phone?'<a href="tel:'+esc(telHref(c.phone))+'">'+esc(c.phone)+'</a>'
               :'<span class="muted" style="font-size:11.5px">연락처 없음</span>')
       +(c.email?'<span class="muted" style="font-size:11px">'+esc(c.email)+'</span>':'')
-      +'<span class="src">업체관리</span></div>';
+      +'<span class="src">'+esc(c._src||'')+'</span></div>';
   });
   h+='<div class="c3">'
     +'<input id="ct-nm" value="'+esc(mc.name||'')+'" placeholder="이 건 담당자 이름" onchange="saveContact(\''+escJ(id)+'\')">'
