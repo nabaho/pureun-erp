@@ -47,7 +47,9 @@
         project: pick(c, m.proj),
         year: String(dateRaw).slice(0, 4),
         main: (userMap && userMap[sid]) || sid,
-        status: '완료',
+        /* 진행중도 가져온다(실사용: 사건 13건 중 11건이 진행중이었다).
+           상태를 그대로 옮겨 두고, 증명서 발급은 '완료' 건만 고르게 한다. */
+        status: isClosed(c) ? '완료' : '진행',
         puRef: coll + '/' + key
       }
     };
@@ -67,18 +69,20 @@
      existingRefs에 있는 puRef는 배제된 것이라도 다시 들어오지 않는다. */
   function buildSyncPlan(collData, existingRefs, userMap) {
     var known = (existingRefs instanceof Set) ? existingRefs : new Set(existingRefs || []);
-    var plan = { adds: [], counts: { case: 0, consult: 0, fund: 0, etc: 0 }, skippedOpen: 0, skippedKnown: 0 };
+    var plan = { adds: [], counts: { case: 0, consult: 0, fund: 0, etc: 0 },
+                 skippedOpen: 0, skippedKnown: 0, closedCount: 0, openCount: 0 };
     Object.keys(COLL_MAP).forEach(function (coll) {
       var v = unwrap(collData ? collData[coll] : null);
       if (!v || typeof v !== 'object') return;
       Object.keys(v).forEach(function (key) {
         var c = v[key];
         if (!c) return;                                       /* Firebase 배열형의 null 구멍 */
-        if (!isClosed(c)) { plan.skippedOpen++; return; }
         var ref = coll + '/' + key;
         if (known.has(ref)) { plan.skippedKnown++; return; }
         var m = mapRecord(coll, key, c, userMap);
         if (!m) return;
+        /* 진행중도 담는다 — 종료만 받으면 실적이 영원히 안 들어온다(실사용) */
+        if (isClosed(c)) plan.closedCount++; else plan.openCount++;
         plan.adds.push(m);
         plan.counts[m.store]++;
       });
@@ -86,7 +90,31 @@
     return plan;
   }
 
-  var api = { isClosed: isClosed, mapRecord: mapRecord, buildSyncPlan: buildSyncPlan, unwrap: unwrap };
+  /* ===== 상태 맞추기 =====
+     진행중으로 가져온 건이 pu-erp에서 종료되면 상태·연도만 맞춘다.
+     다른 필드는 손대지 않는다 — 사람이 고친 내용을 덮어쓰지 않기 위해서다. */
+  function buildStatusUpdates(collData, existingRecords) {
+    var byRef = {};
+    Object.keys(COLL_MAP).forEach(function (coll) {
+      var v = unwrap(collData ? collData[coll] : null);
+      if (!v || typeof v !== 'object') return;
+      Object.keys(v).forEach(function (key) { if (v[key]) byRef[coll + '/' + key] = v[key]; });
+    });
+    var out = [];
+    (existingRecords || []).forEach(function (r) {
+      if (!r || !r.puRef) return;                      /* 손으로 등록한 건은 건드리지 않는다 */
+      var c = byRef[r.puRef];
+      if (!c) return;                                  /* pu-erp에서 사라진 건 */
+      if (isClosed(c) && r.status !== '완료') {
+        var d = c.closedDate || c.endDate || '';
+        out.push({ puRef: r.puRef, status: '완료', year: String(d).slice(0, 4) || r.year || '' });
+      }
+    });
+    return out;
+  }
+
+  var api = { isClosed: isClosed, mapRecord: mapRecord, buildSyncPlan: buildSyncPlan,
+              buildStatusUpdates: buildStatusUpdates, unwrap: unwrap };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.KcareerPuSync = api;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

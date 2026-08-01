@@ -1979,7 +1979,11 @@ async function _puFetchPlan(){
     collData[colls[i]] = _puUnwrap(s.val());   /* pu-erp의 {v,u} 봉투 벗기기 */
   }
   var plan = KcareerPuSync.buildSyncPlan(collData, _puKnownRefs(), userMap || {});
-  return { syncId: 'PS' + new Date().toISOString().slice(0,10).replace(/-/g,'') + '-' + String(Date.now()).slice(-4), plan: plan };
+  /* 이미 가져온 건 중 pu-erp에서 종료된 것 — 상태·연도만 맞춘다 */
+  var mine = [];
+  PU_SYNC_STORES.forEach(function(k){ get(k).forEach(function(r){ if(r && r.puRef) mine.push(r); }); });
+  var ups = KcareerPuSync.buildStatusUpdates(collData, mine);
+  return { syncId: 'PS' + new Date().toISOString().slice(0,10).replace(/-/g,'') + '-' + String(Date.now()).slice(-4), plan: plan, statusUps: ups };
 }
 
 async function puSyncNow(){
@@ -2000,8 +2004,10 @@ function renderPuSyncPreview(){
   var LABEL = { case:'사건', consult:'컨설팅', fund:'기금', etc:'기타' };
   var h = '<div style="font-size:12px;background:#F3F8F6;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:10px">'
     + '새로 들어올 실적 <b>' + p.adds.length + '건</b>'
-    + ' <span style="color:var(--text-mute)">(진행 중이라 제외 ' + p.skippedOpen + ' · 이미 있어 건너뜀 ' + p.skippedKnown + ')</span>'
-    + '<div style="color:var(--text-mute);margin-top:4px">가져온 뒤 pu-erp에서 내용이 바뀌어도 여기 실적은 바뀌지 않습니다. 불필요한 건은 목록에서 배제하세요.</div></div>'
+    + ' <span style="color:var(--text-mute)">(완료 ' + (p.closedCount||0) + ' · 진행 ' + (p.openCount||0) + ' · 이미 있어 건너뜀 ' + p.skippedKnown + ')</span>'
+    + '<div style="color:var(--text-mute);margin-top:4px">진행 중인 건도 상태를 달아 함께 가져옵니다 — pu-erp에서 종료 처리하면 다음 동기화 때 상태가 맞춰집니다. 불필요한 건은 목록에서 배제하세요.</div>'
+    + ((_puSyncCtx.statusUps && _puSyncCtx.statusUps.length) ? '<div style="margin-top:6px;color:var(--teal)">↻ 이미 있는 실적 <b>' + _puSyncCtx.statusUps.length + '건</b>이 그동안 종료돼 <b>완료</b>로 바뀝니다</div>' : '')
+    + '</div>'
     + '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">'
     + PU_SYNC_STORES.map(function(k){ return '<div class="card" style="flex:1;min-width:80px;text-align:center"><div style="font-size:20px;font-weight:700;color:var(--navy)">' + p.counts[k] + '</div><div style="font-size:11px;color:var(--text-mute)">' + LABEL[k] + '</div></div>'; }).join('')
     + '</div>'
@@ -2039,12 +2045,25 @@ function puSyncCommit(){
     });
     buf[a.store].unshift(rec); n++;
   });
+
+  /* 이미 가져온 건이 그동안 종료됐으면 상태·연도만 맞춘다(다른 필드는 손대지 않는다) */
+  var upMap = {}, upN = 0;
+  (_puSyncCtx.statusUps || []).forEach(function(u){ upMap[u.puRef] = u; });
+  PU_SYNC_STORES.forEach(function(k){
+    buf[k].forEach(function(r){
+      var u = r.puRef && upMap[r.puRef];
+      if(!u) return;
+      r.status = u.status; if(u.year) r.year = u.year;
+      upN++;
+    });
+  });
+
   PU_SYNC_STORES.forEach(function(k){ set(k, buf[k]); });
   LS.set(NS + 'pu_sync_last', new Date().toISOString());
   LS.set(NS + 'pu_sync_last_id', syncId);
   closePuSync();
   PU_SYNC_STORES.forEach(function(k){ try{ if(CAREER_CFG[k]) renderCareer(k); }catch(e){} });
-  toast('✅ 실적 ' + n + '건 들어옴 — 불필요한 건은 행의 배제 버튼으로 정리하세요');
+  toast('✅ 실적 ' + n + '건 들어옴' + (upN ? ' · ' + upN + '건 완료로 갱신' : '') + ' — 불필요한 건은 행의 배제 버튼으로 정리하세요');
 }
 
 /* ===== 동기화 되돌리기 — 그 동기화가 만든 레코드만(배제된 것 포함) 삭제 ===== */
@@ -2212,7 +2231,8 @@ async function puSyncAuto(){
     var last = String(LS.get(NS + 'pu_sync_last') || '').slice(0, 10);
     if(last === today) return;                              /* 오늘 이미 했다 */
     var ctx = await _puFetchPlan();
-    if(!ctx || !ctx.plan.adds.length){ LS.set(NS + 'pu_sync_last', new Date().toISOString()); return; }
+    /* 새로 들어올 게 없어도 상태 갱신할 게 있으면 진행한다 */
+    if(!ctx || (!ctx.plan.adds.length && !(ctx.statusUps||[]).length)){ LS.set(NS + 'pu_sync_last', new Date().toISOString()); return; }
     if(!LS.get(NS + 'pu_sync_last_id')){                    /* 첫 실행 → 미리보기 */
       _puSyncCtx = ctx; renderPuSyncPreview(); $('modalPuSync').classList.add('open'); return;
     }

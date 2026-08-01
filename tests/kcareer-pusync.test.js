@@ -65,6 +65,56 @@ test('mapRecord: 모르는 컬렉션은 null', () => {
   assert.equal(PS.mapRecord('unknown', 'k', {}, {}), null);
 });
 
+test('mapRecord: 상태를 pu-erp 실제 상태로 옮긴다 — 진행중도 가져온다', () => {
+  // 사건 13건 중 11건이 진행중이었다(실사용). 종료만 받으면 실적이 영원히 안 들어온다.
+  const open = PS.mapRecord('cases', 'k9', {
+    caseType: '임금체불', companyName: '오철진', title: '임금체불사건', managerMain: '2001'
+  }, UMAP);
+  assert.equal(open.rec.status, '진행');
+  const closed = PS.mapRecord('cases', 'k8', {
+    caseType: '산재', companyName: 'B사', title: 't', status: 'closed', managerMain: '2001'
+  }, UMAP);
+  assert.equal(closed.rec.status, '완료');
+});
+
+test('buildSyncPlan: 진행중도 담되 종료 건수를 따로 센다', () => {
+  const collData = {
+    cases: { v: {
+      k1: { caseType: '산재', companyName: 'A사', title: 't1', status: 'closed', managerMain: '2001' },
+      k2: { caseType: '임금체불', companyName: 'B사', title: 't2', managerMain: '2001' }   // 진행중
+    }, u: 1 },
+    consultings: null, funds: null, other_projects: null
+  };
+  const plan = PS.buildSyncPlan(collData, new Set(), UMAP);
+  assert.equal(plan.adds.length, 2, '진행중도 들어와야 합니다');
+  assert.equal(plan.closedCount, 1, '종료 건수를 따로 세어 미리보기에 보여준다');
+  assert.equal(plan.openCount, 1);
+  assert.equal(plan.skippedOpen, 0, '진행중을 제외하지 않는다');
+});
+
+test('buildStatusUpdates: 진행 → 완료로 바뀐 것만 상태를 맞춘다', () => {
+  const collData = {
+    cases: { v: {
+      k1: { caseType: '산재', companyName: 'A사', status: 'closed', closedDate: '2026-05-01' },  // 종료됨
+      k2: { caseType: '임금체불', companyName: 'B사', status: 'active' },                        // 여전히 진행
+      k3: { caseType: '부해', companyName: 'C사', status: 'closed' }                             // 이미 완료로 반영됨
+    }, u: 1 },
+    consultings: null, funds: null, other_projects: null
+  };
+  const existing = [
+    { id: 'CS0001', puRef: 'cases/k1', status: '진행', year: '' },
+    { id: 'CS0002', puRef: 'cases/k2', status: '진행', year: '2026' },
+    { id: 'CS0003', puRef: 'cases/k3', status: '완료', year: '2025' },
+    { id: 'CS0004', status: '진행' },                    // 손으로 등록한 건 — puRef 없으면 건드리지 않는다
+    { id: 'CS0005', puRef: 'cases/없음', status: '진행' } // pu-erp에서 사라진 건
+  ];
+  const ups = PS.buildStatusUpdates(collData, existing);
+  assert.equal(ups.length, 1, '바뀐 것만 나와야 합니다');
+  assert.equal(ups[0].puRef, 'cases/k1');
+  assert.equal(ups[0].status, '완료');
+  assert.equal(ups[0].year, '2026', '종료일에서 연도를 채운다');
+});
+
 test('unwrap: pu-erp의 {v,u} 봉투를 벗긴다', () => {
   // pu-erp는 data/{키} = {v:실제값, u:타임스탬프} 로 저장하고 자신은 data/{키}/v 로 읽는다.
   // 봉투를 안 벗기면 컬렉션마다 v·u 두 개가 레코드로 세어진다(4×2=8건 유령 레코드).
@@ -90,11 +140,11 @@ test('buildSyncPlan: 봉투에 싸인 컬렉션도 제대로 읽는다', () => {
   assert.equal(plan.skippedOpen, 0, '봉투의 u(타임스탬프)를 레코드로 세면 안 됩니다');
 });
 
-test('buildSyncPlan: 종료 건만, puRef 처음인 것만 들어온다', () => {
+test('buildSyncPlan: puRef 처음인 것만 들어오고 이미 있는 건 건너뛴다', () => {
   const collData = {
     cases: {
       k1: { caseType: '부당해고', companyName: 'A사', title: '사건1', closedDate: '2026-01-01', managerMain: '2001' },
-      k2: { caseType: '임금체불', companyName: 'B사', title: '사건2', status: 'active' },            // 진행 중 → 제외
+      k2: { caseType: '임금체불', companyName: 'B사', title: '사건2', status: 'active' },            // 진행 중 → 상태만 '진행'으로
       k3: { caseType: '산재', companyName: 'C사', title: '사건3', status: 'closed', managerMain: '2001' }
     },
     consultings: {
@@ -106,12 +156,14 @@ test('buildSyncPlan: 종료 건만, puRef 처음인 것만 들어온다', () => 
   const existing = new Set(['cases/k3']);                                                             // 이미 들어온 것(배제 포함)
   const plan = PS.buildSyncPlan(collData, existing, UMAP);
 
-  assert.equal(plan.adds.length, 2);                                                                  // k1 + c1
-  assert.deepEqual(plan.counts, { case: 1, consult: 1, fund: 0, etc: 0 });
-  assert.equal(plan.skippedOpen, 1);                                                                  // k2
+  assert.equal(plan.adds.length, 3);                                                                  // k1 + k2 + c1
+  assert.deepEqual(plan.counts, { case: 2, consult: 1, fund: 0, etc: 0 });
+  assert.equal(plan.closedCount, 2);                                                                  // k1 · c1
+  assert.equal(plan.openCount, 1);                                                                    // k2
   assert.equal(plan.skippedKnown, 1);                                                                 // k3
   const refs = plan.adds.map((a) => a.rec.puRef).sort();
-  assert.deepEqual(refs, ['cases/k1', 'consultings/c1']);
+  assert.deepEqual(refs, ['cases/k1', 'cases/k2', 'consultings/c1']);
+  assert.equal(plan.adds.find((a) => a.rec.puRef === 'cases/k2').rec.status, '진행');
 });
 
 test('buildSyncPlan: 배열형 컬렉션(Firebase가 배열로 줄 때)도 처리한다', () => {
