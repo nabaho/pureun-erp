@@ -279,6 +279,28 @@ test('puSyncCommit은 스토어별 단일 쓰기와 꼬리표를 지킨다', () 
   assert.ok(!/\bset\(/.test(loop), 'adds 반복문 안에서 set()을 부르면 안 됩니다');
 });
 
+test('실적 4탭은 외부기관·배제 건을 걸러낸다', () => {
+  ['case', 'consult', 'fund', 'etc'].forEach((k) => {
+    const m = source.match(new RegExp(k + ":\\{store:'" + k + "'[^\\n]*"));
+    assert.ok(m, k + ' CFG가 있어야 합니다');
+    assert.match(m[0], /filter:\s*r\s*=>\s*!r\.agency\s*&&\s*!r\.excluded/,
+      k + ' 목록은 agency 있는 것과 excluded를 숨겨야 합니다');
+  });
+});
+
+test('배제는 삭제가 아니라 excluded 플래그다', () => {
+  const src = funcSource('puExclude');
+  assert.match(src, /excluded\s*=\s*true/);
+  const rest = funcSource('puRestore');
+  assert.match(rest, /excluded\s*=\s*false/);
+});
+
+test('배제 권한 — 담당자는 본인 건만', () => {
+  const src = funcSource('_puCanExclude');
+  assert.match(src, /_me\.isAdmin/);
+  assert.match(src, /_me\.name/);
+});
+
 test('자동 동기화는 하루 1회이고 첫 실행은 미리보기를 거친다', () => {
   const m = source.match(/async function puSyncAuto\([\s\S]*?\n\}/);
   assert.ok(m, 'puSyncAuto 함수가 있어야 합니다');
