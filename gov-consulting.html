@@ -1449,6 +1449,7 @@ const FB_CONFIG={
 const FB_NODES={p_staff:'scal_staff',p_types:'scal_types',p_cos:'scal_cos',p_scheds:'scal_scheds',p_env:'scal_env',p_fieldState:'scal_fieldState',p_conflictMatrix:'scal_conflictMatrix',p_erpTypeMap:'scal_erpTypeMap'};
 let FB_READY=false, _fbDB=null, _fbSuppress=false;
 let _savePending=0, _saveFailed=false, _releaseLockAfterSave=false;
+const _recordWriteQueue={},_recordWritePending={};
 
 function setSaveState(kind,text,title){
   const el=document.getElementById('saveState'),tx=document.getElementById('saveStateText');
@@ -1483,7 +1484,10 @@ function _editLockedMessage(v){return `${(v&&v.owner)||'다른 사용자'}님이
 function _loseCompanyEditLock(v){
   const coId=_editLockCo;if(!coId)return;
   if(_editLockTimer){clearInterval(_editLockTimer);_editLockTimer=null;}
+  if(_editLockRef&&_editLockRemoteHandler){try{_editLockRef.off('value',_editLockRemoteHandler);}catch(e){}}
+  _removeLocalEditLock(coId);
   _editLockCo='';_editLockRef=null;
+  _editLockRemoteHandler=null;
   setSaveState('locked','다른 창 편집 중',_editLockedMessage(v));
   toast('🔒 '+_editLockedMessage(v),'err');
   ['mbSingle','mbEdit','mbCo'].forEach(id=>{const el=q('#'+id);if(el)el.classList.remove('open');});
@@ -1498,27 +1502,52 @@ function _startCompanyEditHeartbeat(){
 }
 async function acquireCompanyEditLock(coId){
   if(!coId)return true;
-  if(_editLockCo===coId){_writeLocalEditLock(coId);return true;}
+  if(_editLockCo===coId)return verifyCompanyEditLock(coId);
   if(_editLockCo)_releaseCompanyEditLockNow();
+  if(!FB_READY||!_fbDB){
+    setSaveState('locked','서버 연결 필요','동시 편집을 안전하게 차단하려면 클라우드 연결이 필요합니다.');
+    toast('🔒 서버 연결 후 다시 편집해 주세요.','err');
+    return false;
+  }
   const local=_readLocalEditLock(coId);
   if(_editLockFresh(local)&&local.tabId!==EDIT_TAB_ID){setSaveState('locked','다른 창 편집 중',_editLockedMessage(local));toast('🔒 '+_editLockedMessage(local),'err');return false;}
   _writeLocalEditLock(coId);
-  if(FB_READY&&_fbDB){
-    try{
-      const ref=_fbDB.ref('activeWriter/gov_consulting/'+coId);
-      const result=await ref.transaction(cur=>(!_editLockFresh(cur)||cur.tabId===EDIT_TAB_ID)?_editLockRecord(coId):undefined,undefined,false);
-      if(!result.committed){const holder=result.snapshot&&result.snapshot.val();_removeLocalEditLock(coId);setSaveState('locked','다른 창 편집 중',_editLockedMessage(holder));toast('🔒 '+_editLockedMessage(holder),'err');return false;}
-      _editLockRef=ref;
-      try{ref.onDisconnect().remove();}catch(e){}
-      _editLockRemoteHandler=ref.on('value',snap=>{const v=snap.val();if(_editLockCo===coId&&_editLockFresh(v)&&v.tabId!==EDIT_TAB_ID)_loseCompanyEditLock(v);});
-    }catch(e){
-      console.warn('사업장 편집 잠금 연결 실패 — 이 브라우저 안에서만 중복 차단',e);
-      setSaveState('local','기기 내 편집','서버 잠금 연결에 실패해 현재 브라우저 안에서만 중복 편집을 차단합니다.');
-    }
+  try{
+    const ref=_fbDB.ref('activeWriter/gov_consulting/'+coId);
+    const result=await ref.transaction(cur=>(!_editLockFresh(cur)||cur.tabId===EDIT_TAB_ID)?_editLockRecord(coId):undefined,undefined,false);
+    if(!result.committed){const holder=result.snapshot&&result.snapshot.val();_removeLocalEditLock(coId);setSaveState('locked','다른 창 편집 중',_editLockedMessage(holder));toast('🔒 '+_editLockedMessage(holder),'err');return false;}
+    _editLockRef=ref;
+    try{ref.onDisconnect().remove();}catch(e){}
+    _editLockRemoteHandler=ref.on('value',snap=>{const v=snap.val();if(_editLockCo===coId&&_editLockFresh(v)&&v.tabId!==EDIT_TAB_ID)_loseCompanyEditLock(v);});
+  }catch(e){
+    console.warn('사업장 서버 편집 잠금 실패',e);
+    _removeLocalEditLock(coId);
+    setSaveState('locked','편집 잠금 실패','서버에서 편집 권한을 확인하지 못했습니다. 연결을 확인한 뒤 다시 시도하세요.');
+    toast('🔒 서버 편집 잠금을 확인하지 못했습니다.','err');
+    return false;
   }
   _editLockCo=coId;_startCompanyEditHeartbeat();
   if(_savePending===0)setSaveState('saved','편집 가능',`${_editLockOwner()}님이 이 사업장의 편집 권한을 확보했습니다.`);
   return true;
+}
+async function verifyCompanyEditLock(coId){
+  if(!coId||_editLockCo!==coId||!FB_READY||!_fbDB||!_editLockRef){
+    setSaveState('locked','편집 권한 없음','저장 전에 서버 편집 권한을 다시 확보해 주세요.');
+    toast('🔒 편집 권한이 없어 저장하지 않았습니다. 다시 열어 주세요.','err');
+    return false;
+  }
+  try{
+    const result=await _editLockRef.transaction(cur=>(cur&&cur.tabId===EDIT_TAB_ID&&_editLockFresh(cur))?_editLockRecord(coId):undefined,undefined,false);
+    if(result.committed){_writeLocalEditLock(coId);return true;}
+    const holder=result.snapshot&&result.snapshot.val();
+    _loseCompanyEditLock(holder);
+    return false;
+  }catch(e){
+    console.warn('저장 전 서버 편집 권한 확인 실패',e);
+    setSaveState('locked','권한 확인 실패','서버 연결 문제로 저장을 중단했습니다. 입력 내용은 화면에 남아 있습니다.');
+    toast('🔒 서버 편집 권한을 확인하지 못해 저장하지 않았습니다.','err');
+    return false;
+  }
 }
 function _releaseCompanyEditLockNow(){
   const coId=_editLockCo,ref=_editLockRef;
@@ -1624,6 +1653,7 @@ function fbSubscribe(){
   for(const[lsKey,node]of Object.entries(FB_NODES)){
     _fbDB.ref(node).on('value',snap=>{
       if(!snap.exists())return;
+      if((_recordWritePending[node]||0)>0)return;
       const val=snap.val();
       if((lsKey==='p_cos'||lsKey==='p_scheds')&&_isBulkShrink(JSON.parse(localStorage.getItem(lsKey)||'[]'),val)){
         console.warn('[안전장치] 실시간 비정상 축소 반영 보류:',lsKey);
@@ -1638,6 +1668,46 @@ function fbSubscribe(){
       if(typeof renderDash==='function'){renderSummaryBar();renderDash();renderCal();renderNotifBadge();}
     });
   }
+}
+
+function _idRows(value){
+  const rows=Array.isArray(value)?value:(value&&typeof value==='object'?Object.values(value):[]);
+  return rows.filter(row=>row&&row.id);
+}
+function _idMap(value){const map=new Map();_idRows(value).forEach(row=>map.set(String(row.id),row));return map;}
+function fbPushRecordDelta(lsKey,beforeValue,afterValue){
+  if(_fbSuppress)return Promise.resolve(false);
+  if(!FB_READY||!_fbDB){setSaveState('local','기기 내 저장','클라우드 연결 전이라 이 기기에 먼저 저장했습니다. 연결 후 다시 저장하세요.');return Promise.resolve(false);}
+  const node=FB_NODES[lsKey];if(!node)return Promise.resolve(false);
+  const before=_idMap(beforeValue),after=_idMap(afterValue),changed=new Map(),removed=[];
+  after.forEach((row,id)=>{if(!before.has(id)||JSON.stringify(before.get(id))!==JSON.stringify(row))changed.set(id,row);});
+  before.forEach((_row,id)=>{if(!after.has(id))removed.push(id);});
+  if(!changed.size&&!removed.length)return Promise.resolve(true);
+  _saveStart();_recordWritePending[node]=(_recordWritePending[node]||0)+1;
+  const run=()=>_fbDB.ref(node).transaction(current=>{
+    const merged=_idMap(current);
+    removed.forEach(id=>merged.delete(id));
+    changed.forEach((row,id)=>merged.set(id,row));
+    return Array.from(merged.values());
+  },undefined,false);
+  const task=(_recordWriteQueue[node]||Promise.resolve()).catch(()=>{}).then(run)
+    .then(result=>{
+      if(!result.committed)throw new Error('record transaction not committed');
+      _saveFinish(true);return true;
+    })
+    .catch(e=>{console.warn('FB 레코드 병합 저장 실패',node,e);_saveFinish(false);toast('클라우드 병합 저장 실패 — 다시 시도해 주세요.','err');return false;})
+    .finally(()=>{
+      _recordWritePending[node]=Math.max(0,(_recordWritePending[node]||1)-1);
+      if(_recordWritePending[node]===0){
+        _fbDB.ref(node).once('value').then(snap=>{
+          const val=_idRows(snap.val());
+          _fbSuppress=true;try{lsSet(lsKey,JSON.stringify(val));}finally{_fbSuppress=false;}
+          if(typeof renderDash==='function'){renderSummaryBar();renderDash();renderCal();renderNotifBadge();}
+        }).catch(()=>{});
+      }
+    });
+  _recordWriteQueue[node]=task;
+  return task;
 }
 
 // localStorage → Firebase (쓰기)
@@ -1741,17 +1811,19 @@ function getCos(){return JSON.parse(localStorage.getItem('p_cos')||'[]');}
 function _cnt(x){return Array.isArray(x)?x.length:(x&&typeof x==='object'?Object.keys(x).length:0);}
 function _isBulkShrink(oldV,newV){const o=_cnt(oldV),n=_cnt(newV);return o>=5&&n<o*0.2;}
 function setCos(v){
-  try{const old=JSON.parse(localStorage.getItem('p_cos')||'[]');
+  let old=[];
+  try{old=JSON.parse(localStorage.getItem('p_cos')||'[]');
     if(_isBulkShrink(old,v)&&!confirm(`⚠️ 사업장이 ${_cnt(old)}개 → ${_cnt(v)}개로 크게 줄어듭니다.\n실수로 데이터가 지워지는 것일 수 있습니다.\n\n정말 저장하시겠습니까?`)){return;}
   }catch(e){}
-  lsSet('p_cos',JSON.stringify(v));fbPush('p_cos',v);
+  lsSet('p_cos',JSON.stringify(v));fbPushRecordDelta('p_cos',old,v);
 }
 function getScheds(){return JSON.parse(localStorage.getItem('p_scheds')||'[]');}
 function setScheds(v){
-  try{const old=JSON.parse(localStorage.getItem('p_scheds')||'[]');
+  let old=[];
+  try{old=JSON.parse(localStorage.getItem('p_scheds')||'[]');
     if(_isBulkShrink(old,v)&&!confirm(`⚠️ 일정이 ${_cnt(old)}개 → ${_cnt(v)}개로 크게 줄어듭니다.\n실수로 데이터가 지워지는 것일 수 있습니다.\n\n정말 저장하시겠습니까?`)){return;}
   }catch(e){}
-  lsSet('p_scheds',JSON.stringify(v));fbPush('p_scheds',v);
+  lsSet('p_scheds',JSON.stringify(v));fbPushRecordDelta('p_scheds',old,v);
 }
 const PHOTOS={};
 
@@ -2596,8 +2668,9 @@ function onDropDate(ev,ds){
   renderSingleCal();renderMultiList();
 }
 
-function saveSingle(){
+async function saveSingle(){
   if(single.multi){return saveMultiSingle();}
+  if(!await verifyCompanyEditLock(single.coId))return;
   if(!single.selDate){toast('날짜를 선택해주세요','err');return;}
   const blockMsg=isBlocked(single.selDate);
   if(blockMsg){toast(blockMsg,'err');return;}
@@ -2638,7 +2711,8 @@ function saveSingle(){
 
 // ===== 여러 회차 일괄 등록 + 방문 건 순차 사진 =====
 let _photoQueue=[];
-function saveMultiSingle(){
+async function saveMultiSingle(){
+  if(!await verifyCompanyEditLock(single.coId))return;
   if(!single.picks.length){toast('날짜를 하나 이상 선택해주세요','err');return;}
   const co=getCos().find(c=>c.id===single.coId);
   const t=getTypes().find(x=>x.id===single.typeId);
@@ -3026,12 +3100,14 @@ function ensurePhaseState(coId,typeId,phase){
 }
 // 사전진단 → 본컨설팅 전환
 function startMainPhase(coId,typeId){
-  showConfirm('본컨설팅을 시작할까요?\n이후 등록하는 일정은 본컨설팅 1회차부터 시작됩니다.',()=>{
-    const cos=getCos();const idx=cos.findIndex(c=>c.id===coId);if(idx===-1)return;
+  showConfirm('본컨설팅을 시작할까요?\n이후 등록하는 일정은 본컨설팅 1회차부터 시작됩니다.',async()=>{
+    if(!await acquireCompanyEditLock(coId)||!await verifyCompanyEditLock(coId))return;
+    const cos=getCos();const idx=cos.findIndex(c=>c.id===coId);if(idx===-1){releaseCompanyEditLock();return;}
     if(!cos[idx].phaseState)cos[idx].phaseState={};
     cos[idx].phaseState[typeId]='main';setCos(cos);
     renderDash();renderCal();renderSummaryBar();
     toast('본컨설팅 단계로 전환되었습니다');
+    releaseCompanyEditLock();
   });
 }
 // 단계별 회차 라벨 (사전진단은 접두어, 본컨설팅은 숫자만)
@@ -3060,9 +3136,10 @@ function getCoMandatory(coId,typeId){
 
 // ===== 사업장 삭제 (소프트 삭제 + 3초 복귀) =====
 let _undoTimer=null, _pendingDelete=null;
-function deleteCo(coId){
+async function deleteCo(coId){
+  if(!await acquireCompanyEditLock(coId)||!await verifyCompanyEditLock(coId))return;
   const cos=getCos();const idx=cos.findIndex(c=>c.id===coId);
-  if(idx===-1)return;
+  if(idx===-1){releaseCompanyEditLock();return;}
   const co=cos[idx];
   // 소프트 삭제: 삭제 표시만 (데이터·사진은 보존)
   cos[idx].deleted=true;
@@ -3071,6 +3148,7 @@ function deleteCo(coId){
   renderSummaryBar();renderDash();renderCal();
   if(q('#endedList'))renderEndedView();
   showUndoToast(`'${co.name}' 삭제됨`, ()=>restoreDeletedCo(coId));
+  releaseCompanyEditLock();
 }
 
 // 3초간 복귀 가능한 토스트
@@ -3099,27 +3177,31 @@ function showConfirm(msg, onYes){
 }
 
 // 삭제 복귀
-function restoreDeletedCo(coId){
+async function restoreDeletedCo(coId){
+  if(!await acquireCompanyEditLock(coId)||!await verifyCompanyEditLock(coId))return;
   const cos=getCos();const idx=cos.findIndex(c=>c.id===coId);
-  if(idx===-1)return;
+  if(idx===-1){releaseCompanyEditLock();return;}
   delete cos[idx].deleted;delete cos[idx].deletedDate;
   setCos(cos);
   renderSummaryBar();renderDash();renderCal();
   if(q('#endedList'))renderEndedView();
   toast('복귀되었습니다');
+  releaseCompanyEditLock();
 }
 
 // 영구 삭제 (종료사업장 화면에서 실행)
 let _purgeTimers={};
 const _purgingIds=new Set();
-function purgeDeletedCo(coId){
+async function purgeDeletedCo(coId){
   const co=getCos().find(c=>c.id===coId);
   if(!co)return;
+  if(!await acquireCompanyEditLock(coId)||!await verifyCompanyEditLock(coId))return;
   // 즉시 영구삭제하지 않고, 화면에서 숨긴 뒤 3초 복귀 토스트. 3초 경과 시 실제 삭제.
   _purgingIds.add(coId);
   renderEndedView();
   clearTimeout(_purgeTimers[coId]);
-  _purgeTimers[coId]=setTimeout(()=>{
+  _purgeTimers[coId]=setTimeout(async()=>{
+    if(!await verifyCompanyEditLock(coId)){_purgingIds.delete(coId);renderEndedView();return;}
     takeSnapshot('사업장 완전삭제 직전');
     const s=getScheds(),c=getCos();
     s.filter(x=>x.coId===coId).forEach(x=>{try{deletePhotoFromDB(x.id);}catch(e){}});
@@ -3127,32 +3209,37 @@ function purgeDeletedCo(coId){
     setCos(c.filter(x=>x.id!==coId));
     _purgingIds.delete(coId);
     renderEndedView();renderSummaryBar();renderDash();renderCal();
+    releaseCompanyEditLock();
   },3000);
   showUndoToast(`'${co.name}' 완전삭제 — 3초 후 복구 불가`, ()=>{
     clearTimeout(_purgeTimers[coId]);
     _purgingIds.delete(coId);
     renderEndedView();
+    releaseCompanyEditLock();
   });
 }
 
 // ===== 컨설팅 종료 =====
 function endConsulting(coId,typeId){
-  showConfirm('이 컨설팅을 종료 처리하시겠습니까?',()=>{
+  showConfirm('이 컨설팅을 종료 처리하시겠습니까?',async()=>{
+    if(!await acquireCompanyEditLock(coId)||!await verifyCompanyEditLock(coId))return;
     const cos=getCos();const idx=cos.findIndex(c=>c.id===coId);
-    if(idx===-1)return;
+    if(idx===-1){releaseCompanyEditLock();return;}
     if(!cos[idx].endedTypes)cos[idx].endedTypes={};
     cos[idx].endedTypes[typeId]=todayStr();
     setCos(cos);renderSummaryBar();renderDash();renderCal();
     if(q('#endedList'))renderEndedView();
     toast('종료 처리됨');
+    releaseCompanyEditLock();
   });
 }
 
-function restoreConsulting(coId,typeId){
+async function restoreConsulting(coId,typeId){
+  if(!await acquireCompanyEditLock(coId)||!await verifyCompanyEditLock(coId))return;
   const cos=getCos();const idx=cos.findIndex(c=>c.id===coId);
-  if(idx===-1)return;
+  if(idx===-1){releaseCompanyEditLock();return;}
   if(cos[idx].endedTypes)delete cos[idx].endedTypes[typeId];
-  setCos(cos);renderSummaryBar();renderEndedView();renderDash();renderCal();toast('재개됨');
+  setCos(cos);renderSummaryBar();renderEndedView();renderDash();renderCal();toast('재개됨');releaseCompanyEditLock();
 }
 
 function endConfirmHiddenKey(){
@@ -4669,7 +4756,9 @@ function copyEdit(){
   q('#mbSingle').classList.add('open');
 }
 
-function saveEdit(){
+async function saveEdit(){
+  const lockedSc=getScheds().find(s=>s.id===edit_id);
+  if(!lockedSc||!await verifyCompanyEditLock(lockedSc.coId))return;
   const attId=q('#mEditAtt').value;
   const coAttIds=edit_selCoAtts.filter(id=>id&&id!==attId);
   const scheds=getScheds();
@@ -4682,9 +4771,10 @@ function saveEdit(){
   setScheds(scheds);closeModal('mbEdit');renderCal();renderDash();toast('수정됨');
 }
 
-function deleteEdit(){
+async function deleteEdit(){
   let scheds=getScheds();
   const sc=scheds.find(s=>s.id===edit_id);
+  if(!sc||!await verifyCompanyEditLock(sc.coId))return;
   const coId=sc?.coId,typeId=sc?.typeId;
   const delId=edit_id;
   // 보유 사진 이력 기록 후 삭제
@@ -4793,8 +4883,9 @@ function _renderCoAttChips(boxId,mainSelId,selArr,rerender){
 function renderCoCoAtts(){ co_selCoAtts=_renderCoAttChips('mCoCoAttChips','mCoAtt',co_selCoAtts,renderCoCoAtts); }
 function renderEditCoAtts(){ edit_selCoAtts=_renderCoAttChips('mEditCoAttChips','mEditAtt',edit_selCoAtts,renderEditCoAtts); }
 
-function saveCo(){
+async function saveCo(){
   const name=q('#mCoName').value.trim();
+  if(co_editId&&!await verifyCompanyEditLock(co_editId))return;
   if(!name){toast('사업장명을 입력해주세요','err');return;}
   const defAtt=q('#mCoAtt').value;const defCoAtts=co_selCoAtts.filter(id=>id&&id!==defAtt);
   const cos=getCos();
@@ -4803,8 +4894,9 @@ function saveCo(){
   setCos(cos);closeModal('mbCo');renderDash();renderCal();toast(co_editId?'수정됨':'추가됨');
 }
 
-function delCo(){
+async function delCo(){
   if(!co_editId)return;
+  if(!await verifyCompanyEditLock(co_editId))return;
   const cos=getCos().map(c=>c.id===co_editId?{...c,active:false}:c);
   setCos(cos);closeModal('mbCo');renderDash();toast('비활성 처리됨');
 }

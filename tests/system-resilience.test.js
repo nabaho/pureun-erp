@@ -63,3 +63,29 @@ test('career management keeps essential mobile topbar controls visible', () => {
   assert.match(src, /\.topbar \.crumb,#searchBtn,#printBtn\{display:none!important\}/);
   assert.match(src, /#fbLogoutBtn::before\{content:'🚪'/);
 });
+
+test('government consulting requires a live server lock before editing', () => {
+  const src = read('gov-consulting.html');
+  assert.match(src, /async function acquireCompanyEditLock\(coId\)[\s\S]*?if\(!FB_READY\|\|!_fbDB\)[\s\S]*?return false/);
+  assert.match(src, /ref\.onDisconnect\(\)\.remove\(\)/);
+  assert.match(src, /async function verifyCompanyEditLock\(coId\)/);
+  assert.match(src, /cur&&cur\.tabId===EDIT_TAB_ID&&_editLockFresh\(cur\)/);
+  assert.match(src, /if\(_editLockCo===coId\)return verifyCompanyEditLock\(coId\)/);
+});
+
+test('government consulting rechecks lock ownership immediately before modal saves', () => {
+  const src = read('gov-consulting.html');
+  assert.match(src, /async function saveSingle\(\)[\s\S]*?verifyCompanyEditLock\(single\.coId\)/);
+  assert.match(src, /async function saveMultiSingle\(\)[\s\S]*?verifyCompanyEditLock\(single\.coId\)/);
+  assert.match(src, /async function saveEdit\(\)[\s\S]*?verifyCompanyEditLock\(lockedSc\.coId\)/);
+  assert.match(src, /async function saveCo\(\)[\s\S]*?verifyCompanyEditLock\(co_editId\)/);
+});
+
+test('different consulting companies are merged by record instead of replacing whole arrays', () => {
+  const src = read('gov-consulting.html');
+  assert.match(src, /function fbPushRecordDelta\(lsKey,beforeValue,afterValue\)/);
+  assert.match(src, /_fbDB\.ref\(node\)\.transaction\(current=>/);
+  assert.match(src, /changed\.forEach\(\(row,id\)=>merged\.set\(id,row\)\)/);
+  assert.match(src, /fbPushRecordDelta\('p_cos',old,v\)/);
+  assert.match(src, /fbPushRecordDelta\('p_scheds',old,v\)/);
+});
