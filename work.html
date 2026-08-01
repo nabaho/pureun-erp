@@ -160,6 +160,13 @@
   td.itc{cursor:pointer;min-width:110px}
   td.itc .co{font-weight:700}
   td.itc .sub{font-size:11px;color:var(--faint);font-weight:400}
+  /* 담당 한 줄 — 주담당과 함께 하는 부담당(공동)을 나란히 */
+  .mgl{display:flex;flex-wrap:wrap;align-items:center;gap:3px;margin-top:2px;font-weight:400}
+  .mgk{font-size:9px;font-weight:800;color:var(--faint);letter-spacing:.04em}
+  .mgk.sub{color:#7c5cd6}
+  .mgt{font-size:10.5px;font-weight:700;color:var(--sub);background:#f1f5fb;border-radius:4px;padding:0 6px;white-space:nowrap}
+  .mgt.sub{background:#ede9fe;color:#5b21b6}
+  .mgt.hi{outline:1.5px solid var(--acc);outline-offset:-1.5px}
   /* 업무 칸 — 윗줄 업무명(유형), 아랫줄 업무 요약 */
   td.tkc{cursor:pointer;min-width:140px;font-size:12.5px}
   td.tkc .brf{font-size:11px;color:#1d4ed8;font-weight:400;margin-top:1px}
@@ -721,8 +728,12 @@ function _normStaff(v){
   return v.filter(function(u){return u&&u.sid;})
     .filter(function(u){return !u.status||u.status==='active'||(u.status==='leave'&&u.leaveLoginAllowed===true);})
     .filter(function(u){ if(seen[u.sid])return false; seen[u.sid]=1; return true; })
-    .map(function(u){return {sid:u.sid,name:u.name||u.sid,title:u.title||u.role||''};})
-    .sort(function(a,b){return String(a.sid||'').localeCompare(String(b.sid||''),'en',{numeric:true});});
+    .map(function(u){return {sid:u.sid,name:u.name||u.sid,title:u.title||u.role||'',
+      ord:(typeof u.sortOrder==='number')?u.sortOrder:9999};})
+    // 푸른이알피가 정해 둔 차례(sortOrder)를 그대로 쓴다. 예전에는 사번순이라
+    // A-00x(사무직)이 앞에, P-00x(노무사)가 뒤에 와서 그쪽 화면과 순서가 달랐다.
+    .sort(function(a,b){ return (a.ord-b.ord)
+      ||String(a.sid||'').localeCompare(String(b.sid||''),'en',{numeric:true}); });
 }
 function loadStaff(){
   if(_staffCache) return Promise.resolve(_staffCache);
@@ -1253,6 +1264,31 @@ function roleOf(it,who){
     return (who.sid&&s.sid===who.sid)||(who.name&&s.name===who.name); })?'sub':'';
 }
 function viewOpen(){ return openItems().filter(function(it){return isOf(it,viewer());}); }   // 화면에서 보고 있는 사람
+/* ── 담당 표시 ────────────────────────────────────────────────────
+   주담당만 보이면 "누가 같이 하고 있는지"를 알 수 없어 부담당이 하는 일이
+   묻힌다. 모든 목록에 주·부를 함께 세운다.
+   mode: 'all' 주·부 모두 / 'sub' 부담당만 / 'other' 보고 있는 사람만 빼고 */
+function mgrSubNames(it){
+  return ((it&&it.mgr_subs)||[]).map(function(s){ return s&&s.name; }).filter(Boolean);
+}
+function mgrAll(it){                                  // 주 + 부 (중복 없이)
+  var a=[(it&&it.mgr_main&&it.mgr_main.name)||'(담당 미지정)'];
+  mgrSubNames(it).forEach(function(n){ if(a.indexOf(n)<0) a.push(n); });
+  return a;
+}
+function mgrLine(it,mode,hi){
+  var main=(it.mgr_main&&it.mgr_main.name)||'', subs=mgrSubNames(it);
+  var me=(mode==='other')?((viewer()||{}).name||''):'';
+  hi=hi||[];
+  function tag(n,sub){
+    return '<span class="mgt'+(sub?' sub':'')+(hi.indexOf(n)>=0?' hi':'')+'">'+esc(n)+'</span>';
+  }
+  var h='';
+  if(mode!=='sub'&&main&&main!==me) h+='<span class="mgk">주</span>'+tag(main,false);
+  var ss=subs.filter(function(n){ return n!==me; });
+  if(ss.length) h+='<span class="mgk sub">부</span>'+ss.map(function(n){ return tag(n,true); }).join('');
+  return h?'<div class="mgl" title="주담당 · 부담당(공동으로 함께 하는 사람)">'+h+'</div>':'';
+}
 function wkLogsOf(itemId,wk){ wk=wk||weekKeyOf(S.week); var w=wkCache[wk]||{}; var o=w[itemId]||{};
   return Object.keys(o).map(function(k){var l=o[k];l._id=k;return l;})
     .sort(function(a,b){return (b.d||'').localeCompare(a.d||'')||(b.at||'').localeCompare(a.at||'');}); }
@@ -1600,7 +1636,9 @@ var FCOLS={
         ['pt', '업무',      function(it){ return ptOf(it); }],
         ['st', '상태',      function(it){ return it.status||'진행중'; }],
         ['due','다음 할 일',dueBucket]],
-  team:[['mgr','담당',      function(it){ return (it.mgr_main&&it.mgr_main.name)||'(담당 미지정)'; }],
+  // 담당은 한 건에 여러 명(주 1 + 부 N)이라 값을 배열로 준다 — 그 사람이
+  // 부담당으로 붙어 있는 건까지 함께 봐야 무슨 일을 하고 있는지 알 수 있다
+  team:[['mgr','담당',mgrAll,'담당으로 걸러 봅니다 — 주담당·부담당 모두'],
         ['cat','구분',      function(it){ return it.cat||'기타'; }],
         ['pt', '업무명',    function(it){ return ptOf(it); }],
         ['st', '상태',      function(it){ return it.status||'진행중'; }],
@@ -1617,12 +1655,16 @@ function fSet(sc,k,v){ S.F=S.F||{}; S.F[sc]=S.F[sc]||{}; S.F[sc][k]=v; }
 function fAny(sc){ return fCols(sc).some(function(c){ return fSel(sc,c[0]).length>0; }); }
 function fResetCols(sc){ S.F=S.F||{}; S.F[sc]={}; }
 function fLabel(k,v){ return k==='due'?(DUE_LABEL[v]||v):(v||'(이름 없음)'); }
+// 한 건이 값을 여럿 가질 수 있다(담당 = 주 1 + 부 N). 항상 배열로 다룬다.
+function _fList(v){ return (v instanceof Array)?v:[v]; }
 // 그 열에 실제로 쓰인 값과 건수. 건수는 "그 열만 빼고" 걸러 센다(엑셀과 같다) —
 // 그래야 "사건을 고르면 컨설팅이 0건"이 되어 다시 넓힐 수가 없는 일이 없다.
 function fVals(sc,k,arr){
   var f=fCol(sc,k); if(!f) return [];
   var m={}, out=[];
-  (arr||[]).forEach(function(it){ var v=f[2](it); if(!(v in m)){ m[v]=0; out.push(v); } m[v]++; });
+  (arr||[]).forEach(function(it){
+    _fList(f[2](it)).forEach(function(v){ if(!(v in m)){ m[v]=0; out.push(v); } m[v]++; });
+  });
   out.sort(k==='due'
     ?function(a,b){ return DUE_ORDER[a]-DUE_ORDER[b]; }
     :function(a,b){ return String(fLabel(k,a)).localeCompare(String(fLabel(k,b)),'ko'); });
@@ -1633,7 +1675,10 @@ function fPass(sc,it,except){
   var a=fCols(sc);
   for(var i=0;i<a.length;i++){
     if(a[i][0]===except) continue;
-    var sel=fSel(sc,a[i][0]); if(sel.length&&sel.indexOf(a[i][2](it))<0) return false;
+    var sel=fSel(sc,a[i][0]); if(!sel.length) continue;
+    // 값이 여럿이면 하나라도 걸리면 남긴다 (담당: 주담당이거나 부담당이거나)
+    var hit=_fList(a[i][2](it)).some(function(v){ return sel.indexOf(v)>=0; });
+    if(!hit) return false;
   }
   return true;
 }
@@ -1691,7 +1736,7 @@ function fBtn(sc,k,vals){
   var txt=!sel.length?label:(sel.length===1?fLabel(k,sel[0]):label+' '+sel.length+'개');
   return '<span class="fhb'+(sel.length?' on':'')+(open?' pop':'')
     +'" onclick="event.stopPropagation();fPop(\''+sc+'\',\''+k+'\')" '
-    +'title="'+esc(label)+'으로 걸러 봅니다 — 여러 개 고를 수 있습니다">'
+    +'title="'+esc(c[3]||(label+'으로 걸러 봅니다 — 여러 개 고를 수 있습니다'))+'">'
     +esc(txt)+'<span class="fun">▽</span></span>'
     +(open?fPopHTML(sc,k,vals):'');
 }
@@ -1722,10 +1767,8 @@ function rowHTML(it,no,rowIdx){
     // 기업 칸 — 회사·관리번호·내 역할. 무슨 일인지는 옆 업무 칸이 맡는다.
     +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
     +(it.no?'<div class="sub">'+esc(it.no)+'</div>':'')
-    +(roleOf(it,viewer())==='sub'
-      ?'<div class="sub"><span class="badge" style="background:#ede9fe;color:#5b21b6" title="주담당은 '
-        +esc((it.mgr_main&&it.mgr_main.name)||'미지정')+' — 나는 부담당(공동)입니다">공동 · 주 '
-        +esc((it.mgr_main&&it.mgr_main.name)||'미지정')+'</span></div>':'')
+    // 나 말고 이 업무에 붙어 있는 사람 — 내가 주담당이면 부담당이, 부담당이면 주담당이 뜬다
+    +mgrLine(it,'other')
     +(it.ho&&!it.ho.confirmed?'<div class="sub" style="color:#b45309;font-weight:800">📥 인수 확인 필요</div>':'')
     +'</td>'
     // 업무 칸 — 팀 전체와 같은 자리. 윗줄 업무명(유형), 아랫줄 업무 요약.
@@ -3833,7 +3876,8 @@ function renderTeam(){
       var nx=it.next&&it.next.text?ddayHTML(it.next.date,it.next.text):(it.due?ddayHTML(it.due,'기한'):'<span class="muted">—</span>');
       return '<tr data-i="'+esc(it._id)+'">'+tdNo(i+1)+'<td>'+catBadge(it.cat)+'</td>'
         +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
-        +(perGroup?'':'<div class="sub">'+esc((it.mgr_main&&it.mgr_main.name)||'담당 미지정')+'</div>')
+        // 묶어 볼 때는 주담당이 묶음 머리에 이미 있으니 부담당만, 평면일 때는 주·부 모두
+        +mgrLine(it,perGroup?'sub':'all',fSel('team','mgr'))
         +(it.officer?'<div class="sub">'+esc(it.officer)+'</div>':'')+'</td>'
         +'<td class="tkc">'+nameCell(it)+stepChip(it._id)+peFlag(it)+'</td>'
         // 상태 — 남의 업무라 눌러서 바꾸지는 않는다(보기만)
