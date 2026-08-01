@@ -167,6 +167,13 @@
   .mgt{font-size:10.5px;font-weight:700;color:var(--sub);background:#f1f5fb;border-radius:4px;padding:0 6px;white-space:nowrap}
   .mgt.sub{background:#ede9fe;color:#5b21b6}
   .mgt.hi{outline:1.5px solid var(--acc);outline-offset:-1.5px}
+  /* 푸른이알피에서 한 건씩 당겨오기 */
+  .phd{font-size:11.5px;font-weight:800;color:var(--sub);margin:10px 0 4px;padding-top:6px;border-top:1px solid var(--line)}
+  .prow{display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid #f1f4f9}
+  .prow .px{flex:1;min-width:0;font-size:12.5px}
+  .prow .px .sub{font-size:11px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .prow .pm{display:flex;align-items:center;gap:3px;flex-shrink:0}
+  .prow button{font-size:11.5px;padding:4px 10px;flex-shrink:0;white-space:nowrap}
   /* 업무 칸 — 윗줄 업무명(유형), 아랫줄 업무 요약 */
   td.tkc{cursor:pointer;min-width:140px;font-size:12.5px}
   td.tkc .brf{font-size:11px;color:#1d4ed8;font-weight:400;margin-top:1px}
@@ -2811,10 +2818,14 @@ function itemModal(editId){
             +'🔗 푸른이알피 <b>'+esc(PE_KIND[it.ref.type]||'')+(it.no?' '+esc(it.no):'')+'</b>와 연결된 업무입니다. '
             +'업무명·의뢰인·업무 요약은 <b>양쪽이 서로 반영</b>됩니다.</div>'
           :'')
-        :'<div style="font-size:12px;color:var(--ok);background:var(--ok-bg);border-radius:7px;padding:7px 11px;margin-top:11px">'
+        :'<div style="display:flex;align-items:center;gap:9px;background:var(--acc-soft);border:1px solid #c7d7fe;'
+          +'border-radius:8px;padding:9px 11px;margin-top:11px;flex-wrap:wrap">'
+          +'<span style="font-size:12.5px;flex:1;min-width:190px">이미 <b>푸른이알피에 있는 건</b>인가요?<br>'
+          +'<span class="muted" style="font-size:11.5px">사업장 이름으로 찾아 가져오면 담당·기한·관할이 함께 따라오고 계속 동기화됩니다.</span></span>'
+          +'<button onclick="pullModal(\'\')">🔍 찾아서 가져오기 →</button></div>'
+          +'<div style="font-size:12px;color:var(--ok);background:var(--ok-bg);border-radius:7px;padding:7px 11px;margin-top:8px">'
           +'✓ 관리번호 자동 부여: <b id="if-no">'+genNo(catList()[0])+'</b> — 연도-구분-연번<br>'
-          +'<span style="color:var(--sub)">푸른이알피에 없는 <b>자체 업무</b>로 만들어집니다. 여기서만 관리되고 푸른이알피에는 생기지 않습니다.<br>'
-          +'나중에 푸른이알피에 같은 건이 등록되면 <b>🔗 푸른이알피 연동 → 짝짓기</b>로 이어 붙일 수 있습니다.</span></div>')
+          +'<span style="color:var(--sub)">푸른이알피에 없는 <b>자체 업무</b>로 만들어집니다. 여기서만 관리되고 푸른이알피에는 생기지 않습니다.</span></div>')
       +'<div class="row" style="justify-content:flex-end;margin-top:16px"><button onclick="closeM()">취소</button>'
       +'<button class="primary" onclick="saveItem('+(it?'\''+editId+'\'':'null')+')">'+(it?'저장':'등록')+'</button></div>');
     if(!it){ $('if-cat').addEventListener('change',function(){ var n=$('if-no'); if(n)n.textContent=genNo(this.value); }); }
@@ -4668,6 +4679,131 @@ function peAllUnlinked(){
     return !!(c.mgrSid||c.mgr);                 // 주담당이 지정된 건만
   });
 }
+/* ── 푸른이알피에서 한 건씩 당겨오기 ──────────────────────────────
+   [한 번에 연결]은 "내가 주담당인 것 전부"를 가져온다. 그런데 "저 회사 그
+   건 하나만" 또는 "남이 맡은 건에 나도 붙는다"는 길이 없었다. 사업장 이름으로
+   찾아 한 건씩 가져온다. 내 담당을 언제나 위에 둔다.
+   ⚠ 남의 건을 가져와도 주담당은 바꾸지 않는다 — 주담당의 원본은 푸른이알피라
+     여기서 바꿔 봐야 다음 동기화에 되돌아온다. 나는 부담당으로 붙는다.
+     그 참여는 pe_addsub로 푸른이알피에도 넘겨 양쪽이 어긋나지 않게 한다. */
+function pullModal(q){
+  if(q!==undefined) S._pullQ=q;
+  showModal('<h2 style="margin:0 0 10px">🔗 푸른이알피에서 가져오기</h2>'
+    +'<p class="muted" style="font-size:12.5px">마스터를 불러오는 중…</p>');
+  peReady().then(_pullModal);
+}
+function pullFind(q){
+  var cand=puerpCandidates();
+  if(!cand) return null;
+  var me=S.me||{}, have={};
+  allItems().forEach(function(it){ if(peLinked(it)) have[it.ref.type+'|'+safeKey(it.ref.id)]=it; });
+  q=String(q||'').trim().toLowerCase();
+  var mine=[], other=[];
+  cand.forEach(function(c){
+    if(q){
+      var hay=[c.company,c.title,c.ptype,c.no,c.client,c.mgr].concat(c.subs||[]).join(' ').toLowerCase();
+      if(hay.indexOf(q)<0) return;
+    }
+    c._have=have[c.ref.type+'|'+safeKey(c.ref.id)]||null;
+    c._main=!!((me.sid&&c.mgrSid===me.sid)||(me.name&&c.mgr===me.name));
+    c._sub=!!(me.name&&(c.subs||[]).indexOf(me.name)>=0);
+    (c._main||c._sub?mine:other).push(c);
+  });
+  function ord(a,b){
+    return String(a.company||'').localeCompare(String(b.company||''),'ko')
+      ||String(a.no||'').localeCompare(String(b.no||''),'en',{numeric:true});
+  }
+  return {mine:mine.sort(ord), other:other.sort(ord)};
+}
+function _pullRow(c){
+  var me=S.me||{};
+  var joined=!!(c._have&&isOf(c._have,{sid:me.sid,name:me.name}));
+  var btn=joined
+    ?'<button onclick="closeM();openDrawer(\''+escJ(c._have._id)+'\')" title="이미 내 업무에 있습니다">✓ 열기</button>'
+    :(c._main||c._sub
+      ?'<button class="primary" onclick="pullOne(\''+escJ(c.pid)+'\',false)" title="내 담당 건을 내 업무로 가져옵니다">가져오기</button>'
+      :'<button class="primary" onclick="pullOne(\''+escJ(c.pid)+'\',true)" '
+        +'title="주담당은 '+esc(c.mgr||'미지정')+' 그대로 두고, 나를 부담당(공동)으로 붙입니다 — 푸른이알피에도 반영됩니다">부담당으로</button>');
+  return '<div class="prow">'
+    +catBadge(c.cat)
+    +'<div class="px"><b>'+esc(c.company||'—')+'</b>'
+    +'<div class="sub">'+esc(c.ptype||c.title||'')+(c.no?' · '+esc(c.no):'')+'</div></div>'
+    +'<div class="pm">'+(c._main?'<span class="mgt">나</span>'
+        :'<span class="mgk">주</span><span class="mgt">'+esc(c.mgr||'미지정')+'</span>')
+      +(c._sub?'<span class="mgt sub">부담당</span>':'')
+      +(c._have&&!joined?'<span class="mgt" title="다른 사람 목록에 이미 있습니다">이미 있음</span>':'')+'</div>'
+    +btn+'</div>';
+}
+function _pullModal(){
+  var q=S._pullQ||'', r=pullFind(q);
+  if(r===null){
+    showModal('<h2 style="margin:0 0 10px">🔗 푸른이알피에서 가져오기</h2>'
+      +'<p class="muted" style="font-size:12.5px">푸른이알피 마스터를 읽지 못했습니다. 같은 브라우저에서 <b>푸른이알피를 한 번 열고</b> 다시 시도해 주세요.</p>'
+      +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">닫기</button></div>');
+    return;
+  }
+  S._pullC={}; r.mine.concat(r.other).forEach(function(c){ S._pullC[c.pid]=c; });
+  var LIM=40, more=r.other.length-LIM;
+  showModal('<h2 style="margin:0 0 4px">🔗 푸른이알피에서 가져오기</h2>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 10px">사업장 이름·업무명·관리번호로 찾습니다. '
+    +'<b>남이 맡은 건</b>은 주담당을 그대로 두고 <b>나를 부담당</b>으로 붙입니다.</p>'
+    +'<input id="pull-q" value="'+esc(q)+'" placeholder="🔍 사업장 이름 (예: 나래)" '
+    +'oninput="onPullQ(this.value)" style="width:100%;padding:8px 11px;border:1px solid var(--line);border-radius:8px;font-size:13px">'
+    +'<div style="max-height:340px;overflow-y:auto;margin-top:10px">'
+    +'<div class="phd">● 내 담당 '+r.mine.length+'건</div>'
+    +(r.mine.length?r.mine.map(_pullRow).join('')
+      :'<div class="muted" style="font-size:12px;padding:6px 2px">찾는 조건에 내 담당 건이 없습니다.</div>')
+    +'<div class="phd">○ 다른 사람 담당 '+r.other.length+'건</div>'
+    +(r.other.length?r.other.slice(0,LIM).map(_pullRow).join('')
+      :'<div class="muted" style="font-size:12px;padding:6px 2px">없습니다.</div>')
+    +(more>0?'<div class="muted" style="font-size:11.5px;padding:6px 2px">…외 '+more+'건. 사업장 이름을 적어 좁혀 보세요.</div>':'')
+    +'</div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="closeM()">닫기</button></div>');
+  var el=$('pull-q'); if(el){ el.focus(); try{ el.setSelectionRange(el.value.length,el.value.length); }catch(e){} }
+}
+var _pullT=null;
+function onPullQ(v){ S._pullQ=v; clearTimeout(_pullT); _pullT=setTimeout(_pullModal,220); }
+function pullOne(pid,asSub){
+  var c=(S._pullC||{})[pid];
+  if(!c){ toast('건을 찾을 수 없습니다','warn'); return; }
+  var me=S.me||{};
+  if(asSub&&!me.sid&&!me.name){ toast('로그인 정보를 읽지 못했습니다','warn'); return; }
+  loadStaff().then(function(st){
+    var name2sid={}; st.forEach(function(u){ name2sid[u.name]=u.sid; });
+    var up={}, now=new Date().toISOString(), meRec={sid:me.sid||'',name:me.name||''};
+    function hasMe(arr){
+      return (arr||[]).some(function(s){ return s&&((me.sid&&s.sid===me.sid)||(me.name&&s.name===me.name)); });
+    }
+    if(c._have){
+      var it=c._have;
+      if(hasMe(it.mgr_subs)||roleOf(it,meRec)==='main'){ closeM(); openDrawer(it._id); return; }
+      up[NS+'/items/'+it._id+'/mgr_subs']=(it.mgr_subs||[]).concat([meRec]);
+      up[NS+'/items/'+it._id+'/pe_addsub']=[me.sid||''];
+      up[NS+'/items/'+it._id+'/up_at']=now;
+    }else{
+      var mSid=c.mgrSid||name2sid[c.mgr]||'';
+      var subs=(c.subs||[]).map(function(n){ return {sid:name2sid[n]||'',name:n}; });
+      if(asSub&&!hasMe(subs)) subs.push(meRec);
+      // pe_m = 푸른이알피 소유 필드 스냅샷. 가져오는 시점에 함께 찍어 둔다.
+      var m={}; PE_MIRROR.forEach(function(f){ m[f]=c[f]||''; });
+      m.mgr=mSid+'/'+(c.mgr||''); m.subs=(c.subs||[]).join('|');
+      var rec={ no:c.no||(S.year+'-'+c.cat+'-PE'), cat:c.cat, ptype:c.ptype||'',
+        company:c.company||'', client:c.client||'', officer:c.officer||'',
+        jur_org:c.jur_org||'', jur_ph:c.jur_ph||'', jur_em:c.jur_em||'',
+        title:c.title||'', due:c.due||'', start:c.start||'', status:'진행중',
+        brief:c.brief||'', co_id:c.co_id||'',
+        mgr_main:{sid:mSid,name:c.mgr||''}, mgr_subs:subs,
+        src:'puerp', ref:c.ref, pe_m:m, created_at:now };
+      if(asSub) rec.pe_addsub=[me.sid||''];   // 푸른이알피 공동담당에도 나를 더해 달라는 요청
+      up[NS+'/items/'+c.pid]=rec;
+      up[NS+'/pe_seen/'+c.ref.type+'/'+safeKey(c.ref.id)]=true;
+    }
+    fbDb.ref().update(up).then(function(){
+      toast(asSub?'부담당으로 붙였습니다 — 푸른이알피 공동담당에도 반영됩니다':'🔗 내 업무로 가져왔습니다');
+      _pullModal(); route();
+    }).catch(function(e){ toast('실패: '+e.message,'warn'); });
+  });
+}
 // 전 직원 주담당을 한 번에 연결 — 담당자별로 묶고, 엑셀 이관분과 겹치는 건은 기본 해제
 function puerpAllModal(){
   showModal('<h2 style="margin:0 0 10px">🔗 주담당 업무 일괄 연결</h2><p class="muted" style="font-size:12.5px">불러오는 중…</p>');
@@ -5043,6 +5179,12 @@ function _puerpModal(){
     +'<span class="muted" style="font-size:11.5px">엑셀에서 옮겨 온 업무는 연동이 안 되어 있습니다. '
     +'같은 사건을 찾아 붙이면 기록은 그대로 두고 동기화만 시작됩니다.</span></span>'
     +'<button onclick="matchModal()">짝짓기 →</button></div>'
+    +'<div style="display:flex;align-items:center;gap:9px;background:var(--bg);border:1px solid var(--line);'
+    +'border-radius:9px;padding:10px 12px;margin-bottom:11px;flex-wrap:wrap">'
+    +'<span style="font-size:12.5px;flex:1;min-width:180px"><b>사업장 이름으로 찾아 한 건씩 가져오기</b><br>'
+    +'<span class="muted" style="font-size:11.5px">내 담당이 위에 나옵니다. 남이 맡은 건은 주담당을 그대로 두고 '
+    +'<b>나를 부담당</b>으로 붙입니다(푸른이알피에도 반영).</span></span>'
+    +'<button onclick="pullModal(\'\')">🔍 찾아서 가져오기 →</button></div>'
     +(kindFixList().length
       ?'<div style="display:flex;align-items:center;gap:9px;background:var(--bg);border:1px solid var(--line);'
         +'border-radius:9px;padding:10px 12px;margin-bottom:11px;flex-wrap:wrap">'
