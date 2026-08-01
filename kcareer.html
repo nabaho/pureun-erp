@@ -1956,6 +1956,12 @@ function fsUndoLast(){
 /* ===== pu-erp 실적 동기화 =====
    pu-erp의 종료 건을 실적 스토어로 가져온다. 추가만 하고 덮어쓰지 않는다(설계서 §6). */
 var PU_SYNC_STORES = ['case','consult','fund','etc'];
+
+/* 외부기관 실적 판별 — 수행기관이 있어도 '의뢰기관 직접' 같은 직접 수행은 푸른 자체 실적이다 */
+function _isExternal(r){
+  if(!r || !r.agency) return false;
+  return !/직접/.test(String(r.agency));
+}
 var _puSyncCtx = null;
 
 function _puKnownRefs(){
@@ -2093,7 +2099,7 @@ function renderPuAgency(){
   var groups = {};                                          /* 정규화 기관명 → {name, rows} */
   PU_SYNC_STORES.forEach(function(k){
     get(k).forEach(function(r){
-      if(!r || !r.agency || r.excluded) return;
+      if(!r || !_isExternal(r) || r.excluded) return;
       var key = _agencyNorm(r.agency);
       if(!groups[key]) groups[key] = { name: r.agency, rows: [] };
       groups[key].rows.push(Object.assign({ _store: k, _label: LABEL[k] }, r));
@@ -2112,11 +2118,18 @@ function renderPuAgency(){
     var g = groups[key];
     var years = g.rows.map(function(r){ return r.year; }).filter(Boolean).sort();
     var yr = years.length ? (years[0] === years[years.length-1] ? years[0] : years[0] + '~' + years[years.length-1]) : '';
-    /* 이 기관이 발급한 증명서: certdoc의 발급기관(org) 부분일치 + 손으로 연결한 것(agencyKey) */
+    /* 이 기관이 발급한 증명서 매칭.
+       스캔으로 들어온 증명서는 발급기관(org) 칸이 비어 있고 파일명·제목에만 기관명이 있다
+       (실사용 피드백) — 그래서 org·제목·파일명을 합쳐 보고, '한국능률협회'처럼
+       접두어가 붙은 기관명은 앞 2자를 뗀 꼬리('능률협회')로도 찾는다. */
     var myCerts = certs.filter(function(c){
       if(_agencyNorm(c.agencyKey) === key) return true;
-      var a = _agencyNorm(c.org), b = key;
-      return a && (a.indexOf(b.slice(0,6)) >= 0 || b.indexOf(a.slice(0,6)) >= 0);
+      var hay = _agencyNorm((c.org||'') + (c.title||'') + (c.fname||''));
+      if(!hay) return false;
+      var head = key.slice(0,6);
+      if(head && hay.indexOf(head) >= 0) return true;
+      if(key.length >= 6){ var tail = key.slice(2, 8); if(hay.indexOf(tail) >= 0) return true; }
+      return false;
     });
     return '<div class="card" style="margin-bottom:12px">'
       + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><strong style="font-size:14px">🏛 ' + escapeHtml(g.name) + '</strong>'
@@ -3811,7 +3824,7 @@ const CAREER_CFG={
       <td style="font-size:11px">${r.major||'-'}</td><td>${r.degree||'-'}</td>
       <td style="font-size:11px">${r.period||'-'}</td><td>${r.graduated||'-'}</td>
       <td onclick="event.stopPropagation()">${rowActions(r.id,'edu',r.school,p)}</td></tr>`},
-  consult:{store:'consult',filter:r=>!r.agency&&!r.excluded,qFields:['org','project','agency','main'],
+  consult:{store:'consult',filter:r=>!_isExternal(r)&&!r.excluded,qFields:['org','project','agency','main'],
     cols:['ID','유형','고객사','과제','수행기관','담당','연도','상태','관리'],
     row:(r,p)=>`<tr style="cursor:pointer"><td><span class="id-chip">${r.id}</span></td><td><span class="tag navy">${r.type||'-'}</span></td>
       <td><strong>${r.org||'-'}</strong></td><td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.project||'-'}</td>
@@ -3824,19 +3837,19 @@ const CAREER_CFG={
       <td><strong>${r.topic||'-'}</strong></td><td>${r.org||'-'}</td><td>${formatDate(r.date)||'-'}</td>
       <td>${r.duration?r.duration+'h':'-'}</td><td>${r.year||'-'}</td>
       <td onclick="event.stopPropagation()">${rowActions(r.id,'lecture',r.topic,p)}</td></tr>`},
-  case:{store:'case',filter:r=>!r.agency&&!r.excluded,qFields:['org','project','type'],
+  case:{store:'case',filter:r=>!_isExternal(r)&&!r.excluded,qFields:['org','project','type'],
     cols:['ID','유형','의뢰인/사업장','사건내용','상태','연도','관리'],
     row:(r,p)=>`<tr style="cursor:pointer"><td><span class="id-chip">${r.id}</span></td><td><span class="tag navy">${r.type||'-'}</span></td>
       <td><strong>${r.org||'-'}</strong></td><td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.project||'-'}</td>
       <td><span class="tag ${r.status==='완료'?'teal':'amber'}">${r.status||'-'}</span></td><td>${r.year||'-'}</td>
       <td onclick="event.stopPropagation()">${rowActions(r.id,'case',r.org,p,r)}</td></tr>`},
-  fund:{store:'fund',filter:r=>!r.agency&&!r.excluded,qFields:['org','project'],
+  fund:{store:'fund',filter:r=>!_isExternal(r)&&!r.excluded,qFields:['org','project'],
     cols:['ID','기업/기금','내용','상태','연도','관리'],
     row:(r,p)=>`<tr style="cursor:pointer"><td><span class="id-chip">${r.id}</span></td>
       <td><strong>${r.org||'-'}</strong></td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.project||'-'}</td>
       <td><span class="tag ${r.status==='완료'?'teal':'amber'}">${r.status||'-'}</span></td><td>${r.year||'-'}</td>
       <td onclick="event.stopPropagation()">${rowActions(r.id,'fund',r.org,p,r)}</td></tr>`},
-  etc:{store:'etc',filter:r=>!r.agency&&!r.excluded,qFields:['org','project','type'],
+  etc:{store:'etc',filter:r=>!_isExternal(r)&&!r.excluded,qFields:['org','project','type'],
     cols:['ID','유형','기관/고객','내용','연도','관리'],
     row:(r,p)=>`<tr style="cursor:pointer"><td><span class="id-chip">${r.id}</span></td><td>${r.type||'-'}</td>
       <td><strong>${r.org||'-'}</strong></td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.project||'-'}</td><td>${r.year||'-'}</td>
@@ -3914,9 +3927,12 @@ function renderCareer(name){ const cfg=CAREER_CFG[name]; if(!cfg) return;
   /* pu 동기화 스토어면 배제된 건 수를 보여주고 펼쳐서 복원(설계서 §7 — 배제는 숨김이지 삭제가 아니다) */
   let exBar='';
   if(typeof PU_SYNC_STORES!=='undefined' && PU_SYNC_STORES.indexOf(cfg.store)>=0){
+    /* 외부기관으로 넘어간 건수 안내 — 컨설팅 79건이 전부 넘어가 0건이 되자 유실로 오인한 실사용 피드백 */
+    const extCount=get(cfg.store).filter(function(r){ return _isExternal(r)&&!r.excluded; }).length;
+    if(extCount) exBar+='<div style="font-size:12px;color:var(--text-mute);padding:6px 0">🏛 수행기관이 있는 <b>'+extCount+'건</b>은 <b>실적관리 › 외부기관 실적</b> 탭에 있습니다</div>';
     const exRows=get(cfg.store).filter(function(r){ return r.excluded; });
     if(exRows.length){
-      exBar='<div style="margin-top:10px;border-top:1px dashed var(--border);padding-top:8px;font-size:12px">'
+      exBar+='<div style="margin-top:10px;border-top:1px dashed var(--border);padding-top:8px;font-size:12px">'
         +'<button type="button" class="nofile-btn'+(_showExcluded[name]?' active':'')+'" onclick="toggleExcluded(\''+name+'\')">🚫 배제된 건 '+exRows.length+'개</button>'
         +(_showExcluded[name]?exRows.map(function(r){
             return '<div style="display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--border-soft)">'

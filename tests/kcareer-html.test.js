@@ -285,21 +285,41 @@ test('외부기관 실적 페이지와 메뉴가 있다', () => {
   assert.match(source, /function renderPuAgency\(/);
 });
 
-test('외부기관 탭은 4개 스토어의 agency 있는 건을 모아 기관별로 묶는다', () => {
+test('외부기관 탭은 4개 스토어의 외부 건을 모아 기관별로 묶는다', () => {
   const src = funcSource('renderPuAgency');
   assert.match(src, /PU_SYNC_STORES/);
-  assert.match(src, /r\.agency/);
-  assert.match(src, /!r\.excluded|r\.excluded\) return/, '배제된 건은 외부기관 탭에서도 숨긴다');
+  assert.match(src, /_isExternal\(r\)/);
+  assert.match(src, /r\.excluded\) return/, '배제된 건은 외부기관 탭에서도 숨긴다');
   assert.match(src, /certdoc/, '기관이 발급한 증명서를 자동 매칭해 보여준다');
+  // 발급기관 칸이 빈 스캔 증명서도 제목·파일명으로 매칭돼야 한다
+  assert.match(src, /c\.fname/, '증명서 매칭이 파일명·제목도 봐야 합니다');
+});
+
+test('_isExternal: 수행기관이 있어도 직접 수행은 내부다', () => {
+  const ctx = {};
+  vm.runInNewContext(funcSource('_isExternal'), ctx);
+  assert.equal(ctx._isExternal({ agency: '한국능률협회' }), true);
+  assert.equal(ctx._isExternal({ agency: '충남경제진흥원' }), true);
+  assert.equal(ctx._isExternal({ agency: '의뢰기관 직접' }), false);   // 직접 수행 = 푸른 자체 실적
+  assert.equal(ctx._isExternal({ agency: '직접' }), false);
+  assert.equal(ctx._isExternal({ agency: '' }), false);
+  assert.equal(ctx._isExternal({}), false);
+  assert.equal(ctx._isExternal(null), false);
 });
 
 test('실적 4탭은 외부기관·배제 건을 걸러낸다', () => {
   ['case', 'consult', 'fund', 'etc'].forEach((k) => {
     const m = source.match(new RegExp(k + ":\\{store:'" + k + "'[^\\n]*"));
     assert.ok(m, k + ' CFG가 있어야 합니다');
-    assert.match(m[0], /filter:\s*r\s*=>\s*!r\.agency\s*&&\s*!r\.excluded/,
-      k + ' 목록은 agency 있는 것과 excluded를 숨겨야 합니다');
+    assert.match(m[0], /filter:\s*r\s*=>\s*!_isExternal\(r\)\s*&&\s*!r\.excluded/,
+      k + ' 목록은 외부기관 건과 excluded를 숨겨야 합니다');
   });
+});
+
+test('내부 탭이 비어 보여도 외부기관 건이 어디 갔는지 안내한다', () => {
+  // 컨설팅실적 79건이 전부 외부로 넘어가 0건이 되자 사용자가 데이터 유실로 오인했다(실사용 피드백)
+  assert.match(source, /외부기관 실적.{0,10}탭에/, '외부로 넘어간 건수를 알려주는 안내가 있어야 합니다');
+  assert.match(source, /extCount/);
 });
 
 test('배제는 삭제가 아니라 excluded 플래그다', () => {
