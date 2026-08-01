@@ -1224,7 +1224,7 @@ function renderMy(){
   if(S.myRole) base=base.filter(function(it){return roleOf(it,viewer())===S.myRole;});
   if(S.q)      base=base.filter(function(it){return matchQ(it,S.q);});
   // 열 조건은 base에서 뺀다 — 어떤 열의 선택지 건수를 셀 때 그 열만 되살리기 위해서다
-  var list=base.filter(function(it){ return myPass(it,''); });
+  var list=base.filter(function(it){ return fPass('my',it,''); });
   var opts=ownerOptions();
   var h='<div class="row" style="flex-wrap:wrap">'
     +'<h1>'+(self?'내 업무':esc(S.vname)+' 님의 업무')+'</h1>'
@@ -1295,21 +1295,21 @@ function renderMy(){
     app.innerHTML=h; return;
   }
   // 머리행이 곧 걸러 보기 — 열 이름을 누르면 그 열의 값이 건수와 함께 뜬다(엑셀 자동필터).
-  var on=!!(S.q||S.f||S.myRole||MYF.some(function(f){ return myF(f[0]).length; }));
+  var on=!!(S.q||S.f||S.myRole||fAny('my'));
   // 선택지는 열려 있는 열만 센다 — 네 열을 매번 다 세면 헛일이다
-  function fh(k,label,w){
-    var vals=(S.myPop===k)?myVals(k,base.filter(function(it){ return myPass(it,k); })):[];
-    return '<th style="'+w+'">'+myFH(k,label,vals)+'</th>';
+  function fh(k,w){
+    var vals=fOpen('my',k)?fVals('my',k,base.filter(function(it){ return fPass('my',it,k); })):[];
+    return '<th style="'+w+'">'+fBtn('my',k,vals)+'</th>';
   }
   h+='<div class="panel" style="padding:0;overflow-x:auto"><table><thead><tr class="fhead">'
     +'<th class="rowno">'+(on?'<span class="fx" onclick="myReset()" title="걸러 보기를 모두 해제합니다">✕</span>':'#')+'</th>'
-    +fh('cat','구분','width:64px')
+    +fh('cat','width:64px')
     +'<th style="min-width:110px">'+qBox('renderMy','기업','fh')+'</th>'
-    +fh('pt','업무','min-width:140px')
-    +fh('st','상태','width:74px')
+    +fh('pt','min-width:140px')
+    +fh('st','width:74px')
     +'<th style="min-width:130px">최근 기록</th>'
     +'<th style="color:var(--acc2)">'+(isCurWeek()?'이번 주':'그 주')+' <span style="font-weight:400;text-transform:none">'+esc(weekLabel(S.week).split('·')[1]||'')+' — 칸에 바로 입력, Enter 저장</span></th>'
-    +fh('due','다음 할 일','width:110px')
+    +fh('due','width:110px')
     +'<th style="width:58px;text-align:center">종료</th></tr></thead><tbody>';
   if(!list.length) h+='<tr><td colspan="9" class="moremark">조건에 맞는 업무가 없습니다. 열 이름을 눌러 조건을 바꿔 보세요.</td></tr>';
   list.forEach(function(it,i){ h+=rowHTML(it,i+1); });
@@ -1320,7 +1320,7 @@ function renderMy(){
         +' <span class="chipbtn" onclick="myReset()" title="걸러 보기를 모두 해제합니다">✕ 조건 해제</span>'
        :'진행 중 '+total+'건')+'</div>';
   app.innerHTML=h;
-  if(S.myPop) myPopPos();
+  if(S.fPop) fPopPos();
 }
 // 컴팩트 요약 칩 — 누르면 그 건만 보고, 다시 누르면 해제 (예전 .fcard와 같은 동작)
 function sbHTML(key,label,val,cls){
@@ -1329,13 +1329,13 @@ function sbHTML(key,label,val,cls){
 }
 function setFocus(k){ S.f=(S.f===k)?null:k; renderMy(); }
 function myRole(r){ S.myRole=(S.myRole===r)?'':r; renderMy(); }
-function myReset(){ S.myF={}; S.myPop=''; S.q=''; S.f=null; S.myRole=''; renderMy(); }
+function myReset(){ fResetCols('my'); S.fPop=''; S.q=''; S.f=null; S.myRole=''; renderMy(); }
 
 /* ── 열별 걸러 보기 (엑셀 자동필터) ──────────────────────────────────
    열 이름을 누르면 그 열에 실제로 쓰인 값이 건수와 함께 뜬다. 값은 여러 개를
    동시에 고를 수 있다 — 드롭다운으로는 "사건과 컨설팅만"을 볼 수 없었다.
-   고른 값은 S.myF={cat:[...],pt:[...],st:[...],due:[...]}에 담는다.
-   빈 배열 = 그 열에 조건 없음. */
+   고른 값은 S.F={my:{cat:[...],…}, team:{…}}에 화면별로 담는다.
+   빈 배열 = 그 열에 조건 없음. 내 업무·팀 전체가 같은 코드를 쓴다. */
 // 기한은 겹치지 않는 칸으로 나눈다 — 체크 목록은 한 건이 한 칸에만 들어가야 센 수가 맞다
 var DUE_BUCKETS=[['over','기한 지남'],['d7','임박 D-7'],['d30','한 달 안'],['later','그 뒤'],['none','기한 없음']];
 var DUE_LABEL={}, DUE_ORDER={};
@@ -1355,88 +1355,107 @@ function dueMatch(it,mode){
   var b=dueBucket(it);
   return mode==='d30'?(b==='d7'||b==='d30'):(b===mode);  // '한 달 안'에는 임박도 든다
 }
-var MYF=[
-  ['cat','구분',      function(it){ return it.cat||'기타'; }],
-  ['pt', '업무',      function(it){ return ptOf(it); }],
-  ['st', '상태',      function(it){ return it.status||'진행중'; }],
-  ['due','다음 할 일',dueBucket]
-];
-var MYF_BY={}; MYF.forEach(function(f){ MYF_BY[f[0]]=f; });
-function myF(k){ var s=S.myF&&S.myF[k]; return (s instanceof Array)?s:[]; }
-function myLabel(k,v){ return k==='due'?(DUE_LABEL[v]||v):(v||'(이름 없음)'); }
+/* 걸러 볼 수 있는 열. 화면(sc)마다 목록이 다르지만 동작은 하나로 쓴다.
+   [키, 열 이름, 그 건의 값] — 값이 같은 것끼리 한 줄로 묶인다. */
+var FCOLS={
+  my:  [['cat','구분',      function(it){ return it.cat||'기타'; }],
+        ['pt', '업무',      function(it){ return ptOf(it); }],
+        ['st', '상태',      function(it){ return it.status||'진행중'; }],
+        ['due','다음 할 일',dueBucket]],
+  team:[['mgr','담당',      function(it){ return (it.mgr_main&&it.mgr_main.name)||'(담당 미지정)'; }],
+        ['cat','구분',      function(it){ return it.cat||'기타'; }],
+        ['pt', '업무명',    function(it){ return ptOf(it); }],
+        ['st', '상태',      function(it){ return it.status||'진행중'; }],
+        ['due','다음 할 일',dueBucket]]
+};
+function fCols(sc){ return FCOLS[sc]||FCOLS.my; }
+function fCol(sc,k){
+  var a=fCols(sc); for(var i=0;i<a.length;i++) if(a[i][0]===k) return a[i];
+  return null;
+}
+function fRender(sc){ if(sc==='team') renderTeam(); else renderMy(); }
+function fSel(sc,k){ var s=S.F&&S.F[sc]&&S.F[sc][k]; return (s instanceof Array)?s:[]; }
+function fSet(sc,k,v){ S.F=S.F||{}; S.F[sc]=S.F[sc]||{}; S.F[sc][k]=v; }
+function fAny(sc){ return fCols(sc).some(function(c){ return fSel(sc,c[0]).length>0; }); }
+function fResetCols(sc){ S.F=S.F||{}; S.F[sc]={}; }
+function fLabel(k,v){ return k==='due'?(DUE_LABEL[v]||v):(v||'(이름 없음)'); }
 // 그 열에 실제로 쓰인 값과 건수. 건수는 "그 열만 빼고" 걸러 센다(엑셀과 같다) —
 // 그래야 "사건을 고르면 컨설팅이 0건"이 되어 다시 넓힐 수가 없는 일이 없다.
-function myVals(k,arr){
-  var f=MYF_BY[k]; if(!f) return [];
+function fVals(sc,k,arr){
+  var f=fCol(sc,k); if(!f) return [];
   var m={}, out=[];
   (arr||[]).forEach(function(it){ var v=f[2](it); if(!(v in m)){ m[v]=0; out.push(v); } m[v]++; });
   out.sort(k==='due'
     ?function(a,b){ return DUE_ORDER[a]-DUE_ORDER[b]; }
-    :function(a,b){ return String(myLabel(k,a)).localeCompare(String(myLabel(k,b)),'ko'); });
+    :function(a,b){ return String(fLabel(k,a)).localeCompare(String(fLabel(k,b)),'ko'); });
   return out.map(function(v){ return [v,m[v]]; });
 }
 // 고른 값에 드는가. except를 주면 그 열 조건은 빼고 본다(선택지 건수를 셀 때).
-function myPass(it,except){
-  for(var i=0;i<MYF.length;i++){
-    var f=MYF[i]; if(f[0]===except) continue;
-    var sel=myF(f[0]); if(sel.length&&sel.indexOf(f[2](it))<0) return false;
+function fPass(sc,it,except){
+  var a=fCols(sc);
+  for(var i=0;i<a.length;i++){
+    if(a[i][0]===except) continue;
+    var sel=fSel(sc,a[i][0]); if(sel.length&&sel.indexOf(a[i][2](it))<0) return false;
   }
   return true;
 }
-function myPop(k){ S.myPop=(S.myPop===k)?'':k; renderMy(); }
-function myPopClose(){ if(S.myPop){ S.myPop=''; renderMy(); } }
+// 열려 있는 열 하나 — 'my:cat' 꼴로 담는다(두 화면이 같은 자리를 쓰지 않게)
+function fPopKey(sc,k){ return sc+':'+k; }
+function fOpen(sc,k){ return S.fPop===fPopKey(sc,k); }
+function fPop(sc,k){ var t=fPopKey(sc,k); S.fPop=(S.fPop===t)?'':t; fRender(sc); }
+function fPopClose(sc){ if(S.fPop){ S.fPop=''; fRender(sc); } }
 // 체크 상태를 읽어 그 열에만 적용한다. 전부 골랐으면 조건 없음과 같다.
-function myApply(k){
+function fApply(sc,k){
   var all=[].slice.call(document.querySelectorAll('#fpop .fv'));
   var sel=all.filter(function(c){ return c.checked; }).map(function(c){ return c.getAttribute('data-v'); });
-  S.myF=S.myF||{}; S.myF[k]=(sel.length===all.length)?[]:sel;
-  S.myPop=''; renderMy();
+  fSet(sc,k,(sel.length===all.length)?[]:sel);
+  S.fPop=''; fRender(sc);
 }
-function myClearCol(k){ S.myF=S.myF||{}; S.myF[k]=[]; S.myPop=''; renderMy(); }
+function fClearCol(sc,k){ fSet(sc,k,[]); S.fPop=''; fRender(sc); }
 // 값이 많을 때 좁혀 찾기 — 다시 그리지 않고 화면에서만 감춘다
-function myPopFind(v){
+function fPopFind(v){
   v=String(v||'').trim().toLowerCase();
   [].slice.call(document.querySelectorAll('#fpop .fpl label')).forEach(function(l){
     l.style.display=(!v||l.textContent.toLowerCase().indexOf(v)>=0)?'':'none';
   });
 }
-function myPopAll(on){
+function fPopAll(on){
   [].slice.call(document.querySelectorAll('#fpop .fv')).forEach(function(c){
     if(c.parentNode.style.display!=='none') c.checked=on;
   });
 }
-function myPopHTML(k,vals){
-  var sel=myF(k), any=sel.length;
-  return '<div class="fbk" onclick="myPopClose()"></div>'
+function fPopHTML(sc,k,vals){
+  var sel=fSel(sc,k), any=sel.length;
+  return '<div class="fbk" onclick="fPopClose(\''+sc+'\')"></div>'
     +'<div class="fpop" id="fpop" onclick="event.stopPropagation()">'
-    +(vals.length>8?'<input class="fps" placeholder="값 찾기" oninput="myPopFind(this.value)">':'')
+    +(vals.length>8?'<input class="fps" placeholder="값 찾기" oninput="fPopFind(this.value)">':'')
     +'<div class="fpl">'
     +(vals.length?vals.map(function(v){
         var ck=!any||sel.indexOf(v[0])>=0;
         return '<label><input type="checkbox" class="fv" data-v="'+esc(v[0])+'"'+(ck?' checked':'')+'>'
-          +'<span>'+esc(myLabel(k,v[0]))+'</span><span class="c">'+v[1]+'</span></label>';
+          +'<span>'+esc(fLabel(k,v[0]))+'</span><span class="c">'+v[1]+'</span></label>';
       }).join('')
      :'<div class="muted" style="font-size:12px;padding:6px 4px">고를 값이 없습니다</div>')
     +'</div>'
-    +'<div class="fpa"><span class="lnk" onclick="myPopAll(true)">전체 선택</span>'
-    +'<span class="lnk" onclick="myPopAll(false)">모두 지우기</span></div>'
-    +'<div class="fpa"><button class="primary" onclick="myApply(\''+k+'\')">적용</button>'
-    +'<button onclick="myClearCol(\''+k+'\')" title="이 열의 조건만 풉니다">조건 없음</button></div>'
+    +'<div class="fpa"><span class="lnk" onclick="fPopAll(true)">전체 선택</span>'
+    +'<span class="lnk" onclick="fPopAll(false)">모두 지우기</span></div>'
+    +'<div class="fpa"><button class="primary" onclick="fApply(\''+sc+'\',\''+k+'\')">적용</button>'
+    +'<button onclick="fClearCol(\''+sc+'\',\''+k+'\')" title="이 열의 조건만 풉니다">조건 없음</button></div>'
     +'</div>';
 }
-// 머리행 한 칸. 고른 값이 있으면 열 이름 대신 그 값을 보여준다.
-function myFH(k,label,vals){
-  var sel=myF(k), open=(S.myPop===k);
-  var txt=!sel.length?label
-    :(sel.length===1?myLabel(k,sel[0]):label+' '+sel.length+'개');
+// 깔때기 한 개. 고른 값이 있으면 열 이름 대신 그 값을 보여준다.
+function fBtn(sc,k,vals){
+  var c=fCol(sc,k); if(!c) return '';
+  var label=c[1], sel=fSel(sc,k), open=fOpen(sc,k);
+  var txt=!sel.length?label:(sel.length===1?fLabel(k,sel[0]):label+' '+sel.length+'개');
   return '<span class="fhb'+(sel.length?' on':'')+(open?' pop':'')
-    +'" onclick="event.stopPropagation();myPop(\''+k+'\')" '
+    +'" onclick="event.stopPropagation();fPop(\''+sc+'\',\''+k+'\')" '
     +'title="'+esc(label)+'으로 걸러 봅니다 — 여러 개 고를 수 있습니다">'
     +esc(txt)+'<span class="fun">▽</span></span>'
-    +(open?myPopHTML(k,vals):'');
+    +(open?fPopHTML(sc,k,vals):'');
 }
 // 팝업은 표 바깥으로 띄운다(표에 가로 스크롤이 있어 안에 두면 잘린다)
-function myPopPos(){
+function fPopPos(){
   var b=document.querySelector('.fhb.pop'), p=$('fpop'); if(!b||!p) return;
   var r=b.getBoundingClientRect();
   p.style.left=Math.max(8,Math.min(r.left,window.innerWidth-p.offsetWidth-8))+'px';
@@ -3288,41 +3307,48 @@ function renderTeam(){
     +'<span class="sb dg'+(S.teamDue==='d7'?' on':'')+'" onclick="S.teamDue=(S.teamDue===\'d7\'?\'\':\'d7\');renderTeam()" title="기한이 7일 이내인 건만">임박 '+due7.length+'</span>'
     +'</div>';
   var folded=Object.keys(S.teamFold||{}).length>0;
+  var anyF=!!(S.q||S.teamNolog||S.teamStale||fAny('team'));
   h+='<div class="fbar">'
     +qBox('renderTeam','🔍 기업·업무명·의뢰인')
-    +'<select onchange="S.teamMgr=this.value;renderTeam()" title="담당자로 좁히기">'
-    +'<option value="">담당 전체</option>'+names.map(function(n){return '<option'+(S.teamMgr===n?' selected':'')+'>'+esc(n)+'</option>';}).join('')+'</select>'
-    +catSelect(S.teamCat,'S.teamCat=this.value;renderTeam()')
-    +'<select onchange="S.teamSt=this.value;renderTeam()" title="상태로 좁히기">'
-    +'<option value="">상태 전체</option>'
-    +STATUSES.map(function(s){return '<option'+(S.teamSt===s[0]?' selected':'')+'>'+s[0]+'</option>';}).join('')+'</select>'
-    +'<select onchange="S.teamDue=this.value;renderTeam()" title="기한으로 좁히기">'
-    +DUE_OPTS.map(function(o){
-        return '<option value="'+o[0]+'"'+(S.teamDue===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select>'
     +'<span class="chipbtn'+(S.teamFlat?' on':'')+'" onclick="S.teamFlat=!S.teamFlat;renderTeam()" title="담당자 묶음을 풀고 한 표로 — 정렬에 유용">평면</span>'
     +(S.teamFlat?'':'<span class="chipbtn" onclick="teamFoldAll('+(folded?'false':'true')+')" title="담당자 묶음 접기·펼치기">'+(folded?'▾ 펼치기':'▸ 접기')+'</span>')
-    +((S.teamMgr||S.teamCat||S.teamSt||S.teamDue||S.teamNolog||S.teamStale||S.q)
-      ?'<span class="chipbtn on" onclick="teamReset()" title="모든 필터 해제">✕ 필터</span>':'')
+    +(anyF?'<span class="chipbtn on" onclick="teamReset()" title="모든 필터 해제">✕ 필터</span>':'')
     +'</div>';
   if(!isCurWeek()) h+='<div class="histbanner">🕘 <b>'+esc(weekLabel(S.week))+'</b> 열람 중<span class="back" onclick="setWeek(null)">이번 주로 →</span></div>';
-  // 필터 적용
-  function pass(it){
-    if(S.teamCat&&it.cat!==S.teamCat) return false;
-    if(S.teamSt&&(it.status||'진행중')!==S.teamSt) return false;
+  // 열 조건 밖의 것(검색·미기록·방치)만 먼저 거른다. 열 조건은 깔때기가 따로 본다.
+  function preF(it){
     if(S.teamNolog&&wkLogsOf(it._id,wk).length) return false;
     if(S.teamStale){ var ld=(it.last&&it.last.d)||''; if(ld&&_dayDiff(today,ld)<14) return false; }
-    if(S.teamDue&&!dueMatch(it,S.teamDue)) return false;
     if(S.q&&!matchQ(it,S.q)) return false;
     return true;
   }
-  var TH=[['cat','구분','width:56px'],['co','기업 / 의뢰인','min-width:130px'],['title','업무명','min-width:130px'],
-          ['log','이 주 실적','color:var(--acc2)'],['last','최근 기록','min-width:150px'],['due','다음 할 일','width:110px']];
-  h+='<div class="panel" style="padding:0;overflow-x:auto"><table><thead><tr><th class="rowno">#</th>'
-    +TH.map(function(c){
-        var on=(S.teamSort||'due')===c[0];
-        return '<th style="'+c[2]+';cursor:pointer'+(on?';color:var(--acc2)':'')+'" onclick="teamSort(\''+c[0]+'\')" title="클릭하면 이 열로 정렬">'
-          +esc(c[1])+(on?(S.teamDesc?' ▼':' ▲'):'')+'</th>';
-      }).join('')
+  function pass(it){ return preF(it)&&fPass('team',it,''); }
+  // 머리행 — 열 이름을 누르면 걸러 보기, 옆의 화살표를 누르면 정렬.
+  // 두 가지를 한 칸에 넣어야 해서 정렬은 작은 화살표로 떼어 뒀다.
+  var teamBase=open.filter(preF);
+  function tSort(k){
+    var cur=(S.teamSort||'due')===k;
+    return '<span class="sortb'+(cur?' on':'')+'" onclick="event.stopPropagation();teamSort(\''+k+'\')" '
+      +'title="이 열로 정렬합니다">'+(cur?(S.teamDesc?'▼':'▲'):'↕')+'</span>';
+  }
+  function tf(k,w){    // 깔때기 + 정렬
+    var vals=fOpen('team',k)?fVals('team',k,teamBase.filter(function(it){ return fPass('team',it,k); })):[];
+    return '<th style="'+w+'">'+fBtn('team',k,vals)+tSort(k)+'</th>';
+  }
+  function ts(k,label,w){   // 정렬만 (걸러 볼 값이 마땅치 않은 열)
+    var cur=(S.teamSort||'due')===k;
+    return '<th style="'+w+';cursor:pointer'+(cur?';color:var(--acc2)':'')+'" onclick="teamSort(\''+k+'\')" '
+      +'title="클릭하면 이 열로 정렬">'+esc(label)+(cur?(S.teamDesc?' ▼':' ▲'):'')+'</th>';
+  }
+  h+='<div class="panel" style="padding:0;overflow-x:auto"><table><thead><tr class="fhead">'
+    +'<th class="rowno">'+(anyF?'<span class="fx" onclick="teamReset()" title="걸러 보기를 모두 해제합니다">✕</span>':'#')+'</th>'
+    +tf('cat','width:64px')
+    +ts('co','기업 / 의뢰인','min-width:130px')
+    +tf('pt','min-width:130px')
+    +tf('st','width:74px')
+    +ts('log','이 주 실적','color:var(--acc2)')
+    +ts('last','최근 기록','min-width:140px')
+    +tf('due','width:110px')
     +'<th style="width:58px;text-align:center">종료</th>'
     +'</tr></thead><tbody>';
   function rowsOf(arr,perGroup){
@@ -3343,6 +3369,8 @@ function renderTeam(){
         +(perGroup?'':'<div class="sub">'+esc((it.mgr_main&&it.mgr_main.name)||'담당 미지정')+'</div>')
         +(it.officer?'<div class="sub">'+esc(it.officer)+'</div>':'')+'</td>'
         +'<td class="tkc">'+nameCell(it)+stepChip(it._id)+peFlag(it)+'</td>'
+        // 상태 — 남의 업무라 눌러서 바꾸지는 않는다(보기만)
+        +'<td>'+stChip(it.status||'진행중')+'</td>'
         +'<td>'+logHtml+'</td><td>'+lastHtml+'</td><td>'+nx+'</td>'
         +'<td style="text-align:center"><button class="endbtn" onclick="event.stopPropagation();completeItem(\''+escJ(it._id)+'\')" '
         +'title="이 업무를 끝내고 종료 화면으로 옮깁니다'+(peLinked(it)?' (푸른이알피 종료 연동)':'')+'">종료'
@@ -3355,14 +3383,13 @@ function renderTeam(){
     h+=rowsOf(flat,false);
   }else{
     names.forEach(function(nm){
-      if(S.teamMgr&&S.teamMgr!==nm) return;
-      var arr=groups[nm].filter(pass);
+      var arr=groups[nm].filter(pass);       // 담당 조건도 깔때기가 본다 — 여기서 또 거르지 않는다
       if(!arr.length) return;
       shown+=arr.length;
       var rec=groups[nm].filter(function(it){return wkLogsOf(it._id,wk).length>0;}).length;
       var fold=!!(S.teamFold||{})[nm];
       h+='<tr class="grp-h" style="cursor:pointer" onclick="teamFold(\''+escJ(nm)+'\')" '
-        +'title="'+(fold?'펼치기':'접기')+' — 이 줄을 누르세요"><td colspan="8">'
+        +'title="'+(fold?'펼치기':'접기')+' — 이 줄을 누르세요"><td colspan="9">'
         +'<span class="fold">'+(fold?'▸':'▾')+'</span> 👤 '+esc(nm)+' — 진행 '+groups[nm].length+'건'
         +(arr.length!==groups[nm].length?' <span class="muted" style="font-weight:600">(조건 '+arr.length+'건)</span>':'')
         +' <span class="pct">이 주 기록 '+rec+'/'+groups[nm].length+'</span></td></tr>';

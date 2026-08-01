@@ -23,6 +23,11 @@ header .logo{font-weight:800;font-size:16px}
 header .env{font-size:11px;background:#ffffff22;border:1px solid #ffffff55;border-radius:99px;padding:2px 9px}
 header .who{margin-left:auto;font-size:12px;display:flex;align-items:center;gap:10px}
 header .out{background:#ffffff22;border:1px solid #ffffff66;color:#fff;border-radius:8px;padding:3px 10px;cursor:pointer;font-size:12px}
+.save-state{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;border:1px solid #ffffff55;border-radius:99px;padding:3px 8px;font-size:11px;font-weight:700;background:#ffffff18}
+.save-state::before{content:'';width:7px;height:7px;border-radius:50%;background:#cbd5e1}
+.save-state.saving::before{background:#fbbf24;animation:savePulse .8s infinite alternate}
+.save-state.saved::before{background:#4ade80}.save-state.failed::before{background:#fb7185}
+@keyframes savePulse{from{opacity:.4}to{opacity:1}}
 .layout{display:flex;min-height:calc(100vh - 46px)}
 nav{width:180px;background:#fff;border-right:1px solid var(--line);padding:14px 10px;flex-shrink:0}
 nav button{display:block;width:100%;text-align:left;border:none;background:none;border-radius:10px;padding:10px 12px;font-size:13.5px;cursor:pointer;color:var(--ink);font-family:inherit}
@@ -59,6 +64,22 @@ h1{font-size:20px;margin-bottom:4px}.sub{color:var(--sub);font-size:13px;margin-
 .slip .snote{margin-top:11px;font-size:12px;background:#FBF1DE;border-radius:8px;padding:9px 12px;color:#7A5200;white-space:pre-wrap}
 .slip .foot{margin-top:15px;border-top:1px solid var(--line);padding-top:7px;font-size:11px;color:#9aa0b5}
 .slip.draft::after{content:'미확정 · 검토용';position:absolute;top:45%;left:50%;transform:translate(-50%,-50%) rotate(-24deg);font-size:52px;font-weight:800;color:rgba(196,61,61,.13);white-space:nowrap;pointer-events:none}
+@media (max-width:760px){
+  header{padding:9px 10px;gap:8px;flex-wrap:wrap}
+  header .env{display:none}
+  header .who{width:100%;margin-left:0;justify-content:space-between;gap:6px}
+  header .who #whoami{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .layout{display:block;min-height:calc(100vh - 82px)}
+  nav{position:sticky;top:0;z-index:5;width:100%;display:flex;gap:6px;padding:8px 10px;border-right:0;border-bottom:1px solid var(--line);overflow-x:auto;-webkit-overflow-scrolling:touch}
+  nav button{display:inline-block;width:auto;flex:0 0 auto;padding:8px 11px;white-space:nowrap}
+  main{padding:15px 12px;overflow:visible}
+  .cards{grid-template-columns:minmax(0,1fr)}
+  .c,.empty{min-width:0}.empty{padding:24px 14px}
+  #gate{padding:14px}#gate .box{width:100%;max-width:360px;padding:26px 20px}
+  .slip{padding:20px 14px;overflow-x:auto}
+  .slip .shead{gap:10px}.slip .ttl{font-size:16px;letter-spacing:3px;white-space:nowrap}
+  .slip .cols{display:block}.slip .cols>div+div{margin-top:14px}
+}
 @media print{header,nav,.noprint{display:none !important}body{background:#fff}main{padding:0}.layout{min-height:0}.slip{border:none;border-radius:0;max-width:none;margin:0}}
 </style>
 </head>
@@ -80,7 +101,7 @@ h1{font-size:20px;margin-bottom:4px}.sub{color:var(--sub);font-size:13px;margin-
 <header>
   <button id="backbtn" class="out" style="display:none;margin-right:2px" onclick="goBack()">← 뒤로</button>
   <span class="logo">급여관리</span><span class="env">푸른통합시스템 · payroll_os</span>
-  <div class="who"><span id="whoami"></span><button class="out" onclick="doLogout()">로그아웃</button></div>
+  <div class="who"><span id="whoami"></span><span id="saveState" class="save-state saved" role="status" aria-live="polite">저장 완료</span><button class="out" onclick="doLogout()">로그아웃</button></div>
 </header>
 <div class="layout"><nav id="nav"></nav><main id="main"></main></div>
 
@@ -128,7 +149,21 @@ function afterLogin(){
     document.getElementById('main').innerHTML='<div class="empty">DB 접근 거부: '+e.code+'<br>규칙에 payroll_os 블록이 있는지, 재무/관리자 권한이 있는지 확인하세요.</div>'; });
 }
 function dbGet(k,fb){ return (cache[k]!=null)?cache[k]:fb; }
-function dbSet(k,v){ cache[k]=v; fbDb.ref(ROOT+'/'+k).set(v).catch(function(e){alert('저장 실패: '+e.code);}); render(); }
+var savePending=0, saveFailed=false;
+function setSaveState(kind,text){ var el=document.getElementById('saveState'); if(!el)return; el.className='save-state '+kind; el.textContent=text; }
+function dbSet(k,v){
+  cache[k]=v; render();
+  if(savePending===0) saveFailed=false;
+  savePending++; setSaveState('saving','저장 중…');
+  return fbDb.ref(ROOT+'/'+k).set(v).then(function(){
+    savePending=Math.max(0,savePending-1);
+    if(savePending===0) setSaveState(saveFailed?'failed':'saved',saveFailed?'저장 실패':'저장 완료');
+    return true;
+  }).catch(function(e){
+    saveFailed=true; savePending=Math.max(0,savePending-1); setSaveState('failed','저장 실패');
+    alert('저장 실패: '+e.code+'\n인터넷 연결을 확인한 뒤 다시 저장하세요.'); return false;
+  });
+}
 
 var App={screen:'cards',site:null,month:null};
 /* ── 화면 이동 기록(직전 화면으로 되돌아가는 백 키) ──

@@ -279,6 +279,20 @@ test('puSyncCommit은 스토어별 단일 쓰기와 꼬리표를 지킨다', () 
   assert.ok(!/\bset\(/.test(loop), 'adds 반복문 안에서 set()을 부르면 안 됩니다');
 });
 
+test('외부기관 실적 페이지와 메뉴가 있다', () => {
+  assert.match(source, /<section class="page-view" id="page-puagency">/);
+  assert.match(source, /\['page-puagency','외부기관 실적'\]/);
+  assert.match(source, /function renderPuAgency\(/);
+});
+
+test('외부기관 탭은 4개 스토어의 agency 있는 건을 모아 기관별로 묶는다', () => {
+  const src = funcSource('renderPuAgency');
+  assert.match(src, /PU_SYNC_STORES/);
+  assert.match(src, /r\.agency/);
+  assert.match(src, /!r\.excluded|r\.excluded\) return/, '배제된 건은 외부기관 탭에서도 숨긴다');
+  assert.match(src, /certdoc/, '기관이 발급한 증명서를 자동 매칭해 보여준다');
+});
+
 test('실적 4탭은 외부기관·배제 건을 걸러낸다', () => {
   ['case', 'consult', 'fund', 'etc'].forEach((k) => {
     const m = source.match(new RegExp(k + ":\\{store:'" + k + "'[^\\n]*"));

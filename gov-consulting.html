@@ -642,10 +642,21 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 .login-submit:active{transform:translateY(0);}
 .login-foot{text-align:center;padding:18px;font-size:11px;color:#9aa3bb;font-weight:600;flex-shrink:0;}
 #mbLogin .ferr{margin:8px 0 4px;}
+.save-state{display:inline-flex;align-items:center;gap:6px;min-width:82px;padding:5px 9px;border:1px solid rgba(255,255,255,.28);border-radius:999px;background:rgba(255,255,255,.12);color:#fff;font-size:11px;font-weight:800;white-space:nowrap;transition:background .15s,border-color .15s;}
+.save-state-dot{width:7px;height:7px;border-radius:50%;background:#cbd5e1;box-shadow:0 0 0 3px rgba(203,213,225,.14);flex:0 0 auto;}
+.save-state.saving{background:rgba(245,158,11,.18);border-color:rgba(253,230,138,.55);}
+.save-state.saving .save-state-dot{background:#fbbf24;box-shadow:0 0 0 3px rgba(251,191,36,.18);animation:savePulse .9s infinite alternate;}
+.save-state.saved{background:rgba(34,197,94,.18);border-color:rgba(134,239,172,.5);}
+.save-state.saved .save-state-dot{background:#4ade80;box-shadow:0 0 0 3px rgba(74,222,128,.16);}
+.save-state.failed,.save-state.locked{background:rgba(239,68,68,.2);border-color:rgba(252,165,165,.58);}
+.save-state.failed .save-state-dot,.save-state.locked .save-state-dot{background:#fb7185;box-shadow:0 0 0 3px rgba(251,113,133,.16);}
+.save-state.local .save-state-dot{background:#94a3b8;}
+@keyframes savePulse{from{opacity:.45}to{opacity:1}}
 @media(max-width:600px){
   .login-top{padding:14px 16px;}
   .login-status{display:none;}
   .login-card{padding:22px 18px;}
+  .save-state{position:fixed;right:10px;bottom:10px;z-index:950;min-width:0;padding:7px 10px;background:#173f68;border-color:rgba(255,255,255,.4);box-shadow:0 5px 18px rgba(0,0,0,.24);}
 }
 /* [포털 연동] 포털 경유 자동 로그인 확인 중: 로그인 카드 숨김 (번쩍임 방지) */
 #mbLogin.sso-wait .login-center{visibility:hidden;}
@@ -693,6 +704,7 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
   </div>
   <div class="hdr-r">
     <span id="hdrLogout" style="display:flex;align-items:center;"></span>
+    <span id="saveState" class="save-state local" role="status" aria-live="polite" title="클라우드 저장 상태"><span class="save-state-dot"></span><span id="saveStateText">연결 확인 중</span></span>
     <span id="fbStatus" data-tip="클라우드 동기화 상태 (🟢 연결 / 🔴 오류 / ⚪ 미연결)" style="font-size:13px;align-self:center;">⚪</span>
     <button class="notif-btn" id="notifBtn" data-tip="알림 · 오늘 할 일">🔔<span class="notif-badge" id="notifBadge" style="display:none;">0</span></button>
     <button class="notif-btn" id="statsBtn" data-tip="노무사별 통계">📊</button>
@@ -931,13 +943,13 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 <div class="mb open" id="mbLogin" style="background:none;padding:0;">
   <div class="login-screen">
     <script>
-    /* [포털 연동] 초기 가드: sso=1(포털 경유)이고 미로그인이면 로그인 카드 잠깐 숨김(스플래시), 6초 내 자동로그인 없으면 카드 표시 */
+    /* [포털 연동] 초기 가드: 인증 확인 중 로그인 카드가 잠깐 번쩍이지 않도록 짧게 숨긴다. */
     try{
       var _pgs=null; try{_pgs=JSON.parse(sessionStorage.getItem('p_session')||localStorage.getItem('p_autoSession')||'null');}catch(_e){}
       if(!_pgs && /[?&]sso=1/.test(location.search)){
         var _mb=document.getElementById('mbLogin');
         if(_mb){ _mb.classList.add('sso-wait');
-          setTimeout(function(){ _mb.classList.remove('sso-wait'); }, 6000);
+          setTimeout(function(){ _mb.classList.remove('sso-wait'); }, 1500);
         }
       }
     }catch(_e){}
@@ -1388,6 +1400,88 @@ const FB_CONFIG={
 // localStorage 키 → Firebase 노드 매핑 (scal_ 접두어)
 const FB_NODES={p_staff:'scal_staff',p_types:'scal_types',p_cos:'scal_cos',p_scheds:'scal_scheds',p_env:'scal_env',p_fieldState:'scal_fieldState',p_conflictMatrix:'scal_conflictMatrix',p_erpTypeMap:'scal_erpTypeMap'};
 let FB_READY=false, _fbDB=null, _fbSuppress=false;
+let _savePending=0, _saveFailed=false, _releaseLockAfterSave=false;
+
+function setSaveState(kind,text,title){
+  const el=document.getElementById('saveState'),tx=document.getElementById('saveStateText');
+  if(!el||!tx)return;
+  el.className='save-state '+(kind||'local');
+  tx.textContent=text||'';
+  el.title=title||text||'저장 상태';
+}
+function _saveStart(){if(_savePending===0)_saveFailed=false;_savePending++;setSaveState('saving','저장 중…','클라우드에 변경사항을 저장하고 있습니다.');}
+function _saveFinish(ok){
+  _savePending=Math.max(0,_savePending-1);
+  if(!ok)_saveFailed=true;
+  if(_savePending===0){
+    setSaveState(_saveFailed?'failed':'saved',_saveFailed?'저장 실패':'저장 완료',_saveFailed?'클라우드 저장에 실패했습니다. 인터넷 연결을 확인하세요.':'클라우드 저장이 완료되었습니다.');
+    if(_releaseLockAfterSave){_releaseLockAfterSave=false;_releaseCompanyEditLockNow();}
+  }
+}
+
+// ===== 사업장별 중복 편집 차단 =====
+// 같은 사업장을 여러 창/PC에서 동시에 수정하지 못하게 하되, 서로 다른 사업장은 계속 병행할 수 있다.
+const EDIT_LOCK_TTL=45000, EDIT_LOCK_HEARTBEAT=12000;
+const EDIT_TAB_ID=(()=>{let id='';try{id=sessionStorage.getItem('pu_gov_edit_tab')||'';if(!id){id='g'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);sessionStorage.setItem('pu_gov_edit_tab',id);}}catch(e){id='g'+Math.random().toString(36).slice(2);}return id;})();
+let _editLockCo='',_editLockRef=null,_editLockTimer=null,_editLockRemoteHandler=null;
+function _editLockLocalKey(coId){return 'pu_gov_edit_lock_'+coId;}
+function _editLockOwner(){const s=typeof getSession==='function'&&getSession();return (s&&s.name)||'다른 사용자';}
+function _editLockFresh(v){return !!(v&&v.tabId&&Date.now()-(+v.at||0)<EDIT_LOCK_TTL);}
+function _editLockRecord(coId){return {tabId:EDIT_TAB_ID,coId:coId,owner:_editLockOwner(),at:Date.now()};}
+function _readLocalEditLock(coId){try{return JSON.parse(localStorage.getItem(_editLockLocalKey(coId))||'null');}catch(e){return null;}}
+function _writeLocalEditLock(coId){try{localStorage.setItem(_editLockLocalKey(coId),JSON.stringify(_editLockRecord(coId)));}catch(e){}}
+function _removeLocalEditLock(coId){try{const v=_readLocalEditLock(coId);if(!v||v.tabId===EDIT_TAB_ID)localStorage.removeItem(_editLockLocalKey(coId));}catch(e){}}
+function _editLockedMessage(v){return `${(v&&v.owner)||'다른 사용자'}님이 이 사업장을 다른 창에서 편집 중입니다. 잠시 후 다시 시도하세요.`;}
+function _loseCompanyEditLock(v){
+  const coId=_editLockCo;if(!coId)return;
+  if(_editLockTimer){clearInterval(_editLockTimer);_editLockTimer=null;}
+  _editLockCo='';_editLockRef=null;
+  setSaveState('locked','다른 창 편집 중',_editLockedMessage(v));
+  toast('🔒 '+_editLockedMessage(v),'err');
+  ['mbSingle','mbEdit','mbCo'].forEach(id=>{const el=q('#'+id);if(el)el.classList.remove('open');});
+}
+function _startCompanyEditHeartbeat(){
+  if(_editLockTimer)clearInterval(_editLockTimer);
+  _editLockTimer=setInterval(()=>{
+    if(!_editLockCo)return;
+    _writeLocalEditLock(_editLockCo);
+    if(_editLockRef)_editLockRef.transaction(cur=>(cur&&cur.tabId===EDIT_TAB_ID)?_editLockRecord(_editLockCo):undefined,undefined,false).catch(()=>{});
+  },EDIT_LOCK_HEARTBEAT);
+}
+async function acquireCompanyEditLock(coId){
+  if(!coId)return true;
+  if(_editLockCo===coId){_writeLocalEditLock(coId);return true;}
+  if(_editLockCo)_releaseCompanyEditLockNow();
+  const local=_readLocalEditLock(coId);
+  if(_editLockFresh(local)&&local.tabId!==EDIT_TAB_ID){setSaveState('locked','다른 창 편집 중',_editLockedMessage(local));toast('🔒 '+_editLockedMessage(local),'err');return false;}
+  _writeLocalEditLock(coId);
+  if(FB_READY&&_fbDB){
+    try{
+      const ref=_fbDB.ref('activeWriter/gov_consulting/'+coId);
+      const result=await ref.transaction(cur=>(!_editLockFresh(cur)||cur.tabId===EDIT_TAB_ID)?_editLockRecord(coId):undefined,undefined,false);
+      if(!result.committed){const holder=result.snapshot&&result.snapshot.val();_removeLocalEditLock(coId);setSaveState('locked','다른 창 편집 중',_editLockedMessage(holder));toast('🔒 '+_editLockedMessage(holder),'err');return false;}
+      _editLockRef=ref;
+      try{ref.onDisconnect().remove();}catch(e){}
+      _editLockRemoteHandler=ref.on('value',snap=>{const v=snap.val();if(_editLockCo===coId&&_editLockFresh(v)&&v.tabId!==EDIT_TAB_ID)_loseCompanyEditLock(v);});
+    }catch(e){
+      console.warn('사업장 편집 잠금 연결 실패 — 이 브라우저 안에서만 중복 차단',e);
+      setSaveState('local','기기 내 편집','서버 잠금 연결에 실패해 현재 브라우저 안에서만 중복 편집을 차단합니다.');
+    }
+  }
+  _editLockCo=coId;_startCompanyEditHeartbeat();
+  if(_savePending===0)setSaveState('saved','편집 가능',`${_editLockOwner()}님이 이 사업장의 편집 권한을 확보했습니다.`);
+  return true;
+}
+function _releaseCompanyEditLockNow(){
+  const coId=_editLockCo,ref=_editLockRef;
+  if(!coId)return;
+  if(_editLockTimer){clearInterval(_editLockTimer);_editLockTimer=null;}
+  if(ref){try{ref.off('value',_editLockRemoteHandler);ref.onDisconnect().cancel();ref.transaction(cur=>(cur&&cur.tabId===EDIT_TAB_ID)?null:undefined,undefined,false).catch(()=>{});}catch(e){}}
+  _removeLocalEditLock(coId);_editLockCo='';_editLockRef=null;_editLockRemoteHandler=null;
+}
+function releaseCompanyEditLock(){if(_savePending>0){_releaseLockAfterSave=true;return;}_releaseCompanyEditLockNow();}
+window.addEventListener('storage',e=>{if(_editLockCo&&e.key===_editLockLocalKey(_editLockCo)){const v=_readLocalEditLock(_editLockCo);if(_editLockFresh(v)&&v.tabId!==EDIT_TAB_ID)_loseCompanyEditLock(v);}});
+window.addEventListener('beforeunload',()=>{_releaseCompanyEditLockNow();});
 
 // [포털 연동] 루프 차단기: 10초 내 2회 이상 포털로 이동했다면 더 이상 이동하지 않음 (무한루프 구조적 차단)
 function _govBounceOK(){
@@ -1421,6 +1515,7 @@ function fbInit(){
         fbSubscribe();  // 실시간 구독
         subscribeRoundLog(); // 회차 변경 이력 구독
         updateFbStatus('🟢');
+        if(_savePending===0)setSaveState('saved','저장 완료','클라우드 연결이 정상입니다.');
       }
       // [포털 연동] 포털에서 이메일 로그인해 온 경우: ERP 명부(이메일→이름) 조회 후 자동 로그인 (튕기기 없음)
       if(u.email && !getSession()){
@@ -1499,9 +1594,15 @@ function fbSubscribe(){
 
 // localStorage → Firebase (쓰기)
 function fbPush(lsKey,value){
-  if(!FB_READY||_fbSuppress)return;
+  if(_fbSuppress)return Promise.resolve(false);
+  if(!FB_READY||!_fbDB){setSaveState('local','기기에 저장','클라우드 연결 전이라 이 기기에 먼저 저장했습니다. 연결되면 다시 저장하세요.');return Promise.resolve(false);}
   const node=FB_NODES[lsKey];if(!node)return;
-  try{_fbDB.ref(node).set(value);}catch(e){console.warn('FB 쓰기 실패',node,e);}
+  _saveStart();
+  try{
+    return _fbDB.ref(node).set(value)
+      .then(()=>{_saveFinish(true);return true;})
+      .catch(e=>{console.warn('FB 쓰기 실패',node,e);_saveFinish(false);toast('클라우드 저장 실패 — 인터넷 연결을 확인하세요','err');return false;});
+  }catch(e){console.warn('FB 쓰기 실패',node,e);_saveFinish(false);return Promise.resolve(false);}
 }
 
 function updateFbStatus(icon){
@@ -2106,7 +2207,10 @@ function korDate(ds){if(!ds)return'';const[y,m,d]=ds.split('-');const dw=['일',
 function q(s){return document.querySelector(s);}
 function qa(s){return document.querySelectorAll(s);}
 function toast(msg,k='ok'){const t=q('#toast');t.textContent=msg;t.className=`toast ${k} on`;clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('on'),2200);}
-function closeModal(id){q(`#${id}`).classList.remove('open');}
+function closeModal(id,keepCompanyLock=false){
+  q(`#${id}`).classList.remove('open');
+  if(!keepCompanyLock&&['mbSingle','mbEdit','mbCo'].includes(id))releaseCompanyEditLock();
+}
 // ===== DAY DETAIL MODAL =====
 function openDayModal(date){
   const scheds=getScheds().filter(s=>s.date===date);
@@ -2314,7 +2418,7 @@ function bindCalNav(){
 // ===== 개별 등록 =====
 let single={coId:'',typeId:'',isField:true,selDate:'',calY:new Date().getFullYear(),calM:new Date().getMonth()};
 
-function openSingleModal(coId,typeId){
+async function openSingleModal(coId,typeId){
   const co=getCos().find(c=>c.id===coId);
   const t=getTypes().find(x=>x.id===typeId);
   if(!co||!t)return;
@@ -2324,6 +2428,7 @@ function openSingleModal(coId,typeId){
   const cap=phase==='pre'?PRE_ROUND_CAP:maxR;
   const nr=nextRound(coId,typeId,phase);
   if(cap>0&&nr>cap){toast(phase==='pre'?`사전진단 ${PRE_ROUND_CAP}회 완료 — '본컨설팅 시작'을 눌러 진행하세요`:`최대 ${maxR}회차 완료`,'err');return;}
+  if(!await acquireCompanyEditLock(coId))return;
   single={coId,typeId,isField:getFieldState(coId,typeId),selDate:'',calY:new Date().getFullYear(),calM:new Date().getMonth(),multi:false,picks:[]};
   q('#mSingleTitle').textContent='개별 일정 등록';
   q('#mSingleInfo').textContent=`${co.name} · ${t.fullName||t.name} | ${phLbl}${nr}회차`;
@@ -3986,11 +4091,13 @@ function moveChip(sid,newDate){
   targets.forEach((s,i)=>s.round=i+1);
   const affected=targets.filter(s=>before[s.id]!==s.round).map(s=>({id:s.id,from:before[s.id],to:s.round}));
   const otherChanges=affected.filter(a=>a.id!==sid);
-  const commit=()=>{
+  const commit=async()=>{
+    if(!await acquireCompanyEditLock(sc.coId))return;
     setScheds(scheds);
     if(otherChanges.length)logRoundChange(sc,oldDate,newDate,affected);
     renderSummaryBar();renderCal();renderDash();
     toast('일정 이동됨 · 회차 재정렬 완료');
+    releaseCompanyEditLock();
   };
   if(otherChanges.length){
     const coNm=getCos().find(c=>c.id===sc.coId)?.name||'';
@@ -4320,19 +4427,21 @@ function revertRoundChange(id){
   const log=(_roundLog&&_roundLog.length)?_roundLog:getRoundLog();
   const e=log.find(x=>x.id===id);if(!e)return;
   if(e.reverted){toast('이미 되돌린 기록입니다','err');return;}
-  showConfirm(`${e.coName}·${e.typeName} 일정을 ${e.toDate} → ${e.fromDate}로 되돌립니다.`,()=>{
+  showConfirm(`${e.coName}·${e.typeName} 일정을 ${e.toDate} → ${e.fromDate}로 되돌립니다.`,async()=>{
     const scheds=getScheds();
     const sidx=scheds.findIndex(s=>s.id===e.schedId);
     if(sidx===-1){toast('해당 일정을 찾을 수 없습니다 (삭제됨)','err');markReverted(e,'대상없음');return;}
     if(isEndedSchedule(scheds[sidx])){toast('종료된 컨설팅은 되돌리기로 이동할 수 없습니다','err');return;}
     const clash=scheds.find(s=>s.id!==e.schedId&&s.coId===e.coId&&s.typeId===e.typeId&&s.date===e.fromDate);
     if(clash){toast(`${e.fromDate}에 동일 일정이 이미 있어 되돌릴 수 없습니다`,'err');return;}
+    if(!await acquireCompanyEditLock(e.coId))return;
     scheds[sidx].date=e.fromDate;
     setScheds(scheds);
     reorderRounds(e.coId,e.typeId);
     markReverted(e,'');
     renderSummaryBar();renderCal();renderDash();
     toast('되돌리기 완료 · 회차 재정렬');
+    releaseCompanyEditLock();
   });
 }
 
@@ -4343,7 +4452,7 @@ function validateRoundOrder(coId,typeId,newDate,excludeId=null){
   return null;
 }
 
-function handleDrop(date,item){
+async function handleDrop(date,item){
   const blockMsg=isBlocked(date);
   if(blockMsg){toast(blockMsg,'err');return;}
   const co=getCos().find(c=>c.id===item.coId);
@@ -4361,6 +4470,7 @@ function handleDrop(date,item){
   const defCoAs=getCoAtts(co);
   const attErr=checkAttLimit(defA,date);
   if(attErr){toast(attErr,'err');return;}
+  if(!await acquireCompanyEditLock(item.coId))return;
   const newId=uid();
   const scheds=getScheds();
   const phase=curPhase(item.coId,item.typeId);
@@ -4374,11 +4484,12 @@ function handleDrop(date,item){
   if(cap>0&&nr>cap){
     setScheds(getScheds().filter(s=>s.id!==newId));
     reorderRounds(item.coId,item.typeId);
-    toast(phase==='pre'?`사전진단은 최대 ${PRE_ROUND_CAP}회입니다. '본컨설팅 시작'을 눌러 진행하세요.`:`${ty.name} 최대 ${maxR}회차를 초과합니다`,'err');return;
+    toast(phase==='pre'?`사전진단은 최대 ${PRE_ROUND_CAP}회입니다. '본컨설팅 시작'을 눌러 진행하세요.`:`${ty.name} 최대 ${maxR}회차를 초과합니다`,'err');releaseCompanyEditLock();return;
   }
   renderSummaryBar();renderCal();renderDash();
   if(item.isField&&getEnv().autoStampOnField)setTimeout(()=>openStampModal(newId),200);
   else toast('일정 등록됨');
+  releaseCompanyEditLock();
 }
 
 // ===== EDIT MODAL =====
@@ -4401,10 +4512,11 @@ function openEndedViewModal(sid){
   toast(`🔒 종료된 컨설팅입니다 · ${co?.name||'?'} · ${ty?.name||''} · 종료일 ${endedDate||'-'} · 이동/수정 불가`,'err');
 }
 
-function openEditModal(sid){
+async function openEditModal(sid){
   const sc=getScheds().find(s=>s.id===sid);if(!sc)return;
   if(isEndedSchedule(sc)){openEndedViewModal(sid);return;}
   if(!canEdit(sc)){openViewModal(sid);return;}
+  if(!await acquireCompanyEditLock(sc.coId))return;
   const co=getCos().find(c=>c.id===sc.coId);
   const ty=getTypes().find(t=>t.id===sc.typeId);
   edit_id=sid;edit_isField=sc.isField;
@@ -4438,7 +4550,7 @@ function openEditModal(sid){
 
 function copyEdit(){
   const sc=getScheds().find(s=>s.id===edit_id);if(!sc)return;
-  closeModal('mbEdit');
+  closeModal('mbEdit',true);
   // 같은 사업장·컨설팅·방문구분으로 개별등록 모달 오픈 (날짜만 새로 선택)
   single={coId:sc.coId,typeId:sc.typeId,isField:sc.isField,selDate:'',calY:new Date().getFullYear(),calM:new Date().getMonth()};
   const co=getCos().find(c=>c.id===sc.coId);
@@ -4484,9 +4596,10 @@ let co_deadlines={};
 let co_rounds={};
 let co_mandatory={};
 
-function openCoModal(editId=null){
+async function openCoModal(editId=null){
   co_editId=editId;co_selTypes=new Set();co_deadlines={};co_rounds={};co_mandatory={};
   const co=editId?getCos().find(c=>c.id===editId):null;
+  if(editId&&!await acquireCompanyEditLock(editId))return;
   q('#mCoTitle').textContent=editId?'사업장 수정':'사업장 추가';
   q('#mCoName').value=co?.name||'';
   q('#mCoAtt').innerHTML=getStaff().map(a=>`<option value="${a.id}" ${(co?.defAtt||S.curUser)===a.id?'selected':''}>${a.name}</option>`).join('');
@@ -6300,10 +6413,10 @@ function init(){
   initShortcuts();
   const sess=getSession();
   if(sess){sessionStorage.setItem('p_session',JSON.stringify(sess));closeModal('mbLogin');applySession();}
-  // [포털 연동] 포털 경유(sso=1) + 미로그인: 자동 로그인 확인이 끝날 때까지 로그인 카드 숨김 (번쩍임 방지)
+  // [포털 연동] 포털 경유(sso=1) + 미로그인: 인증 확인 동안만 짧게 숨김
   if(!sess && /[?&]sso=1/.test(location.search)){
     q('#mbLogin')?.classList.add('sso-wait');
-    setTimeout(()=>q('#mbLogin')?.classList.remove('sso-wait'),6000);  // 6초 내 자동로그인 없으면 카드 표시
+    setTimeout(()=>q('#mbLogin')?.classList.remove('sso-wait'),1500);
   }
   loadPhotosFromDB();
   fbInit();
