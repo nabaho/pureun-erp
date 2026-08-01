@@ -2030,6 +2030,22 @@ function puUndoLastSync(){
   if(confirm('이번 동기화로 들어온 실적을 모두 지웁니다.\n(' + sid + ')\n배제해 둔 것도 함께 지워지고, 다음 동기화 때 다시 들어옵니다.\n\n계속할까요?')) puUndoSync(sid);
 }
 
+/* 하루 1회 자동. 첫 실행(등록 이력 없음)은 사람이 보고 등록하도록 미리보기를 띄운다. */
+async function puSyncAuto(){
+  try{
+    var today = new Date().toISOString().slice(0, 10);
+    var last = String(LS.get(NS + 'pu_sync_last') || '').slice(0, 10);
+    if(last === today) return;                              /* 오늘 이미 했다 */
+    var ctx = await _puFetchPlan();
+    if(!ctx || !ctx.plan.adds.length){ LS.set(NS + 'pu_sync_last', new Date().toISOString()); return; }
+    if(!LS.get(NS + 'pu_sync_last_id')){                    /* 첫 실행 → 미리보기 */
+      _puSyncCtx = ctx; renderPuSyncPreview(); $('modalPuSync').classList.add('open'); return;
+    }
+    _puSyncCtx = ctx;                                       /* 이후 → 조용히 추가 */
+    puSyncCommit();
+  }catch(e){ console.warn('puSyncAuto', e); }
+}
+
 /* localStorage → IDB 마이그레이션 (최초 1회) */
 async function migrateFilesToIDB(){
   if(localStorage.getItem(NS+'_idb_migrated')) return;
@@ -5077,7 +5093,7 @@ function fbInit(){ if(location.protocol==='file:') return; if(typeof firebase===
          한동안 안 써도(관리 안 해도) 세션이 풀리지 않습니다. */
     try{ if(firebase.auth().setPersistence) firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){ console.warn('[persistence]',e&&e.message); }
     firebase.auth().onAuthStateChanged(function(u){ fbUid=u?u.uid:null; fbUpdateUI(u);
-      if(u){ authGate(false); if(typeof resolveMe==='function'){ try{ resolveMe(); }catch(e){} } if(typeof fbLoadApiKeys==='function'){ try{ fbLoadApiKeys(); }catch(e){} } }
+      if(u){ authGate(false); if(typeof resolveMe==='function'){ try{ resolveMe(); }catch(e){} } if(typeof puSyncAuto==='function'){ try{ puSyncAuto(); }catch(e){} } if(typeof fbLoadApiKeys==='function'){ try{ fbLoadApiKeys(); }catch(e){} } }
       else { _me={resolved:false,name:'',sid:'',role:'',isAdmin:true}; _fbWatching=false; _fbBase=null;
         /* sso=1로 갓 진입한 경우엔 공유 세션이 잡힐 시간을 잠깐 준 뒤 잠금 판단 */
         if(/[?&]sso=1/.test(location.search) && !window._ssoRetried){ window._ssoRetried=true;

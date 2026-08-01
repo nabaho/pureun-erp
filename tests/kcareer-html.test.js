@@ -279,6 +279,19 @@ test('puSyncCommit은 스토어별 단일 쓰기와 꼬리표를 지킨다', () 
   assert.ok(!/\bset\(/.test(loop), 'adds 반복문 안에서 set()을 부르면 안 됩니다');
 });
 
+test('자동 동기화는 하루 1회이고 첫 실행은 미리보기를 거친다', () => {
+  const m = source.match(/async function puSyncAuto\([\s\S]*?\n\}/);
+  assert.ok(m, 'puSyncAuto 함수가 있어야 합니다');
+  const src = m[0];
+  assert.match(src, /pu_sync_last/);                       // 마지막 실행 기록 확인
+  assert.match(src, /slice\(0,\s*10\)/);                   // 날짜(하루) 단위 비교
+  assert.match(src, /renderPuSyncPreview/);                // 첫 실행 → 미리보기 경로
+});
+
+test('로그인 후 자동 동기화가 걸려 있다', () => {
+  assert.match(source, /resolveMe\(\)[\s\S]{0,300}puSyncAuto\(\)/);
+});
+
 test('puUndoSync는 그 동기화가 만든 레코드만 지운다 (배제된 것 포함)', () => {
   const store = { case: [], consult: [], fund: [], etc: [] };
   const ctx = {
