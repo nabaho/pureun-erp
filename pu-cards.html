@@ -2180,6 +2180,7 @@ function openMenu(){
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openErpClosedTidy()">🚪 ERP 종료업체 명함 정리</button>
 
     ${hd('⚙️ 기타')}
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');openViewManager()">🔖 내 탭 관리 (이름변경·삭제)</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openMaterialShelf()">📎 자료함</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openSettings()">🤖 AI 키 설정</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');doLogoutCards()">🚪 로그아웃</button>
@@ -3449,20 +3450,72 @@ function saveCurrentAsView(){
   Store.putView(v);
   toast(`🔖 '${name}' 탭을 만들었습니다 — 전 직원이 함께 씁니다`,4000);
 }
+/* 칩의 ⋮ → 버튼 메뉴 (보기·이름변경·조건갱신·삭제) */
 function viewMenu(id){
   const v=(state.views||{})[id]; if(!v) return;
-  const a=(prompt(`'${v.name}' 탭 관리 — 번호를 입력하세요\n\n1 = 이름 변경\n2 = 지금 화면 조건으로 이 탭 갱신\n3 = 탭 삭제 (명함은 그대로)`, '1')||'').trim();
-  if(!a) return;
-  if(a==='1'){
-    const nm=(prompt('새 탭 이름', v.name)||'').trim(); if(!nm) return;
-    Store.putView(Object.assign({}, v, {name:nm})); toast('탭 이름을 바꿨습니다');
-  } else if(a==='2'){
-    if(!confirm(`'${v.name}' 탭을 지금 화면의 조건으로 덮어쓸까요?`)) return;
-    Store.putView(Object.assign({}, v, {f:viewSnapshot(), kind:state.tab})); toast('탭 조건을 갱신했습니다');
-  } else if(a==='3'){
-    if(!confirm(`'${v.name}' 탭을 삭제할까요?\n\n· 탭(보기 조건)만 없어지고 명함은 그대로입니다.`)) return;
-    Store.delView(id); toast('탭을 삭제했습니다');
-  }
+  $('menuM').innerHTML=`
+    <div class="mhead"><b>🔖 ${esc(v.name)}</b><button class="iconbtn" onclick="menuBg.classList.remove('open')">✕</button></div>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');applyView('${id}')">👁 이 조건으로 보기</button>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');renameView('${id}')">✏️ 이름 변경</button>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');updateView('${id}')">🔄 지금 화면 조건으로 갱신</button>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');deleteView('${id}')" style="color:#c0392b">🗑 이 탭 삭제
+      <span style="margin-left:auto;color:var(--sub);font-size:12px">명함은 그대로</span></button>`;
+  $('menuBg').classList.add('open');
+}
+function renameView(id){
+  const v=(state.views||{})[id]; if(!v) return;
+  const nm=(prompt('새 탭 이름', v.name)||'').trim(); if(!nm) return;
+  Store.putView(Object.assign({}, v, {name:nm})); toast('탭 이름을 바꿨습니다');
+}
+function updateView(id){
+  const v=(state.views||{})[id]; if(!v) return;
+  if(!confirm(`'${v.name}' 탭을 지금 화면의 조건으로 덮어쓸까요?`)) return;
+  Store.putView(Object.assign({}, v, {f:viewSnapshot(), kind:state.tab})); toast('탭 조건을 갱신했습니다');
+}
+function deleteView(id){
+  const v=(state.views||{})[id]; if(!v) return;
+  if(!confirm(`'${v.name}' 탭을 삭제할까요?\n\n· 탭(보기 조건)만 없어지고 명함은 그대로입니다.`)) return;
+  Store.delView(id); toast(`'${v.name}' 탭을 삭제했습니다`);
+  if($('dedupBg').classList.contains('open')) setTimeout(openViewManager, 80);   /* 관리창 열려 있으면 갱신 */
+}
+/* 환경설정 → 내 탭 전체 관리 (한 곳에서 삭제·이름변경) */
+function openViewManager(){
+  const vs=Object.values(state.views||{}).filter(v=>v&&v.id)
+            .sort((a,b)=>((a.kind||'card')===(b.kind||'card') ? (a.order||0)-(b.order||0) : ((a.kind||'card')==='card'?-1:1)));
+  if(!vs.length){ $('dedupBg').classList.remove('open');
+    return toast('만들어 둔 탭이 없습니다 — 목록 화면에서 [＋ 탭 추가]로 만드세요',5000); }
+  const desc = f => {
+    f=f||{}; const c=f.colFilter||{}; const out=[];
+    if(f.q) out.push(`검색 "${f.q}"`);
+    if(f.group&&f.group!=='all') out.push('폴더 '+((state.groups[f.group]||{}).name||'(삭제된 폴더)'));
+    if(f.owner&&f.owner!=='all') out.push('담당 '+f.owner);
+    if(f.region) out.push('지역 '+f.region);
+    if(f.erpFilter) out.push('ERP '+f.erpFilter);
+    if(c.company) out.push(`회사에 "${c.company}"`);
+    if(c.name) out.push(`이름에 "${c.name}"`);
+    if(c.phone) out.push(`전화에 "${c.phone}"`);
+    if(c.email) out.push(`이메일에 "${c.email}"`);
+    if(f.onlyPhone) out.push('전화있음');
+    if(f.onlyEmail) out.push('이메일있음');
+    if(f.onlyIncomplete) out.push('정보부족만');
+    if(f.onlyPrivate) out.push('개인만');
+    if(f.onlyDup) out.push('중복만');
+    return out.length ? out.join(' · ') : '조건 없음 (전체 보기)';
+  };
+  let h=`<div class="mhead"><b>🔖 내 탭 관리 — ${vs.length}개</b>
+    <button class="iconbtn" onclick="dedupBg.classList.remove('open')">✕</button></div>
+    <p style="font-size:12.5px;color:var(--sub);line-height:1.7;margin-bottom:10px">
+    탭은 <b>보기 조건</b>일 뿐이라, 삭제해도 <b>명함은 그대로</b>입니다. 전 직원이 함께 쓰는 탭이에요.</p>`;
+  vs.forEach(v=>{
+    h+=`<div class="ditem" style="align-items:center"><div class="v">
+      <b>🔖 ${esc(v.name)}</b> <span style="font-size:11px;color:var(--sub)">${(v.kind||'card')==='biz'?'사업자':'명함'}</span><br>
+      <span style="font-size:12px;color:var(--sub)">${esc(desc(v.f))}</span></div>
+      <div style="display:flex;gap:6px;flex:none;margin-left:8px">
+        <button class="btn ghost" style="padding:7px 12px" onclick="renameView('${v.id}');setTimeout(openViewManager,80)">이름</button>
+        <button class="btn ghost" style="padding:7px 12px;color:#c0392b" onclick="deleteView('${v.id}')">삭제</button>
+      </div></div>`;
+  });
+  $('dedupM').innerHTML=h; $('dedupBg').classList.add('open');
 }
 function renderMyTabsHtml(){
   const vs=Object.values(state.views||{}).filter(v=>v&&v.id&&(v.kind||'card')===state.tab)
