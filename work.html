@@ -3196,6 +3196,30 @@ function coContacts(it){
 function telHref(p){ return String(p||'').replace(/[^0-9+]/g,''); }
 // 드로어: 사업장 담당자 + 담당(주/부). 부담당은 여기서 여러 명 지정한다
 // (등록 폼은 1명만 고를 수 있어 연동 건의 공동작업자를 늘릴 수단이 없었다)
+/* 상대기관 — 노동청·노동위원회와 그쪽 담당자(감독관·조사관).
+   푸른이알피 사건의 '관할' 칸을 그대로 읽는다. 여기서 고치지 않는다 —
+   그 사건의 원본은 푸른이알피이고, 양쪽에서 고치면 어느 쪽이 맞는지 알 수 없다.
+   이름은 지식카드(person)와 이어져 있어, 같은 감독관을 다시 만나면 따라온다. */
+function dOrgHTML(it){
+  var org=String(it.jur_org||'').trim(), who=String(it.officer||'').trim();
+  var ph=String(it.jur_ph||'').trim(), em=String(it.jur_em||'').trim();
+  if(!org&&!who&&!ph&&!em){
+    if(!peLinked(it)) return '';                 // 자체 업무는 관할 자체가 없다
+    return '<div class="dbox"><div class="bh">🏛 상대기관<span class="r">푸른이알피에 등록 없음</span></div>'
+      +'<div class="bb"><div class="muted" style="font-size:11.5px">'
+      +'푸른이알피 사건의 <b>관할</b> 칸(기관·담당자·연락처)이 비어 있습니다. '
+      +'그쪽에 적으면 여기에도 따라옵니다.</div></div></div>';
+  }
+  return '<div class="dbox"><div class="bh">🏛 상대기관<span class="r">푸른이알피 관할 — 읽기 전용</span></div>'
+    +'<div class="bb">'
+    +(org?'<div class="pc"><span class="rk">기관</span><span class="nm">'+esc(org)+'</span></div>':'')
+    +((who||ph||em)?'<div class="pc"><span class="rk">담당</span>'
+      +'<span class="nm">'+esc(who||'—')+'</span>'
+      +(ph?'<a href="tel:'+esc(telHref(ph))+'">'+esc(ph)+'</a>':'')
+      +(em?'<span class="muted" style="font-size:11px">'+esc(em)+'</span>':'')
+      +'</div>':'')
+    +'</div></div>';
+}
 function dPeopleHTML(id,it){
   if(!coSrc) coLoad().then(function(){ if(S.drawerId===id) renderDrawer(); });
   var cs=coContacts(it), mc=it.contact||{};
@@ -3217,7 +3241,8 @@ function dPeopleHTML(id,it){
     +'</div>'
     +'<div class="muted" style="font-size:10.5px">업체 담당자와 다르면 여기에 적습니다 (예: 인사담당 ↔ 안전담당). '
     +'위 목록은 푸른이알피 업체관리 자료로 <b>읽기 전용</b>입니다.</div>'
-    +'</div></div>';
+    +'</div></div>'
+    +dOrgHTML(it);
   var subs=(it.mgr_subs||[]).filter(function(s){return s&&(s.name||s.sid);});
   h+='<div class="dbox"><div class="bh">👥 담당<span class="r">부담당도 이 업무의 기록을 씁니다</span></div><div class="bb">'
     +'<div class="subrow"><span class="muted" style="font-size:11.5px;min-width:44px">주담당</span>'
@@ -4270,7 +4295,8 @@ var PE_DEF=[
   ['fund','기금',function(x){return x.fundNo||x.no||'';},function(x){return x.title||x.fundName||'';},function(x){return x.fundType||'기금';}],
   ['other','기타사업',function(x){return x.projectNo||x.no||'';},function(x){return x.title||x.projectName||'';},function(x){return x.programName||'';}]
 ];
-var PE_MIRROR=['no','cat','ptype','company','client','officer','title','due','start','co_id'];
+var PE_MIRROR=['no','cat','ptype','company','client','officer','title','due','start','co_id',
+  'jur_org','jur_ph','jur_em'];   // 관할(상대기관) — 푸른이알피가 원본, 여기는 따라 읽기만
 /* 유형 마스터 — 푸른이알피는 유형을 "코드"로 저장하고(typeCodes) 사람이 읽는
    이름은 이 마스터에 따로 둔다. 코드만 보면 case-mpz7pd42ogb 같은 내부 ID가
    나오므로 반드시 이름으로 바꿔 줘야 "부당해고·임금체불·취업규칙"이 보인다.
@@ -4437,6 +4463,10 @@ function peLoadAll(){
 function _peCandOf(t,label,dNo,dTitle,dKind,x,sid2name){
   var co=x.companyName||x.fundName||x.targetName||'';
   var kind=dKind(x), title=dTitle(x);
+  /* 관할(상대기관) — 노동청·노동위원회와 그쪽 담당자(감독관·조사관).
+     ⚠ 푸른이알피는 지금 judgment에 담고 jurisdiction은 옛 이름으로만 남겨 두었다.
+        예전에는 jurisdiction만 봐서 요즘 등록한 사건은 담당자가 늘 비어 있었다. */
+  var J=x.judgment||x.jurisdiction||{};
   // 구분 = 사무관리 메뉴 5종, 업무명 자리에 쓸 유형은 ptype에 따로 담는다
   return { pid:'PE-'+t+'-'+safeKey(x.id), kindLabel:label, no:dNo(x)||'',
     cat:label, ptype:peType(t,x,kind), end_way:peEndWay(x),
@@ -4444,7 +4474,10 @@ function _peCandOf(t,label,dNo,dTitle,dKind,x,sid2name){
     //   기본정보 양방향이 그 값을 푸른이알피 title에 되돌려써 마스터가 더러워진다.
     //   비면 비운 채로 두고 화면에서 업무 요약·유형으로 대신 보여준다(itemName).
     //   유형도 넣지 않는다 — ptype이 따로 담으므로 업무명에까지 넣으면 같은 값이 두 번 나온다
-    company:co, title:String(title||'').trim(), officer:(x.jurisdiction&&x.jurisdiction.officer)||'',
+    company:co, title:String(title||'').trim(),
+    officer:String(J.officer||'').trim(),         // 상대기관 담당자 (감독관·조사관)
+    jur_org:String(J.org||'').trim(),             // 관할기관 (○○지청·○○지방노동위원회)
+    jur_ph:String(J.phone||'').trim(), jur_em:String(J.email||'').trim(),
     brief:briefTrim(x.brief),
     client:x.payee||'', mgr:sid2name[x.managerMain]||'', mgrSid:x.managerMain||'',
     co_id:x.companyId||'',                        // 업체 담당자 조회용 — 이름 매칭보다 정확하다
