@@ -213,9 +213,21 @@
   #qsug .qi.pick{background:var(--acc-soft)}
   #qsug .qi small{color:var(--faint);margin-left:auto}
   #qbar{display:flex;align-items:center;gap:9px;background:#fff;border:1.6px solid var(--acc);border-radius:10px;padding:7px 13px;box-shadow:0 6px 18px rgba(15,23,42,.14)}
-  #qbar .zap{color:var(--acc);font-weight:800}
+  #qbar .zap{color:var(--acc);font-weight:800;cursor:grab;user-select:none;touch-action:none;
+    border-radius:6px;padding:0 3px}
+  #qbar .zap:hover{background:var(--acc-soft)}
+  #qwrap.drag #qbar .zap{cursor:grabbing}
+  #qwrap.drag #qbar{box-shadow:0 14px 34px rgba(15,23,42,.24)}
+  #qwrap.moved{max-width:none}
   #qbar input{flex:1;border:none;outline:none;font-size:13px;background:transparent}
-  #qbar .k{font-size:10px;color:var(--faint);border:1px solid var(--line);border-radius:4px;padding:0 6px;white-space:nowrap}
+  #qbar .k{font-size:10px;color:var(--faint);border:1px solid var(--line);border-radius:4px;padding:0 6px;white-space:nowrap;cursor:pointer}
+  #qbar .k:hover{border-color:var(--acc);color:var(--acc)}
+  #qbar .home{display:none}
+  #qwrap.moved #qbar .home{display:inline-block}
+  /* 단축키 도움말의 자판 모양 */
+  .kbd{flex:0 0 auto;min-width:74px;text-align:center;font-size:11px;font-weight:700;color:var(--ink);
+    background:#f7f9fc;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;
+    padding:1px 6px;white-space:nowrap}
 
   /* 캘린더 팝오버 */
   #calpop{position:absolute;z-index:80;width:300px;background:#fff;border:1px solid #c7d7fe;border-radius:12px;box-shadow:0 14px 34px rgba(30,64,175,.16);padding:12px 14px;font-size:11.5px}
@@ -582,8 +594,10 @@ function shell(){
     +'<button id="logoutbtn" onclick="doLogout()">로그아웃</button></div></div>'
     +'<div id="app">'+loadingHTML()+'</div></div>'
     +'<div id="qwrap" style="display:none"><div id="qsug"></div>'
-    +'<div id="qbar"><span class="zap">⚡</span><input id="qb" placeholder="빠른 기록 — 기업명·업무명 몇 글자 + 한 일  (예: 나래 설문 정리)" autocomplete="off">'
-    +'<span class="k">어디서든 /</span></div></div>';
+    +'<div id="qbar"><span class="zap" id="qgrip" title="여기를 잡고 끌면 옮길 수 있습니다">⚡</span>'
+    +'<input id="qb" placeholder="빠른 기록 — 기업명·업무명 몇 글자 + 한 일  (예: 나래 설문 정리)" autocomplete="off">'
+    +'<span class="k home" onclick="qbarReset()" title="원래 자리(화면 아래)로 되돌립니다">⤺ 제자리</span>'
+    +'<span class="k" onclick="keysModal()" title="단축키 보기">/ 기록 · ? 단축키</span></div></div>';
 }
 function _setTopUser(name,role){ var el=$('topuser'); if(el) el.innerHTML=esc(name||'푸른노무법인')+'<span class="role">'+esc(role||'')+'</span>'; }
 function initTop(){
@@ -595,7 +609,59 @@ function initTop(){
   qb.addEventListener('keydown',qbKey);
   qb.addEventListener('input',qbSug);
   qb.addEventListener('blur',function(){ setTimeout(function(){ var s=$('qsug'); if(s)s.style.display='none'; },200); });
+  var gp=$('qgrip'); if(gp) gp.addEventListener('pointerdown',qbarDrag);
+  qbarLoad();
 }
+
+/* ── 빠른 기록 바 옮기기 ──────────────────────────────────────────────
+   기본은 화면 아래에 붙어 있다. 그런데 표의 맨 아랫줄이 바에 가려 정작
+   기록할 줄이 안 보이는 일이 있다. ⚡을 잡고 끌어 옮기고, 그 자리를 이
+   컴퓨터에 기억해 둔다(사람마다 화면 크기가 다르므로 브라우저에 저장). */
+var QBAR_POS='work_qbar_pos';
+function qbarPut(l,t,wd){
+  var w=$('qwrap'); if(!w) return;
+  wd=Math.max(320,Math.min(wd||w.offsetWidth||520,window.innerWidth-16));
+  var hh=w.offsetHeight||60;
+  w.classList.add('moved');
+  w.style.width=wd+'px'; w.style.right='auto'; w.style.bottom='auto';
+  w.style.left=Math.max(8,Math.min(l,window.innerWidth-wd-8))+'px';
+  w.style.top =Math.max(8,Math.min(t,window.innerHeight-hh-8))+'px';
+}
+function qbarSave(){
+  var w=$('qwrap'); if(!w) return;
+  var r=w.getBoundingClientRect();
+  try{ localStorage.setItem(QBAR_POS,JSON.stringify({l:r.left,t:r.top,w:r.width})); }catch(e){}
+}
+function qbarLoad(){
+  var p=null; try{ p=JSON.parse(localStorage.getItem(QBAR_POS)||'null'); }catch(e){}
+  if(p&&typeof p.l==='number'&&typeof p.t==='number') qbarPut(p.l,p.t,p.w);
+}
+function qbarReset(){
+  var w=$('qwrap'); if(!w) return;
+  w.classList.remove('moved');
+  w.style.left=''; w.style.top=''; w.style.right=''; w.style.bottom=''; w.style.width='';
+  try{ localStorage.removeItem(QBAR_POS); }catch(e){}
+  toast('빠른 기록을 제자리로 옮겼습니다');
+}
+function qbarDrag(e){
+  var w=$('qwrap'); if(!w||(e.button!==undefined&&e.button!==0)) return;
+  e.preventDefault();
+  var r=w.getBoundingClientRect(), dx=e.clientX-r.left, dy=e.clientY-r.top, wd=r.width;
+  w.classList.add('drag');
+  function mv(ev){ qbarPut(ev.clientX-dx,ev.clientY-dy,wd); }
+  function up(){
+    document.removeEventListener('pointermove',mv);
+    document.removeEventListener('pointerup',up);
+    w.classList.remove('drag'); qbarSave();
+  }
+  document.addEventListener('pointermove',mv);
+  document.addEventListener('pointerup',up);
+}
+// 창을 줄이면 바가 화면 밖으로 나가 다시 잡을 수가 없다 — 안쪽으로 되돌린다
+window.addEventListener('resize',function(){
+  var w=$('qwrap'); if(!w||!w.classList.contains('moved')) return;
+  var r=w.getBoundingClientRect(); qbarPut(r.left,r.top,r.width);
+});
 function doLogout(){ confirmM('로그아웃하고 푸른 포털로 나가시겠어요?',{ok:'로그아웃'}).then(function(ok){ if(!ok)return;
   try{ firebase.auth().signOut().catch(function(){}).then(function(){ location.href=PORTAL_URL; }); }
   catch(e){ location.href=PORTAL_URL; } }); }
@@ -694,7 +760,62 @@ function confirmM(msg,opts){
 function loadingHTML(msg){ return '<div class="loading"><span class="spin"></span>'+esc(msg||'불러오는 중…')+'</div>'; }
 function _inTyping(e){ var t=e.target||document.activeElement;
   return t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.tagName==='SELECT'||t.isContentEditable); }
+
+/* ── 단축키 ────────────────────────────────────────────────────────
+   매주 수십 건을 훑고 한 줄씩 적는 화면이라, 손이 자판을 떠나지 않는 것이
+   가장 크다. 아래 한 목록이 도움말(?)과 실제 동작을 함께 만든다 —
+   따로 적어 두면 언젠가 도움말만 남고 동작은 바뀐다. */
+var NAV_KEYS=['my','team','stats','kb','ho','archive'];
+var KEYS=[
+  ['기록하기',[
+    ['/','빠른 기록 칸으로 (어느 화면에서든)'],
+    ['E','이번 주 기록 칸 첫 줄로'],
+    ['Enter','기록 저장하고 아랫줄로'],
+    ['Shift+Enter','기록 저장하고 윗줄로'],
+    ['↑ ↓','기록 칸 사이 이동 (저장 안 함)']
+  ]],
+  ['찾기·만들기',[
+    ['Ctrl+K','전체 검색 (기록·지식까지)'],
+    ['N','새 업무 만들기']
+  ]],
+  ['화면 옮기기',[
+    ['1 … 6','내 업무·팀 전체·업무량·지식·인수인계·종료'],
+    ['[  ]','지난 주 · 다음 주'],
+    ['T','이번 주로']
+  ]],
+  ['걸러 보기',[
+    ['Enter','열어 둔 조건 적용'],
+    ['Esc','조건 목록 닫기']
+  ]],
+  ['닫기·되돌리기',[
+    ['Esc','팝업·서랍·모달 닫기 (없으면 뒤로)'],
+    ['Backspace','뒤로'],
+    ['?','이 도움말']
+  ]]
+];
+function keysModal(){
+  showModal('<h2 style="margin:0 0 4px">⌨ 단축키</h2>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 12px">글자를 입력하는 중에는 단축키가 듣지 않습니다 — 마음 놓고 치세요.</p>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 22px">'
+    +KEYS.map(function(g){
+        return '<div><div style="font-size:11.5px;font-weight:800;color:var(--acc2);margin-bottom:5px">'+esc(g[0])+'</div>'
+          +g[1].map(function(k){
+              return '<div style="display:flex;gap:9px;align-items:baseline;padding:2px 0;font-size:12.5px">'
+                +'<span class="kbd">'+esc(k[0])+'</span>'
+                +'<span style="color:var(--sub)">'+esc(k[1])+'</span></div>';
+            }).join('')
+          +'</div>';
+      }).join('')
+    +'</div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:16px"><button onclick="closeM()">닫기</button></div>');
+}
 document.addEventListener('keydown',function(e){
+  // 걸러 보기 목록이 열려 있으면 그쪽이 먼저다 — Enter로 적용, Esc로 닫기
+  if(S.fPop&&(e.key==='Enter'||e.key==='Escape')){
+    e.preventDefault(); var p=String(S.fPop).split(':');
+    if(e.key==='Enter') fApply(p[0],p[1]); else fPopClose(p[0]);
+    return;
+  }
   if(e.key==='Escape'){
     if($('confirmbg'))return;
     if($('modalbg')){ closeM(); return; }
@@ -706,11 +827,53 @@ document.addEventListener('keydown',function(e){
     return;
   }
   if((e.ctrlKey||e.metaKey)&&(e.key==='k'||e.key==='K')){ e.preventDefault(); searchModal(); return; }
-  if(e.key==='/'&&!_inTyping(e)){ e.preventDefault(); var q=$('qb'); if(q)q.focus(); return; }
-  if((e.key==='n'||e.key==='N')&&!_inTyping(e)&&!$('modalbg')&&!$('confirmbg')){ e.preventDefault(); itemModal(); return; }
-  if(e.key==='Backspace'&&!_inTyping(e)){ e.preventDefault();
-    if($('modalbg')||$('confirmbg'))return; if(S.drawerId){closeDrawer();return;} if(S.view!=='my')goBack(); return; }
+  if(e.ctrlKey||e.metaKey||e.altKey) return;         // 브라우저 단축키는 건드리지 않는다
+  if(_inTyping(e)) return;                            // 글자를 치는 중에는 아무 것도 가로채지 않는다
+  // ?는 Shift+/라서 /보다 먼저 봐야 한다
+  if(_k(e,'/',true)){ e.preventDefault(); keysModal(); return; }
+  if(_k(e,'/')){ e.preventDefault(); var q=$('qb'); if(q)q.focus(); return; }
+  if($('modalbg')||$('confirmbg')) return;
+  if(_k(e,'N')){ e.preventDefault(); itemModal(); return; }
+  if(e.key==='Backspace'){ e.preventDefault();
+    if(S.drawerId){closeDrawer();return;} if(S.view!=='my')goBack(); return; }
+  var n=_kNum(e);
+  if(n>=1&&n<=NAV_KEYS.length){ e.preventDefault(); go(NAV_KEYS[n-1]); return; }
+  // 주 이동·기록 칸은 주간 표가 있는 화면에서만
+  if(S.view==='my'||S.view==='team'){
+    if(_k(e,'[')){ e.preventDefault(); shiftWeek(-1); return; }
+    if(_k(e,']')){ e.preventDefault(); shiftWeek(1);  return; }
+    if(_k(e,'T')){ e.preventDefault(); setWeek(null); return; }
+    if(_k(e,'E')){ e.preventDefault(); wkFocus(0); return; }
+  }
 });
+/* 한글 입력 상태에서는 T가 'ㅅ'으로 온다. 글자(key)만 보면 단축키가 죽으므로
+   물리 자판 자리(code)도 함께 본다 — 자판을 한영 어느 쪽에 두든 똑같이 듣는다. */
+var _KCODE={'/':'Slash','[':'BracketLeft',']':'BracketRight'};
+function _k(e,ch,shift){
+  if(shift!==undefined&&!!e.shiftKey!==!!shift) return false;
+  if(shift===undefined&&e.shiftKey&&ch.length===1&&!/[A-Z]/.test(ch)) return false;
+  var code=_KCODE[ch]||('Key'+ch.toUpperCase());
+  if(e.code===code) return true;
+  return e.key===ch||e.key===ch.toLowerCase()||e.key===ch.toUpperCase();
+}
+function _kNum(e){
+  if(/^Digit[0-9]$/.test(e.code||'')) return +e.code.slice(5);
+  if(/^Numpad[0-9]$/.test(e.code||'')) return +e.code.slice(6);
+  return /^[0-9]$/.test(e.key)?+e.key:-1;
+}
+// 주간 기록 칸 — n번째 칸으로 (없으면 아무것도 안 한다)
+function wkFocus(n){
+  var all=[].slice.call(document.querySelectorAll('.wkin'));
+  if(!all.length) return false;
+  var el=all[Math.max(0,Math.min(n,all.length-1))];
+  el.focus(); try{ el.setSelectionRange(el.value.length,el.value.length); }catch(e){}
+  return true;
+}
+function wkMove(inp,d){
+  var all=[].slice.call(document.querySelectorAll('.wkin'));
+  var i=all.indexOf(inp); if(i<0) return false;
+  return wkFocus(i+d);
+}
 
 /* ── 라우팅 ── */
 function go(v){ S.view=v; S.f=null; S.q=''; try{history.pushState({view:v},'');}catch(e){} route(); }
@@ -1499,10 +1662,13 @@ function rowHTML(it,no){
     +'</tr>';
 }
 function wkKey(e,inp){
+  // ↑↓는 저장하지 않고 칸만 옮긴다 — 적다 만 줄을 두고 위아래를 훑을 수 있어야 한다
+  if(e.key==='ArrowDown'||e.key==='ArrowUp'){ e.preventDefault(); wkMove(inp,e.key==='ArrowDown'?1:-1); return; }
   if(e.key!=='Enter')return;
   e.preventDefault();
+  var step=e.shiftKey?-1:1;                                     // Shift+Enter는 윗줄로
   var id=inp.getAttribute('data-id'); var txt=inp.value;
-  if(!txt.trim())return;
+  if(!txt.trim()){ wkMove(inp,step); return; }                  // 빈 칸에서 Enter = 그냥 넘어가기
   var dateStr=isCurWeek()?todayStr():ymd(addDays(S.week,4));   // 과거 주 보완은 그 주 금요일 날짜로
   inp.value='';
   addLog(id,txt,dateStr).then(function(ok){ if(!ok){inp.value=txt;return;}
@@ -1510,8 +1676,7 @@ function wkKey(e,inp){
     var all=[].slice.call(document.querySelectorAll('.wkin'));
     var i=all.indexOf(inp);
     route();
-    setTimeout(function(){ var all2=[].slice.call(document.querySelectorAll('.wkin'));
-      var nx=all2[Math.min(i+1,all2.length-1)]; if(nx)nx.focus(); },50);
+    setTimeout(function(){ wkFocus(i+step); },50);
   });
 }
 function cycleStatus(id){
