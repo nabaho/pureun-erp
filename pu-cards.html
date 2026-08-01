@@ -656,7 +656,7 @@ function backfillIdx(){
   }catch(_){}
 }
 
-const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, colOrder:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, onlyPrivate:false, unlocked:{}, items:{}, groups:{}, trash:{}, views:{}, view:'list' };
+const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, colOrder:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, onlyPrivate:false, unlocked:{}, items:{}, groups:{}, trash:{}, views:{}, view:'list', vtab:'' };
 
 /* ── 데이터 계층 ── */
 const Store = {
@@ -1216,6 +1216,8 @@ function listItems(){
       return (it.group||'')===state.group;
     })
     .filter(it => state.owner==='all' || (it.owner||'')===state.owner)
+    /* 담는 탭(직접 골라 담은 탭)이 켜져 있으면 그 탭에 담긴 명함만 */
+    .filter(it => !state.vtab || (it.vtabs||[]).indexOf(state.vtab)>=0)
     .filter(it => {
       /* 잠긴 폴더(세션에서 해제 안 된)의 명함은 숨김. 단 그 폴더를 직접 열고 있으면 보임 */
       const gid = it.group||'';
@@ -3405,6 +3407,8 @@ function renderPCTable(){
   const n=Object.keys(state.sel).length;
   $('pcSel').innerHTML = n ? `<div class="bar"><b>${n}개 선택</b>
       <button onclick="selPickGroup()" title="선택한 명함을 폴더로 한 번에 이동">📁 폴더 이동</button>
+      <button onclick="selAddToTab()" title="선택한 명함을 이 폴더의 '담는 탭'에 넣기">🏷 탭에 담기</button>
+      ${state.vtab?`<button onclick="selRemoveFromTab()" title="지금 보고 있는 탭에서 빼기">🚫 탭에서 빼기</button>`:''}
       <button onclick="selPickOwner()" title="선택한 명함에 담당 직원을 한 번에 지정">👤 담당자 지정</button>
       <button onclick="copySelInfo()" title="선택한 명함 정보를 한꺼번에 복사">📋 단체 복사</button>
       <button onclick="mailSel()" title="선택한 명함 이메일로 단체 메일 작성 (숨은참조)">📧 단체 메일</button>
@@ -3515,6 +3519,7 @@ function viewSnapshot(){
     erpFilter: state.erpFilter||'', colFilter: Object.assign({}, state.colFilter||{}),
     onlyPhone: !!state.onlyPhone, onlyEmail: !!state.onlyEmail,
     onlyIncomplete: !!state.onlyIncomplete, onlyPrivate: !!state.onlyPrivate, onlyDup: !!state.onlyDup,
+    vtab: state.vtab||'',
     sort: state.sort||'date', sortKey: state.sortKey||null, sortDir: state.sortDir||'desc'
   };
 }
@@ -3525,12 +3530,13 @@ function countMatching(f){
   const sv={ group:state.group, owner:state.owner, region:state.region, erpFilter:state.erpFilter,
     colFilter:state.colFilter, onlyPhone:state.onlyPhone, onlyEmail:state.onlyEmail,
     onlyIncomplete:state.onlyIncomplete, onlyPrivate:state.onlyPrivate, onlyDup:state.onlyDup,
-    sort:state.sort, sortKey:state.sortKey, q:(s?s.value:'') };
+    vtab:state.vtab, sort:state.sort, sortKey:state.sortKey, q:(s?s.value:'') };
   try{
     state.group=f.group||'all'; state.owner=f.owner||'all'; state.region=f.region||'';
     state.erpFilter=f.erpFilter||''; state.colFilter=f.colFilter||{};
     state.onlyPhone=!!f.onlyPhone; state.onlyEmail=!!f.onlyEmail;
     state.onlyIncomplete=!!f.onlyIncomplete; state.onlyPrivate=!!f.onlyPrivate; state.onlyDup=!!f.onlyDup;
+    state.vtab=f.vtab||'';
     state.sort='date'; state.sortKey=null;          /* 세기만 하므로 가벼운 정렬로 */
     if(s) s.value=f.q||'';
     return listItems().length;
@@ -3539,7 +3545,7 @@ function countMatching(f){
     state.group=sv.group; state.owner=sv.owner; state.region=sv.region; state.erpFilter=sv.erpFilter;
     state.colFilter=sv.colFilter; state.onlyPhone=sv.onlyPhone; state.onlyEmail=sv.onlyEmail;
     state.onlyIncomplete=sv.onlyIncomplete; state.onlyPrivate=sv.onlyPrivate; state.onlyDup=sv.onlyDup;
-    state.sort=sv.sort; state.sortKey=sv.sortKey; if(s) s.value=sv.q;
+    state.vtab=sv.vtab; state.sort=sv.sort; state.sortKey=sv.sortKey; if(s) s.value=sv.q;
   }
 }
 /* 지금 화면이 그 탭과 같은 조건인지 비교용 서명 (정렬은 제외 — 정렬 바꿔도 탭 선택 유지) */
@@ -3547,7 +3553,7 @@ function viewSig(f){
   f=f||{}; const c=f.colFilter||{};
   return JSON.stringify([f.q||'', f.group||'all', f.owner||'all', f.region||'', f.erpFilter||'',
     c.name||'', c.company||'', c.phone||'', c.email||'',
-    !!f.onlyPhone, !!f.onlyEmail, !!f.onlyIncomplete, !!f.onlyPrivate, !!f.onlyDup]);
+    !!f.onlyPhone, !!f.onlyEmail, !!f.onlyIncomplete, !!f.onlyPrivate, !!f.onlyDup, f.vtab||'']);
 }
 function applyView(id){
   const v=(state.views||{})[id]; if(!v) return;
@@ -3557,6 +3563,7 @@ function applyView(id){
   state.erpFilter=f.erpFilter||''; state.colFilter=Object.assign({}, f.colFilter||{});
   state.onlyPhone=!!f.onlyPhone; state.onlyEmail=!!f.onlyEmail;
   state.onlyIncomplete=!!f.onlyIncomplete; state.onlyPrivate=!!f.onlyPrivate; state.onlyDup=!!f.onlyDup;
+  state.vtab=f.vtab||'';
   state.sort=f.sort||'date'; state.sortKey=f.sortKey||null; state.sortDir=f.sortDir||'desc';
   state.page=0; state.sel={}; state.view='list';
   const s=$('search'); if(s) s.value=f.q||'';
@@ -3565,10 +3572,23 @@ function applyView(id){
 }
 function saveCurrentAsView(){
   const f=viewSnapshot();
-  const hasCond = f.q||f.region||f.erpFilter||(f.group&&f.group!=='all')||(f.owner&&f.owner!=='all')
+  /* 폴더는 탭의 '소속'이라 조건으로 치지 않는다 — 폴더 안에서 조건 없이 만들면 '담는 탭' */
+  const hasCond = f.q||f.region||f.erpFilter||(f.owner&&f.owner!=='all')
     ||f.onlyPhone||f.onlyEmail||f.onlyIncomplete||f.onlyPrivate||f.onlyDup
     ||Object.keys(f.colFilter||{}).some(k=>f.colFilter[k]);
-  if(!hasCond && !confirm('지금 화면에 걸린 조건이 없습니다.\n(검색어·지역·칸별검색·정보부족 등)\n\n조건 없는 탭(전체 보기)으로 저장할까요?')) return;
+  /* 조건이 없으면 '담는 탭' — 명함을 직접 골라 담는 칸으로 만든다 */
+  if(!hasCond){
+    if(!confirm(`📁 ${curScopeName()} 안에 '담는 탭'을 만듭니다.\n\n· 명함을 골라서 직접 담는 칸이에요 (폴더 안의 작은 칸)\n· 만든 뒤: 명함 선택 → [🏷 탭에 담기]\n\n계속할까요?`)) return;
+    const name0=(prompt(`담는 탭 이름을 입력하세요\n(예: 푸른노무법인, 대전충청노무사)`,'')||'').trim();
+    if(!name0) return;
+    const id=uid();
+    const mf={ q:'', group:(state.group||'all'), owner:'all', region:'', erpFilter:'', colFilter:{},
+      onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false,
+      vtab:id, sort:'date', sortKey:null, sortDir:'desc' };
+    Store.putView({ id, name:name0, kind:state.tab, scope:(state.group||'all'), manual:true, order:Date.now(), f:mf });
+    toast(`🏷 '${name0}' 담는 탭을 만들었습니다 — 명함을 선택해 [🏷 탭에 담기]로 넣으세요`,6000);
+    return;
+  }
   const dflt = f.q || f.region || f.erpFilter || (f.colFilter&&(f.colFilter.company||f.colFilter.name)) || '';
   /* 어디에 · 무슨 조건으로 만들어지는지 이름 묻기 전에 알려준다 */
   const cond=[]; const c=f.colFilter||{};
@@ -3594,6 +3614,54 @@ function saveCurrentAsView(){
   const v={ id:uid(), name, kind:state.tab, scope:(state.group||'all'), order:Date.now(), f };
   Store.putView(v);
   toast(`🔖 '${name}' 탭을 ${curScopeName()}에 만들었습니다`,4000);
+}
+/* ── 🏷 담는 탭: 선택한 명함을 탭에 담기 / 빼기 ── */
+function manualTabsHere(){
+  const cur=state.group||'all';
+  return Object.values(state.views||{})
+    .filter(v=>v&&v.manual&&(v.kind||'card')===state.tab&&(v.scope||'all')===cur)
+    .sort((a,b)=>(a.order||0)-(b.order||0));
+}
+function selAddToTab(){
+  const ids=Object.keys(state.sel);
+  if(!ids.length) return toast('명함을 먼저 선택하세요');
+  const tabs=manualTabsHere();
+  if(!tabs.length) return toast(`${curScopeName()}에 '담는 탭'이 없습니다 — [＋ 탭 추가]로 먼저 만드세요`,6000);
+  $('menuM').innerHTML=`
+    <div class="mhead"><b>🏷 ${ids.length}개 명함을 담을 탭</b><button class="iconbtn" onclick="menuBg.classList.remove('open')">✕</button></div>
+    <p style="font-size:12.5px;color:var(--sub);padding:0 4px 8px;line-height:1.6">아래 탭을 누르면 선택한 명함이 그 탭에 담깁니다. (폴더는 그대로)</p>
+    ${tabs.map(v=>`<button class="sheetbtn" onclick="menuBg.classList.remove('open');doAddToTab('${v.id}')">🏷 ${esc(v.name)}
+      <span style="margin-left:auto;color:var(--sub);font-size:12px">${countMatching(v.f).toLocaleString()}개 담김</span></button>`).join('')}`;
+  $('menuBg').classList.add('open');
+}
+function doAddToTab(vid){
+  const v=(state.views||{})[vid]; if(!v) return;
+  const gid=(v.f&&v.f.group)||'all';
+  const ids=Object.keys(state.sel); let n=0, moved=0;
+  ids.forEach(sid=>{
+    const it=state.items[sid]; if(!it) return;
+    const arr=(it.vtabs||[]).slice();
+    if(arr.indexOf(vid)<0) arr.push(vid);
+    it.vtabs=arr;
+    /* 탭이 특정 폴더 소속이면 그 폴더로 함께 옮긴다 (폴더 밖 명함이 탭에서 안 보이는 것 방지) */
+    if(gid!=='all' && (it.group||'')!==gid){ it.group=gid; moved++; }
+    Store.put(it); n++;
+  });
+  state.sel={}; render();
+  toast(`🏷 ${n}개를 '${v.name}' 탭에 담았습니다`+(moved?` (${moved}개는 ${(state.groups[gid]||{}).name||'폴더'}로 함께 이동)`:''),5000);
+}
+function selRemoveFromTab(){
+  if(!state.vtab) return;
+  const v=(state.views||{})[state.vtab]; if(!v) return;
+  const ids=Object.keys(state.sel);
+  if(!ids.length) return toast('명함을 먼저 선택하세요');
+  if(!confirm(`선택한 ${ids.length}개를 '${v.name}' 탭에서 뺄까요?\n\n· 탭에서만 빠지고 명함은 그대로 남습니다.`)) return;
+  let n=0;
+  ids.forEach(sid=>{ const it=state.items[sid]; if(!it) return;
+    const arr=(it.vtabs||[]).filter(x=>x!==state.vtab);
+    it.vtabs=arr; Store.put(it); n++; });
+  state.sel={}; render();
+  toast(`${n}개를 '${v.name}' 탭에서 뺐습니다`);
 }
 /* 지금 보고 있는 곳(대시보드) 이름 — 탭은 이 안에서만 보인다 */
 function curScopeName(){
@@ -3685,7 +3753,7 @@ function renderMyTabsHtml(){
     const on=viewSig(v.f)===sig;
     let n=0; try{ n=countMatching(v.f); }catch(_){}
     return `<span style="display:inline-flex;align-items:center;border:1.5px solid ${on?'#1d4ed8':'#cfe0fb'};background:${on?'#1d4ed8':'#f4f9ff'};color:${on?'#fff':'#1d4fc4'};border-radius:18px;font-weight:700;font-size:12.5px;overflow:hidden">
-      <span style="cursor:pointer;padding:6px 4px 6px 13px" onclick="applyView('${v.id}')" title="이 조건으로 보기">🔖 ${esc(v.name)}
+      <span style="cursor:pointer;padding:6px 4px 6px 13px" onclick="applyView('${v.id}')" title="${v.manual?'담는 탭 — 골라 담은 명함만':'조건 탭 — 조건에 맞는 명함'}">${v.manual?'🏷':'🔖'} ${esc(v.name)}
         <b style="margin-left:5px;font-weight:800;${on?'':'color:#5a6885'}">${n.toLocaleString()}</b></span>
       <span style="cursor:pointer;padding:6px 9px 6px 4px;opacity:.75;font-size:13px" onclick="viewMenu('${v.id}')" title="이름변경 · 조건갱신 · 삭제">⋮</span></span>`;
   }).join('');
