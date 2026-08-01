@@ -2262,16 +2262,24 @@ function onRestoreFile(files){
 
 /* 전체 백업 — items + groups를 JSON 파일로 (환경설정의 수동 버튼 전용) */
 function backupNow(silent){
-  const data = { backupAt: new Date().toISOString(), items: state.items, groups: state.groups };
   const cnt = Object.keys(state.items||{}).length;
   if (!cnt){ if(!silent) toast('백업할 명함이 없습니다'); return; }
-  const blob = new Blob([JSON.stringify(data)], {type:'application/json'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `푸른명함첩_백업_${fmtDate(Date.now())}.json`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
-  if(!silent) toast(`백업 완료 (${cnt}건)`);
+  try{
+    if(!silent) toast(`백업 파일 만드는 중… (${cnt.toLocaleString()}건, 잠시만요)`,8000);
+    const data = { backupAt: new Date().toISOString(), items: state.items, groups: state.groups };
+    const json = JSON.stringify(data);
+    const blob = new Blob([json], {type:'application/json'});
+    const mb = (blob.size/1048576).toFixed(1);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `푸른명함첩_백업_${fmtDate(Date.now())}.json`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+    if(!silent) toast(`✅ 백업 완료 — ${cnt.toLocaleString()}건 (${mb}MB). 다운로드 폴더를 확인하세요`,6000);
+  }catch(e){
+    console.error('[backup]', e);
+    if(!silent) toast('백업 실패: '+((e&&e.message)||'파일이 너무 크거나 브라우저 제한') + ' — 다운로드 차단 여부를 확인하세요',7000);
+  }
 }
 
 /* 전체 비우기 — 현재 탭(명함 또는 사업자등록증) 전부 삭제. "삭제" 입력 안전장치 */
@@ -2494,6 +2502,14 @@ function previewImport(rows,fname){
   const seen={};
   rows.forEach(r=>{ const id=matchExisting(r,{...map,...seen});
     if(id) merge++; else { add++; rowKeys(r).forEach(k=>seen[k]=k); } });
+  /* 인코딩 깨짐 사전 감지 — 깨진 파일이면 가져오기 전에 경고 */
+  const badN = rows.filter(r=>_hasMojibake(r.name)||_hasMojibake(r.company)||_hasMojibake(r.title)).length;
+  const badRatio = rows.length ? badN/rows.length : 0;
+  const warnBox = badN>0 ? `
+    <div style="background:#fee2e2;border:1px solid #fca5a5;color:#991b1b;border-radius:10px;padding:11px 12px;margin:10px 0;font-size:13px;line-height:1.6">
+      ⚠️ <b>글자가 깨진 것으로 보이는 명함 ${badN.toLocaleString()}건</b> 발견 (이름이 'ì¶œ…'처럼 보임).<br>
+      이 파일은 <b>인코딩(UTF-8)이 안 맞아요.</b> 이대로 가져오면 깨진 명함이 생깁니다.<br>
+      <b>권장</b>: 취소하고 → 구글에서 내보낼 때 <b>vCard</b> 선택, 또는 파일을 <b>UTF-8</b>로 저장한 뒤 다시 가져오세요.</div>` : '';
   $('impM').innerHTML=`
     <div class="mhead"><b>📥 가져오기 미리보기</b><button class="iconbtn" onclick="impBg.classList.remove('open')">✕</button></div>
     <p style="font-size:14.5px;line-height:2;color:var(--sub)">
@@ -2502,6 +2518,7 @@ function previewImport(rows,fname){
       · 신규 등록 <b style="color:var(--green)">${add.toLocaleString()}</b>건<br>
       · 이미 있는 중복 <b style="color:var(--orange)">${merge.toLocaleString()}</b>건<br>
       모두 <b style="color:var(--ink)">명함</b> 탭으로 들어갑니다.</p>
+    ${warnBox}
     <div style="background:#f4f9ff;border:1px solid #cfe0fb;border-radius:10px;padding:11px 12px">
       <div style="font-size:12.5px;font-weight:800;color:#1d4fc4;margin-bottom:8px">이미 있는 명함(중복 ${merge.toLocaleString()}건) 처리 방법</div>
       <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--ink);line-height:1.55;cursor:pointer;margin-bottom:8px">
@@ -2524,8 +2541,13 @@ async function runImport(){
   const _modeEl = document.querySelector('input[name="imp_mode"]:checked');
   const impMode = _modeEl ? _modeEl.value : 'skip';   /* skip | merge | overwrite */
   const IMP_KEEP = {id:1,kind:1,thumb:1,thumb2:1,group:1,createdAt:1,fav:1,erpAutoFoldered:1,scope:1,phones:1};
-  $('impBg').classList.remove('open');
   const rows=pendingImport||[]; pendingImport=null;
+  /* 인코딩 깨짐 방어 — 상당수가 깨진 파일이면 한 번 더 확인 */
+  const _bad = rows.filter(r=>_hasMojibake(r.name)||_hasMojibake(r.company)).length;
+  if (_bad>0 && _bad/Math.max(1,rows.length) > 0.2){
+    if(!confirm(`⚠️ 글자가 깨진 명함이 ${_bad.toLocaleString()}건입니다.\n이대로 가져오면 깨진 명함이 생깁니다.\n\n그래도 진행할까요?\n(권장: 취소하고 파일을 UTF-8 / vCard로 다시 내보내세요)`)) { $('impBg').classList.remove('open'); return; }
+  }
+  $('impBg').classList.remove('open');
   if (Store.mode==='local' && rows.length>300 &&
       !confirm('데모 모드에서는 대량 가져오기가 기기 용량을 초과할 수 있습니다.\nFirebase 연결 후 진행을 권장합니다. 계속할까요?')) return;
   /* 회사 없는 연락처를 모을 "지인" 그룹 확보(없으면 생성) */
