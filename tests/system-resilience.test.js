@@ -47,3 +47,19 @@ test('취업규칙 헤더 도구는 휴대폰에서 두 열로 재배치된다',
   assert.match(src, /header \.toolbar\{order:3;width:100%;display:grid;grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\)/);
   assert.match(src, /#daejo-tools\{flex-wrap:wrap!important;overflow-x:visible!important\}/);
 });
+
+test('government consulting keeps mobile header tools and calendar navigation in view', () => {
+  const src = read('gov-consulting.html');
+  assert.match(src, /\.hdr\{height:auto;max-height:none;flex-wrap:wrap;overflow-x:hidden/);
+  assert.match(src, /\.hdr-r\{width:100%;margin-left:0;[\s\S]*?flex-wrap:wrap;overflow:visible/);
+  assert.match(src, /\.summary-nav\{flex:1 1 100%/);
+  assert.match(src, /class="summary-nav"/);
+  assert.match(src, /class="summary-date"/);
+});
+
+test('career management keeps essential mobile topbar controls visible', () => {
+  const src = read('kcareer.html');
+  assert.match(src, /\.topbar\{overflow-x:hidden;gap:5px;padding:0 8px\}/);
+  assert.match(src, /\.topbar \.crumb,#searchBtn,#printBtn\{display:none!important\}/);
+  assert.match(src, /#fbLogoutBtn::before\{content:'🚪'/);
+});
