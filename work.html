@@ -53,6 +53,25 @@
   /* 캘린더 (월·주·일 + 레이어 체크) — 격자선은 옅게, 강조는 오늘·이벤트에만 */
   .calwrap{background:#fff;border:1px solid #e8eef7;border-radius:14px;margin:0 0 12px;overflow:hidden;
     box-shadow:0 1px 2px rgba(24,34,52,.03),0 10px 26px -18px rgba(24,34,52,.16)}
+  /* 캘린더를 오른쪽에 붙이고 표는 왼쪽 — 가운데를 끌어 폭을 나눈다.
+     예전엔 캘린더가 표를 통째로 아래로 밀어내 둘을 함께 볼 수가 없었다. */
+  .split{display:flex;align-items:flex-start;gap:0}
+  .split>.spmain{flex:1 1 auto;min-width:0}
+  .split>.spside{flex:0 0 auto;align-self:stretch}
+  .split>.spside .calwrap{margin:0;position:sticky;top:8px;
+    max-height:calc(100vh - 150px);display:flex;flex-direction:column}
+  .split>.spside .calwrap .cgrid,.split>.spside .calwrap .cdayrow{overflow:auto}
+  .spgrip{flex:0 0 11px;align-self:stretch;cursor:col-resize;position:relative;touch-action:none}
+  .spgrip::after{content:'';position:absolute;left:5px;top:10px;bottom:10px;width:1px;background:var(--line)}
+  .spgrip:hover::after,.spgrip.on::after{width:3px;left:4px;background:var(--acc);border-radius:2px}
+  body.colres{cursor:col-resize;user-select:none}
+  /* 캘린더가 옆에 붙으면 칸이 좁다 — 글자와 여백을 한 단계 줄인다 */
+  .split>.spside .cday{min-height:56px;padding:3px 4px 5px}
+  .split>.spside .cwcol{min-height:110px}
+  .split>.spside .cev{font-size:10px;padding:1px 5px}
+  /* 캘린더에서 고른 줄 — 잠깐 반짝여 어디로 왔는지 알려 준다 */
+  tr.hit>td{background:var(--acc-soft)!important;transition:background .8s}
+  tr.hit.off>td{background:transparent!important}
   .calhd{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:10px 12px 8px}
   .calhd .ttl{font-size:14.5px;font-weight:800;letter-spacing:-.015em;min-width:112px;font-variant-numeric:tabular-nums}
   .cnav{width:25px;height:25px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;
@@ -98,7 +117,15 @@
   .cev:hover{filter:brightness(.975);box-shadow:0 1px 3px rgba(24,34,52,.09)}
   .cev.dg{cursor:grab}.cev.dg:active{cursor:grabbing}
   .cev .cd{width:5px;height:5px;border-radius:50%;flex-shrink:0}
-  .cev .cx{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cev .cx{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+  /* 일정 위의 작은 버튼 — 평소엔 숨어 있다가 마우스를 올리면 나온다 */
+  .cev .cvb{display:none;flex:0 0 auto;font-size:9.5px;opacity:.75;padding:0 1px}
+  .cev:hover .cvb{display:inline-block}
+  .cev .cvb:hover{opacity:1}
+  .cev .cqin{width:100%;min-width:0;border:1px solid var(--acc);border-radius:5px;padding:1px 5px;
+    font-family:inherit;font-size:10.5px;outline:none}
+  .cday.sel,.cwcol.sel{box-shadow:inset 0 0 0 2px var(--acc);background:var(--acc-soft)}
+  .cday,.cwcol{cursor:pointer}
   .cmore{font-size:10px;font-weight:700;color:#98a3b4;padding:2px 6px;margin-top:1px;cursor:pointer;border-radius:5px}
   .cmore:hover{background:#f1f5fb;color:var(--acc2)}
   /* 주·일 보기 = 날짜별 목록 (일정은 시간순) */
@@ -1390,6 +1417,7 @@ function renderMy(){
   var nSub=mine.length-nMain;
   if(S.myRole) base=base.filter(function(it){return roleOf(it,viewer())===S.myRole;});
   if(S.q)      base=base.filter(function(it){return matchQ(it,S.q);});
+  if(S.calDay) base=base.filter(calDayHas);      // 캘린더에서 고른 날 것만
   // 열 조건은 base에서 뺀다 — 어떤 열의 선택지 건수를 셀 때 그 열만 되살리기 위해서다
   var list=base.filter(function(it){ return fPass('my',it,''); });
   var opts=ownerOptions();
@@ -1424,7 +1452,7 @@ function renderMy(){
     +'<span class="wkpill" id="wkpill" onclick="openCal()">📅 '+esc(weekLabel(S.week))+' ▾</span>'
     +'<span class="wknav" onclick="shiftWeek(1)">›</span>'
     +'</div>'
-    +calPanel();
+    +splitOpen();                       // 캘린더가 켜져 있으면 여기서부터 좌우로 갈린다
   // 보고 있는 사람의 부재(퇴사·휴직·연차) 예정 → 인수인계 진행 배너
   var myLv=S.vsid&&(leaving[S.vsid]||null);
   if(myLv&&!myLv.done){
@@ -1459,10 +1487,12 @@ function renderMy(){
           +'<div class="muted" style="font-size:12px;margin-top:10px">연결하면 매주 이 화면에서 진행 상황을 적을 수 있습니다.</div>'
         :(self?'아직 등록된 업무가 없습니다.<br><br><button class="primary" onclick="itemModal()">＋ 첫 업무 등록</button> &nbsp; 또는 좌측 하단 <b>📥 엑셀 가져오기</b>로 이관 파일을 불러오세요.'
               :esc(S.vname)+' 님의 진행 중 업무가 없습니다.'))+'</div>';
-    app.innerHTML=h; return;
+    app.innerHTML=h+splitClose(); return;
   }
   // 머리행이 곧 걸러 보기 — 열 이름을 누르면 그 열의 값이 건수와 함께 뜬다(엑셀 자동필터).
-  var on=!!(S.q||S.f||S.myRole||fAny('my'));
+  var on=!!(S.q||S.f||S.myRole||S.calDay||fAny('my'));
+  if(S.calDay) h+='<div class="histbanner">📅 캘린더에서 고른 <b>'+esc(md(S.calDay))+'</b> 것만 보고 있습니다.'
+    +'<span class="back" onclick="calDayOnly(\'\')">모두 보기 →</span></div>';
   // 선택지는 열려 있는 열만 센다 — 네 열을 매번 다 세면 헛일이다
   function fh(k,w){
     var vals=fOpen('my',k)?fVals('my',k,base.filter(function(it){ return fPass('my',it,k); })):[];
@@ -1486,8 +1516,9 @@ function renderMy(){
     +(on?'조건에 맞는 업무 '+list.length+' / 전체 '+total+'건'
         +' <span class="chipbtn" onclick="myReset()" title="걸러 보기를 모두 해제합니다">✕ 조건 해제</span>'
        :'진행 중 '+total+'건')+'</div>';
-  app.innerHTML=h;
+  app.innerHTML=h+splitClose();
   if(S.fPop) fPopPos();
+  calAfter();
 }
 // 컴팩트 요약 칩 — 누르면 그 건만 보고, 다시 누르면 해제 (예전 .fcard와 같은 동작)
 function sbHTML(key,label,val,cls){
@@ -1496,7 +1527,7 @@ function sbHTML(key,label,val,cls){
 }
 function setFocus(k){ S.f=(S.f===k)?null:k; renderMy(); }
 function myRole(r){ S.myRole=(S.myRole===r)?'':r; renderMy(); }
-function myReset(){ fResetCols('my'); S.fPop=''; S.q=''; S.f=null; S.myRole=''; renderMy(); }
+function myReset(){ fResetCols('my'); S.fPop=''; S.q=''; S.f=null; S.myRole=''; S.calDay=''; renderMy(); }
 
 /* ── 열별 걸러 보기 (엑셀 자동필터) ──────────────────────────────────
    열 이름을 누르면 그 열에 실제로 쓰인 값이 건수와 함께 뜬다. 값은 여러 개를
@@ -1637,7 +1668,8 @@ function rowHTML(it,no){
       +(l.k==='ho'?' 🔄':'')+logBtns(it._id,l)+'</div>'; }).join('');
   var lastHtml=it.last?'<span class="last">'+esc(it.last.t)+' <span class="ago">· '+esc(md(it.last.d))+'</span></span>':'<span class="last" style="color:#c4a15a">기록 없음</span>';
   var nx=it.next&&it.next.text?ddayHTML(it.next.date,it.next.text):(it.due?ddayHTML(it.due,'기한'):'<span class="muted">—</span>');
-  return '<tr>'
+  // data-i — 캘린더에서 이 업무 줄로 데려갈 때 찾는 표식
+  return '<tr data-i="'+esc(it._id)+'">'
     +tdNo(no||'')
     +'<td>'+catBadge(it.cat)+'</td>'
     // 기업 칸 — 회사·관리번호·내 역할. 무슨 일인지는 옆 업무 칸이 맡는다.
@@ -3319,16 +3351,141 @@ function calBuild(R){
   return map;
 }
 // 색은 점으로만 알리고 글자는 진한 중성색으로 둔다 — 옅은 배경 위 색글씨는 잘 안 읽힌다
+/* 캘린더 일정 한 칸. 누르는 자리마다 하는 일이 다르다 —
+   ① 글자를 누르면 그 업무 줄로 데려가고 기록 칸에 커서를 둔다 (가장 잦은 일)
+   ② ✏️은 그 자리에서 바로 한 줄 적기 (표로 갈 것도 없을 때)
+   ③ ⤢는 그 업무 서랍 열기 (한 건을 깊게 볼 때)
+   푸른이알피 자료(일정·근태 등)는 우리 업무가 아니라 ①②③이 없다. */
 function calEvHTML(e){
-  return '<span class="cev'+(e.drag?' dg':'')+'" style="background:'+e.c+'12"'
-    +(e.drag?' draggable="true" ondragstart="calDrag(event,\''+escJ(e.it)+'\',\''+e.k+'\')"':'')
-    +(e.it?' onclick="openDrawer(\''+escJ(e.it)+'\')"':' onclick="openPuerpCal()"')
-    +' title="'+esc(CAL_NAME[e.k]+' · '+e.t+(e.s?' — '+e.s:'')+(e.drag?'  (끌어서 날짜 변경)':''))+'">'
+  var mine=!!e.it, j=mine?escJ(e.it):'';
+  return '<span class="cev'+(e.drag?' dg':'')+(mine?' own':'')+'" style="background:'+e.c+'12"'
+    +(e.drag?' draggable="true" ondragstart="calDrag(event,\''+j+'\',\''+e.k+'\')"':'')
+    +' title="'+esc(CAL_NAME[e.k]+' · '+e.t+(e.s?' — '+e.s:'')
+        +(mine?'  (누르면 그 업무 줄로)':'')+(e.drag?'  (끌어서 날짜 변경)':''))+'">'
     +'<span class="cd" style="background:'+e.c+'"></span>'
-    +'<span class="cx">'+esc(e.t)+'</span></span>';
+    +'<span class="cx"'+(mine?' onclick="event.stopPropagation();calGo(\''+j+'\')"'
+                             :' onclick="event.stopPropagation();openPuerpCal()"')+'>'+esc(e.t)+'</span>'
+    +(mine?'<span class="cvb" onclick="event.stopPropagation();calQuick(\''+j+'\',this)" title="여기서 바로 한 줄 적기">✏️</span>'
+          +'<span class="cvb" onclick="event.stopPropagation();openDrawer(\''+j+'\')" title="이 업무 자세히 보기">⤢</span>':'')
+    +'</span>';
 }
+/* ── 캘린더 ↔ 표 ────────────────────────────────────────────────── */
+// 그 날 캘린더에 뜬 우리 업무 id — 날짜 칸을 눌러 "그 날 것만" 볼 때 쓴다
+function calDaySet(d){
+  if(!d) return null;
+  var R={days:[d],month:new Date(d+'T00:00:00').getMonth()};
+  var map=calBuild(R), ids={};
+  (map[d]||[]).forEach(function(e){ if(e.it) ids[e.it]=1; });
+  return ids;
+}
+var _calDayIds=null, _calDayFor='', _calGoTry=0;
+function calDayHas(it){
+  if(_calDayFor!==S.calDay){ _calDayFor=S.calDay; _calDayIds=calDaySet(S.calDay); }
+  return !!(_calDayIds&&_calDayIds[it._id]);
+}
+function calDayOnly(d){
+  S.calDay=(S.calDay===d)?'':(d||'');
+  _calDayFor=null;                             // 다음 그리기에서 다시 센다
+  route();
+}
+// 그 업무 줄로 데려가고 기록 칸에 커서를 둔다. 걸러 보기에 가려 있으면 먼저 푼다.
+function calGo(id){
+  var r=document.querySelector('tr[data-i="'+(window.CSS&&CSS.escape?CSS.escape(id):id)+'"]');
+  if(!r){
+    // 걸러 보기나 접힌 묶음에 가려 있을 수 있다 — 한 번은 풀어 보고 다시 찾는다
+    var team=(S.view==='team');
+    var hidden=team?(S.calDay||S.q||S.teamNolog||S.teamStale||fAny('team')||Object.keys(S.teamFold||{}).length)
+                   :(S.calDay||S.q||S.f||S.myRole||fAny('my'));
+    if(hidden&&!_calGoTry){
+      _calGoTry=1; toast('걸러 보기에 가려 있어 조건을 풀었습니다');
+      if(team){ S.teamFold={}; teamReset(); } else myReset();
+      setTimeout(function(){ calGo(id); _calGoTry=0; },80); return;
+    }
+    _calGoTry=0; toast('이 화면에 없는 업무입니다','warn'); return;
+  }
+  _calGoTry=0;
+  r.scrollIntoView({block:'center',behavior:'smooth'});
+  r.classList.add('hit');
+  setTimeout(function(){ r.classList.add('off'); },900);
+  setTimeout(function(){ r.classList.remove('hit');r.classList.remove('off'); },1800);
+  var inp=r.querySelector('.wkin');
+  if(inp){ inp.focus(); try{ inp.setSelectionRange(inp.value.length,inp.value.length); }catch(e){} }
+}
+// 캘린더 안에서 바로 한 줄 적기 — 일정 칸을 입력칸으로 잠깐 바꾼다
+function calQuick(id,el){
+  var box=el&&el.parentNode; if(!box) return;
+  if(box.querySelector('.cqin')) return;
+  var keep=box.innerHTML;
+  box.innerHTML='<input class="cqin" placeholder="한 줄 기록… Enter 저장">';
+  var inp=box.querySelector('.cqin');
+  function back(){ box.innerHTML=keep; }
+  inp.addEventListener('keydown',function(ev){
+    ev.stopPropagation();
+    if(ev.key==='Escape'){ back(); return; }
+    if(ev.key!=='Enter') return;
+    ev.preventDefault();
+    var t=inp.value; if(!t.trim()){ back(); return; }
+    inp.disabled=true;
+    addLog(id,t).then(function(ok){ if(ok) route(); else back(); });
+  });
+  inp.addEventListener('blur',function(){ setTimeout(back,150); });
+  inp.focus();
+}
+/* ── 캘린더를 오른쪽에 붙이기 ──────────────────────────────────────
+   캘린더가 켜져 있고 화면이 넉넉하면 좌우로 나눈다. 좁으면 예전처럼
+   위아래로 쌓는다 — 좁은 화면에서 반씩 나누면 둘 다 못 쓴다. */
+var CALW_KEY='work_cal_w', CALW_MIN=280, CALW_MAX=720, SPLIT_MIN=1080;
+function calWidth(){
+  var v=0; try{ v=parseFloat(localStorage.getItem(CALW_KEY)||'')||0; }catch(e){}
+  return Math.max(CALW_MIN,Math.min(v||400,CALW_MAX));
+}
+function splitOn(){ return !!S.calOn&&window.innerWidth>=SPLIT_MIN; }
+function splitOpen(){
+  if(!S.calOn) return '';
+  if(!splitOn()) return calPanel();                 // 좁은 화면 — 예전처럼 위에
+  return '<div class="split" id="split"><div class="spmain">';
+}
+function splitClose(){
+  if(!splitOn()) return '';
+  return '</div><div class="spgrip" id="spgrip" title="좌우로 끌어 폭을 바꿉니다"></div>'
+    +'<div class="spside" style="width:'+calWidth()+'px">'+calPanel()+'</div></div>';
+}
+// 그린 뒤 — 가운데 손잡이를 살려 둔다
+function calAfter(){
+  var g=$('spgrip'); if(g&&!g._on){ g._on=1; g.addEventListener('pointerdown',calResize); }
+}
+function calResize(e){
+  if(e.button!==undefined&&e.button!==0) return;
+  var sp=$('split'), g=$('spgrip'); if(!sp||!g) return;
+  e.preventDefault();
+  var side=sp.querySelector('.spside'); if(!side) return;
+  var right=sp.getBoundingClientRect().right;
+  g.classList.add('on'); document.body.classList.add('colres');
+  function mv(ev){
+    var w=Math.max(CALW_MIN,Math.min(right-ev.clientX-11,CALW_MAX));
+    side.style.width=w+'px';
+  }
+  function up(){
+    document.removeEventListener('pointermove',mv);
+    document.removeEventListener('pointerup',up);
+    g.classList.remove('on'); document.body.classList.remove('colres');
+    try{ localStorage.setItem(CALW_KEY,String(parseFloat(side.style.width)||400)); }catch(e2){}
+  }
+  document.addEventListener('pointermove',mv);
+  document.addEventListener('pointerup',up);
+}
+// 창 폭이 갈림길(1080px)을 넘나들면 좌우/위아래가 바뀌므로 다시 그린다
+var _spWide=null;
+window.addEventListener('resize',function(){
+  var w=window.innerWidth>=SPLIT_MIN;
+  if(_spWide===null){ _spWide=w; return; }
+  if(_spWide!==w){ _spWide=w; if(S.calOn) route(); }
+});
 function _calDropAttr(d){
-  return ' id="cd-'+d+'" ondragover="calOver(event,\''+d+'\')" ondragleave="calLeave(\''+d+'\')" ondrop="calDrop(event,\''+d+'\')"';
+  // 날짜 칸의 빈 곳을 누르면 그 날 것만 본다 (다시 누르면 해제). 일정 글자는 따로 받는다.
+  return ' id="cd-'+d+'" onclick="calDayOnly(\''+d+'\')"'
+    +' title="'+(S.calDay===d?'모두 보기':'이 날 것만 보기')+'"'
+    +' ondragover="calOver(event,\''+d+'\')" ondragleave="calLeave(\''+d+'\')" ondrop="calDrop(event,\''+d+'\')"';
 }
 function calTitle(R){
   var d=calBase();
@@ -3366,7 +3523,8 @@ function calPanel(){
     h+='<div class="cgrid hd">'+WDS.map(function(w,i){return '<div class="cdow'+(i>=5?' we':'')+'">'+w+'</div>';}).join('')+'</div>'
       +'<div class="cgrid">'+R.days.map(function(d){
           var dt=new Date(d+'T00:00:00'), wi=(dt.getDay()+6)%7, evs=map[d]||[], more=evs.length-3;
-          return '<div class="cday'+(dt.getMonth()!==R.month?' out':'')+(d===today?' today':'')+'"'+_calDropAttr(d)+'>'
+          return '<div class="cday'+(dt.getMonth()!==R.month?' out':'')+(d===today?' today':'')
+            +(S.calDay===d?' sel':'')+'"'+_calDropAttr(d)+'>'
             +'<div class="dn'+(wi>=5?' we':'')+'">'+dt.getDate()+'</div>'
             +evs.slice(0,3).map(calEvHTML).join('')
             +(more>0?'<div class="cmore" onclick="calZoom(\''+d+'\')">+'+more+'건</div>':'')
@@ -3375,7 +3533,7 @@ function calPanel(){
   }else if(S.calView==='week'){
     h+='<div class="cgrid">'+R.days.map(function(d,i){
         var dt=new Date(d+'T00:00:00'), evs=map[d]||[];
-        return '<div class="cwcol'+(d===today?' today':'')+'"'+_calDropAttr(d)+'>'
+        return '<div class="cwcol'+(d===today?' today':'')+(S.calDay===d?' sel':'')+'"'+_calDropAttr(d)+'>'
           +'<div class="cwhd'+(d===today?' today':'')+(i>=5?' we':'')+'">'
           +WDS[i]+'<span class="dn">'+dt.getDate()+'</span></div>'
           +(evs.length?evs.map(calEvHTML).join(''):'<div class="cdash">—</div>')
@@ -3460,7 +3618,7 @@ function renderTeam(){
     +'<span class="wknav" onclick="shiftWeek(-1)">‹</span>'
     +'<span class="wkpill" id="wkpill" onclick="openCal()">📅 '+esc(weekLabel(S.week))+' ▾</span>'
     +'<span class="wknav" onclick="shiftWeek(1)">›</span></div>'
-    +calPanel();
+    +splitOpen();                       // 캘린더가 켜져 있으면 여기서부터 좌우로 갈린다
   // 요약 1줄 — 숫자 칩 자체가 필터다(예전 카드 6개 + 같은 뜻의 칩 2개를 합쳤다)
   h+='<div class="statbar">'
     +'진행 <b>'+open.length+'</b>건'
@@ -3474,7 +3632,7 @@ function renderTeam(){
     +'title="기한이 7일 이내인 건만 — 다시 누르면 해제">임박 '+due7.length+'</span>'
     +'</div>';
   var folded=Object.keys(S.teamFold||{}).length>0;
-  var anyF=!!(S.q||S.teamNolog||S.teamStale||fAny('team'));
+  var anyF=!!(S.q||S.teamNolog||S.teamStale||S.calDay||fAny('team'));
   h+='<div class="fbar">'
     +qBox('renderTeam','🔍 기업·업무명·의뢰인')
     +'<span class="chipbtn'+(S.teamFlat?' on':'')+'" onclick="S.teamFlat=!S.teamFlat;renderTeam()" title="담당자 묶음을 풀고 한 표로 — 정렬에 유용">평면</span>'
@@ -3482,10 +3640,13 @@ function renderTeam(){
     +(anyF?'<span class="chipbtn on" onclick="teamReset()" title="모든 필터 해제">✕ 필터</span>':'')
     +'</div>';
   if(!isCurWeek()) h+='<div class="histbanner">🕘 <b>'+esc(weekLabel(S.week))+'</b> 열람 중<span class="back" onclick="setWeek(null)">이번 주로 →</span></div>';
+  if(S.calDay) h+='<div class="histbanner">📅 캘린더에서 고른 <b>'+esc(md(S.calDay))+'</b> 것만 보고 있습니다.'
+    +'<span class="back" onclick="calDayOnly(\'\')">모두 보기 →</span></div>';
   // 열 조건 밖의 것(검색·미기록·방치)만 먼저 거른다. 열 조건은 깔때기가 따로 본다.
   function preF(it){
     if(S.teamNolog&&wkLogsOf(it._id,wk).length) return false;
     if(S.teamStale){ var ld=(it.last&&it.last.d)||''; if(ld&&_dayDiff(today,ld)<14) return false; }
+    if(S.calDay&&!calDayHas(it)) return false;      // 캘린더에서 고른 날 것만
     if(S.q&&!matchQ(it,S.q)) return false;
     return true;
   }
@@ -3531,7 +3692,7 @@ function renderTeam(){
           +(stale?' style="color:var(--warn);font-weight:700"':'')+'>· '+esc(md(ld))+'</span></span>')
         :'<span class="muted" style="font-size:12px">기록 없음</span>';
       var nx=it.next&&it.next.text?ddayHTML(it.next.date,it.next.text):(it.due?ddayHTML(it.due,'기한'):'<span class="muted">—</span>');
-      return '<tr>'+tdNo(i+1)+'<td>'+catBadge(it.cat)+'</td>'
+      return '<tr data-i="'+esc(it._id)+'">'+tdNo(i+1)+'<td>'+catBadge(it.cat)+'</td>'
         +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
         +(perGroup?'':'<div class="sub">'+esc((it.mgr_main&&it.mgr_main.name)||'담당 미지정')+'</div>')
         +(it.officer?'<div class="sub">'+esc(it.officer)+'</div>':'')+'</td>'
@@ -3569,8 +3730,9 @@ function renderTeam(){
     +(anyF?'조건에 맞는 업무 '+shown+' / 전체 '+open.length+'건'
         +' <span class="chipbtn" onclick="teamReset()" title="걸러 보기를 모두 해제합니다">✕ 조건 해제</span>'
        :'진행 중 '+open.length+'건')+'</div>';
-  app.innerHTML=h;
+  app.innerHTML=h+splitClose();
   if(S.fPop) fPopPos();
+  calAfter();
 }
 function teamSort(k){ if((S.teamSort||'due')===k) S.teamDesc=!S.teamDesc; else { S.teamSort=k; S.teamDesc=false; } renderTeam(); }
 function teamSortArr(arr,wk){
@@ -3592,7 +3754,7 @@ function teamFold(nm){ S.teamFold=S.teamFold||{}; S.teamFold[nm]=!S.teamFold[nm]
 function teamFoldAll(on){ S.teamFold={};
   if(on) openItems().forEach(function(it){ S.teamFold[(it.mgr_main&&it.mgr_main.name)||'(담당 미지정)']=1; });
   renderTeam(); }
-function teamReset(){ fResetCols('team'); S.fPop=''; S.teamNolog=false; S.teamStale=false; S.q=''; renderTeam(); }
+function teamReset(){ fResetCols('team'); S.fPop=''; S.teamNolog=false; S.teamStale=false; S.q=''; S.calDay=''; renderTeam(); }
 
 /* ── 업무량 (사람별 비교·관리) ── */
 // 최근 n주 기록을 모두 로드
