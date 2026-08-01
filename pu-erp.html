@@ -7405,6 +7405,31 @@ if(!window.__pureun_autoselect_numeric){
 // ⋯ 하나만 두고 누를 때만 펼친다. props.items = [{label, onClick, tone, title, hide}]
 //   tone: 'edit'(파랑) | 'warn'(노랑) | 'danger'(빨강) | 기본(회색)
 // 표 바깥으로 나가는 스크롤 영역 안에 있으므로 메뉴는 fixed 로 띄운다(안 그러면 잘린다).
+// ── 유형 고르기 (붙어 있는 한 덩어리) ─────────────────────────────
+// 드롭다운은 열고-고르고 3번을 눌러야 해서, 자주 쓰는 유형만 도구줄로 꺼낸다.
+// 라디오처럼 붙여 두면 "이 중 하나만 고른다"가 눈에 바로 들어온다.
+// props.items = [{v, label, count, bg, fg}]  — 고른 칸만 그 유형 색으로 칠한다.
+function TypeSeg(props){
+  var items = props.items || [];
+  if(!items.length) return null;
+  return h('div', { role:'group', 'aria-label': props.label || '유형',
+    style:{ display:'inline-flex', border:'1px solid #cbd5e1', borderRadius:'20px',
+      overflow:'hidden', flexShrink:0, background:'#fff' } },
+    items.map(function(it, i){
+      var on = props.value === it.v;
+      return h('button', { key:it.v, type:'button', 'aria-pressed':on,
+        title: it.count === undefined ? it.label : it.label + ' ' + it.count + '건',
+        onClick:function(){ props.onChange(it.v); },
+        style:{ padding:'5px 13px', fontSize:'11.5px', fontFamily:'inherit', cursor:'pointer',
+          border:'none', borderLeft: i ? '1px solid #e2e8f0' : 'none',
+          background: on ? (it.bg || '#1e293b') : 'transparent',
+          color: on ? (it.fg || '#fff') : '#64748b',
+          fontWeight: on ? 700 : 500, whiteSpace:'nowrap', lineHeight:1.5 } },
+        it.label, it.count === undefined ? null :
+          h('span', { style:{ marginLeft:'5px', opacity: on ? 0.75 : 0.6, fontWeight:500 } }, it.count));
+    }));
+}
+
 var ROW_TONE = {
   edit:   { c:'#1e40af', bg:'#eff6ff' },
   warn:   { c:'#854d0e', bg:'#fffbeb' },
@@ -14845,7 +14870,8 @@ function CompanyManagement(){
   function coSimple(){ var n = Object.assign({}, hiddenCols); coColReg.forEach(function(c){ if(c.d) n[c.k] = true; else delete n[c.k]; }); saveHiddenCols(n); }
   var coHideCss = coColReg.filter(function(c){ return hiddenCols[c.k]; }).map(function(c){ return '.co-table td:nth-child('+c.idx+'),.co-table th:nth-child('+c.idx+'){display:none}'; }).join('');
   var coHiddenCount = coColReg.filter(function(c){ return hiddenCols[c.k]; }).length;
-  var activeFilterCount = [typeFilter, mgrFilter, subMgrFilter, payrollDayFilter].filter(function(v){ return v && v !== 'all'; }).length;
+  // 유형은 도구줄에 그대로 보이므로 '필터 (n)' 배지에서 뺀다 — 두 군데서 세면 헷갈린다
+  var activeFilterCount = [mgrFilter, subMgrFilter, payrollDayFilter].filter(function(v){ return v && v !== 'all'; }).length;
   // 컬럼 드롭다운 외부 클릭 자동 닫기
   useEffect(function(){
     if(!colMenuOpen) return;
@@ -15193,18 +15219,17 @@ function CompanyManagement(){
     showToast('CSV 다운로드 완료 (엑셀에서 열기 가능)');
   }
 
+  // 상태 탭 범위 — 목록 거르기와 유형별 건수가 같은 기준을 쓰도록 따로 뺐다
+  function coInTab(co){
+    // ★ 계약 중단 탭
+    if(statusTab === 'suspended') return !!co.suspended;
+    // 사무대행 탭: status='suboffice' OR active+isSuboffice 모두 표시 (자문과 중복인 경우)
+    if(statusTab === 'suboffice') return co.status === 'suboffice' || !!co.isSuboffice;
+    return co.status === statusTab;
+  }
   // 필터
   var filtered = companies.filter(function(co){
-    // ★ 계약 중단 탭
-    if(statusTab === 'suspended'){
-      return !!co.suspended;
-    }
-    // 사무대행 탭: status='suboffice' OR active+isSuboffice 모두 표시 (자문과 중복인 경우)
-    if(statusTab === 'suboffice'){
-      if(co.status !== 'suboffice' && !co.isSuboffice) return false;
-    } else {
-      if(co.status !== statusTab) return false;
-    }
+    if(!coInTab(co)) return false;
     if(typeFilter !== 'all' && co.typeCode !== typeFilter) return false;
     if(payrollDayFilter !== 'all' && payrollDayNorm(co.payrollDay) !== payrollDayFilter) return false;
     if(bizTypeFilter !== 'all' && (co.bizType||'').trim() !== bizTypeFilter) return false;
@@ -15285,11 +15310,18 @@ function CompanyManagement(){
   // 페이지네이션 (표시 개수 선택)
   var copsS = useState(50); var coPageSize = copsS[0]; var setCoPageSize = copsS[1];
   var pg = usePagination(filtered, coPageSize);
+  // 지금 보고 있는 탭 안에서 유형별 건수 (사무대행·계약중단 탭도 목록과 같은 기준)
   function typeCount(code){
     return companies.filter(function(c){
-      return c.status === statusTab && (code === 'all' || c.typeCode === code);
+      return coInTab(c) && (code === 'all' || c.typeCode === code);
     }).length;
   }
+  // 도구줄 유형 단추 — 그 탭에 한 건도 없는 유형은 아예 안 보여 준다
+  var coTypeSeg = [{ v:'all', label:'전체', count:typeCount('all') }].concat(
+    [['자문','#dbeafe','#1e40af'], ['급여','#dcfce7','#166534'],
+     ['노조','#ede9fe','#5b21b6'], ['기금','#fef3c7','#854d0e']]
+    .map(function(t){ return { v:t[0], label:t[0], count:typeCount(t[0]), bg:t[1], fg:t[2] }; })
+    .filter(function(t){ return t.count > 0 || typeFilter === t.v; }));
   function mgrCount(sid){
     return companies.filter(function(c){
       return c.status === statusTab && (sid === 'all' || c.managerMain === sid || (c.managerSubs||[]).indexOf(sid) !== -1);
@@ -15508,8 +15540,8 @@ function CompanyManagement(){
         )
       )
     : h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'14px', flexWrap:'wrap' } },
-      // 상태 탭
-      h('button', { onClick:function(){ setStatusTab('active'); setTypeFilter('all'); },
+      // 상태 탭 (유형은 따로 보이므로 탭을 바꿔도 유지한다)
+      h('button', { onClick:function(){ setStatusTab('active'); },
         style:{ padding:'6px 14px', borderRadius:'5px',
           background: statusTab==='active' ? '#1e40af' : '#fff',
           color: statusTab==='active' ? '#fff' : '#475569',
@@ -15531,7 +15563,10 @@ function CompanyManagement(){
           fontSize:'12px', fontWeight:700, cursor:'pointer' } },
         '⏸ 계약 중단 (' + companies.filter(function(c){return !!c.suspended;}).length + ')'),
       // (종료 탭 제거: 종료 업체는 종료관리에서 조회)
-      // 필터 팝오버 (유형·담당·부담당·급여일)
+      // 유형 — 가장 자주 쓰는 필터라 창 안에 두지 않고 여기서 한 번에 고른다
+      h('span', { style:{ width:'1px', height:'22px', background:'#e2e8f0', margin:'0 2px', flexShrink:0 } }),
+      h(TypeSeg, { value:typeFilter, onChange:setTypeFilter, items:coTypeSeg, label:'업체 유형' }),
+      // 필터 팝오버 (담당·부담당·급여일 — 유형은 위로 꺼냈다)
       h('div', { style:{ position:'relative' } },
         h('button', { onClick:function(e){ e.stopPropagation(); setFilterMenuOpen(!filterMenuOpen); setMoreMenuOpen(false); },
           style:{ padding:'6px 12px', fontSize:'12px', fontWeight:600, borderRadius:'5px',
@@ -15543,14 +15578,6 @@ function CompanyManagement(){
           style:{ position:'absolute', top:'calc(100% + 4px)', left:0, zIndex:100,
             background:'#fff', border:'1px solid #cbd5e1', borderRadius:'8px',
             boxShadow:'0 4px 12px rgba(0,0,0,0.15)', minWidth:'260px', padding:'10px', display:'flex', flexDirection:'column', gap:'8px' } },
-          statusTab !== 'suboffice' && h('div', { style:{ display:'flex', alignItems:'center', gap:'6px' } },
-            h('span', { style:{ fontSize:'11px', color:'#64748b', width:'48px', flexShrink:0 } }, '유형'),
-            h('select', { value:typeFilter, onChange:function(e){ setTypeFilter(e.target.value); },
-              style:{ flex:1, padding:'5px 10px', border:'1px solid '+(typeFilter!=='all'?'#1e40af':'#cbd5e1'), borderRadius:'4px', fontSize:'11.5px', fontFamily:'inherit',
-                color: typeFilter!=='all'?'#1e40af':'#475569', fontWeight: typeFilter!=='all'?700:400, cursor:'pointer' } },
-              COMPANY_TYPE_FILTERS.map(function(tf0){ return h('option', { key:tf0.v, value:tf0.v }, tf0.icon + ' ' + tf0.label); })),
-            h('span', { style:{ fontSize:'11.5px', color:'#475569', fontWeight:700, whiteSpace:'nowrap' } }, typeCount(typeFilter) + '건')
-          ),
           h('div', { style:{ display:'flex', alignItems:'center', gap:'6px' } },
             h('span', { style:{ fontSize:'11px', color:'#64748b', width:'48px', flexShrink:0 } }, '담당자'),
             h('select', { value:mgrFilter, onChange:function(e){ setMgrFilter(e.target.value); },
@@ -15576,7 +15603,7 @@ function CompanyManagement(){
               h('option', { value:'all' }, '📅 급여지급일'),
               payrollDayOpts.map(function(d){ return h('option', { key:d, value:d }, d); }))
           ),
-          activeFilterCount>0 && h('button', { onClick:function(){ setTypeFilter('all'); setMgrFilter('all'); setSubMgrFilter('all'); setPayrollDayFilter('all'); },
+          activeFilterCount>0 && h('button', { onClick:function(){ setMgrFilter('all'); setSubMgrFilter('all'); setPayrollDayFilter('all'); },
             style:{ marginTop:'2px', background:'#f8fafc', color:'#1d4ed8', border:'1px solid #cbd5e1', borderRadius:'4px', padding:'5px 10px', fontSize:'11.5px', fontWeight:600, cursor:'pointer' } }, '↺ 필터 초기화')
         )
       ),
