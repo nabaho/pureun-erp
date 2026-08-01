@@ -64,3 +64,35 @@ test('mapRecord: consultings → consult, funds → fund, other_projects → etc
 test('mapRecord: 모르는 컬렉션은 null', () => {
   assert.equal(PS.mapRecord('unknown', 'k', {}, {}), null);
 });
+
+test('buildSyncPlan: 종료 건만, puRef 처음인 것만 들어온다', () => {
+  const collData = {
+    cases: {
+      k1: { caseType: '부당해고', companyName: 'A사', title: '사건1', closedDate: '2026-01-01', managerMain: '2001' },
+      k2: { caseType: '임금체불', companyName: 'B사', title: '사건2', status: 'active' },            // 진행 중 → 제외
+      k3: { caseType: '산재', companyName: 'C사', title: '사건3', status: 'closed', managerMain: '2001' }
+    },
+    consultings: {
+      c1: { consultingType: '일터혁신', companyName: 'D사', title: '컨설팅1', status: 'done', managerMain: '2003' }
+    },
+    funds: null,                                                                                      // 컬렉션이 비어도 죽지 않는다
+    other_projects: {}
+  };
+  const existing = new Set(['cases/k3']);                                                             // 이미 들어온 것(배제 포함)
+  const plan = PS.buildSyncPlan(collData, existing, UMAP);
+
+  assert.equal(plan.adds.length, 2);                                                                  // k1 + c1
+  assert.deepEqual(plan.counts, { case: 1, consult: 1, fund: 0, etc: 0 });
+  assert.equal(plan.skippedOpen, 1);                                                                  // k2
+  assert.equal(plan.skippedKnown, 1);                                                                 // k3
+  const refs = plan.adds.map((a) => a.rec.puRef).sort();
+  assert.deepEqual(refs, ['cases/k1', 'consultings/c1']);
+});
+
+test('buildSyncPlan: 배열형 컬렉션(Firebase가 배열로 줄 때)도 처리한다', () => {
+  const collData = { cases: [null, { caseType: '사건', companyName: 'E사', title: 't', closedDate: '2025-05-05' }],
+                     consultings: null, funds: null, other_projects: null };
+  const plan = PS.buildSyncPlan(collData, new Set(), {});
+  assert.equal(plan.adds.length, 1);
+  assert.equal(plan.adds[0].rec.puRef, 'cases/1');                                                    // 배열 인덱스가 키
+});
