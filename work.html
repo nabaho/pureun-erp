@@ -3056,8 +3056,10 @@ function tplModal(id){
 var HELP={
   steps:'이 업무에서 <b>해야 할 일을 순서대로</b> 깔아 둡니다. 다음에 뭘 할지 찾지 않아도 되고, '
        +'기한을 넣으면 캘린더와 그 주 요일 칸에 함께 표시됩니다.',
-  people:'푸른이알피 <b>업체관리</b>에 등록된 담당자를 그대로 읽어 옵니다 — 여기서는 고칠 수 없습니다.<br>'
-        +'이 건에서만 다른 사람과 일한다면(예: 인사담당 ↔ 안전담당) 아래 칸에 따로 적으세요.',
+  people:'윗줄은 푸른이알피 <b>업체관리</b>에 등록된 담당자입니다 — 여기서는 고칠 수 없습니다.<br>'
+        +'이 건에서만 다른 사람과 일한다면(예: 인사담당 ↔ 안전담당) 아래 칸에 따로 적으세요.<br>'
+        +'<b>📇 명함첩에서 찾기</b>를 누르면 이름·직급·연락처를 골라 넣을 수 있습니다. '
+        +'적어 넣은 값은 푸른이알피 업체 담당자에도 반영됩니다.',
   org:'노동청·노동위원회 같은 <b>상대기관</b>과 그쪽 담당자(감독관·조사관)입니다.<br>'
      +'푸른이알피 사건의 <b>관할</b> 칸을 그대로 읽어 옵니다 — 그쪽에서 고치면 여기에도 따라옵니다.',
   mgr:'<b>부담당(공동작업자)</b>도 이 업무의 기록을 쓰고 고칠 수 있습니다.<br>'
@@ -3303,6 +3305,12 @@ function dPeopleHTML(id,it){
     +'<input id="ct-rk" value="'+esc(mc.rank||'')+'" placeholder="직급" onchange="saveContact(\''+escJ(id)+'\')">'
     +'<input id="ct-ph" value="'+esc(mc.phone||'')+'" placeholder="연락처" onchange="saveContact(\''+escJ(id)+'\')">'
     +'</div>'
+    // 손으로 옮겨 적지 않게 — 명함첩에서 골라 넣는다
+    +'<div class="row" style="gap:6px">'
+    +'<span class="chipbtn" onclick="cardModal(\''+escJ(id)+'\')" '
+    +'title="명함첩에서 이름·직급·연락처를 찾아 넣습니다">📇 명함첩에서 찾기</span>'
+    +(mc.name||mc.phone?'<span class="chipbtn" onclick="saveContactClear(\''+escJ(id)+'\')" title="이 건 담당자 칸을 비웁니다">✕ 비우기</span>':'')
+    +'</div>'
     +'</div></div>'
     +dOrgHTML(it);
   var subs=(it.mgr_subs||[]).filter(function(s){return s&&(s.name||s.sid);});
@@ -3334,6 +3342,102 @@ function saveContact(id){
   var nm=g('ct-nm'), rk=g('ct-rk'), ph=g('ct-ph');
   patchItem(id,{contact:(nm||rk||ph)?{name:nm,rank:rk,phone:ph}:null})
     .then(function(ok){ if(ok) toast('👤 담당자 저장됨'); });
+}
+function saveContactClear(id){
+  patchItem(id,{contact:null}).then(function(ok){
+    if(!ok) return; toast('담당자 칸을 비웠습니다'); renderDrawer(); route();
+  });
+}
+/* ── 명함첩에서 담당자 찾아 넣기 ────────────────────────────────
+   담당자 이름·연락처를 손으로 옮겨 적고 있었다. 명함첩(pu-cards)이
+   이미 검색용 색인 pucards/idx를 따로 두고 있어 그것만 읽으면 된다.
+   idx 한 건 = {n 이름, c 회사, m 휴대폰, t 전화, e 메일, ti 직급, d 부서,
+                ct 회사전화, ad 주소, k 'card'|'biz'}
+   ⚠ 읽기만 한다 — 명함은 명함첩에서 고친다. */
+var cardIdx=null, _cardT=null;
+function cardLoad(){
+  if(cardIdx) return Promise.resolve(cardIdx);
+  if(_cardT) return _cardT;
+  _cardT=fbDb.ref('pucards/idx').once('value').then(function(s){
+    var v=s.val()||{}, out=[];
+    Object.keys(v).forEach(function(k){ var r=v[k]; if(r) { r=Object.assign({},r); r._id=k; out.push(r); } });
+    cardIdx=out; _cardT=null; return out;
+  }).catch(function(){ cardIdx=[]; _cardT=null; return cardIdx; });
+  return _cardT;
+}
+function cardPhone(r){ return r.m||r.t||r.ct||''; }
+function cardFind(q,limit){
+  q=String(q||'').trim().toLowerCase();
+  if(!q) return [];
+  var digits=q.replace(/[^0-9]/g,'');
+  var out=[];
+  (cardIdx||[]).forEach(function(r){
+    if(r.k==='biz') return;                       // 사업자등록증은 사람이 아니다
+    var hay=[r.n,r.c,r.ti,r.d,r.e].join(' ').toLowerCase();
+    var tel=[r.m,r.t,r.ct].join('').replace(/[^0-9]/g,'');
+    var hit=hay.indexOf(q)>=0||(digits.length>=3&&tel.indexOf(digits)>=0);
+    if(!hit) return;
+    // 회사 이름이 맞은 것보다 사람 이름이 맞은 것을 앞에 둔다
+    r._s=(String(r.n||'').toLowerCase().indexOf(q)>=0?0:1);
+    out.push(r);
+  });
+  out.sort(function(a,b){ return a._s-b._s
+    ||String(a.c||'').localeCompare(String(b.c||''),'ko')
+    ||String(a.n||'').localeCompare(String(b.n||''),'ko'); });
+  return limit?out.slice(0,limit):out;
+}
+function cardModal(id,q){
+  var it=items[id]; if(!it) return;
+  S._cardFor=id;
+  if(q!==undefined) S._cardQ=q;
+  else if(S._cardQ===undefined) S._cardQ=String(it.company||it.client||'').trim();
+  if(!cardIdx){
+    showModal('<h2 style="margin:0 0 10px">📇 명함첩에서 찾기</h2>'
+      +'<p class="muted" style="font-size:12.5px">명함첩을 불러오는 중…</p>');
+    cardLoad().then(function(){ if(S._cardFor===id) cardModal(id); });
+    return;
+  }
+  var q2=S._cardQ, r=cardFind(q2,30), all=cardFind(q2).length;
+  showModal('<h2 style="margin:0 0 4px">📇 명함첩에서 찾기</h2>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 10px">고르면 이 건의 담당자 칸에 들어갑니다. '
+    +'명함 자체는 <b>명함첩에서</b> 고칩니다.</p>'
+    +'<input id="cd-q" value="'+esc(q2)+'" placeholder="🔍 이름·회사·전화번호" '
+    +'oninput="onCardQ(this.value)" style="width:100%;padding:8px 11px;border:1px solid var(--line);border-radius:8px;font-size:13px">'
+    +'<div style="max-height:320px;overflow-y:auto;margin-top:10px">'
+    +(cardIdx.length?'':'<div class="kbempty">명함첩을 읽지 못했습니다. 같은 브라우저에서 <b>명함첩을 한 번 열고</b> 다시 시도해 주세요.</div>')
+    +(r.length?r.map(function(c){
+        return '<div class="prow">'
+          +'<div class="px"><b>'+esc(c.n||'(이름 없음)')+'</b>'
+          +(c.ti||c.d?' <span class="mgt">'+esc([c.d,c.ti].filter(Boolean).join(' '))+'</span>':'')
+          +'<div class="sub">'+esc(c.c||'—')+(cardPhone(c)?' · '+esc(cardPhone(c)):'')
+          +(c.e?' · '+esc(c.e):'')+'</div></div>'
+          +'<button class="primary" onclick="cardPick(\''+escJ(c._id)+'\')">넣기</button></div>';
+      }).join('')
+     :(q2&&cardIdx.length?'<div class="kbempty">찾는 명함이 없습니다. 이름 일부나 전화번호로도 찾아보세요.</div>'
+        :(cardIdx.length?'<div class="kbempty">이름·회사·전화번호를 적어 찾습니다.</div>':'')))
+    +(all>30?'<div class="muted" style="font-size:11.5px;padding:6px 2px">…외 '+(all-30)+'명. 더 적어 좁혀 보세요.</div>':'')
+    +'</div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:12px">'
+    +'<button onclick="window.open(\'pu-cards.html?sso=1&q='+encodeURIComponent(q2)+'\',\'_blank\')" '
+    +'title="명함첩을 열어 새 명함을 등록하거나 고칩니다">📇 명함첩 열기</button>'
+    +'<button onclick="closeM()">닫기</button></div>');
+  var el=$('cd-q'); if(el){ el.focus(); try{ el.setSelectionRange(el.value.length,el.value.length); }catch(e){} }
+}
+var _cardQT=null;
+function onCardQ(v){ S._cardQ=v; clearTimeout(_cardQT);
+  _cardQT=setTimeout(function(){ if(S._cardFor) cardModal(S._cardFor); },220); }
+function cardPick(cid){
+  var id=S._cardFor, c=(cardIdx||[]).filter(function(x){ return x._id===cid; })[0];
+  if(!id||!c){ toast('명함을 찾을 수 없습니다','warn'); return; }
+  var rec={name:String(c.n||'').trim(),
+           rank:[c.d,c.ti].filter(Boolean).join(' ').trim(),
+           phone:cardPhone(c)};
+  if(!rec.name&&!rec.rank&&!rec.phone){ toast('이 명함에는 담을 내용이 없습니다','warn'); return; }
+  patchItem(id,{contact:rec}).then(function(ok){
+    if(!ok) return;
+    closeM(); toast('📇 '+(rec.name||'담당자')+' — 담당자 칸에 넣었습니다');
+    renderDrawer(); route();
+  });
 }
 function subAdd(id,sel){
   var sid=sel.value; if(!sid) return;
