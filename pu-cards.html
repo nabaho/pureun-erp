@@ -604,7 +604,7 @@ function backfillIdx(){
   }catch(_){}
 }
 
-const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, colOrder:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, onlyPrivate:false, unlocked:{}, items:{}, groups:{}, trash:{} };
+const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, colOrder:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, onlyPrivate:false, unlocked:{}, items:{}, groups:{}, trash:{}, views:{} };
 
 /* ── 데이터 계층 ── */
 const Store = {
@@ -629,6 +629,8 @@ const Store = {
           if(!Store._idxDone){ setTimeout(backfillIdx, 3000); } });
         this.db.ref(DB_ROOT+'/groups').on('value', s => { state.groups = s.val()||{}; render();
           if(!Store._bizSeedDone){ Store._bizSeedDone=true; setTimeout(seedBizFolders, 3000); } });
+        /* 내 탭(저장된 검색·필터 조건) — 전 직원 공유 */
+        this.db.ref(DB_ROOT+'/views').on('value', s => { state.views = s.val()||{}; render(); });
         this.db.ref(DB_ROOT+'/trash').on('value', s => { state.trash = s.val()||{};
           if(!Store._trashPurgeDone){ Store._trashPurgeDone=true; setTimeout(purgeTrash, 2000); } });
       };
@@ -645,6 +647,7 @@ const Store = {
       state.items  = JSON.parse(localStorage.getItem('pucards_local_items')||'{}');
       state.groups = JSON.parse(localStorage.getItem('pucards_local_groups')||'{}');
       state.trash  = JSON.parse(localStorage.getItem('pucards_local_trash')||'{}');
+      state.views  = JSON.parse(localStorage.getItem('pucards_local_views')||'{}');
       /* 구버전 구조(item.photo 내장) → 사진 분리 저장으로 1회 이전 */
       Object.values(state.items).forEach(it=>{
         if (it.photo){ const p=it.photo; delete it.photo; this.putPhoto(it.id,p);
@@ -714,6 +717,12 @@ const Store = {
     if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/photos/${id}`).remove();
     else { const m=JSON.parse(localStorage.getItem('pucards_local_photos')||'{}'); delete m[id];
       localStorage.setItem('pucards_local_photos', JSON.stringify(m)); } },
+  /* 내 탭(저장된 조건) — 전 직원 공유. 명함을 건드리지 않고 보기 조건만 저장 */
+  putView(v){ if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/views/${v.id}`).set(v);
+    else { state.views[v.id]=v; this._lsViews(); render(); } },
+  delView(id){ if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/views/${id}`).remove();
+    else { delete state.views[id]; this._lsViews(); render(); } },
+  _lsViews(){ try{ localStorage.setItem('pucards_local_views', JSON.stringify(state.views||{})); }catch(e){} },
   putGroup(g){ if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/groups/${g.id}`).set(g);
     else { state.groups[g.id]=g; this._ls(); render(); } },
   delGroup(id){ Object.values(state.items).forEach(it=>{ if(it.group===id){ it.group=''; this.put(it);} });
@@ -3392,7 +3401,86 @@ function renderPCTable(){
       + btn('다음 ▶', state.page+1, state.page>=totalPages-1);
   } else pager.innerHTML='';
 }
-/* ERP 유형 탭 (자문·급여·노조·기금) — 업체관리 매칭 건수 포함 */
+/* ══════ 🔖 내 탭 (저장된 검색·필터 조건) ══════
+   폴더는 '명함을 옮기는 서류함', 내 탭은 '조건으로 걸러 보는 즐겨찾기'.
+   명함 데이터를 건드리지 않으므로 5천 장에도 즉시 적용된다. 전 직원 공유(pucards/views). */
+function viewSnapshot(){
+  const s=$('search');
+  return {
+    q: s ? s.value.trim() : '',
+    group: state.group||'all', owner: state.owner||'all', region: state.region||'',
+    erpFilter: state.erpFilter||'', colFilter: Object.assign({}, state.colFilter||{}),
+    onlyPhone: !!state.onlyPhone, onlyEmail: !!state.onlyEmail,
+    onlyIncomplete: !!state.onlyIncomplete, onlyPrivate: !!state.onlyPrivate, onlyDup: !!state.onlyDup,
+    sort: state.sort||'date', sortKey: state.sortKey||null, sortDir: state.sortDir||'desc'
+  };
+}
+/* 지금 화면이 그 탭과 같은 조건인지 비교용 서명 (정렬은 제외 — 정렬 바꿔도 탭 선택 유지) */
+function viewSig(f){
+  f=f||{}; const c=f.colFilter||{};
+  return JSON.stringify([f.q||'', f.group||'all', f.owner||'all', f.region||'', f.erpFilter||'',
+    c.name||'', c.company||'', c.phone||'', c.email||'',
+    !!f.onlyPhone, !!f.onlyEmail, !!f.onlyIncomplete, !!f.onlyPrivate, !!f.onlyDup]);
+}
+function applyView(id){
+  const v=(state.views||{})[id]; if(!v) return;
+  const f=v.f||{};
+  if((v.kind||'card')!==state.tab){ state.tab=v.kind||'card'; }
+  state.group=f.group||'all'; state.owner=f.owner||'all'; state.region=f.region||'';
+  state.erpFilter=f.erpFilter||''; state.colFilter=Object.assign({}, f.colFilter||{});
+  state.onlyPhone=!!f.onlyPhone; state.onlyEmail=!!f.onlyEmail;
+  state.onlyIncomplete=!!f.onlyIncomplete; state.onlyPrivate=!!f.onlyPrivate; state.onlyDup=!!f.onlyDup;
+  state.sort=f.sort||'date'; state.sortKey=f.sortKey||null; state.sortDir=f.sortDir||'desc';
+  state.page=0; state.sel={};
+  const s=$('search'); if(s) s.value=f.q||'';
+  const ps=$('pcSearch'); if(ps) ps.value=f.q||'';
+  render();
+}
+function saveCurrentAsView(){
+  const f=viewSnapshot();
+  const hasCond = f.q||f.region||f.erpFilter||(f.group&&f.group!=='all')||(f.owner&&f.owner!=='all')
+    ||f.onlyPhone||f.onlyEmail||f.onlyIncomplete||f.onlyPrivate||f.onlyDup
+    ||Object.keys(f.colFilter||{}).some(k=>f.colFilter[k]);
+  if(!hasCond && !confirm('지금 화면에 걸린 조건이 없습니다.\n(검색어·폴더·지역·칸별검색 등)\n\n조건 없는 탭(전체 보기)으로 저장할까요?')) return;
+  const dflt = f.q || f.region || f.erpFilter || (f.colFilter&&(f.colFilter.company||f.colFilter.name)) || '';
+  const name=(prompt('탭 이름을 입력하세요 (예: 세무사무실, 천안 자문, 정보부족)', dflt)||'').trim();
+  if(!name) return;
+  const v={ id:uid(), name, kind:state.tab, order:Date.now(), f };
+  Store.putView(v);
+  toast(`🔖 '${name}' 탭을 만들었습니다 — 전 직원이 함께 씁니다`,4000);
+}
+function viewMenu(id){
+  const v=(state.views||{})[id]; if(!v) return;
+  const a=(prompt(`'${v.name}' 탭 관리 — 번호를 입력하세요\n\n1 = 이름 변경\n2 = 지금 화면 조건으로 이 탭 갱신\n3 = 탭 삭제 (명함은 그대로)`, '1')||'').trim();
+  if(!a) return;
+  if(a==='1'){
+    const nm=(prompt('새 탭 이름', v.name)||'').trim(); if(!nm) return;
+    Store.putView(Object.assign({}, v, {name:nm})); toast('탭 이름을 바꿨습니다');
+  } else if(a==='2'){
+    if(!confirm(`'${v.name}' 탭을 지금 화면의 조건으로 덮어쓸까요?`)) return;
+    Store.putView(Object.assign({}, v, {f:viewSnapshot(), kind:state.tab})); toast('탭 조건을 갱신했습니다');
+  } else if(a==='3'){
+    if(!confirm(`'${v.name}' 탭을 삭제할까요?\n\n· 탭(보기 조건)만 없어지고 명함은 그대로입니다.`)) return;
+    Store.delView(id); toast('탭을 삭제했습니다');
+  }
+}
+function renderMyTabsHtml(){
+  const vs=Object.values(state.views||{}).filter(v=>v&&v.id&&(v.kind||'card')===state.tab)
+            .sort((a,b)=>(a.order||0)-(b.order||0));
+  const sig=viewSig(viewSnapshot());
+  let h='';
+  if(vs.length) h+=`<span style="width:1px;height:22px;background:#dde3ee;margin:0 3px"></span>`;
+  h+=vs.map(v=>{
+    const on=viewSig(v.f)===sig;
+    return `<span style="display:inline-flex;align-items:center;border:1.5px solid ${on?'#1d4ed8':'#cfe0fb'};background:${on?'#1d4ed8':'#f4f9ff'};color:${on?'#fff':'#1d4fc4'};border-radius:18px;font-weight:700;font-size:12.5px;overflow:hidden">
+      <span style="cursor:pointer;padding:6px 4px 6px 13px" onclick="applyView('${v.id}')" title="이 조건으로 보기">🔖 ${esc(v.name)}</span>
+      <span style="cursor:pointer;padding:6px 9px 6px 4px;opacity:.75;font-size:13px" onclick="viewMenu('${v.id}')" title="이름변경 · 조건갱신 · 삭제">⋮</span></span>`;
+  }).join('');
+  h+=`<button onclick="saveCurrentAsView()" title="지금 화면의 검색·필터 조건을 탭으로 저장합니다" style="border:1.5px dashed #c3d0e6;background:#fff;color:#5a6885;border-radius:18px;padding:6px 13px;font-weight:700;font-size:12.5px;cursor:pointer">＋ 탭 추가</button>`;
+  return h;
+}
+
+/* ERP 유형 탭 (자문·급여·노조·기금·사무대행) + 내 탭 */
 function renderErpTabs(){
   const el=$('pcErpTabs'); if(!el) return;
   /* ERP 유형 탭(자문·급여·노조·기금)은 ERP 연동 폴더에서만 — 전체 명함 · 업체관리 · 업체퇴사.
@@ -3400,18 +3488,20 @@ function renderErpTabs(){
   const _g = state.groups[state.group];
   const _gc = _g ? _canon(_g.name) : '';
   const _showErp = (state.group==='all') || _gc==='업체관리' || _gc==='업체퇴사';
-  if(!_showErp){ el.innerHTML=''; if(state.erpFilter) state.erpFilter=''; return; }
-  if(!ErpMatch.ready){ el.innerHTML=''; return; }
-  const all=Object.values(state.items).filter(x=>x&&x.kind===state.tab);
-  const cnt={}; ERP_TYPES.forEach(t=>cnt[t]=0);
-  all.forEach(it=>{ const m=ErpMatch.match(it); if(m){ const t=m.type||''; if(cnt[t]!==undefined) cnt[t]++; } });
-  const ICON={ '자문':'🏢','급여':'💰','노조':'🤝','기금':'🏦','사무대행':'🗂' };
-  const tabs=ERP_TYPES.map(t=>[t, (ICON[t]||'🏷')+' '+t+' '+cnt[t]]);
-  el.innerHTML=tabs.map(([v,label])=>{
-    const on=(state.erpFilter||'')===v;
-    /* 활성 탭 다시 누르면 해제(전체로) */
-    return `<button onclick="state.erpFilter=(state.erpFilter==='${v}'?'':'${v}');state.page=0;render()" title="푸른이알피 업체관리 유형 기준 자동 분류 (다시 누르면 해제)" style="border:1.5px solid ${on?'#1e40af':'#dde3ee'};background:${on?'#1e40af':'#fff'};color:${on?'#fff':'#33415e'};border-radius:18px;padding:6px 14px;font-weight:700;font-size:12.5px;cursor:pointer">${label}</button>`;
-  }).join('');
+  if(!_showErp && state.erpFilter) state.erpFilter='';   /* 지인·노무사 등에선 ERP 필터 해제 */
+  let erpHtml='';
+  if(_showErp && ErpMatch.ready){
+    const all=Object.values(state.items).filter(x=>x&&x.kind===state.tab);
+    const cnt={}; ERP_TYPES.forEach(t=>cnt[t]=0);
+    all.forEach(it=>{ const m=ErpMatch.match(it); if(m){ const t=m.type||''; if(cnt[t]!==undefined) cnt[t]++; } });
+    const ICON={ '자문':'🏢','급여':'💰','노조':'🤝','기금':'🏦','사무대행':'🗂' };
+    erpHtml=ERP_TYPES.map(t=>{
+      const on=(state.erpFilter||'')===t;
+      /* 활성 탭 다시 누르면 해제(전체로) */
+      return `<button onclick="state.erpFilter=(state.erpFilter==='${t}'?'':'${t}');state.page=0;render()" title="푸른이알피 업체관리 유형 기준 자동 분류 (다시 누르면 해제)" style="border:1.5px solid ${on?'#1e40af':'#dde3ee'};background:${on?'#1e40af':'#fff'};color:${on?'#fff':'#33415e'};border-radius:18px;padding:6px 14px;font-weight:700;font-size:12.5px;cursor:pointer">${(ICON[t]||'🏷')+' '+t+' '+cnt[t]}</button>`;
+    }).join('');
+  }
+  el.innerHTML = erpHtml + renderMyTabsHtml();   /* 내 탭은 어느 폴더에서나 보인다 */
 }
 function renderPC(){ renderPCSide(); renderErpTabs(); renderPCTable(); }
 
