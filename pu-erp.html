@@ -9353,6 +9353,21 @@ function PastCompanySearchModal(props){
 // 명함첩은 사람 단위(명함 한 장 = 한 사람)라 그대로 뿌리면 목록이 지저분해진다.
 // 회사 이름으로 묶어 한 줄만 내보내고, 그 회사 사람들은 담당자로 함께 딸려 보낸다.
 function pcNormCo(s){ return String(s||'').toLowerCase().replace(/[\s\-㈜()]|주식회사/g,''); }
+// 이 직책이면 대표로 본다 — 고르는 순간 대표자 칸까지 채운다.
+// '대표번호'·'대표전화' 같은 말은 직책이 아니므로 뺀다.
+var PC_CEO_TITLE = /(대표이사|대표원장|대표변호사|대표노무사|공동대표|각자대표|대표자|사장|회장|원장|대표|ceo|president)/i;
+function pcIsCeoTitle(ti){
+  var t = String(ti||'').trim();
+  if(!t) return false;
+  if(/대표\s*(번호|전화|메일|이메일|팩스|계좌)/.test(t)) return false;   // 연락처 표기
+  if(/(부대표|대표\s*대행|대표\s*직무|부사장|부회장|부원장)/.test(t)) return false;  // 대표가 아니다
+  return PC_CEO_TITLE.test(t);
+}
+// 명함 한 장 → 담당자 레코드
+function pcToContact(x, primary){
+  return { id:'pc'+Math.random().toString(36).slice(2,9), name:x.n||'', role:x.ti||'',
+    phone:x.m||'', bizPhone:x.t||x.ct||'', email:x.e||'', isPrimary:!!primary, pcFrom:'명함첩' };
+}
 function pcCompanyRows(q){
   var out = [];
   try{
@@ -9377,14 +9392,16 @@ function pcCompanyRows(q){
              || (bizNo && bizNo.indexOf(ql) >= 0)
              || g.cards.some(function(x){ return String(x.n||'').toLowerCase().indexOf(ql) >= 0; });
       if(!hit) return;
-      var contacts = g.cards.slice(0, 20).map(function(x, i){
-        return { id:'pc'+Math.random().toString(36).slice(2,9), name:x.n||'', role:x.ti||'',
-          phone:x.m||'', bizPhone:x.t||x.ct||'', email:x.e||'', isPrimary:(i===0),
-          pcFrom:'명함첩' };
+      // 대표 명함이 있으면 그 사람을 첫 담당자로 올린다
+      var ordered = g.cards.slice(0, 20).sort(function(a, b){
+        return (pcIsCeoTitle(b.ti) ? 1 : 0) - (pcIsCeoTitle(a.ti) ? 1 : 0);
       });
+      var contacts = ordered.map(function(x, i){ return pcToContact(x, i === 0); });
+      var ceoCard = ordered.find(function(x){ return pcIsCeoTitle(x.ti); });
       var sub = [];
       if(bizNo) sub.push(bizNo);
       if(g.biz && g.biz.ceo) sub.push('대표 ' + g.biz.ceo);
+      else if(ceoCard && ceoCard.n) sub.push('대표 ' + ceoCard.n + ' (명함)');
       if(g.cards.length) sub.push('명함 ' + g.cards.length + '장');
       out.push({
         label: g.name || '(회사명 없음)',
@@ -9394,7 +9411,8 @@ function pcCompanyRows(q){
         sub: sub.join(' · '),
         _pc: {
           name: g.name || '', bizNo: bizNo,
-          ceo: (g.biz && g.biz.ceo) || '',
+          // 사업자등록증에 대표가 없으면 대표 직책 명함의 이름을 쓴다
+          ceo: (g.biz && g.biz.ceo) || (ceoCard && ceoCard.n) || '',
           address: (g.biz && g.biz.ad) || (g.cards[0] && g.cards[0].ad) || '',
           phone: (g.biz && g.biz.ct) || (g.cards[0] && g.cards[0].ct) || '',
           contacts: contacts,
@@ -9406,7 +9424,63 @@ function pcCompanyRows(q){
     // 명함 많은 회사부터
     out.sort(function(a,b){ return (b._pc.contacts.length) - (a._pc.contacts.length); });
   }catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
-  return out.slice(0, 8);
+  return out.slice(0, 6);
+}
+
+// 사람 이름으로도 고를 수 있게 — 명함 한 장 = 한 줄.
+// 회사 줄(위)은 "이 회사 통째로", 사람 줄(아래)은 "이 사람을 담당자로".
+// 대표 직책이면 대표자 칸까지 함께 채운다.
+function pcPersonRows(q){
+  var out = [];
+  try{
+    var idx = (typeof window !== 'undefined' && window.pucardsIdx) || null;
+    if(!idx) return out;
+    var ql = String(q||'').toLowerCase();
+    if(ql.length < 2) return out;
+    // 회사별 사업자등록증 — 사람을 골라도 회사 정보를 같이 채우려고 미리 모은다
+    var bizByCo = {}, bizIdByCo = {};
+    Object.keys(idx).forEach(function(id){
+      var r = idx[id];
+      if(r && r.k === 'biz' && r.c){ bizByCo[pcNormCo(r.c)] = r; bizIdByCo[pcNormCo(r.c)] = id; }
+    });
+    Object.keys(idx).forEach(function(id){
+      var r = idx[id];
+      if(!r || r.k === 'biz') return;
+      var nm = String(r.n||'').trim();
+      if(!nm) return;
+      // 사람 줄은 '이름'이 맞을 때만 — 회사명만 맞으면 위의 회사 줄로 충분하다
+      if(nm.toLowerCase().indexOf(ql) < 0) return;
+      var cn = pcNormCo(r.c);
+      var biz = bizByCo[cn] || {};
+      var isCeo = pcIsCeoTitle(r.ti);
+      var sub = [];
+      if(r.c) sub.push(r.c);
+      if(r.m || r.t || r.ct) sub.push(r.m || r.t || r.ct);
+      if(biz.bz) sub.push(biz.bz);
+      out.push({
+        label: nm + (r.ti ? ' ' + r.ti : ''),
+        bizNo: biz.bz || '',
+        date: '',
+        source: isCeo ? '명함·대표' : '명함',
+        sourceBg: isCeo ? '#fef3c7' : '#e0e7ff',
+        sourceColor: isCeo ? '#854d0e' : '#3730a3',
+        sub: sub.join(' · '),
+        _pc: {
+          name: r.c || '', bizNo: biz.bz || '',
+          ceo: isCeo ? nm : (biz.ceo || ''),        // 대표 명함이면 그 사람이 대표
+          address: biz.ad || r.ad || '',
+          phone: biz.ct || r.ct || '',
+          contacts: [ pcToContact(r, true) ],       // 고른 그 사람이 대표담당
+          bizId: bizIdByCo[cn] || '',
+          cardId: id,
+          person: { name:nm, title:r.ti || '', isCeo:isCeo }
+        }
+      });
+    });
+    // 대표 명함을 위로
+    out.sort(function(a,b){ return (b._pc.person.isCeo?1:0) - (a._pc.person.isCeo?1:0); });
+  }catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+  return out.slice(0, 6);
 }
 // 고른 명함첩 회사의 사진(사업자등록증·명함)을 원본 카드에서 가져온다.
 // 색인에는 사진이 없다(가볍게 유지하려고). 필요할 때 그 카드 한 장만 읽는다.
@@ -9658,8 +9732,9 @@ function ContractModal(props){
     dbGet('consultings',[]).forEach(function(c){ if(c.companyName) add(c.companyName,c.bizNo,c.startDate,'컨설팅','#cffafe','#2563eb'); });
     dbGet('funds',[]).forEach(function(c){ if(c.companyName) add(c.companyName,c.bizNo,c.estDate,'기금','#fef9c3','#854d0e'); });
     dbGet('other_projects',[]).forEach(function(c){ if(c.companyName) add(c.companyName,c.bizNo,c.startDate,'기타','#dcfce7','#166534'); });
-    // 명함첩 — 회사 단위로 한 줄. 사람마다 한 줄이면 목록이 지저분해진다.
+    // 명함첩 — 회사 줄(통째로) 먼저, 그다음 사람 줄(그 사람을 담당자로)
     pcCompanyRows(q).forEach(function(row){ results.push(row); });
+    pcPersonRows(q).forEach(function(row){ results.push(row); });
     return results;
   }
 
@@ -9679,8 +9754,14 @@ function ContractModal(props){
         contacts: (pc.contacts && pc.contacts.length) ? pc.contacts.slice() : (cur0.contacts || [])
       })}); });
       setAutoResults([]);
-      showToast('✓ 명함첩에서 불러옴: ' + (pc.name || '') +
-        (pc.contacts.length ? ' (담당자 ' + pc.contacts.length + '명)' : ''));
+      var msg = '✓ 명함첩에서 불러옴: ' + (pc.name || '');
+      if(pc.person){
+        msg += ' — ' + pc.person.name + (pc.person.title ? ' ' + pc.person.title : '') + ' 담당자로';
+        if(pc.person.isCeo && !cur0.ceo) msg += ' · 대표자에도 넣음';
+      } else if(pc.contacts.length){
+        msg += ' (담당자 ' + pc.contacts.length + '명)';
+      }
+      showToast(msg);
       // 사진은 뒤늦게 — 이미 넣어 둔 사진이 있으면 덮지 않는다
       pcFetchImages(pc).then(function(img){
         if(!img || (!img.bizLicenseImg && !img.businessCardImg)) return;
