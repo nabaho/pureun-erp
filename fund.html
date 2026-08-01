@@ -79,6 +79,8 @@
   #toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%) translateY(20px);background:#1f2937;color:#fff;padding:11px 20px;border-radius:10px;font-size:13.5px;font-weight:600;box-shadow:0 8px 30px rgba(0,0,0,.25);opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;z-index:200;max-width:80vw}
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
   #toast.err{background:#b91c1c}#toast.warn{background:#b45309}
+  #saveState{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;border:1px solid var(--line);border-radius:99px;padding:4px 8px;font-size:11px;font-weight:700;background:#fff;color:var(--sub)}
+  #saveState:before{content:'';width:7px;height:7px;border-radius:50%;background:#94a3b8}#saveState.saving:before{background:#f59e0b}#saveState.saved:before{background:#22c55e}#saveState.failed:before{background:#ef4444}
   /* 보기 전환(세그먼트) — 같은 목록에 열만 바꾸는 스위치 */
   .segbar{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:#fff}
   .seg{border:none;background:#fff;padding:5px 13px;font-size:12.5px;color:var(--sub);cursor:pointer;border-radius:0;border-right:1px solid var(--line)}
@@ -261,6 +263,7 @@ try{
   try{if(FB_APPCHECK_KEY&&firebase.appCheck)firebase.appCheck().activate(new firebase.appCheck.ReCaptchaV3Provider(FB_APPCHECK_KEY),true);}catch(e){}
   fbDb=firebase.database();
   try{ fbStore=firebase.storage(); }catch(e){ fbStore=null; }
+  installWriteStatus();
   firebase.auth().onAuthStateChanged(function(u){ if(u){ start(); } else { gate(); } });
 }catch(e){ $('root').innerHTML='<div class="gate">초기화 실패: '+esc(e.message)+'</div>'; }
 
@@ -323,10 +326,29 @@ function shell(){
     +'<div id="sideveil" onclick="closeSide()"></div>'
     +'<div id="main"><div id="topbar"><button id="menubtn" onclick="toggleSide()" title="메뉴">☰</button><span id="crumb">기금 현황</span>'
     +'<div id="topright"><span id="conn"><span class="dot" id="dot"></span><span id="connt">연결 확인</span></span>'
+    +'<span id="saveState" class="saved" role="status" aria-live="polite">저장 완료</span>'
     +'<span id="topuser"></span><span id="topclock">—</span>'
     +'<button onclick="refreshAll()" title="서버에서 다시 불러오기" style="padding:5px 9px;border:1px solid var(--line);background:#fff;border-radius:8px;cursor:pointer">↻</button>'
     +'<button id="logoutbtn" onclick="doLogout()">로그아웃</button></div></div>'
     +'<div id="app"></div></div>';
+}
+
+/* Firebase의 모든 쓰기를 한 곳에서 감시한다. 기능별 저장 코드를 빠뜨려도 상단 상태가 동일하게 보인다. */
+var _savePending=0,_saveFailed=false,_writeStatusInstalled=false;
+function setWriteStatus(kind,text){var e=$('saveState');if(!e)return;e.className=kind;e.textContent=text;}
+function _writeBegin(){if(_savePending===0)_saveFailed=false;_savePending++;setWriteStatus('saving','저장 중…');}
+function _writeEnd(ok){_savePending=Math.max(0,_savePending-1);if(!ok)_saveFailed=true;if(!_savePending)setWriteStatus(_saveFailed?'failed':'saved',_saveFailed?'저장 실패':'저장 완료');}
+function installWriteStatus(){
+  if(_writeStatusInstalled||!firebase.database||!firebase.database.Reference)return;
+  _writeStatusInstalled=true;
+  ['set','update','remove'].forEach(function(name){
+    var proto=firebase.database.Reference.prototype, original=proto[name]; if(typeof original!=='function')return;
+    proto[name]=function(){
+      _writeBegin(); var p;
+      try{p=original.apply(this,arguments);}catch(e){_writeEnd(false);throw e;}
+      return Promise.resolve(p).then(function(v){_writeEnd(true);return v;},function(e){_writeEnd(false);throw e;});
+    };
+  });
 }
 
 /* ══ 사이드바 메뉴 순서 드래그 ══

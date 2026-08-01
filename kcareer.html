@@ -1011,6 +1011,15 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
         <div id="puEtcBox" style="margin-bottom:12px"></div>
         <div class="dt"></div>
       </div></section>
+      <section class="page-view" id="page-puagency"><div class="page">
+        <div class="page-head"><div class="page-title">🏛 외부기관 실적</div><div class="page-desc">외부 컨설팅기관을 통해 수행한 실적 — 그 기관이 실적증명·경력증명서를 발급합니다. 실적의 수행기관 칸을 채우면 이 탭으로 모입니다.</div></div>
+        <div class="toolbar">
+          <input class="tb-input" id="puagQ" placeholder="기관·고객사·내용 검색" style="min-width:220px" oninput="renderPuAgency()">
+          <div class="tb-spacer"></div>
+          <span class="cnt" id="puagCnt" style="font-size:11px;color:var(--text-mute)"></span>
+        </div>
+        <div id="puagBody"></div>
+      </div></section>
       <section class="page-view" id="page-submission"><div class="page">
         <div class="page-head"><div class="page-title">📥 제출서류</div><div class="page-desc">신청서·제출서류를 건 단위로 보관 — 위촉장 › ⋯ 더보기 › 서류 폴더 스캔으로 등록됩니다</div></div>
         <div class="toolbar">
@@ -1238,6 +1247,13 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
     <div class="modal-h">🔄 pu-erp 실적 동기화 — 아직 저장되지 않았습니다</div>
     <div class="modal-b" id="puSyncBody"></div>
     <div class="modal-foot"><button class="btn" onclick="closePuSync()">닫기 (저장 안 함)</button><button class="btn primary" onclick="puSyncCommit()">등록</button></div>
+  </div>
+</div>
+<div class="modal-ov" id="modalCertLink">
+  <div class="modal" style="width:560px">
+    <div class="modal-h">📜 증명서 연결</div>
+    <div class="modal-b" id="certLinkBody"></div>
+    <div class="modal-foot"><button class="btn" onclick="closeCertLink()">닫기</button></div>
   </div>
 </div>
 <div class="modal-ov" id="modalResume">
@@ -2055,6 +2071,91 @@ function puRestore(store, id, page){
 var _showExcluded = {};
 function toggleExcluded(name){ _showExcluded[name] = !_showExcluded[name]; renderCareer(name); }
 
+/* ===== 외부기관 실적 — agency별 그룹 + 그 기관이 발급한 증명서(certdoc) 자동 연결 ===== */
+function _agencyNorm(s){ return String(s||'').replace(/[\s\(\)（）\-·]/g,'').toLowerCase(); }
+function renderPuAgency(){
+  var box = $('puagBody'); if(!box) return;
+  var q = _agencyNorm(($('puagQ')||{}).value||'');
+  var LABEL = { case:'사건', consult:'컨설팅', fund:'기금', etc:'기타' };
+  var groups = {};                                          /* 정규화 기관명 → {name, rows} */
+  PU_SYNC_STORES.forEach(function(k){
+    get(k).forEach(function(r){
+      if(!r || !r.agency || r.excluded) return;
+      var key = _agencyNorm(r.agency);
+      if(!groups[key]) groups[key] = { name: r.agency, rows: [] };
+      groups[key].rows.push(Object.assign({ _store: k, _label: LABEL[k] }, r));
+    });
+  });
+  var certs = get('certdoc');
+  var keys = Object.keys(groups).sort(function(a,b){ return groups[b].rows.length - groups[a].rows.length; });
+  if(q) keys = keys.filter(function(key){
+    var g = groups[key];
+    return key.indexOf(q) >= 0 || g.rows.some(function(r){ return _agencyNorm((r.org||'')+(r.project||'')).indexOf(q) >= 0; });
+  });
+  var total = keys.reduce(function(s,k){ return s + groups[k].rows.length; }, 0);
+  var cnt = $('puagCnt'); if(cnt) cnt.textContent = keys.length + '개 기관 · ' + total + '건';
+  if(!keys.length){ box.innerHTML = '<div style="font-size:12px;color:var(--text-mute);padding:20px;text-align:center">외부기관 실적이 없습니다 — 실적 행을 열어 수행기관을 채우면 여기로 모입니다</div>'; return; }
+  box.innerHTML = keys.map(function(key){
+    var g = groups[key];
+    var years = g.rows.map(function(r){ return r.year; }).filter(Boolean).sort();
+    var yr = years.length ? (years[0] === years[years.length-1] ? years[0] : years[0] + '~' + years[years.length-1]) : '';
+    /* 이 기관이 발급한 증명서: certdoc의 발급기관(org) 부분일치 + 손으로 연결한 것(agencyKey) */
+    var myCerts = certs.filter(function(c){
+      if(_agencyNorm(c.agencyKey) === key) return true;
+      var a = _agencyNorm(c.org), b = key;
+      return a && (a.indexOf(b.slice(0,6)) >= 0 || b.indexOf(a.slice(0,6)) >= 0);
+    });
+    return '<div class="card" style="margin-bottom:12px">'
+      + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><strong style="font-size:14px">🏛 ' + escapeHtml(g.name) + '</strong>'
+      + '<span style="font-size:11px;color:var(--text-mute)">' + g.rows.length + '건' + (yr ? ' · ' + yr : '') + '</span></div>'
+      + g.rows.map(function(r){
+          return '<div style="display:flex;gap:6px;align-items:center;font-size:12px;padding:5px 0;border-top:1px solid var(--border-soft);flex-wrap:wrap">'
+            + '<span class="tag navy">' + r._label + '</span>'
+            + '<span style="white-space:nowrap">' + escapeHtml(r.year||'-') + '</span>'
+            + '<strong style="min-width:90px">' + escapeHtml(r.org||'-') + '</strong>'
+            + '<span style="flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(r.project||r.type||'') + '</span>'
+            + '<span style="color:var(--text-mute);white-space:nowrap">' + escapeHtml(r.main||'-') + '</span>'
+            + (r.src==='pu' ? '<span class="tag" style="font-size:10px">pu</span>' : '')
+            + '</div>';
+        }).join('')
+      + '<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:12px">'
+      + '<span style="font-weight:600;color:var(--teal)">📜 이 기관이 발급한 증명서 ' + myCerts.length + '건</span> '
+      + '<button class="btn sm" onclick="openCertLink(\'' + _jsAttr(g.name) + '\')">➕ 증명서 연결</button>'
+      + myCerts.map(function(c){
+          return '<div style="display:flex;gap:6px;align-items:center;padding:4px 0">'
+            + '<span style="flex:1">' + escapeHtml(c.title||c.fname||c.id) + ' <span style="color:var(--text-mute)">(' + escapeHtml(formatDate(c.date)||'-') + ')</span></span>'
+            + (hasOriginal(c) ? '<button class="btn sm" onclick=\'openOriginal(' + JSON.stringify({id:c.id,src:c.src||"",relPath:c.relPath||""}).replace(/'/g,"&#39;") + ')\'>📄 원본</button>' : '')
+            + '</div>';
+        }).join('') + '</div>'
+      + '</div>';
+  }).join('');
+}
+
+/* 자동 매칭이 놓친 증명서를 손으로 연결 — certdoc.agencyKey에 기관명을 붙인다(설계서 §7) */
+var _certLinkAgency = '';
+function openCertLink(agencyName){
+  _certLinkAgency = agencyName;
+  var key = _agencyNorm(agencyName);
+  var list = get('certdoc').filter(function(c){ return _agencyNorm(c.agencyKey) !== key; });
+  $('certLinkBody').innerHTML = '<div style="font-size:12px;color:var(--text-mute);margin-bottom:8px">'
+    + escapeHtml(agencyName) + ' 그룹에 연결할 증명서를 고르세요</div>'
+    + (list.length ? list.map(function(c){
+        return '<div style="display:flex;gap:6px;align-items:center;font-size:12px;padding:5px 0;border-bottom:1px solid var(--border-soft)">'
+          + '<span style="flex:1">' + escapeHtml(c.title||c.fname||c.id) + ' <span style="color:var(--text-mute)">' + escapeHtml(c.org||'') + '</span></span>'
+          + '<button class="btn sm primary" onclick="linkCert(\'' + _jsAttr(c.id) + '\')">연결</button></div>';
+      }).join('') : '<div style="font-size:12px;color:var(--text-mute)">연결할 증명서가 없습니다</div>');
+  $('modalCertLink').classList.add('open');
+}
+function linkCert(certId){
+  var db = get('certdoc'), c = db.find(function(x){ return x.id === certId; });
+  if(!c){ toast('증명서를 찾을 수 없습니다'); return; }
+  c.agencyKey = _certLinkAgency; set('certdoc', db);
+  $('modalCertLink').classList.remove('open');
+  renderPuAgency();
+  toast('✅ 연결했습니다');
+}
+function closeCertLink(){ $('modalCertLink').classList.remove('open'); }
+
 /* 하루 1회 자동. 첫 실행(등록 이력 없음)은 사람이 보고 등록하도록 미리보기를 띄운다. */
 async function puSyncAuto(){
   try{
@@ -2107,7 +2208,7 @@ let NAV=[
   {g:'이력서관리', items:[['page-quickcv','⚡ 빠른 이력서(PDF)'],['page-resume-hub','이력서 생성·보관'],['page-profile','프로필 작성보관'],['page-certdoc','경력증명서 보관']]},
   {g:'회의·비용관리', items:[['page-meetfee','회의등비용신청'],['page-etcfee','기타비용신청']]},
   {g:'경력관리', items:[['page-wiccok','위촉장'],['page-license','자격증'],['page-complete','수료증'],['page-award','표창 및 포상'],['page-edu','학력']]},
-  {g:'실적관리', items:[['page-case','사건실적'],['page-consult','컨설팅실적'],['page-fund','기금실적'],['page-lecture','강의실적'],['page-etc','기타실적'],['page-submission','제출서류']]},
+  {g:'실적관리', items:[['page-case','사건실적'],['page-consult','컨설팅실적'],['page-fund','기금실적'],['page-lecture','강의실적'],['page-etc','기타실적'],['page-puagency','외부기관 실적'],['page-submission','제출서류']]},
   {g:null, items:[['page-settings','환경설정']]},
 ];
 function navState(){ try{ return JSON.parse(LS.get(NS+'nav_state')||'{}'); }catch(e){ return {}; } }

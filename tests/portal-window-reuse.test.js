@@ -8,7 +8,7 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'enter.html'), 'utf8')
 
 function loadWindowManager(open) {
   const start = source.indexOf('var portalAppWindows = Object.create(null);');
-  const end = source.indexOf('\n\n  function renderPortal', start);
+  const end = source.indexOf('  function renderPortal', start);
   assert.ok(start >= 0 && end > start, '창 관리자 코드가 있어야 합니다.');
   const context = {
     URL,
@@ -50,7 +50,7 @@ test('포털을 새로고침한 뒤에도 이름으로 기존 프로그램 창�
 
 test('이미 열린 같은 프로그램은 주소를 다시 넣지 않고 포커스만 이동한다', () => {
   const functionStart = source.indexOf('function openPortalApp(app, url)');
-  const functionEnd = source.indexOf('\n  }\n\n  function renderPortal', functionStart);
+  const functionEnd = source.indexOf('  function renderPortal', functionStart);
   assert.ok(functionStart >= 0 && functionEnd > functionStart, '창 관리자 함수가 있어야 합니다.');
   const body = source.slice(functionStart, functionEnd);
 

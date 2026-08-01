@@ -26,12 +26,23 @@
   .modal{background:#fff;border-radius:12px;max-width:520px;width:100%;padding:22px;max-height:90vh;overflow-y:auto}
   .badge{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11.5px;font-weight:700}
   .b-active{background:#dcfce7;color:#166534}.b-closed{background:#f1f5f9;color:#64748b}
+  .save-state{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;border:1px solid #475569;border-radius:99px;padding:3px 8px;font-size:11px;font-weight:700;color:#cbd5e1}
+  .save-state::before{content:'';width:7px;height:7px;border-radius:50%;background:#94a3b8}.save-state.saving::before{background:#fbbf24}.save-state.saved::before{background:#4ade80}.save-state.failed::before{background:#fb7185}
+  @media(max-width:700px){
+    .top{padding:10px 12px;gap:8px;flex-wrap:wrap}.top h1{width:100%;font-size:14px}.top #whoami{margin-right:auto}
+    .main{margin:12px auto;padding:0 10px}.card{padding:13px;overflow-x:auto}
+    .card>div:first-child{min-width:0;gap:8px}.card>div:first-child b{min-width:0}
+    table{min-width:640px}#viewDetail{overflow-x:auto}
+    .modal-bg{padding:10px;align-items:flex-start;overflow-y:auto}.modal{padding:17px;max-height:none;margin:8px 0;overflow-x:auto}
+    .modal input,.modal select{max-width:100%}.btn{padding:9px 12px}
+  }
 </style>
 </head>
 <body>
 <div class="top">
   <h1>📄 문서관리 — 집단체불 계약서 전자송부</h1>
   <span id="whoami" style="font-size:12.5px;color:#94a3b8"></span>
+  <span id="saveState" class="save-state saved" role="status" aria-live="polite">저장 완료</span>
   <a href="enter.html">← 포털</a>
 </div>
 <div class="main">
@@ -72,6 +83,23 @@ var db = firebase.database();
 var $ = function (id) { return document.getElementById(id); };
 var curUser = null;
 var casesCache = {};
+var savePending = 0, saveFailed = false;
+function setSaveState(kind, text) {
+  var el = $('saveState'); if (!el) return;
+  el.className = 'save-state ' + kind; el.textContent = text;
+}
+function trackedWrite(promise) {
+  if (savePending === 0) saveFailed = false;
+  savePending++; setSaveState('saving', '저장 중…');
+  return promise.then(function (v) {
+    savePending = Math.max(0, savePending - 1);
+    if (!savePending) setSaveState(saveFailed ? 'failed' : 'saved', saveFailed ? '저장 실패' : '저장 완료');
+    return v;
+  }).catch(function (e) {
+    saveFailed = true; savePending = Math.max(0, savePending - 1); setSaveState('failed', '저장 실패');
+    throw e;
+  });
+}
 
 // ── 로그인 가드 (직원 이메일 계정 필수 — 익명/미로그인은 포털로) ──
 firebase.auth().onAuthStateChanged(function (u) {
@@ -94,10 +122,10 @@ function loadCases() {
       var c = casesCache[id], m = c.meta || {};
       var n = Object.keys(c.submissions || {}).length;
       return '<tr>'
-        + '<td><a href="javascript:void(0)" onclick="openCase(\'' + id + '\')" style="color:#1e40af;font-weight:700">' + (m.title || '(제목 없음)') + '</a></td>'
-        + '<td>' + (m.company || '') + '</td>'
+        + '<td><a href="javascript:void(0)" onclick="openCase(\'' + id + '\')" style="color:#1e40af;font-weight:700">' + EsignDocs.esc(m.title || '(제목 없음)') + '</a></td>'
+        + '<td>' + EsignDocs.esc(m.company || '') + '</td>'
         + '<td><b>' + n + '</b>명</td>'
-        + '<td><span class="badge b-' + (m.status === 'active' ? 'active' : 'closed') + '">' + (m.status || '') + '</span></td>'
+        + '<td><span class="badge b-' + (m.status === 'active' ? 'active' : 'closed') + '">' + EsignDocs.esc(m.status || '') + '</span></td>'
         + '<td>' + (m.createdAt ? localYMD(new Date(m.createdAt)) : '') + '</td>'
         + '<td><button class="btn btn-sub" onclick="shareCase(\'' + id + '\')">🔗 링크</button></td>'
         + '</tr>';
@@ -130,18 +158,23 @@ $('btnNewCase').onclick = function () {
     if (pw.length < 6) { showToast('비밀번호는 6자 이상으로 하세요'); return; }
     if (pw !== pw2) { showToast('비밀번호 확인이 일치하지 않습니다'); return; }
     this.textContent = '키 생성 중…'; this.disabled = true;
-    var keys = await EsignCrypto.generateCaseKeys();
-    var prot = await EsignCrypto.protectPrivKey(keys.privKeyJwk, pw);
-    var ref = db.ref('esign/cases').push();
-    await ref.child('meta').set({
-      title: title, company: company, respondent: $('ncResp').value.trim(),
-      ownerSid: curUser.email.split('@')[0],
-      pubKey: keys.pubKeyJwk, linkToken: EsignCrypto.randomToken(),
-      createdAt: firebase.database.ServerValue.TIMESTAMP, status: 'active'
-    });
-    await ref.child('secret/encPrivKey').set(prot);
-    bg.remove();
-    showToast('✅ 사건이 생성되었습니다 — [🔗 링크]로 근로자에게 공유하세요');
+    try {
+      var keys = await EsignCrypto.generateCaseKeys();
+      var prot = await EsignCrypto.protectPrivKey(keys.privKeyJwk, pw);
+      var ref = db.ref('esign/cases').push();
+      await trackedWrite(ref.child('meta').set({
+        title: title, company: company, respondent: $('ncResp').value.trim(),
+        ownerSid: curUser.email.split('@')[0],
+        pubKey: keys.pubKeyJwk, linkToken: EsignCrypto.randomToken(),
+        createdAt: firebase.database.ServerValue.TIMESTAMP, status: 'active'
+      }));
+      await trackedWrite(ref.child('secret/encPrivKey').set(prot));
+      bg.remove();
+      showToast('✅ 사건이 생성되었습니다 — [🔗 링크]로 근로자에게 공유하세요');
+    } catch (e) {
+      this.textContent = '사건 생성'; this.disabled = false;
+      showToast('사건 생성에 실패했습니다 — 인터넷 연결을 확인하고 다시 시도해 주세요');
+    }
   };
 };
 
@@ -153,7 +186,7 @@ function shareCase(caseId) {
   var bg = document.createElement('div');
   bg.className = 'modal-bg';
   bg.innerHTML = '<div class="modal" style="text-align:center">'
-    + '<h3>' + (m.title || '') + '</h3>'
+    + '<h3>' + EsignDocs.esc(m.title || '') + '</h3>'
     + '<div id="qrBox" style="display:flex;justify-content:center;margin:16px 0"></div>'
     + '<input readonly value="' + url + '" style="width:100%;font-size:12px;color:#475569" onclick="this.select()">'
     + '<div style="display:flex;gap:8px;justify-content:center;margin-top:14px">'
@@ -226,7 +259,7 @@ function renderDetail() {
   $('viewDetail').innerHTML =
     '<div class="card"><div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">'
     + '<button class="btn btn-sub" onclick="closeDetail()">← 목록</button>'
-    + '<b style="flex:1;font-size:15px">' + (m.title || '') + ' <span style="color:#64748b;font-weight:400">— 제출 '
+    + '<b style="flex:1;font-size:15px">' + EsignDocs.esc(m.title || '') + ' <span style="color:#64748b;font-weight:400">— 제출 '
     + decrypted.length + '명</span></b>'
     + '<button class="btn btn-sub" onclick="shareCase(curCaseId)">🔗 링크</button>'
     + '<span id="detailActions"></span>' // Task 11·12가 버튼 추가
@@ -263,7 +296,7 @@ function cycleReview(subId) {
   var d = decrypted.find(function (x) { return x._subId === subId; }); if (!d) return;
   var prev = d._reviewState;
   var next = { pending: 'confirmed', confirmed: 'hold', hold: 'pending' }[prev] || 'pending';
-  db.ref('esign/cases/' + curCaseId + '/submissions/' + subId + '/reviewState').set(next).catch(function (e) {
+  trackedWrite(db.ref('esign/cases/' + curCaseId + '/submissions/' + subId + '/reviewState').set(next)).catch(function (e) {
     showToast('저장 실패 — 다시 시도해 주세요');
     d._reviewState = prev;
     renderDetail();
@@ -301,12 +334,12 @@ function delSub(subId) {
   var snapCache = null;
   db.ref('esign/cases/' + curCaseId + '/submissions/' + subId).once('value').then(function (s) {
     snapCache = s.val();
-    return db.ref('esign/cases/' + curCaseId + '/submissions/' + subId).remove();
+    return trackedWrite(db.ref('esign/cases/' + curCaseId + '/submissions/' + subId).remove());
   }).then(function () {
     decrypted = decrypted.filter(function (x) { return x._subId !== subId; });
     renderDetail();
     showToastUndo('제출 1건을 삭제했습니다', function () {
-      db.ref('esign/cases/' + curCaseId + '/submissions/' + subId).set(snapCache).then(refreshSubs).then(renderDetail).catch(function (e) {
+      trackedWrite(db.ref('esign/cases/' + curCaseId + '/submissions/' + subId).set(snapCache)).then(refreshSubs).then(renderDetail).catch(function (e) {
         showToast('삭제 실패 — 다시 시도해 주세요');
       });
     });
@@ -360,7 +393,7 @@ async function genDocs() {
 // 사건 마감 (신규 제출 차단 — RTDB 규칙의 status==='active' 조건)
 function closeCase() {
   customConfirm('사건을 마감할까요?\n마감하면 근로자 링크로 더 이상 제출할 수 없습니다.', function () {
-    db.ref('esign/cases/' + curCaseId + '/meta/status').set('closed').then(function () {
+    trackedWrite(db.ref('esign/cases/' + curCaseId + '/meta/status').set('closed')).then(function () {
       showToast('사건이 마감되었습니다'); renderDetail();
     }).catch(function () {
       showToast('마감 실패 — 다시 시도해 주세요');
@@ -371,11 +404,11 @@ function closeCase() {
 // 제출 데이터 파기 (개인정보보호법 파기 의무 — 서류 다운로드 후 실행)
 function purgeCase() {
   customConfirm('제출된 개인정보(암호문 포함)를 영구 파기할까요?\n\n⚠ 되돌릴 수 없습니다. 필요한 서류를 먼저 [서류 일괄 생성]으로 내려받았는지 확인하세요.', function () {
-    Promise.all([
+    trackedWrite(Promise.all([
       db.ref('esign/cases/' + curCaseId + '/submissions').remove(),
       db.ref('esign/cases/' + curCaseId + '/arrears').remove(),
       db.ref('esign/cases/' + curCaseId + '/meta/status').set('purged')
-    ]).then(function () {
+    ])).then(function () {
       showToast('제출 데이터가 파기되었습니다');
       closeDetail();
     }).catch(function () {
@@ -433,7 +466,7 @@ async function openArrears() {
       if (!out[sid]) out[sid] = {};
       out[sid][k] = v;
     });
-    await db.ref('esign/cases/' + curCaseId + '/arrears').update(out);
+    await trackedWrite(db.ref('esign/cases/' + curCaseId + '/arrears').update(out));
     arrearsCache = out;
     bg.remove();
     showToast('✅ 체불내역이 저장되었습니다');
