@@ -568,6 +568,25 @@ function writeIdx(it){
   }catch(_){}
 }
 function removeIdx(id){ try{ if(Store.mode==='firebase') Store.db.ref(DB_ROOT+'/idx/'+id).remove(); }catch(_){} }
+
+/* 사업자등록증 탭 기본 폴더 1회 생성 — ERP와 무관한 서류 정리용.
+   (ERP 거래처는 업체관리/업체퇴사로 자동 분류되고, 나머지는 여기에 손으로 넣는다)
+   지운 뒤 다시 살아나지 않도록 이 기기에 1회만 표시 */
+function seedBizFolders(){
+  try{
+    if(Store.mode!=='firebase') return;
+    if(localStorage.getItem('pucards_bizfolders_v1')) return;
+    if(!state.groups) return;
+    const hasBiz = nm => Object.values(state.groups).some(g=>g && ((g.kind||'card')==='biz') && _canon(g.name)===nm);
+    [['거래처·기관',9001],['우리법인',9002]].forEach(([nm,ord])=>{
+      if(hasBiz(_canon(nm))) return;
+      const g={id:uid(), name:nm, kind:'biz', order:ord};
+      Store.putGroup(g); state.groups[g.id]=g;
+    });
+    localStorage.setItem('pucards_bizfolders_v1','1');
+    try{ render(); }catch(_){}
+  }catch(e){ console.warn('[seedBizFolders]', e&&e.message); }
+}
 function backfillIdx(){
   try{
     if(Store.mode!=='firebase' || Store._idxDone) return;
@@ -608,7 +627,8 @@ const Store = {
       const subscribe = () => {
         this.db.ref(DB_ROOT+'/items').on('value', s => { state.items = s.val()||{}; render();
           if(!Store._idxDone){ setTimeout(backfillIdx, 3000); } });
-        this.db.ref(DB_ROOT+'/groups').on('value', s => { state.groups = s.val()||{}; render(); });
+        this.db.ref(DB_ROOT+'/groups').on('value', s => { state.groups = s.val()||{}; render();
+          if(!Store._bizSeedDone){ Store._bizSeedDone=true; setTimeout(seedBizFolders, 3000); } });
         this.db.ref(DB_ROOT+'/trash').on('value', s => { state.trash = s.val()||{};
           if(!Store._trashPurgeDone){ Store._trashPurgeDone=true; setTimeout(purgeTrash, 2000); } });
       };
@@ -700,6 +720,9 @@ const Store = {
     if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/groups/${id}`).remove();
     else { delete state.groups[id]; this._ls(); render(); } }
 };
+
+/* 푸른이알피 업체관리의 업체 유형 (COMPANY_TYPE_SEED와 동일하게 유지) */
+const ERP_TYPES = ['자문','급여','노조','기금','사무대행'];
 
 /* ══════ 🏢 ERP 거래처 담당자 매칭 ══════
    푸른 ERP(업체관리)의 회사·담당자를 읽어와, 명함의 회사명/사업자번호가 맞으면
@@ -807,44 +830,51 @@ const ErpMatch = {
       if(!ErpMatch.ready) return;
       const items = Object.values(state.items||{});
       if(!items.length) return;
-      const byNm = nm => Object.values(state.groups||{}).find(x=>x && _canon(x.name)===nm);
-      /* 구 '자문사' 폴더는 '업체관리'로 이름 변경 (1회) */
-      const oldA = byNm('자문사'); if(oldA && !byNm('업체관리')){ oldA.name='업체관리'; Store.putGroup(oldA); }
-      /* 대상 폴더 지연 생성 */
+      /* 폴더는 명함용(card)·사업자용(biz)이 따로 — 이름이 같아도 서로 섞이지 않게 종류까지 맞춰 찾는다 */
+      const kindOf = it => (it && it.kind==='biz') ? 'biz' : 'card';
+      const gKind  = g  => (g && g.kind) || 'card';
+      const byNmK = (nm,k) => Object.values(state.groups||{}).find(x=>x && _canon(x.name)===nm && gKind(x)===k);
+      /* 구 '자문사' 폴더는 '업체관리'로 이름 변경 (1회, 명함용) */
+      const oldA = byNmK('자문사','card'); if(oldA && !byNmK('업체관리','card')){ oldA.name='업체관리'; Store.putGroup(oldA); }
+      /* 대상 폴더 지연 생성 (종류별) */
       const cache={};
-      function ensure(nm){
-        if(cache[nm]) return cache[nm];
-        let g = byNm(nm);
-        if(!g){ g={id:uid(), name:nm, order:Date.now()}; Store.putGroup(g); state.groups[g.id]=g; }
-        cache[nm]=g; return g;
+      function ensure(nm,k){
+        const ck=k+'|'+nm;
+        if(cache[ck]) return cache[ck];
+        let g = byNmK(nm,k);
+        if(!g){ g={id:uid(), name:nm, kind:k, order:Date.now()}; Store.putGroup(g); state.groups[g.id]=g; }
+        cache[ck]=g; return g;
       }
       /* 자동 관리 대상 폴더(여기 있으면 상태 변화에 따라 재배치 허용) */
-      const AUTO_NAMES=['업체관리','업체퇴사','자문사','급여','기금','노조'];
+      const AUTO_NAMES=['업체관리','업체퇴사','자문사','급여','기금','노조','사무대행'];
       const autoIds = new Set(Object.values(state.groups||{}).filter(g=>g&&AUTO_NAMES.indexOf(_canon(g.name))>=0).map(g=>g.id));
       let n=0;
       items.forEach(it=>{
         if(!it) return;
         const m = ErpMatch.match(it);
-        const matched = !!m && ['자문','급여','노조','기금'].indexOf(m.type)>=0;
+        const matched = !!m && ERP_TYPES.indexOf(m.type)>=0;   /* 자문·급여·노조·기금·사무대행 */
         const targetNm = matched ? (m.left ? '업체퇴사' : '업체관리') : null;
+        const k = kindOf(it);
         if(it.erpAutoFoldered){
           /* 자동 배정분: 현재 자동 폴더 안에 있을 때만 상태 따라 재배치 (사용자가 딴 폴더로 옮겼으면 존중) */
           if(targetNm && autoIds.has(it.group)){
-            const tg = ensure(targetNm);
+            const tg = ensure(targetNm,k);
             if(it.group !== tg.id){ it.group=tg.id; it.updatedAt=Date.now(); Store.put(it); n++; }
           }
           return;
         }
         /* 미지정 + 매칭 → 대상 폴더로 자동 배정 */
         if((it.group||'')==='' && targetNm){
-          const tg = ensure(targetNm);
+          const tg = ensure(targetNm,k);
           it.group=tg.id; it.erpAutoFoldered=1; it.updatedAt=Date.now(); Store.put(it); n++;
         }
       });
-      /* 비게 된 구 자동 폴더 정리 */
+      /* 비게 된 구 자동 폴더 정리 (명함용·사업자용 각각) */
       ['급여','기금','노조','자문사'].forEach(nm=>{
-        const og = byNm(nm); if(!og) return;
-        if(!items.some(it=>it && it.group===og.id)){ try{ Store.delGroup(og.id); delete state.groups[og.id]; }catch(_){} }
+        ['card','biz'].forEach(k=>{
+          const og = byNmK(nm,k); if(!og) return;
+          if(!items.some(it=>it && it.group===og.id)){ try{ Store.delGroup(og.id); delete state.groups[og.id]; }catch(_){} }
+        });
       });
       if(n>0){ toast('🗂 업체 폴더 자동 분류/이동 '+n+'건'); try{ render(); }catch(_){}}
     }catch(e){ console.warn('[autoFolder]', e&&e.message); }
@@ -3328,7 +3358,7 @@ function renderPCTable(){
     /* ERP 연결 배지: 업체 유형(자문/급여/노조/기금) + 실무담당 여부 (업체관리 실시간 매칭) */
     const erpBadge = (function(){
       const t = ErpMatch.type(it); if(!t && !ErpMatch.match(it)) return '';
-      const cMap = { '자문':'#1e40af', '급여':'#166534', '노조':'#6d28d9', '기금':'#92400e' };
+      const cMap = { '자문':'#1e40af', '급여':'#166534', '노조':'#6d28d9', '기금':'#92400e', '사무대행':'#0f766e' };
       let h = t ? `<span title="푸른이알피 업체관리 연결 · ${esc(ErpMatch.full(it))}" style="display:inline-block;background:${cMap[t]||'#475569'}18;color:${cMap[t]||'#475569'};border:1px solid ${cMap[t]||'#475569'}44;border-radius:8px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap">ERP·${esc(t)}</span>` : '';
       /* 이 사람이 그 회사의 ERP 대표자/담당자인지 */
       const _role = ErpMatch.role(it);
@@ -3373,10 +3403,10 @@ function renderErpTabs(){
   if(!_showErp){ el.innerHTML=''; if(state.erpFilter) state.erpFilter=''; return; }
   if(!ErpMatch.ready){ el.innerHTML=''; return; }
   const all=Object.values(state.items).filter(x=>x&&x.kind===state.tab);
-  const cnt={ '자문':0,'급여':0,'노조':0,'기금':0 };
+  const cnt={}; ERP_TYPES.forEach(t=>cnt[t]=0);
   all.forEach(it=>{ const m=ErpMatch.match(it); if(m){ const t=m.type||''; if(cnt[t]!==undefined) cnt[t]++; } });
-  const tabs=[['자문','🏢 자문 '+cnt['자문']],['급여','💰 급여 '+cnt['급여']],
-    ['노조','🤝 노조 '+cnt['노조']],['기금','🏦 기금 '+cnt['기금']]];
+  const ICON={ '자문':'🏢','급여':'💰','노조':'🤝','기금':'🏦','사무대행':'🗂' };
+  const tabs=ERP_TYPES.map(t=>[t, (ICON[t]||'🏷')+' '+t+' '+cnt[t]]);
   el.innerHTML=tabs.map(([v,label])=>{
     const on=(state.erpFilter||'')===v;
     /* 활성 탭 다시 누르면 해제(전체로) */
