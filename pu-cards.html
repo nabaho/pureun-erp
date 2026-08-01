@@ -569,6 +569,29 @@ function writeIdx(it){
 }
 function removeIdx(id){ try{ if(Store.mode==='firebase') Store.db.ref(DB_ROOT+'/idx/'+id).remove(); }catch(_){} }
 
+/* 자문·급여·노조·기금·사무대행 탭을 '전체 명함/전체 사업자등록증'에 1회 생성.
+   (예전 자동 표시되던 줄을 대신 — 이제는 일반 탭이라 삭제·이름변경이 자유롭다) */
+function seedErpTabs(){
+  try{
+    if(Store.mode!=='firebase') return;
+    if(localStorage.getItem('pucards_erptabs_v1')) return;
+    ['card','biz'].forEach(kind=>{
+      ERP_TYPES.forEach((t,i)=>{
+        const dup=Object.values(state.views||{}).find(v=>v&&(v.kind||'card')===kind
+          &&(v.scope||'all')==='all'&&((v.f||{}).erpFilter)===t);
+        if(dup) return;
+        const f={ q:'', group:'all', owner:'all', region:'', erpFilter:t, colFilter:{},
+          onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false,
+          sort:'date', sortKey:null, sortDir:'desc' };
+        const v={ id:uid(), name:t, kind, scope:'all', order:1000+i, f };
+        Store.putView(v); state.views[v.id]=v;
+      });
+    });
+    localStorage.setItem('pucards_erptabs_v1','1');
+    try{ render(); }catch(_){}
+  }catch(e){ console.warn('[seedErpTabs]', e&&e.message); }
+}
+
 /* 사업자등록증 탭 기본 폴더 1회 생성 — ERP와 무관한 서류 정리용.
    (ERP 거래처는 업체관리/업체퇴사로 자동 분류되고, 나머지는 여기에 손으로 넣는다)
    지운 뒤 다시 살아나지 않도록 이 기기에 1회만 표시 */
@@ -630,7 +653,8 @@ const Store = {
         this.db.ref(DB_ROOT+'/groups').on('value', s => { state.groups = s.val()||{}; render();
           if(!Store._bizSeedDone){ Store._bizSeedDone=true; setTimeout(seedBizFolders, 3000); } });
         /* 내 탭(저장된 검색·필터 조건) — 전 직원 공유 */
-        this.db.ref(DB_ROOT+'/views').on('value', s => { state.views = s.val()||{}; render(); });
+        this.db.ref(DB_ROOT+'/views').on('value', s => { state.views = s.val()||{}; render();
+          if(!Store._erpTabSeedDone){ Store._erpTabSeedDone=true; setTimeout(seedErpTabs, 3500); } });
         this.db.ref(DB_ROOT+'/trash').on('value', s => { state.trash = s.val()||{};
           if(!Store._trashPurgeDone){ Store._trashPurgeDone=true; setTimeout(purgeTrash, 2000); } });
       };
@@ -2989,9 +3013,11 @@ function renderPCSide(){
     const isLocked = !!g.locked;
     const unlocked = isLocked && state.unlocked && state.unlocked[g.id];
     const icon = isLocked ? (unlocked ? '🔓' : '🔒') : '📁';
+    /* 폴더를 옮기면 앞 폴더의 탭 조건(ERP유형·칸검색)은 해제 — 탭은 폴더마다 따로이므로 */
+    const reset = `state.owner='all';state.region='';state.erpFilter='';state.colFilter={};state.page=0;`;
     const openClick = isLocked
-      ? `if(tryUnlockFolder('${g.id}')){state.group='${g.id}';state.owner='all';state.region='';state.page=0;}render()`
-      : `state.group='${g.id}';state.owner='all';state.region='';state.page=0;render()`;
+      ? `if(tryUnlockFolder('${g.id}')){state.group='${g.id}';${reset}}render()`
+      : `state.group='${g.id}';${reset}render()`;
     return `<div class="pcitem folderrow ${on?'on':''}" style="padding-left:11px"
         draggable="true"
         ondragstart="onFolderDrag(event,'${g.id}')"
@@ -3026,7 +3052,8 @@ function renderPCSide(){
   </div>`;
   $('pcSide').innerHTML = h;
 }
-function switchTab(t){ state.tab=t; state.group='all'; state.owner='all'; state.region=''; state.page=0; state.sel={}; render(); }
+function switchTab(t){ state.tab=t; state.group='all'; state.owner='all'; state.region='';
+  state.erpFilter=''; state.colFilter={}; state.page=0; state.sel={}; render(); }
 function toggleSidebar(){ $('pcRoot').classList.toggle('sidehidden'); }
 
 /* 열 너비 드래그 조절 */
@@ -3469,6 +3496,30 @@ function viewSnapshot(){
     sort: state.sort||'date', sortKey: state.sortKey||null, sortDir: state.sortDir||'desc'
   };
 }
+/* 그 탭 조건에 해당하는 인원수 — 목록과 똑같은 기준으로 세기 위해 잠시 조건을 바꿔 계산 후 되돌린다 */
+function countMatching(f){
+  f=f||{};
+  const s=$('search');
+  const sv={ group:state.group, owner:state.owner, region:state.region, erpFilter:state.erpFilter,
+    colFilter:state.colFilter, onlyPhone:state.onlyPhone, onlyEmail:state.onlyEmail,
+    onlyIncomplete:state.onlyIncomplete, onlyPrivate:state.onlyPrivate, onlyDup:state.onlyDup,
+    sort:state.sort, sortKey:state.sortKey, q:(s?s.value:'') };
+  try{
+    state.group=f.group||'all'; state.owner=f.owner||'all'; state.region=f.region||'';
+    state.erpFilter=f.erpFilter||''; state.colFilter=f.colFilter||{};
+    state.onlyPhone=!!f.onlyPhone; state.onlyEmail=!!f.onlyEmail;
+    state.onlyIncomplete=!!f.onlyIncomplete; state.onlyPrivate=!!f.onlyPrivate; state.onlyDup=!!f.onlyDup;
+    state.sort='date'; state.sortKey=null;          /* 세기만 하므로 가벼운 정렬로 */
+    if(s) s.value=f.q||'';
+    return listItems().length;
+  }catch(e){ return 0; }
+  finally{
+    state.group=sv.group; state.owner=sv.owner; state.region=sv.region; state.erpFilter=sv.erpFilter;
+    state.colFilter=sv.colFilter; state.onlyPhone=sv.onlyPhone; state.onlyEmail=sv.onlyEmail;
+    state.onlyIncomplete=sv.onlyIncomplete; state.onlyPrivate=sv.onlyPrivate; state.onlyDup=sv.onlyDup;
+    state.sort=sv.sort; state.sortKey=sv.sortKey; if(s) s.value=sv.q;
+  }
+}
 /* 지금 화면이 그 탭과 같은 조건인지 비교용 서명 (정렬은 제외 — 정렬 바꿔도 탭 선택 유지) */
 function viewSig(f){
   f=f||{}; const c=f.colFilter||{};
@@ -3499,9 +3550,41 @@ function saveCurrentAsView(){
   const dflt = f.q || f.region || f.erpFilter || (f.colFilter&&(f.colFilter.company||f.colFilter.name)) || '';
   const name=(prompt('탭 이름을 입력하세요 (예: 세무사무실, 천안 자문, 정보부족)', dflt)||'').trim();
   if(!name) return;
-  const v={ id:uid(), name, kind:state.tab, order:Date.now(), f };
+  const v={ id:uid(), name, kind:state.tab, scope:(state.group||'all'), order:Date.now(), f };
   Store.putView(v);
-  toast(`🔖 '${name}' 탭을 만들었습니다 — 전 직원이 함께 씁니다`,4000);
+  toast(`🔖 '${name}' 탭을 ${curScopeName()}에 만들었습니다`,4000);
+}
+/* 지금 보고 있는 곳(대시보드) 이름 — 탭은 이 안에서만 보인다 */
+function curScopeName(){
+  const g=state.group;
+  if(!g||g==='all') return state.tab==='biz' ? '전체 사업자등록증' : '전체 명함';
+  if(g==='') return '미분류';
+  return (state.groups[g]||{}).name || '이 폴더';
+}
+/* ＋ 탭 추가 — 지금 조건으로 만들거나, ERP 유형을 바로 추가 */
+function openAddTabMenu(){
+  const here=curScopeName();
+  const ICON={ '자문':'🏢','급여':'💰','노조':'🤝','기금':'🏦','사무대행':'🗂' };
+  $('menuM').innerHTML=`
+    <div class="mhead"><b>＋ 탭 추가</b><button class="iconbtn" onclick="menuBg.classList.remove('open')">✕</button></div>
+    <p style="font-size:12.5px;color:var(--sub);padding:0 4px 10px;line-height:1.7">
+      여기서 만든 탭은 <b style="color:var(--ink)">${esc(here)}</b>에서만 보입니다.<br>
+      다른 폴더에 필요하면 그 폴더로 가서 따로 만들어 주세요.</p>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');saveCurrentAsView()">🔖 지금 화면 조건으로 만들기
+      <span style="margin-left:auto;color:var(--sub);font-size:12px">검색·지역·정보부족 등</span></button>
+    <div style="font-size:11px;font-weight:800;color:#9aa6bd;padding:14px 6px 5px">푸른이알피 유형으로 바로 추가</div>
+    ${ERP_TYPES.map(t=>`<button class="sheetbtn" onclick="menuBg.classList.remove('open');addErpTab('${t}')">${ICON[t]||'🏷'} ${t}</button>`).join('')}`;
+  $('menuBg').classList.add('open');
+}
+function addErpTab(t){
+  const f=viewSnapshot();
+  f.erpFilter=t; f.q=''; f.colFilter={};
+  f.onlyPhone=false; f.onlyEmail=false; f.onlyIncomplete=false; f.onlyPrivate=false; f.onlyDup=false;
+  const dup=Object.values(state.views||{}).find(v=>v&&(v.kind||'card')===state.tab
+    &&(v.scope||'all')===(state.group||'all')&&(v.f||{}).erpFilter===t);
+  if(dup) return toast(`'${t}' 탭이 이미 있습니다`);
+  Store.putView({ id:uid(), name:t, kind:state.tab, scope:(state.group||'all'), order:Date.now(), f });
+  toast(`🔖 '${t}' 탭을 ${curScopeName()}에 추가했습니다`,4000);
 }
 /* 칩의 ⋮ → 버튼 메뉴 (보기·이름변경·조건갱신·삭제) */
 function viewMenu(id){
@@ -3560,8 +3643,12 @@ function openViewManager(){
     <p style="font-size:12.5px;color:var(--sub);line-height:1.7;margin-bottom:10px">
     탭은 <b>보기 조건</b>일 뿐이라, 삭제해도 <b>명함은 그대로</b>입니다. 전 직원이 함께 쓰는 탭이에요.</p>`;
   vs.forEach(v=>{
+    const sc=(v.scope||'all');
+    const scName = sc==='all' ? ((v.kind||'card')==='biz'?'전체 사업자등록증':'전체 명함')
+                 : (sc==='' ? '미분류' : ((state.groups[sc]||{}).name || '(삭제된 폴더)'));
     h+=`<div class="ditem" style="align-items:center"><div class="v">
-      <b>🔖 ${esc(v.name)}</b> <span style="font-size:11px;color:var(--sub)">${(v.kind||'card')==='biz'?'사업자':'명함'}</span><br>
+      <b>🔖 ${esc(v.name)}</b> <span style="font-size:11px;color:var(--sub)">${(v.kind||'card')==='biz'?'사업자':'명함'}</span>
+      <span style="font-size:11px;color:#1d4fc4;background:#eef4ff;border:1px solid #cfe0fb;border-radius:8px;padding:1px 7px;margin-left:4px">📁 ${esc(scName)}</span><br>
       <span style="font-size:12px;color:var(--sub)">${esc(desc(v.f))}</span></div>
       <div style="display:flex;gap:6px;flex:none;margin-left:8px">
         <button class="btn ghost" style="padding:7px 12px" onclick="renameView('${v.id}');setTimeout(openViewManager,80)">이름</button>
@@ -3570,44 +3657,30 @@ function openViewManager(){
   });
   $('dedupM').innerHTML=h; $('dedupBg').classList.add('open');
 }
+/* 탭은 '지금 보고 있는 폴더(대시보드)'에 소속 — 그 폴더에서만 보인다. 각 탭에 인원수 표시 */
 function renderMyTabsHtml(){
-  const vs=Object.values(state.views||{}).filter(v=>v&&v.id&&(v.kind||'card')===state.tab)
+  const cur = state.group||'all';
+  const vs=Object.values(state.views||{})
+            .filter(v=>v&&v.id&&(v.kind||'card')===state.tab&&(v.scope||'all')===cur)
             .sort((a,b)=>(a.order||0)-(b.order||0));
   const sig=viewSig(viewSnapshot());
   let h='';
-  if(vs.length) h+=`<span style="width:1px;height:22px;background:#dde3ee;margin:0 3px"></span>`;
   h+=vs.map(v=>{
     const on=viewSig(v.f)===sig;
+    let n=0; try{ n=countMatching(v.f); }catch(_){}
     return `<span style="display:inline-flex;align-items:center;border:1.5px solid ${on?'#1d4ed8':'#cfe0fb'};background:${on?'#1d4ed8':'#f4f9ff'};color:${on?'#fff':'#1d4fc4'};border-radius:18px;font-weight:700;font-size:12.5px;overflow:hidden">
-      <span style="cursor:pointer;padding:6px 4px 6px 13px" onclick="applyView('${v.id}')" title="이 조건으로 보기">🔖 ${esc(v.name)}</span>
+      <span style="cursor:pointer;padding:6px 4px 6px 13px" onclick="applyView('${v.id}')" title="이 조건으로 보기">🔖 ${esc(v.name)}
+        <b style="margin-left:5px;font-weight:800;${on?'':'color:#5a6885'}">${n.toLocaleString()}</b></span>
       <span style="cursor:pointer;padding:6px 9px 6px 4px;opacity:.75;font-size:13px" onclick="viewMenu('${v.id}')" title="이름변경 · 조건갱신 · 삭제">⋮</span></span>`;
   }).join('');
-  h+=`<button onclick="saveCurrentAsView()" title="지금 화면의 검색·필터 조건을 탭으로 저장합니다" style="border:1.5px dashed #c3d0e6;background:#fff;color:#5a6885;border-radius:18px;padding:6px 13px;font-weight:700;font-size:12.5px;cursor:pointer">＋ 탭 추가</button>`;
+  h+=`<button onclick="openAddTabMenu()" title="이 폴더에만 보이는 탭을 만듭니다" style="border:1.5px dashed #c3d0e6;background:#fff;color:#5a6885;border-radius:18px;padding:6px 13px;font-weight:700;font-size:12.5px;cursor:pointer">＋ 탭 추가</button>`;
   return h;
 }
 
-/* ERP 유형 탭 (자문·급여·노조·기금·사무대행) + 내 탭 */
+/* 탭 줄 — 지금 폴더(대시보드)에 속한 탭만 표시. 자문·급여 등 ERP 유형도 '탭'으로 직접 추가/삭제 */
 function renderErpTabs(){
   const el=$('pcErpTabs'); if(!el) return;
-  /* ERP 유형 탭(자문·급여·노조·기금)은 ERP 연동 폴더에서만 — 전체 명함 · 업체관리 · 업체퇴사.
-     지인·노무사·개인폴더 등에선 숨기고, 남아있던 ERP 필터도 해제(빈 화면 방지) */
-  const _g = state.groups[state.group];
-  const _gc = _g ? _canon(_g.name) : '';
-  const _showErp = (state.group==='all') || _gc==='업체관리' || _gc==='업체퇴사';
-  if(!_showErp && state.erpFilter) state.erpFilter='';   /* 지인·노무사 등에선 ERP 필터 해제 */
-  let erpHtml='';
-  if(_showErp && ErpMatch.ready){
-    const all=Object.values(state.items).filter(x=>x&&x.kind===state.tab);
-    const cnt={}; ERP_TYPES.forEach(t=>cnt[t]=0);
-    all.forEach(it=>{ const m=ErpMatch.match(it); if(m){ const t=m.type||''; if(cnt[t]!==undefined) cnt[t]++; } });
-    const ICON={ '자문':'🏢','급여':'💰','노조':'🤝','기금':'🏦','사무대행':'🗂' };
-    erpHtml=ERP_TYPES.map(t=>{
-      const on=(state.erpFilter||'')===t;
-      /* 활성 탭 다시 누르면 해제(전체로) */
-      return `<button onclick="state.erpFilter=(state.erpFilter==='${t}'?'':'${t}');state.page=0;render()" title="푸른이알피 업체관리 유형 기준 자동 분류 (다시 누르면 해제)" style="border:1.5px solid ${on?'#1e40af':'#dde3ee'};background:${on?'#1e40af':'#fff'};color:${on?'#fff':'#33415e'};border-radius:18px;padding:6px 14px;font-weight:700;font-size:12.5px;cursor:pointer">${(ICON[t]||'🏷')+' '+t+' '+cnt[t]}</button>`;
-    }).join('');
-  }
-  el.innerHTML = erpHtml + renderMyTabsHtml();   /* 내 탭은 어느 폴더에서나 보인다 */
+  el.innerHTML = renderMyTabsHtml();
 }
 function renderPC(){ renderPCSide(); renderErpTabs(); renderPCTable(); }
 
