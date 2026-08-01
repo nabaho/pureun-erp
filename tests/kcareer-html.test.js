@@ -346,6 +346,19 @@ test('puUndoSync는 그 동기화가 만든 레코드만 지운다 (배제된 �
   assert.deepEqual(store.case.map((r) => r.id), ['CS0003', 'CS0004']);
 });
 
+test('pu-erp 원본 보기는 읽기 전용이다', () => {
+  const m = source.match(/async function openPuSource\([\s\S]*?\n\}/);
+  assert.ok(m, 'openPuSource 함수가 있어야 합니다');
+  assert.ok(!/\.set\(|\.update\(|\.push\(/.test(m[0]), 'pu-erp 데이터에 쓰기를 시도하면 안 됩니다');
+  assert.match(source, /<div class="modal-ov" id="modalPuSrc">/);
+});
+
+test('동기화 레코드 행에서 pu-erp 원본을 열 수 있다', () => {
+  const src = funcSource('rowActions');
+  assert.match(src, /rec&&rec\.puRef/);
+  assert.match(src, /openPuSource/);
+});
+
 test('fsUndoScan은 scanId가 일치하는 레코드만 지운다', () => {
   const store = { wiccok: [], cert: [], certdoc: [], submission: [] };
   const ctx = {
