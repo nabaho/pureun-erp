@@ -244,6 +244,11 @@ body.pc #main,body.pc #fab,body.pc #selbar{display:none!important}
 .pcitem{display:flex;align-items:center;gap:6px;padding:9px 11px;border-radius:9px;font-size:13.5px;cursor:pointer;min-height:38px;line-height:1.2}
 .pcitem>span{flex-shrink:0}
 .pcitem .gname{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 폴더가 많아도 한 화면에 — 행을 촘촘히, 목록만 따로 스크롤 */
+.folderrow{padding:5px 9px!important;min-height:28px;font-size:13px}
+#pcFolderList{max-height:44vh;overflow-y:auto;margin-bottom:2px}
+#pcFolderList::-webkit-scrollbar{width:6px}
+#pcFolderList::-webkit-scrollbar-thumb{background:#33457a;border-radius:3px}
 /* 폴더 행 — 평소엔 건수, hover시 ⋮ 메뉴 (메일함 스타일) */
 .folderrow .gcount{font-size:11.5px;color:#8fa0c4}
 .folderrow .gmenu{display:none;cursor:pointer;padding:0 6px;font-size:16px;color:#aebcdc;font-weight:700}
@@ -566,6 +571,30 @@ const FIREBASE_CONFIG = {
 
 const DB_ROOT = 'pucards';
 const GEMINI_KEY_LS = 'pucards_gemini_key';
+
+/* ══════ 🔒 잠금 폴더(개인 전용) ══════
+   잠근 사람만 폴더가 보이고, 다른 직원에게는 폴더도 명함도 보이지 않는다.
+   또한 잠긴 폴더의 명함은 공유 검색목록(pucards/idx)에서 빠져
+   푸른이알피 계약창·업체관리 등 다른 프로그램에서 당겨올 수 없다. */
+let myEmail = '';
+const lockOwnerOf = g => String((g&&g.lockOwner)||'').toLowerCase();
+/* 내가 볼 수 있는 폴더인가 (잠긴 폴더는 잠근 본인만) */
+function canSeeGroup(g){
+  if(!g || !g.locked) return true;
+  const own = lockOwnerOf(g);
+  if(!own) return true;                 /* 예전에 주인 없이 잠근 폴더는 기존대로 */
+  return !!myEmail && own === myEmail;
+}
+/* 이 명함이 '남의 잠긴 폴더'에 있는가 → 목록·공유목록에서 제외 */
+function inHiddenLocked(it){
+  const g = state.groups[(it&&it.group)||''];
+  return !!g && !!g.locked && !canSeeGroup(g);
+}
+/* 잠긴 폴더의 명함인가 (주인 여부와 무관) → 공유 검색목록에서 항상 제외 */
+function inLockedGroup(it){
+  const g = state.groups[(it&&it.group)||''];
+  return !!g && !!g.locked;
+}
 /* AI 키 우선순위: ①이 기기 로컬 키 ②명함첩 공유 키 ③포털 공용 설정(data/app_config)
    포털 ⚙설정에 넣어두면 앱마다 따로 넣을 필요가 없다. */
 let _sharedGKey='', _portalGKey='';
@@ -592,7 +621,8 @@ function idxRecord(it){
 }
 function writeIdx(it){
   try{ if(Store.mode!=='firebase' || !it || !it.id) return;
-    const r=idxRecord(it);
+    /* 🔒 잠긴 폴더의 명함은 공유 검색목록에 넣지 않는다 (다른 프로그램에서 당겨오기 차단) */
+    const r = inLockedGroup(it) ? null : idxRecord(it);
     if(r) Store.db.ref(DB_ROOT+'/idx/'+it.id).set(r);
     else Store.db.ref(DB_ROOT+'/idx/'+it.id).remove();
   }catch(_){}
@@ -649,7 +679,7 @@ function backfillIdx(){
       const existCount=Object.keys(s.val()||{}).length;
       if(existCount >= items.length*0.9) return;   /* 이미 대부분 있으면 스킵 */
       const all={};
-      items.forEach(it=>{ if(it&&it.id){ const r=idxRecord(it); if(r) all[it.id]=r; } });
+      items.forEach(it=>{ if(it&&it.id&&!inLockedGroup(it)){ const r=idxRecord(it); if(r) all[it.id]=r; } });
       Store.db.ref(DB_ROOT+'/idx').set(all)
         .then(()=>console.log('[idx] 백필 완료', Object.keys(all).length))
         .catch(e=>console.warn('[idx] 백필 실패', e&&e.message));
@@ -691,7 +721,7 @@ const Store = {
       /* 통합 이메일 로그인 (포털·ERP·컨설팅과 같은 Firebase 세션 공유) */
       if (firebase.auth){
         firebase.auth().onAuthStateChanged(u=>{
-          if (u && u.email){ hideCardsLogin(); subscribe(); ErpMatch.load(); loadSharedGKey(); }
+          if (u && u.email){ myEmail=(u.email||'').toLowerCase(); hideCardsLogin(); subscribe(); ErpMatch.load(); loadSharedGKey(); }
           /* 익명 세션은 건드리지 않음 — 컨설팅 등 다른 앱이 읽기용으로 쓰는 세션을
              여기서 signOut하면 그 앱이 다시 익명 로그인 → 무한 핑퐁으로 전체가 튕김 */
           else { showCardsLogin(); }
@@ -1225,6 +1255,7 @@ function listItems(){
       if (!gid) return true;
       const g = state.groups[gid];
       if (!g || !g.locked) return true;
+      if (!canSeeGroup(g)) return false;                        /* 남의 잠긴 폴더 → 아예 안 보임 */
       if (state.unlocked && state.unlocked[gid]) return true;   /* 세션에서 풀림 */
       if (state.group===gid) return true;                       /* 그 폴더를 직접 보는 중 */
       return false;
@@ -1301,7 +1332,7 @@ function renderSubbar(){
 function renderSidebar(){
   const all = Object.values(state.items).filter(it=>it.kind===state.tab);
   const cnt = g => all.filter(it=>(it.group||'')===g).length;
-  const groups = Object.values(state.groups).sort((a,b)=>(a.order||0)-(b.order||0));
+  const groups = Object.values(state.groups).filter(canSeeGroup).sort((a,b)=>(a.order||0)-(b.order||0));
   let h = `<div class="grouphead"><b>그룹</b><button class="iconbtn" onclick="addGroup()">＋</button></div>`;
   h += gItem('all','📂 전체', all.length);
   h += gItem('','📁 미분류', cnt(''));
@@ -1329,7 +1360,7 @@ function groupMenu(id){ const g=state.groups[id]; if(!g) return;
 function openGroupSheet(){
   const all = Object.values(state.items).filter(it=>it.kind===state.tab);
   const cnt = g => all.filter(it=>(it.group||'')===g).length;
-  const groups = Object.values(state.groups).sort((a,b)=>(a.order||0)-(b.order||0));
+  const groups = Object.values(state.groups).filter(canSeeGroup).sort((a,b)=>(a.order||0)-(b.order||0));
   let h = `<div class="mhead"><b>그룹 선택</b><button class="iconbtn" onclick="groupSheetBg.classList.remove('open')">✕</button></div>`;
   const mk=(id,label,n)=>`<button class="sheetbtn" onclick="onGroupChoice('${id}')">
      ${state.group===id?'✅':'📁'} ${label}<span style="margin-left:auto;color:var(--sub);font-size:13px">${n}</span></button>`;
@@ -1428,7 +1459,7 @@ let selPick=false;
 function selPickGroup(){
   if(!Object.keys(state.sel).length) return toast('항목을 먼저 선택하세요');
   /* 현재 탭의 폴더만 골라 이동 (계층 들여쓰기 표시) */
-  const groups = Object.values(state.groups).filter(g=>(g.kind||'card')===state.tab);
+  const groups = Object.values(state.groups).filter(g=>(g.kind||'card')===state.tab && canSeeGroup(g));
   const children = pid => groups.filter(g=>(g.parent||'')===pid).sort((a,b)=>(a.order||0)-(b.order||0));
   let opts = `<div class="movefolder" onclick="moveSelTo('')"><span class="mfic">📭</span> 미분류</div>`;
   const walk=(pid,depth)=>{ children(pid).forEach(g=>{
@@ -1704,7 +1735,7 @@ function openEditor(item, photoObj, pre){
       : `<input id="f_${k}" value="${esc(src[k])}">`;
     fh += `<div class="field" style="${wide.includes(k)?'grid-column:1/3':''}"><label>${label}</label>${tag}</div>`;
   });
-  const groups=Object.values(state.groups).sort((a,b)=>(a.order||0)-(b.order||0));
+  const groups=Object.values(state.groups).filter(canSeeGroup).sort((a,b)=>(a.order||0)-(b.order||0));
   /* 새 명함이고 현재 폴더 보는 중이면 그 폴더를 기본 선택 */
   const curGroupValid = state.group && state.group!=='all' && state.groups[state.group] && (state.groups[state.group].kind||'card')===kind;
   const defGroup = (src.group!==undefined && src.group!=='') ? src.group : (!item && curGroupValid ? state.group : (src.group||''));
@@ -3030,7 +3061,7 @@ function renderPCSide(){
               all.filter(i=>i.kind===state.tab).length, isAllView('all'));
 
   /* 현재 탭에 속한 폴더만 — 계층 없이 1단계로 평평하게 */
-  const groups = Object.values(state.groups).filter(g=>(g.kind||'card')===state.tab)
+  const groups = Object.values(state.groups).filter(g=>(g.kind||'card')===state.tab && canSeeGroup(g))
                    .sort((a,b)=>(a.order||0)-(b.order||0));
   const cntSelf = g => kindArr.filter(it=>(it.group||'')===g).length;
 
@@ -3062,7 +3093,9 @@ function renderPCSide(){
         <span class="gmenu" onclick="event.stopPropagation();openFolderMenu(event,'${g.id}')" title="관리">⋮</span>
       </div>`;
   };
+  h += `<div id="pcFolderList">`;
   groups.forEach(g=> h += folderRow(g));
+  h += `</div>`;
 
   h += `<div class="pcsec">담당자별 (직원)</div>`;
   const owners=[...new Set(kindArr.map(it=>String(it.owner||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ko'));
@@ -3199,7 +3232,7 @@ function loadColPrefs(){
 }
 function toggleCollapse(id){ state.collapsed[id]=!state.collapsed[id]; render(); }
 function toggleAllFolders(){
-  const groups=Object.values(state.groups).filter(g=>(g.kind||'card')===state.tab);
+  const groups=Object.values(state.groups).filter(g=>(g.kind||'card')===state.tab && canSeeGroup(g));
   const anyOpen = groups.some(g=>groups.some(c=>(c.parent||'')===g.id) && !state.collapsed[g.id]);
   groups.forEach(g=>{ state.collapsed[g.id]=anyOpen; });
   render();
@@ -3252,12 +3285,15 @@ function openFolderMenu(ev, id){
 /* 폴더 비밀번호 잠금 설정/해제/확인 (화면에서만 가림 — 진짜 보안 아님) */
 function setFolderLock(id){
   const g=state.groups[id]; if(!g) return;
-  const pw=prompt(`'${g.name}' 폴더에 걸 비밀번호를 입력하세요.\n(이 폴더는 화면에서 가려지며, 비밀번호를 입력해야 보입니다)`);
+  if(!myEmail) return toast('로그인 후 잠글 수 있습니다');
+  const pw=prompt(`'${g.name}' 폴더를 나만 보는 개인 폴더로 잠급니다.\n\n· 다른 직원에게는 폴더도 명함도 보이지 않습니다\n· 푸른이알피 등 다른 프로그램에서도 당겨올 수 없습니다\n· 오직 명함첩에서 비밀번호로만 열 수 있습니다\n\n비밀번호를 입력하세요`);
   if(pw===null) return;
   if(!pw.trim()) return toast('비밀번호가 비어 있습니다');
-  g.locked=true; g.pw=pw; Store.putGroup(g);
+  g.locked=true; g.pw=pw; g.lockOwner=myEmail; Store.putGroup(g);
   if(state.unlocked) delete state.unlocked[id];
-  toast('폴더를 잠갔습니다 🔒');
+  /* 이 폴더 명함들을 공유 검색목록에서 즉시 제거 (다른 프로그램 노출 차단) */
+  try{ Object.values(state.items).forEach(it=>{ if(it && (it.group||'')===id) removeIdx(it.id); }); }catch(_){}
+  toast('🔒 나만 보는 폴더로 잠갔습니다 — 다른 직원·다른 프로그램에서 보이지 않습니다',6000);
   render();
 }
 function unsetFolderLock(id){
@@ -3268,7 +3304,9 @@ function unsetFolderLock(id){
     if(pw===null) return;
     if(pw!==g.pw) return toast('비밀번호가 틀렸습니다');
   }
-  g.locked=false; delete g.pw; Store.putGroup(g);
+  g.locked=false; delete g.pw; delete g.lockOwner; Store.putGroup(g);
+  /* 잠금이 풀렸으니 공유 검색목록에 다시 넣는다 */
+  try{ Object.values(state.items).forEach(it=>{ if(it && (it.group||'')===id) writeIdx(it); }); }catch(_){}
   toast('잠금을 해제했습니다 🔓');
   render();
 }
