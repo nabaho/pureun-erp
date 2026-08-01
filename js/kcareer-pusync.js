@@ -53,6 +53,15 @@
     };
   }
 
+  /* ===== pu-erp 저장 봉투 벗기기 =====
+     pu-erp는 data/{키} = { v:실제값, u:갱신시각 } 형태로 저장하고 자신은 data/{키}/v 로 읽는다.
+     봉투를 안 벗기면 컬렉션마다 v·u 두 개가 레코드로 세어져 유령 8건이 생긴다(실사용에서 발견). */
+  function unwrap(val) {
+    if (val && typeof val === 'object' && !Array.isArray(val) &&
+        Object.prototype.hasOwnProperty.call(val, 'v')) return val.v;
+    return val;
+  }
+
   /* ===== 병합 계획 =====
      추가만 계획한다. 기존 레코드는 건드리지 않고(수동 수정 보존),
      existingRefs에 있는 puRef는 배제된 것이라도 다시 들어오지 않는다. */
@@ -60,8 +69,8 @@
     var known = (existingRefs instanceof Set) ? existingRefs : new Set(existingRefs || []);
     var plan = { adds: [], counts: { case: 0, consult: 0, fund: 0, etc: 0 }, skippedOpen: 0, skippedKnown: 0 };
     Object.keys(COLL_MAP).forEach(function (coll) {
-      var v = collData ? collData[coll] : null;
-      if (!v) return;
+      var v = unwrap(collData ? collData[coll] : null);
+      if (!v || typeof v !== 'object') return;
       Object.keys(v).forEach(function (key) {
         var c = v[key];
         if (!c) return;                                       /* Firebase 배열형의 null 구멍 */
@@ -77,7 +86,7 @@
     return plan;
   }
 
-  var api = { isClosed: isClosed, mapRecord: mapRecord, buildSyncPlan: buildSyncPlan };
+  var api = { isClosed: isClosed, mapRecord: mapRecord, buildSyncPlan: buildSyncPlan, unwrap: unwrap };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.KcareerPuSync = api;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

@@ -1355,7 +1355,7 @@ function puCfgLoad(){
   try{
     if(typeof fbDb==='undefined' || !fbDb) return;
     fbDb.ref('data/app_config').once('value')
-      .then(function(s){ PU_CFG = s.val() || {}; })
+      .then(function(s){ PU_CFG = (typeof _puUnwrap==='function' ? _puUnwrap(s.val()) : s.val()) || {}; })
       .catch(function(){});   /* 권한·네트워크 실패해도 기존 동작 유지 */
   }catch(e){}
 }
@@ -1976,7 +1976,7 @@ async function _puFetchPlan(){
   var colls = ['cases','consultings','funds','other_projects'], collData = {};
   for(var i = 0; i < colls.length; i++){
     var s = await fbDb.ref('data/' + colls[i]).once('value');
-    collData[colls[i]] = s.val();
+    collData[colls[i]] = _puUnwrap(s.val());   /* pu-erp의 {v,u} 봉투 벗기기 */
   }
   var plan = KcareerPuSync.buildSyncPlan(collData, _puKnownRefs(), userMap || {});
   return { syncId: 'PS' + new Date().toISOString().slice(0,10).replace(/-/g,'') + '-' + String(Date.now()).slice(-4), plan: plan };
@@ -2186,8 +2186,11 @@ function closeCertLink(){ $('modalCertLink').classList.remove('open'); }
 async function openPuSource(puRef){
   if(typeof fbDb === 'undefined' || !fbDb){ toast('클라우드 로그인 후 사용하세요'); return; }
   try{
-    var s = await fbDb.ref('data/' + puRef).once('value');
+    /* puRef는 '컬렉션/키'. pu-erp 실제 경로는 data/{컬렉션}/v/{키} (봉투 안) */
+    var seg = String(puRef).split('/');
+    var s = await fbDb.ref('data/' + seg[0] + '/v/' + seg.slice(1).join('/')).once('value');
     var v = s.val();
+    if(!v){ var s2 = await fbDb.ref('data/' + puRef).once('value'); v = s2.val(); }   /* 봉투 없는 옛 형태 대비 */
     if(!v){ toast('pu-erp에서 이 건을 찾을 수 없습니다 (삭제되었을 수 있음)'); return; }
     var KEY_LABEL = { companyName:'고객사', title:'내용', caseType:'사건유형', consultingType:'컨설팅유형',
       fundType:'기금유형', programName:'사업명', status:'상태', closedDate:'종료일', endDate:'예정일', managerMain:'주담당' };
@@ -5000,10 +5003,18 @@ function renderStaffMgr(){ var box=document.getElementById('staffMgrBody'); if(!
 
 /* ===== pu-erp 컨설팅 실적 연동 (data/consultings + data/user_dir, 주담당별) ===== */
 var _puUserMap=null;
+/* pu-erp는 data/{키} = {v:실제값, u:갱신시각} 봉투로 저장하고 자신은 data/{키}/v 로 읽는다.
+   kcareer가 봉투를 안 벗기면 배열 대신 [값, 타임스탬프]를 받아 전부 어긋난다(실사용에서 발견). */
+function _puUnwrap(val){
+  if(typeof KcareerPuSync!=='undefined' && KcareerPuSync.unwrap) return KcareerPuSync.unwrap(val);
+  if(val && typeof val==='object' && !Array.isArray(val) && Object.prototype.hasOwnProperty.call(val,'v')) return val.v;
+  return val;
+}
+
 async function _puLoadUserMap(){
   if(_puUserMap) return _puUserMap;
   var map={};
-  try{ var s=await fbDb.ref('data/user_dir').once('value'); var v=s.val();
+  try{ var s=await fbDb.ref('data/user_dir').once('value'); var v=_puUnwrap(s.val());
     if(v){ var arr=Array.isArray(v)?v:Object.keys(v).map(function(k){return v[k];});
       arr.filter(Boolean).forEach(function(u){ if(u&&u.sid) map[String(u.sid)]=u.name||String(u.sid); }); }
     _puUserMap=map; /* 응답 수신 성공 시에만 캐시 — 실패하면 캐시 안 하고 다음에 재시도 */
@@ -5058,7 +5069,7 @@ async function resolveMe(){
     /* 2순위 — 이메일 규칙(sid@pureun.kr)으로 직원목록 조회. 이름을 얻는 용도로도 쓴다. */
     var acct=null;
     try{
-      var s=await fbDb.ref('data/user_dir').once('value'); var v=s.val();
+      var s=await fbDb.ref('data/user_dir').once('value'); var v=_puUnwrap(s.val());
       var arr=v?(Array.isArray(v)?v:Object.keys(v).map(function(k){return v[k];})):[];
       acct=arr.filter(Boolean).find(function(u){
         if(!u||!u.sid) return false;
@@ -5114,7 +5125,7 @@ async function loadPuPerf(coll,force){
   if(force) box.innerHTML='<div style="font-size:12px;color:var(--text-mute);padding:10px">⏳ pu-erp '+cfg.label+' 불러오는 중...</div>';
   try{
     await _puLoadUserMap();
-    var s=await fbDb.ref('data/'+coll).once('value'); var v=s.val();
+    var s=await fbDb.ref('data/'+coll).once('value'); var v=_puUnwrap(s.val());
     if(!v){ box.innerHTML='<div style="font-size:12px;color:var(--text-mute);padding:10px">pu-erp '+cfg.label+' 데이터가 없습니다</div>'; return; }
     var arr=(Array.isArray(v)?v:Object.keys(v).map(function(k){return v[k];})).filter(Boolean);
     var byMgr={};
@@ -5151,7 +5162,7 @@ async function loadPuConsulting(force){
   if(force) box.innerHTML='<div style="font-size:12px;color:var(--text-mute);padding:10px">⏳ pu-erp 컨설팅 불러오는 중...</div>';
   try{
     await _puLoadUserMap();
-    var s=await fbDb.ref('data/consultings').once('value'); var v=s.val();
+    var s=await fbDb.ref('data/consultings').once('value'); var v=_puUnwrap(s.val());
     if(!v){ box.innerHTML='<div style="font-size:12px;color:var(--text-mute);padding:10px">pu-erp 컨설팅 데이터가 없습니다</div>'; return; }
     var arr=(Array.isArray(v)?v:Object.keys(v).map(function(k){return v[k];})).filter(Boolean);
     var byMgr={};

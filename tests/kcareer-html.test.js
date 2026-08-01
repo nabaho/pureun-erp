@@ -52,6 +52,17 @@ test('폴더 연결 UI는 환경설정이 숨겨진 계정에서도 닿는 곳�
   assert.match(wiccok, /onclick="fsUndoLast\(\)"/);
 });
 
+test('pu-erp data/ 읽기는 모두 {v,u} 봉투를 벗긴다', () => {
+  // pu-erp는 data/{키}={v:값,u:시각}으로 저장한다. 안 벗기면 직원목록·실적이 통째로 어긋난다.
+  ['_puLoadUserMap', 'loadPuPerf', '_puFetchPlan', 'resolveMe'].forEach((fn) => {
+    const m = source.match(new RegExp('function ' + fn + '\\([\\s\\S]*?\\n\\}'));
+    assert.ok(m, fn + ' 함수가 있어야 합니다');
+    if (!/ref\('data\//.test(m[0])) return;                  // data/ 를 안 읽는 함수는 통과
+    assert.match(m[0], /_puUnwrap\(/, fn + '는 봉투를 벗겨야 합니다');
+  });
+  assert.match(source, /function _puUnwrap\(/);
+});
+
 test('권한 판별은 uid_roles를 먼저 본다', () => {
   const src = funcSource('resolveMe');
   const iRoles = src.indexOf("uid_roles/");

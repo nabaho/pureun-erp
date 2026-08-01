@@ -65,6 +65,31 @@ test('mapRecord: 모르는 컬렉션은 null', () => {
   assert.equal(PS.mapRecord('unknown', 'k', {}, {}), null);
 });
 
+test('unwrap: pu-erp의 {v,u} 봉투를 벗긴다', () => {
+  // pu-erp는 data/{키} = {v:실제값, u:타임스탬프} 로 저장하고 자신은 data/{키}/v 로 읽는다.
+  // 봉투를 안 벗기면 컬렉션마다 v·u 두 개가 레코드로 세어진다(4×2=8건 유령 레코드).
+  assert.deepEqual(PS.unwrap({ v: [1, 2], u: 123 }), [1, 2]);
+  assert.deepEqual(PS.unwrap({ v: { a: 1 }, u: 1 }), { a: 1 });
+  assert.equal(PS.unwrap({ v: null, u: 1 }), null);          // 빈 봉투
+  assert.deepEqual(PS.unwrap([1, 2]), [1, 2]);               // 봉투 없으면 그대로
+  assert.deepEqual(PS.unwrap({ k1: { a: 1 } }), { k1: { a: 1 } });
+  assert.equal(PS.unwrap(null), null);
+});
+
+test('buildSyncPlan: 봉투에 싸인 컬렉션도 제대로 읽는다', () => {
+  const closed = { caseType: '부당해고', companyName: 'A사', title: '사건1', closedDate: '2026-01-01', managerMain: '2001' };
+  const collData = {
+    cases: { v: { k1: closed }, u: 1770000000000 },          // pu-erp 실제 형태
+    consultings: { v: {}, u: 1 },
+    funds: null,
+    other_projects: null
+  };
+  const plan = PS.buildSyncPlan(collData, new Set(), UMAP);
+  assert.equal(plan.adds.length, 1);
+  assert.equal(plan.adds[0].rec.puRef, 'cases/k1');
+  assert.equal(plan.skippedOpen, 0, '봉투의 u(타임스탬프)를 레코드로 세면 안 됩니다');
+});
+
 test('buildSyncPlan: 종료 건만, puRef 처음인 것만 들어온다', () => {
   const collData = {
     cases: {
