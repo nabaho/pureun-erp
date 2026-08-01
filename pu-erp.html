@@ -11954,6 +11954,50 @@ function ContractModal(props){
     })
   );
 }
+// ============ 방금 들어온 건 표시 ============
+// 계약에서 이관하면 사건·컨설팅·기금·기타 목록 어딘가에 섞여 들어가 어디로 갔는지 찾기 어렵다.
+// 반대로 복귀하면 계약관리 어딘가로 돌아간다. 양쪽 다 맨 위로 올리고 눈에 띄게 표시한다.
+var ARV_HOURS = 48;                       // 이틀 지나면 표시가 저절로 사라진다
+function arvStamp(from, no){
+  return { arrivedAt:new Date().toISOString(), arrivedFrom:from||'', arrivedNo:no||'' };
+}
+function arvIsNew(x){
+  if(!x || !x.arrivedAt) return false;
+  var t = Date.parse(x.arrivedAt);
+  if(!t) return false;
+  return (Date.now() - t) < ARV_HOURS * 3600 * 1000;
+}
+// 방금 들어온 것부터 위로. 그 안에서는 최근 순, 나머지는 원래 정렬대로.
+function arvSort(a, b, base){
+  var an = arvIsNew(a) ? 1 : 0, bn = arvIsNew(b) ? 1 : 0;
+  if(an !== bn) return bn - an;
+  if(an && bn){ var c = String(b.arrivedAt||'').localeCompare(String(a.arrivedAt||'')); if(c) return c; }
+  return base ? base(a, b) : 0;
+}
+function arvClear(store, id, after){
+  if(dbPatch(store, id, { arrivedAt:null, arrivedFrom:null, arrivedNo:null })){
+    if(typeof after === 'function') after();
+  }
+}
+// 목록에 붙는 표시. ✕ 를 누르면 바로 지워진다(확인했다는 뜻).
+function arvBadge(x, store, onDone){
+  if(!arvIsNew(x)) return null;
+  var back = /관리$|사업$/.test(String(x.arrivedFrom||''));   // 계약관리로 '복귀'한 경우
+  return h('span', { key:'arv',
+    style:{ display:'inline-flex', alignItems:'center', gap:'4px', marginLeft:'6px', verticalAlign:'middle',
+      background: back ? '#fef3c7' : '#dcfce7', color: back ? '#854d0e' : '#166534',
+      border:'1px solid ' + (back ? '#fcd34d' : '#86efac'),
+      borderRadius:'10px', padding:'1px 7px', fontSize:'10px', fontWeight:700, whiteSpace:'nowrap' },
+    title:(x.arrivedFrom||'') + (x.arrivedNo ? ' · ' + x.arrivedNo : '') + '\n✕ 를 누르면 이 표시가 사라집니다' },
+    (back ? '↩ ' : '🆕 ') + (x.arrivedFrom || '') + (back ? '에서 복귀' : '에서 이관'),
+    x.arrivedNo ? h('span', { style:{ fontWeight:500, opacity:.8 } }, '· ' + x.arrivedNo) : null,
+    h('button', { onClick:function(e){ e.stopPropagation(); arvClear(store, x.id, onDone); },
+      title:'확인 — 표시 지우기',
+      style:{ border:'none', background:'transparent', color:'inherit', cursor:'pointer',
+        fontSize:'11px', lineHeight:1, padding:'0 0 0 2px', fontWeight:900 } }, '×')
+  );
+}
+
 // contract.kinds 배열을 돌면서 각 종류별로 데이터 생성
 // 반환: [{type, no, id}, ...] 결과 배열
 function transferContract(contract){
@@ -12084,6 +12128,8 @@ function transferContract(contract){
         sourceContractNo: contract.contractNo,
         note: '계약(' + contract.contractNo + ')에서 이관' + (contract.successFeeType === 'percent' ? ' / 성공보수 ' + (contract.successFee||0) + '%' : '')
       };
+      // 사건관리 목록 맨 위로 올려 어디로 갔는지 바로 보이게
+      Object.assign(newCase, arvStamp('계약', contract.contractNo));
       if(!dbUpsert('cases', newCase)) throw new Error('사건관리 저장 실패');
       results.push({ type:'case', no:caseNo, id:newCase.id });
       return;
@@ -12163,6 +12209,8 @@ function transferContract(contract){
       sourceContractNo: contract.contractNo,
       note: '계약(' + contract.contractNo + ')에서 이관'
     };
+    // 컨설팅·기금·기타 목록 맨 위로
+    Object.assign(item2, arvStamp('계약', contract.contractNo));
     if(kindV === 'fund'){ item2.estDate = contract.signDate; delete item2.startDate; delete item2.endDate; }
     // (제거) 컨설팅 이관 시 업체관리 자동 등록 — 컨설팅 사업장은 컨설팅관리에서만 관리
     if(!dbUpsert(storageMap[kindV], item2)) throw new Error(k.label + ' 저장 실패');
@@ -12243,6 +12291,8 @@ async function returnToContract(storeKey, itemId){
       createdAt: new Date().toISOString(),
       updatedAt: Date.now()
     };
+    // 계약관리 맨 위로 올려 어디서 돌아왔는지 바로 보이게
+    Object.assign(newContract, arvStamp(storeLabel, item.no || item.caseNo || ''));
 
     if(!dbUpsert('contracts', newContract)){ if(typeof showToast==='function') showToast('❌ 계약관리 생성 실패'); return; }
     if(!dbRemove(storeKey, itemId)){
@@ -12444,7 +12494,9 @@ function ContractManagement(){
   // ── Phase 1: 건별 저장 (과거회귀 방지) — 화면 배열을 재사용하지 않고 그 1건만 서버 반영 ──
   function refreshContracts(){
     var fresh = dbGet('contracts', []).slice();
-    fresh.sort(function(a,b){ return (b.signDate||'').localeCompare(a.signDate||''); });
+    // 방금 복귀한 건을 맨 위로 (arvSort) — 나머지는 계약일 최신순 그대로
+    fresh.sort(function(a,b){ return arvSort(a, b, function(x,y){
+      return (y.signDate||'').localeCompare(x.signDate||''); }); });
     setContracts(fresh);
   }
   function lockGuard(c){
@@ -12977,8 +13029,9 @@ function ContractManagement(){
         h('div', { style:{ flex:1 } }),
         h('span', { style:{ fontSize:'10px', color:'#94a3b8', fontFamily:'monospace' } }, c.contractNo)
       ),
-      // 둘째 줄: 의뢰인
-      h('div', { style:{ fontSize:'13.5px', fontWeight:700, color:'#1e293b', marginBottom:'3px' } }, c.companyName),
+      // 둘째 줄: 의뢰인 (+ 방금 복귀한 건 표시)
+      h('div', { style:{ fontSize:'13.5px', fontWeight:700, color:'#1e293b', marginBottom:'3px' } },
+        c.companyName, arvBadge(c, 'contracts', refreshContracts)),
       // 셋째 줄: 담당자 + 합계금액
       h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', fontSize:'11px', color:'#64748b' } },
         h('span', null, '👤 ' + [userName(c.managerMain)].concat((c.managerSubs||[]).map(userName)).filter(Boolean).join(' / ')),
@@ -17427,7 +17480,9 @@ function CaseManagement(props){
   // ── Phase 3: 건별 저장 (과거회귀 방지) — 그 건만 서버 반영 ──
   function refreshCases(){
     var fresh = dbGet('cases', []).slice();
-    fresh.sort(function(a,b){ return (b.receiveDate||'').localeCompare(a.receiveDate||''); });
+    // 방금 이관된 건을 맨 위로 — 나머지는 수임일 최신순 그대로
+    fresh.sort(function(a,b){ return arvSort(a, b, function(x,y){
+      return (y.receiveDate||'').localeCompare(x.receiveDate||''); }); });
     setCases(fresh);
   }
   function caseUpsert(item){ if(!item || !item.id) return false; var ok = dbUpsert('cases', item); if(ok) refreshCases(); else showToast('❌ 저장 실패'); return ok; }
@@ -18149,6 +18204,7 @@ function CaseManagement(props){
                 h('td', null,
                   h('div', { style:{ fontFamily:'monospace', fontWeight:700, fontSize:'12.5px', color:'#2563eb', cursor:'pointer', textDecoration:'underline' },
                     onClick:function(){ setDetailModal(c); }, title:'사건 상세 보기' }, c.caseNo),
+                  arvBadge(c, 'cases', refreshCases),
                   h('div', { style:{ fontSize:'10.5px', color:'#94a3b8', marginTop:'2px' } }, t ? t.name : '')
                 ),
 
@@ -46748,11 +46804,12 @@ function ProjectManagementShared(props){
   // ── Phase 3: 건별 저장 (과거회귀 방지) — 그 건만 서버 반영 ──
   function refreshItems(){
     var fresh = dbGet(props.storageKey, []).slice();
-    fresh.sort(function(a,b){
-      var ad = a.startDate || a.estDate || '';
-      var bd = b.startDate || b.estDate || '';
+    // 방금 이관된 건을 맨 위로 — 나머지는 시작일 최신순 그대로
+    fresh.sort(function(a,b){ return arvSort(a, b, function(x,y){
+      var ad = x.startDate || x.estDate || '';
+      var bd = y.startDate || y.estDate || '';
       return bd.localeCompare(ad);
-    });
+    }); });
     setItems(fresh);
   }
   function itemUpsert(item){ if(!item || !item.id) return false; var ok = dbUpsert(props.storageKey, item); if(ok) refreshItems(); else showToast('❌ 저장 실패'); return ok; }
@@ -47326,7 +47383,8 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                       title:'상세 보기',
                       style:{ fontFamily:'monospace', fontWeight:700, fontSize:'11.5px',
                         color:'#2563eb', cursor:'pointer', textDecoration:'underline' }
-                    }, it.no || '-')
+                    }, it.no || '-'),
+                    arvBadge(it, props.storageKey, refreshItems)
                   ),
                   colVis.type && h('td', null,
                     editingTypeId === it.id
