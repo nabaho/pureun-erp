@@ -2133,6 +2133,7 @@ function openMenu(){
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openDedup()">🧹 중복 정리</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openSimilar()">🔍 유사 항목 검사</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');cleanEmpty()">🧽 빈 명함 정리</button>
+    <button class="sheetbtn" onclick="menuBg.classList.remove('open');openMojibakeCleanup()">🧯 깨진 글자 명함 정리 (인코딩 오류)</button>
     <button class="sheetbtn" onclick="menuBg.classList.remove('open');openTrash()">🗑 휴지통 (삭제 명함 30일 보관)</button>
 
     ${hd('🔗 푸른이알피 연동')}
@@ -2309,6 +2310,14 @@ async function onImportFile(files){
     toast('파일 분석 중…',9000);
     let rows;
     if (/\.vcf$/i.test(f.name)) rows = parseVcf(await f.text());
+    else if (/\.csv$/i.test(f.name) || /csv/i.test(f.type||'')){
+      /* CSV는 UTF-8 텍스트로 직접 읽어야 한글이 안 깨진다 (구글·리멤버 CSV = UTF-8).
+         예전엔 arrayBuffer→XLSX로 읽어 라틴으로 해석되며 'ì¶œ' 처럼 깨졌음 */
+      await needXLSX();
+      let text = await f.text();
+      if (text.charCodeAt(0)===0xFEFF) text = text.slice(1);   /* BOM 제거 */
+      const wb=XLSX.read(text,{type:'string'});
+      rows = mapRows(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''})); }
     else { await needXLSX();
       const wb=XLSX.read(await f.arrayBuffer(),{type:'array'});
       rows = mapRows(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''})); }
@@ -2712,6 +2721,39 @@ function openErpClosedTidy(){
   let n=0;
   toMove.forEach(it=>{ it.group=g.id; it.erpAutoFoldered=1; it.updatedAt=Date.now(); Store.put(it); n++; });
   toast(`✅ ${n}장을 '업체퇴사' 폴더로 정리했습니다`,6000);
+  render();
+}
+
+/* ════════════ 🧹 깨진 글자(인코딩 오류) 명함 정리 → 휴지통 ════════════
+   UTF-8 한글을 라틴으로 잘못 읽으면 'ì¶œ ë°œ'처럼 깨진다. 정상 한글(U+AC00~) 없이
+   연속바이트(U+0080~U+00BF)가 2개 이상이면 깨진 것으로 판정. */
+function _hasMojibake(s){ s=String(s||'');
+  if(/[가-힣]/.test(s)) return false;               /* 정상 한글이 있으면 안 깨진 것 */
+  return (s.match(/[\u0080-\u02FF\u2010-\u2122\u20AC]/g)||[]).length >= 2;   /* 라틴 깨짐 문자 2개+ */
+}
+function itemMojibake(it){
+  return _hasMojibake(it.name)||_hasMojibake(it.company)||_hasMojibake(it.title)
+       ||_hasMojibake(it.dept)||_hasMojibake(it.companyAddr)||_hasMojibake(it.address);
+}
+async function openMojibakeCleanup(){
+  const bad=Object.values(state.items).filter(it=>it&&it.kind==='card'&&itemMojibake(it));
+  if(!bad.length) return toast('깨진 글자 명함이 없습니다 👍');
+  const sample=bad.slice(0,6).map(it=>it.name||it.company||'(빈)').join(', ');
+  if(!confirm(`글자가 깨진(인코딩 오류) 명함 ${bad.length}장을 발견했습니다.\n예: ${sample} …\n\n휴지통으로 보낼까요? (30일간 복구 가능)\n· 잘못된 CSV 가져오기로 생긴 것들입니다.\n· 보낸 뒤 올바르게 다시 가져오면 됩니다.`)) return;
+  toast('정리 중…',9000);
+  if(Store.mode==='firebase'){
+    const now=Date.now();
+    for(let s=0;s<bad.length;s+=200){
+      const chunk=bad.slice(s,s+200), trashUpd={}, itemUpd={};
+      chunk.forEach(it=>{ trashUpd[it.id]={...it,_deletedAt:now,_photo:'',_photo2:''}; itemUpd[it.id]=null; removeIdx(it.id); });
+      try{ await Store.db.ref(DB_ROOT+'/trash').update(trashUpd);
+           await Store.db.ref(DB_ROOT+'/items').update(itemUpd);
+           chunk.forEach(it=>{ Store.delPhoto(it.id); Store.delPhoto(it.id+'_b'); });
+      }catch(e){ console.warn('[mojibake]', e&&e.message); }
+      toast(`정리 중… ${Math.min(s+200,bad.length).toLocaleString()}/${bad.length.toLocaleString()}`,5000);
+    }
+  } else { bad.forEach(it=>Store.del(it.id)); }
+  toast(`✅ 깨진 명함 ${bad.length.toLocaleString()}장을 휴지통으로 보냈습니다 (30일 복구 가능)`,7000);
   render();
 }
 async function mergeSimilar(csv){ await mergeGroup(csv.split(',')); toast('병합 완료'); openSimilar(); }
