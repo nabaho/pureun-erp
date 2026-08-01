@@ -3573,9 +3573,28 @@ function saveCurrentAsView(){
   const hasCond = f.q||f.region||f.erpFilter||(f.group&&f.group!=='all')||(f.owner&&f.owner!=='all')
     ||f.onlyPhone||f.onlyEmail||f.onlyIncomplete||f.onlyPrivate||f.onlyDup
     ||Object.keys(f.colFilter||{}).some(k=>f.colFilter[k]);
-  if(!hasCond && !confirm('지금 화면에 걸린 조건이 없습니다.\n(검색어·폴더·지역·칸별검색 등)\n\n조건 없는 탭(전체 보기)으로 저장할까요?')) return;
+  if(!hasCond && !confirm('지금 화면에 걸린 조건이 없습니다.\n(검색어·지역·칸별검색·정보부족 등)\n\n조건 없는 탭(전체 보기)으로 저장할까요?')) return;
   const dflt = f.q || f.region || f.erpFilter || (f.colFilter&&(f.colFilter.company||f.colFilter.name)) || '';
-  const name=(prompt('탭 이름을 입력하세요 (예: 세무사무실, 천안 자문, 정보부족)', dflt)||'').trim();
+  /* 어디에 · 무슨 조건으로 만들어지는지 이름 묻기 전에 알려준다 */
+  const cond=[]; const c=f.colFilter||{};
+  if(f.q) cond.push(`검색 "${f.q}"`);
+  if(f.region) cond.push('지역 '+f.region);
+  if(f.erpFilter) cond.push('ERP '+f.erpFilter);
+  if(c.company) cond.push(`회사에 "${c.company}"`);
+  if(c.name) cond.push(`이름에 "${c.name}"`);
+  if(c.phone) cond.push(`전화에 "${c.phone}"`);
+  if(c.email) cond.push(`이메일에 "${c.email}"`);
+  if(f.owner&&f.owner!=='all') cond.push('담당 '+f.owner);
+  if(f.onlyPhone) cond.push('전화있음');
+  if(f.onlyEmail) cond.push('이메일있음');
+  if(f.onlyIncomplete) cond.push('정보부족만');
+  if(f.onlyPrivate) cond.push('개인만');
+  if(f.onlyDup) cond.push('중복만');
+  let n=0; try{ n=countMatching(f); }catch(_){}
+  const head = `📁 ${curScopeName()} 에만 보이는 탭을 만듭니다.\n`
+             + `조건: ${cond.length?cond.join(' · '):'없음 (전체)'}\n`
+             + `해당 인원: ${n.toLocaleString()}명\n\n탭 이름을 입력하세요`;
+  const name=(prompt(head, dflt)||'').trim();
   if(!name) return;
   const v={ id:uid(), name, kind:state.tab, scope:(state.group||'all'), order:Date.now(), f };
   Store.putView(v);
@@ -3587,31 +3606,6 @@ function curScopeName(){
   if(!g||g==='all') return state.tab==='biz' ? '전체 사업자등록증' : '전체 명함';
   if(g==='') return '미분류';
   return (state.groups[g]||{}).name || '이 폴더';
-}
-/* ＋ 탭 추가 — 지금 조건으로 만들거나, ERP 유형을 바로 추가 */
-function openAddTabMenu(){
-  const here=curScopeName();
-  const ICON={ '자문':'🏢','급여':'💰','노조':'🤝','기금':'🏦','사무대행':'🗂' };
-  $('menuM').innerHTML=`
-    <div class="mhead"><b>＋ 탭 추가</b><button class="iconbtn" onclick="menuBg.classList.remove('open')">✕</button></div>
-    <p style="font-size:12.5px;color:var(--sub);padding:0 4px 10px;line-height:1.7">
-      여기서 만든 탭은 <b style="color:var(--ink)">${esc(here)}</b>에서만 보입니다.<br>
-      다른 폴더에 필요하면 그 폴더로 가서 따로 만들어 주세요.</p>
-    <button class="sheetbtn" onclick="menuBg.classList.remove('open');saveCurrentAsView()">🔖 지금 화면 조건으로 만들기
-      <span style="margin-left:auto;color:var(--sub);font-size:12px">검색·지역·정보부족 등</span></button>
-    <div style="font-size:11px;font-weight:800;color:#9aa6bd;padding:14px 6px 5px">푸른이알피 유형으로 바로 추가</div>
-    ${ERP_TYPES.map(t=>`<button class="sheetbtn" onclick="menuBg.classList.remove('open');addErpTab('${t}')">${ICON[t]||'🏷'} ${t}</button>`).join('')}`;
-  $('menuBg').classList.add('open');
-}
-function addErpTab(t){
-  const f=viewSnapshot();
-  f.erpFilter=t; f.q=''; f.colFilter={};
-  f.onlyPhone=false; f.onlyEmail=false; f.onlyIncomplete=false; f.onlyPrivate=false; f.onlyDup=false;
-  const dup=Object.values(state.views||{}).find(v=>v&&(v.kind||'card')===state.tab
-    &&(v.scope||'all')===(state.group||'all')&&(v.f||{}).erpFilter===t);
-  if(dup) return toast(`'${t}' 탭이 이미 있습니다`);
-  Store.putView({ id:uid(), name:t, kind:state.tab, scope:(state.group||'all'), order:Date.now(), f });
-  toast(`🔖 '${t}' 탭을 ${curScopeName()}에 추가했습니다`,4000);
 }
 /* 칩의 ⋮ → 버튼 메뉴 (보기·이름변경·조건갱신·삭제) */
 function viewMenu(id){
@@ -3700,7 +3694,7 @@ function renderMyTabsHtml(){
         <b style="margin-left:5px;font-weight:800;${on?'':'color:#5a6885'}">${n.toLocaleString()}</b></span>
       <span style="cursor:pointer;padding:6px 9px 6px 4px;opacity:.75;font-size:13px" onclick="viewMenu('${v.id}')" title="이름변경 · 조건갱신 · 삭제">⋮</span></span>`;
   }).join('');
-  h+=`<button onclick="openAddTabMenu()" title="이 폴더에만 보이는 탭을 만듭니다" style="border:1.5px dashed #c3d0e6;background:#fff;color:#5a6885;border-radius:18px;padding:6px 13px;font-weight:700;font-size:12.5px;cursor:pointer">＋ 탭 추가</button>`;
+  h+=`<button onclick="saveCurrentAsView()" title="지금 화면의 검색·필터 조건을 이 폴더 전용 탭으로 저장합니다" style="border:1.5px dashed #c3d0e6;background:#fff;color:#5a6885;border-radius:18px;padding:6px 13px;font-weight:700;font-size:12.5px;cursor:pointer">＋ 탭 추가</button>`;
   return h;
 }
 
