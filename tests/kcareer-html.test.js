@@ -264,6 +264,39 @@ test('원본 없는 항목만 필터와 중복관리 표시가 fs 레코드를 �
   assert.match(dup, /hasOriginal\(r\)/);
 });
 
+test('동기화 모듈을 외부 파일로 로드한다', () => {
+  assert.match(source, /<script src="js\/kcareer-pusync\.js"><\/script>/);
+});
+
+test('puSyncCommit은 스토어별 단일 쓰기와 꼬리표를 지킨다', () => {
+  const src = funcSource('puSyncCommit');
+  assert.match(src, /src:\s*'pu'/);
+  assert.match(src, /puRef/);
+  assert.match(src, /syncId/);
+  // 레코드 반복문 안에서 set() 금지 — 저장은 마지막에 스토어 목록을 돌며 한 번씩
+  const loop = src.slice(src.indexOf('plan.adds.forEach'), src.indexOf('PU_SYNC_STORES.forEach'));
+  assert.ok(loop.length > 0, 'adds 반복문과 저장 루프가 있어야 합니다');
+  assert.ok(!/\bset\(/.test(loop), 'adds 반복문 안에서 set()을 부르면 안 됩니다');
+});
+
+test('puUndoSync는 그 동기화가 만든 레코드만 지운다 (배제된 것 포함)', () => {
+  const store = { case: [], consult: [], fund: [], etc: [] };
+  const ctx = {
+    get: (k) => store[k].slice(),
+    set: (k, v) => { store[k] = v; },
+    toast: () => {}, renderCareer: () => {}, CAREER_CFG: {},
+    PU_SYNC_STORES: ['case', 'consult', 'fund', 'etc']
+  };
+  store.case = [
+    { id: 'CS0001', syncId: 'PS1' },
+    { id: 'CS0002', syncId: 'PS1', excluded: true },   // 배제됐어도 그 동기화 것이면 삭제
+    { id: 'CS0003', syncId: 'PS2' },
+    { id: 'CS0004' }                                    // 수동 등록 → 보존
+  ];
+  vm.runInNewContext(funcSource('puUndoSync') + '\npuUndoSync("PS1");', ctx);
+  assert.deepEqual(store.case.map((r) => r.id), ['CS0003', 'CS0004']);
+});
+
 test('fsUndoScan은 scanId가 일치하는 레코드만 지운다', () => {
   const store = { wiccok: [], cert: [], certdoc: [], submission: [] };
   const ctx = {

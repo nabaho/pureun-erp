@@ -391,6 +391,7 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
 <script src="js/kcareer-scan.js"></script>
+<script src="js/kcareer-pusync.js"></script>
 </head>
 <body>
 <div id="pu-boot-splash" style="position:fixed;inset:0;z-index:2147483000;background:#eef1f7;display:flex;align-items:center;justify-content:center">
@@ -941,6 +942,8 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
           <div class="tb-spacer"></div>
           <span class="cnt" style="font-size:11px;color:var(--text-mute)"></span>
           <button class="btn" type="button" onclick="loadPuPerf('cases',true)">🔗 pu-erp 사건 불러오기</button>
+          <button class="btn" type="button" onclick="puSyncNow()">🔄 실적 동기화</button>
+          <button class="btn" type="button" onclick="puUndoLastSync()">↩ 동기화 되돌리기</button>
           <button class="btn" data-act="csv">📤 CSV</button>
           <button class="btn primary" data-act="new">+ 새 사건</button>
         </div>
@@ -956,6 +959,8 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
           <div class="tb-spacer"></div>
           <span class="cnt" style="font-size:11px;color:var(--text-mute)"></span>
           <button class="btn" type="button" onclick="loadPuConsulting(true)">🔗 pu-erp 컨설팅 불러오기</button>
+          <button class="btn" type="button" onclick="puSyncNow()">🔄 실적 동기화</button>
+          <button class="btn" type="button" onclick="puUndoLastSync()">↩ 동기화 되돌리기</button>
           <button class="btn" data-act="csv">📤 CSV</button>
           <button class="btn primary" data-act="new">+ 새 컨설팅</button>
         </div>
@@ -970,6 +975,8 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
           <div class="tb-spacer"></div>
           <span class="cnt" style="font-size:11px;color:var(--text-mute)"></span>
           <button class="btn" type="button" onclick="loadPuPerf('funds',true)">🔗 pu-erp 기금 불러오기</button>
+          <button class="btn" type="button" onclick="puSyncNow()">🔄 실적 동기화</button>
+          <button class="btn" type="button" onclick="puUndoLastSync()">↩ 동기화 되돌리기</button>
           <button class="btn" data-act="csv">📤 CSV</button>
           <button class="btn primary" data-act="new">+ 새 기금</button>
         </div>
@@ -996,6 +1003,8 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
           <div class="tb-spacer"></div>
           <span class="cnt" style="font-size:11px;color:var(--text-mute)"></span>
           <button class="btn" type="button" onclick="loadPuPerf('other_projects',true)">🔗 pu-erp 기타사업 불러오기</button>
+          <button class="btn" type="button" onclick="puSyncNow()">🔄 실적 동기화</button>
+          <button class="btn" type="button" onclick="puUndoLastSync()">↩ 동기화 되돌리기</button>
           <button class="btn" data-act="csv">📤 CSV</button>
           <button class="btn primary" data-act="new">+ 새 기타</button>
         </div>
@@ -1222,6 +1231,13 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
     <div class="modal-h">📥 이 건에 낸 서류</div>
     <div class="modal-b" id="subBody"></div>
     <div class="modal-foot"><button class="btn" onclick="closeSub()">닫기</button></div>
+  </div>
+</div>
+<div class="modal-ov" id="modalPuSync">
+  <div class="modal" style="width:720px">
+    <div class="modal-h">🔄 pu-erp 실적 동기화 — 아직 저장되지 않았습니다</div>
+    <div class="modal-b" id="puSyncBody"></div>
+    <div class="modal-foot"><button class="btn" onclick="closePuSync()">닫기 (저장 안 함)</button><button class="btn primary" onclick="puSyncCommit()">등록</button></div>
   </div>
 </div>
 <div class="modal-ov" id="modalResume">
@@ -1906,6 +1922,112 @@ function fsUndoLast(){
   var sid = fsLastScanId();
   if(!sid){ toast('되돌릴 스캔 기록이 없습니다'); return; }
   if(confirm('이번 스캔으로 등록된 것을 모두 지웁니다.\n(' + sid + ')\n\n계속할까요?')) fsUndoScan(sid);
+}
+
+/* ===== pu-erp 실적 동기화 =====
+   pu-erp의 종료 건을 실적 스토어로 가져온다. 추가만 하고 덮어쓰지 않는다(설계서 §6). */
+var PU_SYNC_STORES = ['case','consult','fund','etc'];
+var _puSyncCtx = null;
+
+function _puKnownRefs(){
+  var s = new Set();
+  PU_SYNC_STORES.forEach(function(k){ get(k).forEach(function(r){ if(r && r.puRef) s.add(r.puRef); }); });
+  return s;
+}
+
+async function _puFetchPlan(){
+  if(typeof fbDb === 'undefined' || !fbDb) return null;
+  var userMap = await _puLoadUserMap();
+  var colls = ['cases','consultings','funds','other_projects'], collData = {};
+  for(var i = 0; i < colls.length; i++){
+    var s = await fbDb.ref('data/' + colls[i]).once('value');
+    collData[colls[i]] = s.val();
+  }
+  var plan = KcareerPuSync.buildSyncPlan(collData, _puKnownRefs(), userMap || {});
+  return { syncId: 'PS' + new Date().toISOString().slice(0,10).replace(/-/g,'') + '-' + String(Date.now()).slice(-4), plan: plan };
+}
+
+async function puSyncNow(){
+  if(typeof fbDb === 'undefined' || !fbDb){ toast('클라우드 로그인 후 사용하세요'); return; }
+  toast('⏳ pu-erp 실적 읽는 중…');
+  try{
+    var ctx = await _puFetchPlan();
+    if(!ctx) return;
+    _puSyncCtx = ctx;
+    renderPuSyncPreview();
+    $('modalPuSync').classList.add('open');
+  }catch(e){ console.warn('puSyncNow', e); toast('동기화 실패 — 로그인·권한을 확인하세요'); }
+}
+
+function renderPuSyncPreview(){
+  if(!_puSyncCtx) return;
+  var p = _puSyncCtx.plan;
+  var LABEL = { case:'사건', consult:'컨설팅', fund:'기금', etc:'기타' };
+  var h = '<div style="font-size:12px;background:#F3F8F6;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:10px">'
+    + '새로 들어올 실적 <b>' + p.adds.length + '건</b>'
+    + ' <span style="color:var(--text-mute)">(진행 중이라 제외 ' + p.skippedOpen + ' · 이미 있어 건너뜀 ' + p.skippedKnown + ')</span>'
+    + '<div style="color:var(--text-mute);margin-top:4px">가져온 뒤 pu-erp에서 내용이 바뀌어도 여기 실적은 바뀌지 않습니다. 불필요한 건은 목록에서 배제하세요.</div></div>'
+    + '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">'
+    + PU_SYNC_STORES.map(function(k){ return '<div class="card" style="flex:1;min-width:80px;text-align:center"><div style="font-size:20px;font-weight:700;color:var(--navy)">' + p.counts[k] + '</div><div style="font-size:11px;color:var(--text-mute)">' + LABEL[k] + '</div></div>'; }).join('')
+    + '</div>'
+    + p.adds.slice(0,60).map(function(a){
+        return '<div style="font-size:12px;padding:4px 0;border-bottom:1px solid var(--border-soft)">'
+          + '<span class="tag navy">' + escapeHtml(LABEL[a.store]) + '</span> '
+          + escapeHtml(a.rec.year || '-') + ' · <strong>' + escapeHtml(a.rec.org || '-') + '</strong> · '
+          + escapeHtml(a.rec.project || a.rec.type || '') + ' <span style="color:var(--text-mute)">(' + escapeHtml(a.rec.main || '-') + ')</span></div>';
+      }).join('')
+    + (p.adds.length > 60 ? '<div style="font-size:11px;color:var(--text-mute);padding:4px 0">…외 ' + (p.adds.length - 60) + '건</div>' : '');
+  $('puSyncBody').innerHTML = h;
+}
+
+function closePuSync(){ $('modalPuSync').classList.remove('open'); _puSyncCtx = null; }
+
+function puSyncCommit(){
+  if(!_puSyncCtx){ toast('동기화 결과가 없습니다'); return; }
+  var plan = _puSyncCtx.plan, syncId = _puSyncCtx.syncId, n = 0;
+  /* 스토어별로 한 번만 읽고 한 번만 쓴다. buf는 리터럴로 초기화한다 —
+     스토어 목록을 도는 반복문은 이 함수에서 맨 끝의 저장 한 곳뿐이어야 한다(정적 테스트가 지킴). */
+  var buf = { case: get('case'), consult: get('consult'), fund: get('fund'), etc: get('etc') };
+  var PREFIX = { case:'CS', consult:'CN', fund:'FD', etc:'ET' };
+  function bufId(store){
+    var k = 1, mk = function(){ return PREFIX[store] + String(k).padStart(4,'0'); };
+    while(buf[store].some(function(x){ return x.id === mk(); })) k++;
+    return mk();
+  }
+  var known = _puKnownRefs();          /* 등록 이중클릭·자동 동기화와의 경합 대비 재확인 */
+  plan.adds.forEach(function(a){
+    if(known.has(a.rec.puRef)) return;
+    known.add(a.rec.puRef);
+    var rec = Object.assign({}, a.rec, {
+      id: bufId(a.store), src: 'pu', syncId: syncId, excluded: false,
+      savedAt: new Date().toISOString()
+    });
+    buf[a.store].unshift(rec); n++;
+  });
+  PU_SYNC_STORES.forEach(function(k){ set(k, buf[k]); });
+  LS.set(NS + 'pu_sync_last', new Date().toISOString());
+  LS.set(NS + 'pu_sync_last_id', syncId);
+  closePuSync();
+  PU_SYNC_STORES.forEach(function(k){ try{ if(CAREER_CFG[k]) renderCareer(k); }catch(e){} });
+  toast('✅ 실적 ' + n + '건 들어옴 — 불필요한 건은 행의 배제 버튼으로 정리하세요');
+}
+
+/* ===== 동기화 되돌리기 — 그 동기화가 만든 레코드만(배제된 것 포함) 삭제 ===== */
+function puUndoSync(syncId){
+  if(!syncId) return;
+  var total = 0;
+  PU_SYNC_STORES.forEach(function(k){
+    var db = get(k), left = db.filter(function(r){ return r.syncId !== syncId; });
+    total += db.length - left.length;
+    if(left.length !== db.length) set(k, left);
+  });
+  toast(total + '건을 되돌렸습니다 — 다음 동기화 때 다시 들어옵니다');
+  PU_SYNC_STORES.forEach(function(k){ try{ if(CAREER_CFG[k]) renderCareer(k); }catch(e){} });
+}
+function puUndoLastSync(){
+  var sid = LS.get(NS + 'pu_sync_last_id') || '';
+  if(!sid){ toast('되돌릴 동기화 기록이 없습니다'); return; }
+  if(confirm('이번 동기화로 들어온 실적을 모두 지웁니다.\n(' + sid + ')\n배제해 둔 것도 함께 지워지고, 다음 동기화 때 다시 들어옵니다.\n\n계속할까요?')) puUndoSync(sid);
 }
 
 /* localStorage → IDB 마이그레이션 (최초 1회) */
