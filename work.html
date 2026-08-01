@@ -166,6 +166,25 @@
   .last{font-size:12px;color:var(--sub)}
   .last .ago{font-size:10.5px;color:var(--faint)}
   td.wkcell{background:#f8fbff;min-width:220px}
+  /* 주간 칸을 요일로 쪼갠 모습 — 머리행과 본문이 같은 격자를 써야 줄이 맞는다 */
+  th.wkhd{padding:6px 6px 4px}
+  td.wkcell.sp{padding:3px 6px;min-width:340px}
+  .wkg{display:grid;gap:4px}
+  .wkh{font-size:10px;font-weight:800;color:var(--faint);text-align:center;padding:2px 0;
+    border-bottom:1px solid var(--line);letter-spacing:.02em}
+  .wkh.td{color:var(--acc);border-bottom-color:var(--acc)}
+  .wkc{min-width:0;border-radius:6px;padding:1px}
+  .wkc.td{background:#eef5ff}
+  .wkc .wklog{font-size:11px;line-height:1.4;padding:1px 3px;word-break:break-all}
+  .wkc .wkin{font-size:11.5px;padding:3px 5px;border-color:transparent;background:transparent;margin-top:1px}
+  .wkc .wkin:hover{border-color:#dbe4f3;background:#fff}
+  .wkc .wkin:focus{border-color:var(--acc);background:#fff;outline:none}
+  /* 그 업무의 그 날 표시 — 달력에서 보던 것을 줄 안으로 옮겨 온 것 */
+  .wkm{display:block;font-size:9.5px;font-weight:800;border-radius:4px;padding:0 4px;margin-bottom:1px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wkm.dg{background:#fee2e2;color:#b91c1c}
+  .wkm.pu{background:#ede9fe;color:#5b21b6}
+  .wkm.tl{background:#ccfbf1;color:#0f766e}
   .wklog{font-size:12px;color:#334155;padding:1px 0}
   .wklog .d{color:var(--faint);font-size:10.5px;margin-right:4px;font-variant-numeric:tabular-nums}
   .wkin{width:100%;border:1px solid #c9d6f2;border-radius:6px;padding:5px 8px;font-size:12.5px;background:#fff;margin-top:2px}
@@ -799,7 +818,8 @@ var KEYS=[
     ['E','이번 주 기록 칸 첫 줄로'],
     ['Enter','기록 저장하고 아랫줄로'],
     ['Shift+Enter','기록 저장하고 윗줄로'],
-    ['↑ ↓','기록 칸 사이 이동 (저장 안 함)']
+    ['↑ ↓','같은 요일을 지키며 윗줄·아랫줄로 (저장 안 함)'],
+    ['← →','요일 옮기기 (빈 칸에서만)']
   ]],
   ['찾기·만들기',[
     ['Ctrl+K','전체 검색 (기록·지식까지)'],
@@ -888,18 +908,34 @@ function _kNum(e){
   if(/^Numpad[0-9]$/.test(e.code||'')) return +e.code.slice(6);
   return /^[0-9]$/.test(e.key)?+e.key:-1;
 }
+function wkPut(el){
+  if(!el) return false;
+  el.focus(); try{ el.setSelectionRange(el.value.length,el.value.length); }catch(e){}
+  return true;
+}
 // 주간 기록 칸 — n번째 칸으로 (없으면 아무것도 안 한다)
 function wkFocus(n){
   var all=[].slice.call(document.querySelectorAll('.wkin'));
   if(!all.length) return false;
-  var el=all[Math.max(0,Math.min(n,all.length-1))];
-  el.focus(); try{ el.setSelectionRange(el.value.length,el.value.length); }catch(e){}
-  return true;
+  return wkPut(all[Math.max(0,Math.min(n,all.length-1))]);
 }
+// 위아래 = 같은 요일로 줄 옮기기 (요일별로 쪼개져 있을 때)
 function wkMove(inp,d){
-  var all=[].slice.call(document.querySelectorAll('.wkin'));
-  var i=all.indexOf(inp); if(i<0) return false;
-  return wkFocus(i+d);
+  var c=inp.getAttribute('data-c');
+  if(c===null){                                   // 한 칸 보기 — 예전처럼 차례대로
+    var all=[].slice.call(document.querySelectorAll('.wkin'));
+    var i=all.indexOf(inp); return i<0?false:wkFocus(i+d);
+  }
+  var col=[].slice.call(document.querySelectorAll('.wkin[data-c="'+c+'"]'));
+  var j=col.indexOf(inp); if(j<0) return false;
+  return wkPut(col[Math.max(0,Math.min(j+d,col.length-1))]);
+}
+// 좌우 = 같은 줄에서 요일 옮기기
+function wkSide(inp,d){
+  var r=inp.getAttribute('data-r'); if(r===null) return false;
+  var row=[].slice.call(document.querySelectorAll('.wkin[data-r="'+r+'"]'));
+  var j=row.indexOf(inp); if(j<0) return false;
+  return wkPut(row[Math.max(0,Math.min(j+d,row.length-1))]);
 }
 
 /* ── 라우팅 ── */
@@ -1505,11 +1541,20 @@ function renderMy(){
     +fh('pt','min-width:140px')
     +fh('st','width:74px')
     +'<th style="min-width:130px">최근 기록</th>'
-    +'<th style="color:var(--acc2)">'+(isCurWeek()?'이번 주':'그 주')+' <span style="font-weight:400;text-transform:none">'+esc(weekLabel(S.week).split('·')[1]||'')+' — 칸에 바로 입력, Enter 저장</span></th>'
+    +'<th class="wkhd" style="color:var(--acc2)">'
+    +'<div class="row" style="gap:6px;margin-bottom:'+(wkSplitOn()?'4px':'0')+'">'
+    +'<span>'+(isCurWeek()?'이번 주':'그 주')+'</span>'
+    +'<span style="font-weight:400;text-transform:none;color:var(--faint)">'+esc(weekLabel(S.week).split('·')[1]||'')+'</span>'
+    +'<span class="chipbtn'+(wkSplitOn()?' on':'')+'" onclick="wkSplitToggle()" '
+    +'title="'+(wkSplitOn()?'요일을 합쳐 한 칸으로 봅니다':'요일별로 나눠 그 날짜 칸에 바로 적습니다')+'">'
+    +(wkSplitOn()?'요일별':'한 칸')+'</span>'
+    +'</div>'
+    +(wkSplitOn()?wkHeadHTML():'<span style="font-weight:400;text-transform:none;color:var(--faint)">칸에 바로 입력, Enter 저장</span>')
+    +'</th>'
     +fh('due','width:110px')
     +'<th style="width:58px;text-align:center">종료</th></tr></thead><tbody>';
   if(!list.length) h+='<tr><td colspan="9" class="moremark">조건에 맞는 업무가 없습니다. 열 이름을 눌러 조건을 바꿔 보세요.</td></tr>';
-  list.forEach(function(it,i){ h+=rowHTML(it,i+1); });
+  list.forEach(function(it,i){ h+=rowHTML(it,i+1,i); });
   h+='</tbody></table></div>';
   // 몇 건을 보고 있는지는 표 아래 한 줄로 (팀 전체와 같은 자리)
   h+='<div class="muted" style="font-size:12px;margin-top:8px">'
@@ -1658,7 +1703,7 @@ function fPopPos(){
 }
 function setWeek(mon){ S.week=mon||curMonday(); S.f=null; watchWeek(); closeCal(); route(); }
 function shiftWeek(n){ setWeek(addDays(S.week,n*7)); }
-function rowHTML(it,no){
+function rowHTML(it,no,rowIdx){
   var logs=wkLogsOf(it._id);
   // 공동 작업이 보이도록, 내가 아닌 사람이 쓴 기록에는 작성자를 붙인다
   var logHtml=logs.map(function(l){
@@ -1686,30 +1731,114 @@ function rowHTML(it,no){
     +stepChip(it._id)+peFlag(it)+'</td>'
     +'<td>'+stChip(it.status||'진행중',it._id)+'</td>'
     +'<td>'+lastHtml+'</td>'
-    +'<td class="wkcell">'+logHtml
-    +'<input class="wkin" data-id="'+it._id+'" placeholder="'+(isCurWeek()?'이번 주 기록…':'그 주 기록 보완…')+'" onkeydown="wkKey(event,this)">'
+    +'<td class="wkcell'+(wkSplitOn()?' sp':'')+'">'
+    +(wkSplitOn()?wkCellHTML(it,logs,rowIdx||0)
+      :logHtml+'<input class="wkin" data-id="'+esc(it._id)+'" placeholder="'
+        +(isCurWeek()?'이번 주 기록…':'그 주 기록 보완…')+'" onkeydown="wkKey(event,this)">')
     +'</td>'
     +'<td>'+nx+'</td>'
     +'<td style="text-align:center"><button class="endbtn" onclick="event.stopPropagation();completeItem(\''+escJ(it._id)+'\')" title="이 업무를 끝내고 종료 화면으로 옮깁니다'+(peLinked(it)?' (푸른이알피 종료 연동)':'')+'">종료'+(peLinked(it)?'<span class="lk">🔗</span>':'')+'</button></td>'
     +'</tr>';
 }
 function wkKey(e,inp){
+  var day=inp.getAttribute('data-d')||'';
   // ↑↓는 저장하지 않고 칸만 옮긴다 — 적다 만 줄을 두고 위아래를 훑을 수 있어야 한다
   if(e.key==='ArrowDown'||e.key==='ArrowUp'){ e.preventDefault(); wkMove(inp,e.key==='ArrowDown'?1:-1); return; }
+  // ←→는 요일을 옮긴다. 글자가 있을 때는 글자 안에서 커서를 옮겨야 하므로 빈 칸에서만.
+  if((e.key==='ArrowLeft'||e.key==='ArrowRight')&&!inp.value){
+    e.preventDefault(); wkSide(inp,e.key==='ArrowRight'?1:-1); return; }
   if(e.key!=='Enter')return;
   e.preventDefault();
   var step=e.shiftKey?-1:1;                                     // Shift+Enter는 윗줄로
   var id=inp.getAttribute('data-id'); var txt=inp.value;
   if(!txt.trim()){ wkMove(inp,step); return; }                  // 빈 칸에서 Enter = 그냥 넘어가기
-  var dateStr=isCurWeek()?todayStr():ymd(addDays(S.week,4));   // 과거 주 보완은 그 주 금요일 날짜로
+  // 요일 칸에 적었으면 그 날짜로. 한 칸 보기는 오늘(지난 주는 그 주 금요일)로.
+  var dateStr=day||(isCurWeek()?todayStr():ymd(addDays(S.week,4)));
+  var r=inp.getAttribute('data-r'), c=inp.getAttribute('data-c');
   inp.value='';
   addLog(id,txt,dateStr).then(function(ok){ if(!ok){inp.value=txt;return;}
-    // 다음 행 입력으로 이동 (엑셀 Enter↓)
+    // 다음 행 같은 요일로 (엑셀 Enter↓)
     var all=[].slice.call(document.querySelectorAll('.wkin'));
     var i=all.indexOf(inp);
     route();
-    setTimeout(function(){ wkFocus(i+step); },50);
+    setTimeout(function(){
+      if(r===null||c===null){ wkFocus(i+step); return; }
+      var col=[].slice.call(document.querySelectorAll('.wkin[data-c="'+c+'"]'));
+      var j=-1;
+      for(var k2=0;k2<col.length;k2++) if(col[k2].getAttribute('data-r')===r){ j=k2; break; }
+      wkPut(col[Math.max(0,Math.min((j<0?0:j)+step,col.length-1))]);
+    },50);
   });
+}
+/* ── 주간 칸을 요일로 쪼개기 ────────────────────────────────────────
+   달력을 따로 두면 "달력에서 날짜 확인 → 표에서 그 줄 찾기"로 눈이 오간다.
+   달력을 표 안으로 들여와, 그 업무 줄에서 기한·할 일이 어느 요일인지 보고
+   그 요일 칸에 그대로 적는다. 기록은 원래부터 날짜별로 저장돼 있어(d)
+   자료를 바꿀 필요가 없다. [한 칸] 버튼으로 예전 방식으로 돌아갈 수 있다. */
+var WKSPLIT_KEY='work_wk_split';
+function wkSplitOn(){
+  if(S.wkSplit===undefined){
+    var v=null; try{ v=localStorage.getItem(WKSPLIT_KEY); }catch(e){}
+    S.wkSplit=(v!=='0');                                        // 처음에는 요일별로 본다
+  }
+  return !!S.wkSplit;
+}
+function wkSplitToggle(){
+  S.wkSplit=!wkSplitOn();
+  try{ localStorage.setItem(WKSPLIT_KEY,S.wkSplit?'1':'0'); }catch(e){}
+  renderMy();
+}
+// 보여줄 요일 — 월~금. 토·일에 적힌 기록이 하나라도 있으면 그 두 칸도 함께
+// 내보인다(안 그러면 주말에 적은 것이 사라진 것처럼 보인다).
+function wkDays(){
+  var d=[],i;
+  for(i=0;i<5;i++) d.push(ymd(addDays(S.week,i)));
+  var sat=ymd(addDays(S.week,5)), sun=ymd(addDays(S.week,6)), we=false;
+  var c=wkCache[weekKeyOf(S.week)]||{};
+  Object.keys(c).forEach(function(iid){
+    var m=c[iid]||{};
+    Object.keys(m).forEach(function(lid){ var dd=m[lid]&&m[lid].d; if(dd===sat||dd===sun) we=true; });
+  });
+  if(we){ d.push(sat); d.push(sun); }
+  return d;
+}
+function _cut(s,n){ s=String(s||''); return s.length>n?s.slice(0,n)+'…':s; }
+// 그 업무의 그 날 표시 — 달력에서 보던 것을 그 줄에 그대로 옮겨 온다
+function wkMarks(it,d){
+  var h='';
+  if(it.due===d) h+='<span class="wkm dg" title="업무 기한">📅 기한</span>';
+  if(it.next&&it.next.date===d)
+    h+='<span class="wkm pu" title="다음 할 일 — '+esc(it.next.text||'')+'">📌 '+esc(_cut(it.next.text||'할 일',8))+'</span>';
+  var st=stepsOf(it._id).filter(function(s){ return !s.done&&s.due===d; });
+  if(st.length) h+='<span class="wkm tl" title="진행 단계 — '+esc(st.map(function(s){return s.t;}).join(', '))
+    +'">🔖 '+esc(_cut(st[0].t,8))+(st.length>1?' +'+(st.length-1):'')+'</span>';
+  return h;
+}
+function wkHeadHTML(){
+  var days=wkDays(), today=todayStr();
+  return '<div class="wkg" style="grid-template-columns:repeat('+days.length+',1fr)">'
+    +days.map(function(d){
+        var dt=new Date(d+'T00:00:00');
+        return '<div class="wkh'+(d===today?' td':'')+'">'+WDS[(dt.getDay()+6)%7]+' '+dt.getDate()+'</div>';
+      }).join('')+'</div>';
+}
+function wkCellHTML(it,logs,rowIdx){
+  var days=wkDays(), today=todayStr(), byd={};
+  logs.forEach(function(l){ (byd[l.d]=byd[l.d]||[]).push(l); });
+  return '<div class="wkg" style="grid-template-columns:repeat('+days.length+',1fr)">'
+    +days.map(function(d,ci){
+        var ls=byd[d]||[], mk=wkMarks(it,d);
+        return '<div class="wkc'+(d===today?' td':'')+'">'+mk
+          +ls.map(function(l){
+              return '<div class="wklog">'+esc(l.t)
+                +(l.byName&&l.byName!==(S.me&&S.me.name)?' <span class="by">'+esc(l.byName)+'</span>':'')
+                +(l.ed_at?' <span class="ed" title="'+esc((l.ed_by||'')+' '+String(l.ed_at).slice(0,10)+' 수정')+'">(수정)</span>':'')
+                +(l.k==='ho'?' 🔄':'')+logBtns(it._id,l)+'</div>';
+            }).join('')
+          +'<input class="wkin" data-id="'+esc(it._id)+'" data-d="'+d+'" data-r="'+rowIdx+'" data-c="'+ci+'" '
+          +'onkeydown="wkKey(event,this)">'
+          +'</div>';
+      }).join('')+'</div>';
 }
 function cycleStatus(id){
   var it=items[id]; if(!it)return;
