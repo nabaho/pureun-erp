@@ -265,6 +265,16 @@ table.daejo .rreason{color:var(--sub);font-size:11px}
 .dchip .dc-n{font-size:10.5px;color:var(--mute);white-space:nowrap}
 /* 전체 보기 팝업 — 상태 필터 + 한 사업장 한 줄 */
 .dmfilt{display:flex;gap:5px;flex-wrap:wrap;margin:0 0 10px}
+/* ── 조문 검색 결과 ── */
+.artrow{border:1px solid var(--line);border-radius:9px;padding:8px 11px;margin-bottom:6px;cursor:pointer;background:#fff}
+.artrow:hover{border-color:#c7d2e8;background:#fbfdff}
+.ar-head{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:3px}
+.ar-site{font-size:12.5px;font-weight:700;color:var(--ink)}
+.ar-lab{font-size:12px;color:var(--accent);font-weight:600}
+.ar-date{font-size:11px;color:var(--mute);margin-left:auto}
+.ar-snip{font-size:12px;color:var(--sub);line-height:1.65}
+.ar-snip mark{background:#fde68a;padding:0 1px;border-radius:2px}
+.ar-full{font-size:12px;color:#334155;line-height:1.75;white-space:pre-wrap;margin-top:7px;padding-top:7px;border-top:1px dashed var(--line)}
 .dmf{font-size:11px;padding:3px 10px;border-radius:20px;border:1px solid #cdd6e6;background:#fff;color:var(--sub);cursor:pointer;font-family:inherit}
 .dmf:hover{background:#eef2ff}
 .dmf.on{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -415,6 +425,7 @@ table.daejo td.dj2{padding:0}
   <span class="spacer"></span>
   <button class="hbtn" id="open-std" title="고용노동부 표준취업규칙 — 연도별 보관·사업장 규정과 비교">📘 표준규칙</button>
   <button class="hbtn" id="open-arch">📁 보관함 <span id="arch-cnt"></span></button>
+  <button class="hbtn" id="open-arts" title="보관된 모든 사업장 취업규칙을 조문 단위로 찾아 나란히 비교합니다">🔎 조문 검색</button>
   <span class="logoutTimer" title="무활동 시 자동 로그아웃까지 남은 시간 — 화면을 조작하면 다시 60분" style="display:none;align-items:center;gap:4px;font-size:12px;font-weight:700;color:var(--accent);background:#eef4ff;border:1px solid #c7d2e8;border-radius:20px;padding:3px 10px;margin-right:2px"></span>
   <span class="user" id="who">로그인 확인 중…</span>
   <a class="hbtn" href="enter.html">← 포털로</a>
@@ -740,6 +751,20 @@ table.daejo td.dj2{padding:0}
     <div class="empty" id="arch-empty" style="display:none">보관된 규정이 없습니다.</div>
   </div>
   <div class="foot"><button class="btn ghost" data-close>닫기</button></div>
+</div></div>
+
+<!-- 조문 검색 — 보관된 모든 사업장 취업규칙을 조문 단위로 찾아 나란히 비교 -->
+<div class="overlay" id="ov-arts"><div class="modal" style="max-width:900px">
+  <h2>🔎 조문 검색 <span id="arts-sub" style="font-size:12px;color:var(--mute);font-weight:400"></span><span class="x" data-close>×</span></h2>
+  <div class="body" style="max-height:70vh">
+    <input class="arch-search" id="arts-q" placeholder="조문 내용·제목으로 검색 (예: 연차, 사용촉진, 수습기간, 정년, 경조)">
+    <div id="arts-prog" style="font-size:11.5px;color:var(--mute);margin:-6px 0 10px"></div>
+    <div id="arts-list"></div>
+  </div>
+  <div class="foot">
+    <span style="margin-right:auto;font-size:11.5px;color:var(--mute)">조문 검색은 브라우저 안에서만 이뤄지며 원문을 외부로 전송하지 않습니다.</span>
+    <button class="btn ghost" data-close>닫기</button>
+  </div>
 </div></div>
 
 <script>
@@ -4569,6 +4594,102 @@ function renderArch(q){
 }
 $("open-arch").addEventListener("click",()=>{renderArch("");$("ov-arch").classList.add("on");});
 $("arch-q").addEventListener("input",e=>renderArch(e.target.value));
+
+/* ══════ 조문 검색 — 보관함 전체를 조문 단위로 찾아 비교 ══════
+   보관함 한 칸 검색(dashMatch)은 원문을 통짜 문자열로 훑어 '사업장 이름'만 알려주고,
+   원본이 이 브라우저에 남아 있는 기기에서만 본문이 검색됐다. 여기서는
+     ① 원문을 parseArticles()로 조문 단위로 쪼개 어느 조 · 어느 문장이 걸렸는지까지 보여주고
+     ② 로컬에 원본이 없으면 공용 저장소에서 본문만 내려받는다
+        (rules_mgmt/orig/{id}/text — base64 원본 파일은 건드리지 않아 가볍다)
+   원문은 브라우저 안에서만 다루며 외부 API로 보내지 않는다. */
+const ARTS={};              // 보관함 id → {site,bizno,file,savedAt,arts:[…]}
+let ARTS_BUILDING=false;
+function artsProg(msg){ const el=$("arts-prog"); if(el)el.innerHTML=msg||""; }
+async function artsBuild(){
+  if(ARTS_BUILDING)return;
+  ARTS_BUILDING=true;
+  try{
+    const recs=loadArch(), local=loadOrigLocal();
+    let done=0, miss=0;
+    for(const r of recs){
+      if(!r||!r.id)continue;
+      if(!ARTS[r.id]){
+        let text=String((local[r.id]||{}).text||"");
+        if(!text&&FBDB&&FBUSER){
+          artsProg(`원문 불러오는 중… ${done}/${recs.length}`);
+          try{ const s=await FBDB.ref("rules_mgmt/orig/"+r.id+"/text").once("value"); text=String(s.val()||""); }
+          catch(e){ console.warn("조문 검색 원문 로드 실패:",r.id,e); }
+        }
+        ARTS[r.id]={site:r.site||"",bizno:r.bizno||"",file:r.file||"",savedAt:r.savedAt||"",
+                    arts:text?parseArticles(text):[]};
+      }
+      if(!ARTS[r.id].arts.length)miss++;
+      done++;
+    }
+    const sites=Object.keys(ARTS).length;
+    const total=Object.values(ARTS).reduce((s,v)=>s+v.arts.length,0);
+    $("arts-sub").textContent=`${sites}곳 · 조문 ${total}개`;
+    artsProg(miss?`※ ${miss}곳은 보관된 원문이 없어(검토 기록만 저장된 건) 검색되지 않습니다.`:"");
+  } finally { ARTS_BUILDING=false; }
+}
+/* 검색어를 글자 사이 띄어쓰기에 관대한 정규식으로 — '연차유급휴가'로 '연차 유급 휴가'도 짚어낸다 */
+function artsRe(q){
+  const cs=String(q||"").split(/\s*/).filter(Boolean).map(c=>c.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"));
+  return cs.length?new RegExp(cs.join("\\s*"),"i"):null;
+}
+/* 걸린 자리 앞뒤를 잘라 보여주기 — 자리를 못 찾으면 조문 앞부분을 보여준다 */
+function artsSnip(body,q){
+  const b=String(body||"").replace(/\s+/g," ").trim();
+  const re=artsRe(q), m=re?b.match(re):null;
+  if(!m)return escapeH(b.slice(0,120))+(b.length>120?"…":"");
+  const i=m.index, len=m[0].length;
+  const s=Math.max(0,i-45), e=Math.min(b.length,i+len+80);
+  return (s?"…":"")+escapeH(b.slice(s,i))+"<mark>"+escapeH(m[0])+"</mark>"
+    +escapeH(b.slice(i+len,e))+(e<b.length?"…":"");
+}
+function artsSearch(q){
+  const raw=String(q||"").trim(); if(raw.length<2)return null;
+  const k=stripWs(raw).toLowerCase(), out=[];
+  Object.keys(ARTS).forEach(id=>{
+    const rec=ARTS[id];
+    rec.arts.forEach(a=>{
+      // 조문 본문은 parseArticles가 만든 공백제거본(bodyNs)을 그대로 써서 띄어쓰기 차이를 흡수
+      if((stripWs(a.title)+a.bodyNs).toLowerCase().includes(k))out.push({id,rec,a});
+    });
+  });
+  // 사업장 이름순 → 조문 번호순: 같은 주제 조문이 사업장별로 나란히 읽힌다
+  return out.sort((x,y)=>String(x.rec.site).localeCompare(String(y.rec.site))||(x.a.num-y.a.num));
+}
+function renderArts(){
+  const q=$("arts-q").value.trim(), box=$("arts-list"), hits=artsSearch(q);
+  if(hits===null){
+    box.innerHTML='<div style="font-size:12px;color:var(--mute);padding:14px 2px;line-height:1.8">'
+      +'두 글자 이상 입력하세요.<br>예) 연차 · 사용촉진 · 수습 · 정년 · 경조 · 육아휴직 · 징계</div>';
+    return;
+  }
+  if(!hits.length){ box.innerHTML='<div style="font-size:12px;color:var(--mute);padding:14px 2px">검색 결과가 없습니다.</div>'; return; }
+  const sites=new Set(hits.map(h=>h.id)).size;
+  box.innerHTML=`<div style="font-size:11.5px;color:var(--mute);margin-bottom:8px">${sites}곳 · 조문 ${hits.length}건 — 줄을 누르면 조문 전문이 펼쳐집니다</div>`
+    +hits.map((h,i)=>`<div class="artrow" data-i="${i}">
+        <div class="ar-head">
+          <span class="ar-site">${escapeH(shortSite(h.rec.site))}</span>
+          <span class="ar-lab">${escapeH(h.a.label)}${h.a.title?"("+escapeH(h.a.title)+")":""}</span>
+          <span class="ar-date">${escapeH((h.rec.savedAt||"").slice(0,10))}</span>
+        </div>
+        <div class="ar-snip">${artsSnip(h.a.body,q)}</div>
+        <div class="ar-full" style="display:none"></div>
+      </div>`).join("");
+  box.querySelectorAll(".artrow").forEach(el=>el.onclick=()=>{
+    const f=el.querySelector(".ar-full");
+    if(f.style.display==="none"){ f.textContent=hits[+el.dataset.i].a.body; f.style.display=""; }
+    else f.style.display="none";
+  });
+}
+$("open-arts").addEventListener("click",async()=>{
+  $("ov-arts").classList.add("on"); renderArts(); $("arts-q").focus();
+  await artsBuild(); renderArts();
+});
+$("arts-q").addEventListener("input",renderArts);
 /* 오버레이 닫기 — 닫을 때 모달 위치(드래그 이동분) 초기화해 다음엔 중앙에서 열림 */
 function closeOverlay(o){ o.classList.remove("on"); const m=o.querySelector(".modal"); if(m){m.style.transform="";m._dx=0;m._dy=0;} }
 /* ══════ 팝업은 항상 하나만 ══════
