@@ -104,6 +104,37 @@ rules.data.sg_resolved = {
   '.write': signedIn,
 };
 
+// 공통 장애 수집: 사용자는 자기 UID 아래에 신규 알림만 등록하고,
+// 관리자·위임관리인만 전체 조회·상태 변경·삭제를 할 수 있다.
+rules.systemAlerts = {
+  '.read': isManager,
+  '$uid': {
+    '$id': {
+      '.write':
+        `${signedIn} && (` +
+        `${isAdmin} || ${isSubAdmin} || (` +
+        `auth.uid === $uid && !data.exists() && newData.child('uid').val() === auth.uid` +
+        `))`,
+      '.validate':
+        "!newData.exists() || newData.hasChildren(['uid','kind','message','page','createdAt','status'])",
+      uid: { '.validate': `${isAdmin} || ${isSubAdmin} || newData.val() === auth.uid` },
+      kind: { '.validate': 'newData.isString() && newData.val().length > 0 && newData.val().length <= 40' },
+      message: { '.validate': 'newData.isString() && newData.val().length > 0 && newData.val().length <= 700' },
+      page: { '.validate': 'newData.isString() && newData.val().length > 0 && newData.val().length <= 100' },
+      createdAt: { '.validate': 'newData.isNumber()' },
+      status: { '.validate': "newData.isString() && newData.val().matches(/^(new|resolved)$/)" },
+    },
+  },
+};
+
+// 시스템별 자동 스냅샷·복원 이력은 관리자·위임관리인만 접근한다.
+for (const rootKey of ['systemBackups', 'systemBackupsIndex', 'systemRestoreLog']) {
+  rules[rootKey] = {
+    '.read': isManager,
+    '.write': isManager,
+  };
+}
+
 // 백업은 실제 생성 주체인 관리자·위임관리인에게만 허용한다.
 for (const rootKey of [
   'serverBackups',
@@ -124,4 +155,3 @@ if (process.argv.includes('--write')) {
 } else {
   process.stdout.write(output);
 }
-
