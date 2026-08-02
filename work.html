@@ -1092,11 +1092,38 @@ function pcAmFin(){
 function pcLoadAll(){
   return pcAmFin().then(function(fin){
     if(!fin) return [];
-    return Promise.all(pcMonths(4).map(function(ym){
+    return Promise.all(pcMonths(6).map(function(ym){
       return fbDb.ref(PC_PATH+'/'+ym+'/p').once('value')
         .then(function(s){ var v=s.val(); return (v&&Object.keys(v).length)?{ym:ym,all:v}:null; })
         .catch(function(){ return null; });
     })).then(function(r){ return r.filter(Boolean); });
+  });
+}
+/* 며칠 지났나 — 이의가 며칠째 대기인지, 마감이 며칠 지났는지 */
+function pcDaysAgo(iso){
+  if(!iso) return 0;
+  var t=new Date(iso).getTime(); if(isNaN(t)) return 0;
+  var d=Math.floor((Date.now()-t)/86400000);
+  return d>0?d:0;
+}
+/* 그 달 전체를 한 눈금으로 */
+function pcMonthStat(all){
+  var st={people:0,done:0,obj:0,todo:0,sum:0,left:0};
+  Object.keys(all||{}).forEach(function(sid){
+    var p=all[sid]||{}, w=pcWho(p);
+    st.people++; st.sum+=(p.total||0);
+    if(w.k==='done') st.done++; else if(w.k==='obj') st.obj++; else st.todo++;
+  });
+  st.left=st.obj+st.todo;
+  return st;
+}
+/* 사람 차례 — 손봐야 할 사람이 앞으로 (이의 → 미확인 → 완료), 같은 무리면 금액 큰 쪽 */
+function pcSortSids(all){
+  var rank={obj:0, todo:1, done:2};
+  return Object.keys(all||{}).sort(function(a,b){
+    var ra=rank[pcWho(all[a]).k], rb=rank[pcWho(all[b]).k];
+    if(ra!==rb) return ra-rb;
+    return ((all[b]||{}).total||0)-((all[a]||{}).total||0);
   });
 }
 /* 사람 한 명의 상태를 한 낱말로 */
@@ -1207,69 +1234,181 @@ function renderPerf(){
   } else {
     h+=list.map(pcMonthHTML).join('');
   }
-  h+=adm.map(pcAdminHTML).join('');    /* 재무권한자에게만 채워진다 */
+  h+=pcAdminHTML();                    /* 총괄·대행에게만 채워진다 */
   app.innerHTML=h;
 }
 
-/* ── 대표만 보는 전체 현황 (읽기 전용) ── */
-function pcAdminHTML(e){
-  var ym=e.ym, all=e.all;
-  var sids=Object.keys(all).sort(function(a,b){ return (all[b].total||0)-(all[a].total||0); });
-  var done=0, obj=0, todo=0, sum=0, objRows=[];
-  sids.forEach(function(sid){
-    var p=all[sid], w=pcWho(p); sum+=(p.total||0);
-    if(w.k==='done') done++; else if(w.k==='obj') obj++; else todo++;
-    w.open.forEach(function(fid){
-      objRows.push({ name:p.name||sid, fid:fid, it:(p.items||{})[fid]||{}, ob:((p.objection||{}).byItem||{})[fid]||{} });
-    });
-  });
+/* ── 대표만 보는 전체 현황 (읽기 전용) ────────────────────────
+   달력 줄로 달을 고르고, 그 아래 사람 탭으로 전체 ↔ 각자를 오간다.
+   탭 줄만 훑어도 누구를 손봐야 하는지 알 수 있게 딱지를 붙인다. */
+function pcAdmMonths(){ return (S.perfAll||[]).map(function(x){ return x.ym; }); }
+function pcAdmYm(){
+  if(S.perfAdmYm) return S.perfAdmYm;
+  var list=S.perfAll||[]; if(!list.length) return '';
+  /* 처음엔 아직 안 끝난 달 중 가장 최근. 다 끝났으면 가장 최근 달. */
+  var pend=list.filter(function(x){ return pcMonthStat(x.all).left>0; });
+  return (pend[0]||list[0]).ym;
+}
+function pcAdmSet(ym){ S.perfAdmYm=ym; S.perfAdmSid=''; renderPerf(); }
+function pcAdmPick(sid){ S.perfAdmSid=sid||''; renderPerf(); }
+function pcAdmMove(d){
+  var ym=pcAdmYm(); if(!ym) return;
+  var dt=new Date(+ym.slice(0,4), +ym.slice(5,7)-1+d, 1);
+  pcAdmSet(dt.getFullYear()+'-'+pad(dt.getMonth()+1));
+}
+function pcAdmToday(){ var d=new Date(); pcAdmSet(d.getFullYear()+'-'+pad(d.getMonth()+1)); }
+
+function pcAdminHTML(){
+  var list=S.perfAll||[];
+  if(!list.length) return '';
+  var ym=pcAdmYm();
+  var cur=list.filter(function(x){ return x.ym===ym; })[0];
+  var all=(cur&&cur.all)||{};
+  var st=pcMonthStat(all);
   var mask=!S.perfShow;
+  var sids=pcSortSids(all);
+  var sel=S.perfAdmSid||'';
+  if(sel && !all[sel]) sel='';
+
   var h='<div class="card" style="margin-bottom:14px;border-color:#c7d2fe">';
   h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
-    +'<b style="font-size:14px">👑 '+esc(ym.slice(0,4))+'년 '+(+ym.slice(5,7))+'월 전체 현황</b>'
+    +'<b style="font-size:14px">👑 전체 현황</b>'
     +'<span style="font-size:11.5px;color:#4f46e5;background:#eef2ff;border-radius:10px;padding:2px 9px">대표만 보임</span>'
-    +'<span style="margin-left:auto;font-size:12px;color:var(--faint)">합계 <b style="color:var(--tx)">'
-    +(mask?'●●●':pcMoney(sum)+'원')+'</b></span></div>';
+    +'<button onclick="pcToggleShow()" style="margin-left:auto;padding:6px 12px;font-size:12px;'
+    +'border:1px solid var(--bd);background:#fff;border-radius:6px;cursor:pointer">'
+    +(S.perfShow?'금액 가리기':'금액 보기')+'</button></div>';
 
-  h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;font-size:12px">'
-    +'<span style="background:#f0fdf4;color:#166534;border-radius:6px;padding:4px 10px">확인 완료 '+done+'명</span>'
-    +(obj?'<span style="background:#fffbeb;color:#854d0e;border-radius:6px;padding:4px 10px;font-weight:700">이의 '+obj+'명</span>':'')
-    +(todo?'<span style="background:#f8fafc;color:#64748b;border-radius:6px;padding:4px 10px">미확인 '+todo+'명</span>':'')
+  /* 달력 줄 — 푸른이알피와 같은 모양 */
+  var nav='padding:5px 11px;font-size:13px;border:1px solid var(--bd);background:#fff;border-radius:6px;cursor:pointer';
+  h+='<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px">'
+    +'<button onclick="pcAdmMove(-1)" style="'+nav+'">◀</button>'
+    +'<span style="font-size:15px;font-weight:700;padding:0 6px">'+esc(ym)+'</span>'
+    +'<button onclick="pcAdmMove(1)" style="'+nav+'">▶</button>'
+    +'<button onclick="pcAdmToday()" style="'+nav+';font-size:12px">오늘</button>'
+    +(st.people?'<span style="margin-left:8px;font-size:12px;color:var(--faint)">'
+        +st.people+'명 · 합계 '+(mask?'●●●':pcMoney(st.sum)+'원')+'</span>':'')
     +'</div>';
 
-  h+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:340px">'
+  if(!st.people){
+    h+='<div style="padding:26px 12px;text-align:center;color:var(--faint);font-size:12.5px;line-height:1.8">'
+      +'이 달은 아직 발행되지 않았습니다.<br>'
+      +'<span style="font-size:11.5px">발행한 달: '+(pcAdmMonths().join(' · ')||'없음')+'</span></div></div>';
+    return h;
+  }
+
+  /* 사람 탭 — 전체부터, 손봐야 할 사람 순서로 */
+  h+='<div style="display:flex;gap:2px;flex-wrap:wrap;border-bottom:1px solid var(--bd);margin-bottom:12px">';
+  h+=pcTabHTML('', '전체 <span style="color:var(--faint);font-weight:400">'+st.people+'</span>', sel==='');
+  sids.forEach(function(sid){
+    var w=pcWho(all[sid]);
+    var mark = w.k==='obj'
+      ? ' <span style="background:#f59e0b;color:#fff;border-radius:9px;padding:0 6px;font-size:10.5px">이의</span>'
+      : (w.k==='todo' ? ' <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#dc2626;vertical-align:1px"></span>' : '');
+    h+=pcTabHTML(sid, esc((all[sid].name)||sid)+mark, sel===sid, w.k==='done');
+  });
+  h+='</div>';
+
+  h+= sel ? pcAdmOneHTML(ym, all[sel], mask) : pcAdmAllHTML(ym, all, sids, st, mask);
+  h+='</div>';
+  return h;
+}
+function pcTabHTML(sid, label, on, dim){
+  return '<span onclick="pcAdmPick(\''+esc(sid)+'\')" style="font-size:13px;padding:7px 14px;cursor:pointer;'
+    +'margin-bottom:-1px;'+(on?'font-weight:700;border-bottom:2px solid var(--acc);color:var(--tx)':'color:'+(dim?'var(--faint)':'#475569'))+'">'
+    +label+'</span>';
+}
+
+/* 전체 탭 — 그 달을 통째로 */
+function pcAdmAllHTML(ym, all, sids, st, mask){
+  var h='';
+  /* 한 줄 막대 */
+  function seg(n,c){ return n? '<div style="flex:'+n+';background:'+c+'"></div>' : ''; }
+  h+='<div style="display:flex;height:8px;border-radius:4px;overflow:hidden;margin-bottom:8px;background:#f1f5f9">'
+    +seg(st.done,'#16a34a')+seg(st.obj,'#f59e0b')+seg(st.todo,'#cbd5e1')+'</div>'
+    +'<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:12px;margin-bottom:12px">'
+    +'<span style="color:#166534">확인 완료 '+st.done+'</span>'
+    +'<span style="color:#854d0e">이의 '+st.obj+'</span>'
+    +'<span style="color:#64748b">미확인 '+st.todo+'</span></div>';
+
+  /* 다음 할 일 한 줄 */
+  var todoTxt=[];
+  if(st.obj) todoTxt.push('이의 '+st.obj+'명 처리');
+  if(st.todo) todoTxt.push('미확인 '+st.todo+'명 확인');
+  h+= st.left
+    ? '<div style="background:#fffbeb;border-radius:8px;padding:10px 13px;margin-bottom:12px;font-size:12.5px;color:#854d0e;line-height:1.7">'
+      +'→ '+todoTxt.join(', ')+' — 끝나면 이 달을 마감할 수 있습니다</div>'
+    : '<div style="background:#f0fdf4;border-radius:8px;padding:10px 13px;margin-bottom:12px;font-size:12.5px;color:#166534;line-height:1.7">'
+      +'✅ 모두 확인했습니다 — 푸른이알피 성과관리 → 확인 현황에서 마감하세요</div>';
+
+  h+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:380px">'
     +'<tr style="border-bottom:1px solid var(--bd)">'
     +'<td style="padding:6px 4px;color:var(--faint);font-size:11px">이름</td>'
-    +'<td style="padding:6px 4px;color:var(--faint);font-size:11px;text-align:right">건수</td>'
+    +'<td style="padding:6px 4px;color:var(--faint);font-size:11px;text-align:right">진행</td>'
     +'<td style="padding:6px 4px;color:var(--faint);font-size:11px;text-align:right">금액</td>'
     +'<td style="padding:6px 4px 6px 12px;color:var(--faint);font-size:11px">상태</td>'
     +'<td style="padding:6px 4px;color:var(--faint);font-size:11px">확인한 때</td></tr>';
   sids.forEach(function(sid){
-    var p=all[sid], w=pcWho(p);
-    h+='<tr style="border-bottom:1px solid #f1f5f9;background:'+(w.k==='done'?'#fff':w.bg)+'">'
-      +'<td style="padding:6px 4px">'+esc(p.name||sid)+'</td>'
-      +'<td style="padding:6px 4px;text-align:right">'+(p.itemCount||0)+'</td>'
-      +'<td style="padding:6px 4px;text-align:right;font-weight:600">'+(mask?'●●●':pcMoney(p.total))+'</td>'
-      +'<td style="padding:6px 4px 6px 12px;color:'+w.c+';font-weight:'+(w.k==='done'?400:700)+'">'+esc(w.t)+'</td>'
-      +'<td style="padding:6px 4px;color:var(--faint);font-size:11.5px">'
+    var p=all[sid], w=pcWho(p), c=pcCounts(p);
+    var late=(w.k!=='done')&&pcDueLate(p.due);
+    var extra='';
+    if(w.k==='obj'){
+      var oldest=0; w.open.forEach(function(fid){
+        var d=pcDaysAgo((((p.objection||{}).byItem||{})[fid]||{}).at); if(d>oldest) oldest=d; });
+      if(oldest) extra=' · '+oldest+'일째';
+    } else if(late){
+      extra=' · 마감 '+pcDaysAgo(p.due+'T00:00:00Z')+'일 지남';
+    }
+    h+='<tr onclick="pcAdmPick(\''+esc(sid)+'\')" style="cursor:pointer;border-bottom:1px solid #f1f5f9;background:'+(w.k==='done'?'#fff':w.bg)+'">'
+      +'<td style="padding:8px 4px">'+esc(p.name||sid)+'</td>'
+      +'<td style="padding:8px 4px;text-align:right;color:'+(c.todo?'var(--tx)':'var(--faint)')+'">'+c.handled+' / '+c.total+'</td>'
+      +'<td style="padding:8px 4px;text-align:right;font-weight:600">'+(mask?'●●●':pcMoney(p.total))+'</td>'
+      +'<td style="padding:8px 4px 8px 12px;color:'+(late?'#b91c1c':w.c)+';font-weight:'+(w.k==='done'?400:700)+'">'
+        +esc(w.t)+extra+'</td>'
+      +'<td style="padding:8px 4px;color:var(--faint);font-size:11.5px">'
         +(p.doneAt?esc(String(p.doneAt).slice(0,10))+(p.deviceHint?' · '+esc(p.deviceHint):''):'-')+'</td></tr>';
   });
   h+='</table></div>';
+  return h;
+}
 
-  if(objRows.length){
-    h+='<div style="margin-top:12px;border-top:1px solid var(--bd);padding-top:10px">'
-      +'<b style="font-size:12.5px;color:#854d0e">⚠ 처리 대기 이의 '+objRows.length+'건</b>';
-    objRows.forEach(function(r){
-      h+='<div style="border-left:3px solid #fbbf24;padding:4px 0 4px 10px;margin-top:8px">'
-        +'<div style="font-size:12.5px;font-weight:600">'+esc(r.name)+' · '+esc(pcDay(r.it.date))+' '
-          +esc(r.it.coName||'')+' · '+(mask?'●●●':pcMoney(r.it.amount)+'원')
-          +' <span style="color:var(--faint);font-weight:400;font-size:11.5px">'+esc(String(r.ob.at||'').slice(0,10))+' 접수</span></div>'
-        +'<div style="font-size:12.5px;color:#475569;margin-top:3px;line-height:1.6">'+esc(r.ob.text||'')+'</div></div>';
-    });
-    h+='<div style="margin-top:10px;font-size:11.5px;color:var(--faint);line-height:1.7">'
-      +'답변과 처리는 푸른이알피 <b>성과관리</b>에서 합니다. 여기서는 보기만 합니다.</div></div>';
-  }
-  h+='</div>';
+/* 사람 탭 — 그 사람이 어느 줄에서 멈췄는지 */
+function pcAdmOneHTML(ym, p, mask){
+  var items=p.items||{}, c=pcCounts(p), w=pcWho(p);
+  var ids=Object.keys(items).sort(function(a,b){ return String(items[a].date||'')<String(items[b].date||'')?-1:1; });
+  var h='<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--faint);margin-bottom:12px">'
+    +'<span>'+(p.itemCount||ids.length)+'건 · 합계 <b style="color:var(--tx)">'+(mask?'●●●':pcMoney(p.total)+'원')+'</b></span>'
+    +'<span>'+c.handled+' / '+c.total+' 처리</span>'
+    +'<span style="color:'+w.c+';font-weight:700">'+esc(w.t)+'</span>'
+    +(p.doneAt?'<span>확인 '+esc(String(p.doneAt).slice(0,10))+(p.deviceHint?' · '+esc(p.deviceHint):'')+'</span>':'')
+    +(!p.uid?'<span style="color:#854d0e;font-weight:700">계정 없음 — 확인 화면을 못 엽니다</span>':'')
+    +'</div>';
+
+  ids.forEach(function(fid){
+    var it=items[fid]||{}, ob=pcObjOf(p,fid), st=pcRowState(p,fid);
+    var tone={ ok:['#f0fdf4','#bbf7d0','#166534','☑'], obj:['#fffbeb','#fde68a','#854d0e','⚠'], todo:['#fff','var(--bd)','#94a3b8','☐'] }[st];
+    h+='<div style="border:1px solid '+tone[1]+';background:'+tone[0]+';border-radius:8px;padding:10px 12px;margin-bottom:7px">'
+      +'<div style="display:flex;align-items:baseline;gap:9px;flex-wrap:wrap">'
+        +'<span style="font-size:15px;color:'+tone[2]+'">'+tone[3]+'</span>'
+        +'<span style="font-size:13px;flex:1;min-width:0">'+esc(pcDay(it.date))+' '+esc(it.coName||'-')
+          +'<span style="color:var(--faint);font-size:12px"> · '+esc(it.kind||it.source||'')+' · '+esc(it.role||'')+'</span></span>'
+        +'<span style="font-size:13px;font-weight:600;white-space:nowrap">'+(mask?'●●●':pcMoney(it.amount)+'원')+'</span></div>';
+    if(st==='obj' && ob){
+      var d=pcDaysAgo(ob.at);
+      h+='<div style="font-size:12.5px;color:#475569;margin-top:7px;line-height:1.6">“'+esc(ob.text||'')+'” '
+        +'<span style="color:var(--faint)">'+esc(String(ob.at||'').slice(0,10))+' 접수'+(d?' · '+d+'일째':'')+'</span></div>';
+    } else if(st==='ok'){
+      h+='<div style="font-size:11.5px;color:var(--faint);margin-top:6px">'
+        +esc(String(it.okAt||'').slice(0,10))+' 확인</div>';
+    }
+    if(it.reply && it.reply.text){
+      h+='<div style="background:#eff6ff;border-radius:6px;padding:8px 11px;margin-top:7px;font-size:12.5px;color:#1e40af;line-height:1.7">'
+        +'<b>답변</b> '+esc(String(it.reply.at||'').slice(0,10))+'<br>'+esc(it.reply.text)+'</div>';
+    }
+    h+='</div>';
+  });
+
+  if(w.k==='obj') h+='<div style="margin-top:10px;font-size:11.5px;color:var(--faint);line-height:1.7">'
+    +'이의 답변은 푸른이알피 <b>성과관리 → 확인 현황</b>에서 합니다. 여기서는 보기만 합니다.</div>';
   return h;
 }
 
