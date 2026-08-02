@@ -50445,6 +50445,70 @@ function pcfCount(prev){
   return { people:people, done:done, objOpen:objOpen, todo:todo, objN:objN };
 }
 
+// ── 월 마감 ──────────────────────────────────────────────
+// 전원 확인되면 그 달을 잠근다. 안 잠그면 나중에 입금 하나 고칠 때
+// 이미 확인받은 달의 금액이 조용히 바뀌어, "확인했다"는 기록이 지금 금액과 어긋난다.
+// 잠근 뒤에도 대표는 풀 수 있고, 푼 것도 기록에 남는다.
+function pcfLockPath(ym){ return PCF_PATH + '/' + ym + '/lock'; }
+function pcfLock(ym, by, note){
+  if(typeof fbDb === 'undefined' || !fbDb) return Promise.reject(new Error('서버에 연결돼 있지 않습니다'));
+  return fbDb.ref(pcfLockPath(ym)).set({ at:new Date().toISOString(), by:by||'', note:note||'' });
+}
+function pcfUnlock(ym, by, reason){
+  if(typeof fbDb === 'undefined' || !fbDb) return Promise.reject(new Error('서버에 연결돼 있지 않습니다'));
+  // 잠금을 지우되, 푼 사실은 남긴다
+  return fbDb.ref(PCF_PATH + '/' + ym).update({
+    lock: null,
+    unlocked: { at:new Date().toISOString(), by:by||'', reason:reason||'' }
+  });
+}
+// 대표 답변 — 직원이 못 쓰는 자리(items/<fiId>/reply)에 넣는다
+function pcfReply(ym, sid, fiId, text, by){
+  if(typeof fbDb === 'undefined' || !fbDb) return Promise.reject(new Error('서버에 연결돼 있지 않습니다'));
+  return fbDb.ref(PCF_PATH + '/' + ym + '/p/' + sid + '/items/' + fiId + '/reply').set({
+    text: String(text||'').slice(0,500), at:new Date().toISOString(), by:by||'', state:'done'
+  });
+}
+// 최근 n개월치 사람묶음 + 잠금 상태를 한 번에
+function pcfLoadRecent(n){
+  if(typeof fbDb === 'undefined' || !fbDb) return Promise.resolve([]);
+  var out = [], d = new Date();
+  for(var i=0;i<(n||12);i++){
+    out.push(d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2));
+    d.setMonth(d.getMonth()-1);
+  }
+  return Promise.all(out.map(function(ym){
+    return fbDb.ref(PCF_PATH + '/' + ym).once('value')
+      .then(function(s){
+        var v = s.val() || {};
+        if(!v.p || !Object.keys(v.p).length) return null;
+        return { ym:ym, p:v.p, lock:v.lock || null, unlocked:v.unlocked || null };
+      }).catch(function(){ return null; });
+  })).then(function(r){ return r.filter(Boolean); });
+}
+// 그 달의 이의를 한 줄씩 펴서 모은다
+function pcfOpenObjections(month){
+  var out = [], p = (month && month.p) || {};
+  Object.keys(p).forEach(function(sid){
+    var per = p[sid] || {}, by = (per.objection||{}).byItem || {};
+    Object.keys(by).forEach(function(fid){
+      var o = by[fid] || {}; if(!o.text) return;
+      var it = (per.items||{})[fid] || {};
+      var closed = !!(it.reply && it.reply.state === 'done');
+      out.push({ sid:sid, name:per.name||sid, fid:fid, it:it, ob:o,
+        withdrawn: !!o.withdrawnAt, closed: closed,
+        open: !o.withdrawnAt && !closed });
+    });
+  });
+  return out.sort(function(a,b){ return (b.open?1:0) - (a.open?1:0); });
+}
+// 마감할 수 있나 — 아무도 안 남고 열린 이의도 없어야
+function pcfCanClose(month){
+  if(!month || month.lock) return false;
+  var c = pcfCount(month.p);
+  return c.people > 0 && c.todo === 0 && c.objOpen === 0;
+}
+
 function pcfDefaultDue(nowIso){
   var d = new Date(nowIso);
   d.setDate(d.getDate() + 7);
@@ -50464,11 +50528,16 @@ function PerfPublishModal(props){
   // 누구를 보낼지. 적어 두지 않은 사람은 '보냄'으로 본다(기본은 전원).
   var kS = useState({});     var pick = kS[0];      var setPick = kS[1];
 
+  var lkS = useState(null); var lock = lkS[0]; var setLock = lkS[1];
+
   useEffect(function(){
     var alive = true;
-    Promise.all([pcfLoadUidMap(), pcfLoadMonth(ym)]).then(function(r){
+    var lockP = (typeof fbDb !== 'undefined' && fbDb)
+      ? fbDb.ref(pcfLockPath(ym)).once('value').then(function(s){ return s.val(); }).catch(function(){ return null; })
+      : Promise.resolve(null);
+    Promise.all([pcfLoadUidMap(), pcfLoadMonth(ym), lockP]).then(function(r){
       if(!alive) return;
-      setUidMap(r[0]); setPrev(r[1]); setLoading(false);
+      setUidMap(r[0]); setPrev(r[1]); setLock(r[2]); setLoading(false);
       var anyDue = Object.keys(r[1]).map(function(s){ return r[1][s] && r[1][s].due; }).filter(Boolean)[0];
       if(anyDue) setDue(anyDue);
     }).catch(function(e){
@@ -50496,7 +50565,7 @@ function PerfPublishModal(props){
   }
 
   function doPublish(){
-    if(busy || !sent.length) return;
+    if(busy || !sent.length || lock) return;
     var left = rows.length - sent.length;
     var msg = ym + ' 성과급을 ' + sent.length + '명에게 내보냅니다.';
     if(left > 0) msg += '\n\n고르지 않은 ' + left + '명은 이번에 안 나갑니다. 나중에 다시 발행하면 됩니다.';
@@ -50586,8 +50655,17 @@ function PerfPublishModal(props){
               h('b', null, '금액이 바뀐 ' + resetAll + '건'),
               ' — 이미 한 확인이 풀리고 다시 받습니다. 옛 확인 기록이 지금 금액과 다른 것을 가리키면 안 되기 때문입니다.'),
 
+            // 마감된 달은 못 보낸다 — 확인받은 금액이 나중에 바뀌면 기록이 의미를 잃는다
+            lock && h('div', { style:{ background:'#f0fdf4', border:'1px solid #bbf7d0',
+                borderRadius:'8px', padding:'12px 14px', marginBottom:'12px', fontSize:'12.5px',
+                color:'#166534', lineHeight:1.8 } },
+              h('b', null, '🔒 이 달은 마감됐습니다'),
+              ' — ' + String(lock.at||'').slice(0,10) + (lock.by ? ' · ' + lock.by : ''), h('br'),
+              '마감된 달은 다시 발행하지 않습니다. 확인받은 금액이 나중에 바뀌면 기록이 의미를 잃기 때문입니다.', h('br'),
+              h('span', { style:{ color:'#15803d' } }, '정말 고쳐야 하면 ⭐ 확인 현황 탭에서 마감을 먼저 푸세요.')),
+
             // 성과 미반영이 있는 사람 — 보내기 전에 한 번 더 볼 사람들
-            holds.length > 0 && h('div', { style:{ background:'#fef2f2', border:'1px solid #fecaca',
+            !lock && holds.length > 0 && h('div', { style:{ background:'#fef2f2', border:'1px solid #fecaca',
                 borderRadius:'8px', padding:'10px 12px', marginBottom:'12px', fontSize:'12px',
                 color:'#991b1b', lineHeight:1.8 } },
               h('b', null, '⚠️ 성과 미반영이 있는 사람 ' + holds.length + '명 — 보내기 전에 한 번 더 보세요'),
@@ -50664,12 +50742,199 @@ function PerfPublishModal(props){
               h('button', { onClick:function(){ if(!busy) props.onClose(); },
                 style:{ padding:'7px 16px', fontSize:'12.5px', fontWeight:600, borderRadius:'6px',
                   background:'#fff', color:'#475569', border:'1px solid #cbd5e1', cursor:'pointer' } }, '취소'),
-              h('button', { onClick:doPublish, disabled: busy || !sent.length,
+              h('button', { onClick:doPublish, disabled: busy || !sent.length || !!lock,
                 style:{ padding:'7px 18px', fontSize:'12.5px', fontWeight:700, borderRadius:'6px',
-                  background: (busy || !sent.length) ? '#cbd5e1' : '#1e40af', color:'#fff', border:'none',
-                  cursor: (busy || !sent.length) ? 'default' : 'pointer' } },
-                busy ? '내보내는 중…' : (sent.length ? sent.length + '명에게 발행' : '고른 사람이 없습니다'))))
+                  background: (busy || !sent.length || lock) ? '#cbd5e1' : '#1e40af', color:'#fff', border:'none',
+                  cursor: (busy || !sent.length || lock) ? 'default' : 'pointer' } },
+                lock ? '마감된 달입니다'
+                  : busy ? '내보내는 중…'
+                  : (sent.length ? sent.length + '명에게 발행' : '고른 사람이 없습니다'))))
     ));
+}
+
+// ── 확인 현황 탭 — 달마다 쌓아 보고, 이의를 답하고, 다 끝난 달을 마감한다 ──
+var PCF_SRC_MENU = { 'case':'biz/case', 'consulting':'biz/consulting', 'fund':'biz/fund', 'other':'biz/other' };
+function pcfGoto(menu, title){
+  try{ sessionStorage.setItem('global_search_focus', JSON.stringify({ title:title||'', ts:Date.now() })); }catch(_){}
+  if(window.navigateTo) window.navigateTo(menu);
+}
+
+function PerfConfirmTab(){
+  var mS = useState(null);   var months = mS[0];  var setMonths = mS[1];
+  var oS = useState('');     var openYm = oS[0];  var setOpenYm = oS[1];
+  var rS = useState({});     var reply = rS[0];   var setReply = rS[1];
+  var bS = useState('');     var busy = bS[0];    var setBusy = bS[1];
+  var tS = useState(0);      var tick = tS[0];    var setTick = tS[1];
+
+  useEffect(function(){
+    var alive = true; setMonths(null);
+    pcfLoadRecent(12).then(function(r){ if(alive) setMonths(r); })
+      .catch(function(){ if(alive) setMonths([]); });
+    return function(){ alive = false; };
+  }, [tick]);
+
+  var me = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.name) || '';
+  function refresh(){ setTick(Date.now()); }
+  function run(p, okMsg){
+    setBusy('1');
+    p.then(function(){ showToast(okMsg); setBusy(''); refresh(); })
+     .catch(function(e){ setBusy(''); showToast('실패 — ' + ((e && e.message) || '권한을 확인하세요')); });
+  }
+
+  function doClose(m){
+    if(!window.confirm(m.ym + ' 을 마감합니다.\n\n마감하면 이 달은 다시 발행되지 않습니다.\n나중에 입금을 고쳐도 확인받은 금액이 바뀌지 않습니다.\n\n필요하면 대표님이 다시 풀 수 있고, 푼 것도 기록에 남습니다.\n\n진행할까요?')) return;
+    run(pcfLock(m.ym, me, ''), '🔒 ' + m.ym + ' 마감 완료');
+  }
+  function doOpen(m){
+    var why = window.prompt(m.ym + ' 마감을 풉니다.\n\n왜 푸는지 적어 주세요 (기록에 남습니다)', '');
+    if(why === null) return;
+    if(!String(why).trim()){ showToast('사유를 적어 주세요'); return; }
+    run(pcfUnlock(m.ym, me, String(why).trim()), '🔓 ' + m.ym + ' 마감 해제');
+  }
+  function doReply(m, o){
+    var k = m.ym + '|' + o.sid + '|' + o.fid;
+    var t = String(reply[k] || '').trim();
+    if(t.length < 2){ showToast('답변을 적어 주세요'); return; }
+    run(pcfReply(m.ym, o.sid, o.fid, t, me).then(function(){
+      var n = Object.assign({}, reply); delete n[k]; setReply(n);
+    }), '✓ 답변 저장 — ' + o.name);
+  }
+
+  if(months === null) return h('div', { style:{ padding:'40px', textAlign:'center', color:'#94a3b8', fontSize:'13px' } }, '불러오는 중…');
+  if(!months.length) return h('div', { style:{ padding:'40px 20px', textAlign:'center', color:'#64748b', fontSize:'13px', lineHeight:1.8 } },
+    '아직 발행한 달이 없습니다.', h('br'),
+    h('span', { style:{ fontSize:'12px', color:'#94a3b8' } }, '직원별 탭에서 ⭐ 이달 확인 발행 을 누르면 여기에 쌓입니다.'));
+
+  var cell = { padding:'9px 6px', fontSize:'12.5px', borderBottom:'1px solid #f1f5f9' };
+  var head = { padding:'7px 6px', fontSize:'11px', color:'#64748b', borderBottom:'1px solid #e2e8f0', fontWeight:600 };
+
+  function stateChip(m){
+    var c = pcfCount(m.p);
+    if(m.lock) return h('span', { style:{ background:'#f0fdf4', color:'#166534', fontSize:'11.5px', padding:'3px 9px', borderRadius:'5px', fontWeight:700 } },
+      '🔒 마감 ' + String(m.lock.at||'').slice(5,10));
+    if(c.objOpen > 0) return h('span', { style:{ background:'#f59e0b', color:'#fff', fontSize:'11.5px', padding:'3px 9px', borderRadius:'5px', fontWeight:700 } }, '이의 처리 필요');
+    if(c.todo > 0) return h('span', { style:{ background:'#fffbeb', color:'#854d0e', fontSize:'11.5px', padding:'3px 9px', borderRadius:'5px' } }, '받는 중');
+    return h('button', { onClick:function(e){ e.stopPropagation(); doClose(m); }, disabled: !!busy,
+      style:{ padding:'4px 12px', fontSize:'11.5px', fontWeight:700, borderRadius:'5px',
+        background:'#1e40af', color:'#fff', border:'none', cursor:'pointer' } }, '마감하기');
+  }
+
+  return h('div', null,
+    h('div', { style:{ fontSize:'12px', color:'#64748b', marginBottom:'10px', lineHeight:1.8 } },
+      '달마다 누가 확인했는지, 이의가 남았는지 봅니다. 다 끝난 달은 ',
+      h('b', { style:{ color:'#1e40af' } }, '마감'),
+      ' 하면 잠깁니다 — 그 뒤로는 다시 발행되지 않아, 나중에 입금을 고쳐도 확인받은 금액이 바뀌지 않습니다.'),
+
+    h('div', { style:{ border:'1px solid #e2e8f0', borderRadius:'8px', overflow:'hidden' } },
+      h('table', { style:{ width:'100%', borderCollapse:'collapse' } },
+        h('thead', null, h('tr', null,
+          h('th', { style:Object.assign({textAlign:'left'}, head) }, '달'),
+          h('th', { style:Object.assign({textAlign:'right'}, head) }, '인원'),
+          h('th', { style:Object.assign({textAlign:'right'}, head) }, '합계'),
+          h('th', { style:Object.assign({textAlign:'left', paddingLeft:'12px'}, head) }, '확인'),
+          h('th', { style:Object.assign({textAlign:'left'}, head) }, '상태'))),
+        h('tbody', null, months.map(function(m){
+          var c = pcfCount(m.p);
+          var sum = Object.keys(m.p).reduce(function(s,sid){ return s + ((m.p[sid]||{}).total||0); }, 0);
+          var isOpen = openYm === m.ym;
+          var rows = [
+            h('tr', { key:m.ym, onClick:function(){ setOpenYm(isOpen ? '' : m.ym); },
+              style:{ cursor:'pointer', background: isOpen ? '#eff6ff' : (c.objOpen ? '#fffbeb' : 'transparent') } },
+              h('td', { style:Object.assign({fontWeight:700}, cell) }, (isOpen?'▾ ':'▸ ') + m.ym),
+              h('td', { style:Object.assign({textAlign:'right'}, cell) }, c.people + '명'),
+              h('td', { style:Object.assign({textAlign:'right'}, cell) }, sum.toLocaleString('ko-KR')),
+              h('td', { style:Object.assign({paddingLeft:'12px'}, cell) },
+                h('span', { style:{ color: c.todo ? '#64748b' : '#166534', fontWeight: c.todo ? 400 : 700 } },
+                  c.done + ' / ' + c.people),
+                c.objOpen > 0 && h('span', { style:{ color:'#b45309', fontWeight:700 } }, ' · 이의 ' + c.objN)),
+              h('td', { style:cell }, stateChip(m)))
+          ];
+          if(isOpen) rows.push(h('tr', { key:m.ym+'-d' },
+            h('td', { colSpan:5, style:{ padding:'0 0 12px', background:'#f8fafc' } }, monthDetail(m))));
+          return rows;
+        }).reduce(function(a,b){ return a.concat(b); }, [])))));
+
+  function monthDetail(m){
+    var objs = pcfOpenObjections(m);
+    var sids = Object.keys(m.p).sort(function(a,b){ return ((m.p[b]||{}).total||0) - ((m.p[a]||{}).total||0); });
+    return h('div', { style:{ padding:'12px 14px' } },
+      m.lock && h('div', { style:{ background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:'6px',
+          padding:'8px 12px', marginBottom:'10px', fontSize:'12px', color:'#166534',
+          display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap' } },
+        h('b', null, '🔒 마감됨'),
+        h('span', null, String(m.lock.at||'').slice(0,10) + (m.lock.by ? ' · ' + m.lock.by : '')),
+        h('span', { style:{ color:'#15803d' } }, '이 달은 다시 발행되지 않습니다'),
+        h('button', { onClick:function(){ doOpen(m); }, disabled:!!busy,
+          style:{ marginLeft:'auto', padding:'4px 11px', fontSize:'11.5px', fontWeight:600, borderRadius:'5px',
+            background:'#fff', color:'#475569', border:'1px solid #cbd5e1', cursor:'pointer' } }, '마감 풀기')),
+
+      m.unlocked && !m.lock && h('div', { style:{ background:'#fef2f2', border:'1px solid #fecaca', borderRadius:'6px',
+          padding:'8px 12px', marginBottom:'10px', fontSize:'11.5px', color:'#991b1b', lineHeight:1.7 } },
+        h('b', null, '🔓 마감을 푼 적이 있습니다'),
+        ' — ' + String(m.unlocked.at||'').slice(0,10) + (m.unlocked.by ? ' · ' + m.unlocked.by : ''),
+        m.unlocked.reason && h('div', null, '사유: ' + m.unlocked.reason)),
+
+      h('table', { style:{ width:'100%', borderCollapse:'collapse', marginBottom: objs.length ? '14px' : '0' } },
+        h('thead', null, h('tr', null,
+          h('th', { style:Object.assign({textAlign:'left'}, head) }, '이름'),
+          h('th', { style:Object.assign({textAlign:'right'}, head) }, '건수'),
+          h('th', { style:Object.assign({textAlign:'right'}, head) }, '금액'),
+          h('th', { style:Object.assign({textAlign:'left', paddingLeft:'12px'}, head) }, '상태'),
+          h('th', { style:Object.assign({textAlign:'left'}, head) }, '확인한 때'))),
+        h('tbody', null, sids.map(function(sid){
+          var per = m.p[sid] || {};
+          var open = objs.filter(function(o){ return o.sid === sid && o.open; }).length;
+          var st = open ? { t:'이의 ' + open + '건', c:'#b45309' }
+                 : (per.done === true ? { t:'확인 완료', c:'#166534' } : { t:'미확인', c:'#64748b' });
+          return h('tr', { key:sid },
+            h('td', { style:cell }, per.name || sid,
+              !per.uid && h('span', { style:{ marginLeft:'6px', fontSize:'10.5px', background:'#fffbeb',
+                color:'#854d0e', borderRadius:'4px', padding:'1px 5px', fontWeight:700 } }, '계정 없음')),
+            h('td', { style:Object.assign({textAlign:'right'}, cell) }, (per.itemCount||0)),
+            h('td', { style:Object.assign({textAlign:'right', fontWeight:600}, cell) }, (per.total||0).toLocaleString('ko-KR')),
+            h('td', { style:Object.assign({paddingLeft:'12px', color:st.c, fontWeight: st.t==='확인 완료'?400:700}, cell) }, st.t),
+            h('td', { style:Object.assign({color:'#64748b', fontSize:'11.5px'}, cell) },
+              per.doneAt ? String(per.doneAt).slice(0,10) + (per.deviceHint ? ' · ' + per.deviceHint : '') : '-'));
+        }))),
+
+      objs.length > 0 && h('div', null,
+        h('div', { style:{ fontSize:'12.5px', fontWeight:700, color:'#854d0e', marginBottom:'8px' } },
+          '⚠ 이의 ' + objs.length + '건 (처리 대기 ' + objs.filter(function(o){return o.open;}).length + ')'),
+        objs.map(function(o){
+          var k = m.ym + '|' + o.sid + '|' + o.fid;
+          var tone = o.open ? '#fbbf24' : (o.withdrawn ? '#cbd5e1' : '#86efac');
+          return h('div', { key:k, style:{ borderLeft:'3px solid '+tone, padding:'4px 0 8px 12px', marginBottom:'10px' } },
+            h('div', { style:{ fontSize:'12.5px', fontWeight:600 } },
+              o.name + ' · ' + String(o.it.date||'').slice(5) + ' ' + (o.it.coName||'') + ' · ' + (o.it.amount||0).toLocaleString('ko-KR') + '원',
+              h('span', { style:{ marginLeft:'8px', fontWeight:400, fontSize:'11.5px', color:'#94a3b8' } },
+                String(o.ob.at||'').slice(0,10) + ' 접수'),
+              o.withdrawn && h('span', { style:{ marginLeft:'8px', fontSize:'11px', background:'#f1f5f9', color:'#64748b', borderRadius:'4px', padding:'1px 6px' } },
+                '본인이 물림 ' + String(o.ob.withdrawnAt||'').slice(5,10)),
+              o.closed && h('span', { style:{ marginLeft:'8px', fontSize:'11px', background:'#f0fdf4', color:'#166534', borderRadius:'4px', padding:'1px 6px', fontWeight:700 } }, '처리됨')),
+            h('div', { style:{ fontSize:'12.5px', color:'#475569', margin:'4px 0 8px', lineHeight:1.7 } }, o.ob.text || ''),
+            h('div', { style:{ display:'flex', gap:'6px', flexWrap:'wrap', marginBottom: o.open ? '8px' : '0' } },
+              h('button', { onClick:function(){ pcfGoto('fin/income', o.it.coName||''); },
+                style:{ padding:'4px 11px', fontSize:'11.5px', borderRadius:'5px', background:'#fff',
+                  color:'#1d4ed8', border:'1px solid #93c5fd', cursor:'pointer' } }, '입금 건 보기 ↗'),
+              PCF_SRC_MENU[o.it.source] && h('button', { onClick:function(){ pcfGoto(PCF_SRC_MENU[o.it.source], o.it.coName||''); },
+                style:{ padding:'4px 11px', fontSize:'11.5px', borderRadius:'5px', background:'#fff',
+                  color:'#475569', border:'1px solid #cbd5e1', cursor:'pointer' } }, '원천 보기 ↗')),
+            o.closed && o.it.reply && h('div', { style:{ background:'#f0fdf4', borderRadius:'6px', padding:'8px 11px',
+              fontSize:'12.5px', color:'#166534', lineHeight:1.7 } },
+              h('b', null, '내 답변'), ' ', String(o.it.reply.at||'').slice(0,10), h('br'), o.it.reply.text),
+            o.open && h('div', null,
+              h('textarea', { value: reply[k] || '', placeholder:'답변을 적어주세요 — 직원 화면에 그대로 보입니다',
+                onChange:function(e){ var n=Object.assign({}, reply); n[k]=e.target.value; setReply(n); },
+                style:{ width:'100%', minHeight:'46px', fontFamily:'inherit', fontSize:'12.5px',
+                  padding:'7px 9px', border:'1px solid #cbd5e1', borderRadius:'6px', boxSizing:'border-box' } }),
+              h('div', { style:{ display:'flex', gap:'8px', alignItems:'center', marginTop:'6px', flexWrap:'wrap' } },
+                h('button', { onClick:function(){ doReply(m, o); }, disabled:!!busy,
+                  style:{ padding:'6px 14px', fontSize:'12px', fontWeight:700, borderRadius:'6px',
+                    background:'#1e40af', color:'#fff', border:'none', cursor:'pointer' } }, '답변하고 닫기'),
+                h('span', { style:{ fontSize:'11.5px', color:'#94a3b8' } },
+                  '닫으면 그 줄은 다시 확인 대상이 됩니다'))));
+        })));
+  }
 }
 
 // ============ 성과관리 ============
@@ -50796,8 +51061,8 @@ function PerfManagement(props){
   }, [selYm, pubTick]);
   var pubStat = pubPrev ? pcfCount(pubPrev) : null;
 
-  var DEFAULT_TAB_ORDER = ['income','personal','unmatched','emp','year'];
-  var TAB_LABELS = { income:'월별 입금전체', personal:'📌 개인수익', unmatched:'⚠️ 성과미반영', emp:'직원별', year:'연도별' };
+  var DEFAULT_TAB_ORDER = ['income','personal','unmatched','emp','year','confirm'];
+  var TAB_LABELS = { income:'월별 입금전체', personal:'📌 개인수익', unmatched:'⚠️ 성과미반영', emp:'직원별', year:'연도별', confirm:'⭐ 확인 현황' };
   var to = useState((function(){
     try{
       var s = localStorage.getItem('pureun_v6_perf_tab_order');
@@ -51426,6 +51691,9 @@ function PerfManagement(props){
             )
           )
     ) : null,
+
+    // ── 탭: 확인 현황 (달마다 쌓아 보기 · 이의 답변 · 월 마감) ──
+    tab==='confirm' ? h(PerfConfirmTab, null) : null,
 
     // ── 탭3: 연도별 ──
     tab==='year' ? h('div',null,
