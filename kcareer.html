@@ -3184,6 +3184,54 @@ function cdUndoLastScan(){
   if(confirm('이번 스캔으로 등록된 증명서를 지웁니다.\n(' + sid + ')\n\n계속할까요?')) cdUndoScan(sid);
 }
 
+/* 증명서 원본 바이트 — 경로 참조(src:'fs')와 base64 첨부 둘 다 다룬다 */
+async function _cdFileBytes(r){
+  var ext = '', b64 = '';
+  if(r.src === 'fs' && r.relPath){
+    var root = await fsRoot();
+    if(!root){ toast('서류 폴더가 연결돼 있지 않습니다 — 위촉장 › ⋯ 더보기 › 서류 폴더 연결'); return null; }
+    var segs = String(r.relPath).split('/'), dir = root;
+    for(var i = 0; i < segs.length - 1; i++) dir = await dir.getDirectoryHandle(segs[i]);
+    var fh = await dir.getFileHandle(segs[segs.length - 1]);
+    var f = await fh.getFile();
+    ext = (segs[segs.length - 1].split('.').pop() || '').toLowerCase();
+    b64 = abToB64(await f.arrayBuffer());
+  } else {
+    var g = await getFileAsync(r.genFileId || r.id);
+    if(!g || !g.base64){ toast('원본이 없습니다'); return null; }
+    ext = (g.ext || (g.name || '').split('.').pop() || '').toLowerCase();
+    b64 = g.base64;
+  }
+  if(['hwp','hwpx','docx'].indexOf(ext) >= 0){ toast('HWP·DOCX는 OCR로 읽을 수 없습니다 — 손으로 입력해 주세요'); return null; }
+  var mime = ext === 'pdf' ? 'application/pdf' : ext === 'png' ? 'image/png' : 'image/jpeg';
+  return { b64: b64, mime: mime };
+}
+
+/* 행의 🔍 — 사람이 누를 때만 OCR한다(41개 자동 실행 금지) */
+async function cdReOcr(id){
+  var db = get('certdoc'), r = db.find(function(x){ return x.id === id; });
+  if(!r){ toast('증명서를 찾을 수 없습니다'); return; }
+  if(_cdSrc(r) !== 'received'){ toast('직접 만든 증명서는 다시 읽기 대상이 아닙니다'); return; }
+  if(!getGeminiKey() && !getApiKey()){ toast('API 키가 필요합니다 — 위촉장 › ⋯ 더보기에서 키를 넣어주세요'); return; }
+  toast('⏳ 증명서 읽는 중…');
+  try{
+    var got = await _cdFileBytes(r);
+    if(!got) return;
+    var parsed = null;
+    var gj = await _geminiOCR(PAGE_OCR_PROMPT.certdoc, got.b64, got.mime);
+    if(gj && gj.parsed) parsed = gj.parsed;
+    if(!parsed){ toast('읽지 못했습니다 — 손으로 입력해 주세요'); return; }
+    if(parsed.kind) r.kind = parsed.kind;
+    if(parsed.issuer){ r.issuer = parsed.issuer; if(!r.org) r.org = parsed.issuer; }
+    if(parsed.date){ r.date = parsed.date; r.year = String(parsed.date).slice(0,4); }
+    if(parsed.coverage) r.coverage = parsed.coverage;
+    if(parsed.usage && !r.usage) r.usage = parsed.usage;
+    set('certdoc', db);
+    renderDocStore('certdoc');
+    toast('✅ ' + (parsed.issuer || '') + ' ' + (parsed.date || '') + ' — 확인해 주세요');
+  }catch(e){ console.warn('cdReOcr', e); toast('읽기 실패 — 원본을 확인해 주세요'); }
+}
+
 function renderDocStore(domain){ const D=DOMAINS[domain]; const sec=document.getElementById(D.page); if(!sec) return;
   const arr=get(D.store);
   const orgSel=document.getElementById(D.orgFilter); if(!orgSel) return; const cur=orgSel.value;
@@ -4476,6 +4524,7 @@ async function _geminiOCR(prompt,b64,mt){ var key=getGeminiKey(); if(!key) retur
     var m=raw.match(/\{[\s\S]*\}/); return m?{parsed:JSON.parse(m[0])}:null;
   }catch(e){ console.warn('Gemini',e); return null; } }
 const PAGE_OCR_PROMPT={
+  certdoc:`이 문서(실적증명서·경력증명서·참여확인서·수행확인서)를 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 문서에 적힌 그대로 정확히(YYYY.MM.DD), 추측하지 마세요.\n{"kind":"실적증명서/경력증명서/참여확인/용역수행확인 중 해당","issuer":"이 증명서를 발급해준 기관의 전체 명칭(직인·발급기관란)","date":"발급일 YYYY.MM.DD","coverage":"증명하는 기간(수행기간·경력기간). 예: 2019.01.01 ~ 2021.12.31 또는 2024","usage":"용도·제출처가 적혀 있으면"}\n※ 발급기관은 증명서를 떼어준 곳입니다(신청인이 아님). 없는 항목만 빈 문자열. 다른 말 없이 JSON만.`,
   wiccok:`이 문서(위촉장·협약서·임명장)를 아주 꼼꼼히 읽고 JSON으로만 답하세요. 문서에 적힌 날짜를 그대로 정확히 옮기고, 추측하거나 지어내지 마세요. 날짜는 반드시 YYYY.MM.DD 형식으로.\n{"docType":"위촉장/협약서/임명장 중 해당","org":"발급·위촉 기관의 전체 명칭","issuer":"위촉하는 사람·기관장 직함(예: ○○원장·○○회장·○○지사장, 서명자)","titleVal":"직책 또는 위촉 내용(예: 컨설턴트, 위원, 전담노무사)","issueDate":"발급일(문서에 적힌 날짜) YYYY.MM.DD","period":"위촉기간이 있으면 시작일 ~ 종료일 (YYYY.MM.DD ~ YYYY.MM.DD)","year":"발급연도 YYYY","note":"문서번호(제○호 등)"}\n※ 발급일과 위촉기간(시작·종료)은 서로 다를 수 있으니 각각 정확히 구분해 읽으세요. 없는 항목만 빈 문자열. 다른 말 없이 JSON만.`,
   award:`이 표창장/포상장/감사장을 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 문서 그대로 정확히(YYYY.MM.DD).\n{"docType":"표창/포상/감사장 중 해당","org":"수여기관 전체 명칭","titleVal":"표창·포상 명칭 또는 공적 내용","issueDate":"수여일 YYYY.MM.DD","year":"YYYY","note":"문서번호(제○호)"}\n없는 항목만 빈 문자열. JSON만.`,
   license:`이 자격증/면허증을 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜·번호는 그대로 정확히.\n{"title":"자격·면허 명칭","org":"발급기관 전체 명칭","date":"취득/발급일 YYYY.MM.DD","num":"자격증/등록 번호","note":"등급·비고"}\n없는 항목만 빈 문자열. JSON만.`,

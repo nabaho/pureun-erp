@@ -52,6 +52,38 @@ test('폴더 연결 UI는 환경설정이 숨겨진 계정에서도 닿는 곳�
   assert.match(wiccok, /onclick="fsUndoLast\(\)"/);
 });
 
+test('증명서 OCR 프롬프트는 발급기관·발급일·증명기간·종류를 뽑는다', () => {
+  assert.match(source, /PAGE_OCR_PROMPT=\{[\s\S]{0,200}?certdoc:/);
+  const m = source.match(/certdoc:`([\s\S]*?)`,/);
+  assert.ok(m, 'certdoc 프롬프트가 있어야 합니다');
+  ['issuer', 'date', 'coverage', 'kind'].forEach((k) => {
+    assert.ok(m[1].includes('"' + k + '"'), '프롬프트가 ' + k + '를 요구해야 합니다');
+  });
+});
+
+test('cdReOcr는 사람이 누를 때만 돌고 made는 거부한다', () => {
+  const m = source.match(/async function cdReOcr\([\s\S]*?\n\}/);
+  assert.ok(m, 'cdReOcr 함수가 있어야 합니다');
+  assert.match(m[0], /_cdSrc\(r\)/, '만든 증명서는 OCR 대상이 아닙니다');
+  assert.match(m[0], /PAGE_OCR_PROMPT\.certdoc/);
+});
+
+test('OCR은 자동 실행되지 않는다', () => {
+  // 스캔·등록 경로에서 OCR을 부르면 41개가 한 번에 돌아 시간·비용이 든다
+  ['cdScanNow', 'cdScanCommit'].forEach((fn) => {
+    const m = source.match(new RegExp('function ' + fn + '\\([\\s\\S]*?\\n\\}'));
+    assert.ok(m, fn + ' 함수가 있어야 합니다');
+    assert.ok(!/cdReOcr|_geminiOCR/.test(m[0]), fn + '에서 OCR을 부르면 안 됩니다');
+  });
+});
+
+test('증명서 원본 바이트 취득은 경로와 base64 둘 다 다룬다', () => {
+  const m = source.match(/async function _cdFileBytes\([\s\S]*?\n\}/);
+  assert.ok(m, '_cdFileBytes 함수가 있어야 합니다');
+  assert.match(m[0], /fsRoot|getDirectoryHandle/, '경로 참조 원본을 읽어야 합니다');
+  assert.match(m[0], /getFileAsync/, 'base64 첨부도 읽어야 합니다');
+});
+
 test('증명서 스캔은 위촉장과 같은 폴더 핸들을 쓴다', () => {
   const m = source.match(/async function cdScanNow\([\s\S]*?\n\}/);
   assert.ok(m, 'cdScanNow 함수가 있어야 합니다');
