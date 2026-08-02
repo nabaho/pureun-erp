@@ -1,5 +1,6 @@
 'use strict';
-// js/pu-photo-store.js 단위 검사 — 실행: node --test tests/
+// js/pu-photo-store.js 단위 검사 — 실행: node --test tests/*.test.js
+//   (이 환경의 node는 --test 에 디렉터리 인자를 주면 죽는다. 반드시 glob으로 파일을 넘긴다.)
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -58,6 +59,20 @@ test('파일 창고 경로는 축소본과 격자용 미리보기가 다르다',
   assert.equal(S.filePath('2026', 'abc', 'full'), 'pu_photos/2026/abc.jpg');
   assert.equal(S.filePath('2026', 'abc', 'thumb'), 'pu_photos/2026/abc_t.jpg');
   assert.notEqual(S.filePath('2026', 'abc', 'full'), S.filePath('2026', 'abc', 'thumb'));
+});
+
+test('파일 종류가 full·thumb 가 아니면 예외를 던진다', () => {
+  const S = loadStore();
+  // 왜 던지는가: 예전에는 'thumb'이 아닌 모든 값을 원본 축소본 경로로 돌려줬다.
+  // 그러면 'thumbnail' 같은 오타 한 번에 격자용 미리보기가 원본 축소본을 덮어쓴다.
+  // 사진은 증빙 자료라 덮어쓰면 되돌릴 수 없다 — 조용한 사고보다 즉시 터지는 게 낫다.
+  assert.throws(() => S.filePath('2026', 'abc', 'thumbnail'), /full 또는 thumb/);
+  assert.throws(() => S.filePath('2026', 'abc', ''), /full 또는 thumb/);
+  assert.throws(() => S.filePath('2026', 'abc', undefined), /full 또는 thumb/);
+  assert.throws(() => S.filePath('2026', 'abc'), /full 또는 thumb/);
+  // 정상 값은 그대로 동작한다.
+  assert.equal(S.filePath('2026', 'abc', 'full'), 'pu_photos/2026/abc.jpg');
+  assert.equal(S.filePath('2026', 'abc', 'thumb'), 'pu_photos/2026/abc_t.jpg');
 });
 
 test('경로가 연도로 갈라진다', () => {
@@ -201,49 +216,114 @@ test('주소받기가 막히면 올리기 실패가 아니라 따로 알려주�
 
 /* ── 창고 점검 결과 → 화면 문구 (probeMessage) ── */
 
-test('여섯 가지 step 값 각각에 대해 서로 다른 문구가 나온다', () => {
-  const S = loadStore();
-  const cases = {
-    done: { ok: true, step: 'done', url: 'https://example.test/x' },
-    delete: { ok: true, step: 'delete', url: 'https://example.test/x', message: '올리기는 됐지만 지우기가 막혔습니다 — 권한이 없습니다' },
-    init: { ok: false, step: 'init', message: '파일 창고가 연결되지 않았습니다' },
-    ref: { ok: false, step: 'ref', message: '창고 설정이 없습니다' },
-    upload: { ok: false, step: 'upload', message: '권한이 없습니다' },
-    url: { ok: false, step: 'url', message: '주소를 못 받았습니다' }
+/* 이 단계의 핵심 산출물은 '점검이 어디서 막혔는지 정확히 알려주는 것'이다.
+   대표님은 이 문구만 보고 파이어베이스 콘솔에서 규칙을 손보신다. 그래서 문구가
+   엉뚱하면 콘솔에서 엉뚱한 규칙을 고치게 된다 — 코드 버그보다 비싸다.
+
+   ⚠ 아래 '여섯 갈래' 검사는 반드시 여섯 갈래 전부에 **같은 message 값**을 넣는다.
+   예전 검사는 갈래마다 message를 다르게 넣어 문구를 비교했다. 그러면 message만
+   달라도 통과하므로, ref·upload·url 에 똑같은 안내 문장을 써도 검사가 통과했다.
+   실제로 그 결함(세 실패를 한 문구로 뭉쳐 잘못된 조치를 지시)을 이 검사가 놓쳤다.
+   message를 고정해야 '안내 문장 자체'가 서로 다른지 검사할 수 있다. */
+
+// 여섯 갈래 전부에 넣는 같은 오류문(파이어베이스가 주는 영어 오류문 자리).
+const SAME_MESSAGE = 'Firebase-오류문-고정값';
+
+function sixBranches() {
+  return {
+    done: { ok: true, step: 'done', url: 'https://example.test/x', message: SAME_MESSAGE },
+    delete: { ok: true, step: 'delete', url: 'https://example.test/x', message: SAME_MESSAGE },
+    init: { ok: false, step: 'init', message: SAME_MESSAGE },
+    ref: { ok: false, step: 'ref', message: SAME_MESSAGE },
+    upload: { ok: false, step: 'upload', message: SAME_MESSAGE },
+    url: { ok: false, step: 'url', message: SAME_MESSAGE }
   };
-  const messages = {};
-  for (const step of Object.keys(cases)) {
-    const msg = S.probeMessage(cases[step]);
+}
+
+// 갈래별 문구를 {step: 문구} 로 만든다.
+function branchMessages(S) {
+  const cases = sixBranches();
+  const out = {};
+  for (const step of Object.keys(cases)) out[step] = S.probeMessage(cases[step]);
+  return out;
+}
+
+test('여섯 갈래의 안내 문장이 서로 다르다 (오류문을 같게 고정해도)', () => {
+  const S = loadStore();
+  const messages = branchMessages(S);
+  for (const step of Object.keys(messages)) {
+    const msg = messages[step];
     assert.ok(msg && typeof msg === 'string' && msg.length > 0, step + ': 문구가 비어 있습니다');
-    messages[step] = msg;
   }
+  // 오류문이 같으므로, 문구가 겹치면 그건 안내 문장 자체가 같다는 뜻이다.
   const values = Object.values(messages);
-  const unique = new Set(values);
-  assert.equal(unique.size, values.length, '서로 다른 step인데 같은 문구가 나왔습니다: ' + JSON.stringify(messages));
+  assert.equal(new Set(values).size, values.length,
+    '오류문이 같을 때 겹치는 문구가 있습니다 = 안내 문장을 뭉쳐 놨습니다: ' + JSON.stringify(messages, null, 2));
 });
 
-test('init 문구에는 규칙 이야기가 없고 연결 이야기가 있다', () => {
-  // 회귀 방지: step:'init'은 창고 자체가 연결되지 않은 경우다. 이걸 규칙 문제로
-  // 안내하면 대표님이 콘솔에서 엉뚱한 규칙을 고치게 된다(승인된 목업에서 지적된 오류).
+test('설정 문제(창고 미연결·창고 설정)에는 규칙 이야기를 하지 않는다', () => {
+  // 회귀 방지: 이 두 갈래는 규칙 문제가 아니라 설정 문제다. 규칙 문제로 안내하면
+  // 대표님이 콘솔에서 있지도 않은 규칙을 고치신다.
   const S = loadStore();
-  const msg = S.probeMessage({ ok: false, step: 'init', message: '파일 창고가 연결되지 않았습니다' });
-  assert.ok(!/규칙/.test(msg), '연결 실패 문구에 규칙 이야기가 섞였습니다: ' + msg);
-  assert.match(msg, /연결/);
+  const messages = branchMessages(S);
+  for (const step of ['init', 'ref']) {
+    assert.ok(!/규칙/.test(messages[step]),
+      step + ' 갈래 문구에 규칙 이야기가 섞였습니다: ' + messages[step]);
+  }
+  assert.match(messages.init, /연결/);
 });
 
-test('ok:false 문구에는 막힌 단계와 메시지가 들어 있다', () => {
+test('올리기가 막힌 갈래는 쓰기 권한을 넣으라고 말한다', () => {
   const S = loadStore();
-  for (const step of ['ref', 'upload', 'url']) {
-    const msg = S.probeMessage({ ok: false, step: step, message: '이건-특정-메시지-내용' });
-    assert.ok(msg.includes(step), step + ': 문구에 단계 이름이 없습니다: ' + msg);
-    assert.ok(msg.includes('이건-특정-메시지-내용'), step + ': 문구에 메시지 내용이 없습니다: ' + msg);
+  const msg = branchMessages(S).upload;
+  assert.match(msg, /쓰기/, '쓰기 권한 이야기가 없습니다: ' + msg);
+  assert.match(msg, /권한/, '권한 이야기가 없습니다: ' + msg);
+});
+
+test('주소받기가 막힌 갈래는 올리기는 됐다고 말하고 읽기 권한만 요구한다', () => {
+  // 회귀 방지: 이 갈래는 쓰기가 이미 성공한 경우다 = 쓰기 규칙은 있다는 뜻이다.
+  // "규칙이 없을 수 있다"고 하면 대표님이 이미 있는 규칙을 다시 쓰신다.
+  // 실제로 없는 것은 읽기 권한뿐이다.
+  const S = loadStore();
+  const msg = branchMessages(S).url;
+  assert.match(msg, /올리/, '올리기가 됐다는 말이 없습니다: ' + msg);
+  assert.match(msg, /읽/, '읽기 권한 이야기가 없습니다: ' + msg);
+  assert.ok(!/규칙이[^\n]{0,10}없/.test(msg), '규칙이 없다고 잘못 안내합니다: ' + msg);
+});
+
+test('지우기만 막힌 갈래는 사진을 담을 수 있다고 말한다', () => {
+  const S = loadStore();
+  const msg = branchMessages(S).delete;
+  assert.match(msg, /사진.*담을 수 있습/, msg);
+});
+
+test('여섯 갈래 어디에도 영어 내부 단계 이름이 노출되지 않는다', () => {
+  // 저장소 규칙: 설명은 짧고 쉬운 한국어. 파일 경로·함수 이름·내부 단계 이름은
+  // 대표님이 직접 입력할 때만 노출한다. 'done'·'delete'는 영어 단어이면서
+  // 흔한 오류문에 잘 안 나오는 편이라, 내부용으로 새는 네 개만 못 박는다.
+  const S = loadStore();
+  const messages = branchMessages(S);
+  for (const step of Object.keys(messages)) {
+    // 오류문(고정값)에는 이 단어들이 없으므로, 나오면 우리 문구가 노출한 것이다.
+    for (const word of ['init', 'ref', 'upload', 'url']) {
+      assert.ok(!new RegExp(word, 'i').test(messages[step]),
+        step + ' 갈래 문구에 영어 단계 이름 "' + word + '"이 노출됐습니다: ' + messages[step]);
+    }
   }
 });
 
-test('ok:true, step:delete 문구에는 사진을 담을 수 있다는 안내가 들어 있다', () => {
+test('done 말고는 모든 갈래 문구에 원인 오류문이 담긴다', () => {
+  // 파이어베이스가 준 영어 오류문은 진단에 필요하므로 반드시 남긴다.
+  // 다만 영어라서 먼저 읽히면 안 되니, 한국어 안내가 앞에 오고 뒤에 붙어야 한다.
   const S = loadStore();
-  const msg = S.probeMessage({ ok: true, step: 'delete', message: '지우기가 막혔습니다' });
-  assert.match(msg, /사진.*담을 수 있습/);
+  const messages = branchMessages(S);
+  for (const step of ['delete', 'init', 'ref', 'upload', 'url']) {
+    const msg = messages[step];
+    assert.ok(msg.includes(SAME_MESSAGE), step + ': 문구에 원인 오류문이 없습니다: ' + msg);
+    assert.ok(msg.indexOf(SAME_MESSAGE) > 0, step + ': 영어 오류문이 한국어 안내보다 앞에 옵니다: ' + msg);
+  }
+  // done 은 오류가 없으므로 원인을 붙이지 않는다.
+  assert.ok(!S.probeMessage({ ok: true, step: 'done', url: 'https://example.test/x' }).includes('원인'));
 });
 
 test('어떤 결과를 넣어도 빈 문자열이나 undefined를 돌려주지 않는다', () => {
