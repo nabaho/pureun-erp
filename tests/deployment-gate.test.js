@@ -27,6 +27,14 @@ test('deployment generates version metadata before uploading the site', () => {
   assert.ok(versionAt >= 0 && uploadAt > versionAt);
 });
 
+test('new versions apply automatically and only show a one-second completion notice', () => {
+  const runtime = fs.readFileSync(path.join(root, 'js/pu-version.js'), 'utf8');
+  assert.match(runtime, /window\.location\.replace/);
+  assert.match(runtime, /새 버전으로 업데이트되었습니다/);
+  assert.match(runtime, /}, 1000\)/);
+  assert.doesNotMatch(runtime, /<button/);
+});
+
 test('backup and restore data is manager-only in current Firebase rules', () => {
   const rules = JSON.parse(fs.readFileSync(path.join(root, 'docs/firebase-rules-현재적용본.json'), 'utf8')).rules;
   for (const key of ['systemBackups', 'systemBackupsIndex', 'systemRestoreLog']) {
