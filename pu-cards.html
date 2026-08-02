@@ -2925,6 +2925,115 @@ async function openMojibakeCleanup(){
   toast(`✅ 깨진 명함 ${bad.length.toLocaleString()}장을 휴지통으로 보냈습니다 (30일 복구 가능)`,7000);
   render();
 }
+/* ════════════ 🏢 이름 칸에 회사·기관명이 들어간 명함 정리 ════════════
+   예) 이름='청풍중학교' → 회사로 이동 / 이름='가성훈사장-창성산업' → 이름·직책·회사로 분리 */
+const _SURNAME = new Set('김이박최정강조윤장임한오서신권황안송류전홍고문양손배백허유남심노하곽성차주우구나민진지엄채원천방공현함변염여추도소석선설마길연위표명기반왕금옥육인맹제모탁국어은편용봉'
+  + '가간갈감견경계동두라목미범복부빈사상승시종좌창태평피해형호화후흥');   /* 드문 성씨도 포함 (가성훈·계미정 등) */
+const _MULTI_SN = ['남궁','황보','제갈','사공','선우','서문','독고','동방'];
+const _ORG_KW = ['공사','공단','위원회','노동청','지청','센터','협회','조합','학교','대학','병원','의원','약국','은행','산업',
+ '엔지니어링','테크','전자','식품','건설','물산','상사','기업','법인','사무소','세무','회계','법률','관광','마트','식당',
+ '카페','호텔','모텔','농장','축산','정밀','기계','화학','제약','물류','운수','택배','공업','설비','시스템','솔루션',
+ '컨설팅','노무','인력','건축','설계','자동차','부품','금속','철강','섬유','유통','무역','통신','정보','미디어','교육',
+ '학원','어린이집','유치원','복지관','재단','지사','지점','공장','연구소','진흥원','보험','증권','농협','수협','시청',
+ '군청','구청','주민센터','경찰서','소방서','세무서','치과','한의','요양','그룹','코리아','서비스','고속','개발'];
+const _TITLE_SFX = ['대표이사','부사장','전무이사','상무이사','사무국장','본부장','센터장','조합장','위원장','사장','회장',
+ '원장','대표','전무','상무','이사','부장','차장','과장','대리','주임','팀장','실장','소장','국장','반장','기사','교수',
+ '선생','노무사','변호사','세무사','회계사','법무사','조정관','조사관','감독관','주무관','사무관','담당자','총무','님'];
+/* 엄격 판정 — 고칠 필요가 있는지(성씨로 시작하는 2~3자 한글) */
+function _isPersonName(s){
+  s=String(s||'').trim();
+  if(!/^[가-힣]{2,4}$/.test(s)) return false;
+  if(_ORG_KW.some(k=>s.includes(k))) return false;
+  if(_MULTI_SN.some(m=>s.startsWith(m))) return true;
+  if(s.length>3) return false;
+  return _SURNAME.has(s[0]);
+}
+/* 느슨한 판정 — 이미 '이름-회사'나 '이름+호칭' 형태로 쪼갠 조각이 사람 이름인지
+   (드문 성씨 '가·간·견' 등도 살리되, 4자 이상 상호는 배제) */
+function _looksPerson(s){
+  s=String(s||'').trim();
+  if(_ORG_KW.some(k=>s.includes(k))) return false;
+  if(_MULTI_SN.some(m=>s.startsWith(m)) && /^[가-힣]{3,4}$/.test(s)) return true;
+  return /^[가-힣]{2,3}$/.test(s);
+}
+/* 이름 뒤 호칭·직책 떼기 — '님' 먼저 떼고 긴 것부터 맞춰본다 */
+function _stripTitle(s){
+  s=String(s||'').trim();
+  if(s.endsWith('님') && s.length>1) s=s.slice(0,-1).trim();
+  const sorted=_TITLE_SFX.filter(t=>t!=='님').sort((a,b)=>b.length-a.length);
+  for(const t of sorted){ if(s.endsWith(t) && s.length>t.length) return [s.slice(0,-t.length).trim(), t]; }
+  return [s,''];
+}
+/* 한 건을 어떻게 고칠지 계산 — 고칠 필요 없으면 null */
+function nameFixPlan(it){
+  const nm=String(it.name||'').trim(); if(!nm) return null;
+  if(_isPersonName(nm)) return null;                       /* 정상 */
+  const co=String(it.company||'').trim();
+  /* 1) '가성훈사장-창성산업' 처럼 구분자로 사람·회사가 붙은 경우 */
+  const m=nm.split(/\s*[-–—_·]\s*/).filter(Boolean);
+  if(m.length===2){
+    const r=_stripTitle(m[0]);
+    if(_looksPerson(r[0])){
+      return { type:'분리', sure:true, name:r[0], company:(co||m[1]), title:(it.title||r[1]||''), dept:it.dept||'',
+               memo:(co&&co!==m[1]) ? [it.memo,m[1]].filter(Boolean).join(' / ') : (it.memo||'') };
+    }
+  }
+  /* 2) '홍영숙선생님' 처럼 사람+호칭 */
+  const b=_stripTitle(nm);
+  if(b[0]!==nm && _looksPerson(b[0])){
+    return { type:'호칭분리', sure:true, name:b[0], company:co, title:(it.title||b[1]||''), dept:it.dept||'', memo:it.memo||'' };
+  }
+  /* 3) 기관·상호 → 회사 칸으로 (기존 회사값은 부서·메모로 보존) */
+  const plan={ type:'회사로', sure:_ORG_KW.some(k=>nm.includes(k)), name:'', company:nm,
+               title:it.title||'', dept:it.dept||'', memo:it.memo||'' };
+  if(co && co!==nm){ if(!plan.dept) plan.dept=co; else plan.memo=[plan.memo,co].filter(Boolean).join(' / '); }
+  return plan;
+}
+function nameFixList(){
+  return Object.values(state.items)
+    /* 한 번 고친 명함은 다시 잡지 않는다 (또 고치면 이름이 회사로 밀려남) */
+    .filter(it=>it && it.kind===state.tab && !it.nameFixed && !inHiddenLocked(it))
+    .map(it=>({it:it, plan:nameFixPlan(it)}))
+    .filter(x=>x.plan);
+}
+function applyNameFix(id){
+  const it=state.items[id]; if(!it) return;
+  const p=nameFixPlan(it); if(!p) return;
+  it.name=p.name; it.company=p.company; it.title=p.title; it.dept=p.dept; it.memo=p.memo;
+  it.nameFixed=1; it.updatedAt=Date.now(); Store.put(it);
+}
+function autoNameFixSure(){
+  const list=nameFixList().filter(x=>x.plan.sure);
+  if(!list.length) return toast('자동으로 고칠 수 있는 항목이 없습니다');
+  if(!confirm(`확실한 ${list.length.toLocaleString()}건을 자동으로 정리할까요?\n\n· 이름 칸의 회사·기관명을 회사 칸으로 옮깁니다\n· 사람+회사가 붙은 것은 이름·직책·회사로 나눕니다\n· 명함은 삭제되지 않습니다`)) return;
+  let n=0; list.forEach(x=>{ applyNameFix(x.it.id); n++; });
+  toast(`✅ ${n.toLocaleString()}건을 정리했습니다`,5000);
+  render(); setTimeout(openNameFix, 120);
+}
+function openNameFix(){
+  const list=nameFixList();
+  if(!list.length){ $('dedupBg').classList.remove('open'); return toast('이름 칸이 이상한 명함이 없습니다 👍'); }
+  const sureN=list.filter(x=>x.plan.sure).length;
+  let h=`<div class="mhead"><b>🏢 이름 칸에 회사명 — ${list.length.toLocaleString()}건</b>
+    <button class="iconbtn" onclick="dedupBg.classList.remove('open')">✕</button></div>
+    <p style="font-size:12.5px;color:var(--sub);line-height:1.7;margin-bottom:10px">
+    이름 자리에 <b>회사·기관명</b>이 들어간 명함이에요. 고치면 회사 칸으로 옮겨지고, 사람+회사가 붙은 것은 나눠집니다.
+    <b>명함은 지워지지 않습니다.</b></p>
+    ${sureN?`<button class="btn primary" style="width:100%;margin-bottom:12px" onclick="autoNameFixSure()">⚡ 확실한 ${sureN.toLocaleString()}건 자동 정리</button>`:''}`;
+  list.slice(0,200).forEach(function(x){
+    const it=x.it, plan=x.plan;
+    const after=[plan.name?'이름 '+esc(plan.name):'', plan.company?'회사 '+esc(plan.company):'',
+                 plan.title?'직책 '+esc(plan.title):'', plan.dept?'부서 '+esc(plan.dept):''].filter(Boolean).join(' · ');
+    h+=`<div class="ditem" style="align-items:center"><div class="v">
+      <span style="font-size:11px;color:${plan.sure?'#0f7a44':'#9a5b00'};font-weight:700">${plan.sure?'확실':'검토'} · ${plan.type}</span><br>
+      <b>${esc(it.name||'')}</b>${it.company?` <span style="color:var(--sub);font-size:12px">/ ${esc(it.company)}</span>`:''}<br>
+      <span style="font-size:12px;color:#0f7a44">→ ${after}</span></div>
+      <button class="btn ghost" style="flex:none;padding:8px 14px" onclick="applyNameFix('${it.id}');render();setTimeout(openNameFix,80)">고치기</button></div>`;
+  });
+  if(list.length>200) h+=`<p style="color:var(--sub);font-size:12px;padding:8px 2px">…외 ${(list.length-200).toLocaleString()}건 (자동 정리를 쓰면 한 번에 처리됩니다)</p>`;
+  $('dedupM').innerHTML=h; $('dedupBg').classList.add('open');
+}
+
 /* ════════════ 🧹 정리 센터 — 손볼 것들을 한 화면에서 건수로 확인 ════════════
    중복·유사·빈 명함·깨진 글자·휴지통이 흩어져 있어 "지금 정리할 게 있나?"를 네 번 눌러야 알던 것을
    한 번에 보여준다. 각 줄의 버튼은 기존 정리 화면을 그대로 연다. */
@@ -2940,6 +3049,7 @@ function openCleanupCenter(){
   const emptyN = emptyTargets().length;
   const mojiN  = isCard ? mojibakeTargets().length : 0;
   const trashN = Object.keys(state.trash||{}).length;
+  let nameFixN=0; try{ nameFixN=nameFixList().length; }catch(e){ console.warn(e); }
   const row=(icon,title,desc,n,unit,fn,btnLabel)=>{
     const clean = n===0;
     return `<div class="ditem" style="align-items:center">
@@ -2961,6 +3071,8 @@ function openCleanupCenter(){
          emptyN,'장','dedupBg.classList.remove(\'open\');cleanEmpty()','삭제');
   if(isCard) h+=row('🧯','깨진 글자','가져오기 인코딩 오류로 글자가 깨진 항목 (예: ì¶œ…)',
          mojiN,'장','dedupBg.classList.remove(\'open\');openMojibakeCleanup()','정리');
+  h+=row('🏢','이름 칸에 회사명','이름 자리에 회사·기관명이 들어간 항목 — 회사 칸으로 옮기거나 이름·회사로 나눕니다',
+         nameFixN,'건','openNameFix()','검토');
   h+=row('🗑','휴지통','삭제한 항목을 30일간 보관 — 실수로 지웠으면 여기서 되살립니다',
          trashN,'건','dedupBg.classList.remove(\'open\');openTrash()','열기');
   h+=`<p style="font-size:11.5px;color:var(--sub);line-height:1.7;margin-top:12px">
