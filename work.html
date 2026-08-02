@@ -625,8 +625,8 @@ function start(){
   initTop();
   try{ history.replaceState({view:'my'}, ''); }catch(e){}
   resolveMe().then(function(){
-    /* 내 성과급 — 메뉴 배지용으로 한 번 읽는다. 실패해도 화면에 영향 없다 */
-    pcLoad().then(function(d){ S.perfData=d; route(); }).catch(function(){ S.perfData=[]; });
+    /* 내 성과급 — 배지·안내 띠용으로 한 번 읽는다. 실패해도 화면에 영향 없다 */
+    pcRefresh().then(function(){ route(); pcNag(); }).catch(function(){ S.perfData=[]; S.perfAll=[]; });
     fbDb.ref(NS+'/items').on('value',function(snap){ items=snap.val()||{};
       if(appHasFocus()){ S._pend=true; return; } route();
       if(!S._hashDone){ S._hashDone=1; openFromHash(); }   // 푸른이알피 → #item= 딥링크
@@ -693,6 +693,7 @@ function shell(){
     +'<div id="topright"><span id="conn"><span class="dot" id="dot"></span><span id="connt">연결 확인</span></span>'
     +'<span id="topuser"></span><span id="topclock">—</span>'
     +'<button id="logoutbtn" onclick="doLogout()">로그아웃</button></div></div>'
+    +'<div id="perfband" style="display:none"></div>'
     +'<div id="app">'+loadingHTML()+'</div></div>'
     +'<div id="qwrap" style="display:none"><div id="qsug"></div>'
     +'<div id="qbar"><span class="zap" id="qgrip" title="여기를 잡고 끌면 옮길 수 있습니다">⚡</span>'
@@ -1018,6 +1019,40 @@ function pcMonths(n){
   for(var i=0;i<(n||4);i++){ out.push(d.getFullYear()+'-'+pad(d.getMonth()+1)); d.setMonth(d.getMonth()-1); }
   return out;
 }
+/* 대표(재무권한)인지 — 서버가 아는 값을 그대로 쓴다. 화면에서 짐작하지 않는다.
+   재무권한자만 perf_confirm 전체를 읽을 수 있다(규칙). 아니면 아래 전체 현황은 아예 안 뜬다. */
+function pcAmFin(){
+  if(S.perfFin!==undefined) return Promise.resolve(S.perfFin);
+  var u=(typeof firebase!=='undefined'&&firebase.auth)?firebase.auth().currentUser:null;
+  if(!u||!u.uid||typeof fbDb==='undefined'||!fbDb){ S.perfFin=false; return Promise.resolve(false); }
+  return fbDb.ref('uid_roles/'+u.uid+'/fin').once('value')
+    .then(function(s){ S.perfFin=(s.val()===true); return S.perfFin; })
+    .catch(function(){ S.perfFin=false; return false; });
+}
+/* 전체 현황 — 재무권한자만. 권한이 없으면 서버가 막으므로 조용히 빈 손으로 돌아온다. */
+function pcLoadAll(){
+  return pcAmFin().then(function(fin){
+    if(!fin) return [];
+    return Promise.all(pcMonths(4).map(function(ym){
+      return fbDb.ref(PC_PATH+'/'+ym+'/p').once('value')
+        .then(function(s){ var v=s.val(); return (v&&Object.keys(v).length)?{ym:ym,all:v}:null; })
+        .catch(function(){ return null; });
+    })).then(function(r){ return r.filter(Boolean); });
+  });
+}
+/* 사람 한 명의 상태를 한 낱말로 */
+function pcWho(p){
+  var by=(p.objection||{}).byItem||{};
+  var open=Object.keys(by).filter(function(fid){
+    var o=by[fid]||{}; if(o.withdrawnAt||!o.text) return false;
+    var it=(p.items||{})[fid]||{};
+    return !(it.reply&&it.reply.state==='done');
+  });
+  if(open.length) return { k:'obj', t:'이의 '+open.length+'건', c:'#b45309', bg:'#fffbeb', open:open };
+  if(p.done===true) return { k:'done', t:'확인 완료', c:'#166534', bg:'#f0fdf4', open:[] };
+  return { k:'todo', t:'미확인', c:'#64748b', bg:'#f8fafc', open:[] };
+}
+
 /* 달 목록을 훑을 권한은 없다(남의 것까지 보이므로). 최근 넉 달을 하나씩 두드려 본다.
    발행 안 됐거나 내 것이 아니면 막히는데, 그게 정상이라 조용히 넘긴다. */
 function pcLoad(){
@@ -1071,7 +1106,14 @@ function pcMarkDone(ym){
 }
 
 /* ── 화면 ── */
-function pcRefresh(){ return pcLoad().then(function(d){ S.perfData=d; if(S.view==='perf') renderPerf(); return d; }); }
+function pcRefresh(){
+  return Promise.all([pcLoad(), pcLoadAll()]).then(function(r){
+    S.perfData=r[0]; S.perfAll=r[1];
+    if(S.view==='perf') renderPerf();
+    pcBand();
+    return r[0];
+  });
+}
 function pcToggleShow(){ S.perfShow=!S.perfShow; renderPerf(); }
 function pcToggleRow(k){ S.perfOpen=S.perfOpen||{}; S.perfOpen[k]=!S.perfOpen[k]; renderPerf(); }
 function pcAct(fn){ fn().then(pcRefresh).catch(function(e){ toast('저장하지 못했습니다 — '+((e&&e.message)||'권한을 확인하세요'),'err'); }); }
@@ -1095,16 +1137,121 @@ function pcDoneClick(ym){
 function renderPerf(){
   var app=$('app'); if(!app) return;
   if(S.perfData===undefined){ app.innerHTML=loadingHTML(); pcRefresh(); return; }
-  var list=S.perfData||[];
+  var list=S.perfData||[], adm=S.perfAll||[];
+  var h='';
   if(!list.length){
-    app.innerHTML='<div class="card" style="text-align:center;padding:40px 20px;color:var(--faint)">'
+    h+='<div class="card" style="text-align:center;padding:32px 20px;color:var(--faint);margin-bottom:14px">'
       +'<div style="font-size:30px;margin-bottom:10px">⭐</div>'
-      +'<div style="font-size:14px;margin-bottom:6px">확인할 성과급이 없습니다</div>'
+      +'<div style="font-size:14px;margin-bottom:6px">확인할 내 성과급이 없습니다</div>'
       +'<div style="font-size:12px;line-height:1.7">대표님이 그 달치를 내보내면 여기에 나타납니다.<br>'
       +'분명히 있어야 하는데 안 보이면 대표님께 계정 연결을 확인해 달라고 하세요.</div></div>';
-    return;
+  } else {
+    h+=list.map(pcMonthHTML).join('');
   }
-  app.innerHTML=list.map(pcMonthHTML).join('');
+  h+=adm.map(pcAdminHTML).join('');    /* 재무권한자에게만 채워진다 */
+  app.innerHTML=h;
+}
+
+/* ── 대표만 보는 전체 현황 (읽기 전용) ── */
+function pcAdminHTML(e){
+  var ym=e.ym, all=e.all;
+  var sids=Object.keys(all).sort(function(a,b){ return (all[b].total||0)-(all[a].total||0); });
+  var done=0, obj=0, todo=0, sum=0, objRows=[];
+  sids.forEach(function(sid){
+    var p=all[sid], w=pcWho(p); sum+=(p.total||0);
+    if(w.k==='done') done++; else if(w.k==='obj') obj++; else todo++;
+    w.open.forEach(function(fid){
+      objRows.push({ name:p.name||sid, fid:fid, it:(p.items||{})[fid]||{}, ob:((p.objection||{}).byItem||{})[fid]||{} });
+    });
+  });
+  var mask=!S.perfShow;
+  var h='<div class="card" style="margin-bottom:14px;border-color:#c7d2fe">';
+  h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
+    +'<b style="font-size:14px">👑 '+esc(ym.slice(0,4))+'년 '+(+ym.slice(5,7))+'월 전체 현황</b>'
+    +'<span style="font-size:11.5px;color:#4f46e5;background:#eef2ff;border-radius:10px;padding:2px 9px">대표만 보임</span>'
+    +'<span style="margin-left:auto;font-size:12px;color:var(--faint)">합계 <b style="color:var(--tx)">'
+    +(mask?'●●●':pcMoney(sum)+'원')+'</b></span></div>';
+
+  h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;font-size:12px">'
+    +'<span style="background:#f0fdf4;color:#166534;border-radius:6px;padding:4px 10px">확인 완료 '+done+'명</span>'
+    +(obj?'<span style="background:#fffbeb;color:#854d0e;border-radius:6px;padding:4px 10px;font-weight:700">이의 '+obj+'명</span>':'')
+    +(todo?'<span style="background:#f8fafc;color:#64748b;border-radius:6px;padding:4px 10px">미확인 '+todo+'명</span>':'')
+    +'</div>';
+
+  h+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:340px">'
+    +'<tr style="border-bottom:1px solid var(--bd)">'
+    +'<td style="padding:6px 4px;color:var(--faint);font-size:11px">이름</td>'
+    +'<td style="padding:6px 4px;color:var(--faint);font-size:11px;text-align:right">건수</td>'
+    +'<td style="padding:6px 4px;color:var(--faint);font-size:11px;text-align:right">금액</td>'
+    +'<td style="padding:6px 4px 6px 12px;color:var(--faint);font-size:11px">상태</td>'
+    +'<td style="padding:6px 4px;color:var(--faint);font-size:11px">확인한 때</td></tr>';
+  sids.forEach(function(sid){
+    var p=all[sid], w=pcWho(p);
+    h+='<tr style="border-bottom:1px solid #f1f5f9;background:'+(w.k==='done'?'#fff':w.bg)+'">'
+      +'<td style="padding:6px 4px">'+esc(p.name||sid)+'</td>'
+      +'<td style="padding:6px 4px;text-align:right">'+(p.itemCount||0)+'</td>'
+      +'<td style="padding:6px 4px;text-align:right;font-weight:600">'+(mask?'●●●':pcMoney(p.total))+'</td>'
+      +'<td style="padding:6px 4px 6px 12px;color:'+w.c+';font-weight:'+(w.k==='done'?400:700)+'">'+esc(w.t)+'</td>'
+      +'<td style="padding:6px 4px;color:var(--faint);font-size:11.5px">'
+        +(p.doneAt?esc(String(p.doneAt).slice(0,10))+(p.deviceHint?' · '+esc(p.deviceHint):''):'-')+'</td></tr>';
+  });
+  h+='</table></div>';
+
+  if(objRows.length){
+    h+='<div style="margin-top:12px;border-top:1px solid var(--bd);padding-top:10px">'
+      +'<b style="font-size:12.5px;color:#854d0e">⚠ 처리 대기 이의 '+objRows.length+'건</b>';
+    objRows.forEach(function(r){
+      h+='<div style="border-left:3px solid #fbbf24;padding:4px 0 4px 10px;margin-top:8px">'
+        +'<div style="font-size:12.5px;font-weight:600">'+esc(r.name)+' · '+esc(pcDay(r.it.date))+' '
+          +esc(r.it.coName||'')+' · '+(mask?'●●●':pcMoney(r.it.amount)+'원')
+          +' <span style="color:var(--faint);font-weight:400;font-size:11.5px">'+esc(String(r.ob.at||'').slice(0,10))+' 접수</span></div>'
+        +'<div style="font-size:12.5px;color:#475569;margin-top:3px;line-height:1.6">'+esc(r.ob.text||'')+'</div></div>';
+    });
+    h+='<div style="margin-top:10px;font-size:11.5px;color:var(--faint);line-height:1.7">'
+      +'답변과 처리는 푸른이알피 <b>성과관리</b>에서 합니다. 여기서는 보기만 합니다.</div></div>';
+  }
+  h+='</div>';
+  return h;
+}
+
+/* ── 안내 띠 — 확인이 남아 있으면 화면 맨 위에 계속 남는다 ── */
+function pcBand(){
+  var el=$('perfband'); if(!el) return;
+  var pend=(S.perfData||[]).filter(function(x){ return !x.p.done; });
+  if(!pend.length || S.view==='perf'){ el.style.display='none'; el.innerHTML=''; return; }
+  var n=pend.reduce(function(s,x){ return s+pcCounts(x.p).todo; },0);
+  var late=pend.some(function(x){ return pcDueLate(x.p.due); });
+  var ms=pend.map(function(x){ return (+x.ym.slice(5,7))+'월'; }).join('·');
+  el.style.display='';
+  el.innerHTML='<div onclick="go(\'perf\')" style="cursor:pointer;display:flex;align-items:center;gap:10px;flex-wrap:wrap;'
+    +'background:'+(late?'#fef2f2':'#fffbeb')+';border-bottom:2px solid '+(late?'#fca5a5':'#fbbf24')+';padding:9px 16px;font-size:13px;color:'+(late?'#b91c1c':'#854d0e')+'">'
+    +'<b>'+(late?'⏰':'⭐')+' '+esc(ms)+' 성과급 확인이 남았습니다</b>'
+    +'<span style="font-size:12px">'+(n?'처리할 줄 '+n+'개':'마무리만 하면 됩니다')+(late?' · 마감일이 지났습니다':'')+'</span>'
+    +'<span style="margin-left:auto;background:#fff;border:1px solid currentColor;border-radius:6px;padding:4px 12px;font-size:12px;font-weight:700">확인하러 가기 →</span></div>';
+}
+
+/* ── 하루에 한 번만 뜨는 알림 ── */
+function pcNag(){
+  var pend=(S.perfData||[]).filter(function(x){ return !x.p.done; });
+  if(!pend.length) return;
+  var today=new Date().toISOString().slice(0,10);
+  var key='perf_nag_'+pcMySid();
+  try{ if(localStorage.getItem(key)===today) return; localStorage.setItem(key,today); }catch(e){}
+  var n=pend.reduce(function(s,x){ return s+pcCounts(x.p).todo; },0);
+  var ms=pend.map(function(x){ return (+x.ym.slice(5,7))+'월'; }).join('·');
+  var late=pend.some(function(x){ return pcDueLate(x.p.due); });
+  showModal('<div style="text-align:center;padding:6px 4px">'
+    +'<div style="font-size:34px;margin-bottom:8px">⭐</div>'
+    +'<div style="font-size:16px;font-weight:700;margin-bottom:6px">'+esc(ms)+' 성과급 확인이 남았습니다</div>'
+    +'<div style="font-size:13px;color:#475569;line-height:1.8;margin-bottom:4px">'
+      +'내 성과급 내역을 한 건씩 보고 맞는지 확인해 주세요.<br>'
+      +(n?'처리할 줄이 <b>'+n+'개</b> 있습니다.':'마무리만 하면 됩니다.')
+      +(late?'<br><b style="color:#b91c1c">마감일이 지났습니다.</b>':'')+'</div>'
+    +'<div style="font-size:12px;color:var(--faint);margin-bottom:16px">다르면 그 자리에서 이의를 남길 수 있습니다.</div>'
+    +'<div style="display:flex;gap:8px;justify-content:center">'
+      +'<button onclick="closeM()" style="padding:9px 18px;font-size:13px;border:1px solid var(--bd);background:#fff;border-radius:8px;cursor:pointer">나중에</button>'
+      +'<button onclick="closeM();go(\'perf\')" style="padding:9px 22px;font-size:13px;font-weight:700;border:none;background:var(--acc);color:#fff;border-radius:8px;cursor:pointer">확인하러 가기</button>'
+    +'</div><div style="font-size:11.5px;color:var(--faint);margin-top:12px">이 알림은 하루에 한 번만 뜹니다.<br>확인을 마칠 때까지 화면 위에 표시가 남습니다.</div></div>');
 }
 
 function pcMonthHTML(e){
@@ -1219,6 +1366,7 @@ function route(){
   var ch=$('cnt-ho'); if(ch){ var n2=hoBadgeCount(); ch.textContent=n2||''; ch.style.color=n2?'#c0392b':''; ch.style.fontWeight=n2?'800':''; }
   var cp=$('cnt-perf'); if(cp){ var n3=(S.perfData||[]).filter(function(x){return !x.p.done;}).length;
     cp.textContent=n3||''; cp.style.color=n3?'#c0392b':''; cp.style.fontWeight=n3?'800':''; }
+  pcBand();   /* 화면을 옮길 때마다 띠를 다시 판단한다 (성과급 화면에서는 숨긴다) */
   if(S.view==='team') renderTeam();
   else if(S.view==='stats') renderStats();
   else if(S.view==='kb') renderKb();
