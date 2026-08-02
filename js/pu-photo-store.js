@@ -34,12 +34,75 @@
     return BUCKET_ROOT + '/' + year + '/' + id + (kind === 'thumb' ? '_t' : '') + '.jpg';
   }
 
+  /* ── 저장 방식 ──
+     기본은 'rtdb'(실시간DB). 이미 명함첩·푸른카메라가 쓰고 있는 검증된 길이다.
+     창고 점검을 통과한 뒤에만 'storage'(파일 창고)로 올린다. */
+  var mode = 'rtdb';
+  var deps = { db: null, storage: null };
+
+  function init(o) {
+    o = o || {};
+    deps.db = o.db || null;
+    deps.storage = o.storage || null;
+    if (o.mode) setMode(o.mode);
+    return mode;
+  }
+
+  function getMode() { return mode; }
+
+  function setMode(m) {
+    if (m !== 'storage' && m !== 'rtdb') {
+      throw new Error('저장 방식은 storage 또는 rtdb만 가능합니다: ' + m);
+    }
+    mode = m;
+    return mode;
+  }
+
+  /* ── 창고 점검 ──
+     파일 창고를 이 저장소에서 실제로 써본 적이 없다. 그래서 사진을 담기 전에
+     작은 파일 하나로 올리기·주소받기·지우기를 확인한다.
+     실사진 경로가 아니라 전용 점검 경로만 쓴다 — 실데이터를 덮어쓰지 않는다. */
+  function probePath(stamp) { return BUCKET_ROOT + '/_probe/' + stamp + '.txt'; }
+
+  function probe(stamp) {
+    if (!deps.storage) {
+      return Promise.resolve({ ok: false, step: 'init', message: '파일 창고가 연결되지 않았습니다' });
+    }
+    var ref;
+    try {
+      ref = deps.storage.ref(probePath(stamp));
+    } catch (e) {
+      return Promise.resolve({ ok: false, step: 'ref', message: (e && e.message) || String(e) });
+    }
+    return ref.putString('pu-photos probe')
+      .then(function () { return ref.getDownloadURL(); })
+      .then(function (url) {
+        // 지우기가 막혀도 사진은 담을 수 있다. 통과로 보되 규칙을 손보라고 알린다.
+        return ref.delete()
+          .then(function () { return { ok: true, step: 'done', url: url }; })
+          .catch(function (e) {
+            return {
+              ok: true, step: 'delete', url: url,
+              message: '올리기는 됐지만 지우기가 막혔습니다 — ' + ((e && e.message) || e)
+            };
+          });
+      })
+      .catch(function (e) {
+        return { ok: false, step: 'upload', message: (e && e.message) || String(e) };
+      });
+  }
+
   global.PuPhotoStore = {
     DB_ROOT: DB_ROOT,
     BUCKET_ROOT: BUCKET_ROOT,
     yearOf: yearOf,
     metaPath: metaPath,
     blobPath: blobPath,
-    filePath: filePath
+    filePath: filePath,
+    init: init,
+    getMode: getMode,
+    setMode: setMode,
+    probePath: probePath,
+    probe: probe
   };
 })(typeof window !== 'undefined' ? window : globalThis);

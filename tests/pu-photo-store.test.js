@@ -66,3 +66,120 @@ test('경로가 연도로 갈라진다', () => {
   assert.ok(S.metaPath('2026', 'x').includes('/2026/'));
   assert.ok(S.filePath('2025', 'x', 'full').includes('/2025/'));
 });
+
+/* ── 저장 방식 선택 ── */
+
+test('저장 방식 기본값은 검증된 실시간DB다', () => {
+  const S = loadStore();
+  // 창고 점검을 통과하기 전에는 한 번도 안 써본 길로 가지 않는다.
+  assert.equal(S.getMode(), 'rtdb');
+});
+
+test('저장 방식을 바꿀 수 있다', () => {
+  const S = loadStore();
+  assert.equal(S.setMode('storage'), 'storage');
+  assert.equal(S.getMode(), 'storage');
+});
+
+test('없는 저장 방식은 거부한다', () => {
+  const S = loadStore();
+  assert.throws(() => S.setMode('아무거나'), /storage 또는 rtdb/);
+});
+
+test('init이 파이어베이스 객체를 받고 방식을 돌려준다', () => {
+  const S = loadStore();
+  const fakeDb = {};
+  const fakeStorage = {};
+  assert.equal(S.init({ db: fakeDb, storage: fakeStorage, mode: 'storage' }), 'storage');
+  assert.equal(S.getMode(), 'storage');
+});
+
+/* ── 창고 점검 ── */
+
+// 파일 창고 흉내. putString·getDownloadURL·delete 를 마음대로 성공/실패시킨다.
+function fakeStorage(behavior) {
+  const calls = [];
+  return {
+    calls,
+    ref(p) {
+      calls.push(['ref', p]);
+      return {
+        putString(s) {
+          calls.push(['putString', p, s]);
+          return behavior.upload === 'fail'
+            ? Promise.reject(new Error('권한이 없습니다'))
+            : Promise.resolve({});
+        },
+        getDownloadURL() {
+          calls.push(['getDownloadURL', p]);
+          return behavior.url === 'fail'
+            ? Promise.reject(new Error('주소를 못 받았습니다'))
+            : Promise.resolve('https://example.test/' + p);
+        },
+        delete() {
+          calls.push(['delete', p]);
+          return behavior.del === 'fail'
+            ? Promise.reject(new Error('지울 권한이 없습니다'))
+            : Promise.resolve();
+        }
+      };
+    }
+  };
+}
+
+test('점검 경로는 실사진 경로와 겹치지 않는다', () => {
+  const S = loadStore();
+  const p = S.probePath('12345');
+  // 점검이 실사진을 덮어쓰면 안 된다.
+  assert.ok(p.includes('_probe'), '점검 경로에 _probe 표시가 없습니다: ' + p);
+  assert.notEqual(p, S.filePath('2026', '12345', 'full'));
+  assert.ok(p.startsWith('pu_photos/'), '창고 루트 밖으로 나가면 안 됩니다: ' + p);
+});
+
+test('창고가 연결되지 않았으면 점검이 곧바로 알려준다', async () => {
+  const S = loadStore();
+  S.init({ db: {}, storage: null });
+  const r = await S.probe('1');
+  assert.equal(r.ok, false);
+  assert.equal(r.step, 'init');
+  assert.match(r.message, /창고/);
+});
+
+test('점검이 통과하면 올리고·주소받고·지운다', async () => {
+  const S = loadStore();
+  const fs2 = fakeStorage({});
+  S.init({ db: {}, storage: fs2 });
+  const r = await S.probe('99');
+  assert.equal(r.ok, true);
+  assert.equal(r.step, 'done');
+  assert.match(r.url, /^https:\/\//);
+  // 점검 파일을 남기지 않는다.
+  assert.ok(fs2.calls.some(c => c[0] === 'delete'), '점검 파일을 지우지 않았습니다');
+});
+
+test('올리기가 막히면 실패로 알려준다', async () => {
+  const S = loadStore();
+  S.init({ db: {}, storage: fakeStorage({ upload: 'fail' }) });
+  const r = await S.probe('99');
+  assert.equal(r.ok, false);
+  assert.equal(r.step, 'upload');
+  assert.match(r.message, /권한/);
+});
+
+test('올리기는 됐지만 지우기가 막히면 통과로 보되 알려준다', async () => {
+  const S = loadStore();
+  S.init({ db: {}, storage: fakeStorage({ del: 'fail' }) });
+  const r = await S.probe('99');
+  // 사진을 올릴 수는 있으니 창고는 쓸 수 있다. 다만 규칙을 손봐야 한다.
+  assert.equal(r.ok, true);
+  assert.equal(r.step, 'delete');
+  assert.match(r.message, /지우기/);
+});
+
+test('점검이 실패해도 예외를 던지지 않는다', async () => {
+  const S = loadStore();
+  S.init({ db: {}, storage: { ref() { throw new Error('창고 설정이 없습니다'); } } });
+  const r = await S.probe('99');
+  assert.equal(r.ok, false);
+  assert.equal(r.step, 'ref');
+});
