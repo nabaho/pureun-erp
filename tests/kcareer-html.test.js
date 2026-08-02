@@ -52,6 +52,20 @@ test('폴더 연결 UI는 환경설정이 숨겨진 계정에서도 닿는 곳�
   assert.match(wiccok, /onclick="fsUndoLast\(\)"/);
 });
 
+test('기관 증명서 매칭이 issuer도 본다', () => {
+  const src = funcSource('renderPuAgency');
+  assert.match(src, /c\.issuer/, 'OCR로 채운 발급기관으로 매칭돼야 합니다');
+  assert.match(src, /c\.kind/, '정규화로 title이 kind로 옮겨졌으므로 둘 다 봐야 합니다');
+});
+
+test('증명서 행에서 그 기관 실적으로 건너갈 수 있다', () => {
+  assert.match(source, /function cdOpenAgency\(/);
+  const src = funcSource('cdOpenAgency');
+  assert.match(src, /page-puagency/, '외부기관 실적 탭으로 이동해야 합니다');
+  assert.match(src, /puagQ/, '그 기관으로 검색어를 넣어줘야 합니다');
+  assert.match(src, /nav_to\(/, '페이지 전환은 nav_to를 씁니다');
+});
+
 test('증명서 OCR 프롬프트는 발급기관·발급일·증명기간·종류를 뽑는다', () => {
   assert.match(source, /PAGE_OCR_PROMPT=\{[\s\S]{0,200}?certdoc:/);
   const m = source.match(/certdoc:`([\s\S]*?)`,/);
