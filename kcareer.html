@@ -1809,7 +1809,9 @@ function fsCommitScan(){
     } else if(p.store === 'cert'){
       rec = { id: _bufIdSeq('C','cert'), title: _fsTitleFor(p), org: p.org || '', date: '', num: '', note: '' };
     } else {
-      rec = { id: _bufIdSeq('CD','certdoc'), title: KcareerScan.cleanCore(p.name), org: p.org || '', date: '', note: '' };
+      /* 화면(renderDocStore)이 읽는 이름으로 쓴다 — kind·year·memo */
+      rec = { id: _bufIdSeq('CD','certdoc'), kind: KcareerScan.cleanCore(p.name), org: p.org || '',
+              year: p.year || '', date: '', memo: '', docSrc: 'received', submits: [] };
     }
     rec.fname = p.name; rec.src = 'fs'; rec.relPath = p.relPath;
     rec.fileSize = p.fileSize; rec.fileMtime = p.fileMtime;
@@ -3010,6 +3012,34 @@ async function confirmResumeSave(){ if(!_docCtx) return; const {domain,mode,file
 function delDoc(domain,id){ const D=DOMAINS[domain]; if(!confirm('삭제하시겠습니까?')) return;
   const r=get(D.store).find(x=>x.id===id); set(D.store, get(D.store).filter(x=>x.id!==id));
   if(r){ deleteFile(r.genFileId); if(r.origFileId) deleteFile(r.origFileId); } renderDocStore(domain); toast('삭제됨'); }
+/* ===== 증명서 출처 구분 =====
+   경력증명서 보관은 '내가 만들어 발급하는 증명서'를 전제로 만들어졌다(genFileId).
+   외부기관이 발급해준 것은 만든 파일이 없고 받은 PDF 하나뿐이라 구분이 필요하다. */
+function _cdSrc(r){
+  if(!r) return 'made';
+  if(r.docSrc) return r.docSrc;
+  if(r.relPath || (!r.genFileId && r.fname)) return 'received';   /* 스캔·업로드로 들어온 것 */
+  return 'made';
+}
+
+/* 스캔이 남긴 어긋난 필드 이름을 화면이 읽는 이름으로 옮긴다(앱 시작 시 1회, 멱등).
+   fsCommitScan이 title·date·note로 쓰던 것을 화면은 kind·year·memo로 읽어
+   종류가 '-', 연도 묶음이 undefined로 나왔다. */
+function _cdNormalize(){
+  var arr = get('certdoc'), n = 0, changed = false;
+  arr.forEach(function(r){
+    if(_cdSrc(r) !== 'received') return;
+    if(!r.kind && r.title){ r.kind = r.title; n++; changed = true; }
+    if(!r.year){ var d = r.date || r.fileMtime || ''; if(d){ r.year = String(d).slice(0,4); changed = true; } }
+    if(!r.memo && r.note){ r.memo = r.note; changed = true; }
+    if(!r.submits){ r.submits = []; changed = true; }
+    if(!r.docSrc){ r.docSrc = 'received'; changed = true; }
+  });
+  /* kind 말고 다른 칸만 채워진 경우에도 저장해야 다음 실행에서 또 고치지 않는다 */
+  if(changed) set('certdoc', arr);
+  return n;
+}
+
 function renderDocStore(domain){ const D=DOMAINS[domain]; const sec=document.getElementById(D.page); if(!sec) return;
   const arr=get(D.store);
   const orgSel=document.getElementById(D.orgFilter); if(!orgSel) return; const cur=orgSel.value;
@@ -3029,8 +3059,10 @@ function renderDocStore(domain){ const D=DOMAINS[domain]; const sec=document.get
           <div style="flex:1;min-width:180px"><div style="font-weight:600">${escapeHtml(r.kind||'-')}${r.org?` · ${escapeHtml(r.org)}`:''}</div>
           ${extraTxt?`<div style="font-size:11px;color:var(--navy);margin-top:2px">${extraTxt}</div>`:''}
           <div style="font-size:12px;color:var(--text-mute);margin-top:2px">${escapeHtml(r.memo||'')}</div></div>
-          <button class="btn sm" onclick="showBig('${r.genFileId}')" onmouseenter="hoverThumb('${r.genFileId}',event)" onmousemove="moveThumb(event)" onmouseleave="hideThumb()">📄 ${D.label}</button><button class="btn sm" onclick="downloadFile('${r.genFileId}')">⬇</button>
-          ${r.origFileId?`<button class="btn sm" onclick="showBig('${r.origFileId}')" onmouseenter="hoverThumb('${r.origFileId}',event)" onmousemove="moveThumb(event)" onmouseleave="hideThumb()">📎 원본</button><button class="btn sm" onclick="downloadFile('${r.origFileId}')">⬇</button>`:''}
+          ${_cdSrc(r)==='received'
+            ? `<button class="btn sm" style="background:var(--navy);color:#fff;border-color:var(--navy)" onclick='openOriginal(${JSON.stringify({id:r.id,src:r.src||"",relPath:r.relPath||"",genFileId:r.genFileId||""}).replace(/'/g,"&#39;")})'>📄 원본</button>`
+            : `<button class="btn sm" onclick="showBig('${r.genFileId}')" onmouseenter="hoverThumb('${r.genFileId}',event)" onmousemove="moveThumb(event)" onmouseleave="hideThumb()">📄 ${D.label}</button><button class="btn sm" onclick="downloadFile('${r.genFileId}')">⬇</button>`
+              + (r.origFileId?`<button class="btn sm" onclick="showBig('${r.origFileId}')" onmouseenter="hoverThumb('${r.origFileId}',event)" onmousemove="moveThumb(event)" onmouseleave="hideThumb()">📎 원본</button><button class="btn sm" onclick="downloadFile('${r.origFileId}')">⬇</button>`:'')}
           <button class="btn sm" onclick="openSubmitLog('${domain}','${r.id}')">🧾 제출기록${n?`(${n})`:''}</button>
           <button class="btn sm" onclick="delDoc('${domain}','${r.id}')" style="color:#C0392B">삭제</button>
         </div>`; }).join('') + '</div>';
@@ -5394,7 +5426,7 @@ function fbAutoPush(){ if(!fbUid||!fbDb||!fbAutoOn()) return;
     fbDb.ref('kcareer/'+fbUid).update(payload).then(function(){ var b=document.getElementById('fbBtn'); if(b){ var t=b.textContent; b.textContent='☁ 저장됨'; setTimeout(function(){ if(b.textContent==='☁ 저장됨') b.textContent=t; },1500); } }).catch(function(){});
   }).catch(function(){}); }
 
-_safe(loadSeed); _safe(loadCustomNav); _safe(buildNav); _safe(initTabs); _safe(()=>initDocCreate('resume')); _safe(()=>initDocStore('resume')); _safe(()=>initDocCreate('profile')); _safe(()=>initDocStore('profile')); _safe(()=>initDocCreate('certdoc')); _safe(()=>initDocStore('certdoc')); _safe(bindCareer); _safe(initApiTab); _safe(initSettings); _safe(seedStamps); _safe(fbInit);
+_safe(loadSeed); _safe(_cdNormalize); _safe(loadCustomNav); _safe(buildNav); _safe(initTabs); _safe(()=>initDocCreate('resume')); _safe(()=>initDocStore('resume')); _safe(()=>initDocCreate('profile')); _safe(()=>initDocStore('profile')); _safe(()=>initDocCreate('certdoc')); _safe(()=>initDocStore('certdoc')); _safe(bindCareer); _safe(initApiTab); _safe(initSettings); _safe(seedStamps); _safe(fbInit);
 _safe(()=>{ document.getElementById('brand').onclick=()=>{ nav_to('page-home','홈',null); renderHome(); };
   document.getElementById('hamburger').onclick=()=>toggleSidebar();
   var _pb=document.getElementById('printBtn'); if(_pb) _pb.onclick=()=>window.print();

@@ -52,6 +52,72 @@ test('폴더 연결 UI는 환경설정이 숨겨진 계정에서도 닿는 곳�
   assert.match(wiccok, /onclick="fsUndoLast\(\)"/);
 });
 
+test('_cdSrc: 만든 증명서와 받은 증명서를 가른다', () => {
+  const ctx = {};
+  vm.runInNewContext(funcSource('_cdSrc'), ctx);
+  assert.equal(ctx._cdSrc({ docSrc: 'received' }), 'received');
+  assert.equal(ctx._cdSrc({ docSrc: 'made' }), 'made');
+  assert.equal(ctx._cdSrc({ relPath: '6. 컨설팅 실적증명/a.pdf' }), 'received');  // 스캔으로 들어온 것
+  assert.equal(ctx._cdSrc({ fname: 'a.pdf' }), 'received');                        // genFileId 없이 파일명만
+  assert.equal(ctx._cdSrc({ genFileId: 'certdoc_1' }), 'made');                    // 내가 만든 것
+  assert.equal(ctx._cdSrc({}), 'made');
+  assert.equal(ctx._cdSrc(null), 'made');
+});
+
+test('_cdNormalize: 스캔이 남긴 어긋난 필드를 화면이 읽는 이름으로 옮긴다', () => {
+  const store = { certdoc: [
+    { id: 'CD0001', title: '2.권형하노무사 경력증명서', date: '2023.05.11', note: 'x',
+      relPath: '6. 컨설팅 실적증명/a.pdf', src: 'fs' },
+    { id: 'CD0002', kind: '실적증명서', year: '2025', memo: '', genFileId: 'certdoc_9' }  // 이미 정상 → 손대지 않음
+  ] };
+  const ctx = {
+    get: (k) => store[k].slice(),
+    set: (k, v) => { store[k] = v; },
+    _cdSrc: (r) => (r.relPath || (!r.genFileId && r.fname) ? 'received' : 'made')
+  };
+  vm.runInNewContext(funcSource('_cdNormalize') + '\nglobalThis.__n = _cdNormalize();', ctx);
+  assert.equal(ctx.__n, 1, '고친 건수를 돌려준다');
+  const a = store.certdoc.find((r) => r.id === 'CD0001');
+  assert.equal(a.kind, '2.권형하노무사 경력증명서');
+  assert.equal(a.year, '2023');
+  assert.equal(a.docSrc, 'received');
+  // vm 안에서 만든 배열은 realm이 달라 deepStrictEqual이 프로토타입에서 걸린다
+  assert.ok(Array.isArray(a.submits) && a.submits.length === 0, 'submits는 빈 배열이어야 합니다');
+  const b = store.certdoc.find((r) => r.id === 'CD0002');
+  assert.equal(b.kind, '실적증명서', '이미 정상인 레코드는 그대로');
+  assert.equal(b.docSrc, undefined, 'made는 docSrc를 붙이지 않는다');
+});
+
+test('_cdNormalize는 멱등이다 — 두 번 돌려도 0건', () => {
+  const store = { certdoc: [
+    { id: 'CD0001', title: 't', date: '2023.05.11', relPath: 'x/a.pdf', src: 'fs' }
+  ] };
+  const ctx = {
+    get: (k) => store[k].slice(),
+    set: (k, v) => { store[k] = v; },
+    _cdSrc: () => 'received'
+  };
+  const src = funcSource('_cdNormalize');
+  vm.runInNewContext(src + '\nglobalThis.__a = _cdNormalize(); globalThis.__b = _cdNormalize();', ctx);
+  assert.equal(ctx.__a, 1);
+  assert.equal(ctx.__b, 0, '두 번째는 고칠 게 없어야 합니다');
+});
+
+test('스캔이 만드는 certdoc 레코드는 화면이 읽는 필드를 쓴다', () => {
+  const src = funcSource('fsCommitScan');
+  const i = src.indexOf("_bufIdSeq('CD','certdoc')");
+  assert.ok(i >= 0, 'certdoc 분기가 있어야 합니다');
+  const line = src.slice(i, i + 400);
+  assert.match(line, /kind:/, '화면은 title이 아니라 kind를 읽습니다');
+  assert.match(line, /docSrc:\s*'received'/);
+  assert.match(line, /submits:\s*\[\]/);
+});
+
+test('받은 증명서에는 만든 파일 버튼을 그리지 않는다', () => {
+  const src = funcSource('renderDocStore');
+  assert.match(src, /_cdSrc\(r\)/, '출처에 따라 버튼을 달리 그려야 합니다');
+});
+
 test('pu-erp data/ 읽기는 모두 {v,u} 봉투를 벗긴다', () => {
   // pu-erp는 data/{키}={v:값,u:시각}으로 저장한다. 안 벗기면 직원목록·실적이 통째로 어긋난다.
   ['_puLoadUserMap', 'loadPuPerf', '_puFetchPlan', 'resolveMe'].forEach((fn) => {
