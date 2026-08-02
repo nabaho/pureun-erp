@@ -183,3 +183,18 @@ test('점검이 실패해도 예외를 던지지 않는다', async () => {
   assert.equal(r.ok, false);
   assert.equal(r.step, 'ref');
 });
+
+test('주소받기가 막히면 올리기 실패가 아니라 따로 알려주고 점검 파일을 지운다', async () => {
+  const S = loadStore();
+  const fs3 = fakeStorage({ url: 'fail' });
+  S.init({ db: {}, storage: fs3 });
+  const r = await S.probe('99');
+  // 올리기는 성공했다 — 그러니 'upload' 단계로 보고하면 거짓 보고가 된다.
+  // 실제로 막힌 곳인 'url' 단계로 정확히 알려줘야 한다.
+  assert.equal(r.ok, false);
+  assert.equal(r.step, 'url');
+  assert.match(r.message, /주소/);
+  // 주소를 못 받아도 파일은 이미 창고에 올라가 있다 — 점검은 흔적을 남기면 안 되므로
+  // 실패 결과를 돌려주기 전에 반드시 지우기를 시도해야 한다.
+  assert.ok(fs3.calls.some(c => c[0] === 'delete'), '주소받기 실패 후 점검 파일을 지우려 하지 않았습니다');
+});

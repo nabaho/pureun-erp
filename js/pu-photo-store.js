@@ -75,17 +75,31 @@
       return Promise.resolve({ ok: false, step: 'ref', message: (e && e.message) || String(e) });
     }
     return ref.putString('pu-photos probe')
-      .then(function () { return ref.getDownloadURL(); })
-      .then(function (url) {
-        // 지우기가 막혀도 사진은 담을 수 있다. 통과로 보되 규칙을 손보라고 알린다.
-        return ref.delete()
-          .then(function () { return { ok: true, step: 'done', url: url }; })
-          .catch(function (e) {
-            return {
-              ok: true, step: 'delete', url: url,
-              message: '올리기는 됐지만 지우기가 막혔습니다 — ' + ((e && e.message) || e)
-            };
-          });
+      .then(function () {
+        // getDownloadURL 실패는 여기서 바로 갈라 잡는다 — 뒤의 .catch(업로드 실패용)로
+        // 흘려보내면 "올리기는 됐는데 실패했다고 보고하는" 거짓 결과가 나온다.
+        return ref.getDownloadURL().then(
+          function (url) {
+            // 지우기가 막혀도 사진은 담을 수 있다. 통과로 보되 규칙을 손보라고 알린다.
+            return ref.delete()
+              .then(function () { return { ok: true, step: 'done', url: url }; })
+              .catch(function (e) {
+                return {
+                  ok: true, step: 'delete', url: url,
+                  message: '올리기는 됐지만 지우기가 막혔습니다 — ' + ((e && e.message) || e)
+                };
+              });
+          },
+          function (e) {
+            var message = (e && e.message) || String(e);
+            // 주소받기는 실패했지만 파일은 이미 창고에 올라가 있다 — 점검 흔적을
+            // 남기지 않도록 지우기를 시도한다. 이 지우기가 또 실패해도(권한 등)
+            // 무시하고 원래의 'url' 실패 결과를 그대로 돌려준다(예외를 밖으로 던지지 않는다).
+            return ref.delete().then(function () {}, function () {}).then(function () {
+              return { ok: false, step: 'url', message: message };
+            });
+          }
+        );
       })
       .catch(function (e) {
         return { ok: false, step: 'upload', message: (e && e.message) || String(e) };
