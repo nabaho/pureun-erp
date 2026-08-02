@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101010">
+<title>푸른사진첩</title>
+<link rel="manifest" href="pu-photos-manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="푸른사진첩">
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
+<script src="js/pu-resilience.js"></script>
+<script src="js/pu-health.js"></script>
+<script src="js/pu-version.js"></script>
+<script src="js/pu-photo-store.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check-compat.js"></script>
+<style>
+:root{ --blue:#1e40af; --ink:#101828; --sub:#5a6885; --line:#e4e8f0; --bg:#f4f6fb; }
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Malgun Gothic","Apple SD Gothic Neo",sans-serif;background:var(--bg);color:var(--ink);-webkit-text-size-adjust:100%}
+button{font-family:inherit;cursor:pointer}
+#app{display:flex;flex-direction:column;height:100%}
+
+/* 상단바 */
+#top{display:flex;align-items:center;gap:8px;padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;background:#101010;color:#fff}
+#top .brand{display:flex;align-items:center;gap:8px;font-weight:800;font-size:16px}
+#top .mark{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;background:var(--blue);font-size:13px}
+#top .who{margin-left:auto;font-size:12px;opacity:.8}
+/* ⚙️ 초기값은 반드시 숨김이다. 로그아웃 상태에서 점검을 누르면 권한 거부가 나고
+   화면이 "규칙이 없다"고 오보고한다 — 규칙이 정상인데 규칙을 고치게 만든다.
+   보임을 초기값으로 두면 앱이 뜨는 순간 잠깐 눌릴 수 있으니, 스크립트가
+   로그인을 확인한 뒤에만 켠다. */
+#top .ico{display:none;background:none;border:none;color:#fff;font-size:18px;padding:4px}
+
+/* 로그인 안내 */
+#login{display:none;flex:1;align-items:center;justify-content:center;padding:24px}
+#login .card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:28px 22px;text-align:center;max-width:340px}
+#login .m{width:52px;height:52px;margin:0 auto 14px;border-radius:14px;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800}
+#login h1{font-size:19px;margin:0 0 8px}
+#login p{font-size:13.5px;color:var(--sub);line-height:1.6;margin:0 0 18px}
+#login a{display:inline-block;background:var(--blue);color:#fff;text-decoration:none;border-radius:10px;padding:11px 18px;font-weight:700;font-size:14px}
+
+/* 홈 */
+#home{display:none;flex:1;flex-direction:column;align-items:center;justify-content:center;padding:24px}
+#home .empty{text-align:center;color:var(--sub)}
+#home .empty .ic{font-size:44px;margin-bottom:10px}
+#home .empty p{font-size:14px;margin:0}
+
+/* 설정 시트 */
+#settings{display:none;position:fixed;inset:0;background:rgba(16,24,40,.45);align-items:flex-end;justify-content:center;z-index:20}
+#settings .sheet{background:#fff;width:100%;max-width:460px;border-radius:16px 16px 0 0;padding:20px 18px calc(env(safe-area-inset-bottom) + 20px)}
+#settings h2{font-size:16px;margin:0 0 14px}
+#settings .row{display:flex;align-items:center;justify-content:space-between;font-size:13.5px;padding:9px 0;border-bottom:1px solid var(--line)}
+#settings button{width:100%;margin-top:12px;border:none;border-radius:10px;padding:12px;font-weight:700;font-size:14px;background:var(--blue);color:#fff}
+#settings button.close{background:#eef1f6;color:var(--ink)}
+#probeOut{margin:12px 0 0;font-size:12.5px;line-height:1.6;white-space:pre-wrap;background:#f7f9fc;border:1px solid var(--line);border-radius:10px;padding:12px;min-height:20px}
+#probeOut:empty{display:none}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="top">
+    <div class="brand"><span class="mark">푸</span> 푸른사진첩</div>
+    <span class="who" id="who"></span>
+    <button class="ico" id="gear" title="설정" onclick="openSettings()">⚙️</button>
+  </div>
+
+  <!-- 로그인 안내 -->
+  <div id="login">
+    <div class="card">
+      <div class="m">푸</div>
+      <h1>푸른사진첩</h1>
+      <p>푸른노무법인 앱은 통합 포털에서 로그인합니다.<br>로그인하면 사진첩으로 연결됩니다.</p>
+      <a href="enter.html">포털에서 로그인 →</a>
+    </div>
+  </div>
+
+  <!-- 홈 -->
+  <div id="home">
+    <div class="empty">
+      <div class="ic">🖼️</div>
+      <p>아직 올린 사진이 없습니다.</p>
+    </div>
+  </div>
+
+  <!-- 설정 -->
+  <div id="settings">
+    <div class="sheet">
+      <h2>설정</h2>
+      <div class="row"><span>저장 방식</span><b id="modeText">-</b></div>
+      <button onclick="runProbe()">파일 창고 점검</button>
+      <pre id="probeOut"></pre>
+      <button class="close" onclick="closeSettings()">닫기</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ══════ 설정 (다른 앱과 같은 파이어베이스 프로젝트) ══════ */
+const FB_APPCHECK_KEY = '6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
+const FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA',
+  databaseURL: 'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app',
+  projectId: 'pureun-erp',
+  storageBucket: 'pureun-erp.firebasestorage.app',
+  appId: '1:936817166182:web:9bd31f70d0afdf5fca2aa7',
+  messagingSenderId: '936817166182'
+};
+
+const $ = id => document.getElementById(id);
+let db = null, store = null;
+
+/* ══════ 시작 ══════ */
+firebase.initializeApp(FIREBASE_CONFIG);
+try { if (firebase.appCheck) firebase.appCheck().activate(new firebase.appCheck.ReCaptchaV3Provider(FB_APPCHECK_KEY), true); }
+catch (e) { console.warn('[AppCheck]', e && e.message); }
+
+db = firebase.database();
+/* 파일 창고는 아직 이 저장소에서 검증되지 않았다. 없어도 앱이 뜨게 한다. */
+try { store = firebase.storage(); } catch (e) { store = null; }
+
+/* 저장 방식은 저장 층이 정한다. 앱은 어디에 담기는지 모른다. */
+PuPhotoStore.init({ db: db, storage: store });
+
+firebase.auth().onAuthStateChanged(u => {
+  const signedIn = !!(u && u.email);
+  $('who').textContent = signedIn ? (u.displayName || u.email) : '';
+  $('login').style.display = signedIn ? 'none' : 'flex';
+  $('home').style.display = signedIn ? 'flex' : 'none';
+  /* ⚙️(설정·창고 점검)는 로그인한 뒤에만 보인다.
+     로그아웃 상태로 점검하면 권한 거부가 나서 "규칙 문제"로 잘못 보고된다. */
+  $('gear').style.display = signedIn ? 'inline-flex' : 'none';
+});
+
+/* ══════ 설정 ══════ */
+function modeLabel(m) { return m === 'storage' ? '파일 창고' : '실시간DB'; }
+
+function openSettings() {
+  $('modeText').textContent = modeLabel(PuPhotoStore.getMode());
+  $('settings').style.display = 'flex';
+}
+function closeSettings() { $('settings').style.display = 'none'; }
+
+/* 파일 창고 점검 — 작은 파일을 올리고 주소를 받아본 뒤 지운다.
+   실사진 경로가 아니라 전용 점검 경로만 쓴다. */
+function runProbe() {
+  const out = $('probeOut');
+  out.textContent = '점검 중…';
+  PuPhotoStore.probe(String(Date.now())).then(r => {
+    out.textContent = PuPhotoStore.probeMessage(r);
+  }).catch(e => {
+    /* .catch 가 없으면 저장 층 로드가 실패했을 때 화면이 "점검 중…"에서 영원히 멈춘다. */
+    console.warn('[probe]', e);
+    out.textContent = '점검을 실행하지 못했습니다.\n잠시 뒤 다시 시도해 주세요. 계속 같은 화면이면 개발자에게 알려 주세요.';
+  });
+}
+</script>
+</body>
+</html>

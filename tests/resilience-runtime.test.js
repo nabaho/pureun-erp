@@ -29,7 +29,7 @@ test('every Firebase HTML entry loads resilience and health runtimes in safe ord
   const entries = [
     'chwieop.html', 'docs-esign.html', 'enter.html', 'fund-poc.html', 'fund.html',
     'gov-consulting.html', 'ieum-view.html', 'kcareer.html', 'payroll-os.html',
-    'pu-camera.html', 'pu-cards.html', 'pu-erp.html', 'rules.html', 'sign.html',
+    'pu-camera.html', 'pu-cards.html', 'pu-erp.html', 'pu-photos.html', 'rules.html', 'sign.html',
     'work.html', 'app/payroll_app_fb.html', 'reference/payroll_mvp.html'
   ];
   for (const entry of entries) {
