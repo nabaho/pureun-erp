@@ -50269,6 +50269,330 @@ function RetireModal(props){
 }
 
 
+// ============ 성과급 확인 발행 (data/perf_confirm) ============
+// 성과급 원본(finance_income)은 재무권한자만 읽는다 — 직원 본인도 자기 것을 못 읽는다.
+// 규칙을 풀면 남의 것까지 다 보이므로 풀 수 없다. 그래서 달마다 사람별 '확인용 사본'을
+// 내보내고 직원은 사본만 본다. 원본은 건드리지 않는다.
+var PCF_PATH = 'data/perf_confirm';
+
+// 항목 지문 — 금액·비율·역할을 뭉친다. 이게 바뀌면 확인을 다시 받아야 한다.
+function pcfStamp(x){
+  return [Math.round((x && x.amount) || 0), (x && x.pct) || 0, (x && x.role) || ''].join('|');
+}
+
+// 사본에 담을 항목만 추린다 — 실제로 돈이 붙은 것만.
+// 0원(분배 누락 등)은 대표가 고칠 일이지 직원이 확인할 게 아니다.
+function pcfPickItems(perf){
+  return ((perf && perf.items) || []).filter(function(x){
+    return x && x.fiId && (x.category === 'matched' || x.category === 'personal')
+        && Math.round(x.amount || 0) > 0;
+  });
+}
+
+function pcfItemRow(x){
+  return {
+    date: x.date || '', source: x.sourceKind || '', sourceId: x.sourceId || '',
+    coName: x.companyName || '', kind: x.kind || '', role: x.role || '',
+    pct: x.pct || 0,
+    amount: Math.round(x.amount || 0),
+    base: Math.round(x.baseAmount || 0),
+    gross: Math.round(x.grossAmount || 0),
+    stamp: pcfStamp(x)
+  };
+}
+
+// 사람별 발행 대상. 담을 게 없는 사람은 아예 빠진다(0원은 확인 안 시킨다).
+function pcfBuildRows(empPerfs, users, uidBySid){
+  var byS = {}; (users || []).forEach(function(u){ if(u && u.sid) byS[u.sid] = u; });
+  var out = [];
+  (empPerfs || []).forEach(function(p){
+    var picked = pcfPickItems(p);
+    if(!picked.length) return;
+    var items = {}, total = 0;
+    picked.forEach(function(x){ items[x.fiId] = pcfItemRow(x); total += Math.round(x.amount || 0); });
+    out.push({
+      sid: p.sid, name: (byS[p.sid] && byS[p.sid].name) || p.sid,
+      uid: (uidBySid || {})[p.sid] || '',
+      itemCount: Object.keys(items).length, total: total, items: items
+    });
+  });
+  out.sort(function(a, b){ return b.total - a.total; });
+  return out;
+}
+
+// 이미 나간 것과 견줘 무엇이 달라지는지 (미리보기용)
+function pcfDiff(rows, prev){
+  prev = prev || {};
+  return (rows || []).map(function(r){
+    var old = prev[r.sid];
+    if(!old) return Object.assign({}, r, { state:'new', addN:r.itemCount, resetN:0, keepN:0, goneN:0, wasDone:false });
+    var oldItems = old.items || {};
+    var add = 0, reset = 0, keep = 0;
+    Object.keys(r.items).forEach(function(fid){
+      var o = oldItems[fid];
+      if(!o) { add++; return; }
+      if(o.stamp !== r.items[fid].stamp) { reset++; return; }  // 금액이 바뀌었다
+      keep++;
+    });
+    var gone = Object.keys(oldItems).filter(function(fid){ return !r.items[fid]; }).length;
+    return Object.assign({}, r, {
+      state: (add || reset || gone) ? 'update' : 'same',
+      addN:add, resetN:reset, keepN:keep, goneN:gone, wasDone: old.done === true
+    });
+  });
+}
+
+// 서버에 쓸 한 사람치. 이미 확인한 항목은 살리고, 지문이 바뀐 항목만 체크를 푼다.
+function pcfMergeOne(row, old, nowIso, byName, due){
+  old = old || {};
+  var oldItems = old.items || {};
+  var items = {}, anyReset = false;
+  Object.keys(row.items).forEach(function(fid){
+    var n = row.items[fid], o = oldItems[fid];
+    var keepOk = !!(o && o.stamp === n.stamp && o.ok === true);
+    if(o && o.ok === true && !keepOk) anyReset = true;   // 확인했었는데 금액이 바뀌었다
+    var it = Object.assign({}, n, { ok: keepOk });
+    if(keepOk){ it.okAt = o.okAt || ''; it.okBy = o.okBy || ''; }
+    if(o && o.reply) it.reply = o.reply;                 // 대표 답변은 남긴다
+    items[fid] = it;
+  });
+  var out = {
+    uid: row.uid || '', name: row.name, total: row.total, itemCount: row.itemCount,
+    openedAt: old.openedAt || nowIso, openedBy: old.openedBy || byName,
+    due: due || null, items: items
+  };
+  if(old.openedAt) out.republishedAt = nowIso;
+  // 이의는 살린다. 없어진 항목의 이의는 같이 뺀다.
+  if(old.objection && old.objection.byItem){
+    var kept = {};
+    Object.keys(old.objection.byItem).forEach(function(fid){
+      if(items[fid]) kept[fid] = old.objection.byItem[fid];
+    });
+    if(Object.keys(kept).length) out.objection = { byItem: kept };
+  }
+  // 지문이 바뀐 게 있으면 완료를 푼다 — 옛 확인 기록이 지금 금액과 다른 걸 가리키면 안 된다
+  if(old.done === true && !anyReset){
+    out.done = true; out.doneAt = old.doneAt || ''; out.doneBy = old.doneBy || '';
+  } else {
+    out.done = false;
+  }
+  if(old.reopen) out.reopen = old.reopen;
+  return out;
+}
+
+function pcfMergeAll(rows, prev, nowIso, byName, due){
+  var upd = {};
+  (rows || []).forEach(function(r){ upd[r.sid] = pcfMergeOne(r, (prev || {})[r.sid], nowIso, byName, due); });
+  return upd;
+}
+
+// uid_roles 를 뒤집어 사번 → 계정(uid). 한 번도 로그인 안 한 사람은 안 나온다.
+function pcfLoadUidMap(){
+  if(typeof fbDb === 'undefined' || !fbDb) return Promise.resolve({});
+  return fbDb.ref('uid_roles').once('value').then(function(s){
+    var v = s.val() || {}, best = {};
+    Object.keys(v).forEach(function(uid){
+      var r = v[uid]; if(!r || !r.sid) return;
+      var t = r.updatedAt || 0;
+      if(!best[r.sid] || t > best[r.sid].t) best[r.sid] = { uid:uid, t:t };  // 계정이 여럿이면 최근 것
+    });
+    var out = {}; Object.keys(best).forEach(function(sid){ out[sid] = best[sid].uid; });
+    return out;
+  }).catch(function(){ return {}; });
+}
+
+function pcfLoadMonth(ym){
+  if(typeof fbDb === 'undefined' || !fbDb) return Promise.resolve({});
+  return fbDb.ref(PCF_PATH + '/' + ym + '/p').once('value')
+    .then(function(s){ return s.val() || {}; }).catch(function(){ return {}; });
+}
+
+function pcfWrite(ym, upd){
+  if(typeof fbDb === 'undefined' || !fbDb) return Promise.reject(new Error('서버에 연결돼 있지 않습니다'));
+  return fbDb.ref(PCF_PATH + '/' + ym + '/p').update(upd);
+}
+
+// 발행된 달의 현황 세기 — 이의가 열려 있는 사람은 완료로 세지 않는다
+function pcfCount(prev){
+  var done = 0, objOpen = 0, todo = 0, people = 0, objN = 0;
+  Object.keys(prev || {}).forEach(function(sid){
+    var p = prev[sid] || {}; people++;
+    var by = (p.objection && p.objection.byItem) || {};
+    var open = Object.keys(by).filter(function(fid){
+      var o = by[fid] || {};
+      if(o.withdrawnAt) return false;                       // 직원이 스스로 물렸다
+      var it = (p.items || {})[fid] || {};
+      return !(it.reply && it.reply.state === 'done');      // 대표가 답하면 닫힌다
+    });
+    objN += open.length;
+    if(open.length) objOpen++;
+    else if(p.done === true) done++;
+    else todo++;
+  });
+  return { people:people, done:done, objOpen:objOpen, todo:todo, objN:objN };
+}
+
+function pcfDefaultDue(nowIso){
+  var d = new Date(nowIso);
+  d.setDate(d.getDate() + 7);
+  return d.getFullYear() + '-' + ('0'+(d.getMonth()+1)).slice(-2) + '-' + ('0'+d.getDate()).slice(-2);
+}
+
+// ── 발행 창 ──
+function PerfPublishModal(props){
+  var ym = props.ym;
+  var lS = useState(true);   var loading = lS[0];   var setLoading = lS[1];
+  var pS = useState({});     var prev = pS[0];      var setPrev = pS[1];
+  var uS = useState({});     var uidMap = uS[0];    var setUidMap = uS[1];
+  var eS = useState('');     var err = eS[0];       var setErr = eS[1];
+  var dS = useState(pcfDefaultDue(new Date().toISOString()));
+  var due = dS[0]; var setDue = dS[1];
+  var bS = useState(false);  var busy = bS[0];      var setBusy = bS[1];
+
+  useEffect(function(){
+    var alive = true;
+    Promise.all([pcfLoadUidMap(), pcfLoadMonth(ym)]).then(function(r){
+      if(!alive) return;
+      setUidMap(r[0]); setPrev(r[1]); setLoading(false);
+      var anyDue = Object.keys(r[1]).map(function(s){ return r[1][s] && r[1][s].due; }).filter(Boolean)[0];
+      if(anyDue) setDue(anyDue);
+    }).catch(function(e){
+      if(!alive) return;
+      setErr((e && e.message) || '불러오지 못했습니다'); setLoading(false);
+    });
+    return function(){ alive = false; };
+  }, [ym]);
+
+  var rows = loading ? [] : pcfDiff(pcfBuildRows(props.empPerfs, props.users, uidMap), prev);
+  var noUid = rows.filter(function(r){ return !r.uid; });
+  var totalAmt = rows.reduce(function(s,r){ return s + r.total; }, 0);
+  var totalCnt = rows.reduce(function(s,r){ return s + r.itemCount; }, 0);
+  var resetAll = rows.reduce(function(s,r){ return s + (r.resetN||0); }, 0);
+
+  function doPublish(){
+    if(busy || !rows.length) return;
+    var msg = ym + ' 성과급을 ' + rows.length + '명에게 내보냅니다.';
+    if(resetAll > 0) msg += '\n\n금액이 바뀐 ' + resetAll + '건은 확인이 풀리고 다시 받게 됩니다.';
+    if(noUid.length > 0) msg += '\n\n계정 연결이 안 된 ' + noUid.length + '명은 확인 화면을 못 엽니다.';
+    if(!window.confirm(msg + '\n\n진행할까요?')) return;
+    setBusy(true); setErr('');
+    var by = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.name) || '';
+    var upd = pcfMergeAll(rows, prev, new Date().toISOString(), by, due);
+    pcfWrite(ym, upd).then(function(){
+      showToast('✅ ' + ym + ' 성과급 확인 발행 완료 — ' + rows.length + '명');
+      props.onDone && props.onDone();
+      props.onClose && props.onClose();
+    }).catch(function(e){
+      setBusy(false);
+      setErr('발행 실패 — ' + ((e && e.message) || '권한 또는 연결을 확인하세요'));
+    });
+  }
+
+  var STATE_TXT = {
+    'new':    { t:'새로 나감',  c:'#166534' },
+    'update': { t:'',           c:'#1d4ed8' },
+    'same':   { t:'그대로',     c:'#94a3b8' }
+  };
+  function stateCell(r){
+    if(!r.uid) return h('span', { style:{ color:'#b45309', fontWeight:700 } }, '⚠ 계정 없음');
+    if(r.state === 'new') return h('span', { style:{ color:'#166534' } }, '새로 나감');
+    if(r.state === 'same') return h('span', { style:{ color:'#94a3b8' } }, '그대로');
+    var bits = [];
+    if(r.addN) bits.push(r.addN + '건 추가');
+    if(r.resetN) bits.push(r.resetN + '건 확인 풀림');
+    if(r.goneN) bits.push(r.goneN + '건 빠짐');
+    if(r.keepN) bits.push(r.keepN + '건 유지');
+    return h('span', { style:{ color:'#1d4ed8' } }, bits.join(' · '));
+  }
+
+  var cell = { padding:'7px 6px', fontSize:'12px', borderBottom:'1px solid #f1f5f9' };
+  var head = { padding:'7px 6px', fontSize:'11px', color:'#64748b', borderBottom:'1px solid #e2e8f0', fontWeight:600 };
+
+  return h('div', { style:{ position:'fixed', inset:0, background:'rgba(15,23,42,0.45)', zIndex:9600,
+      display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' },
+      onClick:function(e){ if(e.target === e.currentTarget && !busy) props.onClose(); } },
+    h('div', { style:{ background:'#fff', borderRadius:'14px', padding:'20px 22px', width:'100%',
+        maxWidth:'720px', maxHeight:'88vh', overflow:'auto', boxShadow:'0 20px 60px rgba(0,0,0,0.25)' } },
+
+      h('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'4px' } },
+        h('div', { style:{ fontSize:'15px', fontWeight:700, color:'#0f172a' } }, '⭐ ' + ym + ' 성과급 확인 발행'),
+        h('button', { onClick:function(){ if(!busy) props.onClose(); },
+          style:{ background:'none', border:'none', fontSize:'18px', color:'#94a3b8', cursor:'pointer' } }, '×')),
+      h('div', { style:{ fontSize:'12px', color:'#64748b', marginBottom:'14px', lineHeight:1.7 } },
+        '이 달 확정된 입금에서 사람별 성과급을 추려 확인용으로 내보냅니다. 원본은 바뀌지 않습니다.',
+        h('br'), '성과급이 0원인 사람은 내보내지 않습니다.'),
+
+      loading
+        ? h('div', { style:{ padding:'40px', textAlign:'center', color:'#94a3b8', fontSize:'13px' } }, '불러오는 중…')
+        : h('div', null,
+            h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:'10px', marginBottom:'12px' } },
+              [['받는 사람', rows.length + '명'], ['항목', totalCnt + '건'], ['합계', totalAmt.toLocaleString('ko-KR') + '원']]
+                .map(function(k){
+                  return h('div', { key:k[0], style:{ background:'#f8fafc', borderRadius:'8px', padding:'10px 12px' } },
+                    h('div', { style:{ fontSize:'11px', color:'#64748b', marginBottom:'3px' } }, k[0]),
+                    h('div', { style:{ fontSize:'18px', fontWeight:700, color:'#0f172a' } }, k[1]));
+                })),
+
+            h('div', { style:{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'12px',
+                background:'#f8fafc', borderRadius:'8px', padding:'9px 12px', flexWrap:'wrap' } },
+              h('span', { style:{ fontSize:'12px', color:'#334155', fontWeight:600 } }, '확인 마감일'),
+              h('input', { type:'date', value:due, onChange:function(e){ setDue(e.target.value); },
+                style:{ padding:'5px 8px', fontSize:'12px', fontFamily:'inherit',
+                  border:'1px solid #cbd5e1', borderRadius:'5px' } }),
+              h('span', { style:{ fontSize:'11.5px', color:'#94a3b8' } },
+                '지나도 확인은 계속 할 수 있습니다. 현황판에 늦은 사람으로 표시됩니다.')),
+
+            noUid.length > 0 && h('div', { style:{ background:'#fffbeb', border:'1px solid #fde68a',
+                borderRadius:'8px', padding:'10px 12px', marginBottom:'12px', fontSize:'12px',
+                color:'#854d0e', lineHeight:1.7 } },
+              h('b', null, '⚠ 계정 연결이 안 된 사람 ' + noUid.length + '명'),
+              ' — ' + noUid.map(function(r){ return r.name; }).join(', '), h('br'),
+              '이 사람들은 확인 화면을 못 엽니다. 한 번 로그인하면 자동으로 연결되니, 로그인 뒤 다시 발행하세요.'),
+
+            resetAll > 0 && h('div', { style:{ background:'#eff6ff', border:'1px solid #bfdbfe',
+                borderRadius:'8px', padding:'10px 12px', marginBottom:'12px', fontSize:'12px',
+                color:'#1e40af', lineHeight:1.7 } },
+              h('b', null, '금액이 바뀐 ' + resetAll + '건'),
+              ' — 이미 한 확인이 풀리고 다시 받습니다. 옛 확인 기록이 지금 금액과 다른 것을 가리키면 안 되기 때문입니다.'),
+
+            rows.length === 0
+              ? h('div', { style:{ padding:'30px 12px', textAlign:'center', color:'#64748b', fontSize:'13px' } },
+                  '이 달에 내보낼 성과급이 없습니다.')
+              : h('div', { style:{ maxHeight:'42vh', overflow:'auto', border:'1px solid #e2e8f0', borderRadius:'8px' } },
+                  h('table', { style:{ width:'100%', borderCollapse:'collapse' } },
+                    h('thead', null, h('tr', null,
+                      h('th', { style:Object.assign({textAlign:'left'}, head) }, '이름'),
+                      h('th', { style:Object.assign({textAlign:'right'}, head) }, '건수'),
+                      h('th', { style:Object.assign({textAlign:'right'}, head) }, '금액'),
+                      h('th', { style:Object.assign({textAlign:'left', paddingLeft:'14px'}, head) }, '상태'))),
+                    h('tbody', null, rows.map(function(r){
+                      return h('tr', { key:r.sid, style: r.uid ? null : { background:'#fffbeb' } },
+                        h('td', { style:cell },
+                          r.name,
+                          r.wasDone && r.resetN > 0 && h('span', { style:{ marginLeft:'6px', fontSize:'10.5px',
+                            background:'#fef2f2', color:'#b91c1c', borderRadius:'4px', padding:'1px 5px', fontWeight:700 } },
+                            '완료 풀림')),
+                        h('td', { style:Object.assign({textAlign:'right'}, cell) }, r.itemCount),
+                        h('td', { style:Object.assign({textAlign:'right', fontWeight:600}, cell) },
+                          r.total.toLocaleString('ko-KR')),
+                        h('td', { style:Object.assign({paddingLeft:'14px'}, cell) }, stateCell(r)));
+                    })))),
+
+            err && h('div', { style:{ marginTop:'10px', background:'#fef2f2', border:'1px solid #fecaca',
+              borderRadius:'8px', padding:'9px 12px', fontSize:'12px', color:'#b91c1c' } }, err),
+
+            h('div', { style:{ display:'flex', gap:'8px', justifyContent:'flex-end', marginTop:'16px' } },
+              h('button', { onClick:function(){ if(!busy) props.onClose(); },
+                style:{ padding:'7px 16px', fontSize:'12.5px', fontWeight:600, borderRadius:'6px',
+                  background:'#fff', color:'#475569', border:'1px solid #cbd5e1', cursor:'pointer' } }, '취소'),
+              h('button', { onClick:doPublish, disabled: busy || !rows.length,
+                style:{ padding:'7px 18px', fontSize:'12.5px', fontWeight:700, borderRadius:'6px',
+                  background: (busy || !rows.length) ? '#cbd5e1' : '#1e40af', color:'#fff', border:'none',
+                  cursor: (busy || !rows.length) ? 'default' : 'pointer' } },
+                busy ? '내보내는 중…' : '발행하기')))
+    ));
+}
+
 // ============ 성과관리 ============
 function PerfManagement(props){
   var onNav = props.onNavigate || function(){};
@@ -50379,6 +50703,19 @@ function PerfManagement(props){
   var ssS = useState(null);   var selSid  = ssS[0]; var setSelSid  = ssS[1];
   var pzS = usePersistedState('perf_income_zoom', 100); var perfZoom = pzS[0]; var setPerfZoom = pzS[1];
   var ts  = usePersistedState('perf_tab', 'income');  var tab = ts[0]; var setTab = ts[1];
+
+  // ── 성과급 확인 발행 ──
+  var pbS = useState(false); var pubOpen = pbS[0]; var setPubOpen = pbS[1];
+  var ppS = useState(null);  var pubPrev = ppS[0]; var setPubPrev = ppS[1];   // null = 아직 안 읽음
+  var ptS = useState(0);     var pubTick = ptS[0]; var setPubTick = ptS[1];
+  useEffect(function(){
+    var alive = true;
+    setPubPrev(null);
+    pcfLoadMonth(selYm).then(function(v){ if(alive) setPubPrev(v || {}); })
+      .catch(function(){ if(alive) setPubPrev({}); });
+    return function(){ alive = false; };
+  }, [selYm, pubTick]);
+  var pubStat = pubPrev ? pcfCount(pubPrev) : null;
 
   var DEFAULT_TAB_ORDER = ['income','personal','unmatched','emp','year'];
   var TAB_LABELS = { income:'월별 입금전체', personal:'📌 개인수익', unmatched:'⚠️ 성과미반영', emp:'직원별', year:'연도별' };
@@ -50595,6 +50932,12 @@ function PerfManagement(props){
   var tabS = function(a){ var _m=window.innerWidth<=768; return {padding:_m?'6px 10px':'9px 14px',border:_m?'1px solid '+( a?'#1e40af':'#cbd5e1'):'none',borderRadius:_m?'20px':'5px',cursor:'pointer',fontWeight:a?700:600,fontSize:_m?'11.5px':'12.5px',background:a?'#1e40af':'transparent',color:a?'#fff':'#475569',whiteSpace:'nowrap',flexShrink:0}; };
 
   return h('div',{style:{padding:window.innerWidth<=768?'10px':'20px'}},
+    // 성과급 확인 발행 창
+    pubOpen && h(PerfPublishModal, {
+      ym: selYm, users: users, empPerfs: empPerfs,
+      onClose: function(){ setPubOpen(false); },
+      onDone: function(){ setPubTick(Date.now()); }
+    }),
     // 헤더 + 탭
     h('div',{style:{display:'flex',flexDirection:'column',gap:'6px',marginBottom:window.innerWidth<=768?'8px':'16px'}},
       h('label',{style:{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'11px',color:!showRetired?'#dc2626':'#94a3b8',cursor:'pointer',userSelect:'none',padding:'4px 10px',borderRadius:'10px',background:!showRetired?'#fef2f2':'#f1f5f9',fontWeight:600,border:'1px solid '+(!showRetired?'#fecaca':'#e2e8f0')}},
@@ -50652,8 +50995,24 @@ function PerfManagement(props){
             kpiBox('#f5f3ff','#2563eb','직원 '+empPerfs.length+'명'),
             kpiBox('#eff6ff','#1e40af','입금건 '+monthIncomes.length+'건'),
             kpiBox('#f0fdf4','#059669','합계 '+totalPerfAll.toLocaleString()+'원')
-          )
-        )
+          ),
+          // 성과급 확인 발행 — 이 달치를 사람별로 추려 직원이 확인하게 내보낸다
+          h('button', { onClick:function(){ setPubOpen(true); },
+            className:'erp-tip', 'data-tip':'이 달 성과급을 사람별로 추려 직원이 직접 확인하도록 내보냅니다',
+            style:{ marginLeft:'auto', padding:'6px 13px', fontSize:'11.5px', fontWeight:700,
+              borderRadius:'5px', background:'#1e40af', color:'#fff', border:'none',
+              cursor:'pointer', whiteSpace:'nowrap', flexShrink:0 } },
+            '⭐ 이달 확인 발행')
+        ),
+        // 발행된 달이면 현황 한 줄
+        pubStat && pubStat.people > 0 && h('div', { style:{ display:'flex', alignItems:'center', gap:'8px',
+            flexWrap:'wrap', background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:'6px',
+            padding:'7px 12px', fontSize:'11.5px', color:'#166534', marginTop:'2px' } },
+          h('b', null, selYm + ' 발행됨'),
+          h('span', null, pubStat.people + '명 중 ' + pubStat.done + '명 확인 완료'),
+          pubStat.objOpen > 0 && h('span', { style:{ color:'#b45309', fontWeight:700 } },
+            '· 이의 ' + pubStat.objN + '건 처리 대기 (' + pubStat.objOpen + '명)'),
+          pubStat.todo > 0 && h('span', { style:{ color:'#64748b' } }, '· 미확인 ' + pubStat.todo + '명'))
       ),
       h('div',{style:{display:'grid',gridTemplateColumns:selSid?'225px 1fr':'1fr',gap:'14px'}},
         h('div',null,
