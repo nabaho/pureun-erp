@@ -3034,6 +3034,90 @@ function openNameFix(){
   $('dedupM').innerHTML=h; $('dedupBg').classList.add('open');
 }
 
+/* ════════════ 📞 이름·회사 칸에 전화번호·주소가 통째로 들어간 명함 정리 ════════════
+   예) '아름다운정원화수목 041-415-0815 산33 천안시 동남구' → 회사·전화·주소로 분리 */
+const _PHONE_RE = /(0\d{1,2}[-.\s]?\d{3,4}[-.\s]?\d{4}|1[5-8]\d{2}[-.\s]?\d{4})/g;
+const _PROV_RE = /^(서울특별시|부산광역시|대구광역시|인천광역시|광주광역시|대전광역시|울산광역시|세종특별자치시|경기도|강원도|강원특별자치도|충청북도|충청남도|전라북도|전라남도|전북특별자치도|경상북도|경상남도|제주특별자치도|제주도|서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)$/;
+const _isAddrTok = t => /^(산)?\d+[-\d]*$/.test(t)
+  || _PROV_RE.test(t)
+  || /(특별시|광역시|자치시|자치도)$/.test(t)
+  || /^[가-힣]{2,8}(시|군|구|읍|면|동|리|로|길|가)$/.test(t);
+/* 뒤섞인 문자열을 회사명 · 전화들 · 주소로 나눈다 */
+function splitMixed(s){
+  s=String(s||'').trim();
+  const phones=[];
+  s=s.replace(_PHONE_RE,(m)=>{ phones.push(m.trim().replace(/[.\s]/g,'-')); return ' '; });
+  const toks=s.split(/\s+/).filter(Boolean);
+  let cut=-1;
+  for(let i=0;i<toks.length;i++){ if(_isAddrTok(toks[i])){ cut=i; break; } }
+  let addr='';
+  if(cut>0){                       /* 앞에 회사명이 남아 있을 때만 주소로 인정 */
+    const tail=toks.slice(cut);
+    if(tail.length>=2 || /(시|군|구|도)$/.test(tail[0])){ addr=tail.join(' '); toks.length=cut; }
+  }
+  return { text:toks.join(' ').trim(), phones, addr };
+}
+function mixedFixPlan(it){
+  const src=String(it.name||'').trim() || String(it.company||'').trim();
+  if(!src) return null;
+  if(!_PHONE_RE.test(src)){ _PHONE_RE.lastIndex=0; return null; }
+  _PHONE_RE.lastIndex=0;
+  const r=splitMixed(src);
+  if(!r.text) return null;                      /* 회사명이 안 남으면 손대지 않음 */
+  const p={ company:r.text, name:'', mobile:it.mobile||'', companyTel:it.companyTel||'',
+            companyFax:it.companyFax||'', companyAddr:it.companyAddr||'' };
+  r.phones.forEach(ph=>{
+    const d=digits(ph);
+    if(d.startsWith('010')){ if(!p.mobile) p.mobile=ph; }
+    else if(!p.companyTel) p.companyTel=ph;
+    else if(!p.companyFax) p.companyFax=ph;
+  });
+  if(r.addr && !p.companyAddr) p.companyAddr=r.addr;
+  return p;
+}
+function mixedFixList(){
+  return Object.values(state.items)
+    .filter(it=>it && it.kind===state.tab && !it.mixedFixed && !inHiddenLocked(it))
+    .map(it=>({it:it, plan:mixedFixPlan(it)}))
+    .filter(x=>x.plan);
+}
+function applyMixedFix(id){
+  const it=state.items[id]; if(!it) return;
+  const p=mixedFixPlan(it); if(!p) return;
+  it.name=p.name; it.company=p.company; it.mobile=p.mobile; it.companyTel=p.companyTel;
+  it.companyFax=p.companyFax; it.companyAddr=p.companyAddr;
+  it.mixedFixed=1; it.updatedAt=Date.now(); Store.put(it);
+}
+function autoMixedFixAll(){
+  const list=mixedFixList();
+  if(!list.length) return toast('정리할 항목이 없습니다');
+  if(!confirm(`${list.length.toLocaleString()}건을 자동으로 나눌까요?\n\n· 이름·회사 칸에 붙어 있던 전화번호를 전화 칸으로\n· 주소는 회사주소 칸으로\n· 남는 글자는 회사명으로\n· 명함은 삭제되지 않습니다`)) return;
+  let n=0; list.forEach(x=>{ applyMixedFix(x.it.id); n++; });
+  toast(`✅ ${n.toLocaleString()}건을 정리했습니다`,5000);
+  render(); setTimeout(openMixedFix,120);
+}
+function openMixedFix(){
+  const list=mixedFixList();
+  if(!list.length){ $('dedupBg').classList.remove('open'); return toast('전화번호가 섞인 명함이 없습니다 👍'); }
+  let h=`<div class="mhead"><b>📞 전화·주소가 섞인 명함 — ${list.length.toLocaleString()}건</b>
+    <button class="iconbtn" onclick="dedupBg.classList.remove('open')">✕</button></div>
+    <p style="font-size:12.5px;color:var(--sub);line-height:1.7;margin-bottom:10px">
+    이름·회사 칸에 <b>전화번호·주소가 통째로</b> 들어간 명함이에요. 나누면 각 칸으로 옮겨집니다.
+    <b>명함은 지워지지 않습니다.</b></p>
+    <button class="btn primary" style="width:100%;margin-bottom:12px" onclick="autoMixedFixAll()">⚡ ${list.length.toLocaleString()}건 모두 자동으로 나누기</button>`;
+  list.slice(0,200).forEach(function(x){
+    const it=x.it, p=x.plan;
+    const after=[ '회사 '+esc(p.company), p.mobile&&'휴대폰 '+esc(p.mobile), p.companyTel&&'회사전화 '+esc(p.companyTel),
+                  p.companyFax&&'팩스 '+esc(p.companyFax), p.companyAddr&&'주소 '+esc(p.companyAddr) ].filter(Boolean).join(' · ');
+    h+=`<div class="ditem" style="align-items:center"><div class="v">
+      <span style="font-size:12px;color:var(--sub)">${esc((it.name||it.company||'').slice(0,60))}</span><br>
+      <span style="font-size:12px;color:#0f7a44">→ ${after}</span></div>
+      <button class="btn ghost" style="flex:none;padding:8px 14px" onclick="applyMixedFix('${it.id}');render();setTimeout(openMixedFix,80)">나누기</button></div>`;
+  });
+  if(list.length>200) h+=`<p style="color:var(--sub);font-size:12px;padding:8px 2px">…외 ${(list.length-200).toLocaleString()}건 (자동 나누기를 쓰면 한 번에 처리됩니다)</p>`;
+  $('dedupM').innerHTML=h; $('dedupBg').classList.add('open');
+}
+
 /* ════════════ 🧹 정리 센터 — 손볼 것들을 한 화면에서 건수로 확인 ════════════
    중복·유사·빈 명함·깨진 글자·휴지통이 흩어져 있어 "지금 정리할 게 있나?"를 네 번 눌러야 알던 것을
    한 번에 보여준다. 각 줄의 버튼은 기존 정리 화면을 그대로 연다. */
@@ -3050,6 +3134,7 @@ function openCleanupCenter(){
   const mojiN  = isCard ? mojibakeTargets().length : 0;
   const trashN = Object.keys(state.trash||{}).length;
   let nameFixN=0; try{ nameFixN=nameFixList().length; }catch(e){ console.warn(e); }
+  let mixedFixN=0; try{ mixedFixN=mixedFixList().length; }catch(e){ console.warn(e); }
   const row=(icon,title,desc,n,unit,fn,btnLabel)=>{
     const clean = n===0;
     return `<div class="ditem" style="align-items:center">
@@ -3071,6 +3156,8 @@ function openCleanupCenter(){
          emptyN,'장','dedupBg.classList.remove(\'open\');cleanEmpty()','삭제');
   if(isCard) h+=row('🧯','깨진 글자','가져오기 인코딩 오류로 글자가 깨진 항목 (예: ì¶œ…)',
          mojiN,'장','dedupBg.classList.remove(\'open\');openMojibakeCleanup()','정리');
+  h+=row('📞','전화·주소가 섞임','이름·회사 칸에 전화번호·주소가 통째로 들어간 항목 — 각 칸으로 나눕니다',
+         mixedFixN,'건','openMixedFix()','나누기');
   h+=row('🏢','이름 칸에 회사명','이름 자리에 회사·기관명이 들어간 항목 — 회사 칸으로 옮기거나 이름·회사로 나눕니다',
          nameFixN,'건','openNameFix()','검토');
   h+=row('🗑','휴지통','삭제한 항목을 30일간 보관 — 실수로 지웠으면 여기서 되살립니다',
