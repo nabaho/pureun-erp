@@ -61,6 +61,36 @@ test('mapRecord: consultings → consult, funds → fund, other_projects → etc
   assert.equal(e.rec.year, '');                  // 날짜가 아예 없으면 빈 값
 });
 
+test('mapRecord: caseType이 비면 사건번호에서 유형·연도를 뽑는다', () => {
+  // pu-erp 사건은 caseType이 비어 있고 진행중이라 종료일도 없다.
+  // 그런데 사건번호에 둘 다 들어 있다 — 부해등-2026-003 → 유형 부해등, 연도 2026 (실사용)
+  const r = PS.mapRecord('cases', 'k1', {
+    companyName: '충남사회서비스원', caseNo: '부해등-2026-003', managerMain: '2001'
+  }, UMAP);
+  assert.equal(r.rec.type, '부해등');
+  assert.equal(r.rec.year, '2026');
+  assert.equal(r.rec.project, '부해등-2026-003');
+  assert.equal(r.rec.main, '권형하');
+
+  // 쉼표가 든 유형도 그대로 — 성,직괴-2026-001
+  const r2 = PS.mapRecord('cases', 'k2', { companyName: '롯데리아', caseNo: '성,직괴-2026-001' }, UMAP);
+  assert.equal(r2.rec.type, '성,직괴');
+  assert.equal(r2.rec.year, '2026');
+
+  // caseType이 있으면 그것을 우선한다
+  const r3 = PS.mapRecord('cases', 'k3', { caseType: '부당해고', caseNo: '부해등-2026-004' }, UMAP);
+  assert.equal(r3.rec.type, '부당해고');
+
+  // 종료일이 있으면 연도는 종료일에서 (사건번호보다 우선)
+  const r4 = PS.mapRecord('cases', 'k4', { caseNo: '임금체불-2025-001', closedDate: '2026-03-15' }, UMAP);
+  assert.equal(r4.rec.year, '2026');
+
+  // 사건번호 형식이 아니면 유형은 비운다
+  const r5 = PS.mapRecord('cases', 'k5', { companyName: 'A사', title: '윤성진아버지 유족사건' }, UMAP);
+  assert.equal(r5.rec.type, '');
+  assert.equal(r5.rec.project, '윤성진아버지 유족사건');
+});
+
 test('mapRecord: 모르는 컬렉션은 null', () => {
   assert.equal(PS.mapRecord('unknown', 'k', {}, {}), null);
 });

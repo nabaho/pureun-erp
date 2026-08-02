@@ -34,18 +34,29 @@
   };
   function pick(c, keys) { for (var i = 0; i < keys.length; i++) { if (c[keys[i]]) return c[keys[i]]; } return ''; }
 
+  /* 사건번호에서 유형·연도를 뽑는다.
+     pu-erp 사건은 caseType이 비어 있고 진행중이면 종료일도 없는데,
+     사건번호가 '부해등-2026-003' 꼴이라 둘 다 여기 들어 있다(실사용에서 확인). */
+  var CASENO_RE = /^\s*([^\-\s][^\-]*?)\s*-\s*(20\d{2})\s*-\s*\d+/;
+  function fromCaseNo(no) {
+    var m = CASENO_RE.exec(String(no || ''));
+    return m ? { type: m[1].trim(), year: m[2] } : null;
+  }
+
   function mapRecord(coll, key, c, userMap) {
     var m = COLL_MAP[coll];
     if (!m || !c) return null;
     var sid = mainSid(c);
     var dateRaw = c.closedDate || c.endDate || '';
+    var proj = pick(c, m.proj);
+    var cn = fromCaseNo(c.caseNo || proj);
     return {
       store: m.store,
       rec: {
-        type: pick(c, m.type),
+        type: pick(c, m.type) || (cn ? cn.type : ''),
         org: c.companyName || c.payee || '',
-        project: pick(c, m.proj),
-        year: String(dateRaw).slice(0, 4),
+        project: proj,
+        year: String(dateRaw).slice(0, 4) || (cn ? cn.year : ''),
         main: (userMap && userMap[sid]) || sid,
         /* 진행중도 가져온다(실사용: 사건 13건 중 11건이 진행중이었다).
            상태를 그대로 옮겨 두고, 증명서 발급은 '완료' 건만 고르게 한다. */
@@ -114,7 +125,7 @@
   }
 
   var api = { isClosed: isClosed, mapRecord: mapRecord, buildSyncPlan: buildSyncPlan,
-              buildStatusUpdates: buildStatusUpdates, unwrap: unwrap };
+              buildStatusUpdates: buildStatusUpdates, unwrap: unwrap, fromCaseNo: fromCaseNo };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.KcareerPuSync = api;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

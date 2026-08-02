@@ -52,6 +52,53 @@ test('폴더 연결 UI는 환경설정이 숨겨진 계정에서도 닿는 곳�
   assert.match(wiccok, /onclick="fsUndoLast\(\)"/);
 });
 
+test('_puBackfill: 이미 동기화된 레코드의 빈 유형·연도를 사건번호에서 채운다', () => {
+  const store = { case: [
+    { id: 'CS0001', src: 'pu', project: '부해등-2026-003', type: '', year: '' },
+    { id: 'CS0002', src: 'pu', project: '윤성진아버지 유족사건', type: '', year: '' },  // 사건번호 아님 → 그대로
+    { id: 'CS0003', src: 'pu', project: '임금체불-2025-001', type: '부당해고', year: '2024' }, // 값 있으면 안 건드림
+    { id: 'CS0004', project: '부해등-2026-009', type: '', year: '' }                    // 손으로 등록 → 안 건드림
+  ], consult: [], fund: [], etc: [] };
+  const ctx = {
+    get: (k) => store[k].slice(), set: (k, v) => { store[k] = v; },
+    PU_SYNC_STORES: ['case', 'consult', 'fund', 'etc'],
+    KcareerPuSync: require('../js/kcareer-pusync.js')
+  };
+  vm.runInNewContext(funcSource('_puBackfill') + '\nglobalThis.__n = _puBackfill();', ctx);
+  assert.equal(ctx.__n, 1, '고친 건수를 돌려준다');
+  const a = store.case.find((r) => r.id === 'CS0001');
+  assert.equal(a.type, '부해등');
+  assert.equal(a.year, '2026');
+  assert.equal(store.case.find((r) => r.id === 'CS0002').type, '', '사건번호가 아니면 그대로');
+  assert.equal(store.case.find((r) => r.id === 'CS0003').type, '부당해고', '값이 있으면 안 건드림');
+  assert.equal(store.case.find((r) => r.id === 'CS0004').type, '', 'pu에서 온 게 아니면 안 건드림');
+});
+
+test('실적 4탭 모두 담당 칸이 있다 — 누가 수행했는지 보여야 한다', () => {
+  ['case', 'consult', 'fund', 'etc'].forEach((k) => {
+    const m = source.match(new RegExp(k + ":\\{store:'" + k + "'[\\s\\S]{0,900}?cols:\\[([^\\]]*)\\]"));
+    assert.ok(m, k + ' CFG의 cols를 찾을 수 없습니다');
+    assert.ok(m[1].includes("'담당'"), k + ' 표에 담당 칸이 있어야 합니다');
+  });
+});
+
+test('실적 4탭 행이 담당(main)을 그린다', () => {
+  ['case', 'fund', 'etc'].forEach((k) => {
+    const i = source.indexOf(k + ":{store:'" + k + "'");
+    const block = source.slice(i, i + 1200);
+    assert.match(block, /r\.main/, k + ' 행이 담당을 그려야 합니다');
+  });
+});
+
+test('pu-erp 참고 박스는 기본 접힘이다', () => {
+  // 동기화된 표와 같은 내용이 두 번 보여 혼란스럽다(실사용 피드백)
+  const i = source.indexOf('id="puCaseBox"');
+  assert.ok(i >= 0, 'puCaseBox가 있어야 합니다');
+  const around = source.slice(Math.max(0, i - 400), i);
+  assert.match(around, /<details/, '참고 박스를 details로 감싸야 합니다');
+  assert.ok(!/<details open/.test(around.slice(around.lastIndexOf('<details'))), '기본은 접힘이어야 합니다');
+});
+
 test('기관 증명서 매칭이 issuer도 본다', () => {
   const src = funcSource('renderPuAgency');
   assert.match(src, /c\.issuer/, 'OCR로 채운 발급기관으로 매칭돼야 합니다');
