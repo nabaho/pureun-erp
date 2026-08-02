@@ -50313,11 +50313,24 @@ function pcfBuildRows(empPerfs, users, uidBySid){
     out.push({
       sid: p.sid, name: (byS[p.sid] && byS[p.sid].name) || p.sid,
       uid: (uidBySid || {})[p.sid] || '',
-      itemCount: Object.keys(items).length, total: total, items: items
+      itemCount: Object.keys(items).length, total: total, items: items,
+      unmatchedN: p.unmatchedCount || 0   // 성과 미반영 — 보내기 전에 한 번 더 볼 거리
     });
   });
   out.sort(function(a, b){ return b.total - a.total; });
   return out;
+}
+
+// 성과 미반영이 있는 사람. 보낼 게 하나도 없는 사람(0원)도 여기엔 잡힌다 —
+// 표에는 안 나오지만 "한 번 더 보라"고 알려는 줘야 한다.
+function pcfHolds(empPerfs, users){
+  var byS = {}; (users || []).forEach(function(u){ if(u && u.sid) byS[u.sid] = u; });
+  return (empPerfs || []).filter(function(p){ return p && (p.unmatchedCount || 0) > 0; })
+    .map(function(p){
+      return { sid:p.sid, name:(byS[p.sid] && byS[p.sid].name) || p.sid,
+        n:p.unmatchedCount, base:Math.round(p.unmatchedBase || 0),
+        sendable: pcfPickItems(p).length };
+    });
 }
 
 // 이미 나간 것과 견줘 무엇이 달라지는지 (미리보기용)
@@ -50448,6 +50461,8 @@ function PerfPublishModal(props){
   var dS = useState(pcfDefaultDue(new Date().toISOString()));
   var due = dS[0]; var setDue = dS[1];
   var bS = useState(false);  var busy = bS[0];      var setBusy = bS[1];
+  // 누구를 보낼지. 적어 두지 않은 사람은 '보냄'으로 본다(기본은 전원).
+  var kS = useState({});     var pick = kS[0];      var setPick = kS[1];
 
   useEffect(function(){
     var alive = true;
@@ -50464,22 +50479,37 @@ function PerfPublishModal(props){
   }, [ym]);
 
   var rows = loading ? [] : pcfDiff(pcfBuildRows(props.empPerfs, props.users, uidMap), prev);
-  var noUid = rows.filter(function(r){ return !r.uid; });
-  var totalAmt = rows.reduce(function(s,r){ return s + r.total; }, 0);
-  var totalCnt = rows.reduce(function(s,r){ return s + r.itemCount; }, 0);
-  var resetAll = rows.reduce(function(s,r){ return s + (r.resetN||0); }, 0);
+  var holds = loading ? [] : pcfHolds(props.empPerfs, props.users);
+  function isPick(sid){ return pick[sid] !== false; }
+  var sent = rows.filter(function(r){ return isPick(r.sid); });     // 이번에 보낼 사람
+  var noUid = sent.filter(function(r){ return !r.uid; });
+  var totalAmt = sent.reduce(function(s,r){ return s + r.total; }, 0);
+  var totalCnt = sent.reduce(function(s,r){ return s + r.itemCount; }, 0);
+  var resetAll = sent.reduce(function(s,r){ return s + (r.resetN||0); }, 0);
+  var holdN = sent.filter(function(r){ return r.unmatchedN > 0; }).length;
+
+  function togglePick(sid){ var n = Object.assign({}, pick); n[sid] = !isPick(sid); setPick(n); }
+  function pickAll(on){ var n = {}; rows.forEach(function(r){ n[r.sid] = on; }); setPick(n); }
+  // 성과 미반영이 있는 사람만 빼고 고른다 — "확정된 사람 먼저" 한 번에
+  function pickSettled(){
+    var n = {}; rows.forEach(function(r){ n[r.sid] = !(r.unmatchedN > 0); }); setPick(n);
+  }
 
   function doPublish(){
-    if(busy || !rows.length) return;
-    var msg = ym + ' 성과급을 ' + rows.length + '명에게 내보냅니다.';
+    if(busy || !sent.length) return;
+    var left = rows.length - sent.length;
+    var msg = ym + ' 성과급을 ' + sent.length + '명에게 내보냅니다.';
+    if(left > 0) msg += '\n\n고르지 않은 ' + left + '명은 이번에 안 나갑니다. 나중에 다시 발행하면 됩니다.';
     if(resetAll > 0) msg += '\n\n금액이 바뀐 ' + resetAll + '건은 확인이 풀리고 다시 받게 됩니다.';
+    if(holdN > 0) msg += '\n\n성과 미반영이 있는 ' + holdN + '명이 포함돼 있습니다.';
     if(noUid.length > 0) msg += '\n\n계정 연결이 안 된 ' + noUid.length + '명은 확인 화면을 못 엽니다.';
     if(!window.confirm(msg + '\n\n진행할까요?')) return;
     setBusy(true); setErr('');
     var by = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.name) || '';
-    var upd = pcfMergeAll(rows, prev, new Date().toISOString(), by, due);
+    var upd = pcfMergeAll(sent, prev, new Date().toISOString(), by, due);
     pcfWrite(ym, upd).then(function(){
-      showToast('✅ ' + ym + ' 성과급 확인 발행 완료 — ' + rows.length + '명');
+      showToast('✅ ' + ym + ' 성과급 확인 발행 완료 — ' + sent.length + '명'
+        + (left > 0 ? ' (' + left + '명은 보류)' : ''));
       props.onDone && props.onDone();
       props.onClose && props.onClose();
     }).catch(function(e){
@@ -50526,7 +50556,8 @@ function PerfPublishModal(props){
         ? h('div', { style:{ padding:'40px', textAlign:'center', color:'#94a3b8', fontSize:'13px' } }, '불러오는 중…')
         : h('div', null,
             h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:'10px', marginBottom:'12px' } },
-              [['받는 사람', rows.length + '명'], ['항목', totalCnt + '건'], ['합계', totalAmt.toLocaleString('ko-KR') + '원']]
+              [['보낼 사람', sent.length + '명' + (rows.length !== sent.length ? ' / ' + rows.length : '')],
+               ['항목', totalCnt + '건'], ['합계', totalAmt.toLocaleString('ko-KR') + '원']]
                 .map(function(k){
                   return h('div', { key:k[0], style:{ background:'#f8fafc', borderRadius:'8px', padding:'10px 12px' } },
                     h('div', { style:{ fontSize:'11px', color:'#64748b', marginBottom:'3px' } }, k[0]),
@@ -50555,41 +50586,89 @@ function PerfPublishModal(props){
               h('b', null, '금액이 바뀐 ' + resetAll + '건'),
               ' — 이미 한 확인이 풀리고 다시 받습니다. 옛 확인 기록이 지금 금액과 다른 것을 가리키면 안 되기 때문입니다.'),
 
+            // 성과 미반영이 있는 사람 — 보내기 전에 한 번 더 볼 사람들
+            holds.length > 0 && h('div', { style:{ background:'#fef2f2', border:'1px solid #fecaca',
+                borderRadius:'8px', padding:'10px 12px', marginBottom:'12px', fontSize:'12px',
+                color:'#991b1b', lineHeight:1.8 } },
+              h('b', null, '⚠️ 성과 미반영이 있는 사람 ' + holds.length + '명 — 보내기 전에 한 번 더 보세요'),
+              h('br'),
+              holds.map(function(x){
+                return x.name + '(' + x.n + '건' + (x.sendable ? '' : ' · 보낼 것 없음') + ')';
+              }).join(' · '),
+              h('br'),
+              h('span', { style:{ color:'#b91c1c' } },
+                '미반영 건은 발행에 안 담깁니다. 분배가 빠진 것이라면 입금관리에서 고친 뒤 다시 발행하세요.')),
+
             rows.length === 0
               ? h('div', { style:{ padding:'30px 12px', textAlign:'center', color:'#64748b', fontSize:'13px' } },
                   '이 달에 내보낼 성과급이 없습니다.')
-              : h('div', { style:{ maxHeight:'42vh', overflow:'auto', border:'1px solid #e2e8f0', borderRadius:'8px' } },
+              : h('div', null,
+                h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'6px', flexWrap:'wrap' } },
+                  h('span', { style:{ fontSize:'11.5px', color:'#64748b', marginRight:'2px' } }, '고르기'),
+                  h('button', { onClick:function(){ pickAll(true); },
+                    style:{ padding:'4px 11px', fontSize:'11.5px', fontWeight:600, borderRadius:'5px',
+                      background:'#fff', color:'#1e40af', border:'1px solid #93c5fd', cursor:'pointer' } }, '전체'),
+                  h('button', { onClick:pickSettled,
+                    className:'erp-tip', 'data-tip':'성과 미반영이 있는 사람만 빼고 고릅니다',
+                    style:{ padding:'4px 11px', fontSize:'11.5px', fontWeight:600, borderRadius:'5px',
+                      background:'#fff', color:'#166534', border:'1px solid #86efac', cursor:'pointer' } }, '확정된 사람만'),
+                  h('button', { onClick:function(){ pickAll(false); },
+                    style:{ padding:'4px 11px', fontSize:'11.5px', fontWeight:600, borderRadius:'5px',
+                      background:'#fff', color:'#64748b', border:'1px solid #cbd5e1', cursor:'pointer' } }, '해제'),
+                  h('span', { style:{ marginLeft:'auto', fontSize:'11.5px', color:'#64748b' } },
+                    '체크한 사람에게만 나갑니다')),
+                h('div', { style:{ maxHeight:'40vh', overflow:'auto', border:'1px solid #e2e8f0', borderRadius:'8px' } },
                   h('table', { style:{ width:'100%', borderCollapse:'collapse' } },
                     h('thead', null, h('tr', null,
+                      h('th', { style:Object.assign({width:'34px'}, head) },
+                        h('input', { type:'checkbox',
+                          checked: rows.length > 0 && sent.length === rows.length,
+                          onChange:function(e){ pickAll(e.target.checked); },
+                          style:{ cursor:'pointer' } })),
                       h('th', { style:Object.assign({textAlign:'left'}, head) }, '이름'),
                       h('th', { style:Object.assign({textAlign:'right'}, head) }, '건수'),
                       h('th', { style:Object.assign({textAlign:'right'}, head) }, '금액'),
                       h('th', { style:Object.assign({textAlign:'left', paddingLeft:'14px'}, head) }, '상태'))),
                     h('tbody', null, rows.map(function(r){
-                      return h('tr', { key:r.sid, style: r.uid ? null : { background:'#fffbeb' } },
+                      var on = isPick(r.sid);
+                      return h('tr', { key:r.sid,
+                        onClick:function(){ togglePick(r.sid); },
+                        style:{ cursor:'pointer',
+                          background: !on ? '#f8fafc' : (r.uid ? 'transparent' : '#fffbeb'),
+                          opacity: on ? 1 : 0.5 } },
+                        h('td', { style:Object.assign({textAlign:'center'}, cell) },
+                          h('input', { type:'checkbox', checked:on, readOnly:true,
+                            style:{ cursor:'pointer', pointerEvents:'none' } })),
                         h('td', { style:cell },
                           r.name,
+                          r.unmatchedN > 0 && h('span', { title:'성과 미반영 '+r.unmatchedN+'건 — 보내기 전에 한 번 더 보세요',
+                            style:{ marginLeft:'6px', fontSize:'10.5px',
+                            background:'#fef2f2', color:'#991b1b', borderRadius:'4px', padding:'1px 5px', fontWeight:700 } },
+                            '⚠️ 미반영 ' + r.unmatchedN),
                           r.wasDone && r.resetN > 0 && h('span', { style:{ marginLeft:'6px', fontSize:'10.5px',
                             background:'#fef2f2', color:'#b91c1c', borderRadius:'4px', padding:'1px 5px', fontWeight:700 } },
                             '완료 풀림')),
                         h('td', { style:Object.assign({textAlign:'right'}, cell) }, r.itemCount),
                         h('td', { style:Object.assign({textAlign:'right', fontWeight:600}, cell) },
                           r.total.toLocaleString('ko-KR')),
-                        h('td', { style:Object.assign({paddingLeft:'14px'}, cell) }, stateCell(r)));
-                    })))),
+                        h('td', { style:Object.assign({paddingLeft:'14px'}, cell) },
+                          on ? stateCell(r) : h('span', { style:{ color:'#94a3b8' } }, '이번엔 안 보냄')));
+                    }))))),
 
             err && h('div', { style:{ marginTop:'10px', background:'#fef2f2', border:'1px solid #fecaca',
               borderRadius:'8px', padding:'9px 12px', fontSize:'12px', color:'#b91c1c' } }, err),
 
-            h('div', { style:{ display:'flex', gap:'8px', justifyContent:'flex-end', marginTop:'16px' } },
+            h('div', { style:{ display:'flex', gap:'8px', justifyContent:'flex-end', alignItems:'center', marginTop:'16px' } },
+              rows.length > sent.length && h('span', { style:{ marginRight:'auto', fontSize:'11.5px', color:'#64748b' } },
+                '고르지 않은 ' + (rows.length - sent.length) + '명은 나중에 다시 발행하면 됩니다'),
               h('button', { onClick:function(){ if(!busy) props.onClose(); },
                 style:{ padding:'7px 16px', fontSize:'12.5px', fontWeight:600, borderRadius:'6px',
                   background:'#fff', color:'#475569', border:'1px solid #cbd5e1', cursor:'pointer' } }, '취소'),
-              h('button', { onClick:doPublish, disabled: busy || !rows.length,
+              h('button', { onClick:doPublish, disabled: busy || !sent.length,
                 style:{ padding:'7px 18px', fontSize:'12.5px', fontWeight:700, borderRadius:'6px',
-                  background: (busy || !rows.length) ? '#cbd5e1' : '#1e40af', color:'#fff', border:'none',
-                  cursor: (busy || !rows.length) ? 'default' : 'pointer' } },
-                busy ? '내보내는 중…' : '발행하기')))
+                  background: (busy || !sent.length) ? '#cbd5e1' : '#1e40af', color:'#fff', border:'none',
+                  cursor: (busy || !sent.length) ? 'default' : 'pointer' } },
+                busy ? '내보내는 중…' : (sent.length ? sent.length + '명에게 발행' : '고른 사람이 없습니다'))))
     ));
 }
 
