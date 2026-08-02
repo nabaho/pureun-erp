@@ -39361,6 +39361,7 @@ function MyDeskV2(props){
       if(m.id){
         dbPatch('attendance_records', m.id, { date:m.date, note:m.note||'', externalId:m.externalId||null });
         showToast('✅ 이음센터 근무 수정');
+        if(typeof ieumSchedulePublish==='function') ieumSchedulePublish();
       } else {
         // 본인 근무 시는 같은 날짜 중복 방지, 제3자 근무 시는 중복 허용 (여러 명 가능)
         if(!m.externalId){
@@ -39373,6 +39374,7 @@ function MyDeskV2(props){
           externalId: m.externalId || null
         });
         showToast('🏛️ 이음센터 근무 등록');
+        if(typeof ieumSchedulePublish==='function') ieumSchedulePublish();
       }
     }
     setQuickModal(null);
@@ -39396,6 +39398,7 @@ function MyDeskV2(props){
     } else if(m.kind === 'eum'){
       dbRemove('attendance_records', m.id);
       showToast('🗑️ 이음센터 근무 삭제');
+      if(typeof ieumSchedulePublish==='function') ieumSchedulePublish();
     }
     setQuickModal(null);
     setRfk(rfk+1);
@@ -42399,6 +42402,7 @@ function CorpDashboard(props){
           });
         }
         showToast('🏛️ '+newDate+' '+(data.name||'')+' 이음센터 등록');
+        ieumSchedulePublish();
         setCalRfk(calRfk+1);
         return;
       }
@@ -42419,6 +42423,7 @@ function CorpDashboard(props){
           });
         }
         showToast('🏛️ '+newDate+' '+exObj.name+' 이음센터 등록');
+        ieumSchedulePublish();
         setCalRfk(calRfk+1);
         return;
       }
@@ -44465,6 +44470,7 @@ function CorpDashboard(props){
                   } else {
                     showToast('🏛️ '+workerName+' 이음센터 등록 (구글 미연결)');
                   }
+                  ieumSchedulePublish();
                   setEumWorkModal(null);
                   setCorpRfk(corpRfk+1); setCalRfk(calRfk+1);
                 },
@@ -45163,28 +45169,7 @@ var EXPENSE_CAT_QUICK = [
 //   ieum_lectures : [ { id, date, time, place, title, content, attendees, personKey } ] — 이음강의 기록
 // personKey = 내부직원 sid 또는 external_staff id
 
-// 이음근무(eum-work) 집계: personKey → { total, byMonth: {'01':[일자,...]} }
-// year='all'이면 전체 연도 누적 (byMonth 키는 'YYYY-MM')
-function ieumDutyStats(year){
-  var att = dbGet('attendance_records', []) || [];
-  var isAll = String(year) === 'all';
-  var out = {};
-  att.forEach(function(r){
-    if(r.type !== 'eum-work') return;
-    if(!isAll && (r.date||'').slice(0,4) !== String(year)) return;
-    var pk = r.externalId || r.sid; if(!pk) return;
-    var mm = isAll ? r.date.slice(0,7) : r.date.slice(5,7);
-    var dd = parseInt(r.date.slice(8,10),10);
-    if(!out[pk]) out[pk] = { total:0, byMonth:{} };
-    if(!out[pk].byMonth[mm]) out[pk].byMonth[mm] = [];
-    out[pk].byMonth[mm].push(dd);
-    out[pk].total++;
-  });
-  Object.keys(out).forEach(function(pk){
-    Object.keys(out[pk].byMonth).forEach(function(mm){ out[pk].byMonth[mm].sort(function(a,b){return a-b;}); });
-  });
-  return out;
-}
+// (이음근무 집계는 IeumPeopleTab 내부의 스코프 기반 집계로 대체됨 — 구 ieumDutyStats 제거)
 
 // 법인 대시보드와 동일한 근로자 지정색: 커스텀 색(pureun_v6_staff_custom_colors) 우선 → STAFF_COLORS 순번
 // ※ CorpDashboard 내부의 STAFF_COLORS·staffColorMap 규칙과 반드시 일치 유지
@@ -45257,6 +45242,7 @@ function IeumCenter(props){
   // 1회 이관: 과거 드래그로 my_schedules에 들어간 이음센터 일정('일정'으로만 표시되던 것)을
   // attendance_records로 이동 — 이름 표시·인원현황 집계·문자·공개미러 일원화
   useEffect(function(){
+    ieumSchedulePublish(); // 화면 진입 시 공개 일정 자동 발행 (최신 상태 유지)
     try {
       var sch = dbGet('my_schedules', []) || [];
       var eum = sch.filter(function(s){ return s.type === 'eum-work'; });
@@ -45809,6 +45795,21 @@ function ieumPublishPublic(cb){
   fbDb.ref('ieum_public').set({ roster:roster, people:people, updatedAt:Date.now() })
     .then(function(){ cb && cb(true); })
     .catch(function(e){ cb && cb(false, e && e.message); });
+}
+
+// 공개 일정 자동 발행 (디바운스 3초) — 이음센터 근무 등록·수정·삭제 시, 그리고 이음센터 화면 진입 시 호출
+// 수동 [지금 발행] 버튼은 유지 (강제 즉시 발행용)
+function ieumSchedulePublish(){
+  try {
+    if(typeof fbDb === 'undefined' || !fbDb) return;
+    clearTimeout(window._ieumPubTimer);
+    window._ieumPubTimer = setTimeout(function(){
+      ieumPublishPublic(function(ok, err){
+        if(ok) console.log('🔗 이음센터 공개 일정 자동 발행 완료');
+        else console.warn('이음센터 공개 일정 자동 발행 실패:', err||'');
+      });
+    }, 3000);
+  } catch(e){ window._erpErrLog && window._erpErrLog(e); }
 }
 
 function IeumShareTab(props){
