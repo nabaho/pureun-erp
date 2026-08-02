@@ -52,6 +52,60 @@ test('폴더 연결 UI는 환경설정이 숨겨진 계정에서도 닿는 곳�
   assert.match(wiccok, /onclick="fsUndoLast\(\)"/);
 });
 
+test('증명서 스캔은 위촉장과 같은 폴더 핸들을 쓴다', () => {
+  const m = source.match(/async function cdScanNow\([\s\S]*?\n\}/);
+  assert.ok(m, 'cdScanNow 함수가 있어야 합니다');
+  assert.match(m[0], /fsScanAll/, '폴더를 다시 지정하지 않고 기존 스캔을 재사용합니다');
+  assert.ok(!/showDirectoryPicker/.test(m[0]));
+  assert.ok(!/환경설정/.test(m[0]), '환경설정으로 안내하면 막다른 길이 됩니다');
+});
+
+test('_cdFindAttachTarget은 원본 없는 received 레코드만 돌려준다', () => {
+  const db = [
+    { id: 'CD1', kind: '실적증명서', issuer: '충남경제진흥원', year: '2025', docSrc: 'received' },
+    { id: 'CD2', kind: '실적증명서', issuer: '충남경제진흥원', year: '2025', docSrc: 'received', src: 'fs', relPath: 'x/y.pdf' },
+    { id: 'CD3', kind: '실적증명서', org: '충남경제진흥원', year: '2025', genFileId: 'certdoc_1' }   // made → 대상 아님
+  ];
+  const ctx = {
+    matchByFilename: (file, arr) => arr.find((r) => file.name.includes(r.org)) || null,
+    hasOriginal: (r) => (r.src === 'fs' ? !!r.relPath : !!r.genFileId),
+    _cdSrc: (r) => (r.docSrc || (r.genFileId ? 'made' : 'received'))
+  };
+  vm.runInNewContext(funcSource('_cdFindAttachTarget'), ctx);
+  const hit = ctx._cdFindAttachTarget({ name: '2025 충남경제진흥원 실적증명서.pdf' }, db);
+  assert.ok(hit, '원본 없는 received를 찾아야 합니다');
+  assert.equal(hit.id, 'CD1');
+  assert.ok(hit === db[0], '버퍼 안의 원래 객체를 돌려줘야 붙일 수 있습니다');
+  assert.equal(ctx._cdFindAttachTarget({ name: '2025 충남경제진흥원 실적증명서.pdf' }, [db[2]]), null);
+});
+
+test('cdScanCommit은 made를 건드리지 않고 스토어를 한 번만 쓴다', () => {
+  const src = funcSource('cdScanCommit');
+  assert.match(src, /docSrc:\s*'received'/);
+  assert.match(src, /scanId/);
+  const loop = src.slice(src.indexOf('.adds.forEach'), src.lastIndexOf("set('certdoc'"));
+  assert.ok(loop.length > 0, 'adds 반복문과 저장이 있어야 합니다');
+  assert.ok(!/\bset\(/.test(loop), '반복문 안에서 set()을 부르면 안 됩니다');
+});
+
+test('cdUndoScan은 만든 레코드만 지우고 붙인 것은 경로만 뗀다', () => {
+  const store = { certdoc: [
+    { id: 'CD1', scanId: 'CS1' },
+    { id: 'CD2', src: 'fs', relPath: 'a/b.pdf', attachedScanId: 'CS1' },
+    { id: 'CD3', scanId: 'CS2' },
+    { id: 'CD4', genFileId: 'certdoc_1' }
+  ] };
+  const ctx = {
+    get: (k) => store[k].slice(), set: (k, v) => { store[k] = v; },
+    toast: () => {}, renderDocStore: () => {}
+  };
+  vm.runInNewContext(funcSource('cdUndoScan') + '\ncdUndoScan("CS1");', ctx);
+  assert.deepEqual(store.certdoc.map((r) => r.id), ['CD2', 'CD3', 'CD4']);
+  const kept = store.certdoc.find((r) => r.id === 'CD2');
+  assert.equal(kept.relPath, undefined);
+  assert.equal(kept.attachedScanId, undefined);
+});
+
 test('증명서는 표로 그리고 이력서·프로필은 카드를 유지한다', () => {
   assert.match(source, /certdoc:\{store:'certdoc'[\s\S]{0,400}?tableView:\s*true/);
   assert.ok(!/resume:\{[\s\S]{0,300}?tableView:\s*true/.test(source), '이력서는 카드를 유지합니다');

@@ -744,6 +744,8 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
             <select class="tb-select" id="cdOrgFilter"><option value="">전체 기관</option></select>
             <div class="tb-spacer"></div>
             <span class="cnt" id="cdCnt" style="font-size:11px;color:var(--text-mute)"></span>
+            <button class="btn" type="button" onclick="cdScanNow()">🔍 서류 폴더 스캔</button>
+            <button class="btn" type="button" onclick="cdUndoLastScan()">↩ 이번 스캔 되돌리기</button>
             <button class="btn" id="cdAddExisting">+ 받은 증명서 추가</button>
           </div>
           <div id="cdBody"></div>
@@ -1266,6 +1268,13 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
     <div class="modal-h">📜 증명서 연결</div>
     <div class="modal-b" id="certLinkBody"></div>
     <div class="modal-foot"><button class="btn" onclick="closeCertLink()">닫기</button></div>
+  </div>
+</div>
+<div class="modal-ov" id="modalCdScan">
+  <div class="modal" style="width:720px">
+    <div class="modal-h">🔍 증명서 폴더 스캔 — 아직 저장되지 않았습니다</div>
+    <div class="modal-b" id="cdScanBody"></div>
+    <div class="modal-foot"><button class="btn" onclick="closeCdScan()">닫기 (저장 안 함)</button><button class="btn primary" onclick="cdScanCommit()">등록</button></div>
   </div>
 </div>
 <div class="modal-ov" id="modalPuSrc">
@@ -3069,6 +3078,110 @@ function _cdTable(rows, D){
           + '</td></tr>';
       }).join('')
     + '</tbody></table>';
+}
+
+/* ===== 증명서 폴더 스캔 =====
+   위촉장 스캔과 같은 폴더 핸들(fsRoot)을 쓰고, 판정도 js/kcareer-scan.js를 그대로 쓴다.
+   증명서로 판정된 파일만(파일명 끝이 실적증명서·경력증명서·참여확인서·수행확인서) 대상이다. */
+var _cdScanCtx = null;
+
+/* 원본 없는 기존 received 레코드를 파일명으로 찾아 경로만 붙인다(새 줄을 만들지 않는다) */
+function _cdFindAttachTarget(file, db){
+  var pool = (db||[]).filter(function(r){ return _cdSrc(r)==='received' && !hasOriginal(r); });
+  if(!pool.length) return null;
+  /* matchByFilename은 org·title을 보므로 issuer를 org 자리에 얹은 사본으로 넘긴다 */
+  var proxy = pool.map(function(r){ return { id:r.id, org:r.issuer||r.org||'', title:r.kind||'', year:r.year||'', date:r.date||'' }; });
+  var hit = matchByFilename(file, proxy, 'certdoc');
+  if(!hit) return null;
+  return pool.find(function(r){ return r.id === hit.id; }) || null;
+}
+
+async function cdScanNow(){
+  var files = await fsScanAll(function(n){ toast('스캔 중… ' + n + '개'); });
+  if(!files) return;
+  var db = get('certdoc');
+  var known = {};
+  db.forEach(function(r){ if(r.relPath) known[r.relPath] = true; });
+  var adds = [], attaches = [], seen = {};
+  files.forEach(function(f){
+    var c = KcareerScan.classify(f.name);
+    if(c.level !== 'sure' || c.store !== 'certdoc') return;
+    if(known[f.relPath]) return;                      /* 이미 등록된 경로 */
+    var ck = f.name + '|' + f.size;
+    if(seen[ck]) return; seen[ck] = true;              /* 같은 파일 사본 */
+    var t = _cdFindAttachTarget(f, db);
+    if(t) attaches.push({ id: t.id, f: f });
+    else adds.push(f);
+  });
+  _cdScanCtx = { scanId: 'CS' + new Date().toISOString().slice(0,10).replace(/-/g,'') + '-' + String(Date.now()).slice(-4),
+                 adds: adds, attaches: attaches, total: files.length };
+  renderCdScanPreview();
+  $('modalCdScan').classList.add('open');
+}
+
+function renderCdScanPreview(){
+  if(!_cdScanCtx) return;
+  var c = _cdScanCtx;
+  $('cdScanBody').innerHTML = '<div style="font-size:12px;background:#F3F8F6;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:10px">'
+    + '증명서로 판정된 파일 <b>' + (c.adds.length + c.attaches.length) + '건</b> '
+    + '<span style="color:var(--text-mute)">(새로 등록 ' + c.adds.length + ' · 원본 없는 기존 증명서에 붙임 ' + c.attaches.length + ')</span>'
+    + '<div style="color:var(--text-mute);margin-top:4px">원본은 복사하지 않고 경로만 저장합니다. 직접 만든 증명서는 건드리지 않습니다.</div></div>'
+    + (c.adds.length ? '<div style="font-size:12px;font-weight:600;margin:8px 0 4px">🟢 새로 등록</div>'
+        + c.adds.slice(0,50).map(function(f){ return '<div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--border-soft)">' + escapeHtml(f.name) + '</div>'; }).join('')
+        + (c.adds.length>50 ? '<div style="font-size:11px;color:var(--text-mute)">…외 ' + (c.adds.length-50) + '건</div>' : '') : '')
+    + (c.attaches.length ? '<div style="font-size:12px;font-weight:600;margin:12px 0 4px;color:var(--teal)">📎 기존 증명서에 원본만 붙임</div>'
+        + c.attaches.map(function(a){ return '<div style="font-size:12px;padding:3px 0">' + escapeHtml(a.id) + ' ← ' + escapeHtml(a.f.name) + '</div>'; }).join('') : '');
+}
+function closeCdScan(){ $('modalCdScan').classList.remove('open'); _cdScanCtx = null; }
+
+function cdScanCommit(){
+  if(!_cdScanCtx){ toast('스캔 결과가 없습니다'); return; }
+  var c = _cdScanCtx, db = get('certdoc'), n = 0, att = 0;
+  var seq = 1;
+  function nextId(){
+    var mk = function(){ return 'CD' + String(seq).padStart(4,'0'); };
+    while(db.some(function(x){ return x.id === mk(); })) seq++;
+    return mk();
+  }
+  c.adds.forEach(function(f){
+    db.unshift({ id: nextId(), kind: KcareerScan.cleanCore(f.name), org: '', issuer: '', usage: '', coverage: '',
+      year: (String(f.name).match(/(20\d{2})/)||[])[1] || String(f.mtime||'').slice(0,4), date: '', memo: '',
+      docSrc: 'received', src: 'fs', relPath: f.relPath, fileSize: f.size, fileMtime: f.mtime,
+      scanId: c.scanId, submits: [], savedAt: new Date().toISOString() });
+    n++;
+  });
+  c.attaches.forEach(function(a){
+    var r = db.find(function(x){ return x.id === a.id; });
+    if(!r) return;
+    r.src = 'fs'; r.relPath = a.f.relPath; r.fileSize = a.f.size; r.fileMtime = a.f.mtime;
+    r.attachedScanId = c.scanId; att++;
+  });
+  set('certdoc', db);
+  LS.set(NS + 'cd_scan_last_id', c.scanId);
+  closeCdScan();
+  renderDocStore('certdoc');
+  toast('✅ 증명서 새로 ' + n + '건 · 기존에 원본 붙임 ' + att + '건');
+}
+
+function cdUndoScan(scanId){
+  if(!scanId) return;
+  var db = get('certdoc');
+  var left = db.filter(function(r){ return r.scanId !== scanId; });
+  var removed = db.length - left.length, detached = 0;
+  left.forEach(function(r){
+    if(r.attachedScanId === scanId){
+      delete r.src; delete r.relPath; delete r.fileSize; delete r.fileMtime; delete r.attachedScanId;
+      detached++;
+    }
+  });
+  set('certdoc', left);
+  renderDocStore('certdoc');
+  toast('되돌렸습니다 — 새로 만든 ' + removed + '건 삭제, 붙인 ' + detached + '건은 경로 해제');
+}
+function cdUndoLastScan(){
+  var sid = LS.get(NS + 'cd_scan_last_id') || '';
+  if(!sid){ toast('되돌릴 스캔 기록이 없습니다'); return; }
+  if(confirm('이번 스캔으로 등록된 증명서를 지웁니다.\n(' + sid + ')\n\n계속할까요?')) cdUndoScan(sid);
 }
 
 function renderDocStore(domain){ const D=DOMAINS[domain]; const sec=document.getElementById(D.page); if(!sec) return;
