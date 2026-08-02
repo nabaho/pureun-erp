@@ -106,6 +106,39 @@
       });
   }
 
+  /* ── 창고 점검 결과 → 화면 문구 ──
+     probe()의 결과를 사람이 읽을 한국어 문자열로 바꾼다. 화면 코드가 이 갈래를
+     직접 갖지 않게 하려고 여기로 옮겼다 — 순수 함수라 테스트로 문구를 보증할 수 있다.
+
+     step:'init'(창고 자체가 연결 안 됨)과 step:'ref'|'upload'|'url'(창고는 연결됐지만
+     규칙에 막힘)은 원인이 다르므로 반드시 다른 안내를 준다. 'init'을 규칙 문제로
+     안내하면 대표님이 콘솔에서 엉뚱한 규칙을 고치게 된다 — 그래서 이 갈래에는
+     '규칙'이라는 말을 아예 쓰지 않는다. */
+  function probeMessage(result) {
+    result = result || {};
+
+    if (result.ok && result.step === 'done') {
+      return '통과 — 파일 창고를 쓸 수 있습니다.\n올리기 · 주소 받기 · 지우기 모두 됩니다.';
+    }
+
+    if (result.ok) {
+      // step: 'delete' — 지우기만 막혔다. 사진은 담을 수 있으니 통과로 본다.
+      return '일부 통과 — ' + (result.message || '') +
+        '\n사진은 담을 수 있습니다. 창고 규칙에서 지우기 권한을 확인하세요.';
+    }
+
+    if (result.step === 'init') {
+      // 창고 자체가 연결되지 않았다 — 규칙 이야기를 하면 안 된다.
+      return '막혔습니다 — 파일 창고가 연결되지 않았습니다.\n' +
+        '창고 연결이 되어 있지 않을 뿐입니다. 실시간DB로 진행해도 됩니다.';
+    }
+
+    // step: 'ref' | 'upload' | 'url' — 창고는 연결됐지만 규칙에 막혔다.
+    // 어느 단계에서 막혔는지와 메시지를 반드시 담아야 콘솔에서 무엇을 고칠지 판단할 수 있다.
+    return '막혔습니다 (' + result.step + ')\n' + (result.message || '') +
+      '\n\n창고 규칙이 아직 없을 수 있습니다. 실시간DB로 진행해도 됩니다.';
+  }
+
   global.PuPhotoStore = {
     DB_ROOT: DB_ROOT,
     BUCKET_ROOT: BUCKET_ROOT,
@@ -117,6 +150,7 @@
     getMode: getMode,
     setMode: setMode,
     probePath: probePath,
-    probe: probe
+    probe: probe,
+    probeMessage: probeMessage
   };
 })(typeof window !== 'undefined' ? window : globalThis);

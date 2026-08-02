@@ -62,6 +62,20 @@ test('점검 결과를 화면에 보여주는 함수가 있다', () => {
   assert.match(app, /PuPhotoStore\.probe\(/);
 });
 
+test('앱은 점검 결과 문구 분기를 직접 갖지 않고 PuPhotoStore.probeMessage를 쓴다', () => {
+  // 문구 분기가 앱 안에 인라인으로 있으면 테스트로 보증할 수 없고(과거 지적 사항),
+  // 당겨오기 창 등 다른 화면이 같은 문구를 재사용할 수도 없다.
+  // 문구를 만드는 일은 js/pu-photo-store.js의 순수 함수 하나로만 존재해야 한다.
+  assert.match(app, /PuPhotoStore\.probeMessage\(/, 'runProbe가 PuPhotoStore.probeMessage를 쓰지 않습니다');
+
+  const blocks = [...app.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)];
+  const inlineCode = blocks.map(m => m[1]).join('\n');
+  const runProbeBody = inlineCode.match(/function runProbe\(\)\s*\{([\s\S]*?)\n\}/);
+  assert.ok(runProbeBody, 'runProbe 함수 본문을 찾을 수 없습니다');
+  assert.ok(!/통과했습니다|막혔습니다|일부 통과/.test(runProbeBody[1]),
+    'runProbe 안에 문구 분기가 남아 있습니다 — probeMessage로 옮겨야 합니다');
+});
+
 test('매니페스트를 연결한다', () => {
   assert.match(app, /<link rel="manifest" href="pu-photos-manifest\.json">/);
 });

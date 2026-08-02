@@ -198,3 +198,64 @@ test('주소받기가 막히면 올리기 실패가 아니라 따로 알려주�
   // 실패 결과를 돌려주기 전에 반드시 지우기를 시도해야 한다.
   assert.ok(fs3.calls.some(c => c[0] === 'delete'), '주소받기 실패 후 점검 파일을 지우려 하지 않았습니다');
 });
+
+/* ── 창고 점검 결과 → 화면 문구 (probeMessage) ── */
+
+test('여섯 가지 step 값 각각에 대해 서로 다른 문구가 나온다', () => {
+  const S = loadStore();
+  const cases = {
+    done: { ok: true, step: 'done', url: 'https://example.test/x' },
+    delete: { ok: true, step: 'delete', url: 'https://example.test/x', message: '올리기는 됐지만 지우기가 막혔습니다 — 권한이 없습니다' },
+    init: { ok: false, step: 'init', message: '파일 창고가 연결되지 않았습니다' },
+    ref: { ok: false, step: 'ref', message: '창고 설정이 없습니다' },
+    upload: { ok: false, step: 'upload', message: '권한이 없습니다' },
+    url: { ok: false, step: 'url', message: '주소를 못 받았습니다' }
+  };
+  const messages = {};
+  for (const step of Object.keys(cases)) {
+    const msg = S.probeMessage(cases[step]);
+    assert.ok(msg && typeof msg === 'string' && msg.length > 0, step + ': 문구가 비어 있습니다');
+    messages[step] = msg;
+  }
+  const values = Object.values(messages);
+  const unique = new Set(values);
+  assert.equal(unique.size, values.length, '서로 다른 step인데 같은 문구가 나왔습니다: ' + JSON.stringify(messages));
+});
+
+test('init 문구에는 규칙 이야기가 없고 연결 이야기가 있다', () => {
+  // 회귀 방지: step:'init'은 창고 자체가 연결되지 않은 경우다. 이걸 규칙 문제로
+  // 안내하면 대표님이 콘솔에서 엉뚱한 규칙을 고치게 된다(승인된 목업에서 지적된 오류).
+  const S = loadStore();
+  const msg = S.probeMessage({ ok: false, step: 'init', message: '파일 창고가 연결되지 않았습니다' });
+  assert.ok(!/규칙/.test(msg), '연결 실패 문구에 규칙 이야기가 섞였습니다: ' + msg);
+  assert.match(msg, /연결/);
+});
+
+test('ok:false 문구에는 막힌 단계와 메시지가 들어 있다', () => {
+  const S = loadStore();
+  for (const step of ['ref', 'upload', 'url']) {
+    const msg = S.probeMessage({ ok: false, step: step, message: '이건-특정-메시지-내용' });
+    assert.ok(msg.includes(step), step + ': 문구에 단계 이름이 없습니다: ' + msg);
+    assert.ok(msg.includes('이건-특정-메시지-내용'), step + ': 문구에 메시지 내용이 없습니다: ' + msg);
+  }
+});
+
+test('ok:true, step:delete 문구에는 사진을 담을 수 있다는 안내가 들어 있다', () => {
+  const S = loadStore();
+  const msg = S.probeMessage({ ok: true, step: 'delete', message: '지우기가 막혔습니다' });
+  assert.match(msg, /사진.*담을 수 있습/);
+});
+
+test('어떤 결과를 넣어도 빈 문자열이나 undefined를 돌려주지 않는다', () => {
+  const S = loadStore();
+  const inputs = [
+    {}, undefined, { ok: false, step: '모르는값' }, { ok: true },
+    { ok: false }, { ok: true, step: '모르는값' }
+  ];
+  for (const input of inputs) {
+    const msg = S.probeMessage(input);
+    assert.notEqual(msg, undefined, JSON.stringify(input) + ': undefined가 나왔습니다');
+    assert.notEqual(msg, '', JSON.stringify(input) + ': 빈 문자열이 나왔습니다');
+    assert.equal(typeof msg, 'string', JSON.stringify(input) + ': 문자열이 아닙니다');
+  }
+});
