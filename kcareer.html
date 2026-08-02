@@ -711,7 +711,8 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
       </div></section>
       <section class="page-view" id="page-certdoc" ondragover="pageDropOver(event,'certdoc')" ondragleave="pageDropLeave(event)" ondrop="pageDropFile(event,'certdoc')"><div class="page"><div class="page-drop-overlay" id="ovl-page-certdoc"><span>📎 경력증명서 파일을 놓으면 저장됩니다</span></div>
         <h2>경력증명서 보관</h2><div class="desc">증명서 양식 가져와 작성 또는 받은 증명서 업로드 → 보관 · 제출 기록 누적</div>
-        <div class="card">
+        <details style="margin-bottom:14px"><summary style="cursor:pointer;font-size:13px;color:var(--text-mute);padding:6px 0">✍️ 증명서 직접 만들기 (양식 가져오기·보관함)</summary>
+        <div class="card" style="margin-top:8px">
           <div class="rc-h">① 양식 가져오기</div>
           <div class="dropzone" id="cdDrop">📄 증명서 HWP/HWPX 양식을 끌어놓거나 클릭해서 선택</div>
           <input type="file" id="cdFile" accept=".hwp,.hwpx" style="display:none">
@@ -723,6 +724,7 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
           <div class="rc-h">② 양식 보관함</div>
           <div id="cdTplLib" class="empty">보관된 양식 없음</div>
         </div>
+        </details>
         <div class="card" style="margin-top:14px">
           <div class="rc-bar">
             <div class="rc-h" style="margin:0">③ 편집</div>
@@ -2690,7 +2692,7 @@ const DOMAINS={
   profile:{store:'profile', kindKey:'profile_kinds', tplKey:'profile_tpl', label:'프로필', page:'page-profile',
     search:'pfSearch', orgFilter:'pfOrgFilter', cnt:'pfCnt', body:'pfBody', addExisting:'pfAddExisting',
     create:{drop:'pcDrop',file:'pcFile',saveLib:'pcSaveLib',tplLib:'pcTplLib',editor:'#rhwpProfileEditor',msg:'pcEditorMsg',fillBtn:'pcFillBtn',fillPanel:'pcFillPanel',saveBtn:'pcSaveBtn'}},
-  certdoc:{store:'certdoc', kindKey:'certdoc_kinds', tplKey:'certdoc_tpl', label:'경력증명서', page:'page-certdoc',
+  certdoc:{store:'certdoc', tableView:true, kindKey:'certdoc_kinds', tplKey:'certdoc_tpl', label:'경력증명서', page:'page-certdoc',
     search:'cdSearch', orgFilter:'cdOrgFilter', cnt:'cdCnt', body:'cdBody', addExisting:'cdAddExisting',
     extra:[{key:'issuer',label:'발급기관(증명해준 곳)'},{key:'usage',label:'용도·제출처'},{key:'coverage',label:'증명 기간(경력기간)'}],
     create:{drop:'cdDrop',file:'cdFile',saveLib:'cdSaveLib',tplLib:'cdTplLib',editor:'#rhwpCertEditor',msg:'cdEditorMsg',fillBtn:'cdFillBtn',fillPanel:'cdFillPanel',saveBtn:'cdSaveBtn'}}
@@ -3040,16 +3042,54 @@ function _cdNormalize(){
   return n;
 }
 
+/* 증명서는 건수가 많아(기관 실적 63건에 증명서 40~50건) 카드로는 못 찾는다 → 표로 그린다 */
+var _cdNoFileOnly = false;
+function toggleCdNoFile(){ _cdNoFileOnly = !_cdNoFileOnly; renderDocStore('certdoc'); }
+
+function _cdTable(rows, D){
+  return '<table><thead><tr>'
+    + ['종류','발급기관','발급일','증명기간','용도·제출처','원본','제출','관리'].map(function(h){ return '<th>'+h+'</th>'; }).join('')
+    + '</tr></thead><tbody>'
+    + rows.map(function(r){
+        var org = r.issuer || r.org || '-';
+        return '<tr>'
+          + '<td><strong>' + escapeHtml(r.kind||'-') + '</strong></td>'
+          + '<td>' + escapeHtml(org) + '</td>'
+          + '<td style="white-space:nowrap">' + escapeHtml(formatDate(r.date)||r.year||'-') + '</td>'
+          + '<td style="font-size:11px">' + escapeHtml(r.coverage||'-') + '</td>'
+          + '<td style="font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(r.usage||'-') + '</td>'
+          + '<td>' + (hasOriginal(r)
+              ? '<button class="btn sm" onclick=\'openOriginal(' + JSON.stringify({id:r.id,src:r.src||"",relPath:r.relPath||"",genFileId:r.genFileId||""}).replace(/'/g,"&#39;") + ')\'>📄</button>'
+              : '<span style="color:var(--text-mute);font-size:11px">없음</span>') + '</td>'
+          + '<td><button class="btn sm" onclick="openSubmitLog(\'certdoc\',\'' + _jsAttr(r.id) + '\')">🧾' + ((r.submits||[]).length||'') + '</button></td>'
+          + '<td style="white-space:nowrap">'
+            + (_cdSrc(r)==='received' ? '<button class="btn sm" onclick="cdReOcr(\'' + _jsAttr(r.id) + '\')" title="원본을 다시 읽어 발급기관·날짜 채우기">🔍</button>' : '')
+            + '<button class="btn sm" onclick="cdOpenAgency(\'' + _jsAttr(org) + '\')" title="이 기관 실적 보기">🏛</button>'
+            + '<button class="btn sm" onclick="delDoc(\'certdoc\',\'' + _jsAttr(r.id) + '\')" style="color:#C0392B">🗑</button>'
+          + '</td></tr>';
+      }).join('')
+    + '</tbody></table>';
+}
+
 function renderDocStore(domain){ const D=DOMAINS[domain]; const sec=document.getElementById(D.page); if(!sec) return;
   const arr=get(D.store);
   const orgSel=document.getElementById(D.orgFilter); if(!orgSel) return; const cur=orgSel.value;
   const orgs=[...new Set(arr.map(r=>r.org).filter(Boolean))].sort();
   orgSel.innerHTML='<option value="">전체 기관</option>'+orgs.map(o=>`<option${o===cur?' selected':''}>${escapeHtml(o)}</option>`).join('');
   const q=(document.getElementById(D.search).value||'').toLowerCase(), orgF=orgSel.value;
-  let rows=arr.filter(r=>{ if(orgF&&r.org!==orgF) return false; if(q&&![r.kind,r.org,r.memo,r.year].some(v=>(v||'').toLowerCase().includes(q))) return false; return true; });
+  let rows=arr.filter(r=>{ if(orgF&&r.org!==orgF) return false; if(q&&![r.kind,r.org,r.issuer,r.usage,r.coverage,r.memo,r.year].some(v=>(v||'').toLowerCase().includes(q))) return false; return true; });
   document.getElementById(D.cnt).textContent=rows.length+'건';
   const body=document.getElementById(D.body);
-  if(!rows.length){ body.innerHTML='<div class="empty"><div class="emp-ico">📭</div>보관된 '+D.label+'이(가) 없습니다</div>'; return; }
+  /* 증명서만 표로 그린다(이력서·프로필은 카드 유지 — 건수가 적고 이번 요구와 무관) */
+  let cdBar='';
+  if(D.tableView){
+    const missing=rows.filter(function(r){ return !hasOriginal(r); }).length;
+    cdBar='<div class="nofile-bar"><button type="button" class="nofile-btn'+(_cdNoFileOnly?' active':'')+'" onclick="toggleCdNoFile()">📎 원본 없는 항목만'+(missing?' ('+missing+')':'')+'</button></div>';
+    if(_cdNoFileOnly) rows=rows.filter(function(r){ return !hasOriginal(r); });
+    rows=rows.slice().sort(function(a,b){ return String((b.date||b.year||'')).localeCompare(String(a.date||a.year||'')); });
+  }
+  if(!rows.length){ body.innerHTML=cdBar+'<div class="empty"><div class="emp-ico">📭</div>보관된 '+D.label+'이(가) 없습니다</div>'; return; }
+  if(D.tableView){ body.innerHTML=cdBar+_cdTable(rows,D); return; }
   const years=[...new Set(rows.map(r=>r.year))].sort().reverse();
   body.innerHTML=years.map(y=>{ const items=rows.filter(r=>r.year===y).sort((a,b)=>(b.savedAt||'').localeCompare(a.savedAt||''));
     return `<div style="margin-top:16px"><div style="font-weight:700;color:var(--navy);font-size:15px;margin-bottom:8px">${escapeHtml(y)} <span style="font-size:12px;color:var(--text-mute);font-weight:400">(${items.length}건)</span></div>`

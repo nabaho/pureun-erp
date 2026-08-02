@@ -52,6 +52,33 @@ test('폴더 연결 UI는 환경설정이 숨겨진 계정에서도 닿는 곳�
   assert.match(wiccok, /onclick="fsUndoLast\(\)"/);
 });
 
+test('증명서는 표로 그리고 이력서·프로필은 카드를 유지한다', () => {
+  assert.match(source, /certdoc:\{store:'certdoc'[\s\S]{0,400}?tableView:\s*true/);
+  assert.ok(!/resume:\{[\s\S]{0,300}?tableView:\s*true/.test(source), '이력서는 카드를 유지합니다');
+  const src = funcSource('renderDocStore');
+  assert.match(src, /D\.tableView/, '도메인별로 표/카드를 갈라야 합니다');
+});
+
+test('증명서 표에 필요한 칸이 있다', () => {
+  const src = funcSource('_cdTable');
+  ['종류', '발급기관', '발급일', '증명기간', '원본', '제출'].forEach((h) => {
+    assert.ok(src.includes(h), '표에 ' + h + ' 칸이 있어야 합니다');
+  });
+  assert.match(src, /openSubmitLog/, '제출기록은 유지합니다');
+});
+
+test('증명서 목록에 원본 없는 항목만 필터가 있다', () => {
+  assert.match(source, /function toggleCdNoFile\(/);
+  const src = funcSource('renderDocStore');
+  assert.match(src, /_cdNoFileOnly/);
+  assert.match(src, /hasOriginal\(r\)/);
+});
+
+test('증명서 검색은 발급기관도 본다', () => {
+  const src = funcSource('renderDocStore');
+  assert.match(src, /r\.issuer/, 'issuer로도 검색돼야 외부기관을 찾을 수 있습니다');
+});
+
 test('_cdSrc: 만든 증명서와 받은 증명서를 가른다', () => {
   const ctx = {};
   vm.runInNewContext(funcSource('_cdSrc'), ctx);
