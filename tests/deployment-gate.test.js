@@ -17,13 +17,13 @@ test('Pages deployment cannot run before verification and packaging succeeds', (
   assert.match(workflow, /verify-and-package:/);
   assert.match(workflow, /node --test tests\/\*\.test\.js/);
   assert.match(workflow, /deploy:\s*[\s\S]*needs: verify-and-package/);
-  assert.match(workflow, /actions\/deploy-pages@v4/);
+  assert.match(workflow, /actions\/deploy-pages@v5/);
 });
 
 test('deployment generates version metadata before uploading the site', () => {
   const workflow = fs.readFileSync(path.join(root, '.github/workflows/deploy-pages.yml'), 'utf8');
   const versionAt = workflow.indexOf('node scripts/write-version.js');
-  const uploadAt = workflow.indexOf('actions/upload-pages-artifact@v4');
+  const uploadAt = workflow.indexOf('actions/upload-pages-artifact@v5');
   assert.ok(versionAt >= 0 && uploadAt > versionAt);
 });
 
