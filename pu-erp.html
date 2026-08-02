@@ -49813,9 +49813,69 @@ function StaffRosterModal(props){
   );
 }
 
+// ============ 퇴사자 성과급 정산 (finance_income.perfShares[].paid) ============
+// 퇴사자는 성과급 확인 발행에서 빼는 대신, 여기서 지급일을 적어 정산 표시를 한다.
+// 쓸 자리는 shareIdx(배열의 그 자리)로 짚는다 — 사람 찾기가 sid/이름 둘 다 보는 헐렁한
+// 매칭이라, 쓸 때 다시 찾으면 엉뚱한 줄에 들어갈 수 있다.
+//
+// 입금 마감(isIncomeLocked)으로 막지 않는다. 마감은 입금 금액을 지키려는 것이고,
+// 정산 표시는 금액을 바꾸지 않는다. paid·paidAt·paidBy·paidByName·paidNote는 어떤
+// 합계에도, 확인 지문(pcfStamp = 금액|비율|역할)에도 들어가지 않는다.
+// 마감 때문에 퇴사자 정산이 막히면 목적이 뒤집힌다.
+function _perfFindIncome(fiId){
+  if(!fiId) return null;
+  var arr = dbGet('finance_income', []) || [];
+  if(!Array.isArray(arr)) return null;
+  for(var i=0; i<arr.length; i++){ if(arr[i] && arr[i].id === fiId) return arr[i]; }
+  return null;
+}
+// 정산 처리. 성공 true / 대상 없음·이미 정산·저장 실패 false.
+function perfSettleShare(fiId, shareIdx, payDate, note){
+  if(typeof shareIdx !== 'number' || shareIdx < 0) return false;
+  var cur = _perfFindIncome(fiId);
+  if(!cur || !Array.isArray(cur.perfShares) || !cur.perfShares[shareIdx]) return false;
+  if(cur.perfShares[shareIdx].paid) return false;   // 이미 정산 — 지급일을 덮어쓰지 않는다
+  // 캐시에 담긴 객체를 그 자리에서 고치면 안 된다(되돌릴 수 없다) → 통째로 새로 만든다
+  var rec = Object.assign({}, cur);
+  rec.perfShares = cur.perfShares.map(function(ps, i){
+    if(i !== shareIdx) return ps;
+    return Object.assign({}, ps, {
+      paid: true,
+      paidAt: payDate || todayYMD(),
+      paidBy: (typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.sid) || '',
+      paidByName: (typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.name) || '',
+      paidNote: note || ''
+    });
+  });
+  if(!dbUpsert('finance_income', rec)) return false;   // 저장 실패면 성공이라 말하지 않는다
+  return true;
+}
+// 정산을 미정산으로 되돌린다 (잘못 눌렀거나 실제로 안 준 경우).
+function perfUnsettleShare(fiId, shareIdx){
+  if(typeof shareIdx !== 'number' || shareIdx < 0) return false;
+  var cur = _perfFindIncome(fiId);
+  if(!cur || !Array.isArray(cur.perfShares) || !cur.perfShares[shareIdx]) return false;
+  if(!cur.perfShares[shareIdx].paid) return false;   // 정산 안 된 것은 되돌릴 것도 없다
+  var rec = Object.assign({}, cur);
+  rec.perfShares = cur.perfShares.map(function(ps, i){
+    if(i !== shareIdx) return ps;
+    var n = Object.assign({}, ps);
+    delete n.paid; delete n.paidAt; delete n.paidBy; delete n.paidByName; delete n.paidNote;
+    return n;
+  });
+  if(!dbUpsert('finance_income', rec)) return false;
+  return true;
+}
+window.perfSettleShare = perfSettleShare;
+window.perfUnsettleShare = perfUnsettleShare;
+
 function StaffRosterDetail(props){
   var u = props.user;
   var srS = useState(false); var showRRN = srS[0]; var setShowRRN = srS[1];
+  // 퇴사자 성과급 정산 — 쓰고 나면 tick 을 올려 dbGet 을 다시 읽는다
+  var stS = useState(0);     var setlTick = stS[0];  var setSetlTick = stS[1];
+  var sfS = useState(null);  var setlForm = sfS[0];  var setSetlForm = sfS[1];
+  var spS = useState(false); var showPaid = spS[0];  var setShowPaid = spS[1];
   function row(label, val){
     if(!val && val !== 0) return null;
     return h('div', { style:{ display:'flex', gap:'8px', padding:'6px 0', borderBottom:'1px solid #f1f5f9', fontSize:'12.5px' } },
@@ -49949,17 +50009,73 @@ function StaffRosterDetail(props){
         })(),
         // ───── 퇴사 후 현황 (retired만) ─────
         u.status === 'retired' && (function(){
-          // 퇴사일 이후 발생한 본인 성과급 (미정산 = paid 플래그가 false/없음)
-          var unsettled = [];
+          // 퇴사일 이후 발생한 본인 성과급 — 미정산(paid 없음)과 정산완료를 한 번에 갈라 담는다.
+          // fiId·shareIdx 를 같이 들고 나가야 나중에 그 줄에 정확히 쓸 수 있다.
+          var unsettled = [], settled = [];
           (dbGet('finance_income', [])||[]).forEach(function(fi){
             if(!u.retireDate || (fi.date||'') < u.retireDate) return;
-            (fi.perfShares||[]).forEach(function(ps){
+            (fi.perfShares||[]).forEach(function(ps, psIdx){
               var match = ps.sid === u.sid || ps.sid === u.name || (ps.name && ps.name === u.name);
-              if(match && !ps.paid){
-                unsettled.push({ date:fi.date, companyName:fi.companyName||'-', amount:ps.amount||0, role:ps.role||'' });
+              if(!match) return;
+              var r = { fiId:fi.id, shareIdx:psIdx, date:fi.date, companyName:fi.companyName||'-',
+                amount:ps.amount||0, role:ps.role||'' };
+              if(ps.paid){
+                r.paidAt = ps.paidAt||''; r.paidNote = ps.paidNote||'';
+                r.paidByName = ps.paidByName || ps.paidBy || '';
+                settled.push(r);
+              } else {
+                unsettled.push(r);
               }
             });
           });
+          var unsettledSum = unsettled.reduce(function(s,x){ return s + x.amount; }, 0);
+          // 정산 입력칸 — 한 건('one')이든 전부('all')든 같은 칸을 쓴다
+          function openForm(mode, row){
+            setSetlForm({ mode:mode, fiId:row ? row.fiId : '', shareIdx:row ? row.shareIdx : -1,
+              payDate:todayYMD(), note:'' });
+          }
+          function isFormOn(row){
+            return !!(setlForm && setlForm.mode === 'one'
+              && setlForm.fiId === row.fiId && setlForm.shareIdx === row.shareIdx);
+          }
+          function saveForm(){
+            var f = setlForm; if(!f) return;
+            var targets = f.mode === 'all' ? unsettled
+              : unsettled.filter(function(x){ return x.fiId === f.fiId && x.shareIdx === f.shareIdx; });
+            var okN = 0, badN = 0;
+            targets.forEach(function(x){
+              if(perfSettleShare(x.fiId, x.shareIdx, f.payDate, f.note)) okN++; else badN++;
+            });
+            setSetlForm(null); setSetlTick(Date.now());
+            showToast(badN > 0 ? ('정산 ' + okN + '건 · 실패 ' + badN + '건')
+              : ('✅ 정산 ' + okN + '건 — 지급일 ' + f.payDate));
+          }
+          function doUnsettle(x){
+            popConfirm('이 건을 미정산으로 되돌립니다.\n\n지급일·메모·처리자 기록이 지워지고 다시 미정산 목록에 올라옵니다.\n\n진행할까요?')
+              .then(function(okY){
+                if(!okY) return;
+                if(perfUnsettleShare(x.fiId, x.shareIdx)){ setSetlTick(Date.now()); showToast('미정산으로 되돌렸습니다'); }
+                else showToast('되돌리지 못했습니다');
+              });
+          }
+          var miniBtn = { padding:'3px 9px', fontSize:'10.5px', fontWeight:700, borderRadius:'4px', cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' };
+          function formPanel(f){
+            return h('div', { style:{ background:'#fff7ed', border:'1px solid #fed7aa', borderRadius:'5px',
+                padding:'6px 8px', marginTop:'4px', display:'flex', gap:'5px', alignItems:'center', flexWrap:'wrap' } },
+              h('span', { style:{ fontSize:'10.5px', color:'#9a3412', fontWeight:700 } }, '지급일'),
+              h('input', { type:'date', value:f.payDate,
+                onChange:function(e){ setSetlForm(Object.assign({}, f, { payDate:e.target.value })); },
+                style:{ padding:'3px 6px', fontSize:'11px', fontFamily:'inherit', border:'1px solid #fdba74', borderRadius:'4px' } }),
+              h('span', { style:{ fontSize:'10.5px', color:'#9a3412', fontWeight:700 } }, '메모'),
+              h('input', { type:'text', value:f.note, placeholder:'예: 8월 급여와 함께 지급',
+                onChange:function(e){ setSetlForm(Object.assign({}, f, { note:e.target.value })); },
+                style:{ flex:1, minWidth:'110px', padding:'3px 6px', fontSize:'11px', fontFamily:'inherit', border:'1px solid #fdba74', borderRadius:'4px' } }),
+              h('button', { onClick:saveForm, disabled:!f.payDate,
+                style:Object.assign({}, miniBtn, { background:f.payDate?'#166534':'#cbd5e1', color:'#fff',
+                  border:'none', cursor:f.payDate?'pointer':'default' }) }, '저장'),
+              h('button', { onClick:function(){ setSetlForm(null); },
+                style:Object.assign({}, miniBtn, { background:'#fff', color:'#64748b', border:'1px solid #cbd5e1' }) }, '취소'));
+          }
           // 인계 내역: mgrHistory에 본인 이름이 before로 남아있는 사무관리 항목
           var handovers = [];
           [['cases','사건'],['consultings','컨설팅'],['funds','기금'],['other_projects','기타사업'],['companies','업체']].forEach(function(p){
@@ -49974,17 +50090,50 @@ function StaffRosterDetail(props){
           });
           return h('div', { style:{ marginTop:'14px', padding:'12px', background:'#fef2f2', border:'1px solid #fecaca', borderRadius:'6px' } },
             h('div', { style:{ fontSize:'12.5px', fontWeight:700, color:'#991b1b', marginBottom:'10px', paddingBottom:'6px', borderBottom:'1px solid #fecaca' } }, '🚪 퇴사 후 현황'),
-            // 미정산 성과급
-            h('div', { style:{ marginBottom:'10px' } },
-              h('div', { style:{ fontSize:'11.5px', color:'#dc2626', fontWeight:700, marginBottom:'4px' } },
-                '💰 미정산 성과급 (' + unsettled.length + '건)' + (unsettled.length>0 ? ' · 권형하 결재 필요' : '')),
+            // 미정산 성과급 — 지급일·메모를 적어 정산 표시를 한다
+            h('div', { key:'us'+setlTick, style:{ marginBottom:'10px' } },
+              h('div', { style:{ fontSize:'11.5px', color:'#dc2626', fontWeight:700, marginBottom:'4px',
+                  display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap' } },
+                h('span', { style:{ flex:1 } },
+                  '💰 미정산 성과급 (' + unsettled.length + '건'
+                    + (unsettled.length>0 ? ' · 합계 ' + unsettledSum.toLocaleString('ko-KR') + '원' : '') + ')'),
+                unsettled.length>1 && h('button', { onClick:function(){ openForm('all', null); },
+                  style:Object.assign({}, miniBtn, { background:'#fff', color:'#166534', border:'1px solid #86efac' }) },
+                  '전부 정산 (' + unsettled.length + '건)')),
+              setlForm && setlForm.mode==='all' && formPanel(setlForm),
+              unsettled.length>0 && h('div', { style:{ fontSize:'10.5px', color:'#94a3b8', marginBottom:'4px' } },
+                '퇴사자는 성과급 확인 발행에서 빠집니다. 여기서 지급일을 적어 정산하세요.'),
               unsettled.length===0
                 ? h('div', { style:{ fontSize:'11px', color:'#94a3b8', padding:'4px 0' } }, '없음')
                 : unsettled.slice(0,20).map(function(x, i){
-                    return h('div', { key:'u'+i, style:{ fontSize:'11px', padding:'4px 8px', background:'#fff', borderRadius:'5px', marginBottom:'4px', display:'flex', justifyContent:'space-between' } },
-                      h('span', null, x.date + ' · ' + x.companyName + (x.role?' ('+x.role+')':'')),
-                      h('span', { style:{ fontFamily:'monospace', fontWeight:700, color:'#dc2626' } }, x.amount.toLocaleString() + '원'));
-                  })
+                    return h('div', { key:'u'+x.fiId+'-'+x.shareIdx, style:{ fontSize:'11px', padding:'4px 8px', background:'#fff', borderRadius:'5px', marginBottom:'4px' } },
+                      h('div', { style:{ display:'flex', alignItems:'center', gap:'6px' } },
+                        h('span', { style:{ flex:1 } }, x.date + ' · ' + x.companyName + (x.role?' ('+x.role+')':'')),
+                        h('span', { style:{ fontFamily:'monospace', fontWeight:700, color:'#dc2626' } }, x.amount.toLocaleString() + '원'),
+                        h('button', { onClick:function(){ openForm('one', x); },
+                          style:Object.assign({}, miniBtn, { background:'#f0fdf4', color:'#166534', border:'1px solid #86efac' }) },
+                          '정산 완료')),
+                      isFormOn(x) && formPanel(setlForm));
+                  }),
+              // 정산 완료분 — 안 보이면 "이거 준 거 맞나"에 아무도 답을 못 한다
+              settled.length>0 && h('div', { style:{ marginTop:'6px' } },
+                h('button', { onClick:function(){ setShowPaid(!showPaid); },
+                  style:Object.assign({}, miniBtn, { background:'#fff', color:'#166534', border:'1px solid #86efac', fontWeight:600 }) },
+                  (showPaid ? '▾ ' : '▸ ') + '정산 완료 ' + settled.length + '건 보기'),
+                showPaid && h('div', { style:{ marginTop:'4px' } },
+                  settled.slice(0,50).map(function(x, i){
+                    return h('div', { key:'p'+x.fiId+'-'+x.shareIdx, style:{ fontSize:'10.5px', padding:'4px 8px',
+                        background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:'5px', marginBottom:'3px',
+                        display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap' } },
+                      h('span', { style:{ flex:1, color:'#166534', minWidth:'140px' } },
+                        x.date + ' · ' + x.companyName + ' · ' + x.amount.toLocaleString('ko-KR') + '원'
+                          + ' · 지급 ' + (x.paidAt || '-')
+                          + (x.paidNote ? ' · ' + x.paidNote : '')
+                          + (x.paidByName ? ' · ' + x.paidByName : '')),
+                      h('button', { onClick:function(){ doUnsettle(x); },
+                        style:Object.assign({}, miniBtn, { background:'#fff', color:'#b91c1c', border:'1px solid #fca5a5', fontWeight:600 }) },
+                        '되돌리기'));
+                  })))
             ),
             // 인계 내역
             h('div', { style:{ marginBottom:'10px' } },
@@ -50302,12 +50451,15 @@ function pcfItemRow(x){
 }
 
 // 사람별 발행 대상. 담을 게 없는 사람은 아예 빠진다(0원은 확인 안 시킨다).
+// 퇴사자도 빠진다 — 로그인이 없어 확인을 못 받고, 보내 놓으면 그 달을 마감할 수 없다.
 function pcfBuildRows(empPerfs, users, uidBySid){
   var byS = {}; (users || []).forEach(function(u){ if(u && u.sid) byS[u.sid] = u; });
   var out = [];
   (empPerfs || []).forEach(function(p){
     var picked = pcfPickItems(p);
     if(!picked.length) return;
+    // 퇴사자는 확인 대상이 아니다. 성과급은 근로자명부 › 퇴사 후 현황에서 정산한다.
+    if(byS[p.sid] && byS[p.sid].status === 'retired') return;
     var items = {}, total = 0;
     picked.forEach(function(x){ items[x.fiId] = pcfItemRow(x); total += Math.round(x.amount || 0); });
     out.push({
@@ -50331,6 +50483,26 @@ function pcfHolds(empPerfs, users){
         n:p.unmatchedCount, base:Math.round(p.unmatchedBase || 0),
         sendable: pcfPickItems(p).length };
     });
+}
+
+// 발행에서 뺀 퇴사자. 뺐다는 걸 알려 줘야 대표가 근로자명부에서 정산한다 —
+// 조용히 빠지면 퇴사자 성과급이 아무 데도 안 나타난다.
+// 보낼 게 하나도 없는 퇴사자는 알릴 것도 없으니 뺀다.
+function pcfRetiredHolds(empPerfs, users){
+  var byS = {}; (users || []).forEach(function(u){ if(u && u.sid) byS[u.sid] = u; });
+  var out = [];
+  (empPerfs || []).forEach(function(p){
+    var u = p && byS[p.sid];
+    if(!u || u.status !== 'retired') return;
+    var picked = pcfPickItems(p);
+    if(!picked.length) return;
+    var total = 0;
+    picked.forEach(function(x){ total += Math.round(x.amount || 0); });
+    out.push({ sid:p.sid, name:u.name || p.sid, retireDate:u.retireDate || '',
+      n:picked.length, total:total });
+  });
+  out.sort(function(a, b){ return b.total - a.total; });
+  return out;
 }
 
 // 이미 나간 것과 견줘 무엇이 달라지는지 (미리보기용)
@@ -50549,6 +50721,8 @@ function PerfPublishModal(props){
 
   var rows = loading ? [] : pcfDiff(pcfBuildRows(props.empPerfs, props.users, uidMap), prev);
   var holds = loading ? [] : pcfHolds(props.empPerfs, props.users);
+  var retHolds = loading ? [] : pcfRetiredHolds(props.empPerfs, props.users);
+  var retTotal = retHolds.reduce(function(s, x){ return s + x.total; }, 0);
   function isPick(sid){ return pick[sid] !== false; }
   var sent = rows.filter(function(r){ return isPick(r.sid); });     // 이번에 보낼 사람
   var noUid = sent.filter(function(r){ return !r.uid; });
@@ -50676,6 +50850,31 @@ function PerfPublishModal(props){
               h('br'),
               h('span', { style:{ color:'#b91c1c' } },
                 '미반영 건은 발행에 안 담깁니다. 분배가 빠진 것이라면 입금관리에서 고친 뒤 다시 발행하세요.')),
+
+            // 퇴사자 — 확인 대상에서 뺐다. 뺐다고 알려 주고 정산할 곳으로 보낸다.
+            !lock && retHolds.length > 0 && h('div', { style:{ background:'#f8fafc', border:'1px solid #cbd5e1',
+                borderRadius:'8px', padding:'10px 12px', marginBottom:'12px', fontSize:'12px',
+                color:'#334155', lineHeight:1.8 } },
+              h('b', null, '🚪 퇴사자 ' + retHolds.length + '명은 확인 대상에서 제외했습니다 — 근로자명부에서 정산하세요'),
+              h('br'),
+              h('span', { style:{ fontFamily:'monospace', fontWeight:700, color:'#0f172a' } },
+                '합계 ' + retTotal.toLocaleString('ko-KR') + '원'),
+              retHolds.map(function(x){
+                return h('div', { key:x.sid, style:{ display:'flex', alignItems:'center', gap:'8px',
+                    marginTop:'5px', background:'#fff', border:'1px solid #e2e8f0',
+                    borderRadius:'5px', padding:'4px 8px' } },
+                  h('span', { style:{ flex:1 } },
+                    x.name + (x.retireDate ? ' (퇴사 ' + x.retireDate + ')' : '')
+                      + ' · ' + x.n + '건 · ' + x.total.toLocaleString('ko-KR') + '원'),
+                  h('button', { onClick:function(){ pcfGoto('hr/staff', x.name); props.onClose && props.onClose(); },
+                    style:{ padding:'3px 10px', fontSize:'11px', fontWeight:600, borderRadius:'5px',
+                      background:'#fff', color:'#334155', border:'1px solid #cbd5e1',
+                      cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' } }, '근로자명부 ↗'));
+              }),
+              h('div', { style:{ color:'#64748b', marginTop:'6px' } },
+                '퇴사자는 로그인이 없어 확인을 받을 수 없습니다. 보내 놓으면 끝까지 확인 안 한 사람으로 남아 그 달을 마감할 수 없습니다.'),
+              h('div', { style:{ color:'#64748b' } },
+                '퇴사자 성과급은 근로자명부 › 퇴사 후 현황의 미정산 성과급에서 지급일을 적어 정산하세요.')),
 
             rows.length === 0
               ? h('div', { style:{ padding:'30px 12px', textAlign:'center', color:'#64748b', fontSize:'13px' } },
