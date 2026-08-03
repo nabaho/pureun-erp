@@ -62,9 +62,14 @@ RRN = re.compile(r'\b\d{6}\s*-\s*[1-4]\d{6}\b')          # 주민등록번호
 
 # ── 실사례(이비공동기금 등)에서 딸려온 개인정보·실체정보 ──
 # 원본 서식이 '작성 예시'라 실제 임원 성명·주소·연락처·법인번호가 박혀 있다. 빈 양식이 되도록 마스킹.
-REAL_PERSONS = ['박준희', '박 준 희', '전석정', '전 석 정', '노옥희', '노 옥 희']
+# 이름·단체명은 원본에서 '전    석    정'처럼 글자마다 공백이 끼어 있다.
+# 고정 문자열로 지우면 그 변형이 그대로 남는다(2026-08-03 reg_seal에서 실제로 남아 있었음) → 정규식으로 처리.
+REAL_PERSONS = ['박준희', '전석정', '노옥희']
 REAL_ORGS = ['고려인삼연구']
 BLANK = '＿＿＿＿＿＿'
+SPACED = lambda w: re.compile(r'[\s ]*'.join(map(re.escape, w)))
+PERSON_RE = [SPACED(w) for w in REAL_PERSONS]
+ORG_RE = [SPACED(w) for w in REAL_ORGS]
 SCRUB = [
     # 상세주소(시도+시군구+번지까지) — 태그 경계 전까지
     (re.compile(r'(서울|경기|인천|부산|대구|광주|대전|울산|세종|강원|충북|충남|전북|전남|경북|경남|제주)'
@@ -89,13 +94,13 @@ def bindify(h):
     h = re.sub(r'0{4}\s*(?=공동근로복지기금)', '', h)
     for nm in REAL_NAMES:
         h = h.replace(nm + '근로복지기금', '{{FUND}}').replace(nm, '{{FUND}}')
-    for org in REAL_ORGS:                                   # 실사례 단체명
-        h = h.replace(org + ' 사내근로복지기금', '{{FUND}}').replace(org, '{{FUND}}')
+    for pat in ORG_RE:                                      # 실사례 단체명(공백 변형 포함)
+        h = pat.sub('{{FUND}}', h)
     h = RRN.sub('______-_______', h)
     for pat, rep in SCRUB:                                  # 주소·연락처·번호류
         h = pat.sub(rep, h)
-    for nm in REAL_PERSONS:                                 # 실명
-        h = h.replace(nm, BLANK)
+    for pat in PERSON_RE:                                   # 실명(공백 변형 포함)
+        h = pat.sub(BLANK, h)
     return h
 
 
@@ -116,6 +121,21 @@ def main():
             key, label, len(h), h.count('<table>'), h.count('{{FUND}}'), flag))
         if hits or rrn: warn.append((key, flag))
         out[key] = h
+    # ── PII 게이트 ──
+    # 개인정보가 남았으면 **쓰지 않고 실패**한다. 이 생성물은 공개 저장소에 커밋되므로
+    # 경고만 하고 지나가면 실명·주민번호가 그대로 올라간다(실제로 '전    석    정'이 남아 있었다).
+    leaks = []
+    for key, h in out.items():
+        for w, pat in zip(REAL_PERSONS + REAL_ORGS, PERSON_RE + ORG_RE):
+            m = pat.search(h)
+            if m: leaks.append('%s: %s → %r' % (key, w, m.group(0)))
+        for m in RRN.finditer(h):
+            leaks.append('%s: 주민번호 → %r' % (key, m.group(0)))
+    if leaks:
+        print('\n✗ 개인정보가 남아 생성을 중단합니다 (%d건):' % len(leaks))
+        for x in leaks: print('   -', x)
+        sys.exit(1)
+
     js = "// 자동생성 — 원본 .hwp 변환 법정서식(빈 양식). 재생성: python fund-erp/tools/build_forms.py\n"
     js += "window.HWP_FORMS = " + json.dumps(out, ensure_ascii=False, indent=0) + ";\n"
     dest = r"C:\Users\fair0\Documents\pureunall\fund_forms.js"

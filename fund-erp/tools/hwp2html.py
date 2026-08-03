@@ -95,15 +95,27 @@ def convert(path):
 def esc(t): return html.escape(t).replace('\n', '<br>')
 
 def cell_html(cell):
-    """셀 내용 = 문자열 + 중첩 표가 섞인 목록"""
-    parts = []
+    """셀 내용 = 문자열 + 중첩 표가 섞인 목록
+
+    문단끼리는 항상 <br>로 나눈다. 중첩 표가 있으면 예전에는 전부 ''로 이어붙여
+    '보 증 서 면위 신고하는 인감은…'처럼 제목과 본문이 한 덩어리가 됐다(인감신고서).
+    표는 블록이라 구분자가 필요 없으므로, 글은 <br>로 잇고 표는 따로 붙인다."""
+    out, buf = [], []
+
+    def flush():
+        if buf:
+            out.append('<br>'.join(buf))
+            del buf[:]
+
     for item in cell['text']:
         if isinstance(item, tuple) and item[0] == 'table':
-            parts.append(render_table(item[1]))
+            flush()
+            out.append(render_table(item[1]))
         else:
             s = str(item).strip()
-            if s: parts.append(esc(s))
-    return ''.join(parts) if any(isinstance(x, tuple) for x in cell['text']) else '<br>'.join(parts)
+            if s: buf.append(esc(s))
+    flush()
+    return ''.join(out)
 
 def render_table(v):
     # 1x1 표(제목 감싼 글상자/레이아웃용)는 내용만 펼침
