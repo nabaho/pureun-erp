@@ -91,7 +91,9 @@ test('화면은 실시간DB에 직접 쓰지 않는다 — 쓰기는 저장 층�
      그것까지 막으면 검사가 엉뚱한 곳에서 걸려 신뢰를 잃는다. 먼저 걷어낸 뒤 본다. */
   const noDom = app
     .replace(/classList\.(add|remove|toggle)\(/g, 'CLASSLIST(')
-    .replace(/selected\.(add|delete|clear|has)\(/g, 'SET(');
+    .replace(/selected\.(add|delete|clear|has)\(/g, 'SET(')
+    .replace(/PuDrag\.set\(/g, 'DRAG(')        // 끌어놓기 데이터 담기 — DB 쓰기가 아니다
+    .replace(/dataTransfer\.setData\(/g, 'DRAG(');
   for (const call of ['.set(', '.update(', '.remove(']) {
     assert.ok(!noDom.includes(call), '화면이 클라우드에 직접 쓰고 있습니다: ' + call);
   }
@@ -146,6 +148,50 @@ test('미리보기를 끼워 넣을 때 서류 딱지를 지우지 않는다', (
   assert.ok(fill, 'fillThumbs 본문을 찾을 수 없습니다');
   assert.ok(!/cell\.innerHTML\s*=/.test(fill[0]), '칸 내용을 통째로 바꿔 딱지가 지워집니다');
   assert.match(fill[0], /insertBefore/);
+});
+
+/* ── 다른 앱으로 끌어다 놓기 ── */
+
+test('사진을 끌 수 있다 — 공용 규약을 쓴다', () => {
+  assert.match(app, /<script src="js\/pu-drag\.js"><\/script>/);
+  assert.match(app, /draggable="true"/);
+  assert.match(app, /addEventListener\('dragstart'/);
+  assert.match(app, /PuDrag\.set\(/);
+});
+
+test('끌 때 사진 자체가 아니라 표만 넘긴다', () => {
+  // base64 를 넘기면 크기 제한에 걸리고 창을 넘길 때 깨진다.
+  const fn = app.match(/addEventListener\('dragstart'[\s\S]*?\n\}\);/);
+  assert.ok(fn, 'dragstart 본문을 찾을 수 없습니다');
+  assert.ok(!/it\.thumb|loadFull|blob/.test(fn[0]), '사진 데이터를 넘기고 있습니다');
+  // 어디 있는 무엇인지가 다 들어가야 받는 쪽이 가져올 수 있다
+  for (const k of ['year:', 'owner:', 'id:']) {
+    assert.ok(fn[0].indexOf(k) >= 0, '표에 ' + k + ' 가 없습니다');
+  }
+});
+
+test('컨설팅이 사진첩 사진을 받는다', () => {
+  const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
+  assert.match(gov, /<script src="js\/pu-drag\.js"><\/script>/);
+  assert.match(gov, /<script src="js\/pu-photo-store\.js"><\/script>/);
+  assert.match(gov, /PuDrag\.read\(/);
+  assert.match(gov, /function dropFromAlbum\(/);
+  // 파일을 놓는 기존 길이 살아 있어야 한다(사진첩만 되면 퇴보다)
+  const drop = gov.match(/async function dropExtraPhoto\([\s\S]*?\n\}/);
+  assert.ok(drop, 'dropExtraPhoto 본문을 찾을 수 없습니다');
+  assert.match(drop[0], /dataTransfer\.files/, '파일 놓기가 사라졌습니다');
+});
+
+test('컨설팅은 사진첩에서 원판을 받아 자기 사본을 만든다', () => {
+  // 사진첩 원본은 그대로 남아야 한다(설계서 원칙).
+  const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
+  const fn = gov.match(/async function dropFromAlbum\([\s\S]*?\n\}/);
+  assert.ok(fn, 'dropFromAlbum 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /PuPhotoStore\.loadFull\(/);
+  assert.match(fn[0], /simpleStampFile\(/, '기존 사진 처리 길을 타지 않습니다');
+  assert.ok(!/deletePhoto|saveRead/.test(fn[0]), '사진첩 원본을 건드리고 있습니다');
+  // 남의 사진은 규칙이 막는다 → 왜 안 되는지 알려줘야 한다
+  assert.match(fn[0], /내가 올린 사진만/);
 });
 
 /* ── 사람별 분리 ── */

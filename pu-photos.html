@@ -20,6 +20,7 @@
 <script src="js/pu-photo-queue.js"></script>
 <script src="js/pu-doc-read.js"></script>
 <script src="js/pu-doc-file.js"></script>
+<script src="js/pu-drag.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check-compat.js"></script>
 <style>
@@ -892,8 +893,9 @@ function renderGrid() {
     const on = selected.has(it.id) ? ' on' : '';
     /* 확인이 필요한 사진은 칸에서 바로 보인다 — 눌러 봐야 아는 일이 없게. */
     const warn = needsCheck(it) ? '<span class="wn">⚠</span>' : '';
-    html += '<div class="cell' + on + '" data-id="' + esc(it.id) + '">' +
-      (t ? '<img src="' + t + '" alt="">' : '') + tag + warn + '<span class="ck">✓</span></div>';
+    /* 다른 앱(정부사업 컨설팅 등)으로 끌어다 놓을 수 있다. */
+    html += '<div class="cell' + on + '" data-id="' + esc(it.id) + '" draggable="true">' +
+      (t ? '<img src="' + t + '" alt="" draggable="false">' : '') + tag + warn + '<span class="ck">✓</span></div>';
   });
   html += '</div>';
   el.innerHTML = html;
@@ -932,6 +934,34 @@ $('grid').addEventListener('click', function (ev) {
      사진의 다른 곳을 누르면 열린다. 「고르기」 단계를 먼저 밟지 않아도 된다. */
   if (ev.target.closest('.ck')) { toggleOne(id); return; }
   openViewer(id);
+});
+
+/* ══════ 다른 앱으로 끌어다 놓기 ══════
+   사진 자체가 아니라 '어디 있는 무엇인지'만 넘긴다 — 받는 앱이 그 표로
+   사진을 직접 가져와 자기 사본을 만든다(원본은 사진첩에 그대로 남는다).
+   ⚠ 두 창이 동시에 보여야 한다 — 탭 뒤에 숨은 화면으로는 끌어다 놓을 수 없다. */
+$('grid').addEventListener('dragstart', function (ev) {
+  const cell = ev.target.closest ? ev.target.closest('.cell') : null;
+  if (!cell) return;
+  const id = cell.getAttribute('data-id');
+  const it = gridItems.find(function (x) { return x.id === id; });
+  if (!it) return;
+  const r = it.meta.read || {};
+  PuDrag.set(ev.dataTransfer, {
+    app: 'pu-photos',
+    kind: 'photo',
+    year: gridYear,
+    owner: gridOwner || PuPhotoStore.myUid(),
+    id: id,
+    name: (r.fields && (r.fields.company || r.fields.name)) || dayLabel(it.meta.takenAt || 0) + ' 사진',
+    docKind: it.meta.kind || 'photo',
+    takenAt: it.meta.takenAt || 0
+  });
+  /* 끌고 가는 동안 미리보기가 따라오게 — 무엇을 끄는지 눈에 보여야 한다. */
+  const img = cell.querySelector('img');
+  if (img && ev.dataTransfer.setDragImage) {
+    try { ev.dataTransfer.setDragImage(img, 30, 30); } catch (e) { /* 브라우저마다 다름 */ }
+  }
 });
 
 /* ══════ 고르기 · 지우기 ══════
