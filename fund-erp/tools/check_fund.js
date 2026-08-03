@@ -107,19 +107,29 @@ ok('세금과공과를 관리비로 집계', /var ADMIN=\[[^\]]*'세금과공과
 ok('별지15호 66번에 격려금 매핑', /\[66,'그 밖의 복지비',\['격려금'/.test(src));
 ok('통장 파서가 거래상대방 열을 읽음', /보낸분\|받는분\|상대계좌\|입금자\|송금인\|거래처/.test(src));
 
-// ── ⑨ 준비금 자동 환입 (결산 확정 시) ──
-ok('reserveReclaim 존재', src.includes('function reserveReclaim'));
-ok('환입 분개 생성기 존재', src.includes('function _reclaimEntry'));
-ok('환입 분개는 대체분개(nocash)', /nocash:1/.test(src));
+// ── ⑨ 준비금 자동 조정 (결산 확정 시, 양방향) ──
+// 비용>수익이면 환입(청신공동 2025), 수익>비용이면 전입(안전공사공동 2022). 한쪽만 처리하면 순이익이 0이 안 된다.
+ok('reserveAdjust 존재', src.includes('function reserveAdjust'));
+ok('조정 분개 생성기 존재', src.includes('function _reserveEntry'));
+ok('환입·전입 양방향', /return \{kind:'환입'/.test(src) && /return \{kind:'전입'/.test(src));
+ok('전입액 계정(사업외비용)', src.includes("'고유목적사업준비금전입액':'비용'"));
+ok('잔액 있는 준비금 계정을 고름', src.includes('function _reserveAcct'));
+ok('환입은 준비금 잔액 상한', /Math\.min\(-net,avail\)/.test(src));
+ok('조정 분개는 대체분개(nocash)', /nocash:1/.test(src));
 // 대체분개는 현금이 아니므로 amount로 금액을 읽어야 한다 — 안 읽으면 금액 0으로 무시된다
 ok('journalOf가 amount를 읽음', src.includes('amount:num(x.amount)||num(x.deposit)'));
 ok('computeFin이 amount를 읽음', src.includes('var amt=num(x.amount)||num(x.deposit)'));
-ok('결산 확정이 환입을 자동 기록', src.includes('var rc=reserveReclaim(arr,fid,yr)'));
+ok('결산 확정이 조정을 자동 기록', src.includes('var rc=reserveAdjust(arr,fid,yr)'));
 // 분개와 확정이 따로 저장되면 하나만 성공했을 때 장부가 어긋난다 → 한 번의 update로
-ok('환입 분개와 확정을 한 번에 저장', /up\['txns\/'\+fid\+'\/'\+yr\+'\/'\+id\]=e;/.test(src)
+ok('조정 분개와 확정을 한 번에 저장', /up\['txns\/'\+fid\+'\/'\+yr\+'\/'\+id\]=e;/.test(src)
   && /up\['closing\/'\+fid\+'\/'\+yr\+'\/locked'\]=true;/.test(src));
 ok('거래 목록에 대체분개 표시', src.includes('x.nocash&&num(x.amount)'));
 
+// ── ⑨-2 통장 여러 시트 ──
+// 은행이 월별 시트로 나눠 주면 첫 시트만 읽고 나머지 달을 통째로 잃는다(안전공사 2022: 2,007,649원 누락)
+ok('전 시트를 합쳐 읽음', src.includes('txns=(txns||[]).concat(got)'));
+ok('시트가 겹치면 잔액까지 같은 것만 중복 제거', src.includes("+'|'+x.balance"));
+ok('여러 시트면 확인창에 내역 표시', src.includes('sheets.length>1'));
 // ── ⑩ 계좌 간 이체 자동매칭 ──
 ok('통장 파서가 계좌번호를 읽음', /계좌\\s\*번호/.test(src) || src.includes('계좌\\s*번호'));
 ok('거래에 계좌번호 보존', src.includes("acct:(x.acct||'')"));
