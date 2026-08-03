@@ -173,7 +173,7 @@
      사진첩·컨설팅·급여·기금 어느 앱도 손대지 않고 **여기 한 곳만** 고친다.
      앱들이 각자 방식을 정하지 않는 것이 이 파일이 존재하는 이유다. */
   var mode = 'rtdb';
-  var deps = { db: null, storage: null, uid: '', isAdmin: false };
+  var deps = { db: null, storage: null, uid: '', isAdmin: false, name: '' };
 
   /* 파이어베이스 객체를 받아 저장 층을 준비한다.
 
@@ -239,6 +239,11 @@
     u[metaPath(year, id)] = null;
     u[blobPath(year, id)] = null;
     u[thumbPath(year, id)] = null;
+    /* 옛 자리도 함께 지운다 — 안 지우면 지운 사진이 다시 나타난다
+       (옛 자리도 함께 읽고 있으므로). 옛 자리가 이미 없으면 무해하다. */
+    u[legacyRoot('items') + '/' + year + '/' + id] = null;
+    u[legacyRoot('blobs') + '/' + year + '/' + id] = null;
+    u[legacyRoot('thumbs') + '/' + year + '/' + id] = null;
     return deps.db.ref().update(u);
   }
 
@@ -255,13 +260,49 @@
      owner 를 넘기면 그 사람 것을 읽는다(관리자만 규칙이 허락한다). */
   function listYear(year, owner) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
-    return deps.db.ref(base(owner) + '/items/' + year).once('value')
-      .then(function (s) { return s.val() || {}; });
+    var who = owner || deps.uid;
+    return Promise.all([
+      deps.db.ref(base(owner) + '/items/' + year).once('value'),
+      /* 옛 자리도 함께 읽는다 — 옮기기 전에 사진이 사라져 보이면 그것만으로도 사고다.
+         (실사용 보고 2026-08-03: 자리를 바꾸자 올린 사진이 모두 사라져 보였다)
+         옛 자리를 지운 뒤에는 여기서 아무것도 안 나오므로 그대로 두어도 된다. */
+      deps.db.ref(legacyRoot('items') + '/' + year).once('value')
+        .catch(function () { return { val: function () { return null; } }; })
+    ]).then(function (snaps) {
+      var mine = snaps[0].val() || {};
+      var old = snaps[1].val() || {};
+      var out = {};
+      Object.keys(old).forEach(function (id) {
+        var m = old[id] || {};
+        /* 남의 옛 사진을 내 목록에 섞지 않는다. 올린 사람을 모르는 것(by 없음)은
+           관리자에게만 보인다 — 누구 것인지 정해야 넘길 수 있다. */
+        var ok = m.by ? (m.by === who) : deps.isAdmin;
+        if (ok) out[id] = m;
+      });
+      /* 이미 옮긴 사진은 새 자리 값이 이기고, 새 자리에 없는 값(촬영 시각 등)은
+         옛 것으로 채운다 — 판독 결과만 새 자리에 적힌 경우에도 시각이 살아야 한다. */
+      Object.keys(mine).forEach(function (id) {
+        out[id] = Object.assign({}, out[id] || {}, mine[id] || {});
+      });
+      return out;
+    });
   }
 
-  /* 미리보기·본문은 볼 때만 한 장씩 받아온다. */
-  function loadThumb(year, id, owner) { return readOnce(thumbPath(year, id, owner)); }
-  function loadFull(year, id, owner) { return readOnce(blobPath(year, id, owner)); }
+  /* 미리보기·본문은 볼 때만 한 장씩 받아온다.
+     새 자리에 없으면 옛 자리에서 찾는다(옮기기 전에도 사진이 보여야 한다). */
+  function loadThumb(year, id, owner) {
+    return withLegacy(thumbPath(year, id, owner), legacyRoot('thumbs') + '/' + year + '/' + id);
+  }
+  function loadFull(year, id, owner) {
+    return withLegacy(blobPath(year, id, owner), legacyRoot('blobs') + '/' + year + '/' + id);
+  }
+
+  function withLegacy(newPath, oldPath) {
+    return readOnce(newPath).then(function (v) {
+      if (v) return v;
+      return readOnce(oldPath).catch(function () { return null; });
+    });
+  }
 
   /* ── 사람 명단 ──
      내 칸만 갱신한다. 훑는 것은 관리자만 — 규칙도 그렇게 막지만, 화면이
@@ -278,20 +319,81 @@
      화면에서 짐작하지 않는다. 이 값으로 남의 사진을 볼 수 있는지가 갈리므로
      짐작하면 안 된다(어차피 규칙이 한 번 더 막지만 이중으로 잠근다).
      경로에 계정이 필요하므로 **이것이 끝난 뒤에 사진을 읽어야 한다.** */
-  function signIn(uid, name) {
+  function signIn(uid, email, fallbackName) {
     deps.uid = uid || '';
     deps.isAdmin = false;
-    if (!deps.db || !deps.uid) return Promise.resolve(false);
+    deps.name = fallbackName || email || '';
+    if (!deps.db || !deps.uid) return Promise.resolve({ isAdmin: false, name: deps.name });
     return deps.db.ref('uid_roles/' + deps.uid + '/isAdmin').once('value')
       .then(function (s) { deps.isAdmin = s.val() === true; })
       .catch(function () { deps.isAdmin = false; })
-      .then(function () { return touchOwner(name); })
+      .then(function () { return lookupName(email); })
+      .then(function (found) { if (found) deps.name = found; })
+      .then(function () { return touchOwner(deps.name); })
       .catch(function () { /* 명단 갱신 실패가 로그인을 막지 않는다 */ })
-      .then(function () { return deps.isAdmin; });
+      .then(function () { return { isAdmin: deps.isAdmin, name: deps.name }; });
+  }
+
+  /* ── 로그인한 사람의 이름 ──
+     화면에 `p001@pureun.kr` 같은 주소가 아니라 사람 이름이 떠야 한다.
+     포털(enter.html)이 쓰는 길을 그대로 쓴다: **공개 명부 `data/user_dir` 를 먼저** 보고,
+     막히면 `data/user_accounts`(재무권한자만 읽힌다) → 이 기기에 남은 명부 순서.
+     사번을 이메일로 바꾸는 규칙(`p-001` → `p001@pureun.kr`)도 포털과 같아야 한다 —
+     다르면 같은 사람을 못 찾는다. */
+  function sidToEmail(sid) {
+    return String(sid || '').toLowerCase().replace(/-/g, '') + '@pureun.kr';
+  }
+
+  function pickFromRoster(list, email) {
+    if (!list) return '';
+    var em = String(email || '').toLowerCase();
+    var arr = list;
+    if (!Array.isArray(arr) && typeof arr === 'object') {
+      arr = Object.keys(arr).map(function (k) { return arr[k]; });
+    }
+    if (!Array.isArray(arr)) return '';
+    for (var i = 0; i < arr.length; i++) {
+      var x = arr[i];
+      if (x && x.sid && sidToEmail(x.sid) === em && x.name) return x.name;
+    }
+    return '';
+  }
+
+  function readRoster(path) {
+    return deps.db.ref(path).once('value').then(function (s) {
+      var raw = s.val();
+      return (raw && raw.v !== undefined) ? raw.v : raw;
+    });
+  }
+
+  function localRoster() {
+    try {
+      var ls = global.localStorage;
+      return ls ? JSON.parse(ls.getItem('pureun_v6_user_accounts') || 'null') : null;
+    } catch (e) { return null; }
+  }
+
+  function lookupName(email) {
+    if (!email || !deps.db) return Promise.resolve('');
+    return readRoster('data/user_dir').then(function (dir) {
+      var got = pickFromRoster(dir, email);
+      if (got) return got;
+      /* 공개 명부에 없으면 관리자 명부를 본다 — 일반 직원은 규칙이 막으므로 조용히 넘어간다. */
+      return readRoster('data/user_accounts')
+        .then(function (l) { return pickFromRoster(l, email); })
+        .catch(function () { return ''; });
+    }).catch(function () {
+      return readRoster('data/user_accounts')
+        .then(function (l) { return pickFromRoster(l, email); })
+        .catch(function () { return ''; });
+    }).then(function (got) {
+      return got || pickFromRoster(localRoster(), email);
+    });
   }
 
   function amAdmin() { return deps.isAdmin; }
   function myUid() { return deps.uid; }
+  function myName() { return deps.name; }
 
   function listOwners() {
     if (!deps.isAdmin || !deps.db) return Promise.resolve({});
@@ -528,6 +630,8 @@
     signIn: signIn,
     amAdmin: amAdmin,
     myUid: myUid,
+    myName: myName,
+    lookupName: lookupName,
     touchOwner: touchOwner,
     listOwners: listOwners,
     migrateLegacy: migrateLegacy,

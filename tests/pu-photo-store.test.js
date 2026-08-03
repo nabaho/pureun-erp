@@ -518,8 +518,10 @@ test('listYear — 그 연도 목록만 한 번 읽는다', async () => {
   const db = fakeDb({ a: { takenAt: 1 } });
   S.init({ uid: 'U1', db });
   const items = await S.listYear('2026');
-  assert.deepEqual(items, { a: { takenAt: 1 } });
-  assert.deepEqual(db.calls.once, ['puphotos/u/U1/items/2026']);
+  // 샌드박스(vm) 안에서 만들어진 객체는 프로토타입이 달라 복사본으로 비교한다
+  assert.deepEqual(JSON.parse(JSON.stringify(items)), { a: { takenAt: 1 } });
+  // 옮기기 전에도 사진이 보이도록 옛 자리도 함께 읽는다
+  assert.deepEqual(db.calls.once.sort(), ['puphotos/items/2026', 'puphotos/u/U1/items/2026']);
 });
 
 test('listYear — 비어 있으면 빈 객체', async () => {
@@ -586,9 +588,10 @@ test('listYear·loadThumb·loadFull 은 남의 자리도 읽을 수 있다 (관�
   await S.listYear('2026', 'U2');
   await S.loadThumb('2026', 'p1', 'U2');
   await S.loadFull('2026', 'p1', 'U2');
-  assert.deepEqual(db.calls.once, [
-    'puphotos/u/U2/items/2026', 'puphotos/u/U2/thumbs/2026/p1', 'puphotos/u/U2/blobs/2026/p1'
-  ]);
+  // 남의 자리를 읽는다(관리자). 옛 자리도 함께 본다.
+  assert.ok(db.calls.once.indexOf('puphotos/u/U2/items/2026') >= 0);
+  assert.ok(db.calls.once.indexOf('puphotos/u/U2/thumbs/2026/p1') >= 0);
+  assert.ok(db.calls.once.indexOf('puphotos/u/U2/blobs/2026/p1') >= 0);
 });
 
 test('사진첩을 쓰는 사람 명단 — 내 칸만 쓰고, 관리자만 훑는다', async () => {
@@ -612,25 +615,115 @@ test('관리자가 아니면 사람 명단을 읽지 않는다', async () => {
   assert.equal(db.calls.once.length, 0);
 });
 
+/* ── 옮기기 전에도 옛 사진이 보여야 한다 ──
+   실사용 보고(2026-08-03): 사람별 자리로 바꾸자 **올린 사진이 모두 사라져 보였다.**
+   지워진 것이 아니라 앱이 새 자리만 봤기 때문이다. 옮기기를 누르기 전에도
+   사진이 보여야 한다 — 사라져 보이는 것만으로도 사고다. */
+
+test('내 사진 목록에 옛 자리 사진도 함께 나온다', async () => {
+  const S = loadStore();
+  const db = legacyDb(
+    { 2026: { old1: { by: 'U1', takenAt: 1 }, other: { by: 'U9', takenAt: 2 } } },
+    { 2026: { old1: 'd' } }, { 2026: { old1: 't' } },
+    { 'puphotos/u/U1/items/2026': { new1: { takenAt: 3 } } });
+  S.init({ uid: 'U1', db });
+  const items = await S.listYear('2026');
+  assert.deepEqual(Object.keys(items).sort(), ['new1', 'old1']);
+  assert.ok(!('other' in items), '남의 옛 사진이 내 목록에 섞였습니다');
+});
+
+test('옛 사진 중 올린 사람을 모르는 것은 관리자에게만 보인다', async () => {
+  const noBy = { 2026: { x: { takenAt: 1 } } };
+  const S1 = loadStore();
+  S1.init({ uid: 'U1', db: legacyDb(noBy, {}, {}), isAdmin: false });
+  assert.deepEqual(Object.keys(await S1.listYear('2026')), []);
+
+  const S2 = loadStore();
+  S2.init({ uid: 'ADMIN', db: legacyDb(noBy, {}, {}), isAdmin: true });
+  assert.deepEqual(Object.keys(await S2.listYear('2026')), ['x']);
+});
+
+test('옮긴 사진은 새 자리 값이 이기고, 빠진 값은 옛 것으로 채운다', async () => {
+  // 판독 결과만 새 자리에 적힌 경우에도 촬영 시각이 사라지면 안 된다
+  const S = loadStore();
+  const db = legacyDb(
+    { 2026: { p: { by: 'U1', takenAt: 111, byName: '가' } } }, {}, {},
+    { 'puphotos/u/U1/items/2026': { p: { read: { kind: 'card' } } } });
+  S.init({ uid: 'U1', db });
+  const items = await S.listYear('2026');
+  assert.equal(Object.keys(items).length, 1, '같은 사진이 두 번 나옵니다');
+  assert.equal(items.p.takenAt, 111, '옛 촬영 시각이 사라졌습니다');
+  assert.ok(items.p.read, '새 자리의 판독 결과가 사라졌습니다');
+});
+
+test('사진 본문·미리보기는 새 자리에 없으면 옛 자리에서 찾는다', async () => {
+  const S = loadStore();
+  const db = legacyDb({}, { 2026: { p: 'data:old-full' } }, { 2026: { p: 'data:old-thumb' } });
+  S.init({ uid: 'U1', db });
+  assert.equal(await S.loadFull('2026', 'p'), 'data:old-full');
+  assert.equal(await S.loadThumb('2026', 'p'), 'data:old-thumb');
+});
+
+test('새 자리에 있으면 옛 자리를 두드리지 않는다', async () => {
+  const S = loadStore();
+  const db = legacyDb({}, {}, {}, {
+    'puphotos/u/U1/blobs/2026/p': 'data:new'
+  });
+  S.init({ uid: 'U1', db });
+  assert.equal(await S.loadFull('2026', 'p'), 'data:new');
+  assert.ok(!db.calls.once.some(function (k) { return k === 'puphotos/blobs/2026/p'; }),
+    '새 자리에 있는데 옛 자리를 또 읽었습니다');
+});
+
+test('지우기는 새 자리와 옛 자리를 함께 지운다 — 안 그러면 다시 나타난다', async () => {
+  const S = loadStore();
+  const db = legacyDb({}, {}, {});
+  S.init({ uid: 'U1', db });
+  await S.deletePhoto('2026', 'p1');
+  const u = db.calls.update[0].u;
+  assert.deepEqual(Object.keys(u).sort(), [
+    'puphotos/blobs/2026/p1', 'puphotos/items/2026/p1', 'puphotos/thumbs/2026/p1',
+    'puphotos/u/U1/blobs/2026/p1', 'puphotos/u/U1/items/2026/p1', 'puphotos/u/U1/thumbs/2026/p1'
+  ]);
+  Object.keys(u).forEach(function (k) { assert.equal(u[k], null); });
+});
+
 /* ── 옛 자리에서 사람별 자리로 이사 ──
    여기서 실수하면 사진을 잃는다. 그래서 규칙 하나: **복사가 끝날 때까지 옛 것을
    지우지 않는다.** 지우기는 복사 완료 표시가 있을 때만 동작한다. */
 
-// 옛 자리 사진이 든 가짜 DB
+/* 옛 자리 사진이 든 가짜 DB.
+   경로를 실제로 따라간다 — `puphotos/items` 도 `puphotos/items/2026` 도 답해야 한다.
+   (예전 가짜는 정확히 일치하는 경로만 답해서, 연도별로 읽는 코드를 못 시험했다) */
 function legacyDb(items, blobs, thumbs, extra) {
   const calls = { update: [], once: [] };
-  const map = Object.assign({
-    'puphotos/items': items || {},
-    'puphotos/blobs': blobs || {},
-    'puphotos/thumbs': thumbs || {}
-  }, extra || {});
+  const tree = { puphotos: { items: items || {}, blobs: blobs || {}, thumbs: thumbs || {} } };
+  Object.keys(extra || {}).forEach(function (p) {
+    const parts = p.split('/');
+    let cur = tree;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (!cur[parts[i]] || typeof cur[parts[i]] !== 'object') cur[parts[i]] = {};
+      cur = cur[parts[i]];
+    }
+    cur[parts[parts.length - 1]] = extra[p];
+  });
+  function getPath(p) {
+    if (!p) return tree;
+    let cur = tree;
+    const parts = p.split('/');
+    for (const k of parts) {
+      if (cur === null || cur === undefined || typeof cur !== 'object') return null;
+      cur = cur[k];
+    }
+    return cur === undefined ? null : cur;
+  }
   return {
     calls,
     ref(p) {
       const key = p || '';
       return {
         update(u) { calls.update.push({ path: key, u }); return Promise.resolve(); },
-        once() { calls.once.push(key); return Promise.resolve({ val: () => (key in map ? map[key] : null) }); },
+        once() { calls.once.push(key); return Promise.resolve({ val: () => getPath(key) }); },
         push() { return { key: '-n' + calls.update.length }; }
       };
     }
@@ -741,6 +834,7 @@ test('deletePhoto — 정보·본문·미리보기 세 곳을 한 번에 지운�
   assert.equal(db.calls.update.length, 1);
   const u = db.calls.update[0].u;
   assert.deepEqual(Object.keys(u).sort(), [
+    'puphotos/blobs/2026/p1', 'puphotos/items/2026/p1', 'puphotos/thumbs/2026/p1',
     'puphotos/u/U1/blobs/2026/p1', 'puphotos/u/U1/items/2026/p1', 'puphotos/u/U1/thumbs/2026/p1'
   ]);
   // 지우기는 null 을 쓰는 것이다
@@ -754,7 +848,7 @@ test('deletePhoto — 그 사진 하나만 건드린다', async () => {
   await S.deletePhoto('2026', 'p1');
   // 연도나 루트를 지우면 그 해 사진이 전부 사라진다
   for (const k of Object.keys(db.calls.update[0].u)) {
-    assert.match(k, /^puphotos\/u\/U1\/(items|blobs|thumbs)\/2026\/p1$/, '위험한 경로입니다: ' + k);
+    assert.match(k, /^puphotos\/(u\/U1\/)?(items|blobs|thumbs)\/2026\/p1$/, '위험한 경로입니다: ' + k);
   }
   assert.equal(db.calls.update[0].path, '');
 });
