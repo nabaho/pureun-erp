@@ -82,14 +82,66 @@ test('이 앱이 쓸 루트는 사진첩 전용 두 개뿐이다', () => {
   assert.match(store, /'pu_photos'/);
 });
 
-test('이 단계의 앱은 클라우드에 아무것도 쓰지 않는다', () => {
-  // A단계 앱은 창고 점검만 한다 — 읽기·쓰기가 전혀 없어야 한다.
-  // 이 단정이 있으면 다음 단계에서 실수로 들어간 쓰기를 자동으로 잡는다.
-  // (점검용 올리기·지우기는 js/pu-photo-store.js 안에만 있고, 실사진 경로가 아니라
-  //  pu_photos/_probe/ 전용 경로만 쓴다.)
-  for (const call of ['.set(', '.update(', '.push(', '.remove(']) {
-    assert.ok(!app.includes(call), '앱이 클라우드에 쓰고 있습니다: ' + call);
+test('화면은 실시간DB에 직접 쓰지 않는다 — 쓰기는 저장 층·대기열만', () => {
+  // B단계부터 앱은 사진을 저장하지만, 그 쓰기는 반드시 PuPhotoStore.savePhoto
+  // (다중 경로 update 한 번)를 통해서만 나간다. 화면이 db.ref 를 직접 만지기
+  // 시작하면 상위 노드 set 같은 사고 경로(2026-07 실데이터 사고)가 다시 열린다.
+  assert.ok(!app.includes('db.ref('), '화면이 db.ref 를 직접 부릅니다');
+  for (const call of ['.set(', '.update(', '.remove(']) {
+    assert.ok(!app.includes(call), '화면이 클라우드에 직접 쓰고 있습니다: ' + call);
   }
+  assert.match(app, /PuPhotoStore\.savePhoto/, '저장이 저장 층을 거치지 않습니다');
+});
+
+/* ── B단계: 올리기·대기열·격자 ── */
+
+test('사진 고르기 — 앨범에서 여러 장', () => {
+  assert.match(app, /<input[^>]*type="file"[^>]*multiple/);
+  assert.match(app, /accept="image\/\*"/);
+});
+
+test('카메라 즉석 촬영 입력이 있다', () => {
+  assert.match(app, /capture="environment"/);
+});
+
+test('업로드 대기열 파일을 불러오고 쓴다', () => {
+  assert.match(app, /<script src="js\/pu-photo-queue\.js"><\/script>/);
+  assert.match(app, /PuPhotoQueue\.create\(/);
+});
+
+test('신호가 돌아오면 기다리지 않고 바로 재시도한다', () => {
+  assert.match(app, /addEventListener\('online'/);
+  assert.match(app, /retryNow/);
+});
+
+test('올릴 때 긴 변 1600px 축소본과 240px 미리보기를 만든다', () => {
+  assert.match(app, /shrink\(f, 1600\)/);
+  assert.match(app, /shrink\(f, 240\)/);
+  // 카메라 원본이 그대로 클라우드로 가는 길이 없어야 한다 —
+  // 파일→dataURL 직행(readAsDataURL)을 금지하고 축소(shrink)만 허용한다.
+  assert.ok(!/readAsDataURL/.test(app), '원본을 그대로 올릴 수 있는 경로가 있습니다');
+});
+
+test('촬영 시각은 저장 층의 우선순위 함수로 정한다', () => {
+  // EXIF → 파일 날짜 → 업로드 시각. 판단이 화면에 흩어지면 앱마다 달라진다.
+  assert.match(app, /PuPhotoStore\.pickTakenAt\(/);
+  assert.match(app, /PuPhotoStore\.exifTakenAt\(/);
+});
+
+test('격자는 미리보기만 받는다 — 본문은 부르지 않는다', () => {
+  assert.match(app, /PuPhotoStore\.loadThumb\(/);
+  assert.ok(!app.includes('loadFull('), '격자(B단계 화면)가 사진 본문까지 받고 있습니다');
+});
+
+test('격자에 넣는 미리보기는 data:image 로 시작하는 것만 허용한다', () => {
+  // DB에서 온 문자열을 그대로 img src 에 꽂으면 값이 오염됐을 때 화면이 뚫린다.
+  assert.match(app, /function safeSrc\(/);
+  assert.match(app, /data:image\\?\//);
+});
+
+test('파일 이름 등 바깥 문자열은 이스케이프해서 화면에 넣는다', () => {
+  assert.match(app, /function esc\(/);
+  assert.match(app, /esc\(j\.name/);
 });
 
 /* ── 로그아웃 상태 보호 ──
