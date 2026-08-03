@@ -4504,8 +4504,42 @@ function _openingOf(fid,yr){
   var yd=(funds[fid]&&funds[fid].years&&funds[fid].years[yr])||{}; return yd.opening||{};
 }
 /* 승인 거래 → 분개 배열. 한 거래 = 차변 1 / 대변 1 (통장 기반이라 단순분개) */
+/* ══ 분할 분개 ══
+   통장 한 줄에 성격이 다른 금액이 함께 찍히는 일이 흔하다 — 이비공동은 송금 100,500원이
+   생활지원금 100,000 + 이체수수료 500이고, 제출한 결산서도 그렇게 갈라 적었다.
+   은행이 준 줄은 하나이므로 **통장 잔액 대사를 깨뜨리지 않아야 한다**:
+   첫 조각만 입·출금 금액을 지니고 나머지는 nocash로 만들어 금액(amount)으로만 회계에 넣는다.
+   조각 합계가 원래 금액과 다르면 저장하지 않는다(splitSave). */
+function _splitsOf(x){
+  return ((x&&x.splits)||[]).filter(function(s){ return s&&s.acct&&(num(s.amount)||0)>0; });
+}
+function _splitSum(x){ return _splitsOf(x).reduce(function(s,v){ return s+(num(v.amount)||0); },0); }
+/* 계정 지정이 끝난 거래인가 — 분할이면 조각이 둘 이상이고 합계가 거래금액과 같아야 한다 */
+function _txnDone(x){
+  var sp=_splitsOf(x);
+  if(sp.length) return sp.length>=2 && _splitSum(x)===((num(x.deposit)||0)+(num(x.withdraw)||0));
+  return !!(x&&x.debit&&x.credit);
+}
+/* 장부를 만들 때만 조각으로 펼친다 — 저장된 거래는 한 줄 그대로다(통장 대사·중복검사 키 보존) */
+function expandSplits(arr){
+  var out=[];
+  (arr||[]).forEach(function(x){
+    var sp=_splitsOf(x);
+    if(!sp.length){ out.push(x); return; }
+    var isDep=(num(x.deposit)||0)>0;
+    var cash=(isDep?x.debit:x.credit)||'현금성자산';
+    sp.forEach(function(s,i){
+      var o=Object.assign({},x);
+      o._id=x._id+'#'+(i+1); o.splits=null; o.amount=num(s.amount)||0;
+      if(isDep){ o.debit=cash; o.credit=s.acct; } else { o.debit=s.acct; o.credit=cash; }
+      if(i>0){ o.deposit=0; o.withdraw=0; o.nocash=1; }   // 통장 금액은 첫 조각만 지닌다
+      out.push(o);
+    });
+  });
+  return out;
+}
 function journalOf(arr){
-  return (arr||[]).filter(function(x){return x.approved&&x.debit&&x.credit;})
+  return expandSplits(arr).filter(function(x){return x.approved&&x.debit&&x.credit;})
     .map(function(x){ return {date:String(x.date||''),memo:String(x.memo||''),
       debit:x.debit,credit:x.credit,amount:num(x.amount)||num(x.deposit)||num(x.withdraw)||0,id:x._id}; })
     .sort(function(a,b){ return a.date.localeCompare(b.date)||String(a.id).localeCompare(String(b.id)); });
@@ -5567,7 +5601,7 @@ function _reserveAcct(fin){
 }
 /* 당기 출연금 — 자동분개에서 **기본재산 대변**으로 들어온 금액. 준비금2 설정 한도의 기준이다. */
 function _contribOf(arr){
-  var s=0; (arr||[]).forEach(function(x){
+  var s=0; expandSplits(arr).forEach(function(x){
     if(!x.approved||x.credit!=='기본재산') return;
     s+=num(x.amount)||num(x.deposit)||num(x.withdraw)||0; });
   return Math.round(s);
@@ -5821,7 +5855,7 @@ function closingTab(f){
   loadLearned();                       // 배운 거래처를 미리 읽어 둔다(제안·표시에 씀)
   arr.sort(function(a,b){return String(a.date||'').localeCompare(String(b.date||''));});
   var dep=arr.reduce(function(s,x){return s+(num(x.deposit)||0);},0), wd=arr.reduce(function(s,x){return s+(num(x.withdraw)||0);},0);
-  var unclass=arr.filter(function(x){return !x.debit||!x.credit;}).length, unappr=arr.filter(function(x){return !x.approved;}).length;
+  var unclass=arr.filter(function(x){return !_txnDone(x);}).length, unappr=arr.filter(function(x){return !x.approved;}).length;
   var gateOk = arr.length && unclass===0 && unappr===0;
   // ⑷ 통장 잔액 대사: 마지막 거래의 통장 잔액 vs (전기이월 현금 + 입금 - 출금)
   var _yd=(funds[S.fundId]&&funds[S.fundId].years&&funds[S.fundId].years[S.year])||{};
@@ -5832,13 +5866,20 @@ function closingTab(f){
        : '<span class="chip warn">통장잔액 대사 차이 '+won(lastBal-calcBal)+' (전기이월 현금 확인)</span>')
     : '';
   var rows=arr.map(function(x){
+    var sp=_splitsOf(x);
+    /* 쪼갠 거래는 차·대 선택 대신 조각을 그대로 보여 준다 — 무엇이 얼마인지가 그 줄의 정보다 */
+    var acctCells = sp.length
+      ? '<td colspan="2">'+sp.map(function(s){ return '<span class="chip" style="font-size:10px">'+esc(s.acct)+' '+(num(s.amount)||0).toLocaleString()+'</span>'; }).join(' ')
+          +(_txnDone(x)?'':' <span class="chip warn" style="font-size:10px">조각 합계가 거래금액과 다릅니다</span>')+'</td>'
+      : '<td>'+acctSel(x._id,'debit',x.debit)+(x.xfer?' <span class="chip" style="font-size:10px" title="계좌 간 이체로 상계 처리됨">이체</span>':'')+'</td><td>'+acctSel(x._id,'credit',x.credit)+'</td>';
     return '<tr'+(x.approved?' style="background:#f6faf7"':'')+'><td style="white-space:nowrap">'+esc(x.date||'')+'</td>'
       +'<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(x.memo||'')+'">'+(x.manual?'<span class="chip" style="font-size:9.5px" title="직접 입력한 거래">직접</span> ':'')+esc(x.memo||'')+'</td>'
       +'<td style="text-align:right;color:#1f7a4d">'+(num(x.deposit)?num(x.deposit).toLocaleString():'')+'</td>'
       +'<td style="text-align:right;color:#c0392b">'+(num(x.withdraw)?num(x.withdraw).toLocaleString():'')+(x.nocash&&num(x.amount)?'<span class="chip" style="font-size:10px" title="현금이 오가지 않는 대체분개 — 통장 잔액 대사에서 제외">대체 '+num(x.amount).toLocaleString()+'</span>':'')+'</td>'
-      +'<td>'+acctSel(x._id,'debit',x.debit)+(x.xfer?' <span class="chip" style="font-size:10px" title="계좌 간 이체로 상계 처리됨">이체</span>':'')+'</td><td>'+acctSel(x._id,'credit',x.credit)+'</td>'
+      +acctCells
       +'<td style="text-align:center"><input type="checkbox"'+(x.approved?' checked':'')+' onchange="approveTxn(\''+x._id+'\',this.checked)"></td>'
-      +'<td><button onclick="delTxn(\''+x._id+'\')" style="padding:2px 7px">×</button></td></tr>';
+      +'<td style="white-space:nowrap"><button onclick="splitForm(\''+x._id+'\')" style="padding:2px 6px" title="한 줄에 성격이 다른 금액이 섞여 있으면 계정별로 쪼갠다(원금+수수료)">✂</button>'
+      +'<button onclick="delTxn(\''+x._id+'\')" style="padding:2px 7px">×</button></td></tr>';
   }).join('');
   return '<div class="panel"><div class="row"><h2>회계·결산</h2>'+hlp('close.bank')+yearSel()
     +'<span style="flex:1"></span><button onclick="addTxnForm()" title="통장을 엑셀로 못 받는 경우 한 줄씩 직접 넣기">＋ 거래 추가</button>'+'<button onclick="learnedPanel()" title="승인할 때 기억한 거래처·계정 보기·지우기">📚 분개 학습</button>'+'<button onclick="autoMatchTransfers()" title="같은 날·같은 금액이 서로 반대 방향인 계좌 간 이체를 찾아 상계 처리">🔁 이체 자동매칭</button>'+'<button class="primary" onclick="importBank()">📥 통장 엑셀 가져오기</button></div>'
@@ -5875,7 +5916,7 @@ function won(n){return (n||0).toLocaleString()+'원';}
 function computeFin(arr,fid,yr){
   fid=fid||S.fundId; yr=yr||S.year;
   var yd=(funds[fid]&&funds[fid].years&&funds[fid].years[yr])||{}, opening=yd.opening||{};
-  var appr=arr.filter(function(x){return x.approved&&x.debit&&x.credit;});
+  var appr=expandSplits(arr).filter(function(x){return x.approved&&x.debit&&x.credit;});
   var acc={};
   appr.forEach(function(x){var amt=num(x.amount)||num(x.deposit)||num(x.withdraw)||0;
     (acc[x.debit]=acc[x.debit]||{d:0,c:0}).d+=amt; (acc[x.credit]=acc[x.credit]||{d:0,c:0}).c+=amt;});
@@ -6340,21 +6381,100 @@ function setTxnAcct(id,side,val){ var _key=S.fundId+'/'+S.year;
 function approveTxn(id,on){
   var x=S.txns&&S.txns[id];
   if(on){
-    if(x&&(!x.debit||!x.credit)){ toast('차변·대변 계정을 먼저 지정하세요','warn'); renderFund(); return; }
+    if(x&&!_txnDone(x)){ toast(_splitsOf(x).length?'조각 합계를 거래금액과 맞추세요':'차변·대변 계정을 먼저 지정하세요','warn'); renderFund(); return; }
     /* 계좌 간 이체는 현금↔현금으로 상계하므로 차·대가 같은 것이 정상이다 */
-    if(x&&x.debit===x.credit&&!x.xfer){ toast('차변과 대변이 같은 계정입니다','warn'); renderFund(); return; }
+    if(x&&!_splitsOf(x).length&&x.debit===x.credit&&!x.xfer){ toast('차변과 대변이 같은 계정입니다','warn'); renderFund(); return; }
   }
   var _key=S.fundId+'/'+S.year, _fid=S.fundId;
   fbDb.ref(NS+'/txns/'+_key+'/'+id+'/approved').set(on)
     .then(function(){
       if(S.txnsFor===_key&&S.txns&&S.txns[id])S.txns[id].approved=on;
       // 사람이 확정한 것만 기억한다(이체 상계는 거래처 성격이 아니라 제외)
-      if(on&&x&&!x.xfer) learnAcct(x.memo,(num(x.deposit)||0)>0,x.debit,x.credit,_fid);
+      // 쪼갠 거래는 계정이 하나가 아니어서 거래처 학습에 쓰지 않는다
+      if(on&&x&&!x.xfer&&!_splitsOf(x).length) learnAcct(x.memo,(num(x.deposit)||0)>0,x.debit,x.credit,_fid);
       renderFund();
     })
     .catch(function(e){ toast('저장 실패: '+e.message,'err'); renderFund(); });
 }
 function delTxn(id){ confirmM('이 거래를 삭제할까요?',{ok:'삭제',danger:true}).then(function(ok){ if(ok) fbDb.ref(NS+'/txns/'+S.fundId+'/'+S.year+'/'+id).remove().then(function(){S.txnsFor=null;renderFund();toast('삭제되었습니다');}).catch(function(e){toast('삭제 실패: '+e.message,'err');}); }); }
+
+/* ══ 거래 쪼개기 화면 ══ */
+var _splitId=null, _splitRows=[];
+function splitForm(id){
+  var x=(S.txns||{})[id]; if(!x){ toast('거래를 찾지 못했습니다','err'); return; }
+  var total=(num(x.deposit)||0)+(num(x.withdraw)||0);
+  if(!total){ toast('금액이 없는 거래는 쪼갤 수 없습니다','warn'); return; }
+  _splitId=id;
+  var sp=_splitsOf(x);
+  _splitRows = sp.length ? sp.map(function(s){ return {acct:s.acct, amount:num(s.amount)||0}; })
+    : [{acct:((num(x.deposit)||0)>0?x.credit:x.debit)||'', amount:total},{acct:'지급수수료', amount:0}];
+  _splitOpen();
+}
+function _splitTotal(){ var x=(S.txns||{})[_splitId]||{}; return (num(x.deposit)||0)+(num(x.withdraw)||0); }
+function _splitRead(){
+  _splitRows=_splitRows.map(function(r,i){
+    var a=$('sp-a-'+i), m=$('sp-m-'+i);
+    return {acct:a?String(a.value||''):r.acct, amount:m?(num(m.value)||0):r.amount};
+  });
+}
+function splitAddRow(){ _splitRead(); _splitRows.push({acct:'',amount:0}); _splitOpen(); }
+function splitDelRow(i){ _splitRead(); _splitRows.splice(i,1);
+  while(_splitRows.length<2) _splitRows.push({acct:'',amount:0}); _splitOpen(); }
+function _splitSumShow(){
+  var total=_splitTotal(), s=0;
+  for(var i=0;i<_splitRows.length;i++){ var m=$('sp-m-'+i); if(m) s+=num(m.value)||0; }
+  var el=$('sp-sum'); if(!el) return;
+  el.innerHTML='조각 합계 <b>'+s.toLocaleString()+'</b> / 거래금액 '+total.toLocaleString()
+    +(s===total?' <span class="chip ok" style="font-size:10px">일치</span>'
+               :' <span class="chip warn" style="font-size:10px">차이 '+(s-total).toLocaleString()+'</span>');
+}
+function _splitOpen(){
+  var x=(S.txns||{})[_splitId]||{}, total=_splitTotal(), isDep=(num(x.deposit)||0)>0;
+  var rows=_splitRows.map(function(r,i){
+    return '<div class="row" style="gap:6px;margin-bottom:6px">'
+      +'<select id="sp-a-'+i+'" style="flex:1;padding:4px 6px"><option value="">(계정 선택)</option>'
+      +ACCTS.map(function(a){return '<option'+(r.acct===a?' selected':'')+'>'+a+'</option>';}).join('')+'</select>'
+      +'<input id="sp-m-'+i+'" value="'+(r.amount?r.amount.toLocaleString():'')+'" oninput="_splitSumShow()"'
+      +' style="width:130px;text-align:right;padding:4px 6px" placeholder="0">'
+      +'<button onclick="splitDelRow('+i+')" style="padding:2px 7px">×</button></div>';
+  }).join('');
+  showModal('<h2 style="margin:0 0 4px">거래 쪼개기</h2>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 10px">한 줄에 성격이 다른 금액이 함께 찍힌 경우입니다.<br>'
+    +'<b>'+esc(String(x.memo||''))+'</b> · '+(isDep?'입금':'출금')+' <b>'+total.toLocaleString()+'원</b>을 계정별로 나눕니다. '
+    +'조각 합계가 이 금액과 같아야 저장됩니다 — <b>통장 잔액 대사는 원래 금액 그대로 유지됩니다.</b></p>'
+    +'<div>'+rows+'</div>'
+    +'<div class="row" style="gap:10px;margin-top:4px"><button onclick="splitAddRow()">＋ 줄 추가</button>'
+    +'<span id="sp-sum" class="muted" style="font-size:12px"></span></div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:14px;gap:8px">'
+    +(_splitsOf(x).length?'<button onclick="splitClear()">분할 해제</button>':'')
+    +'<button onclick="closeM()">취소</button><button class="primary" onclick="splitSave()">저장</button></div>');
+  _splitSumShow();
+}
+function splitSave(){
+  _splitRead();
+  var id=_splitId, x=(S.txns||{})[id]; if(!x){ closeM(); return; }
+  var total=(num(x.deposit)||0)+(num(x.withdraw)||0), isDep=(num(x.deposit)||0)>0;
+  var sp=_splitRows.filter(function(r){ return r.acct&&(num(r.amount)||0)>0; });
+  if(sp.length<2){ toast('계정과 금액을 두 줄 이상 채우세요','warn'); return; }
+  var sum=sp.reduce(function(s,r){ return s+(num(r.amount)||0); },0);
+  if(sum!==total){ toast('조각 합계 '+sum.toLocaleString()+'원이 거래금액 '+total.toLocaleString()+'원과 다릅니다','warn'); return; }
+  var _key=S.fundId+'/'+S.year, up={};
+  up.splits=sp.map(function(r){ return {acct:r.acct, amount:num(r.amount)||0}; });
+  /* 분할이면 차·대 선택은 쓰지 않는다 — 현금 쪽만 남겨 장부에서 반대편으로 쓴다 */
+  up[isDep?'debit':'credit']='현금성자산';
+  up[isDep?'credit':'debit']='';
+  fbDb.ref(NS+'/txns/'+_key+'/'+id).update(up).then(function(){
+    if(S.txnsFor===_key&&S.txns&&S.txns[id]) Object.keys(up).forEach(function(k){ S.txns[id][k]=up[k]; });
+    closeM(); renderFund(); toast('거래를 '+sp.length+'개 계정으로 나눴습니다');
+  }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
+}
+function splitClear(){
+  var id=_splitId, _key=S.fundId+'/'+S.year;
+  fbDb.ref(NS+'/txns/'+_key+'/'+id+'/splits').remove().then(function(){
+    if(S.txnsFor===_key&&S.txns&&S.txns[id]) S.txns[id].splits=null;
+    closeM(); renderFund(); toast('분할을 해제했습니다');
+  }).catch(function(e){ toast('해제 실패: '+e.message,'err'); });
+}
 
 /* ══ 도움말 팝업 ══
    화면에는 ⓘ 버튼만 두고 설명은 누를 때만 띄운다. 첫 화면을 단순하게 유지하고

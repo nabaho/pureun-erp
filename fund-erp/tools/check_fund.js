@@ -176,8 +176,8 @@ ok('학습이 일반 규칙보다 우선', src.includes("if(lr&&lr.d&&lr.c) retu
 // 입금·출금은 성격이 달라 방향별로 따로 기억해야 한다
 ok('방향별로 기억(i_/o_)', src.includes("return (isDep?'i_':'o_')+head;"));
 ok('승인할 때만 학습', src.includes('learnAcct(x.memo'));
-ok('이체 상계는 학습하지 않음', src.includes('if(on&&x&&!x.xfer) learnAcct'));
-ok('이체 행은 차·대 같아도 승인 가능', src.includes('if(x&&x.debit===x.credit&&!x.xfer)'));
+ok('이체 상계는 학습하지 않음', src.includes('!x.xfer&&!_splitsOf(x).length) learnAcct'));
+ok('이체 행은 차·대 같아도 승인 가능', src.includes('x.debit===x.credit&&!x.xfer){'));
 
 // ── ⑫ 디와이사내 2025 실결산에서 확인된 것 ──
 // 기본재산을 증권으로 운용하는 기금이 있다(26억). 계정·전기이월 칸이 없으면 대차가 그만큼 어긋난다
@@ -202,6 +202,25 @@ ok('거래 직접 추가', src.includes('function addTxnForm') && src.includes('
   && src.includes('onclick="addTxnForm()"'));
 ok('직접 입력 거래 표시', src.includes('x.manual?'));
 ok('머리글에 계좌번호가 없으면 파일명에서', src.includes("String(file.name||'').match"));
+
+// ── ⑭ 분할 분개 (이비공동 2024: 송금 100,500 = 생활지원금 100,000 + 이체수수료 500) ──
+ok('분할 전개기 존재', src.includes('function expandSplits'));
+ok('분할 판정 헬퍼', src.includes('function _splitsOf') && src.includes('function _splitSum')
+  && src.includes('function _txnDone'));
+// 은행이 준 줄은 하나다 — 첫 조각만 입·출금 금액을 지녀야 통장 잔액 대사가 유지된다
+ok('첫 조각만 통장 금액을 지님', src.includes('if(i>0){ o.deposit=0; o.withdraw=0; o.nocash=1; }'));
+ok('장부가 전개된 배열을 씀',
+  src.includes('return expandSplits(arr).filter(function(x){return x.approved&&x.debit&&x.credit;})')
+  && src.includes('var appr=expandSplits(arr).filter(function(x){return x.approved&&x.debit&&x.credit;});')
+  && src.includes('var s=0; expandSplits(arr).forEach(function(x){'));
+ok('미분류·승인 판정에 분할 반영', src.includes('arr.filter(function(x){return !_txnDone(x);}).length')
+  && src.includes('if(x&&!_txnDone(x)){'));
+ok('분할은 거래처 학습에서 제외', src.includes('!x.xfer&&!_splitsOf(x).length) learnAcct'));
+// 합계가 거래금액과 다르면 저장을 막는다 — 안 막으면 대차가 조용히 어긋난다
+ok('조각 합계 불일치는 저장 거부', src.includes('if(sum!==total){'));
+ok('쪼개기 화면·해제', src.includes('function splitForm') && src.includes('function splitSave')
+  && src.includes('function splitClear'));
+ok('목록에 가위 단추', src.includes('onclick=\"splitForm('));
 
 // ── ⑬ 통장 파서·자동분개 (가치를만들어가는사람들 2024 실결산 검증) ──
 // 합계 행: 하나·기업·우리 모두 'No' 다음 칸(= 일자 칸)에 '합   계'를 적는다. 적요만 보면 놓친다.
