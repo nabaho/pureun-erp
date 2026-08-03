@@ -107,6 +107,17 @@ button{font-family:inherit;cursor:pointer}
 #gridBar button.del{border-color:#f0b4b4;color:#b91c1c}
 #gridBar button.rd{border-color:#b6c6ee;color:var(--blue)}
 
+/* 누구 사진을 볼까 (관리자만) */
+#ownerPick{margin-top:12px}
+#ownerPick .cap{font-size:11.5px;color:var(--sub);margin-bottom:4px}
+#ownerSel{width:100%;border:1px solid var(--line);border-radius:9px;padding:8px;font-size:13px;font-family:inherit;background:#fff}
+#home .pri:disabled,#home .sec:disabled{opacity:.4}
+
+/* 예전 사진 옮기기 */
+#mig .mignote{margin:6px 0 0;font-size:11.5px;line-height:1.6;color:var(--sub)}
+#migOut{margin:10px 0 0;font-size:12px;line-height:1.6;white-space:pre-wrap;background:#f7f9fc;border:1px solid var(--line);border-radius:10px;padding:11px}
+#migOut:empty{display:none}
+
 /* 경고등 — 판독이 어긋난 것만 모아 보는 단추 */
 #needBox{width:100%;margin-top:12px;border:1px solid #f0c98a;background:#fff8ec;color:#92400e;border-radius:10px;padding:10px;font-size:12.5px;font-weight:700;text-align:left}
 #needBox.on{border-color:#b6c6ee;background:#eef2fd;color:var(--blue)}
@@ -210,6 +221,12 @@ button{font-family:inherit;cursor:pointer}
       <div class="l2">화면을 캡처한 뒤 Ctrl+V 로 붙여넣어도 됩니다</div>
     </div>
 
+    <!-- 총괄 관리자만 — 누구 사진을 볼지 -->
+    <div id="ownerPick" style="display:none">
+      <div class="cap">누구 사진</div>
+      <select id="ownerSel" onchange="pickOwner(this.value)"></select>
+    </div>
+
     <!-- 판독이 어긋난 것만 모아 보는 경고등 -->
     <button id="needBox" style="display:none" onclick="toggleNeed()"></button>
 
@@ -264,6 +281,14 @@ button{font-family:inherit;cursor:pointer}
       <div class="row"><span>저장 방식</span><b id="modeText">-</b></div>
       <button onclick="runProbe()">파일 창고 점검</button>
       <pre id="probeOut"></pre>
+      <!-- 관리자만 — 옛 자리 사진을 사람별 자리로 옮기기 -->
+      <div id="mig" style="display:none">
+        <div class="row" style="border:none;padding-top:14px"><span>예전 사진 옮기기</span></div>
+        <p class="mignote">2026-08-03 전에 올린 사진은 모두 한자리에 섞여 있습니다. 사람별로 나누려면 한 번 옮겨야 합니다. <b>원본은 지우지 않고 복사만</b> 합니다.</p>
+        <button onclick="runMigrate()">사진 옮기기</button>
+        <button id="dropBtn" style="display:none" onclick="runDropLegacy()">옛 자리 지우기</button>
+        <pre id="migOut"></pre>
+      </div>
       <button class="close" onclick="closeSettings()">닫기</button>
     </div>
   </div>
@@ -324,7 +349,17 @@ firebase.auth().onAuthStateChanged(u => {
   /* ⚙️(설정·창고 점검)는 로그인한 뒤에만 보인다.
      로그아웃 상태로 점검하면 권한 거부가 나서 "규칙 문제"로 잘못 보고된다. */
   $('gear').style.display = signedIn ? 'inline-flex' : 'none';
-  if (signedIn) { initQueue(); loadGrid(); }
+  if (!signedIn) return;
+  /* 사진 자리가 사람별로 갈려 있어 **계정을 알기 전에는 사진을 읽을 수 없다.**
+     그래서 로그인 확인 → 계정·권한 등록 → 그 다음에 목록을 읽는 순서를 지킨다. */
+  PuPhotoStore.signIn(u.uid, u.displayName || u.email).then(function () {
+    initQueue();
+    loadGrid();
+    renderOwnerPick();
+  }).catch(function (e) {
+    console.warn('[로그인]', e);
+    alert('사진첩을 준비하지 못했습니다. 새로고침해 주세요.\n' + ((e && e.message) || e));
+  });
 });
 
 /* ══════ 업로드 대기열 ══════
@@ -770,9 +805,22 @@ function renderUp() {
    미리보기는 한 장씩 따로 받는다 — 본문(1600px)은 격자에서 절대 받지 않는다. */
 const gridYear = String(new Date().getFullYear());
 let gridItems = []; // { id, meta, thumb? } — 촬영 시각 내림차순
+let gridOwner = null;   // null = 내 사진. 관리자가 남의 것을 볼 때만 계정이 들어간다
+
+/* 남의 사진을 보는 중인가 — 그때는 올리기·지우기·판독을 잠근다.
+   남이 찍은 사진을 내가 고칠 일이 아니고, 저장 층도 내 자리에만 쓴다. */
+function viewingOther() {
+  return !!gridOwner && gridOwner !== PuPhotoStore.myUid();
+}
+
+function blockedIfOther() {
+  if (!viewingOther()) return false;
+  alert('다른 사람의 사진은 보기만 할 수 있습니다.');
+  return true;
+}
 
 function loadGrid() {
-  PuPhotoStore.listYear(gridYear).then(function (items) {
+  PuPhotoStore.listYear(gridYear, gridOwner).then(function (items) {
     gridItems = Object.keys(items).map(id => ({ id: id, meta: items[id] || {} }));
     gridItems.sort((a, b) => (b.meta.takenAt || 0) - (a.meta.takenAt || 0));
     renderGrid();
@@ -845,7 +893,7 @@ function fillThumbs() {
   gridItems.forEach(function (it) {
     if (it.thumb) return;
     chain = chain.then(function () {
-      return PuPhotoStore.loadThumb(gridYear, it.id).then(function (t) {
+      return PuPhotoStore.loadThumb(gridYear, it.id, gridOwner).then(function (t) {
         it.thumb = t;
         const src = safeSrc(t);
         if (!src) return;
@@ -952,6 +1000,7 @@ function renderGridBar() {
 
 /* 고른 여러 장 지우기 */
 function deleteSelected() {
+  if (blockedIfOther()) return;
   const ids = Array.from(selected);
   if (!ids.length) return;
   const filedN = ids.filter(function (id) {
@@ -992,6 +1041,7 @@ function removeMany(ids) {
 
 /* 크게 보기에서 이 사진 하나 지우기 */
 function deleteOne() {
+  if (blockedIfOther()) return;
   const id = viewerId;
   if (!id) return;
   const it = gridItems.find(function (x) { return x.id === id; });
@@ -1025,7 +1075,7 @@ function openViewer(id) {
   $('viewerHint').textContent = '불러오는 중…';
   const img = $('viewerImg');
   img.src = safeSrc(it && it.thumb) || ''; // 우선 미리보기를 깔고
-  PuPhotoStore.loadFull(gridYear, id).then(function (full) { // 원판으로 바꾼다
+  PuPhotoStore.loadFull(gridYear, id, gridOwner).then(function (full) { // 원판으로 바꾼다
     const src = safeSrc(full);
     if (src && v.style.display !== 'none') {
       img.src = src;
@@ -1133,6 +1183,7 @@ function readPhoto(id) {
 }
 
 function readAgain() {
+  if (blockedIfOther()) return;
   const id = viewerId;
   if (!id) return;
   $('readPanel').innerHTML = '<div class="box"><p class="note" style="margin:0">판독 중…</p></div>';
@@ -1155,6 +1206,7 @@ function readAgain() {
 let reading = false;
 
 function readSelected() {
+  if (blockedIfOther()) return;
   const ids = Array.from(selected);
   if (!ids.length || reading) return;
   reading = true;
@@ -1182,6 +1234,70 @@ function readSelected() {
     const need = gridItems.filter(needsCheck).length;
     if (need) msg += '\n확인이 필요한 것이 ' + need + '장 있습니다.';
     alert(msg);
+  });
+}
+
+/* ══════ 누구 사진을 볼까 (총괄 관리자만) ══════
+   직원은 이 칸이 아예 없다 — 남의 사진을 볼 길이 화면에도 없고 규칙에도 없다. */
+function renderOwnerPick() {
+  if (!PuPhotoStore.amAdmin()) { $('ownerPick').style.display = 'none'; return; }
+  $('mig').style.display = 'block';
+  PuPhotoStore.listOwners().then(function (owners) {
+    const me = PuPhotoStore.myUid();
+    const ids = Object.keys(owners).filter(function (k) { return k !== me; });
+    $('ownerPick').style.display = ids.length ? 'block' : 'none';
+    if (!ids.length) return;
+    $('ownerSel').innerHTML = '<option value="">내 사진</option>' +
+      ids.map(function (k) {
+        return '<option value="' + esc(k) + '">' + esc((owners[k] && owners[k].name) || k) + '</option>';
+      }).join('');
+    $('ownerSel').value = gridOwner || '';
+  }).catch(function (e) { console.warn('[사람 명단]', e); });
+}
+
+function pickOwner(uid) {
+  gridOwner = uid || null;
+  gridItems = [];
+  selMode = false; selected.clear(); needOnly = false;
+  $('grid').classList.remove('sel');
+  /* 남의 사진을 보는 중에는 올리기 단추를 잠근다. */
+  ['pickBtn', 'docBtn', 'camBtn'].forEach(function (id) { $(id).disabled = viewingOther(); });
+  renderGrid();
+  loadGrid();
+}
+
+/* ══════ 예전 사진 옮기기 (관리자만) ══════ */
+function runMigrate() {
+  const out = $('migOut');
+  if (!confirm('예전 사진을 사람별 자리로 옮깁니다.\n원본은 지우지 않고 복사만 합니다. 계속할까요?')) return;
+  out.textContent = '옮기는 중…';
+  PuPhotoStore.migrateLegacy(function (i, n) { out.textContent = '옮기는 중… ' + i + '/' + n; })
+    .then(function (r) {
+      let msg = '옮겼습니다 — ' + r.copied + '장.';
+      if (r.unknown) msg += '\n올린 사람을 모르는 ' + r.unknown + '장은 관리자 자리로 옮겼습니다.';
+      if (r.failed) {
+        msg += '\n' + r.failed + '장을 옮기지 못했습니다. 다시 눌러 주세요 — 모두 성공해야 옛 자리를 지울 수 있습니다.';
+      } else if (r.copied) {
+        msg += '\n\n사진이 보이는지 확인한 뒤 「옛 자리 지우기」를 눌러 주세요.';
+        $('dropBtn').style.display = 'block';
+      } else {
+        msg = '옮길 예전 사진이 없습니다.';
+      }
+      out.textContent = msg;
+      loadGrid();
+    }).catch(function (e) {
+      out.textContent = '옮기지 못했습니다 — ' + ((e && e.message) || e);
+    });
+}
+
+function runDropLegacy() {
+  if (!confirm('옛 자리 사진을 지웁니다. 되돌릴 수 없습니다.\n옮긴 사진이 잘 보이는지 먼저 확인하셨나요?')) return;
+  $('migOut').textContent = '지우는 중…';
+  PuPhotoStore.dropLegacy().then(function () {
+    $('migOut').textContent = '옛 자리를 지웠습니다.\n마지막으로 파이어베이스 규칙에서 puphotos 최상위 읽기·쓰기 두 줄을 지우고 다시 게시해 주세요 — 그래야 사람별 분리가 완성됩니다.';
+    $('dropBtn').style.display = 'none';
+  }).catch(function (e) {
+    $('migOut').textContent = '지우지 못했습니다 — ' + ((e && e.message) || e);
   });
 }
 
