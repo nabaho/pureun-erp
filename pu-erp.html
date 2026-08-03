@@ -9840,6 +9840,11 @@ function PucardsContactPickerModal(props){
             : '명함첩 목록을 불러오는 중… (명함첩 앱을 한 번 열면 목록이 생성됩니다)')
       ),
       h('div', { style:{ flex:1, overflow:'auto', padding:'8px' } },
+        // 사업장 이름으로 먼저 찾아 준 경우에만 알려 준다 — 검색창을 고쳐 다른 이름으로도 찾을 수 있다
+        props.initialQuery && query === props.initialQuery && results.length > 0
+          && h('div', { style:{ fontSize:'10.5px', color:'#1d4ed8', background:'#eff6ff', border:'1px solid #dbeafe',
+              borderRadius:'5px', padding:'4px 8px', margin:'0 2px 6px' } },
+            '📇 ' + props.initialQuery + ' 으로 먼저 찾았습니다 — 위 칸에서 다른 이름으로 바꿔 검색할 수 있습니다'),
         !query ? h('div', { style:{ padding:'16px', textAlign:'center', color:'#94a3b8', fontSize:'12px' } }, '이름 또는 회사를 입력하세요')
         : results.length === 0 ? h('div', { style:{ padding:'16px', textAlign:'center', color:'#94a3b8', fontSize:'12px' } }, '검색 결과가 없습니다')
         : results.map(function(r, i){
@@ -12545,6 +12550,7 @@ function ContractModal(props){
       onSelect: fillFromPast
     }),
     pcPickIdx !== null && h(PucardsContactPickerModal, {
+      initialQuery: (f.company && f.company.name) || f.companyName || '',   // 그 사업장으로 먼저 찾아 준다
       onClose: function(){ setPcPickIdx(null); },
       onSelect: function(p){ fillContactFromPucards(pcPickIdx, p); setPcPickIdx(null); }
     }),
@@ -16800,11 +16806,29 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
 // 담당자 다수 입력 컴포넌트 (사업장 담당자 - 모든 모듈 공통)
 function ContactsEditor(props){
   var contacts = props.contacts || [];
+  // 명함첩 찾기 — 업체관리·컨설팅·기금·기타가 이 부품을 함께 쓰므로 여기에 두면 네 화면이 같이 된다.
+  // props.companyName 을 검색 초기값으로 넘겨 열자마자 그 사업장 사람들이 나오게 한다.
+  var pk = useState(false); var pcOpen = pk[0]; var setPcOpen = pk[1];
   function update(arr){ props.onChange(arr); }
   function add(){
     var n = contacts.slice();
     n.push({ name:'', position:'', phone:'', email:'', isPrimary: n.length === 0 });
     update(n);
+  }
+  // 명함첩에서 고른 사람을 담당자로 추가. 이 편집기의 입력칸은 position 을 읽으므로
+  // 명함첩의 직책(ti)을 position 에 넣는다 (role 에 넣으면 화면에 빈칸으로 보인다).
+  function addFromPc(p){
+    var cand = { name:p.n||'', phone:p.m||'' };
+    var key = (typeof _normPersonKey === 'function') ? _normPersonKey(cand) : '';
+    if(key && contacts.some(function(c){ return _normPersonKey(c) === key; })){
+      showToast('이미 있는 담당자입니다'); return;
+    }
+    var n = contacts.slice();
+    n.push({ name:p.n||'', position:p.ti||'', phone:p.m||'', bizPhone:(p.t||p.ct||''),
+      email:p.e||'', isPrimary: n.length === 0,
+      pcId:p.id||'', pcFrom:'명함첩', pcAt:(new Date()).toISOString().slice(0,10) });
+    update(n);
+    showToast('담당자 추가: ' + (p.n||''));
   }
   function del(i){
     var n = contacts.slice();
@@ -16823,10 +16847,20 @@ function ContactsEditor(props){
     update(n);
   }
   return h('div', null,
-    h('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px' } },
+    pcOpen && h(PucardsContactPickerModal, {
+      initialQuery: props.companyName || '',
+      onClose:function(){ setPcOpen(false); },
+      onSelect:function(p){ addFromPc(p); setPcOpen(false); }
+    }),
+    h('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:'6px', marginBottom:'6px' } },
       h('label', { style:{ fontSize:'12px', fontWeight:600, color:'#475569' } }, '담당자 (' + contacts.length + ')'),
-      h('button', { type:'button', onClick:add,
-        style:{ background:'#1e40af', color:'#fff', border:'none', padding:'3px 10px', borderRadius:'5px', fontSize:'11px', fontWeight:600, cursor:'pointer' } }, '+ 추가')
+      h('div', { style:{ display:'flex', gap:'4px' } },
+        h('button', { type:'button', onClick:function(){ setPcOpen(true); },
+          title:(props.companyName ? props.companyName + ' 으로 먼저 찾아 줍니다' : '명함첩에서 담당자를 찾아 넣습니다'),
+          style:{ background:'#eff6ff', color:'#1d4ed8', border:'1px solid #bfdbfe', padding:'3px 9px', borderRadius:'5px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } }, '📇 명함첩'),
+        h('button', { type:'button', onClick:add,
+          style:{ background:'#1e40af', color:'#fff', border:'none', padding:'3px 10px', borderRadius:'5px', fontSize:'11px', fontWeight:600, cursor:'pointer' } }, '+ 추가')
+      )
     ),
     contacts.length === 0
       ? h('div', { style:{ color:'#94a3b8', fontSize:'11.5px', padding:'10px', textAlign:'center', background:'#f8fafc', borderRadius:'4px' } }, '담당자 없음 - [+ 추가]를 클릭하세요')
@@ -16982,6 +17016,7 @@ function CompanyEditModal(props){
               style:{ marginBottom:'8px', background:'#eff6ff', color:'#1d4ed8', border:'1px solid #bfdbfe', borderRadius:'5px', padding:'6px 11px', fontSize:'11.5px', fontWeight:600, cursor:'pointer' } }, '📇 명함첩에서 담당자 추가'),
             h(ContactsEditor, {
               contacts: f.contacts || (f.primaryContactName ? [{ name:f.primaryContactName, phone:f.primaryContactPhone, email:f.primaryContactEmail, isPrimary:true }] : []),
+              companyName: f.name || '',
               scope: 'company-' + f.id,
               onChange: function(arr){
                 var primary = arr.find(function(c){return c.isPrimary;}) || arr[0] || {};
@@ -17182,6 +17217,7 @@ function CompanyEditModal(props){
       )
     ),
     pcPickMode && h(PucardsContactPickerModal, {
+      initialQuery: f.name || '',            // 그 업체 이름으로 먼저 찾아 준다
       onClose:function(){ setPcPickMode(null); },
       onSelect:function(p){ (pcPickMode==='ceo' ? fillCeoFromPc : addContactFromPc)(p); setPcPickMode(null); }
     })
@@ -17697,6 +17733,7 @@ function CaseEditModal(props){
   }
   var ci = useState(true); var coInfoOpen = ci[0]; var setCoInfoOpen = ci[1];
   var ca = useState(true); var contactsOpen = ca[0]; var setContactsOpen = ca[1];
+  var cpk = useState(false); var casePcOpen = cpk[0]; var setCasePcOpen = cpk[1];   // 명함첩에서 담당자 찾기
   function setV(k){ return function(e){ var v = e.target ? e.target.value : e; setF(function(prev){ return Object.assign({}, prev, (function(){var x={}; x[k]=v; return x;})()); }); }; }
   function setNum(k){ return function(e){ var v = parseInt((e.target?e.target.value:e+'').replace(/[^0-9]/g,''))||0; setF(function(prev){ return Object.assign({}, prev, (function(){var x={}; x[k]=v; return x;})()); }); }; }
   function setJ(k){ return function(e){ var v = e.target.value; setF(function(prev){ return Object.assign({}, prev, { judgment: Object.assign({}, prev.judgment, (function(){var x={}; x[k]=v; return x;})()) }); }); }; }
@@ -17743,6 +17780,23 @@ function CaseEditModal(props){
     setF(function(prev){
       return Object.assign({}, prev, { contacts:(prev.contacts||[]).filter(function(_,i){ return i!==idx; }) });
     });
+  }
+  // 명함첩에서 고른 사람을 담당자로 추가. 이 카드의 입력칸은 role 을 읽으므로
+  // 명함첩 직책(ti)을 role 에 넣는다 (position 에 넣으면 화면에 빈칸으로 보인다).
+  function addContactFromPc(p){
+    var cand = { name:p.n||'', phone:p.m||'' };
+    var key = (typeof _normPersonKey === 'function') ? _normPersonKey(cand) : '';
+    if(key && (f.contacts||[]).some(function(c){ return _normPersonKey(c) === key; })){
+      showToast('이미 있는 담당자입니다'); return;
+    }
+    setF(function(prev){
+      var arr = (prev.contacts||[]).slice();
+      arr.push({ name:p.n||'', role:p.ti||'', bizPhone:(p.t||p.ct||''), phone:p.m||'', fax:'',
+        email:p.e||'', isPrimary: arr.length===0,
+        pcId:p.id||'', pcFrom:'명함첩', pcAt:(new Date()).toISOString().slice(0,10) });
+      return Object.assign({}, prev, { contacts: arr });
+    });
+    showToast('담당자 추가: ' + (p.n||''));
   }
   var lawyers = props.users || [];
   // 담당 가능한 직원 (휴직·배제 제외)
@@ -17839,13 +17893,22 @@ function CaseEditModal(props){
                   h('input', { type:'email', value:f.email||'', onChange:setV('email'), placeholder:'이메일', style:inputS }))
               ),
           ), // 회사정보 내용 닫기
+          // 명함첩에서 담당자 찾기 — 사업장 이름으로 먼저 찾아 준다 (붙어 뜨는 창이라 위치는 무관)
+          casePcOpen && h(PucardsContactPickerModal, {
+            initialQuery: f.companyName || '',
+            onClose:function(){ setCasePcOpen(false); },
+            onSelect:function(p){ addContactFromPc(p); setCasePcOpen(false); }
+          }),
           // 담당자 (접기/펼치기)
           h('div', { onClick:function(){ setContactsOpen(function(v){return !v;}); },
             style:{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px',
               cursor:'pointer', userSelect:'none', background:'#f8fafc', borderRadius:'6px', padding:'5px 9px', border:'1px solid #e2e8f0' } },
             h('div', { style:{ fontSize:'11.5px', fontWeight:700, color:'#1e293b' } }, (isWorkerCase ? '👤 상대방 담당자 ' : '👤 담당자 ') + '(' + (f.contacts||[]).length + ')'),
+            h('button', { type:'button', onClick:function(e){ e.stopPropagation(); setCasePcOpen(true); },
+              title:(f.companyName ? f.companyName + ' 으로 먼저 찾아 줍니다' : '명함첩에서 담당자를 찾아 넣습니다'),
+              style:{ padding:'4px 9px', background:'#eff6ff', color:'#1d4ed8', border:'1px solid #bfdbfe', borderRadius:'4px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap', marginLeft:'auto' } }, '📇 명함첩'),
             h('button', { type:'button', onClick:function(e){ e.stopPropagation(); addContact(); },
-              style:{ padding:'4px 10px', background:'#dbeafe', color:'#1d4ed8', border:'1px solid #93c5fd', borderRadius:'4px', fontSize:'11px', fontWeight:600, cursor:'pointer' } }, '+ 추가'),
+              style:{ padding:'4px 10px', background:'#dbeafe', color:'#1d4ed8', border:'1px solid #93c5fd', borderRadius:'4px', fontSize:'11px', fontWeight:600, cursor:'pointer', marginLeft:'4px' } }, '+ 추가'),
             h('span', { style:{ fontSize:'12px', color:'#94a3b8', marginLeft:'4px' } }, contactsOpen ? '▲' : '▼')),
           h('div', { style:{ display: contactsOpen ? 'block' : 'none' } },
           (f.contacts||[]).map(function(ct, idx){
@@ -48640,6 +48703,7 @@ function ProjectEditModal(props){
               : (f.primaryContactName || f.primaryContactPhone || f.primaryContactEmail
                   ? [{ name:f.primaryContactName||'', position:'', phone:f.primaryContactPhone||'', email:f.primaryContactEmail||'', isPrimary:true }]
                   : []),
+            companyName: f.companyName || '',
             scope: 'project-' + (f.id || 'new'),
             onChange: function(arr){
               var primary = arr.find(function(c){return c.isPrimary;}) || arr[0] || {};

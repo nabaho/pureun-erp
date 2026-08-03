@@ -327,5 +327,107 @@ ok('줄마다 판정 점·계약번호·상태칩이 그대로다',
 ok('결론 한 줄도 카드 안에 남아 있다',
    banner.indexOf("style:{ fontSize:'11px', fontWeight:700, color:titleColor, marginTop:'6px' } }, conclusion)") > 0);
 
+
+/* ══════════════════════════════════════════════════════════════
+   추가: 검색키 전체 담당자 · 담당자를 명함첩에서 찾기 (사업장 이름 자동검색)
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── 1. 업무관리 검색이 담당자 전원을 본다 ── */
+(function(){
+  const cut = cutter(wk, 'work.html');
+  const ctxQ = { console };
+  vm.createContext(ctxQ);
+  vm.runInContext(cut('function contactRole(c){', '\n}') + '\n}', ctxQ);
+  vm.runInContext(cut('function itemContacts(it){', '\n}') + '\n}', ctxQ);
+  vm.runInContext(cut('function matchQ(it,q){', '\n}') + '\n}', ctxQ);
+  const mq = ctxQ.matchQ;
+
+  const it3 = { company:'가나상사', contacts:[
+    { name:'하서윤', rank:'실장',    phone:'010-3110-9468' },
+    { name:'이근혜', position:'차장', phone:'010-2822-1998' },
+    { name:'송금석', role:'대표자',  phone:'041-575-7994' } ]};
+  it3.contact = it3.contacts[0];
+  ok('검색: 1번째 담당자',        mq(it3, '하서윤'));
+  ok('검색: 2번째 담당자',        mq(it3, '이근혜'));
+  ok('검색: 3번째 담당자',        mq(it3, '송금석'));
+  ok('검색: 2번째 담당자 직책',   mq(it3, '차장'));
+  ok('검색: 3번째 담당자 직책',   mq(it3, '대표자'));
+  ok('검색: 전화 하이픈 그대로',  mq(it3, '010-2822-1998'));
+  ok('검색: 전화 숫자만',         mq(it3, '01028221998'));
+  ok('검색: 없는 이름은 안 걸림', !mq(it3, '없는사람'));
+
+  const legacy = { company:'다라기업', contact:{ name:'옛담당', rank:'과장', phone:'010-1111-2222' } };
+  ok('검색: 옛 단수 담당자',      mq(legacy, '옛담당'));
+  ok('검색: 옛 단수 전화 숫자만', mq(legacy, '01011112222'));
+
+  const none = { company:'무담당', title:'현장클리닉' };
+  ok('검색: 담당자 없어도 회사명',   mq(none, '무담당'));
+  ok('검색: 담당자 없어도 업무명',   mq(none, '현장클리닉'));
+  ok('검색: 담당자 없으면 안 걸림', !mq(none, '하서윤'));
+  ok('검색: 빈 검색어는 전부 통과',  mq(none, ''));
+})();
+
+/* ── 2. 지식카드 이름 목록도 담당자 전원 ── */
+ok('지식카드 이름 목록이 itemContacts 를 쓴다 (2곳)',
+   (wk.match(/\.concat\(itemContacts\(it\)\.map\(function\(c\)\{ return c&&c\.name; \}\)\)/g) || []).length === 2);
+ok('지식카드에서 옛 단수 참조가 사라졌다',
+   wk.indexOf('[it.officer,it.client,(it.contact&&it.contact.name)]') < 0);
+
+/* ── 3. 공용 담당자 편집기(업체관리·컨설팅·기금·기타)에 명함첩 버튼 ── */
+(function(){
+  const cut = cutter(pe, 'pu-erp.html');
+  const ce = cut('function ContactsEditor(props){', '\nfunction ');
+  const ceNs = ce.replace(/\s/g, '');
+  ok('공용 편집기에 명함첩 버튼', ce.indexOf("'📇 명함첩'") > 0);
+  ok('공용 편집기가 companyName 을 초기검색으로 넘긴다',
+     /initialQuery:props\.companyName\|\|''/.test(ceNs));
+  ok('공용 편집기는 position 에 직책을 넣는다 (입력칸이 읽는 칸)',
+     /position:p\.ti\|\|''/.test(ceNs));
+  ok('공용 편집기가 중복 사람을 막는다',
+     ce.indexOf('_normPersonKey') > 0 && ce.indexOf('이미 있는 담당자입니다') > 0);
+  ok('공용 편집기가 명함첩 출처를 남긴다', /pcFrom:'명함첩'/.test(ce));
+  ok('공용 편집기의 + 추가 는 그대로', ce.indexOf("'+ 추가'") > 0);
+})();
+
+/* ── 4. 두 호출부가 사업장 이름을 넘긴다 ── */
+ok('업체관리가 업체명을 넘긴다',           /companyName: f\.name \|\| ''/.test(pe));
+ok('컨설팅·기금·기타가 사업장명을 넘긴다', /companyName: f\.companyName \|\| ''/.test(pe));
+
+/* ── 5. 사건관리 자체 담당자 카드 ── */
+(function(){
+  const cut = cutter(pe, 'pu-erp.html');
+  const cm = cut('function CaseEditModal(props){', '\nfunction CaseManagement(props){');
+  const cmNs = cm.replace(/\s/g, '');
+  ok('사건 카드에 명함첩 버튼', cm.indexOf("'📇 명함첩'") > 0);
+  ok('사건 카드가 사업장명으로 먼저 찾는다', /initialQuery:f\.companyName\|\|''/.test(cmNs));
+  ok('사건 카드는 role 에 직책을 넣는다 (이 카드 입력칸은 role)', /role:p\.ti\|\|''/.test(cmNs));
+  ok('사건 카드도 중복 사람을 막는다',
+     cm.indexOf('_normPersonKey') > 0 && cm.indexOf('이미 있는 담당자입니다') > 0);
+  ok('사건 카드의 + 추가 는 그대로', cm.indexOf("'+ 추가'") > 0);
+})();
+
+/* ── 6. 명함첩 찾기 창을 여는 모든 곳이 초기검색을 넘긴다 ── */
+(function(){
+  // 세는 방법: 'h(PucardsContactPickerModal, {' 가 있는 줄의 바로 다음 줄에 initialQuery 가 있는지
+  const lines = pe.split('\n');
+  let mounts = 0, withQ = 0; const missing = [];
+  lines.forEach(function(L, i){
+    if(L.indexOf('h(PucardsContactPickerModal, {') < 0) return;
+    mounts++;
+    if((lines[i+1] || '').indexOf('initialQuery') >= 0) withQ++; else missing.push(i + 1);
+  });
+  ok('명함첩 찾기 창을 여는 곳이 4군데', mounts === 4, '실제 ' + mounts + '곳');
+  ok('네 곳 모두 초기검색을 넘긴다', withQ === mounts, '빠진 줄: ' + missing.join(','));
+})();
+
+/* ── 7. 안내 줄은 자동검색했을 때만 ── */
+(function(){
+  const cut = cutter(pe, 'pu-erp.html');
+  const pk = cut('function PucardsContactPickerModal(props){', '\nfunction ');
+  ok('안내 줄이 있다', pk.indexOf('으로 먼저 찾았습니다') > 0);
+  ok('안내 줄은 초기검색이 있고 결과가 있을 때만',
+     /props\.initialQuery && query === props\.initialQuery && results\.length > 0/.test(pk));
+  ok('검색창은 그대로 (직접 검색 가능)', pk.indexOf('setQuery(e.target.value)') > 0);
+})();
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');
 process.exit(fail ? 1 : 0);
