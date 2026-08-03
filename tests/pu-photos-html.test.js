@@ -159,16 +159,16 @@ test('촬영 시각은 저장 층의 우선순위 함수로 정한다', () => {
   assert.match(app, /PuPhotoStore\.exifTakenAt\(/);
 });
 
-test('격자는 미리보기만 받는다 — 본문은 크게 보기에서만', () => {
+test('격자는 미리보기만 받는다 — 본문은 한 장 볼 때만', () => {
   assert.match(app, /PuPhotoStore\.loadThumb\(/);
-  // 본문(1600px)은 크게 보기(openViewer) 안에서만 한 장씩 받는다.
-  // 격자 채우기(fillThumbs)나 목록(renderGrid)이 본문을 받으면
+  // 본문(1600~2560px)은 사진 한 장을 볼 때(크게 보기)와 다시 판독할 때만 받는다.
+  // 격자 채우기(fillThumbs)나 목록 그리기(renderGrid)가 본문을 받으면
   // 사진 수십 장에 수십 MB를 내려받게 된다.
-  const uses = [...app.matchAll(/PuPhotoStore\.loadFull\(/g)];
-  assert.equal(uses.length, 1, '본문 받기가 한 곳(크게 보기)에만 있어야 합니다');
-  const viewerBody = app.match(/function openViewer\([\s\S]*?\nfunction closeViewer/);
-  assert.ok(viewerBody && viewerBody[0].includes('PuPhotoStore.loadFull('),
-    '본문 받기가 크게 보기 밖에 있습니다');
+  for (const fname of ['fillThumbs', 'renderGrid']) {
+    const body = app.match(new RegExp('function ' + fname + '\\([\\s\\S]*?\\n\\}'));
+    assert.ok(body, fname + ' 본문을 찾을 수 없습니다');
+    assert.ok(!body[0].includes('loadFull('), fname + ' 이 사진 본문까지 받고 있습니다');
+  }
 });
 
 test('크게 보기가 있다 — 격자를 누르면 저장본 원판을 보여준다', () => {
@@ -188,6 +188,48 @@ test('격자에 넣는 미리보기는 data:image 로 시작하는 것만 허용
 test('파일 이름 등 바깥 문자열은 이스케이프해서 화면에 넣는다', () => {
   assert.match(app, /function esc\(/);
   assert.match(app, /esc\(j\.name/);
+});
+
+/* ── 서류 판독 ── */
+
+test('서류 판독 층을 불러오고, 판독은 서류에만 돌린다', () => {
+  assert.match(app, /<script src="js\/pu-doc-read\.js"><\/script>/);
+  assert.match(app, /PuDocRead\.read\(/);
+  // 현장사진에는 읽을 것이 없다 — 전부 판독하면 AI 호출이 헛돈다
+  assert.match(app, /j\.kind === 'doc'.*startRead|kind === 'doc'\)\s*startRead/);
+});
+
+test('AI 키를 화면이 직접 찾지 않는다 — 판독 층이 안다', () => {
+  // 키 읽는 코드를 앱마다 복사하면 앱마다 다른 키를 보게 된다.
+  // 게다가 화면에 다른 앱 루트 이름(pucards·data)이 들어오면 실데이터 가드가 깨진다.
+  assert.match(app, /PuDocRead\.keysFrom\(/);
+  assert.ok(!/geminiKey/.test(app), '화면이 AI 키 경로를 직접 알고 있습니다');
+});
+
+test('판독 결과는 사진 정보 아래 read 칸에만 저장한다', () => {
+  assert.match(app, /PuPhotoStore\.saveRead\(/);
+});
+
+test('판독 결과를 한국어 한 줄로 만드는 함수가 하나다', () => {
+  // 목록과 크게 보기가 서로 다른 문구를 쓰면 같은 서류가 두 가지로 보인다.
+  assert.match(app, /function readLine\(/);
+  const uses = [...app.matchAll(/readLine\(/g)];
+  assert.ok(uses.length >= 3, '문구 함수를 화면 두 곳에서 함께 쓰지 않습니다');
+});
+
+test('크게 보기에 판독 결과 패널과 다시 판독이 있다', () => {
+  assert.match(app, /id="readPanel"/);
+  assert.match(app, /function renderReadPanel\(/);
+  assert.match(app, /function readAgain\(/);
+  // 다시 판독은 원판으로 읽어야 한다 — 미리보기(240px)로는 글씨가 안 보인다
+  const again = app.match(/function readAgain\(\)[\s\S]*?\n\}/);
+  assert.ok(again && again[0].includes('loadFull('), '다시 판독이 미리보기로 읽고 있습니다');
+});
+
+test('판독 결과도 이스케이프해서 화면에 넣는다', () => {
+  // AI가 돌려준 문자열을 그대로 넣으면 화면이 뚫린다
+  assert.match(app, /esc\(readLine\(/);
+  assert.match(app, /esc\(read\.fields\[/);
 });
 
 test('권한 거절은 재시도가 아니라 막힘으로 표시하고 원인을 보여준다', () => {
