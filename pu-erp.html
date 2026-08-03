@@ -10025,14 +10025,18 @@ function PucardsCompanyPickerModal(props){
         !query ? h('div', { style:{ padding:'16px', textAlign:'center', color:'#94a3b8', fontSize:'12px' } }, '회사명 또는 사업자번호를 입력하세요')
         : results.length === 0 ? h('div', { style:{ padding:'16px', textAlign:'center', color:'#94a3b8', fontSize:'12px' } }, '검색 결과가 없습니다')
         : results.map(function(r, i){
+            // 사업자등록증 칸인데 그 회사에 사업자등록증이 없으면 흐리게 — 눌러도 사진이 없다
+            var noBizHere = (props.want === 'bizLicenseImg' && !r.hasBiz);
             return h('div', { key:i, onClick:function(){ props.onSelect(r); },
-              style:{ padding:'10px 14px', borderBottom:'1px solid #f1f5f9', cursor:'pointer' },
+              title: noBizHere ? '이 회사는 명함첩에 사업자등록증이 없습니다 (회사정보만 들어옵니다)' : '',
+              style:{ padding:'10px 14px', borderBottom:'1px solid #f1f5f9', cursor:'pointer', opacity: noBizHere ? 0.6 : 1 },
               onMouseEnter:function(e){ e.currentTarget.style.background = '#f8fafc'; },
               onMouseLeave:function(e){ e.currentTarget.style.background = ''; }
             },
               h('div', { style:{ fontSize:'12.5px', fontWeight:600, color:'#1e293b', display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap' } },
                 h('span', null, r.name),
                 r.hasBiz && h('span', { style:{ background:'#dbeafe', color:'#1d4ed8', fontSize:'10px', padding:'1px 7px', borderRadius:'8px', fontWeight:700 } }, '사업자등록증 있음'),
+                noBizHere && h('span', { style:{ background:'#fef2f2', color:'#b91c1c', fontSize:'10px', padding:'1px 7px', borderRadius:'8px', fontWeight:700 } }, '사업자등록증 없음'),
                 r.cardCount ? h('span', { style:{ background:'#e0e7ff', color:'#3730a3', fontSize:'10px', padding:'1px 7px', borderRadius:'8px', fontWeight:700 } }, '명함 ' + r.cardCount + '장') : null
               ),
               h('div', { style:{ fontSize:'10.5px', color:'#64748b', marginTop:'2px' } },
@@ -10066,7 +10070,8 @@ function PucardsCompanyPickerModal(props){
                 '사람 이름으로 찾은 회사입니다'),
               // ── 그 회사 사람들 — 한 사람씩 항목을 다 보여 주고 따로 고를 수 있게 ──
               // 회사 머리줄을 누르면 통째로, 여기서 한 사람을 누르면 그 사람만 들어온다.
-              (r.cards && r.cards.length)
+              // 사업자등록증 칸에서 열었으면 사람 줄은 감춘다 — 거기서 고를 일이 아니다
+              (props.want !== 'bizLicenseImg' && r.cards && r.cards.length)
                 ? h('div', { style:{ marginTop:'6px', borderTop:'1px dashed #e2e8f0', paddingTop:'5px' } },
                     h('div', { style:{ fontSize:'10px', color:'#94a3b8', marginBottom:'3px' } },
                       '👤 이 회사 명함 ' + r.cards.length + '장 — 한 사람만 넣으려면 그 줄을 누르세요'),
@@ -10308,8 +10313,13 @@ function ContractModal(props){
   // 명함첩에서 고른 회사의 사진(사업자등록증·대표자 명함)을 첨부칸에 넣는다.
   // 자동완성으로 딸려올 때와 달리 여기서는 대표가 직접 부른 것이라 이미 있는 사진도 바꿔 준다 —
   // 다만 무엇이 바뀌는지 먼저 묻는다.
-  async function fillCompanyImagesFromPucards(row){
+  // want = 어느 첨부칸에서 눌렀나 ('bizLicenseImg' | 'businessCardImg' | '')
+  // 사업자등록증 칸에서는 사업자등록증만, 대표자 명함 칸에서는 명함만 가져온다.
+  // 종전에는 양쪽을 다 가져와서, 사업자등록증을 누르면 명함 사진까지 딸려왔다(중복).
+  async function fillCompanyImagesFromPucards(row, want){
     if(!row) return;
+    var onlyBiz  = (want === 'bizLicenseImg');
+    var onlyCard = (want === 'businessCardImg');
     var cur = f.company || {};
     // ── 사람·회사 정보 먼저 (사진이 없어도 이건 가져와야 한다) ──
     // 종전에는 사진만 가져와서, 사업자등록증이 없는 회사(예: 남양인텍)를 고르면
@@ -10318,7 +10328,8 @@ function ContractModal(props){
     // 대표 명함을 담당자로 또 붙이면 똑같은 사람이 두 줄이 된다.
     var _hasCeoRow = (cur.contacts || []).some(function(c){ return c && c.sameAsCeo; });
     var _ceoNm = String(row.ceo || '').replace(/\s+/g, '').toLowerCase();
-    var newContacts = (row.cards || []).map(function(x, i){
+    // 사업자등록증 칸에서 부른 것이면 사람은 손대지 않는다 (담당자는 명함·담당자 칸에서)
+    var newContacts = (onlyBiz ? [] : (row.cards || [])).map(function(x, i){
       return pcToContact(x, i === 0, (row.cardIdsOrdered || [])[i] || '');
     }).filter(function(c){
       if(!_hasCeoRow || !_ceoNm) return true;
@@ -10343,7 +10354,15 @@ function ContractModal(props){
     }
     // ── 사진 ──
     var img = {};
-    try { img = (await pcFetchImages({ bizId: row.bizId, cardId: row.cardId })) || {}; } catch(e){ img = {}; }
+    try {
+      // 필요한 쪽 카드만 읽는다 (아이디를 안 넘기면 pcFetchImages 가 그 쪽을 건너뛴다)
+      img = (await pcFetchImages({
+        bizId:  onlyCard ? '' : row.bizId,
+        cardId: onlyBiz  ? '' : row.cardId
+      })) || {};
+    } catch(e){ img = {}; }
+    if(onlyBiz)  img.businessCardImg = '';   // 사업자등록증 칸 — 명함 사진은 안 건드린다
+    if(onlyCard) img.bizLicenseImg   = '';   // 대표자 명함 칸 — 사업자등록증은 안 건드린다
     var got = [];
     if(img.bizLicenseImg)   got.push('사업자등록증');
     if(img.businessCardImg) got.push('대표자 명함');
@@ -10356,6 +10375,9 @@ function ContractModal(props){
         + '• 가져올 사진: ' + got.join('·') + '\n\n바꿀까요?'))){
         got = []; img = {};                      // 사진만 취소 — 사람·회사 정보는 그대로 넣는다
       }
+    }
+    if(onlyBiz && !img.bizLicenseImg && !Object.keys(info).length){
+      showToast('이 회사는 명함첩에 사업자등록증이 없습니다 — 명함첩에 먼저 등록하세요'); return;
     }
     if(!got.length && !addedN && !Object.keys(info).length){
       showToast('이 회사에서 새로 가져올 것이 없습니다 (이미 다 들어와 있습니다)'); return;
@@ -12785,7 +12807,7 @@ function ContractModal(props){
       initialQuery: ((f.company && f.company.name) || '').trim().length >= 2 ? (f.company.name || '').trim() : '',
       want: pcCoPick,
       onClose: function(){ setPcCoPick(''); },
-      onSelect: function(row){ setPcCoPick(''); fillCompanyImagesFromPucards(row); }
+      onSelect: function(row){ var w = pcCoPick; setPcCoPick(''); fillCompanyImagesFromPucards(row, w); }
     })
   );
 }
