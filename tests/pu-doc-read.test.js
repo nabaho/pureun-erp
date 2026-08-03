@@ -249,6 +249,81 @@ test('서버 오류·네트워크 끊김에도 예외를 던지지 않는다', a
   assert.ok(b.error);
 });
 
+/* ── 일시적 실패는 스스로 다시 시도한다 ──
+   실사용 보고(2026-08-03): 사업자등록증을 올렸는데 'AI 응답 오류 429' 로 끝났다.
+   429는 "잠시 바쁘다"는 뜻이라 조금 기다렸다 다시 부르면 되는 경우다.
+   한 번 실패로 끝내면 사용자는 서류가 잘못된 줄 안다. */
+
+// 앞의 n번은 실패시키고 그 뒤엔 성공시키는 가짜 서버
+function flakyFetch(failTimes, status, reply) {
+  let n = 0;
+  const fn = function () {
+    n++;
+    if (n <= failTimes) {
+      return Promise.resolve({ ok: false, status: status, json: () => Promise.resolve({}) });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
+      candidates: [{ content: { parts: [{ text: reply }] } }] }) });
+  };
+  fn.tries = function () { return n; };
+  return fn;
+}
+// 기다리지 않고 곧바로 진행하는 가짜 기다림 (검사가 느려지지 않게)
+const noWait = function (fn) { fn(); };
+
+test('AI가 바쁘면(429) 기다렸다 스스로 다시 시도한다', async () => {
+  const R = loadRead();
+  const f = flakyFetch(2, 429, '{"kind":"bizreg","company":"가나상사","bizno":"220-81-62517"}');
+  R.init({ fetch: f, getKey: () => Promise.resolve('KEY'), delay: noWait });
+  const r = await R.read(DUMMY_IMG);
+  assert.equal(r.kind, 'bizreg', '다시 시도해서 읽어냈어야 합니다');
+  assert.equal(f.tries(), 3);
+  assert.equal(r.error, null);
+});
+
+test('서버가 잠깐 죽어도(503) 다시 시도한다', async () => {
+  const R = loadRead();
+  const f = flakyFetch(1, 503, '{"kind":"card","name":"홍길동"}');
+  R.init({ fetch: f, getKey: () => Promise.resolve('KEY'), delay: noWait });
+  assert.equal((await R.read(DUMMY_IMG)).kind, 'card');
+});
+
+test('계속 바쁘면 포기하되, 서류가 잘못된 것처럼 말하지 않는다', async () => {
+  const R = loadRead();
+  const f = flakyFetch(99, 429, '{}');
+  R.init({ fetch: f, getKey: () => Promise.resolve('KEY'), delay: noWait });
+  const r = await R.read(DUMMY_IMG);
+  assert.ok(r.error, '실패 이유가 없습니다');
+  // 무한정 부르면 안 된다
+  assert.ok(f.tries() <= 4, '다시 시도를 너무 많이 합니다: ' + f.tries());
+  // 사람이 무엇을 하면 되는지 알 수 있어야 한다
+  assert.match(r.error, /잠시|다시/, '기다렸다 다시 하라는 안내가 없습니다');
+  assert.ok(!/서류가 아/.test(r.error), '서류가 잘못된 것처럼 말합니다: ' + r.error);
+});
+
+test('키가 틀린 것(400·403)은 다시 시도해도 소용없다 — 곧바로 알려준다', async () => {
+  const R = loadRead();
+  const f = flakyFetch(99, 403, '{}');
+  R.init({ fetch: f, getKey: () => Promise.resolve('KEY'), delay: noWait });
+  const r = await R.read(DUMMY_IMG);
+  assert.equal(f.tries(), 1, '고쳐질 수 없는 오류로 서버를 여러 번 불렀습니다');
+  assert.ok(r.error);
+});
+
+test('판독 실패는 「서류로 보이지 않음」과 다른 것이다', async () => {
+  // 실사용 보고: 사업자등록증이 맞는데 '서류로 보이지 않음' 이라고 떴다.
+  // 판독 실패(error 있음)와 정말 서류가 아닌 것(error 없음)을 화면이 가를 수 있어야 한다.
+  const R1 = loadRead();
+  R1.init({ fetch: flakyFetch(99, 429, '{}'), getKey: () => Promise.resolve('KEY'), delay: noWait });
+  const failed = await R1.read(DUMMY_IMG);
+  assert.ok(failed.error, '판독 실패에는 error 가 있어야 한다');
+
+  const R2 = loadRead();
+  R2.init({ fetch: fakeFetch('{"kind":"other"}'), getKey: () => Promise.resolve('KEY') });
+  const notDoc = await R2.read(DUMMY_IMG);
+  assert.equal(notDoc.error, null, '정말 서류가 아닌 것에는 error 가 없어야 한다');
+});
+
 test('AI가 JSON이 아닌 말을 해도 터지지 않는다', async () => {
   const R = loadRead();
   R.init({ fetch: fakeFetch('죄송합니다, 읽을 수 없습니다.'), getKey: () => Promise.resolve('KEY') });

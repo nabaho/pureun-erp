@@ -226,6 +226,19 @@ test('크게 보기에 판독 결과 패널과 다시 판독이 있다', () => {
   assert.ok(again && again[0].includes('loadFull('), '다시 판독이 미리보기로 읽고 있습니다');
 });
 
+test('판독 실패를 「서류로 보이지 않음」이라고 말하지 않는다', () => {
+  // 실사용 보고(2026-08-03): 사업자등록증이 맞는데 AI가 답을 못 준 것을
+  // '서류로 보이지 않음'으로 표시했다 — 사실이 아닌 안내였다.
+  assert.match(app, /function readLabel\(/);
+  const fn = app.match(/function readLabel\([\s\S]*?\n\}/);
+  assert.ok(fn, 'readLabel 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /read\.error/, '실패 여부를 보지 않고 딱지를 정합니다');
+  assert.match(fn[0], /판독 실패/);
+  // 딱지 문구를 만드는 곳이 한 군데여야 한다 — 여러 곳이면 한쪽만 고쳐진다
+  assert.ok(!/READ_LABEL\[read\.kind\]/.test(app.replace(/function readLabel\([\s\S]*?\n\}/, '')),
+    'readLabel 밖에서 딱지 문구를 따로 만들고 있습니다');
+});
+
 test('판독 결과도 이스케이프해서 화면에 넣는다', () => {
   // AI가 돌려준 문자열을 그대로 넣으면 화면이 뚫린다
   assert.match(app, /esc\(readLine\(/);
