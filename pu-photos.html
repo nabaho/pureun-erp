@@ -61,7 +61,10 @@ button{font-family:inherit;cursor:pointer}
 .uprow.s-wait .st{color:var(--sub)}
 .uprow.s-up .st{color:var(--blue)}
 .uprow.s-retry .st{color:#b45309}
+.uprow.s-fail .st{color:#b91c1c}
 .uprow.s-done .st{color:#15803d}
+.uprow{flex-wrap:wrap}
+.uprow .er{width:100%;font-size:11px;color:#8a94a6;margin-top:2px;word-break:break-all}
 
 #grid{margin-top:4px}
 #grid .day{display:flex;align-items:baseline;gap:8px;margin:16px 0 8px}
@@ -229,7 +232,9 @@ function initQueue() {
     queue = PuPhotoQueue.create({
       save: PuPhotoStore.savePhoto,   // 쓰기는 저장 층으로만 나간다
       idb: idbAdapter(dbi),
-      onChange: onQueueChange
+      onChange: onQueueChange,
+      /* 권한 거절은 재시도해도 소용없다 — "신호 약함"으로 오보고하지 않는다. */
+      isFatal: function (e) { return /permission[ _-]?denied/i.test((e && (e.message || e.code)) || ''); }
     });
     return queue.resume();            // 지난번에 못 올라간 사진을 이어서
   }).catch(function (e) {
@@ -338,7 +343,7 @@ function shrink(file, maxEdge) {
 
 /* ══════ 올리는 중 목록 ══════ */
 const UP_HIDE_MS = 3000; // 완료된 줄이 목록에서 내려가기까지
-const UP_STATE = { wait: '대기', up: '올리는 중', retry: '신호 약함 — 자동 재시도', done: '완료 ✓' };
+const UP_STATE = { wait: '대기', up: '올리는 중', retry: '신호 약함 — 자동 재시도', fail: '막힘 — 권한이 없습니다', done: '완료 ✓' };
 let upJobs = [];
 
 function onQueueChange(list) {
@@ -359,11 +364,15 @@ function renderUp() {
   const now = Date.now();
   const rows = upJobs.filter(j => j.state !== 'done' || !j._hideAt || j._hideAt > now);
   $('upWrap').style.display = rows.length ? 'block' : 'none';
-  $('upList').innerHTML = rows.map(j =>
-    '<div class="uprow s-' + esc(j.state) + '">' +
-    '<span class="nm">' + esc(j.name || '사진') + '</span>' +
-    '<span class="st">' + (UP_STATE[j.state] || esc(j.state)) + '</span></div>'
-  ).join('');
+  $('upList').innerHTML = rows.map(j => {
+    /* 원인(클라우드가 준 오류문)은 진단에 필요하니 재시도·막힘 줄에 함께 보여준다.
+       이것이 없으면 "왜 안 되나"를 아무도 알 수 없다(2026-08-03 실사용 보고). */
+    const cause = (j.state === 'retry' || j.state === 'fail') && j.error
+      ? '<span class="er">원인: ' + esc(j.error) + '</span>' : '';
+    return '<div class="uprow s-' + esc(j.state) + '">' +
+      '<span class="nm">' + esc(j.name || '사진') + '</span>' +
+      '<span class="st">' + (UP_STATE[j.state] || esc(j.state)) + '</span>' + cause + '</div>';
+  }).join('');
 }
 
 /* ══════ 날짜별 격자 ══════

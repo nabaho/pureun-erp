@@ -145,6 +145,40 @@ test('retryNow — 신호가 돌아오면 기다리지 않고 바로 다시 시�
   assert.equal(tries, 2);
 });
 
+test('권한 거절 같은 영구 실패는 재시도하지 않고 막힘으로 표시한다', async () => {
+  // 실사용 보고(2026-08-03): 규칙이 없어 거절되는데 "신호 약함 — 자동 재시도"만
+  // 계속 나왔다. 재시도해서 풀릴 일이 아니면 그렇게 말해줘야 한다.
+  const Q = loadQueue();
+  const idb = fakeIdb();
+  const timer = fakeTimer();
+  const q = Q.create({
+    save: () => Promise.reject(new Error('PERMISSION_DENIED: Permission denied')),
+    idb, setTimeout: timer,
+    isFatal: e => /permission[ _-]?denied/i.test((e && e.message) || '')
+  });
+  await q.enqueue({ id: 'a' });
+  await settle();
+  assert.equal(q.jobs[0].state, 'fail');
+  assert.equal(timer.list.length, 0, '영구 실패인데 재시도를 예약했습니다');
+  assert.equal(idb.m.size, 1, '실패한 사진이 기기에서 사라졌습니다 — 남아 있어야 규칙을 고친 뒤 살릴 수 있다');
+});
+
+test('retryNow는 막힘(fail) 상태도 깨운다 — 규칙을 고친 뒤 다시 올릴 길', async () => {
+  const Q = loadQueue();
+  let tries = 0;
+  const q = Q.create({
+    save: () => { tries++; return tries === 1 ? Promise.reject(new Error('PERMISSION_DENIED')) : Promise.resolve(); },
+    idb: fakeIdb(),
+    isFatal: e => /permission/i.test((e && e.message) || '')
+  });
+  await q.enqueue({ id: 'a' });
+  await settle();
+  assert.equal(q.jobs[0].state, 'fail');
+  q.retryNow();
+  await settle();
+  assert.equal(q.jobs[0].state, 'done');
+});
+
 test('상태가 바뀔 때마다 onChange로 알려준다', async () => {
   const Q = loadQueue();
   const states = [];

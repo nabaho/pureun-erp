@@ -20,6 +20,9 @@
     var idb = opts.idb;
     var onChange = opts.onChange || function () {};
     var delay = opts.setTimeout || function (fn, ms) { return setTimeout(fn, ms); };
+    /* 영구 실패 판정 — 권한 거절처럼 재시도해서 풀릴 일이 아닌 오류.
+       판정 기준은 저장소마다 다르므로 주입받는다. 없으면 전부 재시도 대상. */
+    var isFatal = opts.isFatal || function () { return false; };
 
     var jobs = [];
     var running = false; // 한 번에 한 장씩 — 폰 회선에서 동시 업로드는 서로를 굶긴다
@@ -58,9 +61,18 @@
         return idb.del(job.id).then(function () { snapshot(); kick(); });
       }).catch(function (e) {
         job.tries += 1;
-        job.state = 'retry';
         job.error = (e && e.message) || String(e);
         running = false;
+        /* 권한 거절 같은 영구 실패는 재시도해도 소용없다 — "신호 약함"이라고
+           말하면 사용자가 하염없이 기다린다(2026-08-03 실사용 보고). 막힘으로
+           표시하고 멈춘다. 사진은 기기에 남아 있으니 원인을 고친 뒤 살릴 수 있다. */
+        if (isFatal(e)) {
+          job.state = 'fail';
+          snapshot();
+          kick(); // 다음 사진은 원인이 다를 수 있으니 계속 진행한다
+          return;
+        }
+        job.state = 'retry';
         snapshot();
         /* 5초 → 10초 → 20초 … 최대 5분. 신호가 돌아오면 retryNow가 바로 깨운다. */
         var wait = Math.min(RETRY_BASE_MS * Math.pow(2, job.tries - 1), RETRY_MAX_MS);
@@ -84,11 +96,12 @@
       });
     }
 
-    /* 신호가 돌아왔다(online 이벤트 등) — 기다리는 시간 없이 바로 다시 시도. */
+    /* 신호가 돌아왔다(online 이벤트 등) — 기다리는 시간 없이 바로 다시 시도.
+       막힘(fail)도 같이 깨운다 — 규칙을 고친 뒤 다시 올릴 길이 있어야 한다. */
     function retryNow() {
       var woke = false;
       for (var i = 0; i < jobs.length; i++) {
-        if (jobs[i].state === 'retry') { jobs[i].state = 'wait'; woke = true; }
+        if (jobs[i].state === 'retry' || jobs[i].state === 'fail') { jobs[i].state = 'wait'; woke = true; }
       }
       if (woke) { snapshot(); kick(); }
     }
