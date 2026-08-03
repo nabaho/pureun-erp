@@ -148,6 +148,64 @@ test('미리보기를 끼워 넣을 때 서류 딱지를 지우지 않는다', (
   assert.match(fill[0], /insertBefore/);
 });
 
+/* ── 확인 필요 모아보기 · 여러 장 판독 ── */
+
+test('다시 판독해도 검증 통과분은 자동으로 명함첩에 간다', () => {
+  // 예전에는 올릴 때만 자동이고 다시 판독하면 단추를 한 번 더 눌러야 했다.
+  const fn = app.match(/function readPhoto\([\s\S]*?\n\}/);
+  assert.ok(fn, 'readPhoto 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /read\.auto && canSend\(read\)/, '다시 판독 후 자동 등록이 없습니다');
+  // 판독하는 길이 하나여야 두 길이 어긋나지 않는다
+  assert.match(app, /function readAgain\(\)[\s\S]{0,400}readPhoto\(id\)/);
+});
+
+test('확인이 필요한 것만 모아 볼 수 있다', () => {
+  assert.match(app, /function needsCheck\(/);
+  assert.match(app, /id="needBox"/);
+  assert.match(app, /function toggleNeed\(/);
+  assert.match(app, /확인 필요/);
+});
+
+test('확인 필요 판정에 아직 판독 안 한 것과 서류 아닌 것은 안 든다', () => {
+  // 안 한 일과 어긋난 일은 다르다. 서류가 아닌 사진은 읽을 것이 없다.
+  const fn = app.match(/function needsCheck\([\s\S]*?\n\}/);
+  assert.ok(fn, 'needsCheck 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /if \(!r\) return false/);
+  assert.match(fn[0], /kind === 'other'\) return false/);
+  // 판독 실패·검증 걸림·아직 안 보낸 것은 든다
+  assert.match(fn[0], /r\.error\) return true/);
+  assert.match(fn[0], /!r\.auto\) return true/);
+  assert.match(fn[0], /filed && r\.filed\.id\)\) return true/);
+});
+
+test('확인 필요 표시가 격자 칸에 바로 보인다', () => {
+  assert.match(app, /needsCheck\(it\) \? '<span class="wn">/);
+});
+
+test('여러 장을 한꺼번에 판독할 수 있다', () => {
+  assert.match(app, /function readSelected\(/);
+  assert.match(app, /id="readSelBtn"/);
+});
+
+/* readSelected 안에 함수(step)가 하나 더 있어 정규식으로 끝을 잡으면 그 안쪽에서
+   끊긴다. 시작 위치부터 넉넉히 잘라 본다. */
+function bodyAfter(marker, len) {
+  const i = app.indexOf(marker);
+  assert.ok(i >= 0, marker + ' 를 찾을 수 없습니다');
+  return app.slice(i, i + (len || 1600));
+}
+
+test('여러 장 판독은 한 번에 하나씩 부른다', () => {
+  // AI 무료 등급은 분당 횟수가 정해져 있어 동시에 던지면 다 막힌다
+  const body = bodyAfter('function readSelected(');
+  assert.ok(!/Promise\.all/.test(body), '동시에 여러 장을 던지고 있습니다');
+  assert.match(body, /step\(i \+ 1\)/, '차례로 부르지 않습니다');
+});
+
+test('여러 장 판독 중 한 장이 실패해도 나머지를 계속한다', () => {
+  assert.match(bodyAfter('function readSelected('), /failed\+\+/);
+});
+
 /* ── 2단 화면 · 사진 지우기 ── */
 
 test('넓은 화면은 왼쪽 대시보드 + 오른쪽 격자로 나뉜다', () => {
@@ -329,9 +387,10 @@ test('크게 보기에 판독 결과 패널과 다시 판독이 있다', () => {
   assert.match(app, /id="readPanel"/);
   assert.match(app, /function renderReadPanel\(/);
   assert.match(app, /function readAgain\(/);
-  // 다시 판독은 원판으로 읽어야 한다 — 미리보기(240px)로는 글씨가 안 보인다
-  const again = app.match(/function readAgain\(\)[\s\S]*?\n\}/);
-  assert.ok(again && again[0].includes('loadFull('), '다시 판독이 미리보기로 읽고 있습니다');
+  // 판독은 원판으로 읽어야 한다 — 미리보기(240px)로는 글씨가 안 보인다.
+  // (다시 판독·여러 장 판독이 함께 쓰는 readPhoto 안에 있다)
+  const one = app.match(/function readPhoto\([\s\S]*?\n\}/);
+  assert.ok(one && one[0].includes('loadFull('), '판독이 미리보기로 읽고 있습니다');
 });
 
 test('판독 실패를 「서류로 보이지 않음」이라고 말하지 않는다', () => {
