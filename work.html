@@ -395,6 +395,10 @@
   .c3{display:grid;grid-template-columns:1.1fr .6fr 1.1fr;gap:6px}
   .c3 input{padding:5px 8px;border:1px solid var(--line);border-radius:6px;font-size:12px;min-width:0}
   .c3 input:focus{outline:none;border-color:var(--acc);box-shadow:0 0 0 2px rgba(37,99,235,.1)}
+  .c3.c4{grid-template-columns:1.1fr .6fr 1.1fr 24px}   /* 담당자 한 줄 + ✕ */
+  .c3 .ctx{border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--faint);
+    font-size:12px;cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:center}
+  .c3 .ctx:hover{border-color:#fca5a5;color:#b91c1c}
   .subrow{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
   .subchip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;
     background:#f3f0fd;color:#5b21b6;border-radius:12px;padding:2px 9px}
@@ -3832,7 +3836,8 @@ function calName(sid){ return (_peU2N&&_peU2N[sid])||''; }
    pu-erp companies[].contacts[] = {name, role, phone, fax, email, isPrimary}
    (옛 contactName/contactPhone은 pu-erp가 contacts[0]으로 마이그레이션한다)
    업체 담당자와 이 건 담당자가 다를 수 있으므로(인사담당 ↔ 안전담당)
-   item.contact{name,rank,phone}에 건별로 따로 적을 수 있게 둔다. */
+   item.contacts[{name,rank,position,phone}]에 건별로 여러 명 적을 수 있게 둔다.
+   item.contact(단수)는 contacts[0]과 늘 같게 유지한다 — 검색·푸른이알피 연동이 그 칸을 본다. */
 var coSrc=null, _coT=null;
 function coLoad(){
   if(coSrc) return Promise.resolve(coSrc);
@@ -3871,13 +3876,38 @@ function _cList(o){
     return [{name:o.contactName||'',role:'',phone:o.contactPhone||'',email:o.contactEmail||''}];
   return [];
 }
+/* 담당자의 '직책'이 저장된 칸이 세 가지다.
+     position … 업체관리 담당자 편집칸 (앞으로의 공통 이름)
+     role     … 계약모달 회사정보 담당자칸 (옛 이름, 실데이터가 많다)
+     rank     … 이 화면의 건별 담당자칸 (옛 이름)
+   ⚠ 이 함수와 똑같은 것이 pu-erp.html 에도 있다(같은 이름·같은 순서). 두 파일은
+     코드를 나눠 쓸 수 없어 복사해 두었다 — 한쪽을 고치면 다른 쪽도 고쳐야 한다.
+   ⚠ 쓸 때는 position 이 기준이다(rank 는 옛 데이터를 위해 함께 적는다). */
+function contactRole(c){ return (c&&(c.position||c.role||c.rank))||''; }
 function coContacts(it){
   var r=peRec(it);
   var a=_cList(r&&r.company);
   if(a.length){ a.forEach(function(c){ c._src='이 건'; }); return a; }
+  // 이관본(사건·컨설팅·기금·기타)은 contacts 를 레코드 최상위에 둔다 — company 상자가 없다.
+  // 그래서 여기서 한 번 더 잡아야 이관된 건의 담당자가 보인다(전에는 통째로 안 보였다).
+  var a2=_cList(r);
+  if(a2.length){ a2.forEach(function(c){ c._src='이 건'; }); return a2; }
   var b=_cList(coFind(it));
   b.forEach(function(c){ c._src='업체관리'; });
   return b;
+}
+/* 이 건 담당자 — 여러 명. 옛 데이터는 it.contact 한 명뿐이라 그것도 읽는다. */
+function itemContacts(it){
+  if(!it) return [];
+  if(it.contacts&&it.contacts.length) return it.contacts.filter(function(c){ return !!c; });
+  var c=it.contact;
+  if(c&&(c.name||c.phone||contactRole(c))) return [c];
+  return [];
+}
+// 같은 사람인가 — 이름(공백 제거) + 전화(숫자만). pu-erp 의 _normPersonKey 와 같은 규칙이다
+function _ctKey(c){
+  return String((c&&c.name)||'').replace(/\s+/g,'').toLowerCase()
+    +'|'+String((c&&c.phone)||'').replace(/[^0-9]/g,'');
 }
 function telHref(p){ return String(p||'').replace(/[^0-9+]/g,''); }
 // 드로어: 사업장 담당자 + 담당(주/부). 부담당은 여기서 여러 명 지정한다
@@ -3908,28 +3938,37 @@ function dOrgHTML(it){
 }
 function dPeopleHTML(id,it){
   if(!coSrc) coLoad().then(function(){ if(S.drawerId===id) renderDrawer(); });
-  var cs=coContacts(it), mc=it.contact||{};
+  var cs=coContacts(it), mine=itemContacts(it);
   var h='<div class="dbox"><div class="bh">👤 사업장 담당자'+hlp('people')
     +'<span class="r">'+(cs.length?(cs[0]._src||'')+' '+cs.length+'명'
       :(peLinked(it)?'등록 없음':'연동 안 됨'))+'</span></div><div class="bb">';
   cs.slice(0,5).forEach(function(c){
     h+='<div class="pc"><span class="nm">'+esc(c.name||'—')+'</span>'
-      +(c.role?'<span class="rk">'+esc(c.role)+'</span>':'')
+      +(contactRole(c)?'<span class="rk">'+esc(contactRole(c))+'</span>':'')
       +(c.phone?'<a href="tel:'+esc(telHref(c.phone))+'">'+esc(c.phone)+'</a>'
               :'<span class="muted" style="font-size:11.5px">연락처 없음</span>')
       +(c.email?'<span class="muted" style="font-size:11px">'+esc(c.email)+'</span>':'')
       +'<span class="src">'+esc(c._src||'')+'</span></div>';
   });
-  h+='<div class="c3">'
-    +'<input id="ct-nm" value="'+esc(mc.name||'')+'" placeholder="이 건 담당자 이름" onchange="saveContact(\''+escJ(id)+'\')">'
-    +'<input id="ct-rk" value="'+esc(mc.rank||'')+'" placeholder="직급" onchange="saveContact(\''+escJ(id)+'\')">'
-    +'<input id="ct-ph" value="'+esc(mc.phone||'')+'" placeholder="연락처" onchange="saveContact(\''+escJ(id)+'\')">'
-    +'</div>'
-    // 손으로 옮겨 적지 않게 — 명함첩에서 골라 넣는다
-    +'<div class="row" style="gap:6px">'
+  // 이 건 담당자는 여러 명 적을 수 있다 (인사담당 ↔ 안전담당처럼 건마다 다른 사람이 붙는다).
+  // 아직 저장 전인 빈 줄 수는 화면에만 둔다(S._ctAdd) — 빈 줄을 저장해 두지 않는다.
+  var rows=_ctRowCount(id);                        // 늘 한 줄은 적을 수 있게
+  for(var ri=0;ri<rows;ri++){
+    var mc=mine[ri]||{}, sv='saveContactAt(\''+escJ(id)+'\','+ri+')';
+    h+='<div class="c3 c4">'
+      +'<input id="ct-nm-'+ri+'" value="'+esc(mc.name||'')+'" placeholder="'+(ri===0?'이 건 담당자 이름':'담당자 '+(ri+1))+'" onchange="'+sv+'">'
+      +'<input id="ct-rk-'+ri+'" value="'+esc(contactRole(mc))+'" placeholder="직급" onchange="'+sv+'">'
+      +'<input id="ct-ph-'+ri+'" value="'+esc(mc.phone||'')+'" placeholder="연락처" onchange="'+sv+'">'
+      +'<span class="ctx" onclick="contactDelAt(\''+escJ(id)+'\','+ri+')" title="이 줄을 담당자에서 뺍니다">✕</span>'
+      +'</div>';
+  }
+  h+='<div class="row" style="gap:6px">'
+    +'<span class="chipbtn" onclick="contactAdd(\''+escJ(id)+'\')" '
+    +'title="이 건 담당자를 한 명 더 적습니다">＋ 담당자 추가</span>'
+    // 손으로 옮겨 적지 않게 — 명함첩에서 골라 넣는다 (고른 사람은 한 명 더로 붙는다)
     +'<span class="chipbtn" onclick="cardModal(\''+escJ(id)+'\')" '
-    +'title="명함첩에서 이름·직급·연락처를 찾아 넣습니다">📇 명함첩에서 찾기</span>'
-    +(mc.name||mc.phone?'<span class="chipbtn" onclick="saveContactClear(\''+escJ(id)+'\')" title="이 건 담당자 칸을 비웁니다">✕ 비우기</span>':'')
+    +'title="명함첩에서 이름·직급·연락처를 찾아 담당자로 한 명 더 넣습니다">📇 명함첩에서 찾기</span>'
+    +(mine.length?'<span class="chipbtn" onclick="saveContactClear(\''+escJ(id)+'\')" title="이 건 담당자를 모두 비웁니다">✕ 비우기</span>':'')
     +'</div>'
     +'</div></div>'
     +dOrgHTML(it);
@@ -3957,15 +3996,62 @@ function _subOpts(it){
   return (_staffCache||[]).filter(function(u){ return !used[u.sid]; })
     .map(function(u){ return '<option value="'+esc(u.sid)+'" data-n="'+esc(u.name)+'">'+esc(u.name)+'</option>'; }).join('');
 }
-function saveContact(id){
-  var g=function(k){ var e=$(k); return e?e.value.trim():''; };
-  var nm=g('ct-nm'), rk=g('ct-rk'), ph=g('ct-ph');
-  patchItem(id,{contact:(nm||rk||ph)?{name:nm,rank:rk,phone:ph}:null})
-    .then(function(ok){ if(ok) toast('👤 담당자 저장됨'); });
+/* 이 건 담당자 저장 — 화면에 그려진 줄을 모두 읽어 배열로 담는다.
+   ⚠ 다시 그리지 않는다(renderDrawer 없음) — 적는 중에 다시 그리면 포커스가 날아간다.
+   ⚠ contact(단수)는 contacts[0]과 늘 같게 둔다. 검색·푸른이알피 연동이 아직 그 칸을 본다. */
+function _ctRows(){
+  var out=[];
+  for(var i=0;;i++){
+    var e=$('ct-nm-'+i); if(!e) break;
+    var g=function(k){ var x=$(k+'-'+i); return x?x.value.trim():''; };
+    out.push({name:e.value.trim(), rank:g('ct-rk'), phone:g('ct-ph')});
+  }
+  return out;
+}
+// 화면에 그리는 줄 수 — 빈 줄 한 줄은 늘 있다. 그리는 쪽과 [＋ 추가]가 같은 셈을 봐야 어긋나지 않는다
+function _ctRowCount(id){
+  return Math.max(1, itemContacts(items[id]||{}).length+((S._ctAdd&&S._ctAdd[id])||0));
+}
+function _ctSave(id,arr,msg){
+  // 줄이 화면에 없으면 아무것도 하지 않는다 — 빈 화면을 읽어 담당자를 지우는 사고를 막는다
+  if(!$('ct-nm-0')) return Promise.resolve(false);
+  // 직책은 rank(옛 칸)와 position(푸른이알피 공통 칸) 둘 다 적는다
+  var clean=arr.filter(function(c){ return c&&(c.name||c.rank||c.phone); })
+    .map(function(c){ return {name:c.name||'', rank:c.rank||'', position:c.rank||'', phone:c.phone||''}; });
+  if(S._ctAdd) S._ctAdd[id]=0;
+  if(!clean.length&&!itemContacts(items[id]||{}).length) return Promise.resolve(true);   // 원래 비었다 — 쓸 것이 없다
+  return patchItem(id,{contacts:clean.length?clean:null, contact:clean[0]||null})
+    .then(function(ok){ if(ok&&msg) toast(msg); return ok; });
+}
+function saveContactAt(id,i){ return _ctSave(id,_ctRows(),'👤 담당자 저장됨 ('+(i+1)+'번째 줄)'); }
+function contactAdd(id){
+  // 적던 줄을 먼저 저장한다 — 다시 그리면 저장 안 한 글자가 날아간다
+  _ctSave(id,_ctRows()).then(function(){
+    S._ctAdd=S._ctAdd||{};
+    var shown=_ctRowCount(id);
+    S._ctAdd[id]=(shown+1)-itemContacts(items[id]||{}).length;   // 한 줄 더
+    renderDrawer();
+    var e=$('ct-nm-'+shown); if(e) e.focus();
+  });
+}
+function contactDelAt(id,i){
+  var arr=_ctRows();
+  var g=arr.splice(i,1)[0]||{};
+  _ctSave(id,arr).then(function(ok){
+    if(!ok) return; toast('담당자에서 뺐습니다 — '+(g.name||'빈 줄')); renderDrawer(); route();
+  });
 }
 function saveContactClear(id){
-  patchItem(id,{contact:null}).then(function(ok){
-    if(!ok) return; toast('담당자 칸을 비웠습니다'); renderDrawer(); route();
+  var n=itemContacts(items[id]||{}).length;
+  // 여러 명이면 한 번 묻는다 — 한꺼번에 사라지는 것을 모르고 누를 수 있다
+  var ask=(n>1)?confirmM('이 건 담당자 '+n+'명을 모두 비웁니다.',{ok:'모두 비우기',danger:true})
+               :Promise.resolve(true);
+  ask.then(function(yes){
+    if(!yes) return;
+    if(S._ctAdd) S._ctAdd[id]=0;
+    patchItem(id,{contact:null,contacts:null}).then(function(ok){
+      if(!ok) return; toast('담당자 칸을 비웠습니다'); renderDrawer(); route();
+    });
   });
 }
 /* ── 명함첩에서 담당자 찾아 넣기 ────────────────────────────────
@@ -4126,16 +4212,25 @@ function cardModal(id,q){
 var _cardQT=null;
 function onCardQ(v){ S._cardQ=v; clearTimeout(_cardQT);
   _cardQT=setTimeout(function(){ if(S._cardFor) cardModal(S._cardFor); },220); }
+/* 명함첩에서 고른 사람은 '한 명 더'로 붙인다 — 담당자를 여러 명 둘 수 있게 됐으므로
+   지금 적어 둔 사람을 덮어쓰지 않는다(안전쪽). 특정 줄만 바꾸려면 그 줄을 ×로 지우고 다시 고른다. */
 function cardPick(cid){
   var id=S._cardFor, c=(cardIdx||[]).filter(function(x){ return x._id===cid; })[0];
   if(!id||!c){ toast('명함을 찾을 수 없습니다','warn'); return; }
+  var _rk=[c.d,c.ti].filter(Boolean).join(' ').trim();
   var rec={name:String(c.n||'').trim(),
-           rank:[c.d,c.ti].filter(Boolean).join(' ').trim(),
+           rank:_rk, position:_rk,      // rank=옛 칸(그대로 둔다), position=푸른이알피가 읽는 칸
            phone:cardPhone(c)};
   if(!rec.name&&!rec.rank&&!rec.phone){ toast('이 명함에는 담을 내용이 없습니다','warn'); return; }
-  patchItem(id,{contact:rec}).then(function(ok){
+  var arr=itemContacts(items[id]||{}).slice();
+  if(arr.some(function(x){ return _ctKey(x)===_ctKey(rec); })){
+    closeM(); toast('이미 담당자로 들어 있습니다','warn'); return;
+  }
+  arr.push(rec);
+  if(S._ctAdd) S._ctAdd[id]=0;                     // 저장 전 빈 줄은 정리한다
+  patchItem(id,{contacts:arr,contact:arr[0]||null}).then(function(ok){
     if(!ok) return;
-    closeM(); toast('📇 '+(rec.name||'담당자')+' — 담당자 칸에 넣었습니다');
+    closeM(); toast('📇 '+(rec.name||'담당자')+' — 담당자로 넣었습니다 (지금 '+arr.length+'명)');
     renderDrawer(); route();
   });
 }

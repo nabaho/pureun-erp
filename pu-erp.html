@@ -9386,7 +9386,61 @@ function contractFormSubtypeFill(form){
   });
   return Object.assign({}, form, { typeCodes: tc });
 }
+/* ============ 사업장 담당자의 직책 — 칸 이름이 셋으로 갈려 있다 ============
+   같은 '직책'이 저장된 칸이 세 가지다.
+     position … 업체관리 담당자 편집칸 · 계약 근로자칸 (앞으로의 공통 이름)
+     role     … 계약모달의 회사정보 담당자칸(옛 이름, 실데이터가 많다)
+     rank     … 업무관리(work.html)의 건별 담당자칸(옛 이름)
+   칸을 하나로 합치려면 실데이터 이관이 필요해, 읽을 때만 세 칸을 다 본다.
+   ⚠ 이 함수와 똑같은 것이 work.html 에도 있다(같은 이름·같은 순서). 두 파일은
+     코드를 나눠 쓸 수 없어 복사해 두었다 — 한쪽을 고치면 다른 쪽도 고쳐야 한다.
+   ⚠ 쓸 때는 position 이 기준이다. 편집칸(입력 상자)은 지금 쓰는 칸을 그대로 쓴다. */
+function contactRole(c){ return (c && (c.position || c.role || c.rank)) || ''; }
+
+/* ============ 계약 → 업체관리 담당자 합치기 (없는 사람만 추가) ============
+   같은 사람인지 = 이름(공백 제거) + 전화번호(숫자만). 둘 다 비면 담을 수 없다.
+   ⚠ 이름은 같은데 전화가 다르면(또는 한쪽이 비면) '다른 사람'으로 보고 따로 넣는다.
+     조용히 합치면 옛 번호가 엉뚱한 사람에게 붙어, 그 번호로 전화를 걸게 된다.
+     같은 사람이었다면 업체관리에서 사람이 보고 지우는 편이 안전하다.
+   ⚠ 이미 있는 사람은 전화·직책·메일까지 하나도 건드리지 않는다 (대표 결정: 추가만). */
+function _normPersonKey(c){
+  if(!c) return '';
+  var n = String(c.name || '').replace(/\s+/g, '').toLowerCase();
+  var p = String(c.phone || '').replace(/[^0-9]/g, '');
+  if(!n && !p) return '';                                 // 이름도 전화도 없으면 담을 수 없다
+  return n + '|' + p;
+}
+function mergeCompanyContacts(existing, incoming){
+  var out = (existing || []).slice();                     // 원본 배열은 바꾸지 않는다
+  var had = out.length;
+  var seen = {};
+  out.forEach(function(c){ var k = _normPersonKey(c); if(k) seen[k] = true; });
+  var hasPrimary = out.some(function(c){ return !!(c && c.isPrimary); });
+  var added = 0, skipped = 0;
+  (incoming || []).forEach(function(c){
+    var k = _normPersonKey(c);
+    if(!k){ skipped++; return; }                          // 빈 담당자 줄
+    if(seen[k]){ skipped++; return; }                     // 이미 있는 사람 — 그대로 둔다
+    seen[k] = true;
+    var first = (added === 0);
+    // 대표 표시를 빼앗지 않는다. 기존이 아예 비어 있을 때만 들고 온 값을 그대로 쓴다.
+    var pr = hasPrimary ? false : (had === 0 ? (first ? !!c.isPrimary : false) : (first ? true : false));
+    if(pr) hasPrimary = true;
+    var n = { name: String(c.name || '').trim(), position: contactRole(c),
+      phone: String(c.phone || '').trim(), email: String(c.email || '').trim(), isPrimary: pr };
+    // 명함첩 출처는 남긴다. 명함 사진(cardImg)·동일인 표시는 계약 화면 것이라 옮기지 않는다.
+    if(c.pcId) n.pcId = c.pcId;
+    if(c.pcAt) n.pcAt = c.pcAt;
+    if(c.bizPhone) n.bizPhone = String(c.bizPhone).trim();
+    if(c.fax) n.fax = String(c.fax).trim();
+    out.push(n); added++;
+  });
+  return { contacts: out, added: added, skipped: skipped };
+}
 try {
+  window.contactRole = contactRole;
+  window._normPersonKey = _normPersonKey;
+  window.mergeCompanyContacts = mergeCompanyContacts;
   window.contractFormSubtypeFill = contractFormSubtypeFill;
   window.contractSubtypeCode = contractSubtypeCode;
   window.contractSubtypeLabel = contractSubtypeLabel;
@@ -10037,6 +10091,10 @@ function ContractModal(props){
   var ar = useState([]); var autoResults = ar[0]; var setAutoResults = ar[1];
   var aidx = useState(-1); var autoIdx = aidx[0]; var setAutoIdx = aidx[1];   // 자동완성 키보드 선택 인덱스
   var cd = useState(false); var confirmedDuplicate = cd[0]; var setConfirmedDuplicate = cd[1];
+  // 중복 안내 배너: 접기(자세히)·이번 편집 동안만 숨기기(✕).
+  // 저장하지 않는다 — 다시 열면 또 보여야 한다. 🔴 확인(confirmedDuplicate)과는 별개다.
+  var dbh = useState(false); var dupBannerHid = dbh[0]; var setDupBannerHid = dbh[1];
+  var ddt = useState(false); var dupDetail = ddt[0]; var setDupDetail = ddt[1];
   // 과거 데이터 입력용: 계약번호 수동 편집
   var en = useState(false); var editNo = en[0]; var setEditNo = en[1];
   var mn = useState(''); var manualNo = mn[0]; var setManualNo = mn[1];
@@ -10812,11 +10870,11 @@ function ContractModal(props){
         var arr = dbGet('companies', []);
         var name = saveData.companyName || (saveData.company && saveData.company.name) || '';
         if(!name) return;
-        var changed = false;
+        var changed = false, ctAdded = 0, ctSkipped = 0;
         arr = arr.map(function(co){
           if(co.name !== name) return co;
           changed = true;
-          return Object.assign({}, co, {
+          var patch = {
             isCMS: !!(saveData.isCMS),
             cmsPayDay: saveData.cmsPayDay || co.cmsPayDay || '',
             taxInvoiceIssueDay: saveData.taxInvoiceIssueDay || co.taxInvoiceIssueDay || '',
@@ -10824,9 +10882,21 @@ function ContractModal(props){
             monthlyAdvisoryFee: saveData.monthlyAdvisoryFee || co.monthlyAdvisoryFee || 0
             // 담당자(managerMain/managerSubs)는 동기화하지 않음 — 업체 담당자는 업체관리에서만 관리
             // (2026-07-12: 계약 저장 시 업체 주담당이 조용히 덮어써지는 사고 방지)
-          });
+            // 사업장 담당자(contacts)는 '없는 사람만 추가'한다 — 수정·삭제는 업체관리에서만 한다
+            // (2026-08 대표 결정: 계약서에 적은 담당자가 업체관리에 안 올라와 손으로 또 적고 있었다)
+          };
+          // 계약에 적은 사업장 담당자를 업체관리 마스터에 더한다. 있는 사람은 손대지 않는다.
+          var mg = mergeCompanyContacts(co.contacts || [],
+            (saveData.company && saveData.company.contacts) || []);
+          if(mg.added > 0){ patch.contacts = mg.contacts; ctAdded += mg.added; ctSkipped += mg.skipped; }
+          return Object.assign({}, co, patch);
         });
         if(changed) dbSet('companies', arr);
+        // 저장 토스트와 겹치지 않게 살짝 뒤에 알린다
+        if(ctAdded > 0) setTimeout(function(){
+          showToast('👤 업체관리에 담당자 ' + ctAdded + '명 추가'
+            + (ctSkipped > 0 ? ' (이미 있던 ' + ctSkipped + '명은 그대로)' : ''));
+        }, 1400);
       } catch(e){ window._erpErrLog && window._erpErrLog(e); }
     })();
 
@@ -11499,10 +11569,26 @@ function ContractModal(props){
         }
         var mySubs = newKinds.map(function(k){ return kindSubText(fEff, k); }).join(' · ');
 
-        return h('div', { style:{ padding:'10px 12px', background:bgColor, border:'1px solid '+borderColor, borderRadius:'6px', margin:'4px 0 10px' } },
-          h('div', { style:{ fontWeight:700, color:titleColor, fontSize:'12px', marginBottom:'4px' } },
+        /* ── 접어 두기 ────────────────────────────────────────────────
+           배너가 길어 아래 입력칸을 반쯤 덮었다. 기본은 한 줄만 보이고
+           [자세히]를 누르면 예전 내용을 그대로 펼친다.
+           ⚠ ✕(닫기)는 🔴 중복 확인 전에는 주지 않는다 — 막는 장치를 눈앞에서
+             치우면 확인한 줄 알고 저장으로 넘어간다. 확인 체크란은 접혀 있어도
+             늘 보이고, ✕ 로 닫아도 confirmedDuplicate 는 건드리지 않는다.
+           ⚠ 닫음은 이 편집창이 열려 있는 동안만이다(state) — 저장하지 않는다. */
+        var blocking = (worst === 'dup' && !confirmedDuplicate);
+        if(dupBannerHid && !blocking) return null;         // 🟡·🟢 는 마음대로 닫는다
+        var reopened = dupBannerHid && blocking;            // 닫아 뒀는데 확인이 풀렸다 → 한 줄로 되살린다
+        var dotIcon = worst === 'dup' ? '🔴' : worst === 'again' ? '🟡' : '🟢';
+        var shortLine = String(conclusion).replace(/^→\s*/, '');
+        var lineColor = blocking ? '#b91c1c' : titleColor;
+        var btnS = { fontSize:'10.5px', padding:'2px 8px', background:'#fff', color:'#475569',
+          border:'1px solid #94a3b8', borderRadius:'4px', cursor:'pointer', fontWeight:700, whiteSpace:'nowrap' };
+        // 펼쳤을 때 보이는 내용 — 예전 배너의 모든 정보를 그대로 옮겨 왔다
+        var detailKids = [
+          h('div', { key:'t', style:{ fontWeight:700, color:titleColor, fontSize:'12px', marginBottom:'4px' } },
             icon + ' ' + title),
-          h('div', { style:{ fontSize:'10.5px', color:'#475569', background:'#fff', border:'1px dashed '+borderColor,
+          h('div', { key:'m', style:{ fontSize:'10.5px', color:'#475569', background:'#fff', border:'1px dashed '+borderColor,
               borderRadius:'5px', padding:'3px 8px', marginBottom:'6px' } },
             '지금 작성 중 ', h('b', { style:{ fontFamily:'monospace' } }, myNo),
             mySubs ? h('span', null, ' · ', h('b', null, mySubs)) : null,
@@ -11568,15 +11654,47 @@ function ContractModal(props){
               )
             );
           }),
-          dupContracts.length > 4 && h('div', { style:{ fontSize:'10.5px', color:'#6b7280', marginTop:'2px' } }, '... 외 ' + (dupContracts.length-4) + '건'),
+          dupContracts.length > 4 && h('div', { key:'more', style:{ fontSize:'10.5px', color:'#6b7280', marginTop:'2px' } }, '... 외 ' + (dupContracts.length-4) + '건'),
           // 결론 한 줄 — 위 판정을 말로 풀어 준다
-          h('div', { style:{ fontSize:'11px', fontWeight:700, color:titleColor, marginTop:'6px' } }, conclusion),
+          h('div', { key:'cc', style:{ fontSize:'11px', fontWeight:700, color:titleColor, marginTop:'6px' } }, conclusion)
+        ];
+
+        return h('div', { style:{ position:'relative', padding:'7px 10px',
+            background: blocking ? '#fef2f2' : bgColor,
+            border:'1px solid '+(blocking ? '#fca5a5' : borderColor), borderRadius:'6px', margin:'4px 0 10px' } },
+          // 한 줄 요약 — 점 · 몇 건 · 결론 한 줄 · [자세히] · [✕]
+          h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap' } },
+            h('span', { style:{ fontSize:'11.5px', fontWeight:700, color:lineColor, whiteSpace:'nowrap' },
+              title: title }, dotIcon + ' 같은 사업장 ' + dupContracts.length + '건'),
+            h('span', { style:{ fontSize:'11px', color: blocking ? '#b91c1c' : '#475569', fontWeight: blocking ? 700 : 500,
+                flex:'1 1 200px', minWidth:0 } },
+              '— ' + (reopened ? '중복 확인이 아직 필요합니다. ' : '') + shortLine),
+            h('button', { type:'button', onClick:function(){ setDupBannerHid(false); setDupDetail(!dupDetail); },
+              style:btnS, title:'기존 계약 목록·계약번호·주담당·금액·이력을 펼쳐 봅니다' },
+              dupDetail ? '접기' : '자세히'),
+            // ✕ 는 🔴 확인 전에는 아예 주지 않는다 (막는 장치를 치울 수는 없다)
+            blocking
+              ? h('span', { style:{ fontSize:'11px', color:'#cbd5e1', fontWeight:700, padding:'2px 6px', cursor:'not-allowed' },
+                  title:'🔴 중복 확인 전에는 닫을 수 없습니다 — 아래 확인란에 체크하면 닫기가 열립니다' }, '✕')
+              : h('button', { type:'button', onClick:function(){ setDupDetail(false); setDupBannerHid(true); },
+                  style:Object.assign({}, btnS, { padding:'2px 7px' }),
+                  title:'이 안내를 이번 편집 동안만 숨깁니다 (다시 열면 또 보입니다)' }, '✕')
+          ),
           // 체크박스: 🔴(같은 세부 종류가 진행 중)일 때만 확인받고 저장을 허용한다
-          needConfirm && h('label', { style:{ display:'flex', alignItems:'center', gap:'6px', marginTop:'8px', cursor:'pointer', fontSize:'11.5px', color:'#92400e', fontWeight:600 } },
+          // ⚠ 접거나 ✕ 로 닫아도 이 줄은 그대로 남는다 — 저장을 막는 장치이기 때문이다
+          needConfirm && h('label', { style:{ display:'flex', alignItems:'center', gap:'6px', marginTop:'6px', cursor:'pointer', fontSize:'11.5px', color:'#92400e', fontWeight:600 } },
             h('input', { type:'checkbox', checked: confirmedDuplicate,
               onChange:function(e){ setConfirmedDuplicate(e.target.checked); },
               style:{ width:'14px', height:'14px', cursor:'pointer' } }),
-            '✔ 동일 사업장이지만 새로운 계약 진행임을 확인했습니다 (저장 허용)')
+            '✔ 동일 사업장이지만 새로운 계약 진행임을 확인했습니다 (저장 허용)'),
+          // [자세히] 로 펼치는 카드 — 아래 입력칸을 밀어내지 않도록 띄워서 얹는다
+          dupDetail && h('div', { style:{ position:'absolute', left:0, right:0, top:'calc(100% + 2px)', zIndex:8200,
+              background:'#fff', border:'1px solid '+borderColor, borderRadius:'6px', padding:'10px 12px',
+              maxHeight:'52vh', overflowY:'auto', boxShadow:'0 10px 28px rgba(0,0,0,0.16)' } },
+            h('div', { style:{ display:'flex', justifyContent:'flex-end', marginBottom:'2px' } },
+              h('button', { type:'button', onClick:function(){ setDupDetail(false); },
+                style:Object.assign({}, btnS, { padding:'2px 7px' }), title:'자세히 닫기' }, '✕ 닫기')),
+            detailKids)
         );
       })(),
 
@@ -16385,8 +16503,8 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                     var primary = cs.find(function(x){return x.isPrimary;}) || cs[0];
                     var second = cs.find(function(x){return x !== primary;});
                     return h('div', { style:{ fontSize:'11.5px', lineHeight:'1.4' } },
-                      h('div', null, primary ? (primary.name + (primary.position ? ' (' + primary.position + ')' : '')) : '-', primary && _cardBtn(primary.name)),
-                      second && h('div', { style:{ color:'#64748b' } }, second.name + (second.position ? ' (' + second.position + ')' : ''), _cardBtn(second.name))
+                      h('div', null, primary ? (primary.name + (contactRole(primary) ? ' (' + contactRole(primary) + ')' : '')) : '-', primary && _cardBtn(primary.name)),
+                      second && h('div', { style:{ color:'#64748b' } }, second.name + (contactRole(second) ? ' (' + contactRole(second) + ')' : ''), _cardBtn(second.name))
                     );
                   })()),
                   // 연락처 (2명까지)
@@ -19221,7 +19339,7 @@ function CaseCompanyInfoModal(props){
         // 담당자
         primaryContact.name && h('div', { style:{ marginTop:'12px' } },
           h('div', { style:{ fontSize:'11.5px', fontWeight:700, color:'#475569', marginBottom:'6px' } }, '담당자'),
-          row('이름', primaryContact.name + (primaryContact.position ? ' (' + primaryContact.position + ')' : '')),
+          row('이름', primaryContact.name + (contactRole(primaryContact) ? ' (' + contactRole(primaryContact) + ')' : '')),
           row('연락처', primaryContact.phone || null),
           row('이메일', primaryContact.email || null)
         ),
@@ -19600,7 +19718,7 @@ function UnifiedDetailModal(props){
               h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'4px' } },
                 p.isPrimary && h('span', { style:{ background:'#1e40af', color:'#fff', fontSize:'10px', padding:'1px 6px', borderRadius:'10px', fontWeight:700 } }, '대표'),
                 h('strong', null, p.name || '-'),
-                p.position && h('span', { style:{ color:'#64748b' } }, '· ' + p.position)),
+                contactRole(p) && h('span', { style:{ color:'#64748b' } }, '· ' + contactRole(p))),
               h('div', { style:{ color:'#475569', fontSize:'11px' } },
                 p.phone ? h('span', { style:{ fontFamily:'monospace', marginRight:'10px' } }, '☎ ' + p.phone) : null,
                 p.email ? h('span', { style:{ fontFamily:'monospace' } }, '✉ ' + p.email) : null)
@@ -39485,8 +39603,15 @@ function MyDeskV2(props){
           if(bw.ti !== undefined){ up['work_erp/items/' + wid + '/title'] = bw.ti; toWs++; }
           if(bw.cl !== undefined){ up['work_erp/items/' + wid + '/client'] = bw.cl; toWs++; }
           if(bw.cn !== undefined || bw.cr !== undefined || bw.cp !== undefined){
-            up['work_erp/items/' + wid + '/contact'] =
-              (scn || scr || scp) ? { name:scn, rank:scr, phone:scp } : null;
+            // 업무관리는 이제 사업장 담당자를 여러 명 둔다(items/{id}/contacts).
+            // 첫 사람만 맞추고 뒷사람은 그대로 둔다 — 배열을 통째로 갈면 업무관리에서
+            // 손으로 더 적어 둔 담당자가 조용히 사라진다. contact(단수)는 contacts[0]과 같게 유지한다.
+            // 직책은 rank(옛 이름)와 position(공통 이름) 둘 다 적어 양쪽이 읽을 수 있게 한다.
+            var _c1 = (scn || scr || scp) ? { name:scn, rank:scr, position:scr, phone:scp } : null;
+            var _crest = (w.contacts || []).slice(1);
+            up['work_erp/items/' + wid + '/contact'] = _c1;
+            up['work_erp/items/' + wid + '/contacts'] =
+              _c1 ? [_c1].concat(_crest) : (_crest.length ? _crest : null);
             toWs++;
           }
           var cpf = {};
@@ -39502,7 +39627,9 @@ function MyDeskV2(props){
             }
             var c0 = Object.assign({}, i0 >= 0 ? cl2[i0] : { isPrimary:true });
             if(!c0.id) c0.id = 'mc-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-            c0.name = scn; c0.role = scr; c0.phone = scp;
+            // 직책은 role(계약 화면이 읽는 옛 칸)과 position(업체관리가 읽는 공통 칸) 둘 다 적는다.
+            // 판정·비교는 그대로 role 로 한다 — 기준선(pesync)을 흔들지 않기 위해서다.
+            c0.name = scn; c0.role = scr; c0.position = scr; c0.phone = scp;
             if(i0 >= 0) cl2[i0] = c0; else cl2.unshift(c0);
             comp.contacts = cl2;
             cpf.company = comp;
