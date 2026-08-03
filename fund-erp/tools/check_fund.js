@@ -112,10 +112,11 @@ ok('대장 머리글(세부내역) 인식', src.includes('/적요|내용|내역|
 // 적요가 'BZ뱅크'처럼 수단만 적힌 통장이 있다 — 실제 상대방이 든 설명 열을 버리면 출연금을 못 잡는다
 ok('남는 설명 열을 성격 힌트로 모음', src.includes('if(col.memo==null)col.memo=c; else if(col.kind.indexOf(c)<0)col.kind.push(c); }'));
 ok('예금주명 열도 힌트(계좌번호는 제외)', src.includes('/구분|종류|기록사항|메모|비고|예금주/.test(v)&&!/계좌번호|통화|화폐/.test(v)'));
-ok('사업장명 대조에 힌트 포함', src.includes("var mzz=strip(m+' '+String(kind||'')), hz=strip(kind);"));
+ok('사업장명 대조에 힌트 포함', src.includes("var mzz=strip(m+' '+String(kind||''));"));
 // 은행이 상대방 이름을 잘라 적는다 — 잘린 쪽이 사업장명의 앞부분이면 같은 회사로 본다
-ok('잘려 적힌 회사명도 인식', src.includes('if(hz.length>=4&&nm.indexOf(hz)===0)')
-  && src.includes("var mzz=strip(m+' '+String(kind||'')), hz=strip(kind);"));
+ok('전각 괄호도 지움', src.includes('（주）|（유）|주식회사|유한회사'));
+ok('잘려 적힌 회사명도 인식', src.includes('if(nm.indexOf(toks[q])===0)')
+  && src.includes(".map(strip).filter(function(t){ return t.length>=4; });"));
 ok('엑셀 미국식 m/d/yy 인식', src.includes("m=t.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{2})$/);"));
 ok('빈 일자는 위 일자를 이음', src.includes("if(/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) lastDate=date; else if(!date) date=lastDate;"));
 
@@ -129,7 +130,10 @@ ok('당기 출연금 집계', src.includes('function _contribOf'));
 ok('사용한도 비율(공동 90/사내 50)', /function _reserveRate\(fid\)\{ return \(\(funds\[fid\]\|\|\{\}\)\.fund_type==='사내'\)\?0\.5:0\.9; \}/.test(src));
 ok('준비금2 설정 분개(기본재산 차변)', /if\(kind==='설정'\)/.test(src) && /debit:'기본재산', credit:acct/.test(src));
 ok('한도 초과분은 기본재산 사용으로 구분', /if\(kind==='기본재산사용'\)/.test(src));
-ok('설정은 필요한 만큼만(한도 내)', src.includes('r.setup=Math.min(short,Math.max(0,cap));'));
+// 실무 결산서는 사용한도 전액을 설정하고 쓰지 않은 잔액을 준비금2로 남긴다
+// (가치를만들어가는사람들 2024·일원공동 2024 모두 출연금 × 90% 전액)
+ok('설정은 사용한도 전액', src.includes('r.setup=Math.max(0,cap);')
+  && src.includes('r.overBasic=Math.max(0,r.need-avail-r.setup);'));
 ok('환입을 계정별 잔액 안에서 배분', src.includes('r.parts.push({acct:a,amount:take})'));
 ok('조정 분개 묶음 생성기', src.includes('function _reserveEntries'));
 ok('전입액 계정(사업외비용)', src.includes("'고유목적사업준비금전입액':'비용'"));
