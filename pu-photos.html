@@ -19,6 +19,7 @@
 <script src="js/pu-photo-store.js"></script>
 <script src="js/pu-photo-queue.js"></script>
 <script src="js/pu-doc-read.js"></script>
+<script src="js/pu-doc-file.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check-compat.js"></script>
 <style>
@@ -112,6 +113,8 @@ button{font-family:inherit;cursor:pointer}
 #readPanel .note{margin:8px 0 0;font-size:11px;color:#7d879b;line-height:1.5}
 #readPanel .cause{margin:0;font-size:11.5px;color:#f0b95b;line-height:1.6;white-space:pre-wrap;word-break:break-word;font-family:inherit;user-select:text}
 #readPanel .again{width:100%;margin-top:8px;background:transparent;color:#c8cfdc;border:1px solid #2c374b;border-radius:9px;padding:9px;font-size:12.5px;font-weight:600}
+#readPanel .again.send{background:#1e40af;color:#fff;border-color:#1e40af}
+#readPanel .sent{margin:8px 0 0;font-size:12px;color:#5dcaa5;line-height:1.5}
 
 /* 설정 시트 */
 #settings{display:none;position:fixed;inset:0;background:rgba(16,24,40,.45);align-items:flex-end;justify-content:center;z-index:20}
@@ -232,6 +235,8 @@ PuDocRead.init(Object.assign(
   { fetch: window.fetch.bind(window) },
   PuDocRead.keysFrom(db)
 ));
+/* 명함첩으로 보내는 일은 등록 층이 안다 — 이 화면은 명함첩 구조를 모른다. */
+PuDocFile.init({ db: db });
 
 firebase.auth().onAuthStateChanged(u => {
   const signedIn = !!(u && u.email);
@@ -453,13 +458,70 @@ function startRead(job) {
     const it = gridItems.find(function (x) { return x.id === job.id; });
     if (it) it.meta = Object.assign({}, it.meta, { read: read });
     renderUp();
-    return PuPhotoStore.saveRead(year, job.id, read);
+    return PuPhotoStore.saveRead(year, job.id, read).then(function () {
+      /* 검증을 통과한 명함·사업자등록증은 곧바로 명함첩으로 보낸다.
+         걸린 것은 보내지 않고 사람이 「명함첩으로 보내기」를 누를 때 보낸다. */
+      if (read.auto && canSend(read)) return sendCards(job.id, year, job);
+    });
   }).catch(function (e) {
     console.warn('[판독]', e);
     job._reading = false;
     job._read = { kind: 'other', error: (e && e.message) || String(e), auto: false, why: '판독하지 못했습니다' };
     renderUp();
   });
+}
+
+/* ══════ 명함첩으로 보내기 ══════
+   명함첩이 어떻게 생겼는지는 등록 층(PuDocFile)만 안다 — 이 화면은 모른다.
+   같은 사진을 두 번 보내지 않도록 보낸 표시(filed)를 사진 정보에 남긴다. */
+const CARD_KINDS = { card: 1, bizreg: 1 };
+
+function canSend(read) {
+  return !!(read && !read.error && CARD_KINDS[read.kind] && !(read.filed && read.filed.id));
+}
+
+function sendCards(id, year, job) {
+  const it = gridItems.find(function (x) { return x.id === id; });
+  const read = (it && it.meta.read) || (job && job._read);
+  if (!read || !canSend(read)) return Promise.resolve();
+  const u = firebase.auth().currentUser;
+
+  /* 명함첩은 사진 사본을 갖는다 — 사진첩을 정리해도 명함첩 기록이 온전하게.
+     그래서 원판(본문)을 받아 함께 보낸다. */
+  return PuPhotoStore.loadFull(year, id).then(function (full) {
+    return PuDocFile.sendToCards({
+      kind: read.kind,
+      fields: read.fields,
+      full: safeSrc(full) || '',
+      thumb: (it && safeSrc(it.thumb)) || '',
+      photoId: id,
+      takenAt: (it && it.meta.takenAt) || Date.now(),
+      byName: (u && (u.displayName || u.email)) || ''
+    });
+  }).then(function (res) {
+    read.filed = { id: res.id, at: Date.now(), created: res.created, message: res.message };
+    if (it) it.meta = Object.assign({}, it.meta, { read: read });
+    if (job) job._read = read;
+    if (viewerId === id) renderReadPanel(it);
+    renderUp();
+    return PuPhotoStore.saveRead(year, id, read);
+  }).catch(function (e) {
+    console.warn('[명함첩 보내기]', e);
+    read.filedError = (e && e.message) || String(e);
+    if (viewerId === id) renderReadPanel(it);
+    renderUp();
+  });
+}
+
+/* 크게 보기의 「명함첩으로 보내기」 단추가 부른다. */
+function sendCardsNow() {
+  const id = viewerId;
+  if (!id) return;
+  const it = gridItems.find(function (x) { return x.id === id; });
+  if (!it) return;
+  const box = $('readPanel').querySelector('.send');
+  if (box) { box.disabled = true; box.textContent = '보내는 중…'; }
+  sendCards(id, gridYear, null);
 }
 
 /* 판독 결과를 한 줄 한국어로. 화면 두 곳(올리는 중 목록·크게 보기)이 같은 문구를 쓴다. */
@@ -490,8 +552,11 @@ function renderUp() {
     /* 서류는 올라간 뒤 스스로 판독한다 — 그 진행과 결과를 같은 줄 아래에 붙인다. */
     let rd = '';
     if (j._reading) rd = '<span class="rd">판독 중…</span>';
-    else if (j._read) rd = '<span class="rd ' + (j._read.auto ? 'ok' : 'warn') + '">' +
-      (j._read.auto ? '✓ ' : '⚠ ') + esc(readLine(j._read)) + '</span>';
+    else if (j._read) {
+      const filed = j._read.filed && j._read.filed.id ? ' → 명함첩' : '';
+      rd = '<span class="rd ' + (j._read.auto ? 'ok' : 'warn') + '">' +
+        (j._read.auto ? '✓ ' : '⚠ ') + esc(readLine(j._read)) + filed + '</span>';
+    }
     return '<div class="uprow s-' + esc(j.state) + '">' +
       '<span class="nm">' + esc(j.name || '사진') + tag + '</span>' +
       '<span class="st">' + (UP_STATE[j.state] || esc(j.state)) + '</span>' + cause + rd + '</div>';
@@ -657,12 +722,24 @@ function renderReadPanel(it) {
   /* 실패했으면 AI가 준 설명까지 통째로 보여준다 — 줄바꿈도 살린다.
      이것을 우리 문구로 덮었다가 원인을 잘못 짚은 적이 있다(모델 종료 사고). */
   const cause = read.error ? '<pre class="cause">' + esc(read.error) + '</pre>' : '';
+  /* 명함첩으로 보낸 결과 / 보내는 단추 */
+  let box = '';
+  if (read.filed && read.filed.id) {
+    box = '<p class="sent">✓ ' + esc(read.filed.message || '명함첩에 보냈습니다') + '</p>';
+  } else if (read.filedError) {
+    box = '<p class="cause">명함첩에 보내지 못했습니다\n' + esc(read.filedError) + '</p>' +
+      '<button class="again send" onclick="sendCardsNow()">명함첩으로 다시 보내기</button>';
+  } else if (CARD_KINDS[read.kind] && !read.error) {
+    box = (read.auto ? '' : '<p class="note">확인이 필요해 자동으로 보내지 않았습니다. 위 내용이 맞으면 보내 주세요.</p>') +
+      '<button class="again send" onclick="sendCardsNow()">명함첩으로 보내기</button>';
+  }
+
   el.innerHTML = '<div class="box">' +
     '<div class="top"><span class="kd' + warn + '">' + esc(readLabel(read)) + '</span>' +
     (read.error ? '' : '<span class="msg' + warn + '">' + esc(readTail(read)) + '</span>') + '</div>' +
     cause +
     (rows ? '<table>' + rows + '</table>' : '') +
-    (rows ? '<p class="note">읽기만 했습니다. 각 프로그램에 넣는 것은 다음 단계입니다.</p>' : '') +
+    box +
     '<button class="again" onclick="readAgain()">다시 판독</button></div>';
 }
 

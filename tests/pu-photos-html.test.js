@@ -256,6 +256,48 @@ test('판독 결과도 이스케이프해서 화면에 넣는다', () => {
   assert.match(app, /esc\(read\.fields\[/);
 });
 
+/* ── 명함첩으로 보내기 ── */
+
+test('등록 층을 불러오고, 명함첩 구조는 화면이 모른다', () => {
+  assert.match(app, /<script src="js\/pu-doc-file\.js"><\/script>/);
+  assert.match(app, /PuDocFile\.sendToCards\(/);
+  // 화면에 명함첩 루트 이름이 들어오면 실데이터 가드가 깨지고,
+  // 명함첩 구조가 두 곳에 흩어져 한쪽만 고쳐진다
+  assert.ok(!/pucards/.test(app), '화면이 명함첩 루트를 직접 알고 있습니다');
+});
+
+test('검증을 통과한 것만 자동으로 보낸다', () => {
+  const fn = app.match(/function startRead\([\s\S]*?\n\}/);
+  assert.ok(fn, 'startRead 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /read\.auto && canSend\(read\)/,
+    '검증 결과를 보지 않고 보내고 있습니다');
+});
+
+test('명함과 사업자등록증만 명함첩으로 보낸다', () => {
+  // 중소기업확인서는 명함첩에 들어갈 물건이 아니다(사업장 정보로 간다)
+  assert.match(app, /CARD_KINDS = \{ card: 1, bizreg: 1 \}/);
+  assert.match(app, /function canSend\(/);
+});
+
+test('같은 사진을 두 번 보내지 않는다', () => {
+  const fn = app.match(/function canSend\([\s\S]*?\n\}/);
+  assert.ok(fn, 'canSend 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /read\.filed/, '보낸 표시를 확인하지 않습니다');
+});
+
+test('보낼 때 사진 원판을 함께 보낸다', () => {
+  // 명함첩이 자기 사본을 가져야 사진첩을 정리해도 기록이 온전하다
+  const fn = app.match(/function sendCards\([\s\S]*?\n\}/);
+  assert.ok(fn, 'sendCards 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /loadFull\(/);
+  assert.match(fn[0], /safeSrc\(/, '사진 값을 검사 없이 넘기고 있습니다');
+});
+
+test('걸린 것은 사람이 보낼 수 있게 단추를 준다', () => {
+  assert.match(app, /function sendCardsNow\(/);
+  assert.match(app, /명함첩으로 보내기/);
+});
+
 test('권한 거절은 재시도가 아니라 막힘으로 표시하고 원인을 보여준다', () => {
   // 실사용 보고(2026-08-03): 규칙 문제인데 "신호 약함 — 자동 재시도"만 계속 나왔다.
   assert.match(app, /isFatal/);
