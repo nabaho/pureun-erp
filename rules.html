@@ -696,6 +696,13 @@ table.daejo td.dj2{padding:0}
       <input type="file" id="bank-files" multiple accept=".hwp,.hwpx,.docx,.odt,.rtf,.pdf,.txt" style="display:none">
       <span class="muted" style="font-size:11px">HWP · HWPX · DOCX · ODT · RTF · PDF · TXT</span>
     </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+      <span style="font-size:11.5px;color:var(--mute)">파일이 아직 없다면:</span>
+      <button class="stbtn" id="bank-from-arch" title="보관함에 저장된 사업장 규정(원본·완료본)을 조문 단위로 은행에 넣습니다">🏦 보관함에서 가져오기</button>
+      <button class="stbtn" id="bank-from-std" title="등록된 표준취업규칙과 규칙집 조문 템플릿 29개를 은행에 넣습니다">📘 표준·템플릿으로 시작</button>
+    </div>
+    <div style="margin-bottom:10px;padding:8px 12px;background:#f0fdfa;border:1px solid #99d5cc;border-radius:9px;font-size:11.5px;color:#0f766e;line-height:1.6">
+      ✔ <b>자동 적립</b> — 앞으로 [✅ 검토 완료]를 누를 때마다 그 사업장의 확정 문안이 은행에 저절로 쌓입니다. 10년치 파일은 준비되는 대로 나중에 추가하면 됩니다.</div>
     <div id="bank-prog" style="display:none;margin-bottom:10px;padding:9px 12px;background:#f6f9ff;border:1px solid var(--line);border-radius:9px;font-size:12px;line-height:1.6"></div>
     <div id="bank-stat" style="font-size:12.5px;line-height:1.8"></div>
     <p class="muted" style="font-size:11px;margin:10px 0 0;line-height:1.6">※ 같은 문안은 하나로 접고 사용 횟수만 셉니다. 개정 전 문구가 의심되는 문안에는 ⚠ 표시가 붙습니다 — 그대로 쓰지 말고 최신 법령으로 고쳐 쓰십시오.</p>
@@ -3638,6 +3645,7 @@ function setRecordDone(id,done){
   const to=fbPath(next);
   setLocal(loadArch().filter(x=>x.id!==oldId).concat([next]));
   storeDel(r); storePut(next);
+  if(done)bankAutoAccrue(next);        // 확정 문안을 은행에 적립 (비동기, 실패 무해)
   moveOrig(oldId,next.id);
   if(FBDB&&to){
     FBDB.ref(to).set(stripLocal(next))
@@ -4251,6 +4259,56 @@ function bankStale(body){
     for(const k of expandKw(r.keywords)) if(k.length>=4&&ns.includes(k)) return true; }
   return false;
 }
+/* 문안 적립 — 텍스트 하나를 조문으로 쪼개 map 에 접어 넣는다 (모든 공급원 공용) */
+function bankAccum(map,text,site,year,src){
+  const as=parseArticles(String(text||""));
+  let cnt=0;
+  as.forEach(a=>{
+    if(!a.title||stripWs(a.body).length<20)return;
+    cnt++;
+    const key=bankHash(bankNormBody(a.body));
+    const c=map[key]||(map[key]={t:a.title,b:a.body,y:"",n:0,st:[],w:0});
+    c.n++;
+    if(String(year)>String(c.y||"")){ c.y=String(year); c.b=a.body; c.t=a.title; }
+    if(src)c.src=src;
+    if(c.st.length<5&&!c.st.some(x=>x.site===site))c.st.push({site,year:String(year)});
+  });
+  return cnt;
+}
+/* 병합 업로드 — 기존 문안이 있으면 사용 횟수를 더하고 최신 연도를 남긴다.
+   조금씩 추가 적립할 때 횟수가 초기화되지 않게 하는 핵심. */
+async function bankMergeUpload(map,progFn){
+  const keys=Object.keys(map); if(!keys.length)return 0;
+  const CH=200;
+  for(let i=0;i<keys.length;i+=CH){
+    const part=keys.slice(i,i+CH);
+    const olds=await Promise.all(part.map(k=>FBDB.ref("chwieop/bank/c/"+k).once("value").then(s2=>s2.val()).catch(()=>null)));
+    const batch={};
+    part.forEach((k,j)=>{
+      const c=Object.assign({},map[k]), o=olds[j];
+      if(o){
+        c.n=(o.n||0)+c.n;
+        if(String(o.y||"")>String(c.y||"")){ c.y=o.y; c.b=o.b; c.t=o.t; }
+        const st=(o.st||[]).slice();
+        (map[k].st||[]).forEach(x=>{ if(st.length<5&&!st.some(z=>z.site===x.site))st.push(x); });
+        c.st=st; c.w=o.w||c.w; if(o.src&&!c.src)c.src=o.src;
+      }
+      batch["c/"+k]=c;
+      batch["t/"+(fbKey(_tnorm(c.t))||"기타")+"/"+k]=1;
+      bankKeysOf(c.t,c.b).forEach(kw=>{ batch["k/"+kw+"/"+k]=1; });
+    });
+    await FBDB.ref("chwieop/bank").update(batch);
+    if(progFn)progFn(Math.min(keys.length,i+CH),keys.length);
+  }
+  // 총계 갱신
+  try{
+    const m=(await FBDB.ref("chwieop/bank/meta").once("value")).val()||{};
+    m.clauses=Math.max(m.clauses||0,0)+keys.length;   // 근사치 — 정확한 수는 다음 전체 구축 때
+    m.builtAt=new Date().toISOString().slice(0,16).replace("T"," "); m.by=myName()||"";
+    await FBDB.ref("chwieop/bank/meta").set(m);
+  }catch(e){}
+  return keys.length;
+}
 async function bankBuild(files){
   if(!FBDB||!FBUSER){ alert("문안 은행은 법인 공동 저장소에 보관됩니다 — 포털 로그인 후 이용하세요."); return; }
   const list=[...files].filter(f=>/\.(hwpx?|docx|odt|rtf|pdf|txt)$/i.test(f.name));
@@ -4271,17 +4329,7 @@ async function bankBuild(files){
       if(String(text||"").replace(/\s/g,"").length<100)throw new Error("빈 문서");
       const year=bankYearOf(f.name,text,new Date(f.lastModified||Date.now()).getFullYear());
       const site=detectSiteName(text)||f.name.replace(/\.[^.]+$/,"");
-      const as=parseArticles(text);
-      as.forEach(a=>{
-        if(!a.title||stripWs(a.body).length<20)return;   // 제목 없는 조각·빈 조문 제외
-        arts++;
-        const key=bankHash(bankNormBody(a.body));
-        const c=map[key]||(map[key]={t:a.title,b:a.body,y:"",n:0,st:[],w:0});
-        c.n++;
-        if(String(year)>String(c.y||""))
-          { c.y=String(year); c.b=a.body; c.t=a.title; } // 같은 문안이면 최신 연도 본문을 대표로
-        if(c.st.length<5&&!c.st.some(x=>x.site===site))c.st.push({site,year:String(year)});
-      });
+      arts+=bankAccum(map,text,site,year);
       ok++;
     }catch(e){ fail++; console.warn("문안은행 파일 실패:",f.name,e); }
     if(i%10===9)await new Promise(r=>setTimeout(r,0));   // 화면 숨 고르기
@@ -4290,20 +4338,7 @@ async function bankBuild(files){
   Object.values(map).forEach(c=>{ c.w=bankStale(c.b)?1:0; });
   const keys=Object.keys(map);
   prog.innerHTML=`정리 완료 — 문안 ${keys.length}개 (원 조문 ${arts}개에서 중복 접음)<br><span class="muted">법인 저장소에 올리는 중…</span>`;
-  // 묶음 업로드 — 건별 set 은 수만 번 왕복이라 못 쓴다
-  const CH=200; let up=0;
-  for(let i=0;i<keys.length;i+=CH){
-    const batch={};
-    keys.slice(i,i+CH).forEach(k=>{
-      const c=map[k];
-      batch["c/"+k]=c;
-      batch["t/"+(fbKey(_tnorm(c.t))||"기타")+"/"+k]=1;
-      bankKeysOf(c.t,c.b).forEach(kw=>{ batch["k/"+kw+"/"+k]=1; });
-    });
-    await FBDB.ref("chwieop/bank").update(batch);
-    up=Math.min(keys.length,i+CH);
-    prog.innerHTML=`올리는 중 ${up} / ${keys.length}…`;
-  }
+  await bankMergeUpload(map,(u,t2)=>{ prog.innerHTML=`올리는 중 ${u} / ${t2}…`; });
   const meta={files:ok,failed:fail,clauses:keys.length,rawArts:arts,
     builtAt:new Date().toISOString().slice(0,16).replace("T"," "),by:myName()||""};
   await FBDB.ref("chwieop/bank/meta").set(meta);
@@ -4325,6 +4360,77 @@ $("open-bank").addEventListener("click",async()=>{
   if(FBDB&&FBUSER){ try{ meta=(await FBDB.ref("chwieop/bank/meta").once("value")).val(); }catch(e){} }
   bankRenderStat(meta);
 });
+/* 기록(items) → 변경후 전문 — 현재 세션을 건드리지 않게 전역을 잠깐 바꿨다 되돌린다 */
+function bankTextOfRecord(r){
+  const sv={L:LAST,M:REV_MODE,C:CUR_ITEMS};
+  try{
+    LAST={key:null,site:r.site,bizno:r.bizno,size:r.size,conds:r.conds||[],asof:r.asof,
+      summary:r.summary,arts:[],addendum:r.addendum||""};
+    REV_MODE=r.mode||"partial";
+    CUR_ITEMS=normalizeItems(r.items||[]);
+    return CUR_ITEMS.length?revisedTextOf():null;
+  }catch(e){ return null; }
+  finally{ LAST=sv.L; REV_MODE=sv.M; CUR_ITEMS=sv.C; }
+}
+/* ① 보관함 반입 — 이미 저장된 사업장 기록을 은행으로 */
+$("bank-from-arch").addEventListener("click",async()=>{
+  if(!FBDB||!FBUSER){ alert("로그인 후 이용하세요."); return; }
+  const recs=visibleArch();
+  if(!recs.length){ alert("보관함이 비어 있습니다."); return; }
+  if(!confirm(`보관함의 ${recs.length}건(내 담당 + 완료본)을 조문 단위로 은행에 넣을까요?`))return;
+  const prog=$("bank-prog"); prog.style.display="block";
+  const map={}; let arts=0,done=0;
+  for(const r of recs){
+    prog.innerHTML=`보관함 반입 중 ${++done} / ${recs.length} — ${escapeH(r.site||"")}`;
+    let text=null;
+    try{ const o=await getOrig(r.id); if(o&&o.text)text=o.text; }catch(e){}
+    if(!text)text=bankTextOfRecord(r);
+    if(!text)continue;
+    const year=String(r.asof||"").slice(0,4)||bankYearOf("",text,"");
+    arts+=bankAccum(map,text,siteName(r.site)||r.site,year);
+  }
+  Object.values(map).forEach(c=>{ c.w=bankStale(c.b)?1:0; });
+  await bankMergeUpload(map,(u,t2)=>{ prog.innerHTML=`올리는 중 ${u} / ${t2}…`; });
+  prog.style.display="none";
+  bankRenderStat((await FBDB.ref("chwieop/bank/meta").once("value")).val());
+  alert(`보관함 반입 완료 — 기록 ${recs.length}건 → 조문 ${arts}개 → 문안 ${Object.keys(map).length}개`);
+});
+/* ② 표준취업규칙 + 조문 템플릿 시드 */
+$("bank-from-std").addEventListener("click",async()=>{
+  if(!FBDB||!FBUSER){ alert("로그인 후 이용하세요."); return; }
+  await stdLoad();
+  const years=Object.keys(STD);
+  if(!years.length&&!TPLS.length){ alert("등록된 표준취업규칙이 없습니다 — [📘 표준규칙]에서 먼저 등록하거나, 템플릿만 넣으려면 확인을 누르세요."); }
+  if(!confirm(`표준취업규칙 ${years.length}개 연도 + 조문 템플릿 ${TPLS.length}개를 은행에 넣을까요?`))return;
+  const prog=$("bank-prog"); prog.style.display="block"; prog.textContent="표준·템플릿 정리 중…";
+  const map={}; let arts=0;
+  years.forEach(y=>{ arts+=bankAccum(map,STD[y].text,"표준취업규칙",y,"std"); });
+  TPLS.forEach(t=>{
+    const body=String(t.text||"").replace(/\{회사\}/g,"회사").replace(/\{근로자\}/g,"근로자");
+    if(stripWs(body).length<20)return;
+    arts++;
+    const key=bankHash(bankNormBody(body));
+    map[key]=map[key]||{t:t.title,b:body,y:String(new Date().getFullYear()),n:1,st:[{site:"법인 조문 템플릿",year:""}],w:0,src:"tpl"};
+  });
+  Object.values(map).forEach(c=>{ if(!c.src)c.w=bankStale(c.b)?1:0; });
+  await bankMergeUpload(map,(u,t2)=>{ prog.innerHTML=`올리는 중 ${u} / ${t2}…`; });
+  prog.style.display="none";
+  bankRenderStat((await FBDB.ref("chwieop/bank/meta").once("value")).val());
+  alert(`시드 완료 — 문안 ${Object.keys(map).length}개 (표준 ${years.length}개 연도 + 템플릿)`);
+});
+/* ③ 자동 적립 — 검토 완료 때마다 확정 문안이 쌓인다 (조용히, 실패해도 완료 처리에는 지장 없음) */
+async function bankAutoAccrue(rec){
+  try{
+    if(!FBDB||!FBUSER||!rec)return;
+    const text=bankTextOfRecord(rec); if(!text)return;
+    const map={}; const year=String(rec.asof||"").slice(0,4);
+    const cnt=bankAccum(map,text,siteName(rec.site)||rec.site,year);
+    if(!cnt)return;
+    Object.values(map).forEach(c=>{ c.w=bankStale(c.b)?1:0; });
+    await bankMergeUpload(map,null);
+    console.info("문안 은행 자동 적립:",rec.site,cnt,"조문");
+  }catch(e){ console.warn("문안 은행 자동 적립 실패:",e); }
+}
 $("bank-pick-folder").addEventListener("click",()=>$("bank-folder").click());
 $("bank-pick-files").addEventListener("click",()=>$("bank-files").click());
 $("bank-folder").addEventListener("change",e=>{ if(e.target.files.length)bankBuild(e.target.files); e.target.value=""; });
@@ -4374,6 +4480,8 @@ async function bankPickRun(){
         <b style="font-size:13px">${escapeH(c.t)}</b>
         <span class="badge" style="background:#eef4ff;color:#1e40af">${c.n}회 사용</span>
         <span class="badge" style="background:#f1f5f9;color:#475569">최신 ${escapeH(String(c.y||"?"))}</span>
+        ${c.src==="std"?'<span class="badge" style="background:#ede9fe;color:#6d28d9">표준취업규칙</span>':""}
+        ${c.src==="tpl"?'<span class="badge" style="background:#e0f2fe;color:#075985">법인 템플릿</span>':""}
         ${c.w?'<span class="badge" style="background:#fef3c7;color:#92400e">⚠ 개정 전 문구 의심</span>':""}
         <span style="flex:1"></span>
         <button class="stbtn on-adopt" data-use="1">이 문안 넣기</button></div>
