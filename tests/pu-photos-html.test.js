@@ -159,6 +159,15 @@ test('계정을 등록한 뒤에 사진을 읽는다', () => {
   assert.match(blk[0], /loadGrid\(\)/, '계정 등록이 끝나기 전에 사진을 읽습니다');
 });
 
+test('주소가 아니라 사람 이름이 뜬다', () => {
+  // 대표 지시 — p001@pureun.kr 이 아니라 본인 이름.
+  // 명부에서 찾는 일은 저장 층이 한다(화면이 data/user_dir 경로를 알면 가드가 깨진다).
+  assert.ok(!/user_dir/.test(app), '화면이 명부 경로를 직접 읽습니다');
+  assert.match(app, /\$\('who'\)\.textContent = me\.name/);
+  // 올린 사람 이름도 주소가 아니라 이름으로 남는다
+  assert.match(app, /byName: PuPhotoStore\.myName\(\)/);
+});
+
 test('관리자 여부를 화면에서 짐작하지 않는다', () => {
   // uid_roles 는 서버가 아는 값이고, 화면에 그 경로가 들어오면 실데이터 가드가 깨진다
   assert.ok(!/uid_roles/.test(app), '화면이 권한 경로를 직접 읽습니다');
@@ -287,9 +296,25 @@ test('명함첩에 보낸 사진을 지울 때는 그 기록이 남는다고 알
   assert.match(app, /명함첩 기록은 그대로 남습니다/);
 });
 
-test('고르기 중에는 사진을 열지 않고 고른다', () => {
-  // 지우려고 누른 것이 열리면 헷갈린다
-  assert.match(app, /if \(selMode\) \{ toggleOne\(id\); return; \}/);
+test('체크는 늘 사진 오른쪽 위에 있고, 거기를 누르면 고른다', () => {
+  // 「고르기」 단계를 먼저 밟지 않아도 바로 고를 수 있어야 한다(대표 지시).
+  // 체크를 누르면 고르고, 사진의 다른 곳을 누르면 열린다.
+  assert.match(app, /ev\.target\.closest\('\.ck'\)\) \{ toggleOne\(id\); return; \}/);
+  // 체크가 숨어 있지 않아야 한다 — display:none 이면 누를 자리가 없다
+  const rule = app.match(/#grid \.cell \.ck\{([^}]*)\}/);
+  assert.ok(rule, '체크 규칙을 찾을 수 없습니다');
+  assert.ok(!/display:none/.test(rule[1]), '체크가 숨어 있습니다: ' + rule[1]);
+  assert.match(rule[1], /right:|top:/, '체크가 오른쪽 위에 없습니다: ' + rule[1]);
+});
+
+test('고른 것에 쓰는 단추는 왼쪽 끝에 있다', () => {
+  // 대표 지시 — 판독·지우기·취소를 왼쪽에서 고를 수 있게.
+  const bar = app.match(/<div id="gridBar">([\s\S]*?)<\/div>/);
+  assert.ok(bar, 'gridBar 를 찾을 수 없습니다');
+  const iBtn = bar[1].indexOf('readSelBtn');
+  const iCount = bar[1].indexOf('gridCount');
+  assert.ok(iBtn >= 0 && iCount >= 0, '단추나 장수 표시가 없습니다');
+  assert.ok(iBtn < iCount, '단추가 장수 표시보다 뒤에 있습니다 — 왼쪽 끝이 아닙니다');
 });
 
 test('여러 장 지울 때 한 장이 실패해도 나머지를 지운다', () => {
@@ -514,21 +539,24 @@ test('권한 거절은 재시도가 아니라 막힘으로 표시하고 원인�
    "규칙이 없을 수 있다"고 오보고한다. 규칙이 정상인데 대표님이 콘솔에서
    규칙을 고치게 만드는 경로다 — 반드시 로그인 뒤에만 보여야 한다. */
 
-test('⚙️ 버튼의 CSS 초기값은 숨김이다', () => {
-  // 초기값이 보임이면 앱이 뜨는 순간(로그인 확인 전) 잠깐 눌릴 수 있다.
-  const rule = app.match(/#top\s+\.ico\s*\{([^}]*)\}/);
-  assert.ok(rule, '#top .ico 규칙을 찾을 수 없습니다');
-  assert.match(rule[1], /display\s*:\s*none/, '⚙️ 버튼의 CSS 초기값이 숨김이 아닙니다: ' + rule[1]);
-});
-
-test('⚙️ 버튼 표시가 로그인 여부에 묶여 있다', () => {
-  assert.match(app, /<button[^>]*id="gear"/, '⚙️ 버튼에 id가 없습니다');
-  const blocks = [...app.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)];
-  const inlineCode = blocks.map(m => m[1]).join('\n');
-  const authBody = inlineCode.match(/onAuthStateChanged\(([\s\S]*?)\n\}\);/);
-  assert.ok(authBody, 'onAuthStateChanged 본문을 찾을 수 없습니다');
-  assert.match(authBody[1], /\$\('gear'\)\.style\.display\s*=\s*signedIn\s*\?/,
-    '로그인 여부로 ⚙️ 버튼 표시를 갈라놓지 않았습니다');
+test('설정은 대시보드 가장 아래에 있고, 로그인 뒤에만 닿는다', () => {
+  // 대표 지시로 위쪽 톱니바퀴에서 대시보드 맨 아래로 옮겼다.
+  // 대시보드(#side)는 #home 안에 있고 #home 은 로그인 뒤에만 뜨므로
+  // **구조로** 막힌다 — 숨기는 규칙에 의존하지 않는다.
+  assert.match(app, /<button id="gearBtn"[^>]*onclick="openSettings\(\)"/);
+  const side = app.match(/<aside id="side">([\s\S]*?)<\/aside>/);
+  assert.ok(side, '대시보드(#side)를 찾을 수 없습니다');
+  assert.match(side[1], /id="gearBtn"/, '설정이 대시보드 안에 없습니다');
+  // 대시보드 안에서 가장 아래여야 한다
+  const iGear = side[1].indexOf('id="gearBtn"');
+  const iUp = side[1].indexOf('id="upWrap"');
+  assert.ok(iUp >= 0 && iGear > iUp, '설정이 대시보드 맨 아래가 아닙니다');
+  // 위쪽 상단바에는 더 이상 톱니바퀴가 없다
+  const top = app.match(/<div id="top">([\s\S]*?)<\/div>/);
+  assert.ok(top && !/openSettings/.test(top[1]), '상단바에 설정이 남아 있습니다');
+  // #home 은 기본이 숨김이어야 한다(로그인 전에 대시보드가 보이면 안 된다)
+  const home = app.match(/#home\{([^}]*)\}/);
+  assert.match(home[1], /display:none/, '#home 이 로그인 전에도 보입니다');
 });
 
 test('저장 방식을 앱이 직접 정하지 않는다', () => {

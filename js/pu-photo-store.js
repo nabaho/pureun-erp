@@ -173,7 +173,7 @@
      사진첩·컨설팅·급여·기금 어느 앱도 손대지 않고 **여기 한 곳만** 고친다.
      앱들이 각자 방식을 정하지 않는 것이 이 파일이 존재하는 이유다. */
   var mode = 'rtdb';
-  var deps = { db: null, storage: null, uid: '', isAdmin: false };
+  var deps = { db: null, storage: null, uid: '', isAdmin: false, name: '' };
 
   /* 파이어베이스 객체를 받아 저장 층을 준비한다.
 
@@ -278,20 +278,81 @@
      화면에서 짐작하지 않는다. 이 값으로 남의 사진을 볼 수 있는지가 갈리므로
      짐작하면 안 된다(어차피 규칙이 한 번 더 막지만 이중으로 잠근다).
      경로에 계정이 필요하므로 **이것이 끝난 뒤에 사진을 읽어야 한다.** */
-  function signIn(uid, name) {
+  function signIn(uid, email, fallbackName) {
     deps.uid = uid || '';
     deps.isAdmin = false;
-    if (!deps.db || !deps.uid) return Promise.resolve(false);
+    deps.name = fallbackName || email || '';
+    if (!deps.db || !deps.uid) return Promise.resolve({ isAdmin: false, name: deps.name });
     return deps.db.ref('uid_roles/' + deps.uid + '/isAdmin').once('value')
       .then(function (s) { deps.isAdmin = s.val() === true; })
       .catch(function () { deps.isAdmin = false; })
-      .then(function () { return touchOwner(name); })
+      .then(function () { return lookupName(email); })
+      .then(function (found) { if (found) deps.name = found; })
+      .then(function () { return touchOwner(deps.name); })
       .catch(function () { /* 명단 갱신 실패가 로그인을 막지 않는다 */ })
-      .then(function () { return deps.isAdmin; });
+      .then(function () { return { isAdmin: deps.isAdmin, name: deps.name }; });
+  }
+
+  /* ── 로그인한 사람의 이름 ──
+     화면에 `p001@pureun.kr` 같은 주소가 아니라 사람 이름이 떠야 한다.
+     포털(enter.html)이 쓰는 길을 그대로 쓴다: **공개 명부 `data/user_dir` 를 먼저** 보고,
+     막히면 `data/user_accounts`(재무권한자만 읽힌다) → 이 기기에 남은 명부 순서.
+     사번을 이메일로 바꾸는 규칙(`p-001` → `p001@pureun.kr`)도 포털과 같아야 한다 —
+     다르면 같은 사람을 못 찾는다. */
+  function sidToEmail(sid) {
+    return String(sid || '').toLowerCase().replace(/-/g, '') + '@pureun.kr';
+  }
+
+  function pickFromRoster(list, email) {
+    if (!list) return '';
+    var em = String(email || '').toLowerCase();
+    var arr = list;
+    if (!Array.isArray(arr) && typeof arr === 'object') {
+      arr = Object.keys(arr).map(function (k) { return arr[k]; });
+    }
+    if (!Array.isArray(arr)) return '';
+    for (var i = 0; i < arr.length; i++) {
+      var x = arr[i];
+      if (x && x.sid && sidToEmail(x.sid) === em && x.name) return x.name;
+    }
+    return '';
+  }
+
+  function readRoster(path) {
+    return deps.db.ref(path).once('value').then(function (s) {
+      var raw = s.val();
+      return (raw && raw.v !== undefined) ? raw.v : raw;
+    });
+  }
+
+  function localRoster() {
+    try {
+      var ls = global.localStorage;
+      return ls ? JSON.parse(ls.getItem('pureun_v6_user_accounts') || 'null') : null;
+    } catch (e) { return null; }
+  }
+
+  function lookupName(email) {
+    if (!email || !deps.db) return Promise.resolve('');
+    return readRoster('data/user_dir').then(function (dir) {
+      var got = pickFromRoster(dir, email);
+      if (got) return got;
+      /* 공개 명부에 없으면 관리자 명부를 본다 — 일반 직원은 규칙이 막으므로 조용히 넘어간다. */
+      return readRoster('data/user_accounts')
+        .then(function (l) { return pickFromRoster(l, email); })
+        .catch(function () { return ''; });
+    }).catch(function () {
+      return readRoster('data/user_accounts')
+        .then(function (l) { return pickFromRoster(l, email); })
+        .catch(function () { return ''; });
+    }).then(function (got) {
+      return got || pickFromRoster(localRoster(), email);
+    });
   }
 
   function amAdmin() { return deps.isAdmin; }
   function myUid() { return deps.uid; }
+  function myName() { return deps.name; }
 
   function listOwners() {
     if (!deps.isAdmin || !deps.db) return Promise.resolve({});
@@ -528,6 +589,8 @@
     signIn: signIn,
     amAdmin: amAdmin,
     myUid: myUid,
+    myName: myName,
+    lookupName: lookupName,
     touchOwner: touchOwner,
     listOwners: listOwners,
     migrateLegacy: migrateLegacy,
