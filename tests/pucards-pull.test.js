@@ -136,7 +136,7 @@ eq('대표담당 아니면 false', ctx.pcToContact(card, false).isPrimary, false
           e: 'kim@ni.kr', ad: '충남 천안시 서북구', ct: '041-500-1000' },
     a3: { k: 'card', n: '박대리', c: '남양인텍', ti: '대리', m: '010-3333-4444' } } } };
   vm.createContext(ctx4);
-  ['function pcNormCo(', 'function pcIsCeoTitle('].forEach(function (fn) {
+  ['var PC_CORP_TOKENS =', 'function pcNormCo(', 'function pcIsCeoTitle('].forEach(function (fn) {
     vm.runInContext(cutPe(fn, '\nfunction '), ctx4);
   });
   vm.runInContext(cutPe('function pcGroupCompanies(){', '\nfunction '), ctx4);
@@ -182,8 +182,61 @@ eq('대표담당 아니면 false', ctx.pcToContact(card, false).isPrimary, false
   ok('사람 목록에 부서를 보여 준다', /r\.d \? ' · ' \+ r\.d/.test(pk));
   ok('사람 목록에 이메일을 보여 준다', pk.indexOf("'✉ ' + r.e") > 0);
   const cp = cutPe('function PucardsCompanyPickerModal(props){', '\nfunction ');
-  ok('회사 목록에 딸려 올 사람을 미리 보여 준다', cp.indexOf("'👤 '") > 0);
+  /* 2026-08-03 — 간단 미리보기('👤 이름(직책) · 외 N명')를 사람별 줄로 바꿨다.
+     대표 요청: 이름·회사연락처·회사팩스·개인연락처·이메일·주소가 이 화면에서 보이고
+     한 사람만 골라 넣을 수 있어야 한다. */
+  ok('회사 목록에 사람 수를 밝힌다', cp.indexOf("'👤 이 회사 명함 '") > 0);
+  ok('한 사람만 넣는 방법을 알려 준다', cp.indexOf('한 사람만 넣으려면 그 줄을 누르세요') > 0);
   ok('사람 이름으로 찾은 회사임을 밝힌다', cp.indexOf('사람 이름으로 찾은 회사입니다') > 0);
+
+  /* ── 사람 줄에 항목이 다 보이는가 ── */
+  const nsCp = NS(cp);
+  ok('★ 사람 줄에 개인연락처',   /\['📱',x\.m\]/.test(nsCp));
+  ok('★ 사람 줄에 회사연락처',   /\['☎',x\.t\|\|x\.ct\]/.test(nsCp));
+  ok('★ 사람 줄에 회사팩스',     /\['📠',x\.fx\|\|x\.cfx\]/.test(nsCp));
+  ok('★ 사람 줄에 이메일',       /\['✉',x\.e\]/.test(nsCp));
+  ok('★ 사람 줄에 주소',         /\['🏠',x\.ad\]/.test(nsCp));
+  ok('사람 줄에 이름·직책·부서', /x\.n\|\|'\(이름없음\)'/.test(nsCp) && /x\.ti\?'·'\+x\.ti/.test(nsCp) && /x\.d\?'·'\+x\.d/.test(nsCp));
+  ok('연락처가 하나도 없으면 그렇다고 말한다', cp.indexOf('이 명함에는 연락처가 없습니다') > 0);
+  ok('빈 항목은 줄에 안 넣는다', /\.filter\(function\(b\)\{ return b\[1\]; \}\)/.test(cp));
+
+  /* ── 개별 선택이 되는가 ── */
+  ok('★ 사람 줄을 누르면 그 사람만 넘긴다', /pickOne: x/.test(cp) && /cards: \[x\]/.test(cp));
+  /* 팝업 바깥 덮개에도 stopPropagation 이 있어서, 그냥 찾으면 늘 통과한다.
+     사람 줄 손잡이 안에서 pickOne 앞에 있는지를 본다. */
+  ok('★ 회사 통째로 선택과 섞이지 않는다 (사람 줄에서 전파 중단)',
+     /onClick:function\(e\)\{\s*e\.stopPropagation\(\);[\s\S]{0,200}pickOne: x/.test(cp));
+  ok('★ 그 사람 명함 사진을 가져오게 cardId 를 바꾼다',
+     /cardId: \(r\.cardIdsOrdered \|\| \[\]\)\[xi\] \|\| r\.cardId/.test(cp));
+  ok('★ 대표인 사람만 대표자 칸을 채운다',
+     /ceo: isCeo \? \(x\.n \|\| ''\) : ''/.test(cp)
+     && /ceoPhone: isCeo \? \(x\.m \|\| ''\) : ''/.test(cp));
+  ok('대표 줄은 표시로 구분한다', /isCeo = pcIsCeoTitle\(x\.ti\)/.test(cp) && cp.indexOf("'대표') : null") > 0);
+  ok('누구를 넣었는지 알려 준다', pe.indexOf('row.pickOne ?') > 0);
+})();
+
+/* ── (주) 같은 법인 표기 때문에 검색이 아예 안 되던 문제 ── */
+(function () {
+  const ctx8 = { console, String, window: {} };
+  vm.createContext(ctx8);
+  vm.runInContext(cutPe('var PC_CORP_TOKENS =', '\nfunction '), ctx8);
+  vm.runInContext(cutPe('function pcNormCo(', '\nfunction '), ctx8);
+  const N = ctx8.pcNormCo;
+  const hit = (q, card) => N(card).indexOf(N(q)) >= 0;
+  ok('★ (주)디와이테크 로 디와이테크 를 찾는다', hit('(주)디와이테크', '디와이테크'));
+  ok('★ 디와이테크 로 (주)디와이테크 를 찾는다', hit('디와이테크', '(주)디와이테크'));
+  eq('(주) 를 괄호째로 지운다', N('(주)디와이테크'), '디와이테크');
+  eq('㈜ 도 지운다', N('㈜유원에프앤비'), '유원에프앤비');
+  eq('주식회사 도 지운다', N('주식회사 파보네'), '파보네');
+  eq('(유) 유한회사', N('(유)한샘'), '한샘');
+  eq('(재) 재단법인', N('(재)한국기금'), '한국기금');
+  eq('(사) 사단법인', N('(사)대한협회'), '대한협회');
+  eq('(의) 의료법인', N('(의)서울의료원'), '서울의료원');
+  eq('공백 넣은 ( 주 ) 도', N('( 주 )디와이테크'), '디와이테크');
+  // 회사 이름 안의 '주'는 지우면 안 된다
+  eq('이름 속 주는 남긴다', N('주성엔지니어링'), '주성엔지니어링');
+  eq('이름 속 유도 남긴다', N('유원에프앤비'), '유원에프앤비');
+  ok('다른 회사끼리 헷갈리지 않는다', !hit('디와이테크', '에이와이테크'));
 })();
 
 /* ── 업무관리도 같은 것을 보여 주는가 ── */
@@ -282,7 +335,7 @@ ok('★ 사건 카드가 팩스를 빈값으로 덮지 않는다',
     a1: { k:'card', n:'김종복', c:'남양인텍', ti:'대표이사', m:'010-4243-8853',
           cfx:'041-583-1895', e:'namyangit@naver.com' } } } };
   vm.createContext(ctx5);
-  ['function pcNormCo(', 'function pcIsCeoTitle('].forEach(function (fn) {
+  ['var PC_CORP_TOKENS =', 'function pcNormCo(', 'function pcIsCeoTitle('].forEach(function (fn) {
     vm.runInContext(cutPe(fn, '\nfunction '), ctx5);
   });
   vm.runInContext(cutPe('function pcGroupCompanies(){', '\nfunction '), ctx5);
@@ -300,7 +353,7 @@ ok('★ 사건 카드가 팩스를 빈값으로 덮지 않는다',
   const ctx6 = { console, Object, String, window: { pucardsIdx: {
     a1: { k:'card', n:'김종복', c:'남양인텍', ti:'대표이사', cfx:'041-999-8888' } } } };
   vm.createContext(ctx6);
-  ['function pcNormCo(', 'function pcIsCeoTitle('].forEach(function (fn) {
+  ['var PC_CORP_TOKENS =', 'function pcNormCo(', 'function pcIsCeoTitle('].forEach(function (fn) {
     vm.runInContext(cutPe(fn, '\nfunction '), ctx6);
   });
   vm.runInContext(cutPe('function pcGroupCompanies(){', '\nfunction '), ctx6);
@@ -344,7 +397,7 @@ ok('★ 사건 카드가 팩스를 빈값으로 덮지 않는다',
   function mk(idx) {
     const c = { console, Object, String, window: { pucardsIdx: idx } };
     vm.createContext(c);
-    ['function pcNormCo(', 'function pcIsCeoTitle('].forEach(fn =>
+    ['var PC_CORP_TOKENS =', 'function pcNormCo(', 'function pcIsCeoTitle('].forEach(fn =>
       vm.runInContext(cutPe(fn, '\nfunction '), c));
     vm.runInContext(cutPe('function pcGroupCompanies(){', '\nfunction '), c);
     vm.runInContext(cutPe('function searchPucardsCompanies(query){', '\nfunction '), c);

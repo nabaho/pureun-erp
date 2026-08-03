@@ -9662,7 +9662,18 @@ function PastCompanySearchModal(props){
 // 계약창 회사명 칸에 치면 업체·계약·사건…과 함께 명함첩도 같이 뜨게 한다.
 // 명함첩은 사람 단위(명함 한 장 = 한 사람)라 그대로 뿌리면 목록이 지저분해진다.
 // 회사 이름으로 묶어 한 줄만 내보내고, 그 회사 사람들은 담당자로 함께 딸려 보낸다.
-function pcNormCo(s){ return String(s||'').toLowerCase().replace(/[\s\-㈜()]|주식회사/g,''); }
+/* 회사명 대조용 정규화.
+   ★ 법인 표기를 '괄호까지 묶어서' 먼저 지운다.
+     종전에는 괄호만 지워 '(주)디와이테크' → '주디와이테크' 가 되어,
+     명함에 '디와이테크' 로 적힌 회사를 못 찾았다(㈜ 는 되고 (주) 는 안 되는 상태).
+   유한·재단·사단·의료·학교법인, 합자·합명도 같은 문제라 함께 처리한다. */
+var PC_CORP_TOKENS = /\(\s*(주|유|재|사|합|학|의|장)\s*\)|㈜|㈠|주식회사|유한책임회사|유한회사|합자회사|합명회사|재단법인|사단법인|의료법인|학교법인|사회복지법인|영농조합법인|농업회사법인/g;
+function pcNormCo(s){
+  return String(s||'').toLowerCase()
+    .replace(PC_CORP_TOKENS, '')      // 법인 표기 먼저 (괄호째로)
+    .replace(/[\s\-()·.,]/g, '');     // 남은 공백·기호
+}
+try { window.pcNormCo = pcNormCo; } catch(_){ }
 // 이 직책이면 대표로 본다 — 고르는 순간 대표자 칸까지 채운다.
 // '대표번호'·'대표전화' 같은 말은 직책이 아니므로 뺀다.
 var PC_CEO_TITLE = /(대표이사|대표원장|대표변호사|대표노무사|공동대표|각자대표|대표자|사장|회장|원장|대표|ceo|president)/i;
@@ -10051,15 +10062,55 @@ function PucardsCompanyPickerModal(props){
                       '명함첩에 없음: ' + miss.join(' · '))
                   : null;
               })(),
-              // 어떤 사람이 딸려 오는지 미리 보여 준다 — 골라 놓고 '엉뚱한 게 왔다'가 없게
-              (r.cards && r.cards.length)
-                ? h('div', { style:{ fontSize:'10.5px', color:'#475569', marginTop:'3px' } },
-                    '👤 ' + r.cards.slice(0,3).map(function(x){
-                      return (x.n||'(이름없음)') + (x.ti ? '(' + x.ti + ')' : '');
-                    }).join(' · ') + (r.cards.length > 3 ? ' 외 ' + (r.cards.length-3) + '명' : ''))
-                : null,
               r.hitPerson && h('div', { style:{ fontSize:'10px', color:'#b45309', marginTop:'2px' } },
-                '사람 이름으로 찾은 회사입니다')
+                '사람 이름으로 찾은 회사입니다'),
+              // ── 그 회사 사람들 — 한 사람씩 항목을 다 보여 주고 따로 고를 수 있게 ──
+              // 회사 머리줄을 누르면 통째로, 여기서 한 사람을 누르면 그 사람만 들어온다.
+              (r.cards && r.cards.length)
+                ? h('div', { style:{ marginTop:'6px', borderTop:'1px dashed #e2e8f0', paddingTop:'5px' } },
+                    h('div', { style:{ fontSize:'10px', color:'#94a3b8', marginBottom:'3px' } },
+                      '👤 이 회사 명함 ' + r.cards.length + '장 — 한 사람만 넣으려면 그 줄을 누르세요'),
+                    r.cards.map(function(x, xi){
+                      var isCeo = pcIsCeoTitle(x.ti);
+                      var bits = [['📱', x.m], ['☎', x.t || x.ct], ['📠', x.fx || x.cfx],
+                                  ['✉', x.e], ['🏠', x.ad]].filter(function(b){ return b[1]; });
+                      return h('div', { key:'p'+xi,
+                        onClick:function(e){
+                          e.stopPropagation();                       // 회사 통째로가 아니라 이 사람만
+                          props.onSelect(Object.assign({}, r, {
+                            pickOne: x,
+                            pickOneId: (r.cardIdsOrdered || [])[xi] || '',
+                            cards: [x],
+                            cardIdsOrdered: [ (r.cardIdsOrdered || [])[xi] || '' ],
+                            cardId: (r.cardIdsOrdered || [])[xi] || r.cardId,
+                            // 그 사람이 대표면 대표자 칸까지, 아니면 대표자 칸은 건드리지 않는다
+                            ceo: isCeo ? (x.n || '') : '',
+                            ceoPhone: isCeo ? (x.m || '') : '',
+                            ceoEmail: isCeo ? (x.e || '') : ''
+                          }));
+                        },
+                        style:{ padding:'5px 8px', margin:'2px 0', borderRadius:'5px', cursor:'pointer',
+                          background: isCeo ? '#fffbeb' : '#f8fafc',
+                          border:'1px solid ' + (isCeo ? '#fde68a' : '#e2e8f0') },
+                        onMouseEnter:function(e){ e.currentTarget.style.background = '#dbeafe'; },
+                        onMouseLeave:function(e){ e.currentTarget.style.background = isCeo ? '#fffbeb' : '#f8fafc'; }
+                      },
+                        h('div', { style:{ fontSize:'11.5px', fontWeight:700, color:'#1e293b' } },
+                          (x.n || '(이름없음)')
+                          + (x.ti ? ' · ' + x.ti : '') + (x.d ? ' · ' + x.d : ''),
+                          isCeo ? h('span', { style:{ marginLeft:'5px', background:'#fef3c7', color:'#854d0e',
+                            fontSize:'9.5px', padding:'1px 5px', borderRadius:'7px', fontWeight:700 } }, '대표') : null),
+                        bits.length
+                          ? h('div', { style:{ fontSize:'10.5px', color:'#334155', marginTop:'2px', lineHeight:1.6 } },
+                              bits.map(function(b, bi){
+                                return h('span', { key:bi, style:{ marginRight:'8px' } }, b[0] + ' ' + b[1]);
+                              }))
+                          : h('div', { style:{ fontSize:'10px', color:'#b45309', marginTop:'2px' } },
+                              '이 명함에는 연락처가 없습니다')
+                      );
+                    })
+                  )
+                : null
             );
           })
       )
@@ -10321,7 +10372,9 @@ function ContractModal(props){
     if(addedN) msg.push('담당자 ' + addedN + '명');
     if(Object.keys(info).length) msg.push('회사정보');
     if(got.length) msg.push(got.join('·') + ' 사진');
-    showToast('📇 명함첩에서 ' + msg.join(' · ') + ' 가져왔습니다');
+    // 한 사람만 골랐으면 누구를 넣었는지 밝힌다
+    var who = row.pickOne ? (' — ' + (row.pickOne.n || '') + (row.pickOne.ti ? ' ' + row.pickOne.ti : '')) : '';
+    showToast('📇 명함첩에서 ' + msg.join(' · ') + ' 가져왔습니다' + who);
   }
 
   // 자동완성 항목 선택 시 회사 정보 자동 채움
