@@ -17,6 +17,7 @@
 <script src="js/pu-health.js"></script>
 <script src="js/pu-version.js"></script>
 <script src="js/pu-photo-store.js"></script>
+<script src="js/pu-photo-queue.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check-compat.js"></script>
 <style>
@@ -45,11 +46,35 @@ button{font-family:inherit;cursor:pointer}
 #login p{font-size:13.5px;color:var(--sub);line-height:1.6;margin:0 0 18px}
 #login a{display:inline-block;background:var(--blue);color:#fff;text-decoration:none;border-radius:10px;padding:11px 18px;font-weight:700;font-size:14px}
 
-/* 홈 */
-#home{display:none;flex:1;flex-direction:column;align-items:center;justify-content:center;padding:24px}
-#home .empty{text-align:center;color:var(--sub)}
-#home .empty .ic{font-size:44px;margin-bottom:10px}
-#home .empty p{font-size:14px;margin:0}
+/* 홈 — 올리기 버튼 + 올리는 중 목록 + 날짜별 격자 */
+#home{display:none;flex:1;flex-direction:column;padding:14px;overflow-y:auto;max-width:560px;width:100%;margin:0 auto}
+#home .pri{width:100%;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:700;background:var(--blue);color:#fff}
+#home .sec{width:100%;border:1px solid var(--line);border-radius:12px;padding:12px;font-size:14px;font-weight:600;background:#fff;color:var(--ink);margin-top:8px}
+
+#upWrap{margin-top:16px}
+#upWrap .cap{font-size:12px;color:var(--sub);margin-bottom:6px}
+#upList{border:1px solid var(--line);border-radius:10px;background:#fff;overflow:hidden}
+.uprow{display:flex;align-items:center;gap:10px;padding:9px 12px;font-size:12.5px;border-bottom:1px solid var(--line)}
+.uprow:last-child{border-bottom:none}
+.uprow .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.uprow .st{flex-shrink:0;font-weight:600}
+.uprow.s-wait .st{color:var(--sub)}
+.uprow.s-up .st{color:var(--blue)}
+.uprow.s-retry .st{color:#b45309}
+.uprow.s-done .st{color:#15803d}
+
+#grid{margin-top:4px}
+#grid .day{display:flex;align-items:baseline;gap:8px;margin:16px 0 8px}
+#grid .day b{font-size:13px}
+#grid .day span{font-size:12px;color:var(--sub)}
+#grid .cells{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+#grid .cell{aspect-ratio:1;border-radius:8px;background:#e7ebf3;overflow:hidden}
+#grid .cell img{width:100%;height:100%;object-fit:cover;display:block}
+
+#empty{display:none;flex:1;align-items:center;justify-content:center;padding:40px 0}
+#empty .in{text-align:center;color:var(--sub)}
+#empty .ic{font-size:44px;margin-bottom:10px}
+#empty p{font-size:14px;margin:0}
 
 /* 설정 시트 */
 #settings{display:none;position:fixed;inset:0;background:rgba(16,24,40,.45);align-items:flex-end;justify-content:center;z-index:20}
@@ -83,9 +108,23 @@ button{font-family:inherit;cursor:pointer}
 
   <!-- 홈 -->
   <div id="home">
-    <div class="empty">
-      <div class="ic">🖼️</div>
-      <p>아직 올린 사진이 없습니다.</p>
+    <button class="pri" id="pickBtn">📷 사진 고르기</button>
+    <button class="sec" id="camBtn">카메라로 바로 찍기</button>
+    <input type="file" id="pickInput" accept="image/*" multiple hidden>
+    <input type="file" id="camInput" accept="image/*" capture="environment" hidden>
+
+    <div id="upWrap" style="display:none">
+      <div class="cap">올리는 중</div>
+      <div id="upList"></div>
+    </div>
+
+    <div id="grid"></div>
+
+    <div id="empty">
+      <div class="in">
+        <div class="ic">🖼️</div>
+        <p>아직 올린 사진이 없습니다.</p>
+      </div>
     </div>
   </div>
 
@@ -114,6 +153,18 @@ const FIREBASE_CONFIG = {
 };
 
 const $ = id => document.getElementById(id);
+
+/* 바깥에서 온 문자열(파일 이름 등)을 화면에 넣기 전에 이스케이프한다. */
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/* DB에서 온 미리보기를 img src 에 꽂기 전 검사 — 사진 데이터만 통과시킨다. */
+function safeSrc(t) {
+  return typeof t === 'string' && /^data:image\//.test(t) ? t : null;
+}
+
 let db = null, store = null;
 
 /* ══════ 시작 ══════ */
@@ -122,7 +173,7 @@ try { if (firebase.appCheck) firebase.appCheck().activate(new firebase.appCheck.
 catch (e) { console.warn('[AppCheck]', e && e.message); }
 
 db = firebase.database();
-/* 파일 창고는 아직 이 저장소에서 검증되지 않았다. 없어도 앱이 뜨게 한다. */
+/* 파일 창고는 요금제 문제로 못 쓴다(2026-08-02 점검). 점검 화면을 위해서만 연결한다. */
 try { store = firebase.storage(); } catch (e) { store = null; }
 
 /* 저장 방식은 저장 층이 정한다. 앱은 어디에 담기는지 모른다. */
@@ -136,7 +187,224 @@ firebase.auth().onAuthStateChanged(u => {
   /* ⚙️(설정·창고 점검)는 로그인한 뒤에만 보인다.
      로그아웃 상태로 점검하면 권한 거부가 나서 "규칙 문제"로 잘못 보고된다. */
   $('gear').style.display = signedIn ? 'inline-flex' : 'none';
+  if (signedIn) { initQueue(); loadGrid(); }
 });
+
+/* ══════ 업로드 대기열 ══════
+   사진은 먼저 이 기기(IndexedDB)에 담고, 클라우드에 올라간 뒤에만 지운다.
+   그래서 신호가 약한 현장에서 올려도 사진을 잃지 않는다. */
+let queue = null;
+let queueStarted = false;
+
+function openQueueIdb() {
+  return new Promise(function (res, rej) {
+    const rq = indexedDB.open('puPhotosQueue', 1);
+    rq.onupgradeneeded = function () { rq.result.createObjectStore('jobs', { keyPath: 'id' }); };
+    rq.onsuccess = function () { res(rq.result); };
+    rq.onerror = function () { rej(rq.error); };
+  });
+}
+
+function idbAdapter(dbi) {
+  function tx(mode, fn) {
+    return new Promise(function (res, rej) {
+      const t = dbi.transaction('jobs', mode);
+      const out = fn(t.objectStore('jobs'));
+      t.oncomplete = function () { res(out && out.result); };
+      t.onerror = function () { rej(t.error); };
+      t.onabort = function () { rej(t.error); };
+    });
+  }
+  return {
+    all: function () { return tx('readonly', function (st) { return st.getAll(); }); },
+    put: function (j) { return tx('readwrite', function (st) { st.put(j); }); },
+    del: function (id) { return tx('readwrite', function (st) { st.delete(id); }); }
+  };
+}
+
+function initQueue() {
+  if (queueStarted) return;
+  queueStarted = true;
+  openQueueIdb().then(function (dbi) {
+    queue = PuPhotoQueue.create({
+      save: PuPhotoStore.savePhoto,   // 쓰기는 저장 층으로만 나간다
+      idb: idbAdapter(dbi),
+      onChange: onQueueChange
+    });
+    return queue.resume();            // 지난번에 못 올라간 사진을 이어서
+  }).catch(function (e) {
+    console.warn('[대기열]', e);
+    queueStarted = false;
+  });
+}
+
+/* 신호가 돌아오면 기다리는 시간 없이 바로 다시 시도한다. */
+window.addEventListener('online', function () { if (queue) queue.retryNow(); });
+
+/* ══════ 사진 고르기 → 축소 → 대기열 ══════ */
+$('pickBtn').onclick = function () { $('pickInput').click(); };
+$('camBtn').onclick = function () { $('camInput').click(); };
+$('pickInput').onchange = function () { addFiles(this.files); this.value = ''; };
+$('camInput').onchange = function () { addFiles(this.files); this.value = ''; };
+
+async function addFiles(fileList) {
+  const files = Array.from(fileList || []);
+  const u = firebase.auth().currentUser;
+  if (!files.length || !u || !queue) return;
+  for (const f of files) {
+    try {
+      /* 촬영 시각: EXIF → 파일 날짜 → 지금. 판단은 저장 층의 함수가 한다. */
+      const buf = await f.arrayBuffer();
+      const takenAt = PuPhotoStore.pickTakenAt(PuPhotoStore.exifTakenAt(buf), f.lastModified, Date.now());
+      /* 긴 변 1600px 축소본과 240px 미리보기 — 카메라 원본은 클라우드에 안 올라간다. */
+      const full = await shrink(f, 1600);
+      const thumb = await shrink(f, 240);
+      await queue.enqueue({
+        id: PuPhotoStore.newId(),
+        name: f.name || '사진',
+        takenAt: takenAt,
+        full: full.dataUrl,
+        thumb: thumb.dataUrl,
+        meta: {
+          takenAt: takenAt,
+          upAt: Date.now(),
+          by: u.uid,
+          byName: u.displayName || u.email || '',
+          w: full.w, h: full.h,
+          size: full.dataUrl.length
+        }
+      });
+    } catch (e) {
+      console.warn('[사진 준비]', e);
+      alert('사진 하나를 읽지 못했습니다: ' + (f.name || '') + '\n' + ((e && e.message) || e));
+    }
+  }
+}
+
+/* 사진을 긴 변 maxEdge 로 줄여 JPEG dataURL 로 만든다.
+   회전 정보(EXIF orientation)는 브라우저가 그림을 읽을 때 반영한다. */
+function shrink(file, maxEdge) {
+  return createImageBitmap(file, { imageOrientation: 'from-image' })
+    .catch(function () { return createImageBitmap(file); }) // 옵션을 모르는 브라우저
+    .then(function (bmp) {
+      const scale = Math.min(1, maxEdge / Math.max(bmp.width, bmp.height));
+      const w = Math.max(1, Math.round(bmp.width * scale));
+      const h = Math.max(1, Math.round(bmp.height * scale));
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(bmp, 0, 0, w, h);
+      if (bmp.close) bmp.close();
+      return { dataUrl: c.toDataURL('image/jpeg', 0.85), w: w, h: h };
+    });
+}
+
+/* ══════ 올리는 중 목록 ══════ */
+const UP_HIDE_MS = 3000; // 완료된 줄이 목록에서 내려가기까지
+const UP_STATE = { wait: '대기', up: '올리는 중', retry: '신호 약함 — 자동 재시도', done: '완료 ✓' };
+let upJobs = [];
+
+function onQueueChange(list) {
+  upJobs = list;
+  let scheduled = false;
+  list.forEach(function (j) {
+    if (j.state === 'done' && !j._hideAt) {
+      j._hideAt = Date.now() + UP_HIDE_MS;
+      addToGrid(j);               // 방금 올라간 사진을 격자 맨 앞에 (다시 받지 않고)
+      scheduled = true;
+    }
+  });
+  renderUp();
+  if (scheduled) setTimeout(renderUp, UP_HIDE_MS + 100);
+}
+
+function renderUp() {
+  const now = Date.now();
+  const rows = upJobs.filter(j => j.state !== 'done' || !j._hideAt || j._hideAt > now);
+  $('upWrap').style.display = rows.length ? 'block' : 'none';
+  $('upList').innerHTML = rows.map(j =>
+    '<div class="uprow s-' + esc(j.state) + '">' +
+    '<span class="nm">' + esc(j.name || '사진') + '</span>' +
+    '<span class="st">' + (UP_STATE[j.state] || esc(j.state)) + '</span></div>'
+  ).join('');
+}
+
+/* ══════ 날짜별 격자 ══════
+   올해 것만 불러온다(연도별 보관의 이유). 목록(정보)만 먼저 받고,
+   미리보기는 한 장씩 따로 받는다 — 본문(1600px)은 격자에서 절대 받지 않는다. */
+const gridYear = String(new Date().getFullYear());
+let gridItems = []; // { id, meta, thumb? } — 촬영 시각 내림차순
+
+function loadGrid() {
+  PuPhotoStore.listYear(gridYear).then(function (items) {
+    gridItems = Object.keys(items).map(id => ({ id: id, meta: items[id] || {} }));
+    gridItems.sort((a, b) => (b.meta.takenAt || 0) - (a.meta.takenAt || 0));
+    renderGrid();
+    fillThumbs();
+  }).catch(function (e) { console.warn('[목록]', e); });
+}
+
+function addToGrid(job) {
+  if (PuPhotoStore.yearOf(job.takenAt) !== gridYear) return; // 지난 연도는 다음 방문 때
+  if (gridItems.some(it => it.id === job.id)) return;
+  gridItems.unshift({ id: job.id, meta: job.meta, thumb: job.thumb });
+  gridItems.sort((a, b) => (b.meta.takenAt || 0) - (a.meta.takenAt || 0));
+  renderGrid();
+}
+
+function dayKey(ts) {
+  const d = new Date(ts);
+  return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+}
+function dayLabel(ts) {
+  const d = new Date(ts);
+  let label = (d.getMonth() + 1) + '월 ' + d.getDate() + '일';
+  if (d.toDateString() === new Date().toDateString()) label += ' (오늘)';
+  return label;
+}
+
+function renderGrid() {
+  const el = $('grid');
+  $('empty').style.display = gridItems.length ? 'none' : 'flex';
+  if (!gridItems.length) { el.innerHTML = ''; return; }
+
+  const counts = {};
+  gridItems.forEach(it => {
+    const k = dayKey(it.meta.takenAt || it.meta.upAt || 0);
+    counts[k] = (counts[k] || 0) + 1;
+  });
+
+  let html = '', lastDay = '';
+  gridItems.forEach(it => {
+    const ts = it.meta.takenAt || it.meta.upAt || 0;
+    const k = dayKey(ts);
+    if (k !== lastDay) {
+      if (lastDay) html += '</div>';
+      html += '<div class="day"><b>' + esc(dayLabel(ts)) + '</b><span>' + counts[k] + '장</span></div><div class="cells">';
+      lastDay = k;
+    }
+    const t = safeSrc(it.thumb);
+    html += '<div class="cell" data-id="' + esc(it.id) + '">' + (t ? '<img src="' + t + '" alt="">' : '') + '</div>';
+  });
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+/* 미리보기를 위에서부터 한 장씩 받아 채운다 — 한꺼번에 요청하지 않는다. */
+function fillThumbs() {
+  let chain = Promise.resolve();
+  gridItems.forEach(function (it) {
+    if (it.thumb) return;
+    chain = chain.then(function () {
+      return PuPhotoStore.loadThumb(gridYear, it.id).then(function (t) {
+        it.thumb = t;
+        const src = safeSrc(t);
+        if (!src) return;
+        const cell = document.querySelector('.cell[data-id="' + it.id + '"]');
+        if (cell) cell.innerHTML = '<img src="' + src + '" alt="">';
+      }).catch(function () { /* 한 장 실패해도 다음 장으로 */ });
+    });
+  });
+}
 
 /* ══════ 설정 ══════ */
 function modeLabel(m) { return m === 'storage' ? '파일 창고' : '실시간DB'; }
