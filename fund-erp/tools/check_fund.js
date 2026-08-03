@@ -158,5 +158,21 @@ ok('승인할 때만 학습', src.includes('learnAcct(x.memo'));
 ok('이체 상계는 학습하지 않음', src.includes('if(on&&x&&!x.xfer) learnAcct'));
 ok('이체 행은 차·대 같아도 승인 가능', src.includes('if(x&&x.debit===x.credit&&!x.xfer)'));
 
+// ── ⑫ 디와이사내 2025 실결산에서 확인된 것 ──
+// 기본재산을 증권으로 운용하는 기금이 있다(26억). 계정·전기이월 칸이 없으면 대차가 그만큼 어긋난다
+ok('매도가능증권 계정', src.includes("'매도가능증권':'자산'"));
+ok('전기이월에 매도가능증권 칸', src.includes("secu:'매도가능증권'") && src.includes("oi('secu','매도가능증권')"));
+ok('자산총계에 증권 합산', src.includes('cash+savings+loan+secu'));
+ok('별지15호 ㉓ 유가증권을 장부에서', src.includes('num(rep.run_secu)||fin.secu'));
+ok('복리후생 계정(목적사업비)', src.includes("'복리후생':'비용'"));
+ok('잡수익 계정', src.includes("'잡수익':'수익'"));
+// 1원·10원은 같은 날 같은 금액이 우연히 겹친다 — 소액을 이체로 자동 상계하면 장부가 틀어진다
+ok('이체 자동상계 최소금액', /var XFER_MIN=\d+;/.test(src) && src.includes('amt>=XFER_MIN'));
+// 통장을 엑셀로 못 받는 은행이 있다(새마을금고는 PDF만) — 직접 입력이 없으면 회계를 시작조차 못 한다
+ok('거래 직접 추가', src.includes('function addTxnForm') && src.includes('function addTxnSave')
+  && src.includes('onclick="addTxnForm()"'));
+ok('직접 입력 거래 표시', src.includes('x.manual?'));
+ok('머리글에 계좌번호가 없으면 파일명에서', src.includes("String(file.name||'').match"));
+
 console.log('\n' + (fail ? 'FAILURES ' + fail + ' / ' + n : 'ALL PASS (' + n + '건)'));
 process.exit(fail ? 1 : 0);
