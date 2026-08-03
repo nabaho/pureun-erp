@@ -327,5 +327,73 @@ ok('★ 사건 카드가 팩스를 빈값으로 덮지 않는다',
   const blk = cutWk('function dPeopleHTML(id,it){', '\nfunction ');
   ok('업무관리도 팩스를 보여 준다', /c\.fax/.test(blk));
 })();
+
+/* ══════════════════════════════════════════════════════════════
+   추가: 대표자 전화 — 회사 대표번호와 다른 칸이다
+   명함첩의 '핸드폰'(대표 명함) → 계약·업체 화면의 '대표자 전화'(ceoPhone)
+   ══════════════════════════════════════════════════════════════ */
+(function () {
+  const IDX = {
+    b1: { k:'biz', n:'남양인텍', c:'남양인텍', bz:'312-81-28123', ceo:'김종복',
+          ct:'041-583-1893', cfx:'041-583-1895', ad:'충남 천안시 서북구 성거읍 석문길 194',
+          bt:'제조업', bi:'인쇄 및 기록매체 복제업', e:'namyangit@daum.net' },
+    a1: { k:'card', n:'김종복', c:'남양인텍', ti:'대표이사',
+          m:'010-4243-8853', ct:'041-583-1893', cfx:'041-583-1895', e:'namyangit@naver.com' },
+    a2: { k:'card', n:'박대리', c:'남양인텍', ti:'대리', m:'010-3333-4444' }
+  };
+  function mk(idx) {
+    const c = { console, Object, String, window: { pucardsIdx: idx } };
+    vm.createContext(c);
+    ['function pcNormCo(', 'function pcIsCeoTitle('].forEach(fn =>
+      vm.runInContext(cutPe(fn, '\nfunction '), c));
+    vm.runInContext(cutPe('function pcGroupCompanies(){', '\nfunction '), c);
+    vm.runInContext(cutPe('function searchPucardsCompanies(query){', '\nfunction '), c);
+    return c;
+  }
+  const r0 = mk(IDX).searchPucardsCompanies('남양인텍')[0] || {};
+  eq('★ 대표자 전화 = 대표 명함의 휴대폰', r0.ceoPhone, '010-4243-8853');
+  eq('회사 대표번호는 따로',               r0.phone, '041-583-1893');
+  ok('★ 둘이 다른 값이다 (같은 칸에 넣으면 안 된다)', r0.ceoPhone !== r0.phone);
+  eq('대표 이메일은 사업자등록증 것 먼저', r0.ceoEmail, 'namyangit@daum.net');
+
+  // 사업자등록증이 없으면 대표 명함의 이메일을 쓴다
+  const noBiz = mk({ a1: IDX.a1, a2: IDX.a2 }).searchPucardsCompanies('남양인텍')[0] || {};
+  eq('사업자등록증 없으면 대표 명함 이메일', noBiz.ceoEmail, 'namyangit@naver.com');
+  eq('사업자등록증 없어도 대표자 전화는 온다', noBiz.ceoPhone, '010-4243-8853');
+
+  // 대표 직책 명함이 없으면 대표자 전화는 비운다 (대리 휴대폰을 넣으면 안 된다)
+  const noCeo = mk({ a2: IDX.a2 }).searchPucardsCompanies('남양인텍')[0] || {};
+  eq('★ 대표 명함이 없으면 비운다 (직원 휴대폰을 넣지 않는다)', noCeo.ceoPhone, '');
+})();
+
+/* 자동완성(pcCompanyRows)도 같은 값을 넘기는가 */
+(function () {
+  const blk = NS(cutPe('function pcCompanyRows(q){', '\n// 사람 이름으로도'));
+  ok('자동완성이 대표자 전화를 넘긴다', /ceoPhone:\(ceoCard&&ceoCard\.m\)\|\|''/.test(blk));
+  ok('자동완성이 대표 이메일을 넘긴다', /ceoEmail:\(g\.biz&&g\.biz\.e\)\|\|\(ceoCard&&ceoCard\.e\)\|\|''/.test(blk));
+})();
+
+/* 사람 줄에서 대표를 고르면 대표자 전화가 오는가 */
+(function () {
+  const blk = NS(cutPe('function pcPersonRows(q){', '\n// 고른 명함첩 회사의 사진'));
+  ok('★ 대표 명함을 고르면 그 휴대폰이 대표자 전화', /ceoPhone:isCeo\?\(r\.m\|\|''\):''/.test(blk));
+  ok('★ 대표가 아니면 대표자 전화를 넣지 않는다', /isCeo\?\(r\.m\|\|''\):''/.test(blk));
+  ok('사람 줄도 팩스·업태·종목을 넘긴다',
+     /fax:biz\.cfx\|\|r\.cfx\|\|r\.fx\|\|''/.test(blk) && /bizType:biz\.bt\|\|''/.test(blk));
+})();
+
+/* 고를 때 실제로 그 칸에 넣는가 (비어 있을 때만) */
+(function () {
+  const n = NS(cutPe('async function fillCompanyImagesFromPucards(row){', '\n  }'));
+  ok('★ 대표자 전화를 채운다',   /info\.ceoPhone=row\.ceoPhone/.test(n));
+  ok('이미 있으면 안 덮는다',    /row\.ceoPhone&&!cur\.ceoPhone/.test(n));
+  ok('대표 이메일도 비었을 때만', /row\.ceoEmail&&!cur\.email/.test(n));
+  const sel = NS(cutPe('function onSelectPastCompany(r){', '\n    // 모든 컬렉션에서'));
+  ok('자동완성 선택도 대표자 전화를 넣는다', /ceoPhone:cur0\.ceoPhone\|\|pc\.ceoPhone\|\|''/.test(sel));
+  ok('자동완성 선택은 기존 값이 우선', /fax:cur0\.fax\|\|pc\.fax\|\|''/.test(sel));
+})();
+
+/* 화면에 그 칸이 실제로 있는가 */
+ok('계약모달에 대표자 전화 칸이 있다', /f\.company\.ceoPhone/.test(pe) && pe.indexOf("fld('대표자 전화'") > 0);
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');
 process.exit(fail ? 1 : 0);
