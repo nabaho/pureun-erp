@@ -48,9 +48,10 @@ test('촬영 시각을 모르면 unknown으로 모은다', () => {
 
 test('메타 경로와 본문 경로가 갈라져 있다', () => {
   const S = loadStore();
+  S.init({ uid: 'U1' });
   // 목록만 읽을 때 사진까지 내려받으면 앱이 느려진다. 반드시 분리한다.
-  assert.equal(S.metaPath('2026', 'abc'), 'puphotos/items/2026/abc');
-  assert.equal(S.blobPath('2026', 'abc'), 'puphotos/blobs/2026/abc');
+  assert.equal(S.metaPath('2026', 'abc'), 'puphotos/u/U1/items/2026/abc');
+  assert.equal(S.blobPath('2026', 'abc'), 'puphotos/u/U1/blobs/2026/abc');
   assert.notEqual(S.metaPath('2026', 'abc'), S.blobPath('2026', 'abc'));
 });
 
@@ -77,6 +78,7 @@ test('파일 종류가 full·thumb 가 아니면 예외를 던진다', () => {
 
 test('경로가 연도로 갈라진다', () => {
   const S = loadStore();
+  S.init({ uid: 'U1' });
   // 연도별로 나눠야 평소에 올해 것만 불러올 수 있다.
   assert.ok(S.metaPath('2026', 'x').includes('/2026/'));
   assert.ok(S.filePath('2025', 'x', 'full').includes('/2025/'));
@@ -105,7 +107,7 @@ test('init이 파이어베이스 객체를 받고 방식을 돌려준다', () =>
   const S = loadStore();
   const fakeDb = {};
   const fakeStorage = {};
-  assert.equal(S.init({ db: fakeDb, storage: fakeStorage, mode: 'storage' }), 'storage');
+  assert.equal(S.init({ uid: 'U1', db: fakeDb, storage: fakeStorage, mode: 'storage' }), 'storage');
   assert.equal(S.getMode(), 'storage');
 });
 
@@ -153,7 +155,7 @@ test('점검 경로는 실사진 경로와 겹치지 않는다', () => {
 
 test('창고가 연결되지 않았으면 점검이 곧바로 알려준다', async () => {
   const S = loadStore();
-  S.init({ db: {}, storage: null });
+  S.init({ uid: 'U1', db: {}, storage: null });
   const r = await S.probe('1');
   assert.equal(r.ok, false);
   assert.equal(r.step, 'init');
@@ -163,7 +165,7 @@ test('창고가 연결되지 않았으면 점검이 곧바로 알려준다', asy
 test('점검이 통과하면 올리고·주소받고·지운다', async () => {
   const S = loadStore();
   const fs2 = fakeStorage({});
-  S.init({ db: {}, storage: fs2 });
+  S.init({ uid: 'U1', db: {}, storage: fs2 });
   const r = await S.probe('99');
   assert.equal(r.ok, true);
   assert.equal(r.step, 'done');
@@ -174,7 +176,7 @@ test('점검이 통과하면 올리고·주소받고·지운다', async () => {
 
 test('올리기가 막히면 실패로 알려준다', async () => {
   const S = loadStore();
-  S.init({ db: {}, storage: fakeStorage({ upload: 'fail' }) });
+  S.init({ uid: 'U1', db: {}, storage: fakeStorage({ upload: 'fail' }) });
   const r = await S.probe('99');
   assert.equal(r.ok, false);
   assert.equal(r.step, 'upload');
@@ -183,7 +185,7 @@ test('올리기가 막히면 실패로 알려준다', async () => {
 
 test('올리기는 됐지만 지우기가 막히면 통과로 보되 알려준다', async () => {
   const S = loadStore();
-  S.init({ db: {}, storage: fakeStorage({ del: 'fail' }) });
+  S.init({ uid: 'U1', db: {}, storage: fakeStorage({ del: 'fail' }) });
   const r = await S.probe('99');
   // 사진을 올릴 수는 있으니 창고는 쓸 수 있다. 다만 규칙을 손봐야 한다.
   assert.equal(r.ok, true);
@@ -193,7 +195,7 @@ test('올리기는 됐지만 지우기가 막히면 통과로 보되 알려준�
 
 test('점검이 실패해도 예외를 던지지 않는다', async () => {
   const S = loadStore();
-  S.init({ db: {}, storage: { ref() { throw new Error('창고 설정이 없습니다'); } } });
+  S.init({ uid: 'U1', db: {}, storage: { ref() { throw new Error('창고 설정이 없습니다'); } } });
   const r = await S.probe('99');
   assert.equal(r.ok, false);
   assert.equal(r.step, 'ref');
@@ -202,7 +204,7 @@ test('점검이 실패해도 예외를 던지지 않는다', async () => {
 test('주소받기가 막히면 올리기 실패가 아니라 따로 알려주고 점검 파일을 지운다', async () => {
   const S = loadStore();
   const fs3 = fakeStorage({ url: 'fail' });
-  S.init({ db: {}, storage: fs3 });
+  S.init({ uid: 'U1', db: {}, storage: fs3 });
   const r = await S.probe('99');
   // 올리기는 성공했다 — 그러니 'upload' 단계로 보고하면 거짓 보고가 된다.
   // 실제로 막힌 곳인 'url' 단계로 정확히 알려줘야 한다.
@@ -344,8 +346,9 @@ test('어떤 결과를 넣어도 빈 문자열이나 undefined를 돌려주지 �
 
 test('미리보기 경로 — 본문과 다른 곳에 담긴다', () => {
   const S = loadStore();
+  S.init({ uid: 'U1' });
   // 격자가 본문(1600px)까지 받으면 느려진다. 반드시 갈라 둔다.
-  assert.equal(S.thumbPath('2026', 'p1'), 'puphotos/thumbs/2026/p1');
+  assert.equal(S.thumbPath('2026', 'p1'), 'puphotos/u/U1/thumbs/2026/p1');
   assert.notEqual(S.thumbPath('2026', 'p1'), S.blobPath('2026', 'p1'));
   assert.notEqual(S.thumbPath('2026', 'p1'), S.metaPath('2026', 'p1'));
 });
@@ -457,7 +460,7 @@ function fakeDb(data) {
 test('savePhoto — 사진 한 장이 세 경로에 update 한 번으로 담긴다', async () => {
   const S = loadStore();
   const db = fakeDb();
-  S.init({ db });
+  S.init({ uid: 'U1', db });
   const r = await S.savePhoto({
     id: 'p1', takenAt: new Date(2026, 6, 15).getTime(),
     meta: { takenAt: 1 }, full: 'data:full', thumb: 'data:thumb'
@@ -470,16 +473,16 @@ test('savePhoto — 사진 한 장이 세 경로에 update 한 번으로 담긴�
   assert.equal(db.calls.update[0].path, '');
   const u = db.calls.update[0].u;
   assert.deepEqual(Object.keys(u).sort(), [
-    'puphotos/blobs/2026/p1', 'puphotos/items/2026/p1', 'puphotos/thumbs/2026/p1'
+    'puphotos/u/U1/blobs/2026/p1', 'puphotos/u/U1/items/2026/p1', 'puphotos/u/U1/thumbs/2026/p1'
   ]);
-  assert.equal(u['puphotos/blobs/2026/p1'], 'data:full');
-  assert.equal(u['puphotos/thumbs/2026/p1'], 'data:thumb');
+  assert.equal(u['puphotos/u/U1/blobs/2026/p1'], 'data:full');
+  assert.equal(u['puphotos/u/U1/thumbs/2026/p1'], 'data:thumb');
 });
 
 test('savePhoto — 촬영 시각을 모르는 사진은 unknown 연도로', async () => {
   const S = loadStore();
   const db = fakeDb();
-  S.init({ db });
+  S.init({ uid: 'U1', db });
   const r = await S.savePhoto({ id: 'p2', takenAt: null, meta: {}, full: 'f', thumb: 't' });
   assert.equal(r.year, 'unknown');
   assert.ok(Object.keys(db.calls.update[0].u).every(k => k.includes('/unknown/')));
@@ -487,7 +490,7 @@ test('savePhoto — 촬영 시각을 모르는 사진은 unknown 연도로', asy
 
 test('savePhoto — 실시간DB가 없으면 한국어로 거절한다', async () => {
   const S = loadStore();
-  S.init({});
+  S.init({ uid: 'U1' });
   await assert.rejects(
     () => S.savePhoto({ id: 'x', takenAt: 1, meta: {}, full: '', thumb: '' }),
     /실시간DB/);
@@ -495,7 +498,7 @@ test('savePhoto — 실시간DB가 없으면 한국어로 거절한다', async (
 
 test('savePhoto — 파일 창고 방식 저장은 아직 없다고 명확히 거절한다', async () => {
   const S = loadStore();
-  S.init({ db: fakeDb(), mode: 'storage' });
+  S.init({ uid: 'U1', db: fakeDb(), mode: 'storage' });
   await assert.rejects(
     () => S.savePhoto({ id: 'x', takenAt: 1, meta: {}, full: '', thumb: '' }),
     /파일 창고/);
@@ -503,43 +506,229 @@ test('savePhoto — 파일 창고 방식 저장은 아직 없다고 명확히 �
 
 test('newId — db가 있으면 push 키, 없으면 임시 키', () => {
   const S = loadStore();
-  S.init({ db: fakeDb() });
+  S.init({ uid: 'U1', db: fakeDb() });
   assert.match(S.newId(), /^-fake/);
   const S2 = loadStore();
-  S2.init({});
+  S2.init({ uid: 'U1' });
   assert.ok(S2.newId().length > 5);
 });
 
 test('listYear — 그 연도 목록만 한 번 읽는다', async () => {
   const S = loadStore();
   const db = fakeDb({ a: { takenAt: 1 } });
-  S.init({ db });
+  S.init({ uid: 'U1', db });
   const items = await S.listYear('2026');
   assert.deepEqual(items, { a: { takenAt: 1 } });
-  assert.deepEqual(db.calls.once, ['puphotos/items/2026']);
+  assert.deepEqual(db.calls.once, ['puphotos/u/U1/items/2026']);
 });
 
 test('listYear — 비어 있으면 빈 객체', async () => {
   const S = loadStore();
-  S.init({ db: fakeDb(undefined) });
+  S.init({ uid: 'U1', db: fakeDb(undefined) });
   assert.deepEqual({ ...(await S.listYear('2020')) }, {});
 });
 
 test('loadThumb·loadFull — 한 장씩, 서로 다른 경로에서', async () => {
   const S = loadStore();
   const db = fakeDb('data:x');
-  S.init({ db });
+  S.init({ uid: 'U1', db });
   assert.equal(await S.loadThumb('2026', 'p1'), 'data:x');
   assert.equal(await S.loadFull('2026', 'p1'), 'data:x');
-  assert.deepEqual(db.calls.once, ['puphotos/thumbs/2026/p1', 'puphotos/blobs/2026/p1']);
+  assert.deepEqual(db.calls.once, ['puphotos/u/U1/thumbs/2026/p1', 'puphotos/u/U1/blobs/2026/p1']);
 });
 
 test('읽기 함수들 — 실시간DB가 없으면 한국어로 거절한다', async () => {
   const S = loadStore();
-  S.init({});
+  S.init({ uid: 'U1' });
   await assert.rejects(() => S.listYear('2026'), /실시간DB/);
   await assert.rejects(() => S.loadThumb('2026', 'x'), /실시간DB/);
   await assert.rejects(() => S.loadFull('2026', 'x'), /실시간DB/);
+});
+
+/* ── 사람별 분리 ──
+   실시간DB는 규칙으로 목록을 걸러 주지 못한다(어떤 노드를 읽을 수 있으면 그 아래
+   전부가 열린다). 그래서 사진을 사람별 자리로 나눠 담는 것 말고는 방법이 없다.
+   경로가 어긋나면 남의 사진이 보이거나 내 사진이 사라진다 — 여기가 핵심 검사다. */
+
+test('경로가 사람별로 갈라진다', () => {
+  const S = loadStore();
+  S.init({ uid: 'U1' });
+  assert.ok(S.metaPath('2026', 'p1').indexOf('puphotos/u/U1/') === 0,
+    '내 자리 밖에 담고 있습니다: ' + S.metaPath('2026', 'p1'));
+  // 남의 자리를 읽을 때는 계정을 넘긴다(관리자만 규칙이 허락한다)
+  assert.equal(S.metaPath('2026', 'p1', 'U2'), 'puphotos/u/U2/items/2026/p1');
+  assert.notEqual(S.metaPath('2026', 'p1'), S.metaPath('2026', 'p1', 'U2'));
+});
+
+test('계정을 모르면 경로를 만들지 않는다', () => {
+  // 빈 값이 들어가면 puphotos/u//items/... 가 되어 엉뚱한 곳을 가리킨다
+  const S = loadStore();
+  S.init({});
+  assert.throws(() => S.metaPath('2026', 'p1'), /계정/);
+  assert.throws(() => S.blobPath('2026', 'p1'), /계정/);
+  assert.throws(() => S.thumbPath('2026', 'p1'), /계정/);
+});
+
+test('savePhoto 는 내 자리에만 쓴다 — 남의 자리에 쓰는 길이 없다', async () => {
+  const S = loadStore();
+  const db = fakeDb();
+  S.init({ uid: 'U1', db });
+  await S.savePhoto({ id: 'p1', takenAt: new Date(2026, 6, 15).getTime(), meta: {}, full: 'f', thumb: 't' });
+  for (const k of Object.keys(db.calls.update[0].u)) {
+    assert.ok(k.indexOf('puphotos/u/U1/') === 0, '내 자리 밖에 썼습니다: ' + k);
+  }
+});
+
+test('listYear·loadThumb·loadFull 은 남의 자리도 읽을 수 있다 (관리자용)', async () => {
+  const S = loadStore();
+  const db = fakeDb('data:x');
+  S.init({ uid: 'U1', db });
+  await S.listYear('2026', 'U2');
+  await S.loadThumb('2026', 'p1', 'U2');
+  await S.loadFull('2026', 'p1', 'U2');
+  assert.deepEqual(db.calls.once, [
+    'puphotos/u/U2/items/2026', 'puphotos/u/U2/thumbs/2026/p1', 'puphotos/u/U2/blobs/2026/p1'
+  ]);
+});
+
+test('사진첩을 쓰는 사람 명단 — 내 칸만 쓰고, 관리자만 훑는다', async () => {
+  const S = loadStore();
+  const db = fakeDb({ U1: { name: '가' }, U2: { name: '나' } });
+  S.init({ uid: 'U1', db, isAdmin: true });
+  await S.touchOwner('홍길동');
+  assert.equal(db.calls.update.length, 1);
+  assert.deepEqual(Object.keys(db.calls.update[0].u), ['puphotos/owners/U1']);
+  assert.equal(db.calls.update[0].u['puphotos/owners/U1'].name, '홍길동');
+  const owners = await S.listOwners();
+  assert.deepEqual(Object.keys(owners).sort(), ['U1', 'U2']);
+});
+
+test('관리자가 아니면 사람 명단을 읽지 않는다', async () => {
+  // 규칙이 막지만, 화면이 헛되게 두드려 오류를 만들 이유도 없다
+  const S = loadStore();
+  const db = fakeDb({ U1: {} });
+  S.init({ uid: 'U1', db, isAdmin: false });
+  assert.deepEqual({ ...(await S.listOwners()) }, {});
+  assert.equal(db.calls.once.length, 0);
+});
+
+/* ── 옛 자리에서 사람별 자리로 이사 ──
+   여기서 실수하면 사진을 잃는다. 그래서 규칙 하나: **복사가 끝날 때까지 옛 것을
+   지우지 않는다.** 지우기는 복사 완료 표시가 있을 때만 동작한다. */
+
+// 옛 자리 사진이 든 가짜 DB
+function legacyDb(items, blobs, thumbs, extra) {
+  const calls = { update: [], once: [] };
+  const map = Object.assign({
+    'puphotos/items': items || {},
+    'puphotos/blobs': blobs || {},
+    'puphotos/thumbs': thumbs || {}
+  }, extra || {});
+  return {
+    calls,
+    ref(p) {
+      const key = p || '';
+      return {
+        update(u) { calls.update.push({ path: key, u }); return Promise.resolve(); },
+        once() { calls.once.push(key); return Promise.resolve({ val: () => (key in map ? map[key] : null) }); },
+        push() { return { key: '-n' + calls.update.length }; }
+      };
+    }
+  };
+}
+
+const LEG_ITEMS = { 2026: { a: { by: 'U2', takenAt: 1 }, b: { by: 'U1', takenAt: 2 } } };
+const LEG_BLOBS = { 2026: { a: 'data:a', b: 'data:b' } };
+const LEG_THUMBS = { 2026: { a: 'data:ta', b: 'data:tb' } };
+
+test('이사 — 올린 사람 자리로 복사하고 원본은 그대로 둔다', async () => {
+  const S = loadStore();
+  const db = legacyDb(LEG_ITEMS, LEG_BLOBS, LEG_THUMBS);
+  S.init({ uid: 'ADMIN', db, isAdmin: true });
+  const r = await S.migrateLegacy();
+  assert.equal(r.copied, 2);
+  assert.equal(r.unknown, 0);
+  assert.equal(r.failed, 0);
+  const wrote = db.calls.update.map(function (c) { return Object.keys(c.u); }).flat();
+  // 각자 자기 자리로 갔는지
+  assert.ok(wrote.indexOf('puphotos/u/U2/items/2026/a') >= 0, 'U2 자리로 안 갔습니다');
+  assert.ok(wrote.indexOf('puphotos/u/U1/items/2026/b') >= 0, 'U1 자리로 안 갔습니다');
+  assert.ok(wrote.indexOf('puphotos/u/U2/blobs/2026/a') >= 0);
+  assert.ok(wrote.indexOf('puphotos/u/U2/thumbs/2026/a') >= 0);
+  // **원본을 지우지 않았다**
+  assert.ok(!wrote.some(function (k) { return /^puphotos\/(items|blobs|thumbs)\//.test(k); }),
+    '옛 자리를 건드렸습니다: ' + wrote.join(', '));
+});
+
+test('이사 — 올린 사람을 모르는 사진은 관리자 자리로 가고 그 수를 알린다', async () => {
+  // 조용히 버리면 사진이 사라진 줄도 모른다
+  const S = loadStore();
+  const db = legacyDb({ 2026: { x: { takenAt: 1 } } }, { 2026: { x: 'd' } }, { 2026: { x: 't' } });
+  S.init({ uid: 'ADMIN', db, isAdmin: true });
+  const r = await S.migrateLegacy();
+  assert.equal(r.copied, 1);
+  assert.equal(r.unknown, 1);
+  const wrote = db.calls.update.map(function (c) { return Object.keys(c.u); }).flat();
+  assert.ok(wrote.indexOf('puphotos/u/ADMIN/items/2026/x') >= 0, '관리자 자리로 안 갔습니다');
+});
+
+test('이사 — 한 장이 실패해도 나머지를 복사하고 실패 수를 알린다', async () => {
+  const S = loadStore();
+  const db = legacyDb(LEG_ITEMS, LEG_BLOBS, LEG_THUMBS);
+  let n = 0;
+  const realRef = db.ref;
+  db.ref = function (p) {
+    const r = realRef.call(db, p);
+    const realUpdate = r.update;
+    r.update = function (u) {
+      n++;
+      if (n === 1) return Promise.reject(new Error('권한 없음'));
+      return realUpdate.call(r, u);
+    };
+    return r;
+  };
+  S.init({ uid: 'ADMIN', db, isAdmin: true });
+  const r = await S.migrateLegacy();
+  assert.equal(r.failed, 1);
+  assert.equal(r.copied, 1);
+});
+
+test('이사 — 관리자가 아니면 하지 않는다', async () => {
+  const S = loadStore();
+  const db = legacyDb(LEG_ITEMS, LEG_BLOBS, LEG_THUMBS);
+  S.init({ uid: 'U1', db, isAdmin: false });
+  await assert.rejects(() => S.migrateLegacy(), /관리자/);
+  assert.equal(db.calls.update.length, 0);
+});
+
+test('옛 자리 지우기 — 복사가 끝났다는 표시가 없으면 거절한다', async () => {
+  const S = loadStore();
+  const db = legacyDb(LEG_ITEMS, LEG_BLOBS, LEG_THUMBS);
+  S.init({ uid: 'ADMIN', db, isAdmin: true });
+  await assert.rejects(() => S.dropLegacy(), /옮기/);
+  assert.equal(db.calls.update.length, 0, '복사도 안 했는데 지우려 했습니다');
+});
+
+test('옛 자리 지우기 — 복사한 뒤에는 세 자리만 지운다', async () => {
+  const S = loadStore();
+  const db = legacyDb(LEG_ITEMS, LEG_BLOBS, LEG_THUMBS);
+  S.init({ uid: 'ADMIN', db, isAdmin: true });
+  await S.migrateLegacy();
+  const before = db.calls.update.length;
+  await S.dropLegacy();
+  const last = db.calls.update[db.calls.update.length - 1].u;
+  assert.deepEqual(Object.keys(last).sort(), ['puphotos/blobs', 'puphotos/items', 'puphotos/thumbs']);
+  Object.keys(last).forEach(k => assert.equal(last[k], null));
+  assert.ok(db.calls.update.length > before);
+});
+
+test('이사 — 옛 자리가 비어 있으면 아무것도 쓰지 않는다', async () => {
+  const S = loadStore();
+  const db = legacyDb({}, {}, {});
+  S.init({ uid: 'ADMIN', db, isAdmin: true });
+  const r = await S.migrateLegacy();
+  assert.equal(r.copied, 0);
+  assert.equal(db.calls.update.length, 0);
 });
 
 /* ── 사진 지우기 ── */
@@ -547,12 +736,12 @@ test('읽기 함수들 — 실시간DB가 없으면 한국어로 거절한다', 
 test('deletePhoto — 정보·본문·미리보기 세 곳을 한 번에 지운다', async () => {
   const S = loadStore();
   const db = fakeDb();
-  S.init({ db });
+  S.init({ uid: 'U1', db });
   await S.deletePhoto('2026', 'p1');
   assert.equal(db.calls.update.length, 1);
   const u = db.calls.update[0].u;
   assert.deepEqual(Object.keys(u).sort(), [
-    'puphotos/blobs/2026/p1', 'puphotos/items/2026/p1', 'puphotos/thumbs/2026/p1'
+    'puphotos/u/U1/blobs/2026/p1', 'puphotos/u/U1/items/2026/p1', 'puphotos/u/U1/thumbs/2026/p1'
   ]);
   // 지우기는 null 을 쓰는 것이다
   Object.keys(u).forEach(k => assert.equal(u[k], null, k + ' 가 null 이 아닙니다'));
@@ -561,25 +750,25 @@ test('deletePhoto — 정보·본문·미리보기 세 곳을 한 번에 지운�
 test('deletePhoto — 그 사진 하나만 건드린다', async () => {
   const S = loadStore();
   const db = fakeDb();
-  S.init({ db });
+  S.init({ uid: 'U1', db });
   await S.deletePhoto('2026', 'p1');
   // 연도나 루트를 지우면 그 해 사진이 전부 사라진다
   for (const k of Object.keys(db.calls.update[0].u)) {
-    assert.match(k, /^puphotos\/(items|blobs|thumbs)\/2026\/p1$/, '위험한 경로입니다: ' + k);
+    assert.match(k, /^puphotos\/u\/U1\/(items|blobs|thumbs)\/2026\/p1$/, '위험한 경로입니다: ' + k);
   }
   assert.equal(db.calls.update[0].path, '');
 });
 
 test('deletePhoto — 실시간DB가 없으면 한국어로 거절한다', async () => {
   const S = loadStore();
-  S.init({});
+  S.init({ uid: 'U1' });
   await assert.rejects(() => S.deletePhoto('2026', 'p1'), /실시간DB/);
 });
 
 test('deletePhoto — 사진 번호가 없으면 아무것도 지우지 않는다', async () => {
   const S = loadStore();
   const db = fakeDb();
-  S.init({ db });
+  S.init({ uid: 'U1', db });
   await assert.rejects(() => S.deletePhoto('2026', ''), /사진/);
   await assert.rejects(() => S.deletePhoto('', 'p1'), /사진/);
   assert.equal(db.calls.update.length, 0);
@@ -590,17 +779,17 @@ test('deletePhoto — 사진 번호가 없으면 아무것도 지우지 않는�
 test('saveRead — 사진 정보 아래 판독 칸만 쓴다 (사진·정보를 건드리지 않는다)', async () => {
   const S = loadStore();
   const db = fakeDb();
-  S.init({ db });
+  S.init({ uid: 'U1', db });
   await S.saveRead('2026', 'p1', { kind: 'bizreg', auto: true });
   assert.equal(db.calls.update.length, 1);
   const u = db.calls.update[0].u;
   // 반드시 read 하위 경로만 — items/p1 을 통째로 쓰면 촬영 시각·올린 사람이 지워진다
-  assert.deepEqual(Object.keys(u), ['puphotos/items/2026/p1/read']);
-  assert.equal(u['puphotos/items/2026/p1/read'].kind, 'bizreg');
+  assert.deepEqual(Object.keys(u), ['puphotos/u/U1/items/2026/p1/read']);
+  assert.equal(u['puphotos/u/U1/items/2026/p1/read'].kind, 'bizreg');
 });
 
 test('saveRead — 실시간DB가 없으면 한국어로 거절한다', async () => {
   const S = loadStore();
-  S.init({});
+  S.init({ uid: 'U1' });
   await assert.rejects(() => S.saveRead('2026', 'p1', {}), /실시간DB/);
 });

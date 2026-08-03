@@ -27,16 +27,34 @@
     return String(new Date(n).getFullYear());
   }
 
+  /* ── 사람별 자리 ──
+     직원은 자기 사진만, 총괄 관리자만 전체를 본다(2026-08-03 대표 지시).
+     **실시간DB는 규칙으로 목록을 걸러 주지 못한다** — 어떤 노드를 읽을 수 있으면
+     그 아래가 전부 열린다. 그래서 사진을 사람별 자리로 나눠 담는 것 말고는
+     방법이 없다. 화면에서 가리는 것은 보호가 아니다.
+
+     owner 를 안 넘기면 지금 로그인한 사람 자리. 남의 자리를 읽는 것은
+     관리자만 규칙이 허락한다(코드가 아니라 서버가 막는다). */
+  function base(owner) {
+    var who = owner || deps.uid;
+    if (!who) throw new Error('사진을 담을 계정을 알 수 없습니다 — 로그인을 확인해 주세요');
+    return DB_ROOT + '/u/' + who;
+  }
+
   /* 사진 한 장의 정보(올린 사람·회사·설명 등)가 들어가는 실시간DB 경로 */
-  function metaPath(year, id) { return DB_ROOT + '/items/' + year + '/' + id; }
+  function metaPath(year, id, owner) { return base(owner) + '/items/' + year + '/' + id; }
 
   /* 실시간DB 방식에서 사진 본문(base64)이 들어가는 경로.
      정보와 반드시 갈라 둔다 — 목록만 읽을 때 사진까지 내려받으면 앱이 느려진다. */
-  function blobPath(year, id) { return DB_ROOT + '/blobs/' + year + '/' + id; }
+  function blobPath(year, id, owner) { return base(owner) + '/blobs/' + year + '/' + id; }
 
   /* 격자용 작은 미리보기(240px) 경로. 본문(1600px)과도 갈라 둔다 —
      격자가 본문까지 받으면 사진 수십 장에 수십 MB를 내려받게 된다. */
-  function thumbPath(year, id) { return DB_ROOT + '/thumbs/' + year + '/' + id; }
+  function thumbPath(year, id, owner) { return base(owner) + '/thumbs/' + year + '/' + id; }
+
+  /* 사진첩을 쓰는 사람 명단 — 관리자가 사람을 훑는 용도로만 쓰는 가벼운 칸.
+     여기에 사진을 담지 않는다(관리자가 전 직원 사진 본문을 통째로 받는 일 방지). */
+  function ownerPath(uid) { return DB_ROOT + '/owners/' + uid; }
 
   /* 촬영 시각 결정 — EXIF → 파일 날짜 → 업로드 시각 순서.
      카톡을 거친 사진은 EXIF가 지워져 있어 파일 날짜로, 그것도 없으면 올린 때로 간다. */
@@ -155,7 +173,7 @@
      사진첩·컨설팅·급여·기금 어느 앱도 손대지 않고 **여기 한 곳만** 고친다.
      앱들이 각자 방식을 정하지 않는 것이 이 파일이 존재하는 이유다. */
   var mode = 'rtdb';
-  var deps = { db: null, storage: null };
+  var deps = { db: null, storage: null, uid: '', isAdmin: false };
 
   /* 파이어베이스 객체를 받아 저장 층을 준비한다.
 
@@ -167,6 +185,8 @@
     o = o || {};
     deps.db = o.db || null;
     deps.storage = o.storage || null;
+    deps.uid = o.uid || '';
+    deps.isAdmin = !!o.isAdmin;
     if (o.mode) setMode(o.mode);
     return mode;
   }
@@ -231,19 +251,121 @@
     return deps.db.ref().update(u);
   }
 
-  /* 한 연도의 사진 목록(정보만). 본문·미리보기는 안 딸려 온다 — 경로가 갈라져 있어서. */
-  function listYear(year) {
+  /* 한 연도의 사진 목록(정보만). 본문·미리보기는 안 딸려 온다 — 경로가 갈라져 있어서.
+     owner 를 넘기면 그 사람 것을 읽는다(관리자만 규칙이 허락한다). */
+  function listYear(year, owner) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
-    return deps.db.ref(DB_ROOT + '/items/' + year).once('value')
+    return deps.db.ref(base(owner) + '/items/' + year).once('value')
       .then(function (s) { return s.val() || {}; });
   }
 
   /* 미리보기·본문은 볼 때만 한 장씩 받아온다. */
-  function loadThumb(year, id) { return readOnce(thumbPath(year, id)); }
-  function loadFull(year, id) { return readOnce(blobPath(year, id)); }
+  function loadThumb(year, id, owner) { return readOnce(thumbPath(year, id, owner)); }
+  function loadFull(year, id, owner) { return readOnce(blobPath(year, id, owner)); }
+
+  /* ── 사람 명단 ──
+     내 칸만 갱신한다. 훑는 것은 관리자만 — 규칙도 그렇게 막지만, 화면이
+     헛되게 두드려 오류를 만들 이유도 없다. */
+  function touchOwner(name) {
+    if (!deps.db || !deps.uid) return Promise.resolve();
+    var u = {};
+    u[ownerPath(deps.uid)] = { name: name || '', lastAt: Date.now() };
+    return deps.db.ref().update(u);
+  }
+
+  function listOwners() {
+    if (!deps.isAdmin || !deps.db) return Promise.resolve({});
+    return deps.db.ref(DB_ROOT + '/owners').once('value')
+      .then(function (s) { return s.val() || {}; });
+  }
   function readOnce(path) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     return deps.db.ref(path).once('value').then(function (s) { return s.val(); });
+  }
+
+  /* ── 옛 자리에서 사람별 자리로 이사 ──
+     2026-08-03 전에 올린 사진은 `puphotos/items|blobs|thumbs/{연도}/{id}` 에 모두
+     섞여 있다. 사람별 자리로 옮겨야 분리가 완성된다.
+
+     여기서 실수하면 사진을 잃는다. 그래서 규칙 하나: **복사가 끝날 때까지 옛 것을
+     지우지 않는다.** 지우기(dropLegacy)는 복사 완료 표시가 있을 때만 동작한다.
+     올린 사람을 모르는 사진(`by` 없음)은 조용히 버리지 않고 관리자 자리로 옮기고
+     그 수를 알린다. */
+  var legacyDone = false;
+
+  function legacyRoot(kind) { return DB_ROOT + '/' + kind; }
+
+  function migrateLegacy(onStep) {
+    if (!deps.isAdmin) {
+      return Promise.reject(new Error('사진 옮기기는 총괄 관리자만 할 수 있습니다'));
+    }
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+
+    var out = { copied: 0, unknown: 0, failed: 0 };
+    return Promise.all([
+      deps.db.ref(legacyRoot('items')).once('value'),
+      deps.db.ref(legacyRoot('blobs')).once('value'),
+      deps.db.ref(legacyRoot('thumbs')).once('value')
+    ]).then(function (snaps) {
+      var items = snaps[0].val() || {};
+      var blobs = snaps[1].val() || {};
+      var thumbs = snaps[2].val() || {};
+
+      /* 옮길 것을 먼저 목록으로 뽑는다 — 도는 중에 무엇이 남았는지 알 수 있어야 한다. */
+      var jobs = [];
+      Object.keys(items).forEach(function (year) {
+        Object.keys(items[year] || {}).forEach(function (id) {
+          var meta = items[year][id] || {};
+          var owner = meta.by;
+          if (!owner) { owner = deps.uid; out.unknown++; }
+          jobs.push({ year: year, id: id, owner: owner, meta: meta,
+            full: (blobs[year] || {})[id], thumb: (thumbs[year] || {})[id] });
+        });
+      });
+
+      var chain = Promise.resolve();
+      jobs.forEach(function (j, i) {
+        chain = chain.then(function () {
+          var u = {};
+          u[DB_ROOT + '/u/' + j.owner + '/items/' + j.year + '/' + j.id] = j.meta;
+          if (j.full !== undefined && j.full !== null) {
+            u[DB_ROOT + '/u/' + j.owner + '/blobs/' + j.year + '/' + j.id] = j.full;
+          }
+          if (j.thumb !== undefined && j.thumb !== null) {
+            u[DB_ROOT + '/u/' + j.owner + '/thumbs/' + j.year + '/' + j.id] = j.thumb;
+          }
+          return deps.db.ref().update(u).then(function () {
+            out.copied++;
+            if (onStep) onStep(i + 1, jobs.length);
+          }).catch(function (e) {
+            /* 한 장이 실패해도 나머지를 옮긴다 — 다 멈추면 아무것도 못 옮긴다. */
+            console.warn('[이사]', j.year, j.id, e);
+            out.failed++;
+          });
+        });
+      });
+      return chain.then(function () {
+        /* 실패가 하나라도 있으면 '끝났다'고 표시하지 않는다 → 옛 자리를 못 지운다. */
+        legacyDone = jobs.length > 0 && out.failed === 0;
+        return out;
+      });
+    });
+  }
+
+  /* 옛 자리 지우기 — 복사가 끝났다는 표시가 있을 때만. */
+  function dropLegacy() {
+    if (!deps.isAdmin) {
+      return Promise.reject(new Error('옛 자리 지우기는 총괄 관리자만 할 수 있습니다'));
+    }
+    if (!legacyDone) {
+      return Promise.reject(new Error('먼저 사진을 옮겨 주세요 — 옮기기가 모두 성공한 뒤에만 지울 수 있습니다'));
+    }
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var u = {};
+    u[legacyRoot('items')] = null;
+    u[legacyRoot('blobs')] = null;
+    u[legacyRoot('thumbs')] = null;
+    return deps.db.ref().update(u).then(function () { legacyDone = false; });
   }
 
   /* ── 창고 점검 ──
@@ -383,6 +505,10 @@
     savePhoto: savePhoto,
     saveRead: saveRead,
     deletePhoto: deletePhoto,
+    touchOwner: touchOwner,
+    listOwners: listOwners,
+    migrateLegacy: migrateLegacy,
+    dropLegacy: dropLegacy,
     listYear: listYear,
     loadThumb: loadThumb,
     loadFull: loadFull,
