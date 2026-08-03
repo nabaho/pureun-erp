@@ -148,6 +148,53 @@ test('미리보기를 끼워 넣을 때 서류 딱지를 지우지 않는다', (
   assert.match(fill[0], /insertBefore/);
 });
 
+/* ── 사람별 분리 ── */
+
+test('계정을 등록한 뒤에 사진을 읽는다', () => {
+  // 사진 자리가 사람별로 갈려 있어 계정을 모르면 경로를 만들 수 없다.
+  // 순서가 어긋나면 앱이 뜨는 순간 사진이 안 보인다(실제로 그런 사고가 있었다).
+  assert.match(app, /PuPhotoStore\.signIn\(u\.uid/);
+  const blk = app.match(/PuPhotoStore\.signIn\(u\.uid[\s\S]{0,300}/);
+  assert.ok(blk, 'signIn 호출을 찾을 수 없습니다');
+  assert.match(blk[0], /loadGrid\(\)/, '계정 등록이 끝나기 전에 사진을 읽습니다');
+});
+
+test('관리자 여부를 화면에서 짐작하지 않는다', () => {
+  // uid_roles 는 서버가 아는 값이고, 화면에 그 경로가 들어오면 실데이터 가드가 깨진다
+  assert.ok(!/uid_roles/.test(app), '화면이 권한 경로를 직접 읽습니다');
+  assert.match(app, /PuPhotoStore\.amAdmin\(\)/);
+});
+
+test('직원에게는 남의 사진을 볼 길이 화면에도 없다', () => {
+  const fn = app.match(/function renderOwnerPick\([\s\S]*?\n\}/);
+  assert.ok(fn, 'renderOwnerPick 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /if \(!PuPhotoStore\.amAdmin\(\)\)/, '관리자 확인 없이 사람 고르기를 보여줍니다');
+});
+
+test('남의 사진은 보기만 된다 — 올리기·지우기·판독이 잠긴다', () => {
+  assert.match(app, /function viewingOther\(/);
+  assert.match(app, /function blockedIfOther\(/);
+  for (const fname of ['deleteOne', 'deleteSelected', 'readAgain', 'readSelected']) {
+    const fn = app.match(new RegExp('function ' + fname + '\\([\\s\\S]{0,160}'));
+    assert.ok(fn, fname + ' 를 찾을 수 없습니다');
+    assert.match(fn[0], /blockedIfOther\(\)/, fname + ' 이 남의 사진에도 동작합니다');
+  }
+  // 올리기 단추도 잠근다
+  assert.match(app, /\['pickBtn', 'docBtn', 'camBtn'\][\s\S]{0,120}viewingOther\(\)/);
+});
+
+test('예전 사진 옮기기는 관리자에게만 보이고 확인을 받는다', () => {
+  assert.match(app, /function runMigrate\(/);
+  assert.match(app, /function runDropLegacy\(/);
+  const mig = app.match(/function runMigrate\([\s\S]*?\n\}/);
+  assert.match(mig[0], /confirm\(/);
+  assert.match(mig[0], /원본은 지우지 않고/, '원본을 지우지 않는다는 안내가 없습니다');
+  // 옛 자리 지우기 단추는 옮기기가 모두 성공한 뒤에만 나타난다
+  assert.match(mig[0], /r\.failed[\s\S]{0,240}dropBtn.*display = 'block'|dropBtn'\)\.style\.display = 'block'/);
+  const drop = app.match(/function runDropLegacy\([\s\S]*?\n\}/);
+  assert.match(drop[0], /되돌릴 수 없/);
+});
+
 /* ── 확인 필요 모아보기 · 여러 장 판독 ── */
 
 test('다시 판독해도 검증 통과분은 자동으로 명함첩에 간다', () => {

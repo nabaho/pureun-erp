@@ -273,6 +273,26 @@
     return deps.db.ref().update(u);
   }
 
+  /* ── 로그인한 사람 ──
+     계정을 알려주고, **관리자인지는 서버가 아는 값(uid_roles)을 물어본다** —
+     화면에서 짐작하지 않는다. 이 값으로 남의 사진을 볼 수 있는지가 갈리므로
+     짐작하면 안 된다(어차피 규칙이 한 번 더 막지만 이중으로 잠근다).
+     경로에 계정이 필요하므로 **이것이 끝난 뒤에 사진을 읽어야 한다.** */
+  function signIn(uid, name) {
+    deps.uid = uid || '';
+    deps.isAdmin = false;
+    if (!deps.db || !deps.uid) return Promise.resolve(false);
+    return deps.db.ref('uid_roles/' + deps.uid + '/isAdmin').once('value')
+      .then(function (s) { deps.isAdmin = s.val() === true; })
+      .catch(function () { deps.isAdmin = false; })
+      .then(function () { return touchOwner(name); })
+      .catch(function () { /* 명단 갱신 실패가 로그인을 막지 않는다 */ })
+      .then(function () { return deps.isAdmin; });
+  }
+
+  function amAdmin() { return deps.isAdmin; }
+  function myUid() { return deps.uid; }
+
   function listOwners() {
     if (!deps.isAdmin || !deps.db) return Promise.resolve({});
     return deps.db.ref(DB_ROOT + '/owners').once('value')
@@ -505,6 +525,9 @@
     savePhoto: savePhoto,
     saveRead: saveRead,
     deletePhoto: deletePhoto,
+    signIn: signIn,
+    amAdmin: amAdmin,
+    myUid: myUid,
     touchOwner: touchOwner,
     listOwners: listOwners,
     migrateLegacy: migrateLegacy,
