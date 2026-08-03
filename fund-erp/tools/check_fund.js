@@ -88,5 +88,24 @@ ok('예산군은 천안지청', src.includes("'충남 예산군':'대전지방�
 ok('보령지청에 서산 없음',
   !/'충남 서산시':'대전지방고용노동청 보령지청'/.test(src));
 
+// ── ⑧ 회계 계정 체계 (청신공동 2025 실결산 검증에서 확인된 필수 계정) ──
+ok('세금과공과 계정', src.includes("'세금과공과':'비용'"));
+ok('격려금 계정', src.includes("'격려금':'비용'"));
+ok('고유목적사업준비금환입 계정(수익)', src.includes("'고유목적사업준비금환입':'수익'"));
+ok('세금과공과를 관리비로 집계', /var ADMIN=\[[^\]]*'세금과공과'/.test(src));
+{
+  const pa = (src.match(/var PURPOSE_ACCTS=\[(.*?)\];/) || [])[1] || '';
+  const wc = (src.match(/var WELF_CATS=\[(.*?)\];/) || [])[1] || '';
+  const P = pa.split(',').map(x => x.trim().replace(/^'|'$/g, '')).filter(Boolean);
+  const W = wc.split(',').map(x => x.trim().replace(/^'|'$/g, '')).filter(Boolean);
+  const miss = P.filter(x => !W.includes(x));
+  const extra = W.filter(x => !P.includes(x) && x !== '대부사업');
+  // 목적사업비 계정과 목적사업 분류는 1:1이어야 한다 — 어긋나면 지출은 잡히는데 수혜자 수를 넣을 칸이 없다
+  ok('목적사업비 계정 ↔ 목적사업 분류 1:1', miss.length === 0 && extra.length === 0,
+    '계정만: ' + miss.join(',') + ' / 분류만: ' + extra.join(','));
+}
+ok('별지15호 66번에 격려금 매핑', /\[66,'그 밖의 복지비',\['격려금'/.test(src));
+ok('통장 파서가 거래상대방 열을 읽음', /보낸분\|받는분\|상대계좌\|입금자\|송금인\|거래처/.test(src));
+
 console.log('\n' + (fail ? 'FAILURES ' + fail + ' / ' + n : 'ALL PASS (' + n + '건)'));
 process.exit(fail ? 1 : 0);
