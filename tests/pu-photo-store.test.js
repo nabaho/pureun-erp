@@ -339,3 +339,191 @@ test('어떤 결과를 넣어도 빈 문자열이나 undefined를 돌려주지 �
     assert.equal(typeof msg, 'string', JSON.stringify(input) + ': 문자열이 아닙니다');
   }
 });
+
+/* ── B단계: 미리보기 경로 · 촬영 시각 · EXIF ── */
+
+test('미리보기 경로 — 본문과 다른 곳에 담긴다', () => {
+  const S = loadStore();
+  // 격자가 본문(1600px)까지 받으면 느려진다. 반드시 갈라 둔다.
+  assert.equal(S.thumbPath('2026', 'p1'), 'puphotos/thumbs/2026/p1');
+  assert.notEqual(S.thumbPath('2026', 'p1'), S.blobPath('2026', 'p1'));
+  assert.notEqual(S.thumbPath('2026', 'p1'), S.metaPath('2026', 'p1'));
+});
+
+test('촬영 시각 — EXIF가 첫째, 파일 날짜가 둘째, 업로드 시각이 마지막', () => {
+  const S = loadStore();
+  // 카톡을 거친 사진은 EXIF가 지워져 있다 — 그때는 파일 날짜, 그것도 없으면 올린 때.
+  assert.equal(S.pickTakenAt(111, 222, 333), 111);
+  assert.equal(S.pickTakenAt(null, 222, 333), 222);
+  assert.equal(S.pickTakenAt(null, 0, 333), 333);
+  assert.equal(S.pickTakenAt(NaN, undefined, 333), 333);
+  assert.equal(S.pickTakenAt(-5, -1, 333), 333);
+});
+
+/* 최소 JPEG을 손으로 조립한다 — SOI + APP1(Exif, 리틀엔디안 TIFF,
+   IFD0에 ExifIFD 포인터, ExifIFD에 DateTimeOriginal 문자열). */
+function makeExifJpeg(dateStr) {
+  const buf = new ArrayBuffer(76);
+  const v = new DataView(buf);
+  v.setUint16(0, 0xFFD8);            // SOI
+  v.setUint16(2, 0xFFE1);            // APP1
+  v.setUint16(4, 72);                // APP1 길이(자기 자신 포함)
+  v.setUint32(6, 0x45786966);        // 'Exif'
+  v.setUint16(10, 0);                // \0\0
+  const t = 12;                      // TIFF 머리 시작
+  v.setUint16(t, 0x4949);            // 'II' 리틀엔디안
+  v.setUint16(t + 2, 0x2A, true);
+  v.setUint32(t + 4, 8, true);       // IFD0 위치(상대)
+  // IFD0 (상대 8): 항목 1개 — ExifIFD 포인터(0x8769)
+  v.setUint16(t + 8, 1, true);
+  v.setUint16(t + 10, 0x8769, true); // 태그
+  v.setUint16(t + 12, 4, true);      // LONG
+  v.setUint32(t + 14, 1, true);      // 개수
+  v.setUint32(t + 18, 26, true);     // ExifIFD 위치(상대)
+  v.setUint32(t + 22, 0, true);      // 다음 IFD 없음
+  // ExifIFD (상대 26): 항목 1개 — DateTimeOriginal(0x9003)
+  v.setUint16(t + 26, 1, true);
+  v.setUint16(t + 28, 0x9003, true);
+  v.setUint16(t + 30, 2, true);      // ASCII
+  v.setUint32(t + 32, 20, true);     // 20자
+  v.setUint32(t + 36, 44, true);     // 문자열 위치(상대)
+  v.setUint32(t + 40, 0, true);      // 다음 IFD 없음
+  const s = dateStr + '\0';
+  for (let i = 0; i < s.length; i++) v.setUint8(t + 44 + i, s.charCodeAt(i) & 0xFF);
+  return buf;
+}
+
+test('EXIF에서 촬영 시각을 읽는다', () => {
+  const S = loadStore();
+  const ts = S.exifTakenAt(makeExifJpeg('2026:07:15 14:30:00'));
+  assert.ok(ts, '촬영 시각을 못 읽었습니다');
+  const d = new Date(ts);
+  assert.equal(d.getFullYear(), 2026);
+  assert.equal(d.getMonth(), 6);
+  assert.equal(d.getDate(), 15);
+  assert.equal(d.getHours(), 14);
+  assert.equal(d.getMinutes(), 30);
+});
+
+test('EXIF 없는 JPEG·JPEG 아닌 것·이상한 입력 → null (예외를 던지지 않는다)', () => {
+  const S = loadStore();
+  assert.equal(S.exifTakenAt(new Uint8Array([0xFF, 0xD8, 0xFF, 0xD9]).buffer), null);
+  assert.equal(S.exifTakenAt(new Uint8Array([0, 1, 2, 3]).buffer), null);
+  assert.equal(S.exifTakenAt(new ArrayBuffer(0)), null);
+  assert.equal(S.exifTakenAt(null), null);
+  assert.equal(S.exifTakenAt(undefined), null);
+});
+
+test('EXIF 날짜가 깨져 있으면 null', () => {
+  const S = loadStore();
+  assert.equal(S.exifTakenAt(makeExifJpeg('사진기가 이상한 값을 줬')), null);
+  assert.equal(S.exifTakenAt(makeExifJpeg('0000:00:00 00:00:00')), null);
+});
+
+/* ── B단계: 실시간DB 저장·읽기 ── */
+
+// 실시간DB 흉내 — update/once 호출을 기록한다. 실서버에는 절대 안 붙는다.
+function fakeDb(data) {
+  const calls = { update: [], once: [] };
+  return {
+    calls,
+    ref(p) {
+      return {
+        update(u) { calls.update.push({ path: p || '', u }); return Promise.resolve(); },
+        once() {
+          calls.once.push(p);
+          return Promise.resolve({ val: () => (data === undefined ? null : data) });
+        },
+        push() { return { key: '-fake' + (calls.update.length + calls.once.length) }; }
+      };
+    }
+  };
+}
+
+test('savePhoto — 사진 한 장이 세 경로에 update 한 번으로 담긴다', async () => {
+  const S = loadStore();
+  const db = fakeDb();
+  S.init({ db });
+  const r = await S.savePhoto({
+    id: 'p1', takenAt: new Date(2026, 6, 15).getTime(),
+    meta: { takenAt: 1 }, full: 'data:full', thumb: 'data:thumb'
+  });
+  // 주의: 샌드박스(vm) 안에서 만들어진 객체는 프로토타입이 달라 strict 비교가
+  // 실패한다 — 복사본으로 비교한다.
+  assert.deepEqual({ ...r }, { year: '2026', id: 'p1' });
+  // 반드시 update 한 번 — 상위 노드 set 은 남의 사진을 지운다(2026-07 사고).
+  assert.equal(db.calls.update.length, 1);
+  assert.equal(db.calls.update[0].path, '');
+  const u = db.calls.update[0].u;
+  assert.deepEqual(Object.keys(u).sort(), [
+    'puphotos/blobs/2026/p1', 'puphotos/items/2026/p1', 'puphotos/thumbs/2026/p1'
+  ]);
+  assert.equal(u['puphotos/blobs/2026/p1'], 'data:full');
+  assert.equal(u['puphotos/thumbs/2026/p1'], 'data:thumb');
+});
+
+test('savePhoto — 촬영 시각을 모르는 사진은 unknown 연도로', async () => {
+  const S = loadStore();
+  const db = fakeDb();
+  S.init({ db });
+  const r = await S.savePhoto({ id: 'p2', takenAt: null, meta: {}, full: 'f', thumb: 't' });
+  assert.equal(r.year, 'unknown');
+  assert.ok(Object.keys(db.calls.update[0].u).every(k => k.includes('/unknown/')));
+});
+
+test('savePhoto — 실시간DB가 없으면 한국어로 거절한다', async () => {
+  const S = loadStore();
+  S.init({});
+  await assert.rejects(
+    () => S.savePhoto({ id: 'x', takenAt: 1, meta: {}, full: '', thumb: '' }),
+    /실시간DB/);
+});
+
+test('savePhoto — 파일 창고 방식 저장은 아직 없다고 명확히 거절한다', async () => {
+  const S = loadStore();
+  S.init({ db: fakeDb(), mode: 'storage' });
+  await assert.rejects(
+    () => S.savePhoto({ id: 'x', takenAt: 1, meta: {}, full: '', thumb: '' }),
+    /파일 창고/);
+});
+
+test('newId — db가 있으면 push 키, 없으면 임시 키', () => {
+  const S = loadStore();
+  S.init({ db: fakeDb() });
+  assert.match(S.newId(), /^-fake/);
+  const S2 = loadStore();
+  S2.init({});
+  assert.ok(S2.newId().length > 5);
+});
+
+test('listYear — 그 연도 목록만 한 번 읽는다', async () => {
+  const S = loadStore();
+  const db = fakeDb({ a: { takenAt: 1 } });
+  S.init({ db });
+  const items = await S.listYear('2026');
+  assert.deepEqual(items, { a: { takenAt: 1 } });
+  assert.deepEqual(db.calls.once, ['puphotos/items/2026']);
+});
+
+test('listYear — 비어 있으면 빈 객체', async () => {
+  const S = loadStore();
+  S.init({ db: fakeDb(undefined) });
+  assert.deepEqual({ ...(await S.listYear('2020')) }, {});
+});
+
+test('loadThumb·loadFull — 한 장씩, 서로 다른 경로에서', async () => {
+  const S = loadStore();
+  const db = fakeDb('data:x');
+  S.init({ db });
+  assert.equal(await S.loadThumb('2026', 'p1'), 'data:x');
+  assert.equal(await S.loadFull('2026', 'p1'), 'data:x');
+  assert.deepEqual(db.calls.once, ['puphotos/thumbs/2026/p1', 'puphotos/blobs/2026/p1']);
+});
+
+test('읽기 함수들 — 실시간DB가 없으면 한국어로 거절한다', async () => {
+  const S = loadStore();
+  S.init({});
+  await assert.rejects(() => S.listYear('2026'), /실시간DB/);
+  await assert.rejects(() => S.loadThumb('2026', 'x'), /실시간DB/);
+  await assert.rejects(() => S.loadFull('2026', 'x'), /실시간DB/);
+});

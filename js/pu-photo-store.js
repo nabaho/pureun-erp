@@ -34,6 +34,95 @@
      정보와 반드시 갈라 둔다 — 목록만 읽을 때 사진까지 내려받으면 앱이 느려진다. */
   function blobPath(year, id) { return DB_ROOT + '/blobs/' + year + '/' + id; }
 
+  /* 격자용 작은 미리보기(240px) 경로. 본문(1600px)과도 갈라 둔다 —
+     격자가 본문까지 받으면 사진 수십 장에 수십 MB를 내려받게 된다. */
+  function thumbPath(year, id) { return DB_ROOT + '/thumbs/' + year + '/' + id; }
+
+  /* 촬영 시각 결정 — EXIF → 파일 날짜 → 업로드 시각 순서.
+     카톡을 거친 사진은 EXIF가 지워져 있어 파일 날짜로, 그것도 없으면 올린 때로 간다. */
+  function pickTakenAt(exifTs, fileTs, uploadTs) {
+    var e = Number(exifTs), f = Number(fileTs);
+    if (Number.isFinite(e) && e > 0) return e;
+    if (Number.isFinite(f) && f > 0) return f;
+    return Number(uploadTs);
+  }
+
+  /* ── EXIF 촬영 시각 판독 ──
+     JPEG 안의 EXIF에서 촬영 시각(DateTimeOriginal, 없으면 DateTime)을 읽는다.
+     어떤 입력이 와도 예외를 밖으로 던지지 않는다 — 못 읽으면 null (파일 날짜로 넘어감). */
+  function exifTakenAt(buf) {
+    try {
+      var v = new DataView(buf);
+      if (v.byteLength < 4 || v.getUint16(0) !== 0xFFD8) return null; // JPEG 아님
+      var off = 2;
+      while (off + 4 <= v.byteLength) {
+        var marker = v.getUint16(off);
+        if ((marker & 0xFF00) !== 0xFF00) return null; // 마커가 깨졌다
+        var size = v.getUint16(off + 2);
+        if (marker === 0xFFE1) {
+          var got = exifFromApp1(v, off + 4, size - 2);
+          if (got) return got;
+        }
+        if (marker === 0xFFDA) return null; // 압축 데이터 시작 — 더 볼 것 없다
+        off += 2 + size;
+      }
+    } catch (e) { /* 깨진 파일 — 아래에서 null */ }
+    return null;
+  }
+
+  /* APP1 조각에서 촬영 시각을 꺼낸다. TIFF 구조: 엔디안 표시 → IFD0 →
+     ExifIFD(0x8769) 안의 DateTimeOriginal(0x9003). IFD0의 DateTime(0x0132)은 예비. */
+  function exifFromApp1(v, start, len) {
+    if (len < 14) return null;
+    if (v.getUint32(start) !== 0x45786966 || v.getUint16(start + 4) !== 0) return null; // 'Exif\0\0'
+    var t = start + 6; // TIFF 머리 시작
+    var mark = v.getUint16(t);
+    var le = mark === 0x4949; // 'II' 리틀엔디안 / 'MM' 빅엔디안
+    if (!le && mark !== 0x4D4D) return null;
+    if (v.getUint16(t + 2, le) !== 0x2A) return null;
+    var ifd0 = t + v.getUint32(t + 4, le);
+    var exifIfd = null, fallback = null;
+    var n = v.getUint16(ifd0, le);
+    for (var i = 0; i < n; i++) {
+      var e = ifd0 + 2 + i * 12;
+      var tag = v.getUint16(e, le);
+      if (tag === 0x8769) exifIfd = t + v.getUint32(e + 8, le);
+      if (tag === 0x0132) fallback = exifAscii(v, t, e, le);
+    }
+    var main = null;
+    if (exifIfd) {
+      var m = v.getUint16(exifIfd, le);
+      for (var j = 0; j < m; j++) {
+        var e2 = exifIfd + 2 + j * 12;
+        if (v.getUint16(e2, le) === 0x9003) { main = exifAscii(v, t, e2, le); break; }
+      }
+    }
+    return exifDateMs(main || fallback);
+  }
+
+  /* IFD 항목에서 ASCII 문자열을 꺼낸다. 4바이트가 넘으면 값 자리에 위치가 들어 있다. */
+  function exifAscii(v, tiffStart, entry, le) {
+    var count = v.getUint32(entry + 4, le);
+    var off = count <= 4 ? entry + 8 : tiffStart + v.getUint32(entry + 8, le);
+    var s = '';
+    for (var i = 0; i < count && off + i < v.byteLength; i++) {
+      var c = v.getUint8(off + i);
+      if (c === 0) break;
+      s += String.fromCharCode(c);
+    }
+    return s;
+  }
+
+  /* "YYYY:MM:DD HH:MM:SS" → 로컬 시각 ms. 깨진 값·전부 0인 값은 null. */
+  function exifDateMs(s) {
+    if (!s) return null;
+    var m = /^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(s);
+    if (!m) return null;
+    if (m[1] === '0000') return null; // 일부 사진기가 넣는 빈 값
+    var ts = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
+    return Number.isFinite(ts) && ts > 0 ? ts : null;
+  }
+
   /* 파일 창고 방식의 파일 경로.
      kind: 'full' = 긴 변 1600px 축소본 / 'thumb' = 격자용 작은 미리보기
 
@@ -79,6 +168,48 @@
     }
     mode = m;
     return mode;
+  }
+
+  /* ── 실시간DB 저장·읽기 ──
+     확정된 방식(2026-08-02, 창고는 요금제 문제로 막힘 → 실시간DB).
+     파일 창고 방식 저장은 아직 없다 — 만들 일이 생기면 여기(저장 층)에만 더한다. */
+
+  /* 새 사진 id. 파이어베이스 push 키는 시간순으로 정렬되는 문자열이라
+     최신순 정렬이 공짜다. db가 없을 때(단위 검사)만 임시 키. */
+  function newId() {
+    if (deps.db) return deps.db.ref(DB_ROOT + '/items').push().key;
+    return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
+
+  /* 사진 한 장 저장 — 정보·본문·미리보기를 다중 경로 update 한 번에 담는다.
+     반드시 이 모양이어야 한다: 상위 노드를 set 으로 통째로 쓰면 남의 사진이
+     지워진다(2026-07 실데이터 사고). update 는 적은 경로만 만들고 나머지는 안 건드린다. */
+  function savePhoto(p) {
+    if (mode === 'storage') {
+      return Promise.reject(new Error('파일 창고 저장은 아직 준비되지 않았습니다'));
+    }
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var year = yearOf(p.takenAt);
+    var u = {};
+    u[metaPath(year, p.id)] = p.meta;
+    u[blobPath(year, p.id)] = p.full;
+    u[thumbPath(year, p.id)] = p.thumb;
+    return deps.db.ref().update(u).then(function () { return { year: year, id: p.id }; });
+  }
+
+  /* 한 연도의 사진 목록(정보만). 본문·미리보기는 안 딸려 온다 — 경로가 갈라져 있어서. */
+  function listYear(year) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(DB_ROOT + '/items/' + year).once('value')
+      .then(function (s) { return s.val() || {}; });
+  }
+
+  /* 미리보기·본문은 볼 때만 한 장씩 받아온다. */
+  function loadThumb(year, id) { return readOnce(thumbPath(year, id)); }
+  function loadFull(year, id) { return readOnce(blobPath(year, id)); }
+  function readOnce(path) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(path).once('value').then(function (s) { return s.val(); });
   }
 
   /* ── 창고 점검 ──
@@ -209,7 +340,15 @@
     yearOf: yearOf,
     metaPath: metaPath,
     blobPath: blobPath,
+    thumbPath: thumbPath,
     filePath: filePath,
+    pickTakenAt: pickTakenAt,
+    exifTakenAt: exifTakenAt,
+    newId: newId,
+    savePhoto: savePhoto,
+    listYear: listYear,
+    loadThumb: loadThumb,
+    loadFull: loadFull,
     init: init,
     getMode: getMode,
     setMode: setMode,
