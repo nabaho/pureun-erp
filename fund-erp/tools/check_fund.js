@@ -134,5 +134,19 @@ ok('상계는 현금성자산 ↔ 현금성자산', /up\[b\+'debit'\]='현금성
 ok('거래 목록에 이체 칩', src.includes('x.xfer?'));
 ok('이미 처리된 이체는 다시 잡지 않음', src.includes('return !x.xfer;'));
 
+// ── ⑪ 분개 학습(거래처 기억) ──
+ok('_learnKey 존재', src.includes('function _learnKey'));
+ok('학습 저장·조회·삭제', src.includes('function learnAcct') && src.includes('function loadLearned')
+  && src.includes('function forgetAcct'));
+ok('학습 관리 화면', src.includes('function learnedPanel') && src.includes('onclick="learnedPanel()"'));
+// 일반 적요('인터넷출금이체')를 배우면 모든 거래가 그 계정으로 오분류된다
+ok('일반 적요는 학습 제외 목록에', /var LEARN_SKIP=\[[^\]]*'인터넷출금이체'/.test(src));
+ok('학습이 일반 규칙보다 우선', src.includes("if(lr&&lr.d&&lr.c) return {d:lr.d,c:lr.c,learned:true};"));
+// 입금·출금은 성격이 달라 방향별로 따로 기억해야 한다
+ok('방향별로 기억(i_/o_)', src.includes("return (isDep?'i_':'o_')+head;"));
+ok('승인할 때만 학습', src.includes('learnAcct(x.memo'));
+ok('이체 상계는 학습하지 않음', src.includes('if(on&&x&&!x.xfer) learnAcct'));
+ok('이체 행은 차·대 같아도 승인 가능', src.includes('if(x&&x.debit===x.credit&&!x.xfer)'));
+
 console.log('\n' + (fail ? 'FAILURES ' + fail + ' / ' + n : 'ALL PASS (' + n + '건)'));
 process.exit(fail ? 1 : 0);
