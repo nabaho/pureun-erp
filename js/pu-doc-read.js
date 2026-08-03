@@ -1,0 +1,263 @@
+/* 푸른통합시스템 — 서류 판독 층
+   사진 한 장이 명함인지 사업자등록증인지 중소기업확인서인지 가리고, 항목을 읽어 내고,
+   사업자등록번호가 맞는지 기계로 검증하는 유일한 파일이다.
+   사진첩·명함첩·푸른이알피가 모두 이 파일을 쓴다 — 판독 방식(모델·프롬프트)이
+   바뀌어도 앱은 손대지 않는다. (저장 층 pu-photo-store.js 와 같은 원리)
+
+   이 층은 읽고·검증하고·앱별 이름으로 바꾸기만 한다. **저장하지 않는다.**
+   저장은 부르는 쪽 책임이다 — 그래서 이 파일이 실데이터를 망칠 경로가 없다.
+
+   fetch·키 읽기는 주입받는다. 노드에서 가짜로 갈아끼워 검사할 수 있어야 하고,
+   앱마다 키를 얻는 방법이 다르기 때문이다(명함첩 공유 키 / 포털 공용 설정 / 이 기기). */
+(function (global) {
+  'use strict';
+
+  /* ── 주입받는 것 ── */
+  var deps = {
+    fetch: null,       // (url, init) => Promise<{ok,status,json()}>
+    getKey: null,      // () => Promise<string>  AI 키
+    getNtsKey: null    // () => Promise<string>  국세청 키(없으면 조회를 건너뛴다)
+  };
+
+  function init(o) {
+    o = o || {};
+    deps.fetch = o.fetch || (typeof global.fetch === 'function' ? global.fetch.bind(global) : null);
+    deps.getKey = o.getKey || null;
+    deps.getNtsKey = o.getNtsKey || null;
+    return true;
+  }
+
+  /* ── 사업자등록번호 ── */
+
+  function bizNoDigits(v) { return String(v == null ? '' : v).replace(/\D/g, ''); }
+
+  /* 국세청 사업자등록번호 체크섬.
+     AI가 한 자리 잘못 읽으면 여기서 걸린다 — '검증 통과하면 자동 입력'의 근거가 이 함수다.
+     잘못 읽은 번호가 그대로 저장되면 4대보험 신고서·계약서로 흘러가 되돌리기 어렵다.
+     (푸른이알피에 있던 같은 계산식을 여기로 모았다) */
+  function bizNoValid(v) {
+    var d = bizNoDigits(v);
+    if (!/^\d{10}$/.test(d)) return false;
+    var w = [1, 3, 7, 1, 3, 7, 1, 3, 5], s = 0;
+    for (var i = 0; i < 9; i++) s += parseInt(d[i], 10) * w[i];
+    s += Math.floor(parseInt(d[8], 10) * 5 / 10);
+    return (10 - (s % 10)) % 10 === parseInt(d[9], 10);
+  }
+
+  function fmtBizNo(v) {
+    var d = bizNoDigits(v);
+    return d.length === 10 ? d.slice(0, 3) + '-' + d.slice(3, 5) + '-' + d.slice(5) : d;
+  }
+
+  /* ── 앱별 필드 이름 변환표 ──
+     같은 사업자등록번호를 앱마다 다른 이름으로 부른다:
+       명함첩 bizno · 푸른이알피 bizNo · 기금관리 biz_no
+     이 표를 앱이 각자 들고 있으면 한 곳만 고쳐도 조용히 안 붙는다. 여기 한 곳에 둔다.
+     왼쪽 = 판독 결과 이름, 오른쪽 = 그 앱의 필드 이름. */
+  var MAP = {
+    cards: {
+      card: { name: 'name', company: 'company', dept: 'dept', title: 'title',
+              mobile: 'mobile', tel: 'tel', fax: 'fax', email: 'email',
+              companyTel: 'companyTel', companyFax: 'companyFax', companyAddr: 'companyAddr',
+              website: 'website', address: 'address', memo: 'memo' },
+      bizreg: { company: 'company', ceo: 'ceo', bizno: 'bizno', corpno: 'corpno',
+                openDate: 'openDate', bizType: 'bizType', bizItem: 'bizItem',
+                companyTel: 'companyTel', companyFax: 'companyFax', address: 'address', memo: 'memo' }
+    },
+    erp: {
+      bizreg: { company: 'name', ceo: 'ceo', bizno: 'bizNo', corpno: 'corpNo',
+                openDate: 'openDate', bizType: 'bizType', bizItem: 'bizCategory',
+                companyTel: 'phone', companyFax: 'fax', address: 'address', memo: 'note' },
+      sme: { company: 'name', bizno: 'bizNo', ceo: 'ceo', smeType: 'companySize', industry: 'industry' }
+    },
+    fund: {
+      bizreg: { company: 'name', ceo: 'ceo', bizno: 'biz_no', corpno: 'corp_no',
+                bizType: 'biz_type', address: 'address', memo: 'note' },
+      sme: { company: 'name', bizno: 'biz_no', ceo: 'ceo', smeType: 'company_size' }
+    }
+  };
+
+  /* 명함첩 레코드는 종류를 kind 로 구분한다(card / biz). 다른 앱은 종류 칸이 없다. */
+  var CARDS_KIND = { card: 'card', bizreg: 'biz' };
+
+  /* 사업자등록번호에 해당하는 이름들 — 담을 때 보기 좋은 꼴로 바꿔 넣는다. */
+  var BIZNO_KEYS = { bizno: 1, bizNo: 1, biz_no: 1 };
+
+  /* 판독 결과를 그 앱의 필드 이름으로 바꾼다.
+     **빈 값은 아예 싣지 않는다** — 빈 값을 실어 보내면 기존에 들어 있던 대표자·주소를
+     빈 값으로 덮어써 버린다(자동 입력에서 가장 위험한 사고). */
+  function mapTo(target, kind, fields) {
+    var table = MAP[target] && MAP[target][kind];
+    if (!table) return {};
+    var src = fields || {};
+    var out = {};
+    for (var from in table) {
+      if (!Object.prototype.hasOwnProperty.call(table, from)) continue;
+      var v = src[from];
+      if (v === undefined || v === null || String(v).trim() === '') continue;
+      var to = table[from];
+      out[to] = BIZNO_KEYS[to] ? fmtBizNo(v) : v;
+    }
+    if (target === 'cards' && CARDS_KIND[kind]) out.kind = CARDS_KIND[kind];
+    return out;
+  }
+
+  /* ── 판독 프롬프트 ──
+     종류 판정과 항목 판독을 **한 번의 호출로** 한다. 따로 부르면 사진을 두 번 올려
+     시간·비용이 두 배가 되고, 판정과 판독이 서로 다른 판단을 할 수 있다.
+     명함·사업자등록증 키 목록은 명함첩이 쓰던 문장을 그대로 가져왔다 —
+     이미 현장에서 검증된 프롬프트를 새로 쓰지 않는다. */
+  var PROMPT_ALL =
+    '이 이미지가 어떤 서류인지 가리고 정보를 추출해 JSON으로만 답하세요.' +
+    '\nkind 는 다음 중 하나입니다: card(명함), bizreg(사업자등록증), sme(중소기업확인서 또는 중견기업확인서), other(위 셋이 아님).' +
+    '\nkind=card 이면 키: name(이름), company(회사명), dept(부서), title(직책), mobile(휴대폰), tel(직통전화), fax(개인팩스), email(이메일), companyTel(회사 대표번호), companyFax(회사 팩스), companyAddr(회사 주소), website(홈페이지), address(개인 주소), memo(기타 정보).' +
+    '\nkind=bizreg 이면 키: company(상호/법인명), ceo(대표자), bizno(사업자등록번호), corpno(법인등록번호), openDate(개업연월일), bizType(업태), bizItem(종목), companyTel(대표번호), companyFax(팩스), address(사업장 소재지), memo(기타).' +
+    '\nkind=sme 이면 키: company(상호/법인명), bizno(사업자등록번호), ceo(대표자), smeType(기업규모 — 소기업/중기업/중견기업 등), issueNo(발급번호), issueDate(발급일), expiry(유효기간 만료일), industry(주업종).' +
+    '\nkind=other 이면 kind 만 담으세요.' +
+    '\n없는 값은 빈 문자열. 날짜는 2026-08-03 형식. 전화번호는 010-1234-5678 형식.' +
+    '\n사업자등록번호는 숫자 10자리를 정확히 옮기고 추측하지 마세요. JSON 외 텍스트 금지.';
+
+  var GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=';
+  var NTS_URL = 'https://api.odcloud.kr/api/nts-businessman/v1/status?serviceKey=';
+
+  var KINDS = { card: 1, bizreg: 1, sme: 1, other: 1 };
+
+  function fail(message) {
+    return { kind: 'other', fields: {}, bizNoOk: null, ntsChecked: false, ntsState: null, error: message };
+  }
+
+  /* 사진 한 장을 판독한다.
+     어떤 실패에도 예외를 밖으로 던지지 않는다 — 사진 한 장 판독 실패가
+     여러 장 올리기 전체를 멈추면 안 된다. 실패는 error 에 한국어로 담아 돌려준다. */
+  function read(dataUrl) {
+    if (!deps.fetch) return Promise.resolve(fail('판독 준비가 되지 않았습니다'));
+    var b64 = String(dataUrl || '').split(',')[1] || '';
+    if (!b64) return Promise.resolve(fail('사진을 읽을 수 없습니다'));
+
+    var keyP = deps.getKey ? Promise.resolve().then(deps.getKey) : Promise.resolve('');
+    return keyP.catch(function () { return ''; }).then(function (key) {
+      if (!key) return fail('AI 키가 없습니다 — 포털 설정에서 등록해 주세요');
+      var body = {
+        contents: [{ parts: [
+          { inline_data: { mime_type: 'image/jpeg', data: b64 } },
+          { text: PROMPT_ALL }
+        ] }],
+        generationConfig: { temperature: 0 } // 같은 사진에 같은 답이 나와야 한다
+      };
+      return deps.fetch(GEMINI_URL + encodeURIComponent(key), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      }).then(function (r) {
+        if (!r || !r.ok) throw new Error('AI 응답 오류 ' + ((r && r.status) || ''));
+        return r.json();
+      }).then(function (j) {
+        var parsed = parseReply(j);
+        if (!parsed) throw new Error('AI가 알아볼 수 없는 답을 보냈습니다');
+        return afterRead(parsed);
+      }).catch(function (e) {
+        return fail((e && e.message) || String(e));
+      });
+    });
+  }
+
+  /* AI 응답에서 JSON을 꺼낸다. ```json 껍데기를 벗기고, 그래도 안 되면 중괄호 구간만 잘라 본다. */
+  function parseReply(j) {
+    var parts = (j && j.candidates && j.candidates[0] && j.candidates[0].content
+      && j.candidates[0].content.parts) || [];
+    var t = parts.map(function (p) { return (p && p.text) || ''; }).join('');
+    t = t.replace(/```json|```/g, '').trim();
+    try { return JSON.parse(t); } catch (e) { /* 아래에서 한 번 더 */ }
+    var a = t.indexOf('{'), b = t.lastIndexOf('}');
+    if (a >= 0 && b > a) {
+      try { return JSON.parse(t.slice(a, b + 1)); } catch (e2) { /* 포기 */ }
+    }
+    return null;
+  }
+
+  /* 판독 결과 정리 + 사업자번호 검증 + (키가 있을 때만) 국세청 조회 */
+  function afterRead(parsed) {
+    var kind = KINDS[parsed.kind] ? parsed.kind : 'other';
+    var fields = {};
+    for (var k in parsed) {
+      if (!Object.prototype.hasOwnProperty.call(parsed, k) || k === 'kind') continue;
+      var v = parsed[k];
+      if (v === undefined || v === null || String(v).trim() === '') continue;
+      fields[k] = typeof v === 'string' ? v.trim() : v;
+    }
+
+    var out = { kind: kind, fields: fields, bizNoOk: null, ntsChecked: false, ntsState: null, error: null };
+
+    /* 명함에는 사업자번호가 없다 → 검증 대상이 아니므로 null 로 둔다.
+       false 로 두면 화면이 '검증 실패'로 오해해 멀쩡한 명함을 사람에게 물어본다. */
+    if (kind !== 'bizreg' && kind !== 'sme') return Promise.resolve(out);
+
+    out.bizNoOk = bizNoValid(fields.bizno);
+    if (fields.bizno) out.fields.bizno = fmtBizNo(fields.bizno);
+
+    /* 체크섬에서 이미 걸린 번호로 국세청을 부르면 헛일이다 — 통과한 것만 묻는다. */
+    if (!out.bizNoOk || !deps.getNtsKey) return Promise.resolve(out);
+
+    return Promise.resolve().then(deps.getNtsKey).catch(function () { return ''; })
+      .then(function (ntsKey) {
+        if (!ntsKey) return out;
+        return deps.fetch(NTS_URL + encodeURIComponent(ntsKey), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ b_no: [bizNoDigits(fields.bizno)] })
+        }).then(function (r) {
+          if (!r || !r.ok) throw new Error('국세청 응답 오류');
+          return r.json();
+        }).then(function (j) {
+          var row = j && j.data && j.data[0];
+          if (!row) throw new Error('국세청에 자료가 없습니다');
+          out.ntsChecked = true;
+          out.ntsState = row.b_stt || null;
+          return out;
+        }).catch(function () {
+          /* 조회 못 했는데 했다고 하면 안 된다 — 판독 결과는 그대로 살린다. */
+          out.ntsChecked = false;
+          return out;
+        });
+      });
+  }
+
+  /* ── 자동 입력 판정 ──
+     "검증 통과하면 자동, 걸리면 사람 확인"을 앱마다 다시 쓰지 않도록 한 함수로 굳혔다.
+     why 는 화면에 그대로 띄울 한국어다 — 영어 내부 용어를 노출하지 않는다(저장소 규칙). */
+  function autoOk(result, nowMs) {
+    var r = result || {};
+    if (r.error) return { auto: false, why: '판독하지 못했습니다 — 직접 확인해 주세요' };
+    if (r.kind === 'other' || !KINDS[r.kind]) return { auto: false, why: '어떤 서류인지 가리지 못했습니다' };
+
+    var f = r.fields || {};
+    /* 회사도 이름도 못 읽었으면 넣을 것이 없다 — 빈 껍데기를 만들면 나중에 지우는 일이 생긴다. */
+    if (!f.company && !f.name) return { auto: false, why: '회사나 이름을 읽지 못했습니다' };
+
+    if (r.kind === 'bizreg' || r.kind === 'sme') {
+      if (!r.bizNoOk) return { auto: false, why: '사업자등록번호를 확실히 읽지 못했습니다 — 번호를 확인해 주세요' };
+      if (r.ntsChecked && r.ntsState && r.ntsState.indexOf('계속') < 0) {
+        return { auto: false, why: '국세청에 ' + r.ntsState + '로 나옵니다 — 확인이 필요합니다' };
+      }
+    }
+
+    if (r.kind === 'sme' && f.expiry) {
+      var t = Date.parse(f.expiry);
+      var now = nowMs || Date.now();
+      if (!isNaN(t) && t < now) return { auto: false, why: '유효기간이 지난 확인서입니다 — 새로 발급받아야 합니다' };
+    }
+
+    return { auto: true, why: '' };
+  }
+
+  global.PuDocRead = {
+    init: init,
+    bizNoDigits: bizNoDigits,
+    bizNoValid: bizNoValid,
+    fmtBizNo: fmtBizNo,
+    mapTo: mapTo,
+    PROMPTS: { all: PROMPT_ALL },
+    read: read,
+    autoOk: autoOk
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
