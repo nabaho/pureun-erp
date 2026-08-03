@@ -217,6 +217,17 @@ test('판독 결과를 한국어 한 줄로 만드는 함수가 하나다', () =
   assert.ok(uses.length >= 3, '문구 함수를 화면 두 곳에서 함께 쓰지 않습니다');
 });
 
+test('일반 사진으로 올린 것도 판독할 수 있다', () => {
+  // 실사용 보고(2026-08-03): 명함을 「사진 고르기」로 올렸더니 판독 버튼이
+  // 아예 없어 읽을 방법이 없었다. 서류 버튼으로 올렸는지 여부는 화질 결정용일
+  // 뿐이고, 나중에 "이거 명함이네" 하고 읽고 싶은 것은 사진 종류와 무관하다.
+  const fn = app.match(/function renderReadPanel\([\s\S]*?\n\}/);
+  assert.ok(fn, 'renderReadPanel 본문을 찾을 수 없습니다');
+  assert.ok(!/kind !== 'doc'[\s\S]{0,80}innerHTML = ''/.test(fn[0]),
+    '일반 사진에서는 판독 패널이 아예 안 나옵니다');
+  assert.match(fn[0], /글자 판독하기/);
+});
+
 test('크게 보기에 판독 결과 패널과 다시 판독이 있다', () => {
   assert.match(app, /id="readPanel"/);
   assert.match(app, /function renderReadPanel\(/);
