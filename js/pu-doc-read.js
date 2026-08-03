@@ -222,6 +222,43 @@
       });
   }
 
+  /* ── AI 키를 어디서 얻는가 ──
+     키 읽는 코드를 앱마다 복사하면 한 곳만 고쳐도 앱마다 다른 키를 보게 된다.
+     그래서 '키가 어디 있는지'도 이 층이 안다. 순서는 명함첩·푸른카메라와 같게 맞췄다:
+       ① 이 기기(브라우저) ② 명함첩 공유 키 ③ 포털 공용 설정
+     국세청 키는 포털 공용 설정에만 둔다(명함첩은 국세청을 안 쓴다). */
+  var LS_GEMINI = 'pucards_gemini_key';
+
+  function readOnce(db, path) {
+    if (!db) return Promise.resolve('');
+    try {
+      return db.ref(path).once('value')
+        .then(function (s) { return (s && s.val()) || ''; })
+        .catch(function () { return ''; });   // 권한이 없어도 조용히 넘어간다
+    } catch (e) { return Promise.resolve(''); }
+  }
+
+  function localKey(name) {
+    try {
+      var ls = global.localStorage;
+      return (ls && ls.getItem(name)) || '';
+    } catch (e) { return ''; }
+  }
+
+  function keysFrom(db) {
+    return {
+      getKey: function () {
+        var mine = localKey(LS_GEMINI);
+        if (mine) return Promise.resolve(mine);
+        return readOnce(db, 'pucards/config/geminiKey').then(function (shared) {
+          if (shared) return shared;
+          return readOnce(db, 'data/app_config/geminiKey');
+        });
+      },
+      getNtsKey: function () { return readOnce(db, 'data/app_config/ntsKey'); }
+    };
+  }
+
   /* ── 자동 입력 판정 ──
      "검증 통과하면 자동, 걸리면 사람 확인"을 앱마다 다시 쓰지 않도록 한 함수로 굳혔다.
      why 는 화면에 그대로 띄울 한국어다 — 영어 내부 용어를 노출하지 않는다(저장소 규칙). */
@@ -256,6 +293,7 @@
     bizNoValid: bizNoValid,
     fmtBizNo: fmtBizNo,
     mapTo: mapTo,
+    keysFrom: keysFrom,
     PROMPTS: { all: PROMPT_ALL },
     read: read,
     autoOk: autoOk

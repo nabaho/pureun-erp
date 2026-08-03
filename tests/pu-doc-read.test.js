@@ -424,6 +424,59 @@ test('판독 자체가 실패했거나 서류가 아니면 자동이 아니다',
   assert.equal(R.autoOk({}).auto, false);
 });
 
+/* ── AI 키를 어디서 얻는가 ──
+   앱마다 키 읽는 코드를 복사하면 한 곳만 고쳐도 앱마다 다른 키를 보게 된다.
+   또 사진첩 화면에는 다른 앱 루트(pucards·data) 이름을 쓰면 안 되므로(정적 검사),
+   키가 어디 있는지도 이 층이 알아야 한다. */
+
+// 실시간DB 흉내 — 경로별 값을 준다.
+function fakeDbKeys(map) {
+  const asked = [];
+  return {
+    asked,
+    ref(p) {
+      asked.push(p);
+      return { once: () => Promise.resolve({ val: () => (p in map ? map[p] : null) }) };
+    }
+  };
+}
+
+test('AI 키 — 이 기기 → 명함첩 공유 → 포털 공용 순서로 찾는다', async () => {
+  const R = loadRead({ window: { localStorage: { getItem: () => 'LOCAL' } } });
+  const db = fakeDbKeys({ 'pucards/config/geminiKey': 'SHARED', 'data/app_config/geminiKey': 'PORTAL' });
+  assert.equal(await R.keysFrom(db).getKey(), 'LOCAL');
+
+  const R2 = loadRead({ window: { localStorage: { getItem: () => null } } });
+  assert.equal(await R2.keysFrom(db).getKey(), 'SHARED');
+
+  const R3 = loadRead({ window: { localStorage: { getItem: () => null } } });
+  assert.equal(await R3.keysFrom(fakeDbKeys({ 'data/app_config/geminiKey': 'PORTAL' })).getKey(), 'PORTAL');
+});
+
+test('AI 키 — 아무 데도 없으면 빈 문자열 (예외를 던지지 않는다)', async () => {
+  const R = loadRead({ window: { localStorage: { getItem: () => null } } });
+  assert.equal(await R.keysFrom(fakeDbKeys({})).getKey(), '');
+});
+
+test('AI 키 — 실시간DB 읽기가 막혀도 예외를 던지지 않는다', async () => {
+  const R = loadRead({ window: { localStorage: { getItem: () => null } } });
+  const badDb = { ref: () => ({ once: () => Promise.reject(new Error('권한 없음')) }) };
+  assert.equal(await R.keysFrom(badDb).getKey(), '');
+});
+
+test('국세청 키는 포털 공용 설정에서만 찾는다', async () => {
+  const R = loadRead({ window: { localStorage: { getItem: () => null } } });
+  const db = fakeDbKeys({ 'data/app_config/ntsKey': 'NTS' });
+  assert.equal(await R.keysFrom(db).getNtsKey(), 'NTS');
+  assert.ok(db.asked.every(p => p.indexOf('pucards') < 0), '국세청 키를 명함첩에서 찾고 있습니다');
+});
+
+test('키 함수는 db 가 없어도 터지지 않는다', async () => {
+  const R = loadRead({ window: { localStorage: { getItem: () => null } } });
+  assert.equal(await R.keysFrom(null).getKey(), '');
+  assert.equal(await R.keysFrom(null).getNtsKey(), '');
+});
+
 test('자동이 아닐 때는 이유가 항상 있다 — 화면이 아무 말도 못 하면 안 된다', () => {
   const R = loadRead();
   const cases = [

@@ -208,6 +208,15 @@
     return deps.db.ref().update(u).then(function () { return { year: year, id: p.id }; });
   }
 
+  /* 서류 판독 결과를 사진 정보 아래 'read' 칸에만 적는다.
+     items/{id} 를 통째로 쓰면 촬영 시각·올린 사람이 지워진다 — 반드시 하위 경로만. */
+  function saveRead(year, id, read) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var u = {};
+    u[metaPath(year, id) + '/read'] = read;
+    return deps.db.ref().update(u);
+  }
+
   /* 한 연도의 사진 목록(정보만). 본문·미리보기는 안 딸려 온다 — 경로가 갈라져 있어서. */
   function listYear(year) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
@@ -358,6 +367,7 @@
     exifTakenAt: exifTakenAt,
     newId: newId,
     savePhoto: savePhoto,
+    saveRead: saveRead,
     listYear: listYear,
     loadThumb: loadThumb,
     loadFull: loadFull,
