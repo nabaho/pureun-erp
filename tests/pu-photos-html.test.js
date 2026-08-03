@@ -143,6 +143,52 @@ test('미리보기를 끼워 넣을 때 서류 딱지를 지우지 않는다', (
   assert.match(fill[0], /insertBefore/);
 });
 
+/* ── 스캔·화면 캡처·끌어다 놓기 ── */
+
+test('스캔 파일(PDF)을 받는다', () => {
+  // 스캔은 대개 PDF 로 나온다. 서류 고르기에서 PDF 를 고를 수 있어야 한다.
+  assert.match(app, /accept="[^"]*application\/pdf/);
+  assert.match(app, /function pdfToPages\(/);
+  // 명함첩과 같은 판(pdf.js 3.11.174)을 쓴다 — 앱마다 다르면 캐시가 두 벌 된다
+  assert.match(app, /pdf\.js\/3\.11\.174\/pdf\.min\.js/);
+  assert.match(app, /workerSrc/);
+});
+
+test('여러 쪽 스캔은 쪽마다 한 건으로 갈라 담는다', () => {
+  // 한 파일에 서류 여러 장을 스캔하는 일이 흔하다. 첫 쪽만 받으면 나머지를 잃는다.
+  const fn = app.match(/function pdfToPages\([\s\S]*?\n\}/);
+  assert.ok(fn, 'pdfToPages 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /numPages/);
+  assert.match(fn[0], /PDF_MAX_PAGES/, '쪽 수 상한이 없으면 큰 파일에 앱이 멈충니다');
+  // 상한을 넘겨 버릴 때 조용히 버리지 않는다
+  assert.match(app, /PDF_MAX_PAGES[\s\S]{0,600}?쪽까지/);
+});
+
+test('스캔을 그릴 때 화면 갱신 신호를 기다리지 않는다', () => {
+  // 기본값으로 두면 pdf.js 가 requestAnimationFrame 을 기다리는데, 그 신호는
+  // **탭이 보이지 않을 때 오지 않는다** → 스캔을 올려두고 다른 탭으로 넘어가면
+  // 올리기가 그대로 멈춘다. 화면에 보여줄 그림이 아니므로 print 로 그린다.
+  assert.match(app, /intent: 'print'/);
+});
+
+test('마우스로 끌어다 놓을 수 있다', () => {
+  assert.match(app, /addEventListener\('drop'/);
+  assert.match(app, /addEventListener\('dragover'/);
+  assert.match(app, /preventDefault/);
+  // 끌고 오는 동안 받을 자리임을 보여준다
+  assert.match(app, /id="dropzone"/);
+});
+
+test('화면을 캡처해 붙여넣을 수 있다', () => {
+  assert.match(app, /addEventListener\('paste'/);
+  assert.match(app, /clipboardData/);
+});
+
+test('끌어다 놓기·붙여넣기는 서류로 담는다', () => {
+  // 스캔·화면 캡처가 주 용도라 글씨를 읽어야 한다 → 고화질(서류) 기준
+  assert.match(app, /addFiles\([^)]*,\s*true\s*\)/);
+});
+
 test('사진 열기에 예비 통로가 있다 — 브라우저마다 되는 방법이 다르다', () => {
   // 실사용 보고(2026-08-03): 폰 앱 내장 브라우저에서 "사진을 읽지 못했습니다".
   // 빠른 길(createImageBitmap)이 안 되면 <img> 로, 최신 바이트 읽기(arrayBuffer)가
