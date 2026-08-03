@@ -9298,6 +9298,103 @@ function kindSubLabel(c, kv){
   return (v || '').toString().trim().slice(0, 20);
 }
 
+// ============ 계약의 세부 종류 (코드 → 사람이 읽는 이름) ============
+// 계약은 세부 종류를 typeCodes[종류] 에 '코드'로 담는다 (예: typeCodes.consulting = 'cons-techguard').
+// 이름만 보면 '산업일자리'처럼 똑같은 게 둘(한국능률협회 / 충남기업혁신협회) 있어 구분이 안 되므로
+// 기관이 있으면 이름 뒤에 기관을 붙여 준다.
+function contractSubtypeCode(c, kindV){
+  if(!c || !kindV) return '';
+  var tc = (c.typeCodes && c.typeCodes[kindV]) || '';
+  if(tc) return String(tc);
+  // 레거시: 옛 데이터는 종류가 하나일 때만 typeCode 한 칸에 담았다.
+  // 종류가 여러 개면 그 코드가 어느 종류의 것인지 알 수 없어 쓰지 않는다.
+  var ks = c.kinds || (c.kind ? [c.kind] : []);
+  if(c.typeCode && ks.length === 1 && ks[0] === kindV) return String(c.typeCode);
+  return '';
+}
+function contractSubtypeLabel(c, kindV){
+  if(!c || !kindV) return null;
+  var code = contractSubtypeCode(c, kindV);
+  if(code){
+    // 숨김 유형도 찾아본다 — 옛 계약이 지금은 숨긴 유형을 가리킬 수 있다
+    // (상담사항은 세부 종류 목록이 아예 없다 — 화면의 needsType 와 같은 기준)
+    var types = (kindV !== 'consult' && typeof getKindTypes === 'function') ? (getKindTypes(kindV, true) || []) : [];
+    var found = null;
+    for(var i=0;i<types.length;i++){ if(types[i] && types[i].code === code){ found = types[i]; break; } }
+    if(found){
+      var nm = String(found.name || found.short || '').trim();
+      var ag = String(found.agency || '').trim();
+      return { code:code, name:nm, agency:ag, label: nm + (ag ? ' (' + ag + ')' : '') };
+    }
+  }
+  // 마지막 수단 — 이름이 그대로 박혀 있는 옛 레코드(이관된 사건·컨설팅 등)를 위해 남겨 둔다
+  var legacy = '';
+  if(kindV === 'consulting')   legacy = c.consultingType || '';
+  else if(kindV === 'case')    legacy = c.caseType       || '';
+  else if(kindV === 'fund')    legacy = c.fundType       || '';
+  else if(kindV === 'other')   legacy = c.programName    || c.projectType || '';
+  else if(kindV === 'company') legacy = c.programName    || c.advisoryType || '';
+  legacy = String(legacy || '').trim();
+  if(legacy) return { code:code || '', name:legacy, agency:'', label:legacy };
+  return null;                                          // 알 수 없음 (세부 종류 미입력)
+}
+
+// ============ 같은 사업장 계약 중복 판정 (3단계) ============
+// 종류(컨설팅/사건…)만 같다고 중복이 아니다. 세부 종류까지 같아야 진짜 중복이다.
+//   dup   🔴 겹치는 종류에서 세부 종류가 같고, 기존 계약이 진행 중
+//   again 🟡 세부 종류가 같지만 기존 계약이 종료·취소됨 (재계약으로 보인다)
+//   diff  🟢 겹치는 종류마다 세부 종류가 서로 다르다 (다른 일)
+// 한쪽이라도 세부 종류가 비어 있으면 판단할 수 없으므로 안전하게 dup 으로 보고 확인받는다.
+function contractDupVerdict(existing, form){
+  if(!existing || !form) return null;
+  var newKinds = form.kinds || (form.kind ? [form.kind] : []);
+  var cKinds   = existing.kinds || (existing.kind ? [existing.kind] : []);
+  var shared = cKinds.filter(function(k){ return newKinds.indexOf(k) >= 0; });
+  if(!shared.length) return null;                       // 종류가 안 겹치면 비교 대상이 아니다
+  var closed = existing.status === 'closed' || existing.status === 'cancelled' || !!existing.closedDate;
+  var same = [], diff = [], unknown = [];
+  shared.forEach(function(k){
+    var a = contractSubtypeCode(existing, k);
+    var b = contractSubtypeCode(form, k);
+    if(!a || !b)      unknown.push(k);
+    else if(a === b)  same.push(k);
+    else              diff.push(k);
+  });
+  var verdict = same.length ? (closed ? 'again' : 'dup')
+              : unknown.length ? 'dup'
+              : 'diff';
+  return { verdict:verdict, shared:shared, same:same, diff:diff, unknown:unknown,
+           missingSubtype: unknown.length > 0, closed:closed };
+}
+// 여러 건 중 가장 센 판정 (dup > again > diff). 겹치는 게 하나도 없으면 null.
+function contractDupWorst(verdicts){
+  var has = { dup:false, again:false, diff:false };
+  (verdicts || []).forEach(function(v){ if(v && v.verdict) has[v.verdict] = true; });
+  return has.dup ? 'dup' : has.again ? 'again' : has.diff ? 'diff' : null;
+}
+// 저장 전 확인 체크박스는 🔴 일 때만 요구한다
+function contractDupNeedsConfirm(worst){ return worst === 'dup'; }
+// 지금 작성 중인 폼의 세부 종류 — 드롭다운을 건드리지 않아도 화면에는 첫 항목이 골라져 있고
+// 저장할 때도 그 값이 들어간다(fixTypeCodes). 판정도 화면과 같은 값을 봐야 헛경고가 안 난다.
+function contractFormSubtypeFill(form){
+  if(!form) return form;
+  var tc = Object.assign({}, form.typeCodes || {});
+  (form.kinds || []).forEach(function(kv){
+    if(tc[kv] || kv === 'consult') return;
+    var types = (typeof getKindTypes === 'function') ? (getKindTypes(kv) || []) : [];
+    if(types.length && types[0] && types[0].code) tc[kv] = types[0].code;
+  });
+  return Object.assign({}, form, { typeCodes: tc });
+}
+try {
+  window.contractFormSubtypeFill = contractFormSubtypeFill;
+  window.contractSubtypeCode = contractSubtypeCode;
+  window.contractSubtypeLabel = contractSubtypeLabel;
+  window.contractDupVerdict = contractDupVerdict;
+  window.contractDupWorst = contractDupWorst;
+  window.contractDupNeedsConfirm = contractDupNeedsConfirm;
+} catch(_){}
+
 // 계약번호 자동 생성: 계약-2026-001
 function genContractNo(){
   var year = (new Date()).getFullYear();
@@ -9512,6 +9609,22 @@ function pcToContact(x, primary){
   return { id:'pc'+Math.random().toString(36).slice(2,9), name:x.n||'', role:x.ti||'',
     phone:x.m||'', bizPhone:x.t||x.ct||'', email:x.e||'', isPrimary:!!primary, pcFrom:'명함첩' };
 }
+// 명함첩 색인을 회사 단위로 묶는다 — 회사 자동완성(pcCompanyRows)과 '명함첩에서 회사 찾기' 모달이 함께 쓴다.
+// 키는 회사명 정규화값(pcNormCo), 값은 { name, biz, bizId, cards[], cardIds[] }
+function pcGroupCompanies(){
+  var groups = {};
+  var idx = (typeof window !== 'undefined' && window.pucardsIdx) || null;
+  if(!idx) return groups;
+  Object.keys(idx).forEach(function(id){
+    var r = idx[id]; if(!r) return;
+    var cn = pcNormCo(r.c); if(!cn) return;                // 회사명 없는 명함은 회사 후보가 아니다
+    var g = groups[cn] || (groups[cn] = { name:r.c, biz:null, bizId:'', cards:[], cardIds:[] });
+    if(!g.name) g.name = r.c;
+    if(r.k === 'biz'){ g.biz = r; g.bizId = id; }
+    else { g.cards.push(r); g.cardIds.push(id); }
+  });
+  return groups;
+}
 function pcCompanyRows(q){
   var out = [];
   try{
@@ -9519,15 +9632,7 @@ function pcCompanyRows(q){
     if(!idx) return out;                                   // 아직 안 받아졌으면 조용히 넘어간다
     var ql = String(q||'').toLowerCase();
     if(ql.length < 2) return out;
-    var groups = {};
-    Object.keys(idx).forEach(function(id){
-      var r = idx[id]; if(!r) return;
-      var cn = pcNormCo(r.c); if(!cn) return;              // 회사명 없는 명함은 회사 후보가 아니다
-      var g = groups[cn] || (groups[cn] = { name:r.c, biz:null, bizId:'', cards:[], cardIds:[] });
-      if(!g.name) g.name = r.c;
-      if(r.k === 'biz'){ g.biz = r; g.bizId = id; }
-      else { g.cards.push(r); g.cardIds.push(id); }
-    });
+    var groups = pcGroupCompanies();
     Object.keys(groups).forEach(function(cn){
       var g = groups[cn];
       var bizNo = (g.biz && g.biz.bz) || '';
@@ -9700,6 +9805,85 @@ function PucardsContactPickerModal(props){
   );
 }
 
+// ============ 명함첩에서 회사 찾기 모달 (사업자등록증·대표자 명함 사진 가져오기) ============
+// 사람이 아니라 '회사' 한 줄씩 — 묶음은 pcGroupCompanies 를 그대로 쓴다(같은 묶음 규칙 유지).
+function searchPucardsCompanies(query){
+  var q = String(query || '');
+  if(q.replace(/\s/g,'').length < 2) return [];
+  var qn = pcNormCo(q);
+  var qd = q.replace(/\D/g,'');
+  var groups = pcGroupCompanies();
+  var out = [];
+  Object.keys(groups).forEach(function(cn){
+    var g = groups[cn];
+    var bizNo = (g.biz && g.biz.bz) || '';
+    var hit = (qn.length >= 2 && cn.indexOf(qn) >= 0)
+           || (qd.length >= 4 && bizNo.replace(/\D/g,'').indexOf(qd) >= 0);
+    if(!hit) return;
+    out.push({
+      name: g.name || '(회사명 없음)',
+      bizNo: bizNo,
+      ceo: (g.biz && g.biz.ceo) || '',
+      hasBiz: !!g.biz,
+      cardCount: g.cards.length,
+      bizId: g.bizId,                       // 사업자등록증 카드 — 사진을 여기서 읽는다
+      cardId: g.cardIds[0] || ''            // 대표(첫) 명함 — 사진을 여기서 읽는다
+    });
+  });
+  // 사업자등록증이 있는 회사 → 명함 많은 회사 → 이름 순
+  out.sort(function(a,b){
+    return (b.hasBiz?1:0)-(a.hasBiz?1:0) || (b.cardCount-a.cardCount)
+        || String(a.name).localeCompare(String(b.name));
+  });
+  return out.slice(0, 40);
+}
+function PucardsCompanyPickerModal(props){
+  useEscClose(props.onClose);
+  var qs = useState(props.initialQuery || ''); var query = qs[0]; var setQuery = qs[1];
+  var results = searchPucardsCompanies(query);
+  var wantLabel = props.want === 'bizLicenseImg' ? '사업자등록증' : props.want === 'businessCardImg' ? '대표자 명함' : '';
+  return h('div', {
+    style:{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:210, display:'flex', alignItems:'center', justifyContent:'center' },
+    onClick:function(e){ e.stopPropagation(); if(e.target === e.currentTarget) props.onClose(); }
+  },
+    h('div', { style:{ background:'#fff', borderRadius:'8px', width:'560px', maxWidth:'95vw', maxHeight:'80vh', display:'flex', flexDirection:'column' } },
+      h('div', { style:{ padding:'14px 18px', borderBottom:'1px solid #e5e7eb', display:'flex', justifyContent:'space-between', alignItems:'center' } },
+        h('div', { style:{ fontSize:'14px', fontWeight:700 } },
+          '📇 명함첩에서 회사 찾기' + (wantLabel ? ' — ' + wantLabel : '')),
+        h('button', { onClick:props.onClose, style:{ background:'none', border:'none', fontSize:'18px', cursor:'pointer', color:'#64748b' } }, '×')
+      ),
+      h('div', { style:{ padding:'12px 18px', borderBottom:'1px solid #e5e7eb' } },
+        h('input', { type:'text', value:query, onChange:function(e){ setQuery(e.target.value); }, autoFocus:true,
+          placeholder:'🔍 회사명 또는 사업자번호로 검색 (2글자 이상)',
+          style:{ width:'100%', padding:'6px 9px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12px' } }),
+        h('div', { style:{ fontSize:'10.5px', color:'#94a3b8', marginTop:'4px' } },
+          Object.keys(window.pucardsIdx||{}).length
+            ? '명함첩 ' + Object.keys(window.pucardsIdx||{}).length + '건에서 검색'
+            : '명함첩 목록을 불러오는 중… (명함첩 앱을 한 번 열면 목록이 생성됩니다)')
+      ),
+      h('div', { style:{ flex:1, overflow:'auto', padding:'8px' } },
+        !query ? h('div', { style:{ padding:'16px', textAlign:'center', color:'#94a3b8', fontSize:'12px' } }, '회사명 또는 사업자번호를 입력하세요')
+        : results.length === 0 ? h('div', { style:{ padding:'16px', textAlign:'center', color:'#94a3b8', fontSize:'12px' } }, '검색 결과가 없습니다')
+        : results.map(function(r, i){
+            return h('div', { key:i, onClick:function(){ props.onSelect(r); },
+              style:{ padding:'10px 14px', borderBottom:'1px solid #f1f5f9', cursor:'pointer' },
+              onMouseEnter:function(e){ e.currentTarget.style.background = '#f8fafc'; },
+              onMouseLeave:function(e){ e.currentTarget.style.background = ''; }
+            },
+              h('div', { style:{ fontSize:'12.5px', fontWeight:600, color:'#1e293b', display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap' } },
+                h('span', null, r.name),
+                r.hasBiz && h('span', { style:{ background:'#dbeafe', color:'#1d4ed8', fontSize:'10px', padding:'1px 7px', borderRadius:'8px', fontWeight:700 } }, '사업자등록증 있음'),
+                r.cardCount ? h('span', { style:{ background:'#e0e7ff', color:'#3730a3', fontSize:'10px', padding:'1px 7px', borderRadius:'8px', fontWeight:700 } }, '명함 ' + r.cardCount + '장') : null
+              ),
+              h('div', { style:{ fontSize:'10.5px', color:'#64748b', marginTop:'2px' } },
+                (r.bizNo || '사업자번호 없음') + (r.ceo ? ' · 대표 ' + r.ceo : ''))
+            );
+          })
+      )
+    )
+  );
+}
+
 // ============ 계약 모달 (3탭: 기업정보 / 계약정보 / 담당자정보) ============
 function ContractModal(props){
   useEscClose(props.onClose);
@@ -9848,6 +10032,7 @@ function ContractModal(props){
   }, [tab]);
   var pcs = useState(false); var pastSearch = pcs[0]; var setPastSearch = pcs[1];
   var pcpk = useState(null); var pcPickIdx = pcpk[0]; var setPcPickIdx = pcpk[1];  // 명함첩 담당자 찾기: 대상 담당자 index
+  var pcco = useState(''); var pcCoPick = pcco[0]; var setPcCoPick = pcco[1];      // 명함첩 회사 찾기: 누른 첨부칸(businessCardImg/bizLicenseImg)
   var hrw = useState(false); var hideRetiredWk = hrw[0]; var setHideRetiredWk = hrw[1];  // 근로자: 재직자만 보기
   var ar = useState([]); var autoResults = ar[0]; var setAutoResults = ar[1];
   var aidx = useState(-1); var autoIdx = aidx[0]; var setAutoIdx = aidx[1];   // 자동완성 키보드 선택 인덱스
@@ -9880,6 +10065,36 @@ function ContractModal(props){
     pcCompanyRows(q).forEach(function(row){ results.push(row); });
     pcPersonRows(q).forEach(function(row){ results.push(row); });
     return results;
+  }
+
+  // 명함첩에서 고른 회사의 사진(사업자등록증·대표자 명함)을 첨부칸에 넣는다.
+  // 자동완성으로 딸려올 때와 달리 여기서는 대표가 직접 부른 것이라 이미 있는 사진도 바꿔 준다 —
+  // 다만 무엇이 바뀌는지 먼저 묻는다.
+  async function fillCompanyImagesFromPucards(row){
+    if(!row) return;
+    var img = {};
+    try { img = (await pcFetchImages({ bizId: row.bizId, cardId: row.cardId })) || {}; } catch(e){ img = {}; }
+    var got = [];
+    if(img.bizLicenseImg)   got.push('사업자등록증');
+    if(img.businessCardImg) got.push('대표자 명함');
+    if(!got.length){ showToast('이 회사는 명함첩에 사진이 없습니다'); return; }
+    var cur = f.company || {};
+    var over = [];
+    if(img.bizLicenseImg   && cur.bizLicenseImg)   over.push('사업자등록증');
+    if(img.businessCardImg && cur.businessCardImg) over.push('대표자 명함');
+    if(over.length){
+      if(!(await popConfirm('이미 붙여 둔 ' + over.join('·') + ' 사진을 명함첩 사진으로 바꿉니다.\n\n'
+        + '• 회사: ' + (row.name || '-') + '\n'
+        + '• 가져올 사진: ' + got.join('·') + '\n\n바꿀까요?'))) return;
+    }
+    setF(function(prev){
+      var c = prev.company || {};
+      var next = {};
+      if(img.bizLicenseImg)   next.bizLicenseImg   = img.bizLicenseImg;
+      if(img.businessCardImg) next.businessCardImg = img.businessCardImg;
+      return Object.assign({}, prev, { company: Object.assign({}, c, next) });
+    });
+    showToast('🖼 ' + got.join('·') + ' 사진을 명함첩에서 가져왔습니다');
   }
 
   // 자동완성 항목 선택 시 회사 정보 자동 채움
@@ -10502,8 +10717,9 @@ function ContractModal(props){
               var u = users.find(function(x){return x.sid===(c.createdBySid||c.managerMain);});
               var cKinds = (c.kinds||[c.kind]).filter(function(x){return x;}).map(function(k){
                 var _lbl = ({consult:'상담',company:'업체계약',case:'사건',consulting:'컨설팅',fund:'기금',other:'기타'})[k]||k;
-                var _sub = kindSubLabel(c, k);
-                return _sub ? (_lbl+' · '+_sub) : _lbl;
+                // 세부 종류까지 붙인다 — 이름이 같은 유형은 기관까지 (예: 산업일자리 (한국능률협회))
+                var _sub = contractSubtypeLabel(c, k);
+                return _sub ? (_lbl+' › '+_sub.label) : _lbl;
               }).join('+');
               // 기존 계약이 지금 어디 있는지 표시(진행중=계약관리 / 이관완료=종료관리 / 보관됨)
               var _stLbl = c.status==='transferred' ? '이관완료 → 종료관리'
@@ -10514,9 +10730,18 @@ function ContractModal(props){
               return '• ' + (c.contractNo||'-') + ' [' + cKinds + '] · ' + (u?u.name:'-')
                 + ' · ' + (_cd || '계약일 없음') + ' · ' + _stLbl;
             }).join('\n');
+            // 지금 작성 중인 것도 세부 종류까지 적어 준다 — 안 그러면 무엇과 겹치는지 알 수 없다
+            var _fEff = contractFormSubtypeFill(f);
+            var myLine = newKinds2.map(function(k){
+              var _lbl = ({consult:'상담',company:'업체계약',case:'사건',consulting:'컨설팅',fund:'기금',other:'기타'})[k]||k;
+              var _sub = contractSubtypeLabel(_fEff, k);
+              if(_sub) return _lbl + ' › ' + _sub.label;
+              return k === 'consult' ? _lbl : (_lbl + ' › 세부 종류 미입력');   // 상담사항은 세부 종류가 없는 종류
+            }).join('+');
             if(!(await popConfirm('⚠️ 같은 사업장에 같은 종류 계약이 ' + dupCs.length + '건 있습니다.\n\n'
                 + '[기존]\n' + lst
-                + '\n\n[지금 작성 중]\n• ' + (f.contractNo||'(번호 미정)') + ' · ' + (f.signDate||'계약일 미입력')
+                + '\n\n[지금 작성 중]\n• ' + (f.contractNo||'(번호 미정)')
+                + (myLine ? ' [' + myLine + ']' : '') + ' · ' + (f.signDate||'계약일 미입력')
                 + '\n\n새로 만들기보다 기존 계약을 찾아 이관하는 편이 낫습니다. 그래도 저장할까요?'))){
               setTab('company');
               return;
@@ -10653,10 +10878,17 @@ function ContractModal(props){
     return h('div', { style:{ flex:1 } },
       h('div', { style:{ fontSize:'11.5px', fontWeight:700, color:'#475569', marginBottom:'4px', display:'flex', justifyContent:'space-between', alignItems:'center', gap:'4px' } },
         h('span', null, title),
-        img && h('button', { type:'button', disabled:ocrBusy, onClick:function(){ runOcr(field); },
-          title: '이미지에서 텍스트 자동 추출 (한국어 지원)',
-          style:{ background:ocrBusy?'#cbd5e1':'#2563eb', color:'#fff', border:'none', padding:'2px 8px', borderRadius:'4px', fontSize:'10.5px', fontWeight:700, cursor:ocrBusy?'wait':'pointer' } },
-          ocrBusy ? '⏳ 처리중...' : '🔍 OCR 추출')
+        h('span', { style:{ display:'inline-flex', alignItems:'center', gap:'4px' } },
+          // 명함첩에 이미 찍어 둔 사진이 있으면 다시 찍지 말고 그대로 가져온다
+          h('button', { type:'button', onClick:function(){ setPcCoPick(field); },
+            title:'명함첩에 저장된 이 회사의 사업자등록증·명함 사진을 가져옵니다',
+            style:{ background:'#eff6ff', color:'#1d4ed8', border:'1px solid #bfdbfe', padding:'2px 8px', borderRadius:'4px', fontSize:'10.5px', fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' } },
+            '📇 명함첩에서 찾기'),
+          img && h('button', { type:'button', disabled:ocrBusy, onClick:function(){ runOcr(field); },
+            title: '이미지에서 텍스트 자동 추출 (한국어 지원)',
+            style:{ background:ocrBusy?'#cbd5e1':'#2563eb', color:'#fff', border:'none', padding:'2px 8px', borderRadius:'4px', fontSize:'10.5px', fontWeight:700, cursor:ocrBusy?'wait':'pointer' } },
+            ocrBusy ? '⏳ 처리중...' : '🔍 OCR 추출')
+        )
       ),
       img
         ? h('div', { style:{ position:'relative', border:'1px solid #e5e7eb', borderRadius:'6px', overflow:'hidden', background:'#f8fafc', height:'54px' } },
@@ -11083,6 +11315,13 @@ function ContractModal(props){
             boxShadow:'0 4px 16px rgba(0,0,0,0.12)', maxHeight:'200px', overflow:'auto', marginTop:'2px' } },
           h('div', { style:{ padding:'6px 10px', fontSize:'10.5px', color:'#64748b', borderBottom:'1px solid #f1f5f9', background:'#eff6ff' } },
             '📂 과거 데이터 선택 (클릭하면 자동 입력)'),
+          // 명함첩에서 온 줄이 몇 개인지 미리 알려 준다 — 그 줄을 누르면 사진까지 딸려온다
+          (function(){
+            var pcN = autoResults.filter(function(r){ return r && r._pc; }).length;
+            if(!pcN) return null;
+            return h('div', { style:{ padding:'4px 10px', fontSize:'10.5px', color:'#1d4ed8', borderBottom:'1px solid #f1f5f9', background:'#f0f9ff', fontWeight:600 } },
+              '📇 명함첩 ' + pcN + '건 — 누르면 사진까지 가져옵니다');
+          })(),
           autoResults.map(function(r, i){
             return h('div', { key:i,
               onMouseDown:function(e){
@@ -11099,6 +11338,10 @@ function ContractModal(props){
               h('div', { style:{ minWidth:0 } },
                 h('div', { style:{ fontSize:'12px', fontWeight:600, color:'#1e293b' } }, r.label),
                 h('div', { style:{ fontSize:'10px', color:'#64748b', fontFamily:'monospace', marginTop:'1px' } },
+                  // 명함첩 줄은 출처를 눈에 보이게 찍어 준다 (사진까지 가져오는 줄이라 구분이 필요하다)
+                  r._pc ? h('span', { style:{ color:'#1d4ed8', fontWeight:700, fontFamily:'inherit' },
+                      title:'명함첩 원본 카드에서 사업자등록증·명함 사진을 읽어옵니다 — 사진이 없으면 알려 드립니다' },
+                      '📇 명함첩' + ((r._pc.bizId || r._pc.cardId) ? ' · 사진 있음' : '') + ' ') : null,
                   // 명함첩은 사업자번호·대표·명함 장수를 한 줄로 (sub), 나머지는 기존 그대로
                   r.sub ? r.sub : ((r.bizNo||'-') + (r.date?' · '+r.date:'')))
               ),
@@ -11152,7 +11395,8 @@ function ContractModal(props){
         // 과거 계약 이력 보기 (시작/종료/종류 등)
         var kindLabelsHist = { consult:'상담', company:'업체계약', case:'사건', consulting:'컨설팅', fund:'기금', other:'기타' };
         async function showHistory(c){
-          var ks = (c.kinds || (c.kind ? [c.kind] : [])).map(function(k){ return kindLabelsHist[k]||k; }).join(', ') || '-';
+          var ksArr = c.kinds || (c.kind ? [c.kind] : []);
+          var ks = ksArr.map(function(k){ return kindLabelsHist[k]||k; }).join(', ') || '-';
           var u  = users.find(function(x){ return x.sid === (c.createdBySid || c.managerMain); });
           var u2 = c.managerSub ? users.find(function(x){ return x.sid === c.managerSub; }) : null;
           var isClosed = c.status === 'closed' || c.status === 'cancelled' || !!c.closedDate;
@@ -11162,15 +11406,30 @@ function ContractModal(props){
           lines.push('━━ ' + (c.contractNo || '-') + ' ━━');
           lines.push('종류: ' + ks);
           if(c.companyName)     lines.push('사업장: ' + c.companyName);
+          // 세부 종류는 코드(typeCodes)로 저장돼 있다 — 이름으로 바꿔 보여주고, 이름이 겹치면 기관까지 붙는다
+          ksArr.forEach(function(k){
+            var sub = contractSubtypeLabel(c, k);
+            if(sub) lines.push((kindLabelsHist[k]||k) + ' 유형: ' + sub.label);
+          });
           if(c.programName)     lines.push('컨설팅명: ' + c.programName);
-          if(c.consultingType)  lines.push('컨설팅 유형: ' + c.consultingType);
-          if(c.caseType)        lines.push('사건 유형: ' + c.caseType);
-          if(c.fundType)        lines.push('기금 유형: ' + c.fundType);
           lines.push('상태: ' + statusLabel);
-          if(c.startDate || c.createdAt) lines.push('시작일: ' + String(c.startDate || c.createdAt).slice(0,10));
+          // 계약일은 signDate. 없으면 시작일·등록일로 대신 보여주되 대신 쓴 것임을 밝힌다
+          var signD  = String(c.signDate  || '').slice(0,10);
+          var startD = String(c.startDate || '').slice(0,10);
+          if(signD)                      lines.push('계약일: ' + signD);
+          else if(startD || c.createdAt) lines.push('계약일: 없음 (대신 ' + (startD || String(c.createdAt).slice(0,10)) + ')');
+          if(startD && startD !== signD) lines.push('시작일: ' + startD);
           if(c.endDate)         lines.push('계약 종료일: ' + String(c.endDate).slice(0,10));
           if(c.closedDate)      lines.push('실제 종료일: ' + String(c.closedDate).slice(0,10));
           if(c.closeReason)     lines.push('종료 사유: ' + c.closeReason);
+          // 금액은 종류별 amounts 에 담긴다 (contractFee·balanceFee 는 옛 데이터용)
+          var amtParts = [];
+          ksArr.forEach(function(k){
+            var a = Number((c.amounts && c.amounts[k]) || 0);
+            if(a) amtParts.push((kindLabelsHist[k]||k) + ' ' + a.toLocaleString() + '원');
+          });
+          if(amtParts.length)       lines.push('금액: ' + amtParts.join(' · '));
+          else if(c.contractAmount) lines.push('금액: ' + Number(c.contractAmount).toLocaleString() + '원');
           if(c.contractFee)     lines.push('계약금: ' + Number(c.contractFee).toLocaleString() + '원');
           if(c.balanceFee)      lines.push('잔금: ' + Number(c.balanceFee).toLocaleString() + '원');
           if(u)                 lines.push('주담당: ' + u.name);
@@ -11181,28 +11440,64 @@ function ContractModal(props){
 
         // 현재 입력 중인 계약유형
         var newKinds = f.kinds || [];
-        // 기존 계약의 유형 목록
-        var existingKindSets = dupContracts.map(function(c){ return c.kinds || (c.kind ? [c.kind] : []); });
-        // 겹치는 유형 (같은 종류 중복)
-        var overlapping = newKinds.filter(function(k){
-          return existingKindSets.some(function(ks){ return ks.indexOf(k) >= 0; });
-        });
-        // 새로운 유형 (다른 종류 신규)
-        var isNewKind = newKinds.length > 0 && overlapping.length === 0;
         var kindLabels = { consult:'상담', company:'업체계약', case:'사건', consulting:'컨설팅', fund:'기금', other:'기타' };
         function kindName(k){ return kindLabels[k] || k; }
-
-        var bgColor = isNewKind ? '#f0fdf4' : '#fef3c7';
-        var borderColor = isNewKind ? '#86efac' : '#fcd34d';
-        var titleColor = isNewKind ? '#166534' : '#92400e';
-        var icon = isNewKind ? '✅' : '⚠️';
-        var title = isNewKind
-          ? '같은 사업장, 다른 종류 계약 — 신규 진행 정상'
-          : '같은 사업장에 기존 계약 ' + dupContracts.length + '건 — 중복 확인 필요';
+        // 계약 한 건씩 3단계로 가른다 — 🔴 같은 세부 종류가 진행 중 / 🟡 같은 세부 종류가 종료됨(재계약) / 🟢 세부 종류가 다름
+        // 판정은 '화면에 골라져 있는' 세부 종류로 한다 (드롭다운 첫 항목이 기본값이고 저장도 그 값으로 된다)
+        var fEff = contractFormSubtypeFill(f);
+        var dupRows = dupContracts.map(function(c){ return { c:c, v:contractDupVerdict(c, fEff) }; });
+        // rawWorst 가 null 이면 종류 자체가 하나도 겹치지 않는다 (완전히 다른 일)
+        var rawWorst = contractDupWorst(dupRows.map(function(r){ return r.v; }));
+        var worst = rawWorst || 'diff';
+        var needConfirm = contractDupNeedsConfirm(worst);
+        var VSTYLE = {
+          dup:   { bg:'#fef3c7', border:'#fcd34d', title:'#92400e', icon:'⚠️' },
+          again: { bg:'#fffbeb', border:'#fde68a', title:'#92400e', icon:'🟡' },
+          diff:  { bg:'#f0fdf4', border:'#86efac', title:'#166534', icon:'✅' }
+        };
+        var sv = VSTYLE[worst] || VSTYLE.diff;
+        var bgColor = sv.bg, borderColor = sv.border, titleColor = sv.title, icon = sv.icon;
+        // 판정 근거가 된 종류·세부 종류 — 제목과 결론 한 줄에 쓴다
+        var worstRow = null;
+        dupRows.forEach(function(r){ if(!worstRow && r.v && r.v.verdict === worst) worstRow = r; });
+        var worstKindName = (worstRow && worstRow.v.shared[0]) ? kindName(worstRow.v.shared[0]) : '계약';
+        var worstSameKind = (worstRow && worstRow.v.same[0]) || '';
+        var worstSameLb = worstSameKind ? contractSubtypeLabel(worstRow.c, worstSameKind) : null;
+        var worstSameName = worstSameLb ? worstSameLb.label : (worstSameKind ? kindName(worstSameKind) : '');
+        // 세부 종류가 비어 있어서 🔴가 된 경우 — 같은 것이 진행 중이라고 단정하면 안 된다.
+        // 상담사항은 세부 종류가 아예 없는 종류이므로 '비어 있다'에 넣지 않는다.
+        var dupByUnknown = worst === 'dup'
+          && !dupRows.some(function(r){ return r.v && r.v.verdict === 'dup' && r.v.same.length; })
+          && dupRows.some(function(r){ return r.v && r.v.verdict === 'dup' && r.v.unknown.some(function(k){ return k !== 'consult'; }); });
+        var title = worst === 'dup'
+          ? (dupByUnknown
+              ? '같은 사업장 계약 ' + dupContracts.length + '건 — 세부 종류가 비어 있어 확인 필요'
+              : '같은 사업장에 같은 ' + (worstSameName || worstKindName) + ' 계약 — 중복 확인 필요')
+          : worst === 'again'
+          ? '같은 ' + (worstSameName || worstKindName) + ' 계약이 종료돼 있습니다 — 재계약인가요?'
+          : rawWorst
+          ? '같은 사업장, 다른 세부 종류 계약 — 신규 진행 정상'
+          : '같은 사업장, 다른 종류 계약 — 신규 진행 정상';
+        var conclusion = worst === 'dup'
+          ? (dupByUnknown
+              ? '→ 세부 종류가 비어 있어 중복인지 알 수 없습니다. 기존 계약을 열어 확인하세요.'
+              : '→ 같은 ' + worstKindName + '이 진행 중입니다. 새로 만들지 말고 기존 계약을 확인하세요.')
+          : worst === 'again'
+          ? '→ 같은 ' + worstKindName + '이 종료돼 있습니다 — 재계약이면 정상입니다.'
+          : rawWorst
+          ? '→ 세부 종류가 달라 중복이 아닙니다. 그대로 저장하셔도 됩니다.'
+          : '→ 종류가 달라 중복이 아닙니다. 그대로 저장하셔도 됩니다.';
         // 지금 작성 중인 계약이 무엇인지 함께 보여준다 — 아래 목록이 '기존' 것임을
         // 알 수 있어야 '지금 저장하는 건지 옛것인지' 헷갈리지 않는다
         var myNo = f.contractNo || '(번호 미정)';
         var myDate = f.signDate || '';
+        // 종류 › 세부종류 (기관) 한 덩이. 상담사항은 세부 종류가 없는 종류라 종류만 적는다.
+        function kindSubText(rec, k){
+          if(k === 'consult') return kindName(k);
+          var lb = contractSubtypeLabel(rec, k);
+          return kindName(k) + ' › ' + (lb ? lb.label : '세부 종류 미입력');
+        }
+        var mySubs = newKinds.map(function(k){ return kindSubText(fEff, k); }).join(' · ');
 
         return h('div', { style:{ padding:'10px 12px', background:bgColor, border:'1px solid '+borderColor, borderRadius:'6px', margin:'4px 0 10px' } },
           h('div', { style:{ fontWeight:700, color:titleColor, fontSize:'12px', marginBottom:'4px' } },
@@ -11210,43 +11505,60 @@ function ContractModal(props){
           h('div', { style:{ fontSize:'10.5px', color:'#475569', background:'#fff', border:'1px dashed '+borderColor,
               borderRadius:'5px', padding:'3px 8px', marginBottom:'6px' } },
             '지금 작성 중 ', h('b', { style:{ fontFamily:'monospace' } }, myNo),
+            mySubs ? h('span', null, ' · ', h('b', null, mySubs)) : null,
             myDate ? h('span', null, ' · 계약일 ', h('b', null, myDate)) : null,
             h('span', { style:{ color:'#94a3b8' } }, ' — 아래는 이미 저장된 계약입니다')),
-          // 기존 계약 목록 (종류 강조)
-          dupContracts.slice(0, 4).map(function(c){
+          // 기존 계약 목록 (판정 · 종류 › 세부 종류 · 상태 / 계약일 · 주담당 · 금액)
+          dupRows.slice(0, 4).map(function(row){
+            var c = row.c, v = row.v;
             var u = users.find(function(x){ return x.sid === (c.createdBySid || c.managerMain); });
-            var cKinds = (c.kinds || (c.kind ? [c.kind] : [])).map(kindName).join('+') || '-';
-            var cSubtype = c.consultingType || c.caseType || c.fundType || c.programName || '';
+            var cKindsArr = c.kinds || (c.kind ? [c.kind] : []);
             var isClosed = c.status === 'closed' || c.status === 'cancelled' || !!c.closedDate;
             var closedLabel = isClosed ? (
               c.closedDate ? ('🏁 종료 ' + String(c.closedDate).slice(0,10)) :
               c.status === 'cancelled' ? '✕ 취소됨' :
               '🏁 종료됨'
-            ) : null;
-            var isOverlap = !isClosed && (c.kinds||[]).some(function(k){ return newKinds.indexOf(k) >= 0; });
-            return h('div', { key:c.id, style:{ fontSize:'11px', color:'#1e293b', padding:'4px 0', borderTop:'1px solid '+borderColor, display:'flex', justifyContent:'space-between', gap:'8px', alignItems:'center', opacity: isClosed ? 0.65 : 1 } },
-              h('span', null,
+            ) : '▶ 진행 중';
+            var vk = v ? v.verdict : 'diff';
+            var dot = vk === 'dup' ? '🔴' : vk === 'again' ? '🟡' : '🟢';
+            // 겹치는 종류를 먼저 보여준다 — 겹치는 게 없으면 이 계약의 종류 그대로
+            var showKinds = (v && v.shared.length) ? v.shared : cKindsArr;
+            var amt = 0;
+            showKinds.forEach(function(k){ amt += Number((c.amounts && c.amounts[k]) || 0); });
+            if(!amt) amt = Number(c.contractAmount || 0);
+            var dateStr = String(c.signDate || c.startDate || c.createdAt || '').slice(0,10);
+            return h('div', { key:c.id, style:{ fontSize:'11px', color:'#1e293b', padding:'5px 0', borderTop:'1px solid '+borderColor, opacity: isClosed ? 0.75 : 1 } },
+              h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap' } },
+                h('span', { title: vk === 'dup'   ? '같은 세부 종류가 진행 중입니다 — 중복일 수 있습니다'
+                                 : vk === 'again' ? '같은 세부 종류가 종료됐습니다 — 재계약으로 보입니다'
+                                 :                  '세부 종류가 달라 중복이 아닙니다' }, dot),
                 h('span', { style:{ fontFamily:'monospace', fontWeight:700 } }, c.contractNo || '-'),
-                ' ',
-                h('span', { style:{ background: isClosed ? '#e2e8f0' : (isOverlap ? '#fee2e2' : '#d1fae5'),
-                  color: isClosed ? '#6b7280' : (isOverlap ? '#b91c1c' : '#065f46'),
-                  fontSize:'10px', padding:'1px 6px', borderRadius:'8px', fontWeight:700 } },
-                  cKinds),
-                cSubtype ? h('span', { style:{ color:'#475569', fontSize:'10.5px', fontWeight:600, marginLeft:'4px' } }, cSubtype) : null,
-                ' · ', u ? u.name : '-',
-                isClosed && h('span', { style:{ marginLeft:'6px', background:'#f1f5f9', color:'#6b7280', fontSize:'10px', padding:'1px 6px', borderRadius:'8px', fontWeight:600, border:'1px solid #d1d5db' } }, closedLabel)
+                // 종류 › 세부종류 (기관) — 이름만으로는 구분이 안 되는 유형이 있어 기관까지 붙는다
+                showKinds.map(function(k, ki){
+                  var lb = (k === 'consult') ? null : contractSubtypeLabel(c, k);
+                  var miss = (k !== 'consult') && !lb;
+                  return h('span', { key:String(k)+ki,
+                    style:{ background: miss ? '#fffbeb' : (isClosed ? '#e2e8f0' : (vk === 'dup' ? '#fee2e2' : vk === 'again' ? '#fef3c7' : '#d1fae5')),
+                      color: miss ? '#b45309' : (isClosed ? '#475569' : (vk === 'dup' ? '#b91c1c' : vk === 'again' ? '#92400e' : '#065f46')),
+                      border: miss ? '1px solid #fde68a' : 'none',
+                      fontSize:'10px', padding:'1px 7px', borderRadius:'8px', fontWeight:700 } },
+                    kindSubText(c, k));
+                }),
+                (v && v.unknown.some(function(k){ return k !== 'consult'; })) ? h('span', { style:{ color:'#b45309', fontSize:'10px', fontWeight:700 },
+                  title:'이 종류의 세부 종류가 한쪽이라도 비어 있어 같은 일인지 판단할 수 없습니다' }, '세부 종류 미입력 — 확인 필요') : null,
+                h('span', { style:{ background:'#f1f5f9', color: isClosed ? '#6b7280' : '#166534', fontSize:'10px', padding:'1px 6px', borderRadius:'8px', fontWeight:600, border:'1px solid #d1d5db', whiteSpace:'nowrap' } }, closedLabel)
               ),
-              h('span', { style:{ display:'flex', alignItems:'center', gap:'6px' } },
+              h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap', marginTop:'3px' } },
                 // 계약일 — signDate 가 실제 계약일이고 항상 채워진다.
                 // 종전에는 startDate(자문·컨설팅용, 기본 빈값)를 먼저 봐서 대부분 빈칸이었다
-                (function(){
-                  var d = (c.signDate || c.startDate || c.createdAt || '').slice(0,10);
-                  return h('span', { style:{ fontSize:'10.5px', color: d ? '#1e293b' : '#b45309',
-                      background: d ? '#fff' : '#fffbeb', border:'1px solid '+(d ? '#cbd5e1' : '#fde68a'),
-                      borderRadius:'5px', padding:'1px 6px', fontWeight:700, whiteSpace:'nowrap' },
-                    title: d ? '이 계약의 계약일' : '이 계약에 계약일이 없습니다 — 이력에서 확인하세요' },
-                    d ? ('계약일 ' + d) : '계약일 없음');
-                })(),
+                h('span', { style:{ fontSize:'10.5px', color: dateStr ? '#1e293b' : '#b45309',
+                    background: dateStr ? '#fff' : '#fffbeb', border:'1px solid '+(dateStr ? '#cbd5e1' : '#fde68a'),
+                    borderRadius:'5px', padding:'1px 6px', fontWeight:700, whiteSpace:'nowrap' },
+                  title: dateStr ? '이 계약의 계약일' : '이 계약에 계약일이 없습니다 — 이력에서 확인하세요' },
+                  dateStr ? ('계약일 ' + dateStr) : '계약일 없음'),
+                h('span', { style:{ fontSize:'10.5px', color:'#475569' } }, '주담당 ' + (u ? u.name : '-')),
+                amt ? h('span', { style:{ fontSize:'10.5px', color:'#475569', fontWeight:600 } }, amt.toLocaleString() + '원') : null,
+                h('div', { style:{ flex:1 } }),
                 h('button', { onClick:function(){ showHistory(c); },
                   style:{ fontSize:'10.5px', padding:'3px 8px', background:'#fff', color:'#475569', border:'1px solid #94a3b8', borderRadius:'4px', cursor:'pointer', fontWeight:600, whiteSpace:'nowrap' },
                   title:'이 계약의 시작/종료/종류 등 이력 보기' }, '🔍 이력'),
@@ -11257,8 +11569,10 @@ function ContractModal(props){
             );
           }),
           dupContracts.length > 4 && h('div', { style:{ fontSize:'10.5px', color:'#6b7280', marginTop:'2px' } }, '... 외 ' + (dupContracts.length-4) + '건'),
-          // 체크박스: 확인 후 저장 허용
-          !isNewKind && h('label', { style:{ display:'flex', alignItems:'center', gap:'6px', marginTop:'8px', cursor:'pointer', fontSize:'11.5px', color:'#92400e', fontWeight:600 } },
+          // 결론 한 줄 — 위 판정을 말로 풀어 준다
+          h('div', { style:{ fontSize:'11px', fontWeight:700, color:titleColor, marginTop:'6px' } }, conclusion),
+          // 체크박스: 🔴(같은 세부 종류가 진행 중)일 때만 확인받고 저장을 허용한다
+          needConfirm && h('label', { style:{ display:'flex', alignItems:'center', gap:'6px', marginTop:'8px', cursor:'pointer', fontSize:'11.5px', color:'#92400e', fontWeight:600 } },
             h('input', { type:'checkbox', checked: confirmedDuplicate,
               onChange:function(e){ setConfirmedDuplicate(e.target.checked); },
               style:{ width:'14px', height:'14px', cursor:'pointer' } }),
@@ -11378,19 +11692,91 @@ function ContractModal(props){
           : { padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12px', fontFamily:'inherit' };
         return h('div', { key:ct.id || idx,
           style:{ background:ct.isPrimary ? '#eff6ff' : '#f8fafc', border:'1px solid '+(ct.isPrimary ? '#bfdbfe' : '#e2e8f0'), borderRadius:'6px', padding:'10px 12px', marginBottom:'8px' } },
-          // 헤더: 대표 표시 + 동일인 체크 + 삭제
-          h('div', { style:{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px', flexWrap:'wrap' } },
+          // 헤더 한 줄: 번호 · 주담당자 · 동일인 · 명함첩 · 명함 첨부 · 삭제
+          h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'8px', flexWrap:'wrap' } },
             h('span', { style:{ fontSize:'11px', color:'#64748b', fontWeight:600 } }, '#' + (idx+1)),
             ct.isPrimary
               ? h('span', { style:{ background:'#1e40af', color:'#fff', fontSize:'10px', padding:'2px 8px', borderRadius:'10px', fontWeight:700 } }, '✓ 주담당자')
               : h('button', { type:'button', onClick:function(){ setPrimary(idx); },
                   style:{ background:'#fff', color:'#1e40af', border:'1px solid #bfdbfe', padding:'2px 8px', borderRadius:'10px', fontSize:'10px', fontWeight:600, cursor:'pointer' } }, '주담당자로'),
-            // 사업자 동일인 체크박스
-            h('label', { style:{ display:'flex', alignItems:'center', gap:'4px', fontSize:'10.5px', cursor:'pointer', color: locked ? '#1e40af' : '#64748b', fontWeight: locked ? 700 : 500, background: locked ? '#dbeafe' : 'transparent', padding:'2px 8px', borderRadius:'10px', border:'1px solid '+(locked ? '#bfdbfe' : 'transparent') } },
+            // 사업자 동일인 체크박스 — 라벨은 짧게, 뜻은 마우스를 올리면 그대로 보인다
+            h('label', { title:'🔗 사업자(대표) 동일인 — 사업자등록증의 대표자와 같은 사람입니다',
+              style:{ display:'flex', alignItems:'center', gap:'4px', fontSize:'10.5px', cursor:'pointer', color: locked ? '#1e40af' : '#64748b', fontWeight: locked ? 700 : 500, background: locked ? '#dbeafe' : 'transparent', padding:'2px 8px', borderRadius:'10px', border:'1px solid '+(locked ? '#bfdbfe' : 'transparent') } },
               h('input', { type:'checkbox', checked:locked, onChange:function(){ toggleSameAsCeo(idx); },
                 style:{ margin:0, cursor:'pointer' } }),
-              h('span', null, '🔗 사업자(대표) 동일인')
+              h('span', null, '🔗 동일인')
             ),
+            // 명함첩에서 담당자 바로 찾기
+            !locked && h('button', { type:'button', onClick:function(){ setPcPickIdx(idx); },
+              title:'명함첩에서 이 담당자를 찾아 이름·직책·연락처를 채웁니다',
+              style:{ display:'inline-flex', alignItems:'center', gap:'3px', background:'#eff6ff', color:'#1d4ed8', border:'1px solid #bfdbfe', borderRadius:'10px', padding:'2px 8px', fontSize:'10.5px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
+              '📇 명함첩'),
+            // 담당자 명함 — 한 줄에 들어가는 작은 첨부 칸 (누르기·끌어놓기·Ctrl+V 모두 그대로)
+            !locked && (function(){
+              var ctImg = ct.cardImg || '';
+              var ctBusy = ocrField === 'contact-'+idx;
+              function putCard(file){
+                if(!file) return;
+                attachFile('__contact__'+idx, file, function(b64){
+                  var cs=f.company.contacts.slice(); cs[idx]=Object.assign({},cs[idx],{cardImg:b64});
+                  setF(function(prev){return Object.assign({},prev,{company:Object.assign({},prev.company,{contacts:cs})});});
+                });
+              }
+              return h('span', { style:{ display:'inline-flex', alignItems:'center', gap:'3px' } },
+                h('label', {
+                    onDragOver:function(e){ e.preventDefault(); },
+                    onDrop:function(e){ e.preventDefault(); putCard(e.dataTransfer.files && e.dataTransfer.files[0]); },
+                    onPaste:function(e){
+                      var items=(e.clipboardData||{}).items; if(!items) return;
+                      for(var i=0;i<items.length;i++){ if(items[i].type.indexOf('image')===0){ e.preventDefault(); putCard(items[i].getAsFile()); break; } }
+                    },
+                    onClick:function(e){ var inp=e.currentTarget.querySelector('input[type=file]'); if(inp){ e.preventDefault(); inp.click(); } },
+                    tabIndex:0,
+                    title: ctImg ? '담당자 명함 사진 — 누르면 다른 사진으로 바꿉니다 (끌어놓기·Ctrl+V도 됩니다)'
+                                 : '담당자 명함 첨부 — 누르면 사진 선택 (끌어놓기·Ctrl+V도 됩니다)',
+                    style: ctImg
+                      ? { display:'inline-flex', alignItems:'center', border:'1px solid #e5e7eb', borderRadius:'4px', overflow:'hidden', background:'#f8fafc', cursor:'pointer', outline:'none' }
+                      : { display:'inline-flex', alignItems:'center', gap:'3px', border:'1px dashed #cbd5e1', borderRadius:'10px', padding:'2px 8px', cursor:'pointer', background:'#f8fafc', fontSize:'10.5px', color:'#64748b', whiteSpace:'nowrap', outline:'none' } },
+                  ctImg
+                    ? h(AsyncImg, { src:ctImg, style:{ width:'34px', height:'22px', objectFit:'cover', display:'block' } })
+                    : h('span', null, '📎 명함 첨부'),
+                  h('input', { type:'file', accept:'image/*,.pdf',
+                    onChange:function(e){ var file=e.target.files&&e.target.files[0]; putCard(file); e.target.value=''; },
+                    style:{ display:'none' } })
+                ),
+                ctImg && h('button', { type:'button', disabled:ctBusy,
+                  title:'명함에서 이름·직책·연락처 자동 추출 (OCR)',
+                  onClick:function(){
+                    if(!ctImg) return;
+                    setOcrField('contact-'+idx);
+                    showToast('🔍 명함 OCR 처리 중...');
+                    ocrExtract(ctImg).then(function(res){
+                      var ext = res.fields || {};
+                      var card = (typeof parseBizCard==='function') ? parseBizCard(res.text||'') : {};
+                      ext = Object.assign({}, ext, card);  // 명함 필드(이름·직책·전화·이메일) 우선 보강
+                      var cs = f.company.contacts.slice();
+                      var c = Object.assign({}, cs[idx]);
+                      if(ext.name) c.name = ext.name;
+                      if(ext.phone) c.phone = ext.phone;
+                      if(ext.email) c.email = ext.email;
+                      if(ext.position) c.role = ext.position;
+                      if(ext.bizPhone) c.bizPhone = ext.bizPhone;
+                      cs[idx] = c;
+                      setF(function(prev){return Object.assign({},prev,{company:Object.assign({},prev.company,{contacts:cs})});});
+                      setOcrField('');
+                      showToast('✓ 담당자 명함 OCR 완료');
+                    }).catch(function(err){ setOcrField(''); showToast('OCR 실패: '+err.message); });
+                  },
+                  style:{ background:ctBusy?'#cbd5e1':'#2563eb', color:'#fff', border:'none', borderRadius:'4px', fontSize:'10px', fontWeight:700, cursor:ctBusy?'wait':'pointer', padding:'2px 5px' } },
+                  ctBusy ? '⏳' : '🔍'),
+                ctImg && h('button', { type:'button', title:'명함 사진 지우기',
+                  onClick:function(){
+                    var cs=f.company.contacts.slice(); cs[idx]=Object.assign({},cs[idx],{cardImg:''});
+                    setF(function(prev){return Object.assign({},prev,{company:Object.assign({},prev.company,{contacts:cs})});});
+                  },
+                  style:{ background:'#fff', border:'1px solid #fecaca', color:'#dc2626', borderRadius:'4px', fontSize:'10px', cursor:'pointer', padding:'2px 5px', lineHeight:1 } }, '×')
+              );
+            })(),
             h('div', { style:{ flex:1 } }),
             (f.company.contacts||[]).length > 1 && h('button', { type:'button', onClick:function(){ removeContact(idx); },
               style:{ background:'#fef2f2', color:'#dc2626', border:'1px solid #fecaca', borderRadius:'4px', width:'24px', height:'24px', fontSize:'13px', cursor:'pointer' } }, '×')
@@ -11404,75 +11790,6 @@ function ContractModal(props){
               '🔄 명함첩 최신정보로 새로고침')),
           locked && h('div', { style:{ fontSize:'10.5px', color:'#1e40af', marginBottom:'6px', background:'#eff6ff', padding:'4px 8px', borderRadius:'4px' } },
             '🔒 회사정보(대표자/연락처)와 동기화 중 - 회사정보 수정 시 자동 반영.'),
-          // 명함첩에서 담당자 바로 찾기
-          !locked && h('div', { style:{ marginBottom:'6px' } },
-            h('button', { type:'button', onClick:function(){ setPcPickIdx(idx); },
-              style:{ display:'inline-flex', alignItems:'center', gap:'4px', background:'#eff6ff', color:'#1d4ed8', border:'1px solid #bfdbfe', borderRadius:'5px', padding:'5px 10px', fontSize:'11px', fontWeight:600, cursor:'pointer' } },
-              '📇 명함첩에서 찾기')),
-          // 담당자 명함 드롭존
-          !locked && h('div', { style:{ marginBottom:'8px' } },
-            (function(){
-              var ctImg = ct.cardImg || '';
-              var ctBusy = ocrField === 'contact-'+idx;
-              return h('div', { style:{ display:'flex', alignItems:'center', gap:'8px' } },
-                ctImg
-                  ? h('div', { style:{ position:'relative', border:'1px solid #e5e7eb', borderRadius:'6px', overflow:'hidden', background:'#f8fafc', height:'38px', width:'120px', flexShrink:0 } },
-                      h(AsyncImg, { src:ctImg, style:{ width:'120px', height:'38px', objectFit:'contain', display:'block' } }),
-                      h('button', { onClick:function(){
-                          var cs=f.company.contacts.slice(); cs[idx]=Object.assign({},cs[idx],{cardImg:''});
-                          setF(function(prev){return Object.assign({},prev,{company:Object.assign({},prev.company,{contacts:cs})});});
-                        }, style:{ position:'absolute', top:'1px', right:'1px', background:'#fff', border:'1px solid #fecaca', color:'#dc2626', borderRadius:'5px', width:'16px', height:'16px', fontSize:'10px', cursor:'pointer', lineHeight:'14px', padding:0 } }, '×'),
-                      h('button', { disabled:ctBusy, onClick:function(){
-                          if(!ctImg) return;
-                          setOcrField('contact-'+idx);
-                          showToast('🔍 명함 OCR 처리 중...');
-                          ocrExtract(ctImg).then(function(res){
-                            var ext = res.fields || {};
-                            var card = (typeof parseBizCard==='function') ? parseBizCard(res.text||'') : {};
-                            ext = Object.assign({}, ext, card);  // 명함 필드(이름·직책·전화·이메일) 우선 보강
-                            var cs = f.company.contacts.slice();
-                            var c = Object.assign({}, cs[idx]);
-                            if(ext.name) c.name = ext.name;
-                            if(ext.phone) c.phone = ext.phone;
-                            if(ext.email) c.email = ext.email;
-                            if(ext.position) c.role = ext.position;
-                            if(ext.bizPhone) c.bizPhone = ext.bizPhone;
-                            cs[idx] = c;
-                            setF(function(prev){return Object.assign({},prev,{company:Object.assign({},prev.company,{contacts:cs})});});
-                            setOcrField('');
-                            showToast('✓ 담당자 명함 OCR 완료');
-                          }).catch(function(err){ setOcrField(''); showToast('OCR 실패: '+err.message); });
-                        },
-                        style:{ position:'absolute', bottom:'1px', right:'1px', background:ctBusy?'#cbd5e1':'#2563eb', color:'#fff', border:'none', borderRadius:'5px', fontSize:'10px', fontWeight:700, cursor:ctBusy?'wait':'pointer', padding:'1px 4px' } },
-                        ctBusy ? '⏳' : '🔍')
-                    )
-                  : h('label', {
-                      onDragOver:function(e){ e.preventDefault(); },
-                      onDrop:function(e){
-                        e.preventDefault();
-                        var file=e.dataTransfer.files&&e.dataTransfer.files[0];
-                        if(!file) return;
-                        attachFile('__contact__'+idx, file, function(b64){
-                          var cs=f.company.contacts.slice(); cs[idx]=Object.assign({},cs[idx],{cardImg:b64});
-                          setF(function(prev){return Object.assign({},prev,{company:Object.assign({},prev.company,{contacts:cs})});});
-                        });
-                      },
-                      style:{ display:'flex', alignItems:'center', gap:'4px', border:'1px dashed #cbd5e1', borderRadius:'5px', padding:'5px 8px', cursor:'pointer', background:'#f8fafc', fontSize:'10.5px', color:'#64748b' } },
-                      h('span', null, '📇'),
-                      h('span', null, '담당자 명함 첨부 (OCR)'),
-                      h('input', { type:'file', accept:'image/*,.pdf',
-                        onChange:function(e){
-                          var file=e.target.files&&e.target.files[0]; if(!file) return;
-                          attachFile('__contact__'+idx, file, function(b64){
-                            var cs=f.company.contacts.slice(); cs[idx]=Object.assign({},cs[idx],{cardImg:b64});
-                            setF(function(prev){return Object.assign({},prev,{company:Object.assign({},prev.company,{contacts:cs})});});
-                          });
-                          e.target.value='';
-                        }, style:{ display:'none' } })
-                    )
-              );
-            })()
-          ),
           // 입력 필드: 이름/직급 | 담당자전화/회사팩스 | 담당자핸드폰/담당자이메일
           h('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px' } },
             h('input', { type:'text', value:ct.name || '',
@@ -12112,6 +12429,13 @@ function ContractModal(props){
     pcPickIdx !== null && h(PucardsContactPickerModal, {
       onClose: function(){ setPcPickIdx(null); },
       onSelect: function(p){ fillContactFromPucards(pcPickIdx, p); setPcPickIdx(null); }
+    }),
+    // 명함첩에서 회사 찾기 — 대표자 명함 / 사업자등록증 사진을 그 회사 카드에서 가져온다
+    pcCoPick && h(PucardsCompanyPickerModal, {
+      initialQuery: ((f.company && f.company.name) || '').trim().length >= 2 ? (f.company.name || '').trim() : '',
+      want: pcCoPick,
+      onClose: function(){ setPcCoPick(''); },
+      onSelect: function(row){ setPcCoPick(''); fillCompanyImagesFromPucards(row); }
     })
   );
 }
