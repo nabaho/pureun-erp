@@ -107,5 +107,18 @@ ok('세금과공과를 관리비로 집계', /var ADMIN=\[[^\]]*'세금과공과
 ok('별지15호 66번에 격려금 매핑', /\[66,'그 밖의 복지비',\['격려금'/.test(src));
 ok('통장 파서가 거래상대방 열을 읽음', /보낸분\|받는분\|상대계좌\|입금자\|송금인\|거래처/.test(src));
 
+// ── ⑨ 준비금 자동 환입 (결산 확정 시) ──
+ok('reserveReclaim 존재', src.includes('function reserveReclaim'));
+ok('환입 분개 생성기 존재', src.includes('function _reclaimEntry'));
+ok('환입 분개는 대체분개(nocash)', /nocash:1/.test(src));
+// 대체분개는 현금이 아니므로 amount로 금액을 읽어야 한다 — 안 읽으면 금액 0으로 무시된다
+ok('journalOf가 amount를 읽음', src.includes('amount:num(x.amount)||num(x.deposit)'));
+ok('computeFin이 amount를 읽음', src.includes('var amt=num(x.amount)||num(x.deposit)'));
+ok('결산 확정이 환입을 자동 기록', src.includes('var rc=reserveReclaim(arr,fid,yr)'));
+// 분개와 확정이 따로 저장되면 하나만 성공했을 때 장부가 어긋난다 → 한 번의 update로
+ok('환입 분개와 확정을 한 번에 저장', /up\['txns\/'\+fid\+'\/'\+yr\+'\/'\+id\]=e;/.test(src)
+  && /up\['closing\/'\+fid\+'\/'\+yr\+'\/locked'\]=true;/.test(src));
+ok('거래 목록에 대체분개 표시', src.includes('x.nocash&&num(x.amount)'));
+
 console.log('\n' + (fail ? 'FAILURES ' + fail + ' / ' + n : 'ALL PASS (' + n + '건)'));
 process.exit(fail ? 1 : 0);
