@@ -170,6 +170,14 @@ ok('이체 행은 차·대 같아도 승인 가능', src.includes('if(x&&x.debit
 // ── ⑫ 디와이사내 2025 실결산에서 확인된 것 ──
 // 기본재산을 증권으로 운용하는 기금이 있다(26억). 계정·전기이월 칸이 없으면 대차가 그만큼 어긋난다
 ok('매도가능증권 계정', src.includes("'매도가능증권':'자산'"));
+// 칸만 늘리고 저장 목록을 안 고쳐 매도가능증권 전기이월이 저장되지 않았다 → OPEN_ACCT에서 파생
+ok('전기이월 저장 목록을 OPEN_ACCT에서 뽑음',
+  src.includes("var o={}; Object.keys(OPEN_ACCT).forEach(function(k){var el=$('op-'+k);"));
+// 준비금은 1·2를 갈라 이월해야 한다(안전공사공동 2024는 준비금2로 42,245,952원 이월)
+ok('전기이월 준비금1·2 분리', src.includes("reserve:'고유목적사업준비금1',reserve2:'고유목적사업준비금2'")
+  && src.includes("oi('reserve2','고유목적사업준비금2')")
+  && src.includes('liab+=(num(opening.reserve)||0)+(num(opening.reserve2)||0);')
+  && src.includes('bal[RESERVE_ACCTS[1]]+=Math.round(num(op.reserve2)||0);'));
 ok('전기이월에 매도가능증권 칸', src.includes("secu:'매도가능증권'") && src.includes("oi('secu','매도가능증권')"));
 ok('자산총계에 증권 합산', src.includes('cash+savings+loan+secu'));
 ok('별지15호 ㉓ 유가증권을 장부에서', src.includes('num(rep.run_secu)||fin.secu'));
@@ -192,8 +200,17 @@ ok('일자 칸에 숫자가 없으면 거래 아님', src.includes('if(dcell&&!/
 // 적요의 띄어쓰기는 제각각인데 키워드는 붙여 써 두었다 — '근로자의 날 기념품'이 새어나갔다
 ok('자동분개가 적요 공백을 무시', src.includes("var mz=(m+' '+String(kind||'')).replace(/\\s+/g,'');"));
 ok('성과금·성과급 키워드', src.includes("'격려금','격려','포상','상여','성과금','성과급'"));
+// 예금이자 원천징수·학교 송금·경기장 예매는 모든 기금 통장에 찍히는데 규칙에 없었다
+ok('이자소득 원천징수 세목', src.includes("'세금','공과금','법인세','소득세','원천세'"));
+ok('학교·산학협력단 = 장학금', src.includes("'교육비','대학교','대학원','산학협력단','장학재단','사이버대'"));
+ok('경기장·예매처 = 체육문화비', src.includes("'야구장','경기장','티켓','공연','콘서트','관람'"));
 // 하나·기업은행은 예금이자 행의 적요를 비우고 성격을 '구분' 칸에만 적는다(이자 8건이 미분류였다)
-ok('거래구분 열을 읽음', src.includes('col.kind==null)col.kind=c;'));
+ok('성격 열을 여러 개 읽음(구분·거래기록사항·이체메모·기재내용)',
+  src.includes('if(/구분|종류|기록사항|메모|기재/.test(v)')
+  && src.includes('col.kind.indexOf(c)<0)col.kind.push(c);')
+  && src.includes('function find(cells){col.kind=[];'));
+// 농협은 순번 칸의 머리글이 '구분'이라 1·2·3…이 거래성격으로 읽혔다
+ok('숫자만인 값은 성격으로 보지 않음', src.includes('!/^[\\d,.\\s]+$/.test(t)'));
 ok('거래마다 kind를 담음', src.includes('kind:kind});'));
 ok('가져오기가 kind를 넘기고 보관', src.includes('proposeAcct(x.memo,x.deposit>0,_snames,x.kind)')
   && src.includes("kind:(x.kind||'')"));

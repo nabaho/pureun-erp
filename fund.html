@@ -225,13 +225,18 @@ var ACCT_RULES=[
   {kw:['이자','예금이자'],dir:'입금',d:'현금성자산',c:'이자수익'},
   {kw:['대부상환','대부금상환','상환','대출상환'],dir:'입금',d:'현금성자산',c:'근로자대부금'},
   {kw:['수수료','지급수수료','이체수수료','인터넷뱅킹','인증서'],dir:'출금',d:'지급수수료',c:'현금성자산'},
-  {kw:['지방세','주민세','구청','시청','군청','세무서','세금','공과금'],dir:'출금',d:'세금과공과',c:'현금성자산'},
+  /* 예금이자에 붙는 원천징수(결산법인세·이자소득지방소득세)는 모든 기금 통장에 반년마다 찍힌다.
+     '세금'만 있어 전부 미분류였다(안전공사공동 2024: 4,990원). */
+  {kw:['지방세','주민세','구청','시청','군청','세무서','세금','공과금','법인세','소득세','원천세'],dir:'출금',d:'세금과공과',c:'현금성자산'},
   {kw:['격려금','격려','포상','상여','성과금','성과급'],dir:'출금',d:'격려금',c:'현금성자산'},
   {kw:['대부','대부금','대출','대여금','근로자대부'],dir:'출금',d:'근로자대부금',c:'현금성자산'},
   {kw:['경조','축의','조의','결혼','장례','부의','연말선물'],dir:'출금',d:'경조사비',c:'현금성자산'},
   {kw:['동호회','동아리','상품권','기프트카드','영화'],dir:'출금',d:'동호회비',c:'현금성자산'},
-  {kw:['체육','문화','레크레이션','체육대회','워크샵','야유회'],dir:'출금',d:'체육문화비',c:'현금성자산'},
-  {kw:['장학','학자금','교육비'],dir:'출금',d:'장학금',c:'현금성자산'},
+  /* 체육·문화 지출은 상대방이 경기장·예매처 이름으로 찍힌다(안전공사공동 2024: 대전야구장·티켓링크) */
+  {kw:['체육','문화','레크레이션','체육대회','워크샵','야유회','야구장','경기장','티켓','공연','콘서트','관람'],dir:'출금',d:'체육문화비',c:'현금성자산'},
+  /* 학자금은 근로자에게 주는 대신 학교로 바로 보내는 일이 많아 적요·상대방에 '학자금'이 없다
+     (안전공사공동 2024: 국립한밭대학교산학협력단·숭실사이버대학교로 4,027,000원). */
+  {kw:['장학','학자금','교육비','대학교','대학원','산학협력단','장학재단','사이버대'],dir:'출금',d:'장학금',c:'현금성자산'},
   {kw:['생활안정','생활자금','긴급자금'],dir:'출금',d:'생활안정자금',c:'현금성자산'},
   {kw:['모성보호','출산','육아','출산축하','임신'],dir:'출금',d:'모성보호비',c:'현금성자산'},
   {kw:['근로자의날','근로자날','노동절'],dir:'출금',d:'근로자의날행사비',c:'현금성자산'},
@@ -4480,8 +4485,14 @@ function acctSel(id,side,cur){
    승인된 거래를 원천으로 분개장 → 계정별원장 → 월계표 → 합계잔액시산표 → 재무제표(전기 대비)
    순서로 파생시킨다. 숫자는 어디서 봐도 같은 원천에서 나온다.
    전기이월(opening)은 각 장부의 '기초' 한 줄로 들어가 잔액이 이어진다. */
+/* 전기이월(기초잔액) 칸 ↔ 계정 대응. **화면·저장·시산표·조정이 모두 이 표를 따라가야 한다** —
+   칸만 늘리고 저장 목록을 안 고쳐 매도가능증권 전기이월이 저장되지 않은 일이 있었다. */
 var OPEN_ACCT={cash:'현금성자산',savings:'정기예금',loan:'근로자대부금',secu:'매도가능증권',
-               basic:'기본재산',retained:'이월잉여금',reserve:'고유목적사업준비금1'};
+               basic:'기본재산',retained:'이월잉여금',
+               /* 준비금은 1·2를 갈라 이월한다 — 기금마다 쓰는 쪽이 다르다(법인세법 제29조 / 근로복지기본법
+                  제62조제2항). 칸이 하나였을 때는 준비금2로 이월하는 기금(안전공사공동 2024:
+                  42,245,952원)이 재무상태표에서 준비금1로 표시돼 제출본과 달라졌다. */
+               reserve:'고유목적사업준비금1',reserve2:'고유목적사업준비금2'};
 function acctType(n){ return ACCT_CHART[n]||'비용'; }
 function isDrAcct(n){ var t=acctType(n); return t==='자산'||t==='비용'; }   // 차변 잔액 계정
 function _openingOf(fid,yr){
@@ -5568,6 +5579,7 @@ function reserveAdjust(arr,fid,yr){
   var bal={};
   RESERVE_ACCTS.forEach(function(a){ var v=fin.tb[a]; bal[a]=Math.round(v?(v.credit-v.debit):0); });
   bal[RESERVE_ACCTS[0]]+=Math.round(num(op.reserve)||0);
+  bal[RESERVE_ACCTS[1]]+=Math.round(num(op.reserve2)||0);
   var avail=RESERVE_ACCTS.reduce(function(s,a){ return s+Math.max(0,bal[a]); },0);
   var contrib=_contribOf(arr), rate=_reserveRate(fid), cap=Math.round(contrib*rate);
   var r={kind:'', need:0, avail:avail, amount:0, acct:_reserveAcct(fin), fin:fin,
@@ -5881,7 +5893,7 @@ function computeFin(arr,fid,yr){
   var loan=sg('근로자대부금')+(num(opening.loan)||0), basic=-sg('기본재산')+(num(opening.basic)||0);
   /* 기본재산을 증권으로 운용하는 기금이 있다(디와이사내: 26억). 칸이 없으면 대차가 그만큼 어긋난다. */
   var secu=sg('매도가능증권')+(num(opening.secu)||0);
-  liab+=(num(opening.reserve)||0);
+  liab+=(num(opening.reserve)||0)+(num(opening.reserve2)||0);
   var net=revenue-purpose-admin-otherExp, retained=(num(opening.retained)||0)+otherEquity+net;
   var totalAssets=cash+savings+loan+secu+otherAsset, equity=basic+retained, totalLiabEq=liab+equity;
   return {tb:tb,appr:appr.length,interest:interest,purpose:purpose,admin:admin,otherExp:otherExp,
@@ -5894,11 +5906,13 @@ function finPanel(arr){
   var op=f.opening||{};
   function oi(k,lbl){return '<div class="fld"><label>'+lbl+'</label><input id="op-'+k+'" value="'+esc(op[k]||'')+'" placeholder="0"></div>';}
   var openingHtml='<div style="margin-top:14px"><div style="font-weight:700;margin-bottom:6px">전기이월(기초잔액) — 있으면 입력</div>'
-      +'<div class="grid" style="max-width:760px">'+oi('cash','현금성자산')+oi('savings','정기예금')+oi('loan','근로자대부금')+oi('secu','매도가능증권')+oi('basic','기본재산')+oi('retained','이월잉여금')+oi('reserve','고유목적사업준비금')+'</div>'
+      +'<div class="grid" style="max-width:760px">'+oi('cash','현금성자산')+oi('savings','정기예금')+oi('loan','근로자대부금')+oi('secu','매도가능증권')+oi('basic','기본재산')+oi('retained','이월잉여금')+oi('reserve','고유목적사업준비금1')+oi('reserve2','고유목적사업준비금2')+'</div>'
       +'<button style="margin-top:8px" onclick="saveOpening()">💾 전기이월 저장</button></div>';
   if(!f.appr) return '<div class="panel"><div class="muted">승인된 거래가 없어 재무제표를 만들 수 없습니다. 위에서 계정 지정 후 승인하세요.</div>'+openingHtml+'</div>';
   // ⑻ 전기이월(기초잔액)을 시산표 맨 위에 표시 — 재무상태표와 대차가 맞는 이유를 드러냄
-  var openMap=[['현금성자산',op.cash],['정기예금',op.savings],['근로자대부금',op.loan],['기본재산',op.basic],['이월잉여금',op.retained],['고유목적사업준비금',op.reserve]];
+  var openMap=[['현금성자산',op.cash],['정기예금',op.savings],['근로자대부금',op.loan],['매도가능증권',op.secu],
+               ['기본재산',op.basic],['이월잉여금',op.retained],
+               ['고유목적사업준비금1',op.reserve],['고유목적사업준비금2',op.reserve2]];
   var openRows=openMap.filter(function(m){return num(m[1]);}).map(function(m){
     var typ=ACCT_CHART[m[0]]||'자본', v=num(m[1])||0, isDr=(typ==='자산'||typ==='비용');
     return '<tr style="color:#8b94a6"><td>'+m[0]+' <span style="font-size:10px">(전기이월)</span></td><td class="muted">'+typ+'</td><td style="text-align:right">'+(isDr?v.toLocaleString():'')+'</td><td style="text-align:right">'+(isDr?'':v.toLocaleString())+'</td></tr>';}).join('');
@@ -5932,7 +5946,9 @@ function finPanel(arr){
 }
 function saveOpening(){
   var _fid=S.fundId,_yr=S.year;
-  var o={}; ['cash','savings','loan','basic','retained','reserve'].forEach(function(k){var el=$('op-'+k);if(el)o[k]=num(el.value)||0;});
+  /* 저장 목록을 손으로 적어 두었더니 칸을 늘릴 때 빠졌다(매도가능증권 전기이월이 저장되지 않았다).
+     OPEN_ACCT에서 뽑아 쓰면 칸과 저장이 어긋날 수 없다. */
+  var o={}; Object.keys(OPEN_ACCT).forEach(function(k){var el=$('op-'+k);if(el)o[k]=num(el.value)||0;});
   fbDb.ref(NS+'/funds/'+_fid+'/years/'+_yr+'/opening').set(o).then(function(){
     if(!funds[_fid].years)funds[_fid].years={}; if(!funds[_fid].years[_yr])funds[_fid].years[_yr]={};
     funds[_fid].years[_yr].opening=o; renderFund(); toast('전기이월 저장됨');
@@ -6032,7 +6048,7 @@ function proposeAcct(memo,isDep,sites,kind){
 }
 function parseBank(rows){
   var hi=-1, col={};
-  function find(cells){for(var c=0;c<cells.length;c++){var v=String(cells[c]||'');
+  function find(cells){col.kind=[];for(var c=0;c<cells.length;c++){var v=String(cells[c]||'');
     if(/날짜|거래일|일자|거래일시/.test(v)&&col.date==null)col.date=c;
     if(/적요|내용|의뢰인|기재|가맹점/.test(v)&&col.memo==null)col.memo=c;
     /* 거래상대방 열 — 자동분개에 가장 중요한 정보가 여기 있다(청원건설=출연, 안산단원구=세금,
@@ -6041,11 +6057,14 @@ function parseBank(rows){
     if(/입금|맡기신/.test(v)&&!/건수|횟수|잔액|잔고/.test(v)&&col.dep==null)col.dep=c;
     if(/출금|찾으신|지급/.test(v)&&!/건수|횟수|잔액|잔고/.test(v)&&col.wd==null)col.wd=c;
     if(/잔액|잔고/.test(v)&&col.bal==null)col.bal=c;
-    /* 거래구분 열 — 하나·기업은행은 예금이자 행의 적요·의뢰인을 모두 비워 두고 성격을 여기에만
-       적는다('예금이자'). 이 칸을 안 읽어 가치를만들어가는사람들 2024는 이자 8건이 전부
-       미분류로 남았다. 적요에 합치지는 않는다 — 적요는 중복검사 키(hkey)의 재료라
-       바꾸면 이미 가져온 거래가 다시 신규로 들어온다. */
-    if(/구분|종류/.test(v)&&!/계좌|통화|화폐/.test(v)&&col.kind==null)col.kind=c;}}
+    /* 성격이 적힌 나머지 열들 — 적요 밖에 흩어져 있다. 적요에 합치지는 않는다:
+       적요는 중복검사 키(hkey)의 재료라 바꾸면 이미 가져온 거래가 다시 신규로 들어온다.
+         · 하나·기업은행 '구분'    — 예금이자 행은 적요·의뢰인을 비우고 여기에만 '예금이자'를 적는다
+                                    (가치를만들어가는사람들 2024: 이자 8건이 전부 미분류였다)
+         · 농협 '거래기록사항'      — 적요('거래내용')에는 'G-국민은행'처럼 수단만 적히고
+                                    실제 상대방('국립한밭대학교산학협')은 여기 있다
+         · '이체메모'·'기재내용'    — '이자소득지방소득세'·'예금결산이자'처럼 성격이 그대로 적힌다 */
+    if(/구분|종류|기록사항|메모|기재/.test(v)&&!/계좌|통화|화폐/.test(v)&&col.kind.indexOf(c)<0)col.kind.push(c);}}
   /* 계좌번호 — 이체 자동매칭의 근거. 같은 날 같은 금액이라도 계좌가 다르면 확실한 이체다. */
   var acct='';
   for(var a0=0;a0<Math.min(rows.length,12);a0++){
@@ -6079,7 +6098,9 @@ function parseBank(rows){
     if(!date&&!memo&&!dep&&!wd) continue;
     if(!dep&&!wd) continue;
     var bal=col.bal!=null?(num(row[col.bal])||0):0;
-    var kind=col.kind!=null?String(row[col.kind]||'').trim():'';
+    /* 농협은 순번 칸의 머리글이 하필 '구분'이라 1·2·3…이 성격으로 읽혔다 — 숫자만인 값은 버린다 */
+    var kind=(col.kind||[]).map(function(kc){ return String(row[kc]||'').trim(); })
+               .filter(function(t){ return t&&!/^[\d,.\s]+$/.test(t); }).join(' ');
     if(dep&&wd){ out.push({date:date,memo:memo,deposit:dep,withdraw:0,balance:bal,acct:acct,kind:kind});
                  out.push({date:date,memo:memo,deposit:0,withdraw:wd,balance:bal,acct:acct,kind:kind}); } // 입·출 동시 행 분리(분개 누락 방지)
     else out.push({date:date,memo:memo,deposit:dep,withdraw:wd,balance:bal,acct:acct,kind:kind});
