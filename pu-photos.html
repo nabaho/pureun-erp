@@ -253,9 +253,11 @@ async function addFiles(fileList) {
   if (!files.length || !u || !queue) return;
   for (const f of files) {
     try {
-      /* 촬영 시각: EXIF → 파일 날짜 → 지금. 판단은 저장 층의 함수가 한다. */
-      const buf = await f.arrayBuffer();
-      const takenAt = PuPhotoStore.pickTakenAt(PuPhotoStore.exifTakenAt(buf), f.lastModified, Date.now());
+      /* 촬영 시각: EXIF → 파일 날짜 → 지금. 판단은 저장 층의 함수가 한다.
+         EXIF를 못 읽는 상황(오래된 브라우저 등)이어도 올리기는 계속돼야 하므로
+         읽기 실패는 null 로 넘긴다 — 그러면 파일 날짜로 정해진다. */
+      const buf = await readFileBytes(f).catch(() => null);
+      const takenAt = PuPhotoStore.pickTakenAt(buf ? PuPhotoStore.exifTakenAt(buf) : null, f.lastModified, Date.now());
       /* 긴 변 1600px 축소본과 240px 미리보기 — 카메라 원본은 클라우드에 안 올라간다. */
       const full = await shrink(f, 1600);
       const thumb = await shrink(f, 240);
@@ -281,21 +283,57 @@ async function addFiles(fileList) {
   }
 }
 
+/* 파일 내용을 바이트로 읽는다. 최신 방법(arrayBuffer)이 없는 브라우저는
+   FileReader 로 돌아간다 — 폰의 앱 내장 브라우저가 종종 그렇다. */
+function readFileBytes(f) {
+  if (f.arrayBuffer) return f.arrayBuffer();
+  return new Promise(function (res, rej) {
+    const r = new FileReader();
+    r.onload = function () { res(r.result); };
+    r.onerror = function () { rej(r.error || new Error('파일을 읽지 못했습니다')); };
+    r.readAsArrayBuffer(f);
+  });
+}
+
+/* 사진을 그림 객체로 연다. 빠른 길(createImageBitmap)이 안 되는 브라우저는
+   <img> 로 여는 예비 통로로 돌아간다 — 어느 쪽이든 canvas 에 그릴 수 있다. */
+function decodeImage(file) {
+  if (window.createImageBitmap) {
+    return createImageBitmap(file, { imageOrientation: 'from-image' })
+      .catch(function () { return createImageBitmap(file); }) // 옵션을 모르는 브라우저
+      .catch(function () { return decodeViaImg(file); });     // 함수는 있는데 파일을 거부
+  }
+  return decodeViaImg(file);
+}
+
+function decodeViaImg(file) {
+  return new Promise(function (res, rej) {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = function () { URL.revokeObjectURL(url); res(img); };
+    img.onerror = function () {
+      URL.revokeObjectURL(url);
+      rej(new Error('이 형식의 사진은 열 수 없습니다 (지원: JPG·PNG 등 일반 사진)'));
+    };
+    img.src = url;
+  });
+}
+
 /* 사진을 긴 변 maxEdge 로 줄여 JPEG dataURL 로 만든다.
    회전 정보(EXIF orientation)는 브라우저가 그림을 읽을 때 반영한다. */
 function shrink(file, maxEdge) {
-  return createImageBitmap(file, { imageOrientation: 'from-image' })
-    .catch(function () { return createImageBitmap(file); }) // 옵션을 모르는 브라우저
-    .then(function (bmp) {
-      const scale = Math.min(1, maxEdge / Math.max(bmp.width, bmp.height));
-      const w = Math.max(1, Math.round(bmp.width * scale));
-      const h = Math.max(1, Math.round(bmp.height * scale));
-      const c = document.createElement('canvas');
-      c.width = w; c.height = h;
-      c.getContext('2d').drawImage(bmp, 0, 0, w, h);
-      if (bmp.close) bmp.close();
-      return { dataUrl: c.toDataURL('image/jpeg', 0.85), w: w, h: h };
-    });
+  return decodeImage(file).then(function (im) {
+    const iw = im.naturalWidth || im.width;
+    const ih = im.naturalHeight || im.height;
+    const scale = Math.min(1, maxEdge / Math.max(iw, ih));
+    const w = Math.max(1, Math.round(iw * scale));
+    const h = Math.max(1, Math.round(ih * scale));
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(im, 0, 0, w, h);
+    if (im.close) im.close();
+    return { dataUrl: c.toDataURL('image/jpeg', 0.85), w: w, h: h };
+  });
 }
 
 /* ══════ 올리는 중 목록 ══════ */

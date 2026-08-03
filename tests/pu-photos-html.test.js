@@ -122,6 +122,16 @@ test('올릴 때 긴 변 1600px 축소본과 240px 미리보기를 만든다', (
   assert.ok(!/readAsDataURL/.test(app), '원본을 그대로 올릴 수 있는 경로가 있습니다');
 });
 
+test('사진 열기에 예비 통로가 있다 — 브라우저마다 되는 방법이 다르다', () => {
+  // 실사용 보고(2026-08-03): 폰 앱 내장 브라우저에서 "사진을 읽지 못했습니다".
+  // 빠른 길(createImageBitmap)이 안 되면 <img> 로, 최신 바이트 읽기(arrayBuffer)가
+  // 없으면 FileReader 로 돌아가야 한다. EXIF 읽기 실패는 올리기를 막으면 안 된다.
+  assert.match(app, /function decodeViaImg\(/);
+  assert.match(app, /URL\.createObjectURL\(/);
+  assert.match(app, /readAsArrayBuffer/);
+  assert.match(app, /readFileBytes\(f\)\.catch\(/, 'EXIF용 바이트 읽기 실패가 올리기를 막습니다');
+});
+
 test('촬영 시각은 저장 층의 우선순위 함수로 정한다', () => {
   // EXIF → 파일 날짜 → 업로드 시각. 판단이 화면에 흩어지면 앱마다 달라진다.
   assert.match(app, /PuPhotoStore\.pickTakenAt\(/);
