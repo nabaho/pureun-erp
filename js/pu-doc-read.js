@@ -16,7 +16,8 @@
   var deps = {
     fetch: null,       // (url, init) => Promise<{ok,status,json()}>
     getKey: null,      // () => Promise<string>  AI 키
-    getNtsKey: null    // () => Promise<string>  국세청 키(없으면 조회를 건너뛴다)
+    getNtsKey: null,   // () => Promise<string>  국세청 키(없으면 조회를 건너뛴다)
+    delay: null        // (fn, ms) — 검사에서 기다림 없이 진행시키려고 주입받는다
   };
 
   function init(o) {
@@ -24,6 +25,7 @@
     deps.fetch = o.fetch || (typeof global.fetch === 'function' ? global.fetch.bind(global) : null);
     deps.getKey = o.getKey || null;
     deps.getNtsKey = o.getNtsKey || null;
+    deps.delay = o.delay || function (fn, ms) { setTimeout(fn, ms); };
     return true;
   }
 
@@ -126,6 +128,45 @@
     return { kind: 'other', fields: {}, bizNoOk: null, ntsChecked: false, ntsState: null, error: message };
   }
 
+  /* ── 일시적 실패는 스스로 다시 시도한다 ──
+     실사용 보고(2026-08-03): 사업자등록증을 올렸는데 '오류 429' 한 번으로 끝났다.
+     429(잠시 바쁨)·5xx(서버가 잠깐 죽음)는 조금 기다렸다 다시 부르면 되는 경우다.
+     반대로 400·403(키가 틀렸거나 권한 없음)은 몇 번을 불러도 같으니 곧바로 알려준다. */
+  var RETRY_WAITS = [2000, 5000];   // 최대 3번 부른다(처음 + 두 번)
+
+  function isTransient(status) {
+    return status === 429 || status === 408 || (status >= 500 && status < 600);
+  }
+
+  function busyMessage(status) {
+    if (status === 429) {
+      return 'AI가 잠시 바쁩니다 — 잠시 뒤 「다시 판독」을 눌러 주세요.' +
+        '\n계속 같으면 AI 키의 하루 사용량을 다 썼을 수 있습니다.';
+    }
+    return 'AI 서버가 잠시 응답하지 않습니다 — 잠시 뒤 「다시 판독」을 눌러 주세요.';
+  }
+
+  /* 성공하면 응답(json)을 준다. 실패하면 사람이 읽을 한국어 이유를 담아 throw. */
+  function fetchWithRetry(url, init, attempt) {
+    attempt = attempt || 0;
+    return deps.fetch(url, init).then(function (r) {
+      if (r && r.ok) return r.json();
+      var status = (r && r.status) || 0;
+      if (isTransient(status) && attempt < RETRY_WAITS.length) {
+        return waitFor(RETRY_WAITS[attempt]).then(function () {
+          return fetchWithRetry(url, init, attempt + 1);
+        });
+      }
+      throw new Error(isTransient(status)
+        ? busyMessage(status)
+        : 'AI가 응답하지 않습니다 (오류 ' + status + ') — AI 키가 올바른지 확인해 주세요');
+    });
+  }
+
+  function waitFor(ms) {
+    return new Promise(function (res) { (deps.delay || function (f, m) { setTimeout(f, m); })(res, ms); });
+  }
+
   /* 사진 한 장을 판독한다.
      어떤 실패에도 예외를 밖으로 던지지 않는다 — 사진 한 장 판독 실패가
      여러 장 올리기 전체를 멈추면 안 된다. 실패는 error 에 한국어로 담아 돌려준다. */
@@ -144,13 +185,10 @@
         ] }],
         generationConfig: { temperature: 0 } // 같은 사진에 같은 답이 나와야 한다
       };
-      return deps.fetch(GEMINI_URL + encodeURIComponent(key), {
+      return fetchWithRetry(GEMINI_URL + encodeURIComponent(key), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
-      }).then(function (r) {
-        if (!r || !r.ok) throw new Error('AI 응답 오류 ' + ((r && r.status) || ''));
-        return r.json();
       }).then(function (j) {
         var parsed = parseReply(j);
         if (!parsed) throw new Error('AI가 알아볼 수 없는 답을 보냈습니다');
