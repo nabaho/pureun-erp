@@ -87,8 +87,13 @@ test('화면은 실시간DB에 직접 쓰지 않는다 — 쓰기는 저장 층�
   // (다중 경로 update 한 번)를 통해서만 나간다. 화면이 db.ref 를 직접 만지기
   // 시작하면 상위 노드 set 같은 사고 경로(2026-07 실데이터 사고)가 다시 열린다.
   assert.ok(!app.includes('db.ref('), '화면이 db.ref 를 직접 부릅니다');
+  /* classList.add/remove/toggle 같은 화면 조작은 DB 쓰기가 아니다 —
+     그것까지 막으면 검사가 엉뚱한 곳에서 걸려 신뢰를 잃는다. 먼저 걷어낸 뒤 본다. */
+  const noDom = app
+    .replace(/classList\.(add|remove|toggle)\(/g, 'CLASSLIST(')
+    .replace(/selected\.(add|delete|clear|has)\(/g, 'SET(');
   for (const call of ['.set(', '.update(', '.remove(']) {
-    assert.ok(!app.includes(call), '화면이 클라우드에 직접 쓰고 있습니다: ' + call);
+    assert.ok(!noDom.includes(call), '화면이 클라우드에 직접 쓰고 있습니다: ' + call);
   }
   assert.match(app, /PuPhotoStore\.savePhoto/, '저장이 저장 층을 거치지 않습니다');
 });
@@ -141,6 +146,52 @@ test('미리보기를 끼워 넣을 때 서류 딱지를 지우지 않는다', (
   assert.ok(fill, 'fillThumbs 본문을 찾을 수 없습니다');
   assert.ok(!/cell\.innerHTML\s*=/.test(fill[0]), '칸 내용을 통째로 바꿔 딱지가 지워집니다');
   assert.match(fill[0], /insertBefore/);
+});
+
+/* ── 2단 화면 · 사진 지우기 ── */
+
+test('넓은 화면은 왼쪽 대시보드 + 오른쪽 격자로 나뉜다', () => {
+  assert.match(app, /<aside id="side">/);
+  assert.match(app, /<main id="main">/);
+  assert.match(app, /@media \(min-width:900px\)/);
+  // 좁은 화면(폰)에서는 위아래로 쌓여야 한다 — 기본이 세로여야 한다
+  const rule = app.match(/#home\{([^}]*)\}/);
+  assert.ok(rule, '#home 규칙을 찾을 수 없습니다');
+  assert.match(rule[1], /flex-direction:column/);
+  // 격자 열 수는 폭에 따라 늘어난다(넓은 화면을 3칸으로 낭비하지 않는다)
+  assert.match(app, /grid-template-columns:repeat\(auto-fill/);
+});
+
+test('사진을 지울 수 있다 — 한 장, 여러 장 모두', () => {
+  assert.match(app, /function deleteOne\(/);
+  assert.match(app, /function deleteSelected\(/);
+  assert.match(app, /PuPhotoStore\.deletePhoto\(/);
+});
+
+test('지우기는 되돌릴 수 없으니 반드시 확인을 받는다', () => {
+  for (const fname of ['deleteOne', 'deleteSelected']) {
+    const fn = app.match(new RegExp('function ' + fname + '\\([\\s\\S]*?\\n\\}'));
+    assert.ok(fn, fname + ' 본문을 찾을 수 없습니다');
+    assert.match(fn[0], /confirm\(/, fname + ' 이 확인 없이 지웁니다');
+    assert.match(fn[0], /되돌릴 수 없/, fname + ' 이 되돌릴 수 없다는 말을 안 합니다');
+  }
+});
+
+test('명함첩에 보낸 사진을 지울 때는 그 기록이 남는다고 알린다', () => {
+  // 사진첩 사진과 명함첩 레코드는 다른 물건이다 — 같이 지워지는 줄 알면 안 된다
+  assert.match(app, /명함첩 기록은 그대로 남습니다/);
+});
+
+test('고르기 중에는 사진을 열지 않고 고른다', () => {
+  // 지우려고 누른 것이 열리면 헷갈린다
+  assert.match(app, /if \(selMode\) \{ toggleOne\(id\); return; \}/);
+});
+
+test('여러 장 지울 때 한 장이 실패해도 나머지를 지운다', () => {
+  const fn = app.match(/function removeMany\([\s\S]*?\n\}/);
+  assert.ok(fn, 'removeMany 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /catch/);
+  assert.match(fn[0], /failed/);
 });
 
 /* ── 스캔·화면 캡처·끌어다 놓기 ── */

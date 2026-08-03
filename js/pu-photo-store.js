@@ -208,6 +208,20 @@
     return deps.db.ref().update(u).then(function () { return { year: year, id: p.id }; });
   }
 
+  /* 사진 한 장 지우기 — 정보·본문·미리보기 세 곳을 한 번에.
+     연도나 루트를 지우면 그 해 사진이 전부 사라지므로, 반드시 사진 하나의
+     세 경로만 null 로 쓴다. 번호가 없으면 아예 시작하지 않는다
+     (빈 값이 경로에 들어가면 상위 노드를 가리키게 된다). */
+  function deletePhoto(year, id) {
+    if (!year || !id) return Promise.reject(new Error('지울 사진을 알 수 없습니다'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var u = {};
+    u[metaPath(year, id)] = null;
+    u[blobPath(year, id)] = null;
+    u[thumbPath(year, id)] = null;
+    return deps.db.ref().update(u);
+  }
+
   /* 서류 판독 결과를 사진 정보 아래 'read' 칸에만 적는다.
      items/{id} 를 통째로 쓰면 촬영 시각·올린 사람이 지워진다 — 반드시 하위 경로만. */
   function saveRead(year, id, read) {
@@ -368,6 +382,7 @@
     newId: newId,
     savePhoto: savePhoto,
     saveRead: saveRead,
+    deletePhoto: deletePhoto,
     listYear: listYear,
     loadThumb: loadThumb,
     loadFull: loadFull,

@@ -542,6 +542,49 @@ test('읽기 함수들 — 실시간DB가 없으면 한국어로 거절한다', 
   await assert.rejects(() => S.loadFull('2026', 'x'), /실시간DB/);
 });
 
+/* ── 사진 지우기 ── */
+
+test('deletePhoto — 정보·본문·미리보기 세 곳을 한 번에 지운다', async () => {
+  const S = loadStore();
+  const db = fakeDb();
+  S.init({ db });
+  await S.deletePhoto('2026', 'p1');
+  assert.equal(db.calls.update.length, 1);
+  const u = db.calls.update[0].u;
+  assert.deepEqual(Object.keys(u).sort(), [
+    'puphotos/blobs/2026/p1', 'puphotos/items/2026/p1', 'puphotos/thumbs/2026/p1'
+  ]);
+  // 지우기는 null 을 쓰는 것이다
+  Object.keys(u).forEach(k => assert.equal(u[k], null, k + ' 가 null 이 아닙니다'));
+});
+
+test('deletePhoto — 그 사진 하나만 건드린다', async () => {
+  const S = loadStore();
+  const db = fakeDb();
+  S.init({ db });
+  await S.deletePhoto('2026', 'p1');
+  // 연도나 루트를 지우면 그 해 사진이 전부 사라진다
+  for (const k of Object.keys(db.calls.update[0].u)) {
+    assert.match(k, /^puphotos\/(items|blobs|thumbs)\/2026\/p1$/, '위험한 경로입니다: ' + k);
+  }
+  assert.equal(db.calls.update[0].path, '');
+});
+
+test('deletePhoto — 실시간DB가 없으면 한국어로 거절한다', async () => {
+  const S = loadStore();
+  S.init({});
+  await assert.rejects(() => S.deletePhoto('2026', 'p1'), /실시간DB/);
+});
+
+test('deletePhoto — 사진 번호가 없으면 아무것도 지우지 않는다', async () => {
+  const S = loadStore();
+  const db = fakeDb();
+  S.init({ db });
+  await assert.rejects(() => S.deletePhoto('2026', ''), /사진/);
+  await assert.rejects(() => S.deletePhoto('', 'p1'), /사진/);
+  assert.equal(db.calls.update.length, 0);
+});
+
 /* ── 판독 결과 저장 ── */
 
 test('saveRead — 사진 정보 아래 판독 칸만 쓴다 (사진·정보를 건드리지 않는다)', async () => {
