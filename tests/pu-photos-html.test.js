@@ -114,12 +114,33 @@ test('신호가 돌아오면 기다리지 않고 바로 재시도한다', () => 
   assert.match(app, /retryNow/);
 });
 
-test('올릴 때 긴 변 1600px 축소본과 240px 미리보기를 만든다', () => {
-  assert.match(app, /shrink\(f, 1600\)/);
-  assert.match(app, /shrink\(f, 240\)/);
+test('올릴 크기는 저장 층이 정한다 — 화면이 숫자를 갖지 않는다', () => {
+  // 서류 2560 / 사진 1600. 폰·PC·당겨오기 창이 같은 값을 써야 하므로
+  // 숫자는 PuPhotoStore.uploadSpec 한 곳에만 있어야 한다.
+  assert.match(app, /PuPhotoStore\.uploadSpec\(/);
+  assert.match(app, /shrink\(f, spec\.maxEdge, spec\.quality\)/);
+  assert.match(app, /shrink\(f, spec\.thumbEdge/);
+  assert.ok(!/shrink\(f,\s*\d/.test(app), '화면에 축소 크기 숫자가 박혀 있습니다');
   // 카메라 원본이 그대로 클라우드로 가는 길이 없어야 한다 —
   // 파일→dataURL 직행(readAsDataURL)을 금지하고 축소(shrink)만 허용한다.
   assert.ok(!/readAsDataURL/.test(app), '원본을 그대로 올릴 수 있는 경로가 있습니다');
+});
+
+test('서류 고르기 버튼이 따로 있고 서류로 표시된다', () => {
+  // 서류(명함·사업자등록증·중소기업확인서)는 글씨를 읽어야 하므로 고화질로 담고,
+  // 나중에 서류만 골라 보거나 명함첩으로 넘길 수 있게 종류를 남긴다.
+  assert.match(app, /id="docBtn"/);
+  assert.match(app, /id="docInput"/);
+  assert.match(app, /addFiles\(this\.files, true\)/);
+  assert.match(app, /kind: isDoc \? 'doc' : 'photo'/);
+});
+
+test('미리보기를 끼워 넣을 때 서류 딱지를 지우지 않는다', () => {
+  // 칸 내용을 innerHTML 로 통째로 바꾸면 딱지가 사라진다.
+  const fill = app.match(/function fillThumbs\(\)[\s\S]*?\n\}/);
+  assert.ok(fill, 'fillThumbs 본문을 찾을 수 없습니다');
+  assert.ok(!/cell\.innerHTML\s*=/.test(fill[0]), '칸 내용을 통째로 바꿔 딱지가 지워집니다');
+  assert.match(fill[0], /insertBefore/);
 });
 
 test('사진 열기에 예비 통로가 있다 — 브라우저마다 되는 방법이 다르다', () => {

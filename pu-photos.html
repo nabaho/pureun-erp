@@ -50,6 +50,12 @@ button{font-family:inherit;cursor:pointer}
 #home{display:none;flex:1;flex-direction:column;padding:14px;overflow-y:auto;max-width:560px;width:100%;margin:0 auto}
 #home .pri{width:100%;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:700;background:var(--blue);color:#fff}
 #home .sec{width:100%;border:1px solid var(--line);border-radius:12px;padding:12px;font-size:14px;font-weight:600;background:#fff;color:var(--ink);margin-top:8px}
+#home .sec.doc{border-color:#b6c6ee}
+#home .sec .hq{font-size:12px;font-weight:600;color:var(--sub)}
+#home .dochint{margin:5px 2px 0;font-size:11.5px;line-height:1.5;color:#8a94a6}
+.tag{font-size:10.5px;font-weight:700;background:#e8eefc;color:#1e40af;padding:1px 6px;border-radius:5px;margin-left:5px}
+#grid .cell .tag{position:absolute;left:4px;top:4px;margin:0;background:var(--blue);color:#fff}
+#grid .cell{position:relative}
 
 #upWrap{margin-top:16px}
 #upWrap .cap{font-size:12px;color:var(--sub);margin-bottom:6px}
@@ -120,8 +126,11 @@ button{font-family:inherit;cursor:pointer}
   <!-- 홈 -->
   <div id="home">
     <button class="pri" id="pickBtn">📷 사진 고르기</button>
+    <button class="sec doc" id="docBtn">📄 서류 고르기 <span class="hq">고화질</span></button>
+    <p class="dochint">명함 · 사업자등록증 · 중소기업확인서처럼 글씨를 읽어야 하는 것</p>
     <button class="sec" id="camBtn">카메라로 바로 찍기</button>
     <input type="file" id="pickInput" accept="image/*" multiple hidden>
+    <input type="file" id="docInput" accept="image/*" multiple hidden>
     <input type="file" id="camInput" accept="image/*" capture="environment" hidden>
 
     <div id="upWrap" style="display:none">
@@ -263,14 +272,18 @@ window.addEventListener('online', function () { if (queue) queue.retryNow(); });
 
 /* ══════ 사진 고르기 → 축소 → 대기열 ══════ */
 $('pickBtn').onclick = function () { $('pickInput').click(); };
+$('docBtn').onclick = function () { $('docInput').click(); };
 $('camBtn').onclick = function () { $('camInput').click(); };
-$('pickInput').onchange = function () { addFiles(this.files); this.value = ''; };
-$('camInput').onchange = function () { addFiles(this.files); this.value = ''; };
+$('pickInput').onchange = function () { addFiles(this.files, false); this.value = ''; };
+$('docInput').onchange = function () { addFiles(this.files, true); this.value = ''; };
+$('camInput').onchange = function () { addFiles(this.files, false); this.value = ''; };
 
-async function addFiles(fileList) {
+/* isDoc: 「서류 고르기」로 넣은 것 — 글씨를 읽어야 하므로 더 크고 좋은 화질로 담는다. */
+async function addFiles(fileList, isDoc) {
   const files = Array.from(fileList || []);
   const u = firebase.auth().currentUser;
   if (!files.length || !u || !queue) return;
+  const spec = PuPhotoStore.uploadSpec(isDoc); // 크기 기준은 저장 층이 정한다
   for (const f of files) {
     try {
       /* 촬영 시각: EXIF → 파일 날짜 → 지금. 판단은 저장 층의 함수가 한다.
@@ -278,13 +291,15 @@ async function addFiles(fileList) {
          읽기 실패는 null 로 넘긴다 — 그러면 파일 날짜로 정해진다. */
       const buf = await readFileBytes(f).catch(() => null);
       const takenAt = PuPhotoStore.pickTakenAt(buf ? PuPhotoStore.exifTakenAt(buf) : null, f.lastModified, Date.now());
-      /* 긴 변 1600px 축소본과 240px 미리보기 — 카메라 원본은 클라우드에 안 올라간다. */
-      const full = await shrink(f, 1600);
-      const thumb = await shrink(f, 240);
+      /* 축소본(서류 2560px·사진 1600px)과 격자용 미리보기 —
+         카메라 원본은 클라우드에 안 올라간다. */
+      const full = await shrink(f, spec.maxEdge, spec.quality);
+      const thumb = await shrink(f, spec.thumbEdge, 0.85);
       await queue.enqueue({
         id: PuPhotoStore.newId(),
         name: f.name || '사진',
         takenAt: takenAt,
+        kind: isDoc ? 'doc' : 'photo',
         full: full.dataUrl,
         thumb: thumb.dataUrl,
         meta: {
@@ -292,6 +307,7 @@ async function addFiles(fileList) {
           upAt: Date.now(),
           by: u.uid,
           byName: u.displayName || u.email || '',
+          kind: isDoc ? 'doc' : 'photo',
           w: full.w, h: full.h,
           size: full.dataUrl.length
         }
@@ -340,8 +356,9 @@ function decodeViaImg(file) {
 }
 
 /* 사진을 긴 변 maxEdge 로 줄여 JPEG dataURL 로 만든다.
-   회전 정보(EXIF orientation)는 브라우저가 그림을 읽을 때 반영한다. */
-function shrink(file, maxEdge) {
+   회전 정보(EXIF orientation)는 브라우저가 그림을 읽을 때 반영한다.
+   quality: 서류는 글씨를 읽어야 해서 사진보다 높다(저장 층의 uploadSpec 참고). */
+function shrink(file, maxEdge, quality) {
   return decodeImage(file).then(function (im) {
     const iw = im.naturalWidth || im.width;
     const ih = im.naturalHeight || im.height;
@@ -352,7 +369,7 @@ function shrink(file, maxEdge) {
     c.width = w; c.height = h;
     c.getContext('2d').drawImage(im, 0, 0, w, h);
     if (im.close) im.close();
-    return { dataUrl: c.toDataURL('image/jpeg', 0.85), w: w, h: h };
+    return { dataUrl: c.toDataURL('image/jpeg', quality || 0.85), w: w, h: h };
   });
 }
 
@@ -384,8 +401,9 @@ function renderUp() {
        이것이 없으면 "왜 안 되나"를 아무도 알 수 없다(2026-08-03 실사용 보고). */
     const cause = (j.state === 'retry' || j.state === 'fail') && j.error
       ? '<span class="er">원인: ' + esc(j.error) + '</span>' : '';
+    const tag = j.kind === 'doc' ? '<span class="tag">서류</span>' : '';
     return '<div class="uprow s-' + esc(j.state) + '">' +
-      '<span class="nm">' + esc(j.name || '사진') + '</span>' +
+      '<span class="nm">' + esc(j.name || '사진') + tag + '</span>' +
       '<span class="st">' + (UP_STATE[j.state] || esc(j.state)) + '</span>' + cause + '</div>';
   }).join('');
 }
@@ -445,7 +463,9 @@ function renderGrid() {
       lastDay = k;
     }
     const t = safeSrc(it.thumb);
-    html += '<div class="cell" data-id="' + esc(it.id) + '">' + (t ? '<img src="' + t + '" alt="">' : '') + '</div>';
+    const tag = it.meta.kind === 'doc' ? '<span class="tag">서류</span>' : '';
+    html += '<div class="cell" data-id="' + esc(it.id) + '">' +
+      (t ? '<img src="' + t + '" alt="">' : '') + tag + '</div>';
   });
   html += '</div>';
   el.innerHTML = html;
@@ -462,7 +482,12 @@ function fillThumbs() {
         const src = safeSrc(t);
         if (!src) return;
         const cell = document.querySelector('.cell[data-id="' + it.id + '"]');
-        if (cell) cell.innerHTML = '<img src="' + src + '" alt="">';
+        if (!cell) return;
+        /* 칸 내용을 통째로 바꾸면 '서류' 딱지가 지워진다 — 그림만 끼워 넣는다. */
+        const img = document.createElement('img');
+        img.src = src;
+        img.alt = '';
+        cell.insertBefore(img, cell.firstChild);
       }).catch(function () { /* 한 장 실패해도 다음 장으로 */ });
     });
   });
@@ -480,8 +505,10 @@ function openViewer(id) {
   const it = gridItems.find(x => x.id === id);
   const v = $('viewer');
   v.style.display = 'flex';
-  $('viewerInfo').textContent = it && it.meta.takenAt
-    ? dayLabel(it.meta.takenAt) + ' · ' + (it.meta.byName || '') : '';
+  $('viewerInfo').textContent = it
+    ? (it.meta.kind === 'doc' ? '서류 · ' : '') +
+      (it.meta.takenAt ? dayLabel(it.meta.takenAt) + ' · ' : '') + (it.meta.byName || '')
+    : '';
   $('viewerHint').textContent = '불러오는 중…';
   const img = $('viewerImg');
   img.src = safeSrc(it && it.thumb) || ''; // 우선 미리보기를 깔고

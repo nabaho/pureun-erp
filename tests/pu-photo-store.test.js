@@ -420,6 +420,20 @@ test('EXIF 날짜가 깨져 있으면 null', () => {
   assert.equal(S.exifTakenAt(makeExifJpeg('0000:00:00 00:00:00')), null);
 });
 
+/* ── 서류 고화질 ── */
+
+test('올릴 크기 — 서류는 2560px 고품질, 일반 사진은 1600px', () => {
+  const S = loadStore();
+  // 서류(명함·사업자등록증·중소기업확인서)는 글씨를 읽어야 하는 물건이라
+  // 일반 현장사진과 기준이 달라야 한다(2026-08-03 대표 지시).
+  assert.equal(S.uploadSpec(true).maxEdge, 2560);
+  assert.equal(S.uploadSpec(false).maxEdge, 1600);
+  assert.ok(S.uploadSpec(true).quality > S.uploadSpec(false).quality,
+    '서류 품질이 일반 사진보다 높지 않습니다');
+  // 미리보기는 종류와 무관하게 격자용 작은 것으로 통일한다.
+  assert.equal(S.uploadSpec(true).thumbEdge, S.uploadSpec(false).thumbEdge);
+});
+
 /* ── B단계: 실시간DB 저장·읽기 ── */
 
 // 실시간DB 흉내 — update/once 호출을 기록한다. 실서버에는 절대 안 붙는다.

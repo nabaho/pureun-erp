@@ -47,6 +47,17 @@
     return Number(uploadTs);
   }
 
+  /* ── 올릴 크기 ──
+     서류(명함·사업자등록증·중소기업확인서 등)는 **글씨를 읽어야 하는 물건**이라
+     일반 현장사진과 기준이 다르다(2026-08-03 대표 지시). 서류는 2560px·고품질,
+     사진은 1600px. 격자용 미리보기는 종류와 무관하게 240px로 같다.
+     크기 판단을 화면이 아니라 여기 두는 이유: 폰·PC·당겨오기 창이 같은 값을 써야 한다. */
+  function uploadSpec(isDoc) {
+    return isDoc
+      ? { maxEdge: 2560, quality: 0.92, thumbEdge: 240 }
+      : { maxEdge: 1600, quality: 0.85, thumbEdge: 240 };
+  }
+
   /* ── EXIF 촬영 시각 판독 ──
      JPEG 안의 EXIF에서 촬영 시각(DateTimeOriginal, 없으면 DateTime)을 읽는다.
      어떤 입력이 와도 예외를 밖으로 던지지 않는다 — 못 읽으면 null (파일 날짜로 넘어감). */
@@ -343,6 +354,7 @@
     thumbPath: thumbPath,
     filePath: filePath,
     pickTakenAt: pickTakenAt,
+    uploadSpec: uploadSpec,
     exifTakenAt: exifTakenAt,
     newId: newId,
     savePhoto: savePhoto,
