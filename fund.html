@@ -226,7 +226,7 @@ var ACCT_RULES=[
   {kw:['대부상환','대부금상환','상환','대출상환'],dir:'입금',d:'현금성자산',c:'근로자대부금'},
   {kw:['수수료','지급수수료','이체수수료','인터넷뱅킹','인증서'],dir:'출금',d:'지급수수료',c:'현금성자산'},
   {kw:['지방세','주민세','구청','시청','군청','세무서','세금','공과금'],dir:'출금',d:'세금과공과',c:'현금성자산'},
-  {kw:['격려금','격려','포상','상여'],dir:'출금',d:'격려금',c:'현금성자산'},
+  {kw:['격려금','격려','포상','상여','성과금','성과급'],dir:'출금',d:'격려금',c:'현금성자산'},
   {kw:['대부','대부금','대출','대여금','근로자대부'],dir:'출금',d:'근로자대부금',c:'현금성자산'},
   {kw:['경조','축의','조의','결혼','장례','부의','연말선물'],dir:'출금',d:'경조사비',c:'현금성자산'},
   {kw:['동호회','동아리','상품권','기프트카드','영화'],dir:'출금',d:'동호회비',c:'현금성자산'},
@@ -5549,25 +5549,80 @@ function _reserveAcct(fin){
   });
   return best;
 }
+/* 당기 출연금 — 자동분개에서 **기본재산 대변**으로 들어온 금액. 준비금2 설정 한도의 기준이다. */
+function _contribOf(arr){
+  var s=0; (arr||[]).forEach(function(x){
+    if(!x.approved||x.credit!=='기본재산') return;
+    s+=num(x.amount)||num(x.deposit)||num(x.withdraw)||0; });
+  return Math.round(s);
+}
+/* 근로복지기본법 제62조제2항 — 해당 회계연도 출연금 중 근로복지사업에 쓸 수 있는 비율.
+   사내근로복지기금 100분의 50, 공동근로복지기금 100분의 90. 별지15호 ㉚과 같은 한도다. */
+function _reserveRate(fid){ return ((funds[fid]||{}).fund_type==='사내')?0.5:0.9; }
 function reserveAdjust(arr,fid,yr){
   fid=fid||S.fundId; yr=yr||S.year;
   var fin=computeFin(arr,fid,yr);
   var net=Math.round(fin.net);
-  var op=_openingOf(fid,yr), avail=num(op.reserve)||0;
-  RESERVE_ACCTS.forEach(function(a){ var v=fin.tb[a]; if(v) avail+=(v.credit-v.debit); });
-  avail=Math.round(avail);
-  var acct=_reserveAcct(fin);
-  if(net<0) return {kind:'환입', need:-net, avail:avail, amount:Math.max(0,Math.min(-net,avail)), acct:acct, fin:fin};
-  if(net>0) return {kind:'전입', need:net,  avail:avail, amount:net, acct:acct, fin:fin};
-  return {kind:'', need:0, avail:avail, amount:0, acct:acct, fin:fin};
+  var op=_openingOf(fid,yr);
+  /* 계정별 준비금 잔액 — 전기이월 칸은 하나뿐이라 준비금1에 얹는다 */
+  var bal={};
+  RESERVE_ACCTS.forEach(function(a){ var v=fin.tb[a]; bal[a]=Math.round(v?(v.credit-v.debit):0); });
+  bal[RESERVE_ACCTS[0]]+=Math.round(num(op.reserve)||0);
+  var avail=RESERVE_ACCTS.reduce(function(s,a){ return s+Math.max(0,bal[a]); },0);
+  var contrib=_contribOf(arr), rate=_reserveRate(fid), cap=Math.round(contrib*rate);
+  var r={kind:'', need:0, avail:avail, amount:0, acct:_reserveAcct(fin), fin:fin,
+         contrib:contrib, rate:rate, cap:cap, setup:0, overBasic:0, parts:[]};
+  if(net>0){ r.kind='전입'; r.need=net; r.amount=net;
+             r.parts=[{acct:RESERVE_ACCTS[1],amount:net}]; r.acct=RESERVE_ACCTS[1]; return r; }
+  if(net===0) return r;
+  r.kind='환입'; r.need=-net;
+  /* 재원이 모자라면 **기본재산에서 준비금2로 설정**해 재원을 만든다(기본재산 차변 / 준비금2 대변).
+     이 분개가 없으면 준비금2를 만들 방법이 아예 없어, 출연금을 그 해에 쓰는 공동기금은
+     환입 재원이 전기이월분뿐이라 당기순이익이 0이 되지 않는다
+     (가치를만들어가는사람들 2024: 필요 112,264,937원 / 전기이월 160,291원).
+     설정은 **필요한 만큼만** 한다 — 한도 전액을 설정하면 쓰지 않은 잔액이 준비금2에 남는데,
+     전기이월 칸이 준비금1 하나뿐이어서 다음 해에 그 잔액을 이월할 자리가 없다.
+     한도를 넘겨야 하는 부족분은 '기본재산 사용'이라 따로 표시한다(별지15호 ㊱). */
+  var short=r.need-avail;
+  if(short>0){
+    r.setup=Math.min(short,Math.max(0,cap));
+    r.overBasic=Math.max(0,short-r.setup);
+    r.setup+=r.overBasic;
+    bal[RESERVE_ACCTS[1]]=(bal[RESERVE_ACCTS[1]]||0)+r.setup;
+    avail+=r.setup; r.avail=avail;
+  }
+  r.amount=Math.max(0,Math.min(r.need,avail));
+  /* 환입은 계정별 잔액 안에서 나눈다 — 한 계정을 음수로 만들지 않는다. 준비금1(법인세법 제29조)을
+     먼저 쓰고 남은 만큼 준비금2(근로복지기본법 제62조제2항)에서 환입한다. */
+  var rest=r.amount;
+  RESERVE_ACCTS.forEach(function(a){ if(rest<=0) return;
+    var take=Math.min(rest,Math.max(0,bal[a])); if(take<=0) return;
+    r.parts.push({acct:a,amount:take}); rest-=take; });
+  if(r.parts.length) r.acct=r.parts[0].acct;
+  return r;
 }
 /* 현금이 오가지 않는 대체분개 — nocash:1 이라 통장 입·출금 합계와 잔액 대사에서 빠진다 */
 function _reserveEntry(yr,kind,amount,acct){
   var base={date:yr+'-12-31', amount:amount, deposit:0, withdraw:0, nocash:1, approved:true};
+  if(kind==='설정') return Object.assign(base,{memo:'고유목적사업준비금2 설정(출연금 사용한도 내)',
+                                              debit:'기본재산', credit:acct});
+  if(kind==='기본재산사용') return Object.assign(base,{memo:'기본재산 사용(준비금 사용한도 초과분)',
+                                              debit:'기본재산', credit:acct});
   if(kind==='환입') return Object.assign(base,{memo:'고유목적사업준비금 환입(결산 자동)',
                                               debit:acct, credit:'고유목적사업준비금환입'});
   return Object.assign(base,{memo:'고유목적사업준비금 전입(결산 자동)',
                              debit:'고유목적사업준비금전입액', credit:acct});
+}
+/* 결산 확정 때 쓸 조정 분개 전체 — 설정 → 기본재산 사용 → 환입(계정별) 순서.
+   id를 고정해 두어 다시 확정해도 같은 자리에 덮어써지고 분개가 늘지 않는다. */
+function _reserveEntries(yr,rc){
+  var out=[], R2=RESERVE_ACCTS[1];
+  var setPure=Math.max(0,(rc.setup||0)-(rc.overBasic||0));
+  if(setPure>0) out.push({id:'rsvset'+yr, e:_reserveEntry(yr,'설정',setPure,R2)});
+  if(rc.overBasic>0) out.push({id:'rsvbas'+yr, e:_reserveEntry(yr,'기본재산사용',rc.overBasic,R2)});
+  (rc.parts||[]).forEach(function(p,i){
+    if(p.amount>0) out.push({id:'rsv'+yr+(i?String.fromCharCode(97+i):''), e:_reserveEntry(yr,rc.kind,p.amount,p.acct)}); });
+  return out;
 }
 function lockClosing(){
   var fid=S.fundId, yr=S.year;
@@ -5577,15 +5632,22 @@ function lockClosing(){
   var msg=yr+'년 결산을 확정합니다.\n확정 시점의 수치가 스냅샷으로 보존되어 결산 대장·연도별 비교에 쓰입니다.'
     +(fin.balanced?'':'\n\n⚠️ 대차가 맞지 않습니다 (차이 '+won(fin.totalAssets-fin.totalLiabEq)+') — 전기이월을 먼저 확인하세요.');
   var rc=reserveAdjust(arr,fid,yr);
-  if(rc.amount>0) msg+='\n\n확정 시 고유목적사업준비금 '+won(rc.amount)+'을 '+rc.kind+' 분개로 자동 기록합니다'
-    +(rc.kind==='환입'&&rc.amount<rc.need?'\n(준비금 잔액이 '+won(rc.avail)+'뿐이어서 전액 환입은 되지 않습니다)':' — 당기순이익이 0이 됩니다')+'.';
+  if(rc.setup>rc.overBasic) msg+='\n\n① 고유목적사업준비금2 '+won(rc.setup-rc.overBasic)+'을 기본재산에서 설정합니다'
+    +'\n   (당기 출연금 '+won(rc.contrib)+' × '+Math.round(rc.rate*100)+'% = 사용한도 '+won(rc.cap)+')';
+  if(rc.overBasic>0) msg+='\n\n⚠️ 사용한도를 '+won(rc.overBasic)+' 넘습니다 — 그만큼은 기본재산 사용으로 기록합니다.'
+    +'\n   목적사업비가 당기 출연금의 '+Math.round(rc.rate*100)+'%를 넘었다는 뜻이니, 출연금 분개가 빠진 것이 없는지 먼저 확인하세요.'
+    +'\n   (별지 제15호 ㊱ 사용한 기본재산에 기재해야 합니다)';
+  if(rc.amount>0) msg+='\n\n② 고유목적사업준비금 '+won(rc.amount)+'을 '+rc.kind+' 분개로 자동 기록합니다'
+    +(rc.parts.length>1?' ('+rc.parts.map(function(p){return p.acct.slice(-1)+' '+won(p.amount);}).join(' / ')+')':'')
+    +(rc.kind==='환입'&&rc.amount<rc.need?'\n(준비금 재원이 '+won(rc.avail)+'뿐이어서 전액 환입은 되지 않습니다)':' — 당기순이익이 0이 됩니다')+'.';
   confirmM(msg,{ok:'결산 확정',danger:!fin.balanced}).then(function(ok){ if(!ok)return;
     /* 환입 분개와 확정을 **한 번의 update로** 쓴다 — 하나만 저장되고 끊기면 장부가 어긋난다 */
     var arr2=arr, up={};
-    if(rc.amount>0){
-      var id='rsv'+yr, e=_reserveEntry(yr,rc.kind,rc.amount,rc.acct);
-      up['txns/'+fid+'/'+yr+'/'+id]=e;
-      arr2=arr.concat([Object.assign({_id:id},e)]);
+    var ents=_reserveEntries(yr,rc);
+    if(ents.length){
+      ents.forEach(function(x){ var id=x.id, e=x.e;
+        up['txns/'+fid+'/'+yr+'/'+id]=e;
+        arr2=arr2.concat([Object.assign({_id:id},e)]); });
     }
     var snap=closeSnapshot(arr2,fid,yr,S.f15Rep,S.f15Sites,S.f15Welf);
     up['closing/'+fid+'/'+yr+'/locked']=true;
@@ -5942,13 +6004,29 @@ function learnedPanel(){
       +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">닫기</button></div>');
   });
 }
-function proposeAcct(memo,isDep){
+/* 참여사업장 이름 목록 — 자동분개의 '회사명 입금 = 출연금' 판정에 쓴다.
+   탈퇴한 사업장도 그 해에는 출연했을 수 있으므로 status로 걸러내지 않는다. */
+function _siteNames(fid){ return fbDb.ref(NS+'/sites/'+fid).once('value').then(function(s){
+  var v=s.val()||{}; return Object.keys(v).map(function(k){ return String((v[k]||{}).name||''); }).filter(Boolean);
+}).catch(function(){ return []; }); }
+function proposeAcct(memo,isDep,sites,kind){
   var m=String(memo||''), dir=isDep?'입금':'출금';
   var lk=_learnKey(m,isDep), lr=lk&&(_learned||{})[lk];   // 배운 것이 일반 규칙보다 우선
   if(lr&&lr.d&&lr.c) return {d:lr.d,c:lr.c,learned:true};
+  /* 적요의 공백을 지우고 맞춘다. 통장 적요의 띄어쓰기는 제각각인데 키워드는 붙여 써 두어
+     '근로자의 날 기념품'이 '근로자의날'을 그냥 비껴갔다(가치를만들어가는사람들 2024). */
+  var mz=(m+' '+String(kind||'')).replace(/\s+/g,'');
   for(var i=0;i<ACCT_RULES.length;i++){ var r=ACCT_RULES[i];
     if(r.dir!==dir) continue;
-    for(var j=0;j<r.kw.length;j++){ if(m.indexOf(r.kw[j])>=0) return {d:r.d,c:r.c}; }
+    for(var j=0;j<r.kw.length;j++){ if(mz.indexOf(r.kw[j])>=0) return {d:r.d,c:r.c}; }
+  }
+  /* 참여사업장 이름으로 들어온 입금은 출연금이다. 공동기금 최대 유입인데 적요에는 '출연' 없이
+     회사명만 찍히므로((주)수영로지콘·청원건설) 키워드로는 잡을 방법이 없다. */
+  if(isDep&&sites&&sites.length){
+    var strip=function(t){ return String(t||'').replace(/\s+/g,'').replace(/\(주\)|\(유\)|㈜|주식회사|유한회사/g,''); };
+    var mzz=strip(m);
+    for(var k=0;k<sites.length;k++){ var nm=strip(sites[k]);
+      if(nm.length>=2&&mzz.indexOf(nm)>=0) return {d:'현금성자산',c:'기본재산'}; }
   }
   return {d:'',c:''};
 }
@@ -5962,7 +6040,12 @@ function parseBank(rows){
     if(/보낸분|받는분|상대계좌|입금자|송금인|거래처/.test(v)&&col.who==null)col.who=c;
     if(/입금|맡기신/.test(v)&&!/건수|횟수|잔액|잔고/.test(v)&&col.dep==null)col.dep=c;
     if(/출금|찾으신|지급/.test(v)&&!/건수|횟수|잔액|잔고/.test(v)&&col.wd==null)col.wd=c;
-    if(/잔액|잔고/.test(v)&&col.bal==null)col.bal=c;}}
+    if(/잔액|잔고/.test(v)&&col.bal==null)col.bal=c;
+    /* 거래구분 열 — 하나·기업은행은 예금이자 행의 적요·의뢰인을 모두 비워 두고 성격을 여기에만
+       적는다('예금이자'). 이 칸을 안 읽어 가치를만들어가는사람들 2024는 이자 8건이 전부
+       미분류로 남았다. 적요에 합치지는 않는다 — 적요는 중복검사 키(hkey)의 재료라
+       바꾸면 이미 가져온 거래가 다시 신규로 들어온다. */
+    if(/구분|종류/.test(v)&&!/계좌|통화|화폐/.test(v)&&col.kind==null)col.kind=c;}}
   /* 계좌번호 — 이체 자동매칭의 근거. 같은 날 같은 금액이라도 계좌가 다르면 확실한 이체다. */
   var acct='';
   for(var a0=0;a0<Math.min(rows.length,12);a0++){
@@ -5984,15 +6067,22 @@ function parseBank(rows){
     var memo=col.memo!=null?String(row[col.memo]||'').trim():'';
     var who=col.who!=null?String(row[col.who]||'').trim():'';
     if(who&&who!==memo) memo=(who+' '+memo).trim();
-    if(/^(합\s*계|소\s*계|총\s*계)/.test(memo)) continue;   // 합계·소계 행은 거래 아님
+    /* 합계 행은 거래가 아니다. 하나·기업·우리 모두 'No' 다음 칸(= 일자 칸)에 '합   계'라고
+       적는다 — 적요 칸만 보던 예전 가드는 이걸 그대로 놓쳤다. 가치를만들어가는사람들 2024는
+       합계 행 한 줄이 입·출 동시 행으로 쪼개져 출금이 119,510,650원이나 부풀었다. */
+    var dcell=col.date!=null?String(row[col.date]||'').trim():'';
+    if(/^(합\s*계|소\s*계|총\s*계|누\s*계|총\s*\d+\s*건)/.test(dcell)) continue;
+    if(dcell&&!/\d/.test(dcell)) continue;                 // 일자 칸에 숫자가 없으면 거래가 아니다
+    if(/^(합\s*계|소\s*계|총\s*계|누\s*계)/.test(memo)) continue;
     var dep=num(row[col.dep])||0, wd=num(row[col.wd])||0;
     if(dep<0){ wd+=-dep; dep=0; } if(wd<0){ dep+=-wd; wd=0; } // 음수 표기 = 반대방향
     if(!date&&!memo&&!dep&&!wd) continue;
     if(!dep&&!wd) continue;
     var bal=col.bal!=null?(num(row[col.bal])||0):0;
-    if(dep&&wd){ out.push({date:date,memo:memo,deposit:dep,withdraw:0,balance:bal,acct:acct});
-                 out.push({date:date,memo:memo,deposit:0,withdraw:wd,balance:bal,acct:acct}); } // 입·출 동시 행 분리(분개 누락 방지)
-    else out.push({date:date,memo:memo,deposit:dep,withdraw:wd,balance:bal,acct:acct});
+    var kind=col.kind!=null?String(row[col.kind]||'').trim():'';
+    if(dep&&wd){ out.push({date:date,memo:memo,deposit:dep,withdraw:0,balance:bal,acct:acct,kind:kind});
+                 out.push({date:date,memo:memo,deposit:0,withdraw:wd,balance:bal,acct:acct,kind:kind}); } // 입·출 동시 행 분리(분개 누락 방지)
+    else out.push({date:date,memo:memo,deposit:dep,withdraw:wd,balance:bal,acct:acct,kind:kind});
   }
   return out;
 }
@@ -6107,7 +6197,7 @@ function addTxnSave(){
   if(String(date).slice(0,4)!==String(yr)){ toast(yr+'년 거래만 이 연도에 넣을 수 있습니다','warn'); return; }
   if(!dep&&!wd){ toast('입금 또는 출금 금액을 입력하세요','warn'); return; }
   if(dep&&wd){ toast('입금과 출금을 함께 넣을 수 없습니다 — 두 줄로 나눠 주세요','warn'); return; }
-  var p=proposeAcct(memo,dep>0);
+  var p=proposeAcct(memo,dep>0,Object.keys(S.sites||{}).map(function(k){ return String((S.sites[k]||{}).name||''); }));
   /* 키는 가져오기와 같은 방식(hkey) — 같은 거래를 두 번 넣으면 같은 키가 되어 덮어쓴다 */
   var base=date+'|'+dep+'|'+wd+'|'+memo, key=hkey(base);
   var rec={date:date,memo:memo,deposit:dep,withdraw:wd,balance:bal,acct:acct,
@@ -6161,7 +6251,8 @@ function importBank(){
         if(!txns){ toast('통장 형식을 인식하지 못했습니다 (입금·출금 열 없음)','err'); return; }
         if(!txns.length){ toast('거래 내역이 없습니다','warn'); return; }
         confirmM('['+_fname+' · '+_yr+'년] '+txns.length+'건의 거래를 읽었습니다.'+(sheets.length>1?'\n시트 '+sheets.length+'개: '+sheets.join(' / '):'')+'\n자동분개 제안과 함께 가져올까요?\n(이미 있는 거래는 승인·분개를 그대로 보존합니다)',{ok:'가져오기'}).then(function(ok){ if(!ok)return;
-          return loadLearned().then(function(){   // 배운 거래처를 제안에 반영
+          return Promise.all([loadLearned(),_siteNames(_fid)]).then(function(_pre){   // 배운 거래처·참여사업장명을 제안에 반영
+          var _snames=_pre[1];
           var path=NS+'/txns/'+_fid+'/'+_yr;
           fbDb.ref(path).once('value').then(function(snap){   // 서버 최신본 기준 중복검사 — 오래된 캐시로 승인 거래 덮어쓰기 방지
             var existing=snap.val()||{};
@@ -6170,8 +6261,8 @@ function importBank(){
               var n=(seen[base]=(seen[base]||0)+1);
               var key=hkey(n>1?base+'|'+n:base);   // 같은 날 동일 금액·적요 거래도 각각 보존
               if(existing[key]||obj[key]){ kept++; return; }
-              var p=proposeAcct(x.memo,x.deposit>0);
-              obj[key]={date:x.date,memo:x.memo,deposit:x.deposit,withdraw:x.withdraw,balance:x.balance,acct:(x.acct||''),debit:p.d,credit:p.c,approved:false}; added++;
+              var p=proposeAcct(x.memo,x.deposit>0,_snames,x.kind);
+              obj[key]={date:x.date,memo:x.memo,deposit:x.deposit,withdraw:x.withdraw,balance:x.balance,acct:(x.acct||''),kind:(x.kind||''),debit:p.d,credit:p.c,approved:false}; added++;
             });
             if(added===0){ toast('새로 추가할 거래가 없습니다 (기존 '+kept+'건 유지)','warn'); return; }
             return fbDb.ref(path).update(obj).then(function(){

@@ -111,10 +111,18 @@ ok('통장 파서가 거래상대방 열을 읽음', /보낸분\|받는분\|상�
 // 비용>수익이면 환입(청신공동 2025), 수익>비용이면 전입(안전공사공동 2022). 한쪽만 처리하면 순이익이 0이 안 된다.
 ok('reserveAdjust 존재', src.includes('function reserveAdjust'));
 ok('조정 분개 생성기 존재', src.includes('function _reserveEntry'));
-ok('환입·전입 양방향', /return \{kind:'환입'/.test(src) && /return \{kind:'전입'/.test(src));
+ok('환입·전입 양방향', /r\.kind='환입'/.test(src) && /r\.kind='전입'/.test(src));
+// 준비금2를 만드는 분개가 없으면 출연금을 그 해에 쓰는 공동기금은 순이익 0을 만들 수 없다
+ok('당기 출연금 집계', src.includes('function _contribOf'));
+ok('사용한도 비율(공동 90/사내 50)', /function _reserveRate\(fid\)\{ return \(\(funds\[fid\]\|\|\{\}\)\.fund_type==='사내'\)\?0\.5:0\.9; \}/.test(src));
+ok('준비금2 설정 분개(기본재산 차변)', /if\(kind==='설정'\)/.test(src) && /debit:'기본재산', credit:acct/.test(src));
+ok('한도 초과분은 기본재산 사용으로 구분', /if\(kind==='기본재산사용'\)/.test(src));
+ok('설정은 필요한 만큼만(한도 내)', src.includes('r.setup=Math.min(short,Math.max(0,cap));'));
+ok('환입을 계정별 잔액 안에서 배분', src.includes('r.parts.push({acct:a,amount:take})'));
+ok('조정 분개 묶음 생성기', src.includes('function _reserveEntries'));
 ok('전입액 계정(사업외비용)', src.includes("'고유목적사업준비금전입액':'비용'"));
 ok('잔액 있는 준비금 계정을 고름', src.includes('function _reserveAcct'));
-ok('환입은 준비금 잔액 상한', /Math\.min\(-net,avail\)/.test(src));
+ok('환입은 준비금 재원 상한', src.includes('r.amount=Math.max(0,Math.min(r.need,avail));'));
 ok('조정 분개는 대체분개(nocash)', /nocash:1/.test(src));
 // 대체분개는 현금이 아니므로 amount로 금액을 읽어야 한다 — 안 읽으면 금액 0으로 무시된다
 ok('journalOf가 amount를 읽음', src.includes('amount:num(x.amount)||num(x.deposit)'));
@@ -122,7 +130,8 @@ ok('computeFin이 amount를 읽음', src.includes('var amt=num(x.amount)||num(x.
 ok('결산 확정이 조정을 자동 기록', src.includes('var rc=reserveAdjust(arr,fid,yr)'));
 // 분개와 확정이 따로 저장되면 하나만 성공했을 때 장부가 어긋난다 → 한 번의 update로
 ok('조정 분개와 확정을 한 번에 저장', /up\['txns\/'\+fid\+'\/'\+yr\+'\/'\+id\]=e;/.test(src)
-  && /up\['closing\/'\+fid\+'\/'\+yr\+'\/locked'\]=true;/.test(src));
+  && /up\['closing\/'\+fid\+'\/'\+yr\+'\/locked'\]=true;/.test(src)
+  && src.includes('var ents=_reserveEntries(yr,rc);'));
 ok('거래 목록에 대체분개 표시', src.includes('x.nocash&&num(x.amount)'));
 
 // ── ⑨-2 통장 여러 시트 ──
@@ -173,6 +182,25 @@ ok('거래 직접 추가', src.includes('function addTxnForm') && src.includes('
   && src.includes('onclick="addTxnForm()"'));
 ok('직접 입력 거래 표시', src.includes('x.manual?'));
 ok('머리글에 계좌번호가 없으면 파일명에서', src.includes("String(file.name||'').match"));
+
+// ── ⑬ 통장 파서·자동분개 (가치를만들어가는사람들 2024 실결산 검증) ──
+// 합계 행: 하나·기업·우리 모두 'No' 다음 칸(= 일자 칸)에 '합   계'를 적는다. 적요만 보면 놓친다.
+// (가치 A통장의 합계 행 한 줄이 거래로 들어와 출금이 119,510,650원 부풀었다)
+ok('합계 행을 일자 칸에서도 걸러냄', src.includes("var dcell=col.date!=null?String(row[col.date]||'').trim():'';")
+  && /test\(dcell\)\) continue;/.test(src));
+ok('일자 칸에 숫자가 없으면 거래 아님', src.includes('if(dcell&&!/\\d/.test(dcell)) continue;'));
+// 적요의 띄어쓰기는 제각각인데 키워드는 붙여 써 두었다 — '근로자의 날 기념품'이 새어나갔다
+ok('자동분개가 적요 공백을 무시', src.includes("var mz=(m+' '+String(kind||'')).replace(/\\s+/g,'');"));
+ok('성과금·성과급 키워드', src.includes("'격려금','격려','포상','상여','성과금','성과급'"));
+// 하나·기업은행은 예금이자 행의 적요를 비우고 성격을 '구분' 칸에만 적는다(이자 8건이 미분류였다)
+ok('거래구분 열을 읽음', src.includes('col.kind==null)col.kind=c;'));
+ok('거래마다 kind를 담음', src.includes('kind:kind});'));
+ok('가져오기가 kind를 넘기고 보관', src.includes('proposeAcct(x.memo,x.deposit>0,_snames,x.kind)')
+  && src.includes("kind:(x.kind||'')"));
+// 공동기금 최대 유입인 출연금은 적요에 '출연' 없이 회사명만 찍힌다((주)수영로지콘·청원건설)
+ok('참여사업장명 입금을 출연금으로', src.includes('function _siteNames')
+  && src.includes('if(isDep&&sites&&sites.length){')
+  && src.includes("return {d:'현금성자산',c:'기본재산'};"));
 
 console.log('\n' + (fail ? 'FAILURES ' + fail + ' / ' + n : 'ALL PASS (' + n + '건)'));
 process.exit(fail ? 1 : 0);
