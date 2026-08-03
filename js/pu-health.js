@@ -166,7 +166,7 @@
   function monitorAdmin(app, user) {
     app.database().ref('uid_roles/' + user.uid).once('value').then(function (snapshot) {
       var role = snapshot.val() || {};
-      if (!role.isAdmin && !role.isSubAdmin) return;
+      if (!role.isAdmin) return;
       var badge = ensureAdminBadge(app);
       app.database().ref('systemAlerts').on('value', function (alertsSnapshot) {
         adminAlerts = flattenAlerts(alertsSnapshot.val());
