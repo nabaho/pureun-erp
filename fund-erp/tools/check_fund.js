@@ -109,6 +109,13 @@ ok('통장 파서가 거래상대방 열을 읽음', /보낸분\|받는분\|상�
 // 통장을 못 받고 손으로 적은 지출대장만 오는 기금이 있다(플러스동반성장 2024: 56건)
 ok('머리글의 공백을 지우고 맞춤', src.includes("var v=String(cells[c]||'').replace(/\\s+/g,'');"));
 ok('대장 머리글(세부내역) 인식', src.includes('/적요|내용|내역|의뢰인|기재|가맹점/.test(v)'));
+// 적요가 'BZ뱅크'처럼 수단만 적힌 통장이 있다 — 실제 상대방이 든 설명 열을 버리면 출연금을 못 잡는다
+ok('남는 설명 열을 성격 힌트로 모음', src.includes('if(col.memo==null)col.memo=c; else if(col.kind.indexOf(c)<0)col.kind.push(c); }'));
+ok('예금주명 열도 힌트(계좌번호는 제외)', src.includes('/구분|종류|기록사항|메모|비고|예금주/.test(v)&&!/계좌번호|통화|화폐/.test(v)'));
+ok('사업장명 대조에 힌트 포함', src.includes("var mzz=strip(m+' '+String(kind||'')), hz=strip(kind);"));
+// 은행이 상대방 이름을 잘라 적는다 — 잘린 쪽이 사업장명의 앞부분이면 같은 회사로 본다
+ok('잘려 적힌 회사명도 인식', src.includes('if(hz.length>=4&&nm.indexOf(hz)===0)')
+  && src.includes("var mzz=strip(m+' '+String(kind||'')), hz=strip(kind);"));
 ok('엑셀 미국식 m/d/yy 인식', src.includes("m=t.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{2})$/);"));
 ok('빈 일자는 위 일자를 이음', src.includes("if(/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) lastDate=date; else if(!date) date=lastDate;"));
 
@@ -206,7 +213,7 @@ ok('일자 칸에 숫자가 없으면 거래 아님', src.includes('if(dcell&&!/
 ok('자동분개가 적요 공백을 무시', src.includes("var mz=(m+' '+String(kind||'')).replace(/\\s+/g,'');"));
 ok('성과금·성과급 키워드', src.includes("'격려금','격려','포상','상여','성과금','성과급'"));
 // 예금이자 원천징수·학교 송금·경기장 예매는 모든 기금 통장에 찍히는데 규칙에 없었다
-ok('이자소득 원천징수 세목', src.includes("'세금','공과금','법인세','소득세','원천세'"));
+ok('이자소득 원천징수 세목', src.includes("'세금','공과금','공과','법인세','소득세','원천세'"));
 ok('학교·산학협력단 = 장학금', src.includes("'교육비','대학교','대학원','산학협력단','장학재단','사이버대'"));
 ok('경기장·예매처 = 체육문화비', src.includes("'야구장','경기장','티켓','공연','콘서트','관람'"));
 // 결산·등기 용역비, 시설·비품, 명절선물은 어느 기금에나 나오는데 규칙에 없었다
@@ -214,8 +221,8 @@ ok('전문가 용역비 = 지급수수료', src.includes("'노무법인','회계
 ok('시설·비품 = 근로복지시설비', src.includes("'공사','설치','보수','비품','냉난방','정수기','사물함','세탁기','청소기','게시판','신발장'"));
 ok('명절선물·작업복 = 그 밖의 복지비', src.includes("'선물세트','명절선물','유니폼','작업복','피복'"));
 // 하나·기업은행은 예금이자 행의 적요를 비우고 성격을 '구분' 칸에만 적는다(이자 8건이 미분류였다)
-ok('성격 열을 여러 개 읽음(구분·거래기록사항·이체메모·기재내용)',
-  src.includes('if(/구분|종류|기록사항|메모|기재/.test(v)')
+ok('성격 열을 여러 개 읽음(구분·거래기록사항·이체메모·예금주명)',
+  src.includes('if(/구분|종류|기록사항|메모|비고|예금주/.test(v)')
   && src.includes('col.kind.indexOf(c)<0)col.kind.push(c);')
   && src.includes('function find(cells){col.kind=[];'));
 // 농협은 순번 칸의 머리글이 '구분'이라 1·2·3…이 거래성격으로 읽혔다
