@@ -150,6 +150,54 @@ test('미리보기를 끼워 넣을 때 서류 딱지를 지우지 않는다', (
   assert.match(fill[0], /insertBefore/);
 });
 
+/* ── 휴지통 · 설정 화면 · 3분류 ── */
+
+test('지운 사진은 휴지통으로 가고 되살릴 수 있다', () => {
+  assert.match(app, /id="viewTrash"/);
+  assert.match(app, /PuPhotoStore\.listTrash\(/);
+  assert.match(app, /function restoreOne\(/);
+  assert.match(app, /PuPhotoStore\.restorePhoto\(/);
+  // 남은 날을 보여줘야 급한지 안다
+  assert.match(app, /일 남음/);
+});
+
+test('30일 지난 휴지통은 스스로 비운다 — 실패해도 앱은 돈다', () => {
+  assert.match(app, /PuPhotoStore\.purgeOldTrash\(/);
+  const blk = app.match(/purgeOldTrash\([\s\S]{0,200}/);
+  assert.match(blk[0], /catch/, '정리 실패가 앱을 멈추게 합니다');
+});
+
+test('휴지통에서 완전히 지울 때는 확인을 받는다', () => {
+  const fn = app.match(/function purgeOneNow\([\s\S]*?\n\}/);
+  assert.ok(fn, 'purgeOneNow 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /confirm\(/);
+  assert.match(fn[0], /되돌릴 수 없/);
+});
+
+test('설정은 팝업이 아니라 본문 화면이다', () => {
+  // 팝업은 화면을 가리고 뒤가 어수선하다(대표 지시로 본문 화면으로 옮김).
+  assert.match(app, /id="viewSettings"/);
+  assert.match(app, /function showView\(/);
+  assert.ok(!/id="settings"/.test(app), '옛 설정 팝업이 남아 있습니다');
+  assert.ok(!/function closeSettings\(/.test(app), '팝업 닫기 함수가 남아 있습니다');
+});
+
+test('설정 단추는 대시보드 맨 아래에 고정된다', () => {
+  const rule = app.match(/#gearBtn\{([^}]*)\}/);
+  assert.ok(rule, '#gearBtn 규칙을 찾을 수 없습니다');
+  assert.match(rule[1], /margin-top:auto/, '맨 아래로 밀어내지 않습니다');
+  // 밀어내려면 대시보드가 세로 flex 여야 한다
+  const side = app.match(/#side\{([^}]*)\}/);
+  assert.match(side[1], /flex-direction:column/);
+});
+
+test('명함·서류·회의사진 세 가지를 가린다', () => {
+  assert.match(app, /meeting: '회의·현장 사진'/);
+  // 회의사진은 명함첩에 넣을 것이 없으니 '확인 필요'로 잡지 않는다
+  const fn = app.match(/function needsCheck\([\s\S]*?\n\}/);
+  assert.match(fn[0], /kind === 'meeting'\) return false/);
+});
+
 /* ── 다른 앱으로 끌어다 놓기 ── */
 
 test('사진을 끌 수 있다 — 공용 규약을 쓴다', () => {
