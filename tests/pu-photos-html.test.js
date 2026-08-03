@@ -114,12 +114,43 @@ test('신호가 돌아오면 기다리지 않고 바로 재시도한다', () => 
   assert.match(app, /retryNow/);
 });
 
-test('올릴 때 긴 변 1600px 축소본과 240px 미리보기를 만든다', () => {
-  assert.match(app, /shrink\(f, 1600\)/);
-  assert.match(app, /shrink\(f, 240\)/);
+test('올릴 크기는 저장 층이 정한다 — 화면이 숫자를 갖지 않는다', () => {
+  // 서류 2560 / 사진 1600. 폰·PC·당겨오기 창이 같은 값을 써야 하므로
+  // 숫자는 PuPhotoStore.uploadSpec 한 곳에만 있어야 한다.
+  assert.match(app, /PuPhotoStore\.uploadSpec\(/);
+  assert.match(app, /shrink\(f, spec\.maxEdge, spec\.quality\)/);
+  assert.match(app, /shrink\(f, spec\.thumbEdge/);
+  assert.ok(!/shrink\(f,\s*\d/.test(app), '화면에 축소 크기 숫자가 박혀 있습니다');
   // 카메라 원본이 그대로 클라우드로 가는 길이 없어야 한다 —
   // 파일→dataURL 직행(readAsDataURL)을 금지하고 축소(shrink)만 허용한다.
   assert.ok(!/readAsDataURL/.test(app), '원본을 그대로 올릴 수 있는 경로가 있습니다');
+});
+
+test('서류 고르기 버튼이 따로 있고 서류로 표시된다', () => {
+  // 서류(명함·사업자등록증·중소기업확인서)는 글씨를 읽어야 하므로 고화질로 담고,
+  // 나중에 서류만 골라 보거나 명함첩으로 넘길 수 있게 종류를 남긴다.
+  assert.match(app, /id="docBtn"/);
+  assert.match(app, /id="docInput"/);
+  assert.match(app, /addFiles\(this\.files, true\)/);
+  assert.match(app, /kind: isDoc \? 'doc' : 'photo'/);
+});
+
+test('미리보기를 끼워 넣을 때 서류 딱지를 지우지 않는다', () => {
+  // 칸 내용을 innerHTML 로 통째로 바꾸면 딱지가 사라진다.
+  const fill = app.match(/function fillThumbs\(\)[\s\S]*?\n\}/);
+  assert.ok(fill, 'fillThumbs 본문을 찾을 수 없습니다');
+  assert.ok(!/cell\.innerHTML\s*=/.test(fill[0]), '칸 내용을 통째로 바꿔 딱지가 지워집니다');
+  assert.match(fill[0], /insertBefore/);
+});
+
+test('사진 열기에 예비 통로가 있다 — 브라우저마다 되는 방법이 다르다', () => {
+  // 실사용 보고(2026-08-03): 폰 앱 내장 브라우저에서 "사진을 읽지 못했습니다".
+  // 빠른 길(createImageBitmap)이 안 되면 <img> 로, 최신 바이트 읽기(arrayBuffer)가
+  // 없으면 FileReader 로 돌아가야 한다. EXIF 읽기 실패는 올리기를 막으면 안 된다.
+  assert.match(app, /function decodeViaImg\(/);
+  assert.match(app, /URL\.createObjectURL\(/);
+  assert.match(app, /readAsArrayBuffer/);
+  assert.match(app, /readFileBytes\(f\)\.catch\(/, 'EXIF용 바이트 읽기 실패가 올리기를 막습니다');
 });
 
 test('촬영 시각은 저장 층의 우선순위 함수로 정한다', () => {
@@ -128,9 +159,24 @@ test('촬영 시각은 저장 층의 우선순위 함수로 정한다', () => {
   assert.match(app, /PuPhotoStore\.exifTakenAt\(/);
 });
 
-test('격자는 미리보기만 받는다 — 본문은 부르지 않는다', () => {
+test('격자는 미리보기만 받는다 — 본문은 크게 보기에서만', () => {
   assert.match(app, /PuPhotoStore\.loadThumb\(/);
-  assert.ok(!app.includes('loadFull('), '격자(B단계 화면)가 사진 본문까지 받고 있습니다');
+  // 본문(1600px)은 크게 보기(openViewer) 안에서만 한 장씩 받는다.
+  // 격자 채우기(fillThumbs)나 목록(renderGrid)이 본문을 받으면
+  // 사진 수십 장에 수십 MB를 내려받게 된다.
+  const uses = [...app.matchAll(/PuPhotoStore\.loadFull\(/g)];
+  assert.equal(uses.length, 1, '본문 받기가 한 곳(크게 보기)에만 있어야 합니다');
+  const viewerBody = app.match(/function openViewer\([\s\S]*?\nfunction closeViewer/);
+  assert.ok(viewerBody && viewerBody[0].includes('PuPhotoStore.loadFull('),
+    '본문 받기가 크게 보기 밖에 있습니다');
+});
+
+test('크게 보기가 있다 — 격자를 누르면 저장본 원판을 보여준다', () => {
+  // 실사용 보고(2026-08-03): 격자의 240px 미리보기를 보고 "화질이 나쁘다"고
+  // 판단하게 된다. 저장된 1600px 원판을 볼 길이 있어야 한다.
+  assert.match(app, /id="viewer"/);
+  assert.match(app, /function openViewer\(/);
+  assert.match(app, /function closeViewer\(/);
 });
 
 test('격자에 넣는 미리보기는 data:image 로 시작하는 것만 허용한다', () => {
@@ -142,6 +188,14 @@ test('격자에 넣는 미리보기는 data:image 로 시작하는 것만 허용
 test('파일 이름 등 바깥 문자열은 이스케이프해서 화면에 넣는다', () => {
   assert.match(app, /function esc\(/);
   assert.match(app, /esc\(j\.name/);
+});
+
+test('권한 거절은 재시도가 아니라 막힘으로 표시하고 원인을 보여준다', () => {
+  // 실사용 보고(2026-08-03): 규칙 문제인데 "신호 약함 — 자동 재시도"만 계속 나왔다.
+  assert.match(app, /isFatal/);
+  assert.match(app, /permission\[ _-\]\?denied/i);
+  assert.match(app, /fail: '막힘/);
+  assert.match(app, /esc\(j\.error\)/, '오류 원인을 화면에 보여주지 않습니다');
 });
 
 /* ── 로그아웃 상태 보호 ──

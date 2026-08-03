@@ -50,6 +50,12 @@ button{font-family:inherit;cursor:pointer}
 #home{display:none;flex:1;flex-direction:column;padding:14px;overflow-y:auto;max-width:560px;width:100%;margin:0 auto}
 #home .pri{width:100%;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:700;background:var(--blue);color:#fff}
 #home .sec{width:100%;border:1px solid var(--line);border-radius:12px;padding:12px;font-size:14px;font-weight:600;background:#fff;color:var(--ink);margin-top:8px}
+#home .sec.doc{border-color:#b6c6ee}
+#home .sec .hq{font-size:12px;font-weight:600;color:var(--sub)}
+#home .dochint{margin:5px 2px 0;font-size:11.5px;line-height:1.5;color:#8a94a6}
+.tag{font-size:10.5px;font-weight:700;background:#e8eefc;color:#1e40af;padding:1px 6px;border-radius:5px;margin-left:5px}
+#grid .cell .tag{position:absolute;left:4px;top:4px;margin:0;background:var(--blue);color:#fff}
+#grid .cell{position:relative}
 
 #upWrap{margin-top:16px}
 #upWrap .cap{font-size:12px;color:var(--sub);margin-bottom:6px}
@@ -61,7 +67,10 @@ button{font-family:inherit;cursor:pointer}
 .uprow.s-wait .st{color:var(--sub)}
 .uprow.s-up .st{color:var(--blue)}
 .uprow.s-retry .st{color:#b45309}
+.uprow.s-fail .st{color:#b91c1c}
 .uprow.s-done .st{color:#15803d}
+.uprow{flex-wrap:wrap}
+.uprow .er{width:100%;font-size:11px;color:#8a94a6;margin-top:2px;word-break:break-all}
 
 #grid{margin-top:4px}
 #grid .day{display:flex;align-items:baseline;gap:8px;margin:16px 0 8px}
@@ -75,6 +84,14 @@ button{font-family:inherit;cursor:pointer}
 #empty .in{text-align:center;color:var(--sub)}
 #empty .ic{font-size:44px;margin-bottom:10px}
 #empty p{font-size:14px;margin:0}
+
+/* 크게 보기 */
+#viewer{display:none;position:fixed;inset:0;background:rgba(8,10,16,.96);z-index:30;flex-direction:column}
+#viewer .bar{display:flex;align-items:center;justify-content:space-between;padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;color:#fff}
+#viewer .bar span{font-size:12.5px;opacity:.85}
+#viewer .bar button{background:none;border:none;color:#fff;font-size:14px;font-weight:700;padding:6px}
+#viewer img{flex:1;min-height:0;width:100%;object-fit:contain}
+#viewer .hint{text-align:center;color:#fff;font-size:12px;opacity:.6;padding:10px 0 calc(env(safe-area-inset-bottom) + 12px)}
 
 /* 설정 시트 */
 #settings{display:none;position:fixed;inset:0;background:rgba(16,24,40,.45);align-items:flex-end;justify-content:center;z-index:20}
@@ -109,8 +126,11 @@ button{font-family:inherit;cursor:pointer}
   <!-- 홈 -->
   <div id="home">
     <button class="pri" id="pickBtn">📷 사진 고르기</button>
+    <button class="sec doc" id="docBtn">📄 서류 고르기 <span class="hq">고화질</span></button>
+    <p class="dochint">명함 · 사업자등록증 · 중소기업확인서처럼 글씨를 읽어야 하는 것</p>
     <button class="sec" id="camBtn">카메라로 바로 찍기</button>
     <input type="file" id="pickInput" accept="image/*" multiple hidden>
+    <input type="file" id="docInput" accept="image/*" multiple hidden>
     <input type="file" id="camInput" accept="image/*" capture="environment" hidden>
 
     <div id="upWrap" style="display:none">
@@ -126,6 +146,13 @@ button{font-family:inherit;cursor:pointer}
         <p>아직 올린 사진이 없습니다.</p>
       </div>
     </div>
+  </div>
+
+  <!-- 크게 보기 — 격자를 누르면 저장된 축소본(1600px) 원판을 보여준다 -->
+  <div id="viewer" onclick="closeViewer()">
+    <div class="bar"><span id="viewerInfo"></span><button onclick="closeViewer()">닫기 ✕</button></div>
+    <img id="viewerImg" alt="">
+    <div class="hint" id="viewerHint"></div>
   </div>
 
   <!-- 설정 -->
@@ -229,7 +256,9 @@ function initQueue() {
     queue = PuPhotoQueue.create({
       save: PuPhotoStore.savePhoto,   // 쓰기는 저장 층으로만 나간다
       idb: idbAdapter(dbi),
-      onChange: onQueueChange
+      onChange: onQueueChange,
+      /* 권한 거절은 재시도해도 소용없다 — "신호 약함"으로 오보고하지 않는다. */
+      isFatal: function (e) { return /permission[ _-]?denied/i.test((e && (e.message || e.code)) || ''); }
     });
     return queue.resume();            // 지난번에 못 올라간 사진을 이어서
   }).catch(function (e) {
@@ -243,26 +272,34 @@ window.addEventListener('online', function () { if (queue) queue.retryNow(); });
 
 /* ══════ 사진 고르기 → 축소 → 대기열 ══════ */
 $('pickBtn').onclick = function () { $('pickInput').click(); };
+$('docBtn').onclick = function () { $('docInput').click(); };
 $('camBtn').onclick = function () { $('camInput').click(); };
-$('pickInput').onchange = function () { addFiles(this.files); this.value = ''; };
-$('camInput').onchange = function () { addFiles(this.files); this.value = ''; };
+$('pickInput').onchange = function () { addFiles(this.files, false); this.value = ''; };
+$('docInput').onchange = function () { addFiles(this.files, true); this.value = ''; };
+$('camInput').onchange = function () { addFiles(this.files, false); this.value = ''; };
 
-async function addFiles(fileList) {
+/* isDoc: 「서류 고르기」로 넣은 것 — 글씨를 읽어야 하므로 더 크고 좋은 화질로 담는다. */
+async function addFiles(fileList, isDoc) {
   const files = Array.from(fileList || []);
   const u = firebase.auth().currentUser;
   if (!files.length || !u || !queue) return;
+  const spec = PuPhotoStore.uploadSpec(isDoc); // 크기 기준은 저장 층이 정한다
   for (const f of files) {
     try {
-      /* 촬영 시각: EXIF → 파일 날짜 → 지금. 판단은 저장 층의 함수가 한다. */
-      const buf = await f.arrayBuffer();
-      const takenAt = PuPhotoStore.pickTakenAt(PuPhotoStore.exifTakenAt(buf), f.lastModified, Date.now());
-      /* 긴 변 1600px 축소본과 240px 미리보기 — 카메라 원본은 클라우드에 안 올라간다. */
-      const full = await shrink(f, 1600);
-      const thumb = await shrink(f, 240);
+      /* 촬영 시각: EXIF → 파일 날짜 → 지금. 판단은 저장 층의 함수가 한다.
+         EXIF를 못 읽는 상황(오래된 브라우저 등)이어도 올리기는 계속돼야 하므로
+         읽기 실패는 null 로 넘긴다 — 그러면 파일 날짜로 정해진다. */
+      const buf = await readFileBytes(f).catch(() => null);
+      const takenAt = PuPhotoStore.pickTakenAt(buf ? PuPhotoStore.exifTakenAt(buf) : null, f.lastModified, Date.now());
+      /* 축소본(서류 2560px·사진 1600px)과 격자용 미리보기 —
+         카메라 원본은 클라우드에 안 올라간다. */
+      const full = await shrink(f, spec.maxEdge, spec.quality);
+      const thumb = await shrink(f, spec.thumbEdge, 0.85);
       await queue.enqueue({
         id: PuPhotoStore.newId(),
         name: f.name || '사진',
         takenAt: takenAt,
+        kind: isDoc ? 'doc' : 'photo',
         full: full.dataUrl,
         thumb: thumb.dataUrl,
         meta: {
@@ -270,6 +307,7 @@ async function addFiles(fileList) {
           upAt: Date.now(),
           by: u.uid,
           byName: u.displayName || u.email || '',
+          kind: isDoc ? 'doc' : 'photo',
           w: full.w, h: full.h,
           size: full.dataUrl.length
         }
@@ -281,26 +319,63 @@ async function addFiles(fileList) {
   }
 }
 
+/* 파일 내용을 바이트로 읽는다. 최신 방법(arrayBuffer)이 없는 브라우저는
+   FileReader 로 돌아간다 — 폰의 앱 내장 브라우저가 종종 그렇다. */
+function readFileBytes(f) {
+  if (f.arrayBuffer) return f.arrayBuffer();
+  return new Promise(function (res, rej) {
+    const r = new FileReader();
+    r.onload = function () { res(r.result); };
+    r.onerror = function () { rej(r.error || new Error('파일을 읽지 못했습니다')); };
+    r.readAsArrayBuffer(f);
+  });
+}
+
+/* 사진을 그림 객체로 연다. 빠른 길(createImageBitmap)이 안 되는 브라우저는
+   <img> 로 여는 예비 통로로 돌아간다 — 어느 쪽이든 canvas 에 그릴 수 있다. */
+function decodeImage(file) {
+  if (window.createImageBitmap) {
+    return createImageBitmap(file, { imageOrientation: 'from-image' })
+      .catch(function () { return createImageBitmap(file); }) // 옵션을 모르는 브라우저
+      .catch(function () { return decodeViaImg(file); });     // 함수는 있는데 파일을 거부
+  }
+  return decodeViaImg(file);
+}
+
+function decodeViaImg(file) {
+  return new Promise(function (res, rej) {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = function () { URL.revokeObjectURL(url); res(img); };
+    img.onerror = function () {
+      URL.revokeObjectURL(url);
+      rej(new Error('이 형식의 사진은 열 수 없습니다 (지원: JPG·PNG 등 일반 사진)'));
+    };
+    img.src = url;
+  });
+}
+
 /* 사진을 긴 변 maxEdge 로 줄여 JPEG dataURL 로 만든다.
-   회전 정보(EXIF orientation)는 브라우저가 그림을 읽을 때 반영한다. */
-function shrink(file, maxEdge) {
-  return createImageBitmap(file, { imageOrientation: 'from-image' })
-    .catch(function () { return createImageBitmap(file); }) // 옵션을 모르는 브라우저
-    .then(function (bmp) {
-      const scale = Math.min(1, maxEdge / Math.max(bmp.width, bmp.height));
-      const w = Math.max(1, Math.round(bmp.width * scale));
-      const h = Math.max(1, Math.round(bmp.height * scale));
-      const c = document.createElement('canvas');
-      c.width = w; c.height = h;
-      c.getContext('2d').drawImage(bmp, 0, 0, w, h);
-      if (bmp.close) bmp.close();
-      return { dataUrl: c.toDataURL('image/jpeg', 0.85), w: w, h: h };
-    });
+   회전 정보(EXIF orientation)는 브라우저가 그림을 읽을 때 반영한다.
+   quality: 서류는 글씨를 읽어야 해서 사진보다 높다(저장 층의 uploadSpec 참고). */
+function shrink(file, maxEdge, quality) {
+  return decodeImage(file).then(function (im) {
+    const iw = im.naturalWidth || im.width;
+    const ih = im.naturalHeight || im.height;
+    const scale = Math.min(1, maxEdge / Math.max(iw, ih));
+    const w = Math.max(1, Math.round(iw * scale));
+    const h = Math.max(1, Math.round(ih * scale));
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(im, 0, 0, w, h);
+    if (im.close) im.close();
+    return { dataUrl: c.toDataURL('image/jpeg', quality || 0.85), w: w, h: h };
+  });
 }
 
 /* ══════ 올리는 중 목록 ══════ */
 const UP_HIDE_MS = 3000; // 완료된 줄이 목록에서 내려가기까지
-const UP_STATE = { wait: '대기', up: '올리는 중', retry: '신호 약함 — 자동 재시도', done: '완료 ✓' };
+const UP_STATE = { wait: '대기', up: '올리는 중', retry: '신호 약함 — 자동 재시도', fail: '막힘 — 권한이 없습니다', done: '완료 ✓' };
 let upJobs = [];
 
 function onQueueChange(list) {
@@ -321,11 +396,16 @@ function renderUp() {
   const now = Date.now();
   const rows = upJobs.filter(j => j.state !== 'done' || !j._hideAt || j._hideAt > now);
   $('upWrap').style.display = rows.length ? 'block' : 'none';
-  $('upList').innerHTML = rows.map(j =>
-    '<div class="uprow s-' + esc(j.state) + '">' +
-    '<span class="nm">' + esc(j.name || '사진') + '</span>' +
-    '<span class="st">' + (UP_STATE[j.state] || esc(j.state)) + '</span></div>'
-  ).join('');
+  $('upList').innerHTML = rows.map(j => {
+    /* 원인(클라우드가 준 오류문)은 진단에 필요하니 재시도·막힘 줄에 함께 보여준다.
+       이것이 없으면 "왜 안 되나"를 아무도 알 수 없다(2026-08-03 실사용 보고). */
+    const cause = (j.state === 'retry' || j.state === 'fail') && j.error
+      ? '<span class="er">원인: ' + esc(j.error) + '</span>' : '';
+    const tag = j.kind === 'doc' ? '<span class="tag">서류</span>' : '';
+    return '<div class="uprow s-' + esc(j.state) + '">' +
+      '<span class="nm">' + esc(j.name || '사진') + tag + '</span>' +
+      '<span class="st">' + (UP_STATE[j.state] || esc(j.state)) + '</span>' + cause + '</div>';
+  }).join('');
 }
 
 /* ══════ 날짜별 격자 ══════
@@ -383,7 +463,9 @@ function renderGrid() {
       lastDay = k;
     }
     const t = safeSrc(it.thumb);
-    html += '<div class="cell" data-id="' + esc(it.id) + '">' + (t ? '<img src="' + t + '" alt="">' : '') + '</div>';
+    const tag = it.meta.kind === 'doc' ? '<span class="tag">서류</span>' : '';
+    html += '<div class="cell" data-id="' + esc(it.id) + '">' +
+      (t ? '<img src="' + t + '" alt="">' : '') + tag + '</div>';
   });
   html += '</div>';
   el.innerHTML = html;
@@ -400,10 +482,50 @@ function fillThumbs() {
         const src = safeSrc(t);
         if (!src) return;
         const cell = document.querySelector('.cell[data-id="' + it.id + '"]');
-        if (cell) cell.innerHTML = '<img src="' + src + '" alt="">';
+        if (!cell) return;
+        /* 칸 내용을 통째로 바꾸면 '서류' 딱지가 지워진다 — 그림만 끼워 넣는다. */
+        const img = document.createElement('img');
+        img.src = src;
+        img.alt = '';
+        cell.insertBefore(img, cell.firstChild);
       }).catch(function () { /* 한 장 실패해도 다음 장으로 */ });
     });
   });
+}
+
+/* ══════ 크게 보기 ══════
+   격자의 흐릿함은 목록용 초소형 미리보기(240px)라서다. 실제 화질 판단은
+   여기서 한다 — 저장된 축소본(1600px) 원판을 받아 보여준다. */
+$('grid').addEventListener('click', function (ev) {
+  const cell = ev.target.closest ? ev.target.closest('.cell') : null;
+  if (cell) openViewer(cell.getAttribute('data-id'));
+});
+
+function openViewer(id) {
+  const it = gridItems.find(x => x.id === id);
+  const v = $('viewer');
+  v.style.display = 'flex';
+  $('viewerInfo').textContent = it
+    ? (it.meta.kind === 'doc' ? '서류 · ' : '') +
+      (it.meta.takenAt ? dayLabel(it.meta.takenAt) + ' · ' : '') + (it.meta.byName || '')
+    : '';
+  $('viewerHint').textContent = '불러오는 중…';
+  const img = $('viewerImg');
+  img.src = safeSrc(it && it.thumb) || ''; // 우선 미리보기를 깔고
+  PuPhotoStore.loadFull(gridYear, id).then(function (full) { // 원판으로 바꾼다
+    const src = safeSrc(full);
+    if (src && v.style.display !== 'none') {
+      img.src = src;
+      $('viewerHint').textContent = (it && it.meta.w ? '저장본 ' + it.meta.w + '×' + it.meta.h + ' · ' : '') + '누르면 닫힘';
+    } else if (!src) {
+      $('viewerHint').textContent = '사진 본문을 불러오지 못했습니다';
+    }
+  }).catch(function () { $('viewerHint').textContent = '사진 본문을 불러오지 못했습니다'; });
+}
+
+function closeViewer() {
+  $('viewer').style.display = 'none';
+  $('viewerImg').src = '';
 }
 
 /* ══════ 설정 ══════ */
