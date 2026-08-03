@@ -1,0 +1,128 @@
+name: Representative-approved AI development
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: autodev-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    if: github.event.label.name == 'ai-ready' && github.actor == 'nabaho'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      ISSUE_TITLE: ${{ github.event.issue.title }}
+    steps:
+      - name: Check out verified main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Mark issue as in development
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create ai-coding --color 1d76db --description "AI development is running" --force
+          gh label create ai-failed --color b60205 --description "AI development failed" --force
+          gh label create ai-generated --color 7057ff --description "AI-generated pull request" --force
+          gh label create auto-deploy-approved --color 0e8a16 --description "Merge after required checks pass" --force
+          gh issue edit "$ISSUE_NUMBER" --add-label ai-coding
+          gh issue comment "$ISSUE_NUMBER" --body "자동개발을 시작했습니다. 변경은 별도 브랜치에서 작성되며 전체검사 전에는 배포되지 않습니다."
+
+      - name: Fetch protected task package
+        id: task
+        env:
+          AUTOMATION_ENDPOINT: ${{ secrets.AUTOMATION_ENDPOINT }}
+          AUTOMATION_BRIDGE_KEY: ${{ secrets.AUTOMATION_BRIDGE_KEY }}
+        run: node scripts/fetch-autodev-task.mjs
+
+      - name: Create isolated development branch
+        run: git switch -c "ai/issue-${ISSUE_NUMBER}-${{ github.run_id }}"
+
+      - name: Run Codex implementation
+        id: codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: .codex-task.md
+          codex-args: ${{ steps.task.outputs.codex_args }}
+          sandbox: workspace-write
+          safety-strategy: drop-sudo
+          allow-users: nabaho
+          output-file: codex-output.md
+
+      - name: Remove protected task material
+        if: always()
+        run: rm -rf .codex-input .codex-task.md codex-output.md
+
+      - name: Check whether Codex made changes
+        id: changed
+        shell: bash
+        run: |
+          if git diff --quiet && [ -z "$(git status --porcelain)" ]; then
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run all automated checks
+        if: steps.changed.outputs.value == 'true'
+        run: node --test tests/*.test.js
+
+      - name: Commit and push proposed changes
+        if: steps.changed.outputs.value == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "pureunall-autodev"
+          git config user.email "actions@users.noreply.github.com"
+          gh auth setup-git
+          git add --all
+          git commit -m "자동개발: 이슈 #${ISSUE_NUMBER} 개선안"
+          git push --set-upstream origin HEAD
+
+      - name: Open pull request
+        if: steps.changed.outputs.value == 'true'
+        id: pr
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_URL=$(gh pr create --base main --head "$(git branch --show-current)" --title "자동개발: $ISSUE_TITLE" --body "Closes #${ISSUE_NUMBER}\n\n총괄관리자가 포털에서 승인한 자동개발 변경안입니다. 전체 자동검사 통과 전에는 병합되지 않습니다.")
+          PR_NUMBER=${PR_URL##*/}
+          gh pr edit "$PR_NUMBER" --add-label ai-generated
+          if [ "${{ steps.task.outputs.risk }}" = "low" ] && [ "${{ steps.task.outputs.auto_deploy }}" = "true" ]; then
+            gh pr edit "$PR_NUMBER" --add-label auto-deploy-approved
+          fi
+          gh issue comment "$ISSUE_NUMBER" --body "변경안(PR) 검토와 자동검사가 시작됐습니다: $PR_URL\n\n<!-- pu-autodev-pr:$PR_NUMBER -->"
+
+      - name: Report no-change result
+        if: steps.changed.outputs.value != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue comment "$ISSUE_NUMBER" --body "자동개발이 안전하게 적용할 변경을 만들지 못했습니다. 대표 개발 지시를 보완한 뒤 다시 검토해 주세요."
+
+      - name: Mark failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue edit "$ISSUE_NUMBER" --add-label ai-failed || true
+          gh issue comment "$ISSUE_NUMBER" --body "자동개발 또는 검사에 실패하여 병합과 배포를 차단했습니다. 실행 기록을 확인해 주세요." || true

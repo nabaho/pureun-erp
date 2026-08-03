@@ -1,0 +1,34 @@
+name: Merge approved automatic development
+
+on:
+  workflow_run:
+    workflows: [Quality Gate]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  merge:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERIFIED_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Merge only representative-approved low-risk PR
+        shell: bash
+        run: |
+          SHA="$VERIFIED_SHA"
+          PR=$(gh api -H "Accept: application/vnd.github+json" "/repos/${{ github.repository }}/commits/$SHA/pulls" --jq '[.[] | select(.state=="open")][0]')
+          [ "$PR" != "null" ] || exit 0
+          NUMBER=$(jq -r '.number' <<<"$PR")
+          HEAD=$(jq -r '.head.ref' <<<"$PR")
+          [[ "$HEAD" == ai/issue-* || "$HEAD" == rollback/issue-* ]] || exit 0
+          LABELS=$(gh pr view "$NUMBER" --json labels --jq '.labels[].name')
+          grep -qx 'ai-generated' <<<"$LABELS" || grep -qx 'rollback-approved' <<<"$LABELS" || exit 0
+          grep -qx 'auto-deploy-approved' <<<"$LABELS" || exit 0
+          gh pr merge "$NUMBER" --merge --delete-branch

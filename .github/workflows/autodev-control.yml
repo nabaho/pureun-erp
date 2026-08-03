@@ -1,0 +1,85 @@
+name: Representative deployment and rollback control
+
+on:
+  repository_dispatch:
+    types: [approve-deploy, rollback-release]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  checks: read
+
+concurrency:
+  group: representative-control
+  cancel-in-progress: false
+
+jobs:
+  approve-deploy:
+    if: github.event.action == 'approve-deploy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      APPROVED_PR_NUMBER: ${{ github.event.client_payload.pr_number }}
+    steps:
+      - name: Verify and merge approved PR
+        shell: bash
+        run: |
+          PR="$APPROVED_PR_NUMBER"
+          [[ "$PR" =~ ^[0-9]+$ ]] || { echo "Invalid PR number"; exit 1; }
+          HEAD=$(gh pr view "$PR" --repo "${{ github.repository }}" --json headRefName --jq '.headRefName')
+          [[ "$HEAD" == ai/issue-* ]] || { echo "Not an automatic-development PR"; exit 1; }
+          LABELS=$(gh pr view "$PR" --repo "${{ github.repository }}" --json labels --jq '.labels[].name')
+          grep -qx 'ai-generated' <<<"$LABELS" || { echo "Missing ai-generated label"; exit 1; }
+          gh pr checks "$PR" --repo "${{ github.repository }}" --watch --interval 10
+          gh pr merge "$PR" --repo "${{ github.repository }}" --merge --delete-branch
+
+  rollback:
+    if: github.event.action == 'rollback-release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ROLLBACK_SHA: ${{ github.event.client_payload.merge_commit_sha }}
+      ROLLBACK_ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
+    steps:
+      - name: Check out main history
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Validate rollback target and create revert
+        shell: bash
+        run: |
+          SHA="$ROLLBACK_SHA"
+          [[ "$SHA" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "Invalid rollback SHA"; exit 1; }
+          [[ "$ROLLBACK_ISSUE_NUMBER" =~ ^[0-9]+$ ]] || { echo "Invalid issue number"; exit 1; }
+          git merge-base --is-ancestor "$SHA" origin/main || { echo "Rollback target is not in main"; exit 1; }
+          PARENTS=$(git show -s --format='%P' "$SHA" | wc -w)
+          [ "$PARENTS" -ge 2 ] || { echo "Rollback target must be a merged PR"; exit 1; }
+          git switch -c "rollback/issue-${ROLLBACK_ISSUE_NUMBER}-${{ github.run_id }}"
+          git config user.name "pureunall-rollback"
+          git config user.email "actions@users.noreply.github.com"
+          git revert -m 1 --no-edit "$SHA"
+          node --test tests/*.test.js
+          gh auth setup-git
+          git push --set-upstream origin HEAD
+
+      - name: Open tested rollback PR
+        shell: bash
+        run: |
+          PR_URL=$(gh pr create --base main --head "$(git branch --show-current)" --title "복귀: 건의 #${ROLLBACK_ISSUE_NUMBER} 배포 되돌리기" --body "총괄관리자가 포털에서 비밀번호와 1회용 복귀 키를 확인한 요청입니다. 자동검사 통과 후 직전 코드를 복원합니다.")
+          PR_NUMBER=${PR_URL##*/}
+          gh label create rollback-approved --color d93f0b --description "Representative-approved rollback" --force
+          gh label create auto-deploy-approved --color 0e8a16 --description "Merge after required checks pass" --force
+          gh pr edit "$PR_NUMBER" --add-label rollback-approved --add-label auto-deploy-approved
+          gh issue comment "$ROLLBACK_ISSUE_NUMBER" --body "복귀 변경안의 자동검사가 시작됐습니다: $PR_URL\n\n<!-- pu-autodev-rollback-pr:$PR_NUMBER -->"
