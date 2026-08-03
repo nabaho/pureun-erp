@@ -105,10 +105,25 @@ ok('mergeCompanyContacts 가 있다', typeof merge === 'function');
   eq('기존 번호는 그대로', r.contacts[0].phone, '010-1111-2222');
   eq('새 번호는 새 줄에', r.contacts[1].phone, '010-9999-8888');
 })();
+/* 2026-08-03 규칙 바뀜 — 대표 지적으로 되돌렸다.
+   종전: 이름이 같아도 한쪽 전화가 비면 '딴 사람일 수 있다'며 새 줄로 넣었다.
+   실제로는 전화가 아직 안 적힌 같은 사람이라, 똑같은 이름이 두 줄로 붙었다
+   (가야엔지니어링 최상윤 대표가 #1·#2 로 중복).
+   지금: 새 줄을 만들지 않고 그냥 넘긴다. 있는 줄을 고치지도 않는다
+   (대표 결정 '없는 사람만 추가, 있는 사람은 그대로'를 둘 다 지킨다). */
 (function () {
   const ex = [{ name: '김철수', phone: '', position: '인사팀장', isPrimary: true }];
   const r = merge(ex, [{ name: '김철수', phone: '010-1111-2222' }]);
-  eq('한쪽 전화가 비어 있어도 따로 넣는다 (조용히 합치지 않는다)', [r.added, r.contacts.length], [1, 2]);
+  eq('★ 이름 같고 한쪽 전화가 비면 같은 사람 — 줄을 늘리지 않는다',
+    [r.added, r.contacts.length], [0, 1]);
+  eq('있는 줄을 고치지도 않는다 (전화가 여전히 빈칸)', r.contacts[0].phone, '');
+  eq('한 건 넘긴 것으로 센다', r.skipped, 1);
+  // 반대 방향도 같다 — 들어온 쪽에 전화가 없을 때
+  const r2 = merge([{ name: '김철수', phone: '010-1111-2222', isPrimary: true }], [{ name: '김철수', phone: '' }]);
+  eq('들어온 쪽 전화가 비어도 줄을 늘리지 않는다', [r2.added, r2.contacts.length], [0, 1]);
+  // 둘 다 전화가 있고 서로 다르면 여전히 딴 사람으로 본다
+  const r3 = merge([{ name: '김철수', phone: '010-1111-2222', isPrimary: true }], [{ name: '김철수', phone: '010-9999-8888' }]);
+  eq('둘 다 전화가 있고 다르면 딴 사람 (이 규칙은 그대로)', [r3.added, r3.contacts.length], [1, 2]);
 })();
 
 // 빈 줄은 담지 않는다

@@ -395,5 +395,75 @@ ok('★ 사건 카드가 팩스를 빈값으로 덮지 않는다',
 
 /* 화면에 그 칸이 실제로 있는가 */
 ok('계약모달에 대표자 전화 칸이 있다', /f\.company\.ceoPhone/.test(pe) && pe.indexOf("fld('대표자 전화'") > 0);
+
+/* ══════════════════════════════════════════════════════════════
+   추가: 담당자가 두 줄로 늘어나던 문제 · 팝업에 기본 데이터 다 보이기
+   가야엔지니어링 최상윤 대표가 #1(동일인)·#2(명함첩) 로 중복됐다.
+   동일인 줄은 회사정보(대표자·연락처)에서 자동으로 채워지므로 그 줄이 곧 대표다.
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── 동일인 줄이 있으면 대표 명함을 또 붙이지 않는가 ── */
+(function () {
+  const n = NS(cutPe('async function fillCompanyImagesFromPucards(row){', '\n  }'));
+  ok('★ 동일인 줄이 있는지 본다', /_hasCeoRow=\(cur\.contacts\|\|\[\]\)\.some\(function\(c\)\{returnc&&c\.sameAsCeo;\}\)/.test(n));
+  ok('★ 동일인 줄이 있으면 대표 이름의 명함을 걸러낸다',
+     /if\(!_hasCeoRow\|\|!_ceoNm\)returntrue;/.test(n)
+     && /!==_ceoNm/.test(n));
+  ok('대표가 아닌 사람은 그대로 들어온다 (걸러내기가 대표 이름에만 걸린다)',
+     /_ceoNm=String\(row\.ceo\|\|''\)/.test(n));
+})();
+
+/* ── 동일인 줄은 무엇으로 채워지는가 (그래서 중복이었다) ── */
+(function () {
+  const blk = NS(cutPe('// 사업자 동일인 자동 동기화', '\n  }, ['));
+  ok('동일인 줄 이름 = 회사정보 대표자',   /name:f\.company\.ceo\|\|''/.test(blk));
+  ok('동일인 줄 사업장전화 = 대표 전화',   /bizPhone:f\.company\.phone\|\|''/.test(blk));
+  ok('★ 동일인 줄 개인전화 = 대표자 전화', /phone:f\.company\.ceoPhone\|\|''/.test(blk));
+  ok('동일인 줄 이메일 = 대표 이메일',     /email:f\.company\.email\|\|''/.test(blk));
+})();
+
+/* ── 합치기: 전화 빈 쪽은 같은 사람 ── */
+(function () {
+  const ctx7 = { console, Math, Object, String, window: {} };
+  vm.createContext(ctx7);
+  vm.runInContext(cutPe('function contactRole(c){', '\n'), ctx7);
+  vm.runInContext(cutPe('function _normPersonKey(c){', '\ntry {'), ctx7);
+  const M = ctx7.mergeCompanyContacts;
+  // 실제 사고 재현: 동일인 줄이 아직 비어 있는 상태에서 대표 명함이 들어온다
+  const r1 = M([{ name:'최상윤', role:'대표자', phone:'', bizPhone:'', isPrimary:true, sameAsCeo:true }],
+               [{ name:'최상윤', position:'대표이사', phone:'010-5425-1241', bizPhone:'041-664-1241' }]);
+  eq('★ 줄이 늘지 않는다', [r1.added, r1.contacts.length], [0, 1]);
+  eq('있는 줄을 고치지도 않는다', r1.contacts[0].phone, '');
+  // 이름이 다르면 정상 추가
+  const r2 = M([{ name:'최상윤', phone:'', isPrimary:true }], [{ name:'박대리', phone:'010-3333-4444' }]);
+  eq('다른 사람은 추가된다', [r2.added, r2.contacts.length], [1, 2]);
+  // 둘 다 전화가 있고 다르면 딴 사람 (기존 규칙 유지)
+  const r3 = M([{ name:'최상윤', phone:'010-1111-1111', isPrimary:true }],
+               [{ name:'최상윤', phone:'010-5425-1241' }]);
+  eq('둘 다 전화 있고 다르면 딴 사람', [r3.added, r3.contacts.length], [1, 2]);
+  // 이름·전화가 똑같으면 당연히 넘긴다
+  const r4 = M([{ name:'최상윤', phone:'010-5425-1241', isPrimary:true }],
+               [{ name:'최상윤', phone:'010-5425-1241' }]);
+  eq('완전히 같으면 넘긴다', [r4.added, r4.contacts.length], [0, 1]);
+  // 공백·대소문자 차이는 같은 사람
+  const r5 = M([{ name:'최 상 윤', phone:'', isPrimary:true }], [{ name:'최상윤', phone:'010-5425-1241' }]);
+  eq('이름의 공백 차이는 같은 사람', [r5.added, r5.contacts.length], [0, 1]);
+})();
+
+/* ── 팝업에 기본 데이터가 다 보이는가 ── */
+(function () {
+  const cp = cutPe('function PucardsCompanyPickerModal(props){', '\nfunction ');
+  ok('★ 대표 전화를 보여 준다',   cp.indexOf("['☎', r.phone]") > 0);
+  ok('★ 팩스를 보여 준다',        cp.indexOf("['📠', r.fax]") > 0 || /\ud83d\udcf0', r\.fax/.test(cp));
+  ok('★ 대표자 전화를 보여 준다', /r\.ceoPhone\]/.test(cp));
+  ok('★ 이메일을 보여 준다',      /r\.ceoEmail\]/.test(cp));
+  ok('주소도 보여 준다',          /r\.address\]/.test(cp));
+  ok('업태·종목도 보여 준다',     /r\.bizType, r\.bizCategory/.test(cp));
+  ok('★ 없는 항목을 알려 준다',   cp.indexOf('명함첩에 없음: ') > 0);
+  ['사업자번호','대표 전화','팩스','대표자 전화','이메일','주소'].forEach(function (k) {
+    ok("없는 항목 목록에 '" + k + "' 가 있다", cp.indexOf("'" + k + "'") > 0);
+  });
+  ok('빈 값은 줄에 안 넣는다', /\.filter\(function\(x\)\{ return x\[1\]; \}\)/.test(cp));
+})();
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');
 process.exit(fail ? 1 : 0);
