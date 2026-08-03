@@ -138,9 +138,24 @@ test('촬영 시각은 저장 층의 우선순위 함수로 정한다', () => {
   assert.match(app, /PuPhotoStore\.exifTakenAt\(/);
 });
 
-test('격자는 미리보기만 받는다 — 본문은 부르지 않는다', () => {
+test('격자는 미리보기만 받는다 — 본문은 크게 보기에서만', () => {
   assert.match(app, /PuPhotoStore\.loadThumb\(/);
-  assert.ok(!app.includes('loadFull('), '격자(B단계 화면)가 사진 본문까지 받고 있습니다');
+  // 본문(1600px)은 크게 보기(openViewer) 안에서만 한 장씩 받는다.
+  // 격자 채우기(fillThumbs)나 목록(renderGrid)이 본문을 받으면
+  // 사진 수십 장에 수십 MB를 내려받게 된다.
+  const uses = [...app.matchAll(/PuPhotoStore\.loadFull\(/g)];
+  assert.equal(uses.length, 1, '본문 받기가 한 곳(크게 보기)에만 있어야 합니다');
+  const viewerBody = app.match(/function openViewer\([\s\S]*?\nfunction closeViewer/);
+  assert.ok(viewerBody && viewerBody[0].includes('PuPhotoStore.loadFull('),
+    '본문 받기가 크게 보기 밖에 있습니다');
+});
+
+test('크게 보기가 있다 — 격자를 누르면 저장본 원판을 보여준다', () => {
+  // 실사용 보고(2026-08-03): 격자의 240px 미리보기를 보고 "화질이 나쁘다"고
+  // 판단하게 된다. 저장된 1600px 원판을 볼 길이 있어야 한다.
+  assert.match(app, /id="viewer"/);
+  assert.match(app, /function openViewer\(/);
+  assert.match(app, /function closeViewer\(/);
 });
 
 test('격자에 넣는 미리보기는 data:image 로 시작하는 것만 허용한다', () => {
