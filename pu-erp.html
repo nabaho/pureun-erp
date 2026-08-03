@@ -9190,6 +9190,38 @@ function EmptyPage(props){
 // 의뢰 → 계약 체결 → 사건/컨설팅/기금/기타사업으로 이관
 // 계약유형이 4가지 모듈 중 어디로 이관될지 결정
 
+// ── 사무관리 공용 문구 ──
+// 계약·업체·사건·컨설팅/기금/기타에서 똑같이 쓰는 안내문은 여기 한 곳에서만 고친다.
+var PAYER_PH = '업체명과 다르게 입금될 때만 입력 (예: 모회사·협회·대표자 개인)';
+var MONTH_ONLY_TIP = '이번 달 신규만 표시';
+var SUBMGR_ADD_OPT = '+ 부담당 추가...';
+var REASSIGN_SUFFIX = ' - 재배정 필요)';   // ' 🚫(' + 상태라벨 + 이 문구
+var ADDR_NONE_MSG = '⚠️ 주소 정보 없음';
+var ADDR_OK_MSG = '✓ 주소 입력됨: ';
+var RESET_VIEW_TIP = '첫 화면 기본값으로 (상태·유형·담당·정렬·검색 초기화)';
+// 업체관리 툴바 — 모바일/PC 두 줄에서 같은 설명을 쓴다
+var CO_MERGE_TIP = '같은 이름으로 따로 등록된 업체를 한 쌍씩 확인하고 합칩니다';
+var CO_SUBOFFICE_FIX_TIP = '합치면서 사무대행 표시가 딸려오지 않은 업체를 사무대행 탭에 되살립니다';
+var CO_LINK_TIP = '이름으로만 이어진 계약·사건·컨설팅·기금·기타에 업체 ID를 붙입니다';
+var CO_VAT_ALL_TIP = '월 자문료를 모두 부가세 포함으로 지정합니다 (미확정은 금액 변화 없음)';
+
+// ── 필터 경고 배너 (공용) ──
+// 계약·사건·컨설팅/기금/기타 목록에서 같이 쓴다.
+// hidden = 필터 때문에 화면에서 빠진 건수, filters = 켜져 있는 필터 이름들, onReset = 전체 해제
+function FilterWarnBanner(props){
+  var filters = props.filters || [];
+  return h('div', { style:{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap',
+    background:'#fffbeb', border:'1px solid #fcd34d', borderRadius:'8px', padding:'9px 12px', margin:'0 0 8px' } },
+    h('span', { style:{ fontSize:'12.5px', fontWeight:800, color:'#92400e' } },
+      '⚠️ 필터 적용 중 — ' + props.hidden + '건이 화면에서 숨겨졌습니다'),
+    filters.length > 0 && h('span', { style:{ fontSize:'11.5px', color:'#a16207' } }, '(' + filters.join(' · ') + ')'),
+    h('div', { style:{ flex:1 } }),
+    h('button', { onClick:props.onReset,
+      style:{ background:'#f59e0b', color:'#fff', border:'none', padding:'6px 14px', borderRadius:'6px', fontSize:'12px', fontWeight:700, cursor:'pointer', flexShrink:0 } },
+      '✕ 필터 해제 (전체 보기)')
+  );
+}
+
 var CONTRACT_STATUS = [
   { v:'consult',  label:'상담접수', color:'#dc2626', bg:'#fef2f2', icon:'📞', headBg:'#fee2e2', headFg:'#991b1b' },
   { v:'review',   label:'계약협의', color:'#d97706', bg:'#fef3c7', icon:'🛡️', headBg:'#fef3c7', headFg:'#854d0e' },
@@ -10477,9 +10509,15 @@ function ContractModal(props){
               var _stLbl = c.status==='transferred' ? '이관완료 → 종료관리'
                 : (c.permanentArchived||c.closedDate) ? '보관됨 → 종료관리'
                 : '진행중 → 계약관리';
-              return '• ' + (c.contractNo||'-') + ' [' + cKinds + '] · ' + (u?u.name:'-') + ' · ' + _stLbl;
+              // 계약일을 붙인다 — 언제 한 계약인지 없으면 지금 것과 구분이 안 된다
+              var _cd = (c.signDate || c.startDate || c.createdAt || '').slice(0,10);
+              return '• ' + (c.contractNo||'-') + ' [' + cKinds + '] · ' + (u?u.name:'-')
+                + ' · ' + (_cd || '계약일 없음') + ' · ' + _stLbl;
             }).join('\n');
-            if(!(await popConfirm('⚠️ 동일 사업장에 같은 종류 계약이 ' + dupCs.length + '건 있습니다. (아래에 위치 표시)\n\n' + lst + '\n\n새로 만들지 말고 기존 계약을 찾아 이관하는 것을 권장합니다.\n그래도 계속 저장하시겠습니까?\n(기업정보 탭의 체크박스로 사전 확인 후 저장하면 이 창이 뜨지 않습니다)'))){
+            if(!(await popConfirm('⚠️ 같은 사업장에 같은 종류 계약이 ' + dupCs.length + '건 있습니다.\n\n'
+                + '[기존]\n' + lst
+                + '\n\n[지금 작성 중]\n• ' + (f.contractNo||'(번호 미정)') + ' · ' + (f.signDate||'계약일 미입력')
+                + '\n\n새로 만들기보다 기존 계약을 찾아 이관하는 편이 낫습니다. 그래도 저장할까요?'))){
               setTab('company');
               return;
             }
@@ -10758,12 +10796,7 @@ function ContractModal(props){
     
 
     tabBody = h('div', null,
-      // 의뢰인 유형 안내 (토글은 탭 줄 위 상단 고정으로 이동)
-      h('div', { style:{ fontSize:'10.5px', color:'#9a3412', background:'#fff7ed', border:'1px solid #fed7aa', borderRadius:'6px', padding:'7px 10px', marginBottom:'12px', lineHeight:1.5 } },
-        clientType === 'company' ? '· 회사가 의뢰인 (자문/컨설팅 일반 케이스)'
-          : clientType === 'worker' ? '· 근로자가 의뢰인 (해고·체불·산재 등 노동 사건). 회사 정보는 피신청인/사용자로 자동 처리'
-          : '· 회사 + 근로자 동시 등록 (특수 케이스)'),
-
+      // 의뢰인 유형 안내는 탭 줄 위 상단 고정 밴드(ctDesc) 하나만 쓴다 (중복 설명 제거)
       // 의뢰인(근로자) 섹션 - clientType='worker' 또는 'both'일 때만 표시 (토글 박스 직후 노출)
       showWorker && h('div', { style:{ display:'flex', alignItems:'center', borderBottom:'1px solid #e5e7eb', paddingBottom:'4px', marginTop:'10px', marginBottom:'8px' } },
         h('span', { style:{ fontSize:'12.5px', fontWeight:700, color:'#1e293b', flex:1, display:'flex', alignItems:'center', gap:'6px' } },
@@ -10791,7 +10824,7 @@ function ContractModal(props){
       ),
       showWorker && ((f.company.workers || []).length === 0
         ? h('div', { style:{ color:'#94a3b8', fontSize:'11.5px', textAlign:'center', padding:'14px', border:'1px dashed #e5e7eb', borderRadius:'4px', marginBottom:'8px' } },
-            '의뢰인이 근로자인 경우 [+ 근로자 추가] 클릭 (부당해고·체불 등)')
+            '+ 근로자 추가를 눌러 추가')
         : (f.company.workers || []).map(function(wk, idx){
             var wkLeft = !!(wk.leaveDate && String(wk.leaveDate).trim());
             if (hideRetiredWk && wkLeft) return null;   // 재직자만 보기 (원본 index는 유지)
@@ -10901,7 +10934,7 @@ function ContractModal(props){
                     showToast('✓ 엑셀 일괄 입력: '+filled+'개 필드 채워짐');
                   },
                   onChange:function(e){ setWorker(idx, 'name', e.target.value); },
-                  placeholder:'이름 * (엑셀 행 붙여넣기 시 자동 분리)',
+                  placeholder:'이름 *',
                   style:{ padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12px', fontFamily:'inherit' } }),
                 h('input', { type:'text', value:wk.rrn || '',
                   onChange:function(e){ setWorker(idx, 'rrn', e.target.value); },
@@ -10924,14 +10957,14 @@ function ContractModal(props){
                   h('button', { type:'button',
                     onClick:function(){
                       openAddressSearch(function(r){
-                        if(!r || (!r.zipcode && !r.address)){ showToast('⚠️ 주소 정보 없음'); return; }
+                        if(!r || (!r.zipcode && !r.address)){ showToast(ADDR_NONE_MSG); return; }
                         setF(function(prev){
                           var workers = (prev.company.workers || []).slice();
                           if(!workers[idx]) return prev;
                           workers[idx] = Object.assign({}, workers[idx], { address: r.address });
                           return Object.assign({}, prev, { company: Object.assign({}, prev.company, { workers: workers }) });
                         });
-                        showToast('✓ 주소 입력됨: ' + r.address);
+                        showToast(ADDR_OK_MSG + r.address);
                       });
                     },
                     style:{ padding:'6px 10px', background:'#1e40af', color:'#fff', border:'none', borderRadius:'4px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } }, '🔍')
@@ -11041,7 +11074,7 @@ function ContractModal(props){
               setAutoResults(res.slice(0,6));
             }
           },
-          placeholder:'회사명 입력 또는 엑셀 행 붙여넣기 (탭 구분 자동 분리)',
+          placeholder:'회사명 또는 엑셀 한 행 붙여넣기',
           style:{ width:'100%', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12px', boxSizing:'border-box' } }),
         autoResults.length > 0 && h('div', {
           'data-autocomplete':'1',
@@ -11165,11 +11198,20 @@ function ContractModal(props){
         var icon = isNewKind ? '✅' : '⚠️';
         var title = isNewKind
           ? '같은 사업장, 다른 종류 계약 — 신규 진행 정상'
-          : '⚠️ 동일 사업장 ' + dupContracts.length + '건 — 같은 종류 중복 확인 필요';
+          : '같은 사업장에 기존 계약 ' + dupContracts.length + '건 — 중복 확인 필요';
+        // 지금 작성 중인 계약이 무엇인지 함께 보여준다 — 아래 목록이 '기존' 것임을
+        // 알 수 있어야 '지금 저장하는 건지 옛것인지' 헷갈리지 않는다
+        var myNo = f.contractNo || '(번호 미정)';
+        var myDate = f.signDate || '';
 
         return h('div', { style:{ padding:'10px 12px', background:bgColor, border:'1px solid '+borderColor, borderRadius:'6px', margin:'4px 0 10px' } },
-          h('div', { style:{ fontWeight:700, color:titleColor, fontSize:'12px', marginBottom:'6px' } },
+          h('div', { style:{ fontWeight:700, color:titleColor, fontSize:'12px', marginBottom:'4px' } },
             icon + ' ' + title),
+          h('div', { style:{ fontSize:'10.5px', color:'#475569', background:'#fff', border:'1px dashed '+borderColor,
+              borderRadius:'5px', padding:'3px 8px', marginBottom:'6px' } },
+            '지금 작성 중 ', h('b', { style:{ fontFamily:'monospace' } }, myNo),
+            myDate ? h('span', null, ' · 계약일 ', h('b', null, myDate)) : null,
+            h('span', { style:{ color:'#94a3b8' } }, ' — 아래는 이미 저장된 계약입니다')),
           // 기존 계약 목록 (종류 강조)
           dupContracts.slice(0, 4).map(function(c){
             var u = users.find(function(x){ return x.sid === (c.createdBySid || c.managerMain); });
@@ -11195,8 +11237,16 @@ function ContractModal(props){
                 isClosed && h('span', { style:{ marginLeft:'6px', background:'#f1f5f9', color:'#6b7280', fontSize:'10px', padding:'1px 6px', borderRadius:'8px', fontWeight:600, border:'1px solid #d1d5db' } }, closedLabel)
               ),
               h('span', { style:{ display:'flex', alignItems:'center', gap:'6px' } },
-                h('span', { style:{ fontFamily:'monospace', fontSize:'10px', color:'#6b7280', marginRight:'4px' } },
-                  (c.startDate || c.createdAt || '').slice(0,10)),
+                // 계약일 — signDate 가 실제 계약일이고 항상 채워진다.
+                // 종전에는 startDate(자문·컨설팅용, 기본 빈값)를 먼저 봐서 대부분 빈칸이었다
+                (function(){
+                  var d = (c.signDate || c.startDate || c.createdAt || '').slice(0,10);
+                  return h('span', { style:{ fontSize:'10.5px', color: d ? '#1e293b' : '#b45309',
+                      background: d ? '#fff' : '#fffbeb', border:'1px solid '+(d ? '#cbd5e1' : '#fde68a'),
+                      borderRadius:'5px', padding:'1px 6px', fontWeight:700, whiteSpace:'nowrap' },
+                    title: d ? '이 계약의 계약일' : '이 계약에 계약일이 없습니다 — 이력에서 확인하세요' },
+                    d ? ('계약일 ' + d) : '계약일 없음');
+                })(),
                 h('button', { onClick:function(){ showHistory(c); },
                   style:{ fontSize:'10.5px', padding:'3px 8px', background:'#fff', color:'#475569', border:'1px solid #94a3b8', borderRadius:'4px', cursor:'pointer', fontWeight:600, whiteSpace:'nowrap' },
                   title:'이 계약의 시작/종료/종류 등 이력 보기' }, '🔍 이력'),
@@ -11247,7 +11297,7 @@ function ContractModal(props){
         // 주소 검색 공용 실행 (버튼 클릭·입력칸 Enter 모두 이걸로)
         function doAddrSearch(){
           openAddressSearch(function(r){
-            if(!r || (!r.zipcode && !r.address)){ showToast('⚠️ 주소 정보 없음'); return; }
+            if(!r || (!r.zipcode && !r.address)){ showToast(ADDR_NONE_MSG); return; }
             setF(function(prev){
               var nextC = Object.assign({}, prev.company, { zipcode: r.zipcode, address: r.address });
               return Object.assign({}, prev, {
@@ -11256,7 +11306,7 @@ function ContractModal(props){
                 bizNo: nextC.bizNo || prev.bizNo
               });
             });
-            showToast('✓ 주소 입력됨: ' + (r.zipcode||'') + ' ' + r.address);
+            showToast(ADDR_OK_MSG + (r.zipcode||'') + ' ' + r.address);
           });
         }
         // 주소칸에서 Enter → 저장(useEnterSave)이 아니라 주소 검색을 연다
@@ -11347,13 +11397,13 @@ function ContractModal(props){
           ),
           // 명함첩에서 가져온 담당자: 출처·시점 표시 + 수동 새로고침 (자동연동 안 됨)
           ct.pcId && h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap', fontSize:'10px', color:'#1d4ed8', background:'#eff6ff', border:'1px solid #dbeafe', borderRadius:'4px', padding:'4px 8px', marginBottom:'6px' } },
-            h('span', null, '📇 명함첩에서 ' + (ct.pcAt || '') + ' 가져옴 · 자동연동 안 됨(퇴사·승진 시 아래 버튼으로 직접 갱신)'),
+            h('span', null, '📇 명함첩에서 ' + (ct.pcAt || '') + ' 가져옴 · 자동연동 안 됨'),
             h('div', { style:{ flex:1 } }),
             h('button', { type:'button', onClick:function(){ refreshContactFromPucards(idx); },
               style:{ background:'#dbeafe', color:'#1e40af', border:'1px solid #bfdbfe', borderRadius:'4px', padding:'2px 8px', fontSize:'10px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
               '🔄 명함첩 최신정보로 새로고침')),
           locked && h('div', { style:{ fontSize:'10.5px', color:'#1e40af', marginBottom:'6px', background:'#eff6ff', padding:'4px 8px', borderRadius:'4px' } },
-            '🔒 회사정보(대표자/연락처)와 동기화 중 - 회사정보 수정 시 자동 반영. 해제하려면 위 체크박스 해제.'),
+            '🔒 회사정보(대표자/연락처)와 동기화 중 - 회사정보 수정 시 자동 반영.'),
           // 명함첩에서 담당자 바로 찾기
           !locked && h('div', { style:{ marginBottom:'6px' } },
             h('button', { type:'button', onClick:function(){ setPcPickIdx(idx); },
@@ -11607,7 +11657,7 @@ function ContractModal(props){
       // 입금자(예금주) — 통장 적요가 업체명과 다를 때 입력하면 거래내역 자동매칭이 이 이름으로도 대조한다
       fld('입금자(예금주)',
         h('input', { type:'text', value:f.payerName || '', onChange:setSimple('payerName'),
-          placeholder:'업체명과 다르게 입금될 때만 입력 (예: 모회사·협회·대표자 개인)' })),
+          placeholder:PAYER_PH })),
       fld('계약일',
         h(KoreanDatePicker, { value:f.signDate, onChange:setSimple('signDate') })),
       // 계약기간 (자문/컨설팅/기금/기타에서 주로 사용)
@@ -11679,7 +11729,7 @@ function ContractModal(props){
       h('div', { style:{ background:'#eff6ff', border:'1px solid #bfdbfe', borderRadius:'4px', padding:'8px 12px', fontSize:'11.5px', color:'#1e40af', marginBottom:'12px' } },
         '💡 환경설정 → 인사관리기준 → 사용자 관리에 등록된 ',
         h('strong', null, '노무사·관리자 ' + lawyers.length + '명'),
-        '이 표시됩니다. (사용자 추가/이름 변경 시 자동 반영)'
+        '이 표시됩니다.'
       ),
       // 주담당 — 저장값이 SID 또는 이름 어느 쪽이어도 이름으로 해석해 표시
       (function(){
@@ -11702,7 +11752,7 @@ function ContractModal(props){
                 }
               }
               return optList.map(function(u){
-                var label = u.name + (u._statusLabel ? ' 🚫('+u._statusLabel+' - 재배정 필요)' : '');
+                var label = u.name + (u._statusLabel ? ' 🚫('+u._statusLabel+REASSIGN_SUFFIX : '');
                 return h('option', { key:u.sid, value:u.name, style: u._statusLabel ? { color:'#dc2626' } : {} }, label);
               });
             })()
@@ -11714,7 +11764,7 @@ function ContractModal(props){
           h('select', { value:'',
             onChange:function(e){ if(e.target.value){ toggleSub(e.target.value); e.target.value=''; } },
             style:{ width:'100%', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'12.5px', fontFamily:'inherit', cursor:'pointer' } },
-            h('option', { value:'' }, '+ 부담당 추가...'),
+            h('option', { value:'' }, SUBMGR_ADD_OPT),
             // 담당 가능한 직원만 표시 (주담당·이미 부담당 제외)
             assignable.filter(function(u){
               return u.name !== f.managerMain && (f.managerSubs||[]).indexOf(u.name) < 0;
@@ -11915,7 +11965,7 @@ function ContractModal(props){
                     setManualSeq(nextS);
                     setManualNo(combineNo(y, nextS));
                   },
-                  title:'년도 선택 (클릭하여 펼침). 선택하면 그 연도의 다음 번호가 자동 입력됩니다',
+                  title:'선택하면 그 연도의 다음 번호가 자동 입력됩니다',
                   style:Object.assign({}, inputBaseS, { width:'100px', cursor:'pointer', appearance:'auto', paddingRight:'18px' }) },
                   yearOptions.map(function(y){
                     return h('option', { key:y, value:y }, y+'년');
@@ -11959,7 +12009,6 @@ function ContractModal(props){
                 setManualNo(combineNo(startY, startS));
               }
             },
-            title:'과거 데이터 입력 시 계약번호를 직접 지정할 수 있습니다',
             style:{ fontSize:'10.5px', padding:'2px 8px', background:editNo?(dupHit?'#dc2626':'#1e40af'):'#f1f5f9', color:editNo?'#fff':'#475569', border:'1px solid '+(editNo?(dupHit?'#dc2626':'#1e40af'):'#cbd5e1'), borderRadius:'4px', cursor:'pointer' } },
             editNo ? (dupHit ? '🚫 중복' : '✅ 완료') : '✏️ 수동 입력'),
             editNo && dupHit
@@ -11987,7 +12036,7 @@ function ContractModal(props){
           : '🏢+👤 회사와 근로자를 함께 등록 — 양측 정보를 모두 입력합니다. 예) 노사 양쪽 관련 특수 케이스';
         return h('div', { style:{ margin: M?'5px 10px 0':'12px 16px 0', background:'#fff7ed', border:'1.5px solid #fb923c', borderRadius:'8px', padding: M?'5px 7px':'8px 10px' } },
           h('div', { style:{ fontSize: M?'9.5px':'11px', fontWeight:800, color:'#9a3412', marginBottom: M?'3px':'6px' } },
-            '⚖️ 의뢰인 유형 — 먼저 선택하세요 (버튼에 마우스를 올리면 설명)'),
+            '⚖️ 의뢰인 유형 — 먼저 선택하세요'),
           h('div', { style:{ display:'flex', gap: M?'4px':'6px' } },
             ctBar('company', '🏢 회사(의뢰인)',
               '【회사가 의뢰인일 때】\n회사정보(회사명·대표자·사업자번호·주소)를 입력합니다.\n\n예) 취업규칙 작성, 인사노무 자문, 컨설팅,\n임금체계 설계, 평가보상 등 회사 의뢰 업무'),
@@ -13231,7 +13280,7 @@ function ContractManagement(){
             border:'1px solid #bfdbfe', borderRadius:'5px', cursor:'pointer',
             fontSize: window.innerWidth<=768?'11px':'11.5px', fontWeight:700, whiteSpace:'nowrap' } }, '❓ 사용법'),
         h('button', { key:'mo', onClick:function(){setMonthOnly(!monthOnly);},
-        title:'이번 달 신규만 표시',
+        title:MONTH_ONLY_TIP,
         style:{ padding: window.innerWidth<=768?'5px 9px':'6px 12px',
           background: monthOnly?'#1e40af':'#fff', color: monthOnly?'#fff':'#475569',
           border:'1px solid '+(monthOnly?'#1e40af':'#cbd5e1'), borderRadius:'5px', cursor:'pointer',
@@ -13328,18 +13377,8 @@ function ContractManagement(){
       var scoped = contracts.filter(function(c){ return isActiveContract(c); }).length;
       var hidden = scoped - filtered.length;
       if(af.length === 0 || hidden <= 0) return null;
-      return h('div', { style:{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap',
-        background:'#fffbeb', border:'1px solid #fcd34d', borderRadius:'8px', padding:'9px 12px', margin:'0 0 8px' } },
-        h('span', { style:{ fontSize:'12.5px', fontWeight:800, color:'#92400e' } },
-          '⚠️ 필터 적용 중 — ' + hidden + '건이 화면에서 숨겨졌습니다'),
-        h('span', { style:{ fontSize:'11.5px', color:'#a16207' } }, '(' + af.join(' · ') + ')'),
-        h('span', { style:{ fontSize:'11px', color:'#a16207' } }, '· 전체 ' + scoped + '건 중 ' + filtered.length + '건 표시'),
-        h('div', { style:{ flex:1 } }),
-        h('button', { onClick:function(){ setMgrFilter('all'); setSubMgrFilter('all'); setQuery(''); try { setMonthOnly(false); } catch(_){} },
-          title:'모든 필터를 해제하고 전체를 표시합니다',
-          style:{ background:'#f59e0b', color:'#fff', border:'none', padding:'6px 14px', borderRadius:'6px', fontSize:'12px', fontWeight:700, cursor:'pointer', flexShrink:0 } },
-          '✕ 필터 해제 (전체 보기)')
-      );
+      return h(FilterWarnBanner, { hidden: hidden, filters: af,
+        onReset: function(){ setMgrFilter('all'); setSubMgrFilter('all'); setQuery(''); try { setMonthOnly(false); } catch(_){} } });
     })(),
     h('div', { style:{ display:'grid', gridTemplateColumns: window.innerWidth<=768?'1fr':(focusCol==='all'?'repeat(3, 1fr)':'1fr'), gap:'8px' } },
       CONTRACT_STATUS.filter(function(s){ return focusCol==='all' || s.v===focusCol; }).map(function(s){
@@ -13374,7 +13413,6 @@ function ContractManagement(){
           // 헤더 (클릭 시 단독 보기 토글)
           h('div', {
             onClick:function(){ setFocusCol(isFocused ? 'all' : s.v); },
-            title: isFocused ? '클릭하면 3컬럼 보기로 돌아갑니다' : '클릭하면 이 단계만 단독으로 봅니다',
             style:{ background:s.headBg, color:s.headFg, padding:'7px 10px', borderRadius:'8px 8px 0 0', display:'flex', alignItems:'center', gap:'8px', fontWeight:700, fontSize:'13px', cursor:'pointer', userSelect:'none', boxShadow:'0 2px 6px rgba(0,0,0,0.06)' } },
             h('span', null, s.icon),
             h('span', null, s.label),
@@ -15425,7 +15463,7 @@ function CompanyManagement(){
         { label:'⏸ 계약 중단', value:companies.filter(function(c){return !!c.suspended;}).length+'개', bg:'#fff7ed', fg:'#9a3412', color:'#f97316', border:'#fed7aa' }
       ],
       extra: h('button', { onClick:function(){setMonthOnly(!monthOnly);},
-        title:'이번 달 신규만 표시',
+        title:MONTH_ONLY_TIP,
         style:{ padding:'6px 12px', background: monthOnly?'#1e40af':'#fff', color: monthOnly?'#fff':'#475569',
           border:'1px solid '+(monthOnly?'#1e40af':'#cbd5e1'), borderRadius:'5px', cursor:'pointer', fontSize:'11.5px', fontWeight:600 } },
         monthOnly ? '✓ 이번 달만' : '📅 이번 달만')
@@ -15451,22 +15489,22 @@ function CompanyManagement(){
               borderRadius:'8px', fontSize:'13px', fontWeight:700, cursor:'pointer', flexShrink:0 } }, '📥'),
           // 이름이 겹치는 업체가 있을 때만 나타난다. 다 정리하면 사라진다.
           dupCount > 0 && h('button', { onClick:function(){ setMergeOpen(true); },
-            className:'erp-tip', 'data-tip':'같은 이름으로 따로 등록된 업체를 한 쌍씩 확인하고 합칩니다',
+            className:'erp-tip', 'data-tip':CO_MERGE_TIP,
             style:{ padding:'9px 12px', background:'#fff7ed', color:'#9a3412', border:'1px solid #fdba74',
               borderRadius:'8px', fontSize:'12px', fontWeight:700, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' } },
             '🔀 중복 정리 ' + dupCount),
           lostSub > 0 && h('button', { onClick:doRepairSub,
-            className:'erp-tip', 'data-tip':'합치면서 사무대행 표시가 딸려오지 않은 업체를 사무대행 탭에 되살립니다',
+            className:'erp-tip', 'data-tip':CO_SUBOFFICE_FIX_TIP,
             style:{ padding:'9px 12px', background:'#fef3c7', color:'#854d0e', border:'1px solid #fbbf24',
               borderRadius:'8px', fontSize:'12px', fontWeight:700, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' } },
             '🏛️ 사무대행 복구 ' + lostSub),
           linkCount > 0 && h('button', { onClick:function(){ setLinkOpen(true); },
-            className:'erp-tip', 'data-tip':'이름으로만 이어진 계약·사건·컨설팅·기금·기타에 업체 ID를 붙입니다',
+            className:'erp-tip', 'data-tip':CO_LINK_TIP,
             style:{ padding:'9px 12px', background:'#eff6ff', color:'#1d4ed8', border:'1px solid #93c5fd',
               borderRadius:'8px', fontSize:'12px', fontWeight:700, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' } },
             '🔗 업체 연결 ' + linkCount),
           vatPend.total > 0 && h('button', { onClick:doVatAll,
-            className:'erp-tip', 'data-tip':'월 자문료를 모두 부가세 포함으로 지정합니다 (미확정은 금액 변화 없음)',
+            className:'erp-tip', 'data-tip':CO_VAT_ALL_TIP,
             style:{ padding:'9px 12px', background:'#f5f3ff', color:'#5b21b6', border:'1px solid #c4b5fd',
               borderRadius:'8px', fontSize:'12px', fontWeight:700, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' } },
             '🧾 부가세 포함 일괄 ' + vatPend.total),
@@ -15631,28 +15669,28 @@ function CompanyManagement(){
       ),
       // 중복 정리 — 이름이 겹치는 업체가 있을 때만 나타난다. 다 정리하면 사라진다.
       dupCount > 0 && h('button', { onClick:function(){ setMergeOpen(true); },
-        className:'erp-tip', 'data-tip':'같은 이름으로 따로 등록된 업체를 한 쌍씩 확인하고 합칩니다',
+        className:'erp-tip', 'data-tip':CO_MERGE_TIP,
         style:{ padding:'6px 12px', fontSize:'11.5px', fontWeight:700, borderRadius:'5px',
           background:'#fff7ed', color:'#9a3412', border:'1px solid #fdba74', cursor:'pointer',
           whiteSpace:'nowrap', marginRight:'6px' } },
         '🔀 중복 정리 ' + dupCount),
       // 사무대행 표시 복구 — 합치면서 사무대행 탭에서 빠진 업체가 있을 때만 나타난다
       lostSub > 0 && h('button', { onClick:doRepairSub,
-        className:'erp-tip', 'data-tip':'합치면서 사무대행 표시가 딸려오지 않은 업체를 사무대행 탭에 되살립니다',
+        className:'erp-tip', 'data-tip':CO_SUBOFFICE_FIX_TIP,
         style:{ padding:'6px 12px', fontSize:'11.5px', fontWeight:700, borderRadius:'5px',
           background:'#fef3c7', color:'#854d0e', border:'1px solid #fbbf24', cursor:'pointer',
           whiteSpace:'nowrap', marginRight:'6px' } },
         '🏛️ 사무대행 표시 복구 ' + lostSub),
       // 업체 연결 — 이름으로만 이어진 건이 있을 때만 나타난다
       linkCount > 0 && h('button', { onClick:function(){ setLinkOpen(true); },
-        className:'erp-tip', 'data-tip':'이름으로만 이어진 계약·사건·컨설팅·기금·기타에 업체 ID를 붙입니다',
+        className:'erp-tip', 'data-tip':CO_LINK_TIP,
         style:{ padding:'6px 12px', fontSize:'11.5px', fontWeight:700, borderRadius:'5px',
           background:'#eff6ff', color:'#1d4ed8', border:'1px solid #93c5fd', cursor:'pointer',
           whiteSpace:'nowrap', marginRight:'6px' } },
         '🔗 업체 연결 ' + linkCount),
       // 월 자문료 부가세 = 포함 일괄 지정. 다 지정되면 사라진다.
       vatPend.total > 0 && h('button', { onClick:doVatAll,
-        className:'erp-tip', 'data-tip':'월 자문료를 모두 부가세 포함으로 지정합니다 (미확정은 금액 변화 없음)',
+        className:'erp-tip', 'data-tip':CO_VAT_ALL_TIP,
         style:{ padding:'6px 12px', fontSize:'11.5px', fontWeight:700, borderRadius:'5px',
           background:'#f5f3ff', color:'#5b21b6', border:'1px solid #c4b5fd', cursor:'pointer',
           whiteSpace:'nowrap', marginRight:'6px' } },
@@ -15799,7 +15837,7 @@ function CompanyManagement(){
                 h('th', { key:'hw3', style:{ background:'#f0fdfa', color:'#0f766e', fontSize:'10.5px' } }, '고용·산재'),
                 h('th', { key:'hw4', style:{ background:'#f0fdfa', color:'#0f766e', fontSize:'10.5px' } }, '건강'),
                 h('th', { key:'h7', className:'co-note-col' }, '특이사항'),
-                h('th', { key:'h7b', className:'ac erp-tip', 'data-tip':'난이도: 1 쉬움 ~ 5 어려움 (셀 더블클릭으로 입력)', style:{ width:'52px' } }, '난이도'),
+                h('th', { key:'h7b', className:'ac erp-tip', 'data-tip':'난이도: 1 쉬움 ~ 5 어려움', style:{ width:'52px' } }, '난이도'),
                 h('th', { key:'h8', className:'ac', style:{ width:'60px' } }, '관리')
               ]
             : [
@@ -15841,7 +15879,7 @@ function CompanyManagement(){
                 h('th', { key:'a16', className:'contract-only', onClick:function(){toggleSort('contractEndDate');}, style:{ cursor:'pointer', userSelect:'none' }, title:'계약별 고유 필드' }, '계약종료' + sortIcon('contractEndDate')),
                 h('th', { key:'a17', className:'contract-only ar hide-fee-col', onClick:function(){toggleSort('monthlyAdvisoryFee');}, style:{ cursor:'pointer', userSelect:'none' }, title:'계약별 고유 필드' }, '월자문료' + sortIcon('monthlyAdvisoryFee')),
                 h('th', { key:'a18', className:'co-note-col' }, '특이사항'),
-                h('th', { key:'a18b', className:'ac erp-tip', 'data-tip':'난이도: 1 쉬움 ~ 5 어려움 (셀 더블클릭으로 입력)', style:{ width:'52px' } }, '난이도'),
+                h('th', { key:'a18b', className:'ac erp-tip', 'data-tip':'난이도: 1 쉬움 ~ 5 어려움', style:{ width:'52px' } }, '난이도'),
                 h('th', { key:'a19', className:'ac', style:{ width:'60px' } }, '관리')
               ]
         )),
@@ -15920,7 +15958,7 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                     h('td', { style:{ background:'#f0fdfa' } }, wageCell(co, 'taxReply')),
                     h('td', { style:{ background:'#f0fdfa' } }, wageCell(co, 'eiSi')),
                     h('td', { style:{ background:'#f0fdfa' } }, wageCell(co, 'health')),
-                    h('td', { className:'co-note-col' }, renderCell(co, 'note', co.note, { tipTitle: (co.note ? co.note + '\n(더블클릭으로 편집)' : '더블클릭으로 편집') })),
+                    h('td', { className:'co-note-col' }, renderCell(co, 'note', co.note, { tipTitle: (co.note ? co.note : '더블클릭으로 편집') })),
                   h('td', { className:'ac' }, renderCell(co, 'difficulty', co.difficulty ? h('span',{style:{fontWeight:700,padding:'1px 7px',borderRadius:'8px',background:({1:'#dcfce7',2:'#ecfccb',3:'#fef9c3',4:'#ffedd5',5:'#fee2e2'})[co.difficulty]||'#f1f5f9',color:({1:'#166534',2:'#4d7c0f',3:'#854d0e',4:'#c2410c',5:'#b91c1c'})[co.difficulty]||'#475569'}}, co.difficulty) : '-', {select:[{v:'',label:'-'},{v:'1',label:'1 쉬움'},{v:'2',label:'2'},{v:'3',label:'3 보통'},{v:'4',label:'4'},{v:'5',label:'5 어려움'}]})),
                     h('td', { className:'ac' },
                       h(RowActions, { items:[
@@ -16072,7 +16110,7 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                   // 월자문료 [계약고유]
                   h('td', { className:'contract-only ar hide-fee-col' }, renderCell(co, 'monthlyAdvisoryFee', (co.monthlyAdvisoryFee||0).toLocaleString() + '원', { numeric:true, type:'text' })),
                   // 특이사항
-                  h('td', { className:'co-note-col' }, renderCell(co, 'note', co.note, { tipTitle: (co.note ? co.note + '\n(더블클릭으로 편집)' : '더블클릭으로 편집') })),
+                  h('td', { className:'co-note-col' }, renderCell(co, 'note', co.note, { tipTitle: (co.note ? co.note : '더블클릭으로 편집') })),
                   h('td', { className:'ac' }, renderCell(co, 'difficulty', co.difficulty ? h('span',{style:{fontWeight:700,padding:'1px 7px',borderRadius:'8px',background:({1:'#dcfce7',2:'#ecfccb',3:'#fef9c3',4:'#ffedd5',5:'#fee2e2'})[co.difficulty]||'#f1f5f9',color:({1:'#166534',2:'#4d7c0f',3:'#854d0e',4:'#c2410c',5:'#b91c1c'})[co.difficulty]||'#475569'}}, co.difficulty) : '-', {select:[{v:'',label:'-'},{v:'1',label:'1 쉬움'},{v:'2',label:'2'},{v:'3',label:'3 보통'},{v:'4',label:'4'},{v:'5',label:'5 어려움'}]})),
                   // 관리
                   h('td', { className:'ac' },
@@ -16472,9 +16510,9 @@ function CompanyEditModal(props){
               h('button', { type:'button',
                 onClick:function(){
                   openAddressSearch(function(r){
-                    if(!r || (!r.zipcode && !r.address)){ showToast('⚠️ 주소 정보 없음'); return; }
+                    if(!r || (!r.zipcode && !r.address)){ showToast(ADDR_NONE_MSG); return; }
                     setF(function(prev){ return Object.assign({}, prev, { zipcode: r.zipcode, address: r.address }); });
-                    showToast('✓ 주소 입력됨: ' + (r.zipcode||'') + ' ' + r.address);
+                    showToast(ADDR_OK_MSG + (r.zipcode||'') + ' ' + r.address);
                   });
                 },
                 style:{ padding:'7px 12px', background:'#1e40af', color:'#fff', border:'none', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' } }, '🔍 검색'),
@@ -16608,7 +16646,7 @@ function CompanyEditModal(props){
                     }
                   }
                   return optUsers.map(function(u){
-                    var label = u.name + (u._statusLabel ? ' 🚫('+u._statusLabel+' - 재배정 필요)' : '');
+                    var label = u.name + (u._statusLabel ? ' 🚫('+u._statusLabel+REASSIGN_SUFFIX : '');
                     return h('option', { key:u.sid, value:u.sid, style: u._statusLabel ? { color:'#dc2626' } : {} }, label);
                   });
                 })()
@@ -16630,7 +16668,7 @@ function CompanyEditModal(props){
             h('select', { value:'',
               onChange:function(e){ if(e.target.value){ toggleSub(e.target.value); } },
               style:{ width:'100%', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'12.5px' } },
-              h('option', { value:'' }, '+ 부담당 추가...'),
+              h('option', { value:'' }, SUBMGR_ADD_OPT),
               // 담당 가능한 직원만 표시 (주담당·이미 부담당 제외)
               assignable
                 .filter(function(u){ return u.sid !== f.managerMain && (f.managerSubs||[]).indexOf(u.sid) < 0; })
@@ -16959,8 +16997,7 @@ function CompanyDetailModal(props){
         // 회사 정보 (계약관리와 동기화)
         h('div', { style:{ marginBottom:'14px', background:'#eff6ff', border:'1px solid #bfdbfe', borderRadius:'6px', padding:'10px 12px' } },
           h('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px', borderBottom:'2px solid #1e40af', paddingBottom:'4px' } },
-            h('div', { style:{ fontSize:'12.5px', fontWeight:700, color:'#1e40af' } }, '🔄 회사정보 (계약관리 동기화)'),
-            h('span', { style:{ fontSize:'10px', color:'#1e40af', background:'#dbeafe', padding:'2px 8px', borderRadius:'10px', fontWeight:600 } }, '공유')
+            h('div', { style:{ fontSize:'12.5px', fontWeight:700, color:'#1e40af' } }, '🔄 회사정보 (계약관리 동기화)')
           ),
           h('div', { style:{ fontSize:'10.5px', color:'#1e40af', marginBottom:'6px', fontStyle:'italic' } }, '※ 이 정보는 변경 시 같은 사업자번호의 모든 계약에 자동 반영됩니다.'),
           row('업체명', co.name),
@@ -17459,7 +17496,7 @@ function CaseEditModal(props){
                   }
                 }
                 return optList.map(function(u){
-                  var label = u.name + (u._statusLabel ? ' 🚫('+u._statusLabel+' - 재배정 필요)' : '');
+                  var label = u.name + (u._statusLabel ? ' 🚫('+u._statusLabel+REASSIGN_SUFFIX : '');
                   return h('option', { key:u.sid, value:u.sid, style: u._statusLabel ? { color:'#dc2626' } : {} }, label);
                 });
               })()
@@ -17467,7 +17504,7 @@ function CaseEditModal(props){
           h('div', { className:'fld' }, h('label', null, '부담당'),
             h('div', null,
               h('select', { value:'', onChange:function(e){ if(e.target.value){ toggleSub(e.target.value); e.target.value=''; } }, style:inputS },
-                h('option', { value:'' }, '+ 부담당 추가...'),
+                h('option', { value:'' }, SUBMGR_ADD_OPT),
                 assignable.filter(function(u){ return u.sid !== f.managerMain && (f.managerSubs||[]).indexOf(u.sid)<0 && u.name !== f.managerMain && (f.managerSubs||[]).indexOf(u.name)<0; })
                        .map(function(u){ return h('option', { key:u.sid, value:u.sid||u.name }, u.name); })),
               (f.managerSubs||[]).length > 0 && h('div', { style:{ display:'flex', flexWrap:'wrap', gap:'4px', marginTop:'6px' } },
@@ -17503,7 +17540,7 @@ function CaseEditModal(props){
           // 입금자(예금주) — 통장 적요가 업체명과 다를 때 입력 (거래내역 자동매칭에 사용)
           h('div', { className:'fld' }, h('label', null, '입금자(예금주)'),
             h('input', { type:'text', value:f.payerName || '', onChange:setV('payerName'),
-              placeholder:'업체명과 다르게 입금될 때만 입력 (예: 모회사·협회·대표자 개인)',
+              placeholder:PAYER_PH,
               style:inputS })),
           // 착수금
           briefFld(f.brief, setV('brief'), 'case'),
@@ -18142,7 +18179,7 @@ function CaseManagement(props){
         { label:'💰 입금확정', value:totalConfirmedIncome.toLocaleString()+'원', bg:'#ede9fe', fg:'#1e40af', color:'#1e40af', border:'#ddd6fe' }
       ],
       extra: h('button', { onClick:function(){setMonthOnly(!monthOnly);},
-        title:'이번 달 신규만 표시',
+        title:MONTH_ONLY_TIP,
         style:{ padding:'6px 12px', background: monthOnly?'#1e40af':'#fff', color: monthOnly?'#fff':'#475569',
           border:'1px solid '+(monthOnly?'#1e40af':'#cbd5e1'), borderRadius:'5px', cursor:'pointer', fontSize:'11.5px', fontWeight:600 } },
         monthOnly ? '✓ 이번 달만' : '📅 이번 달만')
@@ -18265,18 +18302,8 @@ function CaseManagement(props){
         h(PageSizeSelector, { pageSize:casePageSize, setPageSize:setCasePageSize, setPage:pgCase.setPage })
       ),
     // [필터 경고 배너] 필터로 숨겨진 사건이 있으면 알림 + 원클릭 해제
-    (_activeFilters.length > 0 && (_scopedCount - filtered.length) > 0) && h('div', {
-      style:{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap',
-        background:'#fffbeb', border:'1px solid #fcd34d', borderRadius:'8px', padding:'9px 12px', margin:'0 0 8px' } },
-      h('span', { style:{ fontSize:'12.5px', fontWeight:800, color:'#92400e' } },
-        '⚠️ 필터 적용 중 — ' + (_scopedCount - filtered.length) + '건이 화면에서 숨겨졌습니다'),
-      h('span', { style:{ fontSize:'11.5px', color:'#a16207' } }, '(' + _activeFilters.join(' · ') + ')'),
-      h('span', { style:{ fontSize:'11px', color:'#a16207' } }, '· 전체 ' + _scopedCount + '건 중 ' + filtered.length + '건 표시'),
-      h('div', { style:{ flex:1 } }),
-      h('button', { onClick:_resetCaseFilters, title:'모든 필터를 해제하고 전체를 표시합니다',
-        style:{ background:'#f59e0b', color:'#fff', border:'none', padding:'6px 14px', borderRadius:'6px', fontSize:'12px', fontWeight:700, cursor:'pointer', flexShrink:0 } },
-        '✕ 필터 해제 (전체 보기)')
-    ),
+    (_activeFilters.length > 0 && (_scopedCount - filtered.length) > 0) &&
+      h(FilterWarnBanner, { hidden: _scopedCount - filtered.length, filters: _activeFilters, onReset: _resetCaseFilters }),
     (window.IS_MOBILE || window.innerWidth <= 768)
     ? h('div', { style:{ display:'flex', flexDirection:'column', gap:'6px' } },
         filtered.length === 0
@@ -47460,7 +47487,7 @@ function ProjectManagementShared(props){
         { label:'💰 계약금 합계', value:totalFee.toLocaleString()+'원', bg:props.bgColor, fg:props.fgColor, color:props.fgColor, border:props.iconColor+'80' }
       ],
       extra: h('button', { onClick:function(){setMonthOnly(!monthOnly);},
-        title:'이번 달 신규만 표시',
+        title:MONTH_ONLY_TIP,
         style:{ padding:'6px 12px', background: monthOnly?'#1e40af':'#fff', color: monthOnly?'#fff':'#475569',
           border:'1px solid '+(monthOnly?'#1e40af':'#cbd5e1'), borderRadius:'5px', cursor:'pointer', fontSize:'11.5px', fontWeight:600 } },
         monthOnly ? '✓ 이번 달만' : '📅 이번 달만')
@@ -47517,7 +47544,7 @@ function ProjectManagementShared(props){
             h('option',{value:'all'},'👥 부담당'),
             users.map(function(u){ return h('option',{key:u.sid,value:u.sid},u.name); })),
           props.sourceKind === 'consulting' && h('button', { onClick:resetProjView,
-            title:'첫 화면 기본값으로 (상태·유형·담당·정렬·검색 초기화)',
+            title:RESET_VIEW_TIP,
             style:{ padding:'5px 10px', border:'1px solid #93c5fd', borderRadius:'20px', fontSize:'11px', flexShrink:0, background:'#eff6ff', color:'#1d4ed8', fontWeight:700, cursor:'pointer' } }, '↺ 기본값')
         )
       )
@@ -47555,7 +47582,7 @@ function ProjectManagementShared(props){
         users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); })),
       h('div', { style:{ flex:1 } }),
       props.sourceKind === 'consulting' && h('button', { onClick:resetProjView,
-        title:'첫 화면 기본값으로 (상태·유형·담당·정렬·검색 초기화)',
+        title:RESET_VIEW_TIP,
         style:{ background:'#eff6ff', color:'#1d4ed8', border:'1px solid #93c5fd', padding:'7px 12px', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer' } }, '↺ 기본값으로'),
       h('button', { onClick:function(){setGapModal(true);},
         title:'시리즈별 번호 결번 검사 + 번호 재정렬',
@@ -47586,21 +47613,8 @@ function ProjectManagementShared(props){
       h(PageSizeSelector, { pageSize:projPageSize, setPageSize:setProjPageSize, setPage:pgConsult.setPage })
     ),
     // [필터 경고 배너] 필터로 숨겨진 건이 있으면 눈에 띄게 알림 + 원클릭 해제
-    (_activeFilters.length > 0 && (_scopedCount - filtered.length) > 0) && h('div', {
-      style:{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap',
-        background:'#fffbeb', border:'1px solid #fcd34d', borderRadius:'8px',
-        padding:'9px 12px', margin:'0 0 8px' } },
-      h('span', { style:{ fontSize:'12.5px', fontWeight:800, color:'#92400e' } },
-        '⚠️ 필터 적용 중 — ' + (_scopedCount - filtered.length) + '건이 화면에서 숨겨졌습니다'),
-      h('span', { style:{ fontSize:'11.5px', color:'#a16207' } }, '(' + _activeFilters.join(' · ') + ')'),
-      h('span', { style:{ fontSize:'11px', color:'#a16207' } }, '· 전체 ' + _scopedCount + '건 중 ' + filtered.length + '건 표시'),
-      h('div', { style:{ flex:1 } }),
-      h('button', { onClick:resetProjView,
-        title:'모든 필터를 해제하고 전체를 표시합니다',
-        style:{ background:'#f59e0b', color:'#fff', border:'none', padding:'6px 14px',
-          borderRadius:'6px', fontSize:'12px', fontWeight:700, cursor:'pointer', flexShrink:0 } },
-        '✕ 필터 해제 (전체 보기)')
-    ),
+    (_activeFilters.length > 0 && (_scopedCount - filtered.length) > 0) &&
+      h(FilterWarnBanner, { hidden: _scopedCount - filtered.length, filters: _activeFilters, onReset: resetProjView }),
     // 테이블 — 모바일 카드뷰 / PC 테이블
     window.innerWidth <= 768
     ? h('div', { style:{ display:'flex', flexDirection:'column', gap:'6px' } },
@@ -48161,9 +48175,9 @@ function ProjectEditModal(props){
               h('button', { type:'button',
                 onClick:function(){
                   openAddressSearch(function(r){
-                    if(!r || (!r.zipcode && !r.address)){ showToast('⚠️ 주소 정보 없음'); return; }
+                    if(!r || (!r.zipcode && !r.address)){ showToast(ADDR_NONE_MSG); return; }
                     setF(function(prev){ return Object.assign({}, prev, { zipcode: r.zipcode, address: r.address }); });
-                    showToast('✓ 주소 입력됨: ' + (r.zipcode||'') + ' ' + r.address);
+                    showToast(ADDR_OK_MSG + (r.zipcode||'') + ' ' + r.address);
                   });
                 },
                 style:{ padding:'7px 12px', background:'#1e40af', color:'#fff', border:'none', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' } }, '🔍 검색'),
@@ -48195,8 +48209,7 @@ function ProjectEditModal(props){
               props.types.map(function(t){ return h('option', { key:t.code, value:t.code }, t.name); }))),
           h('div', { className:'fld' }, h('label', null, '관리번호'),
             h('div', { style:{ padding:'7px 10px', background:'#f1f5f9', border:'1px solid #e2e8f0', borderRadius:'4px', fontFamily:'monospace', fontSize:'12.5px', fontWeight:700, color:'#1e293b' } },
-              f.no || '-',
-              h('span', { style:{ fontSize:'10.5px', color:'#94a3b8', marginLeft:'8px', fontFamily:'inherit', fontWeight:400 } }, '(유형 변경 시 자동 갱신)')
+              f.no || '-'
             )),
           h('div', { className:'fld' }, h('label', null, '주담당'),
             h('select', { value:f.managerMain || '', onChange:set('managerMain') },
@@ -48213,7 +48226,7 @@ function ProjectEditModal(props){
                     }
                   }
                   return assignable.map(function(u){
-                    var label = u.name + (u._statusLabel ? ' 🚫('+u._statusLabel+' - 재배정 필요)' : '');
+                    var label = u.name + (u._statusLabel ? ' 🚫('+u._statusLabel+REASSIGN_SUFFIX : '');
                     return h('option', { key:u.sid, value:u.sid, style: u._statusLabel ? { color:'#dc2626' } : {} }, label);
                   });
                 })()
@@ -48223,7 +48236,7 @@ function ProjectEditModal(props){
               h('select', { value:'',
                 onChange:function(e){ if(e.target.value){ toggleSub(e.target.value); e.target.value=''; } },
                 style:{ width:'100%', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'12.5px', fontFamily:'inherit', cursor:'pointer' } },
-                h('option', { value:'' }, '+ 부담당 추가...'),
+                h('option', { value:'' }, SUBMGR_ADD_OPT),
                 (props.users||[]).filter(function(u){
                   return u.sid !== f.managerMain && (f.managerSubs||[]).indexOf(u.sid) < 0 && getUserAssignStatus(u.sid).assignable;
                 }).map(function(u){
@@ -48261,7 +48274,7 @@ function ProjectEditModal(props){
           // 입금자(예금주) — 통장 적요가 업체명과 다를 때 입력 (거래내역 자동매칭에 사용)
           h('div', { className:'fld' }, h('label', null, '입금자(예금주)'),
             h('input', { type:'text', value:f.payerName || '', onChange:set('payerName'),
-              placeholder:'업체명과 다르게 입금될 때만 입력 (예: 모회사·협회·대표자 개인)' })),
+              placeholder:PAYER_PH })),
           h('div', { className:'fld' }, h('label', null, '계약금'),
             h('div', { style:{ display:'flex', alignItems:'center', gap:'8px' } },
               h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
