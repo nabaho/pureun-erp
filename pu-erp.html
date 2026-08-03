@@ -9426,13 +9426,17 @@ function mergeCompanyContacts(existing, incoming){
     // 대표 표시를 빼앗지 않는다. 기존이 아예 비어 있을 때만 들고 온 값을 그대로 쓴다.
     var pr = hasPrimary ? false : (had === 0 ? (first ? !!c.isPrimary : false) : (first ? true : false));
     if(pr) hasPrimary = true;
-    var n = { name: String(c.name || '').trim(), position: contactRole(c),
+    // 직책은 position·role 두 칸에 같이 넣는다 — 화면마다 읽는 칸이 다르다
+    var _role = contactRole(c);
+    var n = { name: String(c.name || '').trim(), position: _role, role: _role,
       phone: String(c.phone || '').trim(), email: String(c.email || '').trim(), isPrimary: pr };
     // 명함첩 출처는 남긴다. 명함 사진(cardImg)·동일인 표시는 계약 화면 것이라 옮기지 않는다.
     if(c.pcId) n.pcId = c.pcId;
     if(c.pcAt) n.pcAt = c.pcAt;
     if(c.bizPhone) n.bizPhone = String(c.bizPhone).trim();
     if(c.fax) n.fax = String(c.fax).trim();
+    if(c.dept) n.dept = String(c.dept).trim();       // 부서 — 명함에 있는데 여태 버려졌다
+    if(c.addr) n.addr = String(c.addr).trim();       // 주소
     out.push(n); added++;
   });
   return { contacts: out, added: added, skipped: skipped };
@@ -9659,10 +9663,29 @@ function pcIsCeoTitle(ti){
   return PC_CEO_TITLE.test(t);
 }
 // 명함 한 장 → 담당자 레코드
-function pcToContact(x, primary){
-  return { id:'pc'+Math.random().toString(36).slice(2,9), name:x.n||'', role:x.ti||'',
-    phone:x.m||'', bizPhone:x.t||x.ct||'', email:x.e||'', isPrimary:!!primary, pcFrom:'명함첩' };
+/* 명함첩 색인 한 줄 → 담당자 하나. 명함첩에서 가져오는 모든 화면이 이 함수만 쓴다.
+   색인(pu-cards.html idxRecord)이 담고 있는 것:
+     n 이름 · c 회사 · ti 직책 · d 부서 · m 휴대폰 · t 전화 · ct 회사전화
+     e 이메일 · ad 주소 · (사업자등록증이면) bz 사업자번호 · ceo 대표자
+   ★ 직책을 position·role 두 칸에 같이 넣는다. 화면마다 읽는 칸이 다르다 —
+     업체관리·컨설팅·기금·기타 편집기는 position, 계약·사건 카드는 role.
+     한 칸만 채우면 "담당자는 들어왔는데 직책만 빈칸"이 된다. */
+function pcToContact(x, primary, pcId){
+  x = x || {};
+  var title = x.ti || '';
+  return { id:'pc'+Math.random().toString(36).slice(2,9),
+    name:x.n||'',
+    position:title, role:title,          // 두 칸 모두 — 어느 편집기에서든 보이게
+    dept:x.d||'',                        // 부서 (색인에 있는데 여태 버려졌다)
+    phone:x.m||'',                       // 휴대폰
+    bizPhone:x.t||x.ct||'',              // 사업장 전화
+    email:x.e||'',
+    addr:x.ad||'',                       // 주소
+    isPrimary:!!primary,
+    pcId:pcId || x.id || '', pcFrom:'명함첩',
+    pcAt:(new Date()).toISOString().slice(0,10) };
 }
+window.pcToContact = pcToContact;
 // 명함첩 색인을 회사 단위로 묶는다 — 회사 자동완성(pcCompanyRows)과 '명함첩에서 회사 찾기' 모달이 함께 쓴다.
 // 키는 회사명 정규화값(pcNormCo), 값은 { name, biz, bizId, cards[], cardIds[] }
 function pcGroupCompanies(){
@@ -9808,11 +9831,19 @@ function searchPucardsPeople(query){
   if(!query || query.replace(/\s/g,'').length < 2) return [];
   var idx = window.pucardsIdx || {};
   var qn = query.toLowerCase().replace(/[\s\-㈜()]|주식회사/g, '');
+  var qd = query.replace(/\D/g,'');                       // 전화·번호로도 찾게
   var out = []; var ids = Object.keys(idx);
   for(var i=0;i<ids.length && out.length<60;i++){
     var r = idx[ids[i]]; if(!r || r.k==='biz') continue;   // 사람(명함)만
-    var hay = ((r.n||'')+(r.c||'')+(r.ti||'')).toLowerCase().replace(/[\s\-㈜()]|주식회사/g, '');
-    if(hay.indexOf(qn) >= 0) out.push(Object.assign({ id:ids[i] }, r));
+    // 이름·회사·직책에 부서·이메일까지 본다 (종전엔 앞 셋만 봐서 메일로는 못 찾았다)
+    var hay = ((r.n||'')+(r.c||'')+(r.ti||'')+(r.d||'')+(r.e||''))
+      .toLowerCase().replace(/[\s\-㈜()]|주식회사/g, '');
+    var hit = hay.indexOf(qn) >= 0;
+    if(!hit && qd.length >= 4){                            // 010-1234 / 01012345678 둘 다
+      var tel = ((r.m||'')+(r.t||'')+(r.ct||'')).replace(/\D/g,'');
+      hit = tel.indexOf(qd) >= 0;
+    }
+    if(hit) out.push(Object.assign({ id:ids[i] }, r));
   }
   out.sort(function(a,b){ return (a.c||'').localeCompare(b.c||''); });
   return out;
@@ -9854,9 +9885,13 @@ function PucardsContactPickerModal(props){
               onMouseLeave:function(e){ e.currentTarget.style.background = ''; }
             },
               h('div', { style:{ fontSize:'12.5px', fontWeight:600, color:'#1e293b' } },
-                (r.n || '(이름없음)') + (r.ti ? ' · ' + r.ti : '')),
+                (r.n || '(이름없음)') + (r.ti ? ' · ' + r.ti : '') + (r.d ? ' · ' + r.d : '')),
               h('div', { style:{ fontSize:'10.5px', color:'#64748b', marginTop:'2px' } },
-                (r.c || '-') + (r.m ? ' · ' + r.m : (r.t ? ' · ' + r.t : '')))
+                (r.c || '-')
+                + (r.m ? ' · ' + r.m : '') + (!r.m && r.t ? ' · ' + r.t : '')
+                + (r.ct && r.ct !== r.t ? ' · ' + r.ct : '')),
+              // 명함에 있는 이메일도 보여 준다 — 골랐을 때 같이 들어온다
+              r.e && h('div', { style:{ fontSize:'10.5px', color:'#1d4ed8', marginTop:'1px' } }, '✉ ' + r.e)
             );
           })
       )
@@ -9876,15 +9911,35 @@ function searchPucardsCompanies(query){
   Object.keys(groups).forEach(function(cn){
     var g = groups[cn];
     var bizNo = (g.biz && g.biz.bz) || '';
+    var ql = q.toLowerCase();
+    // 회사명·사업자번호뿐 아니라 그 회사 사람 이름으로도 찾히게 한다
+    var hitPerson = ql.length >= 2 && g.cards.some(function(x){
+      return String(x.n||'').toLowerCase().indexOf(ql) >= 0;
+    });
     var hit = (qn.length >= 2 && cn.indexOf(qn) >= 0)
-           || (qd.length >= 4 && bizNo.replace(/\D/g,'').indexOf(qd) >= 0);
+           || (qd.length >= 4 && bizNo.replace(/\D/g,'').indexOf(qd) >= 0)
+           || hitPerson;
     if(!hit) return;
+    // 대표 직책 명함을 앞으로 — 고르면 그 사람이 대표담당이 된다
+    var ordered = g.cards.slice(0, 20).sort(function(a, b){
+      return (pcIsCeoTitle(b.ti) ? 1 : 0) - (pcIsCeoTitle(a.ti) ? 1 : 0);
+    });
+    var ceoCard = ordered.find(function(x){ return pcIsCeoTitle(x.ti); });
     out.push({
       name: g.name || '(회사명 없음)',
       bizNo: bizNo,
-      ceo: (g.biz && g.biz.ceo) || '',
+      // 사업자등록증에 대표가 없으면 대표 직책 명함의 이름을 쓴다
+      ceo: (g.biz && g.biz.ceo) || (ceoCard && ceoCard.n) || '',
+      address: (g.biz && g.biz.ad) || (ordered[0] && ordered[0].ad) || '',
+      phone: (g.biz && g.biz.ct) || (ordered[0] && ordered[0].ct) || '',
       hasBiz: !!g.biz,
       cardCount: g.cards.length,
+      hitPerson: hitPerson,
+      // ★ 명함 원본 줄과 id — 골랐을 때 사진만 아니라 사람 정보까지 가져오려면 이게 있어야 한다
+      cards: ordered,
+      cardIdsOrdered: ordered.map(function(x){
+        var i = g.cards.indexOf(x); return i >= 0 ? g.cardIds[i] : '';
+      }),
       bizId: g.bizId,                       // 사업자등록증 카드 — 사진을 여기서 읽는다
       cardId: g.cardIds[0] || ''            // 대표(첫) 명함 — 사진을 여기서 읽는다
     });
@@ -9935,7 +9990,16 @@ function PucardsCompanyPickerModal(props){
                 r.cardCount ? h('span', { style:{ background:'#e0e7ff', color:'#3730a3', fontSize:'10px', padding:'1px 7px', borderRadius:'8px', fontWeight:700 } }, '명함 ' + r.cardCount + '장') : null
               ),
               h('div', { style:{ fontSize:'10.5px', color:'#64748b', marginTop:'2px' } },
-                (r.bizNo || '사업자번호 없음') + (r.ceo ? ' · 대표 ' + r.ceo : ''))
+                (r.bizNo || '사업자번호 없음') + (r.ceo ? ' · 대표 ' + r.ceo : '')),
+              // 어떤 사람이 딸려 오는지 미리 보여 준다 — 골라 놓고 '엉뚱한 게 왔다'가 없게
+              (r.cards && r.cards.length)
+                ? h('div', { style:{ fontSize:'10.5px', color:'#475569', marginTop:'3px' } },
+                    '👤 ' + r.cards.slice(0,3).map(function(x){
+                      return (x.n||'(이름없음)') + (x.ti ? '(' + x.ti + ')' : '');
+                    }).join(' · ') + (r.cards.length > 3 ? ' 외 ' + (r.cards.length-3) + '명' : ''))
+                : null,
+              r.hitPerson && h('div', { style:{ fontSize:'10px', color:'#b45309', marginTop:'2px' } },
+                '사람 이름으로 찾은 회사입니다')
             );
           })
       )
@@ -10135,29 +10199,56 @@ function ContractModal(props){
   // 다만 무엇이 바뀌는지 먼저 묻는다.
   async function fillCompanyImagesFromPucards(row){
     if(!row) return;
+    var cur = f.company || {};
+    // ── 사람·회사 정보 먼저 (사진이 없어도 이건 가져와야 한다) ──
+    // 종전에는 사진만 가져와서, 사업자등록증이 없는 회사(예: 남양인텍)를 고르면
+    // '사진이 없습니다'로 끝나고 이름·직책·연락처·이메일은 하나도 안 들어왔다.
+    var newContacts = (row.cards || []).map(function(x, i){
+      return pcToContact(x, i === 0, (row.cardIdsOrdered || [])[i] || '');
+    });
+    var info = {};
+    if(row.bizNo   && !cur.bizNo)   info.bizNo   = row.bizNo;
+    if(row.ceo     && !cur.ceo)     info.ceo     = row.ceo;
+    if(row.address && !cur.address) info.address = row.address;
+    if(row.phone   && !cur.phone)   info.phone   = row.phone;
+    // 담당자는 이미 있는 사람을 지우지 않고 없는 사람만 더한다 (업체관리 합치기와 같은 기준)
+    var merged = null, addedN = 0;
+    if(newContacts.length){
+      var mg = mergeCompanyContacts(cur.contacts || [], newContacts);
+      if(mg.added > 0){ merged = mg.contacts; addedN = mg.added; }
+    }
+    // ── 사진 ──
     var img = {};
     try { img = (await pcFetchImages({ bizId: row.bizId, cardId: row.cardId })) || {}; } catch(e){ img = {}; }
     var got = [];
     if(img.bizLicenseImg)   got.push('사업자등록증');
     if(img.businessCardImg) got.push('대표자 명함');
-    if(!got.length){ showToast('이 회사는 명함첩에 사진이 없습니다'); return; }
-    var cur = f.company || {};
     var over = [];
     if(img.bizLicenseImg   && cur.bizLicenseImg)   over.push('사업자등록증');
     if(img.businessCardImg && cur.businessCardImg) over.push('대표자 명함');
     if(over.length){
       if(!(await popConfirm('이미 붙여 둔 ' + over.join('·') + ' 사진을 명함첩 사진으로 바꿉니다.\n\n'
         + '• 회사: ' + (row.name || '-') + '\n'
-        + '• 가져올 사진: ' + got.join('·') + '\n\n바꿀까요?'))) return;
+        + '• 가져올 사진: ' + got.join('·') + '\n\n바꿀까요?'))){
+        got = []; img = {};                      // 사진만 취소 — 사람·회사 정보는 그대로 넣는다
+      }
+    }
+    if(!got.length && !addedN && !Object.keys(info).length){
+      showToast('이 회사에서 새로 가져올 것이 없습니다 (이미 다 들어와 있습니다)'); return;
     }
     setF(function(prev){
       var c = prev.company || {};
-      var next = {};
+      var next = Object.assign({}, info);
+      if(merged) next.contacts = merged;
       if(img.bizLicenseImg)   next.bizLicenseImg   = img.bizLicenseImg;
       if(img.businessCardImg) next.businessCardImg = img.businessCardImg;
       return Object.assign({}, prev, { company: Object.assign({}, c, next) });
     });
-    showToast('🖼 ' + got.join('·') + ' 사진을 명함첩에서 가져왔습니다');
+    var msg = [];
+    if(addedN) msg.push('담당자 ' + addedN + '명');
+    if(Object.keys(info).length) msg.push('회사정보');
+    if(got.length) msg.push(got.join('·') + ' 사진');
+    showToast('📇 명함첩에서 ' + msg.join(' · ') + ' 가져왔습니다');
   }
 
   // 자동완성 항목 선택 시 회사 정보 자동 채움
@@ -10382,8 +10473,10 @@ function ContractModal(props){
   function fillContactFromPucards(ci, p){
     var cs = f.company.contacts.slice();
     var c = Object.assign({}, cs[ci]);
-    c.name = p.n||''; c.role = p.ti||''; c.phone = p.m||''; c.bizPhone = (p.t||p.ct||''); c.email = p.e||'';
-    c.pcId = p.id||''; c.pcFrom = '명함첩'; c.pcAt = (new Date()).toISOString().slice(0,10);
+    // 정식 변환기 하나만 쓴다 — 직책·부서·주소·이메일이 화면마다 빠지지 않게
+    var pcc = pcToContact(p, !!c.isPrimary, p.id);
+    delete pcc.id;                                   // 기존 담당자 줄의 id 는 유지한다
+    c = Object.assign(c, pcc);
     cs[ci] = c;
     setF(function(prev){ return Object.assign({}, prev, { company: Object.assign({}, prev.company, { contacts: cs }) }); });
     showToast('명함첩에서 담당자 넣음: ' + (c.name||''));
@@ -16824,9 +16917,7 @@ function ContactsEditor(props){
       showToast('이미 있는 담당자입니다'); return;
     }
     var n = contacts.slice();
-    n.push({ name:p.n||'', position:p.ti||'', phone:p.m||'', bizPhone:(p.t||p.ct||''),
-      email:p.e||'', isPrimary: n.length === 0,
-      pcId:p.id||'', pcFrom:'명함첩', pcAt:(new Date()).toISOString().slice(0,10) });
+    n.push(pcToContact(p, n.length === 0, p.id));
     update(n);
     showToast('담당자 추가: ' + (p.n||''));
   }
@@ -16924,8 +17015,8 @@ function CompanyEditModal(props){
   // 명함첩에서 담당자 추가 (pcId 기록 — 자동연동 아님)
   function addContactFromPc(p){
     var arr = (f.contacts||[]).slice();
-    arr.push({ name:p.n||'', role:p.ti||'', phone:(p.m||''), bizPhone:(p.t||p.ct||''), email:(p.e||''),
-      isPrimary: arr.length===0, pcId:p.id||'', pcFrom:'명함첩', pcAt:(new Date()).toISOString().slice(0,10) });
+    // 종전에는 role 에만 직책을 넣어, 업체관리 입력칸(position)에서 빈칸으로 보였다
+    arr.push(pcToContact(p, arr.length===0, p.id));
     var primary = arr.find(function(c){ return c.isPrimary; }) || arr[0] || {};
     setF(function(prev){ return Object.assign({}, prev, {
       contacts: arr, primaryContactName: primary.name||'', primaryContactPhone: primary.phone||'', primaryContactEmail: primary.email||'' }); });
@@ -17791,9 +17882,7 @@ function CaseEditModal(props){
     }
     setF(function(prev){
       var arr = (prev.contacts||[]).slice();
-      arr.push({ name:p.n||'', role:p.ti||'', bizPhone:(p.t||p.ct||''), phone:p.m||'', fax:'',
-        email:p.e||'', isPrimary: arr.length===0,
-        pcId:p.id||'', pcFrom:'명함첩', pcAt:(new Date()).toISOString().slice(0,10) });
+      arr.push(Object.assign(pcToContact(p, arr.length===0, p.id), { fax:'' }));
       return Object.assign({}, prev, { contacts: arr });
     });
     showToast('담당자 추가: ' + (p.n||''));

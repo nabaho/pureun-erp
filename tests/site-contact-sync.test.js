@@ -381,11 +381,13 @@ ok('지식카드에서 옛 단수 참조가 사라졌다',
   ok('공용 편집기에 명함첩 버튼', ce.indexOf("'📇 명함첩'") > 0);
   ok('공용 편집기가 companyName 을 초기검색으로 넘긴다',
      /initialQuery:props\.companyName\|\|''/.test(ceNs));
-  ok('공용 편집기는 position 에 직책을 넣는다 (입력칸이 읽는 칸)',
-     /position:p\.ti\|\|''/.test(ceNs));
+  // 2026-08-03: 화면마다 따로 만들던 것을 pcToContact 하나로 통일했다.
+  // 예전 어설션은 각 화면이 직접 'position:p.ti' 를 쓰는지 봤는데, 이제 변환기가
+  // position·role 을 함께 채우므로 '변환기를 쓰는지'를 본다 (더 강한 조건이다).
+  ok('공용 편집기가 정식 변환기(pcToContact)를 쓴다', /pcToContact\(p,/.test(ceNs));
   ok('공용 편집기가 중복 사람을 막는다',
      ce.indexOf('_normPersonKey') > 0 && ce.indexOf('이미 있는 담당자입니다') > 0);
-  ok('공용 편집기가 명함첩 출처를 남긴다', /pcFrom:'명함첩'/.test(ce));
+  ok('공용 편집기가 pcId 를 넘겨 출처를 남긴다', /pcToContact\(p,n\.length===0,p\.id\)/.test(ceNs));
   ok('공용 편집기의 + 추가 는 그대로', ce.indexOf("'+ 추가'") > 0);
 })();
 
@@ -400,7 +402,8 @@ ok('컨설팅·기금·기타가 사업장명을 넘긴다', /companyName: f\.co
   const cmNs = cm.replace(/\s/g, '');
   ok('사건 카드에 명함첩 버튼', cm.indexOf("'📇 명함첩'") > 0);
   ok('사건 카드가 사업장명으로 먼저 찾는다', /initialQuery:f\.companyName\|\|''/.test(cmNs));
-  ok('사건 카드는 role 에 직책을 넣는다 (이 카드 입력칸은 role)', /role:p\.ti\|\|''/.test(cmNs));
+  ok('사건 카드도 정식 변환기를 쓴다 (팩스 칸은 유지)',
+     /pcToContact\(p,arr\.length===0,p\.id\)/.test(cmNs) && /fax:''/.test(cmNs));
   ok('사건 카드도 중복 사람을 막는다',
      cm.indexOf('_normPersonKey') > 0 && cm.indexOf('이미 있는 담당자입니다') > 0);
   ok('사건 카드의 + 추가 는 그대로', cm.indexOf("'+ 추가'") > 0);
