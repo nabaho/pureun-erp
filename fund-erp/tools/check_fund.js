@@ -120,5 +120,19 @@ ok('환입 분개와 확정을 한 번에 저장', /up\['txns\/'\+fid\+'\/'\+yr\
   && /up\['closing\/'\+fid\+'\/'\+yr\+'\/locked'\]=true;/.test(src));
 ok('거래 목록에 대체분개 표시', src.includes('x.nocash&&num(x.amount)'));
 
+// ── ⑩ 계좌 간 이체 자동매칭 ──
+ok('통장 파서가 계좌번호를 읽음', /계좌\\s\*번호/.test(src) || src.includes('계좌\\s*번호'));
+ok('거래에 계좌번호 보존', src.includes("acct:(x.acct||'')"));
+ok('findTransfers 존재', src.includes('function findTransfers'));
+ok('applyTransfers 존재', src.includes('function applyTransfers'));
+ok('이체 자동매칭 버튼', src.includes('onclick="autoMatchTransfers()"'));
+// 계좌가 다르면 확실, 계좌번호가 없는 옛 자료는 추정으로 남겨 사람이 확인해야 한다
+ok('확실/추정 구분', src.includes("kind='sure'") && src.includes("kind='guess'"));
+ok('가져오기 직후 확실한 것만 자동 상계', /findTransfers\(list\)\.filter\(function\(pr\)\{ return pr\.kind==='sure'/.test(src));
+// 상계는 현금↔현금 — 재무제표 영향 0이면서 통장 입·출금 합계는 그대로 남아야 한다
+ok('상계는 현금성자산 ↔ 현금성자산', /up\[b\+'debit'\]='현금성자산'; up\[b\+'credit'\]='현금성자산';/.test(src));
+ok('거래 목록에 이체 칩', src.includes('x.xfer?'));
+ok('이미 처리된 이체는 다시 잡지 않음', src.includes('return !x.xfer;'));
+
 console.log('\n' + (fail ? 'FAILURES ' + fail + ' / ' + n : 'ALL PASS (' + n + '건)'));
 process.exit(fail ? 1 : 0);

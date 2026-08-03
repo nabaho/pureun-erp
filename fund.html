@@ -5741,12 +5741,12 @@ function closingTab(f){
       +'<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(x.memo||'')+'">'+esc(x.memo||'')+'</td>'
       +'<td style="text-align:right;color:#1f7a4d">'+(num(x.deposit)?num(x.deposit).toLocaleString():'')+'</td>'
       +'<td style="text-align:right;color:#c0392b">'+(num(x.withdraw)?num(x.withdraw).toLocaleString():'')+(x.nocash&&num(x.amount)?'<span class="chip" style="font-size:10px" title="현금이 오가지 않는 대체분개 — 통장 잔액 대사에서 제외">대체 '+num(x.amount).toLocaleString()+'</span>':'')+'</td>'
-      +'<td>'+acctSel(x._id,'debit',x.debit)+'</td><td>'+acctSel(x._id,'credit',x.credit)+'</td>'
+      +'<td>'+acctSel(x._id,'debit',x.debit)+(x.xfer?' <span class="chip" style="font-size:10px" title="계좌 간 이체로 상계 처리됨">이체</span>':'')+'</td><td>'+acctSel(x._id,'credit',x.credit)+'</td>'
       +'<td style="text-align:center"><input type="checkbox"'+(x.approved?' checked':'')+' onchange="approveTxn(\''+x._id+'\',this.checked)"></td>'
       +'<td><button onclick="delTxn(\''+x._id+'\')" style="padding:2px 7px">×</button></td></tr>';
   }).join('');
   return '<div class="panel"><div class="row"><h2>회계·결산</h2>'+hlp('close.bank')+yearSel()
-    +'<span style="flex:1"></span><button class="primary" onclick="importBank()">📥 통장 엑셀 가져오기</button></div>'
+    +'<span style="flex:1"></span><button onclick="autoMatchTransfers()" title="같은 날·같은 금액이 서로 반대 방향인 계좌 간 이체를 찾아 상계 처리">🔁 이체 자동매칭</button>'+'<button class="primary" onclick="importBank()">📥 통장 엑셀 가져오기</button></div>'
     +'<div class="row" style="margin-top:8px;flex-wrap:wrap;gap:8px">'
     +'<span class="stat" style="background:var(--ok-bg);color:var(--ok)">입금 '+dep.toLocaleString()+'원</span>'
     +'<span class="stat" style="background:var(--danger-bg);color:var(--danger)">출금 '+wd.toLocaleString()+'원</span>'
@@ -5878,6 +5878,13 @@ function parseBank(rows){
     if(/입금|맡기신/.test(v)&&!/건수|횟수|잔액|잔고/.test(v)&&col.dep==null)col.dep=c;
     if(/출금|찾으신|지급/.test(v)&&!/건수|횟수|잔액|잔고/.test(v)&&col.wd==null)col.wd=c;
     if(/잔액|잔고/.test(v)&&col.bal==null)col.bal=c;}}
+  /* 계좌번호 — 이체 자동매칭의 근거. 같은 날 같은 금액이라도 계좌가 다르면 확실한 이체다. */
+  var acct='';
+  for(var a0=0;a0<Math.min(rows.length,12);a0++){
+    var line=(rows[a0]||[]).join(' ');
+    var am=line.match(/계좌\s*번호[^0-9]*([0-9][0-9\-]{6,})/);
+    if(am){ acct=am[1].replace(/\D/g,''); break; }
+  }
   var lim=Math.min(rows.length,100);
   // 1차: 날짜열까지 있는 헤더 우선(다단 헤더 오인 방지), 2차: 입·출금열만으로 폴백
   for(var i=0;i<lim;i++){ col={}; find(rows[i]||[]); if(col.dep!=null&&col.wd!=null&&col.date!=null){ hi=i; break; } }
@@ -5898,11 +5905,83 @@ function parseBank(rows){
     if(!date&&!memo&&!dep&&!wd) continue;
     if(!dep&&!wd) continue;
     var bal=col.bal!=null?(num(row[col.bal])||0):0;
-    if(dep&&wd){ out.push({date:date,memo:memo,deposit:dep,withdraw:0,balance:bal});
-                 out.push({date:date,memo:memo,deposit:0,withdraw:wd,balance:bal}); } // 입·출 동시 행 분리(분개 누락 방지)
-    else out.push({date:date,memo:memo,deposit:dep,withdraw:wd,balance:bal});
+    if(dep&&wd){ out.push({date:date,memo:memo,deposit:dep,withdraw:0,balance:bal,acct:acct});
+                 out.push({date:date,memo:memo,deposit:0,withdraw:wd,balance:bal,acct:acct}); } // 입·출 동시 행 분리(분개 누락 방지)
+    else out.push({date:date,memo:memo,deposit:dep,withdraw:wd,balance:bal,acct:acct});
   }
   return out;
+}
+/* ══ 계좌 간 이체 자동매칭 ══
+   한 기금이 계좌를 둘 이상 쓰면 같은 돈이 한쪽 출금·다른쪽 입금으로 두 번 잡힌다.
+   그대로 두면 목적사업비나 출연금으로 오인되고, 승인 게이트도 통과하지 못한다.
+   같은 날·같은 금액이 서로 반대 방향이면 한 쌍으로 본다. **계좌번호가 서로 다르면 확실(sure)**,
+   계좌번호가 없는 옛 자료는 추정(guess)으로 두어 사람이 확인하게 한다.
+   처리 방법: 양쪽 다 현금성자산 ↔ 현금성자산 — 재무제표에 영향이 0이고(총현금 불변),
+   통장 입·출금 합계에는 그대로 남아 잔액 대사도 어긋나지 않는다. */
+function findTransfers(arr){
+  var pool=(arr||[]).filter(function(x){ return !x.xfer; });
+  var deps=pool.filter(function(x){ return (num(x.deposit)||0)>0; });
+  var wds =pool.filter(function(x){ return (num(x.withdraw)||0)>0; });
+  var used={}, pairs=[];
+  deps.forEach(function(d){
+    var amt=num(d.deposit)||0;
+    var cands=wds.filter(function(w){
+      return !used[w._id] && w._id!==d._id && w.date===d.date && (num(w.withdraw)||0)===amt;
+    });
+    // 계좌가 다른 짝을 먼저 쓴다(확실). 없으면 계좌 정보가 없는 짝을 추정으로.
+    var sure=cands.filter(function(w){ return d.acct && w.acct && d.acct!==w.acct; });
+    var pick=sure[0], kind='sure';
+    if(!pick){ pick=cands.filter(function(w){ return !d.acct || !w.acct; })[0]; kind='guess'; }
+    if(!pick) return;
+    used[pick._id]=used[d._id]=1;
+    pairs.push({inId:d._id, outId:pick._id, date:d.date, amount:amt, kind:kind,
+                inMemo:String(d.memo||''), outMemo:String(pick.memo||'')});
+  });
+  return pairs;
+}
+/* 짝지어진 두 줄을 현금↔현금 대체로 만들고 승인까지 한 번에 쓴다 */
+function applyTransfers(pairs,fid,yr,quiet){
+  pairs=pairs||[]; if(!pairs.length) return Promise.resolve(0);
+  var up={};
+  pairs.forEach(function(pr){
+    [pr.inId,pr.outId].forEach(function(id){
+      var b='txns/'+fid+'/'+yr+'/'+id+'/';
+      up[b+'debit']='현금성자산'; up[b+'credit']='현금성자산';
+      up[b+'approved']=true; up[b+'xfer']=1;
+    });
+  });
+  return fbDb.ref(NS).update(up).then(function(){
+    if(S.fundId===fid&&S.year===yr){ S.txnsFor=null; renderFund(); }
+    if(!quiet) toast('계좌 간 이체 '+pairs.length+'쌍을 상계 처리했습니다');
+    return pairs.length;
+  });
+}
+function autoMatchTransfers(){
+  var fid=S.fundId, yr=S.year;
+  var t=S.txns||{}, arr=Object.keys(t).map(function(k){ var o=Object.assign({},t[k]); o._id=k; return o; });
+  var pairs=findTransfers(arr);
+  if(!pairs.length){ toast('짝지을 계좌 간 이체가 없습니다','warn'); return; }
+  var rows=pairs.map(function(pr){
+    return '<tr><td>'+esc(pr.date)+'</td><td style="text-align:right">'+pr.amount.toLocaleString()+'</td>'
+      +'<td class="muted" style="font-size:11.5px">'+esc(pr.outMemo.slice(0,26))+' → '+esc(pr.inMemo.slice(0,26))+'</td>'
+      +'<td>'+(pr.kind==='sure'?'<span class="chip ok" style="font-size:10px">계좌 다름</span>'
+        :'<span class="chip warn" style="font-size:10px">추정(계좌번호 없음)</span>')+'</td></tr>';
+  }).join('');
+  var nSure=pairs.filter(function(p){return p.kind==='sure';}).length;
+  window._xferPairs=pairs;
+  showModal('<div class="row" style="margin:0 0 6px"><h2 style="margin:0">계좌 간 이체 자동매칭</h2>'
+    +'<span class="chip" style="font-size:10px">'+pairs.length+'쌍</span></div>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 10px">같은 날·같은 금액이 서로 반대 방향인 짝입니다. '
+    +'양쪽을 <b>현금성자산 ↔ 현금성자산</b>으로 상계 처리하고 승인합니다 — 재무제표에 영향이 없고 통장 잔액 대사도 그대로입니다.'
+    +(nSure<pairs.length?'<br>계좌번호가 없는 옛 자료는 <b>추정</b>입니다. 아닌 것이 있으면 취소하고 개별로 지정하세요.':'')+'</p>'
+    +'<div style="max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:8px">'
+    +'<table><thead><tr><th>일자</th><th style="text-align:right">금액</th><th>출금 → 입금</th><th>판정</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">취소</button>'
+    +'<button class="primary" onclick="_applyXfer()">'+pairs.length+'쌍 상계 처리</button></div>');
+}
+function _applyXfer(){
+  var pairs=window._xferPairs||[]; window._xferPairs=null; closeM();
+  applyTransfers(pairs,S.fundId,S.year).catch(function(e){ toast('처리 실패: '+e.message,'err'); });
 }
 function hkey(s){var h=0;for(var i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))|0;return 't'+(h>>>0).toString(36);}
 function importBank(){
@@ -5934,10 +6013,20 @@ function importBank(){
               var key=hkey(n>1?base+'|'+n:base);   // 같은 날 동일 금액·적요 거래도 각각 보존
               if(existing[key]||obj[key]){ kept++; return; }
               var p=proposeAcct(x.memo,x.deposit>0);
-              obj[key]={date:x.date,memo:x.memo,deposit:x.deposit,withdraw:x.withdraw,balance:x.balance,debit:p.d,credit:p.c,approved:false}; added++;
+              obj[key]={date:x.date,memo:x.memo,deposit:x.deposit,withdraw:x.withdraw,balance:x.balance,acct:(x.acct||''),debit:p.d,credit:p.c,approved:false}; added++;
             });
             if(added===0){ toast('새로 추가할 거래가 없습니다 (기존 '+kept+'건 유지)','warn'); return; }
-            return fbDb.ref(path).update(obj).then(function(){ S.txnsFor=null; renderFund(); toast('가져오기 완료: 신규 '+added+'건'+(kept?' · 기존 '+kept+'건 보존':'')); });
+            return fbDb.ref(path).update(obj).then(function(){
+              /* 계좌번호가 서로 다른 확실한 이체만 자동 상계. 추정은 사람이 확인하게 남긴다. */
+              var merged=Object.assign({},existing,obj);
+              var list=Object.keys(merged).map(function(k){ var o=Object.assign({},merged[k]); o._id=k; return o; });
+              var sure=findTransfers(list).filter(function(pr){ return pr.kind==='sure'; });
+              return applyTransfers(sure,_fid,_yr,true).then(function(nx){
+                S.txnsFor=null; renderFund();
+                toast('가져오기 완료: 신규 '+added+'건'+(kept?' · 기존 '+kept+'건 보존':'')
+                  +(nx?' · 계좌 간 이체 '+nx+'쌍 자동 상계':''));
+              });
+            });
           }).catch(function(e){ toast('저장 실패: '+e.message,'err'); });
         });
       }catch(e){ toast('파싱 실패: '+e.message,'err'); }
