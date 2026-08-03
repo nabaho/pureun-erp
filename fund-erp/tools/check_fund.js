@@ -127,6 +127,9 @@ ok('조정 분개 생성기 존재', src.includes('function _reserveEntry'));
 ok('환입·전입 양방향', /r\.kind='환입'/.test(src) && /r\.kind='전입'/.test(src));
 // 준비금2를 만드는 분개가 없으면 출연금을 그 해에 쓰는 공동기금은 순이익 0을 만들 수 없다
 ok('당기 출연금 집계', src.includes('function _contribOf'));
+// 증권·부동산 현물출연을 한도에 넣으면 기본재산이 붕괴한다(배경공동 2022: 증권 72.6억 현물출연)
+ok('한도 기준은 현금 출연금만', src.includes('if(x.nocash) return;                                  // 현물출연·대체분개는 제외')
+  && src.includes("if(!amt&&(x.debit==='현금성자산'||x.debit==='정기예금')) amt=num(x.amount)||0;"));
 ok('사용한도 비율(공동 90/사내 50)', /function _reserveRate\(fid\)\{ return \(\(funds\[fid\]\|\|\{\}\)\.fund_type==='사내'\)\?0\.5:0\.9; \}/.test(src));
 ok('준비금2 설정 분개(기본재산 차변)', /if\(kind==='설정'\)/.test(src) && /debit:'기본재산', credit:acct/.test(src));
 ok('한도 초과분은 기본재산 사용으로 구분', /if\(kind==='기본재산사용'\)/.test(src));
