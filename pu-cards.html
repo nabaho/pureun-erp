@@ -630,7 +630,14 @@ function idxRecord(it){
   put('n', it.name); put('c', it.company); put('m', it.mobile); put('t', it.tel);
   put('e', it.email); put('ti', it.title); put('d', it.dept); put('ct', it.companyTel);
   put('ad', it.kind==='biz' ? it.address : it.companyAddr);
-  if(it.kind==='biz'){ put('bz', it.bizno); put('ceo', it.ceo); }
+  /* 팩스·홈페이지 — 명함에 적혀 있는데 색인에 없어서 푸른이알피가 못 가져왔다.
+     개인팩스(fax)와 회사팩스(companyFax)를 따로 담는다 (다른 번호다). */
+  put('fx', it.fax); put('cfx', it.companyFax); put('w', it.website);
+  if(it.kind==='biz'){
+    put('bz', it.bizno); put('ceo', it.ceo);
+    /* 업태·종목·법인번호 — 계약관리·업체관리에 그대로 들어가는 칸이라 함께 담는다 */
+    put('bt', it.bizType); put('bi', it.bizItem); put('cno', it.corpno);
+  }
   r.k = (it.kind==='biz') ? 'biz' : 'card';
   if(!r.n && !r.c && !r.bz) return null;   /* 검색에 쓸 정보가 없으면 기록 안 함 */
   return r;
@@ -644,6 +651,34 @@ function writeIdx(it){
   }catch(_){}
 }
 function removeIdx(id){ try{ if(Store.mode==='firebase') Store.db.ref(DB_ROOT+'/idx/'+id).remove(); }catch(_){} }
+
+/* ══════ 검색목록 다시 만들기 ══════
+   색인은 명함을 '저장할 때만' 갱신된다. 그래서 색인에 담는 항목을 늘려도
+   이미 있던 명함들은 옛 색인을 그대로 갖고 있어, 푸른이알피에서 새 항목(팩스 등)이
+   안 딸려온다. 이 기능이 전체를 한 번 다시 써 준다.
+   한 장씩 쓰면 6천 번 통신하므로 한 번의 update 로 몰아 보낸다. */
+async function rebuildIdxAll(){
+  if(Store.mode!=='firebase'){ toast('클라우드에 연결된 상태에서만 됩니다'); return; }
+  const items = Object.values(state.items||{}).filter(x=>x && x.id);
+  if(!items.length){ toast('명함이 없습니다'); return; }
+  if(!confirm(`검색목록을 다시 만듭니다 — 명함 ${items.length.toLocaleString()}장.\n\n`
+    + `푸른이알피(계약·업체·사건·컨설팅)에서 명함을 당겨올 때\n`
+    + `팩스·홈페이지·업태·종목처럼 새로 담게 된 항목이 채워집니다.\n\n`
+    + `명함 자체는 하나도 바뀌지 않습니다. 진행할까요?`)) return;
+  const upd = {}; let put=0, skip=0;
+  items.forEach(it=>{
+    const r = inLockedGroup(it) ? null : idxRecord(it);
+    upd[it.id] = r;                      /* null 이면 그 줄이 지워진다 (잠긴 폴더·정보 없음) */
+    if(r) put++; else skip++;
+  });
+  try{
+    await Store.db.ref(DB_ROOT+'/idx').update(upd);
+    toast(`✅ 검색목록 다시 만들었습니다 — ${put.toLocaleString()}장`
+      + (skip ? ` (잠긴 폴더·정보 없음 ${skip.toLocaleString()}장 제외)` : ''));
+  }catch(e){
+    toast('❌ 실패: ' + ((e&&e.message)||'알 수 없음'));
+  }
+}
 
 /* 자문·급여·노조·기금·사무대행 탭을 '전체 명함/전체 사업자등록증'에 1회 생성.
    (예전 자동 표시되던 줄을 대신 — 이제는 일반 탭이라 삭제·이름변경이 자유롭다) */
@@ -4137,6 +4172,7 @@ function renderSettingsPage(){
     panel = note('푸른이알피 업체관리와 대조하고, 종료된 업체 명함을 정리합니다.')
       + btn(`setSub('erpname')`,'🔗','대표자·담당자 대조','ERP에만 있는 이름')
       + btn('openErpClosedTidy()','🏚','종료업체 명함 정리','업체퇴사 폴더로')
+      + btn('rebuildIdxAll()','🔄','검색목록 다시 만들기','팩스·업태 등 새 항목 채우기')
       + `<div id="setInline" style="grid-column:1/-1;margin-top:6px"></div>`;
   } else if(cur==='tabs'){
     panel = note('폴더마다 만든 탭을 관리하고, 고객에게 보낼 자료를 보관합니다.')

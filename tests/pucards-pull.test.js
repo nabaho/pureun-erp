@@ -202,5 +202,130 @@ eq('대표담당 아니면 false', ctx.pcToContact(card, false).isPrimary, false
     /c\.position\|\|c\.role\|\|c\.rank/.test(crPe));
 })();
 
+
+/* ══════════════════════════════════════════════════════════════
+   추가: 팩스·홈페이지·업태·종목·법인번호 — 명함에 있는데 색인에 없어서 못 왔다
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── 색인이 새 항목들을 담는가 (pu-cards.html 쪽 계약) ── */
+(function () {
+  const pc = rd(path.join(__dirname, '..', 'pu-cards.html'));
+  const rec = cut(pc, 'pu-cards.html')('function idxRecord(it){', '\n}');
+  ok('★ 개인팩스(fx) 를 담는다',      /put\('fx', it\.fax\)/.test(rec));
+  ok('★ 회사팩스(cfx) 를 담는다',     /put\('cfx', it\.companyFax\)/.test(rec));
+  ok('홈페이지(w) 를 담는다',         /put\('w', it\.website\)/.test(rec));
+  ok('업태(bt) 를 담는다',            /put\('bt', it\.bizType\)/.test(rec));
+  ok('종목(bi) 를 담는다',            /put\('bi', it\.bizItem\)/.test(rec));
+  ok('법인번호(cno) 를 담는다',       /put\('cno', it\.corpno\)/.test(rec));
+  ok('업태·종목·법인번호는 사업자등록증에만',
+     /if\(it\.kind==='biz'\)\{[\s\S]*put\('bt'/.test(rec));
+})();
+
+/* ── 색인을 늘려도 옛 명함은 그대로다 → 다시 만들기가 있어야 한다 ── */
+(function () {
+  const pc = rd(path.join(__dirname, '..', 'pu-cards.html'));
+  const fn = cut(pc, 'pu-cards.html')('async function rebuildIdxAll(){', '\n}');
+  ok('★ 검색목록 다시 만들기가 있다', fn.length > 100);
+  ok('한 번의 update 로 몰아 보낸다 (한 장씩 6천 번 쓰지 않는다)',
+     /\.ref\(DB_ROOT\+'\/idx'\)\.update\(upd\)/.test(fn));
+  ok('잠긴 폴더는 넣지 않고 지운다', /inLockedGroup\(it\) \? null : idxRecord\(it\)/.test(fn));
+  ok('명함 자체는 안 건드린다고 알려 준다', fn.indexOf('명함 자체는 하나도 바뀌지 않습니다') > 0);
+  ok('실행 전에 묻는다', /confirm\(/.test(fn));
+  ok('실패를 성공이라 하지 않는다', /catch\(e\)\{[\s\S]{0,80}실패/.test(fn));
+  ok('클라우드 아닐 때는 안 한다', /Store\.mode!=='firebase'/.test(fn));
+  ok('푸른이알피 연동 탭에 단추가 있다',
+     pc.indexOf("btn('rebuildIdxAll()','🔄','검색목록 다시 만들기'") > 0);
+})();
+
+/* ── pcToContact 가 팩스·홈페이지를 옮기는가 ── */
+(function () {
+  const full = { n:'김종복', c:'남양인텍', ti:'대표이사',
+    m:'010-4243-8853', ct:'041-583-1893', cfx:'041-583-1895',
+    e:'namyangit@naver.com', ad:'충남 천안시 서북구', w:'http://ni.kr' };
+  const g = ctx.pcToContact(full, true, 'c1');
+  eq('★ 회사팩스가 팩스로',   g.fax, '041-583-1895');
+  eq('홈페이지',              g.website, 'http://ni.kr');
+  eq('휴대폰',                g.phone, '010-4243-8853');
+  eq('회사전화가 사업장전화로', g.bizPhone, '041-583-1893');
+  eq('이메일',                g.email, 'namyangit@naver.com');
+  eq('직책 두 칸',            [g.position, g.role], ['대표이사','대표이사']);
+  // 개인팩스가 있으면 그쪽을 먼저 쓴다 (회사팩스와 다른 번호다)
+  eq('★ 개인팩스 우선', ctx.pcToContact({ n:'x', fx:'041-1-1111', cfx:'041-2-2222' }, false).fax, '041-1-1111');
+  eq('개인팩스 없으면 회사팩스', ctx.pcToContact({ n:'x', cfx:'041-2-2222' }, false).fax, '041-2-2222');
+  eq('팩스 둘 다 없으면 빈값', ctx.pcToContact({ n:'x' }, false).fax, '');
+})();
+
+/* ── 사건 카드가 팩스를 빈값으로 덮지 않는가 ── */
+ok('★ 사건 카드가 팩스를 빈값으로 덮지 않는다',
+   !/pcToContact\(p,arr\.length===0,p\.id\),\{fax:''\}/.test(NS(pe)));
+
+/* ── 합치기가 홈페이지·팩스를 버리지 않는가 ── */
+(function () {
+  const ctx2 = { console, Math, Object, String, window: {} };
+  vm.createContext(ctx2);
+  vm.runInContext(cutPe('function contactRole(c){', '\n'), ctx2);
+  vm.runInContext(cutPe('function _normPersonKey(c){', '\ntry {'), ctx2);
+  const r = ctx2.mergeCompanyContacts([], [{ name:'김종복', position:'대표이사',
+    phone:'010-4243-8853', bizPhone:'041-583-1893', fax:'041-583-1895',
+    email:'namyangit@naver.com', addr:'충남 천안', website:'http://ni.kr', dept:'경영' }]);
+  const g = r.contacts[0];
+  eq('합칠 때 팩스 보존',     g.fax, '041-583-1895');
+  eq('합칠 때 홈페이지 보존', g.website, 'http://ni.kr');
+})();
+
+/* ── 회사 검색이 팩스·업태·종목·법인번호를 내놓는가 ── */
+(function () {
+  const ctx5 = { console, Object, String, window: { pucardsIdx: {
+    b1: { k:'biz', n:'남양인텍', c:'남양인텍', bz:'312-81-28123', ceo:'김종복',
+          ct:'041-583-1893', cfx:'041-583-1895', ad:'충남 천안시 서북구',
+          bt:'제조업', bi:'인쇄 및 기록매체 복제업', cno:'110111-1234567' },
+    a1: { k:'card', n:'김종복', c:'남양인텍', ti:'대표이사', m:'010-4243-8853',
+          cfx:'041-583-1895', e:'namyangit@naver.com' } } } };
+  vm.createContext(ctx5);
+  ['function pcNormCo(', 'function pcIsCeoTitle('].forEach(function (fn) {
+    vm.runInContext(cutPe(fn, '\nfunction '), ctx5);
+  });
+  vm.runInContext(cutPe('function pcGroupCompanies(){', '\nfunction '), ctx5);
+  vm.runInContext(cutPe('function searchPucardsCompanies(query){', '\nfunction '), ctx5);
+  const r0 = ctx5.searchPucardsCompanies('남양인텍')[0] || {};
+  eq('사업자번호',      r0.bizNo, '312-81-28123');
+  eq('대표자',          r0.ceo, '김종복');
+  eq('★ 팩스',          r0.fax, '041-583-1895');
+  eq('★ 업태',          r0.bizType, '제조업');
+  eq('★ 종목',          r0.bizCategory, '인쇄 및 기록매체 복제업');
+  eq('★ 법인등록번호',  r0.corpNo, '110111-1234567');
+  eq('전화',            r0.phone, '041-583-1893');
+  eq('주소',            r0.address, '충남 천안시 서북구');
+  // 사업자등록증이 없어도 명함의 회사팩스를 쓴다
+  const ctx6 = { console, Object, String, window: { pucardsIdx: {
+    a1: { k:'card', n:'김종복', c:'남양인텍', ti:'대표이사', cfx:'041-999-8888' } } } };
+  vm.createContext(ctx6);
+  ['function pcNormCo(', 'function pcIsCeoTitle('].forEach(function (fn) {
+    vm.runInContext(cutPe(fn, '\nfunction '), ctx6);
+  });
+  vm.runInContext(cutPe('function pcGroupCompanies(){', '\nfunction '), ctx6);
+  vm.runInContext(cutPe('function searchPucardsCompanies(query){', '\nfunction '), ctx6);
+  eq('★ 사업자등록증 없어도 명함 회사팩스를 쓴다',
+     (ctx6.searchPucardsCompanies('남양인텍')[0]||{}).fax, '041-999-8888');
+})();
+
+/* ── 회사를 고르면 그 항목들까지 채우는가 ── */
+(function () {
+  const n = NS(cutPe('async function fillCompanyImagesFromPucards(row){', '\n  }'));
+  ok('★ 팩스도 채운다',   /info\.fax=row\.fax/.test(n));
+  ok('★ 업태도 채운다',   /info\.bizType=row\.bizType/.test(n));
+  ok('★ 종목도 채운다',   /info\.bizCategory=row\.bizCategory/.test(n));
+  ok('★ 법인번호도 채운다', /info\.corpRegNo=row\.corpNo/.test(n));
+  ok('이미 있는 값은 안 덮는다',
+     /row\.fax&&!cur\.fax/.test(n) && /row\.bizType&&!cur\.bizType/.test(n));
+})();
+
+/* ── 목록·업무관리에 팩스가 보이는가 ── */
+(function () {
+  const pk = cutPe('function PucardsContactPickerModal(props){', '\nfunction ');
+  ok('사람 목록에 팩스를 보여 준다', /r\.fx\|\|r\.cfx/.test(NS(pk)));
+  const blk = cutWk('function dPeopleHTML(id,it){', '\nfunction ');
+  ok('업무관리도 팩스를 보여 준다', /c\.fax/.test(blk));
+})();
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');
 process.exit(fail ? 1 : 0);

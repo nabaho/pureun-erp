@@ -9437,6 +9437,7 @@ function mergeCompanyContacts(existing, incoming){
     if(c.fax) n.fax = String(c.fax).trim();
     if(c.dept) n.dept = String(c.dept).trim();       // 부서 — 명함에 있는데 여태 버려졌다
     if(c.addr) n.addr = String(c.addr).trim();       // 주소
+    if(c.website) n.website = String(c.website).trim();   // 홈페이지
     out.push(n); added++;
   });
   return { contacts: out, added: added, skipped: skipped };
@@ -9679,8 +9680,10 @@ function pcToContact(x, primary, pcId){
     dept:x.d||'',                        // 부서 (색인에 있는데 여태 버려졌다)
     phone:x.m||'',                       // 휴대폰
     bizPhone:x.t||x.ct||'',              // 사업장 전화
+    fax:x.fx||x.cfx||'',                 // 팩스 — 개인팩스 먼저, 없으면 회사팩스
     email:x.e||'',
     addr:x.ad||'',                       // 주소
+    website:x.w||'',                     // 홈페이지
     isPrimary:!!primary,
     pcId:pcId || x.id || '', pcFrom:'명함첩',
     pcAt:(new Date()).toISOString().slice(0,10) };
@@ -9741,6 +9744,10 @@ function pcCompanyRows(q){
           ceo: (g.biz && g.biz.ceo) || (ceoCard && ceoCard.n) || '',
           address: (g.biz && g.biz.ad) || (g.cards[0] && g.cards[0].ad) || '',
           phone: (g.biz && g.biz.ct) || (g.cards[0] && g.cards[0].ct) || '',
+          fax: (g.biz && g.biz.cfx) || (g.cards[0] && (g.cards[0].cfx || g.cards[0].fx)) || '',
+          bizType: (g.biz && g.biz.bt) || '',
+          bizCategory: (g.biz && g.biz.bi) || '',
+          corpNo: (g.biz && g.biz.cno) || '',
           contacts: contacts,
           bizId: g.bizId,                                  // 사업자등록증 카드 — 사진 가져올 때 쓴다
           cardId: g.cardIds[0] || ''                       // 대표 명함 — 사진 가져올 때 쓴다
@@ -9891,7 +9898,9 @@ function PucardsContactPickerModal(props){
                 + (r.m ? ' · ' + r.m : '') + (!r.m && r.t ? ' · ' + r.t : '')
                 + (r.ct && r.ct !== r.t ? ' · ' + r.ct : '')),
               // 명함에 있는 이메일도 보여 준다 — 골랐을 때 같이 들어온다
-              r.e && h('div', { style:{ fontSize:'10.5px', color:'#1d4ed8', marginTop:'1px' } }, '✉ ' + r.e)
+              (r.e || r.fx || r.cfx) && h('div', { style:{ fontSize:'10.5px', color:'#1d4ed8', marginTop:'1px' } },
+                (r.e ? '✉ ' + r.e : '') + ((r.e && (r.fx||r.cfx)) ? '  ' : '')
+                + ((r.fx||r.cfx) ? '📠 ' + (r.fx||r.cfx) : ''))
             );
           })
       )
@@ -9932,6 +9941,11 @@ function searchPucardsCompanies(query){
       ceo: (g.biz && g.biz.ceo) || (ceoCard && ceoCard.n) || '',
       address: (g.biz && g.biz.ad) || (ordered[0] && ordered[0].ad) || '',
       phone: (g.biz && g.biz.ct) || (ordered[0] && ordered[0].ct) || '',
+      // 사업자등록증에 없으면 명함의 회사팩스를 쓴다
+      fax: (g.biz && g.biz.cfx) || (ordered[0] && (ordered[0].cfx || ordered[0].fx)) || '',
+      bizType: (g.biz && g.biz.bt) || '',            // 업태
+      bizCategory: (g.biz && g.biz.bi) || '',        // 종목
+      corpNo: (g.biz && g.biz.cno) || '',            // 법인등록번호
       hasBiz: !!g.biz,
       cardCount: g.cards.length,
       hitPerson: hitPerson,
@@ -10211,6 +10225,10 @@ function ContractModal(props){
     if(row.ceo     && !cur.ceo)     info.ceo     = row.ceo;
     if(row.address && !cur.address) info.address = row.address;
     if(row.phone   && !cur.phone)   info.phone   = row.phone;
+    if(row.fax     && !cur.fax)     info.fax     = row.fax;
+    if(row.bizType     && !cur.bizType)     info.bizType     = row.bizType;
+    if(row.bizCategory && !cur.bizCategory) info.bizCategory = row.bizCategory;
+    if(row.corpNo      && !cur.corpRegNo)   info.corpRegNo   = row.corpNo;
     // 담당자는 이미 있는 사람을 지우지 않고 없는 사람만 더한다 (업체관리 합치기와 같은 기준)
     var merged = null, addedN = 0;
     if(newContacts.length){
@@ -17882,7 +17900,8 @@ function CaseEditModal(props){
     }
     setF(function(prev){
       var arr = (prev.contacts||[]).slice();
-      arr.push(Object.assign(pcToContact(p, arr.length===0, p.id), { fax:'' }));
+      // 팩스는 변환기가 명함에서 가져온다 (예전엔 여기서 빈값으로 덮어써 버렸다)
+      arr.push(pcToContact(p, arr.length===0, p.id));
       return Object.assign({}, prev, { contacts: arr });
     });
     showToast('담당자 추가: ' + (p.n||''));
