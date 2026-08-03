@@ -119,7 +119,20 @@
     '\n없는 값은 빈 문자열. 날짜는 2026-08-03 형식. 전화번호는 010-1234-5678 형식.' +
     '\n사업자등록번호는 숫자 10자리를 정확히 옮기고 추측하지 마세요. JSON 외 텍스트 금지.';
 
-  var GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=';
+  /* ── 쓸 모델 ──
+     ⚠ 모델 이름을 한 곳에 박아 두면 구글이 그 모델을 내릴 때 앱이 조용히 멈춘다.
+     실제로 그랬다 — `gemini-2.0-flash` 가 2026-06-01 에 서비스 종료되면서
+     계속 429(사용 가능 한도 0)가 났고, '사용량 초과'로 잘못 짚었다.
+     그래서 **여러 모델을 차례로 시도하고 되는 것을 기억한다.**
+     앞에 있는 것이 우선. 무료 등급에서 쓸 수 있는 것만 둔다. */
+  var MODELS = ['gemini-2.5-flash', 'gemini-3.1-flash-lite'];
+  var goodModel = null;   // 한 번 통한 모델을 기억해 헛걸음을 줄인다
+
+  function modelUrl(model, key) {
+    return 'https://generativelanguage.googleapis.com/v1beta/models/' +
+      model + ':generateContent?key=' + encodeURIComponent(key);
+  }
+
   var NTS_URL = 'https://api.odcloud.kr/api/nts-businessman/v1/status?serviceKey=';
 
   var KINDS = { card: 1, bizreg: 1, sme: 1, other: 1 };
@@ -146,21 +159,64 @@
     return 'AI 서버가 잠시 응답하지 않습니다 — 잠시 뒤 「다시 판독」을 눌러 주세요.';
   }
 
-  /* 성공하면 응답(json)을 준다. 실패하면 사람이 읽을 한국어 이유를 담아 throw. */
-  function fetchWithRetry(url, init, attempt) {
+  /* 한 모델로 부른다. 일시적 실패는 기다렸다 다시. 실패하면 이유를 담아 throw.
+     ⚠ AI가 준 설명(error.message)을 반드시 담는다 — 우리 문구만 보여주고 그것을
+     버렸더니 '사용량 초과'로 잘못 짚었다(실제로는 모델이 없어진 것이었다). */
+  function askModel(model, key, init, attempt) {
     attempt = attempt || 0;
-    return deps.fetch(url, init).then(function (r) {
+    return deps.fetch(modelUrl(model, key), init).then(function (r) {
       if (r && r.ok) return r.json();
       var status = (r && r.status) || 0;
       if (isTransient(status) && attempt < RETRY_WAITS.length) {
         return waitFor(RETRY_WAITS[attempt]).then(function () {
-          return fetchWithRetry(url, init, attempt + 1);
+          return askModel(model, key, init, attempt + 1);
         });
       }
-      throw new Error(isTransient(status)
-        ? busyMessage(status)
-        : 'AI가 응답하지 않습니다 (오류 ' + status + ') — AI 키가 올바른지 확인해 주세요');
+      return apiReason(r).then(function (why) {
+        var e = new Error((isTransient(status) ? busyMessage(status)
+          : 'AI가 응답하지 않습니다 (오류 ' + status + ')') + (why ? '\n' + why : ''));
+        e.status = status;
+        throw e;
+      });
     });
+  }
+
+  /* 응답 본문에 담긴 AI 쪽 설명을 꺼낸다. 없거나 못 읽어도 조용히 넘어간다. */
+  function apiReason(r) {
+    if (!r || !r.json) return Promise.resolve('');
+    return r.json().then(function (j) {
+      return (j && j.error && j.error.message) || '';
+    }).catch(function () { return ''; });
+  }
+
+  /* 모델을 차례로 시도한다. 기억해 둔 모델이 있으면 그것부터. */
+  function askAny(key, init) {
+    var order = goodModel
+      ? [goodModel].concat(MODELS.filter(function (m) { return m !== goodModel; }))
+      : MODELS.slice();
+    var lastErr = null;
+
+    function step(i) {
+      if (i >= order.length) {
+        throw lastErr || new Error('쓸 수 있는 AI 모델이 없습니다');
+      }
+      return askModel(order[i], key, init).then(function (j) {
+        goodModel = order[i];
+        return j;
+      }).catch(function (e) {
+        lastErr = e;
+        /* 모델이 없어졌거나(404) 그 모델에 한도가 없으면(429) 다음 모델로.
+           키 문제(400·401·403)는 모델을 바꿔도 같으므로 곧바로 포기한다. */
+        var s = e && e.status;
+        if (s === 404 || s === 400 || isTransient(s)) {
+          if (s === 400 && i + 1 >= order.length) throw e;
+          if (s === 401 || s === 403) throw e;
+          return step(i + 1);
+        }
+        throw e;
+      });
+    }
+    return Promise.resolve().then(function () { return step(0); });
   }
 
   function waitFor(ms) {
@@ -185,7 +241,7 @@
         ] }],
         generationConfig: { temperature: 0 } // 같은 사진에 같은 답이 나와야 한다
       };
-      return fetchWithRetry(GEMINI_URL + encodeURIComponent(key), {
+      return askAny(key, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -332,6 +388,7 @@
     fmtBizNo: fmtBizNo,
     mapTo: mapTo,
     keysFrom: keysFrom,
+    MODELS: MODELS,
     PROMPTS: { all: PROMPT_ALL },
     read: read,
     autoOk: autoOk

@@ -294,8 +294,9 @@ test('계속 바쁘면 포기하되, 서류가 잘못된 것처럼 말하지 않
   R.init({ fetch: f, getKey: () => Promise.resolve('KEY'), delay: noWait });
   const r = await R.read(DUMMY_IMG);
   assert.ok(r.error, '실패 이유가 없습니다');
-  // 무한정 부르면 안 된다
-  assert.ok(f.tries() <= 4, '다시 시도를 너무 많이 합니다: ' + f.tries());
+  // 무한정 부르면 안 된다. 상한 = 모델 수 × (처음 1 + 다시 2)
+  const cap = R.MODELS.length * 3;
+  assert.ok(f.tries() <= cap, '다시 시도를 너무 많이 합니다: ' + f.tries() + ' (상한 ' + cap + ')');
   // 사람이 무엇을 하면 되는지 알 수 있어야 한다
   assert.match(r.error, /잠시|다시/, '기다렸다 다시 하라는 안내가 없습니다');
   assert.ok(!/서류가 아/.test(r.error), '서류가 잘못된 것처럼 말합니다: ' + r.error);
@@ -322,6 +323,93 @@ test('판독 실패는 「서류로 보이지 않음」과 다른 것이다', as
   R2.init({ fetch: fakeFetch('{"kind":"other"}'), getKey: () => Promise.resolve('KEY') });
   const notDoc = await R2.read(DUMMY_IMG);
   assert.equal(notDoc.error, null, '정말 서류가 아닌 것에는 error 가 없어야 한다');
+});
+
+/* ── 모델이 없어져도 버틴다 ──
+   실사용 보고(2026-08-03): 계속 429가 났고, 원인은 사용량이 아니라
+   `gemini-2.0-flash` 가 2026-06-01 에 서비스 종료된 것이었다.
+   모델 이름을 한 곳에 박아 두면 구글이 모델을 내릴 때마다 앱이 조용히 멈춘다.
+   그래서 여러 모델을 차례로 시도하고, 되는 것을 기억한다. */
+
+// 모델 이름별로 다르게 응답하는 가짜 서버
+function modelFetch(behavior, reply) {
+  const seen = [];
+  const fn = function (url, init) {
+    const m = /models\/([^:]+):/.exec(url);
+    const model = m ? m[1] : '?';
+    seen.push(model);
+    const how = behavior[model] || 'ok';
+    if (how === 'ok') {
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
+        candidates: [{ content: { parts: [{ text: reply }] } }] }) });
+    }
+    return Promise.resolve({
+      ok: false, status: how,
+      json: () => Promise.resolve({ error: { message: '모델을 찾을 수 없습니다', status: 'NOT_FOUND' } })
+    });
+  };
+  fn.seen = seen;
+  fn.models = function () { return seen.filter(function (v, i) { return seen.indexOf(v) === i; }); };
+  return fn;
+}
+
+test('여러 모델을 쓴다 — 하나에 매달리지 않는다', () => {
+  const R = loadRead();
+  assert.ok(Array.isArray(R.MODELS), 'MODELS 목록이 없습니다');
+  assert.ok(R.MODELS.length >= 2, '모델이 하나뿐이면 그것이 없어질 때 앱이 멈춥니다');
+  // 서비스 종료된 모델을 쓰고 있지 않은지
+  assert.ok(R.MODELS.indexOf('gemini-2.0-flash') < 0,
+    'gemini-2.0-flash 는 2026-06-01 에 종료됐습니다');
+});
+
+test('첫 모델이 없어졌으면(404) 다음 모델로 넘어가 읽어낸다', async () => {
+  const R = loadRead();
+  const first = R.MODELS[0];
+  const behavior = {}; behavior[first] = 404;
+  const f = modelFetch(behavior, '{"kind":"card","name":"홍길동"}');
+  R.init({ fetch: f, getKey: () => Promise.resolve('KEY'), delay: noWait });
+  const r = await R.read(DUMMY_IMG);
+  assert.equal(r.kind, 'card', '다음 모델로 읽어냈어야 합니다');
+  assert.ok(f.models().length >= 2, '다음 모델을 시도하지 않았습니다');
+});
+
+test('첫 모델이 계속 바쁘면(429) 다음 모델로 넘어간다', async () => {
+  // 종료된 모델은 429(사용 가능 한도 0)로 나오기도 한다 — 실제로 그랬다.
+  const R = loadRead();
+  const first = R.MODELS[0];
+  const behavior = {}; behavior[first] = 429;
+  const f = modelFetch(behavior, '{"kind":"bizreg","company":"가나상사","bizno":"220-81-62517"}');
+  R.init({ fetch: f, getKey: () => Promise.resolve('KEY'), delay: noWait });
+  const r = await R.read(DUMMY_IMG);
+  assert.equal(r.kind, 'bizreg');
+  assert.equal(r.bizNoOk, true);
+});
+
+test('되는 모델을 기억해 다음 판독에서 바로 쓴다', async () => {
+  const R = loadRead();
+  const first = R.MODELS[0];
+  const behavior = {}; behavior[first] = 404;
+  const f = modelFetch(behavior, '{"kind":"card","name":"홍길동"}');
+  R.init({ fetch: f, getKey: () => Promise.resolve('KEY'), delay: noWait });
+  await R.read(DUMMY_IMG);
+  const afterFirst = f.seen.length;
+  await R.read(DUMMY_IMG);
+  // 두 번째 판독은 안 되는 모델을 다시 두드리지 않는다
+  assert.equal(f.seen.length, afterFirst + 1,
+    '되는 모델을 기억하지 않아 매번 헛걸음합니다: ' + JSON.stringify(f.seen));
+});
+
+test('모든 모델이 안 되면 AI가 준 설명을 그대로 남긴다', async () => {
+  // 이번 사고의 교훈: 우리 문구만 보여주고 AI의 설명을 버렸더니
+  // '사용량 초과'로 잘못 짚었다. 실제로는 모델이 없어진 것이었다.
+  const R = loadRead();
+  const behavior = {};
+  R.MODELS.forEach(function (m) { behavior[m] = 404; });
+  const f = modelFetch(behavior, '{}');
+  R.init({ fetch: f, getKey: () => Promise.resolve('KEY'), delay: noWait });
+  const r = await R.read(DUMMY_IMG);
+  assert.ok(r.error, '실패 이유가 없습니다');
+  assert.match(r.error, /모델을 찾을 수 없습니다/, 'AI가 준 설명을 버렸습니다: ' + r.error);
 });
 
 test('AI가 JSON이 아닌 말을 해도 터지지 않는다', async () => {
