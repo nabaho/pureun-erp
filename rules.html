@@ -5017,6 +5017,75 @@ $("open-arts").addEventListener("click",async()=>{
   await artsBuild(); renderArts();
 });
 $("arts-q").addEventListener("input",renderArts);
+/* ══════ [↗ 새 창] — 비교용 화면을 진짜 브라우저 창으로 ══════
+   모니터가 여러 대면 창을 끌어다 나란히 놓고 비교한다.
+   편집 요소(입력창·선택 등)는 현재 값 그대로 글자로 굳힌다(읽기 전용 사본). */
+let _popSeq=0;
+function bakeStatic(root){
+  const el=root.cloneNode(true);
+  el.querySelectorAll("textarea").forEach(t=>{
+    const d=document.createElement("div");
+    d.style.cssText="white-space:pre-wrap;font-size:12.5px;line-height:1.6;border:1px solid #d8dee9;border-radius:8px;padding:8px 10px;background:#fff";
+    d.textContent=t.value; t.replaceWith(d); });
+  el.querySelectorAll("select").forEach(sl=>{
+    const sp=document.createElement("span"); sp.style.fontWeight="600";
+    sp.textContent=sl.options[sl.selectedIndex]?sl.options[sl.selectedIndex].text:""; sl.replaceWith(sp); });
+  el.querySelectorAll("input").forEach(i=>{
+    const sp=document.createElement("span"); sp.textContent=i.type==="checkbox"?(i.checked?"☑":"☐"):i.value; i.replaceWith(sp); });
+  el.querySelectorAll("button").forEach(b=>b.remove());
+  return el;
+}
+function popOut(title,contentEl,opt){
+  const seq=_popSeq++;
+  /* 화면 최대 크기로 연다 — 여러 창을 띄우면 살짝 어긋나게 겹쳐 구분되게 */
+  const W=Math.max(900,(screen.availWidth||1280)-seq*40);
+  const H=Math.max(700,(screen.availHeight||800)-seq*40);
+  const w=window.open("","pu_pop_"+Date.now(),
+    "width="+W+",height="+H+",left="+(seq*40)+",top="+(seq*36)+",resizable=yes,scrollbars=yes");
+  if(!w){ alert("팝업이 차단되었습니다 — 주소창의 팝업 허용을 눌러 주세요."); return; }
+  const styles=[...document.querySelectorAll("style")].map(x=>x.textContent).join("\n");
+  const links=[...document.querySelectorAll('link[rel="stylesheet"]')].map(x=>x.outerHTML).join("");
+  const baked=bakeStatic(contentEl);
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>'
+    +escapeH(title)+'</title>'+links+'<style>'+styles
+    +'\nbody{background:#f4f6fa;margin:0;padding:14px 18px;overflow:auto}'
+    +'\n.pop-head{position:sticky;top:0;background:#fff;border:1px solid #d8dee9;border-radius:10px;'
+    +'padding:9px 14px;margin-bottom:12px;font-size:14px;font-weight:700;display:flex;gap:10px;align-items:center;z-index:5}'
+    +'\n.pop-head .tag{font-size:12px;color:#8a93a6;font-weight:500}'
+    +'\n.pop-head button{font-size:13px;padding:4px 12px;border:1px solid #c7d2e8;border-radius:8px;background:#fff;cursor:pointer;font-weight:700}'
+    +'\n.pop-body{background:#fff;border:1px solid #d8dee9;border-radius:12px;padding:16px 18px;'
+    +'zoom:1.25;transform-origin:0 0}'   /* 기본 125% — 상세 비교용 */
+    +'</style></head><body><div class="pop-head">'+escapeH(title)
+    +'<span class="tag">읽기 전용 사본 · '+new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"})
+    +' 기준 · 편집은 본 화면에서</span>'
+    +'<span style="flex:1"></span>'
+    +'<button id="zo">가−</button><button id="zi">가＋</button>'
+    +'</div><div class="pop-body"></div>'
+    +'<scr'+'ipt>var z=1.25;function az(){document.querySelector(".pop-body").style.zoom=z;'
+    +'document.getElementById("zi").title=document.getElementById("zo").title=Math.round(z*100)+"%";}'
+    +'document.getElementById("zi").onclick=function(){z=Math.min(2.2,z+0.15);az();};'
+    +'document.getElementById("zo").onclick=function(){z=Math.max(0.8,z-0.15);az();};az();</scr'+'ipt>'
+    +'</body></html>');
+  w.document.close();
+  w.document.querySelector(".pop-body").appendChild(w.document.importNode(baked,true));
+  w.document.title=title;
+  try{ w.focus(); }catch(e){}
+  return w;
+}
+/* 모달 제목줄에 [↗ 새 창] 달기 */
+function addPopBtn(ovId,title,bodySel,opt){
+  const ov=document.getElementById(ovId); if(!ov)return;
+  const h2=ov.querySelector(".modal>h2"); if(!h2||h2.querySelector(".popout"))return;
+  const b=document.createElement("button");
+  b.className="stbtn popout"; b.textContent="↗ 새 창";
+  b.title="이 화면을 별도 브라우저 창으로 띄웁니다 — 다른 모니터로 끌어가 나란히 비교하세요";
+  b.style.cssText="margin-left:auto;margin-right:6px;flex:0 0 auto";
+  b.onclick=e=>{ e.stopPropagation();
+    const el=ov.querySelector(bodySel); if(!el)return;
+    const t=(typeof title==="function"?title():title);
+    popOut(t,el,opt); };
+  const x=h2.querySelector(".x"); h2.insertBefore(b,x||null);
+}
 /* 오버레이 닫기 — 닫을 때 모달 위치(드래그 이동분) 초기화해 다음엔 중앙에서 열림 */
 function closeOverlay(o){ o.classList.remove("on"); const m=o.querySelector(".modal"); if(m){m.style.transform="";m._dx=0;m._dy=0;} }
 /* ══════ 팝업은 항상 하나만 ══════
@@ -5183,6 +5252,12 @@ $("dash-new").addEventListener("click",()=>{
 });
 $("dash-upload").addEventListener("click",()=>{ showDash(false); $("upload-input").click(); });
 $("run").addEventListener("click",run);
+/* 비교에 쓰는 화면들 — 새 창으로 띄워 모니터 여러 대에 나란히 */
+addPopBtn("ov-daejo",()=>siteLabel()+" — 신구대조표",".body",{w:1250,h:850});
+addPopBtn("ov-rev",()=>siteLabel()+" — 변경 결과(개정안)","#rev-body");
+addPopBtn("ov-full",()=>siteLabel()+" — 원본 전문","#full-body");
+addPopBtn("ov-final",()=>siteLabel()+" — 최종 확인","#fin-body");
+addPopBtn("ov-stdcmp",()=>"표준규칙 대조 — "+siteLabel(),".body",{w:1250,h:850});
 renderPreview();updateArchCnt();
 migrateWip();    // 옛 임시저장(WIP)이 남아 있으면 통합 저장으로 이관
 try{ showDash(localStorage.getItem("pureun_rules_dash_open_v1")!=="0"); }catch(e){ showDash(true); }
