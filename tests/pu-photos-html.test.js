@@ -795,6 +795,44 @@ test('왜 지웠는지를 지운 기록에 보여 준다', () => {
   assert.match(fn[0], /r\.why/, '스스로 치운 이유가 기록 화면에 안 나옵니다');
 });
 
+function fnBodyOf(name) {
+  const m = app.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n\\}'));
+  assert.ok(m, name + ' 본문을 찾을 수 없습니다');
+  return m[0];
+}
+
+/* ── 업체관리로 보내기 ── */
+
+test('사업자등록증·중소기업확인서는 업체관리에도 보낸다', () => {
+  assert.match(app, /const CO_KINDS = \{ bizreg: 1, sme: 1 \}/);
+  assert.match(app, /PuDocFile\.sendToCompany\(/, '업체관리로 보내지 않습니다');
+  assert.match(app, /function sendCompanyNow\(/, '사람이 손으로 보낼 길이 없습니다');
+});
+
+test('명함첩 보내기와 업체관리 보내기를 따로 둔다', () => {
+  // 한 줄로 묶으면 한쪽이 실패할 때 다른 쪽도 못 간다.
+  const s = fnBodyOf('startRead');
+  assert.match(s, /canSend\(read\)/);
+  assert.match(s, /canSendCo\(read\)/, '업체관리 자동 보내기가 없습니다');
+});
+
+test('중소기업확인서가 아무 곳에도 안 들어가면 확인 필요로 잡는다', () => {
+  // 확인서는 명함첩에 가지 않는다 — 이 줄이 없으면 조용히 묻힌다.
+  const fn = fnBodyOf('needsCheck');
+  assert.match(fn, /CO_KINDS\[r\.kind\]/, '업체관리에 못 넣은 것을 놓칩니다');
+  assert.match(fn, /filedCo/);
+});
+
+test('업체관리 결과를 명함첩 결과와 따로 보여 준다', () => {
+  const fn = fnBodyOf('renderReadPanel');
+  assert.match(fn, /filedCo/, '업체관리 결과를 안 보여줍니다');
+  assert.match(fn, /🏢/);
+});
+
+test('유효기간을 화면에 보여 준다 — 만료를 알 수 있어야 한다', () => {
+  assert.match(app, /\['expiry', '유효기간'\]/);
+});
+
 test('저장 방식을 앱이 직접 정하지 않는다', () => {
   // 방식 판단은 저장 층 한 곳에만 있어야 한다.
   assert.ok(!/BUCKET_ROOT\s*=/.test(app), '창고 경로를 앱에서 다시 정의하면 안 됩니다');

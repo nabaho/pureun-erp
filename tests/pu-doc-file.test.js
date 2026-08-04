@@ -342,3 +342,157 @@ test('결과 문구가 사람이 읽을 한국어다', async () => {
   assert.ok(!/[A-Za-z]{5,}/.test(r.message), '영어 내부 용어가 노출됩니다: ' + r.message);
   assert.match(r.message, /명함첩/);
 });
+
+/* ══════════ 업체관리에 넣기 ══════════
+   여기서 잘못하면 실데이터가 망가진다. 못 박아 둘 것 셋:
+   ① 업체를 새로 만들지 않는다  ② 빈 칸만 채운다  ③ 목록을 통째로 쓰지 않는다 */
+
+const SME = { company: '가나상사', bizno: '220-81-62517', ceo: '홍길동',
+  smeType: '소기업', industry: '금속가공', expiry: '2027-03-31',
+  issueNo: 'S2026-1234', issueDate: '2026-04-01' };
+
+// 업체 목록은 객체형·배열형 둘 다 쓰인다 — 둘 다 시험한다.
+function coObj(rec) { return { 'data/companies': { v: { c1: rec }, u: 100 } }; }
+function coArr(rec) { return { 'data/companies': { v: [null, rec], u: 100 } }; }
+
+test('사업자번호로 기존 업체를 찾는다 — 하이픈이 달라도', async () => {
+  const F = loadFile();
+  F.init({ db: fakeDb({ 'data/companies': { v: {
+    c1: { id: 'c1', name: '가나상사', bizNo: '220-81-62517' },
+    c2: { id: 'c2', name: '다라상사', bizNo: '1234567890' } } } }) });
+  assert.equal((await F.findCompanyByBizNo('2208162517')).id, 'c1');
+  assert.equal((await F.findCompanyByBizNo('123-45-67890')).id, 'c2');
+  assert.equal(await F.findCompanyByBizNo('999-99-99999'), null);
+  assert.equal(await F.findCompanyByBizNo(''), null, '번호가 없으면 찾지 않는다');
+});
+
+test('배열형 목록에서도 찾는다 — 자리번호를 열쇠로 쓴다', async () => {
+  const F = loadFile();
+  F.init({ db: fakeDb(coArr({ id: 'c9', name: '가나상사', bizNo: '2208162517' })) });
+  const hit = await F.findCompanyByBizNo('220-81-62517');
+  assert.equal(hit.id, 'c9');
+  assert.equal(hit.at, '1', '배열 자리번호를 못 잡으면 칸 경로를 만들 수 없습니다');
+});
+
+test('업체를 찾지 못하면 새로 만들지 않는다 — 유령 업체 금지', async () => {
+  const F = loadFile();
+  const db = fakeDb({ 'data/companies': { v: {} } });
+  F.init({ db });
+  const r = await F.sendToCompany({ kind: 'bizreg', fields: BIZ });
+  assert.equal(r.found, false);
+  assert.equal(db.calls.update.length, 0, '업체를 만들었습니다');
+  assert.match(r.message, /업체를 먼저 만들어/, '무엇을 해야 하는지 알려주지 않습니다: ' + r.message);
+});
+
+test('사업자번호를 못 읽었으면 찾지도 않는다', async () => {
+  const F = loadFile();
+  const db = fakeDb({ 'data/companies': { v: {} } });
+  F.init({ db });
+  const r = await F.sendToCompany({ kind: 'bizreg', fields: { company: '가나상사' } });
+  assert.equal(r.found, false);
+  assert.equal(db.calls.update.length, 0);
+  assert.match(r.message, /사업자번호/);
+});
+
+test('찾은 업체의 빈 칸만 채운다 — 기존 값은 덮지 않는다', async () => {
+  const F = loadFile();
+  const db = fakeDb(coObj({ id: 'c1', name: '가나상사', bizNo: '2208162517',
+    ceo: '기존대표', address: '', bizType: '' }));
+  F.init({ db });
+  const r = await F.sendToCompany({ kind: 'bizreg', fields: BIZ, byName: '권형하' });
+  assert.equal(r.found, true);
+  const u = db.calls.update[0].u;
+  assert.equal(u['data/companies/v/c1/ceo'], undefined, '기존 대표자를 덮어썼습니다');
+  assert.equal(u['data/companies/v/c1/address'], '천안시');
+  assert.equal(u['data/companies/v/c1/bizType'], '제조업');
+  assert.ok(r.filled.indexOf('소재지') >= 0, JSON.stringify(r.filled));
+});
+
+test('업체 목록을 통째로 쓰지 않는다 — 남이 넣은 업체가 지워진다', async () => {
+  const F = loadFile();
+  const db = fakeDb(coObj({ id: 'c1', name: '가나상사', bizNo: '2208162517' }));
+  F.init({ db });
+  await F.sendToCompany({ kind: 'bizreg', fields: BIZ });
+  const u = db.calls.update[0].u;
+  assert.equal(u['data/companies/v'], undefined, '목록 노드를 통째로 썼습니다');
+  assert.equal(u['data/companies'], undefined, '업체 뿌리를 통째로 썼습니다');
+  for (const k of Object.keys(u)) {
+    assert.match(k, /^data\/companies\/(v\/c1\/[A-Za-z]+|u)$/, '위험한 경로입니다: ' + k);
+  }
+});
+
+test('찾는 열쇠(사업자번호)를 다시 쓰지 않는다', async () => {
+  // 열쇠를 다시 쓰면 표기만 바뀌어 다음 번에 못 찾을 수 있다.
+  const F = loadFile();
+  const db = fakeDb(coObj({ id: 'c1', name: '가나상사', bizNo: '2208162517' }));
+  F.init({ db });
+  await F.sendToCompany({ kind: 'bizreg', fields: BIZ });
+  assert.equal(db.calls.update[0].u['data/companies/v/c1/bizNo'], undefined);
+});
+
+test('갱신시각을 함께 쓴다 — 안 쓰면 푸른이알피 화면에 안 나타난다', async () => {
+  const F = loadFile();
+  const db = fakeDb(coObj({ id: 'c1', name: '가나상사', bizNo: '2208162517' }));
+  F.init({ db });
+  await F.sendToCompany({ kind: 'bizreg', fields: BIZ });
+  assert.ok(db.calls.update[0].u['data/companies/u'] > 0);
+});
+
+test('고친 때·고친 이를 남긴다 — 동시 편집 판단이 이걸 본다', async () => {
+  const F = loadFile();
+  const db = fakeDb(coObj({ id: 'c1', name: '가나상사', bizNo: '2208162517' }));
+  F.init({ db });
+  await F.sendToCompany({ kind: 'bizreg', fields: BIZ, byName: '권형하' });
+  const u = db.calls.update[0].u;
+  assert.ok(u['data/companies/v/c1/updatedAt'] > 0);
+  assert.equal(u['data/companies/v/c1/updatedBy'], '권형하');
+});
+
+test('채울 것이 없으면 아무것도 쓰지 않는다 — 업체관리도', async () => {
+  const F = loadFile();
+  const db = fakeDb(coObj({ id: 'c1', name: '가나상사', bizNo: '2208162517',
+    ceo: '홍길동', corpNo: '160111-0371859', openDate: '2014-05-07',
+    bizType: '제조업', bizCategory: '금속가공', address: '천안시' }));
+  F.init({ db });
+  const r = await F.sendToCompany({ kind: 'bizreg', fields: BIZ });
+  assert.equal(r.found, true);
+  assert.deepEqual([...r.filled], []);
+  assert.equal(db.calls.update.length, 0, '바뀔 것이 없는데 저장했습니다');
+});
+
+test('중소기업확인서는 기업규모와 유효기간만 채운다', async () => {
+  // 상호·대표자는 사업자등록증이 더 정확한 원본이다 — 확인서로 건드리지 않는다.
+  const F = loadFile();
+  const db = fakeDb(coObj({ id: 'c1', name: '', bizNo: '2208162517', ceo: '',
+    companySize: '', industry: '', smeExpiry: '' }));
+  F.init({ db });
+  const r = await F.sendToCompany({ kind: 'sme', fields: SME });
+  const u = db.calls.update[0].u;
+  assert.equal(u['data/companies/v/c1/companySize'], '소기업');
+  assert.equal(u['data/companies/v/c1/smeExpiry'], '2027-03-31');
+  assert.equal(u['data/companies/v/c1/name'], undefined, '확인서로 상호를 건드렸습니다');
+  assert.equal(u['data/companies/v/c1/ceo'], undefined, '확인서로 대표자를 건드렸습니다');
+  assert.equal(u['data/companies/v/c1/industry'], undefined, '규모·유효기간 밖을 건드렸습니다');
+  assert.match(r.message, /유효기간/);
+});
+
+test('확인서 발급번호·발급일도 함께 남는다', () => {
+  // 유효기간만 있으면 어느 확인서인지 몰라 재발급 요청 때 다시 찾아야 한다.
+  const F = loadFile();
+  assert.ok(F.sendToCompany && F.findCompanyByBizNo, '업체 등록 함수가 없습니다');
+});
+
+test('명함·회의사진은 업체관리로 보내지 않는다', async () => {
+  const F = loadFile();
+  const db = fakeDb({});
+  F.init({ db });
+  await assert.rejects(() => F.sendToCompany({ kind: 'card', fields: CARD }), /사업자등록증|중소기업/);
+  await assert.rejects(() => F.sendToCompany({ kind: 'meeting', fields: {} }), /사업자등록증|중소기업/);
+  assert.equal(db.calls.update.length, 0);
+});
+
+test('실시간DB가 없으면 한국어로 거절한다 — 업체관리도', async () => {
+  const F = loadFile();
+  F.init({});
+  await assert.rejects(() => F.sendToCompany({ kind: 'bizreg', fields: BIZ }), /실시간DB/);
+});
