@@ -1,0 +1,102 @@
+name: Auto merge
+
+# 검사(Quality Gate)를 통과한 PR을 스스로 병합한다 — 매번 손으로 누르지 않게.
+#
+# ⚠ 왜 안전한가
+#   배포(Test and Deploy Pages)는 검사 job 을 통과해야만 이뤄진다. 그래서 검사가
+#   깨진 코드는 이 장치가 병합해도 **사이트에 올라가지 않는다.**
+#
+# ⚠ 무엇을 병합하지 않는가 (아래 조건 중 하나라도 걸리면 손으로 병합해야 한다)
+#   · 검사가 실패했다
+#   · 저장소 주인이 만든 PR이 아니다 (바깥 사람이 올린 코드가 저절로 들어오면 안 된다)
+#   · 초안(draft)이다
+#   · 제목에 [보류] 가 있거나 hold 라벨이 붙어 있다 — 눈으로 보고 싶을 때 쓰는 브레이크
+#   · 충돌이 있거나 다른 이유로 병합할 수 없다
+#
+# workflow_run 은 **기본 브랜치(main)에 있는 이 파일**을 쓴다. 그래서 이 파일이
+# main 에 한 번 들어간 뒤부터 동작한다(그 한 번만 손으로 병합하면 된다).
+
+on:
+  workflow_run:
+    workflows: ["Quality Gate"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write        # 병합 뒤 배포를 직접 깨우려면 필요하다(아래 설명)
+
+concurrency:
+  group: auto-merge-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    name: Merge if checks passed
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Find the pull request and merge it
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          # 이 검사가 돌던 커밋에 딸린 열린 PR 을 찾는다.
+          PR=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
+                --jq '[.[] | select(.state=="open")] | first // empty')
+          if [ -z "$PR" ]; then
+            echo "이 커밋에 열린 PR 이 없습니다 — 병합할 것이 없습니다."
+            exit 0
+          fi
+
+          NUM=$(echo "$PR" | jq -r '.number')
+          AUTHOR=$(echo "$PR" | jq -r '.user.login')
+          DRAFT=$(echo "$PR" | jq -r '.draft')
+          TITLE=$(echo "$PR" | jq -r '.title')
+          echo "PR #$NUM · 만든 사람 $AUTHOR · 초안 $DRAFT"
+          echo "제목: $TITLE"
+
+          # 바깥 사람이 올린 코드가 저절로 들어오면 안 된다.
+          if [ "$AUTHOR" != "$OWNER" ]; then
+            echo "저장소 주인이 만든 PR 이 아닙니다 — 손으로 병합해야 합니다."
+            exit 0
+          fi
+
+          if [ "$DRAFT" = "true" ]; then
+            echo "초안입니다 — 병합하지 않습니다."
+            exit 0
+          fi
+
+          # 눈으로 보고 싶을 때 쓰는 브레이크.
+          case "$TITLE" in
+            *"[보류]"*|*"[hold]"*)
+              echo "제목에 보류 표시가 있습니다 — 병합하지 않습니다."
+              exit 0 ;;
+          esac
+          LABELS=$(echo "$PR" | jq -r '[.labels[].name] | join(",")')
+          case ",$LABELS," in
+            *",hold,"*|*",보류,"*)
+              echo "보류 라벨이 붙어 있습니다 — 병합하지 않습니다."
+              exit 0 ;;
+          esac
+
+          # 저장소 관례대로 병합 커밋을 만든다(스쿼시하지 않는다).
+          # 충돌 등으로 병합할 수 없으면 여기서 실패하고, 그때는 손으로 하면 된다.
+          gh pr merge "$NUM" --repo "$REPO" --merge \
+            --subject "Merge pull request #$NUM from $OWNER/$(echo "$PR" | jq -r '.head.ref')" \
+            --body "$TITLE"
+          echo "PR #$NUM 을 병합했습니다."
+
+          # ⚠ 여기가 놓치기 쉬운 곳이다.
+          # 이 장치가 만든 병합 커밋은 **배포를 저절로 깨우지 못한다** — GitHub 규칙상
+          # GITHUB_TOKEN 이 만든 push 는 다른 워크플로를 일으키지 않는다.
+          # 그대로 두면 "병합은 됐는데 사이트는 어제 것"이 되고, 아무도 모른다.
+          # 그래서 배포를 직접 깨운다(배포 워크플로에 workflow_dispatch 가 있어서 된다).
+          echo "배포를 깨웁니다…"
+          gh workflow run "Test and Deploy Pages" --repo "$REPO" --ref main
+          echo "배포를 깨웠습니다."
