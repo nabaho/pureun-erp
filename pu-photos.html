@@ -246,6 +246,7 @@ button{font-family:inherit;cursor:pointer}
 #readPanel .again{width:100%;margin-top:8px;background:transparent;color:#c8cfdc;border:1px solid #2c374b;border-radius:9px;padding:9px;font-size:12.5px;font-weight:600}
 #readPanel .again.send{background:#1e40af;color:#fff;border-color:#1e40af}
 #readPanel .again.rm{border-color:#5a2530;color:#f09595}
+#readPanel .again.dl,#readPanel .again.sh{border-color:#2c4a7a;color:#9dc0f0}
 #readPanel .sent{margin:8px 0 0;font-size:12px;color:#5dcaa5;line-height:1.5}
 
 /* 설정 시트 */
@@ -327,6 +328,7 @@ button{font-family:inherit;cursor:pointer}
      <div id="viewPhotos">
       <!-- 고른 것에 쓰는 단추는 왼쪽 끝에 둔다(대표 지시) -->
       <div id="gridBar">
+        <button id="dlBtn" onclick="downloadSelected()" style="display:none">⬇ 내려받기</button>
         <button id="readSelBtn" class="rd" onclick="readSelected()" style="display:none">🔍 판독</button>
         <button id="delBtn" class="del" onclick="deleteSelected()" style="display:none">🗑 지우기</button>
         <button id="selCancel" onclick="clearSel()" style="display:none">취소</button>
@@ -1151,6 +1153,148 @@ $('grid').addEventListener('dragstart', function (ev) {
   }
 });
 
+/* ══════ 내려받기 ══════
+   폰에서도 사진을 받아 쓸 수 있어야 한다(대표 요청).
+
+   ⚠ 두 가지를 지킨다.
+   1) **원판을 내려준다.** 격자의 미리보기(240px)를 내려주면 글씨가 안 보여 쓸 수 없다.
+   2) **data: 주소를 그대로 a[download] 에 걸지 않는다.** 큰 사진에서 막히는
+      브라우저가 있어 Blob 으로 바꿔 내려준다(폰에서 특히). */
+
+/* 파일 이름 — 날짜와 회사명이 들어가야 나중에 찾을 수 있다.
+   파일 이름에 쓸 수 없는 글자(\ / : * ? " < > |)는 지운다. */
+function fileNameOf(it, ext) {
+  const d = new Date(it.meta.takenAt || it.meta.upAt || Date.now());
+  const ymd = d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+  const r = it.meta.read || {};
+  const who = (r.fields && (r.fields.company || r.fields.name)) || '';
+  const kind = READ_LABEL[r.kind] && r.kind !== 'other' ? READ_LABEL[r.kind] : '';
+  const parts = ['사진첩', ymd, kind, who].filter(Boolean);
+  return parts.join('_').replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim() + (ext || '.jpg');
+}
+
+/* dataURL → Blob. 큰 사진을 주소로 넘기지 않으려고 한 번 바꾼다. */
+function toBlob(dataUrl) {
+  return fetch(dataUrl).then(function (r) { return r.blob(); });
+}
+
+function saveBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  /* 곧바로 지우면 내려받기가 끊기는 브라우저가 있어 잠시 뒤에 지운다. */
+  setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+}
+
+function downloadOne(id) {
+  const it = gridItems.find(function (x) { return x.id === id; });
+  if (!it) return;
+  PuPhotoStore.loadFull(gridYear, id, gridOwner).then(function (full) {
+    if (!safeSrc(full)) throw new Error('사진 본문을 불러오지 못했습니다');
+    return toBlob(full);
+  }).then(function (blob) {
+    saveBlob(blob, fileNameOf(it));
+  }).catch(function (e) {
+    console.warn('[내려받기]', e);
+    alert('내려받지 못했습니다 — ' + ((e && e.message) || e));
+  });
+}
+
+/* 폰에서는 내려받기보다 '공유'가 쓸 데가 많다 — 사진앱에 저장하거나 카톡으로 바로 보낸다.
+   되는 기기에서만 단추를 보여 준다. */
+function canShareFiles() {
+  try {
+    return !!(navigator.canShare && navigator.share &&
+      navigator.canShare({ files: [new File([new Uint8Array([1])], 'a.jpg', { type: 'image/jpeg' })] }));
+  } catch (e) { return false; }
+}
+
+function shareOne(id) {
+  const it = gridItems.find(function (x) { return x.id === id; });
+  if (!it) return;
+  PuPhotoStore.loadFull(gridYear, id, gridOwner).then(function (full) {
+    if (!safeSrc(full)) throw new Error('사진 본문을 불러오지 못했습니다');
+    return toBlob(full);
+  }).then(function (blob) {
+    const file = new File([blob], fileNameOf(it), { type: 'image/jpeg' });
+    return navigator.share({ files: [file], title: fileNameOf(it, '') });
+  }).catch(function (e) {
+    /* 사용자가 공유창을 닫은 것은 잘못이 아니다 — 조용히 넘어간다. */
+    if (e && e.name === 'AbortError') return;
+    console.warn('[공유]', e);
+    alert('공유하지 못했습니다 — ' + ((e && e.message) || e));
+  });
+}
+
+/* 여러 장은 **한 파일로 묶어** 내려준다. 한 장씩 여러 번 내려받으면
+   물음창이 여러 번 떠서 폰에서 쓸 수 없다. */
+function loadZipLib() {
+  if (window.JSZip) return Promise.resolve(window.JSZip);
+  return new Promise(function (res, rej) {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    s.onload = function () { res(window.JSZip); };
+    s.onerror = function () { rej(new Error('묶는 도구를 불러오지 못했습니다')); };
+    document.head.appendChild(s);
+  });
+}
+
+function downloadSelected() {
+  const ids = Array.from(selected);
+  if (!ids.length) return;
+  if (ids.length === 1) { downloadOne(ids[0]); return; }
+
+  const btn = $('dlBtn');
+  btn.disabled = true;
+  btn.textContent = '모으는 중…';
+  loadZipLib().then(function (JSZip) {
+    const zip = new JSZip();
+    let chain = Promise.resolve();
+    let n = 0;
+    ids.forEach(function (id) {
+      chain = chain.then(function () {
+        const it = gridItems.find(function (x) { return x.id === id; });
+        if (!it) return;
+        btn.textContent = '모으는 중… ' + (n + 1) + '/' + ids.length;
+        /* 한 장씩 받는다 — 한꺼번에 받으면 폰 메모리가 버티지 못한다. */
+        return PuPhotoStore.loadFull(gridYear, id, gridOwner).then(function (full) {
+          if (!safeSrc(full)) return;
+          const b64 = String(full).split(',')[1] || '';
+          if (!b64) return;
+          /* 같은 이름이 겹치면 뒤엣것이 앞엣것을 덮는다 — 번호를 붙여 막는다. */
+          n += 1;
+          zip.file(String(n).padStart(2, '0') + '_' + fileNameOf(it), b64, { base64: true });
+        }).catch(function (e) { console.warn('[묶기]', id, e); });
+      });
+    });
+    return chain.then(function () {
+      if (!n) throw new Error('내려받을 사진을 하나도 읽지 못했습니다');
+      btn.textContent = '파일 만드는 중…';
+      return zip.generateAsync({ type: 'blob' }).then(function (blob) {
+        const d = new Date();
+        saveBlob(blob, '사진첩_' + d.getFullYear() + '-' +
+          String(d.getMonth() + 1).padStart(2, '0') + '-' +
+          String(d.getDate()).padStart(2, '0') + '_' + n + '장.zip');
+        if (n < ids.length) {
+          alert(ids.length + '장 중 ' + n + '장만 담았습니다. 나머지는 사진을 읽지 못했습니다.');
+        }
+      });
+    });
+  }).catch(function (e) {
+    console.warn('[내려받기]', e);
+    alert('내려받지 못했습니다 — ' + ((e && e.message) || e));
+  }).then(function () {
+    btn.disabled = false;
+    renderGridBar();
+  });
+}
+
 /* ══════ 고르기 · 지우기 ══════
    지우기는 되돌릴 수 없으므로 ① 반드시 확인을 받고 ② 명함첩에 보낸 것은
    그 기록이 남는다는 사실을 함께 알린다(사진첩 사진과 명함첩 레코드는 다른 물건). */
@@ -1212,10 +1356,11 @@ function renderGridBar() {
   const n = selected.size;
   $('gridBar').style.display = (shown || needOnly) ? 'flex' : 'none';
   /* 고른 것이 있을 때만 단추가 나온다 — 「고르기」 단계가 없어졌다. */
-  ['readSelBtn', 'delBtn', 'selCancel'].forEach(function (id) {
+  ['dlBtn', 'readSelBtn', 'delBtn', 'selCancel'].forEach(function (id) {
     $(id).style.display = n ? 'inline-block' : 'none';
   });
   $('delBtn').textContent = '🗑 ' + n + '장 지우기';
+  if (!$('dlBtn').disabled) $('dlBtn').textContent = '⬇ ' + n + '장 내려받기';
   $('readSelBtn').disabled = reading;
   if (!reading) $('readSelBtn').textContent = '🔍 ' + n + '장 판독';
   $('gridCount').textContent = n
@@ -1329,6 +1474,14 @@ const READ_ROWS = [
   ['companyTel', '대표번호'], ['email', '이메일'], ['address', '소재지'], ['companyAddr', '회사주소']
 ];
 
+/* 내려받기·공유 줄. 공유는 되는 기기(주로 폰)에만 보인다 —
+   PC 에 보이면 눌러도 아무 일이 없어 헛단추가 된다. */
+function dlRow() {
+  const share = canShareFiles()
+    ? '<button class="again sh" onclick="shareOne(viewerId)">📤 공유·사진앱에 저장</button>' : '';
+  return '<button class="again dl" onclick="downloadOne(viewerId)">⬇ 내려받기</button>' + share;
+}
+
 function renderReadPanel(it) {
   const el = $('readPanel');
   if (!it) { el.innerHTML = ''; return; }
@@ -1341,7 +1494,8 @@ function renderReadPanel(it) {
     const isDoc = it.meta.kind === 'doc';
     el.innerHTML = '<div class="box"><p class="note" style="margin:0">' +
       (isDoc ? '아직 판독하지 않은 서류입니다.' : '명함·사업자등록증이면 글자를 읽어 정보를 뽑아냅니다.') +
-      '</p><button class="again" onclick="readAgain()">글자 판독하기</button>' +
+      '</p>' + dlRow() +
+      '<button class="again" onclick="readAgain()">글자 판독하기</button>' +
       '<button class="again rm" onclick="deleteOne()">🗑 이 사진 지우기</button></div>';
     return;
   }
@@ -1371,6 +1525,7 @@ function renderReadPanel(it) {
     cause +
     (rows ? '<table>' + rows + '</table>' : '') +
     box +
+    dlRow() +
     '<button class="again" onclick="readAgain()">다시 판독</button>' +
     '<button class="again rm" onclick="deleteOne()">🗑 이 사진 지우기</button></div>';
 }

@@ -93,7 +93,8 @@ test('화면은 실시간DB에 직접 쓰지 않는다 — 쓰기는 저장 층�
     .replace(/classList\.(add|remove|toggle)\(/g, 'CLASSLIST(')
     .replace(/selected\.(add|delete|clear|has)\(/g, 'SET(')
     .replace(/PuDrag\.set\(/g, 'DRAG(')        // 끌어놓기 데이터 담기 — DB 쓰기가 아니다
-    .replace(/dataTransfer\.setData\(/g, 'DRAG(');
+    .replace(/dataTransfer\.setData\(/g, 'DRAG(')
+    .replace(/\ba\.remove\(\)/g, 'DOM()');     // 임시 내려받기 링크 걷어내기 — DB 쓰기가 아니다
   for (const call of ['.set(', '.update(', '.remove(']) {
     assert.ok(!noDom.includes(call), '화면이 클라우드에 직접 쓰고 있습니다: ' + call);
   }
@@ -148,6 +149,40 @@ test('미리보기를 끼워 넣을 때 서류 딱지를 지우지 않는다', (
   assert.ok(fill, 'fillThumbs 본문을 찾을 수 없습니다');
   assert.ok(!/cell\.innerHTML\s*=/.test(fill[0]), '칸 내용을 통째로 바꿔 딱지가 지워집니다');
   assert.match(fill[0], /insertBefore/);
+});
+
+/* ── 내려받기 ── */
+
+test('사진 한 장을 내려받을 수 있다 — 폰에서도', () => {
+  assert.match(app, /function downloadOne\(/);
+  // 원판을 받아 내려준다(미리보기 240px 를 내려주면 쓸 수 없다)
+  const fn = app.match(/function downloadOne\([\s\S]*?\n\}/);
+  assert.ok(fn, 'downloadOne 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /loadFull\(/);
+  // data: 주소를 그대로 a[download] 에 걸면 폰에서 막히는 브라우저가 있다 → Blob
+  assert.match(app, /createObjectURL\(/);
+  assert.match(app, /revokeObjectURL\(/);
+});
+
+test('파일 이름에 날짜와 회사명이 들어가고 위험한 글자는 걸러낸다', () => {
+  assert.match(app, /function fileNameOf\(/);
+  const fn = app.match(/function fileNameOf\([\s\S]*?\n\}/);
+  assert.ok(fn, 'fileNameOf 본문을 찾을 수 없습니다');
+  // 파일 이름에 쓸 수 없는 글자를 지운다
+  assert.match(fn[0], /replace\(/);
+});
+
+test('여러 장은 묶어서 한 파일로 내려받는다', () => {
+  // 폰에서 여러 번 내려받으면 물음창이 여러 번 뜬다 — 한 파일이 낫다.
+  assert.match(app, /function downloadSelected\(/);
+  assert.match(app, /jszip/i);
+  // 필요할 때만 받아 쓴다(앱에 통째로 박지 않는다)
+  assert.match(app, /function loadZipLib\(/);
+});
+
+test('내려받기 단추는 고른 것이 있을 때 나온다', () => {
+  assert.match(app, /id="dlBtn"/);
+  assert.match(app, /downloadSelected\(\)/);
 });
 
 /* ── 휴지통 · 설정 화면 · 3분류 ── */
