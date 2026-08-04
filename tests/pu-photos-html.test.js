@@ -358,6 +358,13 @@ test('여러 장 판독 중 한 장이 실패해도 나머지를 계속한다', 
 
 /* ── 2단 화면 · 사진 지우기 ── */
 
+test('카메라 단추는 손으로 만지는 기기에만 보인다', () => {
+  // PC 에는 찍을 카메라가 없다(대표 지시). 화면 폭이 아니라 **만지는 기기인지**로
+  // 가른다 — 좁게 띄운 PC 창에 보이면 눌러도 아무 일이 없어 헛단추가 된다.
+  assert.match(app, /#camBtn\{display:none\}/);
+  assert.match(app, /@media \(hover:none\) and \(pointer:coarse\)\{ #camBtn\{display:block\}/);
+});
+
 test('폰에서는 대시보드를 줄인다 — 사진이 화면 밖으로 밀리지 않게', () => {
   // 폰에서 버튼·안내가 위아래로 길게 쌓이면 사진을 보려고 스크롤해야 한다.
   assert.match(app, /@media \(max-width:899px\)/);
