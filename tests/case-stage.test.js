@@ -236,7 +236,11 @@ ok('이름·약어·기관종류·기한일수·기산·설명을 고칠 수 있
 ok('적용 유형을 붙이고 뗄 수 있다', /forTypes:\(x\.forTypes\|\|\[\]\)\.concat\(\[v\]\)/.test(stageCard) && /forTypes:\(x\.forTypes\|\|\[\]\)\.filter/.test(stageCard));
 ok('저장은 biz_case_stages 로 간다', /dbSet\(BIZ_CASE_STAGE_KEY, arr\)/.test(stageCard));
 ok('쓰는 사건이 있으면 삭제 대신 숨김을 권한다', /단계 사용 중/.test(stageCard) && /hidden:true/.test(stageCard));
-ok('확인함이 켜진 줄에는 표시가 안 뜬다', /\(x\.dueDays > 0 && !x\.dueVerified\)/.test(stageCard));
+// 기한이 있고 아직 확인 안 된 줄에만 표시가 뜬다 (계열 묶음으로 바꾸며 dd 변수로 뽑아 썼다)
+ok('확인함이 켜진 줄에는 표시가 안 뜬다',
+  /var unv = \(dd > 0 && !x\.dueVerified\);/.test(stageCard)
+  && /var dd = parseInt\(x\.dueDays, 10\) \|\| 0;/.test(stageCard)
+  && /unv[\s\S]{0,400}?'확인 필요'/.test(stageCard));
 ok('기본 단계로 복원할 수 있다', /persist\(BIZ_CASE_STAGE_SEED\.slice\(\)\)/.test(stageCard));
 
 /* ══ ⑩ 시드가 코드에 숨어 있지 않다 (대표가 고칠 수 있어야 한다) ══ */
