@@ -40306,6 +40306,25 @@ function MyDeskV2(props){
             if(addN) toPeS.push({ store:store, id:w.ref.id, subs:curS });
             up['work_erp/items/' + wid + '/pe_addsub'] = null;   // 처리했으니 지운다
           }
+          // ── 사건 단계 기한 → 업무관리 (한 방향) ──
+          // 법정 기한은 송달일·판정일에서 계산된 값이다. 사람이 적은 "다음 할 일"(next)에
+          // 넣으면 그 사람이 쓴 내용을 덮으므로 섞지 않고 따로 내려보낸다.
+          // 업무관리는 이 칸을 보여주기만 하고 되돌려 쓰지 않는다 — 그래서 pick3 를 타지 않는다.
+          // ⚠ 기준선만 찍고 돌아가는 아래 분기보다 앞에 두어야 새로 연결한 건도 첫 패스에 받는다.
+          if(w.ref.type === 'case' && typeof caseNextDue === 'function'){
+            // 끝난 사건의 기한은 내려보내지 않는다 (남아 있으면 달력에 계속 뜬다)
+            var _nd = isItemClosed(pe) ? null : caseNextDue(pe);
+            var _ndi = _nd ? (caseStageInfo(_nd.code) || {}) : null;
+            var _want = _nd ? { date:_nd.due,
+                                label:(_ndi.short || _ndi.name || '단계') + ' 기한',
+                                verified: _ndi.dueVerified === true } : null;
+            var _cur = w.pe_due || null;
+            var _same = (_cur && _want)
+              ? (String(_cur.date||'') === _want.date && String(_cur.label||'') === _want.label
+                 && (_cur.verified === true) === _want.verified)
+              : (!_cur && !_want);
+            if(!_same){ up['work_erp/items/' + wid + '/pe_due'] = _want; toWs++; }
+          }
           var peClosed = isItemClosed(pe), wsDone = (w.state === 'done');
           // 진행 필드는 담당자 본인 것만 맞춘다 — project_progress가 사람별 기록이라
           // 남의 행을 여기서 만들거나 고치면 안 된다.
@@ -40874,24 +40893,33 @@ function MyDeskV2(props){
             return items.map(function(x){
               var role = (String(x.managerMain)===String(sid) || (name && x.managerMain===name)) ? '주' : '부';
               var prog = getProgress(type, x.id);
-              // D-day: 사건은 deadlines 중 가장 가까운 것
-              var dDay = null, dDayDate = '';
-              if(type==='case' && x.deadlines && x.deadlines.length>0){
+              // D-day: 사건은 deadlines(사람이 넣은 마감일) + 심급·단계에서 계산된 법정 기한 중 가장 가까운 것
+              var dDay = null, dDayDate = '', dDayWhy = '';
+              if(type==='case'){
                 var nearest = null;
-                x.deadlines.forEach(function(d){
-                  if(!d.date) return;
-                  var dd = new Date(d.date); dd.setHours(0,0,0,0);
+                var consider = function(dateStr, why){
+                  if(!dateStr) return;
+                  var dd = new Date(dateStr); dd.setHours(0,0,0,0);
                   var diff = Math.round((dd - today)/86400000);
                   if(nearest===null || Math.abs(diff) < Math.abs(nearest.diff)){
-                    nearest = { date:d.date, diff:diff };
+                    nearest = { date:dateStr, diff:diff, why:why };
                   }
-                });
-                if(nearest){ dDay = nearest.diff; dDayDate = nearest.date; }
+                };
+                (x.deadlines||[]).forEach(function(d){ consider(d.date, d.title || '마감'); });
+                // 단계 기한을 놓치면 되돌릴 수 없다 — 사람이 넣은 마감일과 같이 본다
+                if(typeof caseStageDue === 'function' && Array.isArray(x.stages)){
+                  x.stages.forEach(function(stg){
+                    var _si = caseStageInfo(stg && stg.code) || {};
+                    var _sd = caseStageDue(stg, _si);
+                    if(_sd) consider(_sd.due, (_si.short || _si.name || '단계') + ' 기한' + (_si.dueVerified ? '' : '(확인)'));
+                  });
+                }
+                if(nearest){ dDay = nearest.diff; dDayDate = nearest.date; dDayWhy = nearest.why || ''; }
               }
               return {
                 type:type, id:x.id,
                 no: getNo(x), name:getName(x), company:getCompany(x),
-                role:role, dDay:dDay, dDayDate:dDayDate,
+                role:role, dDay:dDay, dDayDate:dDayDate, dDayWhy:dDayWhy,
                 status: x.status || x.progressStatus || '진행중',
                 progress: prog ? (prog.progress||0) : 0,
                 progressData: prog,
@@ -41203,7 +41231,9 @@ function MyDeskV2(props){
                               h('span', { style:{ fontSize:'10px', fontWeight:700, color:progColor, fontFamily:'monospace', minWidth:'28px', textAlign:'right' } }, it.progress+'%')
                             )
                           ),
-                          h('td', { style:{ padding:'7px', textAlign:'center', fontSize:'10.5px', fontWeight:700, color:dDayColor, fontFamily:'monospace' } },
+                          h('td', { style:{ padding:'7px', textAlign:'center', fontSize:'10.5px', fontWeight:700, color:dDayColor, fontFamily:'monospace' },
+                              // 무슨 기한인지 — 단계 기한과 사람이 넣은 마감일을 구분해야 한다
+                              title: it.dDayDate ? (it.dDayDate + (it.dDayWhy ? ' · ' + it.dDayWhy : '')) : '' },
                             dDayLabel
                           ),
                           h('td', { style:{ padding:'7px', textAlign:'center', fontSize:'10.5px', color:'#475569' } },
@@ -43547,6 +43577,29 @@ function CorpDashboard(props){
         color:'#dc2626', draggable:false });
     });
   });
+  // 3-2) 사건 단계 기한 (심급·산재 단계에서 계산된 법정 기한)
+  // 사람이 넣은 마감일(3번)과 달리 계산된 값이므로 보여주기만 한다 — 끌어 옮길 수 없다.
+  // 아직 확인되지 않은 기한은 (확인) 을 붙여 그대로 믿지 않게 한다.
+  if(typeof caseStageDue === 'function'){
+    cases.forEach(function(c){
+      if(c.permanentArchived || c.closedDate) return;
+      if(filterIsEum || filterEumId || filterIsEumWork || filterIsEumKeyword) return;
+      if(!Array.isArray(c.stages)) return;
+      var assignedSid = c.managerMain;
+      if(filterIsStaffSid && assignedSid !== calFilter) return;
+      c.stages.forEach(function(stg){
+        var info = caseStageInfo(stg && stg.code) || {};
+        var d = caseStageDue(stg, info);
+        if(!d || !d.due || !inCalRange(d.due)) return;
+        calEvents.push({ date:d.due, sid:assignedSid, type:'stage-due',
+          label:'⚖ '+(info.short || info.name || '단계')+' 기한'
+                + (info.dueVerified ? '' : '(확인)')
+                + ' · ' + (c.companyName || c.title || c.caseNo || '사건'),
+          search:(c.title||'')+' '+(c.caseNo||'')+' '+(stg.caseNo||'')+' '+(info.name||'')+' '+(c.companyName||''),
+          color: info.dueVerified ? '#b91c1c' : '#b45309', draggable:false });
+      });
+    });
+  }
 
   // 4) 자문료 입금예정일 + 미수금 색상 — 보안 강화로 캘린더에서 완전 제거 (직원 일정·근속·업무진행만)
   var corpShowAdvisory = false;
@@ -45023,7 +45076,9 @@ function CorpDashboard(props){
                 style:{ padding:'7px 14px', background:'#1e40af', border:'none', borderRadius:'6px',
                   color:'#fff', fontSize:'12px', fontWeight:700, cursor:'pointer' }}, '✏️ 수정')
               : h('div', { style:{ fontSize:'11px', color:'#94a3b8' } },
-                  evDetail.ev.type==='deadline' ? '※ 사건 메뉴에서 수정' : evDetail.ev.type==='loa' ? '※ 휴가관리 → 휴직 탭에서 수정' : evDetail.ev.type==='gcal'
+                  evDetail.ev.type==='deadline' ? '※ 사건 메뉴에서 수정'
+                  : evDetail.ev.type==='stage-due' ? '※ 사건 ▸ 심급·단계에서 계산된 기한 (송달일·판정일을 고치면 함께 바뀝니다)'
+                  : evDetail.ev.type==='loa' ? '※ 휴가관리 → 휴직 탭에서 수정' : evDetail.ev.type==='gcal'
                     ? h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
                         gcalHasToken()
                           ? h('button',{onClick:function(){
