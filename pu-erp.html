@@ -9544,6 +9544,131 @@ function contractDupVerdict(existing, form){
   return { verdict:verdict, shared:shared, same:same, diff:diff, unknown:unknown,
            missingSubtype: unknown.length > 0, closed:closed };
 }
+// ============ 지난 자료 중복 훑기 ============
+// 위 판정은 계약을 **저장할 때만** 돈다. 이미 쌓인 것끼리 중복인지는 아무도 안 봤다.
+// 여기서 계약·사건·일반업무를 한 번에 훑는다.
+//
+// 판정 방법은 위와 같다 — 같은 사업장에서 같은 세부 종류가 둘 이상이면 중복이고,
+// 앞의 것이 종료·취소됐으면 재계약이다. 다만 저장 화면은 "새 것 하나 vs 기존들" 을
+// 보는 반면, 여기서는 쌓인 것끼리 봐야 하므로 (사업장 · 종류 · 세부종류) 로 묶는다.
+//
+// ★ 합치기·지우기 버튼은 두지 않는다. 계약은 돈과 세금계산서가 걸려 있어 자동으로
+//   합치면 되돌릴 수 없다. 찾아서 보여주기까지만 하고 판단은 사람이 한다.
+var DUP_SWEEP_KINDS = [
+  { key:'contract', label:'계약',     store:'contracts',      goto:'biz/contract' },
+  { key:'case',     label:'사건',     store:'cases',          goto:'biz/case' },
+  { key:'work',     label:'일반업무', store:'my_work_items',  goto:'dash/my' }
+];
+// 같은 사업장인가 — 사업자번호가 있으면 그것, 없으면 표기 차이를 지운 회사명.
+// 둘 다 없으면 묶을 근거가 없으므로 훑지 않는다 (이름 없는 건끼리 묶으면 엉뚱하게 걸린다).
+function dupSweepCoKey(rec){
+  if(!rec) return '';
+  var b = (typeof CompanyRef !== 'undefined' && CompanyRef._normBiz)
+    ? CompanyRef._normBiz(rec.bizNo || rec.bizno || (rec.company && rec.company.bizNo))
+    : String(rec.bizNo || '').replace(/\D/g, '');
+  if(b && String(b).length >= 10) return 'b' + b;
+  var n = pcNormCo(rec.companyName || (rec.company && rec.company.name) || rec.client || '');
+  return n ? 'n' + n : '';
+}
+function dupSweepCoName(rec){
+  return String((rec && (rec.companyName || (rec.company && rec.company.name) || rec.client)) || '').trim();
+}
+// 한 건을 (종류 · 세부종류) 짝으로 펼친다. 계약은 종류를 여러 개 가질 수 있다.
+// 세부 종류를 못 읽으면 code:'' 로 내보낸다 — 조용히 버리면 중복인지 아닌지 모른 채 넘어간다.
+function dupSweepFacets(kindKey, rec){
+  if(!rec) return [];
+  if(kindKey === 'contract'){
+    var ks = rec.kinds || (rec.kind ? [rec.kind] : []);
+    if(!ks.length) return [{ kindV:'', code:'', label:'종류 미입력' }];
+    return ks.map(function(k){
+      var code = contractSubtypeCode(rec, k);
+      var lb = contractSubtypeLabel(rec, k);
+      return { kindV:k, code:code, label:(lb && lb.label) || '' };
+    });
+  }
+  if(kindKey === 'case'){
+    var cc = contractSubtypeCode(rec, 'case');
+    var cl = contractSubtypeLabel(rec, 'case');
+    return [{ kindV:'case', code:cc, label:(cl && cl.label) || '' }];
+  }
+  if(kindKey === 'work'){
+    // 일반업무는 세부 종류 목록이 없다. 업무종류 + 업무명으로 같은 일인지 본다.
+    var wt = String(rec.workType || '').trim();
+    var ti = String(rec.title || '').replace(/\s+/g, '').toLowerCase();
+    var code = (wt || ti) ? (wt + '|' + ti) : '';
+    return [{ kindV:'work', code:code, label:(wt ? wt : '') + (rec.title ? ' · ' + rec.title : '') }];
+  }
+  return [];
+}
+// 훑기 — 읽기만 한다. 아무것도 저장하지 않는다.
+function dupSweepScan(opts){
+  opts = opts || {};
+  var only = opts.kinds || null;                 // ['contract'] 처럼 좁힐 수 있다
+  var groups = {};
+  var scanned = 0;
+  DUP_SWEEP_KINDS.forEach(function(K){
+    if(only && only.indexOf(K.key) < 0) return;
+    var arr = dbGet(K.store, []) || [];
+    if(!Array.isArray(arr)) return;
+    arr.forEach(function(rec){
+      if(!rec || !rec.id) return;
+      if(rec.permanentArchived) return;          // 영구보관은 목록에서 빠진 건이다
+      var co = dupSweepCoKey(rec);
+      if(!co) return;                            // 사업장을 특정할 수 없으면 훑지 않는다
+      scanned++;
+      var closed = isItemClosed(rec);
+      dupSweepFacets(K.key, rec).forEach(function(f){
+        var gk = K.key + '|' + co + '|' + (f.kindV || '') + '|' + (f.code || '');
+        if(!groups[gk]){
+          groups[gk] = { gk:gk, kind:K.key, kindLabel:K.label, goto:K.goto,
+            coKey:co, coName:dupSweepCoName(rec),
+            kindV:f.kindV, code:f.code, label:f.label, rows:[] };
+        }
+        if(!groups[gk].coName) groups[gk].coName = dupSweepCoName(rec);
+        if(!groups[gk].label && f.label) groups[gk].label = f.label;
+        groups[gk].rows.push({ rec:rec, closed:closed });
+      });
+    });
+  });
+  var out = [];
+  Object.keys(groups).forEach(function(gk){
+    var g = groups[gk];
+    if(g.rows.length < 2) return;                // 한 건이면 중복이 아니다
+    var openN = 0;
+    g.rows.forEach(function(r){ if(!r.closed) openN++; });
+    // 세부 종류를 못 읽었으면 같은 일인지 판단할 수 없다 — 따로 모아 사람이 보게 한다
+    g.verdict = !g.code ? 'unknown' : (openN >= 2 ? 'dup' : 'again');
+    g.openN = openN;
+    g.rows.sort(function(a,b){
+      return String(dupSweepDateOf(a.rec)).localeCompare(String(dupSweepDateOf(b.rec)));
+    });
+    out.push(g);
+  });
+  var rank = { dup:0, unknown:1, again:2 };
+  out.sort(function(a,b){
+    if(rank[a.verdict] !== rank[b.verdict]) return rank[a.verdict] - rank[b.verdict];
+    if(b.rows.length !== a.rows.length) return b.rows.length - a.rows.length;
+    return String(a.coName).localeCompare(String(b.coName), 'ko');
+  });
+  var counts = { dup:0, again:0, unknown:0, groups:out.length, scanned:scanned };
+  out.forEach(function(g){ counts[g.verdict]++; });
+  return { counts:counts, groups:out };
+}
+// 목록에 보일 날짜 — 종류마다 이름이 다르다
+function dupSweepDateOf(rec){
+  if(!rec) return '';
+  return String(rec.signDate || rec.receiveDate || rec.startDate || rec.createdAt || '').slice(0, 10);
+}
+// 목록에 보일 관리번호
+function dupSweepNoOf(rec){
+  if(!rec) return '';
+  return String(rec.contractNo || rec.caseNo || rec.itemNo || rec.no || '');
+}
+window.dupSweepScan   = dupSweepScan;
+window.dupSweepCoKey  = dupSweepCoKey;
+window.dupSweepFacets = dupSweepFacets;
+// ── 지난 자료 중복 훑기 끝 ──
+
 // 여러 건 중 가장 센 판정 (dup > again > diff). 겹치는 게 하나도 없으면 null.
 function contractDupWorst(verdicts){
   var has = { dup:false, again:false, diff:false };
@@ -13426,10 +13551,14 @@ function ContractHelpModal(props){
   );
 }
 
-function ContractManagement(){
+function ContractManagement(props){
+  props = props || {};
   var existing = dbGet('contracts', null);
   if(!existing){ dbSet('contracts', []); existing = []; }
   var c = useState(existing); var contracts = c[0]; var setContracts = c[1];
+  // 지난 자료 중복 훑기 결과 — null 이면 아직 안 훑은 상태 (누를 때만 훑는다)
+  var dsS = useState(null); var dupSweep = dsS[0]; var setDupSweep = dsS[1];
+  var dsfS = useState('all'); var dupFilter = dsfS[0]; var setDupFilter = dsfS[1];
   // ★ #10 핀 고정
   var pinS = usePersistedState('pinned_contracts', []); var pinnedIds = pinS[0]; var setPinnedIds = pinS[1];
   function togglePin(id){ setPinnedIds(function(prev){ var p=prev||[]; return p.indexOf(id)>=0 ? p.filter(function(x){return x!==id;}) : p.concat([id]); }); }
@@ -14215,7 +14344,12 @@ function ContractManagement(){
         },
         title:'계약-2026 빈 번호 메우기',
         style:{ padding:'6px 12px', background:'#fff', color:'#475569', border:'1px solid #cbd5e1', borderRadius:'5px', cursor:'pointer', fontSize:'11.5px', fontWeight:600 } },
-        '🔢 번호 재정렬')
+        '🔢 번호 재정렬'),
+      // 지난 자료 중복 훑기 — 누를 때만 훑는다(매번 훑으면 목록이 느려진다)
+      window.innerWidth > 768 && h('button', { onClick:function(){ setDupSweep(dupSweepScan()); },
+        title:'이미 쌓인 계약·사건·일반업무끼리 중복인지 한 번 훑습니다 (읽기만 함)',
+        style:{ padding:'6px 12px', background:'#fff', color:'#475569', border:'1px solid #cbd5e1', borderRadius:'5px', cursor:'pointer', fontSize:'11.5px', fontWeight:600 } },
+        '🔎 지난 중복 훑기')
     ),
     // (담당자 필터는 위 툴바 드롭다운으로 통합)
     // 상단 공통 하위종류 칩 (종류=컨설팅 선택 시) — 클릭하면 3개 열 동시 필터
@@ -14309,7 +14443,118 @@ function ContractManagement(){
         border:'none', background:'#1e40af', color:'#fff', fontSize:'24px', boxShadow:'0 6px 16px rgba(30,64,175,.45)', cursor:'pointer' } }, '📷'),
     modal && h(ContractModal, { cur:modal.cur, onSave:save, onClose:close }),
     printModal && h(ContractFormPrintModal, { contract:printModal, onClose:closePrintModal }),
-    docModal && h(ContractDocVault, { contract:docModal, onClose:function(){ setDocModal(null); } })
+    docModal && h(ContractDocVault, { contract:docModal, onClose:function(){ setDocModal(null); } }),
+    dupSweep && h(DupSweepModal, { result:dupSweep, filter:dupFilter, onFilter:setDupFilter,
+      onClose:function(){ setDupSweep(null); },
+      onRescan:function(){ setDupSweep(dupSweepScan()); },
+      onOpen:function(g, rec){
+        // 계약이면 그 자리에서 열고, 사건·일반업무는 그 화면으로 보낸다
+        if(g.kind === 'contract'){ setDupSweep(null); setModal({ mode:'edit', cur:rec }); return; }
+        setDupSweep(null);
+        // 어느 건인지 알려 준 다음 그 화면으로 — 목록에서 바로 못 찾으면 훑은 뜻이 없다
+        showToast('👉 ' + g.kindLabel + ' ' + (dupSweepNoOf(rec) || g.coName) + ' — ' + g.coName);
+        if(props.onNavigate) props.onNavigate(g.goto);
+      } })
+  );
+}
+
+// ── 지난 자료 중복 훑기 결과 ──
+// 보여주기만 한다. 합치기·지우기 버튼을 두지 않는 이유는 dupSweepScan 위 주석에 있다.
+function DupSweepModal(props){
+  var r = props.result || { counts:{}, groups:[] };
+  var cnt = r.counts || {};
+  var VER = {
+    dup:     { label:'진짜 중복', sub:'세부 종류가 같고 둘 이상 진행 중',  fg:'#991b1b', bg:'#fef2f2', bd:'#fca5a5' },
+    again:   { label:'재계약으로 보임', sub:'앞의 것이 종료·취소됨',       fg:'#92400e', bg:'#fffbeb', bd:'#fde68a' },
+    unknown: { label:'판단 못 함', sub:'세부 종류가 비어 있어 알 수 없음', fg:'#475569', bg:'#f8fafc', bd:'#cbd5e1' }
+  };
+  var f = props.filter || 'all';
+  var shown = (r.groups || []).filter(function(g){ return f === 'all' || g.verdict === f; });
+  function tile(k){
+    var v = VER[k];
+    var on = (f === k);
+    return h('button', { key:k, onClick:function(){ props.onFilter(on ? 'all' : k); },
+      title: on ? '전체 보기로' : v.label + '만 보기',
+      style:{ flex:'1 1 150px', textAlign:'left', padding:'9px 12px', borderRadius:'7px', cursor:'pointer',
+        background:v.bg, border:'2px solid ' + (on ? v.fg : v.bd) } },
+      h('div', { style:{ fontSize:'11.5px', color:v.fg, fontWeight:700 } }, v.label),
+      h('div', { style:{ fontSize:'20px', fontWeight:800, color:v.fg, lineHeight:1.2 } }, (cnt[k] || 0) + '묶음'),
+      h('div', { style:{ fontSize:'10.5px', color:v.fg, opacity:.8 } }, v.sub));
+  }
+  return h('div', { className:'modal-bg', onClick:props.onClose },
+    h('div', { className:'modal', onClick:function(e){ e.stopPropagation(); },
+      style:{ maxWidth:'880px', width:'94vw', maxHeight:'88vh', display:'flex', flexDirection:'column' } },
+      h('div', { style:{ display:'flex', alignItems:'center', gap:'9px', flexWrap:'wrap', marginBottom:'10px' } },
+        h('span', { style:{ fontSize:'15px', fontWeight:700, color:'#1e293b' } }, '🔎 지난 자료 중복 훑기'),
+        h('span', { style:{ fontSize:'11.5px', color:'#64748b' } },
+          '계약·사건·일반업무 ' + (cnt.scanned || 0) + '건을 훑어 ' + (cnt.groups || 0) + '묶음'),
+        h('div', { style:{ flex:1 } }),
+        h('span', { style:{ fontSize:'11px', color:'#94a3b8' } }, '읽기만 합니다 · 아무것도 바꾸지 않습니다'),
+        h('button', { onClick:props.onRescan, title:'다시 훑기',
+          style:{ padding:'4px 10px', background:'#fff', color:'#475569', border:'1px solid #cbd5e1',
+            borderRadius:'5px', cursor:'pointer', fontSize:'11px' } }, '↻'),
+        h('button', { onClick:props.onClose,
+          style:{ padding:'4px 10px', background:'#f1f5f9', color:'#475569', border:'1px solid #cbd5e1',
+            borderRadius:'5px', cursor:'pointer', fontSize:'11px' } }, '✕')
+      ),
+      h('div', { style:{ display:'flex', gap:'8px', flexWrap:'wrap', marginBottom:'10px' } },
+        tile('dup'), tile('again'), tile('unknown')),
+      h('div', { style:{ flex:1, overflowY:'auto', minHeight:'120px' } },
+        shown.length === 0
+          ? h('div', { style:{ padding:'26px', textAlign:'center', color:'#64748b', fontSize:'12.5px' } },
+              (r.groups || []).length === 0
+                ? '겹치는 것이 없습니다 — 깨끗합니다 👍'
+                : '이 갈래에는 없습니다 (다른 칸을 눌러 보세요)')
+          : shown.map(function(g){
+              var v = VER[g.verdict] || VER.unknown;
+              return h('div', { key:g.gk,
+                style:{ border:'1px solid ' + v.bd, borderRadius:'7px', overflow:'hidden', marginBottom:'7px' } },
+                h('div', { style:{ background:v.bg, padding:'6px 10px', display:'flex',
+                  alignItems:'center', gap:'8px', flexWrap:'wrap' } },
+                  h('span', { style:{ fontSize:'12.5px', fontWeight:700, color:'#1e293b' } }, g.coName || '(업체명 없음)'),
+                  h('span', { style:{ fontSize:'10.5px', fontWeight:700, color:v.fg, background:'#fff',
+                    border:'1px solid ' + v.bd, borderRadius:'8px', padding:'1px 7px' } }, g.kindLabel),
+                  h('span', { style:{ fontSize:'11.5px', color:v.fg } },
+                    g.rows.length + '건 · ' + v.label),
+                  g.label ? h('span', { style:{ fontSize:'11.5px', color:'#475569' } }, g.label) : null,
+                  h('div', { style:{ flex:1 } }),
+                  h('span', { style:{ fontSize:'10.5px', color:v.fg, opacity:.85 } },
+                    g.verdict === 'dup'   ? ('진행 중 ' + g.openN + '건')
+                  : g.verdict === 'again' ? (g.openN === 0 ? '모두 종료' : '진행 중 1건')
+                  : '세부 종류 미입력')
+                ),
+                g.rows.map(function(row, i){
+                  return h('div', { key:(row.rec.id || i),
+                    style:{ display:'flex', alignItems:'center', gap:'9px', flexWrap:'wrap',
+                      padding:'6px 10px', borderTop:'1px solid #f1f5f9', background:'#fff' } },
+                    h('span', { style:{ fontSize:'11px', color:'#94a3b8', fontFamily:'monospace', minWidth:'72px' } },
+                      dupSweepDateOf(row.rec) || '날짜 없음'),
+                    h('span', { style:{ fontSize:'11px', color:'#475569', background:'#f8fafc',
+                      border:'1px solid #e2e8f0', borderRadius:'4px', padding:'1px 6px' } },
+                      dupSweepNoOf(row.rec) || '번호 없음'),
+                    h('span', { style:{ fontSize:'11.5px', color:'#1e293b', flex:'1 1 120px', minWidth:'90px',
+                      overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } },
+                      row.rec.title || row.rec.brief || g.label || ''),
+                    h('span', { style:{ fontSize:'11px', color:'#64748b', minWidth:'54px' } },
+                      row.rec.managerMain || row.rec.sid || ''),
+                    row.closed
+                      ? h('span', { style:{ fontSize:'10.5px', fontWeight:700, color:'#059669' } }, '종료')
+                      : h('span', { style:{ fontSize:'10.5px', fontWeight:700, color:'#2563eb' } }, '진행중'),
+                    h('button', { onClick:function(){ props.onOpen(g, row.rec); },
+                      style:{ padding:'3px 10px', background:'#fff', color:'#1e40af', border:'1px solid #bfdbfe',
+                        borderRadius:'5px', cursor:'pointer', fontSize:'11px', fontWeight:600 } }, '열기')
+                  );
+                })
+              );
+            })
+      ),
+      h('div', { style:{ marginTop:'9px', paddingTop:'8px', borderTop:'1px solid #f1f5f9',
+        fontSize:'11px', color:'#64748b', lineHeight:1.8 } },
+        h('div', null, '· 같은 사업장 판정은 사업자번호가 있으면 그것으로, 없으면 표기 차이를 지운 회사명으로 합니다.'),
+        h('div', null, '· 합치기·지우기 버튼은 두지 않았습니다. 계약은 돈과 세금계산서가 걸려 있어 자동으로 합치면 되돌릴 수 없습니다.'),
+        h('div', null, '· 「판단 못 함」은 세부 종류가 비어 있어 같은 일인지 알 수 없는 것입니다. 채워 넣으시면 다음 훑기에서 갈립니다.')
+      )
+    )
   );
 }
 //  - 사건유형 (case_types): 약어-연도-순번 자동 관리번호 생성
@@ -65483,7 +65728,7 @@ function ERPMain(props){
   } else if(current === 'env/settings'){
     mainContent = h(EnvSettings, null);
   } else if(current === 'biz/contract'){
-    mainContent = h(ContractManagement, null);
+    mainContent = h(ContractManagement, { onNavigate:selectMenu });
   } else if(current === 'biz/company'){
     mainContent = h(CompanyManagement, null);
   } else if(current === 'biz/case'){
