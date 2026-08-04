@@ -278,6 +278,7 @@ button{font-family:inherit;cursor:pointer}
 #readPanel .acts button{background:transparent;color:#c8cfdc;border:1px solid #2c374b;border-radius:8px;padding:8px 6px;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #readPanel .acts .dl,#readPanel .acts .sh{border-color:#2c4a7a;color:#9dc0f0}
 #readPanel .acts .rm{border-color:#5a2530;color:#f09595}
+#readPanel .acts .ok{border-color:#1f5d45;color:#5dcaa5}
 #readPanel .acts .wide{grid-column:1 / -1}
 #readPanel .again.send{background:#1e40af;color:#fff;border-color:#1e40af}
 #readPanel .again.rm{border-color:#5a2530;color:#f09595}
@@ -604,6 +605,9 @@ window.addEventListener('dragleave', function (e) {
   if (!dragDepth) showDrop(false);
 });
 window.addEventListener('drop', function (e) {
+  /* 우리 드래그면 아무것도 받지 않는다 — 위 hasFiles 와 같은 이유로, 여기서도
+     한 번 더 막는다(받는 자리가 안 열려도 drop 은 올 수 있다). */
+  if (window.PuDrag && PuDrag.maybeOurs(e.dataTransfer)) { dragDepth = 0; showDrop(false); return; }
   e.preventDefault();
   dragDepth = 0;
   showDrop(false);
@@ -614,6 +618,10 @@ window.addEventListener('drop', function (e) {
 function hasFiles(e) {
   const t = e.dataTransfer && e.dataTransfer.types;
   if (!t) return false;
+  /* ⚠ 사진첩 안에서 시작한 드래그는 **받을 것이 아니다.**
+     격자의 사진을 끌면 브라우저가 그림을 파일로도 실어 보내므로, 이 줄이 없으면
+     받는 자리가 열리고 같은 사진이 다시 올라간다(2026-08-04 재복사 사고). */
+  if (window.PuDrag && PuDrag.maybeOurs(e.dataTransfer)) return false;
   return Array.prototype.indexOf.call(t, 'Files') >= 0;
 }
 
@@ -1487,6 +1495,12 @@ const selected = new Set();
 function needsCheck(it) {
   const r = it && it.meta && it.meta.read;
   if (!r) return false;
+  /* ⚠ 사람이 「확인했음」을 누른 것은 더 이상 할 일이 아니다.
+     이 빠져나갈 길이 없으면 **영원히 지워지지 않는 ⚠** 가 생긴다 — 예를 들어
+     사업자등록증인데 그 업체가 업체관리에 없으면(아래 CO_KINDS 줄) 사진첩에서는
+     할 수 있는 일이 없는데도 계속 할 일로 남는다. 2026-08-04 대표 보고:
+     "확인 필요 오류가 계속 나온다". 치울 수 없는 할 일은 목록을 못 믿게 만든다. */
+  if (r.ack) return false;
   if (r.error) return true;                                   // 판독 실패
   /* 종류를 못 가렸어도 **내용을 읽어냈으면** 사람이 봐야 한다 — 자동 등록 대상이
      아니므로 이 줄이 없으면 아무 곳에도 안 들어간 채 조용히 묻힌다.
@@ -1690,14 +1704,39 @@ const READ_ROWS = [
    readBtn: 「다시 판독」이냐 「글자 판독하기」냐가 상황에 따라 다르다.
    ⚠ 「공유·사진앱에 저장」은 되는 기기(주로 폰)에만 — PC 에 보이면 눌러도
      아무 일이 없는 헛단추가 된다. 그래서 폰에서만 한 줄을 통째로 쓴다. */
-function actsRow(readBtn) {
+function actsRow(readBtn, showAck) {
   const share = canShareFiles()
     ? '<button class="sh wide" onclick="shareOne(viewerId)">📤 공유·사진앱에 저장</button>' : '';
+  /* 「확인했음」 — 사진첩에서 더 할 일이 없는데 ⚠ 로 남은 것을 사람이 치운다.
+     이것이 없으면 지워지지 않는 할 일이 쌓여 목록을 못 믿게 된다. */
+  const ack = showAck
+    ? '<button class="ok wide" onclick="ackRead()">✓ 확인했음 — 할 일에서 치우기</button>' : '';
   return '<div class="acts">' +
     '<button class="dl" onclick="downloadOne(viewerId)">⬇ 내려받기</button>' +
     '<button onclick="readAgain()">' + readBtn + '</button>' +
-    share +
+    share + ack +
     '<button class="rm wide" onclick="deleteOne()">🗑 이 사진 지우기</button></div>';
+}
+
+/* 「확인했음」 — 봤다는 표시만 남긴다. 사진·판독 결과는 그대로 둔다.
+   되돌리려면 「다시 판독」을 누르면 표시가 지워진다(아래 readAgain 참고). */
+function ackRead() {
+  const id = viewerId;
+  if (!id) return;
+  if (blockedIfOther()) return;
+  const it = gridItems.find(function (x) { return x.id === id; });
+  if (!it || !it.meta.read) return;
+  const read = Object.assign({}, it.meta.read, {
+    ack: { at: Date.now(), by: PuPhotoStore.myName() || '' }
+  });
+  it.meta = Object.assign({}, it.meta, { read: read });
+  renderReadPanel(it);
+  renderGridBar();
+  renderGrid();
+  PuPhotoStore.saveRead(gridYear, id, read).catch(function (e) {
+    console.warn('[확인했음]', e);
+    alert('확인 표시를 저장하지 못했습니다: ' + ((e && e.message) || e));
+  });
 }
 
 function renderReadPanel(it) {
@@ -1758,7 +1797,9 @@ function renderReadPanel(it) {
     cause +
     (rows ? '<table>' + rows + '</table>' : '') +
     box +
-    actsRow('다시 판독') + '</div>';
+    (read.ack ? '<p class="note">✓ ' + esc(read.ack.by || '') +
+        '님이 확인해 할 일에서 치웠습니다 · 「다시 판독」을 누르면 되돌아옵니다</p>' : '') +
+    actsRow('다시 판독', needsCheck(it)) + '</div>';
 }
 
 /* readLine 의 뒷부분(상태)만 — 패널은 종류를 딱지로 따로 보여주므로 겹치지 않게. */

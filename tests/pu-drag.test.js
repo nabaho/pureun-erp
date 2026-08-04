@@ -115,6 +115,24 @@ test('끌고 오는 중에는 종류만 보고 우리 것인지 가린다', () =
   assert.equal(D.maybeOurs(null), false);
 });
 
+test('우리 종류가 있으면 파일이 함께 실려 있어도 우리 것이다', () => {
+  /* ⚠ 이번 버그의 핵심(2026-08-04 대표 보고 "내부의 사진을 재복사한다").
+     격자의 사진(<img>)을 끌면 **브라우저가 그 그림을 파일로도 함께 싣는다.**
+     그래서 'Files' 를 먼저 보고 판단하면 우리 드래그를 남의 파일로 오인하고,
+     사진첩이 그것을 받아 같은 사진을 다시 올린다.
+     → 우리 종류가 있으면 Files 가 있어도 우리 것이라고 판단해야 한다. */
+  const D = loadDrag();
+  const both = fakeDT();
+  D.set(both, REF);
+  both.types.push('Files');          // 브라우저가 얹은 것
+  assert.equal(D.maybeOurs(both), true,
+    '우리 종류가 있는데도 남의 파일로 봤습니다 — 재복사가 생깁니다');
+  // 우리 종류가 없고 파일만 있으면 우리 것이 아니다(진짜 파일 받기는 그대로 동작해야 한다)
+  const onlyFiles = fakeDT();
+  onlyFiles.types.push('Files');
+  assert.equal(D.maybeOurs(onlyFiles), false);
+});
+
 test('끄는 쪽 효과는 복사다 — 원본을 옮기지 않는다', () => {
   // 사진첩 사진은 그대로 남고, 받는 앱이 사본을 갖는다(설계서 원칙).
   const D = loadDrag();

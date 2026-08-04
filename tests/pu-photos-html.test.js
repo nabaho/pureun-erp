@@ -900,6 +900,50 @@ test('안내 문구가 실제 동작과 같다', () => {
   assert.ok(!/'누르면 닫힘'/.test(app), '옛 안내 문구가 남아 있습니다');
 });
 
+/* ── 사진첩 안에서 끈 사진이 다시 올라가던 버그 (2026-08-04 대표 보고) ── */
+
+test('사진첩 안에서 끈 것은 받지 않는다 — 같은 사진이 또 올라가면 안 된다', () => {
+  /* 격자의 사진(<img>)을 끌면 브라우저가 그 그림을 파일로도 함께 싣는다.
+     그래서 'Files' 만 보고 판단하면 우리 드래그를 남의 파일로 오인해 재복사한다. */
+  const fn = app.match(/function hasFiles\([\s\S]*?\n\}/);
+  assert.ok(fn, 'hasFiles 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /PuDrag\.maybeOurs\(e\.dataTransfer\)\) return false/,
+    '우리 드래그를 걸러내지 않습니다 — 재복사가 다시 생깁니다');
+  // 놓는 순간에도 한 번 더 막는다(받는 자리가 안 열려도 drop 은 올 수 있다)
+  const drop = app.match(/window\.addEventListener\('drop'[\s\S]*?\n\}\);/);
+  assert.ok(drop, 'drop 처리기를 찾을 수 없습니다');
+  assert.match(drop[0], /PuDrag\.maybeOurs/, '놓는 순간의 방어가 없습니다');
+});
+
+/* ── 지워지지 않는 「확인 필요」 (내가 PR #34 에서 만든 결함) ── */
+
+test('사람이 확인한 것은 할 일에서 빠진다', () => {
+  /* 사업자등록증인데 그 업체가 업체관리에 없으면 사진첩에서 할 수 있는 일이
+     없는데도 계속 ⚠ 로 남았다. 치울 수 없는 할 일은 목록을 못 믿게 만든다. */
+  const fn = app.match(/function needsCheck\([\s\S]*?\n\}/);
+  assert.ok(fn, 'needsCheck 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /if \(r\.ack\) return false/, '확인해도 치워지지 않습니다');
+  // 확인 표시는 판독 결과와 함께 서버에 남아야 다음에 열 때도 치워져 있다
+  const ack = app.match(/function ackRead\([\s\S]*?\n\}/);
+  assert.ok(ack, 'ackRead 본문을 찾을 수 없습니다');
+  assert.match(ack[0], /PuPhotoStore\.saveRead\(/, '확인 표시를 저장하지 않습니다');
+  assert.match(ack[0], /blockedIfOther\(\)/, '남의 사진에도 확인 표시를 남깁니다');
+});
+
+test('확인했음 단추는 할 일인 것에만 나온다', () => {
+  // 할 일이 아닌 사진에까지 단추를 두면 무슨 뜻인지 알 수 없다.
+  assert.match(app, /actsRow\('다시 판독', needsCheck\(it\)\)/);
+  const fn = app.match(/function actsRow\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /showAck/);
+  assert.match(fn, /확인했음/);
+});
+
+test('확인한 뒤에도 되돌릴 수 있다고 알려 준다', () => {
+  // 되돌릴 길을 안 알리면 잘못 눌렀을 때 갇힌다.
+  assert.match(app, /님이 확인해 할 일에서 치웠습니다/);
+  assert.match(app, /「다시 판독」을 누르면 되돌아옵니다/);
+});
+
 /* ── 업체관리로 보내기 ── */
 
 test('사업자등록증·중소기업확인서는 업체관리에도 보낸다', () => {
