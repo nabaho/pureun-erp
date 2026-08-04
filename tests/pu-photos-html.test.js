@@ -354,11 +354,15 @@ test('확인이 필요한 것만 모아 볼 수 있다', () => {
 });
 
 test('확인 필요 판정에 아직 판독 안 한 것과 서류 아닌 것은 안 든다', () => {
-  // 안 한 일과 어긋난 일은 다르다. 서류가 아닌 사진은 읽을 것이 없다.
+  // 안 한 일과 어긋난 일은 다르다. 정말 서류가 아닌 사진은 읽을 것이 없다.
   const fn = app.match(/function needsCheck\([\s\S]*?\n\}/);
   assert.ok(fn, 'needsCheck 본문을 찾을 수 없습니다');
   assert.match(fn[0], /if \(!r\) return false/);
-  assert.match(fn[0], /kind === 'other'\) return false/);
+  /* 'other' 는 **읽은 것이 있을 때만** 확인 필요다(2026-08-04 정교화).
+     종류를 못 가렸어도 상호·사업자번호를 읽어낸 서류가 실제로 있고(지정서 등),
+     그건 자동 등록 대상이 아니라 아무 곳에도 안 들어간 채 조용히 묻힌다.
+     읽은 것이 없는 사진은 여전히 할 일이 아니다. */
+  assert.match(fn[0], /kind === 'other'\) return readAnyField\(r\)/);
   // 판독 실패·검증 걸림·아직 안 보낸 것은 든다
   assert.match(fn[0], /r\.error\) return true/);
   assert.match(fn[0], /!r\.auto\) return true/);
@@ -800,6 +804,101 @@ function fnBodyOf(name) {
   assert.ok(m, name + ' 본문을 찾을 수 없습니다');
   return m[0];
 }
+
+/* ── 크게 보기: 좌우 분할 · 단추 압축 · 딱지 정직하게 (2026-08-04 대표 승인 목업) ── */
+
+test('넓은 화면에서 사진과 판독을 좌우로 나눈다', () => {
+  assert.match(app, /id="viewerBody"/);
+  assert.match(app, /id="viewerPic"/);
+  // 좁은 화면은 위·아래 — 좌우로 나누면 둘 다 못 본다
+  const body = app.match(/#viewerBody\{[^}]*\}/)[0];
+  assert.match(body, /flex-direction:column/, '기본이 좌우면 폰에서 둘 다 못 봅니다');
+  /* 넓은 화면에서만 좌우로 바뀐다.
+     ⚠ @media (min-width:900px) 블록이 파일에 여럿 있다(홈 배치·격자 열수 등).
+     그냥 첫 블록을 잡으면 엉뚱한 곳을 검사한다 — #viewerBody 가 든 블록만 고른다. */
+  const mq = (app.match(/@media \(min-width:900px\)\{[\s\S]*?\n\}/g) || [])
+    .find(b => b.includes('#viewerBody'));
+  assert.ok(mq, '크게 보기의 넓은 화면 규칙을 찾을 수 없습니다');
+  assert.match(mq, /#viewerBody\{flex-direction:row\}/);
+  assert.match(mq, /#viewerPic\{flex:1\.5/, '사진 자리가 판독보다 넓어야 합니다');
+});
+
+test('단추는 두 칸씩 놓고 지우기는 혼자 한 줄을 쓴다', () => {
+  // 한 줄에 하나씩이면 세로로 길어져 판독 내용을 가린다.
+  assert.match(app, /#readPanel \.acts\{display:grid;grid-template-columns:1fr 1fr/);
+  const fn = app.match(/function actsRow\([\s\S]*?\n\}/);
+  assert.ok(fn, 'actsRow 본문을 찾을 수 없습니다');
+  // 지우기는 되돌리기 어려우니 늘 한 줄을 통째로 — 잘못 누르기 어렵게
+  assert.match(fn[0], /class="rm wide"/, '지우기가 다른 단추와 나란히 있습니다');
+  assert.match(app, /#readPanel \.acts \.wide\{grid-column:1 \/ -1\}/);
+});
+
+test('공유 단추는 되는 기기에만 나온다 — PC 에 헛단추를 두지 않는다', () => {
+  const fn = app.match(/function actsRow\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /canShareFiles\(\)/);
+});
+
+test('옛 단추 함수(dlRow)는 남겨두지 않는다', () => {
+  // 둘이 함께 남으면 한쪽만 고쳐지고 화면이 갈린다.
+  assert.ok(!/function dlRow\(/.test(app), 'dlRow 가 아직 남아 있습니다');
+  assert.ok(!/dlRow\(\)/.test(app), 'dlRow 를 아직 부르고 있습니다');
+});
+
+/* ── 딱지 정직하게 ── */
+
+test('읽어낸 것이 있으면 서류가 아니라고 말하지 않는다', () => {
+  // 2026-08-04 대표 캡처: 상호·대표자·사업자번호를 다 읽고도 '서류로 보이지 않음'.
+  const fn = app.match(/function readLabel\([\s\S]*?\n\}/);
+  assert.ok(fn, 'readLabel 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /readAnyField\(read\) \? '기타 서류' : '서류로 보이지 않음'/);
+  assert.match(app, /function readAnyField\(/);
+});
+
+test('딱지와 설명이 같은 말을 두 번 하지 않는다', () => {
+  // 같은 캡처에서 '서류로 보이지 않음'이 나란히 두 번 찍혀 있었다.
+  const fn = app.match(/function readTail\([\s\S]*?\n\}/);
+  assert.ok(fn, 'readTail 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /if \(line === label\) return ''/);
+  // 설명이 비면 칸 자체를 만들지 않는다(빈 딱지가 남지 않게)
+  const panel = app.match(/function renderReadPanel\([\s\S]*?\n\}/)[0];
+  assert.match(panel, /tail \? '<span class="msg'/);
+});
+
+test('종류를 못 가린 서류는 무엇을 하라고 알려 준다', () => {
+  const fn = app.match(/function readLine\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /종류를 가리지 못했습니다/);
+  assert.match(fn, /readAnyField\(read\)/);
+});
+
+/* ── 사진 확대 · 닫는 길 ── */
+
+test('사진을 누르면 원본 크기, 바깥을 누르면 닫힌다', () => {
+  const fn = app.match(/function picClick\([\s\S]*?\n\}/);
+  assert.ok(fn, 'picClick 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /viewerImg/, '사진 자체를 눌렀는지 가리지 않습니다');
+  assert.match(fn[0], /classList\.toggle\('zoom'\)/);
+  assert.match(fn[0], /closeViewer\(\)/, '바깥을 눌러 닫는 길이 없습니다');
+  assert.match(app, /#viewerPic\.zoom img\{max-width:none;max-height:none/);
+});
+
+test('닫는 길이 셋이다 — 단추·바깥 누르기·ESC', () => {
+  // 사진을 눌러 닫던 길이 확대로 바뀌었으니 닫는 길을 잃으면 갇힌다.
+  assert.match(app, /onclick="closeViewer\(\)">닫기/);
+  assert.match(app, /onclick="picClick\(event\)"/);
+  assert.match(app, /e\.key === 'Escape' && viewerId\) closeViewer\(\)/);
+});
+
+test('다음 사진을 열 때 확대가 풀려 있다', () => {
+  // 확대한 채로 닫고 다른 사진을 열면 잘린 채로 보인다.
+  const fn = app.match(/function closeViewer\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /classList\.remove\('zoom'\)/);
+});
+
+test('안내 문구가 실제 동작과 같다', () => {
+  // 예전 문구는 '누르면 닫힘'이었는데 이제 사진을 누르면 확대된다.
+  assert.match(app, /사진을 누르면 원본 크기 · 바깥을 누르면 닫힘/);
+  assert.ok(!/'누르면 닫힘'/.test(app), '옛 안내 문구가 남아 있습니다');
+});
 
 /* ── 업체관리로 보내기 ── */
 
