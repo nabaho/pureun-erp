@@ -70,6 +70,14 @@
      일반 현장사진과 기준이 다르다(2026-08-03 대표 지시). 서류는 2560px·고품질,
      사진은 1600px. 격자용 미리보기는 종류와 무관하게 240px로 같다.
      크기 판단을 화면이 아니라 여기 두는 이유: 폰·PC·당겨오기 창이 같은 값을 써야 한다. */
+  /* ── 한 번에 올릴 수 있는 장수 ──
+     30장으로 잡은 근거는 **판독 속도**다. AI 무료 등급은 분당 10회까지 부를 수 있고
+     한 장씩 차례로 부르므로 30장이면 판독이 3분쯤 걸린다. 그보다 많이 받으면
+     판독이 줄줄이 막히고 '확인 필요'만 쌓인다(사람이 할 일이 늘어난다).
+     용량도 같이 본다 — 서류는 장당 1MB 가까이라 30장이면 30MB다.
+     화면마다 숫자를 박으면 폰·PC가 서로 다른 상한을 갖게 되므로 여기 한 곳에 둔다. */
+  var UPLOAD_MAX = 30;
+
   function uploadSpec(isDoc) {
     return isDoc
       ? { maxEdge: 2560, quality: 0.92, thumbEdge: 240 }
@@ -232,18 +240,97 @@
      연도나 루트를 지우면 그 해 사진이 전부 사라지므로, 반드시 사진 하나의
      세 경로만 null 로 쓴다. 번호가 없으면 아예 시작하지 않는다
      (빈 값이 경로에 들어가면 상위 노드를 가리키게 된다). */
+  /* ── 지우기 = 휴지통으로 (30일) ──
+     곧바로 없애지 않는다. 잘못 지운 것을 되살릴 수 있어야 한다.
+     **담고 나서 지운다** — 순서가 바뀌거나 중간에 끊기면 사진을 잃는다.
+     그래서 읽기를 먼저 다 하고, 담기와 비우기를 **한 번의 update** 로 한다. */
+  var TRASH_DAYS = 30;
+
+  function trashPath(year, id, owner) { return base(owner) + '/trash/' + year + '/' + id; }
+
   function deletePhoto(year, id) {
     if (!year || !id) return Promise.reject(new Error('지울 사진을 알 수 없습니다'));
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    /* 새 자리와 옛 자리 어디에 있든 찾아 담는다. */
+    return Promise.all([
+      readOnce(metaPath(year, id)).catch(function () { return null; }),
+      readOnce(legacyRoot('items') + '/' + year + '/' + id).catch(function () { return null; }),
+      loadFull(year, id).catch(function () { return null; }),
+      loadThumb(year, id).catch(function () { return null; })
+    ]).then(function (r) {
+      var meta = r[0] || r[1];
+      if (!meta && !r[2] && !r[3]) {
+        throw new Error('사진을 읽지 못해 지우지 않았습니다 — 잠시 뒤 다시 시도해 주세요');
+      }
+      var u = {};
+      u[trashPath(year, id)] = {
+        meta: meta || {}, full: r[2] || '', thumb: r[3] || '', delAt: Date.now()
+      };
+      u[metaPath(year, id)] = null;
+      u[blobPath(year, id)] = null;
+      u[thumbPath(year, id)] = null;
+      /* 옛 자리도 함께 비운다 — 안 비우면 지운 사진이 다시 나타난다. */
+      u[legacyRoot('items') + '/' + year + '/' + id] = null;
+      u[legacyRoot('blobs') + '/' + year + '/' + id] = null;
+      u[legacyRoot('thumbs') + '/' + year + '/' + id] = null;
+      return deps.db.ref().update(u);
+    });
+  }
+
+  /* 휴지통 목록 — 남은 날을 함께 준다(사람이 급한지 알아야 한다). */
+  function listTrash(year, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(base(owner) + '/trash/' + year).once('value').then(function (s) {
+      var raw = s.val() || {};
+      var out = {};
+      Object.keys(raw).forEach(function (id) {
+        var t = raw[id] || {};
+        var used = t.delAt ? Math.floor((Date.now() - t.delAt) / 86400000) : 0;
+        out[id] = {
+          meta: t.meta || {}, thumb: t.thumb || '', delAt: t.delAt || 0,
+          daysLeft: Math.max(0, TRASH_DAYS - used)
+        };
+      });
+      return out;
+    });
+  }
+
+  /* 되살리기 — 휴지통에서 꺼내 원래 자리로. */
+  function restorePhoto(year, id) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return readOnce(trashPath(year, id)).then(function (t) {
+      if (!t) throw new Error('휴지통에 그 사진이 없습니다');
+      var u = {};
+      u[metaPath(year, id)] = t.meta || {};
+      if (t.full) u[blobPath(year, id)] = t.full;
+      if (t.thumb) u[thumbPath(year, id)] = t.thumb;
+      u[trashPath(year, id)] = null;
+      return deps.db.ref().update(u);
+    });
+  }
+
+  /* 30일 지난 것만 완전히 지운다. 지운 때가 없는 것은 건드리지 않는다
+     (언제 지웠는지 모르는 것을 없애면 되돌릴 길이 사라진다). */
+  function purgeOldTrash(year, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(base(owner) + '/trash/' + year).once('value').then(function (s) {
+      var raw = s.val() || {};
+      var u = {}, n = 0;
+      var cut = Date.now() - TRASH_DAYS * 86400000;
+      Object.keys(raw).forEach(function (id) {
+        var t = raw[id] || {};
+        if (t.delAt && t.delAt < cut) { u[trashPath(year, id, owner)] = null; n++; }
+      });
+      if (!n) return 0;
+      return deps.db.ref().update(u).then(function () { return n; });
+    });
+  }
+
+  /* 휴지통에서 한 장만 완전히 지운다. */
+  function purgeOne(year, id) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     var u = {};
-    u[metaPath(year, id)] = null;
-    u[blobPath(year, id)] = null;
-    u[thumbPath(year, id)] = null;
-    /* 옛 자리도 함께 지운다 — 안 지우면 지운 사진이 다시 나타난다
-       (옛 자리도 함께 읽고 있으므로). 옛 자리가 이미 없으면 무해하다. */
-    u[legacyRoot('items') + '/' + year + '/' + id] = null;
-    u[legacyRoot('blobs') + '/' + year + '/' + id] = null;
-    u[legacyRoot('thumbs') + '/' + year + '/' + id] = null;
+    u[trashPath(year, id)] = null;
     return deps.db.ref().update(u);
   }
 
@@ -622,11 +709,17 @@
     filePath: filePath,
     pickTakenAt: pickTakenAt,
     uploadSpec: uploadSpec,
+    UPLOAD_MAX: UPLOAD_MAX,
     exifTakenAt: exifTakenAt,
     newId: newId,
     savePhoto: savePhoto,
     saveRead: saveRead,
     deletePhoto: deletePhoto,
+    listTrash: listTrash,
+    restorePhoto: restorePhoto,
+    purgeOldTrash: purgeOldTrash,
+    purgeOne: purgeOne,
+    TRASH_DAYS: TRASH_DAYS,
     signIn: signIn,
     amAdmin: amAdmin,
     myUid: myUid,

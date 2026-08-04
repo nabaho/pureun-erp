@@ -91,7 +91,9 @@ test('화면은 실시간DB에 직접 쓰지 않는다 — 쓰기는 저장 층�
      그것까지 막으면 검사가 엉뚱한 곳에서 걸려 신뢰를 잃는다. 먼저 걷어낸 뒤 본다. */
   const noDom = app
     .replace(/classList\.(add|remove|toggle)\(/g, 'CLASSLIST(')
-    .replace(/selected\.(add|delete|clear|has)\(/g, 'SET(');
+    .replace(/selected\.(add|delete|clear|has)\(/g, 'SET(')
+    .replace(/PuDrag\.set\(/g, 'DRAG(')        // 끌어놓기 데이터 담기 — DB 쓰기가 아니다
+    .replace(/dataTransfer\.setData\(/g, 'DRAG(');
   for (const call of ['.set(', '.update(', '.remove(']) {
     assert.ok(!noDom.includes(call), '화면이 클라우드에 직접 쓰고 있습니다: ' + call);
   }
@@ -146,6 +148,98 @@ test('미리보기를 끼워 넣을 때 서류 딱지를 지우지 않는다', (
   assert.ok(fill, 'fillThumbs 본문을 찾을 수 없습니다');
   assert.ok(!/cell\.innerHTML\s*=/.test(fill[0]), '칸 내용을 통째로 바꿔 딱지가 지워집니다');
   assert.match(fill[0], /insertBefore/);
+});
+
+/* ── 휴지통 · 설정 화면 · 3분류 ── */
+
+test('지운 사진은 휴지통으로 가고 되살릴 수 있다', () => {
+  assert.match(app, /id="viewTrash"/);
+  assert.match(app, /PuPhotoStore\.listTrash\(/);
+  assert.match(app, /function restoreOne\(/);
+  assert.match(app, /PuPhotoStore\.restorePhoto\(/);
+  // 남은 날을 보여줘야 급한지 안다
+  assert.match(app, /일 남음/);
+});
+
+test('30일 지난 휴지통은 스스로 비운다 — 실패해도 앱은 돈다', () => {
+  assert.match(app, /PuPhotoStore\.purgeOldTrash\(/);
+  const blk = app.match(/purgeOldTrash\([\s\S]{0,200}/);
+  assert.match(blk[0], /catch/, '정리 실패가 앱을 멈추게 합니다');
+});
+
+test('휴지통에서 완전히 지울 때는 확인을 받는다', () => {
+  const fn = app.match(/function purgeOneNow\([\s\S]*?\n\}/);
+  assert.ok(fn, 'purgeOneNow 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /confirm\(/);
+  assert.match(fn[0], /되돌릴 수 없/);
+});
+
+test('설정은 팝업이 아니라 본문 화면이다', () => {
+  // 팝업은 화면을 가리고 뒤가 어수선하다(대표 지시로 본문 화면으로 옮김).
+  assert.match(app, /id="viewSettings"/);
+  assert.match(app, /function showView\(/);
+  assert.ok(!/id="settings"/.test(app), '옛 설정 팝업이 남아 있습니다');
+  assert.ok(!/function closeSettings\(/.test(app), '팝업 닫기 함수가 남아 있습니다');
+});
+
+test('설정 단추는 대시보드 맨 아래에 고정된다', () => {
+  const rule = app.match(/#gearBtn\{([^}]*)\}/);
+  assert.ok(rule, '#gearBtn 규칙을 찾을 수 없습니다');
+  assert.match(rule[1], /margin-top:auto/, '맨 아래로 밀어내지 않습니다');
+  // 밀어내려면 대시보드가 세로 flex 여야 한다
+  const side = app.match(/#side\{([^}]*)\}/);
+  assert.match(side[1], /flex-direction:column/);
+});
+
+test('명함·서류·회의사진 세 가지를 가린다', () => {
+  assert.match(app, /meeting: '회의·현장 사진'/);
+  // 회의사진은 명함첩에 넣을 것이 없으니 '확인 필요'로 잡지 않는다
+  const fn = app.match(/function needsCheck\([\s\S]*?\n\}/);
+  assert.match(fn[0], /kind === 'meeting'\) return false/);
+});
+
+/* ── 다른 앱으로 끌어다 놓기 ── */
+
+test('사진을 끌 수 있다 — 공용 규약을 쓴다', () => {
+  assert.match(app, /<script src="js\/pu-drag\.js"><\/script>/);
+  assert.match(app, /draggable="true"/);
+  assert.match(app, /addEventListener\('dragstart'/);
+  assert.match(app, /PuDrag\.set\(/);
+});
+
+test('끌 때 사진 자체가 아니라 표만 넘긴다', () => {
+  // base64 를 넘기면 크기 제한에 걸리고 창을 넘길 때 깨진다.
+  const fn = app.match(/addEventListener\('dragstart'[\s\S]*?\n\}\);/);
+  assert.ok(fn, 'dragstart 본문을 찾을 수 없습니다');
+  assert.ok(!/it\.thumb|loadFull|blob/.test(fn[0]), '사진 데이터를 넘기고 있습니다');
+  // 어디 있는 무엇인지가 다 들어가야 받는 쪽이 가져올 수 있다
+  for (const k of ['year:', 'owner:', 'id:']) {
+    assert.ok(fn[0].indexOf(k) >= 0, '표에 ' + k + ' 가 없습니다');
+  }
+});
+
+test('컨설팅이 사진첩 사진을 받는다', () => {
+  const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
+  assert.match(gov, /<script src="js\/pu-drag\.js"><\/script>/);
+  assert.match(gov, /<script src="js\/pu-photo-store\.js"><\/script>/);
+  assert.match(gov, /PuDrag\.read\(/);
+  assert.match(gov, /function dropFromAlbum\(/);
+  // 파일을 놓는 기존 길이 살아 있어야 한다(사진첩만 되면 퇴보다)
+  const drop = gov.match(/async function dropExtraPhoto\([\s\S]*?\n\}/);
+  assert.ok(drop, 'dropExtraPhoto 본문을 찾을 수 없습니다');
+  assert.match(drop[0], /dataTransfer\.files/, '파일 놓기가 사라졌습니다');
+});
+
+test('컨설팅은 사진첩에서 원판을 받아 자기 사본을 만든다', () => {
+  // 사진첩 원본은 그대로 남아야 한다(설계서 원칙).
+  const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
+  const fn = gov.match(/async function dropFromAlbum\([\s\S]*?\n\}/);
+  assert.ok(fn, 'dropFromAlbum 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /PuPhotoStore\.loadFull\(/);
+  assert.match(fn[0], /simpleStampFile\(/, '기존 사진 처리 길을 타지 않습니다');
+  assert.ok(!/deletePhoto|saveRead/.test(fn[0]), '사진첩 원본을 건드리고 있습니다');
+  // 남의 사진은 규칙이 막는다 → 왜 안 되는지 알려줘야 한다
+  assert.match(fn[0], /내가 올린 사진만/);
 });
 
 /* ── 사람별 분리 ── */
@@ -419,11 +513,48 @@ test('파일 이름 등 바깥 문자열은 이스케이프해서 화면에 넣�
 
 /* ── 서류 판독 ── */
 
-test('서류 판독 층을 불러오고, 판독은 서류에만 돌린다', () => {
+test('한 번에 올릴 장수 상한을 지키고, 넘치면 몇 장이 남았는지 알린다', () => {
+  // 조용히 자르면 "왜 몇 장이 안 올라갔지"가 되고 그게 증빙 누락으로 이어진다.
+  assert.match(app, /PuPhotoStore\.UPLOAD_MAX/);
+  const fn = bodyAfter('async function addFiles(', 5200);
+  assert.match(fn, /files\.length > MAX/, '상한을 넘겨도 그대로 받습니다');
+  assert.match(fn, /나머지 ' \+ over \+ '장은 다시 골라/, '남은 장수를 알리지 않습니다');
+  // 안내 문구의 숫자도 저장 층에서 가져온다(두 곳에 적으면 어긋난다)
+  assert.match(app, /'한 번에 ' \+ PuPhotoStore\.UPLOAD_MAX \+ '장까지/);
+  assert.ok(!/한 번에 30장/.test(app), '화면에 숫자를 또 적었습니다 — 상한을 바꿀 때 어긋납니다');
+});
+
+test('올린 사진은 종류를 가리지 않고 스스로 판독한다', () => {
+  // 대표 지시 — 「글자 판독하기」를 누를 일이 없어야 한다.
+  // 명함인지 서류인지 회의사진인지는 AI 가 가린다.
   assert.match(app, /<script src="js\/pu-doc-read\.js"><\/script>/);
   assert.match(app, /PuDocRead\.read\(/);
-  // 현장사진에는 읽을 것이 없다 — 전부 판독하면 AI 호출이 헛돈다
-  assert.match(app, /j\.kind === 'doc'.*startRead|kind === 'doc'\)\s*startRead/);
+  assert.match(app, /queueRead\(j\)/);
+  assert.ok(!/j\.kind === 'doc'\)\s*startRead/.test(app), '아직 서류만 판독합니다');
+});
+
+test('판독은 한 번에 하나씩 — 한꺼번에 던지지 않는다', () => {
+  // AI 무료 등급은 분당 횟수가 정해져 있어 여러 장을 동시에 던지면 전부 막힌다.
+  assert.match(app, /function pumpRead\(/);
+  const fn = bodyAfter('function pumpRead(', 900);
+  assert.match(fn, /if \(readBusy/, '동시에 여러 장이 돌 수 있습니다');
+  assert.ok(!/Promise\.all/.test(fn), '동시에 던지고 있습니다');
+});
+
+test('이미 올라간 사진도 스스로 판독하되 상한을 두고 알린다', () => {
+  assert.match(app, /function autoReadPending\(/);
+  assert.match(app, /AUTO_READ_MAX/);
+  // 상한에 걸려 남은 것을 조용히 버리지 않는다
+  const fn = app.match(/function autoReadPending\([\s\S]*?\n\}/);
+  assert.match(fn[0], /남은 .*장은 다음에 열 때/);
+  // 남의 사진은 손대지 않는다
+  assert.match(fn[0], /viewingOther\(\)/);
+});
+
+test('판독을 기다리는 줄은 사라지지 않는다', () => {
+  // 진행이 안 보이면 멈춘 줄 안다(올리기는 3초 뒤 사라진다).
+  assert.match(app, /_queuedRead \|\| j\._reading \|\| j\.state !== 'done'/);
+  assert.match(app, /판독 차례 기다리는 중/);
 });
 
 test('AI 키를 화면이 직접 찾지 않는다 — 판독 층이 안다', () => {

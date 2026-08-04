@@ -715,6 +715,9 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 <script src="js/pu-health.js"></script>
 <script src="js/pu-version.js"></script>
 <script src="js/pu-backup.js"></script>
+<!-- 푸른사진첩에서 사진을 끌어다 놓을 수 있게 하는 공용 조각 -->
+<script src="js/pu-drag.js"></script>
+<script src="js/pu-photo-store.js"></script>
 </head>
 <body>
 <div id="pu-boot-splash" style="position:fixed;inset:0;z-index:2147483000;background:#eef1f7;display:flex;align-items:center;justify-content:center">
@@ -2176,7 +2179,7 @@ function renderEditPhotos(sid,sc){
           <div style="display:flex;flex-direction:column;gap:6px;padding:8px 6px;">
             <input type="time" value="10:00" id="mExT${d.i}" style="width:100%;height:30px;border:1px solid var(--border);border-radius:7px;font-family:inherit;text-align:center;color:var(--text);background:var(--surface);">
             <button onclick="addExtraPhoto('${sid}',${d.i})" style="width:100%;padding:8px;border:none;border-radius:7px;background:var(--accent);color:#fff;font-weight:800;font-size:11px;cursor:pointer;font-family:inherit;">📷 사진 찍기·고르기</button>
-            <div style="font-size:9.5px;color:var(--t2);text-align:center;line-height:1.4;">여기로 끌어다 놓아도 됩니다<br>· 방문일·위 시간이 자동으로 찍힙니다 ·</div>
+            <div style="font-size:9.5px;color:var(--t2);text-align:center;line-height:1.4;">여기로 끌어다 놓아도 됩니다<br>파일 · <b>푸른사진첩 사진</b> 모두 됩니다<br>· 방문일·위 시간이 자동으로 찍힙니다 ·</div>
           </div></div>`;
       } else if(d.kind==='base'){
         cell.innerHTML=`<div class="edit-photo-card" style="opacity:.75;"><div class="edit-photo-label">${d.label}</div><div class="edit-photo-empty">미등록<br><span style="font-size:9px;">촬영은 '📷 사진 등록'</span></div></div>`;
@@ -2225,6 +2228,37 @@ function stepExtraPhotos(sid,delta){
   renderEditPhotos(sid,getScheds().find(s=>s.id===sid)); renderCal();
 }
 // 추가 사진 간편 도장 등록
+/* 푸른사진첩에서 끌어다 놓은 사진 한 장을 이 회차 사진 칸에 담는다.
+   사진첩 원본은 그대로 남고 **컨설팅이 사본을 갖는다**(설계서 원칙 — 사진첩을
+   정리해도 증빙 기록이 온전해야 한다). 사람별 분리 때문에 남이 찍은 사진은
+   규칙이 막는다 → 그때는 왜 안 되는지 그대로 알려 준다. */
+async function dropFromAlbum(ref, sid, slotIdx){
+  if(!window.PuPhotoStore){ toast('사진첩과 연결되지 않았습니다','err'); return; }
+  toast('사진첩에서 사진을 가져오는 중…');
+  let full=null;
+  try{
+    PuPhotoStore.init({ db: firebase.database() });
+    full = await PuPhotoStore.loadFull(ref.year, ref.id, ref.owner);
+  }catch(err){
+    console.warn('[사진첩 가져오기]',err);
+    toast('사진을 가져오지 못했습니다 — '+((err&&err.message)||err),'err');
+    return;
+  }
+  if(!full||!/^data:image\//.test(full)){
+    toast('그 사진을 읽을 수 없습니다. 내가 올린 사진만 가져올 수 있습니다.','err');
+    return;
+  }
+  const tv=q('#mExT'+slotIdx)?.value||'10:00'; const [hh,mm]=tv.split(':').map(Number);
+  /* dataURL → 파일로 바꿔 기존 파일 처리 길에 태운다(타임스탬프·중복검사 그대로). */
+  let file;
+  try{
+    const res=await fetch(full); const blob=await res.blob();
+    file=new File([blob],(ref.name||'사진')+'.jpg',{type:'image/jpeg'});
+  }catch(err){ toast('사진을 옮기지 못했습니다','err'); return; }
+  const ok=await simpleStampFile(sid,slotIdx,file,{h:hh>=0?hh:10,m:mm>=0?mm:0});
+  if(ok){ renderEditPhotos(sid,getScheds().find(s=>s.id===sid)); renderCal(); toast('사진첩에서 가져왔습니다'); }
+}
+
 function addExtraPhoto(sid,slotIdx){
   const sc=getScheds().find(s=>s.id===sid); if(!sc)return;
   if(!canEdit(sc)){toast('본인 컨설팅만 추가할 수 있습니다','err');return;}
@@ -2246,6 +2280,11 @@ async function dropExtraPhoto(e,sid,slotIdx){
   const el=e.currentTarget; if(el&&el.classList)el.classList.remove('drag-over');
   const sc=getScheds().find(s=>s.id===sid);
   if(!sc||!canEdit(sc)){toast('본인 컨설팅만 추가할 수 있습니다','err');return;}
+  /* 푸른사진첩에서 끌어다 놓은 것이면 사진첩에서 원판을 가져온다.
+     끌고 온 것은 사진이 아니라 '어디 있는 무엇인지'라서, 여기서 받아 와야 한다.
+     받아 온 사진은 아래 파일 처리 길을 그대로 타므로 타임스탬프도 똑같이 찍힌다. */
+  const ref = window.PuDrag && PuDrag.read(e.dataTransfer);
+  if (ref) { await dropFromAlbum(ref, sid, slotIdx); return; }
   const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
   if(!f){toast('이미지 파일을 놓아주세요','err');return;}
   if(!/^image\//.test(f.type)){toast('이미지 파일만 가능합니다','err');return;}

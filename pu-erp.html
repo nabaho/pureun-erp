@@ -16737,29 +16737,19 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                     var addr = (co.address||'').replace(/^\s*[\(\[]?\d{5,6}[\)\]]?\s*/, '');
                     return renderCell(co, 'address', addr, {});
                   })()),
-                  // 담당자 (2명까지: 대표 + 다음) + 📇 명함첩 열기
+                  // 담당자 (2명까지: 대표 + 다음)
+                  // 명함첩 딥링크(📇)는 뺐다 — 줄마다 붙어 표가 어수선했다.
+                  // 명함첩에서 찾는 일은 계약·업체 편집창의 [📇 명함첩] 에서 한다
                   h('td', null, (function(){
                     var cs = co.contacts || [];
-                    // 명함첩 딥링크: 담당자 이름(직책 제거)으로 명함첩 검색을 열어줌
-                    var _cardBtn = function(nm){
-                      if(!nm) return null;
-                      var q = String(nm).replace(/\s*\(.*\)\s*$/,'').trim();
-                      if(!q) return null;
-                      return h('a', { href:'pu-cards.html?sso=1&q='+encodeURIComponent(q), target:'_blank',
-                        onClick:function(e){ e.stopPropagation(); },
-                        title:'명함첩에서 "'+q+'" 검색',
-                        style:{ marginLeft:'4px', fontSize:'10px', textDecoration:'none', background:'#eff6ff', color:'#1e40af', border:'1px solid #bfdbfe', borderRadius:'6px', padding:'0 4px', verticalAlign:'middle' } }, '📇');
-                    };
                     if(cs.length === 0){
-                      return h('div', { style:{ display:'flex', alignItems:'center' } },
-                        h('div', { style:{ flex:1, minWidth:0 } }, renderCell(co, 'primaryContactName', co.primaryContactName, {})),
-                        _cardBtn(co.primaryContactName));
+                      return renderCell(co, 'primaryContactName', co.primaryContactName, {});
                     }
                     var primary = cs.find(function(x){return x.isPrimary;}) || cs[0];
                     var second = cs.find(function(x){return x !== primary;});
                     return h('div', { style:{ fontSize:'11.5px', lineHeight:'1.4' } },
-                      h('div', null, primary ? (primary.name + (contactRole(primary) ? ' (' + contactRole(primary) + ')' : '')) : '-', primary && _cardBtn(primary.name)),
-                      second && h('div', { style:{ color:'#64748b' } }, second.name + (contactRole(second) ? ' (' + contactRole(second) + ')' : ''), _cardBtn(second.name))
+                      h('div', null, primary ? (primary.name + (contactRole(primary) ? ' (' + contactRole(primary) + ')' : '')) : '-'),
+                      second && h('div', { style:{ color:'#64748b' } }, second.name + (contactRole(second) ? ' (' + contactRole(second) + ')' : ''))
                     );
                   })()),
                   // 연락처 (2명까지)
@@ -17985,6 +17975,39 @@ function CaseEditModal(props){
   function setNum(k){ return function(e){ var v = parseInt((e.target?e.target.value:e+'').replace(/[^0-9]/g,''))||0; setF(function(prev){ return Object.assign({}, prev, (function(){var x={}; x[k]=v; return x;})()); }); }; }
   function setJ(k){ return function(e){ var v = e.target.value; setF(function(prev){ return Object.assign({}, prev, { judgment: Object.assign({}, prev.judgment, (function(){var x={}; x[k]=v; return x;})()) }); }); }; }
 
+  // ── 심급·단계 이력 (stages) ──
+  // 단계를 손대지 않으면 f 에 stages/stageCode 가 생기지 않는다 → 옛 사건은 예전과 똑같이 저장된다.
+  var sgo = useState(true); var stagesOpen = sgo[0]; var setStagesOpen = sgo[1];
+  var caseStageDefs = (typeof getCaseStages === 'function') ? (getCaseStages(f.typeCode || '') || []) : [];
+  // stages 가 바뀌면 stageCode(현재 단계)를 다시 뽑아 넣는다 — 사람이 직접 고르는 값이 아니다
+  function setStages(next){
+    setF(function(prev){ return caseSyncStageCode(Object.assign({}, prev, { stages: next })); });
+  }
+  function addStage(code){
+    if(!code) return;
+    var def = caseStageInfo(code) || {};
+    setStages((f.stages||[]).concat([{
+      id: 'cs-' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+      code: code, orgName:'', caseNo:'', filedDate:'', noticeDate:'', resultDate:'', result:'', note:''
+    }]));
+    showToast('단계 추가: ' + (def.name || code));
+  }
+  function updStage(idx, k){
+    return function(e){
+      var v = (e && e.target) ? e.target.value : e;
+      setStages((f.stages||[]).map(function(s, i){
+        if(i !== idx) return s;
+        var nx = Object.assign({}, s); nx[k] = v; return nx;
+      }));
+    };
+  }
+  async function delStage(idx){
+    var s = (f.stages||[])[idx]; if(!s) return;
+    var def = caseStageInfo(s.code) || {};
+    if(!(await popConfirm('"' + (def.name || s.code) + '" 단계를 지우시겠습니까?\n(입력한 기관명·사건번호·날짜가 함께 사라집니다)'))) return;
+    setStages((f.stages||[]).filter(function(_, i){ return i !== idx; }));
+  }
+
   // 유형 변경 시 사건 관리번호 자동 갱신 (중복 없는 다음 번호)
   function setCaseTypeCode(e){
     var newCode = e.target.value;
@@ -18227,6 +18250,89 @@ function CaseEditModal(props){
             h('div', { className:'fld' }, h('label', null, '진행상태'),
               h('select', { value:f.status||'pending', onChange:setV('status'), style:inputS },
                 CASE_STATUS.map(function(s){ return h('option', { key:s.v, value:s.v }, s.label); }))),
+            // ── 심급·단계 (지노위 → 중노위 → 행정소송 / 요양신청 → 심사청구 …) ──
+            //    진행상태·처리기한은 그대로 두고, 심급 이력만 여기에 쌓는다
+            h('div', { style:{ background:'#fff', border:'1px solid #c7d2fe', borderRadius:'6px', padding:'7px 9px', marginBottom:'10px' } },
+              h('div', { onClick:function(){ setStagesOpen(function(v){ return !v; }); },
+                style:{ display:'flex', alignItems:'center', gap:'6px', cursor:'pointer', userSelect:'none', fontSize:'11.5px', fontWeight:700, color:'#1e40af' } },
+                h('span', null, '⚖ 심급·단계'),
+                h('span', { style:{ fontWeight:600, color:'#64748b' } }, '(' + (f.stages||[]).length + ')'),
+                h('span', { style:{ marginLeft:'auto', fontSize:'12px', color:'#94a3b8' } }, stagesOpen ? '▲' : '▼')),
+              h('div', { style:{ display: stagesOpen ? 'block' : 'none', marginTop:'6px' } },
+                (f.stages||[]).length === 0
+                  ? h('div', { style:{ fontSize:'10.5px', color:'#94a3b8', padding:'2px 0 6px' } },
+                      '아래에서 단계를 고르면 심급 이력이 쌓입니다 (넣지 않아도 사건은 예전과 똑같이 저장됩니다)')
+                  : caseStagesOrdered(f.stages).map(function(sg, ord){
+                      var _idx = (f.stages||[]).indexOf(sg);
+                      var _def = caseStageInfo(sg.code) || {};
+                      var _col = caseStageColor(_def.orgKind);
+                      var _sgDue = caseStageDue(sg, _def);
+                      var _isCur = (ord === caseStagesOrdered(f.stages).length - 1);
+                      return h('div', { key:sg.id || _idx,
+                        style:{ border:'1px solid ' + (_isCur ? '#93c5fd' : '#e5e7eb'), borderRadius:'6px', padding:'6px 7px', marginBottom:'5px',
+                          background: _isCur ? '#f8fafc' : '#fff' } },
+                        h('div', { style:{ display:'flex', alignItems:'center', gap:'5px', flexWrap:'wrap', marginBottom:'4px' } },
+                          h('span', { style:{ background:_col.bg, color:_col.fg, fontSize:'10.5px', fontWeight:700, padding:'2px 8px', borderRadius:'10px', whiteSpace:'nowrap' } },
+                            _def.name || sg.code || '미정의'),
+                          _isCur ? h('span', { style:{ fontSize:'10px', fontWeight:700, color:'#1e40af', background:'#dbeafe', padding:'1px 6px', borderRadius:'8px' } }, '현재 단계') : null,
+                          h('div', { style:{ flex:1 } }),
+                          h('button', { type:'button', onClick:function(){ delStage(_idx); },
+                            style:{ padding:'1px 7px', background:'#fee2e2', color:'#b91c1c', border:0, borderRadius:'4px', fontSize:'10px', cursor:'pointer' } }, '×')),
+                        h('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'4px' } },
+                          h('input', { type:'text', value:sg.orgName||'', onChange:updStage(_idx, 'orgName'), placeholder:'기관명 (예: 충남지방노동위원회)',
+                            style:{ padding:'4px 6px', border:'1px solid #e2e8f0', borderRadius:'4px', fontSize:'10.5px', fontFamily:'inherit' } }),
+                          h('input', { type:'text', value:sg.caseNo||'', onChange:updStage(_idx, 'caseNo'), placeholder:'그 심급의 사건번호 (예: 충남2026부해123)',
+                            style:{ padding:'4px 6px', border:'1px solid #e2e8f0', borderRadius:'4px', fontSize:'10.5px', fontFamily:'monospace' } })),
+                        h('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'4px', marginTop:'4px' } },
+                          h('div', null, h('div', { style:{ fontSize:'10px', color:'#64748b', marginBottom:'2px' } }, '접수·신청일'),
+                            h(KoreanDatePicker, { value:sg.filedDate||'', onChange:updStage(_idx, 'filedDate') })),
+                          h('div', null, h('div', { style:{ fontSize:'10px', color:'#64748b', marginBottom:'2px' } }, '송달일'),
+                            h(KoreanDatePicker, { value:sg.noticeDate||'', onChange:updStage(_idx, 'noticeDate') })),
+                          h('div', null, h('div', { style:{ fontSize:'10px', color:'#64748b', marginBottom:'2px' } }, '판정·결정일'),
+                            h(KoreanDatePicker, { value:sg.resultDate||'', onChange:updStage(_idx, 'resultDate') }))),
+                        h('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'4px', marginTop:'4px' } },
+                          h('input', { type:'text', value:sg.result||'', onChange:updStage(_idx, 'result'), placeholder:'결과 (예: 기각 · 일부인정 · 승인)',
+                            style:{ padding:'4px 6px', border:'1px solid #e2e8f0', borderRadius:'4px', fontSize:'10.5px', fontFamily:'inherit' } }),
+                          h('input', { type:'text', value:sg.note||'', onChange:updStage(_idx, 'note'), placeholder:'비고',
+                            style:{ padding:'4px 6px', border:'1px solid #e2e8f0', borderRadius:'4px', fontSize:'10.5px', fontFamily:'inherit' } })),
+                        // 다음 단계 기한 — 기산일이 채워졌을 때만 계산해 보여준다
+                        _sgDue
+                          ? h('div', { style:{ display:'flex', alignItems:'center', gap:'5px', flexWrap:'wrap', marginTop:'5px', padding:'4px 6px', background:'#fffbeb', border:'1px solid #fde68a', borderRadius:'5px' } },
+                              h('span', { style:{ fontSize:'10.5px', color:'#b45309', fontWeight:700 } },
+                                '다음 기한 ' + _sgDue.due + ' (' + (_sgDue.basis === 'result' ? '판정일' : '송달일') + '+' + _sgDue.days + '일)'),
+                              _def.dueNote ? h('span', { style:{ fontSize:'10px', color:'#92400e' } }, _def.dueNote) : null,
+                              _def.dueVerified
+                                ? null
+                                : h('span', { className:'erp-tip', 'data-tip':'초기값은 참고용이며 유형 관리에서 고칠 수 있습니다',
+                                    title:'초기값은 참고용이며 유형 관리에서 고칠 수 있습니다',
+                                    style:{ fontSize:'10px', fontWeight:700, color:'#b45309', background:'#fff', border:'1px solid #fbbf24', borderRadius:'8px', padding:'1px 6px', whiteSpace:'nowrap' } },
+                                    '법정 기한 — 확인 후 사용'),
+                              h('div', { style:{ flex:1 } }),
+                              // 처리기한(f.dueDate)은 대표가 이 단추를 눌러야만 바뀐다 (자동으로 덮어쓰지 않는다)
+                              h('button', { type:'button',
+                                onClick:function(){
+                                  if((f.dueDate||'') === _sgDue.due){ showToast('이미 같은 처리기한입니다'); return; }
+                                  var _msg = (f.dueDate ? '처리기한을 ' + f.dueDate + ' → ' + _sgDue.due + ' 로 바꿀까요?' : '처리기한을 ' + _sgDue.due + ' 로 넣을까요?')
+                                    + (_def.dueVerified ? '' : '\n\n⚠ 이 기한(' + _sgDue.days + '일)은 아직 확인되지 않은 초기값입니다.');
+                                  popConfirm(_msg).then(function(okv){
+                                    if(!okv) return;
+                                    setF(function(prev){ return Object.assign({}, prev, { dueDate: _sgDue.due }); });
+                                    showToast('처리기한 반영: ' + _sgDue.due);
+                                  });
+                                },
+                                style:{ padding:'2px 8px', background:'#fff', color:'#b45309', border:'1px solid #f59e0b', borderRadius:'4px', fontSize:'10px', fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' } },
+                                '사건 기한으로 넣기')
+                            )
+                          : null
+                      );
+                    }),
+                h('div', { style:{ display:'flex', alignItems:'center', gap:'5px', marginTop:'2px' } },
+                  h('select', { value:'', onChange:function(e){ var v = e.target.value; if(v){ addStage(v); e.target.value = ''; } },
+                    style:{ flex:1, padding:'5px 7px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'11px', fontFamily:'inherit' } },
+                    h('option', { value:'' }, '+ 단계 추가'),
+                    caseStageDefs.map(function(sd){ return h('option', { key:sd.code, value:sd.code }, sd.name); })))
+              )
+            ),
             h('div', { className:'fld' }, h('label', null, '의뢰인 구분'),
               h('select', { value:caseClientType, onChange:setV('clientType'), style:inputS },
                 h('option', { value:'company' }, '🏢 회사가 의뢰인'),
@@ -18397,6 +18503,7 @@ function CaseManagement(props){
   var q = useState(''); var query = q[0]; var setQuery = q[1];
   var sf = usePersistedState('case_status_filter', 'open'); var statusFilter = sf[0]; var setStatusFilter = sf[1];
   var ty = usePersistedState('case_type_filter', 'all'); var typeFilter = ty[0]; var setTypeFilter = ty[1];
+  var sgf = usePersistedState('case_stage_filter', 'all'); var stageFilter = sgf[0]; var setStageFilter = sgf[1];   // 심급·단계 (stageCode)
   var mg = usePersistedState('case_mgr_filter', 'all'); var mgrFilter = mg[0]; var setMgrFilter = mg[1];
   var smg = usePersistedState('case_submgr_filter', 'all'); var subMgrFilter = smg[0]; var setSubMgrFilter = smg[1];
   var moS = useState(false); var monthOnly = moS[0]; var setMonthOnly = moS[1];
@@ -18413,7 +18520,8 @@ function CaseManagement(props){
   var caseCvKey = 'pureun_v6_cols_cases';
   // type: 유형 전용 칸 — 컨설팅·기금·기타와 같은 자리(번호 다음)에 둔다.
   // 종전에는 사건번호 아래 회색 글씨 + 의뢰인 아래 칩으로 같은 값이 두 번 나왔다(번호 접두어까지 세면 세 번).
-  var caseDefaultCols = {type:true, opponent:true, mgrMain:true, mgrSubs:true, jurOrg:true, jurOfficer:true, jurPhone:true, jurEmail:true, receiveDate:true, dueDate:true, retainerFee:true, successFee:true, status:true, note:true};
+  // stage: 심급/단계 칸 — 기한 다음, 착수금 앞. 여기 빠뜨리면 열이 아예 안 나온다.
+  var caseDefaultCols = {type:true, opponent:true, mgrMain:true, mgrSubs:true, jurOrg:true, jurOfficer:true, jurPhone:true, jurEmail:true, receiveDate:true, dueDate:true, stage:true, retainerFee:true, successFee:true, status:true, note:true};
   var savedCaseCols = (function(){ try{ var sc=localStorage.getItem(caseCvKey); return sc?JSON.parse(sc):caseDefaultCols; }catch(e){ return caseDefaultCols; } })();
   var cvvS = useState(Object.assign({}, caseDefaultCols, savedCaseCols)); var colVis = cvvS[0]; var setColVis = cvvS[1];
   var cssS = useState(false); var colSettings = cssS[0]; var setColSettings = cssS[1];
@@ -18423,8 +18531,8 @@ function CaseManagement(props){
     try{ localStorage.setItem(caseCvKey, JSON.stringify(next)); }catch(e){ window._erpErrLog && window._erpErrLog(e); }
   }
   // 'type'(유형)은 사건번호와 의뢰인 사이에 있는 토글 열 — 여기 빠뜨리면 합계 줄이 한 칸 밀린다
-  var _cvBeforeFee = ['type','opponent','mgrMain','mgrSubs','jurOrg','jurOfficer','jurPhone','jurEmail','receiveDate','dueDate'];
-  var visBeforeFee = 3 + _cvBeforeFee.filter(function(k){return colVis[k];}).length; // 고정 3열(#·사건번호·의뢰인) + 토글 열 (전체 표시 시 13)
+  var _cvBeforeFee = ['type','opponent','mgrMain','mgrSubs','jurOrg','jurOfficer','jurPhone','jurEmail','receiveDate','dueDate','stage'];
+  var visBeforeFee = 3 + _cvBeforeFee.filter(function(k){return colVis[k];}).length; // 고정 3열(#·사건번호·의뢰인) + 토글 열 (전체 표시 시 14)
   var visColCount = visBeforeFee + ['retainerFee','successFee','status','note'].filter(function(k){return colVis[k];}).length + 1;
   var cl = useState(null); var closeModal = cl[0]; var setCloseModal = cl[1];   // 종료 처리 모달 (#B안: 결과+성공보수처리+메모)
   // 통합 검색 포커스
@@ -18432,6 +18540,7 @@ function CaseManagement(props){
   useEffect(function(){ if(initFocus){ setQuery(initFocus); setStatusFilter('all'); setTypeFilter('all'); setMgrFilter('all'); } }, [initFocus]);
 
   var types = getCaseTypes();
+  var stageDefs = getCaseStages('');   // 심급·단계 전체 (필터 드롭다운용)
   var users = getActiveUsers();
   function userName(sid){ var u = users.find(function(x){return x.sid===sid;}); return u ? u.name : sid; }
 
@@ -18594,6 +18703,9 @@ function CaseManagement(props){
       var jur = c.jurisdiction || {};
       var totalIncome = (c.incomes||[]).filter(function(i){return i.confirmed;}).reduce(function(s,i){return s+i.amount;}, 0);
       var statusLabel = caseStatusKr(c.status);
+      // 심급·단계는 맨 뒤에 붙인다 — 붙여넣기 반입(confirmDropAdd)이 읽는 앞쪽 열 순서를 건드리지 않으려고
+      var _stg = caseStageCurrent(c.stages);
+      var _stgDef = _stg ? caseStageInfo(_stg.code) : null;
       return {
         '#': idx + 1,
         '사건번호': c.caseNo,
@@ -18615,7 +18727,9 @@ function CaseManagement(props){
         '성공보수': c.successFee || 0,
         '성공보수 입금일': c.successPaidDate || '',
         '입금합계': totalIncome,
-        '비고': c.note || ''
+        '비고': c.note || '',
+        '심급/단계': _stgDef ? _stgDef.name : '',
+        '심급 사건번호': (_stg && _stg.caseNo) || ''
       };
     });
     if(rows.length === 0){ showToast('등록된 데이터가 없습니다'); return; }
@@ -18791,6 +18905,7 @@ function CaseManagement(props){
     if(statusFilter !== 'closed' && c.status === 'closed') return false;
     if(statusFilter !== 'all' && statusFilter !== 'open' && c.status !== statusFilter) return false;
     if(typeFilter !== 'all' && c.typeCode !== typeFilter) return false;
+    if(stageFilter !== 'all' && (c.stageCode||'') !== stageFilter) return false;
     if(monthOnly){
       var d = (c.contractDate||c.receiveDate||c.createdAt||'').slice(0,7);
       if(d !== thisYM) return false;
@@ -18818,10 +18933,12 @@ function CaseManagement(props){
   if(mgrFilter !== 'all') _activeFilters.push('담당 ' + ((typeof sidToName === 'function' && sidToName(mgrFilter)) || mgrFilter));
   if(subMgrFilter !== 'all') _activeFilters.push('부담당 ' + ((typeof sidToName === 'function' && sidToName(subMgrFilter)) || subMgrFilter));
   if(typeFilter !== 'all') _activeFilters.push('유형 ' + typeFilter);
+  if(stageFilter !== 'all') _activeFilters.push('심급 ' + ((caseStageInfo(stageFilter)||{}).name || stageFilter));
   if(monthOnly) _activeFilters.push('이번 달만');
   if(query) _activeFilters.push('검색 "' + query + '"');
   function _resetCaseFilters(){
     setStatusFilter('open'); setTypeFilter('all'); setMgrFilter('all'); setSubMgrFilter('all');
+    setStageFilter('all');
     setQuery(''); try { setMonthOnly(false); } catch(_){}
   }
 
@@ -18974,6 +19091,13 @@ function CaseManagement(props){
               color: typeFilter!=='all'?'#2563eb':'#64748b', fontWeight: typeFilter!=='all'?700:400, cursor:'pointer' } },
             h('option', { value:'all' }, '전체 유형'),
             types.map(function(t){ return h('option', { key:t.code, value:t.code }, t.name); })),
+          h('select', { value:stageFilter, onChange:function(e){ setStageFilter(e.target.value); },
+            style:{ padding:'5px 8px', border:'1px solid '+(stageFilter!=='all'?'#1e40af':'#cbd5e1'),
+              borderRadius:'20px', fontSize:'11px', fontFamily:'inherit', flexShrink:0,
+              background: stageFilter!=='all'?'#dbeafe':'#f8fafc',
+              color: stageFilter!=='all'?'#1e40af':'#64748b', fontWeight: stageFilter!=='all'?700:400, cursor:'pointer' } },
+            h('option', { value:'all' }, '⚖ 전체 심급'),
+            stageDefs.map(function(sd){ return h('option', { key:sd.code, value:sd.code }, sd.name); })),
           h('select', { value:mgrFilter, onChange:function(e){ setMgrFilter(e.target.value); },
             style:{ padding:'5px 8px', border:'1px solid '+(mgrFilter!=='all'?'#1e40af':'#cbd5e1'),
               borderRadius:'20px', fontSize:'11px', fontFamily:'inherit', flexShrink:0,
@@ -19010,6 +19134,12 @@ function CaseManagement(props){
           style:{ padding:'6px 10px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12px', fontFamily:'inherit' } },
           h('option', { value:'all' }, '전체 유형'),
           types.map(function(t){ return h('option', { key:t.code, value:t.code }, t.name); })),
+        // 심급·단계 필터 (stageCode 로 걸러낸다)
+        h('select', { value:stageFilter, onChange:function(e){ setStageFilter(e.target.value); },
+          style:{ padding:'6px 10px', border:'1px solid '+(stageFilter!=='all'?'#1e40af':'#cbd5e1'), borderRadius:'4px', fontSize:'12px', fontFamily:'inherit',
+            color: stageFilter!=='all'?'#1e40af':'#475569', fontWeight: stageFilter!=='all'?700:400 } },
+          h('option', { value:'all' }, '⚖ 전체 심급'),
+          stageDefs.map(function(sd){ return h('option', { key:sd.code, value:sd.code }, sd.name); })),
         h('select', { value:mgrFilter, onChange:function(e){ setMgrFilter(e.target.value); },
           style:{ padding:'6px 10px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12px', fontFamily:'inherit' } },
           h('option', { value:'all' }, '전체 담당'),
@@ -19035,7 +19165,7 @@ function CaseManagement(props){
               {k:'type', l:'유형'},
               {k:'opponent', l:'상대방'},{k:'mgrMain', l:'주담당'},{k:'mgrSubs', l:'부담당'},
               {k:'jurOrg', l:'관할기관'},{k:'jurOfficer', l:'관할담당자'},{k:'jurPhone', l:'관할연락처'},{k:'jurEmail', l:'관할이메일'},
-              {k:'receiveDate', l:'수임일'},{k:'dueDate', l:'기한'},{k:'retainerFee', l:'착수금'},{k:'successFee', l:'성공보수'},
+              {k:'receiveDate', l:'수임일'},{k:'dueDate', l:'기한'},{k:'stage', l:'심급/단계'},{k:'retainerFee', l:'착수금'},{k:'successFee', l:'성공보수'},
               {k:'status', l:'상태'},{k:'note', l:'비고'}
             ].map(function(cc){
               return h('label', { key:cc.k, style:{ display:'flex', alignItems:'center', gap:'6px', padding:'4px 6px', cursor:'pointer', fontSize:'11.5px', borderRadius:'5px' },
@@ -19146,6 +19276,7 @@ function CaseManagement(props){
         colVis.jurEmail && h('th', null, '관할이메일'),
         colVis.receiveDate && h('th', { onClick:function(){toggleSort('receiveDate');}, style:{ cursor:'pointer', userSelect:'none' } }, '수임일' + sortIcon('receiveDate')),
         colVis.dueDate && h('th', { onClick:function(){toggleSort('dueDate');}, style:{ cursor:'pointer', userSelect:'none' } }, '기한' + sortIcon('dueDate')),
+        colVis.stage && h('th', { onClick:function(){toggleSort('stageCode');}, style:{ cursor:'pointer', userSelect:'none', minWidth:'92px' } }, '심급/단계' + sortIcon('stageCode')),
         colVis.retainerFee && h('th', { onClick:function(){toggleSort('retainerFee');}, style:{ cursor:'pointer', userSelect:'none' } }, '착수금' + sortIcon('retainerFee')),
         colVis.successFee && h('th', { onClick:function(){toggleSort('successFee');}, style:{ cursor:'pointer', userSelect:'none' } }, '성공보수' + sortIcon('successFee')),
         colVis.status && h('th', { style:{ width:'70px' } }, '상태'),
@@ -19296,6 +19427,24 @@ function CaseManagement(props){
                   c.dueDate
                     ? h('div', { style:{ fontFamily:'monospace', fontSize:'11.5px', color: dueWarn ? '#dc2626' : '#1e293b', fontWeight: dueWarn ? 700 : 500 } }, c.dueDate.replace(/-/g,'.'))
                     : h('span', { style:{ color:'#cbd5e1' } }, '-')
+                ),
+
+                // 심급/단계 — 현재 단계(stageCode) 배지 + 그 심급의 사건번호
+                colVis.stage && h('td', { style:{ minWidth:'92px' } },
+                  (function(){
+                    var _sdef = c.stageCode ? caseStageInfo(c.stageCode) : null;
+                    if(!_sdef) return h('span', { style:{ color:'#cbd5e1' } }, '-');
+                    var _scol = caseStageColor(_sdef.orgKind);
+                    var _scur = caseStageCurrent(c.stages) || {};
+                    return h('div', null,
+                      h('span', { title:_sdef.name,
+                        style:{ background:_scol.bg, color:_scol.fg, fontSize:'10.5px', fontWeight:700, padding:'2px 7px', borderRadius:'10px', display:'inline-block', whiteSpace:'nowrap' } },
+                        _sdef.short || _sdef.name),
+                      _scur.caseNo
+                        ? h('div', { style:{ fontSize:'10px', color:'#94a3b8', marginTop:'2px', fontFamily:'monospace' } }, _scur.caseNo)
+                        : null
+                    );
+                  })()
                 ),
 
                 // 착수금: 금액 표시 (입금여부는 재무관리에서)
@@ -22832,6 +22981,162 @@ var CONSULTING_DEMO_SEED = [];
 var FUND_DEMO_SEED       = [];
 var OTHER_DEMO_SEED      = [];
 
+// ============ 사건 심급·단계 카탈로그 ============
+// 사건은 지노위 → 중노위 → 행정소송, 산재는 요양신청 → 심사청구 → 재심사청구처럼 심급(단계)을 밟는다.
+// 진행상태(의뢰접수·진행중·조정중…)만으로는 "지금 어느 심급인지"를 알 수 없어 단계 목록을 따로 둔다.
+// 사건 유형(biz_case_types)과 똑같이 화면에서 고칠 수 있다 — 저장소 키 biz_case_stages.
+//
+// ★ dueDays(다음 단계 신청 기한)는 법정 기한이다. 시드 숫자는 아직 확인되지 않은 참고값이라
+//   모두 dueVerified:false 로 두고, 화면에 '법정 기한 — 확인 후 사용' 표시를 붙인다.
+//   대표(노무사)가 유형 관리에서 '확인함'을 켜면 그 표시가 사라진다.
+var BIZ_CASE_STAGE_KEY = 'biz_case_stages';
+var BIZ_CASE_STAGE_SEED = [
+  { code:'lrc-local',    name:'지방노동위원회', short:'지노위', orgKind:'lrc',
+    forTypes:['case-dismiss','case-relation','case-discipline'],
+    dueDays:10, dueFrom:'notice', dueNote:'판정서 송달받은 날부터 10일 이내 중노위 재심 신청',
+    dueVerified:false, sortOrder:10 },
+  { code:'lrc-central',  name:'중앙노동위원회', short:'중노위', orgKind:'lrc',
+    forTypes:['case-dismiss','case-relation','case-discipline'],
+    dueDays:15, dueFrom:'notice', dueNote:'재심판정서 송달받은 날부터 15일 이내 행정소송',
+    dueVerified:false, sortOrder:20 },
+  { code:'court-admin',  name:'행정소송', short:'행소', orgKind:'court',
+    forTypes:['case-dismiss','case-relation','case-discipline','case-injury'],
+    dueDays:0, dueFrom:'', dueNote:'',
+    dueVerified:false, sortOrder:30 },
+  { code:'wc-apply',     name:'요양신청', short:'요양', orgKind:'wc',
+    forTypes:['case-injury'],
+    dueDays:90, dueFrom:'notice', dueNote:'결정 통보받은 날부터 90일 이내 심사청구',
+    dueVerified:false, sortOrder:40 },
+  { code:'wc-review',    name:'심사청구', short:'심사', orgKind:'wc',
+    forTypes:['case-injury'],
+    dueDays:90, dueFrom:'notice', dueNote:'심사 결정 통보받은 날부터 90일 이내 재심사청구',
+    dueVerified:false, sortOrder:50 },
+  { code:'wc-rereview',  name:'재심사청구', short:'재심', orgKind:'wc',
+    forTypes:['case-injury'],
+    dueDays:90, dueFrom:'notice', dueNote:'',
+    dueVerified:false, sortOrder:60 },
+  { code:'labor-report', name:'진정·신고', short:'진정', orgKind:'labor',
+    forTypes:['case-wage','case-subsidy'],
+    dueDays:0, dueFrom:'', dueNote:'',
+    dueVerified:false, sortOrder:70 },
+  { code:'labor-invest', name:'조사·수사', short:'조사', orgKind:'labor',
+    forTypes:['case-wage','case-subsidy'],
+    dueDays:0, dueFrom:'', dueNote:'',
+    dueVerified:false, sortOrder:80 },
+  { code:'labor-done',   name:'확정·지급', short:'확정', orgKind:'labor',
+    forTypes:['case-wage','case-subsidy'],
+    dueDays:0, dueFrom:'', dueNote:'',
+    dueVerified:false, sortOrder:90 }
+];
+// 기관 종류별 색 (지노위·중노위 파랑 / 산재 초록 / 법원 빨강 / 노동청 회색)
+var CASE_STAGE_ORGS = [
+  { v:'lrc',   label:'노동위원회', fg:'#1e40af', bg:'#dbeafe' },
+  { v:'wc',    label:'근로복지공단', fg:'#166534', bg:'#dcfce7' },
+  { v:'court', label:'법원',       fg:'#b91c1c', bg:'#fee2e2' },
+  { v:'labor', label:'노동청',     fg:'#475569', bg:'#f1f5f9' },
+  { v:'',      label:'기타',       fg:'#475569', bg:'#f1f5f9' }
+];
+function caseStageColor(orgKind){
+  var o = CASE_STAGE_ORGS.find(function(x){ return x.v === (orgKind||''); });
+  return o || CASE_STAGE_ORGS[CASE_STAGE_ORGS.length-1];
+}
+// 저장된 단계 목록 — 없으면 시드로 채운다 (getKindTypes 와 같은 방식)
+function getCaseStagesAll(includeHidden){
+  var arr = dbGet(BIZ_CASE_STAGE_KEY, null);
+  if(!arr || !Array.isArray(arr) || arr.length === 0){
+    dbSet(BIZ_CASE_STAGE_KEY, BIZ_CASE_STAGE_SEED);
+    arr = BIZ_CASE_STAGE_SEED;
+  }
+  var out = arr.filter(function(x){ return x && x.code; });
+  if(!includeHidden) out = out.filter(function(x){ return !x.hidden; });
+  return out.slice().sort(function(a,b){ return (a.sortOrder||0)-(b.sortOrder||0); });
+}
+// 이 사건유형에서 고를 수 있는 단계. 유형이 비었거나 걸린 단계가 없으면 전체를 준다(고를 수 없으면 안 되니까)
+function getCaseStages(typeCode, includeHidden){
+  var all = getCaseStagesAll(includeHidden);
+  if(!typeCode) return all;
+  var hit = all.filter(function(s){
+    return Array.isArray(s.forTypes) && s.forTypes.indexOf(typeCode) >= 0;
+  });
+  return hit.length ? hit : all;
+}
+function caseStageInfo(code){
+  if(!code) return null;
+  return getCaseStagesAll(true).find(function(x){ return x.code === code; }) || null;
+}
+// YYYY-MM-DD + n일. Date.UTC 로만 계산해 시간대에 따라 하루 밀리는 일이 없게 한다
+function _ymdAddDays(ymd, days){
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd||''));
+  if(!m) return '';
+  var t = Date.UTC(parseInt(m[1],10), parseInt(m[2],10)-1, parseInt(m[3],10)) + (days*86400000);
+  var d = new Date(t);
+  return d.getUTCFullYear() + '-' + ('0'+(d.getUTCMonth()+1)).slice(-2) + '-' + ('0'+d.getUTCDate()).slice(-2);
+}
+// 단계 하나의 다음 기한. 기산일(송달일 또는 판정일) + dueDays '달력일'
+//   ※ 달력일 기준이다(영업일 아님). 실제 법정 기준이 영업일이면 대표가 유형 관리에서 고친다.
+function caseStageDue(stage, stageDef){
+  if(!stage || !stageDef) return null;
+  var days = parseInt(stageDef.dueDays, 10) || 0;
+  if(days <= 0) return null;
+  var basis = (stageDef.dueFrom === 'result') ? 'result' : 'notice';
+  var base  = (basis === 'result') ? stage.resultDate : stage.noticeDate;
+  var due = _ymdAddDays(base, days);
+  if(!due) return null;
+  return { due:due, basis:basis, days:days };
+}
+// 접수일(filedDate) 순 → 같으면 입력 순. 날짜가 아직 없는 단계는 방금 넣은 것이라 맨 뒤(= 현재 단계)
+function caseStagesOrdered(stages){
+  if(!Array.isArray(stages)) return [];
+  return stages.map(function(s, i){ return { s:s, i:i }; }).sort(function(a, b){
+    var da = (a.s && a.s.filedDate) || '9999-99-99';
+    var db = (b.s && b.s.filedDate) || '9999-99-99';
+    if(da !== db) return da < db ? -1 : 1;
+    return a.i - b.i;
+  }).map(function(x){ return x.s; });
+}
+function caseStageCurrent(stages){
+  var ord = caseStagesOrdered(stages);
+  return ord.length ? ord[ord.length-1] : null;
+}
+// stageCode = 현재(마지막) 단계 코드. 사람이 고르는 값이 아니라 stages 에서 뽑아 넣는다.
+// 목록의 배지·필터·정렬은 이 한 칸만 읽으므로 싸다.
+// 단계가 없는 옛 사건은 손대지 않는다 — stageCode 를 새로 만들지 않는다(예전과 똑같이 동작).
+function caseSyncStageCode(rec){
+  if(!rec) return rec;
+  var st = rec.stages;
+  if(!Array.isArray(st) || st.length === 0){
+    if(rec.stageCode) return Object.assign({}, rec, { stageCode:'' });
+    return rec;
+  }
+  var cur = caseStageCurrent(st) || {};
+  var code = cur.code || '';
+  if(rec.stageCode === code) return rec;
+  return Object.assign({}, rec, { stageCode:code });
+}
+// 이 사건의 단계들 중 아직 지나지 않은 가장 이른 기한 (목록·D-day 용)
+function caseNextDue(caseRec, todayStr){
+  if(!caseRec || !Array.isArray(caseRec.stages) || caseRec.stages.length === 0) return null;
+  var today = todayStr || ((typeof todayYMD === 'function') ? todayYMD() : '');
+  var best = null;
+  caseRec.stages.forEach(function(st){
+    var d = caseStageDue(st, caseStageInfo(st && st.code));
+    if(!d) return;
+    if(today && d.due < today) return;   // 이미 지난 기한은 건너뛴다
+    if(!best || d.due < best.due){
+      best = { due:d.due, basis:d.basis, days:d.days, code:(st.code||''), stageId:(st.id||'') };
+    }
+  });
+  return best;
+}
+window.getCaseStages    = getCaseStages;
+window.caseStageInfo    = caseStageInfo;
+window.caseStageDue     = caseStageDue;
+window.caseNextDue      = caseNextDue;
+window.caseStagesOrdered= caseStagesOrdered;
+window.caseStageCurrent = caseStageCurrent;
+window.caseSyncStageCode= caseSyncStageCode;
+// ── 사건 심급·단계 카탈로그 끝 ──
+
 // 카테고리별 색상 (캡쳐 색상 톤)
 var BIZ_CATS = [
   { key:'company',    title:'업체유형',    storageKey:'biz_company_types', seed:COMPANY_TYPE_SEED, headBg:'#fff7ed', headFg:'#9a3412', icon:'🏢', addBtnBg:'#ea580c', shortBg:'#fed7aa', shortFg:'#9a3412' },
@@ -23027,6 +23332,163 @@ function BizTypeCard(props){
   );
 }
 
+// ── 사건 심급·단계 관리 (업무유형 화면의 형제 칸) ──
+// 유형 카드(BizTypeCard)는 [약어 + 이름] 한 줄짜리라 단계에 필요한 칸(기관종류·적용유형·법정기한·확인함)을
+// 억지로 넣으면 업체·컨설팅·기금·기타 카드까지 같이 틀어진다. 그래서 같은 화면 아래에 표 모양 형제 칸으로 뒀다.
+function CaseStageCard(){
+  var st = useState(function(){ return getCaseStagesAll(true); });
+  var list = st[0]; var setList = st[1];
+  var ni = useState(''); var nameIn = ni[0]; var setNameIn = ni[1];
+  var si = useState(''); var shortIn = si[0]; var setShortIn = si[1];
+  var oi = useState('lrc'); var orgIn = oi[0]; var setOrgIn = oi[1];
+  var caseTypes = (typeof getCaseTypes === 'function') ? (getCaseTypes() || []) : [];
+  var smallS = { padding:'3px 6px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'11px', fontFamily:'inherit' };
+
+  function persist(arr){
+    arr = arr.slice().sort(function(a,b){ return (a.sortOrder||0)-(b.sortOrder||0); });
+    setList(arr); dbSet(BIZ_CASE_STAGE_KEY, arr);
+  }
+  function upd(code, fields){
+    persist(list.map(function(x){ return x.code===code ? Object.assign({}, x, fields) : x; }));
+  }
+  // 이 단계를 쓰고 있는 사건 건수
+  function usage(code){
+    return (dbGet('cases', []) || []).filter(function(c){
+      if(!c) return false;
+      if(c.stageCode === code) return true;
+      return Array.isArray(c.stages) && c.stages.some(function(s){ return s && s.code === code; });
+    }).length;
+  }
+  function add(){
+    var nm = (nameIn||'').replace(/^\s+|\s+$/g,'');
+    if(!nm){ showToast('단계 이름 입력'); return; }
+    var sh = ((shortIn||'').replace(/^\s+|\s+$/g,'') || nm.slice(0,2)).slice(0,4);
+    var nextOrder = list.length === 0 ? 10 : (Math.max.apply(null, list.map(function(x){ return x.sortOrder||0; })) + 10);
+    var code = 'stage-' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+    // 대표가 직접 넣은 단계는 본인이 확인한 값이므로 dueVerified:true (시드 숫자만 확인 대기)
+    persist(list.concat([{ code:code, name:nm, short:sh, orgKind:orgIn, forTypes:[],
+      dueDays:0, dueFrom:'', dueNote:'', dueVerified:true, sortOrder:nextOrder }]));
+    setNameIn(''); setShortIn(''); showToast('추가됨');
+  }
+  function del(code){
+    var item = list.find(function(x){ return x.code===code; }) || {};
+    var used = usage(code);
+    if(used > 0){
+      showConfirm('"'+(item.name||code)+'" 단계는 '+used+'건의 사건이 쓰고 있습니다.\n\n삭제하면 그 사건의 심급 표시가 사라집니다.\n\n대신 목록에서 "숨김" 처리할까요?\n(숨기면 새로 고를 때 안 보이지만, 기존 '+used+'건의 표시는 그대로 유지됩니다)',
+        { title:'단계 사용 중', confirmText:'숨김 처리', danger:false }).then(function(okv){
+        if(!okv) return;
+        upd(code, { hidden:true });
+        showToast('🙈 숨김 처리됨 — 기존 '+used+'건 표시 유지');
+      });
+      return;
+    }
+    showConfirm('"'+(item.name||code)+'" 단계를 삭제할까요?\n(쓰는 사건 없음)', { title:'단계 삭제', confirmText:'삭제', danger:true }).then(function(okv){
+      if(!okv) return;
+      persist(list.filter(function(x){ return x.code !== code; }));
+      showToast('🗑 삭제됨');
+    });
+  }
+  function reseed(){ persist(BIZ_CASE_STAGE_SEED.slice()); showToast('기본 단계로 복원됨'); }
+
+  return h('div', { style:{ background:'#fff', border:'1px solid #e5e7eb', borderRadius:'8px', overflow:'hidden', marginTop:'8px' } },
+    h('div', { style:{ background:'#eef2ff', color:'#1e40af', padding:'6px 10px', fontSize:'11.5px', fontWeight:700, display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap' } },
+      h('span', null, '⚖'),
+      h('span', null, '사건 심급·단계'),
+      h('span', { style:{ fontWeight:600, fontSize:'12px' } }, '(' + list.length + ')'),
+      h('div', { style:{ flex:1 } }),
+      h('button', { onClick:reseed, className:'erp-tip', 'data-tip':'⚠️ 기본 단계로 되돌림 — 고친 값이 사라집니다',
+        style:{ fontSize:'10.5px', padding:'2px 8px', background:'transparent', color:'#1e40af', border:'1px solid #1e40af', borderRadius:'4px', opacity:.6, cursor:'pointer' } }, '복원')
+    ),
+    h('div', { style:{ padding:'6px' } },
+      h('div', { style:{ fontSize:'10.5px', color:'#64748b', marginBottom:'6px', lineHeight:1.5 } },
+        h('div', null, '· 사건 화면의 ⚖ 심급·단계 목록에서 고르는 항목입니다 (지노위 → 중노위 → 행정소송 / 요양신청 → 심사청구 → 재심사청구)'),
+        h('div', null, '· 기한 일수는 ', h('b', null, '아직 확인되지 않은 초기값'), '입니다. 확인하신 뒤 ', h('b', null, '확인함'),
+          ' 을 켜 주세요 — 사건 화면의 「법정 기한 — 확인 후 사용」 표시가 그 단계에서 사라집니다.'),
+        h('div', null, '· 적용 유형을 비우면 모든 사건유형에서 고를 수 있습니다.')
+      ),
+      list.length === 0
+        ? h('div', { style:{ color:'#94a3b8', fontSize:'11px', textAlign:'center', padding:'10px' } }, '항목 없음')
+        : list.map(function(x){
+            var col = caseStageColor(x.orgKind);
+            return h('div', { key:x.code,
+              style:{ border:'1px solid #e5e7eb', borderRadius:'6px', padding:'6px 8px', marginBottom:'5px',
+                background: x.hidden ? '#f8fafc' : '#fff', opacity: x.hidden ? .6 : 1 } },
+              h('div', { style:{ display:'flex', alignItems:'center', gap:'5px', flexWrap:'wrap' } },
+                h('span', { style:{ background:col.bg, color:col.fg, fontSize:'10.5px', fontWeight:700, padding:'2px 7px', borderRadius:'10px', whiteSpace:'nowrap', minWidth:'42px', textAlign:'center' } }, x.short || x.name),
+                h('input', { type:'text', value:x.name||'', onChange:function(e){ upd(x.code, { name:e.target.value }); }, placeholder:'단계 이름',
+                  style:Object.assign({}, smallS, { flex:'1 1 130px', minWidth:'110px' }) }),
+                h('input', { type:'text', value:x.short||'', onChange:function(e){ upd(x.code, { short:e.target.value.slice(0,4) }); }, placeholder:'약어', maxLength:4,
+                  style:Object.assign({}, smallS, { width:'56px', textAlign:'center' }) }),
+                h('select', { value:x.orgKind||'', onChange:function(e){ upd(x.code, { orgKind:e.target.value }); }, style:smallS },
+                  CASE_STAGE_ORGS.map(function(o){ return h('option', { key:o.v||'none', value:o.v }, o.label); })),
+                h('span', { style:{ fontSize:'10.5px', color:'#64748b' } }, '기한'),
+                h('input', { type:'number', min:0, value:x.dueDays||0,
+                  onChange:function(e){ upd(x.code, { dueDays: parseInt(e.target.value,10) || 0 }); },
+                  style:Object.assign({}, smallS, { width:'58px', textAlign:'right', fontFamily:'monospace' }) }),
+                h('span', { style:{ fontSize:'10.5px', color:'#64748b' } }, '일'),
+                h('select', { value:x.dueFrom||'', onChange:function(e){ upd(x.code, { dueFrom:e.target.value }); }, style:smallS },
+                  h('option', { value:'' }, '기산 없음'),
+                  h('option', { value:'notice' }, '송달일부터'),
+                  h('option', { value:'result' }, '판정일부터')),
+                h('label', { title:'확인하면 「법정 기한 — 확인 후 사용」 표시가 사라집니다',
+                  style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', fontWeight:700, cursor:'pointer', color: x.dueVerified ? '#059669' : '#b45309' } },
+                  h('input', { type:'checkbox', checked:!!x.dueVerified,
+                    onChange:function(e){ upd(x.code, { dueVerified:e.target.checked }); },
+                    style:{ margin:0, width:'13px', height:'13px', cursor:'pointer' } }),
+                  h('span', null, '확인함')),
+                (x.dueDays > 0 && !x.dueVerified)
+                  ? h('span', { className:'erp-tip', 'data-tip':'초기값은 참고용이며 유형 관리에서 고칠 수 있습니다',
+                      style:{ fontSize:'10px', fontWeight:700, color:'#b45309', background:'#fffbeb', border:'1px solid #fde68a', borderRadius:'8px', padding:'1px 6px', whiteSpace:'nowrap' } },
+                      '법정 기한 — 확인 후 사용')
+                  : null,
+                x.hidden ? h('span', { style:{ fontSize:'10px', color:'#64748b', background:'#e2e8f0', padding:'1px 6px', borderRadius:'8px', fontWeight:600 } }, '숨김') : null,
+                h('div', { style:{ flex:1 } }),
+                x.hidden
+                  ? h('button', { onClick:function(){ upd(x.code, { hidden:false }); showToast('👁 다시 표시됨'); }, title:'다시 표시',
+                      style:{ background:'#f0fdf4', color:'#16a34a', border:'1px solid #bbf7d0', borderRadius:'5px', width:'20px', height:'22px', fontSize:'11px', cursor:'pointer', flexShrink:0 } }, '👁')
+                  : h('button', { onClick:function(){ del(x.code); },
+                      style:{ background:'#fef2f2', color:'#dc2626', border:'1px solid #fecaca', borderRadius:'5px', width:'20px', height:'22px', fontSize:'12px', cursor:'pointer', flexShrink:0 } }, '×')
+              ),
+              h('div', { style:{ display:'flex', alignItems:'center', gap:'4px', flexWrap:'wrap', marginTop:'4px' } },
+                h('span', { style:{ fontSize:'10.5px', color:'#64748b', fontWeight:600 } }, '적용 유형'),
+                (x.forTypes||[]).length === 0
+                  ? h('span', { style:{ fontSize:'10.5px', color:'#94a3b8' } }, '전체')
+                  : (x.forTypes||[]).map(function(tc){
+                      var t = caseTypes.find(function(y){ return y.code === tc; });
+                      return h('span', { key:tc, style:{ display:'inline-flex', alignItems:'center', gap:'3px', background:'#ede9fe', color:'#1e40af', fontSize:'10.5px', fontWeight:600, padding:'1px 4px 1px 8px', borderRadius:'10px' } },
+                        h('span', null, t ? t.name : tc),
+                        h('button', { onClick:function(){ upd(x.code, { forTypes:(x.forTypes||[]).filter(function(v){ return v !== tc; }) }); },
+                          style:{ width:'15px', height:'15px', borderRadius:'50%', border:0, background:'#60a5fa', color:'#fff', fontSize:'9px', cursor:'pointer' } }, '×'));
+                    }),
+                h('select', { value:'',
+                  onChange:function(e){ var v = e.target.value; if(!v) return;
+                    if((x.forTypes||[]).indexOf(v) < 0) upd(x.code, { forTypes:(x.forTypes||[]).concat([v]) });
+                    e.target.value = ''; },
+                  style:Object.assign({}, smallS, { fontSize:'10.5px' }) },
+                  h('option', { value:'' }, '+ 유형'),
+                  caseTypes.filter(function(t){ return (x.forTypes||[]).indexOf(t.code) < 0; })
+                    .map(function(t){ return h('option', { key:t.code, value:t.code }, t.name); })),
+                h('input', { type:'text', value:x.dueNote||'', onChange:function(e){ upd(x.code, { dueNote:e.target.value }); },
+                  placeholder:'기한 설명 (예: 판정서 송달받은 날부터 10일 이내 재심 신청)',
+                  style:Object.assign({}, smallS, { flex:'1 1 220px', minWidth:'160px', fontSize:'10.5px' }) })
+              )
+            );
+          })
+    ),
+    h('div', { style:{ padding:'6px', borderTop:'1px solid #f1f5f9', background:'#f8fafc', display:'flex', gap:'4px', flexWrap:'wrap', alignItems:'center' } },
+      h('input', { type:'text', value:shortIn, onChange:function(e){ setShortIn(e.target.value.slice(0,4)); }, placeholder:'약어', maxLength:4,
+        style:Object.assign({}, smallS, { width:'60px', textAlign:'center' }) }),
+      h('input', { type:'text', value:nameIn, onChange:function(e){ setNameIn(e.target.value); },
+        onKeyDown:function(e){ if(e.key === 'Enter') add(); }, placeholder:'새 단계 이름 (예: 재심사청구)',
+        style:Object.assign({}, smallS, { flex:'1 1 160px' }) }),
+      h('select', { value:orgIn, onChange:function(e){ setOrgIn(e.target.value); }, style:smallS },
+        CASE_STAGE_ORGS.map(function(o){ return h('option', { key:o.v||'none', value:o.v }, o.label); })),
+      h('button', { onClick:add,
+        style:{ background:'#2563eb', color:'#fff', padding:'4px 14px', borderRadius:'4px', fontSize:'10.5px', fontWeight:700 } }, '+ 추가')
+    )
+  );
+}
+
 function BizMasters(){
   var ts = useState(0); var activeTab = ts[0]; var setActiveTab = ts[1];
   var dg = useState(null); var diag = dg[0]; var setDiag = dg[1];
@@ -23165,7 +23627,9 @@ function BizMasters(){
       BIZ_CATS.map(function(cat){
         return h(BizTypeCard, { key:cat.key, cat:cat });
       })
-    )
+    ),
+    // 사건 유형의 형제 칸 — 사건은 유형 말고 심급(단계)도 관리한다
+    h(CaseStageCard, null)
         )
   );
 }

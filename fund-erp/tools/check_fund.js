@@ -137,15 +137,27 @@ ok('한도 초과분은 기본재산 사용으로 구분', /if\(kind==='기본�
 // (가치를만들어가는사람들 2024·일원공동 2024 모두 출연금 × 90% 전액)
 // 법은 한도를 '범위'로 정한다 — 그 안에서 얼마를 설정할지는 협의회 결정 사항이다
 // (참살이공동 2024는 한도 929,554,369원 중 412,000,000원만 설정했다)
+// 설정은 순이익 방향과 무관하다 — 전입하는 해에도 그 해 출연금의 사용한도만큼 재원을 만든다
+// (안전공사공동 2022: 전입 3,249원인 해에 설정 63,003,960원. 환입 분기에만 두면 기본재산이 6,300만원 어긋난다)
+ok('설정은 순이익 방향과 무관', src.includes('var want=r.setupManual?_man:Math.max(0,cap);')
+  && src.includes('if(want>0){ r.setup=want;')
+  && src.includes('r.overBasic=r.need-avail;'));
 ok('설정액은 협의회 지정값 우선, 비우면 한도 전액',
-  src.includes('r.setup=r.setupManual?_man:Math.max(0,cap);')
+  src.includes('var want=r.setupManual?_man:Math.max(0,cap);')
   && src.includes("var _man=num(((funds[fid]||{}).years||{})[yr]&&((funds[fid]||{}).years||{})[yr].reserve_setup);")
-  && src.includes('r.overBasic=Math.max(0,r.need-avail-r.setup);'));
+  && src.includes("r.setupManual=(_man!==''&&_man>=0);"));
 ok('설정액 입력칸과 저장', src.includes("<input id=\"op-rsvset\"")
   && src.includes("up['funds/'+_fid+'/years/'+_yr+'/reserve_setup']=(rsv===''?null:(num(rsv)||0));")
   && src.includes('function _rsvSetOf'));
 ok('환입을 계정별 잔액 안에서 배분', src.includes('r.parts.push({acct:a,amount:take})'));
 ok('조정 분개 묶음 생성기', src.includes('function _reserveEntries'));
+// 검증한 열한 기금 모두 준비금1(법인세법 제29조)을 '현금 이자수익만큼 전입 후 환입'으로 적었다
+// 순이익·대차에는 영향이 없지만 손익계산서의 사업외수익·비용에 나타나야 제출본과 맞는다
+ok('준비금1 전입액을 이자수익만큼 자동 생성',
+  src.includes("if(!x.approved||x.credit!=='이자수익'||x.nocash) return;")
+  && src.includes('interestCash:Math.round(itc)')
+  && src.includes("out.push({id:'rsv1set'+yr, e:_reserveEntry(yr,'전입',it,R1)});")
+  && src.includes("out.push({id:'rsv1in'+yr, e:_reserveEntry(yr,'환입',it,R1)});"));
 ok('전입액 계정(사업외비용)', src.includes("'고유목적사업준비금전입액':'비용'"));
 ok('잔액 있는 준비금 계정을 고름', src.includes('function _reserveAcct'));
 ok('환입은 준비금 재원 상한', src.includes('r.amount=Math.max(0,Math.min(r.need,avail));'));
@@ -272,7 +284,7 @@ ok('이자소득 원천징수 세목', src.includes("'세금','공과금','공�
 ok('학교·산학협력단 = 장학금', src.includes("'교육비','대학교','대학원','산학협력단','장학재단','사이버대'"));
 ok('경기장·예매처 = 체육문화비', src.includes("'야구장','경기장','티켓','공연','콘서트','관람'"));
 // 결산·등기 용역비, 시설·비품, 명절선물은 어느 기금에나 나오는데 규칙에 없었다
-ok('전문가 용역비 = 지급수수료', src.includes("'노무법인','회계법인','세무법인','세무사','법무사','변호사','등기'"));
+ok('전문가 용역비 = 지급수수료', src.includes("'노무법인','회계법인','세무법인','법무법인','세무사','법무사','변호사','등기'"));
 ok('시설·비품 = 근로복지시설비', src.includes("'공사','설치','보수','비품','냉난방','정수기','사물함','세탁기','청소기','게시판','신발장'"));
 ok('명절선물·작업복 = 그 밖의 복지비', src.includes("'선물세트','명절선물','유니폼','작업복','피복'"));
 // 하나·기업은행은 예금이자 행의 적요를 비우고 성격을 '구분' 칸에만 적는다(이자 8건이 미분류였다)
