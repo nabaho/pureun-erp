@@ -232,18 +232,97 @@
      연도나 루트를 지우면 그 해 사진이 전부 사라지므로, 반드시 사진 하나의
      세 경로만 null 로 쓴다. 번호가 없으면 아예 시작하지 않는다
      (빈 값이 경로에 들어가면 상위 노드를 가리키게 된다). */
+  /* ── 지우기 = 휴지통으로 (30일) ──
+     곧바로 없애지 않는다. 잘못 지운 것을 되살릴 수 있어야 한다.
+     **담고 나서 지운다** — 순서가 바뀌거나 중간에 끊기면 사진을 잃는다.
+     그래서 읽기를 먼저 다 하고, 담기와 비우기를 **한 번의 update** 로 한다. */
+  var TRASH_DAYS = 30;
+
+  function trashPath(year, id, owner) { return base(owner) + '/trash/' + year + '/' + id; }
+
   function deletePhoto(year, id) {
     if (!year || !id) return Promise.reject(new Error('지울 사진을 알 수 없습니다'));
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    /* 새 자리와 옛 자리 어디에 있든 찾아 담는다. */
+    return Promise.all([
+      readOnce(metaPath(year, id)).catch(function () { return null; }),
+      readOnce(legacyRoot('items') + '/' + year + '/' + id).catch(function () { return null; }),
+      loadFull(year, id).catch(function () { return null; }),
+      loadThumb(year, id).catch(function () { return null; })
+    ]).then(function (r) {
+      var meta = r[0] || r[1];
+      if (!meta && !r[2] && !r[3]) {
+        throw new Error('사진을 읽지 못해 지우지 않았습니다 — 잠시 뒤 다시 시도해 주세요');
+      }
+      var u = {};
+      u[trashPath(year, id)] = {
+        meta: meta || {}, full: r[2] || '', thumb: r[3] || '', delAt: Date.now()
+      };
+      u[metaPath(year, id)] = null;
+      u[blobPath(year, id)] = null;
+      u[thumbPath(year, id)] = null;
+      /* 옛 자리도 함께 비운다 — 안 비우면 지운 사진이 다시 나타난다. */
+      u[legacyRoot('items') + '/' + year + '/' + id] = null;
+      u[legacyRoot('blobs') + '/' + year + '/' + id] = null;
+      u[legacyRoot('thumbs') + '/' + year + '/' + id] = null;
+      return deps.db.ref().update(u);
+    });
+  }
+
+  /* 휴지통 목록 — 남은 날을 함께 준다(사람이 급한지 알아야 한다). */
+  function listTrash(year, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(base(owner) + '/trash/' + year).once('value').then(function (s) {
+      var raw = s.val() || {};
+      var out = {};
+      Object.keys(raw).forEach(function (id) {
+        var t = raw[id] || {};
+        var used = t.delAt ? Math.floor((Date.now() - t.delAt) / 86400000) : 0;
+        out[id] = {
+          meta: t.meta || {}, thumb: t.thumb || '', delAt: t.delAt || 0,
+          daysLeft: Math.max(0, TRASH_DAYS - used)
+        };
+      });
+      return out;
+    });
+  }
+
+  /* 되살리기 — 휴지통에서 꺼내 원래 자리로. */
+  function restorePhoto(year, id) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return readOnce(trashPath(year, id)).then(function (t) {
+      if (!t) throw new Error('휴지통에 그 사진이 없습니다');
+      var u = {};
+      u[metaPath(year, id)] = t.meta || {};
+      if (t.full) u[blobPath(year, id)] = t.full;
+      if (t.thumb) u[thumbPath(year, id)] = t.thumb;
+      u[trashPath(year, id)] = null;
+      return deps.db.ref().update(u);
+    });
+  }
+
+  /* 30일 지난 것만 완전히 지운다. 지운 때가 없는 것은 건드리지 않는다
+     (언제 지웠는지 모르는 것을 없애면 되돌릴 길이 사라진다). */
+  function purgeOldTrash(year, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(base(owner) + '/trash/' + year).once('value').then(function (s) {
+      var raw = s.val() || {};
+      var u = {}, n = 0;
+      var cut = Date.now() - TRASH_DAYS * 86400000;
+      Object.keys(raw).forEach(function (id) {
+        var t = raw[id] || {};
+        if (t.delAt && t.delAt < cut) { u[trashPath(year, id, owner)] = null; n++; }
+      });
+      if (!n) return 0;
+      return deps.db.ref().update(u).then(function () { return n; });
+    });
+  }
+
+  /* 휴지통에서 한 장만 완전히 지운다. */
+  function purgeOne(year, id) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     var u = {};
-    u[metaPath(year, id)] = null;
-    u[blobPath(year, id)] = null;
-    u[thumbPath(year, id)] = null;
-    /* 옛 자리도 함께 지운다 — 안 지우면 지운 사진이 다시 나타난다
-       (옛 자리도 함께 읽고 있으므로). 옛 자리가 이미 없으면 무해하다. */
-    u[legacyRoot('items') + '/' + year + '/' + id] = null;
-    u[legacyRoot('blobs') + '/' + year + '/' + id] = null;
-    u[legacyRoot('thumbs') + '/' + year + '/' + id] = null;
+    u[trashPath(year, id)] = null;
     return deps.db.ref().update(u);
   }
 
@@ -627,6 +706,11 @@
     savePhoto: savePhoto,
     saveRead: saveRead,
     deletePhoto: deletePhoto,
+    listTrash: listTrash,
+    restorePhoto: restorePhoto,
+    purgeOldTrash: purgeOldTrash,
+    purgeOne: purgeOne,
+    TRASH_DAYS: TRASH_DAYS,
     signIn: signIn,
     amAdmin: amAdmin,
     myUid: myUid,

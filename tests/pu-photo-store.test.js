@@ -675,17 +675,18 @@ test('새 자리에 있으면 옛 자리를 두드리지 않는다', async () =>
     '새 자리에 있는데 옛 자리를 또 읽었습니다');
 });
 
-test('지우기는 새 자리와 옛 자리를 함께 지운다 — 안 그러면 다시 나타난다', async () => {
+test('지우기는 새 자리와 옛 자리를 함께 비운다 — 안 그러면 다시 나타난다', async () => {
   const S = loadStore();
-  const db = legacyDb({}, {}, {});
+  // 휴지통에 담을 것이 있어야 지운다(읽지 못하면 지우지 않는다)
+  const db = legacyDb({ 2026: { p1: { by: 'U1', takenAt: 1 } } }, {}, {});
   S.init({ uid: 'U1', db });
   await S.deletePhoto('2026', 'p1');
   const u = db.calls.update[0].u;
-  assert.deepEqual(Object.keys(u).sort(), [
-    'puphotos/blobs/2026/p1', 'puphotos/items/2026/p1', 'puphotos/thumbs/2026/p1',
-    'puphotos/u/U1/blobs/2026/p1', 'puphotos/u/U1/items/2026/p1', 'puphotos/u/U1/thumbs/2026/p1'
-  ]);
-  Object.keys(u).forEach(function (k) { assert.equal(u[k], null); });
+  ['puphotos/items/2026/p1', 'puphotos/blobs/2026/p1', 'puphotos/thumbs/2026/p1',
+   'puphotos/u/U1/items/2026/p1', 'puphotos/u/U1/blobs/2026/p1', 'puphotos/u/U1/thumbs/2026/p1'
+  ].forEach(function (k) { assert.equal(u[k], null, k + ' 를 비우지 않았습니다'); });
+  // 휴지통에는 담겨 있어야 한다
+  assert.ok(u['puphotos/u/U1/trash/2026/p1'], '휴지통에 담지 않았습니다');
 });
 
 /* ── 옛 자리에서 사람별 자리로 이사 ──
@@ -824,31 +825,152 @@ test('이사 — 옛 자리가 비어 있으면 아무것도 쓰지 않는다', 
   assert.equal(db.calls.update.length, 0);
 });
 
+/* ── 휴지통 (30일) ──
+   지운 사진을 곧바로 없애지 않는다. 잘못 지운 것을 되살릴 수 있어야 한다.
+   담고 나서 지운다 — 순서가 바뀌면 사진을 잃는다. */
+
+test('지우면 휴지통으로 간다 — 담은 뒤에 원래 자리를 비운다', async () => {
+  const S = loadStore();
+  const db = legacyDb({}, {}, {}, {
+    'puphotos/u/U1/items/2026/p1': { takenAt: 111, kind: 'doc' },
+    'puphotos/u/U1/blobs/2026/p1': 'data:full',
+    'puphotos/u/U1/thumbs/2026/p1': 'data:thumb'
+  });
+  S.init({ uid: 'U1', db });
+  await S.deletePhoto('2026', 'p1');
+  assert.equal(db.calls.update.length, 1, '한 번에 담고 비워야 한다(중간에 끊기면 사진을 잃는다)');
+  const u = db.calls.update[0].u;
+  const trash = u['puphotos/u/U1/trash/2026/p1'];
+  assert.ok(trash, '휴지통에 담지 않았습니다');
+  assert.equal(trash.full, 'data:full', '사진 본문이 휴지통에 안 들어갔습니다');
+  assert.equal(trash.thumb, 'data:thumb');
+  assert.equal(trash.meta.takenAt, 111);
+  assert.ok(trash.delAt > 0, '지운 때가 없으면 30일을 셀 수 없습니다');
+  // 원래 자리는 비운다
+  assert.equal(u['puphotos/u/U1/items/2026/p1'], null);
+  assert.equal(u['puphotos/u/U1/blobs/2026/p1'], null);
+  assert.equal(u['puphotos/u/U1/thumbs/2026/p1'], null);
+});
+
+test('옛 자리 사진을 지워도 휴지통으로 간다', async () => {
+  const S = loadStore();
+  const db = legacyDb(
+    { 2026: { old1: { by: 'U1', takenAt: 5 } } },
+    { 2026: { old1: 'data:of' } }, { 2026: { old1: 'data:ot' } });
+  S.init({ uid: 'U1', db });
+  await S.deletePhoto('2026', 'old1');
+  const u = db.calls.update[0].u;
+  assert.equal(u['puphotos/u/U1/trash/2026/old1'].full, 'data:of');
+  assert.equal(u['puphotos/items/2026/old1'], null, '옛 자리를 비우지 않았습니다');
+});
+
+test('읽지 못하면 지우지 않는다 — 담지 못한 것을 없애면 안 된다', async () => {
+  const S = loadStore();
+  const db = legacyDb({}, {}, {});
+  db.ref = function () { return { once: function () { return Promise.reject(new Error('권한 없음')); },
+    update: function () { throw new Error('지우려 했습니다'); } }; };
+  S.init({ uid: 'U1', db });
+  await assert.rejects(() => S.deletePhoto('2026', 'p1'), /지우지|읽/);
+});
+
+test('휴지통 목록 — 지운 때와 남은 날이 함께 온다', async () => {
+  const S = loadStore();
+  const now = Date.now();
+  const db = legacyDb({}, {}, {}, {
+    'puphotos/u/U1/trash/2026': {
+      a: { meta: { takenAt: 1 }, thumb: 't', delAt: now - 5 * 86400000 },
+      b: { meta: { takenAt: 2 }, thumb: 't', delAt: now - 29 * 86400000 }
+    }
+  });
+  S.init({ uid: 'U1', db });
+  const list = await S.listTrash('2026');
+  assert.equal(Object.keys(list).length, 2);
+  assert.equal(list.a.daysLeft, 25);
+  assert.equal(list.b.daysLeft, 1);
+});
+
+test('되살리기 — 휴지통에서 꺼내 원래 자리로 되돌린다', async () => {
+  const S = loadStore();
+  const db = legacyDb({}, {}, {}, {
+    'puphotos/u/U1/trash/2026/p1': { meta: { takenAt: 9 }, full: 'F', thumb: 'T', delAt: 1 }
+  });
+  S.init({ uid: 'U1', db });
+  await S.restorePhoto('2026', 'p1');
+  const u = db.calls.update[0].u;
+  assert.equal(u['puphotos/u/U1/items/2026/p1'].takenAt, 9);
+  assert.equal(u['puphotos/u/U1/blobs/2026/p1'], 'F');
+  assert.equal(u['puphotos/u/U1/thumbs/2026/p1'], 'T');
+  assert.equal(u['puphotos/u/U1/trash/2026/p1'], null, '휴지통에서 안 비웠습니다');
+});
+
+test('되살리기 — 휴지통에 없으면 한국어로 알려준다', async () => {
+  const S = loadStore();
+  S.init({ uid: 'U1', db: legacyDb({}, {}, {}) });
+  await assert.rejects(() => S.restorePhoto('2026', 'none'), /휴지통/);
+});
+
+test('30일 지난 것만 완전히 지운다 — 남은 것은 건드리지 않는다', async () => {
+  const S = loadStore();
+  const now = Date.now();
+  const db = legacyDb({}, {}, {}, {
+    'puphotos/u/U1/trash/2026': {
+      old: { delAt: now - 31 * 86400000 },
+      keep: { delAt: now - 10 * 86400000 },
+      noStamp: {}                                  // 지운 때가 없는 것
+    }
+  });
+  S.init({ uid: 'U1', db });
+  const n = await S.purgeOldTrash('2026');
+  assert.equal(n, 1);
+  const u = db.calls.update[0].u;
+  assert.deepEqual(Object.keys(u), ['puphotos/u/U1/trash/2026/old']);
+  assert.equal(u['puphotos/u/U1/trash/2026/old'], null);
+});
+
+test('30일 지난 것이 없으면 아무것도 쓰지 않는다', async () => {
+  const S = loadStore();
+  const db = legacyDb({}, {}, {}, {
+    'puphotos/u/U1/trash/2026': { keep: { delAt: Date.now() } }
+  });
+  S.init({ uid: 'U1', db });
+  assert.equal(await S.purgeOldTrash('2026'), 0);
+  assert.equal(db.calls.update.length, 0);
+});
+
+test('휴지통에서 완전히 지우기 — 그 한 칸만', async () => {
+  const S = loadStore();
+  const db = legacyDb({}, {}, {});
+  S.init({ uid: 'U1', db });
+  await S.purgeOne('2026', 'p1');
+  const u = db.calls.update[0].u;
+  assert.deepEqual(Object.keys(u), ['puphotos/u/U1/trash/2026/p1']);
+  assert.equal(u['puphotos/u/U1/trash/2026/p1'], null);
+});
+
 /* ── 사진 지우기 ── */
 
-test('deletePhoto — 정보·본문·미리보기 세 곳을 한 번에 지운다', async () => {
+test('deletePhoto — 담기와 비우기를 한 번의 저장으로 한다', async () => {
+  // 중간에 끊기면 사진을 잃는다 — 반드시 한 번에.
   const S = loadStore();
-  const db = fakeDb();
+  const db = fakeDb({ takenAt: 1 });
   S.init({ uid: 'U1', db });
   await S.deletePhoto('2026', 'p1');
   assert.equal(db.calls.update.length, 1);
   const u = db.calls.update[0].u;
-  assert.deepEqual(Object.keys(u).sort(), [
-    'puphotos/blobs/2026/p1', 'puphotos/items/2026/p1', 'puphotos/thumbs/2026/p1',
-    'puphotos/u/U1/blobs/2026/p1', 'puphotos/u/U1/items/2026/p1', 'puphotos/u/U1/thumbs/2026/p1'
-  ]);
-  // 지우기는 null 을 쓰는 것이다
-  Object.keys(u).forEach(k => assert.equal(u[k], null, k + ' 가 null 이 아닙니다'));
+  assert.ok(u['puphotos/u/U1/trash/2026/p1'], '휴지통에 담지 않았습니다');
+  ['puphotos/items/2026/p1', 'puphotos/u/U1/items/2026/p1'].forEach(function (k) {
+    assert.equal(u[k], null, k + ' 를 비우지 않았습니다');
+  });
 });
 
 test('deletePhoto — 그 사진 하나만 건드린다', async () => {
   const S = loadStore();
-  const db = fakeDb();
+  const db = fakeDb({ takenAt: 1 });
   S.init({ uid: 'U1', db });
   await S.deletePhoto('2026', 'p1');
   // 연도나 루트를 지우면 그 해 사진이 전부 사라진다
   for (const k of Object.keys(db.calls.update[0].u)) {
-    assert.match(k, /^puphotos\/(u\/U1\/)?(items|blobs|thumbs)\/2026\/p1$/, '위험한 경로입니다: ' + k);
+    assert.match(k, /^puphotos\/(u\/U1\/)?(items|blobs|thumbs|trash)\/2026\/p1$/, '위험한 경로입니다: ' + k);
   }
   assert.equal(db.calls.update[0].path, '');
 });
