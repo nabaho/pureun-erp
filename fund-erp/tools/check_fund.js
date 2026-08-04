@@ -146,6 +146,13 @@ ok('설정액 입력칸과 저장', src.includes("<input id=\"op-rsvset\"")
   && src.includes('function _rsvSetOf'));
 ok('환입을 계정별 잔액 안에서 배분', src.includes('r.parts.push({acct:a,amount:take})'));
 ok('조정 분개 묶음 생성기', src.includes('function _reserveEntries'));
+// 검증한 열한 기금 모두 준비금1(법인세법 제29조)을 '현금 이자수익만큼 전입 후 환입'으로 적었다
+// 순이익·대차에는 영향이 없지만 손익계산서의 사업외수익·비용에 나타나야 제출본과 맞는다
+ok('준비금1 전입액을 이자수익만큼 자동 생성',
+  src.includes("if(!x.approved||x.credit!=='이자수익'||x.nocash) return;")
+  && src.includes('interestCash:Math.round(itc)')
+  && src.includes("out.push({id:'rsv1set'+yr, e:_reserveEntry(yr,'전입',it,R1)});")
+  && src.includes("out.push({id:'rsv1in'+yr, e:_reserveEntry(yr,'환입',it,R1)});"));
 ok('전입액 계정(사업외비용)', src.includes("'고유목적사업준비금전입액':'비용'"));
 ok('잔액 있는 준비금 계정을 고름', src.includes('function _reserveAcct'));
 ok('환입은 준비금 재원 상한', src.includes('r.amount=Math.max(0,Math.min(r.need,avail));'));

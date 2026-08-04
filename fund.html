@@ -5651,8 +5651,16 @@ function reserveAdjust(arr,fid,yr){
   bal[RESERVE_ACCTS[1]]+=Math.round(num(op.reserve2)||0);
   var avail=RESERVE_ACCTS.reduce(function(s,a){ return s+Math.max(0,bal[a]); },0);
   var contrib=_contribOf(arr), rate=_reserveRate(fid), cap=Math.round(contrib*rate);
+  /* 법인세법 제29조 준비금(준비금1)은 **그 해에 현금으로 받은 이자수익만큼** 전입했다가 그대로 환입한다.
+     검증한 열한 기금이 모두 그렇게 적었다(가치 23,963·안전공사 40,618·플러스 253,010·이비 57,523·
+     일원 2,287·배경 7,247·참살이 81,137·충남6호 156,964·충남8호 461,478·경기1호 323,627·현재기업 831).
+     미수이자는 뺀다 — 충남8호 2025는 이자수익 527,526 중 미수수익 66,048을 빼고 461,478만 전입했다. */
+  var itc=0;
+  expandSplits(arr).forEach(function(x){
+    if(!x.approved||x.credit!=='이자수익'||x.nocash) return;
+    itc+=num(x.deposit)||num(x.amount)||0; });
   var r={kind:'', need:0, avail:avail, amount:0, acct:_reserveAcct(fin), fin:fin,
-         contrib:contrib, rate:rate, cap:cap, setup:0, overBasic:0, parts:[]};
+         contrib:contrib, rate:rate, cap:cap, setup:0, overBasic:0, parts:[], interestCash:Math.round(itc)};
   if(net>0){ r.kind='전입'; r.need=net; r.amount=net;
              r.parts=[{acct:RESERVE_ACCTS[1],amount:net}]; r.acct=RESERVE_ACCTS[1]; return r; }
   if(net===0) return r;
@@ -5701,7 +5709,15 @@ function _reserveEntry(yr,kind,amount,acct){
 /* 결산 확정 때 쓸 조정 분개 전체 — 설정 → 기본재산 사용 → 환입(계정별) 순서.
    id를 고정해 두어 다시 확정해도 같은 자리에 덮어써지고 분개가 늘지 않는다. */
 function _reserveEntries(yr,rc){
-  var out=[], R2=RESERVE_ACCTS[1];
+  var out=[], R1=RESERVE_ACCTS[0], R2=RESERVE_ACCTS[1];
+  /* 준비금1(법인세법 제29조) — 현금으로 받은 이자수익만큼 전입했다가 그대로 환입한다.
+     비용과 수익이 같은 금액이라 당기순이익·대차에는 영향이 없지만, 손익계산서의
+     사업외비용('고유목적사업준비금전입액')과 사업외수익('준비금1 전입수입')에 나타나야 제출본과 맞는다. */
+  var it=Math.round(rc.interestCash||0);
+  if(it>0){
+    out.push({id:'rsv1set'+yr, e:_reserveEntry(yr,'전입',it,R1)});
+    out.push({id:'rsv1in'+yr, e:_reserveEntry(yr,'환입',it,R1)});
+  }
   var setPure=Math.max(0,(rc.setup||0)-(rc.overBasic||0));
   if(setPure>0) out.push({id:'rsvset'+yr, e:_reserveEntry(yr,'설정',setPure,R2)});
   if(rc.overBasic>0) out.push({id:'rsvbas'+yr, e:_reserveEntry(yr,'기본재산사용',rc.overBasic,R2)});
