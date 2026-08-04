@@ -513,6 +513,17 @@ test('파일 이름 등 바깥 문자열은 이스케이프해서 화면에 넣�
 
 /* ── 서류 판독 ── */
 
+test('한 번에 올릴 장수 상한을 지키고, 넘치면 몇 장이 남았는지 알린다', () => {
+  // 조용히 자르면 "왜 몇 장이 안 올라갔지"가 되고 그게 증빙 누락으로 이어진다.
+  assert.match(app, /PuPhotoStore\.UPLOAD_MAX/);
+  const fn = bodyAfter('async function addFiles(', 5200);
+  assert.match(fn, /files\.length > MAX/, '상한을 넘겨도 그대로 받습니다');
+  assert.match(fn, /나머지 ' \+ over \+ '장은 다시 골라/, '남은 장수를 알리지 않습니다');
+  // 안내 문구의 숫자도 저장 층에서 가져온다(두 곳에 적으면 어긋난다)
+  assert.match(app, /'한 번에 ' \+ PuPhotoStore\.UPLOAD_MAX \+ '장까지/);
+  assert.ok(!/한 번에 30장/.test(app), '화면에 숫자를 또 적었습니다 — 상한을 바꿀 때 어긋납니다');
+});
+
 test('올린 사진은 종류를 가리지 않고 스스로 판독한다', () => {
   // 대표 지시 — 「글자 판독하기」를 누를 일이 없어야 한다.
   // 명함인지 서류인지 회의사진인지는 AI 가 가린다.
