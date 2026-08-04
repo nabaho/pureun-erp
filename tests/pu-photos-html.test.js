@@ -877,10 +877,17 @@ test('포털 앱 목록에 사진첩이 있다', () => {
   assert.match(portal, /url:'pu-photos\.html'/);
 });
 
-test('완성 전까지 포털 타일은 관리자만 본다', () => {
-  // 사진 올리기가 붙기 전(B·C단계)에 전 직원에게 빈 앱을 보여주지 않는다.
+test('포털 타일이 전 직원에게 열려 있다', () => {
+  /* 2026-08-04 열었다. 그전에는 관리자만 보게 잠가 두었는데, 이유가 둘이었고
+     둘 다 해소됐다.
+       ① "빈 앱을 직원에게 보여주지 않는다" — 올리기·격자·크게보기·휴지통·
+          설정·판독·자동등록이 모두 붙었다.
+       ② 사람별 분리 전에는 서로의 사진이 보였다 — 규칙 게시·이사·최상위
+          두 줄 삭제까지 끝나 이제 각자 자기 사진만 본다.
+     ⚠ 다시 admin 으로 되돌리면 **직원은 앱을 찾을 길이 아예 없다**(포털
+     타일이 유일한 입구다). 되돌리려면 그 대신 어떤 입구를 줄지 먼저 정할 것. */
   const portal = fs.readFileSync(path.join(root, 'enter.html'), 'utf8');
   const line = portal.split('\n').find(l => l.includes("key:'photos'"));
   assert.ok(line, '사진첩 줄을 찾을 수 없습니다');
-  assert.match(line, /roles:\['admin'\]/);
+  assert.match(line, /roles:null/, '사진첩이 다시 관리자 전용으로 잠겼습니다');
 });
