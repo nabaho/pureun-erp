@@ -217,13 +217,15 @@ test('설정은 팝업이 아니라 본문 화면이다', () => {
   assert.ok(!/function closeSettings\(/.test(app), '팝업 닫기 함수가 남아 있습니다');
 });
 
-test('설정 단추는 대시보드 맨 아래에 고정된다', () => {
-  const rule = app.match(/#gearBtn\{([^}]*)\}/);
-  assert.ok(rule, '#gearBtn 규칙을 찾을 수 없습니다');
-  assert.match(rule[1], /margin-top:auto/, '맨 아래로 밀어내지 않습니다');
-  // 밀어내려면 대시보드가 세로 flex 여야 한다
-  const side = app.match(/#side\{([^}]*)\}/);
-  assert.match(side[1], /flex-direction:column/);
+test('본문은 사진·휴지통·설정 세 탭으로 나뉜다', () => {
+  // 대표 지시로 대시보드 단추에서 본문 탭으로 옮겼다.
+  assert.match(app, /id="tabs"/);
+  for (const id of ['tabPhotos', 'tabTrash', 'tabSettings']) {
+    assert.match(app, new RegExp('id="' + id + '"'), id + ' 탭이 없습니다');
+  }
+  // 대시보드에 있던 옛 단추는 남아 있으면 안 된다(들어가는 길이 둘이면 헷갈린다)
+  assert.ok(!/id="gearBtn"/.test(app), '대시보드 설정 단추가 남아 있습니다');
+  assert.ok(!/id="trashBox"/.test(app), '대시보드 휴지통 단추가 남아 있습니다');
 });
 
 test('명함·서류·회의사진 세 가지를 가린다', () => {
@@ -727,26 +729,22 @@ test('권한 거절은 재시도가 아니라 막힘으로 표시하고 원인�
    "규칙이 없을 수 있다"고 오보고한다. 규칙이 정상인데 대표님이 콘솔에서
    규칙을 고치게 만드는 경로다 — 반드시 로그인 뒤에만 보여야 한다. */
 
-test('설정은 대시보드 가장 아래에 있고, 로그인 뒤에만 닿는다', () => {
-  // 대표 지시로 위쪽 톱니바퀴에서 대시보드 맨 아래로 옮겼다.
-  // 대시보드(#side)는 #home 안에 있고 #home 은 로그인 뒤에만 뜨므로
-  // **구조로** 막힌다 — 숨기는 규칙에 의존하지 않는다.
-  assert.match(app, /<button id="gearBtn"[^>]*onclick="openSettings\(\)"/);
-  const side = app.match(/<aside id="side">([\s\S]*?)<\/aside>/);
-  assert.ok(side, '대시보드(#side)를 찾을 수 없습니다');
-  assert.match(side[1], /id="gearBtn"/, '설정이 대시보드 안에 없습니다');
-  // 대시보드 안에서 가장 아래여야 한다
-  const iGear = side[1].indexOf('id="gearBtn"');
-  const iUp = side[1].indexOf('id="upWrap"');
-  assert.ok(iUp >= 0 && iGear > iUp, '설정이 대시보드 맨 아래가 아닙니다');
-  // 위쪽 상단바에는 더 이상 톱니바퀴가 없다
-  const top = app.match(/<div id="top">([\s\S]*?)<\/div>/);
-  assert.ok(top && !/openSettings/.test(top[1]), '상단바에 설정이 남아 있습니다');
-  // #home 은 기본이 숨김이어야 한다(로그인 전에 대시보드가 보이면 안 된다)
+test('휴지통 탭은 비어 있어도 남는다 — 숨으면 있는 줄도 모른다', () => {
+  const fn = app.match(/function renderTrashBox\([\s\S]*?\n\}/);
+  assert.ok(fn, 'renderTrashBox 본문을 찾을 수 없습니다');
+  assert.ok(!/display\s*=/.test(fn[0]), '휴지통 탭을 숨기고 있습니다');
+  assert.match(fn[0], /tabTrash/);
+  // #home 은 로그인 전에는 숨어 있어야 한다(설정·휴지통이 그 안에 있다)
   const home = app.match(/#home\{([^}]*)\}/);
   assert.match(home[1], /display:none/, '#home 이 로그인 전에도 보입니다');
 });
 
+test('지운 기록을 보여 준다 — 완전히 지운 뒤에도', () => {
+  assert.match(app, /id="delLog"/);
+  assert.match(app, /function loadDelLog\(/);
+  assert.match(app, /PuPhotoStore\.listDelLog\(/);
+  assert.match(app, /완전히 지움/);
+});
 test('저장 방식을 앱이 직접 정하지 않는다', () => {
   // 방식 판단은 저장 층 한 곳에만 있어야 한다.
   assert.ok(!/BUCKET_ROOT\s*=/.test(app), '창고 경로를 앱에서 다시 정의하면 안 됩니다');

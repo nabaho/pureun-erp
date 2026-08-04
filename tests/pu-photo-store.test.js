@@ -697,6 +697,59 @@ test('지우기는 새 자리와 옛 자리를 함께 비운다 — 안 그러�
   assert.ok(u['puphotos/u/U1/trash/2026/p1'], '휴지통에 담지 않았습니다');
 });
 
+/* ── 지운 기록 ──
+   휴지통에서 완전히 지운 뒤에도 '무엇을 언제 누가 지웠는지'는 남아야 한다.
+   증빙 자료를 다루는 앱이라 "그 사진 어디 갔지"에 답할 수 있어야 한다. */
+
+test('지우면 기록이 함께 남는다', async () => {
+  const S = loadStore();
+  const db = legacyDb({}, {}, {}, {
+    'puphotos/u/U1/items/2026/p1': { takenAt: 111, kind: 'doc', read: { kind: 'bizreg', fields: { company: '가나상사' } } }
+  });
+  S.init({ uid: 'U1', db, name: '홍길동' });
+  await S.deletePhoto('2026', 'p1');
+  const u = db.calls.update[0].u;
+  const log = u['puphotos/u/U1/dellog/p1'];
+  assert.ok(log, '지운 기록이 없습니다');
+  assert.ok(log.delAt > 0);
+  assert.equal(log.year, '2026');
+  assert.match(log.what, /사업자등록증|가나상사/);
+});
+
+test('지운 기록은 휴지통을 완전히 비운 뒤에도 남는다', async () => {
+  const S = loadStore();
+  const db = legacyDb({}, {}, {});
+  S.init({ uid: 'U1', db });
+  await S.purgeOne('2026', 'p1');
+  const u = db.calls.update[0].u;
+  assert.equal(u['puphotos/u/U1/trash/2026/p1'], null);
+  // 기록 자체를 지우면 안 된다(때만 덧붙인다)
+  assert.equal(u['puphotos/u/U1/dellog/p1'], undefined, '기록을 통째로 지웠습니다');
+});
+
+test('기록에 완전히 지운 때를 덧붙인다', async () => {
+  const S = loadStore();
+  const db = legacyDb({}, {}, {});
+  S.init({ uid: 'U1', db });
+  await S.purgeOne('2026', 'p1');
+  const u = db.calls.update[0].u;
+  assert.ok(u['puphotos/u/U1/dellog/p1/purgedAt'] > 0, '완전히 지운 때를 안 남겼습니다');
+});
+
+test('지운 기록 목록 — 최근 것이 먼저', async () => {
+  const S = loadStore();
+  const db = legacyDb({}, {}, {}, {
+    'puphotos/u/U1/dellog': {
+      a: { delAt: 100, what: '명함' },
+      b: { delAt: 300, what: '서류' },
+      c: { delAt: 200, what: '사진' }
+    }
+  });
+  S.init({ uid: 'U1', db });
+  const list = await S.listDelLog();
+  assert.deepEqual(JSON.parse(JSON.stringify(list.map(function (x) { return x.id; }))), ['b', 'c', 'a']);
+});
+
 /* ── 옛 자리에서 사람별 자리로 이사 ──
    여기서 실수하면 사진을 잃는다. 그래서 규칙 하나: **복사가 끝날 때까지 옛 것을
    지우지 않는다.** 지우기는 복사 완료 표시가 있을 때만 동작한다. */
@@ -951,7 +1004,9 @@ test('휴지통에서 완전히 지우기 — 그 한 칸만', async () => {
   S.init({ uid: 'U1', db });
   await S.purgeOne('2026', 'p1');
   const u = db.calls.update[0].u;
-  assert.deepEqual(Object.keys(u), ['puphotos/u/U1/trash/2026/p1']);
+  // 휴지통 칸을 비우고, 기록에는 '완전히 지운 때'만 덧붙인다
+  assert.deepEqual(Object.keys(u).sort(),
+    ['puphotos/u/U1/dellog/p1/purgedAt', 'puphotos/u/U1/trash/2026/p1']);
   assert.equal(u['puphotos/u/U1/trash/2026/p1'], null);
 });
 
@@ -978,7 +1033,7 @@ test('deletePhoto — 그 사진 하나만 건드린다', async () => {
   await S.deletePhoto('2026', 'p1');
   // 연도나 루트를 지우면 그 해 사진이 전부 사라진다
   for (const k of Object.keys(db.calls.update[0].u)) {
-    assert.match(k, /^puphotos\/(u\/U1\/)?(items|blobs|thumbs|trash)\/2026\/p1$/, '위험한 경로입니다: ' + k);
+    assert.match(k, /^puphotos\/(u\/U1\/)?((items|blobs|thumbs|trash)\/2026\/p1|dellog\/p1)$/, '위험한 경로입니다: ' + k);
   }
   assert.equal(db.calls.update[0].path, '');
 });
