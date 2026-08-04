@@ -136,7 +136,7 @@ eq('대표담당 아니면 false', ctx.pcToContact(card, false).isPrimary, false
           e: 'kim@ni.kr', ad: '충남 천안시 서북구', ct: '041-500-1000' },
     a3: { k: 'card', n: '박대리', c: '남양인텍', ti: '대리', m: '010-3333-4444' } } } };
   vm.createContext(ctx4);
-  ['function pcNormCo(', 'function pcIsCeoTitle('].forEach(function (fn) {
+  ['var PC_CORP_TOKENS =', 'function pcNormCo(', 'function pcIsCeoTitle('].forEach(function (fn) {
     vm.runInContext(cutPe(fn, '\nfunction '), ctx4);
   });
   vm.runInContext(cutPe('function pcGroupCompanies(){', '\nfunction '), ctx4);
@@ -161,9 +161,11 @@ eq('대표담당 아니면 false', ctx.pcToContact(card, false).isPrimary, false
 
 /* ── 회사를 고르면 사진뿐 아니라 사람·회사정보까지 넣는가 ── */
 (function () {
-  const blk = cutPe('async function fillCompanyImagesFromPucards(row){', '\n  }');
+  const blk = cutPe('async function fillCompanyImagesFromPucards(row, want){', '\n  }');
   const n = NS(blk);
-  ok('★ 명함 줄을 담당자로 바꾼다', /row\.cards\|\|\[\]\)\.map/.test(n) && /pcToContact\(x,/.test(n));
+  /* 2026-08-04 — 사업자등록증 칸에서 부르면 사람은 손대지 않으므로 빈 목록이 된다 */
+  ok('★ 명함 줄을 담당자로 바꾼다 (사업자등록증 칸에서는 빈 목록)',
+     /\(onlyBiz\?\[\]:\(row\.cards\|\|\[\]\)\)\.map/.test(n) && /pcToContact\(x,/.test(n));
   ok('★ 이미 있는 담당자는 안 지우고 없는 사람만 더한다', /mergeCompanyContacts\(/.test(n));
   ok('★ 사업자번호·대표자·주소·전화도 채운다',
     /info\.bizNo/.test(n) && /info\.ceo/.test(n) && /info\.address/.test(n) && /info\.phone/.test(n));
@@ -182,8 +184,61 @@ eq('대표담당 아니면 false', ctx.pcToContact(card, false).isPrimary, false
   ok('사람 목록에 부서를 보여 준다', /r\.d \? ' · ' \+ r\.d/.test(pk));
   ok('사람 목록에 이메일을 보여 준다', pk.indexOf("'✉ ' + r.e") > 0);
   const cp = cutPe('function PucardsCompanyPickerModal(props){', '\nfunction ');
-  ok('회사 목록에 딸려 올 사람을 미리 보여 준다', cp.indexOf("'👤 '") > 0);
+  /* 2026-08-03 — 간단 미리보기('👤 이름(직책) · 외 N명')를 사람별 줄로 바꿨다.
+     대표 요청: 이름·회사연락처·회사팩스·개인연락처·이메일·주소가 이 화면에서 보이고
+     한 사람만 골라 넣을 수 있어야 한다. */
+  ok('회사 목록에 사람 수를 밝힌다', cp.indexOf("'👤 이 회사 명함 '") > 0);
+  ok('한 사람만 넣는 방법을 알려 준다', cp.indexOf('한 사람만 넣으려면 그 줄을 누르세요') > 0);
   ok('사람 이름으로 찾은 회사임을 밝힌다', cp.indexOf('사람 이름으로 찾은 회사입니다') > 0);
+
+  /* ── 사람 줄에 항목이 다 보이는가 ── */
+  const nsCp = NS(cp);
+  ok('★ 사람 줄에 개인연락처',   /\['📱',x\.m\]/.test(nsCp));
+  ok('★ 사람 줄에 회사연락처',   /\['☎',x\.t\|\|x\.ct\]/.test(nsCp));
+  ok('★ 사람 줄에 회사팩스',     /\['📠',x\.fx\|\|x\.cfx\]/.test(nsCp));
+  ok('★ 사람 줄에 이메일',       /\['✉',x\.e\]/.test(nsCp));
+  ok('★ 사람 줄에 주소',         /\['🏠',x\.ad\]/.test(nsCp));
+  ok('사람 줄에 이름·직책·부서', /x\.n\|\|'\(이름없음\)'/.test(nsCp) && /x\.ti\?'·'\+x\.ti/.test(nsCp) && /x\.d\?'·'\+x\.d/.test(nsCp));
+  ok('연락처가 하나도 없으면 그렇다고 말한다', cp.indexOf('이 명함에는 연락처가 없습니다') > 0);
+  ok('빈 항목은 줄에 안 넣는다', /\.filter\(function\(b\)\{ return b\[1\]; \}\)/.test(cp));
+
+  /* ── 개별 선택이 되는가 ── */
+  ok('★ 사람 줄을 누르면 그 사람만 넘긴다', /pickOne: x/.test(cp) && /cards: \[x\]/.test(cp));
+  /* 팝업 바깥 덮개에도 stopPropagation 이 있어서, 그냥 찾으면 늘 통과한다.
+     사람 줄 손잡이 안에서 pickOne 앞에 있는지를 본다. */
+  ok('★ 회사 통째로 선택과 섞이지 않는다 (사람 줄에서 전파 중단)',
+     /onClick:function\(e\)\{\s*e\.stopPropagation\(\);[\s\S]{0,200}pickOne: x/.test(cp));
+  ok('★ 그 사람 명함 사진을 가져오게 cardId 를 바꾼다',
+     /cardId: \(r\.cardIdsOrdered \|\| \[\]\)\[xi\] \|\| r\.cardId/.test(cp));
+  ok('★ 대표인 사람만 대표자 칸을 채운다',
+     /ceo: isCeo \? \(x\.n \|\| ''\) : ''/.test(cp)
+     && /ceoPhone: isCeo \? \(x\.m \|\| ''\) : ''/.test(cp));
+  ok('대표 줄은 표시로 구분한다', /isCeo = pcIsCeoTitle\(x\.ti\)/.test(cp) && cp.indexOf("'대표') : null") > 0);
+  ok('누구를 넣었는지 알려 준다', pe.indexOf('row.pickOne ?') > 0);
+})();
+
+/* ── (주) 같은 법인 표기 때문에 검색이 아예 안 되던 문제 ── */
+(function () {
+  const ctx8 = { console, String, window: {} };
+  vm.createContext(ctx8);
+  vm.runInContext(cutPe('var PC_CORP_TOKENS =', '\nfunction '), ctx8);
+  vm.runInContext(cutPe('function pcNormCo(', '\nfunction '), ctx8);
+  const N = ctx8.pcNormCo;
+  const hit = (q, card) => N(card).indexOf(N(q)) >= 0;
+  ok('★ (주)디와이테크 로 디와이테크 를 찾는다', hit('(주)디와이테크', '디와이테크'));
+  ok('★ 디와이테크 로 (주)디와이테크 를 찾는다', hit('디와이테크', '(주)디와이테크'));
+  eq('(주) 를 괄호째로 지운다', N('(주)디와이테크'), '디와이테크');
+  eq('㈜ 도 지운다', N('㈜유원에프앤비'), '유원에프앤비');
+  eq('주식회사 도 지운다', N('주식회사 파보네'), '파보네');
+  eq('(유) 유한회사', N('(유)한샘'), '한샘');
+  eq('(재) 재단법인', N('(재)한국기금'), '한국기금');
+  eq('(사) 사단법인', N('(사)대한협회'), '대한협회');
+  eq('(의) 의료법인', N('(의)서울의료원'), '서울의료원');
+  eq('공백 넣은 ( 주 ) 도', N('( 주 )디와이테크'), '디와이테크');
+  // 회사 이름 안의 '주'는 지우면 안 된다
+  eq('이름 속 주는 남긴다', N('주성엔지니어링'), '주성엔지니어링');
+  eq('이름 속 유도 남긴다', N('유원에프앤비'), '유원에프앤비');
+  ok('다른 회사끼리 헷갈리지 않는다', !hit('디와이테크', '에이와이테크'));
 })();
 
 /* ── 업무관리도 같은 것을 보여 주는가 ── */
@@ -282,7 +337,7 @@ ok('★ 사건 카드가 팩스를 빈값으로 덮지 않는다',
     a1: { k:'card', n:'김종복', c:'남양인텍', ti:'대표이사', m:'010-4243-8853',
           cfx:'041-583-1895', e:'namyangit@naver.com' } } } };
   vm.createContext(ctx5);
-  ['function pcNormCo(', 'function pcIsCeoTitle('].forEach(function (fn) {
+  ['var PC_CORP_TOKENS =', 'function pcNormCo(', 'function pcIsCeoTitle('].forEach(function (fn) {
     vm.runInContext(cutPe(fn, '\nfunction '), ctx5);
   });
   vm.runInContext(cutPe('function pcGroupCompanies(){', '\nfunction '), ctx5);
@@ -300,7 +355,7 @@ ok('★ 사건 카드가 팩스를 빈값으로 덮지 않는다',
   const ctx6 = { console, Object, String, window: { pucardsIdx: {
     a1: { k:'card', n:'김종복', c:'남양인텍', ti:'대표이사', cfx:'041-999-8888' } } } };
   vm.createContext(ctx6);
-  ['function pcNormCo(', 'function pcIsCeoTitle('].forEach(function (fn) {
+  ['var PC_CORP_TOKENS =', 'function pcNormCo(', 'function pcIsCeoTitle('].forEach(function (fn) {
     vm.runInContext(cutPe(fn, '\nfunction '), ctx6);
   });
   vm.runInContext(cutPe('function pcGroupCompanies(){', '\nfunction '), ctx6);
@@ -311,7 +366,7 @@ ok('★ 사건 카드가 팩스를 빈값으로 덮지 않는다',
 
 /* ── 회사를 고르면 그 항목들까지 채우는가 ── */
 (function () {
-  const n = NS(cutPe('async function fillCompanyImagesFromPucards(row){', '\n  }'));
+  const n = NS(cutPe('async function fillCompanyImagesFromPucards(row, want){', '\n  }'));
   ok('★ 팩스도 채운다',   /info\.fax=row\.fax/.test(n));
   ok('★ 업태도 채운다',   /info\.bizType=row\.bizType/.test(n));
   ok('★ 종목도 채운다',   /info\.bizCategory=row\.bizCategory/.test(n));
@@ -344,7 +399,7 @@ ok('★ 사건 카드가 팩스를 빈값으로 덮지 않는다',
   function mk(idx) {
     const c = { console, Object, String, window: { pucardsIdx: idx } };
     vm.createContext(c);
-    ['function pcNormCo(', 'function pcIsCeoTitle('].forEach(fn =>
+    ['var PC_CORP_TOKENS =', 'function pcNormCo(', 'function pcIsCeoTitle('].forEach(fn =>
       vm.runInContext(cutPe(fn, '\nfunction '), c));
     vm.runInContext(cutPe('function pcGroupCompanies(){', '\nfunction '), c);
     vm.runInContext(cutPe('function searchPucardsCompanies(query){', '\nfunction '), c);
@@ -384,7 +439,7 @@ ok('★ 사건 카드가 팩스를 빈값으로 덮지 않는다',
 
 /* 고를 때 실제로 그 칸에 넣는가 (비어 있을 때만) */
 (function () {
-  const n = NS(cutPe('async function fillCompanyImagesFromPucards(row){', '\n  }'));
+  const n = NS(cutPe('async function fillCompanyImagesFromPucards(row, want){', '\n  }'));
   ok('★ 대표자 전화를 채운다',   /info\.ceoPhone=row\.ceoPhone/.test(n));
   ok('이미 있으면 안 덮는다',    /row\.ceoPhone&&!cur\.ceoPhone/.test(n));
   ok('대표 이메일도 비었을 때만', /row\.ceoEmail&&!cur\.email/.test(n));
@@ -404,7 +459,7 @@ ok('계약모달에 대표자 전화 칸이 있다', /f\.company\.ceoPhone/.test
 
 /* ── 동일인 줄이 있으면 대표 명함을 또 붙이지 않는가 ── */
 (function () {
-  const n = NS(cutPe('async function fillCompanyImagesFromPucards(row){', '\n  }'));
+  const n = NS(cutPe('async function fillCompanyImagesFromPucards(row, want){', '\n  }'));
   ok('★ 동일인 줄이 있는지 본다', /_hasCeoRow=\(cur\.contacts\|\|\[\]\)\.some\(function\(c\)\{returnc&&c\.sameAsCeo;\}\)/.test(n));
   ok('★ 동일인 줄이 있으면 대표 이름의 명함을 걸러낸다',
      /if\(!_hasCeoRow\|\|!_ceoNm\)returntrue;/.test(n)
@@ -464,6 +519,63 @@ ok('계약모달에 대표자 전화 칸이 있다', /f\.company\.ceoPhone/.test
     ok("없는 항목 목록에 '" + k + "' 가 있다", cp.indexOf("'" + k + "'") > 0);
   });
   ok('빈 값은 줄에 안 넣는다', /\.filter\(function\(x\)\{ return x\[1\]; \}\)/.test(cp));
+})();
+
+/* ══════════════════════════════════════════════════════════════
+   추가: 사업자등록증 칸과 대표자 명함 칸을 갈라 놓는다
+   대표 지적 — 사업자등록증을 명함에서 가져올 필요가 없다(중복).
+   사업자등록증은 명함첩의 사업자등록증에서만 가져온다.
+   ══════════════════════════════════════════════════════════════ */
+(function () {
+  const fn = cutPe('async function fillCompanyImagesFromPucards(row, want){', '\n  }');
+  const nf = NS(fn);
+  ok('★ 어느 칸에서 눌렀는지(want) 를 받는다',
+     /async function fillCompanyImagesFromPucards\(row, want\)/.test(pe));
+  ok('★ 사업자등록증 칸을 구분한다',   /onlyBiz=\(want==='bizLicenseImg'\)/.test(nf));
+  ok('★ 대표자 명함 칸을 구분한다',    /onlyCard=\(want==='businessCardImg'\)/.test(nf));
+
+  /* 사진 — 필요한 쪽 카드만 읽는다 */
+  ok('★ 사업자등록증 칸이면 명함 카드를 안 읽는다', /cardId:onlyBiz\?'':row\.cardId/.test(nf));
+  ok('★ 대표자 명함 칸이면 사업자등록증 카드를 안 읽는다', /bizId:onlyCard\?'':row\.bizId/.test(nf));
+  ok('★ 사업자등록증 칸이면 명함 사진을 안 채운다', /if\(onlyBiz\)img\.businessCardImg='';/.test(nf));
+  ok('★ 대표자 명함 칸이면 사업자등록증을 안 채운다', /if\(onlyCard\)img\.bizLicenseImg='';/.test(nf));
+
+  /* 사람 — 사업자등록증 칸에서는 담당자를 붙이지 않는다 */
+  ok('★ 사업자등록증 칸에서는 담당자를 안 붙인다',
+     /newContacts=\(onlyBiz\?\[\]:\(row\.cards\|\|\[\]\)\)\.map/.test(nf));
+
+  /* 사업자등록증이 없으면 분명히 말해 준다 */
+  ok('★ 사업자등록증이 없으면 그렇다고 말한다',
+     fn.indexOf('이 회사는 명함첩에 사업자등록증이 없습니다') > 0);
+  ok('그때도 회사정보가 있으면 그건 넣는다',
+     /if\(onlyBiz&&!img\.bizLicenseImg&&!Object\.keys\(info\)\.length\)/.test(nf));
+
+  /* 빈 아이디는 통신도 안 한다 */
+  const fetchFn = cutPe('function pcFetchImages(pc){', '\n}');
+  ok('빈 아이디는 읽지 않는다', /if\(!id\) return Promise\.resolve\(null\);/.test(fetchFn));
+})();
+
+/* 호출부가 want 를 넘기는가 */
+ok('★ 첨부칸이 어느 것인지 넘긴다',
+   /onSelect: function\(row\)\{ var w = pcCoPick; setPcCoPick\(''\); fillCompanyImagesFromPucards\(row, w\); \}/.test(pe));
+/* 첨부칸 이름은 dropZone(field,…) 의 첫 인자다 — setPcCoPick(field) 로 그대로 넘어간다 */
+ok('첨부칸이 대표자 명함 / 사업자등록증 둘이다',
+   pe.indexOf("dropZone('businessCardImg'") > 0 && pe.indexOf("dropZone('bizLicenseImg'") > 0);
+ok('누른 첨부칸을 그대로 want 로 넘긴다', /setPcCoPick\(field\)/.test(pe));
+
+/* 팝업 — 사업자등록증 칸에서는 사람 줄을 감추고, 없는 회사는 흐리게 */
+(function () {
+  const cp = cutPe('function PucardsCompanyPickerModal(props){', '\nfunction ');
+  ok('★ 사업자등록증 칸에서는 사람 줄을 감춘다',
+     /props\.want !== 'bizLicenseImg' && r\.cards && r\.cards\.length/.test(cp));
+  ok('★ 사업자등록증 없는 회사는 흐리게',
+     /noBizHere = \(props\.want === 'bizLicenseImg' && !r\.hasBiz\)/.test(cp)
+     && /opacity: noBizHere \? 0\.6 : 1/.test(cp));
+  ok('흐린 줄에 이유를 붙인다', cp.indexOf('이 회사는 명함첩에 사업자등록증이 없습니다 (회사정보만 들어옵니다)') > 0);
+  ok('대표자 명함 칸에서는 사람 줄이 그대로 보인다',
+     cp.indexOf("'👤 이 회사 명함 '") > 0);
+  ok('창 제목이 어느 칸인지 알려 준다',
+     /props\.want === 'bizLicenseImg' \? '사업자등록증'/.test(cp));
 })();
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');
 process.exit(fail ? 1 : 0);

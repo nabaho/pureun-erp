@@ -111,11 +111,12 @@ ok('머리글의 공백을 지우고 맞춤', src.includes("var v=String(cells[c
 ok('대장 머리글(세부내역) 인식', src.includes('/적요|내용|내역|의뢰인|기재|가맹점/.test(v)'));
 // 적요가 'BZ뱅크'처럼 수단만 적힌 통장이 있다 — 실제 상대방이 든 설명 열을 버리면 출연금을 못 잡는다
 ok('남는 설명 열을 성격 힌트로 모음', src.includes('if(col.memo==null)col.memo=c; else if(col.kind.indexOf(c)<0)col.kind.push(c); }'));
-ok('예금주명 열도 힌트(계좌번호는 제외)', src.includes('/구분|종류|기록사항|메모|비고|예금주/.test(v)&&!/계좌번호|통화|화폐/.test(v)'));
-ok('사업장명 대조에 힌트 포함', src.includes("var mzz=strip(m+' '+String(kind||'')), hz=strip(kind);"));
+ok('예금주명 열도 힌트(계좌번호는 제외)', src.includes('/구분|종류|기록사항|메모|비고|예금주|입금인/.test(v)&&!/계좌번호|통화|화폐/.test(v)'));
+ok('사업장명 대조에 힌트 포함', src.includes("var mzz=strip(m+' '+String(kind||''));"));
 // 은행이 상대방 이름을 잘라 적는다 — 잘린 쪽이 사업장명의 앞부분이면 같은 회사로 본다
-ok('잘려 적힌 회사명도 인식', src.includes('if(hz.length>=4&&nm.indexOf(hz)===0)')
-  && src.includes("var mzz=strip(m+' '+String(kind||'')), hz=strip(kind);"));
+ok('전각 괄호도 지움', src.includes('（주）|（유）|주식회사|유한회사'));
+ok('잘려 적힌 회사명도 인식', src.includes('if(nm.indexOf(toks[q])===0)')
+  && src.includes(".map(strip).filter(function(t){ return t.length>=4; });"));
 ok('엑셀 미국식 m/d/yy 인식', src.includes("m=t.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{2})$/);"));
 ok('빈 일자는 위 일자를 이음', src.includes("if(/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) lastDate=date; else if(!date) date=lastDate;"));
 
@@ -126,10 +127,23 @@ ok('조정 분개 생성기 존재', src.includes('function _reserveEntry'));
 ok('환입·전입 양방향', /r\.kind='환입'/.test(src) && /r\.kind='전입'/.test(src));
 // 준비금2를 만드는 분개가 없으면 출연금을 그 해에 쓰는 공동기금은 순이익 0을 만들 수 없다
 ok('당기 출연금 집계', src.includes('function _contribOf'));
+// 증권·부동산 현물출연을 한도에 넣으면 기본재산이 붕괴한다(배경공동 2022: 증권 72.6억 현물출연)
+ok('한도 기준은 현금 출연금만', src.includes('if(x.nocash) return;                                  // 현물출연·대체분개는 제외')
+  && src.includes("if(!amt&&(x.debit==='현금성자산'||x.debit==='정기예금')) amt=num(x.amount)||0;"));
 ok('사용한도 비율(공동 90/사내 50)', /function _reserveRate\(fid\)\{ return \(\(funds\[fid\]\|\|\{\}\)\.fund_type==='사내'\)\?0\.5:0\.9; \}/.test(src));
 ok('준비금2 설정 분개(기본재산 차변)', /if\(kind==='설정'\)/.test(src) && /debit:'기본재산', credit:acct/.test(src));
 ok('한도 초과분은 기본재산 사용으로 구분', /if\(kind==='기본재산사용'\)/.test(src));
-ok('설정은 필요한 만큼만(한도 내)', src.includes('r.setup=Math.min(short,Math.max(0,cap));'));
+// 실무 결산서는 사용한도 전액을 설정하고 쓰지 않은 잔액을 준비금2로 남긴다
+// (가치를만들어가는사람들 2024·일원공동 2024 모두 출연금 × 90% 전액)
+// 법은 한도를 '범위'로 정한다 — 그 안에서 얼마를 설정할지는 협의회 결정 사항이다
+// (참살이공동 2024는 한도 929,554,369원 중 412,000,000원만 설정했다)
+ok('설정액은 협의회 지정값 우선, 비우면 한도 전액',
+  src.includes('r.setup=r.setupManual?_man:Math.max(0,cap);')
+  && src.includes("var _man=num(((funds[fid]||{}).years||{})[yr]&&((funds[fid]||{}).years||{})[yr].reserve_setup);")
+  && src.includes('r.overBasic=Math.max(0,r.need-avail-r.setup);'));
+ok('설정액 입력칸과 저장', src.includes("<input id=\"op-rsvset\"")
+  && src.includes("up['funds/'+_fid+'/years/'+_yr+'/reserve_setup']=(rsv===''?null:(num(rsv)||0));")
+  && src.includes('function _rsvSetOf'));
 ok('환입을 계정별 잔액 안에서 배분', src.includes('r.parts.push({acct:a,amount:take})'));
 ok('조정 분개 묶음 생성기', src.includes('function _reserveEntries'));
 ok('전입액 계정(사업외비용)', src.includes("'고유목적사업준비금전입액':'비용'"));
@@ -176,8 +190,8 @@ ok('학습이 일반 규칙보다 우선', src.includes("if(lr&&lr.d&&lr.c) retu
 // 입금·출금은 성격이 달라 방향별로 따로 기억해야 한다
 ok('방향별로 기억(i_/o_)', src.includes("return (isDep?'i_':'o_')+head;"));
 ok('승인할 때만 학습', src.includes('learnAcct(x.memo'));
-ok('이체 상계는 학습하지 않음', src.includes('if(on&&x&&!x.xfer) learnAcct'));
-ok('이체 행은 차·대 같아도 승인 가능', src.includes('if(x&&x.debit===x.credit&&!x.xfer)'));
+ok('이체 상계는 학습하지 않음', src.includes('!x.xfer&&!_splitsOf(x).length) learnAcct'));
+ok('이체 행은 차·대 같아도 승인 가능', src.includes('x.debit===x.credit&&!x.xfer){'));
 
 // ── ⑫ 디와이사내 2025 실결산에서 확인된 것 ──
 // 기본재산을 증권으로 운용하는 기금이 있다(26억). 계정·전기이월 칸이 없으면 대차가 그만큼 어긋난다
@@ -186,6 +200,15 @@ ok('매도가능증권 계정', src.includes("'매도가능증권':'자산'"));
 ok('전기이월 저장 목록을 OPEN_ACCT에서 뽑음',
   src.includes("var o={}; Object.keys(OPEN_ACCT).forEach(function(k){var el=$('op-'+k);"));
 // 준비금은 1·2를 갈라 이월해야 한다(안전공사공동 2024는 준비금2로 42,245,952원 이월)
+// 세무회계법인이 비영리조직회계기준으로 결산하는 기금이 있다(충남공동8호·경기공동1호)
+ok('비영리조직회계기준 계정', src.includes("'미수수익':'자산','미수금':'자산','단기금융상품':'자산','특정현금과예금':'자산'")
+  && src.includes("'손실대비특별적립금':'자본'"));
+ok('그 계정들의 전기이월 칸', src.includes("accrued:'미수수익',recv:'미수금',stfund:'단기금융상품',spcash:'특정현금과예금'")
+  && src.includes("oi('accrued','미수수익')+oi('recv','미수금')"));
+// 그런 기금은 당기운영이익이 0이 아니다(충남공동8호 2025: 66,048원) → 자동조정을 끈다
+ok('준비금 자동조정 끄기', src.includes('.reserve_auto===false)')
+  && src.includes('function _rsvAutoOf')
+  && src.includes("up['funds/'+_fid+'/years/'+_yr+'/reserve_auto']=(raOn?null:false);"));
 ok('전기이월 준비금1·2 분리', src.includes("reserve:'고유목적사업준비금1',reserve2:'고유목적사업준비금2'")
   && src.includes("oi('reserve2','고유목적사업준비금2')")
   && src.includes('liab+=(num(opening.reserve)||0)+(num(opening.reserve2)||0);')
@@ -194,6 +217,14 @@ ok('전기이월에 매도가능증권 칸', src.includes("secu:'매도가능증
 ok('자산총계에 증권 합산', src.includes('cash+savings+loan+secu'));
 ok('별지15호 ㉓ 유가증권을 장부에서', src.includes('num(rep.run_secu)||fin.secu'));
 ok('복리후생 계정(목적사업비)', src.includes("'복리후생':'비용'"));
+// 건강검진·기념품은 결산서마다 별 항목으로 세운다(참살이·가치·플러스 세 기금)
+ok('의료비·기념품비 계정', src.includes("'의료비':'비용','기념품비':'비용'")
+  && src.includes("'격려금','복리후생','의료비','기념품비','경조사비',")
+  && src.includes("var WELF_CATS=['격려금','복리후생','의료비','기념품비',"));
+ok('별지15호 66번에 의료비·기념품비',
+  src.includes("[66,'그 밖의 복지비',['격려금','복리후생','의료비','기념품비','경조사비','기타복지비']]"));
+ok('건강검진·기념품 자동분개 규칙', src.includes("'건강검진','건강건진','종합검진'")
+  && src.includes("'기념품','명절선물','설선물','추석선물','장기근속'"));
 ok('잡수익 계정', src.includes("'잡수익':'수익'"));
 // 1원·10원은 같은 날 같은 금액이 우연히 겹친다 — 소액을 이체로 자동 상계하면 장부가 틀어진다
 ok('이체 자동상계 최소금액', /var XFER_MIN=\d+;/.test(src) && src.includes('amt>=XFER_MIN'));
@@ -202,6 +233,30 @@ ok('거래 직접 추가', src.includes('function addTxnForm') && src.includes('
   && src.includes('onclick="addTxnForm()"'));
 ok('직접 입력 거래 표시', src.includes('x.manual?'));
 ok('머리글에 계좌번호가 없으면 파일명에서', src.includes("String(file.name||'').match"));
+// 적요가 'BZ뱅크'처럼 수단 이름뿐인 은행은 계좌가 달라도 중복검사 키가 겹친다
+// (참살이공동 2024: 두 계좌를 따로 가져오면 3건 23,934,000원이 버려졌다)
+ok('키가 겹치면 계좌·잔액으로 같은 거래인지 확인',
+  src.includes("if(String(cur.acct||'')===String(x.acct||'')&&String(cur.balance||'')===String(x.balance||'')){ dup=true; break; }")
+  && src.includes("n++; key=hkey(base+'|'+n);"));
+
+// ── ⑭ 분할 분개 (이비공동 2024: 송금 100,500 = 생활지원금 100,000 + 이체수수료 500) ──
+ok('분할 전개기 존재', src.includes('function expandSplits'));
+ok('분할 판정 헬퍼', src.includes('function _splitsOf') && src.includes('function _splitSum')
+  && src.includes('function _txnDone'));
+// 은행이 준 줄은 하나다 — 첫 조각만 입·출금 금액을 지녀야 통장 잔액 대사가 유지된다
+ok('첫 조각만 통장 금액을 지님', src.includes('if(i>0){ o.deposit=0; o.withdraw=0; o.nocash=1; }'));
+ok('장부가 전개된 배열을 씀',
+  src.includes('return expandSplits(arr).filter(function(x){return x.approved&&x.debit&&x.credit;})')
+  && src.includes('var appr=expandSplits(arr).filter(function(x){return x.approved&&x.debit&&x.credit;});')
+  && src.includes('var s=0; expandSplits(arr).forEach(function(x){'));
+ok('미분류·승인 판정에 분할 반영', src.includes('arr.filter(function(x){return !_txnDone(x);}).length')
+  && src.includes('if(x&&!_txnDone(x)){'));
+ok('분할은 거래처 학습에서 제외', src.includes('!x.xfer&&!_splitsOf(x).length) learnAcct'));
+// 합계가 거래금액과 다르면 저장을 막는다 — 안 막으면 대차가 조용히 어긋난다
+ok('조각 합계 불일치는 저장 거부', src.includes('if(sum!==total){'));
+ok('쪼개기 화면·해제', src.includes('function splitForm') && src.includes('function splitSave')
+  && src.includes('function splitClear'));
+ok('목록에 가위 단추', src.includes('onclick=\"splitForm('));
 
 // ── ⑬ 통장 파서·자동분개 (가치를만들어가는사람들 2024 실결산 검증) ──
 // 합계 행: 하나·기업·우리 모두 'No' 다음 칸(= 일자 칸)에 '합   계'를 적는다. 적요만 보면 놓친다.
@@ -221,8 +276,12 @@ ok('전문가 용역비 = 지급수수료', src.includes("'노무법인','회계
 ok('시설·비품 = 근로복지시설비', src.includes("'공사','설치','보수','비품','냉난방','정수기','사물함','세탁기','청소기','게시판','신발장'"));
 ok('명절선물·작업복 = 그 밖의 복지비', src.includes("'선물세트','명절선물','유니폼','작업복','피복'"));
 // 하나·기업은행은 예금이자 행의 적요를 비우고 성격을 '구분' 칸에만 적는다(이자 8건이 미분류였다)
+// 참살이공동은 대부금 지출의 성격('09월사내대출')을 '입금인코드' 칸에만 적었다
+ok('입금인코드 칸도 힌트', src.includes('/구분|종류|기록사항|메모|비고|예금주|입금인/.test(v)'));
+ok('리조트·회식 규칙', src.includes("'리조트','펜션','수련원','워터파크'")
+  && src.includes("'회식','주스','도시락','생수','과일'"));
 ok('성격 열을 여러 개 읽음(구분·거래기록사항·이체메모·예금주명)',
-  src.includes('if(/구분|종류|기록사항|메모|비고|예금주/.test(v)')
+  src.includes('if(/구분|종류|기록사항|메모|비고|예금주|입금인/.test(v)')
   && src.includes('col.kind.indexOf(c)<0)col.kind.push(c);')
   && src.includes('function find(cells){col.kind=[];'));
 // 농협은 순번 칸의 머리글이 '구분'이라 1·2·3…이 거래성격으로 읽혔다
