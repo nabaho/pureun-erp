@@ -34,6 +34,21 @@
   function digits(v) { return String(v == null ? '' : v).replace(/\D/g, ''); }
   function blank(v) { return v === undefined || v === null || String(v).trim() === ''; }
 
+  /* 언제 저장된 것과 겹쳤는지 사람 말로. 밀리초를 그대로 보여주면 아무 뜻이 없다. */
+  function whenText(ts) {
+    if (!ts) return '';
+    var d = new Date(ts);
+    function p(n) { return (n < 10 ? '0' : '') + n; }
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+      ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
+  /* 겹친 상대가 무엇인지 — '홍길동 · 가나상사'. 번호만 보여주면 못 알아본다. */
+  function whoText(rec) {
+    var r = rec || {};
+    return [r.name, r.company].filter(function (v) { return !blank(v); }).join(' · ');
+  }
+
   /* ── 이미 있는 것 찾기 ──
      명함첩과 **같은 기준**으로 중복을 본다 — 명함은 휴대폰 숫자,
      사업자등록증은 사업자번호 숫자. 기준이 다르면 같은 사람이 두 번 쌓인다.
@@ -113,36 +128,61 @@
     }
 
     return findExisting(kind, o.fields).then(function (hit) {
-      return hit ? fillOne(hit, mapped, want) : createOne(o, mapped, want);
+      return hit ? fillOne(hit, mapped, want, o) : createOne(o, mapped, want);
     });
   }
 
-  /* 이미 있는 명함 — 빈 칸만 채운다. 사진은 덮지 않는다(원래 것이 더 나을 수 있다). */
-  function fillOne(hit, mapped, want) {
+  /* ── 이미 있는 명함 = 중복 ──
+     빈 칸만 채운다. 이미 있는 값은 덮지 않는다.
+
+     ⚠ 여기서 **언제 저장된 것과 겹쳤는지**를 반드시 함께 돌려준다. 그냥
+     '이미 있습니다'라고만 하면 사람은 어느 것이 원본인지 알 수 없고,
+     자기 사진이 왜 사라졌는지도 알 수 없다.
+
+     redundant = 이 사진이 더한 것이 하나도 없다는 뜻. 화면은 이때만 사진을
+     스스로 치운다(휴지통으로 — 30일 안에 되살릴 수 있다). */
+  function fillOne(hit, mapped, want, o) {
+    o = o || {};
     return deps.db.ref(CARDS_ROOT + '/items/' + hit.id).once('value').then(function (s) {
       var rec = s.val() || {};
       var gaps = fillGaps(rec, mapped);
       var names = Object.keys(gaps);
-      if (!names.length) {
-        return {
-          id: hit.id, created: false, filled: [],
-          message: '이미 명함첩에 있고, 새로 채울 것이 없었습니다'
-        };
-      }
+      var labels = names.map(function (n) { return FIELD_LABEL[n] || n; });
+
       var u = {};
       for (var i = 0; i < names.length; i++) {
         u[CARDS_ROOT + '/items/' + hit.id + '/' + names[i]] = gaps[names[i]];
       }
+
+      /* 사진이 없던 명함이라면 이 사진이 **첫 사진**이다 — 빈 칸을 채우는 것과 같다.
+         (사진이 이미 있으면 덮지 않는다. 원래 것이 더 나을 수 있다.)
+         이 판단이 없으면 '글자는 다 있지만 사진은 없는' 명함에 들어온 사진을
+         쓸모없다고 보고 치워 버린다. */
+      if (blank(rec.thumb) && !blank(o.thumb)) {
+        u[CARDS_ROOT + '/items/' + hit.id + '/thumb'] = o.thumb;
+        if (o.full) u[CARDS_ROOT + '/photos/' + hit.id] = o.full;
+        if (o.photoId) u[CARDS_ROOT + '/items/' + hit.id + '/photoId'] = o.photoId;
+        labels.push('사진');
+      }
+
+      var when = whenText(rec.createdAt || rec.updatedAt || 0);
+      var who = whoText(Object.assign({}, rec, gaps));
+      var head = '이미 명함첩에 있습니다' +
+        (when ? ' — ' + when + '에 저장된 것' : '') + (who ? ' (' + who + ')' : '');
+      var out = {
+        id: hit.id, created: false, filled: labels,
+        dup: true, dupAt: rec.createdAt || rec.updatedAt || 0, dupWho: who,
+        redundant: !labels.length
+      };
+
+      if (!labels.length) {
+        out.message = head + '과 같고, 새로 채울 것이 없었습니다';
+        return out;                                 // 쓸 것이 없으면 아무것도 쓰지 않는다
+      }
       /* 인덱스도 같이 갱신해야 검색에 새 값이 잡힌다. */
-      var merged = Object.assign({}, rec, gaps, { kind: want });
-      u[CARDS_ROOT + '/idx/' + hit.id] = idxOf(merged);
-      var labels = names.map(function (n) { return FIELD_LABEL[n] || n; });
-      return deps.db.ref().update(u).then(function () {
-        return {
-          id: hit.id, created: false, filled: labels,
-          message: '이미 명함첩에 있어서 빈 칸 ' + labels.length + '개를 채웠습니다 (' + labels.join('·') + ')'
-        };
-      });
+      u[CARDS_ROOT + '/idx/' + hit.id] = idxOf(Object.assign({}, rec, gaps, { kind: want }));
+      out.message = head + '. 빈 칸 ' + labels.length + '개를 채웠습니다 (' + labels.join('·') + ')';
+      return deps.db.ref().update(u).then(function () { return out; });
     });
   }
 
@@ -180,6 +220,7 @@
     findExisting: findExisting,
     fillGaps: fillGaps,
     idxOf: idxOf,
+    whenText: whenText,
     sendToCards: sendToCards
   };
 })(typeof window !== 'undefined' ? window : globalThis);

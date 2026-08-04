@@ -217,13 +217,15 @@ test('설정은 팝업이 아니라 본문 화면이다', () => {
   assert.ok(!/function closeSettings\(/.test(app), '팝업 닫기 함수가 남아 있습니다');
 });
 
-test('설정 단추는 대시보드 맨 아래에 고정된다', () => {
-  const rule = app.match(/#gearBtn\{([^}]*)\}/);
-  assert.ok(rule, '#gearBtn 규칙을 찾을 수 없습니다');
-  assert.match(rule[1], /margin-top:auto/, '맨 아래로 밀어내지 않습니다');
-  // 밀어내려면 대시보드가 세로 flex 여야 한다
-  const side = app.match(/#side\{([^}]*)\}/);
-  assert.match(side[1], /flex-direction:column/);
+test('본문은 사진·휴지통·설정 세 탭으로 나뉜다', () => {
+  // 대표 지시로 대시보드 단추에서 본문 탭으로 옮겼다.
+  assert.match(app, /id="tabs"/);
+  for (const id of ['tabPhotos', 'tabTrash', 'tabSettings']) {
+    assert.match(app, new RegExp('id="' + id + '"'), id + ' 탭이 없습니다');
+  }
+  // 대시보드에 있던 옛 단추는 남아 있으면 안 된다(들어가는 길이 둘이면 헷갈린다)
+  assert.ok(!/id="gearBtn"/.test(app), '대시보드 설정 단추가 남아 있습니다');
+  assert.ok(!/id="trashBox"/.test(app), '대시보드 휴지통 단추가 남아 있습니다');
 });
 
 test('명함·서류·회의사진 세 가지를 가린다', () => {
@@ -433,12 +435,12 @@ test('사진을 지울 수 있다 — 한 장, 여러 장 모두', () => {
   assert.match(app, /PuPhotoStore\.deletePhoto\(/);
 });
 
-test('지우기는 되돌릴 수 없으니 반드시 확인을 받는다', () => {
+test('지울 때는 반드시 확인을 받고 어디로 가는지 알린다', () => {
   for (const fname of ['deleteOne', 'deleteSelected']) {
     const fn = app.match(new RegExp('function ' + fname + '\\([\\s\\S]*?\\n\\}'));
     assert.ok(fn, fname + ' 본문을 찾을 수 없습니다');
     assert.match(fn[0], /confirm\(/, fname + ' 이 확인 없이 지웁니다');
-    assert.match(fn[0], /되돌릴 수 없/, fname + ' 이 되돌릴 수 없다는 말을 안 합니다');
+    assert.match(fn[0], /휴지통/, fname + ' 이 어디로 가는지 말하지 않습니다');
   }
 });
 
@@ -727,24 +729,70 @@ test('권한 거절은 재시도가 아니라 막힘으로 표시하고 원인�
    "규칙이 없을 수 있다"고 오보고한다. 규칙이 정상인데 대표님이 콘솔에서
    규칙을 고치게 만드는 경로다 — 반드시 로그인 뒤에만 보여야 한다. */
 
-test('설정은 대시보드 가장 아래에 있고, 로그인 뒤에만 닿는다', () => {
-  // 대표 지시로 위쪽 톱니바퀴에서 대시보드 맨 아래로 옮겼다.
-  // 대시보드(#side)는 #home 안에 있고 #home 은 로그인 뒤에만 뜨므로
-  // **구조로** 막힌다 — 숨기는 규칙에 의존하지 않는다.
-  assert.match(app, /<button id="gearBtn"[^>]*onclick="openSettings\(\)"/);
-  const side = app.match(/<aside id="side">([\s\S]*?)<\/aside>/);
-  assert.ok(side, '대시보드(#side)를 찾을 수 없습니다');
-  assert.match(side[1], /id="gearBtn"/, '설정이 대시보드 안에 없습니다');
-  // 대시보드 안에서 가장 아래여야 한다
-  const iGear = side[1].indexOf('id="gearBtn"');
-  const iUp = side[1].indexOf('id="upWrap"');
-  assert.ok(iUp >= 0 && iGear > iUp, '설정이 대시보드 맨 아래가 아닙니다');
-  // 위쪽 상단바에는 더 이상 톱니바퀴가 없다
-  const top = app.match(/<div id="top">([\s\S]*?)<\/div>/);
-  assert.ok(top && !/openSettings/.test(top[1]), '상단바에 설정이 남아 있습니다');
-  // #home 은 기본이 숨김이어야 한다(로그인 전에 대시보드가 보이면 안 된다)
+test('휴지통 탭은 비어 있어도 남는다 — 숨으면 있는 줄도 모른다', () => {
+  const fn = app.match(/function renderTrashBox\([\s\S]*?\n\}/);
+  assert.ok(fn, 'renderTrashBox 본문을 찾을 수 없습니다');
+  assert.ok(!/display\s*=/.test(fn[0]), '휴지통 탭을 숨기고 있습니다');
+  assert.match(fn[0], /tabTrash/);
+  // #home 은 로그인 전에는 숨어 있어야 한다(설정·휴지통이 그 안에 있다)
   const home = app.match(/#home\{([^}]*)\}/);
   assert.match(home[1], /display:none/, '#home 이 로그인 전에도 보입니다');
+});
+
+test('지운 기록을 보여 준다 — 완전히 지운 뒤에도', () => {
+  assert.match(app, /id="delLog"/);
+  assert.match(app, /function loadDelLog\(/);
+  assert.match(app, /PuPhotoStore\.listDelLog\(/);
+  assert.match(app, /완전히 지움/);
+});
+/* ── 겹치는 서류 스스로 치우기 ──
+   스스로 지우는 기능은 잘못 만들면 사람 자료를 없앤다. 세 가지를 못 박는다. */
+
+test('더한 것이 없을 때만 치운다 — 빈 칸을 채웠으면 두어야 한다', () => {
+  const fn = app.match(/\.then\(function \(res\) \{[\s\S]*?dropRedundant[\s\S]*?\n  \}\)/);
+  assert.ok(fn, '중복 치우기를 부르는 곳을 찾을 수 없습니다');
+  assert.match(fn[0], /res\.redundant/, 'redundant 아닌 것도 치울 수 있습니다');
+});
+
+test('치우기 전에 판독 결과를 먼저 남긴다 — 순서가 바뀌면 고리가 끊긴다', () => {
+  const i = app.indexOf('saveRead(year, id, read)');
+  const j = app.indexOf('dropRedundant(id, year, res)');
+  assert.ok(i > 0 && j > i, '기록보다 치우기가 먼저입니다');
+});
+
+test('휴지통으로 보낸다 — 스스로 한 일은 되돌릴 수 있어야 한다', () => {
+  const fn = app.match(/function dropRedundant\([\s\S]*?\n\}/);
+  assert.ok(fn, 'dropRedundant 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /PuPhotoStore\.deletePhoto\(/, '휴지통을 거치지 않고 지웁니다');
+  assert.match(fn[0], /중복/, '왜 치웠는지 기록에 남기지 않습니다');
+  assert.match(app, /function undoDup\(/, '되살리는 길이 없습니다');
+  assert.match(app, /PuPhotoStore\.restorePhoto\(/);
+});
+
+test('말없이 치우지 않는다 — 언제 겹친 것인지 화면에 남는다', () => {
+  assert.match(app, /id="dupBox"/);
+  assert.match(app, /function renderDupBox\(/);
+  const fn = app.match(/function renderDupBox\([\s\S]*?\n\}/);
+  assert.match(fn[0], /PuDocFile\.whenText\(/, '언제 저장된 것과 겹쳤는지 안 보여줍니다');
+  assert.match(fn[0], /되살리기/);
+});
+
+test('지우기 확인 문구가 휴지통을 알린다 — 되돌릴 수 없다는 말은 거짓이다', () => {
+  for (const fname of ['deleteOne', 'deleteSelected']) {
+    const fn = app.match(new RegExp('function ' + fname + '\\([\\s\\S]*?\\n\\}'));
+    assert.ok(!/되돌릴 수 없/.test(fn[0]),
+      fname + ' 이 휴지통이 있는데 되돌릴 수 없다고 말합니다');
+    assert.match(fn[0], /TRASH_DAYS/, fname + ' 이 며칠 보관하는지 말하지 않습니다');
+  }
+  /* 반대로 **정말** 되돌릴 수 없는 두 곳(완전히 지우기·옛 자리 지우기)은
+     그렇다고 말해야 한다. 여기서 겁을 덜 주면 사람이 자료를 잃는다. */
+  const purge = app.match(/function purgeOneNow\([\s\S]*?\n\}/);
+  assert.match(purge[0], /되돌릴 수 없/, '완전히 지우기가 위험을 알리지 않습니다');
+});
+
+test('왜 지웠는지를 지운 기록에 보여 준다', () => {
+  const fn = app.match(/function loadDelLog\([\s\S]*?\n\}/);
+  assert.match(fn[0], /r\.why/, '스스로 치운 이유가 기록 화면에 안 나옵니다');
 });
 
 test('저장 방식을 앱이 직접 정하지 않는다', () => {

@@ -195,6 +195,7 @@
     deps.storage = o.storage || null;
     deps.uid = o.uid || '';
     deps.isAdmin = !!o.isAdmin;
+    if (o.name) deps.name = o.name;
     if (o.mode) setMode(o.mode);
     return mode;
   }
@@ -247,8 +248,22 @@
   var TRASH_DAYS = 30;
 
   function trashPath(year, id, owner) { return base(owner) + '/trash/' + year + '/' + id; }
+  function logPath(id, owner) { return base(owner) + '/dellog/' + id; }
 
-  function deletePhoto(year, id) {
+  /* 지운 기록에 남길 한 줄 — 무엇이었는지 사람이 알아볼 수 있게. */
+  function whatOf(meta) {
+    var m = meta || {};
+    var r = m.read || {};
+    var kind = { card: '명함', bizreg: '사업자등록증', sme: '중소기업확인서', meeting: '회의·현장 사진' }[r.kind];
+    var who = (r.fields && (r.fields.company || r.fields.name)) || '';
+    var base2 = kind || (m.kind === 'doc' ? '서류' : '사진');
+    return who ? (base2 + ' · ' + who) : base2;
+  }
+
+  /* why: 왜 지웠는지 한 줄(없으면 사람이 지운 것이다).
+     스스로 지우는 경우(중복 등)에 이것이 없으면 기록만 보고는
+     '누가 왜 지웠는지' 알 수 없어 지운 기록이 반쪽이 된다. */
+  function deletePhoto(year, id, why) {
     if (!year || !id) return Promise.reject(new Error('지울 사진을 알 수 없습니다'));
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     /* 새 자리와 옛 자리 어디에 있든 찾아 담는다. */
@@ -263,8 +278,16 @@
         throw new Error('사진을 읽지 못해 지우지 않았습니다 — 잠시 뒤 다시 시도해 주세요');
       }
       var u = {};
+      var now = Date.now();
       u[trashPath(year, id)] = {
-        meta: meta || {}, full: r[2] || '', thumb: r[3] || '', delAt: Date.now()
+        meta: meta || {}, full: r[2] || '', thumb: r[3] || '', delAt: now
+      };
+      /* 지운 기록은 휴지통과 따로 남는다 — 휴지통을 완전히 비운 뒤에도
+         '무엇을 언제 누가 지웠는지'에 답할 수 있어야 한다(증빙 자료를 다루는 앱이다). */
+      u[logPath(id)] = {
+        year: year, what: whatOf(meta), delAt: now,
+        by: deps.uid || '', byName: deps.name || '',
+        why: why || ''
       };
       u[metaPath(year, id)] = null;
       u[blobPath(year, id)] = null;
@@ -331,7 +354,20 @@
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     var u = {};
     u[trashPath(year, id)] = null;
+    /* 기록은 지우지 않는다 — 완전히 지운 때만 덧붙인다. */
+    u[logPath(id) + '/purgedAt'] = Date.now();
     return deps.db.ref().update(u);
+  }
+
+  /* 지운 기록 목록 — 최근 것이 먼저. */
+  function listDelLog(owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(base(owner) + '/dellog').once('value').then(function (s) {
+      var raw = s.val() || {};
+      return Object.keys(raw)
+        .map(function (id) { return Object.assign({ id: id }, raw[id]); })
+        .sort(function (a, b) { return (b.delAt || 0) - (a.delAt || 0); });
+    });
   }
 
   /* 서류 판독 결과를 사진 정보 아래 'read' 칸에만 적는다.
@@ -719,6 +755,7 @@
     restorePhoto: restorePhoto,
     purgeOldTrash: purgeOldTrash,
     purgeOne: purgeOne,
+    listDelLog: listDelLog,
     TRASH_DAYS: TRASH_DAYS,
     signIn: signIn,
     amAdmin: amAdmin,
