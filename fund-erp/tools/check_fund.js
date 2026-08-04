@@ -111,7 +111,7 @@ ok('머리글의 공백을 지우고 맞춤', src.includes("var v=String(cells[c
 ok('대장 머리글(세부내역) 인식', src.includes('/적요|내용|내역|의뢰인|기재|가맹점/.test(v)'));
 // 적요가 'BZ뱅크'처럼 수단만 적힌 통장이 있다 — 실제 상대방이 든 설명 열을 버리면 출연금을 못 잡는다
 ok('남는 설명 열을 성격 힌트로 모음', src.includes('if(col.memo==null)col.memo=c; else if(col.kind.indexOf(c)<0)col.kind.push(c); }'));
-ok('예금주명 열도 힌트(계좌번호는 제외)', src.includes('/구분|종류|기록사항|메모|비고|예금주/.test(v)&&!/계좌번호|통화|화폐/.test(v)'));
+ok('예금주명 열도 힌트(계좌번호는 제외)', src.includes('/구분|종류|기록사항|메모|비고|예금주|입금인/.test(v)&&!/계좌번호|통화|화폐/.test(v)'));
 ok('사업장명 대조에 힌트 포함', src.includes("var mzz=strip(m+' '+String(kind||''));"));
 // 은행이 상대방 이름을 잘라 적는다 — 잘린 쪽이 사업장명의 앞부분이면 같은 회사로 본다
 ok('전각 괄호도 지움', src.includes('（주）|（유）|주식회사|유한회사'));
@@ -135,8 +135,15 @@ ok('준비금2 설정 분개(기본재산 차변)', /if\(kind==='설정'\)/.test
 ok('한도 초과분은 기본재산 사용으로 구분', /if\(kind==='기본재산사용'\)/.test(src));
 // 실무 결산서는 사용한도 전액을 설정하고 쓰지 않은 잔액을 준비금2로 남긴다
 // (가치를만들어가는사람들 2024·일원공동 2024 모두 출연금 × 90% 전액)
-ok('설정은 사용한도 전액', src.includes('r.setup=Math.max(0,cap);')
+// 법은 한도를 '범위'로 정한다 — 그 안에서 얼마를 설정할지는 협의회 결정 사항이다
+// (참살이공동 2024는 한도 929,554,369원 중 412,000,000원만 설정했다)
+ok('설정액은 협의회 지정값 우선, 비우면 한도 전액',
+  src.includes('r.setup=r.setupManual?_man:Math.max(0,cap);')
+  && src.includes("var _man=num(((funds[fid]||{}).years||{})[yr]&&((funds[fid]||{}).years||{})[yr].reserve_setup);")
   && src.includes('r.overBasic=Math.max(0,r.need-avail-r.setup);'));
+ok('설정액 입력칸과 저장', src.includes("<input id=\"op-rsvset\"")
+  && src.includes("up['funds/'+_fid+'/years/'+_yr+'/reserve_setup']=(rsv===''?null:(num(rsv)||0));")
+  && src.includes('function _rsvSetOf'));
 ok('환입을 계정별 잔액 안에서 배분', src.includes('r.parts.push({acct:a,amount:take})'));
 ok('조정 분개 묶음 생성기', src.includes('function _reserveEntries'));
 ok('전입액 계정(사업외비용)', src.includes("'고유목적사업준비금전입액':'비용'"));
@@ -201,6 +208,14 @@ ok('전기이월에 매도가능증권 칸', src.includes("secu:'매도가능증
 ok('자산총계에 증권 합산', src.includes('cash+savings+loan+secu'));
 ok('별지15호 ㉓ 유가증권을 장부에서', src.includes('num(rep.run_secu)||fin.secu'));
 ok('복리후생 계정(목적사업비)', src.includes("'복리후생':'비용'"));
+// 건강검진·기념품은 결산서마다 별 항목으로 세운다(참살이·가치·플러스 세 기금)
+ok('의료비·기념품비 계정', src.includes("'의료비':'비용','기념품비':'비용'")
+  && src.includes("'격려금','복리후생','의료비','기념품비','경조사비',")
+  && src.includes("var WELF_CATS=['격려금','복리후생','의료비','기념품비',"));
+ok('별지15호 66번에 의료비·기념품비',
+  src.includes("[66,'그 밖의 복지비',['격려금','복리후생','의료비','기념품비','경조사비','기타복지비']]"));
+ok('건강검진·기념품 자동분개 규칙', src.includes("'건강검진','건강건진','종합검진'")
+  && src.includes("'기념품','명절선물','설선물','추석선물','장기근속'"));
 ok('잡수익 계정', src.includes("'잡수익':'수익'"));
 // 1원·10원은 같은 날 같은 금액이 우연히 겹친다 — 소액을 이체로 자동 상계하면 장부가 틀어진다
 ok('이체 자동상계 최소금액', /var XFER_MIN=\d+;/.test(src) && src.includes('amt>=XFER_MIN'));
@@ -209,6 +224,11 @@ ok('거래 직접 추가', src.includes('function addTxnForm') && src.includes('
   && src.includes('onclick="addTxnForm()"'));
 ok('직접 입력 거래 표시', src.includes('x.manual?'));
 ok('머리글에 계좌번호가 없으면 파일명에서', src.includes("String(file.name||'').match"));
+// 적요가 'BZ뱅크'처럼 수단 이름뿐인 은행은 계좌가 달라도 중복검사 키가 겹친다
+// (참살이공동 2024: 두 계좌를 따로 가져오면 3건 23,934,000원이 버려졌다)
+ok('키가 겹치면 계좌·잔액으로 같은 거래인지 확인',
+  src.includes("if(String(cur.acct||'')===String(x.acct||'')&&String(cur.balance||'')===String(x.balance||'')){ dup=true; break; }")
+  && src.includes("n++; key=hkey(base+'|'+n);"));
 
 // ── ⑭ 분할 분개 (이비공동 2024: 송금 100,500 = 생활지원금 100,000 + 이체수수료 500) ──
 ok('분할 전개기 존재', src.includes('function expandSplits'));
@@ -247,8 +267,12 @@ ok('전문가 용역비 = 지급수수료', src.includes("'노무법인','회계
 ok('시설·비품 = 근로복지시설비', src.includes("'공사','설치','보수','비품','냉난방','정수기','사물함','세탁기','청소기','게시판','신발장'"));
 ok('명절선물·작업복 = 그 밖의 복지비', src.includes("'선물세트','명절선물','유니폼','작업복','피복'"));
 // 하나·기업은행은 예금이자 행의 적요를 비우고 성격을 '구분' 칸에만 적는다(이자 8건이 미분류였다)
+// 참살이공동은 대부금 지출의 성격('09월사내대출')을 '입금인코드' 칸에만 적었다
+ok('입금인코드 칸도 힌트', src.includes('/구분|종류|기록사항|메모|비고|예금주|입금인/.test(v)'));
+ok('리조트·회식 규칙', src.includes("'리조트','펜션','수련원','워터파크'")
+  && src.includes("'회식','주스','도시락','생수','과일'"));
 ok('성격 열을 여러 개 읽음(구분·거래기록사항·이체메모·예금주명)',
-  src.includes('if(/구분|종류|기록사항|메모|비고|예금주/.test(v)')
+  src.includes('if(/구분|종류|기록사항|메모|비고|예금주|입금인/.test(v)')
   && src.includes('col.kind.indexOf(c)<0)col.kind.push(c);')
   && src.includes('function find(cells){col.kind=[];'));
 // 농협은 순번 칸의 머리글이 '구분'이라 1·2·3…이 거래성격으로 읽혔다
