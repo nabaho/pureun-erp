@@ -200,6 +200,15 @@ ok('매도가능증권 계정', src.includes("'매도가능증권':'자산'"));
 ok('전기이월 저장 목록을 OPEN_ACCT에서 뽑음',
   src.includes("var o={}; Object.keys(OPEN_ACCT).forEach(function(k){var el=$('op-'+k);"));
 // 준비금은 1·2를 갈라 이월해야 한다(안전공사공동 2024는 준비금2로 42,245,952원 이월)
+// 세무회계법인이 비영리조직회계기준으로 결산하는 기금이 있다(충남공동8호·경기공동1호)
+ok('비영리조직회계기준 계정', src.includes("'미수수익':'자산','미수금':'자산','단기금융상품':'자산','특정현금과예금':'자산'")
+  && src.includes("'손실대비특별적립금':'자본'"));
+ok('그 계정들의 전기이월 칸', src.includes("accrued:'미수수익',recv:'미수금',stfund:'단기금융상품',spcash:'특정현금과예금'")
+  && src.includes("oi('accrued','미수수익')+oi('recv','미수금')"));
+// 그런 기금은 당기운영이익이 0이 아니다(충남공동8호 2025: 66,048원) → 자동조정을 끈다
+ok('준비금 자동조정 끄기', src.includes('.reserve_auto===false)')
+  && src.includes('function _rsvAutoOf')
+  && src.includes("up['funds/'+_fid+'/years/'+_yr+'/reserve_auto']=(raOn?null:false);"));
 ok('전기이월 준비금1·2 분리', src.includes("reserve:'고유목적사업준비금1',reserve2:'고유목적사업준비금2'")
   && src.includes("oi('reserve2','고유목적사업준비금2')")
   && src.includes('liab+=(num(opening.reserve)||0)+(num(opening.reserve2)||0);')

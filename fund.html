@@ -216,7 +216,12 @@ var EST_TMPL=[
   ['EST-11','법인 계좌 개설·인감 관리',false],
   ['EST-12','최초 출연금 입금 확인 → 운영 전환',false]
 ];
-var ACCT_CHART={'현금성자산':'자산','정기예금':'자산','근로자대부금':'자산','매도가능증권':'자산','고유목적사업준비금1':'부채','고유목적사업준비금2':'부채','기본재산':'자본','이월잉여금':'자본','이자수익':'수익','경조사비':'비용','동호회비':'비용','체육문화비':'비용','장학금':'비용','생활안정자금':'비용','재난구호금':'비용','주택자금':'비용','우리사주구입자금':'비용','모성보호비':'비용','근로자의날행사비':'비용','근로복지시설비':'비용','기타복지비':'비용','지급수수료':'비용','사무용품비':'비용','기타관리비':'비용','세금과공과':'비용','정기예금전입':'비용','격려금':'비용','복리후생':'비용','의료비':'비용','기념품비':'비용','잡수익':'수익','고유목적사업준비금환입':'수익','고유목적사업준비금전입액':'비용'};
+/* 세무회계법인이 **비영리조직회계기준**으로 결산하는 기금이 있다(충남공동8호·경기공동1호).
+   발생주의 계정(미수수익·미수금)과 운용상품(단기금융상품·특정현금과예금), 적립금이 나온다.
+   앱의 자산총계는 목록에 없는 자산 계정도 otherAsset으로 합산하므로 계정만 있으면 대차가 맞는다. */
+var ACCT_CHART={'현금성자산':'자산','정기예금':'자산','근로자대부금':'자산','매도가능증권':'자산',
+                '미수수익':'자산','미수금':'자산','단기금융상품':'자산','특정현금과예금':'자산',
+                '손실대비특별적립금':'자본','고유목적사업준비금1':'부채','고유목적사업준비금2':'부채','기본재산':'자본','이월잉여금':'자본','이자수익':'수익','경조사비':'비용','동호회비':'비용','체육문화비':'비용','장학금':'비용','생활안정자금':'비용','재난구호금':'비용','주택자금':'비용','우리사주구입자금':'비용','모성보호비':'비용','근로자의날행사비':'비용','근로복지시설비':'비용','기타복지비':'비용','지급수수료':'비용','사무용품비':'비용','기타관리비':'비용','세금과공과':'비용','정기예금전입':'비용','격려금':'비용','복리후생':'비용','의료비':'비용','기념품비':'비용','잡수익':'수익','고유목적사업준비금환입':'수익','고유목적사업준비금전입액':'비용'};
 var ACCTS=Object.keys(ACCT_CHART);
 // 목적사업비(복지사업) 계정 — WELF_CATS 및 재무제표 목적사업비 집계와 1:1 대응 (대부사업은 자산이라 제외)
 var PURPOSE_ACCTS=['격려금','복리후생','의료비','기념품비','경조사비','동호회비','체육문화비','장학금','생활안정자금','재난구호금','주택자금','우리사주구입자금','모성보호비','근로자의날행사비','근로복지시설비','기타복지비'];
@@ -4497,6 +4502,9 @@ function acctSel(id,side,cur){
 /* 전기이월(기초잔액) 칸 ↔ 계정 대응. **화면·저장·시산표·조정이 모두 이 표를 따라가야 한다** —
    칸만 늘리고 저장 목록을 안 고쳐 매도가능증권 전기이월이 저장되지 않은 일이 있었다. */
 var OPEN_ACCT={cash:'현금성자산',savings:'정기예금',loan:'근로자대부금',secu:'매도가능증권',
+               /* 비영리조직회계기준으로 결산하는 기금의 계정 — 없으면 다음 해로 이월할 자리가 없다 */
+               accrued:'미수수익',recv:'미수금',stfund:'단기금융상품',spcash:'특정현금과예금',
+               spresv:'손실대비특별적립금',
                basic:'기본재산',retained:'이월잉여금',
                /* 준비금은 1·2를 갈라 이월한다 — 기금마다 쓰는 쪽이 다르다(법인세법 제29조 / 근로복지기본법
                   제62조제2항). 칸이 하나였을 때는 준비금2로 이월하는 기금(안전공사공동 2024:
@@ -5629,6 +5637,12 @@ function reserveAdjust(arr,fid,yr){
   fid=fid||S.fundId; yr=yr||S.year;
   var fin=computeFin(arr,fid,yr);
   var net=Math.round(fin.net);
+  /* 비영리조직회계기준으로 결산하는 기금은 당기운영이익이 0이 아니다 — 남는 이익을 미처분이익잉여금으로
+     이월한다(충남공동8호 2025: 66,048원). 그런 기금은 준비금 자동조정을 끈다.
+     [결산·재무제표]의 '준비금 자동조정' 체크를 풀면 reserve_auto:false 가 저장된다. */
+  if(((funds[fid]||{}).years||{})[yr] && ((funds[fid]||{}).years||{})[yr].reserve_auto===false)
+    return {kind:'', need:0, avail:0, amount:0, acct:RESERVE_ACCTS[0], fin:fin, off:true,
+            contrib:_contribOf(arr), rate:_reserveRate(fid), cap:0, setup:0, overBasic:0, parts:[]};
   var op=_openingOf(fid,yr);
   /* 계정별 준비금 잔액 — 전기이월 칸은 하나뿐이라 준비금1에 얹는다 */
   var bal={};
@@ -5973,16 +5987,25 @@ function finPanel(arr){
   var op=f.opening||{};
   function oi(k,lbl){return '<div class="fld"><label>'+lbl+'</label><input id="op-'+k+'" value="'+esc(op[k]||'')+'" placeholder="0"></div>';}
   var openingHtml='<div style="margin-top:14px"><div style="font-weight:700;margin-bottom:6px">전기이월(기초잔액) — 있으면 입력</div>'
-      +'<div class="grid" style="max-width:760px">'+oi('cash','현금성자산')+oi('savings','정기예금')+oi('loan','근로자대부금')+oi('secu','매도가능증권')+oi('basic','기본재산')+oi('retained','이월잉여금')+oi('reserve','고유목적사업준비금1')+oi('reserve2','고유목적사업준비금2')+'</div>'
+      +'<div class="grid" style="max-width:760px">'+oi('cash','현금성자산')+oi('savings','정기예금')+oi('loan','근로자대부금')+oi('secu','매도가능증권')
+      +oi('accrued','미수수익')+oi('recv','미수금')+oi('stfund','단기금융상품')+oi('spcash','특정현금과예금')+oi('spresv','손실대비특별적립금')
+      +oi('basic','기본재산')+oi('retained','이월잉여금')+oi('reserve','고유목적사업준비금1')+oi('reserve2','고유목적사업준비금2')+'</div>'
       /* 준비금2 설정액 — 법은 한도를 '범위'로 정하므로 그 안에서 얼마를 설정할지는 협의회가 정한다.
          비워 두면 사용한도 전액으로 본다(참살이공동 2024는 한도의 절반도 안 되는 412,000,000원만 설정했다). */
       +'<div style="font-weight:700;margin:14px 0 6px">고유목적사업준비금2 설정액 <span style="font-weight:400;color:var(--sub);font-size:11.5px">— 협의회가 정한 금액. 비우면 사용한도 전액</span></div>'
       +'<div class="grid" style="max-width:380px"><div class="fld"><label>설정액</label>'
       +'<input id="op-rsvset" value="'+esc(_rsvSetOf(S.fundId,S.year))+'" placeholder="비우면 한도 전액"></div></div>'
+      /* 비영리조직회계기준으로 결산하는 기금은 당기운영이익이 0이 아니다 — 자동조정을 끈다 */
+      +'<label class="row" style="gap:6px;margin-top:10px;font-size:12.5px;cursor:pointer">'
+      +'<input type="checkbox" id="op-rsvauto"'+(_rsvAutoOf(S.fundId,S.year)?' checked':'')+'>'
+      +'<span>결산 확정 때 준비금을 자동 조정해 당기순이익을 0으로 맞춥니다'
+      +' <span class="muted">— 비영리조직회계기준으로 결산하는 기금은 체크를 풉니다</span></span></label>'
       +'<button style="margin-top:8px" onclick="saveOpening()">💾 전기이월·설정액 저장</button></div>';
   if(!f.appr) return '<div class="panel"><div class="muted">승인된 거래가 없어 재무제표를 만들 수 없습니다. 위에서 계정 지정 후 승인하세요.</div>'+openingHtml+'</div>';
   // ⑻ 전기이월(기초잔액)을 시산표 맨 위에 표시 — 재무상태표와 대차가 맞는 이유를 드러냄
   var openMap=[['현금성자산',op.cash],['정기예금',op.savings],['근로자대부금',op.loan],['매도가능증권',op.secu],
+               ['미수수익',op.accrued],['미수금',op.recv],['단기금융상품',op.stfund],['특정현금과예금',op.spcash],
+               ['손실대비특별적립금',op.spresv],
                ['기본재산',op.basic],['이월잉여금',op.retained],
                ['고유목적사업준비금1',op.reserve],['고유목적사업준비금2',op.reserve2]];
   var openRows=openMap.filter(function(m){return num(m[1]);}).map(function(m){
@@ -6016,6 +6039,11 @@ function finPanel(arr){
       +'<table style="margin-top:8px"><thead><tr><th>계정</th><th>유형</th><th style="text-align:right">차변잔액</th><th style="text-align:right">대변잔액</th></tr></thead><tbody>'+tbRows+'</tbody></table></details>'
     +openingHtml+'</div>';
 }
+/* 준비금 자동조정 여부 — 저장된 값이 없으면 켜진 것으로 본다(기존 기금 동작 유지) */
+function _rsvAutoOf(fid,yr){
+  var v=(((funds[fid]||{}).years||{})[yr]||{}).reserve_auto;
+  return v!==false;
+}
 /* 저장된 준비금2 설정액 — 없으면 빈 칸(= 사용한도 전액) */
 function _rsvSetOf(fid,yr){
   var v=(((funds[fid]||{}).years||{})[yr]||{}).reserve_setup;
@@ -6030,10 +6058,13 @@ function saveOpening(){
   var up={};
   up['funds/'+_fid+'/years/'+_yr+'/opening']=o;
   up['funds/'+_fid+'/years/'+_yr+'/reserve_setup']=(rsv===''?null:(num(rsv)||0));
+  var ra=$('op-rsvauto'); var raOn=ra?!!ra.checked:true;
+  up['funds/'+_fid+'/years/'+_yr+'/reserve_auto']=(raOn?null:false);
   fbDb.ref(NS).update(up).then(function(){
     if(!funds[_fid].years)funds[_fid].years={}; if(!funds[_fid].years[_yr])funds[_fid].years[_yr]={};
     funds[_fid].years[_yr].opening=o;
     funds[_fid].years[_yr].reserve_setup=(rsv===''?null:(num(rsv)||0));
+    funds[_fid].years[_yr].reserve_auto=(raOn?null:false);
     renderFund(); toast('전기이월·설정액 저장됨');
   }).catch(function(e){toast('저장 실패: '+e.message,'err');});
 }
