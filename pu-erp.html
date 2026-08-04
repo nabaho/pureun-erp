@@ -49,6 +49,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
 <script src="js/pu-resilience.js"></script>
+<script src="js/pu-conflict.js"></script>
 <script src="js/pu-health.js"></script>
 <script src="js/pu-version.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
@@ -3536,6 +3537,105 @@ function _recStamp(item){
   } catch(_){}
   return item;
 }
+
+// ============ 동시 편집 — 남의 작업을 말없이 덮지 않게 ============
+// 판단은 공용 층(PuConflict)이 한다. 여기는 "무엇을 물어볼지"와 "어디에 알릴지"만 안다.
+//
+// ⚠ 어떻게 알아채나
+//   화면이 들고 있는 레코드의 updatedAt = 그 화면이 자료를 읽어온 판(版)이다.
+//   저장 순간 새 시각이 찍히므로, 저장 직전의 그 값이 "내가 본 것"을 가리킨다.
+//   저장돼 있는 것이 그보다 새로우면 = 내가 보는 동안 남이 고쳤다.
+//
+// ⚠ 두 겹으로 둔다
+//   ① 주요 화면은 저장 전에 **물어본다**(erpGuardEdit) — 사람이 그만둘 수 있다.
+//   ② 물어보지 않는 경로(일괄 저장·자동 연결 등)는 저장은 하되 **덮어썼다고 알린다**
+//      (dbUpsert 안의 그물). 조용히 사라지는 것이 가장 나쁘다.
+
+// 무엇을 고치는 중인지 사람 말로. 문구에 그대로 들어간다.
+var CONFLICT_WHAT = {
+  companies:'업체', cases:'사건', contracts:'계약', consultings:'컨설팅',
+  consult_logs:'상담일지', other_projects:'기타사업', funds:'기금',
+  payroll_monthly:'급여', employment_contracts:'근로계약',
+  retirement_settlements:'퇴직정산', finance_income:'수입', finance_expense:'지출',
+  finance_invoice:'청구서', external_staff:'외부인력'
+};
+function conflictWhat(k){ return CONFLICT_WHAT[k] || '자료'; }
+
+// 칸 이름표 — 이름을 모르는 칸은 사람에게 말하지 않는다(영문 코드 노출 금지).
+// ⚠ 처음 쓸 때 만든다. 업체 이름표(CO_FIELD_LABEL)가 이 아래에서 선언되므로
+//   지금 바로 읽으면 비어 있다(그러면 업체 칸 이름이 통째로 빠진다).
+var _conflictLabel = null;
+function conflictLabels(){
+  if(_conflictLabel) return _conflictLabel;
+  var m = {};
+  try { Object.keys(CO_FIELD_LABEL).forEach(function(k){ m[k] = CO_FIELD_LABEL[k]; }); } catch(_){}
+  _conflictLabel = Object.assign(m, {
+    name:'이름', companyName:'업체명', title:'제목', memo:'메모', note:'비고',
+    status:'상태', amount:'금액', date:'날짜', startDate:'시작일', endDate:'종료일',
+    manager:'담당', managerMain:'주담당', managerSubs:'부담당',
+    caseNo:'사건번호', typeCode:'유형', stage:'단계', court:'법원',
+    workerName:'근로자', hireDate:'입사일', retireDate:'퇴사일',
+    payDay:'급여지급일', totalPay:'지급액', content:'내용'
+  });
+  return _conflictLabel;
+}
+
+// 저장 직전에 부른다. true = 계속 저장, false = 사람이 그만두기로 했다.
+// item — 화면이 들고 있던 그 레코드(저장 시각이 아직 안 찍힌 상태).
+// base — 화면을 **띄웠을 때의 판**(내가 고치기 전). 넘기면 "그분이 고친 칸"을
+//        정확히 말할 수 있다. 모달이 원본을 들고 있으면 꼭 넘기는 편이 낫다.
+function erpGuardEdit(k, item, base){
+  try {
+    if(!window.PuConflict || !item || !item.id) return Promise.resolve(true);
+    var arr = dbGet(k, []);
+    if(!Array.isArray(arr)) return Promise.resolve(true);
+    var stored = null;
+    for(var i=0;i<arr.length;i++){ if(arr[i] && arr[i].id === item.id){ stored = arr[i]; break; } }
+    var hit = PuConflict.check(stored, item, {
+      myName: (typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.name) || '',
+      labels: conflictLabels(),
+      base: base || null
+    });
+    if(!hit) return Promise.resolve(true);
+    // 물어봤으니 그물(아래)이 또 알리지 않게 표시해 둔다 — 같은 일로 두 번 놀라지 않게.
+    window._conflictAsked = { k:k, id:item.id, at:Date.now() };
+    var msg = PuConflict.message(conflictWhat(k), hit);
+    if(typeof popConfirm === 'function') return Promise.resolve(popConfirm(msg));
+    return Promise.resolve(confirm(msg));
+  } catch(e){ window._erpErrLog && window._erpErrLog(e); return Promise.resolve(true); }
+}
+
+// 겹쳤나 찾기 — 방금 사람에게 물어본 건은 빼고(같은 일로 두 번 놀라지 않게).
+function _conflictFind(k, item, stored){
+  try {
+    if(!window.PuConflict || !item) return null;
+    var asked = window._conflictAsked;
+    if(asked && asked.k === k && asked.id === item.id && (Date.now() - asked.at) < 10000){
+      window._conflictAsked = null; return null;
+    }
+    return PuConflict.check(stored, item, {
+      myName: (typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.name) || '',
+      labels: conflictLabels()
+    });
+  } catch(e){ window._erpErrLog && window._erpErrLog(e); return null; }
+}
+
+// 덮어썼다고 알리기. n = 겹친 건수(여러 건이면 몇 건인지도 말한다).
+function _conflictTell(k, hit, n){
+  try {
+    var note = PuConflict.overwriteNote(conflictWhat(k), hit);
+    if(n > 1) note += ' 외 ' + (n - 1) + '건';
+    console.warn('[동시편집] ' + k + ' — ' + note);
+    try { showToast(note); } catch(_){}
+  } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+}
+
+// 그물 — 물어보지 않은 채 남의 변경을 덮었으면 적어도 보이게 한다.
+function _conflictNet(k, item, stored){
+  var hit = _conflictFind(k, item, stored);
+  if(hit) _conflictTell(k, hit, 1);
+}
+
 function _recLocalSave(k, arr){
   try { localStorage.setItem(KEY+k, JSON.stringify(arr)); }
   catch(e){
@@ -3599,9 +3699,14 @@ function dbUpsert(k, item){
     if(_d2) return _attendLockToast(_d2);
   }
   if(_REC_BADKEY.test(item.id)){ console.warn('[dbUpsert] '+k+'/'+item.id+': id 금지문자 — dbSet 폴백'); }
-  _recStamp(item);
   var arr = dbGet(k, []);
   if(!Array.isArray(arr)){ console.warn('[dbUpsert] '+k+': 배열 아님 — 거부'); return false; }
+  /* ⚠ 그물은 시각을 찍기 **전에** 봐야 한다. _recStamp 가 item.updatedAt 을
+     지금 시각으로 바꾸므로, 그 뒤에는 "내가 읽어온 판"을 알 수 없다. */
+  var _prevRec = null;
+  for(var _pi=0; _pi<arr.length; _pi++){ if(arr[_pi] && arr[_pi].id === item.id){ _prevRec = arr[_pi]; break; } }
+  if(_prevRec) _conflictNet(k, item, _prevRec);
+  _recStamp(item);
   var found = false;
   var next = arr.map(function(x){ if(x && x.id === item.id){ found = true; return item; } return x; });
   if(!found) next = next.concat([item]);
@@ -3674,9 +3779,22 @@ function dbUpsertMany(k, items){
     }
   }
   var bad = items.some(function(it){ return !it || typeof it.id !== 'string' || !it.id || _REC_BADKEY.test(it.id); });
-  items.forEach(function(it){ if(it && it.id) _recStamp(it); });
   var arr = dbGet(k, []);
   if(!Array.isArray(arr)) return false;
+  /* 일괄 저장에도 같은 그물. 시각을 찍기 전에 본다.
+     겹친 건이 여럿이어도 알림은 **한 번만** — 열 건이면 열 번 뜨고, 그러면 아무도 안 읽는다. */
+  (function(){
+    var prevById = {};
+    arr.forEach(function(x){ if(x && x.id) prevById[x.id] = x; });
+    var hits = [];
+    items.forEach(function(it){
+      if(!it || !it.id || !prevById[it.id]) return;
+      var h = _conflictFind(k, it, prevById[it.id]);
+      if(h) hits.push(h);
+    });
+    if(hits.length) _conflictTell(k, hits[0], hits.length);
+  })();
+  items.forEach(function(it){ if(it && it.id) _recStamp(it); });
   var byId = {}; items.forEach(function(it){ if(it && it.id) byId[it.id] = it; });
   var seen = {};
   var next = arr.map(function(x){ if(x && byId[x.id]){ seen[x.id] = true; return byId[x.id]; } return x; });
@@ -11022,16 +11140,12 @@ function ContractModal(props){
   }; }
 
   async function save(){
-    // 동시편집 가드: 수정 모드에서 외부 변경 감지
-    if(props.cur && props.cur.id && origUpdatedAt){
-      var latest = (dbGet('contracts', []) || []).find(function(x){ return x.id === props.cur.id; });
-      if(latest && latest.updatedAt && latest.updatedAt > origUpdatedAt){
-        var who = latest.updatedBy || '다른 사용자';
-        var when = '';
-        try { when = new Date(latest.updatedAt).toLocaleString('ko-KR'); } catch(_){ when = '최근'; }
-        var msg = '⚠️ 동시 편집 충돌\n\n' + who + '님이 ' + when + '에 이 계약을 수정했습니다.\n\n그래도 저장하면 그 변경 사항이 사라집니다.\n\n• 확인: 그래도 저장 (덮어쓰기)\n• 취소: 닫고 다시 열어 최신 상태로 작업';
-        if(!(await popConfirm(msg))) return;
-      }
+    /* 동시편집 가드 — 이 화면에만 있던 판단을 공용 층으로 옮겼다.
+       다른 화면(업체·사건 등)도 같은 물음을 쓴다. 문구를 한 곳에서 고치면
+       전부 같이 고쳐진다(베껴 두면 한 곳만 고쳐지고 나머지는 뒤처진다). */
+    if(props.cur && props.cur.id){
+      // 원본(props.cur)을 함께 넘긴다 → '그분이 고친 칸'을 정확히 알려 줄 수 있다
+      if(!(await erpGuardEdit('contracts', props.cur, props.cur))) return;
     }
     var ct = f.clientType || 'company';
     if(ct === 'company' || ct === 'both'){
@@ -16881,7 +16995,10 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
     // 수정 모달
     editModal && h(CompanyEditModal, {
       cur: editModal,
-      onSave: function(form){
+      onSave: async function(form){
+        /* 내가 보는 동안 남이 이 업체를 고쳤으면 먼저 물어본다.
+           업체는 여러 사람이 함께 만지는 자료라 조용히 덮으면 안 된다. */
+        if(!(await erpGuardEdit('companies', form, editModal))) return;
         coUpsert(form);
         setEditModal(null);
         // 계약관리 일괄 동기화 (회사정보 필드 모두)
@@ -18665,6 +18782,8 @@ function CaseManagement(props){
       if(!caseUpsert(newCase)) return;
       showToast('사건 등록: ' + newCase.caseNo);
     } else {
+      // 내가 보는 동안 남이 이 사건을 고쳤으면 먼저 물어본다(원본을 넘겨 정확히 알린다)
+      if(!(await erpGuardEdit('cases', form, modal.cur))) return;
       if(!caseUpsert(form)) return;
       showToast('수정됨');
     }
@@ -34856,7 +34975,9 @@ function IncomeListTab(){
     setDetailModal({ id:'fi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), date:today, amount:0, category:'inc-misc',
       sourceKind:'manual', sourceId:'', companyName:'', kind:'기타', perfShares:[], createdAt:(new Date()).toISOString(), __new:true });
   }
-  function saveItem(form){ delete form.__new;
+  async function saveItem(form){ delete form.__new;
+    // 남이 먼저 고친 것을 조용히 덮지 않는다(원본을 넘겨 정확히 알린다)
+    if(!(await erpGuardEdit('finance_income', form, detailModal))) return;
     var isHist = !!form.__historyMode;
     delete form.__historyMode;
     // 과거 기록 전용: confirmed=false로 강제 → 성과·재무 자동 연동 차단
@@ -37260,8 +37381,9 @@ function FinanceExpense(){
     var myBranch = (CURRENT_USER && CURRENT_USER.branch && CURRENT_USER.branch.indexOf('서산')>=0) ? 'seosan' : 'cheonan';
     setDetailModal({ id:'fe-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), date:today, amount:0, category:'exp-other', payee:'', note:'', bankFee:lastFee, branch:myBranch, __new:true });
   }
-  function saveItem(form){
+  async function saveItem(form){
     delete form.__new;
+    if(!(await erpGuardEdit('finance_expense', form, detailModal))) return;
     var bankFee = parseInt(form.bankFee||0, 10) || 0;
     delete form.bankFee; // 본 레코드에는 저장 안 함 (자식 출금으로 분리)
     // 마지막 사용한 수수료 저장 (다음 모달 열 때 자동 채움)
@@ -39192,8 +39314,9 @@ function FinanceInvoice(){
     var today = todayYMD();
     setDetailModal({ id:'iv-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), issueDate:today, companyName:'', bizNo:'', amount:0, vatType:'separate', status:'발행', note:'', __new:true });
   }
-  function saveItem(form){
+  async function saveItem(form){
     delete form.__new;
+    if(!(await erpGuardEdit('finance_invoice', form, detailModal))) return;
     if(invoices.find(function(x){return x.id===form.id;})){
       persist(invoices.map(function(x){return x.id===form.id ? form : x;}));
       showToast('수정됨');
@@ -49469,7 +49592,10 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
 
     editModal && h(ProjectEditModal, {
       cur: editModal, types: types, users: users, kindLabel: props.title, items: items,
-      onSave: function(form){
+      onSave: async function(form){
+        /* 이 화면 하나가 컨설팅·기금·기타사업을 함께 쓴다 — 여기 한 번 붙이면 셋 다 덮인다.
+           원본(editModal)을 넘겨 '그분이 고친 칸'을 정확히 알린다. */
+        if(!(await erpGuardEdit(props.storageKey, form, editModal))) return;
         itemUpsert(form);
         // 컨설팅이면 startDate 변경 가능성 → 자동 재정렬
         if(props.storageKey === 'consultings'){
@@ -59166,8 +59292,7 @@ function RetirementSettlement(){
         var idx = arr.findIndex(function(x){return x.id===settleModal.id;});
         var nextItem = Object.assign({}, settleModal, {
           totalGross:totalGross, totalDeduct:totalDeduct, netPay:netPay,
-          status: s || settleModal.status || 'draft',
-          updatedAt: (new Date()).toISOString()
+          status: s || settleModal.status || 'draft'
         });
         if(s === 'paid' && !nextItem.paidDate) nextItem.paidDate = todayYMD();
         if(!nextItem.id) nextItem.id = 'rs-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
