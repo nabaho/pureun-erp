@@ -70,7 +70,11 @@
       bizreg: { company: 'name', ceo: 'ceo', bizno: 'bizNo', corpno: 'corpNo',
                 openDate: 'openDate', bizType: 'bizType', bizItem: 'bizCategory',
                 companyTel: 'phone', companyFax: 'fax', address: 'address', memo: 'note' },
-      sme: { company: 'name', bizno: 'bizNo', ceo: 'ceo', smeType: 'companySize', industry: 'industry' }
+      /* 유효기간을 함께 넘긴다 — 만료된 확인서로 신청하면 반려된다.
+         이 칸이 없으면 언제 만료되는지 아무도 알 수 없다(읽어도 버리는 셈). */
+      sme: { company: 'name', bizno: 'bizNo', ceo: 'ceo', smeType: 'companySize',
+             industry: 'industry', expiry: 'smeExpiry', issueNo: 'smeIssueNo',
+             issueDate: 'smeIssueDate' }
     },
     fund: {
       bizreg: { company: 'name', ceo: 'ceo', bizno: 'biz_no', corpno: 'corp_no',

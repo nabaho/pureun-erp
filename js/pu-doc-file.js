@@ -1,5 +1,5 @@
 /* 푸른통합시스템 — 서류 등록 층
-   판독한 서류를 명함첩에 넣는 유일한 파일이다.
+   판독한 서류를 명함첩과 업체관리에 넣는 유일한 파일이다.
    판독 층(pu-doc-read.js)이 "읽기"를 아는 유일한 파일인 것과 짝을 이룬다.
    화면은 이 파일의 함수 하나를 부르고 결과 문구만 띄운다 —
    그래서 사진첩 화면은 명함첩이 어떻게 생겼는지 몰라도 된다.
@@ -215,12 +215,138 @@
     });
   }
 
+  /* ══════════════════════════════════════════════════════════════
+     업체관리(푸른이알피)에 넣기
+     ══════════════════════════════════════════════════════════════
+     ⚠ 규칙 셋. 이 셋을 어기면 실데이터가 망가진다.
+
+     1. **업체를 새로 만들지 않는다.** 사업자번호로 찾지 못하면 아무것도 하지
+        않고 그대로 알린다. 새 업체를 만드는 일은 계약·청구가 걸린 결정이라
+        사진 한 장으로 자동 생성하면 유령 업체가 쌓인다.
+     2. **빈 칸만 채운다.** 기존 값은 절대 덮지 않는다. 이 기능의 실제 값은
+        '사업자번호가 없던 업체를 메우는 것'이지 고쳐 쓰는 것이 아니다.
+     3. **칸 하나씩 쓴다.** 업체 목록 노드를 통째로 쓰면 그 사이 다른 사람이
+        넣은 업체가 지워진다. 목록이 배열이든 객체든 칸 경로로만 쓴다. */
+
+  var ERP_CO = 'data/companies';
+
+  /* 사업자번호는 표기가 제각각이다(하이픈·공백). 숫자만 남겨 비교한다. */
+  function bizKey(v) { var d = digits(v); return d.length >= 10 ? d : ''; }
+
+  /* 업체 목록은 배열형·객체형 둘 다 쓰인다(푸른이알피가 옮겨 가는 중이다).
+     어느 쪽이든 **칸 경로**를 만들 수 있게 열쇠를 함께 돌려준다. */
+  function eachCompany(raw, fn) {
+    if (!raw) return;
+    if (Array.isArray(raw)) {
+      for (var i = 0; i < raw.length; i++) if (raw[i]) fn(raw[i], String(i));
+      return;
+    }
+    if (typeof raw !== 'object') return;
+    Object.keys(raw).forEach(function (k) { if (raw[k]) fn(raw[k], k); });
+  }
+
+  function findCompanyByBizNo(bizno) {
+    var key = bizKey(bizno);
+    if (!key) return Promise.resolve(null);
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(ERP_CO).once('value').then(function (s) {
+      var wrap = s.val();
+      var raw = (wrap && wrap.v !== undefined) ? wrap.v : wrap;
+      var hit = null;
+      eachCompany(raw, function (co, at) {
+        if (hit) return;
+        if (bizKey(co.bizNo) === key) hit = { id: co.id || at, at: at, rec: co };
+      });
+      return hit;
+    });
+  }
+
+  /* 업체 칸 이름표 — 무엇을 채웠는지 사람 말로 알리려고 쓴다. */
+  var CO_LABEL = {
+    name: '업체명', bizNo: '사업자번호', ceo: '대표자', corpNo: '법인번호',
+    openDate: '개업일', bizType: '업태', bizCategory: '종목', address: '소재지',
+    phone: '전화', fax: '팩스', companySize: '기업규모', industry: '주업종',
+    smeExpiry: '중소기업확인서 유효기간', smeIssueNo: '확인서 발급번호',
+    smeIssueDate: '확인서 발급일', note: '비고'
+  };
+
+  /* 중소기업확인서는 **기업규모와 유효기간만** 채운다(대표 승인 설계).
+     나머지 칸(상호·대표자)은 사업자등록증이 더 정확한 원본이다. */
+  var SME_ONLY = { companySize: 1, smeExpiry: 1, smeIssueNo: 1, smeIssueDate: 1 };
+
+  function sendToCompany(o) {
+    o = o || {};
+    var kind = o.kind;
+    if (kind !== 'bizreg' && kind !== 'sme') {
+      return Promise.reject(new Error('사업자등록증과 중소기업확인서만 업체관리로 보낼 수 있습니다'));
+    }
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+
+    var fields = o.fields || {};
+    if (!bizKey(fields.bizno)) {
+      return Promise.resolve({
+        found: false, filled: [],
+        message: '사업자번호를 읽지 못해 업체를 찾을 수 없습니다'
+      });
+    }
+
+    var mapped = global.PuDocRead.mapTo('erp', kind, fields);
+    delete mapped.bizNo;                      // 찾는 열쇠다 — 다시 쓰지 않는다
+    if (kind === 'sme') {
+      Object.keys(mapped).forEach(function (k) { if (!SME_ONLY[k]) delete mapped[k]; });
+    }
+    if (!Object.keys(mapped).length) {
+      return Promise.resolve({
+        found: false, filled: [],
+        message: '업체에 채울 내용이 없습니다'
+      });
+    }
+
+    return findCompanyByBizNo(fields.bizno).then(function (hit) {
+      if (!hit) {
+        /* 못 찾았다고 만들지 않는다. 사람이 업체관리에서 만들면 그때 채워진다. */
+        return {
+          found: false, filled: [],
+          message: '이 사업자번호의 업체가 업체관리에 없습니다 — 업체를 먼저 만들어 주세요'
+        };
+      }
+      var gaps = fillGaps(hit.rec, mapped);
+      var names = Object.keys(gaps);
+      if (!names.length) {
+        return {
+          found: true, id: hit.id, filled: [],
+          message: '업체 「' + (hit.rec.name || '') + '」에 이미 다 들어 있었습니다'
+        };
+      }
+      var now = Date.now();
+      var u = {};
+      var path = ERP_CO + '/v/' + hit.at + '/';
+      names.forEach(function (k) { u[path + k] = gaps[k]; });
+      /* 고친 때·고친 이를 남긴다 — 푸른이알피의 동시 편집 판단이 이걸 본다. */
+      u[path + 'updatedAt'] = now;
+      if (o.byName) u[path + 'updatedBy'] = o.byName;
+      /* 갱신시각 — 푸른이알피가 이걸 보고 다시 읽는다. 안 쓰면 화면에 안 나타난다. */
+      u[ERP_CO + '/u'] = now;
+
+      var labels = names.map(function (n) { return CO_LABEL[n] || n; });
+      return deps.db.ref().update(u).then(function () {
+        return {
+          found: true, id: hit.id, filled: labels,
+          message: '업체 「' + (hit.rec.name || '') + '」의 빈 칸 ' + labels.length +
+            '개를 채웠습니다 (' + labels.join('·') + ')'
+        };
+      });
+    });
+  }
+
   global.PuDocFile = {
     init: init,
     findExisting: findExisting,
     fillGaps: fillGaps,
     idxOf: idxOf,
     whenText: whenText,
-    sendToCards: sendToCards
+    sendToCards: sendToCards,
+    findCompanyByBizNo: findCompanyByBizNo,
+    sendToCompany: sendToCompany
   };
 })(typeof window !== 'undefined' ? window : globalThis);
