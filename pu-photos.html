@@ -113,6 +113,10 @@ button{font-family:inherit;cursor:pointer}
   border-radius:10px;padding:10px;font-size:13px;font-weight:700;text-align:left;flex-shrink:0}
 @media (max-width:899px){ #gearBtn{margin-top:16px} }
 
+/* 스스로 판독하는 중 안내 */
+#autoNote{margin-top:12px;border:1px solid #b6c6ee;background:#eef2fd;color:var(--blue);
+  border-radius:10px;padding:9px 10px;font-size:12px;font-weight:700;line-height:1.5}
+
 /* 휴지통 단추 */
 #trashBox{width:100%;margin-top:8px;border:1px solid var(--line);background:#fff;color:var(--sub);
   border-radius:10px;padding:10px;font-size:12.5px;font-weight:700;text-align:left}
@@ -270,6 +274,9 @@ button{font-family:inherit;cursor:pointer}
       <div class="cap">올리는 중</div>
       <div id="upList"></div>
     </div>
+
+    <!-- 스스로 판독하는 중임을 알린다 -->
+    <div id="autoNote" style="display:none"></div>
 
     <!-- 지운 사진은 30일 보관 -->
     <button id="trashBox" style="display:none" onclick="toggleTrashView()"></button>
@@ -720,7 +727,7 @@ function onQueueChange(list) {
     if (j.state === 'done' && !j._hideAt) {
       j._hideAt = Date.now() + UP_HIDE_MS;
       addToGrid(j);               // 방금 올라간 사진을 격자 맨 앞에 (다시 받지 않고)
-      if (j.kind === 'doc') startRead(j);   // 서류만 판독한다(현장사진은 읽을 것이 없다)
+      queueRead(j);   // 올린 것은 모두 스스로 판독한다 — 사람이 단추를 누를 일이 없게
       scheduled = true;
     }
   });
@@ -734,6 +741,70 @@ function onQueueChange(list) {
    판독이 실패해도 사진은 이미 안전하게 올라가 있다(판독은 덧붙이는 일이다). */
 const READ_LABEL = { card: '명함', bizreg: '사업자등록증', sme: '중소기업확인서',
   meeting: '회의·현장 사진', other: '서류로 보이지 않음' };
+
+/* ══════ 판독 대기열 ══════
+   올린 사진은 종류를 가리지 않고 **모두 스스로 판독한다** — 사람이 「글자 판독하기」를
+   누를 일이 없어야 한다(대표 지시). 명함인지 서류인지 회의사진인지는 AI가 가린다.
+
+   ⚠ 한꺼번에 던지면 안 된다. AI 무료 등급은 분당 부를 수 있는 횟수가 정해져 있어
+   여러 장을 동시에 던지면 전부 막힌다. **한 번에 하나씩** 차례로 부른다.
+   (여러 장을 올리면 예전에는 동시에 판독이 돌아 서로를 막았다) */
+const readQ = [];
+let readBusy = false;
+
+function queueRead(job) {
+  if (!job || job._queuedRead) return;
+  job._queuedRead = true;
+  readQ.push(job);
+  renderUp();
+  pumpRead();
+}
+
+/* 이미 올라가 있는데 아직 판독 안 한 사진도 스스로 읽는다.
+   ⚠ 한 번 열 때 상한을 둔다 — 사진이 수백 장이면 AI 하루 한도를 하루아침에
+   써 버린다. 남은 것은 다음에 열 때 이어서 하고, **몇 장 남았는지 알려 준다**
+   (조용히 안 하면 "왜 저건 판독이 안 됐지"가 된다). */
+const AUTO_READ_MAX = 20;
+
+function autoReadPending() {
+  if (viewingOther()) return;               // 남의 사진은 손대지 않는다
+  const todo = gridItems.filter(function (it) { return !it.meta.read; });
+  if (!todo.length) { $('autoNote').style.display = 'none'; return; }
+  const take = todo.slice(0, AUTO_READ_MAX);
+  take.forEach(function (it) { queuePhotoRead(it.id); });
+  const rest = todo.length - take.length;
+  const el = $('autoNote');
+  el.style.display = 'block';
+  el.textContent = rest
+    ? '판독 중… ' + take.length + '장 (남은 ' + rest + '장은 다음에 열 때)'
+    : '판독 중… ' + take.length + '장';
+}
+
+/* 격자에 있는 사진 한 장을 판독 대기열에 넣는다(올리는 중이 아닌 것). */
+function queuePhotoRead(id) {
+  readQ.push({ _photoId: id });
+  pumpRead();
+}
+
+function pumpRead() {
+  if (readBusy || !readQ.length) return;
+  readBusy = true;
+  const job = readQ.shift();
+  /* 두 종류가 들어온다 — 방금 올린 것(본문을 손에 들고 있다)과
+     이미 올라가 있는 것(본문을 받아 와야 한다). */
+  const work = job._photoId ? readPhoto(job._photoId) : startRead(job);
+  work.catch(function (e) { console.warn('[판독]', e); }).then(function () {
+    readBusy = false;
+    if (job) job._queuedRead = false;
+    renderUp();
+    if (!readQ.length) {
+      $('autoNote').style.display = 'none';
+      renderGridBar();
+      renderGrid();
+    }
+    pumpRead();
+  });
+}
 
 /* 딱지 문구. **판독 실패와 "정말 서류가 아닌 것"은 다른 일이다.**
    실사용 보고(2026-08-03): 사업자등록증이 맞는데 AI가 답을 못 준 것을
@@ -749,7 +820,7 @@ function startRead(job) {
   const year = PuPhotoStore.yearOf(job.takenAt);
   job._reading = true;
   renderUp();
-  PuDocRead.read(job.full).then(function (r) {
+  return PuDocRead.read(job.full).then(function (r) {
     const v = PuDocRead.autoOk(r);
     const read = {
       kind: r.kind, fields: r.fields, bizNoOk: r.bizNoOk,
@@ -845,7 +916,10 @@ function readLine(read) {
 
 function renderUp() {
   const now = Date.now();
-  const rows = upJobs.filter(j => j.state !== 'done' || !j._hideAt || j._hideAt > now);
+  /* 판독을 기다리거나 판독 중인 줄은 사라지지 않는다 — 진행이 안 보이면
+     멈춘 줄 안다(올릴 때는 3초 뒤 사라지지만 판독은 더 걸릴 수 있다). */
+  const rows = upJobs.filter(j =>
+    j._queuedRead || j._reading || j.state !== 'done' || !j._hideAt || j._hideAt > now);
   $('upWrap').style.display = rows.length ? 'block' : 'none';
   $('upList').innerHTML = rows.map(j => {
     /* 원인(클라우드가 준 오류문)은 진단에 필요하니 재시도·막힘 줄에 함께 보여준다.
@@ -856,6 +930,7 @@ function renderUp() {
     /* 서류는 올라간 뒤 스스로 판독한다 — 그 진행과 결과를 같은 줄 아래에 붙인다. */
     let rd = '';
     if (j._reading) rd = '<span class="rd">판독 중…</span>';
+    else if (j._queuedRead) rd = '<span class="rd">판독 차례 기다리는 중…</span>';
     else if (j._read) {
       const filed = j._read.filed && j._read.filed.id ? ' → 명함첩' : '';
       rd = '<span class="rd ' + (j._read.auto ? 'ok' : 'warn') + '">' +
@@ -892,6 +967,7 @@ function loadGrid() {
     gridItems.sort((a, b) => (b.meta.takenAt || 0) - (a.meta.takenAt || 0));
     renderGrid();
     fillThumbs();
+    autoReadPending();
   }).catch(function (e) { console.warn('[목록]', e); });
 }
 

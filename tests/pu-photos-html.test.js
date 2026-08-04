@@ -513,11 +513,37 @@ test('파일 이름 등 바깥 문자열은 이스케이프해서 화면에 넣�
 
 /* ── 서류 판독 ── */
 
-test('서류 판독 층을 불러오고, 판독은 서류에만 돌린다', () => {
+test('올린 사진은 종류를 가리지 않고 스스로 판독한다', () => {
+  // 대표 지시 — 「글자 판독하기」를 누를 일이 없어야 한다.
+  // 명함인지 서류인지 회의사진인지는 AI 가 가린다.
   assert.match(app, /<script src="js\/pu-doc-read\.js"><\/script>/);
   assert.match(app, /PuDocRead\.read\(/);
-  // 현장사진에는 읽을 것이 없다 — 전부 판독하면 AI 호출이 헛돈다
-  assert.match(app, /j\.kind === 'doc'.*startRead|kind === 'doc'\)\s*startRead/);
+  assert.match(app, /queueRead\(j\)/);
+  assert.ok(!/j\.kind === 'doc'\)\s*startRead/.test(app), '아직 서류만 판독합니다');
+});
+
+test('판독은 한 번에 하나씩 — 한꺼번에 던지지 않는다', () => {
+  // AI 무료 등급은 분당 횟수가 정해져 있어 여러 장을 동시에 던지면 전부 막힌다.
+  assert.match(app, /function pumpRead\(/);
+  const fn = bodyAfter('function pumpRead(', 900);
+  assert.match(fn, /if \(readBusy/, '동시에 여러 장이 돌 수 있습니다');
+  assert.ok(!/Promise\.all/.test(fn), '동시에 던지고 있습니다');
+});
+
+test('이미 올라간 사진도 스스로 판독하되 상한을 두고 알린다', () => {
+  assert.match(app, /function autoReadPending\(/);
+  assert.match(app, /AUTO_READ_MAX/);
+  // 상한에 걸려 남은 것을 조용히 버리지 않는다
+  const fn = app.match(/function autoReadPending\([\s\S]*?\n\}/);
+  assert.match(fn[0], /남은 .*장은 다음에 열 때/);
+  // 남의 사진은 손대지 않는다
+  assert.match(fn[0], /viewingOther\(\)/);
+});
+
+test('판독을 기다리는 줄은 사라지지 않는다', () => {
+  // 진행이 안 보이면 멈춘 줄 안다(올리기는 3초 뒤 사라진다).
+  assert.match(app, /_queuedRead \|\| j\._reading \|\| j\.state !== 'done'/);
+  assert.match(app, /판독 차례 기다리는 중/);
 });
 
 test('AI 키를 화면이 직접 찾지 않는다 — 판독 층이 안다', () => {
