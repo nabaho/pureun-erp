@@ -13,15 +13,22 @@ test('개인 포털 설정은 UID 소유자만 읽고 쓴다', () => {
 });
 
 test('건의 수정과 답변은 관리자만 가능하고 신규 작성자는 UID를 남긴다', () => {
-  const write = rules.data.suggestions.$id['.write'];
+  assert.match(rules.suggestions_private['.read'], /isAdmin/);
+  assert.match(rules.suggestions_meta_private['.read'], /isAdmin/);
+  const write = rules.suggestions_private.$id['.write'];
   assert.match(write, /isAdmin/);
   assert.match(write, /!data\.exists\(\)/);
   assert.match(write, /authorUid/);
   assert.match(write, /auth\.uid/);
 });
 
+test('구 이메일 기반 해결 알림도 관리자만 읽는다', () => {
+  assert.match(rules.data.sg_resolved['.write'], /isAdmin/);
+  assert.match(rules.data.suggestions['.write'], /isAdmin/);
+});
+
 test('해결 알림은 대상 UID와 관리자만 접근한다', () => {
-  const node = rules.data.sg_resolved_uid.$uid;
+  const node = rules.suggestions_resolved_private.$uid;
   assert.match(node['.read'], /auth\.uid === \$uid/);
   assert.match(node['.read'], /isAdmin/);
   assert.match(node['.write'], /auth\.uid === \$uid/);

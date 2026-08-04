@@ -53,14 +53,15 @@ test('건의 렌더링에 검증되지 않은 분류값이나 document.write를 
 
 test('개인 설정과 해결 알림은 Firebase UID 경로를 사용한다', () => {
   assert.match(source, /data\/portal_prefs_uid\//);
-  assert.match(source, /data\/sg_resolved_uid\//);
+  assert.match(source, /suggestions_resolved_private/);
   assert.match(source, /authorUid:\s*SG\.uid/);
   assert.match(source, /SG\.uid\s*=\s*\(auth\.currentUser/);
 });
 
 test('기존 이메일 경로 데이터는 UID 경로로 이전할 수 있다', () => {
   assert.match(source, /function tilePrefLegacyPath\(/);
-  assert.match(source, /function sgResolvedLegacyPath\(/);
+  assert.match(source, /function sgEnsurePrivateMigration\(/);
+  assert.match(source, /data\/sg_resolved/);
   assert.match(source, /function sgLoadOwnResolved\(/);
   assert.match(source, /sgFindAuthorUid\(s\)/);
 });
