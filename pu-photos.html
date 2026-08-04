@@ -66,6 +66,7 @@ button{font-family:inherit;cursor:pointer}
 #home .sec.doc{border-color:#b6c6ee}
 #home .sec .hq{font-size:12px;font-weight:600;color:var(--sub)}
 #home .dochint{margin:5px 2px 0;font-size:11.5px;line-height:1.5;color:#8a94a6}
+#home .maxhint{margin:8px 2px 0;font-size:11.5px;color:var(--sub);font-weight:700}
 
 /* 끌어다 놓기 안내 — 폰에는 마우스가 없어 숨긴다(자리만 차지한다) */
 #dropHint{display:none;margin-top:12px;padding:10px;border:1px dashed #c3ccdb;border-radius:10px;text-align:center}
@@ -250,6 +251,7 @@ button{font-family:inherit;cursor:pointer}
     <button class="pri" id="pickBtn">📷 사진 고르기</button>
     <button class="sec doc" id="docBtn">📄 서류 고르기 <span class="hq">고화질 · PDF도 됩니다</span></button>
     <p class="dochint">명함 · 사업자등록증 · 중소기업확인서처럼 글씨를 읽어야 하는 것</p>
+    <p class="maxhint" id="maxHint"></p>
     <button class="sec" id="camBtn">카메라로 바로 찍기</button>
     <input type="file" id="pickInput" accept="image/*,application/pdf" multiple hidden>
     <input type="file" id="docInput" accept="image/*,application/pdf" multiple hidden>
@@ -403,6 +405,10 @@ PuDocRead.init(Object.assign(
 ));
 /* 명함첩으로 보내는 일은 등록 층이 안다 — 이 화면은 명함첩 구조를 모른다. */
 PuDocFile.init({ db: db });
+
+/* 상한 안내는 저장 층의 숫자를 그대로 보여 준다 — 화면에 숫자를 또 적으면
+   상한을 바꿀 때 한쪽만 고쳐져 안내와 실제가 어긋난다. */
+$('maxHint').textContent = '한 번에 ' + PuPhotoStore.UPLOAD_MAX + '장까지 올릴 수 있습니다';
 
 firebase.auth().onAuthStateChanged(u => {
   const signedIn = !!(u && u.email);
@@ -625,6 +631,15 @@ async function addFiles(fileList, isDoc) {
   }
   if (!files.length) return;
 
+  /* 한 번에 받을 장수를 지킨다. **버리지 않고 앞에서부터 받고, 남은 것을 알려 준다** —
+     조용히 자르면 "왜 몇 장이 안 올라갔지"가 되고 그게 증빙 누락으로 이어진다. */
+  const MAX = PuPhotoStore.UPLOAD_MAX;
+  let over = 0;
+  if (files.length > MAX) {
+    over = files.length - MAX;
+    files.length = MAX;
+  }
+
   const spec = PuPhotoStore.uploadSpec(isDoc); // 크기 기준은 저장 층이 정한다
   for (const f of files) {
     try {
@@ -658,6 +673,12 @@ async function addFiles(fileList, isDoc) {
       console.warn('[사진 준비]', e);
       alert('사진 하나를 읽지 못했습니다: ' + (f.name || '') + '\n' + ((e && e.message) || e));
     }
+  }
+
+  if (over) {
+    alert('한 번에 ' + MAX + '장까지 올릴 수 있습니다.\n앞 ' + MAX + '장을 올렸습니다 — ' +
+      '나머지 ' + over + '장은 다시 골라 주세요.\n\n' +
+      '한 번에 더 받으면 글자 판독이 줄줄이 막힙니다(AI가 분당 받는 수가 정해져 있습니다).');
   }
 }
 

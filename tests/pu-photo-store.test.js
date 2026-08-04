@@ -423,6 +423,14 @@ test('EXIF 날짜가 깨져 있으면 null', () => {
   assert.equal(S.exifTakenAt(makeExifJpeg('0000:00:00 00:00:00')), null);
 });
 
+test('한 번에 올릴 수 있는 장수 상한이 저장 층에 있다', () => {
+  // 화면마다 숫자를 박으면 폰·PC·다른 앱이 서로 다른 상한을 갖게 된다.
+  const S = loadStore();
+  assert.equal(typeof S.UPLOAD_MAX, 'number');
+  assert.ok(S.UPLOAD_MAX >= 10 && S.UPLOAD_MAX <= 100,
+    '상한이 현실적이지 않습니다: ' + S.UPLOAD_MAX);
+});
+
 /* ── 서류 고화질 ── */
 
 test('올릴 크기 — 서류는 2560px 고품질, 일반 사진은 1600px', () => {

@@ -70,6 +70,14 @@
      일반 현장사진과 기준이 다르다(2026-08-03 대표 지시). 서류는 2560px·고품질,
      사진은 1600px. 격자용 미리보기는 종류와 무관하게 240px로 같다.
      크기 판단을 화면이 아니라 여기 두는 이유: 폰·PC·당겨오기 창이 같은 값을 써야 한다. */
+  /* ── 한 번에 올릴 수 있는 장수 ──
+     30장으로 잡은 근거는 **판독 속도**다. AI 무료 등급은 분당 10회까지 부를 수 있고
+     한 장씩 차례로 부르므로 30장이면 판독이 3분쯤 걸린다. 그보다 많이 받으면
+     판독이 줄줄이 막히고 '확인 필요'만 쌓인다(사람이 할 일이 늘어난다).
+     용량도 같이 본다 — 서류는 장당 1MB 가까이라 30장이면 30MB다.
+     화면마다 숫자를 박으면 폰·PC가 서로 다른 상한을 갖게 되므로 여기 한 곳에 둔다. */
+  var UPLOAD_MAX = 30;
+
   function uploadSpec(isDoc) {
     return isDoc
       ? { maxEdge: 2560, quality: 0.92, thumbEdge: 240 }
@@ -701,6 +709,7 @@
     filePath: filePath,
     pickTakenAt: pickTakenAt,
     uploadSpec: uploadSpec,
+    UPLOAD_MAX: UPLOAD_MAX,
     exifTakenAt: exifTakenAt,
     newId: newId,
     savePhoto: savePhoto,
