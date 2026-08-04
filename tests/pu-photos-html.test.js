@@ -358,6 +358,21 @@ test('여러 장 판독 중 한 장이 실패해도 나머지를 계속한다', 
 
 /* ── 2단 화면 · 사진 지우기 ── */
 
+test('폰에서는 대시보드를 줄인다 — 사진이 화면 밖으로 밀리지 않게', () => {
+  // 폰에서 버튼·안내가 위아래로 길게 쌓이면 사진을 보려고 스크롤해야 한다.
+  assert.match(app, /@media \(max-width:899px\)/);
+  const m = app.match(/@media \(max-width:899px\)\{([\s\S]*?)\n\}/);
+  assert.ok(m, '폰 규칙을 찾을 수 없습니다');
+  // 서류·카메라를 나란히
+  assert.match(m[1], /\.row2\{display:grid;grid-template-columns:1fr 1fr/);
+  // 긴 안내를 짧은 것으로 갈아 끼운다
+  assert.match(m[1], /\.dochint\{display:none\}/);
+  assert.match(m[1], /\.dochint\.s\{display:block/);
+  // PC 기본값은 종전대로(넓은 화면은 줄일 이유가 없다)
+  assert.match(app, /#home \.row2\{display:block\}/);
+  assert.match(app, /\.narrow-only\{display:none\}/);
+});
+
 test('넓은 화면은 왼쪽 대시보드 + 오른쪽 격자로 나뉜다', () => {
   assert.match(app, /<aside id="side">/);
   assert.match(app, /<main id="main">/);
