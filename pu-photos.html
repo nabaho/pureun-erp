@@ -159,6 +159,7 @@ button{font-family:inherit;cursor:pointer}
 #delLog th,#delLog td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
 #delLog th{color:var(--sub);font-size:11.5px;font-weight:700}
 #delLog .gone{color:#b91c1c;font-weight:700}
+#delLog .why{display:block;color:var(--sub);font-size:11px;font-weight:400;margin-top:2px}
 #delLog .tnote{font-size:12.5px;color:var(--sub);padding:10px 0}
 
 /* 본문 화면 머리 (휴지통·설정) */
@@ -198,6 +199,14 @@ button{font-family:inherit;cursor:pointer}
 #needBox{width:100%;margin-top:12px;border:1px solid #f0c98a;background:#fff8ec;color:#92400e;border-radius:10px;padding:10px;font-size:12.5px;font-weight:700;text-align:left}
 #needBox.on{border-color:#b6c6ee;background:#eef2fd;color:var(--blue)}
 #gridBar button:disabled{opacity:.45}
+
+/* 겹치는 서류를 스스로 치웠다는 알림 — 그 자리에서 되살릴 수 있다 */
+#dupBox{margin-bottom:10px;border:1px solid #f0c98a;background:#fff8ec;border-radius:10px;padding:9px 11px;font-size:12.5px;color:#92400e}
+#dupBox .dh{display:flex;align-items:center;gap:8px;font-weight:800;margin-bottom:4px}
+#dupBox .dh .x{margin-left:auto;border:1px solid #e2c79b;background:#fff;color:#92400e;border-radius:7px;padding:2px 8px;font-size:11.5px}
+#dupBox .dr{display:flex;align-items:center;gap:8px;padding:3px 0}
+#dupBox .dr button{margin-left:auto;border:1px solid #b6c6ee;background:#fff;color:var(--blue);border-radius:7px;padding:2px 9px;font-size:11.5px;font-weight:700}
+#dupBox .dr b{margin-left:auto;color:var(--blue);font-size:11.5px}
 
 #grid{margin-top:0}
 #grid .day{display:flex;align-items:baseline;gap:8px;margin:14px 0 8px}
@@ -334,6 +343,9 @@ button{font-family:inherit;cursor:pointer}
      </div>
 
      <div id="viewPhotos">
+      <!-- 겹치는 서류를 스스로 치웠을 때 — 말없이 치우지 않는다 -->
+      <div id="dupBox" style="display:none"></div>
+
       <!-- 고른 것에 쓰는 단추는 왼쪽 끝에 둔다(대표 지시) -->
       <div id="gridBar">
         <button id="dlBtn" onclick="downloadSelected()" style="display:none">⬇ 내려받기</button>
@@ -936,17 +948,88 @@ function sendCards(id, year, job) {
       byName: PuPhotoStore.myName() || (u && u.email) || ''
     });
   }).then(function (res) {
-    read.filed = { id: res.id, at: Date.now(), created: res.created, message: res.message };
+    read.filed = {
+      id: res.id, at: Date.now(), created: res.created, message: res.message,
+      dup: !!res.dup, dupAt: res.dupAt || 0
+    };
     if (it) it.meta = Object.assign({}, it.meta, { read: read });
     if (job) job._read = read;
     if (viewerId === id) renderReadPanel(it);
     renderUp();
-    return PuPhotoStore.saveRead(year, id, read);
+    /* 기록을 먼저 남기고 나서 치운다 — 순서가 바뀌면 휴지통에 담긴 사본에
+       '명함첩 어디로 갔는지'가 빠져 되살려도 고리가 끊긴다. */
+    return PuPhotoStore.saveRead(year, id, read).then(function () {
+      if (res.redundant) return dropRedundant(id, year, res);
+    });
   }).catch(function (e) {
     console.warn('[명함첩 보내기]', e);
     read.filedError = (e && e.message) || String(e);
     if (viewerId === id) renderReadPanel(it);
     renderUp();
+  });
+}
+
+/* ══════ 중복 서류 스스로 치우기 ══════
+   같은 명함·사업자등록증이 이미 명함첩에 있고, 이 사진이 더한 것이 하나도
+   없을 때만 치운다(대표 지시: "특별히 내용이 없으면 자동 삭제").
+
+   ⚠ 지키는 것 세 가지
+   1. **휴지통으로** 보낸다 — 30일 안에 되살릴 수 있다. 스스로 하는 일은
+      사람이 되돌릴 수 있어야 한다.
+   2. **왜 치웠는지 남긴다** — 지운 기록에 '중복'이 적힌다. 안 적으면
+      "내 사진이 왜 없어졌지"에 아무도 답할 수 없다.
+   3. **말없이 하지 않는다** — 언제 저장된 것과 겹쳤는지 화면에 남기고,
+      그 자리에서 되살릴 수 있게 한다. */
+let dupNotes = [];
+
+function dropRedundant(id, year, res) {
+  const why = '중복 — ' + (res.dupAt ? PuDocFile.whenText(res.dupAt) + '에 ' : '') +
+    '명함첩에 이미 있었음';
+  return PuPhotoStore.deletePhoto(year, id, why).then(function () {
+    gridItems = gridItems.filter(function (x) { return x.id !== id; });
+    if (viewerId === id) closeViewer();
+    dupNotes.push({ id: id, year: year, at: res.dupAt || 0, who: res.dupWho || '', back: false });
+    renderDupBox();
+    renderGridBar();
+    renderGrid();
+    refreshTrashCount();
+  }).catch(function (e) {
+    /* 못 치웠으면 그냥 둔다 — 사진이 남는 것이 사라지는 것보다 낫다. */
+    console.warn('[중복 치우기]', id, e);
+  });
+}
+
+function renderDupBox() {
+  const el = $('dupBox');
+  if (!dupNotes.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = 'block';
+  el.innerHTML =
+    '<div class="dh">겹치는 서류 ' + dupNotes.length + '장을 휴지통으로 보냈습니다' +
+    '<button class="x" onclick="closeDupBox()">닫기</button></div>' +
+    dupNotes.map(function (d, i) {
+      const when = d.at ? PuDocFile.whenText(d.at) + '에 저장된 것' : '먼저 저장된 것';
+      return '<div class="dr">' +
+        '<span>' + esc(when) + (d.who ? ' (' + esc(d.who) + ')' : '') + '과 같아서 치웠습니다</span>' +
+        (d.back
+          ? '<b>되살렸습니다</b>'
+          : '<button onclick="undoDup(' + i + ')">되살리기</button>') +
+        '</div>';
+    }).join('');
+}
+
+function closeDupBox() { dupNotes = []; renderDupBox(); }
+
+/* 「되살리기」 — 자동 판단이 틀렸을 때 사람이 곧바로 되돌린다. */
+function undoDup(i) {
+  const d = dupNotes[i];
+  if (!d || d.back) return;
+  PuPhotoStore.restorePhoto(d.year, d.id).then(function () {
+    d.back = true;
+    renderDupBox();
+    refreshTrashCount();
+    loadGrid();
+  }).catch(function (e) {
+    alert('되살리지 못했습니다: ' + ((e && e.message) || e));
   });
 }
 
@@ -1299,8 +1382,9 @@ function downloadSelected() {
 }
 
 /* ══════ 고르기 · 지우기 ══════
-   지우기는 되돌릴 수 없으므로 ① 반드시 확인을 받고 ② 명함첩에 보낸 것은
-   그 기록이 남는다는 사실을 함께 알린다(사진첩 사진과 명함첩 레코드는 다른 물건). */
+   ① 반드시 확인을 받고 ② 휴지통에서 며칠 되살릴 수 있는지 사실대로 알리고
+   ③ 명함첩에 보낸 것은 그 기록이 남는다는 사실을 함께 알린다
+   (사진첩 사진과 명함첩 레코드는 다른 물건이다). */
 let needOnly = false;          // 「확인 필요」만 걸러 보는 중인가
 const selected = new Set();
 
@@ -1381,7 +1465,10 @@ function deleteSelected() {
     const it = gridItems.find(function (x) { return x.id === id; });
     return it && it.meta.read && it.meta.read.filed && it.meta.read.filed.id;
   }).length;
-  let msg = '사진 ' + ids.length + '장을 지웁니다. 되돌릴 수 없습니다.';
+  /* 휴지통이 생긴 뒤로 옛 경고 문구는 사실과 달라졌다 — 며칠 되살릴 수
+     있는지 사실대로 알려 준다(겁먹어 못 지우는 것도 손해다). */
+  let msg = '사진 ' + ids.length + '장을 휴지통으로 보냅니다.\n' +
+    PuPhotoStore.TRASH_DAYS + '일 안에는 휴지통에서 되살릴 수 있습니다.';
   if (filedN) msg += '\n\n이 중 ' + filedN + '장은 명함첩에 보낸 것입니다. 명함첩 기록은 그대로 남습니다.';
   if (!confirm(msg)) return;
   $('delBtn').disabled = true;
@@ -1419,7 +1506,8 @@ function deleteOne() {
   if (!id) return;
   const it = gridItems.find(function (x) { return x.id === id; });
   const filed = it && it.meta.read && it.meta.read.filed && it.meta.read.filed.id;
-  let msg = '이 사진을 지웁니다. 되돌릴 수 없습니다.';
+  let msg = '이 사진을 휴지통으로 보냅니다.\n' +
+    PuPhotoStore.TRASH_DAYS + '일 안에는 휴지통에서 되살릴 수 있습니다.';
   if (filed) msg += '\n\n명함첩에 보낸 사진입니다. 명함첩 기록은 그대로 남습니다.';
   if (!confirm(msg)) return;
   PuPhotoStore.deletePhoto(gridYear, id).then(function () {
@@ -1751,7 +1839,10 @@ function loadDelLog() {
     if (!list.length) { $('delLog').innerHTML = '<p class="tnote">지운 기록이 없습니다.</p>'; return; }
     $('delLog').innerHTML = '<table><tr><th>무엇</th><th>지운 때</th><th>지운 사람</th><th>상태</th></tr>' +
       list.map(function (r) {
-        return '<tr><td>' + esc(r.what || '사진') + '</td>' +
+        /* 왜 지웠는지가 있으면 함께 보여준다 — 스스로 치운 것(중복)은
+           지운 사람만으로는 설명이 되지 않는다. */
+        return '<tr><td>' + esc(r.what || '사진') +
+          (r.why ? '<span class="why">' + esc(r.why) + '</span>' : '') + '</td>' +
           '<td>' + esc(whenText(r.delAt)) + '</td>' +
           '<td>' + esc(r.byName || '') + '</td>' +
           '<td>' + (r.purgedAt

@@ -260,7 +260,10 @@
     return who ? (base2 + ' · ' + who) : base2;
   }
 
-  function deletePhoto(year, id) {
+  /* why: 왜 지웠는지 한 줄(없으면 사람이 지운 것이다).
+     스스로 지우는 경우(중복 등)에 이것이 없으면 기록만 보고는
+     '누가 왜 지웠는지' 알 수 없어 지운 기록이 반쪽이 된다. */
+  function deletePhoto(year, id, why) {
     if (!year || !id) return Promise.reject(new Error('지울 사진을 알 수 없습니다'));
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     /* 새 자리와 옛 자리 어디에 있든 찾아 담는다. */
@@ -283,7 +286,8 @@
          '무엇을 언제 누가 지웠는지'에 답할 수 있어야 한다(증빙 자료를 다루는 앱이다). */
       u[logPath(id)] = {
         year: year, what: whatOf(meta), delAt: now,
-        by: deps.uid || '', byName: deps.name || ''
+        by: deps.uid || '', byName: deps.name || '',
+        why: why || ''
       };
       u[metaPath(year, id)] = null;
       u[blobPath(year, id)] = null;

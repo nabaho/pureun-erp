@@ -47,6 +47,8 @@ const BIZ = {
   company: '가나상사', ceo: '홍길동', bizno: '220-81-62517', corpno: '160111-0371859',
   openDate: '2014-05-07', bizType: '제조업', bizItem: '금속가공', address: '천안시'
 };
+/* 이미 모든 칸이 찬 명함첩 레코드 — 채울 것이 없는 '진짜 중복'을 만들 때 쓴다. */
+const FULL_BIZ = Object.assign({}, BIZ);
 
 test('등록 층이 window에 붙는다', () => {
   assert.ok(loadFile(), 'window.PuDocFile 이 없습니다');
@@ -209,7 +211,7 @@ test('이미 있으면 새로 만들지 않고 빈 칸만 채운다', async () =
   const F = loadFile();
   const db = fakeDb({
     'pucards/idx': { b1: { c: '가나상사', bz: '220-81-62517', k: 'biz' } },
-    'pucards/items/b1': { id: 'b1', kind: 'biz', company: '가나상사', bizno: '220-81-62517', ceo: '' }
+    'pucards/items/b1': { id: 'b1', kind: 'biz', company: '가나상사', bizno: '220-81-62517', ceo: '', thumb: 'OLD' }
   });
   F.init({ db });
   const r = await F.sendToCards({ kind: 'bizreg', fields: BIZ, full: 'F', thumb: 'T', photoId: 'p2' });
@@ -223,21 +225,90 @@ test('이미 있으면 새로 만들지 않고 빈 칸만 채운다', async () =
   }
   assert.ok(!Object.keys(u).some(k => /^pucards\/photos\//.test(k)),
     '이미 있는 명함의 사진을 덮어씁니다');
+  assert.ok(!Object.keys(u).some(k => /\/thumb$/.test(k)),
+    '이미 있는 미리보기를 덮어씁니다');
+});
+
+/* 중복이라도 '사진이 없던 명함'에 들어온 사진은 더한 것이 있다.
+   이 판단이 없으면 글자만 있던 명함에 온 사진을 쓸모없다고 치워 버린다. */
+test('사진이 없던 명함이면 이 사진이 첫 사진이 된다', async () => {
+  const F = loadFile();
+  const db = fakeDb({
+    'pucards/idx': { b1: { c: '가나상사', bz: '220-81-62517', k: 'biz' } },
+    'pucards/items/b1': Object.assign({ id: 'b1', kind: 'biz' }, FULL_BIZ)
+  });
+  F.init({ db });
+  const r = await F.sendToCards({ kind: 'bizreg', fields: BIZ, full: 'F', thumb: 'T', photoId: 'p2' });
+  assert.equal(r.redundant, false, '사진을 더했는데 쓸모없다고 봤습니다');
+  assert.ok(r.filled.indexOf('사진') >= 0, JSON.stringify(r.filled));
+  const u = db.calls.update[0].u;
+  assert.equal(u['pucards/items/b1/thumb'], 'T');
+  assert.equal(u['pucards/photos/b1'], 'F');
+  assert.equal(u['pucards/items/b1/photoId'], 'p2', '사진첩 사진과 잇는 고리가 없습니다');
 });
 
 test('이미 있고 채울 것도 없으면 아무것도 쓰지 않는다', async () => {
   const F = loadFile();
   const db = fakeDb({
     'pucards/idx': { b1: { c: '가나상사', bz: '220-81-62517', k: 'biz' } },
-    'pucards/items/b1': Object.assign({ id: 'b1', kind: 'biz' }, {
-      company: '가나상사', ceo: '홍길동', bizno: '220-81-62517', corpno: '160111-0371859',
-      openDate: '2014-05-07', bizType: '제조업', bizItem: '금속가공', address: '천안시' })
+    'pucards/items/b1': Object.assign({ id: 'b1', kind: 'biz', thumb: 'OLD' }, FULL_BIZ)
   });
   F.init({ db });
   const r = await F.sendToCards({ kind: 'bizreg', fields: BIZ, full: 'F', thumb: 'T', photoId: 'p2' });
   assert.equal(r.created, false);
   assert.deepEqual([...r.filled], []);
   assert.equal(db.calls.update.length, 0, '바뀔 것이 없는데 저장했습니다');
+});
+
+/* ── 중복 알림 ──
+   '이미 있습니다'만으로는 어느 것이 원본인지, 왜 내 사진이 없어졌는지
+   알 수 없다. 언제 저장된 것과 겹쳤는지 반드시 함께 알려야 한다. */
+test('중복이면 언제 저장된 것과 겹쳤는지 알려준다', async () => {
+  const F = loadFile();
+  const when = new Date(2026, 6, 12, 14, 3).getTime();
+  const db = fakeDb({
+    'pucards/idx': { b1: { c: '가나상사', bz: '220-81-62517', k: 'biz' } },
+    'pucards/items/b1': Object.assign({ id: 'b1', kind: 'biz', thumb: 'OLD', createdAt: when }, FULL_BIZ)
+  });
+  F.init({ db });
+  const r = await F.sendToCards({ kind: 'bizreg', fields: BIZ, full: 'F', thumb: 'T', photoId: 'p2' });
+  assert.equal(r.dup, true);
+  assert.equal(r.dupAt, when);
+  assert.equal(r.redundant, true, '더한 것이 없는데 쓸모있다고 봤습니다');
+  assert.match(r.message, /2026-07-12 14:03/, '언제 겹친 것인지 없습니다: ' + r.message);
+  assert.match(r.message, /가나상사/, '무엇과 겹친 것인지 없습니다: ' + r.message);
+});
+
+test('빈 칸을 채운 중복도 중복이라고 알린다 — 다만 치울 대상은 아니다', async () => {
+  const F = loadFile();
+  const when = new Date(2026, 6, 12, 14, 3).getTime();
+  const db = fakeDb({
+    'pucards/idx': { b1: { c: '가나상사', bz: '220-81-62517', k: 'biz' } },
+    'pucards/items/b1': { id: 'b1', kind: 'biz', company: '가나상사', bizno: '220-81-62517', ceo: '', thumb: 'OLD', createdAt: when }
+  });
+  F.init({ db });
+  const r = await F.sendToCards({ kind: 'bizreg', fields: BIZ, full: 'F', thumb: 'T', photoId: 'p2' });
+  assert.equal(r.dup, true);
+  assert.equal(r.redundant, false);
+  assert.match(r.message, /2026-07-12/);
+});
+
+test('때가 없는 옛 명함이면 때 없이 알린다 — 1970년을 보여주지 않는다', async () => {
+  const F = loadFile();
+  const db = fakeDb({
+    'pucards/idx': { b1: { c: '가나상사', bz: '220-81-62517', k: 'biz' } },
+    'pucards/items/b1': Object.assign({ id: 'b1', kind: 'biz', thumb: 'OLD' }, FULL_BIZ)
+  });
+  F.init({ db });
+  const r = await F.sendToCards({ kind: 'bizreg', fields: BIZ, full: 'F', thumb: 'T', photoId: 'p2' });
+  assert.equal(r.dupAt, 0);
+  assert.ok(!/1970/.test(r.message), '때를 모르는데 1970년을 보여줍니다: ' + r.message);
+});
+
+test('whenText 는 밀리초를 사람 말로 바꾼다', () => {
+  const F = loadFile();
+  assert.equal(F.whenText(new Date(2026, 0, 5, 9, 7).getTime()), '2026-01-05 09:07');
+  assert.equal(F.whenText(0), '', '때를 모를 때 빈 값이어야 합니다');
 });
 
 test('실시간DB가 없으면 한국어로 거절한다', async () => {

@@ -716,6 +716,28 @@ test('지우면 기록이 함께 남는다', async () => {
   assert.match(log.what, /사업자등록증|가나상사/);
 });
 
+/* 스스로 치운 것(중복 등)은 '누가 지웠는지'만으로는 설명이 되지 않는다.
+   왜 지웠는지가 없으면 "내 사진이 왜 없어졌지"에 아무도 답할 수 없다. */
+test('왜 지웠는지도 기록에 남는다', async () => {
+  const S = loadStore();
+  const db = legacyDb({}, {}, {}, {
+    'puphotos/u/U1/items/2026/p1': { takenAt: 111, kind: 'doc' }
+  });
+  S.init({ uid: 'U1', db, name: '홍길동' });
+  await S.deletePhoto('2026', 'p1', '중복 — 명함첩에 이미 있었음');
+  assert.equal(db.calls.update[0].u['puphotos/u/U1/dellog/p1'].why, '중복 — 명함첩에 이미 있었음');
+});
+
+test('사람이 지운 것은 이유 칸이 비어 있다 — 없는 이유를 지어내지 않는다', async () => {
+  const S = loadStore();
+  const db = legacyDb({}, {}, {}, {
+    'puphotos/u/U1/items/2026/p1': { takenAt: 111 }
+  });
+  S.init({ uid: 'U1', db, name: '홍길동' });
+  await S.deletePhoto('2026', 'p1');
+  assert.equal(db.calls.update[0].u['puphotos/u/U1/dellog/p1'].why, '');
+});
+
 test('지운 기록은 휴지통을 완전히 비운 뒤에도 남는다', async () => {
   const S = loadStore();
   const db = legacyDb({}, {}, {});
