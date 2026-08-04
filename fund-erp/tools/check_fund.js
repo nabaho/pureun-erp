@@ -132,7 +132,19 @@ ok('한도 기준은 현금 출연금만', src.includes('if(x.nocash) return;   
   && src.includes("if(!amt&&(x.debit==='현금성자산'||x.debit==='정기예금')) amt=num(x.amount)||0;"));
 ok('사용한도 비율(공동 90/사내 50)', /function _reserveRate\(fid\)\{ return \(\(funds\[fid\]\|\|\{\}\)\.fund_type==='사내'\)\?0\.5:0\.9; \}/.test(src));
 ok('준비금2 설정 분개(기본재산 차변)', /if\(kind==='설정'\)/.test(src) && /debit:'기본재산', credit:acct/.test(src));
-ok('한도 초과분은 기본재산 사용으로 구분', /if\(kind==='기본재산사용'\)/.test(src));
+// 기본재산은 대부사업에만 쓸 수 있다 — 복지사업에는 사용한도를 넘겨 쓸 수 없으므로
+// 모자라는 만큼은 손실금으로 남아 다음 회계연도로 이월된다(근로복지공단 실무 6.2)
+ok('기본재산 초과 사용을 하지 않음', !/기본재산사용/.test(src)
+  && src.includes('r.deficit=Math.max(0,r.need-r.amount);'));
+ok('재원 부족을 확정 창에서 알림', src.includes('if(rc.deficit>0) msg+=')
+  && src.includes('기본재산은 대부사업에만 쓸 수 있어'));
+// 재무제표에 음수를 쓰지 않는다 — 손실은 '이월결손금'으로 이름을 바꿔 양수로 적는다
+ok('결손금 표시 헬퍼', src.includes('function _retLabel') && src.includes('function _retVal')
+  && src.includes("return (num(v)||0)<0?'이월결손금':'이월잉여금';"));
+ok('재무상태표·결산서·별지·전기대비에 결손금 적용',
+  (src.match(/_retLabel\(/g)||[]).length>=4 && (src.match(/_retVal\(/g)||[]).length>=5);
+ok('음수 항목 검사와 경고', src.includes('function finNegatives')
+  && src.includes('⚠️ 음수 항목 ') && src.includes('⚠️ 재무제표에 음수 항목이 있습니다'));
 // 실무 결산서는 사용한도 전액을 설정하고 쓰지 않은 잔액을 준비금2로 남긴다
 // (가치를만들어가는사람들 2024·일원공동 2024 모두 출연금 × 90% 전액)
 // 법은 한도를 '범위'로 정한다 — 그 안에서 얼마를 설정할지는 협의회 결정 사항이다
@@ -141,7 +153,7 @@ ok('한도 초과분은 기본재산 사용으로 구분', /if\(kind==='기본�
 // (안전공사공동 2022: 전입 3,249원인 해에 설정 63,003,960원. 환입 분기에만 두면 기본재산이 6,300만원 어긋난다)
 ok('설정은 순이익 방향과 무관', src.includes('var want=r.setupManual?_man:Math.max(0,cap);')
   && src.includes('if(want>0){ r.setup=want;')
-  && src.includes('r.overBasic=r.need-avail;'));
+  && src.includes('if(want>0){ r.setup=want;'));
 ok('설정액은 협의회 지정값 우선, 비우면 한도 전액',
   src.includes('var want=r.setupManual?_man:Math.max(0,cap);')
   && src.includes("var _man=num(((funds[fid]||{}).years||{})[yr]&&((funds[fid]||{}).years||{})[yr].reserve_setup);")
