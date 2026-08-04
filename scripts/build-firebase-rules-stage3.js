@@ -31,10 +31,10 @@ rules.data.portal_prefs_uid = {
   },
 };
 
-// 건의 원문: 로그인 사용자는 읽을 수 있고, 작성자는 신규 등록만 가능하다.
-// 이후 상태·답변·삭제는 관리자만 가능하다.
-rules.data.suggestions = {
-  '.read': signedIn,
+// 건의 원문: 관리자만 읽을 수 있고, 로그인 사용자는 자기 UID로 신규 등록만 가능하다.
+// 이후 상태·답변·삭제도 관리자만 가능하다.
+rules.suggestions_private = {
+  '.read': `${signedIn} && ${isAdmin}`,
   '.indexOn': ['createdAt'],
   '$id': {
     '.write':
@@ -64,9 +64,9 @@ rules.data.suggestions = {
   },
 };
 
-// 건의 목록용 경량 메타도 원문과 같은 작성·관리 경계를 적용한다.
-rules.data.sg_meta = {
-  '.read': signedIn,
+// 건의 목록용 경량 메타도 관리자만 읽고, 작성자는 자기 건의의 신규 메타만 등록한다.
+rules.suggestions_meta_private = {
+  '.read': `${signedIn} && ${isAdmin}`,
   '$id': {
     '.write':
       `${signedIn} && (` +
@@ -86,7 +86,7 @@ rules.data.sg_meta = {
 };
 
 // 해결 알림: 대상 사용자와 관리자만 접근.
-rules.data.sg_resolved_uid = {
+rules.suggestions_resolved_private = {
   '$uid': {
     '.read': `auth != null && (auth.uid === $uid || ${isAdmin})`,
     '.write': `auth != null && (auth.uid === $uid || ${isAdmin})`,
@@ -99,9 +99,20 @@ rules.data.portal_prefs = {
   '.read': signedIn,
   '.write': signedIn,
 };
+// 이전 경로는 관리자 마이그레이션/삭제만 허용한다. /data 상위 읽기 권한이
+// 적용되는 구조이므로 실제 비공개 자료는 위의 최상위 전용 경로에만 보관한다.
+rules.data.suggestions = {
+  '.write': `${signedIn} && ${isAdmin}`,
+};
+rules.data.sg_meta = {
+  '.write': `${signedIn} && ${isAdmin}`,
+};
+rules.data.sg_resolved_uid = {
+  '.write': `${signedIn} && ${isAdmin}`,
+};
 rules.data.sg_resolved = {
-  '.read': signedIn,
-  '.write': signedIn,
+  '.read': `${signedIn} && ${isAdmin}`,
+  '.write': `${signedIn} && ${isAdmin}`,
 };
 
 // 공통 장애 수집: 사용자는 자기 UID 아래에 신규 알림만 등록하고,

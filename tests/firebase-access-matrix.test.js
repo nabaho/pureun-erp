@@ -73,7 +73,7 @@ test('역할표: 포털 개인 설정은 본인만 허용한다', () => {
 });
 
 test('역할표: 일반 직원은 본인 UID로 건의를 새로 등록할 수 있다', () => {
-  const rule = rules.data.suggestions.$id['.write'];
+  const rule = rules.suggestions_private.$id['.write'];
   const ownSuggestion = { authorUid: 'staffUid', status: 'new' };
   const forgedSuggestion = { authorUid: 'otherUid', status: 'new' };
 
@@ -87,8 +87,16 @@ test('역할표: 일반 직원은 본인 UID로 건의를 새로 등록할 수 �
   );
 });
 
+test('역할표: 건의 원문과 목록은 관리자만 읽는다', () => {
+  for (const rule of [rules.suggestions_private['.read'], rules.suggestions_meta_private['.read']]) {
+    assert.equal(evaluate(rule, { auth: auth('adminUid') }), true);
+    assert.equal(evaluate(rule, { auth: auth('staffUid') }), false);
+  }
+  assert.equal(evaluate(rules.suggestions_resolved_private.$uid['.read'], { auth: auth('otherUid'), $uid: 'staffUid' }), false);
+});
+
 test('역할표: 일반 직원은 기존 건의를 수정하지 못하고 관리자만 수정한다', () => {
-  const rule = rules.data.suggestions.$id['.write'];
+  const rule = rules.suggestions_private.$id['.write'];
   const before = { authorUid: 'staffUid', status: 'new' };
   const after = { authorUid: 'staffUid', status: 'done' };
 
@@ -103,7 +111,7 @@ test('역할표: 일반 직원은 기존 건의를 수정하지 못하고 관리
 });
 
 test('역할표: 해결 알림은 대상자와 관리자만 접근한다', () => {
-  const rule = rules.data.sg_resolved_uid.$uid['.read'];
+  const rule = rules.suggestions_resolved_private.$uid['.read'];
   assert.equal(evaluate(rule, { auth: auth('staffUid'), $uid: 'staffUid' }), true);
   assert.equal(evaluate(rule, { auth: auth('adminUid'), $uid: 'staffUid' }), true);
   assert.equal(evaluate(rule, { auth: auth('otherUid'), $uid: 'staffUid' }), false);
