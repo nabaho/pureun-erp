@@ -379,7 +379,8 @@ var MENUS = [
     { id:'fin/pnl',     icon:'📈', text:'손익계산서' },
     { id:'fin/invoice', icon:'🧾', text:'세금계산서' },
     { id:'fin/recv',    icon:'⏳', text:'미수금관리' },
-    { id:'fin/vat',     icon:'📑', text:'예상부가세' }
+    { id:'fin/vat',     icon:'📑', text:'예상부가세' },
+    { id:'fin/close',   icon:'🔐', text:'월말 마감' }
   ]},
   { gid:'env', name:'환경설정', icon:'⚙️', items:[
     { id:'env/settings', icon:'🔧', text:'환경설정' }
@@ -1630,7 +1631,8 @@ var FB_ALL_SYNC_KEYS = [
   'min_wage','insurance_rates','withholding_brackets','holidays',
   'expense_budget','app_settings',
   'locked_payroll_months','locked_expense_months','locked_income_months',
-  'locked_contract_months','locked_irregular_months',
+  'locked_contract_months','locked_irregular_months','locked_attend_months',
+  'month_close_log',
   'policy_leave','policy_loa','policy_perf','policy_special_leave','policy_vat',
   'pension_policy','security_perms',
   'payroll_irregular','contract_forms','dc_contributions','biz_cases',
@@ -3561,9 +3563,41 @@ function _recServerWrite(k, childPaths){ // childPaths: { '{id}' 또는 '{id}/{f
 function _recCanDirect(k){
   return !!(fbDb && fbShouldSync(k) && _fbSynced && _fbObjForm[k] === true);
 }
+// ── 근태·휴가 마감월 관문 ─────────────────────────────────────
+// 근태 기록을 고치는 자리가 달력·근태관리·휴가·외부인력·이음센터에 걸쳐 스무 곳이 넘는다.
+// 한 곳씩 막으면 반드시 빠뜨리므로, 레코드 저장 함수 이 한 자리에서 막는다.
+// 날짜가 없는 레코드는 어느 달에 속하는지 알 수 없으니 막지 않는다.
+var ATTEND_LOCK_TABLES = { attendance_records:1, overtime_records:1, comp_leave_records:1 };
+function _attendLockDenied(k, ymd){
+  if(!ATTEND_LOCK_TABLES[k]) return '';
+  var ym = String(ymd||'').slice(0,7);
+  if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(ym)) return '';
+  if(typeof isAttendLocked !== 'function' || !isAttendLocked(ym)) return '';
+  return ym;
+}
+function _attendLockToast(ym){
+  console.warn('[근태 마감] '+ym+' 잠김 — 저장 거부');
+  try { if(typeof showToast === 'function') showToast('🔒 ' + ym + ' 근태·휴가 마감 — 수정 불가'); } catch(e){}
+  return false;
+}
+// id 로 기존 레코드의 날짜를 찾는다 (수정·삭제는 넘어온 값에 날짜가 없을 수 있다)
+function _attendLockDateOf(k, id){
+  if(!ATTEND_LOCK_TABLES[k]) return '';
+  var arr = dbGet(k, []);
+  if(!Array.isArray(arr)) return '';
+  for(var i=0;i<arr.length;i++){ if(arr[i] && arr[i].id === id) return arr[i].date || ''; }
+  return '';
+}
 // 1건 추가/수정. 반환 true=저장됨.
 function dbUpsert(k, item){
   if(!item || typeof item.id !== 'string' || !item.id){ console.warn('[dbUpsert] '+k+': id 없는 항목 거부'); return false; }
+  if(ATTEND_LOCK_TABLES[k]){
+    // 새 날짜와 원래 날짜 둘 다 본다 — 잠긴 달에서 빼내는 것도 막아야 한다
+    var _d1 = _attendLockDenied(k, item.date);
+    if(_d1) return _attendLockToast(_d1);
+    var _d2 = _attendLockDenied(k, _attendLockDateOf(k, item.id));
+    if(_d2) return _attendLockToast(_d2);
+  }
   if(_REC_BADKEY.test(item.id)){ console.warn('[dbUpsert] '+k+'/'+item.id+': id 금지문자 — dbSet 폴백'); }
   _recStamp(item);
   var arr = dbGet(k, []);
@@ -3582,6 +3616,12 @@ function dbUpsert(k, item){
 // 1건의 특정 필드만 수정 (상태변경 등). 반환 true=저장됨, false=대상 없음/실패.
 function dbPatch(k, id, fields){
   if(typeof id !== 'string' || !id || !fields){ console.warn('[dbPatch] '+k+': 인자 오류'); return false; }
+  if(ATTEND_LOCK_TABLES[k]){
+    var _p1 = _attendLockDenied(k, _attendLockDateOf(k, id));
+    if(_p1) return _attendLockToast(_p1);
+    var _p2 = _attendLockDenied(k, fields.date);
+    if(_p2) return _attendLockToast(_p2);
+  }
   var arr = dbGet(k, []);
   if(!Array.isArray(arr)) return false;
   var cur = null;
@@ -3605,6 +3645,10 @@ function dbPatch(k, id, fields){
 // 1건 삭제. 반환 true=처리됨.
 function dbRemove(k, id){
   if(typeof id !== 'string' || !id){ console.warn('[dbRemove] '+k+': id 오류'); return false; }
+  if(ATTEND_LOCK_TABLES[k]){
+    var _r1 = _attendLockDenied(k, _attendLockDateOf(k, id));
+    if(_r1) return _attendLockToast(_r1);
+  }
   var arr = dbGet(k, []);
   if(!Array.isArray(arr)) return false;
   var next = arr.filter(function(x){ return !(x && x.id === id); });
@@ -3619,6 +3663,16 @@ function dbRemove(k, id){
 // 여러 건 추가/수정 — 한 번의 요청에 건별 child 경로로 (통째 교체 없음). 자동생성·엑셀 일괄용.
 function dbUpsertMany(k, items){
   if(!Array.isArray(items) || items.length === 0) return true;
+  if(ATTEND_LOCK_TABLES[k]){
+    // 한 건이라도 잠긴 달이면 전부 거부한다 — 일부만 들어가면 어디까지 저장됐는지 알 수 없다
+    for(var _i=0; _i<items.length; _i++){
+      var _it = items[_i]; if(!_it) continue;
+      var _m1 = _attendLockDenied(k, _it.date);
+      if(_m1) return _attendLockToast(_m1);
+      var _m2 = _attendLockDenied(k, _attendLockDateOf(k, _it.id));
+      if(_m2) return _attendLockToast(_m2);
+    }
+  }
   var bad = items.some(function(it){ return !it || typeof it.id !== 'string' || !it.id || _REC_BADKEY.test(it.id); });
   items.forEach(function(it){ if(it && it.id) _recStamp(it); });
   var arr = dbGet(k, []);
@@ -3638,6 +3692,12 @@ function dbUpsertMany(k, items){
 // 여러 건 삭제 — 한 번의 요청에 건별 null
 function dbRemoveMany(k, ids){
   if(!Array.isArray(ids) || ids.length === 0) return true;
+  if(ATTEND_LOCK_TABLES[k]){
+    for(var _j=0; _j<ids.length; _j++){
+      var _n1 = _attendLockDenied(k, _attendLockDateOf(k, ids[_j]));
+      if(_n1) return _attendLockToast(_n1);
+    }
+  }
   var bad = ids.some(function(id){ return typeof id !== 'string' || !id || _REC_BADKEY.test(id); });
   var arr = dbGet(k, []);
   if(!Array.isArray(arr)) return false;
@@ -14019,12 +14079,11 @@ function ContractManagement(){
         var locked = isContractLocked(selYM);
         return h('button', { onClick:async function(){
             if(locked){
-              if(!(await popConfirm(selYM + ' 계약 잠금을 해제할까요?\n(해제 후 해당 월 계약 수정·추가·삭제 가능)'))) return;
-              setContractLock(selYM, false);
+              if(!(await monthCloseUnlockAsk('contract', selYM))) return;
               showToast('🔓 ' + selYM + ' 계약 잠금 해제');
             } else {
-              if(!(await popConfirm(selYM + ' 계약내역을 마감(잠금)할까요?\n→ 해당 월 signDate 계약의 수정·추가·삭제 차단\n→ 같은 버튼으로 다시 해제 가능'))) return;
-              setContractLock(selYM, true);
+              if(!(await monthCloseLockAsk('contract', selYM,
+                selYM + ' 계약내역을 마감(잠금)할까요?\n→ 해당 월 signDate 계약의 수정·추가·삭제 차단\n→ 같은 버튼으로 다시 해제 가능'))) return;
               showToast('🔒 ' + selYM + ' 계약 마감 완료');
             }
             setContracts(dbGet('contracts', []));
@@ -34764,11 +34823,12 @@ function IncomeListTab(){
         var locked = isIncomeLocked(monthFilter);
         return h('button', { onClick:async function(){
             if(locked){
-              if(!(await popConfirm(monthFilter + ' 입금 잠금을 해제할까요?\n(해제 후 입금확정·해제·복원 가능)'))) return;
-              setIncomeLock(monthFilter, false); showToast('🔓 ' + monthFilter + ' 입금 잠금 해제');
+              if(!(await monthCloseUnlockAsk('income', monthFilter))) return;
+              showToast('🔓 ' + monthFilter + ' 입금 잠금 해제');
             } else {
-              if(!(await popConfirm(monthFilter + ' 입금내역을 마감(잠금)할까요?\n→ 이후 입금확정·해제·복원 차단\n→ 같은 버튼으로 다시 해제 가능'))) return;
-              setIncomeLock(monthFilter, true); showToast('🔒 ' + monthFilter + ' 입금 마감 완료');
+              if(!(await monthCloseLockAsk('income', monthFilter,
+                monthFilter + ' 입금내역을 마감(잠금)할까요?\n→ 이후 입금확정·해제·복원 차단\n→ 같은 버튼으로 다시 해제 가능'))) return;
+              showToast('🔒 ' + monthFilter + ' 입금 마감 완료');
             }
             setIncomes(dbGet('finance_income', []));
           },
@@ -37238,12 +37298,11 @@ function FinanceExpense(){
           var locked = isExpenseLocked(monthFilter);
           return h('button', { onClick:async function(){
               if(locked){
-                if(!(await popConfirm(monthFilter + ' 잠금을 해제할까요?\n(해제 후 수정·추가·삭제 가능)'))) return;
-                setExpenseLock(monthFilter, false);
+                if(!(await monthCloseUnlockAsk('expense', monthFilter))) return;
                 showToast('🔓 ' + monthFilter + ' 잠금 해제');
               } else {
-                if(!(await popConfirm(monthFilter + ' 출금내역을 마감(잠금)할까요?\n→ 이후 수정·추가·삭제 차단\n→ 같은 버튼으로 다시 해제 가능'))) return;
-                setExpenseLock(monthFilter, true);
+                if(!(await monthCloseLockAsk('expense', monthFilter,
+                  monthFilter + ' 출금내역을 마감(잠금)할까요?\n→ 이후 수정·추가·삭제 차단\n→ 같은 버튼으로 다시 해제 가능'))) return;
                 showToast('🔒 ' + monthFilter + ' 잠금 — 마감 완료');
               }
               setExpenses(dbGet('finance_expense', [])); // 화면 리렌더
@@ -38612,6 +38671,7 @@ var SCREEN_GUIDE = {
   'fin/invoice':    '세금계산서 화면입니다. 2025년 2,154건 실데이터. 업체명·대표자·이메일·품목 검색. + 발행 버튼으로 신규 발행.',
   'fin/recv':       '미수금관리 화면입니다. 자문료 미납 업체 추적. 빨간 배지 = 미납 건수.',
   'fin/vat':        '예상부가세 화면입니다. 분기별 부가세 자동 계산. 세금계산서 발행 내역 기반.',
+  'fin/close':      '월말 마감 화면입니다. 근태·휴가 → 급여 → 비정규직 → 계약 → 입금 → 출금 순으로 잠급니다. 앞 단계가 잠겨야 다음이 열리고, 해제는 뒤에서부터만 됩니다.',
   'dashboard':      '대시보드입니다. 이번 달 매출·미수금·만료 임박 계약 한눈에. 나의업무 탭에서 내 담당 업무 확인.',
 };
 
@@ -46530,6 +46590,13 @@ function IeumCenter(props){
       var sch = dbGet('my_schedules', []) || [];
       var eum = sch.filter(function(s){ return s.type === 'eum-work'; });
       if(!eum.length) return;
+      // 마감된 달로는 이관하지 않는다 (아래는 dbSet 통째 저장이라 근태 관문을 거치지 않는다)
+      var eumLocked = eum.filter(function(s){ return isAttendLocked(String(s.date||'').slice(0,7)); });
+      if(eumLocked.length){
+        showToast('🔒 마감된 달의 이음센터 일정 '+eumLocked.length+'건은 근무 기록으로 옮기지 않았습니다');
+        eum = eum.filter(function(s){ return !isAttendLocked(String(s.date||'').slice(0,7)); });
+        if(!eum.length) return;
+      }
       var att = dbGet('attendance_records', []) || [];
       eum.forEach(function(s, i){
         var dup = att.find(function(r){ return r.type==='eum-work' && r.date===s.date &&
@@ -46538,7 +46605,9 @@ function IeumCenter(props){
           sid:s.externalId?null:(s.sid||null), externalId:s.externalId||null, date:s.date, type:'eum-work', hours:8, note:s.note||'' });
       });
       dbSet('attendance_records', att);
-      dbSet('my_schedules', sch.filter(function(s){ return s.type !== 'eum-work'; }));
+      // 옮긴 것만 지운다 — 마감월이라 못 옮긴 일정을 함께 지우면 그 기록이 사라진다
+      var _moved = {}; eum.forEach(function(s){ if(s && s.id) _moved[s.id] = 1; });
+      dbSet('my_schedules', sch.filter(function(s){ return s.type !== 'eum-work' || !_moved[s.id]; }));
       showToast('🏛️ 이음센터 일정 '+eum.length+'건을 근무 기록으로 정리했습니다');
       setMgk(function(n){ return n+1; }); // 이관 결과가 캘린더에 즉시 보이도록 리렌더
     } catch(e){ window._erpErrLog && window._erpErrLog(e); }
@@ -48045,6 +48114,147 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
 }
 
 // ============ 재무관리 - 예상부가세 ============
+// ============ 월말 마감 ============
+// 여섯 단계를 한 화면에서 순서대로 잠근다. 규칙은 monthCloseState/Lock/Unlock 이 판단하고,
+// 이 화면은 그 결과만 그린다 (버튼 활성 여부를 화면에서 따로 계산하지 않는다).
+function MonthClose(props){
+  var ymS = usePersistedState('month_close_ym', todayYMD().slice(0,7));
+  var selYM = ymS[0]; var setSelYM = ymS[1];
+  var rkS = useState(0); var setRk = rkS[1];     // 마감/해제 후 다시 읽기
+  function reload(){ setRk(function(n){ return n+1; }); }
+
+  // 최근 18개월
+  var months = (function(){
+    var out = [];
+    var y = parseInt(todayYMD().slice(0,4),10), m = parseInt(todayYMD().slice(5,7),10);
+    for(var i=0;i<18;i++){
+      out.push(y + '-' + String(m).padStart(2,'0'));
+      m--; if(m < 1){ m = 12; y--; }
+    }
+    return out;
+  })();
+  if(months.indexOf(selYM) < 0) months.unshift(selYM);
+
+  var steps = monthCloseState(selYM);
+  var prog  = monthCloseDone(selYM);
+
+  async function doLock(st){
+    var msg = selYM + ' · ' + st.no + '. ' + st.name + ' 을(를) 마감할까요?\n\n'
+            + '→ 이 달의 ' + st.name + ' 은(는) 추가·수정·삭제가 막힙니다.\n'
+            + '→ 해제는 뒤 단계를 모두 푼 뒤에만 됩니다.';
+    if(st.issues.length){
+      msg = selYM + ' · ' + st.no + '. ' + st.name + ' — 확인할 것이 ' + st.issues.length + '건 있습니다.\n\n'
+          + st.issues.map(function(x){ return '⚠️ ' + x; }).join('\n')
+          + '\n\n막는 것은 아닙니다. 확인하셨다면 그대로 마감합니다.';
+    }
+    if(!(await popConfirm(msg))) return;
+    var r = monthCloseLock(st.key, selYM);
+    reload();
+    if(!r.ok){ showToast('⚠️ ' + r.why); return; }
+    showToast('🔒 ' + selYM + ' ' + st.name + ' 마감');
+  }
+  async function doUnlock(st){
+    if(!(await popConfirm(selYM + ' · ' + st.no + '. ' + st.name + ' 마감을 해제할까요?\n\n→ 다시 수정할 수 있게 됩니다.'))) return;
+    var r = monthCloseUnlock(st.key, selYM);
+    reload();
+    if(!r.ok){ showToast('⚠️ ' + r.why); return; }
+    showToast('🔓 ' + selYM + ' ' + st.name + ' 해제');
+  }
+
+  var C = { ok:'#0f766e', okBg:'#f0fdfa', okBd:'#99f6e4',
+            now:'#1e40af', nowBg:'#eff6ff', nowBd:'#bfdbfe',
+            warn:'#92400e', warnBg:'#fffbeb',
+            off:'#94a3b8', line:'#e2e8f0' };
+
+  return h('div', { className:'page' },
+    h('div', { style:{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', marginBottom:'12px' } },
+      h('span', { style:{ fontSize:'15px', fontWeight:700, color:'#1e293b' } }, '🔐 월말 마감'),
+      h('select', { value:selYM, onChange:function(e){ setSelYM(e.target.value); },
+        style:{ padding:'5px 8px', border:'1px solid '+C.line, borderRadius:'5px', fontSize:'12.5px' } },
+        months.map(function(m){ return h('option', { key:m, value:m }, m); })),
+      h('span', { style:{ fontSize:'12px', color:'#64748b' } }, prog.done + ' / ' + prog.total + ' 단계 마감'),
+      prog.all && h('span', { style:{ fontSize:'11.5px', fontWeight:700, color:C.ok, background:C.okBg,
+        border:'1px solid '+C.okBd, borderRadius:'5px', padding:'2px 9px' } }, '✓ ' + selYM + ' 마감 완료'),
+      h('span', { style:{ marginLeft:'auto', fontSize:'11px', color:'#94a3b8' } }, '앞 단계가 잠겨야 다음이 열린다 · 해제는 뒤에서부터')
+    ),
+    // 진행 막대
+    h('div', { style:{ height:'6px', borderRadius:'3px', background:'#f1f5f9', overflow:'hidden', marginBottom:'14px' } },
+      h('div', { style:{ width:(prog.total ? Math.round(prog.done/prog.total*100) : 0)+'%', height:'100%',
+        background:C.ok, transition:'width .2s' } })),
+
+    steps.length === 0
+      ? h('div', { style:{ padding:'20px', textAlign:'center', color:'#94a3b8', fontSize:'12.5px' } }, '월을 선택하세요')
+      : h('div', { style:{ border:'1px solid '+C.line, borderRadius:'8px', overflow:'hidden' } },
+        steps.map(function(st, i){
+          // 지금 차례 = 잠기지 않았고 앞이 막지 않는 첫 단계
+          var isNow = st.canLock && !steps.slice(0,i).some(function(p){ return p.canLock; });
+          var bg = st.locked ? '#fff' : isNow ? C.nowBg : '#fbfcfd';
+          return h('div', { key:st.key, style:{ background:bg, borderTop: i ? '1px solid '+C.line : 'none',
+            padding:'11px 13px' } },
+            h('div', { style:{ display:'flex', alignItems:'center', gap:'11px', flexWrap:'wrap' } },
+              // 번호
+              h('span', { style:{ width:'22px', height:'22px', borderRadius:'50%', flexShrink:0,
+                background: st.locked ? C.okBg : isNow ? '#fff' : '#f1f5f9',
+                border:'1px solid ' + (st.locked ? C.okBd : isNow ? C.nowBd : C.line),
+                color: st.locked ? C.ok : isNow ? C.now : C.off,
+                fontSize:'11px', fontWeight:700, display:'flex', alignItems:'center', justifyContent:'center' } }, st.no),
+              // 이름
+              h('span', { style:{ flex:1, minWidth:'150px' } },
+                h('span', { style:{ display:'block', fontSize:'13px', fontWeight:700,
+                  color: st.locked ? '#1e293b' : isNow ? C.now : '#64748b' } }, st.icon + ' ' + st.name),
+                h('span', { style:{ display:'block', fontSize:'11px', color: st.locked||isNow ? '#64748b' : C.off } }, st.sub)),
+              // 상태
+              st.locked
+                ? h('span', { style:{ fontSize:'11px', fontWeight:700, color:C.ok, background:C.okBg,
+                    border:'1px solid '+C.okBd, borderRadius:'5px', padding:'2px 9px' } }, '마감됨')
+                : st.blockedBy
+                  ? h('span', { style:{ fontSize:'11.5px', color:C.off } }, st.blockedBy.no + '. ' + st.blockedBy.name + ' 먼저')
+                  : st.issues.length
+                    ? h('span', { style:{ fontSize:'11px', fontWeight:700, color:C.warn, background:C.warnBg,
+                        border:'1px solid #fde68a', borderRadius:'5px', padding:'2px 9px' } }, '점검 ' + st.issues.length + '건')
+                    : h('span', { style:{ fontSize:'11.5px', color:C.now, fontWeight:700 } }, '지금 차례'),
+              // 누가·언제
+              h('span', { style:{ fontSize:'11px', color:'#94a3b8', minWidth:'118px', textAlign:'right' } },
+                st.locked && st.info
+                  ? String(st.info.at||'').slice(5,10) + ' ' + (st.info.byName || st.info.by || '')
+                  : ''),
+              // 바로가기
+              h('button', { onClick:function(){ props.onNavigate && props.onNavigate(st.goto); },
+                title: st.name + ' 화면으로',
+                style:{ padding:'4px 8px', background:'#fff', border:'1px solid '+C.line, borderRadius:'5px',
+                  cursor:'pointer', fontSize:'11px', color:'#475569' } }, '보기'),
+              // 마감 / 해제
+              st.locked
+                ? h('button', { onClick:function(){ doUnlock(st); }, disabled:!st.canUnlock,
+                    title: st.canUnlock ? '마감 해제' : (st.heldBy ? st.heldBy.no+'. '+st.heldBy.name+'을(를) 먼저 해제해야 한다' : ''),
+                    style:{ width:'74px', padding:'5px 0', background: st.canUnlock ? '#fff' : '#f8fafc',
+                      border:'1px solid ' + (st.canUnlock ? '#fca5a5' : C.line), borderRadius:'5px',
+                      cursor: st.canUnlock ? 'pointer' : 'not-allowed', fontSize:'11.5px', fontWeight:700,
+                      color: st.canUnlock ? '#b91c1c' : C.off } }, '해제')
+                : h('button', { onClick:function(){ doLock(st); }, disabled:!st.canLock,
+                    title: st.canLock ? '이 단계를 마감' : (st.blockedBy ? st.blockedBy.no+'. '+st.blockedBy.name+'을(를) 먼저 마감해야 한다' : ''),
+                    style:{ width:'74px', padding:'5px 0',
+                      background: st.canLock ? C.now : '#f8fafc',
+                      border:'1px solid ' + (st.canLock ? C.now : C.line), borderRadius:'5px',
+                      cursor: st.canLock ? 'pointer' : 'not-allowed', fontSize:'11.5px', fontWeight:700,
+                      color: st.canLock ? '#fff' : C.off } }, '마감')
+            ),
+            // 점검 내용 — 지금 차례일 때만 펼쳐 보인다
+            (isNow && st.issues.length > 0) && h('div', { style:{ margin:'8px 0 0 33px', fontSize:'11.5px',
+              color:C.warn, lineHeight:'1.85' } },
+              st.issues.map(function(x, j){ return h('div', { key:j }, '⚠️ ' + x); }),
+              h('div', { style:{ color:'#64748b', marginTop:'2px' } }, '막는 것은 아니다. 확인하고 그대로 마감할 수 있다.'))
+          );
+        })
+      ),
+    h('div', { style:{ marginTop:'12px', fontSize:'11.5px', color:'#64748b', lineHeight:'1.85' } },
+      h('div', null, '· 순서는 계산의 근거를 따른다. 근태가 급여의 근거이고, 급여 확정이 출금에 기록되며, 계약이 입금의 근거다.'),
+      h('div', null, '· 해제가 뒤에서부터만 되는 이유 — 급여가 잠긴 채로 근태를 열면 급여의 근거가 흔들린다.'),
+      h('div', null, '· 점검 항목은 막지 않는다. 눈으로 확인할 것만 알려준다.')
+    )
+  );
+}
+
 function FinanceVAT(){
   var year = (new Date()).getFullYear();
   var ys = useState(year); var selYear = ys[0]; var setSelYear = ys[1];
@@ -54289,6 +54499,273 @@ function setIrregularLock(ym, lock){
   dbSet('locked_irregular_months', locked);
 }
 
+// ===== 근태·휴가 월별 잠금 (locked_attend_months) =====
+// 근태기록·초과근로·보상휴가를 함께 잠근다. 급여의 계산 근거이므로 급여보다 먼저 잠근다.
+// 연차 부여(leave_grants)는 연 단위라 여기서 잠그지 않는다.
+function isAttendLocked(ym){
+  var locked = dbGet('locked_attend_months', []);
+  return locked.indexOf(ym) >= 0;
+}
+function setAttendLock(ym, lock){
+  var locked = dbGet('locked_attend_months', []);
+  if(lock && locked.indexOf(ym)<0) locked.push(ym);
+  if(!lock) locked = locked.filter(function(x){return x!==ym;});
+  dbSet('locked_attend_months', locked);
+}
+
+// ── 월말 마감 ──────────────────────────────────────────────────
+// 마감은 여섯 단계를 한 줄로 잠근다.
+//   근태·휴가 → 급여 → 비정규직 → 계약 → 입금 → 출금
+// 앞 단계가 잠겨야 다음을 잠글 수 있고, 해제는 반대로 뒤에서부터만 된다.
+// 급여가 잠긴 채로 근태를 열면 급여의 근거가 흔들리므로, 역순 해제는 규칙이 아니라 안전장치다.
+var MONTH_CLOSE_ORDER = ['attend','payroll','irregular','contract','income','expense'];
+function monthCloseSteps(){
+  return [
+    { key:'attend',    no:1, icon:'⏰', name:'근태·휴가', sub:'근태기록 · 초과근로 · 보상휴가',
+      isLocked:isAttendLocked,    setLock:setAttendLock,    goto:'hr/attend' },
+    { key:'payroll',   no:2, icon:'💰', name:'급여',      sub:'정규직 급여대장',
+      isLocked:isPayrollLocked,   setLock:setPayrollLock,   goto:'hr/pay' },
+    { key:'irregular', no:3, icon:'📑', name:'비정규직',   sub:'일용 · 시간제 지급',
+      isLocked:isIrregularLocked, setLock:setIrregularLock, goto:'hr/pay' },
+    { key:'contract',  no:4, icon:'📄', name:'계약',      sub:'해당 월 체결 계약',
+      isLocked:isContractLocked,  setLock:setContractLock,  goto:'biz/contract' },
+    { key:'income',    no:5, icon:'💵', name:'입금',      sub:'입금확정 · 거래내역 대조',
+      isLocked:isIncomeLocked,    setLock:setIncomeLock,    goto:'fin/income' },
+    { key:'expense',   no:6, icon:'💸', name:'출금',      sub:'경비 · 급여이체 · 사업주부담',
+      isLocked:isExpenseLocked,   setLock:setExpenseLock,   goto:'fin/expense' }
+  ];
+}
+function monthCloseStep(key){
+  var all = monthCloseSteps();
+  for(var i=0;i<all.length;i++){ if(all[i].key === key) return all[i]; }
+  return null;
+}
+function _mcValidYM(ym){ return /^\d{4}-(0[1-9]|1[0-2])$/.test(String(ym||'')); }
+
+// 마감 기록 (누가·언제) — 잠금 배열과 별개로 남긴다
+function monthCloseLogId(key, ym){ return 'mc-' + key + '-' + ym; }
+function monthCloseInfo(key, ym){
+  var log = dbGet('month_close_log', []) || [];
+  var id = monthCloseLogId(key, ym);
+  for(var i=0;i<log.length;i++){ if(log[i] && log[i].id === id) return log[i]; }
+  return null;
+}
+
+// 한 달의 여섯 단계 상태. 화면과 버튼이 이 결과만 읽는다.
+function monthCloseState(ym){
+  var steps = monthCloseSteps();
+  var out = [];
+  if(!_mcValidYM(ym)) return out;
+  var lockedFlags = steps.map(function(s){
+    try { return !!s.isLocked(ym); } catch(e){ return false; }
+  });
+  steps.forEach(function(s, i){
+    var locked = lockedFlags[i];
+    // 잠글 수 있나 — 앞 단계가 모두 잠겨 있어야 한다
+    var blockedBy = null;
+    for(var j=0;j<i;j++){
+      if(!lockedFlags[j]){ blockedBy = steps[j]; break; }
+    }
+    // 풀 수 있나 — 뒤 단계가 모두 풀려 있어야 한다
+    var heldBy = null;
+    for(var k=i+1;k<steps.length;k++){
+      if(lockedFlags[k]){ heldBy = steps[k]; break; }
+    }
+    out.push({
+      key:s.key, no:s.no, icon:s.icon, name:s.name, sub:s.sub, goto:s.goto,
+      locked: locked,
+      canLock:   !locked && !blockedBy,
+      canUnlock:  locked && !heldBy,
+      blockedBy: locked ? null : blockedBy,     // 이 단계 먼저 잠가야 한다
+      heldBy:    locked ? heldBy : null,        // 이 단계 먼저 풀어야 한다
+      issues:    locked ? [] : monthCloseIssues(s.key, ym),
+      info:      monthCloseInfo(s.key, ym)
+    });
+  });
+  return out;
+}
+function monthCloseDone(ym){
+  var st = monthCloseState(ym);
+  var n = 0;
+  st.forEach(function(s){ if(s.locked) n++; });
+  return { done:n, total:st.length, all: st.length>0 && n===st.length };
+}
+
+// 잠그기 — 순서를 어기면 거부한다.
+// force=true 는 개별 화면(급여관리·입금관리 등)의 기존 잠금 버튼용이다. 그 화면들은 예전부터
+// 단독으로 잠글 수 있었고, 순서를 어기는 잠금 자체가 데이터를 망가뜨리지는 않는다.
+// (되돌릴 수 없게 되는 쪽은 해제 순서이고, 그건 force 로도 못 뚫는다.)
+function monthCloseLock(key, ym, force){
+  if(!_mcValidYM(ym)) return { ok:false, why:'월 형식 오류' };
+  var st = monthCloseState(ym);
+  var cur = null;
+  st.forEach(function(s){ if(s.key === key) cur = s; });
+  if(!cur) return { ok:false, why:'없는 단계' };
+  if(cur.locked) return { ok:false, why:cur.name + '은(는) 이미 마감됨' };
+  if(cur.blockedBy && !force) return { ok:false, why:cur.blockedBy.no + '. ' + cur.blockedBy.name + '을(를) 먼저 마감해야 한다' };
+  var def = monthCloseStep(key);
+  def.setLock(ym, true);
+  // 저장이 실패했는데 마감했다고 기록하면, 열려 있는 달을 닫힌 것으로 착각한다
+  if(!def.isLocked(ym)) return { ok:false, why:cur.name + ' 저장 실패 — 마감되지 않았다' };
+  dbUpsert('month_close_log', {
+    id: monthCloseLogId(key, ym), step:key, ym:ym,
+    at: (new Date()).toISOString(),
+    by: (CURRENT_USER && CURRENT_USER.sid) || '',
+    byName: (CURRENT_USER && CURRENT_USER.name) || ''
+  });
+  return { ok:true };
+}
+// 풀기 — 뒤 단계가 잠겨 있으면 거부한다
+function monthCloseUnlock(key, ym){
+  if(!_mcValidYM(ym)) return { ok:false, why:'월 형식 오류' };
+  var st = monthCloseState(ym);
+  var cur = null;
+  st.forEach(function(s){ if(s.key === key) cur = s; });
+  if(!cur) return { ok:false, why:'없는 단계' };
+  if(!cur.locked) return { ok:false, why:cur.name + '은(는) 마감된 상태가 아니다' };
+  if(cur.heldBy) return { ok:false, why:cur.heldBy.no + '. ' + cur.heldBy.name + '이(가) 아직 마감 상태다 — 뒤에서부터 풀어야 한다' };
+  monthCloseStep(key).setLock(ym, false);
+  dbRemove('month_close_log', monthCloseLogId(key, ym));
+  return { ok:true };
+}
+
+// 점검 항목 — 막지는 않고, 마감 전에 눈으로 확인할 것을 알려준다.
+// 실제 데이터로 셀 수 있는 것만 넣는다 (없는 승인절차를 만들어 세지 않는다).
+function monthCloseIssues(key, ym){
+  var out = [];
+  if(!_mcValidYM(ym)) return out;
+  var push = function(msg, names){
+    var s = msg;
+    if(names && names.length){
+      s += ' — ' + names.slice(0,3).join(', ') + (names.length>3 ? ' 외 '+(names.length-3)+'명' : '');
+    }
+    out.push(s);
+  };
+  try {
+    if(key === 'attend'){
+      // 초과근로 기록 합계가 급여의 시간과 어긋나면 급여가 틀린 값으로 확정된다
+      var ots = (dbGet('overtime_records', []) || []).filter(function(r){
+        return r && (r.date||'').slice(0,7) === ym && !r.convertedToComp;
+      });
+      var pms = dbGet('payroll_monthly', []) || [];
+      var bySid = {};
+      ots.forEach(function(r){
+        var f = r.kind==='overtime' ? 'overtimeHours' : r.kind==='night' ? 'nightHours' : r.kind==='holiday' ? 'holidayHours' : null;
+        if(!f) return;
+        if(!bySid[r.sid]) bySid[r.sid] = { overtimeHours:0, nightHours:0, holidayHours:0 };
+        bySid[r.sid][f] += parseFloat(r.hours) || 0;
+      });
+      var mismatch = [];
+      Object.keys(bySid).forEach(function(sid){
+        var p = null;
+        for(var i=0;i<pms.length;i++){
+          var r = pms[i];
+          if(r && (r.empSid||r.sid) === sid && r.ym === ym){ p = r; break; }
+        }
+        var sums = bySid[sid];
+        var off = ['overtimeHours','nightHours','holidayHours'].some(function(f){
+          return Math.abs((p ? (parseFloat(p[f])||0) : 0) - sums[f]) > 0.01;
+        });
+        if(off) mismatch.push(sid);
+      });
+      if(mismatch.length) push('초과근로 기록과 급여의 시간이 다른 직원 '+mismatch.length+'명', mismatch);
+      var hourless = ots.filter(function(r){ return !(parseFloat(r.hours) > 0); });
+      if(hourless.length) out.push('시간이 0인 초과근로 기록 '+hourless.length+'건');
+    }
+    if(key === 'payroll'){
+      var recs = (dbGet('payroll_monthly', []) || []).filter(function(r){ return r && r.ym === ym; });
+      var notConfirmed = recs.filter(function(r){ return r.status !== 'confirmed'; });
+      if(notConfirmed.length) push('확정 안 된 급여 '+notConfirmed.length+'건', notConfirmed.map(function(r){ return r.empName || r.empSid || r.sid || '?'; }));
+      var zero = recs.filter(function(r){ return !((parseInt(r.baseSalary,10)||0) > 0); });
+      if(zero.length) push('기본급이 0원인 급여 '+zero.length+'건', zero.map(function(r){ return r.empName || r.empSid || r.sid || '?'; }));
+      if(recs.length === 0) out.push('이 달 급여 기록이 없다');
+    }
+    if(key === 'irregular'){
+      // 비정규직은 status 가 아니라 paid(boolean) 로 지급 여부를 남긴다
+      var irr = (dbGet('payroll_irregular', []) || []).filter(function(r){ return r && r.ym === ym; });
+      var unpaid = irr.filter(function(r){ return !r.paid; });
+      if(unpaid.length) push('지급 표시가 안 된 비정규직 '+unpaid.length+'건', unpaid.map(function(r){ return r.name || '?'; }));
+      var irrZero = irr.filter(function(r){ return !((parseInt(r.amount,10)||0) > 0); });
+      if(irrZero.length) push('금액이 0원인 비정규직 '+irrZero.length+'건', irrZero.map(function(r){ return r.name || '?'; }));
+    }
+    if(key === 'contract'){
+      // 계약금액은 종류별로 c.amounts[kind] 에 들어간다 (옛 계약은 c.contractAmount)
+      var cts = (dbGet('contracts', []) || []).filter(function(c){ return c && (c.signDate||'').slice(0,7) === ym; });
+      var ctAmount = function(c){
+        var t = parseInt(c.contractAmount, 10) || 0;
+        var am = c.amounts || {};
+        Object.keys(am).forEach(function(k){ t += parseInt(am[k], 10) || 0; });
+        return t;
+      };
+      var noFee = cts.filter(function(c){ return ctAmount(c) <= 0 && !((parseInt(c.successFee,10)||0) > 0); });
+      if(noFee.length) push('계약금액이 0원인 계약 '+noFee.length+'건', noFee.map(function(c){ return c.companyName || '?'; }));
+      var noMgr = cts.filter(function(c){ return !c.managerMain; });
+      if(noMgr.length) push('담당자가 비어 있는 계약 '+noMgr.length+'건', noMgr.map(function(c){ return c.companyName || '?'; }));
+    }
+    if(key === 'income'){
+      var fis = (dbGet('finance_income', []) || []).filter(function(r){ return r && (r.date||'').slice(0,7) === ym; });
+      var noCo = fis.filter(function(r){ return !r.companyName; });
+      if(noCo.length) out.push('업체가 비어 있는 입금 '+noCo.length+'건');
+      if(fis.length === 0) out.push('이 달 입금 기록이 없다');
+    }
+    if(key === 'expense'){
+      var fes = (dbGet('finance_expense', []) || []).filter(function(r){ return r && (r.date||'').slice(0,7) === ym; });
+      var noCat = fes.filter(function(r){ return !r.category; });
+      if(noCat.length) out.push('분류가 비어 있는 출금 '+noCat.length+'건');
+      var noAmt = fes.filter(function(r){ return !((parseInt(r.amount,10)||0) > 0); });
+      if(noAmt.length) out.push('금액이 0원인 출금 '+noAmt.length+'건');
+    }
+  } catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+  return out;
+}
+// ── 개별 화면(급여관리·입금관리·계약관리·출금관리·비정규직)의 기존 잠금 버튼용 ──
+// 그 화면들은 예전부터 자기 달을 단독으로 잠글 수 있었다. 그 습관을 막지 않는다.
+// 다만 순서를 어기면 무엇이 남았는지 한 번 알려주고, 해제는 역순을 지키게 한다.
+async function monthCloseLockAsk(key, ym, extraMsg){
+  var st = monthCloseState(ym);
+  var cur = null;
+  st.forEach(function(s){ if(s.key === key) cur = s; });
+  if(!cur){ showToast('⚠️ 월 형식 오류'); return false; }
+  if(cur.locked){ showToast('🔒 ' + ym + ' 이미 마감됨'); return false; }
+  var msg = (extraMsg || (ym + ' ' + cur.name + '을(를) 마감(잠금)할까요?'));
+  if(cur.blockedBy){
+    msg = '⚠️ 순서보다 앞서 마감합니다.\n\n'
+        + ym + ' 은 아직 ' + cur.blockedBy.no + '. ' + cur.blockedBy.name + ' 이(가) 열려 있습니다.\n'
+        + '(권장 순서: 근태·휴가 → 급여 → 비정규직 → 계약 → 입금 → 출금)\n\n'
+        + '그래도 ' + cur.name + '만 먼저 마감하시겠습니까?';
+  } else if(cur.issues.length){
+    msg += '\n\n확인할 것 ' + cur.issues.length + '건:\n' + cur.issues.map(function(x){ return '⚠️ ' + x; }).join('\n');
+  }
+  if(!(await popConfirm(msg))) return false;
+  var r = monthCloseLock(key, ym, true);
+  if(!r.ok){ showToast('⚠️ ' + r.why); return false; }
+  return true;
+}
+async function monthCloseUnlockAsk(key, ym){
+  var st = monthCloseState(ym);
+  var cur = null;
+  st.forEach(function(s){ if(s.key === key) cur = s; });
+  if(!cur){ showToast('⚠️ 월 형식 오류'); return false; }
+  if(!cur.locked){ showToast('🔓 ' + ym + ' 마감 상태가 아님'); return false; }
+  // 뒤 단계가 잠긴 채로 앞을 풀면 그 단계의 근거가 흔들린다 — 여기서는 뚫을 수 없다
+  if(cur.heldBy){
+    showToast('🔒 ' + cur.heldBy.no + '. ' + cur.heldBy.name + ' 이(가) 마감 상태 — 뒤에서부터 해제해야 합니다');
+    return false;
+  }
+  if(!(await popConfirm(ym + ' ' + cur.name + ' 마감을 해제할까요?\n\n→ 다시 수정할 수 있게 됩니다.'))) return false;
+  var r = monthCloseUnlock(key, ym);
+  if(!r.ok){ showToast('⚠️ ' + r.why); return false; }
+  return true;
+}
+window.monthCloseLockAsk   = monthCloseLockAsk;
+window.monthCloseUnlockAsk = monthCloseUnlockAsk;
+window.monthCloseState  = monthCloseState;
+window.monthCloseLock   = monthCloseLock;
+window.monthCloseUnlock = monthCloseUnlock;
+window.monthCloseIssues = monthCloseIssues;
+window.isAttendLocked   = isAttendLocked;
+// ── 월말 마감 끝 ──
+
 // 감사 로그
 function addPayrollAudit(empSid, ym, field, before, after, note){
   var log = dbGet('payroll_audit_log', []);
@@ -54604,7 +55081,23 @@ function AttendanceManagement(){
       h('div',{style:{display:'flex',justifyContent:'center',alignItems:'center',gap:'8px',marginBottom:'10px',paddingBottom:'8px',borderBottom:'1px solid #f1f5f9'}},
         h(MonthNav, { onPrev:monthPrev, onNext:monthNext, label:selYM,
           onToday:function(){setSelYM(todayYM());},
-          todayActive: selYM===todayYM() })
+          todayActive: selYM===todayYM() }),
+        // 마감 잠금 — 급여의 계산 근거이므로 급여보다 먼저 잠근다
+        (function(){
+          var locked = isAttendLocked(selYM);
+          return h('button', { onClick:async function(){
+              if(locked){ if(!(await monthCloseUnlockAsk('attend', selYM))) return; showToast('🔓 ' + selYM + ' 근태·휴가 해제'); }
+              else { if(!(await monthCloseLockAsk('attend', selYM,
+                selYM + ' 근태·휴가를 마감(잠금)할까요?\n→ 근태기록·초과근로·보상휴가의 수정·추가·삭제 차단\n→ 급여의 계산 근거이므로 급여보다 먼저 잠근다'))) return;
+                showToast('🔒 ' + selYM + ' 근태·휴가 마감'); }
+              refreshAtt();
+            },
+            title: locked ? selYM+' 잠긴 상태 — 클릭하여 해제' : selYM+' 근태·휴가를 마감 잠금',
+            style:{ padding:'4px 10px', background:locked?'#dc2626':'#fff', color:locked?'#fff':'#475569',
+              border:'1px solid '+(locked?'#dc2626':'#cbd5e1'), borderRadius:'5px', cursor:'pointer',
+              fontSize:'11px', fontWeight:locked?700:600, whiteSpace:'nowrap' } },
+            locked ? '🔒 마감됨' : '🔓 마감 잠금');
+        })()
       ),
       h('div',{style:{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:'4px',marginBottom:'4px'}},
         dayNames.map(function(n,i){
@@ -59675,9 +60168,9 @@ function PayrollLedger(props){
     dbUpsertMany('finance_expense', _feNew);
     // 감사로그
     addPayrollAudit('', props.selYM, '일괄확정', '', newRecs.length+'명', '급여 '+totalNet.toLocaleString()+(totalReimburse>0?' + 실비 '+totalReimburse.toLocaleString():'')+' + 사업주부담 '+totalEmployer.toLocaleString()+(totalBankFee>0?' + 이체수수료 '+totalBankFee.toLocaleString():''));
-    // 자동 잠금 여부 (옵션)
-    if(await popConfirm('확정 완료. 이 달을 잠금 처리할까요?\n(잠금 시 수정·재확정 불가, 권한자만 해제 가능)')){
-      setPayrollLock(props.selYM, true);
+    // 자동 잠금 여부 (옵션) — 근태가 아직 열려 있으면 monthCloseLockAsk 가 알려준다
+    if(await monthCloseLockAsk('payroll', props.selYM,
+        '확정 완료. 이 달을 잠금 처리할까요?\n(잠금 시 수정·재확정 불가, 권한자만 해제 가능)')){
       addPayrollAudit('', props.selYM, '잠금', '미잠금', '잠금', '일괄확정 후 자동 잠금');
     }
     showToast('확정 완료 (급여 '+totalNet.toLocaleString()+'원' + (totalReimburse>0?' + 실비 '+totalReimburse.toLocaleString()+'원':'') + ' + 사업주부담 '+totalEmployer.toLocaleString()+'원' + (totalBankFee>0?' + 수수료 '+totalBankFee.toLocaleString()+'원':'') + ')' + (dcAccrued>0?' / DC 적립 '+dcAccrued+'명':''));
@@ -59788,15 +60281,13 @@ function PayrollLedger(props){
           h('input', { type:'checkbox', checked:!showResigned, onChange:function(e){ setShowResigned(!e.target.checked); } }), '퇴사자 제외'),
         isPayrollLocked(props.selYM)
           ? h('button',{ onClick:async function(){
-                if(!(await popConfirm('🔒 '+props.selYM+' 잠금을 해제할까요?'))) return;
-                setPayrollLock(props.selYM, false);
+                if(!(await monthCloseUnlockAsk('payroll', props.selYM))) return;
                 addPayrollAudit('', props.selYM, '잠금해제', '잠금', '미잠금', '');
                 setRecs(dbGet('payroll_monthly', []));
               },
               style:{padding:'6px 10px',background:'#dc2626',color:'#fff',border:'none',borderRadius:'6px',cursor:'pointer',fontSize:'12px',fontWeight:700,whiteSpace:'nowrap'} }, '🔒 마감됨')
           : h('button',{ onClick:async function(){
-                if(!(await popConfirm(props.selYM+' 마감 잠금할까요?'))) return;
-                setPayrollLock(props.selYM, true);
+                if(!(await monthCloseLockAsk('payroll', props.selYM, props.selYM+' 마감 잠금할까요?'))) return;
                 addPayrollAudit('', props.selYM, '잠금', '미잠금', '잠금', '수동 잠금');
                 setRecs(dbGet('payroll_monthly', []));
               },
@@ -61655,12 +62146,11 @@ function PayrollIrregular(props){
           var locked = isIrregularLocked(props.selYM);
           return h('button', { onClick:async function(){
               if(locked){
-                if(!(await popConfirm(props.selYM + ' 잠금을 해제할까요?\n(해제 후 수정·추가·삭제 가능)'))) return;
-                setIrregularLock(props.selYM, false);
+                if(!(await monthCloseUnlockAsk('irregular', props.selYM))) return;
                 showToast('🔓 ' + props.selYM + ' 잠금 해제');
               } else {
-                if(!(await popConfirm(props.selYM + ' 비정규직 내역을 마감(잠금)할까요?\n→ 이후 수정·추가·삭제 차단\n→ 같은 버튼으로 다시 해제 가능'))) return;
-                setIrregularLock(props.selYM, true);
+                if(!(await monthCloseLockAsk('irregular', props.selYM,
+                  props.selYM + ' 비정규직 내역을 마감(잠금)할까요?\n→ 이후 수정·추가·삭제 차단\n→ 같은 버튼으로 다시 해제 가능'))) return;
                 showToast('🔒 ' + props.selYM + ' 잠금 — 마감 완료');
               }
               setRecs(dbGet('payroll_irregular', []));
@@ -64701,6 +65191,8 @@ function ERPMain(props){
     mainContent = h(FinanceInvoice, null);
   } else if(current === 'fin/recv'){
     mainContent = h(FinanceReceivable, { onNavigate:selectMenu });
+  } else if(current === 'fin/close'){
+    mainContent = h(MonthClose, { onNavigate:selectMenu });
   } else if(current === 'fin/vat'){
     mainContent = h(FinanceVAT, null);
   } else if(current === 'hr/staff'){
