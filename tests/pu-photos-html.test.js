@@ -1238,3 +1238,65 @@ test('막힌 드래그 표시는 스스로 풀린다', () => {
   assert.match(app, /dragend[\s\S]{0,120}selfDrag\s*=\s*false/,
     'dragend 에서 selfDrag 를 풀지 않습니다');
 });
+
+/* ══════ 연속촬영 (2026-08-06 대표 요청) ══════
+   한 장 찍으면 닫히던 카메라를 — 셔터 연타로 모으고, 갤러리처럼 골라 한 번에 올린다. */
+
+test('카메라 단추는 앱 안 카메라를 열고, 폰 기본 카메라는 예비 통로로 남는다', () => {
+  assert.match(app, /\$\('camBtn'\)\.onclick = function \(\) \{ openCam\(\); \}/,
+    '카메라 단추가 연속촬영을 열지 않습니다');
+  /* 카메라를 못 여는 폰(권한 거부 등)이 조용히 실패하면 안 된다 —
+     실패 안내와 함께 폰 기본 카메라로 물러난다. */
+  const fn = app.match(/async function openCam\(\)[\s\S]*?\n\}/);
+  assert.ok(fn, 'openCam 을 찾을 수 없습니다');
+  assert.match(fn[0], /\$\('camInput'\)\.click\(\)/, '예비 통로(폰 기본 카메라)가 없습니다');
+  assert.match(app, /id="camInput"[^>]*capture=/, 'camInput 이 사라졌습니다');
+});
+
+test('카메라를 닫으면 반드시 끈다 — 안 끄면 녹화 표시가 남고 배터리를 먹는다', () => {
+  const fn = app.match(/function camStop\(\)[\s\S]*?\n\}/);
+  assert.ok(fn, 'camStop 을 찾을 수 없습니다');
+  assert.match(fn[0], /getTracks\(\)[\s\S]*?stop\(\)/, '카메라 트랙을 멈추지 않습니다');
+  const dis = app.match(/function camDiscard\(\)[\s\S]*?\n\}/);
+  assert.match(dis[0], /camStop\(\)/, '닫을 때 카메라를 끄지 않습니다');
+  assert.match(dis[0], /revokeObjectURL/, '미리보기 주소를 안 지워 메모리가 샙니다');
+});
+
+test('✕는 찍어 둔 사진을 말없이 버리지 않는다', () => {
+  const fn = app.match(/function closeCam\(\)[\s\S]*?\n\}/);
+  assert.ok(fn, 'closeCam 을 찾을 수 없습니다');
+  assert.match(fn[0], /camShots\.length && !confirm/, '찍은 것이 있는데 묻지 않고 버립니다');
+});
+
+test('올리기는 addFiles 단일 통로만 탄다', () => {
+  /* 여기서 따로 enqueue 하면 통로가 갈라져 다음 사람이 한쪽만 고치게 된다 —
+     축소·대기열·재시도·자동 판독을 전부 기존 통로로 태운다. */
+  const fn = app.match(/async function camUpload\(\)[\s\S]*?\n\}/);
+  assert.ok(fn, 'camUpload 을 찾을 수 없습니다');
+  assert.match(fn[0], /addFiles\(files, false\)/, 'addFiles 통로를 타지 않습니다');
+  assert.ok(!/queue\.enqueue/.test(fn[0]), '대기열에 직접 넣고 있습니다 — 통로가 갈라집니다');
+});
+
+test('폰 저장 실패가 올리기를 막지 않는다', () => {
+  /* 클라우드 증빙이 먼저다 — 내려받기가 막혀도(권한·용량) 올리기는 계속돼야 한다. */
+  const fn = app.match(/async function camUpload\(\)[\s\S]*?\n\}/);
+  assert.match(fn[0], /try \{ saveBlob\([\s\S]*?\} catch/, '폰 저장 실패가 올리기를 끊습니다');
+});
+
+test('연속촬영도 한 번에 올리는 상한을 지킨다', () => {
+  const fn = app.match(/async function camShoot\(\)[\s\S]*?\n(?:async )?function/);
+  assert.ok(fn, 'camShoot 을 찾을 수 없습니다');
+  assert.match(fn[0], /PuPhotoStore\.UPLOAD_MAX/, '상한 없이 무한정 찍힙니다');
+});
+
+test('검토 화면은 갤러리처럼 전부 고른 상태로 시작한다', () => {
+  /* 대표 폰 화면 방식 — 기본은 다 올리고, 흐린 것만 눌러 뺀다. */
+  assert.match(app, /camShots\.push\(\{[^}]*sel: true/, '찍은 사진이 기본으로 골라져 있지 않습니다');
+  const fn = app.match(/function camToggle\([\s\S]*?\n\}/);
+  assert.ok(fn, 'camToggle 을 찾을 수 없습니다');
+});
+
+test('카메라 영상은 아이폰에서 전체화면으로 납치되지 않는다', () => {
+  assert.match(app, /<video id="camVid" autoplay playsinline muted>/,
+    'playsinline·muted 가 없으면 아이폰에서 영상이 전체화면으로 열리거나 재생이 막힙니다');
+});
