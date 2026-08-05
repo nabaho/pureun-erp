@@ -54,8 +54,13 @@
   function maybeOurs(dt) {
     if (!dt || !dt.types) return false;
     var types = Array.prototype.slice.call(dt.types);
-    if (types.indexOf('Files') >= 0) return false;
+    /* ⚠ 우리 종류가 있으면 우리 것이다 — 'Files' 가 함께 있어도 그렇다.
+       격자의 사진(<img>)을 끌면 **브라우저가 그 그림을 파일로도 함께 실어 보낸다.**
+       그래서 Files 를 먼저 보고 '남의 파일'이라고 판단하면 우리 드래그를 놓친다.
+       실제 증상(2026-08-04 대표 보고): 사진첩 안에서 사진을 끌었더니 받는 자리가
+       열리고 **같은 사진이 다시 올라갔다**(재복사). */
     if (types.indexOf(TYPE) >= 0) return true;
+    if (types.indexOf('Files') >= 0) return false;
     return types.indexOf('text/plain') >= 0;
   }
 

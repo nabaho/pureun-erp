@@ -235,6 +235,11 @@ button{font-family:inherit;cursor:pointer}
 #empty .in{text-align:center;color:var(--sub)}
 #empty .ic{font-size:44px;margin-bottom:10px}
 #empty p{font-size:14px;margin:0}
+#empty pre{margin:10px auto 0;max-width:440px;text-align:left;font-family:inherit;font-size:11.5px;
+  line-height:1.6;color:var(--orange);background:#fff8ec;border:1px solid #f0c98a;border-radius:8px;
+  padding:9px 11px;white-space:pre-wrap;word-break:break-word;user-select:text}
+#empty button{margin-top:10px;border:1px solid var(--line);background:#fff;color:var(--ink);
+  border-radius:9px;padding:8px 16px;font-size:12.5px;font-weight:700}
 
 /* 크게 보기 */
 #viewer{display:none;position:fixed;inset:0;background:rgba(8,10,16,.96);z-index:30;flex-direction:column}
@@ -278,6 +283,7 @@ button{font-family:inherit;cursor:pointer}
 #readPanel .acts button{background:transparent;color:#c8cfdc;border:1px solid #2c374b;border-radius:8px;padding:8px 6px;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #readPanel .acts .dl,#readPanel .acts .sh{border-color:#2c4a7a;color:#9dc0f0}
 #readPanel .acts .rm{border-color:#5a2530;color:#f09595}
+#readPanel .acts .ok{border-color:#1f5d45;color:#5dcaa5}
 #readPanel .acts .wide{grid-column:1 / -1}
 #readPanel .again.send{background:#1e40af;color:#fff;border-color:#1e40af}
 #readPanel .again.rm{border-color:#5a2530;color:#f09595}
@@ -379,8 +385,11 @@ button{font-family:inherit;cursor:pointer}
 
       <div id="empty">
         <div class="in">
-          <div class="ic">🖼️</div>
-          <p>아직 올린 사진이 없습니다.</p>
+          <div class="ic" id="emptyIcon">🖼️</div>
+          <p id="emptyMsg">아직 올린 사진이 없습니다.</p>
+          <!-- 목록을 못 읽었을 때 그 이유를 그대로 적는다(빈 화면만 보이면 원인을 알 수 없다) -->
+          <pre id="emptyWhy" style="display:none"></pre>
+          <button id="emptyRetry" style="display:none" onclick="loadGrid()">다시 시도</button>
         </div>
       </div>
      </div>
@@ -604,6 +613,9 @@ window.addEventListener('dragleave', function (e) {
   if (!dragDepth) showDrop(false);
 });
 window.addEventListener('drop', function (e) {
+  /* 우리 드래그면 아무것도 받지 않는다 — 위 hasFiles 와 같은 이유로, 여기서도
+     한 번 더 막는다(받는 자리가 안 열려도 drop 은 올 수 있다). */
+  if (window.PuDrag && PuDrag.maybeOurs(e.dataTransfer)) { dragDepth = 0; showDrop(false); return; }
   e.preventDefault();
   dragDepth = 0;
   showDrop(false);
@@ -614,6 +626,10 @@ window.addEventListener('drop', function (e) {
 function hasFiles(e) {
   const t = e.dataTransfer && e.dataTransfer.types;
   if (!t) return false;
+  /* ⚠ 사진첩 안에서 시작한 드래그는 **받을 것이 아니다.**
+     격자의 사진을 끌면 브라우저가 그림을 파일로도 실어 보내므로, 이 줄이 없으면
+     받는 자리가 열리고 같은 사진이 다시 올라간다(2026-08-04 재복사 사고). */
+  if (window.PuDrag && PuDrag.maybeOurs(e.dataTransfer)) return false;
   return Array.prototype.indexOf.call(t, 'Files') >= 0;
 }
 
@@ -682,8 +698,19 @@ async function pdfToPages(file) {
    글씨를 읽어야 하므로 더 크고 좋은 화질로 담는다. */
 async function addFiles(fileList, isDoc) {
   const picked = Array.from(fileList || []);
+  if (!picked.length) return;
+  /* ⚠ 예전에는 여기서 **아무 말 없이 끝났다.** 사진을 골랐는데 화면에 아무 일도
+     일어나지 않으면 사람은 올라간 줄 알고 넘어간다 — 그게 증빙 누락이 된다.
+     그래서 못 시작하는 이유를 말한다. */
   const u = firebase.auth().currentUser;
-  if (!picked.length || !u || !queue) return;
+  if (!u) {
+    alert('로그인이 풀렸습니다 — 새로고침한 뒤 다시 올려 주세요.\n(사진은 아직 올라가지 않았습니다)');
+    return;
+  }
+  if (!queue) {
+    alert('아직 올릴 준비가 끝나지 않았습니다 — 잠시 뒤 다시 눌러 주세요.\n(사진은 아직 올라가지 않았습니다)');
+    return;
+  }
 
   /* PDF는 쪽마다 한 건으로 펼친다. 이미지는 그대로. */
   const files = [];
@@ -1202,10 +1229,38 @@ function loadGrid() {
   PuPhotoStore.listYear(gridYear, gridOwner).then(function (items) {
     gridItems = Object.keys(items).map(id => ({ id: id, meta: items[id] || {} }));
     gridItems.sort((a, b) => (b.meta.takenAt || 0) - (a.meta.takenAt || 0));
+    showGridError('');
     renderGrid();
     fillThumbs();
     autoReadPending();
-  }).catch(function (e) { console.warn('[목록]', e); });
+  }).catch(function (e) {
+    /* ⚠ 예전에는 콘솔에만 적고 **빈 화면**을 보여줬다. 그래서 사진이 안 보일 때
+       "아직 올린 사진이 없습니다"라고 **거짓말**을 하고, 왜 안 보이는지 아무도
+       알 수 없었다(2026-08-04: 직원이 올린 사진이 안 나온다는 보고를 받고도
+       원인을 짚을 단서가 없었다). 클라우드가 준 말을 그대로 보여준다. */
+    console.warn('[목록]', e);
+    showGridError((e && (e.message || e.code)) || String(e));
+  });
+}
+
+/* 목록을 못 읽었을 때 — 화면에 이유를 적고 다시 시도할 길을 준다.
+   빈 문자열을 넘기면 평소 빈 화면 안내로 돌아간다. */
+function showGridError(why) {
+  const icon = $('emptyIcon'), msg = $('emptyMsg'), pre = $('emptyWhy'), btn = $('emptyRetry');
+  if (!why) {
+    icon.textContent = '🖼️';
+    msg.textContent = '아직 올린 사진이 없습니다.';
+    pre.style.display = 'none';
+    btn.style.display = 'none';
+    return;
+  }
+  icon.textContent = '⚠️';
+  msg.textContent = '사진 목록을 불러오지 못했습니다.';
+  pre.textContent = why + (/permission|PERMISSION_DENIED/i.test(why)
+    ? '\n\n권한 문제로 보입니다 — 관리자에게 이 문구를 그대로 알려 주세요.' : '');
+  pre.style.display = 'block';
+  btn.style.display = 'inline-block';
+  $('empty').style.display = 'flex';
 }
 
 function addToGrid(job) {
@@ -1487,6 +1542,12 @@ const selected = new Set();
 function needsCheck(it) {
   const r = it && it.meta && it.meta.read;
   if (!r) return false;
+  /* ⚠ 사람이 「확인했음」을 누른 것은 더 이상 할 일이 아니다.
+     이 빠져나갈 길이 없으면 **영원히 지워지지 않는 ⚠** 가 생긴다 — 예를 들어
+     사업자등록증인데 그 업체가 업체관리에 없으면(아래 CO_KINDS 줄) 사진첩에서는
+     할 수 있는 일이 없는데도 계속 할 일로 남는다. 2026-08-04 대표 보고:
+     "확인 필요 오류가 계속 나온다". 치울 수 없는 할 일은 목록을 못 믿게 만든다. */
+  if (r.ack) return false;
   if (r.error) return true;                                   // 판독 실패
   /* 종류를 못 가렸어도 **내용을 읽어냈으면** 사람이 봐야 한다 — 자동 등록 대상이
      아니므로 이 줄이 없으면 아무 곳에도 안 들어간 채 조용히 묻힌다.
@@ -1690,14 +1751,39 @@ const READ_ROWS = [
    readBtn: 「다시 판독」이냐 「글자 판독하기」냐가 상황에 따라 다르다.
    ⚠ 「공유·사진앱에 저장」은 되는 기기(주로 폰)에만 — PC 에 보이면 눌러도
      아무 일이 없는 헛단추가 된다. 그래서 폰에서만 한 줄을 통째로 쓴다. */
-function actsRow(readBtn) {
+function actsRow(readBtn, showAck) {
   const share = canShareFiles()
     ? '<button class="sh wide" onclick="shareOne(viewerId)">📤 공유·사진앱에 저장</button>' : '';
+  /* 「확인했음」 — 사진첩에서 더 할 일이 없는데 ⚠ 로 남은 것을 사람이 치운다.
+     이것이 없으면 지워지지 않는 할 일이 쌓여 목록을 못 믿게 된다. */
+  const ack = showAck
+    ? '<button class="ok wide" onclick="ackRead()">✓ 확인했음 — 할 일에서 치우기</button>' : '';
   return '<div class="acts">' +
     '<button class="dl" onclick="downloadOne(viewerId)">⬇ 내려받기</button>' +
     '<button onclick="readAgain()">' + readBtn + '</button>' +
-    share +
+    share + ack +
     '<button class="rm wide" onclick="deleteOne()">🗑 이 사진 지우기</button></div>';
+}
+
+/* 「확인했음」 — 봤다는 표시만 남긴다. 사진·판독 결과는 그대로 둔다.
+   되돌리려면 「다시 판독」을 누르면 표시가 지워진다(아래 readAgain 참고). */
+function ackRead() {
+  const id = viewerId;
+  if (!id) return;
+  if (blockedIfOther()) return;
+  const it = gridItems.find(function (x) { return x.id === id; });
+  if (!it || !it.meta.read) return;
+  const read = Object.assign({}, it.meta.read, {
+    ack: { at: Date.now(), by: PuPhotoStore.myName() || '' }
+  });
+  it.meta = Object.assign({}, it.meta, { read: read });
+  renderReadPanel(it);
+  renderGridBar();
+  renderGrid();
+  PuPhotoStore.saveRead(gridYear, id, read).catch(function (e) {
+    console.warn('[확인했음]', e);
+    alert('확인 표시를 저장하지 못했습니다: ' + ((e && e.message) || e));
+  });
 }
 
 function renderReadPanel(it) {
@@ -1758,7 +1844,9 @@ function renderReadPanel(it) {
     cause +
     (rows ? '<table>' + rows + '</table>' : '') +
     box +
-    actsRow('다시 판독') + '</div>';
+    (read.ack ? '<p class="note">✓ ' + esc(read.ack.by || '') +
+        '님이 확인해 할 일에서 치웠습니다 · 「다시 판독」을 누르면 되돌아옵니다</p>' : '') +
+    actsRow('다시 판독', needsCheck(it)) + '</div>';
 }
 
 /* readLine 의 뒷부분(상태)만 — 패널은 종류를 딱지로 따로 보여주므로 겹치지 않게. */

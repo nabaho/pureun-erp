@@ -268,15 +268,65 @@ test('컨설팅이 사진첩 사진을 받는다', () => {
 });
 
 test('컨설팅은 사진첩에서 원판을 받아 자기 사본을 만든다', () => {
-  // 사진첩 원본은 그대로 남아야 한다(설계서 원칙).
+  /* 사진첩 원본은 그대로 남아야 한다(설계서 원칙). insertAlbumFull 이
+     끌어다 놓기·「사진첩에서 고르기」 창의 공용 마무리 단계다 — 둘 다 이걸
+     거쳐야 기존 파일 처리 길(타임스탬프·중복검사)을 그대로 탄다. */
   const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
-  const fn = gov.match(/async function dropFromAlbum\([\s\S]*?\n\}/);
-  assert.ok(fn, 'dropFromAlbum 본문을 찾을 수 없습니다');
-  assert.match(fn[0], /PuPhotoStore\.loadFull\(/);
-  assert.match(fn[0], /simpleStampFile\(/, '기존 사진 처리 길을 타지 않습니다');
-  assert.ok(!/deletePhoto|saveRead/.test(fn[0]), '사진첩 원본을 건드리고 있습니다');
+  const drop = gov.match(/async function dropFromAlbum\([\s\S]*?\n\}/);
+  assert.ok(drop, 'dropFromAlbum 본문을 찾을 수 없습니다');
+  assert.match(drop[0], /PuPhotoStore\.loadFull\(/);
+  assert.match(drop[0], /insertAlbumFull\(/, '공용 마무리 단계를 타지 않습니다');
+  const ins = gov.match(/async function insertAlbumFull\([\s\S]*?\n\}/);
+  assert.ok(ins, 'insertAlbumFull 본문을 찾을 수 없습니다');
+  assert.match(ins[0], /simpleStampFile\(/, '기존 사진 처리 길을 타지 않습니다');
+  assert.ok(!/deletePhoto|saveRead/.test(drop[0] + ins[0]), '사진첩 원본을 건드리고 있습니다');
   // 남의 사진은 규칙이 막는다 → 왜 안 되는지 알려줘야 한다
-  assert.match(fn[0], /내가 올린 사진만/);
+  assert.match(ins[0], /내가 올린 사진만/);
+});
+
+/* ── 사진첩에서 고르기 (창 하나로) ── */
+
+test('사진 칸마다 사진첩에서 고르는 단추가 있다 — 끌어다 놓기는 그대로 둔다', () => {
+  const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
+  assert.match(gov, /onclick="openAlbumPicker\('\$\{sid\}',\$\{d\.i\}\)"/);
+  assert.match(gov, /ondrop="dropExtraPhoto\(event,'\$\{sid\}',\$\{d\.i\}\)"/, '끌어다 놓기가 없어졌습니다');
+});
+
+test('고르는 창은 방문일로 거르지 않고 처음부터 전체를 보여준다', () => {
+  /* 대표 결정(2026-08-04): 대부분 폰으로 찍어 그때그때 올리므로 날짜를
+     가려 볼 필요가 없다 — 방문일 필터를 두지 않는다. */
+  const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
+  const fn = gov.match(/function openAlbumPicker\([\s\S]*?\n\}/);
+  assert.ok(fn, 'openAlbumPicker 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /PuPhotoStore\.listYear\(/);
+  assert.ok(!/sc\.date|schedDate|visitDate/.test(fn[0]), '방문일로 거르고 있습니다');
+});
+
+test('사진첩이 사람별로 갈려 있다 — 내 uid 를 owner 로 넘긴다', () => {
+  // 안 넘기면 저장 층이 "계정을 알 수 없습니다"로 거절한다(이 화면은 signIn 을 안 부른다).
+  const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
+  const open = gov.match(/function openAlbumPicker\([\s\S]*?\n\}/)[0];
+  assert.match(open, /listYear\(year, albumPickOwner\)/);
+  const thumbs = gov.match(/function loadAlbumThumbs\([\s\S]*?\n\}/)[0];
+  assert.match(thumbs, /loadThumb\(it\.year, it\.id, owner\)/);
+  const pick = gov.match(/async function pickAlbumPhoto\([\s\S]*?\n\}/)[0];
+  assert.match(pick, /loadFull\(year, id, owner\)/);
+});
+
+test('고른 사진도 끌어다 놓기와 같은 마무리를 탄다', () => {
+  const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
+  const fn = gov.match(/async function pickAlbumPhoto\([\s\S]*?\n\}/);
+  assert.ok(fn, 'pickAlbumPhoto 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /insertAlbumFull\(/, '공용 마무리 단계를 타지 않습니다');
+  // 고르자마자 창을 닫아야 다음 칸을 헷갈리지 않는다
+  assert.match(fn[0], /closeModal\('mbAlbumPick'\)/);
+});
+
+test('사진이 없으면 왜 없는지 알려 준다', () => {
+  const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
+  const fn = gov.match(/function renderAlbumPick\([\s\S]*?\n\}/);
+  assert.ok(fn, 'renderAlbumPick 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /사진첩에 올린 사진이 없습니다/);
 });
 
 /* ── 사람별 분리 ── */
@@ -898,6 +948,80 @@ test('안내 문구가 실제 동작과 같다', () => {
   // 예전 문구는 '누르면 닫힘'이었는데 이제 사진을 누르면 확대된다.
   assert.match(app, /사진을 누르면 원본 크기 · 바깥을 누르면 닫힘/);
   assert.ok(!/'누르면 닫힘'/.test(app), '옛 안내 문구가 남아 있습니다');
+});
+
+/* ── 사진첩 안에서 끈 사진이 다시 올라가던 버그 (2026-08-04 대표 보고) ── */
+
+test('사진첩 안에서 끈 것은 받지 않는다 — 같은 사진이 또 올라가면 안 된다', () => {
+  /* 격자의 사진(<img>)을 끌면 브라우저가 그 그림을 파일로도 함께 싣는다.
+     그래서 'Files' 만 보고 판단하면 우리 드래그를 남의 파일로 오인해 재복사한다. */
+  const fn = app.match(/function hasFiles\([\s\S]*?\n\}/);
+  assert.ok(fn, 'hasFiles 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /PuDrag\.maybeOurs\(e\.dataTransfer\)\) return false/,
+    '우리 드래그를 걸러내지 않습니다 — 재복사가 다시 생깁니다');
+  // 놓는 순간에도 한 번 더 막는다(받는 자리가 안 열려도 drop 은 올 수 있다)
+  const drop = app.match(/window\.addEventListener\('drop'[\s\S]*?\n\}\);/);
+  assert.ok(drop, 'drop 처리기를 찾을 수 없습니다');
+  assert.match(drop[0], /PuDrag\.maybeOurs/, '놓는 순간의 방어가 없습니다');
+});
+
+/* ── 지워지지 않는 「확인 필요」 (내가 PR #34 에서 만든 결함) ── */
+
+test('사람이 확인한 것은 할 일에서 빠진다', () => {
+  /* 사업자등록증인데 그 업체가 업체관리에 없으면 사진첩에서 할 수 있는 일이
+     없는데도 계속 ⚠ 로 남았다. 치울 수 없는 할 일은 목록을 못 믿게 만든다. */
+  const fn = app.match(/function needsCheck\([\s\S]*?\n\}/);
+  assert.ok(fn, 'needsCheck 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /if \(r\.ack\) return false/, '확인해도 치워지지 않습니다');
+  // 확인 표시는 판독 결과와 함께 서버에 남아야 다음에 열 때도 치워져 있다
+  const ack = app.match(/function ackRead\([\s\S]*?\n\}/);
+  assert.ok(ack, 'ackRead 본문을 찾을 수 없습니다');
+  assert.match(ack[0], /PuPhotoStore\.saveRead\(/, '확인 표시를 저장하지 않습니다');
+  assert.match(ack[0], /blockedIfOther\(\)/, '남의 사진에도 확인 표시를 남깁니다');
+});
+
+test('확인했음 단추는 할 일인 것에만 나온다', () => {
+  // 할 일이 아닌 사진에까지 단추를 두면 무슨 뜻인지 알 수 없다.
+  assert.match(app, /actsRow\('다시 판독', needsCheck\(it\)\)/);
+  const fn = app.match(/function actsRow\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /showAck/);
+  assert.match(fn, /확인했음/);
+});
+
+test('확인한 뒤에도 되돌릴 수 있다고 알려 준다', () => {
+  // 되돌릴 길을 안 알리면 잘못 눌렀을 때 갇힌다.
+  assert.match(app, /님이 확인해 할 일에서 치웠습니다/);
+  assert.match(app, /「다시 판독」을 누르면 되돌아옵니다/);
+});
+
+/* ── 조용한 실패를 드러낸다 (2026-08-04 대표 보고: 직원이 올린 사진이 안 나온다) ── */
+
+test('목록을 못 읽으면 그 이유를 화면에 적는다', () => {
+  /* 예전엔 console.warn 만 하고 빈 화면을 보여줘서, 사진이 없는 것과
+     못 읽은 것을 구별할 수 없었다 — "아직 올린 사진이 없습니다"는 거짓말이 된다. */
+  const fn = app.match(/function loadGrid\([\s\S]*?\n\}/);
+  assert.ok(fn, 'loadGrid 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /showGridError\(/, '실패 이유를 화면에 전하지 않습니다');
+  const sg = app.match(/function showGridError\([\s\S]*?\n\}/);
+  assert.ok(sg, 'showGridError 본문을 찾을 수 없습니다');
+  // 클라우드가 준 말을 그대로 보여준다(우리 문구로 덮지 않는다)
+  assert.match(sg[0], /pre\.textContent = why/);
+  // 권한 문제면 무엇을 해야 하는지까지 알려준다
+  assert.match(sg[0], /PERMISSION_DENIED/);
+  assert.match(sg[0], /관리자에게 이 문구를 그대로/);
+  // 다시 시도할 길이 있다
+  assert.match(app, /id="emptyRetry"[\s\S]{0,80}onclick="loadGrid\(\)"/);
+});
+
+test('올릴 수 없는 상황이면 아무 말 없이 끝내지 않는다', () => {
+  /* 사진을 골랐는데 화면에 아무 일도 없으면 사람은 올라간 줄 알고 넘어간다 —
+     그게 증빙 누락이 된다. */
+  const fn = app.match(/async function addFiles\([\s\S]*?\n  if \(!files\.length\) return;/);
+  assert.ok(fn, 'addFiles 시작 부분을 찾을 수 없습니다');
+  assert.match(fn[0], /로그인이 풀렸습니다/, '로그인 해제를 조용하게 넘깁니다');
+  assert.match(fn[0], /올릴 준비가 끝나지 않았습니다/, '준비가 안 된 상태를 조용하게 넘깁니다');
+  // 사진이 안 올라갔다는 것을 분명하게 말해야 다시 올린다
+  assert.match(fn[0], /사진은 아직 올라가지 않았습니다/);
 });
 
 /* ── 업체관리로 보내기 ── */
