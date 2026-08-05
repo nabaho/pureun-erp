@@ -246,8 +246,10 @@ test('사진을 끌 수 있다 — 공용 규약을 쓴다', () => {
 
 test('끌 때 사진 자체가 아니라 표만 넘긴다', () => {
   // base64 를 넘기면 크기 제한에 걸리고 창을 넘길 때 깨진다.
-  const fn = app.match(/addEventListener\('dragstart'[\s\S]*?\n\}\);/);
-  assert.ok(fn, 'dragstart 본문을 찾을 수 없습니다');
+  /* ⚠ 격자의 dragstart 를 콕 집는다. 그냥 첫 dragstart 를 잡으면, 재복사를
+     막는 document 단위 dragstart(selfDrag)가 앞에 있어 엉뚱한 것을 검사한다. */
+  const fn = app.match(/\$\('grid'\)\.addEventListener\('dragstart'[\s\S]*?\n\}\);/);
+  assert.ok(fn, '격자 dragstart 본문을 찾을 수 없습니다');
   assert.ok(!/it\.thumb|loadFull|blob/.test(fn[0]), '사진 데이터를 넘기고 있습니다');
   // 어디 있는 무엇인지가 다 들어가야 받는 쪽이 가져올 수 있다
   for (const k of ['year:', 'owner:', 'id:']) {
@@ -1113,4 +1115,73 @@ test('포털 타일이 전 직원에게 열려 있다', () => {
   const line = portal.split('\n').find(l => l.includes("key:'photos'"));
   assert.ok(line, '사진첩 줄을 찾을 수 없습니다');
   assert.match(line, /roles:null/, '사진첩이 다시 관리자 전용으로 잠겼습니다');
+});
+
+/* ══════ 지우기 단추가 한 번 쓰고 죽던 버그 (2026-08-05 대표 보고) ══════ */
+
+test('지우기 단추를 잠근 뒤 반드시 다시 풀어 준다', () => {
+  /* 회귀 방지 — 2026-08-05 대표 보고: "지우기 기능 눌렀는데 안된다".
+     deleteSelected() 가 delBtn.disabled = true 로 잠그는데 어디서도 풀지
+     않아, 한 번 지운 뒤로는 영원히 죽은 단추가 됐다. 글자만 'N장 지우기'
+     로 갱신되니 살아 있는 것처럼 보여 더 나빴다.
+     형제인 downloadSelected() 는 마지막 .then 에서 disabled = false 로
+     풀어 준다 — 그 짝을 맞춘다. */
+  const fn = app.match(/function deleteSelected\(\)[\s\S]*?\n\}/);
+  assert.ok(fn, 'deleteSelected 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /disabled = true/, '잠그는 줄이 없어졌습니다');
+  assert.match(fn[0], /disabled = false/,
+    '잠근 단추를 다시 풀어 주지 않습니다 — 한 번 지우면 죽은 단추가 됩니다');
+});
+
+test('지우기가 중간에 실패해도 단추가 풀린다', () => {
+  /* 성공 경로에서만 풀어 주면, 지우다 실패했을 때 단추가 '지우는 중…' 으로
+     굳는다. 되살릴 길이 없어 새로고침 말고는 방법이 없다. */
+  const fn = app.match(/function deleteSelected\(\)[\s\S]*?\n\}/);
+  assert.match(fn[0], /\.catch\(/,
+    '지우기 뒤처리에 .catch 가 없습니다 — 실패하면 단추가 굳습니다');
+});
+
+/* ══════ 자기 사진을 다시 올리던 재복사 버그 (2026-08-05 대표 보고) ══════ */
+
+test('앱 안의 모든 사진 그림은 끌 수 없다', () => {
+  /* 회귀 방지 — 2026-08-05 대표 보고: "자꾸 자가 복제가 된다".
+     창 전체(window)에 파일 받기가 걸려 있고, 우리 사진인지 가리는 유일한
+     수단은 dragstart 에서 심는 표식이다. 그 dragstart 는 #grid 에만 걸려
+     있어서, 격자 밖 그림(크게 보기·휴지통)을 끌면 표식이 없다.
+     → 창이 '남이 준 파일'로 오해하고 그 사진을 새 번호로 다시 올린다.
+       (끌어다 놓기 통로는 무조건 서류로 넣으므로 회의 사진이 「서류」 딱지를
+        달고 복제됐다 — 대표 스크린샷의 증거다.)
+     2026-08-04 에 격자 그림만 draggable="false" 로 막고 나머지를 놓쳤다.
+     그림마다 잠그는 것을 잊지 않도록 검사로 못 박는다. */
+  /* 속성이 하나라도 있는 것만 실제 그림으로 본다 — 주석 안의 <img> 같은
+     글자를 잡으면 고칠 수 없는 검사가 되고, 그러면 다음 사람이 검사를 지운다. */
+  const imgs = [...app.matchAll(/<img\s[^>]*>/g)].map(m => m[0]);
+  assert.ok(imgs.length > 0, '<img> 를 하나도 찾지 못했습니다');
+  const draggable = imgs.filter(t => !/draggable="false"/.test(t));
+  assert.deepEqual(draggable, [],
+    '끌 수 있는 그림이 남아 있습니다 — 끌면 그 사진이 다시 올라갑니다: ' + draggable.join(' | '));
+});
+
+test('우리 화면에서 시작한 드래그는 파일로 받지 않는다', () => {
+  /* 표식(MIME) 하나에만 기대면, 표식을 못 심는 자리나 표식을 지우는
+     브라우저에서 재복사가 되살아난다. 그림마다 draggable="false" 를 붙이는
+     것도 새 그림을 넣을 때 잊으면 끝이다.
+     그래서 독립된 둘째 잠금을 둔다 — 이 화면 안에서 드래그가 시작됐다는
+     사실을 기억해 두고, 그 드래그의 drop 은 파일로 받지 않는다. */
+  assert.match(app, /dragstart[\s\S]{0,400}selfDrag\s*=\s*true/,
+    '화면 안에서 드래그가 시작된 사실을 기억하지 않습니다');
+  const drop = app.match(/addEventListener\('drop'[\s\S]*?\n\}\);/);
+  assert.ok(drop, 'drop 처리부를 찾을 수 없습니다');
+  assert.match(drop[0], /selfDrag/,
+    'drop 이 우리 드래그인지 확인하지 않습니다 — 자기 사진을 다시 올립니다');
+});
+
+test('막힌 드래그 표시는 스스로 풀린다', () => {
+  /* selfDrag 가 참으로 굳으면 **진짜 파일 놓기가 조용히 무시된다.**
+     올린 줄 알고 넘어가면 증빙 누락이 되므로, 조용한 실패는 재복사보다 나쁘다.
+     dragend·drop 없이 취소되는 드래그가 있으니 스스로 풀리는 길이 있어야 한다. */
+  assert.match(app, /mousedown[\s\S]{0,120}selfDrag\s*=\s*false/,
+    'selfDrag 가 굳으면 풀 길이 없습니다 — 파일 놓기가 조용히 막힙니다');
+  assert.match(app, /dragend[\s\S]{0,120}selfDrag\s*=\s*false/,
+    'dragend 에서 selfDrag 를 풀지 않습니다');
 });

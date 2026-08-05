@@ -436,7 +436,10 @@ button{font-family:inherit;cursor:pointer}
     <div class="bar"><span id="viewerInfo"></span><button onclick="closeViewer()">닫기 ✕</button></div>
     <div id="viewerBody">
       <!-- 사진을 누르면 원본 크기, 사진 바깥(어두운 곳)을 누르면 닫힌다 -->
-      <div id="viewerPic" onclick="picClick(event)"><img id="viewerImg" alt=""></div>
+      <!-- draggable="false": 이 그림을 끌면 창이 남의 파일로 오해해 같은 사진을
+           새 번호로 다시 올린다(재복사). 새 그림을 넣을 때도 반드시 붙일 것 —
+           tests/pu-photos-html.test.js 가 못 박아 두었다. -->
+      <div id="viewerPic" onclick="picClick(event)"><img id="viewerImg" alt="" draggable="false"></div>
       <div id="readPanel"></div>
     </div>
     <div class="hint" id="viewerHint"></div>
@@ -592,12 +595,34 @@ $('camInput').onchange = function () { addFiles(this.files, false); this.value =
    둘 다 **서류로 담는다** — 스캔·캡처는 글씨를 읽을 물건이라 고화질이 맞다. */
 let dragDepth = 0;
 
+/* ⚠ 이 화면 안에서 시작한 드래그인가 — 재복사를 막는 **둘째 잠금**이다.
+   창 전체에 파일 받기가 걸려 있어서, 우리 사진을 끌어 놓으면 브라우저가 그
+   그림을 파일로도 실어 보내고 창이 '남이 준 파일'로 오해해 **같은 사진을 새
+   번호로 다시 올린다**(2026-08-04·08-05 대표 보고: "자꾸 자가 복제가 된다").
+
+   첫째 잠금은 dragstart 에서 심는 표식(PuDrag)과 그림마다 붙이는
+   draggable="false" 인데, 둘 다 빠뜨리기 쉽다 — 표식을 막는 브라우저가 있고,
+   새 그림을 넣을 때 draggable 을 잊으면 그날로 되살아난다.
+   그래서 종류를 보지 않고 **출처**를 본다: 이 화면에서 드래그가 시작됐다면
+   그 drop 은 무슨 일이 있어도 파일로 받지 않는다. */
+let selfDrag = false;
+document.addEventListener('dragstart', function () { selfDrag = true; }, true);
+document.addEventListener('dragend', function () { selfDrag = false; }, true);
+/* ⚠ 스스로 풀리는 길을 반드시 둔다.
+   드래그가 dragend·drop 없이 취소되는 경우가 있는데(브라우저마다 다름), 그때
+   이 값이 참으로 굳으면 **진짜 파일 놓기가 조용히 무시된다.** 올린 줄 알고
+   넘어가면 그게 증빙 누락이 되므로, 조용한 실패는 재복사보다 더 나쁘다.
+   화면을 누르는 순간 이전 드래그는 끝난 것이다 — 파일을 끌어오는 동작은
+   이 화면에서 mousedown 을 내지 않으므로 잘못 풀릴 일이 없고,
+   화면 안 드래그는 mousedown → dragstart 순서라 곧바로 다시 참이 된다. */
+document.addEventListener('mousedown', function () { selfDrag = false; }, true);
+
 function showDrop(on) { $('dropzone').style.display = on ? 'flex' : 'none'; }
 
 /* dragenter/leave 는 자식 요소를 지날 때마다 번갈아 일어난다 —
    깊이를 세지 않으면 마우스를 움직일 때 안내가 깜빡인다. */
 window.addEventListener('dragenter', function (e) {
-  if (!hasFiles(e)) return;
+  if (selfDrag || !hasFiles(e)) return;   // 우리 사진을 끌 때는 받는 자리를 열지 않는다
   e.preventDefault();
   dragDepth++;
   showDrop(true);
@@ -614,8 +639,12 @@ window.addEventListener('dragleave', function (e) {
 });
 window.addEventListener('drop', function (e) {
   /* 우리 드래그면 아무것도 받지 않는다 — 위 hasFiles 와 같은 이유로, 여기서도
-     한 번 더 막는다(받는 자리가 안 열려도 drop 은 올 수 있다). */
-  if (window.PuDrag && PuDrag.maybeOurs(e.dataTransfer)) { dragDepth = 0; showDrop(false); return; }
+     한 번 더 막는다(받는 자리가 안 열려도 drop 은 올 수 있다).
+     ⚠ 출처(selfDrag)를 먼저 본다. 표식은 못 심는 자리·못 읽는 브라우저가 있어
+     그것만으로는 새는데, 출처는 그런 사정과 무관하게 늘 참이다. */
+  const ours = selfDrag || (window.PuDrag && PuDrag.maybeOurs(e.dataTransfer));
+  selfDrag = false;   // drop 뒤에는 dragend 가 오지 않는 브라우저가 있다
+  if (ours) { dragDepth = 0; showDrop(false); return; }
   e.preventDefault();
   dragDepth = 0;
   showDrop(false);
@@ -1637,6 +1666,17 @@ function deleteSelected() {
     if (failed.length) alert(failed.length + '장을 지우지 못했습니다. 잠시 뒤 다시 시도해 주세요.');
     refreshTrashCount();
     selected.clear();
+  }).catch(function (e) {
+    /* 뒤처리에서 터져도 단추는 반드시 풀린다 — 아래 마무리로 내려간다. */
+    console.warn('[지우기 뒤처리]', e);
+    alert('지운 뒤 정리 중에 문제가 있었습니다 — 새로고침하면 실제 상태가 보입니다.\n' + ((e && e.message) || e));
+  }).then(function () {
+    /* ⚠ 잠근 단추는 반드시 여기서 풀린다.
+       이 줄이 없어서 **한 번 지운 뒤로는 영원히 죽은 단추**가 됐다
+       (2026-08-05 대표 보고: "지우기 기능 눌렀는데 안된다").
+       renderGridBar 는 글자만 갱신하므로 살아 있는 것처럼 보여 더 나빴다.
+       형제인 downloadSelected 와 같은 모양으로 맞춘다. */
+    $('delBtn').disabled = false;
     renderGridBar();
     renderGrid();
   });
@@ -2054,7 +2094,8 @@ function renderTrash() {
     const src = safeSrc(t.thumb);
     const soon = t.daysLeft <= 3 ? ' soon' : '';
     return '<div class="tcell">' +
-      '<div class="tpic">' + (src ? '<img src="' + src + '" alt="">' : '') + '</div>' +
+      /* draggable="false" — 끌면 그 사진이 새 번호로 다시 올라간다(재복사). */
+      '<div class="tpic">' + (src ? '<img src="' + src + '" alt="" draggable="false">' : '') + '</div>' +
       '<div class="tleft' + soon + '">' + t.daysLeft + '일 남음</div>' +
       '<div class="tbtns">' +
       '<button onclick="restoreOne(\'' + esc(t.id) + '\')">되살리기</button>' +
