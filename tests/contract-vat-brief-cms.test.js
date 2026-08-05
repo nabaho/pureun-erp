@@ -269,6 +269,35 @@ function cmsCtx(isCMS, extra){
   t('★ 옛 칸(taxInvoicePaymentDay)에서도 이체일을 읽는다',
     made.find(n => n.props && n.props.type === 'number').props.value, '10');
 }
+/* ── CMS 를 업무 요약 바로 아랫줄로 붙였는가 (구분선 없이) ── */
+{
+  const { c } = cmsCtx(false, { kinds:['consulting'] });
+  const root = c.cmsBlock();
+  t('★ 굵은 구분선이 없다 (다른 구역처럼 보이지 않게)', !!(root.props.style || {}).borderTop, false);
+  t('★ 업무 요약 바로 아래로 바짝 붙는다', root.props.style.marginTop, '4px');
+  t('줄 자체가 옅은 상자로 묶여 있다', /borderRadius/.test(JSON.stringify(root.kids[0].props.style)), true);
+}
+{
+  // 종류가 하나면 "계약 전체에 하나만" 안내가 필요 없다
+  const { c, made } = cmsCtx(false, { kinds:['consulting'] });
+  c.cmsBlock();
+  const txt = made.flatMap(n => n.kids).filter(k => typeof k === 'string').join(' | ');
+  t('종류 하나면 안내를 안 띄운다', /계약 전체에 하나만/.test(txt), false);
+}
+{
+  // ★ CMS 는 계약 전체에 하나뿐인 값 — 종류를 여럿 고르면 그렇다고 밝혀야 오해가 없다
+  const { c, made } = cmsCtx(false, { kinds:['consulting','fund'] });
+  c.cmsBlock();
+  const txt = made.flatMap(n => n.kids).filter(k => typeof k === 'string').join(' | ');
+  t('★ 종류가 여럿이면 계약 전체에 하나만이라고 알린다', /계약 전체에 하나만/.test(txt), true);
+}
+{
+  // kinds 가 없어도(옛 계약·신규) 터지지 않아야 한다
+  const { c } = cmsCtx(false);
+  let threw = '';
+  try { c.cmsBlock(); } catch(e){ threw = String(e.message); }
+  t('★ kinds 가 없어도 안 터진다', threw, '');
+}
 // 배선 — 박스 안으로 들어갔고, 옛 자리는 비었고, 유형 없을 때 대비가 있다
 t('★ CMS 가 종류별 세부설정 박스 안에 있다',
   /\}\),\s*[\r\n]+\s*\/\/ CMS 자동이체 — 계약 전체에 하나뿐인 값[\s\S]{0,200}?cmsBlock\(\)\s*[\r\n]+\s*\),/.test(src), true);
