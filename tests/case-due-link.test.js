@@ -184,28 +184,35 @@ t('단계 기한만 있으면 그것', wctx.itemDue({ pe_due:{ date:'2026-08-10'
 t('단계 기한에 날짜가 없으면 무시', wctx.itemDue({ due:'2026-08-20', pe_due:{ date:'' } }), '2026-08-20');
 t('pe_due 가 null 이어도 안 터진다', wctx.itemDue({ due:'2026-08-20', pe_due:null }), '2026-08-20');
 
+// ★ dday() 는 stub 이 아닌 실제 시계를 본다 — 날짜를 고정값으로 박으면 날이 바뀔 때마다 깨진다.
+//   오늘을 기준으로 며칠 뒤/앞 날짜를 만들어 쓴다.
+const ymdFromToday = n => {
+  const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate() + n);
+  return d.getFullYear() + '-' + ('0'+(d.getMonth()+1)).slice(-2) + '-' + ('0'+d.getDate()).slice(-2);
+};
+
 // 임박(D-7) 판정에 단계 기한이 들어오는가 — 이것이 "기한 알림"의 실체다
 {
   const near = it => { const n = wctx.dday(wctx.itemDue(it)); return n !== null && n <= 7; };
-  t('★ 단계 기한이 임박하면 알린다', near({ next:{ date:'2026-12-31' }, pe_due:{ date:'2026-08-06' } }), true);
-  t('단계 기한이 멀면 안 알린다', near({ next:{ date:'2026-12-31' }, pe_due:{ date:'2026-12-01' } }), false);
-  t('★ 단계 기한이 지났으면 알린다', near({ pe_due:{ date:'2026-07-01' } }), true);
+  t('★ 단계 기한이 임박하면 알린다', near({ next:{ date:ymdFromToday(200) }, pe_due:{ date:ymdFromToday(2) } }), true);
+  t('단계 기한이 멀면 안 알린다', near({ next:{ date:ymdFromToday(200) }, pe_due:{ date:ymdFromToday(120) } }), false);
+  t('★ 단계 기한이 지났으면 알린다', near({ pe_due:{ date:ymdFromToday(-34) } }), true);
 }
 
 // 배지
 {
-  const html = wctx.sdueHTML({ pe_due:{ date:'2026-08-06', label:'중노위 기한', verified:true } });
+  const html = wctx.sdueHTML({ pe_due:{ date:ymdFromToday(2), label:'중노위 기한', verified:true } });
   t('배지에 남은 날짜', /D-2/.test(html), true);
   t('배지에 단계 이름', /중노위 기한/.test(html), true);
   t('확인된 기한엔 (확인) 없음', /\(확인\)/.test(html), false);
   t('확인된 기한은 unv 아님', /class="sdue"/.test(html), true);
-  const un = wctx.sdueHTML({ pe_due:{ date:'2026-08-06', label:'재심사 기한', verified:false } });
+  const un = wctx.sdueHTML({ pe_due:{ date:ymdFromToday(2), label:'재심사 기한', verified:false } });
   t('★ 확인 안 된 기한엔 (확인)', /\(확인\)/.test(un), true);
   t('확인 안 된 기한은 색이 다르다', /class="sdue unv"/.test(un), true);
   t('★ 확인하라고 어디로 갈지 알려준다', /환경설정 ▸ 업무유형/.test(un), true);
   t('여기서 못 바꾼다고 알린다', /여기서는 바꿀 수 없습니다/.test(un), true);
-  t('지난 기한은 D+', /D\+34/.test(wctx.sdueHTML({ pe_due:{ date:'2026-07-01', label:'x' } })), true);
-  t('오늘이면 D-Day', /D-Day/.test(wctx.sdueHTML({ pe_due:{ date:'2026-08-04', label:'x' } })), true);
+  t('지난 기한은 D+', /D\+34/.test(wctx.sdueHTML({ pe_due:{ date:ymdFromToday(-34), label:'x' } })), true);
+  t('오늘이면 D-Day', /D-Day/.test(wctx.sdueHTML({ pe_due:{ date:ymdFromToday(0), label:'x' } })), true);
   t('pe_due 없으면 빈 문자열', wctx.sdueHTML({}), '');
   t('날짜 없으면 빈 문자열', wctx.sdueHTML({ pe_due:{ label:'x' } }), '');
   t('null 이어도 안 터진다', wctx.sdueHTML(null), '');
