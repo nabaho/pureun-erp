@@ -15499,6 +15499,18 @@ function calcPerfShares(amount, mainSid, subSids, sourceKind, splitMainPct, opts
     if(!ps || !pe) return false;
     return opts.paidDate >= ps && opts.paidDate <= pe;
   }
+  // 퇴사자 판정 — 퇴사일 '이후'에 들어온 입금만 뺀다.
+  // 퇴사 전에 한 일에서 나온 입금은 그 사람 정당한 몫이므로 그대로 나눠 준다.
+  // (퇴사 후에도 담당자 이름이 안 지워지므로, 여기서 막지 않으면 없는 사람에게 계속 분배된다)
+  function isGoneBy(sid){
+    if(!opts.paidDate) return false;
+    var u = users.find(function(x){return x.sid===sid;});
+    if(!u) return false;
+    if(u.status !== 'retired' && u.status !== 'resigned') return false;
+    var rd = u.retireDate || u.lastWorkDate || '';
+    if(!rd) return true;                    // 퇴사일을 모르면 안전하게 뺀다
+    return String(opts.paidDate) > String(rd);
+  }
   // paidDate 시점의 요율 사용 (history 기반, 변경 이전 데이터는 옛 요율)
   // ★ opts.mainRateOverride 우선 (이번 입금건만 다른 요율 적용)
   var baseMainRate = opts.paidDate ? getRateAt(mainSid, opts.paidDate) : resolveBaseRate(mainSid);
@@ -15511,8 +15523,10 @@ function calcPerfShares(amount, mainSid, subSids, sourceKind, splitMainPct, opts
   // 핵심: 입금 기준액을 분배 비율로 나누고, 각자 본인 요율 적용
   var mainBase = Math.round(baseAmount * mainPct / 100);
   var mainProbation = isInProbation(mainSid);
-  var mainAmt = mainProbation ? 0 : Math.round(mainBase * mainRate / 100);
+  var mainGone = isGoneBy(mainSid);
+  var mainAmt = (mainProbation || mainGone) ? 0 : Math.round(mainBase * mainRate / 100);
   var mainShare = { sid:mainSid, name:nameOf(mainSid), pct:mainRate, amount:mainAmt, role:'주담당', sharePct:mainPct, baseAmount:mainBase, probation:mainProbation };
+  if(mainGone) mainShare.retired = true;
   if(opts.mainRateOverride != null && opts.mainRateOverride !== baseMainRate){
     mainShare.rateOverride = true; mainShare.baseRate = baseMainRate;
   }
@@ -15532,8 +15546,10 @@ function calcPerfShares(amount, mainSid, subSids, sourceKind, splitMainPct, opts
       // ★ override 우선
       var subRate = (subRateOverrideMap[sid] != null) ? subRateOverrideMap[sid] : baseSubRate;
       var subProbation = isInProbation(sid);
-      var subAmt = subProbation ? 0 : Math.round(subBase * subRate / 100);
+      var subGone = isGoneBy(sid);
+      var subAmt = (subProbation || subGone) ? 0 : Math.round(subBase * subRate / 100);
       var subShare = { sid:sid, name:nameOf(sid), pct:subRate, amount:subAmt, role:'부담당', sharePct:subPct, baseAmount:subBase, probation:subProbation };
+      if(subGone) subShare.retired = true;
       if(subRateOverrideMap[sid] != null && subRateOverrideMap[sid] !== baseSubRate){
         subShare.rateOverride = true; subShare.baseRate = baseSubRate;
       }
@@ -52385,6 +52401,86 @@ function calcRetirementLeaveJoinBasis(hireDate, retireDateStr, policy){
     reason:fullYears+'→'+nextFY+'년차 구간 ('+workedInPeriod+'/'+periodDays+'일 × '+entitlement+'일 = '+proRated+'일)' };
 }
 
+// ── 퇴사자가 들고 있는 것 찾아 넘기기 ─────────────────────────
+// 퇴사시켜도 이미 박혀 있는 담당자 이름은 안 지워진다. 그대로 두면
+//   ① 새 입금이 확정될 때 퇴사자에게 성과급이 분배되고
+//   ② 목록에 없는 사람이 계속 주담당으로 뜨고
+//   ③ 성과급 확인이 영원히 미확인으로 남는다.
+// 그래서 퇴사 처리 마지막에 한 번에 넘긴다.
+var RT_STORES = [
+  { key:'contracts',      label:'계약'   },
+  { key:'companies',      label:'업체'   },
+  { key:'cases',          label:'사건'   },
+  { key:'consultings',    label:'컨설팅' },
+  { key:'funds',          label:'기금'   },
+  { key:'other_projects', label:'기타'   }
+];
+function rtIsClosed(x){
+  if(!x) return true;
+  var s = x.status || '';
+  return s==='closed' || s==='cancelled' || s==='transferred' || s==='ended' || !!x.closedDate;
+}
+function rtName(x){
+  return String((x && (x.companyName || x.name || x.title || x.caseNo)) || '(이름 없음)');
+}
+// 넘길 것 모으기 — 끝난 건은 뺀다. 이미 끝난 일까지 넘기면 목록만 부풀고 판단이 흐려진다.
+function rtHeld(sid, includeClosed){
+  if(!sid) return [];
+  var out = [];
+  RT_STORES.forEach(function(st){
+    var arr = dbGet(st.key, []) || [];
+    (Array.isArray(arr) ? arr : []).forEach(function(x){
+      if(!x || !x.id) return;
+      var closed = rtIsClosed(x);
+      if(closed && !includeClosed) return;
+      var main = (x.managerMain === sid);
+      var sub  = !main && (x.managerSubs || []).indexOf(sid) >= 0;
+      if(!main && !sub) return;
+      out.push({ store:st.key, label:st.label, id:x.id, name:rtName(x),
+        role: main ? '주담당' : '부담당', closed:closed });
+    });
+  });
+  return out;
+}
+function rtCountByLabel(held){
+  var m = {};
+  (held||[]).forEach(function(x){ m[x.label] = (m[x.label]||0) + 1; });
+  return RT_STORES.map(function(s){ return { label:s.label, n:m[s.label]||0 }; })
+    .filter(function(x){ return x.n > 0; });
+}
+// 한 건 넘기기 — 주담당이면 갈아끼우고, 부담당이면 목록에서 빼고 넣는다.
+// 받는 사람이 이미 부담당이면 겹치지 않게 한다.
+function rtSwap(x, fromSid, toSid){
+  var main = x.managerMain, subs = (x.managerSubs || []).slice();
+  if(main === fromSid){
+    main = toSid;
+    subs = subs.filter(function(s){ return s !== toSid; });   // 주담당이 되었으니 부담당에서 뺀다
+  } else {
+    subs = subs.filter(function(s){ return s !== fromSid; });
+    if(subs.indexOf(toSid) < 0 && main !== toSid) subs.push(toSid);
+  }
+  return { managerMain: main, managerSubs: subs };
+}
+// picks = [{store,id,to}] — to 가 비면 안 넘긴다
+function rtMove(fromSid, picks){
+  var byStore = {};
+  (picks||[]).forEach(function(p){ if(p && p.to){ (byStore[p.store] = byStore[p.store] || []).push(p); } });
+  var done = 0, jobs = [];
+  Object.keys(byStore).forEach(function(k){
+    var arr = dbGet(k, []) || [];
+    byStore[k].forEach(function(p){
+      var x = (Array.isArray(arr) ? arr : []).find(function(y){ return y && y.id === p.id; });
+      if(!x) return;
+      var patch = rtSwap(x, fromSid, p.to);
+      patch.handoverFrom = fromSid;
+      patch.handoverAt = new Date().toISOString();
+      jobs.push([k, p.id, patch]); done++;
+    });
+  });
+  jobs.forEach(function(j){ try{ dbPatch(j[0], j[1], j[2]); }catch(_){} });
+  return done;
+}
+
 function RetireModal(props){
   useEscClose(props.onClose);
   var u = props.user;
@@ -52399,6 +52495,26 @@ function RetireModal(props){
 
   function set1(k){ return function(e){ setF1(Object.assign({},f1,(function(){var x={};x[k]=e.target.value;return x;}()))); }; }
   function toggleDoc(k){ setDocs(Object.assign({},docs,(function(){var x={};x[k]=!docs[k];return x;}()))); }
+
+  // ── 3단계: 이 사람이 들고 있는 것 ──
+  var heldS = useState(null); var held0 = heldS[0]; var setHeld0 = heldS[1];
+  useEffect(function(){ setHeld0(rtHeld(u.sid, false)); }, [u.sid]);
+  var held = held0 || [];
+  var toS = useState({}); var toMap = toS[0]; var setToMap = toS[1];   // {store|id: 받는사람 sid}
+  function keyOf(x){ return x.store + '|' + x.id; }
+  var movedN = held.filter(function(x){ return toMap[keyOf(x)]; }).length;
+  var candidates = sortUsers((dbGet('user_accounts', USERS_SEED)||[]).filter(function(x){
+    return x && x.sid !== u.sid && (x.status === 'active' || x.status === 'leave');
+  }));
+  function setAllTo(sid){
+    var n = {}; if(sid) held.forEach(function(x){ n[keyOf(x)] = sid; });
+    setToMap(n);
+  }
+  function setOneTo(x, sid){
+    var n = Object.assign({}, toMap);
+    if(sid) n[keyOf(x)] = sid; else delete n[keyOf(x)];
+    setToMap(n);
+  }
 
   // 자동계산
   function calcYears(from, to){
@@ -52429,6 +52545,15 @@ function RetireModal(props){
 
   function goStep2(){ if(!f1.retireDate){ showToast('퇴직일을 입력하세요'); return; } setStep(2); }
   function save(){
+    var left = held.length - movedN;
+    if(left > 0){
+      if(!window.confirm('넘기지 않은 업무가 ' + left + '건 남습니다.\n\n퇴사자가 담당으로 남아 있으면 목록에 계속 뜨고,\n그 업체에서 입금이 확정될 때 성과급이 그 사람에게 분배될 수 있습니다.\n\n그래도 진행할까요?')) return;
+    }
+    if(movedN > 0){
+      var n = rtMove(u.sid, held.filter(function(x){ return toMap[keyOf(x)]; })
+        .map(function(x){ return { store:x.store, id:x.id, to:toMap[keyOf(x)] }; }));
+      showToast('🔄 업무 ' + n + '건을 넘겼습니다');
+    }
     var selDocs = Object.keys(docs).filter(function(k){ return docs[k]; });
     props.onSave(Object.assign({}, u, {
       status:'retired', retireDate:f1.retireDate, lastWorkDate:f1.lastWorkDate, leaveReason:f1.leaveReason,
@@ -52531,6 +52656,57 @@ function RetireModal(props){
     }))
   );
 
+  // ── 3단계: 업무 넘기기 ──
+  var sel = { padding:'4px 8px', fontSize:'11.5px', fontFamily:'inherit', border:'1px solid #cbd5e1', borderRadius:'4px', maxWidth:'118px' };
+  function whoSelect(val, onCh, wide){
+    return h('select', { value:val||'', onChange:onCh, style: wide ? Object.assign({}, sel, { maxWidth:'160px', padding:'5px 9px' }) : sel },
+      h('option', { value:'' }, wide ? '전부 한 사람에게…' : '안 넘김'),
+      candidates.map(function(c){ return h('option', { key:c.sid, value:c.sid }, c.name + (c.status==='leave' ? ' (휴직)' : '')); }));
+  }
+  var body3 = held0 === null
+    ? h('div', { style:{ padding:'40px', textAlign:'center', color:'#94a3b8', fontSize:'12.5px' } }, '찾아보는 중…')
+    : held.length === 0
+    ? h('div', { style:{ padding:'34px 16px', textAlign:'center', color:'#166534', fontSize:'13px', lineHeight:1.9 } },
+        h('div', { style:{ fontSize:'30px', marginBottom:'8px' } }, '✅'),
+        h('b', null, '넘길 업무가 없습니다'),
+        h('div', { style:{ fontSize:'11.5px', color:'#64748b' } },
+          '진행 중인 계약·업체·사건·컨설팅·기금·기타 어디에도 담당으로 남아 있지 않습니다.'))
+    : h('div', null,
+        h('div', { style:{ background:'#fff7ed', border:'1px solid #fed7aa', borderRadius:'6px', padding:'10px 14px', marginBottom:'12px', fontSize:'11.5px', color:'#9a3412', lineHeight:1.8 } },
+          h('b', null, '⚠️ 넘기지 않으면'),
+          ' 퇴사자가 담당으로 계속 남습니다. 목록에 없는 사람이 주담당으로 뜨고,',
+          h('br'), '그 업체에서 입금이 확정될 때 ', h('b', null, '성과급이 그 사람에게 분배될 수 있습니다'), '.'),
+
+        h('div', { style:{ display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'10px', fontSize:'11.5px' } },
+          rtCountByLabel(held).map(function(c){
+            return h('span', { key:c.label, style:{ background:'#f1f5f9', color:'#475569', borderRadius:'6px', padding:'3px 10px' } },
+              c.label + ' ' + c.n);
+          })),
+
+        h('div', { style:{ display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap', background:'#f8fafc', borderRadius:'6px', padding:'9px 12px', marginBottom:'10px' } },
+          h('span', { style:{ fontSize:'12px', fontWeight:700, color:'#334155' } }, '한 번에'),
+          whoSelect('', function(e){ setAllTo(e.target.value); }, true),
+          h('button', { onClick:function(){ setToMap({}); },
+            style:{ padding:'5px 11px', fontSize:'11.5px', border:'1px solid #cbd5e1', background:'#fff', borderRadius:'5px', cursor:'pointer' } }, '전부 해제'),
+          h('span', { style:{ marginLeft:'auto', fontSize:'11.5px', fontWeight:700, color: movedN===held.length ? '#166534' : '#b45309' } },
+            movedN + ' / ' + held.length + ' 지정')),
+
+        h('div', { style:{ maxHeight:'34vh', overflowY:'auto', border:'1px solid #e2e8f0', borderRadius:'6px' } },
+          held.map(function(x){
+            var to = toMap[keyOf(x)] || '';
+            return h('div', { key:keyOf(x), style:{ display:'flex', alignItems:'center', gap:'8px', padding:'7px 10px',
+                borderBottom:'1px solid #f1f5f9', background: to ? '#f0fdf4' : '#fff', flexWrap:'wrap' } },
+              h('span', { style:{ fontSize:'10.5px', background:'#eef2ff', color:'#4338ca', borderRadius:'4px', padding:'1px 6px', fontWeight:700, flexShrink:0 } }, x.label),
+              h('span', { style:{ fontSize:'12px', flex:1, minWidth:'90px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, x.name),
+              h('span', { style:{ fontSize:'10.5px', color: x.role==='주담당' ? '#1e40af' : '#64748b', fontWeight: x.role==='주담당'?700:400, flexShrink:0 } }, x.role),
+              whoSelect(to, function(e){ setOneTo(x, e.target.value); }));
+          })),
+
+        h('div', { style:{ marginTop:'10px', fontSize:'11px', color:'#94a3b8', lineHeight:1.8 } },
+          '· 끝난 건(종료·취소·이관)은 넘길 필요가 없어 목록에서 뺐습니다.', h('br'),
+          '· 주담당을 넘기면 받는 사람이 주담당이 되고, 부담당이던 자리에서는 빠집니다.', h('br'),
+          '· 넘긴 기록(누구에게서 언제)은 각 건에 남습니다.'));
+
   return h('div', { className:'modal-bg', onClick:props.onClose },
     h('div', { className:'modal', onClick:function(e){ e.stopPropagation(); }, style:{ width:'520px', maxWidth:'96vw', maxHeight:'92vh', display:'flex', flexDirection:'column' } },
       h('div', { className:'modal-h' },
@@ -52542,15 +52718,21 @@ function RetireModal(props){
         h('span', { style:{ color:'#cbd5e1' } }, '\u2192'),
         h('span', { style:{ padding:'3px 12px', borderRadius:'10px', fontSize:'11.5px', fontWeight:700, background:step===2?'#1e40af':'#f1f5f9', color:step===2?'#fff':'#94a3b8' } }, '2 정산\xb7문서')
       ),
-      h('div', { className:'modal-b', style:{ flex:1, overflowY:'auto' } }, step===1 ? body1 : body2),
+      step===2 && held.length > 0 && h('div', { style:{ padding:'8px 20px', background:'#fffbeb', borderBottom:'1px solid #fde68a', fontSize:'11.5px', color:'#854d0e' } },
+        '다음 단계에서 이 사람이 들고 있는 ' + held.length + '건을 넘깁니다'),
+      h('div', { className:'modal-b', style:{ flex:1, overflowY:'auto' } },
+        step===1 ? body1 : (step===2 ? body2 : body3)),
       h('div', { className:'modal-f' },
         step===1
           ? h('div', { style:{ display:'flex', gap:'8px', width:'100%' } },
               h('button', { className:'btn-secondary', onClick:props.onClose, style:{ flex:1 } }, '취소'),
               h('button', { className:'btn-primary', onClick:goStep2, style:{ flex:2 } }, '다음 \u2192'))
           : h('div', { style:{ display:'flex', gap:'8px', width:'100%' } },
-              h('button', { className:'btn-secondary', onClick:function(){ setStep(1); }, style:{ flex:1 } }, '\u2190 이전'),
-              h('button', { onClick:save, style:{ flex:2, padding:'8px', background:'#dc2626', color:'#fff', border:'none', borderRadius:'5px', fontSize:'13px', fontWeight:700, cursor:'pointer' } }, '퇴사 처리 완료'))
+              h('button', { className:'btn-secondary', onClick:function(){ setStep(step===3?2:1); }, style:{ flex:1 } }, '\u2190 이전'),
+              h('button', { onClick: (step===2 && held.length>0) ? function(){ setStep(3); } : save,
+                style:{ flex:2, padding:'8px', background:(step===2 && held.length>0)?'#1e40af':'#dc2626', color:'#fff', border:'none', borderRadius:'5px', fontSize:'13px', fontWeight:700, cursor:'pointer' } },
+                (step===2 && held.length>0) ? ('업무 넘기기 '+held.length+'건 →')
+                  : (movedN>0 ? ('넘기고 퇴사 처리 ('+movedN+'건)') : '퇴사 처리 완료')))
       )
     )
   );
