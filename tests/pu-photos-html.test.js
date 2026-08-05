@@ -944,6 +944,36 @@ test('확인한 뒤에도 되돌릴 수 있다고 알려 준다', () => {
   assert.match(app, /「다시 판독」을 누르면 되돌아옵니다/);
 });
 
+/* ── 조용한 실패를 드러낸다 (2026-08-04 대표 보고: 직원이 올린 사진이 안 나온다) ── */
+
+test('목록을 못 읽으면 그 이유를 화면에 적는다', () => {
+  /* 예전엔 console.warn 만 하고 빈 화면을 보여줘서, 사진이 없는 것과
+     못 읽은 것을 구별할 수 없었다 — "아직 올린 사진이 없습니다"는 거짓말이 된다. */
+  const fn = app.match(/function loadGrid\([\s\S]*?\n\}/);
+  assert.ok(fn, 'loadGrid 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /showGridError\(/, '실패 이유를 화면에 전하지 않습니다');
+  const sg = app.match(/function showGridError\([\s\S]*?\n\}/);
+  assert.ok(sg, 'showGridError 본문을 찾을 수 없습니다');
+  // 클라우드가 준 말을 그대로 보여준다(우리 문구로 덮지 않는다)
+  assert.match(sg[0], /pre\.textContent = why/);
+  // 권한 문제면 무엇을 해야 하는지까지 알려준다
+  assert.match(sg[0], /PERMISSION_DENIED/);
+  assert.match(sg[0], /관리자에게 이 문구를 그대로/);
+  // 다시 시도할 길이 있다
+  assert.match(app, /id="emptyRetry"[\s\S]{0,80}onclick="loadGrid\(\)"/);
+});
+
+test('올릴 수 없는 상황이면 아무 말 없이 끝내지 않는다', () => {
+  /* 사진을 골랐는데 화면에 아무 일도 없으면 사람은 올라간 줄 알고 넘어간다 —
+     그게 증빙 누락이 된다. */
+  const fn = app.match(/async function addFiles\([\s\S]*?\n  if \(!files\.length\) return;/);
+  assert.ok(fn, 'addFiles 시작 부분을 찾을 수 없습니다');
+  assert.match(fn[0], /로그인이 풀렸습니다/, '로그인 해제를 조용하게 넘깁니다');
+  assert.match(fn[0], /올릴 준비가 끝나지 않았습니다/, '준비가 안 된 상태를 조용하게 넘깁니다');
+  // 사진이 안 올라갔다는 것을 분명하게 말해야 다시 올린다
+  assert.match(fn[0], /사진은 아직 올라가지 않았습니다/);
+});
+
 /* ── 업체관리로 보내기 ── */
 
 test('사업자등록증·중소기업확인서는 업체관리에도 보낸다', () => {
