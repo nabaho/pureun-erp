@@ -744,7 +744,7 @@ function backfillIdx(){
   }catch(_){}
 }
 
-const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, colOrder:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, onlyPrivate:false, unlocked:{}, items:{}, groups:{}, trash:{}, views:{}, view:'list', vtab:'' };
+const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, colOrder:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, onlyPrivate:false, unlocked:{}, items:{}, groups:{}, trash:{}, views:{}, rules:{}, view:'list', vtab:'' };
 
 /* ── 데이터 계층 ── */
 const Store = {
@@ -774,6 +774,8 @@ const Store = {
           if(!Store._erpTabSeedDone){ Store._erpTabSeedDone=true; setTimeout(seedErpTabs, 3500); } });
         this.db.ref(DB_ROOT+'/trash').on('value', s => { state.trash = s.val()||{};
           if(!Store._trashPurgeDone){ Store._trashPurgeDone=true; setTimeout(purgeTrash, 2000); } });
+        this.db.ref(DB_ROOT+'/classifyRules').on('value', s => { state.rules = s.val()||{};
+          if(!Store._ruleSeedDone){ Store._ruleSeedDone=true; setTimeout(seedClassifyRules, 3000); } });
       };
       /* 통합 이메일 로그인 (포털·ERP·컨설팅과 같은 Firebase 세션 공유) */
       if (firebase.auth){
@@ -864,6 +866,12 @@ const Store = {
   delView(id){ if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/views/${id}`).remove();
     else { delete state.views[id]; this._lsViews(); render(); } },
   _lsViews(){ try{ localStorage.setItem('pucards_local_views', JSON.stringify(state.views||{})); }catch(e){} },
+  /* 분류 규칙 — 전 직원 공유. 명함을 건드리지 않고 '어떤 단어면 어느 폴더로' 만 담는다 */
+  putRule(r){ if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/classifyRules/${r.key}`).set(r);
+    else { state.rules[r.key]=r; this._lsRules(); render(); } },
+  delRule(key){ if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/classifyRules/${key}`).remove();
+    else { delete state.rules[key]; this._lsRules(); render(); } },
+  _lsRules(){ try{ localStorage.setItem('pucards_local_rules', JSON.stringify(state.rules||{})); }catch(e){} },
   putGroup(g){ if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/groups/${g.id}`).set(g);
     else { state.groups[g.id]=g; this._ls(); render(); } },
   delGroup(id){ Object.values(state.items).forEach(it=>{ if(it.group===id){ it.group=''; this.put(it);} });
@@ -4165,6 +4173,35 @@ function setSub(s){ state.setSub=s||''; renderSettingsPage(); }
 function _refresh(fn){ if(state.view==='settings') renderSettingsPage(); else if(fn) fn(); }
 /* 정리 센터의 각 줄을 눌렀을 때 — 인라인이면 하위 화면으로, 팝업이면 팝업으로 */
 function _go(sub, modalCall){ return _panelTarget==='inline' ? `setSub('${sub}')` : modalCall; }
+
+/* ══════ 규칙 분류 — 순수 로직 (테스트 대상) ══════
+   미분류로 쌓인 명함을 회사명 단어로 폴더에 나눠 담는다.
+   '청' 처럼 짧은 말은 청소·청과에도 걸려 일부러 뺐다 — 시청·구청처럼 길게 적는다. */
+const CLASSIFY_DEFAULTS = [
+  { key:'nomu',   order:1, enabled:true, toGroupName:'노무사',
+    words:['노무법인','노무사사무소','노무사무소'] },
+  { key:'expert', order:2, enabled:true, toGroupName:'전문가',
+    words:['세무','회계','법무','변호사','법률','변리','특허','감정평가'] },
+  { key:'public', order:3, enabled:true, toGroupName:'기관·공공',
+    words:['공단','공사','시청','구청','군청','도청','교육청','경찰청','소방서','협회','진흥원','재단','연구원','공제회'] },
+  { key:'life',   order:4, enabled:true, toGroupName:'생활·기타',
+    words:['배달','꽃배달','보험','갈비','식당','마트','택배','렌터카','화수목','미용실','세탁','피자','치킨'] }
+];
+/* 규칙이 하나도 없을 때만 기본 4개를 심는다.
+   기록 이름(key)을 고정으로 써서, 두 사람이 동시에 심어도 같은 4개로 모인다. */
+function seedClassifyRules(){
+  try{
+    if(Store.mode!=='firebase') return;
+    if(Object.keys(state.rules||{}).length) return;
+    CLASSIFY_DEFAULTS.forEach(r=>{ Store.putRule({...r, words:r.words.slice()}); });
+  }catch(e){ console.warn('[seedClassifyRules]', e&&e.message); }
+}
+/* 지금 쓸 규칙 — 저장된 게 있으면 그것, 없으면 기본값. 항상 order 오름차순 */
+function classifyRuleList(){
+  const saved = Object.values(state.rules||{}).filter(r=>r&&r.key);
+  const list = saved.length ? saved : CLASSIFY_DEFAULTS.map(r=>({...r, words:r.words.slice()}));
+  return list.slice().sort((a,b)=>(a.order||0)-(b.order||0));
+}
 
 /* ══════ ⚙️ 환경설정 화면 (PC) — 푸른이알피처럼 가로 탭으로 관리 ══════ */
 const SET_TABS=[
