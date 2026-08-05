@@ -576,6 +576,11 @@ function checkSelfStatus(){
     forceLogout('퇴사 처리되었습니다. 시스템 접근이 차단됩니다.');
     return;
   }
+  // 접속 잠금 — 퇴사와 다르다. 급히 막아 둔 것일 뿐, 인사 상태는 그대로 재직이다.
+  if(me.accessLocked === true){
+    forceLogout('접속이 잠겼습니다. 관리자에게 문의하세요.');
+    return;
+  }
   // 휴직은 로그인 자체는 허용 (담당자 제외만)
 }
 function forceLogout(msg){
@@ -14892,6 +14897,8 @@ function getUserAssignStatus(sid, refDate){
   var users = dbGet('user_accounts', USERS_SEED);
   var u = users.find(function(x){ return x.sid === sid; });
   if(!u) return { assignable:false, reason:'inactive', label:'없음' };
+  // 접속 잠금 — 급히 막아 둔 사람. 인사 상태는 재직이지만 새 배정은 멈춘다.
+  if(u.accessLocked === true) return { assignable:false, reason:'locked', label:'접속잠김' };
   // status='leave': 환경설정에서 직접 휴직 토글한 경우
   if(u.status === 'leave') return { assignable:false, reason:'leave', label:'휴직' };
   if(u.status !== 'active') return { assignable:false, reason:'inactive', label:u.status==='retired'?'퇴직':'비활성' };
@@ -22972,7 +22979,7 @@ function UserWithRateSection(){
                 h('td', null, x.branch),
                 h('td', null,
                   h('select', {
-                    value: x.status || 'active',
+                    value: (x.accessLocked === true) ? 'locked' : (x.status || 'active'),
                     onChange: async function(e){
                       var newStatus = e.target.value;
                       // 휴직 선택 시 → 모달 열기 (시작일·종료예정일·사유 입력)
@@ -22986,15 +22993,35 @@ function UserWithRateSection(){
                         });
                         return;
                       }
-                      // ★ 퇴사 처리 시 다단계 확인 + 자동 차단
-                      if(newStatus === 'retired' && x.status !== 'retired'){
-                        var confirmMsg = '"' + x.name + '" (' + x.sid + ') 직원을 퇴사 처리하시겠습니까?\n\n→ 즉시 시스템 접근 차단\n→ 비밀번호 자동 무효화\n→ 자동 로그인 키 삭제\n→ 감사 로그 기록\n\n이 작업은 되돌릴 수 있지만, 비밀번호는 재설정해야 합니다.';
-                        if(!(await popConfirm(confirmMsg))) return;
+                      // ★ 접속 잠금 — 여기는 '퇴사'가 아니다. 급히 막는 자리다.
+                      //   퇴사는 인사 사건이라 퇴직금·서류·업무 넘기기가 붙는데,
+                      //   이 화면에는 입사일도 급여도 없어 그 계산을 할 수가 없다.
+                      //   그래서 여기서는 접속만 끊고, 정식 절차는 근로자명부로 보낸다.
+                      if(newStatus === 'locked'){
+                        var lockMsg = '"' + x.name + '" (' + x.sid + ') 의 접속을 지금 바로 잠급니다.\n\n'
+                          + '→ 로그인 차단 · 비밀번호 무효화 · 자동로그인 삭제\n'
+                          + '→ 새 담당 배정에서 제외\n\n'
+                          + '이것은 퇴사 처리가 아닙니다. 인사 상태는 재직 그대로입니다.\n'
+                          + '퇴직금·서류·업무 넘기기는 근로자명부 → 퇴사 처리에서 하세요.\n'
+                          + '(근로자명부에 「퇴사 처리 필요」로 표시됩니다)\n\n진행할까요?';
+                        if(!(await popConfirm(lockMsg))) return;
                       }
-                      var prevStatus = x.status || 'active';
+                      var prevStatus = (x.accessLocked === true) ? 'locked' : (x.status || 'active');
                       var updated = users.map(function(u){
                         if(u.sid !== x.sid) return u;
-                        var next = Object.assign({}, u, { status: newStatus });
+                        // 'locked' 는 인사 상태가 아니라 별도 잠금 표시다. status 는 그대로 둔다.
+                        var next = (newStatus === 'locked')
+                          ? Object.assign({}, u, { accessLocked:true, accessLockedAt:(new Date()).toISOString(),
+                              accessLockedBy: (CURRENT_USER ? CURRENT_USER.name : '') })
+                          : Object.assign({}, u, { status: newStatus, accessLocked:false,
+                              accessLockedAt:null, accessLockedBy:null });
+                        if(newStatus === 'locked'){
+                          next.password = 'LOCKED-' + Math.random().toString(36).slice(2,12).toUpperCase();
+                          if(getAutoLogin() === x.sid) clearAutoLogin();
+                          if(getSessionSid() === x.sid){
+                            setTimeout(function(){ forceLogout('본인 접속이 잠겨 로그아웃됩니다.'); }, 500);
+                          }
+                        }
                         if(newStatus === 'retired'){
                           if(!next.retireDate) next.retireDate = todayYMD();
                           // 비밀번호 무효화 (랜덤 토큰으로 변경)
@@ -23051,13 +23078,20 @@ function UserWithRateSection(){
                       // ★ 감사 로그
                       if(typeof AuditLog !== 'undefined' && AuditLog.write){
                         AuditLog.write('user', x.sid, 'status', prevStatus, newStatus,
+                          newStatus==='locked'  ? '접속 잠금 (비번 무효화 + 자동로그인 삭제) — 퇴사 처리 아님' :
                           newStatus==='retired' ? '퇴사 처리 (비번 무효화 + 자동로그인 삭제)' :
-                          newStatus==='active'  ? '재직 복귀 (LoA 자동 종료)' :
+                          newStatus==='active'  ? '재직 복귀 (LoA 자동 종료' + (prevStatus==='locked'?' · 접속 잠금 해제':'') + ')' :
                           newStatus==='leave'   ? '휴직 변경 (LoA 자동 등록)' :
                           '상태 변경');
                       }
                       if(newStatus === 'retired'){
                         showToast('🔒 ' + x.name + ' 퇴사 처리 — 시스템 접근 차단됨');
+                      }
+                      if(newStatus === 'locked'){
+                        showToast('🔒 ' + x.name + ' 접속 잠금 — 퇴사 처리는 근로자명부에서 하세요');
+                      }
+                      if(newStatus === 'active' && prevStatus === 'locked'){
+                        showToast('🔓 ' + x.name + ' 접속 잠금 해제 — 비밀번호를 다시 정해 주세요');
                       }
                     },
                     style: {
@@ -23071,7 +23105,10 @@ function UserWithRateSection(){
                   },
                     h('option', { value:'active' }, '재직'),
                     h('option', { value:'leave' }, '휴직'),
-                    h('option', { value:'retired' }, '퇴직')
+                    // 퇴직은 여기서 못 만든다 — 근로자명부 「퇴사 처리」로만 된다.
+                    // 이미 퇴직인 사람은 값이 골라져 있어야 하므로 보기만 남긴다.
+                    x.status === 'retired' && h('option', { value:'retired' }, '퇴직'),
+                    h('option', { value:'locked' }, '접속 잠금')
                   )
                 ),
                 // 담당 토글 (active일 때만 의미 있음)
@@ -52713,10 +52750,17 @@ function RetireModal(props){
         h('div', { className:'t' }, '\ud83d\udeaa 퇴사 처리 \u2014 '+u.name),
         h('button', { className:'x', onClick:props.onClose }, '\xd7')
       ),
-      h('div', { style:{ display:'flex', padding:'10px 20px', background:'#f8fafc', borderBottom:'1px solid #e5e7eb', gap:'8px', alignItems:'center' } },
+      h('div', { style:{ display:'flex', padding:'10px 20px', background:'#f8fafc', borderBottom:'1px solid #e5e7eb', gap:'8px', alignItems:'center', flexWrap:'wrap' } },
         h('span', { style:{ padding:'3px 12px', borderRadius:'10px', fontSize:'11.5px', fontWeight:700, background:step===1?'#1e40af':'#dcfce7', color:step===1?'#fff':'#166534' } }, '1 기본정보'),
         h('span', { style:{ color:'#cbd5e1' } }, '\u2192'),
-        h('span', { style:{ padding:'3px 12px', borderRadius:'10px', fontSize:'11.5px', fontWeight:700, background:step===2?'#1e40af':'#f1f5f9', color:step===2?'#fff':'#94a3b8' } }, '2 정산\xb7문서')
+        h('span', { style:{ padding:'3px 12px', borderRadius:'10px', fontSize:'11.5px', fontWeight:700,
+          background: step===2?'#1e40af':(step>2?'#dcfce7':'#f1f5f9'),
+          color: step===2?'#fff':(step>2?'#166534':'#94a3b8') } }, '2 정산\xb7문서'),
+        // 넘길 업무가 있을 때만 3단계가 생긴다 (없으면 2단계에서 바로 끝)
+        held.length > 0 && h('span', { style:{ color:'#cbd5e1' } }, '→'),
+        held.length > 0 && h('span', { style:{ padding:'3px 12px', borderRadius:'10px', fontSize:'11.5px', fontWeight:700,
+          background: step===3?'#1e40af':'#f1f5f9', color: step===3?'#fff':'#94a3b8' } },
+          '3 업무 넘기기 ' + held.length)
       ),
       step===2 && held.length > 0 && h('div', { style:{ padding:'8px 20px', background:'#fffbeb', borderBottom:'1px solid #fde68a', fontSize:'11.5px', color:'#854d0e' } },
         '다음 단계에서 이 사람이 들고 있는 ' + held.length + '건을 넘깁니다'),
@@ -63751,8 +63795,15 @@ function PersonnelCardModal(props){
             h('div', { style:{fontSize:'11.5px', color:'#94a3b8', marginTop:'4px', fontFamily:'monospace'} }, u.sid+' · '+(u.title||'')+' · '+(u.branch||'')),
             workYears && h('div', { style:{fontSize:'11px', color:'#cbd5e1', marginTop:'4px'} }, '재직기간: '+workYears+' ('+hireDate+(retireDate?' ~ '+retireDate:' ~ 현재')+')')
           ),
-          h('span', { style:{padding:'4px 14px', borderRadius:'10px', fontSize:'11px', fontWeight:700, background:u.status==='active'?'#16a34a':u.status==='retired'?'#dc2626':'#854d0e', color:'#fff'} },
-            u.status==='active'?'재직':u.status==='retired'?'퇴직':u.status==='leave'?'휴직':'기타')
+          h('div', { style:{ display:'flex', flexDirection:'column', gap:'5px', alignItems:'flex-end' } },
+            h('span', { style:{padding:'4px 14px', borderRadius:'10px', fontSize:'11px', fontWeight:700, background:u.status==='active'?'#16a34a':u.status==='retired'?'#dc2626':'#854d0e', color:'#fff'} },
+              u.status==='active'?'재직':u.status==='retired'?'퇴직':u.status==='leave'?'휴직':'기타'),
+            // 환경설정에서 급히 잠가 둔 사람 — 정식 퇴사 절차가 아직 안 끝났다
+            u.accessLocked === true && u.status !== 'retired' && h('span', {
+              title:'환경설정에서 접속만 잠갔습니다. 퇴직금·서류·업무 넘기기는 아직입니다.',
+              style:{ padding:'3px 12px', borderRadius:'10px', fontSize:'10.5px', fontWeight:700,
+                background:'#fbbf24', color:'#78350f', whiteSpace:'nowrap' } },
+              '🔒 접속 잠김 · 퇴사 처리 필요'))
         ),
 
         // 1. 기본정보
@@ -64866,7 +64917,7 @@ function LoginScreen(props){
       var idl = id.toLowerCase();
       var users = dbGet('user_accounts', USERS_SEED) || [];
       function _matches(x){ return (x.loginId && x.loginId === id) || x.sid === id || sidToEmail(x.sid) === idl; }
-      function _canLogin(x){ return x.status === 'active' || (x.status === 'leave' && x.leaveLoginAllowed === true); }
+      function _canLogin(x){ return x.accessLocked !== true && (x.status === 'active' || (x.status === 'leave' && x.leaveLoginAllowed === true)); }
       // 로컬 캐시에 계정이 있고 재직이 아니면 사전 안내 (기존 UX 유지)
       var _anyLocal = users.find(_matches);
       if(_anyLocal && !_canLogin(_anyLocal)){
