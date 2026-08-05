@@ -52,6 +52,42 @@ test('폴더 연결 UI는 환경설정이 숨겨진 계정에서도 닿는 곳�
   assert.match(wiccok, /onclick="fsUndoLast\(\)"/);
 });
 
+test('동기화는 pu-erp 유형 코드표를 읽어 넘긴다', () => {
+  const m = source.match(/async function _puFetchPlan\([\s\S]*?\n\}/);
+  assert.ok(m, '_puFetchPlan 함수가 있어야 합니다');
+  ['biz_case_types', 'biz_cons_types', 'biz_fund_types', 'biz_other_types'].forEach((k) => {
+    assert.ok(m[0].includes(k), k + '를 읽어야 합니다');
+  });
+  assert.match(m[0], /_puUnwrap\(/, '코드표도 봉투를 벗겨야 합니다');
+  // [^)]* 는 _puKnownRefs() 의 괄호에서 멈춘다 — 인자 목록 전체를 훑어야 한다
+  assert.match(m[0], /buildSyncPlan\([\s\S]{0,140}?typeMap/, '코드표를 buildSyncPlan에 넘겨야 합니다');
+});
+
+test('puSyncCommit은 기존 실적에 puRef만 붙이고 새로 만들지 않는다', () => {
+  const src = funcSource('puSyncCommit');
+  assert.match(src, /\.links\b/, '붙이기 목록을 처리해야 합니다');
+  assert.match(src, /linkedSyncId/, '되돌릴 때 구분할 꼬리표가 필요합니다');
+});
+
+test('puUndoSync는 붙인 기존 실적을 지우지 않고 puRef만 뗀다', () => {
+  const store = { case: [], consult: [], fund: [], etc: [] };
+  const ctx = {
+    get: (k) => store[k].slice(), set: (k, v) => { store[k] = v; },
+    toast: () => {}, renderCareer: () => {}, CAREER_CFG: {},
+    PU_SYNC_STORES: ['case', 'consult', 'fund', 'etc']
+  };
+  store.consult = [
+    { id: 'CN0100', syncId: 'PS1' },                                        // 이번에 새로 만든 것 → 삭제
+    { id: 'CN0001', puRef: 'consultings/k1', linkedSyncId: 'PS1' },         // 시드에 붙인 것 → puRef만 해제
+    { id: 'CN0002' }                                                         // 손 안 댐
+  ];
+  vm.runInNewContext(funcSource('puUndoSync') + '\npuUndoSync("PS1");', ctx);
+  assert.deepEqual(store.consult.map((r) => r.id), ['CN0001', 'CN0002']);
+  const kept = store.consult.find((r) => r.id === 'CN0001');
+  assert.equal(kept.puRef, undefined, 'puRef가 떨어져야 다음 동기화 때 다시 붙는다');
+  assert.equal(kept.linkedSyncId, undefined);
+});
+
 test('_puBackfill: 이미 동기화된 레코드의 빈 유형·연도를 사건번호에서 채운다', () => {
   const store = { case: [
     { id: 'CS0001', src: 'pu', project: '부해등-2026-003', type: '', year: '' },
