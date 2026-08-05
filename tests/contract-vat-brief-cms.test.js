@@ -8,7 +8,10 @@ const vm = require('vm');
 const path = require('path');
 
 const HTML = path.join(__dirname, '..', 'pu-erp.html');
-const src = fs.readFileSync(HTML, 'utf8');
+// ★ 줄바꿈을 LF 로 맞춰 읽는다.
+//   이 저장소는 윈도우에서 CRLF 로 체크아웃되고 CI(리눅스)에서는 LF 로 체크아웃된다.
+//   표식에 줄바꿈이 들어가면 한쪽에서만 찾히므로, 읽을 때 한 번 통일한다.
+const src = fs.readFileSync(HTML, 'utf8').replace(/\r\n/g, '\n');
 
 function slice(a, b){
   const i = src.indexOf(a);
@@ -125,7 +128,7 @@ function gridCtx(kindV, opts){
   vm.createContext(c);
   vm.runInContext(slice('  function cmsBlock(){', '  // 종류별 세부설정 그리드 안에 들어가는'), c);
   // 격자를 만드는 map 표현식을 통째로 평가한다 — f.kinds 에 한 종류만 넣어 두었으므로 결과는 한 칸짜리 배열
-  const expr = slice('(f.kinds||[]).map(function(kindV){', ',\r\n        // CMS 자동이체');
+  const expr = slice('(f.kinds||[]).map(function(kindV){', ',\n        // CMS 자동이체');
   vm.runInContext('var __arr = ' + expr + ';', c);
   return c.__arr[0];
 }
