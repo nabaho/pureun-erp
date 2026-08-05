@@ -268,15 +268,65 @@ test('컨설팅이 사진첩 사진을 받는다', () => {
 });
 
 test('컨설팅은 사진첩에서 원판을 받아 자기 사본을 만든다', () => {
-  // 사진첩 원본은 그대로 남아야 한다(설계서 원칙).
+  /* 사진첩 원본은 그대로 남아야 한다(설계서 원칙). insertAlbumFull 이
+     끌어다 놓기·「사진첩에서 고르기」 창의 공용 마무리 단계다 — 둘 다 이걸
+     거쳐야 기존 파일 처리 길(타임스탬프·중복검사)을 그대로 탄다. */
   const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
-  const fn = gov.match(/async function dropFromAlbum\([\s\S]*?\n\}/);
-  assert.ok(fn, 'dropFromAlbum 본문을 찾을 수 없습니다');
-  assert.match(fn[0], /PuPhotoStore\.loadFull\(/);
-  assert.match(fn[0], /simpleStampFile\(/, '기존 사진 처리 길을 타지 않습니다');
-  assert.ok(!/deletePhoto|saveRead/.test(fn[0]), '사진첩 원본을 건드리고 있습니다');
+  const drop = gov.match(/async function dropFromAlbum\([\s\S]*?\n\}/);
+  assert.ok(drop, 'dropFromAlbum 본문을 찾을 수 없습니다');
+  assert.match(drop[0], /PuPhotoStore\.loadFull\(/);
+  assert.match(drop[0], /insertAlbumFull\(/, '공용 마무리 단계를 타지 않습니다');
+  const ins = gov.match(/async function insertAlbumFull\([\s\S]*?\n\}/);
+  assert.ok(ins, 'insertAlbumFull 본문을 찾을 수 없습니다');
+  assert.match(ins[0], /simpleStampFile\(/, '기존 사진 처리 길을 타지 않습니다');
+  assert.ok(!/deletePhoto|saveRead/.test(drop[0] + ins[0]), '사진첩 원본을 건드리고 있습니다');
   // 남의 사진은 규칙이 막는다 → 왜 안 되는지 알려줘야 한다
-  assert.match(fn[0], /내가 올린 사진만/);
+  assert.match(ins[0], /내가 올린 사진만/);
+});
+
+/* ── 사진첩에서 고르기 (창 하나로) ── */
+
+test('사진 칸마다 사진첩에서 고르는 단추가 있다 — 끌어다 놓기는 그대로 둔다', () => {
+  const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
+  assert.match(gov, /onclick="openAlbumPicker\('\$\{sid\}',\$\{d\.i\}\)"/);
+  assert.match(gov, /ondrop="dropExtraPhoto\(event,'\$\{sid\}',\$\{d\.i\}\)"/, '끌어다 놓기가 없어졌습니다');
+});
+
+test('고르는 창은 방문일로 거르지 않고 처음부터 전체를 보여준다', () => {
+  /* 대표 결정(2026-08-04): 대부분 폰으로 찍어 그때그때 올리므로 날짜를
+     가려 볼 필요가 없다 — 방문일 필터를 두지 않는다. */
+  const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
+  const fn = gov.match(/function openAlbumPicker\([\s\S]*?\n\}/);
+  assert.ok(fn, 'openAlbumPicker 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /PuPhotoStore\.listYear\(/);
+  assert.ok(!/sc\.date|schedDate|visitDate/.test(fn[0]), '방문일로 거르고 있습니다');
+});
+
+test('사진첩이 사람별로 갈려 있다 — 내 uid 를 owner 로 넘긴다', () => {
+  // 안 넘기면 저장 층이 "계정을 알 수 없습니다"로 거절한다(이 화면은 signIn 을 안 부른다).
+  const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
+  const open = gov.match(/function openAlbumPicker\([\s\S]*?\n\}/)[0];
+  assert.match(open, /listYear\(year, albumPickOwner\)/);
+  const thumbs = gov.match(/function loadAlbumThumbs\([\s\S]*?\n\}/)[0];
+  assert.match(thumbs, /loadThumb\(it\.year, it\.id, owner\)/);
+  const pick = gov.match(/async function pickAlbumPhoto\([\s\S]*?\n\}/)[0];
+  assert.match(pick, /loadFull\(year, id, owner\)/);
+});
+
+test('고른 사진도 끌어다 놓기와 같은 마무리를 탄다', () => {
+  const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
+  const fn = gov.match(/async function pickAlbumPhoto\([\s\S]*?\n\}/);
+  assert.ok(fn, 'pickAlbumPhoto 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /insertAlbumFull\(/, '공용 마무리 단계를 타지 않습니다');
+  // 고르자마자 창을 닫아야 다음 칸을 헷갈리지 않는다
+  assert.match(fn[0], /closeModal\('mbAlbumPick'\)/);
+});
+
+test('사진이 없으면 왜 없는지 알려 준다', () => {
+  const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
+  const fn = gov.match(/function renderAlbumPick\([\s\S]*?\n\}/);
+  assert.ok(fn, 'renderAlbumPick 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /사진첩에 올린 사진이 없습니다/);
 });
 
 /* ── 사람별 분리 ── */
