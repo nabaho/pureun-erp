@@ -188,7 +188,8 @@ test('내려받기 단추는 고른 것이 있을 때 나온다', () => {
 /* ── 휴지통 · 설정 화면 · 3분류 ── */
 
 test('지운 사진은 휴지통으로 가고 되살릴 수 있다', () => {
-  assert.match(app, /id="viewTrash"/);
+  // 2026-08-05: 휴지통은 화면(viewTrash)에서 본문 맨 아래 접힌 칸(trashBox)으로 옮겼다.
+  assert.match(app, /id="trashBox"/);
   assert.match(app, /PuPhotoStore\.listTrash\(/);
   assert.match(app, /function restoreOne\(/);
   assert.match(app, /PuPhotoStore\.restorePhoto\(/);
@@ -217,15 +218,55 @@ test('설정은 팝업이 아니라 본문 화면이다', () => {
   assert.ok(!/function closeSettings\(/.test(app), '팝업 닫기 함수가 남아 있습니다');
 });
 
-test('본문은 사진·휴지통·설정 세 탭으로 나뉜다', () => {
-  // 대표 지시로 대시보드 단추에서 본문 탭으로 옮겼다.
-  assert.match(app, /id="tabs"/);
+test('본문 위 탭은 사진 분류다 — 휴지통·설정은 그 자리를 쓰지 않는다', () => {
+  /* 2026-08-05 대표 지시로 배치가 바뀌었다.
+     예전: 본문 위에 「사진 · 휴지통 · 설정」 탭.
+     지금: 본문 위는 **분류 탭**, 휴지통은 본문 맨 아래, 설정은 대시보드 맨 아래.
+     되돌리려면 분류 탭을 어디에 둘지 먼저 정할 것 — 이 자리가 유일한 가로줄이다. */
+  assert.match(app, /id="kinds"/, '분류 탭 자리가 없습니다');
+  assert.ok(!/id="tabs"/.test(app), '옛 본문 탭이 남아 있습니다');
   for (const id of ['tabPhotos', 'tabTrash', 'tabSettings']) {
-    assert.match(app, new RegExp('id="' + id + '"'), id + ' 탭이 없습니다');
+    assert.ok(!new RegExp('id="' + id + '"').test(app), id + ' 이 남아 있습니다');
   }
-  // 대시보드에 있던 옛 단추는 남아 있으면 안 된다(들어가는 길이 둘이면 헷갈린다)
-  assert.ok(!/id="gearBtn"/.test(app), '대시보드 설정 단추가 남아 있습니다');
-  assert.ok(!/id="trashBox"/.test(app), '대시보드 휴지통 단추가 남아 있습니다');
+  // 들어가는 길이 둘이면 헷갈린다 — 설정은 대시보드 단추 하나로만 들어간다
+  assert.match(app, /id="setBtn"[^>]*onclick="showView\('settings'\)"/,
+    '대시보드 설정 단추가 없습니다');
+  assert.ok(!/id="gearBtn"/.test(app), '옛 설정 단추가 남아 있습니다');
+});
+
+test('분류 탭은 요청받은 다섯 가지다 — 어느 탭에도 안 드는 사진이 없어야 한다', () => {
+  /* 대표 지시(A안): 전체사진 · 명함 · 사업자등록증 · 급여서류 · 기타서류.
+     판독이 가려내는 종류는 여섯(card·bizreg·sme·payslip·meeting·other)이라
+     둘을 묶는다 — sme 는 사업자등록증에, meeting·other 는 기타서류에.
+     ⚠ 어느 탭에도 안 잡히는 종류가 생기면 그 사진은 화면에서 사라진다. */
+  const tabs = app.match(/const KIND_TABS = \[[\s\S]*?\];/);
+  assert.ok(tabs, 'KIND_TABS 를 찾을 수 없습니다');
+  for (const label of ['전체사진', '명함', '사업자등록증', '급여서류', '기타서류']) {
+    assert.ok(tabs[0].indexOf(label) >= 0, label + ' 탭이 없습니다');
+  }
+  assert.match(tabs[0], /'sme'/, '중소기업확인서가 어느 탭에도 안 들어갑니다');
+  // 기타서류는 나머지 전부를 받는 그물이어야 한다(kinds: null)
+  assert.match(tabs[0], /key: 'other'[\s\S]*?kinds: null/,
+    '기타서류가 나머지를 받는 그물이 아닙니다 — 빠지는 사진이 생깁니다');
+  // 판독을 안 한 사진도 반드시 어딘가에 든다
+  const fn = app.match(/function tabOf\([\s\S]*?\n\}/);
+  assert.ok(fn, 'tabOf 를 찾을 수 없습니다');
+  assert.match(fn[0], /'other'/, '판독 안 한 사진이 갈 곳이 없습니다');
+});
+
+test('분류 탭과 「확인 필요」는 함께 걸린다', () => {
+  /* 하나만 적용하면 확인 필요를 켠 채 탭을 옮겼을 때 다른 탭 사진이 섞여 나온다. */
+  const fn = app.match(/function shownItems\([\s\S]*?\n\}/);
+  assert.ok(fn, 'shownItems 를 찾을 수 없습니다');
+  assert.match(fn[0], /kindTab/, '분류 탭을 안 봅니다');
+  assert.match(fn[0], /needsCheck/, '확인 필요를 안 봅니다');
+});
+
+test('탭을 옮기면 고른 것을 비운다', () => {
+  /* 안 보이는 사진이 골라진 채로 남으면 「지우기」가 엉뚱한 것을 지운다. */
+  const fn = app.match(/function pickKind\([\s\S]*?\n\}/);
+  assert.ok(fn, 'pickKind 를 찾을 수 없습니다');
+  assert.match(fn[0], /selected\.clear\(\)/, '고른 것을 비우지 않습니다');
 });
 
 test('명함·서류·회의사진 세 가지를 가린다', () => {
@@ -785,14 +826,26 @@ test('권한 거절은 재시도가 아니라 막힘으로 표시하고 원인�
    "규칙이 없을 수 있다"고 오보고한다. 규칙이 정상인데 대표님이 콘솔에서
    규칙을 고치게 만드는 경로다 — 반드시 로그인 뒤에만 보여야 한다. */
 
-test('휴지통 탭은 비어 있어도 남는다 — 숨으면 있는 줄도 모른다', () => {
+test('휴지통 머리줄은 비어 있어도 남는다 — 숨으면 있는 줄도 모른다', () => {
+  /* 본문 맨 아래로 옮겼어도 이 약속은 그대로다. 접혀 있을 뿐 늘 보여야 한다. */
   const fn = app.match(/function renderTrashBox\([\s\S]*?\n\}/);
   assert.ok(fn, 'renderTrashBox 본문을 찾을 수 없습니다');
-  assert.ok(!/display\s*=/.test(fn[0]), '휴지통 탭을 숨기고 있습니다');
-  assert.match(fn[0], /tabTrash/);
+  assert.ok(!/display\s*=/.test(fn[0]), '휴지통 머리줄을 숨기고 있습니다');
+  assert.match(fn[0], /trashCount/);
+  assert.match(fn[0], /비어 있습니다/, '비었을 때 그렇다고 말하지 않습니다');
   // #home 은 로그인 전에는 숨어 있어야 한다(설정·휴지통이 그 안에 있다)
   const home = app.match(/#home\{([^}]*)\}/);
   assert.match(home[1], /display:none/, '#home 이 로그인 전에도 보입니다');
+});
+
+test('휴지통은 펼칠 때 비로소 불러온다', () => {
+  /* 늘 불러오면 사진첩을 열 때마다 휴지통·지운기록까지 내려받아 첫 화면이 느려진다. */
+  const fn = app.match(/function toggleTrash\([\s\S]*?\n\}/);
+  assert.ok(fn, 'toggleTrash 를 찾을 수 없습니다');
+  assert.match(fn[0], /loadTrash\(\)/);
+  assert.match(fn[0], /trashOpen/, '펼침 여부를 보지 않습니다');
+  // 접힌 채로 시작해야 한다
+  assert.match(app, /id="trashBody" style="display:none"/, '휴지통이 펼쳐진 채 시작합니다');
 });
 
 test('지운 기록을 보여 준다 — 완전히 지운 뒤에도', () => {
