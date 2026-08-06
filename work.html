@@ -169,7 +169,8 @@
   th{font-size:11px;color:var(--faint);letter-spacing:.03em;white-space:nowrap}
   /* 긴 목록 — 표만 스크롤하고 머리행은 붙어 있는다.
      42건·235건을 훑을 때 열 이름과 요일이 위로 사라지면 어느 칸인지 알 수 없다. */
-  .panel.tbl{padding:0;overflow:auto;max-height:calc(100vh - 250px);min-height:260px}
+  /* min-height는 두지 않는다 — 세 줄짜리 표(종료·업무량)가 빈 칸으로 길어진다 */
+  .panel.tbl{padding:0;overflow:auto;max-height:calc(100vh - 250px)}
   .panel.tbl thead th{position:sticky;top:0;z-index:6;background:var(--panel);
     box-shadow:inset 0 -1px 0 var(--line)}
   .panel.tbl tbody tr:hover>td{background:#fbfcff}
@@ -574,7 +575,6 @@ var END_WAYS=[
 var END_BY_PE={}; END_WAYS.forEach(function(w){ END_BY_PE[w[3]]=w[0]; });
 var END_BY_KEY={}; END_WAYS.forEach(function(w){ END_BY_KEY[w[0]]=w; });
 function endWay(it){ return (it&&END_BY_KEY[it.end_way]?it.end_way:'done'); }
-function endLabel(it){ return (END_BY_KEY[endWay(it)]||END_WAYS[0])[1]; }
 function endBadge(it){
   var w=END_BY_KEY[endWay(it)]||END_WAYS[0];
   return '<span class="badge" style="background:'+w[4]+';color:'+w[5]+'" title="'+esc(w[2])+'">'+w[1]+'</span>';
@@ -2350,8 +2350,25 @@ function fOpen(sc,k){ return S.fPop===fPopKey(sc,k); }
 function fPop(sc,k){ var t=fPopKey(sc,k); S.fFind=''; S.fPop=(S.fPop===t)?'':t; fRender(sc); }
 function fPopClose(sc){ if(S.fPop){ S.fPop=''; S.fFind=''; fRender(sc); } }
 /* 체크를 누르는 즉시 반영한다 — [적용]을 한 번 더 누르게 하지 않는다.
-   목록은 화면에 보이는 체크 상태 그대로 읽는다(찾기로 감춘 줄도 포함).
+   ⚠ 화면에 보이는 체크만 읽으면 안 된다. '값 찾기'로 목록을 좁힌 뒤 하나를
+     체크하면 "보이는 것 전부 체크됨"이 되어 조건이 걸리는 대신 풀려 버렸다.
+     그 열의 값 전체(S._fAll)를 기준으로 한 칸씩 더하고 뺀다.
    전부 골랐으면 조건 없음과 같게 지운다 — 걸린 표시가 쓸데없이 남지 않게. */
+function fPick(sc,k,v,ck){
+  var all=S._fAll||[];
+  if(!all.length) return;
+  // 조건이 없으면 '전부 골라 둔 것'에서 시작한다 — 화면도 그렇게 보인다
+  var sel=fHas(sc,k)?fSel(sc,k).slice():all.slice();
+  var i=sel.indexOf(v);
+  if(ck){ if(i<0) sel.push(v); } else if(i>=0) sel.splice(i,1);
+  if(sel.length>=all.length) fClear(sc,k); else fSet(sc,k,sel);
+  fRender(sc);
+}
+// 전체 선택·모두 지우기 — 찾기로 감춘 값까지 함께 다룬다
+function fPickAll(sc,k,on){
+  if(on) fClear(sc,k); else fSet(sc,k,[]);
+  fRender(sc);
+}
 function fApply(sc,k,keepOpen){
   var all=[].slice.call(document.querySelectorAll('#fpop .fv'));
   if(!all.length) return;
@@ -2360,21 +2377,13 @@ function fApply(sc,k,keepOpen){
   if(!keepOpen) S.fPop='';
   fRender(sc);
 }
-function fClearCol(sc,k){ fClear(sc,k); S.fPop=''; fRender(sc); }
 // 칩 하나로 "그 값만" 켜고 끄기 — 요약 칩과 깔때기가 같은 상태를 쓴다
 function fOnly(sc,k,v){ var s=fSel(sc,k); return fHas(sc,k)&&s.length===1&&s[0]===v; }
 function fToggleOne(sc,k,v){ if(fOnly(sc,k,v)) fClear(sc,k); else fSet(sc,k,[v]); fRender(sc); }
-// 값이 많을 때 좁혀 찾기 — 다시 그려도 남아 있게 적어 둔다
-function fPopFind(v){ S.fFind=String(v||''); fApply(S.fPop.split(':')[0],S.fPop.split(':')[1],true); }
-function fPopAll(on){
-  [].slice.call(document.querySelectorAll('#fpop .fv')).forEach(function(c){
-    if(c.parentNode.style.display!=='none') c.checked=on;
-  });
-  var p=String(S.fPop||'').split(':');
-  fApply(p[0],p[1],true);
-}
 function fPopHTML(sc,k,vals){
   var on=fHas(sc,k), sel=fSel(sc,k);
+  // 한 칸씩 더하고 뺄 때 견줄 '값 전체' — 찾기로 좁힌 목록이 아니다
+  S._fAll=vals.map(function(v){ return v[0]; });
   var q=String(S.fFind||'').trim().toLowerCase();
   var show=q?vals.filter(function(v){ return String(fLabel(k,v[0])).toLowerCase().indexOf(q)>=0; }):vals;
   var none=on&&!sel.length;
@@ -2385,15 +2394,15 @@ function fPopHTML(sc,k,vals){
     +(show.length?show.map(function(v){
         var ck=!on||sel.indexOf(v[0])>=0;
         return '<label><input type="checkbox" class="fv" data-v="'+esc(v[0])+'"'+(ck?' checked':'')
-          +' onchange="fApply(\''+sc+'\',\''+k+'\',true)">'
+          +' onchange="fPick(\''+sc+'\',\''+k+'\',this.getAttribute(\'data-v\'),this.checked)">'
           +'<span>'+esc(fLabel(k,v[0]))+'</span><span class="c">'+v[1]+'</span></label>';
       }).join('')
      :'<div class="muted" style="font-size:12px;padding:6px 4px">'
        +(vals.length?'찾는 값이 없습니다':'고를 값이 없습니다')+'</div>')
     +'</div>'
     +(none?'<div class="fwarn">고른 값이 없어 아무것도 보이지 않습니다</div>':'')
-    +'<div class="fpa"><span class="lnk" onclick="fPopAll(true)">전체 선택</span>'
-    +'<span class="lnk" onclick="fPopAll(false)">모두 지우기</span>'
+    +'<div class="fpa"><span class="lnk" onclick="fPickAll(\''+sc+'\',\''+k+'\',true)">전체 선택</span>'
+    +'<span class="lnk" onclick="fPickAll(\''+sc+'\',\''+k+'\',false)">모두 지우기</span>'
     +'<span style="flex:1"></span>'
     +'<span class="lnk" onclick="fPopClose(\''+sc+'\')">닫기</span></div>'
     +'</div>';
@@ -4202,6 +4211,8 @@ function cardFind(q,co,limit,withNoCo){
 }
 function cardModal(id,q){
   var it=items[id]; if(!it) return;
+  // 다른 업무로 옮기면 '회사 없는 명함 보기'는 꺼 둔다 — 앞 건의 설정이 따라오면 안 된다
+  if(S._cardFor!==id) S._cardNoCo=false;
   S._cardFor=id;
   // 검색어는 비워 둔 채로 연다 — 회사 이름을 넣어 두면 명함첩의 회사 표기가
   // 조금만 달라도 "없습니다"가 됐다. 담당 회사 사람은 아래에서 따로 앞세운다.

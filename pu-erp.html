@@ -576,6 +576,11 @@ function checkSelfStatus(){
     forceLogout('퇴사 처리되었습니다. 시스템 접근이 차단됩니다.');
     return;
   }
+  // 접속 잠금 — 퇴사와 다르다. 급히 막아 둔 것일 뿐, 인사 상태는 그대로 재직이다.
+  if(me.accessLocked === true){
+    forceLogout('접속이 잠겼습니다. 관리자에게 문의하세요.');
+    return;
+  }
   // 휴직은 로그인 자체는 허용 (담당자 제외만)
 }
 function forceLogout(msg){
@@ -6834,60 +6839,77 @@ function vatHintMute(){
   try { localStorage.setItem(VAT_HINT_OFF_KEY, '1'); } catch(e){}
 }
 // 켤 때만 부르면 된다. 끄기·이미 꺼둔 경우는 아무것도 하지 않는다.
-function vatIncludedHint(checked, label){
+// ★ 창을 막는 알림창이 아니라, 그 칸 옆에 잠깐 떴다 사라지는 말풍선이다.
+//   금액을 넣던 흐름을 끊지 않으려면 누를 것이 없어야 한다.
+function vatIncludedHint(checked, label, anchorEl){
   if(!checked || vatHintMuted()) return;
   try {
-    if(typeof showAlertMutable === 'function'){
-      showAlertMutable(
-        (label ? label + ' — ' : '') + '금액 칸에 부가세를 더한 최종 금액을 넣으세요.\n\n'
-        + '공급가액만 넣으면 세금계산서·수금액이 실제보다 적게 잡힙니다.',
-        { title:'🧾 부가세포함으로 바꿉니다', muteLabel:'다시 보지 않기', onMute:vatHintMute });
-    }
+    vatHintBubble(anchorEl || window._lastClickEl,
+      (label ? label + ' — ' : '') + '부가세를 더한 최종 금액을 넣으세요');
   } catch(e){ window._erpErrLog && window._erpErrLog(e); }
 }
-// 「다시 보지 않기」가 붙은 알림창 — showAlert 와 같은 모양에 왼쪽 아래 체크박스만 더한다
-window.showAlertMutable = function(message, opts){
-  return new Promise(function(resolve){
-    opts = opts || {};
-    var overlay = document.createElement('div');
-    Object.assign(overlay.style, {
-      position:'fixed', top:0, left:0, width:'100%', height:'100%',
-      background:'rgba(0,0,0,0.45)', zIndex:99999,
-      display:'flex', alignItems:'center', justifyContent:'center',
-      fontFamily:"'Apple SD Gothic Neo','맑은 고딕',sans-serif"
-    });
-    var title = opts.title || '알림';
-    var okText = opts.okText || '알겠습니다';
-    var muteLabel = opts.muteLabel || '다시 보지 않기';
-    function _esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-    overlay.innerHTML =
-      '<div style="background:#fff;border-radius:12px;padding:24px 22px;max-width:380px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.18)">' +
-        '<div style="font-size:15px;font-weight:800;color:#1e293b;margin-bottom:10px">'+_esc(title)+'</div>' +
-        '<div style="font-size:13.5px;color:#334155;line-height:1.65;white-space:pre-line;margin-bottom:18px">'+_esc(message)+'</div>' +
-        '<div style="display:flex;align-items:center;gap:10px">' +
-          '<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#64748b;cursor:pointer">' +
-            '<input type="checkbox" id="_pureun_mute" style="margin:0;width:14px;height:14px;cursor:pointer">' +
-            _esc(muteLabel) +
-          '</label>' +
-          '<span style="flex:1"></span>' +
-          '<button id="_pureun_mute_ok" style="padding:9px 20px;background:#1e40af;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer">'+_esc(okText)+'</button>' +
-        '</div>' +
-      '</div>';
-    document.body.appendChild(overlay);
-    function cleanup(){
-      // 닫는 방식(확인·ESC·바깥 클릭)과 무관하게 체크했으면 지켜 준다
-      try { if(overlay.querySelector('#_pureun_mute').checked && typeof opts.onMute === 'function') opts.onMute(); }
-      catch(e){ window._erpErrLog && window._erpErrLog(e); }
-      try { document.body.removeChild(overlay); }catch(e){ window._erpErrLog && window._erpErrLog(e); }
-      document.removeEventListener('keydown', onKey);
-      resolve();
-    }
-    overlay.querySelector('#_pureun_mute_ok').addEventListener('click', cleanup);
-    overlay.addEventListener('click', function(e){ if(e.target === overlay) cleanup(); });
-    function onKey(e){ if(e.key === 'Escape' || e.key === 'Enter'){ cleanup(); } }
-    document.addEventListener('keydown', onKey);
+// 금액을 넣고 칸을 벗어날 때 — 부가세포함일 때만, 금액이 있을 때만 알린다.
+// 0원이거나 부가세 별도면 알릴 것이 없다(빈 칸을 지나칠 때마다 뜨면 방해만 된다).
+// 공급가액·부가세를 함께 보여 줘 "이 숫자가 최종 금액이 맞나"를 눈으로 바로 확인하게 한다.
+function vatAmountHint(vatIncluded, amount, label, anchorEl){
+  if(!vatIncluded || vatHintMuted()) return;
+  var n = parseInt(amount, 10) || 0;
+  if(n <= 0) return;
+  var supply = Math.round(n / 1.1);
+  try {
+    vatHintBubble(anchorEl,
+      (label ? label + ' ' : '') + n.toLocaleString() + '원은 부가세포함입니다'
+      + '\n공급가 ' + supply.toLocaleString() + ' + 부가세 ' + (n - supply).toLocaleString());
+  } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+}
+window.vatAmountHint = vatAmountHint;
+// 말풍선 한 개만 띄운다 — 여러 칸을 연달아 건드려도 화면에 쌓이지 않게.
+var _vatBubbleTimer = null;
+function vatHintBubble(anchor, msg, ms){
+  var old = document.getElementById('_pureun_vat_bubble');
+  if(old && old.parentNode) old.parentNode.removeChild(old);
+  if(_vatBubbleTimer){ clearTimeout(_vatBubbleTimer); _vatBubbleTimer = null; }
+  var el = anchor && anchor.nodeType === 1 ? anchor : null;
+  // 체크박스를 눌렀으면 그 줄(부모)을 기준으로 — 체크박스 자체는 너무 작아 말풍선이 엉뚱한 데 붙는다
+  var rect = null;
+  try { rect = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null; } catch(_){ rect = null; }
+  var b = document.createElement('div');
+  b.id = '_pureun_vat_bubble';
+  // 3초면 저절로 사라지지만, 익숙해진 뒤 아예 안 보고 싶을 수 있다 —
+  // 말풍선을 누르면 그 기기에서 다시 안 뜬다(끄는 길이 없으면 계속 참아야 한다).
+  b.textContent = '🧾 ' + msg + '\n(눌러서 그만 보기)';
+  b.title = '누르면 이 안내를 이 기기에서 다시 보지 않습니다';
+  var top = rect ? (rect.bottom + window.scrollY + 6) : (window.scrollY + 80);
+  var left = rect ? (rect.left + window.scrollX) : 20;
+  b.setAttribute('style',
+    'position:absolute;z-index:99998;max-width:320px;white-space:pre-line;'
+    + 'background:#fffbeb;color:#92400e;border:1px solid #fcd34d;border-radius:8px;'
+    + 'padding:7px 11px;font-size:12px;font-weight:700;line-height:1.5;'
+    + 'box-shadow:0 4px 14px rgba(0,0,0,.12);cursor:pointer;'
+    + 'opacity:0;transition:opacity .15s;'
+    + 'top:' + Math.round(top) + 'px;left:' + Math.round(left) + 'px;');
+  b.addEventListener('mousedown', function(ev){
+    ev.preventDefault(); ev.stopPropagation();   // 뒤 칸의 포커스를 뺏지 않는다
+    vatHintMute();
+    if(_vatBubbleTimer){ clearTimeout(_vatBubbleTimer); _vatBubbleTimer = null; }
+    if(b.parentNode) b.parentNode.removeChild(b);
+    try { if(typeof showToast === 'function') showToast('부가세 안내를 이 기기에서 끕니다'); } catch(_){}
   });
-};
+  document.body.appendChild(b);
+  // 화면 오른쪽으로 삐져나가면 당겨 온다
+  try {
+    var r2 = b.getBoundingClientRect();
+    if(r2.right > window.innerWidth - 8) b.style.left = Math.max(8, window.innerWidth - r2.width - 12 + window.scrollX) + 'px';
+  } catch(_){}
+  requestAnimationFrame(function(){ b.style.opacity = '1'; });
+  _vatBubbleTimer = setTimeout(function(){
+    b.style.opacity = '0';
+    setTimeout(function(){ if(b.parentNode) b.parentNode.removeChild(b); }, 200);
+    _vatBubbleTimer = null;
+  }, ms || 3000);
+}
+window.vatHintBubble = vatHintBubble;
+// (창을 막던 showAlertMutable 은 없앴다 — 부가세 안내가 말풍선으로 바뀌면서 쓸 데가 없어졌다)
 window.vatIncludedHint = vatIncludedHint;
 window.vatHintMuted    = vatHintMuted;
 
@@ -10126,6 +10148,13 @@ function pcCompanyRows(q){
       if(g.biz && g.biz.ceo) sub.push('대표 ' + g.biz.ceo);
       else if(ceoCard && ceoCard.n) sub.push('대표 ' + ceoCard.n + ' (명함)');
       if(g.cards.length) sub.push('명함 ' + g.cards.length + '장');
+      // 업태·종목이 딸려오는지 줄에서 미리 보여 준다.
+      // 명함첩 검색목록(pucards/idx)에 업태 칸이 생긴 것은 나중이라, 그 전에 저장된
+      // 사업자등록증은 색인에 업태가 비어 있다. 눌러 보고 나서야 안 왔다는 걸 알면 늦다.
+      if(g.biz){
+        if(g.biz.bt || g.biz.bi) sub.push('업태 ' + [g.biz.bt, g.biz.bi].filter(Boolean).join('/'));
+        else sub.push('업태 없음');
+      }
       out.push({
         label: g.name || '(회사명 없음)',
         bizNo: bizNo,
@@ -10648,6 +10677,20 @@ function ContractModal(props){
   var hrw = useState(false); var hideRetiredWk = hrw[0]; var setHideRetiredWk = hrw[1];  // 근로자: 재직자만 보기
   var ar = useState([]); var autoResults = ar[0]; var setAutoResults = ar[1];
   var aidx = useState(-1); var autoIdx = aidx[0]; var setAutoIdx = aidx[1];   // 자동완성 키보드 선택 인덱스
+  // ── 「과거 데이터 선택」 목록 닫기 ──
+  // data-autocomplete 표식만 달아 두고 바깥 클릭을 듣는 곳이 없어, 한 번 열리면
+  // 고르거나 ESC 를 누르기 전까지 창을 덮은 채 남아 있었다. 여기서 바깥 클릭을 듣는다.
+  useEffect(function(){
+    if(autoResults.length === 0) return;          // 열려 있을 때만 듣는다
+    function onDocDown(e){
+      var el = e.target;
+      if(el && el.closest && (el.closest('[data-autocomplete]') || el.closest('[data-autocomplete-input]'))) return;
+      setAutoResults([]); setAutoIdx(-1);
+    }
+    // 캡처 단계에서 들어야 목록 안 클릭(선택)보다 먼저 닫히는 일이 없다
+    document.addEventListener('mousedown', onDocDown);
+    return function(){ document.removeEventListener('mousedown', onDocDown); };
+  }, [autoResults.length]);
   var cd = useState(false); var confirmedDuplicate = cd[0]; var setConfirmedDuplicate = cd[1];
   // 중복 안내 배너: 접기(자세히)·이번 편집 동안만 숨기기(✕).
   // 저장하지 않는다 — 다시 열면 또 보여야 한다. 🔴 확인(confirmedDuplicate)과는 별개다.
@@ -12052,12 +12095,18 @@ function ContractModal(props){
             else if(e.key === 'Escape'){ setAutoResults([]); setAutoIdx(-1); }
           },
           onFocus:function(e){
+            // 이미 정해진 회사(수정 화면·불러온 뒤)에서는 칸을 눌렀다고 목록을 다시 열지 않는다.
+            // 열면 회사정보 위를 덮어 아래 칸이 안 보이고, 고칠 것도 없는데 매번 치워야 했다.
+            // 새로 찾고 싶으면 글자를 고치면 그때 다시 뜬다(onChange).
+            if(props.cur) return;                       // 계약 수정 화면
+            if((f.company||{}).companyId) return;       // 이미 업체를 특정한 상태
             if((f.company.name||'').length >= 2){
               var res = searchPastCompanies(f.company.name.toLowerCase());
               setAutoResults(res.slice(0,6));
             }
           },
           placeholder:'회사명 또는 엑셀 한 행 붙여넣기',
+          'data-autocomplete-input':'1',
           style:{ width:'100%', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12px', boxSizing:'border-box' } }),
         autoResults.length > 0 && h('div', {
           'data-autocomplete':'1',
@@ -12678,6 +12727,9 @@ function ContractModal(props){
               h(NumberInput, { value: f.amounts[kindV] || 0,
                 onChange:setAmountFor(kindV),
                 placeholder:'0',
+                // 금액을 넣고 칸을 벗어날 때 그 숫자 옆에 잠깐 알려 준다 (부가세포함일 때만)
+                onBlur:function(e){ vatAmountHint(f.contractFeeVatIncluded, f.amounts[kindV],
+                  isConsulting ? '계약금' : '착수금', e.target); },
                 style:{ width:'100%', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'12px', fontFamily:'monospace', textAlign:'right' } }),
               h('span', { style:{ fontSize:'11px', color:'#64748b' } }, '원'),
               h('span'),
@@ -12685,7 +12737,7 @@ function ContractModal(props){
               h('span'), h('span'), h('span'),
               h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
                 h('input', { type:'checkbox', checked:!!f.contractFeeVatIncluded,
-                  onChange:function(e){ vatIncludedHint(e.target.checked, isConsulting ? '계약금' : '착수금');
+                  onChange:function(e){ vatIncludedHint(e.target.checked, isConsulting ? '계약금' : '착수금', e.target);
                     setF(function(prev){ return Object.assign({}, prev, { contractFeeVatIncluded:e.target.checked }); }); },
                   style:{ margin:0, width:'13px', height:'13px', cursor:'pointer' } }),
                 h('span', null, '🧾 부가세포함')),
@@ -12702,6 +12754,9 @@ function ContractModal(props){
                     style:{ width:'100%', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'12px', fontFamily:'monospace', textAlign:'right' } })
                 : h(NumberInput, { value:f.successFee, onChange:setSimple('successFee'),
                     placeholder:'0',
+                    // % 모드는 금액이 아니라 비율이라 안내가 뜻이 없다 — 원 모드에서만 알린다
+                    onBlur:function(e){ vatAmountHint(f.balanceFeeVatIncluded, f.successFee,
+                      isConsulting ? '잔금' : '성공보수', e.target); },
                     style:{ width:'100%', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'12px', fontFamily:'monospace', textAlign:'right' } }),
               h('span', { style:{ fontSize:'11px', color:'#64748b' } }, ((isCase || isOther) && f.successFeeType === 'percent') ? '%' : '원'),
               // 원/% 토글은 사건·기타에 (컨설팅 잔금은 금액 고정)
@@ -12723,7 +12778,7 @@ function ContractModal(props){
               h('span'), h('span'), h('span'),
               h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
                 h('input', { type:'checkbox', checked:!!f.balanceFeeVatIncluded,
-                  onChange:function(e){ vatIncludedHint(e.target.checked, isConsulting ? '잔금' : '성공보수');
+                  onChange:function(e){ vatIncludedHint(e.target.checked, isConsulting ? '잔금' : '성공보수', e.target);
                     setF(function(prev){ return Object.assign({}, prev, { balanceFeeVatIncluded:e.target.checked }); }); },
                   style:{ margin:0, width:'13px', height:'13px', cursor:'pointer' } }),
                 h('span', null, '🧾 부가세포함')),
@@ -12756,6 +12811,9 @@ function ContractModal(props){
             h(NumberInput, { value: f.amounts[kindV] || 0,
               onChange:setAmountFor(kindV),
               placeholder:'0',
+              // 기금은 체크박스로 정하고, 나머지(업체·상담)는 늘 부가세포함이라 항상 알린다
+              onBlur:function(e){ vatAmountHint(kindV === 'fund' ? f.fundVatIncluded : true,
+                f.amounts[kindV], '금액', e.target); },
               style:{ width:'100%', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'12px', fontFamily:'monospace', textAlign:'right' } }),
             // col 5: 원
             h('span', { style:{ fontSize:'11px', color:'#64748b' } }, '원'),
@@ -12763,7 +12821,7 @@ function ContractModal(props){
             kindV === 'fund'
               ? h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
                   h('input', { type:'checkbox', checked:!!f.fundVatIncluded,
-                    onChange:function(e){ vatIncludedHint(e.target.checked, '금액');
+                    onChange:function(e){ vatIncludedHint(e.target.checked, '금액', e.target);
                       setF(function(prev){ return Object.assign({}, prev, { fundVatIncluded:e.target.checked }); }); },
                     style:{ margin:0, width:'13px', height:'13px', cursor:'pointer' } }),
                   h('span', { style:{ color: f.fundVatIncluded ? '#1e40af' : '#94a3b8' } }, '🧾 부가세포함'))
@@ -13231,6 +13289,42 @@ function arvSort(a, b, base){
   if(an && bn){ var c = String(b.arrivedAt||'').localeCompare(String(a.arrivedAt||'')); if(c) return c; }
   return base ? base(a, b) : 0;
 }
+// ── 오늘 새로 등록한 계약 ────────────────────────────────────
+// 「방금 들어옴(arv*)」은 다른 화면에서 이관·복귀한 건이고, 이건 여기서 직접 만든 건이다.
+// 성격이 다르므로 딱지 색도 묶음도 따로 둔다 — 어디서 온 건지 한눈에 갈리게.
+// 기간은 '그날 하루'다. 날짜가 바뀌면 저절로 풀린다(48시간으로 하면 '오늘'과 어긋난다).
+function regDayOf(x){
+  var s = (x && x.regAt) || '';
+  if(!s) return '';
+  // ISO 문자열을 그 자리에서 자르지 않는다 — UTC 기준이라 한국 시간으로는 하루가 밀린다
+  var t = Date.parse(s);
+  if(!t) return '';
+  var d = new Date(t);
+  return d.getFullYear() + '-' + ('0'+(d.getMonth()+1)).slice(-2) + '-' + ('0'+d.getDate()).slice(-2);
+}
+function regIsToday(x){
+  var day = regDayOf(x);
+  return !!day && day === (typeof todayYMD === 'function' ? todayYMD() : '');
+}
+// 등록 시각 hh:mm — 같은 날 여러 건을 올렸을 때 순서를 눈으로 확인하게 한다
+function regTimeText(x){
+  var t = Date.parse((x && x.regAt) || '');
+  if(!t) return '';
+  var d = new Date(t);
+  return ('0'+d.getHours()).slice(-2) + ':' + ('0'+d.getMinutes()).slice(-2);
+}
+// 오늘 등록한 것을 맨 위로, 그 안에서는 최근 등록 순. 나머지는 원래 정렬대로.
+function regSort(a, b, base){
+  var an = regIsToday(a) ? 1 : 0, bn = regIsToday(b) ? 1 : 0;
+  if(an !== bn) return bn - an;
+  if(an && bn){ var c = String(b.regAt||'').localeCompare(String(a.regAt||'')); if(c) return c; }
+  return base ? base(a, b) : 0;
+}
+window.regIsToday   = regIsToday;
+window.regDayOf     = regDayOf;
+window.regTimeText  = regTimeText;
+window.regSort      = regSort;
+
 function arvClear(store, id, after){
   if(dbPatch(store, id, { arrivedAt:null, arrivedFrom:null, arrivedNo:null })){
     if(typeof after === 'function') after();
@@ -13837,7 +13931,10 @@ function ContractManagement(props){
       var newOne = Object.assign({}, form, {
         id: 'ct-' + Date.now().toString(36)+Math.random().toString(36).slice(2,5),
         contractNo: (form._manualContractNo && form._manualContractNo.trim()) ? form._manualContractNo.trim() : genContractNo(),
-        transferredTo: null
+        transferredTo: null,
+        // 새로 만든 시각 — 이걸 안 찍어 두면 방금 만든 카드가 목록 중간에 섞여 안 보였다.
+        // 「오늘 등록」 묶음과 맨 위 정렬이 모두 이 값을 본다.
+        regAt: (new Date()).toISOString()
       });
       delete newOne._manualContractNo;
       if(!persistOne(newOne)) return;
@@ -14095,10 +14192,14 @@ function ContractManagement(props){
     }
     var pa = pinScore(a), pb = pinScore(b);
     if(pa !== pb) return pa - pb;
-    // ★ 이동한 카드를 상단 고정 (orderTs) — 최근 이동 우선. 안 옮긴 카드는 기존 순서 유지
-    var oa = a.orderTs || 0, ob = b.orderTs || 0;
-    if(oa !== ob) return ob - oa;
-    return mgrScore(a) - mgrScore(b);
+    // ★ 오늘 새로 등록한 카드를 맨 위로 (핀 다음). 방금 만든 건이 목록 중간에
+    //   섞여 안 보이던 문제를 여기서 잡는다. 같은 날 여러 건이면 최근 등록 순.
+    return regSort(a, b, function(x, y){
+      // ★ 이동한 카드를 상단 고정 (orderTs) — 최근 이동 우선. 안 옮긴 카드는 기존 순서 유지
+      var oa = x.orderTs || 0, ob = y.orderTs || 0;
+      if(oa !== ob) return ob - oa;
+      return mgrScore(x) - mgrScore(y);
+    });
   });
 
   // 단계별 카드 배열
@@ -14289,6 +14390,8 @@ function ContractManagement(props){
       onClick:function(){ openEdit(c); },
       style:{
         background: justMoved ? '#eff6ff' : '#fff', border: justMoved ? '1px solid #2563eb' : '1px solid #e5e7eb', borderRadius:'6px',
+        // 오늘 등록한 건은 왼쪽에 초록 띠 — 딱지를 못 봐도 목록에서 바로 갈린다
+        borderLeft: (!justMoved && regIsToday(c)) ? '3px solid #16a34a' : (justMoved ? '1px solid #2563eb' : '1px solid #e5e7eb'),
         padding:'10px 12px', marginBottom:'6px', cursor:'grab',
         opacity: isDragging ? .4 : 1,
         transition: 'opacity .15s, background .3s, box-shadow .3s',
@@ -14308,9 +14411,16 @@ function ContractManagement(props){
         h('div', { style:{ flex:1 } }),
         h('span', { style:{ fontSize:'10px', color:'#94a3b8', fontFamily:'monospace' } }, c.contractNo)
       ),
-      // 둘째 줄: 의뢰인 (+ 방금 복귀한 건 표시)
+      // 둘째 줄: 의뢰인 (+ 방금 복귀한 건 표시 + 오늘 등록 표시)
       h('div', { style:{ fontSize:'13.5px', fontWeight:700, color:'#1e293b', marginBottom:'3px' } },
-        c.companyName, arvBadge(c, 'contracts', refreshContracts)),
+        c.companyName, arvBadge(c, 'contracts', refreshContracts),
+        // 오늘 등록한 건 — 등록 시각까지 붙여 같은 날 여러 건의 순서를 눈으로 확인한다
+        regIsToday(c) ? h('span', { key:'reg',
+          title:'오늘 새로 등록한 계약입니다 · ' + regTimeText(c) + ' 등록\n날짜가 바뀌면 이 표시는 저절로 사라집니다',
+          style:{ marginLeft:'6px', verticalAlign:'middle', background:'#dcfce7', color:'#166534',
+            border:'1px solid #86efac', borderRadius:'10px', padding:'1px 7px',
+            fontSize:'10px', fontWeight:700, whiteSpace:'nowrap' } },
+          '🆕 오늘 ' + regTimeText(c)) : null),
       // 셋째 줄: 담당자 + 합계금액
       h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', fontSize:'11px', color:'#64748b' } },
         h('span', null, '👤 ' + [userName(c.managerMain)].concat((c.managerSubs||[]).map(userName)).filter(Boolean).join(' / ')),
@@ -14534,7 +14644,28 @@ function ContractManagement(props){
           h('div', { style:{ padding:'10px' } },
             cards.length === 0
               ? h('div', { style:{ color:'#cbd5e1', fontSize:'12px', textAlign:'center', padding:'16px 10px', border:'1px dashed #e5e7eb', borderRadius:'6px' } }, '없음')
-              : cards.map(function(c, i){ return renderCard(c, i, isFocused); })
+              : (function(){
+                  // 오늘 등록한 것이 있으면 위에 묶어 몇 건인지 알린다.
+                  // 정렬에서 이미 위로 올라와 있으므로 여기서는 머리줄만 끼워 넣는다.
+                  var todayN = cards.filter(regIsToday).length;
+                  if(todayN === 0) return cards.map(function(c, i){ return renderCard(c, i, isFocused); });
+                  var out = [];
+                  out.push(h('div', { key:'__today_head',
+                    style:{ display:'flex', alignItems:'center', gap:'7px', flexWrap:'wrap',
+                      background:'#dcfce7', border:'1px solid #86efac', borderRadius:'6px',
+                      padding:'5px 9px', marginBottom:'7px' } },
+                    h('span', { style:{ fontSize:'11.5px', fontWeight:800, color:'#166534' } }, '🆕 오늘 등록 ' + todayN + '건'),
+                    h('span', { style:{ fontSize:'10.5px', color:'#15803d' } },
+                      (function(){ var t = todayYMD(); return parseInt(t.slice(5,7),10) + '월 ' + parseInt(t.slice(8,10),10) + '일'; })())
+                  ));
+                  cards.forEach(function(c, i){
+                    // 오늘 건이 끝나고 그 전 건이 시작되는 자리에 구분줄
+                    if(i === todayN) out.push(h('div', { key:'__prev_head',
+                      style:{ fontSize:'10.5px', color:'#94a3b8', padding:'2px 2px 6px' } }, '그 전에 등록한 것'));
+                    out.push(renderCard(c, i, isFocused));
+                  });
+                  return out;
+                })()
           )
         );
       })
@@ -14892,6 +15023,8 @@ function getUserAssignStatus(sid, refDate){
   var users = dbGet('user_accounts', USERS_SEED);
   var u = users.find(function(x){ return x.sid === sid; });
   if(!u) return { assignable:false, reason:'inactive', label:'없음' };
+  // 접속 잠금 — 급히 막아 둔 사람. 인사 상태는 재직이지만 새 배정은 멈춘다.
+  if(u.accessLocked === true) return { assignable:false, reason:'locked', label:'접속잠김' };
   // status='leave': 환경설정에서 직접 휴직 토글한 경우
   if(u.status === 'leave') return { assignable:false, reason:'leave', label:'휴직' };
   if(u.status !== 'active') return { assignable:false, reason:'inactive', label:u.status==='retired'?'퇴직':'비활성' };
@@ -15499,6 +15632,18 @@ function calcPerfShares(amount, mainSid, subSids, sourceKind, splitMainPct, opts
     if(!ps || !pe) return false;
     return opts.paidDate >= ps && opts.paidDate <= pe;
   }
+  // 퇴사자 판정 — 퇴사일 '이후'에 들어온 입금만 뺀다.
+  // 퇴사 전에 한 일에서 나온 입금은 그 사람 정당한 몫이므로 그대로 나눠 준다.
+  // (퇴사 후에도 담당자 이름이 안 지워지므로, 여기서 막지 않으면 없는 사람에게 계속 분배된다)
+  function isGoneBy(sid){
+    if(!opts.paidDate) return false;
+    var u = users.find(function(x){return x.sid===sid;});
+    if(!u) return false;
+    if(u.status !== 'retired' && u.status !== 'resigned') return false;
+    var rd = u.retireDate || u.lastWorkDate || '';
+    if(!rd) return true;                    // 퇴사일을 모르면 안전하게 뺀다
+    return String(opts.paidDate) > String(rd);
+  }
   // paidDate 시점의 요율 사용 (history 기반, 변경 이전 데이터는 옛 요율)
   // ★ opts.mainRateOverride 우선 (이번 입금건만 다른 요율 적용)
   var baseMainRate = opts.paidDate ? getRateAt(mainSid, opts.paidDate) : resolveBaseRate(mainSid);
@@ -15511,8 +15656,10 @@ function calcPerfShares(amount, mainSid, subSids, sourceKind, splitMainPct, opts
   // 핵심: 입금 기준액을 분배 비율로 나누고, 각자 본인 요율 적용
   var mainBase = Math.round(baseAmount * mainPct / 100);
   var mainProbation = isInProbation(mainSid);
-  var mainAmt = mainProbation ? 0 : Math.round(mainBase * mainRate / 100);
+  var mainGone = isGoneBy(mainSid);
+  var mainAmt = (mainProbation || mainGone) ? 0 : Math.round(mainBase * mainRate / 100);
   var mainShare = { sid:mainSid, name:nameOf(mainSid), pct:mainRate, amount:mainAmt, role:'주담당', sharePct:mainPct, baseAmount:mainBase, probation:mainProbation };
+  if(mainGone) mainShare.retired = true;
   if(opts.mainRateOverride != null && opts.mainRateOverride !== baseMainRate){
     mainShare.rateOverride = true; mainShare.baseRate = baseMainRate;
   }
@@ -15532,8 +15679,10 @@ function calcPerfShares(amount, mainSid, subSids, sourceKind, splitMainPct, opts
       // ★ override 우선
       var subRate = (subRateOverrideMap[sid] != null) ? subRateOverrideMap[sid] : baseSubRate;
       var subProbation = isInProbation(sid);
-      var subAmt = subProbation ? 0 : Math.round(subBase * subRate / 100);
+      var subGone = isGoneBy(sid);
+      var subAmt = (subProbation || subGone) ? 0 : Math.round(subBase * subRate / 100);
       var subShare = { sid:sid, name:nameOf(sid), pct:subRate, amount:subAmt, role:'부담당', sharePct:subPct, baseAmount:subBase, probation:subProbation };
+      if(subGone) subShare.retired = true;
       if(subRateOverrideMap[sid] != null && subRateOverrideMap[sid] !== baseSubRate){
         subShare.rateOverride = true; subShare.baseRate = baseSubRate;
       }
@@ -18927,7 +19076,7 @@ function CaseEditModal(props){
             h('div', { style:{ display:'flex', gap:'6px', alignItems:'center' } },
               h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
                 h('input', { type:'checkbox', checked:!!f.contractFeeVatIncluded,
-                  onChange:function(e){ vatIncludedHint(e.target.checked, '착수금');
+                  onChange:function(e){ vatIncludedHint(e.target.checked, '착수금', e.target);
                     setF(function(prev){ return Object.assign({}, prev, { contractFeeVatIncluded:e.target.checked }); }); },
                   style:{ margin:0, width:'13px', height:'13px', cursor:'pointer' } }),
                 h('span', null, '🧾 부가세포함')),
@@ -18956,7 +19105,7 @@ function CaseEditModal(props){
                     // 입금확정 때 공급가액을 가르고 성과급 기준이 되므로 % 모드에도 있어야 한다
                     h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
                       h('input', { type:'checkbox', checked:!!f.balanceFeeVatIncluded,
-                        onChange:function(e){ vatIncludedHint(e.target.checked, '성공금액');
+                        onChange:function(e){ vatIncludedHint(e.target.checked, '성공금액', e.target);
                           setF(function(prev){ return Object.assign({}, prev, { balanceFeeVatIncluded:e.target.checked }); }); },
                         style:{ margin:0, width:'13px', height:'13px', cursor:'pointer' } }),
                       h('span', null, '🧾 부가세포함')),
@@ -18985,7 +19134,7 @@ function CaseEditModal(props){
               : h('div', { style:{ display:'flex', gap:'6px', alignItems:'center' } },
                   h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
                     h('input', { type:'checkbox', checked:!!f.balanceFeeVatIncluded,
-                      onChange:function(e){ vatIncludedHint(e.target.checked, '성공보수');
+                      onChange:function(e){ vatIncludedHint(e.target.checked, '성공보수', e.target);
                         setF(function(prev){ return Object.assign({}, prev, { balanceFeeVatIncluded:e.target.checked }); }); },
                       style:{ margin:0, width:'13px', height:'13px', cursor:'pointer' } }),
                     h('span', null, '🧾 부가세포함')),
@@ -22721,7 +22870,9 @@ function UserWithRateSection(){
 
   var q = useState(''); var query = q[0]; var setQuery = q[1];
   var fl = useState('all'); var filter = fl[0]; var setFilter = fl[1];
-  var sr = useState(true); var showRetired = sr[0]; var setShowRetired = sr[1];
+  // 퇴사자는 처음부터 숨긴다 — 평소에 볼 일이 없고, 재직자 목록만 짧게 보이는 게 낫다.
+  // 필요하면 아래 단추로 펼치고, 펼쳐도 재직자 아래에 따로 모아 둔다.
+  var sr = useState(false); var showRetired = sr[0]; var setShowRetired = sr[1];
   var m = useState(null); var modal = m[0]; var setModal = m[1];
   // 휴직 입력 모달
   var lm = useState(null); var leaveModal = lm[0]; var setLeaveModal = lm[1];
@@ -22859,6 +23010,10 @@ function UserWithRateSection(){
         || (x.title||'').indexOf(query)>=0;
   });
 
+  // 퇴사자는 재직자 아래로 따로 모은다 — 섞여 있으면 명단이 길어지고 눈이 헷갈린다
+  var liveRows = filtered.filter(function(x){ return x.status !== 'retired'; });
+  var goneRows = filtered.filter(function(x){ return x.status === 'retired'; });
+
   // 카운트 (3그룹 정확히, 퇴사자 제외)
   var activeUsers = users.filter(function(u){ return u.status !== 'retired'; });
   var retiredCount2 = users.filter(function(u){ return u.status === 'retired'; }).length;
@@ -22903,12 +23058,13 @@ function UserWithRateSection(){
         })
       ),
       h('div', { className:'sp' }),
-      h('button', { onClick:function(){ setShowRetired(!showRetired); },
+      retiredCount2 > 0 && h('button', { onClick:function(){ setShowRetired(!showRetired); },
+        title: showRetired ? '퇴사자를 다시 숨깁니다' : '퇴사자를 재직자 아래에 따로 펼쳐 봅니다',
         style:{ padding:'3px 8px', fontSize:'10.5px', fontWeight:600, cursor:'pointer', borderRadius:'4px',
           border:'1px solid '+(showRetired?'#dc2626':'#cbd5e1'),
           background:showRetired?'#fee2e2':'#f8fafc',
           color:showRetired?'#dc2626':'#64748b' } },
-        (showRetired?'👁 퇴사자 숨기기':'👁 퇴사자 '+retiredCount2+'명 보기')),
+        (showRetired?'🙈 퇴사자 '+retiredCount2+'명 다시 숨기기':'👁 퇴사자 '+retiredCount2+'명 보기')),
       h('button', { className:'btn-secondary', onClick:reseed, title:'시드 12명 + 성과율로 복원' }, '시드 복원')
     ),
     h('table', { className:'dt user-tbl' },
@@ -22929,7 +23085,12 @@ function UserWithRateSection(){
       h('tbody', null,
         filtered.length === 0
           ? h('tr', null, h('td', { colSpan:12, className:'ac', style:{ color:'#94a3b8', padding:'30px' } }, '등록된 데이터가 없습니다'))
-          : filtered.map(function(x){
+          // 재직자 먼저, 그 아래 칸막이 한 줄, 그 아래 퇴사자
+          : liveRows.concat(goneRows.length ? [{ __sep:true }] : []).concat(goneRows).map(function(x){
+              if(x.__sep) return h('tr', { key:'__sep' },
+                h('td', { colSpan:12, style:{ background:'#f1f5f9', color:'#64748b', fontSize:'10.5px',
+                  fontWeight:700, padding:'6px 10px', borderTop:'2px solid #cbd5e1' } },
+                  '⬇ 아래는 퇴사자 ' + goneRows.length + '명 — 평소에는 숨겨져 있습니다'));
               var ri = roleInfo(x.role);
               var isAdmin = isAdminByUser(x);
               var isLawyer = isLawyerByUser(x);
@@ -22956,7 +23117,7 @@ function UserWithRateSection(){
                 h('td', null, x.branch),
                 h('td', null,
                   h('select', {
-                    value: x.status || 'active',
+                    value: (x.accessLocked === true) ? 'locked' : (x.status || 'active'),
                     onChange: async function(e){
                       var newStatus = e.target.value;
                       // 휴직 선택 시 → 모달 열기 (시작일·종료예정일·사유 입력)
@@ -22970,15 +23131,35 @@ function UserWithRateSection(){
                         });
                         return;
                       }
-                      // ★ 퇴사 처리 시 다단계 확인 + 자동 차단
-                      if(newStatus === 'retired' && x.status !== 'retired'){
-                        var confirmMsg = '"' + x.name + '" (' + x.sid + ') 직원을 퇴사 처리하시겠습니까?\n\n→ 즉시 시스템 접근 차단\n→ 비밀번호 자동 무효화\n→ 자동 로그인 키 삭제\n→ 감사 로그 기록\n\n이 작업은 되돌릴 수 있지만, 비밀번호는 재설정해야 합니다.';
-                        if(!(await popConfirm(confirmMsg))) return;
+                      // ★ 접속 잠금 — 여기는 '퇴사'가 아니다. 급히 막는 자리다.
+                      //   퇴사는 인사 사건이라 퇴직금·서류·업무 넘기기가 붙는데,
+                      //   이 화면에는 입사일도 급여도 없어 그 계산을 할 수가 없다.
+                      //   그래서 여기서는 접속만 끊고, 정식 절차는 근로자명부로 보낸다.
+                      if(newStatus === 'locked'){
+                        var lockMsg = '"' + x.name + '" (' + x.sid + ') 의 접속을 지금 바로 잠급니다.\n\n'
+                          + '→ 로그인 차단 · 비밀번호 무효화 · 자동로그인 삭제\n'
+                          + '→ 새 담당 배정에서 제외\n\n'
+                          + '이것은 퇴사 처리가 아닙니다. 인사 상태는 재직 그대로입니다.\n'
+                          + '퇴직금·서류·업무 넘기기는 근로자명부 → 퇴사 처리에서 하세요.\n'
+                          + '(근로자명부에 「퇴사 처리 필요」로 표시됩니다)\n\n진행할까요?';
+                        if(!(await popConfirm(lockMsg))) return;
                       }
-                      var prevStatus = x.status || 'active';
+                      var prevStatus = (x.accessLocked === true) ? 'locked' : (x.status || 'active');
                       var updated = users.map(function(u){
                         if(u.sid !== x.sid) return u;
-                        var next = Object.assign({}, u, { status: newStatus });
+                        // 'locked' 는 인사 상태가 아니라 별도 잠금 표시다. status 는 그대로 둔다.
+                        var next = (newStatus === 'locked')
+                          ? Object.assign({}, u, { accessLocked:true, accessLockedAt:(new Date()).toISOString(),
+                              accessLockedBy: (CURRENT_USER ? CURRENT_USER.name : '') })
+                          : Object.assign({}, u, { status: newStatus, accessLocked:false,
+                              accessLockedAt:null, accessLockedBy:null });
+                        if(newStatus === 'locked'){
+                          next.password = 'LOCKED-' + Math.random().toString(36).slice(2,12).toUpperCase();
+                          if(getAutoLogin() === x.sid) clearAutoLogin();
+                          if(getSessionSid() === x.sid){
+                            setTimeout(function(){ forceLogout('본인 접속이 잠겨 로그아웃됩니다.'); }, 500);
+                          }
+                        }
                         if(newStatus === 'retired'){
                           if(!next.retireDate) next.retireDate = todayYMD();
                           // 비밀번호 무효화 (랜덤 토큰으로 변경)
@@ -22998,7 +23179,7 @@ function UserWithRateSection(){
                         }
                         return next;
                       });
-                      persist(updated);
+                      persistUsers(updated);   // 이 구역이 정의하는 이름은 persistUsers 다
                       // ★ LoA(휴직 기록) 자동 양방향 동기화
                       try {
                         var allLoa = dbGet('leave_of_absence', []);
@@ -23035,13 +23216,20 @@ function UserWithRateSection(){
                       // ★ 감사 로그
                       if(typeof AuditLog !== 'undefined' && AuditLog.write){
                         AuditLog.write('user', x.sid, 'status', prevStatus, newStatus,
+                          newStatus==='locked'  ? '접속 잠금 (비번 무효화 + 자동로그인 삭제) — 퇴사 처리 아님' :
                           newStatus==='retired' ? '퇴사 처리 (비번 무효화 + 자동로그인 삭제)' :
-                          newStatus==='active'  ? '재직 복귀 (LoA 자동 종료)' :
+                          newStatus==='active'  ? '재직 복귀 (LoA 자동 종료' + (prevStatus==='locked'?' · 접속 잠금 해제':'') + ')' :
                           newStatus==='leave'   ? '휴직 변경 (LoA 자동 등록)' :
                           '상태 변경');
                       }
                       if(newStatus === 'retired'){
                         showToast('🔒 ' + x.name + ' 퇴사 처리 — 시스템 접근 차단됨');
+                      }
+                      if(newStatus === 'locked'){
+                        showToast('🔒 ' + x.name + ' 접속 잠금 — 퇴사 처리는 근로자명부에서 하세요');
+                      }
+                      if(newStatus === 'active' && prevStatus === 'locked'){
+                        showToast('🔓 ' + x.name + ' 접속 잠금 해제 — 비밀번호를 다시 정해 주세요');
                       }
                     },
                     style: {
@@ -23055,7 +23243,10 @@ function UserWithRateSection(){
                   },
                     h('option', { value:'active' }, '재직'),
                     h('option', { value:'leave' }, '휴직'),
-                    h('option', { value:'retired' }, '퇴직')
+                    // 퇴직은 여기서 못 만든다 — 근로자명부 「퇴사 처리」로만 된다.
+                    // 이미 퇴직인 사람은 값이 골라져 있어야 하므로 보기만 남긴다.
+                    x.status === 'retired' && h('option', { value:'retired' }, '퇴직'),
+                    h('option', { value:'locked' }, '접속 잠금')
                   )
                 ),
                 // 담당 토글 (active일 때만 의미 있음)
@@ -23074,7 +23265,7 @@ function UserWithRateSection(){
                             if(u.sid !== x.sid) return u;
                             return Object.assign({}, u, { excludeFromAssign: !u.excludeFromAssign });
                           });
-                          persist(updated);
+                          persistUsers(updated);   // 이 구역이 정의하는 이름은 persistUsers 다
                         },
                         title: excluded ? '담당 가능으로 변경' : '담당 배제 (드롭다운에서 숨김)',
                         style: {
@@ -37630,7 +37821,9 @@ function FinanceExpense(){
       });
     });
     if(newFees.length===0){ showToast('이미 모든 선택건에 수수료가 있습니다'); return; }
-    persist(newFees.concat(expenses));
+    // 이 구역이 정의하는 이름은 persistManyExpense 다. 새로 만든 것만 넣는다
+    // (기존 목록까지 같이 넘기면 잠긴 건에 걸려 전부 저장이 안 된다)
+    if(!persistManyExpense(newFees)) return;
     dbSet('finance_bank_fee_last', fee);
     setBulkSel({}); setBulkFeeMode(false);
     showToast(newFees.length+'건 수수료 추가 완료');
@@ -50370,7 +50563,7 @@ function ProjectEditModal(props){
             h('div', { style:{ display:'flex', alignItems:'center', gap:'8px' } },
               h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
                 h('input', { type:'checkbox', checked:!!f.contractFeeVatIncluded,
-                  onChange:function(e){ vatIncludedHint(e.target.checked, '계약금');
+                  onChange:function(e){ vatIncludedHint(e.target.checked, '계약금', e.target);
                     setF(function(prev){ return Object.assign({}, prev, { contractFeeVatIncluded:e.target.checked }); }); },
                   style:{ margin:0, width:'13px', height:'13px', cursor:'pointer' } }),
                 h('span', null, '🧾 부가세포함')),
@@ -50379,7 +50572,7 @@ function ProjectEditModal(props){
             h('div', { style:{ display:'flex', alignItems:'center', gap:'8px' } },
               h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
                 h('input', { type:'checkbox', checked:!!f.balanceFeeVatIncluded,
-                  onChange:function(e){ vatIncludedHint(e.target.checked, '잔금');
+                  onChange:function(e){ vatIncludedHint(e.target.checked, '잔금', e.target);
                     setF(function(prev){ return Object.assign({}, prev, { balanceFeeVatIncluded:e.target.checked }); }); },
                   style:{ margin:0, width:'13px', height:'13px', cursor:'pointer' } }),
                 h('span', null, '🧾 부가세포함')),
@@ -52385,6 +52578,86 @@ function calcRetirementLeaveJoinBasis(hireDate, retireDateStr, policy){
     reason:fullYears+'→'+nextFY+'년차 구간 ('+workedInPeriod+'/'+periodDays+'일 × '+entitlement+'일 = '+proRated+'일)' };
 }
 
+// ── 퇴사자가 들고 있는 것 찾아 넘기기 ─────────────────────────
+// 퇴사시켜도 이미 박혀 있는 담당자 이름은 안 지워진다. 그대로 두면
+//   ① 새 입금이 확정될 때 퇴사자에게 성과급이 분배되고
+//   ② 목록에 없는 사람이 계속 주담당으로 뜨고
+//   ③ 성과급 확인이 영원히 미확인으로 남는다.
+// 그래서 퇴사 처리 마지막에 한 번에 넘긴다.
+var RT_STORES = [
+  { key:'contracts',      label:'계약'   },
+  { key:'companies',      label:'업체'   },
+  { key:'cases',          label:'사건'   },
+  { key:'consultings',    label:'컨설팅' },
+  { key:'funds',          label:'기금'   },
+  { key:'other_projects', label:'기타'   }
+];
+function rtIsClosed(x){
+  if(!x) return true;
+  var s = x.status || '';
+  return s==='closed' || s==='cancelled' || s==='transferred' || s==='ended' || !!x.closedDate;
+}
+function rtName(x){
+  return String((x && (x.companyName || x.name || x.title || x.caseNo)) || '(이름 없음)');
+}
+// 넘길 것 모으기 — 끝난 건은 뺀다. 이미 끝난 일까지 넘기면 목록만 부풀고 판단이 흐려진다.
+function rtHeld(sid, includeClosed){
+  if(!sid) return [];
+  var out = [];
+  RT_STORES.forEach(function(st){
+    var arr = dbGet(st.key, []) || [];
+    (Array.isArray(arr) ? arr : []).forEach(function(x){
+      if(!x || !x.id) return;
+      var closed = rtIsClosed(x);
+      if(closed && !includeClosed) return;
+      var main = (x.managerMain === sid);
+      var sub  = !main && (x.managerSubs || []).indexOf(sid) >= 0;
+      if(!main && !sub) return;
+      out.push({ store:st.key, label:st.label, id:x.id, name:rtName(x),
+        role: main ? '주담당' : '부담당', closed:closed });
+    });
+  });
+  return out;
+}
+function rtCountByLabel(held){
+  var m = {};
+  (held||[]).forEach(function(x){ m[x.label] = (m[x.label]||0) + 1; });
+  return RT_STORES.map(function(s){ return { label:s.label, n:m[s.label]||0 }; })
+    .filter(function(x){ return x.n > 0; });
+}
+// 한 건 넘기기 — 주담당이면 갈아끼우고, 부담당이면 목록에서 빼고 넣는다.
+// 받는 사람이 이미 부담당이면 겹치지 않게 한다.
+function rtSwap(x, fromSid, toSid){
+  var main = x.managerMain, subs = (x.managerSubs || []).slice();
+  if(main === fromSid){
+    main = toSid;
+    subs = subs.filter(function(s){ return s !== toSid; });   // 주담당이 되었으니 부담당에서 뺀다
+  } else {
+    subs = subs.filter(function(s){ return s !== fromSid; });
+    if(subs.indexOf(toSid) < 0 && main !== toSid) subs.push(toSid);
+  }
+  return { managerMain: main, managerSubs: subs };
+}
+// picks = [{store,id,to}] — to 가 비면 안 넘긴다
+function rtMove(fromSid, picks){
+  var byStore = {};
+  (picks||[]).forEach(function(p){ if(p && p.to){ (byStore[p.store] = byStore[p.store] || []).push(p); } });
+  var done = 0, jobs = [];
+  Object.keys(byStore).forEach(function(k){
+    var arr = dbGet(k, []) || [];
+    byStore[k].forEach(function(p){
+      var x = (Array.isArray(arr) ? arr : []).find(function(y){ return y && y.id === p.id; });
+      if(!x) return;
+      var patch = rtSwap(x, fromSid, p.to);
+      patch.handoverFrom = fromSid;
+      patch.handoverAt = new Date().toISOString();
+      jobs.push([k, p.id, patch]); done++;
+    });
+  });
+  jobs.forEach(function(j){ try{ dbPatch(j[0], j[1], j[2]); }catch(_){} });
+  return done;
+}
+
 function RetireModal(props){
   useEscClose(props.onClose);
   var u = props.user;
@@ -52399,6 +52672,26 @@ function RetireModal(props){
 
   function set1(k){ return function(e){ setF1(Object.assign({},f1,(function(){var x={};x[k]=e.target.value;return x;}()))); }; }
   function toggleDoc(k){ setDocs(Object.assign({},docs,(function(){var x={};x[k]=!docs[k];return x;}()))); }
+
+  // ── 3단계: 이 사람이 들고 있는 것 ──
+  var heldS = useState(null); var held0 = heldS[0]; var setHeld0 = heldS[1];
+  useEffect(function(){ setHeld0(rtHeld(u.sid, false)); }, [u.sid]);
+  var held = held0 || [];
+  var toS = useState({}); var toMap = toS[0]; var setToMap = toS[1];   // {store|id: 받는사람 sid}
+  function keyOf(x){ return x.store + '|' + x.id; }
+  var movedN = held.filter(function(x){ return toMap[keyOf(x)]; }).length;
+  var candidates = sortUsers((dbGet('user_accounts', USERS_SEED)||[]).filter(function(x){
+    return x && x.sid !== u.sid && (x.status === 'active' || x.status === 'leave');
+  }));
+  function setAllTo(sid){
+    var n = {}; if(sid) held.forEach(function(x){ n[keyOf(x)] = sid; });
+    setToMap(n);
+  }
+  function setOneTo(x, sid){
+    var n = Object.assign({}, toMap);
+    if(sid) n[keyOf(x)] = sid; else delete n[keyOf(x)];
+    setToMap(n);
+  }
 
   // 자동계산
   function calcYears(from, to){
@@ -52429,6 +52722,15 @@ function RetireModal(props){
 
   function goStep2(){ if(!f1.retireDate){ showToast('퇴직일을 입력하세요'); return; } setStep(2); }
   function save(){
+    var left = held.length - movedN;
+    if(left > 0){
+      if(!window.confirm('넘기지 않은 업무가 ' + left + '건 남습니다.\n\n퇴사자가 담당으로 남아 있으면 목록에 계속 뜨고,\n그 업체에서 입금이 확정될 때 성과급이 그 사람에게 분배될 수 있습니다.\n\n그래도 진행할까요?')) return;
+    }
+    if(movedN > 0){
+      var n = rtMove(u.sid, held.filter(function(x){ return toMap[keyOf(x)]; })
+        .map(function(x){ return { store:x.store, id:x.id, to:toMap[keyOf(x)] }; }));
+      showToast('🔄 업무 ' + n + '건을 넘겼습니다');
+    }
     var selDocs = Object.keys(docs).filter(function(k){ return docs[k]; });
     props.onSave(Object.assign({}, u, {
       status:'retired', retireDate:f1.retireDate, lastWorkDate:f1.lastWorkDate, leaveReason:f1.leaveReason,
@@ -52531,26 +52833,90 @@ function RetireModal(props){
     }))
   );
 
+  // ── 3단계: 업무 넘기기 ──
+  var sel = { padding:'4px 8px', fontSize:'11.5px', fontFamily:'inherit', border:'1px solid #cbd5e1', borderRadius:'4px', maxWidth:'118px' };
+  function whoSelect(val, onCh, wide){
+    return h('select', { value:val||'', onChange:onCh, style: wide ? Object.assign({}, sel, { maxWidth:'160px', padding:'5px 9px' }) : sel },
+      h('option', { value:'' }, wide ? '전부 한 사람에게…' : '안 넘김'),
+      candidates.map(function(c){ return h('option', { key:c.sid, value:c.sid }, c.name + (c.status==='leave' ? ' (휴직)' : '')); }));
+  }
+  var body3 = held0 === null
+    ? h('div', { style:{ padding:'40px', textAlign:'center', color:'#94a3b8', fontSize:'12.5px' } }, '찾아보는 중…')
+    : held.length === 0
+    ? h('div', { style:{ padding:'34px 16px', textAlign:'center', color:'#166534', fontSize:'13px', lineHeight:1.9 } },
+        h('div', { style:{ fontSize:'30px', marginBottom:'8px' } }, '✅'),
+        h('b', null, '넘길 업무가 없습니다'),
+        h('div', { style:{ fontSize:'11.5px', color:'#64748b' } },
+          '진행 중인 계약·업체·사건·컨설팅·기금·기타 어디에도 담당으로 남아 있지 않습니다.'))
+    : h('div', null,
+        h('div', { style:{ background:'#fff7ed', border:'1px solid #fed7aa', borderRadius:'6px', padding:'10px 14px', marginBottom:'12px', fontSize:'11.5px', color:'#9a3412', lineHeight:1.8 } },
+          h('b', null, '⚠️ 넘기지 않으면'),
+          ' 퇴사자가 담당으로 계속 남습니다. 목록에 없는 사람이 주담당으로 뜨고,',
+          h('br'), '그 업체에서 입금이 확정될 때 ', h('b', null, '성과급이 그 사람에게 분배될 수 있습니다'), '.'),
+
+        h('div', { style:{ display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'10px', fontSize:'11.5px' } },
+          rtCountByLabel(held).map(function(c){
+            return h('span', { key:c.label, style:{ background:'#f1f5f9', color:'#475569', borderRadius:'6px', padding:'3px 10px' } },
+              c.label + ' ' + c.n);
+          })),
+
+        h('div', { style:{ display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap', background:'#f8fafc', borderRadius:'6px', padding:'9px 12px', marginBottom:'10px' } },
+          h('span', { style:{ fontSize:'12px', fontWeight:700, color:'#334155' } }, '한 번에'),
+          whoSelect('', function(e){ setAllTo(e.target.value); }, true),
+          h('button', { onClick:function(){ setToMap({}); },
+            style:{ padding:'5px 11px', fontSize:'11.5px', border:'1px solid #cbd5e1', background:'#fff', borderRadius:'5px', cursor:'pointer' } }, '전부 해제'),
+          h('span', { style:{ marginLeft:'auto', fontSize:'11.5px', fontWeight:700, color: movedN===held.length ? '#166534' : '#b45309' } },
+            movedN + ' / ' + held.length + ' 지정')),
+
+        h('div', { style:{ maxHeight:'34vh', overflowY:'auto', border:'1px solid #e2e8f0', borderRadius:'6px' } },
+          held.map(function(x){
+            var to = toMap[keyOf(x)] || '';
+            return h('div', { key:keyOf(x), style:{ display:'flex', alignItems:'center', gap:'8px', padding:'7px 10px',
+                borderBottom:'1px solid #f1f5f9', background: to ? '#f0fdf4' : '#fff', flexWrap:'wrap' } },
+              h('span', { style:{ fontSize:'10.5px', background:'#eef2ff', color:'#4338ca', borderRadius:'4px', padding:'1px 6px', fontWeight:700, flexShrink:0 } }, x.label),
+              h('span', { style:{ fontSize:'12px', flex:1, minWidth:'90px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, x.name),
+              h('span', { style:{ fontSize:'10.5px', color: x.role==='주담당' ? '#1e40af' : '#64748b', fontWeight: x.role==='주담당'?700:400, flexShrink:0 } }, x.role),
+              whoSelect(to, function(e){ setOneTo(x, e.target.value); }));
+          })),
+
+        h('div', { style:{ marginTop:'10px', fontSize:'11px', color:'#94a3b8', lineHeight:1.8 } },
+          '· 끝난 건(종료·취소·이관)은 넘길 필요가 없어 목록에서 뺐습니다.', h('br'),
+          '· 주담당을 넘기면 받는 사람이 주담당이 되고, 부담당이던 자리에서는 빠집니다.', h('br'),
+          '· 넘긴 기록(누구에게서 언제)은 각 건에 남습니다.'));
+
   return h('div', { className:'modal-bg', onClick:props.onClose },
     h('div', { className:'modal', onClick:function(e){ e.stopPropagation(); }, style:{ width:'520px', maxWidth:'96vw', maxHeight:'92vh', display:'flex', flexDirection:'column' } },
       h('div', { className:'modal-h' },
         h('div', { className:'t' }, '\ud83d\udeaa 퇴사 처리 \u2014 '+u.name),
         h('button', { className:'x', onClick:props.onClose }, '\xd7')
       ),
-      h('div', { style:{ display:'flex', padding:'10px 20px', background:'#f8fafc', borderBottom:'1px solid #e5e7eb', gap:'8px', alignItems:'center' } },
+      h('div', { style:{ display:'flex', padding:'10px 20px', background:'#f8fafc', borderBottom:'1px solid #e5e7eb', gap:'8px', alignItems:'center', flexWrap:'wrap' } },
         h('span', { style:{ padding:'3px 12px', borderRadius:'10px', fontSize:'11.5px', fontWeight:700, background:step===1?'#1e40af':'#dcfce7', color:step===1?'#fff':'#166534' } }, '1 기본정보'),
         h('span', { style:{ color:'#cbd5e1' } }, '\u2192'),
-        h('span', { style:{ padding:'3px 12px', borderRadius:'10px', fontSize:'11.5px', fontWeight:700, background:step===2?'#1e40af':'#f1f5f9', color:step===2?'#fff':'#94a3b8' } }, '2 정산\xb7문서')
+        h('span', { style:{ padding:'3px 12px', borderRadius:'10px', fontSize:'11.5px', fontWeight:700,
+          background: step===2?'#1e40af':(step>2?'#dcfce7':'#f1f5f9'),
+          color: step===2?'#fff':(step>2?'#166534':'#94a3b8') } }, '2 정산\xb7문서'),
+        // 넘길 업무가 있을 때만 3단계가 생긴다 (없으면 2단계에서 바로 끝)
+        held.length > 0 && h('span', { style:{ color:'#cbd5e1' } }, '→'),
+        held.length > 0 && h('span', { style:{ padding:'3px 12px', borderRadius:'10px', fontSize:'11.5px', fontWeight:700,
+          background: step===3?'#1e40af':'#f1f5f9', color: step===3?'#fff':'#94a3b8' } },
+          '3 업무 넘기기 ' + held.length)
       ),
-      h('div', { className:'modal-b', style:{ flex:1, overflowY:'auto' } }, step===1 ? body1 : body2),
+      step===2 && held.length > 0 && h('div', { style:{ padding:'8px 20px', background:'#fffbeb', borderBottom:'1px solid #fde68a', fontSize:'11.5px', color:'#854d0e' } },
+        '다음 단계에서 이 사람이 들고 있는 ' + held.length + '건을 넘깁니다'),
+      h('div', { className:'modal-b', style:{ flex:1, overflowY:'auto' } },
+        step===1 ? body1 : (step===2 ? body2 : body3)),
       h('div', { className:'modal-f' },
         step===1
           ? h('div', { style:{ display:'flex', gap:'8px', width:'100%' } },
               h('button', { className:'btn-secondary', onClick:props.onClose, style:{ flex:1 } }, '취소'),
               h('button', { className:'btn-primary', onClick:goStep2, style:{ flex:2 } }, '다음 \u2192'))
           : h('div', { style:{ display:'flex', gap:'8px', width:'100%' } },
-              h('button', { className:'btn-secondary', onClick:function(){ setStep(1); }, style:{ flex:1 } }, '\u2190 이전'),
-              h('button', { onClick:save, style:{ flex:2, padding:'8px', background:'#dc2626', color:'#fff', border:'none', borderRadius:'5px', fontSize:'13px', fontWeight:700, cursor:'pointer' } }, '퇴사 처리 완료'))
+              h('button', { className:'btn-secondary', onClick:function(){ setStep(step===3?2:1); }, style:{ flex:1 } }, '\u2190 이전'),
+              h('button', { onClick: (step===2 && held.length>0) ? function(){ setStep(3); } : save,
+                style:{ flex:2, padding:'8px', background:(step===2 && held.length>0)?'#1e40af':'#dc2626', color:'#fff', border:'none', borderRadius:'5px', fontSize:'13px', fontWeight:700, cursor:'pointer' } },
+                (step===2 && held.length>0) ? ('업무 넘기기 '+held.length+'건 →')
+                  : (movedN>0 ? ('넘기고 퇴사 처리 ('+movedN+'건)') : '퇴사 처리 완료')))
       )
     )
   );
@@ -57072,16 +57438,20 @@ function LeaveOfAbsenceTab(){
 //        attendance_records 에서 연차/반차/시간연차 집계
 //        policy_leave 정책 (입사일 기준 자동 부여)
 // ============================================================
-var LEAVE_LEDGER_SEED = [{"name": "최기운", "year": 2022, "granted": 26, "used": 13, "remain": 4, "monthly": "2월:1, 5월:1, 11월:5, 12월:6", "note": "23.05까지 / 회계기준 13.8일"}, {"name": "박성수", "year": 2022, "granted": 25, "used": 10.5, "remain": 10, "monthly": "2월:0.5, 3월:1, 6월:0.5, 8월:2, 10월:0.5, 11월:1, 12월:5", "note": "23.05까지 / 회계기준 13.8일"}, {"name": "김보람", "year": 2022, "granted": 26, "used": 10.5, "remain": 10, "monthly": "3월:1, 5월:2, 7월:3, 9월:0.5, 11월:1, 12월:3", "note": "23.05까지 / 회계기준 13.8일"}, {"name": "장한돌", "year": 2022, "granted": 26, "used": 10.5, "remain": 11, "monthly": "1월:1, 2월:0.5, 3월:1, 4월:0.5, 6월:2, 8월:1, 9월:1.5, 11월:1, 12월:2", "note": "23.05까지 / 회계기준 13.8일"}, {"name": "신욱임", "year": 2022, "granted": 15, "used": 5, "remain": 10, "monthly": "11월:2, 12월:3", "note": "23.05까지"}, {"name": "주민정", "year": 2022, "granted": 6, "used": 4, "remain": 2, "monthly": "10월:1, 11월:1, 12월:2", "note": "23.06까지"}, {"name": "최기운", "year": 2023, "granted": 15, "used": 15, "remain": 0, "monthly": "3월:1, 8월:4, 11월:4, 12월:6", "note": ""}, {"name": "박성수", "year": 2023, "granted": 15, "used": 11, "remain": 4, "monthly": "1월:2, 2월:0.5, 6월:0.5, 7월:1, 8월:1, 9월:1, 10월:1, 12월:4", "note": ""}, {"name": "김보람", "year": 2023, "granted": 15, "used": 12.5, "remain": 2.5, "monthly": "2월:1, 3월:1.5, 4월:1, 5월:0.5, 7월:1, 8월:1.5, 9월:0.5, 10월:3.5, 12월:2", "note": ""}, {"name": "장한돌", "year": 2023, "granted": 15, "used": 22.5, "remain": -7.5, "monthly": "1월:1.5, 2월:1, 3월:0.5, 4월:0.5, 6월:1, 7월:0.5, 8월:1, 10월:0.5, 11월:1, 12월:15", "note": ""}, {"name": "신욱임", "year": 2023, "granted": 15, "used": 22, "remain": -4, "monthly": "1월:7, 4월:1.5, 5월:3, 6월:0.5, 8월:4, 10월:6", "note": "대체휴가 3일 추가하여 초과사용 4일"}, {"name": "주민정", "year": 2023, "granted": 15, "used": 21.5, "remain": -6.5, "monthly": "1월:1, 2월:1, 3월:1, 4월:2, 5월:1, 6월:1, 7월:2, 8월:3, 9월:6, 10월:1, 11월:1.5, 12월:1", "note": ""}, {"name": "남정의", "year": 2023, "granted": 6, "used": 8, "remain": -2, "monthly": "4월:1, 5월:1, 7월:1, 8월:0.5, 9월:0.5, 10월:2, 11월:2", "note": ""}, {"name": "박지호", "year": 2023, "granted": 9, "used": 9.5, "remain": -0.5, "monthly": "4월:1, 6월:1, 7월:1, 8월:1, 9월:2, 10월:0.5, 11월:2, 12월:1", "note": ""}, {"name": "최기운", "year": 2024, "granted": 15, "used": 12, "remain": 3, "monthly": "1월:1, 3월:1, 5월:1, 8월:1, 9월:2, 12월:6", "note": ""}, {"name": "박성수", "year": 2024, "granted": 15, "used": 15.5, "remain": -0.5, "monthly": "1월:4, 2월:0.5, 3월:0.5, 4월:1.5, 5월:1, 6월:0.5, 8월:4, 10월:1.5, 12월:2", "note": ""}, {"name": "김보람", "year": 2024, "granted": 15, "used": 11, "remain": 4, "monthly": "1월:0.5, 2월:1, 4월:1, 5월:1, 6월:0.5, 7월:1.5, 8월:0.5, 9월:1.5, 10월:1, 11월:1, 12월:1.5", "note": ""}, {"name": "신욱임", "year": 2024, "granted": 15, "used": 15, "remain": 0, "monthly": "1월:2, 2월:2, 4월:1, 6월:5, 8월:1, 9월:1, 10월:1, 12월:2", "note": ""}, {"name": "주민정", "year": 2024, "granted": 15, "used": 15.5, "remain": -0.5, "monthly": "1월:2, 2월:2, 4월:0.5, 5월:3, 6월:3, 7월:3, 8월:1, 11월:1", "note": ""}, {"name": "박지호", "year": 2024, "granted": 15, "used": 16.5, "remain": 0, "monthly": "1월:1, 2월:1.5, 3월:3.5, 4월:8.5, 5월:2", "note": ""}, {"name": "박한별", "year": 2024, "granted": 13, "used": 6.5, "remain": 6.5, "monthly": "3월:0.5, 5월:0.5, 8월:1, 9월:1.5, 10월:1.5, 11월:1.5", "note": "23년 1일 + 24년 12일"}, {"name": "김동근", "year": 2024, "granted": 10, "used": 8, "remain": 2, "monthly": "6월:0.5, 7월:1, 8월:4, 9월:0.5, 11월:1, 12월:1", "note": "24년 2월 집체교육으로 휴직"}, {"name": "김정현", "year": 2024, "granted": 7, "used": 11.5, "remain": -4.5, "monthly": "6월:1, 7월:2, 8월:1, 10월:3.5, 11월:2.5, 12월:1.5", "note": "25년 1월 1일 14일"}, {"name": "최기운", "year": 2025, "granted": 16, "used": 17, "remain": 2, "monthly": "1월:1, 2월:1, 3월:2, 4월:1, 5월:2, 9월:1, 11월:2, 12월:7", "note": ""}, {"name": "박성수", "year": 2025, "granted": 16, "used": 35.5, "remain": -20, "monthly": "1월:1.5, 3월:1, 4월:2, 5월:1, 6월:1.5, 8월:5, 9월:2, 10월:3, 11월:1.5, 12월:17", "note": "배우자 출산휴가 20일 추가 (사용완료)"}, {"name": "김보람", "year": 2025, "granted": 16, "used": 15.5, "remain": 4.5, "monthly": "1월:1, 2월:1.5, 3월:2, 5월:1.5, 6월:1, 7월:2.5, 9월:1, 10월:1.5, 11월:2, 12월:1.5", "note": "보상휴가 계산해볼것"}, {"name": "신욱임", "year": 2025, "granted": 16, "used": 25, "remain": -9, "monthly": "1월:2, 2월:2/11 반차(보상휴가), 3월:1, 4월:5.5, 5월:1, 6월:1, 7월:1, 8월:2, 9월:1, 10월:3.5, 11월:5, 12월:2", "note": "2월 외에 보상휴가 계산해보고 적용할것  → 11/3 연장 3.5시간 보상휴가 *1.5 = 5.25시간"}, {"name": "주민정", "year": 2025, "granted": 15, "used": 16, "remain": -1.5, "monthly": "2월:1.5, 3월:2, 4월:1, 5월:5.5, 7월:1.5, 9월:3, 10월:1, 12월:0.5", "note": ""}, {"name": "박한별", "year": 2025, "granted": 15, "used": 14, "remain": 7.5, "monthly": "1월:3, 4월:1.5, 5월:1, 6월:1.5, 7월:0.5, 9월:1.5, 11월:2, 12월:3", "note": ""}, {"name": "김동근", "year": 2025, "granted": 15, "used": 17, "remain": 0, "monthly": "1월:1, 2월:2, 3월:14", "note": "전년합산하여 잔여연차 없음"}, {"name": "김정현", "year": 2025, "granted": 3, "used": -1.5, "remain": 0, "monthly": "2월:2, 3월:-3.5", "note": "전년합산하여 잔여연차 없음"}, {"name": "김혜민", "year": 2025, "granted": 10, "used": 11, "remain": -1, "monthly": "4월:1.5, 5월:0.5, 6월:2, 7월:1.5, 8월:1, 9월:1, 10월:1, 11월:2, 12월:0.5", "note": "12/22 육아휴직 → 일정 조정 여쭤볼 것"}, {"name": "박재원", "year": 2025, "granted": 9, "used": 8, "remain": 1, "monthly": "6월:1, 7월:1, 8월:1.5, 9월:1, 10월:1, 11월:1.5, 12월:1", "note": ""}, {"name": "박은비", "year": 2025, "granted": 9, "used": 7.5, "remain": 1.5, "monthly": "4월:1, 7월:0.5, 8월:0.5, 9월:3.5, 11월:1, 12월:1", "note": ""}, {"name": "최기운", "year": 2026, "granted": 16, "used": 9, "remain": 12, "monthly": "1월:1, 2월:5, 3월:2, 4월:1", "note": "잔여연차 24년 3일 + 25년 2일"}, {"name": "박성수", "year": 2026, "granted": 16, "used": 16, "remain": 0, "monthly": "6월:16", "note": "이월 잔여연차 없음"}, {"name": "김보람", "year": 2026, "granted": 16, "used": 5, "remain": 19.5, "monthly": "1월:0.5, 3월:2, 4월:1.5, 5월:1", "note": "잔여연차 24년 4일 + 25년 4.5일"}, {"name": "신욱임", "year": 2026, "granted": 16, "used": 13.25, "remain": 2.75, "monthly": "1월:1, 2월:4.5, 3월:1, 4월:1.5, 5월:0.25, 6월:5", "note": ""}, {"name": "주민정", "year": 2026, "granted": 16, "used": 7, "remain": 9, "monthly": "2월:2, 3월:0.5, 4월:3.5, 6월:1", "note": ""}, {"name": "박한별", "year": 2026, "granted": 15, "used": 19, "remain": 10, "monthly": "1월:2, 3월:17", "note": "잔여연차 24년 6.5일 + 25년 7.5일"}, {"name": "김혜민", "year": 2026, "granted": 14.5, "used": 5.5, "remain": 9, "monthly": "5월:4.5, 6월:1", "note": ""}, {"name": "박재원", "year": 2026, "granted": 14.5, "used": 3.5, "remain": 11, "monthly": "1월:1, 4월:1, 5월:1.5", "note": ""}, {"name": "박은비", "year": 2026, "granted": 14.5, "used": 4.5, "remain": 10, "monthly": "1월:0.5, 2월:1.5, 3월:1, 4월:1, 5월:0.5", "note": ""}, {"name": "임혜미", "year": 2026, "granted": 3, "used": 3, "remain": 0, "monthly": "4월:1, 5월:2", "note": ""}, {"name": "김동현", "year": 2026, "granted": 9, "used": 0, "remain": 9, "monthly": "", "note": ""}];
+// security: 직원 16명의 2022~2026 연차대장(실명·부여·사용·잔여·비고)이
+// 여기 그대로 박혀 있었다. 비고에는 육아휴직·배우자 출산휴가·휴직 사유까지
+// 들어 있어 급여보다 민감하다. 이 저장소는 공개이고 main이 실제 배포된다.
+// 실제 대장은 Firebase(leave_ledger)에 있으므로 자료 손실은 없다.
+// ⚠ 빈 배열로 남기지 않고 통째로 없앤다 — 남겨 두면 「엑셀 대장 불러오기」가
+//    빈 배열을 persist 해 **서버 연차대장을 지운다**(2026-07 실데이터 사고 경로).
 
 function LeaveLedgerTab(){
   var s = useState(dbGet('leave_ledger', [])); var ledger = s[0]; var setLedger = s[1];
   function persist(next){ setLedger(next); dbSet('leave_ledger', next); }
-  function importSeed(){
-    if(ledger.length && !confirm('이미 연차대장 '+ledger.length+'건이 있습니다. 엑셀 대장('+LEAVE_LEDGER_SEED.length+'건, 2022~2026)으로 덮어쓸까요?')) return;
-    persist(LEAVE_LEDGER_SEED.map(function(r){ return Object.assign({}, r); }));
-    showToast('연차대장 '+LEAVE_LEDGER_SEED.length+'건 불러왔습니다');
-  }
+  /* security: 「엑셀 대장 불러오기」(importSeed)를 없앴다.
+     실명 연차대장이 코드에 박혀 있어 지웠고, 시드만 비우고 이 함수를 남기면
+     빈 배열을 persist 해 **서버 연차대장을 지운다**(2026-07 실데이터 사고 경로).
+     대장은 이미 Firebase 에 들어가 있는 1회성 이관이라 없애도 손실이 없다. */
   function updField(name, year, field, value){
     persist(ledger.map(function(r){ if(r.name===name && r.year===year){ var c=Object.assign({},r); c[field]=value; return c; } return r; }));
   }
@@ -57098,12 +57468,11 @@ function LeaveLedgerTab(){
   return h('div',null,
     h('div',{style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'8px',flexWrap:'wrap'}},
       h('div',{style:{fontWeight:700,fontSize:'14px',color:'#1e293b'}},'📋 연차대장 (연도별 요약)'),
-      h('button',{onClick:importSeed,style:{padding:'6px 12px',background:'#1e40af',color:'#fff',border:'none',borderRadius:'6px',cursor:'pointer',fontSize:'12px',fontWeight:700}},'📥 엑셀 대장 불러오기 (2022~2026)'),
-      h('span',{style:{fontSize:'11px',color:'#94a3b8'}}, ledger.length ? ('총 '+ledger.length+'건') : '아직 비어 있음 — 불러오기를 누르세요')
+      h('span',{style:{fontSize:'11px',color:'#94a3b8'}}, ledger.length ? ('총 '+ledger.length+'건') : '아직 비어 있음')
     ),
     h('div',{style:{fontSize:'11px',color:'#64748b',marginBottom:'12px'}}, '※ 부여·사용·잔여·비고 칸을 클릭하면 바로 수정됩니다. 월별 내역은 참고용(읽기 전용).'),
     years.length===0
-      ? h('div',{style:{padding:'24px',textAlign:'center',color:'#94a3b8',background:'#fff',border:'1px dashed #cbd5e1',borderRadius:'8px'}}, '데이터가 없습니다. 위 "엑셀 대장 불러오기"를 누르면 2022~2026 연차대장이 들어옵니다.')
+      ? h('div',{style:{padding:'24px',textAlign:'center',color:'#94a3b8',background:'#fff',border:'1px dashed #cbd5e1',borderRadius:'8px'}}, '연차대장이 비어 있습니다. 클라우드에서 불러오는 중이거나, 아직 등록된 것이 없습니다.')
       : years.map(function(y){
           var rows = ledger.filter(function(r){ return r.year===y; });
           var usedSum = rows.reduce(function(a,r){ return a+(typeof r.used==='number'?r.used:0); }, 0);
@@ -60542,16 +60911,11 @@ function PayrollLedger(props){
     if(ok) refreshRecs();
     return ok;
   }
-  function importPay45(){
-    var NEW = [{"id": "pay-P-001-2026-04", "empSid": "P-001", "empName": "권형하", "ym": "2026-04", "dependents": 2, "baseSalary": 2000000, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 116800, "healthInsOverride": -168700, "longCareOverride": 9440, "empInsOverride": -54000, "incomeTaxOverride": 19520, "localTaxOverride": 1950, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-001-2026-04", "empSid": "A-001", "empName": "최기운", "ym": "2026-04", "dependents": 1, "baseSalary": 3150000, "allowances": [{"code": "meal", "name": "식대", "amount": 200000}, {"code": "car", "name": "차량유지비", "amount": 200000}], "bonus": 182078, "bonusIsPerf": true, "pensionOverride": 0, "healthInsOverride": 79370, "longCareOverride": 15730, "empInsOverride": 29980, "incomeTaxOverride": 105210, "localTaxOverride": 10520, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-003-2026-04", "empSid": "A-003", "empName": "김보람", "ym": "2026-04", "dependents": 1, "baseSalary": 3250000, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 139980, "healthInsOverride": 184810, "longCareOverride": 15350, "empInsOverride": 29250, "incomeTaxOverride": 95430, "localTaxOverride": 9540, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-004-2026-04", "empSid": "A-004", "empName": "주민정", "ym": "2026-04", "dependents": 1, "baseSalary": 2650000, "allowances": [], "bonus": 637000, "bonusIsPerf": true, "pensionOverride": 111720, "healthInsOverride": 209480, "longCareOverride": 15520, "empInsOverride": 29580, "incomeTaxOverride": 100320, "localTaxOverride": 10030, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-002-2026-04", "empSid": "A-002", "empName": "신욱임", "ym": "2026-04", "dependents": 1, "baseSalary": 2250000, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 93950, "healthInsOverride": 124740, "longCareOverride": 10620, "empInsOverride": 20250, "incomeTaxOverride": 27560, "localTaxOverride": 2750, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-006-2026-04", "empSid": "A-006", "empName": "김석우", "ym": "2026-04", "dependents": 1, "baseSalary": 2022180, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 0, "healthInsOverride": 0, "longCareOverride": 0, "empInsOverride": 0, "incomeTaxOverride": 20170, "localTaxOverride": 2010, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-003-2026-04", "empSid": "P-003", "empName": "박한별", "ym": "2026-04", "dependents": 1, "baseSalary": 3700000, "allowances": [], "bonus": 540000, "bonusIsPerf": true, "pensionOverride": 195790, "healthInsOverride": 612350, "longCareOverride": 20020, "empInsOverride": 38160, "incomeTaxOverride": 228000, "localTaxOverride": 22800, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-004-2026-04", "empSid": "P-004", "empName": "김혜민", "ym": "2026-04", "dependents": 1, "baseSalary": 2900000, "allowances": [{"code": "etc", "name": "업무분담수당", "amount": 290000}], "bonus": 1766678, "bonusIsPerf": true, "pensionOverride": 99560, "healthInsOverride": 512690, "longCareOverride": 23410, "empInsOverride": 44610, "incomeTaxOverride": 327050, "localTaxOverride": 32700, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-005-2026-04", "empSid": "P-005", "empName": "박재원", "ym": "2026-04", "dependents": 1, "baseSalary": 3000000, "allowances": [{"code": "etc", "name": "업무분담수당", "amount": 300000}], "bonus": 1913895, "bonusIsPerf": true, "pensionOverride": 99560, "healthInsOverride": 471470, "longCareOverride": 24620, "empInsOverride": 46920, "incomeTaxOverride": 363520, "localTaxOverride": 36350, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-005-2026-04", "empSid": "A-005", "empName": "박은비", "ym": "2026-04", "dependents": 1, "baseSalary": 2250000, "allowances": [], "bonus": 234000, "bonusIsPerf": true, "pensionOverride": 99560, "healthInsOverride": 82000, "longCareOverride": 11730, "empInsOverride": 22350, "incomeTaxOverride": 34950, "localTaxOverride": 3490, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-006-2026-04", "empSid": "P-006", "empName": "임혜미", "ym": "2026-04", "dependents": 0, "baseSalary": 2156880, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 102410, "healthInsOverride": 77530, "longCareOverride": 10180, "empInsOverride": 19410, "incomeTaxOverride": 24340, "localTaxOverride": 2430, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-007-2026-04", "empSid": "P-007", "empName": "김동현", "ym": "2026-04", "dependents": 0, "baseSalary": 2156880, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 102410, "healthInsOverride": 77530, "longCareOverride": 10180, "empInsOverride": 19410, "incomeTaxOverride": 24340, "localTaxOverride": 2430, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-001-2026-05", "empSid": "P-001", "empName": "권형하", "ym": "2026-05", "dependents": 2, "baseSalary": 2000000, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 116800, "healthInsOverride": 71900, "longCareOverride": 9440, "empInsOverride": 0, "incomeTaxOverride": 19520, "localTaxOverride": 1950, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-001-2026-05", "empSid": "A-001", "empName": "최기운", "ym": "2026-05", "dependents": 1, "baseSalary": 3150000, "allowances": [{"code": "meal", "name": "식대", "amount": 200000}, {"code": "car", "name": "차량유지비", "amount": 200000}], "bonus": 166363, "bonusIsPerf": true, "pensionOverride": 0, "healthInsOverride": 119220, "longCareOverride": 15660, "empInsOverride": 29840, "incomeTaxOverride": 102770, "localTaxOverride": 10270, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-003-2026-05", "empSid": "A-003", "empName": "김보람", "ym": "2026-05", "dependents": 1, "baseSalary": 3250000, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 139980, "healthInsOverride": 116830, "longCareOverride": 15350, "empInsOverride": 29250, "incomeTaxOverride": 95430, "localTaxOverride": 9540, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-004-2026-05", "empSid": "A-004", "empName": "주민정", "ym": "2026-05", "dependents": 1, "baseSalary": 2650000, "allowances": [], "bonus": 78000, "bonusIsPerf": true, "pensionOverride": 111720, "healthInsOverride": 98070, "longCareOverride": 12880, "empInsOverride": 24550, "incomeTaxOverride": 49960, "localTaxOverride": 4990, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-002-2026-05", "empSid": "A-002", "empName": "신욱임", "ym": "2026-05", "dependents": 1, "baseSalary": 2250000, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 93950, "healthInsOverride": 80880, "longCareOverride": 10620, "empInsOverride": 20250, "incomeTaxOverride": 27560, "localTaxOverride": 2750, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-006-2026-05", "empSid": "A-006", "empName": "김석우", "ym": "2026-05", "dependents": 1, "baseSalary": 2022180, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 0, "healthInsOverride": 0, "longCareOverride": 0, "empInsOverride": 0, "incomeTaxOverride": 20170, "localTaxOverride": 2010, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-004-2026-05", "empSid": "P-004", "empName": "김혜민", "ym": "2026-05", "dependents": 1, "baseSalary": 2806452, "allowances": [{"code": "etc", "name": "업무분담수당", "amount": 280645}], "bonus": 1253217, "bonusIsPerf": true, "pensionOverride": 99560, "healthInsOverride": 156030, "longCareOverride": 20500, "empInsOverride": 39060, "incomeTaxOverride": 241350, "localTaxOverride": 24130, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-005-2026-05", "empSid": "P-005", "empName": "박재원", "ym": "2026-05", "dependents": 1, "baseSalary": 3000000, "allowances": [{"code": "etc", "name": "업무분담수당", "amount": 300000}], "bonus": 336818, "bonusIsPerf": true, "pensionOverride": 99560, "healthInsOverride": 130740, "longCareOverride": 17170, "empInsOverride": 32730, "incomeTaxOverride": 141890, "localTaxOverride": 14180, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-A-005-2026-05", "empSid": "A-005", "empName": "박은비", "ym": "2026-05", "dependents": 1, "baseSalary": 2250000, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 99560, "healthInsOverride": 80880, "longCareOverride": 10620, "empInsOverride": 20250, "incomeTaxOverride": 27560, "localTaxOverride": 2750, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-006-2026-05", "empSid": "P-006", "empName": "임혜미", "ym": "2026-05", "dependents": 0, "baseSalary": 1568640, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 102410, "healthInsOverride": 45070, "longCareOverride": 5920, "empInsOverride": 14110, "incomeTaxOverride": -48680, "localTaxOverride": -4860, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}, {"id": "pay-P-007-2026-05", "empSid": "P-007", "empName": "김동현", "ym": "2026-05", "dependents": 0, "baseSalary": 2156880, "allowances": [], "bonus": 0, "bonusIsPerf": true, "pensionOverride": 102410, "healthInsOverride": 77530, "longCareOverride": 10180, "empInsOverride": 19410, "incomeTaxOverride": 24340, "localTaxOverride": 2430, "status": "paid", "note": "2026 급여대장 가져오기(확정)"}];
-    if(!confirm('2026년 4·5월 급여 ' + NEW.length + '건(4월 12·5월 11)을 가져옵니다.\n같은 직원·월이 이미 있으면 그 건만 교체하고, 1~3월 등 나머지는 그대로 둡니다.\n무급 달(박성수 4·5월·박한별 5월)은 제외됩니다.\n\n진행할까요?')) return;
-    var _byKey = {};
-    (dbGet('payroll_monthly', []) || []).forEach(function(r){ _byKey[(r.empSid||r.sid)+'|'+r.ym] = true; });
-    var added=0, replaced=0;
-    NEW.forEach(function(rec){ if(_byKey[rec.empSid+'|'+rec.ym]) replaced++; else added++; });
-    payUpsertMany(NEW);
-    showToast('급여 4·5월 반영 완료: 추가 '+added+' · 교체 '+replaced+' (새로고침 후 명세서 확인)');
-  }
+  // security: 2026-04·05월 급여를 1회성으로 반영하던 importPay45()를 제거했다.
+  // 실제 직원 이름·급여·상여·세금·보험료가 코드에 그대로 박혀 있었고, 이 저장소는
+  // 공개 저장소이며 main이 GitHub Pages로 실제 배포된다 — 지운 시점까지 인터넷에
+  // 그대로 노출돼 있었다. 그 급여는 이미 Firebase(payroll_monthly)에 반영이 끝난
+  // 1회성 이관이라 기능 손실 없이 제거한다.
 
 
   // ── 급여대장 엑셀 가져오기 (전체 월별 시트 → payroll_monthly, 이미 있는 직원·월은 건너뛰기) ──
@@ -61073,10 +61437,6 @@ function PayrollLedger(props){
           h('label', { style:{padding:'6px 10px',background:'#eff6ff',color:'#1d4ed8',border:'1px solid #bfdbfe',borderRadius:'6px',cursor:'pointer',fontSize:'12px',fontWeight:600,whiteSpace:'nowrap',flexShrink:0,display:'block'} },
             '📥 급여대장 가져오기',
             h('input',{type:'file',accept:'.xlsx,.xls',style:{display:'none'},onChange:importPayrollLedger})),
-          h('button', { onClick:importPay45,
-            title:'2026년 4·5월 급여(파일 확정 숫자)를 가져옵니다. 1~3월·나머지는 그대로.',
-            style:{padding:'6px 10px',background:'#dcfce7',color:'#166534',border:'1px solid #86efac',borderRadius:'6px',cursor:'pointer',fontSize:'12px',fontWeight:600,whiteSpace:'nowrap',flexShrink:0} },
-            '📥 4·5월 급여(확정)'),
           h('div', {
             title:'JSON 백업 파일을 끌어다 놓으세요',
             onDragOver:function(e){ e.preventDefault(); e.currentTarget.style.outline='2px solid #16a34a'; e.currentTarget.style.borderRadius='6px'; },
@@ -63575,8 +63935,15 @@ function PersonnelCardModal(props){
             h('div', { style:{fontSize:'11.5px', color:'#94a3b8', marginTop:'4px', fontFamily:'monospace'} }, u.sid+' · '+(u.title||'')+' · '+(u.branch||'')),
             workYears && h('div', { style:{fontSize:'11px', color:'#cbd5e1', marginTop:'4px'} }, '재직기간: '+workYears+' ('+hireDate+(retireDate?' ~ '+retireDate:' ~ 현재')+')')
           ),
-          h('span', { style:{padding:'4px 14px', borderRadius:'10px', fontSize:'11px', fontWeight:700, background:u.status==='active'?'#16a34a':u.status==='retired'?'#dc2626':'#854d0e', color:'#fff'} },
-            u.status==='active'?'재직':u.status==='retired'?'퇴직':u.status==='leave'?'휴직':'기타')
+          h('div', { style:{ display:'flex', flexDirection:'column', gap:'5px', alignItems:'flex-end' } },
+            h('span', { style:{padding:'4px 14px', borderRadius:'10px', fontSize:'11px', fontWeight:700, background:u.status==='active'?'#16a34a':u.status==='retired'?'#dc2626':'#854d0e', color:'#fff'} },
+              u.status==='active'?'재직':u.status==='retired'?'퇴직':u.status==='leave'?'휴직':'기타'),
+            // 환경설정에서 급히 잠가 둔 사람 — 정식 퇴사 절차가 아직 안 끝났다
+            u.accessLocked === true && u.status !== 'retired' && h('span', {
+              title:'환경설정에서 접속만 잠갔습니다. 퇴직금·서류·업무 넘기기는 아직입니다.',
+              style:{ padding:'3px 12px', borderRadius:'10px', fontSize:'10.5px', fontWeight:700,
+                background:'#fbbf24', color:'#78350f', whiteSpace:'nowrap' } },
+              '🔒 접속 잠김 · 퇴사 처리 필요'))
         ),
 
         // 1. 기본정보
@@ -64690,7 +65057,7 @@ function LoginScreen(props){
       var idl = id.toLowerCase();
       var users = dbGet('user_accounts', USERS_SEED) || [];
       function _matches(x){ return (x.loginId && x.loginId === id) || x.sid === id || sidToEmail(x.sid) === idl; }
-      function _canLogin(x){ return x.status === 'active' || (x.status === 'leave' && x.leaveLoginAllowed === true); }
+      function _canLogin(x){ return x.accessLocked !== true && (x.status === 'active' || (x.status === 'leave' && x.leaveLoginAllowed === true)); }
       // 로컬 캐시에 계정이 있고 재직이 아니면 사전 안내 (기존 UX 유지)
       var _anyLocal = users.find(_matches);
       if(_anyLocal && !_canLogin(_anyLocal)){

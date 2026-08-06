@@ -31,7 +31,7 @@ test('mapRecord: cases → case 스토어', () => {
   }, UMAP);
   assert.equal(r.store, 'case');
   assert.deepEqual(r.rec, {
-    type: '부당해고', org: '대운토건', project: '부당해고 구제신청',
+    type: '부당해고', agency: '', org: '대운토건', project: '부당해고 구제신청',
     year: '2026', main: '권형하', status: '완료', puRef: 'cases/-Nx1'
   });
 });
@@ -89,6 +89,74 @@ test('mapRecord: caseType이 비면 사건번호에서 유형·연도를 뽑는�
   const r5 = PS.mapRecord('cases', 'k5', { companyName: 'A사', title: '윤성진아버지 유족사건' }, UMAP);
   assert.equal(r5.rec.type, '');
   assert.equal(r5.rec.project, '윤성진아버지 유족사건');
+});
+
+/* pu-erp의 유형 코드표 (biz_cons_types 등). name과 agency가 함께 들어 있다 */
+const TYPEMAP = {
+  consulting: [
+    { code: 'cons-job-neung', name: '산업일자리', agency: '한국능률협회' },
+    { code: 'cons-ilteo', name: '일터상생혁신', agency: '노사발전재단' },
+    { code: 'cons-clinic', name: '현장클리닉', agency: '' },
+    { code: 'cons-other', name: '기타', agency: '' }
+  ],
+  case: [{ code: 'case-buhae', name: '부당해고', agency: '' }]
+};
+
+test('mapRecord: 유형 코드에서 유형 이름과 수행기관을 채운다', () => {
+  const r = PS.mapRecord('consultings', 'k1', {
+    companyName: '지나테크', typeCode: 'cons-job-neung', status: 'closed', closedDate: '2026-02-01', managerMain: '2001'
+  }, UMAP, TYPEMAP);
+  assert.equal(r.rec.type, '산업일자리');
+  assert.equal(r.rec.agency, '한국능률협회', '수행기관이 채워지면 외부기관 실적 탭으로 간다');
+
+  /* typeCodes.consulting 형태도 읽는다 */
+  const r2 = PS.mapRecord('consultings', 'k2', {
+    companyName: '노리아이', typeCodes: { consulting: 'cons-ilteo' }, status: 'done'
+  }, UMAP, TYPEMAP);
+  assert.equal(r2.rec.type, '일터상생혁신');
+  assert.equal(r2.rec.agency, '노사발전재단');
+
+  /* agency가 빈 코드는 내부 실적 — 수행기관을 비워 둔다 */
+  const r3 = PS.mapRecord('consultings', 'k3', { companyName: 'A사', typeCode: 'cons-clinic' }, UMAP, TYPEMAP);
+  assert.equal(r3.rec.type, '현장클리닉');
+  assert.equal(r3.rec.agency, '');
+
+  /* 코드표에 없는 코드·코드표 자체가 없을 때도 죽지 않는다 */
+  const r4 = PS.mapRecord('consultings', 'k4', { companyName: 'B사', typeCode: 'cons-없음' }, UMAP, TYPEMAP);
+  assert.equal(r4.rec.type, '');
+  const r5 = PS.mapRecord('consultings', 'k5', { companyName: 'C사', typeCode: 'cons-ilteo' }, UMAP, null);
+  assert.equal(r5.rec.type, '');
+  assert.equal(r5.rec.agency, '');
+});
+
+test('mapRecord: consultingType이 있으면 코드표보다 우선한다', () => {
+  const r = PS.mapRecord('consultings', 'k1', {
+    companyName: 'A사', consultingType: '직접입력유형', typeCode: 'cons-ilteo'
+  }, UMAP, TYPEMAP);
+  assert.equal(r.rec.type, '직접입력유형');
+  assert.equal(r.rec.agency, '노사발전재단', '수행기관은 코드표에서 그대로 가져온다');
+});
+
+test('buildSyncPlan: puRef 없는 기존 실적에는 붙이고 새로 만들지 않는다', () => {
+  const collData = {
+    cases: null,
+    consultings: { v: {
+      k1: { companyName: '지나테크', typeCode: 'cons-job-neung', status: 'closed', closedDate: '2026-02-01' },
+      k2: { companyName: '새로운회사', typeCode: 'cons-ilteo', status: 'closed', closedDate: '2026-03-01' }
+    }, u: 1 },
+    funds: null, other_projects: null
+  };
+  /* 시드로 들어있던 기존 실적 — puRef가 없다 */
+  const existing = [
+    { id: 'CN0001', store: 'consult', org: '지나테크', year: '2026', type: '산업일자리' }
+  ];
+  const plan = PS.buildSyncPlan(collData, new Set(), UMAP, TYPEMAP, existing);
+  assert.equal(plan.adds.length, 1, '기존에 있는 건은 새로 만들지 않는다');
+  assert.equal(plan.adds[0].rec.org, '새로운회사');
+  assert.equal(plan.links.length, 1, '기존 건에는 puRef만 붙인다');
+  assert.equal(plan.links[0].id, 'CN0001');
+  assert.equal(plan.links[0].puRef, 'consultings/k1');
+  assert.equal(plan.links[0].agency, '한국능률협회', '붙일 때 빈 수행기관도 채워준다');
 });
 
 test('mapRecord: 모르는 컬렉션은 null', () => {
