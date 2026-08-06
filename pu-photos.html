@@ -153,8 +153,9 @@ button{font-family:inherit;cursor:pointer}
    ⚠ 이 규칙은 반드시 위 기본 규칙 **뒤에** 있어야 한다. 앞에 두면 특정도가
       같아 나중에 나온 기본 규칙이 이겨서 조용히 안 먹는다(실제로 그랬다). */
 @media (max-width:899px){
-  #kinds{gap:5px;padding-bottom:8px;margin-bottom:9px}
-  #kinds button{padding:6px 9px;font-size:12px}
+  /* 탭이 여섯이 되어 더 조인다 — 두 줄이 되면 사진이 화면 밖으로 밀린다 */
+  #kinds{gap:4px;padding-bottom:8px;margin-bottom:9px}
+  #kinds button{padding:6px 8px;font-size:12px}
   #kinds button .n{margin-left:3px}
 }
 
@@ -1242,19 +1243,40 @@ const READ_LABEL = { card: '명함', bizreg: '사업자등록증', sme: '중소�
 
 /* ══════ 분류 탭 ══════
    대표 지시(2026-08-05): 전체사진 · 명함 · 사업자등록증 · 급여서류 · 기타서류.
-   판독이 가려내는 종류는 여섯인데 탭은 다섯이므로 둘을 묶는다(A안으로 승인):
-     · 중소기업확인서(sme) → 사업자등록증 탭에 함께 (둘 다 업체 서류다)
-     · 회의·현장(meeting)·가리지 못한 것(other)·판독 안 한 사진 → 기타서류 탭
+   + 대표 지시(2026-08-06): 회의사진을 기타서류에서 갈라 따로 — 회의 사진이
+     「서류」 취급을 받는 것이 어색했다.
+   묶는 규칙: 중소기업확인서(sme)는 사업자등록증 탭에(둘 다 업체 서류),
+   가리지 못한 것(other)·판독 안 한 사진은 기타서류 탭에.
    test 가 이 표를 지키므로, 종류를 늘릴 때는 여기와 검사를 함께 고칠 것. */
-/* short: 폰에서 쓰는 짧은 이름. 긴 이름 다섯 개는 375px 에서 두 줄이 되고,
+/* short: 폰에서 쓰는 짧은 이름. 긴 이름은 375px 에서 두 줄이 되고,
    대시보드가 이미 300px 을 쓰는 폰에서 두 줄은 사진을 화면 밖으로 밀어낸다. */
 const KIND_TABS = [
   { key: 'all',     label: '전체사진',     short: '전체',   kinds: undefined },
   { key: 'card',    label: '명함',        short: '명함',   kinds: ['card'] },
   { key: 'bizreg',  label: '사업자등록증', short: '사업자', kinds: ['bizreg', 'sme'] },
   { key: 'payslip', label: '급여서류',     short: '급여',   kinds: ['payslip'] },
-  { key: 'other',   label: '기타서류',     short: '기타',   kinds: null }   // 나머지 전부
+  { key: 'other',   label: '기타서류',     short: '기타',   kinds: null },  // 나머지 전부
+  { key: 'meeting', label: '회의사진',     short: '회의',   kinds: ['meeting'] }
 ];
+
+/* ── 탭 순서 — 마우스로 끌어서 바꿀 수 있다(대표 지시 2026-08-06) ──
+   순서는 이 기기에만 기억한다(개인 취향이라 계정 공유가 오히려 성가시다).
+   「전체사진」은 맨 앞 고정 — 어디로 돌아갈지가 늘 같은 자리에 있어야 한다.
+   저장된 순서에 없는 새 탭은 기본 자리(위 배열 순서)에 끼운다 — 탭이 늘어도
+   저장값 때문에 숨는 일이 없다. */
+const KIND_ORDER_LS = 'puphotos_kind_order';
+function kindOrder() {
+  let saved = [];
+  try { saved = JSON.parse(localStorage.getItem(KIND_ORDER_LS)) || []; } catch (_) { saved = []; }
+  const keys = KIND_TABS.map(function (t) { return t.key; });
+  const out = ['all'];
+  saved.forEach(function (k) { if (k !== 'all' && keys.indexOf(k) >= 0 && out.indexOf(k) < 0) out.push(k); });
+  keys.forEach(function (k) { if (out.indexOf(k) < 0) out.push(k); });
+  return out;
+}
+function saveKindOrder(order) {
+  try { localStorage.setItem(KIND_ORDER_LS, JSON.stringify(order)); } catch (_) { }
+}
 
 /* 위 탭들이 이름을 걸어 둔 종류 — '기타서류'가 무엇을 담을지 정하는 기준이다. */
 const CLAIMED_KINDS = KIND_TABS.reduce(function (a, t) {
@@ -1999,15 +2021,56 @@ function tabCounts() {
 
 function renderKindTabs() {
   const c = tabCounts();
+  const byKey = {};
+  KIND_TABS.forEach(function (t) { byKey[t.key] = t; });
   /* 긴 이름·짧은 이름을 둘 다 그려 놓고 CSS 가 화면 폭에 따라 고른다.
      자바스크립트로 폭을 재서 고르면 창 크기를 바꿀 때 따라오지 못한다. */
-  $('kinds').innerHTML = KIND_TABS.map(function (t) {
-    return '<button class="' + (kindTab === t.key ? 'on' : '') + '" onclick="pickKind(\'' + t.key + '\')">' +
+  $('kinds').innerHTML = kindOrder().map(function (k) {
+    const t = byKey[k];
+    /* 「전체사진」만 못 끈다 — 돌아갈 자리는 늘 같은 곳에 있어야 한다 */
+    const drag = k === 'all' ? '' : ' draggable="true" title="끌어서 순서를 바꿀 수 있습니다"';
+    return '<button data-key="' + t.key + '"' + drag +
+      ' class="' + (kindTab === t.key ? 'on' : '') + '" onclick="pickKind(\'' + t.key + '\')">' +
       '<span class="wide-only">' + esc(t.label) + '</span>' +
       '<span class="narrow-only">' + esc(t.short) + '</span>' +
       '<span class="n">' + (c[t.key] || 0) + '</span></button>';
   }).join('');
 }
+
+/* ── 탭 끌어서 순서 바꾸기 (마우스 전용 — 폰은 끌기가 스크롤과 겹친다) ──
+   창 전체의 파일 받기와 부딪히지 않는다: 화면 안에서 시작한 드래그는
+   selfDrag 가 참이 되어 drop 이 파일로 받지 않는다(재복사 잠금과 같은 장치). */
+let tabDragKey = null;
+$('kinds').addEventListener('dragstart', function (e) {
+  const b = e.target.closest ? e.target.closest('button[data-key]') : null;
+  if (!b) return;
+  tabDragKey = b.getAttribute('data-key');
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', 'tab:' + tabDragKey); } catch (_) { }
+  }
+});
+$('kinds').addEventListener('dragover', function (e) {
+  if (tabDragKey) e.preventDefault();   // 이게 없으면 놓기가 허용되지 않는다
+});
+$('kinds').addEventListener('drop', function (e) {
+  if (!tabDragKey) return;
+  e.preventDefault();
+  const key = tabDragKey; tabDragKey = null;
+  const order = kindOrder().filter(function (k) { return k !== key; });
+  const b = e.target.closest ? e.target.closest('button[data-key]') : null;
+  let at = order.length;   // 빈 곳에 놓으면 맨 뒤로
+  if (b) {
+    const tk = b.getAttribute('data-key');
+    const r = b.getBoundingClientRect();
+    /* 과녁의 왼쪽 반이면 그 앞, 오른쪽 반이면 그 뒤 */
+    at = order.indexOf(tk) + (e.clientX > r.left + r.width / 2 ? 1 : 0);
+  }
+  order.splice(Math.max(1, at), 0, key);   // 1 미만 금지 — 「전체사진」 앞으로는 못 간다
+  saveKindOrder(order);
+  renderKindTabs();
+});
+$('kinds').addEventListener('dragend', function () { tabDragKey = null; });
 
 function pickKind(key) {
   kindTab = key;

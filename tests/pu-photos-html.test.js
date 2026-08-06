@@ -234,17 +234,18 @@ test('본문 위 탭은 사진 분류다 — 휴지통·설정은 그 자리를 
   assert.ok(!/id="gearBtn"/.test(app), '옛 설정 단추가 남아 있습니다');
 });
 
-test('분류 탭은 요청받은 다섯 가지다 — 어느 탭에도 안 드는 사진이 없어야 한다', () => {
-  /* 대표 지시(A안): 전체사진 · 명함 · 사업자등록증 · 급여서류 · 기타서류.
-     판독이 가려내는 종류는 여섯(card·bizreg·sme·payslip·meeting·other)이라
-     둘을 묶는다 — sme 는 사업자등록증에, meeting·other 는 기타서류에.
+test('분류 탭은 여섯 가지다 — 어느 탭에도 안 드는 사진이 없어야 한다', () => {
+  /* 대표 지시 8/5(A안: 다섯) + 8/6(회의사진 분리 → 여섯).
+     묶는 규칙: sme 는 사업자등록증에, other·판독 안 한 사진은 기타서류에.
      ⚠ 어느 탭에도 안 잡히는 종류가 생기면 그 사진은 화면에서 사라진다. */
   const tabs = app.match(/const KIND_TABS = \[[\s\S]*?\];/);
   assert.ok(tabs, 'KIND_TABS 를 찾을 수 없습니다');
-  for (const label of ['전체사진', '명함', '사업자등록증', '급여서류', '기타서류']) {
+  for (const label of ['전체사진', '명함', '사업자등록증', '급여서류', '기타서류', '회의사진']) {
     assert.ok(tabs[0].indexOf(label) >= 0, label + ' 탭이 없습니다');
   }
   assert.match(tabs[0], /'sme'/, '중소기업확인서가 어느 탭에도 안 들어갑니다');
+  assert.match(tabs[0], /key: 'meeting'[\s\S]*?kinds: \['meeting'\]/,
+    '회의사진 탭이 meeting 을 맡지 않습니다 — 회의 사진이 기타서류에 남습니다');
   // 기타서류는 나머지 전부를 받는 그물이어야 한다(kinds: null)
   assert.match(tabs[0], /key: 'other'[\s\S]*?kinds: null/,
     '기타서류가 나머지를 받는 그물이 아닙니다 — 빠지는 사진이 생깁니다');
@@ -252,6 +253,24 @@ test('분류 탭은 요청받은 다섯 가지다 — 어느 탭에도 안 드�
   const fn = app.match(/function tabOf\([\s\S]*?\n\}/);
   assert.ok(fn, 'tabOf 를 찾을 수 없습니다');
   assert.match(fn[0], /'other'/, '판독 안 한 사진이 갈 곳이 없습니다');
+});
+
+test('탭 순서는 끌어서 바꾸고 이 기기에 기억된다 — 전체사진은 맨 앞 고정', () => {
+  /* 대표 지시 8/6: "폴더 마우스로 드래그해서 이동할 수 있게" */
+  const ord = app.match(/function kindOrder\(\)[\s\S]*?\n\}/);
+  assert.ok(ord, 'kindOrder 를 찾을 수 없습니다');
+  assert.match(ord[0], /\['all'\]/, '전체사진이 맨 앞에 고정돼 있지 않습니다');
+  /* 저장된 순서에 없는 새 탭도 반드시 나타난다 — 아니면 탭을 늘릴 때
+     예전에 순서를 바꿔 둔 기기에서 새 탭이 조용히 숨는다 */
+  assert.match(ord[0], /keys\.forEach[\s\S]*?out\.push\(k\)/,
+    '저장 순서에 없는 새 탭이 숨습니다');
+  assert.match(app, /localStorage\.setItem\(KIND_ORDER_LS/, '순서를 기억하지 않습니다');
+  /* 끌 수 있는 것은 전체사진 빼고 전부 */
+  const rk = app.match(/function renderKindTabs\(\)[\s\S]*?\n\}/);
+  assert.match(rk[0], /k === 'all' \? '' : ' draggable="true"/,
+    '전체사진까지 끌리거나, 아무것도 끌 수 없습니다');
+  /* 놓는 계산이 전체사진 앞자리를 지킨다 */
+  assert.match(app, /splice\(Math\.max\(1, at\)/, '끌어다 놓으면 전체사진 앞으로 들어갈 수 있습니다');
 });
 
 test('분류 탭과 「확인 필요」는 함께 걸린다', () => {
