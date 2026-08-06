@@ -683,19 +683,10 @@ test('새 자리에 있으면 옛 자리를 두드리지 않는다', async () =>
     '새 자리에 있는데 옛 자리를 또 읽었습니다');
 });
 
-test('지우기는 새 자리와 옛 자리를 함께 비운다 — 안 그러면 다시 나타난다', async () => {
-  const S = loadStore();
-  // 휴지통에 담을 것이 있어야 지운다(읽지 못하면 지우지 않는다)
-  const db = legacyDb({ 2026: { p1: { by: 'U1', takenAt: 1 } } }, {}, {});
-  S.init({ uid: 'U1', db });
-  await S.deletePhoto('2026', 'p1');
-  const u = db.calls.update[0].u;
-  ['puphotos/items/2026/p1', 'puphotos/blobs/2026/p1', 'puphotos/thumbs/2026/p1',
-   'puphotos/u/U1/items/2026/p1', 'puphotos/u/U1/blobs/2026/p1', 'puphotos/u/U1/thumbs/2026/p1'
-  ].forEach(function (k) { assert.equal(u[k], null, k + ' 를 비우지 않았습니다'); });
-  // 휴지통에는 담겨 있어야 한다
-  assert.ok(u['puphotos/u/U1/trash/2026/p1'], '휴지통에 담지 않았습니다');
-});
+/* (2026-08-06 뒤집힘) 여기 있던 「지우기는 새 자리와 옛 자리를 함께 비운다」는
+   8/3 이사 기간에만 맞는 약속이었다. 8/4에 옛 자리 규칙이 지워지면서 옛 자리
+   쓰기는 거부가 됐고, 묶음 쓰기는 전부 아니면 전무라 그 한 줄이 **모든 지우기를**
+   실패시켰다. 새 약속은 파일 끝 「지우기는 내 자리만 쓴다」가 지킨다. */
 
 /* ── 지운 기록 ──
    휴지통에서 완전히 지운 뒤에도 '무엇을 언제 누가 지웠는지'는 남아야 한다.
@@ -935,16 +926,20 @@ test('지우면 휴지통으로 간다 — 담은 뒤에 원래 자리를 비운
   assert.equal(u['puphotos/u/U1/thumbs/2026/p1'], null);
 });
 
-test('옛 자리 사진을 지워도 휴지통으로 간다', async () => {
+test('옛 자리에만 있는 사진은 지우지 않는다 — 내 자리에서 못 읽으면 담을 수 없다', async () => {
+  /* (2026-08-06 뒤집힘) 예전에는 옛 자리 사진도 휴지통으로 담았다. 8/4에 이사가
+     끝나고 옛 자리 규칙이 지워져 이제 옛 자리는 읽기도 거부된다 — 내 자리에서
+     아무것도 못 읽으면 담지 못한 것을 없애면 안 되므로 거부가 맞다. */
   const S = loadStore();
-  const db = legacyDb(
-    { 2026: { old1: { by: 'U1', takenAt: 5 } } },
-    { 2026: { old1: 'data:of' } }, { 2026: { old1: 'data:ot' } });
+  /* 옛 자리는 규칙이 지워져 **읽기도 거부**다 — 실제 상태 그대로 흉내낸다. */
+  const db = fakeDbFor({
+    'puphotos/items/2026/old1': 'DENY',
+    'puphotos/blobs/2026/old1': 'DENY',
+    'puphotos/thumbs/2026/old1': 'DENY'
+  });
   S.init({ uid: 'U1', db });
-  await S.deletePhoto('2026', 'old1');
-  const u = db.calls.update[0].u;
-  assert.equal(u['puphotos/u/U1/trash/2026/old1'].full, 'data:of');
-  assert.equal(u['puphotos/items/2026/old1'], null, '옛 자리를 비우지 않았습니다');
+  await assert.rejects(() => S.deletePhoto('2026', 'old1'), /읽지 못해/);
+  assert.equal(db.updates.length, 0, '읽지 못했는데 지우려 했습니다');
 });
 
 test('읽지 못하면 지우지 않는다 — 담지 못한 것을 없애면 안 된다', async () => {
@@ -1043,9 +1038,10 @@ test('deletePhoto — 담기와 비우기를 한 번의 저장으로 한다', as
   assert.equal(db.calls.update.length, 1);
   const u = db.calls.update[0].u;
   assert.ok(u['puphotos/u/U1/trash/2026/p1'], '휴지통에 담지 않았습니다');
-  ['puphotos/items/2026/p1', 'puphotos/u/U1/items/2026/p1'].forEach(function (k) {
-    assert.equal(u[k], null, k + ' 를 비우지 않았습니다');
-  });
+  /* (2026-08-06) 옛 자리(puphotos/items)는 더 이상 비우지 않는다 — 규칙이 지워져
+     그 한 줄이 묶음 쓰기 전체를 거부시킨다. 내 자리만 비운다. */
+  assert.equal(u['puphotos/u/U1/items/2026/p1'], null, '내 자리를 비우지 않았습니다');
+  assert.ok(!('puphotos/items/2026/p1' in u), '옛 자리를 건드리고 있습니다');
 });
 
 test('deletePhoto — 그 사진 하나만 건드린다', async () => {
@@ -1093,4 +1089,144 @@ test('saveRead — 실시간DB가 없으면 한국어로 거절한다', async ()
   const S = loadStore();
   S.init({ uid: 'U1' });
   await assert.rejects(() => S.saveRead('2026', 'p1', {}), /실시간DB/);
+});
+
+/* ══════ 지우기 실패 (2026-08-06 대표 보고: "자꾸 에러 난다") ══════
+   2026-08-04 사람별 분리 마지막 단계로 puphotos 최상위(옛 자리) 규칙을 지웠다.
+   그런데 deletePhoto 가 옛 자리 세 경로를 여전히 null 로 함께 쓰고 있었다.
+   실시간DB의 묶음 쓰기(update)는 전부 아니면 전무 — 한 경로가 거부되면
+   통째로 실패한다. 그래서 그날부터 **모든 지우기가** 실패했다. */
+
+function fakeDbFor(vals) {
+  const updates = [];
+  return {
+    updates,
+    ref(p) {
+      return {
+        once() {
+          if (vals[p] === 'DENY') return Promise.reject(new Error('PERMISSION_DENIED'));
+          return Promise.resolve({ val: function () { return (p in vals) ? vals[p] : null; } });
+        },
+        update(u) { updates.push(u); return Promise.resolve(); }
+      };
+    }
+  };
+}
+
+test('지우기는 내 자리만 쓴다 — 옛 자리를 건드리면 규칙에 막혀 통째로 실패한다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({
+    'puphotos/u/U1/items/2026/p1': { takenAt: 1, kind: 'photo' },
+    'puphotos/u/U1/blobs/2026/p1': 'data:image/jpeg;base64,xx',
+    'puphotos/u/U1/thumbs/2026/p1': 'data:image/jpeg;base64,tt',
+    /* 옛 자리는 이제 읽기도 거부된다 — 2026-08-04 규칙 정리 이후의 실제 상태 */
+    'puphotos/items/2026/p1': 'DENY',
+    'puphotos/blobs/2026/p1': 'DENY',
+    'puphotos/thumbs/2026/p1': 'DENY'
+  });
+  S.init({ uid: 'U1', db: db });
+  await S.deletePhoto('2026', 'p1', '');
+  assert.equal(db.updates.length, 1, '묶음 쓰기가 한 번이어야 합니다');
+  const keys = Object.keys(db.updates[0]);
+  const outside = keys.filter(function (k) { return k.indexOf('puphotos/u/U1/') !== 0; });
+  assert.deepEqual(outside, [],
+    '내 자리(u/U1) 밖을 쓰고 있습니다 — 규칙에 거부돼 지우기 전체가 실패합니다: ' + outside.join(', '));
+  /* 지우기의 약속은 그대로다: 휴지통 담기 + 지운 기록 + 세 경로 비우기 */
+  assert.ok(keys.some(function (k) { return k.indexOf('/trash/') >= 0; }), '휴지통에 담지 않습니다');
+  assert.ok(keys.some(function (k) { return k.indexOf('/dellog/') >= 0; }), '지운 기록을 남기지 않습니다');
+  const nulls = keys.filter(function (k) { return db.updates[0][k] === null; });
+  assert.equal(nulls.length, 3, '사진 하나의 세 경로만 비워야 합니다: ' + nulls.join(', '));
+});
+
+/* ── 전체 근로자 사진 (관리자 전용) ──
+   대표 지시(2026-08-06): 총괄책임자는 전체 근로자 사진을 볼 수 있어야 한다. */
+
+test('관리자가 아니면 전체 근로자 사진을 거절한다', async () => {
+  const S = loadStore();
+  S.init({ uid: 'ADMIN', db: fakeDbFor({}), isAdmin: false });
+  await assert.rejects(() => S.listYearAll('2026'), /관리자/);
+  await assert.rejects(() => S.listYearsAll(), /관리자/);
+});
+
+test('명단에 있는 사람마다 사진을 모아 합친다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({
+    'puphotos/owners': { U2: { name: '신욱임' }, U3: { name: '박한별' } },
+    'puphotos/u/U2/items/2026': { p1: { takenAt: 100, kind: 'doc' } },
+    'puphotos/u/U2/items/2026/p1': { takenAt: 100, kind: 'doc' },
+    'puphotos/u/U3/items/2026': { p2: { takenAt: 200, kind: 'photo' } },
+    'puphotos/u/U3/items/2026/p2': { takenAt: 200, kind: 'photo' },
+    'puphotos/u/ADMIN/items/2026': null,
+    'puphotos/u/ADMIN/items/2026/p1': null
+  });
+  S.init({ uid: 'ADMIN', db: db, isAdmin: true, name: '권형하' });
+  const items = await S.listYearAll('2026');
+  assert.deepEqual(Object.keys(items).sort(), ['p1', 'p2']);
+  assert.equal(items.p1.__ownerUid, 'U2');
+  assert.equal(items.p1.__ownerName, '신욱임');
+  assert.equal(items.p2.__ownerUid, 'U3');
+  assert.equal(items.p2.__ownerName, '박한별');
+});
+
+test('관리자 자신도 포함한다 — 명단(owners)에 자기 자리가 없을 수 있다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({
+    'puphotos/owners': { U2: { name: '신욱임' } },
+    'puphotos/u/U2/items/2026': { p1: { takenAt: 100 } },
+    'puphotos/u/U2/items/2026/p1': { takenAt: 100 },
+    'puphotos/u/ADMIN/items/2026': { p9: { takenAt: 300 } },
+    'puphotos/u/ADMIN/items/2026/p9': { takenAt: 300 }
+  });
+  S.init({ uid: 'ADMIN', db: db, isAdmin: true, name: '권형하' });
+  const items = await S.listYearAll('2026');
+  assert.ok(items.p9, '관리자 자신의 사진이 빠졌습니다');
+  assert.equal(items.p9.__ownerName, '권형하');
+});
+
+test('한 사람 읽기가 실패해도 나머지는 보인다', async () => {
+  // 신욱임 것만 권한 문제로 막혀도, 박한별 것까지 다 안 보이면 안 된다.
+  const S = loadStore();
+  const db = fakeDbFor({
+    'puphotos/owners': { U2: { name: '신욱임' }, U3: { name: '박한별' } },
+    'puphotos/u/U2/items/2026': 'DENY',
+    'puphotos/u/U2/items/2026/p1': 'DENY',
+    'puphotos/items/2026': 'DENY',
+    'puphotos/u/U3/items/2026': { p2: { takenAt: 200 } },
+    'puphotos/u/U3/items/2026/p2': { takenAt: 200 },
+    'puphotos/u/ADMIN/items/2026': null
+  });
+  S.init({ uid: 'ADMIN', db: db, isAdmin: true, name: '권형하' });
+  const items = await S.listYearAll('2026');
+  assert.deepEqual(Object.keys(items), ['p2'], '한 사람 실패로 전체가 비었습니다');
+});
+
+// listYears 는 후보 연도마다 ref(...).limitToFirst(1).once('value') 로 존재 여부만 본다.
+// fakeDbFor 는 이 체인을 지원하지 않으므로 전용 가짜를 쓴다.
+function fakeDbYears(nonEmptyPaths, ownersVal) {
+  const set = {};
+  nonEmptyPaths.forEach(function (p) { set[p] = true; });
+  return {
+    ref(p) {
+      return {
+        limitToFirst() {
+          return { once() { return Promise.resolve({ exists: function () { return !!set[p]; } }); } };
+        },
+        once() {
+          return Promise.resolve({ val: function () { return p === 'puphotos/owners' ? ownersVal : null; } });
+        }
+      };
+    }
+  };
+}
+
+test('전체 근로자의 연도 목록은 사람마다의 연도를 합친 것이다', async () => {
+  const S = loadStore();
+  const db = fakeDbYears(
+    ['puphotos/u/U2/items/2025', 'puphotos/u/ADMIN/items/2026'],
+    { U2: { name: '신욱임' } }
+  );
+  S.init({ uid: 'ADMIN', db: db, isAdmin: true, name: '권형하' });
+  const ys = await S.listYearsAll();
+  assert.ok(ys.indexOf('2025') >= 0, '신욱임의 연도가 빠졌습니다');
+  assert.ok(ys.indexOf('2026') >= 0, '올해는 늘 있어야 합니다');
 });

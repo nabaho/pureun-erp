@@ -604,6 +604,52 @@
   function myUid() { return deps.uid; }
   function myName() { return deps.name; }
 
+  /* ── 전체 근로자 사진 (관리자 전용) ──
+     대표 지시(2026-08-06): "관리자인 권형하는 전체 근로자의 사진을 모두 볼 수
+     있게". 명단(owners)을 훑어 사람마다 listYear/listYears 를 그대로 부르고
+     합친다 — 새 경로를 만들지 않고 이미 있는 걸 재사용한다.
+
+     한 사람 읽기가 실패해도(권한·네트워크) 나머지는 보여야 한다 — 그래서
+     사람별로 개별 catch 를 둔다. 한 명 때문에 전체가 안 보이면 안 된다.
+
+     각 항목에 __ownerUid·__ownerName 을 붙인다 — 화면이 "누구 것인지" 표시하고,
+     사진 본문을 받을 때(loadFull 등) 그 사람 자리로 정확히 찾아가는 데 쓴다. */
+  function listYearAll(year) {
+    if (!deps.isAdmin) return Promise.reject(new Error('관리자만 전체 근로자 사진을 볼 수 있습니다'));
+    return listOwners().then(function (owners) {
+      var uids = Object.keys(owners);
+      if (uids.indexOf(deps.uid) < 0) uids.push(deps.uid);   // 나 자신도 포함한다
+      return Promise.all(uids.map(function (uid) {
+        var name = (owners[uid] && owners[uid].name) || (uid === deps.uid ? deps.name : uid);
+        return listYear(year, uid).then(function (items) {
+          var out = {};
+          Object.keys(items).forEach(function (id) {
+            out[id] = Object.assign({}, items[id], { __ownerUid: uid, __ownerName: name });
+          });
+          return out;
+        }).catch(function () { return {}; });   // 이 사람만 실패 — 나머지는 그대로 보인다
+      })).then(function (results) {
+        var merged = {};
+        results.forEach(function (r) { Object.assign(merged, r); });
+        return merged;
+      });
+    });
+  }
+
+  function listYearsAll() {
+    if (!deps.isAdmin) return Promise.reject(new Error('관리자만 전체 근로자 사진을 볼 수 있습니다'));
+    return listOwners().then(function (owners) {
+      var uids = Object.keys(owners);
+      if (uids.indexOf(deps.uid) < 0) uids.push(deps.uid);
+      return Promise.all(uids.map(function (uid) { return listYears(uid).catch(function () { return []; }); }));
+    }).then(function (lists) {
+      var set = {};
+      lists.forEach(function (ys) { ys.forEach(function (y) { set[y] = 1; }); });
+      set[String(new Date().getFullYear())] = 1;   // 올해는 늘 고를 수 있어야 한다
+      return Object.keys(set).sort().reverse();
+    });
+  }
+
   function listOwners() {
     if (!deps.isAdmin || !deps.db) return Promise.resolve({});
     return deps.db.ref(DB_ROOT + '/owners').once('value')
@@ -854,6 +900,8 @@
     lookupName: lookupName,
     touchOwner: touchOwner,
     listOwners: listOwners,
+    listYearAll: listYearAll,
+    listYearsAll: listYearsAll,
     migrateLegacy: migrateLegacy,
     dropLegacy: dropLegacy,
     listYear: listYear,
