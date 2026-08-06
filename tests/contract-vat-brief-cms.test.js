@@ -28,62 +28,16 @@ const t = (name, got, want) => {
   else { fail++; console.log('FAIL ' + name + '\n  got  = ' + G + '\n  want = ' + W); }
 };
 
-/* ═══ 1. 부가세 안내 — 켤 때만, 음소거 지켜짐 ═══ */
-function vatCtx(muted){
-  const store = {};
-  if(muted) store['pureun_v6_vat_hint_off'] = '1';
-  const shown = [];
-  const c = {
-    console, Object, JSON, String, Number, Promise,
-    localStorage: {
-      getItem(k){ return (k in store) ? store[k] : null; },
-      setItem(k, v){ store[k] = String(v); }
-    },
-    window: {},
-    showAlertMutable(msg, opts){ shown.push({ msg, opts }); return Promise.resolve(); }
-  };
-  vm.createContext(c);
-  vm.runInContext(slice('var VAT_HINT_OFF_KEY =', '// 「다시 보지 않기」가 붙은 알림창'), c);
-  return { c, shown, store };
-}
+/* ═══ 1. 부가세 안내 ═══
+   안내가 창을 막는 알림창에서 말풍선으로 바뀌면서, 그 동작 검사는
+   tests/contract-new-today.test.js 로 옮겼다(거기서 뜨는 조건·꺼짐·자동 사라짐을 본다).
+   여기서는 이 화면의 체크박스가 안내를 부르는지, 그 자리를 넘기는지만 확인한다. */
 {
-  const { c, shown } = vatCtx(false);
-  c.vatIncludedHint(true, '잔금');
-  t('★ 켤 때 안내가 뜬다', shown.length, 1);
-  t('★ 최종 금액을 넣으라고 말한다', /부가세를 더한 최종 금액/.test(shown[0].msg), true);
-  t('★ 왜 위험한지 밝힌다', /적게 잡힙니다/.test(shown[0].msg), true);
-  t('어느 칸인지 알려준다', /잔금/.test(shown[0].msg), true);
-  t('다시 보지 않기가 붙는다', shown[0].opts.muteLabel, '다시 보지 않기');
-}
-{
-  const { c, shown } = vatCtx(false);
-  c.vatIncludedHint(false, '잔금');
-  t('★ 끌 때는 안 뜬다 (되돌릴 수 있는 일이다)', shown.length, 0);
-}
-{
-  const { c, shown } = vatCtx(true);
-  c.vatIncludedHint(true, '잔금');
-  t('★ 다시 보지 않기를 켰으면 안 뜬다', shown.length, 0);
-}
-{
-  const { c, shown, store } = vatCtx(false);
-  c.vatIncludedHint(true, '계약금');
-  t('처음엔 음소거가 아니다', c.vatHintMuted(), false);
-  shown[0].opts.onMute();
-  t('★ onMute 를 부르면 그 뒤로 음소거', c.vatHintMuted(), true);
-  t('음소거가 저장된다', store['pureun_v6_vat_hint_off'], '1');
-  const again = [];
-  c.showAlertMutable = function(m, o){ again.push(m); return Promise.resolve(); };
-  c.vatIncludedHint(true, '계약금');
-  t('★ 음소거 뒤 다시 켜도 안 뜬다', again.length, 0);
-}
-{
-  // showAlertMutable 이 없어도(옛 브라우저·부분 로드) 체크 자체는 막히지 않아야 한다
-  const { c } = vatCtx(false);
-  c.showAlertMutable = undefined;
-  let threw = '';
-  try { c.vatIncludedHint(true, '잔금'); } catch(e){ threw = String(e.message); }
-  t('★ 알림창이 없어도 안 터진다', threw, '');
+  const c = vm.createContext({});
+  void c;
+  t('★ 부가세 안내를 부르는 곳이 남아 있다', /vatIncludedHint\(e\.target\.checked/.test(src), true);
+  t('★ 말풍선 자리를 넘긴다', /vatIncludedHint\(e\.target\.checked, [^;]*, e\.target\)/.test(src), true);
+  t('★ 창을 막던 알림창은 사라졌다', /window\.showAlertMutable\s*=/.test(src), false);
 }
 
 /* ═══ 2. ★ 6열 격자의 칸 수 — 한 칸이라도 어긋나면 전부 밀린다 ═══ */
@@ -323,16 +277,10 @@ t('그 이유를 코드에 적어 뒀다', /끌 길이 사라지면 안 된다/.
 t('안내 함수를 밖에서도 쓸 수 있다', /window\.vatIncludedHint\s*=/.test(src), true);
 t('음소거 판단 함수도 열려 있다', /window\.vatHintMuted\s*=/.test(src), true);
 
-/* ═══ 6. 다시 보지 않기 알림창 — 어떻게 닫아도 약속을 지키는가 ═══ */
-{
-  const mk = slice('window.showAlertMutable = function(message, opts){', 'window.vatIncludedHint = vatIncludedHint;');
-  t('★ 닫는 방식과 무관하게 cleanup 에서 음소거를 지킨다',
-    /function cleanup\(\)\{[\s\S]{0,300}?_pureun_mute'\)\.checked && typeof opts\.onMute === 'function'\) opts\.onMute\(\)/.test(mk), true);
-  t('확인 버튼이 cleanup 을 부른다', /_pureun_mute_ok'\)\.addEventListener\('click', cleanup\)/.test(mk), true);
-  t('바깥을 눌러도 cleanup', /if\(e\.target === overlay\) cleanup\(\)/.test(mk), true);
-  t('ESC·엔터도 cleanup', /if\(e\.key === 'Escape' \|\| e\.key === 'Enter'\)\{ cleanup\(\); \}/.test(mk), true);
-  t('★ 글자는 escape 해서 넣는다 (제목·본문)', /_esc\(title\)[\s\S]{0,400}?_esc\(message\)/.test(mk), true);
-}
+/* ═══ 6. (옛 알림창 검사는 삭제)
+   창을 막던 showAlertMutable 을 없애고 말풍선으로 바꿨다.
+   말풍선의 동작(자동 사라짐·하나만 뜨기·눌러서 끄기)은
+   tests/contract-new-today.test.js 에서 본다. */
 
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');
 process.exit(fail ? 1 : 0);

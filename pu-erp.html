@@ -6839,60 +6839,77 @@ function vatHintMute(){
   try { localStorage.setItem(VAT_HINT_OFF_KEY, '1'); } catch(e){}
 }
 // 켤 때만 부르면 된다. 끄기·이미 꺼둔 경우는 아무것도 하지 않는다.
-function vatIncludedHint(checked, label){
+// ★ 창을 막는 알림창이 아니라, 그 칸 옆에 잠깐 떴다 사라지는 말풍선이다.
+//   금액을 넣던 흐름을 끊지 않으려면 누를 것이 없어야 한다.
+function vatIncludedHint(checked, label, anchorEl){
   if(!checked || vatHintMuted()) return;
   try {
-    if(typeof showAlertMutable === 'function'){
-      showAlertMutable(
-        (label ? label + ' — ' : '') + '금액 칸에 부가세를 더한 최종 금액을 넣으세요.\n\n'
-        + '공급가액만 넣으면 세금계산서·수금액이 실제보다 적게 잡힙니다.',
-        { title:'🧾 부가세포함으로 바꿉니다', muteLabel:'다시 보지 않기', onMute:vatHintMute });
-    }
+    vatHintBubble(anchorEl || window._lastClickEl,
+      (label ? label + ' — ' : '') + '부가세를 더한 최종 금액을 넣으세요');
   } catch(e){ window._erpErrLog && window._erpErrLog(e); }
 }
-// 「다시 보지 않기」가 붙은 알림창 — showAlert 와 같은 모양에 왼쪽 아래 체크박스만 더한다
-window.showAlertMutable = function(message, opts){
-  return new Promise(function(resolve){
-    opts = opts || {};
-    var overlay = document.createElement('div');
-    Object.assign(overlay.style, {
-      position:'fixed', top:0, left:0, width:'100%', height:'100%',
-      background:'rgba(0,0,0,0.45)', zIndex:99999,
-      display:'flex', alignItems:'center', justifyContent:'center',
-      fontFamily:"'Apple SD Gothic Neo','맑은 고딕',sans-serif"
-    });
-    var title = opts.title || '알림';
-    var okText = opts.okText || '알겠습니다';
-    var muteLabel = opts.muteLabel || '다시 보지 않기';
-    function _esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-    overlay.innerHTML =
-      '<div style="background:#fff;border-radius:12px;padding:24px 22px;max-width:380px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.18)">' +
-        '<div style="font-size:15px;font-weight:800;color:#1e293b;margin-bottom:10px">'+_esc(title)+'</div>' +
-        '<div style="font-size:13.5px;color:#334155;line-height:1.65;white-space:pre-line;margin-bottom:18px">'+_esc(message)+'</div>' +
-        '<div style="display:flex;align-items:center;gap:10px">' +
-          '<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#64748b;cursor:pointer">' +
-            '<input type="checkbox" id="_pureun_mute" style="margin:0;width:14px;height:14px;cursor:pointer">' +
-            _esc(muteLabel) +
-          '</label>' +
-          '<span style="flex:1"></span>' +
-          '<button id="_pureun_mute_ok" style="padding:9px 20px;background:#1e40af;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer">'+_esc(okText)+'</button>' +
-        '</div>' +
-      '</div>';
-    document.body.appendChild(overlay);
-    function cleanup(){
-      // 닫는 방식(확인·ESC·바깥 클릭)과 무관하게 체크했으면 지켜 준다
-      try { if(overlay.querySelector('#_pureun_mute').checked && typeof opts.onMute === 'function') opts.onMute(); }
-      catch(e){ window._erpErrLog && window._erpErrLog(e); }
-      try { document.body.removeChild(overlay); }catch(e){ window._erpErrLog && window._erpErrLog(e); }
-      document.removeEventListener('keydown', onKey);
-      resolve();
-    }
-    overlay.querySelector('#_pureun_mute_ok').addEventListener('click', cleanup);
-    overlay.addEventListener('click', function(e){ if(e.target === overlay) cleanup(); });
-    function onKey(e){ if(e.key === 'Escape' || e.key === 'Enter'){ cleanup(); } }
-    document.addEventListener('keydown', onKey);
+// 금액을 넣고 칸을 벗어날 때 — 부가세포함일 때만, 금액이 있을 때만 알린다.
+// 0원이거나 부가세 별도면 알릴 것이 없다(빈 칸을 지나칠 때마다 뜨면 방해만 된다).
+// 공급가액·부가세를 함께 보여 줘 "이 숫자가 최종 금액이 맞나"를 눈으로 바로 확인하게 한다.
+function vatAmountHint(vatIncluded, amount, label, anchorEl){
+  if(!vatIncluded || vatHintMuted()) return;
+  var n = parseInt(amount, 10) || 0;
+  if(n <= 0) return;
+  var supply = Math.round(n / 1.1);
+  try {
+    vatHintBubble(anchorEl,
+      (label ? label + ' ' : '') + n.toLocaleString() + '원은 부가세포함입니다'
+      + '\n공급가 ' + supply.toLocaleString() + ' + 부가세 ' + (n - supply).toLocaleString());
+  } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+}
+window.vatAmountHint = vatAmountHint;
+// 말풍선 한 개만 띄운다 — 여러 칸을 연달아 건드려도 화면에 쌓이지 않게.
+var _vatBubbleTimer = null;
+function vatHintBubble(anchor, msg, ms){
+  var old = document.getElementById('_pureun_vat_bubble');
+  if(old && old.parentNode) old.parentNode.removeChild(old);
+  if(_vatBubbleTimer){ clearTimeout(_vatBubbleTimer); _vatBubbleTimer = null; }
+  var el = anchor && anchor.nodeType === 1 ? anchor : null;
+  // 체크박스를 눌렀으면 그 줄(부모)을 기준으로 — 체크박스 자체는 너무 작아 말풍선이 엉뚱한 데 붙는다
+  var rect = null;
+  try { rect = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null; } catch(_){ rect = null; }
+  var b = document.createElement('div');
+  b.id = '_pureun_vat_bubble';
+  // 3초면 저절로 사라지지만, 익숙해진 뒤 아예 안 보고 싶을 수 있다 —
+  // 말풍선을 누르면 그 기기에서 다시 안 뜬다(끄는 길이 없으면 계속 참아야 한다).
+  b.textContent = '🧾 ' + msg + '\n(눌러서 그만 보기)';
+  b.title = '누르면 이 안내를 이 기기에서 다시 보지 않습니다';
+  var top = rect ? (rect.bottom + window.scrollY + 6) : (window.scrollY + 80);
+  var left = rect ? (rect.left + window.scrollX) : 20;
+  b.setAttribute('style',
+    'position:absolute;z-index:99998;max-width:320px;white-space:pre-line;'
+    + 'background:#fffbeb;color:#92400e;border:1px solid #fcd34d;border-radius:8px;'
+    + 'padding:7px 11px;font-size:12px;font-weight:700;line-height:1.5;'
+    + 'box-shadow:0 4px 14px rgba(0,0,0,.12);cursor:pointer;'
+    + 'opacity:0;transition:opacity .15s;'
+    + 'top:' + Math.round(top) + 'px;left:' + Math.round(left) + 'px;');
+  b.addEventListener('mousedown', function(ev){
+    ev.preventDefault(); ev.stopPropagation();   // 뒤 칸의 포커스를 뺏지 않는다
+    vatHintMute();
+    if(_vatBubbleTimer){ clearTimeout(_vatBubbleTimer); _vatBubbleTimer = null; }
+    if(b.parentNode) b.parentNode.removeChild(b);
+    try { if(typeof showToast === 'function') showToast('부가세 안내를 이 기기에서 끕니다'); } catch(_){}
   });
-};
+  document.body.appendChild(b);
+  // 화면 오른쪽으로 삐져나가면 당겨 온다
+  try {
+    var r2 = b.getBoundingClientRect();
+    if(r2.right > window.innerWidth - 8) b.style.left = Math.max(8, window.innerWidth - r2.width - 12 + window.scrollX) + 'px';
+  } catch(_){}
+  requestAnimationFrame(function(){ b.style.opacity = '1'; });
+  _vatBubbleTimer = setTimeout(function(){
+    b.style.opacity = '0';
+    setTimeout(function(){ if(b.parentNode) b.parentNode.removeChild(b); }, 200);
+    _vatBubbleTimer = null;
+  }, ms || 3000);
+}
+window.vatHintBubble = vatHintBubble;
+// (창을 막던 showAlertMutable 은 없앴다 — 부가세 안내가 말풍선으로 바뀌면서 쓸 데가 없어졌다)
 window.vatIncludedHint = vatIncludedHint;
 window.vatHintMuted    = vatHintMuted;
 
@@ -12710,6 +12727,9 @@ function ContractModal(props){
               h(NumberInput, { value: f.amounts[kindV] || 0,
                 onChange:setAmountFor(kindV),
                 placeholder:'0',
+                // 금액을 넣고 칸을 벗어날 때 그 숫자 옆에 잠깐 알려 준다 (부가세포함일 때만)
+                onBlur:function(e){ vatAmountHint(f.contractFeeVatIncluded, f.amounts[kindV],
+                  isConsulting ? '계약금' : '착수금', e.target); },
                 style:{ width:'100%', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'12px', fontFamily:'monospace', textAlign:'right' } }),
               h('span', { style:{ fontSize:'11px', color:'#64748b' } }, '원'),
               h('span'),
@@ -12717,7 +12737,7 @@ function ContractModal(props){
               h('span'), h('span'), h('span'),
               h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
                 h('input', { type:'checkbox', checked:!!f.contractFeeVatIncluded,
-                  onChange:function(e){ vatIncludedHint(e.target.checked, isConsulting ? '계약금' : '착수금');
+                  onChange:function(e){ vatIncludedHint(e.target.checked, isConsulting ? '계약금' : '착수금', e.target);
                     setF(function(prev){ return Object.assign({}, prev, { contractFeeVatIncluded:e.target.checked }); }); },
                   style:{ margin:0, width:'13px', height:'13px', cursor:'pointer' } }),
                 h('span', null, '🧾 부가세포함')),
@@ -12734,6 +12754,9 @@ function ContractModal(props){
                     style:{ width:'100%', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'12px', fontFamily:'monospace', textAlign:'right' } })
                 : h(NumberInput, { value:f.successFee, onChange:setSimple('successFee'),
                     placeholder:'0',
+                    // % 모드는 금액이 아니라 비율이라 안내가 뜻이 없다 — 원 모드에서만 알린다
+                    onBlur:function(e){ vatAmountHint(f.balanceFeeVatIncluded, f.successFee,
+                      isConsulting ? '잔금' : '성공보수', e.target); },
                     style:{ width:'100%', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'12px', fontFamily:'monospace', textAlign:'right' } }),
               h('span', { style:{ fontSize:'11px', color:'#64748b' } }, ((isCase || isOther) && f.successFeeType === 'percent') ? '%' : '원'),
               // 원/% 토글은 사건·기타에 (컨설팅 잔금은 금액 고정)
@@ -12755,7 +12778,7 @@ function ContractModal(props){
               h('span'), h('span'), h('span'),
               h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
                 h('input', { type:'checkbox', checked:!!f.balanceFeeVatIncluded,
-                  onChange:function(e){ vatIncludedHint(e.target.checked, isConsulting ? '잔금' : '성공보수');
+                  onChange:function(e){ vatIncludedHint(e.target.checked, isConsulting ? '잔금' : '성공보수', e.target);
                     setF(function(prev){ return Object.assign({}, prev, { balanceFeeVatIncluded:e.target.checked }); }); },
                   style:{ margin:0, width:'13px', height:'13px', cursor:'pointer' } }),
                 h('span', null, '🧾 부가세포함')),
@@ -12788,6 +12811,9 @@ function ContractModal(props){
             h(NumberInput, { value: f.amounts[kindV] || 0,
               onChange:setAmountFor(kindV),
               placeholder:'0',
+              // 기금은 체크박스로 정하고, 나머지(업체·상담)는 늘 부가세포함이라 항상 알린다
+              onBlur:function(e){ vatAmountHint(kindV === 'fund' ? f.fundVatIncluded : true,
+                f.amounts[kindV], '금액', e.target); },
               style:{ width:'100%', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'12px', fontFamily:'monospace', textAlign:'right' } }),
             // col 5: 원
             h('span', { style:{ fontSize:'11px', color:'#64748b' } }, '원'),
@@ -12795,7 +12821,7 @@ function ContractModal(props){
             kindV === 'fund'
               ? h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
                   h('input', { type:'checkbox', checked:!!f.fundVatIncluded,
-                    onChange:function(e){ vatIncludedHint(e.target.checked, '금액');
+                    onChange:function(e){ vatIncludedHint(e.target.checked, '금액', e.target);
                       setF(function(prev){ return Object.assign({}, prev, { fundVatIncluded:e.target.checked }); }); },
                     style:{ margin:0, width:'13px', height:'13px', cursor:'pointer' } }),
                   h('span', { style:{ color: f.fundVatIncluded ? '#1e40af' : '#94a3b8' } }, '🧾 부가세포함'))
@@ -13263,6 +13289,42 @@ function arvSort(a, b, base){
   if(an && bn){ var c = String(b.arrivedAt||'').localeCompare(String(a.arrivedAt||'')); if(c) return c; }
   return base ? base(a, b) : 0;
 }
+// ── 오늘 새로 등록한 계약 ────────────────────────────────────
+// 「방금 들어옴(arv*)」은 다른 화면에서 이관·복귀한 건이고, 이건 여기서 직접 만든 건이다.
+// 성격이 다르므로 딱지 색도 묶음도 따로 둔다 — 어디서 온 건지 한눈에 갈리게.
+// 기간은 '그날 하루'다. 날짜가 바뀌면 저절로 풀린다(48시간으로 하면 '오늘'과 어긋난다).
+function regDayOf(x){
+  var s = (x && x.regAt) || '';
+  if(!s) return '';
+  // ISO 문자열을 그 자리에서 자르지 않는다 — UTC 기준이라 한국 시간으로는 하루가 밀린다
+  var t = Date.parse(s);
+  if(!t) return '';
+  var d = new Date(t);
+  return d.getFullYear() + '-' + ('0'+(d.getMonth()+1)).slice(-2) + '-' + ('0'+d.getDate()).slice(-2);
+}
+function regIsToday(x){
+  var day = regDayOf(x);
+  return !!day && day === (typeof todayYMD === 'function' ? todayYMD() : '');
+}
+// 등록 시각 hh:mm — 같은 날 여러 건을 올렸을 때 순서를 눈으로 확인하게 한다
+function regTimeText(x){
+  var t = Date.parse((x && x.regAt) || '');
+  if(!t) return '';
+  var d = new Date(t);
+  return ('0'+d.getHours()).slice(-2) + ':' + ('0'+d.getMinutes()).slice(-2);
+}
+// 오늘 등록한 것을 맨 위로, 그 안에서는 최근 등록 순. 나머지는 원래 정렬대로.
+function regSort(a, b, base){
+  var an = regIsToday(a) ? 1 : 0, bn = regIsToday(b) ? 1 : 0;
+  if(an !== bn) return bn - an;
+  if(an && bn){ var c = String(b.regAt||'').localeCompare(String(a.regAt||'')); if(c) return c; }
+  return base ? base(a, b) : 0;
+}
+window.regIsToday   = regIsToday;
+window.regDayOf     = regDayOf;
+window.regTimeText  = regTimeText;
+window.regSort      = regSort;
+
 function arvClear(store, id, after){
   if(dbPatch(store, id, { arrivedAt:null, arrivedFrom:null, arrivedNo:null })){
     if(typeof after === 'function') after();
@@ -13869,7 +13931,10 @@ function ContractManagement(props){
       var newOne = Object.assign({}, form, {
         id: 'ct-' + Date.now().toString(36)+Math.random().toString(36).slice(2,5),
         contractNo: (form._manualContractNo && form._manualContractNo.trim()) ? form._manualContractNo.trim() : genContractNo(),
-        transferredTo: null
+        transferredTo: null,
+        // 새로 만든 시각 — 이걸 안 찍어 두면 방금 만든 카드가 목록 중간에 섞여 안 보였다.
+        // 「오늘 등록」 묶음과 맨 위 정렬이 모두 이 값을 본다.
+        regAt: (new Date()).toISOString()
       });
       delete newOne._manualContractNo;
       if(!persistOne(newOne)) return;
@@ -14127,10 +14192,14 @@ function ContractManagement(props){
     }
     var pa = pinScore(a), pb = pinScore(b);
     if(pa !== pb) return pa - pb;
-    // ★ 이동한 카드를 상단 고정 (orderTs) — 최근 이동 우선. 안 옮긴 카드는 기존 순서 유지
-    var oa = a.orderTs || 0, ob = b.orderTs || 0;
-    if(oa !== ob) return ob - oa;
-    return mgrScore(a) - mgrScore(b);
+    // ★ 오늘 새로 등록한 카드를 맨 위로 (핀 다음). 방금 만든 건이 목록 중간에
+    //   섞여 안 보이던 문제를 여기서 잡는다. 같은 날 여러 건이면 최근 등록 순.
+    return regSort(a, b, function(x, y){
+      // ★ 이동한 카드를 상단 고정 (orderTs) — 최근 이동 우선. 안 옮긴 카드는 기존 순서 유지
+      var oa = x.orderTs || 0, ob = y.orderTs || 0;
+      if(oa !== ob) return ob - oa;
+      return mgrScore(x) - mgrScore(y);
+    });
   });
 
   // 단계별 카드 배열
@@ -14321,6 +14390,8 @@ function ContractManagement(props){
       onClick:function(){ openEdit(c); },
       style:{
         background: justMoved ? '#eff6ff' : '#fff', border: justMoved ? '1px solid #2563eb' : '1px solid #e5e7eb', borderRadius:'6px',
+        // 오늘 등록한 건은 왼쪽에 초록 띠 — 딱지를 못 봐도 목록에서 바로 갈린다
+        borderLeft: (!justMoved && regIsToday(c)) ? '3px solid #16a34a' : (justMoved ? '1px solid #2563eb' : '1px solid #e5e7eb'),
         padding:'10px 12px', marginBottom:'6px', cursor:'grab',
         opacity: isDragging ? .4 : 1,
         transition: 'opacity .15s, background .3s, box-shadow .3s',
@@ -14340,9 +14411,16 @@ function ContractManagement(props){
         h('div', { style:{ flex:1 } }),
         h('span', { style:{ fontSize:'10px', color:'#94a3b8', fontFamily:'monospace' } }, c.contractNo)
       ),
-      // 둘째 줄: 의뢰인 (+ 방금 복귀한 건 표시)
+      // 둘째 줄: 의뢰인 (+ 방금 복귀한 건 표시 + 오늘 등록 표시)
       h('div', { style:{ fontSize:'13.5px', fontWeight:700, color:'#1e293b', marginBottom:'3px' } },
-        c.companyName, arvBadge(c, 'contracts', refreshContracts)),
+        c.companyName, arvBadge(c, 'contracts', refreshContracts),
+        // 오늘 등록한 건 — 등록 시각까지 붙여 같은 날 여러 건의 순서를 눈으로 확인한다
+        regIsToday(c) ? h('span', { key:'reg',
+          title:'오늘 새로 등록한 계약입니다 · ' + regTimeText(c) + ' 등록\n날짜가 바뀌면 이 표시는 저절로 사라집니다',
+          style:{ marginLeft:'6px', verticalAlign:'middle', background:'#dcfce7', color:'#166534',
+            border:'1px solid #86efac', borderRadius:'10px', padding:'1px 7px',
+            fontSize:'10px', fontWeight:700, whiteSpace:'nowrap' } },
+          '🆕 오늘 ' + regTimeText(c)) : null),
       // 셋째 줄: 담당자 + 합계금액
       h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', fontSize:'11px', color:'#64748b' } },
         h('span', null, '👤 ' + [userName(c.managerMain)].concat((c.managerSubs||[]).map(userName)).filter(Boolean).join(' / ')),
@@ -14566,7 +14644,28 @@ function ContractManagement(props){
           h('div', { style:{ padding:'10px' } },
             cards.length === 0
               ? h('div', { style:{ color:'#cbd5e1', fontSize:'12px', textAlign:'center', padding:'16px 10px', border:'1px dashed #e5e7eb', borderRadius:'6px' } }, '없음')
-              : cards.map(function(c, i){ return renderCard(c, i, isFocused); })
+              : (function(){
+                  // 오늘 등록한 것이 있으면 위에 묶어 몇 건인지 알린다.
+                  // 정렬에서 이미 위로 올라와 있으므로 여기서는 머리줄만 끼워 넣는다.
+                  var todayN = cards.filter(regIsToday).length;
+                  if(todayN === 0) return cards.map(function(c, i){ return renderCard(c, i, isFocused); });
+                  var out = [];
+                  out.push(h('div', { key:'__today_head',
+                    style:{ display:'flex', alignItems:'center', gap:'7px', flexWrap:'wrap',
+                      background:'#dcfce7', border:'1px solid #86efac', borderRadius:'6px',
+                      padding:'5px 9px', marginBottom:'7px' } },
+                    h('span', { style:{ fontSize:'11.5px', fontWeight:800, color:'#166534' } }, '🆕 오늘 등록 ' + todayN + '건'),
+                    h('span', { style:{ fontSize:'10.5px', color:'#15803d' } },
+                      (function(){ var t = todayYMD(); return parseInt(t.slice(5,7),10) + '월 ' + parseInt(t.slice(8,10),10) + '일'; })())
+                  ));
+                  cards.forEach(function(c, i){
+                    // 오늘 건이 끝나고 그 전 건이 시작되는 자리에 구분줄
+                    if(i === todayN) out.push(h('div', { key:'__prev_head',
+                      style:{ fontSize:'10.5px', color:'#94a3b8', padding:'2px 2px 6px' } }, '그 전에 등록한 것'));
+                    out.push(renderCard(c, i, isFocused));
+                  });
+                  return out;
+                })()
           )
         );
       })
@@ -18977,7 +19076,7 @@ function CaseEditModal(props){
             h('div', { style:{ display:'flex', gap:'6px', alignItems:'center' } },
               h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
                 h('input', { type:'checkbox', checked:!!f.contractFeeVatIncluded,
-                  onChange:function(e){ vatIncludedHint(e.target.checked, '착수금');
+                  onChange:function(e){ vatIncludedHint(e.target.checked, '착수금', e.target);
                     setF(function(prev){ return Object.assign({}, prev, { contractFeeVatIncluded:e.target.checked }); }); },
                   style:{ margin:0, width:'13px', height:'13px', cursor:'pointer' } }),
                 h('span', null, '🧾 부가세포함')),
@@ -19006,7 +19105,7 @@ function CaseEditModal(props){
                     // 입금확정 때 공급가액을 가르고 성과급 기준이 되므로 % 모드에도 있어야 한다
                     h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
                       h('input', { type:'checkbox', checked:!!f.balanceFeeVatIncluded,
-                        onChange:function(e){ vatIncludedHint(e.target.checked, '성공금액');
+                        onChange:function(e){ vatIncludedHint(e.target.checked, '성공금액', e.target);
                           setF(function(prev){ return Object.assign({}, prev, { balanceFeeVatIncluded:e.target.checked }); }); },
                         style:{ margin:0, width:'13px', height:'13px', cursor:'pointer' } }),
                       h('span', null, '🧾 부가세포함')),
@@ -19035,7 +19134,7 @@ function CaseEditModal(props){
               : h('div', { style:{ display:'flex', gap:'6px', alignItems:'center' } },
                   h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
                     h('input', { type:'checkbox', checked:!!f.balanceFeeVatIncluded,
-                      onChange:function(e){ vatIncludedHint(e.target.checked, '성공보수');
+                      onChange:function(e){ vatIncludedHint(e.target.checked, '성공보수', e.target);
                         setF(function(prev){ return Object.assign({}, prev, { balanceFeeVatIncluded:e.target.checked }); }); },
                       style:{ margin:0, width:'13px', height:'13px', cursor:'pointer' } }),
                     h('span', null, '🧾 부가세포함')),
@@ -50464,7 +50563,7 @@ function ProjectEditModal(props){
             h('div', { style:{ display:'flex', alignItems:'center', gap:'8px' } },
               h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
                 h('input', { type:'checkbox', checked:!!f.contractFeeVatIncluded,
-                  onChange:function(e){ vatIncludedHint(e.target.checked, '계약금');
+                  onChange:function(e){ vatIncludedHint(e.target.checked, '계약금', e.target);
                     setF(function(prev){ return Object.assign({}, prev, { contractFeeVatIncluded:e.target.checked }); }); },
                   style:{ margin:0, width:'13px', height:'13px', cursor:'pointer' } }),
                 h('span', null, '🧾 부가세포함')),
@@ -50473,7 +50572,7 @@ function ProjectEditModal(props){
             h('div', { style:{ display:'flex', alignItems:'center', gap:'8px' } },
               h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', color:'#64748b', cursor:'pointer', whiteSpace:'nowrap' } },
                 h('input', { type:'checkbox', checked:!!f.balanceFeeVatIncluded,
-                  onChange:function(e){ vatIncludedHint(e.target.checked, '잔금');
+                  onChange:function(e){ vatIncludedHint(e.target.checked, '잔금', e.target);
                     setF(function(prev){ return Object.assign({}, prev, { balanceFeeVatIncluded:e.target.checked }); }); },
                   style:{ margin:0, width:'13px', height:'13px', cursor:'pointer' } }),
                 h('span', null, '🧾 부가세포함')),
