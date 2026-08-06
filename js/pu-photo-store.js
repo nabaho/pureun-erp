@@ -56,6 +56,12 @@
      여기에 사진을 담지 않는다(관리자가 전 직원 사진 본문을 통째로 받는 일 방지). */
   function ownerPath(uid) { return DB_ROOT + '/owners/' + uid; }
 
+  /* 직접 만드는 분류(대표 지시 2026-08-06: "종류를 추가할 수 있는 기능").
+     AI 자동 분류(card/bizreg/... )와 달리 코드 수정 없이 화면에서 아무 때나
+     만든다. 이름표는 전 직원이 함께 봐야 하니 공용 자리에 둔다 — 사진 본문은
+     지금처럼 사람별로 그대로 갈려 있다. */
+  function customKindsPath() { return DB_ROOT + '/customKinds'; }
+
   /* 촬영 시각 결정 — EXIF → 파일 날짜 → 업로드 시각 순서.
      카톡을 거친 사진은 EXIF가 지워져 있어 파일 날짜로, 그것도 없으면 올린 때로 간다. */
   function pickTakenAt(exifTs, fileTs, uploadTs) {
@@ -379,6 +385,46 @@
     return deps.db.ref().update(u);
   }
 
+  /* ── 직접 만드는 분류 ──
+     AI 자동 분류를 코드로 늘리려면 프롬프트를 고치고 배포해야 한다 —
+     '아무 때나 새 분류를 만든다'는 지시와 안 맞는다. 그래서 사람이 직접
+     이름을 짓고, 사람이 직접 사진에 붙인다. */
+
+  function listCustomKinds() {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(customKindsPath()).once('value').then(function (s) { return s.val() || {}; });
+  }
+
+  /* 이름이 같은 분류를 두 번 만들지 않는다(대소문자·앞뒤 공백 무시) —
+     안 그러면 "자문등계약서"와 "자문등계약서 " 가 따로 쌓여 사람이 헷갈린다. */
+  function addCustomKind(name) {
+    var clean = String(name || '').trim();
+    if (!clean) return Promise.reject(new Error('분류 이름을 입력해 주세요'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return listCustomKinds().then(function (existing) {
+      var norm = clean.toLowerCase();
+      var dupId = Object.keys(existing).find(function (id) {
+        return String((existing[id] || {}).name || '').trim().toLowerCase() === norm;
+      });
+      if (dupId) return { id: dupId, created: false };
+      var id = deps.db.ref(customKindsPath()).push().key;
+      var rec = { name: clean, createdAt: Date.now(), createdBy: deps.name || '' };
+      var u = {};
+      u[customKindsPath() + '/' + id] = rec;
+      return deps.db.ref().update(u).then(function () { return { id: id, created: true }; });
+    });
+  }
+
+  /* 사진 하나에 분류를 붙이거나(kindId) 뗀다(kindId 없이 호출).
+     AI 종류(read.kind)와 별도 칸에 둔다 — "더하는 것이지 기타서류에서
+     빼앗지 않는다"(대표 승인 목업)를 지키려면 서로 안 건드려야 한다. */
+  function setCustomKind(year, id, kindId, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var u = {};
+    u[metaPath(year, id, owner) + '/customKind'] = kindId || null;
+    return deps.db.ref().update(u);
+  }
+
   /* 한 연도의 사진 목록(정보만). 본문·미리보기는 안 딸려 온다 — 경로가 갈라져 있어서.
      owner 를 넘기면 그 사람 것을 읽는다(관리자만 규칙이 허락한다). */
   function listYear(year, owner) {
@@ -603,6 +649,52 @@
   function amAdmin() { return deps.isAdmin; }
   function myUid() { return deps.uid; }
   function myName() { return deps.name; }
+
+  /* ── 전체 근로자 사진 (관리자 전용) ──
+     대표 지시(2026-08-06): "관리자인 권형하는 전체 근로자의 사진을 모두 볼 수
+     있게". 명단(owners)을 훑어 사람마다 listYear/listYears 를 그대로 부르고
+     합친다 — 새 경로를 만들지 않고 이미 있는 걸 재사용한다.
+
+     한 사람 읽기가 실패해도(권한·네트워크) 나머지는 보여야 한다 — 그래서
+     사람별로 개별 catch 를 둔다. 한 명 때문에 전체가 안 보이면 안 된다.
+
+     각 항목에 __ownerUid·__ownerName 을 붙인다 — 화면이 "누구 것인지" 표시하고,
+     사진 본문을 받을 때(loadFull 등) 그 사람 자리로 정확히 찾아가는 데 쓴다. */
+  function listYearAll(year) {
+    if (!deps.isAdmin) return Promise.reject(new Error('관리자만 전체 근로자 사진을 볼 수 있습니다'));
+    return listOwners().then(function (owners) {
+      var uids = Object.keys(owners);
+      if (uids.indexOf(deps.uid) < 0) uids.push(deps.uid);   // 나 자신도 포함한다
+      return Promise.all(uids.map(function (uid) {
+        var name = (owners[uid] && owners[uid].name) || (uid === deps.uid ? deps.name : uid);
+        return listYear(year, uid).then(function (items) {
+          var out = {};
+          Object.keys(items).forEach(function (id) {
+            out[id] = Object.assign({}, items[id], { __ownerUid: uid, __ownerName: name });
+          });
+          return out;
+        }).catch(function () { return {}; });   // 이 사람만 실패 — 나머지는 그대로 보인다
+      })).then(function (results) {
+        var merged = {};
+        results.forEach(function (r) { Object.assign(merged, r); });
+        return merged;
+      });
+    });
+  }
+
+  function listYearsAll() {
+    if (!deps.isAdmin) return Promise.reject(new Error('관리자만 전체 근로자 사진을 볼 수 있습니다'));
+    return listOwners().then(function (owners) {
+      var uids = Object.keys(owners);
+      if (uids.indexOf(deps.uid) < 0) uids.push(deps.uid);
+      return Promise.all(uids.map(function (uid) { return listYears(uid).catch(function () { return []; }); }));
+    }).then(function (lists) {
+      var set = {};
+      lists.forEach(function (ys) { ys.forEach(function (y) { set[y] = 1; }); });
+      set[String(new Date().getFullYear())] = 1;   // 올해는 늘 고를 수 있어야 한다
+      return Object.keys(set).sort().reverse();
+    });
+  }
 
   function listOwners() {
     if (!deps.isAdmin || !deps.db) return Promise.resolve({});
@@ -836,6 +928,9 @@
     newId: newId,
     savePhoto: savePhoto,
     saveRead: saveRead,
+    listCustomKinds: listCustomKinds,
+    addCustomKind: addCustomKind,
+    setCustomKind: setCustomKind,
     deletePhoto: deletePhoto,
     listTrash: listTrash,
     restorePhoto: restorePhoto,
@@ -854,6 +949,8 @@
     lookupName: lookupName,
     touchOwner: touchOwner,
     listOwners: listOwners,
+    listYearAll: listYearAll,
+    listYearsAll: listYearsAll,
     migrateLegacy: migrateLegacy,
     dropLegacy: dropLegacy,
     listYear: listYear,

@@ -250,8 +250,10 @@ test('분류 탭은 여섯 가지다 — 어느 탭에도 안 드는 사진이 �
   assert.match(tabs[0], /key: 'other'[\s\S]*?kinds: null/,
     '기타서류가 나머지를 받는 그물이 아닙니다 — 빠지는 사진이 생깁니다');
   // 판독을 안 한 사진도 반드시 어딘가에 든다
-  const fn = app.match(/function tabOf\([\s\S]*?\n\}/);
-  assert.ok(fn, 'tabOf 를 찾을 수 없습니다');
+  // 2026-08-06: 직접분류가 생기며 tabOf(하나) → tabsOf(여럿)로 바뀌었다 —
+  // AI 분류와 직접분류를 "더하는 것이지 기타서류에서 빼앗지 않는다"(대표 승인 목업).
+  const fn = app.match(/function tabsOf\([\s\S]*?\n\}/);
+  assert.ok(fn, 'tabsOf 를 찾을 수 없습니다');
   assert.match(fn[0], /'other'/, '판독 안 한 사진이 갈 곳이 없습니다');
 });
 
@@ -1344,4 +1346,119 @@ test('검토 화면은 갤러리처럼 전부 고른 상태로 시작한다', ()
 test('카메라 영상은 아이폰에서 전체화면으로 납치되지 않는다', () => {
   assert.match(app, /<video id="camVid" autoplay playsinline muted>/,
     'playsinline·muted 가 없으면 아이폰에서 영상이 전체화면으로 열리거나 재생이 막힙니다');
+});
+
+/* ── 전체 근로자 사진 (관리자 전용, 2026-08-06 대표 지시) ── */
+
+test('누구 사진 고르개에 전체 근로자 항목이 있다', () => {
+  const fn = app.match(/function renderOwnerPick\([\s\S]*?\n\}/);
+  assert.ok(fn, 'renderOwnerPick 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /ALL_OWNERS/, '전체 근로자 항목이 없습니다');
+});
+
+test('전체 근로자를 고르면 사람마다 모아 합치는 함수를 쓴다', () => {
+  const fn = app.match(/function loadGrid\([\s\S]*?\n\}/);
+  assert.ok(fn, 'loadGrid 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /PuPhotoStore\.listYearAll\(/, '전체 근로자용 목록 함수를 안 씁니다');
+  // 전체 근로자 화면에서는 판독 대기열을 돌리지 않는다 — 남의 사진을 자동으로 건드리면 안 된다
+  assert.match(fn[0], /gridOwner !== ALL_OWNERS\) autoReadPending/);
+});
+
+test('전체 근로자 화면에서는 사진마다 누구 것인지 보인다', () => {
+  assert.match(app, /class="who"/, '누구 것인지 알려주는 표시가 없습니다');
+  const fn = app.match(/function renderGrid\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /__ownerName/);
+  assert.match(fn, /gridOwner === ALL_OWNERS/);
+});
+
+test('전체 근로자 화면에서 사진을 받을 때 그 사람 자리로 정확히 찾아간다', () => {
+  // gridOwner 하나만 쓰면 '전체' 자체를 계정으로 착각해 엉뚱한 경로를 읽는다.
+  const sites = ['downloadOne', 'shareOne', 'downloadSelected', 'openViewer'];
+  sites.forEach(function (name) {
+    const fn = app.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n\\}'));
+    assert.ok(fn, name + ' 본문을 찾을 수 없습니다');
+    assert.match(fn[0], /__ownerUid/, name + ' 이 항목별 실제 소유자를 쓰지 않습니다');
+  });
+});
+
+test('전체 근로자를 보는 중에는 업로드·삭제가 잠긴다 — 남의 것이라서', () => {
+  const fn = app.match(/function viewingOther\([\s\S]*?\n\}/);
+  assert.ok(fn, 'viewingOther 본문을 찾을 수 없습니다');
+  // ALL_OWNERS 도 '내 계정'과 다르므로 이 식 하나로 자연히 막힌다
+  assert.match(fn[0], /gridOwner !== PuPhotoStore\.myUid\(\)/);
+});
+
+test('전체 근로자 화면에서는 휴지통·백업·지운 기록을 볼 수 없다 — 사람별 기능이라서', () => {
+  ['backupYear', 'loadTrash', 'loadDelLog'].forEach(function (name) {
+    const fn = app.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n(?=function )'));
+    assert.ok(fn, name + ' 본문을 찾을 수 없습니다');
+    assert.match(fn[0], /gridOwner === ALL_OWNERS/, name + ' 이 전체 근로자 상태를 가리지 않습니다');
+  });
+});
+
+/* ── 직접 만드는 분류(대표 지시 2026-08-06: "종류를 추가할 수 있는 기능") ── */
+
+test('탭 줄에 「+ 분류 추가」가 있다', () => {
+  assert.match(app, /class="add" onclick="openAddKind\(\)"/);
+});
+
+test('직접분류는 AI 분류와 다른 칸(customKind)에 붙는다 — read.kind 를 안 건드린다', () => {
+  const fn = app.match(/function tabsOf\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /it\.meta\.customKind/);
+  // 더하는 것이지 기타서류에서 빼앗지 않는다 — AI 분류 하나 + 직접분류(있으면) 둘 다 담아야 한다
+  assert.match(fn, /out\.push\(customTabKey/);
+});
+
+test('직접분류 탭도 순서 목록·장수 세기에 들어간다', () => {
+  const order = app.match(/function kindOrder\(\)[\s\S]*?\n\}/)[0];
+  assert.match(order, /allTabKeys\(\)/, 'kindOrder 가 직접분류를 모릅니다');
+  const counts = app.match(/function tabCounts\(\)[\s\S]*?\n\}/)[0];
+  assert.match(counts, /allTabKeys\(\)/, 'tabCounts 가 직접분류 칸을 0으로 안 채웁니다');
+  assert.match(counts, /tabsOf\(it\)\.forEach/, '사진 하나가 여러 탭에 더해지지 않습니다');
+});
+
+test('새 분류 만들기 — 이름을 물어보고 만들자마자 그 탭으로 넘어간다', () => {
+  const fn = app.match(/function submitAddKind\([\s\S]*?\n\}/);
+  assert.ok(fn, 'submitAddKind 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /PuPhotoStore\.addCustomKind\(/);
+  assert.match(fn[0], /pickKind\(customTabKey\(r\.id\)\)/, '만든 분류로 바로 넘어가지 않습니다');
+});
+
+test('분류 이름이 비면 거절하고 만들지 않는다', () => {
+  const fn = app.match(/function submitAddKind\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /if \(!name\)/);
+  assert.match(fn, /showKindErr/);
+});
+
+test('분류 지정은 남의 사진(전체 근로자 포함)에는 못 한다', () => {
+  const fn = app.match(/function openAssignKind\([\s\S]*?\n\}/);
+  assert.ok(fn, 'openAssignKind 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /if \(blockedIfOther\(\)\) return;/);
+  // 고른 것이 없을 때 버튼 자체가 안 보이는지도 확인
+  assert.match(app, /viewingOther\(\)\) \$\('tagBtn'\)\.style\.display = 'none'/);
+});
+
+test('분류 지정은 항목별 실제 소유자 자리에 쓴다', () => {
+  const fn = app.match(/function submitAssignKind\([\s\S]*?\n\/\* ESC/);
+  assert.ok(fn, 'submitAssignKind 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /PuPhotoStore\.setCustomKind\(gridYear, id, kindId, it\.meta\.__ownerUid \|\| gridOwner\)/);
+});
+
+test('크게 보기에서 분류를 뗄 수 있다 — 지정은 되돌릴 수 있어야 한다', () => {
+  assert.match(app, /function customKindNote\(/);
+  assert.match(app, /function removeCustomKindOne\(/);
+  const fn = app.match(/function removeCustomKindOne\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /if \(blockedIfOther\(\)\) return;/);
+  assert.match(fn, /PuPhotoStore\.setCustomKind\(gridYear, id, null/);
+});
+
+test('찾기(검색)에 직접분류 이름도 걸린다', () => {
+  const fn = app.match(/function hayOf\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /CUSTOM_KINDS\[m\.customKind\]/, '직접분류 이름이 찾기 대상에 없습니다');
+});
+
+test('로그인하면 분류 목록을 불러온다', () => {
+  assert.match(app, /loadCustomKinds\(\);/);
+  const fn = app.match(/function loadCustomKinds\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /PuPhotoStore\.listCustomKinds\(\)/);
 });

@@ -1099,6 +1099,7 @@ test('saveRead — 실시간DB가 없으면 한국어로 거절한다', async ()
 
 function fakeDbFor(vals) {
   const updates = [];
+  let pushN = 0;
   return {
     updates,
     ref(p) {
@@ -1107,7 +1108,8 @@ function fakeDbFor(vals) {
           if (vals[p] === 'DENY') return Promise.reject(new Error('PERMISSION_DENIED'));
           return Promise.resolve({ val: function () { return (p in vals) ? vals[p] : null; } });
         },
-        update(u) { updates.push(u); return Promise.resolve(); }
+        update(u) { updates.push(u); return Promise.resolve(); },
+        push() { return { key: '-fake' + (++pushN) }; }
       };
     }
   };
@@ -1136,4 +1138,176 @@ test('지우기는 내 자리만 쓴다 — 옛 자리를 건드리면 규칙에
   assert.ok(keys.some(function (k) { return k.indexOf('/dellog/') >= 0; }), '지운 기록을 남기지 않습니다');
   const nulls = keys.filter(function (k) { return db.updates[0][k] === null; });
   assert.equal(nulls.length, 3, '사진 하나의 세 경로만 비워야 합니다: ' + nulls.join(', '));
+});
+
+/* ── 전체 근로자 사진 (관리자 전용) ──
+   대표 지시(2026-08-06): 총괄책임자는 전체 근로자 사진을 볼 수 있어야 한다. */
+
+test('관리자가 아니면 전체 근로자 사진을 거절한다', async () => {
+  const S = loadStore();
+  S.init({ uid: 'ADMIN', db: fakeDbFor({}), isAdmin: false });
+  await assert.rejects(() => S.listYearAll('2026'), /관리자/);
+  await assert.rejects(() => S.listYearsAll(), /관리자/);
+});
+
+test('명단에 있는 사람마다 사진을 모아 합친다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({
+    'puphotos/owners': { U2: { name: '신욱임' }, U3: { name: '박한별' } },
+    'puphotos/u/U2/items/2026': { p1: { takenAt: 100, kind: 'doc' } },
+    'puphotos/u/U2/items/2026/p1': { takenAt: 100, kind: 'doc' },
+    'puphotos/u/U3/items/2026': { p2: { takenAt: 200, kind: 'photo' } },
+    'puphotos/u/U3/items/2026/p2': { takenAt: 200, kind: 'photo' },
+    'puphotos/u/ADMIN/items/2026': null,
+    'puphotos/u/ADMIN/items/2026/p1': null
+  });
+  S.init({ uid: 'ADMIN', db: db, isAdmin: true, name: '권형하' });
+  const items = await S.listYearAll('2026');
+  assert.deepEqual(Object.keys(items).sort(), ['p1', 'p2']);
+  assert.equal(items.p1.__ownerUid, 'U2');
+  assert.equal(items.p1.__ownerName, '신욱임');
+  assert.equal(items.p2.__ownerUid, 'U3');
+  assert.equal(items.p2.__ownerName, '박한별');
+});
+
+test('관리자 자신도 포함한다 — 명단(owners)에 자기 자리가 없을 수 있다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({
+    'puphotos/owners': { U2: { name: '신욱임' } },
+    'puphotos/u/U2/items/2026': { p1: { takenAt: 100 } },
+    'puphotos/u/U2/items/2026/p1': { takenAt: 100 },
+    'puphotos/u/ADMIN/items/2026': { p9: { takenAt: 300 } },
+    'puphotos/u/ADMIN/items/2026/p9': { takenAt: 300 }
+  });
+  S.init({ uid: 'ADMIN', db: db, isAdmin: true, name: '권형하' });
+  const items = await S.listYearAll('2026');
+  assert.ok(items.p9, '관리자 자신의 사진이 빠졌습니다');
+  assert.equal(items.p9.__ownerName, '권형하');
+});
+
+test('한 사람 읽기가 실패해도 나머지는 보인다', async () => {
+  // 신욱임 것만 권한 문제로 막혀도, 박한별 것까지 다 안 보이면 안 된다.
+  const S = loadStore();
+  const db = fakeDbFor({
+    'puphotos/owners': { U2: { name: '신욱임' }, U3: { name: '박한별' } },
+    'puphotos/u/U2/items/2026': 'DENY',
+    'puphotos/u/U2/items/2026/p1': 'DENY',
+    'puphotos/items/2026': 'DENY',
+    'puphotos/u/U3/items/2026': { p2: { takenAt: 200 } },
+    'puphotos/u/U3/items/2026/p2': { takenAt: 200 },
+    'puphotos/u/ADMIN/items/2026': null
+  });
+  S.init({ uid: 'ADMIN', db: db, isAdmin: true, name: '권형하' });
+  const items = await S.listYearAll('2026');
+  assert.deepEqual(Object.keys(items), ['p2'], '한 사람 실패로 전체가 비었습니다');
+});
+
+// listYears 는 후보 연도마다 ref(...).limitToFirst(1).once('value') 로 존재 여부만 본다.
+// fakeDbFor 는 이 체인을 지원하지 않으므로 전용 가짜를 쓴다.
+function fakeDbYears(nonEmptyPaths, ownersVal) {
+  const set = {};
+  nonEmptyPaths.forEach(function (p) { set[p] = true; });
+  return {
+    ref(p) {
+      return {
+        limitToFirst() {
+          return { once() { return Promise.resolve({ exists: function () { return !!set[p]; } }); } };
+        },
+        once() {
+          return Promise.resolve({ val: function () { return p === 'puphotos/owners' ? ownersVal : null; } });
+        }
+      };
+    }
+  };
+}
+
+test('전체 근로자의 연도 목록은 사람마다의 연도를 합친 것이다', async () => {
+  const S = loadStore();
+  const db = fakeDbYears(
+    ['puphotos/u/U2/items/2025', 'puphotos/u/ADMIN/items/2026'],
+    { U2: { name: '신욱임' } }
+  );
+  S.init({ uid: 'ADMIN', db: db, isAdmin: true, name: '권형하' });
+  const ys = await S.listYearsAll();
+  assert.ok(ys.indexOf('2025') >= 0, '신욱임의 연도가 빠졌습니다');
+  assert.ok(ys.indexOf('2026') >= 0, '올해는 늘 있어야 합니다');
+});
+
+/* ── 직접 만드는 분류(대표 지시 2026-08-06: "종류를 추가할 수 있는 기능") ── */
+
+test('분류 목록을 읽는다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({ 'puphotos/customKinds': { k1: { name: '자문등계약서', createdAt: 1 } } });
+  S.init({ uid: 'U1', db: db });
+  const list = await S.listCustomKinds();
+  // vm 샌드박스는 다른 realm이라 객체 구조는 같아도 deepEqual이 참조 비교에서 걸린다 — 복사해 비교한다.
+  assert.deepEqual(JSON.parse(JSON.stringify(list)), { k1: { name: '자문등계약서', createdAt: 1 } });
+});
+
+test('빈 분류 목록은 빈 객체다 — 예외를 던지지 않는다', async () => {
+  const S = loadStore();
+  S.init({ uid: 'U1', db: fakeDbFor({}) });
+  const list = await S.listCustomKinds();
+  assert.deepEqual({ ...list }, {});
+});
+
+test('새 분류를 만든다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({ 'puphotos/customKinds': {} });
+  S.init({ uid: 'U1', db: db, name: '권형하' });
+  const r = await S.addCustomKind('자문등계약서');
+  assert.equal(r.created, true);
+  const u = db.updates[0];
+  const key = Object.keys(u)[0];
+  assert.match(key, /^puphotos\/customKinds\//);
+  assert.equal(u[key].name, '자문등계약서');
+  assert.equal(u[key].createdBy, '권형하');
+  assert.ok(u[key].createdAt > 0);
+});
+
+test('같은 이름(대소문자·앞뒤공백 무시)은 두 번 만들지 않는다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({ 'puphotos/customKinds': { k1: { name: '자문등계약서' } } });
+  S.init({ uid: 'U1', db: db });
+  const r = await S.addCustomKind('  자문등계약서  ');
+  assert.equal(r.created, false);
+  assert.equal(r.id, 'k1');
+  assert.equal(db.updates.length, 0, '중복인데 새로 썼습니다');
+});
+
+test('빈 이름은 거절한다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({ 'puphotos/customKinds': {} });
+  S.init({ uid: 'U1', db: db });
+  await assert.rejects(() => S.addCustomKind('   '), /이름/);
+  assert.equal(db.updates.length, 0);
+});
+
+test('사진에 분류를 붙인다 — read.kind 와 다른 칸에 둔다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({});
+  S.init({ uid: 'U1', db: db });
+  await S.setCustomKind('2026', 'p1', 'k1');
+  const u = db.updates[0];
+  const key = Object.keys(u)[0];
+  assert.equal(key, 'puphotos/u/U1/items/2026/p1/customKind');
+  assert.equal(u[key], 'k1');
+});
+
+test('분류를 뗄 수 있다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({});
+  S.init({ uid: 'U1', db: db });
+  await S.setCustomKind('2026', 'p1', null);
+  const u = db.updates[0];
+  assert.equal(u['puphotos/u/U1/items/2026/p1/customKind'], null);
+});
+
+test('관리자가 남의 사진에 분류를 붙일 때는 그 사람 자리를 쓴다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({});
+  S.init({ uid: 'ADMIN', db: db, isAdmin: true });
+  await S.setCustomKind('2026', 'p1', 'k1', 'U2');
+  const u = db.updates[0];
+  assert.equal(Object.keys(u)[0], 'puphotos/u/U2/items/2026/p1/customKind');
 });

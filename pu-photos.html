@@ -125,6 +125,9 @@ button{font-family:inherit;cursor:pointer}
 .tag{font-size:10.5px;font-weight:700;background:#e8eefc;color:#1e40af;padding:1px 6px;border-radius:5px;margin-left:5px}
 #grid .cell .tag{position:absolute;left:4px;top:4px;margin:0;background:var(--blue);color:#fff}
 #grid .cell{position:relative}
+/* 전체 근로자 화면 — 누구 것인지 안 보이면 관리자가 못 가른다(대표 지시 2026-08-06) */
+#grid .cell .who{position:absolute;left:0;right:0;bottom:0;background:rgba(16,24,40,.72);color:#fff;
+  font-size:10px;font-weight:700;padding:3px 5px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 #upWrap{margin-top:16px}
 #upWrap .cap{font-size:12px;color:var(--sub);margin-bottom:6px}
@@ -175,6 +178,31 @@ button{font-family:inherit;cursor:pointer}
   padding:7px 13px;font-size:12.5px;font-weight:700;font-family:inherit}
 #kinds button.on{border-color:var(--blue);background:var(--blue);color:#fff}
 #kinds button .n{font-weight:800;opacity:.75;margin-left:5px;font-size:11px}
+/* 직접 만드는 분류 — 점선 테두리로 "사람이 만든 것"임을 가른다(대표 승인 목업) */
+#kinds button.custom{border-style:dashed;border-color:#93c5fd}
+#kinds button.custom.on{border-style:solid}
+#kinds button.add{border:1.5px dashed var(--line);background:#f8fafc;color:var(--blue);font-weight:800}
+#gridBar button.tag{border-color:#93c5fd;color:var(--blue)}
+
+/* 새 분류 만들기 / 분류 지정 팝업 */
+#kindPopup{display:none;position:fixed;inset:0;background:rgba(16,24,40,.45);z-index:40;
+  align-items:center;justify-content:center;padding:16px}
+#kindPopup .pop{background:#fff;border-radius:12px;max-width:340px;width:100%;
+  box-shadow:0 12px 32px rgba(16,24,40,.25);overflow:hidden}
+#kindPopup .h{padding:13px 16px;border-bottom:1px solid var(--line);font-size:14px;font-weight:800}
+#kindPopup .b{padding:14px 16px}
+#kindPopup input[type=text]{width:100%;border:1px solid var(--line);border-radius:8px;
+  padding:9px 11px;font-size:13.5px;font-family:inherit}
+#kindPopup .row{display:flex;align-items:center;gap:8px;padding:9px 0;border-top:1px solid #f1f4f9}
+#kindPopup .row:first-of-type{border-top:none}
+#kindPopup .row input[type=radio]{width:16px;height:16px;flex:none}
+#kindPopup .row span{font-size:13.5px}
+#kindPopup .row .cnt{color:var(--sub);font-size:12px;margin-left:auto}
+#kindPopup .btns{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--line);justify-content:flex-end}
+#kindPopup .btns button{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:8px;
+  padding:8px 15px;font-size:13px;font-weight:700;font-family:inherit}
+#kindPopup .btns .pri{background:var(--blue);color:#fff;border-color:var(--blue)}
+#kindPopup .err{color:#b91c1c;font-size:12px;margin-top:6px}
 /* 폰에서는 한 줄에 들어가게 좁힌다 — 두 줄이 되면 대시보드(300px)에 더해져
    첫 화면에서 사진이 거의 안 보인다. 짧은 이름(.narrow-only)과 함께 쓴다.
    ⚠ 이 규칙은 반드시 위 기본 규칙 **뒤에** 있어야 한다. 앞에 두면 특정도가
@@ -511,6 +539,7 @@ button{font-family:inherit;cursor:pointer}
       <!-- 고른 것에 쓰는 단추는 왼쪽 끝에 둔다(대표 지시) -->
       <div id="gridBar">
         <button id="dlBtn" onclick="downloadSelected()" style="display:none">⬇ 내려받기</button>
+        <button id="tagBtn" class="tag" onclick="openAssignKind()" style="display:none">🏷 분류 지정</button>
         <button id="readSelBtn" class="rd" onclick="readSelected()" style="display:none">🔍 판독</button>
         <button id="delBtn" class="del" onclick="deleteSelected()" style="display:none">🗑 지우기</button>
         <button id="selCancel" onclick="clearSel()" style="display:none">취소</button>
@@ -657,6 +686,18 @@ button{font-family:inherit;cursor:pointer}
     <div class="hint" id="viewerHint"></div>
   </div>
 
+  <!-- 직접 만드는 분류 — 새 분류 만들기 / 사진에 분류 지정 (대표 지시 2026-08-06) -->
+  <div id="kindPopup" onclick="if(event.target===this) closeKindPopup()">
+    <div class="pop">
+      <div class="h" id="kindPopupTitle"></div>
+      <div class="b" id="kindPopupBody"></div>
+      <div class="btns">
+        <button onclick="closeKindPopup()">취소</button>
+        <button class="pri" id="kindPopupOk"></button>
+      </div>
+    </div>
+  </div>
+
   <!-- 설정 -->
 
 <script>
@@ -734,6 +775,7 @@ firebase.auth().onAuthStateChanged(u => {
     $('who').textContent = me.name || u.email || '';
     initQueue();
     loadGrid();
+    loadCustomKinds();
     renderOwnerPick();
     refreshYears();
     /* 30일 지난 휴지통은 스스로 비운다(서버가 대신 해줄 수 없는 구조라 앱이 한다).
@@ -1341,10 +1383,35 @@ const KIND_TABS = [
    저장된 순서에 없는 새 탭은 기본 자리(위 배열 순서)에 끼운다 — 탭이 늘어도
    저장값 때문에 숨는 일이 없다. */
 const KIND_ORDER_LS = 'puphotos_kind_order';
+
+/* ── 직접 만드는 분류(대표 지시 2026-08-06: "종류를 추가할 수 있는 기능") ──
+   AI 자동 분류(KIND_TABS)와 달리 코드를 안 고치고 화면에서 아무 때나 만든다.
+   이름표는 전 직원이 함께 보는 공용 자리(puphotos/customKinds)에서 받아 온다.
+   {id: {name, createdAt, createdBy}} 꼴. */
+let CUSTOM_KINDS = {};
+function customTabKey(id) { return 'custom:' + id; }
+function customTabLabel(key) {
+  const id = key.slice('custom:'.length);
+  return (CUSTOM_KINDS[id] && CUSTOM_KINDS[id].name) || '';
+}
+function loadCustomKinds() {
+  return PuPhotoStore.listCustomKinds().then(function (kinds) {
+    CUSTOM_KINDS = kinds || {};
+    renderKindTabs();
+  }).catch(function (e) { console.warn('[분류 목록]', e); });
+}
+
+/* 지금 있는 탭 전부(고정 + 직접분류) — kindOrder 가 이 목록을 기준으로 정렬한다.
+   순서를 여기 하나로 모아 둬야 새 직접분류가 생겨도 정렬·검사가 같이 따라온다. */
+function allTabKeys() {
+  return KIND_TABS.map(function (t) { return t.key; })
+    .concat(Object.keys(CUSTOM_KINDS).map(customTabKey));
+}
+
 function kindOrder() {
   let saved = [];
   try { saved = JSON.parse(localStorage.getItem(KIND_ORDER_LS)) || []; } catch (_) { saved = []; }
-  const keys = KIND_TABS.map(function (t) { return t.key; });
+  const keys = allTabKeys();
   const out = ['all'];
   saved.forEach(function (k) { if (k !== 'all' && keys.indexOf(k) >= 0 && out.indexOf(k) < 0) out.push(k); });
   keys.forEach(function (k) { if (out.indexOf(k) < 0) out.push(k); });
@@ -1362,9 +1429,16 @@ const CLAIMED_KINDS = KIND_TABS.reduce(function (a, t) {
 
 /* 사진 한 장이 어느 탭에 들어가는가. 판독을 안 했거나 종류를 모르면 기타서류다
    — 어느 탭에도 안 들어가 **사라지는 사진**이 생기면 안 된다. */
-function tabOf(it) {
+/* 사진 한 장이 어느 탭들에 들어가는가 — **여러 개일 수 있다.**
+   AI 분류(하나)와 직접분류(사람이 붙인 것, 있으면)를 각각 담는다.
+   직접분류는 "더하는 것이지 기타서류에서 빼앗지 않는다"(대표 승인 목업) —
+   그래서 기타서류에도 그대로 남고, 직접분류 탭에도 함께 나온다. */
+function tabsOf(it) {
   const k = it && it.meta && it.meta.read && it.meta.read.kind;
-  return (k && CLAIMED_KINDS[k]) ? kindTabKeyOf(k) : 'other';
+  const out = [(k && CLAIMED_KINDS[k]) ? kindTabKeyOf(k) : 'other'];
+  const ck = it && it.meta && it.meta.customKind;
+  if (ck && CUSTOM_KINDS[ck]) out.push(customTabKey(ck));
+  return out;
 }
 function kindTabKeyOf(k) {
   for (const t of KIND_TABS) if (t.kinds && t.kinds.indexOf(k) >= 0) return t.key;
@@ -1719,12 +1793,16 @@ function renderUp() {
 let gridYear = String(new Date().getFullYear());
 let gridYears = [gridYear];  // 사진이 실제로 있는 해 목록
 let gridItems = []; // { id, meta, thumb? } — 촬영 시각 내림차순
-let gridOwner = null;   // null = 내 사진. 관리자가 남의 것을 볼 때만 계정이 들어간다
+const ALL_OWNERS = '__all__';   // '전체 근로자' 를 가리키는 표
+let gridOwner = null;   // null = 내 사진. 관리자가 남의 것(또는 ALL_OWNERS)을 볼 때만 값이 들어간다
 let gridQ = '';         // 찾는 말 (소문자)
 
 /* 남의 사진을 보는 중인가 — 그때는 올리기·지우기·판독을 잠근다.
    남이 찍은 사진을 내가 고칠 일이 아니고, 저장 층도 내 자리에만 쓴다. */
 function viewingOther() {
+  /* ALL_OWNERS(전체 근로자)도 '남의 것'이다 — 누구 하나로 좁혀지지 않은 채
+     고치거나 지우면 어느 사람 자리에 쓸지 알 수 없다. 그래서 업로드·삭제가
+     자연히 잠긴다(이 함수 하나로 여러 곳이 함께 막힌다). */
   return !!gridOwner && gridOwner !== PuPhotoStore.myUid();
 }
 
@@ -1736,7 +1814,8 @@ function blockedIfOther() {
 
 /* 사진이 있는 해 목록을 받아 고르개를 채운다. 실패해도 올해는 볼 수 있다. */
 function refreshYears() {
-  PuPhotoStore.listYears(gridOwner).then(function (ys) {
+  const call = gridOwner === ALL_OWNERS ? PuPhotoStore.listYearsAll() : PuPhotoStore.listYears(gridOwner);
+  call.then(function (ys) {
     gridYears = ys;
     if (gridYears.indexOf(gridYear) < 0) gridYears.unshift(gridYear);
     renderYearSel();
@@ -1772,13 +1851,18 @@ function purgeEveryYearTrash() {
 }
 
 function loadGrid() {
-  PuPhotoStore.listYear(gridYear, gridOwner).then(function (items) {
+  /* 전체 근로자 모드 — 판독·자동등록 대기열은 돌리지 않는다. 그건 '내가 올린
+     것'을 처리하는 일이라, 남의 사진까지 자동으로 건드리면 안 된다. */
+  const call = gridOwner === ALL_OWNERS
+    ? PuPhotoStore.listYearAll(gridYear)
+    : PuPhotoStore.listYear(gridYear, gridOwner);
+  call.then(function (items) {
     gridItems = Object.keys(items).map(id => ({ id: id, meta: items[id] || {} }));
     gridItems.sort((a, b) => (b.meta.takenAt || 0) - (a.meta.takenAt || 0));
     showGridError('');
     renderGrid();
     fillThumbs();
-    autoReadPending();
+    if (gridOwner !== ALL_OWNERS) autoReadPending();
   }).catch(function (e) {
     /* ⚠ 예전에는 콘솔에만 적고 **빈 화면**을 보여줬다. 그래서 사진이 안 보일 때
        "아직 올린 사진이 없습니다"라고 **거짓말**을 하고, 왜 안 보이는지 아무도
@@ -1839,13 +1923,14 @@ function renderGrid() {
        "사진이 없다"와 "못 찾았다"와 "이 분류에 없다"는 서로 다른 말이다. */
     const note = s => '<p style="font-size:13px;color:var(--sub);padding:20px 0;text-align:center">' + s + '</p>';
     const tab = KIND_TABS.find(function (t) { return t.key === kindTab; });
+    const tabLabel = tab ? tab.label : customTabLabel(kindTab);
     if (gridQ) {
       el.innerHTML = note('「' + esc(gridQ) + '」에 맞는 사진이 없습니다.'
         + (gridYears.length > 1 ? '<br>다른 해에 있을 수 있습니다 — 위에서 해를 바꿔 보세요.' : ''));
     } else if (needOnly) {
       el.innerHTML = note('확인이 필요한 사진이 없습니다. 모두 처리됐습니다.');
     } else if (kindTab !== 'all') {
-      el.innerHTML = note(esc('이 분류에 든 사진이 없습니다 — 「' + (tab ? tab.label : '') + '」'));
+      el.innerHTML = note(esc('이 분류에 든 사진이 없습니다 — 「' + tabLabel + '」'));
     } else {
       el.innerHTML = '';
     }
@@ -1872,9 +1957,13 @@ function renderGrid() {
     const on = selected.has(it.id) ? ' on' : '';
     /* 확인이 필요한 사진은 칸에서 바로 보인다 — 눌러 봐야 아는 일이 없게. */
     const warn = needsCheck(it) ? '<span class="wn">⚠</span>' : '';
+    /* 전체 근로자 화면에서는 누구 것인지 칸에서 바로 보여야 한다 —
+       누구 사진인지 열어 봐야만 아는 것은 "훑어보기"가 안 된다. */
+    const who = (gridOwner === ALL_OWNERS && it.meta.__ownerName)
+      ? '<span class="who">' + esc(it.meta.__ownerName) + '</span>' : '';
     /* 다른 앱(정부사업 컨설팅 등)으로 끌어다 놓을 수 있다. */
     html += '<div class="cell' + on + '" data-id="' + esc(it.id) + '" draggable="true">' +
-      (t ? '<img src="' + t + '" alt="" draggable="false">' : '') + tag + warn + '<span class="ck">✓</span></div>';
+      (t ? '<img src="' + t + '" alt="" draggable="false">' : '') + tag + warn + who + '<span class="ck">✓</span></div>';
   });
   html += '</div>';
   el.innerHTML = html;
@@ -1886,7 +1975,7 @@ function fillThumbs() {
   gridItems.forEach(function (it) {
     if (it.thumb) return;
     chain = chain.then(function () {
-      return PuPhotoStore.loadThumb(gridYear, it.id, gridOwner).then(function (t) {
+      return PuPhotoStore.loadThumb(gridYear, it.id, it.meta.__ownerUid || gridOwner).then(function (t) {
         it.thumb = t;
         const src = safeSrc(t);
         if (!src) return;
@@ -1930,7 +2019,7 @@ $('grid').addEventListener('dragstart', function (ev) {
     app: 'pu-photos',
     kind: 'photo',
     year: gridYear,
-    owner: gridOwner || PuPhotoStore.myUid(),
+    owner: it.meta.__ownerUid || gridOwner || PuPhotoStore.myUid(),
     id: id,
     name: (r.fields && (r.fields.company || r.fields.name)) || dayLabel(it.meta.takenAt || 0) + ' 사진',
     docKind: it.meta.kind || 'photo',
@@ -1985,7 +2074,7 @@ function saveBlob(blob, name) {
 function downloadOne(id) {
   const it = gridItems.find(function (x) { return x.id === id; });
   if (!it) return;
-  PuPhotoStore.loadFull(gridYear, id, gridOwner).then(function (full) {
+  PuPhotoStore.loadFull(gridYear, id, it.meta.__ownerUid || gridOwner).then(function (full) {
     if (!safeSrc(full)) throw new Error('사진 본문을 불러오지 못했습니다');
     return toBlob(full);
   }).then(function (blob) {
@@ -2008,7 +2097,7 @@ function canShareFiles() {
 function shareOne(id) {
   const it = gridItems.find(function (x) { return x.id === id; });
   if (!it) return;
-  PuPhotoStore.loadFull(gridYear, id, gridOwner).then(function (full) {
+  PuPhotoStore.loadFull(gridYear, id, it.meta.__ownerUid || gridOwner).then(function (full) {
     if (!safeSrc(full)) throw new Error('사진 본문을 불러오지 못했습니다');
     return toBlob(full);
   }).then(function (blob) {
@@ -2053,7 +2142,7 @@ function downloadSelected() {
         if (!it) return;
         btn.textContent = '모으는 중… ' + (n + 1) + '/' + ids.length;
         /* 한 장씩 받는다 — 한꺼번에 받으면 폰 메모리가 버티지 못한다. */
-        return PuPhotoStore.loadFull(gridYear, id, gridOwner).then(function (full) {
+        return PuPhotoStore.loadFull(gridYear, id, it.meta.__ownerUid || gridOwner).then(function (full) {
           if (!safeSrc(full)) return;
           const b64 = String(full).split(',')[1] || '';
           if (!b64) return;
@@ -2128,7 +2217,7 @@ let kindTab = 'all';
    섞여 나온다(2026-08-05 걸러보기 버그와 같은 종류의 어긋남). */
 function shownItems() {
   let list = gridItems;
-  if (kindTab !== 'all') list = list.filter(function (it) { return tabOf(it) === kindTab; });
+  if (kindTab !== 'all') list = list.filter(function (it) { return tabsOf(it).indexOf(kindTab) >= 0; });
   if (needOnly) list = list.filter(needsCheck);
   /* 찾는 말도 같은 자리에서 건다 — 걸러보기·분류 탭과 어긋나면 안 된다. */
   if (gridQ) list = list.filter(matchQ);
@@ -2139,8 +2228,10 @@ function shownItems() {
    걸러보기를 켰다고 탭 숫자가 줄면 사진이 없어진 것처럼 보인다. */
 function tabCounts() {
   const c = { all: gridItems.length };
-  KIND_TABS.forEach(function (t) { if (t.key !== 'all') c[t.key] = 0; });
-  gridItems.forEach(function (it) { c[tabOf(it)] = (c[tabOf(it)] || 0) + 1; });
+  allTabKeys().forEach(function (k) { if (k !== 'all') c[k] = 0; });
+  gridItems.forEach(function (it) {
+    tabsOf(it).forEach(function (k) { c[k] = (c[k] || 0) + 1; });
+  });
   return c;
 }
 
@@ -2154,12 +2245,17 @@ function renderKindTabs() {
     const t = byKey[k];
     /* 「전체사진」만 못 끈다 — 돌아갈 자리는 늘 같은 곳에 있어야 한다 */
     const drag = k === 'all' ? '' : ' draggable="true" title="끌어서 순서를 바꿀 수 있습니다"';
-    return '<button data-key="' + t.key + '"' + drag +
-      ' class="' + (kindTab === t.key ? 'on' : '') + '" onclick="pickKind(\'' + t.key + '\')">' +
-      '<span class="wide-only">' + esc(t.label) + '</span>' +
-      '<span class="narrow-only">' + esc(t.short) + '</span>' +
-      '<span class="n">' + (c[t.key] || 0) + '</span></button>';
-  }).join('');
+    /* 직접분류는 KIND_TABS 에 없다 — 이름표를 CUSTOM_KINDS 에서 만든다.
+       점선 테두리(.custom)로 "사람이 직접 만든 것"임을 가른다(대표 승인 목업). */
+    const label = t ? t.label : customTabLabel(k);
+    const short = t ? t.short : customTabLabel(k);
+    const cls = (kindTab === k ? 'on' : '') + (t ? '' : ' custom');
+    return '<button data-key="' + k + '"' + drag +
+      ' class="' + cls + '" onclick="pickKind(\'' + k + '\')">' +
+      '<span class="wide-only">' + esc(label) + '</span>' +
+      '<span class="narrow-only">' + esc(short) + '</span>' +
+      '<span class="n">' + (c[k] || 0) + '</span></button>';
+  }).join('') + '<button class="add" onclick="openAddKind()" title="새 분류를 직접 만듭니다">+ 분류 추가</button>';
 }
 
 /* ── 탭 끌어서 순서 바꾸기 (마우스 전용 — 폰은 끌기가 스크롤과 겹친다) ──
@@ -2205,6 +2301,118 @@ function pickKind(key) {
   renderGrid();
 }
 
+/* ══════ 직접 만드는 분류 — 팝업 ══════
+   하나를 두 가지 일에 함께 쓴다: 새 분류 만들기 / 고른 사진에 분류 지정.
+   ESC·바깥 클릭으로 닫힌다(크게 보기와 같은 손짓 — 새로 배우지 않아도 된다). */
+function closeKindPopup() {
+  $('kindPopup').style.display = 'none';
+  $('kindPopupBody').innerHTML = '';
+}
+
+function openAddKind() {
+  $('kindPopupTitle').textContent = '새 분류 만들기';
+  $('kindPopupBody').innerHTML =
+    '<input type="text" id="kindNameInput" placeholder="분류 이름 (예: 자문등계약서)" maxlength="30">' +
+    '<div class="err" id="kindNameErr" style="display:none"></div>';
+  const ok = $('kindPopupOk');
+  ok.textContent = '만들기';
+  ok.onclick = submitAddKind;
+  $('kindPopup').style.display = 'flex';
+  $('kindNameInput').focus();
+}
+
+function submitAddKind() {
+  const input = $('kindNameInput');
+  const name = (input.value || '').trim();
+  if (!name) { showKindErr('kindNameErr', '이름을 입력해 주세요'); return; }
+  $('kindPopupOk').disabled = true;
+  PuPhotoStore.addCustomKind(name).then(function (r) {
+    return loadCustomKinds().then(function () {
+      closeKindPopup();
+      pickKind(customTabKey(r.id));   // 만들자마자 그 분류로 넘어간다 — 방금 한 일이 바로 보여야 한다
+    });
+  }).catch(function (e) {
+    console.warn('[분류 만들기]', e);
+    showKindErr('kindNameErr', (e && e.message) || String(e));
+  }).then(function () { $('kindPopupOk').disabled = false; });
+}
+
+function showKindErr(id, msg) {
+  const el = $(id);
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+/* 고른 사진에 분류를 지정한다. 남의 사진(전체 근로자 포함)은 보기만 —
+   viewingOther() 가 이미 delete·read 를 막는 것과 같은 원칙이라 여기도 막는다. */
+function openAssignKind() {
+  if (blockedIfOther()) return;
+  const ids = Array.from(selected);
+  if (!ids.length) return;
+  const kinds = Object.keys(CUSTOM_KINDS);
+  $('kindPopupTitle').textContent = ids.length + '장을 어느 분류에 넣을까요';
+  const rows = kinds.map(function (id, i) {
+    return '<div class="row"><input type="radio" name="assignKind" value="' + esc(id) + '"' +
+      (i === 0 ? ' checked' : '') + '><span>' + esc(CUSTOM_KINDS[id].name) + '</span></div>';
+  }).join('');
+  $('kindPopupBody').innerHTML = rows +
+    '<div class="row"><input type="radio" name="assignKind" value="__new__"' + (kinds.length ? '' : ' checked') + '>' +
+    '<span>+ 새 분류 만들기</span></div>' +
+    '<input type="text" id="kindNameInput" placeholder="분류 이름" maxlength="30" style="margin-top:8px">' +
+    '<div class="err" id="kindNameErr" style="display:none"></div>';
+  const ok = $('kindPopupOk');
+  ok.textContent = '지정';
+  ok.onclick = submitAssignKind;
+  $('kindPopup').style.display = 'flex';
+}
+
+function submitAssignKind() {
+  const ids = Array.from(selected);
+  if (!ids.length) { closeKindPopup(); return; }
+  const picked = document.querySelector('input[name="assignKind"]:checked');
+  const val = picked ? picked.value : '__new__';
+
+  const applyTo = function (kindId) {
+    $('kindPopupOk').disabled = true;
+    let chain = Promise.resolve();
+    ids.forEach(function (id) {
+      chain = chain.then(function () {
+        const it = gridItems.find(function (x) { return x.id === id; });
+        if (!it) return;
+        return PuPhotoStore.setCustomKind(gridYear, id, kindId, it.meta.__ownerUid || gridOwner)
+          .then(function () {
+            it.meta = Object.assign({}, it.meta, { customKind: kindId });
+          }).catch(function (e) { console.warn('[분류 지정]', id, e); });
+      });
+    });
+    return chain.then(function () {
+      closeKindPopup();
+      clearSel();
+      renderGrid();
+    }).then(function () { $('kindPopupOk').disabled = false; });
+  };
+
+  if (val === '__new__') {
+    const name = ($('kindNameInput').value || '').trim();
+    if (!name) { showKindErr('kindNameErr', '이름을 입력해 주세요'); return; }
+    $('kindPopupOk').disabled = true;
+    PuPhotoStore.addCustomKind(name).then(function (r) {
+      return loadCustomKinds().then(function () { return applyTo(r.id); });
+    }).catch(function (e) {
+      console.warn('[분류 만들기]', e);
+      showKindErr('kindNameErr', (e && e.message) || String(e));
+      $('kindPopupOk').disabled = false;
+    });
+    return;
+  }
+  applyTo(val);
+}
+
+/* ESC 로 팝업도 닫힌다 — 크게 보기의 ESC 처리기에 함께 얹는다. */
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape' && $('kindPopup').style.display === 'flex') closeKindPopup();
+});
+
 /* ── 찾기 ──
    사진 한 장에서 찾을 수 있는 말을 한 줄로 이어 붙인다. 판독이 뽑아 둔 회사명·
    이름·서류 종류, 올린 사람, 촬영 날짜가 대상이다. 파일 이름은 저장하지 않으므로
@@ -2214,7 +2422,8 @@ function hayOf(it) {
      (예전 값을 들고 있으면 방금 판독한 회사명으로 찾아도 안 나온다) */
   if (it._hayFor === it.meta) return it._hay;
   const m = it.meta || {}, r = m.read || {}, f = r.fields || {};
-  const bits = [READ_LABEL[r.kind] || '', m.byName || ''];
+  const ck = m.customKind && CUSTOM_KINDS[m.customKind];
+  const bits = [READ_LABEL[r.kind] || '', m.byName || '', ck ? ck.name : ''];
   Object.keys(f).forEach(function (k) {
     const v = f[k];
     if (typeof v === 'string' || typeof v === 'number') bits.push(String(v));
@@ -2310,9 +2519,11 @@ function renderGridBar() {
   const n = selected.size;
   $('gridBar').style.display = (shown || needOnly || gridQ) ? 'flex' : 'none';
   /* 고른 것이 있을 때만 단추가 나온다 — 「고르기」 단계가 없어졌다. */
-  ['dlBtn', 'readSelBtn', 'delBtn', 'selCancel'].forEach(function (id) {
+  ['dlBtn', 'readSelBtn', 'delBtn', 'selCancel', 'tagBtn'].forEach(function (id) {
     $(id).style.display = n ? 'inline-block' : 'none';
   });
+  /* 남의 사진(전체 근로자 포함)은 분류를 지정할 수 없다 — 보기만 가능. */
+  if (viewingOther()) $('tagBtn').style.display = 'none';
   $('delBtn').textContent = '🗑 ' + n + '장 지우기';
   if (!$('dlBtn').disabled) $('dlBtn').textContent = '⬇ ' + n + '장 내려받기';
   $('readSelBtn').disabled = reading;
@@ -2421,7 +2632,7 @@ function openViewer(id) {
   $('viewerHint').textContent = '불러오는 중…';
   const img = $('viewerImg');
   img.src = safeSrc(it && it.thumb) || ''; // 우선 미리보기를 깔고
-  PuPhotoStore.loadFull(gridYear, id, gridOwner).then(function (full) { // 원판으로 바꾼다
+  PuPhotoStore.loadFull(gridYear, id, (it && it.meta.__ownerUid) || gridOwner).then(function (full) { // 원판으로 바꾼다
     const src = safeSrc(full);
     if (src && v.style.display !== 'none') {
       img.src = src;
@@ -2510,6 +2721,31 @@ function ackRead() {
   });
 }
 
+/* 크게 보기에 지금 붙은 직접분류를 알려주고 뗄 길을 준다("지정은 언제든
+   되돌릴 수 있다" — 대표 승인 목업). 남의 사진(전체 근로자 포함)은 보기만. */
+function customKindNote(it) {
+  const ckId = it && it.meta && it.meta.customKind;
+  const ck = ckId && CUSTOM_KINDS[ckId];
+  if (!ck) return '';
+  const rm = viewingOther() ? '' : '<button class="again" onclick="removeCustomKindOne()">분류 빼기</button>';
+  return '<p class="note">🏷 「' + esc(ck.name) + '」로 분류돼 있습니다</p>' + rm;
+}
+
+function removeCustomKindOne() {
+  if (blockedIfOther()) return;
+  const id = viewerId;
+  const it = gridItems.find(function (x) { return x.id === id; });
+  if (!it) return;
+  PuPhotoStore.setCustomKind(gridYear, id, null, it.meta.__ownerUid || gridOwner).then(function () {
+    it.meta = Object.assign({}, it.meta, { customKind: null });
+    renderReadPanel(it);
+    renderGrid();
+  }).catch(function (e) {
+    console.warn('[분류 빼기]', e);
+    alert('분류를 떼지 못했습니다: ' + ((e && e.message) || e));
+  });
+}
+
 function renderReadPanel(it) {
   const el = $('readPanel');
   if (!it) { el.innerHTML = ''; return; }
@@ -2522,7 +2758,7 @@ function renderReadPanel(it) {
     const isDoc = it.meta.kind === 'doc';
     el.innerHTML = '<div class="box"><p class="note" style="margin:0">' +
       (isDoc ? '아직 판독하지 않은 서류입니다.' : '명함·사업자등록증이면 글자를 읽어 정보를 뽑아냅니다.') +
-      '</p>' + actsRow('글자 판독하기') + '</div>';
+      '</p>' + customKindNote(it) + actsRow('글자 판독하기') + '</div>';
     return;
   }
   const warn = read.auto ? '' : ' warn';
@@ -2570,6 +2806,7 @@ function renderReadPanel(it) {
     box +
     (read.ack ? '<p class="note">✓ ' + esc(read.ack.by || '') +
         '님이 확인해 할 일에서 치웠습니다 · 「다시 판독」을 누르면 되돌아옵니다</p>' : '') +
+    customKindNote(it) +
     actsRow('다시 판독', needsCheck(it)) + '</div>';
 }
 
@@ -2673,6 +2910,7 @@ function renderOwnerPick() {
     $('ownerPick').style.display = ids.length ? 'block' : 'none';
     if (!ids.length) return;
     $('ownerSel').innerHTML = '<option value="">내 사진</option>' +
+      '<option value="' + ALL_OWNERS + '">전체 근로자</option>' +
       ids.map(function (k) {
         return '<option value="' + esc(k) + '">' + esc((owners[k] && owners[k].name) || k) + '</option>';
       }).join('');
@@ -2883,6 +3121,12 @@ function backupYear() {
   const y = $('bkYear').value;
   const btn = $('bkBtn'), out = $('bkOut');
   if (!y) return;
+  /* 전체 근로자를 한 번에 백업하는 개념이 없다 — 사람마다 따로 담아야 뒤섞이지
+     않는다. 조용히 빈 결과(가짜 오류)를 보여주는 대신 이유를 말한다. */
+  if (gridOwner === ALL_OWNERS) {
+    out.textContent = '전체 근로자를 보는 중에는 백업할 수 없습니다 — 위에서 한 사람을 골라 주세요.';
+    return;
+  }
   btn.disabled = true;
   out.textContent = '';
   btn.textContent = '목록을 읽는 중…';
@@ -2954,6 +3198,12 @@ function renderTrashBox() {
 let trashItems = [];
 
 function loadTrash() {
+  /* 휴지통도 사람별로 갈려 있다 — 전체를 한 번에 보여주는 개념이 없다.
+     아무 말 없이 '비어 있음'을 보여주면 정말 빈 줄 오해한다. */
+  if (gridOwner === ALL_OWNERS) {
+    $('trashList').innerHTML = '<p class="tnote">전체 근로자를 보는 중에는 휴지통을 볼 수 없습니다 — 위에서 한 사람을 골라 주세요.</p>';
+    return;
+  }
   $('trashList').innerHTML = '<p class="tnote">불러오는 중…</p>';
   PuPhotoStore.listTrash(gridYear, gridOwner).then(function (list) {
     trashItems = Object.keys(list).map(function (id) { return Object.assign({ id: id }, list[id]); });
@@ -2988,6 +3238,10 @@ function renderTrash() {
 
 /* 지운 기록 — 휴지통을 완전히 비운 뒤에도 남는다. */
 function loadDelLog() {
+  if (gridOwner === ALL_OWNERS) {
+    $('delLog').innerHTML = '<p class="tnote">전체 근로자를 보는 중에는 지운 기록을 볼 수 없습니다 — 위에서 한 사람을 골라 주세요.</p>';
+    return;
+  }
   $('delLog').innerHTML = '<p class="tnote">불러오는 중…</p>';
   PuPhotoStore.listDelLog(gridOwner).then(function (list) {
     if (!list.length) { $('delLog').innerHTML = '<p class="tnote">지운 기록이 없습니다.</p>'; return; }

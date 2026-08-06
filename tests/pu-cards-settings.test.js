@@ -43,6 +43,9 @@ function makeCtx(counts, panelTarget){
   };
   vm.createContext(c);
   vm.runInContext("const esc = s => String(s??'').replace(/[&<>\"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[ch]));", c);
+  // ★ classifyPlan (규칙 분류, Task 3) 은 이 슬라이스 범위 안에 함께 딸려 오는데,
+  //   _canon 은 그 범위 밖(파일 앞쪽)에 있어 여기서 별도로 심어 준다.
+  vm.runInContext("const _canon = s => String(s||'').replace(/^\\s*\\d+\\s*[.)\\-]?\\s*/,'').replace(/\\s/g,'');", c);
   vm.runInContext(slice("let _panelTarget='modal';", "const SET_TABS="), c);
   vm.runInContext(slice('function openCleanupCenter(){', 'async function mergeSimilar'), c);
   // ★ _panelTarget 은 let 으로 선언돼 컨텍스트 객체의 속성으로 안 보인다 —
@@ -107,6 +110,9 @@ function makeCtx(counts, panelTarget){
 }
 {
   const { c, written } = makeCtx({ dup: 7, sim: 12, empty: 2, moji: 1, nameFix: 3, mixedFix: 4, trash: 5 }, 'inline');
+  // ★ 규칙 분류(Task 3) 항목도 걸리는 게 있어야 이 줄만 "이상 없음"으로 남지 않는다 —
+  //   기본 규칙(CLASSIFY_DEFAULTS)의 '노무' 단어가 걸리도록 미분류 명함 하나를 심는다.
+  c.state.items = { x1: { id:'x1', kind:'card', company:'노무법인테스트', group:'' } };
   c.openCleanupCenter();
   const h = written.inline;
   t('건수가 있으면 이상 없음이 하나도 안 보인다', /이상 없음/.test(h), false);
