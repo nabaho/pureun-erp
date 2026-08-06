@@ -10131,6 +10131,13 @@ function pcCompanyRows(q){
       if(g.biz && g.biz.ceo) sub.push('대표 ' + g.biz.ceo);
       else if(ceoCard && ceoCard.n) sub.push('대표 ' + ceoCard.n + ' (명함)');
       if(g.cards.length) sub.push('명함 ' + g.cards.length + '장');
+      // 업태·종목이 딸려오는지 줄에서 미리 보여 준다.
+      // 명함첩 검색목록(pucards/idx)에 업태 칸이 생긴 것은 나중이라, 그 전에 저장된
+      // 사업자등록증은 색인에 업태가 비어 있다. 눌러 보고 나서야 안 왔다는 걸 알면 늦다.
+      if(g.biz){
+        if(g.biz.bt || g.biz.bi) sub.push('업태 ' + [g.biz.bt, g.biz.bi].filter(Boolean).join('/'));
+        else sub.push('업태 없음');
+      }
       out.push({
         label: g.name || '(회사명 없음)',
         bizNo: bizNo,
@@ -10653,6 +10660,20 @@ function ContractModal(props){
   var hrw = useState(false); var hideRetiredWk = hrw[0]; var setHideRetiredWk = hrw[1];  // 근로자: 재직자만 보기
   var ar = useState([]); var autoResults = ar[0]; var setAutoResults = ar[1];
   var aidx = useState(-1); var autoIdx = aidx[0]; var setAutoIdx = aidx[1];   // 자동완성 키보드 선택 인덱스
+  // ── 「과거 데이터 선택」 목록 닫기 ──
+  // data-autocomplete 표식만 달아 두고 바깥 클릭을 듣는 곳이 없어, 한 번 열리면
+  // 고르거나 ESC 를 누르기 전까지 창을 덮은 채 남아 있었다. 여기서 바깥 클릭을 듣는다.
+  useEffect(function(){
+    if(autoResults.length === 0) return;          // 열려 있을 때만 듣는다
+    function onDocDown(e){
+      var el = e.target;
+      if(el && el.closest && (el.closest('[data-autocomplete]') || el.closest('[data-autocomplete-input]'))) return;
+      setAutoResults([]); setAutoIdx(-1);
+    }
+    // 캡처 단계에서 들어야 목록 안 클릭(선택)보다 먼저 닫히는 일이 없다
+    document.addEventListener('mousedown', onDocDown);
+    return function(){ document.removeEventListener('mousedown', onDocDown); };
+  }, [autoResults.length]);
   var cd = useState(false); var confirmedDuplicate = cd[0]; var setConfirmedDuplicate = cd[1];
   // 중복 안내 배너: 접기(자세히)·이번 편집 동안만 숨기기(✕).
   // 저장하지 않는다 — 다시 열면 또 보여야 한다. 🔴 확인(confirmedDuplicate)과는 별개다.
@@ -12057,12 +12078,18 @@ function ContractModal(props){
             else if(e.key === 'Escape'){ setAutoResults([]); setAutoIdx(-1); }
           },
           onFocus:function(e){
+            // 이미 정해진 회사(수정 화면·불러온 뒤)에서는 칸을 눌렀다고 목록을 다시 열지 않는다.
+            // 열면 회사정보 위를 덮어 아래 칸이 안 보이고, 고칠 것도 없는데 매번 치워야 했다.
+            // 새로 찾고 싶으면 글자를 고치면 그때 다시 뜬다(onChange).
+            if(props.cur) return;                       // 계약 수정 화면
+            if((f.company||{}).companyId) return;       // 이미 업체를 특정한 상태
             if((f.company.name||'').length >= 2){
               var res = searchPastCompanies(f.company.name.toLowerCase());
               setAutoResults(res.slice(0,6));
             }
           },
           placeholder:'회사명 또는 엑셀 한 행 붙여넣기',
+          'data-autocomplete-input':'1',
           style:{ width:'100%', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12px', boxSizing:'border-box' } }),
         autoResults.length > 0 && h('div', {
           'data-autocomplete':'1',
