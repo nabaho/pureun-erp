@@ -38,6 +38,19 @@ function load(){
   return ctx;
 }
 
+/* _atMs 는 화면 토막(watchClassifyLog 근처)에 따로 마커로 감싸 둔 별도 슬라이스다 —
+   순수 로직이지만 되돌리기 화면 함수들 사이에 자연스럽게 붙어 있어 그 자리를 그대로 두고
+   슬라이스만 하나 더 뗀다. */
+function loadAtMs(){
+  const code = slice(
+    '/* ══════ _atMs — 순수 로직 (테스트 대상) ══════',
+    '/* ══════ _atMs 끝 ══════ */');
+  const ctx = { console, Date };
+  vm.createContext(ctx);
+  vm.runInContext(code, ctx);
+  return ctx;
+}
+
 /* 샌드박스가 만든 배열·객체는 바깥 realm 의 Array 를 상속하지 않아
    assert.deepEqual(=strict) 이 "구조는 같은데 다르다"며 떨어진다.
    이 파일 옆 dup-sweep.test.js 와 같이 글자로 바꿔 비교한다. */
@@ -163,4 +176,79 @@ test('같은 이름이라도 명함용 폴더와 사업자용 폴더는 다르�
   const r = { key:'nomu', toGroupName:'노무사' };
   assert.equal(c.findRuleGroup(groups, r, 'card').gid, 'g1');
   assert.equal(c.findRuleGroup(groups, r, 'biz').gid, 'g2');
+});
+
+/* Blocker 2 — 규칙이 만든 폴더를 누가 이름을 바꿔도, 결정적 id 자리에 남아 있는 그
+   폴더를 '없다'고 오판해 통째로 덮어쓰면 안 된다. */
+test('이름을 바꾼 규칙 폴더도 id로 다시 찾아 재사용한다 — 없는 걸로 보고 새로 만들면 안 된다', () => {
+  const c = load();
+  const gid = c.ruleFolderId('card', '노무사');
+  const groups = { [gid]: { id:gid, name:'노무사 명함', kind:'card', order:7, parent:'p1' } };
+  const r = { key:'nomu', toGroupName:'노무사' };
+  const got = c.findRuleGroup(groups, r, 'card');
+  assert.equal(got.gid, gid);              /* 이름은 놓쳤어도 id로 찾아 그대로 재사용 */
+  assert.equal(got.missing, undefined);    /* '없다'고 보고 새로 만들면 안 된다 */
+});
+
+test('이름을 바꾸고 잠근 규칙 폴더는 id로 찾아도 여전히 보낼 수 없다', () => {
+  const c = load();
+  const gid = c.ruleFolderId('card', '노무사');
+  const groups = { [gid]: { id:gid, name:'노무사 명함', kind:'card', locked:true, pw:'1234', lockOwner:'me@x.com' } };
+  const r = { key:'nomu', toGroupName:'노무사' };
+  const got = c.findRuleGroup(groups, r, 'card');
+  assert.equal(got.locked, true);
+  assert.equal(got.gid, null);
+});
+
+/* ruleFolderId — Blocker 2 의 결정적 id 생성기. Firebase 키에 못 쓰는 글자가 새면
+   update() 자체가 통째로 실패한다. */
+test('ruleFolderId 는 Firebase 금지문자를 절대 포함하지 않는다', () => {
+  const c = load();
+  const names = ['노무사', '기관·공공', 'R&D', '  ', '', 'a/b.c#d$e[f]g', '이름\t\n있음'];
+  const forbidden = /[.$#[\]/\x00-\x1f\x7f]/;
+  names.forEach(name=>{
+    const id = c.ruleFolderId('card', name);
+    assert.equal(forbidden.test(id), false, `"${name}" → "${id}" 에 금지문자가 남았다`);
+    assert.ok(id.length > 0);
+  });
+});
+
+test('ruleFolderId 는 빈 이름·공백 이름이라도 쓸 수 있는 id를 만든다', () => {
+  const c = load();
+  assert.equal(c.ruleFolderId('card', ''), 'rule_card_g');
+  assert.equal(c.ruleFolderId('card', '   '), 'rule_card_g');
+});
+
+test('ruleFolderId 는 uid() 가 만드는 id 형태(i로 시작)와 절대 겹치지 않는다', () => {
+  const c = load();
+  ['노무사', '', '  ', 'R&D', 'i노무사'].forEach(name=>{
+    const id = c.ruleFolderId('card', name);
+    assert.equal(id.startsWith('i'), false, `"${name}" → "${id}" 가 uid() 형태와 겹친다`);
+    assert.equal(id.startsWith('rule_'), true);
+  });
+});
+
+/* _atMs — 되돌리기 정렬·프루닝의 기준. at 이 없거나 이상하면 가장 오래된 것(0)으로
+   봐야지, '지금'으로 보면 기록 없는 항목이 되돌리기 버튼에 영원히 눌러앉는다. */
+test('_atMs — 숫자면 그대로 통과시킨다', () => {
+  const c = loadAtMs();
+  assert.equal(c._atMs(1700000000000), 1700000000000);
+  assert.equal(c._atMs(0), 0);
+});
+
+test('_atMs — 서버 타임스탬프 placeholder는 지금으로 본다', () => {
+  const c = loadAtMs();
+  const before = Date.now();
+  const got = c._atMs({ '.sv': 'timestamp' });
+  const after = Date.now();
+  assert.ok(got >= before && got <= after, 'placeholder는 Date.now() 범위 안이어야 한다');
+});
+
+test('_atMs — at 이 없거나 이상하면 가장 오래된 것(0)으로 본다', () => {
+  const c = loadAtMs();
+  assert.equal(c._atMs(undefined), 0);
+  assert.equal(c._atMs(null), 0);
+  assert.equal(c._atMs('2024-01-01'), 0);
+  assert.equal(c._atMs({}), 0);              /* placeholder 모양이 아닌 임의 객체 */
+  assert.equal(c._atMs({ foo:'bar' }), 0);
 });
