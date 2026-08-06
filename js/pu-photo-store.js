@@ -411,6 +411,92 @@
     });
   }
 
+  /* ── 어느 해에 사진이 있는가 ──
+     연도별로 나눠 담았기 때문에, 화면이 올해만 읽으면 해가 바뀌는 순간
+     작년 사진이 통째로 사라져 보인다. 그래서 연도 목록이 필요하다.
+
+     실시간DB 클라이언트에는 "자식 이름만 달라"는 요청(REST의 shallow)이 없다.
+     대신 해마다 **한 장만** 꺼내 보는 가벼운 요청으로 있는지 확인한다.
+     옛 자리(사람별 분리 전)는 규칙이 이미 막았고 대표가 비웠으므로 보지 않는다. */
+  var YEAR_SPAN = 8; // 올해부터 몇 해 거슬러 볼지
+
+  function candidateYears() {
+    var y = new Date().getFullYear(), out = [];
+    for (var i = 0; i < YEAR_SPAN; i++) out.push(String(y - i));
+    out.push('unknown'); // 촬영 시각을 끝내 못 구한 사진 자리
+    return out;
+  }
+
+  function hasAny(ref) {
+    return ref.limitToFirst(1).once('value')
+      .then(function (s) { return s.exists(); })
+      .catch(function () { return false; }); // 규칙이 막으면 없는 것으로 본다
+  }
+
+  function listYears(owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var ys = candidateYears();
+    return Promise.all(ys.map(function (y) {
+      return hasAny(deps.db.ref(base(owner) + '/items/' + y))
+        .then(function (yes) { return yes ? y : null; });
+    })).then(function (r) {
+      var got = r.filter(Boolean);
+      /* 올해는 사진이 없어도 늘 고를 수 있어야 한다 — 없으면 고를 것이 없어진다. */
+      var now = String(new Date().getFullYear());
+      if (got.indexOf(now) < 0) got.unshift(now);
+      return got;
+    });
+  }
+
+  /* ── 담긴 양 ──
+     사진 하나하나에 적어 둔 크기(meta.size)를 더한다. 본문을 내려받지 않고
+     정보만 읽으므로 가볍다. 미리보기(240px)와 정보 몫은 여기 안 들어가므로
+     실제 저장량은 이보다 조금 많다 — 화면에 '대략'이라고 적을 것. */
+  function usage(years, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var ys = (years && years.length) ? years : candidateYears();
+    return Promise.all(ys.map(function (y) {
+      return deps.db.ref(base(owner) + '/items/' + y).once('value')
+        .then(function (s) {
+          var raw = s.val() || {}, bytes = 0, n = 0;
+          Object.keys(raw).forEach(function (id) {
+            var m = raw[id] || {};
+            bytes += Number(m.size) || 0;
+            n++;
+          });
+          return { year: y, bytes: bytes, count: n };
+        })
+        .catch(function () { return { year: y, bytes: 0, count: 0 }; });
+    })).then(function (rows) {
+      var keep = rows.filter(function (r) { return r.count > 0; });
+      return {
+        rows: keep,
+        bytes: keep.reduce(function (a, r) { return a + r.bytes; }, 0),
+        count: keep.reduce(function (a, r) { return a + r.count; }, 0)
+      };
+    });
+  }
+
+  /* ── 연말 백업 기록 ──
+     서버가 없어 12월 31일에 저절로 도는 것은 만들 수 없다. 대신 해가 바뀌고
+     앱을 열었을 때 "아직 안 했다"를 알려 주려면 기록이 남아야 한다.
+     기기가 바뀌어도 유지되도록 내 자리에 적는다(localStorage 아님). */
+  function backupPath(year, owner) { return base(owner) + '/backups/' + year; }
+
+  function getBackups(owner) {
+    if (!deps.db) return Promise.resolve({});
+    return deps.db.ref(base(owner) + '/backups').once('value')
+      .then(function (s) { return s.val() || {}; })
+      .catch(function () { return {}; });
+  }
+
+  function markBackup(year, count, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var u = {};
+    u[backupPath(year, owner)] = { at: Date.now(), count: Number(count) || 0 };
+    return deps.db.ref().update(u);
+  }
+
   /* 미리보기·본문은 볼 때만 한 장씩 받아온다.
      새 자리에 없으면 옛 자리에서 찾는다(옮기기 전에도 사진이 보여야 한다). */
   function loadThumb(year, id, owner) {
@@ -755,6 +841,10 @@
     restorePhoto: restorePhoto,
     purgeOldTrash: purgeOldTrash,
     purgeOne: purgeOne,
+    listYears: listYears,
+    usage: usage,
+    getBackups: getBackups,
+    markBackup: markBackup,
     listDelLog: listDelLog,
     TRASH_DAYS: TRASH_DAYS,
     signIn: signIn,
