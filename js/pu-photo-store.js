@@ -266,21 +266,25 @@
   function deletePhoto(year, id, why) {
     if (!year || !id) return Promise.reject(new Error('지울 사진을 알 수 없습니다'));
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
-    /* 새 자리와 옛 자리 어디에 있든 찾아 담는다. */
+    /* ⚠ 옛 자리(puphotos/items 등)는 읽지도 쓰지도 않는다.
+       2026-08-04 사람별 분리 마지막 단계로 옛 자리 규칙을 지웠다 — 그 뒤로
+       옛 자리 쓰기는 거부되고, 묶음 쓰기(update)는 전부 아니면 전무라서
+       옛 자리 null 한 줄 때문에 **모든 지우기가 통째로 실패**했다
+       (2026-08-06 대표 보고: "자꾸 에러 난다"). 옛 자리는 이미 비워서
+       옮겼으므로 여기서 함께 비울 것도 없다. */
     return Promise.all([
       readOnce(metaPath(year, id)).catch(function () { return null; }),
-      readOnce(legacyRoot('items') + '/' + year + '/' + id).catch(function () { return null; }),
       loadFull(year, id).catch(function () { return null; }),
       loadThumb(year, id).catch(function () { return null; })
     ]).then(function (r) {
-      var meta = r[0] || r[1];
-      if (!meta && !r[2] && !r[3]) {
+      var meta = r[0];
+      if (!meta && !r[1] && !r[2]) {
         throw new Error('사진을 읽지 못해 지우지 않았습니다 — 잠시 뒤 다시 시도해 주세요');
       }
       var u = {};
       var now = Date.now();
       u[trashPath(year, id)] = {
-        meta: meta || {}, full: r[2] || '', thumb: r[3] || '', delAt: now
+        meta: meta || {}, full: r[1] || '', thumb: r[2] || '', delAt: now
       };
       /* 지운 기록은 휴지통과 따로 남는다 — 휴지통을 완전히 비운 뒤에도
          '무엇을 언제 누가 지웠는지'에 답할 수 있어야 한다(증빙 자료를 다루는 앱이다). */
@@ -292,10 +296,6 @@
       u[metaPath(year, id)] = null;
       u[blobPath(year, id)] = null;
       u[thumbPath(year, id)] = null;
-      /* 옛 자리도 함께 비운다 — 안 비우면 지운 사진이 다시 나타난다. */
-      u[legacyRoot('items') + '/' + year + '/' + id] = null;
-      u[legacyRoot('blobs') + '/' + year + '/' + id] = null;
-      u[legacyRoot('thumbs') + '/' + year + '/' + id] = null;
       return deps.db.ref().update(u);
     });
   }
