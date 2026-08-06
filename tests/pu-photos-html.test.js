@@ -1527,3 +1527,66 @@ test('옛 판 판독기로 읽은 사진은 스스로 다시 읽는다', () => {
   // 읽을 때마다 어느 판으로 읽었는지 적어야 다음에 비교할 수 있다
   assert.match(app, /rv: PuDocRead\.READ_VERSION/, '판독 결과에 판 번호를 안 적습니다');
 });
+
+/* ══════ 카메라 초점·명함틀·장수 (2026-08-06 대표 보고: "초점이 정확하게 안 잡힌다") ══════ */
+
+test('화면을 누르면 그 자리에 초점을 잡는다', () => {
+  /* 명함처럼 평평하고 무늬가 적은 것은 자동 초점이 헤맨다 — 사람이 짚어 주는
+     길이 필요하다(리멤버 방식). 푸른카메라에 있던 것을 연속촬영에도 가져왔다. */
+  assert.match(app, /onclick="camTapFocus\(event\)"/, '미리보기에 초점 누르기가 없습니다');
+  const fn = app.match(/async function camTapFocus\([\s\S]*?\n\}/);
+  assert.ok(fn, 'camTapFocus 를 찾을 수 없습니다');
+  assert.match(fn[0], /pointsOfInterest/, '누른 지점을 카메라에 넘기지 않습니다');
+  assert.match(fn[0], /focusMode: 'single-shot'/);
+  /* 누른 자리를 눈으로 확인시켜 준다 — 초점이 늦어도 반응은 즉시여야 한다 */
+  assert.match(fn[0], /camFocus/, '누른 자리 표시가 없습니다');
+});
+
+test('못 하는 기기에는 초점·손전등을 아예 안 보여 준다', () => {
+  /* 눌러도 아무 일이 없는 단추는 헛기대만 만든다. */
+  const fn = app.match(/async function openCam\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /getCapabilities/, '기기가 무엇을 받아 주는지 안 보고 있습니다');
+  assert.match(fn, /camCanTorch = !!caps\.torch/);
+  assert.match(fn, /\$\('camTorch'\)\.style\.display = camCanTorch \? 'block' : 'none'/,
+    '손전등을 못 켜는 기기에서도 단추가 보입니다');
+  const tap = app.match(/async function camTapFocus\([\s\S]*?\n\}/)[0];
+  assert.match(tap, /if \(!camTrack \|\| !camCanFocus\) return;/,
+    '초점을 못 잡는 기기에서도 동그라미가 뜹니다');
+});
+
+test('명함틀을 켜면 그 안만 잘라 담는다', () => {
+  /* 화면 전체를 담으면 책상·바닥까지 들어가 같은 용량에 글씨가 작아진다.
+     회의·현장 사진은 넓게 담아야 하므로 켜고 끌 수 있어야 한다(대표 선택). */
+  /* camShoot 은 안에 중첩 블록이 많아 첫 `\n}` 로는 끝을 못 잡는다 —
+     다음 함수 선언이 나오기 전까지를 본문으로 본다. */
+  const fn = app.match(/async function camShoot\(\)[\s\S]*?(?=\nfunction renderCamStrip)/);
+  assert.ok(fn, 'camShoot 를 찾을 수 없습니다');
+  assert.match(fn[0], /if \(frameOn\(\)\)/, '틀 켜짐 여부를 안 봅니다');
+  assert.match(fn[0], /drawImage\(src, cx, cy, cw, ch, 0, 0, cw, ch\)/, '잘라 담지 않습니다');
+  /* 미리보기는 object-fit:cover 라 화면 좌표와 원본 좌표가 다르다 */
+  assert.match(fn[0], /object-fit:cover|Math\.max\(e\.width \/ v\.videoWidth/,
+    '화면 좌표를 원본 좌표로 옮기지 않습니다');
+  /* 넘치면 검은 띠가 담긴다 */
+  assert.match(fn[0], /Math\.min\(Math\.round\(fw\), sw - cx\)/, '자를 범위를 화면 안으로 가두지 않습니다');
+  // 켜고 끄기와 기억
+  assert.match(app, /function toggleFrame\(/);
+  assert.match(app, /localStorage\.setItem\(CAM_FRAME_LS/, '틀 상태를 기억하지 않습니다');
+});
+
+test('몇 장 찍었는지 위 가운데에 크게 보인다', () => {
+  /* 왼쪽 아래 작은 딱지는 찍는 데 정신이 팔리면 놓친다(대표 지시). */
+  assert.match(app, /id="camCount"/);
+  const fn = app.match(/function renderCamStrip\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /장 찍었습니다/, '장수를 말로 알려 주지 않습니다');
+  /* 상한이 가까우면 남은 수를 알려 준다 — 다 차고 나서 알면 늦다 */
+  assert.match(fn, /장 더/, '상한이 가까울 때 남은 수를 안 알립니다');
+  assert.match(fn, /다 찼습니다/);
+  assert.match(app, /#camCount\{[^}]*margin:0 auto/, '장수가 가운데에 있지 않습니다');
+});
+
+test('손전등을 켜 둔 채 카메라를 끄지 않는다', () => {
+  /* 기기에 따라 불이 남는다. */
+  const fn = app.match(/function camStop\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /torch: false/, '손전등을 끄지 않고 카메라를 닫습니다');
+  assert.match(fn, /camTrack = null/, '트랙 참조가 남습니다');
+});
