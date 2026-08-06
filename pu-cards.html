@@ -4206,6 +4206,49 @@ function classifyRuleList(){
   const list = saved.length ? saved : CLASSIFY_DEFAULTS.map(r=>({...r, words:r.words.slice()}));
   return list.slice().sort((a,b)=>(a.order||0)-(b.order||0));
 }
+/* 이 명함이 이 규칙에 걸리는가 — 회사명과 이름에서 단어를 찾는다.
+   회사 칸이 비고 이름 칸에 상호가 들어온 명함이 많아 둘 다 본다. */
+function ruleHit(it, r){
+  if(!it || !r || r.enabled===false) return false;
+  const hay = String(it.company||'') + ' ' + String(it.name||'');
+  const ws = Array.isArray(r.words) ? r.words : [];
+  for(let i=0;i<ws.length;i++){
+    const w = String(ws[i]||'').trim();
+    if(w && hay.indexOf(w) >= 0) return true;
+  }
+  return false;
+}
+/* 규칙별로 옮길 명함을 고른다.
+   ① 미분류만 — 손으로 넣어 둔 폴더는 절대 안 건드린다
+   ② 지금 보는 종류(명함/사업자)만
+   ③ 위에서 아래로 먼저 맞은 규칙 하나만 (한 장이 두 폴더로 갈 수 없다) */
+function classifyTargets(items, rules, kind){
+  const on = (rules||[]).filter(r=>r && r.key && r.enabled!==false)
+                        .slice().sort((a,b)=>(a.order||0)-(b.order||0));
+  const byKey = {}; on.forEach(r=>{ byKey[r.key] = []; });
+  const unmatched = [];
+  (items||[]).forEach(it=>{
+    if(!it || !it.id) return;
+    if(((it.kind==='biz') ? 'biz' : 'card') !== kind) return;
+    if(String(it.group||'') !== '') return;
+    let hit = null;
+    for(let i=0;i<on.length;i++){ if(ruleHit(it, on[i])){ hit = on[i]; break; } }
+    if(hit) byKey[hit.key].push(it); else unmatched.push(it);
+  });
+  return { byKey, unmatched, keys: on.map(r=>r.key) };
+}
+/* 규칙이 보낼 폴더 찾기 — id 가 아니라 이름으로 가리킨다.
+   폴더를 지웠다 다시 만들어도 규칙이 살아남게 하려는 것이다 (autoFolder 의 ensure 와 같은 뜻).
+   잠긴 폴더로는 보내지 않는다 — 남의 개인 폴더에 명함이 섞이면 되돌리기도 어렵다. */
+function findRuleGroup(groups, r, kind){
+  const nm = _canon(r && r.toGroupName);
+  const g = Object.values(groups||{}).find(x =>
+    x && _canon(x.name) === nm && ((x.kind||'card') === kind));
+  if(!g) return { gid:null, missing:true };
+  if(g.locked) return { gid:null, locked:true };
+  return { gid:g.id };
+}
+/* ══════ 규칙 분류 — 화면 ══════ */
 
 /* ══════ ⚙️ 환경설정 화면 (PC) — 푸른이알피처럼 가로 탭으로 관리 ══════ */
 const SET_TABS=[
