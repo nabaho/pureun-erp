@@ -776,6 +776,7 @@ const Store = {
           if(!Store._trashPurgeDone){ Store._trashPurgeDone=true; setTimeout(purgeTrash, 2000); } });
         this.db.ref(DB_ROOT+'/classifyRules').on('value', s => { state.rules = s.val()||{};
           if(!Store._ruleSeedDone){ Store._ruleSeedDone=true; setTimeout(seedClassifyRules, 3000); } });
+        watchClassifyLog();
       };
       /* 통합 이메일 로그인 (포털·ERP·컨설팅과 같은 Firebase 세션 공유) */
       if (firebase.auth){
@@ -4322,6 +4323,119 @@ function openClassifyRules(){
   h += `<p style="font-size:11.5px;color:var(--sub);line-height:1.7;margin-top:10px">
     ※ 폴더만 바뀝니다. 명함은 지워지지 않고, 적용 뒤 <b>되돌리기</b>로 통째로 되돌릴 수 있어요.</p>`;
   showPanel(h);
+  renderUndoBar();
+}
+/* 규칙 적용 — 명함 수천 장을 하나씩 쓰면 수천 번 통신한다.
+   items·idx·되돌리기 기록을 한 번의 update() 로 몰아 보낸다 (rebuildIdxAll 과 같은 방식). */
+async function applyClassifyRules(){
+  if(Store.mode!=='firebase') return toast('클라우드에 연결된 상태에서만 됩니다');
+  const P = classifyPlan();
+  if(!P.targetN) return toast('옮길 명함이 없습니다');
+
+  /* 보낼 폴더를 미리 확보한다 — 없으면 이 자리에서 만든다 */
+  const gidOf = {};
+  for(const r of P.rules){
+    if(r.enabled===false || P.blocked[r.key]) continue;
+    if(!(P.plan.byKey[r.key]||[]).length) continue;
+    const t = findRuleGroup(state.groups||{}, r, P.kind);
+    if(t.locked) continue;
+    if(t.gid){ gidOf[r.key] = t.gid; continue; }
+    const g = { id:uid(), name:r.toGroupName, kind:P.kind, order:Date.now() };
+    Store.putGroup(g); state.groups[g.id] = g;      /* 폴더는 몇 개뿐이라 따로 써도 된다 */
+    gidOf[r.key] = g.id;
+  }
+
+  const lines = P.rules.filter(r=>gidOf[r.key])
+    .map(r=>`· ${r.toGroupName} ← ${(P.plan.byKey[r.key]||[]).length.toLocaleString()}장`).join('\n');
+  if(!confirm(`아래대로 ${P.targetN.toLocaleString()}장을 옮깁니다.\n\n${lines}\n\n`
+    + `· 폴더만 바뀝니다. 명함은 지워지지 않습니다\n`
+    + `· 이미 폴더에 든 명함은 건드리지 않습니다\n`
+    + `· 적용 뒤 [되돌리기]로 통째로 되돌릴 수 있습니다\n\n진행할까요?`)) return;
+
+  const batchId = uid();
+  const now = Date.now();
+  const upd = {}, from = {};
+  let n = 0;
+  P.rules.forEach(r=>{
+    const gid = gidOf[r.key]; if(!gid) return;
+    (P.plan.byKey[r.key]||[]).forEach(it=>{
+      from[it.id] = String(it.group||'');            /* 되돌릴 때 쓸 원래 폴더 */
+      upd[`items/${it.id}/group`]     = gid;
+      upd[`items/${it.id}/updatedAt`] = now;
+      /* 폴더가 바뀌면 검색색인에 들어갈지 여부도 달라진다 — 같은 통신에 함께 고친다 */
+      upd[`idx/${it.id}`] = idxRecord({ ...it, group:gid });
+      n++;
+    });
+  });
+  upd[`classifyLog/${batchId}`] = { id:batchId, at:now, by:(myEmail||''), n, kind:P.kind, from };
+
+  toast(`분류하는 중… ${n.toLocaleString()}장`, 30000);
+  try{
+    await Store.db.ref(DB_ROOT).update(upd);
+    await pruneClassifyLog();
+    toast(`✅ ${n.toLocaleString()}장을 폴더로 옮겼습니다 — 되돌리려면 [되돌리기]`, 8000);
+    setTimeout(()=>_refresh(openClassifyRules), 400);
+  }catch(e){
+    toast('❌ 실패: ' + ((e&&e.message)||'알 수 없음'), 6000);
+  }
+}
+/* 되돌리기 기록은 최근 10건만 남긴다 — 5,000장 기록이 쌓이면 무거워진다 */
+let _classifyLog = {};
+function watchClassifyLog(){
+  try{
+    if(Store.mode!=='firebase') return;
+    Store.db.ref(DB_ROOT+'/classifyLog').on('value', s=>{ _classifyLog = s.val()||{}; });
+  }catch(e){ console.warn('[watchClassifyLog]', e&&e.message); }
+}
+async function pruneClassifyLog(){
+  try{
+    const all = Object.values(_classifyLog||{}).filter(x=>x&&x.id).sort((a,b)=>(b.at||0)-(a.at||0));
+    if(all.length <= 10) return;
+    const upd = {};
+    all.slice(10).forEach(x=>{ upd[`classifyLog/${x.id}`] = null; });
+    await Store.db.ref(DB_ROOT).update(upd);
+  }catch(e){ console.warn('[pruneClassifyLog]', e&&e.message); }
+}
+/* 되돌리기 줄 — 가장 최근 적용 한 건을 화면에 채운다.
+   Task 3이 남겨 둔 <div id="undoBar"> 안에만 쓴다. 그 자리가 없으면 아무것도 안 한다. */
+function renderUndoBar(){
+  const el = $('undoBar'); if(!el) return;
+  const last = Object.values(_classifyLog||{}).filter(x=>x&&x.id)
+    .sort((a,b)=>(b.at||0)-(a.at||0))[0];
+  if(!last){ el.innerHTML=''; return; }
+  const d = new Date(last.at||0);
+  const when = `${d.getMonth()+1}월 ${d.getDate()}일 ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  el.innerHTML = `<div class="ditem" style="align-items:center;margin-top:10px">
+    <div class="v"><b>↩️ 마지막 분류</b>
+      <br><span style="font-size:12px;color:var(--sub)">${when} · ${(last.n||0).toLocaleString()}장</span></div>
+    <button class="btn ghost" style="flex:none;padding:8px 14px"
+      onclick="undoClassify('${last.id}')">되돌리기</button></div>`;
+}
+/* 되돌리기 — 기록해 둔 '원래 폴더'로 그대로 되돌린다. 이것도 통신 한 번. */
+async function undoClassify(batchId){
+  if(Store.mode!=='firebase') return toast('클라우드에 연결된 상태에서만 됩니다');
+  const log = (_classifyLog||{})[batchId];
+  if(!log || !log.from) return toast('되돌릴 기록을 찾지 못했습니다');
+  const ids = Object.keys(log.from);
+  if(!confirm(`${ids.length.toLocaleString()}장을 분류하기 전 상태로 되돌립니다.\n\n진행할까요?`)) return;
+  const now = Date.now();
+  const upd = {};
+  ids.forEach(id=>{
+    const it = state.items[id]; if(!it) return;      /* 그 사이 지워졌으면 건너뛴다 */
+    const back = String(log.from[id]||'');
+    upd[`items/${id}/group`]     = back;
+    upd[`items/${id}/updatedAt`] = now;
+    upd[`idx/${id}`] = idxRecord({ ...it, group:back });
+  });
+  upd[`classifyLog/${batchId}`] = null;
+  toast('되돌리는 중…', 30000);
+  try{
+    await Store.db.ref(DB_ROOT).update(upd);
+    toast(`↩️ ${ids.length.toLocaleString()}장을 되돌렸습니다`, 6000);
+    setTimeout(()=>_refresh(openClassifyRules), 400);
+  }catch(e){
+    toast('❌ 되돌리기 실패: ' + ((e&&e.message)||'알 수 없음'), 6000);
+  }
 }
 /* 미리보기 — 걸린 명함 20장까지 이름·회사를 그 자리에 펼친다 */
 function ruleSampleHtml(list){
