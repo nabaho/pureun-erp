@@ -160,7 +160,11 @@ button{font-family:inherit;cursor:pointer}
 #bkList .todo{color:#b45309;font-weight:700}
 #viewSettings select{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:8px;padding:5px 8px;font-size:12px;font-weight:700}
 /* 찾기 줄 — 해 고르기 + 검색. 사진이 쌓이면 격자를 눈으로 훑을 수 없다. */
-#findBar{display:flex;align-items:center;gap:6px;padding:0 0 8px;flex-wrap:wrap}
+/* 찾기 줄도 함께 붙는다 — 탭 바로 아래에 얹히도록 top 을 탭 높이만큼 내린다.
+   숫자를 박는 대신 --kindsH 를 스크립트가 실제로 재서 채운다(탭이 두 줄이 되는
+   폰에서도 어긋나지 않는다). */
+#findBar{position:sticky;top:var(--kindsH,44px);z-index:11;background:var(--bg);
+  display:flex;align-items:center;gap:6px;padding:0 0 8px;flex-wrap:wrap}
 #findBar select{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:8px;padding:5px 8px;font-size:12px;font-weight:700}
 #findBar input{flex:1;min-width:160px;border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:8px;padding:6px 10px;font-size:12.5px}
 #findBar input:focus{outline:none;border-color:var(--blue)}
@@ -173,7 +177,16 @@ button{font-family:inherit;cursor:pointer}
 
 /* 분류 탭 — 전체사진 · 명함 · 사업자등록증 · 급여서류 · 기타서류.
    장수가 0인 탭도 남긴다 — 숨으면 그런 분류가 있는 줄도 모른다. */
-#kinds{display:flex;gap:6px;padding:2px 0 9px;border-bottom:1px solid var(--line);margin-bottom:11px;flex-wrap:wrap}
+/* ── 분류 탭·찾기 줄 틀고정 (대표 지시 2026-08-06) ──
+   사진이 수십 장이면 아래로 내려간 뒤 탭을 누르려고 다시 맨 위로 올라와야 했다.
+   ⚠ 스크롤하는 상자는 #main(넓은 화면)과 #home(폰)으로 서로 다르다 —
+   sticky 는 **스크롤하는 조상** 기준으로 붙으므로 양쪽 다 확인해야 한다.
+   배경색을 반드시 준다. 투명하면 사진이 그 밑으로 비쳐 글씨를 덮는다. */
+#kinds{position:sticky;top:0;z-index:12;background:var(--bg);
+  display:flex;gap:6px;padding:8px 0 9px;border-bottom:1px solid var(--line);margin-bottom:11px;flex-wrap:wrap}
+/* 사진을 끌어와 놓을 수 있는 탭 — 놓기 전에 어디로 갈지 눈에 보여야 한다 */
+#kinds button.drop{border-color:var(--blue);background:#e8eefc;color:var(--blue);
+  box-shadow:0 0 0 2px rgba(30,64,175,.25)}
 #kinds button{border:1px solid var(--line);background:#fff;color:var(--sub);border-radius:9px;
   padding:7px 13px;font-size:12.5px;font-weight:700;font-family:inherit}
 #kinds button.on{border-color:var(--blue);background:var(--blue);color:#fff}
@@ -1071,7 +1084,11 @@ let dragDepth = 0;
    그 drop 은 무슨 일이 있어도 파일로 받지 않는다. */
 let selfDrag = false;
 document.addEventListener('dragstart', function () { selfDrag = true; }, true);
-document.addEventListener('dragend', function () { selfDrag = false; }, true);
+document.addEventListener('dragend', function () {
+  selfDrag = false;
+  photoDragIds = null;   // 어디에도 못 놓고 끝났으면 들고 있던 것을 놓는다
+  markDropTab(null);
+}, true);
 /* ⚠ 스스로 풀리는 길을 반드시 둔다.
    드래그가 dragend·drop 없이 취소되는 경우가 있는데(브라우저마다 다름), 그때
    이 값이 참으로 굳으면 **진짜 파일 놓기가 조용히 무시된다.** 올린 줄 알고
@@ -1469,9 +1486,21 @@ function queueRead(job) {
    (조용히 안 하면 "왜 저건 판독이 안 됐지"가 된다). */
 const AUTO_READ_MAX = 20;
 
+/* 다시 읽어야 하는가 — ①아직 안 읽었거나 ②옛 판 판독기로 읽은 것.
+   ②가 없으면 회의사진·급여서류를 가르치기 전에 읽힌 사진이 'other' 로 굳어
+   기타서류에 영원히 남는다(2026-08-06 대표 화면: 회의사진 0장, 기타서류 6장).
+   ⚠ 사람이 「확인했음」을 누른 것은 다시 읽지 않는다 — 사람 손으로 정리한
+   것을 기계가 도로 뒤집으면 그 표시가 무의미해진다. */
+function needsRead(it) {
+  const r = it && it.meta && it.meta.read;
+  if (!r) return true;
+  if (r.ack) return false;
+  return (r.rv || 0) < PuDocRead.READ_VERSION;
+}
+
 function autoReadPending() {
   if (viewingOther()) return;               // 남의 사진은 손대지 않는다
-  const todo = gridItems.filter(function (it) { return !it.meta.read; });
+  const todo = gridItems.filter(needsRead);
   if (!todo.length) { $('autoNote').style.display = 'none'; return; }
   const take = todo.slice(0, AUTO_READ_MAX);
   take.forEach(function (it) { queuePhotoRead(it.id); });
@@ -1542,7 +1571,10 @@ function startRead(job) {
     const read = {
       kind: r.kind, fields: r.fields, bizNoOk: r.bizNoOk,
       ntsChecked: r.ntsChecked, ntsState: r.ntsState,
-      auto: v.auto, why: v.why, error: r.error, at: Date.now()
+      auto: v.auto, why: v.why, error: r.error, at: Date.now(),
+      /* 어느 판 판독기로 읽었는지 — 종류를 더 가릴 수 있게 되면 이 값을 보고
+         옛 결과를 다시 읽는다(자동 분류가 뒤늦게라도 맞아떨어져야 한다). */
+      rv: PuDocRead.READ_VERSION
     };
     job._reading = false;
     job._read = read;
@@ -2014,6 +2046,10 @@ $('grid').addEventListener('dragstart', function (ev) {
   const id = cell.getAttribute('data-id');
   const it = gridItems.find(function (x) { return x.id === id; });
   if (!it) return;
+  /* 분류 탭으로 끌어다 놓을 수 있게 번호를 들고 간다.
+     고른 것이 있고 그 안에 이 사진이 들어 있으면 **고른 전부**를 옮긴다 —
+     한 장씩 열 번 끄는 것보다 낫다. 아니면 끈 그 한 장만. */
+  photoDragIds = (selected.size && selected.has(id)) ? Array.from(selected) : [id];
   const r = it.meta.read || {};
   PuDrag.set(ev.dataTransfer, {
     app: 'pu-photos',
@@ -2256,6 +2292,9 @@ function renderKindTabs() {
       '<span class="narrow-only">' + esc(short) + '</span>' +
       '<span class="n">' + (c[k] || 0) + '</span></button>';
   }).join('') + '<button class="add" onclick="openAddKind()" title="새 분류를 직접 만듭니다">+ 분류 추가</button>';
+  /* 탭 줄 높이가 바뀌었을 수 있다(직접분류가 늘거나 폰에서 두 줄이 되는 등) —
+     찾기 줄이 붙을 자리를 다시 잰다. 안 하면 찾기 줄이 탭을 덮는다. */
+  syncStickyTop();
 }
 
 /* ── 탭 끌어서 순서 바꾸기 (마우스 전용 — 폰은 끌기가 스크롤과 겹친다) ──
@@ -2272,9 +2311,27 @@ $('kinds').addEventListener('dragstart', function (e) {
   }
 });
 $('kinds').addEventListener('dragover', function (e) {
-  if (tabDragKey) e.preventDefault();   // 이게 없으면 놓기가 허용되지 않는다
+  /* 탭을 끄는 중이거나, 사진을 끌어와 분류를 바꾸려는 중이면 놓기를 허용한다.
+     이게 없으면 브라우저가 놓기를 막는다. */
+  if (tabDragKey || photoDragIds) {
+    e.preventDefault();
+    const b = e.target.closest ? e.target.closest('button[data-key]') : null;
+    markDropTab(photoDragIds && b && canRetag(b.getAttribute('data-key')) ? b : null);
+  }
+});
+$('kinds').addEventListener('dragleave', function (e) {
+  if (!e.relatedTarget || !$('kinds').contains(e.relatedTarget)) markDropTab(null);
 });
 $('kinds').addEventListener('drop', function (e) {
+  /* ① 사진을 탭에 놓았다 — 그 사진의 분류를 바꾼다(대표 지시 2026-08-06) */
+  if (photoDragIds) {
+    e.preventDefault();
+    const b = e.target.closest ? e.target.closest('button[data-key]') : null;
+    const ids = photoDragIds; photoDragIds = null; markDropTab(null);
+    if (b) retagPhotos(ids, b.getAttribute('data-key'));
+    return;
+  }
+  /* ② 탭끼리 순서 바꾸기 */
   if (!tabDragKey) return;
   e.preventDefault();
   const key = tabDragKey; tabDragKey = null;
@@ -2292,6 +2349,93 @@ $('kinds').addEventListener('drop', function (e) {
   renderKindTabs();
 });
 $('kinds').addEventListener('dragend', function () { tabDragKey = null; });
+
+/* ══════ 사진을 탭으로 끌어 분류 바꾸기 ══════
+   대표 지시(2026-08-06). AI가 잘못 가린 것을 사람이 한 번에 바로잡는 길이다.
+   판독 결과의 kind 만 사람 손으로 고치고, **읽어 둔 항목(이름·전화 등)은 그대로 둔다** —
+   분류가 틀렸다고 읽은 내용까지 틀린 것은 아니다. */
+let photoDragIds = null;    // 지금 끌고 있는 사진 번호들(고른 게 있으면 그 전부)
+
+/* 사람이 손으로 넣을 수 있는 탭인가.
+   ① 직접 만든 분류 — 사람이 만든 칸이니 당연히 받는다.
+   ② AI 분류 중 종류가 **하나뿐인** 탭.
+   「전체사진」은 분류가 아니라 모아 보기이고, 「사업자등록증」은 두 종류(bizreg·sme)를
+   함께 담아 어느 쪽으로 넣을지 정할 수 없다 — 애매한 것은 아예 못 놓게 한다. */
+function isCustomTab(key) { return String(key).indexOf('custom:') === 0; }
+function canRetag(key) {
+  if (isCustomTab(key)) return !!CUSTOM_KINDS[String(key).slice('custom:'.length)];
+  const t = KIND_TABS.find(function (x) { return x.key === key; });
+  return !!(t && t.kinds && t.kinds.length === 1);
+}
+function kindForTab(key) {
+  const t = KIND_TABS.find(function (x) { return x.key === key; });
+  return t && t.kinds && t.kinds.length === 1 ? t.kinds[0] : null;
+}
+function tabLabelOf(key) {
+  if (isCustomTab(key)) return customTabLabel(key);
+  const t = KIND_TABS.find(function (x) { return x.key === key; });
+  return (t && t.label) || '';
+}
+
+function markDropTab(btn) {
+  [].forEach.call($('kinds').querySelectorAll('button'), function (b) {
+    b.classList.toggle('drop', b === btn);
+  });
+}
+
+function retagPhotos(ids, tabKey) {
+  if (!ids.length || !canRetag(tabKey)) return;
+  const label = tabLabelOf(tabKey);
+  const custom = isCustomTab(tabKey) ? String(tabKey).slice('custom:'.length) : null;
+  const kind = custom ? null : kindForTab(tabKey);
+  let done = 0, failed = 0;
+  let chain = Promise.resolve();
+  ids.forEach(function (id) {
+    chain = chain.then(function () {
+      const it = gridItems.find(function (x) { return x.id === id; });
+      if (!it) return;
+      /* 직접 만든 분류는 AI 판독 결과와 **따로** 저장된다(meta.customKind).
+         AI 가 가린 종류를 덮어쓰지 않는다 — 「명함이면서 ○○건」일 수 있다. */
+      if (custom) {
+        return PuPhotoStore.setCustomKind(gridYear, id, custom, it.meta.__ownerUid || gridOwner)
+          .then(function () {
+            it.meta = Object.assign({}, it.meta, { customKind: custom });
+            done++;
+          }).catch(function (e) { failed++; console.warn('[분류 바꾸기]', id, e); });
+      }
+      /* 읽어 둔 것을 살려 두고 종류만 바꾼다. 사람이 정한 것이므로
+         ack: true 로 「확인 필요」에서 빼고, 다시 판독이 도로 뒤집지 않게 막는다. */
+      const read = Object.assign({}, it.meta.read || { fields: {} }, {
+        kind: kind, auto: false, why: '사람이 분류를 정했습니다', ack: true,
+        by: PuPhotoStore.myName() || '', at: Date.now(), rv: PuDocRead.READ_VERSION
+      });
+      it.meta = Object.assign({}, it.meta, { read: read });
+      return PuPhotoStore.saveRead(gridYear, id, read)
+        .then(function () { done++; })
+        .catch(function (e) { failed++; console.warn('[분류 바꾸기]', id, e); });
+    });
+  });
+  chain.then(function () {
+    selected.clear();
+    renderKindTabs();
+    renderGridBar();
+    renderGrid();
+    if (failed) {
+      alert(done + '장을 「' + label + '」(으)로 옮겼습니다.\n' +
+        failed + '장은 저장하지 못했습니다 — 잠시 뒤 다시 해 주세요.');
+    } else {
+      toast(done + '장을 「' + label + '」(으)로 옮겼습니다');
+    }
+  });
+}
+
+/* 찾기 줄이 붙을 자리 = 분류 탭의 실제 높이.
+   숫자를 CSS 에 박으면 탭이 두 줄이 되는 폰에서 찾기 줄이 탭을 덮는다. */
+function syncStickyTop() {
+  const h = $('kinds').getBoundingClientRect().height;
+  if (h) document.documentElement.style.setProperty('--kindsH', Math.round(h) + 'px');
+}
+window.addEventListener('resize', syncStickyTop);
 
 function pickKind(key) {
   kindTab = key;
@@ -2834,7 +2978,10 @@ function readPhoto(id) {
     const read = {
       kind: r.kind, fields: r.fields, bizNoOk: r.bizNoOk,
       ntsChecked: r.ntsChecked, ntsState: r.ntsState,
-      auto: v.auto, why: v.why, error: r.error, at: Date.now()
+      auto: v.auto, why: v.why, error: r.error, at: Date.now(),
+      /* 어느 판 판독기로 읽었는지 — 종류를 더 가릴 수 있게 되면 이 값을 보고
+         옛 결과를 다시 읽는다(자동 분류가 뒤늦게라도 맞아떨어져야 한다). */
+      rv: PuDocRead.READ_VERSION
     };
     it.meta = Object.assign({}, it.meta, { read: read });
     if (viewerId === id) renderReadPanel(it);

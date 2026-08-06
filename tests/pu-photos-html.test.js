@@ -1462,3 +1462,68 @@ test('로그인하면 분류 목록을 불러온다', () => {
   const fn = app.match(/function loadCustomKinds\([\s\S]*?\n\}/)[0];
   assert.match(fn, /PuPhotoStore\.listCustomKinds\(\)/);
 });
+
+/* ══════ 사진을 탭으로 끌어 분류 바꾸기 · 틀고정 · 다시 판독 (2026-08-06 대표 지시) ══════ */
+
+test('사진을 탭에 끌어다 놓으면 분류가 바뀐다', () => {
+  /* AI가 잘못 가린 것을 사람이 한 번에 바로잡는 길. */
+  assert.match(app, /let photoDragIds = null/, '끌고 있는 사진을 기억하지 않습니다');
+  const ds = app.match(/\$\('grid'\)\.addEventListener\('dragstart'[\s\S]*?\n\}\);/);
+  assert.ok(ds, '격자 dragstart 를 찾을 수 없습니다');
+  assert.match(ds[0], /photoDragIds =/, '격자에서 끌 때 사진 번호를 안 싣습니다');
+  /* 고른 것이 있으면 한꺼번에 옮긴다 — 한 장씩 열 번 끄는 것보다 낫다 */
+  assert.match(ds[0], /selected\.size && selected\.has\(id\)/, '고른 여러 장을 함께 옮기지 않습니다');
+  const fn = app.match(/function retagPhotos\([\s\S]*?\n\}/);
+  assert.ok(fn, 'retagPhotos 를 찾을 수 없습니다');
+  assert.match(fn[0], /PuPhotoStore\.saveRead\(/, '바꾼 분류를 저장하지 않습니다');
+});
+
+test('분류를 바꿔도 읽어 둔 항목은 살린다', () => {
+  /* 분류가 틀렸다고 읽은 내용(이름·전화 등)까지 틀린 것은 아니다.
+     Object.assign 으로 기존 read 위에 kind 만 덮어야 한다. */
+  const fn = app.match(/function retagPhotos\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /Object\.assign\(\{\}, it\.meta\.read/, '읽어 둔 결과를 통째로 버리고 있습니다');
+  /* 사람이 정한 것이므로 「확인 필요」에서 빠지고, 다시 판독이 도로 뒤집지 않아야 한다 */
+  assert.match(fn, /ack: true/, '사람이 정한 분류가 「확인 필요」에 계속 남습니다');
+  assert.match(fn, /auto: false/, '사람이 정한 것을 기계가 정한 것으로 적고 있습니다');
+});
+
+test('아무 탭에나 놓을 수는 없다 — 애매한 탭은 막는다', () => {
+  /* 「전체사진」은 분류가 아니라 모아 보기이고, 「사업자등록증」은 두 종류
+     (bizreg·sme)를 함께 담아 어느 쪽으로 넣을지 정할 수 없다. */
+  const fn = app.match(/function canRetag\([\s\S]*?\n\}/);
+  assert.ok(fn, 'canRetag 를 찾을 수 없습니다');
+  assert.match(fn[0], /kinds\.length === 1/, '종류가 하나인 탭만 받도록 막지 않았습니다');
+  // 놓기 전에 어디로 갈지 눈에 보여야 한다
+  assert.match(app, /#kinds button\.drop\{/, '놓을 자리 표시가 없습니다');
+  assert.match(app, /function markDropTab\(/);
+});
+
+test('분류 탭과 찾기 줄은 스크롤해도 위에 붙어 있다', () => {
+  /* 사진이 수십 장이면 아래로 내려간 뒤 탭을 누르려고 다시 맨 위로 올라와야 했다. */
+  assert.match(app, /#kinds\{position:sticky;top:0/, '분류 탭이 고정되지 않습니다');
+  assert.match(app, /#findBar\{position:sticky/, '찾기 줄이 고정되지 않습니다');
+  /* 배경이 없으면 사진이 밑으로 비쳐 글씨를 덮는다 */
+  assert.match(app, /#kinds\{position:sticky[^}]*background:var\(--bg\)/, '분류 탭이 투명합니다');
+  assert.match(app, /#findBar\{position:sticky[^}]*background:var\(--bg\)/, '찾기 줄이 투명합니다');
+  /* 찾기 줄이 붙을 자리는 탭 높이를 **실제로 재서** 채운다 — 숫자를 박으면
+     탭이 두 줄이 되는 폰에서 찾기 줄이 탭을 덮는다 */
+  assert.match(app, /function syncStickyTop\(\)/);
+  assert.match(app, /setProperty\('--kindsH'/);
+  const rk = app.match(/function renderKindTabs\(\)[\s\S]*?\n\}/);
+  assert.match(rk[0], /syncStickyTop\(\)/, '탭을 다시 그린 뒤 높이를 안 잽니다');
+});
+
+test('옛 판 판독기로 읽은 사진은 스스로 다시 읽는다', () => {
+  /* 회의사진·급여서류를 가르치기 전에 읽힌 사진이 'other' 로 굳어 기타서류에
+     영원히 남았다(2026-08-06 대표 화면: 회의사진 0장, 기타서류 6장).
+     사람이 한 장씩 「다시 판독」을 눌러야만 풀리는 것은 자동 분류가 아니다. */
+  const fn = app.match(/function needsRead\([\s\S]*?\n\}/);
+  assert.ok(fn, 'needsRead 를 찾을 수 없습니다');
+  assert.match(fn[0], /PuDocRead\.READ_VERSION/, '판독기 판 번호를 보지 않습니다');
+  assert.match(fn[0], /r\.ack/, '사람이 확인한 것까지 도로 뒤집습니다');
+  const auto = app.match(/function autoReadPending\([\s\S]*?\n\}/);
+  assert.match(auto[0], /filter\(needsRead\)/, '자동 판독이 옛 결과를 안 집어 옵니다');
+  // 읽을 때마다 어느 판으로 읽었는지 적어야 다음에 비교할 수 있다
+  assert.match(app, /rv: PuDocRead\.READ_VERSION/, '판독 결과에 판 번호를 안 적습니다');
+});

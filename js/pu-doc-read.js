@@ -146,6 +146,16 @@
 
   var KINDS = { card: 1, bizreg: 1, sme: 1, payslip: 1, meeting: 1, other: 1 };
 
+  /* ── 판독기 판 번호 ──
+     읽어 둔 결과에 이 번호를 함께 적는다. 가릴 수 있는 종류를 늘리면 번호를
+     올리고, 사진첩은 **옛 번호로 읽은 사진을 다시 읽는다.**
+     이게 없어서 실제로 당했다(2026-08-06 대표 화면): 회의사진 탭이 0장인데
+     기타서류에 6장이 앉아 있었다 — meeting·payslip 을 가르치기 전에 읽혀
+     'other' 로 굳은 사진들이었다. 사람이 한 장씩 「다시 판독」을 눌러야만
+     풀리는 상태는 자동 분류라고 할 수 없다.
+     ⚠ 종류를 늘리거나 프롬프트를 고치면 이 번호를 반드시 올릴 것. */
+  var READ_VERSION = 2;   // 1 = card·bizreg·sme·meeting·other / 2 = payslip 추가
+
   function fail(message) {
     return { kind: 'other', fields: {}, bizNoOk: null, ntsChecked: false, ntsState: null, error: message };
   }
@@ -407,6 +417,7 @@
     keysFrom: keysFrom,
     MODELS: MODELS,
     PROMPTS: { all: PROMPT_ALL },
+    READ_VERSION: READ_VERSION,
     read: read,
     autoOk: autoOk
   };
