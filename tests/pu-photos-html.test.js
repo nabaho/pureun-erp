@@ -511,11 +511,19 @@ test('여러 장 판독 중 한 장이 실패해도 나머지를 계속한다', 
 
 /* ── 2단 화면 · 사진 지우기 ── */
 
-test('카메라 단추는 손으로 만지는 기기에만 보인다', () => {
-  // PC 에는 찍을 카메라가 없다(대표 지시). 화면 폭이 아니라 **만지는 기기인지**로
-  // 가른다 — 좁게 띄운 PC 창에 보이면 눌러도 아무 일이 없어 헛단추가 된다.
+test('카메라 단추는 손으로 만지는 기기에만 보인다 — 판정은 스크립트가 한다', () => {
+  /* PC 에는 찍을 카메라가 없다(대표 지시). 예전에는 CSS 미디어(hover/pointer)로
+     갈랐는데 **폰의 웨일 브라우저가 그 판정에 안 걸려 카메라 단추가 통째로
+     사라졌다**(2026-08-06 대표 화면 — 옆 칸만 비어 보였다). 잘못 숨는 것이
+     잘못 보이는 것보다 나쁘므로 자바스크립트 터치 판정으로 켠다. */
   assert.match(app, /#camBtn\{display:none\}/);
-  assert.match(app, /@media \(hover:none\) and \(pointer:coarse\)\{ #camBtn\{display:block\}/);
+  assert.match(app, /#home\.touch #camBtn\{display:block\}/);
+  assert.match(app, /function isTouchDevice\(\)/);
+  assert.match(app, /maxTouchPoints/, '터치 판정이 ontouchstart 하나에만 기댑니다');
+  assert.match(app, /classList\.add\('touch'\)/, '판정 결과를 화면에 반영하지 않습니다');
+  // CSS 미디어 판정으로 되돌아가면 웨일에서 또 사라진다
+  assert.ok(!/@media[^{]*hover:none[^{]*\{ ?#camBtn/.test(app),
+    'CSS 미디어로 카메라를 켜고 있습니다 — 웨일에서 사라졌던 방식입니다');
 });
 
 test('폰에서는 대시보드를 줄인다 — 사진이 화면 밖으로 밀리지 않게', () => {
@@ -523,11 +531,17 @@ test('폰에서는 대시보드를 줄인다 — 사진이 화면 밖으로 밀�
   assert.match(app, /@media \(max-width:899px\)/);
   const m = app.match(/@media \(max-width:899px\)\{([\s\S]*?)\n\}/);
   assert.ok(m, '폰 규칙을 찾을 수 없습니다');
-  // 서류·카메라를 나란히
-  assert.match(m[1], /\.row2\{display:grid;grid-template-columns:1fr 1fr/);
+  // 서류·카메라 두 칸은 **카메라가 보이는 기기에서만** — 아니면 오른쪽이 빈 구멍이 된다
+  assert.match(m[1], /#home\.touch \.row2\{display:grid;grid-template-columns:1fr 1fr/);
   // 긴 안내를 짧은 것으로 갈아 끼운다
   assert.match(m[1], /\.dochint\{display:none\}/);
   assert.match(m[1], /\.dochint\.s\{display:block/);
+  /* 30장 안내는 위 한 줄에 합쳤다 — 상한 숫자는 스크립트가 UPLOAD_MAX 에서
+     채운다. 마크업에 30을 박으면 상한을 바꿀 때 두 곳이 어긋난다. */
+  assert.match(m[1], /\.maxhint\{display:none\}/);
+  assert.match(app, /id="maxHintS"/);
+  assert.match(app, /\$\('maxHintS'\)\.textContent = '한 번에 ' \+ PuPhotoStore\.UPLOAD_MAX/);
+  assert.ok(!/dochint s">[^<]*30장/.test(app), '상한 숫자가 마크업에 박혀 있습니다');
   // PC 기본값은 종전대로(넓은 화면은 줄일 이유가 없다)
   assert.match(app, /#home \.row2\{display:block\}/);
   assert.match(app, /\.narrow-only\{display:none\}/);
@@ -945,6 +959,18 @@ test('넓은 화면에서 사진과 판독을 좌우로 나눈다', () => {
   assert.ok(mq, '크게 보기의 넓은 화면 규칙을 찾을 수 없습니다');
   assert.match(mq, /#viewerBody\{flex-direction:row\}/);
   assert.match(mq, /#viewerPic\{flex:1\.5/, '사진 자리가 판독보다 넓어야 합니다');
+  /* 대표 지시(2026-08-06): 판독 정보가 사진 **왼쪽**에 선다.
+     폰(세로 쌓임)은 사진이 먼저다 — order 는 넓은 화면 규칙 안에만 있어야 한다. */
+  assert.match(mq, /#readPanel\{[^}]*order:-1/, '판독 정보가 사진 왼쪽에 있지 않습니다');
+  const bodyRule = app.match(/#viewerBody\{[^}]*\}/)[0];
+  assert.ok(!/order/.test(bodyRule), '기본 규칙에 order 가 섞였습니다 — 폰에서 정보가 사진 위로 온다');
+});
+
+test('판독 카드는 밝은색이다 — 어두운 화면에서 글이 잘 보여야 한다', () => {
+  /* 대표 지시(2026-08-06): "밝은색 화면으로". 사진 뒤는 어두운 채로 두고
+     판독 카드만 흰 바탕 — 사진은 어두운 바탕에서, 글은 밝은 바탕에서 잘 보인다. */
+  assert.match(app, /#readPanel \.box\{background:#fff/, '판독 카드가 어두운 색입니다');
+  assert.match(app, /#readPanel table\{[^}]*color:var\(--ink\)/, '판독 글자가 어두운 화면용 색입니다');
 });
 
 test('단추는 두 칸씩 놓고 지우기는 혼자 한 줄을 쓴다', () => {
