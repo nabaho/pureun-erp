@@ -4253,6 +4253,14 @@ function findRuleGroup(groups, r, kind){
   return { gid:g.id };
 }
 /* ══════ 규칙 분류 — 화면 ══════ */
+/* 규칙이 새로 만들 폴더의 id — uid() 대신 종류+이름에서 그대로 뽑는다.
+   두 사람이 동시에 [분류하기]를 눌러도 같은 폴더 하나로 모인다
+   (seedClassifyRules 가 규칙 key를 고정해 두는 것과 같은 이유).
+   Firebase 키 금지문자(. $ # [ ] / 와 제어문자)만 밑줄로 치환한다. */
+function ruleFolderId(kind, name){
+  const safe = _canon(name).replace(/[.$#[\]/\x00-\x1f\x7f]/g, '_');
+  return `rule_${kind}_${safe || 'g'}`;
+}
 /* 지금 보고 있는 종류(명함/사업자) 기준으로 규칙별 걸린 장수를 센다.
    화면과 적용이 같은 답을 보게 이 한 곳에서만 계산한다. */
 function classifyPlan(){
@@ -4332,17 +4340,18 @@ async function applyClassifyRules(){
   const P = classifyPlan();
   if(!P.targetN) return toast('옮길 명함이 없습니다');
 
-  /* 보낼 폴더를 미리 확보한다 — 없으면 이 자리에서 만든다 */
-  const gidOf = {};
+  /* 보낼 폴더를 미리 확보한다 — 없으면 여기서는 '만들 정보'만 메모리에 쥐고 있는다.
+     실제로 쓰기(groups/…)는 취소해도 빈 폴더가 안 남도록 확인 뒤 카드와 한 통신에 같이 보낸다. */
+  const gidOf = {}; const newGroups = {};
   for(const r of P.rules){
     if(r.enabled===false || P.blocked[r.key]) continue;
     if(!(P.plan.byKey[r.key]||[]).length) continue;
     const t = findRuleGroup(state.groups||{}, r, P.kind);
     if(t.locked) continue;
     if(t.gid){ gidOf[r.key] = t.gid; continue; }
-    const g = { id:uid(), name:r.toGroupName, kind:P.kind, order:Date.now() };
-    Store.putGroup(g); state.groups[g.id] = g;      /* 폴더는 몇 개뿐이라 따로 써도 된다 */
-    gidOf[r.key] = g.id;
+    const gid = ruleFolderId(P.kind, r.toGroupName);
+    newGroups[gid] = { id:gid, name:r.toGroupName, kind:P.kind, order:Date.now() };
+    gidOf[r.key] = gid;
   }
 
   const lines = P.rules.filter(r=>gidOf[r.key])
@@ -4352,86 +4361,157 @@ async function applyClassifyRules(){
     + `· 이미 폴더에 든 명함은 건드리지 않습니다\n`
     + `· 적용 뒤 [되돌리기]로 통째로 되돌릴 수 있습니다\n\n진행할까요?`)) return;
 
+  /* confirm() 이 떠 있는 동안 Firebase 리스너는 멈춰 있다 — 그 사이 동료가 지운 카드가 있어도
+     여기 온 순간까진 반영이 안 돼 있을 수 있다. 한 박자 넘겨 큐에 쌓인 갱신을 먼저 흘려보낸다. */
+  await new Promise(r=>setTimeout(r,0));
+
   const batchId = uid();
-  const now = Date.now();
-  const upd = {}, from = {};
-  let n = 0;
+  const upd = {}, logItems = {};
+  const usedGids = new Set();
+  let n = 0, skipped = 0;
   P.rules.forEach(r=>{
     const gid = gidOf[r.key]; if(!gid) return;
-    (P.plan.byKey[r.key]||[]).forEach(it=>{
-      from[it.id] = String(it.group||'');            /* 되돌릴 때 쓸 원래 폴더 */
-      upd[`items/${it.id}/group`]     = gid;
-      upd[`items/${it.id}/updatedAt`] = now;
-      /* 폴더가 바뀌면 검색색인에 들어갈지 여부도 달라진다 — 같은 통신에 함께 고친다 */
-      upd[`idx/${it.id}`] = idxRecord({ ...it, group:gid });
+    (P.plan.byKey[r.key]||[]).forEach(planned=>{
+      /* confirm() 을 보는 동안 지워졌거나, 이미 다른 곳으로 옮겨졌으면 건드리지 않는다 —
+         그 사이의 사람 손 처리가 규칙보다 우선한다 */
+      const cur = state.items[planned.id];
+      if(!cur || String(cur.group||'') !== ''){ skipped++; return; }
+      logItems[cur.id] = { from:'', to:gid };         /* 되돌릴 때 견줘 볼 원래·새 폴더 둘 다 남긴다 */
+      upd[`items/${cur.id}/group`]     = gid;
+      upd[`items/${cur.id}/updatedAt`] = Date.now();
+      /* 폴더가 바뀌면 검색색인에 들어갈지 여부도 달라진다 — 같은 통신에 함께 고친다.
+         (잠긴 폴더 제외는 writeIdx·rebuildIdxAll 과 같은 규칙) */
+      const merged = { ...cur, group:gid };
+      upd[`idx/${cur.id}`] = inLockedGroup(merged) ? null : idxRecord(merged);
+      usedGids.add(gid);
       n++;
     });
   });
-  upd[`classifyLog/${batchId}`] = { id:batchId, at:now, by:(myEmail||''), n, kind:P.kind, from };
+
+  if(!n){ toast('그 사이 대상이 모두 사라지거나 옮겨졌습니다 — 다시 열어 확인해 주세요', 6000); return; }
+
+  /* 카드가 한 장도 안 간 폴더는 만들지 않는다 — 취소·전량 스킵 뒤에 빈 폴더만 남는 일을 막는다 */
+  Object.values(newGroups).forEach(g=>{ if(usedGids.has(g.id)) upd[`groups/${g.id}`] = g; });
+  upd[`classifyLog/${batchId}`]      = { id:batchId, at:firebase.database.ServerValue.TIMESTAMP, by:(myEmail||''), n, kind:P.kind };
+  upd[`classifyLogItems/${batchId}`] = logItems;         /* 카드별 원래·새 폴더 — 되돌리기만 쓰는 무거운 맵이라 따로 둔다 */
 
   toast(`분류하는 중… ${n.toLocaleString()}장`, 30000);
   try{
     await Store.db.ref(DB_ROOT).update(upd);
+    Object.values(newGroups).forEach(g=>{ if(usedGids.has(g.id)) state.groups[g.id] = g; }); /* 실제로 쓴 만큼만 로컬에도 반영 */
     await pruneClassifyLog();
-    toast(`✅ ${n.toLocaleString()}장을 폴더로 옮겼습니다 — 되돌리려면 [되돌리기]`, 8000);
+    let msg = `✅ ${n.toLocaleString()}장을 폴더로 옮겼습니다 — 되돌리려면 [되돌리기]`;
+    if(skipped) msg += ` (그 사이 지워지거나 옮겨진 ${skipped.toLocaleString()}장 제외)`;
+    toast(msg, 8000);
     setTimeout(()=>_refresh(openClassifyRules), 400);
   }catch(e){
     toast('❌ 실패: ' + ((e&&e.message)||'알 수 없음'), 6000);
   }
 }
-/* 되돌리기 기록은 최근 10건만 남긴다 — 5,000장 기록이 쌓이면 무거워진다 */
+/* 되돌리기 기록은 최근 10건만 남긴다 — 5,000장 기록이 쌓이면 무거워진다.
+   classifyLog 에는 날짜·건수 같은 가벼운 정보만 담는다. 카드 5,000장짜리 맵(=classifyLogItems)은
+   여기서 구독하지 않는다 — 그걸 구독하면 화면 한 줄 그리자고 전 직원이 로그인마다,
+   그리고 남이 분류할 때마다 그 무거운 맵을 통째로 받게 된다. 되돌릴 때만 once() 로 딱 한 번 받는다. */
 let _classifyLog = {};
+/* at 은 ServerValue.TIMESTAMP 로 쓴다(느리거나 빠른 PC 시계가 되돌리기 순서를 정하면 안 되니까).
+   그런데 로컬 낙관적 갱신 단계에서는 아직 서버가 채워주기 전이라 숫자가 아니라
+   {'.sv':'timestamp'} 같은 placeholder 객체로 잠깐 보일 수 있다 — 그 경우 '지금'으로 본다. */
+function _atMs(v){ return (typeof v==='number') ? v : Date.now(); }
 function watchClassifyLog(){
   try{
     if(Store.mode!=='firebase') return;
-    Store.db.ref(DB_ROOT+'/classifyLog').on('value', s=>{ _classifyLog = s.val()||{}; });
+    Store.db.ref(DB_ROOT+'/classifyLog').on('value', s=>{
+      _classifyLog = s.val()||{};
+      /* 화면이 이미 떠 있으면 그 자리에서 다시 그린다 — 늦게 도착한 기록도 놓치지 않게 */
+      try{ if($('undoBar')) renderUndoBar(); }catch(_){}
+    });
   }catch(e){ console.warn('[watchClassifyLog]', e&&e.message); }
 }
 async function pruneClassifyLog(){
   try{
-    const all = Object.values(_classifyLog||{}).filter(x=>x&&x.id).sort((a,b)=>(b.at||0)-(a.at||0));
+    const all = Object.values(_classifyLog||{}).filter(x=>x&&x.id).sort((a,b)=>_atMs(b.at)-_atMs(a.at));
     if(all.length <= 10) return;
     const upd = {};
-    all.slice(10).forEach(x=>{ upd[`classifyLog/${x.id}`] = null; });
+    all.slice(10).forEach(x=>{ upd[`classifyLog/${x.id}`] = null; upd[`classifyLogItems/${x.id}`] = null; });
     await Store.db.ref(DB_ROOT).update(upd);
   }catch(e){ console.warn('[pruneClassifyLog]', e&&e.message); }
 }
-/* 되돌리기 줄 — 가장 최근 적용 한 건을 화면에 채운다.
+/* 되돌리기 줄 — 가장 최근 적용 한 건을 화면에 채운다. 메타(날짜·건수·작성자)만으로 그린다 —
+   카드별 맵은 여기서 안 받는다(무거워서, Important 5).
    Task 3이 남겨 둔 <div id="undoBar"> 안에만 쓴다. 그 자리가 없으면 아무것도 안 한다. */
 function renderUndoBar(){
   const el = $('undoBar'); if(!el) return;
   const last = Object.values(_classifyLog||{}).filter(x=>x&&x.id)
-    .sort((a,b)=>(b.at||0)-(a.at||0))[0];
+    .sort((a,b)=>_atMs(b.at)-_atMs(a.at))[0];
   if(!last){ el.innerHTML=''; return; }
-  const d = new Date(last.at||0);
+  const d = new Date(_atMs(last.at));
   const when = `${d.getMonth()+1}월 ${d.getDate()}일 ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  const by = last.by ? ` · ${esc(last.by)}` : '';
   el.innerHTML = `<div class="ditem" style="align-items:center;margin-top:10px">
     <div class="v"><b>↩️ 마지막 분류</b>
-      <br><span style="font-size:12px;color:var(--sub)">${when} · ${(last.n||0).toLocaleString()}장</span></div>
+      <br><span style="font-size:12px;color:var(--sub)">${when}${by} · ${(last.n||0).toLocaleString()}장</span></div>
     <button class="btn ghost" style="flex:none;padding:8px 14px"
       onclick="undoClassify('${last.id}')">되돌리기</button></div>`;
 }
-/* 되돌리기 — 기록해 둔 '원래 폴더'로 그대로 되돌린다. 이것도 통신 한 번. */
+/* 되돌리기 — 기록해 둔 '원래 폴더'로 되돌린다. 단, 그 사이 사람이 손으로 다시 옮긴 카드는
+   건너뛴다(그 판단이 규칙보다 이긴다) — 그러려면 카드별로 '이 배치가 보낸 폴더'도 함께
+   기억해 둬야 지금 있는 자리와 견줄 수 있다(Critical). 카드별 맵은 여기서만 once() 로 받는다. */
 async function undoClassify(batchId){
   if(Store.mode!=='firebase') return toast('클라우드에 연결된 상태에서만 됩니다');
   const log = (_classifyLog||{})[batchId];
-  if(!log || !log.from) return toast('되돌릴 기록을 찾지 못했습니다');
-  const ids = Object.keys(log.from);
-  if(!confirm(`${ids.length.toLocaleString()}장을 분류하기 전 상태로 되돌립니다.\n\n진행할까요?`)) return;
+  if(!log) return toast('되돌릴 기록을 찾지 못했습니다');
+
+  let itemsSnap;
+  try{
+    const s = await Store.db.ref(DB_ROOT+'/classifyLogItems/'+batchId).once('value');
+    itemsSnap = s.val() || {};
+  }catch(e){ return toast('❌ 실패: ' + ((e&&e.message)||'알 수 없음'), 6000); }
+  const ids = Object.keys(itemsSnap);
+  if(!ids.length) return toast('되돌릴 기록을 찾지 못했습니다');
+
+  /* 확인창에 누가·어디로 보낸 것인지 보여준다 — 이름·건수만 보고 누르는 일을 막는다 */
+  const nameOf = gid => gid ? (state.groups[gid]?.name || '(삭제된 폴더)') : '미분류';
+  const toCount = {};
+  ids.forEach(id=>{ const to = itemsSnap[id].to||''; toCount[to] = (toCount[to]||0)+1; });
+  const toLines = Object.keys(toCount)
+    .map(gid=>`· ${esc(nameOf(gid))} ← ${toCount[gid].toLocaleString()}장`).join('\n');
+  const byWho = log.by ? `${log.by} 님이 적용한 ` : '';
+  if(!confirm(`${byWho}${ids.length.toLocaleString()}장을 분류하기 전 상태로 되돌립니다.\n\n${toLines}\n\n`
+    + `· 그 사이 사람이 손으로 다시 옮긴 카드는 건드리지 않고 건너뜁니다\n\n진행할까요?`)) return;
+
   const now = Date.now();
   const upd = {};
+  let restored = 0, movedSince = 0, gone = 0;
   ids.forEach(id=>{
-    const it = state.items[id]; if(!it) return;      /* 그 사이 지워졌으면 건너뛴다 */
-    const back = String(log.from[id]||'');
+    const cur = state.items[id];
+    if(!cur){ gone++; return; }                              /* 그 사이 지워졌다 */
+    const rec = itemsSnap[id] || {};
+    const to = String(rec.to||'');
+    if(String(cur.group||'') !== to){ movedSince++; return; } /* 그 사이 딴 곳으로 옮겨졌다 — 그 결정이 이긴다 */
+    const back = String(rec.from||'');
     upd[`items/${id}/group`]     = back;
     upd[`items/${id}/updatedAt`] = now;
-    upd[`idx/${id}`] = idxRecord({ ...it, group:back });
+    const merged = { ...cur, group:back };
+    upd[`idx/${id}`] = inLockedGroup(merged) ? null : idxRecord(merged);
+    restored++;
   });
-  upd[`classifyLog/${batchId}`] = null;
+
+  if(!restored){
+    /* 하나도 못 되돌렸으면 기록을 지우지 않는다 — 지웠다가 나중에 다시 찾아야 할 수도 있다 */
+    toast(movedSince
+      ? `되돌릴 카드가 없습니다 — ${movedSince.toLocaleString()}장이 그 사이 손으로 옮겨졌습니다`
+      : '되돌릴 카드가 없습니다', 6000);
+    return;
+  }
+  upd[`classifyLog/${batchId}`]      = null;
+  upd[`classifyLogItems/${batchId}`] = null;
   toast('되돌리는 중…', 30000);
   try{
     await Store.db.ref(DB_ROOT).update(upd);
-    toast(`↩️ ${ids.length.toLocaleString()}장을 되돌렸습니다`, 6000);
+    let msg = `↩️ ${restored.toLocaleString()}장을 되돌렸습니다`;    /* 실제로 되돌린 만큼만 알린다 */
+    if(movedSince) msg += ` (그 사이 옮겨진 ${movedSince.toLocaleString()}장 제외)`;
+    if(gone) msg += ` (삭제된 ${gone.toLocaleString()}장 제외)`;
+    toast(msg, 8000);
     setTimeout(()=>_refresh(openClassifyRules), 400);
   }catch(e){
     toast('❌ 되돌리기 실패: ' + ((e&&e.message)||'알 수 없음'), 6000);
