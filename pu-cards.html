@@ -3229,6 +3229,7 @@ function openCleanupCenter(){
   const trashN = Object.keys(state.trash||{}).length;
   let nameFixN=0; try{ nameFixN=nameFixList().length; }catch(e){ console.warn(e); }
   let mixedFixN=0; try{ mixedFixN=mixedFixList().length; }catch(e){ console.warn(e); }
+  let rulesN=0; try{ rulesN=classifyPlan().targetN; }catch(e){ console.warn(e); }
   /* 환경설정 화면(PC, inline)에서는 다른 탭(데이터·계정·AI·위험 구역)과 같은
      setbtn 모양으로 — 긴 설명은 title 말풍선으로 옮기고 버튼 자리엔 짧게만 남긴다.
      폰 시트에서 부를 때는 예전 그대로(.ditem 줄 + 큰 버튼)를 쓴다. */
@@ -3267,6 +3268,8 @@ function openCleanupCenter(){
          mixedFixN,'건',_go('mixed','openMixedFix()'),'나누기');
   h+=row('🏢','이름 칸에 회사명','이름 자리에 회사·기관명이 들어간 항목 — 회사 칸으로 옮기거나 이름·회사로 나눕니다',
          nameFixN,'건',_go('namefix','openNameFix()'),'검토');
+  h+=row('🗂','규칙으로 한 번에 분류','폴더가 안 정해진 명함을 회사명 단어로 나눠 담습니다 — 미리보기 후 적용, 되돌리기 가능',
+         rulesN,'장',_go('rules','openClassifyRules()'),'분류');
   h+=row('🗑','휴지통','삭제한 항목을 30일간 보관 — 실수로 지웠으면 여기서 되살립니다',
          trashN,'건',_go('trash',closeFirst+'openTrash()'),'열기');
   h += inline
@@ -4249,6 +4252,105 @@ function findRuleGroup(groups, r, kind){
   return { gid:g.id };
 }
 /* ══════ 규칙 분류 — 화면 ══════ */
+/* 지금 보고 있는 종류(명함/사업자) 기준으로 규칙별 걸린 장수를 센다.
+   화면과 적용이 같은 답을 보게 이 한 곳에서만 계산한다. */
+function classifyPlan(){
+  const kind  = state.tab==='biz' ? 'biz' : 'card';
+  const rules = classifyRuleList();
+  const items = Object.values(state.items||{});
+  const plan  = classifyTargets(items, rules, kind);
+  const blocked = {};
+  rules.forEach(r=>{
+    const t = findRuleGroup(state.groups||{}, r, kind);
+    if(t.locked) blocked[r.key] = 'locked';
+  });
+  const targetN = rules.reduce((s,r)=> s + (blocked[r.key] ? 0 : ((plan.byKey[r.key]||[]).length)), 0);
+  return { kind, rules, plan, blocked, targetN, unmatchedN: plan.unmatched.length };
+}
+/* 규칙 분류 화면 — 환경설정 안에서는 팝업 없이 그 자리에 펼친다. */
+let _rulePreview = '';              /* 지금 펼쳐 본 규칙 key */
+function openClassifyRules(){
+  const P = classifyPlan();
+  const kindName = P.kind==='biz' ? '사업자등록증' : '명함';
+  const inline = _panelTarget==='inline';
+  const midN = Object.values(state.items||{})
+    .filter(it=>it && ((it.kind==='biz')?'biz':'card')===P.kind && String(it.group||'')==='').length;
+
+  let h = inline
+    ? `<p class="setnote">폴더가 정해지지 않은 <b>${kindName} ${midN.toLocaleString()}장</b>을 회사명 단어로 나눠 담습니다.
+       <b>이미 폴더에 든 명함은 건드리지 않습니다.</b></p>`
+    : `<div class="mhead"><b>🗂 규칙으로 한 번에 분류</b>${_closeBtn()}</div>
+       <p style="font-size:12.5px;color:var(--sub);line-height:1.7;margin-bottom:10px">
+       폴더가 정해지지 않은 <b>${kindName} ${midN.toLocaleString()}장</b>을 회사명 단어로 나눠 담습니다.
+       <b>이미 폴더에 든 명함은 건드리지 않습니다.</b></p>`;
+
+  P.rules.forEach(r=>{
+    const n = (P.plan.byKey[r.key]||[]).length;
+    const off = r.enabled===false;
+    const lock = P.blocked[r.key]==='locked';
+    const words = (r.words||[]).join(' · ');
+    h += `<div class="ditem" style="align-items:flex-start;flex-direction:column;gap:6px">
+      <div style="display:flex;align-items:center;gap:8px;width:100%">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:800;font-size:13px">
+          <input type="checkbox" ${off?'':'checked'} ${lock?'disabled':''}
+            onchange="toggleClassifyRule('${r.key}')"> → 📁 ${esc(r.toGroupName)}</label>
+        <b style="margin-left:auto;font-size:13px;color:${lock?'var(--red)':(off?'#9aa6bd':'var(--orange)')}">
+          ${lock ? '잠긴 폴더 — 보낼 수 없음' : (off ? '꺼짐' : n.toLocaleString()+'장')}</b>
+      </div>
+      <div style="font-size:12px;color:var(--sub);line-height:1.6;word-break:keep-all">${esc(words)}</div>
+      <div style="display:flex;gap:6px">
+        <button class="btn ghost" style="padding:5px 11px;font-size:12px"
+          onclick="editRuleWords('${r.key}')">단어 고치기</button>
+        ${n && !off && !lock ? `<button class="btn ghost" style="padding:5px 11px;font-size:12px"
+          onclick="previewRule('${r.key}')">${_rulePreview===r.key?'접기':'미리보기'}</button>` : ''}
+      </div>
+      ${_rulePreview===r.key ? ruleSampleHtml(P.plan.byKey[r.key]||[]) : ''}
+    </div>`;
+  });
+
+  h += `<div class="ditem" style="align-items:center"><div class="v">
+      <b style="color:var(--sub)">규칙에 안 걸림</b>
+      <br><span style="font-size:12px;color:var(--sub)">손으로 정리하거나 단어를 더하세요</span></div>
+      <b style="flex:none;font-size:13px;color:var(--sub)">${P.unmatchedN.toLocaleString()}장</b></div>`;
+
+  h += P.targetN
+    ? `<button class="btn primary" style="width:100%;margin-top:12px"
+         onclick="applyClassifyRules()">✅ ${P.targetN.toLocaleString()}장 지금 분류하기</button>`
+    : `<p style="font-size:12.5px;color:var(--green);padding:12px 4px;text-align:center">
+         ✓ 규칙으로 옮길 ${kindName}이 없습니다</p>`;
+  h += `<div id="undoBar"></div>`;     /* 되돌리기 줄 — Task 4에서 채운다 */
+  h += `<p style="font-size:11.5px;color:var(--sub);line-height:1.7;margin-top:10px">
+    ※ 폴더만 바뀝니다. 명함은 지워지지 않고, 적용 뒤 <b>되돌리기</b>로 통째로 되돌릴 수 있어요.</p>`;
+  showPanel(h);
+}
+/* 미리보기 — 걸린 명함 20장까지 이름·회사를 그 자리에 펼친다 */
+function ruleSampleHtml(list){
+  const rows = list.slice(0,20).map(it=>
+    `<div style="font-size:12px;color:var(--ink);padding:3px 0;border-top:1px solid var(--line)">
+      ${esc(it.name||'')}${it.name&&it.company?' · ':''}<span style="color:var(--sub)">${esc(it.company||'')}</span></div>`).join('');
+  const more = list.length>20 ? `<div style="font-size:11.5px;color:var(--sub);padding-top:5px">…외 ${(list.length-20).toLocaleString()}장</div>` : '';
+  return `<div style="width:100%;background:var(--bg2);border-radius:8px;padding:8px 10px;margin-top:2px">${rows}${more}</div>`;
+}
+function previewRule(key){ _rulePreview = (_rulePreview===key ? '' : key); _refresh(openClassifyRules); }
+/* 규칙 켜고 끄기 — 저장된 규칙이 없으면 기본값을 먼저 심고 바꾼다 */
+function toggleClassifyRule(key){
+  const cur = classifyRuleList().find(r=>r.key===key); if(!cur) return;
+  Store.putRule({ ...cur, words:(cur.words||[]).slice(), enabled: cur.enabled===false });
+  setTimeout(()=>_refresh(openClassifyRules), 60);
+}
+/* 단어 고치기 — 쉼표로 나눠 적는다 */
+function editRuleWords(key){
+  const cur = classifyRuleList().find(r=>r.key===key); if(!cur) return;
+  const now = (cur.words||[]).join(', ');
+  const txt = prompt(`📁 ${cur.toGroupName} 로 보낼 단어를 쉼표로 나눠 적으세요.\n\n`
+    + `· 회사명이나 이름에 이 말이 있으면 이 폴더로 갑니다\n`
+    + `· 짧은 말은 엉뚱한 곳에 걸립니다 (예: '청' → 청소·청과)`, now);
+  if(txt===null) return;
+  const words = txt.split(',').map(s=>s.trim()).filter(Boolean);
+  if(!words.length) return toast('단어가 비어 있습니다');
+  Store.putRule({ ...cur, words, enabled: cur.enabled!==false });
+  setTimeout(()=>_refresh(openClassifyRules), 60);
+}
 
 /* ══════ ⚙️ 환경설정 화면 (PC) — 푸른이알피처럼 가로 탭으로 관리 ══════ */
 const SET_TABS=[
@@ -4326,7 +4428,7 @@ function renderSettingsPage(){
     _panelTarget='inline';
     try{
       const SUB={ dedup:openDedup, similar:openSimilar, mixed:openMixedFix, namefix:openNameFix,
-                  trash:openTrash, erpname:openErpNameCheck };
+                  trash:openTrash, erpname:openErpNameCheck, rules:openClassifyRules };
       if(cur==='clean')      (SUB[state.setSub] || openCleanupCenter)();
       else if(cur==='tabs')  openViewManager();
       else if(cur==='erp' && state.setSub==='erpname') openErpNameCheck();
