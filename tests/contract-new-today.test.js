@@ -48,15 +48,46 @@ const ymd = (y, m, d) => y + '-' + ('0'+m).slice(-2) + '-' + ('0'+d).slice(-2);
   t('★ 오늘 밤 23시 55분도 오늘', c.regIsToday({ regAt: isoLocal(2026,8,6, 23,55) }), true);
   t('★ 어제 밤 23시 55분은 오늘이 아니다', c.regIsToday({ regAt: isoLocal(2026,8,5, 23,55) }), false);
   t('★ 내일 0시 5분도 오늘이 아니다', c.regIsToday({ regAt: isoLocal(2026,8,7, 0,5) }), false);
-  // ★ 이게 핵심 — ISO 문자열을 그냥 자르면 한국 아침은 전날 UTC 라 어제로 보인다
+  // ★ 이게 핵심 — 하루 24시간 어느 때에 등록해도 그 날짜로 나와야 한다.
+  //   ISO 문자열을 그냥 slice(0,10) 하면 UTC 날짜가 나와, 한국처럼 UTC 보다 앞선 곳에서는
+  //   아침 등록이 어제 것으로 보인다. 시간대를 가리지 않고 확인하려고 24시간을 다 훑는다.
+  //   (CI 는 UTC 로 도는데, 기계의 시간대를 단정하면 내 PC 에서만 통과하는 검사가 된다)
   {
-    const morning = isoLocal(2026,8,6, 7,30);
-    const naiveDay = morning.slice(0,10);        // 문자열을 그냥 자른 값(UTC 날짜)
-    t('★ 아침 등록은 UTC 로는 어제로 보인다 (그래서 자르면 안 된다)',
-      naiveDay !== ymd(2026,8,6), true);
-    t('★ 그래도 오늘로 판정한다', c.regIsToday({ regAt: morning }), true);
-    t('★ 날짜도 한국 기준으로 돌려준다', c.regDayOf({ regAt: morning }), ymd(2026,8,6));
+    let bad = [];
+    for(let hh = 0; hh < 24; hh++){
+      const at = isoLocal(2026,8,6, hh, 30);
+      if(c.regDayOf({ regAt: at }) !== ymd(2026,8,6)) bad.push(hh);
+      if(c.regIsToday({ regAt: at }) !== true) bad.push('today:' + hh);
+    }
+    t('★ 하루 24시간 어느 때 등록해도 그 날짜로 나온다', bad, []);
   }
+  // 자정 직전·직후 1분도 제 날짜에 붙는다 (경계에서 하루가 밀리면 「오늘」이 어긋난다)
+  t('★ 자정 1분 전은 그날', c.regDayOf({ regAt: isoLocal(2026,8,6, 23,59) }), ymd(2026,8,6));
+  t('★ 자정 1분 후는 다음 날', c.regDayOf({ regAt: isoLocal(2026,8,7, 0,1) }), ymd(2026,8,7));
+}
+
+/* ═══ 1-2. ★★ 한국 시간대에서 직접 확인한다 ═══
+   위 검사는 "돌리는 기계의 시간대" 기준이라, CI(UTC)에서는 ISO 문자열을 그냥 잘라도
+   우연히 맞아 버그가 안 잡힌다. 대표는 한국에서 쓰므로, 자식 프로세스를 한국 시간대로
+   띄워 거기서도 맞는지 본다 — 이래야 CI 에서도 이 실수가 걸린다. */
+{
+  const { spawnSync } = require('child_process');
+  const probe = `
+    const fs=require('fs'), vm=require('vm');
+    const src=fs.readFileSync(${JSON.stringify(HTML)},'utf8').replace(/\\r\\n/g,'\\n');
+    function sl(a,b){const i=src.indexOf(a),j=src.indexOf(b,i);return src.slice(i,j);}
+    const c={console,Date,Object,JSON,String,Number,parseInt,isNaN,window:{},todayYMD(){return '2026-08-06';}};
+    vm.createContext(c);
+    vm.runInContext(sl('function regDayOf(x){','function arvClear(store, id, after){'), c);
+    // 한국 아침 7:30 — UTC 로는 전날 22:30 이라 문자열을 자르면 8월 5일이 된다
+    const at = new Date(2026, 7, 6, 7, 30, 0).toISOString();
+    process.stdout.write(c.regDayOf({ regAt: at }) + '|' + (c.regIsToday({ regAt: at }) ? 'Y' : 'N'));
+  `;
+  const r = spawnSync(process.execPath, ['-e', probe],
+    { encoding:'utf8', env: Object.assign({}, process.env, { TZ:'Asia/Seoul' }) });
+  const out = (r.stdout || '').trim();
+  t('★ 한국 시간대에서도 아침 등록이 그날로 나온다', out, '2026-08-06|Y');
+  if(out !== '2026-08-06|Y' && r.stderr) console.log('  (자식 오류) ' + String(r.stderr).slice(0, 300));
 }
 /* ═══ 2. 방어 ═══ */
 {
