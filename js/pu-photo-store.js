@@ -56,6 +56,12 @@
      여기에 사진을 담지 않는다(관리자가 전 직원 사진 본문을 통째로 받는 일 방지). */
   function ownerPath(uid) { return DB_ROOT + '/owners/' + uid; }
 
+  /* 직접 만드는 분류(대표 지시 2026-08-06: "종류를 추가할 수 있는 기능").
+     AI 자동 분류(card/bizreg/... )와 달리 코드 수정 없이 화면에서 아무 때나
+     만든다. 이름표는 전 직원이 함께 봐야 하니 공용 자리에 둔다 — 사진 본문은
+     지금처럼 사람별로 그대로 갈려 있다. */
+  function customKindsPath() { return DB_ROOT + '/customKinds'; }
+
   /* 촬영 시각 결정 — EXIF → 파일 날짜 → 업로드 시각 순서.
      카톡을 거친 사진은 EXIF가 지워져 있어 파일 날짜로, 그것도 없으면 올린 때로 간다. */
   function pickTakenAt(exifTs, fileTs, uploadTs) {
@@ -376,6 +382,46 @@
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     var u = {};
     u[metaPath(year, id) + '/read'] = read;
+    return deps.db.ref().update(u);
+  }
+
+  /* ── 직접 만드는 분류 ──
+     AI 자동 분류를 코드로 늘리려면 프롬프트를 고치고 배포해야 한다 —
+     '아무 때나 새 분류를 만든다'는 지시와 안 맞는다. 그래서 사람이 직접
+     이름을 짓고, 사람이 직접 사진에 붙인다. */
+
+  function listCustomKinds() {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(customKindsPath()).once('value').then(function (s) { return s.val() || {}; });
+  }
+
+  /* 이름이 같은 분류를 두 번 만들지 않는다(대소문자·앞뒤 공백 무시) —
+     안 그러면 "자문등계약서"와 "자문등계약서 " 가 따로 쌓여 사람이 헷갈린다. */
+  function addCustomKind(name) {
+    var clean = String(name || '').trim();
+    if (!clean) return Promise.reject(new Error('분류 이름을 입력해 주세요'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return listCustomKinds().then(function (existing) {
+      var norm = clean.toLowerCase();
+      var dupId = Object.keys(existing).find(function (id) {
+        return String((existing[id] || {}).name || '').trim().toLowerCase() === norm;
+      });
+      if (dupId) return { id: dupId, created: false };
+      var id = deps.db.ref(customKindsPath()).push().key;
+      var rec = { name: clean, createdAt: Date.now(), createdBy: deps.name || '' };
+      var u = {};
+      u[customKindsPath() + '/' + id] = rec;
+      return deps.db.ref().update(u).then(function () { return { id: id, created: true }; });
+    });
+  }
+
+  /* 사진 하나에 분류를 붙이거나(kindId) 뗀다(kindId 없이 호출).
+     AI 종류(read.kind)와 별도 칸에 둔다 — "더하는 것이지 기타서류에서
+     빼앗지 않는다"(대표 승인 목업)를 지키려면 서로 안 건드려야 한다. */
+  function setCustomKind(year, id, kindId, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var u = {};
+    u[metaPath(year, id, owner) + '/customKind'] = kindId || null;
     return deps.db.ref().update(u);
   }
 
@@ -882,6 +928,9 @@
     newId: newId,
     savePhoto: savePhoto,
     saveRead: saveRead,
+    listCustomKinds: listCustomKinds,
+    addCustomKind: addCustomKind,
+    setCustomKind: setCustomKind,
     deletePhoto: deletePhoto,
     listTrash: listTrash,
     restorePhoto: restorePhoto,

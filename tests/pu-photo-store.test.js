@@ -1099,6 +1099,7 @@ test('saveRead — 실시간DB가 없으면 한국어로 거절한다', async ()
 
 function fakeDbFor(vals) {
   const updates = [];
+  let pushN = 0;
   return {
     updates,
     ref(p) {
@@ -1107,7 +1108,8 @@ function fakeDbFor(vals) {
           if (vals[p] === 'DENY') return Promise.reject(new Error('PERMISSION_DENIED'));
           return Promise.resolve({ val: function () { return (p in vals) ? vals[p] : null; } });
         },
-        update(u) { updates.push(u); return Promise.resolve(); }
+        update(u) { updates.push(u); return Promise.resolve(); },
+        push() { return { key: '-fake' + (++pushN) }; }
       };
     }
   };
@@ -1229,4 +1231,83 @@ test('전체 근로자의 연도 목록은 사람마다의 연도를 합친 것�
   const ys = await S.listYearsAll();
   assert.ok(ys.indexOf('2025') >= 0, '신욱임의 연도가 빠졌습니다');
   assert.ok(ys.indexOf('2026') >= 0, '올해는 늘 있어야 합니다');
+});
+
+/* ── 직접 만드는 분류(대표 지시 2026-08-06: "종류를 추가할 수 있는 기능") ── */
+
+test('분류 목록을 읽는다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({ 'puphotos/customKinds': { k1: { name: '자문등계약서', createdAt: 1 } } });
+  S.init({ uid: 'U1', db: db });
+  const list = await S.listCustomKinds();
+  // vm 샌드박스는 다른 realm이라 객체 구조는 같아도 deepEqual이 참조 비교에서 걸린다 — 복사해 비교한다.
+  assert.deepEqual(JSON.parse(JSON.stringify(list)), { k1: { name: '자문등계약서', createdAt: 1 } });
+});
+
+test('빈 분류 목록은 빈 객체다 — 예외를 던지지 않는다', async () => {
+  const S = loadStore();
+  S.init({ uid: 'U1', db: fakeDbFor({}) });
+  const list = await S.listCustomKinds();
+  assert.deepEqual({ ...list }, {});
+});
+
+test('새 분류를 만든다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({ 'puphotos/customKinds': {} });
+  S.init({ uid: 'U1', db: db, name: '권형하' });
+  const r = await S.addCustomKind('자문등계약서');
+  assert.equal(r.created, true);
+  const u = db.updates[0];
+  const key = Object.keys(u)[0];
+  assert.match(key, /^puphotos\/customKinds\//);
+  assert.equal(u[key].name, '자문등계약서');
+  assert.equal(u[key].createdBy, '권형하');
+  assert.ok(u[key].createdAt > 0);
+});
+
+test('같은 이름(대소문자·앞뒤공백 무시)은 두 번 만들지 않는다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({ 'puphotos/customKinds': { k1: { name: '자문등계약서' } } });
+  S.init({ uid: 'U1', db: db });
+  const r = await S.addCustomKind('  자문등계약서  ');
+  assert.equal(r.created, false);
+  assert.equal(r.id, 'k1');
+  assert.equal(db.updates.length, 0, '중복인데 새로 썼습니다');
+});
+
+test('빈 이름은 거절한다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({ 'puphotos/customKinds': {} });
+  S.init({ uid: 'U1', db: db });
+  await assert.rejects(() => S.addCustomKind('   '), /이름/);
+  assert.equal(db.updates.length, 0);
+});
+
+test('사진에 분류를 붙인다 — read.kind 와 다른 칸에 둔다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({});
+  S.init({ uid: 'U1', db: db });
+  await S.setCustomKind('2026', 'p1', 'k1');
+  const u = db.updates[0];
+  const key = Object.keys(u)[0];
+  assert.equal(key, 'puphotos/u/U1/items/2026/p1/customKind');
+  assert.equal(u[key], 'k1');
+});
+
+test('분류를 뗄 수 있다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({});
+  S.init({ uid: 'U1', db: db });
+  await S.setCustomKind('2026', 'p1', null);
+  const u = db.updates[0];
+  assert.equal(u['puphotos/u/U1/items/2026/p1/customKind'], null);
+});
+
+test('관리자가 남의 사진에 분류를 붙일 때는 그 사람 자리를 쓴다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({});
+  S.init({ uid: 'ADMIN', db: db, isAdmin: true });
+  await S.setCustomKind('2026', 'p1', 'k1', 'U2');
+  const u = db.updates[0];
+  assert.equal(Object.keys(u)[0], 'puphotos/u/U2/items/2026/p1/customKind');
 });
