@@ -12,17 +12,26 @@ function ok(name, cond, extra) {
   else { fail++; console.log('  FAIL ' + name + (extra ? ' — ' + extra : '')); }
 }
 
-/* ── 머리칸·내용칸 배선 (사무대행 탭 + 전체 탭, 각 1곳씩) ── */
-ok('업태 머리 2곳에 클래스', (pe.match(/className:'co-biz-col', style:\{ padding:0 \}/g) || []).length === 2);
-ok('종목 머리 2곳에 클래스', (pe.match(/className:'co-biz-cat', style:\{ padding:0 \}/g) || []).length === 2);
+/* ── 머리칸·내용칸 배선 (사무대행 탭 + 전체 탭, 각 1곳씩) ──
+   ⚠ 2026-08-07 다시 겨눔. 머리칸이 thF() 공용 함수로 정리되면서 모양이 바뀌었다
+   (예전: className 과 style 을 그 자리에 나란히 적었다 → 지금: thF 에 넘긴다).
+   **기능은 그대로다** — 폭을 묶는 클래스도, 머리칸 안의 거르개도 살아 있다.
+   그래서 「글자가 이렇게 생겼나」가 아니라 「클래스가 붙었나」로 본다.
+   모양을 붙들면 정리할 때마다 배포가 막힌다(실제로 막혔다). */
+ok('업태 머리 2곳에 클래스', (pe.match(/thF\('업태',[^)]*className:'co-biz-col'/g) || []).length === 2);
+ok('종목 머리 2곳에 클래스', (pe.match(/thF\('종목',[^)]*className:'co-biz-cat'/g) || []).length === 2);
 ok('옛 minWidth 지정이 남아 있지 않다',
    !/key:'(h4b|h4c|a6b|a6c)', style:\{ padding:0, minWidth/.test(pe));
 ok('업태 내용칸 2곳', (pe.match(/className:'co-biz-col', title:co\.bizType/g) || []).length === 2);
 ok('종목 내용칸 2곳', (pe.match(/className:'co-biz-cat', title:co\.bizCategory/g) || []).length === 2);
 ok('★ 잘려도 전체 값을 title 로 볼 수 있다',
    /title:co\.bizType\|\|''/.test(pe) && /title:co\.bizCategory\|\|''/.test(pe));
-ok('필터 드롭다운은 그대로 (머리칸 안)',
-   pe.indexOf("setBizTypeFilter(e.target.value)") > 0 && pe.indexOf("setBizCatFilter(e.target.value)") > 0);
+/* 거르개는 드롭다운에서 깔때기 단추(다중선택)로 바뀌었다 — 사라진 것이 아니다.
+   thF 의 셋째 인자가 거르개 열쇠이고, 그것이 있어야 FunnelBtn 이 그려진다. */
+ok('업태·종목 머리칸에 거르개가 그대로 있다',
+   /thF\('업태', *[^,]+, *'biztype'/.test(pe) && /thF\('종목', *[^,]+, *'bizcat'/.test(pe));
+ok('★ 머리칸 거르개는 깔때기 단추로 그려진다',
+   /filterKey && h\('span'[\s\S]{0,200}FunnelBtn/.test(pe));
 
 /* ── CSS ── */
 ok('업태 폭 92px',  /co-biz-col \{ max-width: 92px; \}/.test(css));
