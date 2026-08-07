@@ -139,6 +139,7 @@
       'font-family:-apple-system,"Malgun Gothic",sans-serif;' +
       'left:' + Math.max(8, Math.min(r.left, global.innerWidth - W - 10)) + 'px;' +
       'top:' + (anchorY + 5) + 'px;';
+    var isTab = btn.hasAttribute('data-pu-appbar-tab');
 
     var head = document.createElement('div');
     head.style.cssText = 'padding:6px 11px;font-size:10.5px;color:#94a3b8;background:#f8fafc;border-bottom:1px solid #eef2f6';
@@ -212,12 +213,23 @@
        종전처럼 「아래로 넘치면 무조건 위」로 하면, 머리줄이 화면 맨 위에 있는 앱에서
        목록이 머리줄을 덮어 버린다(창이 짧을 때 특히). */
     var pr = pop.getBoundingClientRect();
-    var below = global.innerHeight - anchorY;
-    var above = r.top;
-    if (pr.height > below - 8 && above > below) {
-      pop.style.top = 'auto';
-      pop.style.bottom = (global.innerHeight - r.top + 5) + 'px';
+    if (isTab) {
+      /* 오른쪽 가장자리 손잡이 — 목록은 **왼쪽으로** 펼치고 손잡이와 세로 가운데를 맞춘다.
+         화면 위아래로 넘치지 않게 가둔다(짧은 창에서도 다 보이게). */
+      pop.style.left = Math.max(8, r.left - W - 8) + 'px';
+      pop.style.top = Math.max(8, Math.min(r.top + r.height / 2 - pr.height / 2,
+        global.innerHeight - pr.height - 8)) + 'px';
+    } else {
+      var below = global.innerHeight - anchorY;
+      var above = r.top;
+      if (pr.height > below - 8 && above > below) {
+        pop.style.top = 'auto';
+        pop.style.bottom = (global.innerHeight - r.top + 5) + 'px';
+      }
     }
+    /* ★ 닫기 감시는 **어느 모양이든 반드시** 건다.
+       손잡이 자리잡기에서 return 으로 빠져나가 이 두 줄을 건너뛰는 바람에
+       바깥을 눌러도 Esc 를 눌러도 안 닫히는 일이 있었다. */
     document.addEventListener('mousedown', onDocDown, true);
     document.addEventListener('keydown', onKey, true);
   }
@@ -269,32 +281,44 @@
      ① 앱이 자리를 정해 뒀으면(<span data-pu-appbar></span>) 거기에 붙인다.
      ② 안 정해 뒀으면 오른쪽 위에 떠 있는 단추로 붙인다.
         자리를 정하는 것이 보기 좋지만, 안 해도 일단 쓸 수 있어야 8개를 한꺼번에 살릴 수 있다. */
+  /* ── 손잡이를 어디에 둘 것인가 ──
+     대표님 요구: **모든 프로그램에서 똑같은 자리**, 그리고 아무것과도 안 겹칠 것.
+     8개 앱의 화면고정(fixed) 요소를 전부 뽑아 비교한 결과 —
+       · 위 왼/오른  : 머리줄·로그아웃·상태표시가 5개 앱에서 쓴다
+       · 아래 왼/오른: 접속자판·＋단추·저장표시가 4~5개 앱에서 쓴다
+       · 아래 가운데 : **토스트 알림 자리**다(컨설팅·명함첩·사진첩·이력관리 모두 left:50%)
+                       업무관리는 빠른기록 바까지 깔려 있다
+       · 세로 가운데 : **8개 앱 모두 0건 — 완전히 비어 있다**
+     그래서 «오른쪽 가장자리 · 세로 한가운데» 에 세로 손잡이로 고정한다.
+     머리줄·바닥줄·토스트·＋단추 어느 것과도 만나지 않는 유일한 자리다. */
+  function makeTab() {
+    var tab = document.createElement('button');
+    tab.type = 'button';
+    tab.setAttribute('data-pu-appbar-btn', '1');
+    tab.setAttribute('data-pu-appbar-tab', '1');
+    tab.title = '다른 프로그램으로 이동 (로그인은 그대로 이어집니다)';
+    tab.style.cssText =
+      'position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:9998;' +
+      'writing-mode:vertical-rl;text-orientation:upright;' +
+      'padding:14px 5px;border:none;border-radius:9px 0 0 9px;' +
+      'background:#1e40af;color:#fff;font-size:11.5px;font-weight:700;letter-spacing:1px;' +
+      'font-family:-apple-system,"Malgun Gothic",sans-serif;cursor:pointer;' +
+      'box-shadow:-2px 0 10px rgba(0,0,0,.20);opacity:.72;transition:opacity .15s,padding .15s;';
+    tab.textContent = '프로그램';
+    tab.addEventListener('mouseenter', function () { tab.style.opacity = '1'; tab.style.paddingRight = '8px'; });
+    tab.addEventListener('mouseleave', function () { tab.style.opacity = '.72'; tab.style.paddingRight = '5px'; });
+    tab.addEventListener('click', function (e) { e.stopPropagation(); openPop(tab); });
+    return tab;
+  }
+
   function auto() {
-    _me = whoAmI();
-    /* 앱이 단추를 직접 그리는 경우(<meta name="pu-appbar" content="self">)에는
-       손대지 않는다. 안 그러면 로그인 전에 떠 있는 단추가 하나 생기고,
-       로그인 뒤 앱이 그린 단추와 **둘이 겹친다.** */
-    if (document.querySelector('meta[name="pu-appbar"][content="self"]')) return;
-    var host = document.querySelector('[data-pu-appbar]:not([data-pu-appbar="float"])');
-    var btn = document.querySelector('[data-pu-appbar-btn]');
-    if (btn) {
-      /* ★ 옮기는 것은 **내가 띄운 단추뿐**이다.
-         앱이 제자리에 그려 둔 단추까지 끌어오면 엉뚱한 곳으로 간다.
-         (자리가 늦게 생기는 앱을 위해, 떠 있던 것만 제자리로 들여보낸다) */
-      var old = document.querySelector('[data-pu-appbar="float"]');
-      if (host && old && old.contains(btn)) {
-        host.appendChild(btn);
-        if (old.parentNode) old.parentNode.removeChild(old);
-      }
-      return;
-    }
-    if (host) { mount(host, { current: _me }); return; }
-    // 자리를 못 찾았을 때만 임시로 띄운다 (나중에 자리가 생기면 위에서 옮겨 간다)
-    var float = document.createElement('div');
-    float.setAttribute('data-pu-appbar', 'float');
-    float.style.cssText = 'position:fixed;top:8px;right:10px;z-index:9998;';
-    document.body.appendChild(float);
-    mount(float, { current: _me });
+    /* 주소로 알아낸 값이 있을 때만 덮어쓴다.
+       앱이 mount({current}) 로 알려 준 것을 빈 값으로 지워 버리면
+       「보던 화면」이 어느 앱 것인지 몰라 기록이 안 남는다. */
+    _me = whoAmI() || _me;
+    if (document.querySelector('[data-pu-appbar-btn]')) return;   // 두 번 붙지 않게
+    if (!document.body) return;
+    document.body.appendChild(makeTab());
   }
   function ready(fn) {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
