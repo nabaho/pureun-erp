@@ -33341,20 +33341,36 @@ function CmsMatchModal(props){
 }
 
 function FinanceLedger(){
-  // ── 미입금 대기 목록 ──
+  /* ── 미입금 대기 목록 (입금 매칭 후보) ──
+     2026-08-07 김보람 건의: 「일반 자문료 입금건은 매칭이 안 되고 컨설팅·사건만 된다」
+     확인해 보니 후보를 만드는 항목 이름이 실제 자료와 여러 군데 어긋나 있었다.
+       · 'others'        → 실제 저장소는 'other_projects'  ⇒ 기타사업이 통째로 안 나왔다
+       · 'consultingFee' → 실제 항목은 'contractFee'       ⇒ 계약금이 안 나왔다
+       · 성공보수(successFee) 는 아예 빠져 있었다          ⇒ 사건 성공보수가 안 나왔다
+       · 업체 월 자문료는 계약·사건 저장소에 없다          ⇒ 자문료가 안 나왔다 (제보 내용)
+     자문료는 「업체에 월 자문료가 있는데 그 달 입금 기록이 없으면 미입금」으로 본다
+     (환경설정 점검의 「자문료미생성」 판정과 같은 기준). */
   var pending = [];
   var STORES = [
     {key:'contracts',label:'계약'},{key:'cases',label:'사건'},
-    {key:'consultings',label:'컨설팅'},{key:'funds',label:'기금'},{key:'others',label:'기타'}
+    {key:'consultings',label:'컨설팅'},{key:'funds',label:'기금'},{key:'other_projects',label:'기타'}
   ];
   STORES.forEach(function(s){
     (dbGet(s.key,[])||[]).filter(function(it){return !it.permanentArchived&&!it.closedDate;}).forEach(function(it){
       var nm=it.companyName||it.name||'-';
-      if(it.retainerFee&&!it.retainerPaid) pending.push({id:it.id+'-r',store:s.key,label:s.label+'(착수)',companyName:nm,amount:it.retainerFee,item:it,kind:'retainer'});
-      if(it.balanceFee&&!it.balancePaid)   pending.push({id:it.id+'-b',store:s.key,label:s.label+'(잔금)', companyName:nm,amount:it.balanceFee, item:it,kind:'balance'});
-      if(it.consultingFee&&!it.paid)       pending.push({id:it.id+'-c',store:s.key,label:s.label,          companyName:nm,amount:it.consultingFee,item:it,kind:'contract'});
+      if(it.retainerFee&&!it.retainerPaid&&!it.retainerPaidDate)
+        pending.push({id:it.id+'-r',store:s.key,label:s.label+'(착수)',companyName:nm,amount:it.retainerFee,item:it,kind:'retainer'});
+      if(it.successFee&&!it.successPaid&&!it.successPaidDate)
+        pending.push({id:it.id+'-s',store:s.key,label:s.label+'(성공보수)',companyName:nm,amount:it.successFee,item:it,kind:'success'});
+      if(it.contractFee&&!it.contractPaid)
+        pending.push({id:it.id+'-k',store:s.key,label:s.label+'(계약금)',companyName:nm,amount:it.contractFee,item:it,kind:'contractFee'});
+      if(it.balanceFee&&!it.balancePaid)
+        pending.push({id:it.id+'-b',store:s.key,label:s.label+'(잔금)', companyName:nm,amount:it.balanceFee, item:it,kind:'balance'});
+      if(it.consultingFee&&!it.paid)   // 옛 자료 호환 (지금은 contractFee 를 쓴다)
+        pending.push({id:it.id+'-c',store:s.key,label:s.label,          companyName:nm,amount:it.consultingFee,item:it,kind:'contract'});
     });
   });
+  // (업체 월 자문료 후보는 rows 가 정해진 뒤에 더한다 — 아래 addAdvisoryPending 참고)
 
   // ── 출금 카테고리 (자주 쓰는 것 우선) ──
   var EXP_CATS = [
@@ -33383,6 +33399,34 @@ function FinanceLedger(){
   var cmsRowS=useState(null);  var cmsRow=cmsRowS[0];   var setCmsRow=cmsRowS[1];   // CMS 일괄이체 매칭 대상 행
   var nbS=useState(null);      var nb=nbS[0];           var setNb=nbS[1];           // 🏦 나이스빌 CMS 파싱분 {fileName,uploadedAt,rows,byDate,stat,linked}
   var nbRestS=useState(false); var nbRestored=nbRestS[0]; var setNbRestored=nbRestS[1]; // 보관분(cms_ledger)에서 복원됨
+
+  /* ── 업체 월 자문료를 미입금 후보에 더한다 (김보람 건의 ①) ──
+     자문료는 계약·사건 저장소에 없다. 「업체에 월 자문료가 있는데 그 달 자문료
+     입금 기록이 없으면 미입금」으로 본다 — 환경설정 점검의 「자문료미생성」과 같은 기준.
+     선납·건별·분기별은 매달 걷는 것이 아니라 뺀다.
+     rows 를 봐야 «어느 달 명세서인지» 알 수 있어 상태 선언 뒤에 둔다. */
+  (function addAdvisoryPending(){
+    try {
+      var paidBy = {};                       // '회사명|YYYY-MM' → 그 달 이미 입금됨
+      (dbGet('finance_income', []) || []).forEach(function(i){
+        if(i && i.kind === '자문료' && i.companyName && i.date)
+          paidBy[i.companyName + '|' + String(i.date).slice(0,7)] = true;
+      });
+      var ym = todayYM();
+      var ds = ((rows && rows.inc) || []).map(function(r){ return String(r.date||'').slice(0,7); }).filter(Boolean);
+      if(ds.length){ ds.sort(); ym = ds[Math.floor(ds.length/2)]; }   // 가운데 값 = 그 명세서의 달
+      (dbGet('companies', []) || []).forEach(function(co){
+        if(!co || co._deleted || co.status !== 'active') return;
+        var fee = parseInt(co.monthlyAdvisoryFee, 10) || 0;
+        if(fee <= 0) return;
+        var pd = co.taxInvoicePaymentDay;
+        if(pd === '선납' || pd === '건별' || pd === '분기별') return;
+        if(paidBy[co.name + '|' + ym]) return;
+        pending.push({ id:'adv-'+co.id+'-'+ym, store:'companies', label:'자문료('+parseInt(ym.slice(5),10)+'월)',
+          companyName:co.name, amount:fee, item:co, kind:'advisory', ym:ym });
+      });
+    } catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+  })();
   var nbFailS=useState(false); var nbFailOnly=nbFailS[0]; var setNbFailOnly=nbFailS[1]; // 출금실패만 보기
   var nbBusyS=useState(false); var nbBusy=nbBusyS[0];   var setNbBusy=nbBusyS[1];   // CMS 일괄처리 중
   var hideDupS=usePersistedState('ledger_hide_dup', true); var hideDup=hideDupS[0]; var setHideDup=hideDupS[1]; // 이미 처리된 행 숨기기
@@ -33613,15 +33657,24 @@ function FinanceLedger(){
   // ── 입금 확정 ──
   function saveIncome(row, pItem){
     var paidDate=row.date||todayYMD();
+    var isAdv = (pItem.kind === 'advisory');
+    /* 자문료는 「그 달 자문료 입금 기록」이 곧 처리 완료다 (업체에는 입금 표시 칸이 없다).
+       kind:'자문료' 로 남겨야 다음 달 후보에서 빠지고, 점검의 「자문료미생성」도 풀린다. */
     dbUpsert('finance_income', {id:'fi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
       companyName:pItem.companyName, amount:row.amount, date:paidDate,
+      kind: isAdv ? '자문료' : (pItem.label || ''),
+      category: isAdv ? 'inc-advisory' : undefined,
       memo:'[하나'+(fileType==='bank'?'은행':'카드')+'] '+(row.memo||'')+(row.note?' / '+row.note:''),
-      sourceKind:pItem.store.replace('s',''), sourceId:pItem.item.id,
+      sourceKind: isAdv ? 'company' : pItem.store.replace('s',''),
+      sourceId:pItem.item.id,
       perfShares:[], confirmedAt:new Date().toISOString(), confirmedBy:CURRENT_USER?CURRENT_USER.sid:''});
+    if(isAdv) return;                       // ★ 업체 레코드에는 손대지 않는다
     var _sp = {};
-    if(pItem.kind==='retainer'){_sp.retainerPaid=true;_sp.retainerPaidDate=paidDate;}
-    else if(pItem.kind==='balance'){_sp.balancePaid=true;_sp.balancePaidDate=paidDate;}
-    else{_sp.paid=true;_sp.paidDate=paidDate;}
+    if(pItem.kind==='retainer'){ _sp.retainerPaid=true; _sp.retainerPaidDate=paidDate; }
+    else if(pItem.kind==='success'){ _sp.successPaid=true; _sp.successPaidDate=paidDate; }        // 사건 성공보수
+    else if(pItem.kind==='contractFee'){ _sp.contractPaid=true; _sp.contractPaidDate=paidDate; }  // 컨설팅·기금·기타 계약금
+    else if(pItem.kind==='balance'){ _sp.balancePaid=true; _sp.balancePaidDate=paidDate; }
+    else{ _sp.paid=true; _sp.paidDate=paidDate; }
     dbPatch(pItem.store, pItem.item.id, _sp);
   }
 
@@ -48671,18 +48724,27 @@ function FinanceTxn(){
   var busyS  = useState(false); var busy = busyS[0]; var setBusy = busyS[1];
   var editS  = useState({}); var editMap = editS[0]; var setEditMap = editS[1];
 
-  // 미입금 대기 (입금 매칭용)
+  /* 미입금 대기 (입금 매칭용) — 거래내역 화면과 **같은 결함**이 여기에도 있었다.
+     'others' 오타로 기타사업이 통째로 빠지고, 'consultingFee' 라 계약금이 안 잡히고,
+     성공보수는 아예 없었다. 두 화면이 같은 목록을 보여야 하므로 같이 고친다. */
   var pending = [];
   var STORES = [
     {key:'contracts',label:'계약'},{key:'cases',label:'사건'},
-    {key:'consultings',label:'컨설팅'},{key:'funds',label:'기금'},{key:'others',label:'기타'}
+    {key:'consultings',label:'컨설팅'},{key:'funds',label:'기금'},{key:'other_projects',label:'기타'}
   ];
   STORES.forEach(function(store){
     (dbGet(store.key,[])||[]).filter(function(it){ return !it.permanentArchived && !it.closedDate; }).forEach(function(it){
       var nm = it.companyName||it.name||'-';
-      if(it.retainerFee&&!it.retainerPaid) pending.push({id:it.id+'-r',store:store.key,label:store.label+'(착수)',companyName:nm,amount:it.retainerFee,item:it,kind:'retainer'});
-      if(it.balanceFee &&!it.balancePaid)  pending.push({id:it.id+'-b',store:store.key,label:store.label+'(잔금)', companyName:nm,amount:it.balanceFee, item:it,kind:'balance'});
-      if(it.consultingFee&&!it.paid)       pending.push({id:it.id+'-c',store:store.key,label:store.label,           companyName:nm,amount:it.consultingFee,item:it,kind:'contract'});
+      if(it.retainerFee&&!it.retainerPaid&&!it.retainerPaidDate)
+        pending.push({id:it.id+'-r',store:store.key,label:store.label+'(착수)',companyName:nm,amount:it.retainerFee,item:it,kind:'retainer'});
+      if(it.successFee&&!it.successPaid&&!it.successPaidDate)
+        pending.push({id:it.id+'-s',store:store.key,label:store.label+'(성공보수)',companyName:nm,amount:it.successFee,item:it,kind:'success'});
+      if(it.contractFee&&!it.contractPaid)
+        pending.push({id:it.id+'-k',store:store.key,label:store.label+'(계약금)',companyName:nm,amount:it.contractFee,item:it,kind:'contractFee'});
+      if(it.balanceFee &&!it.balancePaid)
+        pending.push({id:it.id+'-b',store:store.key,label:store.label+'(잔금)', companyName:nm,amount:it.balanceFee, item:it,kind:'balance'});
+      if(it.consultingFee&&!it.paid)   // 옛 자료 호환
+        pending.push({id:it.id+'-c',store:store.key,label:store.label,           companyName:nm,amount:it.consultingFee,item:it,kind:'contract'});
     });
   });
 
@@ -48731,6 +48793,8 @@ function FinanceTxn(){
       confirmedAt:new Date().toISOString(), confirmedBy:CURRENT_USER?CURRENT_USER.sid:''});
     var _sp2 = {};
     if(pItem.kind==='retainer'){_sp2.retainerPaid=true;_sp2.retainerPaidDate=paidDate;}
+    else if(pItem.kind==='success'){_sp2.successPaid=true;_sp2.successPaidDate=paidDate;}        // 사건 성공보수
+    else if(pItem.kind==='contractFee'){_sp2.contractPaid=true;_sp2.contractPaidDate=paidDate;}  // 계약금
     else if(pItem.kind==='balance'){_sp2.balancePaid=true;_sp2.balancePaidDate=paidDate;}
     else{_sp2.paid=true;_sp2.paidDate=paidDate;}
     dbPatch(pItem.store, pItem.item.id, _sp2);
