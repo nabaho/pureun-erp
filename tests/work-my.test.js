@@ -230,6 +230,19 @@ ok('묶어 보기 칩이 표 위에 있다', RM.indexOf('grpToggle()') > 0);
 ok('조건 해제가 접힌 묶음도 편다', grab('myReset').indexOf('S.grpF={}') > 0);
 ok('소제목 모양이 CSS에 있다', W.indexOf('tr.grph td{') > 0);
 
+/* ── 머리행과 본문의 칸 수가 같은가 ──
+   어긋나면 표 전체가 한 칸씩 밀린다. 접힌 열도 띠로 한 칸을 차지하므로
+   접든 펴든 언제나 9칸이다. 소제목 colspan 도 같아야 한다. */
+ok('머리행이 9칸', [
+  '\'<th class="rowno">\'', "fh('cat'", "qBox('renderMy','기업'", "fh('pt'", "fh('st'",
+  "colTH('last'", '\'<th class="wkhd"', "fh('due'", '종료</th>'
+].every(s => RM.indexOf(s) > 0));
+ok('본문도 9칸', [
+  'tdNo(no', "colTD('cat'", 'class="itc"', "colTD('pt'", "colTD('st'",
+  "colTD('last'", 'class="wkcell', "colTD('due'", 'endbtn'
+].every(s => RH.indexOf(s) > 0));
+ok('소제목 colspan 도 9', /var NCOL=9;/.test(RM));
+
 /* ── 할 일이냐 기록이냐 — 그 칸의 날짜 하나로 정한다 ── */
 ok('내일 이후는 할 일',
   isPlanDay('2026-08-08') === true && isPlanDay('2026-12-31') === true);
