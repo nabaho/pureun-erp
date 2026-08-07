@@ -184,6 +184,15 @@ ok('↑↓는 저장하지 않고 칸만 옮긴다',
   && WK.indexOf('wkMove') < WK.indexOf('wkSave'));   // 저장은 wkSave 가 맡는다(날짜에 따라 할 일/기록)
 ok('좌우는 빈 칸에서만 (글자가 있으면 커서를 움직여야 한다)',
   WK.indexOf("(e.key==='ArrowLeft'||e.key==='ArrowRight')&&!inp.value") > 0);
+
+/* ── Enter 는 그 칸에 머문다 — 같은 날에 여럿을 연달아 넣기 위함 ── */
+ok('저장한 뒤 그 칸에 머문다', WK.indexOf('wkPut(same[k3]); return;') > 0);
+ok('빈 칸에서 Enter 는 아랫줄로 (지금과 같다)',
+  WK.indexOf('if(!txt.trim()){ wkMove(inp,step); return; }') > 0);
+ok('Shift+Enter 는 윗줄로 (지금과 같다)',
+  WK.indexOf('e.shiftKey?-1:1') > 0 && WK.indexOf('if(!e.shiftKey){') > 0);
+ok('아랫줄로 가려면 ↓ 다', WK.indexOf("e.key==='ArrowDown'") > 0);
+ok('한글 조합 중 Enter 는 글자를 확정할 뿐이다', WK.indexOf('if(_ime(e)) return;') > 0);
 ok('Shift+Enter 는 윗줄로', WK.indexOf('var step=e.shiftKey?-1:1') > 0);
 ok('빈 칸에서 Enter 는 저장 없이 넘어간다', WK.indexOf('if(!txt.trim()){ wkMove(inp,step); return; }') > 0);
 ok('요일 칸에 적으면 그 날짜로 저장된다',
