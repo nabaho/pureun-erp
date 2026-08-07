@@ -14,6 +14,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js"></script>
 <script src="js/pu-resilience.js"></script>
 <script src="js/pu-health.js"></script>
 <script src="js/pu-version.js"></script>
@@ -268,6 +269,12 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
 #sgModal .hd{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid #eef2f7;flex-shrink:0;}
 #sgModal .hd b{font-size:1rem;font-weight:800;}
 #sgModal .hd .x{cursor:pointer;color:#94a3b8;font-size:1.2rem;background:none;border:none;}
+/* 새 건의 폰 알림(웹푸시) 켜기 — 건의함 머리에 한 칸 */
+#sgPushBtn{display:none;margin-left:auto;margin-right:10px;cursor:pointer;font-family:inherit;
+  font-size:.72rem;font-weight:700;padding:5px 11px;border-radius:20px;
+  border:1px solid #dbe3ef;background:#f8fafc;color:#64748b;white-space:nowrap;}
+#sgPushBtn.on{border-color:#bbf7d0;background:#f0fdf4;color:#166534;}
+#sgPushBtn:disabled{opacity:.55;cursor:default;}
 #sgModal .bd{padding:16px 18px;overflow-y:auto;}
 #sgModal label{font-size:.76rem;font-weight:700;color:#475569;display:block;margin:12px 0 5px;}
 #sgModal label:first-child{margin-top:0;}
@@ -500,6 +507,15 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       </div>
       <p class="cfg-help">사업자등록번호 진위·휴폐업 확인 · <a href="https://www.data.go.kr" target="_blank" rel="noopener">공공데이터포털</a> 무료 발급</p>
 
+      <label for="cfgVapid">폰 알림(웹푸시) 키 <span class="cfg-free">무료</span></label>
+      <div class="cfg-row">
+        <input type="password" id="cfgVapid" placeholder="B… 로 시작하는 긴 문자열" autocomplete="off">
+        <button type="button" class="cfg-eye" data-for="cfgVapid">보기</button>
+      </div>
+      <p class="cfg-help">새 건의가 올라오면 관리자 폰으로 알림을 보냅니다. Firebase 콘솔 →
+        프로젝트 설정 → <b>클라우드 메시징</b> → 웹 푸시 인증서에서 <b>키 쌍 생성</b> 후
+        나오는 공개키를 붙여넣으세요. 넣기 전에는 건의함의 [🔔 폰 알림] 버튼이 켜지지 않습니다.</p>
+
       <label for="cfgRhwp">한글 편집기(rhwp-studio) 주소</label>
       <input type="text" id="cfgRhwp" placeholder="https://nabaho.github.io/rhwp-studio/" autocomplete="off">
       <p class="cfg-help">경력관리 · 규정관리 등에서 HWPX 편집·미리보기에 사용</p>
@@ -550,6 +566,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
   <div class="box">
     <div class="hd">
       <b id="sgTitle">💬 건의함</b>
+      <button id="sgPushBtn" type="button" title="이 기기(폰)로 새 건의 알림을 받습니다">🔔 폰 알림</button>
       <button class="x" id="sgClose" type="button" aria-label="건의함 닫기">✕</button>
     </div>
     <div class="bd" id="sgBody"></div>
@@ -1349,7 +1366,10 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     sgShowTip();          // 무엇을 건의하는 곳인지 5초간 말풍선 안내
     sgUpdateBadge();      // 버튼 숫자 배지 (admin=미처리, 일반=내 미확인 해결)
     sgCheckResolved();    // 내 건의가 해결됐으면 로그인 직후 자동 팝업
-    sgCheckPending();     // (관리자) 미처리 건의가 있으면 로그인 직후 자동 팝업
+    // 폰 알림을 눌러 들어온 경우(?sg=1)엔 건의함을 바로 연다 — 미처리 팝업까지 겹쳐 뜨지 않게 한 쪽만.
+    if(/[?&]sg=1/.test(location.search)) sgOpen();
+    else sgCheckPending();   // (관리자) 미처리 건의가 있으면 로그인 직후 자동 팝업
+    pushListenForeground();  // 폰 알림을 켜둔 기기면, 포털을 열어둔 채로 와도 알림·배지 갱신
     cfgShowFab();         // (관리자) 화면 왼쪽 아래 ⚙ 설정 버튼 노출
   };
   // ── 안내 말풍선: 포털 진입 시 1회, 5초 뒤 자동 소멸 ──
@@ -1375,7 +1395,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
   //  · 버튼은 관리자에게만 보인다. 규칙상 저장 자체는 로그인 사용자면 가능하므로
   //    화면에서 감추는 것이 1차 방어이고, 값이 무료 키라 유출 피해가 없다.
   var CFG_PATH = 'data/app_config';
-  var CFG_FIELDS = [['cfgGemini','geminiKey'], ['cfgNts','ntsKey'], ['cfgRhwp','rhwpStudioUrl'], ['cfgProxy','aiProxyUrl'], ['cfgIdle','idleMinutes'], ['cfgTileCross','tileCrossRow']];
+  var CFG_FIELDS = [['cfgGemini','geminiKey'], ['cfgNts','ntsKey'], ['cfgVapid','fcmVapidKey'], ['cfgRhwp','rhwpStudioUrl'], ['cfgProxy','aiProxyUrl'], ['cfgIdle','idleMinutes'], ['cfgTileCross','tileCrossRow']];
 
   function cfgShowFab(){ var b = $('cfgFab'); if(b) b.style.display = sgIsAdmin() ? 'inline-flex' : 'none'; }
 
@@ -1592,6 +1612,113 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     }
   }
 
+  // ══════════ 새 건의 폰 알림 (웹푸시 · FCM) ══════════
+  //  브라우저를 닫아둬도 폰으로 알림이 온다. 보내는 쪽은 functions/index.js 의 notifySuggestion.
+  //  ⚠ 서비스워커는 반드시 좁은 scope('push/')로 등록한다 — 한 scope엔 워커가 하나만 살아남아,
+  //    기본 scope(/pureunall/)로 등록하면 명함첩 공유 수신용 pu-cards-sw.js 를 밀어낸다.
+  var PUSH_SCOPE = 'push/';                 // enter.html 기준 상대경로 → /pureunall/push/
+  var PUSH_LS = 'pu_push_token';            // 이 기기에 등록된 토큰 기억
+  function pushSupported(){
+    return !!(window.isSecureContext && 'serviceWorker' in navigator && 'Notification' in window
+              && window.firebase && firebase.messaging);
+  }
+  function pushTokenPath(uid, token){ return 'fcm_tokens/' + uid + '/' + token; }
+  function pushMyToken(){ try { return localStorage.getItem(PUSH_LS) || ''; } catch(e){ return ''; } }
+  function pushSetBtn(state, text){
+    var b = $('sgPushBtn'); if(!b) return;
+    b.className = (state === 'on') ? 'on' : '';
+    b.disabled = (state === 'busy' || state === 'na');
+    b.textContent = text;
+  }
+  // 건의함을 열 때마다 버튼 상태를 다시 그린다 (관리자에게만 보인다)
+  function pushRefresh(){
+    var b = $('sgPushBtn'); if(!b) return;
+    if(!sgIsAdmin()){ b.style.display = 'none'; return; }
+    b.style.display = 'inline-block';
+    if(!pushSupported()){ pushSetBtn('na', '🔔 알림 미지원'); return; }
+    if(Notification.permission === 'denied'){ pushSetBtn('na', '🔕 알림 차단됨'); return; }
+    if(Notification.permission === 'granted' && pushMyToken()) pushSetBtn('on', '🔔 폰 알림 켜짐');
+    else pushSetBtn('off', '🔔 폰 알림 받기');
+  }
+  /* 등록한 워커가 활성화될 때까지 기다린다.
+     navigator.serviceWorker.ready 를 쓰면 안 된다 — 그건 '이 페이지를 지배하는' 워커를 기다리는데,
+     우리 워커의 scope(/pureunall/push/)에는 이 페이지가 들어 있지 않아 영영 안 끝난다. */
+  function pushWaitActive(reg){
+    if(reg.active) return Promise.resolve(reg);
+    return new Promise(function(resolve){
+      var sw = reg.installing || reg.waiting;
+      if(!sw) return resolve(reg);
+      sw.addEventListener('statechange', function(){ if(sw.state === 'activated') resolve(reg); });
+      setTimeout(function(){ resolve(reg); }, 8000);   // 혹시 상태 신호를 놓쳐도 멈추지 않게
+    });
+  }
+  function pushEnable(){
+    if(!sgIsAdmin()) return;
+    if(!pushSupported()){
+      alert('이 브라우저는 웹 알림을 지원하지 않습니다.\n\n폰에서는 네이버·카카오 앱 안에서 열린 브라우저로는 알림을 받을 수 없습니다.\n크롬 또는 삼성인터넷으로 열거나, 포털을 홈 화면에 설치한 뒤 그 아이콘으로 열어 주세요.');
+      return;
+    }
+    pushSetBtn('busy', '🔔 준비 중…');
+    Promise.resolve()
+      .then(function(){ return firebase.messaging.isSupported ? firebase.messaging.isSupported() : true; })
+      .then(function(ok){
+        if(!ok) throw new Error('이 브라우저는 웹 알림을 지원하지 않습니다.\n크롬·삼성인터넷으로 열거나 홈 화면에 설치해 주세요.');
+        return db.ref('data/app_config/fcmVapidKey').once('value');
+      })
+      .then(function(s){
+        var key = String(s.val() || '').trim();
+        if(!key) throw new Error('폰 알림 키가 아직 없습니다.\n\n⚙ 설정 → [폰 알림(웹푸시) 키]에\nFirebase 콘솔에서 만든 공개키를 넣어 주세요.');
+        return Notification.requestPermission().then(function(perm){
+          if(perm !== 'granted') throw new Error('알림이 허용되지 않았습니다.\n주소창의 자물쇠 → 알림에서 허용으로 바꿔 주세요.');
+          return key;
+        });
+      })
+      .then(function(key){
+        return navigator.serviceWorker.register('firebase-messaging-sw.js', { scope: PUSH_SCOPE })
+          .then(pushWaitActive)
+          .then(function(reg){ return firebase.messaging().getToken({ vapidKey: key, serviceWorkerRegistration: reg }); });
+      })
+      .then(function(token){
+        if(!token) throw new Error('알림 토큰을 받지 못했습니다. 잠시 후 다시 시도해 주세요.');
+        if(!SG.uid) throw new Error('로그인 정보를 확인하지 못했습니다. 새로고침 후 다시 시도해 주세요.');
+        return db.ref(pushTokenPath(SG.uid, token))
+          .set({ at: Date.now(), name: SG.name || '', ua: String(navigator.userAgent || '').slice(0, 180) })
+          .then(function(){ try { localStorage.setItem(PUSH_LS, token); } catch(e){} });
+      })
+      .then(function(){
+        pushRefresh(); pushListenForeground();
+        alert('폰 알림을 켰습니다.\n이제 새 건의가 올라오면 이 기기로 알림이 옵니다.');
+      })
+      .catch(function(err){
+        pushRefresh();
+        alert((err && err.message) ? err.message : '알림을 켜지 못했습니다.');
+      });
+  }
+  function pushDisable(){
+    var mine = pushMyToken();
+    pushSetBtn('busy', '🔔 끄는 중…');
+    var jobs = [];
+    if(mine && SG.uid) jobs.push(db.ref(pushTokenPath(SG.uid, mine)).remove().catch(function(){}));
+    jobs.push(Promise.resolve().then(function(){ return firebase.messaging().deleteToken(); }).catch(function(){}));
+    Promise.all(jobs).then(function(){
+      try { localStorage.removeItem(PUSH_LS); } catch(e){}
+      pushRefresh();
+    });
+  }
+  // 포털을 열어둔 채로 건의가 올라온 경우 — 배지를 갱신하고 알림도 한 번 띄운다
+  var _pushFgOn = false;
+  function pushListenForeground(){
+    if(_pushFgOn || !pushSupported() || !pushMyToken()) return;
+    try {
+      firebase.messaging().onMessage(function(payload){
+        var d = (payload && payload.data) || {};
+        sgUpdateBadge();
+        try { new Notification(d.title || '푸른노무법인', { body: d.body || '', icon: 'icon-192.png', tag: d.tag || 'pu-suggestion' }); } catch(e){}
+      });
+      _pushFgOn = true;
+    } catch(e){ /* 워커 미등록 등 — 다음 켜기 때 다시 시도 */ }
+  }
+
   // ── 관리자 알림: 미처리 건의가 있으면 로그인 직후 팝업 ──
   //  새 건의가 올라오면 바로 다음 로그인에 뜨고, 새 건 없이 미처리만 남아 있으면 하루 1회만.
   //  (매 로그인마다 뜨면 번거롭고, 새 건의를 놓치면 안 되므로 둘을 절충)
@@ -1725,7 +1852,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     });
   }
 
-  function sgOpen(){ $('sgModal').style.display = 'flex'; try{ _sgDrag.reset(); }catch(_){} (sgIsAdmin()?sgViewList():sgViewMemberHome()); setTimeout(function(){ $('sgClose').focus(); }, 0); }
+  function sgOpen(){ $('sgModal').style.display = 'flex'; try{ _sgDrag.reset(); }catch(_){} pushRefresh(); (sgIsAdmin()?sgViewList():sgViewMemberHome()); setTimeout(function(){ $('sgClose').focus(); }, 0); }
   function sgCloseModal(){ $('sgModal').style.display = 'none'; }
 
   function sgViewMemberHome(){
@@ -2158,6 +2285,9 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
   $('sgClose').addEventListener('click', sgCloseModal);
   $('sgModal').addEventListener('click', function(e){ if(e.target === $('sgModal')) sgCloseModal(); });
   $('sgFab').addEventListener('click', sgOpen);
+  $('sgPushBtn').addEventListener('click', function(){
+    if($('sgPushBtn').className === 'on') pushDisable(); else pushEnable();
+  });
   // 시스템 설정(관리자)
   $('cfgFab').addEventListener('click', cfgOpen);
   $('cfgClose').addEventListener('click', cfgClose);

@@ -5,6 +5,7 @@ const functions = require("firebase-functions/v1");
 const { getApps, initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
 const { getDatabase } = require("firebase-admin/database");
+const { getMessaging } = require("firebase-admin/messaging");
 const { Resend } = require("resend");
 const {
   REPO,
@@ -394,4 +395,80 @@ exports.developmentAutomation = functions
       console.error("developmentAutomation", error && error.stack || error);
       res.status(error.status || 500).json({ ok: false, error: cleanText(error && error.message || error || "자동개발 처리 실패", 500) });
     }
+  });
+
+// ══════════ 새 건의 → 관리자 폰 알림 (웹푸시 · FCM) ══════════
+//  건의가 등록되면 포털이 suggestions_meta_private/{id} 에 경량 메타를 함께 적는다.
+//  그 시점을 잡아 uid_roles 에서 관리자를 찾고, 그 사람들이 [🔔 폰 알림]으로 등록해 둔
+//  기기 토큰(fcm_tokens/{uid}/{token})으로 알림을 보낸다.
+//
+//  ⚠ data 전용 메시지를 보낸다. notification 필드를 함께 실으면 브라우저가 자체 알림을
+//    띄우고 firebase-messaging-sw.js 도 띄워 알림이 두 번 뜬다.
+const SG_CAT_NAME = {
+  erp: "푸른이알피", consult: "컨설팅 일정", cards: "명함첩",
+  portal: "포털", work: "업무관리", rules: "취업규칙", etc: "기타",
+};
+
+exports.notifySuggestion = functions.database
+  .ref("/suggestions_meta_private/{id}")
+  .onCreate(async (snap, context) => {
+    const meta = snap.val() || {};
+    const db = getDatabase();
+
+    // 1) 관리자 UID 모으기
+    const rolesSnap = await db.ref("uid_roles").once("value");
+    const adminUids = [];
+    rolesSnap.forEach((child) => {
+      const v = child.val() || {};
+      if (v.isAdmin === true && v.status !== "resigned") adminUids.push(child.key);
+    });
+    if (!adminUids.length) return null;
+
+    // 2) 관리자들이 등록해 둔 기기 토큰 모으기 (본인이 올린 건의는 본인에게 안 보냄)
+    const authorUid = String(meta.authorUid || "");
+    const targets = [];
+    await Promise.all(adminUids.map(async (uid) => {
+      if (uid === authorUid) return;
+      const ts = await db.ref(`fcm_tokens/${uid}`).once("value");
+      ts.forEach((t) => { targets.push({ uid, token: t.key }); });
+    }));
+    if (!targets.length) {
+      console.log("notifySuggestion: 등록된 관리자 기기가 없습니다", { id: context.params.id });
+      return null;
+    }
+
+    // 3) 발송
+    const cat = SG_CAT_NAME[meta.cat] || SG_CAT_NAME.etc;
+    const payload = {
+      title: `💬 새 건의 · ${cleanText(meta.author || "이름 없음", 20)}`,
+      body: `[${cat}] ${cleanText(meta.title || "(제목 없음)", 90)}`,
+      tag: "pu-suggestion",
+      url: "/pureunall/enter.html?sg=1",
+    };
+    const res = await getMessaging().sendEachForMulticast({
+      tokens: targets.map((t) => t.token),
+      data: payload,
+      webpush: { headers: { Urgency: "high", TTL: "86400" } },
+    });
+
+    // 4) 죽은 토큰 정리 — 안 지우면 기기를 바꿀 때마다 쓰레기가 쌓여 발송이 계속 실패한다
+    const dead = [];
+    res.responses.forEach((r, i) => {
+      const code = r.error && r.error.code;
+      if (code === "messaging/registration-token-not-registered" ||
+          code === "messaging/invalid-registration-token" ||
+          code === "messaging/invalid-argument") {
+        dead.push(`fcm_tokens/${targets[i].uid}/${targets[i].token}`);
+      }
+    });
+    if (dead.length) {
+      const updates = {};
+      dead.forEach((p) => { updates[p] = null; });
+      await db.ref().update(updates).catch((e) => console.warn("죽은 토큰 정리 실패", e));
+    }
+
+    console.log("notifySuggestion", {
+      id: context.params.id, sent: res.successCount, failed: res.failureCount, cleaned: dead.length,
+    });
+    return null;
   });
