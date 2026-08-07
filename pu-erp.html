@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
@@ -208,7 +208,7 @@ var Component = React.Component;
    ※ 잊어도 되도록 파일 길이로도 새 배포를 알아채게 해 두었지만(_vgCheckHtml),
      여기 적어 두면 무엇이 바뀐 배포인지 알 수 있어 문제를 찾기 쉽습니다. */
 var ERP_BUILD = '2026-08-07 겹치는 유형 합치기 도구 / 성공보수 소수점 입력 / 금액칸 부가세 안내 / 관리번호 약어 통일 도구 / 입금매칭 후보에 자문료·성공보수·계약금 추가';
-var BUILD_SEQ = 145;
+var BUILD_SEQ = 146;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -66593,13 +66593,46 @@ window.erpMergeTypes = function(kind, fromCode, toCode, apply){
         var sb = {}; B.split('').forEach(function(c){ sb[c] = 1; });
         Object.keys(sa).forEach(function(c){ all++; if(sb[c]) both++; });
         Object.keys(sb).forEach(function(c){ if(!sa[c]) all++; });
-        if(all && both / all >= 0.7){
+        /* 0.8 이다. 0.7 로 했더니 「부당해고등노동위원회대리(노사)」 와
+           「부당노동행위노동위원회대리(노사)」 를 같은 일이라고 짚었다 — 전혀 다른 사건이다.
+           뒤쪽 「노동위원회대리(노사)」 가 길게 같아서 글자가 많이 겹쳐 보였을 뿐이다. */
+        if(all && both / all >= 0.8){
           if(!near) console.log('\n  💡 이름이 비슷한 짝 (같은 일인지 봐 주세요):');
           if(showPair('「' + A + '」 와 「' + B + '」', [types[i], types[j]])) near++;
         }
       }
     }
-    if(!dup.length && !near){ console.log('\n  ✅ 겹치는 유형이 없습니다.'); return; }
+    /* 목록에서 지워졌는데 자료가 아직 붙들고 있는 코드.
+       유형 화면에서 유형을 지우면 그 자료는 「미설정」이 되어 여기 남는다. */
+    var known = {}; types.forEach(function(t){ known[t.code] = 1; });
+    var lost = {};
+    function scanLost(store){
+      (dbGet(store, []) || []).forEach(function(r){
+        var c = codeOf(r); if(!c || known[c]) return;
+        var e = lost[c] = lost[c] || { n:0, shorts:{}, sample:'' };
+        e.n++;
+        if(!e.sample) e.sample = String(r.companyName || r.name || '');
+        var no = noKey ? String(r[noKey] || '') : '';
+        var mm = no.match(/^(.+?)-(\d{4})-(\d+)$/);
+        if(mm) e.shorts[mm[1]] = 1;
+      });
+    }
+    scanLost(m.store); scanLost('consultations'); scanLost('contracts');
+    var lostCodes = Object.keys(lost);
+    if(lostCodes.length){
+      console.log('\n  ⚠ 목록에 없는 옛 유형 — 자료만 남아 「미설정」입니다:');
+      lostCodes.forEach(function(c){
+        var e = lost[c];
+        var sh = Object.keys(e.shorts);
+        console.log('    ' + c + '  ' + (sh.length ? '[' + sh.join('·') + ']  ' : '') + e.n + '건'
+          + (e.sample ? '   ' + e.sample : ''));
+        // 약어가 같은 «살아 있는» 유형이 있으면 거기로 넣자고 권한다
+        var hit = types.filter(function(t){ return sh.indexOf(String(t.short || '')) >= 0; });
+        if(hit.length === 1) console.log('      → erpMergeTypes(\'' + kind + '\',\'' + c + '\',\'' + hit[0].code + '\')   (' + hit[0].name + ')');
+        else console.log('      → 넣을 유형을 골라 주세요: erpMergeTypes(\'' + kind + '\',\'' + c + '\',\'살릴유형코드\')');
+      });
+    }
+    if(!dup.length && !near && !lostCodes.length){ console.log('\n  ✅ 겹치는 유형이 없습니다.'); return; }
     console.log('\n  건수가 많은 쪽을 남기도록 적어 두었습니다. 남길 쪽을 바꾸려면 코드 순서를 바꾸세요.');
     return;
   }
@@ -66607,7 +66640,13 @@ window.erpMergeTypes = function(kind, fromCode, toCode, apply){
   /* ── 합치기 ── */
   var from = types.find(function(t){ return t.code === fromCode; });
   var to   = types.find(function(t){ return t.code === toCode; });
-  if(!from){ console.log('「' + fromCode + '」 유형이 없습니다. erpMergeTypes(\'' + kind + '\') 로 코드를 확인하세요.'); return; }
+  /* 없앨 쪽은 목록에 없어도 된다 — 유형은 지워졌는데 자료만 남은 「미설정」이 그렇다.
+     이게 원래 잡으려던 것이므로 목록에 있는 유형만 받으면 정작 못 고친다. */
+  if(!from){
+    var stray = (cnt[fromCode] || 0) + countIn('consultations', fromCode) + countIn('contracts', fromCode);
+    if(!stray){ console.log('「' + fromCode + '」 를 쓰는 자료가 없습니다. erpMergeTypes(\'' + kind + '\') 로 코드를 확인하세요.'); return; }
+    from = { code:fromCode, short:'', name:'(목록에 없는 옛 유형)' };
+  }
   if(!to){   console.log('「' + toCode   + '」 유형이 없습니다. erpMergeTypes(\'' + kind + '\') 로 코드를 확인하세요.'); return; }
   if(fromCode === toCode){ console.log('같은 유형입니다.'); return; }
 
