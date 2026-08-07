@@ -38,13 +38,15 @@ function escJ(s) { return esc(String(s == null ? '' : s).replace(/\\/g, '\\\\').
 function route() {} function renderMy() {}
 function fHas(sc, k) { return (S.F && S.F[sc] && S.F[sc][k]) instanceof Array; }
 function catBadge(c) { return '<span class="cat">' + esc(c) + '</span>'; }
+let PATCHED = null;
+function patchItem(id, f) { PATCHED = { id: id, f: f }; return Promise.resolve(true); }
 
-eval(gvar('COLS_KEY') + '\n' + gvar('MYCOLS') + '\n' + gvar('COLS_DEFAULT') + '\n'
+eval(gvar('STATUSES') + '\n' + gvar('COLS_KEY') + '\n' + gvar('MYCOLS') + '\n' + gvar('COLS_DEFAULT') + '\n'
   + gvar('GRP_KEY') + '\n' + gvar('GRP_ORDER') + '\n'
   + gvar('KIND_SET') + '\n' + gvar('KIND_ALIAS') + '\n'
   + ['catNorm', 'colPref', 'colHidden', 'colToggle', 'colChips', 'colTH', 'colTD',
      'grpOn', 'grpToggle', 'grpFold', 'grpFolded', 'grpFoldToggle', 'groupRows',
-     'grpHeadHTML'].map(grab).join('\n'));
+     'grpHeadHTML', 'stSelect', 'setStatus'].map(grab).join('\n'));
 
 /* ── 접을 수 있는 열 ──
    묶어 보기는 꺼 두고 본다. 켜면 구분 열이 자동으로 접히는데, 그것은
@@ -145,6 +147,39 @@ ok('묶어 보기를 켜면 구분 열이 자동으로 접힌다 (소제목에 �
   colHidden('cat') === true);
 S.grpOn = false;
 ok('끄면 구분 열이 돌아온다', colHidden('cat') === false);
+
+/* ── 상태 드롭다운 ── */
+ok('다섯 상태가 모두 선택지로 나온다', (function () {
+  const h = stSelect('검토', 'W1');
+  return STATUSES.every(s => h.indexOf('>' + s[0] + '<') > 0)
+    && (h.match(/<option/g) || []).length === 5;
+})());
+ok('지금 상태가 골라져 있다', (function () {
+  const h = stSelect('보류', 'W1');
+  return /value="보류" selected/.test(h) && !/value="진행중" selected/.test(h);
+})());
+ok('상태가 비어 있으면 진행중으로 본다 (옛 자료)',
+  /value="진행중" selected/.test(stSelect('', 'W1')));
+ok('모르는 상태여도 목록이 깨지지 않는다', (function () {
+  const h = stSelect('이상한값', 'W1');
+  return (h.match(/<option/g) || []).length === 5 && h.indexOf('selected') < 0;
+})());
+ok('줄 열기로 번지지 않는다 (상태를 바꾸려다 드로어가 열리면 안 된다)',
+  stSelect('진행중', 'W1').indexOf('event.stopPropagation()') > 0);
+ok('따옴표가 든 업무ID도 안 깨진다', stSelect('진행중', "W'1").indexOf("W\\'1") > 0);
+
+PATCHED = null;
+setStatus('W1', '보류');
+ok('고른 값이 저장된다', PATCHED && PATCHED.id === 'W1' && PATCHED.f.status === '보류');
+PATCHED = null;
+setStatus('W1', '이상한값');
+ok('목록에 없는 값은 저장하지 않는다', PATCHED === null);
+ok('눌러서 한 칸씩 도는 방식은 없앴다',
+  W.indexOf('function cycleStatus(') < 0 && W.indexOf('cycleStatus(') < 0);
+ok('푸른이알피 원본 상태는 그대로 아래에 붙는다',
+  grab('rowHTML').indexOf('peStChip(it)') > 0);
+ok('팀 전체·종료 화면의 상태 칩은 읽기용이라 클릭이 없다',
+  grab('stChip').indexOf('onclick') < 0);
 
 /* ── 표에 실제로 붙었나 ── */
 const RM = grab('renderMy'), RH = grab('rowHTML');
