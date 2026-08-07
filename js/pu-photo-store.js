@@ -260,7 +260,8 @@
   function whatOf(meta) {
     var m = meta || {};
     var r = m.read || {};
-    var kind = { card: '명함', bizreg: '사업자등록증', sme: '중소기업확인서', meeting: '회의·현장 사진' }[r.kind];
+    var kind = { card: '명함', bizreg: '사업자등록증', sme: '중소기업확인서',
+      payslip: '급여서류', meeting: '회의·현장 사진' }[r.kind];
     var who = (r.fields && (r.fields.company || r.fields.name)) || '';
     var base2 = kind || (m.kind === 'doc' ? '서류' : '사진');
     return who ? (base2 + ' · ' + who) : base2;
@@ -492,6 +493,24 @@
       if (got.indexOf(now) < 0) got.unshift(now);
       return got;
     });
+  }
+
+  /* ── 어디에 썼는지 표시 ──
+     보유기준(2026-08-06)이 증빙 5년·나머지 1년으로 갈리므로, **증빙으로 썼는지**를
+     알아야 한다. 컨설팅이 사진을 가져갈 때 여기에 한 줄 남긴다.
+
+     사진 정보 아래 한 칸(used)만 건드린다 — 사진 자체나 판독 결과는 손대지 않는다.
+     남의 사진을 쓸 때(관리자)는 그 사람 자리에 적히므로 owner 를 함께 넘긴다. */
+  function markUsed(year, id, where, owner) {
+    if (!year || !id) return Promise.reject(new Error('표시할 사진을 알 수 없습니다'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var u = {};
+    u[metaPath(year, id, owner) + '/used'] = {
+      at: Date.now(),
+      where: String(where || '').slice(0, 120),
+      by: deps.uid || ''
+    };
+    return deps.db.ref().update(u);
   }
 
   /* ── 담긴 양 ──
@@ -937,6 +956,7 @@
     purgeOldTrash: purgeOldTrash,
     purgeOne: purgeOne,
     listYears: listYears,
+    markUsed: markUsed,
     usage: usage,
     getBackups: getBackups,
     markBackup: markBackup,
