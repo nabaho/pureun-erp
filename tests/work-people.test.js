@@ -35,6 +35,15 @@ function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '
 function escJ(s) { return esc(String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'")); }
 function toast(m, k) { TOASTS.push([m, k]); }
 function closeM() {} function renderDrawer() {} function route() { RENDERED++; }
+// 캘린더에서 그 날을 고르면 그 주로 함께 옮긴다 — 옮겼는지 여기서 지켜본다
+let WEEKSET = null;
+function setWeek(m) { WEEKSET = m; }
+function mondayOf(d) { const t = new Date(d); t.setDate(t.getDate() - ((t.getDay() + 6) % 7)); return t; }
+function inWeek(dateStr, mon) {
+  if (!mon) return false;
+  const d = new Date(dateStr + 'T00:00:00'), e = new Date(mon); e.setDate(e.getDate() + 7);
+  return d >= mon && d < e;
+}
 function showModal() {} function calPanel() { return '<CALPANEL>'; }
 function calBuild() { return MAP; }
 function openDrawer(id) { ROWS._opened = id; }
@@ -285,6 +294,24 @@ MAP = { '2026-08-04': [{ it: 'W2' }] };
 S = { calDay: '2026-08-03' }; calDayHas({ _id: 'W1' }); calDayOnly('2026-08-04');
 ok('날을 바꾸면 다시 센다 (예전 날 것이 남으면 안 된다)',
   calDayHas({ _id: 'W2' }) && !calDayHas({ _id: 'W1' }));
+
+/* 고른 날이 보고 있는 주 밖이면 그 주로 함께 옮긴다.
+   예전에는 걸러만 놓고 주는 그대로 두어, 8/12 를 고르면 표는 8.3~8.7 을 보여 준
+   채 한 건도 안 남아 자료가 통째로 사라진 것처럼 보였다. */
+S = { calDay: '', week: new Date('2026-08-03T00:00:00') };   // 8.3~8.9 주
+WEEKSET = null; RENDERED = 0;
+calDayOnly('2026-08-12');
+ok('다른 주의 날을 고르면 그 주로 옮긴다 (안 그러면 고른 날이 표에 없다)',
+  WEEKSET && WEEKSET.getDate() === 10 && WEEKSET.getMonth() === 7);
+S = { calDay: '', week: new Date('2026-08-03T00:00:00') };
+WEEKSET = null; RENDERED = 0;
+calDayOnly('2026-08-05');
+ok('같은 주 안이면 주를 옮기지 않는다 (보던 자리를 지킨다)',
+  WEEKSET === null && RENDERED === 1);
+S = { calDay: '2026-08-12', week: new Date('2026-08-10T00:00:00') };
+WEEKSET = null;
+calDayOnly('2026-08-12');
+ok('해제할 때는 주를 옮기지 않는다', WEEKSET === null && S.calDay === '');
 
 /* ── 화면 넓게 쓰기 ── */
 STORE = {}; S = {}; CLS = {};
