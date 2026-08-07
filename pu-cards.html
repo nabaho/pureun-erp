@@ -4118,6 +4118,8 @@ function renderPCTable(){
       <button onclick="selPickOwner()" title="선택한 명함에 담당 직원을 한 번에 지정">👤 담당자 지정</button>
       <button onclick="copySelInfo()" title="선택한 명함 정보를 한꺼번에 복사">📋 단체 복사</button>
       <button onclick="mailSel()" title="선택한 명함 이메일로 단체 메일 작성 (숨은참조)">📧 단체 메일</button>
+      <button onclick="selMailCopy()" title="선택한 명함의 이메일을 쉼표로 묶어 복사 — 메일 쓰기창 숨은참조 칸에 붙여넣기">📧 주소 복사</button>
+      <button onclick="selMailCsv()" title="주소록에 가져올 CSV 파일로 내보내기">📇 주소록 내보내기</button>
       <button class="red" onclick="delSel()" title="선택한 명함 삭제">삭제</button>
       <button onclick="state.sel={};render()" title="선택 모두 해제">선택 해제</button></div>` : '';
   /* 표 */
@@ -5220,6 +5222,51 @@ function toCsv(rows){
   return '\uFEFF' + head + '\r\n' + body + '\r\n';
 }
 /* ══════ 메일 보내기 — 화면 ══════ */
+/* 선택한 명함만 대상으로 한다.
+   ★ 엑셀 내보내기와 달리 '아무것도 안 고르면 전체'로 넘어가지 않는다 —
+     실수로 누르면 6,275명 주소가 통째로 나간다. */
+function selMailPick(){
+  const ids = Object.keys(state.sel);
+  if(!ids.length){ toast('명함을 먼저 선택하세요'); return null; }
+  const items = ids.map(id=>state.items[id]).filter(Boolean);
+  const r = mailTargets(items, state.mailBlock);
+  if(!r.ok.length){
+    toast(`보낼 수 있는 주소가 없습니다 — 이메일 없음 ${r.stat.noEmail} · 수신거부 ${r.stat.blocked}`, 6000);
+    return null;
+  }
+  return r;
+}
+/* 결과를 숫자로 알린다. 몇 명에게 나가는지 모르고 보내면 안 된다. */
+function _mailStatText(st){
+  const bits = [];
+  if(st.noEmail) bits.push(`이메일 없음 ${st.noEmail}`);
+  if(st.blocked) bits.push(`수신거부 ${st.blocked}`);
+  if(st.dup)     bits.push(`중복 ${st.dup}`);
+  return `${st.ready.toLocaleString()}명 준비됨` + (bits.length ? ` · ${bits.join(' · ')} 제외` : '');
+}
+/* 메일 쓰기창의 숨은참조 칸에 붙여넣을 수 있게 쉼표로 묶어 복사한다.
+   mailto: 와 달리 길이 제한이 없어 몇 명이든 된다. */
+function selMailCopy(){
+  const r = selMailPick(); if(!r) return;
+  const text = r.ok.map(x=>x.email).join(', ');
+  const done = () => toast(`📧 ${_mailStatText(r.stat)}\n메일 쓰기 → 숨은참조(BCC) 칸에 붙여넣으세요`, 9000);
+  if(navigator.clipboard) navigator.clipboard.writeText(text).then(done).catch(()=>{ fallbackCopy(text); done(); });
+  else { fallbackCopy(text); done(); }
+}
+/* 주소록에 가져올 CSV. 한 번 넣어 두면 메일에서 그룹으로 발송할 수 있다. */
+function selMailCsv(){
+  const r = selMailPick(); if(!r) return;
+  const csv = toCsv(r.ok);
+  const d = new Date();
+  const ymd = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const blob = new Blob([csv], { type:'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `명함첩_주소록_${ymd}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+  toast(`📇 ${_mailStatText(r.stat)}\n처음에는 2~3명만 먼저 가져와 형식을 확인하세요`, 9000);
+}
 </script>
 </body>
 </html>
