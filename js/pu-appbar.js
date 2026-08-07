@@ -112,9 +112,24 @@
   }
   function onKey(e) { if (e.key === 'Escape') closePop(); }
 
+  /* 목록을 걸 높이 — 단추 밑이 아니라 **머리줄 밑**이다.
+     단추는 머리줄보다 작아서(위아래 여백) 단추 밑에 걸면 머리줄을 몇 px 덮는다(실측). */
+  function barBottom(btn) {
+    var r = btn.getBoundingClientRect();
+    var y = r.bottom, p = btn.parentElement, n = 0;
+    while (p && n++ < 4) {
+      var pb = p.getBoundingClientRect();
+      // 단추를 품은 '줄' 로 보이는 것만: 훨씬 넓고, 아래로 조금만 더 내려간 것
+      if (pb.bottom > y && (pb.bottom - r.bottom) <= 40 && pb.width > r.width * 2) y = pb.bottom;
+      p = p.parentElement;
+    }
+    return y;
+  }
+
   function openPop(btn) {
     if (_pop) { closePop(); return; }
     var r = btn.getBoundingClientRect();
+    var anchorY = barBottom(btn);
     var W = 236;
     var pop = document.createElement('div');
     pop.setAttribute('data-pu-appbar-pop', '1');
@@ -123,7 +138,7 @@
       'border-radius:9px;box-shadow:0 12px 30px rgba(0,0,0,.20);overflow:hidden;' +
       'font-family:-apple-system,"Malgun Gothic",sans-serif;' +
       'left:' + Math.max(8, Math.min(r.left, global.innerWidth - W - 10)) + 'px;' +
-      'top:' + (r.bottom + 5) + 'px;';
+      'top:' + (anchorY + 5) + 'px;';
 
     var head = document.createElement('div');
     head.style.cssText = 'padding:6px 11px;font-size:10.5px;color:#94a3b8;background:#f8fafc;border-bottom:1px solid #eef2f6';
@@ -193,9 +208,13 @@
 
     document.body.appendChild(pop);
     _pop = pop;
-    // 아래 공간이 모자라면 위로 펼친다
+    /* 아래가 좁고 **위가 더 넓을 때만** 위로 펼친다.
+       종전처럼 「아래로 넘치면 무조건 위」로 하면, 머리줄이 화면 맨 위에 있는 앱에서
+       목록이 머리줄을 덮어 버린다(창이 짧을 때 특히). */
     var pr = pop.getBoundingClientRect();
-    if (pr.bottom > global.innerHeight - 8) {
+    var below = global.innerHeight - anchorY;
+    var above = r.top;
+    if (pr.height > below - 8 && above > below) {
       pop.style.top = 'auto';
       pop.style.bottom = (global.innerHeight - r.top + 5) + 'px';
     }
@@ -251,10 +270,26 @@
      ② 안 정해 뒀으면 오른쪽 위에 떠 있는 단추로 붙인다.
         자리를 정하는 것이 보기 좋지만, 안 해도 일단 쓸 수 있어야 8개를 한꺼번에 살릴 수 있다. */
   function auto() {
-    if (document.querySelector('[data-pu-appbar-btn]')) return;
     _me = whoAmI();
-    var host = document.querySelector('[data-pu-appbar]');
+    /* 앱이 단추를 직접 그리는 경우(<meta name="pu-appbar" content="self">)에는
+       손대지 않는다. 안 그러면 로그인 전에 떠 있는 단추가 하나 생기고,
+       로그인 뒤 앱이 그린 단추와 **둘이 겹친다.** */
+    if (document.querySelector('meta[name="pu-appbar"][content="self"]')) return;
+    var host = document.querySelector('[data-pu-appbar]:not([data-pu-appbar="float"])');
+    var btn = document.querySelector('[data-pu-appbar-btn]');
+    if (btn) {
+      /* ★ 옮기는 것은 **내가 띄운 단추뿐**이다.
+         앱이 제자리에 그려 둔 단추까지 끌어오면 엉뚱한 곳으로 간다.
+         (자리가 늦게 생기는 앱을 위해, 떠 있던 것만 제자리로 들여보낸다) */
+      var old = document.querySelector('[data-pu-appbar="float"]');
+      if (host && old && old.contains(btn)) {
+        host.appendChild(btn);
+        if (old.parentNode) old.parentNode.removeChild(old);
+      }
+      return;
+    }
     if (host) { mount(host, { current: _me }); return; }
+    // 자리를 못 찾았을 때만 임시로 띄운다 (나중에 자리가 생기면 위에서 옮겨 간다)
     var float = document.createElement('div');
     float.setAttribute('data-pu-appbar', 'float');
     float.style.cssText = 'position:fixed;top:8px;right:10px;z-index:9998;';
@@ -268,10 +303,20 @@
   // 앱 화면이 늦게 그려지는 경우(리액트·프리액트)가 있어 한 번 더 살핀다
   ready(function () { auto(); setTimeout(auto, 1200); });
 
+  /* 앱이 스스로 단추를 그리고 이 함수만 부르는 길.
+     리액트·프리액트로 머리줄을 그리는 앱(푸른이알피)은 남의 DOM 을 끼워 넣으면
+     다시 그릴 때 지워질 수 있다. 그래서 단추는 앱이 그리고, 목록만 여기서 연다. */
+  function open(btnEl) {
+    if (!_me) _me = whoAmI();
+    if (!btnEl) return;
+    openPop(btnEl);
+  }
+
   global.PuAppBar = {
     APPS: APPS,
     mount: mount,
     auto: auto,
+    open: open,
     whoAmI: whoAmI,
     mark: mark,
     lastScreen: lastScreen,
