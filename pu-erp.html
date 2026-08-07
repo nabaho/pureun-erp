@@ -207,8 +207,8 @@ var Component = React.Component;
 /* ⚠ 배포할 때 이 두 줄을 함께 올려 주세요 (안 올리면 다른 사람 화면이 옛 코드로 남습니다).
    ※ 잊어도 되도록 파일 길이로도 새 배포를 알아채게 해 두었지만(_vgCheckHtml),
      여기 적어 두면 무엇이 바뀐 배포인지 알 수 있어 문제를 찾기 쉽습니다. */
-var ERP_BUILD = '2026-08-07 성공보수 소수점 입력 / 금액칸 부가세 안내 / 관리번호 약어 통일 도구 / 입금매칭 후보에 자문료·성공보수·계약금 추가';
-var BUILD_SEQ = 144;
+var ERP_BUILD = '2026-08-07 겹치는 유형 합치기 도구 / 성공보수 소수점 입력 / 금액칸 부가세 안내 / 관리번호 약어 통일 도구 / 입금매칭 후보에 자문료·성공보수·계약금 추가';
+var BUILD_SEQ = 145;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -66499,6 +66499,206 @@ window.erpUnifyNoPrefix = function(kind, target, apply){
   console.log('  화면을 새로고침하세요.');
   try { showToast('관리번호 ' + plan.length + '건을 ' + target + ' 로 모았습니다 — 새로고침하세요'); } catch(_){}
   return plan.length;
+};
+
+/* ── 겹치는 «유형» 합치기 ──
+   2026-08-07 대표님 지시. 위 도구(erpUnifyNoPrefix)는 «한 유형이 두 약어로 갈린 것»을 고친다.
+   여기는 그 반대 — «같은 일인데 유형 자체가 두 개»인 것을 하나로 합친다.
+     예) case-mq7y4m51cmb : 산재등(2건)  +  case-mpurq6pyc56 : 산재등(1건)
+   약어까지 같으면 「산재등-2026-001」 이 두 개 생길 수 있으므로 그냥 두면 위험하다.
+
+   합칠 때 하는 일 네 가지
+     ① 딸린 자료의 유형코드를 새 유형으로 바꾼다 (typeCodes[종류] · typeCode 둘 다)
+     ② 관리번호 약어를 새 유형 약어로 바꾼다 — 번호가 겹치면 그 해의 다음 빈 번호를 준다
+     ③ 이관 전 원장(consultations)·계약(contracts)에 박힌 유형코드도 같이 바꾼다
+     ④ 빈 껍데기가 된 옛 유형을 목록에서 지운다
+
+   쓰는 법 (F12 → Console):
+     erpMergeTypes('case')                                  유형 현황 · 겹치는 짝 찾기
+     erpMergeTypes('case','case-옛코드','case-새코드')        합치면 어떻게 되는지 미리 보기
+     erpMergeTypes('case','case-옛코드','case-새코드',true)   실제로 합치기
+   kind: company | case | consulting | fund | other */
+window.erpMergeTypes = function(kind, fromCode, toCode, apply){
+  var MAP = {
+    company:   { store:'companies',      types:'biz_company_types', noKey:null       },
+    case:      { store:'cases',          types:'biz_case_types',    noKey:'caseNo'   },
+    consulting:{ store:'consultings',    types:'biz_cons_types',    noKey:'no'       },
+    fund:      { store:'funds',          types:'biz_fund_types',    noKey:'no'       },
+    other:     { store:'other_projects', types:'biz_other_types',   noKey:'no'       }
+  };
+  var m = MAP[kind];
+  if(!m){ console.log('kind 는 company / case / consulting / fund / other 중 하나입니다'); return; }
+  var list  = dbGet(m.store, []) || [];
+  var types = dbGet(m.types, []) || [];
+  if(!Array.isArray(types)) types = Object.keys(types).map(function(k){ return types[k]; }).filter(Boolean);
+  var noKey = m.noKey;
+  // 한 건이 어떤 유형코드를 쓰고 있나 (새 방식 typeCodes[종류] 우선, 없으면 옛 typeCode)
+  function codeOf(r){ return (r && r.typeCodes && r.typeCodes[kind]) || (r && r.typeCode) || ''; }
+  function countIn(store, code){
+    var n = 0;
+    (dbGet(store, []) || []).forEach(function(r){ if(codeOf(r) === code) n++; });
+    return n;
+  }
+  var cnt = {};
+  list.forEach(function(r){ var c = codeOf(r); if(c) cnt[c] = (cnt[c] || 0) + 1; });
+
+  /* ── 현황 보기 ── */
+  if(!fromCode || !toCode){
+    console.log('── 유형 현황 (' + kind + ') ──');
+    types.forEach(function(t){
+      var extra = countIn('consultations', t.code) + countIn('contracts', t.code);
+      console.log('  ' + t.code + '  [' + (t.short || '?') + ']  ' + (t.name || '')
+        + '  — ' + (cnt[t.code] || 0) + '건'
+        + (extra ? ' (+원장·계약 ' + extra + '건)' : '')
+        + (t.hidden ? '  🙈숨김' : ''));
+    });
+    // 짝짓기: 약어가 같거나 이름이 같은 것
+    var groups = {};
+    types.forEach(function(t){
+      [['약어', String(t.short || '')], ['이름', String(t.name || '').replace(/\s+/g, '')]].forEach(function(p){
+        if(!p[1]) return;
+        var k = p[0] + ':' + p[1];
+        (groups[k] = groups[k] || []).push(t);
+      });
+    });
+    var dup = Object.keys(groups).filter(function(k){ return groups[k].length > 1; });
+    var seen = {};
+    function showPair(head, g){
+      var sig = g.map(function(t){ return t.code; }).sort().join('|');
+      if(seen[sig]) return false; seen[sig] = 1;
+      console.log('    ' + head + ' —');
+      g.forEach(function(t){ console.log('      ' + t.code + '  [' + (t.short||'?') + ']  ' + (t.name||'') + '  ' + (cnt[t.code]||0) + '건'); });
+      // 건수가 많은 쪽을 남기자고 권한다
+      var keep = g.slice().sort(function(a,b){ return (cnt[b.code]||0) - (cnt[a.code]||0); })[0];
+      g.forEach(function(t){
+        if(t.code === keep.code) return;
+        console.log('      → erpMergeTypes(\'' + kind + '\',\'' + t.code + '\',\'' + keep.code + '\')');
+      });
+      return true;
+    }
+    if(dup.length){
+      console.log('\n  ⚠ 겹치는 짝 (약어나 이름이 똑같음):');
+      dup.forEach(function(k){ showPair(k.split(':')[0] + ' 「' + k.split(':')[1] + '」', groups[k]); });
+    }
+    /* 「임금체불」 과 「임금등 체불」 처럼 글자가 조금 다른 것도 사실상 같은 일일 수 있다.
+       글자가 얼마나 겹치나로 짐작만 해서 보여 준다 — 합칠지는 사람이 정한다. */
+    var near = 0;
+    for(var i = 0; i < types.length; i++){
+      for(var j = i + 1; j < types.length; j++){
+        var A = String(types[i].name || '').replace(/\s+/g, '');
+        var B = String(types[j].name || '').replace(/\s+/g, '');
+        if(A.length < 2 || B.length < 2) continue;
+        var sa = {}, both = 0, all = 0;
+        A.split('').forEach(function(c){ sa[c] = 1; });
+        var sb = {}; B.split('').forEach(function(c){ sb[c] = 1; });
+        Object.keys(sa).forEach(function(c){ all++; if(sb[c]) both++; });
+        Object.keys(sb).forEach(function(c){ if(!sa[c]) all++; });
+        if(all && both / all >= 0.7){
+          if(!near) console.log('\n  💡 이름이 비슷한 짝 (같은 일인지 봐 주세요):');
+          if(showPair('「' + A + '」 와 「' + B + '」', [types[i], types[j]])) near++;
+        }
+      }
+    }
+    if(!dup.length && !near){ console.log('\n  ✅ 겹치는 유형이 없습니다.'); return; }
+    console.log('\n  건수가 많은 쪽을 남기도록 적어 두었습니다. 남길 쪽을 바꾸려면 코드 순서를 바꾸세요.');
+    return;
+  }
+
+  /* ── 합치기 ── */
+  var from = types.find(function(t){ return t.code === fromCode; });
+  var to   = types.find(function(t){ return t.code === toCode; });
+  if(!from){ console.log('「' + fromCode + '」 유형이 없습니다. erpMergeTypes(\'' + kind + '\') 로 코드를 확인하세요.'); return; }
+  if(!to){   console.log('「' + toCode   + '」 유형이 없습니다. erpMergeTypes(\'' + kind + '\') 로 코드를 확인하세요.'); return; }
+  if(fromCode === toCode){ console.log('같은 유형입니다.'); return; }
+
+  var target = String(to.short || '').trim();
+  /* 번호가 몇 번 쓰이고 있는지 «세어» 둔다.
+     ★ 약어가 이미 같아도(산재등 → 산재등) 번호는 겹칠 수 있다 —
+       유형이 둘로 갈려 각자 001 부터 매겼기 때문이다. 그래서 약어가 같다고 건너뛰면 안 된다. */
+  var taken = {}, maxBy = {};
+  if(noKey){
+    list.forEach(function(r){
+      var n = String(r && r[noKey] || ''); if(n) taken[n] = (taken[n] || 0) + 1;
+      if(codeOf(r) !== toCode) return;
+      var mm = n.match(/^(.+?)-(\d{4})-(\d+)$/); if(!mm) return;
+      var v = parseInt(mm[3], 10) || 0;
+      if(v > (maxBy[mm[2]] || 0)) maxBy[mm[2]] = v;
+    });
+  }
+  var move = [], renum = [];
+  list.forEach(function(r){
+    if(codeOf(r) !== fromCode) return;
+    var item = { id:r.id, label:(r.companyName || r.name || '') };
+    if(noKey && target){
+      var no = String(r[noKey] || '');
+      var mm = no.match(/^(.+?)-(\d{4})-(\d+)$/);
+      if(mm){
+        var want = target + '-' + mm[2] + '-' + mm[3];
+        // 남이 이미 쓰는 번호인가 — 제 번호 그대로면 «저 말고 또 있을 때»가 겹침이다
+        var busy = (want === no) ? (taken[want] || 0) > 1 : (taken[want] || 0) > 0;
+        if(busy){                                         // 진짜 겹침 → 그 해의 다음 빈 번호
+          var nn = (maxBy[mm[2]] || 0) + 1; maxBy[mm[2]] = nn;
+          want = target + '-' + mm[2] + '-' + String(nn).padStart(3, '0');
+          renum.push(no + '  →  ' + want + '  (원래 번호가 이미 있어 새 번호)');
+        }
+        if(want !== no){
+          taken[no] = Math.max(0, (taken[no] || 1) - 1);
+          taken[want] = (taken[want] || 0) + 1;
+          item.from = no; item.to = want;
+        }
+      }
+    }
+    move.push(item);
+  });
+  var extraStores = ['consultations', 'contracts'].filter(function(s){ return countIn(s, fromCode) > 0; });
+
+  console.log('── 유형 합치기 (' + kind + ') ──');
+  console.log('  없앨 유형 : ' + fromCode + '  [' + (from.short||'?') + ']  ' + (from.name||''));
+  console.log('  남길 유형 : ' + toCode   + '  [' + (to.short||'?')   + ']  ' + (to.name||''));
+  console.log('  옮길 자료 : ' + move.length + '건');
+  move.forEach(function(x){
+    console.log('    ' + (x.from ? (x.from + '  →  ' + x.to) : '(관리번호 없음)') + (x.label ? '   ' + x.label : ''));
+  });
+  if(renum.length){
+    console.log('\n  ⚠ 번호가 겹쳐 새 번호를 주는 것 ' + renum.length + '건:');
+    renum.forEach(function(s){ console.log('    ' + s); });
+  }
+  extraStores.forEach(function(s){ console.log('  ' + (s==='contracts'?'계약':'이관 전 원장') + ' ' + countIn(s, fromCode) + '건의 유형도 함께 바꿉니다.'); });
+  if(!apply){
+    console.log('\n  실제로 합치려면: erpMergeTypes(\'' + kind + '\',\'' + fromCode + '\',\'' + toCode + '\',true)');
+    return;
+  }
+
+  var toNo = {}; move.forEach(function(x){ if(x.to) toNo[x.id] = x.to; });
+  function swap(store, alsoNo){
+    var arr = dbGet(store, []) || [];
+    if(!Array.isArray(arr) || !arr.length) return 0;
+    var n = 0;
+    var next = arr.map(function(r){
+      if(codeOf(r) !== fromCode) return r;
+      n++;
+      var nr = Object.assign({}, r);
+      nr.typeCodes = Object.assign({}, nr.typeCodes || {});
+      nr.typeCodes[kind] = toCode;
+      if(nr.typeCode === fromCode) nr.typeCode = toCode;
+      if(alsoNo && toNo[r.id]) nr[noKey] = toNo[r.id];
+      return nr;
+    });
+    if(n){ try { console.log('[유형합치기 백업] ' + store, JSON.stringify(arr)); } catch(_){} dbSet(store, next); }
+    return n;
+  }
+  var n1 = swap(m.store, !!noKey);
+  extraStores.forEach(function(s){ swap(s, false); });
+  // 빈 껍데기가 된 옛 유형을 목록에서 뺀다
+  try {
+    console.log('[유형합치기 백업] ' + m.types, JSON.stringify(types));
+    dbSet(m.types, types.filter(function(t){ return t.code !== fromCode; }));
+  } catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+
+  console.log('\n  ✅ ' + n1 + '건을 「' + (to.name||toCode) + '」 로 옮기고, 옛 유형을 지웠습니다.');
+  console.log('  화면을 새로고침하세요.');
+  try { showToast('유형 ' + n1 + '건을 합쳤습니다 — 새로고침하세요'); } catch(_){}
+  return n1;
 };
 
 // 호성기업 현장클리닉 관리번호 001 변경 (일회성, 멱등)
