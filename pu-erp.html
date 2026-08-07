@@ -2300,8 +2300,9 @@ window.erpAllowBulk = function(){
   console.log('✅ 대량 삭제 15초간 허용됨 — 지금 저장/삭제하세요');
 };
 
-// ── 서버 자동백업: 하루 1회, data/와 분리된 serverBackups/ 칸에 스냅샷 저장(30일치 유지) ──
+// ── 서버 자동백업: 하루 1회, data/와 분리된 serverBackups/ 칸에 스냅샷 저장(10일치 유지) ──
 //    이 칸은 동기화(fbInitialSync)·자동삭제 루틴이 건드리지 않음.
+var SERVER_BACKUP_KEEP = 20;   // 아침+저녁 2회 × 10일. 실시간DB 용량 절약(무료 1GB)
 var SERVER_BACKUP_KEYS = [
   'contracts','cases','consultings','funds','other_projects','companies',
   'finance_income','payroll_monthly','attendance_records','my_schedules',
@@ -2356,19 +2357,39 @@ function serverBackupDaily(force){
     .then(function(s){
       if(!s) return;
       var dates = Object.keys(s.val() || {}).sort(); // YYYY-MM-DD(-pm)는 사전순=시간순
-      // 아침+저녁 하루 2회 체계 → 60개 보관 = 약 30일치
-      if(dates.length > 60){
+      // 아침+저녁 하루 2회 체계 → 20개 보관 = 약 10일치
+      //  ※ 스냅샷 한 벌이 실시간DB 용량을 그대로 먹는다(무료 한도 1GB).
+      //    30일치(60벌)는 용량 초과의 주범이라 10일치로 줄였다. 더 옛 자료는 로컬 백업으로 남긴다.
+      if(dates.length > SERVER_BACKUP_KEEP){
         var updates = {};
-        dates.slice(0, dates.length - 60).forEach(function(dd){ updates['serverBackups/'+dd] = null; updates['serverBackupsIndex/'+dd] = null; });
+        dates.slice(0, dates.length - SERVER_BACKUP_KEEP).forEach(function(dd){ updates['serverBackups/'+dd] = null; updates['serverBackupsIndex/'+dd] = null; });
         return fbDb.ref().update(updates);
       }
     })
     .catch(function(e){ window._erpErrLog && window._erpErrLog(e); });
 }
 window.erpServerBackupNow = function(){ serverBackupDaily(true); console.log('서버 백업 시도(강제)'); };
+// 새 백업을 만들지 않고 오래된 것만 즉시 정리 — 실시간DB 용량이 급할 때 쓴다.
+window.erpBackupPruneNow = function(){
+  if(typeof fbDb === 'undefined' || !fbDb){ console.log('서버 연결 안 됨'); return; }
+  if(!(CURRENT_USER && CURRENT_USER.isAdmin)){ console.log('관리자만 실행할 수 있습니다'); return; }
+  fbDb.ref('serverBackupsIndex').once('value').then(function(s){
+    var dates = Object.keys(s.val() || {}).sort();
+    if(dates.length <= SERVER_BACKUP_KEEP){ console.log('정리할 것 없음 ('+dates.length+'벌 보관 중)'); return; }
+    var old = dates.slice(0, dates.length - SERVER_BACKUP_KEEP), updates = {};
+    old.forEach(function(dd){ updates['serverBackups/'+dd] = null; updates['serverBackupsIndex/'+dd] = null; });
+    return fbDb.ref().update(updates).then(function(){
+      console.log('옛 백업 '+old.length+'벌 삭제 · '+SERVER_BACKUP_KEEP+'벌 남김 ('+old[0]+' ~ '+old[old.length-1]+')');
+    });
+  }).catch(function(e){ console.log('정리 실패: '+(e && e.message)); });
+};
 
 // ── 수시 자동백업: 앱이 열려 있는 동안 30분마다, "바뀐 게 있을 때만" serverBackupsRecent/에 저장(최근 24개 유지) ──
 //    일간 보관함(serverBackups)과 완전히 분리. 변화 감지는 데이터 JSON의 경량 해시 비교.
+//    ※ 2026-08-07 중지: 스냅샷 48벌이 실시간DB 용량(무료 1GB)을 크게 먹는다.
+//      게다가 보안규칙에 serverBackupsRecent 칸이 없어 지금까지 저장 자체가 실패해 왔다.
+//      되살리려면 규칙에 칸을 먼저 넣고 아래 ENABLED 를 true 로 바꾼다.
+var RECENT_BACKUP_ENABLED = false;
 var RECENT_BACKUP_INTERVAL_MIN = 15;
 var RECENT_BACKUP_KEEP = 48;
 function _quickHash(str){
@@ -2406,7 +2427,7 @@ function startRecentBackupTimer(){
   if(window._recentBackupTimer) return;
   // [보안규칙 대비] 수시 백업도 관리자·위임관리인 기기에서만 (불완전 백업 방지)
   if(!(CURRENT_USER && (CURRENT_USER.isAdmin || CURRENT_USER.isSubAdmin))) return;
-  window._recentBackupTimer = setInterval(serverBackupRecent, RECENT_BACKUP_INTERVAL_MIN * 60 * 1000);
+  if(RECENT_BACKUP_ENABLED) window._recentBackupTimer = setInterval(serverBackupRecent, RECENT_BACKUP_INTERVAL_MIN * 60 * 1000);
   // 저녁 백업 체크도 함께 시작 (10분 간격) + 즉시 1회
   if(!window._pmBackupTimer){
     window._pmBackupTimer = setInterval(serverBackupEvening, 10 * 60 * 1000);
