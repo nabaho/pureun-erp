@@ -1543,10 +1543,37 @@ function _vgInputFocused(){
   var tag = (el.tagName || '').toLowerCase();
   return tag==='input' || tag==='textarea' || tag==='select' || !!el.isContentEditable;
 }
+/* ★ 팝업창(모달)이 열려 있으면 «작업 중» 이다 — 절대 새로고침하지 않는다.
+   2026-08-07 제보: 입금반영·사건관리 팝업에서 작업하다 자동새로고침이 걸려
+   팝업이 닫히고 입력하던 내용이 통째로 사라졌다. 원인은 두 가지였다 —
+     ① 다른 창으로 잠깐 옮기면(document.hidden) «안전» 으로 보고 그 자리에서 새로고침
+     ② 30초 손 놓고 생각만 해도 «유휴» 로 보고 새로고침
+   팝업이 열려 있는지는 두 가지로 본다: 클래스로 만든 것(.modal-bg)과
+   코드로 그린 전체 덮개(position:fixed 로 화면을 거의 다 덮은 것). */
+function _vgDialogOpen(){
+  try {
+    var m = document.querySelectorAll('.modal-bg, dialog[open]');
+    for(var i=0;i<m.length;i++){
+      var e = m[i], cs = getComputedStyle(e);
+      if(cs.display !== 'none' && cs.visibility !== 'hidden' && e.getBoundingClientRect().height > 0) return true;
+    }
+    var W = window.innerWidth, H = window.innerHeight;
+    if(W > 0 && H > 0){
+      var cand = document.querySelectorAll('div[style*="fixed"]');   // 코드로 그린 덮개
+      for(var j=0;j<cand.length;j++){
+        var r = cand[j].getBoundingClientRect();
+        if(r.width >= W*0.9 && r.height >= H*0.9 && getComputedStyle(cand[j]).position === 'fixed') return true;
+      }
+    }
+  } catch(_){}
+  return false;
+}
+var _VG_IDLE_MS = 180000;   // 3분. 30초는 «생각하는 시간» 에도 걸려 작업을 끊었다.
 function _vgSafeNow(){
-  if(document.hidden) return true;                       // 백그라운드 → 안전
+  if(_vgDialogOpen()) return false;                      // ★ 팝업 열림 → 언제나 보류
   if(_vgInputFocused()) return false;                    // 입력 중 → 보류
-  return (Date.now() - _vgLastActivity) > 30000;         // 30초 이상 유휴 → 안전
+  if(document.hidden) return true;                       // 백그라운드 → 안전
+  return (Date.now() - _vgLastActivity) > _VG_IDLE_MS;   // 오래 손 놓았을 때만
 }
 function _vgReloadNow(){
   _vgPending = false;
@@ -1554,12 +1581,17 @@ function _vgReloadNow(){
 }
 function _vgScheduleReload(){
   if(_vgPending) return; _vgPending = true;
-  try { showToast('🔄 새 버전이 배포됐습니다 — 작업을 멈추면 자동으로 새로고침됩니다'); } catch(_){}
+  try { showToast('🔄 새 버전이 나왔습니다 — 작업이 끝나면 알아서 새로고침됩니다 (팝업이 열려 있으면 기다립니다)', 8000); } catch(_){}
   var iv = setInterval(function(){
     if(!_vgPending){ clearInterval(iv); return; }
     if(_vgSafeNow()){ clearInterval(iv); _vgReloadNow(); }
   }, 5000);
-  try { document.addEventListener('visibilitychange', function(){ if(_vgPending && document.hidden) _vgReloadNow(); }); } catch(_){}
+  /* 다른 창으로 옮겼을 때도 «안전한지» 를 다시 따진다.
+     종전에는 숨겨지기만 하면 그 자리에서 새로고침해서, 팝업에 입력해 두고
+     잠깐 다른 창(은행·엑셀)을 보고 오면 내용이 사라져 있었다. */
+  try { document.addEventListener('visibilitychange', function(){
+    if(_vgPending && document.hidden && _vgSafeNow()) _vgReloadNow();
+  }); } catch(_){}
 }
 function initVersionGate(){
   if(!fbDb) return;
@@ -9269,13 +9301,17 @@ function GlobalSearch(props){
     setOpen(false); setQuery('');
   }
 
-  return h('div',{className:'hd-gsearch', style:{position:'relative',marginRight:'12px'}},
+  /* 검색창은 머리줄에서 **줄어들 수 있는 유일한 칸**이다.
+     종전에는 width:300px 로 못 박혀 있어, 화면이 좁으면 오른쪽 끝(로그아웃)이
+     화면 밖으로 밀려 안 보였다(대표님 제보). 넓을 땐 300px 그대로,
+     좁아지면 150px 까지 알아서 줄어들어 로그아웃까지 다 보이게 한다. */
+  return h('div',{className:'hd-gsearch', style:{position:'relative',marginRight:'12px',minWidth:0,flexShrink:1}},
     h('input',{type:'text', ref:inputRef, id:'erp-global-search', placeholder:'🔍 검색 (Ctrl+K)',
       value:query,
       onChange:function(e){setQuery(e.target.value); setOpen(true);},
       onFocus:function(){setOpen(true);},
       onBlur:function(){setTimeout(function(){setOpen(false);},200);},
-      style:{width:'300px',padding:'7px 12px',border:'1px solid #cbd5e1',borderRadius:'5px',fontSize:'12px',background:'#fff',color:'#1e293b',caretColor:'#2563eb',outline:'none'}
+      style:{width:'300px',maxWidth:'100%',minWidth:'150px',flexShrink:1,padding:'7px 12px',border:'1px solid #cbd5e1',borderRadius:'5px',fontSize:'12px',background:'#fff',color:'#1e293b',caretColor:'#2563eb',outline:'none'}
     }),
     open && query.trim() && h('div',{style:{position:'absolute',top:'38px',right:0,width:'480px',background:'#fff',color:'#1e293b',border:'1px solid #e5e7eb',borderRadius:'6px',boxShadow:'0 8px 24px rgba(0,0,0,0.18)',maxHeight:'70vh',overflowY:'auto',zIndex:1000}},
       results.length===0
