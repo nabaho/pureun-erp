@@ -280,7 +280,14 @@ button{font-family:inherit;cursor:pointer}
 }
 
 /* 설정에서 사진으로 돌아가는 줄 */
-#backBar{padding:2px 0 10px}
+/* 나가는 띠 — 설정·휴지통·걸러보기가 모두 같은 자리·같은 모양 */
+#backBar{display:none;align-items:center;gap:10px;background:#eef2fd;border:1px solid #b6c6ee;
+  border-radius:10px;padding:8px 11px;margin-bottom:10px}
+#backWhere{font-size:12.5px;font-weight:700;color:var(--blue)}
+#backBar .esc{margin-left:auto;font-size:11px;color:#7f93c9;border:1px solid #c8d4ef;
+  border-radius:5px;padding:1px 6px}
+@media (max-width:820px){ #backBar .esc{display:none} }   /* 폰엔 Esc 키가 없다 */
+#backBarOld{padding:2px 0 10px}
 #backBar button{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:8px;
   padding:6px 12px;font-size:12.5px;font-weight:700;font-family:inherit}
 
@@ -546,7 +553,8 @@ button{font-family:inherit;cursor:pointer}
 
 <div id="app">
   <div id="top">
-    <div class="brand"><span class="mark">푸</span> 푸른사진첩</div>
+    <!-- 인터넷에서 가장 익숙한 방식 — 제목을 누르면 처음으로 (대표 지시 2026-08-07) -->
+    <div class="brand" onclick="goHome()" role="button" tabindex="0" title="처음 화면으로"><span class="mark">푸</span> 푸른사진첩</div>
     <span class="who" id="who"></span>
   </div>
 
@@ -623,8 +631,15 @@ button{font-family:inherit;cursor:pointer}
 
      <!-- 설정 화면에서 사진으로 돌아오는 길. 설정이 탭에서 빠졌으므로 이 길이 없으면
           한 번 들어가면 나올 수 없다. -->
+     <!-- ══ 나가는 띠 ══
+          예전에는 나가는 단추가 화면마다 다른 자리에 있었다 — 설정·휴지통은 본문 위,
+          걸러보기는 왼쪽 구석. 그래서 걸러보기 중에 결과가 0장이면 텅 빈 화면에서
+          나가는 길을 못 찾았다(대표 보고 2026-08-07).
+          이제 **어디에 있든 같은 자리·같은 모양**이고, 지금 무엇을 보고 있는지도 적는다. -->
      <div id="backBar" style="display:none">
-       <button onclick="showView('photos')">← 사진으로 돌아가기</button>
+       <button id="backBtn" onclick="goBack()">← 사진으로 돌아가기</button>
+       <span id="backWhere"></span>
+       <span class="esc">Esc</span>
      </div>
 
      <div id="viewPhotos">
@@ -703,6 +718,8 @@ button{font-family:inherit;cursor:pointer}
               자동 삭제는 일부러 안 만들었으므로(사람 확인 필수) 누가 언제 볼지를 정해 둔다. -->
          <div id="retBox" style="border-top:1px solid var(--line);margin-top:11px;padding-top:11px">
            <div class="row" style="border:none"><span>점검 담당자</span><b id="retWho">-</b></div>
+           <!-- 못 읽었을 때 이유를 여기 적는다 — 「-」만 보이면 원인을 못 짚는다 -->
+           <div id="retWhy" style="display:none;border:1px solid #fecaca;background:#fef2f2;color:#991b1b;border-radius:9px;padding:8px 10px;font-size:12px;line-height:1.6;margin:6px 0"></div>
            <p class="mignote">자동으로 지우지 않으므로 <b>정해진 사람이 정기적으로 봐야</b> 합니다. 90일마다 그분 화면에 알려 드립니다.</p>
            <select id="retSel" onchange="setRetOwner(this.value)" style="display:none"></select>
            <div class="row" style="border:none"><span>마지막 점검</span><b id="retLast">-</b></div>
@@ -2429,15 +2446,28 @@ function renderGrid() {
     /* 비었을 때 이유를 구분해 말한다 — 그냥 빈 화면이면 사진이 사라진 줄 안다.
        "사진이 없다"와 "못 찾았다"와 "이 분류에 없다"는 서로 다른 말이다. */
     const note = s => '<p style="font-size:13px;color:var(--sub);padding:20px 0;text-align:center">' + s + '</p>';
+    /* 걸러본 결과가 0장이면 화면이 통째로 빈다 — 그때 나가는 길을 **크게** 준다.
+       작은 회색 글씨만 두면 대표님처럼 빈 화면에서 길을 잃는다(2026-08-07 보고). */
+    const bigNote = (icon, title, sub) =>
+      '<div style="text-align:center;padding:38px 12px">'
+      + '<div style="font-size:30px;margin-bottom:8px">' + icon + '</div>'
+      + '<p style="font-size:14px;font-weight:800;color:var(--ink);margin:0 0 5px">' + title + '</p>'
+      + '<p style="font-size:12.5px;color:var(--sub);margin:0 0 15px;line-height:1.6">' + sub + '</p>'
+      + '<button onclick="goHome()" style="border:none;background:var(--blue);color:#fff;'
+      + 'border-radius:9px;padding:9px 18px;font-size:13px;font-weight:800;font-family:inherit">'
+      + '← 전체 사진으로</button></div>';
     const tab = KIND_TABS.find(function (t) { return t.key === kindTab; });
     const tabLabel = tab ? tab.label : customTabLabel(kindTab);
-    if (gridQ) {
-      el.innerHTML = note('「' + esc(gridQ) + '」에 맞는 사진이 없습니다.'
-        + (gridYears.length > 1 ? '<br>다른 해에 있을 수 있습니다 — 위에서 해를 바꿔 보세요.' : ''));
+    if (oldOnly) {
+      el.innerHTML = bigNote('✅', '보유기간이 지난 사진이 없습니다.', '지금은 정리할 것이 없습니다.');
     } else if (needOnly) {
-      el.innerHTML = note('확인이 필요한 사진이 없습니다. 모두 처리됐습니다.');
+      el.innerHTML = bigNote('✅', '확인이 필요한 사진이 없습니다.', '모두 처리됐습니다.');
+    } else if (gridQ) {
+      el.innerHTML = bigNote('🔍', esc('「' + gridQ + '」에 맞는 사진이 없습니다.'),
+        gridYears.length > 1 ? '다른 해에 있을 수 있습니다 — 위에서 해를 바꿔 보세요.' : '찾는 말을 바꿔 보세요.');
     } else if (kindTab !== 'all') {
-      el.innerHTML = note(esc('이 분류에 든 사진이 없습니다 — 「' + tabLabel + '」'));
+      el.innerHTML = bigNote('🗂', esc('「' + tabLabel + '」에 든 사진이 없습니다.'),
+        '다른 분류에 있을 수 있습니다.');
     } else {
       el.innerHTML = '';
     }
@@ -3195,6 +3225,7 @@ function renderGridBar() {
           : (shown ? yLabel + ' 사진 ' + shown + '장' : '');
   renderNeedBox();
   renderOldBox();
+  renderBackBar();   // 지금 무엇을 보고 있는지 띠에 그대로 적힌다
   renderPayNote();
 }
 
@@ -3768,6 +3799,7 @@ function showView(name) {
   /* 분류 탭은 사진 화면의 것이다 — 다른 화면에서는 숨긴다(눌러도 갈 곳이 없다). */
   $('kinds').style.display = onPhotos ? 'flex' : 'none';
   $('backBar').style.display = onPhotos ? 'none' : 'block';
+  renderBackBar();
   $('trashBtn').className = (name === 'trash') ? 'setbtn on' : 'setbtn';
   $('setBtn').className = (name === 'settings') ? 'setbtn on' : 'setbtn';
 
@@ -3829,6 +3861,78 @@ function countUsage() {
     btn.textContent = old;
   });
 }
+
+/* ══════ 돌아가는 길 ══════
+   대표 보고(2026-08-07): "초기화면이나 직전화면으로 돌아가려고 하면 계속 헷갈린다."
+   원인은 **나가는 단추가 화면마다 다른 자리에 있던 것**이다 — 설정·휴지통은 본문 위,
+   걸러보기는 왼쪽 사이드바 구석. 걸러본 결과가 0장이면 화면이 텅 비어서
+   왼쪽 구석의 작은 단추를 못 찾는다.
+
+   이제 나가는 길이 셋이고 셋 다 늘 같게 움직인다:
+     ① 제목 「푸른사진첩」 누르기 → 언제나 처음 화면
+     ② Esc → 한 단계 뒤로
+     ③ 본문 맨 위 띠 → 지금 무엇을 보고 있는지 적고 나가는 단추를 함께 둔다 */
+
+/* 지금 무엇을 보고 있나 — 없으면 null(= 처음 화면) */
+function whereNow() {
+  if (view === 'settings') return '설정';
+  if (view === 'trash') return '휴지통';
+  if (oldOnly) return '보유기간 지난 사진만 보는 중';
+  if (needOnly) return '확인이 필요한 사진만 보는 중';
+  if (gridQ) return '「' + gridQ + '」(으)로 찾는 중';
+  if (kindTab !== 'all') {
+    const t = KIND_TABS.find(function (x) { return x.key === kindTab; });
+    return '「' + (t ? t.label : customTabLabel(kindTab)) + '」만 보는 중';
+  }
+  return null;
+}
+
+function renderBackBar() {
+  const bar = $('backBar'); if (!bar) return;
+  const where = whereNow();
+  bar.style.display = where ? 'flex' : 'none';
+  if (!where) return;
+  $('backWhere').textContent = where;
+  $('backBtn').textContent = (view === 'photos') ? '← 전체 사진' : '← 사진으로';
+}
+
+/* 한 단계 뒤로 — 걸러보기 중이면 걸러보기만 풀고, 다른 화면이면 사진으로 */
+function goBack() {
+  if (view !== 'photos') { showView('photos'); return; }
+  clearAllFilters();
+}
+
+/* 처음 화면 — 무엇을 보고 있든 한 번에 */
+function goHome() {
+  if (view !== 'photos') showView('photos');
+  clearAllFilters();
+}
+
+function clearAllFilters() {
+  needOnly = false;
+  oldOnly = false;
+  kindTab = 'all';
+  gridQ = '';
+  const q = $('q'); if (q) q.value = '';
+  const c = $('qClear'); if (c) c.style.display = 'none';
+  selected.clear();
+  renderKindTabs();
+  renderGridBar();
+  renderGrid();
+  renderBackBar();
+}
+
+/* Esc — 뷰어·팝업이 먼저다(그것부터 닫는 처리는 각자 자리에 있다).
+   여기서는 그 둘이 닫혀 있을 때만 한 단계 뒤로 간다. */
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Escape') return;
+  if (viewerId) return;                                   // 크게 보기가 먼저 닫힌다
+  if ($('kindPopup').style.display === 'flex') return;     // 분류 고르기가 먼저
+  if ($('camOv').style.display === 'flex' || $('camRev').style.display === 'flex') return;
+  if ($('shareRev').style.display === 'flex') return;
+  if (!whereNow()) return;                                 // 이미 처음 화면이면 할 일 없다
+  goBack();
+});
 
 /* ══════ 설정 탭 ══════
    푸른이알피 환경설정과 같은 방식(대표 지시 2026-08-07). 예전에는 카드 다섯 개가
@@ -3999,16 +4103,22 @@ function toggleNoteMore() { noteExpanded = !noteExpanded; syncDock(); }
       못 읽으면 담당자 칸만 안 보이고 사진첩은 그대로 열린다. */
 const RET_EVERY_DAYS = 90;
 let retInfo = null;   // { uid, name, lastAt, lastBy }
+let retError = '';    // 못 읽었을 때 그 이유 — 화면이 직접 말한다
 
 function loadRetention() {
   return PuPhotoStore.getRetention().then(function (v) {
     retInfo = v || {};
+    retError = '';
     renderRetBox();
     renderRetNote();
   }).catch(function (e) {
-    /* 못 읽어도 사진첩은 그대로 쓴다. 규칙에 `puphotos/retention` 이 아직
-       없으면 여기서 거부된다 — 그때는 담당자 칸만 안 보인다. */
+    /* ⚠ 못 읽어도 사진첩은 그대로 쓴다. 다만 **조용히 넘기지 않는다** —
+       예전에는 담당자 칸이 그냥 「-」로만 보여서, 대표님이 규칙을 두 번 게시하고도
+       왜 안 되는지 알 수 없었다(2026-08-07). 화면이 직접 이유를 말하게 한다. */
     console.warn('[보유기준 점검]', e);
+    retInfo = null;
+    retError = String((e && e.message) || e);
+    renderRetBox();
   });
 }
 
@@ -4033,6 +4143,25 @@ function retDateText() {
 
 function renderRetBox() {
   const who = $('retWho'); if (!who) return;
+  /* 못 읽었으면 그 사실을 그대로 말한다 — 「-」만 보이면 아무도 원인을 못 짚는다 */
+  if (retError) {
+    who.textContent = '읽지 못했습니다';
+    $('retLast').textContent = '-';
+    $('retDone').style.display = 'none';
+    $('retSel').style.display = 'none';
+    const box = $('retWhy');
+    if (box) {
+      box.style.display = 'block';
+      box.innerHTML = '⚠ <b>점검 담당자 정보를 읽지 못했습니다.</b>'
+        + (/permission|denied/i.test(retError)
+          ? '<br>파이어베이스 규칙에 <b>사진첩 담당자 칸</b>이 아직 없습니다.'
+            + ' 콘솔에서 규칙을 게시하면 바로 열립니다.'
+          : '<br>' + esc(retError))
+        + '<br><span style="opacity:.75">사진첩의 다른 기능은 그대로 쓰실 수 있습니다.</span>';
+    }
+    return;
+  }
+  const box0 = $('retWhy'); if (box0) box0.style.display = 'none';
   const r = retInfo || {};
   who.textContent = r.name || '아직 정하지 않았습니다';
   $('retLast').textContent = retDateText();
