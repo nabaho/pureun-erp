@@ -3701,7 +3701,11 @@ function renderEndedView(){
 
 // ===== 직원 관리 =====
 function renderStaffList(){
-  const staff=getStaff();
+  const all=getStaff();
+  /* 빠진 사람(퇴사·휴직)은 아래로 내린다 — 지우지는 않는다. 과거 일정에
+     담당자로 박혀 있어 지우면 기록이 깨진다(pu-erp 도 퇴사자를 따로 둔다). */
+  const staff=all.filter(s=>!s.left);
+  const gone=all.filter(s=>s.left);
   const env=getEnv();
   const today=todayStr();
   q('#staffList').innerHTML=staff.map((s,i)=>{
@@ -3730,7 +3734,35 @@ function renderStaffList(){
       <button class="btn btn-s" style="font-size:11px;padding:4px 8px;white-space:nowrap;" onclick="resetStaffPw('${s.id}')" title="비밀번호를 123456으로 초기화">🔑 초기화</button>
       <button class="btn btn-s" style="font-size:11px;padding:4px 8px;" onclick="deleteStaff('${s.id}')">🗑</button>
     </div>`;
-  }).join('');
+  }).join('')
+  + (gone.length?`
+    <div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--border);">
+      <div style="font-size:11.5px;font-weight:800;color:var(--t2);margin-bottom:6px;">
+        푸른ERP에서 빠진 사람 ${gone.length}명
+        <span style="font-weight:600;">— 새로 배정할 수 없습니다. 과거 기록은 그대로 남습니다</span>
+      </div>
+      ${gone.map(s=>`
+      <div class="staff-row" style="opacity:.6;">
+        <input class="staff-color" type="color" value="${s.color}" disabled title="색상">
+        <input class="staff-name-inp" type="text" value="${s.name}" disabled>
+        <span style="font-size:11px;font-weight:800;color:var(--danger);white-space:nowrap;">${escAttr(s.leftWhy||'빠짐')}</span>
+        ${s.erpSid?`<span style="font-size:10px;font-weight:700;color:var(--t2);white-space:nowrap;">🔗 ${escAttr(s.erpSid)}</span>`:''}
+        <button class="btn btn-s" style="font-size:11px;padding:4px 8px;white-space:nowrap;" onclick="unleaveStaff('${s.id}')" title="푸른ERP와 상관없이 다시 배정할 수 있게 합니다. 다음에 ERP를 읽으면 되돌아갑니다">되살리기</button>
+        <button class="btn btn-s" style="font-size:11px;padding:4px 8px;" onclick="deleteStaff('${s.id}')">🗑</button>
+      </div>`).join('')}
+    </div>`:'');
+}
+
+/* 손으로 되살리기 — ERP가 아직 안 고쳐졌는데 급히 배정해야 할 때.
+   다음에 ERP 명부를 읽으면 다시 빠지므로, 그 사실을 알려 준다. */
+function unleaveStaff(id){
+  const staff=getStaff();
+  const idx=staff.findIndex(s=>s.id===id);
+  if(idx===-1)return;
+  delete staff[idx].left; delete staff[idx].leftWhy;
+  setStaff(staff);
+  renderStaffList(); refreshStaffDropdowns();
+  toast(`${staff[idx].name} 되살렸습니다 — 푸른ERP가 그대로면 다음에 다시 빠집니다`);
 }
 
 /* 직원 줄의 ERP 연결 표시.
@@ -3743,7 +3775,8 @@ function staffErpCell(s){
   }
   if(!ERP.loaded)return '';
   const n=String(s.name||'').replace(/\s/g,'');
-  const cand=erpActiveDir().filter(u=>String(u.name||'').replace(/\s/g,'')===n);
+  /* 명부 전체에서 찾는다 — 휴직자도 사번은 이어 둬야 복직 때 되살아난다 */
+  const cand=erpDirAll().filter(u=>String(u.name||'').replace(/\s/g,'')===n);
   /* 같은 이름이 둘이면 어느 쪽인지 앱이 정할 수 없다 — 사람이 정해야 하므로 안내만 */
   if(cand.length===1&&cand[0].sid){
     return `<button class="btn btn-s" style="font-size:10px;padding:3px 7px;white-space:nowrap;" title="푸른ERP 사번 ${escAttr(cand[0].sid)} 로 못 박습니다" onclick="linkStaffErp('${s.id}','${escAttr(cand[0].sid)}')">🔗 사번 잇기</button>`;
@@ -3751,7 +3784,7 @@ function staffErpCell(s){
   if(cand.length>1){
     return `<span title="푸른ERP에 같은 이름이 ${cand.length}명 있어 자동으로 정할 수 없습니다" style="font-size:10px;font-weight:700;color:#cc7700;white-space:nowrap;cursor:help;">⚠️ 동명 ${cand.length}</span>`;
   }
-  return `<span title="푸른ERP 재직자 명부에 같은 이름이 없습니다. 이름으로만 이어집니다" style="font-size:10px;color:var(--t2);white-space:nowrap;cursor:help;">ERP 없음</span>`;
+  return `<span title="푸른ERP 명부에 같은 이름이 없습니다. 이름으로만 이어집니다" style="font-size:10px;color:var(--t2);white-space:nowrap;cursor:help;">ERP 없음</span>`;
 }
 function linkStaffErp(id,sid){
   const staff=getStaff();
@@ -3834,7 +3867,6 @@ function renderStaffAdd(){
       <span style="min-width:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
         <span style="font-size:12.5px;font-weight:700;">${escAttr(u.name)}</span>
         ${sub?`<span style="font-size:10.5px;color:var(--t2);margin-left:6px;">${escAttr(sub)}</span>`:''}
-        ${u.status==='leave'?'<span style="font-size:10px;font-weight:800;color:#cc7700;margin-left:5px;">휴직</span>':''}
       </span>
       ${done?'<span style="font-size:10.5px;font-weight:800;color:var(--ok);white-space:nowrap;">✓ 이미 있음</span>':''}
     </label>`;
@@ -3892,15 +3924,19 @@ function deleteStaff(id){
 
 function refreshStaffDropdowns(){
   const staff=getStaff();
-  const opts=staff.map(a=>`<option value="${a.id}">${a.name}</option>`).join('');
+  /* 거르기용 목록에는 빠진 사람도 남긴다 — 퇴사자의 과거 건을 찾아봐야 한다.
+     대신 이름 옆에 (퇴사)·(휴직)을 붙여 지금 사람이 아님을 알린다.
+     새로 배정하는 select(mCoAtt·mEditAtt)는 창을 열 때 staffOptions()로 따로
+     만들며 거기서는 빠진 사람이 제외된다. */
+  const optsAll=staff.map(a=>`<option value="${a.id}">${a.name}${a.left?` (${a.leftWhy||'빠짐'})`:''}</option>`).join('');
   const valid=id=>!id||staff.some(a=>a.id===id);
   if(!valid(S.attFilter))S.attFilter='';
   if(!valid(S.dashAtt))S.dashAtt='';
-  const af=q('#attFilter');if(af){af.innerHTML=`<option value="">전체</option>`+opts;af.value=S.attFilter||'';}
-  const daf=q('#dashAttFilter');if(daf){daf.innerHTML=`<option value="">담당 전체</option>`+opts;daf.value=S.dashAtt||'';}
-  if(q('#mCoAtt'))q('#mCoAtt').innerHTML=opts;
-  if(q('#mEditAtt'))q('#mEditAtt').innerHTML=opts;
-  const tf=q('#tlAttFilter');if(tf){const v=tf.value;tf.innerHTML=`<option value="">전체</option>`+opts;tf.value=v;}
+  const af=q('#attFilter');if(af){af.innerHTML=`<option value="">전체</option>`+optsAll;af.value=S.attFilter||'';}
+  const daf=q('#dashAttFilter');if(daf){daf.innerHTML=`<option value="">담당 전체</option>`+optsAll;daf.value=S.dashAtt||'';}
+  if(q('#mCoAtt'))q('#mCoAtt').innerHTML=staffOptions(q('#mCoAtt').value);
+  if(q('#mEditAtt'))q('#mEditAtt').innerHTML=staffOptions(q('#mEditAtt').value);
+  const tf=q('#tlAttFilter');if(tf){const v=tf.value;tf.innerHTML=`<option value="">전체</option>`+optsAll;tf.value=v;}
 }
 
 function deadlineBadge(dl){
@@ -5080,7 +5116,8 @@ async function openEditModal(sid){
   edit_id=sid;edit_isField=sc.isField;
   q('#mEditTitle').textContent=`${co?.name||'?'} 수정`;
   q('#mEditDate').textContent=korDate(sc.date);
-  q('#mEditAtt').innerHTML=getStaff().map(a=>`<option value="${a.id}" ${a.id===sc.attId?'selected':''}>${a.name}</option>`).join('');
+  /* 빠진 사람은 새로 못 고른다. 다만 이 일정에 이미 배정된 사람은 남긴다. */
+  q('#mEditAtt').innerHTML=staffOptions(sc.attId);
   edit_selCoAtts=getCoAtts(sc); renderEditCoAtts();
   q('#mEditType').textContent=`${ty?.name||'?'}`;
   const maxR=getCoMaxRounds(sc.coId,sc.typeId);
@@ -5163,7 +5200,7 @@ async function openCoModal(editId=null){
   if(editId&&!await acquireCompanyEditLock(editId))return;
   q('#mCoTitle').textContent=editId?'사업장 수정':'사업장 추가';
   q('#mCoName').value=co?.name||'';
-  q('#mCoAtt').innerHTML=getStaff().map(a=>`<option value="${a.id}" ${(co?.defAtt||S.curUser)===a.id?'selected':''}>${a.name}</option>`).join('');
+  q('#mCoAtt').innerHTML=staffOptions(co?.defAtt||S.curUser);
   co_selCoAtts=getCoAtts(co); renderCoCoAtts();
   if(co?.types)co.types.forEach(t=>co_selTypes.add(t));
   if(co?.deadlines)co_deadlines={...co.deadlines};
@@ -5314,6 +5351,9 @@ async function erpLoadAll(){
       return;
     }
     ERP.loaded=true;
+    /* 명부를 읽었으면 곧바로 맞춘다 — 대표 지시(휴직·퇴사는 자동으로 빠지게).
+       바뀐 것이 없으면 아무것도 저장하지 않는다. */
+    try{ syncStaffFromErp(); }catch(err){ console.warn('[직원 맞춤]',err); }
   }catch(e){ ERP.err=e.message||'불러오기 실패'; ERP.loaded=false; }
 }
 // ERP 사번 → 이름 → 정부컨설팅 직원 id (이름으로 매칭)
@@ -5338,10 +5378,54 @@ function govStaffIdByErp(sid,name){
   }
   return govStaffIdByName(name||erpSidName(sid));
 }
-/* ERP 명부에서 재직 중인 사람만. status 가 없는 옛 기록은 재직으로 본다
-   (pu-erp 의 판정과 같은 기준 — 없다고 퇴사로 몰면 사람이 사라진다). */
+/* ERP 명부에서 **재직 중인 사람만**(대표 지시 2026-08-07: 휴직·퇴사는 뺀다).
+   status 가 없는 옛 기록은 재직으로 본다 — pu-erp 의 판정과 같은 기준이고,
+   없다고 퇴사로 몰면 멀쩡한 사람이 사라진다. */
 function erpActiveDir(){
-  return (ERP.dir||[]).filter(u=>u&&u.name&&(!u.status||u.status==='active'||u.status==='leave'));
+  return (ERP.dir||[]).filter(u=>u&&u.name&&(!u.status||u.status==='active'));
+}
+/* 사번을 이을 때는 명부 전체에서 찾는다 — 휴직자도 사번은 이어 둬야
+   복직했을 때 자동으로 되살아난다. */
+function erpDirAll(){ return (ERP.dir||[]).filter(u=>u&&u.name); }
+
+/* ── ERP 명부와 맞추기 ──
+   대표 지시: 푸른ERP에서 휴직·퇴사가 되면 여기서도 자동으로 빠지게.
+   ⚠ **지우지 않는다.** 과거 일정에 담당자로 박혀 있어 지우면 기록이 깨진다.
+      대신 「빠짐」으로 표시하고 **새로 배정할 때만** 목록에서 뺀다.
+   ⚠ 사번이 명부에 아예 없으면 건드리지 않는다 — 명부 동기화가 늦었을 수 있고,
+      모른다는 이유로 사람을 빼면 안 된다.
+   ⚠ 복직하면 되살린다. */
+function syncStaffFromErp(){
+  if(!ERP.loaded)return 0;
+  const dir=erpDirAll();
+  if(!dir.length)return 0;
+  const staff=getStaff();
+  const changed=[];
+  staff.forEach(s=>{
+    if(!s.erpSid)return;                       // 사번이 없으면 판단 근거가 없다
+    const u=dir.find(x=>x.sid===s.erpSid);
+    if(!u)return;                              // 명부에 없다 = 모른다
+    const active=(!u.status||u.status==='active');
+    const why=u.status==='retired'?'퇴사':(u.status==='leave'?'휴직':'빠짐');
+    if(!active&&(!s.left||s.leftWhy!==why)){ s.left=true; s.leftWhy=why; changed.push(`${s.name} ${why}`); }
+    else if(active&&s.left){ delete s.left; delete s.leftWhy; changed.push(`${s.name} 복직`); }
+  });
+  if(changed.length){
+    setStaff(staff);
+    toast(`푸른ERP와 맞췄습니다 — ${changed.join(', ')}`);
+  }
+  return changed.length;
+}
+
+/* 담당자로 **고를 수 있는** 사람 = 빠지지 않은 사람.
+   ⚠ 지금 배정돼 있는 사람은 빠졌더라도 목록에 남긴다 — 없으면 창을 여는 순간
+      담당자가 다른 사람으로 바뀐 채 저장된다(조용한 데이터 훼손). */
+function pickableStaff(keepId){
+  return getStaff().filter(a=>!a.left||a.id===keepId);
+}
+function staffOptions(selectedId){
+  return pickableStaff(selectedId).map(a=>
+    `<option value="${a.id}" ${a.id===selectedId?'selected':''}>${a.name}${a.left?` (${a.leftWhy||'빠짐'})`:''}</option>`).join('');
 }
 const _en=s=>String(s||'').replace(/[\s()（）·,]/g,'');
 // ERP 컨설팅 1건의 유형 키.
