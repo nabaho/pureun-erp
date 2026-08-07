@@ -1688,6 +1688,40 @@ function toggleSelectAll(checked){
   pageItems.forEach(it=>{ if(checked) state.sel[it.id]=1; else delete state.sel[it.id]; });
   renderSelbar(); render();
 }
+/* ── 찾은 결과 전체를 한 번에 다루기 ──
+   맨 위 체크는 '이 페이지'만 고른다. 312건을 찾아 놓고도 100건씩 네 번 지워야 했다.
+   그렇다고 아무 조건 없이 6,275건을 한 번에 고르게 하면 사고가 난다 —
+   검색·폴더·탭·칸별 필터 가운데 하나라도 걸려 '좁혀진 상태'에서만 열어 준다. */
+function listNarrowed(){
+  const q = ($('search') && $('search').value.trim()) || ($('pcSearch') && $('pcSearch').value.trim()) || '';
+  if(q) return true;
+  if(state.group && state.group!=='all') return true;
+  if(state.vtab) return true;
+  if(state.erpFilter) return true;
+  if(state.owner && state.owner!=='all') return true;
+  if(state.onlyPhone||state.onlyEmail||state.onlyDup||state.onlyIncomplete||state.onlyPrivate) return true;
+  if(Object.values(state.colFilter||{}).some(v=>String(v||'').trim())) return true;
+  return false;
+}
+/* 지금 화면에 걸린 조건을 사람 말로 — 무엇을 지우는지 알고 눌러야 한다 */
+function narrowLabel(){
+  const q = ($('search') && $('search').value.trim()) || ($('pcSearch') && $('pcSearch').value.trim()) || '';
+  const bits = [];
+  if(q) bits.push(`"${q}" 검색`);
+  if(state.group && state.group!=='all'){ const g=state.groups[state.group]; if(g) bits.push(`📁 ${g.name}`); }
+  if(state.vtab){ const v=(state.views||{})[state.vtab]; if(v) bits.push(`🏷 ${v.name}`); }
+  if(state.erpFilter) bits.push(state.erpFilter);
+  if(state.onlyIncomplete) bits.push('정보부족');
+  if(state.onlyPrivate) bits.push('개인');
+  return bits.join(' · ') || '현재 조건';
+}
+function selectAllMatching(){
+  if(!listNarrowed()) return toast('먼저 검색하거나 폴더를 골라 범위를 좁혀 주세요',5000);
+  const items = listItems();
+  items.forEach(it=>{ state.sel[it.id]=1; });
+  toast(`${items.length.toLocaleString()}건을 모두 선택했습니다 — ${narrowLabel()}`,5000);
+  renderSelbar(); render();
+}
 function renderSelbar(){
   const bar=$('selbar');
   if (!state.selMode){ bar.style.display='none'; return; }
@@ -1763,10 +1797,25 @@ function mailSel(){
   location.href = `mailto:?bcc=${encodeURIComponent(emails.join(','))}`;
   toast(`${emails.length}명에게 메일 작성 (숨은참조)`);
 }
+/* 많이 지울수록 한 번 더 붙잡는다.
+   찾은 결과를 통째로 고를 수 있게 된 뒤로는 엔터 한 번에 수백 건이 사라질 수 있다.
+   100건이 넘으면 확인 창을 넘기지 못하게 '삭제'를 손으로 치게 한다. */
+const DEL_TYPE_MIN = 100;
 function delSel(){
   const ids=Object.keys(state.sel); if(!ids.length) return toast('항목을 먼저 선택하세요');
-  if(!confirm(ids.length+'개 항목을 삭제할까요? (전 직원 명함첩에서 삭제됩니다)')) return;
-  ids.forEach(id=>Store.del(id)); state.sel={}; renderSelbar(); toast('삭제했습니다');
+  const n = ids.length;
+  if(n > DEL_TYPE_MIN){
+    const ans = prompt(`${narrowLabel()} 으로 찾은 ${n.toLocaleString()}건을 삭제합니다.\n\n`
+      + `· 전 직원 명함첩에서 사라집니다\n`
+      + `· 휴지통에 30일 보관되니 되살릴 수 있습니다\n\n`
+      + `정말 지우려면 아래에 삭제 라고 입력하세요`);
+    if(ans===null) return;
+    if(String(ans).trim()!=='삭제') return toast('입력이 달라 지우지 않았습니다');
+  } else {
+    if(!confirm(n+'개 항목을 삭제할까요? (전 직원 명함첩에서 삭제됩니다)')) return;
+  }
+  ids.forEach(id=>Store.del(id)); state.sel={}; renderSelbar(); render();
+  toast(`${n.toLocaleString()}건을 휴지통으로 옮겼습니다 — 되살리려면 환경설정 → 정리 → 휴지통`,7000);
 }
 
 /* ── 그룹으로 드래그 이동(PC) ── */
@@ -4049,7 +4098,18 @@ function renderPCTable(){
   const pageItems = items.slice(start, start+size);
   /* 선택 작업 바 */
   const n=Object.keys(state.sel).length;
-  $('pcSel').innerHTML = n ? `<div class="bar"><b>${n}개 선택</b>
+  /* 이 페이지를 다 골랐는데 찾은 결과가 더 있으면 알려 준다.
+     이 줄이 없으면 100건만 지워진 것을 모른 채 '다 지웠다'고 여기게 된다. */
+  const pageAllSel = pageItems.length>0 && pageItems.every(it=>state.sel[it.id]);
+  const moreBanner = (pageAllSel && items.length > pageItems.length && n < items.length)
+    ? `<div style="background:#fff8ec;border:1px solid #f0c98a;border-radius:9px;padding:9px 12px;margin:0 0 8px;
+         font-size:12.5px;color:#92400e;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span>이 페이지 <b>${pageItems.length.toLocaleString()}건</b>만 선택됐습니다.</span>
+        <button onclick="selectAllMatching()" style="border:1px solid #d9a441;background:#fff;color:#92400e;
+          border-radius:7px;padding:5px 11px;font-size:12.5px;font-weight:700;cursor:pointer">
+          → ${esc(narrowLabel())} <b>${items.length.toLocaleString()}건</b> 모두 선택</button></div>`
+    : '';
+  $('pcSel').innerHTML = n ? moreBanner + `<div class="bar"><b>${n}개 선택</b>
       <button onclick="selPickGroup()" title="선택한 명함을 폴더로 한 번에 이동">📁 폴더 이동</button>
       <button onclick="selAddToTab()" title="선택한 명함을 이 폴더의 '담는 탭'에 넣기">🏷 탭에 담기</button>
       ${state.vtab?`<button onclick="selRemoveFromTab()" title="지금 보고 있는 탭에서 빼기">🚫 탭에서 빼기</button>`:''}
