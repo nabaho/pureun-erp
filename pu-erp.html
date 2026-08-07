@@ -13684,6 +13684,34 @@ function grpRank(it, typeOrder){
   var c = String((it && it.typeCode) || '');
   return (c in typeOrder) ? typeOrder[c] : 9999;
 }
+/* ── 내 담당 먼저 (사건·컨설팅·기금·기타 공통) ──
+   0 주담당 · 1 부담당 · 2 남의 것. 로그인한 사람이 없으면 전부 같게 본다.
+   ★ 묶음(유형별) 보기 **안에서도** 써야 한다 — 종전에는 묶음이면 이 정렬을 통째로
+     건너뛰었는데, 유형이 둘 이상이면 묶음이 기본이라 사실상 한 번도 동작하지 않았다. */
+function myOwnRank(x, mySid){
+  if(!mySid || !x) return 2;
+  if(x.managerMain === mySid) return 0;
+  if((x.managerSubs || []).indexOf(mySid) >= 0) return 1;
+  return 2;
+}
+function myOwnSid(){
+  return (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? (CURRENT_USER.sid || '') : '';
+}
+/* 「내 담당 먼저」 켜고 끄는 칩. 기본은 켜져 있고, 끄면 원래 차례로 돌아간다.
+   거르는 것이 아니라 **차례만 바꾸는 것**이라 남의 건도 그대로 다 보인다 —
+   그 점을 title 로 분명히 해 둔다(담당 필터와 헷갈리기 쉽다). */
+function MineFirstChip(props){
+  if(!myOwnSid()) return null;                 // 로그인 정보가 없으면 뜻이 없다
+  var on = props.on !== false;
+  return h('button', { type:'button', onClick:props.onToggle,
+    title: on ? '내가 맡은 건이 위에 옵니다 — 누르면 원래 차례로 (남의 건도 다 보입니다)'
+              : '누르면 내가 맡은 건을 위로 올립니다',
+    style:{ padding: props.big ? '7px 11px' : '5px 9px',
+      border:'1px solid '+(on ? '#0d9488' : '#cbd5e1'), borderRadius:'20px',
+      fontSize:'11px', fontWeight: on?700:400, fontFamily:'inherit', flexShrink:0, cursor:'pointer',
+      background: on ? '#ccfbf1' : '#f8fafc', color: on ? '#0f766e' : '#64748b', whiteSpace:'nowrap' } },
+    (on ? '✓ ' : '') + '👤 내 담당 먼저');
+}
 // 목록에 붙는 표시. ✕ 를 누르면 바로 지워진다(확인했다는 뜻).
 function arvBadge(x, store, onDone){
   if(!arvIsNew(x)) return null;
@@ -16608,6 +16636,8 @@ function CompanyManagement(){
   // 머리 글자를 누르면 정렬, 옆 ▽ 를 누르면 그 칸 값으로 거른다.
   // 도구줄에 흩어져 있던 유형·담당·부담당·업태·종목·급여일을 여기로 모았다.
   // 어느 칸에 무엇이 걸렸는지 표만 봐도 보이는 것이 도구줄보다 나은 점이다.
+  // 내 담당 먼저 보기 — 기본 켬 (사건·컨설팅·기금·기타와 같은 규칙)
+  var cmfS = usePersistedState('co_minefirst', true); var mineFirst = cmfS[0] !== false; var setMineFirst = cmfS[1];
   var ccS = usePersistedState('co_col_filter', {});
   var coSel = (ccS[0] && typeof ccS[0] === 'object' && !Array.isArray(ccS[0])) ? ccS[0] : {};
   var setCoSel = ccS[1];
@@ -17206,16 +17236,14 @@ function CompanyManagement(){
       return sortBy.dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
     });
   }
-  // ★ 내 담당 항목 최상단 정렬 (주담당 > 부담당 > 기타)
-  var _mySid = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? CURRENT_USER.sid : '';
-  if(_mySid) {
+  /* ★ 내 담당 최상단 (사건·컨설팅·기금·기타와 같은 규칙).
+     종전에는 조건 없이 늘 걸려서, **머리글을 눌러 정렬해도 내 것이 위로 다시 끌려왔다.**
+     이제 머리글 정렬(sortBy.key)이 있으면 그 뜻을 존중해 끼어들지 않는다. */
+  var _mySid = myOwnSid();
+  var _mineOn = mineFirst && !!_mySid && !sortBy.key;
+  if(_mineOn){
     filtered = filtered.slice().sort(function(a, b){
-      function myScore(x){
-        if(x.managerMain === _mySid) return 0;
-        if((x.managerSubs||[]).indexOf(_mySid) >= 0) return 1;
-        return 2;
-      }
-      return myScore(a) - myScore(b);
+      return myOwnRank(a, _mySid) - myOwnRank(b, _mySid);   // 같으면 원래 차례 유지
     });
   }
   function toggleSort(key){
@@ -17420,6 +17448,7 @@ function CompanyManagement(){
               '📁 ' + subofficeCount)
           ),
           // (유형·담당·부담당·급여일 필터는 표 머리 깔때기로 옮겼다)
+          h(MineFirstChip, { on:mineFirst, onToggle:function(){ setMineFirst(!mineFirst); } }),
           activeFilterCount > 0 && h('button', { onClick:cClearAll,
             style:{ padding:'5px 10px', borderRadius:'20px', fontSize:'11px', fontWeight:700, flexShrink:0,
               background:'#eff6ff', color:'#1d4ed8', border:'1px solid #93c5fd', cursor:'pointer', whiteSpace:'nowrap' } },
@@ -19603,6 +19632,8 @@ function CaseManagement(props){
   var sgf = usePersistedState('case_stage_filter', 'all'); var stageFilter = sgf[0]; var setStageFilter = sgf[1];   // 심급·단계 (stageCode)
   var mg = usePersistedState('case_mgr_filter', 'all'); var mgrFilter = mg[0]; var setMgrFilter = mg[1];
   var smg = usePersistedState('case_submgr_filter', 'all'); var subMgrFilter = smg[0]; var setSubMgrFilter = smg[1];
+  // 내 담당 먼저 보기 — 기본 켬. 화면을 열자마자 내 사건이 위에 오게 한다.
+  var mfS = usePersistedState('case_minefirst', true); var mineFirst = mfS[0] !== false; var setMineFirst = mfS[1];
   var moS = useState(false); var monthOnly = moS[0]; var setMonthOnly = moS[1];
   var ymS = usePersistedState('case_month', todayYM()); var selYM = ymS[0]; var setSelYM = ymS[1];
   var thisYM = selYM;
@@ -20060,6 +20091,9 @@ function CaseManagement(props){
   }
   // ★ 유형별 묶음 — 컨설팅·기금·기타와 같은 방식.
   //   유형이 둘 이상 있을 때만 묶고, 방금 이관돼 온 건은 맨 위 별도 묶음으로 뺀다.
+  // 내 담당 먼저 — 묶음 정렬 안에서도 쓰므로 여기서 미리 정한다.
+  var _mySid = myOwnSid();
+  var _mineOn = mineFirst && !!_mySid && !sortBy.key;
   var _isGrouped = (!sortBy.key && grpShould(filtered));
   var _typeOrder = {};
   types.forEach(function(t, i){ _typeOrder[t.code] = (typeof t.sortOrder === 'number' ? t.sortOrder : 1000 + i); });
@@ -20070,6 +20104,11 @@ function CaseManagement(props){
       var ka = grpKeyOf(a), kb = grpKeyOf(b);
       if(ka !== kb) return ka.localeCompare(kb);
       if(ka === GRP_ARV) return String(b.arrivedAt||'').localeCompare(String(a.arrivedAt||''));
+      // ★ 묶음 안에서 내 담당(주>부) 먼저 — 유형별로 묶여 있어도 내 사건이 위에 온다
+      if(_mineOn){
+        var ma = myOwnRank(a, _mySid), mb = myOwnRank(b, _mySid);
+        if(ma !== mb) return ma - mb;
+      }
       // 묶음 안: 살아있는 건 먼저 → 수임일 최신순
       function _rank(x){
         if(x.status === 'closed' || x.status === 'transferred' || x.closedDate) return 2;
@@ -20111,16 +20150,10 @@ function CaseManagement(props){
       h('td', { colSpan:visColCount, style:{ background:bg, padding:'6px 10px', fontWeight:700,
         color:fg, fontSize:'11.5px', borderTop:'1px solid #e2e8f0' } }, label));
   }
-  // ★ 내 담당 항목 최상단 정렬 (주담당 > 부담당 > 기타) — 묶음 보기에서는 묶음이 우선
-  var _mySid = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? CURRENT_USER.sid : '';
-  if(_mySid && !_isGrouped) {
+  // ★ 내 담당 최상단 (묶음이 아닐 때). 묶음일 때는 위 정렬 안에서 이미 처리했다.
+  if(_mineOn && !_isGrouped){
     filtered = filtered.slice().sort(function(a, b){
-      function myScore(x){
-        if(x.managerMain === _mySid) return 0;
-        if((x.managerSubs||[]).indexOf(_mySid) >= 0) return 1;
-        return 2;
-      }
-      return myScore(a) - myScore(b);
+      return myOwnRank(a, _mySid) - myOwnRank(b, _mySid);   // 같으면 원래 차례 유지
     });
   }
 
@@ -20212,7 +20245,8 @@ function CaseManagement(props){
               color: subMgrFilter!=='all'?'#7c3aed':'#64748b', fontWeight: subMgrFilter!=='all'?700:400, cursor:'pointer' } },
             h('option', { value:'all' }, '👥 부담당'),
             users.filter(function(u){return isAdminByUser(u) || isLawyerByUser(u);}).map(function(u){
-              return h('option', { key:u.sid, value:u.sid }, u.name); }))
+              return h('option', { key:u.sid, value:u.sid }, u.name); })),
+          h(MineFirstChip, { on:mineFirst, onToggle:function(){ setMineFirst(!mineFirst); } })
         )
       )
     : h('div', { className:'dt-toolbar', style:{ marginBottom:'14px', flexWrap:'wrap', gap:'6px' } },
@@ -20251,6 +20285,7 @@ function CaseManagement(props){
           users.filter(function(u){return isAdminByUser(u) || isLawyerByUser(u);}).map(function(u){
             return h('option', { key:u.sid, value:u.sid }, u.name);
           })),
+        h(MineFirstChip, { on:mineFirst, big:true, onToggle:function(){ setMineFirst(!mineFirst); } }),
         h('div', { className:'sp' }),
         h('button', { onClick:function(){setGapModal(true);},
           title:'시리즈별 번호 결번 검사 + 번호 재정렬',
@@ -49722,6 +49757,8 @@ function ProjectManagementShared(props){
   var ty = usePersistedState('proj_'+props.sourceKind+'_type', 'all'); var typeFilter = ty[0]; var setTypeFilter = ty[1];
   var mg = usePersistedState('proj_'+props.sourceKind+'_mgr', 'all'); var mgrFilter = mg[0]; var setMgrFilter = mg[1];
   var smg = usePersistedState('proj_'+props.sourceKind+'_submgr', 'all'); var subMgrFilter = smg[0]; var setSubMgrFilter = smg[1];
+  // 내 담당 먼저 보기 — 기본 켬. 화면을 열자마자 내 업무가 위에 오게 한다.
+  var mfS = usePersistedState('proj_'+props.sourceKind+'_minefirst', true); var mineFirst = mfS[0] !== false; var setMineFirst = mfS[1];
   var ymS = usePersistedState('proj_'+props.sourceKind+'_month', todayYM()); var selYM = ymS[0]; var setSelYM = ymS[1];
   var thisYM = selYM;
   var em = useState(null); var editModal = em[0]; var setEditModal = em[1];
@@ -50078,6 +50115,10 @@ function ProjectManagementShared(props){
   // ★ 첫 화면 기본 정렬: 유형별 묶음(유형 순서) + 묶음 안 진행중 먼저 + 시작일 최신순
   //   컨설팅만이 아니라 기금·기타도 같게 한다. 다만 유형이 하나뿐이면 머리행이 군더더기라 묶지 않는다.
   //   방금 이관돼 온 건은 유형과 무관하게 맨 위 별도 묶음으로 뺀다.
+  // 내 담당 먼저 — 묶음 정렬 안에서도 쓰므로 여기서 미리 정한다.
+  // 머리글을 눌러 직접 정렬한 때(sortBy.key)는 그 뜻을 존중해 끼어들지 않는다.
+  var _mySid = myOwnSid();
+  var _mineOn = mineFirst && !!_mySid && !sortBy.key;
   var _isGrouped = (!sortBy.key && grpShould(filtered));
   var _typeOrder = {};
   types.forEach(function(t, i){ _typeOrder[t.code] = (typeof t.sortOrder === 'number' ? t.sortOrder : 1000 + i); });
@@ -50088,6 +50129,11 @@ function ProjectManagementShared(props){
       var ka = grpKeyOf(a), kb = grpKeyOf(b);
       if(ka !== kb) return ka.localeCompare(kb);
       if(ka === GRP_ARV) return String(b.arrivedAt||'').localeCompare(String(a.arrivedAt||''));
+      // ★ 묶음 안에서 내 담당(주>부) 먼저 — 유형별로 묶여 있어도 내 업무가 위에 온다
+      if(_mineOn){
+        var ma = myOwnRank(a, _mySid), mb = myOwnRank(b, _mySid);
+        if(ma !== mb) return ma - mb;
+      }
       function _statusRank(x){ return x.status === 'progress' ? 0 : x.status === 'pending' ? 1 : 2; }
       var sa = _statusRank(a), srb = _statusRank(b);
       if(sa !== srb) return sa - srb;
@@ -50125,16 +50171,10 @@ function ProjectManagementShared(props){
       h('td', { colSpan:16, style:{ background:bg, padding:'6px 10px', fontWeight:700,
         color:fg, fontSize:'11.5px', borderTop:'1px solid #e2e8f0' } }, _label));
   }
-  // ★ 내 담당 항목 최상단 정렬 (주담당 > 부담당 > 기타) — 컨설팅 그룹뷰에서는 그룹이 우선
-  var _mySid = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? CURRENT_USER.sid : '';
-  if(_mySid && !sortBy.key && !_isGrouped) {
+  // ★ 내 담당 최상단 (묶음이 아닐 때). 묶음일 때는 위 정렬 안에서 이미 처리했다.
+  if(_mineOn && !_isGrouped){
     filtered = filtered.slice().sort(function(a, b){
-      function myScore(x){
-        if(x.managerMain === _mySid) return 0;
-        if((x.managerSubs||[]).indexOf(_mySid) >= 0) return 1;
-        return 2;
-      }
-      return myScore(a) - myScore(b);
+      return myOwnRank(a, _mySid) - myOwnRank(b, _mySid);   // 같으면 원래 차례 유지
     });
   }
 
@@ -50255,6 +50295,7 @@ function ProjectManagementShared(props){
               color: subMgrFilter!=='all'?'#7c3aed':'#64748b', fontWeight: subMgrFilter!=='all'?700:400 } },
             h('option',{value:'all'},'👥 부담당'),
             users.map(function(u){ return h('option',{key:u.sid,value:u.sid},u.name); })),
+          h(MineFirstChip, { on:mineFirst, onToggle:function(){ setMineFirst(!mineFirst); } }),
           props.sourceKind === 'consulting' && h('button', { onClick:resetProjView,
             title:RESET_VIEW_TIP,
             style:{ padding:'5px 10px', border:'1px solid #93c5fd', borderRadius:'20px', fontSize:'11px', flexShrink:0, background:'#eff6ff', color:'#1d4ed8', fontWeight:700, cursor:'pointer' } }, '↺ 기본값')
@@ -50292,6 +50333,7 @@ function ProjectManagementShared(props){
         style:{ padding:'7px 10px', border:'1px solid '+(subMgrFilter!=='all'?'#7c3aed':'#cbd5e1'), borderRadius:'4px', fontSize:'12px' } },
         h('option', { value:'all' }, '👥 부담당'),
         users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); })),
+      h(MineFirstChip, { on:mineFirst, big:true, onToggle:function(){ setMineFirst(!mineFirst); } }),
       h('div', { style:{ flex:1 } }),
       props.sourceKind === 'consulting' && h('button', { onClick:resetProjView,
         title:RESET_VIEW_TIP,
@@ -50501,13 +50543,28 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                         )
                       : h('span', { style:{ color:'#cbd5e1', fontSize:'11px' } }, '-')
                   ),
-                  colVis.status && h('td', null, h('span', {
-                    style:{
-                      background: it.status === 'closed' ? '#dcfce7' : it.status === 'progress' ? '#dbeafe' : '#fef9c3',
-                      color: it.status === 'closed' ? '#166534' : it.status === 'progress' ? '#1e40af' : '#854d0e',
-                      fontSize:'10.5px', padding:'2px 7px', borderRadius:'10px', fontWeight:700
-                    }
-                  }, it.status === 'closed' ? '종료' : it.status === 'progress' ? '진행중' : '대기')),
+                  /* 상태를 표에서 바로 바꾼다 (사건관리와 같은 방식).
+                     종료는 드롭다운에 안 넣는다 — 종료는 정산·서류 확인이 딸린 별도 절차(closeItem)라
+                     무심코 고르면 그 절차를 건너뛴다. 종료된 건은 읽기 전용 표시로 둔다. */
+                  colVis.status && h('td', null,
+                    it.status === 'closed'
+                      ? h('span', { style:{ background:'#dcfce7', color:'#166534',
+                          fontSize:'10.5px', padding:'2px 7px', borderRadius:'10px', fontWeight:700 } }, '종료')
+                      : h('select', {
+                          value: it.status === 'progress' ? 'progress' : 'pending',
+                          onClick: function(e){ e.stopPropagation(); },
+                          onChange: function(e){
+                            e.stopPropagation();
+                            var ns = e.target.value;
+                            itemPatch(it.id, { status:ns });
+                            showToast('상태 변경: ' + (ns === 'progress' ? '진행중' : '대기'));
+                          },
+                          style:{ fontSize:'10.5px', padding:'2px 5px', border:'1px solid #e2e8f0', borderRadius:'4px',
+                            background: it.status === 'progress' ? '#dbeafe' : '#fef9c3',
+                            color: it.status === 'progress' ? '#1e40af' : '#854d0e',
+                            fontWeight:700, cursor:'pointer', maxWidth:'74px', fontFamily:'inherit' } },
+                          h('option', { value:'pending' }, '대기'),
+                          h('option', { value:'progress' }, '진행중'))),
                   colVis.note && h('td', { className:'ac' },
                     it.note
                       ? h('span', { title: it.note,
