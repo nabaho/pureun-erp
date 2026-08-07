@@ -2,8 +2,13 @@
    푸른 통합시스템 — 프로그램 사이 이동 (공용 앱바)
    2026-08-07
 
-   무엇: 어느 프로그램에서든 머리줄의 「⊞ 프로그램」 을 눌러 다른 프로그램으로 바로 간다.
+   무엇: 어느 프로그램에서든 오른쪽 가장자리 「즐겨찾기」 손잡이를 눌러 다른 프로그램으로 바로 간다.
         종전에는 포털(enter.html)로 돌아갔다가 타일을 눌러야 해서 두 번 거쳤다.
+
+   ★★ 새 프로그램을 만들 때 반드시 지킬 것 (대표님 지시, 2026-08-07) ★★
+     ① <script src="js/pu-appbar.js"></script> 한 줄을 넣는다  ← 이것만으로 저절로 붙는다
+     ② 아래 APPS 배열에 그 프로그램 한 줄을 더한다
+     둘 중 하나라도 빠뜨리면 그 프로그램만 오갈 수 없는 섬이 된다.
 
    왜 부품으로 빼나: 프로그램이 8개다. 각 앱에 따로 만들면 하나가 늘 때마다 8곳을 고쳐야 한다.
         여기 목록 한 곳만 고치면 전부 반영된다. (pu-photo-store.js 와 같은 뜻)
@@ -34,6 +39,10 @@
     { key: 'rules',   name: '취업규칙 관리', icon: '📋', url: 'rules.html',          desc: '작성·검토·개정' },
     { key: 'fund',    name: '기금관리',     icon: '🏦', url: 'fund.html',           desc: '근로복지기금' }
   ];
+
+  /* 단추에 적는 말 — 한 곳에서만 정한다. 바꾸려면 여기 한 줄. */
+  var ICON = '⊞';
+  var LABEL = '즐겨찾기';
 
   var FAV_KEY  = 'pu_appbar_favs';        // 대표님이 별표로 고른 것 (["cards","work"])
   var LAST_KEY = 'pu_appbar_last_';       // + appKey  →  그 앱에서 마지막에 보던 화면
@@ -246,7 +255,7 @@
     btn.type = 'button';
     btn.setAttribute('data-pu-appbar-btn', '1');
     btn.title = '다른 프로그램으로 이동 (로그인은 그대로 이어집니다)';
-    btn.textContent = '⊞ 프로그램';
+    btn.textContent = ICON + ' ' + LABEL;
     btn.style.cssText =
       'display:inline-flex;align-items:center;gap:4px;background:#eff6ff;color:#1d4ed8;' +
       'border:1px solid #93c5fd;border-radius:6px;padding:4px 10px;font-size:11.5px;' +
@@ -304,7 +313,7 @@
       'background:#1e40af;color:#fff;font-size:11.5px;font-weight:700;letter-spacing:1px;' +
       'font-family:-apple-system,"Malgun Gothic",sans-serif;cursor:pointer;' +
       'box-shadow:-2px 0 10px rgba(0,0,0,.20);opacity:.72;transition:opacity .15s,padding .15s;';
-    tab.textContent = '프로그램';
+    tab.textContent = LABEL;
     tab.addEventListener('mouseenter', function () { tab.style.opacity = '1'; tab.style.paddingRight = '8px'; });
     tab.addEventListener('mouseleave', function () { tab.style.opacity = '.72'; tab.style.paddingRight = '5px'; });
     tab.addEventListener('click', function (e) { e.stopPropagation(); openPop(tab); });
