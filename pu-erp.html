@@ -7755,13 +7755,22 @@ function FunnelBtn(props){
   });
   var on = sel.length > 0;
 
+  // mini = 표 머리 안에 들어가는 작은 ▽ (글자 없이 아이콘만)
+  var btnStyle = props.mini
+    ? { width:'17px', height:'17px', lineHeight:'15px', padding:0, fontSize:'9px', borderRadius:'4px',
+        background: on ? color : '#fff', color: on ? '#fff' : '#94a3b8',
+        border:'1px solid ' + (on ? color : '#cbd5e1'), cursor:'pointer', verticalAlign:'middle' }
+    : { padding:'3px 7px', fontSize:'10.5px', fontWeight: on?700:600, borderRadius:'4px',
+        background: on ? '#eff6ff' : '#fff', color: on ? color : '#64748b',
+        border:'1px solid ' + (on ? color : '#cbd5e1'), cursor:'pointer', whiteSpace:'nowrap' };
+
   return h('div', { style:{ position:'relative', display:'inline-block' }, onClick:function(e){ e.stopPropagation(); } },
     h('button', { onClick:open, 'aria-haspopup':'listbox',
-      title: on ? (props.label + ' — ' + sel.length + '개 고름') : (props.label + '으로 이 칸만 거르기'),
-      style:{ padding:'3px 7px', fontSize:'10.5px', fontWeight: on?700:600, borderRadius:'4px',
-        background: on ? '#eff6ff' : '#fff', color: on ? color : '#64748b',
-        border:'1px solid ' + (on ? color : '#cbd5e1'), cursor:'pointer', whiteSpace:'nowrap' } },
-      '▽ ' + props.label + (on ? ' ' + sel.length : '')),
+      title: on ? (props.label + ' — ' + sel.length + '개 고름') : (props.label + '으로 거르기'),
+      style: btnStyle },
+      props.mini ? '▽' : ('▽ ' + props.label + (on ? ' ' + sel.length : ''))),
+    props.mini && on && h('span', { style:{ marginLeft:'2px', fontSize:'9.5px', fontWeight:800,
+      color:color, verticalAlign:'middle' } }, sel.length),
 
     pos && h('div', { style:{ position:'fixed', left:pos.left+'px',
         top: pos.up ? 'auto' : pos.top+'px',
@@ -16326,13 +16335,78 @@ function CompanyManagement(){
   
 
   var st = useState('active'); var statusTab = st[0]; var setStatusTab = st[1];   // 'active' | 'suboffice'
-  var tf = useState('all'); var typeFilter = tf[0]; var setTypeFilter = tf[1];
-  var pdf = useState('all'); var payrollDayFilter = pdf[0]; var setPayrollDayFilter = pdf[1];
-  var mf = useState('all'); var mgrFilter = mf[0]; var setMgrFilter = mf[1];
-  var smf = useState('all'); var subMgrFilter = smf[0]; var setSubMgrFilter = smf[1];
   var q = useState(''); var query = q[0]; var setQuery = q[1];
-  var btf = useState('all'); var bizTypeFilter = btf[0]; var setBizTypeFilter = btf[1];
-  var bcf = useState('all'); var bizCatFilter = bcf[0]; var setBizCatFilter = bcf[1];
+
+  // ── 표 머리 깔때기 (엑셀 자동필터) ───────────────────────────
+  // 머리 글자를 누르면 정렬, 옆 ▽ 를 누르면 그 칸 값으로 거른다.
+  // 도구줄에 흩어져 있던 유형·담당·부담당·업태·종목·급여일을 여기로 모았다.
+  // 어느 칸에 무엇이 걸렸는지 표만 봐도 보이는 것이 도구줄보다 나은 점이다.
+  var ccS = usePersistedState('co_col_filter', {});
+  var coSel = (ccS[0] && typeof ccS[0] === 'object' && !Array.isArray(ccS[0])) ? ccS[0] : {};
+  var setCoSel = ccS[1];
+  function cGet(k){ return Array.isArray(coSel[k]) ? coSel[k] : []; }
+  function cSet(k, arr){
+    var n = Object.assign({}, coSel);
+    if(arr && arr.length) n[k] = arr; else delete n[k];
+    if(k === 'biztype') delete n.bizcat;   // 업태를 바꾸면 종목 선택은 흘려보낸다
+    setCoSel(n);
+  }
+  function cClearAll(){ setCoSel({}); }
+  function cOnCount(){
+    return Object.keys(coSel).reduce(function(s, k){ return s + cGet(k).length; }, 0);
+  }
+  // 값 목록은 '지금 탭에 있는 업체'에서만 뽑는다 — 없는 값을 고르느라 헛수고하지 않게.
+  // 단, 자기 칸의 선택은 빼고 센다(엑셀과 같다. 안 그러면 고르는 순간 목록이 1개로 줄어든다).
+  function cItems(key){
+    var m = {};
+    companies.forEach(function(co){
+      if(!coInTab(co)) return;
+      var others = Object.keys(coSel).filter(function(k){ return k !== key; });
+      for(var i=0;i<others.length;i++){
+        var k = others[i], sel = cGet(k), v;
+        if(k === 'type')         v = [co.typeCode];
+        else if(k === 'payday')  v = [payrollDayNorm(co.payrollDay)];
+        else if(k === 'biztype') v = [(co.bizType||'').trim()];
+        else if(k === 'bizcat')  v = [(co.bizCategory||'').trim()];
+        else if(k === 'mgr')     v = [co.managerMain].concat(co.managerSubs||[]);
+        else if(k === 'submgr')  v = (co.managerSubs||[]);
+        else continue;
+        if(sel.length && !v.some(function(x){ return sel.indexOf(x) >= 0; })) return;
+      }
+      var vals = key === 'type'    ? [co.typeCode]
+               : key === 'payday'  ? [payrollDayNorm(co.payrollDay)]
+               : key === 'biztype' ? [(co.bizType||'').trim()]
+               : key === 'bizcat'  ? [(co.bizCategory||'').trim()]
+               : key === 'mgr'     ? [co.managerMain].concat(co.managerSubs||[])
+               :                     (co.managerSubs||[]);
+      vals.forEach(function(x){ if(x) m[x] = (m[x]||0) + 1; });
+    });
+    var keys = Object.keys(m);
+    if(key === 'mgr' || key === 'submgr'){
+      return sortUsers(users.filter(function(u){ return m[u.sid]; }))
+        .map(function(u){ return { v:u.sid, label:u.name, n:m[u.sid] }; });
+    }
+    if(key === 'payday'){
+      keys.sort(function(a,b){ return payrollDaySortNum(a) - payrollDaySortNum(b); });
+    } else {
+      keys.sort(function(a,b){ return String(a) < String(b) ? -1 : 1; });
+    }
+    return keys.map(function(x){ return { v:x, label:x, n:m[x] }; });
+  }
+  // 표 머리 한 칸 — 글자를 누르면 정렬, ▽ 를 누르면 거르기 (엑셀 자동필터)
+  function thF(label, sortKey, filterKey, extra){
+    var sel = filterKey ? cGet(filterKey) : [];
+    var on = sel.length > 0;
+    return h('th', Object.assign({ style:{ userSelect:'none', whiteSpace:'nowrap',
+        background: on ? '#eff6ff' : undefined } }, extra || {}),
+      h('span', { onClick: sortKey ? function(){ toggleSort(sortKey); } : null,
+        style:{ cursor: sortKey ? 'pointer' : 'default', color: on ? '#1d4ed8' : undefined,
+          fontWeight: on ? 800 : undefined } },
+        label + (sortKey ? sortIcon(sortKey) : '')),
+      filterKey && h('span', { style:{ marginLeft:'3px', display:'inline-block', verticalAlign:'middle' } },
+        h(FunnelBtn, { label:label, items:cItems(filterKey), sel:sel, mini:true,
+          onApply:function(arr){ cSet(filterKey, arr); pg.setPage && pg.setPage(1); } })));
+  }
   var moS = useState(false); var monthOnly = moS[0]; var setMonthOnly = moS[1];
   var ymS = usePersistedState('company_month', todayYM()); var selYM = ymS[0]; var setSelYM = ymS[1];
   var thisYM = selYM;
@@ -16446,7 +16520,7 @@ function CompanyManagement(){
   var coHideCss = coColReg.filter(function(c){ return hiddenCols[c.k]; }).map(function(c){ return '.co-table td:nth-child('+c.idx+'),.co-table th:nth-child('+c.idx+'){display:none}'; }).join('');
   var coHiddenCount = coColReg.filter(function(c){ return hiddenCols[c.k]; }).length;
   // 유형은 도구줄에 그대로 보이므로 '필터 (n)' 배지에서 뺀다 — 두 군데서 세면 헷갈린다
-  var activeFilterCount = [mgrFilter, subMgrFilter, payrollDayFilter].filter(function(v){ return v && v !== 'all'; }).length;
+  var activeFilterCount = cOnCount();
   // 컬럼 드롭다운 외부 클릭 자동 닫기
   useEffect(function(){
     if(!colMenuOpen) return;
@@ -16468,7 +16542,8 @@ function CompanyManagement(){
   }, [moreMenuOpen]);
   // 통합 검색 포커스
   var initFocus = useGlobalSearchFocus();
-  useEffect(function(){ if(initFocus){ setQuery(initFocus); setStatusTab('active'); setTypeFilter('all'); setMgrFilter('all'); } }, [initFocus]);
+  // 검색으로 특정 업체를 찾아올 때는 걸려 있던 깔때기를 전부 푼다 (안 그러면 안 보인다)
+  useEffect(function(){ if(initFocus){ setQuery(initFocus); setStatusTab('active'); cClearAll(); } }, [initFocus]);
 
   // 일회성 마이그레이션: address에 합쳐진 우편번호(12345) 자동 분리 → zipcode 필드
   useEffect(function(){
@@ -16805,19 +16880,30 @@ function CompanyManagement(){
   // 필터
   var filtered = companies.filter(function(co){
     if(!coInTab(co)) return false;
-    if(typeFilter !== 'all' && co.typeCode !== typeFilter) return false;
-    if(payrollDayFilter !== 'all' && payrollDayNorm(co.payrollDay) !== payrollDayFilter) return false;
-    if(bizTypeFilter !== 'all' && (co.bizType||'').trim() !== bizTypeFilter) return false;
-    if(bizCatFilter !== 'all' && (co.bizCategory||'').trim() !== bizCatFilter) return false;
-    // monthOnly는 담당자 필터/검색어 없을 때만 적용
-    if(monthOnly && mgrFilter === 'all' && subMgrFilter === 'all' && !query){
+    // 표 머리 깔때기 — 같은 칸 안은 '또는', 칸끼리는 '그리고'
+    var fType = cGet('type');
+    if(fType.length && fType.indexOf(co.typeCode) < 0) return false;
+    var fPay = cGet('payday');
+    if(fPay.length && fPay.indexOf(payrollDayNorm(co.payrollDay)) < 0) return false;
+    var fBt = cGet('biztype');
+    if(fBt.length && fBt.indexOf((co.bizType||'').trim()) < 0) return false;
+    var fBc = cGet('bizcat');
+    if(fBc.length && fBc.indexOf((co.bizCategory||'').trim()) < 0) return false;
+    var fMgr = cGet('mgr');
+    if(fMgr.length){
+      var subsA = co.managerSubs || [];
+      if(!fMgr.some(function(s){ return co.managerMain === s || subsA.indexOf(s) >= 0; })) return false;
+    }
+    var fSub = cGet('submgr');
+    if(fSub.length){
+      var subsB = co.managerSubs || [];
+      if(!fSub.some(function(s){ return subsB.indexOf(s) >= 0; })) return false;
+    }
+    // monthOnly는 담당 깔때기/검색어가 없을 때만 적용
+    if(monthOnly && !fMgr.length && !fSub.length && !query){
       var d = (co.contractStartDate||co.firstContractDate||co.createdAt||'').slice(0,7);
       if(d !== thisYM) return false;
     }
-    if(mgrFilter !== 'all'){
-      if(co.managerMain !== mgrFilter && (co.managerSubs||[]).indexOf(mgrFilter) < 0) return false;
-    }
-    if(subMgrFilter !== 'all' && (co.managerSubs||[]).indexOf(subMgrFilter) < 0) return false;
     if(query){
       var qq = query.toLowerCase().trim();
       if(!qq) return true;
@@ -16885,25 +16971,9 @@ function CompanyManagement(){
   // 페이지네이션 (표시 개수 선택)
   var copsS = useState(50); var coPageSize = copsS[0]; var setCoPageSize = copsS[1];
   var pg = usePagination(filtered, coPageSize);
-  // 지금 보고 있는 탭 안에서 유형별 건수 (사무대행·계약중단 탭도 목록과 같은 기준)
-  function typeCount(code){
-    return companies.filter(function(c){
-      return coInTab(c) && (code === 'all' || c.typeCode === code);
-    }).length;
-  }
-  // 도구줄 유형 단추 — 그 탭에 한 건도 없는 유형은 아예 안 보여 준다.
-  // '전체' 칸은 없다. 왼쪽 '전체 활성' 탭과 숫자가 겹쳐서 뺐다.
-  var coTypeSeg = [['자문','#dbeafe','#1e40af'], ['급여','#dcfce7','#166534'],
-     ['노조','#ede9fe','#5b21b6'], ['기금','#fef3c7','#854d0e']]
-    .map(function(t){ return { v:t[0], label:t[0], count:typeCount(t[0]), bg:t[1], fg:t[2] }; })
-    .filter(function(t){ return t.count > 0 || typeFilter === t.v; });
-  function mgrCount(sid){
-    return companies.filter(function(c){
-      return c.status === statusTab && (sid === 'all' || c.managerMain === sid || (c.managerSubs||[]).indexOf(sid) !== -1);
-    }).length;
-  }
-  // 급여지급일 필터 옵션 (활성 업체에 실제 입력된 값만, 일자순 · 말일 마지막)
-  var payrollDayOpts = (function(){ var s={}; companies.forEach(function(c){ if(c.status!=='active') return; var t=payrollDayNorm(c.payrollDay); if(t) s[t]=1; }); return Object.keys(s).sort(function(a,b){ return payrollDaySortNum(a)-payrollDaySortNum(b); }); })();
+  // (도구줄에 있던 유형 세그먼트·담당자·급여일 필터는 표 머리 깔때기로 옮겼다.
+  //  거기 딸려 있던 typeCount·mgrCount·payrollDayOpts 도 함께 걷어냈다 —
+  //  값 목록과 건수는 이제 cItems() 가 그 탭 기준으로 직접 뽑는다)
 
   // 인라인 편집 셀 렌더
   // ★ 주담당 전용 셀: 빈 경우 "+ 지정", 지정된 경우 이름 + ✕
@@ -17082,36 +17152,11 @@ function CompanyManagement(){
                 color: statusTab==='suboffice'?'#fff':'#64748b', border:'none' } },
               '📁 ' + subofficeCount)
           ),
-          // 유형 칩 (활성 탭에서만)
-          statusTab !== 'suboffice' && h('div', { style:{ display:'inline-flex', alignItems:'center', gap:'5px', flexShrink:0 } },
-            h('select', { value:typeFilter, onChange:function(e){ setTypeFilter(e.target.value); },
-              style:{ padding:'5px 8px', border:'1px solid '+(typeFilter!=='all'?'#1e40af':'#cbd5e1'), borderRadius:'20px', fontSize:'11px', fontFamily:'inherit', background:'#f8fafc',
-                color: typeFilter!=='all'?'#1e40af':'#475569', fontWeight: typeFilter!=='all'?700:400, cursor:'pointer', flexShrink:0 } },
-              COMPANY_TYPE_FILTERS.map(function(tf0){ return h('option', { key:tf0.v, value:tf0.v }, tf0.icon + ' ' + tf0.label); })),
-            h('span', { style:{ fontSize:'11px', color:'#475569', fontWeight:700, whiteSpace:'nowrap', flexShrink:0 } }, typeCount(typeFilter) + '건')
-          ),
-          // 담당자
-          h('div', { style:{ display:'inline-flex', alignItems:'center', gap:'4px', flexShrink:0 } },
-            h('select', { value:mgrFilter, onChange:function(e){ setMgrFilter(e.target.value); },
-              style:{ padding:'5px 8px', border:'1px solid '+(mgrFilter!=='all'?'#1e40af':'#cbd5e1'), borderRadius:'20px', fontSize:'11px',
-                fontFamily:'inherit', background:'#f8fafc', flexShrink:0, cursor:'pointer',
-                color: mgrFilter!=='all'?'#1e40af':'#64748b', fontWeight: mgrFilter!=='all'?700:400 } },
-              h('option', { value:'all' }, '👤 담당자'),
-              users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); })),
-            mgrFilter !== 'all' && h('span', { style:{ fontSize:'11px', color:'#1e40af', fontWeight:700, whiteSpace:'nowrap' } }, mgrCount(mgrFilter) + '개'),
-            h('select', { value:subMgrFilter, onChange:function(e){ setSubMgrFilter(e.target.value); },
-              style:{ padding:'5px 8px', border:'1px solid '+(subMgrFilter!=='all'?'#7c3aed':'#cbd5e1'), borderRadius:'20px', fontSize:'11px',
-                fontFamily:'inherit', background:'#f8fafc', flexShrink:0, cursor:'pointer',
-                color: subMgrFilter!=='all'?'#7c3aed':'#64748b', fontWeight: subMgrFilter!=='all'?700:400 } },
-              h('option', { value:'all' }, '👥 부담당'),
-              users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); })),
-            statusTab !== 'suboffice' && h('select', { value:payrollDayFilter, onChange:function(e){ setPayrollDayFilter(e.target.value); },
-              style:{ padding:'5px 8px', border:'1px solid '+(payrollDayFilter!=='all'?'#16a34a':'#cbd5e1'), borderRadius:'20px', fontSize:'11px',
-                fontFamily:'inherit', background:'#f8fafc', flexShrink:0, cursor:'pointer',
-                color: payrollDayFilter!=='all'?'#166534':'#64748b', fontWeight: payrollDayFilter!=='all'?700:400 } },
-              h('option', { value:'all' }, '📅 급여일'),
-              payrollDayOpts.map(function(d){ return h('option', { key:d, value:d }, d); }))
-          )
+          // (유형·담당·부담당·급여일 필터는 표 머리 깔때기로 옮겼다)
+          activeFilterCount > 0 && h('button', { onClick:cClearAll,
+            style:{ padding:'5px 10px', borderRadius:'20px', fontSize:'11px', fontWeight:700, flexShrink:0,
+              background:'#eff6ff', color:'#1d4ed8', border:'1px solid #93c5fd', cursor:'pointer', whiteSpace:'nowrap' } },
+            '▽ 필터 ' + activeFilterCount + ' 풀기')
         )
       )
     : h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'14px', flexWrap:'wrap' } },
@@ -17138,56 +17183,17 @@ function CompanyManagement(){
           fontSize:'12px', fontWeight:700, cursor:'pointer' } },
         '⏸ 계약 중단 (' + companies.filter(function(c){return !!c.suspended;}).length + ')'),
       // (종료 탭 제거: 종료 업체는 종료관리에서 조회)
-      // 유형 — 가장 자주 쓰는 필터라 창 안에 두지 않고 상태 탭 다음에서 바로 고른다.
-      // 상태 탭 셋과 섞여 보이지 않도록 칸막이로 끊는다.
-      h('span', { style:{ width:'1px', height:'22px', background:'#e2e8f0', margin:'0 2px', flexShrink:0 } }),
-      h(TypeSeg, { value:typeFilter, onChange:setTypeFilter, clear:'all',
-        items:coTypeSeg, label:'업체 유형' }),
-      // 표시 개수 — 필터·⋯ 옆(더보기 메뉴 안이 아니라 바로 보이는 자리)에 둔다
+      // (유형·담당·부담당·급여일 필터는 표 머리 깔때기로 옮겼다 — 도구줄에는 두지 않는다)
+      // 표시 개수
       h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', flexShrink:0 } },
         h('span', { style:{ fontSize:'11px', color:'#64748b' } }, '페이지'),
         h(PageSizeSelector, { pageSize:coPageSize, setPageSize:setCoPageSize, setPage:pg.setPage })),
-      // 필터 팝오버 (담당·부담당·급여일 — 유형은 위로 꺼냈다)
-      h('div', { style:{ position:'relative' } },
-        h('button', { onClick:function(e){ e.stopPropagation(); setFilterMenuOpen(!filterMenuOpen); setMoreMenuOpen(false); },
-          style:{ padding:'6px 12px', fontSize:'12px', fontWeight:600, borderRadius:'5px',
-            background: activeFilterCount>0 ? '#1e40af' : '#fff',
-            color: activeFilterCount>0 ? '#fff' : '#475569',
-            border:'1px solid '+(activeFilterCount>0 ? '#1e40af' : '#cbd5e1'), cursor:'pointer', whiteSpace:'nowrap' } },
-          '⚙ 필터' + (activeFilterCount>0 ? ' ('+activeFilterCount+')' : '') + ' ▾'),
-        filterMenuOpen && h('div', { onClick:function(e){ e.stopPropagation(); },
-          style:{ position:'absolute', top:'calc(100% + 4px)', left:0, zIndex:100,
-            background:'#fff', border:'1px solid #cbd5e1', borderRadius:'8px',
-            boxShadow:'0 4px 12px rgba(0,0,0,0.15)', minWidth:'260px', padding:'10px', display:'flex', flexDirection:'column', gap:'8px' } },
-          h('div', { style:{ display:'flex', alignItems:'center', gap:'6px' } },
-            h('span', { style:{ fontSize:'11px', color:'#64748b', width:'48px', flexShrink:0 } }, '담당자'),
-            h('select', { value:mgrFilter, onChange:function(e){ setMgrFilter(e.target.value); },
-              style:{ flex:1, padding:'5px 10px', border:'1px solid '+(mgrFilter!=='all'?'#1e40af':'#cbd5e1'), borderRadius:'4px', fontSize:'11.5px', fontFamily:'inherit',
-                color: mgrFilter!=='all'?'#1e40af':'#475569', fontWeight: mgrFilter!=='all'?700:400 } },
-              h('option', { value:'all' }, '담당자 전체'),
-              users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); })),
-            mgrFilter !== 'all' && h('span', { style:{ fontSize:'11.5px', color:'#1e40af', fontWeight:700, whiteSpace:'nowrap' } }, mgrCount(mgrFilter) + '개')
-          ),
-          h('div', { style:{ display:'flex', alignItems:'center', gap:'6px' } },
-            h('span', { style:{ fontSize:'11px', color:'#64748b', width:'48px', flexShrink:0 } }, '부담당'),
-            h('select', { value:subMgrFilter, onChange:function(e){ setSubMgrFilter(e.target.value); },
-              style:{ flex:1, padding:'5px 10px', border:'1px solid '+(subMgrFilter!=='all'?'#7c3aed':'#cbd5e1'), borderRadius:'4px', fontSize:'11.5px', fontFamily:'inherit',
-                color: subMgrFilter!=='all'?'#7c3aed':'#475569', fontWeight: subMgrFilter!=='all'?700:400 } },
-              h('option', { value:'all' }, '👥 부담당'),
-              users.map(function(u){ return h('option', { key:u.sid, value:u.sid }, u.name); }))
-          ),
-          statusTab !== 'suboffice' && h('div', { style:{ display:'flex', alignItems:'center', gap:'6px' } },
-            h('span', { style:{ fontSize:'11px', color:'#64748b', width:'48px', flexShrink:0 } }, '급여일'),
-            h('select', { value:payrollDayFilter, onChange:function(e){ setPayrollDayFilter(e.target.value); },
-              style:{ flex:1, padding:'5px 10px', border:'1px solid '+(payrollDayFilter!=='all'?'#16a34a':'#cbd5e1'), borderRadius:'4px', fontSize:'11.5px', fontFamily:'inherit',
-                color: payrollDayFilter!=='all'?'#166534':'#475569', fontWeight: payrollDayFilter!=='all'?700:400, cursor:'pointer' } },
-              h('option', { value:'all' }, '📅 급여지급일'),
-              payrollDayOpts.map(function(d){ return h('option', { key:d, value:d }, d); }))
-          ),
-          activeFilterCount>0 && h('button', { onClick:function(){ setMgrFilter('all'); setSubMgrFilter('all'); setPayrollDayFilter('all'); },
-            style:{ marginTop:'2px', background:'#f8fafc', color:'#1d4ed8', border:'1px solid #cbd5e1', borderRadius:'4px', padding:'5px 10px', fontSize:'11.5px', fontWeight:600, cursor:'pointer' } }, '↺ 필터 초기화')
-        )
-      ),
+      // 표 머리에 걸린 깔때기를 한 번에 푸는 단추 (걸린 게 있을 때만)
+      activeFilterCount > 0 && h('button', { onClick:cClearAll,
+        title:'표 머리에 걸린 깔때기를 전부 풉니다',
+        style:{ padding:'6px 12px', fontSize:'12px', fontWeight:700, borderRadius:'5px',
+          background:'#eff6ff', color:'#1d4ed8', border:'1px solid #93c5fd', cursor:'pointer', whiteSpace:'nowrap' } },
+        '▽ 필터 ' + activeFilterCount + ' 풀기'),
       // 사무대행 전용 도구 (컨텍스트)
       statusTab === 'suboffice' && h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', marginRight:'6px' } },
         h('label', { style:{ background:'#eff6ff', color:'#1d4ed8', border:'1px solid #bfdbfe', padding:'5px 10px', borderRadius:'4px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
@@ -17343,24 +17349,10 @@ function CompanyManagement(){
                 h('th', { key:'h0', style:{ width:'30px', textAlign:'center' } }, h('input',{type:'checkbox', title:'현재 페이지 전체 선택', checked:pg.paged.length>0&&pg.paged.every(function(c){return selIds.has(c.id);}), onChange:function(e){e.target.checked?selectAll():clearSel();}, style:{cursor:'pointer'}})),
                 h('th', { key:'h1', style:{ width:'30px' } }, '#'),
                 h('th', { key:'h2', onClick:function(){toggleSort('name');}, style:{ cursor:'pointer', userSelect:'none' } }, '업체명' + sortIcon('name')),
-                h('th', { key:'h3', onClick:function(){toggleSort('managerMain');}, style:{ cursor:'pointer', userSelect:'none' } }, '담당자' + sortIcon('managerMain')),
+                thF('담당자', 'managerMain', 'mgr', { key:'h3' }),
                 h('th', { key:'h4' }, '사업자번호'),
-                h('th', { key:'h4b', className:'co-biz-col', style:{ padding:0 } },
-                  h('div', { style:{ fontSize:'10px', color:'#64748b', fontWeight:600, padding:'2px 4px 0' } }, '업태'),
-                  h('select', { value:bizTypeFilter, onChange:function(e){ setBizTypeFilter(e.target.value); setBizCatFilter('all'); },
-                    style:{ fontSize:'10px', border:'none', borderTop:'1px solid #e2e8f0', background:'transparent', width:'100%', padding:'2px 4px', fontFamily:'inherit', color: bizTypeFilter!=='all'?'#2563eb':'#64748b', fontWeight: bizTypeFilter!=='all'?700:400, cursor:'pointer' } },
-                    h('option',{value:'all'},'전체'),
-                    (function(){ var ts=[]; companies.forEach(function(co){ var v=(co.bizType||'').trim(); if(v&&ts.indexOf(v)<0)ts.push(v); }); ts.sort(); return ts.map(function(v){return h('option',{key:v,value:v},v);}); })()
-                  )
-                ),
-                h('th', { key:'h4c', className:'co-biz-cat', style:{ padding:0 } },
-                  h('div', { style:{ fontSize:'10px', color:'#64748b', fontWeight:600, padding:'2px 4px 0' } }, '종목'),
-                  h('select', { value:bizCatFilter, onChange:function(e){ setBizCatFilter(e.target.value); },
-                    style:{ fontSize:'10px', border:'none', borderTop:'1px solid #e2e8f0', background:'transparent', width:'100%', padding:'2px 4px', fontFamily:'inherit', color: bizCatFilter!=='all'?'#2563eb':'#64748b', fontWeight: bizCatFilter!=='all'?700:400, cursor:'pointer' } },
-                    h('option',{value:'all'},'전체'),
-                    (function(){ var cs=[]; companies.forEach(function(co){ if(bizTypeFilter!=='all'&&(co.bizType||'').trim()!==bizTypeFilter)return; var v=(co.bizCategory||'').trim(); if(v&&cs.indexOf(v)<0)cs.push(v); }); cs.sort(); return cs.map(function(v){return h('option',{key:v,value:v},v);}); })()
-                  )
-                ),
+                thF('업태', null, 'biztype', { key:'h4b', className:'co-biz-col' }),
+                thF('종목', null, 'bizcat', { key:'h4c', className:'co-biz-cat' }),
                 h('th', { key:'h5' }, '대표자'),
                 h('th', { key:'h6', onClick:function(){toggleSort('address');}, style:{ cursor:'pointer', userSelect:'none' } }, '지점' + sortIcon('address')),
                 h('th', { key:'hw1', style:{ background:'#f0fdfa', color:'#0f766e', fontSize:'10.5px' } }, '신고서전달'),
@@ -17376,30 +17368,17 @@ function CompanyManagement(){
                 h('th', { key:'a0', style:{ width:'30px', textAlign:'center' } }, h('input',{type:'checkbox', title:'현재 페이지 전체 선택', checked:pg.paged.length>0&&pg.paged.every(function(c){return selIds.has(c.id);}), onChange:function(e){e.target.checked?selectAll():clearSel();}, style:{cursor:'pointer'}})),
                 h('th', { key:'a1', style:{ width:'30px' } }, '#'),
                 h('th', { key:'a2', onClick:function(){toggleSort('name');}, style:{ cursor:'pointer', userSelect:'none' } }, '업체명' + sortIcon('name')),
-                h('th', { key:'a3', onClick:function(){toggleSort('typeCode');}, style:{ cursor:'pointer', userSelect:'none' } }, '유형' + sortIcon('typeCode')),
-                h('th', { key:'a4', className:'contract-only', onClick:function(){toggleSort('managerMain');}, style:{ cursor:'pointer', userSelect:'none' }, title:'계약별 고유 필드 - 업체관리에서 변경해도 계약관리에 동기화 안 됨' }, '주담당' + sortIcon('managerMain')),
-                h('th', { key:'a5' }, '부담당'),
+                thF('유형', 'typeCode', 'type', { key:'a3' }),
+                thF('주담당', 'managerMain', 'mgr', { key:'a4', className:'contract-only',
+                  title:'계약별 고유 필드 - 업체관리에서 변경해도 계약관리에 동기화 안 됨' }),
+                thF('부담당', null, 'submgr', { key:'a5' }),
                 h('th', { key:'a6' }, '사업자번호'),
-                h('th', { key:'a6b', className:'co-biz-col', style:{ padding:0 } },
-                  h('div', { style:{ fontSize:'10px', color:'#64748b', fontWeight:600, padding:'2px 4px 0' } }, '업태'),
-                  h('select', { value:bizTypeFilter, onChange:function(e){ setBizTypeFilter(e.target.value); setBizCatFilter('all'); },
-                    style:{ fontSize:'10px', border:'none', borderTop:'1px solid #e2e8f0', background:'transparent', width:'100%', padding:'2px 4px', fontFamily:'inherit', color: bizTypeFilter!=='all'?'#2563eb':'#64748b', fontWeight: bizTypeFilter!=='all'?700:400, cursor:'pointer' } },
-                    h('option',{value:'all'},'전체'),
-                    (function(){ var ts=[]; companies.forEach(function(co){ var v=(co.bizType||'').trim(); if(v&&ts.indexOf(v)<0)ts.push(v); }); ts.sort(); return ts.map(function(v){return h('option',{key:v,value:v},v);}); })()
-                  )
-                ),
-                h('th', { key:'a6c', className:'co-biz-cat', style:{ padding:0 } },
-                  h('div', { style:{ fontSize:'10px', color:'#64748b', fontWeight:600, padding:'2px 4px 0' } }, '종목'),
-                  h('select', { value:bizCatFilter, onChange:function(e){ setBizCatFilter(e.target.value); },
-                    style:{ fontSize:'10px', border:'none', borderTop:'1px solid #e2e8f0', background:'transparent', width:'100%', padding:'2px 4px', fontFamily:'inherit', color: bizCatFilter!=='all'?'#2563eb':'#64748b', fontWeight: bizCatFilter!=='all'?700:400, cursor:'pointer' } },
-                    h('option',{value:'all'},'전체'),
-                    (function(){ var cs=[]; companies.forEach(function(co){ if(bizTypeFilter!=='all'&&(co.bizType||'').trim()!==bizTypeFilter)return; var v=(co.bizCategory||'').trim(); if(v&&cs.indexOf(v)<0)cs.push(v); }); cs.sort(); return cs.map(function(v){return h('option',{key:v,value:v},v);}); })()
-                  )
-                ),
+                thF('업태', null, 'biztype', { key:'a6b', className:'co-biz-col' }),
+                thF('종목', null, 'bizcat', { key:'a6c', className:'co-biz-cat' }),
                 h('th', { key:'a7' }, '대표자'),
                 h('th', { key:'a8', onClick:function(){toggleSort('companySize');}, style:{ cursor:'pointer', userSelect:'none' } }, '규모' + sortIcon('companySize')),
                 h('th', { key:'a9', className:'ar', onClick:function(){toggleSort('employmentInsuredCount');}, style:{ cursor:'pointer', userSelect:'none' } }, '근로자수' + sortIcon('employmentInsuredCount')),
-                h('th', { key:'a9b', onClick:function(){toggleSort('payrollDay');}, style:{ cursor:'pointer', userSelect:'none', textAlign:'center', whiteSpace:'nowrap' }, title:'직원 급여 지급일' }, '급여지급일' + sortIcon('payrollDay')),
+                thF('급여지급일', 'payrollDay', 'payday', { key:'a9b', title:'직원 급여 지급일' }),
                 h('th', { key:'a10a', style:{ width:'80px' } }, '우편번호'),
                 h('th', { key:'a10b' }, '주소'),
                 h('th', { key:'a11' }, '담당자'),
