@@ -7706,6 +7706,121 @@ function TypeSeg(props){
     }));
 }
 
+// ── 깔때기 (여러 개 고르기) ────────────────────────────────
+// 칸반 칸마다 붙는다. 값 목록은 '그 칸에 있는 카드'에서만 뽑으므로
+// 칸마다 보이는 값이 다르고, 걸리는 것도 그 칸에만 걸린다.
+// props: label · items[{v,label,n}] · sel · onApply(배열) · color
+// 칸이 좁고 스크롤 상자 안이라 메뉴는 fixed 로 띄운다(안 그러면 잘린다).
+function FunnelBtn(props){
+  var items = props.items || [];
+  var sel = props.sel || [];
+  var color = props.color || '#1e40af';
+  var pS = useState(null);  var pos = pS[0];   var setPos = pS[1];
+  var qS = useState('');    var q = qS[0];     var setQ = qS[1];
+  var dS = useState([]);    var draft = dS[0]; var setDraft = dS[1];
+
+  useEffect(function(){
+    if(!pos) return;
+    function close(){ setPos(null); }
+    function onKey(e){ if(e.key === 'Escape') setPos(null); }
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('resize', close);
+    window.addEventListener('scroll', close, true);
+    return function(){
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', close, true);
+    };
+  }, [pos]);
+
+  if(!items.length) return null;   // 그 칸에 값이 없으면 단추도 안 낸다
+
+  function open(e){
+    e.stopPropagation();
+    var r = e.currentTarget.getBoundingClientRect();
+    var w = 250, left = Math.min(r.left, window.innerWidth - w - 12);
+    setDraft(sel.slice()); setQ('');
+    setPos({ left: Math.max(8, left), top: r.bottom + 4, w:w,
+      up: (window.innerHeight - r.bottom) < 300, bot: window.innerHeight - r.top + 4 });
+  }
+  function toggle(v){
+    var n = draft.slice(), i = n.indexOf(v);
+    if(i >= 0) n.splice(i, 1); else n.push(v);
+    setDraft(n);
+  }
+  var shown = items.filter(function(x){
+    return !q || String(x.label).toLowerCase().indexOf(q.toLowerCase()) >= 0;
+  });
+  var on = sel.length > 0;
+
+  return h('div', { style:{ position:'relative', display:'inline-block' }, onClick:function(e){ e.stopPropagation(); } },
+    h('button', { onClick:open, 'aria-haspopup':'listbox',
+      title: on ? (props.label + ' — ' + sel.length + '개 고름') : (props.label + '으로 이 칸만 거르기'),
+      style:{ padding:'3px 7px', fontSize:'10.5px', fontWeight: on?700:600, borderRadius:'4px',
+        background: on ? '#eff6ff' : '#fff', color: on ? color : '#64748b',
+        border:'1px solid ' + (on ? color : '#cbd5e1'), cursor:'pointer', whiteSpace:'nowrap' } },
+      '▽ ' + props.label + (on ? ' ' + sel.length : '')),
+
+    pos && h('div', { style:{ position:'fixed', left:pos.left+'px',
+        top: pos.up ? 'auto' : pos.top+'px',
+        bottom: pos.up ? pos.bot+'px' : 'auto',
+        width:pos.w+'px', zIndex:9600, background:'#fff', border:'1px solid #cbd5e1',
+        borderRadius:'8px', boxShadow:'0 8px 24px rgba(0,0,0,0.18)', overflow:'hidden' } },
+      h('div', { style:{ padding:'7px 9px', borderBottom:'1px solid #e2e8f0' } },
+        h('input', { value:q, autoFocus:true, placeholder: props.label + ' 찾기',
+          onChange:function(e){ setQ(e.target.value); },
+          style:{ width:'100%', padding:'5px 8px', fontSize:'11.5px', fontFamily:'inherit',
+            border:'1px solid #cbd5e1', borderRadius:'5px', boxSizing:'border-box' } })),
+      h('div', { style:{ padding:'5px 9px', borderBottom:'1px solid #e2e8f0', display:'flex',
+          gap:'9px', alignItems:'center', fontSize:'11px' } },
+        h('span', { onClick:function(){ setDraft(shown.map(function(x){ return x.v; })); },
+          style:{ color:'#1d4ed8', cursor:'pointer', fontWeight:600 } }, '전체 선택'),
+        h('span', { onClick:function(){ setDraft([]); },
+          style:{ color:'#64748b', cursor:'pointer' } }, '전체 해제'),
+        h('span', { style:{ marginLeft:'auto', color:'#94a3b8' } }, shown.length + '개')),
+      h('div', { style:{ maxHeight:'200px', overflowY:'auto' } },
+        shown.length === 0
+          ? h('div', { style:{ padding:'16px 10px', textAlign:'center', color:'#94a3b8', fontSize:'11.5px' } }, '찾는 것이 없습니다')
+          : shown.map(function(x){
+              var ck = draft.indexOf(x.v) >= 0;
+              return h('label', { key:x.v,
+                style:{ display:'flex', alignItems:'center', gap:'7px', padding:'5px 9px',
+                  cursor:'pointer', fontSize:'12px', background: ck ? '#eff6ff' : '#fff' } },
+                h('input', { type:'checkbox', checked:ck, onChange:function(){ toggle(x.v); },
+                  style:{ cursor:'pointer', flexShrink:0 } }),
+                h('span', { style:{ flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, x.label),
+                x.n != null && h('span', { style:{ color:'#94a3b8', fontSize:'11px' } }, x.n));
+            })),
+      h('div', { style:{ padding:'7px 9px', borderTop:'1px solid #e2e8f0', display:'flex', gap:'5px' } },
+        h('button', { onClick:function(){ setPos(null); },
+          style:{ flex:1, padding:'5px', fontSize:'11.5px', border:'1px solid #cbd5e1', background:'#fff',
+            borderRadius:'5px', cursor:'pointer' } }, '취소'),
+        h('button', { onClick:function(){ props.onApply(draft.slice()); setPos(null); },
+          style:{ flex:1, padding:'5px', fontSize:'11.5px', fontWeight:700, border:'none',
+            background:'#1e40af', color:'#fff', borderRadius:'5px', cursor:'pointer' } }, '적용'))));
+}
+// 그 칸에 걸린 조건을 칩으로. picks = [{label, onRemove}]
+function FunnelChips(props){
+  var picks = props.picks || [];
+  if(!picks.length) return null;
+  return h('div', { style:{ display:'flex', alignItems:'center', gap:'4px', flexWrap:'wrap',
+      background:'#eff6ff', borderBottom:'1px solid #e5e7eb', padding:'4px 8px' } },
+    picks.map(function(p, i){
+      return h('span', { key:p.label + '|' + i,
+        style:{ display:'inline-flex', alignItems:'center', gap:'4px', background:'#fff',
+          border:'1px solid #bfdbfe', borderRadius:'20px', padding:'1px 7px',
+          fontSize:'10px', color:'#1e3a8a', maxWidth:'100%' } },
+        h('span', { style:{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:'92px' } }, p.label),
+        h('span', { onClick:p.onRemove, title:'이 조건만 풀기',
+          style:{ cursor:'pointer', color:'#94a3b8', fontWeight:700, flexShrink:0 } }, '✕'));
+    }),
+    h('span', { onClick:props.onClear, title:'이 칸의 조건을 전부 풉니다',
+      style:{ marginLeft:'auto', fontSize:'10px', color:'#1d4ed8', cursor:'pointer',
+        fontWeight:600, whiteSpace:'nowrap' } }, '지우기'));
+}
+
 var ROW_TONE = {
   edit:   { c:'#1e40af', bg:'#eff6ff' },
   warn:   { c:'#854d0e', bg:'#fffbeb' },
@@ -13767,35 +13882,89 @@ function ContractManagement(props){
   var hlpS = useState(false); var showHelp = hlpS[0]; var setShowHelp = hlpS[1];
   var fcS = useState('all'); var focusCol = fcS[0]; var setFocusCol = fcS[1];  // 'all' | 'consult' | 'review' | 'signed' — 단독 보기는 세션 한정, 열 때마다 전체(3컬럼)로 시작
   // 단계별 종류 필터 (각 단계 카드 안에서 독립적으로 필터링)
-  var skf = useState({}); var stageKindFilter = skf[0]; var setStageKindFilter = skf[1];
-  function getStageFilter(v){ return stageKindFilter[v] || 'all'; }
-  function setStageFilter(v, k){ var n = Object.assign({}, stageKindFilter); n[v] = k; setStageKindFilter(n); }
-  // 단계별 종류·하위종류 필터 표시 모드 (드롭다운 기본 / 칩) — 저장됨
-  var fvm = usePersistedState('contract_filter_view', 'dropdown'); var filterView = fvm[0]; var setFilterView = fvm[1];
-  function filterRowUI(icon, label, opts, cur, onPick, accent){
-    if(filterView === 'dropdown'){
-      return h('div', { style:{padding:'6px 10px', background:'#fff', borderBottom:'1px solid #e5e7eb', display:'flex', alignItems:'center', gap:'6px'} },
-        h('span', { style:{fontSize:'10px', color:accent, fontWeight:600, whiteSpace:'nowrap'} }, icon+' '+label),
-        h('select', { className:'sel-compact', value:cur, onChange:function(e){ onPick(e.target.value); },
-          style:{flex:1, maxWidth:'240px', padding:'3px 7px', fontSize:'11px', border:'1px solid '+accent+'55', borderRadius:'6px', color:accent, fontWeight:600, background:'#fff', cursor:'pointer', fontFamily:'inherit'} },
-          opts.map(function(o){ return h('option', { key:o.value, value:o.value }, o.label+' ('+o.count+')'); })
-        )
-      );
-    }
-    return h('div', { style:{padding:'6px 10px', background:'#fff', borderBottom:'1px solid #e5e7eb', display:'flex', flexWrap:'wrap', gap:'4px', alignItems:'center'} },
-      h('span', { style:{fontSize:'10px', color:accent, fontWeight:600, marginRight:'2px'} }, icon+' '+label),
-      opts.map(function(o){
-        var on = cur === o.value;
-        return h('button', { key:o.value, onClick:function(){ onPick(on && o.value!=='all' ? 'all' : o.value); },
-          style:{padding:'2px 8px', fontSize:'10.5px', borderRadius:'10px', cursor:'pointer',
-            background: on ? (o.color||accent) : (o.bg||'#f1f5f9'),
-            color: on ? '#fff' : (o.color||accent),
-            border:'1px solid '+(on ? (o.color||accent) : ((o.color||accent)+'44')),
-            fontWeight: on?700:500} },
-          o.label+' '+o.count);
-      })
-    );
+  // ── 칸별 깔때기 ──────────────────────────────────────────
+  // 칸(상담접수·계약협의·계약확정)마다 따로 건다. 접수는 전체로 두고
+  // 확정만 좁혀 보는 식이 되어야 해서, 도구줄 공통이 아니라 칸 안에 둔다.
+  // 모양: stageSel['consult'] = { co:[], kind:[], sub:[], mgr:[] }
+  var STAGE_AXES = [
+    { k:'co',   label:'사업장', color:'#1e40af' },
+    { k:'kind', label:'종류',   color:'#475569' },
+    { k:'sub',  label:'세부',   color:'#0f766e' },
+    { k:'mgr',  label:'담당',   color:'#7c3aed' }
+  ];
+  var ssS = usePersistedState('contract_stage_sel', {});
+  var stageSel = (ssS[0] && typeof ssS[0] === 'object' && !Array.isArray(ssS[0])) ? ssS[0] : {};
+  var setStageSel = ssS[1];
+  function stGet(v, ax){ var o = stageSel[v] || {}; return Array.isArray(o[ax]) ? o[ax] : []; }
+  function stSet(v, ax, arr){
+    var n = Object.assign({}, stageSel);
+    n[v] = Object.assign({}, n[v] || {});
+    if(arr && arr.length) n[v][ax] = arr; else delete n[v][ax];
+    if(!Object.keys(n[v]).length) delete n[v];
+    setStageSel(n);
   }
+  function stClear(v){ var n = Object.assign({}, stageSel); delete n[v]; setStageSel(n); }
+  function stClearAll(){ setStageSel({}); }
+  function stCount(v){
+    return STAGE_AXES.reduce(function(s, a){ return s + stGet(v, a.k).length; }, 0);
+  }
+  // 그 카드가 이 칸의 조건을 통과하는가 — 같은 축 안은 '또는', 축끼리는 '그리고'
+  function stPass(v, c){
+    var kinds = c.kinds || (c.kind ? [c.kind] : []);
+    var co = stGet(v,'co');
+    if(co.length && co.indexOf(String(c.companyName || '')) < 0) return false;
+    var kd = stGet(v,'kind');
+    if(kd.length && !kinds.some(function(k){ return kd.indexOf(k) >= 0; })) return false;
+    var sb = stGet(v,'sub');
+    if(sb.length){
+      var s0 = kinds.map(function(kv){ return kindSubLabel(c, kv); }).join(' ');
+      if(!sb.some(function(x){ return s0.indexOf(x) >= 0; })) return false;
+    }
+    var mg = stGet(v,'mgr');
+    if(mg.length){
+      var subs = c.managerSubs || [];
+      if(!mg.some(function(t){ return c.managerMain === t || subs.indexOf(t) >= 0; })) return false;
+    }
+    return true;
+  }
+  // 그 칸 카드들에서 축별 값 목록과 건수를 뽑는다
+  function stItems(list, ax){
+    var m = {};
+    list.forEach(function(c){
+      var vals = ax === 'co'   ? [String(c.companyName || '')]
+               : ax === 'kind' ? (c.kinds || (c.kind ? [c.kind] : []))
+               : ax === 'sub'  ? (c.kinds || (c.kind ? [c.kind] : [])).map(function(kv){ return kindSubLabel(c, kv); })
+               :                 [c.managerMain].concat(c.managerSubs || []);
+      vals.forEach(function(x){ if(x) m[x] = (m[x] || 0) + 1; });
+    });
+    if(ax === 'kind'){
+      return CONTRACT_KINDS.filter(function(k){ return m[k.v]; })
+        .map(function(k){ return { v:k.v, label:k.icon + ' ' + k.label, n:m[k.v] }; });
+    }
+    var keys = Object.keys(m).sort(function(a,b){ return String(a) < String(b) ? -1 : 1; });
+    if(ax === 'mgr'){
+      return keys.map(function(sid){
+        var u = users.find(function(x){ return x.sid === sid; });
+        return { v:sid, label:(u ? u.name : sid), n:m[sid] };
+      });
+    }
+    return keys.map(function(x){ return { v:x, label:x, n:m[x] }; });
+  }
+  // 걸린 조건을 칩 문구로
+  function stPicks(v){
+    var out = [];
+    STAGE_AXES.forEach(function(a){
+      stGet(v, a.k).forEach(function(val){
+        var label = val;
+        if(a.k === 'kind'){ var k = CONTRACT_KINDS.find(function(x){ return x.v === val; }); label = k ? k.label : val; }
+        if(a.k === 'mgr'){ var u = users.find(function(x){ return x.sid === val; }); label = u ? u.name : val; }
+        out.push({ label: label, onRemove: function(){
+          stSet(v, a.k, stGet(v, a.k).filter(function(x){ return x !== val; })); } });
+      });
+    });
+    return out;
+  }
+  // (칸별 종류 필터는 깔때기로 바뀌었다 — 옛 filterRowUI·filterView 제거)
   var ymS = usePersistedState('contract_month', todayYM()); var selYM = ymS[0]; var setSelYM = ymS[1];
   var thisYM = selYM;
   var q = useState(''); var query = q[0]; var setQuery = q[1];
@@ -14515,10 +14684,12 @@ function ContractManagement(props){
         style:{ padding:'6px 10px', border:'1px solid '+(kindFilter!=='all'?'#1e40af':'#cbd5e1'), borderRadius:'5px', fontSize:'11.5px', fontFamily:'inherit', color:kindFilter!=='all'?'#1e40af':'#475569', fontWeight:kindFilter!=='all'?700:400, cursor:'pointer' } },
         [{ v:'all', label:'전체', icon:'📊' }].concat(CONTRACT_KINDS).map(function(k){ return h('option', { key:k.v, value:k.v }, k.icon + ' ' + k.label); })),
       h('span', { style:{ fontSize:'11.5px', color:'#475569', fontWeight:700, whiteSpace:'nowrap' } }, kindCount(kindFilter) + '건'),
-      h('button', { onClick:function(){ setFilterView(filterView==='dropdown'?'chips':'dropdown'); },
-        title:'단계별 종류 필터 표시 전환 (현재: '+(filterView==='dropdown'?'드롭다운':'칩')+')',
-        style:{ padding:'6px 9px', background:'#fff', color:'#475569', border:'1px solid #cbd5e1', borderRadius:'5px', cursor:'pointer', fontSize:'11.5px', fontWeight:600, whiteSpace:'nowrap' } },
-        filterView==='dropdown' ? '▾ 필터' : '▦ 필터'),
+      // 칸마다 깔때기가 걸려 있으면 한 번에 푸는 단추 (걸린 게 있을 때만)
+      Object.keys(stageSel).length > 0 && h('button', { onClick:stClearAll,
+        title:'세 칸에 걸린 깔때기를 전부 풉니다',
+        style:{ padding:'6px 9px', background:'#eff6ff', color:'#1d4ed8', border:'1px solid #93c5fd',
+          borderRadius:'5px', cursor:'pointer', fontSize:'11.5px', fontWeight:700, whiteSpace:'nowrap' } },
+        '▽ 칸 필터 모두 풀기'),
       h('select', { value:mgrFilter, onChange:function(e){ setMgrFilter(e.target.value); },
         style:{ padding:'6px 10px', border:'1px solid '+(mgrFilter!=='all'?'#1e40af':'#cbd5e1'), borderRadius:'5px', fontSize:'11.5px', fontFamily:'inherit', color:mgrFilter!=='all'?'#1e40af':'#475569', fontWeight:mgrFilter!=='all'?700:400, cursor:'pointer' } },
         h('option', { value:'all' }, '👤 전체 담당자'),
@@ -14597,19 +14768,9 @@ function ContractManagement(props){
     h('div', { style:{ display:'grid', gridTemplateColumns: window.innerWidth<=768?'1fr':(focusCol==='all'?'repeat(3, 1fr)':'1fr'), gap:'8px' } },
       CONTRACT_STATUS.filter(function(s){ return focusCol==='all' || s.v===focusCol; }).map(function(s){
         var allStageCards = byStatus[s.v] || [];
-        // 단계별 종류 카운트
-        var stKindCnt = {};
-        allStageCards.forEach(function(c){
-          var arr = c.kinds || (c.kind ? [c.kind] : []);
-          arr.forEach(function(k){ stKindCnt[k] = (stKindCnt[k]||0)+1; });
-        });
-        var kindsInStage = CONTRACT_KINDS.filter(function(k){ return stKindCnt[k.v] > 0; });
-        // 카드 필터링 (단계별 종류 필터 적용)
-        var stKindF = getStageFilter(s.v);
-        var cards = stKindF === 'all' ? allStageCards : allStageCards.filter(function(c){
-          var arr = c.kinds || (c.kind ? [c.kind] : []);
-          return arr.indexOf(stKindF) >= 0;
-        });
+        // 카드 필터링 (이 칸의 깔때기만 적용 — 다른 칸에는 안 걸린다)
+        var cards = allStageCards.filter(function(c){ return stPass(s.v, c); });
+        var stOn = stCount(s.v);
         var isOver = overStatus === s.v && dragId;
         var isFocused = focusCol === s.v;
         return h('div', { key:s.v,
@@ -14631,15 +14792,21 @@ function ContractManagement(props){
             h('span', null, s.icon),
             h('span', null, s.label),
             h('div', { style:{ flex:1 } }),
-            h('span', { style:{ background:'#fff', color:s.headFg, fontSize: isFocused?'14px':'11px', padding: isFocused?'3px 14px':'2px 9px', borderRadius:'10px', fontWeight:800, border:'1px solid '+s.headFg+'33' } }, cards.length + (isFocused?'건':'')),
+            h('span', { style:{ background:'#fff', color:s.headFg, fontSize: isFocused?'14px':'11px', padding: isFocused?'3px 14px':'2px 9px', borderRadius:'10px', fontWeight:800, border:'1px solid '+s.headFg+'33' } },
+              (stOn ? cards.length + ' / ' + allStageCards.length : String(cards.length)) + (isFocused?'건':'')),
             h('span', { style:{ fontSize:'11px', opacity:.7, marginLeft:'4px' } }, isFocused ? '◱ 전체보기' : '⛶ 단독')
           ),
-          // 단계별 종류 필터 칩 (그 단계에 종류가 2개 이상일 때만 표시)
-          kindsInStage.length >= 2 && filterRowUI('🔍','종류',
-            [{value:'all', label:'전체', count:allStageCards.length, color:'#475569', bg:'#f1f5f9'}].concat(
-              kindsInStage.map(function(k){ return {value:k.v, label:k.icon+' '+k.label, count:stKindCnt[k.v], color:k.color, bg:k.bg}; })),
-            stKindF, function(v){ setStageFilter(s.v, v); }, '#475569'),
-          // (열별 하위종류 필터 제거 — 상단 공통 하위종류 칩으로 이동)
+          // ── 이 칸만 거르는 깔때기 줄 ──
+          allStageCards.length > 0 && h('div', { style:{ padding:'5px 8px', background:'#fff',
+              borderBottom:'1px solid #e5e7eb', display:'flex', alignItems:'center', gap:'4px', flexWrap:'wrap' } },
+            STAGE_AXES.map(function(a){
+              return h(FunnelBtn, { key:a.k, label:a.label, color:a.color,
+                items: stItems(allStageCards, a.k),
+                sel: stGet(s.v, a.k),
+                onApply: function(arr){ stSet(s.v, a.k, arr); } });
+            })),
+          // 걸린 조건 (그 칸 것만)
+          h(FunnelChips, { picks: stPicks(s.v), onClear: function(){ stClear(s.v); } }),
           // 카드 영역 (단독 보기 시 카드는 가로 한 줄 레이아웃 - CSS로 반응형)
           h('div', { style:{ padding:'10px' } },
             cards.length === 0
