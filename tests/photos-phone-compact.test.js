@@ -137,9 +137,23 @@ test('아래 줄의 빈 자리는 클릭이 뚫린다', () => {
 test('★ 폰에서는 분류 탭 줄이 화면에서 사라진다', () => {
   const m = html.match(/@media \(max-width:820px\)\{[\s\S]*?\n\}\r?\n#chipRow/);
   assert.ok(m, '폰 전용 꾸밈 덩어리를 찾지 못했습니다.');
-  assert.ok(/#kinds,#chipRow\{display:none!important\}/.test(m[0]),
-    '탭 줄이 남아 있으면 합친 뜻이 없습니다.');
+  assert.ok(/#kinds,#chipRow,#needBox,#oldBox,#ownerPick\{display:none!important\}/.test(m[0]),
+    '탭 줄·확인 필요·누구 사진이 남아 있으면 합친 뜻이 없습니다(대표 화면 2026-08-07).');
   assert.ok(/#phMenuBtn\{display:flex\}/.test(m[0]));
+});
+
+/* ⚠ 실제 고장(2026-08-07) — 「보이게」는 폰 구간에, 「숨기기」는 그보다 **뒤**에 적어서
+   같은 힘인데 뒤엣것이 이겼다. 그래서 폰에서 왼쪽 단추가 아예 안 떴다.
+   숨기는 규칙은 반드시 폰 구간보다 **앞**에 있어야 한다. */
+test('★ 숨기는 규칙이 폰 규칙보다 앞에 있다 (뒤에 두면 폰에서 안 뜬다)', () => {
+  const hide = html.indexOf('#phMenuBtn{display:none}');
+  const show = html.indexOf('#phMenuBtn{display:flex}');
+  assert.ok(hide >= 0 && show >= 0, '두 규칙이 다 있어야 합니다.');
+  assert.ok(hide < show,
+    '숨기는 규칙이 뒤에 있으면 폰에서 단추가 안 뜹니다 — 실제로 그랬습니다.');
+  const hideS = html.indexOf('#phSheet{display:none}');
+  assert.ok(hideS >= 0 && hideS < html.indexOf('#phSheet.on{display:block}'),
+    '창도 같은 함정에 빠집니다.');
 });
 
 test('★ 아래 단추에 지금 보는 분류와 장수를 적는다', () => {
