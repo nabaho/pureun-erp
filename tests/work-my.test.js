@@ -67,7 +67,7 @@ eval(gvar('STATUSES') + '\n' + gvar('PLAN_GROUP') + '\n' + gvar('COLS_KEY') + '\
   + gvar('KIND_SET') + '\n' + gvar('KIND_ALIAS') + '\n'
   + ['catNorm', 'colPref', 'colForced', 'colHidden', 'colToggle', 'colBtn', 'colModal', 'colTH', 'colTD',
      'grpOn', 'grpToggle', 'grpFold', 'grpFolded', 'grpFoldToggle', 'groupRows',
-     'grpHeadHTML', 'stSelect', 'setStatus',
+     'grpHeadHTML', 'dayHeadHTML', 'stSelect', 'setStatus',
      'stepsOf', 'isPlanDay', 'wkSave', 'planAdd', 'planCheck', 'planUncheck',
      'planDel', 'planToLog', 'logToPlan'].map(grab).join('\n'));
 
@@ -105,8 +105,21 @@ ok('빈 값은 기본값이 아니라 "전부 펴짐"으로 읽는다 (다시 �
 /* ── 띠와 칩 ── */
 STORE = {}; S.cols = undefined; S.F = {};
 ok('펴진 열은 보통 칸으로 그린다',
-  colTH('st', '상태', 'width:74px') === '<th style="width:74px">상태</th>'
+  colTH('st', '상태', 'width:74px').indexOf('<th style="width:74px">') === 0
+  && colTH('st', '상태', 'width:74px').indexOf('상태</th>') > 0
   && colTD('st', '<b>진행중</b>') === '<td><b>진행중</b></td>');
+/* 펴진 열에도 접는 손잡이가 있어야 한다. 없으면 한 번 편 뒤에는 팝업으로만
+   다시 접을 수 있어 접고 펴는 일이 한쪽으로만 된다. */
+ok('펴진 열에 접는 손잡이가 붙는다', (function () {
+  const h = colTH('st', '상태', 'width:74px');
+  return h.indexOf('class="cfold"') > 0 && h.indexOf("colToggle('st')") > 0 && h.indexOf('‹') > 0;
+})());
+ok('손잡이를 눌러도 걸러 보기 팝업이 열리지 않는다',
+  colTH('st', '상태').indexOf('event.stopPropagation();colToggle') > 0);
+ok('손잡이는 열 이름보다 앞에 온다 (칸 너비를 밀지 않게)',
+  colTH('st', '상태').indexOf('cfold') < colTH('st', '상태').indexOf('상태'));
+ok('접을 수 없는 열에는 손잡이가 없다', colTH('co', '기업').indexOf('cfold') < 0);
+ok('손잡이 모양이 CSS에 있다', W.indexOf('tr.fhead .cfold{') > 0);
 ok('접힌 열은 띠가 되고 눌러서 편다',
   colTH('last', '최근 기록').indexOf('class="cband"') > 0
   && colTH('last', '최근 기록').indexOf("colToggle('last')") > 0
@@ -262,11 +275,31 @@ ok('고른 날이 다른 주면 그 주로 옮긴다',
   && grab('calDayOnly').indexOf('setWeek(mondayOf(') > 0);
 ok('같은 주 안이면 주를 옮기지 않는다 (보던 자리를 지킨다)',
   grab('calDayOnly').indexOf('inWeek(S.calDay,S.week)){ setWeek') > 0);
-ok('그 날 것이 없으면 빈 화면에 까닭과 푸는 길을 둔다',
-  RM.indexOf('에 잡힌 일이 없습니다') > 0
-  && RM.indexOf("calDayOnly(\\'\\')\">그 날 보기 풀기") > 0);
-ok('업무가 그대로 있다고 알려 준다 (사라진 줄 알게 두지 않는다)',
-  RM.indexOf("업무 '+total+'건은 그대로 있습니다") > 0);
+/* 고른 날은 거르지 않는다 —
+   주간 계획을 세우려면 그 주 전체가 보여야 한다. 거르면 그 날 것만 남아
+   예측 업무를 옆 요일에 걸 수가 없다. 대신 위로 모으고 그 칸을 밝힌다. */
+ok('고른 날로 줄을 거르지 않는다',
+  RM.indexOf('base=base.filter(calDayHas)') < 0);
+ok('그 날 것을 위로 모으고 나머지는 아래에 둔다',
+  RM.indexOf('(calDayHas(it)?hit:rest).push(it)') > 0
+  && RM.indexOf('dayHeadHTML(S.calDay,hit.length,NCOL,true)') > 0
+  && RM.indexOf("dayHeadHTML('',rest.length,NCOL,false)") > 0);
+ok('나머지가 없으면 둘째 소제목을 안 그린다', RM.indexOf('if(rest.length){') > 0);
+ok('날을 고르면 구분 묶음은 잠시 물러난다 (두 기준으로 묶으면 알 수 없다)',
+  RM.indexOf('else if(S.calDay){') < RM.indexOf('else if(grpOn()){'));
+ok('"모두 보기" 띠 안내가 없어졌다 (거르지 않으므로 풀 것이 없다)',
+  RM.indexOf('것만 보고 있습니다') < 0 && RM.indexOf('모두 보기 →') < 0);
+ok('고른 날은 걸러 보기 조건 수에 넣지 않는다',
+  /var on=!!\(S\.q\|\|S\.f\|\|S\.myRole\|\|fAny\('my'\)\)/.test(RM));
+ok('소제목에서 고른 날을 바로 놓을 수 있다',
+  grab('dayHeadHTML').indexOf("calDayOnly(\\'\\')") > 0
+  && grab('dayHeadHTML').indexOf('고른 날 놓기') > 0);
+ok('고른 날 요일 칸을 밝힌다 (어디에 적을지 눈에 들어오게)',
+  grab('wkHeadHTML').indexOf("d===S.calDay?' pick':''") > 0
+  && grab('wkCellHTML').indexOf("d===S.calDay?' pick':''") > 0
+  && W.indexOf('.wkh.pick{') > 0 && W.indexOf('.wkc.pick{') > 0);
+ok('팀 전체는 예전대로 거른다 (남이 그 날 무엇을 했는지 보는 화면이다)',
+  grab('renderTeam').indexOf('S.calDay&&!calDayHas(it)') > 0);
 ok('조건 때문에 빈 경우에는 조건 풀기를 준다',
   RM.indexOf('조건 모두 풀기') > 0);
 ok('팀 전체에는 안 붙는다 (내 업무만의 설정이다)',

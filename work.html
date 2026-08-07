@@ -263,6 +263,12 @@
     cursor:pointer;position:relative;overflow:hidden}
   th.cband:hover{background:var(--acc-soft)}
   th.cband.lk{background:var(--acc-soft)}       /* 묶어 보기가 잡고 있는 띠 */
+  /* 펴진 열을 접는 손잡이 — 평소엔 흐리게 있다가 그 열에 마우스를 올리면 진해진다 */
+  tr.fhead .cfold{display:inline-block;width:11px;margin-right:1px;cursor:pointer;
+    color:var(--line);font-weight:800;font-size:12px;line-height:1;vertical-align:1px;
+    text-transform:none;letter-spacing:0}
+  tr.fhead th:hover .cfold{color:var(--acc2)}
+  tr.fhead .cfold:hover{color:var(--danger)}
   th.cband .cbl{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(180deg);
     writing-mode:vertical-rl;font-size:10px;font-weight:700;color:var(--faint);
     white-space:nowrap;letter-spacing:-.4px}
@@ -274,6 +280,17 @@
   tr.grph:hover td{background:#e6edff}
   tr.grph .gc{display:inline-block;width:14px;color:var(--acc);font-weight:800}
   tr.grph .gn{margin-left:7px;color:var(--sub);font-weight:700}
+  /* 고른 날 묶음 — 거르는 것이 아니라 위로 모은 것이다 */
+  tr.grph.day td{background:#fff7e6;border-top:1.5px solid #f0c68a;color:#854d0e}
+  tr.grph.day:hover td{background:#fff2d6}
+  tr.grph.rest td{background:var(--bg);border-top:1px solid var(--line);cursor:default}
+  tr.grph.rest:hover td{background:var(--bg)}
+  tr.grph .gn2{color:var(--faint);font-weight:700}
+  tr.grph .gx{float:right;font-size:11.5px;font-weight:700;color:var(--acc2);cursor:pointer}
+  tr.grph .gx:hover{color:var(--danger)}
+  /* 고른 날의 요일 칸 — 밝혀서 어디에 적을지 눈에 들어오게 */
+  .wkh.pick{background:#fff7e6;color:#854d0e;border-radius:5px}
+  .wkc.pick{background:#fffdf6;box-shadow:inset 1px 0 0 #f0c68a,inset -1px 0 0 #f0c68a}
   /* 상태 고르기 — 칩과 같은 색을 쓴다 */
   select.stsel{border:0;border-radius:6px;padding:2px 3px;font-size:11.5px;font-weight:800;
     cursor:pointer;max-width:70px;appearance:none;-webkit-appearance:none;text-align:center}
@@ -1010,7 +1027,13 @@ function colToggle(k){
 // 접힌 열은 <th>/<td> 를 폭 14px 띠로 바꾼다. 띠 자체가 펴는 단추다.
 function colTH(k,inner,style){
   var c=MYCOLS.filter(function(x){ return x[0]===k; })[0];
-  if(!c||!colHidden(k)) return '<th style="'+(style||'')+'">'+inner+'</th>';
+  // 펴진 열에는 접는 손잡이를 단다. 이것이 없으면 한 번 편 뒤에는 팝업으로만
+  // 다시 접을 수 있어, 접고 펴는 일이 한쪽으로만 된다.
+  if(!c||!colHidden(k))
+    return '<th style="'+(style||'')+'">'
+      +(c?'<span class="cfold" onclick="event.stopPropagation();colToggle(\''+k+'\')" '
+          +'title="'+esc(c[1])+' 열 접기">‹</span>':'')
+      +inner+'</th>';
   // 묶어 보기가 잡고 있는 띠는 "펴기"가 아니라 그 까닭과 실제로 되돌리는 길을 준다
   if(colForced(k))
     return '<th class="cband lk" onclick="grpToggle()" '
@@ -2280,7 +2303,9 @@ function renderMy(){
   var nSub=mine.length-nMain;
   if(S.myRole) base=base.filter(function(it){return roleOf(it,viewer())===S.myRole;});
   if(S.q)      base=base.filter(function(it){return matchQ(it,S.q);});
-  if(S.calDay) base=base.filter(calDayHas);      // 캘린더에서 고른 날 것만
+  // ⚠ 고른 날로 거르지 않는다. 주간 계획을 세우려면 그 주 전체가 보여야 하는데
+  //   거르면 그 날 것만 남아 계획을 세울 수가 없다(예측 업무를 옆 요일에 건다).
+  //   대신 아래에서 그 날 것을 위로 모으고 그 요일 칸을 밝힌다.
   // 열 조건은 base에서 뺀다 — 어떤 열의 선택지 건수를 셀 때 그 열만 되살리기 위해서다
   var list=base.filter(function(it){ return fPass('my',it,''); });
   var opts=ownerOptions();
@@ -2357,9 +2382,10 @@ function renderMy(){
     app.innerHTML=h+splitClose(); return;
   }
   // 머리행이 곧 걸러 보기 — 열 이름을 누르면 그 열의 값이 건수와 함께 뜬다(엑셀 자동필터).
-  var on=!!(S.q||S.f||S.myRole||S.calDay||fAny('my'));
-  if(S.calDay) h+='<div class="histbanner">📅 캘린더에서 고른 <b>'+esc(md(S.calDay))+'</b> 것만 보고 있습니다.'
-    +'<span class="back" onclick="calDayOnly(\'\')">모두 보기 →</span></div>';
+  // 고른 날은 거르는 조건이 아니라 모아 보는 표시다 — 「조건」 수에 넣지 않는다
+  var on=!!(S.q||S.f||S.myRole||fAny('my'));
+  // 띠 안내가 없다. 거르지 않으므로 "모두 보기"가 필요 없고,
+  // 고른 날은 표 안 소제목에서 바로 놓을 수 있다.
   // 선택지는 열려 있는 열만 센다 — 네 열을 매번 다 세면 헛일이다.
   // 접힌 열은 띠가 된다. 걸러 보기 단추는 펴져 있을 때만 만든다 — 안 그리면 헛일이다.
   function fh(k,w){
@@ -2390,12 +2416,22 @@ function renderMy(){
   // 아무것도 안 남았을 때는 무엇 때문인지와 푸는 길을 그 자리에 둔다 —
   // 41건이 통째로 사라진 화면에서 얇은 띠 안내만으로는 자료가 없어진 줄 안다
   if(!list.length) h+='<tr><td colspan="'+NCOL+'" class="moremark" style="padding:26px 14px">'
-    +(S.calDay
-      ?'📅 <b>'+esc(md(S.calDay))+'</b> 에 잡힌 일이 없습니다. 업무 '+total+'건은 그대로 있습니다.'
-       +'<div style="margin-top:10px"><button class="primary" onclick="calDayOnly(\'\')">그 날 보기 풀기</button></div>'
-      :'조건에 맞는 업무가 없습니다.'
-       +'<div style="margin-top:10px"><button class="primary" onclick="myReset()">조건 모두 풀기</button></div>')
+    +'조건에 맞는 업무가 없습니다.'
+    +'<div style="margin-top:10px"><button class="primary" onclick="myReset()">조건 모두 풀기</button></div>'
     +'</td></tr>';
+  /* 날을 골랐으면 그 날 묶음이 먼저다. 구분 묶음은 잠시 물러난다 —
+     두 가지로 한꺼번에 묶으면 어느 기준으로 나뉜 것인지 알 수 없다.
+     날을 풀면 구분 묶음이 그대로 돌아온다. */
+  else if(S.calDay){
+    var dn=0, hit=[], rest=[];
+    list.forEach(function(it){ (calDayHas(it)?hit:rest).push(it); });
+    h+=dayHeadHTML(S.calDay,hit.length,NCOL,true);
+    hit.forEach(function(it){ dn++; h+=rowHTML(it,dn,dn-1); });
+    if(rest.length){
+      h+=dayHeadHTML('',rest.length,NCOL,false);
+      rest.forEach(function(it){ dn++; h+=rowHTML(it,dn,dn-1); });
+    }
+  }
   else if(grpOn()){
     var gn=0;
     groupRows(list).forEach(function(g){
@@ -2474,6 +2510,16 @@ function groupRows(list){
     return ia-ib;
   });
   return order.map(function(c){ return [c,m[c]]; });
+}
+/* 고른 날 소제목. 첫 묶음은 그 날 것, 둘째는 나머지.
+   거르는 것이 아니라 모아 놓는 것이므로 "풀기"가 아니라 "고른 날 놓기"다. */
+function dayHeadHTML(d,n,cols,on){
+  return '<tr class="grph'+(on?' day':' rest')+'">'
+    +'<td colspan="'+cols+'">'
+    +(on?'📅 <b>'+esc(md(d))+'</b> 에 있는 <b>'+n+'건</b>'
+         +'<span class="gx" onclick="calDayOnly(\'\')" title="고른 날을 놓습니다 — 줄은 원래 차례로 돌아갑니다">✕ 고른 날 놓기</span>'
+       :'<span class="gn2">나머지 '+n+'건</span>')
+    +'</td></tr>';
 }
 function grpHeadHTML(cat,n,cols){
   var f=grpFolded(cat);
@@ -2786,7 +2832,8 @@ function wkHeadHTML(){
   return '<div class="wkg" style="grid-template-columns:repeat('+days.length+',1fr)">'
     +days.map(function(d){
         var dt=new Date(d+'T00:00:00');
-        return '<div class="wkh'+(d===today?' td':'')+'">'+WDS[(dt.getDay()+6)%7]+' '+dt.getDate()+'</div>';
+        return '<div class="wkh'+(d===today?' td':'')+(d===S.calDay?' pick':'')+'">'
+          +WDS[(dt.getDay()+6)%7]+' '+dt.getDate()+'</div>';
       }).join('')+'</div>';
 }
 function wkCellHTML(it,logs,rowIdx){
@@ -2797,7 +2844,7 @@ function wkCellHTML(it,logs,rowIdx){
   return '<div class="wkg" style="grid-template-columns:repeat('+days.length+',1fr)">'
     +days.map(function(d,ci){
         var ls=byd[d]||[], ps=byp[d]||[], mk=wkMarks(it,d);
-        return '<div class="wkc'+(d===today?' td':'')+'">'+mk
+        return '<div class="wkc'+(d===today?' td':'')+(d===S.calDay?' pick':'')+'">'+mk
           +ps.map(function(s){ return planRowHTML(it,s); }).join('')
           +ls.map(function(l){
               return '<div class="wklog">'+esc(l.t)
