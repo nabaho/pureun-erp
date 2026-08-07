@@ -70,7 +70,14 @@ const baseTop = ['uid_roles','sid_roles','data','payroll_os','fund_erp','work_er
    ★ 최상위를 일부러 늘렸다면 여기에 적어라. 적지 않으면 아래 검사가 막는다
      (실수로 늘어난 것을 잡는 덫이라 자동으로 넘기지 않는다) */
 const allowTop = ['systemAlerts','systemBackups','systemBackupsIndex','systemRestoreLog',
-  'puphotos'];   /* 2026-08-02 사진첩 B단계 */
+  'puphotos',    /* 2026-08-02 사진첩 B단계 */
+  /* 2026-08-07 건의함을 「전 직원 공개(data/suggestions)」에서 대표만 보는 비공개 자리로
+     옮겼다. 옮기고 이 줄을 안 적어서 배포가 두 번 실패했다(06:24·06:52) —
+     최상위를 늘렸으면 반드시 여기에 적을 것. */
+  'suggestions_private','suggestions_meta_private','suggestions_resolved_private',
+  /* 2026-08-07 푸른이알피 30분 수시 자동백업. `serverBackupsRecentIndex`(목차)만 있고
+     본체가 없어 백업이 조용히 막혀 있었다. */
+  'serverBackupsRecent'];
 
 const keys = Object.keys(R);
 const removed = baseTop.filter(function (k) { return keys.indexOf(k) < 0; });
