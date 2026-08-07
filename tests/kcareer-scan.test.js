@@ -65,7 +65,53 @@ test('classify 확실: 이름 끝이 결과물 단어이고 원본 확장자면 
   assert.deepEqual(KS.classify('2017 기업복지컨설팅 교육 수료증 (2017.04.18).pdf'),
     { level: 'sure', store: 'cert', type: '', titleHint: '수료' });
   assert.deepEqual(KS.classify('2.권형하노무사 경력증명서.pdf'),
-    { level: 'sure', store: 'certdoc', type: '', titleHint: '' });
+    { level: 'sure', store: 'certdoc', type: '', titleHint: '', certKind: 'own' });
+});
+
+test('certKindOf: 외부기관 발급과 본인 경력증명을 가른다', () => {
+  assert.equal(KS.certKindOf('2024 구조혁신지원사업 컨설팅 수행실적 증명서_성문전자(주)_권형하'), 'ext');
+  assert.equal(KS.certKindOf('실적증명서_(주)선진테크_권'), 'ext');
+  assert.equal(KS.certKindOf('2.공인노무사회 정부위탁사업 참여확인서_권형하노무사'), 'ext');
+  assert.equal(KS.certKindOf('2025년 산업·일자리전환 지원 컨설팅 수행 확인(푸른노무법인)'), 'ext');
+  assert.equal(KS.certKindOf('경력증명서-푸른'), 'own');
+  assert.equal(KS.certKindOf('재직증명서-권형하'), 'own');
+  assert.equal(KS.certKindOf('2015 체당금국선노무사 위촉장'), '');
+});
+
+test('classify: 증명서 낱말은 이름 끝이 아니어도 승격한다 (실사용 190건 누락)', () => {
+  // 증명서 파일명은 '증명서_대상_본인이름' 꼴이 흔해 '이름 끝' 규칙으로는 전부 놓쳤다
+  assert.deepEqual(KS.classify('2024 구조혁신지원사업 컨설팅 수행실적 증명서_(주)코시노인터네셔널_권형하.pdf'),
+    { level: 'sure', store: 'certdoc', type: '', titleHint: '', certKind: 'ext' });
+  assert.deepEqual(KS.classify('경력증명서-푸른.pdf'),
+    { level: 'sure', store: 'certdoc', type: '', titleHint: '', certKind: 'own' });
+  assert.deepEqual(KS.classify('재직증명서-권형하.pdf'),
+    { level: 'sure', store: 'certdoc', type: '', titleHint: '', certKind: 'own' });
+  assert.deepEqual(KS.classify('실적증명서- 중소벤처기업부 비즈니스지원단.pdf'),
+    { level: 'sure', store: 'certdoc', type: '', titleHint: '', certKind: 'ext' });
+  assert.deepEqual(KS.classify('실적증명서_(주)영도_권.jpg'),
+    { level: 'sure', store: 'certdoc', type: '', titleHint: '', certKind: 'ext' });
+  assert.deepEqual(KS.classify('2025년 산업·일자리전환 지원 컨설팅 수행 확인(푸른노무법인).pdf'),
+    { level: 'sure', store: 'certdoc', type: '', titleHint: '', certKind: 'ext' });
+});
+
+test('classify 증명서: 부정어·확장자 제한은 그대로 걸러낸다', () => {
+  // 실측으로 확인된 3건 — 신청서 묶음과 빈 양식
+  assert.equal(KS.classify('신청서 및 실적증명서.pdf').level, 'submission');
+  assert.equal(KS.classify('실적증명서_양식.hwp').level, 'submission');
+  assert.equal(KS.classify('붙임4. 컨설팅 수행실적 증명서 표준양식.hwp').level, 'submission');
+  assert.equal(KS.classify('컨설팅_실적증명_목록.xlsx').level, 'submission');
+  assert.equal(KS.classify('능률협회,공인노무사회경력증명서.zip').level, 'maybe');   // zip은 원본 확장자 아님
+});
+
+test('classify 회귀: 증명서 규칙이 위촉장으로 새지 않는다', () => {
+  assert.equal(KS.classify('위촉장 목록.xlsx').level, 'submission');
+  assert.equal(KS.classify('★ 노동권익보호관 위촉식 시나리오.hwp').level, 'submission');
+  assert.equal(KS.classify('★ 제1기 노동권익보호관 위촉 대상자 명단.hwp').level, 'submission');
+  assert.equal(KS.classify('위촉 동의서.hwp').level, 'submission');
+  assert.equal(KS.classify('위촉장 사본 스캔.pdf').level, 'maybe');
+  // 위촉장 판정에는 certKind가 붙지 않는다
+  assert.deepEqual(KS.classify('2015 질병판정위원회 위원 위촉장 (2015.05.07).pdf'),
+    { level: 'sure', store: 'wiccok', type: '위촉장', titleHint: '' });
 });
 
 test('classify 제출서류: 결과물 단어가 끝이 아니거나 부정어가 있으면 승격하지 않는다', () => {

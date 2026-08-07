@@ -46,22 +46,25 @@
   }
 
   /* ===== 3단계 판정 =====
-     핵심 규칙: "이름 끝이 결과물 단어인가". 중간에 있으면 결과물이 아니다.
-     예) '…위촉장' = 위촉장 / '위촉장 목록' = 목록표 / '위촉식 시나리오' = 행사 진행표 */
+     종류에 따라 규칙이 다르다.
+     · 위촉장·표창·자격증 계열 = "이름 끝"만 인정 ('위촉장 목록'·'위촉식 시나리오' 오탐 방지)
+     · 증명서 계열           = "이름 어느 자리에든" 인정 (증명서_대상_본인이름 꼴이 흔하다) */
   var ORIG_EXT = /\.(pdf|jpg|jpeg|png|hwp|hwpx)$/i;
-  var RESULT_END = /(위촉장|위촉계약서|재위촉|위촉서|표창장|표창|포상|상장|자격증|수료증|이수증|협약서|경력증명서|실적증명서|참여확인서|수행확인서)$/;
+  var RESULT_END = /(위촉장|위촉계약서|재위촉|위촉서|표창장|표창|포상|상장|자격증|수료증|이수증|협약서)$/;
+  /* ⚠ 증명서 낱말을 RESULT_END에 되돌려 넣지 말 것 — 끝만 보면 205건 중 15건밖에 못 잡는다
+     (실측 2026-08-06: 190건 누락. '경력증명서-푸른'·'…증명서_성문전자(주)_권형하' 등). */
+  var CERT_ANY = /실적\s*증명|수행실적\s*증명|경력증명|재직증명|참여확인서|수행확인서|용역수행|수행\s*확인/;
   var RESULT_ANY = /위촉장|위촉계약|재위촉|표창|포상|상장|자격증|수료증|이수증|협약서|경력증명|실적증명|참여확인|수행확인/;
   // ⚠ 부정어에 '회의'를 넣지 말 것 — '상공회의소 위촉장'이 오탐된다(설계서 7.3).
   var NEGATIVE = /동의서|신청서|제출|공고|양식|서식|명단|시나리오|좌석|추천\s*계획|모집|목록|초안|회의록|회의자료|교재|자료집|매뉴얼/;
 
-  // 이름 끝 단어 → 어느 목록으로 갈지
+  // 이름 끝 단어 → 어느 목록으로 갈지 (증명서는 CERT_ANY로 따로 판정한다)
   var KIND_MAP = [
     { re: /(위촉장|위촉계약서|재위촉|위촉서)$/,                  store: 'wiccok',  type: '위촉장', titleHint: '' },
     { re: /협약서$/,                                          store: 'wiccok',  type: '협약서', titleHint: '' },
     { re: /(표창장|표창|포상|상장)$/,                           store: 'wiccok',  type: '표창',   titleHint: '' },
     { re: /자격증$/,                                          store: 'cert',    type: '',       titleHint: '자격' },
-    { re: /(수료증|이수증)$/,                                  store: 'cert',    type: '',       titleHint: '수료' },
-    { re: /(경력증명서|실적증명서|참여확인서|수행확인서)$/,         store: 'certdoc', type: '',       titleHint: '' }
+    { re: /(수료증|이수증)$/,                                  store: 'cert',    type: '',       titleHint: '수료' }
   ];
 
   function mapKind(core) {
@@ -71,13 +74,33 @@
     return null;
   }
 
+  /* 증명서 성격 — 기관이 내 실적을 증명한 것(ext)과 푸른이 본인 경력을 증명한 것(own).
+     외부기관 실적 탭 기관 묶음에는 ext만 붙어야 한다(설계서 5). */
+  var CERT_EXT = /실적\s*증명|수행실적\s*증명|참여확인서|수행확인서|용역수행|수행\s*확인/;
+  var CERT_OWN = /경력증명|재직증명/;
+  function certKindOf(core) {
+    var s = String(core || '');
+    if (CERT_EXT.test(s)) return 'ext';
+    if (CERT_OWN.test(s)) return 'own';
+    return '';
+  }
+
   function classify(name) {
     if (isIgnoredFile(name)) return { level: 'ignore' };
     var core = cleanCore(name);
     var neg = NEGATIVE.test(core);
-    if (ORIG_EXT.test(String(name)) && RESULT_END.test(core) && !neg) {
-      var k = mapKind(core);
-      if (k) return { level: 'sure', store: k.store, type: k.type, titleHint: k.titleHint };
+    var isOrig = ORIG_EXT.test(String(name));
+    if (isOrig && !neg) {
+      /* 증명서 — 이름 어느 자리에든 */
+      if (CERT_ANY.test(core)) {
+        var ck = certKindOf(core);
+        if (ck) return { level: 'sure', store: 'certdoc', type: '', titleHint: '', certKind: ck };
+      }
+      /* 위촉장·표창·자격증 계열 — 이름 끝만 */
+      if (RESULT_END.test(core)) {
+        var k = mapKind(core);
+        if (k) return { level: 'sure', store: k.store, type: k.type, titleHint: k.titleHint };
+      }
     }
     if (RESULT_ANY.test(core) && !neg) return { level: 'maybe' };
     return { level: 'submission' };
@@ -188,6 +211,7 @@
     isIgnoredFile: isIgnoredFile,
     cleanCore: cleanCore,
     classify: classify,
+    certKindOf: certKindOf,
     pickYear: pickYear,
     orgFromCaseDir: orgFromCaseDir,
     caseKeyOf: caseKeyOf
