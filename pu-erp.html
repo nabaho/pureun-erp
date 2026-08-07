@@ -58361,7 +58361,13 @@ function LeavePromotion(){
 
 function LeaveManagement(){
   var tbs = useState('annual'); var tab = tbs[0]; var setTab = tbs[1];
-  var srS = useState(true); var showRetired = srS[0]; var setShowRetired = srS[1];  // 퇴사자 포함 기본값(근무연도 필터로 근무한 해만 표시)
+  /* 재직 / 퇴사자를 탭으로 가른다 (환경설정 사용자 관리와 같은 방식).
+     종전에는 「퇴사자 제외」 체크 하나로 한 목록에 섞여 있었다. 그러면
+     **합계(부여·사용·잔여)에 퇴사자가 함께 더해져** 재직자 현황을 볼 수 없다.
+     기본은 재직만 본다. 퇴사자는 그 해에 근무한 사람만 퇴사자 탭에 나온다. */
+  var srS = useState('active'); var leaveTab = srS[0]; var setLeaveTab = srS[1];
+  var showRetired = leaveTab === 'retired';
+  function setShowRetired(v){ setLeaveTab(v ? 'retired' : 'active'); }
   var qS = useState(''); var query = qS[0]; var setQuery = qS[1];
   var _isAdminView = !!(CURRENT_USER && (CURRENT_USER.isAdmin || CURRENT_USER.isSubAdmin));
   var users = (function(){
@@ -58562,19 +58568,17 @@ function LeaveManagement(){
 
   
 
-  // 선택 연도에 재직(입사연도 ≤ 선택연도)인 직원만 — 입사 전 연도는 목록에서 제외
-  var leaveUsers = users.filter(function(u){
+  // 그 해에 근무한 사람 (재직·퇴사 모두) — 여기서 탭으로 가른다
+  function isGoneUser(u){ return u.status==='retired' || u.status==='resigned'; }
+  var leaveBase = users.filter(function(u){
     var y = parseInt(selYear,10);
-    var isRetired = (u.status==='retired' || u.status==='resigned');
-    // "퇴사자 제외" 체크 시(showRetired=false): 검색 중이 아니면 퇴사자 완전 숨김
-    if(isRetired && !showRetired && !(query||'').trim()) return false;
     // 입사연도 이후만
     if(u.hireDate){
       var hy = parseInt(String(u.hireDate).slice(0,4),10);
       if(!isNaN(hy) && y < hy) return false;
     }
     // 퇴사자: 근무한 해(입사~퇴사 연도)에만 표시. 퇴사 연도 이후엔 제외
-    if(isRetired){
+    if(isGoneUser(u)){
       var rd = u.retireDate || u.lastWorkDate || '';
       if(rd){
         var ry = parseInt(String(rd).slice(0,4),10);
@@ -58583,6 +58587,19 @@ function LeaveManagement(){
     }
     return true;
   });
+  var leaveLiveN = leaveBase.filter(function(u){ return !isGoneUser(u); }).length;
+  var leaveGoneN = leaveBase.filter(isGoneUser).length;
+  /* ★ 탭이 목록도 합계도 함께 가른다 — 재직 탭 합계에 퇴사자가 섞이지 않는다.
+     검색해도 탭 밖 사람은 안 나온다(찾으려면 퇴사자 탭으로). */
+  var leaveUsers = leaveBase.filter(function(u){
+    return showRetired ? isGoneUser(u) : !isGoneUser(u);
+  });
+  /* 탭·연도를 바꿨는데 오른쪽 상세가 목록에 없는 사람을 가리키고 있으면 첫 사람으로 옮긴다
+     (안 그러면 재직 탭에서 퇴사자 상세가 계속 떠 있다) */
+  useEffect(function(){
+    if(!leaveUsers.length) return;
+    if(!leaveUsers.some(function(u){ return u.sid === selSid; })) setSelSid(leaveUsers[0].sid);
+  }, [leaveTab, selYear, leaveUsers.length]);
 
   // CSV 다운로드
   function downloadCSV(){
@@ -58628,10 +58645,22 @@ function LeaveManagement(){
         h('button',{onClick:function(){setSelYear(String(parseInt(selYear)+1));},style:{border:'1px solid #cbd5e1',background:'#fff',borderRadius:'4px',padding:'2px 7px',cursor:'pointer',fontSize:'13px'}},'▶')
       ),
       h('div',{style:{display:'flex',gap:'3px',alignItems:'center',flexShrink:0}},
-        _isAdminView && h('label',{style:{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'10.5px',color:!showRetired?'#dc2626':'#94a3b8',cursor:'pointer',userSelect:'none',padding:'2px 5px',borderRadius:'8px',background:!showRetired?'#fef2f2':'#f1f5f9',fontWeight:600,border:'1px solid '+(!showRetired?'#fecaca':'#e2e8f0')}},
-          h('input',{type:'checkbox',checked:!showRetired,onChange:function(e){setShowRetired(!e.target.checked);},style:{width:'10px',height:'10px',cursor:'pointer',margin:0}}),
-          h('span',null,'퇴사자 제외')
-        ),
+        // 재직 / 퇴사자 탭 — 목록도 합계도 함께 갈린다
+        _isAdminView && h('div',{style:{display:'inline-flex',gap:'3px',alignItems:'center'}},
+          [{ v:'active',  label:'재직',      n:leaveLiveN, c:'#1e40af', bg:'#dbeafe', bd:'#bfdbfe' },
+           { v:'retired', label:'🚪 퇴사자', n:leaveGoneN, c:'#475569', bg:'#e2e8f0', bd:'#cbd5e1' }]
+            .filter(function(o){ return o.v==='active' || o.n > 0; })   // 퇴사자가 없으면 탭도 없다
+            .map(function(o){
+              var on = leaveTab === o.v;
+              return h('button',{ key:o.v, type:'button', onClick:function(){ setLeaveTab(o.v); },
+                title: o.v==='retired' ? (selYear+'년에 근무한 퇴사자만 봅니다') : '재직 중인 직원만 봅니다',
+                style:{ fontSize:'10.5px', fontWeight: on?800:600, cursor:'pointer', whiteSpace:'nowrap',
+                  padding:'3px 9px', borderRadius:'9px',
+                  marginLeft: o.v==='retired' ? '4px' : 0,
+                  background: on ? o.bg : '#fff', color: on ? o.c : '#94a3b8',
+                  border:'1px solid '+(on ? o.bd : '#e2e8f0') } },
+                o.label + ' ' + o.n);
+            })),
         // ★ 퇴직자 연차 재산정 미완료 경고
         (function(){
           var allU = dbGet('user_accounts', USERS_SEED);
@@ -58792,7 +58821,10 @@ function LeaveManagement(){
               }),
               // 합계
               h('tr',{style:{background:'#1e40af',color:'#fff'}},
-                h('td',{style:{padding:'7px 10px',fontWeight:800}},'합계'),
+                // 어느 무리의 합인지 밝힌다 — 탭에 따라 숫자가 달라지므로
+                h('td',{style:{padding:'7px 10px',fontWeight:800}},
+                  '합계', h('span',{style:{fontWeight:600,fontSize:'10px',opacity:.85,marginLeft:'5px'}},
+                    (showRetired ? '퇴사자' : '재직') + ' ' + leaveUsers.length + '명')),
                 h('td',{colSpan:2,style:{padding:'7px',textAlign:'right',fontFamily:'monospace'}},''),
                 h('td',{style:{padding:'7px 10px',textAlign:'right',fontFamily:'monospace',fontWeight:800}},
                   leaveUsers.reduce(function(s,u){var a=calcGrantDays(u.hireDate,selYear);var ov=grants[u.sid]&&grants[u.sid][selYear];var t=ov&&ov.total!=null?ov.total:a.days;var co=ov?(ov.carryOver||0):0;return s+t+co;},0)),
