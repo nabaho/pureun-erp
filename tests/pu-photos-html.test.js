@@ -188,8 +188,9 @@ test('내려받기 단추는 고른 것이 있을 때 나온다', () => {
 /* ── 휴지통 · 설정 화면 · 3분류 ── */
 
 test('지운 사진은 휴지통으로 가고 되살릴 수 있다', () => {
-  // 2026-08-05: 휴지통은 화면(viewTrash)에서 본문 맨 아래 접힌 칸(trashBox)으로 옮겼다.
-  assert.match(app, /id="trashBox"/);
+  /* 자리 이력: 8/5 에 화면 → 본문 맨 아래 접힌 칸으로 옮겼다가,
+     8/6 에 다시 제 화면으로 되돌렸다(장수가 쌓이니 본문을 길게 밀어냈다). */
+  assert.match(app, /id="viewTrash"/);
   assert.match(app, /PuPhotoStore\.listTrash\(/);
   assert.match(app, /function restoreOne\(/);
   assert.match(app, /PuPhotoStore\.restorePhoto\(/);
@@ -873,14 +874,36 @@ test('휴지통 머리줄은 비어 있어도 남는다 — 숨으면 있는 줄
   assert.match(home[1], /display:none/, '#home 이 로그인 전에도 보입니다');
 });
 
-test('휴지통은 펼칠 때 비로소 불러온다', () => {
-  /* 늘 불러오면 사진첩을 열 때마다 휴지통·지운기록까지 내려받아 첫 화면이 느려진다. */
-  const fn = app.match(/function toggleTrash\([\s\S]*?\n\}/);
-  assert.ok(fn, 'toggleTrash 를 찾을 수 없습니다');
-  assert.match(fn[0], /loadTrash\(\)/);
-  assert.match(fn[0], /trashOpen/, '펼침 여부를 보지 않습니다');
-  // 접힌 채로 시작해야 한다
-  assert.match(app, /id="trashBody" style="display:none"/, '휴지통이 펼쳐진 채 시작합니다');
+test('휴지통은 열 때 비로소 불러온다', () => {
+  /* 늘 불러오면 사진첩을 열 때마다 휴지통·지운기록까지 내려받아 첫 화면이 느려진다.
+     8/6 에 접힘 → 제 화면이 되면서, 불러오는 자리도 showView 로 옮겼다. */
+  const fn = app.match(/function showView\([\s\S]*?\n\}/);
+  assert.ok(fn, 'showView 를 찾을 수 없습니다');
+  assert.match(fn[0], /name === 'trash'[\s\S]*?loadTrash\(\)/,
+    '휴지통 화면에 들어갈 때 불러오지 않습니다');
+  assert.match(fn[0], /loadDelLog\(\)/, '지운 기록을 함께 불러오지 않습니다');
+  // 처음에는 숨어 있어야 한다 — 사진 화면이 먼저다
+  assert.match(app, /id="viewTrash" style="display:none"/, '휴지통이 열린 채 시작합니다');
+});
+
+test('휴지통은 대시보드 단추로 들어가고 장수가 늘 보인다', () => {
+  /* 대표 지시(2026-08-06): 사진 화면 아래 접힘 → 제 화면.
+     설정과 같은 방식이라 새로 배울 것이 없다. 장수는 **들어가 보지 않아도**
+     알아야 하므로 단추에 붙는다. */
+  assert.match(app, /id="trashBtn"[^>]*onclick="showView\('trash'\)"/,
+    '대시보드에 휴지통 단추가 없습니다');
+  assert.match(app, /id="trashCount"/);
+  const fn = app.match(/function renderTrashBox\([\s\S]*?\n\}/);
+  assert.ok(fn, 'renderTrashBox 를 찾을 수 없습니다');
+  assert.match(fn[0], /trashCount/, '단추의 장수를 갱신하지 않습니다');
+  assert.match(fn[0], /trashNote/, '화면 머리글을 갱신하지 않습니다');
+  /* 비면 숫자를 지운다 — 0 이 붙어 있으면 눈에 걸린다 */
+  assert.match(app, /\.setbtn \.n:empty\{display:none\}/, '빈 장수 뱃지를 숨기지 않습니다');
+  /* 나가는 길이 있어야 한다 — 없으면 한 번 들어가면 못 나온다 */
+  assert.match(app, /id="backBar"/);
+  const sv = app.match(/function showView\([\s\S]*?\n\}/)[0];
+  assert.match(sv, /backBar[\s\S]*?onPhotos \? 'none' : 'block'/,
+    '휴지통에서 돌아가는 길이 안 보입니다');
 });
 
 test('지운 기록을 보여 준다 — 완전히 지운 뒤에도', () => {
