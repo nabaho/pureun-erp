@@ -23051,9 +23051,8 @@ function UserWithRateSection(){
 
   var q = useState(''); var query = q[0]; var setQuery = q[1];
   var fl = useState('all'); var filter = fl[0]; var setFilter = fl[1];
-  // 퇴사자는 처음부터 숨긴다 — 평소에 볼 일이 없고, 재직자 목록만 짧게 보이는 게 낫다.
-  // 필요하면 아래 단추로 펼치고, 펼쳐도 재직자 아래에 따로 모아 둔다.
-  var sr = useState(false); var showRetired = sr[0]; var setShowRetired = sr[1];
+  // 퇴사자는 「🚪 퇴사자」 탭 하나로 따로 뺐다 — 다른 탭에는 아예 안 섞인다.
+  // (종전엔 목록 아래에 붙였는데, 볼 일 없는 사람이 재직자 밑에 따라다닐 이유가 없다)
   var m = useState(null); var modal = m[0]; var setModal = m[1];
   // 휴직 입력 모달
   var lm = useState(null); var leaveModal = lm[0]; var setLeaveModal = lm[1];
@@ -23177,12 +23176,15 @@ function UserWithRateSection(){
 
   var sorted = sortUsers(users);
   var filtered = sorted.filter(function(x){
-    // 퇴사자 숨김 (토글 시에만 표시)
-    if(x.status === 'retired' && !showRetired) return false;
-    // 관리자/노무사/직원 필터
-    if(filter === 'admin'  && !isAdminByUser(x))  return false;
-    if(filter === 'lawyer' && !isLawyerByUser(x)) return false;
-    if(filter === 'staff'  && !isStaffByUser(x))  return false;
+    var isGone = x.status === 'retired';
+    // 퇴사자는 「퇴사자」 탭에서만 본다. 다른 탭에는 아예 안 섞인다.
+    if(filter === 'retired'){ if(!isGone) return false; }
+    else {
+      if(isGone) return false;
+      if(filter === 'admin'  && !isAdminByUser(x))  return false;
+      if(filter === 'lawyer' && !isLawyerByUser(x)) return false;
+      if(filter === 'staff'  && !isStaffByUser(x))  return false;
+    }
     // 검색 필터
     if(!query) return true;
     var qq = query.toLowerCase();
@@ -23190,10 +23192,6 @@ function UserWithRateSection(){
         || x.name.indexOf(query)>=0
         || (x.title||'').indexOf(query)>=0;
   });
-
-  // 퇴사자는 재직자 아래로 따로 모은다 — 섞여 있으면 명단이 길어지고 눈이 헷갈린다
-  var liveRows = filtered.filter(function(x){ return x.status !== 'retired'; });
-  var goneRows = filtered.filter(function(x){ return x.status === 'retired'; });
 
   // 카운트 (3그룹 정확히, 퇴사자 제외)
   var activeUsers = users.filter(function(u){ return u.status !== 'retired'; });
@@ -23223,15 +23221,21 @@ function UserWithRateSection(){
           { v:'admin',  label:'👑 관리자', count: adminCount,  color:'#dc2626' },
           { v:'lawyer', label:'⚖️ 노무사', count: lawyerCount, color:'#2563eb' },
           { v:'staff',  label:'👜 직원',   count: staffCount, color:'#2563eb' }
-        ].map(function(o){
+        ].concat(retiredCount2 > 0
+          // 퇴사자는 따로 탭 하나. 다른 탭에는 안 섞이고, 볼 일 있을 때만 여기로 들어온다.
+          ? [{ v:'retired', label:'🚪 퇴사자', count: retiredCount2, color:'#94a3b8', gap:true }]
+          : []
+        ).map(function(o){
           var active = filter === o.v;
           return h('button', { key:o.v,
             onClick:function(){ setFilter(o.v); },
+            title: o.v === 'retired' ? '퇴사한 사람만 봅니다' : undefined,
             style:{
               background: active ? o.color : '#fff',
               color: active ? '#fff' : o.color,
               border: '1px solid '+o.color,
               padding:'3px 7px', borderRadius:'4px',
+              marginLeft: o.gap ? '8px' : undefined,   // 재직 무리와 눈으로 끊어 준다
               fontSize:'10.5px', fontWeight:600, cursor:'pointer'
             } },
             o.label + ' (' + o.count + ')'
@@ -23239,13 +23243,6 @@ function UserWithRateSection(){
         })
       ),
       h('div', { className:'sp' }),
-      retiredCount2 > 0 && h('button', { onClick:function(){ setShowRetired(!showRetired); },
-        title: showRetired ? '퇴사자를 다시 숨깁니다' : '퇴사자를 재직자 아래에 따로 펼쳐 봅니다',
-        style:{ padding:'3px 8px', fontSize:'10.5px', fontWeight:600, cursor:'pointer', borderRadius:'4px',
-          border:'1px solid '+(showRetired?'#dc2626':'#cbd5e1'),
-          background:showRetired?'#fee2e2':'#f8fafc',
-          color:showRetired?'#dc2626':'#64748b' } },
-        (showRetired?'🙈 퇴사자 '+retiredCount2+'명 다시 숨기기':'👁 퇴사자 '+retiredCount2+'명 보기')),
       h('button', { className:'btn-secondary', onClick:reseed, title:'시드 12명 + 성과율로 복원' }, '시드 복원')
     ),
     h('table', { className:'dt user-tbl' },
@@ -23266,12 +23263,7 @@ function UserWithRateSection(){
       h('tbody', null,
         filtered.length === 0
           ? h('tr', null, h('td', { colSpan:12, className:'ac', style:{ color:'#94a3b8', padding:'30px' } }, '등록된 데이터가 없습니다'))
-          // 재직자 먼저, 그 아래 칸막이 한 줄, 그 아래 퇴사자
-          : liveRows.concat(goneRows.length ? [{ __sep:true }] : []).concat(goneRows).map(function(x){
-              if(x.__sep) return h('tr', { key:'__sep' },
-                h('td', { colSpan:12, style:{ background:'#f1f5f9', color:'#64748b', fontSize:'10.5px',
-                  fontWeight:700, padding:'6px 10px', borderTop:'2px solid #cbd5e1' } },
-                  '⬇ 아래는 퇴사자 ' + goneRows.length + '명 — 평소에는 숨겨져 있습니다'));
+          : filtered.map(function(x){
               var ri = roleInfo(x.role);
               var isAdmin = isAdminByUser(x);
               var isLawyer = isLawyerByUser(x);
