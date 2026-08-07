@@ -34,13 +34,22 @@ const localStorage = {
   setItem(k, v) { STORE[k] = String(v); }
 };
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function escJ(s) { return esc(String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'")); }
 function route() {} function renderMy() {}
 function fHas(sc, k) { return (S.F && S.F[sc] && S.F[sc][k]) instanceof Array; }
+function catBadge(c) { return '<span class="cat">' + esc(c) + '</span>'; }
 
 eval(gvar('COLS_KEY') + '\n' + gvar('MYCOLS') + '\n' + gvar('COLS_DEFAULT') + '\n'
-  + ['colPref', 'colHidden', 'colToggle', 'colChips', 'colTH', 'colTD'].map(grab).join('\n'));
+  + gvar('GRP_KEY') + '\n' + gvar('GRP_ORDER') + '\n'
+  + gvar('KIND_SET') + '\n' + gvar('KIND_ALIAS') + '\n'
+  + ['catNorm', 'colPref', 'colHidden', 'colToggle', 'colChips', 'colTH', 'colTD',
+     'grpOn', 'grpToggle', 'grpFold', 'grpFolded', 'grpFoldToggle', 'groupRows',
+     'grpHeadHTML'].map(grab).join('\n'));
 
-/* ── 접을 수 있는 열 ── */
+/* ── 접을 수 있는 열 ──
+   묶어 보기는 꺼 두고 본다. 켜면 구분 열이 자동으로 접히는데, 그것은
+   아래 「묶어 보기」 묶음에서 따로 확인한다. */
+S.grpOn = false;
 ok('접을 수 있는 열은 다섯 (기업·요일 칸·종료는 접지 않는다)',
   MYCOLS.map(c => c[0]).join() === 'cat,pt,st,last,due');
 ok('처음에는 업무와 최근 기록이 접혀 있다',
@@ -93,6 +102,50 @@ ok('칩은 다섯 개, 접힌 것은 체크가 없다', (function () {
 })());
 ok('접을 수 없는 열은 칩에 없다', colChips().indexOf('기업') < 0);
 
+/* ── 구분별 묶어 보기 ── */
+const mk = (cat, no) => ({ _id: no, cat: cat, no: no });
+let rows = groupRows([mk('컨설팅', 'c1'), mk('계약', 'k1'), mk('기금', 'f1'), mk('사건', 's1'), mk('계약', 'k2')]);
+ok('푸른이알피와 같은 고정 순서로 묶는다',
+  rows.map(r => r[0]).join() === '계약,사건,컨설팅,기금');
+ok('묶음 안 차례는 넘겨받은 그대로 (기한순은 이미 위에서 매겼다)',
+  rows[0][1].map(i => i._id).join() === 'k1,k2');
+rows = groupRows([mk('교육', 'e1'), mk('사건', 's1'), mk('감사', 'a1')]);
+ok('모르는 구분은 뒤에 이름순으로',
+  rows.map(r => r[0]).join() === '사건,감사,교육');
+ok('옛 이름은 지금 이름으로 묶는다 (업체 = 계약)',
+  groupRows([mk('업체', 'x1'), mk('계약', 'x2')]).length === 1);
+ok('구분이 비면 기타로', groupRows([{ _id: 'n1' }])[0][0] === '기타');
+ok('빈 목록은 빈 묶음', groupRows([]).length === 0);
+
+/* ── 켜고 끄기와 접기 ── */
+STORE = {}; S.grpOn = undefined; S.grpF = undefined;
+ok('처음에는 묶어서 본다', grpOn() === true);
+grpToggle();
+ok('끄면 꺼지고 기억된다', grpOn() === false && STORE[GRPON_KEY] === '0');
+grpToggle();
+ok('다시 켜진다', grpOn() === true && STORE[GRPON_KEY] === '1');
+
+STORE = {}; S.grpF = undefined;
+ok('처음에는 아무 묶음도 접혀 있지 않다', grpFolded('계약') === false);
+grpFoldToggle('계약');
+ok('접으면 접히고 기억된다', grpFolded('계약') === true && STORE[GRP_KEY] === '계약');
+grpFoldToggle('기금');
+ok('여러 묶음을 접을 수 있다', STORE[GRP_KEY].split(',').sort().join() === '계약,기금');
+grpFoldToggle('계약');
+ok('다시 펴면 목록에서 빠진다', grpFolded('계약') === false && STORE[GRP_KEY] === '기금');
+ok('소제목에 구분과 건수, 접힘 표시가 들어간다', (function () {
+  const open = grpHeadHTML('사건', 21, 9), shut = grpHeadHTML('기금', 3, 9);
+  return open.indexOf('▾') > 0 && open.indexOf('21건') > 0 && open.indexOf('colspan="9"') > 0
+    && shut.indexOf('▸') > 0;
+})());
+ok('따옴표가 든 구분 이름도 안 깨진다', grpHeadHTML("사'건", 1, 9).indexOf("사\\'건") > 0);
+
+S.grpOn = true; STORE = {}; S.cols = undefined;
+ok('묶어 보기를 켜면 구분 열이 자동으로 접힌다 (소제목에 이미 쓰여 있다)',
+  colHidden('cat') === true);
+S.grpOn = false;
+ok('끄면 구분 열이 돌아온다', colHidden('cat') === false);
+
 /* ── 표에 실제로 붙었나 ── */
 const RM = grab('renderMy'), RH = grab('rowHTML');
 ok('머리행이 접기를 거친다',
@@ -108,6 +161,17 @@ ok('칩이 표 위에 붙는다', RM.indexOf('colChips()+viewChips()') > 0);
 ok('팀 전체에는 안 붙는다 (내 업무만의 설정이다)',
   grab('renderTeam').indexOf('colChips()') < 0);
 ok('띠 모양이 CSS에 있다', W.indexOf('th.cband,td.cband{') > 0 && W.indexOf('.cbl{') > 0);
+ok('묶어 보기를 켜면 소제목으로 그린다',
+  RM.indexOf('grpHeadHTML(g[0],g[1].length,NCOL)') > 0 && RM.indexOf('groupRows(list)') > 0);
+ok('끄면 예전처럼 한 덩어리',
+  RM.indexOf('else list.forEach(function(it,i){ h+=rowHTML(it,i+1,i); });') > 0);
+ok('접힌 묶음은 줄을 그리지 않는다', RM.indexOf('if(grpFolded(g[0])){') > 0);
+ok('접힌 묶음의 건수도 번호에 반영한다 (펴면 번호가 이어진다)',
+  RM.indexOf('gn+=g[1].length; return;') > 0);
+ok('접힌 열도 띠로 한 칸이라 칸 수는 9로 고정', RM.indexOf('var NCOL=9;') > 0);
+ok('묶어 보기 칩이 표 위에 있다', RM.indexOf('grpToggle()') > 0);
+ok('조건 해제가 접힌 묶음도 편다', grab('myReset').indexOf('S.grpF={}') > 0);
+ok('소제목 모양이 CSS에 있다', W.indexOf('tr.grph td{') > 0);
 
 console.log('\n' + (fail ? 'FAILED ' + fail + '/' + (pass + fail) : 'ALL ' + pass + ' PASS'));
 process.exit(fail ? 1 : 0);

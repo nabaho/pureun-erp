@@ -267,6 +267,12 @@
     white-space:nowrap;letter-spacing:-.4px}
   th.cband .cbd{position:absolute;top:3px;left:50%;transform:translateX(-50%);
     width:5px;height:5px;border-radius:50%;background:var(--acc)}
+  /* 구분 소제목 — 누르면 그 묶음이 접힌다 */
+  tr.grph td{background:var(--acc-soft);border-top:1.5px solid #c7d7fe;
+    padding:5px 10px;cursor:pointer;user-select:none;font-size:12px}
+  tr.grph:hover td{background:#e6edff}
+  tr.grph .gc{display:inline-block;width:14px;color:var(--acc);font-weight:800}
+  tr.grph .gn{margin-left:7px;color:var(--sub);font-weight:700}
   tr.fhead .fx{display:inline-block;font-size:12px;font-weight:800;color:var(--acc2);cursor:pointer}
   tr.fhead .fx:hover{color:var(--danger)}
   .fhb{display:inline-flex;align-items:center;gap:3px;max-width:100%;padding:2px 5px;border-radius:6px;
@@ -969,6 +975,8 @@ function colPref(){
 }
 function colHidden(k){
   if(!MYCOLS.some(function(c){ return c[0]===k; })) return false;   // 접을 수 없는 열
+  // 묶어 보기를 켜면 구분은 소제목에 이미 쓰여 있다 — 옆에 또 그릴 이유가 없다
+  if(k==='cat'&&grpOn()) return true;
   return !!colPref()[k];
 }
 function colToggle(k){
@@ -2236,6 +2244,9 @@ function renderMy(){
     +(recv.length?sbHTML('recv','📥 인수',recv.length,'am'):'')
     +'</span>'
     +'<span style="flex:1"></span>'
+    +'<span class="chipbtn'+(grpOn()?' on':'')+'" onclick="grpToggle()" '
+    +'title="'+(grpOn()?'구분 묶음을 풀고 한 덩어리로 봅니다':'구분끼리 묶어 봅니다')+'">'
+    +(grpOn()?'✓ 구분별':'구분별')+'</span>'
     +colChips()+viewChips()
     +calBtn()
     +'<span class="wknav" onclick="shiftWeek(-1)">‹</span>'
@@ -2309,8 +2320,16 @@ function renderMy(){
     +'</th>'
     +fh('due','width:110px')
     +'<th style="width:58px;text-align:center">종료</th></tr></thead><tbody>';
-  if(!list.length) h+='<tr><td colspan="9" class="moremark">조건에 맞는 업무가 없습니다. 열 이름을 눌러 조건을 바꿔 보세요.</td></tr>';
-  list.forEach(function(it,i){ h+=rowHTML(it,i+1,i); });
+  var NCOL=9;   // 접힌 열도 띠로 한 칸을 차지하므로 칸 수는 변하지 않는다
+  if(!list.length) h+='<tr><td colspan="'+NCOL+'" class="moremark">조건에 맞는 업무가 없습니다. 열 이름을 눌러 조건을 바꿔 보세요.</td></tr>';
+  else if(grpOn()){
+    var gn=0;
+    groupRows(list).forEach(function(g){
+      h+=grpHeadHTML(g[0],g[1].length,NCOL);
+      if(grpFolded(g[0])){ gn+=g[1].length; return; }   // 접힌 묶음은 줄을 그리지 않는다
+      g[1].forEach(function(it){ gn++; h+=rowHTML(it,gn,gn-1); });
+    });
+  } else list.forEach(function(it,i){ h+=rowHTML(it,i+1,i); });
   h+='</tbody></table></div>';
   // 몇 건을 보고 있는지는 표 아래 한 줄로 (팀 전체와 같은 자리)
   h+='<div class="muted" style="font-size:12px;margin-top:8px">'
@@ -2328,7 +2347,67 @@ function sbHTML(key,label,val,cls){
 }
 function setFocus(k){ S.f=(S.f===k)?null:k; renderMy(); }
 function myRole(r){ S.myRole=(S.myRole===r)?'':r; renderMy(); }
-function myReset(){ fResetCols('my'); S.fPop=''; S.q=''; S.f=null; S.myRole=''; S.calDay=''; renderMy(); }
+function myReset(){ fResetCols('my'); S.fPop=''; S.q=''; S.f=null; S.myRole=''; S.calDay='';
+  // 접힌 묶음도 편다 — "조건을 다 풀었는데 안 보인다"가 생기면 안 된다
+  S.grpF={}; try{ localStorage.setItem(GRP_KEY,''); }catch(e){}
+  renderMy(); }
+
+/* ── 구분별 묶어 보기 ──────────────────────────────────────────────
+   사건을 보다가 컨설팅이 튀어나오면 눈이 매번 다시 맞춰야 한다.
+   순서는 푸른이알피와 같게 고정한다 — 건수순으로 하면 볼 때마다 자리가
+   바뀌어 손이 기억하지 못한다. */
+var GRP_KEY='work_my_grp', GRPON_KEY='work_my_group';
+var GRP_ORDER=['계약','사건','컨설팅','기금','기타사업'];
+function grpOn(){
+  if(S.grpOn===undefined){
+    var v=null; try{ v=localStorage.getItem(GRPON_KEY); }catch(e){}
+    S.grpOn=(v!=='0');                            // 처음에는 묶어서 본다
+  }
+  return !!S.grpOn;
+}
+function grpToggle(){
+  S.grpOn=!grpOn();
+  try{ localStorage.setItem(GRPON_KEY,S.grpOn?'1':'0'); }catch(e){}
+  renderMy();
+}
+function grpFold(){
+  if(S.grpF===undefined){
+    var v=''; try{ v=localStorage.getItem(GRP_KEY)||''; }catch(e){}
+    S.grpF={}; v.split(',').forEach(function(c){ if(c) S.grpF[c]=1; });
+  }
+  return S.grpF;
+}
+function grpFolded(cat){ return !!grpFold()[cat]; }
+function grpFoldToggle(cat){
+  var f=grpFold();
+  if(f[cat]) delete f[cat]; else f[cat]=1;
+  try{ localStorage.setItem(GRP_KEY,Object.keys(f).join(',')); }catch(e){}
+  renderMy();
+}
+// [구분, 그 구분의 업무들] — 넘겨받은 차례를 묶음 안에서 그대로 지킨다
+function groupRows(list){
+  var m={}, order=[];
+  (list||[]).forEach(function(it){
+    var c=catNorm(it.cat)||'기타';
+    if(!(c in m)){ m[c]=[]; order.push(c); }
+    m[c].push(it);
+  });
+  order.sort(function(a,b){
+    var ia=GRP_ORDER.indexOf(a), ib=GRP_ORDER.indexOf(b);
+    if(ia<0&&ib<0) return a.localeCompare(b,'ko');
+    if(ia<0) return 1;
+    if(ib<0) return -1;
+    return ia-ib;
+  });
+  return order.map(function(c){ return [c,m[c]]; });
+}
+function grpHeadHTML(cat,n,cols){
+  var f=grpFolded(cat);
+  return '<tr class="grph" onclick="grpFoldToggle(\''+escJ(cat)+'\')">'
+    +'<td colspan="'+cols+'" title="'+(f?'펴기':'접기')+'">'
+    +'<span class="gc">'+(f?'▸':'▾')+'</span>'+catBadge(cat)
+    +'<span class="gn">'+n+'건</span></td></tr>';
+}
 
 /* ── 열별 걸러 보기 (엑셀 자동필터) ──────────────────────────────────
    열 이름을 누르면 그 열에 실제로 쓰인 값이 건수와 함께 뜬다. 값은 여러 개를
