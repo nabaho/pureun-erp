@@ -41,12 +41,34 @@ function catBadge(c) { return '<span class="cat">' + esc(c) + '</span>'; }
 let PATCHED = null;
 function patchItem(id, f) { PATCHED = { id: id, f: f }; return Promise.resolve(true); }
 
-eval(gvar('STATUSES') + '\n' + gvar('COLS_KEY') + '\n' + gvar('MYCOLS') + '\n' + gvar('COLS_DEFAULT') + '\n'
+const NS = 'work_erp';
+let steps = {}, itemLogsCache = {};
+let SET = null, UPDATED = null, LOGGED = null, DELETED = null, _lastLogId = '';
+const fbDb = {
+  ref(p) {
+    return {
+      set(v) { SET = { p: p, v: v }; return Promise.resolve(); },
+      update(u) { UPDATED = u; return Promise.resolve(); },
+      remove() { SET = { p: p, v: null }; return Promise.resolve(); }
+    };
+  }
+};
+function todayStr() { return '2026-08-07'; }     // 금요일
+function addLog(id, t, d, k) { LOGGED = { id: id, t: t, d: d, k: k }; _lastLogId = 'L9'; return Promise.resolve(true); }
+function _delLog(id, lid) { DELETED = { id: id, lid: lid }; }
+function loadItemLogs() { return Promise.resolve(); }
+function canLog(l) { return !!l && (l.by === S.me.sid || l.byName === S.me.name); }
+function toast() {}
+function rid(p) { return p + '9'; }
+
+eval(gvar('STATUSES') + '\n' + gvar('PLAN_GROUP') + '\n' + gvar('COLS_KEY') + '\n' + gvar('MYCOLS') + '\n' + gvar('COLS_DEFAULT') + '\n'
   + gvar('GRP_KEY') + '\n' + gvar('GRP_ORDER') + '\n'
   + gvar('KIND_SET') + '\n' + gvar('KIND_ALIAS') + '\n'
   + ['catNorm', 'colPref', 'colHidden', 'colToggle', 'colChips', 'colTH', 'colTD',
      'grpOn', 'grpToggle', 'grpFold', 'grpFolded', 'grpFoldToggle', 'groupRows',
-     'grpHeadHTML', 'stSelect', 'setStatus'].map(grab).join('\n'));
+     'grpHeadHTML', 'stSelect', 'setStatus',
+     'stepsOf', 'isPlanDay', 'wkSave', 'planAdd', 'planCheck', 'planUncheck',
+     'planDel', 'planToLog', 'logToPlan'].map(grab).join('\n'));
 
 /* ── 접을 수 있는 열 ──
    묶어 보기는 꺼 두고 본다. 켜면 구분 열이 자동으로 접히는데, 그것은
@@ -208,5 +230,108 @@ ok('묶어 보기 칩이 표 위에 있다', RM.indexOf('grpToggle()') > 0);
 ok('조건 해제가 접힌 묶음도 편다', grab('myReset').indexOf('S.grpF={}') > 0);
 ok('소제목 모양이 CSS에 있다', W.indexOf('tr.grph td{') > 0);
 
-console.log('\n' + (fail ? 'FAILED ' + fail + '/' + (pass + fail) : 'ALL ' + pass + ' PASS'));
-process.exit(fail ? 1 : 0);
+/* ── 할 일이냐 기록이냐 — 그 칸의 날짜 하나로 정한다 ── */
+ok('내일 이후는 할 일',
+  isPlanDay('2026-08-08') === true && isPlanDay('2026-12-31') === true);
+ok('오늘은 기록 (오늘 할 일은 지금 하는 중이다)', isPlanDay('2026-08-07') === false);
+ok('지난 날은 기록', isPlanDay('2026-08-06') === false && isPlanDay('2020-01-01') === false);
+ok('날짜가 없으면 기록', isPlanDay('') === false && isPlanDay(null) === false);
+
+/* ── 저장 ── */
+SET = null; LOGGED = null;
+wkSave('W1', '임금대장 요청', '2026-08-10');
+ok('내일 이후 칸에 적으면 할 일이 된다',
+  SET && SET.p === 'work_erp/steps/W1/S9' && SET.v.t === '임금대장 요청'
+  && SET.v.d === '2026-08-10' && SET.v.done === 0 && LOGGED === null);
+ok('요일 칸에서 만든 할 일은 주간 묶음에 들어간다', SET.v.g === PLAN_GROUP);
+ok('누가 걸었는지 남는다', SET.v.byName === '김동현');
+SET = null; LOGGED = null;
+wkSave('W1', '조사관 통화', '2026-08-05');
+ok('지난 칸에 적으면 기록이 된다',
+  LOGGED && LOGGED.t === '조사관 통화' && LOGGED.d === '2026-08-05' && SET === null);
+SET = null; LOGGED = null;
+wkSave('W1', '오늘 한 일', '2026-08-07');
+ok('오늘 칸도 기록', LOGGED !== null && SET === null);
+SET = null;
+planAdd('W1', '   ', '2026-08-10');
+ok('빈 내용은 저장하지 않는다', SET === null);
+
+/* ── 그리기 ── */
+const WC = grab('wkCellHTML'), PR = grab('planRowHTML'), WD = grab('wkDays');
+ok('할 일이 그 날 칸에 그려진다', WC.indexOf('planRowHTML(it,s)') > 0);
+ok('체크가 만든 기록은 칸에 다시 그리지 않는다 (같은 일이 두 번 보인다)',
+  WC.indexOf("if(l.k==='step') return;") > 0);
+ok('입력칸이 무엇이 될지 미리 알려 준다',
+  WC.indexOf("isPlanDay(d)?'할 일…':'기록…'") > 0);
+ok('안 한 계획이 지나면 붉게 남는다 (자동으로 밀지 않는다)',
+  PR.indexOf('late=!s.done&&s.d<todayStr()') > 0 && W.indexOf('.wkpl.late .pk') > 0);
+ok('체크와 체크 풀기가 같은 자리에서 갈린다',
+  PR.indexOf("s.done?'planUncheck':'planCheck'") > 0);
+ok('남이 건 할 일에는 이름이 붙는다', PR.indexOf('s.byName') > 0);
+ok('토·일은 할 일이 있어도 열린다', WD.indexOf('Object.keys(steps||{})') > 0);
+ok('요일 칸 입력이 새 저장 함수를 거친다', grab('wkKey').indexOf('wkSave(id,txt,dateStr)') > 0);
+ok('할 일을 지워도 이미 된 기록은 안 지운다', (function () {
+  const d = grab('planDel');
+  return d.indexOf("'/steps/'") > 0 && d.indexOf('logs') < 0 && d.indexOf('delLog') < 0;
+})());
+ok('할 일 줄 모양이 CSS에 있다', W.indexOf('.wkpl{') > 0);
+ok('끝낸 할 일에는 기록으로 옮기기가 없다 (체크를 풀면 된다)',
+  PR.indexOf("s.done?'':'<span class=\"px\" onclick=\"planToLog") > 0);
+ok('체크가 만든 기록에는 할 일로 옮기기를 달지 않는다',
+  grab('logBtns').indexOf("l.k!=='step'") > 0);
+
+/* ── 체크가 곧 실적 (Promise 를 거치므로 마무리를 안쪽으로 옮긴다) ── */
+steps = { W1: { S1: { t: '자료 요청', d: '2026-08-10', done: 0, o: 1 } } };
+UPDATED = null; LOGGED = null;
+planCheck('W1', 'S1');
+setTimeout(function () {
+  ok('체크하면 그 날 기록이 생긴다',
+    LOGGED && LOGGED.t === '자료 요청' && LOGGED.d === '2026-08-10' && LOGGED.k === 'step');
+  ok('체크하면 단계가 끝난 것이 된다',
+    UPDATED && UPDATED['work_erp/steps/W1/S1/done'] === 1);
+  ok('누가 언제 했는지 남는다',
+    UPDATED['work_erp/steps/W1/S1/by'] === '김동현'
+    && UPDATED['work_erp/steps/W1/S1/at'] === '2026-08-07');
+  ok('어느 기록에서 나온 것인지 남긴다 (체크를 풀 때 그것을 지운다)',
+    UPDATED['work_erp/steps/W1/S1/lid'] === 'L9');
+
+  steps = { W1: { S1: { t: '자료 요청', d: '2026-08-10', done: 1, lid: 'L9', o: 1 } } };
+  UPDATED = null; DELETED = null;
+  planUncheck('W1', 'S1');
+  setTimeout(function () {
+    ok('체크를 풀면 안 한 것으로 돌아간다', UPDATED['work_erp/steps/W1/S1/done'] === 0);
+    ok('체크가 만든 기록은 체크가 거둔다', DELETED && DELETED.lid === 'L9');
+    ok('이미 끝난 것을 또 체크하지 않는다', (function () {
+      steps = { W1: { S1: { t: 'x', d: '2026-08-10', done: 1, o: 1 } } };
+      LOGGED = null; planCheck('W1', 'S1'); return LOGGED === null;
+    })());
+
+    /* ── 잘못 들어간 것 옮기기 ── */
+    steps = { W1: { S1: { t: '자료 요청', d: '2026-08-10', done: 0, o: 1 } } };
+    SET = null; LOGGED = null;
+    planToLog('W1', 'S1');
+    setTimeout(function () {
+      ok('할 일을 기록으로 옮기면 기록이 생기고 할 일은 없어진다',
+        LOGGED && LOGGED.t === '자료 요청'
+        && SET && SET.p === 'work_erp/steps/W1/S1' && SET.v === null);
+      ok('옮긴 기록에는 체크 표시가 없다 (체크로 된 것이 아니다)', LOGGED.k === undefined);
+
+      itemLogsCache = { W1: { L1: { t: '내일 할 일', d: '2026-08-10', by: 'u1', _id: 'L1' } } };
+      SET = null; DELETED = null;
+      logToPlan('W1', 'L1');
+      setTimeout(function () {
+        ok('기록을 할 일로 옮기면 그 날짜로 걸리고 기록은 지워진다',
+          SET && SET.v.t === '내일 할 일' && SET.v.d === '2026-08-10'
+          && DELETED && DELETED.lid === 'L1');
+
+        itemLogsCache = { W1: { L2: { t: '남의 기록', d: '2026-08-10', by: 'u9', byName: '권형하', _id: 'L2' } } };
+        SET = null; DELETED = null;
+        logToPlan('W1', 'L2');
+        ok('남이 쓴 기록은 옮기지 못한다', SET === null && DELETED === null);
+
+        console.log('\n' + (fail ? 'FAILED ' + fail + '/' + (pass + fail) : 'ALL ' + pass + ' PASS'));
+        process.exit(fail ? 1 : 0);
+      }, 0);
+    }, 0);
+  }, 0);
+}, 0);

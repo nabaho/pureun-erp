@@ -71,6 +71,7 @@ function $(id) { return null; }
 eval(gvar('WDS') + '\n' + gvar('WKSPLIT_KEY') + '\n' + gvar('NAV_KEYS') + '\n' + gvar('KEYS') + '\n'
   + gvar('_KCODE') + '\n'
   + ['stepsOf', '_cut', 'wkDays', 'wkMarks', 'wkHeadHTML', 'wkCellHTML',
+     'isPlanDay', 'planRowHTML',
      'wkPut', 'wkFocus', 'wkMove', 'wkSide',
      '_inTyping', '_ime', '_k', '_kNum', 'canLog'].map(grab).join('\n'));
 // 화면 전체 자판 처리기를 그대로 실어 실제 분기를 태운다
@@ -179,7 +180,8 @@ ok('줄 표식이 없으면 좌우로 옮기지 않는다', wkSide({ getAttribut
 
 const WK = grab('wkKey');
 ok('↑↓는 저장하지 않고 칸만 옮긴다',
-  WK.indexOf("e.key==='ArrowDown'||e.key==='ArrowUp'") > 0 && WK.indexOf('wkMove') < WK.indexOf('addLog'));
+  WK.indexOf("e.key==='ArrowDown'||e.key==='ArrowUp'") > 0
+  && WK.indexOf('wkMove') < WK.indexOf('wkSave'));   // 저장은 wkSave 가 맡는다(날짜에 따라 할 일/기록)
 ok('좌우는 빈 칸에서만 (글자가 있으면 커서를 움직여야 한다)',
   WK.indexOf("(e.key==='ArrowLeft'||e.key==='ArrowRight')&&!inp.value") > 0);
 ok('Shift+Enter 는 윗줄로', WK.indexOf('var step=e.shiftKey?-1:1') > 0);

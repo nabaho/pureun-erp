@@ -277,6 +277,17 @@
   select.stsel{border:0;border-radius:6px;padding:2px 3px;font-size:11.5px;font-weight:800;
     cursor:pointer;max-width:70px;appearance:none;-webkit-appearance:none;text-align:center}
   select.stsel:hover{filter:brightness(.95)}
+  /* 요일 칸의 할 일 — ☐ 를 누르면 ✓ 가 되고 그 날 기록으로도 남는다 */
+  .wkpl{display:flex;gap:4px;align-items:flex-start;font-size:11.5px;line-height:1.45;
+    padding:1px 0;color:var(--txt)}
+  .wkpl .pk{cursor:pointer;color:var(--acc);font-weight:800;flex:none;width:12px}
+  .wkpl .tx{flex:1;min-width:0;word-break:break-all}
+  .wkpl .by{color:var(--faint);font-size:10.5px;flex:none}
+  .wkpl .px{cursor:pointer;color:var(--faint);flex:none;visibility:hidden;font-weight:800}
+  .wkpl:hover .px{visibility:visible}
+  .wkpl .px:hover{color:var(--danger)}
+  .wkpl.on .tx{color:var(--sub);text-decoration:line-through}
+  .wkpl.late .pk,.wkpl.late .tx{color:var(--danger)}
   tr.fhead .fx{display:inline-block;font-size:12px;font-weight:800;color:var(--acc2);cursor:pointer}
   tr.fhead .fx:hover{color:var(--danger)}
   .fhb{display:inline-flex;align-items:center;gap:3px;max-width:100%;padding:2px 5px;border-radius:6px;
@@ -2083,11 +2094,13 @@ function sdueHTML(it){
 }
 
 /* ── 기록 쓰기 (일 단위 저장 + 주 묶음 + 건별 사본 + last 캐시) ── */
+var _lastLogId='';   // 방금 만든 기록 ID — 체크가 만든 기록을 나중에 되찾기 위함
 function addLog(itemId,text,dateStr,kind){
   text=(text||'').trim(); if(!text){ toast('내용을 입력하세요','warn'); return Promise.resolve(false); }
   dateStr=dateStr||todayStr();
   var wk=weekKeyOf(mondayOf(new Date(dateStr+'T00:00:00')));
   var y=weekYear(wk), lid=rid('L');
+  _lastLogId=lid;
   var log={d:dateStr,t:text,by:(S.me&&S.me.sid)||'',byName:(S.me&&S.me.name)||'',at:new Date().toISOString()};
   if(kind) log.k=kind;
   var up={};
@@ -2112,7 +2125,10 @@ function canLog(l){
 function logBtns(itemId,l){
   if(!canLog(l)) return '';
   var a=escJ(itemId), b=escJ(l._id||'');
-  return '<span class="lgx" onclick="event.stopPropagation();editLog(\''+a+'\',\''+b+'\')" title="이 기록 고치기">✎</span>'
+  // 체크가 만든 기록은 체크를 풀면 되므로 여기서 또 옮길 필요가 없다
+  return (l.k!=='step'?'<span class="lgx" onclick="event.stopPropagation();logToPlan(\''+a+'\',\''+b+'\')" '
+      +'title="아직 안 한 일이었다면 — 할 일로 옮깁니다">↑</span>':'')
+    +'<span class="lgx" onclick="event.stopPropagation();editLog(\''+a+'\',\''+b+'\')" title="이 기록 고치기">✎</span>'
     +'<span class="lgx dl" onclick="event.stopPropagation();delLog(\''+a+'\',\''+b+'\')" title="이 기록 지우기">✕</span>';
 }
 /* 기록 수정 — 내용과 날짜를 고친다.
@@ -2656,7 +2672,7 @@ function wkKey(e,inp){
   var dateStr=day||(isCurWeek()?todayStr():ymd(addDays(S.week,4)));
   var r=inp.getAttribute('data-r'), c=inp.getAttribute('data-c');
   inp.value='';
-  addLog(id,txt,dateStr).then(function(ok){ if(!ok){inp.value=txt;return;}
+  wkSave(id,txt,dateStr).then(function(ok){ if(!ok){inp.value=txt;return;}
     // 다음 행 같은 요일로 (엑셀 Enter↓)
     var all=[].slice.call(document.querySelectorAll('.wkin'));
     var i=all.indexOf(inp);
@@ -2699,6 +2715,11 @@ function wkDays(){
     var m=c[iid]||{};
     Object.keys(m).forEach(function(lid){ var dd=m[lid]&&m[lid].d; if(dd===sat||dd===sun) we=true; });
   });
+  // 걸어 둔 할 일이 주말이면 그 칸도 열어야 한다 — 안 그러면 걸 수도, 볼 수도 없다
+  if(!we) Object.keys(steps||{}).forEach(function(iid){
+    var m=steps[iid]||{};
+    Object.keys(m).forEach(function(sid){ var dd=m[sid]&&m[sid].d; if(dd===sat||dd===sun) we=true; });
+  });
   if(we){ d.push(sat); d.push(sun); }
   return d;
 }
@@ -2724,12 +2745,15 @@ function wkHeadHTML(){
       }).join('')+'</div>';
 }
 function wkCellHTML(it,logs,rowIdx){
-  var days=wkDays(), today=todayStr(), byd={};
-  logs.forEach(function(l){ (byd[l.d]=byd[l.d]||[]).push(l); });
+  var days=wkDays(), today=todayStr(), byd={}, byp={};
+  // 체크가 만든 기록은 단계 줄에 이미 나오므로 칸에 다시 그리지 않는다
+  logs.forEach(function(l){ if(l.k==='step') return; (byd[l.d]=byd[l.d]||[]).push(l); });
+  stepsOf(it._id).forEach(function(s){ if(s.d) (byp[s.d]=byp[s.d]||[]).push(s); });
   return '<div class="wkg" style="grid-template-columns:repeat('+days.length+',1fr)">'
     +days.map(function(d,ci){
-        var ls=byd[d]||[], mk=wkMarks(it,d);
+        var ls=byd[d]||[], ps=byp[d]||[], mk=wkMarks(it,d);
         return '<div class="wkc'+(d===today?' td':'')+'">'+mk
+          +ps.map(function(s){ return planRowHTML(it,s); }).join('')
           +ls.map(function(l){
               return '<div class="wklog">'+esc(l.t)
                 +(l.byName&&l.byName!==(S.me&&S.me.name)?' <span class="by">'+esc(l.byName)+'</span>':'')
@@ -2737,9 +2761,99 @@ function wkCellHTML(it,logs,rowIdx){
                 +(l.k==='ho'?' 🔄':'')+logBtns(it._id,l)+'</div>';
             }).join('')
           +'<input class="wkin" data-id="'+esc(it._id)+'" data-d="'+d+'" data-r="'+rowIdx+'" data-c="'+ci+'" '
-          +'onkeydown="wkKey(event,this)">'
+          +'placeholder="'+(isPlanDay(d)?'할 일…':'기록…')+'" onkeydown="wkKey(event,this)">'
           +'</div>';
       }).join('')+'</div>';
+}
+/* ── 요일 칸의 계획과 실적 ──────────────────────────────────────────
+   적은 것이 할 일이 되느냐 기록이 되느냐는 그 칸의 날짜 하나로 정한다.
+   규칙은 이 한 줄뿐이고 예외를 두지 않는다 — 지난 주를 열람하면 모든 칸이
+   과거라 전부 기록이 되고, 다음 주를 열람하면 전부 할 일이 된다.
+   할 일은 새 자료를 만들지 않고 이미 있는 「진행 단계」에 담는다. 따로
+   만들면 할 일을 적는 곳이 세 군데(다음 할 일·진행 단계·주간 할 일)로
+   나뉘어 어디에 적을지 헷갈린다. */
+var PLAN_GROUP='주간';
+function isPlanDay(d){ return !!d&&String(d)>todayStr(); }
+function wkSave(id,text,d){
+  return isPlanDay(d)?planAdd(id,text,d):addLog(id,text,d);
+}
+function planAdd(id,text,d){
+  text=String(text||'').trim();
+  if(!text){ toast('내용을 입력하세요','warn'); return Promise.resolve(false); }
+  var all=stepsOf(id), last=all.length?all[all.length-1].o:0;
+  var rec={t:text,g:PLAN_GROUP,o:(last||0)+1,done:0,d:d,
+           by:(S.me&&S.me.sid)||'',byName:(S.me&&S.me.name)||''};
+  return fbDb.ref(NS+'/steps/'+id+'/'+rid('S')).set(rec)
+    .then(function(){ toast('할 일 저장됨'); return true; })
+    .catch(function(e){ toast('저장 실패: '+e.message,'err'); return false; });
+}
+/* 체크 = 실적. 단계를 done 처리하고 그 날 기록도 만든다.
+   기록을 안 만들면 팀 전체의 「✍ 미기록」·「최근 기록」·전체 검색이 그 일을
+   못 본다. 그렇다고 두 줄로 그리면 같은 일이 두 번 적힌 것처럼 보이므로,
+   기록에 k:'step' 을 달아 두고 칸에서는 그 기록을 다시 그리지 않는다. */
+function planCheck(id,sid){
+  var s=(steps[id]||{})[sid]; if(!s||s.done) return;
+  addLog(id,s.t,s.d||todayStr(),'step').then(function(ok){
+    if(!ok) return;
+    var lid=_lastLogId;                       // addLog 가 방금 만든 기록
+    var up={};
+    up[NS+'/steps/'+id+'/'+sid+'/done']=1;
+    up[NS+'/steps/'+id+'/'+sid+'/by']=(S.me&&S.me.name)||'';
+    up[NS+'/steps/'+id+'/'+sid+'/at']=todayStr();
+    up[NS+'/steps/'+id+'/'+sid+'/lid']=lid||null;   // 체크를 풀 때 이 기록을 지운다
+    fbDb.ref().update(up).catch(function(e){ toast('실패: '+e.message,'err'); });
+  });
+}
+function planUncheck(id,sid){
+  var s=(steps[id]||{})[sid]; if(!s||!s.done) return;
+  var up={};
+  up[NS+'/steps/'+id+'/'+sid+'/done']=0;
+  up[NS+'/steps/'+id+'/'+sid+'/by']=null;
+  up[NS+'/steps/'+id+'/'+sid+'/at']=null;
+  up[NS+'/steps/'+id+'/'+sid+'/lid']=null;
+  fbDb.ref().update(up).then(function(){
+    if(s.lid) _delLog(id,s.lid);              // 체크가 만든 기록은 체크가 거둔다
+  }).catch(function(e){ toast('실패: '+e.message,'err'); });
+}
+// 할 일을 지운다. 이미 체크해 기록이 된 것은 남긴다 — 한 일을 지우지 않는다.
+function planDel(id,sid){
+  fbDb.ref(NS+'/steps/'+id+'/'+sid).remove()
+    .catch(function(e){ toast('실패: '+e.message,'err'); });
+}
+/* 잘못 들어간 것을 옮긴다 — 지우고 다시 적지 않아도 되게.
+   할 일 → 기록: 그 날 기록을 만들고 할 일을 없앤다(체크와 달리 흔적을 남기지
+   않는다 — 체크한 것이 아니라 처음부터 기록이었어야 할 것이다). */
+function planToLog(id,sid){
+  var s=(steps[id]||{})[sid]; if(!s) return;
+  addLog(id,s.t,s.d||todayStr()).then(function(ok){
+    if(!ok) return;
+    fbDb.ref(NS+'/steps/'+id+'/'+sid).remove()
+      .then(function(){ toast('기록으로 옮겼습니다'); })
+      .catch(function(e){ toast('실패: '+e.message,'err'); });
+  });
+}
+// 기록 → 할 일: 그 날짜로 할 일을 걸고 기록을 지운다.
+function logToPlan(id,lid){
+  var l=(itemLogsCache[id]||{})[lid];
+  if(!l){ loadItemLogs(id).then(function(){ logToPlan(id,lid); }); return; }
+  if(!canLog(l)){ toast('본인이 쓴 기록만 옮길 수 있습니다','warn'); return; }
+  planAdd(id,l.t,l.d).then(function(ok){ if(ok) _delLog(id,lid); });
+}
+// 안 한 계획이 지나면 붉게 남는다. 자동으로 밀지 않는다 —
+// 옮겨 놓으면 언제 하기로 했던 일인지 알 수 없게 된다.
+function planRowHTML(it,s){
+  var late=!s.done&&s.d<todayStr();
+  return '<div class="wkpl'+(s.done?' on':'')+(late?' late':'')+'">'
+    +'<span class="pk" onclick="'+(s.done?'planUncheck':'planCheck')
+    +'(\''+escJ(it._id)+'\',\''+escJ(s._id)+'\')" title="'
+    +(s.done?'체크를 풉니다':'다 했으면 눌러 주세요 — 그 날 기록으로도 남습니다')+'">'
+    +(s.done?'✓':'☐')+'</span>'
+    +'<span class="tx">'+esc(s.t)+'</span>'
+    +(s.byName&&s.byName!==(S.me&&S.me.name)?'<span class="by">'+esc(s.byName)+'</span>':'')
+    +(s.done?'':'<span class="px" onclick="planToLog(\''+escJ(it._id)+'\',\''+escJ(s._id)+'\')" '
+      +'title="이미 한 일이었다면 — 기록으로 옮깁니다">↓</span>')
+    +'<span class="px" onclick="planDel(\''+escJ(it._id)+'\',\''+escJ(s._id)+'\')" title="이 할 일을 지웁니다">✕</span>'
+    +'</div>';
 }
 /* ── 업무 종료 ── 푸른이알피에서 가져온 건이면 그쪽 사건도 함께 종료할지 묻는다 */
 var PE_KIND={contract:'계약',case:'사건',consulting:'컨설팅',fund:'기금',other:'기타사업'};
