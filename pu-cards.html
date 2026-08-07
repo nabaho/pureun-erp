@@ -1641,7 +1641,7 @@ window.pucardsShrinkPhotos = async function(){
       const snap = await Store.db.ref(`${DB_ROOT}/photos/${pid}`).once('value');
       const cur = snap.val();
       if(!cur) continue;
-      const small = await shrinkForStore(cur);
+      const small = await shrinkForStore(cur, photoKeepMax(pid));   /* 사업자등록증은 덜 줄인다 */
       if(small.length >= cur.length) continue;          /* 이미 작다 — 쓰지 않는다 */
       await Store.db.ref(`${DB_ROOT}/photos/${pid}`).set(small);
       Store.photoCache[pid] = small;
@@ -1914,17 +1914,30 @@ function enhance(dataUrl){
 /* ── 보관용 사진 크기 ──
    실시간DB에는 사진이 '글자'로 담기므로 원본 크기가 곧바로 저장용량이 된다.
    파일 창고(Storage)는 이 계정(체험판)에서 못 쓴다 — 신규 버킷은 유료에서만 열린다.
-   그래서 **읽기(OCR)에는 1600px 원본을 그대로 쓰고, 보관만 800px 로 줄여 넣는다.**
-   명함은 90×50mm — 800px 이면 약 226dpi 로 잔글씨도 읽힌다. */
-const PHOTO_KEEP_MAX = 800, PHOTO_KEEP_Q = 0.8;
-function shrinkForStore(dataUrl){
+   그래서 **읽기(OCR)에는 1600px 원본을 그대로 쓰고, 보관만 줄여서 넣는다.**
+
+   ★ 종류마다 크기가 다르다 —
+     명함은 90×50mm 라 800px 이면 약 226dpi 로 잔글씨도 읽힌다.
+     사업자등록증은 A4(210×297mm)라 800px 이면 약 68dpi — 글씨를 못 읽는다.
+     증빙으로 쓰는 서류라 1400px(약 120dpi)로 남긴다. 같은 값으로 줄이면 서류를 버리는 셈이다. */
+const PHOTO_KEEP_MAX = 800;         // 명함
+const PHOTO_KEEP_MAX_DOC = 1400;    // 사업자등록증 등 A4 서류
+const PHOTO_KEEP_Q = 0.8;
+/* 그 사진이 붙은 항목이 사업자등록증이면 큰 쪽을 쓴다. id 뒤의 '_b'(뒷면)는 떼고 본다. */
+function photoKeepMax(photoId){
+  const base = String(photoId||'').replace(/_b$/, '');
+  const it = (typeof state !== 'undefined' && state.items) ? state.items[base] : null;
+  return (it && it.kind === 'biz') ? PHOTO_KEEP_MAX_DOC : PHOTO_KEEP_MAX;
+}
+function shrinkForStore(dataUrl, max){
+  const MAX = max || PHOTO_KEEP_MAX;
   return new Promise(res=>{
     if(!dataUrl || dataUrl.length < 60000) return res(dataUrl);   /* 이미 작으면 손대지 않는다 */
     const i=new Image();
     i.onload=()=>{
       const m=Math.max(i.width,i.height);
-      if(m<=PHOTO_KEEP_MAX) return res(dataUrl);
-      const r=PHOTO_KEEP_MAX/m, c=document.createElement('canvas');
+      if(m<=MAX) return res(dataUrl);
+      const r=MAX/m, c=document.createElement('canvas');
       c.width=Math.round(i.width*r); c.height=Math.round(i.height*r);
       c.getContext('2d').drawImage(i,0,0,c.width,c.height);
       const out=c.toDataURL('image/jpeg',PHOTO_KEEP_Q);
@@ -2116,16 +2129,18 @@ async function saveEditor(){
         const act = await dupDialog(dup, kind);
         if (act==='cancel') return;
         if (act==='merge'){ mergeInto(dup,it);
-          if (editing.photoDirty && editing.photo) Store.putPhoto(dup.id, await shrinkForStore(editing.photo));
-          if (editing.photoDirty2 && editing.photo2) Store.putPhoto(dup.id+'_b', await shrinkForStore(editing.photo2));
+          var kmM = kind==='biz' ? PHOTO_KEEP_MAX_DOC : PHOTO_KEEP_MAX;
+          if (editing.photoDirty && editing.photo) Store.putPhoto(dup.id, await shrinkForStore(editing.photo, kmM));
+          if (editing.photoDirty2 && editing.photo2) Store.putPhoto(dup.id+'_b', await shrinkForStore(editing.photo2, kmM));
           $('editorBg').classList.remove('open'); editing=null;
           toast('기존 항목을 업데이트했습니다'); queueNext(); return; }
       }
     }
   }
   Store.put(it);
-  if (editing.photoDirty && editing.photo) Store.putPhoto(it.id, await shrinkForStore(editing.photo));
-  if (editing.photoDirty2 && editing.photo2) Store.putPhoto(it.id+'_b', await shrinkForStore(editing.photo2));
+  var km = kind==='biz' ? PHOTO_KEEP_MAX_DOC : PHOTO_KEEP_MAX;   /* 사업자등록증은 증빙이라 덜 줄인다 */
+  if (editing.photoDirty && editing.photo) Store.putPhoto(it.id, await shrinkForStore(editing.photo, km));
+  if (editing.photoDirty2 && editing.photo2) Store.putPhoto(it.id+'_b', await shrinkForStore(editing.photo2, km));
   $('editorBg').classList.remove('open'); editing=null;
   toast('저장되었습니다'+(Store.mode==='firebase'?' — 전 직원 공유 완료':''));
   queueNext();
