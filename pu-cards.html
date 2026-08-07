@@ -4033,6 +4033,7 @@ function openRowMenu(ev, id){
     <div class="fmi" onclick="closeFolderMenu();openDetail('${id}')">👁 상세 보기</div>
     <div class="fmi" onclick="closeFolderMenu();openEditor(state.items['${id}'])">✏️ 수정</div>
     <div class="fmi" onclick="closeFolderMenu();copyCardInfo('${id}')">📋 정보 복사</div>
+    <div class="fmi" onclick="closeFolderMenu();toggleNoMail('${id}')">${it.noMail?'✅ 메일 다시 받기':'🚫 메일 안 받음'}</div>
     <div class="fmi" onclick="closeFolderMenu();rowMenuMove('${id}')">📁 폴더 이동</div>
     <div class="fmi" onclick="closeFolderMenu();toggleFav('${id}')">${fav}</div>
     <div class="fmi danger" onclick="closeFolderMenu();delItem('${id}')">🗑 삭제 (휴지통)</div>`;
@@ -4982,7 +4983,9 @@ function renderSettingsPage(){
       + btn('exportXlsx()','📤','엑셀로 내보내기','현재 목록')
       + btn('printList()','🖨','인쇄 / PDF','현재 목록')
       + btn('backupNow()','💾','지금 백업','JSON 저장')
-      + btn('restoreInput.click()','📂','백업 복원','JSON 불러오기');
+      + btn('restoreInput.click()','📂','백업 복원','JSON 불러오기')
+      + btn(`setSub('mailblock')`,'🚫','메일 수신거부 관리',`${Object.keys(state.mailBlock||{}).length}명`)
+      + `<div id="setInline" style="grid-column:1/-1;margin-top:6px"></div>`;
   } else if(cur==='clean'){
     panel = `<div id="setInline" style="grid-column:1/-1"></div>`;   /* 팝업 없이 여기에 펼침 */
   } else if(cur==='erp'){
@@ -5027,6 +5030,7 @@ function renderSettingsPage(){
       if(cur==='clean')      (SUB[state.setSub] || openCleanupCenter)();
       else if(cur==='tabs')  openViewManager();
       else if(cur==='erp' && state.setSub==='erpname') openErpNameCheck();
+      else if(cur==='data' && state.setSub==='mailblock') openMailBlock();
     }catch(e){ console.warn('[settings inline]', e&&e.message); }
     finally{ _panelTarget='modal'; }
   }
@@ -5266,6 +5270,55 @@ function selMailCsv(){
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
   toast(`📇 ${_mailStatText(r.stat)}\n처음에는 2~3명만 먼저 가져와 형식을 확인하세요`, 9000);
+}
+/* 전화로 "그만 보내주세요" 할 때 그 자리에서 누른다. */
+function toggleNoMail(id){
+  const it = state.items[id]; if(!it) return;
+  if(it.noMail) delete it.noMail; else it.noMail = 1;
+  Store.put(it);
+  toast(it.noMail ? '🚫 이 분께는 메일을 보내지 않습니다' : '✅ 다시 메일을 받습니다');
+}
+/* 메일에서 반송·수신거부된 주소를 그대로 긁어 붙여넣는 자리. */
+function openMailBlock(){
+  const list = Object.keys(state.mailBlock||{}).map(keyEmail).sort();
+  const inline = _panelTarget==='inline';
+  let h = inline
+    ? `<p class="setnote">여기 있는 주소는 <b>주소 복사·주소록 내보내기에서 자동으로 빠집니다.</b></p>`
+    : `<div class="mhead"><b>🚫 메일 수신거부 관리</b>${_closeBtn()}</div>
+       <p style="font-size:12.5px;color:var(--sub);line-height:1.7;margin-bottom:10px">
+       여기 있는 주소는 주소 복사·주소록 내보내기에서 자동으로 빠집니다.</p>`;
+  h += `<p style="font-size:12.5px;color:var(--sub);margin:6px 0">현재 <b style="color:var(--orange)">${list.length.toLocaleString()}명</b></p>
+    <textarea id="mbText" style="width:100%;min-height:110px;padding:10px;border:1px solid var(--line);
+      border-radius:10px;background:var(--bg);color:var(--ink);font-family:inherit;font-size:13px"
+      placeholder="메일에서 반송·수신거부된 줄을 그대로 붙여넣으세요.&#10;이름·날짜가 섞여 있어도 이메일만 골라냅니다."></textarea>
+    <button class="btn primary" style="width:100%;margin-top:8px" onclick="saveMailBlock()">＋ 목록에 더하기</button>
+    <p style="font-size:11.5px;color:var(--sub);line-height:1.7;margin-top:8px">
+    ※ 기존 명단을 지우지 않고 <b>더합니다.</b> 지우려면 아래에서 하나씩 빼세요.</p>`;
+  list.slice(0,300).forEach(e=>{
+    h += `<div class="ditem" style="align-items:center"><div class="v"><span style="font-size:13px">${esc(e)}</span></div>
+      <button class="btn ghost" style="flex:none;padding:6px 12px;font-size:12px"
+        onclick="delMailBlock('${esc(e)}')">빼기</button></div>`;
+  });
+  if(list.length>300) h += `<p style="color:var(--sub);font-size:12px;padding:8px 2px">…외 ${(list.length-300).toLocaleString()}명</p>`;
+  showPanel(h);
+}
+/* 저장은 덮어쓰기가 아니라 합치기 — 빈 칸을 실수로 저장해 명단이 날아가면 안 된다. */
+function saveMailBlock(){
+  const el = $('mbText'); if(!el) return;
+  const got = pickEmails(el.value);
+  if(!got.length) return toast('이메일을 찾지 못했습니다');
+  if(Store.mode!=='firebase') return toast('클라우드에 연결된 상태에서만 됩니다');
+  const upd = {}; got.forEach(e=>{ upd[emailKey(e)] = true; });
+  Store.db.ref(DB_ROOT+'/config/mailBlock').update(upd)
+    .then(()=>{ toast(`🚫 ${got.length}명을 수신거부에 더했습니다`); el.value='';
+                setTimeout(()=>_refresh(openMailBlock), 300); })
+    .catch(e=>toast('저장 실패: ' + ((e&&e.message)||'')));
+}
+function delMailBlock(email){
+  if(Store.mode!=='firebase') return toast('클라우드에 연결된 상태에서만 됩니다');
+  Store.db.ref(DB_ROOT+'/config/mailBlock/'+emailKey(email)).remove()
+    .then(()=>{ toast('수신거부에서 뺐습니다'); setTimeout(()=>_refresh(openMailBlock), 300); })
+    .catch(e=>toast('실패: ' + ((e&&e.message)||'')));
 }
 </script>
 </body>
