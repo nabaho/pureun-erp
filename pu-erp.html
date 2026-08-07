@@ -701,10 +701,16 @@ function highlightText(text, query){
 
 
 // ============ 주소 검색 (Daum 우편번호 서비스 - embed 방식) ============
-// 사용법: openAddressSearch(function(result){ ... })
+// 사용법: openAddressSearch(function(result){ ... }, '미리 찾을 주소')
 // result: { zipcode, address, roadAddress, jibunAddress }
 // popup 대신 embed 모달로 띄움 → 부모 컨텍스트와 동일하여 콜백 보장
-function openAddressSearch(onComplete){
+//
+// 둘째 인자(prefill)를 주면 그 주소로 미리 찾아 놓고 연다.
+// 사업자등록증에서 주소만 복사해 붙이는 일이 잦은데, 그러면 우편번호가 빈다.
+// 미리 찾아 두면 목록에서 한 번만 누르면 우편번호까지 채워진다.
+// (완전 자동으로 넣으려면 카카오 REST 키가 필요하다. 다음 우편번호 위젯은
+//  결과를 코드로 읽어올 수 없어서 사람이 한 번은 골라야 한다.)
+function openAddressSearch(onComplete, prefill){
   if(typeof daum === 'undefined' || !daum.Postcode){
     showToast('⚠️ 주소 검색 서비스 로딩 실패 (네트워크 확인)');
     return;
@@ -794,11 +800,25 @@ function openAddressSearch(onComplete){
   // 다시 검색: 모달 닫고 같은 콜백으로 재오픈
   cancelBtn.onclick = function(){
     cleanup();
-    setTimeout(function(){ openAddressSearch(onComplete); }, 50);
+    setTimeout(function(){ openAddressSearch(onComplete, prefill); }, 50);
   };
+
+  // 미리 찾을 말 다듬기 — 괄호 안 건물명·층/호는 빼야 검색이 잘 걸린다
+  var pfQ = String(prefill || '')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\s*\d+층.*$/, ' ')
+    .replace(/\s*[\d-]+호.*$/, ' ')
+    .replace(/\s+/g, ' ').trim();
+  var pfOpt = pfQ.length >= 2 ? { q: pfQ, autoClose: false } : undefined;
 
   function initPostcode(){
     content.innerHTML = '';
+    if(pfQ){
+      var tip = document.createElement('div');
+      tip.style.cssText = 'padding:6px 14px;background:#eff6ff;border-bottom:1px solid #bfdbfe;font-size:11.5px;color:#1e40af;flex-shrink:0;';
+      tip.textContent = '적어 두신 주소로 미리 찾았습니다 — 맞는 것을 누르면 우편번호가 채워집니다';
+      content.parentNode.insertBefore(tip, content);
+    }
     try{
       new daum.Postcode({
         oncomplete: function(data){
@@ -823,7 +843,7 @@ function openAddressSearch(onComplete){
         },
         width: '100%',
         height: '100%'
-      }).embed(content);
+      }).embed(content, pfOpt);
     } catch(err){
       console.error('[주소 검색 embed 실패]', err);
       cleanup();
@@ -12115,7 +12135,7 @@ function ContractModal(props){
                           return Object.assign({}, prev, { company: Object.assign({}, prev.company, { workers: workers }) });
                         });
                         showToast(ADDR_OK_MSG + r.address);
-                      });
+                      }, wk.address);   // 적어 둔 주소로 미리 찾기
                     },
                     style:{ padding:'6px 10px', background:'#1e40af', color:'#fff', border:'none', borderRadius:'4px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } }, '🔍')
                 ),
@@ -12593,17 +12613,22 @@ function ContractModal(props){
               });
             });
             showToast(ADDR_OK_MSG + (r.zipcode||'') + ' ' + r.address);
-          });
+          }, f.company.address);   // 적어 둔 주소로 미리 찾기
         }
         // 주소칸에서 Enter → 저장(useEnterSave)이 아니라 주소 검색을 연다
         function onAddrEnter(e){ if(e.key==='Enter'){ e.preventDefault(); e.stopPropagation(); doAddrSearch(); } }
+        var _needZip = !f.company.zipcode && String(f.company.address||'').trim().length >= 2;
         return h('div', { className:'fld' }, h('label', null, '주소'),
           h('div', { style:{ display:'flex', gap:'6px', alignItems:'center' } },
             h('input', { type:'text', value:f.company.zipcode || '', onChange:setCompanyField('zipcode'), onKeyDown:onAddrEnter,
               placeholder:'우편번호', maxLength:7,
-              style:{ width:'90px', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'12.5px', fontFamily:'monospace', textAlign:'center', flexShrink:0 } }),
+              style:{ width:'90px', padding:'7px 10px', borderRadius:'6px', fontSize:'12.5px', fontFamily:'monospace', textAlign:'center', flexShrink:0,
+                border:'1px solid ' + (_needZip ? '#fbbf24' : '#cbd5e1'),
+                background: _needZip ? '#fffbeb' : undefined } }),
             h('button', { type:'button', onClick:doAddrSearch, onKeyDown:onAddrEnter,
-              style:{ padding:'8px 12px', background:'#1e40af', color:'#fff', border:'none', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' } }, '🔍 검색'),
+              title: _needZip ? '적어 두신 주소로 미리 찾아 드립니다' : '주소 검색',
+              style:{ padding:'8px 12px', background: _needZip ? '#d97706' : '#1e40af', color:'#fff', border:'none', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' } },
+              _needZip ? '🔍 우편번호 찾기' : '🔍 검색'),
             h('input', { type:'text', value:f.company.address, onChange:setCompanyField('address'), onKeyDown:onAddrEnter,
               placeholder:'사업장 주소',
               style:{ flex:1, padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'6px', fontSize:'12.5px', fontFamily:'inherit' } })
@@ -18036,16 +18061,26 @@ function CompanyEditModal(props){
             )),
           h('div', { className:'fld' }, h('label', null, '주소'),
             h('div', { style:{ display:'flex', gap:'6px', alignItems:'center' } },
-              h('input', { type:'text', value:f.zipcode || '', onChange:set('zipcode'), placeholder:'우편번호', maxLength:7, style:{ width:'90px', fontFamily:'monospace', textAlign:'center', flexShrink:0 } }),
-              h('button', { type:'button',
-                onClick:function(){
-                  openAddressSearch(function(r){
-                    if(!r || (!r.zipcode && !r.address)){ showToast(ADDR_NONE_MSG); return; }
-                    setF(function(prev){ return Object.assign({}, prev, { zipcode: r.zipcode, address: r.address }); });
-                    showToast(ADDR_OK_MSG + (r.zipcode||'') + ' ' + r.address);
-                  });
-                },
-                style:{ padding:'7px 12px', background:'#1e40af', color:'#fff', border:'none', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' } }, '🔍 검색'),
+              h('input', { type:'text', value:f.zipcode || '', onChange:set('zipcode'), placeholder:'우편번호', maxLength:7,
+                style:{ width:'90px', fontFamily:'monospace', textAlign:'center', flexShrink:0,
+                  // 주소는 적었는데 우편번호가 비면 눈에 띄게 (놓치기 쉬운 자리다)
+                  background: (!f.zipcode && (f.address||'').trim()) ? '#fffbeb' : undefined,
+                  borderColor: (!f.zipcode && (f.address||'').trim()) ? '#fbbf24' : undefined } }),
+              (function(){
+                var needZip = !f.zipcode && (f.address||'').trim().length >= 2;
+                return h('button', { type:'button',
+                  title: needZip ? '적어 두신 주소로 미리 찾아 드립니다' : '주소 검색',
+                  onClick:function(){
+                    openAddressSearch(function(r){
+                      if(!r || (!r.zipcode && !r.address)){ showToast(ADDR_NONE_MSG); return; }
+                      setF(function(prev){ return Object.assign({}, prev, { zipcode: r.zipcode, address: r.address }); });
+                      showToast(ADDR_OK_MSG + (r.zipcode||'') + ' ' + r.address);
+                    }, f.address);   // 적어 둔 주소로 미리 찾기
+                  },
+                  style:{ padding:'7px 12px', background: needZip ? '#d97706' : '#1e40af', color:'#fff', border:'none',
+                    borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' } },
+                  needZip ? '🔍 우편번호 찾기' : '🔍 검색');
+              })(),
               h('input', { type:'text', value:f.address || '', onChange:set('address'), placeholder:'사업장 주소', style:{ flex:1 } })
             )),
           h('div', { className:'fld' }, h('label', null, '대표 전화 / 팩스'),
@@ -31094,9 +31129,10 @@ function CompanyInfoForm(){
                   return nf;
                 });
                 showToast('✅ '+(activeBranch==='cheonan'?'천안 본사':'서산 지사')+' 주소 저장됨');
-              });
+              }, br.addr);   // 적어 둔 주소로 미리 찾기
             },
-            style:{ padding:'4px 8px', background: activeBranch==='cheonan'?'#1e40af':'#059669', color:'#fff', border:'none', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } }, '🔍 검색')
+            style:{ padding:'4px 8px', background: (!br.zipcode && (br.addr||'').trim().length>=2) ? '#d97706' : (activeBranch==='cheonan'?'#1e40af':'#059669'), color:'#fff', border:'none', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
+            (!br.zipcode && (br.addr||'').trim().length>=2) ? '🔍 우편번호 찾기' : '🔍 검색')
         )),
       h('div', { className:'fld' }, h('label', null, '본사주소'),
         h('input', { type:'text', value:br.addrDetail||'', onChange:setBranchField('addrDetail'), placeholder:'' })),
@@ -50607,9 +50643,10 @@ function ProjectEditModal(props){
                     if(!r || (!r.zipcode && !r.address)){ showToast(ADDR_NONE_MSG); return; }
                     setF(function(prev){ return Object.assign({}, prev, { zipcode: r.zipcode, address: r.address }); });
                     showToast(ADDR_OK_MSG + (r.zipcode||'') + ' ' + r.address);
-                  });
+                  }, f.address);   // 적어 둔 주소로 미리 찾기
                 },
-                style:{ padding:'7px 12px', background:'#1e40af', color:'#fff', border:'none', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' } }, '🔍 검색'),
+                style:{ padding:'7px 12px', background: (!f.zipcode && (f.address||'').trim().length>=2) ? '#d97706' : '#1e40af', color:'#fff', border:'none', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' } },
+                (!f.zipcode && (f.address||'').trim().length>=2) ? '🔍 우편번호 찾기' : '🔍 검색'),
               h('input', { type:'text', value:f.address || '', onChange:set('address'), placeholder:'주소', style:{ flex:1 } })
             )),
           h(ContactsEditor, {
@@ -51861,9 +51898,10 @@ function StaffRosterModal(props){
               if(!r || (!r.zipcode && !r.address)){ showToast('⚠️ 주소 정보 없음'); return; }
               setF(function(prev){ return Object.assign({}, prev, { zipCode: r.zipcode, address: r.address }); });
               showToast('✓ 주소 입력됨: ' + (r.zipcode||'') + ' ' + r.address);
-            });
+            }, f.address);   // 적어 둔 주소로 미리 찾기
           },
-          style:{ padding:'7px 12px', background:'#1e40af', color:'#fff', border:'none', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' } }, '🔍 검색'),
+          style:{ padding:'7px 12px', background: (!f.zipCode && (f.address||'').trim().length>=2) ? '#d97706' : '#1e40af', color:'#fff', border:'none', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' } },
+          (!f.zipCode && (f.address||'').trim().length>=2) ? '🔍 우편번호 찾기' : '🔍 검색'),
         h('input', { type:'text', value:f.address||'', onChange:function(e){ setF(function(prev){ return Object.assign({},prev,{address:e.target.value}); }); }, placeholder:'도로명 주소',
           style:{ flex:1, padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12.5px', boxSizing:'border-box' } })
       )),
