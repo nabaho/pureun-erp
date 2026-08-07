@@ -143,6 +143,17 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .photo-pane{border:1.5px dashed var(--line);border-radius:12px;padding:10px;text-align:center;
   margin-bottom:12px;background:var(--bg)}
 .photo-pane img{max-width:100%;max-height:230px;border-radius:8px;cursor:zoom-in;background:#fff}
+/* ── 수정창: 사진과 읽어낸 값을 좌우로 놓는다 ──
+   위아래로 쌓으면 사진을 보려고 올리고 값을 고치려고 내려야 해서 한 글자씩 대조할 수가 없다.
+   넓은 화면에서만 나눈다 — 폰은 가로가 좁아 쌓는 편이 낫다.
+   사진 칸은 sticky 로 붙여 둔다. 아래쪽 칸(메모·소재지)을 고칠 때도 사진이 계속 보여야 한다. */
+#editorM{max-width:1040px}
+@media(min-width:900px){
+  .edit-split{display:flex;gap:18px;align-items:flex-start}
+  .edit-split>.photo-pane{flex:0 0 44%;margin:0;position:sticky;top:0;max-height:86vh;overflow-y:auto}
+  .edit-split>.edit-fields{flex:1;min-width:0}
+  .edit-split .photo-pane img{max-height:none;width:100%}
+}
 .mfoot{display:flex;gap:8px;margin-top:14px}
 .btn{padding:13px;border-radius:12px;font-size:14.5px;font-weight:700;flex:1}
 .btn.primary{background:var(--orange);color:#fff}
@@ -507,7 +518,7 @@ body.pc #pcDetail{display:flex}
 
 <div class="modalbg" id="addBg" onclick="if(event.target===this)this.classList.remove('open')"><div class="modal" id="addM"></div></div>
 <div class="modalbg" id="groupSheetBg" onclick="if(event.target===this)this.classList.remove('open')"><div class="modal" id="groupSheetM"></div></div>
-<div class="modalbg" id="editorBg"><div class="modal" id="editorM"></div></div>
+<div class="modalbg" id="editorBg" onclick="if(event.target===this)tryCloseEditor()"><div class="modal" id="editorM"></div></div>
 <div class="modalbg" id="detailBg" onclick="if(event.target===this)closeDetail()"><div class="modal" id="detailM"></div></div>
 <div class="modalbg" id="setBg" onclick="if(event.target===this)setBg.classList.remove('open')"><div class="modal" id="setM"></div></div>
 <div class="modalbg" id="dupBg"><div class="modal" id="dupbox"></div></div>
@@ -1829,20 +1840,27 @@ function openEditor(item, photoObj, pre){
     `<option value="${g.id}" ${defGroup===g.id?'selected':''}>${esc(g.name)}</option>`).join('');
   $('editorM').innerHTML=`
     <div class="mhead"><b>${item?'수정':(kind==='card'?'명함 등록':'사업자등록증 등록')}</b>
-      <button class="iconbtn" onclick="closeEditor()">✕</button></div>
-    <div class="photo-pane">${ (editing.photo||editing.thumb)
-      ? `<img src="${editing.photo||editing.thumb}" onclick="zoom('__EDIT__')">`
-      : `<div style="padding:12px;color:var(--sub);font-size:13px">원본 사진 없음 —
-          <button class="btn ghost" style="flex:none;padding:8px 12px" onclick="fileInput.click()">📁 사진 첨부</button></div>` }
-      <div id="backPane" style="margin-top:8px">${ editing.thumb2
-        ? `<img src="${editing.thumb2}" style="max-height:120px" onclick="zoom('__EDIT_B__')">`
-        : `<button class="btn ghost" style="flex:none;padding:7px 12px;font-size:12.5px" onclick="backInput.click()">＋ 뒷면 사진 추가</button>` }</div></div>
-    <div class="fgrid">${fh}</div>
-    <div class="field"><label>그룹</label><select id="f_group">${gOpts}</select></div>
+      <button class="iconbtn" onclick="tryCloseEditor()">✕</button></div>
+    <div class="edit-split">
+      <div class="photo-pane">${ (editing.photo||editing.thumb)
+        ? `<img src="${editing.photo||editing.thumb}" onclick="zoom('__EDIT__')">`
+        : `<div style="padding:12px;color:var(--sub);font-size:13px">원본 사진 없음 —
+            <button class="btn ghost" style="flex:none;padding:8px 12px" onclick="fileInput.click()">📁 사진 첨부</button></div>` }
+        <div id="backPane" style="margin-top:8px">${ editing.thumb2
+          ? `<img src="${editing.thumb2}" style="max-height:120px" onclick="zoom('__EDIT_B__')">`
+          : `<button class="btn ghost" style="flex:none;padding:7px 12px;font-size:12.5px" onclick="backInput.click()">＋ 뒷면 사진 추가</button>` }</div></div>
+      <div class="edit-fields">
+        <div class="fgrid">${fh}</div>
+        <div class="field"><label>그룹</label><select id="f_group">${gOpts}</select></div>
+      </div>
+    </div>
     <div class="mfoot">
-      <button class="btn ghost" onclick="closeEditor()">취소</button>
+      <button class="btn ghost" onclick="tryCloseEditor()">취소</button>
       <button class="btn primary" onclick="saveEditor()">💾 저장</button></div>`;
   $('editorBg').classList.add('open');
+  /* 연 직후 값을 적어 둔다 — 바깥을 눌러 닫을 때 "고친 게 있나"를 이것과 견준다.
+     고친 게 없으면 묻지 않고 바로 닫는 것이 편하고, 고쳤으면 반드시 물어야 한다. */
+  editing.orig = editorSnapshot();
   if (item && !editing.photo && item.thumb){
     Store.getPhoto(item.id).then(p=>{ if(!p || !editing || editing.id!==item.id) return;
       editing.photo=p;
@@ -1850,6 +1868,34 @@ function openEditor(item, photoObj, pre){
   }
 }
 function closeEditor(){ $('editorBg').classList.remove('open'); editing=null; queueNext(); }
+
+/* ── 수정창 닫기 — 바깥을 누르거나 Esc 를 눌러도 닫힌다 ──
+   대표 요청: 저장이나 ✕ 를 누르지 않고도 창을 없앨 수 있어야 한다.
+   다만 고쳐 놓은 것을 말없이 버리면 안 된다 — 고친 게 있을 때만 한 번 묻는다. */
+function editorSnapshot(){
+  if(!editing) return '';
+  const fields = editing.kind==='card' ? CARD_FIELDS : BIZ_FIELDS;
+  const vals = fields.map(([k])=> ($('f_'+k) ? $('f_'+k).value : ''));
+  vals.push($('f_group') ? $('f_group').value : '');
+  return JSON.stringify(vals);
+}
+function editorDirty(){
+  if(!editing) return false;
+  if(editing.photoDirty || editing.photoDirty2) return true;   /* 사진을 새로 붙였다 */
+  if(editing.orig === undefined) return false;
+  return editorSnapshot() !== editing.orig;
+}
+function tryCloseEditor(){
+  if(editorDirty() && !confirm('고친 내용이 저장되지 않았습니다.\n\n그냥 닫을까요?')) return;
+  closeEditor();
+}
+/* Esc 로도 닫는다. 크게 보기(zoom)가 열려 있으면 그쪽이 먼저 닫혀야 하므로 건드리지 않는다. */
+document.addEventListener('keydown', function(e){
+  if(e.key!=='Escape') return;
+  const zb=$('zoombg');
+  if(zb && zb.classList.contains('open')) return;
+  if($('editorBg') && $('editorBg').classList.contains('open')) tryCloseEditor();
+});
 async function onBackFile(files){
   const f=files[0]; if(!f || !editing) return;
   try{
@@ -2442,11 +2488,11 @@ function printList(){
   if(!items.length) return toast('인쇄할 항목이 없습니다');
   const isCard = state.tab==='card';
   const head = isCard ? ['이름','회사','직책·부서','핸드폰','회사전화','이메일']
-                      : ['상호','대표자','사업자번호','소재지'];
+                      : ['상호','대표자','사업자번호','업태','종목','소재지'];
   const rowHtml = items.map((it,i)=>{
     const cells = isCard
       ? [it.name, it.company, [it.title,it.dept].filter(Boolean).join('·'), it.mobile, it.companyTel||it.tel, it.email]
-      : [it.company, it.ceo, fmtBizno(it.bizno), it.address];
+      : [it.company, it.ceo, fmtBizno(it.bizno), it.bizType, it.bizItem, it.address];
     return `<tr><td>${i+1}</td>${cells.map(c=>`<td>${esc(c||'')}</td>`).join('')}</tr>`;
   }).join('');
   const scope = state.region ? ` · ${state.region}` : '';
@@ -3449,7 +3495,7 @@ function toggleSidebar(){ $('pcRoot').classList.toggle('sidehidden'); }
 /* 열 기본 너비 (더블클릭 복원용) — colgroup 정의와 일치 */
 const COL_DEFAULT_W = {
   card: { name:'7%', company:'11%', title:'10%', mobile:'9%', companyTel:'9%', companyFax:'9%', email:'12%', companyAddr:'13%', date:'74px' },
-  biz:  { company:'22%', ceo:'12%', bizno:'15%', address:'auto', date:'82px' }
+  biz:  { company:'19%', ceo:'9%', bizno:'12%', bizType:'12%', bizItem:'14%', address:'auto', date:'82px' }
 };
 /* 열 너비 더블클릭 → 원래 크기로 복원 */
 function resetColWidth(e, key){
@@ -3487,7 +3533,10 @@ function startColResize(e, key){
 const COL_DEFS = {
   card: [['name','이름'],['company','회사'],['title','직책·부서'],['mobile','핸드폰'],
          ['companyTel','회사전화'],['companyFax','회사팩스'],['email','이메일'],['companyAddr','회사주소'],['date','등록일']],
-  biz:  [['company','상호'],['ceo','대표자'],['bizno','사업자번호'],['address','소재지'],['date','등록일']]
+  /* 업태·종목은 계약서·업체관리에 그대로 옮겨 적는 칸이다 — 목록에서 바로 보여야
+     사업자등록증을 하나씩 열어 보지 않는다 */
+  biz:  [['company','상호'],['ceo','대표자'],['bizno','사업자번호'],['bizType','업태'],['bizItem','종목'],
+         ['address','소재지'],['date','등록일']]
 };
 function colHidden(key){ return !!(state.hiddenCols[state.tab]||{})[key]; }
 
@@ -3800,6 +3849,8 @@ function renderPCTable(){
     company: `<th class="col-company" ${dragAttr('company')} onclick="sortBy('company')" style="cursor:pointer">상호${sortArrow('company')}${rz('company')}</th>`,
     ceo:     `<th class="col-ceo" ${dragAttr('ceo')}>대표자${rz('ceo')}</th>`,
     bizno:   `<th class="col-bizno" ${dragAttr('bizno')}>사업자번호${rz('bizno')}</th>`,
+    bizType: `<th class="col-bizType" ${dragAttr('bizType')}>업태${rz('bizType')}</th>`,
+    bizItem: `<th class="col-bizItem" ${dragAttr('bizItem')}>종목${rz('bizItem')}</th>`,
     address: `<th class="col-address" ${dragAttr('address')}>소재지${rz('address')}</th>`,
     date:    `<th class="col-date" ${dragAttr('date')} onclick="sortBy('date')" style="cursor:pointer;text-align:right">등록일${sortArrow('date')}${rz('date')}</th>`,
   };
@@ -3821,6 +3872,8 @@ function renderPCTable(){
     company: it => `<td class="nm col-company">${it.fav?'⭐ ':''}${esc(it.company||'(상호 없음)')}</td>`,
     ceo:     it => `<td class="col-ceo">${esc(it.ceo||'')}</td>`,
     bizno:   it => `<td class="col-bizno">${esc(fmtBizno(it.bizno))}</td>`,
+    bizType: it => `<td class="col-bizType" ondblclick="startCellEdit(event,'${it.id}','bizType')">${esc(it.bizType||'')}</td>`,
+    bizItem: it => `<td class="col-bizItem" ondblclick="startCellEdit(event,'${it.id}','bizItem')">${esc(it.bizItem||'')}</td>`,
     address: it => `<td class="col-address">${esc(it.address||'')}</td>`,
     date:    it => `<td class="dt col-date">${fmtDate(it.createdAt)}</td>`,
   };
