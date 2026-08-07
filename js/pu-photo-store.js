@@ -61,6 +61,10 @@
      만든다. 이름표는 전 직원이 함께 봐야 하니 공용 자리에 둔다 — 사진 본문은
      지금처럼 사람별로 그대로 갈려 있다. */
   function customKindsPath() { return DB_ROOT + '/customKinds'; }
+  /* 보유기준 점검 담당자 — 전 직원이 읽고, 담당자와 총괄 관리자만 쓴다.
+     ⚠ 이 칸은 **규칙에 따로 적어야** 한다(`puphotos` 최상위는 열려 있지 않다).
+        안 적으면 조용히 거부된다 — 건의함이 그래서 통째로 막혔다(2026-08-07). */
+  function retentionPath() { return DB_ROOT + '/retention'; }
 
   /* 촬영 시각 결정 — EXIF → 파일 날짜 → 업로드 시각 순서.
      카톡을 거친 사진은 EXIF가 지워져 있어 파일 날짜로, 그것도 없으면 올린 때로 간다. */
@@ -394,6 +398,30 @@
   function listCustomKinds() {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     return deps.db.ref(customKindsPath()).once('value').then(function (s) { return s.val() || {}; });
+  }
+
+  /* ── 보유기준 점검 담당자 ──
+     기준(증빙 5년·나머지 1년)은 있는데 지우는 일이 아무에게도 안 걸려 있었다.
+     자동 삭제는 일부러 만들지 않았으므로(사람 확인이 필수) 누가 언제 볼지를 정해 둔다.
+     화면은 실시간DB를 직접 만지지 않는다 — 쓰기는 이 층만 한다. */
+  function getRetention() {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(retentionPath()).once('value').then(function (s) { return s.val() || {}; });
+  }
+
+  function setRetentionOwner(uid, name) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    if (!uid) return Promise.reject(new Error('담당자를 고르지 않았습니다'));
+    /* 담당자가 바뀌면 **앞사람의 점검 기록은 지운다** — 앞사람이 본 것을 뒷사람이
+       본 것으로 칠 수 없다. 새 담당자에게는 곧바로 알림이 뜬다. */
+    return deps.db.ref(retentionPath()).set({
+      uid: uid, name: name || '', lastAt: 0, lastBy: '', setAt: Date.now()
+    });
+  }
+
+  function markRetentionChecked(name) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(retentionPath()).update({ lastAt: Date.now(), lastBy: name || '' });
   }
 
   /* 이름이 같은 분류를 두 번 만들지 않는다(대소문자·앞뒤 공백 무시) —
@@ -970,6 +998,10 @@
     savePhoto: savePhoto,
     saveRead: saveRead,
     listCustomKinds: listCustomKinds,
+    getRetention: getRetention,
+    setRetentionOwner: setRetentionOwner,
+    markRetentionChecked: markRetentionChecked,
+    retentionPath: retentionPath,
     addCustomKind: addCustomKind,
     setCustomKind: setCustomKind,
     deletePhoto: deletePhoto,
