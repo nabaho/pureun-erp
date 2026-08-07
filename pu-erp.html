@@ -7762,7 +7762,15 @@ function FunnelBtn(props){
 
   useEffect(function(){
     if(!pos) return;
-    function close(){ setPos(null); }
+    /* ★ 바깥을 눌렀을 때만 닫는다.
+       종전에는 mousedown 이면 무조건 닫아, **팝업 안 체크박스를 누르는 순간 창이 닫혔다**
+       (바깥 div 는 onClick 만 막고 mousedown 은 안 막는다). 그래서 아무것도 못 고르고
+       「적용」에 닿지도 못했다 — 필터가 통째로 죽어 있었다. */
+    function close(e){
+      var t = e && e.target;
+      if(t && t.closest && t.closest('[data-funnel-pop="1"]')) return;   // 팝업 안이면 그대로 둔다
+      setPos(null);
+    }
     function onKey(e){ if(e.key === 'Escape') setPos(null); }
     document.addEventListener('mousedown', close);
     document.addEventListener('keydown', onKey);
@@ -7813,11 +7821,25 @@ function FunnelBtn(props){
     props.mini && on && h('span', { style:{ marginLeft:'2px', fontSize:'9.5px', fontWeight:800,
       color:color, verticalAlign:'middle' } }, sel.length),
 
-    pos && h('div', { style:{ position:'fixed', left:pos.left+'px',
+    pos && h('div', { 'data-funnel-pop':'1', onMouseDown:function(e){ e.stopPropagation(); },
+      style:{ position:'fixed', left:pos.left+'px',
         top: pos.up ? 'auto' : pos.top+'px',
         bottom: pos.up ? pos.bot+'px' : 'auto',
         width:pos.w+'px', zIndex:9600, background:'#fff', border:'1px solid #cbd5e1',
         borderRadius:'8px', boxShadow:'0 8px 24px rgba(0,0,0,0.18)', overflow:'hidden' } },
+      /* ── 정렬 (엑셀 깔때기와 같은 자리) ──
+         고르는 즉시 걸린다. 거르기는 「적용」을 눌러야 걸리지만 정렬은 바로 보는 편이 낫다. */
+      props.onSort && h('div', { style:{ padding:'6px 9px', borderBottom:'1px solid #e2e8f0', display:'flex', gap:'4px' } },
+        [{ d:'asc', t:(props.sortAscLabel || '가나다순'), i:'↑' },
+         { d:'desc', t:(props.sortDescLabel || '거꾸로'), i:'↓' }].map(function(o){
+          var on = props.sortDir === o.d;
+          return h('button', { key:o.d, onClick:function(){ props.onSort(on ? null : o.d); },
+            title: on ? '다시 누르면 기본 순서로' : (props.label + ' ' + o.t + '으로 정렬'),
+            style:{ flex:1, padding:'4px', fontSize:'11px', fontWeight: on?700:600, cursor:'pointer',
+              borderRadius:'5px', border:'1px solid '+(on ? color : '#cbd5e1'),
+              background: on ? color : '#fff', color: on ? '#fff' : '#475569' } },
+            o.i + ' ' + o.t);
+        })),
       h('div', { style:{ padding:'7px 9px', borderBottom:'1px solid #e2e8f0' } },
         h('input', { value:q, autoFocus:true, placeholder: props.label + ' 찾기',
           onChange:function(e){ setQ(e.target.value); },
@@ -14149,6 +14171,46 @@ function ContractManagement(props){
     }
     return keys.map(function(x){ return { v:x, label:x, n:m[x] }; });
   }
+  /* ── 칸별 정렬 (엑셀 깔때기의 정렬 자리) ──
+     {칸: {ax:'co', dir:'asc'}} 하나만 둔다 — 한 칸에서 두 기준으로 동시에 정렬할 일은 없다.
+     아무 것도 안 고르면 기본 순서(등록 최신순 등 원래 정렬)를 그대로 쓴다. */
+  var soS = usePersistedState('contract_stage_sort', {});
+  var stageSort = (soS[0] && typeof soS[0] === 'object' && !Array.isArray(soS[0])) ? soS[0] : {};
+  var setStageSort = soS[1];
+  function soGet(v, ax){ var o = stageSort[v]; return (o && o.ax === ax) ? o.dir : null; }
+  function soSet(v, ax, dir){
+    var n = Object.assign({}, stageSort);
+    if(dir) n[v] = { ax:ax, dir:dir }; else delete n[v];
+    setStageSort(n);
+  }
+  // 그 카드의 정렬 기준 글자 하나 — 축마다 무엇으로 줄 세울지
+  function soKey(c, ax){
+    if(ax === 'co')   return String(c.companyName || '');
+    if(ax === 'kind'){
+      var ks = c.kinds || (c.kind ? [c.kind] : []);
+      // 종류는 가나다가 아니라 **정해 둔 종류 차례**로 (자문·급여·노조… 순서가 뜻이 있다)
+      var i = ks.length ? CONTRACT_KINDS.findIndex(function(k){ return k.v === ks[0]; }) : 999;
+      return String(i < 0 ? 998 : i).padStart(3, '0');
+    }
+    if(ax === 'sub'){
+      var ks2 = c.kinds || (c.kind ? [c.kind] : []);
+      return ks2.map(function(kv){ return kindSubLabel(c, kv); }).join(' ');
+    }
+    if(ax === 'mgr'){
+      var u = users.find(function(x){ return x.sid === c.managerMain; });
+      return String(u ? u.name : (c.managerMain || ''));
+    }
+    return '';
+  }
+  function soApply(v, list){
+    var o = stageSort[v];
+    if(!o || !o.dir) return list;
+    var sign = o.dir === 'desc' ? -1 : 1;
+    return list.slice().sort(function(a, b){
+      var r = String(soKey(a, o.ax)).localeCompare(String(soKey(b, o.ax)), 'ko');
+      return r !== 0 ? r * sign : 0;      // 같으면 원래 차례 유지
+    });
+  }
   // 걸린 조건을 칩 문구로
   function stPicks(v){
     var out = [];
@@ -14968,7 +15030,7 @@ function ContractManagement(props){
       CONTRACT_STATUS.filter(function(s){ return focusCol==='all' || s.v===focusCol; }).map(function(s){
         var allStageCards = byStatus[s.v] || [];
         // 카드 필터링 (이 칸의 깔때기만 적용 — 다른 칸에는 안 걸린다)
-        var cards = allStageCards.filter(function(c){ return stPass(s.v, c); });
+        var cards = soApply(s.v, allStageCards.filter(function(c){ return stPass(s.v, c); }));
         var stOn = stCount(s.v);
         var isOver = overStatus === s.v && dragId;
         var isFocused = focusCol === s.v;
@@ -15002,8 +15064,23 @@ function ContractManagement(props){
               return h(FunnelBtn, { key:a.k, label:a.label, color:a.color,
                 items: stItems(allStageCards, a.k),
                 sel: stGet(s.v, a.k),
+                sortDir: soGet(s.v, a.k),
+                sortAscLabel: a.k === 'kind' ? '종류순' : '가나다순',
+                sortDescLabel: '거꾸로',
+                onSort: function(dir){ soSet(s.v, a.k, dir); },
                 onApply: function(arr){ stSet(s.v, a.k, arr); } });
-            })),
+            }),
+            // 지금 무엇으로 줄 세웠는지 보이게 — 안 보이면 왜 이 차례인지 알 수 없다
+            (function(){
+              var o = stageSort[s.v]; if(!o || !o.dir) return null;
+              var ax = STAGE_AXES.find(function(a){ return a.k === o.ax; });
+              return h('span', { onClick:function(){ soSet(s.v, o.ax, null); },
+                title:'누르면 기본 순서로 돌아갑니다',
+                style:{ marginLeft:'2px', fontSize:'10px', fontWeight:700, cursor:'pointer',
+                  color:(ax?ax.color:'#1e40af'), background:'#f1f5f9', border:'1px solid #e2e8f0',
+                  borderRadius:'10px', padding:'2px 7px', whiteSpace:'nowrap' } },
+                (o.dir === 'asc' ? '↑ ' : '↓ ') + (ax ? ax.label : o.ax) + '순 ✕');
+            })()),
           // 걸린 조건 (그 칸 것만)
           h(FunnelChips, { picks: stPicks(s.v), onClear: function(){ stClear(s.v); } }),
           // 카드 영역 (단독 보기 시 카드는 가로 한 줄 레이아웃 - CSS로 반응형)
