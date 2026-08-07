@@ -1,3 +1,6 @@
+/* ⚠ 더 이상 등록하지 않는다 — pu-sw.js 로 합쳐졌다.
+   앱마다 워커를 따로 등록하면 같은 scope에서 서로 밀어내 공유 받기가 죽는다.
+   이 파일은 예전에 등록해 둔 브라우저가 조용히 갈아타도록 남겨 둔 것이다. */
 /* 푸른명함첩 서비스워커 — 카톡·갤러리 [공유→푸른명함첩] 수신 처리 */
 self.addEventListener('install', e => self.skipWaiting());
 self.addEventListener('activate', e => self.clients.claim());
