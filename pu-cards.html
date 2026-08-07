@@ -815,17 +815,31 @@ const Store = {
   _ls(){ localStorage.setItem('pucards_local_items', JSON.stringify(state.items));
          localStorage.setItem('pucards_local_groups', JSON.stringify(state.groups)); },
   put(it){ it.updatedAt = Date.now();
-    if (this.mode==='firebase'){ this.db.ref(`${DB_ROOT}/items/${it.id}`).set(it); writeIdx(it); }
+    if (this.mode==='firebase'){
+      /* 썸네일은 items 밖(thumbs/)에 둔다 — items 는 통째로 구독되는 칸이라 무거우면 안 된다.
+         빈 값이면 지우지 않는다: 사진을 안 건드린 수정에서 옛 썸네일이 날아가면 안 된다. */
+      const t1 = it.thumb||'', t2 = it.thumb2||'';
+      const rec = {...it}; delete rec.thumb; delete rec.thumb2;
+      this.db.ref(`${DB_ROOT}/items/${it.id}`).set(rec);
+      if (t1) this.putThumb(it.id, t1);
+      if (t2) this.putThumb(it.id+'_b', t2);
+      writeIdx(it);
+    }
     else { state.items[it.id]=it; this._ls(); render(); } },
   /* 삭제 = 휴지통으로 이동 (30일 보관). 사진도 함께 보관 */
   async del(id){
     const it = state.items[id]; if(!it) return;
     const photo = await this.getPhoto(id).catch(()=>'');
     const photo2 = await this.getPhoto(id+'_b').catch(()=>'');
-    const rec = { ...it, _deletedAt: Date.now(), _photo: photo||'', _photo2: photo2||'' };
+    /* 썸네일은 이제 items 밖에 있다 — 함께 챙겨 넣지 않으면 복원해도 사진이 빈 채로 돌아온다 */
+    const th1 = it.thumb || await this.getThumb(id).catch(()=>'');
+    const th2 = it.thumb2 || await this.getThumb(id+'_b').catch(()=>'');
+    const rec = { ...it, thumb: th1||'', thumb2: th2||'',
+      _deletedAt: Date.now(), _photo: photo||'', _photo2: photo2||'' };
     if (this.mode==='firebase'){
       await this.db.ref(`${DB_ROOT}/trash/${id}`).set(rec);
       this.delPhoto(id); this.delPhoto(id+'_b');
+      this.delThumb(id); this.delThumb(id+'_b');
       this.db.ref(`${DB_ROOT}/items/${id}`).remove();
       removeIdx(id);
     } else {
@@ -873,6 +887,26 @@ const Store = {
     if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/photos/${id}`).remove();
     else { const m=JSON.parse(localStorage.getItem('pucards_local_photos')||'{}'); delete m[id];
       localStorage.setItem('pucards_local_photos', JSON.stringify(m)); } },
+  /* ── 목록용 썸네일도 본문과 분리 저장 (thumbs/) ──
+     items 는 `.on('value')` 로 통째 구독한다. 썸네일(장당 약 20KB)이 그 안에 있으면
+     명함첩을 열 때마다 4,400장 전부를 받는다(약 90MB). 밖으로 빼서 **화면에 보이는 것만**
+     받는다. 읽은 것은 items 에 되꽂아 두어(thumbCache→it.thumb) 나머지 화면들은 그대로 쓴다. */
+  thumbCache:{},
+  async getThumb(id){
+    if (this.thumbCache[id]!==undefined) return this.thumbCache[id];
+    let t='';
+    if (this.mode==='firebase'){ const s=await this.db.ref(`${DB_ROOT}/thumbs/${id}`).once('value'); t=s.val()||''; }
+    else t=(JSON.parse(localStorage.getItem('pucards_local_thumbs')||'{}'))[id]||'';
+    this.thumbCache[id]=t; return t;
+  },
+  putThumb(id,dataUrl){ this.thumbCache[id]=dataUrl;
+    if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/thumbs/${id}`).set(dataUrl);
+    else { const m=JSON.parse(localStorage.getItem('pucards_local_thumbs')||'{}'); m[id]=dataUrl;
+      try{ localStorage.setItem('pucards_local_thumbs', JSON.stringify(m)); }catch(e){} } },
+  delThumb(id){ delete this.thumbCache[id];
+    if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/thumbs/${id}`).remove();
+    else { const m=JSON.parse(localStorage.getItem('pucards_local_thumbs')||'{}'); delete m[id];
+      try{ localStorage.setItem('pucards_local_thumbs', JSON.stringify(m)); }catch(e){} } },
   /* 내 탭(저장된 조건) — 전 직원 공유. 명함을 건드리지 않고 보기 조건만 저장 */
   putView(v){ if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/views/${v.id}`).set(v);
     else { state.views[v.id]=v; this._lsViews(); render(); } },
@@ -1398,7 +1432,10 @@ function listItems(){
 }
 
 /* ── 렌더링 ── */
-function render(){ renderSubbar(); renderSidebar(); renderList(); }
+/* _quiet: 썸네일 옮기기처럼 items 를 수십 번 고치는 작업 중에는 다시 그리지 않는다
+   (4,400줄을 배치마다 새로 그리면 몇 초씩 멈춘다) */
+let _quiet = false;
+function render(){ if(_quiet) return; renderSubbar(); renderSidebar(); renderList(); }
 
 function groupName(id){ return id==='all' ? '전체' : (id==='' ? '미분류' : (state.groups[id]?.name || '전체')); }
 
@@ -1472,7 +1509,16 @@ function renderList(){
     const name = isCard ? (it.name || it.company || '(이름 없음)') : (it.company||'(상호 없음)');
     const l1 = isCard ? [it.title,it.dept].filter(Boolean).join(' / ') : (it.ceo ? '대표자 '+it.ceo : '');
     const l2 = isCard ? (it.company||'') : fmtBizno(it.bizno);
-    const th = it.thumb ? `<img src="${it.thumb}" loading="lazy">` : esc(name.charAt(0));
+    /* 썸네일 상태 세 가지를 가른다 —
+       ① it.thumb 에 값이 있다 = 옛 자료(아직 안 옮김) 또는 이미 받아 둔 것 → 바로 그린다
+       ② it.thumb 이 빈 문자열 = 사진 없는 명함 → 첫 글자만, 받으러 가지 않는다
+       ③ it.thumb 이 아예 없다 = 옮겨진 자료 → 화면에 들어올 때 받는다 */
+    let thumbSrc = '', needFetch = false;
+    if (it.thumb) thumbSrc = it.thumb;
+    else if (it.thumb === '') thumbSrc = '';
+    else if (Store.thumbCache[it.id] !== undefined) thumbSrc = Store.thumbCache[it.id];
+    else needFetch = true;
+    const th = thumbSrc ? `<img src="${thumbSrc}" loading="lazy">` : esc(name.charAt(0));
     const click = state.selMode ? `toggleSel('${it.id}')` : `openDetail('${it.id}')`;
     return `<div class="row" draggable="${!state.selMode}"
       ondragstart="onRowDrag(event,'${it.id}')" ondragend="this.classList.remove('dragging')"
@@ -1482,7 +1528,7 @@ function renderList(){
         ${(function(){var e=ErpMatch.label(it);return e?`<div class="erpmgr">🏢 푸른담당 ${esc(e)}</div>`:'';})()}
         ${l1?`<div class="l1">${esc(l1)}</div>`:''}
         ${l2?`<div class="l2">${esc(l2)}</div>`:''}</div>
-      <div class="thumb">${th}</div></div>`;
+      <div class="thumb"${needFetch?` data-th="${it.id}"`:''}>${th}</div></div>`;
   }
   let h='', lastDate='';
   const favs=items.filter(i=>i.fav), rest=items.filter(i=>!i.fav);
@@ -1495,7 +1541,88 @@ function renderList(){
     h += rowHtml(it);
   });
   $('list').innerHTML = h;
+  thumbWatch();
 }
+
+/* ── 화면에 들어온 명함만 썸네일을 받는다 ──
+   4,400장을 한꺼번에 받으면 열 때마다 약 90MB. 보이는 것만 받으면 한 화면당 1MB 남짓이다.
+   미리 300px 앞에서 받아 두어 내리는 도중에 빈 칸이 보이지 않게 한다. */
+let _thObs = null;
+function thumbFill(el){
+  const id = el.getAttribute('data-th'); if(!id) return;
+  el.removeAttribute('data-th');            /* 두 번 받지 않게 먼저 뗀다 */
+  Store.getThumb(id).then(t=>{
+    if(!t) return;                          /* 사진 없는 명함 — 첫 글자 그대로 둔다 */
+    const it = state.items[id];
+    if(it) it.thumb = t;                    /* 상세·확대·끌기 등 나머지 화면이 그대로 쓰게 되꽂는다 */
+    if(el.isConnected) el.innerHTML = `<img src="${t}" loading="lazy">`;
+  }).catch(()=>{});
+}
+let _thSeen = false, _thFallback = null;
+function thumbWatch(){
+  const els = document.querySelectorAll('#list .thumb[data-th]');
+  if(!els.length) return;
+  if(!('IntersectionObserver' in window)){ els.forEach(thumbFill); return; }
+  if(!_thObs) _thObs = new IntersectionObserver(entries=>{
+    _thSeen = true;                         /* 관찰기가 살아 있다는 증거 */
+    entries.forEach(e=>{ if(e.isIntersecting){ _thObs.unobserve(e.target); thumbFill(e.target); } });
+  }, { rootMargin:'300px 0px' });
+  els.forEach(el=>_thObs.observe(el));
+  /* 안전망 — 관찰기가 한 번도 안 알려 주면(창이 숨겨져 있거나 배치가 특이하면)
+     앞쪽 30장만이라도 채운다. 빈 칸만 보이는 화면이 되는 것보다 낫다. */
+  clearTimeout(_thFallback);
+  _thFallback = setTimeout(function(){
+    if(_thSeen) return;
+    Array.prototype.slice.call(document.querySelectorAll('#list .thumb[data-th]'), 0, 30).forEach(thumbFill);
+  }, 1500);
+}
+/* 상세·수정 화면은 썸네일이 있어야 사진 자리가 만들어진다(`it.thumb ? <img> : ''`).
+   목록에서 아직 안 받은 명함도 검색·바로가기로 열 수 있으므로 여기서 한 번 챙긴다.
+   앞·뒷면 두 장을 한 번에 받아 두면 그 뒤 화면들은 손댈 것이 없다. */
+function ensureThumbs(id){
+  const it = state.items[id];
+  if(!it || it.thumb !== undefined) return Promise.resolve(it);
+  return Promise.all([Store.getThumb(id), Store.getThumb(id+'_b')])
+    .then(([a,b])=>{ it.thumb=a||''; it.thumb2=b||''; return it; })
+    .catch(()=>{ it.thumb=it.thumb||''; return it; });
+}
+
+/* ── 한 번만 실행: 옛 명함의 썸네일을 items 밖(thumbs/)으로 옮긴다 ──
+   옮기기 전에는 items 안에 썸네일이 그대로 있어 여전히 다 내려받는다.
+   50장씩 원자적으로(다중경로 update) 옮기므로 도중에 끊겨도 다시 실행하면 이어서 한다.
+   값은 시작할 때 한 번 떠 두고 쓴다 — 도중에 실시간 구독이 state.items 를 갈아끼우기 때문. */
+window.pucardsMoveThumbs = async function(){
+  if(Store.mode!=='firebase'){ console.log('실시간 공유 모드에서만 됩니다'); return; }
+  const src = state.items;
+  const jobs = [];
+  Object.keys(src).forEach(id=>{
+    const it = src[id]; if(!it) return;
+    if(it.thumb)  jobs.push({ id, tid:id,        field:'thumb',  v:it.thumb  });
+    if(it.thumb2) jobs.push({ id, tid:id+'_b',   field:'thumb2', v:it.thumb2 });
+  });
+  if(!jobs.length){ console.log('옮길 썸네일이 없습니다 — 이미 끝났습니다.'); toast('썸네일 옮기기 — 할 것 없음'); return; }
+  const totalMB = (jobs.reduce((s,j)=>s+j.v.length,0)/1048576).toFixed(1);
+  console.log(`[명함첩] 썸네일 ${jobs.length}장(약 ${totalMB}MB) 옮기기 시작 — 창을 닫지 마세요`);
+  _quiet = true;
+  let done = 0;
+  try {
+    for(let i=0;i<jobs.length;i+=50){
+      const u = {};
+      jobs.slice(i,i+50).forEach(j=>{
+        u[`${DB_ROOT}/thumbs/${j.tid}`] = j.v;
+        u[`${DB_ROOT}/items/${j.id}/${j.field}`] = null;
+      });
+      await Store.db.ref().update(u);
+      done += Object.keys(u).length/2;
+      if(done % 500 < 50) console.log(`  ${done} / ${jobs.length}`);
+    }
+    console.log(`[명함첩] 끝 — ${done}장, 약 ${totalMB}MB 를 items 밖으로 옮겼습니다. 새로고침하세요.`);
+    toast(`썸네일 ${done}장 옮김 — 새로고침해 주세요`);
+  } catch(e){
+    console.log(`[명함첩] ${done}장까지 옮기고 멈췄습니다: ${e && e.message} — 다시 실행하면 이어서 합니다`);
+    toast('썸네일 옮기기 중단 — 다시 실행해 주세요');
+  } finally { _quiet = false; render(); }
+};
 
 /* ── ✎ 일괄 선택 모드 ── */
 function toggleSelMode(){
@@ -1817,6 +1944,10 @@ const BIZ_FIELDS=[['company','상호(법인명)'],['ceo','대표자'],['bizno','
 
 let editing=null;
 function openEditor(item, photoObj, pre){
+  /* 옛 명함을 수정하려고 열었는데 썸네일을 아직 안 받았으면, 받아 놓고 다시 연다 */
+  if (item && item.id && item.thumb === undefined && !photoObj){
+    ensureThumbs(item.id).then(()=>openEditor(state.items[item.id]||item, photoObj, pre)); return;
+  }
   const kind = item ? item.kind : state.tab;
   editing = { id:item?.id, kind,
     photo: photoObj?.photo || '', thumb: photoObj?.thumb || item?.thumb || '',
@@ -1967,6 +2098,8 @@ function openDetail(id){
   if (document.querySelector('#pcTable input.cellEdit')) return;
   const it=state.items[id]; if(!it) return;
   if (document.body.classList.contains('pc')) return openPcDetail(id);
+  /* 아직 썸네일을 안 받은 명함이면 받아 놓고 다시 연다 (사진 자리가 안 생기는 것 방지) */
+  if (it.thumb === undefined){ ensureThumbs(id).then(()=>openDetail(id)); return; }
   const isCard = it.kind==='card';
   const fields = isCard ? CARD_FIELDS : BIZ_FIELDS;
   const rows = fields.filter(([k])=>it[k]).map(([k,label])=>{
@@ -2022,6 +2155,7 @@ function closePcDetail(){ closeDetail(); }
 /* ── PC 오른쪽 상세 패널 (리멤버식) ── */
 function openPcDetail(id){
   const it=state.items[id]; if(!it) return;
+  if (it.thumb === undefined){ ensureThumbs(id).then(()=>openPcDetail(id)); return; }
   const isCard = it.kind==='card';
   const fields = isCard ? CARD_FIELDS : BIZ_FIELDS;
   const rows = fields.filter(([k])=>it[k] && k!=='memo').map(([k,label])=>{
@@ -2565,8 +2699,11 @@ async function wipeAll(){
   if (Store.mode==='firebase'){
     const ids = targets.map(it=>it.id);
     for (let s=0; s<ids.length; s+=200){
-      const chunk={}; ids.slice(s,s+200).forEach(id=>chunk[id]=null);
-      try { await Store.db.ref(DB_ROOT+'/items').update(chunk); }
+      /* 썸네일은 이제 items 밖에 있다 — 같이 지우지 않으면 주인 없는 사진이 용량만 먹는다 */
+      const chunk={}, thChunk={};
+      ids.slice(s,s+200).forEach(id=>{ chunk[id]=null; thChunk[id]=null; thChunk[id+'_b']=null; });
+      try { await Store.db.ref(DB_ROOT+'/items').update(chunk);
+            await Store.db.ref(DB_ROOT+'/thumbs').update(thChunk); }
       catch(e){ console.error('삭제 실패 묶음', e); }
       await new Promise(r=>setTimeout(r,100));
     }
@@ -3059,7 +3196,8 @@ async function openMojibakeCleanup(){
       chunk.forEach(it=>{ trashUpd[it.id]={...it,_deletedAt:now,_photo:'',_photo2:''}; itemUpd[it.id]=null; removeIdx(it.id); });
       try{ await Store.db.ref(DB_ROOT+'/trash').update(trashUpd);
            await Store.db.ref(DB_ROOT+'/items').update(itemUpd);
-           chunk.forEach(it=>{ Store.delPhoto(it.id); Store.delPhoto(it.id+'_b'); });
+           chunk.forEach(it=>{ Store.delPhoto(it.id); Store.delPhoto(it.id+'_b');
+                               Store.delThumb(it.id); Store.delThumb(it.id+'_b'); });
       }catch(e){ console.warn('[mojibake]', e&&e.message); }
       toast(`정리 중… ${Math.min(s+200,bad.length).toLocaleString()}/${bad.length.toLocaleString()}`,5000);
     }
