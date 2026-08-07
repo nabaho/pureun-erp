@@ -1150,6 +1150,37 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
   </div>
 </div>
 
+<!-- 직원 추가 — 푸른ERP 재직자 명부에서 골라 온다(대표 지시 2026-08-07).
+     이름을 손으로 치면 오타 하나로 담당자 매칭이 끊긴다. 사번을 함께 저장해
+     동명이인이 있어도 정확히 이어지게 한다. -->
+<div class="mb" id="mbStaffAdd">
+  <div class="modal md" style="max-height:80vh;display:flex;flex-direction:column;">
+    <div class="mhead" style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);">
+      <div>
+        <div style="font-size:15px;font-weight:800;">직원 추가</div>
+        <div style="font-size:11px;color:var(--t2);margin-top:2px;">푸른ERP의 재직 중인 직원에서 고릅니다</div>
+      </div>
+      <button class="mclose" onclick="closeModal('mbStaffAdd')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--t2);">✕</button>
+    </div>
+    <div style="padding:7px 16px;background:rgba(21,101,192,.07);font-size:11px;color:var(--accent);line-height:1.6;">
+      고르면 이름과 <b>사번</b>이 함께 저장돼 ERP 담당자와 정확히 이어집니다.
+      비밀번호는 <b>123456</b>으로 시작하고, 색상·당일 최대 건수·관리자는 목록에서 정합니다.
+    </div>
+    <div style="padding:9px 16px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <input id="staffAddQ" class="fi-sm" style="flex:1;min-width:140px;" type="search" placeholder="찾기 (이름·사번·직위·소속)" oninput="renderStaffAdd()">
+      <label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--t2);white-space:nowrap;cursor:pointer;">
+        <input type="checkbox" id="staffAddAll" onchange="renderStaffAdd()"> 이미 있는 사람도
+      </label>
+    </div>
+    <div id="staffAddBody" style="overflow:auto;flex:1;min-height:120px;"></div>
+    <div id="staffAddFoot" style="padding:9px 16px;border-top:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <span class="sa-count" style="font-size:11px;color:var(--t2);"></span>
+      <button class="btn btn-s" style="margin-left:auto;font-size:11.5px;padding:5px 11px;" onclick="addStaffBlank()">직접 만들기</button>
+      <button class="btn btn-p sa-add" style="font-size:11.5px;padding:5px 13px;" onclick="staffAddApply()" disabled>고른 사람 추가</button>
+    </div>
+  </div>
+</div>
+
 <!-- 사진 확대 라이트박스 -->
 <div class="mb" id="mbPhotoView" style="z-index:1100;flex-direction:column;gap:12px;padding:24px;" onclick="if(event.target===this)closeModal('mbPhotoView')">
   <img id="pvImg" alt="확대된 현장사진" style="max-width:92vw;max-height:78vh;border-radius:10px;object-fit:contain;background:#000;">
@@ -3691,6 +3722,7 @@ function renderStaffList(){
         <span style="font-size:10px;color:${over?'var(--danger)':'var(--t2)'};">· 오늘 ${todayCnt}${over?' ⚠️':''}</span>
       </div>
       <span style="font-size:10px;font-weight:700;color:${pwSet?'var(--ok)':'var(--t2)'};white-space:nowrap;" title="${pwSet?'개인 비밀번호 설정됨':'기본 비밀번호(123456)'}">${pwSet?'🔒 설정됨':'🔓 기본'}</span>
+      ${staffErpCell(s)}
       <label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;">
         <input type="checkbox" ${s.isAdmin?'checked':''} onchange="saveStaffField('${s.id}','isAdmin',this.checked)">
         👑 관리자
@@ -3699,6 +3731,37 @@ function renderStaffList(){
       <button class="btn btn-s" style="font-size:11px;padding:4px 8px;" onclick="deleteStaff('${s.id}')">🗑</button>
     </div>`;
   }).join('');
+}
+
+/* 직원 줄의 ERP 연결 표시.
+   사번이 있으면 조용히 배지로 보여주고, 없는데 ERP 명부에 같은 이름이 있으면
+   한 번 눌러 이을 수 있게 한다 — 지금은 이름으로 매칭하고 있어 동작은 하지만,
+   동명이인이 생기면 그때부터 어긋난다. 미리 사번으로 못 박아 두는 편이 낫다. */
+function staffErpCell(s){
+  if(s.erpSid){
+    return `<span title="푸른ERP 사번 ${escAttr(s.erpSid)} 와 연결됨" style="font-size:10px;font-weight:700;color:var(--ok);white-space:nowrap;">🔗 ${escAttr(s.erpSid)}</span>`;
+  }
+  if(!ERP.loaded)return '';
+  const n=String(s.name||'').replace(/\s/g,'');
+  const cand=erpActiveDir().filter(u=>String(u.name||'').replace(/\s/g,'')===n);
+  /* 같은 이름이 둘이면 어느 쪽인지 앱이 정할 수 없다 — 사람이 정해야 하므로 안내만 */
+  if(cand.length===1&&cand[0].sid){
+    return `<button class="btn btn-s" style="font-size:10px;padding:3px 7px;white-space:nowrap;" title="푸른ERP 사번 ${escAttr(cand[0].sid)} 로 못 박습니다" onclick="linkStaffErp('${s.id}','${escAttr(cand[0].sid)}')">🔗 사번 잇기</button>`;
+  }
+  if(cand.length>1){
+    return `<span title="푸른ERP에 같은 이름이 ${cand.length}명 있어 자동으로 정할 수 없습니다" style="font-size:10px;font-weight:700;color:#cc7700;white-space:nowrap;cursor:help;">⚠️ 동명 ${cand.length}</span>`;
+  }
+  return `<span title="푸른ERP 재직자 명부에 같은 이름이 없습니다. 이름으로만 이어집니다" style="font-size:10px;color:var(--t2);white-space:nowrap;cursor:help;">ERP 없음</span>`;
+}
+function linkStaffErp(id,sid){
+  const staff=getStaff();
+  const idx=staff.findIndex(s=>s.id===id);
+  if(idx===-1||!sid)return;
+  if(staff.some(s=>s.erpSid===sid)){ toast('그 사번은 이미 다른 직원에 연결돼 있습니다','err'); return; }
+  staff[idx].erpSid=sid;
+  setStaff(staff);
+  renderStaffList();
+  toast(`${staff[idx].name} · 사번 ${sid} 연결됨`);
 }
 
 // 관리자: 직원 비밀번호 초기화 (123456)
@@ -3719,11 +3782,99 @@ function saveStaffField(id,field,val){
   if(idx!==-1){staff[idx][field]=val;setStaff(staff);refreshStaffDropdowns();}
 }
 
-function addStaff(){
-  const COLORS=['#e67e22','#8e44ad','#16a085','#2980b9','#c0392b','#27ae60'];
+const STAFF_COLORS=['#e67e22','#8e44ad','#16a085','#2980b9','#c0392b','#27ae60'];
+
+/* ── 직원 추가 — 푸른ERP 재직자 명부에서 고르기 ──
+   컨설팅 종류와 같은 방식이다. 이름을 손으로 치면 오타 하나로 ERP 연동이
+   끊기므로(담당자 매칭이 이름으로 돌아간다) 명부에서 고르고 **사번을 함께
+   저장**한다. 그러면 동명이인이 있어도 정확히 이어진다. */
+async function addStaff(){
+  q('#mbStaffAdd').classList.add('open');
+  const body=q('#staffAddBody');
+  if(!ERP.loaded){
+    body.innerHTML='<div style="padding:24px;text-align:center;color:var(--t2);font-size:12.5px;">푸른ERP 명부를 불러오는 중…</div>';
+    await erpLoadAll();
+  }
+  renderStaffAdd();
+}
+function renderStaffAdd(){
+  const body=q('#staffAddBody'), foot=q('#staffAddFoot');
+  if(!body)return;
+  const dir=erpActiveDir();
+  if(!ERP.loaded||!dir.length){
+    body.innerHTML=`<div style="padding:20px;font-size:12.5px;color:var(--t2);line-height:1.7;">
+      푸른ERP 재직자 명부를 읽지 못했습니다.<br>
+      ${ERP.err?`<span style="color:var(--danger);">${escAttr(ERP.err)}</span>`:'같은 브라우저에서 푸른ERP를 한 번 열어 로그인한 뒤 다시 시도해주세요.'}
+      <br><br>아래 <b>직접 만들기</b>로 빈 직원을 만들 수 있습니다.</div>`;
+    foot.querySelector('.sa-count').textContent='';
+    foot.querySelector('.sa-add').style.display='none';
+    return;
+  }
+  const kw=(q('#staffAddQ')?.value||'').trim().toLowerCase();
+  const showAll=!!q('#staffAddAll')?.checked;
+  const has=u=>!!govStaffIdByErp(u.sid,u.name);
+  const rows=dir.filter(u=>{
+    if(!showAll&&has(u))return false;
+    if(!kw)return true;
+    return [u.name,u.sid,u.title,u.branch].filter(Boolean).join(' ').toLowerCase().includes(kw);
+  }).sort((a,b)=>(a.sortOrder||999)-(b.sortOrder||999));
+  const freeN=dir.filter(u=>!has(u)).length;
+  foot.querySelector('.sa-count').textContent=`ERP 재직자 ${dir.length}명 · 아직 없는 사람 ${freeN}명`;
+  foot.querySelector('.sa-add').style.display='';
+  if(!rows.length){
+    body.innerHTML=`<div style="padding:24px;text-align:center;color:var(--t2);font-size:12.5px;">${kw?'찾는 사람이 없습니다.':'재직자가 모두 이미 등록돼 있습니다.'}</div>`;
+    updateStaffAddCount();
+    return;
+  }
+  body.innerHTML=rows.map(u=>{
+    const done=has(u);
+    const sub=[u.title,u.branch,u.sid].filter(Boolean).join(' · ');
+    return `<label style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--sf2);${done?'opacity:.5;':'cursor:pointer;'}">
+      <input type="checkbox" class="sa-chk" value="${escAttr(u.sid||u.name)}" ${done?'disabled':''} onchange="updateStaffAddCount()">
+      <span style="min-width:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+        <span style="font-size:12.5px;font-weight:700;">${escAttr(u.name)}</span>
+        ${sub?`<span style="font-size:10.5px;color:var(--t2);margin-left:6px;">${escAttr(sub)}</span>`:''}
+        ${u.status==='leave'?'<span style="font-size:10px;font-weight:800;color:#cc7700;margin-left:5px;">휴직</span>':''}
+      </span>
+      ${done?'<span style="font-size:10.5px;font-weight:800;color:var(--ok);white-space:nowrap;">✓ 이미 있음</span>':''}
+    </label>`;
+  }).join('');
+  updateStaffAddCount();
+}
+function updateStaffAddCount(){
+  const n=qa('#staffAddBody .sa-chk:checked').length;
+  const b=q('#staffAddFoot .sa-add');
+  if(!b)return;
+  b.disabled=!n;
+  b.textContent=n?`${n}명 추가`:'고른 사람 추가';
+}
+function staffAddApply(){
+  const keys=Array.from(qa('#staffAddBody .sa-chk:checked')).map(c=>c.value);
+  if(!keys.length)return;
+  const dir=erpActiveDir();
   const staff=getStaff();
-  const col=COLORS[staff.length%COLORS.length];
-  staff.push({id:uid(),name:'신규 직원',color:col});
+  let n=0;
+  keys.forEach(k=>{
+    const u=dir.find(x=>(x.sid||x.name)===k); if(!u)return;
+    if(govStaffIdByErp(u.sid,u.name))return; // 사이에 이미 들어갔으면 건너뛴다
+    staff.push({
+      id:uid(), name:u.name,
+      color:STAFF_COLORS[(staff.length)%STAFF_COLORS.length],
+      erpSid:u.sid||''
+    });
+    n++;
+  });
+  if(!n)return;
+  setStaff(staff);
+  closeModal('mbStaffAdd');
+  renderStaffList(); refreshStaffDropdowns();
+  toast(`${n}명을 추가했습니다 · 비밀번호는 123456`);
+}
+/* ERP 명부에 없는 사람 — 예전처럼 빈 줄을 만들고 이름 칸에 커서를 둔다. */
+function addStaffBlank(){
+  closeModal('mbStaffAdd');
+  const staff=getStaff();
+  staff.push({id:uid(),name:'신규 직원',color:STAFF_COLORS[staff.length%STAFF_COLORS.length]});
   setStaff(staff);renderStaffList();refreshStaffDropdowns();
   const inputs=q('#staffList').querySelectorAll('.staff-name-inp');
   if(inputs.length)inputs[inputs.length-1].focus();
@@ -5177,6 +5328,21 @@ function govStaffIdByName(name){
   const s=getStaff().find(a=>String(a.name||'').replace(/\s/g,'')===n);
   return s?s.id:'';
 }
+/* ERP 사번으로 먼저 찾고, 없으면 이름으로 — ERP에서 골라 추가한 직원은
+   사번을 들고 있으므로 동명이인이 있어도 정확히 이어진다.
+   손으로 만든 옛 직원은 사번이 없어 이름 매칭으로 내려간다. */
+function govStaffIdByErp(sid,name){
+  if(sid){
+    const s=getStaff().find(a=>a&&a.erpSid===sid);
+    if(s)return s.id;
+  }
+  return govStaffIdByName(name||erpSidName(sid));
+}
+/* ERP 명부에서 재직 중인 사람만. status 가 없는 옛 기록은 재직으로 본다
+   (pu-erp 의 판정과 같은 기준 — 없다고 퇴사로 몰면 사람이 사라진다). */
+function erpActiveDir(){
+  return (ERP.dir||[]).filter(u=>u&&u.name&&(!u.status||u.status==='active'||u.status==='leave'));
+}
 const _en=s=>String(s||'').replace(/[\s()（）·,]/g,'');
 // ERP 컨설팅 1건의 유형 키.
 // 코드가 없는 레코드가 많아서, 코드 → 이름 → 약칭 순으로 찾고
@@ -5391,8 +5557,10 @@ function erpBuildPlan(){
     const govType=code?map[code]:'';
     const mainNm=erpSidName(c.managerMain);
     const subNms=(c.managerSubs||[]).map(erpSidName).filter(Boolean);
-    const mainId=govStaffIdByName(mainNm);
-    const subIds=subNms.map(govStaffIdByName).filter(Boolean);
+    /* 사번으로 먼저 찾는다 — ERP 명부에서 골라 추가한 직원은 사번을 들고 있어
+       동명이인이 있어도 정확히 이어진다. 사번이 없는 옛 직원은 이름으로 내려간다. */
+    const mainId=govStaffIdByErp(c.managerMain,mainNm);
+    const subIds=(c.managerSubs||[]).map(sid=>govStaffIdByErp(sid,erpSidName(sid))).filter(Boolean);
     const row={erpId:c.id,name:nm,code,govType,mainNm,subNms,mainId,subIds,rawType:erpConsRawType(c)};
     if(!govType){ row.status='skip'; row.note=code?'연결 안 된 종류':'ERP에 컨설팅 유형이 비어 있음'; }
     else{
@@ -6720,7 +6888,12 @@ function bind(){
          한 번 읽고 다시 그린다 — 실패해도 표는 그대로 뜬다(칸만 「ERP 안 읽힘」). */
       if(!ERP.loaded&&!ERP.err)erpLoadAll().then(()=>{ if(q('#stab-type')?.classList.contains('active'))renderSettings(); });
     }
-    if(btn.dataset.stab==='staff')renderStaffList();
+    if(btn.dataset.stab==='staff'){
+      renderStaffList();
+      /* 「직원 추가」가 ERP 명부를 쓰므로 미리 한 번 읽어 둔다 — 누른 뒤
+         기다리는 것보다 낫다. 실패해도 목록은 그대로 뜬다. */
+      if(!ERP.loaded&&!ERP.err)erpLoadAll().catch(()=>{});
+    }
     if(btn.dataset.stab==='roundlog')renderRoundLog();
     if(btn.dataset.stab==='backup')renderAutoBackups();
     if(btn.dataset.stab==='erp')openErpTab();
