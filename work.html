@@ -262,6 +262,7 @@
     background:var(--bg);border-left:1px solid var(--line);border-right:1px solid var(--line);
     cursor:pointer;position:relative;overflow:hidden}
   th.cband:hover{background:var(--acc-soft)}
+  th.cband.lk{background:var(--acc-soft)}       /* 묶어 보기가 잡고 있는 띠 */
   th.cband .cbl{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(180deg);
     writing-mode:vertical-rl;font-size:10px;font-weight:700;color:var(--faint);
     white-space:nowrap;letter-spacing:-.4px}
@@ -988,14 +989,19 @@ function colPref(){
   }
   return S.cols;
 }
+// 묶어 보기가 켜져 있으면 구분은 열이 아니다 — 소제목에 이미 쓰여 있다.
+// 이때는 사람이 접거나 펼 수 있는 대상이 아니므로 단추도 내주지 않는다.
+function colForced(k){ return k==='cat'&&grpOn(); }
 function colHidden(k){
   if(!MYCOLS.some(function(c){ return c[0]===k; })) return false;   // 접을 수 없는 열
-  // 묶어 보기를 켜면 구분은 소제목에 이미 쓰여 있다 — 옆에 또 그릴 이유가 없다
-  if(k==='cat'&&grpOn()) return true;
+  if(colForced(k)) return true;
   return !!colPref()[k];
 }
 function colToggle(k){
   if(!MYCOLS.some(function(c){ return c[0]===k; })) return;
+  // 묶어 보기가 잡고 있는 열은 눌러도 안 바뀐다. 저장까지 해 두면 나중에
+  // 묶어 보기를 껐을 때 까닭 없이 접혀 있게 되므로 아무것도 하지 않는다.
+  if(colForced(k)) return;
   var p=colPref();
   if(p[k]) delete p[k]; else p[k]=1;
   try{ localStorage.setItem(COLS_KEY,Object.keys(p).join(',')); }catch(e){}
@@ -1005,6 +1011,11 @@ function colToggle(k){
 function colTH(k,inner,style){
   var c=MYCOLS.filter(function(x){ return x[0]===k; })[0];
   if(!c||!colHidden(k)) return '<th style="'+(style||'')+'">'+inner+'</th>';
+  // 묶어 보기가 잡고 있는 띠는 "펴기"가 아니라 그 까닭과 실제로 되돌리는 길을 준다
+  if(colForced(k))
+    return '<th class="cband lk" onclick="grpToggle()" '
+      +'title="구분별로 묶어 보는 중이라 소제목에 있습니다 — 눌러서 묶음을 풀면 열로 돌아옵니다">'
+      +'<span class="cbl">'+esc(c[1])+'</span></th>';
   var dot=fHas('my',k)?'<span class="cbd"></span>':'';    // 조건이 걸린 채 접힌 열
   return '<th class="cband" onclick="colToggle(\''+k+'\')" '
     +'title="'+esc(c[1])+' — 눌러서 폅니다'+(dot?' (걸러 보기 조건이 걸려 있습니다)':'')+'">'
@@ -1014,14 +1025,31 @@ function colTD(k,inner,attr){
   if(colHidden(k)) return '<td class="cband"></td>';
   return '<td'+(attr?' '+attr:'')+'>'+inner+'</td>';
 }
-// 표 위 칩 — 띠를 못 찾아도 여기서 한 번에 켜고 끈다
-function colChips(){
-  return MYCOLS.map(function(c){
-    var off=colHidden(c[0]);
-    return '<span class="chipbtn'+(off?'':' on')+'" onclick="colToggle(\''+c[0]+'\')" '
-      +'title="'+esc(c[1])+' 열을 '+(off?'폅니다':'접습니다')+'">'
-      +(off?'':'✓ ')+esc(c[1])+'</span>';
-  }).join('');
+/* 열 켜고 끄기는 칩 하나로 모아 팝업에서 고른다.
+   ⚠ 처음에는 열마다 칩을 하나씩 놓았는데, 머리줄에 칩이 여덟 개가 되어
+     "화면을 편하게" 와 정반대가 됐다. 자주 누르는 것이 아니므로 안으로 넣는다. */
+function colBtn(){
+  var off=MYCOLS.filter(function(c){ return colHidden(c[0])&&!colForced(c[0]); }).length;
+  return '<span class="chipbtn'+(off?' on':'')+'" onclick="colModal()" '
+    +'title="표에 어떤 열을 보일지 고릅니다">▦ 열'+(off?' '+off+' 접힘':'')+'</span>';
+}
+function colModal(){
+  showModal('<h2 style="margin:0 0 6px">▦ 보일 열 고르기</h2>'
+    +'<p class="muted" style="font-size:12.5px;margin:0 0 10px">끈 열은 사라지지 않고 표에 <b>얇은 띠</b>로 남습니다. '
+    +'띠를 누르면 그 자리에서 다시 펴집니다.</p>'
+    +MYCOLS.map(function(c){
+        var forced=colForced(c[0]), on=!colHidden(c[0]);
+        return '<label style="display:flex;gap:9px;align-items:flex-start;padding:7px 2px;'
+          +'border-bottom:1px solid var(--line);font-size:13px;'
+          +(forced?'opacity:.55':'cursor:pointer')+'">'
+          +'<input type="checkbox"'+(on?' checked':'')+(forced?' disabled':'')
+          +' onchange="colToggle(\''+c[0]+'\');colModal()" style="margin-top:2px">'
+          +'<span style="flex:1;min-width:0">'+esc(c[1])
+          +(forced?'<div class="muted" style="font-size:11.5px">구분별로 묶어 보는 중이라 소제목에 있습니다</div>':'')
+          +'</span></label>';
+      }).join('')
+    +'<div class="row" style="justify-content:flex-end;margin-top:12px">'
+    +'<button onclick="closeM()">닫기</button></div>');
 }
 function _inTyping(e){ var t=e.target||document.activeElement;
   return t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.tagName==='SELECT'||t.isContentEditable); }
@@ -2285,7 +2313,7 @@ function renderMy(){
     +'<span class="chipbtn'+(grpOn()?' on':'')+'" onclick="grpToggle()" '
     +'title="'+(grpOn()?'구분 묶음을 풀고 한 덩어리로 봅니다':'구분끼리 묶어 봅니다')+'">'
     +(grpOn()?'✓ 구분별':'구분별')+'</span>'
-    +colChips()+viewChips()
+    +colBtn()+viewChips()
     +calBtn()
     +'<span class="wknav" onclick="shiftWeek(-1)">‹</span>'
     +'<span class="wkpill" id="wkpill" onclick="openCal()">📅 '+esc(weekLabel(S.week))+' ▾</span>'
@@ -2359,7 +2387,15 @@ function renderMy(){
     +fh('due','width:110px')
     +'<th style="width:58px;text-align:center">종료</th></tr></thead><tbody>';
   var NCOL=9;   // 접힌 열도 띠로 한 칸을 차지하므로 칸 수는 변하지 않는다
-  if(!list.length) h+='<tr><td colspan="'+NCOL+'" class="moremark">조건에 맞는 업무가 없습니다. 열 이름을 눌러 조건을 바꿔 보세요.</td></tr>';
+  // 아무것도 안 남았을 때는 무엇 때문인지와 푸는 길을 그 자리에 둔다 —
+  // 41건이 통째로 사라진 화면에서 얇은 띠 안내만으로는 자료가 없어진 줄 안다
+  if(!list.length) h+='<tr><td colspan="'+NCOL+'" class="moremark" style="padding:26px 14px">'
+    +(S.calDay
+      ?'📅 <b>'+esc(md(S.calDay))+'</b> 에 잡힌 일이 없습니다. 업무 '+total+'건은 그대로 있습니다.'
+       +'<div style="margin-top:10px"><button class="primary" onclick="calDayOnly(\'\')">그 날 보기 풀기</button></div>'
+      :'조건에 맞는 업무가 없습니다.'
+       +'<div style="margin-top:10px"><button class="primary" onclick="myReset()">조건 모두 풀기</button></div>')
+    +'</td></tr>';
   else if(grpOn()){
     var gn=0;
     groupRows(list).forEach(function(g){
@@ -4896,9 +4932,14 @@ function calDayHas(it){
   if(_calDayFor!==S.calDay){ _calDayFor=S.calDay; _calDayIds=calDaySet(S.calDay); }
   return !!(_calDayIds&&_calDayIds[it._id]);
 }
+/* 캘린더에서 그 날 것만 보기.
+   ⚠ 고른 날이 지금 보고 있는 주가 아니면 그 주로 함께 옮긴다. 예전에는 걸러만
+     놓고 주는 그대로 두어, 8/12 를 고르면 표는 8.3~8.7 을 보여 준 채 한 건도
+     안 남았다 — 자료가 사라진 것처럼 보인다. 고른 날이 표에 보여야 한다. */
 function calDayOnly(d){
   S.calDay=(S.calDay===d)?'':(d||'');
   _calDayFor=null;                             // 다음 그리기에서 다시 센다
+  if(S.calDay&&!inWeek(S.calDay,S.week)){ setWeek(mondayOf(new Date(S.calDay+'T00:00:00'))); return; }
   route();
 }
 // 그 업무 줄로 데려가고 기록 칸에 커서를 둔다. 걸러 보기에 가려 있으면 먼저 푼다.

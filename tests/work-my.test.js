@@ -38,6 +38,7 @@ function escJ(s) { return esc(String(s == null ? '' : s).replace(/\\/g, '\\\\').
 function route() {} function renderMy() {}
 function fHas(sc, k) { return (S.F && S.F[sc] && S.F[sc][k]) instanceof Array; }
 function catBadge(c) { return '<span class="cat">' + esc(c) + '</span>'; }
+function showModal() {} function closeM() {}
 let PATCHED = null;
 function patchItem(id, f) { PATCHED = { id: id, f: f }; return Promise.resolve(true); }
 
@@ -64,7 +65,7 @@ function rid(p) { return p + '9'; }
 eval(gvar('STATUSES') + '\n' + gvar('PLAN_GROUP') + '\n' + gvar('COLS_KEY') + '\n' + gvar('MYCOLS') + '\n' + gvar('COLS_DEFAULT') + '\n'
   + gvar('GRP_KEY') + '\n' + gvar('GRP_ORDER') + '\n'
   + gvar('KIND_SET') + '\n' + gvar('KIND_ALIAS') + '\n'
-  + ['catNorm', 'colPref', 'colHidden', 'colToggle', 'colChips', 'colTH', 'colTD',
+  + ['catNorm', 'colPref', 'colForced', 'colHidden', 'colToggle', 'colBtn', 'colModal', 'colTH', 'colTD',
      'grpOn', 'grpToggle', 'grpFold', 'grpFolded', 'grpFoldToggle', 'groupRows',
      'grpHeadHTML', 'stSelect', 'setStatus',
      'stepsOf', 'isPlanDay', 'wkSave', 'planAdd', 'planCheck', 'planUncheck',
@@ -119,12 +120,26 @@ ok('조건이 걸린 채 접힌 열에는 점이 붙는다 (왜 안 나오는지
   colTH('last', 'x').indexOf('class="cbd"') > 0);
 S.F = {};
 ok('조건이 없으면 점이 없다', colTH('last', 'x').indexOf('class="cbd"') < 0);
-ok('칩은 다섯 개, 접힌 것은 체크가 없다', (function () {
-  const h = colChips();
-  return (h.match(/chipbtn/g) || []).length === 5
-    && h.indexOf('✓ 상태') > 0 && h.indexOf('✓ 업무') < 0;
+/* ── 머리줄은 칩 하나로 ──
+   열마다 칩을 하나씩 놓았더니 머리줄에 칩이 여덟 개가 되어 "화면을 편하게" 와
+   정반대가 됐다. 자주 누르는 것이 아니므로 팝업 안으로 넣는다. */
+S.grpOn = false; STORE = {}; S.cols = undefined;
+ok('머리줄에는 열 칩이 하나뿐이다', (function () {
+  const h = colBtn();
+  return (h.match(/chipbtn/g) || []).length === 1 && h.indexOf('▦ 열') > 0;
 })());
-ok('접을 수 없는 열은 칩에 없다', colChips().indexOf('기업') < 0);
+ok('몇 개를 접었는지 칩에 적는다 (접은 것을 잊지 않게)',
+  colBtn().indexOf('2 접힘') > 0);
+ok('다 펴면 숫자를 안 적는다', (function () {
+  colToggle('pt'); colToggle('last');
+  const h = colBtn();
+  colToggle('pt'); colToggle('last');
+  return h.indexOf('접힘') < 0;
+})());
+ok('팝업에 다섯 열이 모두 나온다', (function () {
+  const h = colModal.toString();
+  return h.indexOf('MYCOLS.map') > 0;
+})());
 
 /* ── 구분별 묶어 보기 ── */
 const mk = (cat, no) => ({ _id: no, cat: cat, no: no });
@@ -170,6 +185,28 @@ ok('묶어 보기를 켜면 구분 열이 자동으로 접힌다 (소제목에 �
 S.grpOn = false;
 ok('끄면 구분 열이 돌아온다', colHidden('cat') === false);
 
+/* ── 묶어 보기가 잡고 있는 열은 죽은 단추가 되면 안 된다 ──
+   예전에는 구분 칩·띠가 "눌러서 폅니다"라 해 놓고 눌러도 아무 일이 없었고,
+   그러면서 접힘 목록에는 몰래 써 두어 묶어 보기를 끄면 까닭 없이 접혀 있었다. */
+S.grpOn = true; STORE = {}; S.cols = undefined;
+ok('묶어 보기 중에는 구분을 사람이 접고 펴는 대상이 아니라고 본다',
+  colForced('cat') === true && colForced('pt') === false);
+colToggle('cat');
+ok('눌러도 접힘 목록에 몰래 쓰지 않는다 (끄면 까닭 없이 접혀 있게 된다)',
+  (STORE[COLS_KEY] || '').indexOf('cat') < 0);
+S.grpOn = false;
+ok('묶어 보기를 끄면 구분이 멀쩡히 펴져 있다', colHidden('cat') === false);
+S.grpOn = true;
+ok('띠는 "펴기"가 아니라 묶음을 푸는 길을 준다', (function () {
+  const h = colTH('cat', '');
+  return h.indexOf('grpToggle()') > 0 && h.indexOf("colToggle('cat')") < 0
+    && h.indexOf('묶음을 풀면') > 0;
+})());
+// 사람이 접은 것은 업무·최근 기록 둘뿐이다. 구분까지 세어 3이 되면 안 된다.
+ok('묶어 보기가 잡은 열은 접힘 수에 세지 않는다',
+  colBtn().indexOf('2 접힘') > 0 && colBtn().indexOf('3 접힘') < 0);
+S.grpOn = false;
+
 /* ── 상태 드롭다운 ── */
 ok('다섯 상태가 모두 선택지로 나온다', (function () {
   const h = stSelect('검토', 'W1');
@@ -214,7 +251,24 @@ ok('본문 다섯 칸이 접기를 거친다',
 ok('업무 열을 접으면 진행률이 기업 칸으로 내려온다',
   RH.indexOf("colHidden('pt')?'<div class=\"sub\">'+stepChip(it._id)") > 0);
 ok('기업 칸은 접히지 않는다', RH.indexOf("colTD('co'") < 0);
-ok('칩이 표 위에 붙는다', RM.indexOf('colChips()+viewChips()') > 0);
+ok('칩이 표 위에 붙는다', RM.indexOf('colBtn()+viewChips()') > 0);
+
+/* ── 캘린더에서 그 날을 골랐을 때 ──
+   고른 날이 보고 있는 주가 아니면 그 주로 함께 옮긴다. 예전에는 걸러만 놓고
+   주는 그대로 두어, 8/12 를 고르면 표는 8.3~8.7 을 보여 준 채 한 건도 안 남아
+   자료가 사라진 것처럼 보였다. */
+ok('고른 날이 다른 주면 그 주로 옮긴다',
+  grab('calDayOnly').indexOf('!inWeek(S.calDay,S.week)') > 0
+  && grab('calDayOnly').indexOf('setWeek(mondayOf(') > 0);
+ok('같은 주 안이면 주를 옮기지 않는다 (보던 자리를 지킨다)',
+  grab('calDayOnly').indexOf('inWeek(S.calDay,S.week)){ setWeek') > 0);
+ok('그 날 것이 없으면 빈 화면에 까닭과 푸는 길을 둔다',
+  RM.indexOf('에 잡힌 일이 없습니다') > 0
+  && RM.indexOf("calDayOnly(\\'\\')\">그 날 보기 풀기") > 0);
+ok('업무가 그대로 있다고 알려 준다 (사라진 줄 알게 두지 않는다)',
+  RM.indexOf("업무 '+total+'건은 그대로 있습니다") > 0);
+ok('조건 때문에 빈 경우에는 조건 풀기를 준다',
+  RM.indexOf('조건 모두 풀기') > 0);
 ok('팀 전체에는 안 붙는다 (내 업무만의 설정이다)',
   grab('renderTeam').indexOf('colChips()') < 0);
 ok('띠 모양이 CSS에 있다', W.indexOf('th.cband,td.cband{') > 0 && W.indexOf('.cbl{') > 0);
