@@ -27,15 +27,52 @@ const RESEND_KEY = process.env.RESEND_API_KEY || "";
 const FROM = "푸른노무법인 <payroll@fairrunlabor.com>";
 const TEST_TO = "babylawyer11111@gmail.com";
 
-function setCors(res) {
-  res.set("Access-Control-Allow-Origin", "*");
-  res.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.set("Access-Control-Allow-Headers", "Content-Type");
+// 발송 창구는 우리 포털에서만 연다. 예전에는 "*" 라서 주소만 알면
+// 전 세계 누구나 푸른노무법인 이름으로 메일을 보낼 수 있었다.
+const MAIL_ORIGIN = "https://nabaho.github.io";
+
+function setCors(req, res) {
+  const origin = String((req && req.headers && req.headers.origin) || "");
+  if (origin === MAIL_ORIGIN || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    res.set("Access-Control-Allow-Origin", origin);
+    res.set("Vary", "Origin");
+  }
+  res.set("Access-Control-Allow-Methods", "POST,OPTIONS");
+  // Authorization 을 허용해야 브라우저가 토큰을 붙인 요청을 보낼 수 있다.
+  res.set("Access-Control-Allow-Headers", "Authorization,Content-Type");
+  res.set("Cache-Control", "no-store");
+}
+
+// 메일 발송은 로그인한 직원이면 할 수 있다.
+// 총괄관리자만으로 묶지 않는 이유: 급여명세서·사용촉진 통보는 담당 직원이 보낸다.
+async function requireStaff(req) {
+  const match = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ""));
+  if (!match) {
+    const error = new Error("로그인 후 이용해 주세요.");
+    error.status = 401;
+    throw error;
+  }
+  const decoded = await getAuth().verifyIdToken(match[1], true);
+  if (decoded.firebase && decoded.firebase.sign_in_provider !== "password") {
+    const error = new Error("이메일 로그인 계정만 메일을 보낼 수 있습니다.");
+    error.status = 403;
+    throw error;
+  }
+  return decoded;
 }
 
 exports.sendPayslip = functions.https.onRequest(async (req, res) => {
-  setCors(res);
+  setCors(req, res);
   if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+
+  // ★ 누가 보내는지 확인한다. 이 검사가 없으면 우리 도메인이 공개 발송기가 된다.
+  let sender;
+  try {
+    sender = await requireStaff(req);
+  } catch (e) {
+    res.status(e.status || 401).json({ ok: false, error: String(e.message || e) });
+    return;
+  }
 
   // 키 미설정 시 친절한 안내 (Resend의 난해한 에러 대신)
   if (!RESEND_KEY) {
@@ -76,7 +113,9 @@ exports.sendPayslip = functions.https.onRequest(async (req, res) => {
       res.status(500).json({ ok: false, error: r.error });
       return;
     }
-    res.status(200).json({ ok: true, id: (r && r.data && r.data.id) || null, to: to });
+    // 보낸 사람을 함께 돌려준다 — 화면에서 발송 기록을 남길 때 쓴다.
+    res.status(200).json({ ok: true, id: (r && r.data && r.data.id) || null, to: to,
+                           by: (sender && sender.email) || "" });
   } catch (e) {
     res.status(500).json({ ok: false, error: String((e && e.message) || e) });
   }

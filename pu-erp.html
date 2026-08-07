@@ -58338,6 +58338,21 @@ function LeavePromotion(){
       + '<div style="font-size:16px;font-weight:800">푸른노무법인 (직인)</div><div>대표 권형하</div></div></div>';
   }
   var PROMO_FN_URL = 'https://us-central1-pureun-erp.cloudfunctions.net/sendPayslip';
+  /* 메일 발송 창구는 로그인한 직원만 쓸 수 있다 — 요청에 내 로그인 증표를 붙여 보낸다.
+     예전에는 아무나 부를 수 있어, 주소만 알면 푸른노무법인 이름으로 메일을 보낼 수 있었다.
+     발송을 부르는 곳이 네 군데라 여기 한 곳에 모아 둔다. */
+  function postMail(url, payload){
+    var u = null;
+    try { u = (window.firebase && firebase.auth && firebase.auth().currentUser) || null; } catch(e){}
+    if(!u) return Promise.reject(new Error('로그인 후 이용해 주세요.'));
+    return u.getIdToken().then(function(tok){
+      return fetch(url, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + tok },
+        body: JSON.stringify(payload)
+      });
+    });
+  }
   // 사용촉진 통보 이메일 발송 + 발송기록 저장
   function sendNoticeEmail(r, round, opts){
     opts = opts || {};
@@ -58349,10 +58364,8 @@ function LeavePromotion(){
     var subject = '[푸른노무법인] ' + nb.titleTxt + ' (' + r.name + ')';
     var html = noticeEmailHtml(r, round, opts);
     showToast('📤 ' + r.name + '님에게 ' + (round===1?'1차':'2차') + ' 통보 발송 중...');
-    return fetch(PROMO_FN_URL, {
-      method:'POST', headers:{ 'Content-Type':'application/json' },
-      body: JSON.stringify({ to: email, name: u.name, ym: String(selYear), subject: subject, html: html })
-    }).then(function(res){ return res.json(); }).then(function(d){
+    return postMail(PROMO_FN_URL, { to: email, name: u.name, ym: String(selYear), subject: subject, html: html })
+      .then(function(res){ return res.json(); }).then(function(d){
       if(d && d.ok){
         var now = new Date();
         var stampStr = fmt(now) + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
@@ -58644,9 +58657,8 @@ function LeaveManagement(){
     popConfirm(u.name+' 님('+email+')에게\n'+(round===1?'1차':'2차')+' 사용촉진 통보서를 메일로 발송할까요?\n\n발송 시 통보일이 자동 기록되고 사용촉진 탭에도 반영됩니다.').then(function(ok){
       if(!ok) return;
       showToast('📤 '+u.name+'님에게 발송 중...');
-      fetch(LM_PROMO_FN_URL, { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ to:email, name:u.name, ym:String(selYear), subject:subject, html:html })
-      }).then(function(res){ return res.json(); }).then(function(d){
+      postMail(LM_PROMO_FN_URL, { to:email, name:u.name, ym:String(selYear), subject:subject, html:html })
+      .then(function(res){ return res.json(); }).then(function(d){
         if(d && d.ok){
           var now=new Date(); var stampStr = lmFmt(now)+' '+lmPad(now.getHours())+':'+lmPad(now.getMinutes());
           var patch={};
@@ -61356,11 +61368,9 @@ function PayrollLedger(props){
     if(list.length === 0){ showToast('\ub300\uc0c1 \uc9c1\uc6d0\uc774 \uc5c6\uc2b5\ub2c8\ub2e4'); return; }
     var u = list[0];
     showToast('\ud568\uc218\ub85c \ubc1c\uc1a1 \uc911...');
-    fetch(PAYSLIP_FN_URL, {
-      method:'POST', headers:{ 'Content-Type':'application/json' },
-      body: JSON.stringify({ to: PAYSLIP_TEST_TO, name: u.name, ym: props.selYM,
+    postMail(PAYSLIP_FN_URL, { to: PAYSLIP_TEST_TO, name: u.name, ym: props.selYM,
         subject: '[\ud478\ub978\ub178\ubb34\ubc95\uc778] ' + props.selYM + ' \uae09\uc5ec\uba85\uc138\uc11c(\ud14c\uc2a4\ud2b8) \u2014 ' + u.name, html: payslipTestHtml(u) })
-    }).then(function(r){ return r.json(); }).then(function(d){
+    .then(function(r){ return r.json(); }).then(function(d){
       if(d && d.ok){ showToast('\u2705 \uc790\ub3d9\ubc1c\uc1a1 \uc131\uacf5 \u2014 ' + PAYSLIP_TEST_TO + ' \uba54\uc77c\ud568 \ud655\uc778'); }
       else { showToast('\u26a0 \ubc1c\uc1a1 \uc2e4\ud328: ' + JSON.stringify((d && d.error) || d)); }
     }).catch(function(e){ showToast('\u26a0 \ud638\ucd9c \uc2e4\ud328: ' + ((e && e.message) || e)); });
@@ -61474,11 +61484,9 @@ function PayrollLedger(props){
           + '<p style="font-size:12px;color:#64748b">\u203b \ucca8\ubd80\ub41c PDF \ud30c\uc77c\uc5d0\uc11c\ub3c4 \ub3d9\uc77c\ud55c \uba85\uc138\uc11c\ub97c \ud655\uc778\ud558\uc2e4 \uc218 \uc788\uc2b5\ub2c8\ub2e4.</p>';
         var fname = '\uae09\uc5ec\uba85\uc138\uc11c_' + props.selYM + '_' + u.name + '.pdf';
         showToast('📤 ' + u.name + '님에게 발송 중...');
-        fetch(PAYSLIP_FN_URL, {
-          method:'POST', headers:{ 'Content-Type':'application/json' },
-          body: JSON.stringify({ to: email, name: u.name, ym: props.selYM, subject: subjectText, html: html,
+        postMail(PAYSLIP_FN_URL, { to: email, name: u.name, ym: props.selYM, subject: subjectText, html: html,
             attachments: [{ filename: fname, content: pdfB64 }] })
-        }).then(function(r){ return r.json(); }).then(function(d){
+        .then(function(r){ return r.json(); }).then(function(d){
           if(d && d.ok){ showToast('✅ ' + u.name + '님 PDF 발송 완료 → ' + email); }
           else { showToast('⚠ ' + u.name + ' 발송 실패: ' + JSON.stringify((d && d.error) || d)); }
         }).catch(function(e){ showToast('⚠ 호출 실패: ' + ((e && e.message) || e)); });
