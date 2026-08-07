@@ -1482,9 +1482,36 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
       return merged;
     });
   }
+  /* 「해결 확인」 표시를 새 자리로 옮길 경로를 만든다.
+     ⚠ 반드시 **건의 한 건씩(잎사귀)** 만 적는다. 사람 통째로(`.../{uid}`) 적으면
+     같은 사람이 메일 쪽에도 있을 때 위·아래 경로가 한 묶음에 함께 들어가고,
+     파이어베이스는 그 묶음을 **서버에 보내기도 전에** 통째로 거부한다
+     ("values argument contains a path ... that is ancestor of another path").
+     2026-08-07 관리자 건의함이 아예 안 열린 원인이 이것이었다 — 권한 문제가 아니다.
+     사람 통째로 적으면 이미 새 자리에 있던 표시를 덮어쓰는 문제도 함께 생긴다. */
+  function sgResolvedUpdates(base, byUid, byEmail, emailToUid){
+    var merged = {};
+    function put(uid, map){
+      if(!uid || !map || typeof map !== 'object') return;
+      Object.keys(map).forEach(function(id){
+        if(!merged[uid]) merged[uid] = {};
+        merged[uid][id] = map[id];
+      });
+    }
+    var mail = byEmail || {}, look = emailToUid || {};
+    Object.keys(mail).forEach(function(k){ put(look[k], mail[k]); });   // 옛 메일 자리를 먼저 깔고
+    var uids = byUid || {};
+    Object.keys(uids).forEach(function(uid){ put(uid, uids[uid]); });   // uid 자리로 덮는다(최신값)
+    var updates = {};
+    Object.keys(merged).forEach(function(uid){
+      Object.keys(merged[uid]).forEach(function(id){ updates[base+'/'+uid+'/'+id] = merged[uid][id]; });
+    });
+    return updates;
+  }
   // 예전 /data 아래 건의 자료는 상위 읽기 권한의 영향을 받으므로, 관리자가
   // 처음 접속할 때 전용 비공개 경로로 한 번에 옮기고 이전 위치에서는 삭제한다.
   var _sgPrivateMigration = null;
+  var _sgMigrateWarn = false;   // 이사가 실패했는지 — 목록 위에 알림을 띄우는 데 쓴다
   function sgEnsurePrivateMigration(){
     if(!sgIsAdmin()) return Promise.resolve();
     if(_sgPrivateMigration) return _sgPrivateMigration;
@@ -1522,13 +1549,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
         m.createdAt=m.createdAt||source.createdAt||Date.now();
         updates[SG_META_PRIVATE_PATH+'/'+id]=m;
       });
-      Object.keys(oldResolvedUid).forEach(function(uid){ updates[SG_RESOLVED_PRIVATE_PATH+'/'+uid]=oldResolvedUid[uid]; });
-      Object.keys(oldResolvedEmail).forEach(function(emailKey){
-        var uid=emailToUid[emailKey]; if(!uid) return;
-        Object.keys(oldResolvedEmail[emailKey]||{}).forEach(function(id){
-          updates[SG_RESOLVED_PRIVATE_PATH+'/'+uid+'/'+id]=oldResolvedEmail[emailKey][id];
-        });
-      });
+      updates = Object.assign(updates, sgResolvedUpdates(SG_RESOLVED_PRIVATE_PATH, oldResolvedUid, oldResolvedEmail, emailToUid));
       updates['data/suggestions']=null; updates['data/sg_meta']=null;
       updates['data/sg_resolved_uid']=null; updates['data/sg_resolved']=null;
       return db.ref().update(updates);
@@ -1721,7 +1742,12 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     $('sgTitle').textContent = '💬 건의함';
     var bd = $('sgBody');
     bd.innerHTML = '<div id="sgListWrap"><div class="sg-empty">불러오는 중…</div></div>';
-    sgEnsurePrivateMigration().then(function(){ return db.ref(SG_PRIVATE_PATH).orderByChild('createdAt').once('value'); }).then(function(snap){
+    /* ⚠ 이사가 실패해도 목록 읽기로 넘어간다. 예전엔 여기서 그대로 멈춰서
+       옛 자료 한 줄 때문에 **건의함 전체가 안 보였다**(2026-08-07). 대신 실패를
+       기억해 두었다가 목록 위에 알림을 띄운다 — 조용히 넘기면 옛 건의가
+       안 보이는 것을 아무도 눈치채지 못한다. */
+    sgEnsurePrivateMigration().catch(function(){ _sgMigrateWarn = true; })
+      .then(function(){ return db.ref(SG_PRIVATE_PATH).orderByChild('createdAt').once('value'); }).then(function(snap){
       var arr = [];
       snap.forEach(function(ch){ var v = ch.val(); v._id = ch.key; arr.push(v); });
       arr.reverse();
@@ -1801,7 +1827,13 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,64,175,.12);
     }).join('') : '<div class="sg-empty">'+(arr.length? '조건에 맞는 건의가 없습니다.' : '아직 등록된 건의가 없습니다.<br>불편한 점을 자유롭게 남겨주세요.')+'</div>';
     var moreBtn = (list.length > shown)
       ? '<button id="sgMore" class="sg-btn ghost" style="margin-top:8px">더 보기 ('+(list.length-shown)+'건 남음)</button>' : '';
-    wrap.innerHTML = topHtml + chips + searchBox + listHtml + moreBtn;
+    // 옛 자료 이사가 실패했으면 목록은 띄우되 숨기지 않고 알린다 (옛 건의가 빠져 보일 수 있다)
+    var warnHtml = _sgMigrateWarn
+      ? '<div style="border:1px solid #fecaca;background:#fef2f2;border-radius:9px;padding:8px 10px;margin-bottom:8px;font-size:.76rem;color:#991b1b;line-height:1.5">'
+        + '⚠ 옛 자리에 남은 건의를 옮기지 못했습니다 — <b>아래 목록에 예전 건의가 빠져 있을 수 있습니다.</b>'
+        + '<br>새 건의 등록·답변은 그대로 됩니다. 개발자 도구 콘솔에 원인이 찍혀 있습니다.</div>'
+      : '';
+    wrap.innerHTML = warnHtml + topHtml + chips + searchBox + listHtml + moreBtn;
     $('sgNewBtn').addEventListener('click', sgViewCreate);
     Array.prototype.forEach.call(wrap.querySelectorAll('.sg-flt'), function(el){
       el.addEventListener('click', function(){ SG.listStatus = el.dataset.f; SG.listShown = PAGE; sgRenderList(); });
