@@ -17036,6 +17036,33 @@ function CompanyManagement(){
         h(FunnelBtn, { label:label, items:cItems(filterKey), sel:sel, mini:true,
           onApply:function(arr){ cSet(filterKey, arr); pg.setPage && pg.setPage(1); } })));
   }
+  // 유형 칩 — 자문·급여·노조·기금이 각각 몇 곳인지 한눈에 보여준다.
+  // 거르는 값은 표 머리 「유형」 깔때기와 «같은 상태»(coSel.type)를 쓴다 — 어느 쪽을 눌러도 같이 움직인다.
+  // 깔때기로 옮기면서 건수가 안 보이게 된 것을 되살린 것이다. 거르는 규칙을 새로 만들지는 않았다.
+  function typeChips(){
+    var items = cItems('type');            // 다른 깔때기를 이미 반영한 유형별 건수
+    var n = {}; items.forEach(function(x){ n[x.v] = x.n; });
+    var sel = cGet('type');
+    return h('div', { style:{ display:'flex', gap:'3px', alignItems:'center', flexShrink:0, flexWrap:'wrap' } },
+      COMPANY_TYPE_FILTERS.map(function(t){
+        // 깔때기로 둘 이상 고르면 어느 칩도 켜지지 않는다 — 있는 그대로 보여준다
+        var on = t.v === 'all' ? sel.length === 0 : (sel.length === 1 && sel[0] === t.v);
+        var cnt = t.v === 'all' ? null : (n[t.v] || 0);
+        return h('button', { key:t.v,
+          onClick:function(){
+            cSet('type', (t.v === 'all' || on) ? [] : [t.v]);   // 켜진 걸 다시 누르면 전체로 돌아온다
+            if(pg.setPage) pg.setPage(1);
+          },
+          title: t.v === 'all' ? '유형 거르기를 풉니다' : (t.label + ' 업체만 봅니다'),
+          style:{ padding:'5px 10px', borderRadius:'20px', fontSize:'11px', fontWeight:700, cursor:'pointer',
+            whiteSpace:'nowrap', flexShrink:0,
+            background: on ? t.color : '#fff',
+            color: on ? '#fff' : (cnt === 0 ? '#94a3b8' : t.color),
+            border:'1px solid ' + (on ? t.color : '#e2e8f0') } },
+          t.icon + ' ' + t.label + (cnt === null ? '' : ' ' + cnt));
+      })
+    );
+  }
   var moS = useState(false); var monthOnly = moS[0]; var setMonthOnly = moS[1];
   var ymS = usePersistedState('company_month', todayYM()); var selYM = ymS[0]; var setSelYM = ymS[1];
   var thisYM = selYM;
@@ -17779,7 +17806,8 @@ function CompanyManagement(){
                 color: statusTab==='suboffice'?'#fff':'#64748b', border:'none' } },
               '📁 ' + subofficeCount)
           ),
-          // (유형·담당·부담당·급여일 필터는 표 머리 깔때기로 옮겼다)
+          // (담당·부담당·급여일 필터는 표 머리 깔때기로 옮겼다. 유형은 건수가 보여야 해서 칩으로 남긴다)
+          typeChips(),
           h(MineFirstChip, { on:mineFirst, onToggle:function(){ setMineFirst(!mineFirst); } }),
           activeFilterCount > 0 && h('button', { onClick:cClearAll,
             style:{ padding:'5px 10px', borderRadius:'20px', fontSize:'11px', fontWeight:700, flexShrink:0,
@@ -17811,7 +17839,10 @@ function CompanyManagement(){
           fontSize:'12px', fontWeight:700, cursor:'pointer' } },
         '⏸ 계약 중단 (' + companies.filter(function(c){return !!c.suspended;}).length + ')'),
       // (종료 탭 제거: 종료 업체는 종료관리에서 조회)
-      // (유형·담당·부담당·급여일 필터는 표 머리 깔때기로 옮겼다 — 도구줄에는 두지 않는다)
+      // (담당·부담당·급여일 필터는 표 머리 깔때기로 옮겼다 — 도구줄에는 두지 않는다)
+      // 유형만은 도구줄에 남긴다: 깔때기 안에 들어가니 자문/급여/노조/기금이 몇 곳인지 안 보였다
+      h('div', { style:{ width:'1px', height:'20px', background:'#e2e8f0', flexShrink:0, margin:'0 2px' } }),
+      typeChips(),
       // 표시 개수
       h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', flexShrink:0 } },
         h('span', { style:{ fontSize:'11px', color:'#64748b' } }, '페이지'),
@@ -42478,6 +42509,7 @@ function FinanceInvoice(){
   var dt = useState(null); var detailModal = dt[0]; var setDetailModal = dt[1];
   // 화면 전체로 파일 끌어놓기 — 단추 위에만 놓을 수 있던 것을 넓혔다
   var idg = useState(false); var invDrag = idg[0]; var setInvDrag = idg[1];
+  var invDropRef = useRef(null);   // 문서 청취기가 낡은 함수를 쥐지 않게 하는 손잡이
 
   // ── 탭: 발행관리 / 업체별 아카이브 ──
   var tb = useState('issue'); var tab = tb[0]; var setTab = tb[1];
@@ -43014,28 +43046,47 @@ function FinanceInvoice(){
     );
   }
 
-  return h('div', { className:'page',
-    // 화면 어디에 놓아도 받는다. 종전에는 [엑셀 일괄 업로드] 단추 위에 정확히 놓아야만 됐다.
-    onDragOver:function(ev){
+  // 놓았을 때 할 일 — 그릴 때마다 새로 담는다. 문서 청취기는 이 손잡이만 본다.
+  invDropRef.current = function(fs){
+    if(detailModal) return;                                              // 상세 창이 열려 있으면 받지 않는다
+    if(uploadState.status === 'parsing' || uploadState.status === 'saving') return;   // 이미 올리는 중
+    handleInvoiceUpload({ target:{ files:fs } });
+  };
+  // 화면 아무 곳에나 놓아도 받는다 — 칸이 아니라 «문서 전체»에서 받는다.
+  // 칸에만 걸면 목록이 짧을 때 그 아래 빈 곳은 받는 칸 밖이라, 브라우저가 엑셀을 그냥 열어버린다.
+  useEffect(function(){
+    var depth = 0;   // 자식으로 옮겨갈 때도 leave 가 뜬다 — 깊이를 세어 창 밖으로 나갈 때만 끈다
+    function over(ev){
       if(!invDragHasFile(ev)) return;
-      ev.preventDefault();
+      ev.preventDefault();                                   // 이걸 빼면 브라우저가 파일을 연다
       try{ ev.dataTransfer.dropEffect = 'copy'; }catch(_){}
-      if(!invDrag) setInvDrag(true);
-    },
-    onDragLeave:function(ev){
-      // 자식으로 옮겨갈 때도 leave 가 뜬다 — 화면 밖으로 나갔을 때만 끈다
-      if(ev.currentTarget.contains(ev.relatedTarget)) return;
-      setInvDrag(false);
-    },
-    onDrop:function(ev){
+    }
+    function enter(ev){ if(!invDragHasFile(ev)) return; depth++; setInvDrag(true); }
+    function leave(){ if(--depth <= 0){ depth = 0; setInvDrag(false); } }
+    function drop(ev){
+      depth = 0; setInvDrag(false);
       if(!invDragHasFile(ev)) return;
       ev.preventDefault();
-      setInvDrag(false);
       var fs = (ev.dataTransfer && ev.dataTransfer.files) || null;
       if(!fs || !fs.length) return;
-      handleInvoiceUpload({ target:{ files:fs } });
-    },
-    style: invDrag ? { outline:'3px dashed #16a34a', outlineOffset:'-6px', background:'#f0fdf4' } : null },
+      if(invDropRef.current) invDropRef.current(fs);
+    }
+    document.addEventListener('dragenter', enter);
+    document.addEventListener('dragover', over);
+    document.addEventListener('dragleave', leave);
+    document.addEventListener('drop', drop);
+    return function(){
+      document.removeEventListener('dragenter', enter);
+      document.removeEventListener('dragover', over);
+      document.removeEventListener('dragleave', leave);
+      document.removeEventListener('drop', drop);
+    };
+  }, []);
+
+  return h('div', { className:'page',
+    style: invDrag
+      ? { minHeight:'calc(100vh - 150px)', outline:'3px dashed #16a34a', outlineOffset:'-6px', background:'#f0fdf4' }
+      : { minHeight:'calc(100vh - 150px)' } },
     // 끌어오는 중 안내 — 어디에 놓아도 된다는 걸 알려준다
     invDrag && h('div', { style:{ position:'fixed', left:'50%', top:'18%', transform:'translateX(-50%)',
       zIndex:9000, background:'#16a34a', color:'#fff', padding:'10px 18px', borderRadius:'10px',
