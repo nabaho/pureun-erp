@@ -33680,24 +33680,44 @@ function FinanceLedger(){
           paidAmt[_k] = (paidAmt[_k] || 0) + (parseInt(i.amount, 10) || 0);
         }
       });
-      var ym = todayYM();
-      var ds = ((rows && rows.inc) || []).map(function(r){ return String(r.date||'').slice(0,7); }).filter(Boolean);
-      if(ds.length){ ds.sort(); ym = ds[Math.floor(ds.length/2)]; }   // 가운데 값 = 그 명세서의 달
+      /* 명세서의 «가장 늦은 달» 부터 몇 달 거슬러 올라가며 안 걷힌 달을 모두 후보로 올린다.
+         전에는 가운데 달 하나만 봐서, 자문료가 몇 달 밀렸다가 한 번에 들어오면
+         (코엘이엔지 220,000 × 3개월 = 660,000) 맞출 후보가 없었다.
+         너무 멀리 보면 후보가 불어나 매칭이 느려지므로 3개월로 못 박는다 —
+         그보다 오래 밀린 업체는 미수금관리에서 따로 볼 일이다. */
+      var ADV_BACK = 3;
+      var lastYm = todayYM();
+      var ds = ((rows && rows.inc) || []).map(function(r){ return String(r.date||'').slice(0,7); })
+                 .filter(function(s){ return s && s.length >= 7; });
+      if(ds.length){ ds.sort(); lastYm = ds[ds.length-1]; }   // 가장 늦은 달
+      function _ymBack(ym, n){
+        var y = parseInt(ym.slice(0,4),10), m = parseInt(ym.slice(5,7),10) - n;
+        while(m <= 0){ m += 12; y -= 1; }
+        return y + '-' + ('0'+m).slice(-2);
+      }
+      var ymList = [];
+      for(var _bi=0; _bi<ADV_BACK; _bi++) ymList.push(_ymBack(lastYm, _bi));   // 최신 달부터
       (dbGet('companies', []) || []).forEach(function(co){
         if(!co || co._deleted || co.status !== 'active') return;
         var fee = parseInt(co.monthlyAdvisoryFee, 10) || 0;
         if(fee <= 0) return;
         var pd = co.taxInvoicePaymentDay;
         if(pd === '선납' || pd === '건별' || pd === '분기별') return;
-        var got = paidAmt[co.name + '|' + ym] || 0;
-        if(got >= fee) return;                    // 다 받았다
-        var remain = fee - got;                   // 모자란 만큼만 후보로 남긴다
-        // 월 자문료는 전부 부가세 포함이다(대표 확인)
-        pending.push({ id:'adv-'+co.id+'-'+ym, store:'companies',
-          label:'자문료('+parseInt(ym.slice(5),10)+'월)'+(got>0?' 잔금':''),
-          companyName:co.name, amount:fee, expect:remain,
-          vatLabel:got>0?('약정 '+fee.toLocaleString()+' 중 '+got.toLocaleString()+' 받음'):'',
-          paidAmount:got, item:co, kind:'advisory', ym:ym });
+        var start = String(co.contractStartDate || '').slice(0,7);
+        ymList.forEach(function(ym){
+          if(start && ym < start) return;            // 계약 시작 전 달은 받을 것이 없다
+          var got = paidAmt[co.name + '|' + ym] || 0;
+          if(got >= fee) return;                     // 그 달은 다 받았다
+          var remain = fee - got;                    // 모자란 만큼만 후보로 남긴다
+          var late = (ym !== lastYm);                // 지난 달 것이 아직 안 걷혔다 = 밀림
+          // 월 자문료는 전부 부가세 포함이다(대표 확인)
+          pending.push({ id:'adv-'+co.id+'-'+ym, store:'companies',
+            label:'자문료('+parseInt(ym.slice(5),10)+'월)'+(got>0?' 잔금':(late?' 밀림':'')),
+            companyName:co.name, amount:fee, expect:remain,
+            vatLabel:got>0?('약정 '+fee.toLocaleString()+' 중 '+got.toLocaleString()+' 받음')
+                          :(late?'지난 달 것이 아직 안 걷혔습니다':''),
+            paidAmount:got, item:co, kind:'advisory', ym:ym, late:late });
+        });
       });
     } catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
   })();
@@ -34294,10 +34314,26 @@ function FinanceLedger(){
   // 적요가 화이트리스트(🧩 합계 후보 적용 적요)에 걸릴 때만 탐색한다 — 나머지는 건별 판단이 맞고,
   // 탐색 자체를 건너뛰니 속도도 이득. 단일 고신뢰 추천이 있는 행도 탐색하지 않는다.
   var comboMemo = {};
+  /* 같은 업체의 자문료가 두 달 넘게 안 걷혀 있으면, 한 번에 낸 것일 수 있다.
+     적요가 화이트리스트에 없어도(업체 이름 그대로 찍힌다) 합계를 찾아 준다. */
+  function _advArrears(row){
+    var sg = incSug[row._k] || [];
+    var n = 0, nm = '';
+    for(var i=0; i<sg.length; i++){
+      var c = sg[i].cand;
+      if(!c || c.kind !== 'advisory') continue;
+      if((sg[i].nameScore||0) < 60) continue;          // 적요와 이름이 맞는 업체만
+      var cn = erpNormName(c.companyName);
+      if(!nm) nm = cn;
+      else if(cn !== nm) continue;                     // 같은 업체끼리만 센다
+      n++;
+    }
+    return n >= 2;
+  }
   function comboOf(row){
     if(comboMemo.hasOwnProperty(row._k)) return comboMemo[row._k];
     var v = null;
-    if(!row._dup && erpComboAllowed(row.memo||row.note||'')){
+    if(!row._dup && (erpComboAllowed(row.memo||row.note||'') || _advArrears(row))){
       var b = bestSug(row._k);
       // 고신뢰 1건 추천이 있어도 합산 입금이 흔한 적요(비즈사업 등)는 합계 후보도 함께 보여준다
       var skipCombo = b && b.level==='high' && !(b.cand && Math.abs((b.cand.expect||b.cand.amount) - row.amount) > 1100);
@@ -35189,7 +35225,8 @@ function FinanceLedger(){
                           width:'36px',textAlign:'center'})},bd.label),
                         h('b',{style:{flex:'1 1 80px',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',color:'#334155'}},
                           s.cand.companyName),
-                        h('span',{style:Object.assign({},_cw,{width:'76px',color:'#64748b'})},s.cand.label),
+                        h('span',{style:Object.assign({},_cw,{width:'76px',
+                          color:s.cand.late?'#b45309':'#64748b',fontWeight:s.cand.late?700:400})},s.cand.label),
                         h('span',{style:Object.assign({},_cw,{width:'106px',color:'#94a3b8',fontSize:'9.5px'})},_no),
                         h('span',{style:Object.assign({},_cw,{width:'44px',color:'#475569'})},_st||''),
                         h('span',{style:Object.assign({},_cw,{width:'74px',textAlign:'right',
