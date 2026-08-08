@@ -3794,6 +3794,27 @@ function renderHo(){
       });
       h+='</div>';
     }
+    /* ⚠ 명단에 없는 사람이 부담당으로만 남은 건.
+       위 목록은 주담당만 보므로 이것을 못 잡는다. 인수인계 화면에는 안 뜨는데
+       팀 전체의 담당 목록에는 이름이 계속 남아 있어, 다 정리한 줄 알았는데
+       퇴사자 이름이 사라지지 않는다. */
+    var osub=orphanSubs(st);
+    if(osub.length){
+      h+='<div class="hocard" style="border-color:#f0c68a"><div class="hct"><b style="color:var(--warn)">⚠ 명단에 없는 사람이 부담당으로 남은 건</b>'
+        +'<span class="muted" style="font-size:11.5px">주담당은 다른 사람입니다. 넘길 것은 없고 이름만 떼면 됩니다.</span></div>';
+      osub.forEach(function(o){
+        h+='<div class="row" style="padding:7px 2px;border-bottom:1px solid var(--line);flex-wrap:wrap;gap:8px">'
+          +'<span style="font-weight:800;font-size:12.5px">👤 '+esc(o.name)+'</span>'
+          +'<span class="muted" style="font-size:12px">진행 중 '+o.items.length+'건에 부담당으로 들어 있습니다</span>'
+          +'<span style="flex:1"></span>'
+          +'<button onclick="dropSubAll(\''+escJ(o.name)+'\')" '
+          +'title="진행 중인 건에서만 뗍니다 — 종료된 건은 그대로 둡니다">'
+          +o.items.length+'건에서 한 번에 떼기</button></div>';
+      });
+      h+='<div class="muted" style="font-size:11.5px;margin-top:8px">'
+        +'종료된 건은 건드리지 않습니다 — 거기 남은 이름은 그때 함께 했다는 기록입니다.</div>'
+        +'</div>';
+    }
     // 문서철 — 보관된 인수인계서
     var dk=Object.keys(docs).sort().reverse();
     h+='<div class="panel"><h2 style="margin-bottom:8px">📁 문서철 — 보관된 인수인계서 '+(dk.length?dk.length+'건':'')+'</h2>';
@@ -3830,6 +3851,42 @@ function assignSuccessor(id,selEl){
   var sid=selEl.value; if(!sid)return;
   var name=selEl.options[selEl.selectedIndex].getAttribute('data-name');
   _handoverTo(id,sid,name);
+}
+/* ── 명단에 없는 사람이 부담당으로만 남은 건 ─────────────────────────
+   주담당이 빠지는 것은 「후임 지정」이 맡는다. 부담당은 넘길 일이 없고
+   이름만 떼면 되는데, 건별로 드로어를 열어 지우는 수밖에 없었다.
+   [이름, 그 사람이 부담당인 진행 중 업무들] 을 이름순으로 준다. */
+function orphanSubs(staff){
+  var act={}; (staff||[]).forEach(function(u){ if(u&&u.name) act[u.name]=1; });
+  var m={};
+  openItems().forEach(function(it){
+    mgrSubNames(it).forEach(function(n){
+      if(act[n]) return;                       // 재직자는 대상이 아니다
+      (m[n]=m[n]||[]).push(it);
+    });
+  });
+  return Object.keys(m).sort(function(a,b){ return a.localeCompare(b,'ko'); })
+    .map(function(n){ return {name:n,items:m[n]}; });
+}
+/* 진행 중인 건에서만 뗀다. 종료된 건은 그대로 둔다 —
+   거기 남은 이름은 "그때 이 사람이 함께 했다"는 기록이라 지우면 사실이 틀려진다. */
+function dropSubAll(name){
+  var arr=openItems().filter(function(it){ return mgrSubNames(it).indexOf(name)>=0; });
+  if(!arr.length){ toast('뗄 건이 없습니다','warn'); return; }
+  confirmM('「'+name+'」을(를) 진행 중인 업무 '+arr.length+'건의 부담당에서 뗍니다.\n\n'
+    +'주담당은 그대로입니다. 종료된 건도 그대로 둡니다.',{ok:arr.length+'건에서 떼기'})
+  .then(function(ok){
+    if(!ok)return;
+    var up={}, now=new Date().toISOString();
+    arr.forEach(function(it){
+      var left=(it.mgr_subs||[]).filter(function(s){ return !s||s.name!==name; });
+      up[NS+'/items/'+it._id+'/mgr_subs']=left.length?left:null;
+      up[NS+'/items/'+it._id+'/up_at']=now;
+    });
+    fbDb.ref().update(up).then(function(){
+      toast('👤 '+name+' — '+arr.length+'건에서 뗐습니다'); route();
+    }).catch(function(e){ toast('실패: '+e.message,'err'); });
+  });
 }
 function _hoDocRec(sid){
   var lv=leaving[sid]||{}; var its=leavingItems(sid,lv.name);

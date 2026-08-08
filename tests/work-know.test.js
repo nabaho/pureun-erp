@@ -42,8 +42,13 @@ function peRec(it) { return (it && it.ref && peRecMap[it.ref.id]) || null; }
 let PATCHED = null, LOGGED = [];
 function patchItem(id, f) { PATCHED = { id: id, f: f }; return Promise.resolve(true); }
 function addLog(id, t, d, k) { LOGGED.push([id, t, k]); return Promise.resolve(true); }
-let ONCE = {};
-const fbDb = { ref: (p) => ({ once: () => Promise.resolve({ val: () => ONCE[p] || null }) }) };
+let ONCE = {}, UPDATED = null, CONFIRM = false;
+// 확인 대화 — CONFIRM 값을 그대로 돌려준다
+function confirmM() { return Promise.resolve(CONFIRM); }
+const fbDb = { ref: (p) => ({
+  once: () => Promise.resolve({ val: () => ONCE[p] || null }),
+  update: (u) => { UPDATED = u; return Promise.resolve(); }
+}) };
 
 eval(gvar('HO_FIELDS') + '\n' + gvar('RETRO_FIELDS') + '\n'
   + gvar('HO_OVERDUE_DAYS') + '\n' + gvar('KB_KINDS') + '\n'
@@ -53,6 +58,7 @@ eval(gvar('HO_FIELDS') + '\n' + gvar('RETRO_FIELDS') + '\n'
      'kbKey', 'kbCoKey', 'kbCards', 'kbAll', 'kbStale', 'kbBad', 'kbRelated',
      '_hit', 'matchQ', 'searchAll', 'noteDone', 'hoPendingToMe', 'hoOverdue', 'isAdmin',
      'activeLeavings', 'hoBadgeCount', 'leavingItems', 'confirmHo',
+     'mgrSubNames', 'orphanSubs', 'dropSubAll',
      'excelImported', 'excelWipePaths'].map(grab).join('\n'));
 
 /* ══ 지식 카드 ══ */
@@ -229,6 +235,68 @@ PATCHED = null;
 confirmHo('없는건');
 ok('없는 건에는 아무 일도 안 한다', PATCHED === null);
 
+/* ══ 명단에 없는 사람이 부담당으로만 남은 건 ══
+   주담당이 빠지는 것은 「후임 지정」이 맡는다. 부담당은 넘길 일이 없고 이름만
+   떼면 되는데, 주담당만 보는 목록이 이것을 못 잡아 팀 전체 담당 목록에 퇴사자
+   이름이 계속 남아 있었다. */
+const STAFF = [{ sid: 'u1', name: '김동현' }, { sid: 'u2', name: '권형하' }];
+const SUBFIX = () => ({
+  A: { mgr_main: { name: '김동현' }, mgr_subs: [{ sid: 'u9', name: '임혜미' }] },
+  B: { mgr_main: { name: '권형하' }, mgr_subs: [{ name: '김동현' }, { sid: 'u9', name: '임혜미' }] },
+  C: { mgr_main: { name: '김동현' }, mgr_subs: [{ name: '권형하' }] },
+  D: { state: 'done', mgr_main: { name: '김동현' }, mgr_subs: [{ sid: 'u9', name: '임혜미' }] },
+  E: { mgr_main: { name: '임혜미' } },
+  F: { mgr_main: { name: '김동현' }, mgr_subs: [{ name: '박지호' }] }
+});
+items = SUBFIX();
+let OS = orphanSubs(STAFF);
+ok('명단에 없는 사람만 모은다', OS.map(o => o.name).join() === '박지호,임혜미');
+ok('재직자는 부담당이어도 안 모은다', OS.every(o => o.name !== '김동현' && o.name !== '권형하'));
+ok('그 사람이 부담당인 건만 센다', OS.filter(o => o.name === '임혜미')[0].items.map(i => i._id).join() === 'A,B');
+ok('종료된 건은 세지 않는다 (그때 함께 했다는 기록이다)',
+  OS.filter(o => o.name === '임혜미')[0].items.every(i => i._id !== 'D'));
+ok('주담당으로만 남은 사람은 여기 안 온다 (후임 지정이 맡는다)',
+  OS.every(o => o.items.every(i => i._id !== 'E')));
+ok('이름순으로 준다', OS.map(o => o.name).join() === '박지호,임혜미');
+ok('아무도 없으면 빈 목록', orphanSubs([{ sid: 'u9', name: '임혜미' }, { name: '박지호' }].concat(STAFF)).length === 0);
+// 명단이 비면 부담당 전원이 "명단에 없는 사람"이 된다 — 터지지만 않으면 된다
+ok('명단이 비어도 터지지 않는다',
+  orphanSubs([]).map(o => o.name).join() === '권형하,김동현,박지호,임혜미'
+  && orphanSubs(null).length === 4);
+
+// 확인 대화가 Promise 라 결과는 다음 차례에 온다. 파일의 마무리는 엑셀 묶음이
+// 쥐고 있으므로 여기서 끝내지 않고, 그 마지막 콜백에서 이 함수를 부른다.
+function subTests(done) {
+  items = SUBFIX();                 // 엑셀 묶음이 items 를 바꿔 놓았으므로 다시 깐다
+  CONFIRM = false; UPDATED = null;
+  dropSubAll('임혜미');
+  setTimeout(function () {
+    ok('확인을 누르지 않으면 아무것도 안 쓴다', UPDATED === null);
+    CONFIRM = true; UPDATED = null;
+    dropSubAll('임혜미');
+    setTimeout(function () { subCheck(); done(); }, 0);
+  }, 0);
+}
+function subCheck() {
+  ok('진행 중인 두 건에서만 뗀다',
+    UPDATED && UPDATED['work_erp/items/A/mgr_subs'] === null
+    && !('work_erp/items/D/mgr_subs' in UPDATED));
+  ok('같이 있던 다른 부담당은 남긴다', (function () {
+    const b = UPDATED['work_erp/items/B/mgr_subs'];
+    return b && b.length === 1 && b[0].name === '김동현';
+  })());
+  ok('마지막 한 명이면 칸을 비운다 (빈 배열을 남기지 않는다)',
+    UPDATED['work_erp/items/A/mgr_subs'] === null);
+  ok('주담당은 건드리지 않는다',
+    !('work_erp/items/A/mgr_main' in UPDATED) && !('work_erp/items/E/mgr_main' in UPDATED));
+  ok('상관없는 건은 손대지 않는다',
+    !('work_erp/items/C/mgr_subs' in UPDATED) && !('work_erp/items/F/mgr_subs' in UPDATED));
+  ok('손댄 시각을 남긴다', !!UPDATED['work_erp/items/A/up_at']);
+  UPDATED = null;
+  dropSubAll('없는사람');
+  ok('뗄 건이 없으면 아무것도 안 한다', UPDATED === null);
+}
+
 /* ══ 엑셀 가져오기 ══ */
 const RUN = grab('runImport');
 ok('키가 겹치거나 없으면 아예 넣지 않는다 (그만큼 서로 덮어써 사라진다)',
@@ -258,7 +326,10 @@ excelWipePaths(null).then(function (w) {
   items = { N1: { src: 'puerp' } };
   excelWipePaths(null).then(function (e) {
     ok('이관분이 하나도 없으면 빈 결과', e.n === 0 && Object.keys(e.paths).length === 0);
-    console.log('\n' + (fail ? 'FAILED ' + fail + '/' + (pass + fail) : 'ALL ' + pass + ' PASS'));
-    process.exit(fail ? 1 : 0);
+    // 부담당 떼기는 확인 대화를 거치므로 여기서 이어 돌리고 마지막에 마무리한다
+    subTests(function () {
+      console.log('\n' + (fail ? 'FAILED ' + fail + '/' + (pass + fail) : 'ALL ' + pass + ' PASS'));
+      process.exit(fail ? 1 : 0);
+    });
   });
 });
