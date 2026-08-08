@@ -630,6 +630,11 @@ const FIREBASE_CONFIG = {
 };
 
 const DB_ROOT = 'pucards';
+/* 개인 창고 — 규칙이 auth.uid === $uid 로 막는다. 잠근 본인만 읽고 쓸 수 있다.
+   화면에서 가리는 것이 아니라 서버가 아예 안 준다. */
+const PRIV_ROOT = 'pucards_private';
+let myUid = '';
+function privRoot(){ return myUid ? (PRIV_ROOT + '/' + myUid) : ''; }
 const GEMINI_KEY_LS = 'pucards_gemini_key';
 
 /* ══════ 🔒 잠금 폴더(개인 전용) ══════
@@ -782,7 +787,9 @@ function backfillIdx(){
   }catch(_){}
 }
 
-const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, colOrder:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, onlyPrivate:false, unlocked:{}, items:{}, groups:{}, trash:{}, views:{}, rules:{}, mailBlock:{}, view:'list', vtab:'' };
+const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, colOrder:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, onlyPrivate:false, unlocked:{}, items:{}, groups:{}, trash:{}, views:{}, rules:{}, mailBlock:{},
+  isAdmin:false, privOpen:false, priv:{items:{},groups:{},trash:{}},
+  view:'list', vtab:'' };
 
 /* ── 데이터 계층 ── */
 const Store = {
@@ -821,7 +828,15 @@ const Store = {
       /* 통합 이메일 로그인 (포털·ERP·컨설팅과 같은 Firebase 세션 공유) */
       if (firebase.auth){
         firebase.auth().onAuthStateChanged(u=>{
-          if (u && u.email){ myEmail=(u.email||'').toLowerCase(); hideCardsLogin(); subscribe(); ErpMatch.load(); loadSharedGKey(); }
+          if (u && u.email){
+            myEmail=(u.email||'').toLowerCase(); myUid=u.uid||'';
+            hideCardsLogin(); subscribe(); ErpMatch.load(); loadSharedGKey();
+            /* 대표만 폴더를 잠글 수 있다 — 포털(enter.html)이 이미 쓰는 값을 그대로 읽는다.
+               화면에서 숨기는 것은 편의일 뿐이고, 실제 차단은 규칙이 한다. */
+            this.db.ref('uid_roles/'+u.uid+'/isAdmin').once('value')
+              .then(s=>{ state.isAdmin = s.val()===true; render(); })
+              .catch(()=>{ state.isAdmin=false; });
+          }
           /* 익명 세션은 건드리지 않음 — 컨설팅 등 다른 앱이 읽기용으로 쓰는 세션을
              여기서 signOut하면 그 앱이 다시 익명 로그인 → 무한 핑퐁으로 전체가 튕김 */
           else { showCardsLogin(); }
