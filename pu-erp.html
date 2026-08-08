@@ -4668,6 +4668,28 @@ function erpClearBankProcessed(){
   return dbSet(BANK_PROCESSED_KEY, {}) !== false;
 }
 
+/* ── 그 항목·종류로 지금까지 받은 돈 ──
+   부분입금 기록이 두 곳에 나뉘어 있었다.
+     · splitPayments  — 입금관리·사건관리·컨설팅 화면이 쓰는 정본 [{date, amount, kind}]
+     · xxxPaidAmount  — 거래내역만 쓰던 누계 (retainerPaidAmount 등)
+   서로를 안 봐서, 두 화면에서 나눠 받으면 한쪽은 「덜 받음」 다른 쪽은 「더 받음」이 됐다.
+   이제 거래내역도 splitPayments 에 함께 적으므로 splitPayments 가 항상 같거나 크다.
+   그래서 큰 쪽을 쓰면 옛 기록(누계만 있는 건)도 그대로 맞는다 — 자료를 옮길 필요가 없다.
+   kindLabel: '착수금' | '성공보수' | '계약금' | '잔금' */
+function erpPaidSoFar(item, kindLabel, legacyAmt){
+  var s = 0;
+  try {
+    ((item && item.splitPayments) || []).forEach(function(sp){
+      if(sp && sp.kind === kindLabel) s += parseInt(sp.amount, 10) || 0;
+    });
+  } catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+  var l = parseInt(legacyAmt, 10) || 0;
+  return s > l ? s : l;
+}
+
+// 거래내역 후보 종류 → splitPayments 의 종류 이름표 (없으면 분할기록을 쓰지 않는 종류)
+var ERP_SPLIT_KIND = { retainer:'착수금', success:'성공보수', contractFee:'계약금', balance:'잔금' };
+
 // ── 이력 기반 금액 지문 ──
 // 월 고정 자문료는 적요가 엉뚱해도 "업체 + 같은 금액 반복"이 곧 신원이다.
 // finance_income 전건 스캔은 행×후보마다 하면 O(n²)이라 색인을 만들어 캐시한다.
@@ -8278,11 +8300,18 @@ function Sidebar(props){
       // 미수금관리 페이지와 동일 기준: 종결된 사건/프로젝트 중 미지급 + 세금계산서(발행·미입금)
       if(!CURRENT_USER.isAdmin) return null;
       var unpaid = 0;
+      // 이미 받은 돈을 빼고 «남은 것»이 있을 때만 센다 (미수금관리 화면과 같은 기준)
+      function _left(item, fee, kindLabel, legacyField){
+        var f = parseInt(fee,10)||0;
+        if(f <= 0) return 0;
+        var r = f - erpPaidSoFar(item, kindLabel, item && item[legacyField]);
+        return r > 0 ? r : 0;
+      }
       // 1) 사건 - 종결된 것만 (closedDate 있고 영구보관 아님)
       allCases.forEach(function(c){
         if(!c.closedDate || c.permanentArchived) return;
-        if((c.retainerFee||0) > 0 && !c.retainerPaidDate) unpaid++;
-        if((c.successFee||0)  > 0 && !c.successPaidDate)  unpaid++;
+        if(_left(c, c.retainerFee, '착수금', 'retainerPaidAmount') > 0 && !c.retainerPaidDate) unpaid++;
+        if(_left(c, c.successFee, '성공보수', 'successPaidAmount')  > 0 && !c.successPaidDate)  unpaid++;
       });
       // 2) 컨설팅·기금·기타 - 종결된 것만
       ['consultings','funds','other_projects'].forEach(function(key){
@@ -8290,8 +8319,8 @@ function Sidebar(props){
         if(!Array.isArray(arr)) return;
         arr.forEach(function(p){
           if(!p.closedDate || p.permanentArchived) return;
-          if((p.contractFee||0) > 0 && !p.contractPaid) unpaid++;
-          if((p.balanceFee||0)  > 0 && !p.balancePaid)  unpaid++;
+          if(_left(p, p.contractFee, '계약금', 'contractPaidAmount') > 0 && !p.contractPaid) unpaid++;
+          if(_left(p, p.balanceFee, '잔금', 'balancePaidAmount')  > 0 && !p.balancePaid)  unpaid++;
         });
       });
       // 3) 세금계산서 (발행·incomes 매칭 없음)
@@ -33511,25 +33540,30 @@ function FinanceLedger(){
     (dbGet(s.key,[])||[]).filter(function(it){return !it.permanentArchived&&!it.closedDate;}).forEach(function(it){
       var nm=it.companyName||it.name||'-';
       var cVat=it.contractFeeVatIncluded||false, bVat=it.balanceFeeVatIncluded||false;
+      // 이미 받은 돈은 분할기록(입금관리)과 누계(거래내역) 중 큰 쪽 — 두 화면에서 나눠 받아도 맞는다
+      var _pdR=erpPaidSoFar(it,'착수금',it.retainerPaidAmount);
+      var _pdS=erpPaidSoFar(it,'성공보수',it.successPaidAmount);
+      var _pdK=erpPaidSoFar(it,'계약금',it.contractPaidAmount);
+      var _pdB=erpPaidSoFar(it,'잔금',it.balancePaidAmount);
       if(it.retainerFee&&!it.retainerPaid&&!it.retainerPaidDate)
         pending.push({id:it.id+'-r',store:s.key,label:s.label+'(착수)',companyName:nm,
-          amount:it.retainerFee, expect:_expect(it.retainerFee,cVat,it.retainerPaidAmount),
-          vatLabel:_vatLabel(it.retainerFee,cVat), paidAmount:it.retainerPaidAmount||0,
+          amount:it.retainerFee, expect:_expect(it.retainerFee,cVat,_pdR),
+          vatLabel:_vatLabel(it.retainerFee,cVat), paidAmount:_pdR,
           item:it,kind:'retainer'});
       if(it.successFee&&!it.successPaid&&!it.successPaidDate)
         pending.push({id:it.id+'-s',store:s.key,label:s.label+'(성공보수)',companyName:nm,
-          amount:it.successFee, expect:_expect(it.successFee,bVat,it.successPaidAmount),
-          vatLabel:_vatLabel(it.successFee,bVat), paidAmount:it.successPaidAmount||0,
+          amount:it.successFee, expect:_expect(it.successFee,bVat,_pdS),
+          vatLabel:_vatLabel(it.successFee,bVat), paidAmount:_pdS,
           item:it,kind:'success'});
       if(it.contractFee&&!it.contractPaid)
         pending.push({id:it.id+'-k',store:s.key,label:s.label+'(계약금)',companyName:nm,
-          amount:it.contractFee, expect:_expect(it.contractFee,cVat,it.contractPaidAmount),
-          vatLabel:_vatLabel(it.contractFee,cVat), paidAmount:it.contractPaidAmount||0,
+          amount:it.contractFee, expect:_expect(it.contractFee,cVat,_pdK),
+          vatLabel:_vatLabel(it.contractFee,cVat), paidAmount:_pdK,
           item:it,kind:'contractFee'});
       if(it.balanceFee&&!it.balancePaid)
         pending.push({id:it.id+'-b',store:s.key,label:s.label+'(잔금)', companyName:nm,
-          amount:it.balanceFee, expect:_expect(it.balanceFee,bVat,it.balancePaidAmount),
-          vatLabel:_vatLabel(it.balanceFee,bVat), paidAmount:it.balancePaidAmount||0,
+          amount:it.balanceFee, expect:_expect(it.balanceFee,bVat,_pdB),
+          vatLabel:_vatLabel(it.balanceFee,bVat), paidAmount:_pdB,
           item:it,kind:'balance'});
       if(it.consultingFee&&!it.paid)
         pending.push({id:it.id+'-c',store:s.key,label:s.label,          companyName:nm,
@@ -33579,10 +33613,16 @@ function FinanceLedger(){
      rows 를 봐야 «어느 달 명세서인지» 알 수 있어 상태 선언 뒤에 둔다. */
   (function addAdvisoryPending(){
     try {
-      var paidBy = {};                       // '회사명|YYYY-MM' → 그 달 이미 입금됨
+      /* '회사명|YYYY-MM' → 그 달 자문료로 받은 금액 합계.
+         전에는 받았는지만(true/false) 봐서, 20만원 중 15만원만 들어와도 그 달이 끝난 걸로
+         처리되고 5만원이 사라졌다. 이제 금액을 더해 모자란 만큼만 후보로 남긴다.
+         잔금이 다음 달에 들어와도 advisoryYm 을 보고 «받을 달» 로 친다. */
+      var paidAmt = {};
       (dbGet('finance_income', []) || []).forEach(function(i){
-        if(i && i.kind === '자문료' && i.companyName && i.date)
-          paidBy[i.companyName + '|' + String(i.date).slice(0,7)] = true;
+        if(i && i.kind === '자문료' && i.companyName && i.date){
+          var _k = i.companyName + '|' + (i.advisoryYm || String(i.date).slice(0,7));
+          paidAmt[_k] = (paidAmt[_k] || 0) + (parseInt(i.amount, 10) || 0);
+        }
       });
       var ym = todayYM();
       var ds = ((rows && rows.inc) || []).map(function(r){ return String(r.date||'').slice(0,7); }).filter(Boolean);
@@ -33593,11 +33633,15 @@ function FinanceLedger(){
         if(fee <= 0) return;
         var pd = co.taxInvoicePaymentDay;
         if(pd === '선납' || pd === '건별' || pd === '분기별') return;
-        if(paidBy[co.name + '|' + ym]) return;
+        var got = paidAmt[co.name + '|' + ym] || 0;
+        if(got >= fee) return;                    // 다 받았다
+        var remain = fee - got;                   // 모자란 만큼만 후보로 남긴다
         // 월 자문료는 전부 부가세 포함이다(대표 확인)
-        pending.push({ id:'adv-'+co.id+'-'+ym, store:'companies', label:'자문료('+parseInt(ym.slice(5),10)+'월)',
-          companyName:co.name, amount:fee, expect:fee, vatLabel:'', paidAmount:0,
-          item:co, kind:'advisory', ym:ym });
+        pending.push({ id:'adv-'+co.id+'-'+ym, store:'companies',
+          label:'자문료('+parseInt(ym.slice(5),10)+'월)'+(got>0?' 잔금':''),
+          companyName:co.name, amount:fee, expect:remain,
+          vatLabel:got>0?('약정 '+fee.toLocaleString()+' 중 '+got.toLocaleString()+' 받음'):'',
+          paidAmount:got, item:co, kind:'advisory', ym:ym });
       });
     } catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
   })();
@@ -33964,6 +34008,9 @@ function FinanceLedger(){
       companyName:pItem.companyName, amount:row.amount, date:paidDate,
       kind: isAdv ? '자문료' : (pItem.label || ''),
       category: isAdv ? 'inc-advisory' : undefined,
+      /* 자문료 잔금이 다음 달에 들어와도 «받을 달» 로 친다 — 7월 자문료 잔금을 8월에 받으면 7월 매출.
+         이 칸이 있어야 addAdvisoryPending 이 그 달 합계를 제대로 세고 잔금 후보가 사라진다. */
+      advisoryYm: isAdv ? (pItem.ym || String(paidDate).slice(0,7)) : undefined,
       memo:'[하나'+(fileType==='bank'?'은행':'카드')+'] '+(row.memo||'')+(row.note?' / '+row.note:''),
       sourceKind: isAdv ? 'company' : pItem.store.replace('s',''),
       sourceId:pItem.item.id,
@@ -33982,18 +34029,30 @@ function FinanceLedger(){
     }
     var _sp = {};
     var partial = opts.partial && !opts.feeAmount;
-    if(pItem.kind==='retainer'){
-      _sp.retainerPaidAmount = (pItem.item.retainerPaidAmount||0) + row.amount;
-      if(!partial){ _sp.retainerPaid=true; _sp.retainerPaidDate=paidDate; }
-    } else if(pItem.kind==='success'){
-      _sp.successPaidAmount = (pItem.item.successPaidAmount||0) + row.amount;
-      if(!partial){ _sp.successPaid=true; _sp.successPaidDate=paidDate; }
-    } else if(pItem.kind==='contractFee'){
-      _sp.contractPaidAmount = (pItem.item.contractPaidAmount||0) + row.amount;
-      if(!partial){ _sp.contractPaid=true; _sp.contractPaidDate=paidDate; }
-    } else if(pItem.kind==='balance'){
-      _sp.balancePaidAmount = (pItem.item.balancePaidAmount||0) + row.amount;
-      if(!partial){ _sp.balancePaid=true; _sp.balancePaidDate=paidDate; }
+    var _it = pItem.item || {};
+    var _kl = ERP_SPLIT_KIND[pItem.kind] || '';       // 분할기록 종류 이름표
+    if(_kl){
+      /* 분할기록(splitPayments)에 한 줄 더한다.
+         전에는 거래내역만 xxxPaidAmount 에 쌓고 입금관리는 splitPayments 에 쌓아
+         두 화면이 서로를 못 봤다 — 나눠 받으면 한쪽은 덜 받은 걸로, 다른 쪽은 더 받은 걸로 어긋났다.
+         이제 양쪽에 함께 적고, 읽을 때는 erpPaidSoFar 로 큰 쪽을 본다. */
+      var _lf = { retainer:'retainerPaidAmount', success:'successPaidAmount',
+                  contractFee:'contractPaidAmount', balance:'balancePaidAmount' }[pItem.kind];
+      var _before = erpPaidSoFar(_it, _kl, _it[_lf]);
+      var _after  = _before + row.amount;
+      _sp.splitPayments = (_it.splitPayments||[]).concat([{
+        id:'sp-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+        date:paidDate, amount:row.amount, kind:_kl }]);
+      _sp[_lf] = _after;
+      /* 약정액을 다 채웠으면 「일부입금」을 골랐더라도 완납으로 본다.
+         부가세 포함 여부에 따라 실제 받을 금액이 다르므로 _expect 와 같은 셈을 쓴다. */
+      var _isRet = (pItem.kind==='retainer' || pItem.kind==='contractFee');
+      var _vt = _isRet ? _it.contractFeeVatIncluded : _it.balanceFeeVatIncluded;
+      var _totalExp = _expect(parseInt(pItem.amount,10)||0, _vt, 0);
+      var _done = !partial || (_totalExp > 0 && _after >= _totalExp - 1100);
+      var _flag = { retainer:['retainerPaid','retainerPaidDate'], success:['successPaid','successPaidDate'],
+                    contractFee:['contractPaid','contractPaidDate'], balance:['balancePaid','balancePaidDate'] }[pItem.kind];
+      if(_done){ _sp[_flag[0]] = true; _sp[_flag[1]] = paidDate; }
     } else {
       if(!partial){ _sp.paid=true; _sp.paidDate=paidDate; }
     }
@@ -36532,10 +36591,15 @@ function IncomePendingTab(){
       var _src = items.find(function(x){ return x.id === p.itemId; });
       if(!_src){ showToast('❌ 원본 항목을 찾을 수 없음 — 새로고침 후 다시 시도'); return; }
       _srcBefore = Object.assign({}, _src);
-      // 기존 분할 누적 (잔액 계산용)
-      var _prevPaid = ((p.item.splitPayments)||[]).filter(function(sp){
-        return sp.kind === (p.store.isCase ? (p.kind==='retainer'?'착수금':'성공보수') : (p.kind==='contract'?'계약금':'잔금'));
-      }).reduce(function(s,sp){ return s+(sp.amount||0); }, 0);
+      /* 기존 분할 누적 (잔액 계산용).
+         거래내역에서 받은 분은 예전에 xxxPaidAmount 에만 쌓여 여기서 안 보였다 —
+         그 바람에 통장에서 절반, 여기서 절반을 받으면 여전히 미납으로 남았다.
+         erpPaidSoFar 가 분할기록과 누계 중 큰 쪽을 돌려주므로 양쪽이 같은 잔액을 본다. */
+      var _kindLabel = p.store.isCase ? (p.kind==='retainer'?'착수금':'성공보수')
+                                      : (p.kind==='contract'?'계약금':'잔금');
+      var _legacyField = p.store.isCase ? (p.kind==='retainer'?'retainerPaidAmount':'successPaidAmount')
+                                        : (p.kind==='contract'?'contractPaidAmount':'balancePaidAmount');
+      var _prevPaid = erpPaidSoFar(p.item, _kindLabel, p.item && p.item[_legacyField]);
       var _remaining = p.amount - _prevPaid;
       // 카드결제: 실입금(카드수수료 차감 후)만 들어와도 매출은 잔액 전액·완납, 차액은 카드수수료로 기록
       var _cardMode = !!(confirmModal && confirmModal.cardMode);
@@ -36568,6 +36632,8 @@ function IncomePendingTab(){
         srcPatch = { splitPayments:(_src.splitPayments||[]).concat([_se]) };
         if(_isFullyPaid){ srcPatch[paidKey] = true; srcPatch[dateKey2] = paidDate; }
       }
+      // 거래내역이 보는 누계 칸도 함께 맞춘다 (두 화면이 같은 잔액을 보게)
+      srcPatch[_legacyField] = _prevPaid + payAmt;
       dbPatch(p.store.key, p.itemId, srcPatch);
 
     var it = p.item;
@@ -37798,7 +37864,20 @@ function IncomeCompanyTab(){
 
   function isPaid(name,month){
     var ym=selYear+'-'+('0'+month).slice(-2);
-    return incomes.some(function(i){return i.companyName===name&&i.sourceKind==='company'&&(i.date||'').slice(0,7)===ym;});
+    return incomes.some(function(i){return i.companyName===name&&i.sourceKind==='company'&&((i.advisoryYm||(i.date||'').slice(0,7))===ym);});
+  }
+  /* 그 달 자문료를 얼마나 받았는지 — 부분입금(20만 중 15만)을 가려내려고 금액을 더한다.
+     잔금이 다음 달에 들어와도 advisoryYm 이 가리키는 «받을 달» 로 센다. */
+  function paidInfo(name, month, fee){
+    var ym=selYear+'-'+('0'+month).slice(-2);
+    var got=0, n=0;
+    incomes.forEach(function(i){
+      if(i.companyName!==name || i.sourceKind!=='company') return;
+      if((i.advisoryYm||(i.date||'').slice(0,7))!==ym) return;
+      got += parseInt(i.amount,10)||0; n++;
+    });
+    var f = parseInt(fee,10)||0;
+    return { got:got, cnt:n, fee:f, full:(n>0 && (f<=0 || got>=f)), partial:(n>0 && f>0 && got<f) };
   }
   // ── Phase 2: 건별 저장 — 그 건들만 서버 반영 ──
   function refreshIncomes(){ setIncomes(dbGet('finance_income', []).slice()); }
@@ -38834,6 +38913,7 @@ function IncomeCompanyTab(){
                   var beforeContract = isBeforeContract(co, m);
                   var paid=isPaid(co.name,m);
                   var item=paid?getItem(co.name,m):null;
+                  var pInf=paidInfo(co.name,m,co.fee);      // 부분입금(20만 중 15만)을 가려낸다
                   var isNow=m===nowMonth&&selYear===nowYear;
                   var dateStr=item?(item.date||'').slice(5).replace('-','/'):null;
                   var hasNote=item&&item.note;
@@ -38890,14 +38970,22 @@ function IncomeCompanyTab(){
                     },
                     style:{textAlign:'center',padding:'1px 0',verticalAlign:'middle',
                       background: nicesDragHover === co.name+'-'+m ? '#f5f3ff'
+                        : pInf.partial ? '#fffbeb'
                         : paid ? (isNow?'#bbf7d0':'#f0fdf4') : (isNow?'#fef2f2':''),
                       borderLeft: nicesDragActive && !paid ? '1.5px dashed #2563eb' : '1px solid #f1f5f9',
                       cursor: nicesDragActive && !paid ? 'copy' : 'pointer',
                       transition:'background 0.1s, border-color 0.1s'}},
                     h('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:'0',userSelect:'none'}},
-                      h('input',{type:'checkbox',checked:paid,readOnly:true,
-                        style:{cursor:'pointer',width:'15px',height:'15px',accentColor:'#16a34a',margin:'0',pointerEvents:'none'}}),
-                      dateStr?h('span',{style:{fontSize:'10px',color:paid?'#059669':'#94a3b8',fontFamily:'monospace',lineHeight:'1.2'}},dateStr):null,
+                      // 일부만 받은 달은 체크 대신 ◐ 로 — 아직 받을 돈이 남았다는 뜻
+                      pInf.partial
+                        ? h('span',{title:'약정 '+pInf.fee.toLocaleString()+'원 중 '+pInf.got.toLocaleString()+'원 받음 · '+(pInf.fee-pInf.got).toLocaleString()+'원 남음',
+                            style:{fontSize:'14px',color:'#d97706',lineHeight:'1.1',fontWeight:800}},'◐')
+                        : h('input',{type:'checkbox',checked:paid,readOnly:true,
+                            style:{cursor:'pointer',width:'15px',height:'15px',accentColor:'#16a34a',margin:'0',pointerEvents:'none'}}),
+                      pInf.partial
+                        ? h('span',{style:{fontSize:'8.5px',color:'#b45309',fontFamily:'monospace',lineHeight:'1.2',fontWeight:700}},
+                            Math.round(pInf.got/10000)+'/'+Math.round(pInf.fee/10000)+'만')
+                        : (dateStr?h('span',{style:{fontSize:'10px',color:paid?'#059669':'#94a3b8',fontFamily:'monospace',lineHeight:'1.2'}},dateStr):null),
                       hasNote?h('span',{style:{fontSize:'7px',color:'#f59e0b'},title:item.note},'📝'):null
                     )
                   );
@@ -50694,23 +50782,36 @@ function FinanceReceivable(props){
   // 미수금 수집
   var unpaid = [];
 
+  /* 이미 받은 돈은 빼고 «남은 것»만 미수금으로 센다.
+     전에는 약정액을 그대로 세서, 110만원 중 55만원을 받았어도 110만원이 미수금으로 잡혔다.
+     (법인대시보드는 빼고 세고 있어 두 화면의 숫자가 달랐다) */
+  function _remain(item, fee, kindLabel, legacyField){
+    var f = parseInt(fee, 10) || 0;
+    if(f <= 0) return 0;
+    var got = erpPaidSoFar(item, kindLabel, item && item[legacyField]);
+    var r = f - got;
+    return r > 0 ? r : 0;
+  }
+
   // 1. 사건 - 종결관리로 넘어간 사건만 (closedDate 있음)
   cases.filter(function(c){return c.closedDate && !c.permanentArchived;}).forEach(function(c){
-    if((c.retainerFee||0) > 0 && !c.retainerPaidDate){
+    var _rR = _remain(c, c.retainerFee, '착수금', 'retainerPaidAmount');
+    if(_rR > 0 && !c.retainerPaidDate){
       unpaid.push({
         kind:'착수금', sourceType:'사건', icon:'⚖️', color:'#2563eb',
         sourceNo:c.caseNo, companyName:c.companyName,
-        amount:c.retainerFee,
+        amount:_rR, contractAmt:c.retainerFee||0, paidAmt:(c.retainerFee||0)-_rR,
         expectedDate:c.contractDate || c.createdAt || '',
         sourceId:c.id, mgr:c.managerMain, menuId:'biz/case'
       });
     }
     // 회수불능(패소 등) 성공보수는 미수금 제외, 기록만 보관
-    if((c.successFee||0) > 0 && !c.successPaidDate && !(c.successFeeStatus === 'unrecoverable' && c.status === 'closed')){
+    var _rS = _remain(c, c.successFee, '성공보수', 'successPaidAmount');
+    if(_rS > 0 && !c.successPaidDate && !(c.successFeeStatus === 'unrecoverable' && c.status === 'closed')){
       unpaid.push({
         kind:'성공보수', sourceType:'사건', icon:'⚖️', color:'#2563eb',
         sourceNo:c.caseNo, companyName:c.companyName,
-        amount:c.successFee,
+        amount:_rS, contractAmt:c.successFee||0, paidAmt:(c.successFee||0)-_rS,
         expectedDate:c.closedDate || c.contractDate || '',
         sourceId:c.id, mgr:c.managerMain, menuId:'biz/case'
       });
@@ -50725,20 +50826,22 @@ function FinanceReceivable(props){
   ];
   projTypes.forEach(function(pt){
     pt.arr.filter(function(p){return p.closedDate && !p.permanentArchived;}).forEach(function(p){
-      if((p.contractFee||0) > 0 && !p.contractPaid){
+      var _rK = _remain(p, p.contractFee, '계약금', 'contractPaidAmount');
+      if(_rK > 0 && !p.contractPaid){
         unpaid.push({
           kind:'계약금', sourceType:pt.type, icon:pt.icon, color:pt.color,
           sourceNo:p.no, companyName:p.companyName,
-          amount:p.contractFee,
+          amount:_rK, contractAmt:p.contractFee||0, paidAmt:(p.contractFee||0)-_rK,
           expectedDate:p.contractDate || p.createdAt || '',
           sourceId:p.id, mgr:p.managerMain, menuId:pt.menuId
         });
       }
-      if((p.balanceFee||0) > 0 && !p.balancePaid){
+      var _rB = _remain(p, p.balanceFee, '잔금', 'balancePaidAmount');
+      if(_rB > 0 && !p.balancePaid){
         unpaid.push({
           kind:'잔금', sourceType:pt.type, icon:pt.icon, color:pt.color,
           sourceNo:p.no, companyName:p.companyName,
-          amount:p.balanceFee,
+          amount:_rB, contractAmt:p.balanceFee||0, paidAmt:(p.balanceFee||0)-_rB,
           expectedDate:p.balanceDueDate || p.contractDate || p.createdAt || '',
           sourceId:p.id, mgr:p.managerMain, menuId:pt.menuId
         });
@@ -50935,8 +51038,17 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
                   h('td', null, h('span', { style:{ background:it.color+'22', color:it.color, fontSize:'10.5px', padding:'2px 7px', borderRadius:'10px', fontWeight:700 } }, it.icon+' '+it.sourceType)),
                   h('td', { style:{ fontFamily:'monospace', fontSize:'10.5px', color:'#475569' } }, it.sourceNo || '-'),
                   h('td', { style:{ fontWeight:600 } }, it.companyName || '-'),
-                  h('td', { style:{ fontSize:'11px' } }, it.kind),
-                  h('td', { className:'ar', style:{ fontFamily:'monospace', fontWeight:700, color:'#dc2626' } }, (it.amount || 0).toLocaleString()),
+                  h('td', { style:{ fontSize:'11px' } },
+                    it.kind,
+                    // 일부만 받은 건은 얼마를 받았는지 함께 보여준다
+                    (it.paidAmt||0) > 0 && h('div', { title:'약정 '+(it.contractAmt||0).toLocaleString()+'원 중 '+(it.paidAmt||0).toLocaleString()+'원을 이미 받았습니다',
+                      style:{ marginTop:'2px', display:'inline-block', background:'#eff6ff', color:'#1d4ed8',
+                        border:'1px solid #bfdbfe', borderRadius:'8px', padding:'0 5px', fontSize:'9.5px', fontWeight:700 } },
+                      '일부받음 '+(it.paidAmt||0).toLocaleString())),
+                  h('td', { className:'ar', style:{ fontFamily:'monospace', fontWeight:700, color:'#dc2626' } },
+                    (it.amount || 0).toLocaleString(),
+                    (it.paidAmt||0) > 0 && h('div', { style:{ fontSize:'9.5px', color:'#94a3b8', fontWeight:500 } },
+                      '약정 '+(it.contractAmt||0).toLocaleString())),
                   h('td', { style:{ textAlign:'center', color:'#2563eb', fontSize:'11px', paddingRight:'8px' } }, '→')
                 );
               })
