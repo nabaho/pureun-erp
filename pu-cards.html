@@ -1396,7 +1396,7 @@ function listItems(){
   const q = $('search').value.trim().toLowerCase();
   const qc = q.replace(/\s/g,'');
   const isCho = qc && /^[ㄱ-ㅎ]+$/.test(qc);   /* 초성 검색: ㅎㄱㄷ → 홍길동 */
-  const arr = Object.values(state.items)
+  const arr = Object.values(allItems())
     .filter(it => it.kind===state.tab)
     .filter(it => {
       if (state.group==='all') return true;
@@ -2145,7 +2145,7 @@ function openEditor(item, photoObj, pre){
       : `<input id="f_${k}" value="${esc(src[k])}">`;
     fh += `<div class="field" style="${wide.includes(k)?'grid-column:1/3':''}"><label>${label}</label>${tag}</div>`;
   });
-  const groups=Object.values(state.groups).filter(canSeeGroup).sort((a,b)=>(a.order||0)-(b.order||0));
+  const groups=Object.values(allGroups()).filter(canSeeGroup).sort((a,b)=>(a.order||0)-(b.order||0));
   /* 새 명함이고 현재 폴더 보는 중이면 그 폴더를 기본 선택 */
   const curGroupValid = state.group && state.group!=='all' && state.groups[state.group] && (state.groups[state.group].kind||'card')===kind;
   const defGroup = (src.group!==undefined && src.group!=='') ? src.group : (!item && curGroupValid ? state.group : (src.group||''));
@@ -3747,7 +3747,8 @@ function pcItem(attrs, label, n, on){
   return `<div class="pcitem ${on?'on':''}" ${attrs}>${label}${n!==undefined?`<span>${n}</span>`:''}</div>`;
 }
 function renderPCSide(){
-  const all = Object.values(state.items);
+  /* 개인 폴더가 열려 있으면 그 명함도 함께 센다 — 대표 눈에는 한 목록이어야 한다 */
+  const all = Object.values(allItems());
   const kindArr = all.filter(it=>it.kind===state.tab);
   const isAllView = g => state.group===g && state.owner==='all';
   let h = `<div class="pclogo" style="display:flex;align-items:flex-start;justify-content:space-between">
@@ -3814,6 +3815,8 @@ function renderPCSide(){
       <span class="logoutTimer" style="display:none;font-size:11px;font-weight:700;color:#cdd8f0;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:5px;padding:3px 8px"></span>
       <button onclick="doLogoutCards()" title="로그아웃" style="margin-left:auto;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#dfe6f3;border-radius:7px;padding:5px 12px;font-size:12px;cursor:pointer">🚪 로그아웃</button>
     </div>
+    ${state.isAdmin ? `<button class="pcside-settings" onclick="openPrivateVault()"
+      title="대표만 보는 개인 폴더 — 비밀번호를 맞혀야 자료를 가져옵니다">${state.privOpen?'🔓 개인 폴더 닫기':'🔒 개인 폴더 열기'}</button>` : ''}
     <button class="pcside-settings" onclick="openMaterialShelf()" title="회사소개서·계약서 등 보낼 자료 관리">📎 자료함</button>
     <button class="pcside-settings" onclick="openSettingsPage()" title="정리·데이터·연동·탭·계정 설정 (별도 화면으로 열림)">⚙️ 환경설정</button>
   </div>`;
@@ -5279,6 +5282,74 @@ function movePaths(ids, gid, dir){
   return out;
 }
 /* ══════ 개인 창고 — 화면 ══════ */
+let _privRefs = [];   /* 구독 해제용 */
+
+/* 비밀번호 기록만 먼저 읽는다 — 명함은 아직 안 가져온다 */
+async function privLockRec(){
+  if(Store.mode!=='firebase' || !privRoot()) return null;
+  const s = await Store.db.ref(privRoot()+'/lock').once('value');
+  return s.val() || null;
+}
+/* 처음 잠글 때 비밀번호를 정한다 */
+async function setPrivatePassword(){
+  const pw = prompt('개인 폴더 비밀번호를 정하세요.\n\n'
+    + '· 잊어버려도 명함은 사라지지 않습니다 (대표님 로그인으로 다시 정할 수 있습니다)\n'
+    + '· 자리를 비운 사이 누가 화면을 만지는 것을 막는 장치입니다');
+  if(pw===null) return null;
+  if(!String(pw).trim()){ toast('비밀번호가 비어 있습니다'); return null; }
+  const pw2 = prompt('한 번 더 입력하세요.');
+  if(pw2===null) return null;
+  if(pw!==pw2){ toast('두 번 입력한 비밀번호가 다릅니다'); return null; }
+  const salt = newSalt();
+  const hash = await pwHash(pw, salt, PW_ITER);
+  await Store.db.ref(privRoot()+'/lock').set({ salt, iter:PW_ITER, hash });
+  return true;
+}
+/* 개인 폴더 열기 — 맞은 뒤에야 구독한다.
+   ★ 비밀번호를 맞히기 전에는 개인 자료를 브라우저로 가져오지도 않는다. */
+async function openPrivateVault(){
+  if(!state.isAdmin) return toast('대표만 열 수 있습니다');
+  if(Store.mode!=='firebase') return toast('클라우드에 연결된 상태에서만 됩니다');
+  if(state.privOpen) return closePrivateVault();
+  let rec;
+  try{ rec = await privLockRec(); }
+  catch(e){ return toast('개인 창고를 읽지 못했습니다 — ' + ((e&&e.message)||'')); }
+  if(!rec) return toast('아직 잠근 폴더가 없습니다. 폴더 ⋮ → 🔒 잠금으로 만드세요',5000);
+  const pw = prompt('개인 폴더 비밀번호를 입력하세요.');
+  if(pw===null) return;
+  const h = await pwHash(pw, rec.salt, rec.iter||PW_ITER);
+  if(h !== rec.hash) return toast('비밀번호가 틀렸습니다');
+
+  const P = privRoot();
+  const bind = (sub, key) => {
+    const ref = Store.db.ref(P+'/'+sub);
+    const fn = ref.on('value', s => { state.priv[key] = s.val()||{}; render(); });
+    _privRefs.push([ref, fn]);
+  };
+  bind('items','items'); bind('groups','groups'); bind('trash','trash');
+  state.privOpen = true;
+  toast('🔓 개인 폴더를 열었습니다 — 새로고침하면 다시 잠깁니다',5000);
+  render();
+}
+function closePrivateVault(){
+  _privRefs.forEach(([ref,fn])=>{ try{ ref.off('value', fn); }catch(_){} });
+  _privRefs = [];
+  state.priv = {items:{},groups:{},trash:{}};
+  state.privOpen = false;
+  if(state.group && !state.groups[state.group]) state.group='all';
+  toast('🔒 개인 폴더를 닫았습니다');
+  render();
+}
+/* 화면에서만 쓰는 표시 — 저장할 때는 떼고 보낸다.
+   개인 창고에 있다는 사실 자체가 이미 개인이라는 뜻이라 기록에 남길 이유가 없다. */
+function isPrivGroup(g){ return !!(g && state.priv.groups[g.id]); }
+function isPrivItem(it){ return !!(it && state.priv.items[it.id]); }
+function allItems(){
+  return state.privOpen ? Object.assign({}, state.items, state.priv.items) : state.items;
+}
+function allGroups(){
+  return state.privOpen ? Object.assign({}, state.groups, state.priv.groups) : state.groups;
+}
 
 /* ── 검색칸: 글자가 있을 때만 ✕ 를 보이고, 누르면 한 번에 지운다 ──
    예전에는 백스페이스로 하나씩 지워야 했다.
