@@ -43,17 +43,43 @@
     return m ? { type: m[1].trim(), year: m[2] } : null;
   }
 
-  function mapRecord(coll, key, c, userMap) {
+  /* ===== 유형 코드표 =====
+     pu-erp는 유형을 코드로 저장하고(c.typeCodes.consulting 또는 c.typeCode),
+     코드표(biz_cons_types 등)에 이름과 수행기관이 함께 있다.
+     예) cons-job-neung → 산업일자리 / 한국능률협회 (실사용에서 확인).
+     수행기관이 채워지면 kcareer가 그 건을 외부기관 실적으로 분류한다. */
+  var TYPEMAP_KEY = { cases: 'case', consultings: 'consulting', funds: 'fund', other_projects: 'other' };
+  function typeCodeOf(coll, c) {
+    var k = TYPEMAP_KEY[coll];
+    if (c.typeCodes && k && c.typeCodes[k]) return String(c.typeCodes[k]);
+    return String(c.typeCode || '');
+  }
+  function lookupType(coll, c, typeMap) {
+    var k = TYPEMAP_KEY[coll];
+    var list = (typeMap && k && typeMap[k]) || null;
+    if (!list || !list.length) return null;
+    var code = typeCodeOf(coll, c);
+    if (!code) return null;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && String(list[i].code) === code) return list[i];
+    }
+    return null;
+  }
+
+  function mapRecord(coll, key, c, userMap, typeMap) {
     var m = COLL_MAP[coll];
     if (!m || !c) return null;
     var sid = mainSid(c);
     var dateRaw = c.closedDate || c.endDate || '';
     var proj = pick(c, m.proj);
     var cn = fromCaseNo(c.caseNo || proj);
+    var t = lookupType(coll, c, typeMap);
     return {
       store: m.store,
       rec: {
-        type: pick(c, m.type) || (cn ? cn.type : ''),
+        type: pick(c, m.type) || (t ? (t.name || '') : '') || (cn ? cn.type : ''),
+        /* 수행기관은 코드표에서만 온다 — 비면 푸른 자체 실적(내부 탭) */
+        agency: (t && t.agency) || '',
         org: c.companyName || c.payee || '',
         project: proj,
         year: String(dateRaw).slice(0, 4) || (cn ? cn.year : ''),
@@ -75,12 +101,24 @@
     return val;
   }
 
+  /* 같은 실적인지 — 기관·연도·유형으로 판단(시드에는 puRef가 없어 이름밖에 열쇠가 없다) */
+  function _norm(s) { return String(s || '').replace(/[\s\(\)（）\-·,㈜]/g, '').toLowerCase(); }
+  function _sameWork(rec, r) {
+    if (!r || r.puRef) return false;                 /* 이미 pu와 이어진 건은 대상 아님 */
+    if (r.store && r.store !== rec._store) return false;
+    var a = _norm(rec.org), b = _norm(r.org);
+    if (!a || !b || a !== b) return false;           /* 기관(고객사)이 다르면 다른 건 */
+    if (rec.year && r.year && rec.year !== r.year) return false;
+    return true;
+  }
+
   /* ===== 병합 계획 =====
-     추가만 계획한다. 기존 레코드는 건드리지 않고(수동 수정 보존),
-     existingRefs에 있는 puRef는 배제된 것이라도 다시 들어오지 않는다. */
-  function buildSyncPlan(collData, existingRefs, userMap) {
+     추가만 계획한다. 다만 puRef 없는 기존 실적(시드 등)이 같은 건이면
+     새로 만들지 않고 puRef만 붙인다(중복 방지 — 실사용에서 컨설팅 17건이 겹쳤다). */
+  function buildSyncPlan(collData, existingRefs, userMap, typeMap, existingRecords) {
     var known = (existingRefs instanceof Set) ? existingRefs : new Set(existingRefs || []);
-    var plan = { adds: [], counts: { case: 0, consult: 0, fund: 0, etc: 0 },
+    var pool = (existingRecords || []).slice();
+    var plan = { adds: [], links: [], counts: { case: 0, consult: 0, fund: 0, etc: 0 },
                  skippedOpen: 0, skippedKnown: 0, closedCount: 0, openCount: 0 };
     Object.keys(COLL_MAP).forEach(function (coll) {
       var v = unwrap(collData ? collData[coll] : null);
@@ -90,8 +128,20 @@
         if (!c) return;                                       /* Firebase 배열형의 null 구멍 */
         var ref = coll + '/' + key;
         if (known.has(ref)) { plan.skippedKnown++; return; }
-        var m = mapRecord(coll, key, c, userMap);
+        var m = mapRecord(coll, key, c, userMap, typeMap);
         if (!m) return;
+        /* 기존 실적과 같은 건이면 puRef만 붙이고 넘어간다 */
+        m.rec._store = m.store;
+        var hitIdx = -1;
+        for (var i = 0; i < pool.length; i++) { if (_sameWork(m.rec, pool[i])) { hitIdx = i; break; } }
+        delete m.rec._store;
+        if (hitIdx >= 0) {
+          var h = pool.splice(hitIdx, 1)[0];                  /* 한 건에 두 번 붙지 않게 뺀다 */
+          plan.links.push({ id: h.id, store: h.store, puRef: m.rec.puRef,
+                            agency: m.rec.agency || '', type: m.rec.type || '',
+                            main: m.rec.main || '', status: m.rec.status || '' });
+          return;
+        }
         /* 진행중도 담는다 — 종료만 받으면 실적이 영원히 안 들어온다(실사용) */
         if (isClosed(c)) plan.closedCount++; else plan.openCount++;
         plan.adds.push(m);

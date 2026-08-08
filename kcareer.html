@@ -2014,7 +2014,21 @@ async function _puFetchPlan(){
     var s = await fbDb.ref('data/' + colls[i]).once('value');
     collData[colls[i]] = _puUnwrap(s.val());   /* pu-erp의 {v,u} 봉투 벗기기 */
   }
-  var plan = KcareerPuSync.buildSyncPlan(collData, _puKnownRefs(), userMap || {});
+  /* pu-erp는 유형을 코드로 저장한다. 코드표에 유형 이름과 수행기관이 함께 있어
+     이걸 읽어야 유형·수행기관 칸이 채워지고 외부기관 분류도 맞는다.
+     예) cons-job-neung → 산업일자리 / 한국능률협회 */
+  var TK = { case:'biz_case_types', consulting:'biz_cons_types', fund:'biz_fund_types', other:'biz_other_types' };
+  var typeMap = {};
+  for(var tk in TK){
+    try{ var ts = await fbDb.ref('data/' + TK[tk]).once('value'); typeMap[tk] = _puUnwrap(ts.val()) || []; }
+    catch(e){ typeMap[tk] = []; }
+  }
+  /* puRef 없는 기존 실적(시드 등)에 붙여 중복을 막기 위해 함께 넘긴다 */
+  var existing = [];
+  PU_SYNC_STORES.forEach(function(st){
+    get(st).forEach(function(r){ if(r && !r.puRef) existing.push({ id:r.id, store:st, org:r.org, year:r.year, type:r.type }); });
+  });
+  var plan = KcareerPuSync.buildSyncPlan(collData, _puKnownRefs(), userMap || {}, typeMap, existing);
   /* 이미 가져온 건 중 pu-erp에서 종료된 것 — 상태·연도만 맞춘다 */
   var mine = [];
   PU_SYNC_STORES.forEach(function(k){ get(k).forEach(function(r){ if(r && r.puRef) mine.push(r); }); });
@@ -2041,6 +2055,7 @@ function renderPuSyncPreview(){
   var h = '<div style="font-size:12px;background:#F3F8F6;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:10px">'
     + '새로 들어올 실적 <b>' + p.adds.length + '건</b>'
     + ' <span style="color:var(--text-mute)">(완료 ' + (p.closedCount||0) + ' · 진행 ' + (p.openCount||0) + ' · 이미 있어 건너뜀 ' + p.skippedKnown + ')</span>'
+    + ((p.links && p.links.length) ? '<div style="margin-top:6px;color:var(--teal)">🔗 기존 실적 <b>' + p.links.length + '건</b>은 같은 건으로 보아 <b>새로 만들지 않고 연결</b>합니다(중복 방지)</div>' : '')
     + '<div style="color:var(--text-mute);margin-top:4px">진행 중인 건도 상태를 달아 함께 가져옵니다 — pu-erp에서 종료 처리하면 다음 동기화 때 상태가 맞춰집니다. 불필요한 건은 목록에서 배제하세요.</div>'
     + ((_puSyncCtx.statusUps && _puSyncCtx.statusUps.length) ? '<div style="margin-top:6px;color:var(--teal)">↻ 이미 있는 실적 <b>' + _puSyncCtx.statusUps.length + '건</b>이 그동안 종료돼 <b>완료</b>로 바뀝니다</div>' : '')
     + '</div>'
@@ -2082,6 +2097,21 @@ function puSyncCommit(){
     buf[a.store].unshift(rec); n++;
   });
 
+  /* puRef 없던 기존 실적(시드 등)에 puRef만 붙인다 — 새 줄을 만들지 않아 중복이 안 생긴다.
+     빈 유형·수행기관·담당도 이때 채워준다(값이 있으면 손대지 않는다). */
+  var linkN = 0;
+  (plan.links || []).forEach(function(L){
+    var arr = buf[L.store]; if(!arr) return;
+    var r = arr.find(function(x){ return x.id === L.id; });
+    if(!r || r.puRef) return;
+    r.puRef = L.puRef; r.linkedSyncId = syncId;
+    if(!r.type && L.type) r.type = L.type;
+    if(!r.agency && L.agency) r.agency = L.agency;
+    if(!r.main && L.main) r.main = L.main;
+    if(!r.status && L.status) r.status = L.status;
+    linkN++;
+  });
+
   /* 이미 가져온 건이 그동안 종료됐으면 상태·연도만 맞춘다(다른 필드는 손대지 않는다) */
   var upMap = {}, upN = 0;
   (_puSyncCtx.statusUps || []).forEach(function(u){ upMap[u.puRef] = u; });
@@ -2099,7 +2129,7 @@ function puSyncCommit(){
   LS.set(NS + 'pu_sync_last_id', syncId);
   closePuSync();
   PU_SYNC_STORES.forEach(function(k){ try{ if(CAREER_CFG[k]) renderCareer(k); }catch(e){} });
-  toast('✅ 실적 ' + n + '건 들어옴' + (upN ? ' · ' + upN + '건 완료로 갱신' : '') + ' — 불필요한 건은 행의 배제 버튼으로 정리하세요');
+  toast('✅ 실적 ' + n + '건 들어옴' + (linkN ? ' · 기존 ' + linkN + '건에 연결' : '') + (upN ? ' · ' + upN + '건 완료로 갱신' : '') + ' — 불필요한 건은 행의 배제 버튼으로 정리하세요');
 }
 
 /* ===== 동기화 되돌리기 — 그 동기화가 만든 레코드만(배제된 것 포함) 삭제 ===== */
@@ -2108,8 +2138,13 @@ function puUndoSync(syncId){
   var total = 0;
   PU_SYNC_STORES.forEach(function(k){
     var db = get(k), left = db.filter(function(r){ return r.syncId !== syncId; });
-    total += db.length - left.length;
-    if(left.length !== db.length) set(k, left);
+    var cut = db.length - left.length, det = 0;
+    /* 시드 등 기존 실적에 붙였던 것은 지우지 않고 puRef만 뗀다 */
+    left.forEach(function(r){
+      if(r.linkedSyncId === syncId){ delete r.puRef; delete r.linkedSyncId; det++; }
+    });
+    total += cut;
+    if(cut || det) set(k, left);
   });
   toast(total + '건을 되돌렸습니다 — 다음 동기화 때 다시 들어옵니다');
   PU_SYNC_STORES.forEach(function(k){ try{ if(CAREER_CFG[k]) renderCareer(k); }catch(e){} });
