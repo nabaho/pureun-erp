@@ -29,7 +29,11 @@ test('every Firebase HTML entry loads resilience and health runtimes in safe ord
   const entries = [
     'chwieop.html', 'docs-esign.html', 'enter.html', 'fund-poc.html', 'fund.html',
     'gov-consulting.html', 'ieum-view.html', 'kcareer.html', 'payroll-os.html',
-    'pu-camera.html', 'pu-cards.html', 'pu-erp.html', 'pu-photos.html', 'rules.html', 'sign.html',
+    /* ⚠ 2026-08-08 pu-camera.html 을 뺐다 — 촬영 코드를 사진첩 하나로 합치면서
+       문패만 남는 넘김 페이지가 됐다(pu-photos.html?cam=1 로 replace).
+       Firebase 를 싣지 않으므로 이 목록의 대상이 아니다. 아이콘이 깨지지 않게
+       파일과 manifest 는 그대로 둔다. */
+    'pu-cards.html', 'pu-erp.html', 'pu-photos.html', 'rules.html', 'sign.html',
     'work.html', 'app/payroll_app_fb.html', 'reference/payroll_mvp.html'
   ];
   for (const entry of entries) {
