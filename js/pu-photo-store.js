@@ -66,6 +66,19 @@
         안 적으면 조용히 거부된다 — 건의함이 그래서 통째로 막혔다(2026-08-07). */
   function retentionPath() { return DB_ROOT + '/retention'; }
 
+  /* ── 같이 볼 사람 (대표 지시 2026-08-08) ──
+     사진은 사람별 자리에 갈려 있고 **서버가** 남의 자리를 막는다. 그래서 공유는
+     화면에서 보여 주는 문제가 아니라 **규칙이 열어 줘야 하는** 문제다.
+     두 곳에 적는다:
+       ① 사진 옆   `…/items/{해}/{id}/shareWith/{받는사람}` = true
+          → 규칙이 이걸 보고 그 **한 장만** 읽게 열어 준다.
+       ② 받는 사람 자리 `puphotos/sharedTo/{받는사람}/{id}` = {owner, year, at}
+          → 받은 사람이 **목록을 훑을** 길. ①만 있으면 남의 자리를 못 훑어서
+            공유받은 사진이 있는지조차 알 수 없다. */
+  function sharedToPath(uid, id) {
+    return DB_ROOT + '/sharedTo/' + uid + (id ? '/' + id : '');
+  }
+
   /* 촬영 시각 결정 — EXIF → 파일 날짜 → 업로드 시각 순서.
      카톡을 거친 사진은 EXIF가 지워져 있어 파일 날짜로, 그것도 없으면 올린 때로 간다. */
   function pickTakenAt(exifTs, fileTs, uploadTs) {
@@ -307,6 +320,11 @@
       u[metaPath(year, id)] = null;
       u[blobPath(year, id)] = null;
       u[thumbPath(year, id)] = null;
+      /* 같이 보던 사람의 목록에서도 뺀다 — 안 빼면 원본이 없는 유령이 남아
+         「나와 공유된 사진」이 열리지 않는 사진으로 채워진다. */
+      Object.keys((meta && meta.shareWith) || {}).forEach(function (who) {
+        u[sharedToPath(who, id)] = null;
+      });
       return deps.db.ref().update(u);
     });
   }
@@ -443,6 +461,66 @@
     u[blobPath(year, id, owner)] = full;
     u[thumbPath(year, id, owner)] = thumb;
     return deps.db.ref().update(u);
+  }
+
+  /* 같이 볼 사람을 정한다 — 넘긴 목록이 그대로 최종본이다(빠진 사람은 풀린다).
+     ⚠ 사진 옆과 받는 사람 자리를 **한 묶음**으로 적는다. 나눠서 하다 끊기면
+     「사진에는 공유 표시가 있는데 목록에는 안 뜨는」 반쪽 상태가 남는다. */
+  function setShare(year, id, uids, before) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    if (!deps.uid) return Promise.reject(new Error('로그인을 확인해 주세요'));
+    var now = Object.create(null), was = Object.create(null);
+    (uids || []).forEach(function (u) { if (u && u !== deps.uid) now[u] = 1; });
+    (before || []).forEach(function (u) { if (u && u !== deps.uid) was[u] = 1; });
+    var u = {}, base = metaPath(year, id);
+    Object.keys(now).forEach(function (who) {
+      u[base + '/shareWith/' + who] = true;
+      u[sharedToPath(who, id)] = { owner: deps.uid, year: String(year), at: Date.now() };
+    });
+    /* 뺀 사람은 두 곳에서 다 지운다 — 한 곳만 지우면 목록에 유령이 남는다 */
+    Object.keys(was).forEach(function (who) {
+      if (now[who]) return;
+      u[base + '/shareWith/' + who] = null;
+      u[sharedToPath(who, id)] = null;
+    });
+    if (!Object.keys(u).length) return Promise.resolve();
+    return deps.db.ref().update(u);
+  }
+
+  /* 나에게 공유된 사진 목록 — 받는 사람 자리를 훑고 그 한 장씩 읽어 온다.
+     ⚠ 한 장을 못 읽어도 나머지는 보여야 한다(공유가 풀렸거나 원본이 지워진 경우). */
+  function listSharedToMe() {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    if (!deps.uid) return Promise.resolve({});
+    return readOnce(sharedToPath(deps.uid)).then(function (idx) {
+      var ids = Object.keys(idx || {});
+      if (!ids.length) return {};
+      return Promise.all(ids.map(function (id) {
+        var r = idx[id] || {};
+        if (!r.owner || !r.year) return null;
+        return readOnce(metaPath(r.year, id, r.owner)).then(function (meta) {
+          if (!meta) return null;   // 원본이 지워졌다 — 목록에서 그냥 뺀다
+          return { id: id, meta: Object.assign({}, meta, {
+            __ownerUid: r.owner, __sharedYear: String(r.year)
+          }) };
+        }).catch(function () { return null; });
+      })).then(function (rows) {
+        var out = {};
+        rows.forEach(function (x) { if (x) out[x.id] = x.meta; });
+        return out;
+      });
+    });
+  }
+
+  /* 공유받은 사람 이름을 붙여 준다 — uid 만 보이면 누구인지 모른다 */
+  function fillSharedNames(items) {
+    return listOwners().then(function (owners) {
+      Object.keys(items).forEach(function (id) {
+        var uid = items[id].__ownerUid;
+        items[id].__ownerName = (owners[uid] && owners[uid].name) || uid;
+      });
+      return items;
+    }).catch(function () { return items; });
   }
 
   function saveRead(year, id, read) {
@@ -1059,6 +1137,10 @@
     newId: newId,
     savePhoto: savePhoto,
     saveRead: saveRead,
+    setShare: setShare,
+    listSharedToMe: listSharedToMe,
+    fillSharedNames: fillSharedNames,
+    sharedToPath: sharedToPath,
     saveNote: saveNote,
     setTakenAt: setTakenAt,
     replaceImage: replaceImage,

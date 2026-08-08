@@ -381,6 +381,20 @@ button{font-family:inherit;cursor:pointer}
   color:#fff;font-size:16px;font-family:inherit;backdrop-filter:blur(2px)}
 #rotBar button:hover{background:rgba(255,255,255,.32)}
 
+/* 같이 볼 사람 — 직접 적는 칸 아래 */
+.sharebox{border-top:1px solid var(--line);margin-top:11px;padding-top:11px}
+.sharebox .t{font-size:11px;font-weight:800;color:#a3adbd;letter-spacing:.4px;margin-bottom:7px}
+.sharebox .chips{display:flex;flex-wrap:wrap;gap:5px}
+.sharebox .sc{display:inline-flex;align-items:center;gap:4px;border:1px solid #b6c6ee;
+  background:#eef2fd;color:var(--blue);border-radius:15px;padding:4px 6px 4px 10px;
+  font-size:12px;font-weight:700}
+.sharebox .sc button{border:none;background:none;color:var(--blue);font-size:12px;
+  padding:0 2px;font-family:inherit;opacity:.65}
+.sharebox .sc button:hover{opacity:1}
+.sharebox .add{border:1px dashed #b6c6ee;background:none;color:var(--blue);border-radius:15px;
+  padding:4px 11px;font-size:12px;font-weight:700;font-family:inherit}
+.sharebox .hint{font-size:11px;color:var(--sub);line-height:1.5;margin:7px 0 0}
+
 /* 직접 적는 칸 — AI가 읽은 것 아래에 둔다 */
 .mynote{border-top:1px solid var(--line);margin-top:11px;padding-top:11px}
 .mynote .t{font-size:11px;font-weight:800;color:#a3adbd;letter-spacing:.4px;margin-bottom:7px}
@@ -2492,6 +2506,9 @@ let gridYear = String(new Date().getFullYear());
 let gridYears = [gridYear];  // 사진이 실제로 있는 해 목록
 let gridItems = []; // { id, meta, thumb? } — 촬영 시각 내림차순
 const ALL_OWNERS = '__all__';   // '전체 근로자' 를 가리키는 표
+/* 나에게 공유된 사진 — 관리자가 아니어도 볼 수 있는 유일한 「남의 사진」이다.
+   여기서도 고치기·지우기는 잠긴다(원본은 그 사람 자리에 있다). */
+const SHARED_OWNER = '__shared__';
 let gridOwner = null;   // null = 내 사진. 관리자가 남의 것(또는 ALL_OWNERS)을 볼 때만 값이 들어간다
 let gridQ = '';         // 찾는 말 (소문자)
 
@@ -2512,6 +2529,9 @@ function blockedIfOther() {
 
 /* 사진이 있는 해 목록을 받아 고르개를 채운다. 실패해도 올해는 볼 수 있다. */
 function refreshYears() {
+  /* 공유받은 사진은 여러 사람·여러 해가 섞여 있어 해로 나누지 않는다 —
+     받은 것은 한 화면에 다 보이는 편이 낫다(개수가 많지 않다). */
+  if (gridOwner === SHARED_OWNER) { gridYears = [gridYear]; renderYearSel(); return Promise.resolve(); }
   const call = gridOwner === ALL_OWNERS ? PuPhotoStore.listYearsAll() : PuPhotoStore.listYears(gridOwner);
   call.then(function (ys) {
     gridYears = ys;
@@ -2551,16 +2571,18 @@ function purgeEveryYearTrash() {
 function loadGrid() {
   /* 전체 근로자 모드 — 판독·자동등록 대기열은 돌리지 않는다. 그건 '내가 올린
      것'을 처리하는 일이라, 남의 사진까지 자동으로 건드리면 안 된다. */
-  const call = gridOwner === ALL_OWNERS
-    ? PuPhotoStore.listYearAll(gridYear)
-    : PuPhotoStore.listYear(gridYear, gridOwner);
+  const call = gridOwner === SHARED_OWNER
+    ? PuPhotoStore.listSharedToMe().then(PuPhotoStore.fillSharedNames)
+    : gridOwner === ALL_OWNERS
+      ? PuPhotoStore.listYearAll(gridYear)
+      : PuPhotoStore.listYear(gridYear, gridOwner);
   call.then(function (items) {
     gridItems = Object.keys(items).map(id => ({ id: id, meta: items[id] || {} }));
     gridItems.sort((a, b) => (b.meta.takenAt || 0) - (a.meta.takenAt || 0));
     showGridError('');
     renderGrid();
     fillThumbs();
-    if (gridOwner !== ALL_OWNERS) autoReadPending();
+    if (gridOwner !== ALL_OWNERS && gridOwner !== SHARED_OWNER) autoReadPending();
   }).catch(function (e) {
     /* ⚠ 예전에는 콘솔에만 적고 **빈 화면**을 보여줬다. 그래서 사진이 안 보일 때
        "아직 올린 사진이 없습니다"라고 **거짓말**을 하고, 왜 안 보이는지 아무도
@@ -3868,6 +3890,74 @@ function companyChoices() {
   return Object.keys(seen).sort();
 }
 
+/* ══════ 같이 볼 사람 (대표 지시 2026-08-08) ══════
+   사진은 사람별 자리에 갈려 있고 **서버가** 남의 자리를 막는다. 그래서 공유는
+   「화면에 보여 주기」가 아니라 「규칙이 열어 주기」다. 고른 사람은
+   그 **한 장만** 읽을 수 있고, 「나와 공유된 사진」에서 그것을 본다.
+   ⚠ 공유받은 사람은 고치거나 지우지 못한다 — 원본은 올린 사람 자리에 있다. */
+let ownerNames = {};   // uid → 이름 (사람 고르기 창에서 쓴다)
+
+function shareBox(it) {
+  if (!it || viewingOther()) return '';
+  const list = Object.keys((it.meta && it.meta.shareWith) || {});
+  const chips = list.map(function (uid) {
+    return '<span class="sc">' + esc(ownerNames[uid] || uid) +
+      '<button onclick="unshareOne(\'' + esc(uid) + '\')" title="빼기">✕</button></span>';
+  }).join('');
+  return '<div class="sharebox">' +
+    '<div class="t">같이 볼 사람</div>' +
+    '<div class="chips">' + chips +
+      '<button class="add" onclick="openSharePick()">＋ 사람 고르기</button></div>' +
+    (list.length
+      ? '<p class="hint">고른 분은 「나와 공유된 사진」에서 이 사진을 봅니다. 고치거나 지우지는 못합니다.</p>'
+      : '') +
+    '</div>';
+}
+
+/* 사람 고르기 — 이미 고른 사람은 빼고 보여 준다 */
+function openSharePick() {
+  const it = gridItems.find(function (x) { return x.id === viewerId; });
+  if (!it || viewingOther()) return;
+  const has = (it.meta && it.meta.shareWith) || {};
+  const me = PuPhotoStore.myUid();
+  const ids = Object.keys(ownerNames).filter(function (u) { return u !== me && !has[u]; });
+  if (!ids.length) { alert('더 고를 사람이 없습니다.'); return; }
+  const pick = prompt('같이 볼 사람의 번호를 적어 주세요.\n\n' +
+    ids.map(function (u, i) { return (i + 1) + '. ' + (ownerNames[u] || u); }).join('\n'));
+  const n = Number(pick);
+  if (!Number.isFinite(n) || n < 1 || n > ids.length) return;
+  setShareTo(Object.keys(has).concat([ids[n - 1]]));
+}
+
+function unshareOne(uid) {
+  const it = gridItems.find(function (x) { return x.id === viewerId; });
+  if (!it || viewingOther()) return;
+  const has = Object.keys((it.meta && it.meta.shareWith) || {});
+  setShareTo(has.filter(function (u) { return u !== uid; }));
+}
+
+async function setShareTo(uids) {
+  const id = viewerId;
+  const it = gridItems.find(function (x) { return x.id === id; });
+  if (!it || viewingOther()) return;
+  const before = Object.keys((it.meta && it.meta.shareWith) || {});
+  try {
+    await PuPhotoStore.setShare(gridYear, id, uids, before);
+    const next = {};
+    uids.forEach(function (u) { next[u] = true; });
+    it.meta = Object.assign({}, it.meta, { shareWith: uids.length ? next : undefined });
+    renderReadPanel(it);
+    toast(uids.length ? '같이 볼 사람을 정했습니다' : '공유를 풀었습니다');
+  } catch (e) {
+    console.warn('[공유]', e);
+    /* 규칙이 아직 없으면 여기서 막힌다 — 무엇이 문제인지 그대로 말한다 */
+    alert('공유하지 못했습니다.\n' + ((e && e.message) || e) +
+      (/permission|denied/i.test(String(e && e.message))
+        ? '\n\n파이어베이스 규칙에 공유 자리가 아직 없습니다 — 규칙을 게시하면 열립니다.'
+        : ''));
+  }
+}
+
 function myNoteBox(it) {
   if (!it || viewingOther()) return '';
   const m = it.meta || {};
@@ -3920,7 +4010,7 @@ function renderReadPanel(it) {
     const isDoc = it.meta.kind === 'doc';
     el.innerHTML = '<div class="box"><p class="note" style="margin:0">' +
       (isDoc ? '아직 판독하지 않은 서류입니다.' : '명함·사업자등록증이면 글자를 읽어 정보를 뽑아냅니다.') +
-      '</p>' + customKindNote(it) + myNoteBox(it) + actsRow('글자 판독하기') + '</div>';
+      '</p>' + customKindNote(it) + myNoteBox(it) + shareBox(it) + actsRow('글자 판독하기') + '</div>';
     return;
   }
   const warn = read.auto ? '' : ' warn';
@@ -3986,6 +4076,7 @@ function renderReadPanel(it) {
         '님이 확인해 할 일에서 치웠습니다 · 「다시 판독」을 누르면 되돌아옵니다</p>' : '') +
     customKindNote(it) +
     myNoteBox(it) +
+    shareBox(it) +
     actsRow('다시 판독', needsCheck(it)) + '</div>';
 }
 
@@ -4084,15 +4175,26 @@ function readSelected() {
 /* ══════ 누구 사진을 볼까 (총괄 관리자만) ══════
    직원은 이 칸이 아예 없다 — 남의 사진을 볼 길이 화면에도 없고 규칙에도 없다. */
 function renderOwnerPick() {
-  if (!PuPhotoStore.amAdmin()) { $('ownerPick').style.display = 'none'; return; }
+  /* 「나와 공유된 사진」은 **관리자가 아니어도** 볼 수 있는 유일한 남의 사진이라
+     관리자 판정보다 앞에서 그린다. 관리자가 아니면 이 두 줄만 있는 고르개가 된다. */
+  if (!PuPhotoStore.amAdmin()) {
+    $('ownerPick').style.display = 'block';
+    $('ownerSel').innerHTML = '<option value="">내 사진</option>' +
+      '<option value="' + SHARED_OWNER + '">나와 공유된 사진</option>';
+    $('ownerSel').value = gridOwner || '';
+    return;
+  }
   migAllowed = true;
   $('mig').style.display = (setTab === 'admin') ? 'block' : 'none';
   PuPhotoStore.listOwners().then(function (owners) {
+    /* 공유 칩에 uid 가 아니라 이름이 뜨게 이름표를 챙겨 둔다 */
+    ownerNames = {};
+    Object.keys(owners).forEach(function (k) { ownerNames[k] = (owners[k] && owners[k].name) || k; });
     const me = PuPhotoStore.myUid();
     const ids = Object.keys(owners).filter(function (k) { return k !== me; });
-    $('ownerPick').style.display = ids.length ? 'block' : 'none';
-    if (!ids.length) return;
+    $('ownerPick').style.display = 'block';   // 공유 줄이 있으므로 늘 보인다
     $('ownerSel').innerHTML = '<option value="">내 사진</option>' +
+      '<option value="' + SHARED_OWNER + '">나와 공유된 사진</option>' +
       '<option value="' + ALL_OWNERS + '">전체 근로자</option>' +
       ids.map(function (k) {
         return '<option value="' + esc(k) + '">' + esc((owners[k] && owners[k].name) || k) + '</option>';
