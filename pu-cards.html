@@ -858,21 +858,27 @@ const Store = {
   },
   _ls(){ localStorage.setItem('pucards_local_items', JSON.stringify(state.items));
          localStorage.setItem('pucards_local_groups', JSON.stringify(state.groups)); },
+  /* 개인 명함이 어느 창고에 있는지 — 사진·썸네일 경로도 이걸 따른다.
+     열려 있지 않으면 state.priv 가 비어 있어 언제나 공용을 가리킨다. */
+  _rootOf(id){ return (state.priv && state.priv.items && state.priv.items[id]) ? privRoot() : DB_ROOT; },
   put(it){ it.updatedAt = Date.now();
     if (this.mode==='firebase'){
       /* 썸네일은 items 밖(thumbs/)에 둔다 — items 는 통째로 구독되는 칸이라 무거우면 안 된다.
          빈 값이면 지우지 않는다: 사진을 안 건드린 수정에서 옛 썸네일이 날아가면 안 된다. */
       const t1 = it.thumb||'', t2 = it.thumb2||'';
       const rec = {...it}; delete rec.thumb; delete rec.thumb2;
-      this.db.ref(`${DB_ROOT}/items/${it.id}`).set(rec);
+      const R = this._rootOf(it.id);
+      this.db.ref(`${R}/items/${it.id}`).set(rec);
       if (t1) this.putThumb(it.id, t1);
       if (t2) this.putThumb(it.id+'_b', t2);
-      writeIdx(it);
+      /* ★ 개인 명함은 공유 검색목록에 절대 넣지 않는다 — 다른 앱이 읽는 자리다 */
+      if (R === DB_ROOT) writeIdx(it);
     }
     else { state.items[it.id]=it; this._ls(); render(); } },
   /* 삭제 = 휴지통으로 이동 (30일 보관). 사진도 함께 보관 */
   async del(id){
-    const it = state.items[id]; if(!it) return;
+    const priv = !!(state.priv && state.priv.items && state.priv.items[id]);
+    const it = priv ? state.priv.items[id] : state.items[id]; if(!it) return;
     const photo = await this.getPhoto(id).catch(()=>'');
     const photo2 = await this.getPhoto(id+'_b').catch(()=>'');
     /* 썸네일은 이제 items 밖에 있다 — 함께 챙겨 넣지 않으면 복원해도 사진이 빈 채로 돌아온다 */
@@ -881,11 +887,14 @@ const Store = {
     const rec = { ...it, thumb: th1||'', thumb2: th2||'',
       _deletedAt: Date.now(), _photo: photo||'', _photo2: photo2||'' };
     if (this.mode==='firebase'){
-      await this.db.ref(`${DB_ROOT}/trash/${id}`).set(rec);
+      /* ★ 개인 명함은 개인 휴지통으로. 공용 휴지통은 직원 누구나 읽으므로,
+         그리로 보내면 숨겨 둔 것이 지우는 순간 드러난다. */
+      const R = priv ? privRoot() : DB_ROOT;
+      await this.db.ref(`${R}/trash/${id}`).set(rec);
       this.delPhoto(id); this.delPhoto(id+'_b');
       this.delThumb(id); this.delThumb(id+'_b');
-      this.db.ref(`${DB_ROOT}/items/${id}`).remove();
-      removeIdx(id);
+      this.db.ref(`${R}/items/${id}`).remove();
+      if (!priv) removeIdx(id);      /* 개인 명함은 애초에 검색목록에 없다 */
     } else {
       const t=JSON.parse(localStorage.getItem('pucards_local_trash')||'{}'); t[id]=rec;
       try{ localStorage.setItem('pucards_local_trash', JSON.stringify(t)); }catch(e){}
@@ -918,17 +927,17 @@ const Store = {
   async getPhoto(id){
     if (this.photoCache[id]!==undefined) return this.photoCache[id];
     let p='';
-    if (this.mode==='firebase'){ const s=await this.db.ref(`${DB_ROOT}/photos/${id}`).once('value'); p=s.val()||''; }
+    if (this.mode==='firebase'){ const s=await this.db.ref(`${this._rootOf(id.replace(/_b$/,''))}/photos/${id}`).once('value'); p=s.val()||''; }
     else p=(JSON.parse(localStorage.getItem('pucards_local_photos')||'{}'))[id]||'';
     this.photoCache[id]=p; return p;
   },
   putPhoto(id,dataUrl){ this.photoCache[id]=dataUrl;
-    if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/photos/${id}`).set(dataUrl);
+    if (this.mode==='firebase') this.db.ref(`${this._rootOf(id.replace(/_b$/,''))}/photos/${id}`).set(dataUrl);
     else { const m=JSON.parse(localStorage.getItem('pucards_local_photos')||'{}'); m[id]=dataUrl;
       try{ localStorage.setItem('pucards_local_photos', JSON.stringify(m)); }
       catch(e){ toast('데모 모드 용량 초과 — 원본 사진을 모두 보관하지 못합니다'); } } },
   delPhoto(id){ delete this.photoCache[id];
-    if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/photos/${id}`).remove();
+    if (this.mode==='firebase') this.db.ref(`${this._rootOf(id.replace(/_b$/,''))}/photos/${id}`).remove();
     else { const m=JSON.parse(localStorage.getItem('pucards_local_photos')||'{}'); delete m[id];
       localStorage.setItem('pucards_local_photos', JSON.stringify(m)); } },
   /* ── 목록용 썸네일도 본문과 분리 저장 (thumbs/) ──
@@ -939,16 +948,16 @@ const Store = {
   async getThumb(id){
     if (this.thumbCache[id]!==undefined) return this.thumbCache[id];
     let t='';
-    if (this.mode==='firebase'){ const s=await this.db.ref(`${DB_ROOT}/thumbs/${id}`).once('value'); t=s.val()||''; }
+    if (this.mode==='firebase'){ const s=await this.db.ref(`${this._rootOf(id.replace(/_b$/,''))}/thumbs/${id}`).once('value'); t=s.val()||''; }
     else t=(JSON.parse(localStorage.getItem('pucards_local_thumbs')||'{}'))[id]||'';
     this.thumbCache[id]=t; return t;
   },
   putThumb(id,dataUrl){ this.thumbCache[id]=dataUrl;
-    if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/thumbs/${id}`).set(dataUrl);
+    if (this.mode==='firebase') this.db.ref(`${this._rootOf(id.replace(/_b$/,''))}/thumbs/${id}`).set(dataUrl);
     else { const m=JSON.parse(localStorage.getItem('pucards_local_thumbs')||'{}'); m[id]=dataUrl;
       try{ localStorage.setItem('pucards_local_thumbs', JSON.stringify(m)); }catch(e){} } },
   delThumb(id){ delete this.thumbCache[id];
-    if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/thumbs/${id}`).remove();
+    if (this.mode==='firebase') this.db.ref(`${this._rootOf(id.replace(/_b$/,''))}/thumbs/${id}`).remove();
     else { const m=JSON.parse(localStorage.getItem('pucards_local_thumbs')||'{}'); delete m[id];
       try{ localStorage.setItem('pucards_local_thumbs', JSON.stringify(m)); }catch(e){} } },
   /* 내 탭(저장된 조건) — 전 직원 공유. 명함을 건드리지 않고 보기 조건만 저장 */
