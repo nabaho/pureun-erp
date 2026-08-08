@@ -371,6 +371,14 @@ ok('조건 때문에 빈 경우에는 조건 풀기를 준다',
 ok('팀 전체에는 안 붙는다 (내 업무만의 설정이다)',
   grab('renderTeam').indexOf('colChips()') < 0);
 ok('띠 모양이 CSS에 있다', W.indexOf('th.cband,td.cband{') > 0 && W.indexOf('.cbl{') > 0);
+/* 띠의 세로 글자를 뒤집지 않는다.
+   세로쓰기에서 영문은 글자가 눕지만 한글은 똑바로 선다. 영문 기준으로
+   rotate(180deg) 를 더 걸면 한글이 거꾸로 보인다 — 실제로 그렇게 나갔었다. */
+ok('접힌 열 이름을 뒤집지 않는다 (한글은 세로쓰기만으로 바로 읽힌다)', (function () {
+  const i = W.indexOf('th.cband .cbl{');
+  const rule = W.slice(i, W.indexOf('}', i));
+  return rule.indexOf('vertical-rl') > 0 && rule.indexOf('rotate(') < 0;
+})());
 ok('묶어 보기를 켜면 소제목으로 그린다',
   RM.indexOf('grpHeadHTML(g[0],g[1].length,NCOL)') > 0 && RM.indexOf('groupRows(list)') > 0);
 ok('끄면 예전처럼 한 덩어리',
