@@ -1782,10 +1782,22 @@ var FB_ALL_SYNC_KEYS = [
 ];
 // App Check reCAPTCHA v3 사이트키 — Firebase 콘솔에서 발급 후 따옴표 안에 붙여넣기 (비어있으면 비활성, 동작에 영향 없음)
 var FB_APPCHECK_KEY = '6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
+/* ⚠ App Check 를 끈 채로 둔다 (2026-08-08).
+   사무실에서 켤 때마다 reCAPTCHA 가 시간 초과로 두 번씩 실패하고 있었다.
+     Uncaught (in promise) Error: reCAPTCHA Timeout (C) / (z)
+   그런데 같은 로그에서 Firebase 읽기는 «초기 동기화 완료» 로 멀쩡히 끝난다.
+   즉 콘솔에서 App Check 강제(enforce)가 켜져 있지 않다 — 켜져 있었다면 토큰이
+   없는 읽기는 PERMISSION_DENIED 로 막혔을 것이다.
+   따라서 지금의 reCAPTCHA 는 지키는 것 없이 20~30초짜리 실패만 두 번 만든다.
+   자료는 Rules 의 auth != null 이 계속 지킨다.
+
+   ★ 콘솔에서 App Check 강제를 켤 때는 아래를 true 로 되돌려야 한다.
+     되돌리지 않으면 모든 읽기·쓰기가 막힌다. */
+var FB_APPCHECK_ON = false;
 try {
   if(typeof firebase !== 'undefined' && firebase.initializeApp){
     firebase.initializeApp(FB_CONFIG);
-    if(FB_APPCHECK_KEY && firebase.appCheck){
+    if(FB_APPCHECK_ON && FB_APPCHECK_KEY && firebase.appCheck){
       try { firebase.appCheck().activate(new firebase.appCheck.ReCaptchaV3Provider(FB_APPCHECK_KEY), true); }
       catch(e){ console.warn('[AppCheck]', e && e.message); }
     }
@@ -7442,7 +7454,7 @@ function fbInitialSync(_isRetry){
     });
     if(pulled > 0) console.log('[Firebase] 초기 동기화: '+pulled+'개 항목 적용');
     return pulled;
-  }).catch(function(e){ var _im = (e && (e.message||e.code||''))+''; if(/permission|PERMISSION_DENIED/i.test(_im) && !_isRetry && typeof firebase!=='undefined' && firebase.auth && firebase.auth().currentUser){ console.warn('[Firebase] 첫 읽기 권한오류 — 토큰 갱신 후 재시도'); return firebase.auth().currentUser.getIdToken(true).catch(function(){}).then(function(){ return new Promise(function(res){ setTimeout(res, 700); }); }).then(function(){ return fbInitialSync(true); }); } console.warn('[Firebase] 초기 동기화 실패:', _im); if(/permission|PERMISSION_DENIED/i.test(_im)){ if(typeof firebase!=='undefined' && firebase.auth && firebase.auth().currentUser){ console.warn('[Firebase] 통째 읽기 거부(권한 제한) — 키별 동기화 폴백'); return _fbInitialSyncPerKey(); } window._reloginNotice = '🔒 서버 인증이 만료되어 다시 로그인이 필요합니다.'; try { window.dispatchEvent(new CustomEvent('fb_need_relogin')); } catch(_){} } return 0; })
+  }).catch(function(e){ var _im = (e && (e.message||e.code||''))+''; if(/permission|PERMISSION_DENIED/i.test(_im) && !_isRetry && typeof firebase!=='undefined' && firebase.auth && firebase.auth().currentUser){ console.warn('[Firebase] 첫 읽기 권한오류 — 토큰 갱신 후 재시도'); return firebase.auth().currentUser.getIdToken(true).catch(function(){}).then(function(){ return new Promise(function(res){ setTimeout(res, 700); }); }).then(function(){ return fbInitialSync(true); }); } console.warn('[Firebase] 초기 동기화 실패:', _im); if(/permission|PERMISSION_DENIED/i.test(_im)){ if(typeof firebase!=='undefined' && firebase.auth && firebase.auth().currentUser){ console.warn('[Firebase] 통째 읽기 거부(권한 제한) — 키별 동기화 폴백'); if(!FB_APPCHECK_ON) console.error('[App Check] 콘솔에서 App Check 강제를 켜셨다면 pu-erp.html 의 FB_APPCHECK_ON 을 true 로 되돌려야 합니다 — 그러지 않으면 모든 읽기·쓰기가 막힙니다'); return _fbInitialSyncPerKey(); } window._reloginNotice = '🔒 서버 인증이 만료되어 다시 로그인이 필요합니다.'; try { window.dispatchEvent(new CustomEvent('fb_need_relogin')); } catch(_){} } return 0; })
     // 이 동기화(및 내부 키별폴백·재시도)에서 deferGate로 모아둔 급감 보류분을 완료 후 일괄 확인.
     //   모든 fbInitialSync 호출부(로그인·복귀재동기화·수동새로고침)를 한 곳에서 커버한다.
     .then(function(_n){ try { _drainShrinkQueue(); } catch(_d){} return _n; });
