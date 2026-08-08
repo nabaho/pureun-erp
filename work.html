@@ -1001,58 +1001,71 @@ function viewChips(){
    메뉴 안에 숨기면 접었다는 사실 자체를 잊는다.
    이 브라우저에만 저장한다 — 남의 화면에 영향이 없고, 남의 업무를
    열람할 때도 내 설정이 유지된다. */
-var COLS_KEY='work_my_cols';
-var MYCOLS=[['cat','구분'],['pt','업무'],['st','상태'],['last','최근 기록'],['due','다음 할 일']];
-var COLS_DEFAULT='pt,last';        // 처음 여는 사람이 보는 상태
-function colPref(){
-  if(S.cols===undefined){
-    var v=null; try{ v=localStorage.getItem(COLS_KEY); }catch(e){}
-    if(v===null) v=COLS_DEFAULT;                 // 저장된 적 없음 = 기본값
-    S.cols={};                                   // 빈 문자열이면 전부 펴진 상태다
-    String(v).split(',').forEach(function(k){ if(k) S.cols[k]=1; });
+/* 내 업무와 팀 전체가 같은 코드를 쓴다. 열 구성이 서로 달라(팀에는 「이 주
+   실적」이 있고 「이번 주」 격자가 없다) 화면별(sc)로 나눠 담는다.
+   걸러 보기(fCols/fHas)와 같은 방식이다. */
+var COLS_KEY={my:'work_my_cols',team:'work_team_cols'};
+var COLSET={
+  my:  [['cat','구분'],['pt','업무'],['st','상태'],['last','최근 기록'],['due','다음 할 일']],
+  team:[['cat','구분'],['pt','업무명'],['st','상태'],['log','이 주 실적'],
+        ['last','최근 기록'],['due','다음 할 일']]
+};
+// 처음 여는 사람이 보는 상태. 팀은 남이 무엇을 했는지 보는 화면이라
+// 「이 주 실적」이 주인공이므로 그 옆을 접어 자리를 내준다.
+var COLS_DEFAULT={my:'pt,last',team:'pt,last'};
+function colCols(sc){ return COLSET[sc]||COLSET.my; }
+function colHas(sc,k){ return colCols(sc).some(function(c){ return c[0]===k; }); }
+function colPref(sc){
+  S.cols=S.cols||{};
+  if(S.cols[sc]===undefined){
+    var v=null; try{ v=localStorage.getItem(COLS_KEY[sc]); }catch(e){}
+    if(v===null) v=COLS_DEFAULT[sc]||'';         // 저장된 적 없음 = 기본값
+    S.cols[sc]={};                               // 빈 문자열이면 전부 펴진 상태다
+    String(v).split(',').forEach(function(k){ if(k) S.cols[sc][k]=1; });
   }
-  return S.cols;
+  return S.cols[sc];
 }
-// 묶어 보기가 켜져 있으면 구분은 열이 아니다 — 소제목에 이미 쓰여 있다.
-// 이때는 사람이 접거나 펼 수 있는 대상이 아니므로 단추도 내주지 않는다.
-function colForced(k){ return k==='cat'&&grpOn(); }
-function colHidden(k){
-  if(!MYCOLS.some(function(c){ return c[0]===k; })) return false;   // 접을 수 없는 열
-  if(colForced(k)) return true;
-  return !!colPref()[k];
+/* 묶어 보기가 켜져 있으면 구분은 열이 아니다 — 소제목에 이미 쓰여 있다.
+   이때는 사람이 접거나 펼 수 있는 대상이 아니므로 단추도 내주지 않는다.
+   팀 전체는 담당(사람)으로 묶으므로 겹치는 열이 없다. */
+function colForced(sc,k){ return sc==='my'&&k==='cat'&&grpOn(); }
+function colHidden(sc,k){
+  if(!colHas(sc,k)) return false;                // 접을 수 없는 열
+  if(colForced(sc,k)) return true;
+  return !!colPref(sc)[k];
 }
-function colToggle(k){
-  if(!MYCOLS.some(function(c){ return c[0]===k; })) return;
+function colToggle(sc,k){
+  if(!colHas(sc,k)) return;
   // 묶어 보기가 잡고 있는 열은 눌러도 안 바뀐다. 저장까지 해 두면 나중에
   // 묶어 보기를 껐을 때 까닭 없이 접혀 있게 되므로 아무것도 하지 않는다.
-  if(colForced(k)) return;
-  var p=colPref();
+  if(colForced(sc,k)) return;
+  var p=colPref(sc);
   if(p[k]) delete p[k]; else p[k]=1;
-  try{ localStorage.setItem(COLS_KEY,Object.keys(p).join(',')); }catch(e){}
-  renderMy();
+  try{ localStorage.setItem(COLS_KEY[sc],Object.keys(p).join(',')); }catch(e){}
+  fRender(sc);
 }
 // 접힌 열은 <th>/<td> 를 폭 14px 띠로 바꾼다. 띠 자체가 펴는 단추다.
-function colTH(k,inner,style){
-  var c=MYCOLS.filter(function(x){ return x[0]===k; })[0];
+function colTH(sc,k,inner,style){
+  var c=colCols(sc).filter(function(x){ return x[0]===k; })[0];
   // 펴진 열에는 접는 손잡이를 단다. 이것이 없으면 한 번 편 뒤에는 팝업으로만
   // 다시 접을 수 있어, 접고 펴는 일이 한쪽으로만 된다.
-  if(!c||!colHidden(k))
+  if(!c||!colHidden(sc,k))
     return '<th style="'+(style||'')+'">'
-      +(c?'<span class="cfold" onclick="event.stopPropagation();colToggle(\''+k+'\')" '
+      +(c?'<span class="cfold" onclick="event.stopPropagation();colToggle(\''+sc+'\',\''+k+'\')" '
           +'title="'+esc(c[1])+' 열 접기">‹</span>':'')
       +inner+'</th>';
   // 묶어 보기가 잡고 있는 띠는 "펴기"가 아니라 그 까닭과 실제로 되돌리는 길을 준다
-  if(colForced(k))
+  if(colForced(sc,k))
     return '<th class="cband lk" onclick="grpToggle()" '
       +'title="구분별로 묶어 보는 중이라 소제목에 있습니다 — 눌러서 묶음을 풀면 열로 돌아옵니다">'
       +'<span class="cbl">'+esc(c[1])+'</span></th>';
-  var dot=fHas('my',k)?'<span class="cbd"></span>':'';    // 조건이 걸린 채 접힌 열
-  return '<th class="cband" onclick="colToggle(\''+k+'\')" '
+  var dot=fHas(sc,k)?'<span class="cbd"></span>':'';    // 조건이 걸린 채 접힌 열
+  return '<th class="cband" onclick="colToggle(\''+sc+'\',\''+k+'\')" '
     +'title="'+esc(c[1])+' — 눌러서 폅니다'+(dot?' (걸러 보기 조건이 걸려 있습니다)':'')+'">'
     +'<span class="cbl">'+esc(c[1])+'</span>'+dot+'</th>';
 }
-function colTD(k,inner,attr){
-  if(colHidden(k)) return '<td class="cband"></td>';
+function colTD(sc,k,inner,attr){
+  if(colHidden(sc,k)) return '<td class="cband"></td>';
   return '<td'+(attr?' '+attr:'')+'>'+inner+'</td>';
 }
 /* 열 켜고 끄기는 칩 하나로 모아 팝업에서 고른다.
@@ -1061,24 +1074,25 @@ function colTD(k,inner,attr){
 /* 창을 띄우지 않고 칩 바로 아래에 붙는 체크 목록으로 고른다.
    걸러 보기 깔때기와 같은 구조(.fbk 뒤판 + .fpop)를 그대로 써서
    생김새도 여닫는 법도 같게 한다 — 두 가지를 새로 익히지 않아도 된다. */
-function colBtn(){
-  var off=MYCOLS.filter(function(c){ return colHidden(c[0])&&!colForced(c[0]); }).length;
+function colBtn(sc){
+  var off=colCols(sc).filter(function(c){ return colHidden(sc,c[0])&&!colForced(sc,c[0]); }).length;
   return '<span class="chipbtn'+(off?' on':'')+'" id="colchip" '
-    +'onclick="event.stopPropagation();colPop()" '
+    +'onclick="event.stopPropagation();colPop(\''+sc+'\')" '
     +'title="표에 어떤 열을 보일지 고릅니다">▦ 열'+(off?' '+off+' 접힘':'')+'</span>'
-    +(S.colPop?colPopHTML():'');
+    +(S.colPop===sc?colPopHTML(sc):'');
 }
-function colPop(){ S.colPop=!S.colPop; renderMy(); }
-function colPopClose(){ if(S.colPop){ S.colPop=false; renderMy(); } }
-function colPopHTML(){
+// S.colPop 에는 어느 화면의 목록이 열려 있는지를 담는다('' 면 닫힘)
+function colPop(sc){ S.colPop=(S.colPop===sc)?'':sc; fRender(sc); }
+function colPopClose(){ var sc=S.colPop; if(sc){ S.colPop=''; fRender(sc); } }
+function colPopHTML(sc){
   return '<div class="fbk" onclick="colPopClose()"></div>'
     +'<div class="fpop" id="colpop" onclick="event.stopPropagation()">'
     +'<div class="fpl">'
-    +MYCOLS.map(function(c){
-        var forced=colForced(c[0]), on=!colHidden(c[0]);
+    +colCols(sc).map(function(c){
+        var forced=colForced(sc,c[0]), on=!colHidden(sc,c[0]);
         return '<label'+(forced?' class="off" title="구분별로 묶어 보는 중이라 소제목에 있습니다"':'')+'>'
           +'<input type="checkbox"'+(on?' checked':'')+(forced?' disabled':'')
-          +' onchange="colToggle(\''+c[0]+'\')">'
+          +' onchange="colToggle(\''+sc+'\',\''+c[0]+'\')">'
           +'<span>'+esc(c[1])+'</span>'
           +(forced?'<span class="c">묶음</span>':'')
           +'</label>';
@@ -2359,7 +2373,7 @@ function renderMy(){
     +'<span class="chipbtn'+(grpOn()?' on':'')+'" onclick="grpToggle()" '
     +'title="'+(grpOn()?'구분 묶음을 풀고 한 덩어리로 봅니다':'구분끼리 묶어 봅니다')+'">'
     +(grpOn()?'✓ 구분별':'구분별')+'</span>'
-    +colBtn()+viewChips()
+    +colBtn('my')+viewChips()
     +calBtn()
     +'<span class="wknav" onclick="shiftWeek(-1)">‹</span>'
     +'<span class="wkpill" id="wkpill" onclick="openCal()">📅 '+esc(weekLabel(S.week))+' ▾</span>'
@@ -2410,9 +2424,9 @@ function renderMy(){
   // 선택지는 열려 있는 열만 센다 — 네 열을 매번 다 세면 헛일이다.
   // 접힌 열은 띠가 된다. 걸러 보기 단추는 펴져 있을 때만 만든다 — 안 그리면 헛일이다.
   function fh(k,w){
-    if(colHidden(k)) return colTH(k,'');
+    if(colHidden('my',k)) return colTH('my',k,'');
     var vals=fOpen('my',k)?fVals('my',k,base.filter(function(it){ return fPass('my',it,k); })):[];
-    return colTH(k,fBtn('my',k,vals),w);
+    return colTH('my',k,fBtn('my',k,vals),w);
   }
   h+='<div class="panel tbl"><table><thead><tr class="fhead">'
     +'<th class="rowno">'+(on?'<span class="fx" onclick="myReset()" title="걸러 보기를 모두 해제합니다">✕</span>':'#')+'</th>'
@@ -2420,7 +2434,7 @@ function renderMy(){
     +'<th style="min-width:110px">'+qBox('renderMy','기업','fh')+'</th>'
     +fh('pt','min-width:140px')
     +fh('st','width:74px')
-    +colTH('last','최근 기록','min-width:130px')
+    +colTH('my','last','최근 기록','min-width:130px')
     +'<th class="wkhd" style="color:var(--acc2)">'
     +'<div class="row" style="gap:6px;margin-bottom:'+(wkSplitOn()?'4px':'0')+'">'
     +'<span>'+(isCurWeek()?'이번 주':'그 주')+'</span>'
@@ -2737,27 +2751,27 @@ function rowHTML(it,no,rowIdx){
   // data-i — 캘린더에서 이 업무 줄로 데려갈 때 찾는 표식
   return '<tr data-i="'+esc(it._id)+'">'
     +tdNo(no||'')
-    +colTD('cat',catBadge(it.cat))
+    +colTD('my','cat',catBadge(it.cat))
     // 기업 칸 — 회사·관리번호·내 역할. 무슨 일인지는 옆 업무 칸이 맡는다.
     // 업무 열을 접으면 진행률이 갈 곳이 없으므로 여기로 내려온다.
     +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
     +(it.no?'<div class="sub">'+esc(it.no)+'</div>':'')
-    +(colHidden('pt')?'<div class="sub">'+stepChip(it._id)+'</div>':'')
+    +(colHidden('my','pt')?'<div class="sub">'+stepChip(it._id)+'</div>':'')
     // 나 말고 이 업무에 붙어 있는 사람 — 내가 주담당이면 부담당이, 부담당이면 주담당이 뜬다
     +mgrLine(it,'other')
     +(it.ho&&!it.ho.confirmed?'<div class="sub" style="color:#b45309;font-weight:800">📥 인수 확인 필요</div>':'')
     +'</td>'
     // 업무 칸 — 팀 전체와 같은 자리. 윗줄 업무명(유형), 아랫줄 업무 요약.
-    +colTD('pt',nameCell(it)+stepChip(it._id)+peFlag(it),
+    +colTD('my','pt',nameCell(it)+stepChip(it._id)+peFlag(it),
       'class="tkc" onclick="openDrawer(\''+escJ(it._id)+'\')"')
-    +colTD('st',stSelect(it.status,it._id)+peStChip(it))
-    +colTD('last',lastHtml)
+    +colTD('my','st',stSelect(it.status,it._id)+peStChip(it))
+    +colTD('my','last',lastHtml)
     +'<td class="wkcell'+(wkSplitOn()?' sp':'')+'">'
     +(wkSplitOn()?wkCellHTML(it,logs,rowIdx||0)
       :logHtml+'<input class="wkin" data-id="'+esc(it._id)+'" placeholder="'
         +(isCurWeek()?'이번 주 기록…':'그 주 기록 보완…')+'" onkeydown="wkKey(event,this)">')
     +'</td>'
-    +colTD('due',nx)
+    +colTD('my','due',nx)
     +'<td style="text-align:center"><button class="endbtn" onclick="event.stopPropagation();completeItem(\''+escJ(it._id)+'\')" title="이 업무를 끝내고 종료 화면으로 옮깁니다'+(peLinked(it)?' (푸른이알피 종료 연동)':'')+'">종료'+(peLinked(it)?'<span class="lk">🔗</span>':'')+'</button></td>'
     +'</tr>';
 }
@@ -5254,7 +5268,7 @@ function renderTeam(){
   var names=teamNames();                        // [모두 접기]와 같은 목록을 쓴다
   var h='<div class="row" style="flex-wrap:wrap"><h1>팀 전체</h1>'
     +'<span style="flex:1"></span>'
-    +viewChips()
+    +colBtn('team')+viewChips()
     +calBtn()
     +'<span class="wknav" onclick="shiftWeek(-1)">‹</span>'
     +'<span class="wkpill" id="wkpill" onclick="openCal()">📅 '+esc(weekLabel(S.week))+' ▾</span>'
@@ -5308,14 +5322,18 @@ function renderTeam(){
     return '<span class="sortb'+(cur?' on':'')+'" onclick="event.stopPropagation();teamSort(\''+k+'\')" '
       +'title="이 열로 정렬합니다">'+(cur?(S.teamDesc?'▼':'▲'):'↕')+'</span>';
   }
+  // 접힌 열은 띠가 된다. 깔때기 선택지는 펴져 있을 때만 센다 — 안 그리면 헛일이다
   function tf(k,w){    // 깔때기 + 정렬
+    if(colHidden('team',k)) return colTH('team',k,'');
     var vals=fOpen('team',k)?fVals('team',k,teamBase.filter(function(it){ return fPass('team',it,k); })):[];
-    return '<th style="'+w+'">'+fBtn('team',k,vals)+tSort(k)+'</th>';
+    return colTH('team',k,fBtn('team',k,vals)+tSort(k),w);
   }
   function ts(k,label,w){   // 정렬만 (걸러 볼 값이 마땅치 않은 열)
+    if(colHidden('team',k)) return colTH('team',k,'');
     var cur=(S.teamSort||'due')===k;
-    return '<th style="'+w+';cursor:pointer'+(cur?';color:var(--acc2)':'')+'" onclick="teamSort(\''+k+'\')" '
-      +'title="클릭하면 이 열로 정렬">'+esc(label)+(cur?(S.teamDesc?' ▼':' ▲'):'')+'</th>';
+    return colTH('team',k,'<span onclick="teamSort(\''+k+'\')" style="cursor:pointer" '
+      +'title="클릭하면 이 열로 정렬">'+esc(label)+(cur?(S.teamDesc?' ▼':' ▲'):'')+'</span>',
+      w+(cur?';color:var(--acc2)':''));
   }
   h+='<div class="panel tbl"><table><thead><tr class="fhead">'
     +'<th class="rowno">'+(anyF?'<span class="fx" onclick="teamReset()" title="걸러 보기를 모두 해제합니다">✕</span>':'#')+'</th>'
@@ -5342,15 +5360,17 @@ function renderTeam(){
         :'<span class="muted" style="font-size:12px">기록 없음</span>';
       var nx=it.next&&it.next.text?ddayHTML(it.next.date,it.next.text):(it.due?ddayHTML(it.due,'기한'):'<span class="muted">—</span>');
       nx += sdueHTML(it);   // 단계 기한은 가리지 않고 아래에 나란히 붙인다
-      return '<tr data-i="'+esc(it._id)+'">'+tdNo(i+1)+'<td>'+catBadge(it.cat)+'</td>'
+      return '<tr data-i="'+esc(it._id)+'">'+tdNo(i+1)+colTD('team','cat',catBadge(it.cat))
         +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
+        // 업무명 열을 접으면 진행률이 갈 곳이 없으므로 여기로 내려온다
+        +(colHidden('team','pt')?'<div class="sub">'+stepChip(it._id)+'</div>':'')
         // 묶어 볼 때는 주담당이 묶음 머리에 이미 있으니 부담당만, 평면일 때는 주·부 모두
         +mgrLine(it,perGroup?'sub':'all',fSel('team','mgr'))
         +(it.officer?'<div class="sub">'+esc(it.officer)+'</div>':'')+'</td>'
-        +'<td class="tkc">'+nameCell(it)+stepChip(it._id)+peFlag(it)+'</td>'
+        +colTD('team','pt',nameCell(it)+stepChip(it._id)+peFlag(it),'class="tkc"')
         // 상태 — 남의 업무라 눌러서 바꾸지는 않는다(보기만)
-        +'<td>'+stChip(it.status||'진행중')+peStChip(it)+'</td>'
-        +'<td>'+logHtml+'</td><td>'+lastHtml+'</td><td>'+nx+'</td>'
+        +colTD('team','st',stChip(it.status||'진행중')+peStChip(it))
+        +colTD('team','log',logHtml)+colTD('team','last',lastHtml)+colTD('team','due',nx)
         +'<td style="text-align:center"><button class="endbtn" onclick="event.stopPropagation();completeItem(\''+escJ(it._id)+'\')" '
         +'title="이 업무를 끝내고 종료 화면으로 옮깁니다'+(peLinked(it)?' (푸른이알피 종료 연동)':'')+'">종료'
         +(peLinked(it)?'<span class="lk">🔗</span>':'')+'</button></td></tr>';
@@ -5383,6 +5403,7 @@ function renderTeam(){
        :'진행 중 '+open.length+'건')+'</div>';
   app.innerHTML=h+splitClose();
   if(S.fPop) fPopPos();
+  if(S.colPop) colPopPos();
   calAfter();
 }
 function teamSort(k){ if((S.teamSort||'due')===k) S.teamDesc=!S.teamDesc; else { S.teamSort=k; S.teamDesc=false; } renderTeam(); }
