@@ -100,7 +100,8 @@ ok('계약 안내 함수가 있다', /function erpContractHint\(txn\)/.test(src)
 ok('이관·취소·마감된 계약은 빼고 본다',
    /status === 'cancelled' \|\| ct\.status === 'transferred' \|\| ct\.status === 'closed'/.test(src));
 ok('이름이 확실할 때만 알린다 (85점↑)', /if\(sc >= 85 && \(!best \|\| sc > best\.score\)\)/.test(src));
-ok('맞는 후보가 없을 때만 본다', /if\(!_sg\.length\) ctHint\[row\._k\] = erpContractHint/.test(src));
+// 이 계산은 erpBuildSug 로 옮겨 담겼다(추천 다시쓰기). 뜻은 그대로 — 후보가 없을 때만 본다.
+ok('맞는 후보가 없을 때만 본다', /if\(!_sg\.length\) out\.ctHint\[row\._k\] = erpContractHint/.test(src));
 ok('화면에 안내가 뜬다', /📄 아직 이관 안 된 계약이 있습니다/.test(src));
 ok('계약관리로 바로 갈 수 있다', /window\.navigateTo\('biz\/contract'\)/.test(src));
 
