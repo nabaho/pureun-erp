@@ -1535,6 +1535,11 @@ async function openCam() {
   $('camTorch').style.display = camCanTorch ? 'block' : 'none';
   $('camTorch').className = '';
 
+  /* 이 기기가 낼 수 있는 **가장 큰 사진** 크기를 미리 물어 둔다.
+     안 물어보면 기기가 미리보기 크기 그대로 주는 경우가 있다 — 대표님 화면의
+     「저장본 1200×1600」이 그런 경우다. */
+  await loadPhotoBest();
+
   $('camVid').srcObject = camStream;
   camShots = [];
   setCamSavePref(camSavePref());
@@ -1594,7 +1599,9 @@ async function toggleTorch() {
    끄면 화면 전체를 담는다 — 회의·현장 사진은 넓게 담아야 한다.
    마지막으로 둔 상태를 기기에 기억한다(명함을 몰아 찍는 날이 따로 있다). */
 const CAM_FRAME_LS = 'puphotos_cam_frame';
-function frameOn() { return localStorage.getItem(CAM_FRAME_LS) === '1'; }
+/* 명함틀도 **기본 켜짐** — 틀 안만 담으면 배경이 크게 줄어 글자가 커진다.
+   자르기와 함께 쓰면 ①틀로 크게 줄이고 ②테두리로 정확히 잘라낸다. */
+function frameOn() { return localStorage.getItem(CAM_FRAME_LS) !== '0'; }
 function applyFrameUI() {
   const on = frameOn();
   $('camFrame').style.display = on ? 'block' : 'none';
@@ -1673,6 +1680,28 @@ function loadImg(url) {
    기울기(회전)는 편다. **원근(사다리꼴)까지는 안 편다** — 네 점 변환은 캔버스로
    삼각형을 쪼개 그려야 하고, 잘못되면 글자가 늘어난다. 명함은 대개 평평한 곳에
    두고 위에서 찍으므로 회전만 펴도 충분하다. */
+/* 잘라낸 명함의 짧은 변이 이보다 작으면 글자를 못 읽는다.
+   명함은 90×50mm — 짧은 변 700px 이면 약 355dpi 로 잔글씨도 읽힌다.
+   이보다 작게 찍히면 「더 가까이」라고 알린다(사진은 그대로 담는다). */
+const CARD_MIN_SHORT = 700;
+
+/* 기기가 낼 수 있는 가장 큰 사진을 달라고 한다.
+   ⚠ 기기가 이 값을 안 받아 줄 수 있다 — 그때는 takePhoto() 가 던지므로
+      부르는 쪽에서 미리보기 프레임으로 물러선다(예전 그대로). */
+let camPhotoOpts = null;
+function camPhotoBest() { return camPhotoOpts || undefined; }
+
+/* 카메라를 켤 때 한 번 물어본다 — 이 기기가 낼 수 있는 최대 크기 */
+async function loadPhotoBest() {
+  camPhotoOpts = null;
+  try {
+    if (!camCap || !camCap.getPhotoCapabilities) return;
+    const cap = await camCap.getPhotoCapabilities();
+    const w = cap && cap.imageWidth, h = cap && cap.imageHeight;
+    if (w && h && w.max && h.max) camPhotoOpts = { imageWidth: w.max, imageHeight: h.max };
+  } catch (_) { camPhotoOpts = null; }   // 못 물어보면 기기 기본값으로 찍는다
+}
+
 const EDGE_W = 160;              // 이만큼으로 줄여서 찾는다(폰이 버티는 크기)
 const CARD_MIN_AREA = 0.18;      // 화면의 이만큼은 차지해야 명함으로 본다
 const CARD_MAX_AREA = 0.96;      // 이보다 크면 화면 전체 — 못 찾은 것이다
@@ -1818,9 +1847,13 @@ const autoCan = document.createElement('canvas');
 autoCan.width = 40; autoCan.height = 30;
 
 function camAutoPref() { return localStorage.getItem(CAM_AUTO_LS) === '1'; }
-/* 테두리 자르기 — 기본은 **꺼짐**. 계획서대로 실패할 수 있는 기능이라
-   대표님이 명함 20장으로 시험해 보고 켜실 것을 켜신다. */
-function cropPref() { return localStorage.getItem(CAM_CROP_LS) === '1'; }
+/* 테두리 자르기 — **기본 켜짐**(대표 지시 2026-08-08).
+   "명함 사진 찍을 때는 가운데 명함만 정리해서 될 수 있게, 주변 불필요한 배경은
+   필요가 없다." 배경을 남기면 명함이 화면의 4분의 1이라 글자가 400px 남짓밖에
+   안 남아 판독이 흐려진다(대표님 화면의 「저장본 1200×1600」이 그 경우다).
+   ⚠ 켜 두어도 사진을 잃지 않는다 — 못 찾으면 어차피 안 자르고(물러서는 규칙 여섯),
+      자른 뒤에도 원본을 함께 들고 간다. */
+function cropPref() { return localStorage.getItem(CAM_CROP_LS) !== '0'; }
 function setCropPref(on) {
   try { localStorage.setItem(CAM_CROP_LS, on ? '1' : '0'); } catch (_) {}
   const b = $('camCrop'); if (b) b.checked = !!on;
@@ -1910,7 +1943,9 @@ async function camShoot() {
     let src = v, sw = v.videoWidth, sh = v.videoHeight;
     if (camCap) {
       try {
-        const b = await camCap.takePhoto();
+        /* 기기가 낼 수 있는 **가장 큰 사진**을 달라고 한다.
+           안 적으면 기기가 알아서 작은 것을 주는 경우가 있다(미리보기 크기 그대로). */
+        const b = await camCap.takePhoto(camPhotoBest());
         const u = URL.createObjectURL(b);
         src = await loadImg(u);
         URL.revokeObjectURL(u);
@@ -1954,6 +1989,11 @@ async function camShoot() {
           const cb = await new Promise(function (res) { cut.toBlob(res, 'image/jpeg', 0.92); });
           /* 잘라낸 것이 터무니없이 작으면 잘못 찾은 것이다 — 원본을 쓴다 */
           if (cb && cb.size > blob.size * 0.15) { raw = blob; useBlob = cb; cropped = true; }
+          /* 잘라 놓고 보니 너무 작으면 — 글자를 못 읽는다. 더 가까이 찍으시라고 알린다.
+             (자르지 않고 그냥 두면 배경만 큰 사진이 남아 판독이 흐려진다) */
+          if (cropped && Math.min(r.w, r.h) < CARD_MIN_SHORT) {
+            toast('명함이 작게 찍혔습니다 — 조금 더 가까이서 찍어 주세요');
+          }
         }
       } catch (e) { console.warn('[테두리]', e); }   // 실패해도 사진은 남는다
     }
@@ -2057,7 +2097,12 @@ async function camUpload() {
     $('camRev').style.display = 'none';
     $('camOv').style.display = 'flex';
     renderCamStrip();
-    await addFiles(files, false, { fromCam: true });
+    /* ⚠ 서류(true)로 담는다 — 2560px·품질 0.92.
+       예전에는 false(1600px·0.85)였다. 카메라가 사진첩 안에 있던 시절의 값인데,
+       이제 이 카메라는 **명함 스캐너**다(계획서 1단계). 대표님 화면에 「저장본
+       1200×1600」으로 찍힌 것이 이 때문이고, 명함이 화면의 4분의 1이면
+       글자가 400px 남짓밖에 안 남아 판독이 흐려진다. */
+    await addFiles(files, true, { fromCam: true });
     if (dropped) toast('안 고른 ' + dropped + '장은 버렸습니다');
   } finally {
     btn.disabled = false;

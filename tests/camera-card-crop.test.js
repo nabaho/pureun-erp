@@ -169,11 +169,48 @@ test('★ 자르다 실패해도 사진은 남는다', () => {
   assert.ok(m && /catch \(e\)/.test(m[0]), '자르기가 터지면 촬영 자체가 실패합니다.');
 });
 
-test('★ 기본은 꺼져 있다 (실패할 수 있는 기능)', () => {
+/* ⚠ 2026-08-08 다시 겨눔 — 대표 지시로 **기본 켜짐**이 됐다:
+   "명함 사진 찍을 때는 가운데 명함만 정리해서 될 수 있게, 주변 불필요한 배경은
+   필요가 없다." 켜 두어도 사진을 잃지 않는 근거는 아래 두 줄이다 —
+   못 찾으면 안 자르고, 자른 뒤에도 원본을 함께 들고 간다. */
+test('★ 기본으로 켜져 있고, 그래도 사진을 잃지 않는다', () => {
   const m = html.match(/function cropPref\(\)[^\n]*/);
-  assert.ok(/=== '1'/.test(m[0]),
-    '기본이 켜져 있으면 시험해 보기 전에 모두에게 적용됩니다.');
-  assert.ok(/id="camCrop" onchange="setCropPref\(this\.checked\)"/.test(html), '끄고 켤 수 없습니다.');
+  assert.ok(/!== '0'/.test(m[0]), '기본이 꺼져 있으면 대표님이 매번 켜야 합니다.');
+  assert.ok(/id="camCrop" onchange="setCropPref\(this\.checked\)"/.test(html), '끌 수 있어야 합니다.');
+  /* 켜 두어도 안전한 근거 — 이 둘이 없으면 기본 켜짐은 위험하다 */
+  const shoot = html.match(/if \(cropPref\(\)\) \{[\s\S]{0,900}?\n    \}/);
+  assert.ok(/if \(r\.ok\)/.test(shoot[0]), '못 찾았는데 자르면 글자를 날립니다.');
+  assert.ok(/raw = blob/.test(shoot[0]), '원본을 안 들고 가면 되돌릴 수 없습니다.');
+});
+
+test('★ 명함틀도 기본으로 켜진다 (배경을 먼저 줄인다)', () => {
+  const m = html.match(/function frameOn\(\)[^\n]*/);
+  assert.ok(/!== '0'/.test(m[0]),
+    '틀이 꺼져 있으면 배경이 그대로 담겨 명함 글자가 작아집니다.');
+});
+
+test('★ 카메라 사진은 서류 화질로 담는다', () => {
+  /* 대표님 화면에 「저장본 1200×1600」으로 찍혔다 — 사진 화질(1600px)로 담고
+     있었다는 뜻이다. 이 카메라는 명함 스캐너이므로 서류 화질(2560px)이어야 한다. */
+  const m = html.match(/async function camUpload\(\)[\s\S]*?\n\}/);
+  assert.ok(/addFiles\(files, true,/.test(m[0]),
+    '사진 화질(false)로 담으면 명함 글자가 흐려집니다.');
+});
+
+test('★ 기기가 낼 수 있는 가장 큰 사진을 달라고 한다', () => {
+  assert.ok(/takePhoto\(camPhotoBest\(\)\)/.test(html),
+    '안 적으면 기기가 미리보기 크기 그대로 주는 경우가 있습니다.');
+  const m = html.match(/async function loadPhotoBest\(\)[\s\S]*?\n\}/);
+  assert.ok(m && /getPhotoCapabilities/.test(m[0]) && /imageWidth: w\.max/.test(m[0]));
+  assert.ok(/catch \(_\) \{ camPhotoOpts = null; \}/.test(m[0]),
+    '못 물어보는 기기에서는 기기 기본값으로 찍어야 합니다 — 여기서 터지면 카메라가 안 열립니다.');
+});
+
+test('★ 명함이 작게 찍히면 더 가까이 찍으라고 알린다', () => {
+  assert.ok(/const CARD_MIN_SHORT = 700;/.test(html));
+  const m = html.match(/if \(cropped && Math\.min\(r\.w, r\.h\) < CARD_MIN_SHORT\)[\s\S]{0,140}/);
+  assert.ok(m && /가까이/.test(m[0]),
+    '작게 찍힌 줄 모르고 넘어가면 판독이 흐린 이유를 알 수 없습니다.');
 });
 
 test('자르는 중임을 화면이 말한다', () => {
