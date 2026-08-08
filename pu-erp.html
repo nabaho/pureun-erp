@@ -208,7 +208,7 @@ var Component = React.Component;
    ※ 잊어도 되도록 파일 길이로도 새 배포를 알아채게 해 두었지만(_vgCheckHtml),
      여기 적어 두면 무엇이 바뀐 배포인지 알 수 있어 문제를 찾기 쉽습니다. */
 var ERP_BUILD = '2026-08-07 겹치는 유형 합치기 도구 / 성공보수 소수점 입력 / 금액칸 부가세 안내 / 관리번호 약어 통일 도구 / 입금매칭 후보에 자문료·성공보수·계약금 추가';
-var BUILD_SEQ = 148;
+var BUILD_SEQ = 149;
 // === 자동 최신화 — 아래 '버전 게이트' 모듈로 이동(로그인·탭 복귀·다른 탭 알림 시 작동) ===
 (function(){
   try{
@@ -33492,6 +33492,9 @@ function FinanceLedger(){
   var restS=useState(false);   var restored=restS[0];   var setRestored=restS[1];   // 저장된 초안에서 복원됨
   var cmsRowS=useState(null);  var cmsRow=cmsRowS[0];   var setCmsRow=cmsRowS[1];   // CMS 일괄이체 매칭 대상 행
   var gapModeS=useState({});   var gapMode=gapModeS[0]; var setGapMode=gapModeS[1]; // 차액 처리 모드 (행별: full|partial|fee)
+  var spOpenS=useState(null);  var spOpen=spOpenS[0];   var setSpOpen=spOpenS[1];   // 나눠담기 열린 행 _k (한 번에 하나)
+  var spSelS=useState({});     var spSel=spSelS[0];     var setSpSel=spSelS[1];     // {pendingId: 배분 금액} — 체크된 항목
+  var spGapS=useState('');     var spGap=spGapS[0];     var setSpGap=spGapS[1];     // 나눠담기 차액 모드: fee|partial|other
   var nbS=useState(null);      var nb=nbS[0];           var setNb=nbS[1];           // 🏦 나이스빌 CMS 파싱분 {fileName,uploadedAt,rows,byDate,stat,linked}
   var nbRestS=useState(false); var nbRestored=nbRestS[0]; var setNbRestored=nbRestS[1]; // 보관분(cms_ledger)에서 복원됨
 
@@ -34588,6 +34591,119 @@ function FinanceLedger(){
                       style:{background:'#ecfeff',color:'#0e7490',border:'1px solid #a5f3fc',borderRadius:'8px',
                         padding:'1px 6px',fontSize:'10px',fontWeight:700,cursor:'pointer'}},
                       '🧾 계산서 후보: '+ivc.entry.company+' · '+ivc.entry.date+' · '+(ivc.entry.expect||0).toLocaleString()+'원')
+                  ),
+                  // ── 나눠담기 ──
+                  !row._dup && pending.length>=2 && h('div',{style:{marginTop:'4px'}},
+                    spOpen!==row._k
+                      ? h('button',{onClick:function(){
+                          var init={};
+                          if(mId){ var pi=pending.find(function(p){return p.id===mId;}); if(pi) init[mId]=pi.expect||pi.amount; }
+                          setSpSel(init); setSpGap(''); setSpOpen(row._k);
+                        },style:{background:'#fff',color:'#1e40af',border:'1px solid #93c5fd',borderRadius:'5px',
+                          padding:'3px 8px',fontSize:'10.5px',fontWeight:700,cursor:'pointer'}},'⊞ 나눠담기')
+                      : (function(){
+                          var selIds=Object.keys(spSel);
+                          var total=selIds.reduce(function(s,id){return s+(parseInt(spSel[id],10)||0);},0);
+                          var diff=total-row.amount;
+                          var absDiff=Math.abs(diff);
+                          var spGm=spGap||(absDiff<=1100?'full':(diff>0?'partial':'other'));
+                          return h('div',{style:{border:'2px solid #1e40af',borderRadius:'10px',overflow:'hidden',marginTop:'4px'}},
+                            h('div',{style:{background:'#1e40af',color:'#fff',padding:'7px 10px',fontSize:'11.5px',fontWeight:700}},
+                              '⊞ 나눠 담기 — 입금 ',row.amount.toLocaleString(),'원'),
+                            pending.map(function(p){
+                              var on=spSel[p.id]!==undefined;
+                              var ea=p.expect||p.amount;
+                              return h('div',{key:p.id,style:{display:'flex',alignItems:'center',gap:'7px',padding:'6px 10px',
+                                borderBottom:'1px solid #f1f5f9',background:on?'#eff6ff':'#fff',fontSize:'11.5px'}},
+                                h('input',{type:'checkbox',checked:on,onChange:function(){
+                                  var nm=Object.assign({},spSel);
+                                  if(on) delete nm[p.id]; else nm[p.id]=ea;
+                                  setSpSel(nm);
+                                }}),
+                                h('span',{style:{fontWeight:700,minWidth:'90px'}},p.companyName),
+                                h('span',{style:{color:'#475569',minWidth:'80px'}},p.label),
+                                h('span',{style:{fontFamily:'monospace',minWidth:'90px',textAlign:'right'}},
+                                  ea.toLocaleString(),
+                                  p.vatLabel&&h('small',{style:{display:'block',fontSize:'9.5px',color:'#94a3b8'}},p.vatLabel)),
+                                on && h('input',{type:'text',value:String(spSel[p.id]||''),
+                                  onChange:function(e){var nm=Object.assign({},spSel);nm[p.id]=parseInt(String(e.target.value).replace(/[^0-9]/g,''),10)||0;setSpSel(nm);},
+                                  style:{width:'90px',textAlign:'right',fontFamily:'monospace',fontSize:'11px',padding:'2px 5px',
+                                    border:'1px solid #cbd5e1',borderRadius:'4px'}}),
+                                on && h('span',{style:{fontSize:'10px',padding:'1px 5px',borderRadius:'99px',fontWeight:700,
+                                  background:(spSel[p.id]||0)>=ea?'#dcfce7':'#fef3c7',
+                                  color:(spSel[p.id]||0)>=ea?'#166534':'#92400e'}},
+                                  (spSel[p.id]||0)>=ea?'완납':'일부 · 남은 '+(ea-(spSel[p.id]||0)).toLocaleString())
+                              );
+                            }),
+                            absDiff>1100 && h('div',{style:{padding:'8px 10px',background:'#fffbeb',borderTop:'1px solid #fde68a',fontSize:'11px'}},
+                              h('b',null,diff>0?'담은 합계가 입금보다 '+absDiff.toLocaleString()+'원 많습니다':'남는 '+absDiff.toLocaleString()+'원은?'),
+                              diff<0 && h('div',{style:{marginTop:'4px'}},
+                                h('label',{style:{cursor:'pointer',marginRight:'10px'}},
+                                  h('input',{type:'radio',name:'spgm'+row._k,checked:spGm==='other',
+                                    onChange:function(){setSpGap('other');}}), ' 기타입금'),
+                                h('label',{style:{cursor:'pointer'}},
+                                  h('input',{type:'radio',name:'spgm'+row._k,checked:spGm==='more',
+                                    onChange:function(){setSpGap('more');}}), ' 위에서 더 담기')
+                              ),
+                              diff>0 && h('div',{style:{marginTop:'4px'}},
+                                h('label',{style:{cursor:'pointer',marginRight:'10px'}},
+                                  h('input',{type:'radio',name:'spgm'+row._k,checked:spGm==='fee',
+                                    onChange:function(){setSpGap('fee');}}), ' 수수료 차감'),
+                                h('label',{style:{cursor:'pointer'}},
+                                  h('input',{type:'radio',name:'spgm'+row._k,checked:spGm==='partial',
+                                    onChange:function(){setSpGap('partial');}}), ' 일부입금')
+                              )
+                            ),
+                            h('div',{style:{padding:'8px 10px',background:'#f8fafc',borderTop:'1px solid #e2e8f0',
+                              display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',fontSize:'11.5px'}},
+                              h('span',null,'담은 합계 ',h('b',{style:{fontFamily:'monospace'}},total.toLocaleString()),' / 입금 ',
+                                h('b',{style:{fontFamily:'monospace'}},row.amount.toLocaleString())),
+                              absDiff<=1100 && h('span',{style:{color:'#166534',fontWeight:700}},'✅ 딱 맞습니다'),
+                              h('span',{style:{flex:1}}),
+                              h('button',{onClick:function(){setSpOpen(null);setSpSel({});setSpGap('');},
+                                style:{background:'#fff',color:'#64748b',border:'1px solid #cbd5e1',borderRadius:'5px',
+                                  padding:'4px 10px',fontSize:'11px',cursor:'pointer'}},'취소'),
+                              selIds.length>0 && !(diff>1100 && spGm!=='fee' && spGm!=='partial') && h('button',{
+                                onClick:async function(){
+                                  var lines=selIds.map(function(id){var p=pending.find(function(x){return x.id===id;});
+                                    return '· '+(p?p.companyName:'')+' '+(p?p.label:'')+' '+(spSel[id]||0).toLocaleString()+'원';}).join('\n');
+                                  var msg='입금 '+row.amount.toLocaleString()+'원을 '+selIds.length+'건에 나눠 반영합니다.\n\n'+lines;
+                                  if(diff>1100 && spGm==='fee') msg+='\n\n수수료 '+absDiff.toLocaleString()+'원 지출 기록';
+                                  if(!(await popConfirm(msg))) return;
+                                  var ok=0,ng=0;
+                                  selIds.forEach(function(id){
+                                    var p=pending.find(function(x){return x.id===id;});
+                                    if(!p){ng++;return;}
+                                    var amt=parseInt(spSel[id],10)||0;
+                                    var ea=p.expect||p.amount;
+                                    var isPartial=amt<ea;
+                                    try{
+                                      saveIncome(Object.assign({},row,{amount:amt}),p,
+                                        isPartial?{partial:true}:{});
+                                      erpLearnPayerAlias(row.memo||row.note||'',p); ok++;
+                                    }catch(_e){ng++;}
+                                  });
+                                  if(diff>1100 && spGm==='fee'){
+                                    saveExpense(Object.assign({},row,{amount:absDiff}),
+                                      'exp-outsource');
+                                  }
+                                  if(diff<-1100 && spGm==='other'){
+                                    dbUpsert('finance_income',{id:'fi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+                                      companyName:'기타',amount:absDiff,date:row.date||todayYMD(),
+                                      kind:'기타입금',memo:'나눠담기 초과분 — '+(row.memo||''),
+                                      perfShares:[],confirmedAt:new Date().toISOString(),confirmedBy:CURRENT_USER?CURRENT_USER.sid:''});
+                                  }
+                                  if(ok) erpMarkBankRowProcessed(row,'income','나눠담기 '+ok+'건');
+                                  removeRow(row._k,'inc');
+                                  setSpOpen(null);setSpSel({});setSpGap('');
+                                  showToast('✅ 나눠담기 '+ok+'건 확정'+(ng?' · 실패 '+ng+'건':''));
+                                },
+                                style:{background:'#1e40af',color:'#fff',border:'none',borderRadius:'5px',
+                                  padding:'4px 10px',fontSize:'11px',fontWeight:700,cursor:'pointer'}},
+                                selIds.length+'건에 반영')
+                            )
+                          );
+                        })()
                   )
                 ),
                 (function(){
