@@ -33650,12 +33650,19 @@ function erpSugSig(incAll, pending, tab, invReady){
   }
   return tab+'|'+incAll.length+'|'+a+'|'+pending.length+'|'+b+'|'+(invReady?1:0);
 }
-/* 비싼 부분만 따로. inMatch 를 보지 않는다(위 주석 참고). */
-function erpBuildSug(incAll, pending){
-  var out = { incByK:{}, isCmsMemo:{}, incSug:{}, incDone:{}, ctHint:{}, invSug:{} };
-  incAll.forEach(function(row){
+/* 비싼 부분만 따로. inMatch 를 보지 않는다(위 주석 참고).
+   ⚠ 조각으로 나눠 부를 수 있게 한다(from~to 행만). 실측 2초짜리 계산이라
+     한 번에 다 돌리면 그동안 화면이 통째로 멈춘다 — 대표님 콘솔에
+     「추천 다시 계산 2179ms + 화면 멈춤 3782ms」 로 찍힌 그것이다.
+     25행씩 끊어 숨 쉴 틈(setTimeout)을 주면 합계 시간은 같아도 멈춤이 없다. */
+function erpBuildSugInit(){
+  return { incByK:{}, isCmsMemo:{}, incSug:{}, incDone:{}, ctHint:{}, invSug:{} };
+}
+function erpBuildSugChunk(incAll, pending, from, to, out){
+  for(var _i=from; _i<to && _i<incAll.length; _i++){
+    var row = incAll[_i];
     out.incByK[row._k] = row;
-    if(row._dup) return;                       // 이미 처리된 행은 추천을 계산하지 않는다
+    if(row._dup) continue;                     // 이미 처리된 행은 추천을 계산하지 않는다
     var _memo = row.memo||row.note||'';
     out.isCmsMemo[row._k] = erpIsCmsMemo(_memo);
     // 후보를 종류별로 나눠 보여주므로 넉넉히 받는다 (사건·컨설팅·기금·기타)
@@ -33668,8 +33675,12 @@ function erpBuildSug(incAll, pending){
     // 계산서를 따로 한 칸에 보여주므로 추천 신뢰도와 상관없이 항상 찾는다
     var _iv = erpInvoiceSuggest({date:row.date, amount:row.amount}, 1);
     if(_iv.length) out.invSug[row._k] = _iv[0];
-  });
+  }
   return out;
+}
+// 한 번에 전부 — 검사와 작은 목록용. 화면은 조각(Chunk)으로 부른다.
+function erpBuildSug(incAll, pending){
+  return erpBuildSugChunk(incAll, pending, 0, incAll.length, erpBuildSugInit());
 }
 function FinanceLedger(){
   /* ── 미입금 대기 목록 (입금 매칭 후보) ──
@@ -33852,7 +33863,9 @@ function FinanceLedger(){
   var hideDupS=usePersistedState('ledger_hide_dup', true); var hideDup=hideDupS[0]; var setHideDup=hideDupS[1]; // 이미 처리된 행 숨기기
   var atExS=useState({});      var atEx=atExS[0];       var setAtEx=atExS[1];       // 자동 정리에서 제외한 행 (체크 해제분)
   // 입금 추천 계산 결과 — 지문(erpSugSig)이 같으면 그대로 쓴다. 아래 «비싼 계산» 참고.
-  var _sugCache = useRef({ sig:null, val:null });
+  var _sugCache = useRef({ sig:null, val:null, job:null });
+  // 조각 계산이 끝났을 때 화면을 한 번 다시 그리게 하는 눈금
+  var sugTickS = useState(0); var setSugTick = sugTickS[1];
   var atOpenS=useState(true);  var atOpen=atOpenS[0];   var setAtOpen=atOpenS[1];   // 자동 정리 미리보기 펼침 (기본 펼침)
   var invTickS=useState(0);    var invTick=invTickS[0]; var setInvTick=invTickS[1]; // 세금계산서 아카이브 로딩 완료 신호
   var advBatchS=useState(false); var advBatchOpen=advBatchS[0]; var setAdvBatchOpen=advBatchS[1]; // 자문료 일괄확인 팝업
@@ -34414,22 +34427,41 @@ function FinanceLedger(){
     if((parseInt(it.monthlyAdvisoryFee,10)||0)>0) return true;
     return /자문/.test(String(p.label||''));
   }
-  /* ── 비싼 계산은 지문이 같으면 다시 하지 않는다 ──
-     후보를 바꿀 수 있는 것(통장 행·미입금 건·탭·계산서 색인)이 그대로면 앞의
-     결과를 그대로 쓴다. 체크박스·글자 입력 같은 것으로는 다시 돌지 않는다.
-     ⚠ useRef 로 손수 담는다 — 언제 다시 도는지가 눈에 보이고 검사하기 쉽다. */
+  /* ── 비싼 계산은 지문이 같으면 다시 하지 않고, 다시 할 때도 조각내어 뒤에서 ──
+     지문(후보를 바꿀 수 있는 것: 통장 행·미입금 건·탭·계산서 색인)이 그대로면
+     앞의 결과를 그대로 쓴다. 지문이 달라졌으면 25행씩 끊어 setTimeout 으로
+     돌린다 — 실측 2초짜리 계산이라 한 번에 돌리면 그동안 화면이 통째로 멈춘다.
+     계산이 끝날 때까지는 추천 없이 그리고(⏳ 표시), 끝나면 한 번만 다시 그린다.
+     ⚠ 낡은 결과를 보여주지 않는다 — 지문이 다르면 val 을 쓰지 않는다. 미입금이
+       확정된 직후 옛 후보로 또 확정하는 사고를 막기 위함이다. */
   var _invReady = erpInvoiceIndexReady();
   var _sugSig = (rows && ldTabEff==='inc') ? erpSugSig(incAll, pending, ldTabEff, _invReady) : '';
-  if(_sugCache.current.sig !== _sugSig){
-    var _t0 = (window.performance && performance.now) ? performance.now() : 0;
-    _sugCache.current = { sig:_sugSig, val: _sugSig ? erpBuildSug(incAll, pending) : null };
-    if(_t0){
-      var _ms = performance.now() - _t0;
-      if(_ms >= 200) console.warn('[거래내역] 추천 다시 계산 '+Math.round(_ms)+'ms — 통장 '
-        +incAll.length+'행 × 미입금 '+pending.length+'건');
+  var _sugComputing = false;
+  if(_sugSig && _sugCache.current.sig !== _sugSig){
+    _sugComputing = true;
+    var _oldJob = _sugCache.current.job;
+    if(!_oldJob || _oldJob.sig !== _sugSig){
+      if(_oldJob) _oldJob.cancel = true;                    // 재료가 또 바뀌었다 — 하던 것은 버린다
+      var _job = { sig:_sugSig, cancel:false };
+      _sugCache.current.job = _job;
+      (function(job, rowsArr, pendArr){
+        var out = erpBuildSugInit(), i = 0;
+        var t0 = (window.performance && performance.now) ? performance.now() : 0;
+        function step(){
+          if(job.cancel) return;                            // 낡은 재료 — 조용히 그만둔다
+          erpBuildSugChunk(rowsArr, pendArr, i, i+25, out);
+          i += 25;
+          if(i < rowsArr.length){ setTimeout(step, 0); return; }
+          _sugCache.current = { sig: job.sig, val: out, job: null };
+          if(t0) console.log('[거래내역] 추천 다시 계산 '+Math.round(performance.now()-t0)
+            +'ms (조각내어 뒤에서 — 화면은 멈추지 않음) · 통장 '+rowsArr.length+'행 × 미입금 '+pendArr.length+'건');
+          setSugTick(function(t){ return t+1; });           // 다 됐으니 한 번만 다시 그린다
+        }
+        setTimeout(step, 0);
+      })(_job, incAll, pending);
     }
   }
-  var _sug = _sugCache.current.val;
+  var _sug = (_sugCache.current.sig === _sugSig) ? _sugCache.current.val : null;
   if(_sug){
     incByK = _sug.incByK; isCmsMemo = _sug.isCmsMemo; incSug = _sug.incSug;
     incDone = _sug.incDone; ctHint = _sug.ctHint; invSug = _sug.invSug;
@@ -35111,6 +35143,9 @@ function FinanceLedger(){
           });
           return h('div',{style:{fontWeight:700,fontSize:'12px',color:'#16a34a',marginBottom:'6px',padding:'5px 10px',background:'#f0fdf4',borderRadius:'5px',display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap'}},
             '💰 '+(incMon?parseInt(incMon.slice(5),10)+'월 ':'')+'입금 '+incList.length+'건 · '+incSum.toLocaleString()+'원',
+            // 조각 계산이 도는 몇 초 동안 — 추천 칸이 비어 보이는 까닭을 알린다
+            _sugComputing && h('span',{style:{background:'#eff6ff',color:'#1d4ed8',border:'1px solid #bfdbfe',
+              borderRadius:'8px',padding:'1px 8px',fontSize:'10.5px',fontWeight:800}},'⏳ 추천 계산 중…'),
             _advAuto>0 && h('span',{style:{background:'#f0fdfa',color:'#0d9488',border:'1px solid #99f6e4',borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:700}},'자문료 '+_advAuto+'건'),
             _manualNeed>0 && h('span',{style:{background:'#fffbeb',color:'#d97706',border:'1px solid #fde68a',borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:700}},'수동 '+_manualNeed+'건'),
             _noMatch>0 && h('span',{style:{background:'#fef2f2',color:'#dc2626',border:'1px solid #fecaca',borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:700}},'미매칭 '+_noMatch+'건'),

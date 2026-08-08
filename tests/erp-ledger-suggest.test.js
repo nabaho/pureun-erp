@@ -148,8 +148,52 @@ test('사용자가 고른 매칭(inMatch)은 계산에 넣지 않는다', () => 
 /* ── 화면에 제대로 물렸나 ── */
 test('지문이 같으면 다시 계산하지 않는다', () => {
   const fl = app.slice(app.indexOf('function FinanceLedger(){'));
-  assert.match(fl, /if\(_sugCache\.current\.sig !== _sugSig\)\{/);
+  // 조각 계산으로 바뀌면서 조건에 _sugSig 가드가 앞에 붙었다 — 뜻은 그대로다
+  assert.match(fl, /if\(_sugSig && _sugCache\.current\.sig !== _sugSig\)\{/);
   assert.match(fl, /var _sugCache = useRef\(/);
+});
+
+/* ── 조각내어 뒤에서 — 실측 2초짜리 계산이 화면을 멈추지 않게 ── */
+test('다시 계산할 때 한 번에 다 돌리지 않는다 (25행씩 조각)', () => {
+  const fl = app.slice(app.indexOf('function FinanceLedger(){'));
+  assert.match(fl, /erpBuildSugChunk\(rowsArr, pendArr, i, i\+25, out\)/);
+  assert.match(fl, /setTimeout\(step, 0\)/, '조각 사이에 화면이 숨 쉴 틈을 준다');
+  assert.ok(!/val: _sugSig \? erpBuildSug\(/.test(fl), '한 번에 다 도는 옛 길이 남아 있으면 안 된다');
+});
+
+test('낡은 결과를 보여주지 않는다 — 지문이 다르면 val 을 쓰지 않는다', () => {
+  // 미입금이 확정된 직후 옛 후보로 또 확정하는 사고를 막는다
+  const fl = app.slice(app.indexOf('function FinanceLedger(){'));
+  assert.match(fl, /var _sug = \(_sugCache\.current\.sig === _sugSig\) \? _sugCache\.current\.val : null;/);
+});
+
+test('재료가 또 바뀌면 하던 계산을 버린다 (낡은 조각이 덮지 않게)', () => {
+  const fl = app.slice(app.indexOf('function FinanceLedger(){'));
+  assert.match(fl, /if\(_oldJob\) _oldJob\.cancel = true;/);
+  assert.match(fl, /if\(job\.cancel\) return;/);
+});
+
+test('계산이 끝나면 한 번만 다시 그린다', () => {
+  const fl = app.slice(app.indexOf('function FinanceLedger(){'));
+  assert.match(fl, /setSugTick\(function\(t\)\{ return t\+1; \}\);/);
+});
+
+test('계산 중에는 왜 추천이 비어 보이는지 알린다', () => {
+  const fl = app.slice(app.indexOf('function FinanceLedger(){'));
+  assert.match(fl, /_sugComputing && h\('span'/);
+  assert.match(fl, /추천 계산 중/);
+});
+
+test('조각을 이어 돌린 결과가 한 번에 돌린 것과 똑같다', () => {
+  const { sandbox: s } = load();
+  const rows = [];
+  for (let i = 0; i < 63; i++) rows.push(ROW('r' + i, 1000 + i, '적요' + i));
+  const pend = [PEND('p1', 1000), PEND('p2', 1030)];
+  const whole = s.erpBuildSug(rows, pend);
+  const out = s.erpBuildSugInit();
+  for (let i = 0; i < rows.length; i += 25) s.erpBuildSugChunk(rows, pend, i, i + 25, out);
+  assert.deepEqual(Object.keys(out.incSug).sort(), Object.keys(whole.incSug).sort());
+  assert.equal(Object.keys(out.incByK).length, 63);
 });
 
 test('inMatch 를 쓰는 계산은 캐시 밖에 남아 매번 다시 본다', () => {
