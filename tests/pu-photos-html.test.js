@@ -1383,8 +1383,12 @@ test('전체 근로자를 고르면 사람마다 모아 합치는 함수를 쓴�
   const fn = app.match(/function loadGrid\([\s\S]*?\n\}/);
   assert.ok(fn, 'loadGrid 본문을 찾을 수 없습니다');
   assert.match(fn[0], /PuPhotoStore\.listYearAll\(/, '전체 근로자용 목록 함수를 안 씁니다');
-  // 전체 근로자 화면에서는 판독 대기열을 돌리지 않는다 — 남의 사진을 자동으로 건드리면 안 된다
-  assert.match(fn[0], /gridOwner !== ALL_OWNERS\) autoReadPending/);
+  /* 전체 근로자 화면에서는 판독 대기열을 돌리지 않는다 — 남의 사진을 자동으로 건드리면 안 된다.
+     ⚠ 2026-08-08 다시 겨눔 — 「나와 공유된 사진」(SHARED_OWNER)이 생기면서 조건이
+     둘로 늘었다. 지켜야 할 것은 **남의 사진에는 자동 판독을 안 돌린다**는 것이다. */
+  assert.match(fn[0], /gridOwner !== ALL_OWNERS[\s\S]{0,60}autoReadPending/);
+  assert.match(fn[0], /gridOwner !== SHARED_OWNER[\s\S]{0,40}autoReadPending/,
+    '공유받은 사진에도 자동 판독을 돌리면 안 됩니다 — 남의 사진입니다');
 });
 
 test('전체 근로자 화면에서는 사진마다 누구 것인지 보인다', () => {
