@@ -33843,6 +33843,10 @@ function FinanceLedger(){
   var spSelS=useState({});     var spSel=spSelS[0];     var setSpSel=spSelS[1];     // {pendingId: 배분 금액} — 체크된 항목
   var spGapS=useState('');     var spGap=spGapS[0];     var setSpGap=spGapS[1];     // 나눠담기 차액 모드: fee|partial|other
   var spRowS=useState(null);   var spRow=spRowS[0];     var setSpRow=spRowS[1];     // 나눠담기 대상 행 (모달용)
+  /* 통장 «여러 행»을 묶어 한꺼번에 처리할 때 그 행들. 한 행짜리면 null 이고 [spRow] 와 같다.
+     비즈사업비처럼 한 건 값이 두 번에 나뉘어 들어오면, 행마다 따로 보는 한 어느 후보와도 안 맞는다.
+     묶어 놓고 보면 합계가 맞으므로 애매한 금액끼리 비교할 일이 없어진다. */
+  var spRowsS=useState(null);  var spRows=spRowsS[0];   var setSpRows=spRowsS[1];
   var spQS=useState('');       var spQ=spQS[0];         var setSpQ=spQS[1];         // 나눠담기 목록 검색어
   var nbS=useState(null);      var nb=nbS[0];           var setNb=nbS[1];           // 🏦 나이스빌 CMS 파싱분 {fileName,uploadedAt,rows,byDate,stat,linked}
   var nbRestS=useState(false); var nbRestored=nbRestS[0]; var setNbRestored=nbRestS[1]; // 보관분(cms_ledger)에서 복원됨
@@ -35258,6 +35262,23 @@ function FinanceLedger(){
               },
               style:{padding:'3px 9px',background:'#d97706',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10.5px',fontWeight:800,cursor:'pointer',whiteSpace:'nowrap'}},
               '📋 창에서 확인 '+chkNeed.length+'건'),
+            /* ── ⊞ 묶어서 처리 — 통장 여러 행을 합쳐 미입금 건에 붙인다 ──
+               비즈사업비처럼 한 건 값이 두 번에 나뉘어 들어오면, 행마다 따로 보는 한
+               어느 후보와도 안 맞아 애매한 금액끼리 비교하게 된다. 묶으면 합계가 맞는다. */
+            (function(){
+              var _gk=Object.keys(incChk).filter(function(k){ var r=incByK[k]; return r && !r._dup; });
+              if(_gk.length<2) return null;
+              var _grows=_gk.map(function(k){ return incByK[k]; });
+              var _gsum=_grows.reduce(function(s,r){ return s+(r.amount||0); },0);
+              return h('button',{
+                title:'고른 통장 '+_gk.length+'행을 합쳐 미입금 건에 붙입니다\n— 한 건 값이 여러 번에 나뉘어 들어왔을 때 씁니다',
+                onClick:function(){
+                  setSpSel({}); setSpGap(''); setSpQ('');
+                  setSpRows(_grows); setSpRow(_grows[0]); setSpOpen(_grows[0]._k);
+                },
+                style:{padding:'3px 9px',background:'#7c3aed',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10.5px',fontWeight:800,cursor:'pointer',whiteSpace:'nowrap'}},
+                '⊞ 묶어서 처리 '+_gk.length+'행 · '+_gsum.toLocaleString()+'원');
+            })(),
             _advAuto>0 && h('button',{onClick:function(){setAdvBatchOpen(true);},
               style:{padding:'3px 8px',background:'#0d9488',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'자문료 일괄확인'),
             h('button',{onClick:function(){setConfHistOpen(true);},
@@ -35659,7 +35680,8 @@ function FinanceLedger(){
                     h('button',{onClick:function(){
                         var init={};
                         if(mId){ var pi=pending.find(function(p){return p.id===mId;}); if(pi) init[mId]=pi.expect||pi.amount; }
-                        setSpSel(init); setSpGap(''); setSpQ(''); setSpRow(row); setSpOpen(row._k);
+                        // 이 단추는 «이 행 하나»만 다룬다 — 묶음이 남아 있으면 푼다
+                        setSpSel(init); setSpGap(''); setSpQ(''); setSpRows(null); setSpRow(row); setSpOpen(row._k);
                       },style:{background:spOpen===row._k?'#1e40af':'#fff',color:spOpen===row._k?'#fff':'#1e40af',
                         border:'1px solid #93c5fd',borderRadius:'5px',
                         padding:'3px 8px',fontSize:'10.5px',fontWeight:700,cursor:'pointer'}},
@@ -35844,12 +35866,17 @@ function FinanceLedger(){
     // ── 나눠담기 모달 (2-2 좌우 대조) ──
     spOpen && spRow && (function(){
       var row=spRow;
+      /* 통장 행이 하나면 rowsIn 은 [row] — 종전 나눠담기와 똑같다.
+         둘 이상이면 «합쳐서» 본다. 아래 셈은 전부 amountIn(합계) 기준이다. */
+      var rowsIn=(spRows&&spRows.length)?spRows:[row];
+      var manyIn=rowsIn.length>1;
+      var amountIn=rowsIn.reduce(function(s,r){return s+(r.amount||0);},0);
       var selIds=Object.keys(spSel);
       var total=selIds.reduce(function(s,id){return s+(parseInt(spSel[id],10)||0);},0);
-      var diff=total-row.amount;
+      var diff=total-amountIn;
       var absDiff=Math.abs(diff);
       var spGm=spGap||(absDiff<=1100?'full':(diff>0?'partial':'other'));
-      function closeModal(){setSpOpen(null);setSpRow(null);setSpSel({});setSpGap('');setSpQ('');}
+      function closeModal(){setSpOpen(null);setSpRow(null);setSpRows(null);setSpSel({});setSpGap('');setSpQ('');}
       // 담은 건의 성과급 합계
       var _spPerfAll=[];
       selIds.forEach(function(id){
@@ -35868,18 +35895,35 @@ function FinanceLedger(){
             boxShadow:'0 20px 60px rgba(0,0,0,0.3)',overflow:'hidden'}},
           h('div',{style:{background:'#d97706',color:'#fff',padding:'12px 16px',fontSize:'13px',fontWeight:700,
             display:'flex',alignItems:'center',justifyContent:'space-between'}},
-            h('span',null,'↔️ 나눠담기 · ',row.amount.toLocaleString(),'원 — 좌우 대조'),
+            h('span',null, manyIn
+              ? ('⊞ 묶어서 처리 · 통장 '+rowsIn.length+'행 합계 '+amountIn.toLocaleString()+'원 — 좌우 대조')
+              : ('↔️ 나눠담기 · '+amountIn.toLocaleString()+'원 — 좌우 대조')),
             h('button',{onClick:closeModal,style:{background:'none',border:'none',color:'#fff',fontSize:'18px',
               cursor:'pointer',padding:'0 4px',lineHeight:1}},'×')),
           h('div',{style:{display:'grid',gridTemplateColumns:'250px 1fr',flex:1,overflow:'hidden'}},
             // 왼쪽: 은행 원본
             h('div',{style:{padding:'14px',borderRight:'1px solid #e2e8f0',background:'#f0fdf4',overflowY:'auto'}},
-              h('div',{style:{fontSize:'10px',fontWeight:700,color:'#16a34a',marginBottom:'6px'}},'🏦 은행 입금 원본'),
-              h('div',{style:{fontSize:'24px',fontWeight:800,fontFamily:'monospace',color:'#16a34a'}},row.amount.toLocaleString()),
-              h('div',{style:{display:'flex',justifyContent:'space-between',padding:'4px 0',fontSize:'11px',marginTop:'6px'}},
-                h('span',{style:{color:'#64748b'}},'일시'),h('span',{style:{fontWeight:600}},row.date||'-')),
-              h('div',{style:{display:'flex',justifyContent:'space-between',padding:'4px 0',fontSize:'11px'}},
-                h('span',{style:{color:'#64748b'}},'적요'),h('span',{style:{fontWeight:600}},row.memo||row.note||'-')),
+              h('div',{style:{fontSize:'10px',fontWeight:700,color:'#16a34a',marginBottom:'6px'}},
+                manyIn?('🏦 은행 입금 '+rowsIn.length+'건 합계'):'🏦 은행 입금 원본'),
+              h('div',{style:{fontSize:'24px',fontWeight:800,fontFamily:'monospace',color:'#16a34a'}},amountIn.toLocaleString()),
+              // 묶었으면 어느 행을 묶었는지 그대로 보여준다 — 합계만 보이면 무엇을 묶었는지 알 수 없다
+              manyIn
+              ? h('div',{style:{marginTop:'8px',display:'flex',flexDirection:'column',gap:'3px'}},
+                  rowsIn.map(function(r,_i){
+                    return h('div',{key:r._k||_i,style:{background:'#fff',border:'1px solid #bbf7d0',borderRadius:'5px',
+                      padding:'4px 6px',fontSize:'10px',lineHeight:1.4}},
+                      h('div',{style:{display:'flex',justifyContent:'space-between',gap:'6px'}},
+                        h('span',{style:{color:'#64748b'}},r.date||'-'),
+                        h('span',{style:{fontWeight:700,fontFamily:'monospace'}},(r.amount||0).toLocaleString())),
+                      h('div',{style:{color:'#475569',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
+                        r.memo||r.note||'-'));
+                  }))
+              : [
+                h('div',{key:'d',style:{display:'flex',justifyContent:'space-between',padding:'4px 0',fontSize:'11px',marginTop:'6px'}},
+                  h('span',{style:{color:'#64748b'}},'일시'),h('span',{style:{fontWeight:600}},row.date||'-')),
+                h('div',{key:'m',style:{display:'flex',justifyContent:'space-between',padding:'4px 0',fontSize:'11px'}},
+                  h('span',{style:{color:'#64748b'}},'적요'),h('span',{style:{fontWeight:600}},row.memo||row.note||'-'))
+              ],
               // 금액 대조 박스
               h('div',{style:{marginTop:'12px',padding:'8px',background:'#fff',border:'1px solid #e2e8f0',borderRadius:'6px',fontSize:'10.5px'}},
                 h('div',{style:{fontWeight:700,marginBottom:'3px'}},'금액 대조'),
@@ -35903,7 +35947,8 @@ function FinanceLedger(){
                 /* 전에는 업체명과 세금 배지만 보이고, 종류·관리번호·담당자·금액은 «체크한 뒤에야» 나왔다.
                    체크할지 정하려면 먼저 봐야 하는데 순서가 거꾸로였다. 이제 한 줄에 다 보여준다.
                    비즈사업비·생산성본부처럼 현장클리닉 묶음이면 현장클리닉 건을 위로 올린다. */
-                var _clinic = erpIsClinicPayer(row.memo||row.note||'');
+                // 묶었으면 묶은 행 중 하나라도 현장클리닉 적요면 클리닉 건을 위로 올린다
+                var _clinic = rowsIn.some(function(r){ return erpIsClinicPayer(r.memo||r.note||''); });
                 var _q = (spQ||'').trim().toLowerCase();
                 var _list = pending.filter(function(p){
                   if(!p) return false;
@@ -35918,8 +35963,8 @@ function FinanceLedger(){
                     var ca=erpIsClinicItem(a)?0:1, cb=erpIsClinicItem(b)?0:1;
                     if(ca!==cb) return ca-cb;                        // 현장클리닉 먼저
                   }
-                  var da=Math.abs((a.expect||a.amount)-row.amount);
-                  var db=Math.abs((b.expect||b.amount)-row.amount);
+                  var da=Math.abs((a.expect||a.amount)-amountIn);
+                  var db=Math.abs((b.expect||b.amount)-amountIn);
                   return da-db;                                      // 금액 가까운 순
                 });
                 return h('div',null,
@@ -35940,7 +35985,7 @@ function FinanceLedger(){
                 var _tax=_pendTaxType(p);
                 var _bd=storeBadge(p.store);
                 var _no=(p.item&&(p.item.caseNo||p.item.no))||'';
-                var _dd=ea-row.amount;
+                var _dd=ea-amountIn;
                 var _cw={flexShrink:0,overflow:'hidden',textOverflow:'ellipsis'};
                 var _ivc=null;
                 try{_ivc=erpInvoiceMatch({date:row.date,amount:ea,memo:''},p.companyName);}catch(_e){}
@@ -36048,8 +36093,9 @@ function FinanceLedger(){
             ),
           h('div',{style:{padding:'10px 14px',background:'#f8fafc',borderTop:'1px solid #e2e8f0',
             display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',fontSize:'12px'}},
-            h('span',null,'담은 합계 ',h('b',{style:{fontFamily:'monospace'}},total.toLocaleString()),' / 입금 ',
-              h('b',{style:{fontFamily:'monospace'}},row.amount.toLocaleString())),
+            h('span',null,'담은 합계 ',h('b',{style:{fontFamily:'monospace'}},total.toLocaleString()),
+              manyIn?' / 입금 '+rowsIn.length+'행 ':' / 입금 ',
+              h('b',{style:{fontFamily:'monospace'}},amountIn.toLocaleString())),
             absDiff<=1100 && h('span',{style:{color:'#166534',fontWeight:700}},'✅ 딱 맞습니다'),
             h('span',{style:{flex:1}}),
             h('button',{onClick:closeModal,
@@ -36059,36 +36105,58 @@ function FinanceLedger(){
               onClick:async function(){
                 var lines=selIds.map(function(id){var p=pending.find(function(x){return x.id===id;});
                   return '· '+(p?p.companyName:'')+' '+(p?p.label:'')+' '+(spSel[id]||0).toLocaleString()+'원';}).join('\n');
-                var msg='입금 '+row.amount.toLocaleString()+'원을 '+selIds.length+'건에 나눠 반영합니다.\n\n'+lines;
+                var msg=(manyIn
+                  ? ('통장 '+rowsIn.length+'행 합계 '+amountIn.toLocaleString()+'원을 '+selIds.length+'건에 반영합니다.')
+                  : ('입금 '+amountIn.toLocaleString()+'원을 '+selIds.length+'건에 나눠 반영합니다.'))+'\n\n'+lines;
                 if(diff>1100 && spGm==='fee') msg+='\n\n수수료 '+absDiff.toLocaleString()+'원 지출 기록';
                 if(!(await popConfirm(msg))) return;
                 var ok=0,ng=0;
+                /* 통장 행을 앞에서부터 헐어 미입금 건을 채운다.
+                   한 건이 두 행에 걸치면 기록도 둘로 나뉜다 — 실제로 두 번 들어온 돈이니 그게 맞다.
+                   erpPaidSoFar 가 splitPayments 를 합쳐 보므로 합계가 차면 완납으로 잡힌다. */
+                var _pool=rowsIn.map(function(r){return {row:r,left:(r.amount||0)};});
+                var _pi=0;
                 selIds.forEach(function(id){
                   var p=pending.find(function(x){return x.id===id;});
                   if(!p){ng++;return;}
-                  var amt=parseInt(spSel[id],10)||0;
+                  var need=parseInt(spSel[id],10)||0;
                   var ea=p.expect||p.amount;
-                  var isPartial=amt<ea;
-                  try{
-                    saveIncome(Object.assign({},row,{amount:amt}),p,
-                      isPartial?{partial:true}:{});
-                    erpLearnPayerAlias(row.memo||row.note||'',p); ok++;
-                  }catch(_e){ng++;}
+                  var got=0,bad=false;
+                  while(need>0 && _pi<_pool.length){
+                    var slot=_pool[_pi];
+                    if(slot.left<=0){_pi++;continue;}
+                    var take=Math.min(slot.left,need);
+                    try{
+                      // 이 조각만으로 다 채우지 못하면 일부입금으로 남긴다
+                      saveIncome(Object.assign({},slot.row,{amount:take}),p,
+                        (got+take)<ea?{partial:true}:{});
+                      erpLearnPayerAlias(slot.row.memo||slot.row.note||'',p);
+                    }catch(_e){bad=true;}
+                    slot.left-=take; need-=take; got+=take;
+                  }
+                  if(bad||!got) ng++; else ok++;
                 });
                 if(diff>1100 && spGm==='fee'){
-                  saveExpense(Object.assign({},row,{amount:absDiff}),
+                  // 수수료는 남은 통장 행(없으면 첫 행)에 붙인다 — 날짜가 있어야 지출로 남는다
+                  var _feeRow=(_pool.filter(function(s){return s.left>0;})[0]||_pool[0]).row;
+                  saveExpense(Object.assign({},_feeRow,{amount:absDiff}),
                     'exp-outsource');
                 }
                 if(diff<-1100 && spGm==='other'){
                   dbUpsert('finance_income',{id:'fi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
                     companyName:'기타',amount:absDiff,date:row.date||todayYMD(),
-                    kind:'기타입금',memo:'나눠담기 초과분 — '+(row.memo||''),
+                    kind:'기타입금',memo:(manyIn?'묶어서 처리':'나눠담기')+' 초과분 — '+(row.memo||''),
                     perfShares:[],confirmedAt:new Date().toISOString(),confirmedBy:CURRENT_USER?CURRENT_USER.sid:''});
                 }
-                if(ok) erpMarkBankRowProcessed(row,'income','나눠담기 '+ok+'건');
-                removeRow(row._k,'inc');
+                // 묶은 통장 행은 «하나도 빠짐없이» 처리 표시하고 목록에서 뺀다 — 하나라도 남으면 또 후보로 뜬다
+                var _tag=(manyIn?'묶어서 처리':'나눠담기')+' '+ok+'건';
+                rowsIn.forEach(function(r){
+                  if(ok) erpMarkBankRowProcessed(r,'income',_tag);
+                  removeRow(r._k,'inc');
+                });
+                if(manyIn){ var _nc=Object.assign({},incChk); rowsIn.forEach(function(r){delete _nc[r._k];}); setIncChk(_nc); }
                 closeModal();
-                showToast('✅ 나눠담기 '+ok+'건 확정'+(ng?' · 실패 '+ng+'건':''));
+                showToast('✅ '+(manyIn?'묶어서 처리 통장 '+rowsIn.length+'행 → ':'나눠담기 ')+ok+'건 확정'+(ng?' · 실패 '+ng+'건':''));
               },
               style:{background:'#1e40af',color:'#fff',border:'none',borderRadius:'5px',
                 padding:'5px 14px',fontSize:'11.5px',fontWeight:700,cursor:'pointer'}},
