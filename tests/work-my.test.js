@@ -35,7 +35,8 @@ const localStorage = {
 };
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function escJ(s) { return esc(String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'")); }
-function route() {} function renderMy() {}
+function route() {} function renderMy() {} function renderTeam() {}
+function fRender(sc) { if (sc === 'team') renderTeam(); else renderMy(); }
 function fHas(sc, k) { return (S.F && S.F[sc] && S.F[sc][k]) instanceof Array; }
 function catBadge(c) { return '<span class="cat">' + esc(c) + '</span>'; }
 function showModal() {} function closeM() {}
@@ -72,10 +73,10 @@ function canLog(l) { return !!l && (l.by === S.me.sid || l.byName === S.me.name)
 function toast() {}
 function rid(p) { return p + '9'; }
 
-eval(gvar('STATUSES') + '\n' + gvar('PLAN_GROUP') + '\n' + gvar('COLS_KEY') + '\n' + gvar('MYCOLS') + '\n' + gvar('COLS_DEFAULT') + '\n'
+eval(gvar('STATUSES') + '\n' + gvar('PLAN_GROUP') + '\n' + gvar('COLS_KEY') + '\n' + gvar('COLSET') + '\n' + gvar('COLS_DEFAULT') + '\n'
   + gvar('GRP_KEY') + '\n' + gvar('GRP_ORDER') + '\n'
   + gvar('KIND_SET') + '\n' + gvar('KIND_ALIAS') + '\n'
-  + ['catNorm', 'colPref', 'colForced', 'colHidden', 'colToggle', 'colBtn',
+  + ['catNorm', 'colCols', 'colHas', 'colPref', 'colForced', 'colHidden', 'colToggle', 'colBtn',
      'colPop', 'colPopClose', 'colPopHTML', 'colTH', 'colTD',
      'grpOn', 'grpToggle', 'grpFold', 'grpFolded', 'grpFoldToggle', 'groupRows',
      'grpHeadHTML', 'dayHeadHTML', 'calFocusDay', 'stSelect', 'setStatus',
@@ -87,118 +88,183 @@ eval(gvar('STATUSES') + '\n' + gvar('PLAN_GROUP') + '\n' + gvar('COLS_KEY') + '\
    아래 「묶어 보기」 묶음에서 따로 확인한다. */
 S.grpOn = false;
 ok('접을 수 있는 열은 다섯 (기업·요일 칸·종료는 접지 않는다)',
-  MYCOLS.map(c => c[0]).join() === 'cat,pt,st,last,due');
+  COLSET.my.map(c => c[0]).join() === 'cat,pt,st,last,due');
 ok('처음에는 업무와 최근 기록이 접혀 있다',
-  colHidden('pt') === true && colHidden('last') === true
-  && colHidden('cat') === false && colHidden('st') === false && colHidden('due') === false);
+  colHidden('my','pt') === true && colHidden('my','last') === true
+  && colHidden('my','cat') === false && colHidden('my','st') === false && colHidden('my','due') === false);
 ok('접을 수 없는 열은 언제나 펴져 있다',
-  colHidden('co') === false && colHidden('') === false);
+  colHidden('my','co') === false && colHidden('my','') === false);
 
 /* ── 켜고 끄기 ── */
 STORE = {}; S.cols = undefined;
-colToggle('last');
-ok('접힌 열을 펴면 펴진다', colHidden('last') === false);
-ok('편 것이 이 브라우저에 저장된다', STORE[COLS_KEY] === 'pt');
-colToggle('st');
-ok('펴진 열을 접으면 접힌다', colHidden('st') === true);
-ok('접힌 목록이 함께 저장된다', STORE[COLS_KEY].split(',').sort().join() === 'pt,st');
-colToggle('co');
+colToggle('my','last');
+ok('접힌 열을 펴면 펴진다', colHidden('my','last') === false);
+ok('편 것이 이 브라우저에 저장된다', STORE[COLS_KEY.my] === 'pt');
+colToggle('my','st');
+ok('펴진 열을 접으면 접힌다', colHidden('my','st') === true);
+ok('접힌 목록이 함께 저장된다', STORE[COLS_KEY.my].split(',').sort().join() === 'pt,st');
+colToggle('my','co');
 ok('접을 수 없는 열은 눌러도 안 바뀐다',
-  colHidden('co') === false && STORE[COLS_KEY].split(',').sort().join() === 'pt,st');
+  colHidden('my','co') === false && STORE[COLS_KEY.my].split(',').sort().join() === 'pt,st');
 
 STORE = {}; S.cols = undefined;
-colToggle('pt'); colToggle('last');
-ok('전부 펴면 빈 값으로 저장된다', STORE[COLS_KEY] === '');
+colToggle('my','pt'); colToggle('my','last');
+ok('전부 펴면 빈 값으로 저장된다', STORE[COLS_KEY.my] === '');
 S.cols = undefined;
 ok('빈 값은 기본값이 아니라 "전부 펴짐"으로 읽는다 (다시 접히면 편 뜻이 무시된다)',
-  colHidden('pt') === false && colHidden('last') === false);
+  colHidden('my','pt') === false && colHidden('my','last') === false);
 
 /* ── 띠와 칩 ── */
 STORE = {}; S.cols = undefined; S.F = {};
 ok('펴진 열은 보통 칸으로 그린다',
-  colTH('st', '상태', 'width:74px').indexOf('<th style="width:74px">') === 0
-  && colTH('st', '상태', 'width:74px').indexOf('상태</th>') > 0
-  && colTD('st', '<b>진행중</b>') === '<td><b>진행중</b></td>');
+  colTH('my','st', '상태', 'width:74px').indexOf('<th style="width:74px">') === 0
+  && colTH('my','st', '상태', 'width:74px').indexOf('상태</th>') > 0
+  && colTD('my','st', '<b>진행중</b>') === '<td><b>진행중</b></td>');
 /* 펴진 열에도 접는 손잡이가 있어야 한다. 없으면 한 번 편 뒤에는 팝업으로만
    다시 접을 수 있어 접고 펴는 일이 한쪽으로만 된다. */
 ok('펴진 열에 접는 손잡이가 붙는다', (function () {
-  const h = colTH('st', '상태', 'width:74px');
-  return h.indexOf('class="cfold"') > 0 && h.indexOf("colToggle('st')") > 0 && h.indexOf('‹') > 0;
+  const h = colTH('my','st', '상태', 'width:74px');
+  return h.indexOf('class="cfold"') > 0 && h.indexOf("colToggle('my','st')") > 0 && h.indexOf('‹') > 0;
 })());
 ok('손잡이를 눌러도 걸러 보기 팝업이 열리지 않는다',
-  colTH('st', '상태').indexOf('event.stopPropagation();colToggle') > 0);
+  colTH('my','st', '상태').indexOf('event.stopPropagation();colToggle') > 0);
 ok('손잡이는 열 이름보다 앞에 온다 (칸 너비를 밀지 않게)',
-  colTH('st', '상태').indexOf('cfold') < colTH('st', '상태').indexOf('상태'));
-ok('접을 수 없는 열에는 손잡이가 없다', colTH('co', '기업').indexOf('cfold') < 0);
+  colTH('my','st', '상태').indexOf('cfold') < colTH('my','st', '상태').indexOf('상태'));
+ok('접을 수 없는 열에는 손잡이가 없다', colTH('my','co', '기업').indexOf('cfold') < 0);
 ok('손잡이 모양이 CSS에 있다', W.indexOf('tr.fhead .cfold{') > 0);
 ok('접힌 열은 띠가 되고 눌러서 편다',
-  colTH('last', '최근 기록').indexOf('class="cband"') > 0
-  && colTH('last', '최근 기록').indexOf("colToggle('last')") > 0
-  && colTD('last', '기록 없음') === '<td class="cband"></td>');
+  colTH('my','last', '최근 기록').indexOf('class="cband"') > 0
+  && colTH('my','last', '최근 기록').indexOf("colToggle('my','last')") > 0
+  && colTD('my','last', '기록 없음') === '<td class="cband"></td>');
 ok('띠에 열 이름이 남아 무엇을 접었는지 보인다',
-  colTH('last', 'x').indexOf('최근 기록') > 0);
+  colTH('my','last', 'x').indexOf('최근 기록') > 0);
 ok('접힌 칸은 내용을 그리지 않는다 (그리면 폭이 안 준다)',
-  colTD('last', '아주아주 긴 최근 기록 내용').indexOf('아주') < 0);
+  colTD('my','last', '아주아주 긴 최근 기록 내용').indexOf('아주') < 0);
 S.F = { my: { last: ['기록 없음'] } };
 ok('조건이 걸린 채 접힌 열에는 점이 붙는다 (왜 안 나오는지 모를 일을 막는다)',
-  colTH('last', 'x').indexOf('class="cbd"') > 0);
+  colTH('my','last', 'x').indexOf('class="cbd"') > 0);
 S.F = {};
-ok('조건이 없으면 점이 없다', colTH('last', 'x').indexOf('class="cbd"') < 0);
+ok('조건이 없으면 점이 없다', colTH('my','last', 'x').indexOf('class="cbd"') < 0);
 /* ── 머리줄은 칩 하나로 ──
    열마다 칩을 하나씩 놓았더니 머리줄에 칩이 여덟 개가 되어 "화면을 편하게" 와
    정반대가 됐다. 자주 누르는 것이 아니므로 팝업 안으로 넣는다. */
 S.grpOn = false; STORE = {}; S.cols = undefined;
 ok('머리줄에는 열 칩이 하나뿐이다', (function () {
-  const h = colBtn();
+  const h = colBtn('my');
   return (h.match(/chipbtn/g) || []).length === 1 && h.indexOf('▦ 열') > 0;
 })());
 ok('몇 개를 접었는지 칩에 적는다 (접은 것을 잊지 않게)',
-  colBtn().indexOf('2 접힘') > 0);
+  colBtn('my').indexOf('2 접힘') > 0);
 ok('다 펴면 숫자를 안 적는다', (function () {
-  colToggle('pt'); colToggle('last');
-  const h = colBtn();
-  colToggle('pt'); colToggle('last');
+  colToggle('my','pt'); colToggle('my','last');
+  const h = colBtn('my');
+  colToggle('my','pt'); colToggle('my','last');
   return h.indexOf('접힘') < 0;
 })());
 /* 창을 띄우지 않고 칩 바로 아래에 붙는 체크 목록.
    걸러 보기 깔때기와 같은 구조를 써서 여닫는 법을 새로 익히지 않아도 된다. */
 S.grpOn = false; S.colPop = false; STORE = {}; S.cols = undefined;
-ok('평소에는 목록이 안 붙어 있다', colBtn().indexOf('colpop') < 0);
-colPop();
-ok('칩을 누르면 열린다', S.colPop === true && colBtn().indexOf('id="colpop"') > 0);
+ok('평소에는 목록이 안 붙어 있다', colBtn('my').indexOf('colpop') < 0);
+colPop('my');
+ok('칩을 누르면 열린다', S.colPop === 'my' && colBtn('my').indexOf('id="colpop"') > 0);
 ok('다섯 열이 체크 목록으로 나온다', (function () {
-  const h = colPopHTML();
-  return MYCOLS.every(c => h.indexOf('<span>' + c[1] + '</span>') > 0)
+  const h = colPopHTML('my');
+  return COLSET.my.every(c => h.indexOf('<span>' + c[1] + '</span>') > 0)
     && (h.match(/type="checkbox"/g) || []).length === 5;
 })());
 ok('접힌 열은 체크가 꺼져 있다', (function () {
-  const h = colPopHTML();
-  const 업무 = h.slice(h.indexOf("colToggle('pt')") - 90, h.indexOf('<span>업무</span>'));
-  const 상태 = h.slice(h.indexOf("colToggle('st')") - 90, h.indexOf('<span>상태</span>'));
+  const h = colPopHTML('my');
+  const 업무 = h.slice(h.indexOf("colToggle('my','pt')") - 90, h.indexOf('<span>업무</span>'));
+  const 상태 = h.slice(h.indexOf("colToggle('my','st')") - 90, h.indexOf('<span>상태</span>'));
   return 업무.indexOf('checked') < 0 && 상태.indexOf('checked') > 0;
 })());
 ok('창을 띄우지 않는다 (모달이 아니다)',
-  colPopHTML().indexOf('showModal') < 0 && W.indexOf('function colModal(') < 0);
-ok('뒤판을 누르면 닫힌다', colPopHTML().indexOf('class="fbk" onclick="colPopClose()"') > 0);
-ok('목록 안을 눌러도 안 닫힌다', colPopHTML().indexOf('id="colpop" onclick="event.stopPropagation()"') > 0);
+  colPopHTML('my').indexOf('showModal') < 0 && W.indexOf('function colModal(') < 0);
+ok('뒤판을 누르면 닫힌다', colPopHTML('my').indexOf('class="fbk" onclick="colPopClose()"') > 0);
+ok('목록 안을 눌러도 안 닫힌다', colPopHTML('my').indexOf('id="colpop" onclick="event.stopPropagation()"') > 0);
 ok('깔때기와 같은 모양을 쓴다 (두 가지를 새로 익히지 않게)',
-  colPopHTML().indexOf('class="fpop"') > 0 && colPopHTML().indexOf('class="fpl"') > 0);
+  colPopHTML('my').indexOf('class="fpop"') > 0 && colPopHTML('my').indexOf('class="fpl"') > 0);
 ok('체크하면 그 자리에서 바로 반영된다 ([적용]을 또 누르지 않는다)',
-  colPopHTML().indexOf("onchange=\"colToggle('pt')\"") > 0);
+  colPopHTML('my').indexOf("onchange=\"colToggle('my','pt')\"") > 0);
 ok('열어 둔 채로 여러 개를 손볼 수 있다', (function () {
-  colToggle('pt'); return S.colPop === true;
+  colToggle('my','pt'); return S.colPop === 'my';
 })());
 colPopClose();
-ok('닫으면 닫힌다', S.colPop === false && colBtn().indexOf('colpop') < 0);
-S.grpOn = true; S.colPop = true;
+ok('닫으면 닫힌다', !S.colPop && colBtn('my').indexOf('colpop') < 0);
+S.grpOn = true; S.colPop = 'my';
 ok('묶어 보기가 잡은 줄은 흐리게, 손댈 수 없게', (function () {
-  const h = colPopHTML();
+  const h = colPopHTML('my');
   return h.indexOf('class="off"') > 0 && h.indexOf('disabled') > 0 && h.indexOf('묶음') > 0;
 })());
 S.grpOn = false; S.colPop = false; STORE = {}; S.cols = undefined;
 ok('표 밖으로 띄운다 (표에 가로 스크롤이 있어 안에 두면 잘린다)',
   grab('colPopPos').indexOf('getBoundingClientRect') > 0);
 ok('다시 그린 뒤 자리를 잡아 준다', grab('renderMy').indexOf('if(S.colPop) colPopPos();') > 0);
+
+/* ── 팀 전체도 같은 접기를 쓴다 ──
+   열 구성이 서로 다르므로(팀에는 「이 주 실적」이 있고 「이번 주」 격자가 없다)
+   화면별로 나눠 담는다. 설정도 따로 기억한다 — 내 업무에서 접은 것이
+   팀 전체까지 접어 버리면 두 화면을 같이 쓸 수 없다. */
+ok('팀 전체에는 「이 주 실적」이 더 있다',
+  COLSET.team.map(c => c[0]).join() === 'cat,pt,st,log,last,due');
+ok('기업·담당·종료는 두 화면 모두 접지 않는다',
+  colHas('team', 'co') === false && colHas('team', 'mgr') === false
+  && colHas('my', 'co') === false);
+STORE = {}; S.cols = undefined; S.grpOn = false;
+ok('두 화면이 서로 다른 곳에 기억한다',
+  COLS_KEY.my === 'work_my_cols' && COLS_KEY.team === 'work_team_cols');
+colToggle('team', 'log');
+ok('팀에서 접은 것은 팀에만 저장된다',
+  STORE['work_team_cols'].indexOf('log') >= 0 && !STORE['work_my_cols']);
+ok('팀에서 접어도 내 업무는 그대로',
+  colHidden('team', 'log') === true && colHidden('my', 'st') === false);
+ok('내 업무에 없는 열을 팀에서 접어도 내 업무는 모른다',
+  colHidden('my', 'log') === false);
+S.grpOn = true;
+ok('구분 묶음은 내 업무만의 것이라 팀 구분은 안 잡는다',
+  colForced('my', 'cat') === true && colForced('team', 'cat') === false);
+S.grpOn = false;
+ok('팀 띠도 눌러서 편다', (function () {
+  const h = colTH('team', 'log', '');
+  return h.indexOf("colToggle('team','log')") > 0 && h.indexOf('이 주 실적') > 0;
+})());
+ok('팀 칩은 팀 목록을 연다', colBtn('team').indexOf("colPop('team')") > 0);
+S.colPop = 'team';
+ok('팀 목록에는 여섯 열이 나온다',
+  (colPopHTML('team').match(/type="checkbox"/g) || []).length === 6);
+ok('한 화면 목록만 열린다 (둘이 겹쳐 뜨지 않게)',
+  colBtn('my').indexOf('id="colpop"') < 0 && colBtn('team').indexOf('id="colpop"') > 0);
+S.colPop = ''; STORE = {}; S.cols = undefined;
+
+/* 팀 표에 실제로 붙었나 */
+const RT = grab('renderTeam');
+ok('팀 머리행이 접기를 거친다',
+  RT.indexOf("colTH('team',k,fBtn('team',k,vals)+tSort(k),w)") > 0
+  && RT.indexOf("if(colHidden('team',k)) return colTH('team',k,'');") > 0);
+ok('팀 본문 여섯 칸이 접기를 거친다',
+  ["colTD('team','cat'", "colTD('team','pt'", "colTD('team','st'",
+   "colTD('team','log'", "colTD('team','last'", "colTD('team','due'"].every(s => RT.indexOf(s) > 0));
+ok('팀 칩이 머리줄에 붙는다', RT.indexOf("colBtn('team')+viewChips()") > 0);
+ok('팀도 업무명을 접으면 진행률이 기업 칸으로 내려온다',
+  RT.indexOf("colHidden('team','pt')?'<div class=\"sub\">'+stepChip(it._id)") > 0);
+ok('팀도 다시 그린 뒤 목록 자리를 잡아 준다',
+  RT.indexOf('if(S.colPop) colPopPos();') > 0);
+/* 팀 머리칸 하나에 접기 손잡이·깔때기·정렬이 함께 있다.
+   손잡이가 번지면 접으면서 정렬까지 바뀐다. */
+ok('접기 손잡이가 정렬로 번지지 않는다',
+  colTH('team', 'log', 'x').indexOf('event.stopPropagation();colToggle') > 0);
+ok('정렬은 이름 글자에만 걸린다 (빈 자리를 눌러 엉뚱하게 정렬되지 않게)',
+  RT.indexOf('<span onclick="teamSort(\\\'') > 0);
+ok('팀 표도 9칸 그대로 (접혀도 띠가 한 칸을 차지한다)',
+  (RT.match(/colspan="9"/g) || []).length >= 2);
+ok('팀 머리행이 9칸', [
+  '\'<th class="rowno">\'', "tf('cat'", "ts('co'", "tf('pt'", "tf('st'",
+  "ts('log'", "ts('last'", "tf('due'", '종료</th>'
+].every(s => RT.indexOf(s) > 0));
+ok('팀 본문도 9칸', [
+  'tdNo(i+1)', "colTD('team','cat'", 'class="itc"', "colTD('team','pt'", "colTD('team','st'",
+  "colTD('team','log'", "colTD('team','last'", "colTD('team','due'", 'endbtn'
+].every(s => RT.indexOf(s) > 0));
 
 /* ── 구분별 묶어 보기 ── */
 const mk = (cat, no) => ({ _id: no, cat: cat, no: no });
@@ -240,30 +306,30 @@ ok('따옴표가 든 구분 이름도 안 깨진다', grpHeadHTML("사'건", 1, 
 
 S.grpOn = true; STORE = {}; S.cols = undefined;
 ok('묶어 보기를 켜면 구분 열이 자동으로 접힌다 (소제목에 이미 쓰여 있다)',
-  colHidden('cat') === true);
+  colHidden('my','cat') === true);
 S.grpOn = false;
-ok('끄면 구분 열이 돌아온다', colHidden('cat') === false);
+ok('끄면 구분 열이 돌아온다', colHidden('my','cat') === false);
 
 /* ── 묶어 보기가 잡고 있는 열은 죽은 단추가 되면 안 된다 ──
    예전에는 구분 칩·띠가 "눌러서 폅니다"라 해 놓고 눌러도 아무 일이 없었고,
    그러면서 접힘 목록에는 몰래 써 두어 묶어 보기를 끄면 까닭 없이 접혀 있었다. */
 S.grpOn = true; STORE = {}; S.cols = undefined;
 ok('묶어 보기 중에는 구분을 사람이 접고 펴는 대상이 아니라고 본다',
-  colForced('cat') === true && colForced('pt') === false);
-colToggle('cat');
+  colForced('my','cat') === true && colForced('my','pt') === false);
+colToggle('my','cat');
 ok('눌러도 접힘 목록에 몰래 쓰지 않는다 (끄면 까닭 없이 접혀 있게 된다)',
-  (STORE[COLS_KEY] || '').indexOf('cat') < 0);
+  (STORE[COLS_KEY.my] || '').indexOf('cat') < 0);
 S.grpOn = false;
-ok('묶어 보기를 끄면 구분이 멀쩡히 펴져 있다', colHidden('cat') === false);
+ok('묶어 보기를 끄면 구분이 멀쩡히 펴져 있다', colHidden('my','cat') === false);
 S.grpOn = true;
 ok('띠는 "펴기"가 아니라 묶음을 푸는 길을 준다', (function () {
-  const h = colTH('cat', '');
-  return h.indexOf('grpToggle()') > 0 && h.indexOf("colToggle('cat')") < 0
+  const h = colTH('my','cat', '');
+  return h.indexOf('grpToggle()') > 0 && h.indexOf("colToggle('my','cat')") < 0
     && h.indexOf('묶음을 풀면') > 0;
 })());
 // 사람이 접은 것은 업무·최근 기록 둘뿐이다. 구분까지 세어 3이 되면 안 된다.
 ok('묶어 보기가 잡은 열은 접힘 수에 세지 않는다',
-  colBtn().indexOf('2 접힘') > 0 && colBtn().indexOf('3 접힘') < 0);
+  colBtn('my').indexOf('2 접힘') > 0 && colBtn('my').indexOf('3 접힘') < 0);
 S.grpOn = false;
 
 /* ── 상태 드롭다운 ── */
@@ -302,15 +368,15 @@ ok('팀 전체·종료 화면의 상태 칩은 읽기용이라 클릭이 없다'
 /* ── 표에 실제로 붙었나 ── */
 const RM = grab('renderMy'), RH = grab('rowHTML');
 ok('머리행이 접기를 거친다',
-  RM.indexOf('colTH(k,fBtn') > 0 && RM.indexOf("colTH('last','최근 기록'") > 0);
+  RM.indexOf("colTH('my',k,fBtn") > 0 && RM.indexOf("colTH('my','last','최근 기록'") > 0);
 ok('접힌 열의 걸러 보기 선택지는 세지 않는다 (헛일이다)',
-  RM.indexOf("if(colHidden(k)) return colTH(k,'');") > 0);
+  RM.indexOf("if(colHidden('my',k)) return colTH('my',k,'');") > 0);
 ok('본문 다섯 칸이 접기를 거친다',
-  ["colTD('cat'", "colTD('pt'", "colTD('st'", "colTD('last'", "colTD('due'"].every(s => RH.indexOf(s) > 0));
+  ["colTD('my','cat'", "colTD('my','pt'", "colTD('my','st'", "colTD('my','last'", "colTD('my','due'"].every(s => RH.indexOf(s) > 0));
 ok('업무 열을 접으면 진행률이 기업 칸으로 내려온다',
-  RH.indexOf("colHidden('pt')?'<div class=\"sub\">'+stepChip(it._id)") > 0);
-ok('기업 칸은 접히지 않는다', RH.indexOf("colTD('co'") < 0);
-ok('칩이 표 위에 붙는다', RM.indexOf('colBtn()+viewChips()') > 0);
+  RH.indexOf("colHidden('my','pt')?'<div class=\"sub\">'+stepChip(it._id)") > 0);
+ok('기업 칸은 접히지 않는다', RH.indexOf("colTD('my','co'") < 0);
+ok('칩이 표 위에 붙는다', RM.indexOf("colBtn('my')+viewChips()") > 0);
 
 /* ── 캘린더에서 그 날을 골랐을 때 ──
    고른 날이 보고 있는 주가 아니면 그 주로 함께 옮긴다. 예전에는 걸러만 놓고
@@ -396,11 +462,11 @@ ok('소제목 모양이 CSS에 있다', W.indexOf('tr.grph td{') > 0);
    접든 펴든 언제나 9칸이다. 소제목 colspan 도 같아야 한다. */
 ok('머리행이 9칸', [
   '\'<th class="rowno">\'', "fh('cat'", "qBox('renderMy','기업'", "fh('pt'", "fh('st'",
-  "colTH('last'", '\'<th class="wkhd"', "fh('due'", '종료</th>'
+  "colTH('my','last'", '\'<th class="wkhd"', "fh('due'", '종료</th>'
 ].every(s => RM.indexOf(s) > 0));
 ok('본문도 9칸', [
-  'tdNo(no', "colTD('cat'", 'class="itc"', "colTD('pt'", "colTD('st'",
-  "colTD('last'", 'class="wkcell', "colTD('due'", 'endbtn'
+  'tdNo(no', "colTD('my','cat'", 'class="itc"', "colTD('my','pt'", "colTD('my','st'",
+  "colTD('my','last'", 'class="wkcell', "colTD('my','due'", 'endbtn'
 ].every(s => RH.indexOf(s) > 0));
 ok('소제목 colspan 도 9', /var NCOL=9;/.test(RM));
 
