@@ -32734,12 +32734,69 @@ function findMenu(id){
 // 업로드한 거래내역 초안 저장 키 — 화면을 벗어나도 유지되고, 업체입금 자동표시도 이 값을 쓴다.
 // (행은 텍스트 몇 필드만 남겨 저장 — 이미지·원본 시트는 저장하지 않음)
 var BANK_DRAFT_KEY = 'bank_ledger_draft';
-function _bankDraftSlimRow(r, type){
-  return { _k:String(r._k), type:type, date:r.date||'', memo:r.memo||'', note:r.note||'',
+function _bankDraftSlimRow(r, type, src){
+  return { _k:String(r._k), type:type, src:(src||r.src||'bank'),
+           date:r.date||'', memo:r.memo||'', note:r.note||'',
            amount:parseInt(r.amount,10)||0, balance:parseInt(r.balance,10)||0 };
 }
 function _bankDraftEmpty(){
   return { fileName:'', uploadedAt:'', type:'bank', colMap:{}, rows:[], inMatch:{}, expCat:{} };
+}
+
+var BANK_DRAFT_MAX = 4000;    // 용량 가드 — 넘으면 «오래된» 것부터 버린다
+
+/* 올린 파일을 덮어쓰지 않고 «쌓는다».
+   종전에는 새 파일이 앞의 것을 통째로 지워서, 달마다 올리면 앞 달이 사라졌다.
+   달끼리 견주려면 쌓여 있어야 한다 — 달로 나눠 보는 machinery(ldMonths)는 이미 있었고
+   쌓이지 않는 것이 문제였다.
+
+   같은 행이 두 번 올라오면 버린다. 겹치는 기간을 다시 올리거나,
+   담당자가 실수로 같은 파일을 또 올리는 일이 실제로 생긴다.
+   같고 다름은 erpBankRowKey(날짜|금액|다듬은 적요)로 가린다 — 파일 행번호는
+   파일마다 달라져서 쓸 수 없다.
+
+   ⚠ 한 파일 안에 «진짜로» 같은 행이 두 번 있을 수 있다(같은 곳에서 같은 값을 같은 날
+     두 번 보내는 경우). 그것까지 지우면 돈이 사라진다. 그래서 나온 순서대로 #1, #2 를
+     붙인다 — 순서 기준이 같으니 같은 파일을 다시 올려도 키가 그대로라 늘어나지 않는다.
+     (나이스빌 CMS 보관분이 쓰는 방식과 같다) */
+function erpBankMergeDraft(curRows, newRows){
+  var out = [], have = {}, remap = {}, dup = 0, skip = 0;
+  function sigOf(r){
+    /* ⚠ 날짜가 없으면 같고 다름을 가릴 수도, 달로 나눌 수도 없다.
+       erpBankRowKey 는 빈 날짜에도 '|0|' 같은 글자를 돌려주므로 여기서 따로 막는다.
+       (안 막으면 날짜 없는 행이 죄다 같은 열쇠가 되어 서로를 지운다) */
+    if(!String(r.date||'').trim()) return '';
+    var s = erpBankRowKey(r);
+    if(!s) return '';
+    // 통장과 카드는 따로 쌓는다. 입금·출금도 섞지 않는다.
+    return (r.src||'bank') + '|' + (r.type||'income') + '|' + s;
+  }
+  function addAll(rows, isNew){
+    var seq = {};
+    (rows||[]).forEach(function(r){
+      if(!r) return;
+      var base = sigOf(r);
+      if(!base){ skip++; return; }             // 날짜가 없어 가릴 수 없는 행
+      var i = seq[base] || 0; seq[base] = i + 1;
+      var k = i ? (base + '#' + i) : base;
+      if(have[k]){ if(isNew) dup++; return; }  // 이미 있는 행 — 무시한다
+      have[k] = 1;
+      if(!isNew && r._k) remap[String(r._k)] = k;   // 골라 둔 짝을 새 열쇠로 옮기기 위해
+      var s = {}; for(var p in r){ if(Object.prototype.hasOwnProperty.call(r,p)) s[p] = r[p]; }
+      s._k = k;
+      out.push(s);
+    });
+  }
+  addAll(curRows, false);      // 있던 것이 먼저 — 그래야 뒤에 온 같은 행이 버려진다
+  addAll(newRows, true);
+  // 통장 순서대로 (오래된 것이 위) — 종전 한 파일만 보던 때와 같은 차례
+  out.sort(function(a,b){
+    var da = String(a.date||''), db = String(b.date||'');
+    return da === db ? 0 : (da < db ? -1 : 1);
+  });
+  var cut = 0;
+  if(out.length > BANK_DRAFT_MAX){ cut = out.length - BANK_DRAFT_MAX; out = out.slice(cut); }
+  return { rows:out, dup:dup, cut:cut, skip:skip, remap:remap };
 }
 
 // ══════════════════════════════════════════════
@@ -33957,7 +34014,7 @@ function FinanceLedger(){
         var _pst = erpBankProcessedStore();     // 이미 확정·등록한 행 (중복 방지) — store는 한 번만 받는다
         d.rows.forEach(function(x){
           if(!x) return;
-          var row={_k:String(x._k), date:x.date||'', memo:x.memo||'', note:x.note||'',
+          var row={_k:String(x._k), src:(x.src||'bank'), date:x.date||'', memo:x.memo||'', note:x.note||'',
                    amount:parseInt(x.amount,10)||0, balance:parseInt(x.balance,10)||0};
           var _pk = erpBankRowKey(row);
           if(_pk && _pst[_pk]) row._dup = true;
@@ -34008,8 +34065,9 @@ function FinanceLedger(){
       draftTimer.current = null;
       try{
         var flat=[];
-        (rows.inc||[]).forEach(function(x){ flat.push(_bankDraftSlimRow(x,'income')); });
-        (rows.exp||[]).forEach(function(x){ flat.push(_bankDraftSlimRow(x,'expense')); });
+        // src 를 함께 남긴다 — 통장과 카드가 한 통에 쌓이므로, 어느 쪽 것인지 알아야 한다
+        (rows.inc||[]).forEach(function(x){ flat.push(_bankDraftSlimRow(x,'income',x.src)); });
+        (rows.exp||[]).forEach(function(x){ flat.push(_bankDraftSlimRow(x,'expense',x.src)); });
         dbSet(BANK_DRAFT_KEY, { fileName:fName||'', uploadedAt:upAt||'', type:fileType||'bank',
                                 colMap:(rows.colMap)||{}, rows:flat,
                                 inMatch:inMatch||{}, expCat:expCat||{} });
@@ -34024,6 +34082,28 @@ function FinanceLedger(){
     setRows(null); setDetected(null); setInMatch({}); setExpCat({}); setSugOpen({});
     setFName(''); setUpAt(''); setRestored(false);
     showToast('🗑 거래내역을 비웠습니다');
+  }
+
+  /* 한 달만 비운다. 쌓아 두기 시작했으니 «전부 비우기» 하나로는 못 쓴다 —
+     엉뚱한 달을 잘못 올렸을 때 다른 달까지 날릴 수는 없다.
+     지금 보고 있는 종류(통장/카드) 의 그 달만 지운다. */
+  async function clearMonth(ym){
+    if(!ym || !rows) return;
+    var _n = (rows.inc||[]).filter(function(r){ return _srcOf(r)===_ldSrc && String(r.date||'').slice(0,7)===ym; }).length
+           + (rows.exp||[]).filter(function(r){ return _srcOf(r)===_ldSrc && String(r.date||'').slice(0,7)===ym; }).length;
+    if(!_n){ showToast('그 달에 지울 것이 없습니다'); return; }
+    var _lbl = parseInt(ym.slice(0,4),10)+'년 '+parseInt(ym.slice(5),10)+'월';
+    if(!(await popConfirm(_lbl+' '+(_ldSrc==='card'?'카드':'통장')+' 내역 '+_n+'건을 목록에서 비웁니다.\n\n'
+      + '→ 이미 확정·등록한 입금/출금은 그대로 유지됩니다\n'
+      + '→ 다른 달은 그대로 남습니다'))) return;
+    function keep(list){
+      return (list||[]).filter(function(r){
+        return !(_srcOf(r)===_ldSrc && String(r.date||'').slice(0,7)===ym);
+      });
+    }
+    setRows(function(r){ return r ? Object.assign({},r,{inc:keep(r.inc), exp:keep(r.exp)}) : r; });
+    setIncMon(''); setIncChk({});
+    showToast('🗑 '+_lbl+' '+_n+'건을 비웠습니다');
   }
 
   // ── 유연한 컬럼 감지 파서 ──
@@ -34097,8 +34177,9 @@ function FinanceLedger(){
     if(ext !== 'xlsx' && ext !== 'xls'){
       showToast('❌ Excel 파일(.xlsx, .xls)만 가능합니다'); return;
     }
-    setBusy(true); setFName(file.name); setRows(null); setDetected(null);
-    setRestored(false); setSugOpen({});   // 새 파일은 기존 초안을 대체
+    // 쌓아 두므로 여기서 비우지 않는다 — 파일을 못 읽어도 앞서 올린 것이 남아 있어야 한다
+    setBusy(true); setFName(file.name); setDetected(null);
+    setRestored(false); setSugOpen({});
     var reader = new FileReader();
     reader.onload = function(ev){
       try{
@@ -34135,20 +34216,52 @@ function FinanceLedger(){
           showToast('❌ 컬럼을 인식하지 못했습니다. 파일 형식을 확인해주세요.');
           setBusy(false); return;
         }
-        setRows(result); setDetected(result.colMap);
-        var auto = {};
-        result.inc.forEach(function(row){
+        /* 덮어쓰지 않고 «쌓는다». 달마다 올려도 앞 달이 남아 있어야 달끼리 견줄 수 있다.
+           같은 행이 두 번 올라오면(겹치는 기간·같은 파일 두 번) 뒤엣것을 버린다. */
+        var _src = fileType === 'card' ? 'card' : 'bank';
+        var _cur = [], _new = [];
+        (rows && rows.inc || []).forEach(function(x){ _cur.push(_bankDraftSlimRow(x,'income',x.src)); });
+        (rows && rows.exp || []).forEach(function(x){ _cur.push(_bankDraftSlimRow(x,'expense',x.src)); });
+        result.inc.forEach(function(x){ _new.push(_bankDraftSlimRow(x,'income',_src)); });
+        result.exp.forEach(function(x){ _new.push(_bankDraftSlimRow(x,'expense',_src)); });
+        var _mg = erpBankMergeDraft(_cur, _new);
+        var _pst2 = erpBankProcessedStore();       // 이미 확정·등록한 행 — store 는 한 번만 받는다
+        var _inc = [], _exp = [];
+        _mg.rows.forEach(function(x){
+          var row = { _k:x._k, src:x.src||'bank', date:x.date||'', memo:x.memo||'', note:x.note||'',
+                      amount:parseInt(x.amount,10)||0, balance:parseInt(x.balance,10)||0 };
+          var _pk = erpBankRowKey(row);
+          if(_pk && _pst2[_pk]) row._dup = true;
+          if(x.type === 'expense') _exp.push(row); else _inc.push(row);
+        });
+        setRows({inc:_inc, exp:_exp, colMap:result.colMap, hdrRow:result.hdrRow||[]});
+        setDetected(result.colMap);
+        // 골라 둔 짝·고른 카테고리는 새 열쇠로 옮겨 «살린다» — 지우면 앞서 한 일이 날아간다
+        var _keep = {}, _keepC = {};
+        Object.keys(inMatch||{}).forEach(function(k){ var nk=_mg.remap[k]; if(nk) _keep[nk]=inMatch[k]; });
+        Object.keys(expCat||{}).forEach(function(k){ var nk=_mg.remap[k]; if(nk) _keepC[nk]=expCat[k]; });
+        var _newKeys = {};
+        _mg.rows.forEach(function(x){ _newKeys[x._k] = 1; });
+        Object.keys(_mg.remap).forEach(function(k){ delete _newKeys[_mg.remap[k]]; });
+        var auto = _keep;
+        _inc.forEach(function(row){
           if(row._dup) return;                    // 이미 처리된 행은 매칭 대상에서 제외
+          if(!_newKeys[row._k]) return;           // 이번에 새로 들어온 행만 자동으로 짝지어 본다
           var ms = pending.filter(function(p){ return p.amount === row.amount; });
           if(ms.length === 1) auto[row._k] = ms[0].id;
         });
         setInMatch(auto);
-        setExpCat({});                            // 이전 파일의 카테고리 선택 초기화
+        setExpCat(_keepC);
         setUpAt(new Date().toISOString());        // 초안 저장용 업로드 시각
-        var dupN = result.inc.filter(function(r){return r._dup;}).length
-                 + result.exp.filter(function(r){return r._dup;}).length;
-        showToast('✅ 입금 '+result.inc.length+'건 / 출금 '+result.exp.length+'건 인식 (자동매칭 '+Object.keys(auto).length+'건)');
-        if(dupN) setTimeout(function(){ showToast('⚠️ 이미 처리된 '+dupN+'건은 제외했습니다'); }, 900);
+        var _added = Object.keys(_newKeys).length;
+        var dupN = _inc.filter(function(r){return r._dup;}).length
+                 + _exp.filter(function(r){return r._dup;}).length;
+        showToast('✅ 새로 '+_added+'건 추가 — 쌓인 것 입금 '+_inc.length+'건 / 출금 '+_exp.length+'건');
+        if(_mg.dup) setTimeout(function(){ showToast('🔁 이미 올라와 있던 '+_mg.dup+'건은 무시했습니다'); }, 700);
+        if(dupN) setTimeout(function(){ showToast('⚠️ 이미 처리된 '+dupN+'건은 제외했습니다'); }, 1400);
+        if(_mg.cut) setTimeout(function(){ showToast('🗄 보관 한도('+BANK_DRAFT_MAX+'행)를 넘어 오래된 '+_mg.cut+'건을 버렸습니다'); }, 2100);
+        // 소리 없이 사라지면 안 된다 — 날짜를 못 읽은 행이 있으면 말해 준다
+        if(_mg.skip) setTimeout(function(){ showToast('⚠️ 날짜를 읽지 못한 '+_mg.skip+'건은 넣지 못했습니다 — 파일의 날짜 칸을 확인해주세요'); }, 2800);
       } catch(err){ showToast('❌ 오류: '+err.message); }
       setBusy(false);
     };
@@ -34448,9 +34561,13 @@ function FinanceLedger(){
   var _ldBox={overflow:'auto',maxHeight:(_ldH ? _ldH+'px' : 'calc(100vh - 330px)'),minHeight:'240px',
     border:'1px solid #eef2f7',borderRadius:'6px'};
 
-  // ── 이미 처리된 행 (중복 방지) — 목록에서 감추고 모든 일괄작업에서 제외 ──
-  var incAll = rows ? (rows.inc||[]) : [];
-  var expAll = rows ? (rows.exp||[]) : [];
+  /* 통장과 카드가 한 통에 쌓이므로, 지금 고른 종류의 것만 보여준다.
+     섞어 보이면 같은 달에 통장 306건과 카드 200건이 뒤엉켜 무엇이 무엇인지 알 수 없다.
+     («나이스빌 CMS» 는 아래에서 따로 그린다 — 여기서는 통장 것을 보여준다) */
+  var _ldSrc = fileType === 'card' ? 'card' : 'bank';
+  function _srcOf(r){ return (r && r.src) || 'bank'; }   // src 가 없던 옛 초안은 통장으로 본다
+  var incAll = rows ? (rows.inc||[]).filter(function(r){return _srcOf(r)===_ldSrc;}) : [];
+  var expAll = rows ? (rows.exp||[]).filter(function(r){return _srcOf(r)===_ldSrc;}) : [];
   var dupIncCnt = incAll.filter(function(r){return r._dup;}).length;
   var dupExpCnt = expAll.filter(function(r){return r._dup;}).length;
   var incList = hideDup ? incAll.filter(function(r){return !r._dup;}) : incAll;
@@ -34805,9 +34922,11 @@ function FinanceLedger(){
     },
       // 파일 종류 선택
       h('label',{style:{display:'flex',alignItems:'center',gap:'4px',cursor:'pointer',fontSize:'11.5px',whiteSpace:'nowrap',fontWeight:fileType==='bank'?700:400,color:fileType==='bank'?'#1d4ed8':'#64748b'}},
-        h('input',{type:'radio',name:'ledgerType',checked:fileType==='bank',onChange:function(){setFileType('bank');setRows(null);setDetected(null);}}),'🏦 은행 통장'),
+        /* 종전에는 종류를 바꾸면 올린 것을 비웠다. 이제는 통장·카드를 함께 쌓아 두므로
+           «비우기»가 아니라 «보는 쪽 바꾸기»다 — 올릴 때도 이 종류로 들어간다. */
+        h('input',{type:'radio',name:'ledgerType',checked:fileType==='bank',onChange:function(){setFileType('bank');setDetected(null);setIncChk({});}}),'🏦 은행 통장'),
       h('label',{style:{display:'flex',alignItems:'center',gap:'4px',cursor:'pointer',fontSize:'11.5px',whiteSpace:'nowrap',fontWeight:fileType==='card'?700:400,color:fileType==='card'?'#2563eb':'#64748b'}},
-        h('input',{type:'radio',name:'ledgerType',checked:fileType==='card',onChange:function(){setFileType('card');setRows(null);setDetected(null);}}),'💳 카드'),
+        h('input',{type:'radio',name:'ledgerType',checked:fileType==='card',onChange:function(){setFileType('card');setDetected(null);setIncChk({});}}),'💳 카드'),
       h('label',{title:'나이스빌 → CMS 출금 결과 내역 엑셀 (회원명·납부금액·정산예정일)',
         style:{display:'flex',alignItems:'center',gap:'4px',cursor:'pointer',fontSize:'11.5px',whiteSpace:'nowrap',fontWeight:fileType==='nicebill'?700:400,color:fileType==='nicebill'?'#7c3aed':'#64748b'}},
         h('input',{type:'radio',name:'ledgerType',checked:fileType==='nicebill',onChange:function(){setFileType('nicebill');setRows(null);setDetected(null);}}),'🏦 나이스빌 CMS'),
@@ -35047,6 +35166,12 @@ function FinanceLedger(){
             })),
           ldMonths.length>1 && h('span',{key:'n',style:{display:'flex',alignItems:'center',gap:'3px',flexShrink:0}},
             navBtn(1,'▶', !showAll && idx<ldMonths.length-1)),
+          // 그 달만 비우기 — 달을 골랐을 때만. 쌓아 두므로 «전부 비우기» 하나로는 못 쓴다
+          incMon && h('button',{key:'delm',onClick:function(){ clearMonth(incMon); },
+            title:'이 달의 '+(_ldSrc==='card'?'카드':'통장')+' 내역만 목록에서 비웁니다\n— 다른 달과 이미 확정한 건은 그대로입니다',
+            style:{padding:'0 8px',height:'30px',borderRadius:'6px',border:'1px solid #fecaca',
+              background:'#fff',color:'#b91c1c',fontSize:'11px',fontWeight:700,cursor:'pointer',flexShrink:0}},
+            '🗑 이 달'),
           // 그 달 처리현황
           h('span',{key:'b',style:st.todo>0
             ? {background:'#fef2f2',color:'#dc2626',border:'1px solid #fecaca',
