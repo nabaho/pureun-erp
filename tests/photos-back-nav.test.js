@@ -61,8 +61,15 @@ test('★ 나가는 띠가 본문 맨 위 한 자리에 있다', () => {
   const m = html.match(/function renderBackBar\(\)[\s\S]*?\n\}/);
   assert.ok(m, 'renderBackBar 가 없습니다.');
   assert.ok(/bar\.style\.display = where \? 'flex' : 'none'/.test(m[0]));
-  assert.ok(/backWhere'\)\.textContent = where/.test(m[0]),
+  assert.ok(/backWhere'\)\.innerHTML = esc\(where\)/.test(m[0]),
     '지금 무엇을 보고 있는지 적어야 합니다.');
+  /* 걸러 놓기만 하고 무엇을 하라는 말이 없으면 사람은 멈춘다.
+     대표 보고(2026-08-08): "확인 필요로 체크하였다. 어떻게 하라는 건가." */
+  assert.ok(/whatToDo\(\)/.test(m[0]), '다음에 할 일을 함께 적어야 합니다.');
+  const w = html.match(/function whatToDo\(\)[\s\S]*?\n\}/);
+  assert.ok(w, 'whatToDo 가 없습니다.');
+  assert.ok(/확인했음/.test(w[0]), '확인 필요를 어떻게 치우는지 알려 줘야 합니다.');
+  assert.ok(/골라서 지워/.test(w[0]), '지난 사진을 어떻게 하는지 알려 줘야 합니다.');
 });
 
 test('걸러보기를 바꾸면 띠도 따라온다', () => {

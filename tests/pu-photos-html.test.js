@@ -536,12 +536,12 @@ test('폰에서는 대시보드를 줄인다 — 사진이 화면 밖으로 밀�
   assert.ok(m, '폰 규칙을 찾을 수 없습니다');
   // 서류·카메라 두 칸은 **카메라가 보이는 기기에서만** — 아니면 오른쪽이 빈 구멍이 된다
   assert.match(m[1], /#home\.touch \.row2\{display:grid;grid-template-columns:1fr 1fr/);
-  // 긴 안내를 짧은 것으로 갈아 끼운다
-  assert.match(m[1], /\.dochint\{display:none\}/);
-  assert.match(m[1], /\.dochint\.s\{display:block/);
-  /* 30장 안내는 위 한 줄에 합쳤다 — 상한 숫자는 스크립트가 UPLOAD_MAX 에서
-     채운다. 마크업에 30을 박으면 상한을 바꿀 때 두 곳이 어긋난다. */
-  assert.match(m[1], /\.maxhint\{display:none\}/);
+  /* ⚠ 2026-08-08 다시 겨눔 — 안내 세 덩어리(다섯 줄)를 **한 줄**로 합쳤다(대표 지시:
+     "대시보드가 헷갈린다"). 그래서 폰 전용 짧은 안내(.dochint.s)와 .maxhint 가 없어졌다.
+     지켜야 할 것은 「폰에서 안내가 자리를 안 먹는다」이지 특정 클래스가 있는 것이 아니다. */
+  assert.match(m[1], /\.dochint[^\n]*display:none/);
+  /* 상한 숫자는 스크립트가 UPLOAD_MAX 에서 채운다.
+     마크업에 30을 박으면 상한을 바꿀 때 두 곳이 어긋난다. */
   assert.match(app, /id="maxHintS"/);
   assert.match(app, /\$\('maxHintS'\)\.textContent = '한 번에 ' \+ PuPhotoStore\.UPLOAD_MAX/);
   assert.ok(!/dochint s">[^<]*30장/.test(app), '상한 숫자가 마크업에 박혀 있습니다');
