@@ -313,7 +313,17 @@ body.pc #main,body.pc #fab,body.pc #selbar{display:none!important}
 #pcRight .ritem.dropover{outline:2px dashed #5a76c0;background:#dde7fb}
 #pcRight .rhint{font-size:11.5px;color:#90a0c0;line-height:1.7;padding:6px 4px}
 #pcTop{display:flex;gap:12px;padding:16px 24px;background:#fff;border-bottom:1px solid #eef2f7;align-items:center}
-#pcSearch{flex:1;padding:11px 14px 11px 38px;border:1px solid #e8ecf3;border-radius:12px;font-size:14px;
+/* 검색칸은 화면 끝까지 늘리지 않는다 — 대표 요청(2026-08-08).
+   짧은 말로 찾는 자리라 5cm 면 충분하고, 남는 자리는 목록이 쓴다.
+   좁은 화면에서는 화면을 넘지 않게 줄어든다. */
+#pcSearchWrap{position:relative;flex:0 0 auto;width:5cm;max-width:calc(100% - 140px)}
+/* ✕ — 글자가 있을 때만 보인다. 없을 때도 보이면 누를 게 없어 헷갈린다. */
+#pcSearchX{position:absolute;right:6px;top:50%;transform:translateY(-50%);display:none;
+  border:none;background:none;color:#8b98b3;font-size:15px;line-height:1;cursor:pointer;
+  padding:6px 8px;border-radius:8px}
+#pcSearchX:hover{background:#eef2f7;color:#1b2536}
+#pcSearchWrap.has #pcSearchX{display:block}
+#pcSearch{width:100%;padding:11px 34px 11px 38px;border:1px solid #e8ecf3;border-radius:12px;font-size:14px;
   background:#f7f9fc url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="%238b98b3" viewBox="0 0 16 16"><path d="M11.7 10.3a6 6 0 1 0-1.4 1.4l3 3 1.4-1.4-3-3zM6 10a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>') 12px center no-repeat}
 #pcSearch:focus{outline:none;border-color:#1e2a47;background-color:#fff}
 .pcbtn-primary{background:#1e2a47;color:#fff;border-radius:12px;padding:11px 18px;font-size:13.5px;font-weight:600}
@@ -535,7 +545,10 @@ body.pc #pcDetail{display:flex}
   <aside id="pcSide"></aside>
   <main id="pcMain">
     <div id="pcTop">
-      <input id="pcSearch" placeholder="이름·회사·직책으로 검색" title="이름·회사·전화·이메일·초성으로 검색 (단축키 Ctrl+F)" oninput="search.value=this.value;state.page=0;state.view='list';render()">
+      <div id="pcSearchWrap">
+        <input id="pcSearch" placeholder="이름·회사·직책으로 검색" title="이름·회사·전화·이메일·초성으로 검색 (단축키 Ctrl+F)" oninput="onPcSearchInput(this.value)">
+        <button id="pcSearchX" onclick="clearPcSearch()" title="검색어 지우기 (Esc)" aria-label="검색어 지우기">✕</button>
+      </div>
       <button class="pcbtn-primary" onclick="openAddSheet()" title="새 명함 등록 (단축키 N) — 사진 촬영·이미지·PDF·직접 입력">＋ 명함 등록</button>
     </div>
     <!-- 상단 한 줄: 제목 · 탭 · 보기 도구 -->
@@ -4295,6 +4308,7 @@ function applyView(id){
   state.page=0; state.sel={}; state.view='list';
   const s=$('search'); if(s) s.value=f.q||'';
   const ps=$('pcSearch'); if(ps) ps.value=f.q||'';
+  try{ _syncSearchX(); }catch(_){}      /* 탭으로 검색어가 들어와도 ✕ 가 따라 나와야 한다 */
   render();
 }
 function saveCurrentAsView(){
@@ -5082,6 +5096,7 @@ try{
     state.tab='card'; state.group='all'; state.erpFilter='';
     state.onlyPhone=false; state.onlyEmail=false; state.onlyDup=false; state.onlyIncomplete=false; state.region='';
     const _s=$('search'); if(_s) _s.value=_uq; const _ps=$('pcSearch'); if(_ps) _ps.value=_uq;
+    try{ _syncSearchX(); }catch(_){}    /* 이알피·사진첩에서 넘어와도 ✕ 가 보이게 */
   }
 }catch(e){}
 /* 폴더 계층 폐지: 기존에 parent(하위폴더)였던 폴더를 모두 최상위로 1회 정리 */
@@ -5180,6 +5195,34 @@ document.addEventListener('keydown', e=>{
   requestAnimationFrame(function(){ requestAnimationFrame(rm); });
   setTimeout(rm, 4000);
 })();
+
+/* ── 검색칸: 글자가 있을 때만 ✕ 를 보이고, 누르면 한 번에 지운다 ──
+   예전에는 백스페이스로 하나씩 지워야 했다.
+   모바일 칸(#search)이 실제 검색을 읽으므로 두 곳을 늘 같이 맞춘다. */
+function _syncSearchX(){
+  const w = $('pcSearchWrap'), i = $('pcSearch');
+  if(w && i) w.classList.toggle('has', !!i.value);
+}
+function onPcSearchInput(v){
+  const s = $('search'); if(s) s.value = v;
+  state.page = 0; state.view = 'list';
+  _syncSearchX();
+  render();
+}
+function clearPcSearch(){
+  const p = $('pcSearch'); if(p) p.value = '';
+  const s = $('search');   if(s) s.value = '';
+  state.page = 0; state.view = 'list';
+  _syncSearchX();
+  render();
+  if(p) p.focus();
+}
+/* Esc 로도 지운다 — 검색칸에 커서가 있을 때만. 다른 화면의 Esc 를 뺏지 않는다. */
+document.addEventListener('keydown', function(e){
+  if(e.key!=='Escape') return;
+  const p = $('pcSearch');
+  if(p && document.activeElement===p && p.value){ e.stopPropagation(); clearPcSearch(); }
+}, true);
 
 /* ══════ 메일 보내기 — 순수 로직 (테스트 대상) ══════
    거르는 규칙을 여기 한 곳에만 둔다. 복사·내보내기·단체메일이 모두 이것만 쓴다.
