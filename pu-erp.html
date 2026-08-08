@@ -33795,20 +33795,102 @@ function FinanceLedger(){
     var mainSid=it.managerMain||it.manager||'';
     if(!mainSid) return 0;
     try{
-      var shares=calcPerfShares(amt||p.amount, mainSid, it.managerSubs||[], p.store==='companies'?'company':p.store.replace(/s$/,''), undefined, {paidDate:todayYMD()});
+      /* 부가세 포함 계약이면 1/11 을 뺀 금액이 성과 기준이다.
+         여기 미리보기와 실제 저장액(saveIncome)이 어긋나면 안 되므로 같은 셈을 쓴다. */
+      var _isRet = (p.kind==='retainer' || p.kind==='contractFee');
+      var _vatF = _isRet ? it.contractFeeVatIncluded : it.balanceFeeVatIncluded;
+      var _base = amt||p.amount;
+      if(_vatF===true) _base = calcDeductions(_base, {vatIncluded:true}).perfBaseAmount;
+      var shares=calcPerfShares(_base, mainSid, it.managerSubs||[], p.store==='companies'?'company':p.store.replace(/s$/,''), undefined, {paidDate:todayYMD()});
       var total=0; (shares||[]).forEach(function(s){total+=s.amount||0;}); return total;
     }catch(_e){return 0;}
+  }
+
+  /* ── ⚡ 자동확정 관문 (6중) ──
+     하나라도 못 넘으면 「확인 후 확정」 — 입금관리의 입금확정 창으로 보낸다.
+     ① 신뢰도 90점↑  ② 금액 정확일치  ③ 같은 업체로 3회↑ 학습된 적요   ← erpAutoTidyOk
+     ④ 주담당 지정됨 (없으면 성과급을 못 나눈다)
+     ⑤ 부가세 유형이 계약에 적혀 있음 (미지정이면 공제액이 틀린다)
+     ⑥ 그 달 입금 마감이 안 걸림
+     자문료(advisory)는 입금관리에 항목 자체가 없어 창을 띄울 수 없다 → 「자문료 일괄확인」이 맡는다. */
+  function autoConfirmGate(row, pItem, sug){
+    if(!row || !pItem) return {ok:false, why:'매칭 없음'};
+    if(pItem.kind==='advisory') return {ok:false, why:'자문료', adv:true};
+    var ym = String(row.date||'').slice(0,7);
+    if(ym && isIncomeLocked(ym)) return {ok:false, why:ym+' 마감'};
+    var memo = row.memo||row.note||'';
+    if(!erpAutoTidyOk(sug, memo, row.amount)){
+      var sc = sug ? (parseInt(sug.score,10)||0) : 0;
+      if(sc < 90) return {ok:false, why:'신뢰도 '+sc+'점'};
+      if(!erpAmountExact(row.amount, pItem.expect||pItem.amount)) return {ok:false, why:'금액 안 맞음'};
+      return {ok:false, why:'학습 '+erpAliasCount(memo)+'회'};
+    }
+    var it = pItem.item||{};
+    if(!(it.managerMain||it.manager)) return {ok:false, why:'주담당 없음'};
+    // _pendTaxType 과 같은 기준으로 필드를 고른다 (착수·계약 ↔ 잔금·성공보수)
+    var isRet = (pItem.kind==='retainer' || pItem.kind==='contractFee');
+    var vatF = isRet ? it.contractFeeVatIncluded : it.balanceFeeVatIncluded;
+    if(vatF===undefined || vatF===null || vatF==='') return {ok:false, why:'부가세 미지정'};
+    /* 원천징수(3.3%·8.8%)는 통장 금액이 이미 세후인지 세전인지에 따라 성과 기준이 달라진다.
+       기계가 정할 일이 아니라 창에서 사람이 고르게 한다. */
+    if(vatF==='wht33' || vatF==='wht88') return {ok:false, why:'원천징수 건'};
+    return {ok:true, vatIncluded:(vatF===true)};
+  }
+
+  /* ── 📋 확인 후 확정 — 입금관리의 입금확정 창으로 넘긴다 ──
+     그 창은 입금관리 안에 붙어 있어 여기서 띄울 수 없다. 넘길 것들을 sessionStorage 에
+     줄 세워 두고 화면을 옮긴다 (기존 goto_closed_kind 와 같은 방식).
+     입금관리가 켜질 때 그 줄을 읽어 창을 하나씩 연다.
+     계약(contracts) 스토어와 컨설팅비·자문료는 입금관리 목록에 없어 넘길 수 없다. */
+  var HANDOFF_KEY = 'ledger_confirm_queue';
+  var HANDOFF_STORES = {cases:1, consultings:1, funds:1, other_projects:1};
+  var HANDOFF_KIND = {retainer:'retainer', success:'success', contractFee:'contract', balance:'balance'};
+  function canHandoff(pItem){
+    return !!(pItem && HANDOFF_STORES[pItem.store] && HANDOFF_KIND[pItem.kind] && pItem.item && pItem.item.id);
+  }
+  function sendToConfirm(list){
+    var q = list.filter(function(x){ return canHandoff(x.pItem); }).map(function(x){
+      return { sourceId:x.pItem.item.id, kind:HANDOFF_KIND[x.pItem.kind],
+               company:x.pItem.companyName||'',
+               // 확정 뒤 통장 행을 '처리됨'으로 찍으려면 행 모양 그대로가 필요하다
+               row:{date:x.row.date||'', amount:x.row.amount||0,
+                    memo:x.row.memo||'', note:x.row.note||''} };
+    });
+    var skipped = list.length - q.length;
+    if(!q.length){ showToast('입금관리로 넘길 수 있는 건이 없습니다 (계약·컨설팅비·자문료는 여기서 확정하세요)'); return; }
+    try{ sessionStorage.setItem(HANDOFF_KEY, JSON.stringify(q)); }
+    catch(_e){ showToast('❌ 넘기기 실패 — 다시 시도해주세요'); return; }
+    showToast('📋 '+q.length+'건을 입금관리로 넘겼습니다'+(skipped?' ('+skipped+'건은 넘길 수 없어 남겨둠)':''));
+    if(window.navigateTo) window.navigateTo('fin/income');
   }
 
   // ── 입금 확정 ──
   // opts.partial=true → 일부입금 (paidAmount 누적, paid 플래그 안 세움)
   // opts.feeAmount → 수수료 차감 (차액을 지출로 기록하고 완납 처리)
+  // opts.withPerf → 성과급까지 계산해 저장 (⚡ 자동확정 경로 — 창을 거친 건은 입금관리가 계산한다)
   function saveIncome(row, pItem, opts){
     opts = opts || {};
     var paidDate=row.date||todayYMD();
     var isAdv = (pItem.kind === 'advisory');
     /* 자문료는 「그 달 자문료 입금 기록」이 곧 처리 완료다 (업체에는 입금 표시 칸이 없다).
        kind:'자문료' 로 남겨야 다음 달 후보에서 빠지고, 점검의 「자문료미생성」도 풀린다. */
+    /* ⚡ 자동확정이면 성과급까지 여기서 나눈다.
+       그냥 두면 perfShares 가 빈 채로 저장돼 「성과 미반영」에 쌓인다 — 창을 거친 건과 같은 결과가 되게 한다.
+       부가세 포함 계약이면 1/11 을 뺀 금액이 성과 기준 (입금관리 calcDeductions 와 같은 셈). */
+    var _perfShares = [], _ded = {}, _perfBase = row.amount;
+    if(opts.withPerf && !isAdv){
+      try{
+        var _it = pItem.item||{};
+        var _main = _it.managerMain || _it.manager || '';
+        if(_main){
+          if(opts.vatIncluded) _ded = {vatIncluded:true};
+          _perfBase = calcDeductions(row.amount, _ded).perfBaseAmount;
+          _perfShares = calcPerfShares(_perfBase, _main, _it.managerSubs||[],
+            pItem.store==='companies'?'company':pItem.store.replace(/s$/,''),
+            undefined, {paidDate:paidDate}) || [];
+        }
+      }catch(_pe){ if(window._erpErrLog) window._erpErrLog(_pe); }
+    }
     dbUpsert('finance_income', {id:'fi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
       companyName:pItem.companyName, amount:row.amount, date:paidDate,
       kind: isAdv ? '자문료' : (pItem.label || ''),
@@ -33816,7 +33898,10 @@ function FinanceLedger(){
       memo:'[하나'+(fileType==='bank'?'은행':'카드')+'] '+(row.memo||'')+(row.note?' / '+row.note:''),
       sourceKind: isAdv ? 'company' : pItem.store.replace('s',''),
       sourceId:pItem.item.id,
-      perfShares:[], confirmedAt:new Date().toISOString(), confirmedBy:CURRENT_USER?CURRENT_USER.sid:''});
+      managerSid: isAdv ? undefined : ((pItem.item||{}).managerMain || (pItem.item||{}).manager || ''),
+      deductions: _ded, perfBaseAmount: _perfBase,
+      autoConfirmed: opts.withPerf ? true : undefined,
+      perfShares:_perfShares, confirmedAt:new Date().toISOString(), confirmedBy:CURRENT_USER?CURRENT_USER.sid:''});
     if(isAdv) return;
     // 수수료 차감 → 차액을 지출로 기록
     if(opts.feeAmount > 0){
@@ -33991,6 +34076,27 @@ function FinanceLedger(){
     var b=bestSug(row._k);
     return b && b.level==='high' && inMatch[row._k]===b.cand.id;
   }).map(function(row){return row._k;}) : [];
+
+  /* ── ⚡ 자동확정 / 📋 확인 후 확정 갈래 판정 ──
+     행마다 한 번만 재고 배지·버튼이 같은 결과를 쓴다.
+     직접 고른 건은 관문을 재지 않고 창으로 보낸다 (학습 이력을 확인할 수 없다). */
+  var gateOf = {};
+  if(rows && ldTabEff==='inc') incList.forEach(function(row){
+    if(row._dup) return;
+    var _mid = inMatch[row._k];
+    var _b = bestSug(row._k);
+    var _pi = _mid ? (pendById[_mid]||null) : (_b ? (pendById[_b.cand.id]||_b.cand) : null);
+    if(!_pi){ gateOf[row._k] = {ok:false, why:'매칭 없음', pItem:null}; return; }
+    if(!_b || _pi.id !== _b.cand.id){
+      gateOf[row._k] = {ok:false, why:_mid?'직접 고른 건':'추천 없음', pItem:_pi}; return;
+    }
+    var g = autoConfirmGate(row, _pi, _b);
+    g.pItem = _pi;
+    gateOf[row._k] = g;
+  });
+  var chkKeys  = Object.keys(incChk).filter(function(k){ return gateOf[k]; });
+  var chkAuto  = chkKeys.filter(function(k){ return gateOf[k].ok; });
+  var chkNeed  = chkKeys.filter(function(k){ return !gateOf[k].ok && canHandoff(gateOf[k].pItem); });
 
   function runAutoMatch(){
     if(!rows) return;
@@ -34552,6 +34658,43 @@ function FinanceLedger(){
             _noMatch>0 && h('span',{style:{background:'#fef2f2',color:'#dc2626',border:'1px solid #fecaca',borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:700}},'미매칭 '+_noMatch+'건'),
             Object.keys(incChk).length>0 && h('span',{style:{background:'#eff6ff',color:'#1d4ed8',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:700}},'✓ '+Object.keys(incChk).length+'건 선택'),
             h('span',{style:{flex:'1'}}),
+            // ── ⚡ 자동확정 — 6중 관문을 넘은 건만, 성과급까지 계산해서 저장 ──
+            chkAuto.length>0 && h('button',{
+              title:'신뢰도 90점↑ · 금액 정확일치 · 학습 3회↑ · 주담당 지정 · 부가세 명시 · 마감 아님\n— 여섯 가지를 모두 넘은 건입니다. 성과급까지 나눠 저장합니다.',
+              onClick:async function(){
+                var lines=chkAuto.slice(0,8).map(function(k){
+                  var g=gateOf[k], r=incByK[k];
+                  return '· '+(r?r.date:'')+' '+((r?r.amount:0)).toLocaleString()+'원 → '+g.pItem.companyName+' '+g.pItem.label;
+                }).join('\n');
+                if(!(await popConfirm('⚡ 자동확정 '+chkAuto.length+'건\n\n'+lines
+                      +(chkAuto.length>8?'\n… 외 '+(chkAuto.length-8)+'건':'')
+                      +'\n\n→ 성과급까지 나눠 저장합니다 (잘못되면 「확정 이력」에서 되돌릴 수 있습니다)'))) return;
+                var ok=0, ng=0, done=[];
+                chkAuto.forEach(function(k){
+                  var g=gateOf[k], r=incByK[k];
+                  if(!r||!g||!g.pItem){ ng++; return; }
+                  try{
+                    saveIncome(r, g.pItem, {withPerf:true, vatIncluded:g.vatIncluded});
+                    erpLearnPayerAlias(r.memo||r.note||'', g.pItem);
+                    erpMarkBankRowProcessed(r,'income','⚡ '+g.pItem.companyName+' '+g.pItem.label);
+                    ok++; done.push(k);
+                  }catch(_e){ ng++; }
+                });
+                done.forEach(function(k){ removeRow(k,'inc'); });
+                setIncChk({});
+                showToast('⚡ 자동확정 '+ok+'건'+(ng?' · 실패 '+ng+'건':''));
+              },
+              style:{padding:'3px 9px',background:'#15803d',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10.5px',fontWeight:800,cursor:'pointer',whiteSpace:'nowrap'}},
+              '⚡ 자동확정 '+chkAuto.length+'건'),
+            // ── 📋 확인 후 확정 — 입금관리의 입금확정 창으로 넘긴다 ──
+            chkNeed.length>0 && h('button',{
+              title:'관문을 못 넘은 건입니다 — 입금관리로 옮겨 입금확정 창에서 하나씩 확인합니다',
+              onClick:function(){
+                sendToConfirm(chkNeed.map(function(k){ return {row:incByK[k], pItem:gateOf[k].pItem}; })
+                                     .filter(function(x){ return x.row; }));
+              },
+              style:{padding:'3px 9px',background:'#d97706',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10.5px',fontWeight:800,cursor:'pointer',whiteSpace:'nowrap'}},
+              '📋 확인 후 확정 '+chkNeed.length+'건'),
             _advAuto>0 && h('button',{onClick:function(){setAdvBatchOpen(true);},
               style:{padding:'3px 8px',background:'#0d9488',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'자문료 일괄확인'),
             h('button',{onClick:function(){setConfHistOpen(true);},
@@ -34690,7 +34833,22 @@ function FinanceLedger(){
                           borderRadius:'8px',padding:'1px 5px',fontSize:'9px',fontWeight:600}},'계산서?'),
                       _staff && h('span',{style:{fontSize:'10px',color:'#475569'}},'담당 ',h('b',null,_staff)),
                       _perf>0 && h('span',{style:{fontSize:'10px',color:'#16a34a',fontWeight:600,fontVariantNumeric:'tabular-nums'}},
-                        '성과 '+_perf.toLocaleString())
+                        '성과 '+_perf.toLocaleString()),
+                      // ── ⚡/📋 갈래 배지 — 체크하면 어느 버튼으로 갈 건지 미리 보여준다 ──
+                      (function(){
+                        var g = gateOf[row._k];
+                        if(!g) return null;
+                        if(g.ok) return h('span',{title:'신뢰도 90점↑ · 금액 정확일치 · 학습 3회↑ · 주담당 지정 · 부가세 명시 · 마감 아님 — 모두 통과',
+                          style:{background:'#f0fdf4',color:'#15803d',border:'1px solid #bbf7d0',
+                            borderRadius:'8px',padding:'1px 5px',fontSize:'9.5px',fontWeight:700}},'⚡ 자동확정 가능');
+                        if(g.adv) return null;   // 자문료는 「자문료 일괄확인」이 맡는다
+                        return h('span',{title:canHandoff(g.pItem)
+                              ? '관문을 못 넘었습니다 — 입금관리의 입금확정 창에서 확인하세요'
+                              : '입금관리 목록에 없는 종류입니다 — 이 화면에서 직접 확정하세요',
+                          style:{background:'#fffbeb',color:'#b45309',border:'1px solid #fde68a',
+                            borderRadius:'8px',padding:'1px 5px',fontSize:'9.5px',fontWeight:700}},
+                          '📋 확인 필요 · '+g.why);
+                      })()
                     );
                   })(),
                   // 합산 입금 — 한 번에 들어온 여러 건을 한꺼번에 확정
@@ -36134,6 +36292,38 @@ function IncomePendingTab(){
   var sk = useState('startDate'); var sortKey = sk[0]; var setSortKey = sk[1];
   var sd = useState('desc'); var sortDir = sd[0]; var setSortDir = sd[1];
   var cm = useState(null); var confirmModal = cm[0]; var setConfirmModal = cm[1];
+  /* ── 📋 거래내역에서 넘어온 줄 ──
+     거래내역 화면은 이 입금확정 창을 띄울 수 없어, 넘길 것들을 sessionStorage 에 줄 세워 두고
+     화면을 옮긴다. 여기서 그 줄을 읽어 창을 하나씩 연다 (통장 금액·날짜를 미리 채운 채로).
+     확정하면 통장 행에 '처리됨'을 찍고 다음 건으로 넘어간다. */
+  var lqS = useState(null); var ledgerQ = lqS[0]; var setLedgerQ = lqS[1];
+  function openLedgerItem(q, rest){
+    var hit = extractPending().find(function(x){
+      return x.itemId === q.sourceId && x.kind === q.kind;
+    });
+    if(!hit){
+      showToast('⚠️ '+(q.company||'해당 건')+' — 미입금 목록에 없습니다 (이미 확정됐을 수 있습니다)');
+      advanceLedgerQueue(rest); return;
+    }
+    setConfirmModal({p:hit, date:(q.row&&q.row.date)||todayYMD(),
+      deductions: getVatType(hit)==='inclusive' ? {vatIncluded:true} : {},
+      actualAmt:(q.row&&q.row.amount)||0, fromLedger:q});
+    setLedgerQ(rest && rest.length ? rest : null);
+  }
+  function advanceLedgerQueue(rest){
+    if(!rest || !rest.length){ setLedgerQ(null); return; }
+    openLedgerItem(rest[0], rest.slice(1));
+  }
+  useEffect(function(){
+    var raw = null;
+    try{ raw = sessionStorage.getItem('ledger_confirm_queue');
+         sessionStorage.removeItem('ledger_confirm_queue'); }catch(_e){}
+    if(!raw) return;
+    var q = null;
+    try{ q = JSON.parse(raw); }catch(_e){}
+    if(!q || !q.length) return;
+    advanceLedgerQueue(q);
+  }, []);
   var vff = useState('all'); var vatFilter = vff[0]; var setVatFilter = vff[1];
   var pgf = useState('all'); var progFilter = pgf[0]; var setProgFilter = pgf[1]; // 진행상태 필터: all | closed(종료·마감) | active(진행중)
   var ppsS = useState(99999); var pendPageSize = ppsS[0]; var setPendPageSize = ppsS[1]; // 기본: 전체 보기
@@ -36308,6 +36498,12 @@ function IncomePendingTab(){
           '입금확정 요율 변경: ' + (rateOpts.rateOverrideReason || ''));
       }
 
+      // 거래내역에서 넘어온 건이면 통장 행에 '처리됨'을 찍는다 (다시 올려도 중복되지 않게)
+      var _fromLedger = confirmModal && confirmModal.fromLedger;
+      if(_fromLedger && _fromLedger.row){
+        try{ erpMarkBankRowProcessed(_fromLedger.row, 'income',
+               (it.companyName||'') + ' ' + p.kindLabel); }catch(_me){}
+      }
       setConfirmModal(null);
       refresh();
       var isPartialPay = payAmt < p.amount;
@@ -36316,7 +36512,10 @@ function IncomePendingTab(){
         : ('✅ 완납: ' + p.kindLabel + ' ' + payAmt.toLocaleString() + '원 확정');
       if(splitOn) msg += ' (분할: 주담당 ' + effMainPct + '%)';
       if(hasOverride) msg += ' ⚠️ 요율 변경';
+      if(_fromLedger && ledgerQ && ledgerQ.length) msg += ' · 남은 ' + ledgerQ.length + '건';
       showToast(msg);
+      // 줄에 남은 다음 건을 이어서 연다
+      if(_fromLedger) advanceLedgerQueue(ledgerQ);
     } catch(e){
       // 롤백: 이번에 만진 원장 1건 원복 + 생성한 입금 1건 제거
       try { if(_srcBefore) dbUpsert(p.store.key, _srcBefore); } catch(_){}
@@ -36964,8 +37163,18 @@ function IncomePendingTab(){
             })()
           ),
           h('div', { className:'modal-f' },
+            // 거래내역에서 넘어온 줄이면 몇 건 남았는지 보여준다
+            confirmModal.fromLedger && h('span',{style:{fontSize:'11px',color:'#b45309',fontWeight:700}},
+              '📋 거래내역에서 넘어온 건' + (ledgerQ&&ledgerQ.length ? ' · 남은 '+ledgerQ.length+'건' : ' · 마지막')),
             h('div', { style:{flex:1} }),
-            h('button', { className:'btn-secondary', onClick:function(){setConfirmModal(null);} }, '취소'),
+            // 줄이 남았으면 이 건만 건너뛰고 다음 건으로
+            confirmModal.fromLedger && ledgerQ && ledgerQ.length>0 && h('button',{ className:'btn-secondary',
+              title:'이 건은 그대로 두고 다음 건으로 넘어갑니다',
+              onClick:function(){ advanceLedgerQueue(ledgerQ); } }, '건너뛰기 →'),
+            h('button', { className:'btn-secondary', onClick:function(){
+              setConfirmModal(null);
+              if(confirmModal.fromLedger && ledgerQ && ledgerQ.length) setLedgerQ(null);
+            } }, '취소'),
             h('button', { className:'btn-primary', disabled: !valid || (hasAnyOverride && !rateOverrideReason.trim()),
               style: (!valid || (hasAnyOverride && !rateOverrideReason.trim())) ? {opacity:0.5,cursor:'not-allowed'} : {},
               onClick:function(){
