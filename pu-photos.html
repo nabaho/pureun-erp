@@ -1012,6 +1012,10 @@ button{font-family:inherit;cursor:pointer}
              사람이 누를 길을 없애면 안 된다. -->
         <input type="checkbox" id="camAuto" onchange="setCamAutoPref(this.checked)">
         <label for="camAuto">멈추면 저절로 찍기</label>
+        <!-- 테두리 자르기 — 기본은 꺼짐. 계획서대로 **실패할 수 있는 기능**이라
+             대표님이 명함 몇 장으로 시험해 보고 켜신다. -->
+        <input type="checkbox" id="camCrop" onchange="setCropPref(this.checked)">
+        <label for="camCrop">명함만 잘라내기</label>
         <button id="camFrameBtn" onclick="toggleFrame()">🔲 명함틀 끔</button>
       </div>
       <div class="row">
@@ -1535,6 +1539,7 @@ async function openCam() {
   camShots = [];
   setCamSavePref(camSavePref());
   setCamAutoPref(camAutoPref());   // 지난번에 켜 두었으면 이번에도 자동으로 찍는다
+  setCropPref(cropPref());         // 테두리 자르기도 지난번 그대로
   applyFrameUI();
   renderCamStrip();
   $('camOv').style.display = 'flex';
@@ -1604,6 +1609,7 @@ function setCamTip() {
   const bits = [];
   if (frameOn()) bits.push('명함을 틀 안에 맞추세요');
   if (camAutoPref()) bits.push('멈추면 저절로 찍힙니다');
+  if (cropPref()) bits.push('명함만 잘라 담습니다');
   else if (camCanFocus) bits.push('흐리면 화면을 한 번 누르세요');
   const tip = $('camTip');
   if (tip) tip.textContent = bits.join(' · ');
@@ -1648,6 +1654,141 @@ function loadImg(url) {
   });
 }
 
+/* ══════ 명함 테두리 찾아 반듯하게 자르기 (계획서 4단계) ══════
+   비뚤게 찍어도 명함만 잘라 세운다. 리멤버와 가장 크게 갈리는 곳이자
+   **가장 위험한 곳**이다 — 잘못 자르면 글자를 날린다.
+
+   ⚠ 계획서에 적은 대로 **실패해도 되는 기능**이다. 못 찾으면 지금처럼
+      틀 전체를 그대로 쓴다. 잘못 잘라 글자를 날리느니 안 자르는 게 낫다.
+   ⚠ **원본을 덮어쓰지 않는다.** 자른 것과 원본을 둘 다 들고 있다가,
+      판독이 실패하면 원본으로 다시 시도한다.
+
+   어떻게 찾나 — 바깥 라이브러리 없이(OpenCV.js 는 8MB라 폰에서 못 쓴다):
+     ① 작게(160px) 줄여 흑백으로
+     ② 오츠(Otsu) 기준값으로 밝은 곳/어두운 곳을 가른다 — 명함은 보통 바닥보다 밝다
+     ③ 그 덩어리의 **끝점 넷**을 찾는다(x+y 최소·최대, x−y 최소·최대)
+        = 비뚤어진 네모의 네 꼭짓점
+     ④ 네 점으로 가운데·크기·기울기를 구해 **돌려서 잘라낸다**
+
+   기울기(회전)는 편다. **원근(사다리꼴)까지는 안 편다** — 네 점 변환은 캔버스로
+   삼각형을 쪼개 그려야 하고, 잘못되면 글자가 늘어난다. 명함은 대개 평평한 곳에
+   두고 위에서 찍으므로 회전만 펴도 충분하다. */
+const EDGE_W = 160;              // 이만큼으로 줄여서 찾는다(폰이 버티는 크기)
+const CARD_MIN_AREA = 0.18;      // 화면의 이만큼은 차지해야 명함으로 본다
+const CARD_MAX_AREA = 0.96;      // 이보다 크면 화면 전체 — 못 찾은 것이다
+const CARD_MIN_RATIO = 1.15;     // 명함 가로세로비 (90×50 = 1.8) — 넉넉히 잡는다
+const CARD_MAX_RATIO = 2.8;
+
+/* 오츠 기준값 — 밝기 히스토그램을 둘로 가르는 값을 스스로 찾는다.
+   고정값(예: 128)을 쓰면 조명이 조금만 달라도 통째로 어긋난다. */
+function otsuThreshold(g) {
+  const hist = new Array(256).fill(0);
+  for (let i = 0; i < g.length; i++) hist[g[i]]++;
+  const total = g.length;
+  let sum = 0;
+  for (let t = 0; t < 256; t++) sum += t * hist[t];
+  let sumB = 0, wB = 0, best = 0, bestVar = -1;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (!wB) continue;
+    const wF = total - wB;
+    if (!wF) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB, mF = (sum - sumB) / wF;
+    const v = wB * wF * (mB - mF) * (mB - mF);
+    if (v > bestVar) { bestVar = v; best = t; }
+  }
+  return best;
+}
+
+/* 밝은 덩어리의 끝점 넷 — 비뚤어진 네모의 꼭짓점이 된다.
+   x+y 가 가장 작은 곳 = 왼쪽 위, 가장 큰 곳 = 오른쪽 아래,
+   x−y 가 가장 큰 곳 = 오른쪽 위, 가장 작은 곳 = 왼쪽 아래. */
+function maskCorners(g, w, h, th) {
+  let n = 0;
+  let sMin = Infinity, sMax = -Infinity, dMin = Infinity, dMax = -Infinity;
+  let tl = null, br = null, tr = null, bl = null;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (g[y * w + x] <= th) continue;      // 어두운 곳(바닥)은 건너뛴다
+      n++;
+      const s = x + y, d = x - y;
+      if (s < sMin) { sMin = s; tl = [x, y]; }
+      if (s > sMax) { sMax = s; br = [x, y]; }
+      if (d > dMax) { dMax = d; tr = [x, y]; }
+      if (d < dMin) { dMin = d; bl = [x, y]; }
+    }
+  }
+  return { n: n, tl: tl, tr: tr, br: br, bl: bl };
+}
+
+function dist(a, b) { return Math.hypot(a[0] - b[0], a[1] - b[1]); }
+
+/* 꼭짓점 넷 → 잘라낼 네모(가운데·크기·기울기). 아니다 싶으면 ok:false 로 물러선다. */
+function cardRectFrom(c, w, h) {
+  const no = function (why) { return { ok: false, why: why }; };
+  if (!c || !c.tl || !c.tr || !c.br || !c.bl) return no('덩어리를 못 찾았습니다');
+  /* 밝은 곳이 너무 적거나 화면을 다 덮으면 명함이 아니다 */
+  const fill = c.n / (w * h);
+  if (fill < CARD_MIN_AREA) return no('너무 작습니다');
+  if (fill > CARD_MAX_AREA) return no('화면을 거의 다 덮었습니다');
+
+  /* 마주 보는 변의 길이를 평균으로 — 한 변만 보면 흔들린다 */
+  const wide = (dist(c.tl, c.tr) + dist(c.bl, c.br)) / 2;
+  const tall = (dist(c.tl, c.bl) + dist(c.tr, c.br)) / 2;
+  if (wide < 8 || tall < 8) return no('너무 얇습니다');
+
+  const long = Math.max(wide, tall), short = Math.min(wide, tall);
+  const ratio = long / short;
+  if (ratio < CARD_MIN_RATIO || ratio > CARD_MAX_RATIO) {
+    return no('명함 모양이 아닙니다 (가로세로 ' + ratio.toFixed(2) + ')');
+  }
+  /* 네모가 실제로 그만큼 차 있는가 — 밝은 곳이 흩어져 있으면 네모가 아니다 */
+  if (c.n < wide * tall * 0.6) return no('네모가 아닙니다');
+
+  const cx = (c.tl[0] + c.tr[0] + c.br[0] + c.bl[0]) / 4;
+  const cy = (c.tl[1] + c.tr[1] + c.br[1] + c.bl[1]) / 4;
+  /* 위쪽 변의 기울기 — 아래쪽 변과 평균 내 흔들림을 줄인다 */
+  const a1 = Math.atan2(c.tr[1] - c.tl[1], c.tr[0] - c.tl[0]);
+  const a2 = Math.atan2(c.br[1] - c.bl[1], c.br[0] - c.bl[0]);
+  return { ok: true, cx: cx, cy: cy, w: wide, h: tall, angle: (a1 + a2) / 2 };
+}
+
+/* 사진 한 장에서 명함 네모를 찾는다. 못 찾으면 ok:false — 부르는 쪽은 원본을 쓴다. */
+function findCardRect(src, sw, sh) {
+  try {
+    const w = EDGE_W, h = Math.max(8, Math.round(sh * (EDGE_W / sw)));
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const x = c.getContext('2d', { willReadFrequently: true });
+    x.drawImage(src, 0, 0, w, h);
+    const d = x.getImageData(0, 0, w, h).data;
+    const g = new Uint8Array(w * h);
+    for (let i = 0, j = 0; j < g.length; i += 4, j++) {
+      g[j] = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000;
+    }
+    const r = cardRectFrom(maskCorners(g, w, h, otsuThreshold(g)), w, h);
+    if (!r.ok) return r;
+    const k = sw / w;                       // 원본 크기로 되돌린다
+    return { ok: true, cx: r.cx * k, cy: r.cy * k, w: r.w * k, h: r.h * k, angle: r.angle };
+  } catch (e) {
+    return { ok: false, why: (e && e.message) || String(e) };
+  }
+}
+
+/* 찾은 네모대로 돌려서 잘라낸다 */
+function cropRotated(src, r) {
+  const pad = 1.02;                          // 테두리를 살짝 넉넉히 — 글자가 잘리지 않게
+  const cw = Math.max(1, Math.round(r.w * pad)), chh = Math.max(1, Math.round(r.h * pad));
+  const c = document.createElement('canvas');
+  c.width = cw; c.height = chh;
+  const x = c.getContext('2d');
+  x.translate(cw / 2, chh / 2);
+  x.rotate(-r.angle);
+  x.drawImage(src, -r.cx, -r.cy);
+  return c;
+}
+
 /* ══════ 자동 촬영 (대표 지시 2026-08-08, 계획서 3단계) ══════
    셔터를 누르는 순간 손이 흔들려 흐려진다. 화면이 멎으면 스스로 찍는다.
 
@@ -1664,6 +1805,7 @@ function loadImg(url) {
    ⚠ 셔터 단추는 그대로 둔다. 자동이 안 잡히는 상황(어두운 곳)에서 사람이
      누를 길을 없애면 안 된다. */
 const CAM_AUTO_LS = 'puphotos.cam.auto';
+const CAM_CROP_LS = 'puphotos.cam.crop';
 const SAMPLE_MS = 120;      // 이만큼마다 한 번 잰다(발열)
 const STILL_DIFF = 3.2;     // 밝기 차이 평균이 이보다 작으면 멎은 것
 const MOVE_DIFF = 7;        // 이보다 크면 「장면이 바뀌었다」
@@ -1676,6 +1818,14 @@ const autoCan = document.createElement('canvas');
 autoCan.width = 40; autoCan.height = 30;
 
 function camAutoPref() { return localStorage.getItem(CAM_AUTO_LS) === '1'; }
+/* 테두리 자르기 — 기본은 **꺼짐**. 계획서대로 실패할 수 있는 기능이라
+   대표님이 명함 20장으로 시험해 보고 켜실 것을 켜신다. */
+function cropPref() { return localStorage.getItem(CAM_CROP_LS) === '1'; }
+function setCropPref(on) {
+  try { localStorage.setItem(CAM_CROP_LS, on ? '1' : '0'); } catch (_) {}
+  const b = $('camCrop'); if (b) b.checked = !!on;
+  setCamTip();
+}
 function setCamAutoPref(on) {
   try { localStorage.setItem(CAM_AUTO_LS, on ? '1' : '0'); } catch (_) {}
   const b = $('camAuto'); if (b) b.checked = !!on;
@@ -1790,7 +1940,25 @@ async function camShoot() {
     c.getContext('2d').drawImage(src, cx, cy, cw, ch, 0, 0, cw, ch);
     const blob = await new Promise(function (res) { c.toBlob(res, 'image/jpeg', 0.92); });
     if (!blob) throw new Error('사진을 만들지 못했습니다');
-    camShots.push({ blob: blob, url: URL.createObjectURL(blob), ts: Date.now(), sel: true });
+
+    /* ── 테두리 찾아 반듯하게 (계획서 4단계) ──
+       ⚠ **원본을 덮어쓰지 않는다.** 자른 것을 쓰되 원본을 raw 에 들고 있다가,
+          판독이 실패하면 원본으로 다시 시도한다(cropped 표시로 가른다).
+       ⚠ 못 찾으면 자르지 않는다 — 잘못 잘라 글자를 날리느니 안 자르는 게 낫다. */
+    let useBlob = blob, raw = null, cropped = false;
+    if (cropPref()) {
+      try {
+        const r = findCardRect(c, cw, ch);
+        if (r.ok) {
+          const cut = cropRotated(c, r);
+          const cb = await new Promise(function (res) { cut.toBlob(res, 'image/jpeg', 0.92); });
+          /* 잘라낸 것이 터무니없이 작으면 잘못 찾은 것이다 — 원본을 쓴다 */
+          if (cb && cb.size > blob.size * 0.15) { raw = blob; useBlob = cb; cropped = true; }
+        }
+      } catch (e) { console.warn('[테두리]', e); }   // 실패해도 사진은 남는다
+    }
+    camShots.push({ blob: useBlob, raw: raw, cropped: cropped,
+      url: URL.createObjectURL(useBlob), ts: Date.now(), sel: true });
     /* 찰칵 — 찍혔다는 것이 눈에 보여야 연타할 수 있다 */
     $('camFlash').style.opacity = '.55';
     setTimeout(function () { $('camFlash').style.opacity = '0'; }, 120);
