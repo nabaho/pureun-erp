@@ -33620,6 +33620,57 @@ function CmsMatchModal(props){
   );
 }
 
+/* ── 입금 추천 다시 쓰기 ────────────────────────────────────────────
+   통장 행마다 미입금 후보 전체를 훑는다(506건 × 수백 건). 이 계산이 화면 부품
+   본문에 그냥 놓여 있고 그 부품에는 useState 가 36개라, 체크박스 하나만 눌러도
+   통째로 다시 돌았다 — 대표님 PC 에서 24초 멈춤으로 나타났다.
+
+   그래서 «무엇이 바뀌면 다시 계산해야 하는가» 를 지문 한 줄로 뽑아 두고,
+   지문이 같으면 앞의 결과를 그대로 쓴다.
+
+   ⚠ 여기는 입금 확정에 쓰이는 추천을 만드는 자리다. 지문이 덜 촘촘하면 낡은
+     후보가 남아 엉뚱한 건에 확정될 수 있다. 그래서 «후보를 바꿀 수 있는 것»
+     은 빠짐없이 지문에 넣는다 — 통장 행(날짜·금액·적요·처리됨)과 미입금 건
+     (id·금액)과 탭, 그리고 계산서 색인 준비 여부.
+   ⚠ 사용자가 고른 매칭(inMatch)은 일부러 넣지 않는다. 후보 목록 자체는 그것과
+     무관하고, 그것까지 넣으면 클릭할 때마다 다시 계산해 고치는 뜻이 없어진다.
+     inMatch 를 쓰는 계산(자동정리 관문·계산서 미발급)은 캐시 밖에 둔다. */
+function erpSugSig(incAll, pending, tab, invReady){
+  var a = 0, b = 0, i, r, p;
+  for(i=0; i<incAll.length; i++){
+    r = incAll[i] || {};
+    // 곱하고 더하는 구르는 셈 — 순서가 바뀌어도 다른 값이 나온다
+    a = (a*31 + String(r._k||'').length*7 + (parseInt(r.amount,10)||0)
+          + String(r.date||'').length + String(r.memo||r.note||'').length
+          + (r._dup?1:0)) | 0;
+  }
+  for(i=0; i<pending.length; i++){
+    p = pending[i] || {};
+    b = (b*31 + String(p.id||'').length*7 + (parseInt(p.expect||p.amount,10)||0)) | 0;
+  }
+  return tab+'|'+incAll.length+'|'+a+'|'+pending.length+'|'+b+'|'+(invReady?1:0);
+}
+/* 비싼 부분만 따로. inMatch 를 보지 않는다(위 주석 참고). */
+function erpBuildSug(incAll, pending){
+  var out = { incByK:{}, isCmsMemo:{}, incSug:{}, incDone:{}, ctHint:{}, invSug:{} };
+  incAll.forEach(function(row){
+    out.incByK[row._k] = row;
+    if(row._dup) return;                       // 이미 처리된 행은 추천을 계산하지 않는다
+    var _memo = row.memo||row.note||'';
+    out.isCmsMemo[row._k] = erpIsCmsMemo(_memo);
+    // 후보를 종류별로 나눠 보여주므로 넉넉히 받는다 (사건·컨설팅·기금·기타)
+    var _sg = erpMatchTxnToPending({date:row.date, amount:row.amount, memo:_memo}, pending, 12);
+    out.incSug[row._k] = _sg;
+    // 입금관리에서 이미 확정한 건인지 (통장 행에는 지문이 안 남는다)
+    out.incDone[row._k] = erpAlreadyConfirmed({date:row.date, amount:row.amount}, 10);
+    // 맞는 후보가 없을 때만 — 아직 이관 안 된 계약이 있는지 본다
+    if(!_sg.length) out.ctHint[row._k] = erpContractHint({memo:_memo});
+    // 계산서를 따로 한 칸에 보여주므로 추천 신뢰도와 상관없이 항상 찾는다
+    var _iv = erpInvoiceSuggest({date:row.date, amount:row.amount}, 1);
+    if(_iv.length) out.invSug[row._k] = _iv[0];
+  });
+  return out;
+}
 function FinanceLedger(){
   /* ── 미입금 대기 목록 (입금 매칭 후보) ──
      2026-08-07 김보람 건의: 「일반 자문료 입금건은 매칭이 안 되고 컨설팅·사건만 된다」
@@ -33800,6 +33851,8 @@ function FinanceLedger(){
   var nbBusyS=useState(false); var nbBusy=nbBusyS[0];   var setNbBusy=nbBusyS[1];   // CMS 일괄처리 중
   var hideDupS=usePersistedState('ledger_hide_dup', true); var hideDup=hideDupS[0]; var setHideDup=hideDupS[1]; // 이미 처리된 행 숨기기
   var atExS=useState({});      var atEx=atExS[0];       var setAtEx=atExS[1];       // 자동 정리에서 제외한 행 (체크 해제분)
+  // 입금 추천 계산 결과 — 지문(erpSugSig)이 같으면 그대로 쓴다. 아래 «비싼 계산» 참고.
+  var _sugCache = useRef({ sig:null, val:null });
   var atOpenS=useState(true);  var atOpen=atOpenS[0];   var setAtOpen=atOpenS[1];   // 자동 정리 미리보기 펼침 (기본 펼침)
   var invTickS=useState(0);    var invTick=invTickS[0]; var setInvTick=invTickS[1]; // 세금계산서 아카이브 로딩 완료 신호
   var advBatchS=useState(false); var advBatchOpen=advBatchS[0]; var setAdvBatchOpen=advBatchS[1]; // 자문료 일괄확인 팝업
@@ -34353,19 +34406,32 @@ function FinanceLedger(){
     if((parseInt(it.monthlyAdvisoryFee,10)||0)>0) return true;
     return /자문/.test(String(p.label||''));
   }
-  if(rows && ldTabEff==='inc') incAll.forEach(function(row){
-    incByK[row._k] = row;
+  /* ── 비싼 계산은 지문이 같으면 다시 하지 않는다 ──
+     후보를 바꿀 수 있는 것(통장 행·미입금 건·탭·계산서 색인)이 그대로면 앞의
+     결과를 그대로 쓴다. 체크박스·글자 입력 같은 것으로는 다시 돌지 않는다.
+     ⚠ useRef 로 손수 담는다 — 언제 다시 도는지가 눈에 보이고 검사하기 쉽다. */
+  var _invReady = erpInvoiceIndexReady();
+  var _sugSig = (rows && ldTabEff==='inc') ? erpSugSig(incAll, pending, ldTabEff, _invReady) : '';
+  if(_sugCache.current.sig !== _sugSig){
+    var _t0 = (window.performance && performance.now) ? performance.now() : 0;
+    _sugCache.current = { sig:_sugSig, val: _sugSig ? erpBuildSug(incAll, pending) : null };
+    if(_t0){
+      var _ms = performance.now() - _t0;
+      if(_ms >= 200) console.warn('[거래내역] 추천 다시 계산 '+Math.round(_ms)+'ms — 통장 '
+        +incAll.length+'행 × 미입금 '+pending.length+'건');
+    }
+  }
+  var _sug = _sugCache.current.val;
+  if(_sug){
+    incByK = _sug.incByK; isCmsMemo = _sug.isCmsMemo; incSug = _sug.incSug;
+    incDone = _sug.incDone; ctHint = _sug.ctHint; invSug = _sug.invSug;
+  }
+  /* 사용자가 고른 매칭(inMatch)에 걸리는 것만 매번 다시 본다 — 전부 값싼 조회다.
+     캐시 안에 넣으면 클릭할 때마다 위 비싼 계산까지 다시 돌아 고치는 뜻이 없어진다. */
+  if(_sug) incAll.forEach(function(row){
     if(row._dup) return;
     var _memo = row.memo||row.note||'';
-    var _cms = erpIsCmsMemo(_memo);
-    isCmsMemo[row._k] = _cms;
-    // 후보를 종류별로 나눠 보여주므로 넉넉히 받는다 (사건·컨설팅·기금·기타)
-    var _sg = erpMatchTxnToPending({date:row.date, amount:row.amount, memo:_memo}, pending, 12);
-    incSug[row._k] = _sg;
-    // 입금관리에서 이미 확정한 건인지 (통장 행에는 지문이 안 남는다)
-    incDone[row._k] = erpAlreadyConfirmed({date:row.date, amount:row.amount}, 10);
-    // 맞는 후보가 없을 때만 — 아직 이관 안 된 계약이 있는지 본다
-    if(!_sg.length) ctHint[row._k] = erpContractHint({memo:_memo});
+    var _sg = incSug[row._k] || [];
     var _b = _sg.length ? _sg[0] : null;
     // ── 자동 정리 3중 관문 (학습 3회↑ · 금액 정확일치 · 신뢰도 90↑) ──
     // 사용자가 이미 다른 후보를 골라둔 행은 그 선택을 존중해 대상에서 뺀다
@@ -34373,12 +34439,8 @@ function FinanceLedger(){
           && erpAutoTidyOk(_b, _memo, row.amount)){
       autoTidyKeys.push(row._k); autoTidySet[row._k]=1; atAlias[row._k]=erpAliasCount(_memo);
     }
-    // ── 세금계산서 (금액 해시 O(1) 조회) ──
-    // 계산서를 따로 한 칸에 보여주므로 추천 신뢰도와 상관없이 항상 찾는다
-    var _iv = erpInvoiceSuggest({date:row.date, amount:row.amount}, 1);
-    if(_iv.length) invSug[row._k] = _iv[0];
     // 미발급 의심 — CMS 일괄이체·자문료 건·아카이브 미로딩 시에는 경고하지 않는다 (오탐 방지)
-    if(!_cms && erpInvoiceIndexReady()){
+    if(!isCmsMemo[row._k] && _invReady){
       var _selP = pendById[inMatch[row._k]] || (_b && _b.level==='high' ? _b.cand : null);
       if(!_isAdvisoryPend(_selP) && !erpInvoiceAny({date:row.date, amount:row.amount})) invNone[row._k]=1;
     }
