@@ -1,0 +1,53 @@
+// ════════════════════════════════════════════════════════════
+//  푸른 통합시스템 — 파일 창고(Firebase Storage) 보안규칙
+//  콘솔 → Storage → Rules 에 통째로 붙여넣고 「게시」
+//  작성 2026-08-07
+//
+//  ※ 실시간DB 규칙과 다른 점 — 창고 규칙은 실시간DB 를 읽지 못합니다.
+//    그래서 uid_roles 의 isAdmin 을 볼 수 없어, 관리자 예외를 넣을 수 없습니다.
+//    지금은 그래도 됩니다(명함첩은 원래 전 직원 공유, 사진첩은 본인 것만).
+// ════════════════════════════════════════════════════════════
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ── 명함첩 — 명함·사업자등록증 사진 ──
+    //    실시간DB 의 pucards 와 같은 수준(로그인한 직원이면 읽고 쓴다).
+    //    명함첩은 원래 전 직원이 함께 보는 자료다.
+    match /pucards/photos/{photoId} {
+      allow read:   if isStaff();
+      allow write:  if isStaff() && okImage();
+      allow delete: if isStaff();
+    }
+
+    // ── 푸른사진첩 — 사람별로 갈린다 ──
+    //    본인 것만. (관리자 예외는 창고 규칙으로 만들 수 없다 — 위 주석 참고)
+    match /puphotos/u/{uid}/{allPaths=**} {
+      allow read:   if signedIn() && request.auth.uid == uid;
+      allow write:  if signedIn() && request.auth.uid == uid && okImage();
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    // ── 그 밖은 전부 막는다 ──
+    //    실시간DB 와 같은 원칙: 여기 적지 않은 자리는 아무도 못 쓴다.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // ── 판단 함수 ──
+    function signedIn() {
+      return request.auth != null;
+    }
+    // 이메일로 로그인한 직원만 (익명 세션 차단)
+    function isStaff() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+    // 사진만, 한 장 10MB 까지 — 엉뚱한 파일이 창고에 쌓이지 않게
+    function okImage() {
+      return request.resource != null
+          && request.resource.size < 10 * 1024 * 1024
+          && request.resource.contentType.matches('image/.*');
+    }
+  }
+}

@@ -61,6 +61,23 @@
      만든다. 이름표는 전 직원이 함께 봐야 하니 공용 자리에 둔다 — 사진 본문은
      지금처럼 사람별로 그대로 갈려 있다. */
   function customKindsPath() { return DB_ROOT + '/customKinds'; }
+  /* 보유기준 점검 담당자 — 전 직원이 읽고, 담당자와 총괄 관리자만 쓴다.
+     ⚠ 이 칸은 **규칙에 따로 적어야** 한다(`puphotos` 최상위는 열려 있지 않다).
+        안 적으면 조용히 거부된다 — 건의함이 그래서 통째로 막혔다(2026-08-07). */
+  function retentionPath() { return DB_ROOT + '/retention'; }
+
+  /* ── 같이 볼 사람 (대표 지시 2026-08-08) ──
+     사진은 사람별 자리에 갈려 있고 **서버가** 남의 자리를 막는다. 그래서 공유는
+     화면에서 보여 주는 문제가 아니라 **규칙이 열어 줘야 하는** 문제다.
+     두 곳에 적는다:
+       ① 사진 옆   `…/items/{해}/{id}/shareWith/{받는사람}` = true
+          → 규칙이 이걸 보고 그 **한 장만** 읽게 열어 준다.
+       ② 받는 사람 자리 `puphotos/sharedTo/{받는사람}/{id}` = {owner, year, at}
+          → 받은 사람이 **목록을 훑을** 길. ①만 있으면 남의 자리를 못 훑어서
+            공유받은 사진이 있는지조차 알 수 없다. */
+  function sharedToPath(uid, id) {
+    return DB_ROOT + '/sharedTo/' + uid + (id ? '/' + id : '');
+  }
 
   /* 촬영 시각 결정 — EXIF → 파일 날짜 → 업로드 시각 순서.
      카톡을 거친 사진은 EXIF가 지워져 있어 파일 날짜로, 그것도 없으면 올린 때로 간다. */
@@ -303,6 +320,11 @@
       u[metaPath(year, id)] = null;
       u[blobPath(year, id)] = null;
       u[thumbPath(year, id)] = null;
+      /* 같이 보던 사람의 목록에서도 뺀다 — 안 빼면 원본이 없는 유령이 남아
+         「나와 공유된 사진」이 열리지 않는 사진으로 채워진다. */
+      Object.keys((meta && meta.shareWith) || {}).forEach(function (who) {
+        u[sharedToPath(who, id)] = null;
+      });
       return deps.db.ref().update(u);
     });
   }
@@ -379,6 +401,128 @@
 
   /* 서류 판독 결과를 사진 정보 아래 'read' 칸에만 적는다.
      items/{id} 를 통째로 쓰면 촬영 시각·올린 사람이 지워진다 — 반드시 하위 경로만. */
+  /* ── 사람이 직접 적는 정보 (2026-08-08 대표 지시) ──
+     AI 가 읽은 것(read)과 **따로** 둔다. 다시 판독해도 사람이 적은 것은 안 지워진다.
+     빈 값은 null 로 지운다 — 빈 문자열을 남기면 「적었는데 비어 있음」과 구분이 안 된다. */
+  function saveNote(year, id, patch, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var base = metaPath(year, id, owner), u = {};
+    ['note', 'company'].forEach(function (k) {
+      if (!(k in patch)) return;
+      var v = String(patch[k] == null ? '' : patch[k]).trim();
+      u[base + '/' + k] = v || null;
+    });
+    if (!Object.keys(u).length) return Promise.resolve();
+    return deps.db.ref().update(u);
+  }
+
+  /* ── 촬영일 고치기 ──
+     ⚠ 촬영 시각은 **보관 연도를 정한다**(yearOf). 해가 바뀌는 날짜로 고치면
+     사진·미리보기까지 새 해 자리로 **옮겨야** 한다. 정보만 고치면 목록에서 사라진다
+     (그 해 목록에는 없고, 새 해 자리에는 사진이 없다).
+     같은 해 안에서 고치는 것은 정보 한 줄만 바꾸면 된다. */
+  function setTakenAt(year, id, ts, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var n = Number(ts);
+    if (!Number.isFinite(n) || n <= 0) return Promise.reject(new Error('날짜가 올바르지 않습니다'));
+    var to = yearOf(n);
+    if (to === String(year)) {
+      var u = {};
+      u[metaPath(year, id, owner) + '/takenAt'] = n;
+      return deps.db.ref().update(u);
+    }
+    /* 해가 바뀐다 — 정보·사진·미리보기를 통째로 옮긴다.
+       ⚠ **한 묶음(update)으로** 넣고 지운다. 나눠서 하다 중간에 끊기면 사진을 잃는다. */
+    return Promise.all([
+      readOnce(metaPath(year, id, owner)),
+      loadFull(year, id, owner).catch(function () { return ''; }),
+      loadThumb(year, id, owner).catch(function () { return ''; })
+    ]).then(function (r) {
+      var meta = r[0];
+      if (!meta) throw new Error('사진 정보를 찾지 못했습니다');
+      meta.takenAt = n;
+      var u = {};
+      u[metaPath(to, id, owner)] = meta;
+      if (r[1]) u[blobPath(to, id, owner)] = r[1];
+      if (r[2]) u[thumbPath(to, id, owner)] = r[2];
+      u[metaPath(year, id, owner)] = null;
+      u[blobPath(year, id, owner)] = null;
+      u[thumbPath(year, id, owner)] = null;
+      return deps.db.ref().update(u).then(function () { return to; });
+    });
+  }
+
+  /* ── 돌린 사진 저장 ──
+     사진과 미리보기를 **같이** 바꾼다. 하나만 바꾸면 목록과 크게 보기가 서로 다르게 보인다. */
+  function replaceImage(year, id, full, thumb, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    if (!full || !thumb) return Promise.reject(new Error('바꿀 사진이 없습니다'));
+    var u = {};
+    u[blobPath(year, id, owner)] = full;
+    u[thumbPath(year, id, owner)] = thumb;
+    return deps.db.ref().update(u);
+  }
+
+  /* 같이 볼 사람을 정한다 — 넘긴 목록이 그대로 최종본이다(빠진 사람은 풀린다).
+     ⚠ 사진 옆과 받는 사람 자리를 **한 묶음**으로 적는다. 나눠서 하다 끊기면
+     「사진에는 공유 표시가 있는데 목록에는 안 뜨는」 반쪽 상태가 남는다. */
+  function setShare(year, id, uids, before) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    if (!deps.uid) return Promise.reject(new Error('로그인을 확인해 주세요'));
+    var now = Object.create(null), was = Object.create(null);
+    (uids || []).forEach(function (u) { if (u && u !== deps.uid) now[u] = 1; });
+    (before || []).forEach(function (u) { if (u && u !== deps.uid) was[u] = 1; });
+    var u = {}, base = metaPath(year, id);
+    Object.keys(now).forEach(function (who) {
+      u[base + '/shareWith/' + who] = true;
+      u[sharedToPath(who, id)] = { owner: deps.uid, year: String(year), at: Date.now() };
+    });
+    /* 뺀 사람은 두 곳에서 다 지운다 — 한 곳만 지우면 목록에 유령이 남는다 */
+    Object.keys(was).forEach(function (who) {
+      if (now[who]) return;
+      u[base + '/shareWith/' + who] = null;
+      u[sharedToPath(who, id)] = null;
+    });
+    if (!Object.keys(u).length) return Promise.resolve();
+    return deps.db.ref().update(u);
+  }
+
+  /* 나에게 공유된 사진 목록 — 받는 사람 자리를 훑고 그 한 장씩 읽어 온다.
+     ⚠ 한 장을 못 읽어도 나머지는 보여야 한다(공유가 풀렸거나 원본이 지워진 경우). */
+  function listSharedToMe() {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    if (!deps.uid) return Promise.resolve({});
+    return readOnce(sharedToPath(deps.uid)).then(function (idx) {
+      var ids = Object.keys(idx || {});
+      if (!ids.length) return {};
+      return Promise.all(ids.map(function (id) {
+        var r = idx[id] || {};
+        if (!r.owner || !r.year) return null;
+        return readOnce(metaPath(r.year, id, r.owner)).then(function (meta) {
+          if (!meta) return null;   // 원본이 지워졌다 — 목록에서 그냥 뺀다
+          return { id: id, meta: Object.assign({}, meta, {
+            __ownerUid: r.owner, __sharedYear: String(r.year)
+          }) };
+        }).catch(function () { return null; });
+      })).then(function (rows) {
+        var out = {};
+        rows.forEach(function (x) { if (x) out[x.id] = x.meta; });
+        return out;
+      });
+    });
+  }
+
+  /* 공유받은 사람 이름을 붙여 준다 — uid 만 보이면 누구인지 모른다 */
+  function fillSharedNames(items) {
+    return listOwners().then(function (owners) {
+      Object.keys(items).forEach(function (id) {
+        var uid = items[id].__ownerUid;
+        items[id].__ownerName = (owners[uid] && owners[uid].name) || uid;
+      });
+      return items;
+    }).catch(function () { return items; });
+  }
+
   function saveRead(year, id, read) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     var u = {};
@@ -394,6 +538,30 @@
   function listCustomKinds() {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     return deps.db.ref(customKindsPath()).once('value').then(function (s) { return s.val() || {}; });
+  }
+
+  /* ── 보유기준 점검 담당자 ──
+     기준(증빙 5년·나머지 1년)은 있는데 지우는 일이 아무에게도 안 걸려 있었다.
+     자동 삭제는 일부러 만들지 않았으므로(사람 확인이 필수) 누가 언제 볼지를 정해 둔다.
+     화면은 실시간DB를 직접 만지지 않는다 — 쓰기는 이 층만 한다. */
+  function getRetention() {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(retentionPath()).once('value').then(function (s) { return s.val() || {}; });
+  }
+
+  function setRetentionOwner(uid, name) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    if (!uid) return Promise.reject(new Error('담당자를 고르지 않았습니다'));
+    /* 담당자가 바뀌면 **앞사람의 점검 기록은 지운다** — 앞사람이 본 것을 뒷사람이
+       본 것으로 칠 수 없다. 새 담당자에게는 곧바로 알림이 뜬다. */
+    return deps.db.ref(retentionPath()).set({
+      uid: uid, name: name || '', lastAt: 0, lastBy: '', setAt: Date.now()
+    });
+  }
+
+  function markRetentionChecked(name) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(retentionPath()).update({ lastAt: Date.now(), lastBy: name || '' });
   }
 
   /* 이름이 같은 분류를 두 번 만들지 않는다(대소문자·앞뒤 공백 무시) —
@@ -881,6 +1049,13 @@
      - 영어 내부 단계 이름(init·ref·upload·url)을 문구에 노출하지 않는다.
      - result.message(파이어베이스가 준 영어 오류문)는 진단에 필요하니 계속 담되,
        영어라서 먼저 읽히면 안 되므로 한국어 안내 뒤에 '원인:'으로 붙인다. */
+  /* 요금제 한도로 막힌 것인가 — 권한 문제와 대처가 정반대라 반드시 갈라야 한다.
+     파이어베이스가 주는 코드(storage/quota-exceeded)와 영어 문구 양쪽을 본다:
+     코드만 보면 문구로만 오는 경우를 놓치고, 문구만 보면 말이 바뀌면 놓친다. */
+  function isQuota(msg) {
+    return /quota[ _-]?exceeded|quota for bucket|exceeded[^\n]*quota/i.test(String(msg || ''));
+  }
+
   function probeMessage(result) {
     result = result || {};
 
@@ -891,6 +1066,16 @@
     var setupHint =
       '\n창고 권한을 손봐도 풀리지 않는 문제입니다. 이 화면을 개발자에게 알려 주세요.' +
       '\n창고를 못 쓰면 실시간DB로 담습니다. 그때도 콘솔에서 권한을 한 번 열어 주셔야 합니다.';
+
+    /* 요금제 문제는 어느 단계에서 걸리든 대처가 같다 — 단계별 안내보다 먼저 가른다.
+       (기기·시점에 따라 init/ref/upload 어디서든 이 오류가 나온다) */
+    if (!result.ok && isQuota(result.message)) {
+      return '창고를 쓸 수 없습니다 — 파이어베이스 요금제 때문입니다.' +
+        '\n권한·규칙 문제가 아닙니다. 콘솔에서 규칙을 고쳐도 풀리지 않습니다.' +
+        '\n사진은 지금처럼 실시간DB에 잘 담기고 있습니다 — 그대로 쓰시면 됩니다.' +
+        '\n창고가 꼭 필요해지면 그때 유료 요금제를 켜는 것을 의논하시면 됩니다.' +
+        cause;
+    }
 
     switch (result.step) {
       case 'done':
@@ -913,6 +1098,11 @@
           setupHint + cause;
 
       case 'upload':
+        /* ⚠ 올리기가 막히는 이유가 **둘**이고 대처가 정반대다.
+           요금제 한도(quota-exceeded)를 권한 문제로 안내하면 대표님이 콘솔에서
+           규칙을 아무리 고쳐도 안 풀린다 — 실제로 그 안내가 나갔다(2026-08-06).
+           신규 버킷은 유료 요금제(Blaze)에서만 열리는데 이 계정은 체험판이라
+           **규칙과 무관하게** 막힌다. */
         return '막혔습니다 — 사진을 올릴 권한이 없습니다.' +
           '\n콘솔에서 창고에 쓰기 권한을 주는 규칙을 넣어 주세요.' +
           '\n창고를 안 쓰기로 하면 실시간DB로 담습니다. 그때도 콘솔에서 권한을 한 번 열어 주셔야 합니다.' +
@@ -947,7 +1137,18 @@
     newId: newId,
     savePhoto: savePhoto,
     saveRead: saveRead,
+    setShare: setShare,
+    listSharedToMe: listSharedToMe,
+    fillSharedNames: fillSharedNames,
+    sharedToPath: sharedToPath,
+    saveNote: saveNote,
+    setTakenAt: setTakenAt,
+    replaceImage: replaceImage,
     listCustomKinds: listCustomKinds,
+    getRetention: getRetention,
+    setRetentionOwner: setRetentionOwner,
+    markRetentionChecked: markRetentionChecked,
+    retentionPath: retentionPath,
     addCustomKind: addCustomKind,
     setCustomKind: setCustomKind,
     deletePhoto: deletePhoto,

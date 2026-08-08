@@ -188,8 +188,9 @@ test('내려받기 단추는 고른 것이 있을 때 나온다', () => {
 /* ── 휴지통 · 설정 화면 · 3분류 ── */
 
 test('지운 사진은 휴지통으로 가고 되살릴 수 있다', () => {
-  // 2026-08-05: 휴지통은 화면(viewTrash)에서 본문 맨 아래 접힌 칸(trashBox)으로 옮겼다.
-  assert.match(app, /id="trashBox"/);
+  /* 자리 이력: 8/5 에 화면 → 본문 맨 아래 접힌 칸으로 옮겼다가,
+     8/6 에 다시 제 화면으로 되돌렸다(장수가 쌓이니 본문을 길게 밀어냈다). */
+  assert.match(app, /id="viewTrash"/);
   assert.match(app, /PuPhotoStore\.listTrash\(/);
   assert.match(app, /function restoreOne\(/);
   assert.match(app, /PuPhotoStore\.restorePhoto\(/);
@@ -535,12 +536,12 @@ test('폰에서는 대시보드를 줄인다 — 사진이 화면 밖으로 밀�
   assert.ok(m, '폰 규칙을 찾을 수 없습니다');
   // 서류·카메라 두 칸은 **카메라가 보이는 기기에서만** — 아니면 오른쪽이 빈 구멍이 된다
   assert.match(m[1], /#home\.touch \.row2\{display:grid;grid-template-columns:1fr 1fr/);
-  // 긴 안내를 짧은 것으로 갈아 끼운다
-  assert.match(m[1], /\.dochint\{display:none\}/);
-  assert.match(m[1], /\.dochint\.s\{display:block/);
-  /* 30장 안내는 위 한 줄에 합쳤다 — 상한 숫자는 스크립트가 UPLOAD_MAX 에서
-     채운다. 마크업에 30을 박으면 상한을 바꿀 때 두 곳이 어긋난다. */
-  assert.match(m[1], /\.maxhint\{display:none\}/);
+  /* ⚠ 2026-08-08 다시 겨눔 — 안내 세 덩어리(다섯 줄)를 **한 줄**로 합쳤다(대표 지시:
+     "대시보드가 헷갈린다"). 그래서 폰 전용 짧은 안내(.dochint.s)와 .maxhint 가 없어졌다.
+     지켜야 할 것은 「폰에서 안내가 자리를 안 먹는다」이지 특정 클래스가 있는 것이 아니다. */
+  assert.match(m[1], /\.dochint[^\n]*display:none/);
+  /* 상한 숫자는 스크립트가 UPLOAD_MAX 에서 채운다.
+     마크업에 30을 박으면 상한을 바꿀 때 두 곳이 어긋난다. */
   assert.match(app, /id="maxHintS"/);
   assert.match(app, /\$\('maxHintS'\)\.textContent = '한 번에 ' \+ PuPhotoStore\.UPLOAD_MAX/);
   assert.ok(!/dochint s">[^<]*30장/.test(app), '상한 숫자가 마크업에 박혀 있습니다');
@@ -873,14 +874,36 @@ test('휴지통 머리줄은 비어 있어도 남는다 — 숨으면 있는 줄
   assert.match(home[1], /display:none/, '#home 이 로그인 전에도 보입니다');
 });
 
-test('휴지통은 펼칠 때 비로소 불러온다', () => {
-  /* 늘 불러오면 사진첩을 열 때마다 휴지통·지운기록까지 내려받아 첫 화면이 느려진다. */
-  const fn = app.match(/function toggleTrash\([\s\S]*?\n\}/);
-  assert.ok(fn, 'toggleTrash 를 찾을 수 없습니다');
-  assert.match(fn[0], /loadTrash\(\)/);
-  assert.match(fn[0], /trashOpen/, '펼침 여부를 보지 않습니다');
-  // 접힌 채로 시작해야 한다
-  assert.match(app, /id="trashBody" style="display:none"/, '휴지통이 펼쳐진 채 시작합니다');
+test('휴지통은 열 때 비로소 불러온다', () => {
+  /* 늘 불러오면 사진첩을 열 때마다 휴지통·지운기록까지 내려받아 첫 화면이 느려진다.
+     8/6 에 접힘 → 제 화면이 되면서, 불러오는 자리도 showView 로 옮겼다. */
+  const fn = app.match(/function showView\([\s\S]*?\n\}/);
+  assert.ok(fn, 'showView 를 찾을 수 없습니다');
+  assert.match(fn[0], /name === 'trash'[\s\S]*?loadTrash\(\)/,
+    '휴지통 화면에 들어갈 때 불러오지 않습니다');
+  assert.match(fn[0], /loadDelLog\(\)/, '지운 기록을 함께 불러오지 않습니다');
+  // 처음에는 숨어 있어야 한다 — 사진 화면이 먼저다
+  assert.match(app, /id="viewTrash" style="display:none"/, '휴지통이 열린 채 시작합니다');
+});
+
+test('휴지통은 대시보드 단추로 들어가고 장수가 늘 보인다', () => {
+  /* 대표 지시(2026-08-06): 사진 화면 아래 접힘 → 제 화면.
+     설정과 같은 방식이라 새로 배울 것이 없다. 장수는 **들어가 보지 않아도**
+     알아야 하므로 단추에 붙는다. */
+  assert.match(app, /id="trashBtn"[^>]*onclick="showView\('trash'\)"/,
+    '대시보드에 휴지통 단추가 없습니다');
+  assert.match(app, /id="trashCount"/);
+  const fn = app.match(/function renderTrashBox\([\s\S]*?\n\}/);
+  assert.ok(fn, 'renderTrashBox 를 찾을 수 없습니다');
+  assert.match(fn[0], /trashCount/, '단추의 장수를 갱신하지 않습니다');
+  assert.match(fn[0], /trashNote/, '화면 머리글을 갱신하지 않습니다');
+  /* 비면 숫자를 지운다 — 0 이 붙어 있으면 눈에 걸린다 */
+  assert.match(app, /\.setbtn \.n:empty\{display:none\}/, '빈 장수 뱃지를 숨기지 않습니다');
+  /* 나가는 길이 있어야 한다 — 없으면 한 번 들어가면 못 나온다 */
+  assert.match(app, /id="backBar"/);
+  const sv = app.match(/function showView\([\s\S]*?\n\}/)[0];
+  assert.match(sv, /backBar[\s\S]*?onPhotos \? 'none' : 'block'/,
+    '휴지통에서 돌아가는 길이 안 보입니다');
 });
 
 test('지운 기록을 보여 준다 — 완전히 지운 뒤에도', () => {
@@ -1360,8 +1383,12 @@ test('전체 근로자를 고르면 사람마다 모아 합치는 함수를 쓴�
   const fn = app.match(/function loadGrid\([\s\S]*?\n\}/);
   assert.ok(fn, 'loadGrid 본문을 찾을 수 없습니다');
   assert.match(fn[0], /PuPhotoStore\.listYearAll\(/, '전체 근로자용 목록 함수를 안 씁니다');
-  // 전체 근로자 화면에서는 판독 대기열을 돌리지 않는다 — 남의 사진을 자동으로 건드리면 안 된다
-  assert.match(fn[0], /gridOwner !== ALL_OWNERS\) autoReadPending/);
+  /* 전체 근로자 화면에서는 판독 대기열을 돌리지 않는다 — 남의 사진을 자동으로 건드리면 안 된다.
+     ⚠ 2026-08-08 다시 겨눔 — 「나와 공유된 사진」(SHARED_OWNER)이 생기면서 조건이
+     둘로 늘었다. 지켜야 할 것은 **남의 사진에는 자동 판독을 안 돌린다**는 것이다. */
+  assert.match(fn[0], /gridOwner !== ALL_OWNERS[\s\S]{0,60}autoReadPending/);
+  assert.match(fn[0], /gridOwner !== SHARED_OWNER[\s\S]{0,40}autoReadPending/,
+    '공유받은 사진에도 자동 판독을 돌리면 안 됩니다 — 남의 사진입니다');
 });
 
 test('전체 근로자 화면에서는 사진마다 누구 것인지 보인다', () => {
@@ -1461,4 +1488,132 @@ test('로그인하면 분류 목록을 불러온다', () => {
   assert.match(app, /loadCustomKinds\(\);/);
   const fn = app.match(/function loadCustomKinds\([\s\S]*?\n\}/)[0];
   assert.match(fn, /PuPhotoStore\.listCustomKinds\(\)/);
+});
+
+/* ══════ 사진을 탭으로 끌어 분류 바꾸기 · 틀고정 · 다시 판독 (2026-08-06 대표 지시) ══════ */
+
+test('사진을 탭에 끌어다 놓으면 분류가 바뀐다', () => {
+  /* AI가 잘못 가린 것을 사람이 한 번에 바로잡는 길. */
+  assert.match(app, /let photoDragIds = null/, '끌고 있는 사진을 기억하지 않습니다');
+  const ds = app.match(/\$\('grid'\)\.addEventListener\('dragstart'[\s\S]*?\n\}\);/);
+  assert.ok(ds, '격자 dragstart 를 찾을 수 없습니다');
+  assert.match(ds[0], /photoDragIds =/, '격자에서 끌 때 사진 번호를 안 싣습니다');
+  /* 고른 것이 있으면 한꺼번에 옮긴다 — 한 장씩 열 번 끄는 것보다 낫다 */
+  assert.match(ds[0], /selected\.size && selected\.has\(id\)/, '고른 여러 장을 함께 옮기지 않습니다');
+  const fn = app.match(/function retagPhotos\([\s\S]*?\n\}/);
+  assert.ok(fn, 'retagPhotos 를 찾을 수 없습니다');
+  assert.match(fn[0], /PuPhotoStore\.saveRead\(/, '바꾼 분류를 저장하지 않습니다');
+});
+
+test('분류를 바꿔도 읽어 둔 항목은 살린다', () => {
+  /* 분류가 틀렸다고 읽은 내용(이름·전화 등)까지 틀린 것은 아니다.
+     Object.assign 으로 기존 read 위에 kind 만 덮어야 한다. */
+  const fn = app.match(/function retagPhotos\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /Object\.assign\(\{\}, it\.meta\.read/, '읽어 둔 결과를 통째로 버리고 있습니다');
+  /* 사람이 정한 것이므로 「확인 필요」에서 빠지고, 다시 판독이 도로 뒤집지 않아야 한다 */
+  assert.match(fn, /ack: true/, '사람이 정한 분류가 「확인 필요」에 계속 남습니다');
+  assert.match(fn, /auto: false/, '사람이 정한 것을 기계가 정한 것으로 적고 있습니다');
+});
+
+test('아무 탭에나 놓을 수는 없다 — 애매한 탭은 막는다', () => {
+  /* 「전체사진」은 분류가 아니라 모아 보기이고, 「사업자등록증」은 두 종류
+     (bizreg·sme)를 함께 담아 어느 쪽으로 넣을지 정할 수 없다. */
+  const fn = app.match(/function canRetag\([\s\S]*?\n\}/);
+  assert.ok(fn, 'canRetag 를 찾을 수 없습니다');
+  assert.match(fn[0], /kinds\.length === 1/, '종류가 하나인 탭만 받도록 막지 않았습니다');
+  // 놓기 전에 어디로 갈지 눈에 보여야 한다
+  assert.match(app, /#kinds button\.drop\{/, '놓을 자리 표시가 없습니다');
+  assert.match(app, /function markDropTab\(/);
+});
+
+test('분류 탭과 찾기 줄은 스크롤해도 위에 붙어 있다', () => {
+  /* 사진이 수십 장이면 아래로 내려간 뒤 탭을 누르려고 다시 맨 위로 올라와야 했다. */
+  assert.match(app, /#kinds\{position:sticky;top:0/, '분류 탭이 고정되지 않습니다');
+  assert.match(app, /#findBar\{position:sticky/, '찾기 줄이 고정되지 않습니다');
+  /* 배경이 없으면 사진이 밑으로 비쳐 글씨를 덮는다 */
+  assert.match(app, /#kinds\{position:sticky[^}]*background:var\(--bg\)/, '분류 탭이 투명합니다');
+  assert.match(app, /#findBar\{position:sticky[^}]*background:var\(--bg\)/, '찾기 줄이 투명합니다');
+  /* 찾기 줄이 붙을 자리는 탭 높이를 **실제로 재서** 채운다 — 숫자를 박으면
+     탭이 두 줄이 되는 폰에서 찾기 줄이 탭을 덮는다 */
+  assert.match(app, /function syncStickyTop\(\)/);
+  assert.match(app, /setProperty\('--kindsH'/);
+  const rk = app.match(/function renderKindTabs\(\)[\s\S]*?\n\}/);
+  assert.match(rk[0], /syncStickyTop\(\)/, '탭을 다시 그린 뒤 높이를 안 잽니다');
+});
+
+test('옛 판 판독기로 읽은 사진은 스스로 다시 읽는다', () => {
+  /* 회의사진·급여서류를 가르치기 전에 읽힌 사진이 'other' 로 굳어 기타서류에
+     영원히 남았다(2026-08-06 대표 화면: 회의사진 0장, 기타서류 6장).
+     사람이 한 장씩 「다시 판독」을 눌러야만 풀리는 것은 자동 분류가 아니다. */
+  const fn = app.match(/function needsRead\([\s\S]*?\n\}/);
+  assert.ok(fn, 'needsRead 를 찾을 수 없습니다');
+  assert.match(fn[0], /PuDocRead\.READ_VERSION/, '판독기 판 번호를 보지 않습니다');
+  assert.match(fn[0], /r\.ack/, '사람이 확인한 것까지 도로 뒤집습니다');
+  const auto = app.match(/function autoReadPending\([\s\S]*?\n\}/);
+  assert.match(auto[0], /filter\(needsRead\)/, '자동 판독이 옛 결과를 안 집어 옵니다');
+  // 읽을 때마다 어느 판으로 읽었는지 적어야 다음에 비교할 수 있다
+  assert.match(app, /rv: PuDocRead\.READ_VERSION/, '판독 결과에 판 번호를 안 적습니다');
+});
+
+/* ══════ 카메라 초점·명함틀·장수 (2026-08-06 대표 보고: "초점이 정확하게 안 잡힌다") ══════ */
+
+test('화면을 누르면 그 자리에 초점을 잡는다', () => {
+  /* 명함처럼 평평하고 무늬가 적은 것은 자동 초점이 헤맨다 — 사람이 짚어 주는
+     길이 필요하다(리멤버 방식). 푸른카메라에 있던 것을 연속촬영에도 가져왔다. */
+  assert.match(app, /onclick="camTapFocus\(event\)"/, '미리보기에 초점 누르기가 없습니다');
+  const fn = app.match(/async function camTapFocus\([\s\S]*?\n\}/);
+  assert.ok(fn, 'camTapFocus 를 찾을 수 없습니다');
+  assert.match(fn[0], /pointsOfInterest/, '누른 지점을 카메라에 넘기지 않습니다');
+  assert.match(fn[0], /focusMode: 'single-shot'/);
+  /* 누른 자리를 눈으로 확인시켜 준다 — 초점이 늦어도 반응은 즉시여야 한다 */
+  assert.match(fn[0], /camFocus/, '누른 자리 표시가 없습니다');
+});
+
+test('못 하는 기기에는 초점·손전등을 아예 안 보여 준다', () => {
+  /* 눌러도 아무 일이 없는 단추는 헛기대만 만든다. */
+  const fn = app.match(/async function openCam\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /getCapabilities/, '기기가 무엇을 받아 주는지 안 보고 있습니다');
+  assert.match(fn, /camCanTorch = !!caps\.torch/);
+  assert.match(fn, /\$\('camTorch'\)\.style\.display = camCanTorch \? 'block' : 'none'/,
+    '손전등을 못 켜는 기기에서도 단추가 보입니다');
+  const tap = app.match(/async function camTapFocus\([\s\S]*?\n\}/)[0];
+  assert.match(tap, /if \(!camTrack \|\| !camCanFocus\) return;/,
+    '초점을 못 잡는 기기에서도 동그라미가 뜹니다');
+});
+
+test('명함틀을 켜면 그 안만 잘라 담는다', () => {
+  /* 화면 전체를 담으면 책상·바닥까지 들어가 같은 용량에 글씨가 작아진다.
+     회의·현장 사진은 넓게 담아야 하므로 켜고 끌 수 있어야 한다(대표 선택). */
+  /* camShoot 은 안에 중첩 블록이 많아 첫 `\n}` 로는 끝을 못 잡는다 —
+     다음 함수 선언이 나오기 전까지를 본문으로 본다. */
+  const fn = app.match(/async function camShoot\(\)[\s\S]*?(?=\nfunction renderCamStrip)/);
+  assert.ok(fn, 'camShoot 를 찾을 수 없습니다');
+  assert.match(fn[0], /if \(frameOn\(\)\)/, '틀 켜짐 여부를 안 봅니다');
+  assert.match(fn[0], /drawImage\(src, cx, cy, cw, ch, 0, 0, cw, ch\)/, '잘라 담지 않습니다');
+  /* 미리보기는 object-fit:cover 라 화면 좌표와 원본 좌표가 다르다 */
+  assert.match(fn[0], /object-fit:cover|Math\.max\(e\.width \/ v\.videoWidth/,
+    '화면 좌표를 원본 좌표로 옮기지 않습니다');
+  /* 넘치면 검은 띠가 담긴다 */
+  assert.match(fn[0], /Math\.min\(Math\.round\(fw\), sw - cx\)/, '자를 범위를 화면 안으로 가두지 않습니다');
+  // 켜고 끄기와 기억
+  assert.match(app, /function toggleFrame\(/);
+  assert.match(app, /localStorage\.setItem\(CAM_FRAME_LS/, '틀 상태를 기억하지 않습니다');
+});
+
+test('몇 장 찍었는지 위 가운데에 크게 보인다', () => {
+  /* 왼쪽 아래 작은 딱지는 찍는 데 정신이 팔리면 놓친다(대표 지시). */
+  assert.match(app, /id="camCount"/);
+  const fn = app.match(/function renderCamStrip\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /장 찍었습니다/, '장수를 말로 알려 주지 않습니다');
+  /* 상한이 가까우면 남은 수를 알려 준다 — 다 차고 나서 알면 늦다 */
+  assert.match(fn, /장 더/, '상한이 가까울 때 남은 수를 안 알립니다');
+  assert.match(fn, /다 찼습니다/);
+  assert.match(app, /#camCount\{[^}]*margin:0 auto/, '장수가 가운데에 있지 않습니다');
+});
+
+test('손전등을 켜 둔 채 카메라를 끄지 않는다', () => {
+  /* 기기에 따라 불이 남는다. */
+  const fn = app.match(/function camStop\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /torch: false/, '손전등을 끄지 않고 카메라를 닫습니다');
+  assert.match(fn, /camTrack = null/, '트랙 참조가 남습니다');
 });

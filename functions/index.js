@@ -5,6 +5,7 @@ const functions = require("firebase-functions/v1");
 const { getApps, initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
 const { getDatabase } = require("firebase-admin/database");
+const { getMessaging } = require("firebase-admin/messaging");
 const { Resend } = require("resend");
 const {
   REPO,
@@ -27,15 +28,52 @@ const RESEND_KEY = process.env.RESEND_API_KEY || "";
 const FROM = "푸른노무법인 <payroll@fairrunlabor.com>";
 const TEST_TO = "babylawyer11111@gmail.com";
 
-function setCors(res) {
-  res.set("Access-Control-Allow-Origin", "*");
-  res.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.set("Access-Control-Allow-Headers", "Content-Type");
+// 발송 창구는 우리 포털에서만 연다. 예전에는 "*" 라서 주소만 알면
+// 전 세계 누구나 푸른노무법인 이름으로 메일을 보낼 수 있었다.
+const MAIL_ORIGIN = "https://nabaho.github.io";
+
+function setCors(req, res) {
+  const origin = String((req && req.headers && req.headers.origin) || "");
+  if (origin === MAIL_ORIGIN || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    res.set("Access-Control-Allow-Origin", origin);
+    res.set("Vary", "Origin");
+  }
+  res.set("Access-Control-Allow-Methods", "POST,OPTIONS");
+  // Authorization 을 허용해야 브라우저가 토큰을 붙인 요청을 보낼 수 있다.
+  res.set("Access-Control-Allow-Headers", "Authorization,Content-Type");
+  res.set("Cache-Control", "no-store");
+}
+
+// 메일 발송은 로그인한 직원이면 할 수 있다.
+// 총괄관리자만으로 묶지 않는 이유: 급여명세서·사용촉진 통보는 담당 직원이 보낸다.
+async function requireStaff(req) {
+  const match = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ""));
+  if (!match) {
+    const error = new Error("로그인 후 이용해 주세요.");
+    error.status = 401;
+    throw error;
+  }
+  const decoded = await getAuth().verifyIdToken(match[1], true);
+  if (decoded.firebase && decoded.firebase.sign_in_provider !== "password") {
+    const error = new Error("이메일 로그인 계정만 메일을 보낼 수 있습니다.");
+    error.status = 403;
+    throw error;
+  }
+  return decoded;
 }
 
 exports.sendPayslip = functions.https.onRequest(async (req, res) => {
-  setCors(res);
+  setCors(req, res);
   if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+
+  // ★ 누가 보내는지 확인한다. 이 검사가 없으면 우리 도메인이 공개 발송기가 된다.
+  let sender;
+  try {
+    sender = await requireStaff(req);
+  } catch (e) {
+    res.status(e.status || 401).json({ ok: false, error: String(e.message || e) });
+    return;
+  }
 
   // 키 미설정 시 친절한 안내 (Resend의 난해한 에러 대신)
   if (!RESEND_KEY) {
@@ -76,7 +114,9 @@ exports.sendPayslip = functions.https.onRequest(async (req, res) => {
       res.status(500).json({ ok: false, error: r.error });
       return;
     }
-    res.status(200).json({ ok: true, id: (r && r.data && r.data.id) || null, to: to });
+    // 보낸 사람을 함께 돌려준다 — 화면에서 발송 기록을 남길 때 쓴다.
+    res.status(200).json({ ok: true, id: (r && r.data && r.data.id) || null, to: to,
+                           by: (sender && sender.email) || "" });
   } catch (e) {
     res.status(500).json({ ok: false, error: String((e && e.message) || e) });
   }
@@ -355,4 +395,80 @@ exports.developmentAutomation = functions
       console.error("developmentAutomation", error && error.stack || error);
       res.status(error.status || 500).json({ ok: false, error: cleanText(error && error.message || error || "자동개발 처리 실패", 500) });
     }
+  });
+
+// ══════════ 새 건의 → 관리자 폰 알림 (웹푸시 · FCM) ══════════
+//  건의가 등록되면 포털이 suggestions_meta_private/{id} 에 경량 메타를 함께 적는다.
+//  그 시점을 잡아 uid_roles 에서 관리자를 찾고, 그 사람들이 [🔔 폰 알림]으로 등록해 둔
+//  기기 토큰(fcm_tokens/{uid}/{token})으로 알림을 보낸다.
+//
+//  ⚠ data 전용 메시지를 보낸다. notification 필드를 함께 실으면 브라우저가 자체 알림을
+//    띄우고 firebase-messaging-sw.js 도 띄워 알림이 두 번 뜬다.
+const SG_CAT_NAME = {
+  erp: "푸른이알피", consult: "컨설팅 일정", cards: "명함첩",
+  portal: "포털", work: "업무관리", rules: "취업규칙", etc: "기타",
+};
+
+exports.notifySuggestion = functions.database
+  .ref("/suggestions_meta_private/{id}")
+  .onCreate(async (snap, context) => {
+    const meta = snap.val() || {};
+    const db = getDatabase();
+
+    // 1) 관리자 UID 모으기
+    const rolesSnap = await db.ref("uid_roles").once("value");
+    const adminUids = [];
+    rolesSnap.forEach((child) => {
+      const v = child.val() || {};
+      if (v.isAdmin === true && v.status !== "resigned") adminUids.push(child.key);
+    });
+    if (!adminUids.length) return null;
+
+    // 2) 관리자들이 등록해 둔 기기 토큰 모으기 (본인이 올린 건의는 본인에게 안 보냄)
+    const authorUid = String(meta.authorUid || "");
+    const targets = [];
+    await Promise.all(adminUids.map(async (uid) => {
+      if (uid === authorUid) return;
+      const ts = await db.ref(`fcm_tokens/${uid}`).once("value");
+      ts.forEach((t) => { targets.push({ uid, token: t.key }); });
+    }));
+    if (!targets.length) {
+      console.log("notifySuggestion: 등록된 관리자 기기가 없습니다", { id: context.params.id });
+      return null;
+    }
+
+    // 3) 발송
+    const cat = SG_CAT_NAME[meta.cat] || SG_CAT_NAME.etc;
+    const payload = {
+      title: `💬 새 건의 · ${cleanText(meta.author || "이름 없음", 20)}`,
+      body: `[${cat}] ${cleanText(meta.title || "(제목 없음)", 90)}`,
+      tag: "pu-suggestion",
+      url: "/pureunall/enter.html?sg=1",
+    };
+    const res = await getMessaging().sendEachForMulticast({
+      tokens: targets.map((t) => t.token),
+      data: payload,
+      webpush: { headers: { Urgency: "high", TTL: "86400" } },
+    });
+
+    // 4) 죽은 토큰 정리 — 안 지우면 기기를 바꿀 때마다 쓰레기가 쌓여 발송이 계속 실패한다
+    const dead = [];
+    res.responses.forEach((r, i) => {
+      const code = r.error && r.error.code;
+      if (code === "messaging/registration-token-not-registered" ||
+          code === "messaging/invalid-registration-token" ||
+          code === "messaging/invalid-argument") {
+        dead.push(`fcm_tokens/${targets[i].uid}/${targets[i].token}`);
+      }
+    });
+    if (dead.length) {
+      const updates = {};
+      dead.forEach((p) => { updates[p] = null; });
+      await db.ref().update(updates).catch((e) => console.warn("죽은 토큰 정리 실패", e));
+    }
+
+    console.log("notifySuggestion", {
+      id: context.params.id, sent: res.successCount, failed: res.failureCount, cleaned: dead.length,
+    });
+    return null;
   });

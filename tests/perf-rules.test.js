@@ -70,7 +70,18 @@ const baseTop = ['uid_roles','sid_roles','data','payroll_os','fund_erp','work_er
    ★ 최상위를 일부러 늘렸다면 여기에 적어라. 적지 않으면 아래 검사가 막는다
      (실수로 늘어난 것을 잡는 덫이라 자동으로 넘기지 않는다) */
 const allowTop = ['systemAlerts','systemBackups','systemBackupsIndex','systemRestoreLog',
-  'puphotos'];   /* 2026-08-02 사진첩 B단계 */
+  'puphotos',    /* 2026-08-02 사진첩 B단계 */
+  /* 2026-08-07 건의함을 「전 직원 공개(data/suggestions)」에서 대표만 보는 비공개 자리로
+     옮겼다. 옮기고 이 줄을 안 적어서 배포가 두 번 실패했다(06:24·06:52) —
+     최상위를 늘렸으면 반드시 여기에 적을 것. */
+  'suggestions_private','suggestions_meta_private','suggestions_resolved_private',
+  /* 2026-08-07 푸른이알피 30분 수시 자동백업. `serverBackupsRecentIndex`(목차)만 있고
+     본체가 없어 백업이 조용히 막혀 있었다. */
+  'serverBackupsRecent',
+  /* 2026-08-08 명함첩 개인 폴더. 잠근 명함·사진·폴더이름을 대표 계정만 읽을 수 있는
+     자리로 옮긴다. 부모(pucards_private)에는 읽기를 주지 않는다 — 주면 누가 개인
+     폴더를 갖고 있는지 목록이 드러난다. 사람별 분리는 puphotos 와 같은 방식. */
+  'pucards_private'];
 
 const keys = Object.keys(R);
 const removed = baseTop.filter(function (k) { return keys.indexOf(k) < 0; });
@@ -88,6 +99,25 @@ const mustData = ['finance_income','finance_expense','payroll_monthly','payroll_
 const missD = mustData.filter(function (k) { return !(k in R.data); });
 ok('data 아래 기존 항목이 그대로 있다', missD.length === 0, '빠진 것: ' + missD.join(','));
 ok('esign·rules_mgmt 구조 보존', !!(R.esign && R.esign.cases && R.rules_mgmt && R.rules_mgmt.done));
+
+/* ★ 게시 자체를 막는 줄이 없는가 (2026-08-07 실제 사고)
+   규칙 파일에 `"_comment": "설명..."` 같은 줄을 넣었더니 **콘솔이 게시를 거부했다.**
+   파이어베이스는 점(.)으로 시작하지 않는 이름을 전부 **자료 경로**로 보므로 그 값은
+   반드시 객체여야 한다. 문자열을 넣으면 규칙 문법 오류다.
+   대표님이 게시를 눌렀는데 조용히 안 먹혔고, 그 탓에 사진첩 담당자 칸이 안 떴다.
+   ⚠ 설명은 규칙 파일이 아니라 코드 주석·STATUS 기록에 남길 것. */
+const badRule = [];
+(function walk(o, path) {
+  for (const k in o) {
+    const v = o[k];
+    const q = path ? path + '/' + k : k;
+    if (k[0] === '.') continue;                       // .read/.write/.validate/.indexOn
+    if (v === null || typeof v !== 'object' || Array.isArray(v)) { badRule.push(q); continue; }
+    walk(v, q);
+  }
+})(R, '');
+ok('★ 게시를 막는 줄이 없다 (설명글은 규칙에 못 넣는다)', badRule.length === 0,
+   badRule.join(', ') + ' — 점(.)으로 시작하지 않는 이름의 값은 반드시 객체여야 합니다');
 
 console.log('       최상위 ' + keys.length + '개 · data 아래 ' + Object.keys(R.data).length + '개');
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');

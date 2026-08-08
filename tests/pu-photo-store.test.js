@@ -1311,3 +1311,50 @@ test('관리자가 남의 사진에 분류를 붙일 때는 그 사람 자리를
   const u = db.updates[0];
   assert.equal(Object.keys(u)[0], 'puphotos/u/U2/items/2026/p1/customKind');
 });
+
+/* ══════ 창고 점검 — 요금제 문제를 권한 문제로 안내하지 않는다 (2026-08-06) ══════
+   실제로 이런 안내가 나갔다:
+     "막혔습니다 — 사진을 올릴 권한이 없습니다. 콘솔에서 규칙을 넣어 주세요.
+      원인: Firebase Storage: Quota for bucket ... exceeded (storage/quota-exceeded)"
+   대표님이 규칙을 아무리 고쳐도 안 풀린다 — 신규 버킷은 유료 요금제에서만
+   열리고 이 계정은 체험판이라 **규칙과 무관하게** 막힌다. */
+
+test('요금제로 막힌 것을 권한 문제로 안내하지 않는다', () => {
+  const S = loadStore();
+  const real = "Firebase Storage: Quota for bucket 'pureun-erp.firebasestorage.app' exceeded, " +
+    'please view quota on https://firebase.google.com/pricing/. (storage/quota-exceeded)';
+  const msg = S.probeMessage({ ok: false, step: 'upload', message: real });
+  assert.match(msg, /요금제/, '요금제 문제라고 말하지 않습니다');
+  assert.ok(!/규칙을 넣어|권한을 주는 규칙/.test(msg),
+    '규칙을 고치라고 시키고 있습니다 — 고쳐도 안 풀립니다: ' + msg);
+  /* 사진은 실제로 잘 담기고 있다 — 그 사실을 말해 줘야 불안해하지 않는다 */
+  assert.match(msg, /실시간DB/, '지금 사진이 어디에 담기는지 안 알려 줍니다');
+  assert.match(msg, /quota-exceeded/, '원인 문구를 그대로 남기지 않았습니다');
+});
+
+test('요금제 문제는 어느 단계에서 걸려도 같게 안내한다', () => {
+  /* 기기·시점에 따라 init·ref·upload 어디서든 이 오류가 나온다. */
+  const S = loadStore();
+  const q = 'Quota for bucket exceeded (storage/quota-exceeded)';
+  for (const step of ['init', 'ref', 'upload', 'url']) {
+    const m = S.probeMessage({ ok: false, step: step, message: q });
+    assert.match(m, /요금제/, step + ' 단계에서 요금제라고 안 합니다');
+    assert.ok(!/규칙/.test(m) || /규칙을 고쳐도 풀리지 않/.test(m),
+      step + ' 단계에서 규칙을 고치라고 시킵니다: ' + m);
+  }
+});
+
+test('진짜 권한 문제는 여전히 규칙을 고치라고 한다', () => {
+  /* 요금제만 골라내야 한다 — 전부 요금제로 몰면 진짜 권한 문제를 못 고친다. */
+  const S = loadStore();
+  const m = S.probeMessage({ ok: false, step: 'upload', message: 'PERMISSION_DENIED' });
+  assert.match(m, /규칙/, '권한 문제인데 규칙 이야기를 안 합니다');
+  assert.ok(!/요금제/.test(m), '권한 문제를 요금제로 잘못 안내합니다');
+});
+
+test('통과했을 때는 요금제 문구가 끼어들지 않는다', () => {
+  const S = loadStore();
+  const m = S.probeMessage({ ok: true, step: 'done', url: 'https://x' });
+  assert.match(m, /통과/);
+  assert.ok(!/요금제/.test(m));
+});

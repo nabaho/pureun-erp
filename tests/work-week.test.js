@@ -71,6 +71,7 @@ function $(id) { return null; }
 eval(gvar('WDS') + '\n' + gvar('WKSPLIT_KEY') + '\n' + gvar('NAV_KEYS') + '\n' + gvar('KEYS') + '\n'
   + gvar('_KCODE') + '\n'
   + ['stepsOf', '_cut', 'wkDays', 'wkMarks', 'wkHeadHTML', 'wkCellHTML',
+     'isPlanDay', 'planRowHTML',
      'wkPut', 'wkFocus', 'wkMove', 'wkSide',
      '_inTyping', '_ime', '_k', '_kNum', 'canLog'].map(grab).join('\n'));
 // 화면 전체 자판 처리기를 그대로 실어 실제 분기를 태운다
@@ -100,17 +101,20 @@ ok('머리행에 요일과 날짜, 오늘 표시',
 ok('머리행과 본문이 같은 칸 수 (다르면 줄이 어긋난다)',
   /repeat\((\d+),1fr\)/.exec(wkHeadHTML())[1] === /repeat\((\d+),1fr\)/.exec(wkCellHTML({ _id: 'W1' }, [], 0))[1]);
 
-/* ── 그 날 표시 = 달력을 줄 안으로 ── */
-steps = { W1: { s1: { t: '서면 제출', due: '2026-07-30', o: 1 } } };
+/* ── 그 날 표시 = 달력을 줄 안으로 ──
+   ⚠ 단계 기한 필드는 d 다 (due 아님). stepAdd·stepDate·드로어 날짜칸·캘린더가
+     모두 d 를 쓴다. 예전에 이 붙박이 자료를 due 로 적어 두어, wkMarks 가 due 를
+     보던 결함을 검사가 못 잡았다 — 검사가 코드와 같은 실수를 하고 있었다. */
+steps = { W1: { s1: { t: '서면 제출', d: '2026-07-30', o: 1 } } };
 const IT = { _id: 'W1', due: '2026-07-27', next: { date: '2026-07-28', text: '조사관 통화' } };
 ok('기한·다음 할 일·진행 단계가 그 요일에 뜬다',
   wkMarks(IT, '2026-07-27').indexOf('기한') > 0
   && wkMarks(IT, '2026-07-28').indexOf('조사관 통화') > 0
   && wkMarks(IT, '2026-07-30').indexOf('서면 제출') > 0
   && wkMarks(IT, '2026-07-29') === '');
-steps = { W1: { s1: { t: '자료수집', due: '2026-07-29', done: 1, o: 1 } } };
+steps = { W1: { s1: { t: '자료수집', d: '2026-07-29', done: 1, o: 1 } } };
 ok('끝낸 단계는 표시하지 않는다', wkMarks({ _id: 'W1' }, '2026-07-29') === '');
-steps = { W1: { s1: { t: '자료수집', due: '2026-07-29', o: 1 }, s2: { t: '서면 작성', due: '2026-07-29', o: 2 } } };
+steps = { W1: { s1: { t: '자료수집', d: '2026-07-29', o: 1 }, s2: { t: '서면 작성', d: '2026-07-29', o: 2 } } };
 ok('같은 날 여럿이면 하나만 보이고 +N', (function () {
   const m = wkMarks({ _id: 'W1' }, '2026-07-29');
   return m.indexOf('+1') > 0 && m.indexOf('자료수집') > 0;
@@ -176,9 +180,19 @@ ok('줄 표식이 없으면 좌우로 옮기지 않는다', wkSide({ getAttribut
 
 const WK = grab('wkKey');
 ok('↑↓는 저장하지 않고 칸만 옮긴다',
-  WK.indexOf("e.key==='ArrowDown'||e.key==='ArrowUp'") > 0 && WK.indexOf('wkMove') < WK.indexOf('addLog'));
+  WK.indexOf("e.key==='ArrowDown'||e.key==='ArrowUp'") > 0
+  && WK.indexOf('wkMove') < WK.indexOf('wkSave'));   // 저장은 wkSave 가 맡는다(날짜에 따라 할 일/기록)
 ok('좌우는 빈 칸에서만 (글자가 있으면 커서를 움직여야 한다)',
   WK.indexOf("(e.key==='ArrowLeft'||e.key==='ArrowRight')&&!inp.value") > 0);
+
+/* ── Enter 는 그 칸에 머문다 — 같은 날에 여럿을 연달아 넣기 위함 ── */
+ok('저장한 뒤 그 칸에 머문다', WK.indexOf('wkPut(same[k3]); return;') > 0);
+ok('빈 칸에서 Enter 는 아랫줄로 (지금과 같다)',
+  WK.indexOf('if(!txt.trim()){ wkMove(inp,step); return; }') > 0);
+ok('Shift+Enter 는 윗줄로 (지금과 같다)',
+  WK.indexOf('e.shiftKey?-1:1') > 0 && WK.indexOf('if(!e.shiftKey){') > 0);
+ok('아랫줄로 가려면 ↓ 다', WK.indexOf("e.key==='ArrowDown'") > 0);
+ok('한글 조합 중 Enter 는 글자를 확정할 뿐이다', WK.indexOf('if(_ime(e)) return;') > 0);
 ok('Shift+Enter 는 윗줄로', WK.indexOf('var step=e.shiftKey?-1:1') > 0);
 ok('빈 칸에서 Enter 는 저장 없이 넘어간다', WK.indexOf('if(!txt.trim()){ wkMove(inp,step); return; }') > 0);
 ok('요일 칸에 적으면 그 날짜로 저장된다',
