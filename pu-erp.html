@@ -33715,6 +33715,7 @@ function FinanceLedger(){
   var incVfS=useState({});       var incVf=incVfS[0];     var setIncVf=incVfS[1];     // 눈으로 확인 표시 {_k:{inv:true, work:true}}
   var candQS=useState({});       var candQ=candQS[0];     var setCandQ=candQS[1];     // 후보 검색어 {_k:'...'}
   var candKS=useState({});       var candK=candKS[0];     var setCandK=candKS[1];     // 후보 종류 필터 {_k:'cases'|''}
+  var dirPopS=useState(null);    var dirPop=dirPopS[0];   var setDirPop=dirPopS[1];   // ➕ 직접 등록 팝업 (상담료·현금영수증 등)
   var ldInfoS=useState(false);   var ldInfoOpen=ldInfoS[0]; var setLdInfoOpen=ldInfoS[1]; // 파일 정보 접기/펼치기
   var draftTimer=useRef(null);   // 초안 저장 디바운스
   var draftReady=useRef(false);  // 복원 완료 전에는 저장하지 않음
@@ -34115,6 +34116,56 @@ function FinanceLedger(){
       if(!partial){ _sp.paid=true; _sp.paidDate=paidDate; }
     }
     dbPatch(pItem.store, pItem.item.id, _sp);
+  }
+
+  /* ── ➕ 직접 등록 ──
+     상담만 하고 현금으로 받은 건처럼 «사무관리에 아무 기록도 없는» 입금을 여기서 수입으로 남긴다.
+     전에는 이런 입금이 갈 곳이 없어 ✕ 로 지우면 화면에서만 사라지고 매출·성과급에 안 잡혔다.
+     증빙(세금계산서·현금영수증·없음)을 함께 남겨 두면 나중에 무엇으로 끊었는지 알 수 있다.
+     카드로 받으면 수수료가 빠져 들어오므로, 매출은 원래 금액으로 잡고 차액을 지출로 기록한다. */
+  function saveDirectIncome(d){
+    var row = d.row;
+    var gross = d.cardMode ? (parseInt(d.grossAmt,10)||row.amount) : row.amount;
+    if(gross < row.amount) gross = row.amount;          // 매출이 입금보다 적을 수는 없다
+    var cardFee = d.cardMode ? (gross - row.amount) : 0;
+    var paidDate = row.date || todayYMD();
+    var ded = d.vatIncluded ? {vatIncluded:true} : {};
+    var perfBase = calcDeductions(gross, ded).perfBaseAmount;
+    var shares = [];
+    if(d.perfOn && d.mainSid){
+      try{ shares = calcPerfShares(perfBase, d.mainSid, [], 'other', 100, {paidDate:paidDate}) || []; }
+      catch(_pe){ if(window._erpErrLog) window._erpErrLog(_pe); }
+    }
+    var DOC = {tax:'세금계산서', cash:'현금영수증', none:'증빙없음'};
+    var _ok = dbUpsert('finance_income', {
+      id:'fi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+      companyName:(d.name||'').trim() || (row.memo||'-'),
+      amount:gross, date:paidDate,
+      kind:d.kind||'상담료', category:'inc-other',
+      sourceKind:'other', sourceId:'',
+      docType:d.doc||'cash',                              // tax | cash | none
+      payMethod:d.cardMode?'card':'account',
+      cardFee:cardFee,
+      managerSid:d.mainSid||'', managerName:d.mainSid?_sidName(d.mainSid):'',
+      deductions:ded, perfBaseAmount:perfBase, perfShares:shares,
+      perfExclude:!(d.perfOn && d.mainSid),
+      memo:'[하나'+(fileType==='bank'?'은행':'카드')+'] '+(row.memo||'')
+           +' / ➕ 직접 등록 · '+(DOC[d.doc]||'증빙없음')+(d.cardMode?' · 카드':''),
+      confirmedAt:new Date().toISOString(), confirmedBy:CURRENT_USER?CURRENT_USER.sid:''
+    });
+    if(_ok === false){ showToast('❌ 저장 실패 — 행을 그대로 둡니다'); return false; }
+    // 카드 수수료는 지출로 남긴다 (매출 원금과 실입금의 차액)
+    if(cardFee > 0){
+      dbUpsert('finance_expense', {
+        id:'fe-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+        date:paidDate, amount:cardFee, category:'exp-bankfee',
+        payee:(d.name||'').trim()||'카드사',
+        note:'카드 수수료 — 매출 '+gross.toLocaleString()+'원 중 '+row.amount.toLocaleString()+'원 입금',
+        paid:true, paidDate:paidDate, branch:'cheonan'});
+    }
+    erpMarkBankRowProcessed(row,'income','➕ '+((d.name||'').trim()||'직접 등록')+' '+(d.kind||'상담료'));
+    removeRow(row._k,'inc');
+    return true;
   }
 
   // ── 출금 등록 ──
@@ -35337,9 +35388,20 @@ function FinanceLedger(){
                           showToast(_learned ? '✅ 입금확정 · 입금자 별칭 학습됨' : '✅ 입금확정'
                             +(effGm==='partial'?' (일부입금)':'')+(effGm==='fee'?' · 수수료 '+absGap.toLocaleString()+'원 지출':''));
                         },style:{padding:'4px 10px',background:'#16a34a',color:'#fff',border:'none',borderRadius:'5px',fontSize:'11px',fontWeight:700,cursor:'pointer'}},'✅ 확정')
-                      : h('span',{style:{fontSize:'10px',color:'#94a3b8'}},'선택 필요'),
+                      // 사무관리에 아무 기록도 없는 입금(상담료·현금영수증 등)은 여기서 바로 남긴다
+                      : h('button',{
+                          title:'사무관리에 없는 입금을 수입으로 남깁니다\n— 상담만 하고 받은 돈, 현금영수증 끊은 건 등',
+                          onClick:function(){
+                            setDirPop({row:row, name:(row.memo||'').trim(), kind:'상담료', doc:'cash',
+                              mainSid:(CURRENT_USER&&CURRENT_USER.sid)||'', vatIncluded:true, perfOn:true,
+                              cardMode:false, grossAmt:row.amount});
+                          },
+                          style:{padding:'4px 9px',background:'#fff',color:'#1d4ed8',border:'1px solid #bfdbfe',
+                            borderRadius:'5px',fontSize:'10.5px',fontWeight:800,cursor:'pointer',whiteSpace:'nowrap'}},
+                          '➕ 직접 등록'),
                     ' ',
                     h('button',{onClick:function(){removeRow(row._k,'inc');},
+                      title:'화면에서만 지웁니다 — 기록은 남지 않습니다',
                       style:{padding:'4px 7px',background:'#f1f5f9',color:'#94a3b8',border:'none',borderRadius:'4px',fontSize:'10px',cursor:'pointer'}},'✕')
                   );
                 })()
@@ -35650,6 +35712,129 @@ function FinanceLedger(){
              + (cmsSet ? ' · CMS 등록 '+cmsSet+'곳' : ''))
           : ('처리된 업체가 없습니다' + (skipped ? ' — 이미 입금됨 '+skipped+'곳 제외' : '')));
       } }),
+
+    /* ── ➕ 직접 등록 팝업 ──
+       사무관리에 아무 기록도 없는 입금(상담만 하고 받은 돈, 현금영수증 끊은 건)을 수입으로 남긴다.
+       담당자를 골라야 성과급이 나뉜다 — 이게 없으면 「성과 미반영」에 그대로 쌓인다. */
+    dirPop && (function(){
+      var _r = dirPop.row;
+      if(!_r) return null;
+      function upd(patch){ setDirPop(Object.assign({}, dirPop, patch)); }
+      // 비관리자 기기에서도 담당자 목록이 비지 않도록 표준 함수를 쓴다 (user_dir·시드 폴백 포함)
+      var _users = (getActiveUsers() || []).filter(function(u){ return u && u.sid; });
+      var _gross = dirPop.cardMode ? (parseInt(dirPop.grossAmt,10)||_r.amount) : _r.amount;
+      if(_gross < _r.amount) _gross = _r.amount;
+      var _fee = dirPop.cardMode ? (_gross - _r.amount) : 0;
+      var _base = calcDeductions(_gross, dirPop.vatIncluded?{vatIncluded:true}:{}).perfBaseAmount;
+      var _shares = [];
+      if(dirPop.perfOn && dirPop.mainSid){
+        try{ _shares = calcPerfShares(_base, dirPop.mainSid, [], 'other', 100, {paidDate:_r.date||todayYMD()}) || []; }catch(_e){}
+      }
+      var _perfSum = 0; _shares.forEach(function(s){ _perfSum += s.amount||0; });
+      var _fldS = {marginBottom:'9px'};
+      var _lblS = {fontSize:'10px',fontWeight:800,color:'#475569',marginBottom:'3px'};
+      var _inpS = {width:'100%',padding:'5px 8px',border:'1px solid #cbd5e1',borderRadius:'5px',fontSize:'11.5px'};
+      function seg(cur, val, label, on){
+        return h('button',{key:val,type:'button',onClick:function(){ on(val); },
+          style:{border:'1px solid '+(cur===val?'#1e40af':'#cbd5e1'),background:cur===val?'#1e40af':'#fff',
+            color:cur===val?'#fff':'#64748b',borderRadius:'5px',padding:'4px 11px',
+            fontSize:'10.5px',fontWeight:700,cursor:'pointer'}}, label);
+      }
+      return h('div',{className:'modal-bg',onClick:function(){setDirPop(null);},style:{zIndex:210}},
+        h('div',{className:'modal',style:{width:'440px',maxWidth:'96vw',maxHeight:'92vh',display:'flex',flexDirection:'column'},
+          onClick:function(e){e.stopPropagation();}},
+          h('div',{className:'modal-h',style:{background:'#1e40af'}},
+            h('div',{className:'t',style:{color:'#fff'}},
+              '➕ 직접 등록 — '+_r.amount.toLocaleString()+'원 · '+(_r.date||'')),
+            h('button',{className:'x',onClick:function(){setDirPop(null);},style:{color:'#fff'}},'×')),
+          h('div',{className:'modal-b',style:{padding:'13px 15px',overflowY:'auto',flex:1}},
+            h('div',{style:{fontSize:'11px',color:'#64748b',marginBottom:'10px'}},
+              '통장 적요: ',h('b',{style:{color:'#334155'}},_r.memo||'-')),
+
+            h('div',{style:_fldS},
+              h('div',{style:_lblS},'업체·의뢰인'),
+              h('input',{style:_inpS,value:dirPop.name||'',
+                onInput:function(e){ upd({name:e.target.value}); }}),
+              h('div',{style:{fontSize:'9.5px',color:'#94a3b8',marginTop:'2px'}},'적요에서 가져왔습니다 — 고칠 수 있습니다')),
+
+            h('div',{style:_fldS},
+              h('div',{style:_lblS},'종류'),
+              h('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap'}},
+                seg(dirPop.kind,'상담료','상담료',function(v){upd({kind:v});}),
+                seg(dirPop.kind,'기타수입','기타수입',function(v){upd({kind:v});}))),
+
+            h('div',{style:_fldS},
+              h('div',{style:_lblS},'결제수단'),
+              h('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap'}},
+                seg(dirPop.cardMode?'card':'account','account','계좌',function(){upd({cardMode:false});}),
+                seg(dirPop.cardMode?'card':'account','card','카드',function(){upd({cardMode:true, grossAmt:dirPop.grossAmt||_r.amount});})),
+              dirPop.cardMode && h('div',{style:{marginTop:'5px'}},
+                h('div',{style:_lblS},'매출액 (수수료 빼기 전)'),
+                h('input',{style:Object.assign({},_inpS,{fontFamily:'ui-monospace,monospace'}),
+                  value:String(dirPop.grossAmt||_r.amount),
+                  onInput:function(e){ upd({grossAmt:(e.target.value||'').replace(/[^0-9]/g,'')}); }}),
+                h('div',{style:{fontSize:'10px',color:_fee>0?'#b45309':'#94a3b8',marginTop:'3px'}},
+                  _fee>0 ? '카드 수수료 '+_fee.toLocaleString()+'원을 지출로 함께 기록합니다'
+                         : '매출액이 입금액보다 크면 차액을 수수료로 기록합니다'))),
+
+            h('div',{style:_fldS},
+              h('div',{style:_lblS},'증빙'),
+              h('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap'}},
+                seg(dirPop.doc,'tax','🧾 세금계산서',function(v){upd({doc:v});}),
+                seg(dirPop.doc,'cash','🧾 현금영수증',function(v){upd({doc:v});}),
+                seg(dirPop.doc,'none','증빙 없음',function(v){upd({doc:v});})),
+              h('div',{style:{fontSize:'9.5px',color:'#94a3b8',marginTop:'3px'}},
+                '현금영수증도 매출이므로 예상부가세에 함께 잡힙니다')),
+
+            h('div',{style:_fldS},
+              h('div',{style:_lblS},'담당자 ',h('span',{style:{color:'#dc2626'}},'*')),
+              h('select',{style:_inpS,value:dirPop.mainSid||'',
+                onChange:function(e){ upd({mainSid:e.target.value}); }},
+                h('option',{value:''},'-- 담당자 선택 --'),
+                _users.map(function(u){ return h('option',{key:u.sid,value:u.sid},u.name+(u.position?' ('+u.position+')':'')); })),
+              h('div',{style:{fontSize:'9.5px',color:'#94a3b8',marginTop:'2px'}},'이 사람에게 성과급이 나뉩니다')),
+
+            h('div',{style:{background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:'6px',padding:'8px 10px'}},
+              h('label',{style:{display:'flex',alignItems:'center',gap:'5px',fontSize:'11px',fontWeight:700,color:'#15803d',cursor:'pointer'}},
+                h('input',{type:'checkbox',checked:!!dirPop.vatIncluded,
+                  onChange:function(){ upd({vatIncluded:!dirPop.vatIncluded}); }}),'부가세 공제 (1/11)'),
+              h('label',{style:{display:'flex',alignItems:'center',gap:'5px',fontSize:'11px',fontWeight:700,color:'#15803d',cursor:'pointer',marginTop:'4px'}},
+                h('input',{type:'checkbox',checked:!!dirPop.perfOn,
+                  onChange:function(){ upd({perfOn:!dirPop.perfOn}); }}),'⭐ 성과급 자동 반영'),
+              h('div',{style:{fontSize:'10px',color:'#475569',marginTop:'5px',fontFamily:'ui-monospace,monospace'}},
+                _gross.toLocaleString()+(dirPop.vatIncluded?(' − '+(_gross-_base).toLocaleString()):'')
+                +' = 성과 기준 '+_base.toLocaleString(),
+                _shares.length
+                  ? h('span',{style:{color:'#15803d',fontWeight:700}},'  →  '+_sidName(dirPop.mainSid)+' '+_perfSum.toLocaleString())
+                  : h('span',{style:{color:'#94a3b8'}},'  →  성과급 없음')))
+          ),
+          h('div',{className:'modal-f'},
+            h('div',{style:{flex:1}}),
+            h('button',{className:'btn-secondary',onClick:function(){setDirPop(null);}},'취소'),
+            h('button',{className:'btn-primary',
+              disabled:!(dirPop.name||'').trim() || (dirPop.perfOn && !dirPop.mainSid),
+              style:(!(dirPop.name||'').trim() || (dirPop.perfOn && !dirPop.mainSid)) ? {opacity:0.5,cursor:'not-allowed'} : {},
+              onClick:async function(){
+                if(!(dirPop.name||'').trim()){ showToast('업체·의뢰인을 입력하세요'); return; }
+                if(dirPop.perfOn && !dirPop.mainSid){ showToast('담당자를 고르세요 (성과급을 끄면 없어도 됩니다)'); return; }
+                var _ym = String(_r.date||'').slice(0,7);
+                if(_ym && isIncomeLocked(_ym)){ showToast('🔒 '+_ym+' 입금 마감 — 등록할 수 없습니다'); return; }
+                if(!(await popConfirm((dirPop.name||'').trim()+' · '+(dirPop.kind||'상담료')
+                      +' '+_gross.toLocaleString()+'원을 수입으로 등록합니다.'
+                      +'\n\n· 증빙: '+({tax:'세금계산서',cash:'현금영수증',none:'증빙없음'}[dirPop.doc]||'증빙없음')
+                      +(_fee>0?'\n· 카드 수수료 '+_fee.toLocaleString()+'원을 지출로 기록':'')
+                      +(_shares.length?'\n· 성과급 '+_sidName(dirPop.mainSid)+' '+_perfSum.toLocaleString()+'원':'\n· 성과급 없음')
+                      +'\n\n→ 잘못되면 「확정 이력」에서 되돌릴 수 있습니다'))) return;
+                if(saveDirectIncome(dirPop)){
+                  setDirPop(null);
+                  showToast('✅ '+(dirPop.name||'').trim()+' '+_gross.toLocaleString()+'원 등록'
+                    +(_shares.length?' · 성과 '+_perfSum.toLocaleString():''));
+                }
+              }},'등록')
+          )
+        )
+      );
+    })(),
 
     // ── 1-1 입금 상세 팝업 (행 클릭 시) ──
     detPop && (function(){
