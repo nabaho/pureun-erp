@@ -1007,6 +1007,11 @@ button{font-family:inherit;cursor:pointer}
       <div class="saverow">
         <input type="checkbox" id="camSave" onchange="setCamSavePref(this.checked)">
         <label for="camSave">찍은 사진을 내 폰에도 저장</label>
+        <!-- 자동 촬영 — 셔터를 누르는 순간 손이 흔들려 흐려진다.
+             ⚠ 셔터 단추는 그대로 둔다. 자동이 안 잡히는 곳(어두운 데)에서
+             사람이 누를 길을 없애면 안 된다. -->
+        <input type="checkbox" id="camAuto" onchange="setCamAutoPref(this.checked)">
+        <label for="camAuto">멈추면 저절로 찍기</label>
         <button id="camFrameBtn" onclick="toggleFrame()">🔲 명함틀 끔</button>
       </div>
       <div class="row">
@@ -1529,6 +1534,7 @@ async function openCam() {
   $('camVid').srcObject = camStream;
   camShots = [];
   setCamSavePref(camSavePref());
+  setCamAutoPref(camAutoPref());   // 지난번에 켜 두었으면 이번에도 자동으로 찍는다
   applyFrameUI();
   renderCamStrip();
   $('camOv').style.display = 'flex';
@@ -1589,9 +1595,18 @@ function applyFrameUI() {
   $('camFrame').style.display = on ? 'block' : 'none';
   $('camFrameBtn').className = on ? 'on' : '';
   $('camFrameBtn').textContent = on ? '🔲 명함틀 켬' : '🔲 명함틀 끔';
-  $('camTip').textContent = on
-    ? '명함을 틀 안에 맞추세요 · 흐리면 화면을 한 번 누르세요'
-    : (camCanFocus ? '흐리면 화면을 한 번 누르세요' : '');
+  setCamTip();
+}
+
+/* 화면 아래 안내 한 줄 — 틀·자동 촬영 상태를 함께 말한다.
+   자동으로 찍는 중인데 아무 말이 없으면 「왜 저절로 찍히지」가 된다. */
+function setCamTip() {
+  const bits = [];
+  if (frameOn()) bits.push('명함을 틀 안에 맞추세요');
+  if (camAutoPref()) bits.push('멈추면 저절로 찍힙니다');
+  else if (camCanFocus) bits.push('흐리면 화면을 한 번 누르세요');
+  const tip = $('camTip');
+  if (tip) tip.textContent = bits.join(' · ');
 }
 function toggleFrame() {
   localStorage.setItem(CAM_FRAME_LS, frameOn() ? '0' : '1');
@@ -1611,10 +1626,12 @@ function camStop() {
 
 /* ✕ — 찍어 둔 게 있으면 말없이 버리지 않는다 */
 function closeCam() {
+  stopAutoWatch();   // 카메라가 꺼졌는데 계속 재면 배터리만 먹는다
   if (camShots.length && !confirm('찍어 둔 ' + camShots.length + '장을 올리지 않고 버립니다.\n계속할까요?')) return;
   camDiscard();
 }
 function camDiscard() {
+  stopAutoWatch();
   camShots.forEach(function (s) { URL.revokeObjectURL(s.url); });
   camShots = [];
   camStop();
@@ -1629,6 +1646,105 @@ function loadImg(url) {
     i.onerror = rej;
     i.src = url;
   });
+}
+
+/* ══════ 자동 촬영 (대표 지시 2026-08-08, 계획서 3단계) ══════
+   셔터를 누르는 순간 손이 흔들려 흐려진다. 화면이 멎으면 스스로 찍는다.
+
+   어떻게 판단하나 — 바깥 라이브러리 없이:
+     미리보기를 아주 작게(40×30) 줄여 앞 장면과 견준다. 밝기 차이의 평균이
+     작으면 「멎었다」. 연속 STILL_HITS 번 멎어 있으면 찍는다.
+
+   ⚠ 헛찍기를 막는 장치 셋 — 이것이 이 기능의 대부분이다
+     ① 찍고 나면 COOL_MS 동안 아무것도 안 찍는다
+     ② 그 뒤에도 **화면이 크게 바뀌어야**(명함을 바꿔 놓아야) 다시 겨눈다.
+        안 그러면 같은 명함을 계속 찍는다
+     ③ 너무 어두우면(대비가 거의 없으면) 안 찍는다 — 책상·손바닥을 명함으로 본다
+   ⚠ 발열 — 매 프레임 재면 폰이 뜨거워진다. SAMPLE_MS 마다 한 번만 잰다.
+   ⚠ 셔터 단추는 그대로 둔다. 자동이 안 잡히는 상황(어두운 곳)에서 사람이
+     누를 길을 없애면 안 된다. */
+const CAM_AUTO_LS = 'puphotos.cam.auto';
+const SAMPLE_MS = 120;      // 이만큼마다 한 번 잰다(발열)
+const STILL_DIFF = 3.2;     // 밝기 차이 평균이 이보다 작으면 멎은 것
+const MOVE_DIFF = 7;        // 이보다 크면 「장면이 바뀌었다」
+const STILL_HITS = 3;       // 연속 세 번 멎어 있으면 찍는다(약 0.4초)
+const COOL_MS = 1200;       // 찍고 나서 쉬는 시간
+const MIN_CONTRAST = 8;     // 이보다 밋밋하면 볼 것이 없다(어둠·빈 책상)
+
+let autoTimer = null, autoPrev = null, autoStill = 0, autoArmed = true, autoCoolUntil = 0;
+const autoCan = document.createElement('canvas');
+autoCan.width = 40; autoCan.height = 30;
+
+function camAutoPref() { return localStorage.getItem(CAM_AUTO_LS) === '1'; }
+function setCamAutoPref(on) {
+  try { localStorage.setItem(CAM_AUTO_LS, on ? '1' : '0'); } catch (_) {}
+  const b = $('camAuto'); if (b) b.checked = !!on;
+  if (on) startAutoWatch(); else stopAutoWatch();
+  setCamTip();
+}
+
+/* 지금 장면을 아주 작게 떠서 밝기만 남긴다 */
+function grabTiny(v) {
+  if (!v || !v.videoWidth) return null;
+  const x = autoCan.getContext('2d', { willReadFrequently: true });
+  x.drawImage(v, 0, 0, autoCan.width, autoCan.height);
+  const d = x.getImageData(0, 0, autoCan.width, autoCan.height).data;
+  const g = new Uint8Array(autoCan.width * autoCan.height);
+  for (let i = 0, j = 0; j < g.length; i += 4, j++) {
+    g[j] = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000;   // 밝기
+  }
+  return g;
+}
+
+/* 두 장면의 밝기 차이 평균 */
+function tinyDiff(a, b) {
+  if (!a || !b || a.length !== b.length) return 999;
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]);
+  return s / a.length;
+}
+
+/* 밋밋한지 — 가장 밝은 곳과 어두운 곳의 차이 */
+function tinyContrast(g) {
+  let lo = 255, hi = 0;
+  for (let i = 0; i < g.length; i++) { if (g[i] < lo) lo = g[i]; if (g[i] > hi) hi = g[i]; }
+  return hi - lo;
+}
+
+function autoTick() {
+  const v = $('camVid');
+  if (!camAutoPref() || camBusy || $('camOv').style.display !== 'flex') return;
+  const now = grabTiny(v);
+  if (!now) return;
+  const diff = tinyDiff(autoPrev, now);
+  autoPrev = now;
+
+  /* 찍고 쉬는 중 — 그 사이에 장면이 크게 바뀌면 다음 장을 받을 준비를 한다 */
+  if (Date.now() < autoCoolUntil) { if (diff > MOVE_DIFF) autoArmed = true; autoStill = 0; return; }
+  if (!autoArmed) {
+    if (diff > MOVE_DIFF) autoArmed = true;   // 명함을 바꿔 놓았다
+    autoStill = 0;
+    return;
+  }
+  if (tinyContrast(now) < MIN_CONTRAST) { autoStill = 0; return; }   // 볼 것이 없다
+  if (diff > STILL_DIFF) { autoStill = 0; return; }                  // 아직 흔들린다
+
+  autoStill++;
+  if (autoStill < STILL_HITS) return;
+  autoStill = 0;
+  autoArmed = false;                       // 다음 장은 장면이 바뀌어야 받는다
+  autoCoolUntil = Date.now() + COOL_MS;
+  camShoot();
+}
+
+function startAutoWatch() {
+  stopAutoWatch();
+  autoPrev = null; autoStill = 0; autoArmed = true; autoCoolUntil = 0;
+  autoTimer = setInterval(autoTick, SAMPLE_MS);
+}
+function stopAutoWatch() {
+  if (autoTimer) clearInterval(autoTimer);
+  autoTimer = null; autoPrev = null; autoStill = 0;
 }
 
 async function camShoot() {
