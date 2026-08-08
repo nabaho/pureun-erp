@@ -156,10 +156,10 @@ test('지문이 같으면 다시 계산하지 않는다', () => {
 /* ── 조각내어 뒤에서 — 실측 2초짜리 계산이 화면을 멈추지 않게 ── */
 test('다시 계산할 때 한 번에 다 돌리지 않는다 (시간 예산으로 조각)', () => {
   const fl = app.slice(app.indexOf('function FinanceLedger(){'));
-  // 25행 고정으로 했더니 한 조각이 230ms — 그 자체가 멈춤으로 찍혔다.
-  // 5행씩 하되 24ms 를 넘기면 손을 뗀다.
-  assert.match(fl, /erpBuildSugChunk\(rowsArr, pendArr, i, i\+5, out\)/);
-  assert.match(fl, /performance\.now\(\) - tb\) < 24/);
+  // 25행 고정 → 조각 230ms. 5행 묶음 + 24ms 예산 → 여전히 211ms (무거운 행은
+  // 하나에 40ms 라 5행 묶음이 예산 확인 전에 다 쓴다). 한 행마다 시계를 본다.
+  assert.match(fl, /erpBuildSugChunk\(rowsArr, pendArr, i, i\+1, out\)/);
+  assert.match(fl, /performance\.now\(\) - tb\) < 16/);
   assert.match(fl, /setTimeout\(step, 0\)/, '조각 사이에 화면이 숨 쉴 틈을 준다');
   assert.ok(!/val: _sugSig \? erpBuildSug\(/.test(fl), '한 번에 다 도는 옛 길이 남아 있으면 안 된다');
 });
