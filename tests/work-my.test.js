@@ -39,6 +39,16 @@ function route() {} function renderMy() {}
 function fHas(sc, k) { return (S.F && S.F[sc] && S.F[sc][k]) instanceof Array; }
 function catBadge(c) { return '<span class="cat">' + esc(c) + '</span>'; }
 function showModal() {} function closeM() {}
+// 요일 칸 대역 — 커서가 실제로 그 날 칸에 잡히는지 보기 위함
+let CELLS = [], FOCUSED = null;
+const document = {
+  querySelector(sel) {
+    const m = /data-d="([^"]*)"/.exec(sel || '');
+    return CELLS.filter(c => c.d === (m && m[1]))[0] || null;
+  }
+};
+function wkPut(el) { if (!el) return false; FOCUSED = el; return true; }
+function wkSplitOn() { return S.wkSplit !== false; }
 let PATCHED = null;
 function patchItem(id, f) { PATCHED = { id: id, f: f }; return Promise.resolve(true); }
 
@@ -68,7 +78,7 @@ eval(gvar('STATUSES') + '\n' + gvar('PLAN_GROUP') + '\n' + gvar('COLS_KEY') + '\
   + ['catNorm', 'colPref', 'colForced', 'colHidden', 'colToggle', 'colBtn',
      'colPop', 'colPopClose', 'colPopHTML', 'colTH', 'colTD',
      'grpOn', 'grpToggle', 'grpFold', 'grpFolded', 'grpFoldToggle', 'groupRows',
-     'grpHeadHTML', 'dayHeadHTML', 'stSelect', 'setStatus',
+     'grpHeadHTML', 'dayHeadHTML', 'calFocusDay', 'stSelect', 'setStatus',
      'stepsOf', 'isPlanDay', 'wkSave', 'planAdd', 'planCheck', 'planUncheck',
      'planDel', 'planToLog', 'logToPlan'].map(grab).join('\n'));
 
@@ -330,6 +340,26 @@ ok('고른 날은 걸러 보기 조건 수에 넣지 않는다',
 ok('소제목에서 고른 날을 바로 놓을 수 있다',
   grab('dayHeadHTML').indexOf("calDayOnly(\\'\\')") > 0
   && grab('dayHeadHTML').indexOf('고른 날 놓기') > 0);
+/* 날짜를 누르면 그 칸으로 커서까지 — 누르고 바로 적기 시작할 수 있게 */
+ok('그리기가 끝난 뒤에 커서를 잡는다 (그 전에는 칸이 없다)',
+  RM.indexOf('if(S._calFocus) setTimeout(calFocusDay,60);') > 0);
+ok('고른 날의 첫 칸을 잡는다 — 줄이 그 날 것부터 오므로 가장 관련 있는 줄이다',
+  grab('calFocusDay').indexOf(".wkin[data-d=\"'+d+'\"]") > 0);
+ok('한 번 잡으면 표시를 지운다 (다시 그릴 때마다 커서를 뺏지 않게)',
+  grab('calFocusDay').indexOf("S._calFocus=''") > 0);
+CELLS = [{ d: '2026-08-10' }, { d: '2026-08-11' }, { d: '2026-08-12' }];
+S.wkSplit = true; S._calFocus = '2026-08-11'; FOCUSED = null;
+ok('고른 날 칸에 커서가 잡힌다', calFocusDay() === true && FOCUSED.d === '2026-08-11');
+ok('한 번 잡으면 표시를 지운다 (다시 그릴 때마다 커서를 뺏지 않게)', S._calFocus === '');
+FOCUSED = null;
+ok('표시가 없으면 아무것도 안 한다', calFocusDay() === false && FOCUSED === null);
+S._calFocus = '2026-08-11'; S.wkSplit = false; FOCUSED = null;
+ok('한 칸 보기에는 날짜 칸이 없으므로 잡지 않는다',
+  calFocusDay() === false && FOCUSED === null);
+S.wkSplit = true; S._calFocus = '2026-08-31'; FOCUSED = null;
+ok('그 주에 없는 날이면 조용히 넘어간다 (터지지 않는다)',
+  calFocusDay() === false && FOCUSED === null);
+S._calFocus = '';
 ok('고른 날 요일 칸을 밝힌다 (어디에 적을지 눈에 들어오게)',
   grab('wkHeadHTML').indexOf("d===S.calDay?' pick':''") > 0
   && grab('wkCellHTML').indexOf("d===S.calDay?' pick':''") > 0
