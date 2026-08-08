@@ -17,9 +17,10 @@ test('머리행이 위에 붙는다', () => {
 });
 
 test('표만 구르는 상자 안에 있다 (페이지가 구르면 머리행이 밀려 올라간다)', () => {
-  // sticky 는 «구르는 상자» 기준이라, 감싼 칸에 높이를 못 박아야 화면에 붙는다
-  assert.match(FL, /var _ldBox=\{overflow:'auto',maxHeight:'calc\(100vh - 330px\)'/);
-  const boxes = FL.match(/h\('div',\{style:_ldBox\}/g) || [];
+  // sticky 는 «구르는 상자» 기준이라, 감싼 칸에 높이를 못 박아야 화면에 붙는다.
+  // 높이 값은 재서 정하지만(_ldH), 못 쟀을 때를 대비한 값이 늘 있어야 한다.
+  assert.match(FL, /var _ldBox=\{overflow:'auto',maxHeight:\(_ldH \? _ldH\+'px' : 'calc\(100vh - 330px\)'\)/);
+  const boxes = FL.match(/h\('div',\{ref:_ldBoxRef,style:_ldBox\}/g) || [];
   assert.equal(boxes.length, 2, '입금·출금 표 둘 다');
 });
 
@@ -60,9 +61,10 @@ test('고르면 표와 똑같이 기억하고 반영한다', () => {
   assert.match(pop, /if\(inMatch\[sugPopK\] !== pid\)\{/, '같은 것을 다시 골라도 두 번 세지 않는다');
 });
 
-test('고르면 창이 닫힌다', () => {
+test('고르면 창이 닫히고 찾기말도 지워진다', () => {
+  // 찾기말이 남으면 다음에 다른 행을 열었을 때 엉뚱한 목록이 먼저 보인다
   const pop = FL.slice(FL.indexOf('sugPopK && (function(){'));
-  assert.match(pop, /setSugPopK\(''\);\s*\}/);
+  assert.match(pop, /setSugPopK\(''\); setSugPopQ\(''\);\s*\}/);
 });
 
 test('여기서 확정하지는 않는다 (돈은 표의 확정 단추로만)', () => {

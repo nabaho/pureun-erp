@@ -33920,6 +33920,10 @@ function FinanceLedger(){
   var sugTickS = useState(0); var setSugTick = sugTickS[1];
   // 후보 크게 보기 — 행 열쇠(_k). 표를 옆으로 늘리지 않고 팝업에서 고른다
   var sugPopS = useState(''); var sugPopK = sugPopS[0]; var setSugPopK = sugPopS[1];
+  /* 그 창 안의 찾기말. 추천이 열두 건이나 뜨는데 죄다 같은 금액(220,000)·같은 점수(92%)면
+     골라 봐야 소용이 없다. 아예 후보가 없는 행도 마찬가지다.
+     그럴 때는 미입금 목록 «전체» 에서 이름·번호로 찾아 고르는 편이 빠르다. */
+  var sugPopQS = useState(''); var sugPopQ = sugPopQS[0]; var setSugPopQ = sugPopQS[1];
   var atOpenS=useState(true);  var atOpen=atOpenS[0];   var setAtOpen=atOpenS[1];   // 자동 정리 미리보기 펼침 (기본 펼침)
   var invTickS=useState(0);    var invTick=invTickS[0]; var setInvTick=invTickS[1]; // 세금계산서 아카이브 로딩 완료 신호
   var advBatchS=useState(false); var advBatchOpen=advBatchS[0]; var setAdvBatchOpen=advBatchS[1]; // 자문료 일괄확인 팝업
@@ -34421,8 +34425,27 @@ function FinanceLedger(){
     borderBottom:'1px solid #e2e8f0',textAlign:'left',position:'sticky',top:0,zIndex:3,
     boxShadow:'0 1px 0 #e2e8f0'};
   var tdS={padding:'7px 10px',fontSize:'11.5px',borderBottom:'1px solid #f1f5f9',verticalAlign:'middle'};
-  // 표가 구를 자리 — 위 도구줄·합계줄은 이 상자 밖이라 저절로 제자리에 남는다
-  var _ldBox={overflow:'auto',maxHeight:'calc(100vh - 330px)',minHeight:'240px',
+  /* 표가 구를 자리 — 위 도구줄·합계줄은 이 상자 밖이라 저절로 제자리에 남는다.
+     ⚠ 높이를 calc(100vh - 330px) 로 못 박았더니 위 도구줄 높이가 그때그때 달라
+       (⏳ 추천 계산 중·자문료 n건·미매칭 n건 같은 이름표가 줄을 늘린다)
+       아래가 한참 남거나 반대로 표가 잘렸다. 그래서 «재서» 정한다:
+       상자의 화면상 위치를 재어 창 바닥까지 채운다. */
+  var _ldBoxRef = useRef(null);
+  var _ldHS = useState(0); var _ldH = _ldHS[0]; var setLdH = _ldHS[1];
+  function _ldFit(){
+    var el = _ldBoxRef.current; if(!el) return;
+    var top = el.getBoundingClientRect().top;
+    var want = Math.max(240, Math.round(window.innerHeight - top - 16));   // 바닥에 16px 만 남긴다
+    // 8px 안쪽은 그대로 둔다 — 안 그러면 «고침 → 다시 그림 → 고침» 이 끝나지 않는다
+    setLdH(function(prev){ return Math.abs(prev - want) < 8 ? prev : want; });
+  }
+  useEffect(function(){ _ldFit(); });          // 그릴 때마다 다시 잰다 (도구줄 높이가 변한다)
+  useEffect(function(){
+    window.addEventListener('resize', _ldFit);
+    return function(){ window.removeEventListener('resize', _ldFit); };
+  }, []);
+  // maxHeight 로 둔다 — 목록이 짧으면 빈 상자가 크게 남지 않게
+  var _ldBox={overflow:'auto',maxHeight:(_ldH ? _ldH+'px' : 'calc(100vh - 330px)'),minHeight:'240px',
     border:'1px solid #eef2f7',borderRadius:'6px'};
 
   // ── 이미 처리된 행 (중복 방지) — 목록에서 감추고 모든 일괄작업에서 제외 ──
@@ -35284,7 +35307,7 @@ function FinanceLedger(){
             h('button',{onClick:function(){setConfHistOpen(true);},
               style:{padding:'3px 8px',background:'#64748b',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'확정 이력'));
         })(),
-        h('div',{style:_ldBox},
+        h('div',{ref:_ldBoxRef,style:_ldBox},
           h('table',{style:{width:'100%',borderCollapse:'separate',borderSpacing:0}},
             h('thead',null,h('tr',null,
               h('th',{style:Object.assign({},thS,{width:'28px',textAlign:'center',padding:'7px 2px'})},
@@ -35453,7 +35476,14 @@ function FinanceLedger(){
                           borderRadius:'4px',fontSize:'9.5px',fontWeight:700,cursor:'pointer'}},'계약관리로'))
                   ),
                   (function(){
-                    if(!sugs.length) return null;
+                    /* 후보가 아예 없으면 종전에는 아무것도 안 보여 손을 놓을 수밖에 없었다.
+                       큰 창을 열어 미입금 목록 전체에서 이름으로 찾게 한다. */
+                    if(!sugs.length) return h('div',{style:{marginTop:'2px'}},
+                      h('button',{onClick:function(e){ e.stopPropagation(); setSugPopQ(''); setSugPopK(row._k); },
+                        title:'미입금 목록 전체에서 업체명·관리번호·담당으로 찾아 고릅니다',
+                        style:{background:'#fff',color:'#1d4ed8',border:'1px dashed #93c5fd',borderRadius:'5px',
+                          padding:'3px 9px',fontSize:'10px',fontWeight:700,cursor:'pointer'}},
+                        '🔍 직접 찾아 고르기'));
                     var _memo0 = row.memo||row.note||'';
                     /* 비즈사업비·한국생산성본부는 «현장클리닉» 사업장 여러 곳 몫을 한 번에 보낸다.
                        적요에 사업장 이름이 없으니 이름으로는 못 찾는다 — 대신 현장클리닉 건만 추려 올린다. */
@@ -35536,12 +35566,16 @@ function FinanceLedger(){
                           },
                           style:{fontSize:'10px',color:'#64748b',fontWeight:700,cursor:'pointer'}},
                           (openOther?'▴ ':'▾ ')+(hit.length?'이름이 다른 것 ':'후보 ')+other.length+'건'
-                          +(hit.length?' — 금액만 맞음':'')),
+                          +(hit.length?' — 금액만 맞음':'')
+                          // 죄다 같은 금액이면 훑어봐야 소용없다는 걸 미리 알린다
+                          +((other.length>=3 && other.every(function(s){
+                               return (s.cand.expect||s.cand.amount)===(other[0].cand.expect||other[0].cand.amount); }))
+                             ? ' · 모두 같은 금액' : '')),
                         // 표를 옆으로 늘리지 않고 큰 창에서 고른다
-                        h('span',{onClick:function(e){ e.stopPropagation(); setSugPopK(row._k); },
-                          title:'후보를 큰 창에서 봅니다 — 표를 늘리지 않아도 됩니다',
+                        h('span',{onClick:function(e){ e.stopPropagation(); setSugPopQ(''); setSugPopK(row._k); },
+                          title:'후보를 큰 창에서 봅니다 — 거기서 미입금 목록 전체를 이름으로 찾을 수도 있습니다',
                           style:{marginLeft:'8px',fontSize:'9.5px',fontWeight:800,color:'#1d4ed8',
-                            cursor:'pointer',textDecoration:'underline'}},'⤢ 크게 보기'),
+                            cursor:'pointer',textDecoration:'underline'}},'⤢ 크게 보기 · 직접 찾기'),
                         openOther && h('div',{style:{marginTop:'3px'}},
                           // 종류 칩 + 검색 (후보가 넉넉할 때만)
                           other.length>=4 && h('div',{style:{display:'flex',gap:'3px',flexWrap:'wrap',alignItems:'center',marginBottom:'4px'}},
@@ -35782,7 +35816,7 @@ function FinanceLedger(){
           '💸 '+(incMon?parseInt(incMon.slice(5),10)+'월 ':'')+'출금 내역 — 카테고리 선택 후 출금관리 등록',
           h('span',{style:{marginLeft:'auto',fontWeight:800,color:'#b45309'}},
             expList.length+'건 · 합계 '+expSum.toLocaleString()+'원')),
-        h('div',{style:_ldBox},
+        h('div',{ref:_ldBoxRef,style:_ldBox},
           h('table',{style:{width:'100%',borderCollapse:'separate',borderSpacing:0}},
             h('thead',null,h('tr',null,
               h('th',{style:Object.assign({},thS,{width:'34px',textAlign:'right'})},'#'),
@@ -36314,6 +36348,25 @@ function FinanceLedger(){
       if(!_row) return null;
       var _memo = _row.memo||_row.note||'';
       var _sel = inMatch[sugPopK];
+      var _pq = (sugPopQ||'').trim().toLowerCase();
+      /* 후보가 여럿인데 금액이 죄다 같으면 추천은 아무것도 못 좁혀 준다 (캡쳐의 220,000 × 12건).
+         그런 줄임을 숨기지 말고 「이름으로 찾으세요」 라고 말해 준다. */
+      var _amb = _sg.length>=3 && _sg.every(function(s){
+        return (s.cand.expect||s.cand.amount) === (_sg[0].cand.expect||_sg[0].cand.amount); });
+      /* 찾기말이 있으면 추천을 벗어나 «미입금 목록 전체» 를 뒤진다.
+         이미 추천에 있던 건은 그 점수를 그대로 달고 나온다 — 두 목록이 서로 다른 말을 하면 안 된다. */
+      var _rows = _pq
+        ? pending.filter(function(p){
+            if(!p) return false;
+            var hay=((p.companyName||'')+' '+(p.label||'')+' '
+                    +((p.item&&(p.item.caseNo||p.item.no))||'')+' '+_pendStaff(p)).toLowerCase();
+            return hay.indexOf(_pq)>=0;
+          }).slice(0,200).map(function(p){
+            var _hit=null;
+            for(var i=0;i<_sg.length;i++){ if(_sg[i].cand.id===p.id){ _hit=_sg[i]; break; } }
+            return _hit || { cand:p, score:null, reasons:['직접 찾음'] };
+          })
+        : _sg;
       function _pick(pid){
         if(inMatch[sugPopK] !== pid){
           var nm=Object.assign({},inMatch); nm[sugPopK]=pid; setInMatch(nm);
@@ -36323,9 +36376,9 @@ function FinanceLedger(){
               showToast('🔖 기억함 — 다음부터 「'+_memo+'」 은 '+_c.companyName+' 로 찾아옵니다');
           }catch(_le){ if(window._erpErrLog) window._erpErrLog(_le); }
         }
-        setSugPopK('');
+        setSugPopK(''); setSugPopQ('');
       }
-      return h('div',{className:'modal-bg',onClick:function(){setSugPopK('');},style:{zIndex:210}},
+      return h('div',{className:'modal-bg',onClick:function(){setSugPopK('');setSugPopQ('');},style:{zIndex:210}},
         h('div',{onClick:function(e){e.stopPropagation();},
           style:{background:'#fff',borderRadius:'10px',width:'min(980px,94vw)',maxHeight:'86vh',
             display:'flex',flexDirection:'column',overflow:'hidden'}},
@@ -36334,12 +36387,31 @@ function FinanceLedger(){
             h('span',{style:{fontSize:'11.5px',opacity:0.9}},String(_row.date||'').slice(0,16).replace('T',' ')),
             h('span',{style:{fontSize:'12px',fontWeight:700}},'적요 「'+(_memo||'-')+'」'),
             h('span',{style:{flex:1}}),
-            h('span',{style:{fontSize:'11px',opacity:0.9}},'후보 '+_sg.length+'건'),
-            h('button',{className:'x',onClick:function(){setSugPopK('');},style:{color:'#fff'}},'×')),
-          _sg.length===0
-            ? h('div',{style:{padding:'28px',textAlign:'center',color:'#94a3b8',fontSize:'12.5px'}},'맞는 후보가 없습니다')
+            h('span',{style:{fontSize:'11px',opacity:0.9}},
+              _pq ? ('찾은 것 '+_rows.length+'건') : ('후보 '+_sg.length+'건')),
+            h('button',{className:'x',onClick:function(){setSugPopK('');setSugPopQ('');},style:{color:'#fff'}},'×')),
+          // ── 직접 찾기 — 추천이 못 좁혀 줄 때 여기서 이름·번호로 고른다 ──
+          h('div',{style:{padding:'8px 10px',borderBottom:'1px solid #eef2f7',background:'#f8fafc',
+            display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}},
+            h('input',{value:sugPopQ||'',autoFocus:true,
+              placeholder:'🔍 업체명·관리번호·담당으로 미입금 목록 전체에서 찾기',
+              onInput:function(e){ setSugPopQ(e.target.value); },
+              style:{flex:'1 1 260px',minWidth:0,padding:'6px 10px',border:'1px solid #cbd5e1',
+                borderRadius:'6px',fontSize:'12px'}}),
+            _pq && h('button',{onClick:function(){ setSugPopQ(''); },
+              style:{background:'#fff',color:'#64748b',border:'1px solid #cbd5e1',borderRadius:'6px',
+                padding:'5px 10px',fontSize:'11px',cursor:'pointer',whiteSpace:'nowrap'}},'추천으로 돌아가기'),
+            // 후보가 죄다 같은 금액이면 추천은 아무것도 못 좁혀 준다 — 숨기지 않고 말해 준다
+            !_pq && _amb && h('span',{style:{fontSize:'11px',fontWeight:700,color:'#b45309',whiteSpace:'nowrap'}},
+              '⚠ 후보 '+_sg.length+'건이 모두 '+(_sg[0].cand.expect||_sg[0].cand.amount).toLocaleString()
+              +'원입니다 — 금액으로는 못 고릅니다'),
+            !_pq && !_amb && _sg.length===0 && h('span',{style:{fontSize:'11px',color:'#94a3b8',whiteSpace:'nowrap'}},
+              '맞는 후보가 없습니다 — 이름으로 찾으세요')),
+          _rows.length===0
+            ? h('div',{style:{padding:'28px',textAlign:'center',color:'#94a3b8',fontSize:'12.5px'}},
+                _pq ? '찾는 건이 없습니다' : '맞는 후보가 없습니다 — 위에서 이름으로 찾으세요')
             : h('div',{style:{overflow:'auto',padding:'8px 10px'}},
-                _sg.map(function(s){
+                _rows.map(function(s){
                   var on = _sel===s.cand.id;
                   var ea = s.cand.expect||s.cand.amount;
                   var d  = ea-_row.amount;
@@ -36362,7 +36434,9 @@ function FinanceLedger(){
                       h('b',{style:{fontVariantNumeric:'tabular-nums'}},ea.toLocaleString()+'원'),
                       h('div',{style:{fontSize:'11px',marginTop:'2px',fontWeight:700,
                         color:d===0?'#15803d':'#b45309'}},
-                        (d===0?'금액 일치':(d>0?'+':'')+d.toLocaleString())+' · '+s.score+'%')),
+                        // 직접 찾아 나온 건은 점수가 없다 — 없는 점수를 지어내지 않는다
+                        (d===0?'금액 일치':(d>0?'+':'')+d.toLocaleString())
+                        +(s.score===null?'':' · '+s.score+'%'))),
                     h('div',{style:{flexShrink:0,fontSize:'10.5px',color:'#94a3b8',maxWidth:'190px',
                       whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},
                       (s.reasons||[]).join(' · '))
