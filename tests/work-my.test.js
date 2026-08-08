@@ -65,7 +65,8 @@ function rid(p) { return p + '9'; }
 eval(gvar('STATUSES') + '\n' + gvar('PLAN_GROUP') + '\n' + gvar('COLS_KEY') + '\n' + gvar('MYCOLS') + '\n' + gvar('COLS_DEFAULT') + '\n'
   + gvar('GRP_KEY') + '\n' + gvar('GRP_ORDER') + '\n'
   + gvar('KIND_SET') + '\n' + gvar('KIND_ALIAS') + '\n'
-  + ['catNorm', 'colPref', 'colForced', 'colHidden', 'colToggle', 'colBtn', 'colModal', 'colTH', 'colTD',
+  + ['catNorm', 'colPref', 'colForced', 'colHidden', 'colToggle', 'colBtn',
+     'colPop', 'colPopClose', 'colPopHTML', 'colTH', 'colTD',
      'grpOn', 'grpToggle', 'grpFold', 'grpFolded', 'grpFoldToggle', 'groupRows',
      'grpHeadHTML', 'dayHeadHTML', 'stSelect', 'setStatus',
      'stepsOf', 'isPlanDay', 'wkSave', 'planAdd', 'planCheck', 'planUncheck',
@@ -149,10 +150,45 @@ ok('다 펴면 숫자를 안 적는다', (function () {
   colToggle('pt'); colToggle('last');
   return h.indexOf('접힘') < 0;
 })());
-ok('팝업에 다섯 열이 모두 나온다', (function () {
-  const h = colModal.toString();
-  return h.indexOf('MYCOLS.map') > 0;
+/* 창을 띄우지 않고 칩 바로 아래에 붙는 체크 목록.
+   걸러 보기 깔때기와 같은 구조를 써서 여닫는 법을 새로 익히지 않아도 된다. */
+S.grpOn = false; S.colPop = false; STORE = {}; S.cols = undefined;
+ok('평소에는 목록이 안 붙어 있다', colBtn().indexOf('colpop') < 0);
+colPop();
+ok('칩을 누르면 열린다', S.colPop === true && colBtn().indexOf('id="colpop"') > 0);
+ok('다섯 열이 체크 목록으로 나온다', (function () {
+  const h = colPopHTML();
+  return MYCOLS.every(c => h.indexOf('<span>' + c[1] + '</span>') > 0)
+    && (h.match(/type="checkbox"/g) || []).length === 5;
 })());
+ok('접힌 열은 체크가 꺼져 있다', (function () {
+  const h = colPopHTML();
+  const 업무 = h.slice(h.indexOf("colToggle('pt')") - 90, h.indexOf('<span>업무</span>'));
+  const 상태 = h.slice(h.indexOf("colToggle('st')") - 90, h.indexOf('<span>상태</span>'));
+  return 업무.indexOf('checked') < 0 && 상태.indexOf('checked') > 0;
+})());
+ok('창을 띄우지 않는다 (모달이 아니다)',
+  colPopHTML().indexOf('showModal') < 0 && W.indexOf('function colModal(') < 0);
+ok('뒤판을 누르면 닫힌다', colPopHTML().indexOf('class="fbk" onclick="colPopClose()"') > 0);
+ok('목록 안을 눌러도 안 닫힌다', colPopHTML().indexOf('id="colpop" onclick="event.stopPropagation()"') > 0);
+ok('깔때기와 같은 모양을 쓴다 (두 가지를 새로 익히지 않게)',
+  colPopHTML().indexOf('class="fpop"') > 0 && colPopHTML().indexOf('class="fpl"') > 0);
+ok('체크하면 그 자리에서 바로 반영된다 ([적용]을 또 누르지 않는다)',
+  colPopHTML().indexOf("onchange=\"colToggle('pt')\"") > 0);
+ok('열어 둔 채로 여러 개를 손볼 수 있다', (function () {
+  colToggle('pt'); return S.colPop === true;
+})());
+colPopClose();
+ok('닫으면 닫힌다', S.colPop === false && colBtn().indexOf('colpop') < 0);
+S.grpOn = true; S.colPop = true;
+ok('묶어 보기가 잡은 줄은 흐리게, 손댈 수 없게', (function () {
+  const h = colPopHTML();
+  return h.indexOf('class="off"') > 0 && h.indexOf('disabled') > 0 && h.indexOf('묶음') > 0;
+})());
+S.grpOn = false; S.colPop = false; STORE = {}; S.cols = undefined;
+ok('표 밖으로 띄운다 (표에 가로 스크롤이 있어 안에 두면 잘린다)',
+  grab('colPopPos').indexOf('getBoundingClientRect') > 0);
+ok('다시 그린 뒤 자리를 잡아 준다', grab('renderMy').indexOf('if(S.colPop) colPopPos();') > 0);
 
 /* ── 구분별 묶어 보기 ── */
 const mk = (cat, no) => ({ _id: no, cat: cat, no: no });
