@@ -341,11 +341,23 @@ body.pc #main,body.pc #fab,body.pc #selbar{display:none!important}
 .pctool.on{background:#eef4ff;border-color:#bcd0f2;color:#1e2a47;font-weight:600}
 #pcPageSize,#pcSort{border:1px solid #e8ecf3;border-radius:11px;padding:8px 10px;font-size:13px;color:#33415e;background:#fff;cursor:pointer}
 .pchint{font-size:12.5px;color:#8b98b3;padding:6px 22px 10px}
-#pcSel{padding:0 22px}
-#pcSel .bar{display:flex;align-items:center;gap:10px;background:#fff7ee;border:1px solid #f3ddc2;
-  border-radius:10px;padding:9px 14px;margin-bottom:10px;font-size:13px;color:#1b2536}
-#pcSel .bar button{border:1px solid #e3d2b8;background:#fff;border-radius:8px;padding:6px 12px;font-size:12.5px;font-weight:700;color:#1b2536}
-#pcSel .bar button.red{color:#c0392b}
+/* 선택 도구 — 목록을 밀지 않게 화면 아래에 띄운다 (대표 승인 2026-08-08).
+   예전에는 표 위에 한 줄이 끼어들어, 방금 고른 줄이 아래로 밀려 눈에서 사라졌다.
+   자주 쓰는 넷만 겉에 두고 나머지는 ⋯ 안에 넣는다 — 특히 삭제를 「선택 해제」
+   옆에 두면 잘못 누르기 쉬워 한 겹 안으로 넣었다. */
+#pcSel{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:60;
+  display:flex;justify-content:center;pointer-events:none}
+#pcSel .bar{pointer-events:auto;display:flex;align-items:center;gap:6px;background:#fff;
+  border:1px solid #d7dfec;border-radius:999px;padding:7px 9px 7px 15px;font-size:13px;color:#1b2536;
+  box-shadow:0 6px 24px rgba(20,30,60,.18);max-width:94vw;overflow-x:auto}
+#pcSel .bar b{white-space:nowrap;font-size:13px}
+#pcSel .bar .sep{width:1px;height:18px;background:#e4e8f0;flex:none;margin:0 2px}
+#pcSel .bar button{flex:none;border:1px solid #e4e8f0;background:#fff;border-radius:9px;
+  padding:6px 11px;font-size:12.5px;font-weight:600;color:#1b2536;white-space:nowrap}
+#pcSel .bar button:hover{background:#f2f6fc;border-color:#c3d0e6}
+#pcSel .bar button.red{color:#c0392b;border-color:#f0c9c4}
+#pcSel .bar button.icon{border:none;padding:6px 9px;font-size:15px;color:#8b98b3}
+#pcSel .bar button.icon:hover{background:#eef2f7;color:#1b2536}
 #pcTableWrap{flex:1;overflow:auto;padding:0 22px 26px}
 #pcTable{width:100%;border-collapse:collapse;background:#fff;border:1px solid #eef2f7;border-radius:12px;table-layout:fixed}
 #pcTable thead th{position:relative}
@@ -4064,6 +4076,28 @@ function openRowMenu(ev, id){
   m.style.left=x+'px'; m.style.top=y+'px';
   setTimeout(()=>document.addEventListener('click', closeFolderMenu, {once:true}), 0);
 }
+/* 선택 막대의 ⋯ — 가끔 쓰는 것들을 여기 모은다.
+   삭제를 겉에 두면 「선택 해제」 옆이라 잘못 누르기 쉬워 한 겹 안으로 넣었다. */
+function openSelMore(ev){
+  ev.preventDefault(); ev.stopPropagation();
+  const n = Object.keys(state.sel).length;
+  if(!n) return;
+  const m = $('folderMenu');
+  m.innerHTML = `
+    <div class="fmi" onclick="closeFolderMenu();selPickOwner()">👤 담당자 지정</div>
+    <div class="fmi" onclick="closeFolderMenu();copySelInfo()">📋 단체 복사</div>
+    <div class="fmi" onclick="closeFolderMenu();mailSel()">📧 단체 메일</div>
+    <div class="fmi" onclick="closeFolderMenu();selMailCsv()">📇 주소록 내보내기</div>
+    ${state.vtab?`<div class="fmi" onclick="closeFolderMenu();selRemoveFromTab()">🚫 탭에서 빼기</div>`:''}
+    <div class="fmi danger" onclick="closeFolderMenu();delSel()">🗑 삭제 (휴지통)</div>`;
+  m.style.display='block';
+  /* 막대가 화면 아래에 있으므로 메뉴는 위로 펼친다 — 아래로 열면 화면 밖으로 나간다 */
+  const r = ev.currentTarget.getBoundingClientRect();
+  const h = m.offsetHeight || 220;
+  m.style.left = Math.max(8, Math.min(r.left, window.innerWidth-190)) + 'px';
+  m.style.top  = Math.max(8, r.top - h - 8) + 'px';
+  setTimeout(()=>document.addEventListener('click', closeFolderMenu, {once:true}), 0);
+}
 /* 우클릭 메뉴의 폴더 이동: 그 한 건만 선택 상태로 만들어 폴더 선택 띄움 */
 function rowMenuMove(id){
   state.sel={[id]:1};
@@ -4123,28 +4157,25 @@ function renderPCTable(){
   const pageItems = items.slice(start, start+size);
   /* 선택 작업 바 */
   const n=Object.keys(state.sel).length;
-  /* 이 페이지를 다 골랐는데 찾은 결과가 더 있으면 알려 준다.
-     이 줄이 없으면 100건만 지워진 것을 모른 채 '다 지웠다'고 여기게 된다. */
+  /* 이 페이지를 다 골랐는데 찾은 결과가 더 있으면 막대 안에서 알려 준다.
+     이 안내가 없으면 100건만 지워진 것을 모른 채 '다 지웠다'고 여기게 된다. */
   const pageAllSel = pageItems.length>0 && pageItems.every(it=>state.sel[it.id]);
-  const moreBanner = (pageAllSel && items.length > pageItems.length && n < items.length)
-    ? `<div style="background:#fff8ec;border:1px solid #f0c98a;border-radius:9px;padding:9px 12px;margin:0 0 8px;
-         font-size:12.5px;color:#92400e;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span>이 페이지 <b>${pageItems.length.toLocaleString()}건</b>만 선택됐습니다.</span>
-        <button onclick="selectAllMatching()" style="border:1px solid #d9a441;background:#fff;color:#92400e;
-          border-radius:7px;padding:5px 11px;font-size:12.5px;font-weight:700;cursor:pointer">
-          → ${esc(narrowLabel())} <b>${items.length.toLocaleString()}건</b> 모두 선택</button></div>`
+  /* 범위를 안 좁혔으면 selectAllMatching 이 거부한다 — 눌러도 안 되는 단추를 보이면 안 된다 */
+  let _narrow=false; try{ _narrow = listNarrowed(); }catch(_){}
+  const moreBtn = (_narrow && pageAllSel && items.length > pageItems.length && n < items.length)
+    ? `<button onclick="selectAllMatching()" style="border-color:#d9a441;color:#92400e;background:#fff8ec"
+         title="지금 조건에 맞는 것을 모두 고릅니다">→ ${items.length.toLocaleString()}건 모두</button><span class="sep"></span>`
     : '';
-  $('pcSel').innerHTML = n ? moreBanner + `<div class="bar"><b>${n}개 선택</b>
-      <button onclick="selPickGroup()" title="선택한 명함을 폴더로 한 번에 이동">📁 폴더 이동</button>
-      <button onclick="selAddToTab()" title="선택한 명함을 이 폴더의 '담는 탭'에 넣기">🏷 탭에 담기</button>
-      ${state.vtab?`<button onclick="selRemoveFromTab()" title="지금 보고 있는 탭에서 빼기">🚫 탭에서 빼기</button>`:''}
-      <button onclick="selPickOwner()" title="선택한 명함에 담당 직원을 한 번에 지정">👤 담당자 지정</button>
-      <button onclick="copySelInfo()" title="선택한 명함 정보를 한꺼번에 복사">📋 단체 복사</button>
-      <button onclick="mailSel()" title="선택한 명함 이메일로 단체 메일 작성 (숨은참조)">📧 단체 메일</button>
-      <button onclick="selMailCopy()" title="선택한 명함의 이메일을 쉼표로 묶어 복사 — 메일 쓰기창 숨은참조 칸에 붙여넣기">📧 주소 복사</button>
-      <button onclick="selMailCsv()" title="주소록에 가져올 CSV 파일로 내보내기">📇 주소록 내보내기</button>
-      <button class="red" onclick="delSel()" title="선택한 명함 삭제">삭제</button>
-      <button onclick="state.sel={};render()" title="선택 모두 해제">선택 해제</button></div>` : '';
+  /* 자주 쓰는 넷만 겉에. 나머지는 ⋯ 안 — 삭제도 여기 넣어 오누름을 막는다. */
+  $('pcSel').innerHTML = n ? `<div class="bar"><b>${n}개 선택</b><span class="sep"></span>${moreBtn}
+      <button onclick="selPickGroup()" title="선택한 명함을 폴더로 한 번에 이동">📁 폴더</button>
+      <button onclick="selAddToTab()" title="선택한 명함을 이 폴더의 '담는 탭'에 넣기">🏷 탭</button>
+      <button onclick="selMailCopy()" title="이메일을 쉼표로 묶어 복사 — 메일 쓰기창 숨은참조 칸에 붙여넣기">📧 주소 복사</button>
+      <button onclick="openSelMore(event)" title="담당자 지정 · 단체 복사 · 단체 메일 · 주소록 내보내기 · 삭제">⋯</button>
+      <span class="sep"></span>
+      <button class="icon" onclick="state.sel={};render()" title="선택 모두 해제" aria-label="선택 모두 해제">✕</button>
+    </div>` : '';
+  /* 고른 것이 화면 밖으로 밀려도 막대는 늘 보인다 — 목록 위에 떠 있기 때문 */
   /* 표 */
   const sortArrow = key => state.sortKey===key ? (state.sortDir==='asc'?' ▲':' ▼') : '';
   /* 열 너비: 사용자가 드래그로 조정한 값(state.colW)이 있으면 우선 적용 */
