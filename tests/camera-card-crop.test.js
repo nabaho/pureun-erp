@@ -152,20 +152,20 @@ test('★ 못 찾으면 자르지 않는다', () => {
 });
 
 test('★ 원본을 덮어쓰지 않는다', () => {
-  const m = html.match(/let useBlob = blob, raw = null, cropped = false;[\s\S]{0,700}/);
+  const m = html.match(/let useBlob = blob, raw = null, cropped = false[\s\S]{0,900}/);
   assert.ok(m, '원본 보관 코드를 찾지 못했습니다.');
   assert.ok(/raw = blob/.test(m[0]), '자르기 전 원본을 들고 있어야 다시 시도할 수 있습니다.');
   assert.ok(/raw: raw, cropped: cropped/.test(html), '찍은 것에 원본이 함께 담겨야 합니다.');
 });
 
 test('★ 잘라낸 것이 터무니없이 작으면 원본을 쓴다', () => {
-  const m = html.match(/let useBlob = blob, raw = null, cropped = false;[\s\S]{0,700}/);
+  const m = html.match(/let useBlob = blob, raw = null, cropped = false[\s\S]{0,900}/);
   assert.ok(/cb\.size > blob\.size \* 0\.15/.test(m[0]),
     '잘못 찾아 손톱만 하게 잘린 것을 그대로 쓰면 사진을 잃습니다.');
 });
 
 test('★ 자르다 실패해도 사진은 남는다', () => {
-  const m = html.match(/if \(cropPref\(\)\) \{[\s\S]{0,700}?\n    \}/);
+  const m = html.match(/if \(cropPref\(\)\) \{[\s\S]{0,900}?\n    \}/);
   assert.ok(m && /catch \(e\)/.test(m[0]), '자르기가 터지면 촬영 자체가 실패합니다.');
 });
 

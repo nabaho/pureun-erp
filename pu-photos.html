@@ -1474,6 +1474,7 @@ function toast(msg) {
 
 let camStream = null, camCap = null, camBusy = false;
 let camTrack = null, camCanFocus = false, camCanTorch = false, torchOn = false, camFocusTimer = null;
+let camRefocusTimer = null;
 let camShots = [];   // {blob, url, ts, sel} — sel 기본 true(갤러리처럼 전부 고른 상태에서 뺀다)
 
 /* 「내 폰에도 저장」 — 기기별 기억. 기본 켜짐(대표 요청: 자동 저장). */
@@ -1576,7 +1577,22 @@ async function camTapFocus(ev) {
     await camTrack.applyConstraints({
       advanced: [{ focusMode: 'single-shot', pointsOfInterest: [{ x: x, y: y }] }]
     });
+    armRefocus();
   } catch (_) { /* 받아 주는 척하고 거부하는 기기가 있다 — 표시만 하고 넘어간다 */ }
+}
+
+/* 짚어 준 초점을 잠시 뒤 **자동으로 되돌린다**.
+   대표 보고(2026-08-08): "폰이 자동으로 선명도를 찾아야 되는데 왜 잘 안 되나".
+   원인 하나가 여기였다 — single-shot 은 초점을 **그 거리에 잠근다**. 한 번 짚고
+   다음 명함을 놓으면 거리가 달라졌는데도 잠긴 채라 계속 흐리게 찍혔다.
+   ⚠ 곧바로 되돌리면 짚어 준 뜻이 없다. 한 장 찍을 만큼(FOCUS_HOLD_MS) 잡아 둔다. */
+const FOCUS_HOLD_MS = 3000;
+function armRefocus() {
+  clearTimeout(camRefocusTimer);
+  camRefocusTimer = setTimeout(function () {
+    if (!camTrack) return;
+    try { camTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (_) { }
+  }, FOCUS_HOLD_MS);
 }
 
 /* 손전등 — 어두운 사무실에서 명함이 흐려지는 큰 원인이다.
@@ -1615,9 +1631,11 @@ function applyFrameUI() {
 function setCamTip() {
   const bits = [];
   if (frameOn()) bits.push('명함을 틀 안에 맞추세요');
-  if (camAutoPref()) bits.push('멈추면 저절로 찍힙니다');
-  if (cropPref()) bits.push('명함만 잘라 담습니다');
+  /* 「초점이 잡히면」 — 멎자마자 안 찍히는 이유를 여기서 말해 둔다.
+     안 그러면 잠깐의 뜸을 「고장났나」로 읽으신다. */
+  if (camAutoPref()) bits.push('초점이 잡히면 저절로 찍힙니다');
   else if (camCanFocus) bits.push('흐리면 화면을 한 번 누르세요');
+  if (cropPref()) bits.push('명함만 잘라 담습니다');
   const tip = $('camTip');
   if (tip) tip.textContent = bits.join(' · ');
 }
@@ -1635,6 +1653,7 @@ function camStop() {
   if (camStream) { camStream.getTracks().forEach(function (t) { t.stop(); }); camStream = null; }
   camCap = null; camTrack = null; torchOn = false;
   clearTimeout(camFocusTimer);
+  clearTimeout(camRefocusTimer);
 }
 
 /* ✕ — 찍어 둔 게 있으면 말없이 버리지 않는다 */
@@ -1841,8 +1860,12 @@ const MOVE_DIFF = 7;        // 이보다 크면 「장면이 바뀌었다」
 const STILL_HITS = 3;       // 연속 세 번 멎어 있으면 찍는다(약 0.4초)
 const COOL_MS = 1200;       // 찍고 나서 쉬는 시간
 const MIN_CONTRAST = 8;     // 이보다 밋밋하면 볼 것이 없다(어둠·빈 책상)
+const SETTLE_MAX_MS = 900;  // 초점을 이만큼 기다렸으면 그냥 찍는다(한 장도 못 건지면 안 된다)
+const SETTLE_FLAT = 2;      // 연속 두 번 더 안 또렷해지면 초점이 멎은 것
+const SETTLE_GAIN = 1.03;   // 3% 넘게 올라야 「아직 오르는 중」으로 본다(잡음 무시)
 
 let autoTimer = null, autoPrev = null, autoStill = 0, autoArmed = true, autoCoolUntil = 0;
+let autoSettleUntil = 0, autoPeak = 0, autoFlat = 0;
 const autoCan = document.createElement('canvas');
 autoCan.width = 40; autoCan.height = 30;
 
@@ -1894,6 +1917,56 @@ function tinyContrast(g) {
   return hi - lo;
 }
 
+/* ══════ 선명도 재기 (대표 보고 2026-08-08) ══════
+   "폰이 자동으로 선명도를 찾아야 되는데 왜 잘 안 되나."
+
+   폰의 자동 초점 자체는 돌고 있었다. 문제는 **우리가 언제 찍었나**였다.
+   자동 촬영은 「화면이 멎었다」만 보고 찍었는데, 손이 멎는 그 순간이 바로
+   초점이 새로 도는 순간이다 — 도는 중에 셔터를 눌러 온 셈이다.
+
+   그래서 선명한 정도를 숫자로 잰다. 옆 점과의 밝기 차이가 클수록 또렷하다
+   (흐려지면 경계가 뭉개져 차이가 준다).
+   ⚠ **가운데만** 잰다 — 명함은 가운데 있고 배경(책상 무늬)이 또렷해도 소용없다. */
+const SHARP_W = 128, SHARP_H = 96;
+const SHARP_CENTER = 0.6;   // 화면 가운데 60%만 본다
+const MIN_SHARP = 6;        // 이보다 낮으면 사람 눈에도 흐리다
+const sharpCan = document.createElement('canvas');
+sharpCan.width = SHARP_W; sharpCan.height = SHARP_H;
+
+/* 옆 점·아래 점과의 밝기 차이 평균 */
+function sharpOf(g, w, h) {
+  if (!g || !g.length) return 0;
+  let s = 0, n = 0;
+  for (let y = 0; y < h - 1; y++) {
+    for (let x = 0; x < w - 1; x++) {
+      const i = y * w + x;
+      s += Math.abs(g[i] - g[i + 1]) + Math.abs(g[i] - g[i + w]);
+      n += 2;
+    }
+  }
+  return n ? s / n : 0;
+}
+
+/* 그림(비디오·캔버스)의 가운데를 떠서 선명도를 낸다 */
+function grabSharp(src, sw, sh) {
+  if (!src || !sw || !sh) return 0;
+  const cw = Math.max(1, Math.round(sw * SHARP_CENTER));
+  const ch = Math.max(1, Math.round(sh * SHARP_CENTER));
+  const x = sharpCan.getContext('2d', { willReadFrequently: true });
+  x.drawImage(src, Math.round((sw - cw) / 2), Math.round((sh - ch) / 2), cw, ch, 0, 0, SHARP_W, SHARP_H);
+  const d = x.getImageData(0, 0, SHARP_W, SHARP_H).data;
+  const g = new Uint8Array(SHARP_W * SHARP_H);
+  for (let i = 0, j = 0; j < g.length; i += 4, j++) {
+    g[j] = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000;
+  }
+  return sharpOf(g, SHARP_W, SHARP_H);
+}
+
+/* 흔들렸다 — 「멎었다」도 「초점이 멎었다」도 처음부터 다시 센다.
+   ⚠ 초점 기다림까지 함께 지워야 한다. 안 지우면 지난번 기다림이 남아
+      다음에 멎자마자 그 자리에서 바로 찍힌다(다시 흐린 사진). */
+function autoRestUp() { autoStill = 0; autoSettleUntil = 0; autoPeak = 0; autoFlat = 0; }
+
 function autoTick() {
   const v = $('camVid');
   if (!camAutoPref() || camBusy || $('camOv').style.display !== 'flex') return;
@@ -1903,18 +1976,31 @@ function autoTick() {
   autoPrev = now;
 
   /* 찍고 쉬는 중 — 그 사이에 장면이 크게 바뀌면 다음 장을 받을 준비를 한다 */
-  if (Date.now() < autoCoolUntil) { if (diff > MOVE_DIFF) autoArmed = true; autoStill = 0; return; }
+  if (Date.now() < autoCoolUntil) { if (diff > MOVE_DIFF) autoArmed = true; autoRestUp(); return; }
   if (!autoArmed) {
     if (diff > MOVE_DIFF) autoArmed = true;   // 명함을 바꿔 놓았다
-    autoStill = 0;
+    autoRestUp();
     return;
   }
-  if (tinyContrast(now) < MIN_CONTRAST) { autoStill = 0; return; }   // 볼 것이 없다
-  if (diff > STILL_DIFF) { autoStill = 0; return; }                  // 아직 흔들린다
+  if (tinyContrast(now) < MIN_CONTRAST) { autoRestUp(); return; }   // 볼 것이 없다
+  if (diff > STILL_DIFF) { autoRestUp(); return; }                  // 아직 흔들린다
 
   autoStill++;
   if (autoStill < STILL_HITS) return;
+
+  /* ── 멎었다. 그러나 아직 찍지 않는다 — 초점이 도는 중이다 ──
+     손이 멎는 순간이 곧 초점이 새로 도는 순간이다. 여기서 찍으면 흐리다.
+     선명도가 **더 오르지 않을 때까지** 기다렸다 찍는다.
+     ⚠ 영원히 기다리면 안 된다 — SETTLE_MAX_MS 가 지나면 그냥 찍는다.
+        초점을 못 잡는 곳(어두운 데·너무 가까이)에서 한 장도 못 건지면 안 된다. */
+  const sharp = grabSharp(v, v.videoWidth, v.videoHeight);
+  if (!autoSettleUntil) { autoSettleUntil = Date.now() + SETTLE_MAX_MS; autoPeak = 0; autoFlat = 0; }
+  if (sharp > autoPeak * SETTLE_GAIN) { autoPeak = Math.max(autoPeak, sharp); autoFlat = 0; }
+  else autoFlat++;
+  if (autoFlat < SETTLE_FLAT && Date.now() < autoSettleUntil) return;
+
   autoStill = 0;
+  autoSettleUntil = 0;
   autoArmed = false;                       // 다음 장은 장면이 바뀌어야 받는다
   autoCoolUntil = Date.now() + COOL_MS;
   camShoot();
@@ -1922,12 +2008,14 @@ function autoTick() {
 
 function startAutoWatch() {
   stopAutoWatch();
-  autoPrev = null; autoStill = 0; autoArmed = true; autoCoolUntil = 0;
+  autoPrev = null; autoArmed = true; autoCoolUntil = 0;
+  autoRestUp();
   autoTimer = setInterval(autoTick, SAMPLE_MS);
 }
 function stopAutoWatch() {
   if (autoTimer) clearInterval(autoTimer);
-  autoTimer = null; autoPrev = null; autoStill = 0;
+  autoTimer = null; autoPrev = null;
+  autoRestUp();
 }
 
 async function camShoot() {
@@ -1980,7 +2068,7 @@ async function camShoot() {
        ⚠ **원본을 덮어쓰지 않는다.** 자른 것을 쓰되 원본을 raw 에 들고 있다가,
           판독이 실패하면 원본으로 다시 시도한다(cropped 표시로 가른다).
        ⚠ 못 찾으면 자르지 않는다 — 잘못 잘라 글자를 날리느니 안 자르는 게 낫다. */
-    let useBlob = blob, raw = null, cropped = false;
+    let useBlob = blob, raw = null, cropped = false, small = false;
     if (cropPref()) {
       try {
         const r = findCardRect(c, cw, ch);
@@ -1992,10 +2080,20 @@ async function camShoot() {
           /* 잘라 놓고 보니 너무 작으면 — 글자를 못 읽는다. 더 가까이 찍으시라고 알린다.
              (자르지 않고 그냥 두면 배경만 큰 사진이 남아 판독이 흐려진다) */
           if (cropped && Math.min(r.w, r.h) < CARD_MIN_SHORT) {
+            small = true;
             toast('명함이 작게 찍혔습니다 — 조금 더 가까이서 찍어 주세요');
           }
         }
       } catch (e) { console.warn('[테두리]', e); }   // 실패해도 사진은 남는다
+    }
+
+    /* ── 흐리면 말해 준다 ──
+       지금까지는 흐린 사진이 말없이 담겼다 — 나중에 판독이 안 될 때에야 알았다.
+       ⚠ **버리지 않는다.** 흐려도 그 자리에 다시 갈 수 없는 사진일 수 있다.
+          담되 알려서, 대표님이 한 장 더 찍을지 정하시게 한다.
+       ⚠ 「작게 찍혔다」와 겹쳐 말하지 않는다 — 한 번에 한 가지만 고치시면 된다. */
+    if (!small && grabSharp(c, cw, ch) < MIN_SHARP) {
+      toast('흐리게 찍혔습니다 — 화면을 한 번 눌러 초점을 잡고 다시 찍어 주세요');
     }
     camShots.push({ blob: useBlob, raw: raw, cropped: cropped,
       url: URL.createObjectURL(useBlob), ts: Date.now(), sel: true });
