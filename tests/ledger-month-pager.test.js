@@ -18,7 +18,8 @@ console.log('\n[월 넘기기]');
 ok('◀ ▶ 단추가 있다', /navBtn\(-1,'◀'/.test(src) && /navBtn\(1,'▶'/.test(src));
 ok('끝 달에서는 더 못 넘긴다', /var n=idx\+step;\s*if\(n<0\|\|n>=ldMonths\.length\) return;/.test(src));
 ok('달 고르는 목록도 있다 (달이 많아도 한 칸)', /onChange:function\(e\)\{ setIncMon\(e\.target\.value\); setIncChk\(\{\}\); \}/.test(src));
-ok('목록에 그 달 미처리 건수가 붙는다', /\(s\.todo>0\?' · 미처리 '\+s\.todo:' · 다 됨'\)/.test(src));
+ok('목록에는 달 이름만 짧게 (상태는 옆 배지가 말한다)',
+   /return h\('option',\{key:m,value:m\},\s*parseInt\(m\.slice\(0,4\),10\)\+'년 '\+parseInt\(m\.slice\(5\),10\)\+'월'\);/.test(src));
 ok('넘길 달 이름이 도움말로 보인다', /title:able\?\(ldMonths\[idx\+step\]\.slice\(0,4\)/.test(src));
 ok('달을 넘기면 체크가 풀린다', /setIncMon\(ldMonths\[n\]\); setIncChk\(\{\}\);/.test(src));
 
@@ -29,9 +30,24 @@ ok('확정 건수는 finance_income 에서 센다', /_cfm\[ym\]\.cnt\+\+; _cfm\[
 ok('진행률 막대가 있다', /width:st\.pct\+'%',height:'100%'/.test(src));
 ok('다 되면 막대가 초록으로', /background:st\.pct>=100\?'#16a34a':'#3b82f6'/.test(src));
 ok('미처리가 없으면 「다 처리됨」', /'✅ 다 처리됨'/.test(src));
-ok('입금·출금·확정 건수와 금액을 함께 보여준다',
-   /st\.d\.inc>0 &&[\s\S]{0,300}?st\.d\.exp>0 &&[\s\S]{0,300}?st\.done>0 &&/.test(src));
+ok('확정 금액을 보여준다 (건수는 탭이 말한다)', /'✅ '\+st\.doneAmt\.toLocaleString\(\)/.test(src));
 ok('전체 보기면 모든 달을 합친다', /if\(showAll\)\{[\s\S]{0,400}?ldMonths\.forEach\(function\(m\)\{/.test(src));
+
+console.log('\n[한 줄에 모두 — 월·현황·탭·단추]');
+ok('월 조각을 조각 배열로 돌려준다 (같은 줄에 붙이려고)',
+   /\/\/ 조각으로 돌려준다 — 아래 한 줄에 입금·출금 탭과 나란히 놓기 위해서/.test(src));
+ok('월 조각과 탭이 같은 줄 안에 있다',
+   /한 줄에 모두 — 월 넘기기 · 처리현황 · 입금\/출금 탭 · 일괄 단추[\s\S]{0,600}?ldMonths\.length>0 && \(function\(\)\{/.test(src));
+ok('탭이 월 조각 바로 뒤에 붙는다',
+   /\}\)\(\),\s*incCnt>0 && ledgerTabBtn\('inc','💰 입금'/.test(src));
+ok('따로 있던 요약 줄은 없앴다', !/\/\/ 요약\s*\n\s*h\('div',\{style:\{display:'flex',gap:'8px',marginBottom:'12px'/.test(src));
+
+console.log('\n[한 줄에 들어가게 크기를 줄였다]');
+ok('탭 단추가 작아졌다', /padding:'4px 11px', borderRadius:'14px'/.test(src));
+ok('자동 매칭 단추가 작아졌다', /padding:'4px 11px',background:'#1d4ed8'[\s\S]{0,140}?'🤖 자동 매칭'/.test(src));
+ok('전체확정 단추가 작아졌다', /padding:'4px 11px',background:'#16a34a'[\s\S]{0,160}?'✅ 입금 '\+inMatchedCnt\+'건 확정'/.test(src));
+ok('단추들이 줄어들지 않게 못 박았다',
+   (src.match(/fontWeight:700,cursor:'pointer',whiteSpace:'nowrap',flexShrink:0\}/g)||[]).length >= 5);
 
 console.log('\n[처리현황 셈이 맞나]');
 {
