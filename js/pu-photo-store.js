@@ -383,6 +383,68 @@
 
   /* 서류 판독 결과를 사진 정보 아래 'read' 칸에만 적는다.
      items/{id} 를 통째로 쓰면 촬영 시각·올린 사람이 지워진다 — 반드시 하위 경로만. */
+  /* ── 사람이 직접 적는 정보 (2026-08-08 대표 지시) ──
+     AI 가 읽은 것(read)과 **따로** 둔다. 다시 판독해도 사람이 적은 것은 안 지워진다.
+     빈 값은 null 로 지운다 — 빈 문자열을 남기면 「적었는데 비어 있음」과 구분이 안 된다. */
+  function saveNote(year, id, patch, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var base = metaPath(year, id, owner), u = {};
+    ['note', 'company'].forEach(function (k) {
+      if (!(k in patch)) return;
+      var v = String(patch[k] == null ? '' : patch[k]).trim();
+      u[base + '/' + k] = v || null;
+    });
+    if (!Object.keys(u).length) return Promise.resolve();
+    return deps.db.ref().update(u);
+  }
+
+  /* ── 촬영일 고치기 ──
+     ⚠ 촬영 시각은 **보관 연도를 정한다**(yearOf). 해가 바뀌는 날짜로 고치면
+     사진·미리보기까지 새 해 자리로 **옮겨야** 한다. 정보만 고치면 목록에서 사라진다
+     (그 해 목록에는 없고, 새 해 자리에는 사진이 없다).
+     같은 해 안에서 고치는 것은 정보 한 줄만 바꾸면 된다. */
+  function setTakenAt(year, id, ts, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var n = Number(ts);
+    if (!Number.isFinite(n) || n <= 0) return Promise.reject(new Error('날짜가 올바르지 않습니다'));
+    var to = yearOf(n);
+    if (to === String(year)) {
+      var u = {};
+      u[metaPath(year, id, owner) + '/takenAt'] = n;
+      return deps.db.ref().update(u);
+    }
+    /* 해가 바뀐다 — 정보·사진·미리보기를 통째로 옮긴다.
+       ⚠ **한 묶음(update)으로** 넣고 지운다. 나눠서 하다 중간에 끊기면 사진을 잃는다. */
+    return Promise.all([
+      readOnce(metaPath(year, id, owner)),
+      loadFull(year, id, owner).catch(function () { return ''; }),
+      loadThumb(year, id, owner).catch(function () { return ''; })
+    ]).then(function (r) {
+      var meta = r[0];
+      if (!meta) throw new Error('사진 정보를 찾지 못했습니다');
+      meta.takenAt = n;
+      var u = {};
+      u[metaPath(to, id, owner)] = meta;
+      if (r[1]) u[blobPath(to, id, owner)] = r[1];
+      if (r[2]) u[thumbPath(to, id, owner)] = r[2];
+      u[metaPath(year, id, owner)] = null;
+      u[blobPath(year, id, owner)] = null;
+      u[thumbPath(year, id, owner)] = null;
+      return deps.db.ref().update(u).then(function () { return to; });
+    });
+  }
+
+  /* ── 돌린 사진 저장 ──
+     사진과 미리보기를 **같이** 바꾼다. 하나만 바꾸면 목록과 크게 보기가 서로 다르게 보인다. */
+  function replaceImage(year, id, full, thumb, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    if (!full || !thumb) return Promise.reject(new Error('바꿀 사진이 없습니다'));
+    var u = {};
+    u[blobPath(year, id, owner)] = full;
+    u[thumbPath(year, id, owner)] = thumb;
+    return deps.db.ref().update(u);
+  }
+
   function saveRead(year, id, read) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     var u = {};
@@ -997,6 +1059,9 @@
     newId: newId,
     savePhoto: savePhoto,
     saveRead: saveRead,
+    saveNote: saveNote,
+    setTakenAt: setTakenAt,
+    replaceImage: replaceImage,
     listCustomKinds: listCustomKinds,
     getRetention: getRetention,
     setRetentionOwner: setRetentionOwner,
