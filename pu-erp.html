@@ -1599,12 +1599,24 @@ function _vgDialogOpen(){
       var e = m[i], cs = getComputedStyle(e);
       if(cs.display !== 'none' && cs.visibility !== 'hidden' && e.getBoundingClientRect().height > 0) return true;
     }
+    /* 코드로 그린 전체 덮개 찾기.
+       ⚠ 예전에는 div[style*="fixed"] 를 전부 모아 하나하나 getComputedStyle 을
+         불렀다. 이 앱은 스타일이 전부 인라인이라 그 후보가 수천 개고, 한 번
+         도는 데 745ms — 새 버전을 감지한 뒤 5초마다 그만큼 화면이 멈췄다
+         (#88 이름표가 잡아 준 것).
+       덮개란 «화면 한복판을 덮고 있는 것» 이다. 그러니 다 뒤질 것 없이
+       한복판의 제일 위 요소에서 위로 거슬러 올라가며 fixed 덮개인지만 본다
+       — 몇 번의 조회로 끝난다. */
     var W = window.innerWidth, H = window.innerHeight;
-    if(W > 0 && H > 0){
-      var cand = document.querySelectorAll('div[style*="fixed"]');   // 코드로 그린 덮개
-      for(var j=0;j<cand.length;j++){
-        var r = cand[j].getBoundingClientRect();
-        if(r.width >= W*0.9 && r.height >= H*0.9 && getComputedStyle(cand[j]).position === 'fixed') return true;
+    if(W > 0 && H > 0 && document.elementFromPoint){
+      var el = document.elementFromPoint(Math.floor(W/2), Math.floor(H/2));
+      var hops = 0;
+      while(el && el !== document.body && el !== document.documentElement && hops++ < 15){
+        if(getComputedStyle(el).position === 'fixed'){
+          var r = el.getBoundingClientRect();
+          if(r.width >= W*0.9 && r.height >= H*0.9) return true;
+        }
+        el = el.parentElement;
       }
     }
   } catch(_){}
@@ -1612,10 +1624,15 @@ function _vgDialogOpen(){
 }
 var _VG_IDLE_MS = 180000;   // 3분. 30초는 «생각하는 시간» 에도 걸려 작업을 끊었다.
 function _vgSafeNow(){
+  /* 값싼 검사 먼저 — 화면이 보이고 방금까지 손대고 있었다면 어차피 «보류» 다.
+     덮개 검사(DOM 훑기)는 그 결론을 바꾸지 못하므로 아예 하지 않는다.
+     ⚠ 숨겨진 탭은 이 지름길을 타면 안 된다 — 팝업을 열어 두고 다른 창을 보는
+       중일 수 있고, 그때 새로고침하면 입력이 날아간다(2026-08-07 제보). */
+  if(!document.hidden && (Date.now() - _vgLastActivity) <= _VG_IDLE_MS) return false;
   if(_vgDialogOpen()) return false;                      // ★ 팝업 열림 → 언제나 보류
   if(_vgInputFocused()) return false;                    // 입력 중 → 보류
   if(document.hidden) return true;                       // 백그라운드 → 안전
-  return (Date.now() - _vgLastActivity) > _VG_IDLE_MS;   // 오래 손 놓았을 때만
+  return true;                                           // 보이는 채로 오래 손 놓았다 → 안전
 }
 function _vgReloadNow(){
   _vgPending = false;
@@ -34449,8 +34466,14 @@ function FinanceLedger(){
         var t0 = (window.performance && performance.now) ? performance.now() : 0;
         function step(){
           if(job.cancel) return;                            // 낡은 재료 — 조용히 그만둔다
-          erpBuildSugChunk(rowsArr, pendArr, i, i+25, out);
-          i += 25;
+          /* 행 수가 아니라 시간으로 끊는다. 25행 고정으로 했더니 한 조각이
+             230ms — 그 자체가 또 멈춤으로 찍혔다(#88 이름표). 행마다 걸리는
+             시간이 자료에 따라 달라서, 5행씩 하되 24ms 를 넘기면 손을 뗀다. */
+          var tb = (window.performance && performance.now) ? performance.now() : 0;
+          do {
+            erpBuildSugChunk(rowsArr, pendArr, i, i+5, out);
+            i += 5;
+          } while(i < rowsArr.length && tb && (performance.now() - tb) < 24);
           if(i < rowsArr.length){ setTimeout(step, 0); return; }
           _sugCache.current = { sig: job.sig, val: out, job: null };
           if(t0) console.log('[거래내역] 추천 다시 계산 '+Math.round(performance.now()-t0)
