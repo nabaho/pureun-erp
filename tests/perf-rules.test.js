@@ -77,7 +77,11 @@ const allowTop = ['systemAlerts','systemBackups','systemBackupsIndex','systemRes
   'suggestions_private','suggestions_meta_private','suggestions_resolved_private',
   /* 2026-08-07 푸른이알피 30분 수시 자동백업. `serverBackupsRecentIndex`(목차)만 있고
      본체가 없어 백업이 조용히 막혀 있었다. */
-  'serverBackupsRecent'];
+  'serverBackupsRecent',
+  /* 2026-08-08 명함첩 개인 폴더. 잠근 명함·사진·폴더이름을 대표 계정만 읽을 수 있는
+     자리로 옮긴다. 부모(pucards_private)에는 읽기를 주지 않는다 — 주면 누가 개인
+     폴더를 갖고 있는지 목록이 드러난다. 사람별 분리는 puphotos 와 같은 방식. */
+  'pucards_private'];
 
 const keys = Object.keys(R);
 const removed = baseTop.filter(function (k) { return keys.indexOf(k) < 0; });
