@@ -4674,13 +4674,14 @@ function erpClearBankProcessed(){
 //   무효화: 'pureun-saved'(key=finance_income) 이벤트 + 60초 TTL 안전망 (두 겹)
 var _erpFpByName = null;   // { erpNormName(업체명): [{amount, day, ym}] }
 var _erpFpById   = null;   // { sourceId: [{amount, day, ym}] }
+var _erpFpByAmt  = null;   // { 금액: [{company, date, kind, id, sourceKind, managerSid}] } — 「이미 확정됨」 조회용
 var _erpFpAt     = 0;
 
-function erpResetFingerprintIndex(){ _erpFpByName = null; _erpFpById = null; _erpFpAt = 0; }
+function erpResetFingerprintIndex(){ _erpFpByName = null; _erpFpById = null; _erpFpByAmt = null; _erpFpAt = 0; }
 
 function _erpFpBuild(){
   if(_erpFpByName && (Date.now() - _erpFpAt) < 60000) return;
-  var byName = {}, byId = {};
+  var byName = {}, byId = {}, byAmt = {};
   var recs = dbGet('finance_income', []) || [];
   if(!Array.isArray(recs)) recs = [];
   recs.forEach(function(r){
@@ -4692,8 +4693,40 @@ function _erpFpBuild(){
     var nm = erpNormName(r.companyName);
     if(nm){ if(!byName[nm]) byName[nm] = []; byName[nm].push(e); }
     if(r.sourceId){ if(!byId[r.sourceId]) byId[r.sourceId] = []; byId[r.sourceId].push(e); }
+    var k = String(amt);
+    if(!byAmt[k]) byAmt[k] = [];
+    byAmt[k].push({ company:String(r.companyName||''), date:d, kind:String(r.kind||''),
+                    id:r.id, sourceKind:String(r.sourceKind||''), managerSid:r.managerSid||'' });
   });
-  _erpFpByName = byName; _erpFpById = byId; _erpFpAt = Date.now();
+  _erpFpByName = byName; _erpFpById = byId; _erpFpByAmt = byAmt; _erpFpAt = Date.now();
+}
+
+/* ── 이 통장 입금이 이미 확정된 건인가 ──
+   입금관리에서 곧바로 확정하면 통장 행에는 지문(bank_processed)이 남지 않는다.
+   그래서 나중에 엑셀을 올리면 그 입금이 「미매칭」으로 다시 뜨고, 미입금 목록에서는
+   이미 빠진 뒤라 엉뚱한 후보가 잡힌다. 같은 금액·비슷한 날짜의 확정분을 찾아 알려준다.
+   txn={date, amount} → [{company, date, kind, gap}] (가까운 날짜 순) */
+function erpAlreadyConfirmed(txn, dayWindow){
+  var out = [];
+  try {
+    var tAmt = parseInt(txn && txn.amount, 10) || 0;
+    if(tAmt <= 0) return out;
+    _erpFpBuild();
+    var win = (dayWindow === undefined || dayWindow === null) ? 10 : dayWindow;
+    var tT = new Date(String(txn.date||'')).getTime();
+    (_erpFpByAmt[String(tAmt)] || []).forEach(function(r){
+      var gap = null;
+      if(!isNaN(tT) && r.date){
+        var rT = new Date(r.date).getTime();
+        if(!isNaN(rT)) gap = Math.abs(Math.round((tT - rT) / 86400000));
+      }
+      if(gap === null || gap > win) return;
+      out.push({ company:r.company, date:r.date, kind:r.kind, id:r.id,
+                 sourceKind:r.sourceKind, managerSid:r.managerSid, gap:gap });
+    });
+    out.sort(function(a,b){ return a.gap - b.gap; });
+  } catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+  return out;
 }
 
 // txn={date,amount} vs cand={companyName,item} → {hit, score, reason, reasons}
@@ -5160,15 +5193,40 @@ function erpMatchScore(txn, cand){
   var tn = erpNormName(txn.memo);
   var tnc = '';
   try { tnc = erpNormName(erpCleanMemo(txn.memo)); } catch(_ce){ tnc = ''; }
+  /* 괄호 안은 업체명일 때가 많다 — "최지영(롯데리아)" 의 롯데리아.
+     erpCleanMemo 는 은행명("김철수(우리은행)")을 버리려고 괄호를 통째로 지우는데,
+     그 바람에 업체명까지 같이 날아간다. 그래서 괄호 안만 따로 떼어 함께 대조한다.
+     (노이즈 거르기는 _erpStripNoiseWord 가 그대로 맡는다 — 은행명은 여기서도 걸러진다) */
+  var tnp = [];
+  try {
+    (String(txn.memo===null||txn.memo===undefined?'':txn.memo).match(/\(([^)]{2,})\)/g) || []).forEach(function(g){
+      var raw = erpNormName(g.slice(1, -1));
+      if(!raw) return;
+      /* 은행·조합 표기로 끝나면 업체가 아니라 거래은행이다 — "김철수(우리은행)".
+         erpCleanMemo 가 꼬리를 잘라 "우리"만 남기면 "우리산업" 같은 데 잘못 걸린다. */
+      var isBank = false;
+      for(var _bi=0; _bi<ERP_BANK_WORDS.length; _bi++){
+        if(raw.slice(-ERP_BANK_WORDS[_bi].length) === ERP_BANK_WORDS[_bi]){ isBank = true; break; }
+      }
+      if(isBank) return;
+      var inner = erpNormName(erpCleanMemo(g.slice(1, -1)));
+      if(inner && inner.length >= 2 && tnp.indexOf(inner) < 0) tnp.push(inner);
+    });
+  } catch(_pe){ tnp = []; }
   var cn = erpNormName(cand.companyName);
-  var nameScore = 0, _nameReason = '', _usedClean = false;
+  var nameScore = 0, _nameReason = '', _usedClean = false, _usedParen = false;
   if(cn){
     var _r1 = _erpNameCmp(tn, cn);
     var _r2 = (tnc && tnc !== tn) ? _erpNameCmp(tnc, cn) : null;
     if(_r2 && _r2.score > _r1.score){ nameScore = _r2.score; _nameReason = _r2.reason; _usedClean = true; }
     else { nameScore = _r1.score; _nameReason = _r1.reason; }
+    tnp.forEach(function(p){
+      var _rp = _erpNameCmp(p, cn);
+      if(_rp.score > nameScore){ nameScore = _rp.score; _nameReason = _rp.reason; _usedClean = false; _usedParen = true; }
+    });
     if(_nameReason) reasons.push(_nameReason);
     if(_usedClean) reasons.push('적요 정리 후 일치');
+    if(_usedParen) reasons.push('괄호 안 이름 일치');
   }
 
   // ── 입금자 별칭 학습분 / 레코드의 입금자(예금주) 필드로 이름 점수 보강 ──
@@ -33425,6 +33483,16 @@ function FinanceLedger(){
     {key:'contracts',label:'계약'},{key:'cases',label:'사건'},
     {key:'consultings',label:'컨설팅'},{key:'funds',label:'기금'},{key:'other_projects',label:'기타'}
   ];
+  // 사무관리 후보를 종류별로 묶어 보여줄 때 쓰는 이름표·색 (업체 자문료는 섞지 않는다)
+  var STORE_BADGE = {
+    cases:          {label:'사건',   bg:'#fef3c7', fg:'#92400e', bd:'#fde68a', ord:1},
+    consultings:    {label:'컨설팅', bg:'#eff6ff', fg:'#1d4ed8', bd:'#bfdbfe', ord:2},
+    funds:          {label:'기금',   bg:'#f0fdfa', fg:'#0d9488', bd:'#99f6e4', ord:3},
+    other_projects: {label:'기타',   bg:'#f5f3ff', fg:'#7c3aed', bd:'#ddd6fe', ord:4},
+    contracts:      {label:'계약',   bg:'#f8fafc', fg:'#64748b', bd:'#e2e8f0', ord:5},
+    companies:      {label:'자문료', bg:'#ecfeff', fg:'#0e7490', bd:'#a5f3fc', ord:6}
+  };
+  function storeBadge(k){ return STORE_BADGE[k] || {label:k||'-', bg:'#f8fafc', fg:'#64748b', bd:'#e2e8f0', ord:9}; }
   /* 부가세 포함 예상 입금액. 사건 착수금·계약금은 contractFeeVatIncluded, 성공보수·잔금은 balanceFeeVatIncluded.
      체크돼 있으면 저장된 금액이 이미 부가세 포함이고, 아니면 공급가(×1.1 해야 통장 금액).
      이미 일부 받은 게 있으면(paidAmount) 남은 금액만 보여준다. */
@@ -33545,6 +33613,7 @@ function FinanceLedger(){
   var editPopS=useState(null);   var editPop=editPopS[0]; var setEditPop=editPopS[1]; // 4-3 비교 수정 팝업 {incomeRecord}
   var incChkS=useState({});      var incChk=incChkS[0];   var setIncChk=incChkS[1];   // 입금 행 체크 {_k: true}
   var incMonS=useState('');      var incMon=incMonS[0];   var setIncMon=incMonS[1];   // 월 필터 (''=전체, 'YYYY-MM')
+  var incVfS=useState({});       var incVf=incVfS[0];     var setIncVf=incVfS[1];     // 눈으로 확인 표시 {_k:{inv:true, work:true}}
   var ldInfoS=useState(false);   var ldInfoOpen=ldInfoS[0]; var setLdInfoOpen=ldInfoS[1]; // 파일 정보 접기/펼치기
   var draftTimer=useRef(null);   // 초안 저장 디바운스
   var draftReady=useRef(false);  // 복원 완료 전에는 저장하지 않음
@@ -34005,6 +34074,7 @@ function FinanceLedger(){
   var autoTidyKeys = [];    // 3중 관문 통과 (자동 정리 대상) — 같은 패스에서 함께 계산
   var autoTidySet = {};     // 행별 O(1) 조회용 (배지 표시)
   var atAlias = {};         // 행별 학습 횟수 (미리보기 '학습 ×N')
+  var incDone = {};         // 행별 「이미 확정된 건」 (입금관리에서 곧바로 확정한 분)
   var invSug = {};          // 행별 세금계산서 후보 1건 (고신뢰 추천이 없는 행만)
   var invNone = {};         // 행별 '계산서 미발급?' 의심
   var incByK = {};          // _k → row (자동 정리 미리보기에서 행을 되찾기 위함)
@@ -34024,8 +34094,11 @@ function FinanceLedger(){
     var _memo = row.memo||row.note||'';
     var _cms = erpIsCmsMemo(_memo);
     isCmsMemo[row._k] = _cms;
-    var _sg = erpMatchTxnToPending({date:row.date, amount:row.amount, memo:_memo}, pending, 3);
+    // 후보를 종류별로 나눠 보여주므로 넉넉히 받는다 (사건·컨설팅·기금·기타)
+    var _sg = erpMatchTxnToPending({date:row.date, amount:row.amount, memo:_memo}, pending, 12);
     incSug[row._k] = _sg;
+    // 입금관리에서 이미 확정한 건인지 (통장 행에는 지문이 안 남는다)
+    incDone[row._k] = erpAlreadyConfirmed({date:row.date, amount:row.amount}, 10);
     var _b = _sg.length ? _sg[0] : null;
     // ── 자동 정리 3중 관문 (학습 3회↑ · 금액 정확일치 · 신뢰도 90↑) ──
     // 사용자가 이미 다른 후보를 골라둔 행은 그 선택을 존중해 대상에서 뺀다
@@ -34034,11 +34107,9 @@ function FinanceLedger(){
       autoTidyKeys.push(row._k); autoTidySet[row._k]=1; atAlias[row._k]=erpAliasCount(_memo);
     }
     // ── 세금계산서 (금액 해시 O(1) 조회) ──
-    // 고신뢰 추천이 있으면 그쪽이 우선이므로 계산서 후보는 찾지 않는다
-    if(!(_b && _b.level==='high')){
-      var _iv = erpInvoiceSuggest({date:row.date, amount:row.amount}, 1);
-      if(_iv.length) invSug[row._k] = _iv[0];
-    }
+    // 계산서를 따로 한 칸에 보여주므로 추천 신뢰도와 상관없이 항상 찾는다
+    var _iv = erpInvoiceSuggest({date:row.date, amount:row.amount}, 1);
+    if(_iv.length) invSug[row._k] = _iv[0];
     // 미발급 의심 — CMS 일괄이체·자문료 건·아카이브 미로딩 시에는 경고하지 않는다 (오탐 방지)
     if(!_cms && erpInvoiceIndexReady()){
       var _selP = pendById[inMatch[row._k]] || (_b && _b.level==='high' ? _b.cand : null);
@@ -34096,7 +34167,10 @@ function FinanceLedger(){
   });
   var chkKeys  = Object.keys(incChk).filter(function(k){ return gateOf[k]; });
   var chkAuto  = chkKeys.filter(function(k){ return gateOf[k].ok; });
-  var chkNeed  = chkKeys.filter(function(k){ return !gateOf[k].ok && canHandoff(gateOf[k].pItem); });
+  // 창으로는 관문을 넘은 건도 보낼 수 있다 — 성과급·부가세를 눈으로 보고 확정하고 싶을 때
+  var chkNeed  = chkKeys.filter(function(k){ return canHandoff(gateOf[k].pItem); });
+  // 계산서·사무관리 양쪽을 눈으로 확인해 둔 행
+  var chkSeen  = chkKeys.filter(function(k){ return incVf[k] && incVf[k].inv && incVf[k].work; });
 
   function runAutoMatch(){
     if(!rows) return;
@@ -34657,6 +34731,8 @@ function FinanceLedger(){
             _manualNeed>0 && h('span',{style:{background:'#fffbeb',color:'#d97706',border:'1px solid #fde68a',borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:700}},'수동 '+_manualNeed+'건'),
             _noMatch>0 && h('span',{style:{background:'#fef2f2',color:'#dc2626',border:'1px solid #fecaca',borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:700}},'미매칭 '+_noMatch+'건'),
             Object.keys(incChk).length>0 && h('span',{style:{background:'#eff6ff',color:'#1d4ed8',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:700}},'✓ '+Object.keys(incChk).length+'건 선택'),
+            chkSeen.length>0 && h('span',{title:'계산서·사무관리 양쪽을 확인 체크한 건',
+              style:{background:'#f0fdf4',color:'#15803d',border:'1px solid #bbf7d0',borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:700}},'👁 양쪽 확인 '+chkSeen.length+'건'),
             h('span',{style:{flex:'1'}}),
             // ── ⚡ 자동확정 — 6중 관문을 넘은 건만, 성과급까지 계산해서 저장 ──
             chkAuto.length>0 && h('button',{
@@ -34688,13 +34764,13 @@ function FinanceLedger(){
               '⚡ 자동확정 '+chkAuto.length+'건'),
             // ── 📋 확인 후 확정 — 입금관리의 입금확정 창으로 넘긴다 ──
             chkNeed.length>0 && h('button',{
-              title:'관문을 못 넘은 건입니다 — 입금관리로 옮겨 입금확정 창에서 하나씩 확인합니다',
+              title:'입금관리로 옮겨 입금확정 창에서 하나씩 확인합니다\n— 성과급·부가세 공제를 눈으로 보고 확정할 수 있습니다',
               onClick:function(){
                 sendToConfirm(chkNeed.map(function(k){ return {row:incByK[k], pItem:gateOf[k].pItem}; })
                                      .filter(function(x){ return x.row; }));
               },
               style:{padding:'3px 9px',background:'#d97706',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10.5px',fontWeight:800,cursor:'pointer',whiteSpace:'nowrap'}},
-              '📋 확인 후 확정 '+chkNeed.length+'건'),
+              '📋 창에서 확인 '+chkNeed.length+'건'),
             _advAuto>0 && h('button',{onClick:function(){setAdvBatchOpen(true);},
               style:{padding:'3px 8px',background:'#0d9488',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'자문료 일괄확인'),
             h('button',{onClick:function(){setConfHistOpen(true);},
@@ -34713,9 +34789,11 @@ function FinanceLedger(){
                     if(!allOn) valid.forEach(function(r){ nm[r._k]=true; });
                     setIncChk(nm);
                   }})),
-              h('th',{style:Object.assign({},thS,{width:'34px',textAlign:'right'})},'#'),
-              h('th',{style:thS},'날짜'),h('th',{style:thS},'입금액'),h('th',{style:thS},'적요'),
-              h('th',{style:Object.assign({},thS,{minWidth:'170px'})},'미입금 매칭'),h('th',{style:thS},'처리')
+              h('th',{style:Object.assign({},thS,{width:'30px',textAlign:'right'})},'#'),
+              h('th',{style:Object.assign({},thS,{minWidth:'140px'})},'🏦 통장 입금'),
+              h('th',{style:Object.assign({},thS,{minWidth:'135px',borderLeft:'2px solid #e2e8f0'})},'🧾 세금계산서'),
+              h('th',{style:Object.assign({},thS,{minWidth:'260px',borderLeft:'2px solid #e2e8f0'})},'📁 사무관리 — 사건·컨설팅·기금·기타'),
+              h('th',{style:Object.assign({},thS,{borderLeft:'2px solid #e2e8f0'})},'처리')
             )),
             h('tbody',null,incList.map(function(row,_ri){
               var mId=inMatch[row._k];
@@ -34723,7 +34801,8 @@ function FinanceLedger(){
               var sugs=incSug[row._k]||[];
               var best=sugs.length?sugs[0]:null;
               var bc=best?erpMatchLevelColor(best.level):null;
-              var sugOpened=!!sugOpen[row._k];
+              // 고신뢰 추천이 아니면 후보 목록을 기본으로 펼친다 (눈으로 골라야 하는 건)
+              var sugOpened=sugOpen.hasOwnProperty(row._k) ? !!sugOpen[row._k] : !!(best && best.level!=='high');
               var cbs=comboOf(row); var cb=(cbs&&cbs.length)?cbs[0]:null;   // 합산 입금 후보 (화이트리스트 적요 + 고신뢰 단일추천 없을 때만)
               var isCms=!!isCmsMemo[row._k];                                 // CMS 일괄이체(더빌이체) 적요
               var ivc=invSug[row._k]||null;                                  // 세금계산서 발행분 후보 (고신뢰 추천 없을 때만)
@@ -34740,20 +34819,60 @@ function FinanceLedger(){
                   !row._dup && h('input',{type:'checkbox',style:{cursor:'pointer'},checked:!!incChk[row._k],
                     onChange:function(){ var nm=Object.assign({},incChk); if(nm[row._k]) delete nm[row._k]; else nm[row._k]=true; setIncChk(nm); }})),
                 h('td',{style:Object.assign({},tdS,{textAlign:'right',color:'#94a3b8',fontSize:'10.5px',fontVariantNumeric:'tabular-nums'})},_ri+1),
-                h('td',{style:tdS},row.date),
-                h('td',{style:Object.assign({},tdS,{fontWeight:700,color:'#16a34a',whiteSpace:'nowrap'})},row.amount.toLocaleString()+'원'),
-                h('td',{style:Object.assign({},tdS,{color:'#475569',maxWidth:'130px'})},
-                  h('div',null,row.memo),row.note&&h('div',{style:{fontSize:'10px',color:'#94a3b8'}},row.note),
+                // ══ 🏦 통장 입금 ══
+                h('td',{style:Object.assign({},tdS,{maxWidth:'160px'})},
+                  h('div',{style:{fontWeight:700,color:'#16a34a',whiteSpace:'nowrap',fontSize:'12px',fontVariantNumeric:'tabular-nums'}},
+                    row.amount.toLocaleString()+'원'),
+                  h('div',{style:{fontSize:'10px',color:'#94a3b8',marginTop:'1px'}},row.date),
+                  h('div',{style:{color:'#475569',fontSize:'11px',marginTop:'2px',wordBreak:'break-all'}},row.memo),
+                  row.note&&h('div',{style:{fontSize:'10px',color:'#94a3b8'}},row.note),
                   row._dup && h('div',{title:'처리 대상: '+((dupInfo&&dupInfo.target)||'-')+'\n환경설정 ▸ 입금자 별칭 관리에서 이 기록을 지우면 다시 처리할 수 있습니다',
                     style:{marginTop:'2px',display:'inline-block',background:'#fffbeb',color:'#b45309',
                       border:'1px solid #fde68a',borderRadius:'8px',padding:'0 5px',fontSize:'9.5px',fontWeight:700}},
-                    '⚠️ 이미 처리됨'+(dupInfo&&dupInfo.at?' ('+String(dupInfo.at).slice(0,10)+')':'')),
-                  // 계산서 미발급 의심 (오탐이 있을 수 있어 조용한 회색 배지로 둔다)
-                  ivNone && h('div',{title:'이 금액의 세금계산서 발행분을 최근 90일 안에서 찾지 못했습니다.\n\n· 아직 세금계산서를 발행하지 않은 건일 수 있습니다\n· 매출이 아닌 입금(환급·이자·대체 등)일 수도 있습니다\n\n※ 참고용 표시입니다 (자문료 CMS 일괄이체는 제외)',
-                    style:{marginTop:'2px',display:'inline-block',background:'#f8fafc',color:'#94a3b8',
-                      border:'1px solid #e2e8f0',borderRadius:'8px',padding:'0 5px',fontSize:'9.5px',fontWeight:600}},
-                    '⚠️ 계산서 미발급?')),
-                h('td',{style:tdS},
+                    '⚠️ 이미 처리됨'+(dupInfo&&dupInfo.at?' ('+String(dupInfo.at).slice(0,10)+')':''))),
+                // ══ 🧾 세금계산서 ══
+                h('td',{style:Object.assign({},tdS,{borderLeft:'2px solid #f1f5f9',maxWidth:'160px'})},
+                  ivc ? h('label',{style:{display:'flex',gap:'4px',alignItems:'flex-start',cursor:'pointer'},
+                      title:'발행분과 금액이 맞습니다'
+                            +'\n· '+ivc.entry.company+' / 발급 '+ivc.entry.date+(ivc.gap?' ('+ivc.gap+'일 전)':'')
+                            +(ivc.entry.source==='hometax'?'\n· 홈택스 업로드분':'\n· 수동 발행분')
+                            +(ivc.entry.item?'\n· 품목: '+ivc.entry.item:'')},
+                      h('input',{type:'checkbox',style:{cursor:'pointer',marginTop:'2px'},
+                        checked:!!(incVf[row._k]&&incVf[row._k].inv),
+                        onChange:function(){
+                          var nm=Object.assign({},incVf); var cur=Object.assign({},nm[row._k]||{});
+                          if(cur.inv) delete cur.inv; else cur.inv=true;
+                          nm[row._k]=cur; setIncVf(nm);
+                        }}),
+                      h('span',null,
+                        h('span',{style:{background:'#f0fdf4',color:'#15803d',border:'1px solid #bbf7d0',
+                          borderRadius:'8px',padding:'0 5px',fontSize:'9.5px',fontWeight:700}},'맞음'),
+                        h('div',{style:{fontSize:'11px',color:'#334155',marginTop:'2px',wordBreak:'break-all'}},ivc.entry.company),
+                        h('div',{style:{fontSize:'10px',color:'#94a3b8'}},
+                          ivc.entry.date+' · '+(ivc.entry.amount||0).toLocaleString()+'원'),
+                        ivc.entry.item && h('div',{style:{fontSize:'10px',color:'#64748b',wordBreak:'break-all'}},ivc.entry.item))
+                    )
+                  : h('div',null,
+                      h('span',{title:ivNone
+                          ? '이 금액의 세금계산서 발행분을 최근 90일 안에서 찾지 못했습니다.\n\n· 아직 발행하지 않은 건일 수 있습니다\n· 매출이 아닌 입금(환급·이자·대체 등)일 수도 있습니다'
+                          : '맞는 발행분을 찾지 못했습니다',
+                        style:{background:'#f8fafc',color:'#94a3b8',border:'1px solid #e2e8f0',
+                          borderRadius:'8px',padding:'0 5px',fontSize:'9.5px',fontWeight:700}},'없음'),
+                      ivNone && h('div',{style:{fontSize:'9.5px',color:'#b45309',marginTop:'2px'}},'발행을 빠뜨렸는지 확인'))
+                ),
+                // ══ 📁 사무관리 ══
+                h('td',{style:Object.assign({},tdS,{borderLeft:'2px solid #f1f5f9'})},
+                  // 입금관리에서 이미 확정한 건 — 미입금 목록에서 빠져 있어 엉뚱한 후보가 잡힌다
+                  (incDone[row._k]||[]).length>0 && h('div',{
+                    title:'같은 금액이 이미 확정돼 있습니다. 입금관리에서 곧바로 확정하면 통장 행에는 표시가 남지 않아,\n이 입금이 다시 미매칭으로 보입니다. 같은 건이면 확정하지 말고 넘기세요.',
+                    style:{marginBottom:'4px',background:'#f0fdf4',border:'1px solid #bbf7d0',
+                      borderRadius:'6px',padding:'3px 7px'}},
+                    h('div',{style:{fontSize:'10px',fontWeight:800,color:'#15803d'}},'✅ 이미 확정된 건일 수 있습니다'),
+                    incDone[row._k].slice(0,2).map(function(dn,_di){
+                      return h('div',{key:_di,style:{fontSize:'10px',color:'#475569',marginTop:'1px'}},
+                        dn.company+' · '+dn.date+(dn.kind?' · '+dn.kind:'')
+                        +(dn.gap?' ('+dn.gap+'일 차)':''));
+                    })),
                   // ── CMS 일괄이체는 업체 체크 방식으로 매칭 (아래 드롭다운은 예전 방식으로 그대로 남겨둠) ──
                   isCms && h('button',{onClick:function(){setCmsRow(row);},
                     title:'이 입금은 CMS 일괄이체(자문료 합계)입니다 — 업체를 체크해 한꺼번에 입금표시',
@@ -34792,24 +34911,62 @@ function FinanceLedger(){
                       style:{background:'#eff6ff',color:'#1d4ed8',border:'1px solid #bfdbfe',borderRadius:'8px',
                         padding:'1px 6px',fontSize:'10px',fontWeight:700,whiteSpace:'nowrap'}},
                       '🤖 자동정리 대상'),
-                    sugs.length>=2 && h('span',{onClick:function(){
+                    sugs.length>=1 && h('span',{onClick:function(){
                         var n=Object.assign({},sugOpen);
-                        if(n[row._k]) delete n[row._k]; else n[row._k]=1;
+                        n[row._k]=sugOpened?0:1;         // 지우지 않고 0 으로 — 「직접 접었다」를 기억한다
                         setSugOpen(n);
                       },
                       style:{color:'#64748b',fontSize:'10px',fontWeight:600,cursor:'pointer'}},
-                      (sugOpened?'▴':'▾')+'후보 '+sugs.length)
+                      (sugOpened?'▴ 후보 접기':'▾ 후보 '+sugs.length+'건'))
                   ),
-                  sugOpened && sugs.length>=2 && h('div',{style:{display:'flex',gap:'3px',marginTop:'3px',flexWrap:'wrap'}},
-                    sugs.map(function(s){
-                      var sc=erpMatchLevelColor(s.level);
-                      var on=mId===s.cand.id;
-                      return h('span',{key:s.cand.id,onClick:function(){pickSug(s.cand.id);},
-                        title:s.cand.label+' '+(s.cand.expect||s.cand.amount).toLocaleString()+'원 · '+s.reasons.join('·'),
-                        style:{background:on?sc.fg:sc.bg,color:on?'#fff':sc.fg,border:'1px solid '+sc.bd,
-                          borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:on?700:600,cursor:'pointer'}},
-                        s.cand.companyName+' '+s.score+'%');
-                    })
+                  /* ── 후보를 종류별로 묶어 보여준다 (사건·컨설팅·기금·기타) ──
+                     금액이 맞는 것을 위로 올려 「어느 사건의 돈인지」를 눈으로 고르게 한다. */
+                  sugOpened && sugs.length>=1 && h('div',{style:{marginTop:'4px'}},
+                    (function(){
+                      var grp={};
+                      sugs.forEach(function(s){
+                        var k=(s.cand&&s.cand.store)||'-';
+                        if(!grp[k]) grp[k]=[];
+                        grp[k].push(s);
+                      });
+                      return Object.keys(grp).sort(function(a,b){
+                        return storeBadge(a).ord - storeBadge(b).ord;
+                      }).map(function(k){
+                        var bd=storeBadge(k);
+                        var list=grp[k].slice().sort(function(x,y){
+                          var dx=Math.abs((x.cand.expect||x.cand.amount)-row.amount);
+                          var dy=Math.abs((y.cand.expect||y.cand.amount)-row.amount);
+                          return dx-dy;
+                        });
+                        return h('div',{key:k,style:{marginBottom:'4px'}},
+                          h('div',{style:{fontSize:'9.5px',fontWeight:800,color:'#64748b',marginBottom:'2px'}},
+                            bd.label+' '+list.length+'건'),
+                          list.map(function(s){
+                            var on=mId===s.cand.id;
+                            var ea=s.cand.expect||s.cand.amount;
+                            var d=ea-row.amount;
+                            var _st=_pendStaff(s.cand);
+                            return h('div',{key:s.cand.id,onClick:function(){pickSug(s.cand.id);},
+                              title:s.reasons.join(' · '),
+                              style:{border:'1px solid '+(on?'#1e40af':'#e2e8f0'),background:on?'#eff6ff':'#fff',
+                                borderRadius:'6px',padding:'4px 7px',marginBottom:'3px',cursor:'pointer'}},
+                              h('div',{style:{display:'flex',gap:'4px',alignItems:'center',flexWrap:'wrap'}},
+                                h('span',{style:{background:bd.bg,color:bd.fg,border:'1px solid '+bd.bd,
+                                  borderRadius:'8px',padding:'0 5px',fontSize:'9px',fontWeight:700}},bd.label),
+                                h('b',{style:{fontSize:'11px',color:'#334155'}},s.cand.companyName),
+                                h('span',{style:{fontSize:'10px',color:'#64748b'}},s.cand.label),
+                                h('span',{style:{fontSize:'9.5px',color:'#94a3b8'}},s.score+'%')),
+                              h('div',{style:{fontSize:'10px',color:'#475569',marginTop:'1px'}},
+                                _st && h('span',null,'담당 ',h('b',null,_st),' · '),
+                                h('span',{style:{fontVariantNumeric:'tabular-nums'}},ea.toLocaleString()+'원'),
+                                d===0 ? h('span',{style:{color:'#15803d',fontWeight:700,marginLeft:'4px'}},'금액 일치')
+                                      : h('span',{style:{color:'#b45309',marginLeft:'4px',fontVariantNumeric:'tabular-nums'}},
+                                          (d>0?'+':'')+d.toLocaleString()))
+                            );
+                          })
+                        );
+                      });
+                    })()
                   ),
                   // ── 1-1 매칭 요약 필 (담당·세금·계산서·성과) ──
                   (function(){
@@ -34818,19 +34975,22 @@ function FinanceLedger(){
                     var _staff = _pendStaff(_pi);
                     var _tax = _pendTaxType(_pi);
                     var _perf = _pendPerfEst(_pi, row.amount);
-                    var _ivc = null;
-                    try{ _ivc = erpInvoiceMatch({date:row.date,amount:row.amount,memo:row.memo||''}, _pi.companyName); }catch(_e){}
                     return h('div',{style:{display:'flex',gap:'4px',marginTop:'3px',flexWrap:'wrap',alignItems:'center'}},
+                      // 사무관리 쪽을 눈으로 확인했다는 표시 (계산서 칸의 체크와 짝)
+                      !row._dup && h('label',{title:'사무관리 쪽을 확인했으면 체크해 두세요',
+                        style:{display:'flex',alignItems:'center',gap:'3px',cursor:'pointer',fontSize:'9.5px',
+                          color:(incVf[row._k]&&incVf[row._k].work)?'#15803d':'#94a3b8',fontWeight:700}},
+                        h('input',{type:'checkbox',style:{cursor:'pointer'},
+                          checked:!!(incVf[row._k]&&incVf[row._k].work),
+                          onChange:function(){
+                            var nm=Object.assign({},incVf); var cur=Object.assign({},nm[row._k]||{});
+                            if(cur.work) delete cur.work; else cur.work=true;
+                            nm[row._k]=cur; setIncVf(nm);
+                          }}),'확인'),
                       _tax && h('span',{style:{background:_tax==='3.3%'||_tax==='8.8%'?'#f5f3ff':_tax==='VAT포함'?'#f8fafc':'#eff6ff',
                         color:_tax==='3.3%'||_tax==='8.8%'?'#7c3aed':_tax==='VAT포함'?'#64748b':'#1e40af',
                         border:'1px solid '+(_tax==='3.3%'||_tax==='8.8%'?'#ddd6fe':_tax==='VAT포함'?'#e2e8f0':'#bfdbfe'),
                         borderRadius:'8px',padding:'1px 5px',fontSize:'9px',fontWeight:700}},_tax),
-                      _ivc ? h('span',{title:'계산서 '+(_ivc.entry?_ivc.entry.date:'')
-                          +' · '+(_ivc.entry?((_ivc.entry.amount||0).toLocaleString()+'원'):''),
-                        style:{background:'#f0fdf4',color:'#16a34a',border:'1px solid #bbf7d0',
-                          borderRadius:'8px',padding:'1px 5px',fontSize:'9px',fontWeight:700}},'계산서')
-                        : h('span',{style:{background:'#fffbeb',color:'#d97706',border:'1px solid #fde68a',
-                          borderRadius:'8px',padding:'1px 5px',fontSize:'9px',fontWeight:600}},'계산서?'),
                       _staff && h('span',{style:{fontSize:'10px',color:'#475569'}},'담당 ',h('b',null,_staff)),
                       _perf>0 && h('span',{style:{fontSize:'10px',color:'#16a34a',fontWeight:600,fontVariantNumeric:'tabular-nums'}},
                         '성과 '+_perf.toLocaleString()),
