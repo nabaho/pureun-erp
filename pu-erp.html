@@ -33543,6 +33543,9 @@ function FinanceLedger(){
   var detPopS=useState(null);    var detPop=detPopS[0];   var setDetPop=detPopS[1];   // 1-1 입금 상세 팝업 {row, pItem}
   var confHistS=useState(false); var confHistOpen=confHistS[0]; var setConfHistOpen=confHistS[1]; // 4-1 확정 이력 팝업
   var editPopS=useState(null);   var editPop=editPopS[0]; var setEditPop=editPopS[1]; // 4-3 비교 수정 팝업 {incomeRecord}
+  var incChkS=useState({});      var incChk=incChkS[0];   var setIncChk=incChkS[1];   // 입금 행 체크 {_k: true}
+  var incMonS=useState('');      var incMon=incMonS[0];   var setIncMon=incMonS[1];   // 월 필터 (''=전체, 'YYYY-MM')
+  var ldInfoS=useState(false);   var ldInfoOpen=ldInfoS[0]; var setLdInfoOpen=ldInfoS[1]; // 파일 정보 접기/펼치기
   var draftTimer=useRef(null);   // 초안 저장 디바운스
   var draftReady=useRef(false);  // 복원 완료 전에는 저장하지 않음
 
@@ -33874,6 +33877,12 @@ function FinanceLedger(){
   var incList = hideDup ? incAll.filter(function(r){return !r._dup;}) : incAll;
   var expList = hideDup ? expAll.filter(function(r){return !r._dup;}) : expAll;
 
+  // ── 월별 필터 (입금 탭) ──
+  var _incMonSet={}; incAll.forEach(function(r){var m=String(r.date||'').slice(0,7);if(m&&m.length>=7)_incMonSet[m]=1;});
+  var incMonths=Object.keys(_incMonSet).sort();
+  if(incMon && _incMonSet[incMon]) incList=incList.filter(function(r){return String(r.date||'').slice(0,7)===incMon;});
+  else if(incMon && !_incMonSet[incMon]) setIncMon('');
+
   var inMatchedCnt  = incAll.filter(function(r){return !r._dup && inMatch[r._k];}).length;
   var expReadyCnt   = expAll.filter(function(r){return !r._dup && expCat[r._k];}).length;
 
@@ -34152,49 +34161,46 @@ function FinanceLedger(){
         fileType==='nicebill' ? '나이스빌 → CMS 출금결과 내역 → 엑셀 저장' : '인터넷뱅킹·카드사 → 거래내역 → 엑셀 저장')
     ),
 
-    // ── 🏦 보관된 CMS 내역 안내 (통장·카드 화면일 때만 — 클릭하면 CMS 내역으로 이동) ──
-    fileType!=='nicebill' && nb && nb.rows.length>0 && h('div',{style:{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',
-      background:'#f5f3ff',border:'1px solid #ddd6fe',borderRadius:'6px',padding:'4px 10px',marginBottom:'6px'}},
-      h('span',{style:{fontSize:'11px',color:'#6d28d9',fontWeight:700,whiteSpace:'nowrap'}},
-        '🏦 보관된 나이스빌 CMS 내역 '+nb.rows.length+'건'
-        + (nbDateCnt ? ' · 정산예정일 '+nbDateCnt+'일' : '')
-        + ' — 더빌이체 입금 매칭에 함께 쓰입니다'),
-      h('div',{style:{flex:1}}),
-      h('button',{onClick:function(){ setFileType('nicebill'); },
-        style:{padding:'3px 10px',background:'#7c3aed',color:'#fff',border:'none',borderRadius:'5px',
-          fontSize:'10.5px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'저장분 보기')
-    ),
-
-    // ── 저장된 초안 안내 (1줄) — 파일명·업로드시각·미처리 건수 + 비우기 ──
-    fileType!=='nicebill' && rows && h('div',{style:{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',
-      background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'6px',padding:'4px 10px',marginBottom:'6px'}},
-      h('span',{style:{fontSize:'11px',color:'#475569',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'420px'}},
-        '📂 '+(fName||'업로드분')
-        +' · '+((upAt||'').slice(0,16).replace('T',' ') || '-')
-        +' · 미처리 '+(incCnt+expCnt)+'건'),
-      restored && h('span',{style:{fontSize:'10px',color:'#1d4ed8',background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'1px 6px',fontWeight:700,whiteSpace:'nowrap'}},'저장분 복원'),
-      // ── 중복 방지: 이미 확정·등록한 행 숨기기 (기본 숨김) ──
+    // ── 소스 요약 + 상세 (접이식 1줄) ──
+    fileType!=='nicebill' && rows && h('div',{style:{display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap',
+      background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'6px',padding:'4px 10px',marginBottom:'6px',fontSize:'11px'}},
+      h('span',{style:{fontWeight:700,color:'#475569',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'260px'}},
+        '📂 '+(fName||'업로드분')+' · 미처리 '+(incCnt+expCnt)+'건'),
+      nb && nb.rows.length>0 && h('span',{style:{background:'#f5f3ff',color:'#6d28d9',border:'1px solid #ddd6fe',borderRadius:'8px',padding:'1px 6px',fontWeight:700,fontSize:'10px',cursor:'pointer',whiteSpace:'nowrap'},
+        onClick:function(){setFileType('nicebill');}},'CMS '+nb.rows.length+'건'),
+      restored && h('span',{style:{background:'#eff6ff',color:'#1d4ed8',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'1px 6px',fontWeight:700,fontSize:'10px',whiteSpace:'nowrap'}},'복원'),
       (dupIncCnt+dupExpCnt)>0 && h('label',{
-        title:'전에 확정·등록한 것과 같은 날짜·금액·적요의 행입니다 (일괄작업에서도 제외됩니다)',
-        style:{display:'flex',alignItems:'center',gap:'4px',cursor:'pointer',whiteSpace:'nowrap',
-          fontSize:'10.5px',fontWeight:700,color:'#b45309',background:'#fffbeb',
-          border:'1px solid #fde68a',borderRadius:'8px',padding:'1px 7px'}},
+        title:'전에 확정·등록한 것과 같은 날짜·금액·적요의 행입니다',
+        style:{display:'flex',alignItems:'center',gap:'3px',cursor:'pointer',whiteSpace:'nowrap',
+          fontSize:'10px',fontWeight:700,color:'#b45309',background:'#fffbeb',
+          border:'1px solid #fde68a',borderRadius:'8px',padding:'1px 6px'}},
         h('input',{type:'checkbox',checked:!!hideDup,onChange:function(){setHideDup(!hideDup);}}),
-        '이미 처리된 '+(dupIncCnt+dupExpCnt)+'건 숨기기'),
+        '처리됨 '+(dupIncCnt+dupExpCnt)+'건 숨기기'),
       h('div',{style:{flex:1}}),
+      h('span',{onClick:function(){setLdInfoOpen(!ldInfoOpen);},
+        style:{fontSize:'10px',color:'#64748b',cursor:'pointer',fontWeight:600,whiteSpace:'nowrap'}},
+        ldInfoOpen?'▴ 접기':'▾ 상세'),
       h('button',{onClick:clearDraft,
         title:'업로드한 거래내역만 비웁니다 (확정·등록분은 유지)',
-        style:{padding:'3px 9px',background:'#fef2f2',color:'#b91c1c',border:'1px solid #fecaca',borderRadius:'5px',fontSize:'10.5px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'🗑 내역 비우기')
+        style:{padding:'2px 7px',background:'#fef2f2',color:'#b91c1c',border:'1px solid #fecaca',borderRadius:'5px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'🗑 비우기')
     ),
-
-    // ── 컬럼 감지 결과 표시 (1줄) ──
-    fileType!=='nicebill' && detected && h('div',{style:{background:'#f0f9ff',border:'1px solid #bfdbfe',borderRadius:'6px',padding:'3px 10px',marginBottom:'6px',fontSize:'11px',color:'#1d4ed8',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},
-      '📋 감지된 컬럼: ',
-      Object.entries(detected).map(function(e,i){
-        var label={date:'날짜',dep:'입금',wdw:'출금',memo:'적요',note:'메모',bal:'잔액',time:'시간'};
-        return h('span',{key:i,style:{marginRight:'8px'}},'['+e[1]+'열] '+(label[e[0]]||e[0]));
-      }),
-      h('span',{style:{color:'#94a3b8'}},'※ 컬럼이 다르면 알려주세요')
+    // 상세 정보 (접었을 때 숨김)
+    fileType!=='nicebill' && rows && ldInfoOpen && h('div',{style:{marginBottom:'6px',display:'flex',flexDirection:'column',gap:'4px'}},
+      h('div',{style:{fontSize:'10.5px',color:'#475569',padding:'2px 10px'}},
+        '업로드: '+((upAt||'').slice(0,16).replace('T',' ')||'-')),
+      nb && nb.rows.length>0 && h('div',{style:{display:'flex',alignItems:'center',gap:'6px',padding:'2px 10px',fontSize:'10.5px'}},
+        h('span',{style:{color:'#6d28d9',fontWeight:700}},
+          '🏦 나이스빌 CMS '+nb.rows.length+'건'
+          +(nbDateCnt?' · 정산예정일 '+nbDateCnt+'일':'')
+          +' — 더빌이체 매칭에 사용'),
+        h('button',{onClick:function(){setFileType('nicebill');},
+          style:{padding:'2px 8px',background:'#7c3aed',color:'#fff',border:'none',borderRadius:'4px',fontSize:'10px',fontWeight:700,cursor:'pointer'}},'CMS 보기')),
+      detected && h('div',{style:{fontSize:'10.5px',color:'#1d4ed8',padding:'2px 10px'}},
+        '📋 컬럼: ',
+        Object.entries(detected).map(function(e,i){
+          var label={date:'날짜',dep:'입금',wdw:'출금',memo:'적요',note:'메모',bal:'잔액',time:'시간'};
+          return h('span',{key:i,style:{marginRight:'6px'}},'['+e[1]+'열] '+(label[e[0]]||e[0]));
+        }))
     ),
 
     // ══════════════════════════════════════════════
@@ -34476,6 +34482,23 @@ function FinanceLedger(){
 
       // ── 입금 테이블 (입금 탭에서만 렌더) ──
       ldTabEff==='inc' && incList.length>0 && h('div',{style:{marginBottom:'16px'}},
+        // ── 월별 필터 탭 ──
+        incMonths.length>1 && h('div',{style:{display:'flex',gap:'4px',marginBottom:'6px',flexWrap:'wrap',alignItems:'center'}},
+          h('span',{style:{fontSize:'10.5px',color:'#64748b',fontWeight:600,marginRight:'2px'}},'월별'),
+          h('button',{onClick:function(){setIncMon('');setIncChk({});},
+            style:{padding:'2px 10px',borderRadius:'12px',cursor:'pointer',whiteSpace:'nowrap',fontSize:'10.5px',fontWeight:!incMon?700:500,
+              border:!incMon?'1.5px solid #1e40af':'1px solid #cbd5e1',
+              background:!incMon?'#1e40af':'#fff',color:!incMon?'#fff':'#64748b'}},'전체'),
+          incMonths.map(function(m){
+            var on=incMon===m;
+            var mCnt=incAll.filter(function(r){return !r._dup && String(r.date||'').slice(0,7)===m;}).length;
+            return h('button',{key:m,onClick:function(){setIncMon(m);setIncChk({});},
+              style:{padding:'2px 10px',borderRadius:'12px',cursor:'pointer',whiteSpace:'nowrap',fontSize:'10.5px',fontWeight:on?700:500,
+                border:on?'1.5px solid #1e40af':'1px solid #cbd5e1',
+                background:on?'#1e40af':'#fff',color:on?'#fff':'#64748b'}},
+              parseInt(m.slice(5),10)+'월 ('+mCnt+')');
+          })
+        ),
         (function(){
           var _advAuto=0,_manualNeed=0,_noMatch=0;
           incList.forEach(function(r){
@@ -34486,20 +34509,31 @@ function FinanceLedger(){
             else if(b) _manualNeed++;
             else _noMatch++;
           });
-          return h('div',{style:{fontWeight:700,fontSize:'12px',color:'#16a34a',marginBottom:'6px',padding:'6px 10px',background:'#f0fdf4',borderRadius:'5px',display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}},
-            '💰 입금 '+incList.length+'건 · '+incSum.toLocaleString()+'원',
-            _advAuto>0 && h('span',{style:{background:'#f0fdfa',color:'#0d9488',border:'1px solid #99f6e4',borderRadius:'8px',padding:'1px 7px',fontSize:'10px',fontWeight:700}},'자문료 '+_advAuto+'건 자동'),
-            _manualNeed>0 && h('span',{style:{background:'#fffbeb',color:'#d97706',border:'1px solid #fde68a',borderRadius:'8px',padding:'1px 7px',fontSize:'10px',fontWeight:700}},'수동검증 '+_manualNeed+'건'),
-            _noMatch>0 && h('span',{style:{background:'#fef2f2',color:'#dc2626',border:'1px solid #fecaca',borderRadius:'8px',padding:'1px 7px',fontSize:'10px',fontWeight:700}},'미매칭 '+_noMatch+'건'),
+          return h('div',{style:{fontWeight:700,fontSize:'12px',color:'#16a34a',marginBottom:'6px',padding:'5px 10px',background:'#f0fdf4',borderRadius:'5px',display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap'}},
+            '💰 '+(incMon?parseInt(incMon.slice(5),10)+'월 ':'')+'입금 '+incList.length+'건 · '+incSum.toLocaleString()+'원',
+            _advAuto>0 && h('span',{style:{background:'#f0fdfa',color:'#0d9488',border:'1px solid #99f6e4',borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:700}},'자문료 '+_advAuto+'건'),
+            _manualNeed>0 && h('span',{style:{background:'#fffbeb',color:'#d97706',border:'1px solid #fde68a',borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:700}},'수동 '+_manualNeed+'건'),
+            _noMatch>0 && h('span',{style:{background:'#fef2f2',color:'#dc2626',border:'1px solid #fecaca',borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:700}},'미매칭 '+_noMatch+'건'),
+            Object.keys(incChk).length>0 && h('span',{style:{background:'#eff6ff',color:'#1d4ed8',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:700}},'✓ '+Object.keys(incChk).length+'건 선택'),
             h('span',{style:{flex:'1'}}),
             _advAuto>0 && h('button',{onClick:function(){setAdvBatchOpen(true);},
-              style:{padding:'4px 10px',background:'#0d9488',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10.5px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'자문료 일괄확인'),
+              style:{padding:'3px 8px',background:'#0d9488',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'자문료 일괄확인'),
             h('button',{onClick:function(){setConfHistOpen(true);},
-              style:{padding:'4px 10px',background:'#64748b',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10.5px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'확정 이력'));
+              style:{padding:'3px 8px',background:'#64748b',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'확정 이력'));
         })(),
         h('div',{style:{overflowX:'auto'}},
           h('table',{style:{width:'100%',borderCollapse:'collapse'}},
             h('thead',null,h('tr',null,
+              h('th',{style:Object.assign({},thS,{width:'28px',textAlign:'center',padding:'7px 2px'})},
+                h('input',{type:'checkbox',style:{cursor:'pointer'},
+                  checked:incList.length>0 && incList.filter(function(r){return !r._dup;}).length>0 && incList.filter(function(r){return !r._dup;}).every(function(r){return incChk[r._k];}),
+                  onChange:function(){
+                    var valid=incList.filter(function(r){return !r._dup;});
+                    var allOn=valid.length>0 && valid.every(function(r){return incChk[r._k];});
+                    var nm={};
+                    if(!allOn) valid.forEach(function(r){ nm[r._k]=true; });
+                    setIncChk(nm);
+                  }})),
               h('th',{style:Object.assign({},thS,{width:'34px',textAlign:'right'})},'#'),
               h('th',{style:thS},'날짜'),h('th',{style:thS},'입금액'),h('th',{style:thS},'적요'),
               h('th',{style:Object.assign({},thS,{minWidth:'170px'})},'미입금 매칭'),h('th',{style:thS},'처리')
@@ -34517,12 +34551,15 @@ function FinanceLedger(){
               var ivNone=!!invNone[row._k];                                  // 그 금액의 계산서를 90일 안에서 못 찾음
               var dupInfo=row._dup?erpIsBankRowProcessed(row):null;
               function pickSug(pid){ var nm=Object.assign({},inMatch); nm[row._k]=pid; setInMatch(nm); }
-              return h('tr',{key:row._k,style:{background:pItem?'#f0fdf4':'#fff',opacity:row._dup?0.55:1,cursor:'pointer'},
+              return h('tr',{key:row._k,style:{background:incChk[row._k]?'#eff6ff':(pItem?'#f0fdf4':'#fff'),opacity:row._dup?0.55:1,cursor:'pointer'},
                 onClick:function(e){
                   if(e.target.tagName==='SELECT'||e.target.tagName==='OPTION'||e.target.tagName==='INPUT'||e.target.tagName==='BUTTON'||e.target.closest&&e.target.closest('select,button,input')) return;
                   var _pi=pItem||(best?(pendById[best.cand.id]||best.cand):null);
                   if(_pi) setDetPop({row:row,pItem:_pi});
                 }},
+                h('td',{style:Object.assign({},tdS,{textAlign:'center',padding:'7px 2px'})},
+                  !row._dup && h('input',{type:'checkbox',style:{cursor:'pointer'},checked:!!incChk[row._k],
+                    onChange:function(){ var nm=Object.assign({},incChk); if(nm[row._k]) delete nm[row._k]; else nm[row._k]=true; setIncChk(nm); }})),
                 h('td',{style:Object.assign({},tdS,{textAlign:'right',color:'#94a3b8',fontSize:'10.5px',fontVariantNumeric:'tabular-nums'})},_ri+1),
                 h('td',{style:tdS},row.date),
                 h('td',{style:Object.assign({},tdS,{fontWeight:700,color:'#16a34a',whiteSpace:'nowrap'})},row.amount.toLocaleString()+'원'),
@@ -34682,8 +34719,8 @@ function FinanceLedger(){
                         padding:'1px 6px',fontSize:'10px',fontWeight:700,cursor:'pointer'}},
                       '🧾 계산서 후보: '+ivc.entry.company+' · '+ivc.entry.date+' · '+(ivc.entry.expect||0).toLocaleString()+'원')
                   ),
-                  // ── 나눠담기 (버튼만 — 패널은 모달로) ──
-                  !row._dup && pending.length>=2 && (!best || best.score<88 || /\d+건/.test(row.memo||'')) && h('div',{style:{marginTop:'4px'}},
+                  // ── 나눠담기: 체크된 행에만 표시 ──
+                  incChk[row._k] && !row._dup && pending.length>=2 && h('div',{style:{marginTop:'4px'}},
                     h('button',{onClick:function(){
                         var init={};
                         if(mId){ var pi=pending.find(function(p){return p.id===mId;}); if(pi) init[mId]=pi.expect||pi.amount; }
