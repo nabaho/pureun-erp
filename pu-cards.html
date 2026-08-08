@@ -246,6 +246,16 @@ body.pc #main,body.pc #fab,body.pc #selbar{display:none!important}
 .matmeta{font-size:11.5px;color:#8b98b3;margin-top:8px}
 .matempty{text-align:center;color:#8b98b3;font-size:13px;line-height:1.9;padding:38px 10px;
   border:1px dashed #e4e8f0;border-radius:12px}
+.mattabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.mattab{border:1.5px solid #d7dfec;background:#fff;color:#33415e;border-radius:18px;
+  padding:6px 13px;font-size:12.5px;font-weight:700;cursor:pointer}
+.mattab:hover{background:#f2f6fc}
+.mattab.on{background:#1e2a47;border-color:#1e2a47;color:#fff}
+.mattab b{margin-left:5px;font-weight:800}
+.mattab:not(.on) b{color:#5a6885}
+.matf select{width:100%;padding:8px 10px;border:1px solid #dde3ee;border-radius:9px;font-size:13px;
+  color:#1b2536;background:#fff;font-family:inherit}
+.matf select:focus{outline:none;border-color:#1e2a47}
 .setback{display:inline-flex;align-items:center;gap:6px;background:#eef1f6;border:1px solid #dde3ee;color:#33415e;
   border-radius:8px;padding:6px 12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:10px}
 .setback:hover{background:#e3e9f5}
@@ -1187,6 +1197,14 @@ function loadMaterials(cb){
   }).catch(e=>console.warn('[materials]', e&&e.message));
 }
 function matList(){ return Object.values(_matMeta).filter(m=>m&&m.id).sort((a,b)=>(a.uploadedAt||0)-(b.uploadedAt||0)); }
+/* 자료 갈래 — 제안서·계약서·홍보물처럼 쓰임이 달라 섞이면 고를 때 헷갈린다.
+   갈래가 없던 옛 자료는 '기타'로 본다. */
+const MAT_CATS = ['제안서','계약서','법인홍보물','기타'];
+const matCat = m => (m && MAT_CATS.indexOf(m.cat)>=0) ? m.cat : '기타';
+function matListByCat(cat){
+  const all = matList();
+  return (!cat || cat==='all') ? all : all.filter(m=>matCat(m)===cat);
+}
 
 /* 자료함에서 받는 파일 형식 — 확장자별 MIME·아이콘·브라우저 표시 가능 여부 */
 const MAT_TYPES = {
@@ -1230,7 +1248,7 @@ function renderSendMat(){
       <div class="sm-slot">
         <input type="checkbox" class="sm-chk" data-id="${m.id}" checked>
         <span class="sm-ic">${matIcon(m.fileName)}</span>
-        <div class="sm-sinfo"><div class="n">${esc(m.name||'자료')}</div>
+        <div class="sm-sinfo"><div class="n">${esc(matCat(m))} · ${esc(m.name||'자료')}</div>
           <div class="f">${m.desc?esc(m.desc)+' · ':''}${esc(m.fileName||'')}</div></div>
       </div>`).join('')
     : `<div class="sm-empty">아직 자료함에 등록된 자료가 없습니다.<br>왼쪽 <b>📎 자료함</b>에서 먼저 올려주세요.</div>`;
@@ -1303,13 +1321,22 @@ async function downloadMaterial(id){
 /* ══════ 자료함 — 본문 전용 화면 ══════
    팝업이 좁아 이름을 prompt 로만 받을 수 있었고 설명은 아예 넣을 곳이 없었다.
    환경설정과 같은 방식으로 본문 전체를 쓴다. */
+function setMatCat(c){ state.matCat = c || 'all'; renderMatPage(); }
 function openMatPage(){ state.view='mat'; render();
   try{ document.getElementById('pcMain').scrollTop=0; }catch(_){}
   loadMaterials(()=>{ if(state.view==='mat') renderMatPage(); }); }
 function closeMatPage(){ state.view='list'; render(); }
 function renderMatPage(){
   const el=$('pcMat'); if(!el) return;
-  const list = matList();
+  const cat = state.matCat || 'all';
+  const list = matListByCat(cat);
+  const all  = matList();
+  const tabs = ['all'].concat(MAT_CATS).map(c=>{
+    const on = (cat===c);
+    const n = c==='all' ? all.length : all.filter(m=>matCat(m)===c).length;
+    return `<button class="mattab ${on?'on':''}" onclick="setMatCat('${c}')">${c==='all'?'📋 전체':esc(c)}
+      <b>${n}</b></button>`;
+  }).join('');
   const rows = list.length ? list.map(m=>`
     <div class="matcard">
       <div class="matline">
@@ -1318,6 +1345,12 @@ function renderMatPage(){
           <label>이름</label>
           <input value="${esc(m.name||'')}" placeholder="예: 2025 인사노무자문 제안서"
             onchange="saveMatField('${m.id}','name',this.value)">
+        </div>
+        <div class="matf" style="flex:0 0 130px;min-width:120px">
+          <label>갈래</label>
+          <select onchange="saveMatField('${m.id}','cat',this.value)">
+            ${MAT_CATS.map(c=>`<option value="${c}" ${matCat(m)===c?'selected':''}>${esc(c)}</option>`).join('')}
+          </select>
         </div>
         <div class="matacts">
           <button onclick="previewMaterial('${m.id}')" title="미리보기">👁 보기</button>
@@ -1332,13 +1365,16 @@ function renderMatPage(){
       </div>
       <div class="matmeta">📄 ${esc(m.fileName||'')} · ${m.size?((m.size/1024/1024).toFixed(1)+'MB · '):''}${fmtDate(m.uploadedAt)}</div>
     </div>`).join('')
-    : `<div class="matempty">아직 자료가 없습니다.<br>위 <b>＋ 새 자료 올리기</b>로 회사소개서·제안서·계약서를 올리세요.</div>`;
+    : (cat==='all'
+        ? `<div class="matempty">아직 자료가 없습니다.<br>위 <b>＋ 새 자료 올리기</b>로 제안서·계약서·홍보물을 올리세요.</div>`
+        : `<div class="matempty">「${esc(cat)}」에 든 자료가 없습니다.<br>자료의 <b>갈래</b>를 이걸로 바꾸면 여기 모입니다.</div>`);
   el.innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <button class="setback" onclick="closeMatPage()">← 목록으로</button>
       <h2 style="margin:0 0 10px;font-size:17px;color:#16223c">📎 자료함</h2>
-      <span style="margin:0 0 10px;font-size:12px;color:#8b98b3">고객에게 보낼 자료를 여기서 관리합니다 · ${list.length}개</span>
+      <span style="margin:0 0 10px;font-size:12px;color:#8b98b3">고객에게 보낼 자료를 여기서 관리합니다 · ${all.length}개</span>
     </div>
+    <div class="mattabs">${tabs}</div>
     <div id="matDrop">
       <label class="matadd">＋ 새 자료 올리기<input type="file" accept="${MAT_ACCEPT}" style="display:none" onchange="addMaterial(this)"></label>
       <div class="matdrophint">파일을 이 자리에 끌어다 놓아도 올라갑니다 · PDF·워드·한글·PPT·엑셀·이미지 (8MB 이하)</div>
