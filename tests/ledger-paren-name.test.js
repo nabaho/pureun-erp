@@ -1,6 +1,12 @@
 // 괄호 안 업체명 대조가 실제로 동작하는지 — 함수를 떼어내 돌려본다
 const fs = require('fs');
-const src = fs.readFileSync('C:/Users/fair0/Documents/pureunall/pu-erp.html', 'utf8');
+/* ⚠ 2026-08-08 고침 — 여기에 `C:/Users/.../pu-erp.html` 이라는 **그 PC의 절대 경로**가
+   박혀 있었다. 대표님 컴퓨터에서는 늘 통과했지만 **배포 서버(리눅스)에서는 늘 실패**해
+   모든 PR 이 막혔다. 게다가 그 경로는 PR 의 내용이 아니라 **그때 그 PC 에 있던 파일**을
+   읽으므로, 통과해도 무엇을 검사한 것인지 알 수 없었다.
+   검사 파일 자리를 기준으로 찾는다 — 다른 검사들이 모두 쓰는 방식이다. */
+const path = require('path');
+const src = fs.readFileSync(path.join(__dirname, '..', 'pu-erp.html'), 'utf8');
 
 // 필요한 함수들만 뽑아낸다
 function grab(name, kind){
