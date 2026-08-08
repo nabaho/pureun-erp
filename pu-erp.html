@@ -33877,14 +33877,18 @@ function FinanceLedger(){
   var incList = hideDup ? incAll.filter(function(r){return !r._dup;}) : incAll;
   var expList = hideDup ? expAll.filter(function(r){return !r._dup;}) : expAll;
 
-  // ── 월별 필터 (입금 탭) ──
-  var _incMonSet={}; incAll.forEach(function(r){var m=String(r.date||'').slice(0,7);if(m&&m.length>=7)_incMonSet[m]=1;});
-  var incMonths=Object.keys(_incMonSet).sort();
-  if(incMon && _incMonSet[incMon]) incList=incList.filter(function(r){return String(r.date||'').slice(0,7)===incMon;});
-  else if(incMon && !_incMonSet[incMon]) setIncMon('');
+  // ── 월별 필터 (입금·출금 공용) ──
+  var _ldMonSet={};
+  incAll.forEach(function(r){var m=String(r.date||'').slice(0,7);if(m&&m.length>=7)_ldMonSet[m]=(_ldMonSet[m]||{inc:0,exp:0,incAmt:0,expAmt:0}),_ldMonSet[m].inc++,_ldMonSet[m].incAmt+=(parseInt(r.amount,10)||0);});
+  expAll.forEach(function(r){var m=String(r.date||'').slice(0,7);if(m&&m.length>=7){if(!_ldMonSet[m])_ldMonSet[m]={inc:0,exp:0,incAmt:0,expAmt:0};_ldMonSet[m].exp++;_ldMonSet[m].expAmt+=(parseInt(r.amount,10)||0);}});
+  var ldMonths=Object.keys(_ldMonSet).sort();
+  if(incMon && _ldMonSet[incMon]){
+    incList=incList.filter(function(r){return String(r.date||'').slice(0,7)===incMon;});
+    expList=expList.filter(function(r){return String(r.date||'').slice(0,7)===incMon;});
+  } else if(incMon && !_ldMonSet[incMon]) setIncMon('');
 
-  var inMatchedCnt  = incAll.filter(function(r){return !r._dup && inMatch[r._k];}).length;
-  var expReadyCnt   = expAll.filter(function(r){return !r._dup && expCat[r._k];}).length;
+  var inMatchedCnt  = incList.filter(function(r){return !r._dup && inMatch[r._k];}).length;
+  var expReadyCnt   = expList.filter(function(r){return !r._dup && expCat[r._k];}).length;
 
   // ── 화면에 보이는 행의 금액 합계 (넘버링·합계 표시용) ──
   function _sumAmt(list){ return list.reduce(function(s,r){ return s + (parseInt(r&&r.amount,10)||0); }, 0); }
@@ -33892,9 +33896,9 @@ function FinanceLedger(){
   var expSum = _sumAmt(expList);
 
   // ── 입금/출금 탭 (한 번에 한 섹션만 렌더 — 스크롤·렌더 비용 절감) ──
-  // 건수는 '처리할 행' 기준 (이미 처리된 행은 제외)
-  var incCnt = incAll.length - dupIncCnt;
-  var expCnt = expAll.length - dupExpCnt;
+  // 건수는 월 필터 적용 후 '처리할 행' 기준
+  var incCnt = incList.filter(function(r){return !r._dup;}).length;
+  var expCnt = expList.filter(function(r){return !r._dup;}).length;
   // 저장된 탭에 행이 없으면 반대쪽을 보여준다 (빈 화면 방지)
   var ldTabEff = ldTab;
   if(ldTabEff==='exp' && expCnt===0 && incCnt>0) ldTabEff='inc';
@@ -34324,6 +34328,53 @@ function FinanceLedger(){
     // ── 파싱 결과 ──
     fileType!=='nicebill' && rows && h('div',null,
 
+      // ── 월별 현황 ──
+      ldMonths.length>0 && (function(){
+        var _cfm={}; // 월별 확정 건수
+        try{(dbGet('finance_income',[])||[]).forEach(function(fi){
+          if(!fi||!fi.date) return;
+          var ym=String(fi.date).slice(0,7);
+          if(!_cfm[ym]) _cfm[ym]={cnt:0,amt:0};
+          _cfm[ym].cnt++; _cfm[ym].amt+=(parseInt(fi.amount,10)||0);
+        });}catch(_e){}
+        return h('div',{style:{display:'flex',gap:'6px',marginBottom:'8px',flexWrap:'wrap',alignItems:'stretch'}},
+          ldMonths.map(function(m){
+            var on=incMon===m;
+            var d=_ldMonSet[m];
+            var cf=_cfm[m]||{cnt:0,amt:0};
+            var isOnly=ldMonths.length===1;
+            var dupInM=incAll.filter(function(r){return r._dup && String(r.date||'').slice(0,7)===m;}).length
+                      +expAll.filter(function(r){return r._dup && String(r.date||'').slice(0,7)===m;}).length;
+            var todoInM=(d.inc+d.exp)-dupInM;
+            return h('div',{key:m,onClick:function(){setIncMon(on&&!isOnly?'':m);setIncChk({});},
+              style:{flex:isOnly?'1':'0 0 auto',minWidth:'160px',
+                padding:'8px 14px',borderRadius:'8px',cursor:isOnly?'default':'pointer',
+                border:on||isOnly?'2px solid #1e40af':'1.5px solid #e2e8f0',
+                background:on||isOnly?'#eff6ff':'#fff',
+                transition:'all 0.15s'}},
+              h('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'4px'}},
+                h('span',{style:{fontSize:'13px',fontWeight:800,color:on||isOnly?'#1e40af':'#334155'}},
+                  parseInt(m.slice(0,4),10)+'년 '+parseInt(m.slice(5),10)+'월'),
+                todoInM>0 && h('span',{style:{background:'#fef2f2',color:'#dc2626',border:'1px solid #fecaca',
+                  borderRadius:'8px',padding:'0 5px',fontSize:'9.5px',fontWeight:700}},
+                  '미처리 '+todoInM)
+              ),
+              h('div',{style:{display:'flex',gap:'8px',fontSize:'10.5px',color:'#475569',flexWrap:'wrap'}},
+                d.inc>0 && h('span',null,'💰',h('b',{style:{color:'#16a34a',margin:'0 2px'}},d.inc),
+                  h('span',{style:{color:'#94a3b8'}},d.incAmt.toLocaleString())),
+                d.exp>0 && h('span',null,'💸',h('b',{style:{color:'#d97706',margin:'0 2px'}},d.exp),
+                  h('span',{style:{color:'#94a3b8'}},d.expAmt.toLocaleString())),
+                cf.cnt>0 && h('span',{style:{color:'#16a34a'}},
+                  '✅ 확정 ',h('b',null,cf.cnt),' ',h('span',{style:{color:'#94a3b8'}},cf.amt.toLocaleString()))
+              )
+            );
+          }),
+          ldMonths.length>1 && incMon && h('button',{onClick:function(){setIncMon('');setIncChk({});},
+            style:{padding:'6px 12px',borderRadius:'8px',border:'1px solid #cbd5e1',background:'#fff',
+              color:'#64748b',fontSize:'11px',fontWeight:600,cursor:'pointer',alignSelf:'center'}},'전체 보기')
+        );
+      })(),
+
       // 요약
       h('div',{style:{display:'flex',gap:'8px',marginBottom:'12px',flexWrap:'wrap',alignItems:'center'}},
         // ── 입금/출금 탭 (건수·미처리 건수 포함) ──
@@ -34484,23 +34535,6 @@ function FinanceLedger(){
 
       // ── 입금 테이블 (입금 탭에서만 렌더) ──
       ldTabEff==='inc' && incList.length>0 && h('div',{style:{marginBottom:'16px'}},
-        // ── 월별 필터 탭 ──
-        incMonths.length>1 && h('div',{style:{display:'flex',gap:'4px',marginBottom:'6px',flexWrap:'wrap',alignItems:'center'}},
-          h('span',{style:{fontSize:'10.5px',color:'#64748b',fontWeight:600,marginRight:'2px'}},'월별'),
-          h('button',{onClick:function(){setIncMon('');setIncChk({});},
-            style:{padding:'2px 10px',borderRadius:'12px',cursor:'pointer',whiteSpace:'nowrap',fontSize:'10.5px',fontWeight:!incMon?700:500,
-              border:!incMon?'1.5px solid #1e40af':'1px solid #cbd5e1',
-              background:!incMon?'#1e40af':'#fff',color:!incMon?'#fff':'#64748b'}},'전체'),
-          incMonths.map(function(m){
-            var on=incMon===m;
-            var mCnt=incAll.filter(function(r){return !r._dup && String(r.date||'').slice(0,7)===m;}).length;
-            return h('button',{key:m,onClick:function(){setIncMon(m);setIncChk({});},
-              style:{padding:'2px 10px',borderRadius:'12px',cursor:'pointer',whiteSpace:'nowrap',fontSize:'10.5px',fontWeight:on?700:500,
-                border:on?'1.5px solid #1e40af':'1px solid #cbd5e1',
-                background:on?'#1e40af':'#fff',color:on?'#fff':'#64748b'}},
-              parseInt(m.slice(5),10)+'월 ('+mCnt+')');
-          })
-        ),
         (function(){
           var _advAuto=0,_manualNeed=0,_noMatch=0;
           incList.forEach(function(r){
@@ -34799,7 +34833,7 @@ function FinanceLedger(){
       // ── 출금 테이블 (출금 탭에서만 렌더) ──
       ldTabEff==='exp' && expList.length>0 && h('div',null,
         h('div',{style:{fontWeight:700,fontSize:'12px',color:'#92400e',marginBottom:'6px',padding:'4px 10px',background:'#fef3c7',borderRadius:'5px',display:'flex',alignItems:'center',gap:'8px'}},
-          '💸 출금 내역 — 카테고리 선택 후 출금관리 등록',
+          '💸 '+(incMon?parseInt(incMon.slice(5),10)+'월 ':'')+'출금 내역 — 카테고리 선택 후 출금관리 등록',
           h('span',{style:{marginLeft:'auto',fontWeight:800,color:'#b45309'}},
             expList.length+'건 · 합계 '+expSum.toLocaleString()+'원')),
         h('div',{style:{overflowX:'auto'}},
