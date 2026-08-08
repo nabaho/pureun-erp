@@ -3999,36 +3999,92 @@ function openFolderMenu(ev, id){
   m.style.left=x+'px'; m.style.top=y+'px';
   setTimeout(()=>document.addEventListener('click', closeFolderMenu, {once:true}), 0);
 }
-/* 폴더 비밀번호 잠금 설정/해제/확인 (화면에서만 가림 — 진짜 보안 아님) */
-function setFolderLock(id){
+/* 폴더 잠그기 — 명함·사진·폴더기록을 대표 전용 창고로 실제로 옮긴다.
+   예전에는 화면에서 가리기만 했다(자료는 직원 누구나 읽을 수 있었다).
+   이제는 서버 규칙이 막는 자리로 옮기므로, 코드를 고쳐도 남은 못 본다. */
+async function setFolderLock(id){
   const g=state.groups[id]; if(!g) return;
-  if(!myEmail) return toast('로그인 후 잠글 수 있습니다');
-  const pw=prompt(`'${g.name}' 폴더를 나만 보는 개인 폴더로 잠급니다.\n\n· 다른 직원에게는 폴더도 명함도 보이지 않습니다\n· 푸른이알피 등 다른 프로그램에서도 당겨올 수 없습니다\n· 오직 명함첩에서 비밀번호로만 열 수 있습니다\n\n비밀번호를 입력하세요`);
-  if(pw===null) return;
-  if(!pw.trim()) return toast('비밀번호가 비어 있습니다');
-  g.locked=true; g.pw=pw; g.lockOwner=myEmail; Store.putGroup(g);
-  if(state.unlocked) delete state.unlocked[id];
-  /* 이 폴더 명함들을 공유 검색목록에서 즉시 제거 (다른 프로그램 노출 차단) */
-  try{ Object.values(state.items).forEach(it=>{ if(it && (it.group||'')===id) removeIdx(it.id); }); }catch(_){}
-  toast('🔒 나만 보는 폴더로 잠갔습니다 — 다른 직원·다른 프로그램에서 보이지 않습니다',6000);
-  render();
-}
-function unsetFolderLock(id){
-  const g=state.groups[id]; if(!g) return;
-  /* 해제하려면 현재 비번 확인 (세션에서 이미 풀려있으면 생략) */
-  if(!(state.unlocked&&state.unlocked[id])){
-    const pw=prompt('잠금을 해제하려면 비밀번호를 입력하세요.');
-    if(pw===null) return;
-    if(pw!==g.pw) return toast('비밀번호가 틀렸습니다');
+  if(!state.isAdmin) return toast('대표만 폴더를 잠글 수 있습니다');
+  if(Store.mode!=='firebase') return toast('클라우드에 연결된 상태에서만 됩니다');
+  if(!privRoot()) return toast('로그인 정보를 읽지 못했습니다');
+
+  const ids = Object.values(state.items).filter(it=>it && (it.group||'')===id).map(it=>it.id);
+  if(!confirm(`'${g.name}' 폴더를 대표님만 보는 개인 폴더로 잠급니다.\n\n`
+    + `· 명함 ${ids.length.toLocaleString()}장과 사진이 대표님 전용 창고로 옮겨집니다\n`
+    + `· 다른 직원에게는 폴더도 명함도 보이지 않습니다 (서버가 막습니다)\n`
+    + `· 푸른이알피 등 다른 프로그램에서도 당겨올 수 없습니다\n`
+    + `· 잠근 뒤에는 [🔒 개인 폴더 열기]로 비밀번호를 넣어야 보입니다\n\n진행할까요?`)) return;
+
+  let rec = null;
+  try{ rec = await privLockRec(); }catch(e){ return toast('개인 창고를 읽지 못했습니다'); }
+  if(!rec){ const ok = await setPrivatePassword(); if(!ok) return; }
+
+  toast(`옮기는 중… ${ids.length.toLocaleString()}장`, 30000);
+  try{
+    const upd = movePaths(ids, id, 'lock');
+    const P = privRoot();
+    for(const cid of ids){
+      const it = state.items[cid]; if(!it){ delete upd[`${P}/items/${cid}`]; delete upd[`${P}/photos/${cid}`]; continue; }
+      const body = {...it}; delete body.thumb; delete body.thumb2;
+      upd[`${P}/items/${cid}`] = body;
+      const ph = await Store.getPhoto(cid).catch(()=>'');
+      if(ph) upd[`${P}/photos/${cid}`] = ph; else delete upd[`${P}/photos/${cid}`];
+      /* 썸네일도 함께 옮긴다 — 두고 가면 목록 그림으로 누구인지 보인다 */
+      const th = it.thumb || await Store.getThumb(cid).catch(()=>'');
+      if(th){ upd[`${P}/thumbs/${cid}`] = th; upd[`${DB_ROOT}/thumbs/${cid}`] = null; }
+    }
+    const pg = { ...g, locked:true, lockedAt:Date.now() };
+    delete pg.pw;                       /* 옛 평문 비밀번호는 옮기지 않고 버린다 */
+    upd[`${P}/groups/${id}`] = pg;
+    await Store.db.ref().update(upd);
+    toast(`🔒 '${g.name}'을(를) 개인 폴더로 옮겼습니다 — [🔒 개인 폴더 열기]로 보실 수 있습니다`,9000);
+    if(state.group===id) state.group='all';
+    render();
+  }catch(e){
+    toast('❌ 옮기지 못했습니다: ' + ((e&&e.message)||'알 수 없음'), 8000);
   }
-  g.locked=false; delete g.pw; delete g.lockOwner; Store.putGroup(g);
-  /* 잠금이 풀렸으니 공유 검색목록에 다시 넣는다 */
-  try{ Object.values(state.items).forEach(it=>{ if(it && (it.group||'')===id) writeIdx(it); }); }catch(_){}
-  toast('잠금을 해제했습니다 🔓');
-  render();
 }
-/* 잠긴 폴더 클릭 시 비번 확인 → 세션 동안 해제 */
+/* 잠금 풀기 — 개인 창고에서 공용 자리로 되돌린다. 검색목록에도 다시 넣는다. */
+async function unsetFolderLock(id){
+  const g = (state.priv.groups||{})[id] || state.groups[id]; if(!g) return;
+  if(!state.privOpen) return toast('먼저 [🔒 개인 폴더 열기]로 여세요');
+  if(Store.mode!=='firebase') return toast('클라우드에 연결된 상태에서만 됩니다');
+
+  const ids = Object.values(state.priv.items).filter(it=>it && (it.group||'')===id).map(it=>it.id);
+  if(!confirm(`'${g.name}' 폴더의 잠금을 풉니다.\n\n`
+    + `· 명함 ${ids.length.toLocaleString()}장이 공용 자리로 되돌아갑니다\n`
+    + `· 다른 직원과 푸른이알피에서도 다시 보입니다\n\n진행할까요?`)) return;
+
+  toast(`되돌리는 중… ${ids.length.toLocaleString()}장`, 30000);
+  try{
+    const upd = movePaths(ids, id, 'unlock');
+    const P = privRoot();
+    for(const cid of ids){
+      const it = state.priv.items[cid];
+      if(!it){ delete upd[`${DB_ROOT}/items/${cid}`]; delete upd[`${DB_ROOT}/photos/${cid}`]; continue; }
+      const body = {...it}; delete body.thumb; delete body.thumb2;
+      upd[`${DB_ROOT}/items/${cid}`] = body;
+      const ph = await Store.getPhoto(cid).catch(()=>'');
+      if(ph) upd[`${DB_ROOT}/photos/${cid}`] = ph; else delete upd[`${DB_ROOT}/photos/${cid}`];
+      const th = it.thumb || await Store.getThumb(cid).catch(()=>'');
+      if(th){ upd[`${DB_ROOT}/thumbs/${cid}`] = th; upd[`${P}/thumbs/${cid}`] = null; }
+      upd[`${DB_ROOT}/idx/${cid}`] = idxRecord(it);   /* 값이 없으면 null 이 들어가 지워진다 */
+    }
+    const pub = { ...g };
+    delete pub.locked; delete pub.lockedAt; delete pub.pw; delete pub.lockOwner;
+    upd[`${DB_ROOT}/groups/${id}`] = pub;
+    await Store.db.ref().update(upd);
+    toast(`🔓 '${g.name}' 잠금을 풀었습니다 — 다시 모두에게 보입니다`,7000);
+    render();
+  }catch(e){
+    toast('❌ 되돌리지 못했습니다: ' + ((e&&e.message)||'알 수 없음'), 8000);
+  }
+}
+/* 폴더를 열 수 있나.
+   새 방식(개인 창고)은 이미 비밀번호를 지나 열려 있으므로 그냥 통과시킨다.
+   옛 방식으로 잠긴 폴더는 아직 안 옮긴 것이라 예전대로 비밀번호를 묻는다. */
 function tryUnlockFolder(id){
+  if((state.priv.groups||{})[id]) return true;
   const g=state.groups[id]; if(!g) return false;
   if(!g.locked) return true;
   if(state.unlocked && state.unlocked[id]) return true;
@@ -4039,6 +4095,18 @@ function tryUnlockFolder(id){
   state.unlocked[id]=true;
   toast('잠금을 풀었습니다 (이 세션 동안 표시)');
   return true;
+}
+/* 옛 방식으로 잠긴 폴더를 개인 창고로 옮긴다. 저절로 돌지 않는다 — 대표가 누를 때만. */
+async function migrateLockedFolders(){
+  if(!state.isAdmin) return toast('대표만 할 수 있습니다');
+  const olds = Object.values(state.groups).filter(g=>g && g.locked);
+  if(!olds.length) return toast('옮길 옛 잠금 폴더가 없습니다 👍');
+  const n = olds.reduce((s,g)=> s + Object.values(state.items).filter(it=>it&&(it.group||'')===g.id).length, 0);
+  if(!confirm(`옛 방식으로 잠긴 폴더 ${olds.length}개(명함 ${n.toLocaleString()}장)를\n`
+    + `대표님 전용 창고로 옮깁니다.\n\n`
+    + `옮긴 뒤에는 [🔒 개인 폴더 열기]로 비밀번호를 넣어야 보입니다.\n\n진행할까요?`)) return;
+  for(const g of olds){ await setFolderLock(g.id); }
+  toast('옮기기를 마쳤습니다 — [🔒 개인 폴더 열기]로 확인하세요',9000);
 }
 /* 폴더 순서 한 칸 이동 (같은 부모 형제끼리 order 교환) */
 function moveFolderOrder(id, dir){
@@ -5082,6 +5150,8 @@ function renderSettingsPage(){
   } else if(cur==='acct'){
     panel = note('글자 자동인식(AI) 키와 로그인을 관리합니다.')
       + btn('openSettings()','🤖','AI 키 설정',aiOn?'켜짐':'꺼짐')
+      + (state.isAdmin ? btn('openPrivateVault()','🔒','개인 폴더', state.privOpen?'열림':'잠김')
+                       + btn('migrateLockedFolders()','📦','옛 잠금 폴더 옮기기','대표 전용 창고로') : '')
       + btn('doLogoutCards()','🔓','로그아웃','');
   } else {
     panel = note('⚠️ 되돌릴 수 없습니다. 실행 전 반드시 [데이터 → 지금 백업]을 받아 두세요.')
