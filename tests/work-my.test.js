@@ -136,8 +136,30 @@ ok('접힌 열은 띠가 되고 눌러서 편다',
   colTH('my','last', '최근 기록').indexOf('class="cband"') > 0
   && colTH('my','last', '최근 기록').indexOf("colToggle('my','last')") > 0
   && colTD('my','last', '기록 없음') === '<td class="cband"></td>');
-ok('띠에 열 이름이 남아 무엇을 접었는지 보인다',
-  colTH('my','last', 'x').indexOf('최근 기록') > 0);
+/* 띠는 폭 14px 세로줄이라 긴 이름은 머리칸 높이를 넘어 위아래가 잘린다.
+   띠에만 두 글자로 줄이고, 툴팁에는 본디 이름을 둔다 — 줄인 것만 보이면
+   무슨 열인지 알 수 없다. */
+ok('띠 이름은 모두 두 글자 (길면 위아래가 잘린다)',
+  ['my', 'team'].every(sc => colCols(sc).every(c => (c[2] || c[1]).length <= 2)));
+ok('띠에는 줄인 이름이 들어간다', (function () {
+  const h = colTH('my', 'last', 'x');
+  return h.indexOf('<span class="cbl">기록</span>') > 0;
+})());
+ok('툴팁에는 본디 이름이 남아 무엇을 접었는지 알 수 있다',
+  colTH('my', 'last', 'x').indexOf('title="최근 기록 — 눌러서 폅니다') > 0);
+ok('줄일 것이 없는 열은 그대로', colTH('my', 'st', 'x').indexOf('상태') > 0);
+ok('팀의 긴 이름도 줄인다 (이 주 실적 → 실적)', (function () {
+  colToggle('team', 'log');                 // 접어야 띠가 된다
+  const h = colTH('team', 'log', 'x');
+  colToggle('team', 'log');
+  return h.indexOf('<span class="cbl">실적</span>') > 0 && h.indexOf('title="이 주 실적') > 0;
+})());
+ok('목록에는 본디 이름 그대로 (줄인 이름은 띠에만)', (function () {
+  S.colPop = 'team';
+  const h = colPopHTML('team');
+  S.colPop = '';
+  return h.indexOf('<span>이 주 실적</span>') > 0 && h.indexOf('<span>실적</span>') < 0;
+})());
 ok('접힌 칸은 내용을 그리지 않는다 (그리면 폭이 안 준다)',
   colTD('my','last', '아주아주 긴 최근 기록 내용').indexOf('아주') < 0);
 S.F = { my: { last: ['기록 없음'] } };
