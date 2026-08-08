@@ -33861,6 +33861,14 @@ function FinanceLedger(){
   var editPopS=useState(null);   var editPop=editPopS[0]; var setEditPop=editPopS[1]; // 4-3 비교 수정 팝업 {incomeRecord}
   var incChkS=useState({});      var incChk=incChkS[0];   var setIncChk=incChkS[1];   // 입금 행 체크 {_k: true}
   var incMonS=useState('');      var incMon=incMonS[0];   var setIncMon=incMonS[1];   // 월 필터 (''=전체, 'YYYY-MM')
+  /* ── 한 번에 그리는 행 수 ──
+     통장 506행 × 후보 12개를 한꺼번에 그리면 그리기만 800ms 를 넘는다. 계산을
+     캐시해도(#90) 다시 그릴 때마다 이 비용은 그대로라, 30초 하트비트마다 화면이
+     멈췄다. 위에서부터 80행만 그리고 나머지는 [더 보기]로 잇는다.
+     ⚠ 합계·미처리 건수·자동 매칭·자동 정리는 전체(incAll/incList)로 계산한다 —
+       화면에 덜 그리는 것일 뿐 자료를 자르는 것이 아니다. */
+  var ldShowS=useState(80);      var ldShow=ldShowS[0];   var setLdShow=ldShowS[1];
+  useEffect(function(){ setLdShow(80); }, [incMon, ldTab, hideDup]);   // 달·탭을 바꾸면 처음부터
   var incVfS=useState({});       var incVf=incVfS[0];     var setIncVf=incVfS[1];     // 눈으로 확인 표시 {_k:{inv:true, work:true}}
   var candQS=useState({});       var candQ=candQS[0];     var setCandQ=candQS[1];     // 후보 검색어 {_k:'...'}
   var candKS=useState({});       var candK=candKS[0];     var setCandK=candKS[1];     // 후보 종류 필터 {_k:'cases'|''}
@@ -35171,7 +35179,7 @@ function FinanceLedger(){
               h('th',{style:Object.assign({},thS,{minWidth:'260px',borderLeft:'2px solid #e2e8f0'})},'📁 사무관리 — 사건·컨설팅·기금·기타'),
               h('th',{style:Object.assign({},thS,{borderLeft:'2px solid #e2e8f0'})},'처리')
             )),
-            h('tbody',null,incList.map(function(row,_ri){
+            h('tbody',null,incList.slice(0,ldShow).map(function(row,_ri){
               var mId=inMatch[row._k];
               var pItem=mId?pending.find(function(p){return p.id===mId;}):null;
               var sugs=incSug[row._k]||[];
@@ -35614,7 +35622,21 @@ function FinanceLedger(){
               );
             })),
             // 합계 행 — 입금액 열 아래에 맞춘다
-            h('tfoot',null,h('tr',{style:{background:'#f0fdf4',borderTop:'2px solid #bbf7d0'}},
+            h('tfoot',null,
+              // 아직 안 그린 행 잇기 — 자료는 그대로 있고 화면만 아꼈다
+              incList.length>ldShow && h('tr',null,
+                h('td',{colSpan:6,style:{padding:'8px',textAlign:'center',background:'#f8fafc'}},
+                  h('button',{onClick:function(){ setLdShow(ldShow+200); },
+                    style:{padding:'6px 18px',background:'#fff',color:'#1d4ed8',border:'1px solid #bfdbfe',
+                      borderRadius:'7px',fontSize:'12px',fontWeight:800,cursor:'pointer'}},
+                    '⬇ 나머지 '+(incList.length-ldShow).toLocaleString()+'건 더 보기'),
+                  ' ',
+                  h('button',{onClick:function(){ setLdShow(incList.length); },
+                    title:'전부 그리면 화면이 잠깐 멈출 수 있습니다',
+                    style:{padding:'6px 12px',background:'#f1f5f9',color:'#64748b',border:'1px solid #e2e8f0',
+                      borderRadius:'7px',fontSize:'11px',fontWeight:700,cursor:'pointer'}},
+                    '모두 펼치기'))),
+              h('tr',{style:{background:'#f0fdf4',borderTop:'2px solid #bbf7d0'}},
               h('td',{style:Object.assign({},tdS,{textAlign:'right',fontWeight:800,color:'#15803d',fontSize:'11px'})},'합계'),
               h('td',{style:Object.assign({},tdS,{fontWeight:700,color:'#15803d',fontSize:'11px',whiteSpace:'nowrap'})},incList.length+'건'),
               h('td',{style:Object.assign({},tdS,{fontWeight:800,color:'#15803d',whiteSpace:'nowrap'})},incSum.toLocaleString()+'원'),
@@ -35637,7 +35659,7 @@ function FinanceLedger(){
               h('th',{style:thS},'날짜'),h('th',{style:thS},'출금액'),h('th',{style:thS},'적요'),
               h('th',{style:Object.assign({},thS,{minWidth:'130px'})},'카테고리'),h('th',{style:thS},'처리')
             )),
-            h('tbody',null,expList.map(function(row,_re){
+            h('tbody',null,expList.slice(0,ldShow).map(function(row,_re){
               var cat=expCat[row._k];
               var catName=cat?EXP_CATS.find(function(c){return c.code===cat;}):null;
               var g=expGuess[row._k];
@@ -35686,7 +35708,21 @@ function FinanceLedger(){
               );
             })),
             // 합계 행 — 출금액 열 아래에 맞춘다
-            h('tfoot',null,h('tr',{style:{background:'#fffbeb',borderTop:'2px solid #fde68a'}},
+            h('tfoot',null,
+              // 아직 안 그린 행 잇기 — 입금 표와 같은 이유(그리는 양 줄이기)
+              expList.length>ldShow && h('tr',null,
+                h('td',{colSpan:6,style:{padding:'8px',textAlign:'center',background:'#fffbeb'}},
+                  h('button',{onClick:function(){ setLdShow(ldShow+200); },
+                    style:{padding:'6px 18px',background:'#fff',color:'#b45309',border:'1px solid #fde68a',
+                      borderRadius:'7px',fontSize:'12px',fontWeight:800,cursor:'pointer'}},
+                    '⬇ 나머지 '+(expList.length-ldShow).toLocaleString()+'건 더 보기'),
+                  ' ',
+                  h('button',{onClick:function(){ setLdShow(expList.length); },
+                    title:'전부 그리면 화면이 잠깐 멈출 수 있습니다',
+                    style:{padding:'6px 12px',background:'#f1f5f9',color:'#64748b',border:'1px solid #e2e8f0',
+                      borderRadius:'7px',fontSize:'11px',fontWeight:700,cursor:'pointer'}},
+                    '모두 펼치기'))),
+              h('tr',{style:{background:'#fffbeb',borderTop:'2px solid #fde68a'}},
               h('td',{style:Object.assign({},tdS,{textAlign:'right',fontWeight:800,color:'#b45309',fontSize:'11px'})},'합계'),
               h('td',{style:Object.assign({},tdS,{fontWeight:700,color:'#b45309',fontSize:'11px',whiteSpace:'nowrap'})},expList.length+'건'),
               h('td',{style:Object.assign({},tdS,{fontWeight:800,color:'#b45309',whiteSpace:'nowrap'})},expSum.toLocaleString()+'원'),
