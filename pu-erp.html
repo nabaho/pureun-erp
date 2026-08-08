@@ -4690,6 +4690,54 @@ function erpPaidSoFar(item, kindLabel, legacyAmt){
 // 거래내역 후보 종류 → splitPayments 의 종류 이름표 (없으면 분할기록을 쓰지 않는 종류)
 var ERP_SPLIT_KIND = { retainer:'착수금', success:'성공보수', contractFee:'계약금', balance:'잔금' };
 
+/* ── 🏥 현장클리닉 묶음 입금 ──
+   비즈사업비·한국생산성본부는 «현장클리닉» 사업장 여러 곳의 비용을 한 번에 보낸다.
+   적요에 사업장 이름이 없으니 이름으로는 못 찾는다 — 그 대신 현장클리닉 건만 추려 올린다.
+   (합계 조합 화이트리스트 COMBO_MEMO_WHITELIST 와 같은 성격이지만, 이쪽은 «후보 좁히기» 용) */
+var ERP_CLINIC_PAYERS = ['비즈사업', '한국생산성본부', '생산성본부'];
+function erpIsClinicPayer(memo){
+  try {
+    var n = erpNormName(memo);
+    if(!n) return false;
+    for(var i=0; i<ERP_CLINIC_PAYERS.length; i++){
+      if(n.indexOf(erpNormName(ERP_CLINIC_PAYERS[i])) >= 0) return true;
+    }
+    return false;
+  } catch(e){ if(window._erpErrLog) window._erpErrLog(e); return false; }
+}
+/* ── 📄 계약 단계 입금 안내 ──
+   계약관리에는 입금 칸이 없다. 계약은 «이관» 되면서 사건·컨설팅·기금·기타를 낳고,
+   돈은 그 뒤에 붙는다. 그래서 계약을 미입금 후보에 넣지 않는다(넣으면 성공보수가 두 번 잡힌다).
+   대신 맞는 후보가 하나도 없는 입금이 아직 이관 안 된 계약의 업체 이름과 맞으면 알려준다 —
+   「이관하고 나서 확정하세요」. 이관하면 그 즉시 후보로 뜬다. */
+function erpContractHint(txn){
+  try {
+    var n = erpNormName(txn && txn.memo);
+    if(!n || n.length < 2) return null;
+    var nc = '';
+    try { nc = erpNormName(erpCleanMemo(txn.memo)); } catch(_ce){ nc = ''; }
+    var best = null;
+    (dbGet('contracts', []) || []).forEach(function(ct){
+      if(!ct || ct._deleted) return;
+      if(ct.status === 'cancelled' || ct.status === 'transferred' || ct.status === 'closed') return;
+      var cn = erpNormName(ct.companyName);
+      if(!cn) return;
+      var sc = Math.max(_erpNameCmp(n, cn).score, nc ? _erpNameCmp(nc, cn).score : 0);
+      if(sc >= 85 && (!best || sc > best.score)) best = { ct:ct, score:sc };
+    });
+    return best;
+  } catch(e){ if(window._erpErrLog) window._erpErrLog(e); return null; }
+}
+
+// 현장클리닉 건인가 (컨설팅 유형코드 cons-clinic — 이름이 바뀌어도 코드로 알아본다)
+function erpIsClinicItem(cand){
+  try {
+    var it = (cand && cand.item) || {};
+    if(it.typeCode === 'cons-clinic') return true;
+    return /현장\s*클리닉|현클/.test(String(it.typeName || it.type || cand.label || ''));
+  } catch(e){ if(window._erpErrLog) window._erpErrLog(e); return false; }
+}
+
 // ── 이력 기반 금액 지문 ──
 // 월 고정 자문료는 적요가 엉뚱해도 "업체 + 같은 금액 반복"이 곧 신원이다.
 // finance_income 전건 스캔은 행×후보마다 하면 O(n²)이라 색인을 만들어 캐시한다.
@@ -34144,6 +34192,7 @@ function FinanceLedger(){
   var autoTidySet = {};     // 행별 O(1) 조회용 (배지 표시)
   var atAlias = {};         // 행별 학습 횟수 (미리보기 '학습 ×N')
   var incDone = {};         // 행별 「이미 확정된 건」 (입금관리에서 곧바로 확정한 분)
+  var ctHint  = {};         // 행별 「아직 이관 안 된 계약」 (후보가 없을 때만)
   var invSug = {};          // 행별 세금계산서 후보 1건 (고신뢰 추천이 없는 행만)
   var invNone = {};         // 행별 '계산서 미발급?' 의심
   var incByK = {};          // _k → row (자동 정리 미리보기에서 행을 되찾기 위함)
@@ -34168,6 +34217,8 @@ function FinanceLedger(){
     incSug[row._k] = _sg;
     // 입금관리에서 이미 확정한 건인지 (통장 행에는 지문이 안 남는다)
     incDone[row._k] = erpAlreadyConfirmed({date:row.date, amount:row.amount}, 10);
+    // 맞는 후보가 없을 때만 — 아직 이관 안 된 계약이 있는지 본다
+    if(!_sg.length) ctHint[row._k] = erpContractHint({memo:_memo});
     var _b = _sg.length ? _sg[0] : null;
     // ── 자동 정리 3중 관문 (학습 3회↑ · 금액 정확일치 · 신뢰도 90↑) ──
     // 사용자가 이미 다른 후보를 골라둔 행은 그 선택을 존중해 대상에서 뺀다
@@ -34877,7 +34928,20 @@ function FinanceLedger(){
               var ivc=invSug[row._k]||null;                                  // 세금계산서 발행분 후보 (고신뢰 추천 없을 때만)
               var ivNone=!!invNone[row._k];                                  // 그 금액의 계산서를 90일 안에서 못 찾음
               var dupInfo=row._dup?erpIsBankRowProcessed(row):null;
-              function pickSug(pid){ var nm=Object.assign({},inMatch); nm[row._k]=pid; setInMatch(nm); }
+              /* 후보를 고르면 «적요 → 업체» 관계를 그 자리에서 기억한다.
+                 전에는 확정할 때만 배워서, 골라두기만 하고 나중에 확정하면 그 사이에는 못 찾아왔다.
+                 이름이 이미 같으면 배울 게 없고(erpLearnPayerAlias 가 걸러낸다),
+                 같은 후보를 다시 눌러도 두 번 세지 않게 막는다. */
+              function pickSug(pid){
+                if(inMatch[row._k]===pid) return;
+                var nm=Object.assign({},inMatch); nm[row._k]=pid; setInMatch(nm);
+                try{
+                  var _c=pendById[pid];
+                  var _m=row.memo||row.note||'';
+                  if(_c && _m && erpLearnPayerAlias(_m, _c))
+                    showToast('🔖 기억함 — 다음부터 「'+_m+'」 은 '+_c.companyName+' 로 찾아옵니다');
+                }catch(_le){ if(window._erpErrLog) window._erpErrLog(_le); }
+              }
               return h('tr',{key:row._k,style:{background:incChk[row._k]?'#eff6ff':(pItem?'#f0fdf4':'#fff'),opacity:row._dup?0.55:1,cursor:'pointer'},
                 onClick:function(e){
                   if(e.target.tagName==='SELECT'||e.target.tagName==='OPTION'||e.target.tagName==='INPUT'||e.target.tagName==='BUTTON'||e.target.closest&&e.target.closest('select,button,input')) return;
@@ -34985,17 +35049,39 @@ function FinanceLedger(){
                      후보가 열 건 넘게 세로로 깔리면 못 쓴다. 게다가 같은 금액(1,100,000)짜리
                      계약이 여럿이라 금액만으로는 못 좁힌다. 그래서 «적요 이름과 맞는 것»을 먼저 보이고
                      이름이 다른데 금액만 같은 것은 접어 둔다 (필요하면 칩·검색으로 찾는다). */
+                  // ── 📄 아직 이관 안 된 계약 — 계약관리에는 입금 칸이 없다 ──
+                  ctHint[row._k] && h('div',{
+                    title:'계약은 이관되면서 사건·컨설팅을 낳고, 돈은 그 뒤에 붙습니다.\n계약관리에는 입금 칸이 없어 여기서 확정할 수 없습니다.',
+                    style:{marginBottom:'4px',background:'#f5f3ff',border:'1px solid #ddd6fe',
+                      borderRadius:'6px',padding:'4px 8px'}},
+                    h('div',{style:{fontSize:'10px',fontWeight:800,color:'#6d28d9'}},'📄 아직 이관 안 된 계약이 있습니다'),
+                    h('div',{style:{fontSize:'10px',color:'#475569',marginTop:'1px'}},
+                      (ctHint[row._k].ct.companyName||'')
+                      +(ctHint[row._k].ct.contractNo?' · '+ctHint[row._k].ct.contractNo:'')),
+                    h('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginTop:'3px'}},
+                      h('span',{style:{fontSize:'9.5px',color:'#7c3aed'}},'계약관리에서 이관하면 바로 후보로 뜹니다'),
+                      h('button',{onClick:function(e){ e.stopPropagation(); if(window.navigateTo) window.navigateTo('biz/contract'); },
+                        style:{padding:'2px 8px',background:'#7c3aed',color:'#fff',border:'none',
+                          borderRadius:'4px',fontSize:'9.5px',fontWeight:700,cursor:'pointer'}},'계약관리로'))
+                  ),
                   (function(){
                     if(!sugs.length) return null;
+                    var _memo0 = row.memo||row.note||'';
+                    /* 비즈사업비·한국생산성본부는 «현장클리닉» 사업장 여러 곳 몫을 한 번에 보낸다.
+                       적요에 사업장 이름이 없으니 이름으로는 못 찾는다 — 대신 현장클리닉 건만 추려 올린다. */
+                    var clinicMode = erpIsClinicPayer(_memo0);
                     var hit=[], other=[];
                     sugs.forEach(function(s){
-                      if((s.nameScore||0) >= 60) hit.push(s); else other.push(s);
+                      var _ok = clinicMode ? erpIsClinicItem(s.cand) : ((s.nameScore||0) >= 60);
+                      if(_ok) hit.push(s); else other.push(s);
                     });
-                    // 이름으로 하나도 못 찾으면(「노동권익과」 같은 건) 금액 맞는 쪽을 바로 펼친다
+                    // 먼저 보일 게 하나도 없으면(「노동권익과」 같은 건) 금액 맞는 쪽을 바로 펼친다
                     var openOther = sugOpen.hasOwnProperty(row._k) ? !!sugOpen[row._k] : (hit.length===0);
                     var q=(candQ[row._k]||'').trim().toLowerCase();
                     var kf=candK[row._k]||'';
 
+                    /* 후보 한 건 = 한 줄. 칸 너비를 못 박아 위아래가 세로로 줄맞춤되게 한다 —
+                       두 줄짜리 카드로 쌓으면 몇 건만 있어도 훑기가 어렵다. */
                     function card(s){
                       var on=mId===s.cand.id;
                       var ea=s.cand.expect||s.cand.amount;
@@ -35003,23 +35089,33 @@ function FinanceLedger(){
                       var bd=storeBadge(s.cand.store);
                       var _st=_pendStaff(s.cand);
                       var _no=(s.cand.item&&(s.cand.item.caseNo||s.cand.item.no))||'';
+                      var _cw={flexShrink:0,overflow:'hidden',textOverflow:'ellipsis'};
                       return h('div',{key:s.cand.id,onClick:function(){pickSug(s.cand.id);},
-                        title:s.reasons.join(' · '),
-                        style:{border:'1px solid '+(on?'#1e40af':'#e2e8f0'),background:on?'#eff6ff':'#fff',
-                          borderRadius:'6px',padding:'4px 7px',marginBottom:'3px',cursor:'pointer'}},
-                        h('div',{style:{display:'flex',gap:'4px',alignItems:'center',flexWrap:'wrap'}},
-                          h('span',{style:{background:bd.bg,color:bd.fg,border:'1px solid '+bd.bd,
-                            borderRadius:'8px',padding:'0 5px',fontSize:'9px',fontWeight:700}},bd.label),
-                          h('b',{style:{fontSize:'11px',color:'#334155'}},s.cand.companyName),
-                          h('span',{style:{fontSize:'10px',color:'#64748b'}},s.cand.label),
-                          h('span',{style:{fontSize:'9.5px',color:'#94a3b8'}},s.score+'%')),
-                        h('div',{style:{fontSize:'10px',color:'#475569',marginTop:'1px'}},
-                          _no && h('span',{style:{color:'#94a3b8'}},_no+' · '),
-                          _st && h('span',null,'담당 ',h('b',null,_st),' · '),
-                          h('span',{style:{fontVariantNumeric:'tabular-nums'}},ea.toLocaleString()+'원'),
-                          d===0 ? h('span',{style:{color:'#15803d',fontWeight:700,marginLeft:'4px'}},'금액 일치')
-                                : h('span',{style:{color:'#b45309',marginLeft:'4px',fontVariantNumeric:'tabular-nums'}},
-                                    (d>0?'+':'')+d.toLocaleString()))
+                        title:s.cand.companyName+' '+s.cand.label
+                              +(_no?'\n'+_no:'')+(_st?'\n담당 '+_st:'')
+                              +'\n'+ea.toLocaleString()+'원'
+                              +'\n'+s.reasons.join(' · '),
+                        style:{display:'flex',alignItems:'center',gap:'6px',
+                          border:'1px solid '+(on?'#1e40af':'#eef2f7'),background:on?'#eff6ff':'#fff',
+                          borderRadius:'5px',padding:'2px 6px',marginBottom:'2px',cursor:'pointer',
+                          fontSize:'10.5px',whiteSpace:'nowrap',lineHeight:'1.6'}},
+                        h('input',{type:'radio',checked:on,readOnly:true,
+                          style:{width:'12px',height:'12px',margin:0,pointerEvents:'none',accentColor:'#1e40af',flexShrink:0}}),
+                        h('span',{style:Object.assign({},_cw,{background:bd.bg,color:bd.fg,border:'1px solid '+bd.bd,
+                          borderRadius:'7px',padding:'0 4px',fontSize:'8.5px',fontWeight:700,
+                          width:'36px',textAlign:'center'})},bd.label),
+                        h('b',{style:{flex:'1 1 80px',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',color:'#334155'}},
+                          s.cand.companyName),
+                        h('span',{style:Object.assign({},_cw,{width:'76px',color:'#64748b'})},s.cand.label),
+                        h('span',{style:Object.assign({},_cw,{width:'106px',color:'#94a3b8',fontSize:'9.5px'})},_no),
+                        h('span',{style:Object.assign({},_cw,{width:'44px',color:'#475569'})},_st||''),
+                        h('span',{style:Object.assign({},_cw,{width:'74px',textAlign:'right',
+                          fontVariantNumeric:'tabular-nums',fontWeight:600})},ea.toLocaleString()),
+                        h('span',{style:Object.assign({},_cw,{width:'70px',textAlign:'right',
+                          fontVariantNumeric:'tabular-nums',color:d===0?'#15803d':'#b45309',fontWeight:d===0?700:500})},
+                          d===0?'일치':(d>0?'+':'')+d.toLocaleString()),
+                        h('span',{style:Object.assign({},_cw,{width:'30px',textAlign:'right',color:'#94a3b8',fontSize:'9.5px'})},
+                          s.score+'%')
                       );
                     }
 
@@ -35040,7 +35136,9 @@ function FinanceLedger(){
                       // ── 적요 이름과 맞는 것 ──
                       hit.length>0 && h('div',null,
                         h('div',{style:{fontSize:'9.5px',fontWeight:800,color:'#15803d',marginBottom:'3px'}},
-                          '🔎 적요 「'+(row.memo||'-')+'」 와 이름이 맞는 것 '+hit.length+'건'),
+                          clinicMode
+                            ? '🏥 현장클리닉 사업장 '+hit.length+'건 — 비즈사업비·생산성본부는 여러 곳 몫을 한 번에 보냅니다'
+                            : '🔎 적요 「'+(row.memo||'-')+'」 와 이름이 맞는 것 '+hit.length+'건'),
                         hit.map(card)),
                       // ── 이름이 다른 것 (금액만 맞음) ──
                       other.length>0 && h('div',{style:{marginTop:hit.length?'5px':'0'}},

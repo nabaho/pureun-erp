@@ -98,7 +98,8 @@ console.log('\n[검색·필터가 제대로 거르나]');
 }
 
 console.log('\n[코드에 제대로 붙었는지]');
-ok('이름 점수 60 을 기준으로 가른다', /if\(\(s\.nameScore\|\|0\) >= 60\) hit\.push\(s\); else other\.push\(s\);/.test(src));
+ok('이름 점수 60 을 기준으로 가른다', /\(\(s\.nameScore\|\|0\) >= 60\)/.test(src));
+ok('가른 결과를 두 무리로 담는다', /if\(_ok\) hit\.push\(s\); else other\.push\(s\);/.test(src));
 ok('이름 맞는 것을 머리말과 함께 먼저 보여준다', /🔎 적요 「'\+\(row\.memo\|\|'-'\)\+'」 와 이름이 맞는 것 '\+hit\.length/.test(src));
 ok('이름이 다른 것은 접어둔다', /'이름이 다른 것 ':'후보 '\)\+other\.length\+'건'/.test(src));
 ok('접힌 무리에 왜 접었는지 적는다', /hit\.length\?' — 금액만 맞음':''/.test(src));
