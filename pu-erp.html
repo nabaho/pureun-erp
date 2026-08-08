@@ -33658,6 +33658,7 @@ function FinanceLedger(){
   var spSelS=useState({});     var spSel=spSelS[0];     var setSpSel=spSelS[1];     // {pendingId: 배분 금액} — 체크된 항목
   var spGapS=useState('');     var spGap=spGapS[0];     var setSpGap=spGapS[1];     // 나눠담기 차액 모드: fee|partial|other
   var spRowS=useState(null);   var spRow=spRowS[0];     var setSpRow=spRowS[1];     // 나눠담기 대상 행 (모달용)
+  var spQS=useState('');       var spQ=spQS[0];         var setSpQ=spQS[1];         // 나눠담기 목록 검색어
   var nbS=useState(null);      var nb=nbS[0];           var setNb=nbS[1];           // 🏦 나이스빌 CMS 파싱분 {fileName,uploadedAt,rows,byDate,stat,linked}
   var nbRestS=useState(false); var nbRestored=nbRestS[0]; var setNbRestored=nbRestS[1]; // 보관분(cms_ledger)에서 복원됨
 
@@ -35337,7 +35338,7 @@ function FinanceLedger(){
                     h('button',{onClick:function(){
                         var init={};
                         if(mId){ var pi=pending.find(function(p){return p.id===mId;}); if(pi) init[mId]=pi.expect||pi.amount; }
-                        setSpSel(init); setSpGap(''); setSpRow(row); setSpOpen(row._k);
+                        setSpSel(init); setSpGap(''); setSpQ(''); setSpRow(row); setSpOpen(row._k);
                       },style:{background:spOpen===row._k?'#1e40af':'#fff',color:spOpen===row._k?'#fff':'#1e40af',
                         border:'1px solid #93c5fd',borderRadius:'5px',
                         padding:'3px 8px',fontSize:'10.5px',fontWeight:700,cursor:'pointer'}},
@@ -35499,7 +35500,7 @@ function FinanceLedger(){
       var diff=total-row.amount;
       var absDiff=Math.abs(diff);
       var spGm=spGap||(absDiff<=1100?'full':(diff>0?'partial':'other'));
-      function closeModal(){setSpOpen(null);setSpRow(null);setSpSel({});setSpGap('');}
+      function closeModal(){setSpOpen(null);setSpRow(null);setSpSel({});setSpGap('');setSpQ('');}
       // 담은 건의 성과급 합계
       var _spPerfAll=[];
       selIds.forEach(function(id){
@@ -35547,14 +35548,51 @@ function FinanceLedger(){
               h('div',{style:{marginTop:'10px',padding:'6px 8px',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'6px',fontSize:'10px',color:'#92400e',lineHeight:1.5}},
                 h('b',null,'총괄관리자 확인:'),h('br'),'각 사건의 담당자가 맞는지, 성과 비율이 맞는지 확인하세요')
             ),
-            // 오른쪽: ERP 사건 목록 (각각 상세 카드)
+            // 오른쪽: 사무관리 목록 — 한 줄에 어떤 건인지·담당자·금액이 다 보여야 체크할 수 있다
             h('div',{style:{padding:'14px',overflowY:'auto'}},
-              h('div',{style:{fontSize:'10px',fontWeight:700,color:'#1e40af',marginBottom:'8px'}},'📋 ERP 사건 — 담당자가 등록한 정보'),
-              pending.map(function(p){
+              (function(){
+                /* 전에는 업체명과 세금 배지만 보이고, 종류·관리번호·담당자·금액은 «체크한 뒤에야» 나왔다.
+                   체크할지 정하려면 먼저 봐야 하는데 순서가 거꾸로였다. 이제 한 줄에 다 보여준다.
+                   비즈사업비·생산성본부처럼 현장클리닉 묶음이면 현장클리닉 건을 위로 올린다. */
+                var _clinic = erpIsClinicPayer(row.memo||row.note||'');
+                var _q = (spQ||'').trim().toLowerCase();
+                var _list = pending.filter(function(p){
+                  if(!p) return false;
+                  if(spSel[p.id]!==undefined) return true;          // 이미 담은 건 항상 보인다
+                  if(!_q) return true;
+                  var hay=((p.companyName||'')+' '+(p.label||'')+' '
+                          +((p.item&&(p.item.caseNo||p.item.no))||'')+' '+_pendStaff(p)).toLowerCase();
+                  return hay.indexOf(_q)>=0;
+                });
+                _list.sort(function(a,b){
+                  if(_clinic){
+                    var ca=erpIsClinicItem(a)?0:1, cb=erpIsClinicItem(b)?0:1;
+                    if(ca!==cb) return ca-cb;                        // 현장클리닉 먼저
+                  }
+                  var da=Math.abs((a.expect||a.amount)-row.amount);
+                  var db=Math.abs((b.expect||b.amount)-row.amount);
+                  return da-db;                                      // 금액 가까운 순
+                });
+                return h('div',null,
+                  h('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'7px',flexWrap:'wrap'}},
+                    h('span',{style:{fontSize:'10px',fontWeight:700,color:'#1e40af'}},
+                      _clinic ? '🏥 현장클리닉을 먼저 보여줍니다 — 비즈사업비·생산성본부는 여러 곳 몫을 한 번에 보냅니다'
+                              : '📋 사무관리 — 담아서 나눌 건을 고르세요'),
+                    h('span',{style:{flex:1}}),
+                    h('input',{value:spQ||'',placeholder:'업체·번호·담당으로 찾기',
+                      onInput:function(e){ setSpQ(e.target.value); },
+                      style:{width:'170px',padding:'3px 8px',border:'1px solid #cbd5e1',
+                        borderRadius:'5px',fontSize:'10.5px'}})),
+                  _list.length===0 && h('div',{style:{fontSize:'11px',color:'#94a3b8',padding:'10px 2px'}},'찾는 건이 없습니다'),
+                  _list.map(function(p){
                 var on=spSel[p.id]!==undefined;
                 var ea=p.expect||p.amount;
                 var _staff=_pendStaff(p);
                 var _tax=_pendTaxType(p);
+                var _bd=storeBadge(p.store);
+                var _no=(p.item&&(p.item.caseNo||p.item.no))||'';
+                var _dd=ea-row.amount;
+                var _cw={flexShrink:0,overflow:'hidden',textOverflow:'ellipsis'};
                 var _ivc=null;
                 try{_ivc=erpInvoiceMatch({date:row.date,amount:ea,memo:''},p.companyName);}catch(_e){}
                 var _perf=[];
@@ -35564,37 +35602,49 @@ function FinanceLedger(){
                   if(_ms && p.kind!=='advisory') _perf=calcPerfShares(p.amount,_ms,_it.managerSubs||[],p.store==='companies'?'company':p.store.replace(/s$/,''),undefined,{paidDate:row.date||todayYMD()})||[];
                 }catch(_e){}
                 var _pt=0; _perf.forEach(function(s){_pt+=s.amount||0;});
-                return h('div',{key:p.id,style:{marginBottom:'8px',padding:'10px 12px',background:on?'#fff':'#f8fafc',
-                  border:on?'2px solid #3b82f6':'1px solid #e2e8f0',borderRadius:'8px',
+                return h('div',{key:p.id,style:{marginBottom:'3px',padding:on?'7px 9px':'3px 7px',background:on?'#fff':'#fcfdfe',
+                  border:on?'2px solid #3b82f6':'1px solid #eef2f7',borderRadius:'6px',
                   boxShadow:on?'0 0 0 2px rgba(59,130,246,0.12)':'none'}},
-                  h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:on?'6px':'0'}},
-                    h('div',{style:{display:'flex',alignItems:'center',gap:'6px'}},
-                      h('input',{type:'checkbox',checked:on,onChange:function(){
-                        var nm=Object.assign({},spSel);
-                        if(on) delete nm[p.id]; else nm[p.id]=ea;
-                        setSpSel(nm);
-                      }}),
-                      h('span',{style:{fontSize:'12px',fontWeight:700}},p.companyName),
-                      _tax && h('span',{style:{background:_tax==='3.3%'||_tax==='8.8%'?'#f5f3ff':'#eff6ff',
-                        color:_tax==='3.3%'||_tax==='8.8%'?'#7c3aed':'#1e40af',
-                        padding:'1px 5px',borderRadius:'6px',fontSize:'9px',fontWeight:700,
-                        border:'1px solid '+(_tax==='3.3%'||_tax==='8.8%'?'#ddd6fe':'#bfdbfe')}},_tax),
-                      Math.abs(ea-(parseInt(spSel[p.id],10)||ea))<=1100 && on
-                        ? h('span',{style:{background:'#dcfce7',color:'#166534',padding:'1px 5px',borderRadius:'6px',fontSize:'9px',fontWeight:600}},'금액 일치')
-                        : null
-                    )),
-                  on && h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'6px',marginTop:'4px'}},
+                  // ── 한 줄 요약 — 무엇인지·누가·얼마인지가 항상 보인다 ──
+                  h('div',{style:{display:'flex',alignItems:'center',gap:'6px',fontSize:'10.5px',
+                    whiteSpace:'nowrap',cursor:'pointer'},
+                    onClick:function(){
+                      var nm=Object.assign({},spSel);
+                      if(on) delete nm[p.id]; else nm[p.id]=ea;
+                      setSpSel(nm);
+                    }},
+                    h('input',{type:'checkbox',checked:on,readOnly:true,
+                      style:{margin:0,pointerEvents:'none',flexShrink:0}}),
+                    h('span',{style:Object.assign({},_cw,{background:_bd.bg,color:_bd.fg,border:'1px solid '+_bd.bd,
+                      borderRadius:'7px',padding:'0 4px',fontSize:'8.5px',fontWeight:700,width:'38px',textAlign:'center'})},_bd.label),
+                    h('b',{style:{flex:'1 1 90px',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',color:'#334155'}},
+                      p.companyName||h('span',{style:{color:'#cbd5e1',fontWeight:400}},'(업체명 없음)')),
+                    h('span',{style:Object.assign({},_cw,{width:'82px',color:'#64748b'})},p.label||''),
+                    h('span',{style:Object.assign({},_cw,{width:'108px',color:'#94a3b8',fontSize:'9.5px'})},_no),
+                    h('span',{style:Object.assign({},_cw,{width:'48px',color:'#475569',fontWeight:600})},_staff||'-'),
+                    _tax && h('span',{style:Object.assign({},_cw,{background:_tax==='3.3%'||_tax==='8.8%'?'#f5f3ff':'#eff6ff',
+                      color:_tax==='3.3%'||_tax==='8.8%'?'#7c3aed':'#1e40af',
+                      padding:'0 4px',borderRadius:'6px',fontSize:'8.5px',fontWeight:700,width:'46px',textAlign:'center',
+                      border:'1px solid '+(_tax==='3.3%'||_tax==='8.8%'?'#ddd6fe':'#bfdbfe')})},_tax),
+                    h('span',{style:Object.assign({},_cw,{width:'78px',textAlign:'right',
+                      fontVariantNumeric:'tabular-nums',fontWeight:700,color:'#16a34a'})},ea.toLocaleString()),
+                    h('span',{style:Object.assign({},_cw,{width:'70px',textAlign:'right',fontSize:'9.5px',
+                      fontVariantNumeric:'tabular-nums',color:_dd===0?'#15803d':'#94a3b8'})},
+                      _dd===0?'입금과 일치':(_dd>0?'+':'')+_dd.toLocaleString()),
+                    _pt>0 && h('span',{style:Object.assign({},_cw,{width:'62px',textAlign:'right',fontSize:'9.5px',
+                      color:'#16a34a',fontVariantNumeric:'tabular-nums'})},'성과 '+_pt.toLocaleString())
+                  ),
+                  on && h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'6px',marginTop:'6px',
+                    borderTop:'1px solid #eef2f7',paddingTop:'6px'}},
+                    // 종류·업체·담당·예상입금은 위 한 줄에 이미 있다 — 여기서는 나머지만
                     h('div',null,
                       h('div',{style:{display:'flex',justifyContent:'space-between',padding:'2px 0',fontSize:'10.5px'}},
-                        h('span',{style:{color:'#64748b'}},'사업'),h('span',{style:{fontWeight:600}},p.label)),
-                      h('div',{style:{display:'flex',justifyContent:'space-between',padding:'2px 0',fontSize:'10.5px'}},
-                        h('span',{style:{color:'#64748b'}},'수수료'),h('span',{style:{fontWeight:600,fontFamily:'monospace'}},p.amount.toLocaleString())),
+                        h('span',{style:{color:'#64748b'}},'약정 수수료'),h('span',{style:{fontWeight:600,fontFamily:'monospace'}},p.amount.toLocaleString())),
                       p.vatLabel && h('div',{style:{display:'flex',justifyContent:'space-between',padding:'2px 0',fontSize:'10.5px'}},
                         h('span',{style:{color:'#64748b'}},'세금'),h('span',{style:{fontWeight:600,fontSize:'10px'}},p.vatLabel)),
-                      h('div',{style:{display:'flex',justifyContent:'space-between',padding:'2px 0',fontSize:'10.5px'}},
-                        h('span',{style:{color:'#64748b'}},'예상입금'),h('span',{style:{fontWeight:800,fontFamily:'monospace',color:'#16a34a'}},ea.toLocaleString())),
-                      _staff && h('div',{style:{display:'flex',justifyContent:'space-between',padding:'2px 0',fontSize:'10.5px'}},
-                        h('span',{style:{color:'#64748b'}},'담당'),h('span',{style:{fontWeight:600}},_staff))
+                      (p.paidAmount||0)>0 && h('div',{style:{display:'flex',justifyContent:'space-between',padding:'2px 0',fontSize:'10.5px'}},
+                        h('span',{style:{color:'#64748b'}},'이미 받음'),
+                        h('span',{style:{fontWeight:600,fontFamily:'monospace',color:'#1d4ed8'}},(p.paidAmount||0).toLocaleString()))
                     ),
                     h('div',null,
                       h('div',{style:{display:'flex',justifyContent:'space-between',padding:'2px 0',fontSize:'10.5px'}},
@@ -35623,7 +35673,9 @@ function FinanceLedger(){
                   color:(spSel[p.id]||0)>=ea?'#166534':'#92400e'}},
                   (spSel[p.id]||0)>=ea?'완납':'일부 · 남은 '+(ea-(spSel[p.id]||0)).toLocaleString())
               ));
-            })
+                  })    // _list.map 닫힘
+                );      // 감싼 div 닫힘
+              })()      // 목록 IIFE 닫힘
             ) // 오른쪽 패널 닫힘
           ), // 그리드 닫힘
           absDiff>1100 && h('div',{style:{padding:'10px 14px',background:'#fffbeb',borderTop:'1px solid #fde68a',fontSize:'11.5px'}},
