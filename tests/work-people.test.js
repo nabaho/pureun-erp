@@ -313,6 +313,18 @@ WEEKSET = null;
 calDayOnly('2026-08-12');
 ok('해제할 때는 주를 옮기지 않는다', WEEKSET === null && S.calDay === '');
 
+/* 고른 날 칸으로 커서까지 옮긴다 — 날짜를 누르고 바로 적기 시작할 수 있게 */
+S = { calDay: '', week: new Date('2026-08-10T00:00:00') };
+calDayOnly('2026-08-12');
+ok('고른 날을 커서 옮길 자리로 남긴다', S._calFocus === '2026-08-12');
+S = { calDay: '2026-08-12', week: new Date('2026-08-10T00:00:00') };
+calDayOnly('2026-08-12');
+ok('해제할 때는 커서를 옮기지 않는다', S._calFocus === '');
+S = { calDay: '', week: new Date('2026-08-10T00:00:00'), view: 'team' };
+calDayOnly('2026-08-12');
+ok('팀 전체에는 요일 칸이 없으므로 표시를 남기지 않는다 (뒤늦게 잡히면 안 된다)',
+  S._calFocus === '');
+
 /* ── 화면 넓게 쓰기 ── */
 STORE = {}; S = {}; CLS = {};
 ok('처음에는 둘 다 꺼져 있다', viewPref().cmp === false && viewPref().nos === false);
