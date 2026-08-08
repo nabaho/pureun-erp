@@ -1612,9 +1612,49 @@ function initVersionGate(){
     });
   } catch(e){ window._erpErrLog && window._erpErrLog(e); }
 }
-// 배포된 HTML을 직접 받아 빌드를 비교 → 다르면 안전한 순간 새로고침.
-//   호출 시점: ① 로딩 직후 ② 탭으로 돌아올 때(복귀) ③ 로그인할 때. (5분 throttle로 데이터 절약)
+/* 배포된 새 버전이 있는지 보고, 있으면 안전한 순간 새로고침.
+   호출 시점: ① 로딩 직후 ② 탭으로 돌아올 때(복귀) ③ 로그인할 때. (5분 throttle)
+
+   ⚠ 예전에는 이 파일(4MB+)을 통째로 받아 길이를 쟀다. 내려받기도 부담이지만
+     진짜 문제는 그 다음이었다 — 4MB 문자열을 만들어 정규식을 돌리는 동안
+     화면이 통째로 멈춘다(탭 복귀 때 7.7초 멈춤으로 관측됨).
+     본문은 필요 없다. 머리(HEAD)만 받아 ETag 를 본다 — 내용이 바뀌면 바뀌는
+     값이라 길이 재기보다 정확하고, 받는 양이 0 이다. */
 var _vgLastFetch = 0;
+var _vgHeadBad = false;                                   // HEAD 가 표식을 못 주는 서버
+function _vgSigOf(r){
+  try {
+    return r.headers.get('etag')
+        || r.headers.get('last-modified')
+        || r.headers.get('content-length')
+        || null;
+  } catch(_){ return null; }
+}
+// 표식이 달라졌으면 새로고침 예약. 처음 본 값은 기준으로만 적어 둔다.
+function _vgOnSig(sig){
+  if(!sig) return;
+  var LK = 'pureun_v6_html_sig', prev = null;
+  try { prev = sessionStorage.getItem(LK); } catch(_){}
+  if(!prev){ try { sessionStorage.setItem(LK, sig); } catch(_){} return; }
+  if(prev === sig) return;                                // 같은 파일
+  try { sessionStorage.setItem(LK, sig); } catch(_){}
+  if(sessionStorage.getItem('pureun_v6_au_to') === sig) return;   // 이미 이 버전으로 시도(루프 방지)
+  try { sessionStorage.setItem('pureun_v6_au_to', sig); } catch(_){}
+  _vgScheduleReload();                                    // 안전한 순간(백그라운드·유휴)에 새로고침
+}
+/* HEAD 가 막힌 서버를 위한 옛 방식 — 본문을 받아 길이를 잰다.
+   여기 오면 화면이 잠깐 멈추므로, 정말 못 쓸 때만 온다. */
+function _vgCheckBody(now){
+  fetch(location.pathname + '?_cb=' + now, { cache:'no-store' })
+    .then(function(r){ return r.ok ? r.text() : null; })
+    .then(function(html){
+      if(!html) return;
+      var m = html.match(/var ERP_BUILD = '([^']*)'/);
+      if(m && m[1] && m[1] !== ERP_BUILD){ _vgOnSig(m[1]); return; }
+      _vgOnSig('len:' + html.length);
+    })
+    .catch(function(){});
+}
 function _vgCheckHtml(force){
   try {
     if(location.protocol === 'file:') return;
@@ -1622,32 +1662,16 @@ function _vgCheckHtml(force){
     var now = Date.now();
     if(!force && (now - _vgLastFetch) < 300000) return;     // 5분 throttle
     _vgLastFetch = now;
-    fetch(location.pathname + '?_cb=' + now, { cache:'no-store' })
-      .then(function(r){ return r.ok ? r.text() : null; })
-      .then(function(html){
-        if(!html) return;
-        /* ★ 손으로 적는 ERP_BUILD 에만 기대면 안 된다.
-           실제로 2026-07-02 이후 그 줄이 한 번도 안 바뀐 채 수십 번 배포됐고,
-           그동안 이 검사는 «이미 최신» 이라고만 답해 **자동 갱신이 한 번도 안 돌았다.**
-           그래서 파일 길이도 함께 본다 — 코드가 바뀌면 길이는 거의 언제나 달라진다.
-           처음 한 번은 지금 길이를 적어 두고, 다음부터 달라지면 새 배포로 본다. */
-        var sig = null;
-        var m = html.match(/var ERP_BUILD = '([^']*)'/);
-        if(m && m[1] && m[1] !== ERP_BUILD) sig = m[1];      // 표시가 바뀐 경우
-        if(!sig){
-          var LK = 'pureun_v6_html_len';
-          var prev = 0;
-          try { prev = parseInt(sessionStorage.getItem(LK), 10) || 0; } catch(_){}
-          if(!prev){ try { sessionStorage.setItem(LK, String(html.length)); } catch(_){} return; }
-          if(Math.abs(html.length - prev) < 40) return;      // 사실상 같은 파일
-          try { sessionStorage.setItem(LK, String(html.length)); } catch(_){}
-          sig = 'len:' + html.length;
-        }
-        if(sessionStorage.getItem('pureun_v6_au_to') === sig) return;   // 이미 이 버전으로 시도(루프 방지)
-        try { sessionStorage.setItem('pureun_v6_au_to', sig); } catch(_){}
-        _vgScheduleReload();                                // 안전한 순간(백그라운드·유휴)에 자동 새로고침
+    if(_vgHeadBad){ _vgCheckBody(now); return; }
+    fetch(location.pathname + '?_cb=' + now, { method:'HEAD', cache:'no-store' })
+      .then(function(r){
+        if(!r || !r.ok){ _vgHeadBad = true; _vgCheckBody(now); return; }
+        var sig = _vgSigOf(r);
+        // 표식을 못 얻으면 이 서버에서는 HEAD 가 쓸모없다 — 다음부터 옛 방식으로
+        if(!sig){ _vgHeadBad = true; _vgCheckBody(now); return; }
+        _vgOnSig(sig);
       })
-      .catch(function(){});
+      .catch(function(){ _vgHeadBad = true; });             // 그물망: 다음 차례에 옛 방식
   } catch(_){}
 }
 try {
