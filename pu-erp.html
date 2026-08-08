@@ -33883,6 +33883,8 @@ function FinanceLedger(){
   var _sugCache = useRef({ sig:null, val:null, job:null });
   // 조각 계산이 끝났을 때 화면을 한 번 다시 그리게 하는 눈금
   var sugTickS = useState(0); var setSugTick = sugTickS[1];
+  // 후보 크게 보기 — 행 열쇠(_k). 표를 옆으로 늘리지 않고 팝업에서 고른다
+  var sugPopS = useState(''); var sugPopK = sugPopS[0]; var setSugPopK = sugPopS[1];
   var atOpenS=useState(true);  var atOpen=atOpenS[0];   var setAtOpen=atOpenS[1];   // 자동 정리 미리보기 펼침 (기본 펼침)
   var invTickS=useState(0);    var invTick=invTickS[0]; var setInvTick=invTickS[1]; // 세금계산서 아카이브 로딩 완료 신호
   var advBatchS=useState(false); var advBatchOpen=advBatchS[0]; var setAdvBatchOpen=advBatchS[1]; // 자문료 일괄확인 팝업
@@ -34375,8 +34377,18 @@ function FinanceLedger(){
     }
   }
 
-  var thS={padding:'7px 10px',fontSize:'11px',fontWeight:700,color:'#64748b',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',textAlign:'left'};
+  /* 머리행 틀고정 — 표만 세로로 구르게 하고 머리행을 위에 붙여 둔다.
+     ⚠ position:sticky 는 «구르는 상자» 를 기준으로 붙는다. 표를 감싼 칸에
+       overflow 를 주지 않으면 페이지 전체가 구르는 상자라, 표가 길면 머리행이
+       화면 밖으로 밀려 올라가 버린다. 그래서 감싼 칸에 높이를 못 박아
+       그 안에서만 구르게 한다(_ldBox). */
+  var thS={padding:'7px 10px',fontSize:'11px',fontWeight:700,color:'#64748b',background:'#f8fafc',
+    borderBottom:'1px solid #e2e8f0',textAlign:'left',position:'sticky',top:0,zIndex:3,
+    boxShadow:'0 1px 0 #e2e8f0'};
   var tdS={padding:'7px 10px',fontSize:'11.5px',borderBottom:'1px solid #f1f5f9',verticalAlign:'middle'};
+  // 표가 구를 자리 — 위 도구줄·합계줄은 이 상자 밖이라 저절로 제자리에 남는다
+  var _ldBox={overflow:'auto',maxHeight:'calc(100vh - 330px)',minHeight:'240px',
+    border:'1px solid #eef2f7',borderRadius:'6px'};
 
   // ── 이미 처리된 행 (중복 방지) — 목록에서 감추고 모든 일괄작업에서 제외 ──
   var incAll = rows ? (rows.inc||[]) : [];
@@ -35220,8 +35232,8 @@ function FinanceLedger(){
             h('button',{onClick:function(){setConfHistOpen(true);},
               style:{padding:'3px 8px',background:'#64748b',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'확정 이력'));
         })(),
-        h('div',{style:{overflowX:'auto'}},
-          h('table',{style:{width:'100%',borderCollapse:'collapse'}},
+        h('div',{style:_ldBox},
+          h('table',{style:{width:'100%',borderCollapse:'separate',borderSpacing:0}},
             h('thead',null,h('tr',null,
               h('th',{style:Object.assign({},thS,{width:'28px',textAlign:'center',padding:'7px 2px'})},
                 h('input',{type:'checkbox',style:{cursor:'pointer'},
@@ -35473,6 +35485,11 @@ function FinanceLedger(){
                           style:{fontSize:'10px',color:'#64748b',fontWeight:700,cursor:'pointer'}},
                           (openOther?'▴ ':'▾ ')+(hit.length?'이름이 다른 것 ':'후보 ')+other.length+'건'
                           +(hit.length?' — 금액만 맞음':'')),
+                        // 표를 옆으로 늘리지 않고 큰 창에서 고른다
+                        h('span',{onClick:function(e){ e.stopPropagation(); setSugPopK(row._k); },
+                          title:'후보를 큰 창에서 봅니다 — 표를 늘리지 않아도 됩니다',
+                          style:{marginLeft:'8px',fontSize:'9.5px',fontWeight:800,color:'#1d4ed8',
+                            cursor:'pointer',textDecoration:'underline'}},'⤢ 크게 보기'),
                         openOther && h('div',{style:{marginTop:'3px'}},
                           // 종류 칩 + 검색 (후보가 넉넉할 때만)
                           other.length>=4 && h('div',{style:{display:'flex',gap:'3px',flexWrap:'wrap',alignItems:'center',marginBottom:'4px'}},
@@ -35712,8 +35729,8 @@ function FinanceLedger(){
           '💸 '+(incMon?parseInt(incMon.slice(5),10)+'월 ':'')+'출금 내역 — 카테고리 선택 후 출금관리 등록',
           h('span',{style:{marginLeft:'auto',fontWeight:800,color:'#b45309'}},
             expList.length+'건 · 합계 '+expSum.toLocaleString()+'원')),
-        h('div',{style:{overflowX:'auto'}},
-          h('table',{style:{width:'100%',borderCollapse:'collapse'}},
+        h('div',{style:_ldBox},
+          h('table',{style:{width:'100%',borderCollapse:'separate',borderSpacing:0}},
             h('thead',null,h('tr',null,
               h('th',{style:Object.assign({},thS,{width:'34px',textAlign:'right'})},'#'),
               h('th',{style:thS},'날짜'),h('th',{style:thS},'출금액'),h('th',{style:thS},'적요'),
@@ -36187,6 +36204,73 @@ function FinanceLedger(){
           )
         )
       );
+    })(),
+
+    /* ── 후보 크게 보기 팝업 ──
+       표 안에서는 후보 한 건이 한 줄이라 이름·건명이 잘린다. 창을 옆으로 늘려
+       확인하던 것을 이 창 하나로 갈음한다. 고르는 동작은 표와 똑같다. */
+    sugPopK && (function(){
+      var _row = incByK[sugPopK];
+      var _sg = incSug[sugPopK] || [];
+      if(!_row) return null;
+      var _memo = _row.memo||_row.note||'';
+      var _sel = inMatch[sugPopK];
+      function _pick(pid){
+        if(inMatch[sugPopK] !== pid){
+          var nm=Object.assign({},inMatch); nm[sugPopK]=pid; setInMatch(nm);
+          try{
+            var _c=pendById[pid];
+            if(_c && _memo && erpLearnPayerAlias(_memo, _c))
+              showToast('🔖 기억함 — 다음부터 「'+_memo+'」 은 '+_c.companyName+' 로 찾아옵니다');
+          }catch(_le){ if(window._erpErrLog) window._erpErrLog(_le); }
+        }
+        setSugPopK('');
+      }
+      return h('div',{className:'modal-bg',onClick:function(){setSugPopK('');},style:{zIndex:210}},
+        h('div',{onClick:function(e){e.stopPropagation();},
+          style:{background:'#fff',borderRadius:'10px',width:'min(980px,94vw)',maxHeight:'86vh',
+            display:'flex',flexDirection:'column',overflow:'hidden'}},
+          h('div',{style:{background:'#1e40af',color:'#fff',padding:'10px 14px',display:'flex',alignItems:'center',gap:'10px'}},
+            h('b',{style:{fontSize:'13px'}},_row.amount.toLocaleString()+'원'),
+            h('span',{style:{fontSize:'11.5px',opacity:0.9}},String(_row.date||'').slice(0,16).replace('T',' ')),
+            h('span',{style:{fontSize:'12px',fontWeight:700}},'적요 「'+(_memo||'-')+'」'),
+            h('span',{style:{flex:1}}),
+            h('span',{style:{fontSize:'11px',opacity:0.9}},'후보 '+_sg.length+'건'),
+            h('button',{className:'x',onClick:function(){setSugPopK('');},style:{color:'#fff'}},'×')),
+          _sg.length===0
+            ? h('div',{style:{padding:'28px',textAlign:'center',color:'#94a3b8',fontSize:'12.5px'}},'맞는 후보가 없습니다')
+            : h('div',{style:{overflow:'auto',padding:'8px 10px'}},
+                _sg.map(function(s){
+                  var on = _sel===s.cand.id;
+                  var ea = s.cand.expect||s.cand.amount;
+                  var d  = ea-_row.amount;
+                  var bd = storeBadge(s.cand.store);
+                  var _no=(s.cand.item&&(s.cand.item.caseNo||s.cand.item.no))||'';
+                  var _st=_pendStaff(s.cand);
+                  return h('div',{key:s.cand.id,onClick:function(){_pick(s.cand.id);},
+                    style:{display:'flex',alignItems:'center',gap:'10px',cursor:'pointer',
+                      border:'1px solid '+(on?'#1e40af':'#e8eef6'),background:on?'#eff6ff':'#fff',
+                      borderRadius:'8px',padding:'9px 12px',marginBottom:'5px',fontSize:'12.5px'}},
+                    h('input',{type:'radio',checked:on,readOnly:true,
+                      style:{width:'15px',height:'15px',margin:0,pointerEvents:'none',accentColor:'#1e40af',flexShrink:0}}),
+                    h('span',{style:{background:bd.bg,color:bd.fg,border:'1px solid '+bd.bd,borderRadius:'8px',
+                      padding:'1px 7px',fontSize:'10px',fontWeight:700,flexShrink:0}},bd.label),
+                    h('div',{style:{flex:'1 1 auto',minWidth:0}},
+                      h('b',{style:{color:'#1e293b'}},s.cand.companyName),
+                      h('div',{style:{fontSize:'11px',color:'#64748b',marginTop:'2px'}},
+                        s.cand.label+(_no?' · '+_no:'')+(_st?' · 담당 '+_st:''))),
+                    h('div',{style:{textAlign:'right',flexShrink:0}},
+                      h('b',{style:{fontVariantNumeric:'tabular-nums'}},ea.toLocaleString()+'원'),
+                      h('div',{style:{fontSize:'11px',marginTop:'2px',fontWeight:700,
+                        color:d===0?'#15803d':'#b45309'}},
+                        (d===0?'금액 일치':(d>0?'+':'')+d.toLocaleString())+' · '+s.score+'%')),
+                    h('div',{style:{flexShrink:0,fontSize:'10.5px',color:'#94a3b8',maxWidth:'190px',
+                      whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},
+                      (s.reasons||[]).join(' · '))
+                  );
+                })),
+          h('div',{style:{padding:'8px 12px',borderTop:'1px solid #eef2f7',fontSize:'11px',color:'#64748b'}},
+            '고르면 창이 닫히고 표에 반영됩니다 — 확정은 표의 [확정] 단추로 합니다')));
     })(),
 
     // ── 1-1 입금 상세 팝업 (행 클릭 시) ──
