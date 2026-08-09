@@ -34279,6 +34279,9 @@ function FinanceLedger(){
   var heldS=useState(null);    var held=heldS[0]||{};   var setHeld=heldS[1];
   var upSumS=useState(null);   var upSum=upSumS[0];     var setUpSum=upSumS[1];     // 올린 파일 결과 요약(상주)
   var heldOpenS=useState(false); var heldOpen=heldOpenS[0]; var setHeldOpen=heldOpenS[1]; // 보류함 목록 창
+  /* 마지막으로 누른 체크상자 자리 — 「묶어 확정」 권유를 그 옆에 띄우기 위함이다.
+     화면 위 도구줄에만 단추가 있으면, 아래쪽 줄을 체크하던 사람은 그것을 못 본다. */
+  var chkAnchorS=useState(null); var chkAnchor=chkAnchorS[0]; var setChkAnchor=chkAnchorS[1];
   var nbS=useState(null);      var nb=nbS[0];           var setNb=nbS[1];           // 🏦 나이스빌 CMS 파싱분 {fileName,uploadedAt,rows,byDate,stat,linked}
   var nbRestS=useState(false); var nbRestored=nbRestS[0]; var setNbRestored=nbRestS[1]; // 보관분(cms_ledger)에서 복원됨
 
@@ -34887,6 +34890,33 @@ function FinanceLedger(){
   var _expBtn = { padding:'4px 10px', marginRight:'4px', background:'#fff', color:'#334155',
                   border:'1px solid #cbd5e1', borderRadius:'5px', fontSize:'11px',
                   fontWeight:700, cursor:'pointer' };
+  /* 후보를 고르면 «적요 → 업체» 관계를 그 자리에서 기억한다.
+     확정할 때만 배우면, 골라두고 나중에 확정하는 사이에는 못 찾아온다.
+     (표와 확인창 두 곳에서 같은 동작이 필요해 밖으로 뺐다) */
+  function pickFor(row, pid){
+    if(!row || inMatch[row._k] === pid) return;
+    var nm = Object.assign({}, inMatch); nm[row._k] = pid; setInMatch(nm);
+    try{
+      var _c = pendById[pid];
+      var _m = row.memo || row.note || '';
+      if(_c && _m && erpLearnPayerAlias(_m, _c))
+        showToast('🔖 기억함 — 다음부터 「' + _m + '」 은 ' + _c.companyName + ' 로 찾아옵니다');
+    }catch(_le){ if(window._erpErrLog) window._erpErrLog(_le); }
+  }
+  /* 묶어 확정 — 무엇을 무엇에 합치는지 «먼저 보여주고» 확인받는다.
+     바로 창이 열리면 잘못 고른 줄이 섞여 있어도 모른 채 진행하게 된다. */
+  async function bundleAsk(grows, n, sum){
+    var lines = grows.map(function(r, i){
+      return '· ' + (i + 1) + '. ' + String(r.date || '').slice(5) + ' '
+           + (r.memo || '-') + ' — ' + (r.amount || 0).toLocaleString() + '원';
+    }).join('\n');
+    if(!(await popConfirm('고른 통장 ' + n + '줄을 한 항목에 합쳐 확정합니다.\n\n'
+      + lines + '\n\n합계 ' + sum.toLocaleString() + '원\n\n'
+      + '→ 다음 창에서 어느 항목에 붙일지 고릅니다'))) return;
+    setChkAnchor(null);
+    setSpSel({}); setSpGap(''); setSpQ('');
+    setSpRows(grows); setSpRow(grows[0]); setSpOpen(grows[0]._k);
+  }
   /* 처리 칸 단추는 크기를 하나로 맞춘다 — 제각각이면 줄마다 오른쪽 끝이 들쭉날쭉해 보인다 */
   function _actBtn(bg, fg, bd){
     return { display:'inline-block', minWidth:'44px', padding:'3px 8px', marginLeft:'3px',
@@ -35751,19 +35781,8 @@ function FinanceLedger(){
               var _gsum=_grows.reduce(function(s,r){ return s+(r.amount||0); },0);
               return h('button',{
                 title:'고른 통장 '+_gk.length+'행을 합쳐 미입금 건에 붙입니다\n— 한 건 값이 여러 번에 나뉘어 들어왔을 때 씁니다',
-                /* 무엇을 무엇에 합치는지 «먼저 보여주고» 확인받는다 (대표 지시).
-                   바로 창이 열리면 잘못 고른 줄이 섞여 있어도 모른 채 진행하게 된다. */
-                onClick:async function(){
-                  var _lines = _grows.map(function(r,_i){
-                    return '· ' + (_i+1) + '. ' + String(r.date||'').slice(5) + ' '
-                         + (r.memo||'-') + ' — ' + (r.amount||0).toLocaleString() + '원';
-                  }).join('\n');
-                  if(!(await popConfirm('고른 통장 ' + _gk.length + '줄을 한 항목에 합쳐 확정합니다.\n\n'
-                    + _lines + '\n\n합계 ' + _gsum.toLocaleString() + '원\n\n'
-                    + '→ 다음 창에서 어느 항목에 붙일지 고릅니다'))) return;
-                  setSpSel({}); setSpGap(''); setSpQ('');
-                  setSpRows(_grows); setSpRow(_grows[0]); setSpOpen(_grows[0]._k);
-                },
+                // 확인창은 체크 옆 권유와 같은 함수를 쓴다 — 두 길이 다른 말을 하면 안 된다
+                onClick:function(){ bundleAsk(_grows, _gk.length, _gsum); },
                 style:{padding:'3px 9px',background:'#7c3aed',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10.5px',fontWeight:800,cursor:'pointer',whiteSpace:'nowrap'}},
                 '⊞ 묶어 한 항목에 확정 '+_gk.length+'행 · '+_gsum.toLocaleString()+'원');
             })(),
@@ -35845,7 +35864,21 @@ function FinanceLedger(){
                   }},
                   h('td',{style:Object.assign({},tdS,{textAlign:'center',padding:'5px 2px'})},
                     !row._dup && h('input',{type:'checkbox',style:{cursor:'pointer'},checked:!!incChk[row._k],
-                      onChange:function(){ var nm=Object.assign({},incChk); if(nm[row._k]) delete nm[row._k]; else nm[row._k]=true; setIncChk(nm); }})),
+                      onChange:function(e){
+                        var nm=Object.assign({},incChk);
+                        if(nm[row._k]) delete nm[row._k]; else nm[row._k]=true;
+                        setIncChk(nm);
+                        /* 체크한 자리를 기억해 두었다가 그 옆에 「묶어 확정」 권유를 띄운다.
+                           체크가 둘 미만이 되면 권유도 사라진다. */
+                        try{
+                          var _n = Object.keys(nm).filter(function(k){ var r=incByK[k]; return r && !r._dup; }).length;
+                          if(_n < 2){ setChkAnchor(null); return; }
+                          var _r = e.target.getBoundingClientRect();
+                          var _x = Math.min(_r.right + 8, (window.innerWidth || 1200) - 320);
+                          var _y = Math.min(_r.top - 4, (window.innerHeight || 800) - 130);
+                          setChkAnchor({ x:Math.max(8,_x), y:Math.max(8,_y) });
+                        }catch(_ae){ if(window._erpErrLog) window._erpErrLog(_ae); }
+                      }})),
                   // 줄 번호 — 「몇 번째 줄이 이상하다」 고 서로 말할 수 있어야 한다
                   h('td',{style:Object.assign({},tdS,{textAlign:'right',padding:'5px 3px',color:'#94a3b8',
                       fontSize:'10.5px',fontVariantNumeric:'tabular-nums'})},_ri+1),
@@ -35892,7 +35925,10 @@ function FinanceLedger(){
                   // ══ 담당 ══
                   h('td',{style:Object.assign({},_cell,{fontSize:'10.5px',color:'#64748b'}),
                     title:pItem?('주담당 '+(_pendStaff(pItem)||'지정 안 됨')):''},
-                    pItem ? (_pendStaff(pItem)||'—') : '—'),
+                    /* 업체가 여럿이어도 먼저 채울 후보의 담당은 보여준다 —
+                       담당자 이름이 있어야 그 사람에게 물어볼 수 있다(대표 지적).
+                       전에는 여럿이면 pItem 이 null 이라 늘 「—」 였다. */
+                    (_grp.length ? (_pendStaff(_grp[0].head.cand)||'—') : '—')),
                   // ══ 처리 — 단추 크기를 하나로 맞춘다 ══
                   h('td',{style:Object.assign({},tdS,{borderLeft:'2px solid #f1f5f9',textAlign:'right',
                       whiteSpace:'nowrap',padding:'4px 6px'})},
@@ -35923,82 +35959,7 @@ function FinanceLedger(){
                       title:'화면에서만 지웁니다 — 기록은 남지 않습니다',
                       style:{padding:'3px 5px',marginLeft:'3px',background:'transparent',color:'#cbd5e1',
                         border:'none',borderRadius:'4px',fontSize:'10px',cursor:'pointer'}},'✕'))
-                ),
-                /* ── 펼침 — 판단이 필요한 줄만 ── */
-                _open && h('tr',{style:{background:'#f8fafc'}},
-                  h('td',{colSpan:10,style:{padding:'8px 10px 10px 62px',borderBottom:'1px solid #e2e8f0'}},
-                    // ① 업체가 여럿 — 골라야 한다
-                    _grp.length>1 && h('div',{style:{marginBottom:'7px'}},
-                      h('div',{style:{fontSize:'11px',color:'#64748b',marginBottom:'4px'}},'어느 업체인가요?'),
-                      _grp.map(function(g,_gi){
-                        return h('label',{key:_gi,style:{display:'flex',alignItems:'center',gap:'6px',padding:'4px 8px',
-                            background:'#fff',border:'1px solid #e2e8f0',borderRadius:'5px',marginBottom:'3px',
-                            fontSize:'11.5px',cursor:'pointer'}},
-                          h('input',{type:'radio',name:'g'+row._k,checked:mId===g.head.cand.id,
-                            onChange:function(){ pickSug(g.head.cand.id); }}),
-                          h('span',{style:{flex:1}},g.company+' · '+g.kinds.filter(Boolean).join('·')
-                            +(g.n>1?(' ('+g.months.length+'달)'):'')),
-                          h('span',{style:{fontWeight:700}},((g.head.cand.expect||g.head.cand.amount)||0).toLocaleString()),
-                          h('span',{style:{fontSize:'10px',color:'#94a3b8'}},(g.head.evidence||'')));
-                      })),
-                    // ② 과입금 — 넘친 돈을 어디에 둘지는 돈 문제라 사람이 고른다
-                    _st.diff>0 && pItem && h('div',{style:{marginBottom:'7px'}},
-                      h('div',{style:{fontSize:'11px',color:'#64748b',marginBottom:'4px'}},
-                        '넘친 '+_st.diff.toLocaleString()+'원을 어떻게 할까요?'),
-                      h('button',{onClick:function(){ confirmOver(row,pItem,'prepay'); },style:_expBtn},
-                        (_erpYmNext(pItem.ym||'') ? (parseInt(_erpYmNext(pItem.ym).slice(5),10)+'월분으로 미리 받음') : '다음 건으로 미리 받음')),
-                      h('button',{onClick:function(){ confirmOver(row,pItem,'asis'); },style:_expBtn},'이 건에 그대로 기록'),
-                      h('button',{onClick:function(){ confirmOver(row,pItem,'split'); },style:_expBtn},'다른 항목 골라 나누기')),
-                    // ③ 부족 — 일부입금으로 남길지, 수수료로 볼지
-                    _st.diff<0 && pItem && h('div',{style:{marginBottom:'7px'}},
-                      h('div',{style:{fontSize:'11px',color:'#64748b',marginBottom:'4px'}},
-                        (-_st.diff).toLocaleString()+'원이 덜 들어왔습니다'),
-                      h('button',{onClick:function(){ confirmRow(row,pItem,{partial:true}); },style:_expBtn},
-                        '부분입금으로 확정 (남은 금액은 미수로)'),
-                      h('button',{onClick:function(){ confirmRow(row,pItem,{feeAmount:-_st.diff}); },style:_expBtn},
-                        '수수료 차감으로 보고 완납'),
-                      h('button',{onClick:function(){ confirmRow(row,pItem,{}); },style:_expBtn},'그대로 완납 처리')),
-                    // ④ 합계 후보 — 한 입금이 여러 건의 합계
-                    cb && h('div',{style:{marginBottom:'7px'}},
-                      h('div',{style:{fontSize:'11px',color:'#64748b',marginBottom:'4px'}},
-                        '이 입금 하나가 아래 '+cb.cands.length+'건의 합계와 맞습니다'),
-                      cb.cands.map(function(c,_ci){
-                        return h('div',{key:_ci,style:{display:'flex',gap:'6px',padding:'3px 8px',background:'#fff',
-                            border:'1px solid #e2e8f0',borderRadius:'5px',marginBottom:'3px',fontSize:'11.5px'}},
-                          h('span',{style:{flex:1}},c.companyName+' · '+c.label),
-                          h('span',{style:{fontWeight:700}},(c.amount||0).toLocaleString()));
-                      }),
-                      h('div',{style:{fontSize:'10.5px',color:cb.diff?'#b45309':'#15803d',marginBottom:'4px'}},
-                        '합계 '+cb.total.toLocaleString()+'원'+(cb.diff?(' · 차액 '+cb.diff.toLocaleString()+'원'):' · 차액 0원')),
-                      h('button',{onClick:function(){ confirmCombo(row,cb); },style:_expBtn},
-                        '이 '+cb.cands.length+'건으로 나눠 확정')),
-                    // ⑤ 밀린 달 — 오래된 달부터 채우되 달을 직접 고를 수 있다
-                    _grp.length===1 && _grp[0].n>1 && h('div',{style:{marginBottom:'7px'}},
-                      h('div',{style:{fontSize:'11px',color:'#64748b',marginBottom:'4px'}},
-                        '어느 달부터 채울까요? (기본은 가장 오래된 달)'),
-                      _grp[0].items.map(function(it,_ii){
-                        return h('label',{key:_ii,style:{display:'inline-flex',alignItems:'center',gap:'4px',
-                            padding:'3px 8px',background:'#fff',border:'1px solid #e2e8f0',borderRadius:'5px',
-                            marginRight:'4px',fontSize:'11px',cursor:'pointer'}},
-                          h('input',{type:'radio',name:'m'+row._k,checked:mId===it.cand.id,
-                            onChange:function(){ pickSug(it.cand.id); }}),
-                          // 밀린 달은 색으로도 구분된다 — 지난 달치가 섞여 있으면 눈에 띄어야 한다
-                          h('span',{style:{color:it.cand.late?'#b45309':'#64748b',
-                              fontWeight:it.cand.late?700:400}},
-                            (it.cand.ym||it.cand.label||'')+' · '+((it.cand.expect||it.cand.amount)||0).toLocaleString()
-                            +(it.cand.late?' (밀림)':'')));
-                      })),
-                    // ⑥ 늘 열려 있는 손잡이
-                    h('div',{style:{marginTop:'4px'}},
-                      h('button',{onClick:function(){ openFindRow(row); },style:_expBtn},'⤢ 크게 보기 · 직접 찾기'),
-                      pending.length>=2 && h('button',{onClick:function(){
-                          var init={};
-                          if(mId){ var pi=pending.find(function(p){return p.id===mId;}); if(pi) init[mId]=pi.expect||pi.amount; }
-                          setSpSel(init); setSpGap(''); setSpQ(''); setSpRows(null); setSpRow(row); setSpOpen(row._k);
-                        },style:_expBtn},'⊞ 나눠담기'),
-                      h('button',{onClick:function(){ holdRow(row); },style:_expBtn},'🗄 보류함에 넣기'),
-                      pItem && h('button',{onClick:function(){ setDetPop({row:row,pItem:pItem}); },style:_expBtn},'자세히'))
-                  ))
+                )
               );
             })),
             // 합계 행 — 입금액 열 아래에 맞춘다
@@ -36794,6 +36755,141 @@ function FinanceLedger(){
     })(),
 
 
+    /* ── 확인 창 (노란 줄) ──
+       전에는 표 아래로 밀고 들어가며 펼쳐졌다. 줄이 밀려 내려가 어디를 보던 중인지 놓치고,
+       고르는 동안 표가 계속 흔들렸다(대표 지적). 이제 화면 가운데 창으로 띄운다. */
+    openRow && (function(){
+      var row = incByK[openRow];
+      if(!row) return null;
+      var _grp = rowGroups(row);
+      var _st  = erpRowState(row, _grp, {held:held});
+      var pItem = _grp.length===1 ? (pendById[_grp[0].head.cand.id]||_grp[0].head.cand) : null;
+      var mId = inMatch[row._k];
+      var _cbs = comboOf(row); var cb = (_cbs&&_cbs.length)?_cbs[0]:null;
+      function close(){ setOpenRow(''); }
+      return h('div',{style:{position:'fixed',inset:0,background:'rgba(15,23,42,.45)',zIndex:9000,
+          display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'},
+        onClick:function(e){ if(e.target===e.currentTarget) close(); }},
+        h('div',{style:{background:'#fff',borderRadius:'10px',width:'min(680px,96vw)',maxHeight:'82vh',
+            overflow:'auto',padding:'14px 16px'}},
+          // 무엇을 보고 있는지 — 창을 열면 통장 줄이 안 보이므로 머리에 그대로 적는다
+          h('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'4px'}},
+            h('b',{style:{fontSize:'14px'}},(row.amount||0).toLocaleString()+'원'),
+            h('span',{style:{color:'#64748b',fontSize:'12px'}},
+              String(row.date||'')+' · '+(row.memo||'-')),
+            h('span',{style:{flex:1}}),
+            h('button',{onClick:close,style:{padding:'4px 10px',background:'#f1f5f9',border:'none',
+              borderRadius:'5px',fontSize:'11px',cursor:'pointer'}},'닫기')),
+          h('div',{style:{fontSize:'11.5px',color:'#b45309',marginBottom:'10px'}},'⚠️ '+_st.label),
+          // ① 업체가 여럿 — 골라야 한다
+          _grp.length>1 && h('div',{style:{marginBottom:'10px'}},
+            h('div',{style:{fontSize:'11.5px',color:'#64748b',marginBottom:'4px'}},'어느 업체인가요?'),
+            _grp.map(function(g,_gi){
+              var _stf = _pendStaff(g.head.cand);
+              return h('label',{key:_gi,style:{display:'flex',alignItems:'center',gap:'6px',padding:'5px 8px',
+                  background:'#fff',border:'1px solid '+(mId===g.head.cand.id?'#93c5fd':'#e2e8f0'),
+                  borderRadius:'5px',marginBottom:'3px',fontSize:'11.5px',cursor:'pointer'}},
+                h('input',{type:'radio',name:'g'+row._k,checked:mId===g.head.cand.id,
+                  onChange:function(){ pickFor(row, g.head.cand.id); }}),
+                h('span',{style:{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
+                  g.company+' · '+erpKindLabel(g)+(g.n>1?(' ('+(g.months.length||g.n)+'달)'):'')),
+                // 담당자 이름 — 누구에게 물어볼지 알아야 한다 (대표 지적)
+                h('span',{style:{width:'56px',color:'#475569',fontSize:'10.5px'}},_stf||'담당 없음'),
+                h('span',{style:{width:'82px',textAlign:'right',fontWeight:700}},
+                  ((g.head.cand.expect||g.head.cand.amount)||0).toLocaleString()),
+                h('span',{style:{width:'52px',textAlign:'right',fontSize:'10px',color:'#94a3b8'}},(g.head.evidence||'')));
+            })),
+          // ② 과입금 — 넘친 돈을 어디에 둘지는 돈 문제라 사람이 고른다
+          _st.diff>0 && pItem && h('div',{style:{marginBottom:'10px'}},
+            h('div',{style:{fontSize:'11.5px',color:'#64748b',marginBottom:'4px'}},
+              '넘친 '+_st.diff.toLocaleString()+'원을 어떻게 할까요?'),
+            h('button',{onClick:function(){ close(); confirmOver(row,pItem,'prepay'); },style:_expBtn},
+              (_erpYmNext(pItem.ym||'') ? (parseInt(_erpYmNext(pItem.ym).slice(5),10)+'월분으로 미리 받음') : '다음 건으로 미리 받음')),
+            h('button',{onClick:function(){ close(); confirmOver(row,pItem,'asis'); },style:_expBtn},'이 건에 그대로 기록'),
+            h('button',{onClick:function(){ close(); confirmOver(row,pItem,'split'); },style:_expBtn},'다른 항목 골라 나누기')),
+          // ③ 부족 — 일부입금으로 남길지, 수수료로 볼지
+          _st.diff<0 && pItem && h('div',{style:{marginBottom:'10px'}},
+            h('div',{style:{fontSize:'11.5px',color:'#64748b',marginBottom:'4px'}},
+              (-_st.diff).toLocaleString()+'원이 덜 들어왔습니다'),
+            h('button',{onClick:function(){ close(); confirmRow(row,pItem,{partial:true}); },style:_expBtn},
+              '부분입금으로 확정 (남은 금액은 미수로)'),
+            h('button',{onClick:function(){ close(); confirmRow(row,pItem,{feeAmount:-_st.diff}); },style:_expBtn},
+              '수수료 차감으로 보고 완납'),
+            h('button',{onClick:function(){ close(); confirmRow(row,pItem,{}); },style:_expBtn},'그대로 완납 처리')),
+          // ④ 합계 후보 — 한 입금이 여러 건의 합계
+          cb && h('div',{style:{marginBottom:'10px'}},
+            h('div',{style:{fontSize:'11.5px',color:'#64748b',marginBottom:'4px'}},
+              '이 입금 하나가 아래 '+cb.cands.length+'건의 합계와 맞습니다'),
+            cb.cands.map(function(c,_ci){
+              return h('div',{key:_ci,style:{display:'flex',gap:'6px',padding:'4px 8px',background:'#f8fafc',
+                  border:'1px solid #e2e8f0',borderRadius:'5px',marginBottom:'3px',fontSize:'11.5px'}},
+                h('span',{style:{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
+                  c.companyName+' · '+(c.label||'')),
+                h('span',{style:{width:'56px',color:'#475569',fontSize:'10.5px'}},_pendStaff(c)||'—'),
+                h('span',{style:{width:'82px',textAlign:'right',fontWeight:700}},(c.amount||0).toLocaleString()));
+            }),
+            h('div',{style:{fontSize:'11px',color:cb.diff?'#b45309':'#15803d',marginBottom:'5px'}},
+              '합계 '+cb.total.toLocaleString()+'원'+(cb.diff?(' · 차액 '+cb.diff.toLocaleString()+'원'):' · 차액 0원')),
+            h('button',{onClick:function(){ close(); confirmCombo(row,cb); },style:_expBtn},
+              '이 '+cb.cands.length+'건으로 나눠 확정')),
+          // ⑤ 밀린 달 — 오래된 달부터 채우되 달을 직접 고를 수 있다
+          _grp.length===1 && _grp[0].n>1 && h('div',{style:{marginBottom:'10px'}},
+            h('div',{style:{fontSize:'11.5px',color:'#64748b',marginBottom:'4px'}},
+              '어느 달부터 채울까요? (기본은 가장 오래된 달)'),
+            _grp[0].items.map(function(it,_ii){
+              return h('label',{key:_ii,style:{display:'inline-flex',alignItems:'center',gap:'4px',
+                  padding:'4px 8px',background:'#fff',border:'1px solid #e2e8f0',borderRadius:'5px',
+                  marginRight:'4px',marginBottom:'3px',fontSize:'11px',cursor:'pointer'}},
+                h('input',{type:'radio',name:'m'+row._k,checked:mId===it.cand.id,
+                  onChange:function(){ pickFor(row, it.cand.id); }}),
+                // 밀린 달은 색으로도 구분된다 — 지난 달치가 섞여 있으면 눈에 띄어야 한다
+                h('span',{style:{color:it.cand.late?'#b45309':'#64748b',
+                    fontWeight:it.cand.late?700:400}},
+                  (it.cand.ym||it.cand.label||'')+' · '+((it.cand.expect||it.cand.amount)||0).toLocaleString()
+                  +(it.cand.late?' (밀림)':'')));
+            })),
+          // ⑥ 고른 뒤 바로 확정 — 창을 닫고 다시 찾아 누르게 하면 한 걸음이 는다
+          pItem && _st.diff===0 && h('div',{style:{marginBottom:'10px'}},
+            h('button',{onClick:function(){ close(); confirmRow(row,pItem,{feeAmount:_st.fee}); },
+              style:{padding:'5px 14px',background:'#16a34a',color:'#fff',border:'none',borderRadius:'5px',
+                fontSize:'12px',fontWeight:700,cursor:'pointer'}},
+              '✅ '+_grp[0].company+' 로 확정')),
+          // ⑦ 늘 열려 있는 손잡이
+          h('div',{style:{borderTop:'1px solid #f1f5f9',paddingTop:'8px'}},
+            h('button',{onClick:function(){ close(); openFindRow(row); },style:_expBtn},'⤢ 크게 보기 · 직접 찾기'),
+            pending.length>=2 && h('button',{onClick:function(){
+                var init={};
+                if(mId){ var pi=pending.find(function(p){return p.id===mId;}); if(pi) init[mId]=pi.expect||pi.amount; }
+                close();
+                setSpSel(init); setSpGap(''); setSpQ(''); setSpRows(null); setSpRow(row); setSpOpen(row._k);
+              },style:_expBtn},'⊞ 나눠담기'),
+            h('button',{onClick:function(){ close(); holdRow(row); },style:_expBtn},'🗄 보류함에 넣기'),
+            pItem && h('button',{onClick:function(){ close(); setDetPop({row:row,pItem:pItem}); },style:_expBtn},'자세히'))
+        ));
+    })(),
+
+    /* ── 묶어 확정 권유 (체크가 둘 이상일 때) ──
+       단추가 화면 위 도구줄에 있으면, 아래쪽 줄을 체크하고 있던 사람은 그것을 보지 못한다.
+       체크한 자리 바로 옆에 띄워 «지금 무엇을 할 수 있는지» 를 그 자리에서 알린다(대표 지시). */
+    (function(){
+      var _pk = Object.keys(incChk).filter(function(k){ var r=incByK[k]; return r && !r._dup; });
+      if(_pk.length < 2 || !chkAnchor) return null;
+      var _rows = _pk.map(function(k){ return incByK[k]; });
+      var _sum = _rows.reduce(function(s,r){ return s+(r.amount||0); }, 0);
+      return h('div',{style:{position:'fixed',left:Math.round(chkAnchor.x)+'px',top:Math.round(chkAnchor.y)+'px',
+          zIndex:8500,background:'#fff',border:'1px solid #93c5fd',borderRadius:'8px',
+          boxShadow:'0 6px 20px rgba(15,23,42,.18)',padding:'8px 10px',fontSize:'11.5px',maxWidth:'300px'}},
+        h('div',{style:{fontWeight:800,color:'#1d4ed8',marginBottom:'3px'}},
+          '☑ '+_pk.length+'줄 선택 · '+_sum.toLocaleString()+'원'),
+        h('div',{style:{color:'#64748b',marginBottom:'6px'}},
+          '나눠 들어온 입금인가요? 한 항목에 합쳐 확정할 수 있습니다'),
+        h('button',{onClick:function(){ bundleAsk(_rows, _pk.length, _sum); },
+          style:{padding:'4px 10px',background:'#1d4ed8',color:'#fff',border:'none',borderRadius:'5px',
+            fontSize:'11px',fontWeight:700,cursor:'pointer'}},'묶어 확정'),
+        h('button',{onClick:function(){ setChkAnchor(null); },
+          style:{padding:'4px 8px',marginLeft:'4px',background:'#f1f5f9',color:'#64748b',border:'none',
+            borderRadius:'5px',fontSize:'11px',cursor:'pointer'}},'나중에'));
+    })(),
     /* ── 🗄 보류함 (가수금) ──
        누가 왜 보낸 돈인지 모를 때 두는 자리. 지우는 것과 다르다 — 여기 있는 동안은
        매출에도 안 잡히지만 «나중에 밝힐 것» 으로 남아 있고, 월말 마감이 남은 것을 알린다. */

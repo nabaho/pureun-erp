@@ -56,7 +56,9 @@ t('담당 칸에 너비가 정해져 있다', /width:'58px'[\s\S]{0,60}?'담당'
 t('칸마다 넘침 처리를 공통으로 쓴다',
   /var _cell=Object\.assign\(\{\},tdS,\{padding:'5px 6px',overflow:'hidden',/.test(FL), true);
 t('업체는 제 칸에 홀로 있다', /_grp\.length \? _grp\[0\]\.company/.test(FL), true);
-t('담당이 제 칸에 있다', /pItem \? \(_pendStaff\(pItem\)\|\|'—'\) : '—'/.test(FL), true);
+// 업체가 여럿이어도 먼저 채울 후보의 담당은 보여준다 — 누구에게 물어볼지 알아야 한다
+t('담당이 제 칸에 있다', /\(_grp\.length \? \(_pendStaff\(_grp\[0\]\.head\.cand\)\|\|'—'\) : '—'\)/.test(FL), true);
+t('업체가 여럿이어도 담당이 비지 않는다', /pItem \? \(_pendStaff\(pItem\)\|\|'—'\) : '—'/.test(FL), false);
 t('금액은 오른쪽 정렬·자릿수 고정', /textAlign:'right',padding:'5px 6px',whiteSpace:'nowrap',\s*\n\s*fontWeight:700,color:'#16a34a',fontSize:'12px',fontVariantNumeric:'tabular-nums'/.test(FL), true);
 
 /* ══════ ③ 줄 번호 ══════ */
@@ -100,16 +102,41 @@ t('CMS 줄에는 확인 단추를 겹쳐 놓지 않는다',
   /_st\.state==='check' && !isCms && h\('button'/.test(FL), true);
 
 /* ══════ ⑧ 묶어 확정 — 먼저 보여주고 확인받는다 ══════ */
-t('무엇을 합치는지 먼저 묻는다', /고른 통장 ' \+ _gk\.length \+ '줄을 한 항목에 합쳐 확정합니다/.test(FL), true);
-t('줄마다 날짜·적요·금액을 적어 준다', /String\(r\.date\|\|''\)\.slice\(5\)[\s\S]{0,120}?\(r\.amount\|\|0\)\.toLocaleString\(\)/.test(FL), true);
-t('합계도 보여준다', /'\\n\\n합계 ' \+ _gsum\.toLocaleString\(\)/.test(FL), true);
-t('취소하면 창이 안 열린다', /if\(!\(await popConfirm\([\s\S]{0,400}?\)\)\) return;\s*\n\s*setSpSel\(\{\}\); setSpGap\(''\); setSpQ\(''\);/.test(FL), true);
+const ASK = FL.slice(FL.indexOf('async function bundleAsk('), FL.indexOf('function _actBtn('));
+t('묻는 곳이 한 군데다', /async function bundleAsk\(grows, n, sum\)/.test(FL), true);
+t('무엇을 합치는지 먼저 묻는다', /'고른 통장 ' \+ n \+ '줄을 한 항목에 합쳐 확정합니다/.test(ASK), true);
+t('줄마다 날짜·적요·금액을 적어 준다',
+  /String\(r\.date \|\| ''\)\.slice\(5\)[\s\S]{0,140}?\(r\.amount \|\| 0\)\.toLocaleString\(\)/.test(ASK), true);
+t('합계도 보여준다', /'\\n\\n합계 ' \+ sum\.toLocaleString\(\)/.test(ASK), true);
+t('취소하면 창이 안 열린다',
+  /if\(!\(await popConfirm\([\s\S]{0,300}?\)\)\) return;\s*\n\s*setChkAnchor\(null\);/.test(ASK), true);
+t('도구줄 단추도 같은 함수를 쓴다', /onClick:function\(\)\{ bundleAsk\(_grows, _gk\.length, _gsum\); \}/.test(FL), true);
+
+/* ══════ ⑩ 확인 창 — 표를 밀어내지 않고 가운데 창으로 ══════ */
+t('노란 줄은 창으로 연다', /openRow && \(function\(\)\{[\s\S]{0,900}?position:'fixed',inset:0/.test(FL), true);
+t('표 안에서 펼치지 않는다', /_open && h\('tr',\{style:\{background:'#f8fafc'\}\}/.test(FL), false);
+t('창 머리에 통장 줄을 그대로 적는다', /\(row\.amount\|\|0\)\.toLocaleString\(\)\+'원'/.test(FL), true);
+t('창 안 후보마다 담당자를 보여준다', /var _stf = _pendStaff\(g\.head\.cand\);/.test(FL), true);
+t('합계 후보에도 담당자를 적는다', /_pendStaff\(c\)\|\|'—'/.test(FL), true);
+t('고르는 함수를 밖에서 함께 쓴다', /function pickFor\(row, pid\)/.test(FL), true);
+t('창이 그 함수를 쓴다', /pickFor\(row, g\.head\.cand\.id\)/.test(FL), true);
+t('고른 뒤 창에서 바로 확정할 수 있다', /'✅ '\+_grp\[0\]\.company\+' 로 확정'/.test(FL), true);
+
+/* ══════ ⑪ 체크 둘 이상 — 체크한 자리 옆에 권유 ══════ */
+t('체크 자리를 기억한다', /var chkAnchor=chkAnchorS\[0\]/.test(FL), true);
+t('체크할 때 자리를 잰다', /e\.target\.getBoundingClientRect\(\)/.test(FL), true);
+t('둘 미만이면 권유가 사라진다', /if\(_n < 2\)\{ setChkAnchor\(null\); return; \}/.test(FL), true);
+t('권유가 그 자리에 뜬다', /left:Math\.round\(chkAnchor\.x\)\+'px',top:Math\.round\(chkAnchor\.y\)\+'px'/.test(FL), true);
+// 둘 이상 체크했고 자리를 잰 때만 뜬다 (조건을 없애면 늘 뜨거나 아예 안 뜬다)
+t('뜨는 조건이 하나뿐이다', /if\(_pk\.length < 2 \|\| !chkAnchor\) return null;/.test(FL), true);
+t('권유에서 바로 묶을 수 있다', /bundleAsk\(_rows, _pk\.length, _sum\)/.test(FL), true);
+t('나중에 하겠다고 닫을 수 있다', /'나중에'/.test(FL), true);
+t('화면 밖으로 나가지 않게 막는다', /window\.innerWidth \|\| 1200\) - 320/.test(FL), true);
 
 /* ══════ ⑨ 표 칸 수가 서로 맞는가 ══════ */
 const thN = (HEAD.match(/h\('th'/g) || []).length;
 t('머리 칸이 열 개다', thN, 10);
-t('펼침 줄이 표 전체를 덮는다', /colSpan:10,style:\{padding:'8px 10px 10px 62px'/.test(FL), true);
-t('더보기 줄도 표 전체를 덮는다', /colSpan:10,style:\{padding:'8px',textAlign:'center',background:'#f8fafc'/.test(FL), true);
+t('더보기 줄이 표 전체를 덮는다', /colSpan:10,style:\{padding:'8px',textAlign:'center',background:'#f8fafc'/.test(FL), true);
 // 합계 줄의 칸 수도 머리와 같아야 한다 (2 + 1 + 1 + 2 + 4 = 10)
 const FOOT = FL.slice(FL.indexOf("background:'#f0fdf4',borderTop:'2px solid #bbf7d0'"), FL.indexOf("// ── 출금 테이블"));
 const spans = (FOOT.match(/colSpan:(\d+)/g) || []).map(function(s){ return parseInt(/\d+/.exec(s)[0], 10); });
