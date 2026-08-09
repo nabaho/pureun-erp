@@ -34076,120 +34076,50 @@ function erpInvoiceMatchAll(invs, incs, asOf){
 }
 if(typeof window !== 'undefined') window.erpInvoiceMatchAll = erpInvoiceMatchAll;
 /* ══════════════════════════════════════════════════════════════
-   엑셀식 열 거르기 (거래내역 표 · 나이스빌 CMS 표가 함께 쓴다)
-   머리줄의 ▾ 를 누르면 그 열의 «실제 값» 이 건수와 함께 체크 목록으로 뜬다.
-   거름은 화면에만 걸린다 — 처리 단추는 «보이는 줄» 에만 돌게 하고 글자에 그 수를 적는다.
+   제목 클릭 정렬 (거래내역 표 · 나이스빌 CMS 표가 함께 쓴다)
+   대표 지시: 체크 목록으로 «거르는» 방식 말고, 제목을 눌러 «위아래로 세우는» 방식.
+   한 번 누르면 오름차순 ▲, 다시 누르면 내림차순 ▼, 한 번 더 누르면 원래 순서로.
+   거르지 않으므로 줄이 사라지지 않는다 — 「안 보이는 줄이 조용히 확정」 걱정이 없다.
    ══════════════════════════════════════════════════════════════ */
-/* 그 열의 값들을 세어 목록으로. cap 을 두는 까닭: 업체가 444곳이면 다 그리는 순간 창이 멈춘다.
-   찾기말(q)이 있으면 먼저 걸러 세므로, 잘린 뒤쪽도 찾으면 나온다. */
-function erpColValues(rows, getVal, q, cap){
-  cap = cap || 200;
-  var qq = String(q || '').trim().toLowerCase();
-  var map = {}, order = [];
-  (rows || []).forEach(function(r){
-    var v = getVal(r);
-    v = (v === null || v === undefined || v === '') ? '(없음)' : String(v);
-    if(qq && v.toLowerCase().indexOf(qq) < 0) return;
-    if(map[v] === undefined){ map[v] = 0; order.push(v); }
-    map[v]++;
-  });
-  order.sort(function(a, b){
-    if(a === '(없음)') return 1;                 // 「(없음)」 은 늘 맨 아래
-    if(b === '(없음)') return -1;
-    if(map[b] !== map[a]) return map[b] - map[a];  // 많은 것부터
-    return a.localeCompare(b, 'ko');
-  });
-  var out = order.slice(0, cap).map(function(v){ return { v:v, n:map[v] }; });
-  return { list:out, more:(order.length - out.length), total:order.length };
+/* 누를 때마다 오름 → 내림 → 없음 으로 돈다. 다른 열을 누르면 그 열의 오름차순부터. */
+function erpNextSort(cur, col){
+  if(!cur || cur.col !== col) return { col:col, dir:'asc' };
+  if(cur.dir === 'asc')  return { col:col, dir:'desc' };
+  return null;                                   // 세 번째 — 원래 순서로 되돌린다
 }
-/* 걸린 거름들로 줄을 거른다.
-   filters = { 열이름: {값:1, …} } — 그 열에 켜진 값이 «하나도 없으면» 그 열은 안 거른다.
-   cols    = { 열이름: 값을 꺼내는 함수 } */
-function erpApplyColFilters(rows, filters, cols){
-  var keys = Object.keys(filters || {}).filter(function(k){
-    return filters[k] && Object.keys(filters[k]).length > 0 && cols[k];
+/* 정렬. 숫자는 숫자로, 글자는 한국어 순서로 견준다.
+   ★ 흔들리지 않는 정렬(stable): 값이 같으면 원래 순서를 지킨다 —
+     같은 금액 열 줄이 누를 때마다 자리를 바꾸면 눈이 따라가지 못한다.
+   ★ 빈 값은 어느 쪽으로 세우든 «늘 맨 아래» — 위로 올라오면 화면 첫머리가 빈 줄이 된다. */
+function erpSortRows(rows, getVal, dir){
+  var arr = (rows || []).slice();
+  if(!dir) return arr;
+  var sign = (dir === 'desc') ? -1 : 1;
+  var keyed = arr.map(function(r, i){ return { r:r, i:i, v:getVal(r) }; });
+  keyed.sort(function(a, b){
+    var av = a.v, bv = b.v;
+    var ae = (av === null || av === undefined || av === '');
+    var be = (bv === null || bv === undefined || bv === '');
+    if(ae && be) return a.i - b.i;
+    if(ae) return 1;                              // 빈 값은 늘 아래
+    if(be) return -1;
+    var d;
+    if(typeof av === 'number' && typeof bv === 'number') d = av - bv;
+    else d = String(av).localeCompare(String(bv), 'ko');
+    if(d !== 0) return d * sign;
+    return a.i - b.i;                             // 같으면 원래 순서
   });
-  if(!keys.length) return (rows || []).slice();
-  return (rows || []).filter(function(r){
-    for(var i = 0; i < keys.length; i++){
-      var k = keys[i];
-      var v = cols[k](r);
-      v = (v === null || v === undefined || v === '') ? '(없음)' : String(v);
-      if(!filters[k][v]) return false;
-    }
-    return true;
-  });
+  return keyed.map(function(x){ return x.r; });
 }
-/* 켜진 거름이 몇 개인가 (요약 칩에 쓴다) */
-function erpColFilterCount(filters){
-  var n = 0;
-  Object.keys(filters || {}).forEach(function(k){
-    if(filters[k] && Object.keys(filters[k]).length > 0) n++;
-  });
-  return n;
-}
-/* 한 값을 켜고 끈다 — 새 객체로 돌려준다(그대로 고치면 화면이 다시 안 그려진다) */
-function erpToggleColFilter(filters, col, value){
-  var next = {};
-  Object.keys(filters || {}).forEach(function(k){
-    next[k] = Object.assign({}, filters[k]);
-  });
-  if(!next[col]) next[col] = {};
-  if(next[col][value]) delete next[col][value];
-  else next[col][value] = 1;
-  if(!Object.keys(next[col]).length) delete next[col];
-  return next;
+/* 머리줄에 붙는 표시 — 지금 어느 열로 어떻게 세웠는지 */
+function erpSortMark(cur, col){
+  if(!cur || cur.col !== col) return '↕';
+  return cur.dir === 'asc' ? '▲' : '▼';
 }
 if(typeof window !== 'undefined'){
-  window.erpColValues = erpColValues;
-  window.erpApplyColFilters = erpApplyColFilters;
-  window.erpColFilterCount = erpColFilterCount;
-  window.erpToggleColFilter = erpToggleColFilter;
-}
-/* ── 거르기 창 (두 표가 함께 쓴다) ──
-   props: {title, rows, getVal, on(켜진 값 지도), anchor{x,y}, onToggle(v), onAll, onNone, onClose} */
-function ErpColFilterPopup(props){
-  var qS = useState(''); var q = qS[0]; var setQ = qS[1];
-  var vals = erpColValues(props.rows, props.getVal, q, 200);
-  var on = props.on || {};
-  var _btn = { padding:'2px 8px', borderRadius:'99px', fontSize:'11px', cursor:'pointer',
-               border:'1px solid #cbd5e1', background:'#fff', color:'#475569' };
-  return h('div', { style:{ position:'fixed', inset:0, zIndex:9200 },
-      onClick:function(e){ if(e.target === e.currentTarget) props.onClose(); } },
-    h('div', { style:{ position:'absolute',
-        left:Math.round(props.anchor ? props.anchor.x : 40) + 'px',
-        top:Math.round(props.anchor ? props.anchor.y : 40) + 'px',
-        width:'250px', background:'#fff', border:'1px solid #cbd5e1', borderRadius:'6px',
-        boxShadow:'0 6px 20px rgba(15,23,42,.18)', padding:'8px' } },
-      h('div', { style:{ display:'flex', alignItems:'center', gap:'4px', marginBottom:'6px' } },
-        h('b', { style:{ fontSize:'11.5px' } }, props.title + '으로 거르기'),
-        h('span', { style:{ flex:1 } }),
-        h('span', { onClick:props.onNone, style:{ fontSize:'11px', color:'#2563eb', cursor:'pointer' } }, '이 열 지우기')),
-      h('input', { value:q, placeholder:'찾기',
-        onInput:function(e){ setQ(e.target.value); },
-        style:{ width:'100%', padding:'4px 7px', border:'1px solid #cbd5e1', borderRadius:'4px',
-          fontSize:'11.5px', marginBottom:'6px' } }),
-      h('div', { style:{ display:'flex', gap:'4px', marginBottom:'6px' } },
-        h('button', { onClick:function(){ props.onAll(vals.list.map(function(x){ return x.v; })); }, style:_btn }, '전체'),
-        h('button', { onClick:props.onNone, style:_btn }, '해제'),
-        h('span', { style:{ flex:1 } }),
-        h('span', { style:{ fontSize:'10px', color:'#94a3b8', alignSelf:'center' } },
-          vals.total + '가지')),
-      h('div', { style:{ maxHeight:'170px', overflowY:'auto', fontSize:'11.5px' } },
-        vals.list.length === 0
-          ? h('div', { style:{ padding:'10px 2px', color:'#94a3b8' } }, '찾는 값이 없습니다')
-          : vals.list.map(function(x, i){
-              return h('label', { key:i, style:{ display:'flex', alignItems:'center', gap:'6px',
-                  padding:'3px 2px', cursor:'pointer' } },
-                h('input', { type:'checkbox', checked:!!on[x.v], style:{ width:'13px', height:'13px', flex:'none' },
-                  onChange:function(){ props.onToggle(x.v); } }),
-                h('span', { style:{ flex:1, overflow:'hidden', textOverflow:'ellipsis',
-                  whiteSpace:'nowrap' }, title:x.v }, x.v),
-                h('span', { style:{ color:'#94a3b8', flex:'none' } }, x.n));
-            })),
-      // 잘린 것이 있으면 «숨겼다» 고 말한다 — 조용히 자르면 없는 줄 알고 지나친다
-      vals.more > 0 && h('div', { style:{ fontSize:'10px', color:'#94a3b8', paddingTop:'4px' } },
-        '… 외 ' + vals.more + '가지 — 찾기로 좁혀 보세요')));
+  window.erpNextSort = erpNextSort;
+  window.erpSortRows = erpSortRows;
+  window.erpSortMark = erpSortMark;
 }
 /* ── 나이스빌 CMS — 「몇 월분 자문료인가」 ──
    6월분을 7/5 에 걷어(출금일) 7/6 에 통장으로 받으면(정산일), 그것은 6월분인가 7월분인가.
@@ -34503,11 +34433,10 @@ function FinanceLedger(){
   /* 마지막으로 누른 체크상자 자리 — 「묶어 확정」 권유를 그 옆에 띄우기 위함이다.
      화면 위 도구줄에만 단추가 있으면, 아래쪽 줄을 체크하던 사람은 그것을 못 본다. */
   var chkAnchorS=useState(null); var chkAnchor=chkAnchorS[0]; var setChkAnchor=chkAnchorS[1];
-  /* 엑셀식 열 거르기 — 거래내역 표(colF)와 나이스빌 CMS 표(nbF)를 따로 둔다.
-     새로고침하면 풀린다(기억하지 않는다) — 켜둔 걸 잊고 「왜 안 보이지」 하는 사고를 막는다. */
-  var colFS=useState({});      var colF=colFS[0];       var setColF=colFS[1];
-  var colPopS=useState(null);  var colPop=colPopS[0];   var setColPop=colPopS[1];   // {col,title,x,y,scope}
-  var nbFS=useState({});       var nbF=nbFS[0];         var setNbF=nbFS[1];
+  /* 제목 클릭 정렬 — 거래내역 표(ldSort)와 나이스빌 CMS 표(nbSort)를 따로 둔다.
+     {col, dir:'asc'|'desc'} 또는 null(원래 순서). 새로고침하면 원래 순서로 돌아간다. */
+  var ldSortS=useState(null);  var ldSort=ldSortS[0];   var setLdSort=ldSortS[1];
+  var nbSortS=useState(null);  var nbSort=nbSortS[0];   var setNbSort=nbSortS[1];
   var nbS=useState(null);      var nb=nbS[0];           var setNb=nbS[1];           // 🏦 나이스빌 CMS 파싱분 {fileName,uploadedAt,rows,byDate,stat,linked}
   var nbRestS=useState(false); var nbRestored=nbRestS[0]; var setNbRestored=nbRestS[1]; // 보관분(cms_ledger)에서 복원됨
 
@@ -35464,39 +35393,32 @@ function FinanceLedger(){
       readyRows.push({ row:row, pItem:p, fee:st.fee });
     }
   });
-  /* ── 엑셀식 열 거르기 ──
-     값을 꺼내는 법을 한 곳에 모은다 — 머리줄의 목록과 실제 거르기가 «같은 값» 을 봐야 한다.
-     rowInfo 를 그대로 쓰므로 거르느라 다시 계산하지 않는다. */
-  var LD_COLS = {
-    state: function(r){ var i=rowInfo[r._k]; if(!i) return '';
-      return ({ready:'확정 가능', check:'확인 필요', none:'후보 없음', done:'이미 처리'})[i.st.state] || ''; },
+  /* ── 제목 클릭 정렬 ──
+     값을 꺼내는 법을 한 곳에 모은다 — 머리줄과 실제 정렬이 «같은 값» 을 봐야 한다.
+     rowInfo(이미 계산한 묶음·상태)를 그대로 쓰므로 정렬하느라 다시 계산하지 않는다.
+     상태는 글자 순이 아니라 «일하는 순서» 로 — 확정 가능 → 확인 필요 → 후보 없음 → 이미 처리. */
+  var LD_SORT = {
+    state: function(r){ var i=rowInfo[r._k]; if(!i) return 9;
+      return ({ready:1, check:2, none:3, done:4})[i.st.state] || 9; },
+    amount:function(r){ return parseInt(r.amount,10)||0; },
+    date:  function(r){ return String(r.date||''); },
     memo:  function(r){ return r.memo || ''; },
     co:    function(r){ var i=rowInfo[r._k]; return (i && i.grp.length) ? i.grp[0].company : ''; },
     kind:  function(r){ var i=rowInfo[r._k]; return (i && i.grp.length) ? erpKindLabel(i.grp[0]) : ''; },
     staff: function(r){ var i=rowInfo[r._k];
       return (i && i.grp.length) ? (_pendStaff(i.grp[0].head.cand) || '') : ''; }
   };
-  var incAllRows = incList;                       // 거르기 전 — 목록 만들 때 쓴다
-  incList = erpApplyColFilters(incList, colF, LD_COLS);
-  var colFn = erpColFilterCount(colF);
-  /* 거름이 걸리면 처리도 «보이는 줄» 에만 — 안 보이는 줄이 조용히 확정되면 안 된다 */
-  if(colFn > 0){
-    var _vis = {}; incList.forEach(function(r){ _vis[r._k] = 1; });
-    readyRows = readyRows.filter(function(r){ return _vis[r.row._k]; });
-  }
-  // 머리줄 ▾ — 어느 열이 걸려 있는지 눈에 보이게
-  function colFilterTh(col, title, label, thStyle){
-    var on = !!(colF[col] && Object.keys(colF[col]).length);
-    return h('th', { style:Object.assign({}, thStyle, on ? { background:'#eff6ff', color:'#2563eb' } : {}),
-        title:on ? (title + ' — ' + Object.keys(colF[col]).length + '가지만 보는 중 (눌러서 고치기)')
-                 : (title + ' 로 거르기'),
-        onClick:function(e){
-          var r = e.currentTarget.getBoundingClientRect();
-          setColPop({ col:col, title:title,
-            x:Math.min(r.left, (window.innerWidth || 1200) - 262),
-            y:Math.min(r.bottom + 4, (window.innerHeight || 800) - 250) });
-        } },
-      label, h('span', { style:{ marginLeft:'3px', fontSize:'9px', color:on ? '#2563eb' : '#cbd5e1' } }, on ? '⏷' : '▾'));
+  if(ldSort && LD_SORT[ldSort.col]) incList = erpSortRows(incList, LD_SORT[ldSort.col], ldSort.dir);
+  /* 머리줄 — 누르면 오름 ▲ → 내림 ▼ → 원래 순서.
+     정렬은 «줄을 감추지 않으므로» 확정 대상은 그대로다(거르기와 다른 점). */
+  function colSortTh(col, title, label, thStyle){
+    var on = !!(ldSort && ldSort.col === col);
+    return h('th', { style:Object.assign({}, thStyle, { cursor:'pointer', userSelect:'none' },
+          on ? { background:'#eff6ff', color:'#2563eb' } : {}),
+        title:title + ' 로 정렬 — 누를 때마다 오름차순 → 내림차순 → 원래 순서',
+        onClick:function(){ setLdSort(erpNextSort(ldSort, col)); } },
+      label, h('span', { style:{ marginLeft:'3px', fontSize:'9px', color:on ? '#2563eb' : '#cbd5e1' } },
+        erpSortMark(ldSort, col)));
   }
   // ── 합산 입금 조합 ──
   // 적요가 화이트리스트(🧩 합계 후보 적용 적요)에 걸릴 때만 탐색한다 — 나머지는 건별 판단이 맞고,
@@ -35564,21 +35486,20 @@ function FinanceLedger(){
   // ══════════════════════════════════════════════
   var nbStat = (nb && nb.stat) || { ok:0, pending:0, fail:0, total:0, okAmt:0 };
   var nbUnlinked = nb ? nb.rows.filter(function(r){ return !r.co; }).length : 0;
-  /* ── 나이스빌 표 열 거르기 — 값 꺼내는 법 ──
-       ★ nbOkLinked «앞» 에 있어야 한다. var 는 끌어올려지지만 값은 이 줄에서 들어가므로,
-         뒤에 두면 위에서 쓸 때 undefined 라 거르기가 터진다. */
-  var NB_COLS = {
+  /* ── 나이스빌 표 정렬 — 값 꺼내는 법 ──
+     상태는 글자 순이 아니라 «일하는 순서» 로: 출금실패(손볼 것) → 출금중 → 출금성공. */
+  var NB_SORT = {
     wdate:   function(r){ return r.wdate || ''; },
-    setdate: function(r){ return r.setdate || '(미정)'; },
+    setdate: function(r){ return r.setdate || ''; },
     name:    function(r){ return (r.co && r.co.name) || r.name || ''; },
-    status:  function(r){ return r.status==='ok' ? '출금성공' : r.status==='fail' ? '출금실패' : '출금중'; },
-    ymbase:  function(r){ return r.co ? (erpCmsYmBase(r.co)==='wdate' ? '걷은 달' : '들어온 달') : '(연결 안 됨)'; },
+    amount:  function(r){ return parseInt(r.amount,10)||0; },
+    status:  function(r){ return r.status==='fail' ? 1 : r.status==='ok' ? 3 : 2; },
+    ymbase:  function(r){ return r.co ? (erpCmsYmBase(r.co)==='wdate' ? '걷은 달' : '들어온 달') : ''; },
     todo:    function(r){ return r.status==='ok' ? (r.co ? '입금표시 대상' : '업체 연결 필요')
                         : (r.status==='fail' ? '미수로 남음' : '결과 대기'); }
   };
-  /* 거름이 걸려 있으면 입금표시도 «보이는 줄» 에만 — 안 보이는 줄이 조용히 처리되면 안 된다 */
-  var nbOkLinked = nb ? erpApplyColFilters(nb.rows, nbF, NB_COLS)
-                          .filter(function(r){ return r.status==='ok' && r.co; }) : [];
+  // 정렬은 줄을 감추지 않으므로 입금표시 대상은 늘 그대로다
+  var nbOkLinked = nb ? nb.rows.filter(function(r){ return r.status==='ok' && r.co; }) : [];
   var nbCoCnt = 0;
   if(nb){ var _cs = {}; nb.rows.forEach(function(r){ if(r.co) _cs[r.co.id] = 1; }); nbCoCnt = Object.keys(_cs).length; }
 
@@ -35606,19 +35527,14 @@ function FinanceLedger(){
   }
   var nbGroups = (nb && nbGrpRef.current) ? nbGrpRef.current.groups : [];
   var nbDateCnt = nbGroups.filter(function(g){ return !!g.date; }).length;
-  var nbFn = erpColFilterCount(nbF);
-  function nbFilterTh(col, title, label, thStyle){
-    var on = !!(nbF[col] && Object.keys(nbF[col]).length);
-    return h('th', { style:Object.assign({}, thStyle, { cursor:'pointer' }, on ? { background:'#eff6ff', color:'#2563eb' } : {}),
-        title:on ? (title + ' — ' + Object.keys(nbF[col]).length + '가지만 보는 중 (눌러서 고치기)')
-                 : (title + ' 로 거르기'),
-        onClick:function(e){
-          var r = e.currentTarget.getBoundingClientRect();
-          setColPop({ scope:'nb', col:col, title:title,
-            x:Math.min(r.left, (window.innerWidth || 1200) - 262),
-            y:Math.min(r.bottom + 4, (window.innerHeight || 800) - 250) });
-        } },
-      label, h('span', { style:{ marginLeft:'3px', fontSize:'9px', color:on ? '#2563eb' : '#cbd5e1' } }, on ? '⏷' : '▾'));
+  function nbSortTh(col, title, label, thStyle){
+    var on = !!(nbSort && nbSort.col === col);
+    return h('th', { style:Object.assign({}, thStyle, { cursor:'pointer', userSelect:'none' },
+          on ? { background:'#eff6ff', color:'#2563eb' } : {}),
+        title:title + ' 로 정렬 — 누를 때마다 오름차순 → 내림차순 → 원래 순서',
+        onClick:function(){ setNbSort(erpNextSort(nbSort, col)); } },
+      label, h('span', { style:{ marginLeft:'3px', fontSize:'9px', color:on ? '#2563eb' : '#cbd5e1' } },
+        erpSortMark(nbSort, col)));
   }
 
   // 업체관리 CMS 체크·이체일 기록 (이체일은 비어 있을 때만 출금일의 일자로 채운다)
@@ -35857,14 +35773,12 @@ function FinanceLedger(){
           title:'출금성공 행을 정산예정일 기준으로 업체 자문료 입금표시합니다 (이미 입금된 업체·월은 제외)',
           style:{padding:'6px 14px',background:nbBusy?'#94a3b8':'#16a34a',color:'#fff',border:'none',borderRadius:'6px',
             fontSize:'12px',fontWeight:700,cursor:nbBusy?'wait':'pointer',whiteSpace:'nowrap'}},
-          nbBusy ? '⏳ 처리중' : ('✅ 출금성공 '+nbOkLinked.length+'건 입금표시'+(nbFn>0?' (보이는 것만)':''))),
-        // 거름이 걸려 있으면 몇 건만 보고 있는지 알린다
-        nbFn>0 && h('span',{title:'머리줄의 ▾ 로 건 거름입니다 — 입금표시도 보이는 줄에만 됩니다',
-          style:{background:'#eff6ff',color:'#2563eb',border:'1px solid #bfdbfe',borderRadius:'8px',
-            padding:'3px 9px',fontSize:'11px',fontWeight:700}},'⛃ 거름 '+nbFn+'개'),
-        nbFn>0 && h('button',{onClick:function(){ setNbF({}); },
+          nbBusy ? '⏳ 처리중' : ('✅ 출금성공 '+nbOkLinked.length+'건 입금표시')),
+        // 정렬 중이면 원래 순서로 돌아가는 길
+        nbSort && h('button',{onClick:function(){ setNbSort(null); },
+          title:'제목을 눌러 세운 순서를 풉니다',
           style:{padding:'3px 9px',background:'#fff',color:'#64748b',border:'1px solid #cbd5e1',
-            borderRadius:'8px',fontSize:'11px',fontWeight:700,cursor:'pointer'}},'거름 지우기')
+            borderRadius:'8px',fontSize:'11px',fontWeight:700,cursor:'pointer'}},'↕ 원래 순서로')
       ),
 
       // ── 정산예정일별 표 ──
@@ -35872,23 +35786,22 @@ function FinanceLedger(){
         h('table',{style:{width:'100%',borderCollapse:'collapse'}},
           h('thead',null,h('tr',null,
             h('th',{style:Object.assign({},thS,{width:'34px',textAlign:'right'})},'#'),
-            nbFilterTh('wdate','출금일','출금일',thS),
-            nbFilterTh('setdate','정산예정일','정산예정일',thS),
-            nbFilterTh('name','회원명','회원명',Object.assign({},thS,{minWidth:'180px'})),
-            h('th',{style:Object.assign({},thS,{textAlign:'right'})},'납부금액'),
-            nbFilterTh('status','상태','상태',thS),
-            nbFilterTh('ymbase','몇 월분','몇 월분',Object.assign({},thS,{},{title:'체크하면 그 업체는 「걷은 달」로 자문료를 잡습니다 — 업체마다 따로 정합니다'})),
-            nbFilterTh('todo','처리','처리',thS)
+            nbSortTh('wdate','출금일','출금일',thS),
+            nbSortTh('setdate','정산예정일','정산예정일',thS),
+            nbSortTh('name','회원명','회원명',Object.assign({},thS,{minWidth:'180px'})),
+            nbSortTh('amount','납부금액','납부금액',Object.assign({},thS,{textAlign:'right'})),
+            nbSortTh('status','상태','상태',thS),
+            nbSortTh('ymbase','몇 월분','몇 월분',thS),
+            nbSortTh('todo','처리','처리',thS)
           )),
           h('tbody',null, (function(){
             var out = [], seq = 0;
             nbGroups.forEach(function(g){
               var list = nbFailOnly ? g.rows.filter(function(r){ return r.status==='fail'; }) : g.rows;
-              // 머리줄 ▾ 로 건 거름 — 거른 뒤에 남는 줄만 본다
-              list = erpApplyColFilters(list, nbF, NB_COLS);
+              // 제목 클릭 정렬 — 묶음 «안에서» 세운다 (정산예정일 묶음 자체는 그대로 둔다)
+              if(nbSort && NB_SORT[nbSort.col]) list = erpSortRows(list, NB_SORT[nbSort.col], nbSort.dir);
               if(!list.length) return;
-              /* 묶음 머리의 건수·합계는 «거른 뒤» 로 다시 센다 —
-                 걸러 놓고 원래 합계를 적으면 통장과 맞춰 볼 때 헷갈린다 */
+              /* 묶음 머리의 건수·합계 — 「출금실패만 보기」로 걸러진 뒤일 수 있으니 여기서 다시 센다 */
               var _gok=0, _gfail=0, _gpend=0, _gamt=0;
               list.forEach(function(r){
                 if(r.status==='ok'){ _gok++; _gamt += parseInt(r.amount,10)||0; }
@@ -35901,8 +35814,7 @@ function FinanceLedger(){
                   + ' · '+list.length+'건'
                   + (_gok ? ' · 출금성공 '+_gok+'건 합계 '+_gamt.toLocaleString()+'원' : '')
                   + (_gfail ? ' · 실패 '+_gfail+'건' : '')
-                  + (_gpend ? ' · 진행 '+_gpend+'건' : '')
-                  + (nbFn>0 ? ' · 거른 뒤' : ''))));
+                  + (_gpend ? ' · 진행 '+_gpend+'건' : ''))));
               list.forEach(function(r){
                 seq++;
                 var sc = r.status==='ok' ? {bg:'#f0fdf4',fg:'#166534',bd:'#bbf7d0'}
@@ -36167,11 +36079,10 @@ function FinanceLedger(){
             Object.keys(incChk).length>0 && h('span',{style:{background:'#eff6ff',color:'#2563eb',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:700}},'✓ '+Object.keys(incChk).length+'건 선택'),
             /* 거름이 걸려 있으면 «지금 몇 건만 보고 있는지» 를 알린다 —
                걸어 둔 걸 잊고 「왜 안 보이지」 하는 사고를 막는다 */
-            colFn>0 && h('span',{title:'머리줄의 ▾ 로 건 거름입니다 — 처리도 보이는 줄에만 됩니다',
-              style:{background:'#eff6ff',color:'#2563eb',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:700}},
-              '⛃ 거름 '+colFn+'개 · '+incList.length+'건 보임'),
-            colFn>0 && h('button',{onClick:function(){ setColF({}); },
-              style:{padding:'1px 7px',background:'#fff',color:'#64748b',border:'1px solid #cbd5e1',borderRadius:'8px',fontSize:'10px',fontWeight:700,cursor:'pointer'}},'거름 모두 지우기'),
+            // 정렬 중이면 원래 순서로 돌아가는 길 (줄이 사라지지는 않으니 건수는 그대로다)
+            ldSort && h('button',{onClick:function(){ setLdSort(null); },
+              title:'제목을 눌러 세운 순서를 풉니다',
+              style:{padding:'1px 7px',background:'#fff',color:'#64748b',border:'1px solid #cbd5e1',borderRadius:'8px',fontSize:'10px',fontWeight:700,cursor:'pointer'}},'↕ 원래 순서로'),
             h('span',{style:{flex:'1'}}),
             /* ── ⊞ 묶어서 처리 — 통장 여러 행을 합쳐 미입금 건에 붙인다 ──
                비즈사업비처럼 한 건 값이 두 번에 나뉘어 들어오면, 행마다 따로 보는 한
@@ -36212,13 +36123,13 @@ function FinanceLedger(){
                   }})),
               h('th',{style:Object.assign({},thS,{width:'32px',textAlign:'right',padding:'6px 3px'})},'#'),
               // 신호등 칸 — 상태로 거른다 (확정 가능만 · 확인 필요만 …)
-              colFilterTh('state','상태','●',Object.assign({},thS,{width:'30px',padding:'6px 0',textAlign:'center',cursor:'pointer'})),
-              h('th',{style:Object.assign({},thS,{width:'88px',textAlign:'right',padding:'6px 6px'})},'입금액'),
-              h('th',{style:Object.assign({},thS,{width:'46px',padding:'6px 4px'})},'날짜'),
-              colFilterTh('memo','적요','적요',Object.assign({},thS,{width:'120px',padding:'6px 6px',cursor:'pointer'})),
-              colFilterTh('co','업체','📁 업체',Object.assign({},thS,{width:'150px',padding:'6px 6px',borderLeft:'2px solid #e2e8f0',cursor:'pointer'})),
-              colFilterTh('kind','항목','항목 · 현황',Object.assign({},thS,{padding:'6px 6px',cursor:'pointer'})),
-              colFilterTh('staff','담당','담당',Object.assign({},thS,{width:'58px',padding:'6px 4px',cursor:'pointer'})),
+              colSortTh('state','상태','●',Object.assign({},thS,{width:'30px',padding:'6px 0',textAlign:'center',cursor:'pointer'})),
+              colSortTh('amount','입금액','입금액',Object.assign({},thS,{width:'88px',textAlign:'right',padding:'6px 6px'})),
+              colSortTh('date','날짜','날짜',Object.assign({},thS,{width:'46px',padding:'6px 4px'})),
+              colSortTh('memo','적요','적요',Object.assign({},thS,{width:'120px',padding:'6px 6px',cursor:'pointer'})),
+              colSortTh('co','업체','📁 업체',Object.assign({},thS,{width:'150px',padding:'6px 6px',borderLeft:'2px solid #e2e8f0',cursor:'pointer'})),
+              colSortTh('kind','항목','항목 · 현황',Object.assign({},thS,{padding:'6px 6px',cursor:'pointer'})),
+              colSortTh('staff','담당','담당',Object.assign({},thS,{width:'58px',padding:'6px 4px',cursor:'pointer'})),
               h('th',{style:Object.assign({},thS,{width:'120px',textAlign:'right',padding:'6px 6px',borderLeft:'2px solid #e2e8f0'})},'처리')
             )),
             /* ── 한 줄 = 한 입금 · 칸마다 자리를 정한다 ──
@@ -37491,35 +37402,6 @@ function FinanceLedger(){
         h('button',{onClick:function(){ setChkAnchor(null); },
           style:{padding:'4px 8px',marginLeft:'4px',background:'#f8fafc',color:'#64748b',border:'none',
             borderRadius:'5px',fontSize:'11px',cursor:'pointer'}},'나중에'));
-    })(),
-    /* ── 열 거르기 창 (머리줄 ▾) ──
-       거래내역 표(scope 없음)와 나이스빌 CMS 표(scope:'nb')가 같은 창을 쓴다. */
-    colPop && (function(){
-      var isNb = colPop.scope === 'nb';
-      var _f   = isNb ? nbF : colF;
-      var _set = isNb ? setNbF : setColF;
-      var _rows = isNb ? ((nb && nb.rows) || []) : incAllRows;
-      var _get = (isNb ? NB_COLS : LD_COLS)[colPop.col];
-      if(!_get) return null;
-      return h(ErpColFilterPopup, {
-        title: colPop.title,
-        rows: _rows,
-        getVal: _get,
-        on: _f[colPop.col] || {},
-        anchor: { x:colPop.x, y:colPop.y },
-        onToggle: function(v){ _set(erpToggleColFilter(_f, colPop.col, v)); },
-        onAll: function(vals){
-          var next = {}; Object.keys(_f).forEach(function(k){ next[k] = Object.assign({}, _f[k]); });
-          next[colPop.col] = {};
-          vals.forEach(function(v){ next[colPop.col][v] = 1; });
-          _set(next);
-        },
-        onNone: function(){
-          var next = {}; Object.keys(_f).forEach(function(k){ if(k !== colPop.col) next[k] = Object.assign({}, _f[k]); });
-          _set(next);
-        },
-        onClose: function(){ setColPop(null); }
-      });
     })(),
 
     /* ── 🗄 보류함 (가수금) ──
