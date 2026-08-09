@@ -97,7 +97,9 @@ const _nbBody = FL.indexOf("h('tbody',null, (function(){", _nbHead);
 const NBT = FL.slice(_nbHead, _nbBody);
 // 명세 표의 몸통 — 빈 줄·묶음 머리의 칸 수는 여기서 본다
 const NBB = FL.slice(_nbBody, FL.indexOf("\n          })())", _nbBody));
-const th = (NBT.match(/h\('th'/g) || []).length;
+// 거를 수 있는 열은 nbFilterTh 가 머리칸을 만든다 — 둘 다 세야 실제 칸 수가 나온다
+const th = (NBT.match(/h\('th'/g) || []).length
+         + (NBT.match(/nbFilterTh\(/g) || []).length;
 t('명세 표 머리가 여덟 칸', th, 8);
 t('빈 줄이 표 전체를 덮는다', /colSpan:8,style:\{padding:'26px'/.test(NBB), true);
 t('묶음 머리도 표 전체를 덮는다', /fontSize:'11px'\}\),colSpan:8\}/.test(NBB), true);

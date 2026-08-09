@@ -76,7 +76,10 @@ test('더 보기 줄이 표의 칸을 다 덮는다 (밀리면 줄이 어긋난�
     const iHead = FL.lastIndexOf("h('thead',null,h('tr',null,", iRow);
     assert.ok(iHead > 0, '더보기 줄 앞에 표 머리가 없다');
     const head = FL.slice(iHead, FL.indexOf("h('tbody'", iHead));
-    const th = (head.match(/h\('th'/g) || []).length;
+    /* (2026-08-09) 거를 수 있는 열은 colFilterTh/nbFilterTh 가 머리칸을 만든다 —
+       h('th' 만 세면 그 칸들이 빠져 colSpan 과 어긋난 것처럼 보인다. 둘 다 센다. */
+    const th = (head.match(/h\('th'/g) || []).length
+             + (head.match(/(?:col|nb)FilterTh\(/g) || []).length;
     const span = parseInt(/colSpan:(\d+)/.exec(r)[1], 10);
     assert.equal(span, th, '표 머리 ' + th + '칸인데 더보기 줄은 ' + span + '칸이다');
     spans.push(span);

@@ -52,8 +52,10 @@ const HEAD = FL.slice(_headFrom, iRender);
 ['#', '입금액', '날짜', '적요', '📁 업체', '항목 · 현황', '담당', '처리'].forEach(function(h){
   t('머리칸 「' + h + '」', HEAD.indexOf("'" + h + "'") > 0, true);
 });
-t('업체 칸에 너비가 정해져 있다', /width:'150px'[\s\S]{0,80}?📁 업체/.test(HEAD), true);
-t('담당 칸에 너비가 정해져 있다', /width:'58px'[\s\S]{0,60}?'담당'/.test(HEAD), true);
+/* (2026-08-09) 거를 수 있는 열은 colFilterTh(열, 이름, 라벨, 스타일) 로 만든다 —
+   너비는 그 네 번째 인자에 들어가므로 이름이 먼저 오고 너비가 뒤에 온다. */
+t('업체 칸에 너비가 정해져 있다', /colFilterTh\('co','업체','📁 업체'[\s\S]{0,80}?width:'150px'/.test(HEAD), true);
+t('담당 칸에 너비가 정해져 있다', /colFilterTh\('staff','담당','담당'[\s\S]{0,60}?width:'58px'/.test(HEAD), true);
 // 넘치는 글자는 그 칸 안에서만 잘린다 (줄 전체가 밀리면 세로 줄맞춤이 깨진다)
 t('칸마다 넘침 처리를 공통으로 쓴다',
   /var _cell=Object\.assign\(\{\},tdS,\{padding:'5px 6px',overflow:'hidden',/.test(FL), true);
@@ -136,7 +138,9 @@ t('나중에 하겠다고 닫을 수 있다', /'나중에'/.test(FL), true);
 t('화면 밖으로 나가지 않게 막는다', /window\.innerWidth \|\| 1200\) - 320/.test(FL), true);
 
 /* ══════ ⑨ 표 칸 수가 서로 맞는가 ══════ */
-const thN = (HEAD.match(/h\('th'/g) || []).length;
+// 거를 수 있는 열은 colFilterTh 가 머리칸을 만든다 — 둘 다 세야 실제 칸 수가 나온다
+const thN = (HEAD.match(/h\('th'/g) || []).length
+          + (HEAD.match(/colFilterTh\(/g) || []).length;
 t('머리 칸이 열 개다', thN, 10);
 t('더보기 줄이 표 전체를 덮는다', /colSpan:10,style:\{padding:'8px',textAlign:'center',background:'#f8fafc'/.test(FL), true);
 // 합계 줄의 칸 수도 머리와 같아야 한다 (2 + 1 + 1 + 2 + 4 = 10)
