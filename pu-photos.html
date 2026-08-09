@@ -2490,7 +2490,7 @@ let dragDepth = 0;
    그래서 종류를 보지 않고 **출처**를 본다: 이 화면에서 드래그가 시작됐다면
    그 drop 은 무슨 일이 있어도 파일로 받지 않는다. */
 let selfDrag = false;
-document.addEventListener('dragstart', function () { selfDrag = true; }, true);
+document.addEventListener('dragstart', function () { selfDrag = true; selfDragAt = Date.now(); }, true);
 document.addEventListener('dragend', function () {
   selfDrag = false;
   photoDragIds = null;   // 어디에도 못 놓고 끝났으면 들고 있던 것을 놓는다
@@ -2505,12 +2505,27 @@ document.addEventListener('dragend', function () {
    화면 안 드래그는 mousedown → dragstart 순서라 곧바로 다시 참이 된다. */
 document.addEventListener('mousedown', function () { selfDrag = false; }, true);
 
+/* ⚠ 그런데 그 길 하나로는 샜다 (대표 보고 2026-08-09: "드래그해서 넣었는데 업로드 안 된다").
+   **탐색기에서 파일을 끌어오는 동작은 이 화면에 mousedown 을 내지 않는다.**
+   그래서 사진을 탭으로 끌다 취소해 selfDrag 가 굳으면, 그 뒤 진짜 파일을 놓아도
+   조용히 무시된다 — 위 주석이 걱정한 바로 그 일이다. 풀리는 길을 둘 더 둔다.
+
+   ① 창이 초점을 잃으면 — 파일을 가지러 탐색기로 갔다는 뜻이다. 화면 안 드래그는
+      창을 떠나지 않으므로 잘못 풀릴 일이 없다.
+   ② 시간이 지나면 — 드래그는 몇 초면 끝난다. 이만큼 지났으면 끝난 드래그다.
+   둘 다 「막지 못해 재복사」쪽으로 기울어 있는데, 그게 맞다 —
+   조용한 실패는 증빙 누락이 되고, 재복사는 눈에 보이고 지울 수 있다. */
+const SELF_DRAG_MS = 15000;
+let selfDragAt = 0;
+window.addEventListener('blur', function () { selfDrag = false; });
+function selfDragLive() { return selfDrag && (Date.now() - selfDragAt) < SELF_DRAG_MS; }
+
 function showDrop(on) { $('dropzone').style.display = on ? 'flex' : 'none'; }
 
 /* dragenter/leave 는 자식 요소를 지날 때마다 번갈아 일어난다 —
    깊이를 세지 않으면 마우스를 움직일 때 안내가 깜빡인다. */
 window.addEventListener('dragenter', function (e) {
-  if (selfDrag || !hasFiles(e)) return;   // 우리 사진을 끌 때는 받는 자리를 열지 않는다
+  if (selfDragLive() || !hasFiles(e)) return;   // 우리 사진을 끌 때는 받는 자리를 열지 않는다
   e.preventDefault();
   dragDepth++;
   showDrop(true);
@@ -2530,7 +2545,7 @@ window.addEventListener('drop', function (e) {
      한 번 더 막는다(받는 자리가 안 열려도 drop 은 올 수 있다).
      ⚠ 출처(selfDrag)를 먼저 본다. 표식은 못 심는 자리·못 읽는 브라우저가 있어
      그것만으로는 새는데, 출처는 그런 사정과 무관하게 늘 참이다. */
-  const ours = selfDrag || (window.PuDrag && PuDrag.maybeOurs(e.dataTransfer));
+  const ours = selfDragLive() || (window.PuDrag && PuDrag.maybeOurs(e.dataTransfer));
   selfDrag = false;   // drop 뒤에는 dragend 가 오지 않는 브라우저가 있다
   if (ours) { dragDepth = 0; showDrop(false); return; }
   e.preventDefault();
