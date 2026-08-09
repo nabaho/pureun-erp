@@ -5985,8 +5985,14 @@ function finNegatives(f){
   [['현금및현금성자산',f.cash],['정기예금',f.savings],['근로자대부금',f.loan],['매도가능증권',f.secu],
    ['그 밖의 자산',f.otherAsset],['자산총계',f.totalAssets],['부채총계',f.liab],['기본재산',f.basic]
   ].forEach(function(p){ if(Math.round(num(p[1])||0)<0) out.push({name:p[0],v:Math.round(p[1])}); });
-  RESERVE_ACCTS.forEach(function(a){ var v=f.tb&&f.tb[a]; if(!v) return;
-    var b=Math.round(v.credit-v.debit); if(b<0) out.push({name:a,v:b}); });
+  /* 준비금 잔액은 **전기이월을 더해서** 본다. 환입은 준비금 차변이라 당기 발생분만 보면
+     전기이월로 덮인 정상 결산까지 음수로 보인다 — 검증한 여섯 기금 중 다섯이 헛경보였다
+     (이비·안전공사·플러스·디와이·현재기업). */
+  var op=(f&&f.opening)||{};
+  RESERVE_ACCTS.forEach(function(a,i){
+    var v=f.tb&&f.tb[a];
+    var b=Math.round((v?(v.credit-v.debit):0)+(num(i===0?op.reserve:op.reserve2)||0));
+    if(b<0) out.push({name:a,v:b}); });
   return out;
 }
 /* 재무 집계 — 연도를 파라미터로 받는다(전기 대비 비교에서 지난해도 계산해야 함).
@@ -6013,6 +6019,20 @@ function computeFin(arr,fid,yr){
     else if(v.type==='비용'){ if(PURPOSE.indexOf(n)>=0)purpose+=s; else if(ADMIN.indexOf(n)>=0)admin+=s; else otherExp+=s; }
     else if(v.type==='자산'&&CORE_ASSET.indexOf(n)<0)otherAsset+=s;});
   var interest=revenue;
+  /* 전기이월은 **OPEN_ACCT를 돌며** 유형별로 얹는다. 손으로 적은 목록만 쓰면 칸을 늘릴 때 빠지는데,
+     실제로 미수수익·미수금·단기금융상품·특정현금과예금·손실대비특별적립금이 통째로 빠져
+     자산 109,451,441원·자본 106,108,000원이 사라지고 대차가 3,343,441원 어긋났다.
+     시산표(openingMoves)는 OPEN_ACCT를 돌아 맞았는데 재무제표만 틀린 상태였다.
+     아래에서 따로 쓰는 칸(핵심 자산 4개·기본재산·이월잉여금·준비금1·2)만 건너뛴다. */
+  var _opDone={cash:1,savings:1,loan:1,secu:1,basic:1,retained:1,reserve:1,reserve2:1};
+  var opAssetEtc=0, opLiabEtc=0, opEquityEtc=0;
+  Object.keys(OPEN_ACCT).forEach(function(k){
+    if(_opDone[k]) return;
+    var v=num(opening[k])||0; if(!v) return;
+    var t=ACCT_CHART[OPEN_ACCT[k]]||'자산';
+    if(t==='부채') opLiabEtc+=v; else if(t==='자본') opEquityEtc+=v; else opAssetEtc+=v;
+  });
+  otherAsset+=opAssetEtc; liab+=opLiabEtc; otherEquity+=opEquityEtc;
   var cash=sg('현금성자산')+(num(opening.cash)||0), savings=sg('정기예금')+(num(opening.savings)||0);
   var loan=sg('근로자대부금')+(num(opening.loan)||0), basic=-sg('기본재산')+(num(opening.basic)||0);
   /* 기본재산을 증권으로 운용하는 기금이 있다(디와이사내: 26억). 칸이 없으면 대차가 그만큼 어긋난다. */

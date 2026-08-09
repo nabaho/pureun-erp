@@ -143,6 +143,11 @@ ok('결손금 표시 헬퍼', src.includes('function _retLabel') && src.includes
   && src.includes("return (num(v)||0)<0?'이월결손금':'이월잉여금';"));
 ok('재무상태표·결산서·별지·전기대비에 결손금 적용',
   (src.match(/_retLabel\(/g)||[]).length>=4 && (src.match(/_retVal\(/g)||[]).length>=5);
+// 전기이월 칸을 늘릴 때 재무제표 집계에서 빠지는 일이 있었다(자산 1억 사라짐) → OPEN_ACCT에서 파생
+ok('재무제표가 전기이월을 OPEN_ACCT에서 파생', src.includes('var _opDone={cash:1,savings:1,loan:1,secu:1,basic:1,retained:1,reserve:1,reserve2:1};')
+  && src.includes('otherAsset+=opAssetEtc; liab+=opLiabEtc; otherEquity+=opEquityEtc;'));
+// 환입은 준비금 차변이라 당기 발생분만 보면 전기이월로 덮인 정상 결산도 음수로 보인다
+ok('음수 검사가 전기이월 준비금을 봄', src.includes("var b=Math.round((v?(v.credit-v.debit):0)+(num(i===0?op.reserve:op.reserve2)||0));"));
 ok('음수 항목 검사와 경고', src.includes('function finNegatives')
   && src.includes('⚠️ 음수 항목 ') && src.includes('⚠️ 재무제표에 음수 항목이 있습니다'));
 // 실무 결산서는 사용한도 전액을 설정하고 쓰지 않은 잔액을 준비금2로 남긴다
