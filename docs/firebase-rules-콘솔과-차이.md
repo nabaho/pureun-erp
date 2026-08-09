@@ -34,20 +34,29 @@ permission_denied at /pucards_private/<uid>/lock
 }
 ```
 
-## ② `puphotos` 사진 공유 — 콘솔에 **없다** (아직 안 넣음)
+## ② `puphotos` 사진 공유 — 콘솔에 없었다 (대표 지시로 ①과 함께 넣음)
 
-저장소 파일에는 있고 콘솔에는 없는 칸:
+저장소 파일에는 있고 콘솔에는 없던 칸:
 
 - `puphotos/sharedTo` (와 그 아래 `$uid`, `$pid`)
 - `puphotos/u/$uid/items/$year/$id/.read` (shareWith 조건)
 - `puphotos/u/$uid/blobs/$year/$id/.read`
 - `puphotos/u/$uid/thumbs/$year/$id/.read`
 
-이것은 사진첩 「같이 볼 사람 고르기」를 받는 쪽이 실제로 읽게 해 주는 규칙이다.
-**없으면 받는 사람 화면에서 사진이 안 열린다.**
+사진첩 「같이 볼 사람 고르기」를 **받는 쪽이 실제로 읽게** 해 주는 규칙이다.
+없으면 공유해도 받는 사람 화면에서 사진이 안 열린다.
 
-⚠ 넣으면 **다른 사람의 사진을 읽을 수 있게 되는** 규칙이므로 대표 판단이 필요하다.
-그래서 ①과 함께 넣지 않았다.
+허용 범위는 **사진 한 장씩**이다. 남의 사진첩이 통째로 열리는 것이 아니라,
+그 사진에 `shareWith/{내 uid}` 가 적혀 있을 때만 그 한 장을 읽는다.
+앱이 쓰는 이름과 맞는 것도 확인했다 —
+`items/{해}/{id}/shareWith/{받는사람}` · `sharedTo/{받는사람}/{id}` = {owner, year, at}.
+
+---
+
+## 게시하면 콘솔 = 저장소 파일
+
+①②를 넣으면 `docs/firebase-rules-현재적용본.json` 과 **글자까지 같아진다**(확인함).
+어긋나 있던 것은 이 둘뿐이었다.
 
 ---
 
