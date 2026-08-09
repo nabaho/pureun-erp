@@ -347,6 +347,14 @@ body.pc #main,body.pc #fab,body.pc #selbar{display:none!important}
 #pcRight .ritem.dropover{outline:2px dashed #5a76c0;background:#dde7fb}
 #pcRight .rhint{font-size:11.5px;color:#90a0c0;line-height:1.7;padding:6px 4px}
 #pcTop{display:flex;gap:12px;padding:16px 24px;background:#fff;border-bottom:1px solid #eef2f7;align-items:center}
+/* 오른쪽 끝 묶음 — margin-left:auto 로 밀어 붙인다. 검색칸이 8cm 로 고정이라
+   가운데 남는 자리를 이 묶음이 먹지 않게 flex 로 늘리지 않는다. */
+#pcTopRight{margin-left:auto;display:flex;align-items:center;gap:8px;flex:0 0 auto}
+#pcTopRight .logoutTimer{font-size:11.5px;font-weight:700;color:#7a4a00;background:#fdf1dc;
+  border:1px solid #f0d4a0;border-radius:6px;padding:4px 8px;white-space:nowrap}
+#pcLogout{background:#fff;color:#33415e;border:1px solid #dde3ee;border-radius:10px;
+  padding:9px 14px;font-size:13px;cursor:pointer;white-space:nowrap}
+#pcLogout:hover{background:#fdeced;border-color:#f0b8bc;color:#a3262c}
 /* 검색칸은 화면 끝까지 늘리지 않는다 — 대표 요청(2026-08-08).
    회사명처럼 긴 말도 치므로 8cm. 남는 자리는 목록이 쓴다.
    좁은 화면에서는 화면을 넘지 않게 줄어든다. */
@@ -596,6 +604,13 @@ body.pc #pcDetail{display:flex}
         <button id="pcSearchX" onclick="clearPcSearch()" title="검색어 지우기 (Esc)" aria-label="검색어 지우기">✕</button>
       </div>
       <button class="pcbtn-primary" onclick="openAddSheet()" title="새 명함 등록 (단축키 N) — 사진 촬영·이미지·PDF·직접 입력">＋ 명함 등록</button>
+      <!-- 오른쪽 끝: 자동 로그아웃 남은시간 · 로그아웃.
+           사이드바 맨 아래에 있던 것을 여기로 올렸다 — 자리를 뜰 때 누르는 단추라
+           사이드바를 접으면 아예 사라지는 자리에 두면 안 된다. -->
+      <div id="pcTopRight">
+        <span class="logoutTimer" style="display:none"></span>
+        <button id="pcLogout" onclick="doLogoutCards()" title="로그아웃">🚪 로그아웃</button>
+      </div>
     </div>
     <!-- 상단 한 줄: 제목 · 탭 · 보기 도구 -->
     <div id="pcHead">
@@ -1820,7 +1835,8 @@ function listItems(){
 let _quiet = false;
 function render(){ if(_quiet) return; renderSubbar(); renderSidebar(); renderList(); }
 
-function groupName(id){ return id==='all' ? '전체' : (id==='' ? '미분류' : (state.groups[id]?.name || '전체')); }
+/* 개인 창고 폴더도 이름이 나와야 한다 — allGroups 로 봐야 제목이 '전체'로 뭉개지지 않는다 */
+function groupName(id){ return id==='all' ? '전체' : (id==='' ? '미분류' : (allGroups()[id]?.name || '전체')); }
 
 function renderSubbar(){
   const n = listItems().length;
@@ -4102,8 +4118,13 @@ function renderPCSide(){
               state.tab==='card'?'📇 전체 명함':'📄 전체 사업자등록증',
               all.filter(i=>i.kind===state.tab).length, isAllView('all'));
 
-  /* 현재 탭에 속한 폴더만 — 계층 없이 1단계로 평평하게 */
-  const groups = Object.values(state.groups).filter(g=>(g.kind||'card')===state.tab && canSeeGroup(g))
+  /* 현재 탭에 속한 폴더만 — 계층 없이 1단계로 평평하게.
+     개인 창고를 열어 두었으면 그 폴더도 함께 보인다(allGroups).
+     안 보이면 명함만 전체 목록에 섞여 나오고 어느 것이 개인 건지 알 수 없다.
+     개인 창고 폴더는 canSeeGroup 을 묻지 않는다 — 비밀번호로 이미 지나온 자리다
+     (옛 폴더의 lockOwner 가 남 이름이면 대표 자기 창고인데도 안 보이게 된다). */
+  const groups = Object.values(allGroups())
+                   .filter(g=>(g.kind||'card')===state.tab && (isPrivGroup(g) || canSeeGroup(g)))
                    .sort((a,b)=>(a.order||0)-(b.order||0));
   const cntSelf = g => kindArr.filter(it=>(it.group||'')===g).length;
 
@@ -4115,14 +4136,24 @@ function renderPCSide(){
   const folderRow = (g) => {
     const on = state.group===g.id && state.owner==='all';
     const n = cntSelf(g.id);
-    const isLocked = !!g.locked;
+    /* 개인 창고 폴더는 이미 비밀번호를 지나왔다 — 자물쇠가 아니라 열린 자물쇠로 보인다.
+       개수도 숨기지 않는다(대표 자신만 보는 화면이다). */
+    const isPriv = isPrivGroup(g);
+    const isLocked = !isPriv && !!g.locked;
     const unlocked = isLocked && state.unlocked && state.unlocked[g.id];
-    const icon = isLocked ? (unlocked ? '🔓' : '🔒') : '📁';
+    const icon = isPriv ? '🔓' : (isLocked ? (unlocked ? '🔓' : '🔒') : '📁');
     /* 폴더를 옮기면 앞 폴더의 탭 조건(ERP유형·칸검색)은 해제 — 탭은 폴더마다 따로이므로 */
     const reset = `state.view='list';state.owner='all';state.region='';state.erpFilter='';state.colFilter={};state.page=0;`;
     const openClick = isLocked
       ? `if(tryUnlockFolder('${g.id}')){state.group='${g.id}';${reset}}render()`
       : `state.group='${g.id}';${reset}render()`;
+    /* 개인 창고 폴더는 끌어 옮기지 않는다 — 공용 자리로 떨어지면 그 자리에서 드러난다 */
+    if(isPriv) return `<div class="pcitem folderrow ${on?'on':''}" style="padding-left:11px">
+        <span style="width:13px;display:inline-block"></span>
+        <span class="gname" onclick="${openClick}" title="개인 폴더 — 대표님만 보입니다">${icon} ${esc(g.name)}</span>
+        <span class="gcount">${n}</span>
+        <span class="gmenu" onclick="event.stopPropagation();openFolderMenu(event,'${g.id}')" title="관리">⋮</span>
+      </div>`;
     return `<div class="pcitem folderrow ${on?'on':''}" style="padding-left:11px"
         draggable="true"
         ondragstart="onFolderDrag(event,'${g.id}')"
@@ -4148,12 +4179,15 @@ function renderPCSide(){
       '👤 '+esc(o), kindArr.filter(it=>String(it.owner||'').trim()===o).length, state.owner===o);
   });
 
-  /* 맨 아래 고정 환경설정 */
+  /* 맨 아래 고정 환경설정 — 로그아웃은 오른쪽 위(#pcTopRight)로 옮겼다 */
+  /* 옛 방식으로 잠긴 폴더가 남아 있으면 그것부터 알린다.
+     그냥 두면 「🔒 개인폴더」(옛 방식, 비밀번호가 DB에 그대로)와
+     「🔒 개인 폴더 열기」(새 방식)가 나란히 보여 같은 것이 둘로 보인다. */
+  const oldLocked = Object.values(state.groups).filter(g=>g && g.locked).length;
   h += `<div class="pcside-bottom">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 4px 8px">
-      <span class="logoutTimer" style="display:none;font-size:11px;font-weight:700;color:#cdd8f0;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:5px;padding:3px 8px"></span>
-      <button onclick="doLogoutCards()" title="로그아웃" style="margin-left:auto;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#dfe6f3;border-radius:7px;padding:5px 12px;font-size:12px;cursor:pointer">🚪 로그아웃</button>
-    </div>
+    ${state.isAdmin && oldLocked ? `<button class="pcside-settings" onclick="migrateLockedFolders()"
+      style="background:#7a4a12;border-color:#a4671c"
+      title="옛 방식으로 잠긴 폴더는 비밀번호가 그대로 저장돼 있어 직원이 들여다볼 수 있습니다. 대표님 전용 창고로 옮기면 서버가 막아 줍니다.">⚠ 옛 잠금 폴더 ${oldLocked}개 옮기기</button>` : ''}
     ${state.isAdmin ? `<button class="pcside-settings" onclick="openPrivateVault()"
       title="대표만 보는 개인 폴더 — 비밀번호를 맞혀야 자료를 가져옵니다">${state.privOpen?'🔓 개인 폴더 닫기':'🔒 개인 폴더 열기'}</button>` : ''}
     <button class="pcside-settings" onclick="openMatPage()" title="회사소개서·계약서 등 보낼 자료 관리">📎 자료함</button>
@@ -4308,8 +4342,18 @@ function confirmNewFolder(parent){
 
 /* 폴더 ⋮ 메뉴 — 비우기 없이 노무법인용으로: 하위폴더 추가 / 이름변경 / 삭제 */
 function openFolderMenu(ev, id){
-  const g=state.groups[id]; if(!g) return;
   const m=$('folderMenu');
+  /* 개인 창고 폴더 — 여기서 할 수 있는 것은 잠금 해제뿐이다.
+     이름변경·삭제·순서이동은 모두 공용 자리(state.groups)를 만지므로 개인 창고에는 못 쓴다. */
+  if((state.priv.groups||{})[id]){
+    m.innerHTML = `<div class="fmi" onclick="closeFolderMenu();unsetFolderLock('${id}')">🔓 잠금 해제 (공용으로 되돌리기)</div>`;
+    m.style.display='block';
+    m.style.left=Math.min(ev.clientX, window.innerWidth-230)+'px';
+    m.style.top=Math.min(ev.clientY, window.innerHeight-80)+'px';
+    setTimeout(()=>document.addEventListener('click', closeFolderMenu, {once:true}), 0);
+    return;
+  }
+  const g=state.groups[id]; if(!g) return;
   /* 같은 부모 형제 중 위/아래 이동 가능 여부 */
   const sibs=Object.values(state.groups).filter(x=>(x.kind||'card')===(g.kind||'card') && (x.parent||'')===(g.parent||'')).sort((a,b)=>(a.order||0)-(b.order||0));
   const idx=sibs.findIndex(x=>x.id===id);
