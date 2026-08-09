@@ -24,17 +24,27 @@ ok('나눠담기 모달 코드를 잘라냈다', modal.length > 2000, '길이 ' 
 
 console.log('\n[체크하기 «전에» 보여야 할 것 — 한 줄에 다 있다]');
 ok('종류 배지 (사건·컨설팅·기금·기타)', /var _bd=storeBadge\(p\.store\)/.test(modal));
-ok('업체명', /p\.companyName\|\|h\('span',\{style:\{color:'#cbd5e1'/.test(modal));
+/* (2026-08-09) 업체명이 비어 보여 어느 회사 건인지 확인이 안 됐다(대표 지적).
+   기록마다 이름이 든 칸이 달라 차례로 물러나 찾고(erpWhoOf), 그래도 없으면 «빨갛게» 알린다 —
+   회색으로 두면 그냥 빈 칸으로 보고 지나친다. 건명(erpTitleOf)도 옆 칸에 함께 적는다. */
+ok('업체명', /_who \|\| h\('span',\{style:\{color:'#dc2626'/.test(modal));
+ok('업체명을 여러 칸에서 찾는다', /var _who=erpWhoOf\(p\);/.test(modal));
+ok('건명도 함께 보여준다', /var _title=erpTitleOf\(p\);/.test(modal));
 ok('항목 (착수·잔금·성공보수 등)', /width:'82px',color:'#64748b'\}\)\},p\.label\|\|''/.test(modal));
 ok('관리번호', /var _no=\(p\.item&&\(p\.item\.caseNo\|\|p\.item\.no\)\)\|\|''/.test(modal));
 ok('담당자', /width:'48px',color:'#475569',fontWeight:600\}\)\},_staff\|\|'-'/.test(modal));
 ok('예상입금 금액', /fontWeight:700,color:'#16a34a'\}\)\},ea\.toLocaleString\(\)/.test(modal));
 ok('입금과의 차이', /_dd===0\?'입금과 일치':\(_dd>0\?'\+':''\)\+_dd\.toLocaleString\(\)/.test(modal));
-ok('성과급 미리보기', /'성과 '\+_pt\.toLocaleString\(\)/.test(modal));
-// (2026-08-09) 칸이 비어도 자리를 지키게 조건부(&&)를 삼항(?:)으로 바꿨다 — 정렬 때문\nok('부가세 표시', /_tax \? h\('span'/.test(modal));
+/* 금액만으로는 «그 사람에게 몇 %로 얼마가 갔는지» 확인할 수 없다(대표 지적) —
+   이름과 요율을 함께 적고, 마우스를 올리면 사람별로 다 보인다. */
+ok('성과급 미리보기', /_pt>0 \? \(_perf\.map/.test(modal));
+ok('성과 요율을 보여준다', /ps\.pct\+'%'/.test(modal));
+// 칸이 비어도 자리를 지키게 조건부(&&)를 삼항(?:)으로 바꿨다 — 정렬 때문
+ok('부가세 표시', /_tax \? h\('span'/.test(modal));
 
 console.log('\n[한 줄로 줄맞춤]');
-['38px','82px','108px','48px','46px','78px','70px','62px'].forEach(function(w){
+// 성과 칸은 이름·요율이 들어가 118px 로, 건명 칸(140px)이 새로 붙었다
+['38px','140px','82px','108px','48px','46px','78px','70px','118px'].forEach(function(w){
   ok('칸 너비 ' + w, new RegExp("width:'" + w + "'").test(modal));
 });
 ok('업체명만 늘어난다', /flex:'1 1 90px'/.test(modal));

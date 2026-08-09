@@ -34014,6 +34014,47 @@ function erpKindLabel(g){
   return out.join('·');
 }
 if(typeof window !== 'undefined') window.erpKindLabel = erpKindLabel;
+/* ── 담당자 색을 «연한 바탕 / 진한 글» 로 ──
+   달력 칸을 담당자 색으로 꽉 채우니 한 장이 원색 덩어리가 됐다(대표 지적).
+   팔레트가 5계열 27색뿐이라, 색 하나마다 짝(연한 바탕·진한 글)을 표로 못 박는다.
+   표에 없는 색(직원이 직접 고른 색)은 회색 짝으로 물러난다 — 억지로 계산하면
+   팔레트 밖 색이 생겨 색 검사가 막힌다. */
+var ERP_TINT = {
+  '#1e40af':{bg:'#eff6ff', ink:'#1e40af'}, '#2563eb':{bg:'#eff6ff', ink:'#1e40af'},
+  '#60a5fa':{bg:'#eff6ff', ink:'#2563eb'}, '#bfdbfe':{bg:'#eff6ff', ink:'#2563eb'},
+  '#16a34a':{bg:'#f0fdf4', ink:'#166534'}, '#166534':{bg:'#f0fdf4', ink:'#166534'},
+  '#4ade80':{bg:'#f0fdf4', ink:'#16a34a'}, '#bbf7d0':{bg:'#f0fdf4', ink:'#16a34a'},
+  '#dc2626':{bg:'#fef2f2', ink:'#991b1b'}, '#991b1b':{bg:'#fef2f2', ink:'#991b1b'},
+  '#f87171':{bg:'#fef2f2', ink:'#dc2626'}, '#fecaca':{bg:'#fef2f2', ink:'#dc2626'},
+  '#d97706':{bg:'#fffbeb', ink:'#854d0e'}, '#854d0e':{bg:'#fffbeb', ink:'#854d0e'},
+  '#fbbf24':{bg:'#fffbeb', ink:'#d97706'}, '#fde68a':{bg:'#fffbeb', ink:'#d97706'},
+  '#1e293b':{bg:'#f8fafc', ink:'#1e293b'}, '#475569':{bg:'#f8fafc', ink:'#475569'},
+  '#64748b':{bg:'#f8fafc', ink:'#475569'}, '#94a3b8':{bg:'#f8fafc', ink:'#475569'}
+};
+function erpTint(c){ var e = ERP_TINT[String(c || '').toLowerCase()]; return e ? e.bg : '#f8fafc'; }
+function erpInk(c){  var e = ERP_TINT[String(c || '').toLowerCase()]; return e ? e.ink : '#475569'; }
+if(typeof window !== 'undefined'){ window.erpTint = erpTint; window.erpInk = erpInk; }
+/* ── 「누구 건인가」 · 「어떤 건인가」 ──
+   나눠담기 창에서 업체명이 비어 보여 어느 회사 건인지 확인이 안 됐다(대표 지적).
+   기록 종류마다 이름이 든 칸이 달라서, 있을 만한 칸을 차례로 물러나며 찾는다. */
+function erpWhoOf(p){
+  if(!p) return '';
+  var it = p.item || {};
+  var v = p.companyName || it.companyName || it.company || it.clientName || it.name || '';
+  v = String(v).trim();
+  return (v === '-' ) ? '' : v;
+}
+/* 건명 — 사건명·컨설팅명·프로젝트명. 업체명과 같으면 두 번 적지 않는다 */
+function erpTitleOf(p){
+  if(!p) return '';
+  var it = p.item || {};
+  var v = it.caseName || it.title || it.projectName || it.consultingName || it.subject || '';
+  v = String(v).trim();
+  if(!v || v === '-') return '';
+  if(v === erpWhoOf(p)) return '';
+  return v;
+}
+if(typeof window !== 'undefined'){ window.erpWhoOf = erpWhoOf; window.erpTitleOf = erpTitleOf; }
 /* ── 나이스빌 CMS — 「몇 월분 자문료인가」 ──
    6월분을 7/5 에 걷어(출금일) 7/6 에 통장으로 받으면(정산일), 그것은 6월분인가 7월분인가.
    대표 확인: 업체마다 다르다(당월 걷는 곳·익월 걷는 곳). 그래서 업체마다 골라 두게 한다.
@@ -36379,6 +36420,8 @@ function FinanceLedger(){
                 var _tax=_pendTaxType(p);
                 var _bd=storeBadge(p.store);
                 var _no=(p.item&&(p.item.caseNo||p.item.no))||'';
+                var _who=erpWhoOf(p);
+                var _title=erpTitleOf(p);
                 var _dd=ea-amountIn;
                 var _cw={flexShrink:0,overflow:'hidden',textOverflow:'ellipsis'};
                 var _ivc=null;
@@ -36405,8 +36448,14 @@ function FinanceLedger(){
                       style:{margin:0,pointerEvents:'none',flexShrink:0}}),
                     h('span',{style:Object.assign({},_cw,{background:_bd.bg,color:_bd.fg,border:'1px solid '+_bd.bd,
                       borderRadius:'7px',padding:'0 4px',fontSize:'8.5px',fontWeight:700,width:'38px',textAlign:'center'})},_bd.label),
-                    h('b',{style:{flex:'1 1 90px',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',color:'#475569'}},
-                      p.companyName||h('span',{style:{color:'#cbd5e1',fontWeight:400}},'(업체명 없음)')),
+                    /* 업체명이 비면 어느 회사 건인지 알 수 없어 고를 수가 없다(대표 지적).
+                       기록마다 이름이 든 칸이 다르므로 차례로 물러나 찾고, 그래도 없으면
+                       빨갛게 알린다 — 회색으로 두면 그냥 빈 칸으로 보고 지나친다. */
+                    h('b',{style:{flex:'1 1 90px',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',color:'#1e293b'},
+                      title:_who||''},
+                      _who || h('span',{style:{color:'#dc2626',fontWeight:700}},'⚠ 업체명 없음')),
+                    // 건명 — 「어떤 건인지」. 이것이 있어야 사무관리에서 그 건을 찾아 확인할 수 있다
+                    h('span',{style:Object.assign({},_cw,{width:'140px',color:'#475569'}),title:_title||''},_title||''),
                     h('span',{style:Object.assign({},_cw,{width:'82px',color:'#64748b'})},p.label||''),
                     h('span',{style:Object.assign({},_cw,{width:'108px',color:'#94a3b8',fontSize:'9.5px'})},_no),
                     h('span',{style:Object.assign({},_cw,{width:'48px',color:'#475569',fontWeight:600})},_staff||'-'),
@@ -36422,8 +36471,16 @@ function FinanceLedger(){
                     h('span',{style:Object.assign({},_cw,{width:'70px',textAlign:'right',fontSize:'9.5px',
                       fontVariantNumeric:'tabular-nums',color:_dd===0?'#166534':'#94a3b8'})},
                       _dd===0?'입금과 일치':(_dd>0?'+':'')+_dd.toLocaleString()),
-                    h('span',{style:Object.assign({},_cw,{width:'62px',textAlign:'right',fontSize:'9.5px',
-                      color:'#16a34a',fontVariantNumeric:'tabular-nums'})},_pt>0?('성과 '+_pt.toLocaleString()):'')
+                    /* 한 줄에서도 «누가 몇 %» 를 보여준다 — 펼치지 않고도 확인할 수 있어야 한다 */
+                    h('span',{style:Object.assign({},_cw,{width:'118px',textAlign:'right',fontSize:'9.5px',
+                        color:'#16a34a',fontVariantNumeric:'tabular-nums'}),
+                      title:_perf.length?_perf.map(function(ps){
+                        return (ps.name||ps.sid)+' '+ps.role+' '+((ps.pct!==undefined&&ps.pct!==null)?ps.pct+'%':'-')
+                             + ' → '+(ps.amount||0).toLocaleString()+'원';
+                      }).join('\n'):''},
+                      _pt>0 ? (_perf.map(function(ps){
+                          return (ps.name||ps.sid)+' '+((ps.pct!==undefined&&ps.pct!==null)?ps.pct+'%':'');
+                        }).join(', ') + ' · ' + _pt.toLocaleString()) : '')
                   ),
                   on && h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'6px',marginTop:'6px',
                     borderTop:'1px solid #f8fafc',paddingTop:'6px'}},
@@ -36442,13 +36499,28 @@ function FinanceLedger(){
                         h('span',{style:{color:'#64748b'}},'계산서'),
                         _ivc ? h('span',{style:{background:'#f0fdf4',color:'#166534',padding:'0 4px',borderRadius:'4px',fontSize:'9px',fontWeight:600}},'발행 '+(_ivc.entry?_ivc.entry.date:''))
                              : h('span',{style:{background:'#fffbeb',color:'#854d0e',padding:'0 4px',borderRadius:'4px',fontSize:'9px',fontWeight:600}},_tax==='3.3%'?'미발행(정상)':'미발행?')),
+                      /* 성과급은 «누가 몇 %로 얼마» 를 다 보여야 한다(대표 지적).
+                         금액만 적혀 있으면 그 사람에게 얼마가 갔는지 맞는지 확인할 수 없다.
+                         pct = 그 사람 성과 요율, sharePct = 이 건에서 나눠 갖는 몫. */
                       _perf.length>0 && h('div',{style:{marginTop:'4px',padding:'4px 6px',background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'4px',fontSize:'9.5px'}},
-                        h('div',{style:{fontWeight:600,color:'#64748b',marginBottom:'2px'}},'성과'),
+                        h('div',{style:{display:'flex',justifyContent:'space-between',fontWeight:600,color:'#64748b',marginBottom:'2px'}},
+                          h('span',null,'성과급'),
+                          h('span',{title:'성과를 나누는 기준 금액 (부가세·차감 뒤)'},
+                            '기준 '+((_perf[0]&&_perf[0].baseAmount)||p.amount||0).toLocaleString())),
                         _perf.map(function(ps,pi){
-                          return h('div',{key:pi,style:{display:'flex',justifyContent:'space-between',padding:'1px 0'}},
-                            h('span',null,h('b',null,ps.name||ps.sid),' ',
-                              h('span',{style:{fontSize:'8px',color:ps.role==='주담당'?'#1e40af':'#2563eb',fontWeight:700}},ps.role)),
-                            h('span',{style:{fontFamily:'monospace',color:'#16a34a',fontWeight:700}},(ps.amount||0).toLocaleString()));
+                          return h('div',{key:pi,style:{display:'flex',alignItems:'center',gap:'4px',padding:'1px 0'}},
+                            h('b',{style:{width:'44px',flexShrink:0}},ps.name||ps.sid),
+                            h('span',{style:{width:'32px',flexShrink:0,fontSize:'8px',
+                              color:ps.role==='주담당'?'#1e40af':'#2563eb',fontWeight:700}},ps.role),
+                            // 요율 — 이 사람이 몇 %를 받는 사람인지
+                            h('span',{style:{width:'34px',flexShrink:0,textAlign:'right',color:'#475569',fontWeight:700},
+                              title:'성과 요율'},(ps.pct!==undefined&&ps.pct!==null)?(ps.pct+'%'):'-'),
+                            // 이 건에서 나눠 갖는 몫 (주담당·부담당이 갈라 가질 때)
+                            h('span',{style:{width:'40px',flexShrink:0,textAlign:'right',color:'#94a3b8'},
+                              title:'이 건에서 나눠 갖는 몫'},
+                              (ps.sharePct!==undefined&&ps.sharePct!==null&&ps.sharePct!==100)?('몫 '+ps.sharePct+'%'):''),
+                            h('span',{style:{flex:1,textAlign:'right',fontFamily:'monospace',color:'#16a34a',fontWeight:700}},
+                              (ps.amount||0).toLocaleString()));
                         })
                       )
                     )
@@ -44068,8 +44140,12 @@ function PersonalCalendar(props){
                   ev.preventDefault(); ev.stopPropagation();
                   setCtxMenu({x:ev.clientX, y:ev.clientY, ev:e, date:cell.date});
                 } : null,
-                style:{ background:e.color, borderRadius:'8px',
-                  padding:'2px 6px', fontSize:'10.5px', color:'#fff', fontWeight:600,
+                /* 칸을 담당자 색으로 꽉 채우면 달력 한 장이 원색 덩어리가 된다(대표 지적).
+                   색은 왼쪽 막대로만 두고 바탕은 아주 연하게, 글은 그 색의 진한 쪽으로.
+                   누구 일정인지는 그대로 알아보면서 눈이 편하다. */
+                style:{ background:erpTint(e.color), borderRadius:'5px',
+                  borderLeft:'3px solid '+e.color,
+                  padding:'2px 6px', fontSize:'10.5px', color:erpInk(e.color), fontWeight:600,
                   whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', lineHeight:1.4,
                   cursor:'pointer' },
                 title: e.tooltipText || e.title }, e.title);
