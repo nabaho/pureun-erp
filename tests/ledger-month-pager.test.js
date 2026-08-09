@@ -28,7 +28,7 @@ ok('그 달 통계를 재는 함수가 있다', /function monStat\(m\)\{/.test(s
 ok('이미 처리된 행은 미처리에서 뺀다', /var todo=\(d\.inc\+d\.exp\)-dup;/.test(src));
 ok('확정 건수는 finance_income 에서 센다', /_cfm\[ym\]\.cnt\+\+; _cfm\[ym\]\.amt\+=/.test(src));
 ok('진행률 막대가 있다', /width:st\.pct\+'%',height:'100%'/.test(src));
-ok('다 되면 막대가 초록으로', /background:st\.pct>=100\?'#16a34a':'#3b82f6'/.test(src));
+ok('다 되면 막대가 초록으로', /background:st\.pct>=100\?'#16a34a':'#2563eb'/.test(src));
 ok('미처리가 없으면 「다 처리됨」', /'✅ 다 처리됨'/.test(src));
 ok('확정 금액을 보여준다 (건수는 탭이 말한다)', /'✅ '\+st\.doneAmt\.toLocaleString\(\)/.test(src));
 ok('전체 보기면 모든 달을 합친다', /if\(showAll\)\{[\s\S]{0,400}?ldMonths\.forEach\(function\(m\)\{/.test(src));
@@ -47,7 +47,7 @@ ok('따로 있던 요약 줄은 없앴다', !/\/\/ 요약\s*\n\s*h\('div',\{styl
 
 console.log('\n[한 줄에 들어가게 크기를 줄였다]');
 ok('탭 단추가 작아졌다', /padding:'4px 11px', borderRadius:'14px'/.test(src));
-ok('자동 매칭 단추가 작아졌다', /padding:'4px 11px',background:'#1d4ed8'[\s\S]{0,140}?'🤖 자동 매칭'/.test(src));
+ok('자동 매칭 단추가 작아졌다', /padding:'4px 11px',background:'#2563eb'[\s\S]{0,140}?'🤖 자동 매칭'/.test(src));
 // (2026-08-09) 확정 단추 넷을 하나로 합쳤다 — 글자가 「확정 가능 N건 모두 확정」으로 바뀌었다
 ok('확정 단추가 작아졌다',
    /padding:'4px 11px',background:'#16a34a'[\s\S]{0,200}?'✅ 확정 가능 '\+readyRows\.length\+'건 모두 확정'/.test(src));

@@ -61,7 +61,7 @@ t('★ 단계 기한은 끌어 옮길 수 없다',
 t('확인 안 된 기한에 (확인) 을 붙인다',
   /type:'stage-due'[\s\S]{0,300}?dueVerified \? '' : '\(확인\)'/.test(ERP), true);
 t('확인 여부로 색을 나눈다',
-  /type:'stage-due'[\s\S]{0,500}?info\.dueVerified \? '#b91c1c' : '#b45309'/.test(ERP), true);
+  /type:'stage-due'[\s\S]{0,500}?info\.dueVerified \? '#991b1b' : '#d97706'/.test(ERP), true);
 t('종료·보관된 사건은 캘린더에서 뺀다',
   /3-2\) 사건 단계 기한[\s\S]{0,300}?c\.permanentArchived \|\| c\.closedDate/.test(ERP), true);
 t('달 범위 밖은 넣지 않는다',

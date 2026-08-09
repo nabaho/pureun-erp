@@ -129,7 +129,7 @@ ok('계약 시작 전 달은 뺀다', /if\(start && ym < start\) return;/.test(s
 ok('밀린 달을 표시한다', /var late = \(ym !== lastYm\);/.test(src));
 ok('이름표에 「밀림」 이 붙는다', /\(late\?' 밀림':''\)/.test(src));
 ok('왜 뜬 건지 설명이 붙는다', /'지난 달 것이 아직 안 걷혔습니다'/.test(src));
-ok('밀린 달은 색으로도 구분된다', /color:it\.cand\.late\?'#b45309':'#64748b'/.test(src));
+ok('밀린 달은 색으로도 구분된다', /color:it\.cand\.late\?'#d97706':'#64748b'/.test(src));
 
 console.log('\n[합계 후보 — 한 번에 낸 것을 찾아 준다]');
 ok('같은 업체 자문료가 2건 넘으면 합계를 찾는다', /function _advArrears\(row\)\{/.test(src));
