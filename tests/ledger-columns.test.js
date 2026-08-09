@@ -38,7 +38,9 @@ t('세고 나서 그린다', iCount < iRender, true);
 t('세는 곳이 하나뿐이다', (FL.match(/var readyRows = \[\], stCnt/g) || []).length, 1);
 t('줄과 요약이 같은 함수로 묶음을 만든다', /function rowGroups\(row\)/.test(FL), true);
 t('세는 쪽이 그 함수를 쓴다', /var grp = rowGroups\(row\);/.test(FL), true);
-t('그리는 쪽도 그 함수를 쓴다', /var _grp=rowGroups\(row\);/.test(FL), true);
+// (2026-08-09) 그리는 쪽은 요약 패스가 담아 둔 rowInfo 를 먼저 쓴다 — 같은 계산을 두 번 안 하려고.
+// map 에 없을 때만(이론상 없음) 같은 함수로 물러난다.
+t('그리는 쪽도 그 함수를 쓴다', /var _grp=_ri2\.grp\|\|rowGroups\(row\);/.test(FL), true);
 t('그리는 쪽이 묶음을 따로 만들지 않는다',
   /else _grp=erpGroupPendByCompany\(_sug\);/.test(FL), false);
 

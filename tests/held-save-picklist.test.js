@@ -44,7 +44,9 @@ t('★ 어디에서도 dbUpsert 로 보류함을 저장하지 않는다',
 /* ══════ ② 확인 창 업체 목록 — 칸 맞춤과 순서 ══════ */
 const PICK = slice('// ① 업체가 여럿 — 골라야 한다', '// ② 과입금');
 
-t('머리줄이 있다', /'업체 · 항목'/.test(PICK) && /'담당'\)/.test(PICK) && /'예상 입금'\)/.test(PICK), true);
+// (2026-08-09) 「업체 · 항목」 한 칸을 「업체」·「항목」 두 칸으로 갈랐다 — 항목이 세로로 서게(대표 지시)
+t('머리줄이 있다', /'업체'\)/.test(PICK) && /'항목'\)/.test(PICK)
+  && /'담당'\)/.test(PICK) && /'예상 입금'\)/.test(PICK), true);
 t('근거 칸에도 이름을 붙였다', /'근거'\)/.test(PICK), true);
 // 머리줄과 몸줄의 칸 너비가 같아야 세로로 선다
 ['56px', '82px', '60px'].forEach(function(w){
@@ -61,7 +63,7 @@ t('원본 목록을 건드리지 않고 정렬한다', /_grp\.slice\(\)\.sort/.t
 t('무슨 순서인지 화면에 적어 준다', /'금액이 가까운 순 · 같으면 이름순'/.test(PICK), true);
 t('몇 곳인지 적어 준다', /'어느 업체인가요\? — '\+_grp\.length\+'곳'/.test(PICK), true);
 t('고른 줄은 색으로도 구분된다', /background:_on\?'#eff6ff':'#fff'/.test(PICK), true);
-t('마우스를 올리면 잘린 이름이 다 보인다', /title:g\.company\+' · '\+erpKindLabel\(g\)/.test(PICK), true);
+t('마우스를 올리면 잘린 이름이 다 보인다', /title:g\.company\},g\.company\)/.test(PICK), true);
 
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');
 process.exit(fail ? 1 : 0);
