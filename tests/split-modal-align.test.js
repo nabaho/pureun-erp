@@ -22,8 +22,8 @@ t('모달 구역을 찾았다', MODAL.length > 1000, true);
 t('세금 칸이 비어도 자리를 지킨다',
   /h\('span',\{style:Object\.assign\(\{\},_cw,\{width:'46px',padding:'0 4px',border:'1px solid transparent'\}\)\},''\)/.test(MODAL), true);
 t('성과 칸이 비어도 자리를 지킨다',
-  // 성과 칸에 이름·요율이 들어가 118px 로 넓혔다 — 비어도 자리는 그대로 지킨다
-  /width:'118px',textAlign:'right',fontSize:'9\.5px',[\s\S]{0,500}?_pt>0 \? \(_perf\.map/.test(MODAL), true);
+  // 이름·요율이 들어가는 칸 — 너비 숫자는 못 박지 않는다(업체명 자리 때문에 조절된다)
+  /width:'\d+px',textAlign:'right',fontSize:'9\.5px',\s*\n\s*color:'#16a34a'[\s\S]{0,500}?_pt>0 \? \(_perf\.map/.test(MODAL), true);
 // 정렬 검사는 «목록 줄» 구역만 본다 — 다른 팝업의 요약 배지는 표가 아니라 조건부가 맞다
 const POOL = MODAL.slice(MODAL.indexOf('// ── 한 줄 요약'), MODAL.indexOf("'약정 수수료'"));
 t('조건부로 사라지는 성과 칸이 없다', /_pt>0 && h\('span'/.test(POOL), false);

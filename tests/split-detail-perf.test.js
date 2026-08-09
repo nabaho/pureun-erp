@@ -49,8 +49,13 @@ t('팝업이 이름 찾기를 쓴다', /var _who=erpWhoOf\(p\);/.test(MODAL), tr
 t('팝업이 건명을 쓴다', /var _title=erpTitleOf\(p\);/.test(MODAL), true);
 t('이름이 없으면 빨갛게 알린다', /'⚠ 업체명 없음'/.test(MODAL), true);
 t('회색으로 흘려보내지 않는다', /color:'#cbd5e1',fontWeight:400\}\},'\(업체명 없음\)'/.test(MODAL), false);
-t('건명 칸이 따로 있다', /width:'140px',color:'#475569'\}\),title:_title\|\|''\},_title\|\|''\)/.test(MODAL), true);
-t('마우스를 올리면 전체 이름이 보인다', /title:_who\|\|''/.test(MODAL), true);
+/* 건명은 제 칸을 빼고 «업체명 도움말 + 펼친 칸» 으로 옮겼다 —
+   한 줄에 칸이 열 개면 늘어나는 업체명이 0 으로 찌그러져 사라진다
+   (대표 제보: "왜 사업장 이름이 없나 사업장이 있어야 체크를 한다"). */
+t('건명은 제 칸을 차지하지 않는다', /width:'140px',color:'#475569'\}\),title:_title/.test(MODAL), false);
+t('마우스를 올리면 업체명과 건명이 함께 보인다',
+  /title:\(_who\|\|''\) \+ \(_title \? \(' — ' \+ _title\) : ''\)/.test(MODAL), true);
+t('펼치면 건명이 나온다', /h\('span',\{style:\{color:'#64748b'\}\},'건명'\)/.test(MODAL), true);
 
 /* ══════ ② 성과급 — 누가 몇 %로 얼마 ══════ */
 t('요율을 보여준다', /\(ps\.pct!==undefined&&ps\.pct!==null\)\?\(ps\.pct\+'%'\):'-'/.test(MODAL), true);

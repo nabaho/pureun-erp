@@ -26,7 +26,8 @@ console.log('\n[체크하기 «전에» 보여야 할 것 — 한 줄에 다 있
 ok('종류 배지 (사건·컨설팅·기금·기타)', /var _bd=storeBadge\(p\.store\)/.test(modal));
 /* (2026-08-09) 업체명이 비어 보여 어느 회사 건인지 확인이 안 됐다(대표 지적).
    기록마다 이름이 든 칸이 달라 차례로 물러나 찾고(erpWhoOf), 그래도 없으면 «빨갛게» 알린다 —
-   회색으로 두면 그냥 빈 칸으로 보고 지나친다. 건명(erpTitleOf)도 옆 칸에 함께 적는다. */
+   회색으로 두면 그냥 빈 칸으로 보고 지나친다. 건명(erpTitleOf)은 업체명 도움말과
+   펼친 칸에서 본다 — 제 칸을 주면 한 줄이 넘쳐 업체명이 밀려난다. */
 ok('업체명', /_who \|\| h\('span',\{style:\{color:'#dc2626'/.test(modal));
 ok('업체명을 여러 칸에서 찾는다', /var _who=erpWhoOf\(p\);/.test(modal));
 ok('건명도 함께 보여준다', /var _title=erpTitleOf\(p\);/.test(modal));
@@ -43,11 +44,38 @@ ok('성과 요율을 보여준다', /ps\.pct\+'%'/.test(modal));
 ok('부가세 표시', /_tax \? h\('span'/.test(modal));
 
 console.log('\n[한 줄로 줄맞춤]');
-// 성과 칸은 이름·요율이 들어가 118px 로, 건명 칸(140px)이 새로 붙었다
-['38px','140px','82px','108px','48px','46px','78px','70px','118px'].forEach(function(w){
+// 자리를 지키는 칸들 — 비어도 너비가 있어야 위아래가 세로로 맞는다
+['38px','82px','48px','46px','78px','70px'].forEach(function(w){
   ok('칸 너비 ' + w, new RegExp("width:'" + w + "'").test(modal));
 });
-ok('업체명만 늘어난다', /flex:'1 1 90px'/.test(modal));
+
+/* ★ 대표 제보 "왜 사업장 이름이 없나 사업장이 있어야 체크를 한다" —
+   업체명은 «늘어나는» 칸이라 한 줄이 넘치면 0 으로 찌그러져 통째로 사라졌다.
+   그래서 ① 최소 너비를 못 박고 ② 고정 칸을 다 더해도 팝업 폭 안에 들어오는지 센다.
+   너비 숫자 하나하나를 못 박지 않는 건, 칸을 조금 손볼 때마다 검사가 깨지면 안 되기 때문이다. */
+var mMin = /flex:'1 1 (\d+)px',minWidth:'(\d+)px'/.exec(modal);
+ok('업체명 칸은 늘어나되 최소 너비가 있다', !!mMin, mMin && mMin[0]);
+ok('업체명 최소 너비가 120px 이상', mMin && parseInt(mMin[2],10) >= 120, mMin && mMin[2]);
+ok('늘어나는 기준과 최소 너비가 같다', mMin && mMin[1] === mMin[2]);
+// 긴 이름은 «…» 로 줄여야 한다 — 안 줄이면 뒤 칸을 밀고 나가 한 줄이 무너진다
+var coCell = modal.slice(modal.indexOf("flex:'1 1 130px'"), modal.indexOf("'⚠ 업체명 없음'"));
+ok('긴 업체명은 … 로 줄인다', /textOverflow:'ellipsis'/.test(coCell));
+ok('업체명은 줄바꿈하지 않는다', /whiteSpace:'nowrap'/.test(coCell));
+
+// 한 줄 요약 부분만 잘라 고정 칸을 모두 더한다 (펼친 칸은 제외)
+var oneLine = modal.slice(modal.indexOf('── 한 줄 요약'), modal.indexOf('gridTemplateColumns:\'1fr 1fr\''));
+var fixed = 0, seenTax = false;
+(oneLine.match(/width:'(\d+)px'/g) || []).forEach(function(s){
+  var v = parseInt(/(\d+)/.exec(s)[1], 10);
+  if(v === 46){ if(seenTax) return; seenTax = true; }   // 세금 칸은 있을 때/없을 때 두 벌이지만 한 번만 그려진다
+  fixed += v;
+});
+var modalW = parseInt(/width:'(\d+)px',maxWidth:'96vw'/.exec(modal)[1], 10);
+var leftW  = parseInt(/gridTemplateColumns:'(\d+)px 1fr'/.exec(modal)[1], 10);
+var gaps   = (oneLine.match(/width:'\d+px'/g) || []).length * 6 + 13 + 20;  // 칸 사이 여백·체크상자·안쪽 여백
+var need   = fixed + (mMin ? parseInt(mMin[2],10) : 0) + gaps;
+ok('한 줄이 팝업 폭 안에 들어온다 (업체명이 찌그러지지 않는다)',
+   need <= modalW - leftW, '필요 ' + need + 'px · 자리 ' + (modalW - leftW) + 'px');
 ok('줄바꿈 없이 한 줄', /whiteSpace:'nowrap',cursor:'pointer'/.test(modal));
 ok('줄 아무 데나 눌러도 담긴다', /onClick:function\(\)\{\s*var nm=Object\.assign\(\{\},spSel\);\s*if\(on\) delete nm\[p\.id\]; else nm\[p\.id\]=ea;/.test(modal));
 
