@@ -3521,7 +3521,11 @@ function migrateWip(){
   clearWip();
 }
 function loadArch(){try{return JSON.parse(localStorage.getItem(ARCH_KEY))||[]}catch(e){return[]}}
-function setLocal(a){localStorage.setItem(ARCH_KEY,JSON.stringify(a));updateArchCnt();}
+/* 보관함이 바뀌면 머리줄 수와 대시보드를 한자리에서 같이 고친다.
+   로그인 전에는 내 기록도 남의 것으로 걸러져(uid 가 아직 빈 값) 대시보드가 '0곳'으로 그려지는데,
+   로그인이 끝난 뒤 다시 그리지 않으면 「보관함 (5)」와 「0곳」이 나란히 남는다. */
+function setLocal(a){localStorage.setItem(ARCH_KEY,JSON.stringify(a));updateArchCnt();refreshDash();}
+function refreshDash(){const d=$("dash");if(d&&d.style.display!=="none")renderDash();}
 /* ══════ 담당자(소유) 규칙 ══════
    검토한 사람만 그 사업장 규정을 고칠 수 있고, [검토 완료] 이후에만 남에게 보인다.
    담당자 정보가 없는 옛 기록은 잠기면 아무도 못 여니 '공용'으로 두고 여는 사람이 담당자가 된다.
@@ -3761,6 +3765,7 @@ try{if(window.firebase){firebase.initializeApp(FB_CONFIG);FBDB=firebase.database
   }).catch(function(){}); }catch(e){}
   firebase.auth().onAuthStateChanged(u=>{FBUSER=u;FBNAME=null;updateWho();
     if(u){subscribeArch();subscribeMfix();resolveUserName();loadErpCompanies();pullDecisions();
+      loadDrafts();               // 로그인 전 호출은 FBUSER 가 없어 클라우드 문서를 못 읽었다 — 여기서 한 번 더
       checkCloudWorkSession();   // 재로그인 시 계정에 남은 작업 세션 이어받기
       pushWorkToCloud(true);     // 로그인 전 로컬에만 있던 작업을 계정에 올려 다른 기기에서도 이어갈 수 있게
       try{trimOrigLocal();}catch(_){}   // 브라우저에 쌓인 원본 덩어리 걷어내기(서버본이 있는 것만)
@@ -3924,7 +3929,8 @@ $("work-clear").addEventListener("click",()=>{
 });
 function saveWorkFromUpload(key,buf,isPdf){
   const name=(SITE_MAP[key]||"").replace(/^[📄🏢]\s*/u,"");
-  const mk=b64=>({orig:{name:(SITE_FILE[key]||name),site:SITE_NAME[key]||"",ext:((SITE_FILE[key]||name).split(".").pop()||"").toLowerCase(),text:SAMPLES[key]||"",b64,isPdf:!!isPdf,truncated:!b64&&!!buf},savedAt:new Date().toISOString()});
+  /* 사업자번호도 함께 담는다 — 복원 뒤 ERP 업체를 상호명이 아니라 번호로 먼저 찾게 하려면 필요하다 */
+  const mk=b64=>({orig:{name:(SITE_FILE[key]||name),site:SITE_NAME[key]||"",bizno:SITE_BIZNO[key]||"",ext:((SITE_FILE[key]||name).split(".").pop()||"").toLowerCase(),text:SAMPLES[key]||"",b64,isPdf:!!isPdf,truncated:!b64&&!!buf},savedAt:new Date().toISOString()});
   try{
     let b64=null;
     if(buf&&buf.byteLength<=MAX_ORIG_BYTES)b64=bufToB64(buf);
@@ -3955,7 +3961,7 @@ async function applyWorkObject(w,opts){
   if(!w||!w.orig||(!w.orig.text&&!w.orig.b64))return;
   const o=w.orig, key="W1";
   const site=o.site||detectSiteName(o.text||"");
-  SAMPLES[key]=o.text||""; SITE_MAP[key]=(site?"🏢 "+site:"📄 "+(o.name||"작업 문서")); SITE_BIZNO[key]="";
+  SAMPLES[key]=o.text||""; SITE_MAP[key]=(site?"🏢 "+site:"📄 "+(o.name||"작업 문서")); SITE_BIZNO[key]=o.bizno||"";
   SITE_FILE[key]=o.name||""; SITE_NAME[key]=site;
   delete HWP_BUFS[key]; if(PDF_URLS[key]){URL.revokeObjectURL(PDF_URLS[key]);delete PDF_URLS[key];}
   if(o.b64){ const buf=b64ToBuf(o.b64);
@@ -3967,7 +3973,7 @@ async function applyWorkObject(w,opts){
   if(w.state){ if(w.state.size)$("size").value=w.state.size; if(w.state.asof)$("asof").value=w.state.asof; PAGE_LAND=!!w.state.land; PAGE_AUTO=(w.state.pauto!==false); INC_NOTE=!!w.state.note; RZ_NONE=!!w.state.rzNone; }
   await renderPreview();
   const txt=SAMPLES[key]||"";
-  LAST={key,site:SITE_MAP[key],bizno:"",size:$("size").value,conds:[],asof:$("asof").value,
+  LAST={key,site:SITE_MAP[key],bizno:o.bizno||"",size:$("size").value,conds:[],asof:$("asof").value,
     summary:{위반의심:0,누락:0,수동확인:0,시행예정:0},res:[],arts:parseArticles(txt),terms:detectTerms(txt),addendum:extractAddendum(txt)};
   CUR_ITEMS=[];CUR_KEY=null;
   if(w.state&&Array.isArray(w.state.items)&&w.state.items.length){
