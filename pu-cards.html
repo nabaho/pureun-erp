@@ -2245,7 +2245,10 @@ function initMatDrop(){
   ['dragenter','dragover'].forEach(ev=>z.addEventListener(ev, e=>{ e.preventDefault(); z.classList.add('on'); }));
   z.addEventListener('dragleave', e=>{ if(!z.contains(e.relatedTarget)) z.classList.remove('on'); });
   z.addEventListener('drop', async e=>{
-    e.preventDefault(); z.classList.remove('on');
+    /* ⚠ stopPropagation 을 빠뜨리면 안 된다. window 에도 파일 드롭 핸들러가 있어서
+       같은 파일이 **명함 등록**으로도 흘러간다 — 한글·PDF 를 명함 사진으로 읽으려다
+       "파일을 읽을 수 없습니다" 가 뜬다. 자료는 올라갔는데 오류만 보이니 더 헷갈린다. */
+    e.preventDefault(); e.stopPropagation(); z.classList.remove('on');
     const files=[...((e.dataTransfer&&e.dataTransfer.files)||[])];
     const ok=files.filter(f=>matType(f.name));
     if(!ok.length){ toast('지원하지 않는 파일 형식입니다 (PDF·워드·한글·PPT·엑셀·이미지 등)'); return; }
@@ -2271,7 +2274,8 @@ function initShelfDnd(){
   ['dragenter','dragover'].forEach(ev=>sh.addEventListener(ev, e=>{ e.preventDefault(); sh.classList.add('dragging'); }));
   sh.addEventListener('dragleave', e=>{ if(!sh.contains(e.relatedTarget)) sh.classList.remove('dragging'); });
   sh.addEventListener('drop', async e=>{
-    e.preventDefault(); sh.classList.remove('dragging');
+    /* 본문 자료함(initMatDrop)과 같은 이유로 여기서 이벤트를 끊는다 */
+    e.preventDefault(); e.stopPropagation(); sh.classList.remove('dragging');
     const files=[...((e.dataTransfer&&e.dataTransfer.files)||[])];
     const ok=files.filter(f=>matType(f.name));
     if(!ok.length){ toast('지원하지 않는 파일 형식입니다 (PDF·워드·한글·PPT·엑셀·이미지 등)'); return; }
@@ -2285,6 +2289,19 @@ function initShelfDnd(){
   });
 }
 function closeMatShelf(){ $('matShelfBg').classList.remove('open'); }
+/* 새 자료가 들어갈 갈래 — 지금 열어 둔 탭. 「전체」나 탭이 아닌 화면(묶음·메일틀)에서
+   올렸으면 갈래를 정하지 않는다(= 기타). */
+function matNewCat(){
+  const c = state.matCat || 'all';
+  return (MAT_CATS_NOW().indexOf(c) >= 0 && c !== MAT_CAT_ETC) ? c : '';
+}
+/* 자료함은 화면이 둘이다 — 본문(pcMat)과 옛 팝업(matShelfSheet).
+   올리기·삭제 뒤에 **지금 보고 있는 쪽**을 다시 그린다. 한쪽만 그리면
+   "올렸는데 목록에 안 나온다"가 된다. */
+function matRefresh(){
+  try{ if(state.view==='mat') renderMatPage(); }catch(_){}
+  try{ if($('matShelfBg') && $('matShelfBg').classList.contains('open')) renderMaterialShelf(); }catch(_){}
+}
 function renderMaterialShelf(){
   const list = matList();
   const rows = list.length ? list.map(m=>`
@@ -2335,11 +2352,21 @@ async function putMaterial(id, name, file){
       r.onerror=()=>rej(new Error('파일을 읽을 수 없습니다'));
       r.readAsDataURL(file);
     });
-    const meta = { id, name, fileName:file.name, size:file.size, uploadedAt: Date.now() };
+    /* ⚠ 있던 자료를 교체하는 것일 수 있다. 새 값으로 통째로 덮으면 갈래·설명·순서가
+       사라진다 — 파일만 바꿨을 뿐인데 정리해 둔 것이 날아간다. 있던 것 위에 얹는다. */
+    const old = _matMeta[id] || {};
+    const meta = Object.assign({}, old, {
+      id, name, fileName:file.name, size:file.size, uploadedAt: Date.now(),
+      /* 새로 올리는 것이면 **지금 보고 있는 갈래**에 넣는다. 제안서 탭에서 올렸는데
+         '기타'로 들어가면 방금 올린 것이 눈앞에서 사라진다. */
+      cat: old.cat || matNewCat()
+    });
     await firebase.database().ref(DB_ROOT+'/materialFiles/'+id).set(dataUrl);
     await firebase.database().ref(DB_ROOT+'/materials/'+id).set(meta);
     _matMeta[id]=meta;
-    renderMaterialShelf();
+    /* ⚠ 두 화면이 있다. 옛 팝업(renderMaterialShelf)만 새로 그리면 본문 자료함은
+       그대로라 **올렸는데 목록에 안 나타난다.** 지금 보고 있는 쪽을 다시 그린다. */
+    matRefresh();
     toast('✅ 올렸습니다');
   }catch(e){
     console.warn('[upload]', e&&e.message);
@@ -2375,7 +2402,7 @@ async function deleteMaterial(id){
     await firebase.database().ref(DB_ROOT+'/materials/'+id).remove();
     await firebase.database().ref(DB_ROOT+'/materialFiles/'+id).remove();
     delete _matMeta[id];
-    renderMaterialShelf();
+    matRefresh();
     toast('삭제했습니다');
   }catch(e){ toast('삭제 실패: '+((e&&e.message)||'')); }
 }
@@ -3183,10 +3210,16 @@ async function pdfToImage(f){
 }
 
 let dragDepth=0;
-window.addEventListener('dragenter',e=>{ if([...e.dataTransfer.types].includes('Files')){ dragDepth++; $('dropov').classList.add('open'); }});
+/* 창 아무 데나 파일을 떨어뜨리면 **명함 등록**으로 간다. 그런데 자료함·환경설정
+   화면에서는 그 자리에 떨어뜨릴 일이 없다 — 자료를 올리려던 것이다.
+   그리로 흘러가면 한글·PDF 를 명함 사진으로 읽으려다 "파일을 읽을 수 없습니다"
+   가 뜬다. 목록 화면일 때만 받는다. */
+function cardDropOk(){ return (state.view||'list')==='list'; }
+window.addEventListener('dragenter',e=>{ if(cardDropOk() && [...e.dataTransfer.types].includes('Files')){ dragDepth++; $('dropov').classList.add('open'); }});
 window.addEventListener('dragleave',()=>{ if(--dragDepth<=0){ dragDepth=0; $('dropov').classList.remove('open'); }});
 window.addEventListener('dragover',e=>e.preventDefault());
 window.addEventListener('drop',e=>{ e.preventDefault(); dragDepth=0; $('dropov').classList.remove('open');
+  if(!cardDropOk()){ toast('자료함에서는 위 「＋ 새 자료 올리기」 자리에 놓아 주세요',6000); return; }
   if(e.dataTransfer.files.length) onFiles(e.dataTransfer.files); });
 window.addEventListener('paste',e=>{
   const imgs=[...(e.clipboardData?.items||[])].filter(i=>i.type.startsWith('image/'));
