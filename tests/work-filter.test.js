@@ -41,7 +41,7 @@ eval(gvar('DUE_BUCKETS') + '\n'
   + 'var DUE_LABEL={}, DUE_ORDER={};\n'
   + 'DUE_BUCKETS.forEach(function(b,i){ DUE_LABEL[b[0]]=b[1]; DUE_ORDER[b[0]]=i; });\n'
   + gvar('KIND_ALIAS') + '\n'
-  + ['dueBucket', 'ptOf', 'catNorm', 'mgrSubNames', 'mgrAll'].map(grab).join('\n') + '\n'
+  + ['dueBucket', 'ptOf', 'catNorm', 'mgrSubNames', 'mgrAll', 'mgrSubVals'].map(grab).join('\n') + '\n'
   + gvar('FCOLS') + '\n'
   + ['fCols', 'fCol', 'fRender', 'fHas', 'fSel', 'fSet', 'fClear', 'fAny', 'fResetCols',
      'fLabel', '_fList', 'fVals', 'fPass', 'fPick', 'fPickAll',

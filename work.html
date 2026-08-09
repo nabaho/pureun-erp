@@ -1033,8 +1033,8 @@ var COLSET={
   my:  [['cat','구분','구분'],['pt','업무','업무'],['st','상태','상태'],
         ['last','최근 기록','기록'],['due','다음 할 일','할일']],
   // 「이 주 실적」과 「최근 기록」은 둘 다 기록 열이라 하나로 합쳤다(log).
-  team:[['cat','구분','구분'],['pt','업무명','업무'],['st','상태','상태'],
-        ['log','기록','기록'],['due','다음 할 일','할일']]
+  team:[['cat','구분','구분'],['sub','부담당','부담'],['pt','업무명','업무'],
+        ['st','상태','상태'],['log','기록','기록'],['due','다음 할 일','할일']]
 };
 // 처음 여는 사람이 보는 상태. 팀은 열을 하나도 접지 않는다 —
 // 업무명을 접어 두면 무슨 일인지가 안 보이고, 남는 폭을 기업 열이 다 먹는다.
@@ -2093,6 +2093,12 @@ function mgrAll(it){                                  // 주 + 부 (중복 없�
   mgrSubNames(it).forEach(function(n){ if(a.indexOf(n)<0) a.push(n); });
   return a;
 }
+/* 부담당 열의 걸러 보기 값. 빈 배열로 두면 부담당 없는 건이 어느 값에도
+   안 들어가 목록에서 통째로 사라진다 — 「없음」도 고를 수 있는 값이다. */
+function mgrSubVals(it){
+  var a=mgrSubNames(it);
+  return a.length?a:['(부담당 없음)'];
+}
 // inl = 기업명 옆에 한 줄로 붙인다(팀 전체). 안 주면 예전대로 아랫줄.
 function mgrLine(it,mode,hi,inl){
   var main=(it.mgr_main&&it.mgr_main.name)||'', subs=mgrSubNames(it);
@@ -2103,7 +2109,7 @@ function mgrLine(it,mode,hi,inl){
   }
   var h='';
   if(mode!=='sub'&&main&&main!==me) h+='<span class="mgk">주</span>'+tag(main,false);
-  var ss=subs.filter(function(n){ return n!==me; });
+  var ss=(mode==='main')?[]:subs.filter(function(n){ return n!==me; });   // main = 주담당만
   if(ss.length) h+='<span class="mgk sub">부</span>'+ss.map(function(n){ return tag(n,true); }).join('');
   return h?'<div class="mgl'+(inl?' inl':'')+'" title="주담당 · 부담당(공동으로 함께 하는 사람)">'+h+'</div>':'';
 }
@@ -2624,6 +2630,8 @@ var FCOLS={
   // 부담당으로 붙어 있는 건까지 함께 봐야 무슨 일을 하고 있는지 알 수 있다
   team:[['mgr','담당',mgrAll,'담당으로 걸러 봅니다 — 주담당·부담당 모두'],
         ['cat','구분',      function(it){ return catNorm(it.cat)||'기타'; }],
+        // 부담당만 따로 — 「담당」은 주·부를 함께 보므로 부담당만 좁힐 수가 없었다
+        ['sub','부담당',mgrSubVals,'부담당으로 걸러 봅니다 — 공동으로 함께 하는 사람'],
         ['pt', '업무명',    function(it){ return ptOf(it); }],
         ['st', '상태',      function(it){ return it.status||'진행중'; }],
         ['due','다음 할 일',dueBucket]]
@@ -5429,12 +5437,23 @@ function renderTeam(){
     // 늘어나야 하는 건 글이 긴 두 열(업무명·기록)이다.
     +tf('cat','width:64px')
     +ts('co','기업 / 의뢰인','width:190px')
+    // 부담당은 기업명 옆에 붙여 두니 이름 길이에 따라 줄이 들쭉날쭉했다 — 제 열로 뺀다
+    +tf('sub','width:112px')
     +tf('pt','min-width:150px')
     +tf('st','width:76px')
     +ts('log','기록','min-width:240px')
     +tf('due','width:118px')
     +'<th style="width:58px;text-align:center">종료</th>'
     +'</tr></thead><tbody>';
+  /* 부담당 칸 — 열 머리가 「부담당」이라 줄마다 「부」를 되풀이하지 않는다.
+     걸러 보기로 고른 이름에는 테두리를 둘러 왜 이 줄이 남았는지 보이게 한다. */
+  function subCell(it){
+    var ss=mgrSubNames(it);
+    if(!ss.length) return '<span class="muted" style="font-size:12px">—</span>';
+    var hi=fSel('team','sub').concat(fSel('team','mgr'));
+    return '<div class="mgl" title="부담당 — 공동으로 함께 하는 사람">'+ss.map(function(n){
+      return '<span class="mgt sub'+(hi.indexOf(n)>=0?' hi':'')+'">'+esc(n)+'</span>'; }).join('')+'</div>';
+  }
   // 「N일 전」 — 마지막 기록이 얼마나 묵었는지는 날짜보다 이 말이 빨리 읽힌다
   function agoTxt(d){
     var n=_dayDiff(today,d);
@@ -5465,13 +5484,14 @@ function renderTeam(){
       var nx=it.next&&it.next.text?ddayHTML(it.next.date,it.next.text):(it.due?ddayHTML(it.due,'기한'):'<span class="muted">—</span>');
       nx += sdueHTML(it);   // 단계 기한은 가리지 않고 아래에 나란히 붙인다
       return '<tr data-i="'+esc(it._id)+'">'+tdNo(i+1)+colTD('team','cat',catBadge(it.cat))
-        // 한 건이 한 줄로 끝나게 — 담당·의뢰인 담당자를 아래로 쌓지 않고 옆에 붙인다
+        // 한 건이 한 줄로 끝나게 — 의뢰인 담당자를 아래로 쌓지 않고 옆에 붙인다
         +'<td class="itc" onclick="openDrawer(\''+it._id+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
-        // 묶어 볼 때는 주담당이 묶음 머리에 이미 있으니 부담당만, 평면일 때는 주·부 모두
-        +mgrLine(it,perGroup?'sub':'all',fSel('team','mgr'),true)
+        // 묶어 보면 주담당은 묶음 머리에 이미 있다. 평면일 때만 여기에 적는다.
+        +(perGroup?'':mgrLine(it,'main',fSel('team','mgr'),true))
         // 업무명 열을 접으면 진행률이 갈 곳이 없으므로 여기로 온다
         +(colHidden('team','pt')?' '+stepChip(it._id):'')
         +(it.officer?'<span class="ofc">'+esc(it.officer)+'</span>':'')+'</td>'
+        +colTD('team','sub',subCell(it))
         +colTD('team','pt',nameCell(it)+stepChip(it._id)+peFlag(it),'class="tkc"')
         // 상태 — 남의 업무라 눌러서 바꾸지는 않는다(보기만)
         +colTD('team','st',stChip(it.status||'진행중')+peStChip(it))
@@ -5493,14 +5513,14 @@ function renderTeam(){
       var rec=groups[nm].filter(function(it){return wkLogsOf(it._id,wk).length>0;}).length;
       var fold=!!(S.teamFold||{})[nm];
       h+='<tr class="grp-h" style="cursor:pointer" onclick="teamFold(\''+escJ(nm)+'\')" '
-        +'title="'+(fold?'펼치기':'접기')+' — 이 줄을 누르세요"><td colspan="8">'
+        +'title="'+(fold?'펼치기':'접기')+' — 이 줄을 누르세요"><td colspan="9">'
         +'<span class="fold">'+(fold?'▸':'▾')+'</span> 👤 '+esc(nm)+' — 진행 '+groups[nm].length+'건'
         +(arr.length!==groups[nm].length?' <span class="muted" style="font-weight:600">(조건 '+arr.length+'건)</span>':'')
         +' <span class="pct">이 주 기록 '+rec+'/'+groups[nm].length+'</span></td></tr>';
       if(!fold) h+=rowsOf(teamSortArr(arr,wk),true);
     });
   }
-  if(!shown) h+='<tr><td colspan="8" class="moremark">조건에 맞는 업무가 없습니다. 열 이름을 눌러 조건을 바꿔 보세요.</td></tr>';
+  if(!shown) h+='<tr><td colspan="9" class="moremark">조건에 맞는 업무가 없습니다. 열 이름을 눌러 조건을 바꿔 보세요.</td></tr>';
   h+='</tbody></table></div>';
   h+='<div class="muted" style="font-size:12px;margin-top:8px">'
     +(anyF?'조건에 맞는 업무 '+shown+' / 전체 '+open.length+'건'
@@ -5517,6 +5537,8 @@ function teamSortArr(arr,wk){
   function key(it){
     if(k==='cat') return it.cat||'';
     if(k==='co') return it.company||it.client||'';
+    // 부담당 없는 건은 뒤로 — 이름 순으로 볼 때 빈 줄이 앞에 몰리면 읽기 나쁘다
+    if(k==='sub'){ var ss=mgrSubNames(it); return ss.length?ss.slice().sort().join(','):'힣'; }
     if(k==='title') return it.title||'';
     /* 기록 열 정렬 — 이 주에 쓴 게 없는 것부터, 그중에서도 오래 묵은 것부터 위로.
        밀린 일을 찾는 게 이 열을 정렬하는 이유다. */
