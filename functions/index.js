@@ -501,12 +501,21 @@ const DAUM_HOST = "smtp.daum.net";
 const DAUM_PORT = 465;
 const CARDS_ROOT = "pucards";
 
-function mailUser() { return String(process.env.DAUM_MAIL_USER || "").trim(); }
+// 보내는 주소. 비밀이 아니므로 **명함첩 화면(자료함 → 메일 본문)에서 넣는다** —
+// 파일에만 둘 수도 있지만, 그러면 주소 하나 바꾸려고 다시 배포해야 한다.
+// 환경변수가 있으면 그것을 먼저 쓴다(예전 방식 호환).
+async function mailUserAsync() {
+  const env = String(process.env.DAUM_MAIL_USER || "").trim();
+  if (env) return env;
+  try {
+    const s = await getDatabase().ref(CARDS_ROOT + "/config/matMail/from").once("value");
+    return String(s.val() || "").trim();
+  } catch (e) { return ""; }
+}
 function mailPass() { return String(process.env.DAUM_MAIL_PASSWORD || ""); }
 
 // 보내는 사람 표시 이름. 주소만 나가면 스팸으로 걸리기 쉽다.
-function fromLine() {
-  const u = mailUser();
+function fromLine(u) {
   return u ? '푸른노무법인 <' + u + '>' : "";
 }
 
@@ -526,11 +535,13 @@ exports.sendMaterialMail = functions
       return;
     }
 
-    if (!mailUser() || !mailPass()) {
+    const from = await mailUserAsync();
+    if (!from || !mailPass()) {
       res.status(500).json({
         ok: false,
-        error: "메일 계정이 설정되지 않았습니다.\n"
-             + "DAUM_MAIL_USER(보내는 주소)와 DAUM_MAIL_PASSWORD(앱 비밀번호)를 넣고 다시 배포하세요.",
+        error: !from
+          ? "보내는 주소가 비어 있습니다.\n명함첩 → 자료함 → ✉️ 메일 본문에서 「보내는 주소」를 넣어 주세요."
+          : "메일 비밀번호가 아직 없습니다.\nDAUM_MAIL_PASSWORD(앱 비밀번호)를 넣고 다시 배포하세요.",
       });
       return;
     }
@@ -574,10 +585,10 @@ exports.sendMaterialMail = functions
     try {
       const tx = nodemailer.createTransport({
         host: DAUM_HOST, port: DAUM_PORT, secure: true,
-        auth: { user: mailUser(), pass: mailPass() },
+        auth: { user: from, pass: mailPass() },
       });
       await tx.sendMail({
-        from: fromLine(),
+        from: fromLine(from),
         // 답장은 보낸 직원에게 가게 한다 — 회사 대표주소로만 오면 누구 건인지 모른다
         replyTo: sender.email || undefined,
         to: v.to.join(", "),
@@ -613,6 +624,6 @@ exports.sendMaterialMail = functions
 
     res.json({
       ok: true, sent: v.to.length, files: attachments.length, missing: missing,
-      bytes: v.bytes, from: mailUser(),
+      bytes: v.bytes, from: from,
     });
   });
