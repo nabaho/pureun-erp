@@ -102,7 +102,9 @@ ok('이관·취소·마감된 계약은 빼고 본다',
 ok('이름이 확실할 때만 알린다 (85점↑)', /if\(sc >= 85 && \(!best \|\| sc > best\.score\)\)/.test(src));
 // 이 계산은 erpBuildSug 로 옮겨 담겼다(추천 다시쓰기). 뜻은 그대로 — 후보가 없을 때만 본다.
 ok('맞는 후보가 없을 때만 본다', /if\(!_sg\.length\) out\.ctHint\[row\._k\] = erpContractHint/.test(src));
-ok('화면에 안내가 뜬다', /📄 아직 이관 안 된 계약이 있습니다/.test(src));
+// 업체 이름은 옆 칸에 따로 서므로 현황 칸에는 사실만 짧게 적는다
+ok('화면에 안내가 뜬다', /📄 아직 이관 안 된 계약/.test(src));
+ok('업체 이름은 업체 칸에 선다', /\(_ct \? _ct\.companyName : '—'\)/.test(src));
 ok('계약관리로 바로 갈 수 있다', /window\.navigateTo\('biz\/contract'\)/.test(src));
 
 /* (2026-08-09) 후보를 «줄마다 목록으로» 늘어놓던 것을 그만뒀다.
@@ -110,8 +112,10 @@ ok('계약관리로 바로 갈 수 있다', /window\.navigateTo\('biz\/contract'
    이제 입금 한 건이 한 줄이고, 고를 것이 있을 때만 그 줄을 펼친다.
    칸 너비를 못 박는 검사는 두지 않는다 — 모양이 조금만 바뀌어도 배포가 막힌다. */
 console.log('\n[입금 한 건이 한 줄]');
-ok('업체·종류를 한 칸에 적는다', /_grp\[0\]\.kinds\.filter\(Boolean\)\.join\('·'\)/.test(src));
-ok('밀린 달 수를 줄 안에서 알려 준다', /'달 밀림 — '/.test(src));
+// (2026-08-09) 업체와 항목을 각자 칸으로 나눴다 — 한 칸에 몰면 세로로 비교가 안 된다
+ok('업체는 제 칸에 홀로 있다', /_grp\.length \? _grp\[0\]\.company/.test(src));
+ok('항목은 같은 말을 반복하지 않는다', /erpKindLabel\(_grp\[0\]\)/.test(src));
+ok('밀린 달 수를 줄 안에서 알려 준다', /'달 밀림'/.test(src));
 ok('넘치거나 모자란 금액을 줄에서 보여준다', /\(_st\.diff>0\?'\+':''\)\+_st\.diff\.toLocaleString\(\)/.test(src));
 ok('판단이 필요한 줄만 펼친다', /if\(_st\.state==='check'\)\{ setOpenRow\(_open\?'':row\._k\); return; \}/.test(src));
 ok('펼친 줄은 하나뿐이다', /setOpenRow\(_open\?'':row\._k\)/.test(src));

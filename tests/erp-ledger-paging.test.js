@@ -64,8 +64,23 @@ test('더 보기 줄이 표의 칸을 다 덮는다 (밀리면 줄이 어긋난�
      칸 수를 못 박기보다 «각 표의 머리 칸 수와 더보기 줄의 colSpan 이 같은가» 를 본다. */
   const rows = FL.match(/colSpan:(\d+),style:\{padding:'8px',textAlign:'center'/g) || [];
   assert.equal(rows.length, 2, '입금·출금 각각 하나');
-  const spans = rows.map(r => parseInt(/colSpan:(\d+)/.exec(r)[1], 10));
-  spans.forEach(n => assert.ok(n >= 5 && n <= 6, '표 칸 수 범위를 벗어났다: ' + n));
-  assert.ok(spans.indexOf(5) >= 0, '입금 표는 다섯 칸이 되었다');
+  /* (2026-08-09) 입금 표를 열 칸으로 나눴다(체크·번호·신호등·금액·날짜·적요·업체·현황·담당·처리).
+     출금 표는 여섯 칸 그대로다. 칸 수를 바깥에서 못 박기보다, 더보기 줄의 colSpan 이
+     «그 표의 머리 칸 수와 같은가» 를 본다 — 어긋나면 줄이 밀린다. */
+  // 더보기 줄마다 «바로 앞에 있는 표 머리» 를 찾아 그 칸 수와 맞는지 본다
+  const spans = [];
+  let at = 0;
+  rows.forEach(r => {
+    const iRow = FL.indexOf(r, at);
+    at = iRow + r.length;
+    const iHead = FL.lastIndexOf("h('thead',null,h('tr',null,", iRow);
+    assert.ok(iHead > 0, '더보기 줄 앞에 표 머리가 없다');
+    const head = FL.slice(iHead, FL.indexOf("h('tbody'", iHead));
+    const th = (head.match(/h\('th'/g) || []).length;
+    const span = parseInt(/colSpan:(\d+)/.exec(r)[1], 10);
+    assert.equal(span, th, '표 머리 ' + th + '칸인데 더보기 줄은 ' + span + '칸이다');
+    spans.push(span);
+  });
+  assert.ok(spans.indexOf(10) >= 0, '입금 표는 열 칸이 되었다');
   assert.ok(spans.indexOf(6) >= 0, '출금 표는 여섯 칸 그대로다');
 });
