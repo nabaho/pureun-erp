@@ -1344,8 +1344,9 @@ test('올리기는 addFiles 단일 통로만 탄다', () => {
   const fn = app.match(/async function camUpload\(\)[\s\S]*?\n\}/);
   assert.ok(fn, 'camUpload 을 찾을 수 없습니다');
   /* ⚠ 2026-08-08 다시 겨눔 — 배송표를 만들면서 세 번째 인자(카메라에서 온 것 표시)가
-     붙었다. 지켜야 할 것은 **addFiles 통로를 탄다**는 것이지 인자 개수가 아니다. */
-  assert.match(fn[0], /addFiles\(files, false[,)]/, 'addFiles 통로를 타지 않습니다');
+     붙었다. 지켜야 할 것은 **addFiles 통로를 탄다**는 것이지 인자 개수나 isDoc
+     값이 아니다(2026-08-09: isDoc 은 화질 등급을 서류로 올리며 true로 바뀌었다). */
+  assert.match(fn[0], /addFiles\(files,/, 'addFiles 통로를 타지 않습니다');
   assert.ok(!/queue\.enqueue/.test(fn[0]), '대기열에 직접 넣고 있습니다 — 통로가 갈라집니다');
 });
 
