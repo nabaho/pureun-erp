@@ -19,6 +19,7 @@
 <script src="js/pu-photo-store.js"></script>
 <script src="js/pu-photo-queue.js"></script>
 <script src="js/pu-doc-read.js"></script>
+<script src="js/pu-lockkey.js"></script>
 <script src="js/pu-doc-file.js"></script>
 <script src="js/pu-drag.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
@@ -2748,8 +2749,12 @@ function startRead(job) {
    같은 사진을 두 번 보내지 않도록 보낸 표시(filed)를 사진 정보에 남긴다. */
 const CARD_KINDS = { card: 1, bizreg: 1 };
 
+/* blocked = 이미 등록돼 있어 명함첩이 받지 않은 것. 명함 번호가 없으니 id 만
+   보면 「아직 안 보냄」으로 읽혀 보낼 때마다 다시 두드린다 — 함께 본다. */
 function canSend(read) {
-  return !!(read && !read.error && CARD_KINDS[read.kind] && !(read.filed && read.filed.id));
+  if (!read || read.error || !CARD_KINDS[read.kind]) return false;
+  if (read.filed && (read.filed.id || read.filed.blocked)) return false;
+  return true;
 }
 
 function sendCards(id, year, job) {
@@ -2773,7 +2778,7 @@ function sendCards(id, year, job) {
   }).then(function (res) {
     read.filed = {
       id: res.id, at: Date.now(), created: res.created, message: res.message,
-      dup: !!res.dup, dupAt: res.dupAt || 0
+      dup: !!res.dup, dupAt: res.dupAt || 0, blocked: !!res.blocked
     };
     if (it) it.meta = Object.assign({}, it.meta, { read: read });
     if (job) job._read = read;
@@ -4583,7 +4588,11 @@ function renderReadPanel(it) {
     : '';
   /* 명함첩으로 보낸 결과 / 보내는 단추 */
   let box = '';
-  if (read.filed && read.filed.id) {
+  if (read.filed && read.filed.blocked) {
+    /* 이미 등록돼 있어 명함첩이 받지 않은 것. 「보내기」 단추를 다시 내주지
+       않는다 — 눌러도 같은 답이 오고, 사람은 고장인 줄 안다. */
+    box = '<p class="note">📇 ' + esc(read.filed.message || '이미 등록된 명함입니다') + '</p>';
+  } else if (read.filed && read.filed.id) {
     /* 새로 넣은 것과 「이미 있던 것」은 결과가 다르다 — 같은 초록 한 줄로 보이면
        대표가 새 명함이 안 올라간 줄 알고 찾아 헤맨다. 겹친 경우는 세워서 알리고
        원래 명함으로 바로 건너뛰게 한다(푸른이알피에서 확인하려던 것이 그 명함이다). */

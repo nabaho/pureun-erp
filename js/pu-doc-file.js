@@ -60,6 +60,27 @@
     return '';
   }
 
+  /* ── 대표님 개인 폴더에 이미 있는가 ──
+     개인 폴더로 옮긴 명함은 공유 검색목록(idx)에서 빠진다. 그래서 idx 만 보면
+     "없다"고 답하고, 우리가 그 사람을 **공용 목록에 새로 만들어** 감춘 것을
+     도로 드러낸다. 지문 목록(pucards/lockkeys)에 있으면 아무것도 만들지 않는다.
+     지문은 되돌릴 수 없는 값이라 여기서 누구인지는 알 수 없다 — 있다/없다뿐이다.
+
+     ⚠ 지문 층이 없으면(옛 화면 등) 막지 않고 그냥 지나간다. 여기서 막아 버리면
+       개인 폴더를 쓰지도 않는 곳에서 명함이 통째로 안 올라간다. */
+  function inPrivateVault(kind, fields) {
+    var LK = global.PuLockKey;
+    if (!LK || !deps.db) return Promise.resolve(false);
+    var key = LK.keyOf(kind, fields);
+    if (!key) return Promise.resolve(false);
+    return LK.fingerprint(key)
+      .then(function (fp) {
+        if (!fp) return false;
+        return deps.db.ref(LK.pathOf(fp)).once('value').then(function (s) { return !!s.val(); });
+      })
+      .catch(function () { return false; });
+  }
+
   function findExisting(kind, fields) {
     var key = dedupKey(kind, fields);
     var want = TO_CARD_KIND[kind];
@@ -127,8 +148,20 @@
       return Promise.reject(new Error('읽어낸 정보가 없어 명함첩에 보낼 수 없습니다'));
     }
 
-    return findExisting(kind, o.fields).then(function (hit) {
-      return hit ? fillOne(hit, mapped, want, o) : createOne(o, mapped, want);
+    /* 개인 폴더 확인이 **먼저다.** 뒤에 두면 이미 만들고 난 뒤가 된다. */
+    return inPrivateVault(kind, o.fields).then(function (hidden) {
+      if (hidden) {
+        /* 왜 아무 일도 안 일어났는지는 알려야 한다. 다만 **어디에 있는지는
+           말하지 않는다** — "대표님 개인 폴더에 있습니다"라고 하면 감춘 사실
+           자체가 드러난다. 이미 등록돼 있다는 것만 알리면 충분하다. */
+        return {
+          id: '', created: false, filled: [], blocked: true,
+          message: '이미 등록된 명함입니다 — 새로 넣지 않았습니다'
+        };
+      }
+      return findExisting(kind, o.fields).then(function (hit) {
+        return hit ? fillOne(hit, mapped, want, o) : createOne(o, mapped, want);
+      });
     });
   }
 
@@ -341,6 +374,7 @@
 
   global.PuDocFile = {
     init: init,
+    inPrivateVault: inPrivateVault,
     findExisting: findExisting,
     fillGaps: fillGaps,
     idxOf: idxOf,

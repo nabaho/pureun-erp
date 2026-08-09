@@ -13,6 +13,7 @@
 <script src="js/pu-health.js"></script>
 <script src="js/pu-version.js"></script>
 <script src="js/pu-backup.js"></script>
+<script src="js/pu-lockkey.js"></script>
 <!-- 한글(HWPX) 문서 생성기 — 제안서 틀에서 업체별 문서를 만들 때 쓴다 -->
 <script src="hwpx_gen.js?v=1"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
@@ -4410,6 +4411,8 @@ async function setFolderLock(id){
     const pg = { ...g, locked:true, lockedAt:Date.now() };
     delete pg.pw;                       /* 옛 평문 비밀번호는 옮기지 않고 버린다 */
     upd[`${P}/groups/${id}`] = pg;
+    /* 지문 남기기 — 사진첩이 이 사람을 다시 공용에 만들지 않게 */
+    Object.assign(upd, await lockKeyUpdates(ids.map(cid=>state.items[cid]).filter(Boolean), true));
     await Store.db.ref().update(upd);
     toast(`🔒 '${g.name}'을(를) 개인 폴더로 옮겼습니다 — [🔒 개인 폴더 열기]로 보실 수 있습니다`,9000);
     if(state.group===id) state.group='all';
@@ -4418,6 +4421,26 @@ async function setFolderLock(id){
     toast('❌ 옮기지 못했습니다: ' + ((e&&e.message)||'알 수 없음'), 8000);
   }
 }
+/* ══════ 개인 폴더 「지문」 (pucards/lockkeys) ══════
+   개인 폴더로 옮긴 명함은 공유 검색목록에서 빠지므로, 사진첩이 다시 찍었을 때
+   "이미 있다"를 알 길이 없어 공용 목록에 새로 만들어 버린다 —
+   감춘 사람이 도로 드러난다. 그래서 되돌릴 수 없게 뭉갠 번호 지문만 남긴다.
+   담기는 것은 지문뿐이다(이름·회사·폴더 이름 없음). 자세한 것은 js/pu-lockkey.js.
+
+   ⚠ 이 목록이 없어도 명함은 멀쩡하다. 그래서 지문 만들기가 실패해도
+     옮기는 일 자체는 막지 않는다(사진첩 알림만 못 하게 될 뿐이다). */
+async function lockKeyUpdates(items, on){
+  const out = {}; const LK = window.PuLockKey;
+  if(!LK) return out;
+  for(const it of items){
+    try{
+      const fp = await LK.fingerprint(LK.keyOfItem(it));
+      if(fp) out[LK.pathOf(fp)] = on ? 1 : null;
+    }catch(_){ /* 한 장 실패가 전체를 멈추게 하지 않는다 */ }
+  }
+  return out;
+}
+
 /* 잠금 풀기 — 개인 창고에서 공용 자리로 되돌린다. 검색목록에도 다시 넣는다. */
 async function unsetFolderLock(id){
   const g = (state.priv.groups||{})[id] || state.groups[id]; if(!g) return;
@@ -4447,6 +4470,15 @@ async function unsetFolderLock(id){
     const pub = { ...g };
     delete pub.locked; delete pub.lockedAt; delete pub.pw; delete pub.lockOwner;
     upd[`${DB_ROOT}/groups/${id}`] = pub;
+    /* 지문 지우기 — 단, **개인 창고에 남는 다른 명함이 같은 번호를 쓰고 있으면 남긴다.**
+       한 사람의 명함이 개인 폴더 두 곳에 있을 수 있다. 그냥 지우면 아직 감춰 둔
+       쪽까지 사진첩이 다시 만들어 버린다. */
+    const leaving = ids.map(cid=>state.priv.items[cid]).filter(Boolean);
+    const staying = Object.values(state.priv.items)
+                      .filter(it=>it && (it.group||'')!==id);
+    const dropAll  = await lockKeyUpdates(leaving, false);
+    const keepBack = await lockKeyUpdates(staying, true);
+    Object.keys(dropAll).forEach(p=>{ if(!(p in keepBack)) upd[p] = null; });
     await Store.db.ref().update(upd);
     toast(`🔓 '${g.name}' 잠금을 풀었습니다 — 다시 모두에게 보입니다`,7000);
     render();
@@ -5811,6 +5843,26 @@ async function openPrivateVault(){
   state.privOpen = true;
   toast('🔓 개인 폴더를 열었습니다 — 새로고침하면 다시 잠깁니다',5000);
   render();
+  /* 열 때마다 지문을 맞춰 둔다 — 기다리지 않는다(화면은 이미 떴다).
+     이 장치를 만들기 전에 잠근 폴더에는 지문이 없고, 개인 명함의 번호를
+     고치면 옛 지문이 남는다. 여기서 조용히 메운다. */
+  setTimeout(()=>{ syncLockKeys().catch(()=>{}); }, 0);
+}
+/* 개인 창고에 있는 명함의 지문 중 **빠진 것만** 채운다.
+   지우지는 않는다 — 옛 지문 하나가 남아 있어도 잃는 것은 없지만
+   (사진첩이 "이미 있다"고 한 번 더 막을 뿐), 잘못 지우면 감춘 사람이 드러난다. */
+async function syncLockKeys(){
+  if(!state.privOpen || Store.mode!=='firebase' || !window.PuLockKey) return;
+  const items = Object.values(state.priv.items||{}).filter(Boolean);
+  if(!items.length) return;
+  const want = await lockKeyUpdates(items, true);
+  const paths = Object.keys(want);
+  if(!paths.length) return;
+  const snap = await Store.db.ref('pucards/lockkeys').once('value');
+  const have = snap.val() || {};
+  const upd = {};
+  paths.forEach(p=>{ const fp = p.split('/').pop(); if(!have[fp]) upd[p] = 1; });
+  if(Object.keys(upd).length) await Store.db.ref().update(upd);
 }
 function closePrivateVault(){
   _privRefs.forEach(([ref,fn])=>{ try{ ref.off('value', fn); }catch(_){} });
