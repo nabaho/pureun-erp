@@ -181,13 +181,20 @@ ok('머리줄에는 열 칩이 하나뿐이다', (function () {
   const h = colBtn('my');
   return (h.match(/chipbtn/g) || []).length === 1 && h.indexOf('▦ 열') > 0;
 })());
-ok('몇 개를 접었는지 칩에 적는다 (접은 것을 잊지 않게)',
-  colBtn('my').indexOf('2 접힘') > 0);
-ok('다 펴면 숫자를 안 적는다', (function () {
+/* 늘 「몇 개 중 몇 개」를 적는다. 접힘 개수만 적던 때에는 다 펴 놓은 사람에게
+   숫자가 아예 안 붙어, 열을 접고 펼 수 있다는 것 자체가 안 보였다. */
+ok('몇 개 중 몇 개를 보고 있는지 칩에 적는다',
+  colBtn('my').indexOf('▦ 열 3/5') > 0);
+ok('다 펴도 숫자가 붙는다 (접을 수 있다는 것이 늘 보이게)', (function () {
   colToggle('my','pt'); colToggle('my','last');
   const h = colBtn('my');
   colToggle('my','pt'); colToggle('my','last');
-  return h.indexOf('접힘') < 0;
+  return h.indexOf('▦ 열 5/5') > 0;
+})());
+ok('손잡이가 표 선 색이 아니다 (흰 바탕에서 안 보였다)', (function () {
+  const css = W.slice(0, W.indexOf('</style>'));
+  const m = css.match(/tr\.fhead \.cfold\{[^}]*\}/);
+  return !!m && m[0].indexOf('color:var(--line)') < 0;
 })());
 /* 창을 띄우지 않고 칩 바로 아래에 붙는 체크 목록.
    걸러 보기 깔때기와 같은 구조를 써서 여닫는 법을 새로 익히지 않아도 된다. */
@@ -355,9 +362,15 @@ ok('띠는 "펴기"가 아니라 묶음을 푸는 길을 준다', (function () {
   return h.indexOf('grpToggle()') > 0 && h.indexOf("colToggle('my','cat')") < 0
     && h.indexOf('묶음을 풀면') > 0;
 })());
-// 사람이 접은 것은 업무·최근 기록 둘뿐이다. 구분까지 세어 3이 되면 안 된다.
-ok('묶어 보기가 잡은 열은 접힘 수에 세지 않는다',
-  colBtn('my').indexOf('2 접힘') > 0 && colBtn('my').indexOf('3 접힘') < 0);
+// 사람이 접은 것은 업무·최근 기록 둘뿐이다. 묶어 보기가 잡은 구분을 함께 세면
+// 묶음을 끈 뒤 까닭 없이 접혀 있는 것처럼 보인다.
+ok('묶어 보기가 잡은 열은 사람이 접은 것으로 세지 않는다', (function () {
+  const forced = colCols('my').filter(c => colForced('my', c[0])).map(c => c[0]);
+  const byHand = colCols('my').filter(c => colHidden('my', c[0]) && !colForced('my', c[0])).map(c => c[0]);
+  return forced.join() === 'cat' && byHand.join() === 'pt,last';
+})());
+// 구분까지 접혀 있으므로 보이는 열은 상태·다음 할 일 둘뿐이다
+ok('묶어 보기가 잡은 열도 안 보이는 것으로 센다', colBtn('my').indexOf('▦ 열 2/5') > 0);
 S.grpOn = false;
 
 /* ── 상태 드롭다운 ── */
