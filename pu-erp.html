@@ -2458,7 +2458,11 @@ function buildBackupSnapshot(){
   // 환경설정·정책·기준 등 전체 키 포함 (메타/세션/UI 전용만 제외)
   var SNAP_EXCLUDE = { force_pw:1,last_login_id:1,save_id_flag:1,current_menu:1,env_last_tab:1,
     open_groups:1,dark_mode:1,sidebar_collapsed:1,corp_dash_tab:1,mydesk_cal_custom_w:1,
-    mydesk_cal_size:1,mydesk_widget_collapsed:1,last_server_backup:1,recent_sig:1 };
+    mydesk_cal_size:1,mydesk_widget_collapsed:1,last_server_backup:1,recent_sig:1,
+    // 기기 임시 작업분·이 PC 전용 되돌리기 기록 — 동기화(FB_EXCLUDE)에서 빼는 것과 같은 이유로
+    // 백업에서도 뺀다. 특히 bank_ledger_draft 는 올린 통장 파일이 최대 4,000행까지 쌓여서
+    // 스냅샷을 실시간DB 한 번 쓰기 한도(16MB) 위로 밀어 올렸다(write_too_big — 실제로 났다).
+    bank_ledger_draft:1, co_merge_log:1, co_link_log:1, co_vat_log:1 };
   var data = {};
   for(var i=0;i<localStorage.length;i++){
     var full = localStorage.key(i);
@@ -2481,6 +2485,85 @@ function _snapSummary(data){
   });
   return c.join(' · ');
 }
+// ── 스냅샷을 실을 수 있는 크기로 나눈다 ────────────────────────
+// 실시간DB는 한 번의 쓰기를 16MB까지만 받는다. 스냅샷을 통째로 실으면 데이터가 자란
+// 어느 날부터 write_too_big 으로 조용히 실패한다(대표 콘솔에 실제로 찍혔다).
+// 저장소별로 나눠 여러 번에 싣고, 한 저장소가 그것만으로 한도를 넘으면(배열) 행 단위로 더 쪼갠다.
+// 행 조각은 'data/{키}/{순번}' 으로 실리는데, 실시간DB는 0부터 이어지는 숫자 키를
+// 배열로 되돌려 주므로 읽을 때 모양이 같다.
+var BACKUP_BATCH_CHARS = 1500000;   // 한 번에 싣는 JSON 글자 수 — 한글 3바이트 기준 4.5MB, 한도의 1/3 안쪽
+function erpBackupBatches(data, limitChars){
+  var lim = limitChars || BACKUP_BATCH_CHARS;
+  var batches = [], cur = {}, curSize = 0;
+  function flush(){ if(curSize > 0){ batches.push(cur); cur = {}; curSize = 0; } }
+  function put(path, v, sz){
+    if(curSize > 0 && curSize + sz > lim) flush();
+    cur[path] = v; curSize += sz;
+    if(curSize > lim) flush();                 // 단독으로도 큰 조각은 저 혼자 한 번에
+  }
+  Object.keys(data || {}).forEach(function(k){
+    var v = data[k];
+    var s = '';
+    try { s = JSON.stringify(v); } catch(_e){ return; }   // 직렬화 불가면 백업 대상이 아니다
+    if(s === undefined || s === null) return;
+    if(s.length <= lim || !Array.isArray(v)){
+      put('data/' + k, v, s.length);
+      return;
+    }
+    // 큰 배열은 행 단위로 — 순번을 이어 붙여야 읽을 때 배열로 돌아온다
+    for(var i = 0; i < v.length; i++){
+      var es = '';
+      try { es = JSON.stringify(v[i]); } catch(_e2){ es = '4'; }
+      put('data/' + k + '/' + i, (v[i] === undefined ? null : v[i]), (es || '4').length);
+    }
+  });
+  flush();
+  return batches;
+}
+window.erpBackupBatches = erpBackupBatches;
+// 스냅샷 한 벌 저장 — 머리(메타)를 먼저 set 해 이전 반쪽을 지우고, 조각을 차례로 실은 뒤,
+// 목록(인덱스)은 전부 성공했을 때만 쓴다. 목록에 없는 스냅샷은 백업 목록·유실검사가
+// 보지 않으므로, 도중에 끊긴 반쪽이 온전한 백업처럼 보이는 일이 없다.
+function serverBackupWrite(id, snap){
+  var batches = erpBackupBatches(snap.data);
+  var p = fbDb.ref('serverBackups/' + id).set({ savedAt: snap.savedAt, version: snap.version });
+  batches.forEach(function(b){
+    p = p.then(function(){ return fbDb.ref('serverBackups/' + id).update(b); });
+  });
+  return p.then(function(){
+    return fbDb.ref('serverBackupsIndex/' + id).set({ savedAt: snap.savedAt, summary: _snapSummary(snap.data) });
+  }).then(function(){ return batches.length; });
+}
+// 스냅샷 한 벌 삭제 — 통째 삭제도 한 번의 쓰기라 큰 스냅샷은 같은 한도에 걸린다.
+// 그래서 지워지지 않은 옛 스냅샷이 쌓여 용량 한도(1GB)를 채웠다. 아는 저장소 이름부터
+// 하나씩 비운 뒤 껍데기를 지운다(없는 키에 null 은 아무 일도 안 하므로 넉넉히 돌려도 된다).
+function _backupKnownKeys(){
+  var names = {};
+  try { (FB_ALL_SYNC_KEYS || []).forEach(function(k){ names[k] = 1; }); } catch(_e){}
+  try { (SERVER_BACKUP_KEYS || []).forEach(function(k){ names[k] = 1; }); } catch(_e){}
+  ['bank_ledger_draft','cms_ledger','bank_processed','payer_aliases','activity_log','trash_bin',
+   'consult_logs','my_work_items','my_todos','closed_archive','finance_expense','finance_invoice',
+   'user_accounts','user_dir','employment_contracts','payroll_irregular'].forEach(function(k){ names[k] = 1; });
+  return Object.keys(names);
+}
+function erpBackupDeleteSnap(id){
+  var keys = _backupKnownKeys();
+  var p = Promise.resolve();
+  for(var i = 0; i < keys.length; i += 40){
+    (function(part){
+      p = p.then(function(){
+        var u = {};
+        part.forEach(function(k){ u['serverBackups/' + id + '/data/' + k] = null; });
+        return fbDb.ref().update(u);
+      });
+    })(keys.slice(i, i + 40));
+  }
+  return p.then(function(){
+    var u = {}; u['serverBackups/' + id] = null; u['serverBackupsIndex/' + id] = null;
+    return fbDb.ref().update(u);
+  });
+}
+window.erpBackupDeleteSnap = erpBackupDeleteSnap;
 function serverBackupDaily(force){
   if(typeof fbDb === 'undefined' || !fbDb) return;
   // [보안규칙 대비] 백업은 재무 데이터를 가진 관리자·위임관리인 기기에서만 — 재무 캐시 없는 직원 기기의 불완전 백업 방지
@@ -2491,11 +2574,10 @@ function serverBackupDaily(force){
   // 빈 스냅샷(데이터 미로드 등)은 저장하지 않음
   var hasData = SERVER_BACKUP_KEYS.some(function(k){ return Array.isArray(snap.data[k]) && snap.data[k].length > 0; });
   if(!hasData) return;
-  var w = {}; w['serverBackups/'+ymd] = snap; w['serverBackupsIndex/'+ymd] = { savedAt:snap.savedAt, summary:_snapSummary(snap.data) };
-  fbDb.ref().update(w)
-    .then(function(){
+  serverBackupWrite(ymd, snap)
+    .then(function(n){
       localStorage.setItem('pureun_v6_last_server_backup', ymd);
-      console.log('[ERP] 서버 자동백업 저장: '+ymd);
+      console.log('[ERP] 서버 자동백업 저장: '+ymd+' ('+n+'조각)');
       return fbDb.ref('serverBackupsIndex').once('value'); // 경량 인덱스로 prune
     })
     .then(function(s){
@@ -2503,27 +2585,38 @@ function serverBackupDaily(force){
       var dates = Object.keys(s.val() || {}).sort(); // YYYY-MM-DD(-pm)는 사전순=시간순
       // 아침+저녁 하루 2회 체계 → 20개 보관 = 약 10일치
       //  ※ 스냅샷 한 벌이 실시간DB 용량을 그대로 먹는다(무료 한도 1GB).
-      //    30일치(60벌)는 용량 초과의 주범이라 10일치로 줄였다. 더 옛 자료는 로컬 백업으로 남긴다.
       if(dates.length > SERVER_BACKUP_KEEP){
-        var updates = {};
-        dates.slice(0, dates.length - SERVER_BACKUP_KEEP).forEach(function(dd){ updates['serverBackups/'+dd] = null; updates['serverBackupsIndex/'+dd] = null; });
-        return fbDb.ref().update(updates);
+        var old = dates.slice(0, dates.length - SERVER_BACKUP_KEEP);
+        var pp = Promise.resolve();
+        old.forEach(function(dd){ pp = pp.then(function(){ return erpBackupDeleteSnap(dd); }); });
+        return pp.then(function(){ console.log('[ERP] 옛 백업 '+old.length+'벌 정리'); });
       }
     })
-    .catch(function(e){ window._erpErrLog && window._erpErrLog(e); });
+    .catch(function(e){
+      // 백업 실패가 조용하면 아무도 모른 채 쌓이거나 빠진다 — 소리를 낸다
+      console.warn('[ERP] 서버 백업 실패:', e && e.message);
+      try { if(typeof erpAlert === 'function') erpAlert('warn', '서버 백업 실패', String((e && e.message) || e), '용량·규칙·연결을 확인하세요'); } catch(_a){}
+      window._erpErrLog && window._erpErrLog(e);
+    });
 }
 window.erpServerBackupNow = function(){ serverBackupDaily(true); console.log('서버 백업 시도(강제)'); };
 // 새 백업을 만들지 않고 오래된 것만 즉시 정리 — 실시간DB 용량이 급할 때 쓴다.
-window.erpBackupPruneNow = function(){
+window.erpBackupPruneNow = function(keep){
   if(typeof fbDb === 'undefined' || !fbDb){ console.log('서버 연결 안 됨'); return; }
   if(!(CURRENT_USER && CURRENT_USER.isAdmin)){ console.log('관리자만 실행할 수 있습니다'); return; }
+  var KEEP = (typeof keep === 'number' && keep >= 0) ? keep : SERVER_BACKUP_KEEP;
   fbDb.ref('serverBackupsIndex').once('value').then(function(s){
     var dates = Object.keys(s.val() || {}).sort();
-    if(dates.length <= SERVER_BACKUP_KEEP){ console.log('정리할 것 없음 ('+dates.length+'벌 보관 중)'); return; }
-    var old = dates.slice(0, dates.length - SERVER_BACKUP_KEEP), updates = {};
-    old.forEach(function(dd){ updates['serverBackups/'+dd] = null; updates['serverBackupsIndex/'+dd] = null; });
-    return fbDb.ref().update(updates).then(function(){
-      console.log('옛 백업 '+old.length+'벌 삭제 · '+SERVER_BACKUP_KEEP+'벌 남김 ('+old[0]+' ~ '+old[old.length-1]+')');
+    if(dates.length <= KEEP){ console.log('정리할 것 없음 ('+dates.length+'벌 보관 중)'); return; }
+    var old = dates.slice(0, dates.length - KEEP);
+    console.log('옛 백업 '+old.length+'벌 정리 시작… (한 벌씩 나눠 지운다 — 통째 삭제는 큰 스냅샷에서 실패했다)');
+    var p = Promise.resolve(), done = 0;
+    old.forEach(function(dd){
+      p = p.then(function(){ return erpBackupDeleteSnap(dd); })
+           .then(function(){ done++; console.log('  삭제 '+done+'/'+old.length+' — '+dd); });
+    });
+    return p.then(function(){
+      console.log('✅ 옛 백업 '+old.length+'벌 삭제 · '+KEEP+'벌 남김 ('+old[0]+' ~ '+old[old.length-1]+')');
     });
   }).catch(function(e){ console.log('정리 실패: '+(e && e.message)); });
 };
@@ -2595,11 +2688,14 @@ function serverBackupEvening(){
     var hasData = SERVER_BACKUP_KEYS.some(function(k){ return Array.isArray(snap.data[k]) && snap.data[k].length > 0; });
     if(!hasData) return;
     var key = ymd + '-pm';
-    var w = {}; w['serverBackups/' + key] = snap; w['serverBackupsIndex/' + key] = { savedAt:snap.savedAt, summary:_snapSummary(snap.data) };
-    fbDb.ref().update(w).then(function(){
+    // 아침 백업과 같은 나눠 싣기 — 통째 한 번 쓰기는 16MB 한도에 걸린다 (write_too_big)
+    serverBackupWrite(key, snap).then(function(n){
       localStorage.setItem('pureun_v6_last_server_backup_pm', ymd);
-      console.log('[ERP] 서버 저녁백업 저장: ' + key);
-    }).catch(function(e){ window._erpErrLog && window._erpErrLog(e); });
+      console.log('[ERP] 서버 저녁백업 저장: ' + key + ' ('+n+'조각)');
+    }).catch(function(e){
+      console.warn('[ERP] 서버 저녁백업 실패:', e && e.message);
+      window._erpErrLog && window._erpErrLog(e);
+    });
   } catch(e){ window._erpErrLog && window._erpErrLog(e); }
 }
 
@@ -33787,6 +33883,36 @@ function erpBuildSugChunk(incAll, pending, from, to, out){
 function erpBuildSug(incAll, pending){
   return erpBuildSugChunk(incAll, pending, 0, incAll.length, erpBuildSugInit());
 }
+// ── 행 드롭다운에 실을 미입금 후보 고르기 ──────────────────────
+// 어차피 사람이 고르는 것은 금액이 가까운 후보다. 가까운 순으로 cap 건만 돌려주고
+// 나머지는 몇 건이 잘렸는지(more)만 알려 준다.
+// - 다른 행이 이미 고른 후보는 뺀다 (두 행이 같은 미입금을 가리키면 한쪽 돈이 붕 뜬다)
+// - 이 행 자신이 고른 후보(selectedId)는 잘려 나갔어도 도로 넣는다 —
+//   안 넣으면 select 의 현재 값이 목록에 없어 화면에서 선택이 사라져 보인다
+function erpPendOptions(pending, usedBy, rowKey, rowAmount, selectedId, cap){
+  cap = cap || 30;
+  var amt = parseInt(rowAmount, 10) || 0;
+  var list = [];
+  for(var i = 0; i < (pending || []).length; i++){
+    var p = pending[i]; if(!p) continue;
+    var u = usedBy && usedBy[p.id];
+    if(u && u !== rowKey) continue;               // 다른 행이 이미 고름
+    list.push(p);
+  }
+  list.sort(function(a, b){
+    return Math.abs(((a.expect || a.amount) || 0) - amt) - Math.abs(((b.expect || b.amount) || 0) - amt);
+  });
+  var total = list.length;
+  var out = list.slice(0, cap);
+  if(selectedId && !out.some(function(p){ return p.id === selectedId; })){
+    for(var j = cap; j < list.length; j++){
+      if(list[j].id === selectedId){ out.push(list[j]); break; }
+    }
+  }
+  return { list: out, more: total - out.length, total: total };
+}
+// (검사 스크립트가 이 구역을 window 없는 샌드박스로 떼어 가므로 가드를 둔다)
+if(typeof window !== 'undefined') window.erpPendOptions = erpPendOptions;
 function FinanceLedger(){
   /* ── 미입금 대기 목록 (입금 매칭 후보) ──
      2026-08-07 김보람 건의: 「일반 자문료 입금건은 매칭이 안 되고 컨설팅·사건만 된다」
@@ -34623,6 +34749,10 @@ function FinanceLedger(){
   var incByK = {};          // _k → row (자동 정리 미리보기에서 행을 되찾기 위함)
   var pendById = {};        // id → 미입금 후보 (행마다 find 하지 않도록 한 번만 만든다)
   pending.forEach(function(p){ pendById[p.id]=p; });
+  // 어느 미입금을 어느 행이 골랐는지 (id → 행 열쇠). 전에는 행마다·후보마다 inMatch 전체를
+  // 다시 훑어서 (80행 × 444후보 × 고른 수) 만 단위 연산이 렌더 한 번마다 돌았다.
+  var pendUsedBy = {};
+  Object.keys(inMatch).forEach(function(k){ if(inMatch[k]) pendUsedBy[inMatch[k]] = k; });
   // 자문료(월 고정) 건은 업체 주기로 계산서를 끊으므로 '미발급' 경고에서 제외한다
   function _isAdvisoryPend(p){
     if(!p) return false;
@@ -35555,18 +35685,24 @@ function FinanceLedger(){
                   },style:{width:'100%',fontSize:'11px',padding:'3px 5px',border:'1px solid #e2e8f0',borderRadius:'4px',
                     background:pItem?'#f0fdf4':'#fff',color:pItem?'#16a34a':'#475569',fontWeight:pItem?700:400}},
                     h('option',{value:''},'-- 업체/항목 선택 --'),
-                    pending.filter(function(p){
-                      var used=Object.keys(inMatch).some(function(k){return k!==row._k&&inMatch[k]===p.id;});
-                      return !used;
-                    }).sort(function(a,b){return Math.abs((a.expect||a.amount)-row.amount)-Math.abs((b.expect||b.amount)-row.amount);})
-                    .map(function(p){
-                      var ea=p.expect||p.amount;
-                      var d=ea-row.amount;
-                      var ds=d===0?'일치':(d>0?'+':'')+d.toLocaleString()+'원차';
-                      var lbl='['+ds+'] '+p.companyName+' '+p.label+' '+ea.toLocaleString()+'원';
-                      if(p.vatLabel) lbl+=' ('+p.vatLabel+')';
-                      return h('option',{key:p.id,value:p.id},lbl);
-                    })
+                    /* 미입금 전부(수백 건)를 행마다 <option> 으로 만들면 80행 × 444건 = 3만 개가
+                       넘는 DOM 이 클릭 한 번마다 다시 만들어져 화면이 0.5~1초씩 멈췄다
+                       (콘솔의 「화면 멈춤」). 금액 가까운 30건만 싣는다 — 나머지가 필요하면
+                       위 [🔍 직접 찾아 고르기] 로 검색한다. */
+                    (function(){
+                      var po=erpPendOptions(pending, pendUsedBy, row._k, row.amount, mId, 30);
+                      var opts=po.list.map(function(p){
+                        var ea=p.expect||p.amount;
+                        var d=ea-row.amount;
+                        var ds=d===0?'일치':(d>0?'+':'')+d.toLocaleString()+'원차';
+                        var lbl='['+ds+'] '+p.companyName+' '+p.label+' '+ea.toLocaleString()+'원';
+                        if(p.vatLabel) lbl+=' ('+p.vatLabel+')';
+                        return h('option',{key:p.id,value:p.id},lbl);
+                      });
+                      if(po.more>0) opts.push(h('option',{key:'_more',value:'',disabled:true},
+                        '… 외 '+po.more+'건 — 금액 가까운 30건만 표시, 나머지는 🔍 직접 찾아 고르기'));
+                      return opts;
+                    })()
                   ),
                   // 추천 배지 + 후보 칩
                   best && h('div',{style:{display:'flex',alignItems:'center',gap:'5px',marginTop:'3px',flexWrap:'wrap'}},
