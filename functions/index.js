@@ -519,7 +519,13 @@ function fromLine(u) {
   return u ? '푸른노무법인 <' + u + '>' : "";
 }
 
+// ★ 서울(asia-northeast3)에서 돈다. 다른 함수는 미국(us-central1)에 있지만 이것만 옮겼다.
+//   다음메일이 **해외에서 오는 로그인을 막는** 경우가 있어서다. 비밀번호가 맞아도
+//   미국에서 붙으면 「535 authentication failed」로 거절당한다.
+//   덤으로 국내에서 쓰는 도구라 응답도 빠르다.
+//   ⚠ 리전을 바꾸면 주소가 바뀐다 — pu-cards.html 의 MAIL_FN_URL 도 함께 고쳐야 한다.
 exports.sendMaterialMail = functions
+  .region("asia-northeast3")
   .runWith({ secrets: ["DAUM_MAIL_PASSWORD"], timeoutSeconds: 120, memory: "512MB" })
   .https.onRequest(async (req, res) => {
     setCors(req, res);
