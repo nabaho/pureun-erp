@@ -2088,19 +2088,36 @@ async function camShoot() {
   camBusy = true;
   setCamAsk(false);   // 물음을 띄운 채 또 찍으면 어느 장을 묶을지 헷갈린다
   try {
-    /* 가능하면 고해상도 스틸(선명), 안 되면 미리보기 프레임 — 푸른카메라와 같은 순서 */
+    /* ── 스틸과 미리보기 중 **큰 쪽**을 쓴다 (대표 보고 2026-08-09: "폰에서 화질이 너무 낮다") ──
+       예전에는 스틸이 찍히기만 하면 무조건 썼다. 그런데 안드로이드 기기 중에는
+       크게 달라고 해도 **미리보기보다 작은 사진**을 주는 것이 있다(요청 크기를 무시).
+       그러면 1920 짜리 화면을 두고 640 짜리를 담는 셈이라 글씨가 뭉갠다.
+       ⚠ 실패해도 조용히 넘어가면 안 된다 — 어느 길로 찍혔는지 사진에 적어 둔다.
+          화질 이야기가 나올 때마다 추측만 하게 되던 것이 이것 때문이다. */
     let src = v, sw = v.videoWidth, sh = v.videoHeight;
+    let capWay = 'frame', capNote = '';
     if (camCap) {
       try {
         /* 기기가 낼 수 있는 **가장 큰 사진**을 달라고 한다.
            안 적으면 기기가 알아서 작은 것을 주는 경우가 있다(미리보기 크기 그대로). */
         const b = await camCap.takePhoto(camPhotoBest());
         const u = URL.createObjectURL(b);
-        src = await loadImg(u);
+        const still = await loadImg(u);
         URL.revokeObjectURL(u);
-        sw = src.naturalWidth || src.width; sh = src.naturalHeight || src.height;
-      } catch (_) { src = v; sw = v.videoWidth; sh = v.videoHeight; }
+        const stw = still.naturalWidth || still.width, sth = still.naturalHeight || still.height;
+        /* 긴 변으로 견준다 — 가로세로가 뒤집혀 오는 기기가 있어 넓이로 재면 헷갈린다 */
+        if (Math.max(stw, sth) >= Math.max(v.videoWidth, v.videoHeight)) {
+          src = still; sw = stw; sh = sth; capWay = 'still';
+        } else {
+          capNote = '스틸 ' + stw + '×' + sth + ' 이 미리보기보다 작아 미리보기를 씀';
+        }
+      } catch (e) {
+        capNote = '스틸 실패: ' + ((e && e.message) || e);
+      }
+    } else {
+      capNote = '이 브라우저는 고해상도 촬영을 지원하지 않음';
     }
+    if (capNote) console.warn('[촬영]', capNote);
     /* 명함틀이 켜져 있으면 **틀 안만** 잘라 담는다.
        미리보기는 object-fit:cover 라 화면과 원본의 좌표가 다르다 — 푸른카메라가
        쓰던 계산을 그대로 가져왔다. 스틸 해상도가 미리보기와 다르면 비례로 보정한다. */
@@ -2158,6 +2175,9 @@ async function camShoot() {
     }
     camShots.push({ blob: useBlob, raw: raw, cropped: cropped,
       url: URL.createObjectURL(useBlob), ts: Date.now(), sel: true,
+      /* 어느 길로 찍혔는가 — 화질을 따질 때 이것부터 봐야 한다.
+         'still' = 고해상도 사진 / 'frame' = 미리보기 화면 캡처(상한이 낮다) */
+      capWay: capWay, capW: sw, capH: sh,
       /* 뒷면이면 앞면이 몇 번째인지 들고 간다 — 올릴 때 한 장으로 묶는 고리다 */
       pairWith: camPairWith });
     camPairWith = -1;   // 한 번 쓰고 푼다(다음 장은 또 새 앞면이다)
@@ -2247,6 +2267,10 @@ async function camUpload() {
   picked.forEach(function (s, j) {
     if (s.pairWith >= 0 && pos[s.pairWith] !== undefined) pairs[j] = pos[s.pairWith];
   });
+  /* 어느 길로 찍혔는지도 함께 넘긴다 — 사진에 적어 두어야 나중에 화질을 따질 수 있다 */
+  const caps = picked.map(function (s) {
+    return { way: s.capWay || '', w: s.capW || 0, h: s.capH || 0 };
+  });
   const btn = $('camRevUp');
   btn.disabled = true;
   btn.textContent = '올리는 중…';
@@ -2280,7 +2304,7 @@ async function camUpload() {
        이제 이 카메라는 **명함 스캐너**다(계획서 1단계). 대표님 화면에 「저장본
        1200×1600」으로 찍힌 것이 이 때문이고, 명함이 화면의 4분의 1이면
        글자가 400px 남짓밖에 안 남아 판독이 흐려진다. */
-    await addFiles(files, true, { fromCam: true, pairs: pairs });
+    await addFiles(files, true, { fromCam: true, pairs: pairs, caps: caps });
     if (dropped) toast('안 고른 ' + dropped + '장은 버렸습니다');
     /* 명함첩에서 왔으면 다 올린 뒤 돌려보낸다 — 온 곳으로 돌아가는 것이
        사람이 기대하는 움직임이다(대표 지시 2026-08-09). */
@@ -2484,6 +2508,7 @@ async function addFiles(fileList, isDoc, opts) {
      앞면이 먼저 담기므로 자리마다 만든 id 를 적어 두었다가 뒷면 meta 에 단다.
      앞면이 실패해 id 가 없으면 고리를 안 단다 — 없는 사진을 가리키면 안 된다. */
   const pairs = (opts && opts.pairs) || {};
+  const caps = (opts && opts.caps) || [];
   const idAt = {};
   for (let fi = 0; fi < files.length; fi++) {
     const f = files[fi];
@@ -2510,6 +2535,10 @@ async function addFiles(fileList, isDoc, opts) {
       };
       const frontId = idAt[pairs[fi]];
       if (frontId) meta.cardBack = frontId;   // 이 장은 그 명함의 뒷면이다
+      /* 어느 길로 찍혔는지 — 화질을 따질 때 이것부터 본다.
+         'still' 이면 기기가 낸 사진, 'frame' 이면 미리보기 화면(상한이 낮다). */
+      const cp = caps[fi];
+      if (cp && cp.way) { meta.capWay = cp.way; meta.capW = cp.w; meta.capH = cp.h; }
       await queue.enqueue({
         _fromCam: !!(opts && opts.fromCam),
         id: id,
@@ -4329,7 +4358,13 @@ function openViewer(id) {
     const src = safeSrc(full);
     if (src && v.style.display !== 'none') {
       img.src = src;
-      $('viewerHint').textContent = (it && it.meta.w ? '저장본 ' + it.meta.w + '×' + it.meta.h + ' · ' : '') + '사진을 누르면 원본 크기 · 바깥을 누르면 닫힘';
+      /* 찍힌 길을 함께 보여 준다 — 화질이 낮다는 말이 나올 때 이 한 줄이면 원인이 갈린다.
+         「화면캡처」로 나오면 기기가 고해상도 사진을 안 준 것이고, 「사진」인데도
+         흐리면 초점 문제다. 예전에는 이걸 몰라 매번 추측만 했다. */
+      const cw = it && it.meta.capWay;
+      const capTxt = !cw ? ''
+        : (cw === 'still' ? '사진 ' : '화면캡처 ') + (it.meta.capW || '?') + '×' + (it.meta.capH || '?') + ' → ';
+      $('viewerHint').textContent = (it && it.meta.w ? capTxt + '저장본 ' + it.meta.w + '×' + it.meta.h + ' · ' : '') + '사진을 누르면 원본 크기 · 바깥을 누르면 닫힘';
     } else if (!src) {
       $('viewerHint').textContent = '사진 본문을 불러오지 못했습니다';
     }
