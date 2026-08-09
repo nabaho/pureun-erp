@@ -695,7 +695,11 @@ const FIREBASE_CONFIG = {
   apiKey: 'AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA',
   databaseURL: 'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app',
   projectId: 'pureun-erp',
-  storageBucket: 'pureun-erp.firebasestorage.app',
+  /* ⚠ 서울(asia-northeast3) 창고다 — 기본 창고(pureun-erp.firebasestorage.app)는
+     2026-07-06 에 미국(us-east1)으로 만들어져 있었고 위치는 못 바꾼다. 명함 사진에는
+     고객사 임직원의 성명·연락처가 들어 있어 국내에 두기로 했다(대표 결정 2026-08-09).
+     옛 미국 창고는 비어 있는 채로 두고 쓰지 않는다. */
+  storageBucket: 'pureun-erp-photos',
   appId: '1:936817166182:web:9bd31f70d0afdf5fca2aa7',
   messagingSenderId: '936817166182'
 };
@@ -1064,24 +1068,79 @@ const Store = {
     this.put(it);
     this.hardDel(id);
   },
-  /* 원본 사진은 목록 데이터와 분리 저장 — 필요할 때만 내려받음 */
+  /* ══════ 원본 사진 — 파일 창고(Storage)에 둔다 (대표 결정 2026-08-09) ══════
+     예전에는 실시간DB(`pucards/photos/{id}`)에 base64 로 넣었다. 명함 4,400장이
+     약 1.7GB 가 되어 **무료 한도 1GB 를 이것 하나로 넘겼고**, 2026-08-09 에 실제로
+     한도 초과로 데이터베이스가 멈출 뻔했다. 창고로 옮기면 실시간DB 는 0.1GB 로 떨어진다.
+
+     ⚠ 개인 폴더(pucards_private) 명함은 **실시간DB에 그대로 둔다.**
+        창고 규칙에 그 자리를 안 열어 뒀다 — 열려면 규칙을 또 고쳐야 하고,
+        개인 폴더는 몇 장뿐이라 용량에 영향이 없다. 규칙과 코드가 어긋나면
+        조용히 저장에 실패하므로 **여기서 확실히 갈라 둔다.**
+
+     ⚠ 읽기는 **창고 먼저, 없으면 실시간DB** 순이다. 옮기는 중에는 두 곳에 나뉘어
+        있으므로 한쪽만 보면 사진이 사라진 것처럼 보인다. 다 옮긴 뒤에도 이 순서를
+        그대로 둔다 — 옮기다 만 것이 남아 있어도 화면은 멀쩡하다. */
   photoCache:{},
+  /* 이 사진을 창고에 두는가 — 개인 폴더가 아니고, 실시간 공유 모드일 때만 */
+  _inBucket(id){
+    return this.mode==='firebase' && this._rootOf(String(id).replace(/_b$/,'')) === DB_ROOT;
+  },
+  _photoRef(id){ return firebase.storage().ref(`${DB_ROOT}/photos/${id}`); },
   async getPhoto(id){
     if (this.photoCache[id]!==undefined) return this.photoCache[id];
     let p='';
-    if (this.mode==='firebase'){ const s=await this.db.ref(`${this._rootOf(id.replace(/_b$/,''))}/photos/${id}`).once('value'); p=s.val()||''; }
+    if (this.mode==='firebase'){
+      /* ① 창고 — 옮긴 것은 여기 있다. 없으면(404) 조용히 ②로 넘어간다. */
+      if (this._inBucket(id)) {
+        try { p = await this._fetchFromBucket(id); } catch(e){ p=''; }
+      }
+      /* ② 실시간DB — 아직 안 옮긴 것과 개인 폴더 명함 */
+      if (!p) { const s=await this.db.ref(`${this._rootOf(id.replace(/_b$/,''))}/photos/${id}`).once('value'); p=s.val()||''; }
+    }
     else p=(JSON.parse(localStorage.getItem('pucards_local_photos')||'{}'))[id]||'';
     this.photoCache[id]=p; return p;
   },
+  /* 창고에서 한 장을 data:URL 로 받아 온다. 화면·판독·내려받기가 모두 data:URL 을
+     기대하고 있어(예전 저장 방식) 그 모양을 그대로 맞춰 준다 — 부르는 쪽을 안 고친다. */
+  async _fetchFromBucket(id){
+    const url = await this._photoRef(id).getDownloadURL();
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('창고 응답 ' + res.status);
+    const blob = await res.blob();
+    return await new Promise((ok,no)=>{ const r=new FileReader();
+      r.onload=()=>ok(String(r.result||'')); r.onerror=()=>no(r.error); r.readAsDataURL(blob); });
+  },
+  /* 창고에 올린다. 실패하면 **예외를 그대로 올린다** — 부르는 쪽이 실시간DB로
+     물러설지 정한다. 조용히 삼키면 사진이 어디에도 없는 채로 끝난다. */
+  async _putToBucket(id, dataUrl){
+    await this._photoRef(id).putString(String(dataUrl), 'data_url');
+  },
   putPhoto(id,dataUrl){ this.photoCache[id]=dataUrl;
-    if (this.mode==='firebase') this.db.ref(`${this._rootOf(id.replace(/_b$/,''))}/photos/${id}`).set(dataUrl);
-    else { const m=JSON.parse(localStorage.getItem('pucards_local_photos')||'{}'); m[id]=dataUrl;
-      try{ localStorage.setItem('pucards_local_photos', JSON.stringify(m)); }
-      catch(e){ toast('데모 모드 용량 초과 — 원본 사진을 모두 보관하지 못합니다'); } } },
+    if (this.mode==='firebase'){
+      if (this._inBucket(id)) {
+        /* 창고에 올리고, 실패하면 실시간DB로 물러선다 — 사진을 잃는 것보다 낫다.
+           (물러선 것은 나중에 옮기기 도구가 다시 창고로 보낸다) */
+        return this._putToBucket(id, dataUrl).catch(e=>{
+          console.warn('[명함첩] 창고 저장 실패 — 실시간DB로 보관합니다', e && e.message);
+          return this.db.ref(`${DB_ROOT}/photos/${id}`).set(dataUrl);
+        });
+      }
+      return this.db.ref(`${this._rootOf(id.replace(/_b$/,''))}/photos/${id}`).set(dataUrl);
+    }
+    const m=JSON.parse(localStorage.getItem('pucards_local_photos')||'{}'); m[id]=dataUrl;
+    try{ localStorage.setItem('pucards_local_photos', JSON.stringify(m)); }
+    catch(e){ toast('데모 모드 용량 초과 — 원본 사진을 모두 보관하지 못합니다'); } },
   delPhoto(id){ delete this.photoCache[id];
-    if (this.mode==='firebase') this.db.ref(`${this._rootOf(id.replace(/_b$/,''))}/photos/${id}`).remove();
-    else { const m=JSON.parse(localStorage.getItem('pucards_local_photos')||'{}'); delete m[id];
-      localStorage.setItem('pucards_local_photos', JSON.stringify(m)); } },
+    if (this.mode==='firebase'){
+      /* 두 곳 다 지운다 — 옮기다 만 것이 한쪽에 남아 되살아나면 안 된다.
+         없는 것을 지우는 것은 오류가 아니므로 실패는 흘려보낸다. */
+      if (this._inBucket(id)) this._photoRef(id).delete().catch(()=>{});
+      this.db.ref(`${this._rootOf(id.replace(/_b$/,''))}/photos/${id}`).remove();
+      return;
+    }
+    const m=JSON.parse(localStorage.getItem('pucards_local_photos')||'{}'); delete m[id];
+    localStorage.setItem('pucards_local_photos', JSON.stringify(m)); },
   /* ── 목록용 썸네일도 본문과 분리 저장 (thumbs/) ──
      items 는 `.on('value')` 로 통째 구독한다. 썸네일(장당 약 20KB)이 그 안에 있으면
      명함첩을 열 때마다 4,400장 전부를 받는다(약 90MB). 밖으로 빼서 **화면에 보이는 것만**
@@ -2594,6 +2653,62 @@ function ensureThumbs(id){
     .then(([a,b])=>{ it.thumb=a||''; it.thumb2=b||''; return it; })
     .catch(()=>{ it.thumb=it.thumb||''; return it; });
 }
+
+/* ══════ 한 번만 실행: 실시간DB 에 있는 원본 사진을 창고로 옮긴다 ══════
+   대표 결정 2026-08-09 — 명함 4,400장 약 1.7GB 가 무료 한도(1GB)를 이것 하나로
+   넘겨 데이터베이스가 멈출 뻔했다. 창고로 옮기면 0.1GB 로 떨어진다.
+
+   ⚠ 순서를 지킨다: **올리고 → 되읽어 확인하고 → 그제야 지운다.**
+      확인을 건너뛰고 지우면 창고에 안 올라간 사진이 영영 사라진다. 명함 사진은
+      다시 찍을 수 없는 것이 많다(그 사람을 또 만나야 한다).
+   ⚠ 개인 폴더 명함은 건드리지 않는다 — 창고 규칙에 그 자리가 없다(Store._inBucket).
+   ⚠ 한 장씩 천천히 한다. 몰아서 던지면 창고가 막고, 실패한 것이 어느 장인지 모른다.
+      중간에 끊겨도 다시 실행하면 **남은 것만** 이어서 한다(이미 옮긴 것은 건너뛴다). */
+window.pucardsMovePhotosToStorage = async function(){
+  if(Store.mode!=='firebase'){ console.log('실시간 공유 모드에서만 됩니다'); return; }
+  if(typeof firebase==='undefined' || !firebase.storage){ console.log('창고를 쓸 수 없습니다 — 새로고침 후 다시'); return; }
+
+  console.log('[명함첩] 실시간DB 에서 사진 목록을 읽는 중… (잠시 걸립니다)');
+  let snap;
+  try { snap = await Store.db.ref(`${DB_ROOT}/photos`).once('value'); }
+  catch(e){ console.log('목록을 읽지 못했습니다: ' + (e && e.message)); return; }
+  const all = snap.val() || {};
+  const ids = Object.keys(all);
+  if(!ids.length){ console.log('옮길 사진이 없습니다 — 이미 끝났습니다.'); toast('사진 옮기기 — 할 것 없음'); return; }
+
+  const totalMB = (ids.reduce((s,k)=>s+String(all[k]||'').length,0)/1048576).toFixed(1);
+  if(!confirm(`명함 사진 ${ids.length}장(약 ${totalMB}MB)을 파일 창고로 옮깁니다.\n\n` +
+              `· 한 장씩 올리고 확인한 뒤에 실시간DB 에서 지웁니다\n` +
+              `· 창을 닫지 마세요. 끊겨도 다시 실행하면 이어서 합니다\n\n계속할까요?`)) return;
+
+  console.log(`[명함첩] ${ids.length}장(약 ${totalMB}MB) 옮기기 시작 — 창을 닫지 마세요`);
+  _quiet = true;
+  let done=0, skipped=0, failed=0;
+  const bad = [];
+  try {
+    for(const id of ids){
+      const dataUrl = all[id];
+      if(!dataUrl || String(dataUrl).indexOf('data:')!==0){ skipped++; continue; }  // 빈 값·깨진 값은 두고 본다
+      try {
+        await Store._putToBucket(id, dataUrl);
+        /* 되읽어 **실제로 들어갔는지** 본다. 여기서 걸리면 지우지 않는다. */
+        const back = await Store._fetchFromBucket(id);
+        if(!back || back.indexOf('data:')!==0) throw new Error('되읽기 실패');
+        await Store.db.ref(`${DB_ROOT}/photos/${id}`).remove();
+        delete Store.photoCache[id];
+        done++;
+      } catch(e){
+        failed++; bad.push(id);
+        console.warn(`  ✗ ${id} — ${e && e.message} (실시간DB 에 그대로 둡니다)`);
+      }
+      if((done+failed+skipped) % 100 === 0) console.log(`  ${done+failed+skipped} / ${ids.length} (옮김 ${done} · 실패 ${failed})`);
+    }
+  } finally { _quiet = false; }
+
+  console.log(`[명함첩] 끝 — 옮김 ${done}장 · 건너뜀 ${skipped}장 · 실패 ${failed}장`);
+  if(failed) console.log('  실패한 것은 실시간DB 에 그대로 있습니다. 다시 실행하면 재시도합니다:', bad.slice(0,20));
+  toast(`사진 ${done}장을 창고로 옮겼습니다${failed?` (실패 ${failed}장)`:''} — 새로고침해 주세요`);
+};
 
 /* ── 한 번만 실행: 옛 명함의 썸네일을 items 밖(thumbs/)으로 옮긴다 ──
    옮기기 전에는 items 안에 썸네일이 그대로 있어 여전히 다 내려받는다.
