@@ -53,10 +53,16 @@ ok('수수료 차감분이 지출로 기록된다', /if\(opts\.feeAmount > 0\)[\
 
 console.log('\n[안전장치 — 잃으면 안 되는 것]');
 
+/* confirmRow 안을 볼 때는 «글자 수» 로 자르지 않는다 —
+   줄을 한 줄만 더해도 창이 모자라 검사가 깨진다(실제로 깨졌다).
+   함수 이름에서 다음 함수 이름까지를 잘라 그 안을 본다. */
+const CONFIRM = src.slice(src.indexOf('function confirmRow(row, pItem, opts)'),
+                          src.indexOf('async function confirmOver('));
+ok('confirmRow 구역을 잘라냈다', CONFIRM.length > 300 && CONFIRM.length < 4000, '길이 ' + CONFIRM.length);
 ok('확정을 되돌릴 수 있다 (확정 이력)', /setConfHistOpen\(true\)/.test(src));
-ok('확정하면 적요를 학습한다', /function confirmRow[\s\S]{0,900}?erpLearnPayerAlias/.test(src));
-ok('확정한 통장 행은 처리됨으로 찍힌다', /function confirmRow[\s\S]{0,900}?erpMarkBankRowProcessed/.test(src));
-ok('확정 실패를 조용히 삼키지 않는다', /function confirmRow[\s\S]{0,1200}?확정 실패/.test(src));
+ok('확정하면 적요를 학습한다', /erpLearnPayerAlias/.test(CONFIRM));
+ok('확정한 통장 행은 처리됨으로 찍힌다', /erpMarkBankRowProcessed/.test(CONFIRM));
+ok('확정 실패를 조용히 삼키지 않는다', /확정 실패/.test(CONFIRM));
 ok('부분입금은 완납 표시를 안 찍는다 (남은 금액이 미수로 남는다)',
    /var partial = opts\.partial && !opts\.feeAmount/.test(src)
    && /if\(!partial\)\{ _sp\.paid=true/.test(src));

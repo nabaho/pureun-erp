@@ -34296,10 +34296,141 @@ function erpUploadSummary(mg, addedN, dupN){
   if(mg.cut) lines.push('보관 한도를 넘어 오래된 ' + mg.cut + '줄을 버렸습니다');
   return { added:added, skipped:skipped, same:same, lines:lines };
 }
+/* ══════════ 거래내역 — 키보드로 밟아 나가기 ══════════
+   미처리가 271건이면 줄마다 마우스로 작은 단추를 찾아 누르는 것만 271번이다(대표 지적).
+   ↑↓ 로 줄을 옮기고 Enter 로 처리하면 손이 자판을 떠나지 않는다.
+   판단은 여기 순수함수에 모아 두고 화면은 그 답대로만 움직인다 — 그래야 검사할 수 있다. */
+
+/* 지금 글자를 치는 중인가. 입력칸 안에서 h 를 눌렀는데 「보류」가 되면 안 된다. */
+function erpIsTyping(el){
+  if(!el) return false;
+  var tag = String(el.tagName || '').toLowerCase();
+  if(tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+  return !!el.isContentEditable;
+}
+
+/* 어떤 키가 무엇을 하는가.
+   ① 글자를 치는 중이면 Esc 말고는 아무것도 안 한다 — 입력칸의 Ctrl+Z 는 브라우저 몫이다.
+   ② 팝업이 떠 있으면 Esc 말고는 아무것도 안 한다 — 가려진 표가 몰래 움직이면 안 된다. */
+function erpLedgerKey(e, ctx){
+  e = e || {}; ctx = ctx || {};
+  var k = e.key;
+  if(ctx.typing) return (k === 'Escape') ? 'esc' : null;
+  if(e.ctrlKey || e.metaKey) return (k === 'z' || k === 'Z') ? 'undo' : null;
+  if(e.altKey) return null;
+  if(ctx.modal) return (k === 'Escape') ? 'esc' : null;
+  if(k === 'ArrowDown') return 'down';
+  if(k === 'ArrowUp')   return 'up';
+  if(k === 'Enter')     return 'act';
+  if(k === ' ' || k === 'Spacebar') return 'check';
+  if(k === 'Escape')    return 'esc';
+  if(k === '/')         return 'search';
+  if(k === 'h' || k === 'H') return 'hold';
+  if(k === 'f' || k === 'F') return 'pick';
+  return null;
+}
+
+/* ↑↓ 로 옮긴 뒤 설 자리. 목록 밖으로는 안 나간다 — 맨 위에서 ↑ 는 제자리다.
+   («처음 누르면 첫 줄» 이라야 커서를 마우스로 먼저 찍어 줄 필요가 없다) */
+function erpNextCur(cur, n, delta){
+  n = parseInt(n, 10) || 0;
+  if(n <= 0) return -1;
+  if(cur === null || cur === undefined || cur < 0) return (delta > 0) ? 0 : n - 1;
+  var x = cur + delta;
+  if(x < 0) return 0;
+  if(x > n - 1) return n - 1;
+  return x;
+}
+
+/* 한 줄을 처리한 «뒤» 커서가 갈 자리 — 이것이 없으면 매번 손이 마우스로 돌아간다.
+   확정한 줄은 목록에서 빠지므로 그 자리에 다음 줄이 저절로 올라온다 → 자리를 지킨다.
+   빠지지 않는 처리(줄이 남는 경우)면 한 칸 내려간다. */
+function erpCurAfterAct(cur, before, after){
+  before = parseInt(before, 10) || 0;
+  after  = parseInt(after, 10) || 0;
+  if(after <= 0) return -1;
+  if(cur === null || cur === undefined || cur < 0) return -1;
+  var x = (after < before) ? cur : cur + 1;
+  if(x > after - 1) x = after - 1;
+  if(x < 0) x = 0;
+  return x;
+}
+
+/* ── 표 안에서 찾기 ──
+   ★ 줄을 «감추지 않는다». 감추면 안 보이는 줄이 조용히 확정될 수 있어서,
+     앞서 열 거르기를 정렬로 바꿀 때 세운 규칙과 같다.
+     맞는 줄만 노랗게 칠하고 Enter 로 그 줄들만 건너뛴다. */
+function erpLedgerHit(row, extra, q){
+  q = String(q === null || q === undefined ? '' : q).trim().toLowerCase();
+  if(!q) return true;
+  row = row || {}; extra = extra || {};
+  var amt = parseInt(row.amount, 10) || 0;
+  /* 금액을 «두 가지 꼴로» 넣어 둔다 — 「2100000」 과 「2,100,000」.
+     통장 화면을 보고 콤마째 옮겨 적는 사람도, 숫자만 치는 사람도 찾을 수 있어야 한다. */
+  var hay = [row.memo || '', row.note || '', row.date || '',
+             extra.co || '', extra.kind || '', extra.staff || '',
+             String(amt), amt.toLocaleString()].join(' ').toLowerCase();
+  return hay.indexOf(q) >= 0;
+}
+/* 찾은 줄의 «자리» 목록. Enter 로 다음 짝으로 건너뛸 때 쓴다. */
+function erpHitIdx(rows, getExtra, q){
+  var out = [];
+  (rows || []).forEach(function(r, i){
+    if(erpLedgerHit(r, getExtra ? getExtra(r) : null, q)) out.push(i);
+  });
+  return out;
+}
+/* 지금 자리 «다음» 짝으로. 마지막을 지나면 처음으로 돈다(엑셀 찾기와 같다). */
+function erpNextHit(idxs, cur){
+  idxs = idxs || [];
+  if(!idxs.length) return -1;
+  for(var i = 0; i < idxs.length; i++) if(idxs[i] > cur) return idxs[i];
+  return idxs[0];
+}
+
+/* ── 되돌리기 ──
+   되돌리기는 있었지만 「확정 이력」 창을 열어야만 닿았다.
+   빠르게 처리하면 실수도 빠르게 나므로, 방금 한 것은 «그 자리에서» 물러야 한다. */
+function erpUnmarkBankRow(row){
+  try{
+    var k = erpBankRowKey(row);
+    if(!k) return false;
+    var st = erpBankProcessedStore();
+    if(!st[k]) return false;
+    delete st[k];
+    dbSet(BANK_PROCESSED_KEY, st);
+    return true;
+  }catch(e){ if(window._erpErrLog) window._erpErrLog(e); return false; }
+}
+/* 확정 한 건을 무른다. ★ 확정 이력의 되돌리기와 «똑같은 일» 을 해야 한다 —
+   두 길이 다른 일을 하면 되돌린 뒤의 장부가 어느 쪽인지 알 수 없게 된다. */
+function erpUndoIncome(fi){
+  if(!fi || !fi.id) return false;
+  try{
+    dbPatch('finance_income', fi.id, { undoneDate:new Date().toISOString(),
+      undoneBy:((typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? (CURRENT_USER.sid || '') : '') });
+    if(fi.sourceId && fi.sourceKind){
+      var store = (fi.sourceKind === 'company') ? 'companies' : (fi.sourceKind + 's');
+      var rollback = {}, k = fi.kind || '';
+      if(k === '사건(착수)' || k.indexOf('착수') >= 0){ rollback.retainerPaid=false; rollback.retainerPaidDate=null; rollback.retainerPaidAmount=0; }
+      else if(k === '사건(성공보수)' || k.indexOf('성공') >= 0){ rollback.successPaid=false; rollback.successPaidDate=null; rollback.successPaidAmount=0; }
+      else if(k.indexOf('계약금') >= 0){ rollback.contractPaid=false; rollback.contractPaidDate=null; rollback.contractPaidAmount=0; }
+      else if(k.indexOf('잔금') >= 0){ rollback.balancePaid=false; rollback.balancePaidDate=null; rollback.balancePaidAmount=0; }
+      else if(k !== '자문료'){ rollback.paid=false; rollback.paidDate=null; }
+      if(Object.keys(rollback).length > 0){ try{ dbPatch(store, fi.sourceId, rollback); }catch(_e){} }
+    }
+    return true;
+  }catch(e){ if(window._erpErrLog) window._erpErrLog(e); return false; }
+}
+
 if(typeof window !== 'undefined'){
   window.erpOverpayPlan = erpOverpayPlan; window._erpYmNext = _erpYmNext;
   window.erpBundlePlan = erpBundlePlan;   window.erpHeldSummary = erpHeldSummary;
   window.erpConsultMatch = erpConsultMatch; window.erpUploadSummary = erpUploadSummary;
+  window.erpLedgerKey = erpLedgerKey;     window.erpNextCur = erpNextCur;
+  window.erpCurAfterAct = erpCurAfterAct; window.erpLedgerHit = erpLedgerHit;
+  window.erpHitIdx = erpHitIdx;           window.erpNextHit = erpNextHit;
+  window.erpIsTyping = erpIsTyping;
 }
 function FinanceLedger(){
   /* ── 미입금 대기 목록 (입금 매칭 후보) ──
@@ -34437,6 +34568,15 @@ function FinanceLedger(){
      {col, dir:'asc'|'desc'} 또는 null(원래 순서). 새로고침하면 원래 순서로 돌아간다. */
   var ldSortS=useState(null);  var ldSort=ldSortS[0];   var setLdSort=ldSortS[1];
   var nbSortS=useState(null);  var nbSort=nbSortS[0];   var setNbSort=nbSortS[1];
+  /* ── 키보드로 밟아 나가기 ──
+     ldCur:  지금 커서가 선 줄의 «자리»(-1 = 아직 아무 줄도 안 골랐다).
+             _k 가 아니라 자리인 까닭은, 확정한 줄이 빠지면 그 자리에 다음 줄이
+             올라와 손을 대지 않아도 다음 줄로 넘어가기 때문이다.
+     ldQ:    표 안 찾기 글자. 줄을 «감추지 않고» 맞는 줄만 칠한다.
+     lastAct:방금 한 일 하나 — 되돌리기 띠와 Ctrl+Z 가 이것만 본다. */
+  var ldCurS=useState(-1);     var ldCur=ldCurS[0];     var setLdCur=ldCurS[1];
+  var ldQS=useState(null);     var ldQ=ldQS[0];         var setLdQ=ldQS[1];   // null = 찾기 칸이 닫힘
+  var lastActS=useState(null); var lastAct=lastActS[0]; var setLastAct=lastActS[1];
   var nbS=useState(null);      var nb=nbS[0];           var setNb=nbS[1];           // 🏦 나이스빌 CMS 파싱분 {fileName,uploadedAt,rows,byDate,stat,linked}
   var nbRestS=useState(false); var nbRestored=nbRestS[0]; var setNbRestored=nbRestS[1]; // 보관분(cms_ledger)에서 복원됨
 
@@ -34878,7 +35018,10 @@ function FinanceLedger(){
         }
       }catch(_pe){ if(window._erpErrLog) window._erpErrLog(_pe); }
     }
-    dbUpsert('finance_income', {id:'fi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+    /* 만든 기록의 열쇠를 «먼저» 지어 둔다 — 되돌리기(Ctrl+Z)가 방금 만든 이 한 건을
+       찾아 물어야 하는데, 나중에 목록에서 뒤지면 같은 금액 다른 건을 물 수 있다. */
+    var _fiId = 'fi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+    dbUpsert('finance_income', {id:_fiId,
       companyName:pItem.companyName, amount:row.amount, date:paidDate,
       kind: isAdv ? '자문료' : (pItem.label || ''),
       category: isAdv ? 'inc-advisory' : undefined,
@@ -34893,7 +35036,7 @@ function FinanceLedger(){
       deductions: _ded, perfBaseAmount: _perfBase,
       autoConfirmed: opts.withPerf ? true : undefined,
       perfShares:_perfShares, confirmedAt:new Date().toISOString(), confirmedBy:CURRENT_USER?CURRENT_USER.sid:''});
-    if(isAdv) return;
+    if(isAdv) return _fiId;
     // 수수료 차감 → 차액을 지출로 기록
     if(opts.feeAmount > 0){
       dbUpsert('finance_expense', {id:'fe-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
@@ -34932,6 +35075,7 @@ function FinanceLedger(){
       if(!partial){ _sp.paid=true; _sp.paidDate=paidDate; }
     }
     dbPatch(pItem.store, pItem.item.id, _sp);
+    return _fiId;                                // 되돌리기가 잡을 손잡이
   }
 
   /* ── 확정 한 번 = 연쇄 처리 ──
@@ -34940,13 +35084,19 @@ function FinanceLedger(){
   function confirmRow(row, pItem, opts){
     opts = opts || {};
     try {
-      saveIncome(row, pItem, { partial:opts.partial, withPerf:true,
+      var _fid = saveIncome(row, pItem, { partial:opts.partial, withPerf:true,
         feeAmount:opts.feeAmount || 0,
         feeCat:(row.src === 'card' || row.src === 'nicebill') ? 'exp-cardfee' : 'exp-bankfee',
         vatIncluded:opts.vatIncluded });
       var _learned = erpLearnPayerAlias(row.memo || row.note || '', pItem);
       erpMarkBankRowProcessed(row, 'income', pItem.companyName + ' ' + (pItem.label || '')
         + (opts.partial ? ' (일부)' : '') + (opts.feeAmount ? ' (수수료차감)' : ''));
+      /* 방금 한 일을 하나만 적어 둔다 — 되돌리기 띠와 Ctrl+Z 가 이것만 본다.
+         여럿을 쌓지 않는 까닭: 두 번 전 것을 무르면 그 사이 확정한 건이 어긋난다.
+         더 옛것은 「확정 이력」에서 고르게 한다. */
+      var _pos = (rows && rows.inc) ? rows.inc.findIndex(function(x){ return x && x._k === row._k; }) : -1;
+      setLastAct({ kind:'confirm', fid:_fid, row:row, pos:_pos,
+                   label:pItem.companyName + ' ' + (row.amount || 0).toLocaleString() + '원' });
       removeRow(row._k, 'inc');
       setOpenRow('');
       showToast((_learned ? '✅ 확정 · 입금자 별칭 학습됨' : '✅ 확정')
@@ -35030,6 +35180,8 @@ function FinanceLedger(){
     var nx = {}; Object.keys(held).forEach(function(x){ nx[x] = held[x]; });
     nx[row._k] = 1;
     setHeld(nx);
+    setLastAct({ kind:'hold', row:row,
+                 label:(row.memo || '') + ' ' + (row.amount || 0).toLocaleString() + '원' });
     setOpenRow('');
     showToast('🗄 보류함에 넣었습니다 — 월말 마감에서 남아 있으면 알려 드립니다');
   }
@@ -35420,6 +35572,123 @@ function FinanceLedger(){
       label, h('span', { style:{ marginLeft:'3px', fontSize:'9px', color:on ? '#2563eb' : '#cbd5e1' } },
         erpSortMark(ldSort, col)));
   }
+
+  /* ══════ 표 안에서 찾기 ══════
+     찾기는 줄을 «감추지 않는다» — 감추면 안 보이는 줄이 조용히 확정될 수 있다.
+     맞는 줄만 노랗게 칠하고 Enter 로 그 줄들만 건너뛴다. */
+  function _ldExtra(r){
+    var i = rowInfo[r._k];
+    if(!i || !i.grp.length) return null;
+    return { co:i.grp[0].company, kind:erpKindLabel(i.grp[0]),
+             staff:_pendStaff(i.grp[0].head.cand) || '' };
+  }
+  var ldHits = ldQ ? erpHitIdx(incList, _ldExtra, ldQ) : [];
+  var ldHitSet = {};
+  ldHits.forEach(function(x){ ldHitSet[x] = 1; });
+
+  /* ══════ 방금 한 것 되돌리기 ══════
+     확정한 줄은 목록에서 빠졌으므로 «줄까지» 되돌려 놓는다 —
+     장부만 물리고 줄이 안 돌아오면 그 입금을 다시 처리할 길이 없다.
+     되돌리기는 한 건만 쥔다. 두 번 전 것을 무르면 그 사이 확정한 건과 어긋나기 때문이다
+     (더 옛것은 「확정 이력」에서 고른다). */
+  function undoLast(){
+    if(!lastAct) return;
+    if(lastAct.kind === 'hold'){ unholdRow(lastAct.row._k); setLastAct(null); return; }
+    var fi = (dbGet('finance_income', []) || []).filter(function(x){ return x && x.id === lastAct.fid; })[0];
+    if(!fi){ showToast('❌ 되돌릴 기록을 찾지 못했습니다 — 확정 이력에서 확인하세요'); setLastAct(null); return; }
+    if(!erpUndoIncome(fi)){ showToast('❌ 되돌리지 못했습니다'); return; }
+    erpUnmarkBankRow(lastAct.row);            // 다음에 파일을 올려도 「이미 처리」로 숨지 않게
+    setRows(function(r){
+      if(!r) return r;
+      var arr = (r.inc || []).slice();
+      if(arr.some(function(x){ return x && x._k === lastAct.row._k; })) return r;
+      // 있던 자리에 도로 꽂는다 — 끝에 붙이면 날짜 순서가 흐트러져 어디로 갔는지 못 찾는다
+      var at = (lastAct.pos >= 0 && lastAct.pos <= arr.length) ? lastAct.pos : arr.length;
+      arr.splice(at, 0, lastAct.row);
+      return Object.assign({}, r, { inc:arr });
+    });
+    showToast('↩ 되돌렸습니다 — ' + lastAct.label);
+    setLastAct(null);
+  }
+
+  /* ══════ Enter 한 번이 하는 일 ══════
+     ★ 표의 「처리」 칸 단추와 «같은 판단» 을 써야 한다 —
+       두 길이 다르면 눈으로 본 것과 손으로 한 것이 어긋난다.
+     돌려주는 값은 「줄이 목록에서 빠졌는가」 — 커서를 어디로 옮길지가 여기에 달렸다. */
+  function ldActOn(row){
+    if(!row) return false;
+    var _i = rowInfo[row._k] || {};
+    var _g = _i.grp || rowGroups(row);
+    var _s = _i.st || erpRowState(row, _g, { held:held });
+    if(isCmsMemo[row._k]){ setCmsRow(row); return false; }
+    if(_s.state === 'ready' && _g.length === 1){
+      var p = pendById[_g[0].head.cand.id] || _g[0].head.cand;
+      confirmRow(row, p, { feeAmount:_s.fee || 0 });
+      return true;
+    }
+    if(_s.state === 'check'){ setOpenRow(row._k); return false; }
+    openFindRow(row);                          // 후보가 없으면 곧바로 찾기 창
+    return false;
+  }
+
+  /* ══════ 자판 ══════
+     ⚠ window 의 «잡는 단계»(capture)에 붙인다 — 전체 검색이 document 에서 「/」 를
+       가로채므로, 그보다 먼저 잡아서 멈춰 세워야 표의 찾기가 열린다. */
+  useEffect(function(){
+    function onKey(e){
+      var _modal = !!(openRow || heldOpen || spOpen || cmsRow || detPop || dirPop
+                      || sugPopK || confHistOpen || chkAnchor);
+      var act = erpLedgerKey(e, { typing:erpIsTyping(document.activeElement), modal:_modal });
+      if(!act) return;
+      if(act === 'undo'){
+        if(!lastAct) return;
+        e.preventDefault(); e.stopPropagation(); undoLast(); return;
+      }
+      if(act === 'esc'){
+        if(ldQ !== null){ e.preventDefault(); e.stopPropagation(); setLdQ(null); return; }
+        if(ldCur >= 0){ e.preventDefault(); e.stopPropagation(); setLdCur(-1); }
+        return;
+      }
+      if(ldTabEff !== 'inc' || !incList.length) return;
+      e.preventDefault(); e.stopPropagation();
+      var n = Math.min(incList.length, ldShow);   // 아직 안 그린 줄로는 커서가 못 간다
+      if(act === 'down' || act === 'up'){
+        setLdCur(erpNextCur(ldCur, n, act === 'down' ? 1 : -1)); return;
+      }
+      if(act === 'search'){
+        setLdQ(ldQ === null ? '' : ldQ);
+        setTimeout(function(){ var el = document.getElementById('ldFindBox'); if(el) el.focus(); }, 0);
+        return;
+      }
+      var row = incList[ldCur];
+      if(act === 'check'){
+        if(!row || row._dup) return;
+        var nm = Object.assign({}, incChk);
+        if(nm[row._k]) delete nm[row._k]; else nm[row._k] = true;
+        setIncChk(nm); return;
+      }
+      if(act === 'act'){
+        if(ldQ){ setLdCur(erpNextHit(ldHits, ldCur)); return; }   // 찾는 중이면 다음 짝으로
+        if(!row){ setLdCur(erpNextCur(ldCur, n, 1)); return; }
+        var _b = incList.length;
+        if(ldActOn(row)) setLdCur(erpCurAfterAct(ldCur, _b, _b - 1));
+        return;
+      }
+      if(!row) return;
+      if(act === 'hold'){ var _b2 = incList.length; holdRow(row); setLdCur(erpCurAfterAct(ldCur, _b2, _b2)); return; }
+      if(act === 'pick'){ openFindRow(row); }
+    }
+    window.addEventListener('keydown', onKey, true);
+    return function(){ window.removeEventListener('keydown', onKey, true); };
+  });
+  // 커서가 화면 밖에 있으면 따라 구른다 — 안 보이는 줄을 Enter 로 확정하면 안 된다
+  useEffect(function(){
+    if(ldCur < 0) return;
+    try{
+      var el = document.querySelector('[data-ldrow="' + ldCur + '"]');
+      if(el && el.scrollIntoView) el.scrollIntoView({ block:'nearest' });
+    }catch(_se){ }
+  }, [ldCur]);
   // ── 합산 입금 조합 ──
   // 적요가 화이트리스트(🧩 합계 후보 적용 적요)에 걸릴 때만 탐색한다 — 나머지는 건별 판단이 맞고,
   // 탐색 자체를 건너뛰니 속도도 이득. 단일 고신뢰 추천이 있는 행도 탐색하지 않는다.
@@ -36105,9 +36374,46 @@ function FinanceLedger(){
                     +(_heldS.oldest?('\n가장 오래된 것 '+_heldS.oldest):'')
                     +'\n\n열면 지금 후보로 다시 맞춰 봅니다 — 짝이 생긴 것을 알려 드립니다',
               style:{padding:'3px 8px',background:'#fff',color:'#64748b',border:'1px solid #cbd5e1',borderRadius:'5px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'🗄 보류함 '+_heldS.n),
+            h('button',{onClick:function(){ setLdQ(ldQ===null?'':null); },
+              title:'표 안에서 업체·적요·금액으로 찾습니다 (키보드 /)\n줄을 감추지 않고 맞는 줄만 노랗게 칠합니다',
+              style:{padding:'3px 8px',background:ldQ!==null?'#2563eb':'#fff',color:ldQ!==null?'#fff':'#64748b',
+                border:'1px solid '+(ldQ!==null?'#2563eb':'#cbd5e1'),borderRadius:'5px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'🔍 찾기'),
             h('button',{onClick:function(){setConfHistOpen(true);},
               style:{padding:'3px 8px',background:'#64748b',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'확정 이력'));
         })(),
+        /* ── 되돌리기 띠 ──
+           빠르게 처리하면 실수도 빠르게 난다. 방금 한 것이 여기 떠 있어야
+           「확정 이력」 창을 열지 않고도 곧바로 무를 수 있다(대표 요청). */
+        lastAct && h('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'6px',
+            padding:'5px 10px',background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:'5px'}},
+          h('span',{style:{fontSize:'11px',color:'#166534',fontWeight:700}},
+            (lastAct.kind==='hold'?'🗄 방금 보류 — ':'✅ 방금 확정 — ')+lastAct.label),
+          h('span',{style:{flex:1}}),
+          h('button',{onClick:undoLast,
+            title:'이 한 건만 무릅니다 (Ctrl+Z)\n확정 기록·항목 입금표시를 되돌리고 줄을 목록에 도로 넣습니다',
+            style:{padding:'2px 9px',background:'#fff',color:'#166534',border:'1px solid #bbf7d0',
+              borderRadius:'5px',fontSize:'10.5px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'↩ 되돌리기 (Ctrl+Z)'),
+          h('button',{onClick:function(){ setLastAct(null); },title:'띠만 치웁니다 — 확정은 그대로입니다',
+            style:{background:'none',border:'none',color:'#94a3b8',fontSize:'13px',cursor:'pointer',padding:'0 2px',lineHeight:1}},'×')),
+        /* ── 표 안에서 찾기 ──
+           505건 가운데 「○○기업 입금 들어왔나」를 눈으로 훑어야 했다(대표 지적).
+           ★ 줄을 감추지 않는다 — 안 보이는 줄이 조용히 확정되면 안 되기 때문이다. */
+        ldQ!==null && h('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'6px',
+            padding:'5px 10px',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'5px'}},
+          h('span',{style:{fontSize:'11px',color:'#854d0e',fontWeight:700,whiteSpace:'nowrap'}},'🔍 표에서 찾기'),
+          h('input',{id:'ldFindBox',type:'text',value:ldQ,autoFocus:true,
+            placeholder:'업체·적요·금액 — 2,100,000 도 2100000 도 됩니다',
+            onInput:function(e){ setLdQ(e.target.value); },
+            onKeyDown:function(e){
+              // 찾기 칸 안에서 Enter 는 «다음 짝으로» — 엑셀 찾기와 같다
+              if(e.key==='Enter'){ e.preventDefault(); setLdCur(erpNextHit(ldHits, ldCur)); }
+              else if(e.key==='Escape'){ e.preventDefault(); setLdQ(null); }
+            },
+            style:{flex:1,padding:'3px 9px',border:'1px solid #fde68a',borderRadius:'5px',fontSize:'11.5px'}}),
+          h('span',{style:{fontSize:'10.5px',color:ldQ&&!ldHits.length?'#dc2626':'#854d0e',whiteSpace:'nowrap'}},
+            ldQ ? (ldHits.length ? (ldHits.length+'건 맞음 — Enter 로 다음') : '맞는 줄이 없습니다') : '글자를 넣으세요'),
+          h('button',{onClick:function(){ setLdQ(null); },
+            style:{background:'none',border:'none',color:'#94a3b8',fontSize:'13px',cursor:'pointer',padding:'0 2px',lineHeight:1}},'×')),
         h('div',{ref:_ldBoxRef,style:_ldBox},
           h('table',{style:{width:'100%',borderCollapse:'separate',borderSpacing:0}},
             h('thead',null,h('tr',null,
@@ -36169,6 +36475,11 @@ function FinanceLedger(){
                 }catch(_le){ if(window._erpErrLog) window._erpErrLog(_le); }
               }
               var _sBg=_st.state==='check'?'#fffbeb':_st.state==='none'?'#fef2f2':(incChk[row._k]?'#eff6ff':'#fff');
+              /* 커서가 선 줄 · 찾기에 맞은 줄.
+                 찾기에 맞은 줄은 «칠하기만» 한다 — 감추면 안 보이는 줄이 조용히 확정된다. */
+              var _cur=(ldCur===_ri);
+              var _hit=!!(ldQ && ldHitSet[_ri]);
+              if(_hit && !_cur) _sBg='#fde68a';
               var _sIco=_st.state==='ready'?'✅':_st.state==='check'?'⚠️':_st.state==='none'?'❔':'✔';
               var _sTitle=_st.state==='ready'?'확정할 수 있습니다'
                         :_st.state==='check'?'눌러서 확인하세요 — '+_st.label
@@ -36177,9 +36488,13 @@ function FinanceLedger(){
               var _cell=Object.assign({},tdS,{padding:'5px 6px',overflow:'hidden',
                           textOverflow:'ellipsis',whiteSpace:'nowrap'});
               return h(React.Fragment,{key:row._k},
-                h('tr',{style:{background:_sBg,opacity:_st.state==='done'?0.55:1,
+                h('tr',{'data-ldrow':_ri,
+                  style:Object.assign({background:_cur?'#eff6ff':_sBg,opacity:_st.state==='done'?0.55:1,
                     cursor:_st.state==='check'?'pointer':'default'},
+                    // 커서가 선 줄 — Enter 가 «이 줄» 에 간다는 것이 한눈에 보여야 한다
+                    _cur?{outline:'2px solid #2563eb',outlineOffset:'-2px'}:{}),
                   onClick:function(e){
+                    setLdCur(_ri);              // 마우스로 짚은 줄에서 자판으로 이어 간다
                     if(e.target.closest&&e.target.closest('select,button,input,label')) return;
                     if(_st.state==='check'){ setOpenRow(_open?'':row._k); return; }
                     if(pItem) setDetPop({row:row,pItem:pItem});
@@ -36329,6 +36644,25 @@ function FinanceLedger(){
               h('td',{style:tdS,colSpan:4},'')
             ))
           )
+        ),
+        /* ── 자판 안내 띠 ──
+           단축키는 «있는 줄 모르면 없는 것과 같다». 표 바로 아래에 늘 붙여 둔다.
+           ↑↓ 로 옮기고 Enter 로 처리하면 미처리 271건이 45분 → 13분쯤으로 줄어든다. */
+        h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'7px',marginTop:'6px',
+            padding:'5px 10px',background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'5px',
+            fontSize:'10.5px',color:'#64748b'}},
+          h('span',{style:{fontWeight:700,color:'#475569'}},'⌨ 자판'),
+          [['↑ ↓','줄 옮기기'],['Enter','확정 · 확인'],['Space','체크'],
+           ['H','보류'],['F','찾기 창'],['/','표에서 찾기'],['Ctrl+Z','되돌리기'],['Esc','풀기']]
+            .map(function(kk){
+              return h('span',{key:kk[0],style:{display:'inline-flex',alignItems:'center',gap:'4px'}},
+                h('kbd',{style:{fontFamily:'monospace',fontSize:'10px',background:'#fff',
+                  border:'1px solid #cbd5e1',borderRadius:'4px',padding:'0 5px',color:'#1e293b'}},kk[0]),
+                h('span',null,kk[1]));
+            }),
+          h('span',{style:{flex:1}}),
+          ldCur>=0 && h('span',{style:{color:'#2563eb',fontWeight:700,whiteSpace:'nowrap'}},
+            (ldCur+1)+'번 줄에 서 있습니다')
         )
       ),
 
@@ -37481,27 +37815,10 @@ function FinanceLedger(){
       var PER=30;
       var page=filtered.slice(_pg*PER, (_pg+1)*PER);
       var totalPages=Math.ceil(filtered.length/PER)||1;
-      // 되돌리기 함수
-      function undoConfirm(fi){
-        if(!fi||!fi.id) return;
-        var now=new Date().toISOString();
-        var sid=CURRENT_USER?CURRENT_USER.sid:'';
-        dbPatch('finance_income', fi.id, {undoneDate:now, undoneBy:sid});
-        // 원본 사업 레코드 롤백
-        if(fi.sourceId && fi.sourceKind){
-          var store = fi.sourceKind==='company'?'companies':fi.sourceKind+'s';
-          var rollback={};
-          var k=fi.kind||'';
-          if(k==='사건(착수)'||k.indexOf('착수')>=0){ rollback.retainerPaid=false; rollback.retainerPaidDate=null; rollback.retainerPaidAmount=0; }
-          else if(k==='사건(성공보수)'||k.indexOf('성공')>=0){ rollback.successPaid=false; rollback.successPaidDate=null; rollback.successPaidAmount=0; }
-          else if(k.indexOf('계약금')>=0){ rollback.contractPaid=false; rollback.contractPaidDate=null; rollback.contractPaidAmount=0; }
-          else if(k.indexOf('잔금')>=0){ rollback.balancePaid=false; rollback.balancePaidDate=null; rollback.balancePaidAmount=0; }
-          else if(k!=='자문료'){ rollback.paid=false; rollback.paidDate=null; }
-          if(Object.keys(rollback).length>0){
-            try{ dbPatch(store, fi.sourceId, rollback); }catch(_e){}
-          }
-        }
-      }
+      /* 되돌리기 — ★ 실제 일은 erpUndoIncome 한 곳에서 한다.
+         Ctrl+Z(되돌리기 띠)와 이 창이 «똑같은 일» 을 해야 하기 때문이다.
+         두 길이 다른 일을 하면 되돌린 뒤의 장부가 어느 쪽인지 알 수 없게 된다. */
+      function undoConfirm(fi){ erpUndoIncome(fi); }
       var _undoneSum=0, _activeSum=0;
       allInc.forEach(function(fi){ if(fi.undoneDate) _undoneSum+=fi.amount||0; else _activeSum+=fi.amount||0; });
       return h('div',{onClick:function(){setConfHistOpen(false);},
