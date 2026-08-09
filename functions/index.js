@@ -472,3 +472,147 @@ exports.notifySuggestion = functions.database
     });
     return null;
   });
+
+// ════════════════════════════════════════════════════════════════════════════
+// 명함첩 자료 메일 보내기 — 다음메일(smtp.daum.net)로 대신 보낸다
+// ════════════════════════════════════════════════════════════════════════════
+// 왜 필요한가
+//   지금까지는 브라우저가 mailto: 로 메일창만 열어 주었다. 브라우저는 첨부를
+//   붙일 수 없어서, 자료를 내려받아 **손으로 끌어다 붙여야** 했다. 그리고 보내는
+//   사람이 그 PC 에 설정된 계정이라 사람마다 달랐다.
+//   이 함수가 대신 보내면 첨부가 자동으로 붙고, 늘 회사 주소로 나가고,
+//   다음메일 보낸편지함에도 남는다.
+//
+// ⚠ 왜 Resend 가 아니라 SMTP 인가
+//   Resend 같은 발송 서비스는 **우리가 가진 도메인**으로만 보낼 수 있다.
+//   hanmail.net 은 카카오 것이라 인증할 수 없다. 회사 주소 그대로 보내려면
+//   그 계정의 SMTP 로 직접 붙는 수밖에 없다.
+//
+// ⚠ 비밀번호는 코드에 넣지 않는다. Secret Manager 에 DAUM_MAIL_PASSWORD 로 두고
+//   runWith({secrets:[...]}) 로만 읽는다. 다음은 2단계 인증을 켜면 일반 비밀번호가
+//   막히므로 **앱 비밀번호**를 만들어 넣어야 한다.
+//
+// ⚠ 첨부는 브라우저가 올려 보내지 않는다. 자료는 이미 실시간DB 안에 있으므로
+//   **서버가 직접 읽는다.** 8MB 짜리를 브라우저에서 다시 올리면 느리고, 도중에
+//   끊기면 절반만 간다.
+const MS = require("./mail-send");
+
+const DAUM_HOST = "smtp.daum.net";
+const DAUM_PORT = 465;
+const CARDS_ROOT = "pucards";
+
+function mailUser() { return String(process.env.DAUM_MAIL_USER || "").trim(); }
+function mailPass() { return String(process.env.DAUM_MAIL_PASSWORD || ""); }
+
+// 보내는 사람 표시 이름. 주소만 나가면 스팸으로 걸리기 쉽다.
+function fromLine() {
+  const u = mailUser();
+  return u ? '푸른노무법인 <' + u + '>' : "";
+}
+
+exports.sendMaterialMail = functions
+  .runWith({ secrets: ["DAUM_MAIL_PASSWORD"], timeoutSeconds: 120, memory: "512MB" })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
+
+    // ★ 누가 보내는지 먼저 확인한다. 이 검사가 없으면 회사 메일이 공개 발송기가 된다.
+    let sender;
+    try {
+      sender = await requireStaff(req);
+    } catch (e) {
+      res.status(e.status || 401).json({ ok: false, error: String(e.message || e) });
+      return;
+    }
+
+    if (!mailUser() || !mailPass()) {
+      res.status(500).json({
+        ok: false,
+        error: "메일 계정이 설정되지 않았습니다.\n"
+             + "DAUM_MAIL_USER(보내는 주소)와 DAUM_MAIL_PASSWORD(앱 비밀번호)를 넣고 다시 배포하세요.",
+      });
+      return;
+    }
+
+    const body = (req.body && typeof req.body === "object") ? req.body : {};
+    const db = getDatabase();
+
+    // 첨부 — 자료 번호만 받아 서버가 직접 읽는다
+    const matIds = Array.isArray(body.matIds) ? body.matIds.slice(0, 10) : [];
+    const attachments = [];
+    const names = [];
+    for (const id of matIds) {
+      if (!id || typeof id !== "string") continue;
+      const [metaSnap, fileSnap] = await Promise.all([
+        db.ref(CARDS_ROOT + "/materials/" + id).once("value"),
+        db.ref(CARDS_ROOT + "/materialFiles/" + id).once("value"),
+      ]);
+      const meta = metaSnap.val();
+      if (!meta) continue;                       // 지워진 자료 — 조용히 건너뛰지 않고 아래에서 알린다
+      const att = MS.toAttachment(meta, fileSnap.val());
+      if (!att) continue;
+      attachments.push(att);
+      names.push(String(meta.name || meta.fileName || "자료"));
+    }
+    if (matIds.length && !attachments.length) {
+      res.status(400).json({ ok: false, error: "붙일 자료를 찾지 못했습니다. 자료함에서 파일을 다시 올려 주세요." });
+      return;
+    }
+    // 고른 것 중 일부만 찾았다면 그 사실을 알린다 — 조용히 덜 보내면 다 보낸 줄 안다
+    const missing = matIds.length - attachments.length;
+
+    const v = MS.validateSend({
+      to: body.to, cc: body.cc, subject: body.subject, body: body.body, attachments: attachments,
+    });
+    if (!v.ok) { res.status(400).json({ ok: false, error: v.error }); return; }
+
+    let nodemailer;
+    try { nodemailer = require("nodemailer"); }
+    catch (e) { res.status(500).json({ ok: false, error: "메일 도구를 불러오지 못했습니다: " + String(e.message || e) }); return; }
+
+    try {
+      const tx = nodemailer.createTransport({
+        host: DAUM_HOST, port: DAUM_PORT, secure: true,
+        auth: { user: mailUser(), pass: mailPass() },
+      });
+      await tx.sendMail({
+        from: fromLine(),
+        // 답장은 보낸 직원에게 가게 한다 — 회사 대표주소로만 오면 누구 건인지 모른다
+        replyTo: sender.email || undefined,
+        to: v.to.join(", "),
+        cc: v.cc.length ? v.cc.join(", ") : undefined,
+        subject: v.subject,
+        text: v.body,
+        attachments: v.attachments.map((a) => ({
+          filename: a.filename, content: a.content, encoding: a.encoding,
+        })),
+      });
+    } catch (e) {
+      // 비밀번호가 틀리거나 2단계 인증에 막힌 경우가 대부분이다 — 그대로 알린다
+      console.error("sendMaterialMail", e && e.message);
+      res.status(502).json({
+        ok: false,
+        error: "메일 서버가 받지 않았습니다: " + String((e && e.message) || e)
+             + "\n(다음메일에서 IMAP/SMTP 사용을 켜고, 2단계 인증을 쓰신다면 앱 비밀번호를 넣어야 합니다)",
+      });
+      return;
+    }
+
+    // ★ 보낸 기록은 **실제로 나간 뒤** 서버가 남긴다.
+    //   화면이 남기면 '보냈다는데 안 왔다'를 가릴 수 없다.
+    //   개인 폴더 명함은 남기지 않는다 — 이 자리는 직원 누구나 읽는다.
+    const cardId = String(body.cardId || "");
+    if (cardId && !/[.#$/\[\]]/.test(cardId)) {
+      try {
+        await db.ref(CARDS_ROOT + "/sendLog/" + cardId).push(MS.sentLogRec({
+          at: Date.now(), by: sender.email || "", to: v.to, names: names, set: body.set || "",
+        }));
+      } catch (e) { console.warn("sendLog", e && e.message); }
+    }
+
+    res.json({
+      ok: true, sent: v.to.length, files: attachments.length, missing: missing,
+      bytes: v.bytes, from: mailUser(),
+    });
+  });
