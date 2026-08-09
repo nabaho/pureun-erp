@@ -5195,14 +5195,19 @@ function _erpInvCands(tAmt){
   return res;
 }
 
-// 금액+날짜 관문(발급 ≤ 입금, 60일 이내)을 통과한 발행분 — 금액+날짜 단위로 캐시해 후보마다 재계산하지 않는다
+/* 세금계산서 발급 → 입금까지 봐 주는 기간.
+   60일이었는데, 3월에 끊고 6월에 들어오는 일이 실제로 있다(대표 지적).
+   이름이 맞아야 하고 이미 입금된 계산서는 빠지므로 넓혀도 엉뚱한 것이 붙지 않는다.
+   보관 개월(INV_ARCH_MONTHS=24)보다 짧아야 색인에 없는 것을 찾지 않는다. */
+var INV_MATCH_DAYS = 180;
+// 금액+날짜 관문(발급 ≤ 입금, INV_MATCH_DAYS 이내)을 통과한 발행분 — 금액+날짜 단위로 캐시해 후보마다 재계산하지 않는다
 function _erpInvWindow(tAmt, tDate){
   var ck = tAmt + '|' + tDate;
   if(_erpInvWinC.hasOwnProperty(ck)) return _erpInvWinC[ck];
   var out = [];
   _erpInvCands(tAmt).forEach(function(e){
     var gap = _erpInvGap(e.date, tDate);
-    if(gap === null || gap < 0 || gap > 60) return;
+    if(gap === null || gap < 0 || gap > INV_MATCH_DAYS) return;
     out.push({ e:e, gap:gap, exact:(e.expect === tAmt || e.amount === tAmt) });
   });
   out.sort(function(a, b){
@@ -5555,16 +5560,37 @@ function erpMatchScore(txn, cand){
            invScore:_invScore };
 }
 
-// 한 건의 거래내역에 대한 상위 후보 목록
-function erpMatchTxnToPending(txn, pendingArr, limit){
+/* ── 이름 근거 게이트 ──
+   금액이 비슷하다는 것만으로는 후보가 아니다. 자문료 22만원짜리 업체가 열둘이면
+   열둘이 다 44%로 뜬다 — 사람이 고를 수 없고, 잘못 고르면 남의 돈이 된다.
+   적요·학습별칭(nameScore) · 금액지문(fpScore) · 세금계산서(invScore) 중
+   하나라도 «이 업체» 를 가리켜야 목록에 올린다.
+   (「🔍 직접 찾기」는 막힌 것도 봐야 하므로 걸러내지 않고 weak 표시만 붙인다) */
+function erpNameEvidence(s){
+  s = s || {};
+  var nm = parseInt(s.nameScore, 10) || 0;
+  var fp = parseInt(s.fpScore, 10) || 0;
+  var iv = parseInt(s.invScore, 10) || 0;
+  if(iv >= 85) return { ok:true, why:'세금계산서' };
+  if(nm >= 60) return { ok:true, why:'이름' };
+  if(fp >= 90) return { ok:true, why:'입금이력' };
+  return { ok:false, why:'이름 근거 없음 — 금액만 비슷합니다' };
+}
+if(typeof window !== 'undefined') window.erpNameEvidence = erpNameEvidence;
+
+// 한 건의 거래내역에 대한 상위 후보 목록 (includeWeak=true 면 이름 근거 없는 것까지)
+function erpMatchTxnToPending(txn, pendingArr, limit, includeWeak){
   var lim = limit || 3;
   var out = [];
   var tAmt = parseInt(txn && txn.amount, 10) || 0;
   (pendingArr || []).forEach(function(cand){
     var r = erpMatchScore(txn, cand);
-    if(r.score > 0) out.push({ cand:cand, score:r.score, reasons:r.reasons, level:r.level,
-                               amountScore:r.amountScore, nameScore:r.nameScore,
-                               txnAmount:tAmt });
+    var ev = erpNameEvidence(r);
+    if(r.score > 0 && (ev.ok || includeWeak))
+      out.push({ cand:cand, score:r.score, reasons:r.reasons, level:r.level,
+                 amountScore:r.amountScore, nameScore:r.nameScore,
+                 evidence:ev.why, weak:!ev.ok,
+                 txnAmount:tAmt });
   });
   out.sort(function(a,b){ return b.score - a.score; });
   return out.slice(0, lim);
@@ -5588,6 +5614,25 @@ function erpAmountExact(txnAmt, candAmt){
   if(t === wht) return true;
   return false;
 }
+
+/* ── 카드·CMS 수수료 감안 일치 ──
+   카드로 받으면 수수료가 빠져 들어와 금액이 «안 맞는 것이 정상» 이다.
+   그래서 카드·나이스빌 줄만 0~3.5% 덜 들어온 것을 일치로 본다.
+   통장은 아니다 — 통장에서 덜 들어오면 그것은 진짜 부분입금이다.
+   매출은 원래 금액으로 잡고 차액은 카드수수료 지출로 적는다(세무 처리 정석). */
+var ERP_FEE_MAX_RATE = 0.035;
+function erpFeeMatch(txnAmt, candAmt, src){
+  var t = parseInt(txnAmt, 10) || 0, c = parseInt(candAmt, 10) || 0;
+  var no = { ok:false, fee:0, rate:0 };
+  if(t <= 0 || c <= 0) return no;
+  if(src !== 'card' && src !== 'nicebill') return no;
+  if(t >= c) return no;                                  // 같거나 더 들어온 것은 수수료가 아니다
+  var fee = c - t;
+  var rate = fee / c;
+  if(rate > ERP_FEE_MAX_RATE) return no;
+  return { ok:true, fee:fee, rate:Math.round(rate * 10000) / 10000 };
+}
+if(typeof window !== 'undefined') window.erpFeeMatch = erpFeeMatch;
 
 // sug = erpMatchTxnToPending의 상위 후보 1건 · memo = 통장 적요 · txnAmt = 입금액(없으면 sug.txnAmount)
 function erpAutoTidyOk(sug, memo, txnAmt){
@@ -33913,6 +33958,42 @@ function erpPendOptions(pending, usedBy, rowKey, rowAmount, selectedId, cap){
 }
 // (검사 스크립트가 이 구역을 window 없는 샌드박스로 떼어 가므로 가드를 둔다)
 if(typeof window !== 'undefined') window.erpPendOptions = erpPendOptions;
+/* ── 후보를 업체 한 줄로 묶기 ──
+   크레오에스지가 5·6·7월 세 달 밀리면 지금은 세 줄이 뜬다. 사람이 보기에 그것은
+   «한 업체가 세 달 밀린 것» 한 가지 사실이다. 업체로 묶고 달은 안에 접는다.
+   먼저 채울 곳(head)은 «가장 오래된 달» — 오래된 미수부터 정리하는 회계 관행과 같다.
+   업체 열쇠는 erpNormName 이다 — ㈜·(주)·공백 표기가 달라도 같은 업체다. */
+function erpGroupPendByCompany(sugList){
+  var out = [], byCo = {};
+  (sugList || []).forEach(function(s){
+    if(!s || !s.cand) return;
+    var co = erpNormName(s.cand.companyName);
+    if(!co) return;
+    if(!byCo[co]){
+      byCo[co] = { company:s.cand.companyName || '-', items:[], kinds:[], months:[] };
+      out.push(byCo[co]);
+    }
+    var g = byCo[co];
+    g.items.push(s);
+    var lb = s.cand.label || '';
+    if(lb && g.kinds.indexOf(lb) < 0) g.kinds.push(lb);
+    var ym = s.cand.ym || '';
+    if(ym && g.months.indexOf(ym) < 0) g.months.push(ym);
+  });
+  out.forEach(function(g){
+    g.months.sort();
+    /* 달이 있는 것끼리는 오래된 달 먼저, 달이 없는 것(사건 착수금 등)은 점수 높은 것 먼저 */
+    g.items.sort(function(a, b){
+      var ma = (a.cand && a.cand.ym) || '', mb = (b.cand && b.cand.ym) || '';
+      if(ma && mb && ma !== mb) return ma < mb ? -1 : 1;
+      return (b.score || 0) - (a.score || 0);
+    });
+    g.head = g.items[0];
+    g.n = g.items.length;
+  });
+  return out;
+}
+if(typeof window !== 'undefined') window.erpGroupPendByCompany = erpGroupPendByCompany;
 function FinanceLedger(){
   /* ── 미입금 대기 목록 (입금 매칭 후보) ──
      2026-08-07 김보람 건의: 「일반 자문료 입금건은 매칭이 안 되고 컨설팅·사건만 된다」
