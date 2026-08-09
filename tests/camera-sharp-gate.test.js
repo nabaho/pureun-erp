@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const photos = fs.readFileSync(path.join(__dirname, '..', 'pu-photos.html'), 'utf8');
-const shoot = photos.match(/async function camShoot\(\)[\s\S]*?(?=\nfunction renderCamStrip)/);
+const shoot = photos.match(/async function camShoot\([^)]*\)[\s\S]*?(?=\nfunction renderCamStrip)/);
 
 test('camShoot 을 찾을 수 있다', () => {
   assert.ok(shoot, 'camShoot 를 못 찾으면 아래 검사가 아무것도 못 지킵니다.');
