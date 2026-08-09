@@ -34312,6 +34312,7 @@ function FinanceLedger(){
      묶어 놓고 보면 합계가 맞으므로 애매한 금액끼리 비교할 일이 없어진다. */
   var spRowsS=useState(null);  var spRows=spRowsS[0];   var setSpRows=spRowsS[1];
   var spQS=useState('');       var spQ=spQS[0];         var setSpQ=spQS[1];         // 나눠담기 목록 검색어
+  var spKindS=useState('');    var spKind=spKindS[0];   var setSpKind=spKindS[1];   // 나눠담기 종류 필터 (사건·컨설팅…)
   /* ── 한 줄 화면용 ──
      openRow: 펼친 줄 하나(_k). 여럿을 동시에 펼치면 결국 예전처럼 화면이 길어진다.
      held:    보류함에 넣은 줄(_k → 1). 저장소(ledger_held)를 화면에 비춘 것. */
@@ -36203,7 +36204,7 @@ function FinanceLedger(){
       var diff=total-amountIn;
       var absDiff=Math.abs(diff);
       var spGm=spGap||(absDiff<=1100?'full':(diff>0?'partial':'other'));
-      function closeModal(){setSpOpen(null);setSpRow(null);setSpRows(null);setSpSel({});setSpGap('');setSpQ('');}
+      function closeModal(){setSpOpen(null);setSpRow(null);setSpRows(null);setSpSel({});setSpGap('');setSpQ('');setSpKind('');}
       // 담은 건의 성과급 합계
       var _spPerfAll=[];
       selIds.forEach(function(id){
@@ -36265,6 +36266,47 @@ function FinanceLedger(){
                 h('div',{style:{fontWeight:700,marginBottom:'2px'}},'성과급 합계'),
                 h('div',{style:{color:'#16a34a',fontWeight:700,fontFamily:'monospace'}},_spPerfTotal.toLocaleString()+'원')
               ),
+              /* ── 더빌이체면 나이스빌 명세를 여기 보여준다 (대표 지시) ──
+                 이 입금이 «어느 업체들 몫의 합» 인지 명세가 이미 알고 있다 —
+                 그것을 보면서 오른쪽에서 담아야 엉뚱한 건을 담지 않는다. */
+              (function(){
+                if(!rowsIn.some(function(r){ return erpIsCmsMemo(r.memo||r.note||''); })) return null;
+                var _hit=null;
+                for(var _hi=0; _hi<rowsIn.length && !_hit; _hi++){
+                  try{ _hit=erpCmsLedgerForDeposit(rowsIn[_hi].date, rowsIn[_hi].amount); }catch(_e){}
+                }
+                if(!_hit || !_hit.rows || !_hit.rows.length)
+                  return h('div',{style:{marginTop:'8px',padding:'6px 8px',background:'#fff7ed',border:'1px solid #fed7aa',
+                      borderRadius:'6px',fontSize:'10px',color:'#c2410c'}},
+                    '🏦 더빌이체인데 나이스빌 명세를 못 찾았습니다 — CMS 파일을 올리면 여기 명세가 뜹니다');
+                var _idx=erpNicebillCoIndex();
+                var _fee=0; _hit.rows.forEach(function(r){ _fee+=parseInt(r.fee,10)||0; });
+                return h('div',{style:{marginTop:'8px',padding:'6px 8px',background:'#fff',border:'1px solid #bfdbfe',
+                    borderRadius:'6px',fontSize:'10px'}},
+                  h('div',{style:{fontWeight:700,color:'#1d4ed8',marginBottom:'3px'}},
+                    '🏦 나이스빌 명세 '+_hit.rows.length+'곳 · 정산 '+String(_hit.date).slice(5)),
+                  h('div',{style:{maxHeight:'150px',overflowY:'auto'}},
+                    _hit.rows.map(function(r,_ri2){
+                      var _co=erpNicebillMatchCo(_idx, r.name, r.bizNo);
+                      return h('div',{key:_ri2,style:{display:'flex',justifyContent:'space-between',gap:'6px',
+                          padding:'2px 0',borderBottom:_ri2<_hit.rows.length-1?'1px solid #f1f5f9':'none'}},
+                        h('span',{style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',
+                            color:_co?'#334155':'#c2410c'},
+                          title:_co?('ERP 업체: '+_co.name):'ERP 업체와 연결 안 됨'},
+                          (_co?_co.name:r.name+' ⚠')),
+                        h('span',{style:{fontWeight:700,fontFamily:'monospace',flexShrink:0}},(r.amount||0).toLocaleString()));
+                    })),
+                  h('div',{style:{display:'flex',justifyContent:'space-between',marginTop:'3px',paddingTop:'3px',
+                      borderTop:'1px solid #e2e8f0',fontWeight:700}},
+                    h('span',null,'합계'+(_fee?(' · 수수료 '+_fee.toLocaleString()):'')),
+                    h('span',{style:{fontFamily:'monospace',
+                      color:_hit.exact?'#15803d':'#b45309'}},_hit.total.toLocaleString())),
+                  h('button',{onClick:function(){ var _r0=rowsIn[0]; closeModal(); setCmsRow(_r0); },
+                    title:'명세대로 업체 자문료를 한꺼번에 입금표시하는 창을 엽니다',
+                    style:{marginTop:'5px',width:'100%',padding:'4px 8px',background:'#1d4ed8',color:'#fff',
+                      border:'none',borderRadius:'5px',fontSize:'10.5px',fontWeight:700,cursor:'pointer'}},
+                    '명세대로 한꺼번에 처리 (CMS 창)'));
+              })(),
               h('div',{style:{marginTop:'10px',padding:'6px 8px',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'6px',fontSize:'10px',color:'#92400e',lineHeight:1.5}},
                 h('b',null,'총괄관리자 확인:'),h('br'),'각 사건의 담당자가 맞는지, 성과 비율이 맞는지 확인하세요')
             ),
@@ -36280,6 +36322,7 @@ function FinanceLedger(){
                 var _list = pending.filter(function(p){
                   if(!p) return false;
                   if(spSel[p.id]!==undefined) return true;          // 이미 담은 건 항상 보인다
+                  if(spKind && p.store!==spKind) return false;      // 종류 필터 (사건·컨설팅·기금·기타·자문료)
                   if(!_q) return true;
                   var hay=((p.companyName||'')+' '+(p.label||'')+' '
                           +((p.item&&(p.item.caseNo||p.item.no))||'')+' '+_pendStaff(p)).toLowerCase();
@@ -36304,6 +36347,27 @@ function FinanceLedger(){
                       onInput:function(e){ setSpQ(e.target.value); },
                       style:{width:'170px',padding:'3px 8px',border:'1px solid #cbd5e1',
                         borderRadius:'5px',fontSize:'10.5px'}})),
+                  /* 종류 칩 — 사건만·컨설팅만 보고 싶을 때 (대표 지시).
+                     칩 수는 실제 있는 종류만 — 없는 종류의 칩이 서 있으면 눌러도 빈 화면이다. */
+                  h('div',{style:{display:'flex',gap:'4px',marginBottom:'7px',flexWrap:'wrap'}},
+                    (function(){
+                      var _kinds=[], _seen={};
+                      pending.forEach(function(p){ if(p && p.store && !_seen[p.store]){ _seen[p.store]=1; _kinds.push(p.store); } });
+                      _kinds.sort(function(a,b){ return (storeBadge(a).ord||9)-(storeBadge(b).ord||9); });
+                      var chips=[h('button',{key:'_all',onClick:function(){ setSpKind(''); },
+                        style:{padding:'2px 9px',borderRadius:'10px',fontSize:'10px',fontWeight:700,cursor:'pointer',
+                          border:'1px solid '+(spKind===''?'#1e40af':'#e2e8f0'),
+                          background:spKind===''?'#1e40af':'#fff',color:spKind===''?'#fff':'#64748b'}},'전체')];
+                      _kinds.forEach(function(k){
+                        var b=storeBadge(k);
+                        var on=spKind===k;
+                        chips.push(h('button',{key:k,onClick:function(){ setSpKind(on?'':k); },
+                          style:{padding:'2px 9px',borderRadius:'10px',fontSize:'10px',fontWeight:700,cursor:'pointer',
+                            border:'1px solid '+(on?b.fg:b.bd),
+                            background:on?b.fg:b.bg,color:on?'#fff':b.fg}},b.label));
+                      });
+                      return chips;
+                    })()),
                   _list.length===0 && h('div',{style:{fontSize:'11px',color:'#94a3b8',padding:'10px 2px'}},'찾는 건이 없습니다'),
                   _list.map(function(p){
                 var on=spSel[p.id]!==undefined;
@@ -36343,17 +36407,20 @@ function FinanceLedger(){
                     h('span',{style:Object.assign({},_cw,{width:'82px',color:'#64748b'})},p.label||''),
                     h('span',{style:Object.assign({},_cw,{width:'108px',color:'#94a3b8',fontSize:'9.5px'})},_no),
                     h('span',{style:Object.assign({},_cw,{width:'48px',color:'#475569',fontWeight:600})},_staff||'-'),
-                    _tax && h('span',{style:Object.assign({},_cw,{background:_tax==='3.3%'||_tax==='8.8%'?'#f5f3ff':'#eff6ff',
-                      color:_tax==='3.3%'||_tax==='8.8%'?'#7c3aed':'#1e40af',
-                      padding:'0 4px',borderRadius:'6px',fontSize:'8.5px',fontWeight:700,width:'46px',textAlign:'center',
-                      border:'1px solid '+(_tax==='3.3%'||_tax==='8.8%'?'#ddd6fe':'#bfdbfe')})},_tax),
+                    /* 칸은 비어도 자리를 지킨다 — 세금·성과가 없는 줄에서 뒤 칸이 앞으로 밀리면
+                       위아래 금액이 세로로 어긋나 비교할 수 없다 (대표 지적: "줄칸을 정렬해달라") */
+                    _tax ? h('span',{style:Object.assign({},_cw,{background:_tax==='3.3%'||_tax==='8.8%'?'#f5f3ff':'#eff6ff',
+                        color:_tax==='3.3%'||_tax==='8.8%'?'#7c3aed':'#1e40af',
+                        padding:'0 4px',borderRadius:'6px',fontSize:'8.5px',fontWeight:700,width:'46px',textAlign:'center',
+                        border:'1px solid '+(_tax==='3.3%'||_tax==='8.8%'?'#ddd6fe':'#bfdbfe')})},_tax)
+                      : h('span',{style:Object.assign({},_cw,{width:'46px',padding:'0 4px',border:'1px solid transparent'})},''),
                     h('span',{style:Object.assign({},_cw,{width:'78px',textAlign:'right',
                       fontVariantNumeric:'tabular-nums',fontWeight:700,color:'#16a34a'})},ea.toLocaleString()),
                     h('span',{style:Object.assign({},_cw,{width:'70px',textAlign:'right',fontSize:'9.5px',
                       fontVariantNumeric:'tabular-nums',color:_dd===0?'#15803d':'#94a3b8'})},
                       _dd===0?'입금과 일치':(_dd>0?'+':'')+_dd.toLocaleString()),
-                    _pt>0 && h('span',{style:Object.assign({},_cw,{width:'62px',textAlign:'right',fontSize:'9.5px',
-                      color:'#16a34a',fontVariantNumeric:'tabular-nums'})},'성과 '+_pt.toLocaleString())
+                    h('span',{style:Object.assign({},_cw,{width:'62px',textAlign:'right',fontSize:'9.5px',
+                      color:'#16a34a',fontVariantNumeric:'tabular-nums'})},_pt>0?('성과 '+_pt.toLocaleString()):'')
                   ),
                   on && h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'6px',marginTop:'6px',
                     borderTop:'1px solid #eef2f7',paddingTop:'6px'}},

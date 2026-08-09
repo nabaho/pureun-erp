@@ -31,7 +31,7 @@ ok('담당자', /width:'48px',color:'#475569',fontWeight:600\}\)\},_staff\|\|'-'
 ok('예상입금 금액', /fontWeight:700,color:'#16a34a'\}\)\},ea\.toLocaleString\(\)/.test(modal));
 ok('입금과의 차이', /_dd===0\?'입금과 일치':\(_dd>0\?'\+':''\)\+_dd\.toLocaleString\(\)/.test(modal));
 ok('성과급 미리보기', /'성과 '\+_pt\.toLocaleString\(\)/.test(modal));
-ok('부가세 표시', /_tax && h\('span'/.test(modal));
+// (2026-08-09) 칸이 비어도 자리를 지키게 조건부(&&)를 삼항(?:)으로 바꿨다 — 정렬 때문\nok('부가세 표시', /_tax \? h\('span'/.test(modal));
 
 console.log('\n[한 줄로 줄맞춤]');
 ['38px','82px','108px','48px','46px','78px','70px','62px'].forEach(function(w){
@@ -60,7 +60,7 @@ ok('겹치던 「예상입금」 줄은 뺐다', !/h\('span',\{style:\{color:'#6
 ok('겹치던 「담당」 줄은 뺐다', !/h\('span',\{style:\{color:'#64748b'\}\},'담당'\)/.test(modal));
 
 console.log('\n[검색어 뒷정리]');
-ok('창을 닫으면 검색어를 지운다', /function closeModal\(\)\{[\s\S]{0,120}?setSpQ\(''\);\}/.test(modal));
+ok('창을 닫으면 검색어·종류 필터를 지운다', /function closeModal\(\)\{[\s\S]{0,140}?setSpQ\(''\);setSpKind\(''\);\}/.test(modal));
 ok('창을 열 때도 검색어를 지운다', /setSpSel\(init\); setSpGap\(''\); setSpQ\(''\);/.test(src));
 
 console.log('\n[정렬 규칙을 실제로 돌려본다]');
