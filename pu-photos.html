@@ -470,6 +470,16 @@ button{font-family:inherit;cursor:pointer}
 #camAsk button{border:1px solid rgba(255,255,255,.5);background:rgba(16,16,16,.72);color:#fff;
   border-radius:99px;padding:11px 18px;font-size:13px;font-weight:700;font-family:inherit}
 #camAsk button.pri{background:#fff;color:#101828;border-color:#fff}
+/* 흐림 경고 — 답할 때까지 남는다(잠깐 뜨는 알림으로는 지나친다) */
+#camWarn{position:absolute;left:12px;right:12px;bottom:40px;display:none;z-index:6;
+  background:rgba(146,64,14,.96);color:#fff;border-radius:12px;padding:12px 14px;
+  box-shadow:0 8px 24px rgba(0,0,0,.4)}
+#camWarn .t{font-size:14px;font-weight:800;margin-bottom:3px}
+#camWarn .s{font-size:12px;opacity:.9;line-height:1.5;margin-bottom:10px}
+#camWarn .b{display:flex;gap:8px}
+#camWarn button{flex:1;border:1px solid rgba(255,255,255,.5);background:transparent;color:#fff;
+  border-radius:9px;padding:10px;font-size:13px;font-weight:800;font-family:inherit}
+#camWarn button.pri{background:#fff;color:#92400e;border-color:#fff}
 /* 폰 카메라 권유 — 화면이 낮게 잡히는 기기에서만 뜬다 */
 #camNative{display:none;width:100%;margin-top:9px;border:1px solid #fbbf24;background:#fff8ec;
   color:#92400e;border-radius:10px;padding:11px;font-size:13px;font-weight:800;font-family:inherit}
@@ -1016,6 +1026,16 @@ button{font-family:inherit;cursor:pointer}
       <div id="camAsk">
         <button class="pri" onclick="camAskBack(true)">뒷면도 촬영</button>
         <button onclick="camAskBack(false)">이 명함은 끝</button>
+      </div>
+      <!-- 흐리게 찍혔을 때 — 잠깐 뜨는 알림이 아니라 **답할 때까지 남는다**.
+           대표 지시 2026-08-09 "폰에서 자동으로 화질 검색하는 기능" -->
+      <div id="camWarn">
+        <div class="t">흐리게 찍혔습니다</div>
+        <div class="s">명함을 화면에서 한 번 눌러 초점을 잡고 다시 찍어 보세요</div>
+        <div class="b">
+          <button class="pri" onclick="camWarnRetake()">다시 찍기</button>
+          <button onclick="camWarnKeep()">그대로 쓰기</button>
+        </div>
       </div>
     </div>
     <div id="camCtl">
@@ -1626,6 +1646,7 @@ async function openCam() {
   applyFrameUI();   // 명함 모드면 frameOn() 이 늘 참이라 틀이 켜진 채로 열린다
   camCardStage = 'front'; camPairWith = -1;
   setCamAsk(false);
+  setCamWarn(false);
   renderCamStrip();
   $('camOv').style.display = 'flex';
   /* 화면 크기는 영상이 준비된 뒤에야 알 수 있다 — 그때 폰 카메라 권유를 켤지 정한다 */
@@ -1737,6 +1758,42 @@ function setCamAsk(on) {
   const el = $('camAsk');
   if (el) el.style.display = on ? 'flex' : 'none';
 }
+/* ── 흐림 검사 (대표 지시 2026-08-09: "자동으로 화질 검색") ──
+   찍은 뒤 스스로 재서, 흐리면 답할 때까지 물어본다.
+   ⚠ 사진은 이미 담겨 있다 — 「다시 찍기」를 골라야 비로소 뺀다.
+      먼저 빼 두면 대표님이 딴 데를 누르는 순간 사진이 사라진다. */
+function setCamWarn(on) {
+  const el = $('camWarn');
+  if (!el) return;
+  if (on) {
+    const s = camShots[camShots.length - 1];
+    const d = el.querySelector('.s');
+    /* 잰 숫자를 함께 보여 준다 — 기준값이 맞는지 실제 사진으로 맞추려면 필요하다 */
+    if (d && s) d.textContent = '명함을 화면에서 한 번 눌러 초점을 잡고 다시 찍어 보세요 (선명도 '
+      + s.sharp + ' · 기준 ' + MIN_SHARP + ')';
+  }
+  el.style.display = on ? 'block' : 'none';
+}
+
+/* 「다시 찍기」 — 방금 찍은 흐린 장만 뺀다. 앞뒤 묶기 표도 함께 되돌린다. */
+function camWarnRetake() {
+  const s = camShots.pop();
+  if (s) {
+    URL.revokeObjectURL(s.url);
+    /* 이 장이 뒷면이었다면 그 고리도 사라진다 — 다시 찍을 때 새로 매긴다 */
+    if (s.pairWith >= 0) { camPairWith = s.pairWith; camCardStage = 'back'; }
+  }
+  setCamWarn(false);
+  renderCamStrip();
+}
+
+/* 「그대로 쓰기」 — 담아 둔 채로 넘어간다. 명함 모드면 이어서 뒷면을 묻는다. */
+function camWarnKeep() {
+  setCamWarn(false);
+  if (camCardMode && camCardStage === 'front') setCamAsk(true);
+  camCardStage = 'front';
+}
+
 function camAskBack(yes) {
   setCamAsk(false);
   if (!yes) { camCardStage = 'front'; camPairWith = -1; return; }
@@ -2129,6 +2186,8 @@ async function camShoot() {
   }
   camBusy = true;
   setCamAsk(false);   // 물음을 띄운 채 또 찍으면 어느 장을 묶을지 헷갈린다
+  /* 흐림 물음을 둔 채 셔터를 또 누르면 「그대로 쓰기」로 본다 — 앞 장은 담긴 채 남는다 */
+  setCamWarn(false);
   try {
     /* ── 스틸과 미리보기 중 **큰 쪽**을 쓴다 (대표 보고 2026-08-09: "폰에서 화질이 너무 낮다") ──
        예전에는 스틸이 찍히기만 하면 무조건 썼다. 그런데 안드로이드 기기 중에는
@@ -2212,14 +2271,20 @@ async function camShoot() {
        ⚠ **버리지 않는다.** 흐려도 그 자리에 다시 갈 수 없는 사진일 수 있다.
           담되 알려서, 대표님이 한 장 더 찍을지 정하시게 한다.
        ⚠ 「작게 찍혔다」와 겹쳐 말하지 않는다 — 한 번에 한 가지만 고치시면 된다. */
-    if (!small && grabSharp(c, cw, ch) < MIN_SHARP) {
-      toast('흐리게 찍혔습니다 — 화면을 한 번 눌러 초점을 잡고 다시 찍어 주세요');
-    }
+    /* ⚠ 흐려도 **버리지 않는다.** 그 자리에 다시 갈 수 없는 사진일 수 있다.
+          담되, 흐리면 **그 자리에서 다시 찍을지 물어본다**(대표 지시 2026-08-09:
+          "폰에서 자동으로 화질 검색하는 기능"). 예전에는 잠깐 떴다 사라지는 알림
+          한 줄이라 지나치기 쉬웠고, 흐린 채로 그냥 담겼다. */
+    const sharp = grabSharp(c, cw, ch);
+    const blurry = !small && sharp < MIN_SHARP;
     camShots.push({ blob: useBlob, raw: raw, cropped: cropped,
       url: URL.createObjectURL(useBlob), ts: Date.now(), sel: true,
       /* 어느 길로 찍혔는가 — 화질을 따질 때 이것부터 봐야 한다.
          'still' = 고해상도 사진 / 'frame' = 미리보기 화면 캡처(상한이 낮다) */
       capWay: capWay, capW: sw, capH: sh,
+      /* 얼마나 선명한가 — **숫자를 남긴다.** 기준값(MIN_SHARP)이 맞는지는
+         실제 사진의 숫자를 봐야 알 수 있다(해상도를 숫자로 잡았던 것과 같은 방법). */
+      sharp: Math.round(sharp * 10) / 10, blurry: blurry,
       /* 뒷면이면 앞면이 몇 번째인지 들고 간다 — 올릴 때 한 장으로 묶는 고리다 */
       pairWith: camPairWith });
     camPairWith = -1;   // 한 번 쓰고 푼다(다음 장은 또 새 앞면이다)
@@ -2227,6 +2292,9 @@ async function camShoot() {
     $('camFlash').style.opacity = '.55';
     setTimeout(function () { $('camFlash').style.opacity = '0'; }, 120);
     renderCamStrip();
+    /* 흐리면 그것부터 묻는다 — 뒷면 물음보다 앞이다.
+       흐린 앞면에 뒷면을 붙여 봐야 결국 둘 다 다시 찍어야 한다. */
+    if (blurry) { setCamWarn(true); return; }
     /* 명함 모드에서 앞면을 찍었으면 뒷면을 물어본다(대표 선택 '가').
        뒷면을 막 찍은 참이면 묻지 않는다 — 한 장에 뒷면은 하나다. */
     if (camCardMode && camCardStage === 'front') setCamAsk(true);
@@ -2311,7 +2379,7 @@ async function camUpload() {
   });
   /* 어느 길로 찍혔는지도 함께 넘긴다 — 사진에 적어 두어야 나중에 화질을 따질 수 있다 */
   const caps = picked.map(function (s) {
-    return { way: s.capWay || '', w: s.capW || 0, h: s.capH || 0 };
+    return { way: s.capWay || '', w: s.capW || 0, h: s.capH || 0, sharp: s.sharp };
   });
   const btn = $('camRevUp');
   btn.disabled = true;
@@ -2581,6 +2649,8 @@ async function addFiles(fileList, isDoc, opts) {
          'still' 이면 기기가 낸 사진, 'frame' 이면 미리보기 화면(상한이 낮다). */
       const cp = caps[fi];
       if (cp && cp.way) { meta.capWay = cp.way; meta.capW = cp.w; meta.capH = cp.h; }
+      /* 잰 선명도도 함께 — 기준값을 실제 사진으로 맞추려면 숫자가 남아야 한다 */
+      if (cp && typeof cp.sharp === 'number') meta.sharp = cp.sharp;
       await queue.enqueue({
         _fromCam: !!(opts && opts.fromCam),
         id: id,
@@ -4406,7 +4476,10 @@ function openViewer(id) {
       const cw = it && it.meta.capWay;
       const capTxt = !cw ? ''
         : (cw === 'still' ? '사진 ' : '화면캡처 ') + (it.meta.capW || '?') + '×' + (it.meta.capH || '?') + ' → ';
-      $('viewerHint').textContent = (it && it.meta.w ? capTxt + '저장본 ' + it.meta.w + '×' + it.meta.h + ' · ' : '') + '사진을 누르면 원본 크기 · 바깥을 누르면 닫힘';
+      /* 선명도도 함께 — 「크게 찍혔는데 왜 흐린가」를 이 숫자 하나로 가른다 */
+      const sh = it && typeof it.meta.sharp === 'number'
+        ? ' · 선명도 ' + it.meta.sharp + (it.meta.sharp < MIN_SHARP ? ' (흐림)' : '') : '';
+      $('viewerHint').textContent = (it && it.meta.w ? capTxt + '저장본 ' + it.meta.w + '×' + it.meta.h + sh + ' · ' : '') + '사진을 누르면 원본 크기 · 바깥을 누르면 닫힘';
     } else if (!src) {
       $('viewerHint').textContent = '사진 본문을 불러오지 못했습니다';
     }
