@@ -107,7 +107,14 @@ ok('세금과공과를 관리비로 집계', /var ADMIN=\[[^\]]*'세금과공과
 ok('별지15호 66번에 격려금 매핑', /\[66,'그 밖의 복지비',\['격려금'/.test(src));
 // 69. 잔액은 그 해 말에 남은 기금 재산이다 — 재원 칸에서 빼는 식은 수기 입력이 비면 크게 틀린다
 // (안전공사공동 2024 33,372천원·현재기업사내 2025 2,173,487천원 = 각각 기말 자산총계)
-ok('별지15호 69번 잔액은 기말 자산총계', src.includes('var rest=fin.totalAssets;'));
+// 69.잔액 = 재원(㉟) + 대부금 − (복지사업비 + 대부 실행 + 운영비). 제출본 세 건으로 검산
+ok('별지15호 69번 잔액 산식', src.includes('var rest=(run.loan+src.total)-(subAmt+loanAmt+admin);'));
+// ㉙은 이자·잡수익만(준비금 환입 제외), ㉚은 그 해 준비금2 설정액, ㉞는 전기말 자산총계
+ok('별지15호 ㉙ 기금운용 수익금은 사업수익만', src.includes('src={income:fin.bizRev,')
+  && src.includes("if(n!=='고유목적사업준비금환입') bizRev+=-s;"));
+ok('별지15호 ㉚는 준비금2 설정액(⑰ 기본재산 사용)', src.includes('(num(rep.src_contrib)||0):bfDec,'));
+ok('별지15호 ㉞ 이월금은 전기말 자산총계', src.includes('function _openAssets')
+  && src.includes('(num(rep.src_carry)||0):_openAssets(op)'));
 // 준비금 전입액은 사업외비용이라 68번 '기금 운영비'에 넣으면 안 된다
 ok('별지15호 68번에서 준비금 전입액 제외', src.includes('var admin=fin.admin+fin.otherExp-(fin.resvExp||0);')
   && src.includes("if(n==='고유목적사업준비금전입액') resvExp+=s;"));
@@ -258,6 +265,10 @@ ok('전기이월 준비금1·2 분리', src.includes("reserve:'고유목적사�
   && src.includes('bal[RESERVE_ACCTS[1]]+=Math.round(num(op.reserve2)||0);'));
 ok('전기이월에 매도가능증권 칸', src.includes("secu:'매도가능증권'") && src.includes("oi('secu','매도가능증권')"));
 ok('자산총계에 증권 합산', src.includes('cash+savings+loan+secu'));
+// 대부금은 기본재산을 헐어 나간 것이 아니라 그 자체가 자산이다 — 예입에서 빼지 않고 따로 더한다
+// (참살이공동 2024 제출본: ㉑ 674,108천 + ㉗ 239,720천 = ㉘ 913,828천)
+ok('별지15호 ㉘ 합계에 대부금을 더함', src.includes('run.total=run.deposit+invested+run.loan;')
+  && src.includes('var invested=run.trust+run.secu+run.own+run.reit+run.etc;'));
 ok('별지15호 ㉓ 유가증권을 장부에서', src.includes('num(rep.run_secu)||fin.secu'));
 ok('복리후생 계정(목적사업비)', src.includes("'복리후생':'비용'"));
 // 건강검진·기념품은 결산서마다 별 항목으로 세운다(참살이·가치·플러스 세 기금)

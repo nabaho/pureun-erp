@@ -4837,6 +4837,15 @@ function guessBfKind(e){
   return 'employer';
 }
 function _k1000(n){ return Math.round((n||0)/1000); }          // 원 → 천원
+/* 전기말 자산총계 — 전기이월 칸의 자산 계정을 모두 더한다.
+   별지15호 ㉞ 이월금은 전기에서 넘어온 재산 전부로 적는다(안전공사공동 2024 51,047천원
+   = 전기말 자산총계 51,046,392원, 현재기업사내 2025 2,173,555천원도 같다). */
+function _openAssets(op){
+  var s=0;
+  Object.keys(OPEN_ACCT).forEach(function(k){
+    if((ACCT_CHART[OPEN_ACCT[k]]||'')==='자산') s+=num((op||{})[k])||0; });
+  return s;
+}
 /* 별지15호 전체 수치 산출. rep=사람이 입력한 보조값, sites=참여사업장, welf=목적사업·대부 */
 function buildF15(arr,fid,yr,rep,sites,welf){
   rep=rep||{}; sites=sites||[]; welf=welf||[];
@@ -4856,20 +4865,32 @@ function buildF15(arr,fid,yr,rep,sites,welf){
   var bfInc=bf.employer+bf.other+bf.income+bf.merge, bfDec=bf.use+bf.split;
   var bfEnd=bfOpen+bfInc-bfDec;
   /* ㉑~㉘ 기금 운용·관리 — 이 칸은 '현금 잔액'이 아니라 **기본재산을 어떤 방법으로 운용했는지**다.
-     실제 제출본(충남6호 2023)에서 ㉑ 금융회사 예입 = ㉘ 합계 = ⑳ 기본재산 총액으로 확인.
-     그래서 대부·신탁·유가증권 등으로 운용한 몫을 뺀 나머지를 금융회사 예입으로 잡는다. */
+     대부가 없는 기금(충남6호 2023)에서는 ㉑ 금융회사 예입 = ㉘ 합계 = ⑳ 기본재산 총액이다.
+     대부가 있는 기금에서 구조가 드러난다 — 참살이공동 2024 제출본은
+       ㉑ 예입 674,108천(= ⑳ 기본재산 총액) + ㉗ 근로자 대부 239,720천 = ㉘ 합계 913,828천
+     으로, **대부금은 예입에서 빼지 않고 따로 더한다**. 대부는 기본재산을 헐어 나간 것이 아니라
+     그 자체가 기금의 자산이기 때문이다. 신탁·유가증권 등 운용 상품만 예입에서 뺀다. */
   /* ㉓ 유가증권 매입은 장부의 매도가능증권 잔액에서 나온다(수기 입력값이 있으면 그것을 쓴다) */
   var run={trust:num(rep.run_trust)||0, secu:num(rep.run_secu)||fin.secu||0, own:num(rep.run_own)||0,
            reit:num(rep.run_reit)||0, etc:num(rep.run_etc)||0, loan:fin.loan};
-  var placed=run.trust+run.secu+run.own+run.reit+run.etc+run.loan;
-  run.deposit=Math.max(bfEnd-placed,0);
-  run.total=run.deposit+placed;
+  var invested=run.trust+run.secu+run.own+run.reit+run.etc;   // 운용 상품 — 기본재산에서 뺀다
+  run.deposit=Math.max(bfEnd-invested,0);
+  run.total=run.deposit+invested+run.loan;
   // ㉙~㉟ 기금사업 재원
   var contribYear=bf.employer+bf.other;                        // 당해연도 출연금
-  var ratio=(num(rep.use_ratio)||50)/100;                      // 출연금 사용한도 50% 또는 80%
-  var src={income:fin.interest, contrib:Math.round(contribYear*ratio),
+  var ratio=(num(rep.use_ratio)||50)/100;                      // 출연금 사용한도 — 화면 표시용
+  /* ㉙ 기금운용 수익금 — 이자·잡수익만. 준비금 환입은 회계상 수익이지만 재원이 아니다.
+     ㉚ 해당 회계연도 출연금액의 사용한도 범위 — 실제로는 **그 해 준비금2로 설정한 금액**이다.
+        기본재산에서 준비금2로 옮긴 것이 곧 그 해 쓰기로 정한 재원이라 ⑰ 기본재산 사용과 같은 값이다.
+        출연금 × 비율로 잡으면 협의회가 한도보다 적게 정한 해에 틀린다
+        (참살이공동 2024는 출연금 1,086,108천원의 50%가 543,054천원인데 제출본 ⑰=㉚=412,000천원).
+     ㉞ 이월금 — 전기에서 넘어온 재산 전부. 비워 두면 전기말 자산총계로 잡는다.
+     세 칸 모두 수기 입력값이 있으면 그것을 먼저 쓴다. */
+  var src={income:fin.bizRev,
+           contrib:(rep.src_contrib!==''&&rep.src_contrib!=null)?(num(rep.src_contrib)||0):bfDec,
            capExcess:num(rep.src_cap_excess)||0, basicRange:num(rep.src_basic_range)||0,
-           support:num(rep.src_support)||0, carry:num(rep.src_carry)||0};
+           support:num(rep.src_support)||0,
+           carry:(rep.src_carry!==''&&rep.src_carry!=null)?(num(rep.src_carry)||0):_openAssets(op)};
   src.total=src.income+src.contrib+src.capExcess+src.basicRange+src.support+src.carry;
   // ㊾~62 사업실적 — 금액은 계정, 수혜자수는 목적사업·대부 탭
   var benef={}, loanBenef=0, loanAmt=0;
@@ -4891,17 +4912,18 @@ function buildF15(arr,fid,yr,rep,sites,welf){
   /* 68. 기금 운영비 — 일반관리비와 그 밖의 운영비만. 준비금 전입액은 사업외비용이라 뺀다
      (안전공사공동 2024는 이자 40,618원, 현재기업사내 2025는 831원만큼 부풀었었다). */
   var admin=fin.admin+fin.otherExp-(fin.resvExp||0);
-  /* 69. 잔액 — 제출본은 **그 해 말에 남은 기금 재산**을 적는다. 재원 칸(㉙~㉟)에서 빼는 식으로
-     계산하면 ㉞ 이월금 같은 수기 입력이 비어 있을 때 크게 틀린다.
-     확정 제출본 두 건으로 확인했다(천원 단위):
-       안전공사공동 2024 — 68.운영비 108 + 69.잔액 33,372 + 67.소계 17,608 = 70.합계 51,087
-                          잔액 33,372천원 = 기말 자산총계 33,371,570원
-                          합계 51,087천원 = 전기말 자산총계 51,046,392 + 당기 이자 40,618
-       현재기업사내 2025 — 68.운영비 68.8 + 69.잔액 2,173,487 = 70.합계 2,173,556
-                          잔액 2,173,487천원 = 기말 자산총계 2,173,487,121원
-     그래서 잔액은 기말 자산총계로, 합계는 소계+대부+운영비+잔액으로 잡는다.
-     이러면 '그 해에 쓸 수 있었던 재산 = 쓴 것 + 남은 것'이 저절로 맞는다. */
-  var rest=fin.totalAssets;
+  /* 69. 잔액 = 재원(㉟) + 대부금 잔액 − (복지사업비 소계 + 대부 실행액 + 기금 운영비).
+     대부금은 나갔어도 자산으로 남아 있으므로 재원 쪽에 되돌려 놓는다.
+     확정 제출본 세 건으로 검산했다(원 단위):
+       참살이공동 2024   (239,720,500 + 412,081,137) − (101,190,224 + 239,720,500 + 4,400)
+                        = 310,886,513  → 제출본 61.잔액 310,887천원
+       안전공사공동 2024 (0 + 51,087,010) − (17,607,800 + 0 + 107,640)
+                        = 33,371,570   → 제출본 69.잔액 33,372천원
+       현재기업사내 2025 (0 + 2,173,555,891) − (0 + 0 + 68,770)
+                        = 2,173,487,121 → 제출본 69.잔액 2,173,487천원
+     기말 자산총계로 잡으면 참살이처럼 출연금 일부만 재원으로 정한 해에 틀린다
+     (자산총계 984,995천원 vs 제출본 310,887천원). */
+  var rest=(run.loan+src.total)-(subAmt+loanAmt+admin);
   // 근로자 수 — 참여사업장 합계(협력업체로 표시한 곳은 따로)
   var wk=0, pwk=0;
   sites.forEach(function(s){ var n=num(s.company_size)||0; if(s.partner) pwk+=n; else wk+=n; });
@@ -6038,9 +6060,11 @@ function computeFin(arr,fid,yr){
   var PURPOSE=PURPOSE_ACCTS;
   var ADMIN=['지급수수료','사무용품비','기타관리비','세금과공과'];
   var CORE_ASSET=['현금성자산','정기예금','근로자대부금','매도가능증권'];
-  var revenue=0,purpose=0,admin=0,otherExp=0,resvExp=0,liab=0,otherAsset=0,otherEquity=0;
+  var revenue=0,purpose=0,admin=0,otherExp=0,resvExp=0,bizRev=0,liab=0,otherAsset=0,otherEquity=0;
   Object.keys(tb).forEach(function(n){var v=tb[n],s=v.debit-v.credit;
-    if(v.type==='수익')revenue+=-s;
+    /* 사업수익은 준비금 환입을 뺀 것이다 — 별지15호 ㉙ '기금운용 수익금'은 이자·잡수익만 적는다
+       (참살이공동 2024 제출본 ㉙ = 81천원 = 이자 81,137원. 환입 101,113,487원은 들어가지 않는다). */
+    if(v.type==='수익'){ revenue+=-s; if(n!=='고유목적사업준비금환입') bizRev+=-s; }
     else if(v.type==='부채')liab+=-s;
     else if(v.type==='자본'&&n!=='기본재산')otherEquity+=-s;
     else if(v.type==='비용'){ if(PURPOSE.indexOf(n)>=0)purpose+=s; else if(ADMIN.indexOf(n)>=0)admin+=s;
@@ -6074,7 +6098,7 @@ function computeFin(arr,fid,yr){
   var res2=-sg(RESERVE_ACCTS[1])+(num(opening.reserve2)||0);
   var net=revenue-purpose-admin-otherExp, retained=(num(opening.retained)||0)+otherEquity+net;
   var totalAssets=cash+savings+loan+secu+otherAsset, equity=basic+retained, totalLiabEq=liab+equity;
-  return {tb:tb,appr:appr.length,interest:interest,purpose:purpose,admin:admin,otherExp:otherExp,resvExp:resvExp,
+  return {tb:tb,appr:appr.length,interest:interest,bizRev:bizRev,purpose:purpose,admin:admin,otherExp:otherExp,resvExp:resvExp,
     cash:cash,savings:savings,loan:loan,secu:secu,otherAsset:otherAsset,basic:basic,liab:liab,res1:res1,res2:res2,
     totalAssets:totalAssets,net:net,retained:retained,equity:equity,totalLiabEq:totalLiabEq,
     balanced:totalAssets===totalLiabEq,opening:opening};

@@ -43,10 +43,11 @@ global.num = v => { if (v === '' || v == null) return ''; const n = Number(Strin
 global.S = { fundId: 'X', year: 2024 };
 global.funds = { X: { fund_type: '공동', years: {} } };
 /* 간접 eval — 이 파일은 strict 모드라 그냥 eval 하면 함수가 지역 스코프에 갇힌다 */
-(0, eval)(['ACCT_CHART', 'PURPOSE_ACCTS', 'OPEN_ACCT', 'RESERVE_ACCTS'].map(grabVar).join('\n') + '\n'
+(0, eval)(['ACCT_CHART', 'PURPOSE_ACCTS', 'OPEN_ACCT', 'RESERVE_ACCTS', 'F15_ROWS'].map(grabVar).join('\n') + '\n'
   + ['_openingOf', '_splitsOf', '_splitSum', '_txnDone', 'expandSplits', 'journalOf', 'acctMoves',
      'computeFin', '_contribOf', '_reserveRate', '_reserveAcct', 'reserveAdjust',
-     '_reserveEntry', '_reserveEntries', 'finNegatives', '_retLabel', '_retVal'].map(grabFn).join('\n'));
+     '_reserveEntry', '_reserveEntries', 'finNegatives', '_retLabel', '_retVal',
+     '_k1000', '_openAssets', 'guessBfKind', 'buildF15'].map(grabFn).join('\n'));
 
 let fail = 0, n = 0;
 const W = v => String(Math.round(v || 0).toLocaleString()).padStart(16);
@@ -213,18 +214,78 @@ CASES.forEach(c => {
   }
   const negs = finNegatives(f);
   n++; if (negs.length) { fail++; console.log('FAIL     음수 항목 ' + negs.map(x => x.name + ' ' + x.v.toLocaleString()).join(', ')); }
-  /* 별지15호 '기금 사용 현황' — 68.기금 운영비 · 69.잔액 · 70.합계.
-     별지15호 전체는 참여사업장·수혜자수까지 있어야 만들어지므로, 여기서는 산식만 본다:
-       69.잔액 = 기말 자산총계, 70.합계 = 복지사업비 소계 + 대부사업 + 68 + 69 */
-  if (c.f15) {
-    const admin = f.admin + f.otherExp - (f.resvExp || 0);
-    const rest = f.totalAssets;
-    ok('    별지15호 68 기금 운영비', admin, c.f15.admin);
-    ok('    별지15호 69 잔액', rest, c.f15.rest);
-    ok('    별지15호 70 합계', f.purpose + (c.loanOut || 0) + admin + rest, c.f15.total);
-  }
   if (c.note) console.log('         ※ ' + c.note);
 });
+
+/* ══ 별지 제15호서식 — 확정 제출본과 칸별로 대조 ══
+   결산이 맞아도 보고서 칸이 틀리면 소용이 없다. 천원 단위로 본다.
+   참살이공동 2024 제출본은 대부금 상환 53,270,000원을 반영하지 않아 ⑬·⑳·㉗·㉘·61 다섯 칸이
+   그만큼 어긋난다 — 여기서는 **바로잡은 값**을 기대값으로 적고 제출본 값을 주석에 남긴다. */
+function f15Of(o) {
+  funds.X.fund_type = o.type || '공동';
+  funds.X.years[o.year] = { opening: o.opening || {} };
+  if (o.setup != null) funds.X.years[o.year].reserve_setup = o.setup;
+  S.year = o.year;
+  const T = [];
+  const push = x => T.push(Object.assign({ _id: 'T' + (T.length + 1), date: o.year + '-06-30', approved: true, deposit: 0, withdraw: 0 }, x));
+  if (o.contribCash) push({ memo: '출연금', deposit: o.contribCash, debit: '현금성자산', credit: '기본재산' });
+  if (o.interest) push({ memo: '예금이자', deposit: o.interest, debit: '현금성자산', credit: '이자수익' });
+  (o.costs || []).forEach(c => push({ memo: c[0], withdraw: c[1], debit: c[0], credit: '현금성자산' }));
+  if (o.admin) push({ memo: '일반관리비', withdraw: o.admin, debit: '지급수수료', credit: '현금성자산' });
+  if (o.loanOut) push({ memo: '근로자대부', withdraw: o.loanOut, debit: '근로자대부금', credit: '현금성자산' });
+  if (o.loanBack) push({ memo: '대부상환', deposit: o.loanBack, debit: '현금성자산', credit: '근로자대부금' });
+  const rc = reserveAdjust(T, 'X', o.year);
+  const all = T.concat(_reserveEntries(o.year, rc).map(x => Object.assign({ _id: x.id }, x.e)));
+  return buildF15(all, 'X', o.year, o.rep || {}, o.sites || [], o.welf || []);
+}
+const K1 = v => Math.round((v || 0) / 1000);
+function okK(label, got, want) {
+  n++;
+  if (K1(got) !== want) { fail++; console.log('FAIL ' + label + String(K1(got)).padStart(14) + '천  기대' + String(want).padStart(14) + '천'); }
+}
+console.log('\n── 별지 제15호서식 (천원)');
+let R15 = f15Of({
+  year: 2024, opening: {}, setup: 412000000,
+  contribCash: 1032838188, interest: 81137, admin: 4400,
+  costs: [['기념품비', 41154000], ['의료비', 48600000], ['기타복지비', 11436224]],
+  loanOut: 239720500, loanBack: 53270000,
+  welf: [{ category: '대부사업', beneficiaries: 8, spent: 239720500 }],
+});
+/* 참살이공동 2024 — 괄호 안은 제출본 값(대부금 상환 미반영) */
+okK('    참살이 ⑬ 사업주 출연', R15.bf.employer, 1032838);      // 제출본 1,086,108
+okK('    참살이 ⑰ 기본재산 사용', R15.bf.use, 412000);
+okK('    참살이 ⑳ 기본재산 총액', R15.bfEnd, 620838);           // 제출본 674,108
+okK('    참살이 ㉗ 근로자 대부', R15.run.loan, 186451);          // 제출본 239,720
+okK('    참살이 ㉘ 합계', R15.run.total, 807289);               // 제출본 913,828
+okK('    참살이 ㉙ 기금운용 수익금', R15.src.income, 81);
+okK('    참살이 ㉚ 출연금 사용한도 범위', R15.src.contrib, 412000);
+okK('    참살이 ㉟ 재원 합계', R15.src.total, 412081);
+okK('    참살이 60 기금 운영비', R15.admin, 4);
+okK('    참살이 61 잔액', R15.rest, 257617);                    // 제출본 310,887
+
+R15 = f15Of({
+  year: 2024, opening: { cash: 51046392, basic: 8800440, reserve: 0, reserve2: 42245952 },
+  interest: 40618, admin: 107640,
+  costs: [['체육문화비', 5521600], ['장학금', 4027000], ['기타복지비', 8059200]],
+});
+okK('    안전공사 ㉙ 기금운용 수익금', R15.src.income, 41);
+okK('    안전공사 ㉞ 이월금', R15.src.carry, 51046);
+okK('    안전공사 ㉟ 재원 합계', R15.src.total, 51087);
+okK('    안전공사 67 복지사업비 소계', R15.subAmt, 17608);
+okK('    안전공사 68 기금 운영비', R15.admin, 108);
+okK('    안전공사 69 잔액', R15.rest, 33372);
+okK('    안전공사 70 합계', R15.total, 51087);
+
+R15 = f15Of({
+  year: 2025, type: '사내',
+  opening: { cash: 830860, secu: 2172724200, basic: 2173524200, reserve: 0, reserve2: 30860 },
+  interest: 831, admin: 68770,
+});
+okK('    현재기업 ㉞ 이월금', R15.src.carry, 2173555);
+okK('    현재기업 ㉟ 재원 합계', R15.src.total, 2173556);
+okK('    현재기업 68 기금 운영비', R15.admin, 69);
+okK('    현재기업 69 잔액', R15.rest, 2173487);
+okK('    현재기업 70 합계', R15.total, 2173556);
 
 /* 결손금은 음수가 아니라 이름을 바꿔 양수로 적는다 */
 n++; if (_retLabel(-100) !== '이월결손금' || _retVal(-100) !== 100 || _retLabel(100) !== '이월잉여금' || _retVal(100) !== 100) {
