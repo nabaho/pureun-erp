@@ -634,15 +634,24 @@ exports.sendMaterialMail = functions
     }
     if (lastErr) {
       console.error("sendMaterialMail", lastErr && lastErr.message);
-      const auth = String((lastErr && lastErr.code) || "") === "EAUTH";
-      res.status(502).json({
-        ok: false,
-        error: "메일 서버가 받지 않았습니다: " + String((lastErr && lastErr.message) || lastErr)
-             + (auth
-                ? "\n비밀번호가 맞지 않습니다. 다음메일 설정 → IMAP/POP3 → 「비밀번호 확인하기」에서"
-                  + " **앱 비밀번호**를 새로 받아 다시 넣어 주세요. (평소 로그인 비밀번호로는 안 됩니다)"
-                : "\n다음메일에서 IMAP/SMTP 사용이 켜져 있는지 확인해 주세요."),
-      });
+      // 무엇이 잘못됐는지에 따라 다음 걸음이 완전히 다르다. 뭉뚱그리면 엉뚱한 곳을 고치게 된다.
+      //   EAUTH / 535 → 우리가 로그인을 못 한 것 (앱 비밀번호)
+      //   550 5.1.1   → 로그인은 됐고 **받는 주소가 없는 것** (오타·없는 계정)
+      //   그 밖       → 연결 문제
+      const msg = String((lastErr && lastErr.message) || lastErr);
+      const auth = String((lastErr && lastErr.code) || "") === "EAUTH" || /\b535\b/.test(msg);
+      const noSuchUser = /\b550\b/.test(msg) || /does not exist|NoSuchUser|Recipient address rejected/i.test(msg);
+      let hint;
+      if (noSuchUser) {
+        hint = "\n\n받는 사람 주소가 없는 주소입니다. 오타가 없는지 확인해 주세요."
+             + "\n(로그인 계정 주소가 실제 메일함이 아닐 수 있습니다 — 회사 메일 주소로 보내 보세요)";
+      } else if (auth) {
+        hint = "\n\n비밀번호가 맞지 않습니다. 다음메일 설정 → IMAP/POP3 → 「비밀번호 확인하기」에서"
+             + " 앱 비밀번호를 새로 받아 다시 넣어 주세요. (평소 로그인 비밀번호로는 안 됩니다)";
+      } else {
+        hint = "\n\n다음메일에서 IMAP/SMTP 사용이 켜져 있는지 확인해 주세요.";
+      }
+      res.status(502).json({ ok: false, error: "메일 서버가 받지 않았습니다: " + msg + hint });
       return;
     }
 
