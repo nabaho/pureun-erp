@@ -173,8 +173,13 @@ eq('대표담당 아니면 false', ctx.pcToContact(card, false).isPrimary, false
     /row\.bizNo&&!cur\.bizNo/.test(n) && /row\.ceo&&!cur\.ceo/.test(n));
   ok('★ 사진이 없어도 사람 정보는 넣는다 (예전엔 여기서 그냥 끝났다)',
     n.indexOf('이회사는명함첩에사진이없습니다') < 0);
-  ok('사진 덮어쓰기는 물어본다', /popConfirm\(/.test(n));
-  ok('사진만 취소해도 사람 정보는 들어간다', /got=\[\];img=\{\};/.test(n));
+  /* (2026-08-09 대표 지시) 사진은 «가져오지 않는다» — 정보만.
+     사진은 명함첩에 이미 있고, 계약 기록에 base64 로 박히면 레코드가 부풀어
+     저장이 조용히 실패한다(예전 「계약 저장 실패」의 원인).
+     그래서 덮어쓰기를 물어볼 일도, 사진만 취소할 일도 없어졌다. */
+  ok('★ 사진을 가져오지 않는다', n.indexOf('pcFetchImages') < 0);
+  ok('★ 계약 기록에 사진을 넣지 않는다',
+     n.indexOf('next.bizLicenseImg') < 0 && n.indexOf('next.businessCardImg') < 0);
   ok('가져온 것을 알려 준다', blk.indexOf('명함첩에서') > 0);
 })();
 
@@ -430,7 +435,8 @@ ok('★ 사건 카드가 팩스를 빈값으로 덮지 않는다',
 
 /* 사람 줄에서 대표를 고르면 대표자 전화가 오는가 */
 (function () {
-  const blk = NS(cutPe('function pcPersonRows(q){', '\n// 고른 명함첩 회사의 사진'));
+  // 끝 표식은 «다음 함수» 로 잡는다 — 주석은 고쳐 쓰면 표식이 사라진다(2026-08-09에 실제로 그랬다)
+  const blk = NS(cutPe('function pcPersonRows(q){', '\n// ============ 명함첩 담당자 찾기 모달'));
   ok('★ 대표 명함을 고르면 그 휴대폰이 대표자 전화', /ceoPhone:isCeo\?\(r\.m\|\|''\):''/.test(blk));
   ok('★ 대표가 아니면 대표자 전화를 넣지 않는다', /isCeo\?\(r\.m\|\|''\):''/.test(blk));
   ok('사람 줄도 팩스·업태·종목을 넘긴다',
@@ -534,25 +540,24 @@ ok('계약모달에 대표자 전화 칸이 있다', /f\.company\.ceoPhone/.test
   ok('★ 사업자등록증 칸을 구분한다',   /onlyBiz=\(want==='bizLicenseImg'\)/.test(nf));
   ok('★ 대표자 명함 칸을 구분한다',    /onlyCard=\(want==='businessCardImg'\)/.test(nf));
 
-  /* 사진 — 필요한 쪽 카드만 읽는다 */
-  ok('★ 사업자등록증 칸이면 명함 카드를 안 읽는다', /cardId:onlyBiz\?'':row\.cardId/.test(nf));
-  ok('★ 대표자 명함 칸이면 사업자등록증 카드를 안 읽는다', /bizId:onlyCard\?'':row\.bizId/.test(nf));
-  ok('★ 사업자등록증 칸이면 명함 사진을 안 채운다', /if\(onlyBiz\)img\.businessCardImg='';/.test(nf));
-  ok('★ 대표자 명함 칸이면 사업자등록증을 안 채운다', /if\(onlyCard\)img\.bizLicenseImg='';/.test(nf));
+  /* (2026-08-09 대표 지시) 사진은 아예 안 가져온다 — 정보만.
+     사진은 명함첩에 이미 있고, 계약 기록에 base64 로 박히면 레코드가 부풀어
+     저장이 조용히 실패한다(예전 「계약 저장 실패」의 원인).
+     그래서 «어느 쪽 카드를 읽을지» 를 가릴 일도 없어졌다 — 아예 안 읽는다. */
+  ok('★ 사진을 읽지 않는다', nf.indexOf('pcFetchImages') < 0);
+  ok('★ 사진 읽는 함수 자체가 없다', pe.indexOf('function pcFetchImages(') < 0);
+  ok('★ 계약 기록에 사진을 안 넣는다',
+     nf.indexOf('next.bizLicenseImg') < 0 && nf.indexOf('next.businessCardImg') < 0);
 
-  /* 사람 — 사업자등록증 칸에서는 담당자를 붙이지 않는다 */
+  /* 사람 — 사업자등록증 칸에서는 담당자를 붙이지 않는다 (이건 그대로) */
   ok('★ 사업자등록증 칸에서는 담당자를 안 붙인다',
      /newContacts=\(onlyBiz\?\[\]:\(row\.cards\|\|\[\]\)\)\.map/.test(nf));
 
-  /* 사업자등록증이 없으면 분명히 말해 준다 */
-  ok('★ 사업자등록증이 없으면 그렇다고 말한다',
-     fn.indexOf('이 회사는 명함첩에 사업자등록증이 없습니다') > 0);
-  ok('그때도 회사정보가 있으면 그건 넣는다',
-     /if\(onlyBiz&&!img\.bizLicenseImg&&!Object\.keys\(info\)\.length\)/.test(nf));
-
-  /* 빈 아이디는 통신도 안 한다 */
-  const fetchFn = cutPe('function pcFetchImages(pc){', '\n}');
-  ok('빈 아이디는 읽지 않는다', /if\(!id\) return Promise\.resolve\(null\);/.test(fetchFn));
+  /* 가져올 정보가 없을 때만 없다고 말한다 */
+  ok('★ 가져올 정보가 없으면 그렇다고 말한다',
+     fn.indexOf('이 회사에서 새로 가져올 정보가 없습니다') > 0);
+  ok('담당자든 회사정보든 하나라도 있으면 넣는다',
+     /if\(!addedN&&!Object\.keys\(info\)\.length\)/.test(nf));
 })();
 
 /* 호출부가 want 를 넘기는가 */
@@ -568,14 +573,17 @@ ok('누른 첨부칸을 그대로 want 로 넘긴다', /setPcCoPick\(field\)/.te
   const cp = cutPe('function PucardsCompanyPickerModal(props){', '\nfunction ');
   ok('★ 사업자등록증 칸에서는 사람 줄을 감춘다',
      /props\.want !== 'bizLicenseImg' && r\.cards && r\.cards\.length/.test(cp));
-  ok('★ 사업자등록증 없는 회사는 흐리게',
-     /noBizHere = \(props\.want === 'bizLicenseImg' && !r\.hasBiz\)/.test(cp)
-     && /opacity: noBizHere \? 0\.6 : 1/.test(cp));
-  ok('흐린 줄에 이유를 붙인다', cp.indexOf('이 회사는 명함첩에 사업자등록증이 없습니다 (회사정보만 들어옵니다)') > 0);
+  /* (2026-08-09) 이제 «정보만» 가져오므로 사업자등록증 사진 유무로 줄을 흐리게 할 이유가 없다 —
+     사진이 없는 회사도 사업자번호·대표·업태·종목은 그대로 들어온다.
+     창 제목도 「어느 칸」이 아니라 무엇을 하는지로 바뀌었다. */
+  ok('★ 사진 유무로 줄을 흐리게 하지 않는다',
+     cp.indexOf('noBizHere') < 0 && cp.indexOf('opacity: noBizHere') < 0);
+  ok('무엇을 가져오는지 줄에 적는다',
+     cp.indexOf('이 회사의 회사정보와 담당자를 가져옵니다 (사진은 가져오지 않습니다)') > 0);
   ok('대표자 명함 칸에서는 사람 줄이 그대로 보인다',
      cp.indexOf("'👤 이 회사 명함 '") > 0);
-  ok('창 제목이 어느 칸인지 알려 준다',
-     /props\.want === 'bizLicenseImg' \? '사업자등록증'/.test(cp));
+  ok('창 제목이 무엇을 하는지 알려 준다',
+     cp.indexOf('📇 명함첩에서 회사정보 가져오기') > 0);
 })();
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');
 process.exit(fail ? 1 : 0);

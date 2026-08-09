@@ -10900,23 +10900,9 @@ function pcPersonRows(q){
   }catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
   return out.slice(0, 6);
 }
-// 고른 명함첩 회사의 사진(사업자등록증·명함)을 원본 카드에서 가져온다.
-// 색인에는 사진이 없다(가볍게 유지하려고). 필요할 때 그 카드 한 장만 읽는다.
-function pcFetchImages(pc){
-  if(!pc || (typeof fbDb === 'undefined') || !fbDb) return Promise.resolve({});
-  function one(id){
-    if(!id) return Promise.resolve(null);
-    return fbDb.ref('pucards/items/' + id).once('value')
-      .then(function(s){ return s.val(); }).catch(function(){ return null; });
-  }
-  return Promise.all([one(pc.bizId), one(pc.cardId)]).then(function(r){
-    var biz = r[0] || {}, card = r[1] || {};
-    return {
-      bizLicenseImg: biz.photo || biz.thumb || '',
-      businessCardImg: card.photo || card.thumb || ''
-    };
-  }).catch(function(){ return {}; });
-}
+/* (2026-08-09) pcFetchImages 는 걷어냈다 — 명함첩에서 «정보만» 가져오기로 했기 때문이다(대표 지시).
+   사진을 계약 기록에 복사해 넣으면 레코드가 수 MB 로 부풀어 저장이 조용히 실패한다.
+   사진은 명함첩에 그대로 있으니 거기서 본다(첨부 칸의 「명함첩에서 보기」). */
 
 // ============ 명함첩 담당자 찾기 모달 (담당자 칸에서 바로 사람 검색) ============
 function searchPucardsPeople(query){
@@ -11162,7 +11148,6 @@ function PucardsCompanyPickerModal(props){
   useEscClose(props.onClose);
   var qs = useState(props.initialQuery || ''); var query = qs[0]; var setQuery = qs[1];
   var results = searchPucardsCompanies(query);
-  var wantLabel = props.want === 'bizLicenseImg' ? '사업자등록증' : props.want === 'businessCardImg' ? '대표자 명함' : '';
   return h('div', {
     style:{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:210, display:'flex', alignItems:'center', justifyContent:'center' },
     onClick:function(e){ e.stopPropagation(); if(e.target === e.currentTarget) props.onClose(); }
@@ -11170,7 +11155,7 @@ function PucardsCompanyPickerModal(props){
     h('div', { style:{ background:'#fff', borderRadius:'8px', width:'560px', maxWidth:'95vw', maxHeight:'80vh', display:'flex', flexDirection:'column' } },
       h('div', { style:{ padding:'14px 18px', borderBottom:'1px solid #e2e8f0', display:'flex', justifyContent:'space-between', alignItems:'center' } },
         h('div', { style:{ fontSize:'14px', fontWeight:700 } },
-          '📇 명함첩에서 회사 찾기' + (wantLabel ? ' — ' + wantLabel : '')),
+          '📇 명함첩에서 회사정보 가져오기'),
         h('button', { onClick:props.onClose, style:{ background:'none', border:'none', fontSize:'18px', cursor:'pointer', color:'#64748b' } }, '×')
       ),
       h('div', { style:{ padding:'12px 18px', borderBottom:'1px solid #e2e8f0' } },
@@ -11186,18 +11171,17 @@ function PucardsCompanyPickerModal(props){
         !query ? h('div', { style:{ padding:'16px', textAlign:'center', color:'#94a3b8', fontSize:'12px' } }, '회사명 또는 사업자번호를 입력하세요')
         : results.length === 0 ? h('div', { style:{ padding:'16px', textAlign:'center', color:'#94a3b8', fontSize:'12px' } }, '검색 결과가 없습니다')
         : results.map(function(r, i){
-            // 사업자등록증 칸인데 그 회사에 사업자등록증이 없으면 흐리게 — 눌러도 사진이 없다
-            var noBizHere = (props.want === 'bizLicenseImg' && !r.hasBiz);
+            /* (2026-08-09) 이제 «정보만» 가져오므로 사업자등록증 사진이 없어도 흐리게 하지 않는다 —
+               사진이 없는 회사도 사업자번호·대표·업태·종목은 들어온다. */
             return h('div', { key:i, onClick:function(){ props.onSelect(r); },
-              title: noBizHere ? '이 회사는 명함첩에 사업자등록증이 없습니다 (회사정보만 들어옵니다)' : '',
-              style:{ padding:'10px 14px', borderBottom:'1px solid #f8fafc', cursor:'pointer', opacity: noBizHere ? 0.6 : 1 },
+              title: '이 회사의 회사정보와 담당자를 가져옵니다 (사진은 가져오지 않습니다)',
+              style:{ padding:'10px 14px', borderBottom:'1px solid #f8fafc', cursor:'pointer' },
               onMouseEnter:function(e){ e.currentTarget.style.background = '#f8fafc'; },
               onMouseLeave:function(e){ e.currentTarget.style.background = ''; }
             },
               h('div', { style:{ fontSize:'12.5px', fontWeight:600, color:'#1e293b', display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap' } },
                 h('span', null, r.name),
                 r.hasBiz && h('span', { style:{ background:'#eff6ff', color:'#2563eb', fontSize:'10px', padding:'1px 7px', borderRadius:'8px', fontWeight:700 } }, '사업자등록증 있음'),
-                noBizHere && h('span', { style:{ background:'#fef2f2', color:'#991b1b', fontSize:'10px', padding:'1px 7px', borderRadius:'8px', fontWeight:700 } }, '사업자등록증 없음'),
                 r.cardCount ? h('span', { style:{ background:'#eff6ff', color:'#1e40af', fontSize:'10px', padding:'1px 7px', borderRadius:'8px', fontWeight:700 } }, '명함 ' + r.cardCount + '장') : null
               ),
               h('div', { style:{ fontSize:'10.5px', color:'#64748b', marginTop:'2px' } },
@@ -11528,48 +11512,24 @@ function ContractModal(props){
       var mg = mergeCompanyContacts(cur.contacts || [], newContacts);
       if(mg.added > 0){ merged = mg.contacts; addedN = mg.added; }
     }
-    // ── 사진 ──
-    var img = {};
-    try {
-      // 필요한 쪽 카드만 읽는다 (아이디를 안 넘기면 pcFetchImages 가 그 쪽을 건너뛴다)
-      img = (await pcFetchImages({
-        bizId:  onlyCard ? '' : row.bizId,
-        cardId: onlyBiz  ? '' : row.cardId
-      })) || {};
-    } catch(e){ img = {}; }
-    if(onlyBiz)  img.businessCardImg = '';   // 사업자등록증 칸 — 명함 사진은 안 건드린다
-    if(onlyCard) img.bizLicenseImg   = '';   // 대표자 명함 칸 — 사업자등록증은 안 건드린다
-    var got = [];
-    if(img.bizLicenseImg)   got.push('사업자등록증');
-    if(img.businessCardImg) got.push('대표자 명함');
-    var over = [];
-    if(img.bizLicenseImg   && cur.bizLicenseImg)   over.push('사업자등록증');
-    if(img.businessCardImg && cur.businessCardImg) over.push('대표자 명함');
-    if(over.length){
-      if(!(await popConfirm('이미 붙여 둔 ' + over.join('·') + ' 사진을 명함첩 사진으로 바꿉니다.\n\n'
-        + '• 회사: ' + (row.name || '-') + '\n'
-        + '• 가져올 사진: ' + got.join('·') + '\n\n바꿀까요?'))){
-        got = []; img = {};                      // 사진만 취소 — 사람·회사 정보는 그대로 넣는다
-      }
-    }
-    if(onlyBiz && !img.bizLicenseImg && !Object.keys(info).length){
-      showToast('이 회사는 명함첩에 사업자등록증이 없습니다 — 명함첩에 먼저 등록하세요'); return;
-    }
-    if(!got.length && !addedN && !Object.keys(info).length){
-      showToast('이 회사에서 새로 가져올 것이 없습니다 (이미 다 들어와 있습니다)'); return;
+    /* ── 사진은 가져오지 않는다 (2026-08-09 대표 지시) ──
+       "굳이 명함이나 사업자등록증 사진을 가지고 올 필요는 없어 보인다" — 맞는 판단이다.
+       사진은 명함첩에 이미 있고, 계약 기록 안에 base64 로 박히면 레코드가 수 MB 로 부풀어
+       저장이 조용히 실패한다(예전 「계약 저장 실패」의 원인이 바로 이것이었다).
+       OCR 경로는 이미 «글자를 뽑으면 원본을 지우는» 방식인데 여기만 예외였다.
+       사진이 필요하면 명함첩에서 본다 — 첨부 칸에 그 길을 적어 둔다. */
+    if(!addedN && !Object.keys(info).length){
+      showToast('이 회사에서 새로 가져올 정보가 없습니다 (이미 다 들어와 있습니다)'); return;
     }
     setF(function(prev){
       var c = prev.company || {};
       var next = Object.assign({}, info);
       if(merged) next.contacts = merged;
-      if(img.bizLicenseImg)   next.bizLicenseImg   = img.bizLicenseImg;
-      if(img.businessCardImg) next.businessCardImg = img.businessCardImg;
       return Object.assign({}, prev, { company: Object.assign({}, c, next) });
     });
     var msg = [];
     if(addedN) msg.push('담당자 ' + addedN + '명');
     if(Object.keys(info).length) msg.push('회사정보');
-    if(got.length) msg.push(got.join('·') + ' 사진');
     // 한 사람만 골랐으면 누구를 넣었는지 밝힌다
     var who = row.pickOne ? (' — ' + (row.pickOne.n || '') + (row.pickOne.ti ? ' ' + row.pickOne.ti : '')) : '';
     showToast('📇 명함첩에서 ' + msg.join(' · ') + ' 가져왔습니다' + who);
@@ -11606,22 +11566,11 @@ function ContractModal(props){
         msg += ' (담당자 ' + pc.contacts.length + '명)';
       }
       showToast(msg);
-      // 사진은 뒤늦게 — 이미 넣어 둔 사진이 있으면 덮지 않는다
-      pcFetchImages(pc).then(function(img){
-        if(!img || (!img.bizLicenseImg && !img.businessCardImg)) return;
-        setF(function(prev){
-          var c = prev.company || {};
-          var next = {};
-          if(img.bizLicenseImg && !c.bizLicenseImg) next.bizLicenseImg = img.bizLicenseImg;
-          if(img.businessCardImg && !c.businessCardImg) next.businessCardImg = img.businessCardImg;
-          if(!Object.keys(next).length) return prev;
-          return Object.assign({}, prev, { company: Object.assign({}, c, next) });
-        });
-        var got = [];
-        if(img.bizLicenseImg) got.push('사업자등록증');
-        if(img.businessCardImg) got.push('명함');
-        if(got.length) showToast('🖼 ' + got.join('·') + ' 사진도 가져왔습니다');
-      });
+      /* (2026-08-09 대표 지시) 사진은 «가져오지 않는다» — 정보만.
+         명함·사업자등록증 사진은 명함첩에 이미 있고, 계약 기록 안에 base64 로 박히면
+         레코드가 수 MB 로 부풀어 저장이 조용히 실패한다(예전 「계약 저장 실패」의 원인).
+         OCR 경로는 이미 «글자를 뽑으면 원본을 지우는» 방식이라, 여기만 예외였다.
+         사진이 필요하면 명함첩에서 보면 된다 — 첨부 칸에 그 길을 적어 둔다. */
       return;
     }
     // 모든 컬렉션에서 회사정보 검색 (contracts는 company 중첩 객체, 나머지는 평탄)
@@ -12460,11 +12409,19 @@ function ContractModal(props){
       h('div', { style:{ fontSize:'11.5px', fontWeight:700, color:'#475569', marginBottom:'4px', display:'flex', justifyContent:'space-between', alignItems:'center', gap:'4px' } },
         h('span', null, title),
         h('span', { style:{ display:'inline-flex', alignItems:'center', gap:'4px' } },
-          // 명함첩에 이미 찍어 둔 사진이 있으면 다시 찍지 말고 그대로 가져온다
+          /* (2026-08-09) 사진이 아니라 «정보» 를 가져온다 — 대표 지시.
+             사진은 명함첩에 이미 있으니 두 번 보관할 이유가 없고,
+             계약 기록에 박히면 레코드가 부풀어 저장이 조용히 실패한다. */
           h('button', { type:'button', onClick:function(){ setPcCoPick(field); },
-            title:'명함첩에 저장된 이 회사의 사업자등록증·명함 사진을 가져옵니다',
+            title:'명함첩에서 회사정보(사업자번호·대표·업태·종목·주소·연락처)와 담당자를 가져옵니다\n'
+                 +'— 사진은 가져오지 않습니다. 사진은 명함첩에서 보세요',
             style:{ background:'#eff6ff', color:'#2563eb', border:'1px solid #bfdbfe', padding:'2px 8px', borderRadius:'4px', fontSize:'10.5px', fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' } },
-            '📇 명함첩에서 찾기'),
+            '📇 명함첩 정보 가져오기'),
+          // 사진이 꼭 필요하면 명함첩에서 본다 (여기로 복사해 오지 않는다)
+          h('a', { href:'pu-cards.html', target:'_blank', rel:'noopener',
+            title:'명함첩을 새 탭에서 엽니다 — 사진은 거기서 보세요',
+            style:{ color:'#64748b', fontSize:'10.5px', textDecoration:'underline', whiteSpace:'nowrap' } },
+            '명함첩에서 보기'),
           img && h('button', { type:'button', disabled:ocrBusy, onClick:function(){ runOcr(field); },
             title: '이미지에서 텍스트 자동 추출 (한국어 지원)',
             style:{ background:ocrBusy?'#cbd5e1':'#2563eb', color:'#fff', border:'none', padding:'2px 8px', borderRadius:'4px', fontSize:'10.5px', fontWeight:700, cursor:ocrBusy?'wait':'pointer' } },
@@ -34062,6 +34019,62 @@ function erpTitleOf(p){
   return v;
 }
 if(typeof window !== 'undefined'){ window.erpWhoOf = erpWhoOf; window.erpTitleOf = erpTitleOf; }
+/* ── 세금계산서 ↔ 입금 대조 ──
+   거래내역은 «입금에서 계산서를 찾는» 방향만 있었다(줄의 🧾 표시).
+   반대 방향 — 「끊어 놓고 아직 안 들어온 것」 과 「들어왔는데 안 끊은 것」 — 을 볼 자리가
+   없어 부가세 신고 전에 훑을 수가 없었다(대표 지적).
+   invs: [{id,companyName,amount,issueDate,vatType,status}] · incs: finance_income 배열
+   asOf: 오늘 날짜 'YYYY-MM-DD' (며칠 지났는지 세는 기준 — 기계에 묻지 않고 받는다) */
+function erpInvoiceMatchAll(invs, incs, asOf){
+  var out = { paid:[], unpaid:[], noInvoice:[], sumUnpaid:0, sumNoInv:0 };
+  var _incs = [];
+  (incs || []).forEach(function(i){
+    if(!i) return;
+    var a = parseInt(i.amount, 10) || 0;
+    if(a <= 0) return;
+    _incs.push({ nm:erpNormName(i.companyName), amt:a, date:String(i.date || '').slice(0,10),
+                 used:false, raw:i });
+  });
+  var t0 = new Date(String(asOf || '').slice(0,10)).getTime();
+  (invs || []).forEach(function(iv){
+    if(!iv) return;
+    if(iv.status && iv.status !== '발행') return;          // 미발행(예정)은 대조 대상이 아니다
+    var amt = parseInt(iv.amount, 10) || 0;
+    if(amt <= 0) return;
+    // 부가세 별도로 적은 계산서는 실제 입금이 ×1.1 이다
+    var exp = (iv.vatType === 'separate' || iv.vatType === 'exclusive') ? Math.round(amt * 1.1) : amt;
+    var nm = erpNormName(iv.companyName);
+    var d  = String(iv.issueDate || '').slice(0,10);
+    var hit = null;
+    for(var k = 0; k < _incs.length; k++){
+      var c = _incs[k];
+      if(c.used) continue;
+      if(!nm || c.nm !== nm) continue;
+      // 발행일보다 «나중» 에 들어온 돈만 (그 전 입금은 다른 건이다)
+      if(d && c.date && c.date < d) continue;
+      if(Math.abs(c.amt - exp) > 1100 && Math.abs(c.amt - amt) > 1100) continue;
+      hit = c; c.used = true; break;
+    }
+    if(hit){ out.paid.push({ inv:iv, expect:exp, inc:hit.raw }); return; }
+    var days = 0;
+    if(!isNaN(t0) && d){
+      var t1 = new Date(d).getTime();
+      if(!isNaN(t1)) days = Math.round((t0 - t1) / 86400000);
+    }
+    out.unpaid.push({ inv:iv, expect:exp, days:(days > 0 ? days : 0) });
+    out.sumUnpaid += exp;
+  });
+  /* 들어왔는데 계산서가 없는 입금 — 자문료(company)는 업체 주기로 끊으므로 뺀다 */
+  _incs.forEach(function(c){
+    if(c.used) return;
+    if(c.raw && c.raw.sourceKind === 'company') return;
+    out.noInvoice.push({ inc:c.raw, amount:c.amt });
+    out.sumNoInv += c.amt;
+  });
+  out.todo = out.unpaid.length;
+  return out;
+}
+if(typeof window !== 'undefined') window.erpInvoiceMatchAll = erpInvoiceMatchAll;
 /* ── 나이스빌 CMS — 「몇 월분 자문료인가」 ──
    6월분을 7/5 에 걷어(출금일) 7/6 에 통장으로 받으면(정산일), 그것은 6월분인가 7월분인가.
    대표 확인: 업체마다 다르다(당월 걷는 곳·익월 걷는 곳). 그래서 업체마다 골라 두게 한다.
@@ -35209,6 +35222,25 @@ function FinanceLedger(){
   }, []);
   var _heldList = dbGet('ledger_held', []) || [];
   var _heldS = erpHeldSummary(Array.isArray(_heldList) ? _heldList : []);
+  /* ── 보류함 다시 보기 ──
+     사무관리에 기록이 없어 보류함에 넣어 둔 줄은, 나중에 그 기록을 만들어도
+     아무도 알려 주지 않아 쌓이기만 했다(대표 지적).
+     보류함을 열 때 각 줄을 지금 후보로 다시 맞춰 보고, 짝이 생긴 것을 알린다.
+     — 열 때만 잰다. 늘 재면 보류함 건수만큼 매칭이 매 렌더 돈다. */
+  var _heldReady = [];
+  if(heldOpen && Array.isArray(_heldList)) _heldList.forEach(function(x){
+    if(!x || !x.k) return;
+    var _sug = erpMatchTxnToPending({date:x.date, amount:x.amount, memo:x.memo}, pending, 6);
+    var _g = erpGroupPendByCompany(_sug);
+    if(!_g.length) return;
+    var _cand = _g[0].head.cand;
+    var _exp = parseInt(_cand.expect || _cand.amount, 10) || 0;
+    var _amt = parseInt(x.amount, 10) || 0;
+    _heldReady.push({ k:x.k, row:x, grp:_g, cand:_cand,
+      fits:(_exp > 0 && Math.abs(_amt - _exp) <= 1100) });
+  });
+  var _heldReadyBy = {};
+  _heldReady.forEach(function(r){ _heldReadyBy[r.k] = r; });
   /* ── 한 줄이 어느 후보 묶음을 가리키는가 (요약칩·단추·행이 같은 답을 쓰게 하는 한 곳) ──
      사람이 직접 고른 것이 있으면 그것만 본다 — 추천보다 사람이 우선이다. */
   function rowGroups(row){
@@ -35943,7 +35975,8 @@ function FinanceLedger(){
             // 보류함 — 비어 있으면 아예 안 그린다 (0이 붙어 있으면 눈에 걸린다)
             _heldS.n>0 && h('button',{onClick:function(){setHeldOpen(true);},
               title:'누가 왜 보낸 돈인지 모를 때 넣어 둔 입금입니다\n합계 '+_heldS.sum.toLocaleString()+'원'
-                    +(_heldS.oldest?('\n가장 오래된 것 '+_heldS.oldest):''),
+                    +(_heldS.oldest?('\n가장 오래된 것 '+_heldS.oldest):'')
+                    +'\n\n열면 지금 후보로 다시 맞춰 봅니다 — 짝이 생긴 것을 알려 드립니다',
               style:{padding:'3px 8px',background:'#fff',color:'#64748b',border:'1px solid #cbd5e1',borderRadius:'5px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'🗄 보류함 '+_heldS.n),
             h('button',{onClick:function(){setConfHistOpen(true);},
               style:{padding:'3px 8px',background:'#64748b',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'확정 이력'));
@@ -37222,17 +37255,35 @@ function FinanceLedger(){
             style:{padding:'4px 10px',background:'#f8fafc',border:'none',borderRadius:'5px',
               fontSize:'11px',cursor:'pointer'}},'닫기')),
         h('div',{style:{fontSize:'11px',color:'#64748b',marginBottom:'8px'}},
-          '누가 왜 보낸 돈인지 알아내면 「목록으로」를 눌러 되돌린 뒤 확정하세요.'),
+          '사무관리에 기록을 만들면 여기서 «짝을 찾았습니다» 로 바뀝니다 — 그때 되돌려 확정하세요.'),
+        // 다시 봤더니 짝이 생긴 것이 있으면 맨 위에서 먼저 알린다
+        _heldReady.length>0 && h('div',{style:{marginBottom:'8px',padding:'7px 10px',background:'#f0fdf4',
+            border:'1px solid #bbf7d0',borderRadius:'6px',fontSize:'11.5px',color:'#166534',fontWeight:700}},
+          '✅ 다시 보니 '+_heldReady.length+'건은 이제 짝을 찾았습니다 — 되돌려서 확정할 수 있습니다'),
         (Array.isArray(_heldList)?_heldList:[]).map(function(x,_hi){
           if(!x) return null;
+          var _rd = _heldReadyBy[x.k];
           return h('div',{key:_hi,style:{display:'flex',alignItems:'center',gap:'8px',padding:'6px 8px',
-              borderBottom:'1px solid #f8fafc',fontSize:'11.5px'}},
+              borderBottom:'1px solid #f8fafc',fontSize:'11.5px',
+              background:_rd?'#f0fdf4':'transparent'}},
             h('span',{style:{color:'#94a3b8',width:'72px',flex:'none'}},x.date||'-'),
             h('b',{style:{width:'92px',flex:'none',textAlign:'right'}},(x.amount||0).toLocaleString()),
             h('span',{style:{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},x.memo||'-'),
+            // 짝이 생겼으면 무엇과 맞는지 그 자리에서 말해 준다
+            _rd && h('span',{style:{width:'190px',flex:'none',overflow:'hidden',textOverflow:'ellipsis',
+                whiteSpace:'nowrap',color:_rd.fits?'#166534':'#d97706',fontWeight:700},
+              title:'이제 이 건과 맞습니다\n'+_rd.grp[0].company+' · '+erpKindLabel(_rd.grp[0])
+                   +'\n예상 입금 '+((_rd.cand.expect||_rd.cand.amount)||0).toLocaleString()+'원'
+                   +(_rd.grp.length>1?('\n(이름이 맞는 업체가 '+_rd.grp.length+'곳 — 되돌린 뒤 고르세요)'):'')},
+              '✅ '+_rd.grp[0].company+' · '+erpKindLabel(_rd.grp[0])
+              +(_rd.fits?'':' (금액 확인)')),
             h('button',{onClick:function(){ unholdRow(x.k); },
-              style:{padding:'3px 8px',background:'#fff',color:'#2563eb',border:'1px solid #bfdbfe',
-                borderRadius:'5px',fontSize:'10.5px',fontWeight:700,cursor:'pointer'}},'목록으로'));
+              title:_rd?'목록으로 되돌리면 바로 확정할 수 있습니다':'목록으로 되돌립니다',
+              style:{padding:'3px 8px',flex:'none',
+                background:_rd?'#16a34a':'#fff',color:_rd?'#fff':'#2563eb',
+                border:'1px solid '+(_rd?'#16a34a':'#bfdbfe'),
+                borderRadius:'5px',fontSize:'10.5px',fontWeight:700,cursor:'pointer'}},
+              _rd?'되돌려 확정':'목록으로'));
         }),
         _heldS.n===0 && h('div',{style:{padding:'18px',textAlign:'center',color:'#94a3b8',fontSize:'12px'}},
           '보류함이 비어 있습니다'))),
@@ -43459,6 +43510,66 @@ function FinanceInvoice(){
     return s + vat;
   }, 0);
 
+  /* ─── 입금 대조 ───
+     끊어 놓고 아직 안 들어온 계산서 · 들어왔는데 안 끊은 입금을 갈라 보여준다.
+     부가세 신고 전에 한 번 훑는 자리다(대표 요청). */
+  var _ivmSum = erpInvoiceMatchAll(invoices, dbGet('finance_income', []) || [], todayYMD());
+  function renderMatch(){
+    function card(t, n, amt, bg, fg, bd, tip){
+      return h('div', { title:tip, style:{ flex:1, minWidth:'150px', background:bg, border:'1px solid '+bd,
+          borderRadius:'8px', padding:'9px 12px' } },
+        h('div', { style:{ fontSize:'11px', color:fg, fontWeight:700 } }, t),
+        h('div', { style:{ fontSize:'18px', fontWeight:800, color:fg, marginTop:'2px' } }, n + '건'),
+        h('div', { style:{ fontSize:'11px', color:fg } }, amt.toLocaleString() + '원'));
+    }
+    function rowLine(key, co, date, amt, right, tone){
+      return h('div', { key:key, style:{ display:'flex', alignItems:'center', gap:'8px', padding:'6px 8px',
+          borderBottom:'1px solid #f8fafc', fontSize:'11.5px' } },
+        h('span', { style:{ color:'#94a3b8', width:'82px', flex:'none' } }, date || '-'),
+        h('span', { style:{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+          fontWeight:600, color:'#1e293b' } }, co || '(업체명 없음)'),
+        h('span', { style:{ width:'96px', flex:'none', textAlign:'right', fontWeight:700,
+          fontVariantNumeric:'tabular-nums' } }, (amt||0).toLocaleString()),
+        h('span', { style:{ width:'132px', flex:'none', textAlign:'right', color:tone, fontWeight:700 } }, right));
+    }
+    return h('div', null,
+      h('div', { style:{ display:'flex', gap:'8px', flexWrap:'wrap', marginBottom:'12px' } },
+        card('✅ 입금 확인됨', _ivmSum.paid.length,
+          _ivmSum.paid.reduce(function(s,x){ return s + x.expect; }, 0),
+          '#f0fdf4', '#166534', '#bbf7d0', '발행한 계산서와 맞는 입금이 있습니다'),
+        card('⏳ 발행했는데 미입금', _ivmSum.unpaid.length, _ivmSum.sumUnpaid,
+          '#fffbeb', '#854d0e', '#fde68a', '계산서는 끊었는데 아직 돈이 안 들어왔습니다'),
+        card('❔ 입금은 있는데 계산서 없음', _ivmSum.noInvoice.length, _ivmSum.sumNoInv,
+          '#fef2f2', '#991b1b', '#fecaca',
+          '돈은 들어왔는데 맞는 발행분을 못 찾았습니다 — 발행을 빠뜨렸는지 확인하세요\n(자문료는 업체 주기로 끊으므로 제외합니다)')),
+      h('div', { style:{ fontSize:'11px', color:'#64748b', marginBottom:'10px' } },
+        '업체명이 같고 발행일 이후에 들어온 같은 금액(±1,100원)을 짝으로 봅니다. '
+        + '부가세 별도로 적은 계산서는 ×1.1 한 금액으로 맞춰 봅니다.'),
+      // ⏳ 발행했는데 미입금 — 오래된 것부터
+      h('div', { style:{ marginBottom:'14px' } },
+        h('div', { style:{ fontSize:'12.5px', fontWeight:700, color:'#854d0e', marginBottom:'4px' } },
+          '⏳ 발행했는데 미입금 ' + _ivmSum.unpaid.length + '건'),
+        _ivmSum.unpaid.length === 0
+          ? h('div', { style:{ padding:'14px', textAlign:'center', color:'#94a3b8', fontSize:'12px' } }, '없습니다')
+          : _ivmSum.unpaid.slice().sort(function(a,b){ return b.days - a.days; }).map(function(x,i){
+              return rowLine('u'+i, x.inv.companyName, String(x.inv.issueDate||'').slice(0,10), x.expect,
+                x.days > 0 ? (x.days + '일 지남') : '오늘 발행',
+                x.days >= 30 ? '#dc2626' : '#854d0e');
+            })),
+      // ❔ 입금은 있는데 계산서 없음
+      h('div', null,
+        h('div', { style:{ fontSize:'12.5px', fontWeight:700, color:'#991b1b', marginBottom:'4px' } },
+          '❔ 입금은 있는데 계산서를 못 찾음 ' + _ivmSum.noInvoice.length + '건'),
+        _ivmSum.noInvoice.length === 0
+          ? h('div', { style:{ padding:'14px', textAlign:'center', color:'#94a3b8', fontSize:'12px' } }, '없습니다')
+          : _ivmSum.noInvoice.slice(0, 200).map(function(x,i){
+              return rowLine('n'+i, (x.inc && x.inc.companyName) || '', String((x.inc && x.inc.date)||'').slice(0,10),
+                x.amount, (x.inc && x.inc.kind) || '', '#991b1b');
+            }),
+        _ivmSum.noInvoice.length > 200 && h('div', { style:{ fontSize:'11px', color:'#94a3b8', padding:'6px 8px' } },
+          '… 외 ' + (_ivmSum.noInvoice.length - 200) + '건')));
+  }
+
   // ─── 아카이브 렌더 ───
   function renderArchive(){
     if(!invLoaded){
@@ -43789,6 +43900,7 @@ function FinanceInvoice(){
     h('div', { style:{ display:'flex', gap:'4px', marginBottom:'14px', borderBottom:'2px solid #e2e8f0' } },
       [
         { v:'issue', label:'🧾 발행관리 ('+invoices.length+')' },
+        { v:'match', label:'💰 입금 대조'+(_ivmSum.todo?(' · 미입금 '+_ivmSum.todo):'') },
         { v:'archive', label:'🗄️ 업체별 아카이브'+(invLoaded?' ('+invoiceCompanies.length+')':'') }
       ].map(function(x){
         var on = tab === x.v;
@@ -43800,6 +43912,7 @@ function FinanceInvoice(){
       })
     ),
     tab === 'issue' && renderIssue(),
+    tab === 'match' && renderMatch(),
     tab === 'archive' && renderArchive(),
     detailModal && h(InvoiceDetailModal, { cur:detailModal, onSave:saveItem, onClose:function(){ setDetailModal(null); } })
   );
