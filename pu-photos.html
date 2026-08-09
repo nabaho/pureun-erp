@@ -465,6 +465,11 @@ button{font-family:inherit;cursor:pointer}
 #camFocus.on{opacity:1}
 #camTip{position:absolute;left:0;right:0;bottom:12px;text-align:center;font-size:11.5px;color:#fff;
   opacity:.85;text-shadow:0 1px 3px rgba(0,0,0,.75);pointer-events:none;padding:0 16px}
+/* 앞면 뒤 「뒷면도?」 — 명함 모드에서만 보인다(camAskBack 이 켜고 끈다) */
+#camAsk{position:absolute;left:0;right:0;bottom:44px;display:none;justify-content:center;gap:9px;padding:0 14px}
+#camAsk button{border:1px solid rgba(255,255,255,.5);background:rgba(16,16,16,.72);color:#fff;
+  border-radius:99px;padding:11px 18px;font-size:13px;font-weight:700;font-family:inherit}
+#camAsk button.pri{background:#fff;color:#101828;border-color:#fff}
 #camFrameBtn{margin-left:auto;background:rgba(255,255,255,.14);border:none;color:#cbd5e1;
   border-radius:8px;padding:5px 10px;font-size:11.5px;font-weight:700;font-family:inherit}
 #camFrameBtn.on{background:#fff;color:#101828}
@@ -1003,6 +1008,12 @@ button{font-family:inherit;cursor:pointer}
       <div id="camFocus" style="display:none"></div>
       <div id="camFlash"></div>
       <div id="camTip"></div>
+      <!-- 앞면을 찍은 뒤 「뒷면도?」 — 명함첩에서 열었을 때만 뜬다.
+           명함첩에 있던 촬영 화면의 물음을 그대로 옮겨 온 것이다(대표 선택 '가'). -->
+      <div id="camAsk">
+        <button class="pri" onclick="camAskBack(true)">뒷면도 촬영</button>
+        <button onclick="camAskBack(false)">이 명함은 끝</button>
+      </div>
     </div>
     <div id="camCtl">
       <div class="saverow">
@@ -1492,17 +1503,43 @@ function setCamSavePref(on) {
    문패만 남겨 `?cam=1` 로 넘긴다. 그 표시를 보고 **곧바로 카메라**를 켠다.
    ⚠ 표시는 한 번 쓰고 지운다 — 남겨 두면 카메라를 닫고 새로고침할 때마다
       다시 켜져서 사진첩을 볼 수가 없다(공유 받기의 ?share 와 같은 이유). */
+/* ── 명함 모드 · 돌아갈 곳 (대표 지시 2026-08-09: "카메라 하나로 통일") ──
+   명함첩(pu-cards.html)에도 똑같은 촬영 코드가 한 벌 더 있었다. 그것을 지우고
+   명함첩의 ＋ 도 **이 카메라**를 부르게 했다. 명함첩에서 왔다는 표시가
+   `mode=card&from=cards` 이고, 그때만 앞·뒷면을 물어 한 장으로 묶는다
+   (대표 선택 '가': 지금 쓰던 앞뒤 촬영을 그대로 옮긴다). */
+let camCardMode = false;    // 명함첩에서 온 촬영인가
+let camReturnTo = '';       // 다 찍고 돌아갈 곳 (지금은 명함첩만)
+/* 앞면을 찍으면 'back' 이 되고, 그 다음 한 장은 **앞면과 한 장으로 묶인다**.
+   camPairWith 는 묶어 줄 앞면이 camShots 의 몇 번째인가(-1 = 안 묶음). */
+let camCardStage = 'front';
+let camPairWith = -1;
 function openCamIfAsked() {
-  let want = false;
-  try { want = new URLSearchParams(location.search).get('cam') === '1'; } catch (_) { return; }
+  let want = false, mode = '', from = '';
+  try {
+    const q = new URLSearchParams(location.search);
+    want = q.get('cam') === '1';
+    mode = q.get('mode') || '';
+    from = q.get('from') || '';
+  } catch (_) { return; }
   if (!want) return;
+  camCardMode = mode === 'card';
+  camReturnTo = from === 'cards' ? 'pu-cards.html' : '';
   try {
     const u = new URL(location.href);
-    u.searchParams.delete('cam');
+    ['cam', 'mode', 'from'].forEach(function (k) { u.searchParams.delete(k); });
     history.replaceState(null, '', u.pathname + u.search + u.hash);
   } catch (_) { /* 주소를 못 고쳐도 카메라는 켠다 */ }
   /* 화면이 다 그려진 뒤에 켠다 — 그리는 도중에 켜면 미리보기가 검게 뜨는 기기가 있다 */
   setTimeout(openCam, 0);
+}
+
+/* 명함첩으로 돌아간다. 못 돌아가도 카메라는 이미 닫혀 있으니 조용히 넘어간다. */
+function camGoBack() {
+  if (!camReturnTo) return false;
+  const to = camReturnTo;
+  camReturnTo = '';
+  try { location.href = to + '?sso=1'; return true; } catch (_) { return false; }
 }
 
 async function openCam() {
@@ -1547,7 +1584,9 @@ async function openCam() {
   setCamSavePref(camSavePref());
   setCamAutoPref(camAutoPref());   // 지난번에 켜 두었으면 이번에도 자동으로 찍는다
   setCropPref(cropPref());         // 테두리 자르기도 지난번 그대로
-  applyFrameUI();
+  applyFrameUI();   // 명함 모드면 frameOn() 이 늘 참이라 틀이 켜진 채로 열린다
+  camCardStage = 'front'; camPairWith = -1;
+  setCamAsk(false);
   renderCamStrip();
   $('camOv').style.display = 'flex';
 }
@@ -1618,7 +1657,9 @@ async function toggleTorch() {
 const CAM_FRAME_LS = 'puphotos_cam_frame';
 /* 명함틀도 **기본 켜짐** — 틀 안만 담으면 배경이 크게 줄어 글자가 커진다.
    자르기와 함께 쓰면 ①틀로 크게 줄이고 ②테두리로 정확히 잘라낸다. */
-function frameOn() { return localStorage.getItem(CAM_FRAME_LS) !== '0'; }
+/* 명함 모드(명함첩에서 열었을 때)는 늘 켜 둔다 — 명함을 찍으러 온 것이 분명하고,
+   틀 안만 담아야 글자가 커진다. 기기에 기억된 값은 안 건드린다. */
+function frameOn() { return camCardMode || localStorage.getItem(CAM_FRAME_LS) !== '0'; }
 function applyFrameUI() {
   const on = frameOn();
   $('camFrame').style.display = on ? 'block' : 'none';
@@ -1643,6 +1684,24 @@ function setCamTip() {
 function toggleFrame() {
   localStorage.setItem(CAM_FRAME_LS, frameOn() ? '0' : '1');
   applyFrameUI();
+}
+
+/* ── 앞면·뒷면 (명함 모드) ──
+   명함첩 안에 있던 촬영 화면이 하던 물음을 그대로 옮겼다(대표 선택 '가').
+   묶는 방법만 다르다: 예전에는 두 장을 그 자리에서 합쳐 편집기로 넘겼고,
+   지금은 두 장 다 사진첩에 담되 뒷면에 앞면 고리(cardBack)를 달아 보낸다 —
+   그래야 사진첩에 증빙 사본이 남고 자동 배송도 그대로 탄다. */
+function setCamAsk(on) {
+  const el = $('camAsk');
+  if (el) el.style.display = on ? 'flex' : 'none';
+}
+function camAskBack(yes) {
+  setCamAsk(false);
+  if (!yes) { camCardStage = 'front'; camPairWith = -1; return; }
+  camCardStage = 'back';
+  camPairWith = camShots.length - 1;   // 방금 찍은 앞면
+  const tip = $('camTip');
+  if (tip) tip.textContent = '뒷면을 틀 안에 맞추세요';
 }
 
 /* 카메라를 반드시 끈다 — 안 끄면 불빛(녹화 표시)이 남고 배터리를 먹는다 */
@@ -2027,6 +2086,7 @@ async function camShoot() {
     return;
   }
   camBusy = true;
+  setCamAsk(false);   // 물음을 띄운 채 또 찍으면 어느 장을 묶을지 헷갈린다
   try {
     /* 가능하면 고해상도 스틸(선명), 안 되면 미리보기 프레임 — 푸른카메라와 같은 순서 */
     let src = v, sw = v.videoWidth, sh = v.videoHeight;
@@ -2097,11 +2157,18 @@ async function camShoot() {
       toast('흐리게 찍혔습니다 — 화면을 한 번 눌러 초점을 잡고 다시 찍어 주세요');
     }
     camShots.push({ blob: useBlob, raw: raw, cropped: cropped,
-      url: URL.createObjectURL(useBlob), ts: Date.now(), sel: true });
+      url: URL.createObjectURL(useBlob), ts: Date.now(), sel: true,
+      /* 뒷면이면 앞면이 몇 번째인지 들고 간다 — 올릴 때 한 장으로 묶는 고리다 */
+      pairWith: camPairWith });
+    camPairWith = -1;   // 한 번 쓰고 푼다(다음 장은 또 새 앞면이다)
     /* 찰칵 — 찍혔다는 것이 눈에 보여야 연타할 수 있다 */
     $('camFlash').style.opacity = '.55';
     setTimeout(function () { $('camFlash').style.opacity = '0'; }, 120);
     renderCamStrip();
+    /* 명함 모드에서 앞면을 찍었으면 뒷면을 물어본다(대표 선택 '가').
+       뒷면을 막 찍은 참이면 묻지 않는다 — 한 장에 뒷면은 하나다. */
+    if (camCardMode && camCardStage === 'front') setCamAsk(true);
+    camCardStage = 'front';
   } catch (e) {
     console.warn('[촬영]', e);
     toast('촬영하지 못했습니다 — ' + ((e && e.message) || e));
@@ -2166,8 +2233,20 @@ function camFileName(ts, i) {
 }
 
 async function camUpload() {
-  const picked = camShots.filter(function (s) { return s.sel; });
+  /* 고른 것만 올리되 **원래 자리를 기억해 둔다** — 앞·뒷면 고리(pairWith)가
+     camShots 안 자리로 적혀 있어서, 중간 것을 빼면 자리가 밀려 엉뚱한 장에
+     붙는다. 그래서 자리표(pos)를 만들어 올리는 목록 기준으로 다시 적는다.
+     앞면을 빼고 뒷면만 고르면 고리는 조용히 풀린다(엉뚱한 데 붙는 것보다 낫다). */
+  const pickedIdx = [];
+  camShots.forEach(function (s, i) { if (s.sel) pickedIdx.push(i); });
+  const picked = pickedIdx.map(function (i) { return camShots[i]; });
   if (!picked.length) return;
+  const pos = {};
+  pickedIdx.forEach(function (orig, j) { pos[orig] = j; });
+  const pairs = {};
+  picked.forEach(function (s, j) {
+    if (s.pairWith >= 0 && pos[s.pairWith] !== undefined) pairs[j] = pos[s.pairWith];
+  });
   const btn = $('camRevUp');
   btn.disabled = true;
   btn.textContent = '올리는 중…';
@@ -2201,8 +2280,11 @@ async function camUpload() {
        이제 이 카메라는 **명함 스캐너**다(계획서 1단계). 대표님 화면에 「저장본
        1200×1600」으로 찍힌 것이 이 때문이고, 명함이 화면의 4분의 1이면
        글자가 400px 남짓밖에 안 남아 판독이 흐려진다. */
-    await addFiles(files, true, { fromCam: true });
+    await addFiles(files, true, { fromCam: true, pairs: pairs });
     if (dropped) toast('안 고른 ' + dropped + '장은 버렸습니다');
+    /* 명함첩에서 왔으면 다 올린 뒤 돌려보낸다 — 온 곳으로 돌아가는 것이
+       사람이 기대하는 움직임이다(대표 지시 2026-08-09). */
+    if (camReturnTo) { camDiscard(); camGoBack(); }
   } finally {
     btn.disabled = false;
     btn.textContent = '올리기';
@@ -2398,7 +2480,13 @@ async function addFiles(fileList, isDoc, opts) {
   }
 
   const spec = PuPhotoStore.uploadSpec(isDoc); // 크기 기준은 저장 층이 정한다
-  for (const f of files) {
+  /* 앞·뒷면 묶기(명함 모드) — opts.pairs 는 「뒷면 자리 → 앞면 자리」다.
+     앞면이 먼저 담기므로 자리마다 만든 id 를 적어 두었다가 뒷면 meta 에 단다.
+     앞면이 실패해 id 가 없으면 고리를 안 단다 — 없는 사진을 가리키면 안 된다. */
+  const pairs = (opts && opts.pairs) || {};
+  const idAt = {};
+  for (let fi = 0; fi < files.length; fi++) {
+    const f = files[fi];
     try {
       /* 촬영 시각: EXIF → 파일 날짜 → 지금. 판단은 저장 층의 함수가 한다.
          EXIF를 못 읽는 상황(오래된 브라우저 등)이어도 올리기는 계속돼야 하므로
@@ -2409,23 +2497,28 @@ async function addFiles(fileList, isDoc, opts) {
          카메라 원본은 클라우드에 안 올라간다. */
       const full = await shrink(f, spec.maxEdge, spec.quality);
       const thumb = await shrink(f, spec.thumbEdge, 0.85);
+      const id = PuPhotoStore.newId();
+      idAt[fi] = id;
+      const meta = {
+        takenAt: takenAt,
+        upAt: Date.now(),
+        by: u.uid,
+        byName: PuPhotoStore.myName() || u.email || '',
+        kind: isDoc ? 'doc' : 'photo',
+        w: full.w, h: full.h,
+        size: full.dataUrl.length
+      };
+      const frontId = idAt[pairs[fi]];
+      if (frontId) meta.cardBack = frontId;   // 이 장은 그 명함의 뒷면이다
       await queue.enqueue({
         _fromCam: !!(opts && opts.fromCam),
-        id: PuPhotoStore.newId(),
+        id: id,
         name: f.name || '사진',
         takenAt: takenAt,
         kind: isDoc ? 'doc' : 'photo',
         full: full.dataUrl,
         thumb: thumb.dataUrl,
-        meta: {
-          takenAt: takenAt,
-          upAt: Date.now(),
-          by: u.uid,
-          byName: PuPhotoStore.myName() || u.email || '',
-          kind: isDoc ? 'doc' : 'photo',
-          w: full.w, h: full.h,
-          size: full.dataUrl.length
-        }
+        meta: meta
       });
     } catch (e) {
       console.warn('[사진 준비]', e);
@@ -2761,16 +2854,31 @@ function sendCards(id, year, job) {
   const it = gridItems.find(function (x) { return x.id === id; });
   const read = (it && it.meta.read) || (job && job._read);
   if (!read || !canSend(read)) return Promise.resolve();
+  /* 뒷면은 **혼자 명함첩에 가지 않는다** — 앞면에 얹혀서 간다(아래에서 함께 보낸다).
+     이 줄이 없으면 앞뒤를 찍을 때마다 명함이 두 장씩 생긴다. */
+  if (it && it.meta && it.meta.cardBack) return Promise.resolve();
   const u = firebase.auth().currentUser;
+
+  /* 이 명함의 뒷면이 있으면 같이 보낸다(명함 모드로 앞뒤를 이어 찍은 경우).
+     뒷면을 못 읽어도 앞면만으로 보낸다 — 뒷면 때문에 등록이 막히면 안 된다. */
+  const backIt = gridItems.find(function (x) {
+    return x.meta && x.meta.cardBack === id;
+  });
 
   /* 명함첩은 사진 사본을 갖는다 — 사진첩을 정리해도 명함첩 기록이 온전하게.
      그래서 원판(본문)을 받아 함께 보낸다. */
-  return PuPhotoStore.loadFull(year, id).then(function (full) {
+  return Promise.all([
+    PuPhotoStore.loadFull(year, id),
+    backIt ? PuPhotoStore.loadFull(year, backIt.id).catch(function () { return ''; }) : Promise.resolve('')
+  ]).then(function (got) {
+    const full = got[0], back = got[1];
     return PuDocFile.sendToCards({
       kind: read.kind,
       fields: read.fields,
       full: safeSrc(full) || '',
       thumb: (it && safeSrc(it.thumb)) || '',
+      full2: safeSrc(back) || '',
+      thumb2: (backIt && safeSrc(backIt.thumb)) || '',
       photoId: id,
       takenAt: (it && it.meta.takenAt) || Date.now(),
       byName: PuPhotoStore.myName() || (u && u.email) || ''

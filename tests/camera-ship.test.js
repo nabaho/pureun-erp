@@ -126,8 +126,14 @@ test('카메라가 꺼져 있으면 안 그린다', () => {
 test('★ 올린 뒤 카메라가 꺼지지 않는다', () => {
   const m = html.match(/async function camUpload\(\)[\s\S]*?\n\}/);
   assert.ok(m, 'camUpload 을 찾지 못했습니다.');
-  assert.ok(!/camDiscard\(\);/.test(m[0]),
-    '카메라를 끄면 배송표를 볼 수 없고 다음 장을 이어 찍지 못합니다.');
+  /* ⚠ 2026-08-09 다시 겨눔 — 명함첩에서 온 촬영(camReturnTo)만 예외다. 온 곳으로
+     돌려보내야 하므로 그때는 끈다. 그 밖에는 예전처럼 켠 채로 둔다. 그래서
+     「끄지 않는다」가 아니라 **「돌아갈 곳이 있을 때만 끈다」**로 못 박는다. */
+  m[0].split('\n').forEach(function (line) {
+    if (!/camDiscard\(\)/.test(line)) return;
+    assert.ok(/camReturnTo/.test(line),
+      '카메라를 끄면 배송표를 볼 수 없고 다음 장을 이어 찍지 못합니다.');
+  });
   assert.ok(/camOv'\)\.style\.display = 'flex'/.test(m[0]), '카메라로 돌아와야 합니다.');
   assert.ok(/camShots = \[\]/.test(m[0]), '보낸 사진이 남아 있으면 또 올라갑니다.');
   assert.ok(/revokeObjectURL/.test(m[0]), '미리보기 주소를 안 놓으면 기억이 샙니다.');
