@@ -582,30 +582,60 @@ exports.sendMaterialMail = functions
     try { nodemailer = require("nodemailer"); }
     catch (e) { res.status(500).json({ ok: false, error: "메일 도구를 불러오지 못했습니다: " + String(e.message || e) }); return; }
 
-    try {
-      const tx = nodemailer.createTransport({
-        host: DAUM_HOST, port: DAUM_PORT, secure: true,
-        auth: { user: from, pass: mailPass() },
-      });
-      await tx.sendMail({
-        from: fromLine(from),
-        // 답장은 보낸 직원에게 가게 한다 — 회사 대표주소로만 오면 누구 건인지 모른다
-        replyTo: sender.email || undefined,
-        to: v.to.join(", "),
-        cc: v.cc.length ? v.cc.join(", ") : undefined,
-        subject: v.subject,
-        text: v.body,
-        attachments: v.attachments.map((a) => ({
-          filename: a.filename, content: a.content, encoding: a.encoding,
-        })),
-      });
-    } catch (e) {
-      // 비밀번호가 틀리거나 2단계 인증에 막힌 경우가 대부분이다 — 그대로 알린다
-      console.error("sendMaterialMail", e && e.message);
+    // ★ 접속 아이디는 보내는 주소와 **다르다.**
+    //   다음메일 설정 화면이 「아이디: 370-6 (접속 시 아이디)」라고 알려 준다 —
+    //   @ 앞부분이다. 주소 전체로도 되는 계정이 있어, 앞부분으로 먼저 붙어 보고
+    //   자격 문제로 막히면 주소 전체로 한 번 더 해 본다. 어느 쪽인지 알아내려고
+    //   사람이 시험 삼아 보내 볼 일을 없앤다.
+    const ids = [];
+    const envId = String(process.env.DAUM_MAIL_ID || "").trim();
+    if (envId) ids.push(envId);
+    const local = String(from).split("@")[0].trim();
+    if (local && ids.indexOf(local) < 0) ids.push(local);
+    if (ids.indexOf(from) < 0) ids.push(from);
+
+    const mail = {
+      from: fromLine(from),
+      // 답장은 보낸 직원에게 가게 한다 — 회사 대표주소로만 오면 누구 건인지 모른다
+      replyTo: sender.email || undefined,
+      to: v.to.join(", "),
+      cc: v.cc.length ? v.cc.join(", ") : undefined,
+      subject: v.subject,
+      text: v.body,
+      attachments: v.attachments.map((a) => ({
+        filename: a.filename, content: a.content, encoding: a.encoding,
+      })),
+    };
+
+    let lastErr = null, usedId = "";
+    for (const id of ids) {
+      try {
+        const tx = nodemailer.createTransport({
+          host: DAUM_HOST, port: DAUM_PORT, secure: true,
+          auth: { user: id, pass: mailPass() },
+        });
+        await tx.sendMail(mail);
+        usedId = id;
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        // 자격 문제(EAUTH)일 때만 다른 아이디로 다시 해 본다.
+        // 첨부가 크다거나 받는 주소가 틀린 것은 아이디를 바꿔도 똑같다 —
+        // 그런데도 되풀이하면 같은 메일이 여러 통 나갈 수 있다.
+        if (String((e && e.code) || "") !== "EAUTH") break;
+      }
+    }
+    if (lastErr) {
+      console.error("sendMaterialMail", lastErr && lastErr.message);
+      const auth = String((lastErr && lastErr.code) || "") === "EAUTH";
       res.status(502).json({
         ok: false,
-        error: "메일 서버가 받지 않았습니다: " + String((e && e.message) || e)
-             + "\n(다음메일에서 IMAP/SMTP 사용을 켜고, 2단계 인증을 쓰신다면 앱 비밀번호를 넣어야 합니다)",
+        error: "메일 서버가 받지 않았습니다: " + String((lastErr && lastErr.message) || lastErr)
+             + (auth
+                ? "\n비밀번호가 맞지 않습니다. 다음메일 설정 → IMAP/POP3 → 「비밀번호 확인하기」에서"
+                  + " **앱 비밀번호**를 새로 받아 다시 넣어 주세요. (평소 로그인 비밀번호로는 안 됩니다)"
+                : "\n다음메일에서 IMAP/SMTP 사용이 켜져 있는지 확인해 주세요."),
       });
       return;
     }
@@ -624,6 +654,6 @@ exports.sendMaterialMail = functions
 
     res.json({
       ok: true, sent: v.to.length, files: attachments.length, missing: missing,
-      bytes: v.bytes, from: from,
+      bytes: v.bytes, from: from, id: usedId,
     });
   });
