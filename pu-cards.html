@@ -4459,7 +4459,11 @@ async function setFolderLock(id){
     + `· 잠근 뒤에는 [🔒 개인 폴더 열기]로 비밀번호를 넣어야 보입니다\n\n진행할까요?`)) return;
 
   let rec = null;
-  try{ rec = await privLockRec(); }catch(e){ return toast('개인 창고를 읽지 못했습니다'); }
+  try{ rec = await privLockRec(); }
+  catch(e){
+    if(isDenied(e)) return tellVaultRuleMissing();
+    return toast('개인 창고를 읽지 못했습니다 — ' + ((e&&e.message)||''));
+  }
   if(!rec){ const ok = await setPrivatePassword(); if(!ok) return; }
 
   toast(`옮기는 중… ${ids.length.toLocaleString()}장`, 30000);
@@ -5891,6 +5895,39 @@ async function setPrivatePassword(){
   await Store.db.ref(privRoot()+'/lock').set({ salt, iter:PW_ITER, hash });
   return true;
 }
+/* 개인 창고 자리가 서버에서 아직 안 열렸을 때 — 무엇을 해야 하는지까지 알린다.
+   permission_denied 원문을 그대로 띄우면 영어 한 줄이라 아무도 다음 걸음을 모른다.
+   규칙은 코드 배포로 적용되지 않는다 — 콘솔에 직접 붙여넣어야 한다. */
+function isDenied(e){
+  const m = String((e&&(e.code||e.message))||'');
+  return /permission[_ ]denied|PERMISSION_DENIED/i.test(m);
+}
+function tellVaultRuleMissing(){
+  /* 줄바꿈을 배열로 잇는다 — 붙여넣을 JSON 안에 따옴표가 많아 한 줄 문자열로 쓰면
+     보이지 않는 곳에서 어긋난다. */
+  const rule = [
+    '"pucards_private": {',
+    '  "$uid": {',
+    '    ".read": "auth != null && auth.uid === $uid",',
+    '    ".write": "auth != null && auth.uid === $uid"',
+    '  }',
+    '}'
+  ].join('\n');
+  alert([
+    '개인 폴더 자리가 서버에서 아직 열리지 않았습니다.',
+    '',
+    '규칙은 코드와 따로 갑니다 — 아래를 Firebase 콘솔에 직접 넣어야 합니다.',
+    '',
+    '① Firebase 콘솔 → Realtime Database → [규칙] 탭',
+    '② "pucards" 덩어리 바로 아래에 넣기 (앞 줄 끝에 쉼표)',
+    '③ [게시]',
+    '',
+    rule,
+    '',
+    '넣은 뒤 이 화면을 새로고침하고 다시 눌러 주세요.',
+    '(넣기 전까지 개인 폴더의 명함은 안전합니다 — 아무도 못 읽습니다)'
+  ].join('\n'));
+}
 /* 개인 폴더 열기 — 맞은 뒤에야 구독한다.
    ★ 비밀번호를 맞히기 전에는 개인 자료를 브라우저로 가져오지도 않는다. */
 async function openPrivateVault(){
@@ -5899,7 +5936,10 @@ async function openPrivateVault(){
   if(state.privOpen) return closePrivateVault();
   let rec;
   try{ rec = await privLockRec(); }
-  catch(e){ return toast('개인 창고를 읽지 못했습니다 — ' + ((e&&e.message)||'')); }
+  catch(e){
+    if(isDenied(e)) return tellVaultRuleMissing();
+    return toast('개인 창고를 읽지 못했습니다 — ' + ((e&&e.message)||''));
+  }
   if(!rec) return toast('아직 잠근 폴더가 없습니다. 폴더 ⋮ → 🔒 잠금으로 만드세요',5000);
   const pw = prompt('개인 폴더 비밀번호를 입력하세요.');
   if(pw===null) return;
