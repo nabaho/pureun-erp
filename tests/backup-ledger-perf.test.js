@@ -241,10 +241,16 @@ function afterPend(){
   t('★ 자동 정리(prune)가 나눠 지우기를 쓴다', /pp = pp\.then\(function\(\)\{ return erpBackupDeleteSnap\(dd\); \}\);/.test(src), true);
   t('★ 수동 정리도 나눠 지우기를 쓴다', /p = p\.then\(function\(\)\{ return erpBackupDeleteSnap\(dd\); \}\)/.test(src), true);
   t('★ 백업 실패가 소리를 낸다', /console\.warn\('\[ERP\] 서버 백업 실패:'/.test(src), true);
-  t('★ 드롭다운이 후보 자르기를 쓴다', /erpPendOptions\(pending, pendUsedBy, row\._k, row\.amount, mId, 30\)/.test(src), true);
+  /* (2026-08-09) 행마다 있던 <select> 자체를 없앴다 — 30건으로 자르는 것보다 확실한 답이다.
+     고를 것은 「찾기 창」에서 고르고, 표에는 한 줄만 남는다.
+     자르기 함수(erpPendOptions)는 그 창에서 계속 쓴다 — 다른 줄이 고른 건을 빼는 장치가 그 안에 있다. */
+  t('★ 행마다 미입금 <option> 을 만들지 않는다',
+    /h\('option',\{value:''\},'-- 업체\/항목 선택 --'\)/.test(src), false);
   t('★ 행마다 inMatch 전체를 훑던 filter 가 사라졌다',
     /pending\.filter\(function\(p\)\{\s*\n\s*var used=Object\.keys\(inMatch\)\.some/.test(src), false);
-  t('잘린 수를 드롭다운 안에서 알려 준다', /… 외 '\+po\.more\+'건/.test(src), true);
+  t('찾기 창이 후보 자르기를 쓴다',
+    /erpPendOptions\(pending, pendUsedBy, sugPopK, _row\.amount, _sel, 200\)/.test(src), true);
+  t('다른 줄이 고른 건은 찾기 창에서도 빠진다', /if\(u && u !== rowKey\) continue;/.test(src), true);
   t('고른 후보 지도는 렌더마다 한 번만 만든다', /var pendUsedBy = \{\};/.test(src), true);
 
   console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');

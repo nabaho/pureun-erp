@@ -54,12 +54,17 @@ test('maxHeight 로 둔다 (목록이 짧으면 빈 상자가 크게 남는다)'
 /* ── ② 직접 찾아 고르기 ── */
 test('후보가 아예 없어도 길이 있다', () => {
   // 종전에는 return null 이라 화면에 아무것도 안 나왔다
-  assert.match(FL, /🔍 직접 찾아 고르기/);
+  // (2026-08-09) 빨간 줄에 「찾기·등록·보류」 세 길을 나란히 둔다
+  assert.match(FL, /⤢ 크게 보기 · 직접 찾기/);
+  assert.match(FL, /openFindRow\(row\)/);
   assert.ok(FL.indexOf('if(!sugs.length) return null;') < 0, '아무것도 안 보여주면 손을 놓게 된다');
 });
 
 test('창에서 미입금 목록 «전체» 를 뒤진다 (추천 안에서만 찾지 않는다)', () => {
-  assert.match(POP, /var _rows = _pq\s*\n?\s*\? pending\.filter\(function\(p\)\{/);
+  /* (2026-08-09) 「다른 줄이 이미 고른 건은 뺀다」 를 여기서도 걸었다 —
+     두 줄이 같은 미입금을 가리키면 한쪽 돈이 붕 뜬다. 그 밖에는 종전대로 전체를 뒤진다. */
+  assert.match(POP, /erpPendOptions\(pending, pendUsedBy, sugPopK, _row\.amount, _sel, 200\)/);
+  assert.match(POP, /var _rows = _pq\s*\n?\s*\? _po\.list\.filter\(function\(p\)\{/);
   assert.match(POP, /hay\.indexOf\(_pq\)>=0;/);
 });
 
@@ -87,7 +92,12 @@ test('후보가 죄다 같은 금액이면 그렇다고 말해 준다', () => {
 });
 
 test('표에서도 미리 알려 준다 (열어보고 나서 알면 늦다)', () => {
-  assert.match(FL, /\? ' · 모두 같은 금액' : ''/);
+  /* (2026-08-09) 「모두 같은 금액」은 이제 표에 뜰 일이 없다 —
+     금액만 같고 이름 근거가 없는 후보는 목록에 아예 오르지 않기 때문이다(erpNameEvidence).
+     대신 표는 «업체가 여럿이라 골라야 한다» 는 것을 줄에서 먼저 알려 준다. */
+  assert.match(FL, /'외 '\+\(_grp\.length-1\)\+'곳 — 골라야 합니다'/);
+  // 판정은 화면 밖 erpRowState 에 있다 (한 곳에서만 재려고 밖으로 뺐다)
+  assert.match(app, /label:'업체가 여럿 — 골라야 합니다'/);
 });
 
 test('추천으로 되돌아올 수 있다', () => {

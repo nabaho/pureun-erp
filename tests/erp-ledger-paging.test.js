@@ -59,7 +59,13 @@ test('80행 이하면 더 보기 줄 자체가 없다', () => {
   assert.match(FL, /expList\.length>ldShow && h\('tr'/);
 });
 
-test('더 보기 줄이 표의 여섯 칸을 다 덮는다 (밀리면 줄이 어긋난다)', () => {
-  const rows = FL.match(/colSpan:6,style:\{padding:'8px',textAlign:'center'/g) || [];
+test('더 보기 줄이 표의 칸을 다 덮는다 (밀리면 줄이 어긋난다)', () => {
+  /* (2026-08-09) 입금 표는 다섯 칸(체크·신호등·입금·짝·처리), 출금 표는 그대로 여섯 칸이다.
+     칸 수를 못 박기보다 «각 표의 머리 칸 수와 더보기 줄의 colSpan 이 같은가» 를 본다. */
+  const rows = FL.match(/colSpan:(\d+),style:\{padding:'8px',textAlign:'center'/g) || [];
   assert.equal(rows.length, 2, '입금·출금 각각 하나');
+  const spans = rows.map(r => parseInt(/colSpan:(\d+)/.exec(r)[1], 10));
+  spans.forEach(n => assert.ok(n >= 5 && n <= 6, '표 칸 수 범위를 벗어났다: ' + n));
+  assert.ok(spans.indexOf(5) >= 0, '입금 표는 다섯 칸이 되었다');
+  assert.ok(spans.indexOf(6) >= 0, '출금 표는 여섯 칸 그대로다');
 });

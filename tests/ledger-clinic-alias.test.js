@@ -105,14 +105,17 @@ ok('맞는 후보가 없을 때만 본다', /if\(!_sg\.length\) out\.ctHint\[row
 ok('화면에 안내가 뜬다', /📄 아직 이관 안 된 계약이 있습니다/.test(src));
 ok('계약관리로 바로 갈 수 있다', /window\.navigateTo\('biz\/contract'\)/.test(src));
 
-console.log('\n[후보를 한 줄로 — 세로 줄맞춤]');
-ok('한 줄 가로 배치', /border:'1px solid '\+\(on\?'#1e40af':'#eef2f7'\)[\s\S]{0,200}?whiteSpace:'nowrap'/.test(src));
-ok('고른 것이 라디오로 보인다', /h\('input',\{type:'radio',checked:on,readOnly:true/.test(src));
-['36px','76px','106px','44px','74px','70px','30px'].forEach(function(w){
-  ok('칸 너비 ' + w + ' 를 못 박아 줄맞춤한다', new RegExp("width:'" + w + "'").test(src));
-});
-ok('업체명만 늘어난다', /flex:'1 1 80px'/.test(src));
-ok('자세한 것은 도움말로 뺐다', /title:s\.cand\.companyName\+' '\+s\.cand\.label/.test(src));
+/* (2026-08-09) 후보를 «줄마다 목록으로» 늘어놓던 것을 그만뒀다.
+   줄맞춤을 아무리 해도 한 입금이 화면 반쪽을 먹었고, 열두 건이 떠도 고를 근거가 없었다.
+   이제 입금 한 건이 한 줄이고, 고를 것이 있을 때만 그 줄을 펼친다.
+   칸 너비를 못 박는 검사는 두지 않는다 — 모양이 조금만 바뀌어도 배포가 막힌다. */
+console.log('\n[입금 한 건이 한 줄]');
+ok('업체·종류를 한 칸에 적는다', /_grp\[0\]\.kinds\.filter\(Boolean\)\.join\('·'\)/.test(src));
+ok('밀린 달 수를 줄 안에서 알려 준다', /'달 밀림 — '/.test(src));
+ok('넘치거나 모자란 금액을 줄에서 보여준다', /\(_st\.diff>0\?'\+':''\)\+_st\.diff\.toLocaleString\(\)/.test(src));
+ok('판단이 필요한 줄만 펼친다', /if\(_st\.state==='check'\)\{ setOpenRow\(_open\?'':row\._k\); return; \}/.test(src));
+ok('펼친 줄은 하나뿐이다', /setOpenRow\(_open\?'':row\._k\)/.test(src));
+ok('고를 것이 여럿이면 라디오로 고른다', /h\('input',\{type:'radio',name:'g'\+row\._k/.test(src));
 
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===\n');
 process.exit(fail ? 1 : 0);

@@ -200,12 +200,15 @@ test('조각을 이어 돌린 결과가 한 번에 돌린 것과 똑같다', () 
 });
 
 test('inMatch 를 쓰는 계산은 캐시 밖에 남아 매번 다시 본다', () => {
+  /* (2026-08-09) 자동정리 3중 관문은 걷어냈다 — 확정이 단추 하나로 합쳐지면서 쓰는 데가
+     없어졌는데도 행마다 관문을 다시 재느라 렌더마다 헛일을 했다.
+     여기 남아야 하는 것은 «사람이 고른 것(inMatch)에 따라 답이 달라지는» 싼 계산뿐이다. */
   const fl = app.slice(app.indexOf('function FinanceLedger(){'));
-  const cheap = fl.slice(fl.indexOf('if(_sug) incAll.forEach'));
-  assert.ok(cheap.indexOf('inMatch[row._k]') > 0, '자동정리 관문이 남아 있어야 한다');
-  assert.ok(cheap.indexOf('autoTidyKeys.push') > 0);
+  const cheap = fl.slice(fl.indexOf('if(_sug) incAll.forEach'), fl.indexOf('function bestSug('));
+  assert.ok(cheap.indexOf('inMatch[row._k]') > 0, '고른 것에 따라 달라지는 계산은 여기 남는다');
   assert.ok(cheap.indexOf('invNone[row._k]=1') > 0);
   assert.ok(cheap.indexOf('erpMatchTxnToPending') < 0, '비싼 것은 여기 있으면 안 된다');
+  assert.ok(cheap.indexOf('autoTidyKeys') < 0, '걷어낸 관문이 되살아나면 안 된다');
 });
 
 test('오래 걸리면 콘솔에 남긴다 (다시 계산이 잦은지 눈으로 본다)', () => {

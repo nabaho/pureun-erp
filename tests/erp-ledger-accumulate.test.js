@@ -182,8 +182,16 @@ test('자동 짝짓기는 이번에 새로 들어온 행에만 한다', () => {
 });
 
 test('무시한 중복 건수를 사람에게 말해 준다', () => {
-  assert.match(FL, /🔁 이미 올라와 있던 '\+_mg\.dup\+'건은 무시했습니다/);
-  assert.match(FL, /🗄 보관 한도\('\+BANK_DRAFT_MAX\+'행\)를 넘어 오래된 '\+_mg\.cut\+'건을 버렸습니다/);
+  /* (2026-08-09) 사라지는 토스트 넷을 줄줄이 띄우면 담당자는 마지막 하나만 본다.
+     같은 엑셀을 또 올렸을 때 조용히 걸러졌다는 것을 모르는 것이 진짜 문제였다 —
+     결과를 파일 줄 아래 한 자리에 남기고, 그 셈은 erpUploadSummary 가 한다. */
+  assert.match(FL, /erpUploadSummary\(_mg, _added, dupN\)/);
+  assert.match(app, /이미 있어서 건너뜀 ' \+ skipped \+ '줄/);
+  assert.match(app, /보관 한도를 넘어 오래된 ' \+ mg\.cut \+ '줄을 버렸습니다/);
+  assert.match(app, /날짜를 읽지 못한 ' \+ mg\.skip \+ '줄은 넣지 못했습니다/);
+  // 전부 겹치면 «같은 파일» 이라고 딱 잘라 말해 준다
+  assert.match(app, /이 파일은 전에 올린 것과 같습니다/);
+  assert.match(FL, /upSum\.lines\.map/, '결과가 화면에 남아 있어야 한다');
 });
 
 test('src 를 저장한다 (없으면 통장·카드를 가를 수 없다)', () => {

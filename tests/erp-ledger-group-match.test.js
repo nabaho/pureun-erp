@@ -21,7 +21,8 @@ const CONFIRM = MODAL.slice(MODAL.indexOf('var _pool=rowsIn.map('),
 
 /* ── 창을 여는 길 ── */
 test('통장 행을 두 개 이상 골라야 단추가 나온다', () => {
-  assert.match(FL, /⊞ 묶어서 처리 '\+_gk\.length\+'행/);
+  // (2026-08-09) 단추 글자를 「묶어 한 항목에 확정」으로 바꿨다 (무엇이 되는지가 글자에 있어야 한다)
+  assert.match(FL, /⊞ 묶어 한 항목에 확정 '\+_gk\.length\+'행/);
   assert.match(FL, /if\(_gk\.length<2\) return null;/, '한 행이면 종전 ⊞ 나눠담기가 맞다');
 });
 
@@ -30,8 +31,10 @@ test('짝이 겹친 행(_dup)은 묶지 않는다', () => {
 });
 
 test('이미 있는 체크박스를 그대로 쓴다 (박스를 새로 만들지 않았다)', () => {
-  const btn = FL.slice(FL.indexOf('var _gk=Object.keys(incChk)'), FL.indexOf('_advAuto>0 && h(\'button\''));
-  assert.ok(btn.indexOf('useState') < 0, '고르는 상태를 새로 두면 자동확정 체크와 어긋난다');
+  const _from = FL.indexOf('var _gk=Object.keys(incChk)');
+  const btn = FL.slice(_from, FL.indexOf('h(\'button\',{onClick:function(){setConfHistOpen', _from));
+  assert.ok(btn.length > 0, '묶기 단추를 못 찾았다');
+  assert.ok(btn.indexOf('useState') < 0, '고르는 상태를 새로 두면 줄 체크와 어긋난다');
 });
 
 test('단추가 합계를 미리 보여준다', () => {
@@ -121,7 +124,9 @@ test('창을 닫으면 묶음도 푼다', () => {
 
 /* ── 지켜야 할 것 ── */
 test('종전 나눠담기 길이 그대로 남아 있다', () => {
-  assert.match(FL, /spOpen===row\._k\?'⊞ 나눠담기 열림':'⊞ 나눠담기'/);
+  // (2026-08-09) 나눠담기는 이제 줄을 펼쳤을 때 손잡이 줄에 있다
+  assert.match(FL, /style:_expBtn\},'⊞ 나눠담기'\)/);
+  assert.match(FL, /setSpRow\(row\); setSpOpen\(row\._k\);/);
   assert.match(MODAL, /'↔️ 나눠담기 · '\+amountIn\.toLocaleString\(\)\+'원 — 좌우 대조'/);
 });
 

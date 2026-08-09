@@ -39,15 +39,20 @@ ok('월 조각을 조각 배열로 돌려준다 (같은 줄에 붙이려고)',
 ok('월 조각과 탭이 같은 줄 안에 있다',
    /한 줄에 모두 — 월 넘기기 · 처리현황 · 입금\/출금 탭 · 일괄 단추[\s\S]{0,600}?ldMonths\.length>0 && \(function\(\)\{/.test(src));
 ok('탭이 월 조각 바로 뒤에 붙는다',
-   /\}\)\(\),\s*incCnt>0 && ledgerTabBtn\('inc','💰 입금'/.test(src));
+   /\}\)\(\),\s*\/\/[^\n]*\n\s*incCnt>0 && ledgerTabBtn\('inc','💰 입금'/.test(src));
+// 「남은 것」은 손이 필요한 줄 — 확정 가능한 줄은 단추 하나로 끝나므로 남은 것에 안 센다
+ok('탭 뱃지가 손 갈 줄만 센다',
+   /ledgerTabBtn\('inc','💰 입금', incCnt, \(stCnt\.check\|\|0\)\+\(stCnt\.none\|\|0\)\)/.test(src));
 ok('따로 있던 요약 줄은 없앴다', !/\/\/ 요약\s*\n\s*h\('div',\{style:\{display:'flex',gap:'8px',marginBottom:'12px'/.test(src));
 
 console.log('\n[한 줄에 들어가게 크기를 줄였다]');
 ok('탭 단추가 작아졌다', /padding:'4px 11px', borderRadius:'14px'/.test(src));
 ok('자동 매칭 단추가 작아졌다', /padding:'4px 11px',background:'#1d4ed8'[\s\S]{0,140}?'🤖 자동 매칭'/.test(src));
-ok('전체확정 단추가 작아졌다', /padding:'4px 11px',background:'#16a34a'[\s\S]{0,160}?'✅ 입금 '\+inMatchedCnt\+'건 확정'/.test(src));
+// (2026-08-09) 확정 단추 넷을 하나로 합쳤다 — 글자가 「확정 가능 N건 모두 확정」으로 바뀌었다
+ok('확정 단추가 작아졌다',
+   /padding:'4px 11px',background:'#16a34a'[\s\S]{0,200}?'✅ 확정 가능 '\+readyRows\.length\+'건 모두 확정'/.test(src));
 ok('단추들이 줄어들지 않게 못 박았다',
-   (src.match(/fontWeight:700,cursor:'pointer',whiteSpace:'nowrap',flexShrink:0\}/g)||[]).length >= 5);
+   (src.match(/fontWeight:700,cursor:'pointer',whiteSpace:'nowrap',flexShrink:0\}/g)||[]).length >= 3);
 
 console.log('\n[처리현황 셈이 맞나]');
 {

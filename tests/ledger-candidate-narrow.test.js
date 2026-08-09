@@ -97,19 +97,24 @@ console.log('\n[검색·필터가 제대로 거르나]');
   eq('없으면 빈 목록', filt(other,'','없는이름').length, 0);
 }
 
-console.log('\n[코드에 제대로 붙었는지]');
-ok('이름 점수 60 을 기준으로 가른다', /\(\(s\.nameScore\|\|0\) >= 60\)/.test(src));
-ok('가른 결과를 두 무리로 담는다', /if\(_ok\) hit\.push\(s\); else other\.push\(s\);/.test(src));
-ok('이름 맞는 것을 머리말과 함께 먼저 보여준다', /🔎 적요 「'\+\(row\.memo\|\|'-'\)\+'」 와 이름이 맞는 것 '\+hit\.length/.test(src));
-ok('이름이 다른 것은 접어둔다', /'이름이 다른 것 ':'후보 '\)\+other\.length\+'건'/.test(src));
-ok('접힌 무리에 왜 접었는지 적는다', /hit\.length\?' — 금액만 맞음':''/.test(src));
-ok('이름으로 못 찾으면 기본으로 펼친다', /\(hit\.length===0\)/.test(src));
-ok('후보가 넉넉할 때만 칩·검색을 낸다', /other\.length>=4 && h\('div'/.test(src));
-ok('종류 칩이 있다', /candK\);\s*if\(on\) delete n\[row\._k\]; else n\[row\._k\]=k; setCandK\(n\)/.test(src));
-ok('검색 상자가 있다', /placeholder:'업체·번호로 찾기'/.test(src));
-ok('칸 높이를 묶어 표가 안 흔들린다', /maxHeight:'150px',overflowY:'auto'/.test(src));
-ok('후보에 관리번호도 보여준다', /_no=\(s\.cand\.item&&\(s\.cand\.item\.caseNo\|\|s\.cand\.item\.no\)\)\|\|''/.test(src));
-ok('맞는 후보가 없으면 알려준다', /'맞는 후보가 없습니다'/.test(src));
+/* (2026-08-09) 「이름 맞는 것 먼저 · 나머지는 접어둠」 을 «아예 안 보여줌» 으로 바꿨다.
+   접어 둬도 펼치면 여전히 열두 건이 쏟아졌고, 그 열둘은 이름 근거가 하나도 없는 것들이라
+   사람이 고를 근거가 없었다(대표 지적: "유사한 금액을 맞추려고만 해서 맞지도 않다").
+   이제 게이트(erpNameEvidence)가 목록에서 빼고, 「🔍 직접 찾기」에서만 볼 수 있다.
+   위의 «점수 60 으로 가른다» 는 셈 자체는 게이트 안에 그대로 살아 있다. */
+console.log('\n[코드에 제대로 붙었는지 — 이름 근거 게이트]');
+ok('이름 점수 60 이 여전히 기준이다', /if\(nm >= 60\) return \{ ok:true, why:'이름' \}/.test(src));
+ok('세금계산서·입금이력도 근거로 인정한다',
+   /if\(iv >= 85\) return \{ ok:true, why:'세금계산서' \}/.test(src)
+   && /if\(fp >= 90\) return \{ ok:true, why:'입금이력' \}/.test(src));
+ok('근거 없는 후보는 목록에서 뺀다', /if\(r\.score > 0 && \(ev\.ok \|\| includeWeak\)\)/.test(src));
+ok('뺀 까닭을 말해 준다', /이름 근거 없음 — 금액만 비슷합니다/.test(src));
+ok('직접 찾기는 뺀 것도 본다 (우회 인자)', /erpMatchTxnToPending\(txn, pendingArr, limit, includeWeak\)/.test(src));
+ok('약한 후보에는 표시가 붙는다', /weak:!ev\.ok/.test(src));
+ok('화면에 「직접 찾기」 길이 있다', /function openFindRow\(row\)/.test(src));
+ok('후보가 없는 줄에서 바로 찾을 수 있다', /openFindRow\(row\); \}/.test(src));
+ok('같은 업체의 여러 달은 한 줄로 묶는다', /function erpGroupPendByCompany\(sugList\)/.test(src));
+ok('맞는 후보가 없으면 알려준다', /'후보 없음'/.test(src));
 
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===\n');
 process.exit(fail ? 1 : 0);
