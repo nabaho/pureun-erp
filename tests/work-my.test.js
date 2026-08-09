@@ -148,17 +148,23 @@ ok('띠에는 줄인 이름이 들어간다', (function () {
 ok('툴팁에는 본디 이름이 남아 무엇을 접었는지 알 수 있다',
   colTH('my', 'last', 'x').indexOf('title="최근 기록 — 눌러서 폅니다') > 0);
 ok('줄일 것이 없는 열은 그대로', colTH('my', 'st', 'x').indexOf('상태') > 0);
-ok('팀의 긴 이름도 줄인다 (이 주 실적 → 실적)', (function () {
+/* 이름을 글자 그대로 못 박지 않는다 — 열 이름은 바뀌기 마련이고,
+   그때마다 검사가 깨지면 모든 앱의 배포가 함께 막힌다. COLSET에서 끌어다 쓴다. */
+ok('팀 띠도 줄인 이름을 쓰고 툴팁에는 본디 이름을 남긴다', (function () {
+  const c = colCols('team').filter(x => x[0] === 'log')[0];
   colToggle('team', 'log');                 // 접어야 띠가 된다
   const h = colTH('team', 'log', 'x');
   colToggle('team', 'log');
-  return h.indexOf('<span class="cbl">실적</span>') > 0 && h.indexOf('title="이 주 실적') > 0;
+  return !!c && h.indexOf('<span class="cbl">' + (c[2] || c[1]) + '</span>') > 0
+    && h.indexOf('title="' + c[1]) > 0;
 })());
 ok('목록에는 본디 이름 그대로 (줄인 이름은 띠에만)', (function () {
+  const c = colCols('team').filter(x => x[2] && x[2] !== x[1])[0];
   S.colPop = 'team';
   const h = colPopHTML('team');
   S.colPop = '';
-  return h.indexOf('<span>이 주 실적</span>') > 0 && h.indexOf('<span>실적</span>') < 0;
+  return !!c && h.indexOf('<span>' + c[1] + '</span>') > 0
+    && h.indexOf('<span>' + c[2] + '</span>') < 0;
 })());
 ok('접힌 칸은 내용을 그리지 않는다 (그리면 폭이 안 준다)',
   colTD('my','last', '아주아주 긴 최근 기록 내용').indexOf('아주') < 0);
@@ -224,20 +230,20 @@ ok('표 밖으로 띄운다 (표에 가로 스크롤이 있어 안에 두면 잘
 ok('다시 그린 뒤 자리를 잡아 준다', grab('renderMy').indexOf('if(S.colPop) colPopPos();') > 0);
 
 /* ── 팀 전체도 같은 접기를 쓴다 ──
-   열 구성이 서로 다르므로(팀에는 「이 주 실적」이 있고 「이번 주」 격자가 없다)
+   열 구성이 서로 다르므로(팀에는 「기록」이 있고 「이번 주」 격자가 없다)
    화면별로 나눠 담는다. 설정도 따로 기억한다 — 내 업무에서 접은 것이
    팀 전체까지 접어 버리면 두 화면을 같이 쓸 수 없다. */
-ok('팀 전체에는 「이 주 실적」이 더 있다',
-  COLSET.team.map(c => c[0]).join() === 'cat,pt,st,log,last,due');
+ok('팀 전체에는 기록 열이 더 있다',
+  colHas('team', 'log') === true && colHas('my', 'log') === false);
 ok('기업·담당·종료는 두 화면 모두 접지 않는다',
   colHas('team', 'co') === false && colHas('team', 'mgr') === false
   && colHas('my', 'co') === false);
 STORE = {}; S.cols = undefined; S.grpOn = false;
 ok('두 화면이 서로 다른 곳에 기억한다',
-  COLS_KEY.my === 'work_my_cols' && COLS_KEY.team === 'work_team_cols');
+  COLS_KEY.my === 'work_my_cols' && !!COLS_KEY.team && COLS_KEY.team !== COLS_KEY.my);
 colToggle('team', 'log');
 ok('팀에서 접은 것은 팀에만 저장된다',
-  STORE['work_team_cols'].indexOf('log') >= 0 && !STORE['work_my_cols']);
+  STORE[COLS_KEY.team].indexOf('log') >= 0 && !STORE[COLS_KEY.my]);
 ok('팀에서 접어도 내 업무는 그대로',
   colHidden('team', 'log') === true && colHidden('my', 'st') === false);
 ok('내 업무에 없는 열을 팀에서 접어도 내 업무는 모른다',
@@ -247,13 +253,14 @@ ok('구분 묶음은 내 업무만의 것이라 팀 구분은 안 잡는다',
   colForced('my', 'cat') === true && colForced('team', 'cat') === false);
 S.grpOn = false;
 ok('팀 띠도 눌러서 편다', (function () {
+  const c = colCols('team').filter(x => x[0] === 'log')[0];
   const h = colTH('team', 'log', '');
-  return h.indexOf("colToggle('team','log')") > 0 && h.indexOf('이 주 실적') > 0;
+  return h.indexOf("colToggle('team','log')") > 0 && h.indexOf(c[1]) > 0;
 })());
 ok('팀 칩은 팀 목록을 연다', colBtn('team').indexOf("colPop('team')") > 0);
 S.colPop = 'team';
-ok('팀 목록에는 여섯 열이 나온다',
-  (colPopHTML('team').match(/type="checkbox"/g) || []).length === 6);
+ok('팀 목록에는 접을 수 있는 열이 빠짐없이 나온다',
+  (colPopHTML('team').match(/type="checkbox"/g) || []).length === colCols('team').length);
 ok('한 화면 목록만 열린다 (둘이 겹쳐 뜨지 않게)',
   colBtn('my').indexOf('id="colpop"') < 0 && colBtn('team').indexOf('id="colpop"') > 0);
 S.colPop = ''; STORE = {}; S.cols = undefined;
@@ -263,12 +270,11 @@ const RT = grab('renderTeam');
 ok('팀 머리행이 접기를 거친다',
   RT.indexOf("colTH('team',k,fBtn('team',k,vals)+tSort(k),w)") > 0
   && RT.indexOf("if(colHidden('team',k)) return colTH('team',k,'');") > 0);
-ok('팀 본문 여섯 칸이 접기를 거친다',
-  ["colTD('team','cat'", "colTD('team','pt'", "colTD('team','st'",
-   "colTD('team','log'", "colTD('team','last'", "colTD('team','due'"].every(s => RT.indexOf(s) > 0));
+ok('접을 수 있는 팀 본문 칸은 모두 접기를 거친다',
+  colCols('team').every(c => RT.indexOf("colTD('team','" + c[0] + "'") > 0));
 ok('팀 칩이 머리줄에 붙는다', RT.indexOf("colBtn('team')+viewChips()") > 0);
 ok('팀도 업무명을 접으면 진행률이 기업 칸으로 내려온다',
-  RT.indexOf("colHidden('team','pt')?'<div class=\"sub\">'+stepChip(it._id)") > 0);
+  RT.indexOf("colHidden('team','pt')?' '+stepChip(it._id)") > 0);
 ok('팀도 다시 그린 뒤 목록 자리를 잡아 준다',
   RT.indexOf('if(S.colPop) colPopPos();') > 0);
 /* 팀 머리칸 하나에 접기 손잡이·깔때기·정렬이 함께 있다.
@@ -277,16 +283,16 @@ ok('접기 손잡이가 정렬로 번지지 않는다',
   colTH('team', 'log', 'x').indexOf('event.stopPropagation();colToggle') > 0);
 ok('정렬은 이름 글자에만 걸린다 (빈 자리를 눌러 엉뚱하게 정렬되지 않게)',
   RT.indexOf('<span onclick="teamSort(\\\'') > 0);
-ok('팀 표도 9칸 그대로 (접혀도 띠가 한 칸을 차지한다)',
-  (RT.match(/colspan="9"/g) || []).length >= 2);
-ok('팀 머리행이 9칸', [
-  '\'<th class="rowno">\'', "tf('cat'", "ts('co'", "tf('pt'", "tf('st'",
-  "ts('log'", "ts('last'", "tf('due'", '종료</th>'
-].every(s => RT.indexOf(s) > 0));
-ok('팀 본문도 9칸', [
-  'tdNo(i+1)', "colTD('team','cat'", 'class="itc"', "colTD('team','pt'", "colTD('team','st'",
-  "colTD('team','log'", "colTD('team','last'", "colTD('team','due'", 'endbtn'
-].every(s => RT.indexOf(s) > 0));
+/* 접든 펴든 머리행·본문·소제목 colspan 이 같은 칸 수여야 한다(접힌 열도 띠로 한 칸을
+   차지한다). 칸 수를 숫자로 못 박으면 열 하나 늘고 줄 때마다 검사가 깨져 모든 앱의
+   배포가 막힌다 — renderTeam 이 실제로 그리는 칸을 세어 서로 맞는지만 본다. */
+const teamHead = 2 + (RT.match(/\+t[fs]\('/g) || []).length;        // # + 열들 + 종료
+const teamBody = 3 + (RT.match(/colTD\('team','/g) || []).length;   // 번호·기업·종료 + 열들
+const teamSpan = (RT.match(/colspan="(\d+)"/g) || []).map(s => +s.match(/\d+/)[0]);
+ok('팀 머리행과 본문의 칸 수가 같다',
+  teamHead > 3 && teamHead === teamBody);
+ok('소제목 colspan 도 같은 칸 수 (묶음 머리·빈 목록 두 곳)',
+  teamSpan.length >= 2 && teamSpan.every(n => n === teamHead));
 
 /* ── 구분별 묶어 보기 ── */
 const mk = (cat, no) => ({ _id: no, cat: cat, no: no });
