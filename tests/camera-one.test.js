@@ -136,7 +136,7 @@ test('명함 모드에서는 명함틀이 늘 켜져 있다', () => {
 
 test('★ 앞면을 찍으면 뒷면을 묻는다 (대표 선택 가)', () => {
   assert.ok(/function camAskBack\(/.test(photos), '뒷면을 묻는 길이 없습니다.');
-  const m = photos.match(/async function camShoot\(\)[\s\S]*?(?=\nfunction renderCamStrip)/);
+  const m = photos.match(/async function camShoot\([^)]*\)[\s\S]*?(?=\nfunction renderCamStrip)/);
   assert.ok(/camCardMode && camCardStage === 'front'/.test(m[0]),
     '명함 모드에서 앞면을 찍은 뒤에만 물어야 합니다.');
   /* 사진첩에서 그냥 열었을 때는 묻지 않는다 — 연속 촬영이 끊긴다 */
@@ -176,14 +176,14 @@ test('사진첩에서 그냥 열면 돌아갈 곳이 없다', () => {
    **미리보기보다 작은 사진**을 주는 것이 있는데, 예전에는 그걸 그대로 썼다.
    1920 짜리 화면을 두고 640 짜리를 담으면 글씨가 뭉갠다. */
 test('★ 스틸이 미리보기보다 작으면 미리보기를 쓴다', () => {
-  const m = photos.match(/async function camShoot\(\)[\s\S]*?(?=\nfunction renderCamStrip)/);
+  const m = photos.match(/async function camShoot\([^)]*\)[\s\S]*?(?=\nfunction renderCamStrip)/);
   assert.ok(m, 'camShoot 를 찾지 못했습니다.');
   assert.ok(/Math\.max\(stw, sth\) >= Math\.max\(v\.videoWidth, v\.videoHeight\)/.test(m[0]),
     '기기가 준 사진이 작아도 그대로 쓰면 화면보다 못한 사진이 담깁니다.');
 });
 
 test('★ 어느 길로 찍혔는지 사진에 적어 둔다', () => {
-  const m = photos.match(/async function camShoot\(\)[\s\S]*?(?=\nfunction renderCamStrip)/);
+  const m = photos.match(/async function camShoot\([^)]*\)[\s\S]*?(?=\nfunction renderCamStrip)/);
   assert.ok(/capWay: capWay/.test(m[0]), '찍힌 길을 안 남기면 화질을 따질 때 추측만 하게 됩니다.');
   assert.ok(/meta\.capWay = cp\.way/.test(photos), '사진 정보까지 실려야 나중에 볼 수 있습니다.');
 });
@@ -194,7 +194,7 @@ test('★ 크게 보기에서 찍힌 길이 보인다', () => {
 });
 
 test('스틸이 실패해도 사진은 담긴다', () => {
-  const m = photos.match(/async function camShoot\(\)[\s\S]*?(?=\nfunction renderCamStrip)/);
+  const m = photos.match(/async function camShoot\([^)]*\)[\s\S]*?(?=\nfunction renderCamStrip)/);
   assert.ok(/catch \(e\) \{[\s\S]{0,120}capNote = '스틸 실패/.test(m[0]),
     '스틸이 안 되는 기기에서 촬영 자체가 막히면 안 됩니다.');
 });

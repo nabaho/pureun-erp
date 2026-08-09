@@ -1359,7 +1359,7 @@ test('폰 저장 실패가 올리기를 막지 않는다', () => {
 });
 
 test('연속촬영도 한 번에 올리는 상한을 지킨다', () => {
-  const fn = app.match(/async function camShoot\(\)[\s\S]*?\n(?:async )?function/);
+  const fn = app.match(/async function camShoot\([^)]*\)[\s\S]*?\n(?:async )?function/);
   assert.ok(fn, 'camShoot 을 찾을 수 없습니다');
   assert.match(fn[0], /PuPhotoStore\.UPLOAD_MAX/, '상한 없이 무한정 찍힙니다');
 });
@@ -1591,7 +1591,7 @@ test('명함틀을 켜면 그 안만 잘라 담는다', () => {
      회의·현장 사진은 넓게 담아야 하므로 켜고 끌 수 있어야 한다(대표 선택). */
   /* camShoot 은 안에 중첩 블록이 많아 첫 `\n}` 로는 끝을 못 잡는다 —
      다음 함수 선언이 나오기 전까지를 본문으로 본다. */
-  const fn = app.match(/async function camShoot\(\)[\s\S]*?(?=\nfunction renderCamStrip)/);
+  const fn = app.match(/async function camShoot\([^)]*\)[\s\S]*?(?=\nfunction renderCamStrip)/);
   assert.ok(fn, 'camShoot 를 찾을 수 없습니다');
   assert.match(fn[0], /if \(frameOn\(\)\)/, '틀 켜짐 여부를 안 봅니다');
   assert.match(fn[0], /drawImage\(src, cx, cy, cw, ch, 0, 0, cw, ch\)/, '잘라 담지 않습니다');
