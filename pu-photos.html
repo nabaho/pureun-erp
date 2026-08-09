@@ -470,6 +470,9 @@ button{font-family:inherit;cursor:pointer}
 #camAsk button{border:1px solid rgba(255,255,255,.5);background:rgba(16,16,16,.72);color:#fff;
   border-radius:99px;padding:11px 18px;font-size:13px;font-weight:700;font-family:inherit}
 #camAsk button.pri{background:#fff;color:#101828;border-color:#fff}
+/* 폰 카메라 권유 — 화면이 낮게 잡히는 기기에서만 뜬다 */
+#camNative{display:none;width:100%;margin-top:9px;border:1px solid #fbbf24;background:#fff8ec;
+  color:#92400e;border-radius:10px;padding:11px;font-size:13px;font-weight:800;font-family:inherit}
 #camFrameBtn{margin-left:auto;background:rgba(255,255,255,.14);border:none;color:#cbd5e1;
   border-radius:8px;padding:5px 10px;font-size:11.5px;font-weight:700;font-family:inherit}
 #camFrameBtn.on{background:#fff;color:#101828}
@@ -1030,6 +1033,9 @@ button{font-family:inherit;cursor:pointer}
         <label for="camCrop">명함만 잘라내기</label>
         <button id="camFrameBtn" onclick="toggleFrame()">🔲 명함틀 끔</button>
       </div>
+      <!-- 화면이 낮게 잡히는 기기에서만 뜬다 — 폰 기본 카메라는 사진기 화소를
+           다 쓰므로 글씨가 훨씬 또렷하다. 명함틀은 못 쓰지만 읽는 것이 먼저다. -->
+      <button id="camNative" onclick="useNativeCam()" style="display:none">📱 폰 카메라로 찍기 — 더 또렷합니다</button>
       <div class="row">
         <span class="camSpacer"><img id="camLast" alt="방금 찍은 사진" draggable="false" style="display:none"></span>
         <button id="camShut" onclick="camShoot()" aria-label="촬영"></button>
@@ -1464,8 +1470,28 @@ $('docBtn').onclick = function () { $('docInput').click(); };
 $('camBtn').onclick = function () { openCam(); };
 $('pickInput').onchange = function () { addFiles(this.files, false); this.value = ''; };
 $('docInput').onchange = function () { addFiles(this.files, true); this.value = ''; };
-/* camInput 은 연속촬영의 예비 통로다 — 카메라를 못 여는 폰(권한 거부 등)이 쓴다 */
-$('camInput').onchange = function () { addFiles(this.files, false); this.value = ''; };
+/* camInput 은 폰 기본 카메라다 — 권한 거부 때 물러설 곳이자, 화면이 낮게 잡히는
+   기기에서 **더 또렷하게 찍는 길**이다(폰 카메라는 사진기 화소를 다 쓴다).
+   ⚠ isDoc=true — 여기로 들어온 것도 서류다. false 로 두면 애써 크게 찍어 놓고
+      1600px·85% 로 깎아 담는다(2026-08-09 대표 보고의 화질 문제와 같은 뿌리). */
+$('camInput').onchange = function () { addFiles(this.files, true); this.value = ''; };
+
+/* ── 화면이 낮게 잡히는 기기에 폰 카메라를 권한다 (대표 폰: 1280×720) ──
+   명함 글씨를 읽으려면 긴 변이 최소 이만큼은 되어야 한다. 그 아래면 무엇을 해도
+   뭉개므로, 화면 안 카메라를 고집하지 않고 폰 카메라 쪽을 열어 준다. */
+const CAM_LOW_EDGE = 1600;
+function checkCamRes() {
+  const v = $('camVid'), b = $('camNative');
+  if (!v || !b) return;
+  const edge = Math.max(v.videoWidth || 0, v.videoHeight || 0);
+  b.style.display = (edge && edge < CAM_LOW_EDGE) ? 'block' : 'none';
+}
+function useNativeCam() {
+  /* 찍어 둔 것이 있으면 말없이 버리지 않는다 — ✕ 와 같은 원칙 */
+  if (camShots.length && !confirm('찍어 둔 ' + camShots.length + '장을 올리지 않고 버립니다.\n계속할까요?')) return;
+  camDiscard();          // 두 카메라가 동시에 켜져 있으면 기기가 막는다
+  $('camInput').click();
+}
 
 /* ══════ 연속촬영 카메라 ══════
    대표 지시(2026-08-06): 한 장 찍으면 닫히던 것을 — 셔터 연타로 여러 장 모으고,
@@ -1560,6 +1586,19 @@ async function openCam() {
     }
   }
   camTrack = camStream.getVideoTracks()[0];
+  /* ── 화면 자체를 기기 최대로 끌어올린다 (대표 보고 2026-08-09) ──
+     열 때 3840×2160 을 `ideal` 로 달라고 했는데 대표님 폰은 **1280×720** 을 줬다.
+     `ideal` 은 부탁일 뿐이라 기기가 알아서 낮춰 잡는다. 열고 난 뒤 이 기기가
+     실제로 낼 수 있는 최대치를 물어보고 다시 요청하면 대개 올라간다.
+     ⚠ 이것이 화질의 뿌리다 — 들어온 그림이 720p 면 뒤에서 무엇을 해도 그 이상이 안 된다.
+     ⚠ 거부하는 기기가 있어 실패는 그냥 넘긴다(예전 화면 그대로 쓴다). */
+  try {
+    const cap = camTrack.getCapabilities ? camTrack.getCapabilities() : null;
+    const mw = cap && cap.width && cap.width.max, mh = cap && cap.height && cap.height.max;
+    if (mw && mh && mw > (camTrack.getSettings ? (camTrack.getSettings().width || 0) : 0)) {
+      await camTrack.applyConstraints({ width: { ideal: mw }, height: { ideal: mh } });
+    }
+  } catch (_) { /* 못 올려도 촬영은 된다 */ }
   try { await camTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (_) { }
   try { camCap = ('ImageCapture' in window) ? new ImageCapture(camTrack) : null; } catch (_) { camCap = null; }
 
@@ -1589,6 +1628,9 @@ async function openCam() {
   setCamAsk(false);
   renderCamStrip();
   $('camOv').style.display = 'flex';
+  /* 화면 크기는 영상이 준비된 뒤에야 알 수 있다 — 그때 폰 카메라 권유를 켤지 정한다 */
+  $('camVid').addEventListener('loadedmetadata', checkCamRes, { once: true });
+  setTimeout(checkCamRes, 1200);   // 이미 준비된 경우엔 위 신호가 안 온다
 }
 
 /* ── 누른 곳에 초점 (리멤버 방식) ──
