@@ -316,6 +316,45 @@ var BUILD_SEQ = 150;
     po.observe({entryTypes:['longtask']});
   }catch(e){}
 })();
+/* 느린 타이머 이름표 — 위 감지기는 «800ms 멈췄다» 까지만 알려 준다.
+   어느 타이머인지 몰라 콘솔에서 함수를 붙잡아 재려 했지만 두 가지 이유로 안 됐다:
+     ① setInterval 은 «등록할 때» 함수를 붙잡으므로 나중에 이름을 바꿔치기해도
+        이미 예약된 타이머는 옛 함수를 그대로 부른다
+     ② 문제의 함수들이 감싸인 안쪽(클로저)에 있어 콘솔에서 부를 수조차 없다
+   그래서 타이머를 «등록하는 순간» 껍질을 씌운다. 이 토막은 앱 코드보다 먼저
+   돌아야 하므로 여기(맨 앞)에 둔다. 느릴 때만 한 줄 찍고, 그 밖에는 아무것도
+   바꾸지 않는다. */
+(function(){
+  try{
+    if(!window.performance || !performance.now) return;
+    var SI=window.setInterval, ST=window.setTimeout, LIMIT=200, last={};
+    function skin(fn,kind,ms){
+      if(typeof fn!=='function') return fn;
+      return function(){
+        var t=performance.now();
+        try{ return fn.apply(this,arguments); }
+        finally{
+          var d=performance.now()-t;
+          if(d>=LIMIT){
+            // 같은 타이머가 30초마다 계속 찍히면 시끄럽다 — 5초에 하나만
+            var body=String(fn).replace(/\s+/g,' ').slice(0,110);
+            var now=Date.now();
+            if(!last[body] || now-last[body]>5000){
+              last[body]=now;
+              console.warn('🐌 느린 '+kind+'('+ms+'ms 주기) — '+Math.round(d)+'ms 걸림\n   '+body);
+            }
+          }
+        }
+      };
+    }
+    window.setInterval=function(fn,ms){
+      return SI.apply(window,[skin(fn,'setInterval',ms),ms].concat([].slice.call(arguments,2)));
+    };
+    window.setTimeout=function(fn,ms){
+      return ST.apply(window,[skin(fn,'setTimeout',ms),ms].concat([].slice.call(arguments,2)));
+    };
+  }catch(e){}
+})();
 // fb_data_changed 디바운스: 다발 변경을 150ms로 묶어 리렌더 폭증 방지
 var _fbChangedKeys=null, _fbChangedTimer=null;
 function _scheduleFbChanged(k){
@@ -1560,12 +1599,24 @@ function _vgDialogOpen(){
       var e = m[i], cs = getComputedStyle(e);
       if(cs.display !== 'none' && cs.visibility !== 'hidden' && e.getBoundingClientRect().height > 0) return true;
     }
+    /* 코드로 그린 전체 덮개 찾기.
+       ⚠ 예전에는 div[style*="fixed"] 를 전부 모아 하나하나 getComputedStyle 을
+         불렀다. 이 앱은 스타일이 전부 인라인이라 그 후보가 수천 개고, 한 번
+         도는 데 745ms — 새 버전을 감지한 뒤 5초마다 그만큼 화면이 멈췄다
+         (#88 이름표가 잡아 준 것).
+       덮개란 «화면 한복판을 덮고 있는 것» 이다. 그러니 다 뒤질 것 없이
+       한복판의 제일 위 요소에서 위로 거슬러 올라가며 fixed 덮개인지만 본다
+       — 몇 번의 조회로 끝난다. */
     var W = window.innerWidth, H = window.innerHeight;
-    if(W > 0 && H > 0){
-      var cand = document.querySelectorAll('div[style*="fixed"]');   // 코드로 그린 덮개
-      for(var j=0;j<cand.length;j++){
-        var r = cand[j].getBoundingClientRect();
-        if(r.width >= W*0.9 && r.height >= H*0.9 && getComputedStyle(cand[j]).position === 'fixed') return true;
+    if(W > 0 && H > 0 && document.elementFromPoint){
+      var el = document.elementFromPoint(Math.floor(W/2), Math.floor(H/2));
+      var hops = 0;
+      while(el && el !== document.body && el !== document.documentElement && hops++ < 15){
+        if(getComputedStyle(el).position === 'fixed'){
+          var r = el.getBoundingClientRect();
+          if(r.width >= W*0.9 && r.height >= H*0.9) return true;
+        }
+        el = el.parentElement;
       }
     }
   } catch(_){}
@@ -1573,10 +1624,15 @@ function _vgDialogOpen(){
 }
 var _VG_IDLE_MS = 180000;   // 3분. 30초는 «생각하는 시간» 에도 걸려 작업을 끊었다.
 function _vgSafeNow(){
+  /* 값싼 검사 먼저 — 화면이 보이고 방금까지 손대고 있었다면 어차피 «보류» 다.
+     덮개 검사(DOM 훑기)는 그 결론을 바꾸지 못하므로 아예 하지 않는다.
+     ⚠ 숨겨진 탭은 이 지름길을 타면 안 된다 — 팝업을 열어 두고 다른 창을 보는
+       중일 수 있고, 그때 새로고침하면 입력이 날아간다(2026-08-07 제보). */
+  if(!document.hidden && (Date.now() - _vgLastActivity) <= _VG_IDLE_MS) return false;
   if(_vgDialogOpen()) return false;                      // ★ 팝업 열림 → 언제나 보류
   if(_vgInputFocused()) return false;                    // 입력 중 → 보류
   if(document.hidden) return true;                       // 백그라운드 → 안전
-  return (Date.now() - _vgLastActivity) > _VG_IDLE_MS;   // 오래 손 놓았을 때만
+  return true;                                           // 보이는 채로 오래 손 놓았다 → 안전
 }
 function _vgReloadNow(){
   _vgPending = false;
@@ -1612,9 +1668,49 @@ function initVersionGate(){
     });
   } catch(e){ window._erpErrLog && window._erpErrLog(e); }
 }
-// 배포된 HTML을 직접 받아 빌드를 비교 → 다르면 안전한 순간 새로고침.
-//   호출 시점: ① 로딩 직후 ② 탭으로 돌아올 때(복귀) ③ 로그인할 때. (5분 throttle로 데이터 절약)
+/* 배포된 새 버전이 있는지 보고, 있으면 안전한 순간 새로고침.
+   호출 시점: ① 로딩 직후 ② 탭으로 돌아올 때(복귀) ③ 로그인할 때. (5분 throttle)
+
+   ⚠ 예전에는 이 파일(4MB+)을 통째로 받아 길이를 쟀다. 내려받기도 부담이지만
+     진짜 문제는 그 다음이었다 — 4MB 문자열을 만들어 정규식을 돌리는 동안
+     화면이 통째로 멈춘다(탭 복귀 때 7.7초 멈춤으로 관측됨).
+     본문은 필요 없다. 머리(HEAD)만 받아 ETag 를 본다 — 내용이 바뀌면 바뀌는
+     값이라 길이 재기보다 정확하고, 받는 양이 0 이다. */
 var _vgLastFetch = 0;
+var _vgHeadBad = false;                                   // HEAD 가 표식을 못 주는 서버
+function _vgSigOf(r){
+  try {
+    return r.headers.get('etag')
+        || r.headers.get('last-modified')
+        || r.headers.get('content-length')
+        || null;
+  } catch(_){ return null; }
+}
+// 표식이 달라졌으면 새로고침 예약. 처음 본 값은 기준으로만 적어 둔다.
+function _vgOnSig(sig){
+  if(!sig) return;
+  var LK = 'pureun_v6_html_sig', prev = null;
+  try { prev = sessionStorage.getItem(LK); } catch(_){}
+  if(!prev){ try { sessionStorage.setItem(LK, sig); } catch(_){} return; }
+  if(prev === sig) return;                                // 같은 파일
+  try { sessionStorage.setItem(LK, sig); } catch(_){}
+  if(sessionStorage.getItem('pureun_v6_au_to') === sig) return;   // 이미 이 버전으로 시도(루프 방지)
+  try { sessionStorage.setItem('pureun_v6_au_to', sig); } catch(_){}
+  _vgScheduleReload();                                    // 안전한 순간(백그라운드·유휴)에 새로고침
+}
+/* HEAD 가 막힌 서버를 위한 옛 방식 — 본문을 받아 길이를 잰다.
+   여기 오면 화면이 잠깐 멈추므로, 정말 못 쓸 때만 온다. */
+function _vgCheckBody(now){
+  fetch(location.pathname + '?_cb=' + now, { cache:'no-store' })
+    .then(function(r){ return r.ok ? r.text() : null; })
+    .then(function(html){
+      if(!html) return;
+      var m = html.match(/var ERP_BUILD = '([^']*)'/);
+      if(m && m[1] && m[1] !== ERP_BUILD){ _vgOnSig(m[1]); return; }
+      _vgOnSig('len:' + html.length);
+    })
+    .catch(function(){});
+}
 function _vgCheckHtml(force){
   try {
     if(location.protocol === 'file:') return;
@@ -1622,32 +1718,16 @@ function _vgCheckHtml(force){
     var now = Date.now();
     if(!force && (now - _vgLastFetch) < 300000) return;     // 5분 throttle
     _vgLastFetch = now;
-    fetch(location.pathname + '?_cb=' + now, { cache:'no-store' })
-      .then(function(r){ return r.ok ? r.text() : null; })
-      .then(function(html){
-        if(!html) return;
-        /* ★ 손으로 적는 ERP_BUILD 에만 기대면 안 된다.
-           실제로 2026-07-02 이후 그 줄이 한 번도 안 바뀐 채 수십 번 배포됐고,
-           그동안 이 검사는 «이미 최신» 이라고만 답해 **자동 갱신이 한 번도 안 돌았다.**
-           그래서 파일 길이도 함께 본다 — 코드가 바뀌면 길이는 거의 언제나 달라진다.
-           처음 한 번은 지금 길이를 적어 두고, 다음부터 달라지면 새 배포로 본다. */
-        var sig = null;
-        var m = html.match(/var ERP_BUILD = '([^']*)'/);
-        if(m && m[1] && m[1] !== ERP_BUILD) sig = m[1];      // 표시가 바뀐 경우
-        if(!sig){
-          var LK = 'pureun_v6_html_len';
-          var prev = 0;
-          try { prev = parseInt(sessionStorage.getItem(LK), 10) || 0; } catch(_){}
-          if(!prev){ try { sessionStorage.setItem(LK, String(html.length)); } catch(_){} return; }
-          if(Math.abs(html.length - prev) < 40) return;      // 사실상 같은 파일
-          try { sessionStorage.setItem(LK, String(html.length)); } catch(_){}
-          sig = 'len:' + html.length;
-        }
-        if(sessionStorage.getItem('pureun_v6_au_to') === sig) return;   // 이미 이 버전으로 시도(루프 방지)
-        try { sessionStorage.setItem('pureun_v6_au_to', sig); } catch(_){}
-        _vgScheduleReload();                                // 안전한 순간(백그라운드·유휴)에 자동 새로고침
+    if(_vgHeadBad){ _vgCheckBody(now); return; }
+    fetch(location.pathname + '?_cb=' + now, { method:'HEAD', cache:'no-store' })
+      .then(function(r){
+        if(!r || !r.ok){ _vgHeadBad = true; _vgCheckBody(now); return; }
+        var sig = _vgSigOf(r);
+        // 표식을 못 얻으면 이 서버에서는 HEAD 가 쓸모없다 — 다음부터 옛 방식으로
+        if(!sig){ _vgHeadBad = true; _vgCheckBody(now); return; }
+        _vgOnSig(sig);
       })
-      .catch(function(){});
+      .catch(function(){ _vgHeadBad = true; });             // 그물망: 다음 차례에 옛 방식
   } catch(_){}
 }
 try {
@@ -1719,10 +1799,22 @@ var FB_ALL_SYNC_KEYS = [
 ];
 // App Check reCAPTCHA v3 사이트키 — Firebase 콘솔에서 발급 후 따옴표 안에 붙여넣기 (비어있으면 비활성, 동작에 영향 없음)
 var FB_APPCHECK_KEY = '6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
+/* ⚠ App Check 를 끈 채로 둔다 (2026-08-08).
+   사무실에서 켤 때마다 reCAPTCHA 가 시간 초과로 두 번씩 실패하고 있었다.
+     Uncaught (in promise) Error: reCAPTCHA Timeout (C) / (z)
+   그런데 같은 로그에서 Firebase 읽기는 «초기 동기화 완료» 로 멀쩡히 끝난다.
+   즉 콘솔에서 App Check 강제(enforce)가 켜져 있지 않다 — 켜져 있었다면 토큰이
+   없는 읽기는 PERMISSION_DENIED 로 막혔을 것이다.
+   따라서 지금의 reCAPTCHA 는 지키는 것 없이 20~30초짜리 실패만 두 번 만든다.
+   자료는 Rules 의 auth != null 이 계속 지킨다.
+
+   ★ 콘솔에서 App Check 강제를 켤 때는 아래를 true 로 되돌려야 한다.
+     되돌리지 않으면 모든 읽기·쓰기가 막힌다. */
+var FB_APPCHECK_ON = false;
 try {
   if(typeof firebase !== 'undefined' && firebase.initializeApp){
     firebase.initializeApp(FB_CONFIG);
-    if(FB_APPCHECK_KEY && firebase.appCheck){
+    if(FB_APPCHECK_ON && FB_APPCHECK_KEY && firebase.appCheck){
       try { firebase.appCheck().activate(new firebase.appCheck.ReCaptchaV3Provider(FB_APPCHECK_KEY), true); }
       catch(e){ console.warn('[AppCheck]', e && e.message); }
     }
@@ -2366,7 +2458,11 @@ function buildBackupSnapshot(){
   // 환경설정·정책·기준 등 전체 키 포함 (메타/세션/UI 전용만 제외)
   var SNAP_EXCLUDE = { force_pw:1,last_login_id:1,save_id_flag:1,current_menu:1,env_last_tab:1,
     open_groups:1,dark_mode:1,sidebar_collapsed:1,corp_dash_tab:1,mydesk_cal_custom_w:1,
-    mydesk_cal_size:1,mydesk_widget_collapsed:1,last_server_backup:1,recent_sig:1 };
+    mydesk_cal_size:1,mydesk_widget_collapsed:1,last_server_backup:1,recent_sig:1,
+    // 기기 임시 작업분·이 PC 전용 되돌리기 기록 — 동기화(FB_EXCLUDE)에서 빼는 것과 같은 이유로
+    // 백업에서도 뺀다. 특히 bank_ledger_draft 는 올린 통장 파일이 최대 4,000행까지 쌓여서
+    // 스냅샷을 실시간DB 한 번 쓰기 한도(16MB) 위로 밀어 올렸다(write_too_big — 실제로 났다).
+    bank_ledger_draft:1, co_merge_log:1, co_link_log:1, co_vat_log:1 };
   var data = {};
   for(var i=0;i<localStorage.length;i++){
     var full = localStorage.key(i);
@@ -2389,6 +2485,85 @@ function _snapSummary(data){
   });
   return c.join(' · ');
 }
+// ── 스냅샷을 실을 수 있는 크기로 나눈다 ────────────────────────
+// 실시간DB는 한 번의 쓰기를 16MB까지만 받는다. 스냅샷을 통째로 실으면 데이터가 자란
+// 어느 날부터 write_too_big 으로 조용히 실패한다(대표 콘솔에 실제로 찍혔다).
+// 저장소별로 나눠 여러 번에 싣고, 한 저장소가 그것만으로 한도를 넘으면(배열) 행 단위로 더 쪼갠다.
+// 행 조각은 'data/{키}/{순번}' 으로 실리는데, 실시간DB는 0부터 이어지는 숫자 키를
+// 배열로 되돌려 주므로 읽을 때 모양이 같다.
+var BACKUP_BATCH_CHARS = 1500000;   // 한 번에 싣는 JSON 글자 수 — 한글 3바이트 기준 4.5MB, 한도의 1/3 안쪽
+function erpBackupBatches(data, limitChars){
+  var lim = limitChars || BACKUP_BATCH_CHARS;
+  var batches = [], cur = {}, curSize = 0;
+  function flush(){ if(curSize > 0){ batches.push(cur); cur = {}; curSize = 0; } }
+  function put(path, v, sz){
+    if(curSize > 0 && curSize + sz > lim) flush();
+    cur[path] = v; curSize += sz;
+    if(curSize > lim) flush();                 // 단독으로도 큰 조각은 저 혼자 한 번에
+  }
+  Object.keys(data || {}).forEach(function(k){
+    var v = data[k];
+    var s = '';
+    try { s = JSON.stringify(v); } catch(_e){ return; }   // 직렬화 불가면 백업 대상이 아니다
+    if(s === undefined || s === null) return;
+    if(s.length <= lim || !Array.isArray(v)){
+      put('data/' + k, v, s.length);
+      return;
+    }
+    // 큰 배열은 행 단위로 — 순번을 이어 붙여야 읽을 때 배열로 돌아온다
+    for(var i = 0; i < v.length; i++){
+      var es = '';
+      try { es = JSON.stringify(v[i]); } catch(_e2){ es = '4'; }
+      put('data/' + k + '/' + i, (v[i] === undefined ? null : v[i]), (es || '4').length);
+    }
+  });
+  flush();
+  return batches;
+}
+window.erpBackupBatches = erpBackupBatches;
+// 스냅샷 한 벌 저장 — 머리(메타)를 먼저 set 해 이전 반쪽을 지우고, 조각을 차례로 실은 뒤,
+// 목록(인덱스)은 전부 성공했을 때만 쓴다. 목록에 없는 스냅샷은 백업 목록·유실검사가
+// 보지 않으므로, 도중에 끊긴 반쪽이 온전한 백업처럼 보이는 일이 없다.
+function serverBackupWrite(id, snap){
+  var batches = erpBackupBatches(snap.data);
+  var p = fbDb.ref('serverBackups/' + id).set({ savedAt: snap.savedAt, version: snap.version });
+  batches.forEach(function(b){
+    p = p.then(function(){ return fbDb.ref('serverBackups/' + id).update(b); });
+  });
+  return p.then(function(){
+    return fbDb.ref('serverBackupsIndex/' + id).set({ savedAt: snap.savedAt, summary: _snapSummary(snap.data) });
+  }).then(function(){ return batches.length; });
+}
+// 스냅샷 한 벌 삭제 — 통째 삭제도 한 번의 쓰기라 큰 스냅샷은 같은 한도에 걸린다.
+// 그래서 지워지지 않은 옛 스냅샷이 쌓여 용량 한도(1GB)를 채웠다. 아는 저장소 이름부터
+// 하나씩 비운 뒤 껍데기를 지운다(없는 키에 null 은 아무 일도 안 하므로 넉넉히 돌려도 된다).
+function _backupKnownKeys(){
+  var names = {};
+  try { (FB_ALL_SYNC_KEYS || []).forEach(function(k){ names[k] = 1; }); } catch(_e){}
+  try { (SERVER_BACKUP_KEYS || []).forEach(function(k){ names[k] = 1; }); } catch(_e){}
+  ['bank_ledger_draft','cms_ledger','bank_processed','payer_aliases','activity_log','trash_bin',
+   'consult_logs','my_work_items','my_todos','closed_archive','finance_expense','finance_invoice',
+   'user_accounts','user_dir','employment_contracts','payroll_irregular'].forEach(function(k){ names[k] = 1; });
+  return Object.keys(names);
+}
+function erpBackupDeleteSnap(id){
+  var keys = _backupKnownKeys();
+  var p = Promise.resolve();
+  for(var i = 0; i < keys.length; i += 40){
+    (function(part){
+      p = p.then(function(){
+        var u = {};
+        part.forEach(function(k){ u['serverBackups/' + id + '/data/' + k] = null; });
+        return fbDb.ref().update(u);
+      });
+    })(keys.slice(i, i + 40));
+  }
+  return p.then(function(){
+    var u = {}; u['serverBackups/' + id] = null; u['serverBackupsIndex/' + id] = null;
+    return fbDb.ref().update(u);
+  });
+}
+window.erpBackupDeleteSnap = erpBackupDeleteSnap;
 function serverBackupDaily(force){
   if(typeof fbDb === 'undefined' || !fbDb) return;
   // [보안규칙 대비] 백업은 재무 데이터를 가진 관리자·위임관리인 기기에서만 — 재무 캐시 없는 직원 기기의 불완전 백업 방지
@@ -2399,11 +2574,10 @@ function serverBackupDaily(force){
   // 빈 스냅샷(데이터 미로드 등)은 저장하지 않음
   var hasData = SERVER_BACKUP_KEYS.some(function(k){ return Array.isArray(snap.data[k]) && snap.data[k].length > 0; });
   if(!hasData) return;
-  var w = {}; w['serverBackups/'+ymd] = snap; w['serverBackupsIndex/'+ymd] = { savedAt:snap.savedAt, summary:_snapSummary(snap.data) };
-  fbDb.ref().update(w)
-    .then(function(){
+  serverBackupWrite(ymd, snap)
+    .then(function(n){
       localStorage.setItem('pureun_v6_last_server_backup', ymd);
-      console.log('[ERP] 서버 자동백업 저장: '+ymd);
+      console.log('[ERP] 서버 자동백업 저장: '+ymd+' ('+n+'조각)');
       return fbDb.ref('serverBackupsIndex').once('value'); // 경량 인덱스로 prune
     })
     .then(function(s){
@@ -2411,27 +2585,38 @@ function serverBackupDaily(force){
       var dates = Object.keys(s.val() || {}).sort(); // YYYY-MM-DD(-pm)는 사전순=시간순
       // 아침+저녁 하루 2회 체계 → 20개 보관 = 약 10일치
       //  ※ 스냅샷 한 벌이 실시간DB 용량을 그대로 먹는다(무료 한도 1GB).
-      //    30일치(60벌)는 용량 초과의 주범이라 10일치로 줄였다. 더 옛 자료는 로컬 백업으로 남긴다.
       if(dates.length > SERVER_BACKUP_KEEP){
-        var updates = {};
-        dates.slice(0, dates.length - SERVER_BACKUP_KEEP).forEach(function(dd){ updates['serverBackups/'+dd] = null; updates['serverBackupsIndex/'+dd] = null; });
-        return fbDb.ref().update(updates);
+        var old = dates.slice(0, dates.length - SERVER_BACKUP_KEEP);
+        var pp = Promise.resolve();
+        old.forEach(function(dd){ pp = pp.then(function(){ return erpBackupDeleteSnap(dd); }); });
+        return pp.then(function(){ console.log('[ERP] 옛 백업 '+old.length+'벌 정리'); });
       }
     })
-    .catch(function(e){ window._erpErrLog && window._erpErrLog(e); });
+    .catch(function(e){
+      // 백업 실패가 조용하면 아무도 모른 채 쌓이거나 빠진다 — 소리를 낸다
+      console.warn('[ERP] 서버 백업 실패:', e && e.message);
+      try { if(typeof erpAlert === 'function') erpAlert('warn', '서버 백업 실패', String((e && e.message) || e), '용량·규칙·연결을 확인하세요'); } catch(_a){}
+      window._erpErrLog && window._erpErrLog(e);
+    });
 }
 window.erpServerBackupNow = function(){ serverBackupDaily(true); console.log('서버 백업 시도(강제)'); };
 // 새 백업을 만들지 않고 오래된 것만 즉시 정리 — 실시간DB 용량이 급할 때 쓴다.
-window.erpBackupPruneNow = function(){
+window.erpBackupPruneNow = function(keep){
   if(typeof fbDb === 'undefined' || !fbDb){ console.log('서버 연결 안 됨'); return; }
   if(!(CURRENT_USER && CURRENT_USER.isAdmin)){ console.log('관리자만 실행할 수 있습니다'); return; }
+  var KEEP = (typeof keep === 'number' && keep >= 0) ? keep : SERVER_BACKUP_KEEP;
   fbDb.ref('serverBackupsIndex').once('value').then(function(s){
     var dates = Object.keys(s.val() || {}).sort();
-    if(dates.length <= SERVER_BACKUP_KEEP){ console.log('정리할 것 없음 ('+dates.length+'벌 보관 중)'); return; }
-    var old = dates.slice(0, dates.length - SERVER_BACKUP_KEEP), updates = {};
-    old.forEach(function(dd){ updates['serverBackups/'+dd] = null; updates['serverBackupsIndex/'+dd] = null; });
-    return fbDb.ref().update(updates).then(function(){
-      console.log('옛 백업 '+old.length+'벌 삭제 · '+SERVER_BACKUP_KEEP+'벌 남김 ('+old[0]+' ~ '+old[old.length-1]+')');
+    if(dates.length <= KEEP){ console.log('정리할 것 없음 ('+dates.length+'벌 보관 중)'); return; }
+    var old = dates.slice(0, dates.length - KEEP);
+    console.log('옛 백업 '+old.length+'벌 정리 시작… (한 벌씩 나눠 지운다 — 통째 삭제는 큰 스냅샷에서 실패했다)');
+    var p = Promise.resolve(), done = 0;
+    old.forEach(function(dd){
+      p = p.then(function(){ return erpBackupDeleteSnap(dd); })
+           .then(function(){ done++; console.log('  삭제 '+done+'/'+old.length+' — '+dd); });
+    });
+    return p.then(function(){
+      console.log('✅ 옛 백업 '+old.length+'벌 삭제 · '+KEEP+'벌 남김 ('+old[0]+' ~ '+old[old.length-1]+')');
     });
   }).catch(function(e){ console.log('정리 실패: '+(e && e.message)); });
 };
@@ -2503,11 +2688,14 @@ function serverBackupEvening(){
     var hasData = SERVER_BACKUP_KEYS.some(function(k){ return Array.isArray(snap.data[k]) && snap.data[k].length > 0; });
     if(!hasData) return;
     var key = ymd + '-pm';
-    var w = {}; w['serverBackups/' + key] = snap; w['serverBackupsIndex/' + key] = { savedAt:snap.savedAt, summary:_snapSummary(snap.data) };
-    fbDb.ref().update(w).then(function(){
+    // 아침 백업과 같은 나눠 싣기 — 통째 한 번 쓰기는 16MB 한도에 걸린다 (write_too_big)
+    serverBackupWrite(key, snap).then(function(n){
       localStorage.setItem('pureun_v6_last_server_backup_pm', ymd);
-      console.log('[ERP] 서버 저녁백업 저장: ' + key);
-    }).catch(function(e){ window._erpErrLog && window._erpErrLog(e); });
+      console.log('[ERP] 서버 저녁백업 저장: ' + key + ' ('+n+'조각)');
+    }).catch(function(e){
+      console.warn('[ERP] 서버 저녁백업 실패:', e && e.message);
+      window._erpErrLog && window._erpErrLog(e);
+    });
   } catch(e){ window._erpErrLog && window._erpErrLog(e); }
 }
 
@@ -7379,7 +7567,7 @@ function fbInitialSync(_isRetry){
     });
     if(pulled > 0) console.log('[Firebase] 초기 동기화: '+pulled+'개 항목 적용');
     return pulled;
-  }).catch(function(e){ var _im = (e && (e.message||e.code||''))+''; if(/permission|PERMISSION_DENIED/i.test(_im) && !_isRetry && typeof firebase!=='undefined' && firebase.auth && firebase.auth().currentUser){ console.warn('[Firebase] 첫 읽기 권한오류 — 토큰 갱신 후 재시도'); return firebase.auth().currentUser.getIdToken(true).catch(function(){}).then(function(){ return new Promise(function(res){ setTimeout(res, 700); }); }).then(function(){ return fbInitialSync(true); }); } console.warn('[Firebase] 초기 동기화 실패:', _im); if(/permission|PERMISSION_DENIED/i.test(_im)){ if(typeof firebase!=='undefined' && firebase.auth && firebase.auth().currentUser){ console.warn('[Firebase] 통째 읽기 거부(권한 제한) — 키별 동기화 폴백'); return _fbInitialSyncPerKey(); } window._reloginNotice = '🔒 서버 인증이 만료되어 다시 로그인이 필요합니다.'; try { window.dispatchEvent(new CustomEvent('fb_need_relogin')); } catch(_){} } return 0; })
+  }).catch(function(e){ var _im = (e && (e.message||e.code||''))+''; if(/permission|PERMISSION_DENIED/i.test(_im) && !_isRetry && typeof firebase!=='undefined' && firebase.auth && firebase.auth().currentUser){ console.warn('[Firebase] 첫 읽기 권한오류 — 토큰 갱신 후 재시도'); return firebase.auth().currentUser.getIdToken(true).catch(function(){}).then(function(){ return new Promise(function(res){ setTimeout(res, 700); }); }).then(function(){ return fbInitialSync(true); }); } console.warn('[Firebase] 초기 동기화 실패:', _im); if(/permission|PERMISSION_DENIED/i.test(_im)){ if(typeof firebase!=='undefined' && firebase.auth && firebase.auth().currentUser){ console.warn('[Firebase] 통째 읽기 거부(권한 제한) — 키별 동기화 폴백'); if(!FB_APPCHECK_ON) console.error('[App Check] 콘솔에서 App Check 강제를 켜셨다면 pu-erp.html 의 FB_APPCHECK_ON 을 true 로 되돌려야 합니다 — 그러지 않으면 모든 읽기·쓰기가 막힙니다'); return _fbInitialSyncPerKey(); } window._reloginNotice = '🔒 서버 인증이 만료되어 다시 로그인이 필요합니다.'; try { window.dispatchEvent(new CustomEvent('fb_need_relogin')); } catch(_){} } return 0; })
     // 이 동기화(및 내부 키별폴백·재시도)에서 deferGate로 모아둔 급감 보류분을 완료 후 일괄 확인.
     //   모든 fbInitialSync 호출부(로그인·복귀재동기화·수동새로고침)를 한 곳에서 커버한다.
     .then(function(_n){ try { _drainShrinkQueue(); } catch(_d){} return _n; });
@@ -16944,6 +17132,33 @@ function CompanyManagement(){
         h(FunnelBtn, { label:label, items:cItems(filterKey), sel:sel, mini:true,
           onApply:function(arr){ cSet(filterKey, arr); pg.setPage && pg.setPage(1); } })));
   }
+  // 유형 칩 — 자문·급여·노조·기금이 각각 몇 곳인지 한눈에 보여준다.
+  // 거르는 값은 표 머리 「유형」 깔때기와 «같은 상태»(coSel.type)를 쓴다 — 어느 쪽을 눌러도 같이 움직인다.
+  // 깔때기로 옮기면서 건수가 안 보이게 된 것을 되살린 것이다. 거르는 규칙을 새로 만들지는 않았다.
+  function typeChips(){
+    var items = cItems('type');            // 다른 깔때기를 이미 반영한 유형별 건수
+    var n = {}; items.forEach(function(x){ n[x.v] = x.n; });
+    var sel = cGet('type');
+    return h('div', { style:{ display:'flex', gap:'3px', alignItems:'center', flexShrink:0, flexWrap:'wrap' } },
+      COMPANY_TYPE_FILTERS.map(function(t){
+        // 깔때기로 둘 이상 고르면 어느 칩도 켜지지 않는다 — 있는 그대로 보여준다
+        var on = t.v === 'all' ? sel.length === 0 : (sel.length === 1 && sel[0] === t.v);
+        var cnt = t.v === 'all' ? null : (n[t.v] || 0);
+        return h('button', { key:t.v,
+          onClick:function(){
+            cSet('type', (t.v === 'all' || on) ? [] : [t.v]);   // 켜진 걸 다시 누르면 전체로 돌아온다
+            if(pg.setPage) pg.setPage(1);
+          },
+          title: t.v === 'all' ? '유형 거르기를 풉니다' : (t.label + ' 업체만 봅니다'),
+          style:{ padding:'5px 10px', borderRadius:'20px', fontSize:'11px', fontWeight:700, cursor:'pointer',
+            whiteSpace:'nowrap', flexShrink:0,
+            background: on ? t.color : '#fff',
+            color: on ? '#fff' : (cnt === 0 ? '#94a3b8' : t.color),
+            border:'1px solid ' + (on ? t.color : '#e2e8f0') } },
+          t.icon + ' ' + t.label + (cnt === null ? '' : ' ' + cnt));
+      })
+    );
+  }
   var moS = useState(false); var monthOnly = moS[0]; var setMonthOnly = moS[1];
   var ymS = usePersistedState('company_month', todayYM()); var selYM = ymS[0]; var setSelYM = ymS[1];
   var thisYM = selYM;
@@ -17687,7 +17902,8 @@ function CompanyManagement(){
                 color: statusTab==='suboffice'?'#fff':'#64748b', border:'none' } },
               '📁 ' + subofficeCount)
           ),
-          // (유형·담당·부담당·급여일 필터는 표 머리 깔때기로 옮겼다)
+          // (담당·부담당·급여일 필터는 표 머리 깔때기로 옮겼다. 유형은 건수가 보여야 해서 칩으로 남긴다)
+          typeChips(),
           h(MineFirstChip, { on:mineFirst, onToggle:function(){ setMineFirst(!mineFirst); } }),
           activeFilterCount > 0 && h('button', { onClick:cClearAll,
             style:{ padding:'5px 10px', borderRadius:'20px', fontSize:'11px', fontWeight:700, flexShrink:0,
@@ -17719,7 +17935,10 @@ function CompanyManagement(){
           fontSize:'12px', fontWeight:700, cursor:'pointer' } },
         '⏸ 계약 중단 (' + companies.filter(function(c){return !!c.suspended;}).length + ')'),
       // (종료 탭 제거: 종료 업체는 종료관리에서 조회)
-      // (유형·담당·부담당·급여일 필터는 표 머리 깔때기로 옮겼다 — 도구줄에는 두지 않는다)
+      // (담당·부담당·급여일 필터는 표 머리 깔때기로 옮겼다 — 도구줄에는 두지 않는다)
+      // 유형만은 도구줄에 남긴다: 깔때기 안에 들어가니 자문/급여/노조/기금이 몇 곳인지 안 보였다
+      h('div', { style:{ width:'1px', height:'20px', background:'#e2e8f0', flexShrink:0, margin:'0 2px' } }),
+      typeChips(),
       // 표시 개수
       h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', flexShrink:0 } },
         h('span', { style:{ fontSize:'11px', color:'#64748b' } }, '페이지'),
@@ -32611,12 +32830,69 @@ function findMenu(id){
 // 업로드한 거래내역 초안 저장 키 — 화면을 벗어나도 유지되고, 업체입금 자동표시도 이 값을 쓴다.
 // (행은 텍스트 몇 필드만 남겨 저장 — 이미지·원본 시트는 저장하지 않음)
 var BANK_DRAFT_KEY = 'bank_ledger_draft';
-function _bankDraftSlimRow(r, type){
-  return { _k:String(r._k), type:type, date:r.date||'', memo:r.memo||'', note:r.note||'',
+function _bankDraftSlimRow(r, type, src){
+  return { _k:String(r._k), type:type, src:(src||r.src||'bank'),
+           date:r.date||'', memo:r.memo||'', note:r.note||'',
            amount:parseInt(r.amount,10)||0, balance:parseInt(r.balance,10)||0 };
 }
 function _bankDraftEmpty(){
   return { fileName:'', uploadedAt:'', type:'bank', colMap:{}, rows:[], inMatch:{}, expCat:{} };
+}
+
+var BANK_DRAFT_MAX = 4000;    // 용량 가드 — 넘으면 «오래된» 것부터 버린다
+
+/* 올린 파일을 덮어쓰지 않고 «쌓는다».
+   종전에는 새 파일이 앞의 것을 통째로 지워서, 달마다 올리면 앞 달이 사라졌다.
+   달끼리 견주려면 쌓여 있어야 한다 — 달로 나눠 보는 machinery(ldMonths)는 이미 있었고
+   쌓이지 않는 것이 문제였다.
+
+   같은 행이 두 번 올라오면 버린다. 겹치는 기간을 다시 올리거나,
+   담당자가 실수로 같은 파일을 또 올리는 일이 실제로 생긴다.
+   같고 다름은 erpBankRowKey(날짜|금액|다듬은 적요)로 가린다 — 파일 행번호는
+   파일마다 달라져서 쓸 수 없다.
+
+   ⚠ 한 파일 안에 «진짜로» 같은 행이 두 번 있을 수 있다(같은 곳에서 같은 값을 같은 날
+     두 번 보내는 경우). 그것까지 지우면 돈이 사라진다. 그래서 나온 순서대로 #1, #2 를
+     붙인다 — 순서 기준이 같으니 같은 파일을 다시 올려도 키가 그대로라 늘어나지 않는다.
+     (나이스빌 CMS 보관분이 쓰는 방식과 같다) */
+function erpBankMergeDraft(curRows, newRows){
+  var out = [], have = {}, remap = {}, dup = 0, skip = 0;
+  function sigOf(r){
+    /* ⚠ 날짜가 없으면 같고 다름을 가릴 수도, 달로 나눌 수도 없다.
+       erpBankRowKey 는 빈 날짜에도 '|0|' 같은 글자를 돌려주므로 여기서 따로 막는다.
+       (안 막으면 날짜 없는 행이 죄다 같은 열쇠가 되어 서로를 지운다) */
+    if(!String(r.date||'').trim()) return '';
+    var s = erpBankRowKey(r);
+    if(!s) return '';
+    // 통장과 카드는 따로 쌓는다. 입금·출금도 섞지 않는다.
+    return (r.src||'bank') + '|' + (r.type||'income') + '|' + s;
+  }
+  function addAll(rows, isNew){
+    var seq = {};
+    (rows||[]).forEach(function(r){
+      if(!r) return;
+      var base = sigOf(r);
+      if(!base){ skip++; return; }             // 날짜가 없어 가릴 수 없는 행
+      var i = seq[base] || 0; seq[base] = i + 1;
+      var k = i ? (base + '#' + i) : base;
+      if(have[k]){ if(isNew) dup++; return; }  // 이미 있는 행 — 무시한다
+      have[k] = 1;
+      if(!isNew && r._k) remap[String(r._k)] = k;   // 골라 둔 짝을 새 열쇠로 옮기기 위해
+      var s = {}; for(var p in r){ if(Object.prototype.hasOwnProperty.call(r,p)) s[p] = r[p]; }
+      s._k = k;
+      out.push(s);
+    });
+  }
+  addAll(curRows, false);      // 있던 것이 먼저 — 그래야 뒤에 온 같은 행이 버려진다
+  addAll(newRows, true);
+  // 통장 순서대로 (오래된 것이 위) — 종전 한 파일만 보던 때와 같은 차례
+  out.sort(function(a,b){
+    var da = String(a.date||''), db = String(b.date||'');
+    return da === db ? 0 : (da < db ? -1 : 1);
+  });
+  var cut = 0;
+  if(out.length > BANK_DRAFT_MAX){ cut = out.length - BANK_DRAFT_MAX; out = out.slice(cut); }
+  return { rows:out, dup:dup, cut:cut, skip:skip, remap:remap };
 }
 
 // ══════════════════════════════════════════════
@@ -33545,6 +33821,98 @@ function CmsMatchModal(props){
   );
 }
 
+/* ── 입금 추천 다시 쓰기 ────────────────────────────────────────────
+   통장 행마다 미입금 후보 전체를 훑는다(506건 × 수백 건). 이 계산이 화면 부품
+   본문에 그냥 놓여 있고 그 부품에는 useState 가 36개라, 체크박스 하나만 눌러도
+   통째로 다시 돌았다 — 대표님 PC 에서 24초 멈춤으로 나타났다.
+
+   그래서 «무엇이 바뀌면 다시 계산해야 하는가» 를 지문 한 줄로 뽑아 두고,
+   지문이 같으면 앞의 결과를 그대로 쓴다.
+
+   ⚠ 여기는 입금 확정에 쓰이는 추천을 만드는 자리다. 지문이 덜 촘촘하면 낡은
+     후보가 남아 엉뚱한 건에 확정될 수 있다. 그래서 «후보를 바꿀 수 있는 것»
+     은 빠짐없이 지문에 넣는다 — 통장 행(날짜·금액·적요·처리됨)과 미입금 건
+     (id·금액)과 탭, 그리고 계산서 색인 준비 여부.
+   ⚠ 사용자가 고른 매칭(inMatch)은 일부러 넣지 않는다. 후보 목록 자체는 그것과
+     무관하고, 그것까지 넣으면 클릭할 때마다 다시 계산해 고치는 뜻이 없어진다.
+     inMatch 를 쓰는 계산(자동정리 관문·계산서 미발급)은 캐시 밖에 둔다. */
+function erpSugSig(incAll, pending, tab, invReady){
+  var a = 0, b = 0, i, r, p;
+  for(i=0; i<incAll.length; i++){
+    r = incAll[i] || {};
+    // 곱하고 더하는 구르는 셈 — 순서가 바뀌어도 다른 값이 나온다
+    a = (a*31 + String(r._k||'').length*7 + (parseInt(r.amount,10)||0)
+          + String(r.date||'').length + String(r.memo||r.note||'').length
+          + (r._dup?1:0)) | 0;
+  }
+  for(i=0; i<pending.length; i++){
+    p = pending[i] || {};
+    b = (b*31 + String(p.id||'').length*7 + (parseInt(p.expect||p.amount,10)||0)) | 0;
+  }
+  return tab+'|'+incAll.length+'|'+a+'|'+pending.length+'|'+b+'|'+(invReady?1:0);
+}
+/* 비싼 부분만 따로. inMatch 를 보지 않는다(위 주석 참고).
+   ⚠ 조각으로 나눠 부를 수 있게 한다(from~to 행만). 실측 2초짜리 계산이라
+     한 번에 다 돌리면 그동안 화면이 통째로 멈춘다 — 대표님 콘솔에
+     「추천 다시 계산 2179ms + 화면 멈춤 3782ms」 로 찍힌 그것이다.
+     25행씩 끊어 숨 쉴 틈(setTimeout)을 주면 합계 시간은 같아도 멈춤이 없다. */
+function erpBuildSugInit(){
+  return { incByK:{}, isCmsMemo:{}, incSug:{}, incDone:{}, ctHint:{}, invSug:{} };
+}
+function erpBuildSugChunk(incAll, pending, from, to, out){
+  for(var _i=from; _i<to && _i<incAll.length; _i++){
+    var row = incAll[_i];
+    out.incByK[row._k] = row;
+    if(row._dup) continue;                     // 이미 처리된 행은 추천을 계산하지 않는다
+    var _memo = row.memo||row.note||'';
+    out.isCmsMemo[row._k] = erpIsCmsMemo(_memo);
+    // 후보를 종류별로 나눠 보여주므로 넉넉히 받는다 (사건·컨설팅·기금·기타)
+    var _sg = erpMatchTxnToPending({date:row.date, amount:row.amount, memo:_memo}, pending, 12);
+    out.incSug[row._k] = _sg;
+    // 입금관리에서 이미 확정한 건인지 (통장 행에는 지문이 안 남는다)
+    out.incDone[row._k] = erpAlreadyConfirmed({date:row.date, amount:row.amount}, 10);
+    // 맞는 후보가 없을 때만 — 아직 이관 안 된 계약이 있는지 본다
+    if(!_sg.length) out.ctHint[row._k] = erpContractHint({memo:_memo});
+    // 계산서를 따로 한 칸에 보여주므로 추천 신뢰도와 상관없이 항상 찾는다
+    var _iv = erpInvoiceSuggest({date:row.date, amount:row.amount}, 1);
+    if(_iv.length) out.invSug[row._k] = _iv[0];
+  }
+  return out;
+}
+// 한 번에 전부 — 검사와 작은 목록용. 화면은 조각(Chunk)으로 부른다.
+function erpBuildSug(incAll, pending){
+  return erpBuildSugChunk(incAll, pending, 0, incAll.length, erpBuildSugInit());
+}
+// ── 행 드롭다운에 실을 미입금 후보 고르기 ──────────────────────
+// 어차피 사람이 고르는 것은 금액이 가까운 후보다. 가까운 순으로 cap 건만 돌려주고
+// 나머지는 몇 건이 잘렸는지(more)만 알려 준다.
+// - 다른 행이 이미 고른 후보는 뺀다 (두 행이 같은 미입금을 가리키면 한쪽 돈이 붕 뜬다)
+// - 이 행 자신이 고른 후보(selectedId)는 잘려 나갔어도 도로 넣는다 —
+//   안 넣으면 select 의 현재 값이 목록에 없어 화면에서 선택이 사라져 보인다
+function erpPendOptions(pending, usedBy, rowKey, rowAmount, selectedId, cap){
+  cap = cap || 30;
+  var amt = parseInt(rowAmount, 10) || 0;
+  var list = [];
+  for(var i = 0; i < (pending || []).length; i++){
+    var p = pending[i]; if(!p) continue;
+    var u = usedBy && usedBy[p.id];
+    if(u && u !== rowKey) continue;               // 다른 행이 이미 고름
+    list.push(p);
+  }
+  list.sort(function(a, b){
+    return Math.abs(((a.expect || a.amount) || 0) - amt) - Math.abs(((b.expect || b.amount) || 0) - amt);
+  });
+  var total = list.length;
+  var out = list.slice(0, cap);
+  if(selectedId && !out.some(function(p){ return p.id === selectedId; })){
+    for(var j = cap; j < list.length; j++){
+      if(list[j].id === selectedId){ out.push(list[j]); break; }
+    }
+  }
+  return { list: out, more: total - out.length, total: total };
+}
+// (검사 스크립트가 이 구역을 window 없는 샌드박스로 떼어 가므로 가드를 둔다)
+if(typeof window !== 'undefined') window.erpPendOptions = erpPendOptions;
 function FinanceLedger(){
   /* ── 미입금 대기 목록 (입금 매칭 후보) ──
      2026-08-07 김보람 건의: 「일반 자문료 입금건은 매칭이 안 되고 컨설팅·사건만 된다」
@@ -33658,6 +34026,10 @@ function FinanceLedger(){
   var spSelS=useState({});     var spSel=spSelS[0];     var setSpSel=spSelS[1];     // {pendingId: 배분 금액} — 체크된 항목
   var spGapS=useState('');     var spGap=spGapS[0];     var setSpGap=spGapS[1];     // 나눠담기 차액 모드: fee|partial|other
   var spRowS=useState(null);   var spRow=spRowS[0];     var setSpRow=spRowS[1];     // 나눠담기 대상 행 (모달용)
+  /* 통장 «여러 행»을 묶어 한꺼번에 처리할 때 그 행들. 한 행짜리면 null 이고 [spRow] 와 같다.
+     비즈사업비처럼 한 건 값이 두 번에 나뉘어 들어오면, 행마다 따로 보는 한 어느 후보와도 안 맞는다.
+     묶어 놓고 보면 합계가 맞으므로 애매한 금액끼리 비교할 일이 없어진다. */
+  var spRowsS=useState(null);  var spRows=spRowsS[0];   var setSpRows=spRowsS[1];
   var spQS=useState('');       var spQ=spQS[0];         var setSpQ=spQS[1];         // 나눠담기 목록 검색어
   var nbS=useState(null);      var nb=nbS[0];           var setNb=nbS[1];           // 🏦 나이스빌 CMS 파싱분 {fileName,uploadedAt,rows,byDate,stat,linked}
   var nbRestS=useState(false); var nbRestored=nbRestS[0]; var setNbRestored=nbRestS[1]; // 보관분(cms_ledger)에서 복원됨
@@ -33725,6 +34097,16 @@ function FinanceLedger(){
   var nbBusyS=useState(false); var nbBusy=nbBusyS[0];   var setNbBusy=nbBusyS[1];   // CMS 일괄처리 중
   var hideDupS=usePersistedState('ledger_hide_dup', true); var hideDup=hideDupS[0]; var setHideDup=hideDupS[1]; // 이미 처리된 행 숨기기
   var atExS=useState({});      var atEx=atExS[0];       var setAtEx=atExS[1];       // 자동 정리에서 제외한 행 (체크 해제분)
+  // 입금 추천 계산 결과 — 지문(erpSugSig)이 같으면 그대로 쓴다. 아래 «비싼 계산» 참고.
+  var _sugCache = useRef({ sig:null, val:null, job:null });
+  // 조각 계산이 끝났을 때 화면을 한 번 다시 그리게 하는 눈금
+  var sugTickS = useState(0); var setSugTick = sugTickS[1];
+  // 후보 크게 보기 — 행 열쇠(_k). 표를 옆으로 늘리지 않고 팝업에서 고른다
+  var sugPopS = useState(''); var sugPopK = sugPopS[0]; var setSugPopK = sugPopS[1];
+  /* 그 창 안의 찾기말. 추천이 열두 건이나 뜨는데 죄다 같은 금액(220,000)·같은 점수(92%)면
+     골라 봐야 소용이 없다. 아예 후보가 없는 행도 마찬가지다.
+     그럴 때는 미입금 목록 «전체» 에서 이름·번호로 찾아 고르는 편이 빠르다. */
+  var sugPopQS = useState(''); var sugPopQ = sugPopQS[0]; var setSugPopQ = sugPopQS[1];
   var atOpenS=useState(true);  var atOpen=atOpenS[0];   var setAtOpen=atOpenS[1];   // 자동 정리 미리보기 펼침 (기본 펼침)
   var invTickS=useState(0);    var invTick=invTickS[0]; var setInvTick=invTickS[1]; // 세금계산서 아카이브 로딩 완료 신호
   var advBatchS=useState(false); var advBatchOpen=advBatchS[0]; var setAdvBatchOpen=advBatchS[1]; // 자문료 일괄확인 팝업
@@ -33733,6 +34115,14 @@ function FinanceLedger(){
   var editPopS=useState(null);   var editPop=editPopS[0]; var setEditPop=editPopS[1]; // 4-3 비교 수정 팝업 {incomeRecord}
   var incChkS=useState({});      var incChk=incChkS[0];   var setIncChk=incChkS[1];   // 입금 행 체크 {_k: true}
   var incMonS=useState('');      var incMon=incMonS[0];   var setIncMon=incMonS[1];   // 월 필터 (''=전체, 'YYYY-MM')
+  /* ── 한 번에 그리는 행 수 ──
+     통장 506행 × 후보 12개를 한꺼번에 그리면 그리기만 800ms 를 넘는다. 계산을
+     캐시해도(#90) 다시 그릴 때마다 이 비용은 그대로라, 30초 하트비트마다 화면이
+     멈췄다. 위에서부터 80행만 그리고 나머지는 [더 보기]로 잇는다.
+     ⚠ 합계·미처리 건수·자동 매칭·자동 정리는 전체(incAll/incList)로 계산한다 —
+       화면에 덜 그리는 것일 뿐 자료를 자르는 것이 아니다. */
+  var ldShowS=useState(80);      var ldShow=ldShowS[0];   var setLdShow=ldShowS[1];
+  useEffect(function(){ setLdShow(80); }, [incMon, ldTab, hideDup]);   // 달·탭을 바꾸면 처음부터
   var incVfS=useState({});       var incVf=incVfS[0];     var setIncVf=incVfS[1];     // 눈으로 확인 표시 {_k:{inv:true, work:true}}
   var candQS=useState({});       var candQ=candQS[0];     var setCandQ=candQS[1];     // 후보 검색어 {_k:'...'}
   var candKS=useState({});       var candK=candKS[0];     var setCandK=candKS[1];     // 후보 종류 필터 {_k:'cases'|''}
@@ -33750,7 +34140,7 @@ function FinanceLedger(){
         var _pst = erpBankProcessedStore();     // 이미 확정·등록한 행 (중복 방지) — store는 한 번만 받는다
         d.rows.forEach(function(x){
           if(!x) return;
-          var row={_k:String(x._k), date:x.date||'', memo:x.memo||'', note:x.note||'',
+          var row={_k:String(x._k), src:(x.src||'bank'), date:x.date||'', memo:x.memo||'', note:x.note||'',
                    amount:parseInt(x.amount,10)||0, balance:parseInt(x.balance,10)||0};
           var _pk = erpBankRowKey(row);
           if(_pk && _pst[_pk]) row._dup = true;
@@ -33801,8 +34191,9 @@ function FinanceLedger(){
       draftTimer.current = null;
       try{
         var flat=[];
-        (rows.inc||[]).forEach(function(x){ flat.push(_bankDraftSlimRow(x,'income')); });
-        (rows.exp||[]).forEach(function(x){ flat.push(_bankDraftSlimRow(x,'expense')); });
+        // src 를 함께 남긴다 — 통장과 카드가 한 통에 쌓이므로, 어느 쪽 것인지 알아야 한다
+        (rows.inc||[]).forEach(function(x){ flat.push(_bankDraftSlimRow(x,'income',x.src)); });
+        (rows.exp||[]).forEach(function(x){ flat.push(_bankDraftSlimRow(x,'expense',x.src)); });
         dbSet(BANK_DRAFT_KEY, { fileName:fName||'', uploadedAt:upAt||'', type:fileType||'bank',
                                 colMap:(rows.colMap)||{}, rows:flat,
                                 inMatch:inMatch||{}, expCat:expCat||{} });
@@ -33817,6 +34208,28 @@ function FinanceLedger(){
     setRows(null); setDetected(null); setInMatch({}); setExpCat({}); setSugOpen({});
     setFName(''); setUpAt(''); setRestored(false);
     showToast('🗑 거래내역을 비웠습니다');
+  }
+
+  /* 한 달만 비운다. 쌓아 두기 시작했으니 «전부 비우기» 하나로는 못 쓴다 —
+     엉뚱한 달을 잘못 올렸을 때 다른 달까지 날릴 수는 없다.
+     지금 보고 있는 종류(통장/카드) 의 그 달만 지운다. */
+  async function clearMonth(ym){
+    if(!ym || !rows) return;
+    var _n = (rows.inc||[]).filter(function(r){ return _srcOf(r)===_ldSrc && String(r.date||'').slice(0,7)===ym; }).length
+           + (rows.exp||[]).filter(function(r){ return _srcOf(r)===_ldSrc && String(r.date||'').slice(0,7)===ym; }).length;
+    if(!_n){ showToast('그 달에 지울 것이 없습니다'); return; }
+    var _lbl = parseInt(ym.slice(0,4),10)+'년 '+parseInt(ym.slice(5),10)+'월';
+    if(!(await popConfirm(_lbl+' '+(_ldSrc==='card'?'카드':'통장')+' 내역 '+_n+'건을 목록에서 비웁니다.\n\n'
+      + '→ 이미 확정·등록한 입금/출금은 그대로 유지됩니다\n'
+      + '→ 다른 달은 그대로 남습니다'))) return;
+    function keep(list){
+      return (list||[]).filter(function(r){
+        return !(_srcOf(r)===_ldSrc && String(r.date||'').slice(0,7)===ym);
+      });
+    }
+    setRows(function(r){ return r ? Object.assign({},r,{inc:keep(r.inc), exp:keep(r.exp)}) : r; });
+    setIncMon(''); setIncChk({});
+    showToast('🗑 '+_lbl+' '+_n+'건을 비웠습니다');
   }
 
   // ── 유연한 컬럼 감지 파서 ──
@@ -33890,8 +34303,9 @@ function FinanceLedger(){
     if(ext !== 'xlsx' && ext !== 'xls'){
       showToast('❌ Excel 파일(.xlsx, .xls)만 가능합니다'); return;
     }
-    setBusy(true); setFName(file.name); setRows(null); setDetected(null);
-    setRestored(false); setSugOpen({});   // 새 파일은 기존 초안을 대체
+    // 쌓아 두므로 여기서 비우지 않는다 — 파일을 못 읽어도 앞서 올린 것이 남아 있어야 한다
+    setBusy(true); setFName(file.name); setDetected(null);
+    setRestored(false); setSugOpen({});
     var reader = new FileReader();
     reader.onload = function(ev){
       try{
@@ -33928,20 +34342,52 @@ function FinanceLedger(){
           showToast('❌ 컬럼을 인식하지 못했습니다. 파일 형식을 확인해주세요.');
           setBusy(false); return;
         }
-        setRows(result); setDetected(result.colMap);
-        var auto = {};
-        result.inc.forEach(function(row){
+        /* 덮어쓰지 않고 «쌓는다». 달마다 올려도 앞 달이 남아 있어야 달끼리 견줄 수 있다.
+           같은 행이 두 번 올라오면(겹치는 기간·같은 파일 두 번) 뒤엣것을 버린다. */
+        var _src = fileType === 'card' ? 'card' : 'bank';
+        var _cur = [], _new = [];
+        (rows && rows.inc || []).forEach(function(x){ _cur.push(_bankDraftSlimRow(x,'income',x.src)); });
+        (rows && rows.exp || []).forEach(function(x){ _cur.push(_bankDraftSlimRow(x,'expense',x.src)); });
+        result.inc.forEach(function(x){ _new.push(_bankDraftSlimRow(x,'income',_src)); });
+        result.exp.forEach(function(x){ _new.push(_bankDraftSlimRow(x,'expense',_src)); });
+        var _mg = erpBankMergeDraft(_cur, _new);
+        var _pst2 = erpBankProcessedStore();       // 이미 확정·등록한 행 — store 는 한 번만 받는다
+        var _inc = [], _exp = [];
+        _mg.rows.forEach(function(x){
+          var row = { _k:x._k, src:x.src||'bank', date:x.date||'', memo:x.memo||'', note:x.note||'',
+                      amount:parseInt(x.amount,10)||0, balance:parseInt(x.balance,10)||0 };
+          var _pk = erpBankRowKey(row);
+          if(_pk && _pst2[_pk]) row._dup = true;
+          if(x.type === 'expense') _exp.push(row); else _inc.push(row);
+        });
+        setRows({inc:_inc, exp:_exp, colMap:result.colMap, hdrRow:result.hdrRow||[]});
+        setDetected(result.colMap);
+        // 골라 둔 짝·고른 카테고리는 새 열쇠로 옮겨 «살린다» — 지우면 앞서 한 일이 날아간다
+        var _keep = {}, _keepC = {};
+        Object.keys(inMatch||{}).forEach(function(k){ var nk=_mg.remap[k]; if(nk) _keep[nk]=inMatch[k]; });
+        Object.keys(expCat||{}).forEach(function(k){ var nk=_mg.remap[k]; if(nk) _keepC[nk]=expCat[k]; });
+        var _newKeys = {};
+        _mg.rows.forEach(function(x){ _newKeys[x._k] = 1; });
+        Object.keys(_mg.remap).forEach(function(k){ delete _newKeys[_mg.remap[k]]; });
+        var auto = _keep;
+        _inc.forEach(function(row){
           if(row._dup) return;                    // 이미 처리된 행은 매칭 대상에서 제외
+          if(!_newKeys[row._k]) return;           // 이번에 새로 들어온 행만 자동으로 짝지어 본다
           var ms = pending.filter(function(p){ return p.amount === row.amount; });
           if(ms.length === 1) auto[row._k] = ms[0].id;
         });
         setInMatch(auto);
-        setExpCat({});                            // 이전 파일의 카테고리 선택 초기화
+        setExpCat(_keepC);
         setUpAt(new Date().toISOString());        // 초안 저장용 업로드 시각
-        var dupN = result.inc.filter(function(r){return r._dup;}).length
-                 + result.exp.filter(function(r){return r._dup;}).length;
-        showToast('✅ 입금 '+result.inc.length+'건 / 출금 '+result.exp.length+'건 인식 (자동매칭 '+Object.keys(auto).length+'건)');
-        if(dupN) setTimeout(function(){ showToast('⚠️ 이미 처리된 '+dupN+'건은 제외했습니다'); }, 900);
+        var _added = Object.keys(_newKeys).length;
+        var dupN = _inc.filter(function(r){return r._dup;}).length
+                 + _exp.filter(function(r){return r._dup;}).length;
+        showToast('✅ 새로 '+_added+'건 추가 — 쌓인 것 입금 '+_inc.length+'건 / 출금 '+_exp.length+'건');
+        if(_mg.dup) setTimeout(function(){ showToast('🔁 이미 올라와 있던 '+_mg.dup+'건은 무시했습니다'); }, 700);
+        if(dupN) setTimeout(function(){ showToast('⚠️ 이미 처리된 '+dupN+'건은 제외했습니다'); }, 1400);
+        if(_mg.cut) setTimeout(function(){ showToast('🗄 보관 한도('+BANK_DRAFT_MAX+'행)를 넘어 오래된 '+_mg.cut+'건을 버렸습니다'); }, 2100);
+        // 소리 없이 사라지면 안 된다 — 날짜를 못 읽은 행이 있으면 말해 준다
+        if(_mg.skip) setTimeout(function(){ showToast('⚠️ 날짜를 읽지 못한 '+_mg.skip+'건은 넣지 못했습니다 — 파일의 날짜 칸을 확인해주세요'); }, 2800);
       } catch(err){ showToast('❌ 오류: '+err.message); }
       setBusy(false);
     };
@@ -34209,12 +34655,45 @@ function FinanceLedger(){
     }
   }
 
-  var thS={padding:'7px 10px',fontSize:'11px',fontWeight:700,color:'#64748b',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',textAlign:'left'};
+  /* 머리행 틀고정 — 표만 세로로 구르게 하고 머리행을 위에 붙여 둔다.
+     ⚠ position:sticky 는 «구르는 상자» 를 기준으로 붙는다. 표를 감싼 칸에
+       overflow 를 주지 않으면 페이지 전체가 구르는 상자라, 표가 길면 머리행이
+       화면 밖으로 밀려 올라가 버린다. 그래서 감싼 칸에 높이를 못 박아
+       그 안에서만 구르게 한다(_ldBox). */
+  var thS={padding:'7px 10px',fontSize:'11px',fontWeight:700,color:'#64748b',background:'#f8fafc',
+    borderBottom:'1px solid #e2e8f0',textAlign:'left',position:'sticky',top:0,zIndex:3,
+    boxShadow:'0 1px 0 #e2e8f0'};
   var tdS={padding:'7px 10px',fontSize:'11.5px',borderBottom:'1px solid #f1f5f9',verticalAlign:'middle'};
+  /* 표가 구를 자리 — 위 도구줄·합계줄은 이 상자 밖이라 저절로 제자리에 남는다.
+     ⚠ 높이를 calc(100vh - 330px) 로 못 박았더니 위 도구줄 높이가 그때그때 달라
+       (⏳ 추천 계산 중·자문료 n건·미매칭 n건 같은 이름표가 줄을 늘린다)
+       아래가 한참 남거나 반대로 표가 잘렸다. 그래서 «재서» 정한다:
+       상자의 화면상 위치를 재어 창 바닥까지 채운다. */
+  var _ldBoxRef = useRef(null);
+  var _ldHS = useState(0); var _ldH = _ldHS[0]; var setLdH = _ldHS[1];
+  function _ldFit(){
+    var el = _ldBoxRef.current; if(!el) return;
+    var top = el.getBoundingClientRect().top;
+    var want = Math.max(240, Math.round(window.innerHeight - top - 16));   // 바닥에 16px 만 남긴다
+    // 8px 안쪽은 그대로 둔다 — 안 그러면 «고침 → 다시 그림 → 고침» 이 끝나지 않는다
+    setLdH(function(prev){ return Math.abs(prev - want) < 8 ? prev : want; });
+  }
+  useEffect(function(){ _ldFit(); });          // 그릴 때마다 다시 잰다 (도구줄 높이가 변한다)
+  useEffect(function(){
+    window.addEventListener('resize', _ldFit);
+    return function(){ window.removeEventListener('resize', _ldFit); };
+  }, []);
+  // maxHeight 로 둔다 — 목록이 짧으면 빈 상자가 크게 남지 않게
+  var _ldBox={overflow:'auto',maxHeight:(_ldH ? _ldH+'px' : 'calc(100vh - 330px)'),minHeight:'240px',
+    border:'1px solid #eef2f7',borderRadius:'6px'};
 
-  // ── 이미 처리된 행 (중복 방지) — 목록에서 감추고 모든 일괄작업에서 제외 ──
-  var incAll = rows ? (rows.inc||[]) : [];
-  var expAll = rows ? (rows.exp||[]) : [];
+  /* 통장과 카드가 한 통에 쌓이므로, 지금 고른 종류의 것만 보여준다.
+     섞어 보이면 같은 달에 통장 306건과 카드 200건이 뒤엉켜 무엇이 무엇인지 알 수 없다.
+     («나이스빌 CMS» 는 아래에서 따로 그린다 — 여기서는 통장 것을 보여준다) */
+  var _ldSrc = fileType === 'card' ? 'card' : 'bank';
+  function _srcOf(r){ return (r && r.src) || 'bank'; }   // src 가 없던 옛 초안은 통장으로 본다
+  var incAll = rows ? (rows.inc||[]).filter(function(r){return _srcOf(r)===_ldSrc;}) : [];
+  var expAll = rows ? (rows.exp||[]).filter(function(r){return _srcOf(r)===_ldSrc;}) : [];
   var dupIncCnt = incAll.filter(function(r){return r._dup;}).length;
   var dupExpCnt = expAll.filter(function(r){return r._dup;}).length;
   var incList = hideDup ? incAll.filter(function(r){return !r._dup;}) : incAll;
@@ -34270,6 +34749,10 @@ function FinanceLedger(){
   var incByK = {};          // _k → row (자동 정리 미리보기에서 행을 되찾기 위함)
   var pendById = {};        // id → 미입금 후보 (행마다 find 하지 않도록 한 번만 만든다)
   pending.forEach(function(p){ pendById[p.id]=p; });
+  // 어느 미입금을 어느 행이 골랐는지 (id → 행 열쇠). 전에는 행마다·후보마다 inMatch 전체를
+  // 다시 훑어서 (80행 × 444후보 × 고른 수) 만 단위 연산이 렌더 한 번마다 돌았다.
+  var pendUsedBy = {};
+  Object.keys(inMatch).forEach(function(k){ if(inMatch[k]) pendUsedBy[inMatch[k]] = k; });
   // 자문료(월 고정) 건은 업체 주기로 계산서를 끊으므로 '미발급' 경고에서 제외한다
   function _isAdvisoryPend(p){
     if(!p) return false;
@@ -34278,19 +34761,59 @@ function FinanceLedger(){
     if((parseInt(it.monthlyAdvisoryFee,10)||0)>0) return true;
     return /자문/.test(String(p.label||''));
   }
-  if(rows && ldTabEff==='inc') incAll.forEach(function(row){
-    incByK[row._k] = row;
+  /* ── 비싼 계산은 지문이 같으면 다시 하지 않고, 다시 할 때도 조각내어 뒤에서 ──
+     지문(후보를 바꿀 수 있는 것: 통장 행·미입금 건·탭·계산서 색인)이 그대로면
+     앞의 결과를 그대로 쓴다. 지문이 달라졌으면 25행씩 끊어 setTimeout 으로
+     돌린다 — 실측 2초짜리 계산이라 한 번에 돌리면 그동안 화면이 통째로 멈춘다.
+     계산이 끝날 때까지는 추천 없이 그리고(⏳ 표시), 끝나면 한 번만 다시 그린다.
+     ⚠ 낡은 결과를 보여주지 않는다 — 지문이 다르면 val 을 쓰지 않는다. 미입금이
+       확정된 직후 옛 후보로 또 확정하는 사고를 막기 위함이다. */
+  var _invReady = erpInvoiceIndexReady();
+  var _sugSig = (rows && ldTabEff==='inc') ? erpSugSig(incAll, pending, ldTabEff, _invReady) : '';
+  var _sugComputing = false;
+  if(_sugSig && _sugCache.current.sig !== _sugSig){
+    _sugComputing = true;
+    var _oldJob = _sugCache.current.job;
+    if(!_oldJob || _oldJob.sig !== _sugSig){
+      if(_oldJob) _oldJob.cancel = true;                    // 재료가 또 바뀌었다 — 하던 것은 버린다
+      var _job = { sig:_sugSig, cancel:false };
+      _sugCache.current.job = _job;
+      (function(job, rowsArr, pendArr){
+        var out = erpBuildSugInit(), i = 0;
+        var t0 = (window.performance && performance.now) ? performance.now() : 0;
+        function step(){
+          if(job.cancel) return;                            // 낡은 재료 — 조용히 그만둔다
+          /* 행 수가 아니라 시간으로 끊는다. 처음엔 25행 고정(한 조각 230ms),
+             다음엔 5행 묶음 + 24ms 예산으로 했는데 여전히 211ms 가 찍혔다 —
+             행마다 비용이 크게 달라(무거운 행은 40ms) 5행 묶음이 예산 확인
+             전에 200ms 를 써 버린다. 그래서 한 행마다 시계를 본다.
+             최악의 초과가 무거운 행 하나(≈40ms)로 줄어든다. */
+          var tb = (window.performance && performance.now) ? performance.now() : 0;
+          do {
+            erpBuildSugChunk(rowsArr, pendArr, i, i+1, out);
+            i += 1;
+          } while(i < rowsArr.length && tb && (performance.now() - tb) < 16);
+          if(i < rowsArr.length){ setTimeout(step, 0); return; }
+          _sugCache.current = { sig: job.sig, val: out, job: null };
+          if(t0) console.log('[거래내역] 추천 다시 계산 '+Math.round(performance.now()-t0)
+            +'ms (조각내어 뒤에서 — 화면은 멈추지 않음) · 통장 '+rowsArr.length+'행 × 미입금 '+pendArr.length+'건');
+          setSugTick(function(t){ return t+1; });           // 다 됐으니 한 번만 다시 그린다
+        }
+        setTimeout(step, 0);
+      })(_job, incAll, pending);
+    }
+  }
+  var _sug = (_sugCache.current.sig === _sugSig) ? _sugCache.current.val : null;
+  if(_sug){
+    incByK = _sug.incByK; isCmsMemo = _sug.isCmsMemo; incSug = _sug.incSug;
+    incDone = _sug.incDone; ctHint = _sug.ctHint; invSug = _sug.invSug;
+  }
+  /* 사용자가 고른 매칭(inMatch)에 걸리는 것만 매번 다시 본다 — 전부 값싼 조회다.
+     캐시 안에 넣으면 클릭할 때마다 위 비싼 계산까지 다시 돌아 고치는 뜻이 없어진다. */
+  if(_sug) incAll.forEach(function(row){
     if(row._dup) return;
     var _memo = row.memo||row.note||'';
-    var _cms = erpIsCmsMemo(_memo);
-    isCmsMemo[row._k] = _cms;
-    // 후보를 종류별로 나눠 보여주므로 넉넉히 받는다 (사건·컨설팅·기금·기타)
-    var _sg = erpMatchTxnToPending({date:row.date, amount:row.amount, memo:_memo}, pending, 12);
-    incSug[row._k] = _sg;
-    // 입금관리에서 이미 확정한 건인지 (통장 행에는 지문이 안 남는다)
-    incDone[row._k] = erpAlreadyConfirmed({date:row.date, amount:row.amount}, 10);
-    // 맞는 후보가 없을 때만 — 아직 이관 안 된 계약이 있는지 본다
-    if(!_sg.length) ctHint[row._k] = erpContractHint({memo:_memo});
+    var _sg = incSug[row._k] || [];
     var _b = _sg.length ? _sg[0] : null;
     // ── 자동 정리 3중 관문 (학습 3회↑ · 금액 정확일치 · 신뢰도 90↑) ──
     // 사용자가 이미 다른 후보를 골라둔 행은 그 선택을 존중해 대상에서 뺀다
@@ -34298,12 +34821,8 @@ function FinanceLedger(){
           && erpAutoTidyOk(_b, _memo, row.amount)){
       autoTidyKeys.push(row._k); autoTidySet[row._k]=1; atAlias[row._k]=erpAliasCount(_memo);
     }
-    // ── 세금계산서 (금액 해시 O(1) 조회) ──
-    // 계산서를 따로 한 칸에 보여주므로 추천 신뢰도와 상관없이 항상 찾는다
-    var _iv = erpInvoiceSuggest({date:row.date, amount:row.amount}, 1);
-    if(_iv.length) invSug[row._k] = _iv[0];
     // 미발급 의심 — CMS 일괄이체·자문료 건·아카이브 미로딩 시에는 경고하지 않는다 (오탐 방지)
-    if(!_cms && erpInvoiceIndexReady()){
+    if(!isCmsMemo[row._k] && _invReady){
       var _selP = pendById[inMatch[row._k]] || (_b && _b.level==='high' ? _b.cand : null);
       if(!_isAdvisoryPend(_selP) && !erpInvoiceAny({date:row.date, amount:row.amount})) invNone[row._k]=1;
     }
@@ -34533,9 +35052,11 @@ function FinanceLedger(){
     },
       // 파일 종류 선택
       h('label',{style:{display:'flex',alignItems:'center',gap:'4px',cursor:'pointer',fontSize:'11.5px',whiteSpace:'nowrap',fontWeight:fileType==='bank'?700:400,color:fileType==='bank'?'#1d4ed8':'#64748b'}},
-        h('input',{type:'radio',name:'ledgerType',checked:fileType==='bank',onChange:function(){setFileType('bank');setRows(null);setDetected(null);}}),'🏦 은행 통장'),
+        /* 종전에는 종류를 바꾸면 올린 것을 비웠다. 이제는 통장·카드를 함께 쌓아 두므로
+           «비우기»가 아니라 «보는 쪽 바꾸기»다 — 올릴 때도 이 종류로 들어간다. */
+        h('input',{type:'radio',name:'ledgerType',checked:fileType==='bank',onChange:function(){setFileType('bank');setDetected(null);setIncChk({});}}),'🏦 은행 통장'),
       h('label',{style:{display:'flex',alignItems:'center',gap:'4px',cursor:'pointer',fontSize:'11.5px',whiteSpace:'nowrap',fontWeight:fileType==='card'?700:400,color:fileType==='card'?'#2563eb':'#64748b'}},
-        h('input',{type:'radio',name:'ledgerType',checked:fileType==='card',onChange:function(){setFileType('card');setRows(null);setDetected(null);}}),'💳 카드'),
+        h('input',{type:'radio',name:'ledgerType',checked:fileType==='card',onChange:function(){setFileType('card');setDetected(null);setIncChk({});}}),'💳 카드'),
       h('label',{title:'나이스빌 → CMS 출금 결과 내역 엑셀 (회원명·납부금액·정산예정일)',
         style:{display:'flex',alignItems:'center',gap:'4px',cursor:'pointer',fontSize:'11.5px',whiteSpace:'nowrap',fontWeight:fileType==='nicebill'?700:400,color:fileType==='nicebill'?'#7c3aed':'#64748b'}},
         h('input',{type:'radio',name:'ledgerType',checked:fileType==='nicebill',onChange:function(){setFileType('nicebill');setRows(null);setDetected(null);}}),'🏦 나이스빌 CMS'),
@@ -34775,6 +35296,12 @@ function FinanceLedger(){
             })),
           ldMonths.length>1 && h('span',{key:'n',style:{display:'flex',alignItems:'center',gap:'3px',flexShrink:0}},
             navBtn(1,'▶', !showAll && idx<ldMonths.length-1)),
+          // 그 달만 비우기 — 달을 골랐을 때만. 쌓아 두므로 «전부 비우기» 하나로는 못 쓴다
+          incMon && h('button',{key:'delm',onClick:function(){ clearMonth(incMon); },
+            title:'이 달의 '+(_ldSrc==='card'?'카드':'통장')+' 내역만 목록에서 비웁니다\n— 다른 달과 이미 확정한 건은 그대로입니다',
+            style:{padding:'0 8px',height:'30px',borderRadius:'6px',border:'1px solid #fecaca',
+              background:'#fff',color:'#b91c1c',fontSize:'11px',fontWeight:700,cursor:'pointer',flexShrink:0}},
+            '🗑 이 달'),
           // 그 달 처리현황
           h('span',{key:'b',style:st.todo>0
             ? {background:'#fef2f2',color:'#dc2626',border:'1px solid #fecaca',
@@ -34966,6 +35493,9 @@ function FinanceLedger(){
           });
           return h('div',{style:{fontWeight:700,fontSize:'12px',color:'#16a34a',marginBottom:'6px',padding:'5px 10px',background:'#f0fdf4',borderRadius:'5px',display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap'}},
             '💰 '+(incMon?parseInt(incMon.slice(5),10)+'월 ':'')+'입금 '+incList.length+'건 · '+incSum.toLocaleString()+'원',
+            // 조각 계산이 도는 몇 초 동안 — 추천 칸이 비어 보이는 까닭을 알린다
+            _sugComputing && h('span',{style:{background:'#eff6ff',color:'#1d4ed8',border:'1px solid #bfdbfe',
+              borderRadius:'8px',padding:'1px 8px',fontSize:'10.5px',fontWeight:800}},'⏳ 추천 계산 중…'),
             _advAuto>0 && h('span',{style:{background:'#f0fdfa',color:'#0d9488',border:'1px solid #99f6e4',borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:700}},'자문료 '+_advAuto+'건'),
             _manualNeed>0 && h('span',{style:{background:'#fffbeb',color:'#d97706',border:'1px solid #fde68a',borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:700}},'수동 '+_manualNeed+'건'),
             _noMatch>0 && h('span',{style:{background:'#fef2f2',color:'#dc2626',border:'1px solid #fecaca',borderRadius:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:700}},'미매칭 '+_noMatch+'건'),
@@ -35010,13 +35540,30 @@ function FinanceLedger(){
               },
               style:{padding:'3px 9px',background:'#d97706',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10.5px',fontWeight:800,cursor:'pointer',whiteSpace:'nowrap'}},
               '📋 창에서 확인 '+chkNeed.length+'건'),
+            /* ── ⊞ 묶어서 처리 — 통장 여러 행을 합쳐 미입금 건에 붙인다 ──
+               비즈사업비처럼 한 건 값이 두 번에 나뉘어 들어오면, 행마다 따로 보는 한
+               어느 후보와도 안 맞아 애매한 금액끼리 비교하게 된다. 묶으면 합계가 맞는다. */
+            (function(){
+              var _gk=Object.keys(incChk).filter(function(k){ var r=incByK[k]; return r && !r._dup; });
+              if(_gk.length<2) return null;
+              var _grows=_gk.map(function(k){ return incByK[k]; });
+              var _gsum=_grows.reduce(function(s,r){ return s+(r.amount||0); },0);
+              return h('button',{
+                title:'고른 통장 '+_gk.length+'행을 합쳐 미입금 건에 붙입니다\n— 한 건 값이 여러 번에 나뉘어 들어왔을 때 씁니다',
+                onClick:function(){
+                  setSpSel({}); setSpGap(''); setSpQ('');
+                  setSpRows(_grows); setSpRow(_grows[0]); setSpOpen(_grows[0]._k);
+                },
+                style:{padding:'3px 9px',background:'#7c3aed',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10.5px',fontWeight:800,cursor:'pointer',whiteSpace:'nowrap'}},
+                '⊞ 묶어서 처리 '+_gk.length+'행 · '+_gsum.toLocaleString()+'원');
+            })(),
             _advAuto>0 && h('button',{onClick:function(){setAdvBatchOpen(true);},
               style:{padding:'3px 8px',background:'#0d9488',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'자문료 일괄확인'),
             h('button',{onClick:function(){setConfHistOpen(true);},
               style:{padding:'3px 8px',background:'#64748b',color:'#fff',border:'none',borderRadius:'5px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'확정 이력'));
         })(),
-        h('div',{style:{overflowX:'auto'}},
-          h('table',{style:{width:'100%',borderCollapse:'collapse'}},
+        h('div',{ref:_ldBoxRef,style:_ldBox},
+          h('table',{style:{width:'100%',borderCollapse:'separate',borderSpacing:0}},
             h('thead',null,h('tr',null,
               h('th',{style:Object.assign({},thS,{width:'28px',textAlign:'center',padding:'7px 2px'})},
                 h('input',{type:'checkbox',style:{cursor:'pointer'},
@@ -35034,7 +35581,7 @@ function FinanceLedger(){
               h('th',{style:Object.assign({},thS,{minWidth:'260px',borderLeft:'2px solid #e2e8f0'})},'📁 사무관리 — 사건·컨설팅·기금·기타'),
               h('th',{style:Object.assign({},thS,{borderLeft:'2px solid #e2e8f0'})},'처리')
             )),
-            h('tbody',null,incList.map(function(row,_ri){
+            h('tbody',null,incList.slice(0,ldShow).map(function(row,_ri){
               var mId=inMatch[row._k];
               var pItem=mId?pending.find(function(p){return p.id===mId;}):null;
               var sugs=incSug[row._k]||[];
@@ -35138,18 +35685,24 @@ function FinanceLedger(){
                   },style:{width:'100%',fontSize:'11px',padding:'3px 5px',border:'1px solid #e2e8f0',borderRadius:'4px',
                     background:pItem?'#f0fdf4':'#fff',color:pItem?'#16a34a':'#475569',fontWeight:pItem?700:400}},
                     h('option',{value:''},'-- 업체/항목 선택 --'),
-                    pending.filter(function(p){
-                      var used=Object.keys(inMatch).some(function(k){return k!==row._k&&inMatch[k]===p.id;});
-                      return !used;
-                    }).sort(function(a,b){return Math.abs((a.expect||a.amount)-row.amount)-Math.abs((b.expect||b.amount)-row.amount);})
-                    .map(function(p){
-                      var ea=p.expect||p.amount;
-                      var d=ea-row.amount;
-                      var ds=d===0?'일치':(d>0?'+':'')+d.toLocaleString()+'원차';
-                      var lbl='['+ds+'] '+p.companyName+' '+p.label+' '+ea.toLocaleString()+'원';
-                      if(p.vatLabel) lbl+=' ('+p.vatLabel+')';
-                      return h('option',{key:p.id,value:p.id},lbl);
-                    })
+                    /* 미입금 전부(수백 건)를 행마다 <option> 으로 만들면 80행 × 444건 = 3만 개가
+                       넘는 DOM 이 클릭 한 번마다 다시 만들어져 화면이 0.5~1초씩 멈췄다
+                       (콘솔의 「화면 멈춤」). 금액 가까운 30건만 싣는다 — 나머지가 필요하면
+                       위 [🔍 직접 찾아 고르기] 로 검색한다. */
+                    (function(){
+                      var po=erpPendOptions(pending, pendUsedBy, row._k, row.amount, mId, 30);
+                      var opts=po.list.map(function(p){
+                        var ea=p.expect||p.amount;
+                        var d=ea-row.amount;
+                        var ds=d===0?'일치':(d>0?'+':'')+d.toLocaleString()+'원차';
+                        var lbl='['+ds+'] '+p.companyName+' '+p.label+' '+ea.toLocaleString()+'원';
+                        if(p.vatLabel) lbl+=' ('+p.vatLabel+')';
+                        return h('option',{key:p.id,value:p.id},lbl);
+                      });
+                      if(po.more>0) opts.push(h('option',{key:'_more',value:'',disabled:true},
+                        '… 외 '+po.more+'건 — 금액 가까운 30건만 표시, 나머지는 🔍 직접 찾아 고르기'));
+                      return opts;
+                    })()
                   ),
                   // 추천 배지 + 후보 칩
                   best && h('div',{style:{display:'flex',alignItems:'center',gap:'5px',marginTop:'3px',flexWrap:'wrap'}},
@@ -35184,7 +35737,14 @@ function FinanceLedger(){
                           borderRadius:'4px',fontSize:'9.5px',fontWeight:700,cursor:'pointer'}},'계약관리로'))
                   ),
                   (function(){
-                    if(!sugs.length) return null;
+                    /* 후보가 아예 없으면 종전에는 아무것도 안 보여 손을 놓을 수밖에 없었다.
+                       큰 창을 열어 미입금 목록 전체에서 이름으로 찾게 한다. */
+                    if(!sugs.length) return h('div',{style:{marginTop:'2px'}},
+                      h('button',{onClick:function(e){ e.stopPropagation(); setSugPopQ(''); setSugPopK(row._k); },
+                        title:'미입금 목록 전체에서 업체명·관리번호·담당으로 찾아 고릅니다',
+                        style:{background:'#fff',color:'#1d4ed8',border:'1px dashed #93c5fd',borderRadius:'5px',
+                          padding:'3px 9px',fontSize:'10px',fontWeight:700,cursor:'pointer'}},
+                        '🔍 직접 찾아 고르기'));
                     var _memo0 = row.memo||row.note||'';
                     /* 비즈사업비·한국생산성본부는 «현장클리닉» 사업장 여러 곳 몫을 한 번에 보낸다.
                        적요에 사업장 이름이 없으니 이름으로는 못 찾는다 — 대신 현장클리닉 건만 추려 올린다. */
@@ -35267,7 +35827,16 @@ function FinanceLedger(){
                           },
                           style:{fontSize:'10px',color:'#64748b',fontWeight:700,cursor:'pointer'}},
                           (openOther?'▴ ':'▾ ')+(hit.length?'이름이 다른 것 ':'후보 ')+other.length+'건'
-                          +(hit.length?' — 금액만 맞음':'')),
+                          +(hit.length?' — 금액만 맞음':'')
+                          // 죄다 같은 금액이면 훑어봐야 소용없다는 걸 미리 알린다
+                          +((other.length>=3 && other.every(function(s){
+                               return (s.cand.expect||s.cand.amount)===(other[0].cand.expect||other[0].cand.amount); }))
+                             ? ' · 모두 같은 금액' : '')),
+                        // 표를 옆으로 늘리지 않고 큰 창에서 고른다
+                        h('span',{onClick:function(e){ e.stopPropagation(); setSugPopQ(''); setSugPopK(row._k); },
+                          title:'후보를 큰 창에서 봅니다 — 거기서 미입금 목록 전체를 이름으로 찾을 수도 있습니다',
+                          style:{marginLeft:'8px',fontSize:'9.5px',fontWeight:800,color:'#1d4ed8',
+                            cursor:'pointer',textDecoration:'underline'}},'⤢ 크게 보기 · 직접 찾기'),
                         openOther && h('div',{style:{marginTop:'3px'}},
                           // 종류 칩 + 검색 (후보가 넉넉할 때만)
                           other.length>=4 && h('div',{style:{display:'flex',gap:'3px',flexWrap:'wrap',alignItems:'center',marginBottom:'4px'}},
@@ -35406,7 +35975,8 @@ function FinanceLedger(){
                     h('button',{onClick:function(){
                         var init={};
                         if(mId){ var pi=pending.find(function(p){return p.id===mId;}); if(pi) init[mId]=pi.expect||pi.amount; }
-                        setSpSel(init); setSpGap(''); setSpQ(''); setSpRow(row); setSpOpen(row._k);
+                        // 이 단추는 «이 행 하나»만 다룬다 — 묶음이 남아 있으면 푼다
+                        setSpSel(init); setSpGap(''); setSpQ(''); setSpRows(null); setSpRow(row); setSpOpen(row._k);
                       },style:{background:spOpen===row._k?'#1e40af':'#fff',color:spOpen===row._k?'#fff':'#1e40af',
                         border:'1px solid #93c5fd',borderRadius:'5px',
                         padding:'3px 8px',fontSize:'10.5px',fontWeight:700,cursor:'pointer'}},
@@ -35477,7 +36047,21 @@ function FinanceLedger(){
               );
             })),
             // 합계 행 — 입금액 열 아래에 맞춘다
-            h('tfoot',null,h('tr',{style:{background:'#f0fdf4',borderTop:'2px solid #bbf7d0'}},
+            h('tfoot',null,
+              // 아직 안 그린 행 잇기 — 자료는 그대로 있고 화면만 아꼈다
+              incList.length>ldShow && h('tr',null,
+                h('td',{colSpan:6,style:{padding:'8px',textAlign:'center',background:'#f8fafc'}},
+                  h('button',{onClick:function(){ setLdShow(ldShow+200); },
+                    style:{padding:'6px 18px',background:'#fff',color:'#1d4ed8',border:'1px solid #bfdbfe',
+                      borderRadius:'7px',fontSize:'12px',fontWeight:800,cursor:'pointer'}},
+                    '⬇ 나머지 '+(incList.length-ldShow).toLocaleString()+'건 더 보기'),
+                  ' ',
+                  h('button',{onClick:function(){ setLdShow(incList.length); },
+                    title:'전부 그리면 화면이 잠깐 멈출 수 있습니다',
+                    style:{padding:'6px 12px',background:'#f1f5f9',color:'#64748b',border:'1px solid #e2e8f0',
+                      borderRadius:'7px',fontSize:'11px',fontWeight:700,cursor:'pointer'}},
+                    '모두 펼치기'))),
+              h('tr',{style:{background:'#f0fdf4',borderTop:'2px solid #bbf7d0'}},
               h('td',{style:Object.assign({},tdS,{textAlign:'right',fontWeight:800,color:'#15803d',fontSize:'11px'})},'합계'),
               h('td',{style:Object.assign({},tdS,{fontWeight:700,color:'#15803d',fontSize:'11px',whiteSpace:'nowrap'})},incList.length+'건'),
               h('td',{style:Object.assign({},tdS,{fontWeight:800,color:'#15803d',whiteSpace:'nowrap'})},incSum.toLocaleString()+'원'),
@@ -35493,14 +36077,14 @@ function FinanceLedger(){
           '💸 '+(incMon?parseInt(incMon.slice(5),10)+'월 ':'')+'출금 내역 — 카테고리 선택 후 출금관리 등록',
           h('span',{style:{marginLeft:'auto',fontWeight:800,color:'#b45309'}},
             expList.length+'건 · 합계 '+expSum.toLocaleString()+'원')),
-        h('div',{style:{overflowX:'auto'}},
-          h('table',{style:{width:'100%',borderCollapse:'collapse'}},
+        h('div',{ref:_ldBoxRef,style:_ldBox},
+          h('table',{style:{width:'100%',borderCollapse:'separate',borderSpacing:0}},
             h('thead',null,h('tr',null,
               h('th',{style:Object.assign({},thS,{width:'34px',textAlign:'right'})},'#'),
               h('th',{style:thS},'날짜'),h('th',{style:thS},'출금액'),h('th',{style:thS},'적요'),
               h('th',{style:Object.assign({},thS,{minWidth:'130px'})},'카테고리'),h('th',{style:thS},'처리')
             )),
-            h('tbody',null,expList.map(function(row,_re){
+            h('tbody',null,expList.slice(0,ldShow).map(function(row,_re){
               var cat=expCat[row._k];
               var catName=cat?EXP_CATS.find(function(c){return c.code===cat;}):null;
               var g=expGuess[row._k];
@@ -35549,7 +36133,21 @@ function FinanceLedger(){
               );
             })),
             // 합계 행 — 출금액 열 아래에 맞춘다
-            h('tfoot',null,h('tr',{style:{background:'#fffbeb',borderTop:'2px solid #fde68a'}},
+            h('tfoot',null,
+              // 아직 안 그린 행 잇기 — 입금 표와 같은 이유(그리는 양 줄이기)
+              expList.length>ldShow && h('tr',null,
+                h('td',{colSpan:6,style:{padding:'8px',textAlign:'center',background:'#fffbeb'}},
+                  h('button',{onClick:function(){ setLdShow(ldShow+200); },
+                    style:{padding:'6px 18px',background:'#fff',color:'#b45309',border:'1px solid #fde68a',
+                      borderRadius:'7px',fontSize:'12px',fontWeight:800,cursor:'pointer'}},
+                    '⬇ 나머지 '+(expList.length-ldShow).toLocaleString()+'건 더 보기'),
+                  ' ',
+                  h('button',{onClick:function(){ setLdShow(expList.length); },
+                    title:'전부 그리면 화면이 잠깐 멈출 수 있습니다',
+                    style:{padding:'6px 12px',background:'#f1f5f9',color:'#64748b',border:'1px solid #e2e8f0',
+                      borderRadius:'7px',fontSize:'11px',fontWeight:700,cursor:'pointer'}},
+                    '모두 펼치기'))),
+              h('tr',{style:{background:'#fffbeb',borderTop:'2px solid #fde68a'}},
               h('td',{style:Object.assign({},tdS,{textAlign:'right',fontWeight:800,color:'#b45309',fontSize:'11px'})},'합계'),
               h('td',{style:Object.assign({},tdS,{fontWeight:700,color:'#b45309',fontSize:'11px',whiteSpace:'nowrap'})},expList.length+'건'),
               h('td',{style:Object.assign({},tdS,{fontWeight:800,color:'#b45309',whiteSpace:'nowrap'})},expSum.toLocaleString()+'원'),
@@ -35563,12 +36161,17 @@ function FinanceLedger(){
     // ── 나눠담기 모달 (2-2 좌우 대조) ──
     spOpen && spRow && (function(){
       var row=spRow;
+      /* 통장 행이 하나면 rowsIn 은 [row] — 종전 나눠담기와 똑같다.
+         둘 이상이면 «합쳐서» 본다. 아래 셈은 전부 amountIn(합계) 기준이다. */
+      var rowsIn=(spRows&&spRows.length)?spRows:[row];
+      var manyIn=rowsIn.length>1;
+      var amountIn=rowsIn.reduce(function(s,r){return s+(r.amount||0);},0);
       var selIds=Object.keys(spSel);
       var total=selIds.reduce(function(s,id){return s+(parseInt(spSel[id],10)||0);},0);
-      var diff=total-row.amount;
+      var diff=total-amountIn;
       var absDiff=Math.abs(diff);
       var spGm=spGap||(absDiff<=1100?'full':(diff>0?'partial':'other'));
-      function closeModal(){setSpOpen(null);setSpRow(null);setSpSel({});setSpGap('');setSpQ('');}
+      function closeModal(){setSpOpen(null);setSpRow(null);setSpRows(null);setSpSel({});setSpGap('');setSpQ('');}
       // 담은 건의 성과급 합계
       var _spPerfAll=[];
       selIds.forEach(function(id){
@@ -35587,18 +36190,35 @@ function FinanceLedger(){
             boxShadow:'0 20px 60px rgba(0,0,0,0.3)',overflow:'hidden'}},
           h('div',{style:{background:'#d97706',color:'#fff',padding:'12px 16px',fontSize:'13px',fontWeight:700,
             display:'flex',alignItems:'center',justifyContent:'space-between'}},
-            h('span',null,'↔️ 나눠담기 · ',row.amount.toLocaleString(),'원 — 좌우 대조'),
+            h('span',null, manyIn
+              ? ('⊞ 묶어서 처리 · 통장 '+rowsIn.length+'행 합계 '+amountIn.toLocaleString()+'원 — 좌우 대조')
+              : ('↔️ 나눠담기 · '+amountIn.toLocaleString()+'원 — 좌우 대조')),
             h('button',{onClick:closeModal,style:{background:'none',border:'none',color:'#fff',fontSize:'18px',
               cursor:'pointer',padding:'0 4px',lineHeight:1}},'×')),
           h('div',{style:{display:'grid',gridTemplateColumns:'250px 1fr',flex:1,overflow:'hidden'}},
             // 왼쪽: 은행 원본
             h('div',{style:{padding:'14px',borderRight:'1px solid #e2e8f0',background:'#f0fdf4',overflowY:'auto'}},
-              h('div',{style:{fontSize:'10px',fontWeight:700,color:'#16a34a',marginBottom:'6px'}},'🏦 은행 입금 원본'),
-              h('div',{style:{fontSize:'24px',fontWeight:800,fontFamily:'monospace',color:'#16a34a'}},row.amount.toLocaleString()),
-              h('div',{style:{display:'flex',justifyContent:'space-between',padding:'4px 0',fontSize:'11px',marginTop:'6px'}},
-                h('span',{style:{color:'#64748b'}},'일시'),h('span',{style:{fontWeight:600}},row.date||'-')),
-              h('div',{style:{display:'flex',justifyContent:'space-between',padding:'4px 0',fontSize:'11px'}},
-                h('span',{style:{color:'#64748b'}},'적요'),h('span',{style:{fontWeight:600}},row.memo||row.note||'-')),
+              h('div',{style:{fontSize:'10px',fontWeight:700,color:'#16a34a',marginBottom:'6px'}},
+                manyIn?('🏦 은행 입금 '+rowsIn.length+'건 합계'):'🏦 은행 입금 원본'),
+              h('div',{style:{fontSize:'24px',fontWeight:800,fontFamily:'monospace',color:'#16a34a'}},amountIn.toLocaleString()),
+              // 묶었으면 어느 행을 묶었는지 그대로 보여준다 — 합계만 보이면 무엇을 묶었는지 알 수 없다
+              manyIn
+              ? h('div',{style:{marginTop:'8px',display:'flex',flexDirection:'column',gap:'3px'}},
+                  rowsIn.map(function(r,_i){
+                    return h('div',{key:r._k||_i,style:{background:'#fff',border:'1px solid #bbf7d0',borderRadius:'5px',
+                      padding:'4px 6px',fontSize:'10px',lineHeight:1.4}},
+                      h('div',{style:{display:'flex',justifyContent:'space-between',gap:'6px'}},
+                        h('span',{style:{color:'#64748b'}},r.date||'-'),
+                        h('span',{style:{fontWeight:700,fontFamily:'monospace'}},(r.amount||0).toLocaleString())),
+                      h('div',{style:{color:'#475569',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
+                        r.memo||r.note||'-'));
+                  }))
+              : [
+                h('div',{key:'d',style:{display:'flex',justifyContent:'space-between',padding:'4px 0',fontSize:'11px',marginTop:'6px'}},
+                  h('span',{style:{color:'#64748b'}},'일시'),h('span',{style:{fontWeight:600}},row.date||'-')),
+                h('div',{key:'m',style:{display:'flex',justifyContent:'space-between',padding:'4px 0',fontSize:'11px'}},
+                  h('span',{style:{color:'#64748b'}},'적요'),h('span',{style:{fontWeight:600}},row.memo||row.note||'-'))
+              ],
               // 금액 대조 박스
               h('div',{style:{marginTop:'12px',padding:'8px',background:'#fff',border:'1px solid #e2e8f0',borderRadius:'6px',fontSize:'10.5px'}},
                 h('div',{style:{fontWeight:700,marginBottom:'3px'}},'금액 대조'),
@@ -35622,7 +36242,8 @@ function FinanceLedger(){
                 /* 전에는 업체명과 세금 배지만 보이고, 종류·관리번호·담당자·금액은 «체크한 뒤에야» 나왔다.
                    체크할지 정하려면 먼저 봐야 하는데 순서가 거꾸로였다. 이제 한 줄에 다 보여준다.
                    비즈사업비·생산성본부처럼 현장클리닉 묶음이면 현장클리닉 건을 위로 올린다. */
-                var _clinic = erpIsClinicPayer(row.memo||row.note||'');
+                // 묶었으면 묶은 행 중 하나라도 현장클리닉 적요면 클리닉 건을 위로 올린다
+                var _clinic = rowsIn.some(function(r){ return erpIsClinicPayer(r.memo||r.note||''); });
                 var _q = (spQ||'').trim().toLowerCase();
                 var _list = pending.filter(function(p){
                   if(!p) return false;
@@ -35637,8 +36258,8 @@ function FinanceLedger(){
                     var ca=erpIsClinicItem(a)?0:1, cb=erpIsClinicItem(b)?0:1;
                     if(ca!==cb) return ca-cb;                        // 현장클리닉 먼저
                   }
-                  var da=Math.abs((a.expect||a.amount)-row.amount);
-                  var db=Math.abs((b.expect||b.amount)-row.amount);
+                  var da=Math.abs((a.expect||a.amount)-amountIn);
+                  var db=Math.abs((b.expect||b.amount)-amountIn);
                   return da-db;                                      // 금액 가까운 순
                 });
                 return h('div',null,
@@ -35659,7 +36280,7 @@ function FinanceLedger(){
                 var _tax=_pendTaxType(p);
                 var _bd=storeBadge(p.store);
                 var _no=(p.item&&(p.item.caseNo||p.item.no))||'';
-                var _dd=ea-row.amount;
+                var _dd=ea-amountIn;
                 var _cw={flexShrink:0,overflow:'hidden',textOverflow:'ellipsis'};
                 var _ivc=null;
                 try{_ivc=erpInvoiceMatch({date:row.date,amount:ea,memo:''},p.companyName);}catch(_e){}
@@ -35767,8 +36388,9 @@ function FinanceLedger(){
             ),
           h('div',{style:{padding:'10px 14px',background:'#f8fafc',borderTop:'1px solid #e2e8f0',
             display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',fontSize:'12px'}},
-            h('span',null,'담은 합계 ',h('b',{style:{fontFamily:'monospace'}},total.toLocaleString()),' / 입금 ',
-              h('b',{style:{fontFamily:'monospace'}},row.amount.toLocaleString())),
+            h('span',null,'담은 합계 ',h('b',{style:{fontFamily:'monospace'}},total.toLocaleString()),
+              manyIn?' / 입금 '+rowsIn.length+'행 ':' / 입금 ',
+              h('b',{style:{fontFamily:'monospace'}},amountIn.toLocaleString())),
             absDiff<=1100 && h('span',{style:{color:'#166534',fontWeight:700}},'✅ 딱 맞습니다'),
             h('span',{style:{flex:1}}),
             h('button',{onClick:closeModal,
@@ -35778,36 +36400,58 @@ function FinanceLedger(){
               onClick:async function(){
                 var lines=selIds.map(function(id){var p=pending.find(function(x){return x.id===id;});
                   return '· '+(p?p.companyName:'')+' '+(p?p.label:'')+' '+(spSel[id]||0).toLocaleString()+'원';}).join('\n');
-                var msg='입금 '+row.amount.toLocaleString()+'원을 '+selIds.length+'건에 나눠 반영합니다.\n\n'+lines;
+                var msg=(manyIn
+                  ? ('통장 '+rowsIn.length+'행 합계 '+amountIn.toLocaleString()+'원을 '+selIds.length+'건에 반영합니다.')
+                  : ('입금 '+amountIn.toLocaleString()+'원을 '+selIds.length+'건에 나눠 반영합니다.'))+'\n\n'+lines;
                 if(diff>1100 && spGm==='fee') msg+='\n\n수수료 '+absDiff.toLocaleString()+'원 지출 기록';
                 if(!(await popConfirm(msg))) return;
                 var ok=0,ng=0;
+                /* 통장 행을 앞에서부터 헐어 미입금 건을 채운다.
+                   한 건이 두 행에 걸치면 기록도 둘로 나뉜다 — 실제로 두 번 들어온 돈이니 그게 맞다.
+                   erpPaidSoFar 가 splitPayments 를 합쳐 보므로 합계가 차면 완납으로 잡힌다. */
+                var _pool=rowsIn.map(function(r){return {row:r,left:(r.amount||0)};});
+                var _pi=0;
                 selIds.forEach(function(id){
                   var p=pending.find(function(x){return x.id===id;});
                   if(!p){ng++;return;}
-                  var amt=parseInt(spSel[id],10)||0;
+                  var need=parseInt(spSel[id],10)||0;
                   var ea=p.expect||p.amount;
-                  var isPartial=amt<ea;
-                  try{
-                    saveIncome(Object.assign({},row,{amount:amt}),p,
-                      isPartial?{partial:true}:{});
-                    erpLearnPayerAlias(row.memo||row.note||'',p); ok++;
-                  }catch(_e){ng++;}
+                  var got=0,bad=false;
+                  while(need>0 && _pi<_pool.length){
+                    var slot=_pool[_pi];
+                    if(slot.left<=0){_pi++;continue;}
+                    var take=Math.min(slot.left,need);
+                    try{
+                      // 이 조각만으로 다 채우지 못하면 일부입금으로 남긴다
+                      saveIncome(Object.assign({},slot.row,{amount:take}),p,
+                        (got+take)<ea?{partial:true}:{});
+                      erpLearnPayerAlias(slot.row.memo||slot.row.note||'',p);
+                    }catch(_e){bad=true;}
+                    slot.left-=take; need-=take; got+=take;
+                  }
+                  if(bad||!got) ng++; else ok++;
                 });
                 if(diff>1100 && spGm==='fee'){
-                  saveExpense(Object.assign({},row,{amount:absDiff}),
+                  // 수수료는 남은 통장 행(없으면 첫 행)에 붙인다 — 날짜가 있어야 지출로 남는다
+                  var _feeRow=(_pool.filter(function(s){return s.left>0;})[0]||_pool[0]).row;
+                  saveExpense(Object.assign({},_feeRow,{amount:absDiff}),
                     'exp-outsource');
                 }
                 if(diff<-1100 && spGm==='other'){
                   dbUpsert('finance_income',{id:'fi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
                     companyName:'기타',amount:absDiff,date:row.date||todayYMD(),
-                    kind:'기타입금',memo:'나눠담기 초과분 — '+(row.memo||''),
+                    kind:'기타입금',memo:(manyIn?'묶어서 처리':'나눠담기')+' 초과분 — '+(row.memo||''),
                     perfShares:[],confirmedAt:new Date().toISOString(),confirmedBy:CURRENT_USER?CURRENT_USER.sid:''});
                 }
-                if(ok) erpMarkBankRowProcessed(row,'income','나눠담기 '+ok+'건');
-                removeRow(row._k,'inc');
+                // 묶은 통장 행은 «하나도 빠짐없이» 처리 표시하고 목록에서 뺀다 — 하나라도 남으면 또 후보로 뜬다
+                var _tag=(manyIn?'묶어서 처리':'나눠담기')+' '+ok+'건';
+                rowsIn.forEach(function(r){
+                  if(ok) erpMarkBankRowProcessed(r,'income',_tag);
+                  removeRow(r._k,'inc');
+                });
+                if(manyIn){ var _nc=Object.assign({},incChk); rowsIn.forEach(function(r){delete _nc[r._k];}); setIncChk(_nc); }
                 closeModal();
-                showToast('✅ 나눠담기 '+ok+'건 확정'+(ng?' · 실패 '+ng+'건':''));
+                showToast('✅ '+(manyIn?'묶어서 처리 통장 '+rowsIn.length+'행 → ':'나눠담기 ')+ok+'건 확정'+(ng?' · 실패 '+ng+'건':''));
               },
               style:{background:'#1e40af',color:'#fff',border:'none',borderRadius:'5px',
                 padding:'5px 14px',fontSize:'11.5px',fontWeight:700,cursor:'pointer'}},
@@ -35954,6 +36598,113 @@ function FinanceLedger(){
           )
         )
       );
+    })(),
+
+    /* ── 후보 크게 보기 팝업 ──
+       표 안에서는 후보 한 건이 한 줄이라 이름·건명이 잘린다. 창을 옆으로 늘려
+       확인하던 것을 이 창 하나로 갈음한다. 고르는 동작은 표와 똑같다. */
+    sugPopK && (function(){
+      var _row = incByK[sugPopK];
+      var _sg = incSug[sugPopK] || [];
+      if(!_row) return null;
+      var _memo = _row.memo||_row.note||'';
+      var _sel = inMatch[sugPopK];
+      var _pq = (sugPopQ||'').trim().toLowerCase();
+      /* 후보가 여럿인데 금액이 죄다 같으면 추천은 아무것도 못 좁혀 준다 (캡쳐의 220,000 × 12건).
+         그런 줄임을 숨기지 말고 「이름으로 찾으세요」 라고 말해 준다. */
+      var _amb = _sg.length>=3 && _sg.every(function(s){
+        return (s.cand.expect||s.cand.amount) === (_sg[0].cand.expect||_sg[0].cand.amount); });
+      /* 찾기말이 있으면 추천을 벗어나 «미입금 목록 전체» 를 뒤진다.
+         이미 추천에 있던 건은 그 점수를 그대로 달고 나온다 — 두 목록이 서로 다른 말을 하면 안 된다. */
+      var _rows = _pq
+        ? pending.filter(function(p){
+            if(!p) return false;
+            var hay=((p.companyName||'')+' '+(p.label||'')+' '
+                    +((p.item&&(p.item.caseNo||p.item.no))||'')+' '+_pendStaff(p)).toLowerCase();
+            return hay.indexOf(_pq)>=0;
+          }).slice(0,200).map(function(p){
+            var _hit=null;
+            for(var i=0;i<_sg.length;i++){ if(_sg[i].cand.id===p.id){ _hit=_sg[i]; break; } }
+            return _hit || { cand:p, score:null, reasons:['직접 찾음'] };
+          })
+        : _sg;
+      function _pick(pid){
+        if(inMatch[sugPopK] !== pid){
+          var nm=Object.assign({},inMatch); nm[sugPopK]=pid; setInMatch(nm);
+          try{
+            var _c=pendById[pid];
+            if(_c && _memo && erpLearnPayerAlias(_memo, _c))
+              showToast('🔖 기억함 — 다음부터 「'+_memo+'」 은 '+_c.companyName+' 로 찾아옵니다');
+          }catch(_le){ if(window._erpErrLog) window._erpErrLog(_le); }
+        }
+        setSugPopK(''); setSugPopQ('');
+      }
+      return h('div',{className:'modal-bg',onClick:function(){setSugPopK('');setSugPopQ('');},style:{zIndex:210}},
+        h('div',{onClick:function(e){e.stopPropagation();},
+          style:{background:'#fff',borderRadius:'10px',width:'min(980px,94vw)',maxHeight:'86vh',
+            display:'flex',flexDirection:'column',overflow:'hidden'}},
+          h('div',{style:{background:'#1e40af',color:'#fff',padding:'10px 14px',display:'flex',alignItems:'center',gap:'10px'}},
+            h('b',{style:{fontSize:'13px'}},_row.amount.toLocaleString()+'원'),
+            h('span',{style:{fontSize:'11.5px',opacity:0.9}},String(_row.date||'').slice(0,16).replace('T',' ')),
+            h('span',{style:{fontSize:'12px',fontWeight:700}},'적요 「'+(_memo||'-')+'」'),
+            h('span',{style:{flex:1}}),
+            h('span',{style:{fontSize:'11px',opacity:0.9}},
+              _pq ? ('찾은 것 '+_rows.length+'건') : ('후보 '+_sg.length+'건')),
+            h('button',{className:'x',onClick:function(){setSugPopK('');setSugPopQ('');},style:{color:'#fff'}},'×')),
+          // ── 직접 찾기 — 추천이 못 좁혀 줄 때 여기서 이름·번호로 고른다 ──
+          h('div',{style:{padding:'8px 10px',borderBottom:'1px solid #eef2f7',background:'#f8fafc',
+            display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}},
+            h('input',{value:sugPopQ||'',autoFocus:true,
+              placeholder:'🔍 업체명·관리번호·담당으로 미입금 목록 전체에서 찾기',
+              onInput:function(e){ setSugPopQ(e.target.value); },
+              style:{flex:'1 1 260px',minWidth:0,padding:'6px 10px',border:'1px solid #cbd5e1',
+                borderRadius:'6px',fontSize:'12px'}}),
+            _pq && h('button',{onClick:function(){ setSugPopQ(''); },
+              style:{background:'#fff',color:'#64748b',border:'1px solid #cbd5e1',borderRadius:'6px',
+                padding:'5px 10px',fontSize:'11px',cursor:'pointer',whiteSpace:'nowrap'}},'추천으로 돌아가기'),
+            // 후보가 죄다 같은 금액이면 추천은 아무것도 못 좁혀 준다 — 숨기지 않고 말해 준다
+            !_pq && _amb && h('span',{style:{fontSize:'11px',fontWeight:700,color:'#b45309',whiteSpace:'nowrap'}},
+              '⚠ 후보 '+_sg.length+'건이 모두 '+(_sg[0].cand.expect||_sg[0].cand.amount).toLocaleString()
+              +'원입니다 — 금액으로는 못 고릅니다'),
+            !_pq && !_amb && _sg.length===0 && h('span',{style:{fontSize:'11px',color:'#94a3b8',whiteSpace:'nowrap'}},
+              '맞는 후보가 없습니다 — 이름으로 찾으세요')),
+          _rows.length===0
+            ? h('div',{style:{padding:'28px',textAlign:'center',color:'#94a3b8',fontSize:'12.5px'}},
+                _pq ? '찾는 건이 없습니다' : '맞는 후보가 없습니다 — 위에서 이름으로 찾으세요')
+            : h('div',{style:{overflow:'auto',padding:'8px 10px'}},
+                _rows.map(function(s){
+                  var on = _sel===s.cand.id;
+                  var ea = s.cand.expect||s.cand.amount;
+                  var d  = ea-_row.amount;
+                  var bd = storeBadge(s.cand.store);
+                  var _no=(s.cand.item&&(s.cand.item.caseNo||s.cand.item.no))||'';
+                  var _st=_pendStaff(s.cand);
+                  return h('div',{key:s.cand.id,onClick:function(){_pick(s.cand.id);},
+                    style:{display:'flex',alignItems:'center',gap:'10px',cursor:'pointer',
+                      border:'1px solid '+(on?'#1e40af':'#e8eef6'),background:on?'#eff6ff':'#fff',
+                      borderRadius:'8px',padding:'9px 12px',marginBottom:'5px',fontSize:'12.5px'}},
+                    h('input',{type:'radio',checked:on,readOnly:true,
+                      style:{width:'15px',height:'15px',margin:0,pointerEvents:'none',accentColor:'#1e40af',flexShrink:0}}),
+                    h('span',{style:{background:bd.bg,color:bd.fg,border:'1px solid '+bd.bd,borderRadius:'8px',
+                      padding:'1px 7px',fontSize:'10px',fontWeight:700,flexShrink:0}},bd.label),
+                    h('div',{style:{flex:'1 1 auto',minWidth:0}},
+                      h('b',{style:{color:'#1e293b'}},s.cand.companyName),
+                      h('div',{style:{fontSize:'11px',color:'#64748b',marginTop:'2px'}},
+                        s.cand.label+(_no?' · '+_no:'')+(_st?' · 담당 '+_st:''))),
+                    h('div',{style:{textAlign:'right',flexShrink:0}},
+                      h('b',{style:{fontVariantNumeric:'tabular-nums'}},ea.toLocaleString()+'원'),
+                      h('div',{style:{fontSize:'11px',marginTop:'2px',fontWeight:700,
+                        color:d===0?'#15803d':'#b45309'}},
+                        // 직접 찾아 나온 건은 점수가 없다 — 없는 점수를 지어내지 않는다
+                        (d===0?'금액 일치':(d>0?'+':'')+d.toLocaleString())
+                        +(s.score===null?'':' · '+s.score+'%'))),
+                    h('div',{style:{flexShrink:0,fontSize:'10.5px',color:'#94a3b8',maxWidth:'190px',
+                      whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},
+                      (s.reasons||[]).join(' · '))
+                  );
+                })),
+          h('div',{style:{padding:'8px 12px',borderTop:'1px solid #eef2f7',fontSize:'11px',color:'#64748b'}},
+            '고르면 창이 닫히고 표에 반영됩니다 — 확정은 표의 [확정] 단추로 합니다')));
     })(),
 
     // ── 1-1 입금 상세 팝업 (행 클릭 시) ──
@@ -42161,6 +42912,7 @@ function FinanceInvoice(){
   var dt = useState(null); var detailModal = dt[0]; var setDetailModal = dt[1];
   // 화면 전체로 파일 끌어놓기 — 단추 위에만 놓을 수 있던 것을 넓혔다
   var idg = useState(false); var invDrag = idg[0]; var setInvDrag = idg[1];
+  var invDropRef = useRef(null);   // 문서 청취기가 낡은 함수를 쥐지 않게 하는 손잡이
 
   // ── 탭: 발행관리 / 업체별 아카이브 ──
   var tb = useState('issue'); var tab = tb[0]; var setTab = tb[1];
@@ -42697,28 +43449,47 @@ function FinanceInvoice(){
     );
   }
 
-  return h('div', { className:'page',
-    // 화면 어디에 놓아도 받는다. 종전에는 [엑셀 일괄 업로드] 단추 위에 정확히 놓아야만 됐다.
-    onDragOver:function(ev){
+  // 놓았을 때 할 일 — 그릴 때마다 새로 담는다. 문서 청취기는 이 손잡이만 본다.
+  invDropRef.current = function(fs){
+    if(detailModal) return;                                              // 상세 창이 열려 있으면 받지 않는다
+    if(uploadState.status === 'parsing' || uploadState.status === 'saving') return;   // 이미 올리는 중
+    handleInvoiceUpload({ target:{ files:fs } });
+  };
+  // 화면 아무 곳에나 놓아도 받는다 — 칸이 아니라 «문서 전체»에서 받는다.
+  // 칸에만 걸면 목록이 짧을 때 그 아래 빈 곳은 받는 칸 밖이라, 브라우저가 엑셀을 그냥 열어버린다.
+  useEffect(function(){
+    var depth = 0;   // 자식으로 옮겨갈 때도 leave 가 뜬다 — 깊이를 세어 창 밖으로 나갈 때만 끈다
+    function over(ev){
       if(!invDragHasFile(ev)) return;
-      ev.preventDefault();
+      ev.preventDefault();                                   // 이걸 빼면 브라우저가 파일을 연다
       try{ ev.dataTransfer.dropEffect = 'copy'; }catch(_){}
-      if(!invDrag) setInvDrag(true);
-    },
-    onDragLeave:function(ev){
-      // 자식으로 옮겨갈 때도 leave 가 뜬다 — 화면 밖으로 나갔을 때만 끈다
-      if(ev.currentTarget.contains(ev.relatedTarget)) return;
-      setInvDrag(false);
-    },
-    onDrop:function(ev){
+    }
+    function enter(ev){ if(!invDragHasFile(ev)) return; depth++; setInvDrag(true); }
+    function leave(){ if(--depth <= 0){ depth = 0; setInvDrag(false); } }
+    function drop(ev){
+      depth = 0; setInvDrag(false);
       if(!invDragHasFile(ev)) return;
       ev.preventDefault();
-      setInvDrag(false);
       var fs = (ev.dataTransfer && ev.dataTransfer.files) || null;
       if(!fs || !fs.length) return;
-      handleInvoiceUpload({ target:{ files:fs } });
-    },
-    style: invDrag ? { outline:'3px dashed #16a34a', outlineOffset:'-6px', background:'#f0fdf4' } : null },
+      if(invDropRef.current) invDropRef.current(fs);
+    }
+    document.addEventListener('dragenter', enter);
+    document.addEventListener('dragover', over);
+    document.addEventListener('dragleave', leave);
+    document.addEventListener('drop', drop);
+    return function(){
+      document.removeEventListener('dragenter', enter);
+      document.removeEventListener('dragover', over);
+      document.removeEventListener('dragleave', leave);
+      document.removeEventListener('drop', drop);
+    };
+  }, []);
+
+  return h('div', { className:'page',
+    style: invDrag
+      ? { minHeight:'calc(100vh - 150px)', outline:'3px dashed #16a34a', outlineOffset:'-6px', background:'#f0fdf4' }
+      : { minHeight:'calc(100vh - 150px)' } },
     // 끌어오는 중 안내 — 어디에 놓아도 된다는 걸 알려준다
     invDrag && h('div', { style:{ position:'fixed', left:'50%', top:'18%', transform:'translateX(-50%)',
       zIndex:9000, background:'#16a34a', color:'#fff', padding:'10px 18px', borderRadius:'10px',

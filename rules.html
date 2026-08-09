@@ -3763,6 +3763,7 @@ try{if(window.firebase){firebase.initializeApp(FB_CONFIG);FBDB=firebase.database
     if(u){subscribeArch();subscribeMfix();resolveUserName();loadErpCompanies();pullDecisions();
       checkCloudWorkSession();   // 재로그인 시 계정에 남은 작업 세션 이어받기
       pushWorkToCloud(true);     // 로그인 전 로컬에만 있던 작업을 계정에 올려 다른 기기에서도 이어갈 수 있게
+      try{trimOrigLocal();}catch(_){}   // 브라우저에 쌓인 원본 덩어리 걷어내기(서버본이 있는 것만)
     }else if(FBDB){ ["wip","done"].forEach(k=>FBDB.ref("rules_mgmt/"+k).off()); STORE={wip:{},done:{},legacy:{}}; }});
 }}catch(e){console.warn("Firebase 초기화 건너뜀:",e);}
 
@@ -3827,13 +3828,47 @@ function buildOrig(key){
   if(buf){ if(buf.byteLength<=MAX_ORIG_BYTES)b64=bufToB64(buf); else truncated=true; }
   return {name,ext:(name.split(".").pop()||"").toLowerCase(),text:SAMPLES[key]||"",b64,isPdf:!!PDF_URLS[key],truncated};
 }
+/* ⚠ 원본 덩어리(b64)를 이 브라우저에 두지 않는다.
+   같은 주소(nabaho.github.io)를 쓰는 프로그램들이 브라우저 저장공간 5MB를
+   나눠 쓴다. 규정관리가 원본을 base64로 통째 들고 있어 1.5MB 넘게 먹었고,
+   그 탓에 푸른이알피 쪽 저장이 조용히 실패하는 지경이 됐다(4.25/5MB).
+   원본은 서버(rules_mgmt/orig)에 이미 올라가고 getOrig 가 서버를 먼저 보므로,
+   여기서는 이름·텍스트만 남겨도 미리보기가 그대로 되살아난다.
+   서버에 못 올린 때(로그아웃·오프라인)만 통째로 들고 있는다. */
 function putOrig(id,orig){
   /* 담당자를 함께 적어 둔다 — 보안규칙이 이 값으로 쓰기 권한을 가른다 */
   orig=Object.assign({},orig,{ownerUid:myUid(),owner:myEmail()});
-  if(FBDB&&FBUSER)FBDB.ref("rules_mgmt/orig/"+id).set(orig).catch(e=>console.warn("원본 FB 저장 실패:",e));
-  const map=loadOrigLocal(); map[id]=orig;
+  const onFb=!!(FBDB&&FBUSER);
+  if(onFb)FBDB.ref("rules_mgmt/orig/"+id).set(orig).catch(e=>console.warn("원본 FB 저장 실패:",e));
+  const map=loadOrigLocal();
+  // localOnly: 서버에 없어서 이 브라우저가 유일한 사본이라는 표시(truncated 와 다르다 —
+  // truncated 는 «파일이 2MB 넘어 텍스트만 남겼다» 는 뜻이라 사용자에게 보이는 말이다)
+  map[id]= onFb ? Object.assign({},orig,{b64:null,localOnly:false}) : Object.assign({},orig,{localOnly:true});
   try{localStorage.setItem(ORIG_KEY,JSON.stringify(map));}
   catch(e){ map[id]={...orig,b64:null,truncated:true}; try{localStorage.setItem(ORIG_KEY,JSON.stringify(map));}catch(_){} }
+}
+/* 이미 쌓여 있는 원본 덩어리를 한 번 걷어낸다 — 로그인해서 서버를 볼 수 있을 때만.
+   서버에 사본이 있는 것만 비우므로 잃는 것이 없다. */
+function trimOrigLocal(){
+  if(!(FBDB&&FBUSER))return 0;
+  let raw=null; try{raw=localStorage.getItem(ORIG_KEY);}catch(_){return 0;}
+  if(!raw)return 0;
+  const before=raw.length;
+  let map=null; try{map=JSON.parse(raw)||{};}catch(_){return 0;}
+  let n=0;
+  Object.keys(map).forEach(id=>{
+    const o=map[id];
+    if(!o||!o.b64||o.localOnly)return;      // 서버에 없는 것은 건드리지 않는다
+    map[id]=Object.assign({},o,{b64:null});
+    n++;
+  });
+  if(!n)return 0;
+  try{
+    localStorage.setItem(ORIG_KEY,JSON.stringify(map));
+    const freed=(before-localStorage.getItem(ORIG_KEY).length)/1048576;
+    console.log("[규정관리] 브라우저에 쌓인 원본 "+n+"건을 서버본으로 넘겼습니다 — 약 "+freed.toFixed(2)+"MB 확보");
+    return n;
+  }catch(_){ return 0; }
 }
 async function getOrig(id){
   if(FBDB&&FBUSER){try{const s=await FBDB.ref("rules_mgmt/orig/"+id).once("value");if(s.exists())return s.val();}catch(e){console.warn("원본 로드 실패:",e);}}
