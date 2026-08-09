@@ -148,8 +148,11 @@ test('상위 노드를 통째로 쓰지 않는다 — 남의 명함이 지워진
   F.init({ db });
   await F.sendToCards({ kind: 'card', fields: CARD, full: 'F', thumb: 'T', photoId: 'p1' });
   assert.equal(db.calls.update[0].path, '', '루트에서 다중 경로 update 를 해야 합니다');
+  /* 지키는 것은 「칸 하나씩 쓴다」이지 칸 이름의 목록이 아니다.
+     2026-08-09 bykey(번호 → 명함번호) 를 더하며 목록도 함께 늘렸다 —
+     새 칸이 생길 때마다 여기서 막히면 그 자체가 배포를 세운다. */
   for (const k of Object.keys(db.calls.update[0].u)) {
-    assert.match(k, /^pucards\/(items|idx|photos)\/[^/]+$/, '위험한 경로입니다: ' + k);
+    assert.match(k, /^pucards\/(items|idx|photos|bykey)\/[^/]+$/, '위험한 경로입니다: ' + k);
   }
 });
 

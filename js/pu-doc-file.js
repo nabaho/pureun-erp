@@ -81,11 +81,57 @@
       .catch(function () { return false; });
   }
 
+  /* ── 번호 한 칸으로 찾기 ──
+     예전에는 명함 한 장을 찍을 때마다 검색목록(idx) **전부**를 내려받아 6천 줄을
+     훑었다. 한 장에 1MB 가까이, 여러 장이면 그만큼 되풀이 — 폰에서 느리다.
+     명함첩이 pucards/bykey 에 「번호 → 명함번호」를 적어 두므로 한 칸만 읽는다.
+
+     ⚠ 찾아간 명함의 번호를 **다시 맞춰 본다.** 번호를 고친 명함의 옛 열쇠가
+       남아 있을 수 있는데, 그대로 믿으면 남의 명함에 이 사진을 붙인다.
+     ⚠ 자리가 아직 안 채워졌으면(표시 없음) 옛 방식으로 훑는다. 안 그러면
+       "없다"로 읽고 이미 있는 사람을 또 만든다. */
+  var BYKEY = 'bykey';
+  var BYKEY_FLAG = 'config/bykeyAt';
+
+  function byKeyName(kind, fields) {
+    var key = dedupKey(kind, fields);
+    if (!key) return '';
+    return (TO_CARD_KIND[kind] === 'biz' ? 'b' : 'c') + key;
+  }
+
+  function findByKey(kind, fields) {
+    var name = byKeyName(kind, fields);
+    var want = TO_CARD_KIND[kind];
+    var key = dedupKey(kind, fields);
+    if (!name) return Promise.resolve(null);
+    return deps.db.ref(CARDS_ROOT + '/' + BYKEY + '/' + name).once('value')
+      .then(function (s) {
+        var id = s.val();
+        if (!id || typeof id !== 'string') return null;
+        return deps.db.ref(CARDS_ROOT + '/idx/' + id).once('value').then(function (s2) {
+          var row = s2.val();
+          if (!row) return null;                                  /* 지워진 명함의 옛 열쇠 */
+          if ((row.k || 'card') !== want) return null;            /* 종류가 다르면 다른 물건 */
+          var mine = want === 'biz' ? digits(row.bz) : digits(row.m);
+          if (!mine || mine !== key) return null;                 /* 번호가 바뀐 명함의 옛 열쇠 */
+          return { id: id, idx: row };
+        });
+      });
+  }
+
   function findExisting(kind, fields) {
     var key = dedupKey(kind, fields);
     var want = TO_CARD_KIND[kind];
     if (!key || !want) return Promise.resolve(null);
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(CARDS_ROOT + '/' + BYKEY_FLAG).once('value').then(function (f) {
+      if (f.val()) return findByKey(kind, fields);
+      return findByScan(kind, fields, key, want);
+    });
+  }
+
+  /* 옛 방식 — 검색목록 전부를 훑는다. 번호 열쇠 자리가 채워지기 전까지만 쓴다. */
+  function findByScan(kind, fields, key, want) {
     return deps.db.ref(CARDS_ROOT + '/idx').once('value').then(function (s) {
       var idx = s.val() || {};
       var ids = Object.keys(idx);
@@ -237,6 +283,9 @@
     var u = {};
     u[CARDS_ROOT + '/items/' + id] = rec;
     u[CARDS_ROOT + '/idx/' + id] = idxOf(rec);
+    /* 번호 열쇠도 같이 — 안 쓰면 다음에 같은 명함을 찍었을 때 또 새로 만든다 */
+    var bk = byKeyName(o.kind, o.fields);
+    if (bk) u[CARDS_ROOT + '/' + BYKEY + '/' + bk] = id;
     /* 사진은 명함첩이 자기 사본을 갖는다 — 사진첩을 정리해도 명함첩 기록이 온전하게. */
     if (o.full) u[CARDS_ROOT + '/photos/' + id] = o.full;
     var label = want === 'biz' ? '사업자등록증' : '명함';
@@ -375,6 +424,7 @@
   global.PuDocFile = {
     init: init,
     inPrivateVault: inPrivateVault,
+    byKeyName: byKeyName,
     findExisting: findExisting,
     fillGaps: fillGaps,
     idxOf: idxOf,

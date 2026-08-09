@@ -743,15 +743,51 @@ function idxRecord(it){
   if(!r.n && !r.c && !r.bz) return null;   /* 검색에 쓸 정보가 없으면 기록 안 함 */
   return r;
 }
+/* ══════ 번호로 한 칸에 찾아가는 자리 (pucards/bykey) ══════
+   사진첩은 명함을 찍을 때마다 "이미 있는 사람인가"를 묻는다. 예전에는 그때마다
+   검색목록(idx) **전부**를 내려받아 6천 줄을 훑었다 — 한 장에 1MB 가까이,
+   여러 장 찍으면 그만큼 되풀이. 폰에서 느리고 데이터도 그만큼 쓴다.
+
+   그래서 번호를 열쇠로 삼아 한 칸만 읽으면 되게 한다.
+     pucards/bykey/c01028024601 = 명함번호   (명함 → 휴대폰)
+     pucards/bykey/b1234567890  = 명함번호   (사업자등록증 → 사업자번호)
+   앞의 c/b 는 종류다. 안 붙이면 열 자리 사업자번호와 지역번호 전화가 한 칸을
+   두고 다툰다.
+
+   ⚠ 이 자리는 **틀려도 되는 자리다.** 읽는 쪽(사진첩)이 찾아간 명함의 번호를
+     다시 맞춰 보고, 다르면 못 찾은 것으로 친다. 그래서 옛 열쇠가 남아 있어도
+     엉뚱한 사람에게 명함이 붙지 않는다. 이 규칙 덕분에 '번호를 고칠 때 옛 열쇠를
+     지우는' 까다로운 처리를 하지 않아도 된다. */
+const BYKEY = 'bykey';
+const BYKEY_FLAG = 'config/bykeyAt';   /* 이 자리가 채워졌다는 표시 — 없으면 사진첩은 옛 방식으로 찾는다 */
+function byKeyOf(it){
+  if(!it) return '';
+  const d = v => String(v==null?'':v).replace(/\D/g,'');
+  if(it.kind==='biz'){ const b=d(it.bizno); return b ? 'b'+b : ''; }
+  const m = d(it.mobile); return m ? 'c'+m : '';
+}
 function writeIdx(it){
   try{ if(Store.mode!=='firebase' || !it || !it.id) return;
     /* 🔒 잠긴 폴더의 명함은 공유 검색목록에 넣지 않는다 (다른 프로그램에서 당겨오기 차단) */
     const r = inLockedGroup(it) ? null : idxRecord(it);
     if(r) Store.db.ref(DB_ROOT+'/idx/'+it.id).set(r);
     else Store.db.ref(DB_ROOT+'/idx/'+it.id).remove();
+    const k = byKeyOf(it);
+    if(k){
+      const ref = Store.db.ref(`${DB_ROOT}/${BYKEY}/${k}`);
+      if(r) ref.set(it.id); else ref.remove();
+    }
   }catch(_){}
 }
-function removeIdx(id){ try{ if(Store.mode==='firebase') Store.db.ref(DB_ROOT+'/idx/'+id).remove(); }catch(_){} }
+/* 지울 때는 명함 내용을 함께 받는다 — 번호를 알아야 그 열쇠를 치울 수 있다.
+   못 받아도 괜찮다(읽는 쪽이 번호를 다시 맞춰 보므로 남은 열쇠는 헛것이 된다). */
+function removeIdx(id, it){
+  try{ if(Store.mode!=='firebase') return;
+    Store.db.ref(DB_ROOT+'/idx/'+id).remove();
+    const k = byKeyOf(it);
+    if(k) Store.db.ref(`${DB_ROOT}/${BYKEY}/${k}`).remove();
+  }catch(_){}
+}
 
 /* ══════ 검색목록 다시 만들기 ══════
    색인은 명함을 '저장할 때만' 갱신된다. 그래서 색인에 담는 항목을 늘려도
@@ -774,11 +810,41 @@ async function rebuildIdxAll(){
   });
   try{
     await Store.db.ref(DB_ROOT+'/idx').update(upd);
+    await writeByKeyMap(items);          /* 번호 열쇠도 같이 — 둘이 어긋나면 사진첩이 헛것을 본다 */
     toast(`✅ 검색목록 다시 만들었습니다 — ${put.toLocaleString()}장`
       + (skip ? ` (잠긴 폴더·정보 없음 ${skip.toLocaleString()}장 제외)` : ''));
   }catch(e){
     toast('❌ 실패: ' + ((e&&e.message)||'알 수 없음'));
   }
+}
+
+/* 번호 열쇠 자리를 통째로 쓴다. 한 장씩 쓰면 6천 번 통신하므로 한 번의 update 로.
+   잠긴 폴더 명함은 넣지 않는다 — 검색목록에서 빼 놓고 여기에 두면 그 자리로
+   되짚어 갈 수 있다(같은 규칙: writeIdx·rebuildIdxAll).
+   맨 끝에 '채워졌다' 표시를 남긴다. 이 표시가 있어야 사진첩이 새 방식으로 찾는다 —
+   표시가 없는데 새 방식으로 찾으면 못 찾은 줄 알고 있는 사람을 또 만든다. */
+async function writeByKeyMap(items){
+  const map = {};
+  (items||[]).forEach(it=>{
+    if(!it || !it.id || inLockedGroup(it)) return;
+    const k = byKeyOf(it); if(k) map[k] = it.id;
+  });
+  await Store.db.ref(`${DB_ROOT}/${BYKEY}`).set(map);
+  await Store.db.ref(`${DB_ROOT}/${BYKEY_FLAG}`).set(Date.now());
+  return Object.keys(map).length;
+}
+/* 아직 한 번도 안 채워졌으면 조용히 한 번 채운다.
+   명함첩은 이미 명함 전부를 들고 있으므로 새로 읽을 것이 없다 — 쓰기 한 번이면 끝이다.
+   여럿이 동시에 해도 같은 값을 쓰므로 다투지 않는다. */
+async function ensureByKeyMap(){
+  try{
+    if(Store.mode!=='firebase') return;
+    const items = Object.values(state.items||{}).filter(x=>x && x.id);
+    if(items.length < 1) return;
+    const s = await Store.db.ref(`${DB_ROOT}/${BYKEY_FLAG}`).once('value');
+    if(s.val()) return;
+    await writeByKeyMap(items);
+  }catch(_){}
 }
 
 /* 자문·급여·노조·기금·사무대행 탭을 '전체 명함/전체 사업자등록증'에 1회 생성.
@@ -863,7 +929,9 @@ const Store = {
       modeBadge.textContent='실시간 공유'; modeBadge.classList.add('live');
       const subscribe = () => {
         this.db.ref(DB_ROOT+'/items').on('value', s => { state.items = s.val()||{}; render();
-          if(!Store._idxDone){ setTimeout(backfillIdx, 3000); } });
+          if(!Store._idxDone){ setTimeout(backfillIdx, 3000); }
+          /* 번호 열쇠 자리 첫 채우기 — 한 번만. 명함이 다 들어온 뒤라야 빠짐없이 찬다. */
+          if(!Store._byKeyDone){ Store._byKeyDone=true; setTimeout(ensureByKeyMap, 4000); } });
         this.db.ref(DB_ROOT+'/groups').on('value', s => { state.groups = s.val()||{}; render();
           if(!Store._bizSeedDone){ Store._bizSeedDone=true; setTimeout(seedBizFolders, 3000); } });
         /* 내 탭(저장된 검색·필터 조건) — 전 직원 공유 */
@@ -946,7 +1014,7 @@ const Store = {
       this.delPhoto(id); this.delPhoto(id+'_b');
       this.delThumb(id); this.delThumb(id+'_b');
       this.db.ref(`${R}/items/${id}`).remove();
-      if (!priv) removeIdx(id);      /* 개인 명함은 애초에 검색목록에 없다 */
+      if (!priv) removeIdx(id, it);  /* 개인 명함은 애초에 검색목록에 없다 */
     } else {
       const t=JSON.parse(localStorage.getItem('pucards_local_trash')||'{}'); t[id]=rec;
       try{ localStorage.setItem('pucards_local_trash', JSON.stringify(t)); }catch(e){}
@@ -3734,7 +3802,7 @@ async function openMojibakeCleanup(){
     const now=Date.now();
     for(let s=0;s<bad.length;s+=200){
       const chunk=bad.slice(s,s+200), trashUpd={}, itemUpd={};
-      chunk.forEach(it=>{ trashUpd[it.id]={...it,_deletedAt:now,_photo:'',_photo2:''}; itemUpd[it.id]=null; removeIdx(it.id); });
+      chunk.forEach(it=>{ trashUpd[it.id]={...it,_deletedAt:now,_photo:'',_photo2:''}; itemUpd[it.id]=null; removeIdx(it.id, it); });
       try{ await Store.db.ref(DB_ROOT+'/trash').update(trashUpd);
            await Store.db.ref(DB_ROOT+'/items').update(itemUpd);
            chunk.forEach(it=>{ Store.delPhoto(it.id); Store.delPhoto(it.id+'_b');
@@ -4412,7 +4480,10 @@ async function setFolderLock(id){
     delete pg.pw;                       /* 옛 평문 비밀번호는 옮기지 않고 버린다 */
     upd[`${P}/groups/${id}`] = pg;
     /* 지문 남기기 — 사진첩이 이 사람을 다시 공용에 만들지 않게 */
-    Object.assign(upd, await lockKeyUpdates(ids.map(cid=>state.items[cid]).filter(Boolean), true));
+    const moving = ids.map(cid=>state.items[cid]).filter(Boolean);
+    Object.assign(upd, await lockKeyUpdates(moving, true));
+    /* 번호 열쇠도 거둔다 — 검색목록에서 빼 놓고 이 자리를 두면 그리로 되짚어 간다 */
+    moving.forEach(it=>{ const k=byKeyOf(it); if(k) upd[`${DB_ROOT}/${BYKEY}/${k}`] = null; });
     await Store.db.ref().update(upd);
     toast(`🔒 '${g.name}'을(를) 개인 폴더로 옮겼습니다 — [🔒 개인 폴더 열기]로 보실 수 있습니다`,9000);
     if(state.group===id) state.group='all';
@@ -4474,6 +4545,8 @@ async function unsetFolderLock(id){
        한 사람의 명함이 개인 폴더 두 곳에 있을 수 있다. 그냥 지우면 아직 감춰 둔
        쪽까지 사진첩이 다시 만들어 버린다. */
     const leaving = ids.map(cid=>state.priv.items[cid]).filter(Boolean);
+    /* 번호 열쇠를 되돌린다 — 공용으로 나왔으니 사진첩이 다시 찾아갈 수 있어야 한다 */
+    leaving.forEach(it=>{ const k=byKeyOf(it); if(k) upd[`${DB_ROOT}/${BYKEY}/${k}`] = it.id; });
     const staying = Object.values(state.priv.items)
                       .filter(it=>it && (it.group||'')!==id);
     const dropAll  = await lockKeyUpdates(leaving, false);
