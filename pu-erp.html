@@ -34970,10 +34970,13 @@ function FinanceLedger(){
   function holdRow(row){
     var cur = dbGet('ledger_held', []) || [];
     if(!Array.isArray(cur)) cur = [];
-    cur.push({ k:row._k, date:row.date || '', amount:row.amount || 0, memo:row.memo || '',
+    /* ★ dbSet 이다 — dbUpsert 는 «id 가 있는 항목 하나» 를 넣는 함수라
+       배열을 통째로 넘기면 id 가 없다고 무조건 거부한다(화면에 「보류함 저장에 실패」).
+       보류함은 통장 행 열쇠(_k)로 관리하는 목록이라 통째로 저장하는 것이 맞다. */
+    cur.push({ id:row._k, k:row._k, date:row.date || '', amount:row.amount || 0, memo:row.memo || '',
                src:row.src || 'bank', heldAt:new Date().toISOString(),
                heldBy:CURRENT_USER ? CURRENT_USER.sid : '' });
-    if(dbUpsert('ledger_held', cur) === false){ showToast('❌ 보류함 저장에 실패했습니다'); return; }
+    if(dbSet('ledger_held', cur) === false){ showToast('❌ 보류함 저장에 실패했습니다'); return; }
     var nx = {}; Object.keys(held).forEach(function(x){ nx[x] = held[x]; });
     nx[row._k] = 1;
     setHeld(nx);
@@ -34982,7 +34985,8 @@ function FinanceLedger(){
   }
   function unholdRow(k){
     var cur = (dbGet('ledger_held', []) || []).filter(function(x){ return x && x.k !== k; });
-    if(dbUpsert('ledger_held', cur) === false){ showToast('❌ 보류함 저장에 실패했습니다'); return; }
+    // 목록 통째로 — dbUpsert 는 한 건짜리라 여기 쓰면 안 된다 (위 holdRow 주석 참고)
+    if(dbSet('ledger_held', cur) === false){ showToast('❌ 보류함 저장에 실패했습니다'); return; }
     var nx = {}; Object.keys(held).forEach(function(x){ if(x !== k) nx[x] = held[x]; });
     setHeld(nx);
     showToast('↩ 목록으로 되돌렸습니다');
@@ -37133,21 +37137,48 @@ function FinanceLedger(){
                 style:_expBtn},'나이스빌 화면에서 보기'))),
           // ① 업체가 여럿 — 골라야 한다 (CMS 줄에서는 묻지 않는다 — 여러 곳 몫이라 고를 것이 아니다)
           !_mCms && _grp.length>1 && h('div',{style:{marginBottom:'10px'}},
-            h('div',{style:{fontSize:'11.5px',color:'#64748b',marginBottom:'4px'}},'어느 업체인가요?'),
-            _grp.map(function(g,_gi){
+            h('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'4px'}},
+              h('span',{style:{fontSize:'11.5px',color:'#64748b'}},'어느 업체인가요? — '+_grp.length+'곳'),
+              h('span',{style:{flex:1}}),
+              h('span',{style:{fontSize:'10px',color:'#94a3b8'}},'금액이 가까운 순 · 같으면 이름순')),
+            /* 머리줄 — 어느 칸이 무엇인지 알아야 아래 줄을 읽을 수 있다.
+               칸 너비를 아래 줄과 똑같이 못 박아 세로로 선다(대표 지적: "항목들 정렬해달라"). */
+            h('div',{style:{display:'flex',alignItems:'center',gap:'6px',padding:'0 8px 3px',
+                fontSize:'10px',color:'#94a3b8',fontWeight:700}},
+              h('span',{style:{width:'13px',flex:'none'}},''),
+              h('span',{style:{flex:1,minWidth:0}},'업체 · 항목'),
+              h('span',{style:{width:'56px',flex:'none'}},'담당'),
+              h('span',{style:{width:'82px',flex:'none',textAlign:'right'}},'예상 입금'),
+              h('span',{style:{width:'60px',flex:'none',textAlign:'right'}},'근거')),
+            /* 순서 — 금액이 입금액에 가까운 것 먼저, 같으면 이름 가나다순.
+               전에는 점수 순이라 같은 금액 열 곳이 아무 순서로 서서 눈으로 훑을 수가 없었다. */
+            _grp.slice().sort(function(a,b){
+              var aa = (a.head.cand.expect||a.head.cand.amount)||0;
+              var bb = (b.head.cand.expect||b.head.cand.amount)||0;
+              var amt = row.amount||0;
+              var da = Math.abs(aa-amt), db = Math.abs(bb-amt);
+              if(da !== db) return da - db;
+              return String(a.company||'').localeCompare(String(b.company||''), 'ko');
+            }).map(function(g,_gi){
               var _stf = _pendStaff(g.head.cand);
+              var _ea  = (g.head.cand.expect||g.head.cand.amount)||0;
+              var _on  = mId===g.head.cand.id;
               return h('label',{key:_gi,style:{display:'flex',alignItems:'center',gap:'6px',padding:'5px 8px',
-                  background:'#fff',border:'1px solid '+(mId===g.head.cand.id?'#bfdbfe':'#e2e8f0'),
+                  background:_on?'#eff6ff':'#fff',border:'1px solid '+(_on?'#bfdbfe':'#e2e8f0'),
                   borderRadius:'5px',marginBottom:'3px',fontSize:'11.5px',cursor:'pointer'}},
-                h('input',{type:'radio',name:'g'+row._k,checked:mId===g.head.cand.id,
+                h('input',{type:'radio',name:'g'+row._k,checked:_on,style:{width:'13px',flex:'none',margin:0},
                   onChange:function(){ pickFor(row, g.head.cand.id); }}),
-                h('span',{style:{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
+                h('span',{style:{flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},
+                  title:g.company+' · '+erpKindLabel(g)},
                   g.company+' · '+erpKindLabel(g)+(g.n>1?(' ('+(g.months.length||g.n)+'달)'):'')),
                 // 담당자 이름 — 누구에게 물어볼지 알아야 한다 (대표 지적)
-                h('span',{style:{width:'56px',color:'#475569',fontSize:'10.5px'}},_stf||'담당 없음'),
-                h('span',{style:{width:'82px',textAlign:'right',fontWeight:700}},
-                  ((g.head.cand.expect||g.head.cand.amount)||0).toLocaleString()),
-                h('span',{style:{width:'52px',textAlign:'right',fontSize:'10px',color:'#94a3b8'}},(g.head.evidence||'')));
+                h('span',{style:{width:'56px',flex:'none',color:'#475569',fontSize:'10.5px',
+                  overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},_stf||'담당 없음'),
+                h('span',{style:{width:'82px',flex:'none',textAlign:'right',fontWeight:700,
+                  fontVariantNumeric:'tabular-nums'}},_ea.toLocaleString()),
+                h('span',{style:{width:'60px',flex:'none',textAlign:'right',fontSize:'10px',color:'#94a3b8',
+                  overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},
+                  title:'왜 후보로 올라왔는지'},(g.head.evidence||'')));
             })),
           // ② 과입금 — 넘친 돈을 어디에 둘지는 돈 문제라 사람이 고른다
           !_mCms && _st.diff>0 && pItem && h('div',{style:{marginBottom:'10px'}},
