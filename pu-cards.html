@@ -237,7 +237,42 @@ body.pc #main,body.pc #fab,body.pc #selbar{display:none!important}
 .matmeta{font-size:11.5px;color:#8b98b3;margin-top:8px}
 .matempty{text-align:center;color:#8b98b3;font-size:13px;line-height:1.9;padding:38px 10px;
   border:1px dashed #e4e8f0;border-radius:12px}
-.mattabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+/* 순서 ▲▼ — 자료 줄 맨 앞. 맨 위·맨 아래에서는 눌러도 소용없으므로 흐리게 둔다. */
+.matord{display:flex;flex-direction:column;gap:2px;flex:none}
+.matord button{border:1px solid #e4e8f0;background:#fff;border-radius:6px;width:26px;height:19px;
+  font-size:9px;line-height:1;color:#5a6885;cursor:pointer;padding:0}
+.matord button:hover:not(:disabled){background:#eef2f7;color:#1b2536}
+.matord button:disabled{opacity:.3;cursor:default}
+/* 찾기칸 */
+.matsearch{position:relative;margin-bottom:12px}
+.matsearch input{width:100%;padding:10px 34px 10px 12px;border:1px solid #dde3ee;border-radius:10px;
+  font-size:13.5px;color:#1b2536;background:#fff;font-family:inherit}
+.matsearch input:focus{outline:none;border-color:#1e2a47}
+.matsearch button{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:none;background:none;
+  color:#8b98b3;font-size:14px;cursor:pointer;padding:6px 8px;border-radius:8px}
+.matsearch button:hover{background:#eef2f7;color:#1b2536}
+/* 묶음에 담을 자료 고르기 */
+.setpick{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 8px}
+.setchk{display:inline-flex;align-items:center;gap:5px;border:1px solid #dde3ee;background:#fff;
+  border-radius:16px;padding:5px 11px;font-size:12.5px;color:#33415e;cursor:pointer}
+.setchk.on{background:#eaf1ff;border-color:#b9cdf5;color:#123d92;font-weight:600}
+.setchk input{margin:0}
+/* 보내기 화면의 묶음 단추 */
+.sm-sets{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.sm-sets button{border:1px solid #d7dfec;background:#fff;color:#1e2a47;border-radius:16px;
+  padding:6px 12px;font-size:12.5px;font-weight:700;cursor:pointer}
+.sm-sets button:hover{background:#eaf1ff;border-color:#b9cdf5}
+.sm-sets b{margin-left:4px;color:#5a6885}
+/* 명함 상세 — 보낸 기록 */
+.sendlog{border:1px solid #e4e8f0;border-radius:12px;padding:10px 12px;margin-bottom:12px;background:#fbfcfe}
+.sendlog .slh{font-size:12.5px;font-weight:700;color:#1b2536;margin-bottom:8px}
+.sendlog .slh span{font-weight:400;color:#8b98b3;margin-left:4px}
+.sendlog .slrow{border-left:2px solid #e4e8f0;padding:1px 0 1px 9px;margin-bottom:7px}
+.sendlog .slrow.on{border-left-color:#1d4fc4}
+.sendlog .slrow:last-child{margin-bottom:0}
+.sendlog .sld{font-size:11.5px;color:#5a6885}
+.sendlog .sln{font-size:12px;color:#33415e;line-height:1.6}
+.mattabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
 .mattab{border:1.5px solid #d7dfec;background:#fff;color:#33415e;border-radius:18px;
   padding:6px 13px;font-size:12.5px;font-weight:700;cursor:pointer}
 .mattab:hover{background:#f2f6fc}
@@ -881,6 +916,9 @@ function backfillIdx(){
 
 const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, colOrder:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, onlyPrivate:false, unlocked:{}, items:{}, groups:{}, trash:{}, views:{}, rules:{}, mailBlock:{},
   isAdmin:false, privOpen:false, priv:{items:{},groups:{},trash:{}},
+  /* 자료함 — 찾는 말·메일틀 갈래는 화면에만 쓰고 저장하지 않는다.
+     sendLog 는 명함을 열 때만 그 명함 것을 읽어 담는다. */
+  matQ:'', matMailCat:'', sendLog:{},
   view:'list', vtab:'' };
 
 /* ── 데이터 계층 ── */
@@ -1250,13 +1288,30 @@ function doLogoutCards(){
 let _sendMatId = null;
 let _matMeta = {};   /* {id:{id,name,fileName,url,path,uploadedAt}} */
 
+/* 자료·갈래·묶음·메일틀을 **한 번에** 읽는다. 따로 읽으면 갈래가 늦게 와서
+   자료가 잠깐 '기타'로 보였다가 제자리로 튀는 것이 눈에 띈다. */
 function loadMaterials(cb){
-  firebase.database().ref(DB_ROOT+'/materials').once('value').then(s=>{
-    _matMeta = s.val() || {};
+  const db = firebase.database();
+  Promise.all([
+    db.ref(DB_ROOT+'/materials').once('value'),
+    db.ref(DB_ROOT+'/config/matCats').once('value'),
+    db.ref(DB_ROOT+'/matSets').once('value'),
+    db.ref(DB_ROOT+'/config/matMail').once('value')
+  ]).then(([a,b,c,d])=>{
+    _matMeta = a.val() || {};
+    _matCats = b.val();                       /* null 이면 처음 세 갈래 */
+    _matSets = c.val() || {};
+    _matMail = d.val() || null;
     if(cb) cb();
-  }).catch(e=>console.warn('[materials]', e&&e.message));
+  }).catch(e=>{ console.warn('[materials]', e&&e.message); if(cb) cb(); });
 }
-function matList(){ return Object.values(_matMeta).filter(m=>m&&m.id).sort((a,b)=>(a.uploadedAt||0)-(b.uploadedAt||0)); }
+function matMailCfg(){
+  const c = _matMail || {};
+  return { subject: c.subject || MAIL_TPL_DEFAULT.subject,
+           body:    c.body    || MAIL_TPL_DEFAULT.body,
+           byCat:   c.byCat   || {} };
+}
+function matList(){ return matSortList(Object.values(_matMeta).filter(m=>m&&m.id)); }
 /* ══════ 제안서 틀 — 순수 로직 (테스트 대상) ══════
    기존 한글·PDF 문서를 고쳐 저장하는 것은 서식이 무너져 할 수 없다.
    대신 「틀 + 채울 값」으로 문서를 새로 만든다. 매번 회사명만 고쳐 보내던 일이 없어진다. */
@@ -1304,10 +1359,159 @@ function tplFill(body, vals){
     return (v==null || v==='') ? '' : String(v);
   });
 }
-/* 자료 갈래 — 제안서·계약서·홍보물처럼 쓰임이 달라 섞이면 고를 때 헷갈린다.
-   갈래가 없던 옛 자료는 '기타'로 본다. */
-const MAT_CATS = ['제안서','계약서','법인홍보물','기타'];
-const matCat = m => (m && MAT_CATS.indexOf(m.cat)>=0) ? m.cat : '기타';
+/* ══════ 자료함 — 순수 로직 (테스트 대상) ══════
+   자료 갈래 · 검색 · 순서 · 묶음 · 메일 틀 · 보낸 기록.
+   화면과 저장은 아래 「자료함 — 화면」부터다. 여기는 값만 다룬다.
+
+   ⚠ 지켜야 할 것
+   1. **「기타」는 늘 있고 지울 수 없다.** 갈래를 지웠을 때 그 안의 자료가 갈 곳이다.
+      갈 곳이 없으면 자료가 어느 탭에도 안 보이고, 사람은 지워진 줄 안다.
+   2. 갈래를 지우거나 이름을 바꿀 때 **자료의 cat 도 함께** 고친다.
+      한쪽만 고치면 자료가 없는 갈래를 가리켜 목록에서 사라진다.
+   3. 메일 틀의 채울 칸은 **없으면 빈 값**으로 둔다. 못 채운 칸 이름이
+      그대로 고객에게 나가면 안 된다. */
+const MAT_CAT_ETC = '기타';
+const MAT_CATS_DEFAULT = ['제안서','계약서','법인홍보물'];
+
+/* 저장된 갈래 목록을 화면에 쓸 모양으로 다듬는다 — 빈 값·중복·'기타'를 정리하고
+   '기타'는 언제나 맨 끝에 하나 둔다. 저장값이 없으면 처음 세 갈래. */
+function matCatsOf(saved){
+  const src = Array.isArray(saved) ? saved
+            : (saved && typeof saved==='object') ? Object.keys(saved).sort((a,b)=>(saved[a]||0)-(saved[b]||0))
+            : null;
+  const base = (src && src.length) ? src : MAT_CATS_DEFAULT;
+  const out = [];
+  base.forEach(c=>{
+    const v = String(c==null?'':c).trim();
+    if(!v || v===MAT_CAT_ETC || out.indexOf(v)>=0) return;
+    out.push(v);
+  });
+  out.push(MAT_CAT_ETC);
+  return out;
+}
+/* 이 자료의 갈래. 없는 갈래를 가리키면 '기타'로 본다 (갈래를 지운 뒤에도 안 사라지게) */
+function matCatOf(m, cats){
+  const c = String((m&&m.cat)||'').trim();
+  return (c && (cats||[]).indexOf(c)>=0) ? c : MAT_CAT_ETC;
+}
+/* 순서 — 손으로 매긴 order 가 먼저, 없으면 올린 때. order 가 같으면 올린 때로 가른다. */
+function matSortList(list){
+  return (list||[]).slice().sort((a,b)=>{
+    const ao = (a&&typeof a.order==='number') ? a.order : Number.MAX_SAFE_INTEGER;
+    const bo = (b&&typeof b.order==='number') ? b.order : Number.MAX_SAFE_INTEGER;
+    if(ao!==bo) return ao-bo;
+    return ((a&&a.uploadedAt)||0) - ((b&&b.uploadedAt)||0);
+  });
+}
+/* 이름·설명·파일이름에서 찾는다. 띄어쓰기는 무시한다 — '자문 제안서'로도 '자문제안서'가 잡히게. */
+function matSearchList(list, q){
+  const s = String(q||'').trim().toLowerCase().replace(/\s/g,'');
+  if(!s) return (list||[]).slice();
+  return (list||[]).filter(m=>[m&&m.name, m&&m.desc, m&&m.fileName]
+    .some(v=>String(v||'').toLowerCase().replace(/\s/g,'').includes(s)));
+}
+/* ▲▼ 로 자리를 바꿀 **상대**를 고른다 — 보이는 차례에서 바로 위/아래 줄.
+   갈래 탭이나 찾기로 걸러 놓았으면 화면에서 이웃한 줄이 전체에서는 멀리 있을 수 있다.
+   그 '보이는 이웃'과 바꾸는 것이 사람이 기대하는 움직임이다. */
+function matNeighborId(shown, id, dir){
+  const arr = shown||[];
+  const i = arr.findIndex(m=>m&&m.id===id);
+  const j = i + dir;
+  if(i<0 || j<0 || j>=arr.length) return null;
+  return (arr[j]&&arr[j].id) || null;
+}
+/* 둘의 자리를 바꾼 뒤 **전체 줄의 order 를 다시 매긴다.**
+   ⚠ 바꾼 둘만 고치면 안 된다. order 가 아직 없는 옛 자료가 섞여 순서가 튄다.
+   ⚠ 걸러진 목록 기준으로 매겨도 안 된다. 다른 갈래와 번호가 겹쳐 전체 탭이 뒤죽박죽이 된다.
+      그래서 받는 것은 늘 **전체 목록**이다. */
+function matSwapOrder(full, aId, bId){
+  const arr = (full||[]).slice();
+  const i = arr.findIndex(m=>m&&m.id===aId);
+  const j = arr.findIndex(m=>m&&m.id===bId);
+  if(i<0 || j<0 || i===j) return null;
+  const t = arr[i]; arr[i]=arr[j]; arr[j]=t;
+  const out = {};
+  arr.forEach((m,k)=>{ if(m&&m.id) out[m.id]=(k+1)*10; });
+  return out;
+}
+/* 갈래 이름 바꾸기 — 그 갈래를 쓰던 자료의 cat 도 같이 바꾼다 */
+function matCatRenamePatch(materials, from, to){
+  const out = {};
+  Object.values(materials||{}).forEach(m=>{
+    if(m && m.id && String(m.cat||'')===from) out[m.id] = to;
+  });
+  return out;
+}
+/* 갈래 지우기 — 그 갈래의 자료는 '기타'로 옮긴다. 자료는 하나도 지우지 않는다. */
+function matCatDeletePatch(materials, name){
+  return matCatRenamePatch(materials, name, MAT_CAT_ETC);
+}
+
+/* ── 메일 틀 ──
+   {받는분} {회사명} {자료목록} {오늘} 을 채운다. 모르는 칸은 빈 값으로 지운다 —
+   '{담당자}' 같은 글자가 그대로 고객 메일에 나가면 안 된다. */
+function mailFill(tpl, vals){
+  return String(tpl==null?'':tpl).replace(/\{([^{}]{1,20})\}/g, (_, k)=>{
+    const v = (vals||{})[String(k).trim()];
+    return (v==null) ? '' : String(v);
+  });
+}
+/* 고른 자료의 갈래가 **하나뿐일 때만** 그 갈래 틀을 쓴다.
+   여러 갈래를 섞어 보내면서 한쪽 인사말을 쓰면 말이 어긋난다 — 그때는 기본 틀. */
+function pickMailTpl(cfg, cats){
+  const c = cfg || {};
+  const base = { subject: c.subject||'', body: c.body||'' };
+  const uniq = [...new Set((cats||[]).filter(Boolean))];
+  if(uniq.length!==1) return base;
+  const own = (c.byCat||{})[uniq[0]];
+  if(!own) return base;
+  return { subject: own.subject||base.subject, body: own.body||base.body };
+}
+const MAIL_TPL_DEFAULT = {
+  subject: '[푸른노무법인] 요청하신 자료를 보내드립니다',
+  body: '{받는분} 님, 안녕하세요.\n푸른노무법인입니다.\n\n아래 자료를 첨부합니다.\n\n{자료목록}\n\n'
+      + '문의사항 있으시면 언제든 연락 주십시오.\n감사합니다.\n\n푸른노무법인\n'
+};
+
+/* ── 보낸 기록 ──
+   '이 업체에 제안서 보냈던가'에 답하는 것이 전부다. 그래서 **자료 이름을 그대로 적어 둔다** —
+   자료 번호만 적으면 나중에 그 자료를 지웠을 때 무엇을 보냈는지 알 수 없다. */
+function sendLogRec(o){
+  const p = o || {};
+  return {
+    at: p.at || 0,
+    by: String(p.by||''),
+    to: String(p.to||''),
+    names: (p.names||[]).map(v=>String(v||'')).filter(Boolean),
+    set: String(p.set||'')
+  };
+}
+/* 최근 것이 위로. 화면에 몇 줄만 보이므로 자르는 것까지 여기서 한다. */
+function sendLogList(logs, limit){
+  const arr = Object.entries(logs||{})
+    .map(([id,v])=>Object.assign({id}, v||{}))
+    .filter(v=>v.at)
+    .sort((a,b)=>(b.at||0)-(a.at||0));
+  return (limit>0) ? arr.slice(0, limit) : arr;
+}
+
+/* ── 묶음 ──
+   묶음 안의 자료가 지워졌을 수 있다. 지금 자료함에 **있는 것만** 돌려준다 —
+   없는 번호를 그대로 넘기면 보낼 때 조용히 빠지고, 사람은 다 보낸 줄 안다. */
+function setLiveIds(set, materials){
+  const have = materials || {};
+  return ((set&&set.ids)||[]).filter(id=>have[id]);
+}
+function setList(sets){
+  return Object.values(sets||{}).filter(s=>s&&s.id)
+    .sort((a,b)=>(a.order||0)-(b.order||0));
+}
+/* ══════ 자료함 — 화면 ══════ */
+let _matCats = null;                       /* 아직 안 읽었으면 null */
+let _matSets = {};
+let _matMail = null;
+function MAT_CATS_NOW(){ return matCatsOf(_matCats); }
+const matCat = m => matCatOf(m, MAT_CATS_NOW());
 function matListByCat(cat){
   const all = matList();
   return (!cat || cat==='all') ? all : all.filter(m=>matCat(m)===cat);
@@ -1337,23 +1541,34 @@ const matType = n => MAT_TYPES[matExt(n)];
 const matIcon = n => (matType(n)||{}).ic || '📄';
 
 /* ── 자료 보내기 (고객 명함에서: 고르기만) ── */
+let _sendMatPick = null;          /* 묶음으로 고른 자료 번호들. null 이면 전부 고름(예전 그대로) */
+let _sendMatSetName = '';         /* 보낸 기록에 '어느 묶음으로 보냈는지' 남기려고 */
 function openSendMaterials(id){
   const it=state.items[id]; if(!it) return;
-  _sendMatId=id;
+  _sendMatId=id; _sendMatPick=null; _sendMatSetName='';
   renderSendMat();
   $('sendMatBg').classList.add('open');
   loadMaterials(()=>{ if(_sendMatId===id) renderSendMat(); });
 }
-function closeSendMat(){ $('sendMatBg').classList.remove('open'); _sendMatId=null; }
+function applyMatSet(sid){
+  const s=_matSets[sid]; if(!s) return;
+  _sendMatPick = setLiveIds(s, _matMeta);
+  _sendMatSetName = s.name||'';
+  renderSendMat();
+  toast(`📦 ${s.name||'묶음'} — ${_sendMatPick.length}개를 골랐습니다`);
+}
+function closeSendMat(){ $('sendMatBg').classList.remove('open'); _sendMatId=null; _sendMatPick=null; _sendMatSetName=''; }
 function renderSendMat(){
   const it = state.items[_sendMatId]; if(!it) return;
   const nm = it.name || it.company || '(이름 없음)';
   const comp = it.company ? ' ('+esc(it.company)+')' : '';
   const email = it.email || '';
   const list = matList();
+  /* 묶음을 눌렀으면 그 자료만 체크한 채로 연다. 안 눌렀으면 예전대로 전부 체크. */
+  const pick = _sendMatPick;
   const rows = list.length ? list.map(m=>`
       <div class="sm-slot">
-        <input type="checkbox" class="sm-chk" data-id="${m.id}" checked>
+        <input type="checkbox" class="sm-chk" data-id="${m.id}" ${(!pick || pick.indexOf(m.id)>=0)?'checked':''}>
         <span class="sm-ic">${matIcon(m.fileName)}</span>
         <div class="sm-sinfo"><div class="n">${esc(matCat(m))} · ${esc(m.name||'자료')}</div>
           <div class="f">${m.desc?esc(m.desc)+' · ':''}${esc(m.fileName||'')}</div></div>
@@ -1365,6 +1580,14 @@ function renderSendMat(){
       <div class="sm-htxt"><div class="t">자료 보내기</div><div class="s">받는 사람 · ${esc(nm)}${comp}</div></div>
       <button class="sm-x" onclick="closeSendMat()">✕</button>
     </div>
+    ${(function(){
+      const sets = setList(_matSets).filter(s=>setLiveIds(s,_matMeta).length);
+      if(!sets.length) return '';
+      return `<div class="sm-label">묶음으로 한 번에</div>
+        <div class="sm-sets">${sets.map(s=>`<button onclick="applyMatSet('${s.id}')"
+          title="${esc(setLiveIds(s,_matMeta).map(id=>(_matMeta[id]||{}).name||'자료').join(' · '))}"
+          >📦 ${esc(s.name||'묶음')} <b>${setLiveIds(s,_matMeta).length}</b></button>`).join('')}</div>`;
+    })()}
     <div class="sm-label">보낼 자료</div>
     ${rows}
     <div class="sm-to">📧 <span>보낼 곳 · ${email?esc(email):'이메일 없음 (명함에 이메일을 추가하세요)'}</span></div>
@@ -1397,16 +1620,60 @@ async function doSendMaterials(){
   const nm = it.name || it.company || '';
   const lines = ids.map(id=>{ const m=_matMeta[id]||{};
     return '· ' + (m.name||'자료') + (m.desc ? ' — ' + m.desc : ''); }).join('\n');
-  const subject = `[푸른노무법인] 요청하신 자료를 보내드립니다`;
-  const body = `${nm ? nm+' 님, ' : ''}안녕하세요.\n푸른노무법인입니다.\n\n`
-    + `아래 자료를 첨부합니다.\n\n${lines}\n\n`
-    + `문의사항 있으시면 언제든 연락 주십시오.\n감사합니다.\n\n`
-    + `푸른노무법인\n`;
+  /* 제목·본문은 자료함 → ✉️ 메일 본문에서 고친 글을 쓴다.
+     고른 자료가 한 갈래뿐이면 그 갈래 전용 글이 있으면 그것을 쓴다. */
+  const tpl = pickMailTpl(matMailCfg(), ids.map(id=>matCat(_matMeta[id])));
+  const vals = { 받는분: nm, 회사명: it.company||'', 자료목록: lines, 오늘: fmtDate(Date.now()) };
+  const subject = mailFill(tpl.subject || MAIL_TPL_DEFAULT.subject, vals);
+  const body    = mailFill(tpl.body    || MAIL_TPL_DEFAULT.body,    vals);
+  /* 보낸 기록을 **메일창을 열기 전에** 남긴다 — location.href 로 넘어간 뒤에는
+     이 화면이 멈출 수 있어 기록이 빠진다. (대표 결정: 내려받기 누를 때 바로 남긴다) */
+  logSentMaterials(_sendMatId, ids, email);
   /* 파일은 자동으로 붙지 않는다 — 메일창이 열리면 내려받은 파일을 끌어다 놓아야 한다 */
   location.href = `mailto:${encodeURIComponent(email)}`
     + `?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   closeSendMat();
   toast(`📥 자료 ${got}개를 내려받았습니다.\n메일창에 그 파일들을 끌어다 붙이고 보내세요`, 12000);
+}
+/* ── 보낸 기록 ──
+   '이 업체에 제안서 보냈던가'에 답하려고 남긴다. 전 직원이 본다 (대표 결정) —
+   담당자가 바뀌거나 자리를 비워도 이어받을 수 있어야 한다.
+
+   ⚠ 개인 폴더 명함은 남기지 않는다. 기록 자리(pucards/sendLog)는 직원 누구나
+     읽으므로, 남기는 순간 그 명함 번호가 드러난다. */
+function logSentMaterials(cardId, ids, to){
+  try{
+    if(Store.mode!=='firebase' || !cardId) return;
+    if((state.priv.items||{})[cardId]) return;
+    const rec = sendLogRec({
+      at: Date.now(),
+      by: myEmail || '',
+      to: to || '',
+      names: ids.map(id=>(_matMeta[id]||{}).name || '자료'),
+      set: _sendMatSetName || ''
+    });
+    firebase.database().ref(`${DB_ROOT}/sendLog/${cardId}`).push(rec)
+      .then(()=>{ (state.sendLog[cardId] = state.sendLog[cardId] || {})['t'+rec.at] = rec; })
+      .catch(e=>console.warn('[보낸 기록]', e&&e.message));
+  }catch(_){}
+}
+/* 한 명함의 보낸 기록을 읽어 상세 화면에 채운다 — 명함을 열 때만 읽는다
+   (6천 장 기록을 늘 들고 있을 이유가 없다) */
+function loadSendLog(cardId, cb){
+  if(Store.mode!=='firebase') { if(cb) cb(); return; }
+  firebase.database().ref(`${DB_ROOT}/sendLog/${cardId}`).once('value')
+    .then(s=>{ state.sendLog[cardId] = s.val() || {}; if(cb) cb(); })
+    .catch(()=>{ if(cb) cb(); });
+}
+function sendLogHtml(cardId){
+  const rows = sendLogList(state.sendLog[cardId], 5);
+  if(!rows.length) return '';
+  return `<div class="sendlog">
+    <div class="slh">📤 보낸 자료 <span>${sendLogList(state.sendLog[cardId]).length}회</span></div>
+    ${rows.map((r,i)=>`<div class="slrow ${i?'':'on'}">
+      <div class="sld">${fmtDate(r.at)}${r.by?' · '+esc(String(r.by).split('@')[0]):''}</div>
+      <div class="sln">${r.set?`<b>📦 ${esc(r.set)}</b> — `:''}${esc((r.names||[]).join(' · ')||'자료')}</div>
+    </div>`).join('')}</div>`;
 }
 /* 자료 한 개를 파일로 내려받는다 (미리보기와 같은 방식으로 데이터를 되살린다) */
 async function downloadMaterial(id){
@@ -1520,31 +1787,44 @@ function closeMatPage(){ state.view='list'; render(); }
 function renderMatPage(){
   const el=$('pcMat'); if(!el) return;
   const cat = state.matCat || 'all';
-  const list = matListByCat(cat);
+  const cats = MAT_CATS_NOW();
   const all  = matList();
-  const tabs = ['all'].concat(MAT_CATS).map(c=>{
+  const list = matSearchList(matListByCat(cat), state.matQ);
+  const tabs = ['all'].concat(cats).map(c=>{
     const on = (cat===c);
     const n = c==='all' ? all.length : all.filter(m=>matCat(m)===c).length;
+    /* '기타'는 이름을 바꾸거나 지울 수 없다 — 갈래를 지웠을 때 자료가 갈 곳이다 */
+    const pen = (c!=='all' && c!==MAT_CAT_ETC)
+      ? `<span onclick="event.stopPropagation();editMatCat('${esc(c)}')" title="이름 바꾸기·삭제"
+           style="margin-left:6px;opacity:.75">✏</span>` : '';
     return `<button class="mattab ${on?'on':''}" onclick="setMatCat('${c}')">${c==='all'?'📋 전체':esc(c)}
-      <b>${n}</b></button>`;
+      <b>${n}</b>${pen}</button>`;
   }).join('')
+  + `<button class="mattab" style="border-style:dashed;color:#1d4fc4" onclick="addMatCat()"
+       title="제안서·계약서 말고 다른 갈래를 만듭니다">＋ 갈래</button>`
+  + `<span style="width:1px;background:#e4e8f0;margin:0 3px"></span>`
+  + `<button class="mattab ${cat==='set'?'on':''}" onclick="setMatCat('set')"
+       title="여러 자료를 미리 묶어 두고 보낼 때 한 번에 고릅니다">📦 묶음 <b>${setList(_matSets).length}</b></button>`
+  + `<button class="mattab ${cat==='mail'?'on':''}" onclick="setMatCat('mail')"
+       title="자료를 보낼 때 열리는 메일의 제목·본문">✉️ 메일 본문</button>`
   + `<button class="mattab ${cat==='tpl'?'on':''}" onclick="setMatCat('tpl')"
        title="업체명·금액만 채우면 한글 제안서가 만들어집니다">📝 제안서 틀</button>`;
+  if(cat==='set'){  el.innerHTML = matPageShell(tabs, matSetsHtml());  return; }
+  if(cat==='mail'){ el.innerHTML = matPageShell(tabs, matMailHtml());  return; }
   /* 제안서 틀은 파일이 아니라 글이라 목록 대신 편집칸을 보여준다 */
   if(cat==='tpl'){
     if(_tplBody===null) loadTpl(()=>{ if(state.view==='mat') renderMatPage(); });
-    el.innerHTML = `
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <button class="setback" onclick="closeMatPage()">← 목록으로</button>
-        <h2 style="margin:0 0 10px;font-size:17px;color:#16223c">📎 자료함</h2>
-      </div>
-      <div class="mattabs">${tabs}</div>
-      ${_tplBody===null ? '<div class="matempty">불러오는 중…</div>' : tplEditorHtml()}`;
+    el.innerHTML = matPageShell(tabs,
+      _tplBody===null ? '<div class="matempty">불러오는 중…</div>' : tplEditorHtml());
     return;
   }
-  const rows = list.length ? list.map(m=>`
+  const rows = list.length ? list.map((m,i)=>`
     <div class="matcard">
       <div class="matline">
+        <span class="matord">
+          <button onclick="moveMat('${m.id}',-1)" ${i===0?'disabled':''} title="위로">▲</button>
+          <button onclick="moveMat('${m.id}',1)" ${i===list.length-1?'disabled':''} title="아래로">▼</button>
+        </span>
         <span class="matic">${matIcon(m.fileName)}</span>
         <div class="matf">
           <label>이름</label>
@@ -1554,7 +1834,7 @@ function renderMatPage(){
         <div class="matf" style="flex:0 0 130px;min-width:120px">
           <label>갈래</label>
           <select onchange="saveMatField('${m.id}','cat',this.value)">
-            ${MAT_CATS.map(c=>`<option value="${c}" ${matCat(m)===c?'selected':''}>${esc(c)}</option>`).join('')}
+            ${cats.map(c=>`<option value="${c}" ${matCat(m)===c?'selected':''}>${esc(c)}</option>`).join('')}
           </select>
         </div>
         <div class="matacts">
@@ -1570,25 +1850,228 @@ function renderMatPage(){
       </div>
       <div class="matmeta">📄 ${esc(m.fileName||'')} · ${m.size?((m.size/1024/1024).toFixed(1)+'MB · '):''}${fmtDate(m.uploadedAt)}</div>
     </div>`).join('')
-    : (cat==='all'
+    : (state.matQ
+        ? `<div class="matempty">「${esc(state.matQ)}」로 찾은 자료가 없습니다.</div>`
+        : cat==='all'
         ? `<div class="matempty">아직 자료가 없습니다.<br>위 <b>＋ 새 자료 올리기</b>로 제안서·계약서·홍보물을 올리세요.</div>`
         : `<div class="matempty">「${esc(cat)}」에 든 자료가 없습니다.<br>자료의 <b>갈래</b>를 이걸로 바꾸면 여기 모입니다.</div>`);
-  el.innerHTML = `
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <button class="setback" onclick="closeMatPage()">← 목록으로</button>
-      <h2 style="margin:0 0 10px;font-size:17px;color:#16223c">📎 자료함</h2>
-      <span style="margin:0 0 10px;font-size:12px;color:#8b98b3">고객에게 보낼 자료를 여기서 관리합니다 · ${all.length}개</span>
+  el.innerHTML = matPageShell(tabs, `
+    <div class="matsearch">
+      <input id="matQ" value="${esc(state.matQ||'')}" placeholder="🔍 자료 이름·설명으로 찾기"
+        oninput="state.matQ=this.value;renderMatPage();document.getElementById('matQ').focus()">
+      ${state.matQ?`<button onclick="state.matQ='';renderMatPage()" title="지우기">✕</button>`:''}
     </div>
-    <div class="mattabs">${tabs}</div>
     <div id="matDrop">
       <label class="matadd">＋ 새 자료 올리기<input type="file" accept="${MAT_ACCEPT}" style="display:none" onchange="addMaterial(this)"></label>
       <div class="matdrophint">파일을 이 자리에 끌어다 놓아도 올라갑니다 · PDF·워드·한글·PPT·엑셀·이미지 (8MB 이하)</div>
     </div>
     ${rows}
     <p style="font-size:11.5px;color:#8b98b3;line-height:1.7;margin-top:12px">
-      ※ 여기 올린 자료는 명함의 <b>이메일을 누를 때</b> 고를 수 있습니다.</p>`;
+      ※ 여기 올린 자료는 명함의 <b>이메일을 누를 때</b> 고를 수 있습니다.
+      ▲▼ 로 올린 차례를 바꾸면 고르는 화면에도 그대로 나옵니다.</p>`, all.length);
   initMatDrop();
+  /* 글자를 치면 화면을 다시 그리므로 커서가 끝으로 간다 — 끝에 두는 것이 맞다(계속 이어 친다) */
+  const q=$('matQ'); if(q && state.matQ){ q.focus(); q.setSelectionRange(q.value.length,q.value.length); }
 }
+/* 자료함 화면의 껍데기 — 제목줄·탭줄은 어느 탭에서나 같다 */
+function matPageShell(tabs, inner, n){
+  return `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button class="setback" onclick="closeMatPage()">← 목록으로</button>
+      <h2 style="margin:0 0 10px;font-size:17px;color:#16223c">📎 자료함</h2>
+      ${n===undefined?'':`<span style="margin:0 0 10px;font-size:12px;color:#8b98b3">고객에게 보낼 자료를 여기서 관리합니다 · ${n}개</span>`}
+    </div>
+    <div class="mattabs">${tabs}</div>
+    ${inner}`;
+}
+/* ── 갈래 만들기·이름 바꾸기·지우기 ──
+   지울 때 자료를 함께 지우지 않는다. '기타'로 옮긴다 — 갈래는 서랍일 뿐이고
+   서랍을 뺐다고 안에 든 것을 버리지는 않는다. */
+function saveMatCats(arr){
+  const clean = matCatsOf(arr).filter(c=>c!==MAT_CAT_ETC);   /* '기타'는 저장하지 않는다 — 늘 붙는다 */
+  return firebase.database().ref(DB_ROOT+'/config/matCats').set(clean)
+    .then(()=>{ _matCats = clean; });
+}
+function addMatCat(){
+  const v = (prompt('새 갈래 이름을 입력하세요.\n(예: 산재서식, 취업규칙, 교육자료)')||'').trim();
+  if(!v) return;
+  if(v===MAT_CAT_ETC) return toast('「기타」는 이미 있는 갈래입니다');
+  const cur = MAT_CATS_NOW().filter(c=>c!==MAT_CAT_ETC);
+  if(cur.indexOf(v)>=0) return toast('같은 이름의 갈래가 이미 있습니다');
+  saveMatCats(cur.concat([v]))
+    .then(()=>{ toast(`갈래 「${v}」을(를) 만들었습니다`); setMatCat(v); })
+    .catch(e=>toast('만들지 못했습니다: '+((e&&e.message)||'')));
+}
+function editMatCat(name){
+  const n = matList().filter(m=>matCat(m)===name).length;
+  const v = prompt(`갈래 「${name}」\n\n· 새 이름을 넣고 [확인] → 이름이 바뀝니다 (자료 ${n}개도 따라갑니다)\n`
+    + `· 비워 두고 [확인] → 갈래를 지웁니다 (자료 ${n}개는 「기타」로 옮겨집니다)`, name);
+  if(v===null) return;
+  const to = String(v).trim();
+  if(to===name) return;
+  const cur = MAT_CATS_NOW().filter(c=>c!==MAT_CAT_ETC);
+  if(to && cur.indexOf(to)>=0) return toast('같은 이름의 갈래가 이미 있습니다');
+  if(to===MAT_CAT_ETC) return toast('「기타」라는 이름은 쓸 수 없습니다');
+
+  const patch = to ? matCatRenamePatch(_matMeta, name, to) : matCatDeletePatch(_matMeta, name);
+  if(!to && !confirm(`갈래 「${name}」을(를) 지웁니다.\n\n`
+    + `· 안에 든 자료 ${n}개는 지워지지 않고 「기타」로 옮겨집니다\n\n진행할까요?`)) return;
+
+  const upd = {};
+  Object.keys(patch).forEach(id=>{ upd[`${DB_ROOT}/materials/${id}/cat`] = patch[id]; });
+  const next = to ? cur.map(c=>c===name?to:c) : cur.filter(c=>c!==name);
+  firebase.database().ref().update(upd)
+    .then(()=>{ Object.keys(patch).forEach(id=>{ if(_matMeta[id]) _matMeta[id].cat = patch[id]; });
+                return saveMatCats(next); })
+    .then(()=>{ toast(to ? `갈래 이름을 「${to}」로 바꿨습니다` : `갈래를 지웠습니다 — 자료 ${n}개는 「기타」에 있습니다`, 6000);
+                if(state.matCat===name) state.matCat = to || MAT_CAT_ETC;
+                renderMatPage(); })
+    .catch(e=>toast('바꾸지 못했습니다: '+((e&&e.message)||'')));
+}
+/* ── 순서 바꾸기 ── */
+function moveMat(id, dir){
+  const cat = state.matCat || 'all';
+  const shown = matSearchList(matListByCat(cat), state.matQ);
+  /* 화면에서 이웃한 줄과 자리를 바꾸고, 번호는 **전체 기준**으로 다시 매긴다 */
+  const other = matNeighborId(shown, id, dir);
+  if(!other) return;
+  const order = matSwapOrder(matList(), id, other);
+  if(!order) return;
+  const upd = {};
+  Object.keys(order).forEach(mid=>{
+    upd[`${DB_ROOT}/materials/${mid}/order`] = order[mid];
+    if(_matMeta[mid]) _matMeta[mid].order = order[mid];
+  });
+  renderMatPage();
+  firebase.database().ref().update(upd).catch(e=>toast('순서를 저장하지 못했습니다: '+((e&&e.message)||'')));
+}
+
+/* ── 묶음 ── */
+function matSetsHtml(){
+  const sets = setList(_matSets);
+  const all = matList();
+  const rows = sets.length ? sets.map(s=>{
+    const live = setLiveIds(s, _matMeta);
+    const names = live.map(id=>(_matMeta[id]||{}).name||'자료');
+    const gone = ((s.ids||[]).length - live.length);
+    return `<div class="matcard">
+      <div class="matline">
+        <span class="matic">📦</span>
+        <div class="matf"><label>묶음 이름</label>
+          <input value="${esc(s.name||'')}" placeholder="예: 신규 자문 3종"
+            onchange="saveSetName('${s.id}',this.value)"></div>
+        <div class="matacts"><button class="matdel" onclick="deleteMatSet('${s.id}')">🗑 삭제</button></div>
+      </div>
+      <div class="matf"><label>담긴 자료 ${live.length}개${gone?` <span style="color:#c0392b;font-weight:400">— 지워진 자료 ${gone}개는 자동으로 빠집니다</span>`:''}</label></div>
+      <div class="setpick">${all.map(m=>`
+        <label class="setchk ${live.indexOf(m.id)>=0?'on':''}">
+          <input type="checkbox" ${live.indexOf(m.id)>=0?'checked':''}
+            onchange="toggleSetItem('${s.id}','${m.id}',this.checked)">
+          ${matIcon(m.fileName)} ${esc(m.name||'자료')}</label>`).join('')}</div>
+      <div class="matmeta">${names.length?esc(names.join(' · ')):'아직 고른 자료가 없습니다'}</div>
+    </div>`;
+  }).join('') : `<div class="matempty">아직 묶음이 없습니다.<br>자주 함께 보내는 자료를 묶어 두면 <b>한 번에</b> 고를 수 있습니다.</div>`;
+  return `<button class="matadd" style="border:none;margin-bottom:12px" onclick="addMatSet()">＋ 새 묶음 만들기</button>
+    ${rows}
+    <p style="font-size:11.5px;color:#8b98b3;line-height:1.7;margin-top:12px">
+      ※ 만든 묶음은 명함의 <b>이메일을 누를 때</b> 맨 위에 단추로 나옵니다.</p>`;
+}
+function addMatSet(){
+  const v=(prompt('묶음 이름을 입력하세요.\n(예: 신규 자문 3종, 계약 마무리)')||'').trim();
+  if(!v) return;
+  const id='s'+Date.now()+Math.random().toString(36).slice(2,6);
+  const rec={id, name:v, ids:[], order:Date.now()};
+  firebase.database().ref(DB_ROOT+'/matSets/'+id).set(rec)
+    .then(()=>{ _matSets[id]=rec; toast('묶음을 만들었습니다 — 담을 자료를 고르세요',5000); renderMatPage(); })
+    .catch(e=>toast('만들지 못했습니다: '+((e&&e.message)||'')));
+}
+function saveSetName(id, v){
+  const s=_matSets[id]; if(!s) return;
+  const name=String(v||'').trim(); if(!name || name===s.name) return;
+  s.name=name;
+  firebase.database().ref(DB_ROOT+'/matSets/'+id+'/name').set(name)
+    .then(()=>toast('묶음 이름을 바꿨습니다')).catch(e=>toast('저장 실패: '+((e&&e.message)||'')));
+}
+function toggleSetItem(sid, mid, on){
+  const s=_matSets[sid]; if(!s) return;
+  const ids = (s.ids||[]).filter(x=>x!==mid);
+  if(on) ids.push(mid);
+  s.ids = ids;
+  firebase.database().ref(DB_ROOT+'/matSets/'+sid+'/ids').set(ids)
+    .then(()=>renderMatPage()).catch(e=>toast('저장 실패: '+((e&&e.message)||'')));
+}
+function deleteMatSet(id){
+  const s=_matSets[id]; if(!s) return;
+  if(!confirm(`묶음 「${s.name||''}」을(를) 지웁니다.\n자료 자체는 지워지지 않습니다.\n\n진행할까요?`)) return;
+  firebase.database().ref(DB_ROOT+'/matSets/'+id).remove()
+    .then(()=>{ delete _matSets[id]; toast('묶음을 지웠습니다'); renderMatPage(); })
+    .catch(e=>toast('지우지 못했습니다: '+((e&&e.message)||'')));
+}
+
+/* ── 메일 본문 틀 ── */
+function matMailHtml(){
+  const cfg = matMailCfg();
+  const cats = MAT_CATS_NOW();
+  const sel = state.matMailCat || '';
+  const cur = sel ? (cfg.byCat[sel] || {subject:'',body:''}) : {subject:cfg.subject, body:cfg.body};
+  return `<p class="setnote" style="margin:0 0 10px">
+      자료를 보낼 때 열리는 메일의 <b>제목과 본문</b>입니다.
+      <b>{받는분} {회사명} {자료목록} {오늘}</b> 을 적으면 그 자리에 채워집니다.</p>
+    <div class="matf" style="margin-bottom:10px">
+      <label>어느 때 쓰는 글인가</label>
+      <select onchange="state.matMailCat=this.value;renderMatPage()">
+        <option value="">기본 (모든 경우)</option>
+        ${cats.map(c=>`<option value="${esc(c)}" ${sel===c?'selected':''}>${esc(c)}만 보낼 때</option>`).join('')}
+      </select>
+    </div>
+    ${sel?`<p class="setnote" style="margin:0 0 10px;color:#5a6885">
+      「${esc(sel)}」 자료<b>만</b> 골라 보낼 때 이 글을 씁니다. 비워 두면 기본 글을 씁니다.
+      여러 갈래를 섞어 보내면 기본 글이 나갑니다.</p>`:''}
+    <div class="matf" style="margin-bottom:10px">
+      <label>제목</label>
+      <input id="mailSubj" value="${esc(cur.subject||'')}" placeholder="${esc(MAIL_TPL_DEFAULT.subject)}">
+    </div>
+    <label class="setnote" style="display:block;margin-bottom:6px">본문</label>
+    <textarea id="mailBody" style="width:100%;min-height:260px;padding:12px;border:1px solid #dde3ee;
+      border-radius:10px;font-size:13.5px;line-height:1.8;color:#1b2536;background:#fff;font-family:inherit"
+      placeholder="${esc(MAIL_TPL_DEFAULT.body)}">${esc(cur.body||'')}</textarea>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <button class="matadd" style="border:none" onclick="saveMatMail()">💾 저장</button>
+      <button class="mattab" onclick="renderMatPage()">되돌리기(저장 안 함)</button>
+      ${sel?`<button class="mattab" style="color:#c0392b;border-color:#f0c9c4" onclick="clearMatMailCat()">이 갈래 글 지우기</button>`
+           :`<button class="mattab" style="color:#c0392b;border-color:#f0c9c4" onclick="resetMatMail()">처음 글로</button>`}
+    </div>
+    <div class="matmeta" style="margin-top:12px">미리보기 — ${esc(mailFill(cur.subject||MAIL_TPL_DEFAULT.subject,
+        {받는분:'홍길동', 회사명:'가나상사', 오늘:fmtDate(Date.now())}))}</div>`;
+}
+function saveMatMail(){
+  const subject=($('mailSubj')||{}).value||'';
+  const body=($('mailBody')||{}).value||'';
+  const sel=state.matMailCat||'';
+  const path = sel ? `${DB_ROOT}/config/matMail/byCat/${sel}` : `${DB_ROOT}/config/matMail`;
+  const val  = sel ? {subject, body} : Object.assign({}, matMailCfg(), {subject, body});
+  firebase.database().ref(path).set(val)
+    .then(()=>{ if(sel){ _matMail=_matMail||{}; _matMail.byCat=_matMail.byCat||{}; _matMail.byCat[sel]=val; }
+                else { _matMail=val; }
+                toast('메일 글을 저장했습니다'); renderMatPage(); })
+    .catch(e=>toast('저장 실패: '+((e&&e.message)||'')));
+}
+function clearMatMailCat(){
+  const sel=state.matMailCat||''; if(!sel) return;
+  if(!confirm(`「${sel}」 전용 글을 지웁니다.\n지우면 기본 글을 씁니다.\n\n진행할까요?`)) return;
+  firebase.database().ref(`${DB_ROOT}/config/matMail/byCat/${sel}`).remove()
+    .then(()=>{ if(_matMail&&_matMail.byCat) delete _matMail.byCat[sel];
+                toast('지웠습니다 — 이제 기본 글을 씁니다'); renderMatPage(); })
+    .catch(e=>toast('지우지 못했습니다: '+((e&&e.message)||'')));
+}
+function resetMatMail(){
+  if(!confirm('메일 제목·본문을 처음 글로 되돌립니다.\n\n진행할까요?')) return;
+  const val = Object.assign({}, matMailCfg(), MAIL_TPL_DEFAULT);
+  firebase.database().ref(DB_ROOT+'/config/matMail').set(val)
+    .then(()=>{ _matMail=val; toast('처음 글로 되돌렸습니다'); renderMatPage(); })
+    .catch(e=>toast('되돌리지 못했습니다: '+((e&&e.message)||'')));
+}
+
 /* 이름·설명은 칸에서 나갈 때 저장한다 — 저장 단추를 따로 두면 안 누르고 넘어간다 */
 function saveMatField(id, key, val){
   const m=_matMeta[id]; if(!m) return;
@@ -2712,6 +3195,7 @@ function openDetail(id){
                                    : [it.ceo&&('대표자 '+it.ceo), fmtBizno(it.bizno)].filter(Boolean).join(' · '))}</div>
     ${(function(){var f=ErpMatch.full(it);return f?`<div class="erpmgr-box">🏢 푸른 거래처 · ${esc(f)}</div>`:'';})()}
     ${acts}
+    <div id="dSendLog">${sendLogHtml(id)}</div>
     <div class="dlist">${rows||'<div class="empty" style="padding:20px">저장된 정보가 없습니다</div>'}</div>
     <div class="mfoot">
       <button class="btn ghost" onclick="toggleScope('${id}')">${it.scope==='private'?'공용으로':'🔒 개인으로'}</button>
@@ -2720,6 +3204,9 @@ function openDetail(id){
       <button class="btn ghost" onclick="shareItem('${id}')">📤 공유</button>
       <button class="btn ghost" onclick="closeDetail();openEditor(state.items['${id}'])">수정</button></div>`;
   $('detailBg').classList.add('open');
+  /* 보낸 기록은 명함을 열 때 그 명함 것만 읽는다 — 온 뒤에 그 자리만 갈아 끼운다 */
+  if(!(state.priv.items||{})[id])
+    loadSendLog(id, ()=>{ const box=$('dSendLog'); if(box) box.innerHTML = sendLogHtml(id); });
   if (it.thumb) Store.getPhoto(id).then(p=>{ const im=$('dphoto'); if(p&&im) im.src=p; });
   if (it.thumb2) Store.getPhoto(id+'_b').then(p=>{ const im=$('dphoto2'); if(p&&im) im.src=p; });
 }
