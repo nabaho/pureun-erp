@@ -34014,6 +34014,46 @@ function erpKindLabel(g){
   return out.join('·');
 }
 if(typeof window !== 'undefined') window.erpKindLabel = erpKindLabel;
+/* ── 나이스빌 CMS — 「몇 월분 자문료인가」 ──
+   6월분을 7/5 에 걷어(출금일) 7/6 에 통장으로 받으면(정산일), 그것은 6월분인가 7월분인가.
+   대표 확인: 업체마다 다르다(당월 걷는 곳·익월 걷는 곳). 그래서 업체마다 골라 두게 한다.
+     'wdate'   걷은 달 (출금일 기준)
+     'setdate' 들어온 달 (정산일 기준) ← 지금까지의 동작이라 기본값
+   업체 기록의 cmsYmBase 한 칸에 담는다. 값이 없으면 종전대로 정산일. */
+function erpCmsYmBase(co){
+  var v = co && co.cmsYmBase;
+  return (v === 'wdate') ? 'wdate' : 'setdate';
+}
+/* 나이스빌 한 줄 + 기준 → 'YYYY-MM' (고른 날짜가 비면 다른 쪽으로 물러난다 — 빈 채로 두면 건너뛰게 된다) */
+function erpCmsYmOf(row, base){
+  if(!row) return '';
+  var w = String(row.wdate || '').slice(0, 7);
+  var s = String(row.setdate || '').slice(0, 7);
+  var first = (base === 'wdate') ? w : s;
+  var back  = (base === 'wdate') ? s : w;
+  var ym = (first && first.length === 7) ? first : back;
+  return (ym && ym.length === 7) ? ym : '';
+}
+/* 그 기준으로 실제 쓸 날짜 (입금일로 기록할 날) */
+function erpCmsDateOf(row, base){
+  if(!row) return '';
+  var w = String(row.wdate || '').slice(0, 10);
+  var s = String(row.setdate || '').slice(0, 10);
+  var first = (base === 'wdate') ? w : s;
+  var back  = (base === 'wdate') ? s : w;
+  return (first && first.length === 10) ? first : back;
+}
+/* 나이스빌 수수료 합계 — 명세에 건당 수수료가 적혀 있다.
+   통장에 들어온 돈 = 걷은 합계 − 수수료. 매출은 걷은 금액, 수수료는 지출로 적는 것이 정석이다. */
+function erpCmsFeeSum(rows){
+  var n = 0;
+  (rows || []).forEach(function(r){ if(r && r.status === 'ok') n += parseInt(r.fee, 10) || 0; });
+  return n;
+}
+if(typeof window !== 'undefined'){
+  window.erpCmsYmBase = erpCmsYmBase; window.erpCmsYmOf = erpCmsYmOf;
+  window.erpCmsDateOf = erpCmsDateOf; window.erpCmsFeeSum = erpCmsFeeSum;
+}
 /* ── 줄 상태 (신호등) ──
    ready 초록: 바로 확정 가능 · check 노랑: 사람이 봐야 함
    none  빨강: 이름 근거 있는 후보 없음 · done 회색: 이미 처리했거나 보류함에 넣음
@@ -34903,6 +34943,20 @@ function FinanceLedger(){
         showToast('🔖 기억함 — 다음부터 「' + _m + '」 은 ' + _c.companyName + ' 로 찾아옵니다');
     }catch(_le){ if(window._erpErrLog) window._erpErrLog(_le); }
   }
+  /* ── 업체별 「몇 월분」 기준 저장 ──
+     업체마다 다르다(대표 확인) — 걷은 달로 잡는 곳도, 들어온 달로 잡는 곳도 있다.
+     한 번 정해 두면 그 업체는 다음 달부터 자동으로 그 기준을 쓴다. */
+  function setCmsYmBase(co, base){
+    if(!co || !co.id){ showToast('업체를 찾지 못했습니다'); return; }
+    if(dbPatch('companies', co.id, { cmsYmBase:base }) === false){
+      showToast('❌ 저장에 실패했습니다'); return;
+    }
+    co.cmsYmBase = base;                       // 화면에 든 사본도 함께 (다시 그릴 때까지 어긋나지 않게)
+    setNb(function(prev){ return prev ? Object.assign({}, prev) : prev; });
+    showToast(base === 'wdate'
+      ? ('📅 '+co.name+' — 앞으로 «걷은 달» 로 잡습니다')
+      : ('📅 '+co.name+' — 앞으로 «들어온 달» 로 잡습니다'));
+  }
   /* 묶어 확정 — 무엇을 무엇에 합치는지 «먼저 보여주고» 확인받는다.
      바로 창이 열리면 잘못 고른 줄이 섞여 있어도 모른 채 진행하게 된다. */
   async function bundleAsk(grows, n, sum){
@@ -35327,26 +35381,46 @@ function FinanceLedger(){
     var _users = getActiveUsers();
     function _uName(sid){ var u=_users.find(function(x){return x.sid===sid;}); return u?u.name:''; }
     var lockCache = {};
-    var okN = 0, skipN = 0, lockN = 0, doneRows = [];
+    var okN = 0, skipN = 0, lockN = 0, doneRows = [], wN = 0;
     nbOkLinked.forEach(function(r){
-      var d = r.setdate || r.wdate;                        // 정산예정일 우선 (실제 입금일) · 없으면 출금일
+      /* 몇 월분인가 — 업체마다 다르다(대표 확인).
+         cmsYmBase 가 'wdate' 면 «걷은 달», 아니면 종전대로 «들어온 달(정산일)». */
+      var base = erpCmsYmBase(r.co);
+      var d = erpCmsDateOf(r, base);
       if(!d || d.length < 10){ skipN++; return; }
-      var y = parseInt(d.slice(0,4),10) || 0;
-      var m = parseInt(d.slice(5,7),10) || 0;
+      var ym = erpCmsYmOf(r, base);
+      if(!ym){ skipN++; return; }
+      var y = parseInt(ym.slice(0,4),10) || 0;
+      var m = parseInt(ym.slice(5,7),10) || 0;
       if(!y || !m){ skipN++; return; }
-      var ym = y + '-' + ('0'+m).slice(-2);
+      if(base === 'wdate') wN++;
       if(!lockCache.hasOwnProperty(ym)){
         lockCache[ym] = (typeof isIncomeLocked === 'function') ? !!isIncomeLocked(ym) : false;
       }
       if(lockCache[ym]){ lockN++; return; }                // 마감월은 건너뛴다 (행마다 토스트가 뜨지 않게)
       var co = { name:r.co.name, fee:(parseInt(r.amount,10) || r.co.fee || 0),
                  payDay:r.co.payDay || '', mainSid:r.co.mainSid || '', mainName:_uName(r.co.mainSid) };
-      if(erpAddCompanyIncome(co, m, y, d, '[나이스빌CMS] ' + (r.statusRaw||''))){ okN++; doneRows.push(r); }
+      if(erpAddCompanyIncome(co, m, y, d, '[나이스빌CMS] ' + (r.statusRaw||'')
+          + ' · ' + (base==='wdate' ? '걷은 달' : '들어온 달') + ' 기준')){ okN++; doneRows.push(r); }
       else skipN++;                                        // 이미 입금됨 · 저장 실패
     });
+    /* 수수료 — 명세에 건당 금액이 적혀 있다. 매출은 걷은 금액 그대로 두고 수수료만 지출로 적는다.
+       이걸 빼먹으면 통장 잔액과 장부가 수수료만큼 계속 어긋난다. */
+    var feeSum = erpCmsFeeSum(doneRows);
+    var feeOk = false;
+    if(feeSum > 0){
+      var _fd = erpCmsDateOf(doneRows[0], erpCmsYmBase(doneRows[0].co)) || todayYMD();
+      feeOk = dbUpsert('finance_expense', {
+        id:'fe-nb-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+        date:_fd, amount:feeSum, category:'exp-bankfee', payee:'나이스빌 CMS',
+        note:'나이스빌 CMS 이체수수료 — '+doneRows.length+'건',
+        paid:true, paidDate:_fd, branch:'cheonan'}) !== false;
+    }
     var cmsSet = doneRows.length ? nbWriteCmsFlags(doneRows) : 0;
     setNbBusy(false);
     showToast('✅ 입금표시 '+okN+'건 · 이미입금 '+skipN+'건 제외 · CMS 등록 '+cmsSet+'곳'
+              + (wN ? ' · 걷은 달 기준 '+wN+'건' : '')
+              + (feeSum>0 ? (feeOk ? (' · 수수료 '+feeSum.toLocaleString()+'원 지출기록') : ' · ⚠️ 수수료 기록 실패') : '')
               + (lockN ? ' (마감월 '+lockN+'건 제외)' : ''));
   }
 
@@ -35520,6 +35594,7 @@ function FinanceLedger(){
             h('th',{style:Object.assign({},thS,{minWidth:'180px'})},'회원명'),
             h('th',{style:Object.assign({},thS,{textAlign:'right'})},'납부금액'),
             h('th',{style:thS},'상태'),
+            h('th',{style:thS,title:'체크하면 그 업체는 「걷은 달」로 자문료를 잡습니다 — 업체마다 따로 정합니다'},'몇 월분'),
             h('th',{style:thS},'처리')
           )),
           h('tbody',null, (function(){
@@ -35529,7 +35604,7 @@ function FinanceLedger(){
               if(!list.length) return;
               // 묶음 머리 — 이 합계가 통장 더빌이체 입금액과 맞아야 한다
               out.push(h('tr',{key:'g'+(g.date||'none'),style:{background:'#f1f5f9'}},
-                h('td',{style:Object.assign({},tdS,{fontWeight:800,color:'#334155',fontSize:'11px'}),colSpan:7},
+                h('td',{style:Object.assign({},tdS,{fontWeight:800,color:'#334155',fontSize:'11px'}),colSpan:8},
                   (g.date ? '📅 정산예정일 '+g.date : '📅 정산예정일 미정')
                   + ' · '+list.length+'건'
                   + (g.ok ? ' · 출금성공 '+g.ok+'건 합계 '+g.okAmt.toLocaleString()+'원' : '')
@@ -35560,15 +35635,42 @@ function FinanceLedger(){
                         borderRadius:'8px',padding:'1px 7px',whiteSpace:'nowrap'}},
                       (r.status==='ok'?'✅ 출금성공':(r.status==='fail'?'❌ 출금실패':'⏳ 출금중'))
                       + (r.reason ? ' · '+r.reason : ''))),
+                  /* ── 몇 월분인가 ──
+                     업체마다 다르다(대표 확인) — 걷은 달로 잡는 곳도 있고 들어온 달로 잡는 곳도 있다.
+                     체크하면 그 «업체» 기록에 남아 다음 달부터 자동으로 그 기준을 쓴다. */
+                  h('td',{style:Object.assign({},tdS,{whiteSpace:'nowrap'})},
+                    r.co
+                      ? (function(){
+                          var _b = erpCmsYmBase(r.co);
+                          var _ym = erpCmsYmOf(r, _b);
+                          return h('label',{
+                            title:'체크하면 이 업체는 «걷은 달(출금일)» 로 자문료를 잡습니다.\n'
+                                 +'풀면 «들어온 달(정산일)» 입니다.\n'
+                                 +'업체 기록에 남아 다음 달부터 자동으로 이 기준을 씁니다.\n'
+                                 +'출금 '+(r.wdate||'-')+' · 정산 '+(r.setdate||'-'),
+                            style:{display:'inline-flex',alignItems:'center',gap:'4px',cursor:'pointer',fontSize:'10.5px'}},
+                            h('input',{type:'checkbox',checked:_b==='wdate',
+                              onChange:function(){ setCmsYmBase(r.co, _b==='wdate' ? 'setdate' : 'wdate'); },
+                              style:{cursor:'pointer'}}),
+                            h('span',{style:{color:_b==='wdate'?'#b45309':'#64748b',
+                                fontWeight:_b==='wdate'?700:400}},
+                              (_b==='wdate'?'걷은 달':'들어온 달')),
+                            h('span',{style:{color:'#94a3b8'}},_ym||'-'));
+                        })()
+                      : h('span',{style:{color:'#cbd5e1',fontSize:'10.5px'}},'—')),
                   h('td',{style:Object.assign({},tdS,{color:'#94a3b8',fontSize:'10.5px'})},
                     r.status==='ok'
                       ? (r.co ? '입금표시 대상' : '업체 연결 필요')
-                      : (r.status==='fail' ? '후속 조치 필요' : '결과 대기'))
+                      : (r.status==='fail'
+                          ? h('span',{style:{color:'#b91c1c',fontWeight:700},
+                              title:'이 업체는 이번에 걷히지 않았습니다 — 미수로 남습니다.\n사유: '+(r.reason||r.statusRaw||'-')},
+                              '❌ 미수로 남음')
+                          : '결과 대기'))
                 ));
               });
             });
             if(!out.length) out.push(h('tr',{key:'empty'},
-              h('td',{colSpan:7,style:{padding:'26px',textAlign:'center',color:'#94a3b8',fontSize:'12px'}},
+              h('td',{colSpan:8,style:{padding:'26px',textAlign:'center',color:'#94a3b8',fontSize:'12px'}},
                 nbFailOnly ? '출금실패 행이 없습니다' : '표시할 행이 없습니다')));
             return out;
           })())
@@ -35834,6 +35936,9 @@ function FinanceLedger(){
               var _cm=(_st.state==='none' && !isCms) ? erpConsultMatch(row,_intakes) : null;
               var _ct=(_st.state==='none' && !isCms && !_cm) ? (ctHint[row._k]||null) : null;
               var _done=(incDone[row._k]||[]).length>0;
+              /* CMS 합계 줄이면 나이스빌 명세를 미리 찾아 «누르기 전에» 보여준다.
+                 전에는 눌러 봐야 몇 곳인지 알 수 있었다. */
+              var _nbHit = isCms ? erpCmsLedgerForDeposit(row.date, row.amount) : null;
               /* 후보를 고르면 «적요 → 업체» 관계를 그 자리에서 기억한다.
                  확정할 때만 배우면, 골라두고 나중에 확정하는 사이에는 못 찾아온다. */
               function pickSug(pid){
@@ -35909,8 +36014,17 @@ function FinanceLedger(){
                           '· 업체 '+_grp.length+'곳'))
                       : h('span',{style:{color:'#94a3b8'}},
                           _cm ? ('상담료? · 상담접수 '+String(_cm.date).slice(5))
-                              : (isCms ? 'CMS 일괄이체 — 업체를 체크해 확정'
-                                       : (_ct ? '📄 아직 이관 안 된 계약' : _st.label))),
+                              : (isCms
+                                  ? (_nbHit
+                                      ? h('span',{style:{color:_nbHit.exact?'#15803d':'#b45309'},
+                                          title:'나이스빌 명세와 맞춰 본 결과입니다\n정산예정일 '+_nbHit.date
+                                               +'\n걷은 합계 '+_nbHit.total.toLocaleString()+'원'
+                                               +(_nbHit.exact?'\n통장 입금액과 일치합니다'
+                                                             :('\n차액 '+_nbHit.diff.toLocaleString()+'원 — 수수료·실패분을 확인하세요'))},
+                                          '🏦 나이스빌 '+_nbHit.rows.length+'곳 · 정산 '+String(_nbHit.date).slice(5)
+                                          +(_nbHit.exact?' · 합계 일치':(' · 차액 '+_nbHit.diff.toLocaleString())))
+                                      : 'CMS 일괄이체 — 명세를 못 찾았습니다 (나이스빌 파일을 올려 주세요)')
+                                  : (_ct ? '📄 아직 이관 안 된 계약' : _st.label))),
                     _st.fee>0 && h('span',{style:{color:'#7c3aed',marginLeft:'5px'},
                       title:'카드·CMS 수수료가 빠져 들어왔습니다 — 매출은 원금액, 차액은 수수료 지출로 적습니다'},
                       '수수료 −'+_st.fee.toLocaleString()),
