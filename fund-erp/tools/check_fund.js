@@ -105,6 +105,13 @@ ok('세금과공과를 관리비로 집계', /var ADMIN=\[[^\]]*'세금과공과
     '계정만: ' + miss.join(',') + ' / 분류만: ' + extra.join(','));
 }
 ok('별지15호 66번에 격려금 매핑', /\[66,'그 밖의 복지비',\['격려금'/.test(src));
+// 69. 잔액은 그 해 말에 남은 기금 재산이다 — 재원 칸에서 빼는 식은 수기 입력이 비면 크게 틀린다
+// (안전공사공동 2024 33,372천원·현재기업사내 2025 2,173,487천원 = 각각 기말 자산총계)
+ok('별지15호 69번 잔액은 기말 자산총계', src.includes('var rest=fin.totalAssets;'));
+// 준비금 전입액은 사업외비용이라 68번 '기금 운영비'에 넣으면 안 된다
+ok('별지15호 68번에서 준비금 전입액 제외', src.includes('var admin=fin.admin+fin.otherExp-(fin.resvExp||0);')
+  && src.includes("if(n==='고유목적사업준비금전입액') resvExp+=s;"));
+ok('별지15호 70번 합계는 소계+대부+운영비+잔액', src.includes('total:subAmt+loanAmt+admin+rest,'));
 ok('통장 파서가 거래상대방 열을 읽음', /보낸분\|받는분\|상대계좌\|입금자\|송금인\|거래처\|업체/.test(src));
 // 통장을 못 받고 손으로 적은 지출대장만 오는 기금이 있다(플러스동반성장 2024: 56건)
 ok('머리글의 공백을 지우고 맞춤', src.includes("var v=String(cells[c]||'').replace(/\\s+/g,'');"));
@@ -238,8 +245,15 @@ ok('그 계정들의 전기이월 칸', src.includes("accrued:'미수수익',rec
 ok('준비금 자동조정 끄기', src.includes('.reserve_auto===false)')
   && src.includes('function _rsvAutoOf')
   && src.includes("up['funds/'+_fid+'/years/'+_yr+'/reserve_auto']=(raOn?null:false);"));
+// 번호만으로는 어느 준비금인지 알 수 없다 — 근거 법령을 이름 옆에 붙이고 재무상태표도 두 줄로 나눈다
+ok('준비금1·2를 갈라 계산해 내보냄', src.includes('var res1=-sg(RESERVE_ACCTS[0])+(num(opening.reserve)||0);')
+  && src.includes('var res2=-sg(RESERVE_ACCTS[1])+(num(opening.reserve2)||0);')
+  && src.includes('liab:liab,res1:res1,res2:res2,'));
+ok('재무상태표에 근거를 붙여 두 줄로', src.includes('법인세법 §29 · 이자')
+  && src.includes('근로복지기본법 §62② · 이월')
+  && src.includes("won(f.res1)") && src.includes("won(f.res2)"));
 ok('전기이월 준비금1·2 분리', src.includes("reserve:'고유목적사업준비금1',reserve2:'고유목적사업준비금2'")
-  && src.includes("oi('reserve2','고유목적사업준비금2')")
+  && src.includes("oi('reserve2','고유목적사업준비금2 ")
   && src.includes('liab+=(num(opening.reserve)||0)+(num(opening.reserve2)||0);')
   && src.includes('bal[RESERVE_ACCTS[1]]+=Math.round(num(op.reserve2)||0);'));
 ok('전기이월에 매도가능증권 칸', src.includes("secu:'매도가능증권'") && src.includes("oi('secu','매도가능증권')"));
@@ -262,6 +276,16 @@ ok('거래 직접 추가', src.includes('function addTxnForm') && src.includes('
   && src.includes('onclick="addTxnForm()"'));
 ok('직접 입력 거래 표시', src.includes('x.manual?'));
 ok('머리글에 계좌번호가 없으면 파일명에서', src.includes("String(file.name||'').match"));
+
+// ── ⑮ 익년도 추정재무제표 — 제출본은 목적사업회계·기금관리회계·계 세 열로 적는다 ──
+// (근로복지공단 실무 6.1 회계 구분. 앱은 '실적 | 추정' 두 열뿐이어서 서식과 달랐다)
+ok('추정재무제표에 회계 구분 세 열',
+  src.includes("var _cols=['과목',yr+'년 실적(참고)','목적사업회계','기금관리회계','계'];")
+  && src.includes("var _sum=function(r){ return {formula:'D'+r+'+E'+r}; };"));
+ok('추정재무상태표에 증권·준비금1·2 줄', src.includes("['매도가능증권',fin.secu],")
+  && src.includes("['고유목적사업준비금1',fin.res1],['고유목적사업준비금2',fin.res2],"));
+ok('회계 구분 기준을 시트에 적어 둠', src.includes('기금관리 회계 = 기본재산·정기예금·매도가능증권·근로자대부금·이자수익')
+  && src.includes('목적사업 회계 = 현금및현금성자산·고유목적사업준비금·이월잉여금·목적사업비·일반관리비'));
 // 적요가 'BZ뱅크'처럼 수단 이름뿐인 은행은 계좌가 달라도 중복검사 키가 겹친다
 // (참살이공동 2024: 두 계좌를 따로 가져오면 3건 23,934,000원이 버려졌다)
 ok('키가 겹치면 계좌·잔액으로 같은 거래인지 확인',

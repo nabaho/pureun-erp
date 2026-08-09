@@ -126,7 +126,8 @@ const CASES = [
   { name: '안전공사공동 2024 (출연금 0)', year: 2024,
     opening: { cash: 51046392, basic: 8800440, reserve2: 42245952 },
     interest: 40618, purpose: 17607800, admin: 107640,
-    cash: 33371570, reserve2: 24571130, basic: 8800440, setupWant: 0 },
+    cash: 33371570, reserve2: 24571130, basic: 8800440, setupWant: 0,
+    f15: { admin: 107640, rest: 33371570, total: 51087010 } },
 
   { name: '플러스동반성장 2024', year: 2024,
     opening: { cash: 692612287, basic: 145000000, reserve2: 547612287 },
@@ -150,6 +151,7 @@ const CASES = [
     interest: 831, admin: 68770,
     cash: 762921, reserve2: 0, basic: 2173524200, secu: 2172724200,
     assets: 2173487121, net: -37079, deficitWant: 37079, setupWant: 0,
+    f15: { admin: 68770, rest: 2173487121, total: 2173555891 },
     note: '제출본은 환입을 준비금 잔액에 반영하지 않아 대차가 831원 어긋나 있다' },
 
   { name: '디와이사내 2025 (증권 26억)', year: 2025, type: '사내',
@@ -211,6 +213,16 @@ CASES.forEach(c => {
   }
   const negs = finNegatives(f);
   n++; if (negs.length) { fail++; console.log('FAIL     음수 항목 ' + negs.map(x => x.name + ' ' + x.v.toLocaleString()).join(', ')); }
+  /* 별지15호 '기금 사용 현황' — 68.기금 운영비 · 69.잔액 · 70.합계.
+     별지15호 전체는 참여사업장·수혜자수까지 있어야 만들어지므로, 여기서는 산식만 본다:
+       69.잔액 = 기말 자산총계, 70.합계 = 복지사업비 소계 + 대부사업 + 68 + 69 */
+  if (c.f15) {
+    const admin = f.admin + f.otherExp - (f.resvExp || 0);
+    const rest = f.totalAssets;
+    ok('    별지15호 68 기금 운영비', admin, c.f15.admin);
+    ok('    별지15호 69 잔액', rest, c.f15.rest);
+    ok('    별지15호 70 합계', f.purpose + (c.loanOut || 0) + admin + rest, c.f15.total);
+  }
   if (c.note) console.log('         ※ ' + c.note);
 });
 
