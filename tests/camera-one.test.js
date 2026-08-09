@@ -83,7 +83,9 @@ test('★ ?cam=1 이면 곧바로 카메라를 켠다', () => {
 
 test('★ 표시를 한 번 쓰고 지운다', () => {
   const m = photos.match(/function openCamIfAsked\(\)[\s\S]*?\n\}/);
-  assert.ok(/searchParams\.delete\('cam'\)/.test(m[0]),
+  /* ⚠ 2026-08-09 다시 겨눔 — 지우는 표시가 셋(cam·mode·from)이 되면서 한 줄씩
+     적지 않고 묶어 지운다. 못 박을 것은 **표시를 지운다**는 것이지 적는 모양이 아니다. */
+  assert.ok(/searchParams\.delete\(/.test(m[0]) && /'cam'/.test(m[0]),
     '안 지우면 카메라를 닫고 새로고침할 때마다 다시 켜져 사진첩을 볼 수 없습니다.');
 });
 
@@ -100,4 +102,71 @@ test('표시가 없으면 아무 일도 없다', () => {
 test('주소를 못 읽어도 터지지 않는다', () => {
   const m = photos.match(/function openCamIfAsked\(\)[\s\S]*?\n\}/);
   assert.ok(/catch \(_\) \{ return; \}/.test(m[0]));
+});
+
+/* ══════ 2단계: 명함첩 카메라까지 없애 정말 하나로 (대표 지시 2026-08-09) ══════
+   1단계에서 옛 푸른카메라를 문패로 만들었지만, **명함첩(pu-cards.html) 안에
+   똑같은 촬영 코드가 한 벌 더 남아 있었다.** 그것이 사진첩을 안 거쳐 자동 분류·
+   업체관리 보내기를 못 탔다 — 1단계에서 없앤 문제가 이름만 바꿔 남아 있던 셈. */
+const cards = fs.readFileSync(path.join(R, 'pu-cards.html'), 'utf8');
+const docFile = fs.readFileSync(path.join(R, 'js', 'pu-doc-file.js'), 'utf8');
+
+test('★ 명함첩에는 촬영 코드가 없다', () => {
+  /* 왜 없앴는지는 주석으로 남겨 뒀다 — 그래서 낱말이 아니라 **실제로 부르는가**를 본다.
+     (주석까지 금지하면 다음 사람이 이유를 못 읽는다) */
+  assert.ok(!/navigator\.mediaDevices/.test(cards),
+    '명함첩이 또 자기 카메라를 갖고 있습니다 — 한쪽만 고치는 사고가 납니다.');
+  assert.ok(!/camShot\s*\(|camAskBack\s*\(|<video/.test(cards),
+    '촬영 화면 조각이 남아 있습니다.');
+});
+
+test('★ 명함첩 ＋ 는 사진첩 카메라를 명함 모드로 부른다', () => {
+  const m = cards.match(/function openCamera\(\)[\s\S]*?\n\}/);
+  assert.ok(m, 'openCamera 가 없습니다 — ＋ 단추가 아무 일도 안 합니다.');
+  assert.ok(/pu-photos\.html\?cam=1/.test(m[0]), '사진첩 카메라로 넘기지 않습니다.');
+  assert.ok(/mode=card/.test(m[0]), '명함 모드로 열지 않으면 명함틀이 꺼진 채 열립니다.');
+  assert.ok(/from=cards/.test(m[0]), '돌아올 곳을 안 적으면 명함첩으로 못 돌아옵니다.');
+});
+
+test('명함 모드에서는 명함틀이 늘 켜져 있다', () => {
+  const m = photos.match(/function frameOn\(\)[\s\S]*?\n/);
+  assert.ok(/camCardMode/.test(m[0]),
+    '명함을 찍으러 왔는데 틀이 꺼져 있으면 배경만 크게 담깁니다.');
+});
+
+test('★ 앞면을 찍으면 뒷면을 묻는다 (대표 선택 가)', () => {
+  assert.ok(/function camAskBack\(/.test(photos), '뒷면을 묻는 길이 없습니다.');
+  const m = photos.match(/async function camShoot\(\)[\s\S]*?(?=\nfunction renderCamStrip)/);
+  assert.ok(/camCardMode && camCardStage === 'front'/.test(m[0]),
+    '명함 모드에서 앞면을 찍은 뒤에만 물어야 합니다.');
+  /* 사진첩에서 그냥 열었을 때는 묻지 않는다 — 연속 촬영이 끊긴다 */
+  assert.ok(/camCardMode/.test(m[0]), '사진첩 연속 촬영에서도 물으면 흐름이 끊깁니다.');
+});
+
+test('★ 뒷면은 앞면에 얹혀 간다 — 명함이 두 장 생기지 않는다', () => {
+  const m = photos.match(/function sendCards\([\s\S]*?\n\}/);
+  /* ⚠ 낱말만 보면 안 된다 — 아래 「뒷면 찾기」에도 meta.cardBack 이 나온다.
+     **뒷면이면 그 자리에서 돌아서는가**를 봐야 한다. */
+  assert.ok(/cardBack\)\s*return/.test(m[0]),
+    '뒷면도 혼자 명함첩에 가면 앞뒤를 찍을 때마다 명함이 두 장씩 생깁니다.');
+  assert.ok(/full2/.test(m[0]) && /thumb2/.test(m[0]),
+    '뒷면을 함께 보내지 않으면 앞면만 남습니다.');
+});
+
+test('★ 등록 층이 뒷면을 명함첩이 보는 자리에 넣는다', () => {
+  assert.ok(/photos\/' \+ id \+ '_b'/.test(docFile),
+    '명함첩 편집기·상세보기는 뒷면을 {id}_b 자리에서 찾습니다.');
+  assert.ok(/thumb2:/.test(docFile), '목록에 뒷면 미리보기가 안 잡힙니다.');
+});
+
+test('★ 다 올리면 명함첩으로 돌아간다', () => {
+  const m = photos.match(/async function camUpload\(\)[\s\S]*?\n\}/);
+  assert.ok(/camReturnTo/.test(m[0]) && /camGoBack\(\)/.test(m[0]),
+    '온 곳으로 안 돌아가면 명함첩에서 찍었는데 사진첩에 남겨집니다.');
+});
+
+test('사진첩에서 그냥 열면 돌아갈 곳이 없다', () => {
+  const m = photos.match(/function openCamIfAsked\(\)[\s\S]*?\n\}/);
+  assert.ok(/from === 'cards'/.test(m[0]),
+    '명함첩에서 온 것만 돌려보내야 합니다 — 아니면 사진첩 촬영도 튕겨 나갑니다.');
 });

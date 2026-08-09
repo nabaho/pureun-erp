@@ -272,6 +272,9 @@
       id: id,
       kind: want,
       thumb: o.thumb || '',              // 목록용 미리보기(없으면 명함첩 격자가 빈다)
+      /* 뒷면 미리보기 — 명함 모드로 앞뒤를 이어 찍었을 때만 온다(대표 지시 2026-08-09).
+         명함첩은 뒷면을 items/{id}/thumb2 와 photos/{id}_b 두 자리에 나눠 둔다. */
+      thumb2: o.thumb2 || '',
       fav: false,
       scope: 'shared',                   // 전 직원 공유 (사진첩 설계와 같게)
       createdAt: o.takenAt || Date.now(),
@@ -288,6 +291,9 @@
     if (bk) u[CARDS_ROOT + '/' + BYKEY + '/' + bk] = id;
     /* 사진은 명함첩이 자기 사본을 갖는다 — 사진첩을 정리해도 명함첩 기록이 온전하게. */
     if (o.full) u[CARDS_ROOT + '/photos/' + id] = o.full;
+    /* 뒷면 사본은 `{id}_b` 자리에 — 명함첩 편집기·상세보기가 보는 자리와 같다.
+       (명함첩이 자기 카메라로 찍던 시절부터 쓰던 자리라 화면은 안 고쳐도 된다) */
+    if (o.full2) u[CARDS_ROOT + '/photos/' + id + '_b'] = o.full2;
     var label = want === 'biz' ? '사업자등록증' : '명함';
     return deps.db.ref().update(u).then(function () {
       return {
