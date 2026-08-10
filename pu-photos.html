@@ -3023,9 +3023,21 @@ async function addFiles(fileList, isDoc, opts) {
     try {
       const r = await pdfToPages(f);
       const base = (f.name || '스캔').replace(/\.pdf$/i, '');
+      /* ── 여러 쪽짜리 스캔은 **쪽마다 따로 판독하고, 어느 문서 몇 쪽인지 남긴다**
+           (대표 지시 2026-08-10: "pdf가 여러 장 업로드되는 경우 각각 한 장씩
+            판독해서 기록을 남겨 달라") ──
+         판독은 이미 쪽마다 따로 돈다(올린 것은 모두 queueRead 를 탄다).
+         빠져 있던 것은 **기록**이다 — 올리고 나면 파일 이름을 안 담으므로
+         「(2/3쪽)」이 사라져, 나중에 보면 서로 남남인 사진 석 장이 된다.
+         ⚠ group 은 한 파일에 하나다. 쪽마다 새로 만들면 묶는 뜻이 사라진다. */
+      const gid = PuPhotoStore.newId();
       r.pages.forEach(function (p) {
         const name = r.total > 1 ? base + ' (' + p.page + '/' + r.total + '쪽)' : base;
-        files.push(new File([p.blob], name + '.jpg', { type: 'image/jpeg' }));
+        const file = new File([p.blob], name + '.jpg', { type: 'image/jpeg' });
+        /* taken: 실제로 담은 쪽수. total 보다 적을 수 있다(상한에 걸린 경우) —
+           둘을 함께 남겨야 "나머지는 어디 갔나"에 답할 수 있다. */
+        file.__pdfDoc = { name: base, page: p.page, total: r.total, taken: r.taken, group: gid };
+        files.push(file);
       });
       if (r.total > r.taken) {
         alert('「' + base + '」은 ' + r.total + '쪽입니다.\n앞 ' + PDF_MAX_PAGES +
@@ -3079,6 +3091,9 @@ async function addFiles(fileList, isDoc, opts) {
       };
       const frontId = idAt[pairs[fi]];
       if (frontId) meta.cardBack = frontId;   // 이 장은 그 명함의 뒷면이다
+      /* 여러 쪽짜리 스캔에서 왔으면 어느 문서 몇 쪽인지 남긴다(2026-08-10).
+         이것이 없으면 올린 뒤에는 서로 남남인 사진 여러 장이 된다. */
+      if (f.__pdfDoc) meta.doc = f.__pdfDoc;
       /* 어느 길로 찍혔는지 — 화질을 따질 때 이것부터 본다.
          'still' 이면 기기가 낸 사진, 'frame' 이면 미리보기 화면(상한이 낮다). */
       const cp = caps[fi];
@@ -4060,7 +4075,8 @@ function renderGrid() {
        "승진텍라인 등 내용을 넣고 저장하면 사진 아래에 간략하게 설명내용이 나왔으면").
        ⚠ 「확인 필요」 이유와 자리가 겹친다 — 그때는 이유가 먼저다.
           할 일이 남은 사진에는 할 일을 보여 주는 것이 맞다. */
-    const capTxt = [it.meta.company, it.meta.note].filter(function (x) { return x; }).join(' · ');
+    const capTxt = [it.meta.company, it.meta.note, docLabel(it.meta)]
+      .filter(function (x) { return x; }).join(' · ');
     const cap = (capTxt && !(needOnly && needsCheck(it)))
       ? '<span class="cap">' + esc(capTxt) + '</span>' : '';
     /* 다른 앱(정부사업 컨설팅 등)으로 끌어다 놓을 수 있다. */
@@ -4944,7 +4960,10 @@ function hayOf(it) {
   const m = it.meta || {}, r = m.read || {}, f = r.fields || {};
   const ck = m.customKind && CUSTOM_KINDS[m.customKind];
   const bits = [READ_LABEL[r.kind] || '', m.byName || '', ck ? ck.name : '',
-    m.company || '', m.note || ''];   // 사람이 직접 적은 업체·설명도 찾을 수 있어야 한다
+    m.company || '', m.note || '',
+    /* 스캔 파일 이름으로도 찾을 수 있어야 한다 — 여러 쪽짜리는 그 이름이
+       사람이 기억하는 유일한 실마리다(2026-08-10) */
+    (m.doc && m.doc.name) || ''];   // 사람이 직접 적은 업체·설명도 찾을 수 있어야 한다
   Object.keys(f).forEach(function (k) {
     const v = f[k];
     if (typeof v === 'string' || typeof v === 'number') bits.push(String(v));
@@ -4960,6 +4979,17 @@ function hayOf(it) {
   it._hay = bits.filter(Boolean).join(' ').toLowerCase();
   it._hayFor = it.meta;
   return it._hay;
+}
+
+/* ── 여러 쪽짜리 스캔의 꼬리표 — 「위임계약서 2/3쪽」 ──
+   한 장짜리 PDF·사진에는 안 붙는다(할 말이 없다).
+   ⚠ 담은 쪽수(taken)가 전체(total)보다 적으면 그 사실도 적는다 — 나머지가
+     어디 갔는지 나중에 물으면 답할 수 있어야 한다(상한 10쪽). */
+function docLabel(meta) {
+  const d = meta && meta.doc;
+  if (!d || !d.total || d.total < 2) return '';
+  const cut = (d.taken && d.taken < d.total) ? ' · 앞 ' + d.taken + '쪽만 담음' : '';
+  return (d.name || '스캔') + ' ' + d.page + '/' + d.total + '쪽' + cut;
 }
 
 /* 여러 낱말을 띄어쓰기로 넣으면 **모두** 들어간 것만 남는다(좁히는 쪽). */
@@ -5327,9 +5357,12 @@ function openViewer(id) {
   const v = $('viewer');
   viewerId = id;
   v.style.display = 'flex';
+  /* 여러 쪽짜리 스캔이면 어느 문서 몇 쪽인지 제목줄에 먼저 적는다 —
+     한 장씩 따로 판독하므로, 이 줄이 없으면 무엇의 몇 쪽인지 알 길이 없다. */
   $('viewerInfo').textContent = it
-    ? (it.meta.kind === 'doc' ? '서류 · ' : '') +
-      (it.meta.takenAt ? dayLabel(it.meta.takenAt) + ' · ' : '') + (it.meta.byName || '')
+    ? [it.meta.kind === 'doc' ? '서류' : '', docLabel(it.meta),
+       it.meta.takenAt ? dayLabel(it.meta.takenAt) : '', it.meta.byName || '']
+      .filter(function (x) { return x; }).join(' · ')
     : '';
   renderReadPanel(it);
   $('viewerHint').textContent = '불러오는 중…';
