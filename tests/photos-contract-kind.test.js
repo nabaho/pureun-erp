@@ -26,8 +26,9 @@ test('★ 판독기가 계약서를 종류로 받아들인다', () => {
 test('★ 무엇이 계약서인지 프롬프트가 알려 준다', () => {
   const line = reader.match(/kind 는 다음 중 하나입니다[^']*/);
   assert.ok(line, '종류 목록 문장을 찾지 못했습니다.');
-  assert.ok(/contract\(/.test(line[0]),
-    '목록에 없으면 AI 가 계약서라는 답을 아예 내놓지 않습니다.');
+  /* 이름이 한 글자라도 다르면 판독기가 못 알아본다 — 앞뒤를 함께 본다. */
+  assert.ok(/[ ,]contract\(계약서/.test(line[0]),
+    '목록에 없거나 이름이 다르면 AI 가 계약서라는 답을 아예 내놓지 않습니다.');
   ['자문계약서', '위임계약서'].forEach(function (w) {
     assert.ok(line[0].indexOf(w) > -1, w + ' 를 예로 안 들면 무엇을 계약서로 볼지 애매합니다.');
   });
