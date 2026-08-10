@@ -120,7 +120,12 @@ test('★ 남의 사진은 폴더에 넣지 못한다', () => {
 });
 
 test('지울 때 사진은 안 지워진다고 알려 준다', () => {
-  const m = html.match(/function editFolder\(fid\)[\s\S]*?\n\}/);
+  /* ⚠ 2026-08-10 — ✏ 로 이름을 비워 지우던 editFolder 를 ⋯ 차림표로 갈랐다.
+     지우기는 removeFolderAsk 가 맡는다(알아채기 쉬운 손짓으로). */
+  const m = html.match(/function removeFolderAsk\(fid\)[\s\S]*?\n\}/);
+  assert.ok(m, 'removeFolderAsk 를 찾지 못했습니다.');
   assert.ok(/지워지지 않고/.test(m[0]),
     '폴더를 지우면 사진도 사라지는 줄 알고 못 지우십니다.');
+  assert.ok(/하위폴더 ' \+ kids\.length \+ '개/.test(m[0]),
+    '하위폴더가 함께 지워지는 것을 말 안 하면 모르고 지웁니다.');
 });
