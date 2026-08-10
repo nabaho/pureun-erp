@@ -296,8 +296,11 @@ body.pc #main,body.pc #fab,body.pc #selbar{display:none!important}
 .mdrow{display:flex;align-items:center;gap:6px;padding:7px 9px;border-bottom:1px solid #f1f4f9;font-size:12.5px}
 .mdrow:last-child{border-bottom:none}
 .mdrow.on{background:#eef4ff}
+.mdrow.seen{box-shadow:inset 3px 0 0 #1d4fc4}
+.mdrow .ck{flex:none;cursor:pointer;color:#1d4fc4;font-size:14px;line-height:1;padding:2px}
+.mdrow .ck:hover{color:#123d92}
 .mdrow .n{flex:1;min-width:0;cursor:pointer;color:#1b2536;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mdrow .n b{color:#1d4fc4;font-weight:700}
+.mdrow .n:hover{color:#1d4fc4}
 .mdrow .n i{font-style:normal;font-size:11px;color:#8b98b3;margin-left:4px}
 .mdrow .v{flex:none;cursor:pointer;color:#8b98b3;padding:2px 5px;border-radius:6px}
 .mdrow .v:hover,.mdrow .v.on{background:#dde7fb;color:#1b2536}
@@ -312,6 +315,17 @@ body.pc #main,body.pc #fab,body.pc #selbar{display:none!important}
 .mdprev .mpmsg{text-align:center;font-size:12px;color:#8b98b3;line-height:1.9;padding:20px 12px}
 .mdprev .mptxt{width:100%;height:100%;margin:0;padding:11px;font-size:12px;line-height:1.7;
   color:#1b2536;background:#fff;white-space:pre-wrap;word-break:break-all}
+/* 미리보기 아래 — 보고 나서 그 자리에서 담는다 */
+.mdprev .f{display:flex;align-items:center;gap:8px;padding:8px 10px;border-top:1px solid #eef2f7}
+.mdprev .f .d{flex:1;min-width:0;font-size:11.5px;color:#8b98b3;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.mdprev .f button{flex:none;border:1px solid #1e2a47;background:#1e2a47;color:#fff;border-radius:7px;
+  padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer}
+.mdprev .f button:hover{background:#2a3a5e}
+.mdprev .f button.off{background:#fff;color:#c0392b;border-color:#f0c9c4}
+.mdprev .f button.off:hover{background:#fdeced}
+/* 예약함 — 못 보낸 줄은 눈에 띄게 */
+table.sbox tr.bad td{background:#fdf4f4}
 /* 받는사람 자동 찾기 */
 .cpsug{display:none;position:absolute;left:0;right:0;top:100%;z-index:30;margin-top:3px;
   background:#fff;border:1px solid #dde3ee;border-radius:9px;box-shadow:0 8px 24px rgba(20,30,50,.14);
@@ -1148,7 +1162,7 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', s
      sendLog 는 명함을 열 때만 그 명함 것을 읽어 담는다. */
   matQ:'', matMailCat:'', matPrevId:'', sendLog:{},
   /* 메일 화면 — mailSent 가 true 면 보낸 메일함, 아니면 쓰기 */
-  mailSent:false, mailDrawer:true, sentBox:{}, sentQ:'', sentMine:false, sentCat:'', sentBy:'',
+  mailSent:false, mailDrawer:true, sentBox:{}, schedBox:{}, sentQ:'', sentMine:false, sentCat:'', sentBy:'',
   showBcc:false, draftAt:'', matPick:'', drawerQ:'',
   bodyFont:'맑은고딕', bodySize:'10', bodyBold:false, bodyItalic:false,
   view:'list', vtab:'' };
@@ -1191,6 +1205,7 @@ const Store = {
            바로 판정하려면 설정이 이미 손에 있어야 한다 */
         loadMaterials();
         loadBodyStyle();      /* 지난번에 고른 글꼴·크기를 그대로 */
+        loadSchedBox();       /* 왼쪽 「예약한 메일」 개수용 */
         watchClassifyLog();
       };
       /* 통합 이메일 로그인 (포털·ERP·컨설팅과 같은 Firebase 세션 공유) */
@@ -2174,14 +2189,23 @@ async function sendCompose(){
     const r = await postAutoMail({
       cardId: c.cardId, to: c.to, cc: c.cc, bcc: c.bcc || '',
       toMe: !!c.toMe, oneByOne: !!c.oneByOne,
+      scheduleAt: c.sendAt || 0,        /* 0 이면 지금 보낸다 */
       subject: c.subject, body: c.body, matIds: c.ids, set: _sendMatSetName || '',
       /* 보낸 메일함에 '누구에게'를 사람 이름으로 보이게 — 주소만 남으면 알아보기 어렵다 */
       toName: (state.items[c.cardId]||{}).name || (state.items[c.cardId]||{}).company || '',
       files: (c.files||[]).map(f=>({ name:f.name, dataUrl:f.dataUrl }))
     });
     const cardId = c.cardId, wasMail = (state.view==='mail');
+    const lost = (c.files||[]).length;
     _compose = null;
     clearDraft();          /* 나갔으니 쓰다 만 글은 지운다 — 안 지우면 다음에 또 뜬다 */
+    if(r.scheduled){
+      toast(`⏰ ${esc(fmtWhen(r.at))} 에 보내도록 맡겼습니다 — 창을 닫아도 나갑니다`
+        + (lost?`\n⚠ 💻 내 PC 파일 ${lost}개는 예약에 담기지 않습니다 — 그때 직접 붙여 보내세요`:''),
+        lost?12000:8000);
+      if(wasMail) openSchedBox(); else closeSendMat();
+      return;
+    }
     toast(`✉️ 보냈습니다 — ${esc(r.from||'회사 메일')} 에서 ${esc(c.to)} 로`
       + (r.files?` (첨부 ${r.files}개)`:'')
       + (r.missing?`\n⚠ 파일을 못 찾은 자료 ${r.missing}개는 빠졌습니다`:''), r.missing?12000:8000);
@@ -2641,6 +2665,81 @@ function openMailPage(pre){
   try{ $('pcMain').scrollTop=0; }catch(_){}
   if(!_matLoaded && Store.mode==='firebase') loadMaterials(()=>{ if(state.view==='mail') renderMailPage(); });
 }
+/* ── 예약한 메일 ──
+   서버 자리(pucards/scheduled)에 담겨 때를 기다리는 것들. 취소·되돌리기가 여기서 된다. */
+function openSchedBox(){ state.view='mail'; state.mailSent='sched'; render();
+  try{ $('pcMain').scrollTop=0; }catch(_){}
+  loadSchedBox(()=>{ if(state.view==='mail' && state.mailSent==='sched'){ renderPCSide(); renderMailPage(); } }); }
+function loadSchedBox(cb){
+  if(Store.mode!=='firebase'){ if(cb) cb(); return; }
+  firebase.database().ref(DB_ROOT+'/scheduled').limitToLast(200).once('value')
+    .then(s=>{ state.schedBox = s.val()||{}; if(cb) cb(); })
+    .catch(e=>{ console.warn('[예약메일]', e&&e.message); if(cb) cb(); });
+}
+function schedList(){
+  return Object.entries(state.schedBox||{})
+    .map(([id,v])=>Object.assign({id}, v||{}))
+    .filter(v=>v.at)
+    .sort((a,b)=>(a.at||0)-(b.at||0));
+}
+function schedBoxHtml(){
+  const rows = schedList();
+  const body = rows.length ? rows.map(v=>{
+    const p = v.payload||{};
+    const bad = v.state==='failed';
+    return `<tr class="${bad?'bad':''}">
+      <td class="w">${esc(fmtWhen(v.at))}<span>${bad?'보내지 못함':(v.state==='sending'?'보내는 중':'기다리는 중')}</span></td>
+      <td class="b">${esc(String(v.by||'').split('@')[0])}</td>
+      <td><b>${esc(p.toName||'')}</b><span class="e">${esc(p.to||'')}</span></td>
+      <td>${esc(p.subject||'')}<span class="e">${esc((p.matIds||[]).map(id=>(_matMeta[id]||{}).name||'자료').join(' · ')||'첨부 없음')}${
+        bad?`<br><b style="color:#c0392b">${esc(String(v.error||'').split('\n')[0])}</b>`:''}</span></td>
+      <td class="a">
+        <button onclick="editScheduled('${v.id}')">고쳐 쓰기</button>
+        <button onclick="cancelScheduled('${v.id}')">취소</button>
+      </td></tr>`;
+  }).join('')
+    : `<tr><td colspan="5" class="none">예약해 둔 메일이 없습니다.</td></tr>`;
+  return `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+      <button class="setback" onclick="closeMailPage()">← 목록으로</button>
+      <h2 style="margin:0;font-size:17px;color:#16223c">⏰ 예약한 메일</h2>
+      <span style="font-size:12px;color:#8b98b3">${rows.length}통</span>
+      <button class="mattab" style="margin-left:auto" onclick="openMailPage()">✏️ 새 메일</button>
+    </div>
+    <table class="sbox"><thead><tr>
+      <th>보낼 때</th><th>건 사람</th><th>받는 곳</th><th>제목 · 첨부</th><th></th>
+    </tr></thead><tbody>${body}</tbody></table>
+    <p style="font-size:11.5px;color:#8b98b3;line-height:1.7;margin-top:12px">
+      ※ 서버가 5분마다 살펴 보냅니다 — <b>창을 닫아도 나갑니다.</b> 정한 때보다 최대 5분 늦을 수 있습니다.<br>
+      ※ 💻 내 PC 파일은 예약에 담기지 않습니다. 그런 첨부가 있으면 그때 직접 보내 주세요.</p>`;
+}
+function cancelScheduled(id){
+  const v=(state.schedBox||{})[id]; if(!v) return;
+  const p=v.payload||{};
+  if(!confirm(`예약을 취소합니다.\n\n받는 곳 · ${p.to||''}\n보낼 때 · ${fmtWhen(v.at)}\n\n진행할까요?`)) return;
+  firebase.database().ref(`${DB_ROOT}/scheduled/${id}`).remove()
+    .then(()=>{ delete state.schedBox[id]; toast('예약을 취소했습니다'); renderPCSide(); renderMailPage(); })
+    .catch(e=>toast('취소하지 못했습니다: '+((e&&e.message)||'')));
+}
+/* 예약을 걷어 쓰기 화면으로 — 고쳐서 다시 걸 수 있게 */
+function editScheduled(id){
+  const v=(state.schedBox||{})[id]; if(!v) return;
+  const p=v.payload||{};
+  if(!confirm(`이 예약을 걷어 고쳐 씁니다.\n\n예약은 지워지고 쓰기 화면으로 갑니다.\n진행할까요?`)) return;
+  firebase.database().ref(`${DB_ROOT}/scheduled/${id}`).remove()
+    .then(()=>{
+      delete state.schedBox[id];
+      _compose = { cardId:p.cardId||'', to:p.to||'', cc:p.cc||'', bcc:p.bcc||'',
+        subject:p.subject||'', body:p.body||'',
+        ids:(p.matIds||[]).filter(x=>_matMeta[x]), files:[],
+        toMe:!!p.toMe, oneByOne:!!p.oneByOne, sendAt:v.at, picking:true, base:{} };
+      state.mailSent=false; render();
+      if(p.droppedFiles && p.droppedFiles.length)
+        toast(`💻 내 PC 파일(${p.droppedFiles.join(' · ')})은 다시 붙여 주세요`, 9000);
+    })
+    .catch(e=>toast('걷어 오지 못했습니다: '+((e&&e.message)||'')));
+}
+
 function openSentBox(){ state.view='mail'; state.mailSent=true; render();
   try{ $('pcMain').scrollTop=0; }catch(_){}
   /* 목록이 오면 왼쪽 폴더(갈래별·사람별 개수)도 함께 다시 그린다 — 한쪽만 그리면
@@ -2649,7 +2748,8 @@ function openSentBox(){ state.view='mail'; state.mailSent=true; render();
 function closeMailPage(){ state.view='list'; render(); }
 function renderMailPage(){
   const el=$('pcMail'); if(!el) return;
-  el.innerHTML = state.mailSent ? sentBoxHtml() : mailWriteHtml();
+  el.innerHTML = state.mailSent==='sched' ? schedBoxHtml()
+                : state.mailSent ? sentBoxHtml() : mailWriteHtml();
   if(!state.mailSent) wireMailWrite();
 }
 /* ── 쓰기 화면 ── */
@@ -2758,21 +2858,36 @@ function mailWriteHtml(){
           list = matSearchList(list, state.drawerQ);
           if(!list.length) return `<div class="cpnone" style="padding:12px 2px">${
             state.drawerQ ? '찾은 자료가 없습니다' : state.matPick ? `「${esc(state.matPick)}」에 자료가 없습니다` : '자료함이 비어 있습니다'}</div>`;
+          /* ⚠ 줄을 누르면 **미리보기**가 열린다(대표 지시 2026-08-10).
+             담기는 왼쪽 네모로 한다 — 어떤 서류인지 보고 나서 담는 것이 순서다.
+             예전에는 줄을 누르면 바로 담겨, 무엇인지 모른 채 붙는 일이 있었다. */
           return `<div class="mdlist">${list.map(m=>{
             const on = c.ids.indexOf(m.id)>=0;
-            return `<div class="mdrow ${on?'on':''}">
-              <span class="n" onclick="toggleComposeMat('${m.id}')" title="${esc(m.desc||m.fileName||'')}">
-                <b>${on?'☑':'☐'}</b> ${matIcon(m.fileName)} ${esc(m.name||'자료')}
+            const seen = state.matPrevId===m.id;
+            return `<div class="mdrow ${on?'on':''} ${seen?'seen':''}">
+              <span class="ck" onclick="toggleComposeMat('${m.id}')"
+                title="${on?'첨부에서 빼기':'첨부에 담기'}">${on?'☑':'☐'}</span>
+              <span class="n" onclick="previewInDrawer('${m.id}')"
+                title="눌러서 내용 보기 — ${esc(m.desc||m.fileName||'')}">
+                ${matIcon(m.fileName)} ${esc(m.name||'자료')}
                 <i>${m.size?fmtMB(m.size):''}</i></span>
-              <span class="v ${state.matPrevId===m.id?'on':''}" onclick="previewInDrawer('${m.id}')" title="내용 보기">👁</span>
+              <span class="v ${seen?'on':''}" onclick="previewInDrawer('${m.id}')" title="내용 보기">👁</span>
             </div>`;
           }).join('')}</div>`;
         })()}
-        ${state.matPrevId ? `<div class="mdprev">
-          <div class="h">${matIcon((_matMeta[state.matPrevId]||{}).fileName)} ${esc((_matMeta[state.matPrevId]||{}).name||'자료')}
+        ${state.matPrevId ? (function(){
+          const m=_matMeta[state.matPrevId]||{};
+          const on=c.ids.indexOf(state.matPrevId)>=0;
+          return `<div class="mdprev">
+          <div class="h">${matIcon(m.fileName)} ${esc(m.name||'자료')}
             <b onclick="state.matPrevId='';grabCompose();renderMailPage()" title="닫기">✕</b></div>
           <div class="b" id="mpBody"></div>
-        </div>` : ''}
+          <div class="f">
+            <span class="d">${esc(m.desc||m.fileName||'')}</span>
+            <button class="${on?'off':''}" onclick="toggleComposeMat('${state.matPrevId}')">
+              ${on?'첨부에서 빼기':'＋ 이 자료 첨부'}</button>
+          </div>
+        </div>`; })() : ''}
         <div class="mdlink" onclick="openMatPage()">자료 올리기·관리는 자료함에서 →</div>
       </div>
     </div>`;
@@ -2858,36 +2973,25 @@ function toLocalInput(ts){
   const d=new Date(ts||0); const p=n=>(n<10?'0':'')+n;
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+/* ⚠ 때를 재는 것은 **서버**다. 예전에는 이 화면이 재고 있어서 창을 닫으면
+   안 나갔다 — 「예약했는데 안 갔다」가 되는 자리라 서버로 옮겼다(2026-08-10).
+   여기서는 언제 보낼지만 정하고, [예약하기]를 누르면 서버 자리에 담긴다. */
 function toggleSchedule(on){
   grabCompose(); if(!_compose) return;
-  if(!on){ _compose.sendAt=0; stopSchedule(); renderMailPage(); return; }
+  if(!on){ _compose.sendAt=0; renderMailPage(); return; }
   const d=new Date(Date.now()+3600000); d.setSeconds(0,0);
   _compose.sendAt = d.getTime();
-  alert('예약 발송을 켰습니다.\n\n'
-    + '⚠ 정해진 때에 이 화면이 열려 있어야 나갑니다.\n'
-    + '창을 닫거나 컴퓨터를 끄면 보내지지 않습니다.\n\n'
-    + '(꼭 나가야 하는 메일이면 그때 직접 보내시는 편이 안전합니다)');
   renderMailPage();
+  toast('때를 정한 뒤 [예약하기]를 누르면 서버에 맡겨집니다 — 창을 닫아도 나갑니다', 8000);
 }
 function setSchedule(v){
   grabCompose(); if(!_compose) return;
   const t = new Date(v).getTime();
-  if(!t || t < Date.now()) return toast('지난 때는 고를 수 없습니다');
+  if(!t || t < Date.now() + 30000) return toast('지금부터 30초 뒤 이후로 골라 주세요');
   _compose.sendAt = t;
   renderMailPage();
-  toast(`${fmtWhen(t)} 에 보냅니다 — 그때 이 화면이 열려 있어야 합니다`, 8000);
+  toast(`${fmtWhen(t)} 에 보냅니다`);
 }
-let _schedTimer = null;
-function stopSchedule(){ if(_schedTimer){ clearInterval(_schedTimer); _schedTimer=null; } }
-/* 1분마다 때가 됐는지 본다 */
-_schedTimer = setInterval(()=>{
-  const c=_compose;
-  if(!c || !c.sendAt || _sending) return;
-  if(Date.now() < c.sendAt) return;
-  c.sendAt = 0;                       /* 먼저 끈다 — 안 끄면 실패했을 때 1분마다 되풀이한다 */
-  toast('⏰ 예약한 때가 되어 보냅니다', 6000);
-  sendCompose();
-}, 60000);
 function setComposeFlag(k, v){ grabCompose(); if(!_compose) return; _compose[k]=!!v; renderMailPage(); }
 
 /* ── 임시저장 ──
@@ -6074,7 +6178,9 @@ function mailSideHtml(){
   /* 쓰기가 먼저다 — 제일 자주 누르는 것이 맨 위에 있어야 한다 (대표 지시 2026-08-10) */
   h += pcItem(`onclick="openMailPage()"`, '✏️ 메일 쓰기', undefined, !state.mailSent);
   h += pcItem(`onclick="openSentBox()"`, '📤 전체 보낸 메일', nAll,
-              state.mailSent && !state.sentCat && !state.sentBy);
+              state.mailSent===true && !state.sentCat && !state.sentBy);
+  h += pcItem(`onclick="openSchedBox()"`, '⏰ 예약한 메일', schedList().length || undefined,
+              state.mailSent==='sched');
 
   h += `<div class="pcsec">보낸 자료 갈래</div>`;
   cats.forEach(c=>{

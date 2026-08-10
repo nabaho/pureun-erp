@@ -495,11 +495,11 @@ exports.notifySuggestion = functions.database
 // ⚠ 첨부는 브라우저가 올려 보내지 않는다. 자료는 이미 실시간DB 안에 있으므로
 //   **서버가 직접 읽는다.** 8MB 짜리를 브라우저에서 다시 올리면 느리고, 도중에
 //   끊기면 절반만 간다.
-const MS = require("./mail-send");
+// 실제로 보내는 일은 mail-deliver.js 가 한다 — 「지금 보내기」와 「예약해 둔 것 보내기」가
+// 같은 코드를 쓰게 하려고 떼어 두었다. 두 벌이면 한쪽만 고치고 지나간다.
+const MD = require("./mail-deliver");
 
-const DAUM_HOST = "smtp.daum.net";
-const DAUM_PORT = 465;
-const CARDS_ROOT = "pucards";
+const CARDS_ROOT = MD.CARDS_ROOT;
 
 // 보내는 주소. 비밀이 아니므로 **명함첩 화면(자료함 → 메일 본문)에서 넣는다** —
 // 파일에만 둘 수도 있지만, 그러면 주소 하나 바꾸려고 다시 배포해야 한다.
@@ -514,18 +514,14 @@ async function mailUserAsync() {
 }
 function mailPass() { return String(process.env.DAUM_MAIL_PASSWORD || ""); }
 
-// 보내는 사람 표시 이름. 주소만 나가면 스팸으로 걸리기 쉽다.
-function fromLine(u) {
-  return u ? '푸른노무법인 <' + u + '>' : "";
-}
-
-// ★ 서울(asia-northeast3)에서 돈다. 다른 함수는 미국(us-central1)에 있지만 이것만 옮겼다.
+// ★ 서울(asia-northeast3)에서 돈다. 다른 함수는 미국(us-central1)에 있지만 메일만 옮겼다.
 //   다음메일이 **해외에서 오는 로그인을 막는** 경우가 있어서다. 비밀번호가 맞아도
 //   미국에서 붙으면 「535 authentication failed」로 거절당한다.
 //   덤으로 국내에서 쓰는 도구라 응답도 빠르다.
 //   ⚠ 리전을 바꾸면 주소가 바뀐다 — pu-cards.html 의 MAIL_FN_URL 도 함께 고쳐야 한다.
+const MAIL_REGION = "asia-northeast3";
 exports.sendMaterialMail = functions
-  .region("asia-northeast3")
+  .region(MAIL_REGION)
   .runWith({ secrets: ["DAUM_MAIL_PASSWORD"], timeoutSeconds: 120, memory: "512MB" })
   .https.onRequest(async (req, res) => {
     setCors(req, res);
@@ -541,191 +537,108 @@ exports.sendMaterialMail = functions
       return;
     }
 
-    const from = await mailUserAsync();
-    if (!from || !mailPass()) {
-      res.status(500).json({
-        ok: false,
-        error: !from
-          ? "보내는 주소가 비어 있습니다.\n명함첩 → 자료함 → ✉️ 메일 본문에서 「보내는 주소」를 넣어 주세요."
-          : "메일 비밀번호가 아직 없습니다.\nDAUM_MAIL_PASSWORD(앱 비밀번호)를 넣고 다시 배포하세요.",
-      });
-      return;
-    }
-
-    const body = (req.body && typeof req.body === "object") ? req.body : {};
     const db = getDatabase();
+    const body = (req.body && typeof req.body === "object") ? req.body : {};
+    const from = await mailUserAsync();
 
-    // 첨부 — 자료 번호만 받아 서버가 직접 읽는다
-    const matIds = Array.isArray(body.matIds) ? body.matIds.slice(0, 10) : [];
-    const attachments = [];
-    const names = [];
-    for (const id of matIds) {
-      if (!id || typeof id !== "string") continue;
-      const [metaSnap, fileSnap] = await Promise.all([
-        db.ref(CARDS_ROOT + "/materials/" + id).once("value"),
-        db.ref(CARDS_ROOT + "/materialFiles/" + id).once("value"),
-      ]);
-      const meta = metaSnap.val();
-      if (!meta) continue;                       // 지워진 자료 — 조용히 건너뛰지 않고 아래에서 알린다
-      const att = MS.toAttachment(meta, fileSnap.val());
-      if (!att) continue;
-      attachments.push(att);
-      names.push(String(meta.name || meta.fileName || "자료"));
-    }
-    if (matIds.length && !attachments.length) {
-      res.status(400).json({ ok: false, error: "붙일 자료를 찾지 못했습니다. 자료함에서 파일을 다시 올려 주세요." });
-      return;
-    }
-    // 고른 것 중 일부만 찾았다면 그 사실을 알린다 — 조용히 덜 보내면 다 보낸 줄 안다
-    const missing = matIds.length - attachments.length;
-
-    // ── 이번 편지에만 붙이는 파일 (내 PC 에서 고른 것) ──
-    // 자료함에 없는 파일이라 화면이 내용을 함께 보낸다. 한글에서 조항을 고친
-    // 계약서처럼 **이번 한 번만** 쓰는 파일이 여기로 온다.
-    // ⚠ 자료함에 저장하지 않는다. 저장하면 매번 고친 사본이 자료함에 쌓인다.
-    const extras = Array.isArray(body.files) ? body.files.slice(0, 10) : [];
-    for (const f of extras) {
-      if (!f || typeof f !== "object") continue;
-      const att = MS.toAttachment({ fileName: f.name }, f.dataUrl);
-      if (!att) continue;
-      attachments.push(att);
-      names.push(String(f.name || "첨부"));
-    }
-
-    const v = MS.validateSend({
-      to: body.to, cc: body.cc, subject: body.subject, body: body.body, attachments: attachments,
-    });
-    if (!v.ok) { res.status(400).json({ ok: false, error: v.error }); return; }
-
-    let nodemailer;
-    try { nodemailer = require("nodemailer"); }
-    catch (e) { res.status(500).json({ ok: false, error: "메일 도구를 불러오지 못했습니다: " + String(e.message || e) }); return; }
-
-    // ★ 접속 아이디는 보내는 주소와 **다르다.**
-    //   다음메일 설정 화면이 「아이디: 370-6 (접속 시 아이디)」라고 알려 준다 —
-    //   @ 앞부분이다. 주소 전체로도 되는 계정이 있어, 앞부분으로 먼저 붙어 보고
-    //   자격 문제로 막히면 주소 전체로 한 번 더 해 본다. 어느 쪽인지 알아내려고
-    //   사람이 시험 삼아 보내 볼 일을 없앤다.
-    const ids = [];
-    const envId = String(process.env.DAUM_MAIL_ID || "").trim();
-    if (envId) ids.push(envId);
-    const local = String(from).split("@")[0].trim();
-    if (local && ids.indexOf(local) < 0) ids.push(local);
-    if (ids.indexOf(from) < 0) ids.push(from);
-
-    // 「내게쓰기」 — 숨은참조에 보내는 주소 자신을 더한다. 받는 사람에게는 안 보인다.
-    const bcc = v.bcc.slice();
-    if (body.toMe && bcc.indexOf(from) < 0 && v.to.indexOf(from) < 0) bcc.push(from);
-
-    const baseMail = {
-      from: fromLine(from),
-      // 답장은 보낸 직원에게 가게 한다 — 회사 대표주소로만 오면 누구 건인지 모른다
-      replyTo: sender.email || undefined,
-      cc: v.cc.length ? v.cc.join(", ") : undefined,
-      bcc: bcc.length ? bcc.join(", ") : undefined,
-      subject: v.subject,
-      text: v.body,
-      attachments: v.attachments.map((a) => ({
-        filename: a.filename, content: a.content, encoding: a.encoding,
-      })),
-    };
-
-    // 「한명씩 발송」 — 받는사람마다 따로 보낸다. 서로의 주소가 보이지 않는다.
-    // ⚠ 참조·숨은참조는 **첫 통에만** 붙인다. 매 통에 붙이면 참조받는 사람이
-    //   같은 메일을 사람 수만큼 받는다.
-    const oneByOne = !!body.oneByOne && v.to.length > 1;
-    const batches = oneByOne
-      ? v.to.map((t, i) => Object.assign({}, baseMail, {
-          to: t,
-          cc: i === 0 ? baseMail.cc : undefined,
-          bcc: i === 0 ? baseMail.bcc : undefined,
-        }))
-      : [Object.assign({}, baseMail, { to: v.to.join(", ") })];
-
-    let lastErr = null, usedId = "";
-    for (const id of ids) {
+    // ── 예약 발송 ──
+    // 보내지 않고 자리에만 담아 둔다. 때가 되면 sendScheduledMail 이 꺼내 보낸다.
+    // ⚠ 담을 때 **누가 걸었는지**를 함께 적는다. 보낼 때는 사람이 없으므로
+    //   그때 가서 확인할 수가 없다. 답장 받을 곳도 이 값으로 정해진다.
+    const at = Number(body.scheduleAt || 0);
+    if (at > 0) {
+      if (at < Date.now() + 30000) {
+        res.status(400).json({ ok: false, error: "예약은 지금부터 30초 뒤 이후로만 걸 수 있습니다." });
+        return;
+      }
+      if (at > Date.now() + 1000 * 60 * 60 * 24 * 60) {
+        res.status(400).json({ ok: false, error: "예약은 60일 뒤까지만 걸 수 있습니다." });
+        return;
+      }
+      // 보내기 전에 미리 걸러 둔다 — 때가 되어서야 틀린 것을 알면 이미 늦다.
+      const pre = MD.errorsBefore(body);
+      if (pre) { res.status(400).json({ ok: false, error: pre }); return; }
       try {
-        const tx = nodemailer.createTransport({
-          host: DAUM_HOST, port: DAUM_PORT, secure: true,
-          // 기다리는 시간을 못 박는다. 안 박으면 다음 서버가 대답을 안 할 때
-          // 화면이 하염없이 「보내는 중」으로 멈춰 있고, 사람은 다시 눌러 두 통을 보낸다.
-          connectionTimeout: 20000, greetingTimeout: 20000, socketTimeout: 90000,
-          auth: { user: id, pass: mailPass() },
+        const ref = await db.ref(MD.CARDS_ROOT + "/scheduled").push({
+          at: at,
+          by: sender.email || "",
+          payload: MD.slimPayload(body),
+          madeAt: Date.now(),
+          state: "waiting",
         });
-        for (const m of batches) await tx.sendMail(m);
-        usedId = id;
-        lastErr = null;
-        break;
+        res.json({ ok: true, scheduled: true, at: at, id: ref.key, from: from });
       } catch (e) {
-        lastErr = e;
-        // 자격 문제(EAUTH)일 때만 다른 아이디로 다시 해 본다.
-        // 첨부가 크다거나 받는 주소가 틀린 것은 아이디를 바꿔도 똑같다 —
-        // 그런데도 되풀이하면 같은 메일이 여러 통 나갈 수 있다.
-        if (String((e && e.code) || "") !== "EAUTH") break;
+        res.status(500).json({ ok: false, error: "예약을 걸지 못했습니다: " + String((e && e.message) || e) });
       }
-    }
-    if (lastErr) {
-      console.error("sendMaterialMail", lastErr && lastErr.message);
-      // 무엇이 잘못됐는지에 따라 다음 걸음이 완전히 다르다. 뭉뚱그리면 엉뚱한 곳을 고치게 된다.
-      //   EAUTH / 535 → 우리가 로그인을 못 한 것 (앱 비밀번호)
-      //   550 5.1.1   → 로그인은 됐고 **받는 주소가 없는 것** (오타·없는 계정)
-      //   그 밖       → 연결 문제
-      const msg = String((lastErr && lastErr.message) || lastErr);
-      const auth = String((lastErr && lastErr.code) || "") === "EAUTH" || /\b535\b/.test(msg);
-      const noSuchUser = /\b550\b/.test(msg) || /does not exist|NoSuchUser|Recipient address rejected/i.test(msg);
-      let hint;
-      if (noSuchUser) {
-        hint = "\n\n받는 사람 주소가 없는 주소입니다. 오타가 없는지 확인해 주세요."
-             + "\n(로그인 계정 주소가 실제 메일함이 아닐 수 있습니다 — 회사 메일 주소로 보내 보세요)";
-      } else if (auth) {
-        hint = "\n\n비밀번호가 맞지 않습니다. 다음메일 설정 → IMAP/POP3 → 「비밀번호 확인하기」에서"
-             + " 앱 비밀번호를 새로 받아 다시 넣어 주세요. (평소 로그인 비밀번호로는 안 됩니다)";
-      } else {
-        hint = "\n\n다음메일에서 IMAP/SMTP 사용이 켜져 있는지 확인해 주세요.";
-      }
-      res.status(502).json({ ok: false, error: "메일 서버가 받지 않았습니다: " + msg + hint });
       return;
     }
 
-    // ★ 보낸 기록은 **실제로 나간 뒤** 서버가 남긴다.
-    //   화면이 남기면 '보냈다는데 안 왔다'를 가릴 수 없다.
-    //   개인 폴더 명함은 남기지 않는다 — 이 자리는 직원 누구나 읽는다.
-    const at = Date.now();
-    const cardId = String(body.cardId || "");
-    if (cardId && !/[.#$/\[\]]/.test(cardId)) {
-      try {
-        await db.ref(CARDS_ROOT + "/sendLog/" + cardId).push(MS.sentLogRec({
-          at: at, by: sender.email || "", to: v.to, names: names, set: body.set || "",
-        }));
-      } catch (e) { console.warn("sendLog", e && e.message); }
-    }
-
-    // ── 보낸 메일함 (명함과 무관한 한 줄 기록) ──
-    // 명함 안 기록만으로는 「이번 달 누가 무엇을 보냈나」를 볼 수 없다. 명함 없이
-    // 보낸 것도 여기에는 남는다.
-    // ⚠ 본문을 함께 남긴다 — 「같은 내용으로 다시 쓰기」가 이걸 읽는다.
-    //   이 자리는 직원 누구나 읽으므로, 개인 폴더 명함으로 보낸 것은 명함 번호를
-    //   빼고 남긴다(누구에게 보냈는지는 주소로 이미 드러나므로 굳이 더하지 않는다).
-    try {
-      await db.ref(CARDS_ROOT + "/sentBox").push({
-        at: at,
-        by: sender.email || "",
-        to: v.to.join(", "),
-        toName: String(body.toName || ""),
-        cc: v.cc.join(", "),
-        subject: v.subject,
-        body: v.body,
-        ids: (Array.isArray(body.matIds) ? body.matIds : []).filter((x) => typeof x === "string"),
-        names: names,
-        localNames: extras.map((f) => String((f && f.name) || "")).filter(Boolean),
-        set: String(body.set || ""),
-        cardId: cardId,
-        from: from,
-      });
-    } catch (e) { console.warn("sentBox", e && e.message); }
-
-    res.json({
-      ok: true, sent: v.to.length, files: attachments.length, missing: missing,
-      bytes: v.bytes, from: from, id: usedId,
+    const r = await MD.deliver({
+      db: db, body: body, from: from, pass: mailPass(),
+      envId: process.env.DAUM_MAIL_ID, byEmail: sender.email || "",
     });
+    if (!r.ok) { res.status(r.status || 500).json({ ok: false, error: r.error }); return; }
+    res.json(r);
+  });
+
+// ════════════════════════════════════════════════════════════════════════════
+// 예약해 둔 메일 보내기 — 5분마다 서버가 스스로 깨어난다
+// ════════════════════════════════════════════════════════════════════════════
+// 예전에는 화면(브라우저)이 때를 재고 있었다. 창을 닫으면 안 나갔다 —
+// 「예약했는데 안 갔다」가 되는 자리라 서버로 옮긴다(대표 지시 2026-08-10).
+//
+// ⚠ 5분마다 도므로 정확히 그 분에 나가지는 않는다. 최대 5분 늦는다.
+//   1분마다 돌리면 그만큼 요금이 붙고, 메일은 5분 늦어도 탈이 없다.
+// ⚠ 꺼낼 때 먼저 「보내는 중」으로 찜하고 보낸다. 안 그러면 앞 회차가 아직
+//   보내는 중인데 다음 회차가 같은 것을 또 집어 두 통이 나간다.
+exports.sendScheduledMail = functions
+  .region(MAIL_REGION)
+  .runWith({ secrets: ["DAUM_MAIL_PASSWORD"], timeoutSeconds: 540, memory: "512MB" })
+  .pubsub.schedule("every 5 minutes")
+  .timeZone("Asia/Seoul")
+  .onRun(async () => {
+    const db = getDatabase();
+    const now = Date.now();
+    const snap = await db.ref(MD.CARDS_ROOT + "/scheduled")
+      .orderByChild("at").endAt(now).limitToFirst(20).once("value");
+    const all = snap.val() || {};
+    const ids = Object.keys(all);
+    if (!ids.length) return null;
+
+    const from = await mailUserAsync();
+    let sent = 0, failed = 0;
+
+    for (const id of ids) {
+      const row = all[id] || {};
+      if (row.state && row.state !== "waiting") continue;   // 이미 누가 집어 갔다
+
+      const ref = db.ref(MD.CARDS_ROOT + "/scheduled/" + id);
+      // 먼저 찜한다 — 두 번 보내지 않으려고. 이미 남이 찜했으면 건너뛴다.
+      const claim = await ref.child("state").transaction((cur) =>
+        (cur === "waiting" || cur === null || cur === undefined) ? "sending" : undefined);
+      if (!claim.committed) continue;
+
+      try {
+        const r = await MD.deliver({
+          db: db,
+          body: Object.assign({}, row.payload || {}, { wasScheduled: true }),
+          from: from, pass: mailPass(),
+          envId: process.env.DAUM_MAIL_ID,
+          byEmail: row.by || "",
+        });
+        if (r.ok) {
+          await ref.remove();                    // 나갔으니 자리를 비운다
+          sent++;
+        } else {
+          // ⚠ 지우지 않는다. 왜 못 갔는지 화면에서 보이고, 사람이 고쳐 다시 걸 수 있어야 한다.
+          await ref.update({ state: "failed", error: String(r.error || ""), failedAt: Date.now() });
+          failed++;
+        }
+      } catch (e) {
+        await ref.update({ state: "failed", error: String((e && e.message) || e), failedAt: Date.now() });
+        failed++;
+      }
+    }
+    console.log("sendScheduledMail", { looked: ids.length, sent: sent, failed: failed });
+    return null;
   });
