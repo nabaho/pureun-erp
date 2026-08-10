@@ -48,10 +48,15 @@ test('★ 쪽마다 문서 이름·쪽수를 달아 보낸다', () => {
 
 test('★ 한 파일의 쪽들은 같은 묶음 번호를 쓴다', () => {
   /* 쪽마다 새로 만들면 묶는 뜻이 사라진다 — forEach 밖에서 한 번만 만들어야 한다. */
-  const m = app.match(/const gid = PuPhotoStore\.newId\(\);[\s\S]*?\n      \}\);/);
-  assert.ok(m, '묶음 번호를 만드는 곳을 찾지 못했습니다.');
-  const inLoop = m[0].slice(m[0].indexOf('r.pages.forEach'));
-  assert.ok(!/newId\(\)/.test(inLoop), '쪽마다 새 묶음 번호를 만들면 묶이지 않습니다.');
+  const blk = app.match(/const r = await pdfToPages\(f\);[\s\S]*?\n      \}\);/);
+  assert.ok(blk, '스캔을 쪽으로 가르는 부분을 찾지 못했습니다.');
+  const made = blk[0].indexOf('PuPhotoStore.newId()');
+  const loop = blk[0].indexOf('r.pages.forEach');
+  assert.ok(made > -1, '묶음 번호를 만드는 곳이 없습니다.');
+  assert.ok(made < loop,
+    '묶음 번호를 쪽마다 새로 만들면 묶는 뜻이 사라집니다 — 되풀이 밖에서 한 번만 만들어야 합니다.');
+  const inLoop = blk[0].slice(loop);
+  assert.ok(!/newId\(\)/.test(inLoop), '되풀이 안에서 또 만들고 있습니다.');
 });
 
 test('★ 그 기록이 실제로 저장된다 — 안 담으면 화면에도 안 나온다', () => {
