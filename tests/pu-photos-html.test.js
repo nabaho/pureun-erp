@@ -427,10 +427,14 @@ test('직원에게는 남의 사진을 볼 길이 화면에도 없다', () => {
   assert.match(fn[0], /if \(!PuPhotoStore\.amAdmin\(\)\)/, '관리자 확인 없이 사람 고르기를 보여줍니다');
 });
 
-test('남의 사진은 보기만 된다 — 올리기·지우기·판독이 잠긴다', () => {
+test('남의 사진은 지우거나 고칠 수 없다 (판독은 2026-08-10 부터 허용)', () => {
+  /* ⚠ 예전에는 판독(readAgain·readSelected)도 이 목록에 있었다. 그래서 다른 직원이
+     찍은 명함은 **그 직원이 자기 화면을 열고 있을 때만** 명함첩에 들어갔다.
+     대표 지시(2026-08-10): "다른 직원이 사진찍은 데이터는 입력이 되어야 한다"
+     → 판독·명함첩 보내기는 풀고, **지우기·고치기는 그대로 잠근다.** */
   assert.match(app, /function viewingOther\(/);
   assert.match(app, /function blockedIfOther\(/);
-  for (const fname of ['deleteOne', 'deleteSelected', 'readAgain', 'readSelected']) {
+  for (const fname of ['deleteOne', 'deleteSelected']) {
     const fn = app.match(new RegExp('function ' + fname + '\\([\\s\\S]{0,160}'));
     assert.ok(fn, fname + ' 를 찾을 수 없습니다');
     assert.match(fn[0], /blockedIfOther\(/, fname + ' 이 남의 사진에도 동작합니다');
@@ -763,8 +767,9 @@ test('이미 올라간 사진도 스스로 판독하되 상한을 두고 알린�
   // 상한에 걸려 남은 것을 조용히 버리지 않는다
   const fn = app.match(/function autoReadPending\([\s\S]*?\n\}/);
   assert.match(fn[0], /남은 .*장은 다음에 열 때/);
-  // 남의 사진은 손대지 않는다
-  assert.match(fn[0], /viewingOther\(\)/);
+  /* ⚠ 예전에는 여기서 viewingOther() 로 멈췄다. 그래서 다른 직원이 찍은 서류는
+     그 직원이 자기 화면을 열 때만 읽혔다 — 대표 지시(2026-08-10)로 열었다.
+     지금 무엇이 맞는지는 아래 「안 읽은 서류는 남의 사진첩에서도…」 검사가 지킨다. */
 });
 
 test('판독을 기다리는 줄은 사라지지 않는다', () => {
@@ -946,7 +951,9 @@ test('더한 것이 없을 때만 치운다 — 빈 칸을 채웠으면 두어�
 });
 
 test('치우기 전에 판독 결과를 먼저 남긴다 — 순서가 바뀌면 고리가 끊긴다', () => {
-  const i = app.indexOf('saveRead(year, id, read)');
+  /* 인자 개수를 못 박지 않는다 — 주인(owner)이 붙는 등 늘어날 수 있다.
+     여기서 볼 것은 **순서**뿐이다. */
+  const i = app.indexOf('saveRead(year, id, read');
   const j = app.indexOf('dropRedundant(id, year, res)');
   assert.ok(i > 0 && j > i, '기록보다 치우기가 먼저입니다');
 });
@@ -1663,4 +1670,67 @@ test('손전등을 켜 둔 채 카메라를 끄지 않는다', () => {
   const fn = app.match(/function camStop\([\s\S]*?\n\}/)[0];
   assert.match(fn, /torch: false/, '손전등을 끄지 않고 카메라를 닫습니다');
   assert.match(fn, /camTrack = null/, '트랙 참조가 남습니다');
+});
+
+/* ══════ 다른 직원이 찍은 서류도 명함첩으로 (2026-08-10 대표 지시) ══════
+   "중복되는것은 제외하더라도 추가로 다른 직원이 사진찍은 데이터는 입력이 되어야 한다".
+
+   그동안은 「남의 사진은 보기만」(viewingOther) 하나가 **판독까지** 막아,
+   다른 직원이 찍은 명함은 그 직원이 자기 화면을 열고 있을 때만 명함첩에 갔다.
+   판독·명함첩 보내기는 남의 사진에서도 되어야 하고, **지우기·올리기는 여전히
+   막혀 있어야 한다** — 이 둘을 함께 못 박는다. */
+
+/* 함수 본문 하나를 떠온다 — 들여쓰기 없는 function 선언만 쓴다.
+   정규식으로 짜면 [\s\S] 같은 조각이 셸·편집기를 거칠 때 깨진다. 글자로 자른다. */
+function fnBody(name) {
+  const head = '\nfunction ' + name + '(';
+  const i = app.indexOf(head);
+  assert.ok(i >= 0, name + ' 를 찾을 수 없습니다');
+  const j = app.indexOf('\n}', i);
+  assert.ok(j > i, name + ' 본문의 끝을 찾을 수 없습니다');
+  return app.slice(i, j + 2);
+}
+
+test('안 읽은 서류는 남의 사진첩에서도 스스로 판독된다', () => {
+  const fn = fnBody('autoReadPending');
+  assert.ok(!/viewingOther\(\)/.test(fn),
+    '남의 사진에서 판독이 멈춰 있습니다 — 그 직원이 열 때까지 명함첩에 안 갑니다');
+});
+
+test('「다시 판독」·「여러 장 판독」은 남의 사진에서도 눌린다', () => {
+  assert.ok(!/blockedIfOther\(/.test(fnBody('readAgain')), 'readAgain 이 남의 사진을 막습니다');
+  assert.ok(!/blockedIfOther\(/.test(fnBody('readSelected')), 'readSelected 가 남의 사진을 막습니다');
+});
+
+test('올리기·지우기는 여전히 남의 사진을 막는다', () => {
+  /* 판독 잠금을 풀면서 이것까지 함께 풀리면 남의 사진을 지울 수 있게 된다. */
+  assert.match(fnBody('deleteSelected'), /blockedIfOther\(/, '남의 사진을 지울 수 있습니다');
+  assert.match(app, /if \(viewingOther\(\)\) return;\s*\/\/ 남의 사진첩을 보는 중에는 올릴 수 없다/,
+    '남의 사진첩에서 올리기가 열려 있습니다');
+});
+
+test('판독은 사진 주인 자리에서 본문을 받고 그 자리에 결과를 쓴다', () => {
+  const fn = fnBody('readPhoto');
+  assert.match(fn, /loadFull\([^)]*owner/, '남의 사진 본문을 못 찾습니다 (주인을 안 넘깁니다)');
+  assert.match(fn, /saveRead\([^)]*owner/, '판독 결과가 내 자리에 저장됩니다');
+  assert.match(app, /function photoOwner\(/, '사진 주인을 찾는 함수가 없습니다');
+  /* 「전체 근로자」·「받은 사진」 표를 사람 아이디로 넘기면 없는 자리를 두드린다 */
+  assert.match(fnBody('photoOwner'), /ALL_OWNERS/, 'photoOwner 가 화면 표를 걸러내지 않습니다');
+  assert.match(fnBody('photoOwner'), /SHARED_OWNER/, 'photoOwner 가 화면 표를 걸러내지 않습니다');
+});
+
+test('명함첩 보내기도 사진 주인 자리를 본다', () => {
+  const fn = fnBody('sendCards');
+  assert.match(fn, /loadFull\([^)]*owner/, '남의 사진 본문을 못 받아 명함첩에 못 보냅니다');
+  assert.match(fn, /saveRead\([^)]*owner/, '보낸 표시가 내 자리에 저장됩니다');
+});
+
+test('남의 사진은 중복이어도 스스로 치우지 않는다', () => {
+  /* 남의 사진을 말없이 휴지통에 넣으면 그 사람은 왜 없어졌는지 알 수 없다.
+     내 사진일 때만 치운다 — 판독 잠금을 푸는 대가로 반드시 함께 있어야 한다. */
+  const fn = fnBody('dropRedundant');
+  assert.match(fn, /isMinePhoto\(/, '남의 사진까지 치울 수 있습니다');
+  /* 걸러내기가 deletePhoto **앞**에 있어야 한다 — 뒤면 이미 지운 뒤다 */
+  assert.ok(fn.indexOf('isMinePhoto(') < fn.indexOf('deletePhoto('),
+    '지운 다음에 내 것인지 봅니다');
 });

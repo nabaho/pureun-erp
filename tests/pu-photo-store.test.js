@@ -1358,3 +1358,27 @@ test('통과했을 때는 요금제 문구가 끼어들지 않는다', () => {
   assert.match(m, /통과/);
   assert.ok(!/요금제/.test(m));
 });
+
+/* ══════ 남의 사진 판독 결과 저장 (2026-08-10 대표 지시) ══════
+   "다른 직원이 사진찍은 데이터는 입력이 되어야 한다".
+   판독은 찍은 사람 세션에서만 돌고 있었다 — saveRead 가 주인을 못 받아 늘
+   **내 자리**에 썼기 때문이다. 관리자가 남의 사진을 판독하면 결과가 엉뚱한
+   자리에 저장되고, 그 사람 사진은 영원히 안 읽힌 채로 남았다. */
+
+test('saveRead — 주인을 넘기면 그 사람 자리에 쓴다', async () => {
+  const S = loadStore();
+  const db = fakeDb();
+  S.init({ uid: 'U1', db });
+  await S.saveRead('2026', 'p1', { kind: 'card', auto: true }, 'U9');
+  const u = db.calls.update[0].u;
+  assert.deepEqual(Object.keys(u), ['puphotos/u/U9/items/2026/p1/read'],
+    '남의 사진을 판독했는데 내 자리에 씁니다');
+});
+
+test('saveRead — 주인을 안 넘기면 예전처럼 내 자리 (기존 흐름 그대로)', async () => {
+  const S = loadStore();
+  const db = fakeDb();
+  S.init({ uid: 'U1', db });
+  await S.saveRead('2026', 'p1', { kind: 'card' });
+  assert.deepEqual(Object.keys(db.calls.update[0].u), ['puphotos/u/U1/items/2026/p1/read']);
+});

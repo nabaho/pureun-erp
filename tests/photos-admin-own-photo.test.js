@@ -47,14 +47,15 @@ test('남의 사진은 여전히 막고, 왜 막혔는지 알려 준다', () => 
 });
 
 test('★ 고른 사진을 실제로 넘긴다 — 안 넘기면 예전 그대로다', () => {
+  /* ⚠ readAgain·readSelected 는 2026-08-10 부터 이 목록에 없다 — 판독은 남의
+     사진에서도 된다(대표 지시: "다른 직원이 사진찍은 데이터는 입력이 되어야 한다").
+     지우기·고치기만 남는다. */
   const calls = [
     ['deleteOnePayslip', 'id'],
     ['deleteOne', 'viewerId'],
     ['removeCustomKindOne', 'viewerId'],
-    ['readAgain', 'viewerId'],
     ['ackRead', 'viewerId'],
     ['deleteSelected', 'Array.from(selected)'],
-    ['readSelected', 'Array.from(selected)'],
     ['openAssignKind', 'Array.from(selected)'],
   ];
   calls.forEach(function (pair) {

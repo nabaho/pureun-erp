@@ -523,10 +523,15 @@
     }).catch(function () { return items; });
   }
 
-  function saveRead(year, id, read) {
+  /* owner 를 넘기면 **그 사람 자리**에 쓴다.
+     ⚠ 이 인자가 없던 동안, 관리자가 남의 사진을 판독하면 결과가 자기 자리의
+       없는 사진 밑으로 들어갔다. 그래서 화면이 판독 자체를 잠갔고, 결국 다른
+       직원이 찍은 명함은 그 직원이 자기 화면을 열 때만 명함첩에 들어갔다
+       (대표 지시 2026-08-10로 바로잡음). */
+  function saveRead(year, id, read, owner) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     var u = {};
-    u[metaPath(year, id) + '/read'] = read;
+    u[metaPath(year, id, owner) + '/read'] = read;
     return deps.db.ref().update(u);
   }
 
