@@ -3232,7 +3232,14 @@ function onQueueChange(list) {
     if (j.state === 'done' && !j._hideAt) {
       j._hideAt = Date.now() + UP_HIDE_MS;
       addToGrid(j);               // 방금 올라간 사진을 격자 맨 앞에 (다시 받지 않고)
-      queueRead(j);   // 올린 것은 모두 스스로 판독한다 — 사람이 단추를 누를 일이 없게
+      /* 올린 것은 모두 스스로 판독한다 — 사람이 단추를 누를 일이 없게.
+         ⚠ 여러 쪽짜리 스캔은 **마지막 쪽이 다 올라간 뒤 한 번만** 건다. 쪽마다
+           걸면 같은 문서를 쪽수만큼 되풀이해 읽어 AI 한도를 그만큼 더 쓴다. */
+      const sibs = docJobs(j);
+      const want = (j.meta && j.meta.doc && j.meta.doc.taken) || 1;
+      const ready = sibs.length >= want &&
+        sibs.every(function (s) { return s.state === 'done'; });
+      if (ready && !sibs.some(function (s) { return s._queuedRead; })) queueRead(sibs[0]);
       scheduled = true;
     }
   });
@@ -3388,7 +3395,17 @@ function autoReadPending() {
      다른 직원이 찍은 명함은 **그 직원이 자기 화면을 열 때만** 명함첩에 갔다.
      관리자가 「전체 근로자」로 열면 이제 안 읽힌 서류가 스스로 읽히고
      검증 통과분은 명함첩으로 간다. 한 번에 20장 상한은 그대로다. */
-  const todo = gridItems.filter(needsRead);
+  /* ⚠ 여러 쪽짜리 스캔은 **문서마다 한 번만** 건다(2026-08-10). 쪽마다 걸면
+     첫 쪽이 문서 전체를 읽어 모든 쪽에 답을 써 놓은 뒤에도, 이미 대기열에
+     들어간 나머지 쪽이 같은 문서를 또 읽는다 — 한도를 쪽수만큼 더 쓴다. */
+  const seenDoc = {};
+  const todo = gridItems.filter(needsRead).filter(function (it) {
+    const g = it.meta && it.meta.doc && it.meta.doc.group;
+    if (!g) return true;
+    if (seenDoc[g]) return false;
+    seenDoc[g] = 1;
+    return true;
+  });
   if (!todo.length) { $('autoNote').style.display = 'none'; return; }
   const take = todo.slice(0, AUTO_READ_MAX);
   take.forEach(function (it) { queuePhotoRead(it.id); });
@@ -3450,11 +3467,26 @@ function readLabel(read) {
   return READ_LABEL[read.kind] || '알 수 없음';
 }
 
+/* 방금 올린 것 중 **한 문서의 쪽들** — 묶음 번호로 모아 쪽 차례대로.
+   (격자에 있는 것을 모으는 docPages 와 짝이다. 올리는 중에는 아직 격자가 아니라
+    올리기 목록에 있어서 보는 곳이 다르다.) */
+function docJobs(job) {
+  const g = job && job.meta && job.meta.doc && job.meta.doc.group;
+  if (!g) return [job];
+  return upJobs
+    .filter(function (j) { return j.meta && j.meta.doc && j.meta.doc.group === g; })
+    .sort(function (a, b) { return (a.meta.doc.page || 0) - (b.meta.doc.page || 0); });
+}
+
 function startRead(job) {
   const year = PuPhotoStore.yearOf(job.takenAt);
   job._reading = true;
   renderUp();
-  return PuDocRead.read(job.full).then(function (r) {
+  /* 여러 쪽짜리는 **문서 통째로 한 번** 읽는다(대표 결정 2026-08-10) —
+     쪽마다 따로 보면 조문만 있는 2쪽 이후가 죄다 빈칸으로 돌아온다. */
+  const sibs = docJobs(job);
+  const imgs = sibs.map(function (s) { return s.full; }).filter(function (f) { return safeSrc(f); });
+  return PuDocRead.read(imgs.length > 1 ? imgs : (imgs[0] || job.full)).then(function (r) {
     const v = PuDocRead.autoOk(r);
     const read = {
       kind: r.kind, fields: r.fields, bizNoOk: r.bizNoOk,
@@ -3464,20 +3496,28 @@ function startRead(job) {
          옛 결과를 다시 읽는다(자동 분류가 뒤늦게라도 맞아떨어져야 한다). */
       rv: PuDocRead.READ_VERSION
     };
+    if (sibs.length > 1) read.pagesRead = sibs.length;
     job._reading = false;
-    job._read = read;
-    /* 격자·크게 보기가 같은 결과를 보게 메모리에도 얹는다(다시 받지 않는다). */
-    const it = gridItems.find(function (x) { return x.id === job.id; });
-    if (it) it.meta = Object.assign({}, it.meta, { read: read });
+    /* ⚠ 같은 답을 **모든 쪽**에 남긴다. 한 쪽에만 쓰면 나머지는 「안 읽음」으로
+       남아, 다음에 화면을 열 때 같은 문서를 또 읽으러 간다. */
+    sibs.forEach(function (s) {
+      s._read = read;
+      const g = gridItems.find(function (x) { return x.id === s.id; });
+      if (g) g.meta = Object.assign({}, g.meta, { read: read });
+    });
     renderUp();
-    return PuPhotoStore.saveRead(year, job.id, read).then(function () {
+    return sibs.reduce(function (chain, s) {
+      return chain.then(function () { return PuPhotoStore.saveRead(year, s.id, read); });
+    }, Promise.resolve()).then(function () {
       /* 검증을 통과한 명함·사업자등록증은 곧바로 명함첩으로 보낸다.
-         걸린 것은 보내지 않고 사람이 「명함첩으로 보내기」를 누를 때 보낸다. */
-      if (read.auto && canSend(read)) return sendCards(job.id, year, job);
+         걸린 것은 보내지 않고 사람이 「명함첩으로 보내기」를 누를 때 보낸다.
+         ⚠ 여러 쪽이어도 **대표 쪽 하나만** 보낸다 — 쪽마다 보내면 같은 업체가
+           쪽수만큼 쌓인다. */
+      if (read.auto && canSend(read)) return sendCards(sibs[0].id, year, sibs[0]);
     }).then(function () {
       /* 사업자등록증·중소기업확인서는 업체관리에도 간다(빈 칸만 채운다).
          명함첩 보내기와 따로 둔다 — 한쪽이 실패해도 다른 쪽은 되어야 한다. */
-      if (read.auto && canSendCo(read)) return sendCompany(job.id, year, job);
+      if (read.auto && canSendCo(read)) return sendCompany(sibs[0].id, year, sibs[0]);
     });
   }).catch(function (e) {
     console.warn('[판독]', e);
@@ -5883,16 +5923,37 @@ function readTail(read) {
    **판독이 끝나면 검증 통과분은 곧바로 명함첩으로 보낸다** — 올릴 때 자동으로
    보내는 것과 같은 길이어야 한다(예전에는 다시 판독하면 보내지 않아, 사람이
    단추를 한 번 더 눌러야 했다). */
+/* ── 한 문서의 쪽들 (대표 결정 2026-08-10: "문서 통째로 한 번") ──
+   여러 쪽짜리 스캔은 올릴 때 같은 묶음 번호(meta.doc.group)를 단다.
+   그 번호로 형제 쪽을 모아 **쪽 차례대로** 돌려준다.
+   ⚠ 묶음이 아니면 자기 한 장만 — 명함·사업자등록증은 한 장이 곧 한 문서다. */
+function docPages(id) {
+  const it = gridItems.find(function (x) { return x.id === id; });
+  const g = it && it.meta && it.meta.doc && it.meta.doc.group;
+  if (!g) return it ? [it] : [];
+  return gridItems
+    .filter(function (x) { return x.meta && x.meta.doc && x.meta.doc.group === g; })
+    .sort(function (a, b) { return (a.meta.doc.page || 0) - (b.meta.doc.page || 0); });
+}
+
 function readPhoto(id) {
   const it = gridItems.find(function (x) { return x.id === id; });
   if (!it) return Promise.resolve();
   /* 사진이 있는 **주인 자리**에서 본문을 받고, 결과도 그 자리에 쓴다.
      안 넘기면 남의 사진은 본문을 못 찾아 「사진 본문을 불러오지 못했습니다」가 되고,
      읽어도 결과가 내 자리로 들어가 그 사람 사진은 영원히 안 읽힌 채 남는다. */
-  const owner = photoOwner(id);
-  return PuPhotoStore.loadFull(gridYear, id, owner).then(function (full) {
-    if (!safeSrc(full)) throw new Error('사진 본문을 불러오지 못했습니다');
-    return PuDocRead.read(full);
+  /* ⚠ 여러 쪽짜리는 **문서 통째로 한 번** 읽는다(대표 결정 2026-08-10).
+     계약서는 보수가 2조, 기간이 6조, 서명이 마지막 쪽에 흩어져 있어 쪽마다
+     따로 보면 2쪽 이후가 죄다 빈칸으로 돌아온다. AI 호출도 쪽수만큼에서
+     한 번으로 준다. */
+  const pages = docPages(id);
+  return Promise.all(pages.map(function (p) {
+    return PuPhotoStore.loadFull(gridYear, p.id, photoOwner(p.id))
+      .catch(function () { return ''; });
+  })).then(function (fulls) {
+    const imgs = fulls.filter(function (f) { return safeSrc(f); });
+    if (!imgs.length) throw new Error('사진 본문을 불러오지 못했습니다');
+    return PuDocRead.read(imgs.length > 1 ? imgs : imgs[0]);
   }).then(function (r) {
     const v = PuDocRead.autoOk(r);
     const read = {
@@ -5903,12 +5964,22 @@ function readPhoto(id) {
          옛 결과를 다시 읽는다(자동 분류가 뒤늦게라도 맞아떨어져야 한다). */
       rv: PuDocRead.READ_VERSION
     };
-    it.meta = Object.assign({}, it.meta, { read: read });
-    if (viewerId === id) renderReadPanel(it);
-    return PuPhotoStore.saveRead(gridYear, id, read, owner).then(function () {
-      if (read.auto && canSend(read)) return sendCards(id, gridYear, null);
+    /* 몇 쪽을 함께 보고 낸 답인지 남긴다 — 「2쪽인데 왜 같은 내용인가」에 답한다. */
+    if (pages.length > 1) read.pagesRead = pages.length;
+    /* ⚠ 같은 답을 **모든 쪽**에 쓴다. 한 쪽에만 쓰면 나머지는 영원히 「안 읽음」으로
+       남아, 화면을 열 때마다 같은 문서를 또 읽으러 간다. */
+    return pages.reduce(function (chain, p) {
+      return chain.then(function () {
+        p.meta = Object.assign({}, p.meta, { read: read });
+        if (viewerId === p.id) renderReadPanel(p);
+        return PuPhotoStore.saveRead(gridYear, p.id, read, photoOwner(p.id));
+      });
+    }, Promise.resolve()).then(function () {
+      /* ⚠ 명함첩·업체관리로는 **대표 쪽 하나만** 보낸다 —
+         쪽마다 보내면 같은 업체가 쪽수만큼 쌓인다. */
+      if (read.auto && canSend(read)) return sendCards(pages[0].id, gridYear, null);
     }).then(function () {
-      if (read.auto && canSendCo(read)) return sendCompany(id, gridYear, null);
+      if (read.auto && canSendCo(read)) return sendCompany(pages[0].id, gridYear, null);
     });
   });
 }

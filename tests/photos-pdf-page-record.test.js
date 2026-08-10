@@ -22,11 +22,17 @@ test('★ 스캔은 쪽마다 한 건으로 갈라진다', () => {
 });
 
 test('★ 갈라진 쪽도 하나씩 모두 판독 대기열에 들어간다', () => {
-  /* 한 장만 읽고 마는 일이 없어야 한다 — 올라간 것은 전부 queueRead 를 탄다. */
+  /* 2026-08-10 다시 겨눔 — 대표 결정 "문서 통째로 한 번". 쪽마다 걸던 것을
+     문서마다 한 번으로 바꿨다. 지킬 것은 「모든 쪽이 판독 결과를 갖는다」이지
+     「쪽마다 판독을 건다」가 아니다. */
   const fn = app.match(/function onQueueChange\([\s\S]*?\n\}/);
   assert.ok(fn, 'onQueueChange 를 찾지 못했습니다.');
-  assert.ok(/list\.forEach/.test(fn[0]) && /queueRead\(j\)/.test(fn[0]),
-    '올라간 것마다 판독을 걸지 않으면 첫 쪽만 읽힙니다.');
+  assert.ok(/docJobs\(j\)/.test(fn[0]), '형제 쪽을 모으지 않습니다.');
+  assert.ok(/sibs\.every\(/.test(fn[0]),
+    '다 안 올라왔는데 읽으면 빠진 쪽을 못 보고 읽습니다.');
+  assert.ok(/!sibs\.some\(/.test(fn[0]),
+    '쪽마다 걸면 같은 문서를 쪽수만큼 되풀이해 읽어 한도를 그만큼 더 씁니다.');
+  assert.ok(/queueRead\(sibs\[0\]\)/.test(fn[0]), '판독을 아예 안 겁니다.');
 });
 
 test('판독은 한 번에 하나씩 돈다 — 한꺼번에 던지면 서로 막힌다', () => {
