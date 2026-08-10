@@ -262,19 +262,31 @@
   /* 사진 한 장을 판독한다.
      어떤 실패에도 예외를 밖으로 던지지 않는다 — 사진 한 장 판독 실패가
      여러 장 올리기 전체를 멈추면 안 된다. 실패는 error 에 한국어로 담아 돌려준다. */
+  /* 여러 쪽을 한 번에 보낼 때 덧붙이는 말 (대표 결정 2026-08-10: "문서 통째로 한 번").
+     계약서는 보수가 2조, 기간이 6조, 서명이 마지막 쪽에 흩어져 있다. 쪽마다 따로
+     보면 아무도 문서 전체를 못 봐서 2쪽 이후는 죄다 빈칸으로 돌아온다. */
+  var MULTI_NOTE =
+    '\n\n이 그림들은 **한 문서의 여러 쪽**이며 쪽 순서대로 놓여 있습니다.' +
+    ' 쪽마다 따로 답하지 말고 **전체를 함께 읽어 한 벌의 JSON**만 주세요.' +
+    ' 항목이 여러 쪽에 흩어져 있으면 찾아서 채우고, 어느 쪽에도 없으면 빈 문자열로 두세요.';
+
   function read(dataUrl) {
     if (!deps.fetch) return Promise.resolve(fail('판독 준비가 되지 않았습니다'));
-    var b64 = String(dataUrl || '').split(',')[1] || '';
-    if (!b64) return Promise.resolve(fail('사진을 읽을 수 없습니다'));
+    /* 한 장이면 그대로, 여러 장이면 **한 문서의 여러 쪽**으로 본다. */
+    var imgs = (Array.isArray(dataUrl) ? dataUrl : [dataUrl])
+      .map(function (u) { return String(u || '').split(',')[1] || ''; })
+      .filter(Boolean);
+    if (!imgs.length) return Promise.resolve(fail('사진을 읽을 수 없습니다'));
 
     var keyP = deps.getKey ? Promise.resolve().then(deps.getKey) : Promise.resolve('');
     return keyP.catch(function () { return ''; }).then(function (key) {
       if (!key) return fail('AI 키가 없습니다 — 포털 설정에서 등록해 주세요');
+      var parts = imgs.map(function (b64) {
+        return { inline_data: { mime_type: 'image/jpeg', data: b64 } };
+      });
+      parts.push({ text: PROMPT_ALL + (imgs.length > 1 ? MULTI_NOTE : '') });
       var body = {
-        contents: [{ parts: [
-          { inline_data: { mime_type: 'image/jpeg', data: b64 } },
-          { text: PROMPT_ALL }
-        ] }],
+        contents: [{ parts: parts }],
         generationConfig: { temperature: 0 } // 같은 사진에 같은 답이 나와야 한다
       };
       return askAny(key, {

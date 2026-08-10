@@ -749,7 +749,10 @@ test('올린 사진은 종류를 가리지 않고 스스로 판독한다', () =>
   // 명함인지 서류인지 회의사진인지는 AI 가 가린다.
   assert.match(app, /<script src="js\/pu-doc-read\.js"><\/script>/);
   assert.match(app, /PuDocRead\.read\(/);
-  assert.match(app, /queueRead\(j\)/);
+  /* ⚠ 2026-08-10 다시 겨눔 — 여러 쪽짜리는 마지막 쪽이 올라간 뒤 **문서마다
+     한 번** 건다(대표 결정 "문서 통째로 한 번"). 지킬 것은 「사람이 단추를 누를
+     일이 없다」이지 무엇을 인자로 넘기는가가 아니다. */
+  assert.match(app, /queueRead\(sibs\[0\]\)/, '올린 것을 스스로 판독하지 않습니다');
   assert.ok(!/j\.kind === 'doc'\)\s*startRead/.test(app), '아직 서류만 판독합니다');
 });
 
@@ -1715,8 +1718,10 @@ test('올리기·지우기는 여전히 남의 사진을 막는다', () => {
 
 test('판독은 사진 주인 자리에서 본문을 받고 그 자리에 결과를 쓴다', () => {
   const fn = fnBody('readPhoto');
-  assert.match(fn, /loadFull\([^)]*owner/, '남의 사진 본문을 못 찾습니다 (주인을 안 넘깁니다)');
-  assert.match(fn, /saveRead\([^)]*owner/, '판독 결과가 내 자리에 저장됩니다');
+  /* ⚠ 2026-08-10 다시 겨눔 — 여러 쪽짜리는 쪽마다 주인을 따로 본다
+     (photoOwner(p.id)). 지킬 것은 「주인 자리를 본다」이지 변수 이름이 아니다. */
+  assert.match(fn, /loadFull\([^)]*photoOwner\(/, '남의 사진 본문을 못 찾습니다 (주인을 안 넘깁니다)');
+  assert.match(fn, /saveRead\([^)]*photoOwner\(/, '판독 결과가 내 자리에 저장됩니다');
   assert.match(app, /function photoOwner\(/, '사진 주인을 찾는 함수가 없습니다');
   /* 「전체 근로자」·「받은 사진」 표를 사람 아이디로 넘기면 없는 자리를 두드린다 */
   assert.match(fnBody('photoOwner'), /ALL_OWNERS/, 'photoOwner 가 화면 표를 걸러내지 않습니다');
