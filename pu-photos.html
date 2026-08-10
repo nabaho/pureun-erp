@@ -642,6 +642,10 @@ button{font-family:inherit;cursor:pointer}
 #grid .cell.on .ck{background:var(--blue);border-color:var(--blue);color:#fff}
 /* 확인 필요 표시 — 칸에서 바로 보인다 */
 #grid .cell .wn{position:absolute;right:4px;bottom:4px;background:#b45309;color:#fff;font-size:11px;line-height:1;padding:3px 5px;border-radius:5px;font-weight:800}
+/* 사람이 적어 둔 업체·설명 — 칸 아래를 가로로 채운다 */
+#grid .cell .cap{position:absolute;left:0;right:0;bottom:0;background:rgba(16,24,40,.72);
+  color:#fff;font-size:10px;font-weight:700;padding:3px 5px;text-align:center;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* 「확인 필요」만 볼 때는 이유를 한 줄로 적는다 — 칸 아래를 가로로 채운다 */
 #grid .cell .wn.why{left:4px;right:4px;bottom:4px;text-align:center;font-size:10px;
   padding:3px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1136,7 +1140,8 @@ button{font-family:inherit;cursor:pointer}
       <!-- draggable="false": 이 그림을 끌면 창이 남의 파일로 오해해 같은 사진을
            새 번호로 다시 올린다(재복사). 새 그림을 넣을 때도 반드시 붙일 것 —
            tests/pu-photos-html.test.js 가 못 박아 두었다. -->
-      <div id="viewerPic" onclick="picClick(event)"><img id="viewerImg" alt="" draggable="false">
+      <div id="viewerPic" onclick="picClick(event)"><img id="viewerImg" alt="" draggable="true"
+        ondragstart="viewerDragOut(event)" title="끌어서 다른 프로그램에 넣을 수 있습니다">
         <!-- 돌리기 — 폰으로 찍으면 누워 들어오는 것이 있고, 누우면 글씨를 못 읽는다.
              사진을 누르면 원본 크기로 열리므로 이 단추는 클릭이 위로 안 새게 막는다. -->
         <div id="rotBar">
@@ -3599,9 +3604,16 @@ function renderGrid() {
        누구 사진인지 열어 봐야만 아는 것은 "훑어보기"가 안 된다. */
     const who = (gridOwner === ALL_OWNERS && it.meta.__ownerName)
       ? '<span class="who">' + esc(it.meta.__ownerName) + '</span>' : '';
+    /* 사람이 적어 둔 업체·설명을 칸에 한 줄로 보여 준다 (대표 지시 2026-08-10:
+       "승진텍라인 등 내용을 넣고 저장하면 사진 아래에 간략하게 설명내용이 나왔으면").
+       ⚠ 「확인 필요」 이유와 자리가 겹친다 — 그때는 이유가 먼저다.
+          할 일이 남은 사진에는 할 일을 보여 주는 것이 맞다. */
+    const capTxt = [it.meta.company, it.meta.note].filter(function (x) { return x; }).join(' · ');
+    const cap = (capTxt && !(needOnly && needsCheck(it)))
+      ? '<span class="cap">' + esc(capTxt) + '</span>' : '';
     /* 다른 앱(정부사업 컨설팅 등)으로 끌어다 놓을 수 있다. */
     html += '<div class="cell' + on + '" data-id="' + esc(it.id) + '" draggable="true">' +
-      (t ? '<img src="' + t + '" alt="" draggable="false">' : '') + tag + warn + who + '<span class="ck">✓</span></div>';
+      (t ? '<img src="' + t + '" alt="" draggable="false">' : '') + tag + warn + who + cap + '<span class="ck">✓</span></div>';
   });
   html += '</div>';
   el.innerHTML = html;
@@ -4758,6 +4770,70 @@ function closeViewer() {
    · 사진 자체 → 원본 크기로 확대/축소 (서류는 글씨를 봐야 한다)
    · 사진 바깥(어두운 곳) → 닫기. 예전에 사진을 누르면 닫혔으므로 그 편한 손짓을
      잃지 않게 바깥으로 옮겼다. 닫는 길은 이것 말고도 「닫기」 단추와 ESC 가 있다. */
+/* ══════ 크게 보기 사진을 밖으로 끌어내기 (대표 지시 2026-08-10) ══════
+   "전체화면도 마우스 드래그해서 이동 가능하게 — 이동해서 다른 프로그램에 직접 넣을 수 있게"
+
+   한글·워드·메일 창으로 그대로 끌어다 넣을 수 있게 한다. 내려받아서 다시 찾아
+   붙이는 걸음을 없앤다.
+
+   ⚠ 앱 안의 사진 그림은 모두 draggable="false" 다 — 격자 사진을 끌면 브라우저가
+      그림을 파일로도 실어 보내 **같은 사진이 다시 올라가는 사고**가 났었다
+      (2026-08-04·08-05). 크게 보기 사진만 예외로 여는 대신, 우리 표식(PuDrag)을
+      함께 심어 사진첩이 이것을 「우리 것」으로 알아보게 한다 — 창 안에 도로
+      떨어뜨려도 다시 안 올라간다.
+   ⚠ 다른 프로그램이 알아듣는 것은 **DownloadURL** 이다. data: 주소로는 잘 안 되므로
+      blob: 주소를 만들어 준다. 만든 주소는 잠시 뒤 놓아 준다(안 놓으면 기억이 샌다). */
+function viewerDragOut(e) {
+  const img = $('viewerImg');
+  const dt = e.dataTransfer;
+  if (!img || !img.src || !dt) return;
+  const it = gridItems.find(function (x) { return x.id === viewerId; });
+  /* ① 사진첩 안에서 시작한 드래그라는 표식 — 재복사를 막는 첫째 잠금.
+        격자에서 끌 때와 **같은 모양**으로 심는다(받는 쪽이 하나만 알면 되게). */
+  try {
+    if (window.PuDrag && viewerId && it) {
+      PuDrag.set(dt, {
+        app: 'pu-photos', kind: 'photo', year: gridYear,
+        owner: it.meta.__ownerUid || gridOwner || PuPhotoStore.myUid(),
+        id: viewerId,
+        name: it.meta.company || dayLabel(it.meta.takenAt || 0) + ' 사진'
+      });
+    }
+  } catch (_) { }
+  /* ② 밖으로 나갈 때 쓸 파일 이름·주소 */
+  try {
+    const co = (it && it.meta && it.meta.company) || '';
+    const day = (it && it.meta && it.meta.takenAt) ? dayKey(it.meta.takenAt) : '';
+    /* 파일 이름에 못 쓰는 글자를 걷어낸다 — 남겨 두면 저장이 통째로 실패한다 */
+    const name = ((day ? day + ' ' : '') + (co || '사진')).replace(/[\\/:*?"<>|]/g, '') + '.jpg';
+    const url = dataUrlToBlobUrl(img.src);
+    if (url) {
+      dt.setData('DownloadURL', 'image/jpeg:' + name + ':' + url);
+      setTimeout(function () { try { URL.revokeObjectURL(url); } catch (_) { } }, 60000);
+    }
+    dt.effectAllowed = 'copy';
+  } catch (err) { console.warn('[끌어내기]', err); }
+}
+
+/* data:image/...;base64,... → blob: 주소. 못 바꾸면 null (그래도 드래그는 된다). */
+function dataUrlToBlobUrl(src) {
+  try {
+    const m = /^data:([^;,]+)(;base64)?,(.*)$/.exec(String(src));
+    if (!m) return null;
+    const type = m[1] || 'image/jpeg';
+    const body = m[3] || '';
+    let bytes;
+    if (m[2]) {
+      const bin = atob(body);
+      bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    } else {
+      bytes = new TextEncoder().encode(decodeURIComponent(body));
+    }
+    return URL.createObjectURL(new Blob([bytes], { type: type }));
+  } catch (_) { return null; }
+}
+
 function picClick(e) {
   if (e.target && e.target.id === 'viewerImg') {
     const pic = $('viewerPic');

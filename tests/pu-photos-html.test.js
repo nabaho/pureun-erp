@@ -1284,9 +1284,24 @@ test('앱 안의 모든 사진 그림은 끌 수 없다', () => {
      글자를 잡으면 고칠 수 없는 검사가 되고, 그러면 다음 사람이 검사를 지운다. */
   const imgs = [...app.matchAll(/<img\s[^>]*>/g)].map(m => m[0]);
   assert.ok(imgs.length > 0, '<img> 를 하나도 찾지 못했습니다');
+  /* ⚠ 2026-08-10 다시 겨눔 — 크게 보기 사진은 **밖으로 끌어낼 수 있어야 한다**
+     (대표 지시: "다른 프로그램에 직접 넣을 수 있게"). 그래서 「아무것도 못 끈다」가
+     아니라 **「끌 수 있으면 반드시 우리 표식을 심는다」** 로 바꾼다.
+     재복사를 막는 것은 draggable 이 아니라 그 표식이다 — 표식이 있으면 창이
+     「우리 것」으로 알아보고 파일로 받지 않는다. */
   const draggable = imgs.filter(t => !/draggable="false"/.test(t));
-  assert.deepEqual(draggable, [],
-    '끌 수 있는 그림이 남아 있습니다 — 끌면 그 사진이 다시 올라갑니다: ' + draggable.join(' | '));
+  const unmarked = draggable.filter(t => !/ondragstart=/.test(t));
+  assert.deepEqual(unmarked, [],
+    '표식 없이 끌 수 있는 그림이 남아 있습니다 — 끌면 그 사진이 다시 올라갑니다: ' + unmarked.join(' | '));
+  /* 표식을 심는다고 적어 놓고 실제로 안 심으면 소용이 없다 */
+  for (const t of draggable) {
+    const h = (t.match(/ondragstart="([a-zA-Z0-9_$]+)\(/) || [])[1];
+    assert.ok(h, '끄는 그림에 처리기 이름이 없습니다: ' + t);
+    const fn = app.match(new RegExp('function ' + h + '\\([\\s\\S]*?\\n\\}'));
+    assert.ok(fn, h + ' 를 찾지 못했습니다.');
+    assert.match(fn[0], /PuDrag\.set\(/,
+      h + ' 가 우리 표식을 안 심습니다 — 창이 남의 파일로 오해해 다시 올립니다.');
+  }
 });
 
 test('우리 화면에서 시작한 드래그는 파일로 받지 않는다', () => {
