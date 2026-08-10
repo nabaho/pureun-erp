@@ -129,9 +129,10 @@ test('올릴 크기는 저장 층이 정한다 — 화면이 숫자를 갖지 �
   assert.match(app, /shrink\(f, spec\.maxEdge, spec\.quality\)/);
   assert.match(app, /shrink\(f, spec\.thumbEdge/);
   assert.ok(!/shrink\(f,\s*\d/.test(app), '화면에 축소 크기 숫자가 박혀 있습니다');
-  // 카메라 원본이 그대로 클라우드로 가는 길이 없어야 한다 —
-  // 파일→dataURL 직행(readAsDataURL)을 금지하고 축소(shrink)만 허용한다.
-  assert.ok(!/readAsDataURL/.test(app), '원본을 그대로 올릴 수 있는 경로가 있습니다');
+  // 카메라 원본이 그대로 클라우드로 가는 길이 없어야 한다. 아이폰 호환을 위해
+  // 읽는 단계에서 dataURL을 쓸 수는 있지만, 대기열에는 shrink 결과만 넣는다.
+  assert.match(app, /full:\s*full\.dataUrl/);
+  assert.match(app, /thumb:\s*thumb\.dataUrl/);
 });
 
 test('서류 고르기 버튼이 따로 있고 서류로 표시된다', () => {
@@ -669,6 +670,10 @@ test('사진 열기에 예비 통로가 있다 — 브라우저마다 되는 방
   // 없으면 FileReader 로 돌아가야 한다. EXIF 읽기 실패는 올리기를 막으면 안 된다.
   assert.match(app, /function decodeViaImg\(/);
   assert.match(app, /URL\.createObjectURL\(/);
+  assert.match(app, /function normalizedImageBlob\(/, '아이폰이 JPG 형식을 비워 보내면 보완해야 합니다');
+  assert.match(app, /application\/octet-stream/, '일반 파일 형식으로 온 JPG도 받아야 합니다');
+  assert.match(app, /readAsDataURL/, 'iOS 앱 내장 브라우저가 blob 주소를 막을 때 재시도해야 합니다');
+  assert.match(app, /decodeViaObjectUrl\(file\)\.catch/, 'blob 주소 실패 뒤 data 주소로 재시도해야 합니다');
   assert.match(app, /readAsArrayBuffer/);
   assert.match(app, /readFileBytes\(f\)\.catch\(/, 'EXIF용 바이트 읽기 실패가 올리기를 막습니다');
 });
