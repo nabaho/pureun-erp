@@ -3644,7 +3644,9 @@ function sendCompany(id, year, job) {
     if (job) job._read = read;
     if (viewerId === id) renderReadPanel(it);
     renderUp();
-    return PuPhotoStore.saveRead(year, id, read);
+    /* 주인 자리에 남긴다 — 남의 사진을 관리자가 업체관리로 보냈을 때
+       내 자리에 쓰면 주인 화면에는 「아직 안 보냄」으로 남아 또 보내게 된다. */
+    return PuPhotoStore.saveRead(year, id, read, photoOwner(id));
   }).catch(function (e) {
     console.warn('[업체관리 보내기]', e);
     read.filedCoError = (e && e.message) || String(e);
@@ -3856,16 +3858,23 @@ function photoOwner(id) {
   return undefined;                    /* 내 자리 (저장 층이 알아서 나로 본다) */
 }
 
-/* 고른 사진이 전부 내 것이면 통과시킨다.
-   ⚠ 남의 사진은 아직 못 지운다 — 저장 층(deletePhoto 등)이 주인을 안 받아서
-   그대로 열면 내 자리에 대고 지우는 시늉만 하고 조용히 실패한다. */
+/* 고른 사진에 손을 대도 되는가.
+   ① 내 사진이면 언제나 된다.
+   ② 총괄 관리자는 남의 사진도 된다 (대표 지시 2026-08-10:
+      "전체관리자 권형하는 사진을 삭제할 권한이 있다").
+      ⚠ 열 수 있게 된 근거는 **저장 층이 주인을 받게 됐기 때문**이다.
+        deletePhoto·saveRead·setCustomKind 가 owner 를 받고, 부르는 쪽이
+        photoOwner(id) 로 넘긴다. 이것 없이 잠금만 풀면 자기 자리에 대고
+        지우는 시늉만 하고 조용히 끝난다 — 막는 것보다 나쁘다.
+      ⚠ 서버 규칙도 이미 허락한다(puphotos/u/$uid 의 .write 에 isAdmin).
+        코드만 열고 규칙이 막으면 눌러도 아무 일이 없다.
+   ③ 그 밖에는 막는다 — 직원끼리는 서로의 사진을 못 건드린다. */
 function blockedIfOther(ids) {
   const list = ids == null ? null : (Array.isArray(ids) ? ids : [ids]);
   if (list && list.length && list.every(isMinePhoto)) return false;
+  if (PuPhotoStore.amAdmin()) return false;
   if (!viewingOther()) return false;
-  alert(gridOwner === ALL_OWNERS
-    ? '남이 올린 사진은 아직 여기서 지우거나 고칠 수 없습니다.\n「누구 사진」에서 그 사람을 골라 보실 수는 있습니다.'
-    : '다른 사람의 사진은 보기만 할 수 있습니다.');
+  alert('다른 사람의 사진은 보기만 할 수 있습니다.');
   return true;
 }
 
@@ -4747,7 +4756,7 @@ function retagPhotos(ids, tabKey) {
         by: PuPhotoStore.myName() || '', at: Date.now(), rv: PuDocRead.READ_VERSION
       });
       it.meta = Object.assign({}, it.meta, { read: read });
-      return PuPhotoStore.saveRead(gridYear, id, read)
+      return PuPhotoStore.saveRead(gridYear, id, read, photoOwner(id))
         .then(function () { done++; })
         .catch(function (e) { failed++; console.warn('[분류 바꾸기]', id, e); });
     });
@@ -5183,7 +5192,7 @@ function deleteAllPayslips() {
   let done = 0, failed = 0;
   list.reduce(function (p, it) {
     return p.then(function () {
-      return PuPhotoStore.deletePhoto(gridYear, it.id, '급여서류 — 보관하지 않는 서류')
+      return PuPhotoStore.deletePhoto(gridYear, it.id, '급여서류 — 보관하지 않는 서류', photoOwner(it.id))
         .then(function () {
           done += 1;
           gridItems = gridItems.filter(function (x) { return x.id !== it.id; });
@@ -5210,7 +5219,7 @@ function deleteOnePayslip(id) {
   if (blockedIfOther(id)) return;
   if (!confirm('이 급여서류를 휴지통으로 보냅니다.\n'
     + PuPhotoStore.TRASH_DAYS + '일 안에는 되살릴 수 있습니다.')) return;
-  PuPhotoStore.deletePhoto(gridYear, id, '급여서류 — 보관하지 않는 서류').then(function () {
+  PuPhotoStore.deletePhoto(gridYear, id, '급여서류 — 보관하지 않는 서류', photoOwner(id)).then(function () {
     gridItems = gridItems.filter(function (x) { return x.id !== id; });
     closeViewer();
     selected.delete(id);
@@ -5267,7 +5276,9 @@ function removeMany(ids) {
     chain = chain.then(function () {
       /* 지운 기록에 왜 지웠는지 남긴다 — 나중에 "이건 왜 없어졌나"에 답해야 한다.
          보유기준에 걸려 지운 것과 사람이 그냥 지운 것은 다른 일이다. */
-      return PuPhotoStore.deletePhoto(gridYear, id, delReason(id)).then(function () {
+      /* ⚠ 주인을 함께 넘긴다 — 안 넘기면 남의 사진을 지울 때 내 자리에 대고
+         지우는 시늉만 하고 조용히 끝난다(화면에서만 사라진다). */
+      return PuPhotoStore.deletePhoto(gridYear, id, delReason(id), photoOwner(id)).then(function () {
         gridItems = gridItems.filter(function (x) { return x.id !== id; });
       }).catch(function (e) {
         console.warn('[지우기]', id, e);
@@ -5299,7 +5310,7 @@ function deleteOne() {
     PuPhotoStore.TRASH_DAYS + '일 안에는 휴지통에서 되살릴 수 있습니다.';
   if (filed) msg += '\n\n명함첩에 보낸 사진입니다. 명함첩 기록은 그대로 남습니다.';
   if (!confirm(msg)) return;
-  PuPhotoStore.deletePhoto(gridYear, id, delReason(id)).then(function () {
+  PuPhotoStore.deletePhoto(gridYear, id, delReason(id), photoOwner(id)).then(function () {
     gridItems = gridItems.filter(function (x) { return x.id !== id; });
     closeViewer();
     renderGridBar();
@@ -5487,7 +5498,7 @@ function ackRead() {
   renderReadPanel(it);
   renderGridBar();
   renderGrid();
-  PuPhotoStore.saveRead(gridYear, id, read).catch(function (e) {
+  PuPhotoStore.saveRead(gridYear, id, read, photoOwner(id)).catch(function (e) {
     console.warn('[확인했음]', e);
     alert('확인 표시를 저장하지 못했습니다: ' + ((e && e.message) || e));
   });
