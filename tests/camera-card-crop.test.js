@@ -174,9 +174,14 @@ test('★ 자르다 실패해도 사진은 남는다', () => {
    필요가 없다." 켜 두어도 사진을 잃지 않는 근거는 아래 두 줄이다 —
    못 찾으면 안 자르고, 자른 뒤에도 원본을 함께 들고 간다. */
 test('★ 기본으로 켜져 있고, 그래도 사진을 잃지 않는다', () => {
+  /* ⚠ 2026-08-10 다시 겨눔 — 「명함만 잘라내기」 칸을 없애고 **명함틀을 따라가게** 했다
+     (대표 보고: "사진찍는기능에서 불필요한기능이 너무 많다"). 둘 다 「명함만 담기」라는
+     같은 뜻인데 따로 켜야 해서 헷갈렸다. 지킬 것은 **기본 켜짐이고 끌 수 있다**는
+     것이지 전용 칸이 있는가가 아니다. */
   const m = html.match(/function cropPref\(\)[^\n]*/);
-  assert.ok(/!== '0'/.test(m[0]), '기본이 꺼져 있으면 대표님이 매번 켜야 합니다.');
-  assert.ok(/id="camCrop" onchange="setCropPref\(this\.checked\)"/.test(html), '끌 수 있어야 합니다.');
+  assert.ok(/frameOn\(\)/.test(m[0]), '명함틀을 따라가지 않으면 두 스위치가 어긋납니다.');
+  assert.ok(/function frameOn\(\)[^\n]*!== '0'/.test(html), '기본이 꺼져 있으면 매번 켜야 합니다.');
+  assert.ok(/id="camFrameBtn" onclick="toggleFrame\(\)"/.test(html), '끌 수 있어야 합니다.');
   /* 켜 두어도 안전한 근거 — 이 둘이 없으면 기본 켜짐은 위험하다 */
   const shoot = html.match(/if \(cropPref\(\)\) \{[\s\S]{0,900}?\n    \}/);
   assert.ok(/if \(r\.ok\)/.test(shoot[0]), '못 찾았는데 자르면 글자를 날립니다.');
