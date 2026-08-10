@@ -412,10 +412,17 @@ function build(input){
 }
 function download(input,fname){
   const u8=build(input);
+  const common=(typeof globalThis!=="undefined")&&globalThis.PureunHwp;
+  if(common){
+    common.validate(u8,fname);
+    common.download(u8,fname,"hwpx");
+    return u8;
+  }
   const a=document.createElement("a");
   a.href=URL.createObjectURL(new Blob([u8],{type:"application/hwp+zip"}));
   a.download=fname;a.click();
   setTimeout(function(){URL.revokeObjectURL(a.href);},1500);
+  return u8;
 }
 /* 열 비율(합 1)을 본문 폭에 맞춘 실제 열폭으로 변환 */
 function cols(ratios){

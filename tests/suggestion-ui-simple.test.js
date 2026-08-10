@@ -29,7 +29,15 @@ test('상세 화면은 처리와 자동개발을 분리하고 자동개발은 �
 
 test('휴대폰에서는 건의함이 화면 전체를 사용한다', () => {
   assert.match(html, /#sgModal\{padding:0;align-items:stretch;\}/);
-  assert.match(html, /max-height:100dvh;border-radius:0/);
+  assert.match(html, /height:100dvh;max-height:none;border-radius:0/);
+  assert.match(html, /body\.sg-modal-open\{overflow:hidden;\}/);
+  assert.match(html, /document\.body\.classList\.add\('sg-modal-open'\)/);
+});
+
+test('휴대폰 건의하기 버튼은 헤더 폭과 무관한 고정 터치 버튼이다', () => {
+  assert.match(html, /#sgFab\{position:fixed;right:max\(12px,env\(safe-area-inset-right\)\)/);
+  assert.match(html, /min-height:46px/);
+  assert.match(html, /\.sg-tip\{display:none;\}/);
 });
 
 test('일반 사용자는 건의 작성 안내만 보고 전체 목록과 상세에는 들어가지 못한다', () => {

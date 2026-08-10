@@ -138,6 +138,7 @@ body{font-family:"Malgun Gothic","맑은 고딕",system-ui,sans-serif;color:var(
 .btn.sm{padding:4px 10px;font-size:12px}
 #rhwpEditor{width:100%;height:68vh;border:1px solid var(--border);border-radius:8px;background:#fff}
 #rhwpEditor:empty{display:none}
+.kc-hwp-preview{min-height:60vh;max-height:72vh;overflow:auto;background:#e8edf3;padding:12px}
 .rc-fill{border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;background:#FAFBFD}
 .rc-fill .row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;font-size:13px;border-bottom:1px dashed var(--border)}
 .rc-fill .row:last-child{border-bottom:none}
@@ -378,6 +379,10 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
 .cv-pp-inner{background:#fff;border-radius:12px;padding:16px;max-width:560px;width:100%}
 .cv-pp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:8px}
 @media(max-width:780px){
+  .cv-toolbar{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px!important;align-items:stretch!important}
+  .cv-toolbar>*{min-width:0!important;width:100%}
+  .cv-toolbar>div{display:none}
+  .cv-sheet-scroll{width:100%;overflow:auto;-webkit-overflow-scrolling:touch}
   #cvPalette{width:100%!important;flex:1 1 100%!important;max-height:240px}
   .cv-sheet{padding:8mm;min-height:auto}
   .cv-sheet h2{font-size:21px;letter-spacing:4px}
@@ -392,6 +397,8 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
   @page{size:A4;margin:14mm}
 }
 </style>
+<script src="js/pu-hwp-engine.js?v=13"></script>
+<script src="hwpx_gen.js?v=13"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
@@ -765,7 +772,7 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
         </div>
         <div style="font-size:22px;font-weight:800;color:var(--navy)">⚡ 빠른 이력서</div>
         <div style="color:var(--text-mute);font-size:13px;margin-top:2px">프로필·경력 데이터를 클릭만으로 채워 PDF로 저장 — 타이핑 최소화</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0;align-items:center">
+        <div class="cv-toolbar" style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0;align-items:center">
           <select id="cvTpl" class="tb-select" onchange="renderQuickCV()"><option value="resume">표준 이력서</option><option value="cert">경력증명서</option></select>
           <select id="cvPages" class="tb-select" onchange="cvSetPages(this.value)" title="PDF 분량(A4 장수)에 맞춰 자동 축소"><option value="auto">📄 분량: 자동</option><option value="1">📄 A4 1장</option><option value="2">📄 A4 2장</option><option value="3">📄 A4 3장</option></select>
           <select id="cvStamp" class="tb-select" onchange="cvApplyStamp()" title="경력증명서에 날인할 도장"></select>
@@ -779,7 +786,7 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
           <button class="btn primary" onclick="printCV()">🖨 PDF</button>
         </div>
         <div id="cvForms" style="margin:0 0 10px"></div>
-        <div style="overflow:auto"><div id="cvSheet" class="cv-sheet" ondragover="event.preventDefault()" ondrop="cvDrop(event)"></div></div>
+        <div class="cv-sheet-scroll"><div id="cvSheet" class="cv-sheet" ondragover="event.preventDefault()" ondrop="cvDrop(event)"></div></div>
         <div id="cvPalettePop" class="cv-pop" style="display:none">
           <div class="cv-pop-h" id="cvPopHead">📋 데이터 끌어넣기 <span style="font-weight:400;font-size:10px;opacity:.85">(드래그 또는 클릭)</span><button type="button" onclick="document.getElementById('cvPalettePop').style.display='none'" style="float:right;background:none;border:none;color:#fff;cursor:pointer;font-size:14px;line-height:1">✕</button></div>
           <div class="cv-pop-b" id="cvPaletteBody"></div>
@@ -1483,9 +1490,26 @@ async function createEditor(containerSel, options={}){
   return api;
 }
 
+async function previewKcareerHwp(containerSel,buffer,name){
+  const box=typeof containerSel==='string'?document.querySelector(containerSel):containerSel;
+  if(!box) throw new Error('한글 문서를 표시할 영역이 없습니다.');
+  PureunHwp.validate(buffer,name);
+  box.classList.add('kc-hwp-preview');
+  return PureunHwp.renderPreview(box,buffer,name);
+}
 async function openHwpEditor(containerSel, buffer, name){
+  const fileName=name||'document.hwpx';
+  PureunHwp.validate(buffer,fileName);
+  try{
+    const common=await PureunHwp.createEditor(containerSel,buffer,fileName);
+    _rhwp=common.editor;
+    return;
+  }catch(e){
+    /* 공통 한글 편집기 폴백: 외부 모듈 장애 시 기존 편집기로 자동 복귀한다. */
+    console.warn('[HWP] 공통 편집기 대신 기존 편집기를 사용합니다.',e&&e.message);
+  }
   _rhwp = await createEditor(containerSel, { studioUrl: rhwpStudioUrl() });
-  if(buffer) await _rhwp.loadFile(buffer, name||'document.hwpx');
+  if(buffer) await _rhwp.loadFile(buffer, fileName);
 }
 function get(key){
   if(key==='id_docs' && hasIDPin()){ return (_idUnlocked && _idDocs) ? _idDocs.slice() : []; }
@@ -2874,14 +2898,28 @@ async function mountEditor(buffer,name,cfg){
     const prev=document.getElementById('rcPdfPreview'); if(prev) prev.style.display='none';
     const drows=document.getElementById('rcDropRows'); if(drows) drows.style.display='none';
     await mountDocx(buffer,name);
-  } else {
+  } else if(/^(hwp|hwpx)$/.test(ext)){
     const prev=document.getElementById('rcPdfPreview'); if(prev) prev.style.display='none';
     const drows=document.getElementById('rcDropRows'); if(drows) drows.style.display='none';
     const wrap=document.getElementById('docxEditorWrap'); if(wrap) wrap.style.display='none';
     _activeEditorType='hwp';
     const msg=document.getElementById(cfg.msg||'rcEditorMsg');
     try{ if(msg) msg.textContent='편집기 로딩 중…'; await openHwpEditor(cfg.editor||'#rhwpEditor',buffer,name); if(msg) msg.style.display='none'; }
-    catch(e){ _activeEditorType=null; if(msg){ msg.style.display=''; msg.textContent='편집기 오류: '+e.message; } }
+    catch(e){
+      _activeEditorType='hwp-preview';
+      try{
+        if(msg) msg.textContent='편집기를 열지 못해 안전한 미리보기로 전환합니다.';
+        await previewKcareerHwp(cfg.editor||'#rhwpEditor',buffer,name);
+        if(msg) msg.style.display='none';
+      }catch(previewError){
+        _activeEditorType=null;
+        if(msg){ msg.style.display=''; msg.textContent='한글 문서 오류: '+previewError.message; }
+      }
+    }
+  } else {
+    _activeEditorType=null;
+    const msg=document.getElementById(cfg.msg||'rcEditorMsg');
+    if(msg){ msg.style.display=''; msg.textContent='지원하지 않는 문서 형식입니다: '+ext; }
   }
   _initDragPanel();
 }
@@ -4986,18 +5024,48 @@ function _cvCollectLines(sheet){ const lines=[]; const h=sheet.querySelector('h2
   sheet.querySelectorAll('table').forEach(function(tb){ tb.querySelectorAll('tr').forEach(function(tr){ const c=Array.from(tr.querySelectorAll('th,td')).map(function(x){return (x.textContent||'').trim();}).filter(Boolean); if(c.length) lines.push(c.join('  ')); }); });
   sheet.querySelectorAll(':scope > div[contenteditable]').forEach(function(d){ const t=(d.textContent||'').trim(); if(t) lines.push(t); });
   return lines; }
-function _cvHwpxXml(lines){ const esc=function(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
-  return '<?xml version="1.0" encoding="UTF-8"?>\n<hword:HWPML xmlns:hword="urn:schemas-microsoft-com:office:hwp" version="5.0.3.0">\n<hp:BODY xmlns:hp="urn:schemas-microsoft-com:office:hwp">\n<hp:SECTION>\n'+lines.map(function(t){return '<hp:p><hp:run><hp:t>'+esc(t)+'</hp:t></hp:run></hp:p>';}).join('\n')+'\n</hp:SECTION>\n</hp:BODY>\n</hword:HWPML>'; }
-async function _cvHwpxZip(outType){ const sheet=document.getElementById('cvSheet'); if(!sheet) return null;
-  try{ await _ensureJSZip(); }catch(e){ toast('HWPX 모듈 로드 실패 (인터넷 필요)'); return null; }
-  const zip=new JSZip(); zip.file('Contents/section0.xml',_cvHwpxXml(_cvCollectLines(sheet)));
-  zip.file('META-INF/container.xml','<?xml version="1.0"?><container><rootfiles><rootfile full-path="Contents/content.hpf"/></rootfiles></container>');
-  return await zip.generateAsync({type:outType,mimeType:'application/hwp+zip'}); }
-async function cvExportHwpx(){ const blob=await _cvHwpxZip('blob'); if(!blob) return;
+function _cvTableRows(table){
+  return Array.from(table.querySelectorAll('tr')).map(function(tr){
+    return Array.from(tr.querySelectorAll('th,td')).filter(function(cell){
+      return !cell.classList.contains('cv-noprint');
+    }).map(function(cell){ return (cell.textContent||'').trim(); });
+  }).filter(function(row){ return row.length; });
+}
+function _cvBuildHwpx(){
+  const sheet=document.getElementById('cvSheet'); if(!sheet) return null;
+  if(typeof HWPX==='undefined'||!window.PureunHwp) throw new Error('공통 한글 문서 도구를 불러오지 못했습니다.');
   const tpl=(document.getElementById('cvTpl')||{}).value||'resume';
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=(tpl==='cert'?'경력증명서':'이력서')+'_'+((get('profile_info')||{}).name||'')+'.hwpx'; a.click();
+  const title=tpl==='cert'?'경력증명서':'이력서';
+  let body=HWPX.docTitle(title);
+  sheet.querySelectorAll('table').forEach(function(table){
+    let rows=_cvTableRows(table); if(!rows.length) return;
+    const width=Math.max.apply(null,rows.map(function(row){return row.length;}));
+    rows=rows.map(function(row){ while(row.length<width) row.push(''); return row; });
+    body+=HWPX.tablePara(rows,HWPX.cols(new Array(width).fill(1/width)));
+    body+=HWPX.spacer();
+  });
+  sheet.querySelectorAll(':scope > div[contenteditable]').forEach(function(node){
+    const text=(node.textContent||'').trim(); if(text) body+=HWPX.para(text);
+  });
+  const person=((get('profile_info')||{}).name||'').replace(/[\\/:*?"<>|]/g,'');
+  const name=title+'_'+person+'.hwpx';
+  const bytes=HWPX.build(body);
+  PureunHwp.validate(bytes,name);
+  return {bytes:bytes,name:name};
+}
+async function _cvHwpxZip(outType){
+  const built=_cvBuildHwpx(); if(!built) return null;
+  if(outType==='blob') return new Blob([built.bytes],{type:'application/vnd.hancom.hwpx'});
+  return built.bytes.buffer.slice(built.bytes.byteOffset,built.bytes.byteOffset+built.bytes.byteLength);
+}
+async function cvExportHwpx(){
+  try{
+    const built=_cvBuildHwpx(); if(!built) return;
+    PureunHwp.download(built.bytes,built.name,'hwpx');
+  }catch(e){ toast('HWPX 저장 실패: '+((e&&e.message)||'알 수 없는 오류')); return; }
+  const tpl=(document.getElementById('cvTpl')||{}).value||'resume';
   if(typeof _logCv==='function') _logCv(tpl==='cert'?'경력증명서':'이력서','HWPX');
-  toast('HWPX 저장됨 — 한글에서 열어 레이아웃을 정리하세요(텍스트 기준)'); }
+  toast('HWPX 저장됨 — 표 구조와 입력 내용이 함께 저장되었습니다.'); }
 async function cvSendToEditor(){ const buf=await _cvHwpxZip('arraybuffer'); if(!buf) return;
   nav_to('page-resume-hub','이력서 생성·보관','이력서관리');
   const editBtn=document.querySelector('#rh-tabrow .tab[data-tab="rh-edit"]'); if(typeof rhTab==='function') rhTab('rh-edit', editBtn);

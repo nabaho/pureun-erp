@@ -44,6 +44,9 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <!-- Daum 우편번호 서비스 (무료, 가입 불필요) -->
 <script src="https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
+<!-- 푸른 공통 한글 엔진: 모든 ERP 한글 열기·미리보기·HWPX 저장을 한 경로로 처리 -->
+<script src="js/pu-hwp-engine.js?v=13"></script>
+<script src="hwpx_gen.js?v=13"></script>
 <!-- Firebase SDK: 실시간 동기화 + 11명 동시 접속 -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-check-compat.js"></script>
@@ -26951,6 +26954,45 @@ function _rhwpDocFromDataUrl(dataUrl, cb){
     _rhwpDocFromU8(u, cb);
   }catch(e){ cb('데이터 디코드 실패: '+(e&&e.message||e)); }
 }
+
+// 계약 양식에 첨부된 HWP/HWPX를 공통 엔진으로 안전하게 연다.
+function _erpHwpBytes(dataUrl){
+  var b64=String(dataUrl||'').split(',')[1]||'';
+  var bin=atob(b64); var buf=new Uint8Array(bin.length);
+  for(var i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
+  return buf;
+}
+function openContractHwpAttachment(att){
+  if(!att || !(att.data||att.dataUrl)){ showToast('첨부파일 데이터가 없습니다'); return; }
+  if(typeof PureunHwp==='undefined'){ showToast('한글 엔진을 불러오지 못했습니다'); return; }
+  var buf;
+  try{
+    buf=_erpHwpBytes(att.data||att.dataUrl);
+    PureunHwp.validate(buf,att.name);
+  }catch(err){ showToast('한글 파일 확인 실패: '+(err&&err.message||err)); return; }
+
+  var old=document.getElementById('contractHwpOverlay'); if(old) old.remove();
+  var overlay=document.createElement('div'); overlay.id='contractHwpOverlay'; overlay.className='modal-bg';
+  var modal=document.createElement('div'); modal.className='modal'; modal.style.cssText='width:min(900px,96vw);max-height:94vh;display:flex;flex-direction:column';
+  var head=document.createElement('div'); head.className='modal-h';
+  var title=document.createElement('div'); title.className='t'; title.textContent='📕 한글 열기 · '+(att.name||'첨부파일');
+  var close=document.createElement('button'); close.className='x'; close.textContent='×'; close.onclick=function(){overlay.remove();};
+  head.appendChild(title); head.appendChild(close);
+  var body=document.createElement('div'); body.className='modal-b'; body.style.cssText='flex:1;overflow:auto;background:#e2e8f0';
+  var host=document.createElement('div'); host.id='contractHwpEditor'; host.className='erp-hwp-preview';
+  body.appendChild(host);
+  var foot=document.createElement('div'); foot.className='modal-f contract-hwp-actions';
+  var save=document.createElement('button'); save.className='btn-secondary'; save.textContent='원본 저장';
+  save.onclick=function(){PureunHwp.download(buf,att.name);};
+  var done=document.createElement('button'); done.className='btn-primary'; done.textContent='닫기'; done.onclick=function(){overlay.remove();};
+  foot.appendChild(save); foot.appendChild(done);
+  modal.appendChild(head); modal.appendChild(body); modal.appendChild(foot); overlay.appendChild(modal); document.body.appendChild(overlay);
+  overlay.onclick=function(e){if(e.target===overlay) overlay.remove();};
+
+  PureunHwp.createEditor('#contractHwpEditor',buf,att.name)
+    .catch(function(){ return PureunHwp.renderPreview(host,buf,att.name); })
+    .catch(function(err){ host.textContent='미리보기를 만들지 못했습니다. 원본 저장 후 한글에서 열어 주세요. ('+(err&&err.message||err)+')'; });
+}
 function rhwpFullText(doc){
   var sc=doc.getSectionCount(); var parts=[];
   for(var s=0;s<sc;s++){
@@ -27738,6 +27780,17 @@ function ContractFormPrintModal(props){
     showToast('인쇄 다이얼로그에서 "PDF로 저장" 선택 (선택 ' + selectedForms.length + '건)');
     doPrintMulti();
   }
+  function doHwpxMulti(){
+    if(selectedForms.length === 0){ showToast('체크된 양식이 없습니다'); return; }
+    selectedForms.forEach(function(f){
+      var rendered=fillContractVars(curBody(f),contract);
+      var body=HWPX.docTitle(f.name)+HWPX.bodyPara(rendered);
+      var company=(contract.companyName||(contract.company&&contract.company.name)||'업체').replace(/[\\/:*?"<>|]/g,'_');
+      var base=(company+'_'+f.name).replace(/[\\/:*?"<>|]/g,'_');
+      HWPX.download(body,base+'.hwpx');
+    });
+    showToast('선택한 계약서 한글 파일 '+selectedForms.length+'건 저장 완료');
+  }
   function doEmailMulti(){
     if(selectedForms.length === 0){ showToast('체크된 양식이 없습니다'); return; }
     var co = contract.company || {};
@@ -27842,8 +27895,12 @@ function ContractFormPrintModal(props){
           h('div', { style:{ fontWeight:700, marginBottom:'4px' } }, '📎 체크된 양식의 원본 첨부:'),
           selectedForms.map(function(f){
             return (f.attachments||[]).map(function(att, i){
-              return h('a', { key:f.id+'-'+i, href:att.data, download:att.name,
-                style:{ color:'#1e40af', textDecoration:'underline', marginRight:'8px', display:'inline-block' } }, att.name);
+              var isHwp=/\.hwpx?$/i.test(att.name||'');
+              return isHwp
+                ? h('button', { key:f.id+'-'+i, onClick:function(){openContractHwpAttachment(att);},
+                    style:{ color:'#1e40af', background:'#fff', border:'1px solid #bfdbfe', borderRadius:'5px', padding:'4px 8px', marginRight:'8px', marginBottom:'4px', cursor:'pointer' } }, '📕 한글 열기 · '+att.name)
+                : h('a', { key:f.id+'-'+i, href:att.data||att.dataUrl, download:att.name,
+                    style:{ color:'#1e40af', textDecoration:'underline', marginRight:'8px', display:'inline-block' } }, att.name);
             });
           })
         ),
@@ -27878,7 +27935,7 @@ function ContractFormPrintModal(props){
       ),
       h('div', { className:'modal-f', style:{ justifyContent:'space-between' } },
         h('button', { className:'btn-secondary', onClick:props.onClose }, '닫기'),
-        h('div', { style:{ display:'flex', gap:'6px' } },
+        h('div', { className:'contract-hwp-actions', style:{ display:'flex', gap:'6px' } },
           // 다중 종류 시 일괄 인쇄 (모든 종류의 체크 양식)
           kindsArr.length > 1 && h('button', { onClick:doPrintAll,
             style:{ background:'#fff', color:'#2563eb', border:'1px solid #2563eb', padding:'7px 14px', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer' },
@@ -27888,6 +27945,9 @@ function ContractFormPrintModal(props){
           h('button', { onClick:doPdfMulti, disabled:selectedForms.length===0,
             style:{ background:'#fff', color:'#dc2626', border:'1px solid #dc2626', padding:'7px 14px', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor: selectedForms.length>0 ? 'pointer' : 'not-allowed', opacity: selectedForms.length>0 ? 1 : .5 } },
             '📄 PDF (' + selectedForms.length + ')'),
+          h('button', { onClick:doHwpxMulti, disabled:selectedForms.length===0,
+            style:{ background:'#fff', color:'#1e40af', border:'1px solid #2563eb', padding:'7px 14px', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:selectedForms.length>0?'pointer':'not-allowed', opacity:selectedForms.length>0?1:.5 } },
+            '📕 한글 (' + selectedForms.length + ')'),
           h('button', { onClick:doPrintMulti, disabled:selectedForms.length===0,
             className:'btn-primary',
             style:{ opacity: selectedForms.length>0 ? 1 : .5 } }, '🖨️ 인쇄 (' + selectedForms.length + ')')
@@ -66828,6 +66888,14 @@ function PayrollPayslip(props){
     var body = encodeURIComponent(buildSlipBody(empSid, props.selYM));
     window.location.href = 'mailto:'+emp.email+'?subject='+subject+'&body='+body;
   }
+  function exportSlipHwpx(empSid){
+    if(typeof HWPX==='undefined'){ showToast('한글 저장 기능을 불러오지 못했습니다'); return; }
+    var emp=users.find(function(x){return x.sid===empSid;})||{};
+    var body=HWPX.docTitle(props.selYM+' 급여명세서')+HWPX.bodyPara(buildSlipBody(empSid,props.selYM));
+    var base=('급여명세서_'+props.selYM+'_'+(emp.name||empSid||'직원')).replace(/[\\/:*?"<>|]/g,'_');
+    HWPX.download(body,base+'.hwpx');
+    showToast('급여명세서 한글 파일 저장 완료');
+  }
 
   // 레코드 필드 업데이트 (모든 필드 통합)
   function updateField(field, value){
@@ -66888,6 +66956,8 @@ function PayrollPayslip(props){
           style:{padding:'8px 12px',background:'#2563eb',color:'#fff',border:'none',borderRadius:'6px',cursor:'pointer',fontSize:'12px',fontWeight:700,flexShrink:0,whiteSpace:'nowrap'}}, '📨 일괄 이메일'),
         h('button', { onClick:printSlip,
           style:{padding:'8px 14px',background:'#1e40af',color:'#fff',border:'none',borderRadius:'6px',cursor:'pointer',fontSize:'12px',fontWeight:700,flexShrink:0,whiteSpace:'nowrap'}}, '🖨 인쇄')
+        ,h('button', { onClick:function(){exportSlipHwpx(sid);},
+          style:{padding:'8px 14px',background:'#1e40af',color:'#fff',border:'none',borderRadius:'6px',cursor:'pointer',fontSize:'12px',fontWeight:700,flexShrink:0,whiteSpace:'nowrap'}}, '📕 한글 저장')
       )
     ),
     // 최저임금 경고
@@ -68188,6 +68258,23 @@ function EmploymentContractModal(props){
     if(ed <= oneMonth) return { color:'#854d0e', bg:'#fffbeb', label:'⏰ 1개월 내 만료' };
     return null;
   }
+  function exportEmploymentHwpx(c){
+    c=c||form||list[0];
+    if(!c){ showToast('저장할 근로계약서를 선택해 주세요'); return; }
+    if(typeof HWPX==='undefined'){ showToast('한글 저장 기능을 불러오지 못했습니다'); return; }
+    var rows=[
+      ['근로자',u.name||''], ['계약 종류',c.type||'근로계약서'], ['체결일',c.signedDate||''],
+      ['계약 기간',(c.startDate||'')+' ~ '+(c.endDate||'기한 없음')], ['직책',c.position||u.title||''],
+      ['연봉',c.salary?c.salary.toLocaleString()+'원':''], ['근무시간',c.workHours||''], ['근무일',c.workDays||''],
+      ['수습 기간',c.probationPeriod||''], ['특이사항',c.notes||'']
+    ];
+    var body=HWPX.docTitle((c.type||'근로계약서')+' 초안')
+      +HWPX.tablePara(rows,HWPX.cols([0.25,0.75]))
+      +HWPX.bodyPara('※ 실제 근로조건과 법정 필수사항을 최종 확인한 뒤 서명·교부해 주세요.');
+    var base=((c.type||'근로계약서')+'_'+(u.name||u.sid||'근로자')+'_'+(c.signedDate||todayYMD())).replace(/[\\/:*?"<>|]/g,'_');
+    HWPX.download(body,base+'.hwpx');
+    showToast('근로계약서 한글 초안 저장 완료');
+  }
 
   return h('div', { className:'modal-bg', onClick:function(e){if(e.target===e.currentTarget)props.onClose();} },
     h('div', { className:'modal', style:{width:'700px', maxHeight:'92vh', display:'flex', flexDirection:'column'}, onClick:function(e){e.stopPropagation();} },
@@ -68233,6 +68320,8 @@ function EmploymentContractModal(props){
                         h('td', { style:{padding:'7px 8px', textAlign:'center'} },
                           h('button', { onClick:function(){openEdit(c);},
                             style:{padding:'2px 7px', background:'#eff6ff', color:'#1e40af', border:'1px solid #bfdbfe', borderRadius:'5px', fontSize:'10.5px', cursor:'pointer', fontWeight:600, marginRight:'2px'} }, '수정'),
+                          h('button', { onClick:function(){exportEmploymentHwpx(c);},
+                            style:{padding:'2px 7px', background:'#eff6ff', color:'#1e40af', border:'1px solid #bfdbfe', borderRadius:'5px', fontSize:'10.5px', cursor:'pointer', fontWeight:600, marginRight:'2px'} }, '📕 한글'),
                           c.status==='active' && h('button', { onClick:function(){expire(c.id);},
                             style:{padding:'2px 7px', background:'#fffbeb', color:'#854d0e', border:'1px solid #fde68a', borderRadius:'5px', fontSize:'10.5px', cursor:'pointer', fontWeight:600, marginRight:'2px'} }, '만료'),
                           h('button', { onClick:function(){del(c.id);},

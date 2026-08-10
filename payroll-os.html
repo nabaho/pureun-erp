@@ -16,6 +16,8 @@
 <script src="js/pu-health.js"></script>
 <script src="js/pu-version.js"></script>
 <script src="js/pu-backup.js"></script>
+<script src="js/pu-hwp-engine.js?v=1"></script>
+<script src="hwpx_gen.js?v=13"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <style>
 :root{--navy:#2E3A8C;--violet:#7C6CE0;--ok:#2E7D4F;--warn:#B26A00;--bad:#C43D3D;
@@ -83,6 +85,8 @@ h1{font-size:20px;margin-bottom:4px}.sub{color:var(--sub);font-size:13px;margin-
   .slip{padding:20px 14px;overflow-x:auto}
   .slip .shead{gap:10px}.slip .ttl{font-size:16px;letter-spacing:3px;white-space:nowrap}
   .slip .cols{display:block}.slip .cols>div+div{margin-top:14px}
+  .sub.noprint .btn{display:block;width:100%;margin:8px 0 0!important;min-height:44px}
+  .report-hwp-action{width:100%;min-height:44px;margin:0 0 10px!important}
 }
 @media print{header,nav,.noprint{display:none !important}body{background:#fff}main{padding:0}.layout{min-height:0}.slip{border:none;border-radius:0;max-width:none;margin:0}}
 </style>
@@ -390,6 +394,86 @@ function slipHTML(site,month,e,payday,notice,draft){
 }
 function saveNotice(){ var v=document.getElementById('slipnotice').value; dbSet('payslip_notice',v); }
 window.saveNotice=saveNotice;
+/* 급여명세서 한글 저장: 화면의 계산 결과를 브라우저 안에서만 HWPX로 조립한다. */
+function payrollHwpxText(el){
+  return String(el&&el.textContent||'').replace(/\s+/g,' ').trim();
+}
+function payrollHwpxRows(table){
+  return Array.prototype.map.call(table.querySelectorAll('tr'),function(tr){
+    return Array.prototype.map.call(tr.querySelectorAll('th,td'),payrollHwpxText);
+  }).filter(function(row){return row.length;});
+}
+function exportPayrollSlipsHwpx(){
+  try{
+    if(!window.HWPX||!window.PureunHwp) throw new Error('한글 문서 기능을 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.');
+    var slips=Array.prototype.slice.call(document.querySelectorAll('.slip'));
+    if(!slips.length) throw new Error('저장할 급여명세서가 없습니다.');
+    var body='';
+    slips.forEach(function(slip,index){
+      var title=payrollHwpxText(slip.querySelector('.ttl'))||'급여명세서';
+      var site=payrollHwpxText(slip.querySelector('.co'));
+      body+=HWPX.docTitle(title,{pageBreak:index>0});
+      body+=HWPX.docSub(site+(slip.classList.contains('draft')?' · 미확정 검토용':''));
+      var meta=slip.querySelector('.meta');
+      if(meta){
+        var metaCells=Array.prototype.map.call(meta.querySelectorAll('td'),payrollHwpxText);
+        if(metaCells.length) body+=HWPX.tablePara([metaCells],HWPX.cols(metaCells.map(function(){return 1/metaCells.length;})),{noHead:true});
+      }
+      Array.prototype.forEach.call(slip.querySelectorAll('.cols>div'),function(section){
+        var heading=payrollHwpxText(section.querySelector('.sec'));
+        if(heading) body+=HWPX.bodyPara(heading);
+        var table=section.querySelector('table');
+        var rows=table?payrollHwpxRows(table):[];
+        if(rows.length) body+=HWPX.tablePara([['항목','금액']].concat(rows),HWPX.cols([.58,.42]));
+      });
+      ['.net','.calc','.snote','.foot'].forEach(function(sel){
+        var line=payrollHwpxText(slip.querySelector(sel));
+        if(line) body+=HWPX.bodyPara(line);
+      });
+    });
+    var safe=function(v){return String(v||'').replace(/[\\/:*?"<>|]/g,'_').replace(/\s+/g,'_');};
+    var fileName=safe(App.site)+'_'+safe(App.month)+'_급여명세서.hwpx';
+    var bytes=HWPX.build(body);
+    PureunHwp.validate(bytes,fileName);
+    PureunHwp.download(bytes,fileName,'hwpx');
+  }catch(err){ alert(err&&err.message?err.message:String(err)); }
+}
+window.exportPayrollSlipsHwpx=exportPayrollSlipsHwpx;
+function exportPayrollReportHwpx(){
+  try{
+    if(!window.HWPX||!window.PureunHwp) throw new Error('한글 문서 기능을 불러오지 못했습니다.');
+    var main=document.getElementById('main');
+    var tables=Array.prototype.slice.call(main.querySelectorAll('table'));
+    if(!tables.length) throw new Error('저장할 상세 결과표가 없습니다.');
+    var title=payrollHwpxText(main.querySelector('h1'))||'급여 업무 보고서';
+    var summary=payrollHwpxText(main.querySelector('.sub'));
+    var body=HWPX.docTitle(title)+HWPX.docSub(summary);
+    tables.forEach(function(table,index){
+      var rows=payrollHwpxRows(table);
+      if(!rows.length) return;
+      var width=Math.max.apply(null,rows.map(function(row){return row.length;}));
+      rows=rows.map(function(row){while(row.length<width)row.push('');return row;});
+      body+=HWPX.tablePara(rows,HWPX.cols(new Array(width).fill(1/width)));
+      if(index<tables.length-1) body+=HWPX.spacer();
+    });
+    var fileName=title.replace(/[\\/:*?"<>|]/g,'_').replace(/\s+/g,'_')+'.hwpx';
+    var bytes=HWPX.build(body);
+    PureunHwp.validate(bytes,fileName);
+    PureunHwp.download(bytes,fileName,'hwpx');
+  }catch(err){ alert(err&&err.message?err.message:String(err)); }
+}
+function addPayrollReportHwpxAction(main){
+  if(!main||!main.querySelector('table')) return;
+  var button=document.createElement('button');
+  button.className='btn sec noprint report-hwp-action';
+  button.type='button';
+  button.textContent='현재 결과표 한글(HWPX) 저장';
+  button.onclick=exportPayrollReportHwpx;
+  var first=main.querySelector('table');
+  var host=first.parentElement;
+  host.parentElement.insertBefore(button,host);
+}
+window.exportPayrollReportHwpx=exportPayrollReportHwpx;
 function screenSlip(){
   var pay=dbGet('payroll',null);
   var h='<h1>명세서</h1>';
@@ -423,7 +507,8 @@ function screenSlip(){
   var payday=paydayOf(App.site);
   h+='<div class="sub noprint"><a href="#" onclick="goBack();return false">← '+App.site+'</a> · <b>'+App.month+'</b> 명세서 '+slipEmps.length+'장 '+
      (draft?'<span class="badge warn">미확정 — 검토용 워터마크</span>':'<span class="badge ok">확정본</span>')+
-     ' <button class="btn" style="margin-left:8px" onclick="window.print()">인쇄 / PDF 저장</button></div>';
+     ' <button class="btn" style="margin-left:8px" onclick="window.print()">인쇄 / PDF 저장</button>'+
+     ' <button class="btn sec" style="margin-left:6px" onclick="exportPayrollSlipsHwpx()">한글(HWPX) 저장</button></div>';
   h+='<div class="noprint" style="background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-bottom:14px">'+
      '<div style="font-size:12.5px;color:var(--sub);margin-bottom:6px">명세서 하단 안내 문구(연차사용촉진 등) — 모든 명세서에 함께 인쇄됩니다</div>'+
      '<textarea id="slipnotice" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px;font-family:inherit;font-size:12.5px" rows="2">'+String(notice).replace(/</g,'&lt;')+'</textarea>'+
@@ -1011,7 +1096,7 @@ function render(){
   if(App.screen==='cards') m.innerHTML=screenCards();
   else if(App.screen==='payroll') m.innerHTML=screenPayroll();
   else if(App.screen==='slip') m.innerHTML=screenSlip();
-  else if(App.screen==='report') m.innerHTML=screenReport();
+  else if(App.screen==='report') { m.innerHTML=screenReport(); addPayrollReportHwpxAction(m); }
   else m.innerHTML=screenInbox();
 }
 function importCards(){var i=document.createElement('input');i.type='file';i.accept='.json';

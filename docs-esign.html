@@ -28,6 +28,9 @@
   .b-active{background:#dcfce7;color:#166534}.b-closed{background:#f1f5f9;color:#64748b}
   .save-state{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;border:1px solid #475569;border-radius:99px;padding:3px 8px;font-size:11px;font-weight:700;color:#cbd5e1}
   .save-state::before{content:'';width:7px;height:7px;border-radius:50%;background:#94a3b8}.save-state.saving::before{background:#fbbf24}.save-state.saved::before{background:#4ade80}.save-state.failed::before{background:#fb7185}
+  .hwp-local-note{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;border-radius:9px;padding:10px 12px;font-size:12px;line-height:1.55;margin:10px 0}
+  .hwp-file-card{border:1px solid #dbe3ee;border-radius:10px;padding:12px;margin:10px 0;background:#f8fafc}
+  .hwp-preview{display:none;min-height:360px;max-height:58vh;border:1px solid #cbd5e1;border-radius:10px;margin-top:12px;overflow:auto}
   @media(max-width:700px){
     .top{padding:10px 12px;gap:8px;flex-wrap:wrap}.top h1{width:100%;font-size:14px}.top #whoami{margin-right:auto}
     .main{margin:12px auto;padding:0 10px}.card{padding:13px;overflow-x:auto}
@@ -35,6 +38,7 @@
     table{min-width:640px}#viewDetail{overflow-x:auto}
     .modal-bg{padding:10px;align-items:flex-start;overflow-y:auto}.modal{padding:17px;max-height:none;margin:8px 0;overflow-x:auto}
     .modal input,.modal select{max-width:100%}.btn{padding:9px 12px}
+    .hwp-preview{min-height:300px;max-height:none}.hwp-actions{display:grid!important;grid-template-columns:1fr 1fr}.hwp-actions .btn{width:100%}
   }
 </style>
 </head>
@@ -73,6 +77,8 @@
 <script src="js/utils.js"></script>
 <script src="js/esign-crypto.js"></script>
 <script src="js/esign-docs.js"></script>
+<script src="js/pu-hwp-engine.js?v=1"></script>
+<script src="js/pu-hwp-store.js?v=1"></script>
 <script>
 'use strict';
 var FB_CONFIG = {
@@ -359,10 +365,108 @@ function renderDetailActions() {
   var m = (casesCache[curCaseId] || {}).meta || {};
   $('detailActions').innerHTML =
     '<button class="btn btn-sub" onclick="openArrears()">💰 체불내역</button> '
+    + '<button class="btn btn-sub" onclick="openCaseHwp()">📄 한글 원본</button> '
     + '<button class="btn btn-pri" onclick="genDocs()">📑 서류 일괄 생성</button> '
     + (m.status === 'active'
       ? '<button class="btn btn-sub" onclick="closeCase()">사건 마감</button>'
       : '<button class="btn btn-danger" onclick="purgeCase()">🗑 제출 데이터 파기</button>');
+}
+
+// 사건별 HWP/HWPX 원본은 관리자 기기의 브라우저에만 보관한다.
+// 공개 근로자 서명 화면(sign.html)과 RTDB에는 파일을 전송하지 않는다.
+var caseHwpModal = null;
+var caseHwpEditor = null;
+
+function closeCaseHwp() {
+  if (caseHwpEditor && typeof caseHwpEditor.destroy === 'function') {
+    try { caseHwpEditor.destroy(); } catch (_) {}
+  }
+  caseHwpEditor = null;
+  if (caseHwpModal) caseHwpModal.remove();
+  caseHwpModal = null;
+}
+
+function hwpFileSummary(record) {
+  if (!record) return '<b>등록된 한글 원본이 없습니다.</b><div style="color:#64748b;margin-top:4px">HWP 또는 HWPX 파일을 선택해 주세요.</div>';
+  var kb = Math.max(1, Math.round((record.size || 0) / 1024));
+  var when = record.savedAt ? new Date(record.savedAt).toLocaleString('ko-KR') : '';
+  return '<b>' + EsignDocs.esc(record.name || '한글 원본') + '</b>'
+    + '<div style="color:#64748b;margin-top:4px">' + String(record.format || '').toUpperCase() + ' · ' + kb.toLocaleString() + 'KB · ' + EsignDocs.esc(when) + '</div>';
+}
+
+async function refreshCaseHwp() {
+  if (!caseHwpModal) return null;
+  var record = await PureunHwpStore.get('esign-case', curCaseId);
+  var status = caseHwpModal.querySelector('#caseHwpStatus');
+  if (status) status.innerHTML = hwpFileSummary(record);
+  ['caseHwpOpen', 'caseHwpDownload', 'caseHwpDelete'].forEach(function (id) {
+    var btn = caseHwpModal.querySelector('#' + id); if (btn) btn.disabled = !record;
+  });
+  return record;
+}
+
+async function previewCaseHwp() {
+  try {
+    var record = await PureunHwpStore.get('esign-case', curCaseId);
+    if (!record) { showToast('먼저 한글 원본을 등록해 주세요'); return; }
+    var host = caseHwpModal.querySelector('#caseHwpPreview');
+    host.style.display = 'block';
+    host.innerHTML = '<div style="padding:24px;color:#64748b">한글 문서를 여는 중…</div>';
+    try {
+      var opened = await PureunHwp.createEditor('#caseHwpPreview', record.bytes, record.name);
+      caseHwpEditor = opened.editor;
+    } catch (_) {
+      await PureunHwp.renderPreview(host, record.bytes, record.name);
+    }
+  } catch (e) { showToast(e.message || '문서를 열지 못했습니다'); }
+}
+
+async function openCaseHwp() {
+  if (!curCaseId) return;
+  closeCaseHwp();
+  var bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = '<div class="modal" style="max-width:920px">'
+    + '<div style="display:flex;align-items:center;gap:10px"><h3 style="flex:1">📄 사건 한글 원본</h3><button class="btn btn-sub" id="caseHwpClose">닫기</button></div>'
+    + '<div class="hwp-local-note"><b>관리자 전용</b> · 이 파일은 현재 PC의 이 브라우저에만 보관되며 근로자 서명 링크에는 전송되지 않습니다.</div>'
+    + '<div id="caseHwpStatus" class="hwp-file-card">불러오는 중…</div>'
+    + '<input id="caseHwpInput" type="file" accept=".hwp,.hwpx" hidden>'
+    + '<div class="hwp-actions" style="display:flex;flex-wrap:wrap;gap:8px">'
+    + '<button class="btn btn-pri" id="caseHwpChoose">HWP/HWPX 등록</button>'
+    + '<button class="btn btn-sub" id="caseHwpOpen">열기</button>'
+    + '<button class="btn btn-sub" id="caseHwpDownload">원본 다운로드</button>'
+    + '<button class="btn btn-danger" id="caseHwpDelete">삭제</button></div>'
+    + '<div id="caseHwpPreview" class="hwp-preview"></div></div>';
+  document.body.appendChild(bg);
+  caseHwpModal = bg;
+  bg.querySelector('#caseHwpClose').onclick = closeCaseHwp;
+  bg.onclick = function (e) { if (e.target === bg) closeCaseHwp(); };
+  var input = bg.querySelector('#caseHwpInput');
+  bg.querySelector('#caseHwpChoose').onclick = function () { input.click(); };
+  input.onchange = async function () {
+    if (!input.files || !input.files[0]) return;
+    try {
+      await PureunHwpStore.putFile('esign-case', curCaseId, input.files[0]);
+      await refreshCaseHwp();
+      showToast('한글 원본을 이 기기에 보관했습니다');
+    } catch (e) { showToast(e.message || '한글 원본을 등록하지 못했습니다'); }
+    input.value = '';
+  };
+  bg.querySelector('#caseHwpOpen').onclick = previewCaseHwp;
+  bg.querySelector('#caseHwpDownload').onclick = async function () {
+    var record = await PureunHwpStore.get('esign-case', curCaseId);
+    if (record) PureunHwp.download(record.bytes, record.name, record.format);
+  };
+  bg.querySelector('#caseHwpDelete').onclick = function () {
+    customConfirm('이 기기에 보관된 사건 한글 원본을 삭제할까요?', async function () {
+      await PureunHwpStore.remove('esign-case', curCaseId);
+      var host = bg.querySelector('#caseHwpPreview'); if (host) { host.style.display = 'none'; host.innerHTML = ''; }
+      await refreshCaseHwp();
+      showToast('한글 원본을 삭제했습니다');
+    });
+  };
+  try { await refreshCaseHwp(); }
+  catch (e) { $('caseHwpStatus').textContent = e.message || '한글 원본 보관함을 열지 못했습니다.'; }
 }
 
 // 서류 4종 생성 — 확인(confirmed)된 제출만 (없으면 오류 제외 전체)

@@ -11,6 +11,7 @@
 <script src="js/pu-health.js"></script>
 <script src="js/pu-version.js"></script>
 <script src="js/pu-backup.js"></script>
+<script src="js/pu-hwp-engine.js?v=1"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -2001,12 +2002,13 @@ function clearTpl(key){ confirmM('등록된 원본 서식을 삭제할까요?',{
 
 // ═══════════ 실제 HWP 서식 — 원본 .hwp 등록 + 브라우저 편집(rhwp)·저장 ═══════════
 // 저장은 IndexedDB('hwp:'+kind), 편집기는 rhwp studio(iframe)+@rhwp/editor(esm.sh). 데이터 자동채움 없음(수동 편집).
-var RHWP_EDITOR_URL='https://esm.sh/@rhwp/editor';
+var RHWP_EDITOR_URL=(window.PUREUN_HWP_CONFIG&&window.PUREUN_HWP_CONFIG.editorUrl)||'https://esm.sh/@rhwp/editor';
 function pickHwp(kind){
   var inp=document.createElement('input'); inp.type='file'; inp.accept='.hwp,.hwpx';
   inp.onchange=function(ev){ var file=ev.target.files&&ev.target.files[0]; if(!file)return;
     var rd=new FileReader();
-    rd.onload=function(){ idbPut('hwp:'+kind,rd.result).then(function(){ S._hwpChk=false;
+    rd.onload=function(){ try{ PureunHwp.validate(rd.result,file.name); }catch(e){ toast(e.message,'err'); return; }
+      idbPut('hwp:'+kind,rd.result).then(function(){ S._hwpChk=false;
       _formsRerender(); toast('원본 HWP 등록: '+file.name); })
       .catch(function(e){ toast('저장 실패: '+e.message,'err'); }); };
     rd.readAsArrayBuffer(file); };
@@ -2038,7 +2040,8 @@ function pickHwpBulk(){
     var matched=plan.filter(function(p){return p[0];});
     if(!matched.length){ toast('파일명에서 서식을 못 알아냈어요 — 서식별 [등록]으로 개별 등록하세요','warn'); return; }
     Promise.all(matched.map(function(p){ return new Promise(function(res){ var rd=new FileReader();
-      rd.onload=function(){ idbPut('hwp:'+p[0],rd.result).then(function(){res(true);}).catch(function(){res(false);}); };
+      rd.onload=function(){ try{ PureunHwp.validate(rd.result,p[1].name); }catch(e){res(false);return;}
+        idbPut('hwp:'+p[0],rd.result).then(function(){res(true);}).catch(function(){res(false);}); };
       rd.onerror=function(){res(false);}; rd.readAsArrayBuffer(p[1]); }); }))
       .then(function(oks){ S._hwpChk=false; _formsRerender();
         var okN=oks.filter(Boolean).length, failN=oks.length-okN;      // 실제 저장 성공분만 집계
@@ -2047,46 +2050,52 @@ function pickHwpBulk(){
         toast(okN+'개 자동 등록'+(failN?' · 실패 '+failN+'개':'')+(un.length?' · 미매칭 '+un.length+'개는 개별 등록':''), failN?'warn':''); }); };
   inp.click();
 }
-var _hwpEditor=null, _hwpName='서식';
+var _hwpEditor=null, _hwpName='서식', _hwpOriginalBuf=null, _hwpOriginalFormat='hwp';
 function openHwpEditor(kind){
   idbGet('hwp:'+kind).then(function(buf){
     if(!buf){ toast('먼저 이 서식의 원본 .hwp를 등록하세요','warn'); return; }
     var label=docLabel(kind); _hwpName=label;
+    try{ var _hm=PureunHwp.validate(buf,''); _hwpOriginalFormat=_hm.format; _hwpOriginalBuf=buf; }
+    catch(e){ toast('HWP 문서 검사 실패: '+e.message,'err'); return; }
     var f=funds[S.formFund]||{};
     var ref=[['기금법인명',f.name],['약칭',f.short_name],['대표자',f.chairman],['소재지',f.address],
       ['인가번호',f.inka_no],['인가일',f.inka_date],['법인등록번호',f.corp_reg_no],['설립등기일',f.reg_date],['고유번호',f.tax_id_no]]
       .filter(function(r){return r[1];}).map(function(r){return '<div style="margin-bottom:6px"><span style="color:var(--sub);font-size:11px">'+esc(r[0])+'</span><br><b style="font-size:12.5px;user-select:all">'+esc(r[1])+'</b></div>';}).join('')
       ||'<div class="muted" style="font-size:12px">이 기금의 기본정보가 아직 비어 있습니다.</div>';
     var m=document.createElement('div'); m.id='hwpModal';
-    m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;flex-direction:column;padding:14px';
-    m.innerHTML='<div style="display:flex;align-items:center;gap:8px;background:var(--bg,#fff);padding:9px 12px;border-radius:9px 9px 0 0">'
+    m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;flex-direction:column;padding:min(14px,2vw)';
+    m.innerHTML='<style>@media(max-width:700px){#hwpModal .hwpHead{gap:5px!important;padding:7px!important}#hwpModal .hwpHead span{width:100%}#hwpModal .hwpData{display:none}#hwpModal button{font-size:11px;padding:6px}#hwpModal canvas{max-width:100%!important;height:auto!important}}</style>'
+      +'<div class="hwpHead" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:var(--bg,#fff);padding:9px 12px;border-radius:9px 9px 0 0">'
       +'<b style="font-size:14px">📄 HWP 편집 — '+esc(label)+'</b>'
       +'<span style="font-size:11.5px;color:var(--sub)">rhwp 편집기(외부) · 자료는 브라우저 안에서만 처리</span><span style="flex:1"></span>'
       +'<button class="primary" onclick="hwpExport(\'hwp\')">💾 .hwp로 저장</button>'
       +'<button onclick="hwpExport(\'hwpx\')">💾 .hwpx로 저장</button>'
+      +'<button onclick="hwpDownloadOriginal()">⬇ 원본 보관</button>'
       +'<button onclick="closeHwp()">✖ 닫기</button></div>'
       +'<div style="flex:1;display:flex;min-height:0;background:#fff;border-radius:0 0 9px 9px;overflow:hidden">'
       +'<div id="hwpHost" style="flex:1;min-width:0"></div>'
-      +'<div style="width:230px;border-left:1px solid var(--line,#eee);padding:12px;overflow:auto"><div style="font-size:12px;font-weight:700;margin-bottom:8px">📋 ['+esc(f.short_name||f.name||'')+'] 데이터<br><span style="font-weight:400;color:var(--sub);font-size:10.5px">클릭해 복사 후 서식에 붙여넣기</span></div>'+ref+'</div></div>'
+      +'<div class="hwpData" style="width:230px;border-left:1px solid var(--line,#eee);padding:12px;overflow:auto"><div style="font-size:12px;font-weight:700;margin-bottom:8px">📋 ['+esc(f.short_name||f.name||'')+'] 데이터<br><span style="font-weight:400;color:var(--sub);font-size:10.5px">클릭해 복사 후 서식에 붙여넣기</span></div>'+ref+'</div></div>'
       +'<div id="hwpStat" style="background:#111;color:#9f9;font-size:11px;padding:5px 12px;border-radius:0 0 9px 9px">편집기 불러오는 중…</div>';
     document.body.appendChild(m);
     var stat=function(t){ var s=$('hwpStat'); if(s)s.textContent=t; };
-    import(RHWP_EDITOR_URL).then(function(mod){ stat('편집기 초기화 중…'); return mod.createEditor('#hwpHost'); })
-      .then(function(ed){ _hwpEditor=ed; stat('원본 HWP 로드 중…'); return ed.loadFile(buf,label+'.hwp'); })
-      .then(function(r){ stat('로드 완료 · '+((r&&r.pageCount)||'?')+'쪽 · 편집 후 [💾 저장]으로 .hwp/.hwpx 내려받기'); })
-      .catch(function(e){ stat('편집기 로드 실패: '+(e&&e.message||e)+' — 인터넷/차단 여부 확인'); });
+    PureunHwp.createEditor('#hwpHost',buf,label+'.'+_hwpOriginalFormat,{editorUrl:RHWP_EDITOR_URL})
+      .then(function(opened){ _hwpEditor=opened.editor; var r=opened.result;
+        stat('문서 검사 완료 · '+((r&&r.pageCount)||'?')+'쪽 · 편집 후 [💾 저장]으로 .hwp/.hwpx 내려받기'); })
+      .catch(function(){ stat('고급 편집기를 불러오지 못했습니다. 안전한 읽기 전용 미리보기로 전환합니다.');
+        return PureunHwp.renderPreview($('hwpHost'),buf,label+'.'+_hwpOriginalFormat)
+          .catch(function(e){ stat('미리보기 실패: '+(e&&e.message||e)+' · [원본 보관]으로 파일을 내려받으세요.'); }); });
   });
 }
 function hwpExport(fmt){
   if(!_hwpEditor){ toast('편집기가 아직 준비되지 않았습니다','warn'); return; }
-  var p=(fmt==='hwpx')?_hwpEditor.exportHwpx():_hwpEditor.exportHwp();
-  p.then(function(bytes){ var blob=new Blob([bytes],{type:fmt==='hwpx'?'application/vnd.hancom.hwpx':'application/x-hwp'});
-    var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=_hwpName+'.'+fmt;
-    document.body.appendChild(a); a.click(); setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1500);
+  PureunHwp.exportFrom(_hwpEditor,fmt).then(function(bytes){ PureunHwp.download(bytes,_hwpName+'.'+fmt,fmt);
     toast('내보내기 완료: '+_hwpName+'.'+fmt); })
    .catch(function(e){ toast('내보내기 실패: '+(e&&e.message||e),'err'); });
 }
-function closeHwp(){ if(_hwpEditor){ try{_hwpEditor.destroy();}catch(e){} _hwpEditor=null; } var m=$('hwpModal'); if(m)m.remove(); }
+function hwpDownloadOriginal(){ if(!_hwpOriginalBuf){toast('보관된 원본이 없습니다','warn');return;}
+  PureunHwp.download(_hwpOriginalBuf,_hwpName+'_원본.'+_hwpOriginalFormat,_hwpOriginalFormat); toast('원본 문서를 내려받았습니다'); }
+function closeHwp(){ if(_hwpEditor){ try{_hwpEditor.destroy();}catch(e){} _hwpEditor=null; }
+  _hwpOriginalBuf=null; var m=$('hwpModal'); if(m)m.remove(); }
 function dlBuf(buf,fname){ var blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
   var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=fname; document.body.appendChild(a); a.click();
   setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1500); }
