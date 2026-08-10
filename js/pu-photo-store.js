@@ -584,6 +584,75 @@
     });
   }
 
+  /* ══════ 내 폴더 (대표 지시 2026-08-09) ══════
+     "개인마다 사진들을 종류별로 업무별로 분류해야할 경우가 있다"
+     "폴더는 나만 수정하는것이다. 회의사진처럼 같이 공유하는 부분은 공유로 하면된다"
+
+     분류 탭과 **다른 축**이다 — 분류는 「무엇인가」(명함·회의사진), 폴더는
+     「어느 일인가」(㈜가야 실태조사·8월 교육). 그래서 한 사진이 둘 다에 든다.
+
+     ⚠ **내 자리 안에 둔다**(u/{내uid}/folders). 그래서 규칙을 새로 안 짜도
+        「본인과 관리자만」이 이미 걸려 있다. 공용 자리(customKinds)와 다른 점이다 —
+        분류 이름표는 전 직원이 함께 보지만, 폴더는 내 정리 방식이라 나만 본다.
+     ⚠ 공유와 아무 상관이 없다. 남에게 보여주는 일은 「같이 볼 사람」(shareWith)이
+        따로 맡는다. 내가 어떻게 묶든 남이 보는 것에는 영향이 없다. */
+  function foldersPath(owner) { return base(owner) + '/folders'; }
+
+  function listFolders(owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(foldersPath(owner)).once('value').then(function (s) { return s.val() || {}; });
+  }
+
+  function addFolder(name) {
+    var clean = String(name || '').trim();
+    if (!clean) return Promise.reject(new Error('폴더 이름을 입력해 주세요'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    /* 같은 이름을 또 만들지 않는다 — 대소문자·앞뒤 공백을 무시하고 견준다.
+       둘이 생기면 어느 쪽에 넣었는지 헷갈린다(분류 만들기와 같은 규칙). */
+    return listFolders().then(function (existing) {
+      var norm = clean.toLowerCase();
+      var dupId = Object.keys(existing).find(function (id) {
+        return String((existing[id] || {}).name || '').trim().toLowerCase() === norm;
+      });
+      if (dupId) return { id: dupId, created: false };
+      var id = deps.db.ref(foldersPath()).push().key;
+      var u = {};
+      u[foldersPath() + '/' + id] = { name: clean, createdAt: Date.now() };
+      return deps.db.ref().update(u).then(function () { return { id: id, created: true }; });
+    });
+  }
+
+  function renameFolder(folderId, name) {
+    var clean = String(name || '').trim();
+    if (!folderId) return Promise.reject(new Error('어느 폴더인지 알 수 없습니다'));
+    if (!clean) return Promise.reject(new Error('폴더 이름을 입력해 주세요'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var u = {};
+    u[foldersPath() + '/' + folderId + '/name'] = clean;
+    return deps.db.ref().update(u);
+  }
+
+  /* ⚠ 폴더를 지워도 **사진은 안 지운다.** 폴더 이름표만 없앤다 —
+     사진은 「전체」에 그대로 남는다. 폴더 지웠다가 사진까지 사라지면 큰일이다.
+     사진에 남은 folder 값은 가리키는 폴더가 없으므로 화면이 「전체」로만 본다
+     (사진마다 지우러 다니지 않는다 — 수천 장이면 그 자체가 사고 위험이다). */
+  function deleteFolder(folderId) {
+    if (!folderId) return Promise.reject(new Error('어느 폴더인지 알 수 없습니다'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var u = {};
+    u[foldersPath() + '/' + folderId] = null;
+    return deps.db.ref().update(u);
+  }
+
+  /* 사진 하나를 폴더에 넣거나(folderId) 뺀다(folderId 없이 호출).
+     ⚠ 한 사진은 폴더 하나에만 — 여러 곳에 겹치면 「어디에 뒀더라」가 된다. */
+  function setFolder(year, id, folderId, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var u = {};
+    u[metaPath(year, id, owner) + '/folder'] = folderId || null;
+    return deps.db.ref().update(u);
+  }
+
   /* 사진 하나에 분류를 붙이거나(kindId) 뗀다(kindId 없이 호출).
      AI 종류(read.kind)와 별도 칸에 둔다 — "더하는 것이지 기타서류에서
      빼앗지 않는다"(대표 승인 목업)를 지키려면 서로 안 건드려야 한다. */
@@ -1144,6 +1213,11 @@
     saveNote: saveNote,
     setTakenAt: setTakenAt,
     replaceImage: replaceImage,
+    listFolders: listFolders,
+    addFolder: addFolder,
+    renameFolder: renameFolder,
+    deleteFolder: deleteFolder,
+    setFolder: setFolder,
     listCustomKinds: listCustomKinds,
     getRetention: getRetention,
     setRetentionOwner: setRetentionOwner,
