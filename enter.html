@@ -507,7 +507,7 @@ body.portal-mode #camFab{display:flex;}
 <button id="camFab" type="button" title="사진 찍기 — 바로 촬영" aria-label="사진 찍기">📷</button>
 <!-- 아이폰 카카오톡 등 앱 내부 브라우저는 페이지 이동 뒤 웹 카메라 권한을 막는다.
      그 기기에서는 이 입력을 사용해 '버튼을 누른 바로 그 순간' 기본 카메라를 연다. -->
-<input id="portalCamInput" type="file" accept="image/*" capture="environment" hidden>
+<input id="portalCamInput" type="file" accept="image/jpeg,image/png" capture="environment" hidden>
 
 <!-- ── 시스템 설정 (관리자 전용) — 화면 왼쪽 아래 구석 ── -->
 <button id="cfgFab" type="button" title="시스템 설정 (관리자 전용)">⚙ 설정</button>
@@ -1079,8 +1079,56 @@ body.portal-mode #camFab{display:flex;}
 
   /* 촬영 파일은 페이지가 바뀌면 사라지므로 사진첩의 안전 대기열로 옮길 때까지만
      브라우저 안 임시보관소에 맡긴다. 서버 저장 뒤 이 임시본은 즉시 지워진다. */
-  function savePortalCameraFile(file){
+  /* iPhone 앱 내부 브라우저는 촬영 파일을 image.jpg라고 알려도, File 객체를
+     IndexedDB에 넣고 페이지를 바꾼 뒤에는 사진 디코딩이 실패할 수 있다.
+     페이지를 떠나기 전에 브라우저가 방금 연 원본을 canvas에 그려 표준 JPEG로
+     확정하면 다음 화면에서는 기종/브라우저와 관계없이 같은 형식으로 읽힌다. */
+  function portalCameraJpeg(file){
     return new Promise(function(resolve, reject){
+      if(!file || !file.size){ reject(new Error('촬영한 사진 내용이 비어 있습니다.')); return; }
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function(){
+        try {
+          var iw = img.naturalWidth || img.width;
+          var ih = img.naturalHeight || img.height;
+          if(!iw || !ih) throw new Error('촬영 사진의 크기를 확인하지 못했습니다.');
+          var maxEdge = 4096;
+          var scale = Math.min(1, maxEdge / Math.max(iw, ih));
+          var w = Math.max(1, Math.round(iw * scale));
+          var h = Math.max(1, Math.round(ih * scale));
+          var canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          var ctx = canvas.getContext('2d');
+          if(!ctx) throw new Error('사진 변환 기능을 시작하지 못했습니다.');
+          ctx.drawImage(img, 0, 0, w, h);
+          URL.revokeObjectURL(url);
+          canvas.toBlob(function(blob){
+            if(!blob){ reject(new Error('아이폰 사진을 JPEG로 변환하지 못했습니다.')); return; }
+            resolve({
+              blob: blob,
+              name: 'camera-' + Date.now() + '.jpg',
+              type: 'image/jpeg',
+              lastModified: Date.now(),
+              width: w,
+              height: h
+            });
+          }, 'image/jpeg', 0.95);
+        } catch(e){
+          URL.revokeObjectURL(url);
+          reject(e);
+        }
+      };
+      img.onerror = function(){
+        URL.revokeObjectURL(url);
+        reject(new Error('아이폰 촬영 사진을 열지 못했습니다. 카메라에서 다시 촬영해 주세요.'));
+      };
+      img.src = url;
+    });
+  }
+
+  function savePortalCameraFile(file){
+    return portalCameraJpeg(file).then(function(photo){ return new Promise(function(resolve, reject){
       if(!window.indexedDB){ reject(new Error('이 브라우저는 촬영 임시보관을 지원하지 않습니다.')); return; }
       var token = 'portal-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
       var rq = indexedDB.open('puPortalCamera', 1);
@@ -1091,14 +1139,14 @@ body.portal-mode #camFab{display:flex;}
       rq.onsuccess = function(){
         var dbi = rq.result;
         var tx = dbi.transaction('captures', 'readwrite');
-        tx.objectStore('captures').put({ id:token, blob:file,
-          name:file.name || ('camera-' + Date.now() + '.jpg'),
-          type:file.type || 'image/jpeg', lastModified:file.lastModified || Date.now(), savedAt:Date.now() });
+        tx.objectStore('captures').put({ id:token, blob:photo.blob,
+          name:photo.name, type:photo.type, lastModified:photo.lastModified,
+          width:photo.width, height:photo.height, savedAt:Date.now() });
         tx.oncomplete = function(){ dbi.close(); resolve(token); };
         tx.onerror = function(){ var err = tx.error; dbi.close(); reject(err || new Error('촬영 사진을 보관하지 못했습니다.')); };
         tx.onabort = tx.onerror;
       };
-    });
+    }); });
   }
 
   /* 로그인 신원 안내 띠 — 헤더 바로 아래에 하나만 그린다(다시 그리면 갈아 끼움) */
