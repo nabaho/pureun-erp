@@ -247,6 +247,18 @@ button{font-family:inherit;cursor:pointer}
 /* 직접 만드는 분류 — 점선 테두리로 "사람이 만든 것"임을 가른다(대표 승인 목업) */
 #kinds button.custom{border-style:dashed;border-color:#93c5fd}
 #kinds button.custom.on{border-style:solid}
+/* 내 폴더 — 왼쪽 목록 */
+#foldList .fold{width:100%;display:flex;align-items:center;gap:6px;border:1px solid var(--line);
+  background:#fff;color:var(--ink);border-radius:9px;padding:8px 10px;font-size:12.5px;
+  font-family:inherit;margin-bottom:4px;text-align:left}
+#foldList .fold .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#foldList .fold .n{font-size:11px;color:var(--sub);font-weight:700}
+#foldList .fold .ed{opacity:.45;padding:0 2px}
+#foldList .fold.on{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:800}
+#foldList .fold.on .n{color:#dbeafe}
+#foldList .fold.on .ed{opacity:.8}
+#foldList .fold.add{border-style:dashed;color:var(--blue);font-weight:700;justify-content:center}
+#foldList .fold.drop{outline:2px dashed var(--blue);outline-offset:1px;background:#eef3ff}
 #kinds button.add{border:1.5px dashed var(--line);background:#f8fafc;color:var(--blue);font-weight:800}
 #gridBar button.tag{border-color:#93c5fd;color:var(--blue)}
 
@@ -778,6 +790,14 @@ button{font-family:inherit;cursor:pointer}
       <select id="ownerSel" onchange="pickOwner(this.value)"></select>
     </div>
 
+    <!-- ── 내 폴더 (대표 지시 2026-08-09) ──
+         분류 탭이 「무엇인가」라면 폴더는 「어느 일인가」다. 내 정리 방식이라
+         나만 만들고 나만 고친다. 남의 사진을 볼 때는 통째로 숨긴다. -->
+    <div id="foldWrap" style="display:none">
+      <p class="sect">내 폴더</p>
+      <div id="foldList"></div>
+    </div>
+
     <!-- 판독이 어긋난 것만 모아 보는 경고등 -->
     <button id="needBox" style="display:none" onclick="toggleNeed()"></button>
     <!-- 보유기간이 지난 것만 펼쳐 본다. 숫자만 알려 주고 어느 것인지 못 보면
@@ -1220,6 +1240,7 @@ firebase.auth().onAuthStateChanged(u => {
     takeShared();          // 카톡·갤러리에서 공유해 들어온 사진이 있으면 확인 화면
     loadGrid();
     loadCustomKinds();
+    loadFolders();
     renderOwnerPick();
     loadRetention();      // 보유기준 점검 담당자·때가 됐는지
     refreshYears();
@@ -3507,6 +3528,7 @@ function renderGrid() {
   const items = shownItems();
   $('empty').style.display = gridItems.length ? 'none' : 'flex';
   renderKindTabs();   // 판독이 끝나 종류가 바뀌면 탭 숫자도 따라가야 한다
+  renderFolders();    // 폴더에 든 장수도 함께 따라간다
   renderGridBar();
   if (!items.length) {
     /* 비었을 때 이유를 구분해 말한다 — 그냥 빈 화면이면 사진이 사라진 줄 안다.
@@ -3840,6 +3862,13 @@ let kindTab = 'all';
    섞여 나온다(2026-08-05 걸러보기 버그와 같은 종류의 어긋남). */
 function shownItems() {
   let list = gridItems;
+  /* 폴더는 분류 탭과 **다른 축**이라 함께 걸린다 —
+     「회의사진」이면서 「㈜가야 실태조사」인 사진을 둘 다로 좁혀 볼 수 있다.
+     ⚠ 없어진 폴더를 가리키는 사진은 아무 데도 안 걸리면 사라져 보인다.
+        폴더를 지우면 folderPick 이 'all' 로 돌아가므로 「전체」에서 늘 보인다. */
+  if (folderPick !== 'all') list = list.filter(function (it) {
+    return (it.meta && it.meta.folder) === folderPick;
+  });
   if (kindTab !== 'all') list = list.filter(function (it) { return tabsOf(it).indexOf(kindTab) >= 0; });
   if (needOnly) list = list.filter(needsCheck);
   if (oldOnly) list = list.filter(isOldItem);
@@ -3898,6 +3927,30 @@ $('kinds').addEventListener('dragstart', function (e) {
     try { e.dataTransfer.setData('text/plain', 'tab:' + tabDragKey); } catch (_) { }
   }
 });
+/* -- 사진을 폴더로 끌어다 놓기 (탭에 놓는 것과 같은 손짓) -- */
+$('foldList').addEventListener('dragover', function (e) {
+  if (!photoDragIds || viewingOther()) return;
+  const b = e.target.closest ? e.target.closest('button[data-fid]') : null;
+  if (!b) return;
+  e.preventDefault();
+  b.classList.add('drop');
+});
+$('foldList').addEventListener('dragleave', function (e) {
+  const b = e.target.closest ? e.target.closest('button[data-fid]') : null;
+  if (b) b.classList.remove('drop');
+});
+$('foldList').addEventListener('drop', function (e) {
+  if (!photoDragIds) return;
+  const b = e.target.closest ? e.target.closest('button[data-fid]') : null;
+  if (!b) return;
+  e.preventDefault();
+  b.classList.remove('drop');
+  const ids = photoDragIds; photoDragIds = null;
+  const fid = b.getAttribute('data-fid');
+  /* 「전체」에 놓으면 폴더에서 뺀다 — 되돌리는 길이 있어야 한다 */
+  moveToFolder(ids, fid === 'all' ? null : fid);
+});
+
 $('kinds').addEventListener('dragover', function (e) {
   /* 탭을 끄는 중이거나, 사진을 끌어와 분류를 바꾸려는 중이면 놓기를 허용한다.
      이게 없으면 브라우저가 놓기를 막는다. */
@@ -3943,6 +3996,115 @@ $('kinds').addEventListener('dragend', function () { tabDragKey = null; });
    판독 결과의 kind 만 사람 손으로 고치고, **읽어 둔 항목(이름·전화 등)은 그대로 둔다** —
    분류가 틀렸다고 읽은 내용까지 틀린 것은 아니다. */
 let photoDragIds = null;    // 지금 끌고 있는 사진 번호들(고른 게 있으면 그 전부)
+
+/* ══════ 내 폴더 (대표 지시 2026-08-09) ══════
+   "개인마다 사진들을 종류별로 업무별로 분류해야할 경우가 있다"
+   "폴더는 나만 수정하는것이다 · 회의사진처럼 같이 공유하는 부분은 공유로 하면된다"
+
+   분류 탭과 다른 축이다 — 분류는 「무엇인가」, 폴더는 「어느 일인가」.
+   ⚠ 공유와 상관없다. 남에게 보여주는 일은 「같이 볼 사람」이 따로 맡는다. */
+let FOLDERS = {};
+let folderPick = 'all';
+
+function loadFolders() {
+  /* 남의 사진을 볼 때는 폴더를 아예 안 읽는다 — 그건 그 사람의 정리 방식이다 */
+  if (viewingOther()) { FOLDERS = {}; folderPick = 'all'; renderFolders(); return Promise.resolve(); }
+  return PuPhotoStore.listFolders().then(function (f) {
+    FOLDERS = f || {};
+    if (folderPick !== 'all' && !FOLDERS[folderPick]) folderPick = 'all';   // 지워진 폴더를 보고 있었다
+    renderFolders();
+  }).catch(function (e) { console.warn('[내 폴더]', e); });
+}
+
+function folderCount(fid) {
+  return gridItems.filter(function (it) { return (it.meta && it.meta.folder) === fid; }).length;
+}
+
+function renderFolders() {
+  const wrap = $('foldWrap'), box = $('foldList');
+  if (!wrap || !box) return;
+  /* 남의 사진을 볼 때는 통째로 숨긴다 */
+  if (viewingOther()) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+  const ids = Object.keys(FOLDERS).sort(function (a, b) {
+    return (FOLDERS[a].createdAt || 0) - (FOLDERS[b].createdAt || 0);
+  });
+  const row = function (fid, name, n, extra) {
+    return '<button class="fold' + (folderPick === fid ? ' on' : '') + '" data-fid="' + esc(fid) + '"' +
+      ' onclick="pickFolder(\'' + esc(fid) + '\')">' +
+      '<span class="nm">' + esc(name) + '</span><span class="n">' + n + '</span>' + (extra || '') + '</button>';
+  };
+  box.innerHTML =
+    row('all', '📁 전체', gridItems.length) +
+    ids.map(function (fid) {
+      return row(fid, '📁 ' + (FOLDERS[fid].name || ''), folderCount(fid),
+        '<span class="ed" title="이름 바꾸기·지우기" onclick="event.stopPropagation();editFolder(\'' + esc(fid) + '\')">✏</span>');
+    }).join('') +
+    '<button class="fold add" onclick="newFolder()">＋ 폴더 만들기</button>';
+}
+
+function pickFolder(fid) {
+  folderPick = fid;
+  selected.clear();   // 안 보이는 사진이 골라진 채로 남으면 엉뚱한 것을 지운다
+  renderFolders();
+  renderGridBar();
+  renderGrid();
+}
+
+function newFolder() {
+  const name = prompt('폴더 이름을 지어 주세요 — 예: ㈜가야 실태조사');
+  if (name === null) return;
+  PuPhotoStore.addFolder(name).then(function (r) {
+    return loadFolders().then(function () { pickFolder(r.id); });
+  }).catch(function (e) { alert('폴더를 만들지 못했습니다 — ' + ((e && e.message) || e)); });
+}
+
+/* 이름 바꾸기·지우기. ⚠ 지워도 **사진은 안 지운다** — 「전체」에 그대로 남는다. */
+function editFolder(fid) {
+  const cur = (FOLDERS[fid] || {}).name || '';
+  const name = prompt('폴더 이름 (비우고 확인하면 폴더를 지웁니다 — 사진은 안 지워집니다)', cur);
+  if (name === null) return;
+  const clean = String(name).trim();
+  if (!clean) {
+    const n = folderCount(fid);
+    if (!confirm('「' + cur + '」 폴더를 지웁니다.\n\n안에 있던 사진 ' + n + '장은 지워지지 않고 「전체」에 그대로 남습니다.\n계속할까요?')) return;
+    PuPhotoStore.deleteFolder(fid).then(function () {
+      if (folderPick === fid) folderPick = 'all';
+      return loadFolders();
+    }).then(function () { renderGrid(); })
+      .catch(function (e) { alert('폴더를 지우지 못했습니다 — ' + ((e && e.message) || e)); });
+    return;
+  }
+  if (clean === cur) return;
+  PuPhotoStore.renameFolder(fid, clean).then(loadFolders)
+    .catch(function (e) { alert('이름을 바꾸지 못했습니다 — ' + ((e && e.message) || e)); });
+}
+
+/* 사진을 폴더에 넣는다(fid 없이 부르면 뺀다). 한 사진은 폴더 하나에만. */
+function moveToFolder(ids, fid) {
+  if (!ids || !ids.length) return;
+  if (viewingOther()) return;             // 남의 사진은 손대지 않는다
+  let done = 0, failed = 0;
+  let chain = Promise.resolve();
+  ids.forEach(function (id) {
+    chain = chain.then(function () {
+      const it = gridItems.find(function (x) { return x.id === id; });
+      if (!it) return;
+      return PuPhotoStore.setFolder(gridYear, id, fid).then(function () {
+        it.meta = Object.assign({}, it.meta, { folder: fid || null });
+        done++;
+      }).catch(function (e) { failed++; console.warn('[폴더 넣기]', id, e); });
+    });
+  });
+  chain.then(function () {
+    clearSel();
+    renderFolders();
+    renderGrid();
+    const nm = fid ? (FOLDERS[fid] || {}).name : '';
+    toast(fid ? done + '장을 「' + nm + '」에 넣었습니다' + (failed ? ' (실패 ' + failed + ')' : '')
+              : done + '장을 폴더에서 뺐습니다');
+  });
+}
 
 /* 사람이 손으로 넣을 수 있는 탭인가.
    ① 직접 만든 분류 — 사람이 만든 칸이니 당연히 받는다.
@@ -5103,6 +5265,7 @@ function pickOwner(uid) {
   renderGrid();
   loadGrid();
   refreshYears();
+  loadFolders();   // 남의 사진을 볼 때는 폴더 칸을 통째로 숨긴다
 }
 
 /* ══════ 예전 사진 옮기기 (관리자만) ══════ */
