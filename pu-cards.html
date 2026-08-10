@@ -233,6 +233,35 @@ body.pc #main,body.pc #fab,body.pc #selbar{display:none!important}
 .mdh{font-size:13px;font-weight:700;color:#1b2536;margin-bottom:8px}
 .mdlink{font-size:11.5px;color:#1d4fc4;cursor:pointer;margin-top:9px;text-align:right}
 .mdlink:hover{text-decoration:underline}
+/* 서랍 — 갈래 표시·찾기·자료 줄·미리보기 */
+.mdh{display:flex;align-items:center;gap:7px}
+.mdcat{font-size:11.5px;font-weight:400;background:#eaf1ff;color:#123d92;border-radius:11px;padding:2px 9px}
+.mdcat b{cursor:pointer;color:#8b98b3;margin-left:3px}
+.mdcat b:hover{color:#c0392b}
+.mdsearch{margin:8px 0}
+.mdsearch input{width:100%;border:1px solid #dde3ee;border-radius:8px;padding:6px 9px;font-size:12.5px;
+  color:#1b2536;background:#fff;font-family:inherit}
+.mdsearch input:focus{outline:none;border-color:#1e2a47}
+.mdlist{max-height:300px;overflow:auto;border:1px solid #e4e8f0;border-radius:9px;background:#fff}
+.mdrow{display:flex;align-items:center;gap:6px;padding:7px 9px;border-bottom:1px solid #f1f4f9;font-size:12.5px}
+.mdrow:last-child{border-bottom:none}
+.mdrow.on{background:#eef4ff}
+.mdrow .n{flex:1;min-width:0;cursor:pointer;color:#1b2536;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mdrow .n b{color:#1d4fc4;font-weight:700}
+.mdrow .n i{font-style:normal;font-size:11px;color:#8b98b3;margin-left:4px}
+.mdrow .v{flex:none;cursor:pointer;color:#8b98b3;padding:2px 5px;border-radius:6px}
+.mdrow .v:hover,.mdrow .v.on{background:#dde7fb;color:#1b2536}
+.mdprev{margin-top:9px;border:1px solid #dde3ee;border-radius:9px;overflow:hidden;background:#fff}
+.mdprev .h{display:flex;align-items:center;gap:6px;padding:7px 10px;border-bottom:1px solid #eef2f7;
+  font-size:12px;font-weight:700;color:#1b2536}
+.mdprev .h b{margin-left:auto;cursor:pointer;color:#8b98b3}
+.mdprev .h b:hover{color:#c0392b}
+.mdprev .b{height:300px;overflow:auto;background:#f7f9fc;display:flex;align-items:center;justify-content:center}
+.mdprev iframe{width:100%;height:300px;border:none;background:#fff}
+.mdprev img{max-width:100%;max-height:300px;object-fit:contain}
+.mdprev .mpmsg{text-align:center;font-size:12px;color:#8b98b3;line-height:1.9;padding:20px 12px}
+.mdprev .mptxt{width:100%;height:100%;margin:0;padding:11px;font-size:12px;line-height:1.7;
+  color:#1b2536;background:#fff;white-space:pre-wrap;word-break:break-all}
 /* 받는사람 자동 찾기 */
 .cpsug{display:none;position:absolute;left:0;right:0;top:100%;z-index:30;margin-top:3px;
   background:#fff;border:1px solid #dde3ee;border-radius:9px;box-shadow:0 8px 24px rgba(20,30,50,.14);
@@ -1070,7 +1099,7 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', s
   matQ:'', matMailCat:'', matPrevId:'', sendLog:{},
   /* 메일 화면 — mailSent 가 true 면 보낸 메일함, 아니면 쓰기 */
   mailSent:false, mailDrawer:true, sentBox:{}, sentQ:'', sentMine:false, sentCat:'', sentBy:'',
-  showBcc:false, draftAt:'',
+  showBcc:false, draftAt:'', matPick:'', drawerQ:'',
   view:'list', vtab:'' };
 
 /* ── 데이터 계층 ── */
@@ -2606,22 +2635,50 @@ function mailWriteHtml(){
         <button class="sm-send" onclick="sendCompose()" ${over?'disabled':''}>보내기</button>
       </div>
       <div class="mdrawer">
-        <div class="mdh">📎 자료 서랍</div>
-        <div class="setpick" style="padding:0 2px">
-          ${(function(){
-            const sets = setList(_matSets).filter(s=>setLiveIds(s,_matMeta).length);
-            return sets.map(s=>`<span class="setchk" style="cursor:pointer;background:#fdf6e8;border-color:#eeddb5"
-              onclick="applySetInCompose('${s.id}')">📦 ${esc(s.name||'묶음')}</span>`).join('');
-          })()}
-          ${matList().length ? matList().map(m=>`<span class="setchk ${c.ids.indexOf(m.id)>=0?'on':''}"
-            style="cursor:pointer" onclick="toggleComposeMat('${m.id}')"
-            title="${esc(m.desc||m.fileName||'')}">${matIcon(m.fileName)} ${esc(m.name||'자료')}
-            <i style="font-style:normal;font-size:11px;color:#8b98b3">${m.size?fmtMB(m.size):''}</i></span>`).join('')
-          : '<span class="cpnone">자료함이 비어 있습니다</span>'}
-        </div>
+        <div class="mdh">📎 자료 서랍
+          ${state.matPick?`<span class="mdcat">${esc(state.matPick)}<b onclick="pickMatCat('')" title="전체 보기">✕</b></span>`:''}</div>
+        <div class="mdsearch"><input id="mdQ" value="${esc(state.drawerQ||'')}" placeholder="🔍 자료 찾기"
+          oninput="state.drawerQ=this.value;grabCompose();renderMailPage();focusDrawerQ()"></div>
+        ${(function(){
+          const sets = setList(_matSets).filter(s=>setLiveIds(s,_matMeta).length);
+          if(!sets.length) return '';
+          return `<div class="setpick" style="padding:0 2px 7px">${sets.map(s=>
+            `<span class="setchk" style="cursor:pointer;background:#fdf6e8;border-color:#eeddb5"
+              onclick="applySetInCompose('${s.id}')">📦 ${esc(s.name||'묶음')}</span>`).join('')}</div>`;
+        })()}
+        ${(function(){
+          /* 왼쪽에서 고른 갈래 + 찾는 말로 좁힌다 */
+          let list = matList();
+          if(state.matPick) list = list.filter(m=>matCat(m)===state.matPick);
+          list = matSearchList(list, state.drawerQ);
+          if(!list.length) return `<div class="cpnone" style="padding:12px 2px">${
+            state.drawerQ ? '찾은 자료가 없습니다' : state.matPick ? `「${esc(state.matPick)}」에 자료가 없습니다` : '자료함이 비어 있습니다'}</div>`;
+          return `<div class="mdlist">${list.map(m=>{
+            const on = c.ids.indexOf(m.id)>=0;
+            return `<div class="mdrow ${on?'on':''}">
+              <span class="n" onclick="toggleComposeMat('${m.id}')" title="${esc(m.desc||m.fileName||'')}">
+                <b>${on?'☑':'☐'}</b> ${matIcon(m.fileName)} ${esc(m.name||'자료')}
+                <i>${m.size?fmtMB(m.size):''}</i></span>
+              <span class="v ${state.matPrevId===m.id?'on':''}" onclick="previewInDrawer('${m.id}')" title="내용 보기">👁</span>
+            </div>`;
+          }).join('')}</div>`;
+        })()}
+        ${state.matPrevId ? `<div class="mdprev">
+          <div class="h">${matIcon((_matMeta[state.matPrevId]||{}).fileName)} ${esc((_matMeta[state.matPrevId]||{}).name||'자료')}
+            <b onclick="state.matPrevId='';grabCompose();renderMailPage()" title="닫기">✕</b></div>
+          <div class="b" id="mpBody"></div>
+        </div>` : ''}
         <div class="mdlink" onclick="openMatPage()">자료 올리기·관리는 자료함에서 →</div>
       </div>
     </div>`;
+}
+function focusDrawerQ(){ const q=$('mdQ'); if(q){ q.focus(); q.setSelectionRange(q.value.length,q.value.length); } }
+/* 서랍에서 내용 보기 — 자료함 미리보기와 같은 부품을 쓴다 */
+function previewInDrawer(id){
+  grabCompose();
+  state.matPrevId = (state.matPrevId===id ? '' : id);
+  renderMailPage();
+  if(state.matPrevId) fillMatPreview(state.matPrevId);
 }
 function toggleMailDrawer(){ grabCompose(); state.mailDrawer = (state.mailDrawer===false); renderMailPage(); }
 function toggleBcc(){ grabCompose(); state.showBcc = !state.showBcc; renderMailPage(); }
@@ -5810,11 +5867,34 @@ function mailSideHtml(){
                 rows.filter(v=>String(v.by||'')===b).length, state.sentBy===b);
   });
 
+  /* ── 자료함을 메일 안의 폴더로 ──
+     명함이 「폴더」를 갖듯 메일도 「자료 갈래」를 폴더로 갖는다 (대표 지시 2026-08-10).
+     맨 아래 단추로 빼 두었더니 딴 곳에 있는 것처럼 보였다.
+     여기서 갈래를 고르면 오른쪽 자료 서랍이 그 갈래만 보여 준다 — 편지를 쓰면서
+     자료함까지 갔다 올 일이 없다. */
+  const mats = matList();
+  h += `<div class="pcsec" style="display:flex;align-items:center">📎 자료함
+        <span onclick="openMatPage()" title="자료 올리기·이름·순서 관리"
+          style="margin-left:auto;cursor:pointer;font-weight:700">＋</span></div>`;
+  h += pcItem(`onclick="pickMatCat('')"`, '📋 전체 자료', mats.length, !state.matPick);
+  MAT_CATS_NOW().forEach(c=>{
+    const n = mats.filter(m=>matCat(m)===c).length;
+    if(!n) return;
+    h += pcItem(`onclick="pickMatCat('${esc(c)}')"`, '📁 '+esc(c), n, state.matPick===c);
+  });
+  if(!mats.length) h += `<div class="pchintside">자료가 없습니다.<br>위 <b>＋</b> 로 올려주세요</div>`;
+
   h += `<div class="pcside-bottom">
-    <button class="pcside-settings" onclick="openMatPage()" title="보낼 자료 올리기·갈래·순서·메일 본문 틀">📎 자료함 (${matList().length})</button>
+    <button class="pcside-settings" onclick="openMatPage()" title="자료 올리기·갈래·순서·묶음·메일 본문 틀">📎 자료함 관리</button>
     <button class="pcside-settings" onclick="openSettingsPage()" title="정리·데이터·연동·탭·계정 설정">⚙️ 환경설정</button>
   </div>`;
   return h;
+}
+/* 왼쪽에서 자료 갈래를 고르면 오른쪽 서랍이 그 갈래만 보인다.
+   쓰기 화면이 아니면 쓰기 화면으로 옮겨 간다 — 자료를 고른다는 건 편지를 쓴다는 뜻이다. */
+function pickMatCat(c){
+  state.matPick = (state.matPick===c ? '' : c);
+  if(state.mailSent) openMailPage(); else { renderPCSide(); renderMailPage(); }
 }
 function sentFilterCat(c){ state.mailSent=true; state.sentCat = (state.sentCat===c?'':c); state.sentBy=''; openSentBox(); }
 function sentFilterBy(b){ state.mailSent=true; state.sentBy = (state.sentBy===b?'':b); state.sentCat=''; openSentBox(); }
