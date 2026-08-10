@@ -1812,7 +1812,8 @@ var FB_ALL_SYNC_KEYS = [
   'payer_aliases','expense_cat_aliases',
   'bank_processed','combo_whitelist','cms_ledger',
   // 올린 통장 자료 묶음 — 다른 PC 에서 올린 것도 받아 함께 보려면 이 목록에 있어야 한다
-  'ledger_batches','ledger_held','ledger_split_recipes'
+  'ledger_batches','ledger_held','ledger_split_recipes',
+  'ledger_picks'      // 골라 둔 짝 — A가 골라 두면 B 화면에도 보인다
 ];
 // App Check reCAPTCHA v3 사이트키 — Firebase 콘솔에서 발급 후 따옴표 안에 붙여넣기 (비어있으면 비활성, 동작에 영향 없음)
 var FB_APPCHECK_KEY = '6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
@@ -33153,10 +33154,72 @@ function erpBatchSummary(batches, mySid){
   return { count:bs.length, rows:n, mine:mine, others:bs.length - mine };
 }
 
+/* ══════════ 골라 둔 짝도 함께 본다 ══════════
+   (2026-08-10 대표 지시: "골라둔짝도 보이게")
+   줄은 묶음으로 함께 보게 됐는데 «어느 업체로 골라 뒀는지» 는 각자 PC 에만 남아,
+   A가 골라 둔 줄을 B는 여전히 「확인 필요」로 보고 같은 일을 또 했다.
+   골라 둔 것을 서버에 두고, «누가 골랐는지» 도 함께 적는다 —
+   남이 골라 둔 것을 내가 확정할 때 누구에게 물어야 할지 알아야 한다.
+
+   ★ bank_processed(처리됨 지문)와 같은 «맵» 꼴이다. 작아서 통째로 오간다. */
+var LEDGER_PICK_KEY = 'ledger_picks';
+
+/* 골랐다 — 있던 것 위에 얹는다. 통째로 갈아 끼우면 그 사이 남이 고른 것이 지워진다. */
+function erpPickSet(cur, rowKey, pid, who){
+  var out = {};
+  var src = (cur && typeof cur === 'object' && !Array.isArray(cur)) ? cur : {};
+  for(var k in src){ if(Object.prototype.hasOwnProperty.call(src, k)) out[k] = src[k]; }
+  var rk = String(rowKey || '');
+  if(!rk) return out;
+  if(!pid){ delete out[rk]; return out; }        // 고른 것을 푼다
+  who = who || {};
+  out[rk] = { pid:String(pid), by:String(who.sid || ''), byName:String(who.name || ''),
+              at:(who.at || new Date().toISOString()) };
+  return out;
+}
+
+/* 여러 줄의 고른 것을 푼다 (줄을 치우거나 확정했을 때) */
+function erpPickDrop(cur, rowKeys){
+  var out = {};
+  var src = (cur && typeof cur === 'object' && !Array.isArray(cur)) ? cur : {};
+  var gone = {};
+  (rowKeys || []).forEach(function(k){ if(k) gone[String(k)] = 1; });
+  for(var k in src){
+    if(!Object.prototype.hasOwnProperty.call(src, k)) continue;
+    if(gone[k]) continue;
+    out[k] = src[k];
+  }
+  return out;
+}
+
+/* 화면이 쓰는 꼴로 — { 줄열쇠: 미입금건번호 } */
+function erpPickMap(cur){
+  var out = {};
+  var src = (cur && typeof cur === 'object' && !Array.isArray(cur)) ? cur : {};
+  for(var k in src){
+    if(!Object.prototype.hasOwnProperty.call(src, k)) continue;
+    var v = src[k];
+    var pid = (v && typeof v === 'object') ? v.pid : v;   // 옛 꼴(값이 그냥 번호)도 읽는다
+    if(pid) out[k] = String(pid);
+  }
+  return out;
+}
+
+/* 누가 골랐나 — 내가 고른 것이면 null 을 돌려준다(내 것에는 이름표를 안 붙인다) */
+function erpPickWho(cur, rowKey, mySid){
+  var src = (cur && typeof cur === 'object' && !Array.isArray(cur)) ? cur : {};
+  var v = src[String(rowKey || '')];
+  if(!v || typeof v !== 'object' || !v.by) return null;
+  if(mySid && String(v.by) === String(mySid)) return null;
+  return { sid:v.by, name:v.byName || v.by, at:v.at || '' };
+}
+
 if(typeof window !== 'undefined'){
   window.erpMakeBatch = erpMakeBatch;       window.erpBatchRows = erpBatchRows;
   window.erpCanDropBatch = erpCanDropBatch; window.erpTrimBatches = erpTrimBatches;
   window.erpBatchSummary = erpBatchSummary;
+  window.erpPickSet = erpPickSet;           window.erpPickDrop = erpPickDrop;
+  window.erpPickMap = erpPickMap;           window.erpPickWho = erpPickWho;
 }
 
 // ══════════════════════════════════════════════
@@ -35078,7 +35141,10 @@ function FinanceLedger(){
       var r = _rowsOfBatches(bs, d.hidden || {});
       if(r.inc.length || r.exp.length){
         setRows({ inc:r.inc, exp:r.exp, colMap:d.colMap || {}, hdrRow:[] });
-        setInMatch(d.inMatch || {});            // 골라 둔 짝은 «각자 따로» (대표 선택)
+        /* ★ 골라 둔 짝은 이제 «함께 본다» (2026-08-10 대표 지시). 서버 것이 먼저다.
+           서버에 아직 없으면 이 기기에 남아 있던 옛 것을 쓴다 — 하던 일을 잃지 않게. */
+        var _pk0 = erpPickMap(dbGet(LEDGER_PICK_KEY, {}) || {});
+        setInMatch(Object.keys(_pk0).length ? _pk0 : (d.inMatch || {}));
         setExpCat(d.expCat || {});
         if(d.type) setFileType(d.type);
         setFName(d.fileName || '');
@@ -35148,6 +35214,8 @@ function FinanceLedger(){
       + '→ 모든 사람의 화면에서 사라집니다'))) return;
     try { dbRemoveMany(LEDGER_BATCH_KEY, [b.id]); }
     catch(e){ if(window._erpErrLog) window._erpErrLog(e); showToast('❌ 지우지 못했습니다'); return; }
+    // 지운 묶음의 줄에 붙어 있던 「골라 둔 짝」도 함께 푼다 (다른 묶음 것은 그대로)
+    dropPicks((b.rows || []).map(function(r){ return r && r._k; }).filter(Boolean));
     var next = (dbGet(LEDGER_BATCH_KEY, []) || []).filter(function(x){ return x && x.id !== b.id; });
     setBatches(next);
     var r = _rowsOfBatches(next, hidRow);
@@ -35170,6 +35238,9 @@ function FinanceLedger(){
     if(mine.length){
       try { dbRemoveMany(LEDGER_BATCH_KEY, mine.map(function(b){ return b.id; })); }
       catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+      /* ★ 지운 묶음의 줄에 붙어 있던 「골라 둔 짝」만 푼다.
+         골라 둔 짝은 이제 다 함께 보는 것이라, 통째로 비우면 남이 골라 둔 것까지 날아간다. */
+      dropPicks(erpBatchRows(mine).map(function(r){ return r._k; }));
     }
     // 남의 묶음 줄은 이 기기에서만 치운다
     var hide = Object.assign({}, hidRow || {});
@@ -35373,6 +35444,15 @@ function FinanceLedger(){
           if(ms.length === 1) auto[row._k] = ms[0].id;
         });
         setInMatch(auto);
+        /* 올리면서 저절로 짝지은 것도 함께 보이게 올린다 */
+        try{
+          var _u3 = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? CURRENT_USER : {};
+          var _cur3 = dbGet(LEDGER_PICK_KEY, {}) || {};
+          Object.keys(auto).forEach(function(k){
+            _cur3 = erpPickSet(_cur3, k, auto[k], { sid:_u3.sid||'', name:_u3.name||'' });
+          });
+          dbSet(LEDGER_PICK_KEY, _cur3);
+        }catch(_ue){ if(window._erpErrLog) window._erpErrLog(_ue); }
         setExpCat(_keepC);
         setUpAt(new Date().toISOString());        // 초안 저장용 업로드 시각
         var _added = Object.keys(_newKeys).length;
@@ -35658,6 +35738,7 @@ function FinanceLedger(){
   function pickFor(row, pid){
     if(!row || inMatch[row._k] === pid) return;
     var nm = Object.assign({}, inMatch); nm[row._k] = pid; setInMatch(nm);
+    savePick(row._k, pid);                    // 남의 화면에도 보이게
     try{
       var _c = pendById[pid];
       var _m = row.memo || row.note || '';
@@ -35760,6 +35841,31 @@ function FinanceLedger(){
       branch:'cheonan'});
   }
 
+  /* ── 골라 둔 짝을 «서버에» 적는다 (2026-08-10 대표 지시: "골라둔짝도 보이게") ──
+     ★ 저장 직전에 다시 읽어 그 위에 얹는다. 화면이 들고 있던 낡은 판을 통째로 쓰면
+       그 사이 남이 골라 둔 것이 지워진다.
+     ★ 실패해도 화면은 그대로 둔다 — 고른 것이 눈앞에서 되돌아가면 더 헷갈린다.
+       (다음에 고칠 때 다시 올라간다) */
+  function savePick(rowKey, pid){
+    try{
+      var u = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? CURRENT_USER : {};
+      var cur = dbGet(LEDGER_PICK_KEY, {}) || {};
+      dbSet(LEDGER_PICK_KEY, erpPickSet(cur, rowKey, pid, { sid:u.sid || '', name:u.name || '' }));
+    }catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+  }
+  function dropPicks(rowKeys){
+    try{
+      var cur = dbGet(LEDGER_PICK_KEY, {}) || {};
+      dbSet(LEDGER_PICK_KEY, erpPickDrop(cur, rowKeys));
+    }catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+  }
+  // 이 줄을 «누가» 골라 뒀나 — 내가 고른 것에는 이름표를 안 붙인다
+  var _pickRaw = dbGet(LEDGER_PICK_KEY, {}) || {};
+  function pickedBy(rowKey){
+    var u = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? CURRENT_USER : {};
+    return erpPickWho(_pickRaw, rowKey, u.sid || '');
+  }
+
   function removeRow(key, kind){
     /* ★ 줄의 정본은 이제 서버의 묶음이라, 여기서 화면에서만 빼면 새로고침에 되살아난다.
        그래서 «이 기기에서 치운 줄» 로 적어 둔다 — 남의 화면까지 지우지는 않는다.
@@ -35768,6 +35874,7 @@ function FinanceLedger(){
     if(kind==='inc'){
       setRows(function(r){return r?Object.assign({},r,{inc:r.inc.filter(function(x){return x._k!==key;})}):r;});
       setInMatch(function(m){var n=Object.assign({},m);delete n[key];return n;});
+      dropPicks([key]);                       // 치운 줄의 고른 것은 남겨 두지 않는다
     } else {
       setRows(function(r){return r?Object.assign({},r,{exp:r.exp.filter(function(x){return x._k!==key;})}):r;});
       setExpCat(function(m){var n=Object.assign({},m);delete n[key];return n;});
@@ -36251,6 +36358,15 @@ function FinanceLedger(){
       else rev++;
     });
     setInMatch(nm);
+    /* 자동 매칭도 «함께 보이게» 올린다 — 한 줄씩 올리면 저장이 여러 번 도니 한 번에 얹는다 */
+    try{
+      var _u2 = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? CURRENT_USER : {};
+      var _cur2 = dbGet(LEDGER_PICK_KEY, {}) || {};
+      Object.keys(nm).forEach(function(k){
+        _cur2 = erpPickSet(_cur2, k, nm[k], { sid:_u2.sid||'', name:_u2.name||'' });
+      });
+      dbSet(LEDGER_PICK_KEY, _cur2);
+    }catch(_ae){ if(window._erpErrLog) window._erpErrLog(_ae); }
     showToast('자동 매칭: 확정후보 '+hi+'건 · 검토필요 '+rev+'건');
   }
 
@@ -36994,6 +37110,7 @@ function FinanceLedger(){
               function pickSug(pid){
                 if(inMatch[row._k]===pid) return;
                 var nm=Object.assign({},inMatch); nm[row._k]=pid; setInMatch(nm);
+                savePick(row._k, pid);
                 try{
                   var _c=pendById[pid];
                   var _m=row.memo||row.note||'';
@@ -37151,7 +37268,20 @@ function FinanceLedger(){
                     /* 업체가 여럿이어도 먼저 채울 후보의 담당은 보여준다 —
                        담당자 이름이 있어야 그 사람에게 물어볼 수 있다(대표 지적).
                        전에는 여럿이면 pItem 이 null 이라 늘 「—」 였다. */
-                    (_grp.length ? (_pendStaff(_grp[0].head.cand)||'—') : '—')),
+                    (_grp.length ? (_pendStaff(_grp[0].head.cand)||'—') : '—'),
+                    /* ★ 남이 골라 둔 줄이면 그렇다고 적는다 (2026-08-10 대표 지시).
+                       내가 고른 것에는 안 붙인다 — 내 화면이 온통 내 이름이면 눈에 안 들어온다.
+                       확정하기 전에 「이건 ○○님이 골라 둔 것」 을 알아야 물어볼 수 있다. */
+                    (function(){
+                      var _pw = pickedBy(row._k);
+                      if(!_pw) return null;
+                      return h('div',{style:{marginTop:'1px',color:'#2563eb',fontSize:'9.5px',fontWeight:700,
+                          overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},
+                        title:_pw.name+' 님이 골라 둔 줄입니다'
+                             +(_pw.at?('\n'+String(_pw.at).slice(0,16).replace('T',' ')):'')
+                             +'\n확정하기 전에 한 번 확인하세요'},
+                        '✋ '+_pw.name);
+                    })()),
                   // ══ 처리 — 단추 크기를 하나로 맞춘다 ══
                   h('td',{style:Object.assign({},tdS,{borderLeft:'2px solid #f8fafc',textAlign:'right',
                       whiteSpace:'nowrap',padding:'4px 6px'})},
@@ -37938,6 +38068,7 @@ function FinanceLedger(){
       function _pick(pid){
         if(inMatch[sugPopK] !== pid){
           var nm=Object.assign({},inMatch); nm[sugPopK]=pid; setInMatch(nm);
+          savePick(sugPopK, pid);
           try{
             var _c=pendById[pid];
             if(_c && _memo && erpLearnPayerAlias(_memo, _c))
