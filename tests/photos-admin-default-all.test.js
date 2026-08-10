@@ -38,7 +38,8 @@ test('볼 사람이 없으면 굳이 바꾸지 않는다', () => {
 test('★ 전체 근로자에서도 올릴 수 있다', () => {
   assert.ok(/function viewingOnlyOther\(\) \{ return viewingOther\(\) && gridOwner !== ALL_OWNERS; \}/.test(app),
     '올리기를 잠그면 관리자가 앱을 열 때마다 화면을 바꿔야 올릴 수 있습니다.');
-  assert.ok(/\['pickBtn', 'docBtn', 'camBtn'\][\s\S]{0,200}viewingOnlyOther\(\)/.test(app),
+  /* ⚠ camBtn 은 없앴다(대표 지시 2026-08-10) — 목록에서도 빠져야 한다 */
+  assert.ok(/\['pickBtn', 'docBtn'\][\s\S]{0,200}viewingOnlyOther\(\)/.test(app),
     '올리기 단추가 아직 옛 판단을 씁니다.');
 });
 
