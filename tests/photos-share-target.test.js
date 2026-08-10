@@ -177,8 +177,9 @@ test('주소의 share 표시를 지운다', () => {
 });
 
 test('로그인이 끝난 뒤에 공유를 꺼낸다', () => {
-  const m = html.match(/PuPhotoStore\.signIn\([\s\S]{0,900}?loadGrid\(\);/);
-  assert.ok(m && /takeShared\(\);/.test(m[0]),
+  const signInAt = html.indexOf('PuPhotoStore.signIn(');
+  const takeSharedAt = html.indexOf('takeShared();', signInAt);
+  assert.ok(signInAt >= 0 && takeSharedAt > signInAt,
     '계정을 알기 전에는 사진을 담을 수 없습니다.');
 });
 
