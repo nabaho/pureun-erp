@@ -43,7 +43,7 @@ test('★ 전체 근로자에서도 올릴 수 있다', () => {
 });
 
 test('★ 지우기·판독은 여전히 잠긴다 (남의 사진이 섞여 있다)', () => {
-  const m = app.match(/function blockedIfOther\(\)[\s\S]*?\n\}/);
+  const m = app.match(/function blockedIfOther\([^)]*\)[\s\S]*?\n\}/);
   assert.ok(m, 'blockedIfOther 를 찾지 못했습니다.');
   assert.ok(/viewingOther\(\)/.test(m[0]) && !/viewingOnlyOther/.test(m[0]),
     '전체 근로자 화면에는 남의 사진이 섞여 있어 지우기·판독은 막아야 합니다.');

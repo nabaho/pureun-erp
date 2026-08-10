@@ -433,7 +433,7 @@ test('남의 사진은 보기만 된다 — 올리기·지우기·판독이 잠�
   for (const fname of ['deleteOne', 'deleteSelected', 'readAgain', 'readSelected']) {
     const fn = app.match(new RegExp('function ' + fname + '\\([\\s\\S]{0,160}'));
     assert.ok(fn, fname + ' 를 찾을 수 없습니다');
-    assert.match(fn[0], /blockedIfOther\(\)/, fname + ' 이 남의 사진에도 동작합니다');
+    assert.match(fn[0], /blockedIfOther\(/, fname + ' 이 남의 사진에도 동작합니다');
   }
   /* 올리기 단추는 **한 사람만 보는 중**일 때 잠근다.
      ⚠ 2026-08-10 다시 겨눔 — 관리자는 「전체 근로자」로 시작한다(대표 지시).
@@ -1120,7 +1120,7 @@ test('사람이 확인한 것은 할 일에서 빠진다', () => {
   const ack = app.match(/function ackRead\([\s\S]*?\n\}/);
   assert.ok(ack, 'ackRead 본문을 찾을 수 없습니다');
   assert.match(ack[0], /PuPhotoStore\.saveRead\(/, '확인 표시를 저장하지 않습니다');
-  assert.match(ack[0], /blockedIfOther\(\)/, '남의 사진에도 확인 표시를 남깁니다');
+  assert.match(ack[0], /blockedIfOther\(/, '남의 사진에도 확인 표시를 남깁니다');
 });
 
 test('확인했음 단추는 할 일인 것에만 나온다', () => {
@@ -1498,7 +1498,7 @@ test('분류 이름이 비면 거절하고 만들지 않는다', () => {
 test('분류 지정은 남의 사진(전체 근로자 포함)에는 못 한다', () => {
   const fn = app.match(/function openAssignKind\([\s\S]*?\n\}/);
   assert.ok(fn, 'openAssignKind 본문을 찾을 수 없습니다');
-  assert.match(fn[0], /if \(blockedIfOther\(\)\) return;/);
+  assert.match(fn[0], /if \(blockedIfOther\(.*\)\) return;/);
   // 고른 것이 없을 때 버튼 자체가 안 보이는지도 확인
   assert.match(app, /viewingOther\(\)\) \$\('tagBtn'\)\.style\.display = 'none'/);
 });
@@ -1513,7 +1513,7 @@ test('크게 보기에서 분류를 뗄 수 있다 — 지정은 되돌릴 수 �
   assert.match(app, /function customKindNote\(/);
   assert.match(app, /function removeCustomKindOne\(/);
   const fn = app.match(/function removeCustomKindOne\([\s\S]*?\n\}/)[0];
-  assert.match(fn, /if \(blockedIfOther\(\)\) return;/);
+  assert.match(fn, /if \(blockedIfOther\(.*\)\) return;/);
   assert.match(fn, /PuPhotoStore\.setCustomKind\(gridYear, id, null/);
 });
 
