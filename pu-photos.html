@@ -4139,23 +4139,75 @@ function renderGrid() {
   el.innerHTML = html;
 }
 
-/* 미리보기를 위에서부터 한 장씩 받아 채운다 — 한꺼번에 요청하지 않는다. */
+/* 한 장의 미리보기를 칸에 끼운다.
+   ⚠ 칸 내용을 통째로 바꾸면 '서류' 딱지가 지워진다 — 그림만 끼워 넣는다. */
+function paintThumb(it) {
+  const src = safeSrc(it.thumb);
+  if (!src) return;
+  const cell = document.querySelector('.cell[data-id="' + it.id + '"]');
+  if (!cell || cell.querySelector('img')) return;
+  const img = document.createElement('img');
+  img.src = src;
+  img.alt = '';
+  img.draggable = false;
+  cell.insertBefore(img, cell.firstChild);
+}
+
+/* 이 사진이 누구 자리에 있나 — 「전체 근로자」 화면은 여러 사람 것이 섞여 있다 */
+function thumbOwnerOf(it) {
+  return it.meta.__ownerUid || (gridOwner === ALL_OWNERS ? null : gridOwner);
+}
+
+/* ── 미리보기 채우기 (대표 보고 2026-08-10: "사진 나오는데 너무 시간이 걸린다") ──
+   예전에는 **한 장씩, 앞 장이 끝나야 다음 장**을 청했다. 99장이면 서버와 99번을
+   차례로 오간다 — 폰에서 한 번에 0.2초면 그것만으로 20초다. 받는 양(1.7MB)은
+   몇 초면 끝나는 크기였으니, 늦은 것은 양이 아니라 **횟수**였다.
+   이제 한 해 치를 한 묶음으로 청한다 → 오가는 횟수가 한 번(주인마다 한 번)이 된다.
+
+   ⚠ 물러설 길을 남긴다 — 묶음이 막히거나(공유받은 사진은 규칙이 장마다 따진다)
+      묶음에 없는 사진(옛 자리에 남은 것)은 예전처럼 한 장씩 받는다.
+      빠르게 하려다 **사진이 안 보이는 일**이 생기면 그게 더 큰 사고다. */
+const THUMB_BULK_MAX = 600;   // 이보다 많으면 한 묶음이 너무 커진다 — 한 장씩 간다
+
 function fillThumbs() {
+  const need = gridItems.filter(function (it) { return !it.thumb; });
+  if (!need.length) return;
+  /* 공유받은 사진은 사진 한 장마다 권한을 따지므로 묶음 읽기가 막힌다 */
+  if (gridOwner === SHARED_OWNER || need.length > THUMB_BULK_MAX) return fillThumbsOneByOne(need);
+
+  const byOwner = {};
+  need.forEach(function (it) {
+    const o = thumbOwnerOf(it) || '';
+    (byOwner[o] = byOwner[o] || []).push(it);
+  });
+  const year = gridYear;
+  Promise.all(Object.keys(byOwner).map(function (o) {
+    return PuPhotoStore.loadThumbsYear(year, o || null).then(function (map) {
+      if (year !== gridYear) return;           // 그 사이 해를 바꿨다 — 남의 해에 그리지 않는다
+      byOwner[o].forEach(function (it) {
+        const t = map && map[it.id];
+        if (t) { it.thumb = t; paintThumb(it); }
+      });
+    }).catch(function (e) { console.warn('[미리보기 묶음]', e); });
+  })).then(function () {
+    if (year !== gridYear) return;
+    /* 묶음에 없던 것만 옛 길로 — 대개 몇 장뿐이다 */
+    const left = gridItems.filter(function (it) { return !it.thumb; });
+    if (left.length) fillThumbsOneByOne(left);
+  });
+}
+
+/* 옛 길 — 한 장씩 차례로. 물러설 자리이므로 그대로 남겨 둔다. */
+function fillThumbsOneByOne(items) {
+  const year = gridYear;
   let chain = Promise.resolve();
-  gridItems.forEach(function (it) {
-    if (it.thumb) return;
+  items.forEach(function (it) {
     chain = chain.then(function () {
-      return PuPhotoStore.loadThumb(gridYear, it.id, it.meta.__ownerUid || gridOwner).then(function (t) {
+      if (year !== gridYear || it.thumb) return;
+      return PuPhotoStore.loadThumb(year, it.id, thumbOwnerOf(it)).then(function (t) {
+        if (year !== gridYear) return;
         it.thumb = t;
-        const src = safeSrc(t);
-        if (!src) return;
-        const cell = document.querySelector('.cell[data-id="' + it.id + '"]');
-        if (!cell) return;
-        /* 칸 내용을 통째로 바꾸면 '서류' 딱지가 지워진다 — 그림만 끼워 넣는다. */
-        const img = document.createElement('img');
-        img.src = src;
-        img.alt = '';
-        cell.insertBefore(img, cell.firstChild);
+        paintThumb(it);
       }).catch(function () { /* 한 장 실패해도 다음 장으로 */ });
     });
   });
