@@ -88,11 +88,15 @@ test('빈 것이 섞여 있어도 있는 쪽으로 읽는다', async () => {
 
 /* ── 화면 쪽 ── */
 test('★ 격자에서도 형제 쪽을 모아 한 번에 읽는다', () => {
-  const fn = app.match(/function docPages\(id\)[\s\S]*?\n\}/);
-  assert.ok(fn, 'docPages 를 찾지 못했습니다.');
-  assert.ok(/doc\.group === g/.test(fn[0]), '묶음 번호로 모으지 않습니다.');
-  assert.ok(/\.sort\(/.test(fn[0]) && /doc\.page/.test(fn[0]),
-    '쪽 차례로 안 세우면 뒤죽박죽 보냅니다.');
+  /* ⚠ 격자용(docPages)과 올리는 중용(docJobs) **둘 다** 본다. 하나만 보면
+     다른 하나에서 차례가 무너져도 검사가 통과한다(실제로 그랬다). */
+  ['docPages\\(id\\)', 'docJobs\\(job\\)'].forEach(function (name) {
+    const fn = app.match(new RegExp('function ' + name + '[\\s\\S]*?\\n\\}'));
+    assert.ok(fn, name + ' 를 찾지 못했습니다.');
+    assert.ok(/doc\.group === g/.test(fn[0]), name + ' 이 묶음 번호로 모으지 않습니다.');
+    assert.ok(/\.sort\(/.test(fn[0]) && /doc\.page/.test(fn[0]),
+      name + ' 이 쪽 차례로 안 세웁니다 — 섞이면 조문을 잘못 읽습니다.');
+  });
   const read = app.match(/function readPhoto\(id\)[\s\S]*?\n\}/);
   assert.ok(/docPages\(id\)/.test(read[0]), 'readPhoto 가 형제 쪽을 안 모읍니다.');
   assert.ok(/imgs\.length > 1 \? imgs : imgs\[0\]/.test(read[0]),
@@ -124,8 +128,10 @@ test('★ 명함첩·업체관리에는 대표 쪽 하나만 보낸다', () => {
 test('★ 이미 올라간 문서도 문서마다 한 번만 대기열에 넣는다', () => {
   const fn = app.match(/function autoReadPending\(\)[\s\S]*?\n\}/);
   assert.ok(fn, 'autoReadPending 를 찾지 못했습니다.');
-  assert.ok(/seenDoc/.test(fn[0]),
-    '쪽마다 걸면 첫 쪽이 문서 전체를 읽어 놓은 뒤에도 나머지가 또 읽습니다.');
+  /* 표식을 만들어 놓고 **보지 않으면** 아무 소용이 없다 — 둘 다 못 박는다. */
+  assert.ok(/if \(seenDoc\[g\]\) return false;/.test(fn[0]),
+    '이미 건 문서인지 안 보면, 첫 쪽이 문서 전체를 읽어 놓은 뒤에도 나머지가 또 읽습니다.');
+  assert.ok(/seenDoc\[g\] = 1;/.test(fn[0]), '건 문서를 표시하지 않습니다.');
 });
 
 test('몇 쪽을 함께 보고 낸 답인지 남긴다', () => {
