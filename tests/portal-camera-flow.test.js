@@ -17,8 +17,12 @@ test('일반 모바일 포털 카메라는 사진첩 목록 없이 연속촬영 
   assert.match(flow, /needsDirectNativeCamera\(\)/);
   assert.match(flow, /input\.click\(\)/);
   const native = portal.match(/function needsDirectNativeCamera\(\)\{[\s\S]*?\n  \}/)[0];
-  assert.doesNotMatch(native, /KAKAOTALK|embedded/);
-  assert.match(native, /noWebCamera/);
+  /* (2026-08-10) 뒤집었다 — 대표 제보: "왜 카메라 바로 안 나오고 묻는 문구가 계속 나오나".
+     폰 카메라는 «손가락으로 지금 막 누른» 자리에서만 열린다. 사진첩으로 넘어간 뒤에는
+     그 자격이 사라져 못 열고, 「카메라 열기」를 한 번 더 눌러야 하는 화면이 떴다.
+     포털의 누른 자리에서 열면 곧바로 열린다. */
+  assert.match(native, /portalInAppBrowser\(\)/, '앱 안 브라우저도 곧바로 폰 카메라로');
+  assert.match(native, /noWebCamera/, '웹 카메라가 아예 없는 기기도 그대로');
 });
 
 test('카카오톡 포털도 기본 카메라 확인 화면 없이 연속촬영 화면으로 이동한다', () => {
@@ -27,8 +31,12 @@ test('카카오톡 포털도 기본 카메라 확인 화면 없이 연속촬영 
   const flow = portal.slice(start, end);
   const native = portal.match(/function needsDirectNativeCamera\(\)\{[\s\S]*?\n  \}/)[0];
   assert.match(flow, /pu-photos\.html\?cam=1&quick=1&from=portal/);
-  assert.doesNotMatch(native, /KAKAOTALK|embedded/);
-  assert.match(native, /noWebCamera/);
+  /* (2026-08-10) 뒤집었다 — 대표 제보: "왜 카메라 바로 안 나오고 묻는 문구가 계속 나오나".
+     폰 카메라는 «손가락으로 지금 막 누른» 자리에서만 열린다. 사진첩으로 넘어간 뒤에는
+     그 자격이 사라져 못 열고, 「카메라 열기」를 한 번 더 눌러야 하는 화면이 떴다.
+     포털의 누른 자리에서 열면 곧바로 열린다. */
+  assert.match(native, /portalInAppBrowser\(\)/, '앱 안 브라우저도 곧바로 폰 카메라로');
+  assert.match(native, /noWebCamera/, '웹 카메라가 아예 없는 기기도 그대로');
   /* (2026-08-10) 뒤집었다 — 대표 제보: "카메라 누르면 계속 이 문구 나온다".
      앱 안 브라우저는 카메라 허락을 «기억하지 않아» 누를 때마다 권한 창이 떴다.
      그 창은 브라우저가 띄우는 것이라 우리가 못 없앤다 — 카메라 API 를 아예 안 부르는 것만이 답.

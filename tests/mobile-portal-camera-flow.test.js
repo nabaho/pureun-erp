@@ -29,10 +29,17 @@ test('포털 카메라는 중간 화면 없이 사진첩 카메라로 바로 간
   assert.doesNotMatch(fn, /pu-camera\.html/);
 });
 
-test('카카오톡에서도 시스템 확인 화면 대신 화면 안 연속촬영을 우선한다', () => {
+test('앱 안 브라우저면 포털에서 «곧바로» 폰 카메라를 연다', () => {
+  /* (2026-08-10) 뒤집었다 — 대표 제보: "왜 카메라 바로 안 나오고 묻는 문구가 계속 나오나".
+     폰 카메라는 «손가락으로 지금 막 누른» 자리에서만 열 수 있다.
+     사진첩 화면으로 넘어간 «뒤» 에 열려고 하면 그 자격이 사라져 못 연다 —
+     그래서 「카메라 열기」를 한 번 더 눌러야 하는 화면이 떴다.
+     포털의 누른 자리에서 열면 자격이 살아 있어 곧바로 열린다. */
   const fn = enter.match(/function needsDirectNativeCamera\(\)\{[\s\S]*?\n  \}/)[0];
-  assert.match(fn, /navigator\.mediaDevices\.getUserMedia/);
-  assert.doesNotMatch(fn, /KAKAOTALK|NAVER|DaumApps|embedded/);
+  assert.match(fn, /navigator\.mediaDevices\.getUserMedia/, '웹 카메라가 아예 없는 기기도 그대로');
+  assert.match(fn, /portalInAppBrowser\(\)/, '앱 안 브라우저도 곧바로 폰 카메라로');
+  const det = enter.match(/function portalInAppBrowser\(\)\{[\s\S]*?\n  \}/)[0];
+  assert.match(det, /NAVER|KAKAOTALK/, '네이버·카카오톡을 알아봐야 한다');
   /* (2026-08-10) 뒤집었다 — 대표 제보: "카메라 누르면 계속 이 문구 나온다".
      앱 안 브라우저는 카메라 허락을 «기억하지 않아» 누를 때마다 권한 창이 떴다.
      그 창은 브라우저가 띄우는 것이라 우리가 못 없앤다 — 카메라 API 를 아예 안 부르는 것만이 답.

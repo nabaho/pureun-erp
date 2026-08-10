@@ -63,5 +63,23 @@ t('크롬·삼성인터넷에서는 화면 안 카메라를 연다', /navigator\
 t('앱 안 브라우저 목록은 그대로 (네이버·카카오톡 등)',
   ['NAVER', 'KAKAOTALK', 'Instagram', 'FBAN', 'FBAV', 'Line'].every(function(n){ return src.indexOf(n) >= 0; }), true);
 
+
+console.log('\n[⑦ 포털에서는 «누른 자리에서» 곧바로 연다 — 물러설 화면조차 안 보이게]');
+/* 폰 카메라는 «손가락으로 지금 막 누른» 자리에서만 열린다.
+   사진첩으로 넘어간 «뒤» 에 열려고 하면 자격이 사라져 못 열고,
+   「카메라 열기」를 한 번 더 눌러야 하는 화면이 떴다(대표 제보 2026-08-10).
+   포털의 누른 자리에서 열면 곧바로 열려 그 화면 자체를 안 만난다. */
+const enter = fs.readFileSync(path.join(__dirname, '..', 'enter.html'), 'utf8').replace(/\r\n/g, '\n');
+const NEED = enter.slice(enter.indexOf('function needsDirectNativeCamera()'),
+                         enter.indexOf('function portalCameraJpeg'));
+t('포털이 앱 안 브라우저를 알아본다', /function portalInAppBrowser\(\)\{/.test(enter), true);
+t('네이버·카카오톡을 알아본다',
+  ['NAVER', 'KAKAOTALK'].every(function(n){ return enter.indexOf(n) >= 0; }), true);
+t('★ 앱 안 브라우저면 곧바로 폰 카메라 (사진첩으로 안 넘어간다)',
+  /return noWebCamera \|\| portalInAppBrowser\(\);/.test(NEED), true);
+t('웹 카메라가 없는 기기도 그대로', /var noWebCamera = !\(navigator\.mediaDevices/.test(NEED), true);
+t('누른 자리에서 연다 (넘어간 뒤가 아니다)',
+  /if\(needsDirectNativeCamera\(\)\)\{\s*\n\s*var input = \$\('portalCamInput'\);\s*\n\s*if\(input\) input\.click\(\);/.test(enter), true);
+t('찍은 사진은 사진첩으로 넘겨 저장한다', /portalcam=' \+ encodeURIComponent\(token\)/.test(enter), true);
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===\n');
 process.exit(fail ? 1 : 0);
