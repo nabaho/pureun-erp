@@ -2871,27 +2871,69 @@ function readFileBytes(f) {
   });
 }
 
+/* 아이폰의 앱 내장 브라우저는 촬영 파일 이름은 image.jpg 로 주면서 MIME 형식을
+   비우거나 application/octet-stream 으로 주기도 한다. 이 경우 실제 JPG인데도
+   createImageBitmap/<img> 양쪽에서 거부될 수 있으므로 확장자로 안전하게 보완한다. */
+function normalizedImageBlob(file) {
+  const name = String((file && file.name) || '').toLowerCase();
+  const currentType = String((file && file.type) || '').toLowerCase();
+  let guessedType = '';
+  if (/\.(jpe?g|jfif)$/.test(name)) guessedType = 'image/jpeg';
+  else if (/\.png$/.test(name)) guessedType = 'image/png';
+  else if (/\.webp$/.test(name)) guessedType = 'image/webp';
+
+  const missingType = !currentType || currentType === 'application/octet-stream';
+  if (!missingType || !guessedType || !file || typeof file.slice !== 'function') return file;
+  try { return file.slice(0, file.size, guessedType); }
+  catch (_) { return file; }
+}
+
 /* 사진을 그림 객체로 연다. 빠른 길(createImageBitmap)이 안 되는 브라우저는
    <img> 로 여는 예비 통로로 돌아간다 — 어느 쪽이든 canvas 에 그릴 수 있다. */
 function decodeImage(file) {
+  const imageBlob = normalizedImageBlob(file);
   if (window.createImageBitmap) {
-    return createImageBitmap(file, { imageOrientation: 'from-image' })
-      .catch(function () { return createImageBitmap(file); }) // 옵션을 모르는 브라우저
-      .catch(function () { return decodeViaImg(file); });     // 함수는 있는데 파일을 거부
+    return createImageBitmap(imageBlob, { imageOrientation: 'from-image' })
+      .catch(function () { return createImageBitmap(imageBlob); }) // 옵션을 모르는 브라우저
+      .catch(function () { return decodeViaImg(imageBlob); });     // 함수는 있는데 파일을 거부
   }
-  return decodeViaImg(file);
+  return decodeViaImg(imageBlob);
 }
 
 function decodeViaImg(file) {
+  return decodeViaObjectUrl(file).catch(function () {
+    /* KakaoTalk·Naver 등 iOS 앱 내장 브라우저는 같은 JPG도 blob: 주소만 막는
+       경우가 있다. 파일 내용을 data: 주소로 한 번 더 열어 정상 사진을 살린다. */
+    return decodeViaDataUrl(file);
+  });
+}
+
+function decodeViaObjectUrl(file) {
   return new Promise(function (res, rej) {
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = function () { URL.revokeObjectURL(url); res(img); };
     img.onerror = function () {
       URL.revokeObjectURL(url);
-      rej(new Error('이 형식의 사진은 열 수 없습니다 (지원: JPG·PNG 등 일반 사진)'));
+      rej(new Error('사진 주소를 열지 못했습니다'));
     };
     img.src = url;
+  });
+}
+
+function decodeViaDataUrl(file) {
+  return new Promise(function (res, rej) {
+    const reader = new FileReader();
+    reader.onerror = function () { rej(new Error('사진 파일을 읽지 못했습니다')); };
+    reader.onload = function () {
+      const img = new Image();
+      img.onload = function () { res(img); };
+      img.onerror = function () {
+        rej(new Error('이 사진 형식은 아이폰 브라우저에서 열 수 없습니다. 설정 → 카메라 → 포맷 → 높은 호환성으로 바꾼 뒤 다시 찍어 주세요.'));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
   });
 }
 
