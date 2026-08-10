@@ -22,6 +22,9 @@ test('일반 모바일 포털 카메라는 사진첩 목록 없이 연속촬영 
 test('앱 내부 브라우저 촬영 파일은 임시 보관 후 안전 대기열로 옮긴다', () => {
   assert.match(portal, /indexedDB\.open\('puPortalCamera',\s*1\)/);
   assert.match(portal, /pu-photos\.html\?sso=1&portalcam=/);
+  assert.match(portal, /function portalCameraJpeg\(file\)/);
+  assert.match(portal, /canvas\.toBlob\([\s\S]*?'image\/jpeg',\s*0\.95\)/);
+  assert.match(portal, /blob:photo\.blob/);
   assert.match(photos, /function takePortalCameraFile\(\)/);
   assert.match(photos, /await addFiles\(files,\s*true,\s*\{\s*fromCam:\s*true,\s*portalCapture:\s*true\s*\}\)/);
   assert.match(photos, /촬영한 사진을 준비하고 있습니다/);
