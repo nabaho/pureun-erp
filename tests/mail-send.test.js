@@ -117,3 +117,23 @@ test('기록의 빈 자료 이름은 걸러낸다', () => {
   assert.deepEqual(r.names, ['제안서']);
   assert.equal(r.set, '');
 });
+
+/* ── 숨은참조 ── */
+
+test('숨은참조에 받는사람·참조와 겹치는 주소는 뺀다 — 같은 사람에게 두 통 간다', () => {
+  const r = MS.validateSend({ ...OK, cc:'c@d.com', bcc:'a@b.com, c@d.com, z@z.com' });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.bcc, ['z@z.com']);
+});
+
+test('숨은참조도 개수를 막는다', () => {
+  const many = Array.from({length: MS.MAX_TO + 1}, (_,i)=>`b${i}@x.com`).join(',');
+  const r = MS.validateSend({ ...OK, bcc:many });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /숨은참조/);
+});
+
+test('숨은참조가 없으면 빈 목록', () => {
+  const r = MS.validateSend({ ...OK });
+  assert.deepEqual(r.bcc, []);
+});

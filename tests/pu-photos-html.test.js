@@ -433,10 +433,16 @@ test('남의 사진은 보기만 된다 — 올리기·지우기·판독이 잠�
   for (const fname of ['deleteOne', 'deleteSelected', 'readAgain', 'readSelected']) {
     const fn = app.match(new RegExp('function ' + fname + '\\([\\s\\S]{0,160}'));
     assert.ok(fn, fname + ' 를 찾을 수 없습니다');
-    assert.match(fn[0], /blockedIfOther\(\)/, fname + ' 이 남의 사진에도 동작합니다');
+    assert.match(fn[0], /blockedIfOther\(/, fname + ' 이 남의 사진에도 동작합니다');
   }
-  // 올리기 단추도 잠근다
-  assert.match(app, /\['pickBtn', 'docBtn', 'camBtn'\][\s\S]{0,120}viewingOther\(\)/);
+  /* 올리기 단추는 **한 사람만 보는 중**일 때 잠근다.
+     ⚠ 2026-08-10 다시 겨눔 — 관리자는 「전체 근로자」로 시작한다(대표 지시).
+        거기서도 잠그면 앱을 열 때마다 화면을 바꿔야 올릴 수 있다.
+        올리는 것은 보는 화면과 무관하게 **늘 내 자리로** 간다(savePhoto)。
+        지우기·판독은 위에서 보듯 viewingOther() 그대로 — 남의 사진이 섞여 있다. */
+  assert.match(app, /\['pickBtn', 'docBtn', 'camBtn'\][\s\S]{0,120}viewingOnlyOther\(\)/);
+  assert.match(app, /function viewingOnlyOther\(\) \{ return viewingOther\(\) && gridOwner !== ALL_OWNERS; \}/,
+    '「전체 근로자」만 예외여야 합니다 — 한 사람을 골라 볼 때는 여전히 잠깁니다.');
 });
 
 test('예전 사진 옮기기는 관리자에게만 보이고 확인을 받는다', () => {
@@ -546,10 +552,13 @@ test('폰에서는 대시보드를 줄인다 — 사진이 화면 밖으로 밀�
      지켜야 할 것은 「폰에서 안내가 자리를 안 먹는다」이지 특정 클래스가 있는 것이 아니다. */
   assert.match(m[1], /\.dochint[^\n]*display:none/);
   /* 상한 숫자는 스크립트가 UPLOAD_MAX 에서 채운다.
-     마크업에 30을 박으면 상한을 바꿀 때 두 곳이 어긋난다. */
-  assert.match(app, /id="maxHintS"/);
-  assert.match(app, /\$\('maxHintS'\)\.textContent = '한 번에 ' \+ PuPhotoStore\.UPLOAD_MAX/);
-  assert.ok(!/dochint s">[^<]*30장/.test(app), '상한 숫자가 마크업에 박혀 있습니다');
+     마크업에 30을 박으면 상한을 바꿀 때 두 곳이 어긋난다.
+     ⚠ 2026-08-10 다시 겨눔 — 안내가 ⓘ 팝업(openUpHelp)으로 옮겨 갔다.
+        지킬 것은 **숫자를 코드에서 가져온다**이지 어느 칸에 적히는가가 아니다. */
+  assert.match(app, /PuPhotoStore\.UPLOAD_MAX \+ '장/,
+    '상한을 코드에서 안 가져오면 상한을 바꿀 때 안내와 실제가 어긋납니다.');
+  assert.ok(!/30장/.test(app.replace(/\/\*[\s\S]*?\*\//g, '')),
+    '상한 숫자가 화면에 박혀 있습니다');
   // PC 기본값은 종전대로(넓은 화면은 줄일 이유가 없다)
   assert.match(app, /#home \.row2\{display:block\}/);
   assert.match(app, /\.narrow-only\{display:none\}/);
@@ -1111,7 +1120,7 @@ test('사람이 확인한 것은 할 일에서 빠진다', () => {
   const ack = app.match(/function ackRead\([\s\S]*?\n\}/);
   assert.ok(ack, 'ackRead 본문을 찾을 수 없습니다');
   assert.match(ack[0], /PuPhotoStore\.saveRead\(/, '확인 표시를 저장하지 않습니다');
-  assert.match(ack[0], /blockedIfOther\(\)/, '남의 사진에도 확인 표시를 남깁니다');
+  assert.match(ack[0], /blockedIfOther\(/, '남의 사진에도 확인 표시를 남깁니다');
 });
 
 test('확인했음 단추는 할 일인 것에만 나온다', () => {
@@ -1489,7 +1498,7 @@ test('분류 이름이 비면 거절하고 만들지 않는다', () => {
 test('분류 지정은 남의 사진(전체 근로자 포함)에는 못 한다', () => {
   const fn = app.match(/function openAssignKind\([\s\S]*?\n\}/);
   assert.ok(fn, 'openAssignKind 본문을 찾을 수 없습니다');
-  assert.match(fn[0], /if \(blockedIfOther\(\)\) return;/);
+  assert.match(fn[0], /if \(blockedIfOther\(.*\)\) return;/);
   // 고른 것이 없을 때 버튼 자체가 안 보이는지도 확인
   assert.match(app, /viewingOther\(\)\) \$\('tagBtn'\)\.style\.display = 'none'/);
 });
@@ -1504,7 +1513,7 @@ test('크게 보기에서 분류를 뗄 수 있다 — 지정은 되돌릴 수 �
   assert.match(app, /function customKindNote\(/);
   assert.match(app, /function removeCustomKindOne\(/);
   const fn = app.match(/function removeCustomKindOne\([\s\S]*?\n\}/)[0];
-  assert.match(fn, /if \(blockedIfOther\(\)\) return;/);
+  assert.match(fn, /if \(blockedIfOther\(.*\)\) return;/);
   assert.match(fn, /PuPhotoStore\.setCustomKind\(gridYear, id, null/);
 });
 
@@ -1617,7 +1626,9 @@ test('명함틀을 켜면 그 안만 잘라 담는다', () => {
      다음 함수 선언이 나오기 전까지를 본문으로 본다. */
   const fn = app.match(/async function camShoot\([^)]*\)[\s\S]*?(?=\nfunction renderCamStrip)/);
   assert.ok(fn, 'camShoot 를 찾을 수 없습니다');
-  assert.match(fn[0], /if \(frameOn\(\)\)/, '틀 켜짐 여부를 안 봅니다');
+  /* ⚠ 2026-08-10 다시 겨눔 — 틀은 **명함이 보일 때만** 뜬다(showFrame).
+     그리는 것과 자르는 것이 같은 판단을 써야 엉뚱한 데가 안 잘린다. */
+  assert.match(fn[0], /if \(showFrame\(\)\)/, '틀을 쓰는지 안 봅니다');
   assert.match(fn[0], /drawImage\(src, cx, cy, cw, ch, 0, 0, cw, ch\)/, '잘라 담지 않습니다');
   /* 미리보기는 object-fit:cover 라 화면 좌표와 원본 좌표가 다르다 */
   assert.match(fn[0], /object-fit:cover|Math\.max\(e\.width \/ v\.videoWidth/,

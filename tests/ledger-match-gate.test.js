@@ -31,8 +31,21 @@ vm.runInContext(slice('function erpNameEvidence(', '\n// 한 건의 거래내역
 t('적요 이름이 맞으면 통과', ctx.erpNameEvidence({nameScore:75, fpScore:0, invScore:0}).ok, true);
 t('금액만 비슷하면 막힌다', ctx.erpNameEvidence({nameScore:20, fpScore:0, invScore:0}).ok, false);
 t('세금계산서가 맞으면 통과', ctx.erpNameEvidence({nameScore:0, fpScore:0, invScore:100}).ok, true);
-t('금액지문이 확실하면 통과', ctx.erpNameEvidence({nameScore:0, fpScore:95, invScore:0}).ok, true);
-t('약한 지문은 막힌다', ctx.erpNameEvidence({nameScore:0, fpScore:70, invScore:0}).ok, false);
+/* ★ (2026-08-10 대표 제보) 금액지문(입금이력)은 «업체를 좁히는» 근거가 못 된다.
+   「이 회사는 매달 165,000원을 낸다」는 뜻일 뿐이라, 자문료 165,000원 업체가 열둘이면
+   열둘이 다 90점을 받아 열둘이 다 후보로 떴다. 정작 적요의 이름은 그 안에 없는데도
+   화면은 「업체가 여럿 — 골라야 합니다」라고 말해, 고르라고 부추기는 꼴이었다. */
+t('★ 금액지문만으로는 못 통과한다', ctx.erpNameEvidence({nameScore:0, fpScore:95, invScore:0}).ok, false);
+t('금액지문이라고 «따로» 알린다 — 몇 곳을 뺐는지 화면이 말할 수 있어야 한다',
+  ctx.erpNameEvidence({nameScore:0, fpScore:95, invScore:0}).fp, true);
+t('금액지문만인 이유를 알기 쉽게 적는다',
+  ctx.erpNameEvidence({nameScore:0, fpScore:95, invScore:0}).why.indexOf('금액만 같습니다') === 0, true);
+t('약한 지문은 지문이라고 하지도 않는다',
+  !!ctx.erpNameEvidence({nameScore:0, fpScore:70, invScore:0}).fp, false);
+t('이름이 맞으면 금액지문이 있든 없든 통과',
+  ctx.erpNameEvidence({nameScore:75, fpScore:95, invScore:0}).why, '이름');
+t('세금계산서가 맞으면 금액지문보다 앞선다',
+  ctx.erpNameEvidence({nameScore:0, fpScore:95, invScore:100}).why, '세금계산서');
 t('근거가 무엇인지 말해 준다', ctx.erpNameEvidence({nameScore:75, fpScore:0, invScore:0}).why, '이름');
 t('막힌 이유도 비어 있지 않다', ctx.erpNameEvidence({nameScore:0, fpScore:0, invScore:0}).why.length > 0, true);
 t('빈 값이 들어와도 안 터진다', ctx.erpNameEvidence(null).ok, false);

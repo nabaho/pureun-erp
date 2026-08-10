@@ -603,22 +603,31 @@
     return deps.db.ref(foldersPath(owner)).once('value').then(function (s) { return s.val() || {}; });
   }
 
-  function addFolder(name) {
+  /* parentId 를 주면 그 폴더의 **하위폴더**가 된다 (대표 지시 2026-08-10).
+     ⚠ 한 단계까지만 — 하위폴더 밑에 또 만들려 하면 그 위(상위)에 붙인다.
+        좁은 칸에서 계속 파고들면 「어디 뒀더라」가 된다(대표 승인 목업). */
+  function addFolder(name, parentId) {
     var clean = String(name || '').trim();
     if (!clean) return Promise.reject(new Error('폴더 이름을 입력해 주세요'));
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
-    /* 같은 이름을 또 만들지 않는다 — 대소문자·앞뒤 공백을 무시하고 견준다.
-       둘이 생기면 어느 쪽에 넣었는지 헷갈린다(분류 만들기와 같은 규칙). */
     return listFolders().then(function (existing) {
+      /* 하위폴더의 하위폴더는 만들지 않는다 — 한 단계 위로 끌어올린다 */
+      var parent = parentId || null;
+      if (parent && existing[parent] && existing[parent].parent) parent = existing[parent].parent;
+      /* 같은 이름을 또 만들지 않는다 — 대소문자·앞뒤 공백을 무시하고 견준다.
+         ⚠ **같은 어버이 안에서만** 견준다. 다른 일 밑에 같은 이름의 하위폴더를 두는 것은
+            자연스럽다(㈜가야 ↳ 현장사진 · 8월 교육 ↳ 현장사진). */
       var norm = clean.toLowerCase();
       var dupId = Object.keys(existing).find(function (id) {
-        return String((existing[id] || {}).name || '').trim().toLowerCase() === norm;
+        var f = existing[id] || {};
+        return (f.parent || null) === parent
+          && String(f.name || '').trim().toLowerCase() === norm;
       });
       if (dupId) return { id: dupId, created: false };
       var id = deps.db.ref(foldersPath()).push().key;
       var u = {};
-      u[foldersPath() + '/' + id] = { name: clean, createdAt: Date.now() };
-      return deps.db.ref().update(u).then(function () { return { id: id, created: true }; });
+      u[foldersPath() + '/' + id] = { name: clean, createdAt: Date.now(), parent: parent };
+      return deps.db.ref().update(u).then(function () { return { id: id, created: true, parent: parent }; });
     });
   }
 
@@ -636,12 +645,31 @@
      사진은 「전체」에 그대로 남는다. 폴더 지웠다가 사진까지 사라지면 큰일이다.
      사진에 남은 folder 값은 가리키는 폴더가 없으므로 화면이 「전체」로만 본다
      (사진마다 지우러 다니지 않는다 — 수천 장이면 그 자체가 사고 위험이다). */
+  /* ⚠ 하위폴더가 있으면 **함께 지운다.** 어버이만 지우면 하위폴더가 없는 어버이를
+     가리켜 어느 목록에도 안 나온다(고아). 부르는 쪽이 먼저 물어보고 온다. */
   function deleteFolder(folderId) {
     if (!folderId) return Promise.reject(new Error('어느 폴더인지 알 수 없습니다'));
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return listFolders().then(function (existing) {
+      var u = {};
+      u[foldersPath() + '/' + folderId] = null;
+      Object.keys(existing).forEach(function (id) {
+        if ((existing[id] || {}).parent === folderId) u[foldersPath() + '/' + id] = null;
+      });
+      return deps.db.ref().update(u).then(function () { return { removed: Object.keys(u).length }; });
+    });
+  }
+
+  /* 하위폴더만 지울 때 그 안 사진을 **어버이로 올린다**(사라지지 않게).
+     어버이가 없으면(맨 위 폴더였으면) 폴더에서 빼기만 한다 — 「전체」에 남는다. */
+  function moveFolderPhotos(year, ids, toFolderId, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    if (!ids || !ids.length) return Promise.resolve(0);
     var u = {};
-    u[foldersPath() + '/' + folderId] = null;
-    return deps.db.ref().update(u);
+    ids.forEach(function (id) {
+      u[metaPath(year, id, owner) + '/folder'] = toFolderId || null;
+    });
+    return deps.db.ref().update(u).then(function () { return ids.length; });
   }
 
   /* 사진 하나를 폴더에 넣거나(folderId) 뺀다(folderId 없이 호출).
@@ -1218,6 +1246,7 @@
     renameFolder: renameFolder,
     deleteFolder: deleteFolder,
     setFolder: setFolder,
+    moveFolderPhotos: moveFolderPhotos,
     listCustomKinds: listCustomKinds,
     getRetention: getRetention,
     setRetentionOwner: setRetentionOwner,
