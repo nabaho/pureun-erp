@@ -90,6 +90,19 @@
     });
   }
 
+  /* 문서를 열어 그대로 넘겨준다 — 글을 고치려면 문서를 들고 있어야 한다.
+     ⚠ 다 쓰면 반드시 doc.free() 를 불러야 한다. WASM 쪽 기억은 스스로 안 비워진다.
+     ⚠ 옛 hwp 는 읽기 모양으로 열릴 수 있어 convertToEditable 을 먼저 시도한다
+       (없거나 실패해도 그냥 간다 — 고칠 때 어차피 걸린다). */
+  function openDoc(input, fileName, extra) {
+    validate(input, fileName, extra);
+    return loadCore(extra).then(function (rhwp) {
+      var doc = new rhwp.HwpDocument(bytesOf(input));
+      try { if (typeof doc.convertToEditable === 'function') doc.convertToEditable(); } catch (_) {}
+      return doc;
+    });
+  }
+
   function renderPreview(container, input, fileName, extra) {
     if (!container || !global.document) return Promise.reject(new Error('미리보기 영역이 없습니다.'));
     validate(input, fileName, extra);
@@ -165,6 +178,7 @@
     detectFormat: detectFormat,
     validate: validate,
     inspect: inspect,
+    openDoc: openDoc,
     renderPreview: renderPreview,
     createEditor: createEditor,
     exportFrom: exportFrom,
