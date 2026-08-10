@@ -440,7 +440,8 @@ test('남의 사진은 보기만 된다 — 올리기·지우기·판독이 잠�
         거기서도 잠그면 앱을 열 때마다 화면을 바꿔야 올릴 수 있다.
         올리는 것은 보는 화면과 무관하게 **늘 내 자리로** 간다(savePhoto)。
         지우기·판독은 위에서 보듯 viewingOther() 그대로 — 남의 사진이 섞여 있다. */
-  assert.match(app, /\['pickBtn', 'docBtn', 'camBtn'\][\s\S]{0,120}viewingOnlyOther\(\)/);
+  /* ⚠ camBtn 은 없앴다(2026-08-10) — 목록에 남겨 두면 없는 단추를 부르다 멎는다 */
+  assert.match(app, /\['pickBtn', 'docBtn'\][\s\S]{0,120}viewingOnlyOther\(\)/);
   assert.match(app, /function viewingOnlyOther\(\) \{ return viewingOther\(\) && gridOwner !== ALL_OWNERS; \}/,
     '「전체 근로자」만 예외여야 합니다 — 한 사람을 골라 볼 때는 여전히 잠깁니다.');
 });
@@ -525,19 +526,21 @@ test('여러 장 판독 중 한 장이 실패해도 나머지를 계속한다', 
 
 /* ── 2단 화면 · 사진 지우기 ── */
 
-test('카메라 단추는 손으로 만지는 기기에만 보인다 — 판정은 스크립트가 한다', () => {
-  /* PC 에는 찍을 카메라가 없다(대표 지시). 예전에는 CSS 미디어(hover/pointer)로
-     갈랐는데 **폰의 웨일 브라우저가 그 판정에 안 걸려 카메라 단추가 통째로
-     사라졌다**(2026-08-06 대표 화면 — 옆 칸만 비어 보였다). 잘못 숨는 것이
-     잘못 보이는 것보다 나쁘므로 자바스크립트 터치 판정으로 켠다. */
-  assert.match(app, /#camBtn\{display:none\}/);
-  assert.match(app, /#home\.touch #camBtn\{display:block\}/);
-  assert.match(app, /function isTouchDevice\(\)/);
-  assert.match(app, /maxTouchPoints/, '터치 판정이 ontouchstart 하나에만 기댑니다');
-  assert.match(app, /classList\.add\('touch'\)/, '판정 결과를 화면에 반영하지 않습니다');
-  // CSS 미디어 판정으로 되돌아가면 웨일에서 또 사라진다
-  assert.ok(!/@media[^{]*hover:none[^{]*\{ ?#camBtn/.test(app),
-    'CSS 미디어로 카메라를 켜고 있습니다 — 웨일에서 사라졌던 방식입니다');
+/* 2026-08-10 다시 겨눔: 카메라 단추를 **없앴다**(대표 지시 "사진첩에 오른쪽
+   아래 카메라 기능 전혀 필요없다. 삭제해서 제거해 달라").
+   예전 검사는 「어느 기기에서 단추가 보이는가」를 못 박고 있었다 — 단추가
+   없어졌으니 지킬 것도 바뀐다: **단추는 사라졌고 촬영은 남아 있어야 한다.** */
+test('★ 사진첩에는 카메라 단추가 없다', () => {
+  assert.ok(!/id="camBtn"/.test(app), '없애기로 한 단추가 아직 있습니다.');
+  assert.ok(!/\$\('camBtn'\)/.test(app),
+    '없는 단추를 부르면 그 줄에서 화면이 통째로 멎습니다(2026-08-08 흰 화면과 같은 사고).');
+});
+
+test('★ 그래도 촬영 기능은 살아 있다 — 명함첩·포털이 불러 쓴다', () => {
+  /* 단추만 없앤 것이지 촬영을 지운 것이 아니다. 지우면 명함 촬영이 통째로 죽는다. */
+  assert.match(app, /function openCam\(/, '촬영을 여는 곳이 없어졌습니다.');
+  assert.match(app, /function openCamIfAsked\(/, '?cam=1 로 들어오는 길이 없어졌습니다.');
+  assert.match(app, /openCamIfAsked\(\);/, '들어와도 카메라를 안 켭니다.');
 });
 
 test('폰에서는 대시보드를 줄인다 — 사진이 화면 밖으로 밀리지 않게', () => {
@@ -545,8 +548,11 @@ test('폰에서는 대시보드를 줄인다 — 사진이 화면 밖으로 밀�
   assert.match(app, /@media \(max-width:899px\)/);
   const m = app.match(/@media \(max-width:899px\)\{([\s\S]*?)\n\}/);
   assert.ok(m, '폰 규칙을 찾을 수 없습니다');
-  // 서류·카메라 두 칸은 **카메라가 보이는 기기에서만** — 아니면 오른쪽이 빈 구멍이 된다
-  assert.match(m[1], /#home\.touch \.row2\{display:grid;grid-template-columns:1fr 1fr/);
+  /* ⚠ 2026-08-10 다시 겨눔 — 카메라 단추를 없애면서 row2 에 「서류 고르기」만
+     남았다. 두 칸으로 나누면 오른쪽이 빈 구멍이 된다(2026-08-06 에 실제로 그랬다).
+     지킬 것은 「빈 칸이 생기지 않는다」이지 두 칸 규칙이 있는 것이 아니다. */
+  assert.ok(!/\.row2\{display:grid;grid-template-columns:1fr 1fr/.test(m[1]),
+    '단추가 하나뿐인데 두 칸으로 나누면 오른쪽이 빈 구멍이 됩니다.');
   /* ⚠ 2026-08-08 다시 겨눔 — 안내 세 덩어리(다섯 줄)를 **한 줄**로 합쳤다(대표 지시:
      "대시보드가 헷갈린다"). 그래서 폰 전용 짧은 안내(.dochint.s)와 .maxhint 가 없어졌다.
      지켜야 할 것은 「폰에서 안내가 자리를 안 먹는다」이지 특정 클래스가 있는 것이 아니다. */
@@ -1345,9 +1351,10 @@ test('막힌 드래그 표시는 스스로 풀린다', () => {
 /* ══════ 연속촬영 (2026-08-06 대표 요청) ══════
    한 장 찍으면 닫히던 카메라를 — 셔터 연타로 모으고, 갤러리처럼 골라 한 번에 올린다. */
 
-test('카메라 단추는 앱 안 카메라를 열고, 폰 기본 카메라는 예비 통로로 남는다', () => {
-  assert.match(app, /\$\('camBtn'\)\.onclick = function \(\) \{ openCam\(\); \}/,
-    '카메라 단추가 연속촬영을 열지 않습니다');
+test('연속촬영을 열면 폰 기본 카메라가 예비 통로로 남는다', () => {
+  /* ⚠ 2026-08-10 다시 겨눔 — 사진첩의 카메라 단추를 없앴다. 이제 여는 길은
+     명함첩·포털의 ?cam=1 뿐이다. 지킬 것은 「못 열 때 조용히 실패하지 않는다」
+     이지 단추가 어디에 있는가가 아니다. */
   /* 카메라를 못 여는 폰(권한 거부 등)이 조용히 실패하면 안 된다 —
      실패 안내와 함께 폰 기본 카메라로 물러난다. */
   const fn = app.match(/async function openCam\(\)[\s\S]*?\n\}/);

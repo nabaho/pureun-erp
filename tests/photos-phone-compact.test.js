@@ -16,7 +16,8 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'pu-photos.html'), 'utf8
 test('★ 올리는 단추를 새로 만들지 않는다 — 있는 것을 옮긴다', () => {
   /* 새로 만들면 파일 고르기 배선(onchange·대기열·판독)이 두 벌이 되고,
      한쪽만 고치는 사고가 난다. id 는 딱 하나씩만 있어야 한다. */
-  for (const id of ['pickBtn', 'docBtn', 'camBtn', 'needBox', 'oldBox']) {
+  /* ⚠ camBtn 은 없앴다(대표 지시 2026-08-10) — 목록에서도 빠졌다 */
+  for (const id of ['pickBtn', 'docBtn', 'needBox', 'oldBox']) {
     const n = (html.match(new RegExp('id="' + id + '"', 'g')) || []).length;
     assert.equal(n, 1, id + ' 이 ' + n + '개 있습니다 — 자리만 옮겨야 합니다.');
   }
@@ -34,14 +35,13 @@ function fakeDom() {
              insertBefore(c) { c.parentNode = this; },
              firstChild: null, focus() {} };
   }
-  const ids = ['phoneBar','side','chipRow','pickBtn','docBtn','camBtn','row2',
+  const ids = ['phoneBar','side','chipRow','pickBtn','docBtn','row2',
                'needBox','oldBox','upWrap','findBar','q','phUpRow','phMenuBtn','phSheet'];
   const nodes = {};
   ids.forEach(function (i) { nodes[i] = el(i); });
   /* 처음에는 PC 자리 — 대시보드와 row2 안 */
   nodes.pickBtn.parentNode = nodes.side;
   nodes.docBtn.parentNode = nodes.row2;
-  nodes.camBtn.parentNode = nodes.row2;
   nodes.needBox.parentNode = nodes.side;
   nodes.oldBox.parentNode = nodes.side;
   return nodes;
@@ -64,11 +64,13 @@ function runPlace(width) {
   return nodes;
 }
 
-/* ⚠ 2026-08-07 다시 겨눔 — 분류와 올리기를 **창 하나**로 합쳤다(대표 지시).
-   그래서 아래 줄에는 카메라만 남고, 사진·서류는 창 안으로 들어간다. */
-test('★ 폰이면 카메라만 아래 줄에 남는다', () => {
-  const n = runPlace(390);
-  assert.equal(n.camBtn.parentNode.id, 'phoneBar', '촬영은 한 번에 눌려야 합니다.');
+/* ⚠ 2026-08-10 다시 겨눔 — 카메라 단추를 없앴다(대표 지시). 아래 줄에 남는 것은
+   분류 단추뿐이다. 예전 검사는 「카메라가 아래 줄에 있다」를 못 박고 있었다. */
+test('★ 폰이면 아래 줄에 카메라를 두지 않는다', () => {
+  const m = html.match(/function placeForWidth\(\)[\s\S]*?\n\}/);
+  assert.ok(m, 'placeForWidth 가 없습니다.');
+  assert.ok(!/camBtn/.test(m[0]), '없는 단추를 옮기려 하면 그 줄에서 멎습니다.');
+  assert.ok(!/id="camBtn"/.test(html), '없애기로 한 단추가 아직 있습니다.');
 });
 
 test('★ 사진·서류 고르기는 창 안으로 들어간다', () => {
@@ -81,7 +83,6 @@ test('★ PC 에서는 하나도 안 옮긴다', () => {
   const n = runPlace(1400);
   assert.equal(n.pickBtn.parentNode.id, 'side', 'PC 화면은 지금 그대로여야 합니다.');
   assert.equal(n.docBtn.parentNode.id, 'row2');
-  assert.equal(n.camBtn.parentNode.id, 'row2');
 });
 
 test('★ 폰에서 PC 로 넓히면 제자리로 돌아온다 (화면을 돌릴 때)', () => {
@@ -101,7 +102,6 @@ test('★ 폰에서 PC 로 넓히면 제자리로 돌아온다 (화면을 돌릴
   ctx.placeForWidth();
   assert.equal(nodes.pickBtn.parentNode.id, 'side', '넓혔는데 창 안에 남으면 안 됩니다.');
   assert.equal(nodes.docBtn.parentNode.id, 'row2');
-  assert.equal(nodes.camBtn.parentNode.id, 'row2');
 });
 
 test('창 크기가 바뀌면 다시 맞춘다', () => {
