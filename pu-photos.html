@@ -1271,9 +1271,14 @@ firebase.auth().onAuthStateChanged(u => {
   PuPhotoStore.signIn(u.uid, u.email, u.displayName).then(function (me) {
     /* 주소(p001@pureun.kr)가 아니라 사람 이름이 떠야 한다 — 명부에서 찾아 온다. */
     $('who').textContent = me.name || u.email || '';
-    initQueue();
-    takeShared();          // 카톡·갤러리에서 공유해 들어온 사진이 있으면 확인 화면
     loadGrid();
+    initQueue().then(function () {
+      return takePortalCameraFile();
+    }).catch(function (e) {
+      console.warn('[포털 카메라]', e);
+      portalCameraStatus('사진을 저장하지 못했습니다', true);
+    });
+    takeShared();          // 카톡·갤러리에서 공유해 들어온 사진이 있으면 확인 화면
     loadCustomKinds();
     loadFolders();
     renderOwnerPick();
@@ -1492,6 +1497,7 @@ function instRun() {
    그래서 신호가 약한 현장에서 올려도 사진을 잃지 않는다. */
 let queue = null;
 let queueStarted = false;
+let queueReady = null;
 
 function openQueueIdb() {
   return new Promise(function (res, rej) {
@@ -1520,9 +1526,9 @@ function idbAdapter(dbi) {
 }
 
 function initQueue() {
-  if (queueStarted) return;
+  if (queueStarted) return queueReady || Promise.resolve(queue);
   queueStarted = true;
-  openQueueIdb().then(function (dbi) {
+  queueReady = openQueueIdb().then(function (dbi) {
     queue = PuPhotoQueue.create({
       save: PuPhotoStore.savePhoto,   // 쓰기는 저장 층으로만 나간다
       idb: idbAdapter(dbi),
@@ -1530,11 +1536,14 @@ function initQueue() {
       /* 권한 거절은 재시도해도 소용없다 — "신호 약함"으로 오보고하지 않는다. */
       isFatal: function (e) { return /permission[ _-]?denied/i.test((e && (e.message || e.code)) || ''); }
     });
-    return queue.resume();            // 지난번에 못 올라간 사진을 이어서
+    return queue.resume().then(function () { return queue; }); // 지난번에 못 올라간 사진을 이어서
   }).catch(function (e) {
     console.warn('[대기열]', e);
     queueStarted = false;
+    queueReady = null;
+    throw e;
   });
+  return queueReady;
 }
 
 /* 신호가 돌아오면 기다리는 시간 없이 바로 다시 시도한다. */
@@ -2533,6 +2542,59 @@ function openCamReview() {
   renderCamReview();
   $('camRev').style.display = 'flex';
 }
+
+/* ══════ 포털 카메라 단추에서 곧바로 찍은 한 장 ══════
+   포털에서 기본 카메라를 연 뒤 페이지 이동 중 사진이 사라지지 않도록 잠시 맡긴 파일이다.
+   사진첩 화면은 가리고 저장 상태만 보여 준다. 저장이 끝나면 포털 선택 화면으로 돌아간다. */
+let portalCameraToken = '';
+let portalCameraReturning = false;
+function portalCameraStatus(msg, failed) {
+  let el = $('portalCameraSaving');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'portalCameraSaving';
+    el.style.cssText = 'position:fixed;inset:0;z-index:2147483600;background:#eef3ff;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;font-family:inherit';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = '<div><div style="font-size:52px;margin-bottom:14px">' + (failed ? '⚠️' : '📷') + '</div>'
+    + '<div style="font-size:20px;font-weight:800;color:#173b88">' + msg + '</div>'
+    + (failed ? '<button type="button" onclick="location.replace(\'enter.html?v=\'+Date.now())" style="margin-top:20px;border:0;border-radius:12px;background:#2449bd;color:#fff;padding:12px 24px;font-weight:700">선택 화면으로</button>'
+              : '<div style="margin-top:10px;color:#65738c">잠시만 기다려 주세요</div>') + '</div>';
+}
+function readPortalCameraFile(token) {
+  return new Promise(function (resolve, reject) {
+    const rq = indexedDB.open('puPortalCamera', 1);
+    rq.onupgradeneeded = function () {
+      if (!rq.result.objectStoreNames.contains('captures')) rq.result.createObjectStore('captures', { keyPath: 'id' });
+    };
+    rq.onerror = function () { reject(rq.error || new Error('촬영 임시보관소를 열지 못했습니다.')); };
+    rq.onsuccess = function () {
+      const dbi = rq.result, tx = dbi.transaction('captures', 'readwrite'), st = tx.objectStore('captures');
+      const get = st.get(token);
+      get.onsuccess = function () {
+        const row = get.result;
+        if (row) st.delete(token); // 업로드 대기열로 옮길 것이므로 임시본은 지운다.
+        tx.oncomplete = function () { dbi.close(); resolve(row || null); };
+      };
+      get.onerror = function () { const err = get.error; dbi.close(); reject(err || new Error('촬영 사진을 읽지 못했습니다.')); };
+      tx.onerror = function () { const err = tx.error; dbi.close(); reject(err || new Error('촬영 사진을 옮기지 못했습니다.')); };
+    };
+  });
+}
+async function takePortalCameraFile() {
+  let token = '';
+  try { token = new URLSearchParams(location.search).get('portalcam') || ''; } catch (_) { }
+  if (!token) return false;
+  portalCameraToken = token;
+  portalCameraStatus('촬영한 사진을 저장하고 있습니다', false);
+  const row = await readPortalCameraFile(token);
+  if (!row || !row.blob) throw new Error('촬영한 사진을 찾지 못했습니다. 다시 촬영해 주세요.');
+  const file = new File([row.blob], row.name || ('camera-' + Date.now() + '.jpg'), {
+    type: row.type || 'image/jpeg', lastModified: row.lastModified || Date.now()
+  });
+  await addFiles([file], true, { fromCam: true, portalCapture: true });
+  return true;
+}
 function finishCamShots() {
   if (!camShots.length) return;
   if (camQuickMode) { camUpload(); return; }
@@ -2879,6 +2941,7 @@ async function addFiles(fileList, isDoc, opts) {
       if (cp && typeof cp.sharp === 'number') meta.sharp = cp.sharp;
       await queue.enqueue({
         _fromCam: !!(opts && opts.fromCam),
+        _portalCapture: !!(opts && opts.portalCapture),
         id: id,
         name: f.name || '사진',
         takenAt: takenAt,
@@ -2970,6 +3033,17 @@ function onQueueChange(list) {
       scheduled = true;
     }
   });
+  /* 포털에서 찍은 사진은 실제 서버 저장 완료 뒤에만 선택 화면으로 돌아간다. */
+  if (portalCameraToken && !portalCameraReturning) {
+    const mine = list.filter(function (j) { return j._portalCapture; });
+    if (mine.some(function (j) { return j.state === 'fail'; })) {
+      portalCameraStatus('사진 저장 권한을 확인해 주세요', true);
+    } else if (mine.length && mine.every(function (j) { return j.state === 'done'; })) {
+      portalCameraReturning = true;
+      portalCameraStatus('사진첩에 저장되었습니다', false);
+      setTimeout(function () { location.replace('enter.html?v=' + Date.now()); }, 900);
+    }
+  }
   renderUp();
   if (scheduled) setTimeout(renderUp, UP_HIDE_MS + 100);
 }

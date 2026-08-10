@@ -20,8 +20,11 @@ test('인앱 브라우저도 화면 폭과 터치로 모바일 판정한다', ()
 
 test('포털 카메라는 중간 화면 없이 사진첩 카메라로 바로 간다', () => {
   const fn = enter.match(/function wireCamFab\(\)\{[\s\S]*?\n  \}/)[0];
-  assert.match(fn, /sessionStorage\.setItem\('pu_open_camera','quick'\)/);
-  assert.match(fn, /pu-photos\.html\?cam=1&quick=1&sso=1/);
+  assert.match(enter, /id="portalCamInput"[^>]*accept="image\/\*"[^>]*capture="environment"/);
+  assert.match(fn, /if\(input\) input\.click\(\)/);
+  assert.match(fn, /savePortalCameraFile\(file\)/);
+  assert.match(fn, /pu-photos\.html\?sso=1&portalcam=/);
+  assert.doesNotMatch(fn, /sessionStorage\.setItem\('pu_open_camera','quick'\)/);
   assert.doesNotMatch(fn, /pu-camera\.html/);
 });
 
