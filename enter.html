@@ -144,7 +144,12 @@ body.portal-mode #camFab{display:flex;}
 .homebar select{font-family:inherit;font-size:.76rem;font-weight:700;color:var(--accent);background:rgba(255,255,255,.72);
   border:1px solid var(--card-border);border-radius:10px;padding:4px 10px;cursor:pointer;outline:none;}
 .homebar .hb-hint{display:none;font-size:.68rem;font-weight:500;color:var(--mute);}
-@media (max-width:640px){ .sec{flex-wrap:wrap;} .homebar{margin-left:0;} }
+@media (max-width:640px){
+  .sec{flex-wrap:wrap;}
+  .homebar{margin-left:0;width:100%;display:grid;grid-template-columns:auto minmax(0,1fr);white-space:normal;}
+  .homebar select{width:100%;min-width:0;}
+  .homebar .hb-hint{display:none!important;}
+}
 /* 이동 안내 배너 */
 #homeBanner{position:fixed;left:0;right:0;top:0;z-index:60;display:flex;align-items:center;justify-content:center;gap:16px;
   background:linear-gradient(135deg,var(--accent),#2563eb);color:#fff;padding:13px 16px;font-size:.88rem;font-weight:600;
@@ -156,7 +161,6 @@ body.portal-mode #camFab{display:flex;}
 @media(max-width:520px){
   #homeBanner{font-size:.82rem;padding:11px 12px;gap:10px;flex-wrap:wrap;text-align:center;}
   .homebar{font-size:.76rem;}
-  .homebar .hb-hint{flex-basis:100%;}
 }
 @media(max-width:520px){
   .hello{font-size:16px;}
@@ -208,9 +212,12 @@ body.portal-mode #camFab{display:flex;}
 #sgFab:hover{filter:brightness(1.06);transform:translateY(-1px);box-shadow:0 8px 18px -3px rgba(239,68,68,.55);}
 #sgFab:active{transform:translateY(0) scale(.97);}
 @media(max-width:520px){
-  #sgFab{position:fixed;right:max(12px,env(safe-area-inset-right));bottom:max(12px,env(safe-area-inset-bottom));z-index:65;display:inline-flex!important;min-height:46px;padding:8px 14px;font-size:.76rem;}
-  .pbar #sgFab{order:0;}
-  .sg-tip{display:none;}
+  /* 일부 삼성·네이버 브라우저는 max(env())를 해석하지 못해 fixed 단추가
+     원래 헤더 자리로 되돌아간다. 단순한 px 좌표와 !important 로 헤더와 완전히 분리한다. */
+  #sgFab{position:fixed!important;top:auto!important;left:auto!important;right:14px!important;bottom:78px!important;
+    z-index:65;display:inline-flex!important;min-height:42px;padding:7px 12px;font-size:.72rem;margin:0!important;}
+  .pbar #sgFab{order:initial;}
+  .sg-tip{display:none!important;}
 }
 /* 안내 말풍선: 포털 진입 시 5초간 표시 후 사라짐 */
 .sg-tip{position:absolute;top:calc(100% + 10px);right:0;width:232px;background:#1e293b;color:#fff;
@@ -659,7 +666,14 @@ body.portal-mode #camFab{display:flex;}
   // ── 유틸 ──
   var $ = function(id){ return document.getElementById(id); };
   function sidToEmail(sid){ return String(sid||'').toLowerCase().replace(/-/g,'') + '@pureun.kr'; }
-  function isMobile(){ return /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent); }
+  function isMobile(){
+    /* 인앱 브라우저 중에는 UA에서 Mobile 표식을 빼는 것이 있다. 화면 폭·터치도
+       함께 봐야 폰에서 PC 바로가기가 잘못 실행되지 않는다. */
+    var narrow = false;
+    try { narrow = !!(window.matchMedia && window.matchMedia('(max-width: 760px)').matches); } catch(e){}
+    return /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) || narrow
+      || (!!navigator.maxTouchPoints && navigator.maxTouchPoints > 1 && window.innerWidth <= 900);
+  }
   // 앱 탭(pureun-erp 등)이 로그아웃으로 포털이 된 경우 탭 이름표 초기화 — 안 하면 타일이 '자기 탭'을 겨냥해 현재 화면에서 열림
   try { if(/^pureun-/.test(window.name)) window.name = 'pureun-portal'; } catch(e){}
   // 이전 페이지의 전체화면 덮개(z=2147483647) 잔재가 있으면 제거 (레이아웃 밀림 방지)
@@ -746,7 +760,7 @@ body.portal-mode #camFab{display:flex;}
       // 오래 방치된 탭은 브라우저 절전으로 얼어 있어, 그 안에서 화면만 바꿔치기하면
       // 입력이 안 먹는 반깨움 상태가 됨. ERP·컨설팅·명함첩과 동일하게 fresh load로 통일.
       _handled = false;
-      try { sessionStorage.removeItem('pu_skip_home'); sessionStorage.removeItem('pu_auth_hint'); localStorage.removeItem('pu_auth_hint'); } catch(_e){}
+      try { sessionStorage.setItem('pu_skip_home','1'); sessionStorage.removeItem('pu_auth_hint'); localStorage.removeItem('pu_auth_hint'); } catch(_e){}
       try { location.replace(location.pathname + '?v=' + Date.now()); }
       catch(_) { location.reload(); }
     } else {
@@ -992,9 +1006,15 @@ body.portal-mode #camFab{display:flex;}
     var b = $('camFab'); if(!b || b._wired) return;
     b._wired = true;
     b.addEventListener('click', function(){
-      if(isMobile()){ location.href = 'pu-camera.html?sso=1'; return; }
+      if(isMobile()){
+        /* 중간 안내 화면을 거치지 않는다. 인증 때문에 한 번 다시 열려도
+           촬영 의도가 사라지지 않도록 같은 탭의 sessionStorage에도 남긴다. */
+        try { sessionStorage.setItem('pu_open_camera','quick'); } catch(e){}
+        location.href = 'pu-photos.html?cam=1&quick=1&sso=1';
+        return;
+      }
       var _v = Math.floor(Date.now() / 600000);
-      openPortalApp({ key: 'camquick' }, 'pu-camera.html?sso=1&v=' + _v);
+      openPortalApp({ key: 'camquick' }, 'pu-photos.html?cam=1&quick=1&sso=1&v=' + _v);
     });
   }
 
@@ -1262,9 +1282,7 @@ body.portal-mode #camFab{display:flex;}
     });
     /* 폰에서는 자동 이동을 하지 않는다(maybeGoHome). 설정은 기기 간 공유되므로,
        PC 에서 잡아 둔 값이 폰 화면에도 보인다 — 안 먹는다는 것을 밝혀 둔다. */
-    var phoneNote = isMobile()
-      ? '<span class="hb-hint" style="display:inline;color:#64748b">폰에서는 자동 이동하지 않습니다 (PC 에서만 적용)</span>'
-      : '<span class="hb-hint"></span>';
+    var phoneNote = '<span class="hb-hint"></span>';
     bar.innerHTML = '<span>⚡ 로그인 후 바로가기</span>'
       + '<select id="homeAppSel" aria-label="로그인 후 바로 이동할 앱" title="'
       + (isMobile() ? '폰에서는 자동 이동하지 않습니다 — PC 에서 로그인할 때만 적용됩니다'
@@ -1282,14 +1300,9 @@ body.portal-mode #camFab{display:flex;}
           : (this.value ? '다음 로그인부터 이 앱으로 바로 이동합니다' : '자동 이동을 사용하지 않습니다');
         hint.style.display = 'inline';
         clearTimeout(hint._t);
-        // 폰에서는 4초 뒤 '폰에서는 자동 이동하지 않습니다' 안내로 되돌린다 (숨기면 오해가 남는다)
+        // 좁은 화면에서는 안내를 툴팁에 두고 셀 줄은 늘리지 않는다.
         hint._t = setTimeout(function(){
-          if(isMobile()){
-            hint.textContent = '폰에서는 자동 이동하지 않습니다 (PC 에서만 적용)';
-            hint.style.color = '#64748b';
-          } else {
-            hint.style.display = 'none';
-          }
+          hint.style.display = 'none';
         }, 4000);
       }
     });
@@ -1334,7 +1347,8 @@ body.portal-mode #camFab{display:flex;}
 
   // ── 로그아웃 ──
   $('logoutBtn').addEventListener('click', function(){
-    try { sessionStorage.removeItem('pu_skip_home'); sessionStorage.removeItem('pu_auth_hint'); localStorage.removeItem('pu_auth_hint'); } catch(e){}   // 재로그인 시 바로가기·스플래시 초기화
+    /* 같은 탭에서 다시 로그인하면 반드시 포털 선택 화면에 머문다. */
+    try { sessionStorage.setItem('pu_skip_home','1'); sessionStorage.removeItem('pu_auth_hint'); localStorage.removeItem('pu_auth_hint'); } catch(e){}
     auth.signOut().then(function(){ location.reload(); });
   });
 

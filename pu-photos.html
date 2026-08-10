@@ -1112,7 +1112,7 @@ button{font-family:inherit;cursor:pointer}
           <button id="camUndo" onclick="camDropLast()" title="방금 찍은 것 버리기" style="display:none">✕</button>
         </span>
         <button id="camShut" onclick="camShoot()" aria-label="촬영"></button>
-        <button id="camDone" onclick="openCamReview()" disabled>완료</button>
+        <button id="camDone" onclick="finishCamShots()" disabled>저장</button>
       </div>
     </div>
 
@@ -1550,12 +1550,14 @@ $('docInput').onchange = function () { addFiles(this.files, true); this.value = 
    기기에서 **더 또렷하게 찍는 길**이다(폰 카메라는 사진기 화소를 다 쓴다).
    ⚠ isDoc=true — 여기로 들어온 것도 서류다. false 로 두면 애써 크게 찍어 놓고
       1600px·85% 로 깎아 담는다(2026-08-09 대표 보고의 화질 문제와 같은 뿌리). */
-$('camInput').onchange = function () { addFiles(this.files, true); this.value = ''; };
+$('camInput').onchange = function () { addFiles(this.files, true).then(function () {
+  toast('사진첩에 저장했습니다');
+}); this.value = ''; };
 
 /* ── 화면이 낮게 잡히는 기기에 폰 카메라를 권한다 (대표 폰: 1280×720) ──
    명함 글씨를 읽으려면 긴 변이 최소 이만큼은 되어야 한다. 그 아래면 무엇을 해도
    뭉개므로, 화면 안 카메라를 고집하지 않고 폰 카메라 쪽을 열어 준다. */
-const CAM_LOW_EDGE = 1600;
+const CAM_LOW_EDGE = 1920;
 function checkCamRes() {
   const v = $('camVid'), b = $('camNative');
   if (!v || !b) return;
@@ -1630,24 +1632,30 @@ function setCamSavePref(on) {
    (대표 선택 '가': 지금 쓰던 앞뒤 촬영을 그대로 옮긴다). */
 let camCardMode = false;    // 명함첩에서 온 촬영인가
 let camReturnTo = '';       // 다 찍고 돌아갈 곳 (지금은 명함첩만)
+let camQuickMode = false;   // 포털의 카메라 단추: 검토 화면 없이 저장하고 사진첩으로 복귀
 /* 앞면을 찍으면 'back' 이 되고, 그 다음 한 장은 **앞면과 한 장으로 묶인다**.
    camPairWith 는 묶어 줄 앞면이 camShots 의 몇 번째인가(-1 = 안 묶음). */
 let camCardStage = 'front';
 let camPairWith = -1;
 function openCamIfAsked() {
-  let want = false, mode = '', from = '';
+  let want = false, mode = '', from = '', quick = false;
   try {
     const q = new URLSearchParams(location.search);
-    want = q.get('cam') === '1';
+    let remembered = '';
+    try { remembered = sessionStorage.getItem('pu_open_camera') || ''; } catch (_) { }
+    want = q.get('cam') === '1' || remembered === 'quick';
     mode = q.get('mode') || '';
     from = q.get('from') || '';
+    quick = q.get('quick') === '1' || remembered === 'quick';
   } catch (_) { return; }
   if (!want) return;
+  try { sessionStorage.removeItem('pu_open_camera'); } catch (_) { }
   camCardMode = mode === 'card';
   camReturnTo = from === 'cards' ? 'pu-cards.html' : '';
+  camQuickMode = quick && !camCardMode;
   try {
     const u = new URL(location.href);
-    ['cam', 'mode', 'from'].forEach(function (k) { u.searchParams.delete(k); });
+    ['cam', 'mode', 'from', 'quick'].forEach(function (k) { u.searchParams.delete(k); });
     history.replaceState(null, '', u.pathname + u.search + u.hash);
   } catch (_) { /* 주소를 못 고쳐도 카메라는 켠다 */ }
   /* 화면이 다 그려진 뒤에 켠다 — 그리는 도중에 켜면 미리보기가 검게 뜨는 기기가 있다 */
@@ -1699,7 +1707,12 @@ async function openCam() {
     const cap = camTrack.getCapabilities ? camTrack.getCapabilities() : null;
     const mw = cap && cap.width && cap.width.max, mh = cap && cap.height && cap.height.max;
     if (mw && mh && mw > (camTrack.getSettings ? (camTrack.getSettings().width || 0) : 0)) {
-      await camTrack.applyConstraints({ width: { ideal: mw }, height: { ideal: mh } });
+      /* 우선 정확한 최대 크기를 요청한다. 거부하는 브라우저만 ideal로 물러난다. */
+      try {
+        await camTrack.applyConstraints({ width: { exact: mw }, height: { exact: mh } });
+      } catch (_) {
+        await camTrack.applyConstraints({ width: { ideal: mw }, height: { ideal: mh } });
+      }
     }
   } catch (_) { /* 못 올려도 촬영은 된다 */ }
   try { await camTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (_) { }
@@ -2493,7 +2506,7 @@ function renderCamStrip() {
   const undo = $('camUndo');
   if (undo) undo.style.display = n ? 'flex' : 'none';
   $('camDone').disabled = !n;
-  $('camDone').innerHTML = n ? '완료<br>' + n + '장' : '완료';
+  $('camDone').innerHTML = n ? (camQuickMode ? '저장<br>' : '완료<br>') + n + '장' : (camQuickMode ? '저장' : '완료');
   $('camShut').disabled = n >= max;
 }
 
@@ -2519,6 +2532,11 @@ function openCamReview() {
   $('camOv').style.display = 'none';
   renderCamReview();
   $('camRev').style.display = 'flex';
+}
+function finishCamShots() {
+  if (!camShots.length) return;
+  if (camQuickMode) { camUpload(); return; }
+  openCamReview();
 }
 function camMore() {
   $('camRev').style.display = 'none';
@@ -2603,6 +2621,12 @@ async function camUpload() {
        글자가 400px 남짓밖에 안 남아 판독이 흐려진다. */
     await addFiles(files, true, { fromCam: true, pairs: pairs, caps: caps });
     if (dropped) toast('안 고른 ' + dropped + '장은 버렸습니다');
+    if (camQuickMode && !camReturnTo) {
+      camQuickMode = false;
+      camDiscard();
+      toast('촬영한 사진을 사진첩에 저장했습니다');
+      return;
+    }
     /* 명함첩에서 왔으면 다 올린 뒤 돌려보낸다 — 온 곳으로 돌아가는 것이
        사람이 기대하는 움직임이다(대표 지시 2026-08-09). */
     if (camReturnTo) { camDiscard(); camGoBack(); }
