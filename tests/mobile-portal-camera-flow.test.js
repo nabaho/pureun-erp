@@ -29,6 +29,20 @@ test('포털 카메라는 중간 화면 없이 사진첩 카메라로 바로 간
   assert.doesNotMatch(fn, /pu-camera\.html/);
 });
 
+test('카카오톡에서도 시스템 확인 화면 대신 화면 안 연속촬영을 우선한다', () => {
+  const fn = enter.match(/function needsDirectNativeCamera\(\)\{[\s\S]*?\n  \}/)[0];
+  assert.match(fn, /navigator\.mediaDevices\.getUserMedia/);
+  assert.doesNotMatch(fn, /KAKAOTALK|NAVER|DaumApps|embedded/);
+  assert.match(photos, /if \(inAppBrowser\(\) && !camQuickMode\)/);
+});
+
+test('포털 빠른 촬영은 흐림 확인창 없이 모든 사진을 계속 담는다', () => {
+  const shoot = photos.match(/async function camShoot\(opts\) \{[\s\S]*?\n\}/)[0];
+  assert.match(shoot, /if \(blurry && !camQuickMode\) \{ setCamWarn\(true\); return; \}/);
+  const res = photos.match(/function checkCamRes\(\) \{[\s\S]*?\n\}/)[0];
+  assert.match(res, /!camQuickMode && edge && edge < CAM_LOW_EDGE/);
+});
+
 test('아이폰 기본 카메라 사진은 페이지 이동 전에 고화질 JPEG로 확정한다', () => {
   assert.match(enter, /function portalCameraJpeg\(file\)/);
   assert.match(enter, /maxEdge = 4096/);
