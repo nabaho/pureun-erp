@@ -18818,6 +18818,7 @@ function CompanyEditModal(props){
   useEnterSave(function(){ var saveBtn=document.querySelector('.modal-bg .modal .btn-primary'); if(saveBtn) saveBtn.click(); });
   var s = useState(props.cur); var f = s[0]; var setF = s[1];
   var pcpk = useState(null); var pcPickMode = pcpk[0]; var setPcPickMode = pcpk[1];  // 명함첩 찾기: 'ceo' | 'contact'
+  var pccp = useState(false); var pcCoPick = pccp[0]; var setPcCoPick = pccp[1];     // 명함첩에서 사업자등록증(회사정보) 찾기
   var users = getAssignableUsers();
   var assignable = getAssignableUsers();   // 휴직·배제 제외
   var typeMasters = dbGet('biz_company_types', COMPANY_TYPE_SEED);
@@ -18840,6 +18841,41 @@ function CompanyEditModal(props){
     if(!f.name){ showToast('업체명 입력'); return; }
     props.onSave(f);
   }
+  /* ── 명함첩의 사업자등록증에서 회사정보 채우기 (2026-08-10 대표 지시) ──
+     사업자번호·업태·종목은 사업자등록증에만 있는 것이라, 대표자 명함으로는 못 채운다.
+     ★ 여기서도 «이미 적어 둔 칸은 안 덮는다» — 대표자 찾기와 같은 규칙이다.
+       손으로 고쳐 둔 값이 말없이 바뀌면 바뀐 줄도 모르고 저장된다. */
+  function fillCompanyFromPcBiz(row){
+    row = row || {};
+    var got = [], none = [];
+    /* 사업자등록증 카드가 아예 없는 회사면(명함만 있는 회사) 사업자번호·업태·종목이 안 온다.
+       그것을 말해 주지 않으면 「가져왔는데 왜 비어 있지」 가 된다. */
+    var pairs = [
+      { k:'bizNo',       v:row.bizNo,       label:'사업자번호' },
+      { k:'ceo',         v:row.ceo,         label:'대표자' },
+      { k:'bizType',     v:row.bizType,     label:'업태' },
+      { k:'bizCategory', v:row.bizCategory, label:'종목' },
+      { k:'address',     v:row.address,     label:'주소' },
+      { k:'phone',       v:row.phone,       label:'대표 전화' },
+      { k:'fax',         v:row.fax,         label:'팩스' },
+      { k:'email',       v:row.ceoEmail,    label:'대표 이메일' }
+      /* 법인등록번호(corpNo)는 넣지 않는다 — 이 창에 그 칸이 없다.
+         칸도 없는데 「채웠다」고 말하면 거짓말이 된다(계약관리에는 그 칸이 있어 거기서 채운다). */
+    ];
+    setF(function(prev){
+      var nx = Object.assign({}, prev);
+      pairs.forEach(function(p){
+        if(!p.v){ none.push(p.label); return; }
+        if(String(nx[p.k] || '').trim()) return;      // 이미 있는 칸은 그대로
+        nx[p.k] = p.v; got.push(p.label);
+      });
+      return nx;
+    });
+    showToast('📇 ' + (row.name || '') + (row.hasBiz ? '' : ' (사업자등록증 없음 — 명함에서만)')
+      + (got.length ? (' · ' + got.join('·') + ' 채움') : ' · 새로 채운 칸 없음')
+      + (none.length ? (' · 명함첩에 ' + none.join('·') + ' 없음') : ''));
+  }
+
   /* 명함첩에서 대표자 채우기 — 이름만이 아니라 «명함에 적힌 연락처» 까지.
      (2026-08-10 대표 지적: "대표자 찾아서 수정하면 대표전화 팩스 이메일도 입력되어야 하는데 안 된다")
      명함에는 그 값들이 이미 있는데 이름 한 칸만 가져오고 나머지를 버리고 있었다.
@@ -18892,7 +18928,25 @@ function CompanyEditModal(props){
       h('div', { className:'modal-b', style:{ maxHeight:'70vh', overflowY:'auto' } },
         // 기본 정보
         h('div', { style:{ background:'#f8fafc', border:'1px solid #e2e8f0', borderRadius:'6px', padding:'10px 12px', marginBottom:'10px' } },
-          h('div', { style:{ fontSize:'12px', fontWeight:700, color:'#475569', marginBottom:'8px' } }, '🏢 회사정보'),
+          /* ── 제목 줄에 명함첩 단추 둘을 모아 둔다 (2026-08-10 대표 지시) ──
+             전에는 「명함첩에서 대표자 찾기」가 대표자 칸 «아래» 에 끼어 있어
+             칸과 칸 사이가 벌어지고 무엇에 딸린 단추인지도 흐렸다.
+             회사정보를 채우는 길이니 그 제목 줄에 나란히 두는 것이 맞다. */
+          h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap',
+              marginBottom:'8px' } },
+            h('div', { style:{ fontSize:'12px', fontWeight:700, color:'#475569' } }, '🏢 회사정보'),
+            h('div', { style:{ flex:1 } }),
+            h('button', { type:'button', onClick:function(){ setPcCoPick(true); },
+              title:'명함첩의 사업자등록증에서 사업자번호·대표자·업태·종목·주소·연락처를 가져옵니다\n'
+                   +'— 이미 적어 둔 칸은 그대로 둡니다',
+              style:{ background:'#eff6ff', color:'#1e40af', border:'1px solid #bfdbfe', borderRadius:'5px',
+                padding:'4px 9px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
+              '📇 사업자등록증 찾기'),
+            h('button', { type:'button', onClick:function(){ setPcPickMode('ceo'); },
+              title:'명함첩에서 대표자를 찾아 이름·대표 전화·팩스·이메일을 채웁니다',
+              style:{ background:'#eff6ff', color:'#2563eb', border:'1px solid #bfdbfe', borderRadius:'5px',
+                padding:'4px 9px', fontSize:'11px', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' } },
+              '📇 대표자 찾기')),
           h('div', { className:'fld' }, h('label', null, '업체명 *'),
             h('input', { type:'text', value:f.name || '', onChange:set('name'), placeholder:'(주)○○○' })),
           h('div', { className:'fld' }, h('label', null, '사업자번호'),
@@ -18910,9 +18964,7 @@ function CompanyEditModal(props){
             h('div', { style:{ display:'flex', gap:'6px' } },
               h('input', { type:'text', value:f.ceo || '', onChange:set('ceo'), placeholder:'대표자 1', style:{ flex:1 } }),
               h('input', { type:'text', value:f.ceo2 || '', onChange:set('ceo2'), placeholder:'대표자 2 (선택)', style:{ flex:1 } })
-            ),
-            h('button', { type:'button', onClick:function(){ setPcPickMode('ceo'); },
-              style:{ marginTop:'5px', background:'#eff6ff', color:'#2563eb', border:'1px solid #bfdbfe', borderRadius:'5px', padding:'5px 10px', fontSize:'11px', fontWeight:600, cursor:'pointer' } }, '📇 명함첩에서 대표자 찾기')),
+            )),
           h('div', { className:'fld' }, h('label', null, '업태 / 종목'),
             h('div', { style:{ display:'flex', gap:'6px' } },
               h('input', { type:'text', value:f.bizType || '', onChange:set('bizType'), placeholder:'업태', style:{ flex:1 } }),
@@ -19181,6 +19233,13 @@ function CompanyEditModal(props){
       initialQuery: f.name || '',            // 그 업체 이름으로 먼저 찾아 준다
       onClose:function(){ setPcPickMode(null); },
       onSelect:function(p){ (pcPickMode==='ceo' ? fillCeoFromPc : addContactFromPc)(p); setPcPickMode(null); }
+    }),
+    /* 사업자등록증 찾기 — 계약관리가 쓰던 창을 그대로 쓴다.
+       같은 일에 창이 둘이면 한쪽만 고치는 사고가 난다(명함첩 카메라에서 겪었다). */
+    pcCoPick && h(PucardsCompanyPickerModal, {
+      initialQuery: f.name || '',
+      onClose:function(){ setPcCoPick(false); },
+      onSelect:function(row){ setPcCoPick(false); fillCompanyFromPcBiz(row); }
     })
   );
 }
