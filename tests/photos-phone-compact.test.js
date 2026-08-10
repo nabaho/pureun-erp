@@ -202,8 +202,8 @@ test('두 걸러보기가 겹치지 않게 푼다', () => {
 test('★ 바깥·손잡이·Esc 로 닫힌다', () => {
   assert.ok(/class="dim" onclick="closePhSheet\(\)"/.test(html), '바깥을 눌러 닫을 수 있어야 합니다.');
   assert.ok(/class="grab" onclick="closePhSheet\(\)"/.test(html), '손잡이로도 닫을 수 있어야 합니다.');
-  const esc = (html.match(/document\.addEventListener\('keydown', function \(e\) \{[\s\S]*?\n\}\);/g) || [])
-    .find(function (b) { return /goBack\(\)/.test(b); });
+  /* ⚠ 2026-08-10 다시 겨눔 — ESC 처리를 escOnce() 하나로 모았다 */
+  const esc = (html.match(/function escOnce\(\)[\s\S]*?\n\}/) || [])[0];
   assert.ok(esc && /phSheetOpen\(\)[\s\S]{0,60}closePhSheet\(\)/.test(esc),
     'Esc 는 창을 먼저 닫아야 합니다 — 안 그러면 창이 열린 채 화면이 뒤로 갑니다.');
 });
