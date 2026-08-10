@@ -509,9 +509,6 @@ table.sbox td.none{text-align:center;color:#8b98b3;padding:34px 10px}
 #pcSearch:focus{outline:none;border-color:#1e2a47;background-color:#fff}
 .pcbtn-primary{background:#1e2a47;color:#fff;border-radius:12px;padding:11px 18px;font-size:13.5px;font-weight:600}
 .pcbtn-primary:hover{background:#2c3c66}
-#pcMailBtn{background:#fff;color:#1e2a47;border:1px solid #d7dfec;border-radius:12px;
-  padding:11px 16px;font-size:13.5px;font-weight:600;cursor:pointer;white-space:nowrap}
-#pcMailBtn:hover{background:#eaf1ff;border-color:#b9cdf5}
 .pcbtn-ghost{background:#fff;border:1px solid #dde3ee;border-radius:10px;padding:10px 14px;font-size:15px;color:#5a6885}
 /* 상단 한 줄: 제목 · 탭 · 도구 (좁으면 뒤쪽 도구부터 다음 줄로 내려감) */
 #pcHead{display:flex;align-items:center;gap:10px;padding:16px 22px 6px;flex-wrap:wrap}
@@ -747,9 +744,6 @@ body.pc #pcDetail{display:flex}
         <button id="pcSearchX" onclick="clearPcSearch()" title="검색어 지우기 (Esc)" aria-label="검색어 지우기">✕</button>
       </div>
       <button class="pcbtn-primary" onclick="openAddSheet()" title="새 명함 등록 (단축키 N) — 사진 촬영·이미지·PDF·직접 입력">＋ 명함 등록</button>
-      <!-- 명함 없이 바로 메일 — 받는 곳을 손으로 적고 자료를 담아 보낸다.
-           명함이 없는 상대(문의 전화만 온 곳 등)에게도 자료를 보내는 일이 있다. -->
-      <button id="pcMailBtn" onclick="openComposeMail()" title="명함 없이 바로 메일을 씁니다 — 자료를 담아 회사 메일로 보냅니다">✉️ 메일 쓰기</button>
       <!-- 오른쪽 끝: 자동 로그아웃 남은시간 · 로그아웃.
            사이드바 맨 아래에 있던 것을 여기로 올렸다 — 자리를 뜰 때 누르는 단추라
            사이드바를 접으면 아예 사라지는 자리에 두면 안 된다. -->
@@ -1830,14 +1824,18 @@ function openSendMaterials(id){
      읽은 뒤 다시 들어온다. */
   if(!_matLoaded && Store.mode==='firebase'){ loadMaterials(()=>openSendMaterials(id)); return; }
   /* 바로 보내기 모드에서는 고르기 화면을 거치지 않는다 (대표 지시 2026-08-10).
-     확인 한 번 → 곧장 편지 쓰기. 자료는 편지 안 「＋ 자료 담기」에서 담는다. */
+     ⚠ 물어보고 넘어간다. 이메일 칸은 목록에서 스치듯 눌리는 자리라, 묻지 않으면
+       보던 명함 목록이 갑자기 편지 화면으로 바뀌어 놀란다. */
   if(mailModeOf(matMailCfg())==='auto'){
     const email=normEmail(it.email);
     if(!email) return toast('이 명함에 이메일이 없습니다 — 명함을 열어 이메일을 넣어 주세요', 6000);
+    const who = it.name || it.company || '';
+    if(!confirm(`${who} 님께 메일을 쓸까요?\n\n받는 곳 · ${email}\n\n`
+      + `[확인]을 누르면 메일 쓰기 화면으로 넘어갑니다.`)) return;
     _sendMatId=id; _sendMatPick=null; _sendMatSetName='';
     closeDetail();
     /* 팝업이 아니라 **본문 전체 화면**으로 연다 (대표 지시 2026-08-10) */
-    openMailPage({ cardId:id, to:email, name: it.name||it.company||'', company: it.company||'' });
+    openMailPage({ cardId:id, to:email, name: who, company: it.company||'' });
     return;
   }
   _sendMatId=id; _sendMatPick=null; _sendMatSetName=''; _compose=null;
@@ -1930,18 +1928,6 @@ function openCompose(){
 function backToPick(){ _compose = null;
   try{ $('sendMatSheet').classList.remove('compose'); }catch(_){}
   renderSendMat(); }
-/* 명함 없이 바로 쓰기 — 받는 곳을 손으로 적고 자료를 담는다.
-   문의 전화만 온 곳처럼 명함이 아직 없는 상대에게도 자료를 보낼 일이 있다.
-   보낸 기록은 명함이 없으니 남지 않는다(기록은 명함에 붙는다). */
-function openComposeMail(){
-  /* openSendMaterials 와 같은 이유 — 설정을 읽은 뒤 판정한다 */
-  if(!_matLoaded && Store.mode==='firebase'){ loadMaterials(()=>openComposeMail()); return; }
-  if(mailModeOf(matMailCfg())!=='auto')
-    return toast('자료함 → ✉️ 메일 본문에서 「회사 메일로 바로 보내기」를 켜면 여기서 바로 쓸 수 있습니다', 8000);
-  _sendMatId=null; _sendMatPick=null; _sendMatSetName='';
-  _compose=null;                       /* 빈 편지로 새로 연다 */
-  openMailPage({});
-}
 /* 편지 안에서 자료 담기 — 자료함까지 안 가고 그 자리에서 담고 뺀다 */
 function togglePickMat(){ grabCompose(); if(!_compose) return; _compose.picking=!_compose.picking; redrawCompose(); }
 function toggleComposeMat(id){
@@ -2495,6 +2481,12 @@ async function fillMatPreview(id){
    팝업으로는 본문·첨부를 손보기가 갑갑했다. 자료함·환경설정과 같은 방식으로 본문을 쓴다.
    state.mailSent 가 true 면 보낸 메일함, 아니면 쓰기. */
 function openMailPage(pre){
+  /* 설정을 읽은 뒤 판정한다 (openSendMaterials 와 같은 이유) */
+  if(!_matLoaded && Store.mode==='firebase'){ loadMaterials(()=>openMailPage(pre)); return; }
+  /* 「메일창만 열기」로 두었으면 여기서 보낼 수 없다 — 켜는 곳을 알려 준다.
+     안 막으면 다 쓰고 [보내기]를 눌렀을 때 비로소 안 된다는 것을 알게 된다. */
+  if(mailModeOf(matMailCfg())!=='auto')
+    return toast('자료함 → ✉️ 메일 본문에서 「회사 메일로 바로 보내기」를 켜면 여기서 바로 쓸 수 있습니다', 8000);
   state.view='mail'; state.mailSent=false;
   if(!_compose || pre){
     const tpl = matMailCfg();
