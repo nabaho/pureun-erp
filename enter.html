@@ -666,6 +666,27 @@ body.portal-mode #camFab{display:flex;}
   // ── 유틸 ──
   var $ = function(id){ return document.getElementById(id); };
   function sidToEmail(sid){ return String(sid||'').toLowerCase().replace(/-/g,'') + '@pureun.kr'; }
+  /* ══ 누구로 로그인됐는지 «보이게» 하는 도구들 ══
+     (2026-08-10 박재원 계정으로 접수된 제보: "박은비로 로그인했지만 박재원으로 뜸")
+     사번이 P005(박재원)·A005(박은비)처럼 «숫자가 같고 앞글자만 다르다».
+     아이디를 잘못 넣어도, 이름표가 두 사람에게 겹쳐 있어도, 화면에는 이름 하나만 떠서
+     본인도 관리자도 «어느 계정으로 들어왔는지» 확인할 길이 없었다.
+     고치는 원칙: 로그인 화면이 판단하지 말고, 무엇으로 들어왔는지 그대로 보여준다. */
+  function puEmailToSid(email){
+    var m = String(email||'').toLowerCase().match(/^([a-z]+)(\d+)@/);
+    return m ? (m[1].toUpperCase() + m[2]) : '';
+  }
+  /* 명부에서 이메일로 사람을 찾되, «몇 명이 잡히는지» 도 함께 돌려준다.
+     find() 하나로 끝내면 이름표가 겹쳐 있어도(같은 사번 두 명) 조용히 첫 사람이 떠서
+     엉뚱한 이름이 나온다 — 겹침은 겹쳤다고 말해야 한다. */
+  function puDirMatch(list, email){
+    if(!list || !list.length) return { acct:null, all:[] };
+    var em = String(email||'').toLowerCase();
+    var all = list.filter(function(x){ return x && sidToEmail(x.sid) === em; });
+    // 겹치면 재직(active)인 사람을 우선한다 — 그래도 겹치면 화면이 경고한다
+    var act = all.filter(function(x){ return (x.status||'active') === 'active'; });
+    return { acct:(act[0] || all[0] || null), all:all };
+  }
   function isMobile(){
     /* 인앱 브라우저 중에는 UA에서 Mobile 표식을 빼는 것이 있다. 화면 폭·터치도
        함께 봐야 폰에서 PC 바로가기가 잘못 실행되지 않는다. */
@@ -750,6 +771,10 @@ body.portal-mode #camFab{display:flex;}
 
   // ── 세션 자동 감지: 이메일 계정으로 로그인돼 있으면 포털 표시, 로그아웃되면(다른 탭 포함) 로그인 화면으로 복귀 ──
   var _handled = false;
+  /* 방금 아이디를 «쳐서» 들어왔는가, 남아 있던 세션으로 «저절로» 들어왔는가.
+     저절로 들어온 것이면 그렇게 말해 줘야 한다 — 전 사람 세션이 남은 폰에서
+     포털이 말없이 열리면, 본인은 자기가 로그인한 줄 안다. */
+  var _freshLogin = false;
   function _rmBootSplash(){ try { var s=document.getElementById('pu-boot-splash'); if(s) s.remove(); } catch(_e){} }
   auth.onAuthStateChanged(function(user){
     if(user && user.email){
@@ -784,6 +809,7 @@ body.portal-mode #camFab{display:flex;}
 
     $('loginBtn').disabled = true;
     showErr('');
+    _freshLogin = true;                        // 이번 진입은 「방금 아이디를 친」 로그인이다
 
     // 자동 로그인 지속성 설정
     var persistence = $('autoLogin').checked
@@ -910,9 +936,13 @@ body.portal-mode #camFab{display:flex;}
     document.body.classList.add('portal-mode');   // 포털 화면 상단 정렬
     var tf = $('topfix'); if(tf) tf.style.display = 'none';
 
+    /* 이번 진입이 «방금 친 로그인» 인지 «남은 세션 자동 진입» 인지 여기서 굳힌다.
+       (다음 진입을 위해 표시등은 바로 끈다 — 로그아웃 뒤 자동 복귀와 섞이지 않게) */
+    var _via = _freshLogin ? 'login' : 'auto';
+    _freshLogin = false;
     // 직원명부에서 이 사용자(이메일 매칭) 찾아 이름·역할 확정 → 그 후에 한 번에 표시
-    function _show(acct){
-      renderPortal(acct);
+    function _show(m){
+      renderPortal(m.acct, { email:(user.email||''), all:m.all, via:_via });
       $('portalView').style.display = 'block';
       _rmBootSplash();   // 타일까지 그린 뒤 스플래시 제거 (번쩍임 없음)
     }
@@ -927,30 +957,27 @@ body.portal-mode #camFab{display:flex;}
         return Array.isArray(list) ? list : null;
       });
     }
-    function _match(list){
-      if(!list) return null;
-      var em = (user.email || '').toLowerCase();
-      return list.find(function(x){ return x && sidToEmail(x.sid) === em; }) || null;
-    }
+    // 겹침(같은 사번 두 명)까지 함께 본다 — find() 하나면 겹침이 조용히 묻힌다
+    function _match(list){ return puDirMatch(list, user.email || ''); }
     // 이 기기의 ERP 로컬 캐시 최종 폴백 (서버 읽기가 모두 막혀도 이름 표시)
     function _matchLocal(){
       try {
         var arr = JSON.parse(localStorage.getItem('pureun_v6_user_accounts') || 'null');
         return _match(arr);
-      } catch(e){ return null; }
+      } catch(e){ return { acct:null, all:[] }; }
     }
     // [보안규칙 대비] user_accounts는 관리자 전용 → 일반 직원은 읽기 거부.
     // ERP 로그인 경로와 동일하게 공개 명부 user_dir 우선, 실패 시 user_accounts → 로컬 캐시 순.
     _readRoster('data/user_dir')
       .then(function(dir){
-        var acct = _match(dir);
-        if(acct) return acct;
-        return _readRoster('data/user_accounts').then(_match).catch(function(){ return null; });
+        var m = _match(dir);
+        if(m.acct) return m;
+        return _readRoster('data/user_accounts').then(_match).catch(function(){ return { acct:null, all:[] }; });
       })
       .catch(function(){
-        return _readRoster('data/user_accounts').then(_match).catch(function(){ return null; });
+        return _readRoster('data/user_accounts').then(_match).catch(function(){ return { acct:null, all:[] }; });
       })
-      .then(function(acct){ _show(acct || _matchLocal()); });
+      .then(function(m){ _show((m && m.acct) ? m : _matchLocal()); });
   }
 
   // ── 프로그램 창 관리자 ──
@@ -1017,13 +1044,67 @@ body.portal-mode #camFab{display:flex;}
     });
   }
 
-  function renderPortal(acct){
-    var name = acct ? acct.name : (auth.currentUser && auth.currentUser.email) || '사용자';
+  /* 로그인 신원 안내 띠 — 헤더 바로 아래에 하나만 그린다(다시 그리면 갈아 끼움) */
+  function puIdentityBand(html, tone){
+    var el = document.getElementById('puIdBand');
+    if(!el){
+      el = document.createElement('div');
+      el.id = 'puIdBand';
+      var bar = document.querySelector('.pbar');
+      if(bar && bar.parentNode) bar.parentNode.insertBefore(el, bar.nextSibling);
+      else document.body.insertBefore(el, document.body.firstChild);
+    }
+    if(!html){ el.style.display = 'none'; el.innerHTML = ''; return el; }
+    var c = tone === 'danger' ? ['#fef2f2', '#fecaca', '#991b1b']
+          : tone === 'warn'   ? ['#fffbeb', '#fde68a', '#854d0e']
+          :                     ['#eff6ff', '#bfdbfe', '#1e40af'];
+    el.style.cssText = 'margin:10px 0 0;padding:9px 14px;border-radius:12px;font-size:12.5px;'
+      + 'line-height:1.55;background:' + c[0] + ';border:1px solid ' + c[1] + ';color:' + c[2] + ';';
+    el.innerHTML = html;
+    el.style.display = 'block';
+    return el;
+  }
+
+  function renderPortal(acct, info){
+    info = info || {};
+    var email = info.email || (auth.currentUser && auth.currentUser.email) || '';
+    var mySid = acct ? String(acct.sid || '') : puEmailToSid(email);
+    var name = acct ? acct.name : (email || '사용자');
     var role = acct ? acct.role : 'member';
     _curRole = role;   // 바로가기(홈 앱) 권한 판정용
     var title = acct ? (acct.title || '') : '';
-    $('userName').textContent = name + (title ? ' · ' + title : '') + ' (' + role + ')';
+    /* ★ 이름 옆에 «사번» 을 함께 적는다 (2026-08-10 제보의 핵심 고침).
+       P005(박재원)·A005(박은비)처럼 숫자가 같은 사번이 있어, 아이디를 잘못 넣으면
+       엉뚱한 사람으로 들어가는데 이름만 떠서는 본인이 알아챌 길이 없었다.
+       사번이 떠 있으면 「내 사번이 아닌데?」 를 그 자리에서 본다. */
+    $('userName').textContent = name + (title ? ' · ' + title : '') + ' (' + role + ')'
+      + (mySid ? ' · ' + mySid.toUpperCase() : '');
+    try { $('userName').title = '로그인 계정: ' + email; } catch(_e){}
     $('userAvatar').textContent = name ? name.charAt(0) : '·';
+
+    /* ── 신원 안내 띠 — 이상할 때는 크게, 자동 진입은 조용히 알린다 ── */
+    var dupAll = info.all || [];
+    if(dupAll.length > 1){
+      /* 같은 사번(이메일)이 두 사람 이상에게 붙어 있다 — 누가 맞는지 화면은 모른다.
+         조용히 첫 사람을 골라 버리는 것이 이번 제보의 유력한 원인 후보라 크게 알린다. */
+      puIdentityBand('⚠️ <b>같은 아이디(' + (mySid || email) + ')가 여러 명에게 등록되어 있습니다: '
+        + dupAll.map(function(x){ return (x.name || '?') + (x.status && x.status !== 'active' ? '(' + x.status + ')' : ''); }).join(' · ')
+        + '</b><br>지금 표시된 이름이 본인이 아닐 수 있습니다 — 관리자에게 알려주세요.', 'danger');
+    } else if(!acct){
+      // 로그인은 됐는데 직원명부에 없다 — 이름 대신 이메일이 뜨는 까닭을 말해 준다
+      puIdentityBand('⚠️ 로그인은 되었지만 직원명부에서 <b>' + email + '</b> 을 찾지 못했습니다.<br>'
+        + '이름·권한이 제대로 나오지 않습니다 — 관리자에게 알려주세요.', 'warn');
+    } else if(info.via === 'auto'){
+      /* 남아 있던 세션으로 «저절로» 들어왔다 — 전 사람 세션이 남은 폰이면 여기서 걸린다 */
+      puIdentityBand('<b>' + name + '(' + (mySid || email) + ')</b> 님으로 자동 로그인되었습니다. '
+        + '본인이 아니면 <b>로그아웃</b> 후 본인 아이디로 로그인하세요.'
+        + ' <button type="button" id="puIdBandX" style="float:right;border:none;background:none;'
+        + 'color:inherit;font-size:14px;cursor:pointer;line-height:1;padding:0 2px">×</button>');
+      var _x = document.getElementById('puIdBandX');
+      if(_x) _x.addEventListener('click', function(){ puIdentityBand(''); });
+    } else {
+      puIdentityBand('');   // 방금 친 로그인 + 명부 정상 — 띠는 그리지 않는다
+    }
 
     tileConts().forEach(function(c){ c.innerHTML = ''; });
     wireCamFab();
