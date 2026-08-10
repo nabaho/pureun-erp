@@ -1615,7 +1615,9 @@ test('명함틀을 켜면 그 안만 잘라 담는다', () => {
      다음 함수 선언이 나오기 전까지를 본문으로 본다. */
   const fn = app.match(/async function camShoot\([^)]*\)[\s\S]*?(?=\nfunction renderCamStrip)/);
   assert.ok(fn, 'camShoot 를 찾을 수 없습니다');
-  assert.match(fn[0], /if \(frameOn\(\)\)/, '틀 켜짐 여부를 안 봅니다');
+  /* ⚠ 2026-08-10 다시 겨눔 — 틀은 **명함이 보일 때만** 뜬다(showFrame).
+     그리는 것과 자르는 것이 같은 판단을 써야 엉뚱한 데가 안 잘린다. */
+  assert.match(fn[0], /if \(showFrame\(\)\)/, '틀을 쓰는지 안 봅니다');
   assert.match(fn[0], /drawImage\(src, cx, cy, cw, ch, 0, 0, cw, ch\)/, '잘라 담지 않습니다');
   /* 미리보기는 object-fit:cover 라 화면 좌표와 원본 좌표가 다르다 */
   assert.match(fn[0], /object-fit:cover|Math\.max\(e\.width \/ v\.videoWidth/,

@@ -179,7 +179,7 @@ test('★ 기본으로 켜져 있고, 그래도 사진을 잃지 않는다', () 
      같은 뜻인데 따로 켜야 해서 헷갈렸다. 지킬 것은 **기본 켜짐이고 끌 수 있다**는
      것이지 전용 칸이 있는가가 아니다. */
   const m = html.match(/function cropPref\(\)[^\n]*/);
-  assert.ok(/frameOn\(\)/.test(m[0]), '명함틀을 따라가지 않으면 두 스위치가 어긋납니다.');
+  assert.ok(/showFrame\(\)/.test(m[0]), '명함틀을 따라가지 않으면 두 스위치가 어긋납니다.');
   assert.ok(/function frameOn\(\)[^\n]*!== '0'/.test(html), '기본이 꺼져 있으면 매번 켜야 합니다.');
   assert.ok(/id="camFrameBtn" onclick="toggleFrame\(\)"/.test(html), '끌 수 있어야 합니다.');
   /* 켜 두어도 안전한 근거 — 이 둘이 없으면 기본 켜짐은 위험하다 */
