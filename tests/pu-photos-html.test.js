@@ -545,10 +545,13 @@ test('폰에서는 대시보드를 줄인다 — 사진이 화면 밖으로 밀�
      지켜야 할 것은 「폰에서 안내가 자리를 안 먹는다」이지 특정 클래스가 있는 것이 아니다. */
   assert.match(m[1], /\.dochint[^\n]*display:none/);
   /* 상한 숫자는 스크립트가 UPLOAD_MAX 에서 채운다.
-     마크업에 30을 박으면 상한을 바꿀 때 두 곳이 어긋난다. */
-  assert.match(app, /id="maxHintS"/);
-  assert.match(app, /\$\('maxHintS'\)\.textContent = '한 번에 ' \+ PuPhotoStore\.UPLOAD_MAX/);
-  assert.ok(!/dochint s">[^<]*30장/.test(app), '상한 숫자가 마크업에 박혀 있습니다');
+     마크업에 30을 박으면 상한을 바꿀 때 두 곳이 어긋난다.
+     ⚠ 2026-08-10 다시 겨눔 — 안내가 ⓘ 팝업(openUpHelp)으로 옮겨 갔다.
+        지킬 것은 **숫자를 코드에서 가져온다**이지 어느 칸에 적히는가가 아니다. */
+  assert.match(app, /PuPhotoStore\.UPLOAD_MAX \+ '장/,
+    '상한을 코드에서 안 가져오면 상한을 바꿀 때 안내와 실제가 어긋납니다.');
+  assert.ok(!/30장/.test(app.replace(/\/\*[\s\S]*?\*\//g, '')),
+    '상한 숫자가 화면에 박혀 있습니다');
   // PC 기본값은 종전대로(넓은 화면은 줄일 이유가 없다)
   assert.match(app, /#home \.row2\{display:block\}/);
   assert.match(app, /\.narrow-only\{display:none\}/);
