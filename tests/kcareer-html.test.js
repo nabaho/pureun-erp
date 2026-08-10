@@ -181,6 +181,28 @@ test('증명서 원본 바이트 취득은 경로와 base64 둘 다 다룬다', 
   assert.match(m[0], /getFileAsync/, 'base64 첨부도 읽어야 합니다');
 });
 
+test('증명서 스캔은 외부기관과 본인 것을 갈라 담는다', () => {
+  const m = source.match(/async function cdScanNow\([\s\S]*?\n\}/);
+  assert.ok(m, 'cdScanNow 함수가 있어야 합니다');
+  assert.match(m[0], /certKind/, 'certKind로 갈라야 합니다');
+  assert.match(m[0], /ext:/);
+  assert.match(m[0], /own:/);
+});
+
+test('본인 경력증명서는 기본 체크 해제 상태다', () => {
+  // 146건이 기본으로 들어오면 외부기관 기관 묶음이 지저분해진다(설계서 5)
+  const m = source.match(/async function cdScanNow\([\s\S]*?\n\}/);
+  assert.ok(m, 'cdScanNow 함수가 있어야 합니다');
+  assert.match(m[0], /pickOwn:\s*false/);
+  assert.match(source, /function toggleCdOwn\(/);
+});
+
+test('cdScanCommit은 체크된 묶음만 저장한다', () => {
+  const src = funcSource('cdScanCommit');
+  assert.match(src, /pickOwn/, '체크 여부를 봐야 합니다');
+  assert.match(src, /certKind/, '레코드에 성격을 남겨야 합니다');
+});
+
 test('증명서 스캔은 위촉장과 같은 폴더 핸들을 쓴다', () => {
   const m = source.match(/async function cdScanNow\([\s\S]*?\n\}/);
   assert.ok(m, 'cdScanNow 함수가 있어야 합니다');
@@ -212,8 +234,10 @@ test('cdScanCommit은 made를 건드리지 않고 스토어를 한 번만 쓴다
   const src = funcSource('cdScanCommit');
   assert.match(src, /docSrc:\s*'received'/);
   assert.match(src, /scanId/);
-  const loop = src.slice(src.indexOf('.adds.forEach'), src.lastIndexOf("set('certdoc'"));
-  assert.ok(loop.length > 0, 'adds 반복문과 저장이 있어야 합니다');
+  const i = src.indexOf('rows.forEach');
+  assert.ok(i >= 0, '레코드 반복문(rows.forEach)이 있어야 합니다');
+  const loop = src.slice(i, src.lastIndexOf("set('certdoc'"));
+  assert.ok(loop.length > 0, '반복문과 저장이 있어야 합니다');
   assert.ok(!/\bset\(/.test(loop), '반복문 안에서 set()을 부르면 안 됩니다');
 });
 
