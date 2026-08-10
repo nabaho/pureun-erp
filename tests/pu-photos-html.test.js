@@ -435,8 +435,14 @@ test('남의 사진은 보기만 된다 — 올리기·지우기·판독이 잠�
     assert.ok(fn, fname + ' 를 찾을 수 없습니다');
     assert.match(fn[0], /blockedIfOther\(\)/, fname + ' 이 남의 사진에도 동작합니다');
   }
-  // 올리기 단추도 잠근다
-  assert.match(app, /\['pickBtn', 'docBtn', 'camBtn'\][\s\S]{0,120}viewingOther\(\)/);
+  /* 올리기 단추는 **한 사람만 보는 중**일 때 잠근다.
+     ⚠ 2026-08-10 다시 겨눔 — 관리자는 「전체 근로자」로 시작한다(대표 지시).
+        거기서도 잠그면 앱을 열 때마다 화면을 바꿔야 올릴 수 있다.
+        올리는 것은 보는 화면과 무관하게 **늘 내 자리로** 간다(savePhoto)。
+        지우기·판독은 위에서 보듯 viewingOther() 그대로 — 남의 사진이 섞여 있다. */
+  assert.match(app, /\['pickBtn', 'docBtn', 'camBtn'\][\s\S]{0,120}viewingOnlyOther\(\)/);
+  assert.match(app, /function viewingOnlyOther\(\) \{ return viewingOther\(\) && gridOwner !== ALL_OWNERS; \}/,
+    '「전체 근로자」만 예외여야 합니다 — 한 사람을 골라 볼 때는 여전히 잠깁니다.');
 });
 
 test('예전 사진 옮기기는 관리자에게만 보이고 확인을 받는다', () => {
