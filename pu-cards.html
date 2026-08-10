@@ -1734,10 +1734,32 @@ let _sendMatPick = null;          /* 묶음으로 고른 자료 번호들. null 
 let _sendMatSetName = '';         /* 보낸 기록에 '어느 묶음으로 보냈는지' 남기려고 */
 function openSendMaterials(id){
   const it=state.items[id]; if(!it) return;
+  /* 바로 보내기 모드에서는 고르기 화면을 거치지 않는다 (대표 지시 2026-08-10).
+     확인 한 번 → 곧장 편지 쓰기. 자료는 편지 안 「＋ 자료 담기」에서 담는다. */
+  if(mailModeOf(matMailCfg())==='auto'){
+    const email=normEmail(it.email);
+    if(!email) return toast('이 명함에 이메일이 없습니다 — 명함을 열어 이메일을 넣어 주세요', 6000);
+    if(!confirm(`${it.name||it.company||''} 님께 메일을 쓸까요?\n\n받는 곳 · ${email}`)) return;
+    _sendMatId=id; _sendMatPick=null; _sendMatSetName='';
+    const vals={ 받는분: it.name||it.company||'', 회사명: it.company||'', 자료목록:'', 오늘:fmtDate(Date.now()) };
+    const tpl = matMailCfg();
+    _compose={
+      cardId:id, to:email, cc:'',
+      subject: mailFill(tpl.subject || MAIL_TPL_DEFAULT.subject, vals),
+      /* 자료를 아직 안 골랐으니 {자료목록} 자리가 빈다 — 빈 줄만 다듬는다.
+         첨부 이름은 어차피 받는 쪽 첨부칸에 그대로 보인다. */
+      body: mailFill(tpl.body || MAIL_TPL_DEFAULT.body, vals).replace(/\n{3,}/g,'\n\n'),
+      ids:[], picking:true
+    };
+    renderCompose();
+    $('sendMatBg').classList.add('open');
+    loadMaterials(()=>{ if(_compose) renderCompose(); });
+    return;
+  }
   _sendMatId=id; _sendMatPick=null; _sendMatSetName=''; _compose=null;
   renderSendMat();
   $('sendMatBg').classList.add('open');
-  loadMaterials(()=>{ if(_sendMatId===id) renderSendMat(); });
+  loadMaterials(()=>{ if(_sendMatId===id && !_compose) renderSendMat(); });
 }
 function applyMatSet(sid){
   const s=_matSets[sid]; if(!s) return;
@@ -1816,7 +1838,8 @@ function openCompose(){
     cardId: _sendMatId, to: email, cc: '',
     subject: mailFill(tpl.subject || MAIL_TPL_DEFAULT.subject, vals),
     body:    mailFill(tpl.body    || MAIL_TPL_DEFAULT.body,    vals),
-    ids: ids
+    ids: ids,
+    viaPick: true          /* 고르기 화면에서 왔다 — 「← 자료 고르기」로 돌아갈 수 있다 */
   };
   renderCompose();
 }
@@ -1850,6 +1873,15 @@ function toggleComposeMat(id){
   const i=_compose.ids.indexOf(id);
   if(i>=0) _compose.ids.splice(i,1); else _compose.ids.push(id);
   renderCompose();
+}
+/* 묶음을 편지 안에서 — 누르면 그 묶음의 자료로 첨부가 바뀐다 */
+function applySetInCompose(sid){
+  grabCompose(); if(!_compose) return;
+  const s=_matSets[sid]; if(!s) return;
+  _compose.ids = setLiveIds(s, _matMeta);
+  _sendMatSetName = s.name || '';
+  renderCompose();
+  toast(`📦 ${s.name||'묶음'} — ${_compose.ids.length}개를 담았습니다`);
 }
 /* 칸에 친 글을 잃지 않게, 다시 그리기 전에 화면 값을 먼저 담아 둔다 */
 function grabCompose(){
@@ -1885,7 +1917,7 @@ function renderCompose(){
   $('sendMatSheet').innerHTML = `
     <div class="cptop">
       <button class="cpsendbtn" onclick="sendCompose()" ${over?'disabled':''}>보내기</button>
-      ${c.cardId?`<button class="cpghost" onclick="backToPick()">← 자료 고르기</button>`:''}
+      ${c.viaPick?`<button class="cpghost" onclick="backToPick()">← 자료 고르기</button>`:''}
       <span class="cpwho">${c.cardId ? esc(it.name||it.company||'')+' 님께' : '새 메일'}</span>
       <button class="sm-x" onclick="closeSendMat()" style="margin-left:auto">✕</button>
     </div>
@@ -1903,6 +1935,13 @@ function renderCompose(){
           <button class="cpghost" style="padding:5px 11px;font-size:12px" onclick="togglePickMat()"
             title="자료함의 자료를 이 자리에서 담습니다">${c.picking?'담기 접기':'＋ 자료 담기'}</button></div>
         ${c.picking?`<div class="setpick" style="margin-top:9px;padding-top:9px;border-top:1px dashed #dde3ee">
+          ${(function(){
+            const sets = setList(_matSets).filter(s=>setLiveIds(s,_matMeta).length);
+            return sets.length ? sets.map(s=>`<span class="setchk" style="cursor:pointer;background:#fdf6e8;border-color:#eeddb5"
+              onclick="applySetInCompose('${s.id}')"
+              title="${esc(setLiveIds(s,_matMeta).map(id=>(_matMeta[id]||{}).name||'자료').join(' · '))}"
+              >📦 ${esc(s.name||'묶음')} <i style="font-style:normal;font-size:11px;color:#8b98b3">${setLiveIds(s,_matMeta).length}</i></span>`).join('') : '';
+          })()}
           ${matList().length ? matList().map(m=>`<span class="setchk ${c.ids.indexOf(m.id)>=0?'on':''}"
             style="cursor:pointer" onclick="toggleComposeMat('${m.id}')"
             title="${esc(m.desc||m.fileName||'')}">${matIcon(m.fileName)} ${esc(m.name||'자료')}
