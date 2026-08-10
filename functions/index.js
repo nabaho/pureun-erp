@@ -647,6 +647,9 @@ exports.sendMaterialMail = functions
       try {
         const tx = nodemailer.createTransport({
           host: DAUM_HOST, port: DAUM_PORT, secure: true,
+          // 기다리는 시간을 못 박는다. 안 박으면 다음 서버가 대답을 안 할 때
+          // 화면이 하염없이 「보내는 중」으로 멈춰 있고, 사람은 다시 눌러 두 통을 보낸다.
+          connectionTimeout: 20000, greetingTimeout: 20000, socketTimeout: 90000,
           auth: { user: id, pass: mailPass() },
         });
         for (const m of batches) await tx.sendMail(m);
