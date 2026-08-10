@@ -13,15 +13,29 @@ test('모바일 포털 카메라는 사진첩으로 먼저 이동하지 않고 �
   const end = portal.indexOf('function renderPortal', start);
   const flow = portal.slice(start, end);
   assert.match(portal, /id="portalCamInput"[^>]+capture="environment"/);
-  assert.match(flow, /input\.click\(\)/);
+  assert.match(flow, /openPortalCameraInput\(\)/);
+  const helperStart = portal.indexOf('function openPortalCameraInput()');
+  const helperEnd = portal.indexOf('function showPortalCameraBatch()', helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, '연속 촬영 시작 함수가 있어야 한다');
+  assert.match(portal.slice(helperStart, helperEnd), /input\.click\(\)/);
   assert.doesNotMatch(flow, /if\(isMobile\(\)[\s\S]{0,300}location\.href\s*=\s*'pu-photos\.html\?cam=1/);
 });
 
 test('촬영 파일은 임시 보관 후 사진첩의 기존 안전 대기열로 옮긴다', () => {
   assert.match(portal, /indexedDB\.open\('puPortalCamera',\s*1\)/);
   assert.match(photos, /function takePortalCameraFile\(\)/);
-  assert.match(photos, /addFiles\(\[file\],\s*true,\s*\{\s*fromCam:\s*true,\s*portalCapture:\s*true\s*\}\)/);
+  assert.match(photos, /addFiles\(files,\s*true,\s*\{\s*fromCam:\s*true,\s*portalCapture:\s*true\s*\}\)/);
   assert.match(photos, /_portalCapture:\s*!!\(opts\s*&&\s*opts\.portalCapture\)/);
+});
+
+test('여러 장을 연속 촬영한 뒤 한 묶음으로 저장한다', () => {
+  assert.match(portal, /id="portalCamMore"[^>]*>\+ 한 장 더 찍기<\/button>/);
+  assert.match(portal, /id="portalCamDone"[^>]*>촬영 완료<\/button>/);
+  assert.match(portal, /batch:batchId \|\| token/);
+  assert.match(portal, /PORTAL_CAMERA_MAX = 30/);
+  assert.match(portal, /portalCameraBatchCount >= PORTAL_CAMERA_MAX/);
+  assert.match(photos, /row\.batch === token \|\| row\.id === token/);
+  assert.match(photos, /const files = rows[\s\S]{0,500}addFiles\(files/);
 });
 
 test('서버 저장이 끝나기 전에는 포털로 돌아가지 않는다', () => {

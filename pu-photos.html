@@ -2561,7 +2561,7 @@ function portalCameraStatus(msg, failed) {
     + (failed ? '<button type="button" onclick="location.replace(\'enter.html?v=\'+Date.now())" style="margin-top:20px;border:0;border-radius:12px;background:#2449bd;color:#fff;padding:12px 24px;font-weight:700">선택 화면으로</button>'
               : '<div style="margin-top:10px;color:#65738c">잠시만 기다려 주세요</div>') + '</div>';
 }
-function readPortalCameraFile(token) {
+function readPortalCameraFiles(token) {
   return new Promise(function (resolve, reject) {
     const rq = indexedDB.open('puPortalCamera', 1);
     rq.onupgradeneeded = function () {
@@ -2570,11 +2570,11 @@ function readPortalCameraFile(token) {
     rq.onerror = function () { reject(rq.error || new Error('촬영 임시보관소를 열지 못했습니다.')); };
     rq.onsuccess = function () {
       const dbi = rq.result, tx = dbi.transaction('captures', 'readwrite'), st = tx.objectStore('captures');
-      const get = st.get(token);
+      const get = st.getAll();
       get.onsuccess = function () {
-        const row = get.result;
-        if (row) st.delete(token); // 업로드 대기열로 옮길 것이므로 임시본은 지운다.
-        tx.oncomplete = function () { dbi.close(); resolve(row || null); };
+        const rows = (get.result || []).filter(function (row) { return row.batch === token || row.id === token; });
+        rows.forEach(function (row) { st.delete(row.id); }); // 업로드 대기열로 옮길 것이므로 임시본은 지운다.
+        tx.oncomplete = function () { dbi.close(); resolve(rows); };
       };
       get.onerror = function () { const err = get.error; dbi.close(); reject(err || new Error('촬영 사진을 읽지 못했습니다.')); };
       tx.onerror = function () { const err = tx.error; dbi.close(); reject(err || new Error('촬영 사진을 옮기지 못했습니다.')); };
@@ -2587,12 +2587,16 @@ async function takePortalCameraFile() {
   if (!token) return false;
   portalCameraToken = token;
   portalCameraStatus('촬영한 사진을 저장하고 있습니다', false);
-  const row = await readPortalCameraFile(token);
-  if (!row || !row.blob) throw new Error('촬영한 사진을 찾지 못했습니다. 다시 촬영해 주세요.');
-  const file = new File([row.blob], row.name || ('camera-' + Date.now() + '.jpg'), {
-    type: row.type || 'image/jpeg', lastModified: row.lastModified || Date.now()
+  const rows = await readPortalCameraFiles(token);
+  if (!rows.length) throw new Error('촬영한 사진을 찾지 못했습니다. 다시 촬영해 주세요.');
+  const files = rows.filter(function (row) { return row && row.blob; }).map(function (row, i) {
+    return new File([row.blob], row.name || ('camera-' + Date.now() + '-' + (i + 1) + '.jpg'), {
+      type: row.type || 'image/jpeg', lastModified: row.lastModified || Date.now()
+    });
   });
-  await addFiles([file], true, { fromCam: true, portalCapture: true });
+  if (!files.length) throw new Error('촬영한 사진을 찾지 못했습니다. 다시 촬영해 주세요.');
+  portalCameraStatus('촬영한 사진 ' + files.length + '장을 저장하고 있습니다', false);
+  await addFiles(files, true, { fromCam: true, portalCapture: true });
   return true;
 }
 function finishCamShots() {
