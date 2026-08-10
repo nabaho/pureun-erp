@@ -7,6 +7,8 @@
 <title>푸른명함첩</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>📇</text></svg>">
 <link rel="manifest" href="pu-cards-manifest.json">
+<script src="js/pu-hwp-engine.js?v=13"></script>
+<script src="hwpx_gen.js?v=13"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <script src="js/pu-resilience.js"></script>
@@ -14,8 +16,6 @@
 <script src="js/pu-version.js"></script>
 <script src="js/pu-backup.js"></script>
 <script src="js/pu-lockkey.js"></script>
-<!-- 한글(HWPX) 문서 생성기 — 제안서 틀에서 업체별 문서를 만들 때 쓴다 -->
-<script src="hwpx_gen.js?v=1"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
@@ -280,6 +280,14 @@ table.sbox td.none{text-align:center;color:#8b98b3;padding:34px 10px}
 #matPrev .mpmsg{text-align:center;font-size:12.5px;color:#8b98b3;line-height:1.9;padding:30px 14px}
 #matPrev .mptxt{width:100%;height:100%;margin:0;padding:14px;font-size:12.5px;line-height:1.7;
   color:#1b2536;background:#fff;white-space:pre-wrap;word-break:break-all}
+.mat-hwp-back{position:fixed;inset:0;z-index:130;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:14px}
+.mat-hwp-modal{width:min(1100px,96vw);height:min(860px,92vh);background:#fff;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;color:#1b2536}
+.mat-hwp-head,.mat-hwp-foot{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid #e4e8f0;flex:none}
+.mat-hwp-head b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mat-hwp-head button,.mat-hwp-foot button{border:1px solid #dde3ee;background:#fff;color:#1b2536;border-radius:8px;padding:7px 11px;font-weight:700}
+.mat-hwp-foot{justify-content:flex-end;border-bottom:0;border-top:1px solid #e4e8f0}
+#matHwpBody{flex:1;min-height:0;overflow:auto;background:#e4e8f0;padding:10px}
+@media(max-width:760px){.mat-hwp-back{padding:0}.mat-hwp-modal{width:100%;height:94vh;border-radius:12px 12px 0 0;align-self:flex-end}.mat-hwp-head,.mat-hwp-foot{padding:9px 10px}#matHwpBody{padding:6px}}
 @media(max-width:1100px){.matwrap{flex-direction:column}#matPrev{position:static;max-width:none;width:100%}}
 .matcard{background:#fff;border:1px solid #e4e8f0;border-radius:12px;padding:12px 14px;margin-bottom:10px}
 .matline{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap}
@@ -2424,6 +2432,25 @@ function previewMat(id){ state.matPrevId=id; renderMatPage(); }
    ⚠ 찾기칸에 글자를 칠 때마다 화면을 다시 그리는데, 그때마다 2MB 씩 다시
      내려받으면 타자마다 통신이 나간다. 마지막 자료의 결과를 들고 있다가 재사용. */
 let _mpFor=null, _mpHtml='', _mpUrl=null;
+let _matHwpCurrent=null;
+function closeMaterialHwp(){ const el=$('matHwpBack'); if(el) el.remove(); _matHwpCurrent=null; }
+function downloadMaterialOriginal(){
+  if(!_matHwpCurrent) return;
+  PureunHwp.download(_matHwpCurrent.bytes,_matHwpCurrent.name);
+}
+async function openMaterialHwp(bytes,name){
+  try{ PureunHwp.validate(bytes,name); }
+  catch(e){ toast('한글 파일 확인 실패: '+((e&&e.message)||''),7000); return; }
+  closeMaterialHwp();
+  _matHwpCurrent={bytes:bytes,name:name};
+  const back=document.createElement('div'); back.id='matHwpBack'; back.className='mat-hwp-back';
+  back.innerHTML='<div class="mat-hwp-modal" role="dialog" aria-modal="true"><div class="mat-hwp-head"><b></b><button type="button" onclick="closeMaterialHwp()">✕</button></div><div id="matHwpBody">미리보기를 준비하는 중…</div><div class="mat-hwp-foot"><button type="button" onclick="downloadMaterialOriginal()">📥 원본 저장</button><button type="button" onclick="closeMaterialHwp()">닫기</button></div></div>';
+  back.querySelector('b').textContent='📕 '+name;
+  back.onclick=function(e){if(e.target===back) closeMaterialHwp();};
+  document.body.appendChild(back);
+  try{ await PureunHwp.renderPreview($('matHwpBody'),bytes,name); }
+  catch(e){ $('matHwpBody').innerHTML='<div class="mpmsg">미리보기를 만들지 못했습니다.<br>원본은 그대로 보관되어 있습니다.<br>아래 원본 저장을 이용해 주세요.</div>'; }
+}
 async function fillMatPreview(id){
   const box=$('mpBody'); if(!box) return;
   if(_mpFor===id && _mpHtml){ box.innerHTML=_mpHtml; return; }
@@ -2432,7 +2459,7 @@ async function fillMatPreview(id){
   const t=matType(m.fileName)||{};
   const dl=`<button class="mattab" style="margin-top:10px" onclick="downloadMaterial('${id}')">📥 내려받아 확인</button>`;
   if(m.url){ _mpFor=id; _mpHtml=`<iframe src="${esc(m.url)}"></iframe>`; box.innerHTML=_mpHtml; return; }
-  if(!t.view){
+  if(!t.view && !/^(hwp|hwpx)$/.test(matExt(m.fileName))){
     _mpFor=id;
     _mpHtml=`<div class="mpmsg">📎 ${esc(m.fileName||'')}<br>이 형식은 브라우저로 미리 볼 수 없습니다.<br>${dl}</div>`;
     box.innerHTML=_mpHtml; return;
@@ -2447,7 +2474,10 @@ async function fillMatPreview(id){
     const bin=atob(String(dataUrl).split(',')[1]||'');
     const arr=new Uint8Array(bin.length);
     for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
-    if((t.mime||'')==='text/plain'){
+    if(/^(hwp|hwpx)$/.test(matExt(m.fileName))){
+      await openMaterialHwp(arr,m.fileName||m.name||'한글자료.hwp');
+      _mpFor=id; _mpHtml='<div class="mpmsg">📕 한글 미리보기를 열었습니다.</div>'; box.innerHTML=_mpHtml;
+    }else if((t.mime||'')==='text/plain'){
       _mpHtml=`<pre class="mptxt">${esc(new TextDecoder('utf-8').decode(arr).slice(0,20000))}</pre>`;
     }else{
       _mpUrl=URL.createObjectURL(new Blob([arr],{type:t.mime||'application/octet-stream'}));
@@ -3102,6 +3132,7 @@ async function previewMaterial(id){
     const bin = atob(dataUrl.split(',')[1]);
     const arr = new Uint8Array(bin.length);
     for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+    if(/^(hwp|hwpx)$/.test(matExt(m.fileName))){ await openMaterialHwp(arr,m.fileName||m.name||'한글자료.hwp'); return; }
     const t = matType(m.fileName) || {mime:'application/octet-stream'};
     const url = URL.createObjectURL(new Blob([arr], {type:t.mime}));
     if (t.view){ window.open(url,'_blank'); }
