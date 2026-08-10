@@ -317,6 +317,10 @@ button{font-family:inherit;cursor:pointer}
 #kindPopup .row input[type=radio]{width:16px;height:16px;flex:none}
 #kindPopup .row span{font-size:13.5px}
 #kindPopup .row .cnt{color:var(--sub);font-size:12px;margin-left:auto}
+/* 「직접 만든 분류」 가름줄 — 화면 위 점선 칸과 같은 가름을 목록에서도 준다 */
+#kindPopup .sep{font-size:11px;font-weight:800;color:var(--sub);letter-spacing:.04em;
+  padding:11px 0 5px;border-top:1px solid var(--line);margin-top:6px}
+#kindPopup .sep + .row{border-top:none}
 #kindPopup .btns{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--line);justify-content:flex-end}
 #kindPopup .btns button{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:8px;
   padding:8px 15px;font-size:13px;font-weight:700;font-family:inherit}
@@ -3274,16 +3278,24 @@ const READ_LABEL = { card: '명함', bizreg: '사업자등록증', sme: '중소�
    test 가 이 표를 지키므로, 종류를 늘릴 때는 여기와 검사를 함께 고칠 것. */
 /* short: 폰에서 쓰는 짧은 이름. 긴 이름은 375px 에서 두 줄이 되고,
    대시보드가 이미 300px 을 쓰는 폰에서 두 줄은 사진을 화면 밖으로 밀어낸다. */
+/* main: **사람이 이 칸으로 옮길 때 붙는 종류.**
+   대표 보고(2026-08-10): "분류가 안 되는 서류들을 사업자등록증으로 옮기려는데
+   분류 지정이 안 된다." 사업자등록증 칸은 두 종류(bizreg·sme)를 함께 담아
+   「어느 쪽인지 못 정한다」며 아예 막혀 있었다 — 하필 대표님이 쓰시려던 칸이다.
+   사람이 「사업자등록증」을 고르면 그건 사업자등록증이라는 뜻이다. 그렇게 정해 둔다.
+   기타서류도 마찬가지다 — 「그냥 기타로 둬라」도 분명한 뜻이다.
+   ⚠ 「전체사진」에만 main 이 없다. 그건 분류가 아니라 모아 보기라서
+      "거기에 넣는다"는 말 자체가 성립하지 않는다. */
 const KIND_TABS = [
   { key: 'all',     label: '전체사진',     short: '전체',   kinds: undefined },
-  { key: 'card',    label: '명함',        short: '명함',   kinds: ['card'] },
-  { key: 'bizreg',  label: '사업자등록증', short: '사업자', kinds: ['bizreg', 'sme'] },
-  { key: 'payslip', label: '급여서류',     short: '급여',   kinds: ['payslip'] },
+  { key: 'card',    label: '명함',        short: '명함',   kinds: ['card'],    main: 'card' },
+  { key: 'bizreg',  label: '사업자등록증', short: '사업자', kinds: ['bizreg', 'sme'], main: 'bizreg' },
+  { key: 'payslip', label: '급여서류',     short: '급여',   kinds: ['payslip'], main: 'payslip' },
   /* 계약서(대표 지시 2026-08-10) — 직접분류로 만들어 두셨지만 AI 가 그 이름을
      모르니 늘 0장이었다. 고정 탭이라야 판독 결과가 스스로 들어온다. */
-  { key: 'contract', label: '계약서',      short: '계약',   kinds: ['contract'] },
-  { key: 'other',   label: '기타서류',     short: '기타',   kinds: null },  // 나머지 전부
-  { key: 'meeting', label: '회의사진',     short: '회의',   kinds: ['meeting'] }
+  { key: 'contract', label: '계약서',      short: '계약',   kinds: ['contract'], main: 'contract' },
+  { key: 'other',   label: '기타서류',     short: '기타',   kinds: null, main: 'other' },  // 나머지 전부
+  { key: 'meeting', label: '회의사진',     short: '회의',   kinds: ['meeting'], main: 'meeting' }
 ];
 
 /* ── 탭 순서 — 마우스로 끌어서 바꿀 수 있다(대표 지시 2026-08-06) ──
@@ -4760,18 +4772,18 @@ function moveToFolder(ids, fid) {
 
 /* 사람이 손으로 넣을 수 있는 탭인가.
    ① 직접 만든 분류 — 사람이 만든 칸이니 당연히 받는다.
-   ② AI 분류 중 종류가 **하나뿐인** 탭.
-   「전체사진」은 분류가 아니라 모아 보기이고, 「사업자등록증」은 두 종류(bizreg·sme)를
-   함께 담아 어느 쪽으로 넣을지 정할 수 없다 — 애매한 것은 아예 못 놓게 한다. */
+   ② 대표 종류(main)를 정해 둔 AI 분류 탭 — 즉 「전체사진」을 뺀 전부.
+   ⚠ 2026-08-10 이전에는 「종류가 하나뿐인 탭」만 받았다. 그래서 사업자등록증
+      (bizreg·sme 둘)과 기타서류(나머지 전부)가 막혀 있었고, 대표님이 옮기려던
+      칸이 바로 그 둘이었다. 애매함은 main 을 정해 없앴다(KIND_TABS 참고). */
 function isCustomTab(key) { return String(key).indexOf('custom:') === 0; }
 function canRetag(key) {
   if (isCustomTab(key)) return !!CUSTOM_KINDS[String(key).slice('custom:'.length)];
-  const t = KIND_TABS.find(function (x) { return x.key === key; });
-  return !!(t && t.kinds && t.kinds.length === 1);
+  return !!kindForTab(key);
 }
 function kindForTab(key) {
   const t = KIND_TABS.find(function (x) { return x.key === key; });
-  return t && t.kinds && t.kinds.length === 1 ? t.kinds[0] : null;
+  return (t && t.main) || null;
 }
 function tabLabelOf(key) {
   if (isCustomTab(key)) return customTabLabel(key);
@@ -4927,15 +4939,27 @@ function openAssignKind() {
   if (blockedIfOther(Array.from(selected))) return;
   const ids = Array.from(selected);
   if (!ids.length) return;
-  const kinds = Object.keys(CUSTOM_KINDS);
+  /* 화면 위 칸들과 **같은 순서**로 늘어놓는다 — 대표님이 보고 계신 줄이 곧 목록이다.
+     대표 보고(2026-08-10): 여기에 직접 만든 분류만 나와서, 사업자등록증으로
+     옮길 길이 아예 없었다. 이제 놓을 수 있는 칸이면 전부 나온다. */
+  const c = tabCounts();
+  const keys = kindOrder().filter(canRetag);
+  const row = function (val, label, cnt, on) {
+    return '<div class="row"><input type="radio" name="assignKind" value="' + esc(val) + '"' +
+      (on ? ' checked' : '') + '><span>' + esc(label) + '</span>' +
+      (cnt === null ? '' : '<span class="cnt">' + cnt + '장</span>') + '</div>';
+  };
+  let first = true, html = '', sepDone = false;
+  keys.forEach(function (k) {
+    /* 직접 만든 분류는 아래로 모아 준다 — 점선 칸과 같은 가름이다 */
+    if (isCustomTab(k) && !sepDone) { html += '<div class="sep">직접 만든 분류</div>'; sepDone = true; }
+    html += row(k, tabLabelOf(k), c[k] || 0, first);
+    first = false;
+  });
+  if (!sepDone) html += '<div class="sep">직접 만든 분류</div>';
   $('kindPopupTitle').textContent = ids.length + '장을 어느 분류에 넣을까요';
-  const rows = kinds.map(function (id, i) {
-    return '<div class="row"><input type="radio" name="assignKind" value="' + esc(id) + '"' +
-      (i === 0 ? ' checked' : '') + '><span>' + esc(CUSTOM_KINDS[id].name) + '</span></div>';
-  }).join('');
-  $('kindPopupBody').innerHTML = rows +
-    '<div class="row"><input type="radio" name="assignKind" value="__new__"' + (kinds.length ? '' : ' checked') + '>' +
-    '<span>+ 새 분류 만들기</span></div>' +
+  $('kindPopupBody').innerHTML = html +
+    row('__new__', '+ 새 분류 만들기', null, first) +
     '<input type="text" id="kindNameInput" placeholder="분류 이름" maxlength="30" style="margin-top:8px">' +
     '<div class="err" id="kindNameErr" style="display:none"></div>';
   const ok = $('kindPopupOk');
@@ -4944,46 +4968,32 @@ function openAssignKind() {
   $('kindPopup').style.display = 'flex';
 }
 
+/* ⚠ 옮기는 일 자체는 retagPhotos 한 곳에만 둔다 — 끌어다 놓기와 **같은 길**이다.
+   따로 두면 한쪽만 고쳐져 「끌면 되는데 눌러선 안 되는」 일이 다시 생긴다.
+   (실제로 그랬다: 끌기는 종류가 하나뿐인 칸만, 누르기는 직접분류만 받았다) */
 function submitAssignKind() {
   const ids = Array.from(selected);
   if (!ids.length) { closeKindPopup(); return; }
   const picked = document.querySelector('input[name="assignKind"]:checked');
   const val = picked ? picked.value : '__new__';
 
-  const applyTo = function (kindId) {
-    $('kindPopupOk').disabled = true;
-    let chain = Promise.resolve();
-    ids.forEach(function (id) {
-      chain = chain.then(function () {
-        const it = gridItems.find(function (x) { return x.id === id; });
-        if (!it) return;
-        return PuPhotoStore.setCustomKind(gridYear, id, kindId, it.meta.__ownerUid || gridOwner)
-          .then(function () {
-            it.meta = Object.assign({}, it.meta, { customKind: kindId });
-          }).catch(function (e) { console.warn('[분류 지정]', id, e); });
-      });
-    });
-    return chain.then(function () {
-      closeKindPopup();
-      clearSel();
-      renderGrid();
-    }).then(function () { $('kindPopupOk').disabled = false; });
-  };
-
   if (val === '__new__') {
     const name = ($('kindNameInput').value || '').trim();
     if (!name) { showKindErr('kindNameErr', '이름을 입력해 주세요'); return; }
     $('kindPopupOk').disabled = true;
     PuPhotoStore.addCustomKind(name).then(function (r) {
-      return loadCustomKinds().then(function () { return applyTo(r.id); });
+      return loadCustomKinds().then(function () {
+        closeKindPopup();
+        retagPhotos(ids, customTabKey(r.id));
+      });
     }).catch(function (e) {
       console.warn('[분류 만들기]', e);
       showKindErr('kindNameErr', (e && e.message) || String(e));
-      $('kindPopupOk').disabled = false;
-    });
+    }).then(function () { $('kindPopupOk').disabled = false; });
     return;
   }
-  applyTo(val);
+  closeKindPopup();
+  retagPhotos(ids, val);
 }
 
 /* ESC 로 팝업도 닫힌다 — 처리는 아래 escOnce() 한 곳에 모여 있다.

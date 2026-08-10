@@ -1525,9 +1525,26 @@ test('분류 지정은 남의 사진(전체 근로자 포함)에는 못 한다',
 });
 
 test('분류 지정은 항목별 실제 소유자 자리에 쓴다', () => {
-  const fn = app.match(/function submitAssignKind\([\s\S]*?\n\/\* ESC/);
+  /* 2026-08-10 다시 겨눔 — 옮기는 일이 retagPhotos 한 곳으로 모였다.
+     지켜야 할 것은 「그 사진의 진짜 주인 자리에 쓴다」이지, 어느 함수에 있느냐가
+     아니다. 남의 자리에 쓰면 조용히 실패하거나 남의 사진을 건드린다. */
+  const fn = app.match(/function retagPhotos\([\s\S]*?\n\}/);
+  assert.ok(fn, 'retagPhotos 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /setCustomKind\(gridYear, id, custom, it\.meta\.__ownerUid \|\| gridOwner\)/,
+    '직접분류를 올린 사람 자리가 아닌 곳에 씁니다');
+  assert.match(fn[0], /saveRead\(gridYear, id, read, photoOwner\(id\)\)/,
+    '판독 결과를 올린 사람 자리가 아닌 곳에 씁니다');
+});
+
+test('★ 눌러서 지정하는 길과 끌어다 놓는 길이 같은 한 곳을 쓴다', () => {
+  /* 대표 보고(2026-08-10): 사업자등록증으로 옮길 수가 없었다. 원인이 이것이다 —
+     끌기는 「종류가 하나뿐인 칸」만, 누르기는 「직접 만든 분류」만 받아서
+     사업자등록증은 **양쪽 모두에서** 빠져 있었다. 두 길을 갈라 두면 또 어긋난다. */
+  const fn = app.match(/function submitAssignKind\([\s\S]*?\n\}/);
   assert.ok(fn, 'submitAssignKind 본문을 찾을 수 없습니다');
-  assert.match(fn[0], /PuPhotoStore\.setCustomKind\(gridYear, id, kindId, it\.meta\.__ownerUid \|\| gridOwner\)/);
+  assert.match(fn[0], /retagPhotos\(ids, val\)/, '누르는 길이 제 나름대로 저장하고 있습니다');
+  assert.ok(!/PuPhotoStore\.setCustomKind\(/.test(fn[0]),
+    '누르는 길이 따로 저장하면 한쪽만 고쳐집니다');
 });
 
 test('크게 보기에서 분류를 뗄 수 있다 — 지정은 되돌릴 수 있어야 한다', () => {
@@ -1574,15 +1591,74 @@ test('분류를 바꿔도 읽어 둔 항목은 살린다', () => {
   assert.match(fn, /auto: false/, '사람이 정한 것을 기계가 정한 것으로 적고 있습니다');
 });
 
-test('아무 탭에나 놓을 수는 없다 — 애매한 탭은 막는다', () => {
-  /* 「전체사진」은 분류가 아니라 모아 보기이고, 「사업자등록증」은 두 종류
-     (bizreg·sme)를 함께 담아 어느 쪽으로 넣을지 정할 수 없다. */
-  const fn = app.match(/function canRetag\([\s\S]*?\n\}/);
-  assert.ok(fn, 'canRetag 를 찾을 수 없습니다');
-  assert.match(fn[0], /kinds\.length === 1/, '종류가 하나인 탭만 받도록 막지 않았습니다');
-  // 놓기 전에 어디로 갈지 눈에 보여야 한다
+/* 어느 칸에 놓을 수 있나 — 진짜로 돌려서 본다.
+   ⚠ 2026-08-10 이 검사가 「kinds.length === 1」이라는 **적는 방식**을 붙들고
+      있었다. 그래서 사업자등록증·기타서류가 막혀 있는 것을 「올바름」으로 지켰다.
+      지켜야 할 것은 「전체사진에는 못 넣는다」이지 그 판별식이 아니다. */
+function bootRetag(customKinds) {
+  const ctx = {
+    CUSTOM_KINDS: customKinds || {},
+    KIND_TABS: null
+  };
+  vm.createContext(ctx);
+  const tabs = app.match(/const KIND_TABS = \[[\s\S]*?\n\];/);
+  assert.ok(tabs, 'KIND_TABS 를 찾을 수 없습니다');
+  vm.runInContext(tabs[0].replace('const ', 'var '), ctx);
+  ['isCustomTab', 'canRetag', 'kindForTab'].forEach(function (n) {
+    const m = app.match(new RegExp('function ' + n + '\\([\\s\\S]*?\\r?\\n\\}'));
+    assert.ok(m, n + ' 를 찾을 수 없습니다');
+    vm.runInContext(m[0], ctx);
+  });
+  return ctx;
+}
+
+test('★ 「전체사진」에는 못 넣는다 — 분류가 아니라 모아 보기다', () => {
+  const c = bootRetag();
+  assert.equal(c.canRetag('all'), false,
+    '모아 보기에 「넣는다」는 말은 성립하지 않습니다.');
+  assert.equal(c.kindForTab('all'), null);
+});
+
+test('★ 사업자등록증·기타서류에도 넣을 수 있다 (대표 보고 2026-08-10)', () => {
+  /* 이 둘이 막혀 있어서 "분류가 안 되는 서류들을 사업자등록증으로 옮기려는데
+     분류 지정이 안 된다"가 됐다. 사람이 그 칸을 고르면 그건 분명한 뜻이다. */
+  const c = bootRetag();
+  assert.equal(c.canRetag('bizreg'), true, '사업자등록증으로 옮길 길이 막혀 있습니다.');
+  assert.equal(c.kindForTab('bizreg'), 'bizreg', '두 종류 중 어느 것으로 넣을지 안 정해 뒀습니다.');
+  assert.equal(c.canRetag('other'), true, '「그냥 기타로 둬라」도 분명한 뜻입니다.');
+  assert.equal(c.kindForTab('other'), 'other');
+});
+
+test('★ 「전체사진」 말고는 모든 칸이 사진을 받는다', () => {
+  const c = bootRetag();
+  const tabs = c.KIND_TABS.filter(function (t) { return t.key !== 'all'; });
+  assert.ok(tabs.length >= 6, '칸이 너무 적습니다: ' + tabs.length);
+  tabs.forEach(function (t) {
+    assert.equal(c.canRetag(t.key), true, '「' + t.label + '」로 옮길 수 없습니다.');
+  });
+});
+
+test('없는 직접분류에는 못 넣는다', () => {
+  const c = bootRetag({ k1: { name: '자문등록계약서' } });
+  assert.equal(c.canRetag('custom:k1'), true);
+  assert.equal(c.canRetag('custom:없는것'), false, '지워진 분류로 옮기면 사진이 사라집니다.');
+});
+
+test('놓을 자리가 눈에 보인다', () => {
   assert.match(app, /#kinds button\.drop\{/, '놓을 자리 표시가 없습니다');
   assert.match(app, /function markDropTab\(/);
+});
+
+test('★ 「분류 지정」 목록에 놓을 수 있는 칸이 모두 나온다', () => {
+  /* 대표 보고(2026-08-10): 여기에 직접 만든 분류만 나와서 사업자등록증을
+     고를 수가 없었다. 화면 위 칸과 같은 목록이어야 한다. */
+  const fn = app.match(/function openAssignKind\([\s\S]*?\n\}/);
+  assert.ok(fn, 'openAssignKind 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /kindOrder\(\)\.filter\(canRetag\)/,
+    '고정 칸을 빼고 직접분류만 보여 주면 사업자등록증으로 옮길 길이 없습니다');
+  assert.ok(!/Object\.keys\(CUSTOM_KINDS\)/.test(fn[0]),
+    '직접분류만 훑고 있습니다');
+  assert.match(fn[0], /__new__/, '새 분류 만들기 길이 없어졌습니다');
 });
 
 test('분류 탭과 찾기 줄은 스크롤해도 위에 붙어 있다', () => {
