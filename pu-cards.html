@@ -215,6 +215,42 @@ body.pc #main,body.pc #fab,body.pc #selbar{display:none!important}
 .pcside-settings:hover{background:#33457a}
 /* ── 환경설정 전용 화면 (팝업 대신 본문) ── */
 #pcSettings{padding:2px 2px 40px}
+/* ── 메일 화면 (본문 전체) ── */
+#pcMail{padding:16px 22px 40px}
+.mwrap{display:flex;gap:16px;align-items:flex-start}
+.mwrap .mmain{flex:1;min-width:0}
+.mwrap .mdrawer{flex:0 0 300px;position:sticky;top:10px;border:1px solid #dde3ee;border-radius:12px;
+  background:#fbfcfe;padding:11px 12px}
+.mwrap.nodrawer .mdrawer{display:none}
+.mdh{font-size:13px;font-weight:700;color:#1b2536;margin-bottom:8px}
+.mdlink{font-size:11.5px;color:#1d4fc4;cursor:pointer;margin-top:9px;text-align:right}
+.mdlink:hover{text-decoration:underline}
+/* 받는사람 자동 찾기 */
+.cpsug{display:none;position:absolute;left:0;right:0;top:100%;z-index:30;margin-top:3px;
+  background:#fff;border:1px solid #dde3ee;border-radius:9px;box-shadow:0 8px 24px rgba(20,30,50,.14);
+  max-height:260px;overflow:auto}
+.cpsug.on{display:block}
+.cpsi{padding:7px 11px;font-size:12.5px;color:#1b2536;cursor:pointer;display:flex;gap:7px;align-items:baseline}
+.cpsi:hover{background:#eaf1ff}
+.cpsi .c{color:#5a6885;font-size:11.5px}
+.cpsi .e{margin-left:auto;color:#8b98b3;font-size:11.5px}
+.cpsi.off{cursor:default;opacity:.55}
+.cpsi.off:hover{background:none}
+/* 보낸 메일함 표 */
+table.sbox{width:100%;border-collapse:collapse;font-size:12.5px}
+table.sbox th{text-align:left;font-weight:400;color:#5a6885;padding:7px 10px;background:#f7f9fc;
+  border-bottom:1px solid #e4e8f0;white-space:nowrap}
+table.sbox td{padding:9px 10px;border-bottom:1px solid #eef2f7;vertical-align:top;color:#1b2536}
+table.sbox td span.e{display:block;color:#8b98b3;font-size:11.5px;margin-top:2px}
+table.sbox td.w{white-space:nowrap;color:#5a6885}
+table.sbox td.w span{display:block;color:#8b98b3;font-size:11px}
+table.sbox td.b{white-space:nowrap;color:#5a6885}
+table.sbox td.a{white-space:nowrap;text-align:right}
+table.sbox td.a button{border:1px solid #dde3ee;background:#fff;color:#33415e;border-radius:7px;
+  padding:5px 9px;font-size:11.5px;cursor:pointer;margin-left:4px}
+table.sbox td.a button:hover{background:#eef2f7}
+table.sbox td.none{text-align:center;color:#8b98b3;padding:34px 10px}
+@media(max-width:1000px){.mwrap{flex-direction:column}.mwrap .mdrawer{position:static;width:100%;flex:none}}
 /* ── 자료함 화면 ── */
 #pcMat{padding:16px 22px 40px;--ink:#1b2536;--sub:#5a6885;--line:#e4e8f0}
 .matadd{display:inline-block;background:#1e2a47;color:#fff;border-radius:10px;padding:10px 18px;font-size:13.5px;font-weight:700;cursor:pointer}
@@ -741,6 +777,8 @@ body.pc #pcDetail{display:flex}
     <div id="pcSettings" style="display:none"></div>
     <!-- 자료함 전용 화면 — 팝업이 좁아 이름·설명을 넣기 어려웠다 -->
     <div id="pcMat" style="display:none"></div>
+    <!-- 메일 쓰기 전용 화면 — 팝업으로는 본문·첨부를 손보기가 갑갑했다(대표 지시 2026-08-10) -->
+    <div id="pcMail" style="display:none"></div>
   </main>
 </div>
 
@@ -1013,6 +1051,8 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', s
   /* 자료함 — 찾는 말·메일틀 갈래는 화면에만 쓰고 저장하지 않는다.
      sendLog 는 명함을 열 때만 그 명함 것을 읽어 담는다. */
   matQ:'', matMailCat:'', matPrevId:'', sendLog:{},
+  /* 메일 화면 — mailSent 가 true 면 보낸 메일함, 아니면 쓰기 */
+  mailSent:false, mailDrawer:true, sentBox:{}, sentQ:'', sentMine:false,
   view:'list', vtab:'' };
 
 /* ── 데이터 계층 ── */
@@ -1672,6 +1712,34 @@ function composeCheck(o){
   return { ok:true };
 }
 
+/* ── 받는사람 자동 찾기 ──
+   이름·회사·이메일 어느 것으로 쳐도 명함에서 찾는다. 명함첩을 뒤져 주소를
+   옮겨 적을 필요가 없다.
+   ⚠ 이메일이 없는 명함도 **보여 준다.** 안 보이면 「그 사람이 명함첩에 없나」
+     싶어 다시 찾게 된다 — 있는데 이메일만 없는 것이라고 알려 주는 편이 낫다. */
+function findPeople(items, q, limit){
+  const s = String(q||'').trim().toLowerCase().replace(/\s/g,'');
+  if(s.length < 1) return [];
+  const hit = [];
+  for(const it of Object.values(items||{})){
+    if(!it || !it.id) continue;
+    const hay = [it.name, it.company, it.email, it.dept, it.title]
+      .map(v=>String(v||'').toLowerCase().replace(/\s/g,'')).join('|');
+    if(hay.indexOf(s) < 0) continue;
+    hit.push(it);
+    if(limit>0 && hit.length >= limit*3) break;      /* 넉넉히 모은 뒤 아래에서 줄인다 */
+  }
+  /* 이메일 있는 사람이 먼저. 없는 사람은 골라도 못 보내므로 뒤로. */
+  hit.sort((a,b)=> (a.email?0:1) - (b.email?0:1));
+  return limit>0 ? hit.slice(0, limit) : hit;
+}
+/* 받는사람 칸의 글을 주소로 바꾼다. '홍길동 <a@b.com>' 처럼 적어도 알아본다. */
+function pickEmail(v){
+  const s = String(v||'').trim();
+  const m = s.match(/<([^>]+)>/);
+  return normEmail(m ? m[1] : s);
+}
+
 /* ── 보낸 기록 ──
    '이 업체에 제안서 보냈던가'에 답하는 것이 전부다. 그래서 **자료 이름을 그대로 적어 둔다** —
    자료 번호만 적으면 나중에 그 자료를 지웠을 때 무엇을 보냈는지 알 수 없다. */
@@ -1755,21 +1823,10 @@ function openSendMaterials(id){
   if(mailModeOf(matMailCfg())==='auto'){
     const email=normEmail(it.email);
     if(!email) return toast('이 명함에 이메일이 없습니다 — 명함을 열어 이메일을 넣어 주세요', 6000);
-    if(!confirm(`${it.name||it.company||''} 님께 메일을 쓸까요?\n\n받는 곳 · ${email}`)) return;
     _sendMatId=id; _sendMatPick=null; _sendMatSetName='';
-    const vals={ 받는분: it.name||it.company||'', 회사명: it.company||'', 자료목록:'', 오늘:fmtDate(Date.now()) };
-    const tpl = matMailCfg();
-    _compose={
-      cardId:id, to:email, cc:'',
-      subject: mailFill(tpl.subject || MAIL_TPL_DEFAULT.subject, vals),
-      /* 자료를 아직 안 골랐으니 {자료목록} 자리가 빈다 — 빈 줄만 다듬는다.
-         첨부 이름은 어차피 받는 쪽 첨부칸에 그대로 보인다. */
-      body: mailFill(tpl.body || MAIL_TPL_DEFAULT.body, vals).replace(/\n{3,}/g,'\n\n'),
-      ids:[], picking:true
-    };
-    renderCompose();
-    $('sendMatBg').classList.add('open');
-    loadMaterials(()=>{ if(_compose) renderCompose(); });
+    closeDetail();
+    /* 팝업이 아니라 **본문 전체 화면**으로 연다 (대표 지시 2026-08-10) */
+    openMailPage({ cardId:id, to:email, name: it.name||it.company||'', company: it.company||'' });
     return;
   }
   _sendMatId=id; _sendMatPick=null; _sendMatSetName=''; _compose=null;
@@ -1857,7 +1914,7 @@ function openCompose(){
     ids: ids,
     viaPick: true          /* 고르기 화면에서 왔다 — 「← 자료 고르기」로 돌아갈 수 있다 */
   };
-  renderCompose();
+  redrawCompose();
 }
 function backToPick(){ _compose = null;
   try{ $('sendMatSheet').classList.remove('compose'); }catch(_){}
@@ -1871,26 +1928,16 @@ function openComposeMail(){
   if(mailModeOf(matMailCfg())!=='auto')
     return toast('자료함 → ✉️ 메일 본문에서 「회사 메일로 바로 보내기」를 켜면 여기서 바로 쓸 수 있습니다', 8000);
   _sendMatId=null; _sendMatPick=null; _sendMatSetName='';
-  const tpl = matMailCfg();
-  const vals = { 받는분:'', 회사명:'', 자료목록:'', 오늘:fmtDate(Date.now()) };
-  _compose = {
-    cardId:'', to:'', cc:'',
-    subject: mailFill(tpl.subject || MAIL_TPL_DEFAULT.subject, vals),
-    /* 받는분이 비어 「 님,」처럼 어색하게 남는 머리만 다듬는다 — 나머지는 그대로 고쳐 쓴다 */
-    body: mailFill(tpl.body || MAIL_TPL_DEFAULT.body, vals).replace(/^\s*님,?\s*/,''),
-    ids:[], picking:true
-  };
-  renderCompose();
-  $('sendMatBg').classList.add('open');
-  loadMaterials(()=>{ if(_compose) renderCompose(); });
+  _compose=null;                       /* 빈 편지로 새로 연다 */
+  openMailPage({});
 }
 /* 편지 안에서 자료 담기 — 자료함까지 안 가고 그 자리에서 담고 뺀다 */
-function togglePickMat(){ grabCompose(); if(!_compose) return; _compose.picking=!_compose.picking; renderCompose(); }
+function togglePickMat(){ grabCompose(); if(!_compose) return; _compose.picking=!_compose.picking; redrawCompose(); }
 function toggleComposeMat(id){
   grabCompose(); if(!_compose) return;
   const i=_compose.ids.indexOf(id);
   if(i>=0) _compose.ids.splice(i,1); else _compose.ids.push(id);
-  renderCompose();
+  redrawCompose();
 }
 /* ── 내 PC 파일 붙이기 ──
    한글에서 조항을 고친 계약서처럼 **이번 편지에만** 쓰는 파일.
@@ -1915,12 +1962,12 @@ async function addLocalFiles(input){
     }catch(e){ toast(`${f.name} — ${(e&&e.message)||'읽지 못했습니다'}`, 7000); }
   }
   if(added) toast(`💻 내 PC 파일 ${added}개를 붙였습니다 — 이번 편지에만 붙습니다`, 6000);
-  renderCompose();
+  redrawCompose();
 }
 function dropLocalFile(i){
   grabCompose(); if(!_compose || !_compose.files) return;
   _compose.files.splice(i,1);
-  renderCompose();
+  redrawCompose();
 }
 /* 묶음을 편지 안에서 — 누르면 그 묶음의 자료로 첨부가 바뀐다 */
 function applySetInCompose(sid){
@@ -1928,7 +1975,7 @@ function applySetInCompose(sid){
   const s=_matSets[sid]; if(!s) return;
   _compose.ids = setLiveIds(s, _matMeta);
   _sendMatSetName = s.name || '';
-  renderCompose();
+  redrawCompose();
   toast(`📦 ${s.name||'묶음'} — ${_compose.ids.length}개를 담았습니다`);
 }
 /* 칸에 친 글을 잃지 않게, 다시 그리기 전에 화면 값을 먼저 담아 둔다 */
@@ -1946,6 +1993,12 @@ function dropAttach(id){
   if(!_compose) return;
   _compose.ids = _compose.ids.filter(x=>x!==id);
   if(!_compose.ids.length) toast('첨부를 모두 뺐습니다 — 글만 보냅니다');
+  redrawCompose();
+}
+/* 편지를 다시 그린다 — 본문 전체 화면일 때와 옛 팝업일 때가 다르다.
+   자료를 담고 빼는 함수들이 이 하나만 부르면 어느 화면이든 맞게 그려진다. */
+function redrawCompose(){
+  if(state.view==='mail'){ renderMailPage(); return; }
   renderCompose();
 }
 function renderCompose(){
@@ -2023,15 +2076,18 @@ async function sendCompose(){
     const r = await postAutoMail({
       cardId: c.cardId, to: c.to, cc: c.cc,
       subject: c.subject, body: c.body, matIds: c.ids, set: _sendMatSetName || '',
+      /* 보낸 메일함에 '누구에게'를 사람 이름으로 보이게 — 주소만 남으면 알아보기 어렵다 */
+      toName: (state.items[c.cardId]||{}).name || (state.items[c.cardId]||{}).company || '',
       files: (c.files||[]).map(f=>({ name:f.name, dataUrl:f.dataUrl }))
     });
-    const cardId = c.cardId;
+    const cardId = c.cardId, wasMail = (state.view==='mail');
     _compose = null;
-    closeSendMat();
     toast(`✉️ 보냈습니다 — ${esc(r.from||'회사 메일')} 에서 ${esc(c.to)} 로`
       + (r.files?` (첨부 ${r.files}개)`:'')
       + (r.missing?`\n⚠ 파일을 못 찾은 자료 ${r.missing}개는 빠졌습니다`:''), r.missing?12000:8000);
-    /* 명함 없이 쓴 메일(cardId 없음)은 기록이 없다 — 기록은 명함에 붙는다 */
+    /* 보낸 뒤에는 보낸 메일함을 보여 준다 — 방금 것이 실제로 남았는지 그 자리에서 확인된다 */
+    if(wasMail) openSentBox(); else closeSendMat();
+    /* 명함 없이 쓴 메일(cardId 없음)은 명함 기록이 없다 — 기록은 명함에 붙는다 */
     if(cardId) loadSendLog(cardId, ()=>{ const box=$('dSendLog'); if(box) box.innerHTML = sendLogHtml(cardId); });
   }catch(e){
     /* ⚠ 화면을 닫지 않는다. 쓴 글이 그대로 남아 있어야 고쳐서 다시 보낼 수 있다. */
@@ -2402,6 +2458,204 @@ async function fillMatPreview(id){
     box.innerHTML='<div class="mpmsg">읽지 못했습니다 — '+esc((e&&e.message)||'')+'</div>';
   }
 }
+/* ══════ 메일 화면 (본문 전체) ══════
+   팝업으로는 본문·첨부를 손보기가 갑갑했다. 자료함·환경설정과 같은 방식으로 본문을 쓴다.
+   state.mailSent 가 true 면 보낸 메일함, 아니면 쓰기. */
+function openMailPage(pre){
+  state.view='mail'; state.mailSent=false;
+  if(!_compose || pre){
+    const tpl = matMailCfg();
+    const p = pre || {};
+    const vals = { 받는분: p.name||'', 회사명: p.company||'', 자료목록:'', 오늘: fmtDate(Date.now()) };
+    _compose = {
+      cardId: p.cardId||'', to: p.to||'', cc:'',
+      subject: mailFill(tpl.subject || MAIL_TPL_DEFAULT.subject, vals),
+      body: mailFill(tpl.body || MAIL_TPL_DEFAULT.body, vals).replace(/^\s*님,?\s*/,'').replace(/\n{3,}/g,'\n\n'),
+      ids: p.ids||[], files: [], picking: true
+    };
+  }
+  render();
+  try{ $('pcMain').scrollTop=0; }catch(_){}
+  if(!_matLoaded && Store.mode==='firebase') loadMaterials(()=>{ if(state.view==='mail') renderMailPage(); });
+}
+function openSentBox(){ state.view='mail'; state.mailSent=true; render();
+  try{ $('pcMain').scrollTop=0; }catch(_){}
+  loadSentBox(()=>{ if(state.view==='mail' && state.mailSent) renderMailPage(); }); }
+function closeMailPage(){ state.view='list'; render(); }
+function renderMailPage(){
+  const el=$('pcMail'); if(!el) return;
+  el.innerHTML = state.mailSent ? sentBoxHtml() : mailWriteHtml();
+  if(!state.mailSent) wireMailWrite();
+}
+/* ── 쓰기 화면 ── */
+function mailWriteHtml(){
+  const c = _compose || {}; c.files = c.files || []; c.ids = c.ids || [];
+  const from = matMailCfg().from || '(보내는 주소 없음)';
+  const bytes = attachTotal(c.ids, _matMeta, c.files);
+  const over = bytes > MAIL_MAX_BYTES;
+  const chipsMat = c.ids.map(id=>{ const m=_matMeta[id]||{};
+    return `<span class="cpchip">${matIcon(m.fileName)} ${esc(m.name||'자료')}
+      <span class="sz">${m.size?fmtMB(m.size):''}</span>
+      <b onclick="dropAttach('${id}')" title="빼기">✕</b></span>`; }).join('');
+  const chipsLocal = c.files.map((f,i)=>
+    `<span class="cpchip local">💻 ${esc(f.name||'파일')}
+      <span class="sz">${fmtMB(f.size)}</span>
+      <b onclick="dropLocalFile(${i})" title="빼기">✕</b></span>`).join('');
+  return `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+      <button class="setback" onclick="closeMailPage()">← 목록으로</button>
+      <h2 style="margin:0;font-size:17px;color:#16223c">✏️ 메일 쓰기</h2>
+      <span style="font-size:12px;color:#8b98b3">보내는사람 · 푸른노무법인 &lt;${esc(from)}&gt;</span>
+      <button class="mattab" style="margin-left:auto" onclick="toggleMailDrawer()">
+        ${state.mailDrawer===false?'자료 서랍 열기 ◂':'자료 서랍 접기 ▸'}</button>
+    </div>
+    <div class="mwrap ${state.mailDrawer===false?'nodrawer':''}">
+      <div class="mmain">
+        <div class="cprow" style="align-items:flex-start"><span class="cpk" style="padding-top:8px">받는사람</span>
+          <div style="flex:1;position:relative">
+            <input id="cpTo" value="${esc(c.to)}" autocomplete="off"
+              placeholder="이름·회사·이메일로 찾거나 주소를 직접 적으세요">
+            <div id="cpSug" class="cpsug"></div>
+          </div></div>
+        <div class="cprow"><span class="cpk">참조</span>
+          <input id="cpCc" value="${esc(c.cc||'')}" placeholder="필요할 때만 (쉼표로 여러 명)"></div>
+        <div class="cprow"><span class="cpk">제목</span>
+          <input id="cpSubj" value="${esc(c.subject||'')}"></div>
+        <div class="cprow" style="align-items:flex-start"><span class="cpk" style="padding-top:8px">첨부</span>
+          <div class="cpattbox ${over?'over':''}">
+            <div class="cpatt">${(chipsMat+chipsLocal) || '<span class="cpnone">첨부 없음 — 글만 보냅니다.</span>'}
+              <label class="cpghost" style="padding:5px 11px;font-size:12px;cursor:pointer"
+                title="한글에서 고친 계약서처럼 이번 편지에만 붙일 파일 (8MB 이하)">💻 내 PC 파일
+                <input type="file" multiple style="display:none" onchange="addLocalFiles(this)"></label></div>
+            <div class="cpsize ${over?'over':''}">합계 ${fmtMB(bytes)} / ${fmtMB(MAIL_MAX_BYTES)}${over?' — 넘었습니다. ✕ 로 빼 주세요':''}</div>
+          </div></div>
+        <textarea id="cpBody" class="cpbody" style="min-height:300px">${esc(c.body||'')}</textarea>
+        <div class="cphint">자료함의 메일 본문 틀에서 채워졌습니다. 여기서 고쳐 보내도 <b>틀은 안 바뀝니다.</b>
+          · 답장은 <b>${esc((myEmail||'').split('@')[0]||'보낸 직원')}</b> 님께 옵니다.</div>
+        <button class="sm-send" onclick="sendCompose()" ${over?'disabled':''}>보내기</button>
+      </div>
+      <div class="mdrawer">
+        <div class="mdh">📎 자료 서랍</div>
+        <div class="setpick" style="padding:0 2px">
+          ${(function(){
+            const sets = setList(_matSets).filter(s=>setLiveIds(s,_matMeta).length);
+            return sets.map(s=>`<span class="setchk" style="cursor:pointer;background:#fdf6e8;border-color:#eeddb5"
+              onclick="applySetInCompose('${s.id}')">📦 ${esc(s.name||'묶음')}</span>`).join('');
+          })()}
+          ${matList().length ? matList().map(m=>`<span class="setchk ${c.ids.indexOf(m.id)>=0?'on':''}"
+            style="cursor:pointer" onclick="toggleComposeMat('${m.id}')"
+            title="${esc(m.desc||m.fileName||'')}">${matIcon(m.fileName)} ${esc(m.name||'자료')}
+            <i style="font-style:normal;font-size:11px;color:#8b98b3">${m.size?fmtMB(m.size):''}</i></span>`).join('')
+          : '<span class="cpnone">자료함이 비어 있습니다</span>'}
+        </div>
+        <div class="mdlink" onclick="openMatPage()">자료 올리기·관리는 자료함에서 →</div>
+      </div>
+    </div>`;
+}
+function toggleMailDrawer(){ grabCompose(); state.mailDrawer = (state.mailDrawer===false); renderMailPage(); }
+/* 받는사람 칸에 자동 찾기를 붙인다 — 화면을 새로 그릴 때마다 다시 매단다 */
+function wireMailWrite(){
+  const to=$('cpTo'), sug=$('cpSug'); if(!to||!sug) return;
+  const close=()=>{ sug.innerHTML=''; sug.classList.remove('on'); };
+  to.addEventListener('input', ()=>{
+    if(_compose) _compose.to = to.value;
+    /* 마지막 쉼표 뒤의 말로만 찾는다 — 여러 명을 적는 중일 수 있다 */
+    const tail = to.value.split(/[,;]/).pop().trim();
+    const hits = findPeople(state.items, tail, 8);
+    if(!hits.length) return close();
+    sug.innerHTML = hits.map(it=>{
+      const em = normEmail(it.email);
+      return `<div class="cpsi ${em?'':'off'}" ${em?`onclick="pickPerson('${it.id}')"`:''}>
+        👤 <b>${esc(it.name||'(이름 없음)')}</b>
+        <span class="c">${esc(it.company||'')}</span>
+        <span class="e">${em?esc(em):'이메일 없음'}</span></div>`;
+    }).join('');
+    sug.classList.add('on');
+  });
+  to.addEventListener('blur', ()=>{ setTimeout(close, 180); });   /* 누르는 것을 먼저 받게 조금 늦춘다 */
+}
+function pickPerson(id){
+  const it = state.items[id]; if(!it) return;
+  const em = normEmail(it.email); if(!em) return;
+  grabCompose();
+  if(!_compose) return;
+  /* 적던 마지막 토막을 고른 주소로 바꾼다 */
+  const parts = String(_compose.to||'').split(/[,;]/);
+  parts[parts.length-1] = em;
+  _compose.to = parts.map(s=>s.trim()).filter(Boolean).join(', ');
+  if(!_compose.cardId) _compose.cardId = id;      /* 기록이 이 명함에 붙게 */
+  renderMailPage();
+  toast(`받는사람에 ${it.name||em} 님을 담았습니다`);
+}
+
+/* ── 보낸 메일함 ── */
+function loadSentBox(cb){
+  if(Store.mode!=='firebase'){ if(cb) cb(); return; }
+  firebase.database().ref(DB_ROOT+'/sentBox').limitToLast(300).once('value')
+    .then(s=>{ state.sentBox = s.val()||{}; if(cb) cb(); })
+    .catch(e=>{ console.warn('[보낸메일]', e&&e.message); if(cb) cb(); });
+}
+function sentBoxHtml(){
+  const q = String(state.sentQ||'').trim().toLowerCase().replace(/\s/g,'');
+  const mine = !!state.sentMine;
+  let rows = Object.entries(state.sentBox||{})
+    .map(([id,v])=>Object.assign({id}, v||{}))
+    .filter(v=>v.at)
+    .sort((a,b)=>(b.at||0)-(a.at||0));
+  if(mine) rows = rows.filter(v=>String(v.by||'').toLowerCase()===String(myEmail||'').toLowerCase());
+  if(q) rows = rows.filter(v=>[v.to,v.subject,(v.names||[]).join(' '),v.by,v.toName]
+    .some(x=>String(x||'').toLowerCase().replace(/\s/g,'').includes(q)));
+  const body = rows.length ? rows.map(v=>`
+    <tr>
+      <td class="w">${fmtDate(v.at)}<span>${new Date(v.at||0).toTimeString().slice(0,5)}</span></td>
+      <td class="b">${esc(String(v.by||'').split('@')[0])}</td>
+      <td><b>${esc(v.toName||'')}</b><span class="e">${esc(v.to||'')}</span></td>
+      <td>${esc(v.subject||'')}<span class="e">${v.set?'📦 '+esc(v.set)+' · ':''}${esc((v.names||[]).join(' · ')||'첨부 없음')}</span></td>
+      <td class="a">
+        <button onclick="resendFrom('${v.id}')">다시 쓰기</button>
+        ${v.cardId?`<button onclick="openDetail('${v.cardId}')">명함</button>`:''}
+      </td>
+    </tr>`).join('')
+    : `<tr><td colspan="5" class="none">${q||mine?'찾은 메일이 없습니다.':'아직 보낸 메일이 없습니다.'}</td></tr>`;
+  return `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+      <button class="setback" onclick="closeMailPage()">← 목록으로</button>
+      <h2 style="margin:0;font-size:17px;color:#16223c">📤 보낸 메일</h2>
+      <span style="font-size:12px;color:#8b98b3">${rows.length}통</span>
+      <button class="mattab" style="margin-left:auto" onclick="openMailPage()">✏️ 새 메일</button>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      <div class="matsearch" style="flex:1;min-width:220px;margin:0">
+        <input value="${esc(state.sentQ||'')}" placeholder="🔍 받는사람·제목·자료 이름으로 찾기"
+          oninput="state.sentQ=this.value;renderMailPage()">
+      </div>
+      <button class="mattab ${mine?'on':''}" onclick="state.sentMine=!state.sentMine;renderMailPage()">내가 보낸 것</button>
+    </div>
+    <table class="sbox"><thead><tr>
+      <th>보낸 때</th><th>보낸 사람</th><th>받는 곳</th><th>제목 · 첨부</th><th></th>
+    </tr></thead><tbody>${body}</tbody></table>
+    <p style="font-size:11.5px;color:#8b98b3;line-height:1.7;margin-top:12px">
+      ※ 명함 없이 보낸 것도 남습니다. 명함 상세에는 그 사람 것만 추려 보입니다.</p>`;
+}
+/* 같은 내용으로 다시 쓰기 — 받는사람·제목·본문·자료를 그대로 옮겨 쓰기 화면을 연다.
+   ⚠ 💻 내 PC 파일은 옮기지 못한다. 그 파일은 서버에 두지 않았다(이번 편지에만 붙는 파일). */
+function resendFrom(id){
+  const v = (state.sentBox||{})[id]; if(!v) return;
+  const tpl = matMailCfg();
+  _compose = {
+    cardId: v.cardId||'', to: v.to||'', cc:'',
+    subject: v.subject || tpl.subject,
+    body: v.body || tpl.body,
+    ids: (v.ids||[]).filter(x=>_matMeta[x]),      /* 그 사이 지워진 자료는 뺀다 */
+    files: [], picking: true
+  };
+  state.mailSent=false; render();
+  const lost = (v.ids||[]).length - _compose.ids.length;
+  if(lost) toast(`지워진 자료 ${lost}개는 빠졌습니다`, 6000);
+  if(v.localNames && v.localNames.length)
+    toast(`💻 내 PC 파일(${v.localNames.join(' · ')})은 다시 붙여 주세요 — 서버에 두지 않습니다`, 9000);
+}
+
 /* 자료함 화면의 껍데기 — 제목줄·탭줄은 어느 탭에서나 같다 */
 function matPageShell(tabs, inner, n){
   /* 올리기 자리는 제목줄 오른쪽 끝에 작게 둔다 — 예전에는 목록 위에 큰 상자로
@@ -5337,6 +5591,13 @@ function renderPCSide(){
   groups.forEach(g=> h += folderRow(g));
   h += `</div>`;
 
+  /* ✉️ 메일 묶음 — 자료함이 맨 아래 구석에 있어 찾기 어려웠다.
+     쓰기·보낸 것·자료를 한 묶음으로 올린다 (대표 지시 2026-08-10). */
+  h += `<div class="pcsec">✉️ 메일</div>`;
+  h += pcItem(`onclick="openMailPage()"`, '✏️ 메일 쓰기', undefined, state.view==='mail' && !state.mailSent);
+  h += pcItem(`onclick="openSentBox()"`, '📤 보낸 메일', undefined, state.view==='mail' && state.mailSent);
+  h += pcItem(`onclick="openMatPage()"`, '📎 자료함', matList().length, state.view==='mat');
+
   h += `<div class="pcsec">담당자별 (직원)</div>`;
   const owners=[...new Set(kindArr.map(it=>String(it.owner||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ko'));
   if (!owners.length)
@@ -5357,7 +5618,6 @@ function renderPCSide(){
       title="옛 방식으로 잠긴 폴더는 비밀번호가 그대로 저장돼 있어 직원이 들여다볼 수 있습니다. 대표님 전용 창고로 옮기면 서버가 막아 줍니다.">⚠ 옛 잠금 폴더 ${oldLocked}개 옮기기</button>` : ''}
     ${state.isAdmin ? `<button class="pcside-settings" onclick="openPrivateVault()"
       title="대표만 보는 개인 폴더 — 비밀번호를 맞혀야 자료를 가져옵니다">${state.privOpen?'🔓 개인 폴더 닫기':'🔒 개인 폴더 열기'}</button>` : ''}
-    <button class="pcside-settings" onclick="openMatPage()" title="회사소개서·계약서 등 보낼 자료 관리">📎 자료함</button>
     <button class="pcside-settings" onclick="openSettingsPage()" title="정리·데이터·연동·탭·계정 설정 (별도 화면으로 열림)">⚙️ 환경설정</button>
   </div>`;
   $('pcSide').innerHTML = h;
@@ -6796,14 +7056,17 @@ function renderPC(){
   renderPCSide();
   const isSet = state.view==='settings';
   const isMat = state.view==='mat';
-  /* 설정·자료함 화면일 때는 목록 UI를 숨기고 그 화면만 */
+  const isMail = state.view==='mail';
+  /* 설정·자료함·메일 화면일 때는 목록 UI를 숨기고 그 화면만 */
   ['pcHead','pcErpTabs','pcFilters','pcSel','pcTableWrap','pcPager'].forEach(id=>{
-    const e=$(id); if(e) e.style.display = (isSet||isMat) ? 'none' : '';
+    const e=$(id); if(e) e.style.display = (isSet||isMat||isMail) ? 'none' : '';
   });
   const st=$('pcSettings'); if(st) st.style.display = isSet ? 'block' : 'none';
   const mt=$('pcMat');      if(mt) mt.style.display = isMat ? 'block' : 'none';
+  const ml=$('pcMail');     if(ml) ml.style.display = isMail ? 'block' : 'none';
   if(isSet){ renderSettingsPage(); return; }
   if(isMat){ renderMatPage(); return; }
+  if(isMail){ renderMailPage(); return; }
   renderErpTabs(); renderPCTable();
 }
 

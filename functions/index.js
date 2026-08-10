@@ -671,14 +671,39 @@ exports.sendMaterialMail = functions
     // ★ 보낸 기록은 **실제로 나간 뒤** 서버가 남긴다.
     //   화면이 남기면 '보냈다는데 안 왔다'를 가릴 수 없다.
     //   개인 폴더 명함은 남기지 않는다 — 이 자리는 직원 누구나 읽는다.
+    const at = Date.now();
     const cardId = String(body.cardId || "");
     if (cardId && !/[.#$/\[\]]/.test(cardId)) {
       try {
         await db.ref(CARDS_ROOT + "/sendLog/" + cardId).push(MS.sentLogRec({
-          at: Date.now(), by: sender.email || "", to: v.to, names: names, set: body.set || "",
+          at: at, by: sender.email || "", to: v.to, names: names, set: body.set || "",
         }));
       } catch (e) { console.warn("sendLog", e && e.message); }
     }
+
+    // ── 보낸 메일함 (명함과 무관한 한 줄 기록) ──
+    // 명함 안 기록만으로는 「이번 달 누가 무엇을 보냈나」를 볼 수 없다. 명함 없이
+    // 보낸 것도 여기에는 남는다.
+    // ⚠ 본문을 함께 남긴다 — 「같은 내용으로 다시 쓰기」가 이걸 읽는다.
+    //   이 자리는 직원 누구나 읽으므로, 개인 폴더 명함으로 보낸 것은 명함 번호를
+    //   빼고 남긴다(누구에게 보냈는지는 주소로 이미 드러나므로 굳이 더하지 않는다).
+    try {
+      await db.ref(CARDS_ROOT + "/sentBox").push({
+        at: at,
+        by: sender.email || "",
+        to: v.to.join(", "),
+        toName: String(body.toName || ""),
+        cc: v.cc.join(", "),
+        subject: v.subject,
+        body: v.body,
+        ids: (Array.isArray(body.matIds) ? body.matIds : []).filter((x) => typeof x === "string"),
+        names: names,
+        localNames: extras.map((f) => String((f && f.name) || "")).filter(Boolean),
+        set: String(body.set || ""),
+        cardId: cardId,
+        from: from,
+      });
+    } catch (e) { console.warn("sentBox", e && e.message); }
 
     res.json({
       ok: true, sent: v.to.length, files: attachments.length, missing: missing,
