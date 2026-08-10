@@ -125,6 +125,15 @@ button{font-family:inherit;cursor:pointer}
 .tag{font-size:10.5px;font-weight:700;background:#e8eefc;color:#1e40af;padding:1px 6px;border-radius:5px;margin-left:5px}
 #grid .cell .tag{position:absolute;left:4px;top:4px;margin:0;background:var(--blue);color:#fff}
 #grid .cell{position:relative}
+/* ── 쓸어서 고르기 (대표 지시 2026-08-10) ──
+   "마우스 드래그로 한번에 다 체크하고 체크해제 할 수 있게 해줘"
+   빈 곳에서 눌러 끌면 지나간 칸을 한꺼번에 고른다. 띠가 #grid 안에 그려지므로
+   #grid 가 자리 기준이 되어야 한다(안 그러면 띠가 창 왼쪽 위로 튄다). */
+#grid{position:relative}
+#selBand{position:absolute;border:1.5px solid var(--blue);background:rgba(30,64,175,.13);
+  border-radius:3px;pointer-events:none;z-index:6;display:none}
+/* 쓰는 동안 글자가 파랗게 잡히면 지저분하다 */
+#grid.banding{user-select:none;-webkit-user-select:none}
 /* 전체 근로자 화면 — 누구 것인지 안 보이면 관리자가 못 가른다(대표 지시 2026-08-06) */
 #grid .cell .who{position:absolute;left:0;right:0;bottom:0;background:rgba(16,24,40,.72);color:#fff;
   font-size:10px;font-weight:700;padding:3px 5px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -4230,6 +4239,24 @@ $('grid').addEventListener('click', function (ev) {
    사진 자체가 아니라 '어디 있는 무엇인지'만 넘긴다 — 받는 앱이 그 표로
    사진을 직접 가져와 자기 사본을 만든다(원본은 사진첩에 그대로 남는다).
    ⚠ 두 창이 동시에 보여야 한다 — 탭 뒤에 숨은 화면으로는 끌어다 놓을 수 없다. */
+
+/* 사진 한 장을 「어디 있는 무엇인지」 표로 만든다 — 넘길 때 쓰는 유일한 꼴이다 */
+function dragRefOf(id) {
+  const it = gridItems.find(function (x) { return x.id === id; });
+  if (!it) return null;
+  const r = it.meta.read || {};
+  return {
+    app: 'pu-photos',
+    kind: 'photo',
+    year: gridYear,
+    owner: it.meta.__ownerUid || gridOwner || PuPhotoStore.myUid(),
+    id: id,
+    name: (r.fields && (r.fields.company || r.fields.name)) || dayLabel(it.meta.takenAt || 0) + ' 사진',
+    docKind: it.meta.kind || 'photo',
+    takenAt: it.meta.takenAt || 0
+  };
+}
+
 $('grid').addEventListener('dragstart', function (ev) {
   const cell = ev.target.closest ? ev.target.closest('.cell') : null;
   if (!cell) return;
@@ -4240,17 +4267,15 @@ $('grid').addEventListener('dragstart', function (ev) {
      고른 것이 있고 그 안에 이 사진이 들어 있으면 **고른 전부**를 옮긴다 —
      한 장씩 열 번 끄는 것보다 낫다. 아니면 끈 그 한 장만. */
   photoDragIds = (selected.size && selected.has(id)) ? Array.from(selected) : [id];
-  const r = it.meta.read || {};
-  PuDrag.set(ev.dataTransfer, {
-    app: 'pu-photos',
-    kind: 'photo',
-    year: gridYear,
-    owner: it.meta.__ownerUid || gridOwner || PuPhotoStore.myUid(),
-    id: id,
-    name: (r.fields && (r.fields.company || r.fields.name)) || dayLabel(it.meta.takenAt || 0) + ' 사진',
-    docKind: it.meta.kind || 'photo',
-    takenAt: it.meta.takenAt || 0
-  });
+  /* 다른 앱으로도 **고른 전부**를 보낸다(대표 지시 2026-08-10).
+     예전에는 여기서 끈 한 장만 실었다 — 8장을 끌어도 받는 쪽엔 1장만 갔다.
+     ⚠ 끈 사진을 맨 앞에 둔다. 한 장만 읽는 옛 앱에서도 **대표님이 집은 그 사진**이
+        가야지, 목록 첫 장이 가면 엉뚱한 것을 받은 것처럼 보인다. */
+  const order = [id].concat(photoDragIds.filter(function (x) { return x !== id; }));
+  const refs = order.map(dragRefOf).filter(Boolean);
+  if (!refs.length) return;
+  if (refs.length > 1) PuDrag.setMany(ev.dataTransfer, refs);
+  else PuDrag.set(ev.dataTransfer, refs[0]);
   /* 끌고 가는 동안 미리보기가 따라오게 — 무엇을 끄는지 눈에 보여야 한다. */
   const img = cell.querySelector('img');
   if (img && ev.dataTransfer.setDragImage) {
@@ -5235,6 +5260,136 @@ function toggleOne(id) {
   if (cell) cell.classList.toggle('on', selected.has(id));
   renderGridBar();
 }
+
+/* ══════ 쓸어서 고르기 (대표 지시 2026-08-10) ══════
+   "마우스 드래그로 한번에 다 체크하고 체크해제 할 수 있게 해줘"
+
+   빈 곳에서 눌러 끌면 띠가 생기고, 띠에 닿은 칸을 한꺼번에 고른다.
+     · 그냥 쓸면 고른다(먼저 것은 지운다)
+     · Ctrl 을 누른 채면 푼다
+     · Shift 를 누른 채면 먼저 고른 것에 더한다
+
+   ⚠ **칸 위에서 시작하면 켜지 않는다.** 칸을 끄는 것은 이미 「옮기기」다
+     (분류·폴더·다른 앱으로). 여기서 띠를 켜면 그 기능이 죽는다.
+   ⚠ 폰에서는 아예 안 켠다 — 손가락으로 쓰는 것은 화면 넘기기다.
+   ⚠ 살짝 눌렀다 뗀 것(4px 미만)은 고르기를 건드리지 않는다. 빈 곳을 한 번
+     눌렀다고 골라 둔 99장이 날아가면 안 된다. */
+const BAND_MIN = 4;          // 이만큼 움직여야 「쓸었다」로 본다
+const BAND_EDGE = 48;        // 가장자리 이 안에 들어오면 화면이 따라 움직인다
+const BAND_STEP = 18;        // 한 번에 이만큼씩
+
+let bandOn = false, bandMoved = false, bandMode = 'new';
+let bandAx = 0, bandAy = 0, bandCx = 0, bandCy = 0;
+let bandBase = null, bandEl = null, bandScroller = null, bandTimer = null;
+
+/* 격자가 실제로 스크롤되는 상자 — 넓은 화면은 #main, 폰은 #home 이다.
+   찾지 못하면 창 전체를 움직인다. */
+function scrollerOf(el) {
+  for (let p = el && el.parentElement; p; p = p.parentElement) {
+    const s = getComputedStyle(p).overflowY;
+    if ((s === 'auto' || s === 'scroll') && p.scrollHeight > p.clientHeight + 1) return p;
+  }
+  return null;
+}
+
+function bandStart(e) {
+  if (isTouchDevice()) return;                 // 폰은 화면 넘기기와 부딪힌다
+  if (e.button !== 0) return;                  // 오른쪽 단추는 아니다
+  const g = $('grid');
+  if (!g || !g.contains(e.target)) return;
+  /* 칸·단추 위에서 시작한 것은 여기 일이 아니다 */
+  if (e.target.closest && (e.target.closest('.cell') || e.target.closest('button'))) return;
+  if (!g.querySelector('.cell')) return;        // 고를 것이 없다
+
+  bandOn = true; bandMoved = false;
+  bandMode = (e.ctrlKey || e.metaKey) ? 'off' : (e.shiftKey ? 'add' : 'new');
+  /* 그냥 쓸면 **새로 고르는 것**이다 — 먼저 고른 것은 없던 일이 된다.
+     Shift·Ctrl 일 때만 먼저 것을 바탕으로 삼는다. */
+  bandBase = bandMode === 'new' ? new Set() : new Set(selected);
+  bandScroller = scrollerOf(g);
+  const r = g.getBoundingClientRect();
+  bandAx = e.clientX - r.left; bandAy = e.clientY - r.top;
+  bandCx = e.clientX; bandCy = e.clientY;
+  if (!bandEl) { bandEl = document.createElement('div'); bandEl.id = 'selBand'; }
+  g.appendChild(bandEl);                        // 격자를 다시 그리면 지워지므로 그때마다 붙인다
+  g.classList.add('banding');
+  bandTimer = setInterval(bandEdgeScroll, 60);
+}
+
+function bandMove(e) {
+  if (!bandOn) return;
+  bandCx = e.clientX; bandCy = e.clientY;
+  if (!bandMoved) {
+    const r = $('grid').getBoundingClientRect();
+    if (Math.abs(bandCx - (bandAx + r.left)) < BAND_MIN &&
+        Math.abs(bandCy - (bandAy + r.top)) < BAND_MIN) return;
+    bandMoved = true;
+    /* 새로 고르는 것이면 여기서 먼저 것을 비운다 — 화면 밖(다른 분류)에
+       골라 둔 것까지 함께 비워야 「N장 골랐습니다」가 거짓말이 안 된다. */
+    if (bandMode === 'new') selected.clear();
+  }
+  e.preventDefault();                           // 글자가 파랗게 잡히지 않게
+  bandPaint();
+}
+
+/* 띠를 그리고, 닿은 칸을 켜고 끈다 */
+function bandPaint() {
+  if (!bandOn || !bandMoved) return;
+  const g = $('grid');
+  const r = g.getBoundingClientRect();
+  const x = bandCx - r.left, y = bandCy - r.top;
+  const L = Math.min(bandAx, x), T = Math.min(bandAy, y);
+  const W = Math.abs(x - bandAx), H = Math.abs(y - bandAy);
+  bandEl.style.display = 'block';
+  bandEl.style.left = L + 'px'; bandEl.style.top = T + 'px';
+  bandEl.style.width = W + 'px'; bandEl.style.height = H + 'px';
+
+  /* 화면 좌표로 견준다 — 칸의 자리도 화면 좌표로 나온다 */
+  const box = { left: r.left + L, top: r.top + T, right: r.left + L + W, bottom: r.top + T + H };
+  [].forEach.call(g.querySelectorAll('.cell'), function (c) {
+    const id = c.getAttribute('data-id');
+    if (!id) return;
+    const b = c.getBoundingClientRect();
+    const hit = !(b.right < box.left || b.left > box.right || b.bottom < box.top || b.top > box.bottom);
+    /* 띠에서 벗어난 칸은 **쓸기 전 상태**로 되돌린다 — 되돌아 나오면 취소돼야 한다 */
+    const on = hit ? (bandMode !== 'off') : bandBase.has(id);
+    if (on) selected.add(id); else selected.delete(id);
+    c.classList.toggle('on', on);
+  });
+  renderGridBar();
+}
+
+/* 가장자리에 닿으면 화면이 따라 내려간다 — 99장도 한 번에 쓸 수 있어야 한다 */
+function bandEdgeScroll() {
+  if (!bandOn || !bandMoved) return;
+  const s = bandScroller;
+  const top = s ? s.getBoundingClientRect().top : 0;
+  const bottom = s ? s.getBoundingClientRect().bottom : window.innerHeight;
+  let dy = 0;
+  if (bandCy > bottom - BAND_EDGE) dy = BAND_STEP;
+  else if (bandCy < top + BAND_EDGE) dy = -BAND_STEP;
+  if (!dy) return;
+  if (s) s.scrollTop += dy; else window.scrollBy(0, dy);
+  /* 시작점(bandAx·bandAy)은 **격자 안 좌표**라 화면이 움직여도 그대로다 —
+     다시 그리기만 하면 띠가 스스로 늘어난다. */
+  bandPaint();
+}
+
+function bandEnd() {
+  if (!bandOn) return;
+  bandOn = false;
+  clearInterval(bandTimer); bandTimer = null;
+  if (bandEl) bandEl.style.display = 'none';
+  $('grid').classList.remove('banding');
+  if (bandMoved) renderGrid();     // 날짜 줄 표시까지 맞춘다
+  bandMoved = false; bandBase = null;
+}
+
+$('grid').addEventListener('mousedown', bandStart);
+window.addEventListener('mousemove', bandMove);
+window.addEventListener('mouseup', bandEnd);
+/* 창 밖으로 나갔다가 단추를 뗀 경우 — 띠가 남아 붙어 다니면 안 된다 */
+window.addEventListener('blur', bandEnd);
 
 function renderGridBar() {
   const shown = shownItems().length;

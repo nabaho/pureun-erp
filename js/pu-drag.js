@@ -21,7 +21,12 @@
   var TYPE = 'application/x-pureun-drag';
   var HEAD = 'pureun-drag:v1:';
 
-  /* 끄는 쪽에서 부른다. ref = {app, kind, year, owner, id, name, ...} */
+  /* 끄는 쪽에서 부른다. ref = {app, kind, year, owner, id, name, ...}
+     여러 장을 함께 보낼 때는 ref.items 에 같은 꼴의 표를 죽 담는다.
+
+     ⚠ **맨 윗칸(id·year·owner…)은 그대로 둔다.** 옛 방식으로 한 장만 읽는
+        앱이 아직 있고, 그 앱에서도 최소한 첫 장은 받아져야 한다. 여러 장을
+        받을 줄 아는 앱만 items 를 본다(readAll). 규약을 늘리되 깨지 않는다. */
   function set(dt, ref) {
     if (!dt || !ref) return false;
     var raw = HEAD + JSON.stringify(ref);
@@ -30,6 +35,17 @@
     /* 복사다 — 원본을 옮기는 것이 아니다. */
     dt.effectAllowed = 'copy';
     return true;
+  }
+
+  /* 여러 장을 한꺼번에 보낸다. list = [{app,kind,year,owner,id,name,...}, ...]
+     첫 장을 맨 윗칸에 두어, 한 장만 읽는 앱도 빈손으로 돌아가지 않게 한다. */
+  function setMany(dt, list) {
+    if (!dt || !list || !list.length) return false;
+    var head = {};
+    Object.keys(list[0]).forEach(function (k) { head[k] = list[0][k]; });
+    head.items = list;
+    head.count = list.length;
+    return set(dt, head);
   }
 
   /* 놓는 쪽에서 부른다. 우리 것이면 표를, 아니면 null. */
@@ -45,6 +61,21 @@
     /* 번호가 없으면 가져올 수 없다 — 빈 것을 받아 빈 칸을 만들지 않는다. */
     if (!ref.id) return null;
     return ref;
+  }
+
+  /* 놓는 쪽에서 부른다 — **놓인 것 전부**를 배열로 준다.
+     한 장짜리로 온 것도 한 칸짜리 배열로 준다. 받는 앱은 이것만 쓰면
+     한 장이든 여러 장이든 같은 길로 처리된다.
+     ⚠ 번호 없는 것은 걸러 낸다 — 빈 표를 받아 빈 칸을 만들지 않는다. */
+  function readAll(dt) {
+    var ref = read(dt);
+    if (!ref) return [];
+    if (!Array.isArray(ref.items) || !ref.items.length) return [ref];
+    var out = [];
+    ref.items.forEach(function (x) {
+      if (x && x.id) out.push(x);
+    });
+    return out.length ? out : [ref];
   }
 
   /* 끌고 오는 중에 '받을 자리'로 보여 줄지 가린다.
@@ -68,13 +99,17 @@
   function label(ref) {
     if (!ref) return '';
     var what = ref.kind === 'card' ? '명함' : (ref.docKind === 'doc' ? '서류' : '사진');
+    var n = (Array.isArray(ref.items) && ref.items.length) || 0;
+    if (n > 1) return what + ' ' + n + '장';
     return ref.name ? (what + ' · ' + ref.name) : what;
   }
 
   global.PuDrag = {
     TYPE: TYPE,
     set: set,
+    setMany: setMany,
     read: read,
+    readAll: readAll,
     maybeOurs: maybeOurs,
     label: label
   };
