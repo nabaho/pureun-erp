@@ -431,6 +431,9 @@ table.sbox td.none{text-align:center;color:#8b98b3;padding:34px 10px}
 .sidetab button.on{background:#2a3a5e;color:#fff;border-color:#4a5a83}
 .sidetab button span{font-size:11px;background:#33457a;color:#cfdaf0;border-radius:99px;padding:1px 7px;font-weight:700}
 .sidetab button.on span{background:#4a5a83;color:#fff}
+/* 셋으로 늘어나 한 줄이 좁아졌다 — 글자를 조금 줄이고 여백을 당긴다 */
+.sidetab3 button{font-size:12px;padding:9px 2px;gap:3px}
+.sidetab3 button span{padding:1px 5px;font-size:10.5px}
 #pcRoot.sidehidden #pcSide{width:0;padding:0;overflow:hidden}
 #sideToggle{position:fixed;top:14px;left:0;z-index:50;background:#1e2a47;color:#fff;border:none;border-radius:0 8px 8px 0;
   width:22px;height:42px;cursor:pointer;font-size:13px;display:none;align-items:center;justify-content:center;opacity:.85}
@@ -1060,7 +1063,7 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', s
      sendLog 는 명함을 열 때만 그 명함 것을 읽어 담는다. */
   matQ:'', matMailCat:'', matPrevId:'', sendLog:{},
   /* 메일 화면 — mailSent 가 true 면 보낸 메일함, 아니면 쓰기 */
-  mailSent:false, mailDrawer:true, sentBox:{}, sentQ:'', sentMine:false,
+  mailSent:false, mailDrawer:true, sentBox:{}, sentQ:'', sentMine:false, sentCat:'', sentBy:'',
   view:'list', vtab:'' };
 
 /* ── 데이터 계층 ── */
@@ -2510,7 +2513,9 @@ function openMailPage(pre){
 }
 function openSentBox(){ state.view='mail'; state.mailSent=true; render();
   try{ $('pcMain').scrollTop=0; }catch(_){}
-  loadSentBox(()=>{ if(state.view==='mail' && state.mailSent) renderMailPage(); }); }
+  /* 목록이 오면 왼쪽 폴더(갈래별·사람별 개수)도 함께 다시 그린다 — 한쪽만 그리면
+     본문에는 20통인데 왼쪽은 0으로 남는다 */
+  loadSentBox(()=>{ if(state.view==='mail' && state.mailSent){ renderPCSide(); renderMailPage(); } }); }
 function closeMailPage(){ state.view='list'; render(); }
 function renderMailPage(){
   const el=$('pcMail'); if(!el) return;
@@ -2633,6 +2638,13 @@ function sentBoxHtml(){
     .filter(v=>v.at)
     .sort((a,b)=>(b.at||0)-(a.at||0));
   if(mine) rows = rows.filter(v=>String(v.by||'').toLowerCase()===String(myEmail||'').toLowerCase());
+  /* 왼쪽 메뉴에서 고른 갈래·보낸 사람 */
+  if(state.sentBy) rows = rows.filter(v=>String(v.by||'')===state.sentBy);
+  if(state.sentCat){
+    const catOf = v => { const ids=(v.ids||[]).filter(id=>_matMeta[id]);
+      return ids.length ? matCat(_matMeta[ids[0]]) : ''; };
+    rows = rows.filter(v=> state.sentCat==='__none' ? !catOf(v) : catOf(v)===state.sentCat);
+  }
   if(q) rows = rows.filter(v=>[v.to,v.subject,(v.names||[]).join(' '),v.by,v.toName]
     .some(x=>String(x||'').toLowerCase().replace(/\s/g,'').includes(q)));
   const body = rows.length ? rows.map(v=>`
@@ -2651,7 +2663,10 @@ function sentBoxHtml(){
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
       <button class="setback" onclick="closeMailPage()">← 목록으로</button>
       <h2 style="margin:0;font-size:17px;color:#16223c">📤 보낸 메일</h2>
-      <span style="font-size:12px;color:#8b98b3">${rows.length}통</span>
+      <span style="font-size:12px;color:#8b98b3">${rows.length}통${
+        state.sentCat?` · 갈래 ${esc(state.sentCat==='__none'?'자료 없이':state.sentCat)}`:''}${
+        state.sentBy?` · ${esc(String(state.sentBy).split('@')[0])} 님이 보낸 것`:''}</span>
+      ${(state.sentCat||state.sentBy)?`<button class="mattab" onclick="state.sentCat='';state.sentBy='';openSentBox()">전체 보기</button>`:''}
       <button class="mattab" style="margin-left:auto" onclick="openMailPage()">✏️ 새 메일</button>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
@@ -5561,11 +5576,16 @@ function renderPCSide(){
   let h = `<div class="pclogo" style="display:flex;align-items:flex-start;justify-content:space-between">
     <span>📇 푸른명함첩<span>푸른노무법인 · 명함 관리</span></span>
     <button onclick="toggleSidebar()" title="메뉴 접기" style="background:none;border:none;color:#8fa0c4;cursor:pointer;font-size:15px;padding:2px 4px">◀</button></div>`;
-  /* 명함 / 사업자등록증 탭 — 항상 상단 고정 (폴더에 안 밀림) */
-  h += `<div class="sidetab">
-    <button class="${state.tab==='card'?'on':''}" onclick="switchTab('card')" title="명함">📇 명함 <span>${all.filter(i=>i.kind==='card').length}</span></button>
-    <button class="${state.tab==='biz'?'on':''}" onclick="switchTab('biz')" title="사업자등록증">📄 사업자 <span>${all.filter(i=>i.kind==='biz').length}</span></button>
+  /* 명함 / 사업자 / 메일 — 나란한 세 갈래. 항상 상단 고정 (폴더에 안 밀림).
+     메일은 명함과 다른 것을 다루므로, 고르면 아래 폴더 자리도 통째로 바뀐다. */
+  const onMail = (state.view==='mail');
+  h += `<div class="sidetab sidetab3">
+    <button class="${!onMail&&state.tab==='card'?'on':''}" onclick="switchTab('card')" title="명함">📇 명함 <span>${all.filter(i=>i.kind==='card').length}</span></button>
+    <button class="${!onMail&&state.tab==='biz'?'on':''}" onclick="switchTab('biz')" title="사업자등록증">📄 사업자 <span>${all.filter(i=>i.kind==='biz').length}</span></button>
+    <button class="${onMail?'on':''}" onclick="openSentBox()" title="메일 쓰기·보낸 메일·자료함">✉️ 메일</button>
   </div>`;
+  /* 메일 갈래에서는 메일 전용 폴더를 그린다 — 명함 폴더는 여기서 쓸 일이 없다 */
+  if(onMail){ h += mailSideHtml(); $('pcSide').innerHTML = h; return; }
   h += pcItem(`onclick="switchTab('${state.tab}')"`,
               state.tab==='card'?'📇 전체 명함':'📄 전체 사업자등록증',
               all.filter(i=>i.kind===state.tab).length, isAllView('all'));
@@ -5622,13 +5642,6 @@ function renderPCSide(){
   groups.forEach(g=> h += folderRow(g));
   h += `</div>`;
 
-  /* ✉️ 메일 묶음 — 자료함이 맨 아래 구석에 있어 찾기 어려웠다.
-     쓰기·보낸 것·자료를 한 묶음으로 올린다 (대표 지시 2026-08-10). */
-  h += `<div class="pcsec">✉️ 메일</div>`;
-  h += pcItem(`onclick="openMailPage()"`, '✏️ 메일 쓰기', undefined, state.view==='mail' && !state.mailSent);
-  h += pcItem(`onclick="openSentBox()"`, '📤 보낸 메일', undefined, state.view==='mail' && state.mailSent);
-  h += pcItem(`onclick="openMatPage()"`, '📎 자료함', matList().length, state.view==='mat');
-
   h += `<div class="pcsec">담당자별 (직원)</div>`;
   const owners=[...new Set(kindArr.map(it=>String(it.owner||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ko'));
   if (!owners.length)
@@ -5653,7 +5666,53 @@ function renderPCSide(){
   </div>`;
   $('pcSide').innerHTML = h;
 }
-function switchTab(t){ state.tab=t; state.group='all'; state.owner='all'; state.region='';
+/* ── 메일 갈래의 왼쪽 메뉴 ──
+   명함이 「전체 → 폴더 → 담당자별」이듯, 메일도 「전체 → 갈래별 → 보낸 사람별」로 둔다.
+   갈래는 자료함의 갈래를 그대로 쓴다 — 무엇을 보냈는지가 곧 분류다.
+   ⚠ 자료 없이 글만 보낸 메일이 어디에도 안 잡히면 사라진 것처럼 보인다 — 따로 한 줄 둔다. */
+function mailSideHtml(){
+  const rows = Object.values(state.sentBox||{}).filter(v=>v&&v.at);
+  const cats = MAT_CATS_NOW();
+  /* 이 메일이 어느 갈래인가 — 붙인 자료의 갈래. 여러 갈래가 섞이면 첫 자료를 따른다. */
+  const catOf = v => {
+    const ids = (v.ids||[]).filter(id=>_matMeta[id]);
+    if(!ids.length) return '';
+    return matCat(_matMeta[ids[0]]);
+  };
+  const nAll = rows.length;
+  let h = '';
+  h += pcItem(`onclick="openSentBox()"`, '📤 전체 보낸 메일', nAll,
+              state.mailSent && !state.sentCat && !state.sentBy);
+  h += pcItem(`onclick="openMailPage()"`, '✏️ 메일 쓰기', undefined, !state.mailSent);
+
+  h += `<div class="pcsec">보낸 자료 갈래</div>`;
+  cats.forEach(c=>{
+    const n = rows.filter(v=>catOf(v)===c).length;
+    if(!n) return;
+    h += pcItem(`onclick="sentFilterCat('${esc(c)}')"`, '📁 '+esc(c), n, state.sentCat===c);
+  });
+  const nNone = rows.filter(v=>!catOf(v)).length;
+  if(nNone) h += pcItem(`onclick="sentFilterCat('__none')"`, '✉️ 자료 없이 보낸 것', nNone, state.sentCat==='__none');
+  if(!rows.length) h += `<div class="pchintside">아직 보낸 메일이 없습니다.<br>위 <b>메일 쓰기</b>로 보내 보세요</div>`;
+
+  h += `<div class="pcsec">보낸 사람별 (직원)</div>`;
+  const bys = [...new Set(rows.map(v=>String(v.by||'').trim()).filter(Boolean))].sort();
+  if(!bys.length) h += `<div class="pchintside">보내면 여기에<br>사람별로 모입니다</div>`;
+  bys.forEach(b=>{
+    h += pcItem(`onclick="sentFilterBy('${esc(b)}')"`, '👤 '+esc(b.split('@')[0]),
+                rows.filter(v=>String(v.by||'')===b).length, state.sentBy===b);
+  });
+
+  h += `<div class="pcside-bottom">
+    <button class="pcside-settings" onclick="openMatPage()" title="보낼 자료 올리기·갈래·순서·메일 본문 틀">📎 자료함 (${matList().length})</button>
+    <button class="pcside-settings" onclick="openSettingsPage()" title="정리·데이터·연동·탭·계정 설정">⚙️ 환경설정</button>
+  </div>`;
+  return h;
+}
+function sentFilterCat(c){ state.mailSent=true; state.sentCat = (state.sentCat===c?'':c); state.sentBy=''; openSentBox(); }
+function sentFilterBy(b){ state.mailSent=true; state.sentBy = (state.sentBy===b?'':b); state.sentCat=''; openSentBox(); }
+
+function switchTab(t){ state.view='list'; state.tab=t; state.group='all'; state.owner='all'; state.region='';
   state.erpFilter=''; state.colFilter={}; state.page=0; state.sel={}; state.view='list'; render(); }
 function toggleSidebar(){ $('pcRoot').classList.toggle('sidehidden'); }
 
