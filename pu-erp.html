@@ -5576,19 +5576,105 @@ function erpNameEvidence(s){
   var iv = parseInt(s.invScore, 10) || 0;
   if(iv >= 85) return { ok:true, why:'세금계산서' };
   if(nm >= 60) return { ok:true, why:'이름' };
-  if(fp >= 90) return { ok:true, why:'입금이력' };
+  /* ★ 금액지문(입금이력)은 «업체를 좁히는» 근거가 못 된다 (2026-08-10 대표 제보).
+     「이 회사는 매달 165,000원을 낸다」는 뜻일 뿐이라, 자문료 165,000원 업체가 열둘이면
+     열둘이 다 90점을 받아 열둘이 다 후보로 뜬다. 화면에는 「업체가 여럿 — 골라야 합니다」로
+     나오는데 정작 적요의 이름(아우어베이커리)은 그 안에 없어, 고르라고 부추기는 꼴이었다.
+     이제 근거로 치지 않는다 — 「찾기」 창에서는 여전히 골라 쓸 수 있다. */
+  if(fp >= 90) return { ok:false, fp:true,
+    why:'금액만 같습니다 — 매달 같은 금액을 내는 곳이 여럿입니다' };
   return { ok:false, why:'이름 근거 없음 — 금액만 비슷합니다' };
 }
-if(typeof window !== 'undefined') window.erpNameEvidence = erpNameEvidence;
+/* ── 적요에서 «이름일 만한 조각» 을 뽑는다 ──
+   통장에는 「최건(아우어베이커리」 처럼 예금주와 상호가 함께 찍힌다.
+   통째로만 견주면 둘 다 못 찾으므로 괄호 안팎을 따로 본다. */
+function erpMemoNames(memo){
+  var s = String(memo === null || memo === undefined ? '' : memo).trim();
+  if(!s) return [];
+  var out = [], seen = {};
+  function put(x){
+    x = String(x || '').replace(/[()\[\]（）]/g, ' ').trim();
+    if(x.length < 2) return;                 // 한 글자는 아무 데나 걸린다
+    if(seen[x]) return;
+    seen[x] = 1; out.push(x);
+  }
+  var m = s.match(/[（(]\s*([^)）]+)/);
+  if(m) put(m[1]);                           // 괄호 «안» — 상호가 자주 들어간다
+  put(s.split(/[（(]/)[0]);                  // 괄호 «앞» — 예금주
+  put(s);                                    // 통째로
+  return out;
+}
+
+/* ── 적요의 이름으로 업체관리를 찾는다 ──
+   ★ 「업체는 있는데 받을 항목이 없다」와 「업체 자체가 없다」는 해야 할 일이 «다르다» —
+     앞은 사무관리에 건을 만들면 되고, 뒤는 업체부터 만들어야 한다.
+     그냥 「후보 없음」이라고만 하면 둘 중 무엇인지 알 수 없어 아무것도 못 한다. */
+function erpFindCompanyByMemo(memo, companies, pendingArr){
+  var names = erpMemoNames(memo);
+  if(!names.length) return null;
+  var hit = null, matched = '';
+  for(var i = 0; i < names.length && !hit; i++){
+    var want = erpNormName(names[i]);
+    if(!want || want.length < 2) continue;
+    for(var j = 0; j < (companies || []).length; j++){
+      var c = companies[j];
+      if(!c || !c.name) continue;
+      var cn = erpNormName(c.name);
+      if(!cn) continue;
+      // 완전히 같거나, 셋 글자 이상이 서로 안에 들어 있으면 같은 곳으로 본다
+      if(cn === want
+         || (want.length >= 3 && cn.indexOf(want) >= 0)
+         || (cn.length >= 3 && want.indexOf(cn) >= 0)){
+        hit = c; matched = names[i]; break;
+      }
+    }
+  }
+  if(!hit) return { found:false, tried:names };
+  var want2 = erpNormName(hit.name);
+  var pend = (pendingArr || []).filter(function(p){
+    return p && erpNormName(p.companyName) === want2;
+  });
+  return { found:true, company:hit, matched:matched, pending:pend };
+}
+
+/* 위 찾기는 «샅샅이» 뒤지므로 줄마다 부르면 505줄 × 900업체가 매 렌더 돈다.
+   표에서는 이름이 꼭 같은 것만 O(1) 로 보고, 샅샅이 뒤지는 것은 「찾기」 창에서 한 줄씩 한다. */
+function erpCoIndexByName(companies){
+  var m = {};
+  (companies || []).forEach(function(c){
+    if(!c || !c.name) return;
+    var k = erpNormName(c.name);
+    if(k && !m[k]) m[k] = c;
+  });
+  return m;
+}
+function erpQuickCoByMemo(idx, memo){
+  var names = erpMemoNames(memo);
+  for(var i = 0; i < names.length; i++){
+    var c = (idx || {})[erpNormName(names[i])];
+    if(c) return c;
+  }
+  return null;
+}
+
+if(typeof window !== 'undefined'){
+  window.erpNameEvidence = erpNameEvidence;
+  window.erpMemoNames = erpMemoNames;
+  window.erpFindCompanyByMemo = erpFindCompanyByMemo;
+  window.erpCoIndexByName = erpCoIndexByName;
+  window.erpQuickCoByMemo = erpQuickCoByMemo;
+}
 
 // 한 건의 거래내역에 대한 상위 후보 목록 (includeWeak=true 면 이름 근거 없는 것까지)
 function erpMatchTxnToPending(txn, pendingArr, limit, includeWeak){
   var lim = limit || 3;
   var out = [];
+  var fpHidden = 0;                          // 금액만 같아서 뺀 곳의 수
   var tAmt = parseInt(txn && txn.amount, 10) || 0;
   (pendingArr || []).forEach(function(cand){
     var r = erpMatchScore(txn, cand);
     var ev = erpNameEvidence(r);
+    if(r.score > 0 && !ev.ok && ev.fp) fpHidden++;
     if(r.score > 0 && (ev.ok || includeWeak))
       out.push({ cand:cand, score:r.score, reasons:r.reasons, level:r.level,
                  amountScore:r.amountScore, nameScore:r.nameScore,
@@ -5596,7 +5682,11 @@ function erpMatchTxnToPending(txn, pendingArr, limit, includeWeak){
                  txnAmount:tAmt });
   });
   out.sort(function(a,b){ return b.score - a.score; });
-  return out.slice(0, lim);
+  var res = out.slice(0, lim);
+  /* ★ 조용히 빼지 않는다 — 몇 곳을 숨겼는지 화면이 말할 수 있어야 한다.
+     목록 자체에 달아 두는 까닭은, 부르는 쪽이 두 번 세지 않게 하기 위함이다. */
+  res.fpHidden = fpHidden;
+  return res;
 }
 
 // ── 자동 정리(1클릭 승인) 3중 관문 ──
@@ -34724,6 +34814,9 @@ function FinanceLedger(){
   /* 나눠담기 창을 «기억대로 채워» 열었을 때의 안내 — 몇 곳을 채웠고 몇 곳을 못 찾았는지.
      못 찾은 곳을 안 알리면 모자란 채로 확정하고도 모른다. */
   var spRecipeS=useState(null); var spRecipe=spRecipeS[0]; var setSpRecipe=spRecipeS[1];
+  /* 확정한 뒤 «업체를 잘못 붙였다» 는 것을 알았을 때 고치는 창 {fi, q}.
+     되돌리기와 다르다 — 되돌리면 처음부터 다시 해야 하지만 이것은 한 번에 옮긴다. */
+  var movePopS=useState(null); var movePop=movePopS[0]; var setMovePop=movePopS[1];
   var ldCurS=useState(-1);     var ldCur=ldCurS[0];     var setLdCur=ldCurS[1];
   var ldQS=useState(null);     var ldQ=ldQS[0];         var setLdQ=ldQS[1];   // null = 찾기 칸이 닫힘
   var lastActS=useState(null); var lastAct=lastActS[0]; var setLastAct=lastActS[1];
@@ -35575,6 +35668,25 @@ function FinanceLedger(){
     if(!_recByKey[r.key]) _recByKey[r.key] = [];
     _recByKey[r.key].push(r);
   });
+  /* ── 후보가 없을 때 «왜 없는지» 를 말해 준다 (2026-08-10 대표 제보) ──
+     그냥 「후보 없음」이라고만 하면 무엇을 해야 할지 알 수 없다. 답은 셋 중 하나다:
+       ① 업체가 있고 받을 항목도 있다 → 매칭이 못 찾은 것. 「찾기」에서 고르면 된다
+       ② 업체는 있는데 받을 항목이 없다 → 사무관리에 자문료·건을 만들면 된다
+       ③ 업체 자체가 없다             → 새 업체이거나 상호가 다르다
+     이름이 꼭 같은 것만 O(1) 로 본다 — 샅샅이 뒤지는 것은 「찾기」 창에서 한 줄씩. */
+  var _coIdx = erpCoIndexByName(dbGet('companies', []) || []);
+  var _pendCntByCo = {};
+  pending.forEach(function(p){
+    if(!p || !p.companyName) return;
+    var k = erpNormName(p.companyName);
+    if(k) _pendCntByCo[k] = (_pendCntByCo[k] || 0) + 1;
+  });
+  function whyNone(row){
+    var co = erpQuickCoByMemo(_coIdx, (row && (row.memo || row.note)) || '');
+    if(!co) return { kind:'noco' };
+    var n = _pendCntByCo[erpNormName(co.name)] || 0;
+    return { kind:(n > 0 ? 'hasitem' : 'noitem'), co:co, n:n };
+  }
   function recipeFor(row){
     if(!row) return null;
     var k = erpRecipeKey(row.memo || row.note || '');
@@ -36642,6 +36754,8 @@ function FinanceLedger(){
               var cbs=comboOf(row); var cb=(cbs&&cbs.length)?cbs[0]:null;
               // 후보가 없는 줄에만 「지난번처럼」을 찾는다 — 후보가 있으면 그것이 먼저다
               var _rec=(_st.state==='none' && !isCms) ? recipeFor(row) : null;
+              // 그래도 없으면 «왜 없는지» 를 말해 준다 (업체가 없나 · 받을 항목이 없나)
+              var _why=(_st.state==='none' && !isCms && !_rec) ? whyNone(row) : null;
               var _cm=(_st.state==='none' && !isCms && !_rec) ? erpConsultMatch(row,_intakes) : null;
               var _ct=(_st.state==='none' && !isCms && !_cm) ? (ctHint[row._k]||null) : null;
               var _done=(incDone[row._k]||[]).length>0;
@@ -36744,7 +36858,12 @@ function FinanceLedger(){
                                   border:'1px solid '+(_rec.exact?'#bfdbfe':'#fde68a'),
                                   borderRadius:'10px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},
                                 '🕘 지난번처럼 '+_rec.parts.length+'곳'+(_rec.exact?'':' (금액 다름)'))
-                              : (_cm ? _cm.name : (_ct ? _ct.companyName : '—'))))),
+                              /* 적요의 이름으로 업체관리를 찾아본 결과 — «후보» 가 아니라 «알림» 이다.
+                                 회색으로 두어 고를 것과 헷갈리지 않게 한다. */
+                              : ((_why && _why.co) ? h('span',{style:{color:'#64748b',fontWeight:400},
+                                    title:'적요의 이름으로 업체관리에서 찾은 곳입니다 — 후보가 아니라 참고입니다'},
+                                    _why.co.name)
+                              : (_cm ? _cm.name : (_ct ? _ct.companyName : '—')))))),
                   // ══ 항목 · 현황 ══
                   h('td',{style:Object.assign({},_cell,{fontSize:'11px',color:'#475569'})},
                     _cmsHit
@@ -36768,6 +36887,21 @@ function FinanceLedger(){
                           _rec.exact
                             ? ('지난번과 같은 금액 — '+_rec.parts.length+'곳으로 나눴습니다')
                             : ('지난번은 '+(_rec.amount||0).toLocaleString()+'원 — 금액을 확인하세요'))
+                      /* ★ 「후보 없음」 이라고만 하면 무엇을 해야 할지 알 수 없다(대표 제보).
+                         업체가 없는지 · 받을 항목이 없는지에 따라 할 일이 다르다. */
+                      : (_why && _why.kind==='noitem') ? h('span',{style:{color:'#d97706'},
+                          title:'업체관리에는 '+_why.co.name+' 가 있습니다.\n'
+                               +'그런데 받을 항목(미입금)이 없어 붙일 곳이 없습니다.\n'
+                               +'사무관리에 자문료·건을 만들면 다음부터 저절로 찾아옵니다.'},
+                          '등록된 업체지만 받을 항목이 없습니다')
+                      : (_why && _why.kind==='hasitem') ? h('span',{style:{color:'#2563eb'},
+                          title:'적요의 이름으로 '+_why.co.name+' 를 찾았고 받을 항목도 '+_why.n+'건 있습니다.\n'
+                               +'금액이 안 맞아 후보로 못 올렸습니다 — 「찾기」에서 고르세요.'},
+                          '받을 항목 '+_why.n+'건 있음 — 금액이 안 맞습니다')
+                      : (_why && _why.kind==='noco') ? h('span',{style:{color:'#94a3b8'},
+                          title:'적요의 이름으로 업체관리를 찾지 못했습니다.\n'
+                               +'새 업체이거나 상호가 다를 수 있습니다 — 「찾기」로 직접 고르거나 「등록」하세요.'},
+                          '등록된 업체가 아닙니다')
                       : h('span',{style:{color:'#94a3b8'}},
                           _cm ? ('상담료? · 상담접수 '+String(_cm.date).slice(5))
                               : (isCms
@@ -37616,6 +37750,36 @@ function FinanceLedger(){
               +'원입니다 — 금액으로는 못 고릅니다'),
             !_pq && !_amb && _sg.length===0 && h('span',{style:{fontSize:'11px',color:'#94a3b8',whiteSpace:'nowrap'}},
               '맞는 후보가 없습니다 — 이름으로 찾으세요')),
+          /* ── 왜 후보가 없나 ── (2026-08-10 대표 제보: "업체가 전혀 일치하지 않고 없는 것도 있다")
+             여기서는 «샅샅이» 뒤진다 — 한 줄뿐이라 느려도 된다. 표에서는 이름이 꼭 같은 것만 본다.
+             ★ 금액만 같아서 뺀 곳의 수도 함께 알린다 — 조용히 빼면 「왜 안 뜨지」 하게 된다. */
+          !_pq && (function(){
+            var _f = erpFindCompanyByMemo(_memo, dbGet('companies',[])||[], pending);
+            var _hid = parseInt(_sg.fpHidden, 10) || 0;
+            if(!_f && !_hid) return null;
+            var _co = _f && _f.found ? _f.company : null;
+            var _pn = (_f && _f.found) ? _f.pending.length : 0;
+            var _bg = _co ? (_pn>0 ? '#eff6ff' : '#fffbeb') : '#fef2f2';
+            var _bd2= _co ? (_pn>0 ? '#bfdbfe' : '#fde68a') : '#fecaca';
+            var _fg = _co ? (_pn>0 ? '#1e40af' : '#854d0e') : '#991b1b';
+            return h('div',{style:{padding:'8px 12px',background:_bg,borderBottom:'1px solid '+_bd2,
+                fontSize:'11.5px',color:_fg,lineHeight:1.6}},
+              _co
+                ? h('div',null,
+                    h('b',null,'적요의 이름으로 찾은 업체 — '+_co.name),
+                    _pn>0
+                      ? h('span',null,' · 받을 항목이 '+_pn+'건 있습니다. 아래 목록에서 고르세요')
+                      : h('span',null,' · 그런데 «받을 항목(미입금)이 없습니다». '
+                          +'사무관리에 자문료·건을 만들면 다음부터 저절로 찾아옵니다'))
+                : h('div',null,
+                    h('b',null,'적요의 이름으로 업체를 찾지 못했습니다'),
+                    h('span',null,' · 새 업체이거나 상호가 다릅니다 — 아래에서 직접 고르거나, 닫고 「등록」하세요'),
+                    (_f && _f.tried && _f.tried.length)
+                      ? h('div',{style:{fontSize:'10.5px',opacity:0.85}},'찾아본 이름: '+_f.tried.join(' · ')) : null),
+              _hid>0 && h('div',{style:{fontSize:'10.5px',opacity:0.85}},
+                '· 금액만 같은 '+_hid+'곳은 후보에서 뺐습니다 — 「매달 같은 금액을 내는 곳」일 뿐 이름 근거가 없습니다. '
+                +'그중 하나가 맞으면 위에서 이름으로 찾아 고르세요'));
+          })(),
           _rows.length===0
             ? h('div',{style:{padding:'28px',textAlign:'center',color:'#94a3b8',fontSize:'12.5px'}},
                 _pq ? '찾는 건이 없습니다' : '맞는 후보가 없습니다 — 위에서 이름으로 찾으세요')
@@ -38043,6 +38207,10 @@ function FinanceLedger(){
       var allInc = (dbGet('finance_income',[])||[]).slice();
       allInc.sort(function(a,b){return (b.confirmedAt||b.date||'').localeCompare(a.confirmedAt||a.date||'');});
       var qS=useState(''); var q=qS[0]; var setQ=qS[1];
+      /* 자동으로 붙은 건만 모아 본다 — 손으로 고른 건은 이미 사람이 본 것이라
+         잘못될 여지가 훨씬 적다. 훑어야 할 건수를 확 줄여 준다(대표 요청). */
+      var autoOnlyS=useState(false); var autoOnly=autoOnlyS[0]; var setAutoOnly=autoOnlyS[1];
+      if(autoOnly) allInc = allInc.filter(function(fi){ return fi && fi.autoConfirmed; });
       var ql=q.toLowerCase().trim();
       var filtered = ql ? allInc.filter(function(fi){
         return (fi.companyName||'').toLowerCase().indexOf(ql)>=0
@@ -38077,6 +38245,13 @@ function FinanceLedger(){
             h('input',{type:'text',value:q,placeholder:'업체명·담당자·금액 검색',
               onInput:function(e){setQ(e.target.value);_setPg(0);},
               style:{flex:1,padding:'5px 10px',border:'1px solid #cbd5e1',borderRadius:'5px',fontSize:'12px'}}),
+            h('button',{onClick:function(){ setAutoOnly(!autoOnly); _setPg(0); },
+              title:'사람이 고르지 않고 자동으로 붙은 건만 봅니다 — 잘못 붙었을 여지가 여기 있습니다',
+              style:{padding:'5px 11px',borderRadius:'5px',fontSize:'11px',fontWeight:700,cursor:'pointer',
+                whiteSpace:'nowrap',
+                border:'1px solid '+(autoOnly?'#d97706':'#fde68a'),
+                background:autoOnly?'#d97706':'#fffbeb', color:autoOnly?'#fff':'#854d0e'}},
+              autoOnly?'↩ 전체 보기':'⚡ 자동 확정만 보기'),
             h('span',{style:{fontSize:'11px',color:'#64748b',whiteSpace:'nowrap'}},'유효 ',_activeSum.toLocaleString(),'원')
           ),
           h('div',{style:{flex:1,overflowY:'auto',padding:0}},
@@ -38102,7 +38277,15 @@ function FinanceLedger(){
                   return h('tr',{key:fi.id,style:rowStyle},
                     h('td',{style:Object.assign({},tdBase,{whiteSpace:'nowrap'})},fi.date||'-'),
                     h('td',{style:Object.assign({},tdBase,{textAlign:'right',fontFamily:'monospace',fontWeight:600})},(fi.amount||0).toLocaleString()),
-                    h('td',{style:Object.assign({},tdBase,{fontWeight:600,maxWidth:'140px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'})},fi.companyName||'-'),
+                    h('td',{style:Object.assign({},tdBase,{fontWeight:600,maxWidth:'140px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'})},
+                      fi.companyName||'-',
+                      /* 자동으로 붙은 건임을 표시한다 — 잘못 붙었을 여지가 여기 있다 */
+                      fi.autoConfirmed && h('span',{title:'사람이 고르지 않고 자동으로 붙은 건입니다',
+                        style:{marginLeft:'4px',background:'#fffbeb',color:'#854d0e',border:'1px solid #fde68a',
+                          borderRadius:'8px',padding:'0 5px',fontSize:'9px',fontWeight:700}},'⚡자동'),
+                      fi.movedFrom && h('span',{title:'업체를 바꾼 건입니다 — 앞 업체: '+(fi.movedFromName||'-'),
+                        style:{marginLeft:'4px',background:'#eff6ff',color:'#1e40af',border:'1px solid #bfdbfe',
+                          borderRadius:'8px',padding:'0 5px',fontSize:'9px',fontWeight:700}},'✏고침')),
                     h('td',{style:Object.assign({},tdBase)},fi.kind||'-'),
                     h('td',{style:Object.assign({},tdBase)},_sidName(fi.confirmedBy)||'-'),
                     h('td',{style:Object.assign({},tdBase,{whiteSpace:'nowrap',fontSize:'10px'})},
@@ -38111,8 +38294,15 @@ function FinanceLedger(){
                       undone
                         ? h('span',{style:{fontSize:'9px',color:'#94a3b8',whiteSpace:'nowrap'}},'되돌림 '+fi.undoneDate.slice(0,10))
                         : h('div',{style:{display:'flex',gap:'4px',justifyContent:'center'}},
+                            /* ★ 업체를 잘못 붙였을 때의 길 (2026-08-10 대표 요청).
+                               되돌리기와 다르다 — 되돌리면 그 줄로 돌아가 처음부터 다시 해야 하지만,
+                               이것은 앞 업체를 물리고 새 업체로 «한 번에» 다시 붙인다. */
+                            h('button',{onClick:function(){ setMovePop({fi:fi, q:'' }); },
+                              title:'이 돈을 다른 업체·항목에 붙입니다\n앞 업체의 입금표시·성과급은 되돌립니다',
+                              style:{padding:'2px 8px',background:'#eff6ff',color:'#1e40af',border:'1px solid #bfdbfe',borderRadius:'4px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'업체 바꾸기'),
                             fi.kind!=='자문료' && h('button',{onClick:function(){setEditPop(fi);},
-                              style:{padding:'2px 8px',background:'#fff',color:'#1e40af',border:'1px solid #bfdbfe',borderRadius:'4px',fontSize:'10px',fontWeight:600,cursor:'pointer',whiteSpace:'nowrap'}},'수정'),
+                              title:'담당자와 성과급 배분만 고칩니다 (업체는 그대로)',
+                              style:{padding:'2px 8px',background:'#fff',color:'#1e40af',border:'1px solid #bfdbfe',borderRadius:'4px',fontSize:'10px',fontWeight:600,cursor:'pointer',whiteSpace:'nowrap'}},'담당·성과'),
                             h('button',{onClick:async function(){
                               if(!(await popConfirm(fi.companyName+' '+fi.kind+' '+(fi.amount||0).toLocaleString()+'원\n\n이 확정을 되돌리시겠습니까?\n입금 기록이 취소되고 미입금 상태로 돌아갑니다.'))) return;
                               undoConfirm(fi);
@@ -38135,6 +38325,119 @@ function FinanceLedger(){
           )
         )
       );
+    })(),
+
+    /* ── 4-2 업체 바꾸기 ── (2026-08-10 대표 요청: "자동으로 확인된 것이 잘못된 경우 수정")
+       ★ 되돌리기와 다르다. 되돌리면 그 통장 줄로 되돌아가 처음부터 다시 골라야 하는데,
+         이것은 «앞 업체를 물리고 새 업체로 한 번에» 다시 붙인다.
+       ★ 성과급은 새 업체 담당자로 다시 계산한다(대표 선택) — 잘못 붙은 건이니 성과도 잘못 갔다. */
+    movePop && (function(){
+      var fi = movePop.fi;
+      if(!fi) return null;
+      var mq = String(movePop.q || '').trim().toLowerCase();
+      function closeMove(){ setMovePop(null); }
+      // 금액이 가까운 순으로 — 옮길 곳은 대개 같은 금액이다
+      var _amt = parseInt(fi.amount, 10) || 0;
+      var _cands = pending.slice().filter(function(p){
+        if(!p) return false;
+        if(p.item && p.item.id === fi.sourceId) return false;    // 지금 붙어 있는 그 건은 뺀다
+        if(!mq) return true;
+        var hay = ((p.companyName||'')+' '+(p.label||'')+' '
+                  +((p.item&&(p.item.caseNo||p.item.no))||'')+' '+_pendStaff(p)).toLowerCase();
+        return hay.indexOf(mq) >= 0;
+      });
+      _cands.sort(function(a,b){
+        return Math.abs((a.expect||a.amount)-_amt) - Math.abs((b.expect||b.amount)-_amt);
+      });
+      _cands = _cands.slice(0, 200);
+      async function doMove(p){
+        var _newStaff = _pendStaff(p) || '지정 안 됨';
+        var _msg = '이 돈을 다른 업체로 옮깁니다.\n\n'
+                 + '· 지금: ' + (fi.companyName||'-') + ' ' + (fi.kind||'') + '\n'
+                 + '· 옮길 곳: ' + p.companyName + ' ' + (p.label||'') + ' (담당 ' + _newStaff + ')\n\n'
+                 + '앞 업체의 입금표시·성과급은 되돌리고, 새 업체 담당자로 성과급을 다시 나눕니다.\n'
+                 + '금액 ' + _amt.toLocaleString() + '원 · 날짜 ' + (fi.date||'-') + ' 는 그대로입니다.';
+        if(!(await popConfirm(_msg))) return;
+        if(!erpUndoIncome(fi)){ showToast('❌ 앞 확정을 되돌리지 못했습니다'); return; }
+        /* 통장 줄 꼴로 되돌려 saveIncome 에 넘긴다.
+           적요의 「[하나은행] 」 머리말은 떼어 낸다 — 안 떼면 옮길 때마다 겹쳐 붙는다. */
+        var _memo2 = String(fi.memo || '').replace(/^\[하나(은행|카드)\]\s*/, '');
+        var _fid2 = '';
+        try {
+          _fid2 = saveIncome({ date:fi.date, amount:_amt, memo:_memo2, _k:'' }, p, { withPerf:true });
+        } catch(e){
+          if(window._erpErrLog) window._erpErrLog(e);
+          showToast('❌ 옮기지 못했습니다: ' + (e && e.message));
+          return;
+        }
+        // 어디서 옮겨 왔는지 남긴다 — 이력에서 「✏고침」 으로 보인다
+        if(_fid2){
+          try { dbPatch('finance_income', _fid2,
+            { movedFrom:fi.id, movedFromName:(fi.companyName||''), movedAt:new Date().toISOString(),
+              movedBy:(CURRENT_USER?CURRENT_USER.sid:'') }); }
+          catch(_me){ if(window._erpErrLog) window._erpErrLog(_me); }
+        }
+        closeMove();
+        showToast('✏ 옮겼습니다 — ' + (fi.companyName||'-') + ' → ' + p.companyName);
+      }
+      return h('div',{onClick:closeMove,
+        style:{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.45)',
+          zIndex:9995,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'}},
+        h('div',{onClick:function(e){e.stopPropagation();},
+          style:{background:'#fff',borderRadius:'12px',width:'min(860px,96vw)',maxHeight:'86vh',
+            display:'flex',flexDirection:'column',overflow:'hidden'}},
+          h('div',{style:{background:'#1e40af',color:'#fff',padding:'11px 14px',display:'flex',
+            alignItems:'center',gap:'8px',fontSize:'13px',fontWeight:700}},
+            h('span',null,'✏ 업체 바꾸기'),
+            h('span',{style:{fontWeight:400,opacity:0.9,fontSize:'12px'}},
+              _amt.toLocaleString()+'원 · '+(fi.date||'-')),
+            h('span',{style:{flex:1}}),
+            h('button',{onClick:closeMove,style:{background:'none',border:'none',color:'#fff',
+              fontSize:'18px',cursor:'pointer',padding:'0 4px',lineHeight:1}},'×')),
+          // 지금 어디에 붙어 있는지 — 이것이 안 보이면 무엇을 고치는지 알 수 없다
+          h('div',{style:{padding:'8px 14px',background:'#fef2f2',borderBottom:'1px solid #fecaca',
+            fontSize:'11.5px',color:'#991b1b'}},
+            h('b',null,'지금: '+(fi.companyName||'-')+' '+(fi.kind||'')),
+            fi.autoConfirmed && h('span',{style:{marginLeft:'6px',fontWeight:400}},'· 자동으로 붙은 건입니다'),
+            h('div',{style:{fontSize:'10.5px',opacity:0.9,marginTop:'2px'}},
+              '적요 「'+String(fi.memo||'-').replace(/^\[하나(은행|카드)\]\s*/,'')+'」')),
+          h('div',{style:{padding:'8px 12px',borderBottom:'1px solid #e2e8f0'}},
+            h('input',{type:'text',value:movePop.q||'',autoFocus:true,
+              placeholder:'🔍 옮길 곳을 업체명·관리번호·담당으로 찾기',
+              onInput:function(e){ setMovePop({ fi:fi, q:e.target.value }); },
+              style:{width:'100%',padding:'6px 10px',border:'1px solid #cbd5e1',
+                borderRadius:'6px',fontSize:'12px'}})),
+          h('div',{style:{flex:1,overflowY:'auto',padding:'8px 12px'}},
+            _cands.length===0
+              ? h('div',{style:{padding:'26px',textAlign:'center',color:'#94a3b8',fontSize:'12px'}},'옮길 곳이 없습니다')
+              : _cands.map(function(p){
+                  var ea = p.expect||p.amount;
+                  var d  = ea - _amt;
+                  var bd = storeBadge(p.store);
+                  var _no2 = (p.item&&(p.item.caseNo||p.item.no))||'';
+                  return h('div',{key:p.id,onClick:function(){ doMove(p); },
+                    style:{display:'flex',alignItems:'center',gap:'8px',cursor:'pointer',
+                      border:'1px solid #e2e8f0',borderRadius:'7px',padding:'7px 10px',
+                      marginBottom:'4px',fontSize:'12px'}},
+                    h('span',{style:{background:bd.bg,color:bd.fg,border:'1px solid '+bd.bd,borderRadius:'8px',
+                      padding:'1px 6px',fontSize:'10px',fontWeight:700,flexShrink:0,width:'42px',textAlign:'center'}},bd.label),
+                    h('b',{style:{flex:'1 1 120px',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',
+                      whiteSpace:'nowrap',color:'#1e293b'}},p.companyName||'-'),
+                    h('span',{style:{width:'86px',flexShrink:0,color:'#64748b',overflow:'hidden',
+                      textOverflow:'ellipsis',whiteSpace:'nowrap'}},p.label||''),
+                    h('span',{style:{width:'96px',flexShrink:0,color:'#94a3b8',fontSize:'10.5px',
+                      overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},_no2),
+                    h('span',{style:{width:'52px',flexShrink:0,color:'#475569',fontSize:'10.5px'}},_pendStaff(p)||'-'),
+                    h('span',{style:{width:'82px',flexShrink:0,textAlign:'right',fontWeight:700,
+                      fontVariantNumeric:'tabular-nums',color:'#16a34a'}},(ea||0).toLocaleString()),
+                    // 금액 차이를 함께 보여준다 — 딱 맞는 곳이 대개 정답이다
+                    h('span',{style:{width:'74px',flexShrink:0,textAlign:'right',fontSize:'10.5px',
+                      fontVariantNumeric:'tabular-nums',color:d===0?'#166534':'#94a3b8'}},
+                      d===0?'금액 일치':(d>0?'+':'')+d.toLocaleString()));
+                })),
+          h('div',{style:{padding:'8px 14px',background:'#f8fafc',borderTop:'1px solid #e2e8f0',
+            fontSize:'11px',color:'#64748b'}},
+            '고를 곳을 누르면 확인 창이 뜹니다 — 앞 업체의 입금표시·성과급을 되돌리고 새 업체로 다시 붙입니다')));
     })(),
 
     // ── 4-3 비교 수정 팝업 (담당자·성과 변경) ──

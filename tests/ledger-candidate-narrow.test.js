@@ -104,9 +104,12 @@ console.log('\n[검색·필터가 제대로 거르나]');
    위의 «점수 60 으로 가른다» 는 셈 자체는 게이트 안에 그대로 살아 있다. */
 console.log('\n[코드에 제대로 붙었는지 — 이름 근거 게이트]');
 ok('이름 점수 60 이 여전히 기준이다', /if\(nm >= 60\) return \{ ok:true, why:'이름' \}/.test(src));
-ok('세금계산서·입금이력도 근거로 인정한다',
-   /if\(iv >= 85\) return \{ ok:true, why:'세금계산서' \}/.test(src)
-   && /if\(fp >= 90\) return \{ ok:true, why:'입금이력' \}/.test(src));
+ok('세금계산서는 근거로 인정한다', /if\(iv >= 85\) return \{ ok:true, why:'세금계산서' \}/.test(src));
+/* (2026-08-10) 금액지문은 근거에서 뺐다 — 같은 금액을 매달 내는 곳이 여럿이면
+   그 여럿이 다 후보로 떠서 아무것도 못 좁혀 줬다(대표 제보). */
+ok('금액지문만으로는 근거로 치지 않는다', !/if\(fp >= 90\) return \{ ok:true, why:'입금이력' \}/.test(src));
+ok('금액지문은 「뺐다」고 표시해 둔다', /if\(fp >= 90\) return \{ ok:false, fp:true,/.test(src));
+ok('몇 곳을 뺐는지 세어 목록에 달아 준다', /res\.fpHidden = fpHidden;/.test(src));
 ok('근거 없는 후보는 목록에서 뺀다', /if\(r\.score > 0 && \(ev\.ok \|\| includeWeak\)\)/.test(src));
 ok('뺀 까닭을 말해 준다', /이름 근거 없음 — 금액만 비슷합니다/.test(src));
 ok('직접 찾기는 뺀 것도 본다 (우회 인자)', /erpMatchTxnToPending\(txn, pendingArr, limit, includeWeak\)/.test(src));
