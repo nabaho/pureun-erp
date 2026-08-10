@@ -79,6 +79,12 @@ function validateSend(o) {
   const cc = parseRecipients(p.cc).filter(function (a) { return to.indexOf(a) < 0; });
   if (cc.length > MAX_TO) return { ok: false, error: '참조는 한 번에 ' + MAX_TO + '명까지입니다.' };
 
+  /* 숨은참조 — 받는사람·참조에 이미 있으면 뺀다. 그대로 두면 같은 사람에게 두 통 간다. */
+  const bcc = parseRecipients(p.bcc).filter(function (a) {
+    return to.indexOf(a) < 0 && cc.indexOf(a) < 0;
+  });
+  if (bcc.length > MAX_TO) return { ok: false, error: '숨은참조는 한 번에 ' + MAX_TO + '명까지입니다.' };
+
   const subject = cleanSubject(p.subject);
   if (!subject) return { ok: false, error: '제목이 비어 있습니다.' };
 
@@ -95,7 +101,7 @@ function validateSend(o) {
            + (MAX_TOTAL_BYTES / 1024 / 1024) + 'MB 아래로 줄여 주세요.'
     };
   }
-  return { ok: true, to: to, cc: cc, subject: subject, body: body, attachments: files, bytes: total };
+  return { ok: true, to: to, cc: cc, bcc: bcc, subject: subject, body: body, attachments: files, bytes: total };
 }
 
 /* 보낸 기록 — 화면이 아니라 **서버가** 남긴다. 실제로 나간 것만 남아야

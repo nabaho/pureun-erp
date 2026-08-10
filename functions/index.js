@@ -613,18 +613,34 @@ exports.sendMaterialMail = functions
     if (local && ids.indexOf(local) < 0) ids.push(local);
     if (ids.indexOf(from) < 0) ids.push(from);
 
-    const mail = {
+    // 「내게쓰기」 — 숨은참조에 보내는 주소 자신을 더한다. 받는 사람에게는 안 보인다.
+    const bcc = v.bcc.slice();
+    if (body.toMe && bcc.indexOf(from) < 0 && v.to.indexOf(from) < 0) bcc.push(from);
+
+    const baseMail = {
       from: fromLine(from),
       // 답장은 보낸 직원에게 가게 한다 — 회사 대표주소로만 오면 누구 건인지 모른다
       replyTo: sender.email || undefined,
-      to: v.to.join(", "),
       cc: v.cc.length ? v.cc.join(", ") : undefined,
+      bcc: bcc.length ? bcc.join(", ") : undefined,
       subject: v.subject,
       text: v.body,
       attachments: v.attachments.map((a) => ({
         filename: a.filename, content: a.content, encoding: a.encoding,
       })),
     };
+
+    // 「한명씩 발송」 — 받는사람마다 따로 보낸다. 서로의 주소가 보이지 않는다.
+    // ⚠ 참조·숨은참조는 **첫 통에만** 붙인다. 매 통에 붙이면 참조받는 사람이
+    //   같은 메일을 사람 수만큼 받는다.
+    const oneByOne = !!body.oneByOne && v.to.length > 1;
+    const batches = oneByOne
+      ? v.to.map((t, i) => Object.assign({}, baseMail, {
+          to: t,
+          cc: i === 0 ? baseMail.cc : undefined,
+          bcc: i === 0 ? baseMail.bcc : undefined,
+        }))
+      : [Object.assign({}, baseMail, { to: v.to.join(", ") })];
 
     let lastErr = null, usedId = "";
     for (const id of ids) {
@@ -633,7 +649,7 @@ exports.sendMaterialMail = functions
           host: DAUM_HOST, port: DAUM_PORT, secure: true,
           auth: { user: id, pass: mailPass() },
         });
-        await tx.sendMail(mail);
+        for (const m of batches) await tx.sendMail(m);
         usedId = id;
         lastErr = null;
         break;
