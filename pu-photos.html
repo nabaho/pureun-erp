@@ -642,6 +642,9 @@ button{font-family:inherit;cursor:pointer}
 #grid .cell.on .ck{background:var(--blue);border-color:var(--blue);color:#fff}
 /* 확인 필요 표시 — 칸에서 바로 보인다 */
 #grid .cell .wn{position:absolute;right:4px;bottom:4px;background:#b45309;color:#fff;font-size:11px;line-height:1;padding:3px 5px;border-radius:5px;font-weight:800}
+/* 「확인 필요」만 볼 때는 이유를 한 줄로 적는다 — 칸 아래를 가로로 채운다 */
+#grid .cell .wn.why{left:4px;right:4px;bottom:4px;text-align:center;font-size:10px;
+  padding:3px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #grid .cell{aspect-ratio:1;border-radius:8px;background:#e7ebf3;overflow:hidden}
 #grid .cell img{width:100%;height:100%;object-fit:cover;display:block}
 
@@ -3585,8 +3588,13 @@ function renderGrid() {
     const t = safeSrc(it.thumb);
     const tag = it.meta.kind === 'doc' ? '<span class="tag">서류</span>' : '';
     const on = selected.has(it.id) ? ' on' : '';
-    /* 확인이 필요한 사진은 칸에서 바로 보인다 — 눌러 봐야 아는 일이 없게. */
-    const warn = needsCheck(it) ? '<span class="wn">⚠</span>' : '';
+    /* 확인이 필요한 사진은 칸에서 바로 보인다 — 눌러 봐야 아는 일이 없게.
+       ⚠ 「확인 필요」만 보는 중에는 **왜 걸렸는지**를 칸에 적는다(대표 보고 2026-08-10:
+          "확인필요 3장 클릭했는데 어떻게 하라는 건가 상황에 대한 판단이 안 선다").
+          이유가 저마다 달라서 ⚠ 표만으로는 한 장씩 열어 봐야 알 수 있었다. */
+    const warn = needsCheck(it)
+      ? (needOnly ? '<span class="wn why">' + esc(checkWhy(it)) + '</span>' : '<span class="wn">⚠</span>')
+      : '';
     /* 전체 근로자 화면에서는 누구 것인지 칸에서 바로 보여야 한다 —
        누구 사진인지 열어 봐야만 아는 것은 "훑어보기"가 안 된다. */
     const who = (gridOwner === ALL_OWNERS && it.meta.__ownerName)
@@ -3825,6 +3833,32 @@ const selected = new Set();
 function isPayslip(it) {
   const r = it && it.meta && it.meta.read;
   return !!(r && r.kind === 'payslip');
+}
+
+/* ══════ 왜 확인이 필요한가 (대표 보고 2026-08-10) ══════
+   "확인필요 3장 클릭했는데 어떻게 하라는 건가. 상황에 대한 판단이 안 선다"
+
+   걸리는 이유가 여섯 가지인데 화면에는 ⚠ 표 하나뿐이었다. 그래서 한 장씩
+   열어 봐야 무엇을 해야 하는지 알 수 있었다. **판정하는 순서를 needsCheck 와
+   똑같이 맞춘다** — 순서가 어긋나면 걸린 이유와 적힌 이유가 달라진다. */
+function checkWhy(it) {
+  const r = (it && it.meta && it.meta.read) || null;
+  if (!r) return '';
+  if (r.kind === 'payslip') return '급여서류 — 지워 주세요';
+  if (r.ack) return '';
+  if (r.error) {
+    /* 한도 초과 때 본문이 안 써진 사진이 있다(2026-08-09). 다시 판독해도 소용없다 —
+       읽을 그림 자체가 없다. 그때는 지우라고 말해야 한다. */
+    return /본문/.test(String(r.error)) ? '사진이 비었습니다 — 지워 주세요' : '판독 실패 — 다시 판독';
+  }
+  if (r.kind === 'other') return readAnyField(r) ? '종류를 못 가림 — 분류 지정' : '';
+  if (r.kind === 'meeting') return '';
+  if (!r.auto) return '읽은 값이 미덥지 않음 — 열어서 확인';
+  if (CARD_KINDS[r.kind] && !(r.filed && r.filed.id)) return '명함첩에 아직 안 감 — 보내기';
+  if (CO_KINDS[r.kind] && !(r.filedCo && r.filedCo.found && r.filedCo.filled.length)) {
+    return '업체관리에 못 넣음 — 업체 확인';
+  }
+  return '';
 }
 
 function needsCheck(it) {
