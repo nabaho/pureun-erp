@@ -3638,6 +3638,10 @@ function viewingOther() {
   return !!gridOwner && gridOwner !== PuPhotoStore.myUid();
 }
 
+/* 한 사람만 보고 있는가 — 「전체 근로자」는 뺀다.
+   올리기를 잠글지 정할 때만 쓴다. 지우기·판독은 viewingOther() 그대로다. */
+function viewingOnlyOther() { return viewingOther() && gridOwner !== ALL_OWNERS; }
+
 function blockedIfOther() {
   if (!viewingOther()) return false;
   alert('다른 사람의 사진은 보기만 할 수 있습니다.');
@@ -5382,7 +5386,9 @@ function companyChoices() {
    「화면에 보여 주기」가 아니라 「규칙이 열어 주기」다. 고른 사람은
    그 **한 장만** 읽을 수 있고, 「나와 공유된 사진」에서 그것을 본다.
    ⚠ 공유받은 사람은 고치거나 지우지 못한다 — 원본은 올린 사람 자리에 있다. */
-let ownerNames = {};   // uid → 이름 (사람 고르기 창에서 쓴다)
+let ownerNames = {};
+                              // uid → 이름 (사람 고르기 창에서 쓴다)
+let ownerDefaulted = false;   // 관리자를 「전체 근로자」로 한 번만 맞춘다
 
 function shareBox(it) {
   if (!it || viewingOther()) return '';
@@ -5692,6 +5698,20 @@ function renderOwnerPick() {
       ids.map(function (k) {
         return '<option value="' + esc(k) + '">' + esc((owners[k] && owners[k].name) || k) + '</option>';
       }).join('');
+    /* ⚠ 관리자는 **「전체 근로자」로 시작한다** (대표 지시 2026-08-10:
+       "권형하는 항상 전체 근로자로 기준을 잡아 달라").
+       총괄책임자는 전 직원 것을 보는 것이 기본이고, 자기 것만 보려면 바꾸면 된다.
+       ⚠ 한 번만 한다 — 다시 그릴 때마다 되돌리면 사람을 골라 볼 수가 없다. */
+    if (!ownerDefaulted) {
+      ownerDefaulted = true;
+      /* ⚠ 고르개 값을 **먼저** 맞춘다. pickOwner 는 고르개를 안 건드리므로,
+         뒤로 미루면 화면은 전 직원인데 칸에는 「내 사진」이라고 적혀 있게 된다. */
+      if (!gridOwner && ids.length) {
+        $('ownerSel').value = ALL_OWNERS;
+        pickOwner(ALL_OWNERS);
+        return;
+      }
+    }
     $('ownerSel').value = gridOwner || '';
   }).catch(function (e) { console.warn('[사람 명단]', e); });
 }
@@ -5708,8 +5728,12 @@ function pickOwner(uid) {
   gridYear = String(new Date().getFullYear());
   gridYears = [gridYear];
   renderYearSel();
-  /* 남의 사진을 보는 중에는 올리기 단추를 잠근다. */
-  ['pickBtn', 'docBtn', 'camBtn'].forEach(function (id) { $(id).disabled = viewingOther(); });
+  /* 올리기는 **한 사람만 보는 중**일 때만 잠근다 (대표 지시 2026-08-10).
+     「전체 근로자」에는 내 사진도 들어 있고, 무엇보다 **올리는 것은 보는 화면과
+     무관하게 늘 내 자리로 간다**(savePhoto 가 내 uid 로만 쓴다). 그래서 여기서
+     잠글 이유가 없다 — 잠그면 관리자가 앱을 열 때마다 화면을 바꿔야 올릴 수 있다.
+     ⚠ 지우기·판독은 그대로 viewingOther() 로 잠근다. 거기엔 남의 사진이 섞여 있다. */
+  ['pickBtn', 'docBtn', 'camBtn'].forEach(function (id) { $(id).disabled = viewingOnlyOther(); });
   renderGrid();
   loadGrid();
   refreshYears();
