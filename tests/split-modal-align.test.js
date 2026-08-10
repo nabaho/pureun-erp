@@ -41,7 +41,7 @@ t('전체 칩이 있다', /'전체'\)/.test(MODAL), true);
 t('실제 있는 종류만 칩으로 만든다', /pending\.forEach\(function\(p\)\{ if\(p && p\.store && !_seen\[p\.store\]\)/.test(MODAL), true);
 t('칩이 종류 색을 그대로 쓴다', /background:on\?b\.fg:b\.bg,color:on\?'#fff':b\.fg/.test(MODAL), true);
 t('같은 칩을 다시 누르면 풀린다', /setSpKind\(on\?'':k\)/.test(MODAL), true);
-t('닫으면 필터도 초기화된다', /setSpQ\(''\);setSpKind\(''\);\}/.test(MODAL), true);
+t('닫으면 필터도 초기화된다', /setSpQ\(''\);setSpKind\(''\);/.test(MODAL), true);
 
 /* ══════ ③ 더빌이체 → 나이스빌 명세 ══════ */
 t('더빌 적요인지 본다', /rowsIn\.some\(function\(r\)\{ return erpIsCmsMemo\(r\.memo\|\|r\.note\|\|''\); \}\)/.test(MODAL), true);

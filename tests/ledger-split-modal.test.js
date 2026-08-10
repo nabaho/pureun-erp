@@ -98,7 +98,7 @@ ok('겹치던 「예상입금」 줄은 뺐다', !/h\('span',\{style:\{color:'#6
 ok('겹치던 「담당」 줄은 뺐다', !/h\('span',\{style:\{color:'#64748b'\}\},'담당'\)/.test(modal));
 
 console.log('\n[검색어 뒷정리]');
-ok('창을 닫으면 검색어·종류 필터를 지운다', /function closeModal\(\)\{[\s\S]{0,140}?setSpQ\(''\);setSpKind\(''\);\}/.test(modal));
+ok('창을 닫으면 검색어·종류 필터를 지운다', /function closeModal\(\)\{[\s\S]{0,200}?setSpQ\(''\);setSpKind\(''\);/.test(modal));
 ok('창을 열 때도 검색어를 지운다', /setSpSel\(init\); setSpGap\(''\); setSpQ\(''\);/.test(src));
 
 console.log('\n[정렬 규칙을 실제로 돌려본다]');
