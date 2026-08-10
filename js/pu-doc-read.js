@@ -115,7 +115,7 @@
      이미 현장에서 검증된 프롬프트를 새로 쓰지 않는다. */
   var PROMPT_ALL =
     '이 이미지가 어떤 서류인지 가리고 정보를 추출해 JSON으로만 답하세요.' +
-    '\nkind 는 다음 중 하나입니다: card(명함), bizreg(사업자등록증), sme(중소기업확인서 또는 중견기업확인서), payslip(급여 관련 서류 — 급여명세서·임금대장·급여이체내역·４대보험 산정보수 등 사람의 임금 금액이 적힌 것), meeting(회의·현장 사진 — 사람들이 모여 있거나 사업장·작업 현장 모습), other(위 다섯이 아님).' +
+    '\nkind 는 다음 중 하나입니다: card(명함), bizreg(사업자등록증), sme(중소기업확인서 또는 중견기업확인서), payslip(급여 관련 서류 — 급여명세서·임금대장·급여이체내역·４대보험 산정보수 등 사람의 임금 금액이 적힌 것), meeting(회의·현장 사진 — 사람들이 모여 있거나 사업장·작업 현장 모습), contract(계약서 — 자문계약서·위임계약서·용역계약서·수임약정서 등 우리 사무소와 업체가 맺은 약정 문서), other(위 여섯이 아님).' +
     '\nkind=card 이면 키: name(이름), company(회사명), dept(부서), title(직책), mobile(휴대폰), tel(직통전화), fax(개인팩스), email(이메일), companyTel(회사 대표번호), companyFax(회사 팩스), companyAddr(회사 주소), website(홈페이지), address(개인 주소), memo(기타 정보).' +
     '\nkind=bizreg 이면 키: company(상호/법인명), ceo(대표자), bizno(사업자등록번호), corpno(법인등록번호), openDate(개업연월일), bizType(업태), bizItem(종목), companyTel(대표번호), companyFax(팩스), address(사업장 소재지), memo(기타).' +
     '\nkind=sme 이면 키: company(상호/법인명), bizno(사업자등록번호), ceo(대표자), smeType(기업규모 — 소기업/중기업/중견기업 등), issueNo(발급번호), issueDate(발급일), expiry(유효기간 만료일), industry(주업종).' +
@@ -124,6 +124,10 @@
        읽어 둘 이유가 없다. 읽어서 담으면 클라우드에 한 벌 더 쌓이는 위험만 는다. */
     '\nkind=payslip 이면 키: company(사업장·회사명), period(귀속 연월 — 2026-04 형식), docName(서류 이름 그대로 — 예 급여명세서·임금대장), memo(무엇에 쓰는 서류인지 한 줄). **금액과 사람 이름은 담지 마세요.**' +
     '\nkind=meeting 이면 키: memo(무엇을 하는 장면인지 한 줄), company(현장 간판·표지에 회사명이 보이면 그 이름, 없으면 빈 문자열).' +
+    /* 계약서는 **금액도 담는다**(대표 지시 2026-08-10). 급여서류와 다르다 —
+       급여는 사람마다 다른 임금이라 안 담지만, 계약 보수는 우리 사무소의
+       수임 조건이라 나중에 찾아볼 일이 실제로 있다. */
+    '\nkind=contract 이면 키: company(상대 업체 상호), ceo(상대 업체 대표자), docName(계약서 이름 그대로 — 예 자문계약서·위임계약서), signDate(계약 체결일 — 2026-08-10 형식), startDate(계약 시작일), endDate(계약 종료일 — 없으면 빈 문자열), term(계약 기간을 적은 그대로 — 예 1년, 자동연장), fee(월 자문료·용역비 — 적힌 그대로, 예 300,000원/월), retainer(착수금), success(성공보수 — 예 승소시 청구액의 10%), deposit(계약금), memo(위에 안 담긴 특약이나 눈여겨볼 조건 한 줄). **없는 항목은 빈 문자열로 두고 지어내지 마세요.**' +
     '\nkind=other 이면 kind 만 담으세요.' +
     /* 한글 우선(2026-08-07 대표 지시) — 명함은 같은 내용을 한글·영문으로 나란히
        적어 두는 일이 많다. 그때 영문을 담으면 **명함첩·업체관리에서 한글로 찾는
@@ -157,7 +161,7 @@
 
   var NTS_URL = 'https://api.odcloud.kr/api/nts-businessman/v1/status?serviceKey=';
 
-  var KINDS = { card: 1, bizreg: 1, sme: 1, payslip: 1, meeting: 1, other: 1 };
+  var KINDS = { card: 1, bizreg: 1, sme: 1, payslip: 1, meeting: 1, contract: 1, other: 1 };
 
   /* ── 판독기 판 번호 ──
      읽어 둔 결과에 이 번호를 함께 적는다. 가릴 수 있는 종류를 늘리면 번호를
@@ -400,6 +404,10 @@
        올릴 때마다 「확인 필요」가 쌓여, 치울 수 없는 할 일이 목록을 못 믿게 만든다
        (2026-08-04 "확인 필요 오류가 계속 나온다" 와 같은 종류의 문제). */
     if (r.kind === 'payslip') return { auto: false, why: '급여서류입니다 — 사진첩에만 보관합니다', done: true };
+    /* 계약서도 명함첩·업체관리로 보내지 않는다 — 상대 업체는 이미 명함으로 들어와 있고,
+       계약서에서 만든 업체는 이름만 있는 빈 껍데기가 되어 같은 회사가 두 벌 쌓인다.
+       done: true — 넣을 곳이 없는 것은 할 일이 아니다(급여서류와 같은 이유). */
+    if (r.kind === 'contract') return { auto: false, why: '계약서입니다 — 사진첩에만 보관합니다', done: true };
 
     var f = r.fields || {};
     /* 회사도 이름도 못 읽었으면 넣을 것이 없다 — 빈 껍데기를 만들면 나중에 지우는 일이 생긴다. */
