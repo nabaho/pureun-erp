@@ -266,6 +266,14 @@ button{font-family:inherit;cursor:pointer}
 #foldList .fold.on{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:800}
 #foldList .fold.on .n{color:#dbeafe}
 #foldList .fold.on .ed{opacity:.8}
+/* 이름 적는 칸 — 폴더 줄 자리에 그대로 들어앉는다 */
+#foldList .fold.edit{padding:4px 5px;gap:4px}
+#foldList .fold.edit input{flex:1;min-width:0;border:1px solid var(--blue);border-radius:7px;
+  padding:6px 8px;font-size:12.5px;font-family:inherit;background:#fff;color:var(--ink)}
+#foldList .fold.edit button{flex:none;border:none;background:transparent;font-size:14px;
+  padding:2px 5px;font-family:inherit;line-height:1}
+#foldList .fold.edit .ok{color:var(--blue);font-weight:800}
+#foldList .fold.edit .no{color:var(--sub)}
 #foldList .fold.add{border-style:dashed;color:var(--blue);font-weight:700;justify-content:center}
 #foldList .fold.drop{outline:2px dashed var(--blue);outline-offset:1px;background:#eef3ff}
 #kinds button.add{border:1.5px dashed var(--line);background:#f8fafc;color:var(--blue);font-weight:800}
@@ -4096,15 +4104,64 @@ function renderFolders() {
         ' onclick="event.stopPropagation();folderMenu(event,\'' + esc(fid) + '\')">⋯</span>' : '') +
       '</button>';
   };
+  /* ── 이름을 적는 칸은 **그 자리에** 연다 (대표 지시 2026-08-10) ──
+     예전에는 브라우저 prompt 가 화면 한가운데 떠서, 누른 자리와 묻는 자리가
+     멀었다. 이제 폴더 줄 자리에서 바로 적고 Enter 로 끝낸다. */
+  const editRow = function (sub) {
+    return '<div class="fold edit' + (sub ? ' sub' : '') + '">' +
+      '<input id="foldInput" type="text" maxlength="30" placeholder="' + esc(foldEdit.hint || '') + '"' +
+      ' value="' + esc(foldEdit.value || '') + '" onkeydown="foldKey(event)">' +
+      '<button class="ok" title="확인" onclick="foldSubmit()">✓</button>' +
+      '<button class="no" title="취소" onclick="foldCancel()">✕</button></div>';
+  };
   let html = row('all', '📁 전체', gridItems.length, false, false);
   tops.forEach(function (fid) {
-    html += row(fid, '📁 ' + (FOLDERS[fid].name || ''), folderCount(fid), false, true);
+    if (foldEdit.mode === 'rename' && foldEdit.fid === fid) html += editRow(false);
+    else html += row(fid, '📁 ' + (FOLDERS[fid].name || ''), folderCount(fid), false, true);
     kidsOf(fid).forEach(function (kid) {
-      html += row(kid, '↳ ' + (FOLDERS[kid].name || ''), folderCount(kid), true, true);
+      if (foldEdit.mode === 'rename' && foldEdit.fid === kid) html += editRow(true);
+      else html += row(kid, '↳ ' + (FOLDERS[kid].name || ''), folderCount(kid), true, true);
     });
+    /* 하위폴더 만들기 — 그 어버이 **바로 밑**에 칸이 열린다 */
+    if (foldEdit.mode === 'sub' && foldEdit.fid === fid) html += editRow(true);
   });
-  html += '<button class="fold add" onclick="newFolder()">＋ 폴더 만들기</button>';
+  html += (foldEdit.mode === 'new')
+    ? editRow(false)
+    : '<button class="fold add" onclick="newFolder()">＋ 폴더 만들기</button>';
   box.innerHTML = html;
+  const inp = $('foldInput');
+  if (inp) { inp.focus(); inp.select(); }
+}
+
+/* ── 폴더 이름 적는 칸 (그 자리에 열린다) ──
+   mode: 'new' 새 폴더 / 'sub' 하위폴더 / 'rename' 이름 바꾸기 */
+let foldEdit = { mode: '', fid: '', value: '', hint: '' };
+
+function foldOpen(mode, fid, value, hint) {
+  foldEdit = { mode: mode, fid: fid || '', value: value || '', hint: hint || '' };
+  renderFolders();
+}
+function foldCancel() { foldEdit = { mode: '', fid: '', value: '', hint: '' }; renderFolders(); }
+function foldKey(e) {
+  if (e.key === 'Enter') { e.preventDefault(); foldSubmit(); }
+  else if (e.key === 'Escape') { e.preventDefault(); foldCancel(); }
+}
+function foldSubmit() {
+  const inp = $('foldInput');
+  const name = inp ? String(inp.value || '').trim() : '';
+  const mode = foldEdit.mode, fid = foldEdit.fid;
+  /* 빈 이름은 그냥 접는다 — **지우기가 아니다.** 지우기는 ⋯ 차림표에 따로 있다
+     (이름을 비워 지우던 옛 손짓이 알아채기 어려워 갈라낸 것이다). */
+  if (!name) { foldCancel(); return; }
+  foldEdit = { mode: '', fid: '', value: '', hint: '' };
+  if (mode === 'rename') {
+    PuPhotoStore.renameFolder(fid, name).then(loadFolders)
+      .catch(function (e) { alert('이름을 바꾸지 못했습니다 — ' + ((e && e.message) || e)); renderFolders(); });
+    return;
+  }
+  PuPhotoStore.addFolder(name, mode === 'sub' ? fid : null).then(function (r) {
+    return loadFolders().then(function () { pickFolder(r.id); });
+  }).catch(function (e) { alert('폴더를 만들지 못했습니다 — ' + ((e && e.message) || e)); renderFolders(); });
 }
 
 /* ── ⋯ 차림표 — 만들기·이름 바꾸기·지우기를 한자리에 (대표 지시 2026-08-10) ──
@@ -4140,22 +4197,13 @@ function pickFolder(fid) {
 function newFolder(parentId) {
   closeFolderMenu();
   const up = parentId ? (FOLDERS[parentId] || {}).name : '';
-  const name = prompt(up ? '「' + up + '」 안에 만들 하위폴더 이름' : '폴더 이름을 지어 주세요 — 예: ㈜가야 실태조사');
-  if (name === null) return;
-  PuPhotoStore.addFolder(name, parentId || null).then(function (r) {
-    return loadFolders().then(function () { pickFolder(r.id); });
-  }).catch(function (e) { alert('폴더를 만들지 못했습니다 — ' + ((e && e.message) || e)); });
+  foldOpen(parentId ? 'sub' : 'new', parentId || '', '',
+    up ? '「' + up + '」 안에 만들 이름' : '예: ㈜가야 실태조사');
 }
 
 function renameFolderAsk(fid) {
   closeFolderMenu();
-  const cur = (FOLDERS[fid] || {}).name || '';
-  const name = prompt('폴더 이름', cur);
-  if (name === null) return;
-  const clean = String(name).trim();
-  if (!clean || clean === cur) return;
-  PuPhotoStore.renameFolder(fid, clean).then(loadFolders)
-    .catch(function (e) { alert('이름을 바꾸지 못했습니다 — ' + ((e && e.message) || e)); });
+  foldOpen('rename', fid, (FOLDERS[fid] || {}).name || '', '폴더 이름');
 }
 
 /* ⚠ 지워도 **사진은 안 지운다.**
