@@ -2049,6 +2049,12 @@ async function _puFetchPlan(){
     try{ var ts = await fbDb.ref('data/' + TK[tk]).once('value'); typeMap[tk] = _puUnwrap(ts.val()) || []; }
     catch(e){ typeMap[tk] = []; }
   }
+  /* 증명서 발급기관 추정에 쓸 기관 이름을 남겨둔다(_cdAgencyNames가 읽는다) */
+  try{
+    var ags = {};
+    for(var ak in typeMap){ (typeMap[ak] || []).forEach(function(t){ if(t && t.agency) ags[t.agency] = 1; }); }
+    LS.set(NS + 'pu_type_agencies', JSON.stringify(Object.keys(ags)));
+  }catch(e){}
   /* puRef 없는 기존 실적(시드 등)에 붙여 중복을 막기 위해 함께 넘긴다 */
   var existing = [];
   PU_SYNC_STORES.forEach(function(st){
@@ -3180,6 +3186,44 @@ function _cdTable(rows, D){
    증명서 낱말이 이름 어느 자리에 있어도 대상이다(끝만 보면 205건 중 15건만 잡혔다).
    외부기관 발급(ext)과 본인 경력·재직증명(own)을 갈라 담고, own은 기본 체크 해제다. */
 var _cdScanCtx = null;
+
+/* pu-erp 유형 코드표의 수행기관 이름들 — 코드표는 동기화 때 읽으므로 캐시에서 가져온다 */
+function _puTypeAgencies(){
+  var out = [];
+  try{
+    var cached = JSON.parse(LS.get(NS + 'pu_type_agencies') || '[]');
+    if(Array.isArray(cached)) out = cached;
+  }catch(e){}
+  return out;
+}
+
+/* 기관 후보 — 새 사전을 만들지 않는다. 시스템이 이미 아는 이름만 모은다(설계서 6). */
+function _cdAgencyNames(){
+  var set = {};
+  function add(s){ s = String(s || '').trim(); if(s) set[s] = 1; }
+  _puTypeAgencies().forEach(add);
+  PU_SYNC_STORES.forEach(function(k){ get(k).forEach(function(r){ if(r) add(r.agency); }); });
+  get('certdoc').forEach(function(r){ if(r) add(r.issuer); });
+  /* 긴 이름이 먼저 매칭되게 정렬 — '한국능률협회'가 '능률협회'보다 앞 */
+  return Object.keys(set).sort(function(a,b){ return b.length - a.length; });
+}
+
+/* 발급기관 추정 — 폴더 경로에서 먼저, 없으면 파일명에서. 못 찾으면 빈 문자열(행의 🔍로 보정) */
+function _cdGuessIssuer(f){
+  var names = _cdAgencyNames();
+  if(!names.length) return '';
+  var dir = String(f.relPath || '');
+  var i = dir.lastIndexOf('/');
+  dir = i >= 0 ? dir.slice(0, i) : '';           /* 파일명을 뺀 경로만 */
+  var hayDir = _agencyNorm(dir), hayName = _agencyNorm(f.name || '');
+  for(var n = 0; n < names.length; n++){
+    if(hayDir.indexOf(_agencyNorm(names[n])) >= 0) return names[n];
+  }
+  for(var m = 0; m < names.length; m++){
+    if(hayName.indexOf(_agencyNorm(names[m])) >= 0) return names[m];
+  }
+  return '';
+}
 
 /* 원본 없는 기존 received 레코드를 파일명으로 찾아 경로만 붙인다(새 줄을 만들지 않는다) */
 function _cdFindAttachTarget(file, db){

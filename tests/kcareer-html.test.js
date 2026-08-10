@@ -181,6 +181,42 @@ test('증명서 원본 바이트 취득은 경로와 base64 둘 다 다룬다', 
   assert.match(m[0], /getFileAsync/, 'base64 첨부도 읽어야 합니다');
 });
 
+test('_cdAgencyNames는 새 사전을 만들지 않고 시스템이 아는 이름만 모은다', () => {
+  const store = {
+    consult: [{ agency: '한국능률협회' }, { agency: '충남경제진흥원' }, { agency: '' }],
+    case: [], fund: [], etc: [],
+    certdoc: [{ issuer: '공인노무사회' }, { issuer: '' }]
+  };
+  const ctx = {
+    get: (k) => (store[k] || []).slice(),
+    PU_SYNC_STORES: ['case', 'consult', 'fund', 'etc'],
+    _puTypeAgencies: () => ['노사발전재단']
+  };
+  vm.runInNewContext(funcSource('_cdAgencyNames') + '\nglobalThis.__n = _cdAgencyNames();', ctx);
+  const got = ctx.__n;
+  ['한국능률협회', '충남경제진흥원', '공인노무사회', '노사발전재단'].forEach((a) => {
+    assert.ok(got.includes(a), a + '가 후보에 있어야 합니다');
+  });
+  assert.ok(!got.includes(''), '빈 값은 후보에 넣지 않습니다');
+});
+
+test('_cdGuessIssuer는 폴더 경로에서 먼저 찾고 파일명으로 보완한다', () => {
+  const ctx = {
+    _cdAgencyNames: () => ['한국능률협회', '능률협회', '공인노무사회', '충남경제진흥원'],
+    _agencyNorm: (s) => String(s || '').replace(/[\s\(\)（）\-·]/g, '').toLowerCase()
+  };
+  vm.runInNewContext(funcSource('_cdGuessIssuer'), ctx);
+  assert.equal(ctx._cdGuessIssuer({
+    name: '2024 구조혁신지원사업 컨설팅 수행실적 증명서_성문전자(주)_권형하.pdf',
+    relPath: '6. 컨설팅 실적증명/구조혁신(능률협회)/2024/2024 구조혁신지원사업 컨설팅 수행실적 증명서_성문전자(주)_권형하.pdf'
+  }), '능률협회');
+  assert.equal(ctx._cdGuessIssuer({
+    name: '2.공인노무사회 정부위탁사업 참여확인서_권형하노무사.pdf',
+    relPath: '6. 컨설팅 실적증명/2.공인노무사회 정부위탁사업 참여확인서_권형하노무사.pdf'
+  }), '공인노무사회');
+  assert.equal(ctx._cdGuessIssuer({ name: '실적증명서.pdf', relPath: '6. 컨설팅 실적증명/실적증명서.pdf' }), '');
+});
+
 test('증명서 스캔은 외부기관과 본인 것을 갈라 담는다', () => {
   const m = source.match(/async function cdScanNow\([\s\S]*?\n\}/);
   assert.ok(m, 'cdScanNow 함수가 있어야 합니다');
