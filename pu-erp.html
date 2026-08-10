@@ -1810,7 +1810,9 @@ var FB_ALL_SYNC_KEYS = [
   'pension_policy','security_perms',
   'payroll_irregular','contract_forms','dc_contributions','biz_cases',
   'payer_aliases','expense_cat_aliases',
-  'bank_processed','combo_whitelist','cms_ledger'
+  'bank_processed','combo_whitelist','cms_ledger',
+  // 올린 통장 자료 묶음 — 다른 PC 에서 올린 것도 받아 함께 보려면 이 목록에 있어야 한다
+  'ledger_batches','ledger_held','ledger_split_recipes'
 ];
 // App Check reCAPTCHA v3 사이트키 — Firebase 콘솔에서 발급 후 따옴표 안에 붙여넣기 (비어있으면 비활성, 동작에 영향 없음)
 var FB_APPCHECK_KEY = '6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
@@ -2477,7 +2479,9 @@ function buildBackupSnapshot(){
     // 기기 임시 작업분·이 PC 전용 되돌리기 기록 — 동기화(FB_EXCLUDE)에서 빼는 것과 같은 이유로
     // 백업에서도 뺀다. 특히 bank_ledger_draft 는 올린 통장 파일이 최대 4,000행까지 쌓여서
     // 스냅샷을 실시간DB 한 번 쓰기 한도(16MB) 위로 밀어 올렸다(write_too_big — 실제로 났다).
-    bank_ledger_draft:1, co_merge_log:1, co_link_log:1, co_vat_log:1 };
+    // ledger_batches 도 같은 이유로 백업에서 뺀다 — 서버로는 «실시간 공유» 되지만(FB_EXCLUDE 아님)
+    // 스냅샷에 담으면 통장 4,000행이 다시 실려 16MB 한도를 밀어 올린다.
+    bank_ledger_draft:1, ledger_batches:1, co_merge_log:1, co_link_log:1, co_vat_log:1 };
   var data = {};
   for(var i=0;i<localStorage.length;i++){
     var full = localStorage.key(i);
@@ -3531,7 +3535,10 @@ function dbSet(k, v){
 
       // ── 자동 Diff Sync (핵심 5개 키) — 1단계: 변경 개수 무관 항상 건별 저장 ──
       // #4 Tier 3: id 키 기반 부분 업데이트 (인덱스 충돌 제거) — 삭제도 가능
-      var DIFF_KEYS = ['companies','cases','consultings','funds','other_projects','payroll_monthly','finance_income','finance_expense','contracts','attendance_records','overtime_records','leave_grants','comp_leave_records','leave_of_absence','retirement_settlements','finance_invoice','external_staff','payroll_irregular','employment_contracts'];
+      /* ledger_batches 를 넣는 까닭 — 이 목록에 있어야 서버가 «묶음마다 따로»(객체형) 담고,
+   dbUpsert 가 그 묶음 자리만 고쳐 쓴다. 없으면 통째로 덮어써서
+   A와 B가 동시에 올릴 때 나중 사람이 앞사람 묶음을 지운다. */
+var DIFF_KEYS = ['companies','cases','consultings','funds','other_projects','payroll_monthly','finance_income','finance_expense','contracts','attendance_records','overtime_records','leave_grants','comp_leave_records','leave_of_absence','retirement_settlements','finance_invoice','external_staff','payroll_irregular','employment_contracts','ledger_batches'];
       var diffApplied = false;
       if(DIFF_KEYS.indexOf(k) >= 0 && Array.isArray(v) && Array.isArray(prev)){
         var diff = computeArrayDiff(prev, v);
@@ -33059,6 +33066,99 @@ function erpBankMergeDraft(curRows, newRows){
   return { rows:out, dup:dup, cut:cut, skip:skip, remap:remap };
 }
 
+/* ══════════ 올린 자료를 «묶음마다 따로» 쌓는다 ══════════
+   (2026-08-10 대표 요청) A가 4~6월을 올리고 B가 7~9월을 올리면 둘 다 한 화면에 보이고,
+   A가 자기 것을 지우면 A 것만 사라져야 한다.
+   전에는 올린 자료가 bank_ledger_draft 하나에 뭉쳐 «그 PC 안에만» 남아,
+   서로의 것을 볼 수 없었다.
+
+   ★ 묶음마다 서버에 따로 실린다(data/ledger_batches/{묶음번호}) — 계약·사건이 쓰는
+     건별 저장과 같은 방식이다. 그래서 A가 올리는 순간 B의 묶음은 건드려지지 않는다.
+     한 덩어리로 저장하면 동시에 올릴 때 나중 사람이 앞사람 것을 지운다.
+   ★ 백업 스냅샷에는 담지 않는다 — 통장 임시분이 16MB 한 번 쓰기 한도를 넘겨
+     백업이 통째로 실패했던 그 원인과 같다(2026-08-09 에 실제로 났다). */
+var LEDGER_BATCH_KEY = 'ledger_batches';
+var LEDGER_BATCH_MAX_ROWS = 4000;      // 쌓인 줄 합계 한도 — 넘으면 «오래된 묶음부터» 버린다
+
+function erpMakeBatch(rows, meta){
+  meta = meta || {};
+  // 날짜 없는 줄은 담지 않는다 — 달로 나눌 수도, 같고 다름을 가릴 수도 없다
+  var rs = (rows || []).filter(function(r){ return r && String(r.date || '').trim(); });
+  if(!rs.length) return null;
+  var ds = rs.map(function(r){ return String(r.date).slice(0, 10); }).sort();
+  return {
+    id: meta.id || ('lb-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)),
+    by: String(meta.by || ''), byName: String(meta.byName || ''),
+    at: meta.at || new Date().toISOString(),
+    fileName: String(meta.fileName || ''),
+    src: meta.src || 'bank',
+    from: ds[0], to: ds[ds.length - 1], n: rs.length,
+    rows: rs
+  };
+}
+
+/* 여러 묶음을 한 목록으로 — «먼저 올린 것» 이 앞에 온다.
+   겹치는 줄은 앞엣것이 이긴다(erpBankMergeDraft 규칙). 그래야 누가 먼저 올렸든 결과가 같다. */
+function erpBatchRows(batches){
+  var bs = (batches || []).filter(function(b){ return b && b.rows && b.rows.length; }).slice();
+  bs.sort(function(a, b){ return String(a.at || '').localeCompare(String(b.at || '')); });
+  var out = [];
+  bs.forEach(function(b){
+    b.rows.forEach(function(r){
+      if(!r) return;
+      var c = {};
+      for(var p in r){ if(Object.prototype.hasOwnProperty.call(r, p)) c[p] = r[p]; }
+      c._b = b.id;                       // 어느 묶음에서 왔는지 — 지울 때 이것을 본다
+      out.push(c);
+    });
+  });
+  return out;
+}
+
+/* 지울 수 있나 — 올린 사람 본인, 또는 관리자 (대표 선택).
+   관리자를 넣은 까닭: 올린 사람이 휴가·퇴사로 자리를 비우면 잘못 올린 자료가 영영 남는다. */
+function erpCanDropBatch(batch, me){
+  if(!batch) return false;
+  me = me || {};
+  if(me.isAdmin === true || me.role === 'admin' || me.role === 'admin-delegate') return true;
+  return !!(me.sid && batch.by && String(batch.by) === String(me.sid));
+}
+
+/* 한도를 넘으면 «오래된 묶음부터 통째로» 버린다.
+   줄 단위로 자르면 한 묶음이 반토막 나서 「이 파일 몇 줄」 이 안 맞는다.
+   마지막 한 묶음은 남긴다 — 방금 올린 것까지 지우면 올린 사람이 영문을 모른다. */
+function erpTrimBatches(batches, maxRows){
+  var lim = parseInt(maxRows, 10) || LEDGER_BATCH_MAX_ROWS;
+  var bs = (batches || []).filter(function(b){ return !!b; }).slice();
+  bs.sort(function(a, b){ return String(a.at || '').localeCompare(String(b.at || '')); });
+  var total = 0;
+  bs.forEach(function(b){ total += (b.rows ? b.rows.length : 0); });
+  var dropped = [];
+  while(total > lim && bs.length > 1){
+    var old = bs.shift();
+    total -= (old.rows ? old.rows.length : 0);
+    dropped.push(old);
+  }
+  return { keep:bs, dropped:dropped };
+}
+
+/* 요약 — 몇 묶음·몇 줄·내가 올린 것이 몇 개인가 */
+function erpBatchSummary(batches, mySid){
+  var bs = (batches || []).filter(function(b){ return b && b.rows; });
+  var n = 0, mine = 0;
+  bs.forEach(function(b){
+    n += b.rows.length;
+    if(mySid && String(b.by) === String(mySid)) mine++;
+  });
+  return { count:bs.length, rows:n, mine:mine, others:bs.length - mine };
+}
+
+if(typeof window !== 'undefined'){
+  window.erpMakeBatch = erpMakeBatch;       window.erpBatchRows = erpBatchRows;
+  window.erpCanDropBatch = erpCanDropBatch; window.erpTrimBatches = erpTrimBatches;
+  window.erpBatchSummary = erpBatchSummary;
+}
+
 // ══════════════════════════════════════════════
 // 🏦 CMS 일괄이체(더빌이체) 매칭 — 입금 1건을 여러 업체 자문료로 나눠 표시
 // ══════════════════════════════════════════════
@@ -34825,6 +34925,11 @@ function FinanceLedger(){
      lastAct:방금 한 일 하나 — 되돌리기 띠와 Ctrl+Z 가 이것만 본다. */
   /* 나눠담기 창을 «기억대로 채워» 열었을 때의 안내 — 몇 곳을 채웠고 몇 곳을 못 찾았는지.
      못 찾은 곳을 안 알리면 모자란 채로 확정하고도 모른다. */
+  /* 올린 자료 묶음 — 서버에서 받은 것(내 것 + 남이 올린 것) */
+  var batchesS=useState([]);   var batches=batchesS[0]||[]; var setBatches=batchesS[1];
+  var batOpenS=useState(false); var batOpen=batOpenS[0];    var setBatOpen=batOpenS[1];
+  /* ✕ 로 치운 줄 — 이 기기에만 둔다. 남의 화면까지 지울 수는 없다. */
+  var hidRowS=useState(null);  var hidRow=hidRowS[0]||{};   var setHidRow=hidRowS[1];
   var spRecipeS=useState(null); var spRecipe=spRecipeS[0]; var setSpRecipe=spRecipeS[1];
   /* 확정한 뒤 «업체를 잘못 붙였다» 는 것을 알았을 때 고치는 창 {fi, q}.
      되돌리기와 다르다 — 되돌리면 처음부터 다시 해야 하지만 이것은 한 번에 옮긴다. */
@@ -34931,30 +35036,54 @@ function FinanceLedger(){
   var draftTimer=useRef(null);   // 초안 저장 디바운스
   var draftReady=useRef(false);  // 복원 완료 전에는 저장하지 않음
 
-  // ── 초안 복원 (마운트 1회) — 화면을 벗어났다 돌아와도 업로드분이 살아있게 ──
+  /* ── 쌓인 묶음 → 화면에 그릴 줄 ──
+     겹치는 줄은 «먼저 올린 묶음» 것이 이긴다(erpBankMergeDraft 규칙).
+     hidden 은 이 기기에서 ✕ 로 치운 줄 — 남의 화면까지 지우면 안 되므로 기기별로 둔다. */
+  function _rowsOfBatches(bs, hidden){
+    var mg = erpBankMergeDraft(erpBatchRows(bs), []);
+    var pst = erpBankProcessedStore();          // 이미 확정·등록한 줄 — store 는 한 번만 받는다
+    var inc = [], exp = [];
+    mg.rows.forEach(function(x){
+      if(hidden && hidden[x._k]) return;
+      var row = { _k:String(x._k), _b:x._b||'', src:(x.src||'bank'), date:x.date||'', memo:x.memo||'',
+                  note:x.note||'', amount:parseInt(x.amount,10)||0, balance:parseInt(x.balance,10)||0 };
+      var pk = erpBankRowKey(row);
+      if(pk && pst[pk]) row._dup = true;
+      if(x.type === 'expense') exp.push(row); else inc.push(row);
+    });
+    return { inc:inc, exp:exp };
+  }
+
+  // ── 올린 자료 복원 (마운트 1회) — 이제 «다른 PC 에서 올린 묶음» 도 함께 받는다 ──
   useEffect(function(){
     try{
-      var d = dbGet(BANK_DRAFT_KEY, null);
-      if(d && d.rows && d.rows.length){
-        var inc=[], exp=[];
-        var _pst = erpBankProcessedStore();     // 이미 확정·등록한 행 (중복 방지) — store는 한 번만 받는다
-        d.rows.forEach(function(x){
-          if(!x) return;
-          var row={_k:String(x._k), src:(x.src||'bank'), date:x.date||'', memo:x.memo||'', note:x.note||'',
-                   amount:parseInt(x.amount,10)||0, balance:parseInt(x.balance,10)||0};
-          var _pk = erpBankRowKey(row);
-          if(_pk && _pst[_pk]) row._dup = true;
-          if(x.type==='expense') exp.push(row); else inc.push(row);
-        });
-        if(inc.length || exp.length){
-          setRows({inc:inc, exp:exp, colMap:d.colMap||{}, hdrRow:[]});
-          setInMatch(d.inMatch||{});
-          setExpCat(d.expCat||{});
-          if(d.type) setFileType(d.type);
-          setFName(d.fileName||'');
-          setUpAt(d.uploadedAt||'');
-          setRestored(true);
-        }
+      var d = dbGet(BANK_DRAFT_KEY, null) || {};
+      var bs = dbGet(LEDGER_BATCH_KEY, []) || [];
+      if(!Array.isArray(bs)) bs = [];
+      /* ★ 이 기기에 남아 있던 옛 임시분을 «내 묶음» 으로 한 번 옮긴다.
+         안 옮기면 지금 화면에 있던 줄(대표 PC 에 505줄)이 사라진 것처럼 보인다.
+         한 번만 — 옮긴 표시는 이 기기에만 남긴다(서버로 안 간다). */
+      var MIG = KEY + 'ledger_batch_migrated';
+      var _migDone = false;
+      try { _migDone = localStorage.getItem(MIG) === '1'; } catch(_m){}
+      if(!_migDone && d.rows && d.rows.length){
+        var _me0 = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? CURRENT_USER : {};
+        var _mb = erpMakeBatch(d.rows, { by:_me0.sid || '', byName:_me0.name || '',
+                    at:(d.uploadedAt || new Date().toISOString()),
+                    fileName:(d.fileName || '이 PC 에 있던 자료'), src:(d.type === 'card' ? 'card' : 'bank') });
+        if(_mb){ bs = bs.concat([_mb]); dbUpsert(LEDGER_BATCH_KEY, _mb); }
+        try { localStorage.setItem(MIG, '1'); } catch(_m2){}
+      }
+      setBatches(bs);
+      var r = _rowsOfBatches(bs, d.hidden || {});
+      if(r.inc.length || r.exp.length){
+        setRows({ inc:r.inc, exp:r.exp, colMap:d.colMap || {}, hdrRow:[] });
+        setInMatch(d.inMatch || {});            // 골라 둔 짝은 «각자 따로» (대표 선택)
+        setExpCat(d.expCat || {});
+        if(d.type) setFileType(d.type);
+        setFName(d.fileName || '');
+        setUpAt(d.uploadedAt || '');
+        setRestored(true);
       }
     }catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
     draftReady.current = true;
@@ -34990,24 +35119,68 @@ function FinanceLedger(){
     draftTimer.current = setTimeout(function(){
       draftTimer.current = null;
       try{
-        var flat=[];
-        // src 를 함께 남긴다 — 통장과 카드가 한 통에 쌓이므로, 어느 쪽 것인지 알아야 한다
-        (rows.inc||[]).forEach(function(x){ flat.push(_bankDraftSlimRow(x,'income',x.src)); });
-        (rows.exp||[]).forEach(function(x){ flat.push(_bankDraftSlimRow(x,'expense',x.src)); });
+        /* ★ 줄 자체는 여기 안 담는다 — 이제 ledger_batches(묶음마다 서버에)가 정본이다.
+           여기 남는 것은 «이 기기의 작업 상태» 뿐: 골라 둔 짝·고른 카테고리·✕ 로 치운 줄.
+           (골라 둔 짝을 각자 따로 두는 것은 대표 선택이다) */
         dbSet(BANK_DRAFT_KEY, { fileName:fName||'', uploadedAt:upAt||'', type:fileType||'bank',
-                                colMap:(rows.colMap)||{}, rows:flat,
+                                colMap:(rows.colMap)||{}, rows:[],
+                                hidden:hidRow||{},
                                 inMatch:inMatch||{}, expCat:expCat||{} });
       }catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
     }, 600);
-  }, [rows, inMatch, expCat, fName, upAt, fileType]);
+  }, [rows, inMatch, expCat, fName, upAt, fileType, hidRow]);
+
+  /* 「지울 수 있는 묶음」 — 내가 올린 것, 관리자면 전부 (대표 선택) */
+  function _meNow(){
+    var u = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? CURRENT_USER : {};
+    return { sid:u.sid || '', name:u.name || '', role:u.role || '', isAdmin:(u.isAdmin === true) };
+  }
+  /* 묶음 하나를 «모두에게서» 지운다 — 그 묶음의 줄만 사라진다.
+     겹쳐서 다른 묶음에도 있던 줄은 그 묶음 몫으로 남는다(다시 합치면 살아난다). */
+  async function dropBatch(b){
+    if(!b) return;
+    var me = _meNow();
+    if(!erpCanDropBatch(b, me)){ showToast('올린 사람만 지울 수 있습니다'); return; }
+    if(!(await popConfirm('「' + (b.fileName || '이름 없는 파일') + '」 묶음을 지웁니다.\n'
+      + '· 올린 사람: ' + (b.byName || '-') + '\n· 줄 ' + (b.n || (b.rows ? b.rows.length : 0)) + '건\n\n'
+      + '→ 이 묶음의 줄만 사라지고, 다른 묶음은 그대로입니다\n'
+      + '→ 이미 확정·등록한 입금/출금은 그대로 유지됩니다\n'
+      + '→ 모든 사람의 화면에서 사라집니다'))) return;
+    try { dbRemoveMany(LEDGER_BATCH_KEY, [b.id]); }
+    catch(e){ if(window._erpErrLog) window._erpErrLog(e); showToast('❌ 지우지 못했습니다'); return; }
+    var next = (dbGet(LEDGER_BATCH_KEY, []) || []).filter(function(x){ return x && x.id !== b.id; });
+    setBatches(next);
+    var r = _rowsOfBatches(next, hidRow);
+    setRows((r.inc.length || r.exp.length) ? { inc:r.inc, exp:r.exp, colMap:(rows && rows.colMap) || {}, hdrRow:[] } : null);
+    showToast('🗑 묶음을 지웠습니다 — ' + (b.fileName || '') + ' (' + (b.n || 0) + '건)');
+  }
 
   async function clearDraft(){
-    if(!(await popConfirm('업로드한 거래내역을 모두 비웁니다.\n\n→ 이미 확정·등록한 입금/출금은 그대로 유지됩니다'))) return;
+    /* 「비우기」는 «내 화면에서 치우는 것» 이다 — 남이 올린 묶음까지 말없이 지우면 안 된다.
+       지울 수 있는 묶음(내 것·관리자면 전부)은 진짜로 지우고, 나머지는 이 화면에서만 감춘다. */
+    var me = _meNow();
+    var bs = dbGet(LEDGER_BATCH_KEY, []) || [];
+    var mine = bs.filter(function(b){ return erpCanDropBatch(b, me); });
+    var kept = bs.filter(function(b){ return !erpCanDropBatch(b, me); });
+    if(!(await popConfirm('거래내역 화면을 비웁니다.\n\n'
+      + '· 지울 묶음 ' + mine.length + '개 (모든 사람의 화면에서 사라집니다)\n'
+      + (kept.length ? ('· 남이 올린 묶음 ' + kept.length + '개는 내 화면에서만 감춥니다\n') : '')
+      + '\n→ 이미 확정·등록한 입금/출금은 그대로 유지됩니다'))) return;
     if(draftTimer.current){ clearTimeout(draftTimer.current); draftTimer.current=null; }
-    try{ dbSet(BANK_DRAFT_KEY, _bankDraftEmpty()); }catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+    if(mine.length){
+      try { dbRemoveMany(LEDGER_BATCH_KEY, mine.map(function(b){ return b.id; })); }
+      catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+    }
+    // 남의 묶음 줄은 이 기기에서만 치운다
+    var hide = Object.assign({}, hidRow || {});
+    erpBatchRows(kept).forEach(function(r){ hide[r._k] = 1; });
+    setHidRow(hide);
+    setBatches(kept);
+    try{ dbSet(BANK_DRAFT_KEY, Object.assign(_bankDraftEmpty(), { hidden:hide })); }
+    catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
     setRows(null); setDetected(null); setInMatch({}); setExpCat({}); setSugOpen({});
     setFName(''); setUpAt(''); setRestored(false);
-    showToast('🗑 거래내역을 비웠습니다');
+    showToast('🗑 거래내역을 비웠습니다' + (mine.length ? (' · 묶음 ' + mine.length + '개 삭제') : ''));
   }
 
   /* 한 달만 비운다. 쌓아 두기 시작했으니 «전부 비우기» 하나로는 못 쓴다 —
@@ -35019,17 +35192,23 @@ function FinanceLedger(){
            + (rows.exp||[]).filter(function(r){ return _srcOf(r)===_ldSrc && String(r.date||'').slice(0,7)===ym; }).length;
     if(!_n){ showToast('그 달에 지울 것이 없습니다'); return; }
     var _lbl = parseInt(ym.slice(0,4),10)+'년 '+parseInt(ym.slice(5),10)+'월';
-    if(!(await popConfirm(_lbl+' '+(_ldSrc==='card'?'카드':'통장')+' 내역 '+_n+'건을 목록에서 비웁니다.\n\n'
+    /* 한 달은 여러 묶음에 걸쳐 있을 수 있어 «묶음을 반토막» 낼 수는 없다.
+       그래서 이 달은 «내 화면에서만» 치운다. 남의 화면은 그대로다.
+       올린 자료 자체를 없애려면 「올린 자료」 창에서 묶음째 지운다. */
+    if(!(await popConfirm(_lbl+' '+(_ldSrc==='card'?'카드':'통장')+' 내역 '+_n+'건을 «내 화면에서» 치웁니다.\n\n'
+      + '→ 다른 사람 화면에는 그대로 남습니다\n'
       + '→ 이미 확정·등록한 입금/출금은 그대로 유지됩니다\n'
-      + '→ 다른 달은 그대로 남습니다'))) return;
-    function keep(list){
-      return (list||[]).filter(function(r){
-        return !(_srcOf(r)===_ldSrc && String(r.date||'').slice(0,7)===ym);
-      });
-    }
+      + '→ 다른 달은 그대로 남습니다\n\n'
+      + '올린 자료를 아주 없애려면 「올린 자료」 에서 묶음째 지우세요.'))) return;
+    function gone(r){ return _srcOf(r)===_ldSrc && String(r.date||'').slice(0,7)===ym; }
+    function keep(list){ return (list||[]).filter(function(r){ return !gone(r); }); }
+    var hide2 = Object.assign({}, hidRow || {});
+    (rows.inc||[]).forEach(function(r){ if(gone(r)) hide2[r._k] = 1; });
+    (rows.exp||[]).forEach(function(r){ if(gone(r)) hide2[r._k] = 1; });
+    setHidRow(hide2);
     setRows(function(r){ return r ? Object.assign({},r,{inc:keep(r.inc), exp:keep(r.exp)}) : r; });
     setIncMon(''); setIncChk({});
-    showToast('🗑 '+_lbl+' '+_n+'건을 비웠습니다');
+    showToast('🗑 '+_lbl+' '+_n+'건을 내 화면에서 치웠습니다');
   }
 
   // ── 유연한 컬럼 감지 파서 ──
@@ -35145,12 +35324,29 @@ function FinanceLedger(){
         /* 덮어쓰지 않고 «쌓는다». 달마다 올려도 앞 달이 남아 있어야 달끼리 견줄 수 있다.
            같은 행이 두 번 올라오면(겹치는 기간·같은 파일 두 번) 뒤엣것을 버린다. */
         var _src = fileType === 'card' ? 'card' : 'bank';
-        var _cur = [], _new = [];
-        (rows && rows.inc || []).forEach(function(x){ _cur.push(_bankDraftSlimRow(x,'income',x.src)); });
-        (rows && rows.exp || []).forEach(function(x){ _cur.push(_bankDraftSlimRow(x,'expense',x.src)); });
+        var _new = [];
         result.inc.forEach(function(x){ _new.push(_bankDraftSlimRow(x,'income',_src)); });
         result.exp.forEach(function(x){ _new.push(_bankDraftSlimRow(x,'expense',_src)); });
+        /* ★ 이번 파일을 «한 묶음» 으로 만들어 서버에 따로 싣는다.
+           내 묶음만 고쳐 쓰므로, 같은 때 남이 올려도 서로 지우지 않는다. */
+        var _me = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? CURRENT_USER : {};
+        var _bat = erpMakeBatch(_new, { by:_me.sid || '', byName:_me.name || '',
+                     fileName:(file && file.name) || fName || '', src:_src });
+        var _prev = dbGet(LEDGER_BATCH_KEY, []) || [];
+        if(!Array.isArray(_prev)) _prev = [];
+        var _cur = erpBatchRows(_prev);          // 지금까지 쌓인 줄 (내 것 + 남이 올린 것)
         var _mg = erpBankMergeDraft(_cur, _new);
+        if(_bat){
+          dbUpsert(LEDGER_BATCH_KEY, _bat);
+          // 한도를 넘으면 오래된 묶음부터 통째로 버린다 — 조용히 자르지 않고 아래 요약에 적는다
+          var _tr = erpTrimBatches(_prev.concat([_bat]), LEDGER_BATCH_MAX_ROWS);
+          if(_tr.dropped.length){
+            try { dbRemoveMany(LEDGER_BATCH_KEY, _tr.dropped.map(function(b){ return b.id; })); }
+            catch(_de){ if(window._erpErrLog) window._erpErrLog(_de); }
+          }
+          setBatches(_tr.keep);
+          _mg.dropBatch = _tr.dropped.length;
+        }
         var _pst2 = erpBankProcessedStore();       // 이미 확정·등록한 행 — store 는 한 번만 받는다
         var _inc = [], _exp = [];
         _mg.rows.forEach(function(x){
@@ -35565,6 +35761,10 @@ function FinanceLedger(){
   }
 
   function removeRow(key, kind){
+    /* ★ 줄의 정본은 이제 서버의 묶음이라, 여기서 화면에서만 빼면 새로고침에 되살아난다.
+       그래서 «이 기기에서 치운 줄» 로 적어 둔다 — 남의 화면까지 지우지는 않는다.
+       (묶음째 지우려면 「올린 자료」 창에서 지운다) */
+    setHidRow(function(h){ var n = Object.assign({}, h || {}); n[key] = 1; return n; });
     if(kind==='inc'){
       setRows(function(r){return r?Object.assign({},r,{inc:r.inc.filter(function(x){return x._k!==key;})}):r;});
       setInMatch(function(m){var n=Object.assign({},m);delete n[key];return n;});
@@ -35897,6 +36097,8 @@ function FinanceLedger(){
     if(!fi){ showToast('❌ 되돌릴 기록을 찾지 못했습니다 — 확정 이력에서 확인하세요'); setLastAct(null); return; }
     if(!erpUndoIncome(fi)){ showToast('❌ 되돌리지 못했습니다'); return; }
     erpUnmarkBankRow(lastAct.row);            // 다음에 파일을 올려도 「이미 처리」로 숨지 않게
+    // 확정하며 「치운 줄」로 적어 둔 것을 도로 푼다 — 안 풀면 새로고침에 다시 사라진다
+    setHidRow(function(h){ var n = Object.assign({}, h || {}); delete n[lastAct.row._k]; return n; });
     setRows(function(r){
       if(!r) return r;
       var arr = (r.inc || []).slice();
@@ -36268,6 +36470,17 @@ function FinanceLedger(){
       h('div',{style:{flex:1}}),
       !rows && !busy && h('span',{style:{fontSize:'11px',color:'#94a3b8',whiteSpace:'nowrap'}},
         fileType==='nicebill' ? '나이스빌 → CMS 출금결과 내역 → 엑셀 저장' : '인터넷뱅킹·카드사 → 거래내역 → 엑셀 저장'),
+      /* ── 올린 자료 묶음 — 누가 무엇을 올렸는지 (2026-08-10 대표 요청) ──
+         A가 4~6월, B가 7~9월을 올리면 표에는 합쳐 보이고, 여기서 묶음별로 관리한다. */
+      fileType!=='nicebill' && batches.length>0 && (function(){
+        var _bsum = erpBatchSummary(batches, _meNow().sid);
+        return h('button',{onClick:function(e){ e.stopPropagation(); setBatOpen(true); },
+          title:'누가 어떤 파일을 올렸는지 봅니다\n올린 사람(관리자는 전부)이 묶음째 지울 수 있습니다',
+          style:{padding:'2px 8px',background:'#eff6ff',color:'#1e40af',border:'1px solid #bfdbfe',
+            borderRadius:'5px',fontSize:'10px',fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},
+          '📂 올린 자료 '+_bsum.count+'묶음 · '+_bsum.rows.toLocaleString()+'줄'
+          + (_bsum.others>0 ? (' (남이 '+_bsum.others+')') : ''));
+      })(),
       rows && fileType!=='nicebill' && h('span',{onClick:function(e){e.stopPropagation();setLdInfoOpen(!ldInfoOpen);},
         style:{fontSize:'10px',color:'#64748b',cursor:'pointer',fontWeight:600,whiteSpace:'nowrap'}},
         ldInfoOpen?'▴ 접기':'▾ 상세'),
@@ -38337,6 +38550,74 @@ function FinanceLedger(){
           )
         )
       );
+    })(),
+
+    /* ── 올린 자료 묶음 창 ── (2026-08-10 대표 요청)
+       누가 어떤 파일을 올렸는지 보고, 올린 사람(관리자는 전부)이 묶음째 지운다. */
+    batOpen && (function(){
+      var me = _meNow();
+      var bs = batches.slice().sort(function(a,b){ return String(b.at||'').localeCompare(String(a.at||'')); });
+      var sum = erpBatchSummary(bs, me.sid);
+      var th = { padding:'7px 10px',fontSize:'10.5px',fontWeight:700,color:'#64748b',
+                 background:'#f8fafc',borderBottom:'1px solid #e2e8f0',textAlign:'left' };
+      var td = { padding:'8px 10px',fontSize:'11.5px',borderBottom:'1px solid #f8fafc',verticalAlign:'middle' };
+      return h('div',{onClick:function(){ setBatOpen(false); },
+        style:{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.45)',
+          zIndex:9993,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'}},
+        h('div',{onClick:function(e){ e.stopPropagation(); },
+          style:{background:'#fff',borderRadius:'12px',width:'min(820px,96vw)',maxHeight:'86vh',
+            display:'flex',flexDirection:'column',overflow:'hidden'}},
+          h('div',{style:{background:'#1e40af',color:'#fff',padding:'11px 14px',display:'flex',
+            alignItems:'center',gap:'8px',fontSize:'13px',fontWeight:700}},
+            h('span',null,'📂 올린 자료 묶음'),
+            h('span',{style:{fontWeight:400,opacity:0.9,fontSize:'12px'}},
+              sum.count+'묶음 · '+sum.rows.toLocaleString()+'줄'),
+            h('span',{style:{flex:1}}),
+            h('button',{onClick:function(){ setBatOpen(false); },
+              style:{background:'none',border:'none',color:'#fff',fontSize:'18px',cursor:'pointer',
+                padding:'0 4px',lineHeight:1}},'×')),
+          h('div',{style:{padding:'8px 14px',background:'#eff6ff',borderBottom:'1px solid #bfdbfe',
+            fontSize:'11.5px',color:'#1e40af',lineHeight:1.6}},
+            '표에는 모든 묶음이 «합쳐져» 보입니다. 같은 줄이 두 묶음에 겹치면 먼저 올린 쪽만 남습니다.',
+            h('div',null,'묶음을 지우면 그 묶음의 줄만 사라집니다 — 이미 확정·등록한 입금/출금은 그대로입니다.')),
+          h('div',{style:{flex:1,overflowY:'auto'}},
+            bs.length===0
+              ? h('div',{style:{padding:'30px',textAlign:'center',color:'#94a3b8',fontSize:'12px'}},'올린 자료가 없습니다')
+              : h('table',{style:{width:'100%',borderCollapse:'collapse'}},
+                  h('thead',null,h('tr',null,
+                    h('th',{style:th},'파일 · 기간'),
+                    h('th',{style:Object.assign({},th,{width:'92px'})},'올린 사람'),
+                    h('th',{style:Object.assign({},th,{width:'64px',textAlign:'right'})},'줄'),
+                    h('th',{style:Object.assign({},th,{width:'80px'})},'언제'),
+                    h('th',{style:Object.assign({},th,{width:'74px',textAlign:'right'})},'')
+                  )),
+                  h('tbody',null, bs.map(function(b){
+                    var can = erpCanDropBatch(b, me);
+                    var isMine = !!(me.sid && String(b.by) === String(me.sid));
+                    return h('tr',{key:b.id,style:{background:isMine?'#fff':'#f8fafc'}},
+                      h('td',{style:td},
+                        h('div',{style:{fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',
+                          whiteSpace:'nowrap',maxWidth:'320px'},title:b.fileName||''},b.fileName||'이름 없는 파일'),
+                        h('div',{style:{fontSize:'10.5px',color:'#64748b'}},
+                          (b.from||'?')+' ~ '+(b.to||'?')+((b.src==='card')?' · 카드':''))),
+                      h('td',{style:td},(b.byName||'-'),
+                        isMine && h('span',{style:{marginLeft:'3px',color:'#2563eb',fontSize:'10px',fontWeight:700}},'(나)')),
+                      h('td',{style:Object.assign({},td,{textAlign:'right',fontVariantNumeric:'tabular-nums'})},
+                        (b.n || (b.rows?b.rows.length:0)).toLocaleString()),
+                      h('td',{style:Object.assign({},td,{color:'#64748b',fontSize:'10.5px'})},
+                        String(b.at||'').slice(5,10)),
+                      h('td',{style:Object.assign({},td,{textAlign:'right'})},
+                        can
+                          ? h('button',{onClick:function(){ dropBatch(b); },
+                              style:{padding:'2px 9px',background:'#fef2f2',color:'#991b1b',
+                                border:'1px solid #fecaca',borderRadius:'5px',fontSize:'10.5px',
+                                fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}},'지우기')
+                          : h('span',{style:{fontSize:'10px',color:'#94a3b8',whiteSpace:'nowrap'},
+                              title:'올린 사람과 관리자만 지울 수 있습니다'},'올린 사람만')));
+                  })))),
+          h('div',{style:{padding:'8px 14px',background:'#f8fafc',borderTop:'1px solid #e2e8f0',
+            fontSize:'11px',color:'#64748b'}},
+            '쌓인 줄이 '+LEDGER_BATCH_MAX_ROWS.toLocaleString()+'줄을 넘으면 오래된 묶음부터 자동으로 버립니다.')));
     })(),
 
     /* ── 4-2 업체 바꾸기 ── (2026-08-10 대표 요청: "자동으로 확인된 것이 잘못된 경우 수정")
