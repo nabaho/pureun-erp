@@ -1651,6 +1651,43 @@ function checkCamRes() {
    ⚠ 이럴 때는 화면 안 카메라를 고집하지 않고 **폰 기본 카메라**로 보낸다.
       폰 카메라는 어느 브라우저에서 열든 사진기 화소를 다 쓰고 초점도 제대로 잡는다.
       명함틀은 못 쓰지만, 글씨를 읽는 것이 먼저다. */
+/* 앱 안 브라우저에서 「폰 카메라로 엽니다」 안내를 이미 했는가 — 한 번만 알린다 */
+let _inAppCamTold = false;
+/* 폰 카메라가 저절로 안 열렸을 때 누를 자리 — 화면 한가운데 큰 단추 하나.
+   손가락으로 막 누른 것이 아니면 브라우저가 파일 고르기를 무시하기 때문이다. */
+function _inAppFallbackUI() {
+  let box = document.getElementById('camInAppBox');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'camInAppBox';
+    box.style.cssText = 'position:fixed;inset:0;z-index:8000;background:#0f172a;color:#fff;'
+      + 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center';
+    box.innerHTML =
+      '<div style="font-size:15px;font-weight:700">📷 사진 찍기</div>'
+      + '<div style="font-size:12.5px;line-height:1.6;opacity:.85;max-width:280px">'
+      + '네이버·카카오톡 안에서는 폰 카메라로 찍습니다.<br>더 선명하고, 카메라 허락을 묻지 않습니다.</div>'
+      + '<button id="camInAppGo" style="margin-top:4px;padding:14px 26px;border:none;border-radius:12px;'
+      + 'background:#2563eb;color:#fff;font-size:15px;font-weight:700">📷 카메라 열기</button>'
+      + '<button id="camInAppBack" style="padding:9px 18px;border:1px solid #475569;border-radius:10px;'
+      + 'background:transparent;color:#cbd5e1;font-size:12.5px">← 사진첩으로</button>';
+    document.body.appendChild(box);
+    document.getElementById('camInAppGo').onclick = function () { $('camInput').click(); };
+    document.getElementById('camInAppBack').onclick = function () {
+      box.style.display = 'none';
+      if (!camGoBack()) { try { location.href = 'pu-photos.html?sso=1'; } catch (_) {} }
+    };
+  }
+  box.style.display = 'flex';
+  /* 폰 카메라에서 사진을 받아 오면 이 화면은 할 일이 없다 — 그때 스스로 사라진다 */
+  const inp = $('camInput');
+  if (inp && !inp._inAppWired) {
+    inp._inAppWired = true;
+    inp.addEventListener('change', function () {
+      const b = document.getElementById('camInAppBox');
+      if (b) b.style.display = 'none';
+    });
+  }
+}
 function inAppBrowser() {
   const ua = String(navigator.userAgent || '');
   /* 네이버·카카오톡·인스타·페이스북·라인 — 국내에서 실제로 자주 쓰는 것들 */
@@ -1752,9 +1789,25 @@ async function openCam() {
      여기서는 고해상도 촬영도 초점 지정도 막혀 있어 미리보기부터 흐리다 —
      열어 봐야 흐린 사진만 쌓인다. 곧바로 폰 기본 카메라로 보낸다.
      ⚠ 조용히 넘기지 않는다. 왜 다른 화면이 뜨는지 모르면 고장으로 보인다. */
-  if (inAppBrowser() && !camQuickMode) {
-    toast('네이버·카카오톡 안에서는 카메라가 흐립니다 — 폰 카메라로 엽니다', 5000);
+  /* ★ 빠른촬영(포털 카메라 단추)도 마찬가지다 (2026-08-10 대표 제보:
+       "카메라 누르면 계속 이 문구 나온다 — 권한 요청").
+     앱 안 브라우저는 카메라 허락을 «기억하지 않는다». 그래서 화면 안 카메라를 쓰면
+     누를 때마다 「'nabaho.github.io'에서 카메라를 사용하려고 합니다」 가 뜬다.
+     그 창은 브라우저가 띄우는 것이라 우리가 없앨 수 없다 —
+     «카메라 API 를 아예 안 부르는 것» 만이 답이다.
+     폰 기본 카메라는 허락을 묻지 않고, 여기서는 그림도 더 선명하다.
+     대신 한 장마다 폰의 확인 화면을 거치는데, 그것은 폰이 하는 일이라 어쩔 수 없다. */
+  if (inAppBrowser()) {
+    if (!_inAppCamTold) {
+      _inAppCamTold = true;   // 한 번만 알린다 — 누를 때마다 뜨면 그것도 성가시다
+      toast('네이버·카카오톡 안에서는 폰 카메라로 엽니다 (더 선명하고 허락을 묻지 않습니다)', 4000);
+    }
     $('camInput').click();
+    /* ⚠ 손가락으로 «지금 막» 누른 것이 아니면 브라우저가 이 열기를 무시한다.
+       포털의 카메라 단추로 들어오면 화면이 새로 뜬 뒤라 그 자격이 사라진다 —
+       그때는 아무 일도 안 일어난 것처럼 보인다. 그래서 «누를 자리» 를 남겨 둔다.
+       (열렸으면 이 화면은 폰 카메라에 가려 보이지 않는다) */
+    _inAppFallbackUI();
     return;
   }
   try {

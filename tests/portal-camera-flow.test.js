@@ -29,7 +29,13 @@ test('카카오톡 포털도 기본 카메라 확인 화면 없이 연속촬영 
   assert.match(flow, /pu-photos\.html\?cam=1&quick=1&from=portal/);
   assert.doesNotMatch(native, /KAKAOTALK|embedded/);
   assert.match(native, /noWebCamera/);
-  assert.match(photos, /if \(inAppBrowser\(\) && !camQuickMode\)/);
+  /* (2026-08-10) 뒤집었다 — 대표 제보: "카메라 누르면 계속 이 문구 나온다".
+     앱 안 브라우저는 카메라 허락을 «기억하지 않아» 누를 때마다 권한 창이 떴다.
+     그 창은 브라우저가 띄우는 것이라 우리가 못 없앤다 — 카메라 API 를 아예 안 부르는 것만이 답.
+     그래서 빠른촬영(camQuickMode)에서도 폰 기본 카메라로 보낸다.
+     잃는 것: 한 장마다 폰의 확인 화면. 얻는 것: 권한 창이 안 뜨고 그림이 더 선명하다. */
+  assert.match(photos, /if \(inAppBrowser\(\)\) \{/);
+  assert.doesNotMatch(photos, /inAppBrowser\(\) && !camQuickMode/, '빠른촬영만 빼놓으면 그 길에서 권한 창이 다시 뜬다');
   assert.match(photos, /if \(blurry && !camQuickMode\)/);
 });
 
