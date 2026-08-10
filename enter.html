@@ -139,18 +139,6 @@ body.portal-mode #camFab{display:flex;}
 #camFab:hover{transform:translateY(-2px);box-shadow:0 14px 30px -6px rgba(29,62,182,.6),0 2px 6px rgba(10,20,60,.18);}
 #camFab:active{transform:translateY(0) scale(.95);}
 @media(max-width:520px){ #camFab{right:14px;bottom:14px;width:52px;height:52px;font-size:1.35rem;} }
-#portalCamBatch{display:none;position:fixed;inset:0;z-index:2147483500;background:rgba(17,28,55,.58);align-items:flex-end;justify-content:center;padding:18px;}
-#portalCamBatch.on{display:flex;}
-#portalCamBatch .pcb-box{width:min(100%,420px);background:#fff;border-radius:22px;padding:22px;box-shadow:0 22px 60px rgba(0,0,0,.28);text-align:center;}
-#portalCamBatch .pcb-icon{font-size:42px;line-height:1;margin-bottom:8px;}
-#portalCamBatch strong{display:block;font-size:1.18rem;color:#183b87;}
-#portalCamBatch p{margin:8px 0 18px;color:#62708a;}
-#portalCamBatch .pcb-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
-#portalCamBatch button{border:0;border-radius:13px;padding:13px 10px;font:inherit;font-weight:800;cursor:pointer;}
-#portalCamBatch button:disabled{opacity:.45;cursor:default;}
-#portalCamMore{background:#e8efff;color:#2146a8;}
-#portalCamDone{background:#2449bd;color:#fff;}
-#portalCamCancel{margin-top:10px!important;width:100%;background:#f3f5f9;color:#68758b;}
 /* ── 로그인 후 바로가기(홈 앱) — '업무 시스템' 줄 오른쪽 끝에 한 줄로 배치 ── */
 .homebar{display:inline-flex;align-items:center;gap:7px;margin-left:auto;font-size:.76rem;font-weight:600;color:var(--sub);white-space:nowrap;}
 .homebar select{font-family:inherit;font-size:.76rem;font-weight:700;color:var(--accent);background:rgba(255,255,255,.72);
@@ -517,19 +505,6 @@ body.portal-mode #camFab{display:flex;}
 
 <!-- ── 로그인 직후 바로 찍기 — 화면 오른쪽 아래 구석(대표 지시 2026-08-09) ── -->
 <button id="camFab" type="button" title="사진 찍기 — 바로 촬영" aria-label="사진 찍기">📷</button>
-<input id="portalCamInput" type="file" accept="image/*" capture="environment" hidden>
-<div id="portalCamBatch" role="dialog" aria-modal="true" aria-labelledby="portalCamBatchTitle">
-  <div class="pcb-box">
-    <div class="pcb-icon">📷</div>
-    <strong id="portalCamBatchTitle">연속 촬영</strong>
-    <p id="portalCamBatchCount">1장을 촬영했습니다</p>
-    <div class="pcb-actions">
-      <button id="portalCamMore" type="button">+ 한 장 더 찍기</button>
-      <button id="portalCamDone" type="button">촬영 완료</button>
-    </div>
-    <button id="portalCamCancel" type="button">촬영 취소</button>
-  </div>
-</div>
 
 <!-- ── 시스템 설정 (관리자 전용) — 화면 왼쪽 아래 구석 ── -->
 <button id="cfgFab" type="button" title="시스템 설정 (관리자 전용)">⚙ 설정</button>
@@ -1027,119 +1002,18 @@ body.portal-mode #camFab{display:flex;}
 
   // 로그인 직후 바로 찍기 — 오른쪽 아래 동그란 단추(#camFab, 정적 마크업).
   // 타일 줄과 달리 다시 그릴 필요가 없어 배선은 한 번만 한다.
-  var portalCameraBatchId = '';
-  var portalCameraBatchCount = 0;
-  var PORTAL_CAMERA_MAX = 30; // 사진첩의 한 번 업로드 상한과 같다.
-
-  function openPortalCameraInput(){
-    if(portalCameraBatchCount >= PORTAL_CAMERA_MAX){
-      alert('한 번에 ' + PORTAL_CAMERA_MAX + '장까지 촬영할 수 있습니다.\n「촬영 완료」로 먼저 저장해 주세요.');
-      return;
-    }
-    var input = $('portalCamInput');
-    if(input) input.click();
-  }
-
-  function showPortalCameraBatch(){
-    var full = portalCameraBatchCount >= PORTAL_CAMERA_MAX;
-    $('portalCamBatchCount').textContent = portalCameraBatchCount + '장을 촬영했습니다' + (full ? ' · 이제 저장해 주세요' : '');
-    $('portalCamMore').disabled = full;
-    $('portalCamBatch').classList.add('on');
-  }
-
-  function finishPortalCameraBatch(){
-    if(!portalCameraBatchId || !portalCameraBatchCount) return;
-    location.href = 'pu-photos.html?sso=1&portalcam=' + encodeURIComponent(portalCameraBatchId);
-  }
-
-  function discardPortalCameraBatch(batchId){
-    return new Promise(function(resolve){
-      if(!batchId || !window.indexedDB){ resolve(); return; }
-      var rq = indexedDB.open('puPortalCamera', 1);
-      rq.onupgradeneeded = function(){
-        if(!rq.result.objectStoreNames.contains('captures')) rq.result.createObjectStore('captures', { keyPath:'id' });
-      };
-      rq.onerror = function(){ resolve(); };
-      rq.onsuccess = function(){
-        var dbi = rq.result, tx = dbi.transaction('captures', 'readwrite'), st = tx.objectStore('captures');
-        var all = st.getAll();
-        all.onsuccess = function(){
-          (all.result || []).forEach(function(row){ if(row.batch === batchId || row.id === batchId) st.delete(row.id); });
-        };
-        tx.oncomplete = function(){ dbi.close(); resolve(); };
-        tx.onerror = function(){ dbi.close(); resolve(); };
-      };
-    });
-  }
-
-  function cancelPortalCameraBatch(){
-    if(portalCameraBatchCount && !confirm('촬영한 ' + portalCameraBatchCount + '장을 모두 취소할까요?')) return;
-    var oldBatch = portalCameraBatchId;
-    portalCameraBatchId = '';
-    portalCameraBatchCount = 0;
-    $('portalCamBatch').classList.remove('on');
-    discardPortalCameraBatch(oldBatch);
-  }
-
   function wireCamFab(){
     var b = $('camFab'); if(!b || b._wired) return;
     b._wired = true;
     b.addEventListener('click', function(){
+      var _v = Math.floor(Date.now() / 600000);
       if(isMobile()){
-        /* 모바일에서는 반드시 이 클릭 동작 안에서 폰 기본 카메라를 연다.
-           다른 페이지로 이동한 뒤 카메라를 열면 네이버·삼성 브라우저가 사용자 동작으로
-           인정하지 않아 사진첩 화면만 남는 경우가 있다. */
-        openPortalCameraInput();
+        /* 사진첩 화면은 보이지 않고 그 안의 연속촬영 카메라가 곧바로 열린다.
+           셔터를 계속 눌러 찍고 왼쪽 아래에서 최근 사진을 확인한 뒤 한 번에 저장한다. */
+        location.href = 'pu-photos.html?cam=1&quick=1&from=portal&sso=1&v=' + _v;
         return;
       }
-      var _v = Math.floor(Date.now() / 600000);
-      openPortalApp({ key: 'camquick' }, 'pu-photos.html?cam=1&quick=1&sso=1&v=' + _v);
-    });
-
-    var input = $('portalCamInput');
-    if(input && !input._wired){
-      input._wired = true;
-      input.addEventListener('change', function(){
-        var file = input.files && input.files[0];
-        input.value = '';
-        if(!file) return; // 카메라에서 취소한 경우 포털에 그대로 머문다.
-        if(!portalCameraBatchId) portalCameraBatchId = 'portal-batch-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
-        savePortalCameraFile(file, portalCameraBatchId).then(function(){
-          portalCameraBatchCount += 1;
-          showPortalCameraBatch();
-        }).catch(function(e){
-          alert('촬영한 사진을 임시 보관하지 못했습니다. 다시 찍어 주세요.\n' + ((e && e.message) || e));
-        });
-      });
-    }
-    var more = $('portalCamMore');
-    if(more && !more._wired){ more._wired = true; more.addEventListener('click', openPortalCameraInput); }
-    var done = $('portalCamDone');
-    if(done && !done._wired){ done._wired = true; done.addEventListener('click', finishPortalCameraBatch); }
-    var cancel = $('portalCamCancel');
-    if(cancel && !cancel._wired){ cancel._wired = true; cancel.addEventListener('click', cancelPortalCameraBatch); }
-  }
-
-  /* 카메라가 돌려준 File은 페이지 이동과 함께 사라지므로 IndexedDB에 잠깐 맡긴다.
-     사진첩의 업로드 대기열에 들어간 뒤에는 즉시 지운다. */
-  function savePortalCameraFile(file, batchId){
-    return new Promise(function(resolve, reject){
-      if(!window.indexedDB){ reject(new Error('이 브라우저는 촬영 임시보관을 지원하지 않습니다.')); return; }
-      var token = 'portal-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
-      var rq = indexedDB.open('puPortalCamera', 1);
-      rq.onupgradeneeded = function(){
-        if(!rq.result.objectStoreNames.contains('captures')) rq.result.createObjectStore('captures', { keyPath:'id' });
-      };
-      rq.onerror = function(){ reject(rq.error || new Error('임시보관소를 열지 못했습니다.')); };
-      rq.onsuccess = function(){
-        var dbi = rq.result;
-        var tx = dbi.transaction('captures', 'readwrite');
-        tx.objectStore('captures').put({ id:token, batch:batchId || token, blob:file, name:file.name || ('camera-' + Date.now() + '.jpg'),
-          type:file.type || 'image/jpeg', lastModified:file.lastModified || Date.now(), savedAt:Date.now() });
-        tx.oncomplete = function(){ dbi.close(); resolve(token); };
-        tx.onerror = function(){ var err = tx.error; dbi.close(); reject(err || new Error('촬영 사진을 보관하지 못했습니다.')); };
-        tx.onabort = tx.onerror;
-      };
+      openPortalApp({ key: 'camquick' }, 'pu-photos.html?cam=1&quick=1&from=portal&sso=1&v=' + _v);
     });
   }
 
