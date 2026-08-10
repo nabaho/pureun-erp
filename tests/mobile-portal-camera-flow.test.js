@@ -19,14 +19,12 @@ test('인앱 브라우저도 화면 폭과 터치로 모바일 판정한다', ()
 });
 
 test('포털 카메라는 중간 화면 없이 사진첩 카메라로 바로 간다', () => {
-  const start = enter.indexOf('function openPortalCameraInput()');
+  const start = enter.indexOf('function wireCamFab()');
   const end = enter.indexOf('function renderPortal', start);
   const fn = enter.slice(start, end);
-  assert.match(enter, /id="portalCamInput"[^>]*accept="image\/\*"[^>]*capture="environment"/);
-  assert.match(fn, /if\(input\) input\.click\(\)/);
-  assert.match(fn, /savePortalCameraFile\(file, portalCameraBatchId\)/);
-  assert.match(fn, /pu-photos\.html\?sso=1&portalcam=/);
-  assert.doesNotMatch(fn, /sessionStorage\.setItem\('pu_open_camera','quick'\)/);
+  assert.match(fn, /pu-photos\.html\?cam=1&quick=1&from=portal&sso=1&v=/);
+  assert.doesNotMatch(enter, /portalCamMore/);
+  assert.doesNotMatch(enter, /portalCamInput/);
   assert.doesNotMatch(fn, /pu-camera\.html/);
 });
 
@@ -37,14 +35,15 @@ test('인증 이동 뒤에도 카메라 요청을 기억하고 한 번만 쓴다
   assert.match(fn, /camQuickMode = quick && !camCardMode/);
 });
 
-test('빠른 촬영은 저장 뒤 카메라를 닫고 사진첩에 남긴다', () => {
+test('포털 빠른 촬영은 여러 장 저장 뒤 카메라를 닫고 포털로 돌아간다', () => {
   assert.match(photos, /id="camDone" onclick="finishCamShots\(\)"[^>]*>저장<\/button>/);
   const finish = photos.match(/function finishCamShots\(\) \{[\s\S]*?\n\}/)[0];
   assert.match(finish, /if \(camQuickMode\) \{ camUpload\(\); return; \}/);
   const upload = photos.match(/async function camUpload\(\) \{[\s\S]*?\n\}/)[0];
-  assert.match(upload, /if \(camQuickMode && !camReturnTo\)/);
-  assert.match(upload, /camDiscard\(\)/);
-  assert.match(upload, /사진첩에 저장했습니다/);
+  assert.match(photos, /from === 'portal' \? 'enter\.html'/);
+  assert.match(upload, /if \(camReturnTo\) \{ camDiscard\(\); camGoBack\(\); \}/);
+  const close = photos.match(/function closeCam\(\) \{[\s\S]*?\n\}/)[0];
+  assert.match(close, /camDiscard\(\);[\s\S]*if \(camReturnTo\) camGoBack\(\)/);
 });
 
 test('명함 화질은 최대 해상도 우선·저장 3200px 95%를 쓴다', () => {
