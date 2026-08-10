@@ -321,6 +321,7 @@ body.pc #main,body.pc #fab,body.pc #selbar{display:none!important}
 .cpatt{flex:1;display:flex;flex-wrap:wrap;gap:5px;align-items:center}
 .cpchip{display:inline-flex;align-items:center;gap:5px;background:#eef2f8;border-radius:14px;
   padding:4px 10px;font-size:12px;color:#33415e}
+.cpchip.local{background:#eaf7ee;color:#1c5c34}
 .cpchip b{color:#8b98b3;cursor:pointer;font-weight:700}
 .cpchip b:hover{color:#c0392b}
 .cpnone{font-size:12px;color:#8b98b3}
@@ -1650,8 +1651,10 @@ const MAIL_TPL_DEFAULT = {
    ⚠ 첨부 크기는 **보내기 전에** 센다. 서버가 18MB 에서 자르는데, 보내고 나서
      알면 이미 기다린 뒤다. 여기서 미리 막고 무엇을 빼야 하는지 보여 준다. */
 const MAIL_MAX_BYTES = 18 * 1024 * 1024;
-function attachTotal(ids, meta){
-  return (ids||[]).reduce((s,id)=> s + (((meta||{})[id]||{}).size || 0), 0);
+function attachTotal(ids, meta, files){
+  const a = (ids||[]).reduce((s,id)=> s + (((meta||{})[id]||{}).size || 0), 0);
+  const b = (files||[]).reduce((s,f)=> s + ((f&&f.size)||0), 0);
+  return a + b;
 }
 function fmtMB(n){ return (Number(n||0)/1024/1024).toFixed(1) + 'MB'; }
 /* 보낼 수 있는 편지인가. 되면 {ok:true}, 아니면 {ok:false, error}.
@@ -1889,6 +1892,36 @@ function toggleComposeMat(id){
   if(i>=0) _compose.ids.splice(i,1); else _compose.ids.push(id);
   renderCompose();
 }
+/* ── 내 PC 파일 붙이기 ──
+   한글에서 조항을 고친 계약서처럼 **이번 편지에만** 쓰는 파일.
+   ⚠ 자료함에 저장하지 않는다 — 저장하면 고친 사본이 매번 자료함에 쌓인다.
+     계속 쓸 것이면 자료함 [교체]로 올린다(안내 문구로 알린다). */
+async function addLocalFiles(input){
+  const files=[...((input&&input.files)||[])]; if(input) input.value='';
+  grabCompose(); if(!_compose || !files.length) return;
+  _compose.files = _compose.files || [];
+  let added=0;
+  for(const f of files){
+    if(f.size > 8*1024*1024){ toast(`${f.name} — 파일이 너무 큽니다 (${fmtMB(f.size)}). 8MB 이하만 붙일 수 있습니다`, 8000); continue; }
+    try{
+      const dataUrl = await new Promise((res,rej)=>{
+        const r=new FileReader();
+        r.onload=()=>res(r.result);
+        r.onerror=()=>rej(new Error('파일을 읽을 수 없습니다'));
+        r.readAsDataURL(f);
+      });
+      _compose.files.push({ name:f.name, size:f.size, dataUrl });
+      added++;
+    }catch(e){ toast(`${f.name} — ${(e&&e.message)||'읽지 못했습니다'}`, 7000); }
+  }
+  if(added) toast(`💻 내 PC 파일 ${added}개를 붙였습니다 — 이번 편지에만 붙습니다`, 6000);
+  renderCompose();
+}
+function dropLocalFile(i){
+  grabCompose(); if(!_compose || !_compose.files) return;
+  _compose.files.splice(i,1);
+  renderCompose();
+}
 /* 묶음을 편지 안에서 — 누르면 그 묶음의 자료로 첨부가 바뀐다 */
 function applySetInCompose(sid){
   grabCompose(); if(!_compose) return;
@@ -1919,13 +1952,19 @@ function renderCompose(){
   const c = _compose; if(!c) return;
   const it = state.items[c.cardId] || {};
   const from = matMailCfg().from || '(보내는 주소 없음)';
-  const bytes = attachTotal(c.ids, _matMeta);
+  const local = c.files || [];
+  const bytes = attachTotal(c.ids, _matMeta, local);
   const over = bytes > MAIL_MAX_BYTES;
-  const chips = c.ids.length ? c.ids.map(id=>{ const m=_matMeta[id]||{};
+  const chipsMat = c.ids.map(id=>{ const m=_matMeta[id]||{};
     return `<span class="cpchip">${matIcon(m.fileName)} ${esc(m.name||'자료')}
       <span class="sz">${m.size?fmtMB(m.size):''}</span>
-      <b onclick="dropAttach('${id}')" title="빼기">✕</b></span>`; }).join('')
-    : `<span class="cpnone">첨부 없음 — 글만 보냅니다. 「← 자료 고르기」에서 담을 수 있습니다.</span>`;
+      <b onclick="dropAttach('${id}')" title="빼기">✕</b></span>`; }).join('');
+  /* 내 PC 파일은 색을 달리한다 — 자료함 것과 섞이면 어느 것이 이번만인지 모른다 */
+  const chipsLocal = local.map((f,i)=>
+    `<span class="cpchip local">💻 ${esc(f.name||'파일')}
+      <span class="sz">${fmtMB(f.size)}</span>
+      <b onclick="dropLocalFile(${i})" title="빼기">✕</b></span>`).join('');
+  const chips = (chipsMat+chipsLocal) || `<span class="cpnone">첨부 없음 — 글만 보냅니다.</span>`;
   /* 다음메일 쓰기창과 같은 차림새 — [보내기]가 맨 위, 그 아래 보내는사람부터 차례로.
      다들 매일 쓰는 화면이라 그 배치가 곧 설명서다. */
   $('sendMatSheet').classList.add('compose');
@@ -1948,7 +1987,10 @@ function renderCompose(){
       <div class="cpattbox ${over?'over':''}">
         <div class="cpatt">${chips}
           <button class="cpghost" style="padding:5px 11px;font-size:12px" onclick="togglePickMat()"
-            title="자료함의 자료를 이 자리에서 담습니다">${c.picking?'담기 접기':'＋ 자료 담기'}</button></div>
+            title="자료함의 자료를 이 자리에서 담습니다">${c.picking?'담기 접기':'＋ 자료 담기'}</button>
+          <label class="cpghost" style="padding:5px 11px;font-size:12px;cursor:pointer"
+            title="한글에서 고친 계약서처럼 이번 편지에만 붙일 파일 (8MB 이하)">💻 내 PC 파일
+            <input type="file" multiple style="display:none" onchange="addLocalFiles(this)"></label></div>
         ${c.picking?`<div class="setpick" style="margin-top:9px;padding-top:9px;border-top:1px dashed #dde3ee">
           ${(function(){
             const sets = setList(_matSets).filter(s=>setLiveIds(s,_matMeta).length);
@@ -1966,19 +2008,22 @@ function renderCompose(){
       </div></div>
     <textarea id="cpBody" class="cpbody">${esc(c.body)}</textarea>
     <div class="cphint">자료함의 메일 본문 틀에서 채워졌습니다. 여기서 고쳐 보내도 <b>틀은 안 바뀝니다.</b>
-      · 답장은 <b>${esc((myEmail||'').split('@')[0]||'보낸 직원')}</b> 님께 옵니다.</div>
+      · 답장은 <b>${esc((myEmail||'').split('@')[0]||'보낸 직원')}</b> 님께 옵니다.
+      ${local.length?'<br>💻 내 PC 파일은 <b>이번 편지에만</b> 붙습니다 — 계속 쓰실 것이면 자료함에서 [교체]로 올려주세요.':''}</div>
     <button class="sm-send" onclick="sendCompose()" ${over?'disabled':''}>보내기</button>`;
 }
 async function sendCompose(){
   grabCompose();
   const c = _compose; if(!c) return;
-  const chk = composeCheck({ to:c.to, subject:c.subject, body:c.body, bytes:attachTotal(c.ids,_matMeta) });
+  const chk = composeCheck({ to:c.to, subject:c.subject, body:c.body,
+                             bytes:attachTotal(c.ids,_matMeta,c.files) });
   if(!chk.ok) return toast(chk.error, 7000);
   toast('보내는 중…', 30000);
   try{
     const r = await postAutoMail({
       cardId: c.cardId, to: c.to, cc: c.cc,
-      subject: c.subject, body: c.body, matIds: c.ids, set: _sendMatSetName || ''
+      subject: c.subject, body: c.body, matIds: c.ids, set: _sendMatSetName || '',
+      files: (c.files||[]).map(f=>({ name:f.name, dataUrl:f.dataUrl }))
     });
     const cardId = c.cardId;
     _compose = null;

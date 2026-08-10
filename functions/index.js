@@ -579,6 +579,19 @@ exports.sendMaterialMail = functions
     // 고른 것 중 일부만 찾았다면 그 사실을 알린다 — 조용히 덜 보내면 다 보낸 줄 안다
     const missing = matIds.length - attachments.length;
 
+    // ── 이번 편지에만 붙이는 파일 (내 PC 에서 고른 것) ──
+    // 자료함에 없는 파일이라 화면이 내용을 함께 보낸다. 한글에서 조항을 고친
+    // 계약서처럼 **이번 한 번만** 쓰는 파일이 여기로 온다.
+    // ⚠ 자료함에 저장하지 않는다. 저장하면 매번 고친 사본이 자료함에 쌓인다.
+    const extras = Array.isArray(body.files) ? body.files.slice(0, 10) : [];
+    for (const f of extras) {
+      if (!f || typeof f !== "object") continue;
+      const att = MS.toAttachment({ fileName: f.name }, f.dataUrl);
+      if (!att) continue;
+      attachments.push(att);
+      names.push(String(f.name || "첨부"));
+    }
+
     const v = MS.validateSend({
       to: body.to, cc: body.cc, subject: body.subject, body: body.body, attachments: attachments,
     });
