@@ -287,7 +287,14 @@
   /* why: 왜 지웠는지 한 줄(없으면 사람이 지운 것이다).
      스스로 지우는 경우(중복 등)에 이것이 없으면 기록만 보고는
      '누가 왜 지웠는지' 알 수 없어 지운 기록이 반쪽이 된다. */
-  function deletePhoto(year, id, why) {
+  /* owner: 누구 자리의 사진인가. 안 넘기면 지금 로그인한 사람 자리다.
+     ⚠ 총괄 관리자가 남의 사진을 지울 때 이것을 안 넘기면, **자기 자리에 대고**
+       지우는 시늉만 하고 조용히 끝난다 — 화면에서는 사라진 것처럼 보이지만
+       실제 사진은 그대로 남는다. 막는 것보다 나쁘다(대표 보고 2026-08-10).
+     ⚠ 휴지통·지운 기록도 **주인 자리**에 남는다. 남의 사진을 관리자가 지웠다고
+       관리자 휴지통에 담으면, 주인은 자기 사진이 어디로 갔는지 찾을 길이 없다.
+       누가 지웠는지는 dellog 의 by·byName 에 남는다. */
+  function deletePhoto(year, id, why, owner) {
     if (!year || !id) return Promise.reject(new Error('지울 사진을 알 수 없습니다'));
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     /* ⚠ 옛 자리(puphotos/items 등)는 읽지도 쓰지도 않는다.
@@ -297,9 +304,9 @@
        (2026-08-06 대표 보고: "자꾸 에러 난다"). 옛 자리는 이미 비워서
        옮겼으므로 여기서 함께 비울 것도 없다. */
     return Promise.all([
-      readOnce(metaPath(year, id)).catch(function () { return null; }),
-      loadFull(year, id).catch(function () { return null; }),
-      loadThumb(year, id).catch(function () { return null; })
+      readOnce(metaPath(year, id, owner)).catch(function () { return null; }),
+      loadFull(year, id, owner).catch(function () { return null; }),
+      loadThumb(year, id, owner).catch(function () { return null; })
     ]).then(function (r) {
       var meta = r[0];
       if (!meta && !r[1] && !r[2]) {
@@ -307,19 +314,19 @@
       }
       var u = {};
       var now = Date.now();
-      u[trashPath(year, id)] = {
+      u[trashPath(year, id, owner)] = {
         meta: meta || {}, full: r[1] || '', thumb: r[2] || '', delAt: now
       };
       /* 지운 기록은 휴지통과 따로 남는다 — 휴지통을 완전히 비운 뒤에도
          '무엇을 언제 누가 지웠는지'에 답할 수 있어야 한다(증빙 자료를 다루는 앱이다). */
-      u[logPath(id)] = {
+      u[logPath(id, owner)] = {
         year: year, what: whatOf(meta), delAt: now,
         by: deps.uid || '', byName: deps.name || '',
         why: why || ''
       };
-      u[metaPath(year, id)] = null;
-      u[blobPath(year, id)] = null;
-      u[thumbPath(year, id)] = null;
+      u[metaPath(year, id, owner)] = null;
+      u[blobPath(year, id, owner)] = null;
+      u[thumbPath(year, id, owner)] = null;
       /* 같이 보던 사람의 목록에서도 뺀다 — 안 빼면 원본이 없는 유령이 남아
          「나와 공유된 사진」이 열리지 않는 사진으로 채워진다. */
       Object.keys((meta && meta.shareWith) || {}).forEach(function (who) {
