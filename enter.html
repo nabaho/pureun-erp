@@ -505,6 +505,9 @@ body.portal-mode #camFab{display:flex;}
 
 <!-- ── 로그인 직후 바로 찍기 — 화면 오른쪽 아래 구석(대표 지시 2026-08-09) ── -->
 <button id="camFab" type="button" title="사진 찍기 — 바로 촬영" aria-label="사진 찍기">📷</button>
+<!-- 아이폰 카카오톡 등 앱 내부 브라우저는 페이지 이동 뒤 웹 카메라 권한을 막는다.
+     그 기기에서는 이 입력을 사용해 '버튼을 누른 바로 그 순간' 기본 카메라를 연다. -->
+<input id="portalCamInput" type="file" accept="image/*" capture="environment" hidden>
 
 <!-- ── 시스템 설정 (관리자 전용) — 화면 왼쪽 아래 구석 ── -->
 <button id="cfgFab" type="button" title="시스템 설정 (관리자 전용)">⚙ 설정</button>
@@ -1008,12 +1011,66 @@ body.portal-mode #camFab{display:flex;}
     b.addEventListener('click', function(){
       var _v = Math.floor(Date.now() / 600000);
       if(isMobile()){
+        /* 카카오톡·네이버 등 앱 내부 브라우저는 다음 페이지에서 getUserMedia를
+           부르면 사용자 터치로 인정하지 않아 사진첩만 보이는 경우가 있다.
+           이 환경에서만 현재 터치 안에서 폰 기본 카메라를 바로 연다. */
+        if(needsDirectNativeCamera()){
+          var input = $('portalCamInput');
+          if(input) input.click();
+          return;
+        }
         /* 사진첩 화면은 보이지 않고 그 안의 연속촬영 카메라가 곧바로 열린다.
            셔터를 계속 눌러 찍고 왼쪽 아래에서 최근 사진을 확인한 뒤 한 번에 저장한다. */
         location.href = 'pu-photos.html?cam=1&quick=1&from=portal&sso=1&v=' + _v;
         return;
       }
       openPortalApp({ key: 'camquick' }, 'pu-photos.html?cam=1&quick=1&from=portal&sso=1&v=' + _v);
+    });
+
+    var input = $('portalCamInput');
+    if(input && !input._wired){
+      input._wired = true;
+      input.addEventListener('change', function(){
+        var file = input.files && input.files[0];
+        input.value = '';
+        if(!file) return; // 카메라에서 취소하면 포털에 그대로 머문다.
+        savePortalCameraFile(file).then(function(token){
+          location.href = 'pu-photos.html?sso=1&portalcam=' + encodeURIComponent(token);
+        }).catch(function(e){
+          alert('촬영한 사진을 임시 보관하지 못했습니다. 다시 찍어 주세요.\n' + ((e && e.message) || e));
+        });
+      });
+    }
+  }
+
+  function needsDirectNativeCamera(){
+    var ua = navigator.userAgent || '';
+    var embedded = /KAKAOTALK|NAVER|DaumApps|FBAN|FBAV|Instagram|Line\//i.test(ua);
+    var noWebCamera = !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    return embedded || noWebCamera;
+  }
+
+  /* 촬영 파일은 페이지가 바뀌면 사라지므로 사진첩의 안전 대기열로 옮길 때까지만
+     브라우저 안 임시보관소에 맡긴다. 서버 저장 뒤 이 임시본은 즉시 지워진다. */
+  function savePortalCameraFile(file){
+    return new Promise(function(resolve, reject){
+      if(!window.indexedDB){ reject(new Error('이 브라우저는 촬영 임시보관을 지원하지 않습니다.')); return; }
+      var token = 'portal-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+      var rq = indexedDB.open('puPortalCamera', 1);
+      rq.onupgradeneeded = function(){
+        if(!rq.result.objectStoreNames.contains('captures')) rq.result.createObjectStore('captures', { keyPath:'id' });
+      };
+      rq.onerror = function(){ reject(rq.error || new Error('촬영 임시보관소를 열지 못했습니다.')); };
+      rq.onsuccess = function(){
+        var dbi = rq.result;
+        var tx = dbi.transaction('captures', 'readwrite');
+        tx.objectStore('captures').put({ id:token, blob:file,
+          name:file.name || ('camera-' + Date.now() + '.jpg'),
+          type:file.type || 'image/jpeg', lastModified:file.lastModified || Date.now(), savedAt:Date.now() });
+        tx.oncomplete = function(){ dbi.close(); resolve(token); };
+        tx.onerror = function(){ var err = tx.error; dbi.close(); reject(err || new Error('촬영 사진을 보관하지 못했습니다.')); };
+        tx.onabort = tx.onerror;
+      };
     });
   }
 
