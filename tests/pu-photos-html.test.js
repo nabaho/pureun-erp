@@ -1091,7 +1091,11 @@ test('닫는 길이 셋이다 — 단추·바깥 누르기·ESC', () => {
   // 사진을 눌러 닫던 길이 확대로 바뀌었으니 닫는 길을 잃으면 갇힌다.
   assert.match(app, /onclick="closeViewer\(\)">닫기/);
   assert.match(app, /onclick="picClick\(event\)"/);
-  assert.match(app, /e\.key === 'Escape' && viewerId\) closeViewer\(\)/);
+  /* ⚠ 2026-08-10 다시 겨눔 — ESC 처리를 escOnce() 하나로 모았다.
+     지킬 것은 「ESC 로도 닫힌다」이지 처리기가 어디에 적혀 있는가가 아니다. */
+  const esc = app.match(/function escOnce\(\)[\s\S]*?\n\}/);
+  assert.ok(esc && /if \(viewerId\) \{ closeViewer\(\); return; \}/.test(esc[0]),
+    'ESC 로 크게 보기를 닫는 길이 없습니다.');
 });
 
 test('다음 사진을 열 때 확대가 풀려 있다', () => {
