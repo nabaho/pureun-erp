@@ -8,13 +8,23 @@ const portal = fs.readFileSync(path.join(root, 'enter.html'), 'utf8');
 const photos = fs.readFileSync(path.join(root, 'pu-photos.html'), 'utf8');
 const erp = fs.readFileSync(path.join(root, 'pu-erp.html'), 'utf8');
 
-test('모바일 포털 카메라는 사진첩 목록 없이 연속촬영 카메라를 바로 연다', () => {
+test('일반 모바일 포털 카메라는 사진첩 목록 없이 연속촬영 카메라를 바로 연다', () => {
   const start = portal.indexOf('function wireCamFab()');
   const end = portal.indexOf('function renderPortal', start);
   const flow = portal.slice(start, end);
   assert.match(flow, /location\.href\s*=\s*'pu-photos\.html\?cam=1&quick=1&from=portal&sso=1&v='/);
-  assert.doesNotMatch(portal, /id="portalCamInput"/);
-  assert.doesNotMatch(portal, /id="portalCamMore"/);
+  assert.match(portal, /id="portalCamInput"[^>]+capture="environment"/);
+  assert.match(flow, /needsDirectNativeCamera\(\)/);
+  assert.match(flow, /input\.click\(\)/);
+  assert.match(portal, /KAKAOTALK/);
+});
+
+test('앱 내부 브라우저 촬영 파일은 임시 보관 후 안전 대기열로 옮긴다', () => {
+  assert.match(portal, /indexedDB\.open\('puPortalCamera',\s*1\)/);
+  assert.match(portal, /pu-photos\.html\?sso=1&portalcam=/);
+  assert.match(photos, /function takePortalCameraFile\(\)/);
+  assert.match(photos, /await addFiles\(files,\s*true,\s*\{\s*fromCam:\s*true,\s*portalCapture:\s*true\s*\}\)/);
+  assert.match(photos, /촬영한 사진을 준비하고 있습니다/);
 });
 
 test('연속촬영 사진은 사진첩의 기존 안전 대기열로 한꺼번에 보낸다', () => {

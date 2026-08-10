@@ -23,8 +23,9 @@ test('포털 카메라는 중간 화면 없이 사진첩 카메라로 바로 간
   const end = enter.indexOf('function renderPortal', start);
   const fn = enter.slice(start, end);
   assert.match(fn, /pu-photos\.html\?cam=1&quick=1&from=portal&sso=1&v=/);
-  assert.doesNotMatch(enter, /portalCamMore/);
-  assert.doesNotMatch(enter, /portalCamInput/);
+  assert.match(enter, /id="portalCamInput"[^>]+capture="environment"/);
+  assert.match(fn, /needsDirectNativeCamera\(\)/);
+  assert.match(fn, /input\.click\(\)/);
   assert.doesNotMatch(fn, /pu-camera\.html/);
 });
 
