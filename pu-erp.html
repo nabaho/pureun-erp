@@ -44281,6 +44281,147 @@ function invDragHasFile(ev){
     return false;
   } catch(e){ return false; }
 }
+/* ══════════ 홈택스 세금계산서 목록 읽기 ══════════
+   (2026-08-10 김보람 제보: "세금계산서 엑셀 일괄 업로드가 안 됩니다" — 두 경로 모두)
+   까닭이 둘이었다.
+     ① 홈택스 목록은 머리줄이 «두 줄» 이다. 위는 묶음 이름(공급자·공급받는자),
+        아래가 진짜 칸 이름. 그런데 「공급받는자」 라는 낱말이 보이는 «첫» 줄을 머리줄로
+        잡는 바람에 묶음 줄을 골랐고, 그 줄엔 작성일자·상호·공급가액이 없어 칸 번호가
+        모두 -1 이 됐다. 그러면 모든 줄이 걸러져 0건이 되는데 화면에는
+        「✅ 완료: 업체 0개」 만 떴다 — 실패인데 성공처럼 보였다.
+     ② 머리줄을 제대로 골라도 「상호」가 두 번 나온다(공급자·공급받는자).
+        앞의 것을 집으면 모든 줄이 «우리 법인 이름» 으로 기록된다.
+   그래서 ① 낱말이 보이는 줄이 아니라 «필요한 칸이 실제로 잡히는 줄» 을 고르고,
+          ② 묶음 줄을 아래 줄에 이어 붙여 「공급받는자 상호」 를 한 칸으로 읽는다.
+          ③ 못 읽으면 «왜 못 읽었는지» 를 말한다 — 조용히 0건이 되지 않게. */
+
+/* 병합된 묶음 머리줄은 «맨 앞 칸에만» 글자가 있다 — 오른쪽으로 채워 각 칸의 묶음을 안다 */
+function erpInvFillGroup(row){
+  var out = [], cur = '';
+  for(var i = 0; i < (row || []).length; i++){
+    var v = String(row[i] === null || row[i] === undefined ? '' : row[i]).trim();
+    if(v) cur = v;
+    out.push(cur);
+  }
+  return out;
+}
+/* i 번째 줄을 칸 이름 줄로 보고, 바로 «위» 묶음 줄을 이어 붙인다 */
+function erpInvMergeHeader(rows, i){
+  rows = rows || [];
+  var sub = (rows[i] || []).map(function(x){ return String(x === null || x === undefined ? '' : x).trim(); });
+  if(i <= 0) return sub;
+  var grp = erpInvFillGroup(rows[i - 1]);
+  return sub.map(function(s, j){
+    var g = grp[j] || '';
+    return (g && g !== s) ? (g + ' ' + s) : s;
+  });
+}
+/* 여러 규칙을 «우선순위 순» 으로 본다 — 공급받는자 것을 공급자 것보다 먼저.
+   옛 코드는 /상호|공급받는자.*상호/ 였는데, 「상호」가 먼저라 뒤 갈래가 영영 안 쓰였다. */
+function erpInvColOf(hdr, res){
+  for(var r = 0; r < (res || []).length; r++){
+    for(var i = 0; i < (hdr || []).length; i++){
+      if(res[r].test(String(hdr[i] || ''))) return i;
+    }
+  }
+  return -1;
+}
+var ERP_INV_COL = {
+  date:   [/작성일자/, /발행일/, /작성\s*일/],
+  name:   [/공급받는자[\s\S]*상호/, /상호/],
+  biznum: [/공급받는자[\s\S]*(등록번호|사업자)/, /등록번호/, /사업자/],
+  supply: [/공급가액/],
+  item:   [/품목|품명/],
+  note:   [/비고/]
+};
+function erpInvCols(hdr){
+  return { date:erpInvColOf(hdr, ERP_INV_COL.date),
+           name:erpInvColOf(hdr, ERP_INV_COL.name),
+           biznum:erpInvColOf(hdr, ERP_INV_COL.biznum),
+           supply:erpInvColOf(hdr, ERP_INV_COL.supply),
+           item:erpInvColOf(hdr, ERP_INV_COL.item),
+           note:erpInvColOf(hdr, ERP_INV_COL.note) };
+}
+/* ★ 낱말이 보이는 첫 줄이 아니라 «필요한 칸이 실제로 잡히는 줄» 을 고른다.
+   날짜와 상호가 없으면 한 줄도 못 읽으므로 그 둘은 있어야 하고,
+   상호가 «공급받는자» 것이면 크게 얹어 준다 — 우리 법인 이름을 적으면 안 된다. */
+function erpInvPickHeader(rows){
+  rows = rows || [];
+  var best = { idx:-1, score:0, cols:null, hdr:null, merged:false };
+  var n = Math.min(rows.length, 30);
+  for(var i = 0; i < n; i++){
+    var row = rows[i];
+    if(!row || !row.length) continue;
+    var tries = [
+      { hdr:row.map(function(x){ return String(x === null || x === undefined ? '' : x).trim(); }), merged:false },
+      { hdr:erpInvMergeHeader(rows, i), merged:true }
+    ];
+    for(var k = 0; k < tries.length; k++){
+      var c = erpInvCols(tries[k].hdr);
+      if(c.date < 0 || c.name < 0) continue;
+      var s = 4 + (c.supply >= 0 ? 2 : 0) + (c.biznum >= 0 ? 1 : 0)
+              + (/공급받는자/.test(String(tries[k].hdr[c.name] || '')) ? 3 : 0);
+      if(s > best.score) best = { idx:i, score:s, cols:c, hdr:tries[k].hdr, merged:tries[k].merged };
+    }
+  }
+  return best;
+}
+/* 날짜 칸 — 엑셀 숫자·「2026-07-09」·「2026.07.09」·「20260709」 을 모두 읽는다 */
+function erpInvDateOf(raw, SSF){
+  if(typeof raw === 'number'){
+    try {
+      var d = (SSF && SSF.parse_date_code) ? SSF.parse_date_code(raw) : null;
+      if(d) return d.y + '-' + String(d.m).padStart(2, '0') + '-' + String(d.d).padStart(2, '0');
+    } catch(e){ }
+    return '';
+  }
+  var s = String(raw === null || raw === undefined ? '' : raw);
+  var m = s.match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
+  if(m) return m[1] + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[3]).padStart(2, '0');
+  var d8 = s.replace(/\D/g, '');
+  if(d8.length === 8) return d8.slice(0, 4) + '-' + d8.slice(4, 6) + '-' + d8.slice(6, 8);
+  return '';
+}
+/* 한 장(시트)을 읽어 «몇 줄을 거뒀는지와 왜 못 거뒀는지» 를 함께 돌려준다.
+   ★ 조용히 건너뛰지 않는다 — 지금까지는 못 읽어도 「✅ 완료: 0건」 만 떴다. */
+function erpInvParseSheet(rows, SSF){
+  rows = rows || [];
+  var pick = erpInvPickHeader(rows);
+  if(pick.idx < 0){
+    return { rows:[], why:'머리줄을 못 찾았습니다 — 「작성일자」와 「상호」 칸이 있는 줄이 필요합니다' };
+  }
+  var c = pick.cols, out = [], skipDate = 0, skipName = 0;
+  for(var r = pick.idx + 1; r < rows.length; r++){
+    var row = rows[r];
+    if(!row || row.length === 0) continue;
+    var name = String(row[c.name] === null || row[c.name] === undefined ? '' : row[c.name]).trim();
+    if(!name){ skipName++; continue; }
+    var dateStr = erpInvDateOf(row[c.date], SSF);
+    if(!dateStr){ skipDate++; continue; }
+    out.push({
+      name:name,
+      biznum:(c.biznum >= 0 ? String(row[c.biznum] === null || row[c.biznum] === undefined ? '' : row[c.biznum]).trim() : ''),
+      date:dateStr,
+      supply:(parseFloat(String(row[c.supply] === null || row[c.supply] === undefined ? '0' : row[c.supply]).replace(/[^0-9.-]/g, '')) || 0),
+      item:(c.item >= 0 ? String(row[c.item] === null || row[c.item] === undefined ? '' : row[c.item]).trim() : ''),
+      note:(c.note >= 0 ? String(row[c.note] === null || row[c.note] === undefined ? '' : row[c.note]).trim() : '')
+    });
+  }
+  var why = '';
+  if(!out.length){
+    why = '머리줄은 ' + (pick.idx + 1) + '째 줄에서 찾았는데 읽을 수 있는 줄이 없습니다'
+        + (skipName ? (' · 상호가 빈 줄 ' + skipName) : '')
+        + (skipDate ? (' · 날짜를 못 읽은 줄 ' + skipDate) : '');
+  }
+  return { rows:out, why:why, header:pick.idx, cols:c, usedMerged:pick.merged };
+}
+if(typeof window !== 'undefined'){
+  window.erpInvFillGroup = erpInvFillGroup; window.erpInvMergeHeader = erpInvMergeHeader;
+  window.erpInvColOf = erpInvColOf;         window.erpInvCols = erpInvCols;
+  window.erpInvPickHeader = erpInvPickHeader; window.erpInvDateOf = erpInvDateOf;
+  window.erpInvParseSheet = erpInvParseSheet;
+}
+
 function FinanceInvoice(){
   var existing = dbGet('finance_invoice', []);
   var s = useState(existing); var invoices = s[0]; var setInvoices = s[1];
@@ -44346,54 +44487,36 @@ function FinanceInvoice(){
 
     (async function(){
       var allRows = [];
+      /* ★ 못 읽은 파일을 «조용히 건너뛰지» 않는다 (2026-08-10 김보람 제보).
+         전에는 머리줄을 못 찾으면 그냥 continue 라, 한 줄도 못 읽고도
+         「✅ 완료: 업체 0개」 가 떴다 — 실패인데 성공처럼 보였다. */
+      var bad = [];
       try {
         for(var fi=0; fi<files.length; fi++){
           var file = files[fi];
           setUploadState({ status:'parsing', msg:'파싱 중: '+file.name+' ('+(fi+1)+'/'+files.length+')', progress:Math.round((fi/files.length)*30) });
           var buf = await file.arrayBuffer();
           var wb = XLSX.read(buf, { type:'array', cellDates:false });
-          var ws = wb.Sheets[wb.SheetNames[0]];
-          var rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
-          // 헤더 찾기
-          var hdrIdx = -1;
-          for(var i=0; i<Math.min(rows.length, 20); i++){
-            var line = rows[i].join('|');
-            if(line.indexOf('작성일자') >= 0 || line.indexOf('발행일') >= 0 || line.indexOf('공급받는자') >= 0){ hdrIdx = i; break; }
-          }
-          if(hdrIdx < 0) continue;
-          var hdr = rows[hdrIdx];
-          var dateCol = hdr.findIndex(function(x){return /작성일자|발행일/.test(x);});
-          var nameCol = hdr.findIndex(function(x){return /상호|공급받는자.*상호/.test(x);});
-          var biznumCol = hdr.findIndex(function(x){return /등록번호|사업자/.test(x);});
-          var supplyCol = hdr.findIndex(function(x){return /공급가액/.test(x);});
-          var itemCol = hdr.findIndex(function(x){return /품목|품명/.test(x);});
-          var noteCol = hdr.findIndex(function(x){return /비고/.test(x);});
-
-          for(var r=hdrIdx+1; r<rows.length; r++){
-            var row = rows[r];
-            if(!row || row.length===0) continue;
-            var name = (row[nameCol]||'').toString().trim();
-            if(!name) continue;
-            var dateRaw = row[dateCol];
-            var dateStr = '';
-            if(typeof dateRaw === 'number'){
-              var d = XLSX.SSF.parse_date_code(dateRaw);
-              if(d) dateStr = d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0');
-            } else if(typeof dateRaw === 'string'){
-              var m = dateRaw.match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
-              if(m) dateStr = m[1]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[3]).padStart(2,'0');
-            }
-            if(!dateStr) continue;
-            var supply = parseFloat(String(row[supplyCol]||'0').replace(/[^0-9.-]/g,'')) || 0;
-            allRows.push({
-              name: name,
-              biznum: (row[biznumCol]||'').toString().trim(),
-              date: dateStr,
-              supply: supply,
-              item: (itemCol >= 0 ? (row[itemCol]||'').toString().trim() : ''),
-              note: (noteCol >= 0 ? (row[noteCol]||'').toString().trim() : '')
-            });
-          }
+          /* 장(시트)이 여럿이면 «가장 많이 읽히는» 장을 쓴다 —
+             홈택스 파일은 첫 장이 안내문이고 둘째 장이 목록인 경우가 있다 */
+          var got = { rows:[], why:'장이 없습니다' };
+          (wb.SheetNames || []).forEach(function(sn){
+            var ws = wb.Sheets[sn];
+            if(!ws) return;
+            var rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+            var res = erpInvParseSheet(rows, XLSX.SSF);
+            if(res.rows.length > got.rows.length) got = res;
+            else if(!got.rows.length && res.why) got = res;
+          });
+          if(!got.rows.length) bad.push(file.name + ' — ' + (got.why || '읽을 줄이 없습니다'));
+          else allRows = allRows.concat(got.rows);
+        }
+        // 한 줄도 못 읽었으면 «성공이 아니다» — 무엇이 잘못됐는지 그대로 보여준다
+        if(!allRows.length){
+          setUploadState({ status:'error', progress:0,
+            msg:'❌ 읽을 수 있는 줄이 없습니다\n' + (bad.length ? bad.join('\n') : '')
+              + '\n\n홈택스 ▸ 조회/발급 ▸ 전자세금계산서 ▸ 목록조회 에서 내려받은 «매출» 목록인지 확인하세요' });
+          return;
         }
         setUploadState({ status:'parsing', msg:'데이터 가공 중... ('+allRows.length.toLocaleString()+'건)', progress:40 });
 
@@ -44467,8 +44590,11 @@ function FinanceInvoice(){
 
         var allCompanies = await idbGetAll('invoice_companies');
         setInvoiceCompanies(allCompanies);
-        setUploadState({ status:'done', msg:'✅ 완료: 업체 '+companies.length+'개, 발행이력 '+invoices.length.toLocaleString()+'건', progress:100 });
-        setTimeout(function(){ setUploadState({ status:'idle', msg:'', progress:0 }); }, 5000);
+        setUploadState({ status:'done', progress:100,
+          msg:'✅ 완료: 업체 '+companies.length+'개, 발행이력 '+invoices.length.toLocaleString()+'건'
+            // 여러 파일 중 못 읽은 것이 있으면 «성공 옆에» 함께 적는다 — 조용히 넘어가지 않는다
+            + (bad.length ? ('\n⚠ 못 읽은 파일 '+bad.length+'개\n'+bad.join('\n')) : '') });
+        setTimeout(function(){ setUploadState({ status:'idle', msg:'', progress:0 }); }, 12000);
       } catch(err){
         console.error(err);
         setUploadState({ status:'error', msg:'❌ 오류: '+err.message, progress:0 });
@@ -44633,14 +44759,8 @@ function FinanceInvoice(){
             style:{ padding:'8px 14px', background:'#fef2f2', color:'#991b1b', border:'1px solid #fecaca', borderRadius:'5px', cursor:'pointer', fontSize:'11.5px', fontWeight:600 } }, '🗑 전체 삭제')
         )
       ),
-      uploadState.status !== 'idle' && uploadState.status !== 'done' && h('div', { style:{ marginTop:'10px' } },
-        h('div', { style:{ fontSize:'11px', color:'#475569', marginBottom:'4px' } }, uploadState.msg),
-        h('div', { style:{ height:'6px', background:'#e2e8f0', borderRadius:'5px', overflow:'hidden' } },
-          h('div', { style:{ height:'100%', width:uploadState.progress+'%', background:'#1e40af', transition:'width 0.3s' } })
-        )
-      ),
-      uploadState.status === 'done' && h('div', { style:{ marginTop:'10px', padding:'8px 12px', background:'#f0fdf4', color:'#166534', borderRadius:'4px', fontSize:'11.5px', fontWeight:600 } }, uploadState.msg),
-      uploadState.status === 'error' && h('div', { style:{ marginTop:'10px', padding:'8px 12px', background:'#fef2f2', color:'#991b1b', borderRadius:'4px', fontSize:'11.5px', fontWeight:600 } }, uploadState.msg)
+      /* 진행·결과 안내는 이 상자 밖 «탭 위» 로 옮겼다 — 어느 탭에서 올려도 보여야 한다.
+         여기 두었더니 발행관리 탭에서 올릴 때 아무것도 안 보였다(김보람 제보). */
     );
 
     if(invoiceCompanies.length === 0){
@@ -44947,6 +45067,19 @@ function FinanceInvoice(){
             marginBottom:'0' } }, x.label);
       })
     ),
+    /* ── 올리기 진행·결과 — ★ 어느 탭에서 올려도 보인다 (2026-08-10 김보람 제보) ──
+       전에는 이 안내를 「업체별 아카이브」 탭 안에만 그렸다. 그래서 발행관리 탭에서
+       엑셀을 올리면 진행도 오류도 결과도 «아무것도» 안 보였다 — 눌러도 아무 일이
+       안 일어나는 것처럼 보인 것이다. 화면 아무 곳에나 끌어놓는 길도 마찬가지였다. */
+    uploadState.status !== 'idle' && h('div', { style:{ marginBottom:'12px', padding:'10px 12px',
+        borderRadius:'8px', fontSize:'11.5px', fontWeight:600, whiteSpace:'pre-line',
+        background: uploadState.status==='error' ? '#fef2f2' : uploadState.status==='done' ? '#f0fdf4' : '#eff6ff',
+        color:      uploadState.status==='error' ? '#991b1b' : uploadState.status==='done' ? '#166534' : '#1e40af',
+        border:'1px solid '+(uploadState.status==='error' ? '#fecaca' : uploadState.status==='done' ? '#bbf7d0' : '#bfdbfe') } },
+      uploadState.msg,
+      (uploadState.status==='parsing' || uploadState.status==='saving') && h('div', {
+          style:{ marginTop:'6px', height:'6px', background:'#e2e8f0', borderRadius:'5px', overflow:'hidden' } },
+        h('div', { style:{ height:'100%', width:uploadState.progress+'%', background:'#1e40af', transition:'width 0.3s' } }))),
     tab === 'issue' && renderIssue(),
     tab === 'match' && renderMatch(),
     tab === 'archive' && renderArchive(),
