@@ -433,11 +433,11 @@ test('한 번에 올릴 수 있는 장수 상한이 저장 층에 있다', () =>
 
 /* ── 서류 고화질 ── */
 
-test('올릴 크기 — 서류는 2560px 고품질, 일반 사진은 1600px', () => {
+test('올릴 크기 — 서류는 3200px 고품질, 일반 사진은 1600px', () => {
   const S = loadStore();
   // 서류(명함·사업자등록증·중소기업확인서)는 글씨를 읽어야 하는 물건이라
   // 일반 현장사진과 기준이 달라야 한다(2026-08-03 대표 지시).
-  assert.equal(S.uploadSpec(true).maxEdge, 2560);
+  assert.equal(S.uploadSpec(true).maxEdge, 3200);
   assert.equal(S.uploadSpec(false).maxEdge, 1600);
   assert.ok(S.uploadSpec(true).quality > S.uploadSpec(false).quality,
     '서류 품질이 일반 사진보다 높지 않습니다');

@@ -35,9 +35,9 @@ test('휴대폰에서는 건의함이 화면 전체를 사용한다', () => {
 });
 
 test('휴대폰 건의하기 버튼은 헤더 폭과 무관한 고정 터치 버튼이다', () => {
-  assert.match(html, /#sgFab\{position:fixed;right:max\(12px,env\(safe-area-inset-right\)\)/);
-  assert.match(html, /min-height:46px/);
-  assert.match(html, /\.sg-tip\{display:none;\}/);
+  assert.match(html, /#sgFab\{position:fixed!important;[^}]*right:14px!important;bottom:78px!important;/s);
+  assert.match(html, /min-height:42px/);
+  assert.match(html, /\.sg-tip\{display:none!important;\}/);
 });
 
 test('일반 사용자는 건의 작성 안내만 보고 전체 목록과 상세에는 들어가지 못한다', () => {

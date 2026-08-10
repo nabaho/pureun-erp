@@ -103,7 +103,7 @@
 
   function uploadSpec(isDoc) {
     return isDoc
-      ? { maxEdge: 2560, quality: 0.92, thumbEdge: 240 }
+      ? { maxEdge: 3200, quality: 0.95, thumbEdge: 240 }
       : { maxEdge: 1600, quality: 0.85, thumbEdge: 240 };
   }
 

@@ -36,21 +36,26 @@ function cut(a, b) {
   ok('기기별 캐시에도 저장한다', /localStorage\.setItem\(tilePrefLocalKey\(\)/.test(sv));
 })();
 
-/* ── 폰에서 그 설정이 안 먹는다는 것을 화면에 밝힌다 ── */
+/* ── 폰에서는 설명이 셀을 밀어내지 않고 툴팁으로 남는다 ── */
 (function () {
   const bar = cut('function buildHomeBar(){', '\n  }');
-  ok('★ 폰에 안내 문구를 보여 준다', bar.indexOf('폰에서는 자동 이동하지 않습니다') > 0);
+  ok('★ 좁은 화면의 별도 안내 칸은 비워 둔다', /var phoneNote = '<span class="hb-hint"><\/span>';/.test(bar));
   ok('폰용 툴팁도 다르게', bar.indexOf('PC 에서 로그인할 때만 적용됩니다') > 0);
   ok('PC 에서는 종전 툴팁 그대로', bar.indexOf('선택하면 로그인 후 그 앱으로 바로 이동합니다') > 0);
 })();
 
-/* ── 폰에서 설정을 바꿔도 안내가 사라지지 않는다 ── */
+/* ── 설정 변경 안내도 잠시 뒤 숨겨 셀 줄이 겹치지 않는다 ── */
 (function () {
   const h = cut("$('homeAppSel').addEventListener('change'", '\n  }');
-  ok('★ 4초 뒤 폰 안내로 되돌린다 (숨기면 오해가 남는다)',
-     /if\(isMobile\(\)\)\{/.test(NS(h)) && h.indexOf('폰에서는 자동 이동하지 않습니다') > 0);
-  ok('PC 에서는 종전대로 숨긴다', /hint\.style\.display='none';/.test(NS(h)));
+  ok('★ 4초 뒤 안내를 숨긴다', /hint\.style\.display='none';/.test(NS(h)));
   ok('폰에서 고른 값의 뜻을 알려 준다', h.indexOf('폰은 이 화면 유지') > 0);
+})();
+
+/* ── 로그아웃 뒤 같은 탭에서 다시 로그인해도 포털에 머문다 ── */
+(function () {
+  const h = cut("$('logoutBtn').addEventListener('click'", '\n  });');
+  ok('★ 로그아웃 때 바로가기 건너뛰기 표식을 남긴다',
+     /sessionStorage\.setItem\('pu_skip_home','1'\)/.test(h));
 })();
 
 /* ── 포털이 홈화면 앱의 시작 화면인지 (이건 이미 맞았다 — 회귀 방지로 고정) ── */
