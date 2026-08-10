@@ -44,7 +44,7 @@ test('★ 촬영 중 스위치를 둘로 줄였다', () => {
 });
 
 test('★ 잘라내기는 명함틀을 따라간다 (스위치를 합쳤다)', () => {
-  assert.ok(/function cropPref\(\) \{ return frameOn\(\); \}/.test(html),
+  assert.ok(/function cropPref\(\) \{ return showFrame\(\); \}/.test(html),
     '둘 다 「명함만 담기」인데 따로 켜야 하면 헷갈립니다.');
   assert.ok(!/id="camCrop"/.test(html), '없앤 칸이 남아 있습니다.');
 });
