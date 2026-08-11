@@ -35,7 +35,9 @@ test('자료 바이트 읽기는 한 곳에만 있다', () => {
      읽기(once)는 한 곳이어야 한다 — 쓰기(set)·지우기(remove)는 그대로 둔다.
      charCodeAt 으로 세지 않는다: 자료함과 상관없는 _unb64 도 그것을 쓴다. */
   assert.match(source, /async function matBytes\(id\)/);
-  const reads = (source.match(/materialFiles\/'\+id\)\.once\('value'\)/g) || []).length;
+  /* 따옴표·공백이 다르게 적힌 중복(예: DB_ROOT + '/materialFiles/' + id)도
+     잡아야 한다 — 붙여쓴 모양만 세면 다시 베껴 써도 셈이 그대로 1로 나온다. */
+  const reads = (source.match(/materialFiles\/\s*['"]?\s*\+?\s*id\s*\)\s*\.once\(/g) || []).length;
   assert.equal(reads, 1, '자료 파일을 읽는 곳이 아직 여러 곳입니다');
 });
 
