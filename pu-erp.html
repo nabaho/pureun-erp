@@ -11012,7 +11012,8 @@ function pcCompanyRows(q){
       // 사업자등록증은 색인에 업태가 비어 있다. 눌러 보고 나서야 안 왔다는 걸 알면 늦다.
       if(g.biz){
         if(g.biz.bt || g.biz.bi) sub.push('업태 ' + [g.biz.bt, g.biz.bi].filter(Boolean).join('/'));
-        else sub.push('업태 없음');
+        // 검색목록에 없어도 이제는 고를 때 원본에서 마저 읽는다 — 「없음」이라 단정하면 거짓말이다
+        else sub.push('업태 — 고를 때 원본 확인');
       }
       out.push({
         label: g.name || '(회사명 없음)',
@@ -11349,6 +11350,50 @@ function searchPucardsCompanies(query){
   });
   return out.slice(0, 40);
 }
+/* ── 색인에 없는 칸은 명함첩 «원본» 에서 마저 읽는다 (2026-08-11 대표 지적) ──
+   대표 보고: "명함첩에서 이름 가지고 왔는데 업태 종목은 계속 못 읽는다."
+
+   ★ 까닭: 푸른이알피는 명함첩의 «가벼운 검색목록»(pucards/idx)만 받아 쓴다.
+     그 목록에 업태·종목 칸이 생긴 것은 나중이라, 그 전에 저장된 사업자등록증은
+     목록에 업태가 «비어 있다». 원본에는 멀쩡히 들어 있는데도 못 가져왔다.
+     명함첩에서 「검색목록 다시 만들기」를 눌러야만 되는 것은 답이 아니다 —
+     그걸 눌러야 한다는 걸 아는 사람이 없다. 고를 때 이쪽에서 마저 읽는다.
+
+   ⚠ 사진은 절대 읽지 않는다. 사업자등록증 원본에는 사진이 통째로 들어 있어
+     레코드 하나가 수 MB 다. 필요한 «글자 칸 넷» 만 콕 집어 읽는다. */
+function pcFetchBizFields(bizId){
+  if(!bizId || !fbDb) return Promise.resolve(null);
+  var want = [['bizType','bizType'], ['bizItem','bizCategory'], ['corpno','corpNo'], ['openDate','openDate']];
+  return Promise.all(want.map(function(p){
+    return fbDb.ref('pucards/items/' + bizId + '/' + p[0]).once('value')
+      .then(function(s){ var v = s.val(); return String(v == null ? '' : v).trim(); })
+      .catch(function(){ return ''; });
+  })).then(function(vals){
+    var out = {}, any = false;
+    want.forEach(function(p, i){ if(vals[i]){ out[p[1]] = vals[i]; any = true; } });
+    return any ? out : null;
+  }).catch(function(){ return null; });
+}
+/* 골라 넣은 뒤, 색인에 없어 못 채운 업태·종목을 원본에서 마저 채운다.
+   화면마다 칸 이름이 달라 «채우는 일» 은 각 화면이 한다(apply).
+   채운 칸 이름을 filled 에 담아 주면 그것을 사람에게 말해 준다. */
+function pcTopUpBiz(row, apply){
+  if(!row || !row.bizId) return;
+  if(row.bizType && row.bizCategory) return;      // 색인에서 이미 다 왔다 — 더 읽을 것 없다
+  pcFetchBizFields(row.bizId).then(function(x){
+    if(!x || (!x.bizType && !x.bizCategory)){
+      // 원본에도 없다 — 조용히 비워 두면 「가져왔는데 왜 비지」가 된다
+      try { showToast('⚠ 업태·종목이 명함첩 사업자등록증에도 비어 있습니다 — 명함첩에서 그 칸을 채워 주세요'); } catch(_){}
+      return;
+    }
+    var filled = [];
+    try { apply(x, filled); } catch(e){ window._erpErrLog && window._erpErrLog(e); }
+    // 채운 목록은 화면 갱신 함수 안에서 담기므로 한 박자 뒤에 말한다
+    setTimeout(function(){
+      if(filled.length){ try { showToast('📇 ' + filled.join('·') + ' — 명함첩 원본에서 마저 가져왔습니다'); } catch(_){} }
+    }, 0);
+  });
+}
 function PucardsCompanyPickerModal(props){
   useEscClose(props.onClose);
   var qs = useState(props.initialQuery || ''); var query = qs[0]; var setQuery = qs[1];
@@ -11681,6 +11726,19 @@ function ContractModal(props){
   // want = 어느 첨부칸에서 눌렀나 ('bizLicenseImg' | 'businessCardImg' | '')
   // 사업자등록증 칸에서는 사업자등록증만, 대표자 명함 칸에서는 명함만 가져온다.
   // 종전에는 양쪽을 다 가져와서, 사업자등록증을 누르면 명함 사진까지 딸려왔다(중복).
+  /* 명함첩 원본에서 뒤늦게 온 업태·종목·법인등록번호를 채운다.
+     ★ 이미 적어 둔 칸은 안 덮는다 — 손으로 고쳐 둔 값이 말없이 바뀌면 안 된다. */
+  function _fillBizFromCard(x, filled){
+    setF(function(prev){
+      var c = (prev && prev.company) || {};
+      var nx = {};
+      if(x.bizType     && !String(c.bizType||'').trim())     { nx.bizType     = x.bizType;     filled.push('업태'); }
+      if(x.bizCategory && !String(c.bizCategory||'').trim()) { nx.bizCategory = x.bizCategory; filled.push('종목'); }
+      if(x.corpNo      && !String(c.corpRegNo||'').trim())   { nx.corpRegNo   = x.corpNo;      filled.push('법인등록번호'); }
+      if(!Object.keys(nx).length) return prev;
+      return Object.assign({}, prev, { company: Object.assign({}, c, nx) });
+    });
+  }
   async function fillCompanyImagesFromPucards(row, want){
     if(!row) return;
     var onlyBiz  = (want === 'bizLicenseImg');
@@ -11723,8 +11781,14 @@ function ContractModal(props){
        저장이 조용히 실패한다(예전 「계약 저장 실패」의 원인이 바로 이것이었다).
        OCR 경로는 이미 «글자를 뽑으면 원본을 지우는» 방식인데 여기만 예외였다.
        사진이 필요하면 명함첩에서 본다 — 첨부 칸에 그 길을 적어 둔다. */
+    /* ★ 「가져올 것 없음」 으로 되돌아가기 «전» 에 원본을 확인한다.
+       색인이 나머지를 다 채워 준 뒤 업태·종목만 비어 있는 경우가 바로 대표가 겪은 그 상황이다.
+       여기서 먼저 안 부르면 「새로 가져올 정보가 없습니다」 하고 끝나 버린다. */
+    var _topUpPending = !!(row.bizId && (!row.bizType || !row.bizCategory));
+    pcTopUpBiz(row, _fillBizFromCard);
     if(!addedN && !Object.keys(info).length){
-      showToast('이 회사에서 새로 가져올 정보가 없습니다 (이미 다 들어와 있습니다)'); return;
+      if(!_topUpPending) showToast('이 회사에서 새로 가져올 정보가 없습니다 (이미 다 들어와 있습니다)');
+      return;
     }
     setF(function(prev){
       var c = prev.company || {};
@@ -11763,6 +11827,8 @@ function ContractModal(props){
         contacts: (pc.contacts && pc.contacts.length) ? pc.contacts.slice() : (cur0.contacts || [])
       })}); });
       setAutoResults([]);
+      // 색인에 업태·종목이 없으면 명함첩 원본에서 마저 읽는다 (첨부칸 「가져오기」와 같은 규칙)
+      pcTopUpBiz(pc, _fillBizFromCard);
       var msg = '✓ 명함첩에서 불러옴: ' + (pc.name || '');
       if(pc.person){
         msg += ' — ' + pc.person.name + (pc.person.title ? ' ' + pc.person.title : '') + ' 담당자로';
@@ -19095,6 +19161,16 @@ function CompanyEditModal(props){
     showToast('📇 ' + (row.name || '') + (row.hasBiz ? '' : ' (사업자등록증 없음 — 명함에서만)')
       + (got.length ? (' · ' + got.join('·') + ' 채움') : ' · 새로 채운 칸 없음')
       + (none.length ? (' · 명함첩에 ' + none.join('·') + ' 없음') : ''));
+    /* 업태·종목이 검색목록에 없으면 명함첩 «원본» 에서 마저 읽는다 (계약관리와 같은 규칙).
+       옛 사업자등록증은 검색목록에 업태 칸이 없던 시절에 저장돼 비어 있다. */
+    pcTopUpBiz(row, function(x, filled){
+      setF(function(prev){
+        var nx = Object.assign({}, prev);
+        if(x.bizType     && !String(nx.bizType||'').trim())     { nx.bizType     = x.bizType;     filled.push('업태'); }
+        if(x.bizCategory && !String(nx.bizCategory||'').trim()) { nx.bizCategory = x.bizCategory; filled.push('종목'); }
+        return nx;
+      });
+    });
   }
 
   /* 명함첩에서 대표자 채우기 — 이름만이 아니라 «명함에 적힌 연락처» 까지.

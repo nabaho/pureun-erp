@@ -20,11 +20,15 @@ function t(name, got, want){
 const body = src.slice(src.indexOf('  function fillCompanyFromPcBiz(row){'),
                        src.indexOf('  /* 명함첩에서 대표자 채우기'));
 function run(form, row){
-  let out = null, msg = '';
-  const ctx = { setF:function(fn){ out = fn(form); }, showToast:function(m){ msg = m; }, console:console };
+  let out = null, msg = '', topUp = null;
+  /* pcTopUpBiz — 검색목록에 업태가 없을 때 명함첩 «원본» 에서 마저 읽어 오는 바깥 함수.
+     (2026-08-11) 서버를 부르므로 여기서는 «불렀는지» 만 본다. 셈 자체는
+     biztype-from-card.test.js 가 실제로 돌려서 확인한다. */
+  const ctx = { setF:function(fn){ out = fn(form); }, showToast:function(m){ msg = m; }, console:console,
+                pcTopUpBiz:function(r){ topUp = r; } };
   vm.createContext(ctx);
   vm.runInContext(body + '\nfillCompanyFromPcBiz(' + JSON.stringify(row) + ');', ctx);
-  return { f: out, msg: msg };
+  return { f: out, msg: msg, topUp: topUp };
 }
 
 /* searchPucardsCompanies 가 돌려주는 줄의 생김새 */
