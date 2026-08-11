@@ -30,6 +30,19 @@ function fakeDoc(spec) {
     getCellParagraphCount: (s, p, ctrl, c) => tables[key(s, p)].cells[c].length,
     getCellParagraphLength: (s, p, ctrl, c, cp) => tables[key(s, p)].cells[c][cp].length,
     getTextInCell: (s, p, ctrl, c, cp, off, n) => tables[key(s, p)].cells[c][cp].substr(off, n),
+    /* 진짜 엔진은 행·열·합친 칸을 여기서 알려준다.
+       spec.tables['0-0'].info[c] 로 칸마다 값을 정할 수 있고,
+       'fail' 이라고 적으면 엔진이 못 읽는 경우를 흉내낸다. */
+    getCellInfo: (s, p, ctrl, c) => {
+      const t = tables[key(s, p)];
+      const want = t.info && t.info[c];
+      if (want === 'fail') throw new Error('칸 자리를 못 읽습니다');
+      if (want) return JSON.stringify(want);
+      const cols = t.colCount || 1;
+      return JSON.stringify({ row: Math.floor(c / cols), col: c % cols, rowSpan: 1, colSpan: 1 });
+    },
+    /* 글상자가 있는 문단을 spec.textBoxes 에 '구역-줄' 로 적는다 */
+    getTextBoxControlIndex: (s, p) => ((spec.textBoxes || []).indexOf(s + '-' + p) >= 0 ? 0 : -1),
     deleteTextInCell: (s, p, ctrl, c, cp, off, n) => {
       calls.push(['deleteTextInCell', c, cp, off, n]);
       const arr = tables[key(s, p)].cells[c];
@@ -188,4 +201,134 @@ test('엔진이 글을 못 주는 줄은 건너뛴다', () => {
   const doc = fakeDoc({ body: [['가', '나']] });
   doc.getTextRange = (s, p) => { if (p === 0) throw new Error('글이 없습니다'); return '나'; };
   assert.deepEqual(E.readRows(doc).map(r => r.text), ['나']);
+});
+
+/* ══════════ readGrid — 표를 표로 읽기 ══════════ */
+
+test('표가 blocks 에 표 하나로 들어오고 칸마다 행·열이 붙는다', () => {
+  const doc = fakeDoc({
+    body: [['급여대장']],
+    tables: { '0-0': { ctrl: 0, rowCount: 2, colCount: 2, cells: [['이름'], ['급여'], ['윤성인'], ['700만원']] } }
+  });
+  const g = E.readGrid(doc);
+  const tbl = g.blocks.filter(b => b.kind === 'table');
+  assert.equal(tbl.length, 1);
+  assert.equal(tbl[0].rows, 2);
+  assert.equal(tbl[0].cols, 2);
+  assert.deepEqual(tbl[0].cells.map(c => [c.row, c.col]), [[0, 0], [0, 1], [1, 0], [1, 1]]);
+  /* applyRows 는 실패한 줄을 ch.no 로 알려 준다 — 번호가 안 매겨지면 어느 줄인지 못 말한다 */
+  assert.deepEqual(g.units.map(u => u.no), [1, 2, 3, 4, 5]);
+});
+
+test('합친 칸은 getCellInfo 가 준 rowSpan·colSpan 을 그대로 쓴다', () => {
+  /* 나눗셈으로 짐작하면 여기서 전부 어긋난다 — 서식은 거의 다 합친 칸이다 */
+  const doc = fakeDoc({
+    body: [['']],
+    tables: { '0-0': { ctrl: 0, rowCount: 2, colCount: 4, cells: [['머리말'], ['왼쪽'], ['오른쪽']],
+      info: [{ row: 0, col: 0, rowSpan: 1, colSpan: 4 },
+             { row: 1, col: 0, rowSpan: 1, colSpan: 2 },
+             { row: 1, col: 2, rowSpan: 1, colSpan: 2 }] } }
+  });
+  const t = E.readGrid(doc).blocks.find(b => b.kind === 'table');
+  assert.deepEqual(t.cells.map(c => [c.row, c.col, c.rowSpan, c.colSpan]),
+    [[0, 0, 1, 4], [1, 0, 1, 2], [1, 2, 1, 2]]);
+  /* rows·cols 가 서로 바뀌어도 정사각형 표에서는 안 걸린다 — 2행 4열이라 잡아낸다 */
+  assert.equal(t.rows, 2);
+  assert.equal(t.cols, 4);
+});
+
+test('행·열이 없는 값이 와도 0행 0열로 둔갑하지 않는다', () => {
+  /* {} 를 0 으로 받으면 왼쪽 맨 위 칸 위에 겹쳐 놓이고, 센 숫자는 이상 없다고 말한다 */
+  const doc = fakeDoc({
+    body: [['']],
+    tables: { '0-0': { ctrl: 0, rowCount: 1, colCount: 2, cells: [['가'], ['나']], info: [null, {}] } }
+  });
+  const g = E.readGrid(doc);
+  const t = g.blocks.find(b => b.kind === 'table');
+  assert.equal(t.cells[1].row, null);
+  assert.equal(t.cells[1].col, null);
+  assert.equal(g.warn.badCellInfo, 1);
+});
+
+test('자리를 못 읽은 칸도 사라지지 않고 row 가 null 로 남는다', () => {
+  /* 조용히 빼면 그 칸은 영영 못 고친다 */
+  const doc = fakeDoc({
+    body: [['']],
+    tables: { '0-0': { ctrl: 0, rowCount: 1, colCount: 2, cells: [['가'], ['나']], info: [null, 'fail'] } }
+  });
+  const g = E.readGrid(doc);
+  const t = g.blocks.find(b => b.kind === 'table');
+  assert.equal(t.cells.length, 2);
+  assert.equal(t.cells[1].row, null);
+  assert.equal(t.cells[1].colSpan, 1);
+  assert.equal(g.warn.badCellInfo, 1);
+  assert.equal(g.units.filter(u => u.text === '나').length, 1);
+});
+
+test('문서 전체가 표 한 칸이어도 문단마다 고칠 줄이 생긴다', () => {
+  /* 실제 위임장이 이렇다 — 칸 2개에 문단이 9개·14개.
+     칸을 한 줄로 그리면 두 줄짜리 문서가 되어 아무것도 못 고친다. */
+  const doc = fakeDoc({
+    body: [['']],
+    tables: { '0-0': { ctrl: 0, rowCount: 2, colCount: 1,
+      cells: [['위 임 장', '성 명 :', '주 소 :'], ['다 음', '1. 등기신청']] } }
+  });
+  const g = E.readGrid(doc);
+  const t = g.blocks.find(b => b.kind === 'table');
+  assert.equal(t.cells[0].units.length, 3);
+  assert.equal(t.cells[1].units.length, 2);
+  assert.deepEqual(t.cells[0].units.map(i => g.units[i].text), ['위 임 장', '성 명 :', '주 소 :']);
+});
+
+test('칸의 첫 줄은 비어 있어도 남고, 둘째 줄부터의 빈 줄은 뺀다', () => {
+  /* 첫 줄이 빈 칸은 채울 자리다. 뒤의 빈 줄은 줄 간격용이라 번호만 늘어난다. */
+  const doc = fakeDoc({
+    body: [['']],
+    tables: { '0-0': { ctrl: 0, rowCount: 1, colCount: 2, cells: [[''], ['값', '', '뒷줄']] } }
+  });
+  const g = E.readGrid(doc);
+  const t = g.blocks.find(b => b.kind === 'table');
+  assert.equal(t.cells[0].units.length, 1);
+  assert.deepEqual(t.cells[1].units.map(i => g.units[i].text), ['값', '뒷줄']);
+});
+
+test('본문과 표가 문서에 나오는 순서대로 blocks 에 들어간다', () => {
+  const doc = fakeDoc({
+    body: [['머리말', '가운데말', '꼬리말']],
+    tables: { '0-1': { ctrl: 0, rowCount: 1, colCount: 1, cells: [['표 안']] } }
+  });
+  const g = E.readGrid(doc);
+  const seq = g.blocks.map(b => (b.kind === 'body' ? g.units[b.unit].text : '[표]'));
+  assert.deepEqual(seq, ['머리말', '가운데말', '[표]', '꼬리말']);
+});
+
+test('units 는 readRows 와 같은 모양이라 changedRows·applyRows 가 그대로 먹는다', () => {
+  /* 이것이 깨지면 격자로 읽어도 저장이 안 된다 */
+  const doc = fakeDoc({
+    body: [['계약서']],
+    tables: { '0-0': { ctrl: 0, rowCount: 1, colCount: 2, cells: [['상 호'], ['']] } }
+  });
+  const g = E.readGrid(doc);
+  const blank = g.units.findIndex(u => u.kind === 'cell' && u.text === '');
+  const ch = E.changedRows(g.units, { [blank]: '천안미소신협' });
+  assert.equal(ch.length, 1);
+  const res = E.applyRows(doc, ch);
+  assert.equal(res.ok, 1);
+  assert.deepEqual(res.failed, []);
+  assert.equal(E.readGrid(doc).units[blank].text, '천안미소신협');
+});
+
+test('아직 못 읽는 글상자는 세어서 알린다', () => {
+  /* 조용히 빠지면 「고쳤는데 안 바뀌었다」가 된다 */
+  const doc = fakeDoc({ body: [['본문', '글상자자리']], textBoxes: ['0-1'] });
+  assert.equal(E.readGrid(doc).warn.textBoxes, 1);
+});
+
+test('표를 여덟 번째 자리까지 찾는다', () => {
+  /* 그림이 앞에 끼면 표가 뒤로 밀린다. 넷까지만 보면 놓친다. */
+  const doc = fakeDoc({
+    body: [['']],
+    tables: { '0-0': { ctrl: 6, rowCount: 1, colCount: 1, cells: [['늦게 나온 표']] } }
+  });
+  assert.equal(E.readGrid(doc).blocks.filter(b => b.kind === 'table').length, 1);
 });

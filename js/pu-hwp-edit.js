@@ -20,8 +20,9 @@
   'use strict';
 
   /* 표 안을 들여다볼 때 몇 번째 물건까지 뒤져 볼지.
-     표는 보통 첫 번째다. 그림이 앞에 끼면 밀리므로 몇 칸 더 본다. */
-  const CTRL_PROBE = 4;
+     표는 보통 첫 번째다. 그림·글상자가 앞에 끼면 뒤로 밀리므로 넉넉히 본다
+     (실제 공문에서 표가 세 개 나왔다). 없는 자리는 던지고 지나가므로 값이 커도 손해가 없다. */
+  const CTRL_PROBE = 8;
 
   /* ── 문서에서 번호 붙인 줄 뽑기 ──
      본문 줄 → 그 줄에 표가 붙어 있으면 표의 칸들 → 다음 본문 줄, 순서로 담는다.
@@ -66,6 +67,89 @@
       }
     }
   }
+
+  /* ── 문서를 격자 그대로 읽기 ──
+     readRows() 는 표 칸을 세로로 늘어놓는다. 서식은 거의 전부 표라서 그러면
+     원래 모양이 사라진다 — 20행 × 3열 급여표가 60줄짜리 목록이 된다.
+     여기서는 표를 **표로** 읽는다.
+
+     units 는 readRows 가 내주던 줄과 **같은 모양**이다. 그래야 이미 검사를
+     통과한 changedRows()/applyRows() 를 한 줄도 안 고치고 그대로 쓴다.
+     blocks 는 화면에 그릴 차례와 모양만 담는다(글자는 units 에만 있다). */
+  function readGrid(doc) {
+    const units = [], blocks = [];
+    const warn = { badCellInfo: 0, textBoxes: 0 };
+    const secs = num(doc.getSectionCount());
+    for (let s = 0; s < secs; s++) {
+      const paras = num(doc.getParagraphCount(s));
+      for (let p = 0; p < paras; p++) {
+        let text = '';
+        try { text = String(doc.getTextRange(s, p, 0, num(doc.getParagraphLength(s, p)))); } catch (_) { text = ''; }
+        if (text.trim()) {
+          blocks.push({ kind: 'body', unit: units.length });
+          units.push({ kind: 'body', sec: s, para: p, text: text, len: text.length });
+        }
+        /* 글상자는 아직 못 읽는다. 세어서 화면에 알린다 —
+           조용히 빠지면 「고쳤는데 안 바뀌었다」가 된다. */
+        try {
+          const tb = parseInt(doc.getTextBoxControlIndex(s, p), 10);
+          if (isFinite(tb) && tb >= 0) warn.textBoxes++;
+        } catch (_) {}
+        pushTables(doc, units, blocks, warn, s, p);
+      }
+    }
+    units.forEach(function (u, i) { u.no = i + 1; });
+    return { units: units, blocks: blocks, warn: warn };
+  }
+
+  function pushTables(doc, units, blocks, warn, s, p) {
+    for (let ctrl = 0; ctrl < CTRL_PROBE; ctrl++) {
+      let dim = null;
+      /* 표가 아니면 던진다 — 그림·글상자일 수 있으니 멈추지 말고 다음 것을 본다 */
+      try { dim = JSON.parse(doc.getTableDimensions(s, p, ctrl)); } catch (_) { continue; }
+      const total = num(dim && dim.cellCount);
+      const cells = [];
+      for (let c = 0; c < total; c++) {
+        /* 행·열·합친 칸은 **반드시 엔진에서 받는다.** 칸 번호를 열 수로 나눠
+           짐작하면 합친 칸이 하나만 있어도 그 뒤가 전부 어긋난다. */
+        let inf = null;
+        try { inf = JSON.parse(doc.getCellInfo(s, p, ctrl, c)); } catch (_) { inf = null; }
+        /* 자리를 아는 칸인지 따진다. {} 나 [] 처럼 열어는 봤는데 행·열이 없는 값이
+           올 수 있다 — 그걸 0 으로 받으면 왼쪽 맨 위 칸 위에 겹쳐 놓이고,
+           센 숫자는 「이상 없음」이라고 말한다. 조용한 어긋남이라 더 나쁘다. */
+        const known = !!inf && isFinite(parseInt(inf.row, 10)) && isFinite(parseInt(inf.col, 10));
+        if (!known) warn.badCellInfo++;
+        const idx = [];
+        let cps = 0;
+        try { cps = num(doc.getCellParagraphCount(s, p, ctrl, c)); } catch (_) { cps = 0; }
+        for (let cp = 0; cp < cps; cp++) {
+          let len = 0, text = '';
+          try {
+            len = num(doc.getCellParagraphLength(s, p, ctrl, c, cp));
+            text = String(doc.getTextInCell(s, p, ctrl, c, cp, 0, len));
+          } catch (_) { continue; }
+          /* 칸의 첫 줄은 비어 있어도 남긴다 — 거기가 채울 자리다.
+             둘째 줄부터의 빈 줄은 뺀다(줄 간격용이라 줄만 늘어난다). */
+          if (cp > 0 && !text.trim()) continue;
+          idx.push(units.length);
+          units.push({ kind: 'cell', sec: s, para: p, ctrl: ctrl, cell: c, cpara: cp,
+                       text: text, len: text.length });
+        }
+        cells.push({ cell: c,
+                     row: known ? int0(inf.row) : null,
+                     col: known ? int0(inf.col) : null,
+                     rowSpan: num(inf && inf.rowSpan) || 1,
+                     colSpan: num(inf && inf.colSpan) || 1,
+                     units: idx });
+      }
+      blocks.push({ kind: 'table', sec: s, para: p, ctrl: ctrl,
+                    rows: num(dim && dim.rowCount), cols: num(dim && dim.colCount),
+                    cells: cells });
+    }
+  }
+
+  /* num() 은 1 이상만 받는다(길이·개수용). 행·열은 0 부터라 따로 둔다. */
+  function int0(v) { const n = parseInt(v, 10); return isFinite(n) ? n : 0; }
 
   /* 몇째 줄 몇째 칸인지 — 화면에 「2행 3열」로 알려 주려고 */
   function cellPos(dim, idx) {
@@ -133,7 +217,7 @@
 
   function num(v) { const n = parseInt(v, 10); return isFinite(n) && n > 0 ? n : 0; }
 
-  const api = { readRows: readRows, changedRows: changedRows, applyRows: applyRows,
+  const api = { readRows: readRows, readGrid: readGrid, changedRows: changedRows, applyRows: applyRows,
                 exportBytes: exportBytes, extOf: extOf, editedName: editedName, clean: clean,
                 cellPos: cellPos, CTRL_PROBE: CTRL_PROBE };
   if (typeof window !== 'undefined') window.PuHwpEdit = api;
