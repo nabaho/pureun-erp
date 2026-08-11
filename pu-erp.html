@@ -12388,7 +12388,39 @@ function ContractModal(props){
       ),
       on && h('div', { style:{ marginTop:'6px', background:'#bfdbfe', borderRadius:'5px', padding:'5px 9px',
         fontSize:'10.5px', color:'#2563eb', fontWeight:600 } },
-        '✓ 확정 시 업체관리·재무관리에 자동 동기화 / 이체일 도래 시 자동 알림')
+        '✓ 확정 시 업체관리·재무관리에 자동 동기화 / 이체일 도래 시 자동 알림'),
+      /* ── 👤 개인입금 (2026-08-11 대표 지시) ────────────────────────────
+         "부가세 포함의 경우 법인에 입금이지만 개인입금인 경우가 있다."
+         CMS 와 마찬가지로 «계약 전체에 하나» 다 — 계약금은 법인, 잔금은 개인으로
+         들어오는 일은 없다고 보아 종류별로 나누지 않는다(대표 확인).
+         부가세 포함이어도 함께 켤 수 있다 — 부가세는 «셈하는 법», 개인입금은
+         «돈이 어디로 들어오느냐» 라 서로 다른 이야기다. */
+      personalDepositBlock()
+    );
+  }
+  function personalDepositBlock(){
+    var pd = !!f.personalDeposit;
+    return h('div', { style:{ marginTop:'4px' } },
+      h('label', { style:{ display:'inline-flex', alignItems:'center', gap:'7px', cursor:'pointer',
+          padding:'6px 8px', background: pd ? '#fffbeb' : '#f8fafc', borderRadius:'6px',
+          border:'1px solid ' + (pd ? '#fde68a' : 'transparent') } },
+        h('input', { type:'checkbox', checked:pd,
+          onChange:function(e){ setF(function(prev){ return Object.assign({}, prev, { personalDeposit: e.target.checked }); }); },
+          style:{ width:'16px', height:'16px', accentColor:'#d97706', cursor:'pointer', flexShrink:0 } }),
+        h('span', { style:{ fontSize:'12px', fontWeight:700, color: pd ? '#854d0e' : '#64748b' } },
+          '👤 개인입금 (법인 아닌 개인 계좌)'),
+        /* ⚠ data-tip 이 아니라 title 이다 — 이 파일에는 data-tip 을 그리는 CSS 가 없다.
+           (다른 데서 쓰는 data-tip 27곳은 아무것도 안 뜬다. 여기서 따라 하면 안 된다.) */
+        h('span', {
+          title:'법인 통장이 아니라 개인 계좌로 들어오는 계약입니다.\n'
+            + '입금관리에서 이 계약을 확정할 때 「개인수익」이 미리 체크된 채로 열립니다.\n'
+            + '개인수익은 손익계산서·예상부가세·매출 신고에서 빠지고 성과급만 반영됩니다.\n'
+            + '부가세 포함 계약이라도 켤 수 있습니다 — 개인 계좌로 들어온 돈은 법인 매출이 아닙니다.\n'
+            + '이번 건만 법인으로 들어왔다면 입금확정 창에서 손으로 풀면 됩니다.',
+          style:{ fontSize:'11px', color:'#2563eb', cursor:'help' } }, 'ⓘ')),
+      pd && h('div', { style:{ marginTop:'6px', background:'#fde68a', borderRadius:'5px', padding:'5px 9px',
+        fontSize:'10.5px', color:'#854d0e', fontWeight:600 } },
+        '✓ 입금확정 시 「개인수익」 자동 체크 — 법인 매출 미반영, 성과급만 반영')
     );
   }
   // 잔금·성공보수 줄의 왼쪽 두 칸(1~2열)에 들어가는 "업무 요약". 격자 칸을 정확히 하나만 차지한다.
@@ -14559,6 +14591,7 @@ function transferContract(contract){
         successPaidDate: '',
         status: 'pending', incomes: [],
         brief: brief,                             // 업무 요약 — 계약에서 승계
+        personalDeposit: !!contract.personalDeposit,   // 👤 개인입금 승계 — 안 넘기면 입금확정이 못 본다
         sourceContractNo: contract.contractNo,
         note: '계약(' + contract.contractNo + ')에서 이관' + (contract.successFeeType === 'percent' ? ' / 성공보수 ' + (contract.successFee||0) + '%' : '')
       };
@@ -14640,6 +14673,7 @@ function transferContract(contract){
       balanceFeeVatIncluded: !!contract.balanceFeeVatIncluded,
       status: 'pending',
       brief: brief,                               // 업무 요약 — 계약에서 승계
+      personalDeposit: !!contract.personalDeposit, // 👤 개인입금 승계 — 안 넘기면 입금확정이 못 본다
       sourceContractNo: contract.contractNo,
       note: '계약(' + contract.contractNo + ')에서 이관'
     };
@@ -14718,6 +14752,7 @@ async function returnToContract(storeKey, itemId){
       managerSubs: (item.managerSubs || []).slice(),
       signDate: item.receiveDate || item.startDate || item.estDate || '',
       payerName: item.payerName || '',            // 입금자(예금주) 승계 (역이관)
+      personalDeposit: !!item.personalDeposit,     // 👤 개인입금 승계 (역이관) — 돌아왔다고 꺼지면 안 된다
       successFee: item.successFee || item.balanceFee || 0,
       successFeeType: item.successFeeType || 'amount',
       status: 'signed',
@@ -16732,6 +16767,19 @@ function erpPerfBaseAudit(){
 }
 if(typeof window !== 'undefined') window.erpPerfBaseAudit = erpPerfBaseAudit;
 
+/* ── 입금확정 창을 열 때의 «첫 설정» (2026-08-11 대표 지시) ────────────
+   대표 지시: "컨설팅 계약에서 부가세 포함의 경우 법인에 입금이지만 개인입금인
+   경우가 있다. 이럴 경우 개인입금에 체크하게 해 달라. 그리고 개인입금의 경우
+   입금관리에서 개인수익에 체크되게 해 달라. 성과급만 반영할 수 있게 하겠다."
+
+   ★ 계약에 「개인입금」이 표시돼 있으면 부가세 포함 계약이라도 개인수익으로 연다.
+     개인 계좌로 들어온 돈은 법인 매출이 아니라 부가세 신고 대상이 아니다 —
+     그래서 부가세 공제는 켜지 않는다. 손익계산서·매출에서 빠지고 성과급만 반영된다.
+   ★ 손으로 풀 수 있다 — 계약은 개인입금인데 이번 건만 법인으로 들어올 수 있다. */
+function erpInitDeductions(item, vatType){
+  if(item && item.personalDeposit) return { personalRevenue:true, vatIncluded:false };
+  return (vatType === 'inclusive') ? { vatIncluded:true } : {};
+}
 function calcDeductions(amount, ded){
   ded = ded || {};
   var total = 0;
@@ -39922,7 +39970,8 @@ function IncomePendingTab(){
       advanceLedgerQueue(rest); return;
     }
     setConfirmModal({p:hit, date:(q.row&&q.row.date)||todayYMD(),
-      deductions: getVatType(hit)==='inclusive' ? {vatIncluded:true} : {},
+      // 거래내역에서 넘어온 건도 같은 규칙 — 계약이 개인입금이면 개인수익으로 연다
+      deductions: erpInitDeductions(hit.item, getVatType(hit)),
       actualAmt:(q.row&&q.row.amount)||0, fromLedger:q});
     setLedgerQ(rest && rest.length ? rest : null);
   }
@@ -40369,8 +40418,8 @@ function IncomePendingTab(){
                       : h('span', { style:{background:'#f8fafc',color:'#64748b',border:'1px solid #e2e8f0',padding:'2px 8px',borderRadius:'8px',fontSize:'10.5px',fontWeight:600} }, '진행중')),
                   h('td', {style:Object.assign({},tdS,{textAlign:'center'})},
                     h('button', { onClick:function(){
-                      var initDed = getVatType(p) === 'inclusive' ? { vatIncluded:true } : {};
-                      setConfirmModal({p:p, date:todayYMD(), deductions:initDed});
+                      // 계약에 「개인입금」이 표시돼 있으면 개인수익으로 연다
+                      setConfirmModal({p:p, date:todayYMD(), deductions:erpInitDeductions(p.item, getVatType(p))});
                     },
                       style:{padding:'4px 10px',background:'#1e40af',color:'#fff',border:'none',borderRadius:'4px',cursor:'pointer',fontSize:'10.5px',fontWeight:700} },
                       '입금확정')),
@@ -40686,7 +40735,10 @@ function IncomePendingTab(){
                         if(e.target.checked) setDed({ personalRevenue:true, vatIncluded:false });
                         else setDed({ personalRevenue:false });
                       } }),
-                    h('span', { style:{ fontWeight: ded.personalRevenue?700:400, color: ded.personalRevenue?'#854d0e':'#1e293b' } }, '👤 개인수익'))
+                    h('span', { style:{ fontWeight: ded.personalRevenue?700:400, color: ded.personalRevenue?'#854d0e':'#1e293b' } }, '👤 개인수익'),
+                    // 왜 미리 켜져 있는지 밝힌다 — 까닭 없이 켜져 있으면 잘못 켠 줄 알고 끈다
+                    !!(it && it.personalDeposit) && h('span', { style:{fontSize:'9.5px',color:'#854d0e',opacity:.85} },
+                      '· 계약에 개인입금'))
                 ),
                 // 👤 개인수익 체크 시: 성과급 조정 영역 (개인 직책요율 % 조정)
                 ded.personalRevenue && (function(){
@@ -40704,7 +40756,8 @@ function IncomePendingTab(){
                   function getAmt(sid, isMain){
                     var sp = getSharePct(sid, isMain);
                     var rp = getRate(sid);
-                    var b = Math.round(confirmModal.p.amount * sp / 100);
+                    // 세금 뗀 뒤 남은 금액으로 나눈다 — 저장 로직과 같은 기준 (2026-08-11)
+                    var b = Math.round(_perfBase * sp / 100);
                     return Math.round(b * rp / 100);
                   }
                   function setRate(sid, v){
@@ -40785,28 +40838,43 @@ function IncomePendingTab(){
                     : (calc.totalDeducted > 0
                       ? '입금액 ' + confirmModal.p.amount.toLocaleString() + '원 - 차감 ' + calc.totalDeducted.toLocaleString() + '원 = 성과 기준 ' + calc.perfBaseAmount.toLocaleString() + '원'
                       : '⚠️ 성과급 미반영 — 성과관리에 표시되지 않음')),
-                (ded.bizIncomeTax || ded.etcIncomeTax) && h('div', { style:{ marginTop:'6px', padding:'7px 10px', background:'#fffbeb', borderRadius:'4px', fontSize:'10.5px', color:'#854d0e', fontWeight:600 } },
-                  '🏢 개인소득 — 법인 매출 미반영 (손익계산서·예상부가세 자동 제외)')
               );
             })(),
 
+            /* ── 확정하면 어떻게 되는지 «한 줄» 로 (2026-08-11 대표 지시) ──────────
+               대표 지적: "개인수익에 대해서는 클릭된 경우 마우스가 올라갈 경우 볼 수 있게
+               해 달라. 불필요하게 팝업창이 길게 내려온다."
+               전에는 네다섯 줄짜리 안내가 «늘» 펼쳐져 있어 창이 그만큼 길어졌다.
+               ★ 늘 보여야 하는 것은 «한 줄 결론» 이다. 자세한 것은 올려 봤을 때만.
+               (바로 위 회색 한 줄과 겹치던 「개인소득 — 법인 매출 미반영」도 여기로 합쳤다) */
             (function(){
               var ded = (confirmModal.deductions || {});
-              var isPersonal = !!(ded.bizIncomeTax || ded.etcIncomeTax);
-              if(isPersonal){
-                return h('div', { style:{padding:'10px',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'5px',fontSize:'10.5px',color:'#854d0e',lineHeight:1.6} },
-                  '🏢 ', h('b', null, '개인소득 처리'), ' — 법인 매출이 아닌 ', h('b', null, '개인 수익'), '으로 분류됩니다.', h('br'),
-                  '· 손익계산서·예상부가세에서 ', h('b', null, '자동 제외'), h('br'),
-                  '· 매출 신고·법인 결산에 미반영', h('br'),
-                  '· finance_income은 등록 (개인소득 추적용)', h('br'),
-                  '· 성과관리 ', confirmModal.perfEnabled !== false ? '분배 진행' : '미반영');
-              }
-              return h('div', { style:{padding:'10px',background:'#eff6ff',borderRadius:'5px',fontSize:'10.5px',color:'#1e40af',lineHeight:1.6} },
-                '✓ 확정 시 자동으로:', h('br'),
-                '· finance_income 등록 + 사무관리 원장에 확정 마킹', h('br'),
-                '· 성과관리 분배 (', split ? '분할 비율 적용' : '주담당 100%', ')', h('br'),
-                '· 월별급여 ⭐자동성과금 컬럼에 반영', h('br'),
-                ded.vatIncluded ? '· 손익계산서·예상부가세에 ' + h('b',null,'공급가액 기준') + ' 반영' : '· 손익계산서·예상부가세에 반영');
+              var isPersonal = !!(ded.bizIncomeTax || ded.etcIncomeTax || ded.personalRevenue);
+              var perfTxt = confirmModal.perfEnabled !== false ? '성과급 반영' : '성과급 미반영';
+              var line = isPersonal
+                ? '🏢 개인소득 — 법인 매출 미반영 · ' + perfTxt
+                : '✓ 확정 시 — 입금 기록 + 원장 확정 표시 · ' + perfTxt
+                    + (ded.vatIncluded ? ' · 매출은 공급가액 기준' : ' · 매출 반영');
+              var tip = isPersonal
+                ? '법인 매출이 아닌 개인 수익으로 분류됩니다.\n'
+                  + '· 손익계산서·예상부가세에서 자동 제외\n'
+                  + '· 매출 신고·법인 결산에 미반영\n'
+                  + '· 입금 기록은 남깁니다 (개인소득 추적용)\n'
+                  + '· 성과관리 ' + (confirmModal.perfEnabled !== false ? '분배 진행' : '미반영')
+                : '확정하면 자동으로:\n'
+                  + '· 입금 기록 등록 + 사무관리 원장에 확정 표시\n'
+                  + '· 성과관리 분배 (' + (split ? '분할 비율 적용' : '주담당 100%') + ')\n'
+                  + '· 월별급여 자동성과금 칸에 반영\n'
+                  + (ded.vatIncluded ? '· 손익계산서·예상부가세에 공급가액 기준 반영' : '· 손익계산서·예상부가세에 반영');
+              return h('div', { style:{ display:'flex', alignItems:'center', gap:'6px',
+                  padding:'7px 10px', borderRadius:'5px',
+                  background: isPersonal ? '#fffbeb' : '#eff6ff',
+                  border: '1px solid ' + (isPersonal ? '#fde68a' : '#eff6ff'),
+                  fontSize:'10.5px', color: isPersonal ? '#854d0e' : '#1e40af', fontWeight:600 } },
+                h('span', { style:{flex:1} }, line),
+                // ⚠ title 로 띄운다 — data-tip 은 이 파일에 그리는 CSS 가 없어 아무것도 안 뜬다
+                h('span', { title:tip,
+                  style:{ fontSize:'11px', cursor:'help', flexShrink:0, opacity:.85 } }, 'ⓘ 자세히'));
             })()
           ),
           h('div', { className:'modal-f' },
