@@ -1847,6 +1847,15 @@ async function openCam() {
     _inAppFallbackUI();
     return;
   }
+  /* ── 화면을 **먼저** 띄운다 (대표 보고 2026-08-11: "터치 후 기다리는 시간이 길다") ──
+     아래 준비 과정은 폰에서 1~3초가 걸린다: getUserMedia → 기기 최대 해상도로
+     applyConstraints(촬영 파이프라인을 다시 연다) → loadPhotoBest.
+     예전에는 이것이 **다 끝난 뒤에야** 화면이 떴다. 그 사이 아무것도 안 바뀌니
+     누른 사람은 눌리지 않은 줄 알고 또 누른다.
+     ⚠ 물러나는 길(권한 거부·빠른촬영)에서는 반드시 도로 닫는다 — 안 닫으면
+       검은 화면만 남는다. camFail() 한 곳에 모아 뒀다. */
+  $('camTip').textContent = '카메라를 준비하는 중…';
+  $('camOv').style.display = 'flex';
   try {
     camStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } },
@@ -1860,9 +1869,11 @@ async function openCam() {
       if (camQuickMode) {
         /* 빠른 연속촬영에서 기본 카메라로 물러나면 매 장마다 휴대폰의
            '다시 시도/확인' 화면이 나온다. 대신 권한 안내만 하고 현재 화면을 유지한다. */
+        camFail();
         toast('카메라 권한을 허용하면 확인 없이 연속 촬영할 수 있습니다');
         return;
       }
+      camFail();
       toast('카메라를 열 수 없어 폰 카메라로 엽니다');
       $('camInput').click();
       return;
@@ -1915,11 +1926,18 @@ async function openCam() {
   setCamAsk(false);
   setCamWarn(false);
   renderCamStrip();
-  $('camOv').style.display = 'flex';
+  setCamTip();        // 「준비하는 중…」을 진짜 안내로 바꾼다(화면은 이미 떠 있다)
   /* 화면 크기는 영상이 준비된 뒤에야 알 수 있다 — 그때 폰 카메라 권유를 켤지 정한다 */
   $('camVid').addEventListener('loadedmetadata', checkCamRes, { once: true });
   startFrameWatch();   // 명함이 보일 때만 틀을 띄운다
   setTimeout(checkCamRes, 1200);   // 이미 준비된 경우엔 위 신호가 안 온다
+}
+
+/* 준비하다 물러날 때 — 먼저 띄운 화면을 도로 닫는다.
+   ⚠ 안 닫으면 검은 화면만 남아 「카메라가 고장났다」가 된다. */
+function camFail() {
+  $('camOv').style.display = 'none';
+  $('camTip').textContent = '';
 }
 
 /* ── 누른 곳에 초점 (리멤버 방식) ──
@@ -3152,8 +3170,13 @@ async function addFiles(fileList, isDoc, opts) {
       const takenAt = PuPhotoStore.pickTakenAt(buf ? PuPhotoStore.exifTakenAt(buf) : null, f.lastModified, Date.now());
       /* 축소본(서류 2560px·사진 1600px)과 격자용 미리보기 —
          카메라 원본은 클라우드에 안 올라간다. */
-      const full = await shrink(f, spec.maxEdge, spec.quality);
-      const thumb = await shrink(f, spec.thumbEdge, 0.85);
+      /* ⚠ 한 번만 푼다 — 예전에는 shrink 를 두 번 불러 같은 사진을 두 번 풀었다.
+         폰에서 한 장에 1.5~2초가 통으로 멎던 자리다(대표 보고 2026-08-11). */
+      const sized = await shrinkMany(f, [
+        { maxEdge: spec.maxEdge, quality: spec.quality },
+        { maxEdge: spec.thumbEdge, quality: 0.85 }
+      ]);
+      const full = sized[0], thumb = sized[1];
       const id = PuPhotoStore.newId();
       idAt[fi] = id;
       const meta = {
@@ -3283,17 +3306,35 @@ function decodeViaDataUrl(file) {
    quality: 서류는 글씨를 읽어야 해서 사진보다 높다(저장 층의 uploadSpec 참고). */
 function shrink(file, maxEdge, quality) {
   return decodeImage(file).then(function (im) {
-    const iw = im.naturalWidth || im.width;
-    const ih = im.naturalHeight || im.height;
-    const scale = Math.min(1, maxEdge / Math.max(iw, ih));
-    const w = Math.max(1, Math.round(iw * scale));
-    const h = Math.max(1, Math.round(ih * scale));
-    const c = document.createElement('canvas');
-    c.width = w; c.height = h;
-    c.getContext('2d').drawImage(im, 0, 0, w, h);
+    const out = drawScaled(im, maxEdge, quality);
     if (im.close) im.close();
-    return { dataUrl: c.toDataURL('image/jpeg', quality || 0.85), w: w, h: h };
+    return out;
   });
+}
+
+/* ── 한 번 푼 그림으로 **여러 크기**를 만든다 (대표 보고 2026-08-11) ──
+   예전에는 축소본과 미리보기를 각각 shrink() 로 만들어, 같은 12메가 사진을
+   **두 번 풀고 두 번 그렸다.** 폰에서 한 장에 1.5~2초가 통으로 멎었고,
+   그 사이에는 아무 것도 눌리지 않는다 — 「터치 후 기다리는 시간」의 큰 몫이다.
+   ⚠ 다 만든 뒤에 닫는다(im.close). 첫 크기에서 닫으면 둘째가 빈 그림을 그린다. */
+function shrinkMany(file, sizes) {
+  return decodeImage(file).then(function (im) {
+    const out = sizes.map(function (s) { return drawScaled(im, s.maxEdge, s.quality); });
+    if (im.close) im.close();
+    return out;
+  });
+}
+
+function drawScaled(im, maxEdge, quality) {
+  const iw = im.naturalWidth || im.width;
+  const ih = im.naturalHeight || im.height;
+  const scale = Math.min(1, maxEdge / Math.max(iw, ih));
+  const w = Math.max(1, Math.round(iw * scale));
+  const h = Math.max(1, Math.round(ih * scale));
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d').drawImage(im, 0, 0, w, h);
+  return { dataUrl: c.toDataURL('image/jpeg', quality || 0.85), w: w, h: h };
 }
 
 /* ══════ 올리는 중 목록 ══════ */
@@ -4205,7 +4246,12 @@ function renderGrid() {
       ? '<span class="cap">' + esc(capTxt) + '</span>' : '';
     /* 다른 앱(정부사업 컨설팅 등)으로 끌어다 놓을 수 있다. */
     html += '<div class="cell' + on + '" data-id="' + esc(it.id) + '" draggable="true">' +
-      (t ? '<img src="' + t + '" alt="" draggable="false">' : '') + tag + warn + who + cap + '<span class="ck">✓</span></div>';
+      /* ⚠ loading=lazy · decoding=async (대표 보고 2026-08-11 "터치 후 기다리는 시간") —
+         칸마다 base64 그림이 통째로 박혀 있어, 이것이 없으면 화면 밖 사진까지
+         **전부 그 자리에서 풀어 그린다.** 80장이면 폰에서 몇 백 밀리초가 통으로 멎는다.
+         lazy 는 화면에 들어올 때까지 미루고, async 는 푸는 일을 화면 그리기와 갈라 놓는다. */
+      (t ? '<img src="' + t + '" alt="" loading="lazy" decoding="async" draggable="false">' : '')
+      + tag + warn + who + cap + '<span class="ck">✓</span></div>';
   });
   html += '</div>';
   el.innerHTML = html;
@@ -4219,6 +4265,8 @@ function paintThumb(it) {
   const cell = document.querySelector('.cell[data-id="' + it.id + '"]');
   if (!cell || cell.querySelector('img')) return;
   const img = document.createElement('img');
+  img.loading = 'lazy';        // 화면 밖 칸은 들어올 때까지 미룬다
+  img.decoding = 'async';      // 푸는 일을 화면 그리기와 갈라 놓는다
   img.src = src;
   img.alt = '';
   img.draggable = false;
@@ -4566,7 +4614,23 @@ let kindTab = 'all';
 /* 격자에 보여줄 목록 — 분류 탭과 「확인 필요」를 **함께** 적용한다.
    ⚠ 둘 중 하나만 적용하면, 확인 필요를 켠 채 탭을 옮겼을 때 다른 탭 사진이
    섞여 나온다(2026-08-05 걸러보기 버그와 같은 종류의 어긋남). */
+/* ── 한 번 거른 결과를 그 순간 안에서만 다시 쓴다 (대표 보고 2026-08-11) ──
+   한 번 누를 때 이 함수가 예닐곱 번 불린다(renderGridBar·renderAllBtn·
+   renderNeedBox·renderOldBox·renderPayNote·tabCounts·renderGrid). 사진 80장이면
+   거르는 일을 80×7 번 하는 셈이다.
+   ⚠ 기억은 **같은 순간(마이크로태스크)** 안에서만 쓴다. 더 오래 들고 있으면
+     사진을 지우거나 분류를 바꾼 뒤에도 옛 목록을 그려 「지웠는데 그대로 있다」가
+     된다. 다음 순간이 오면 저절로 버려진다 — 무효로 만드는 것을 사람이 챙길
+     필요가 없어야 한다(챙기다 빠뜨리는 것이 이런 캐시의 흔한 사고다). */
+let _shownCache = null;
 function shownItems() {
+  if (_shownCache) return _shownCache;
+  const out = shownItemsFresh();
+  _shownCache = out;
+  Promise.resolve().then(function () { _shownCache = null; });
+  return out;
+}
+function shownItemsFresh() {
   let list = gridItems;
   /* 폴더는 분류 탭과 **다른 축**이라 함께 걸린다 —
      「회의사진」이면서 「㈜가야 실태조사」인 사진을 둘 다로 좁혀 볼 수 있다.
@@ -6513,8 +6577,15 @@ function showView(name) {
   }
   if (name === 'trash') {
     /* 열 때 비로소 불러온다. 지난 해 휴지통까지 훑는 것도 여기서 —
-       앱을 열 때 다 하면 미리보기까지 내려받느라 무겁다. */
-    purgeEveryYearTrash().then(function () { loadTrash(); });
+       앱을 열 때 다 하면 미리보기까지 내려받느라 무겁다.
+       ⚠ **먼저 그리고 나서 훑는다**(대표 보고 2026-08-11 "터치 후 기다리는 시간").
+          예전에는 아홉 해(올해~7년 전 + 알 수 없음)를 다 훑은 **뒤에야**
+          loadTrash 가 「불러오는 중…」을 썼다 — 그 1~4초 동안 화면이 텅 빈 채였다.
+          훑기는 30일 지난 것을 치우는 뒷정리라 늦어도 된다. 끝나면 다시 그린다. */
+    loadTrash();
+    purgeEveryYearTrash().then(function () {
+      if (view === 'trash') loadTrash();   // 그 사이 나갔으면 그리지 않는다
+    });
     loadDelLog();
   }
 }
