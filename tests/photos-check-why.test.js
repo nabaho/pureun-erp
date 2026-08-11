@@ -26,6 +26,10 @@ function load() {
     'const CARD_KINDS = { card: 1, bizreg: 1 };',
     'const CO_KINDS = { bizreg: 1, sme: 1 };',
     grab(/function readAnyField\([\s\S]*?\n\}/, 'readAnyField'),
+    /* ⚠ 2026-08-11 — 업체관리 판정을 coFilledOk 한 곳으로 모았다(filled 가 실시간DB
+       에서 사라져 화면이 멎던 사고). **진짜 함수를 함께 넣는다** — 가짜로 두면
+       그 판정이 틀려도 아래 「할 일과 이유가 어긋나지 않는다」가 못 잡는다. */
+    grab(/function coFilledOk\(read\)[\s\S]*?\n\}/, 'coFilledOk'),
     grab(/function checkWhy\(it\)[\s\S]*?\n\}/, 'checkWhy'),
     grab(/function needsCheck\(it\)[\s\S]*?\n\}/, 'needsCheck')
   ].join('\n');

@@ -13,12 +13,17 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'pu-photos.html'), 'utf8
 function rowOf(job) {
   const m = html.match(/function shipRowOf\(j\)[\s\S]*?\n\}/);
   assert.ok(m, 'shipRowOf 를 찾지 못했습니다.');
+  /* ⚠ 2026-08-11 — 업체관리 판정을 coFilledOk 한 곳으로 모았다(filled 가 실시간DB
+     에서 사라져 화면이 멎던 사고). 가짜로 만들지 않고 **진짜 함수를 함께 넣는다** —
+     가짜로 두면 그 판정이 틀려도 이 검사는 모른다. */
+  const co = html.match(/function coFilledOk\(read\)[\s\S]*?\n\}/);
+  assert.ok(co, 'coFilledOk 를 찾지 못했습니다.');
   const ctx = {
     UP_STATE: { up: '올리는 중' },
     readLabel: (r) => ({ card: '명함', bizreg: '사업자등록증', meeting: '회의·현장 사진' }[r.kind] || '서류')
   };
   vm.createContext(ctx);
-  vm.runInContext(m[0], ctx);
+  vm.runInContext(co[0] + '\n' + m[0], ctx);
   return ctx.shipRowOf(job);
 }
 const done = (over) => Object.assign({ state: 'done', name: '사진' }, over);
