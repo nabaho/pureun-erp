@@ -216,6 +216,8 @@ test('표가 blocks 에 표 하나로 들어오고 칸마다 행·열이 붙는�
   assert.equal(tbl[0].rows, 2);
   assert.equal(tbl[0].cols, 2);
   assert.deepEqual(tbl[0].cells.map(c => [c.row, c.col]), [[0, 0], [0, 1], [1, 0], [1, 1]]);
+  /* applyRows 는 실패한 줄을 ch.no 로 알려 준다 — 번호가 안 매겨지면 어느 줄인지 못 말한다 */
+  assert.deepEqual(g.units.map(u => u.no), [1, 2, 3, 4, 5]);
 });
 
 test('합친 칸은 getCellInfo 가 준 rowSpan·colSpan 을 그대로 쓴다', () => {
@@ -230,6 +232,22 @@ test('합친 칸은 getCellInfo 가 준 rowSpan·colSpan 을 그대로 쓴다', 
   const t = E.readGrid(doc).blocks.find(b => b.kind === 'table');
   assert.deepEqual(t.cells.map(c => [c.row, c.col, c.rowSpan, c.colSpan]),
     [[0, 0, 1, 4], [1, 0, 1, 2], [1, 2, 1, 2]]);
+  /* rows·cols 가 서로 바뀌어도 정사각형 표에서는 안 걸린다 — 2행 4열이라 잡아낸다 */
+  assert.equal(t.rows, 2);
+  assert.equal(t.cols, 4);
+});
+
+test('행·열이 없는 값이 와도 0행 0열로 둔갑하지 않는다', () => {
+  /* {} 를 0 으로 받으면 왼쪽 맨 위 칸 위에 겹쳐 놓이고, 센 숫자는 이상 없다고 말한다 */
+  const doc = fakeDoc({
+    body: [['']],
+    tables: { '0-0': { ctrl: 0, rowCount: 1, colCount: 2, cells: [['가'], ['나']], info: [null, {}] } }
+  });
+  const g = E.readGrid(doc);
+  const t = g.blocks.find(b => b.kind === 'table');
+  assert.equal(t.cells[1].row, null);
+  assert.equal(t.cells[1].col, null);
+  assert.equal(g.warn.badCellInfo, 1);
 });
 
 test('자리를 못 읽은 칸도 사라지지 않고 row 가 null 로 남는다', () => {

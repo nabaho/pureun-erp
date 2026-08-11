@@ -114,7 +114,11 @@
            짐작하면 합친 칸이 하나만 있어도 그 뒤가 전부 어긋난다. */
         let inf = null;
         try { inf = JSON.parse(doc.getCellInfo(s, p, ctrl, c)); } catch (_) { inf = null; }
-        if (!inf) warn.badCellInfo++;
+        /* 자리를 아는 칸인지 따진다. {} 나 [] 처럼 열어는 봤는데 행·열이 없는 값이
+           올 수 있다 — 그걸 0 으로 받으면 왼쪽 맨 위 칸 위에 겹쳐 놓이고,
+           센 숫자는 「이상 없음」이라고 말한다. 조용한 어긋남이라 더 나쁘다. */
+        const known = !!inf && isFinite(parseInt(inf.row, 10)) && isFinite(parseInt(inf.col, 10));
+        if (!known) warn.badCellInfo++;
         const idx = [];
         let cps = 0;
         try { cps = num(doc.getCellParagraphCount(s, p, ctrl, c)); } catch (_) { cps = 0; }
@@ -132,8 +136,8 @@
                        text: text, len: text.length });
         }
         cells.push({ cell: c,
-                     row: inf ? int0(inf.row) : null,
-                     col: inf ? int0(inf.col) : null,
+                     row: known ? int0(inf.row) : null,
+                     col: known ? int0(inf.col) : null,
                      rowSpan: num(inf && inf.rowSpan) || 1,
                      colSpan: num(inf && inf.colSpan) || 1,
                      units: idx });
