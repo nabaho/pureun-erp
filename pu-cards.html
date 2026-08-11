@@ -1350,6 +1350,9 @@ const Store = {
       modeBadge.textContent='실시간 공유'; modeBadge.classList.add('live');
       const subscribe = () => {
         this.db.ref(DB_ROOT+'/items').on('value', s => { state.items = s.val()||{}; render();
+          /* 명함이 도착한 **뒤에** 마지막 보던 화면으로 옮긴다(대표 지시 2026-08-10).
+             먼저 옮기면 빈 화면이 잠깐 보이고, 자료함·보낸 메일은 아직 읽히지도 않았다. */
+          restoreLastScreen();
           if(!Store._idxDone){ setTimeout(backfillIdx, 3000); }
           /* 번호 열쇠 자리 첫 채우기 — 한 번만. 명함이 다 들어온 뒤라야 빠짐없이 찬다. */
           if(!Store._byKeyDone){ Store._byKeyDone=true; setTimeout(ensureByKeyMap, 4000); } });
@@ -4437,7 +4440,51 @@ function listItems(){
 /* _quiet: 썸네일 옮기기처럼 items 를 수십 번 고치는 작업 중에는 다시 그리지 않는다
    (4,400줄을 배치마다 새로 그리면 몇 초씩 멈춘다) */
 let _quiet = false;
-function render(){ if(_quiet) return; renderSubbar(); renderSidebar(); renderList(); }
+function render(){ if(_quiet) return; saveLastScreen(); renderSubbar(); renderSidebar(); renderList(); }
+
+/* ══════ 마지막 본 화면 (대표 지시 2026-08-10) ══════
+   "로그아웃 또는 다른 화면을 보다가 다시 명함·메일로 들어오면 마지막 들어왔던
+    화면으로 기록해서 들어오게 해달라. 그리고 로그인 하는 사람마다 다를 텐데
+    그 사람마다 각자 마지막 본 화면으로 보게 해라."
+
+   ⚠ **사람마다 따로** 적는다. 한 PC를 여러 사람이 쓰므로 열쇠에 계정을 넣지
+     않으면 앞사람이 보던 화면이 뒷사람에게 열린다.
+   ⚠ 이 기기에만 적는다(localStorage). 화면 취향은 자리마다 다르고, 서버에 두면
+     사무실 PC에서 보던 것이 폰에서 열린다.
+   ⚠ 누구인지 모르는 동안에는 **적지도 읽지도 않는다.** 로그인 전 render 가
+     먼저 도는데, 거기서 적으면 'anon' 자리에 남아 다음 사람에게 샌다. */
+const LASTV_PREFIX = 'pucards_lastscreen_';
+function lastScreenKey(){ return LASTV_PREFIX + (myUid || myEmail || ''); }
+let _lastScreenSig = '';
+function saveLastScreen(){
+  if(!myUid && !myEmail) return;
+  const s = { view: state.view || 'list', tab: state.tab || 'card', mail: state.mailSent || false };
+  const sig = JSON.stringify(s);
+  if(sig === _lastScreenSig) return;   // 바뀔 때만 적는다 — render 는 수시로 돈다
+  _lastScreenSig = sig;
+  try{ localStorage.setItem(lastScreenKey(), sig); }catch(_){}
+}
+
+/* 들어올 때 한 번만. 화면을 직접 그리지 않고 **사람이 누르는 것과 같은 함수**를
+   부른다 — 그래야 그 화면에 필요한 자료(자료함·보낸 메일 등)도 함께 딸려 온다. */
+let _lastScreenDone = false;
+function restoreLastScreen(){
+  if(_lastScreenDone) return;
+  if(!myUid && !myEmail) return;       // 아직 누구인지 모른다 — 다음 기회에
+  _lastScreenDone = true;
+  let s = null;
+  try{ s = JSON.parse(localStorage.getItem(lastScreenKey()) || 'null'); }catch(_){}
+  if(!s || !s.view) return;            // 처음 오신 분 — 기본 화면 그대로
+  if(s.view === 'mat'){ openMatPage(); return; }
+  if(s.view === 'mail'){
+    if(s.mail === 'sched') openSchedBox();
+    else if(s.mail) openSentBox();
+    else openMailPage();
+    return;
+  }
+  /* 목록 — 명함/사업자 중 마지막에 보던 쪽 */
+  if(s.tab && s.tab !== state.tab) switchTab(s.tab);
+}
 
 /* 개인 창고 폴더도 이름이 나와야 한다 — allGroups 로 봐야 제목이 '전체'로 뭉개지지 않는다 */
 function groupName(id){ return id==='all' ? '전체' : (id==='' ? '미분류' : (allGroups()[id]?.name || '전체')); }
