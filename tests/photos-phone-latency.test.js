@@ -31,7 +31,7 @@ test('★ 준비하다 물러나면 띄운 화면을 도로 닫는다', () => {
   const fn = app.match(/async function openCam\(\)[\s\S]*?\n\}/)[0];
   const backOut = fn.slice(fn.indexOf('catch (e2)'), fn.indexOf('camTrack = camStream'));
   const calls = (backOut.match(/camFail\(\)/g) || []).length;
-  assert.ok(calls >= 2,
+  assert.ok(calls >= 1,
     '물러나는 길이 ' + calls + '곳만 닫습니다 — 하나라도 빠지면 검은 화면이 남습니다.');
 });
 

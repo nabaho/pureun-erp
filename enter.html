@@ -505,9 +505,8 @@ body.portal-mode #camFab{display:flex;}
 
 <!-- ── 로그인 직후 바로 찍기 — 화면 오른쪽 아래 구석(대표 지시 2026-08-09) ── -->
 <button id="camFab" type="button" title="사진 찍기 — 바로 촬영" aria-label="사진 찍기">📷</button>
-<!-- 아이폰 카카오톡 등 앱 내부 브라우저는 페이지 이동 뒤 웹 카메라 권한을 막는다.
-     그 기기에서는 이 입력을 사용해 '버튼을 누른 바로 그 순간' 기본 카메라를 연다. -->
-<input id="portalCamInput" type="file" accept="image/jpeg,image/png" capture="environment" hidden>
+<!-- 카메라 진입은 pu-camera.html 한 곳으로만 보낸다. 휴대폰 기본 file/capture 입력은
+     촬영할 때마다 「다시 시도/확인」을 띄우므로 포털에서는 사용하지 않는다. -->
 
 <!-- ── 시스템 설정 (관리자 전용) — 화면 왼쪽 아래 구석 ── -->
 <button id="cfgFab" type="button" title="시스템 설정 (관리자 전용)">⚙ 설정</button>
@@ -1040,54 +1039,18 @@ body.portal-mode #camFab{display:flex;}
     b._wired = true;
     b.addEventListener('click', function(){
       var _v = Math.floor(Date.now() / 600000);
+      var cameraUrl = 'pu-camera.html?mode=photo&quick=1&from=portal&sso=1&v=' + _v;
+      /* 주소의 cam 표시가 로그인·업데이트 과정에서 사라져도 촬영 요청은 남긴다.
+         실제 촬영 화면이 열린 뒤에만 이 값을 지운다. */
+      try { sessionStorage.setItem('pu_open_camera', JSON.stringify({
+        mode:'photo', quick:true, from:'portal', at:Date.now()
+      })); } catch(e){}
       if(isMobile()){
-        /* 폰 기본 카메라(input capture)는 촬영할 때마다 휴대폰의
-           '다시 시도/확인' 화면을 강제로 띄운다. 연속촬영을 끊지 않도록
-           웹 카메라를 쓸 수 없는 기기에서만 최후 수단으로 사용한다. */
-        if(needsDirectNativeCamera()){
-          var input = $('portalCamInput');
-          if(input) input.click();
-          return;
-        }
-        /* 사진첩 화면은 보이지 않고 그 안의 연속촬영 카메라가 곧바로 열린다.
-           셔터를 계속 눌러 찍고 왼쪽 아래에서 최근 사진을 확인한 뒤 한 번에 저장한다. */
-        location.href = 'pu-photos.html?cam=1&quick=1&from=portal&sso=1&v=' + _v;
+        location.href = cameraUrl;
         return;
       }
-      openPortalApp({ key: 'camquick' }, 'pu-photos.html?cam=1&quick=1&from=portal&sso=1&v=' + _v);
+      openPortalApp({ key: 'camquick' }, cameraUrl);
     });
-
-    var input = $('portalCamInput');
-    if(input && !input._wired){
-      input._wired = true;
-      input.addEventListener('change', function(){
-        var file = input.files && input.files[0];
-        input.value = '';
-        if(!file) return; // 카메라에서 취소하면 포털에 그대로 머문다.
-        savePortalCameraFile(file).then(function(token){
-          location.href = 'pu-photos.html?sso=1&portalcam=' + encodeURIComponent(token);
-        }).catch(function(e){
-          alert('촬영한 사진을 임시 보관하지 못했습니다. 다시 찍어 주세요.\n' + ((e && e.message) || e));
-        });
-      });
-    }
-  }
-
-  /* 앱 안 브라우저인가 (네이버·카카오톡·인스타·페이스북·라인) — 사진첩과 같은 판정 */
-  function portalInAppBrowser(){
-    return /NAVER\(inapp|KAKAOTALK|Instagram|FBAN|FBAV|Line\//i.test(String(navigator.userAgent || ''));
-  }
-  function needsDirectNativeCamera(){
-    var noWebCamera = !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-    /* ★ 앱 안 브라우저도 여기서 «곧바로» 폰 카메라를 연다 (2026-08-10 대표 제보:
-         "왜 카메라 바로 안 나오고 묻는 문구가 계속 나오나").
-       까닭: 폰 카메라는 «손가락으로 지금 막 누른» 자리에서만 열 수 있다.
-       사진첩 화면으로 «넘어간 뒤» 에 열려고 하면 그 자격이 사라져 못 연다 —
-       그래서 「카메라 열기」를 한 번 더 눌러야 하는 화면이 떴다.
-       여기서 열면 누른 자격이 살아 있어 곧바로 열린다.
-       (앱 안 브라우저는 카메라 허락을 기억하지 않아 화면 안 카메라도 못 쓴다 —
-        그래서 어차피 폰 카메라가 유일한 길이다) */
-    return noWebCamera || portalInAppBrowser();
   }
 
   /* 촬영 파일은 페이지가 바뀌면 사라지므로 사진첩의 안전 대기열로 옮길 때까지만

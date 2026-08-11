@@ -105,11 +105,12 @@ test('화면은 실시간DB에 직접 쓰지 않는다 — 쓰기는 저장 층�
 
 test('사진 고르기 — 앨범에서 여러 장', () => {
   assert.match(app, /<input[^>]*type="file"[^>]*multiple/);
-  assert.match(app, /accept="image\/\*"/);
+  assert.match(app, /accept="image\/\*,application\/pdf"/);
 });
 
-test('카메라 즉석 촬영 입력이 있다', () => {
-  assert.match(app, /capture="environment"/);
+test('카메라는 확인형 파일 입력 없이 화면 안 연속촬영만 쓴다', () => {
+  assert.doesNotMatch(app, /capture="environment"|id="camInput"|id="camNative"/);
+  assert.match(app, /navigator\.mediaDevices\.getUserMedia/);
 });
 
 test('업로드 대기열 파일을 불러오고 쓴다', () => {
@@ -1516,16 +1517,15 @@ test('막힌 드래그 표시는 스스로 풀린다', () => {
 /* ══════ 연속촬영 (2026-08-06 대표 요청) ══════
    한 장 찍으면 닫히던 카메라를 — 셔터 연타로 모으고, 갤러리처럼 골라 한 번에 올린다. */
 
-test('연속촬영을 열면 폰 기본 카메라가 예비 통로로 남는다', () => {
-  /* ⚠ 2026-08-10 다시 겨눔 — 사진첩의 카메라 단추를 없앴다. 이제 여는 길은
-     명함첩·포털의 ?cam=1 뿐이다. 지킬 것은 「못 열 때 조용히 실패하지 않는다」
-     이지 단추가 어디에 있는가가 아니다. */
-  /* 카메라를 못 여는 폰(권한 거부 등)이 조용히 실패하면 안 된다 —
-     실패 안내와 함께 폰 기본 카메라로 물러난다. */
+test('포털 카메라 진입은 앱 안 카메라만 열고 폰 확인형 카메라로 물러나지 않는다', () => {
+  assert.doesNotMatch(app, /\$\('camBtn'\)/,
+    '삭제된 사진첩 카메라 단추를 다시 호출하면 시작 중 오류가 납니다');
+  assert.match(app, /function openCamIfAsked\(\)/,
+    '포털과 명함첩에서 카메라로 들어오는 길이 없습니다');
   const fn = app.match(/async function openCam\(\)[\s\S]*?\n\}/);
   assert.ok(fn, 'openCam 을 찾을 수 없습니다');
-  assert.match(fn[0], /\$\('camInput'\)\.click\(\)/, '예비 통로(폰 기본 카메라)가 없습니다');
-  assert.match(app, /id="camInput"[^>]*capture=/, 'camInput 이 사라졌습니다');
+  assert.match(fn[0], /navigator\.mediaDevices\.getUserMedia/);
+  assert.doesNotMatch(fn[0], /camInput|\.click\(\)/);
 });
 
 test('카메라를 닫으면 반드시 끈다 — 안 끄면 녹화 표시가 남고 배터리를 먹는다', () => {
@@ -1883,9 +1883,10 @@ test('명함틀을 켜면 그 안만 잘라 담는다', () => {
     '화면 좌표를 원본 좌표로 옮기지 않습니다');
   /* 넘치면 검은 띠가 담긴다 */
   assert.match(fn[0], /Math\.min\(Math\.round\(fw\), sw - cx\)/, '자를 범위를 화면 안으로 가두지 않습니다');
-  // 켜고 끄기와 기억
-  assert.match(app, /function toggleFrame\(/);
-  assert.match(app, /localStorage\.setItem\(CAM_FRAME_LS/, '틀 상태를 기억하지 않습니다');
+  // 일반사진은 틀 없음, 명함·서류를 골랐을 때만 틀을 쓴다
+  assert.match(app, /function frameOn\(\) \{ return camCaptureMode === 'document'; \}/);
+  assert.match(app, /id="camModePhoto"[^>]*setCamCaptureMode\('photo'\)/);
+  assert.match(app, /id="camModeDocument"[^>]*setCamCaptureMode\('document'\)/);
 });
 
 test('몇 장 찍었는지 위 가운데에 크게 보인다', () => {
@@ -1939,7 +1940,7 @@ test('「다시 판독」·「여러 장 판독」은 남의 사진에서도 눌
 test('올리기·지우기는 여전히 남의 사진을 막는다', () => {
   /* 판독 잠금을 풀면서 이것까지 함께 풀리면 남의 사진을 지울 수 있게 된다. */
   assert.match(fnBody('deleteSelected'), /blockedIfOther\(/, '남의 사진을 지울 수 있습니다');
-  assert.match(app, /if \(viewingOther\(\)\) return;\s*\/\/ 남의 사진첩을 보는 중에는 올릴 수 없다/,
+  assert.match(app, /if \(viewingOther\(\)\) return false;\s*\/\/ 남의 사진첩을 보는 중에는 올릴 수 없다/,
     '남의 사진첩에서 올리기가 열려 있습니다');
 });
 

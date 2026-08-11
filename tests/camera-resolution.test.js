@@ -28,29 +28,24 @@ test('해상도를 못 올려도 카메라는 열린다', () => {
     '거부하는 기기에서 카메라가 아예 안 열리면 안 됩니다.');
 });
 
-test('★ 화면이 낮게 잡히면 폰 카메라를 권한다', () => {
-  assert.ok(/id="camNative"/.test(photos), '권유 단추가 없습니다.');
-  assert.ok(/CAM_LOW_EDGE/.test(photos), '낮은지 재는 기준이 없습니다.');
-  assert.ok(/edge < CAM_LOW_EDGE/.test(photos),
-    '늘 띄우면 성가시고, 안 띄우면 길이 없습니다 — 낮을 때만 띄웁니다.');
-  assert.ok(/function useNativeCam\(\)/.test(photos), '누를 곳이 있어야 합니다.');
+test('낮은 미리보기에서도 별도 확인 없이 고해상도 촬영을 시도한다', () => {
+  assert.doesNotMatch(photos, /id="camNative"|function useNativeCam\(\)/);
+  assert.match(photos, /takePhoto\(camPhotoBest\(\)\)/);
 });
 
-test('화면 크기는 영상이 준비된 뒤에 잰다', () => {
+test('앱 안 카메라는 운영체제 확인형 카메라로 우회하지 않는다', () => {
   const m = photos.match(/async function openCam\(\)[\s\S]*?\n\}/);
-  assert.ok(/loadedmetadata/.test(m[0]),
-    '켜자마자 재면 0 이 나와 늘 권유가 뜨거나 안 뜹니다.');
+  assert.ok(m && /getUserMedia/.test(m[0]));
+  assert.doesNotMatch(m[0], /camInput|\.click\(\)/);
 });
 
-test('폰 카메라로 넘어갈 때 찍어 둔 것을 말없이 버리지 않는다', () => {
-  const m = photos.match(/function useNativeCam\(\)[\s\S]*?\n\}/);
-  assert.ok(m, 'useNativeCam 을 찾지 못했습니다.');
-  assert.ok(/camShots\.length && !confirm/.test(m[0]), '찍어 둔 것이 있는데 묻지 않고 버립니다.');
-  assert.ok(/camDiscard\(\)/.test(m[0]),
-    '앱 카메라를 안 끄면 기기가 폰 카메라를 막습니다(카메라는 하나만 잡힌다).');
+test('촬영한 사진은 사용자가 나중에 지울 때까지 남는다', () => {
+  const shoot = photos.match(/async function camShoot\([^)]*\)[\s\S]*?(?=\nfunction renderCamStrip)/);
+  assert.ok(shoot && /camShots\.push\(/.test(shoot[0]));
+  assert.doesNotMatch(shoot[0], /camShots\.pop\(\)/);
 });
 
-test('★ 폰 카메라로 찍은 것도 서류 화질로 담는다', () => {
-  assert.ok(/\$\('camInput'\)\.onchange = function \(\) \{ addFiles\(this\.files, true\)/.test(photos),
-    'false 면 애써 크게 찍어 놓고 1600px·85% 로 깎아 담습니다 — 화질 문제와 같은 뿌리입니다.');
+test('문서 촬영은 고해상도 후보 중 가장 선명한 사진을 고른다', () => {
+  assert.match(photos, /const CAM_DOC_BURST = 3/);
+  assert.match(photos, /usable\.sort\(function \(a, b\) \{ return b\.sharp - a\.sharp; \}\)/);
 });
