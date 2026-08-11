@@ -181,6 +181,28 @@ test('자리가 겹치지 않는 정상 표는 orphan 이 생기지 않는다', 
   assert.doesNotMatch(html, /자리를 모르는 칸/, '멀쩡한 칸까지 orphan 으로 잘못 건지면 안 된다');
 });
 
+/* ══════ mgTableHtml — emitted 는 칸 번호가 아니라 칸 객체로 가려야 한다 (Finding 2) ══════
+   cell 번호가 표 안에서 유일하다는 보장은 pu-hwp-edit.js 의 몫이고 여기서는 확인할 길이 없다.
+   그 불변식이 깨졌을 때(번호가 겹칠 때) 번호로 가리면 살아남은 칸의 번호가 밀려난 칸 몫까지
+   "이미 나갔다"고 잘못 답해, 밀려난 칸이 표에도 orphan 에도 없이 통째로 사라진다. */
+test('칸 번호(cell)가 같아도 칸 객체로 가려 잃어버리지 않는다', () => {
+  const c = loadMgTableHtml();
+  c._mg = { grid: { units: mkGrid(['A','B']) }, edited: {} };
+  const b = {
+    rows: 1, cols: 1,
+    cells: [
+      { cell:3, row:0, col:0, rowSpan:1, colSpan:1, units:[0] },  /* A — 같은 자리·같은 번호(3) */
+      { cell:3, row:0, col:0, rowSpan:1, colSpan:1, units:[1] },  /* B — last-writer-wins 로 표에 남는다 */
+    ]
+  };
+  const html = c.mgTableHtml(b);
+  assert.match(html, />B</, '살아남은 칸은 그대로 표에 있어야 한다');
+  /* 번호로 가리던 옛 코드라면 emitted[3] 이 B 때문에 이미 참이 되어, A 가 orphan 검사에서도
+     "이미 나갔다"고 잘못 걸러져 표에도 orphan 에도 없이 사라진다 — A 가 안 보이면 그 결함이다. */
+  assert.match(html, />A</, 'A 가 표에도 orphan 에도 없으면 영영 못 고친다');
+  assert.match(html, /자리를 모르는 칸 1개/);
+});
+
 /* ══════ openMatEditor — 겹쳐 열면 문서가 새고 화면 id 가 겹친다 ══════
    실행해서 재현하려면 WASM(PureunHwp)·Firebase 까지 갖춰야 해서 비현실적이다.
    대신 고쳐진 소스가 실제로 지켜야 할 모양을 못 박는다: 두 await 사이의 창을
@@ -198,9 +220,131 @@ test('두 await 이후 자신이 최신 호출인지 차례표로 확인한다',
   const fn = source.slice(source.indexOf('async function openMatEditor'), source.indexOf('function mgFail'));
   assert.match(fn, /const gen\s*=\s*\+\+_mgGen/, '호출마다 차례표를 찍어야 한다');
   assert.match(fn, /gen\s*!==\s*_mgGen/, 'await 이후 차례표가 낡았으면 그려서는 안 된다');
-  /* 차례표가 낡았을 때 doc 을 꼭 놓아야 한다 — 안 그러면 WASM 쪽 문서가 샌다 */
-  const guard = fn.slice(fn.indexOf('gen!==_mgGen') - 40, fn.indexOf('gen!==_mgGen') + 80);
+  /* 차례표가 낡았을 때 doc 을 꼭 놓아야 한다 — 안 그러면 WASM 쪽 문서가 샌다.
+     indexOf('gen!==_mgGen') 처럼 리터럴로 찾으면 'gen !== _mgGen'으로 띄어 쓰는 순간
+     -1이 나와 완전히 다른 자리를 조용히 들여다보게 된다 — 실제 찾은 정규식 위치에서 잘라야
+     검사가 검사하려는 자리를 계속 가리킨다. */
+  const m = /gen\s*!==\s*_mgGen/.exec(fn);
+  assert.ok(m, '차례표 비교 자리를 찾지 못했습니다');
+  const guard = fn.slice(Math.max(0, m.index - 40), m.index + 80);
   assert.match(guard, /doc\.free\(\)/);
+});
+
+/* ══════ openMatEditor — 실행해서 검증: 옛 호출의 실패가 새 편집기를 지우면 안 된다 ══════
+   위 두 테스트는 소스 모양만 본다. catch(e){ mgFail(...) } 에 차례표 검사가 없다는 결함은
+   모양만으로는 못 잡는다 — 실제로 두 호출을 겹쳐 실행해야 드러난다.
+   PureunHwp·Firebase 전체를 갖출 필요는 없다: openMatEditor 가 실제로 건드리는 것은
+   matBytes 와 PureunHwp.openDoc 뿐이라 이 둘만 손으로 쥐는 deferred promise 로 갈아 끼우고,
+   나머지(문서 엔진 내부)는 mgRender 안쪽 얘기라 여기서는 몰라도 된다. */
+function loadOpenMatEditor(){
+  const i = source.indexOf('let _mg = null;');
+  const j = source.indexOf('function mgRender()');
+  assert.ok(i > 0, 'let _mg = null; 을 찾지 못했습니다');
+  assert.ok(j > i, 'openMatEditor 블록 끝(mgRender 시작)을 찾지 못했습니다');
+  const code = source.slice(i, j);
+
+  /* 진짜 DOM의 "붙은 걸 떼면 그 안의 것도 통째로 없어진다"는 성질이 이 재현의 핵심이라
+     대충 흉내내면 안 된다 — appendChild 로 붙인 것만 getElementById 로 찾고, remove() 로
+     떼면 그 밑에서 innerHTML 로 흉내낸 id 들도 같이 사라진다. */
+  const bodyChildren = [];
+  function makeEl(tag){
+    return {
+      tagName: tag, id: '', className: '', style:{}, _html:'', _idMap: new Map(),
+      classList: { toggle(){}, add(){}, remove(){} },
+      children: [],
+      get innerHTML(){ return this._html; },
+      set innerHTML(v){
+        this._html = v; this._idMap = new Map();
+        const re = /id="([^"]+)"/g; let m;
+        while((m = re.exec(v))) if(!this._idMap.has(m[1])) this._idMap.set(m[1], makeEl('div'));
+      },
+      appendChild(child){ this.children.push(child); },
+      addEventListener(){}, setAttribute(){}, getAttribute(){ return null; },
+      querySelector(){ return makeEl('div'); },
+      remove(){ const idx = bodyChildren.indexOf(this); if(idx>=0) bodyChildren.splice(idx,1); }
+    };
+  }
+  function findById(node, id){
+    if(!node) return null;
+    if(node.id === id) return node;
+    if(node._idMap.has(id)) return node._idMap.get(id);
+    return null;
+  }
+  const fakeDoc = {
+    createElement: tag => makeEl(tag),
+    getElementById: id => { for(const c of bodyChildren){ const f=findById(c,id); if(f) return f; } return null; },
+    body: { appendChild: el => bodyChildren.push(el) }
+  };
+
+  const pending = {};                              /* id → {resolve, reject} — matBytes 를 손으로 쥐고 흔든다 */
+  const renderLog = [];
+  const ctx = {
+    document: fakeDoc,
+    $: id => fakeDoc.getElementById(id),
+    esc: s => String(s),
+    toast: () => {},
+    confirm: () => true,
+    matExt: () => 'hwp',
+    _matMeta: { x:{id:'x', name:'엑스.hwp', fileName:'엑스.hwp'}, y:{id:'y', name:'와이.hwp', fileName:'와이.hwp'} },
+    matBytes: id => new Promise((resolve, reject) => { pending[id] = { resolve, reject }; }),
+    PureunHwp: { openDoc: async () => ({ freed:false, free(){ this.freed = true; } }) },
+    PuHwpEdit: { readGrid: () => ({units:[], blocks:[], warn:{badCellInfo:0,textBoxes:0}}), changedRows: () => [] },
+    /* mgRender 는 이 슬라이스 밖(표를 실제로 그리는 mgTableHtml 쪽)이다 — 여기서는
+       "성공하면 화면에 무언가 그려진다"만 흉내내면 이 결함을 보는 데 충분하다. */
+    mgRender: () => { renderLog.push(1); const b = fakeDoc.getElementById('mgedBody'); if(b) b.innerHTML = 'RENDERED#'+renderLog.length; }
+  };
+  vm.createContext(ctx);
+  vm.runInContext(code, ctx);
+  ctx._pending = pending;
+  ctx._fakeDoc = fakeDoc;
+  return ctx;
+}
+
+test('[실행] 겹쳐 열었을 때 나중에 도착한 옛 호출의 실패가 새 편집기 화면을 지우지 않는다', async () => {
+  const ctx = loadOpenMatEditor();
+  const openMatEditor = ctx.openMatEditor;
+
+  const pX = openMatEditor('x');                   /* X 를 먼저 연다 — matBytes 가 걸린 채 멈춘다 */
+  await Promise.resolve();
+  assert.ok(ctx._pending.x, 'X 의 matBytes 호출이 걸려 있어야 한다');
+
+  const pY = openMatEditor('y');                   /* X 가 안 끝난 채 Y 를 덮어 연다 */
+  await Promise.resolve();
+  assert.ok(ctx._pending.y, 'Y 의 matBytes 호출도 걸려 있어야 한다');
+
+  ctx._pending.y.resolve(new Uint8Array([1,2,3])); /* Y 는 먼저 끝까지 연다 */
+  await pY;
+  const afterY = ctx._fakeDoc.getElementById('mgedBody').innerHTML;
+  assert.match(afterY, /^RENDERED#/, 'Y 는 정상적으로 화면에 그려져야 한다');
+
+  ctx._pending.x.reject(new Error('DB 오류'));     /* 그 뒤에야 X 의 실패가 도착한다 */
+  await pX;                                        /* openMatEditor 안에서 잡으니 던지지 않아야 한다 */
+
+  const afterX = ctx._fakeDoc.getElementById('mgedBody').innerHTML;
+  assert.equal(afterX, afterY, 'X 의 실패가 Y 의 화면을 건드리면 안 된다');
+  assert.doesNotMatch(afterX, /DB 오류/, '옛 호출의 실패 메시지가 새 편집기 화면에 쓰이면 안 된다');
+  assert.equal(vm.runInContext('_mg.id', ctx), 'y', '_mg 는 여전히 Y 를 가리켜야 한다');
+});
+
+test('[실행] 겹치지 않은 보통 실패는 그대로 오류 메시지를 보여준다', async () => {
+  const ctx = loadOpenMatEditor();
+  const p = ctx.openMatEditor('x');
+  await Promise.resolve();
+  ctx._pending.x.reject(new Error('DB 오류'));
+  await p;
+  const body = ctx._fakeDoc.getElementById('mgedBody').innerHTML;
+  assert.match(body, /한글 문서를 열지 못했습니다/, '겹쳐 열리지 않았으면 실패 메시지를 그대로 보여줘야 한다');
+  assert.match(body, /DB 오류/);
+});
+
+test('[실행] 창을 사용자가 직접 닫은 뒤 옛 호출이 실패해도 조용하다', async () => {
+  const ctx = loadOpenMatEditor();
+  const p = ctx.openMatEditor('x');
+  await Promise.resolve();
+  ctx.closeMatEditor();                            /* 사용자가 결과를 기다리지 않고 닫았다 */
+  ctx._pending.x.reject(new Error('DB 오류'));
+  await p;                                         /* 던지면 안 된다 */
+  assert.equal(ctx._fakeDoc.getElementById('mgedBody'), null, '팝업이 없으니 mgedBody 도 없어야 한다');
 });
 
 /* ══════ 자료 삭제·교체 때 _mg 도 함께 접어야 한다 (Finding 3) ══════ */

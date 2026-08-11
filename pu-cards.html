@@ -3053,6 +3053,10 @@ async function openMatEditor(id){
     }
     mgRender();
   }catch(e){
+    /* 여기도 두 await 뒤다 — 실패가 도착했을 때 이미 새 편집기가 떠 있을 수 있다.
+       옛 호출의 실패는 사용자에게 알릴 소식이 아니다. 알리면 화면에 떠 있는
+       최신 편집기의 #mgedBody 를 지워, 거기 있던 고치던 내용까지 함께 날린다. */
+    if(gen!==_mgGen) return;
     mgFail('한글 문서를 열지 못했습니다 — '+((e&&e.message)||''));
   }
 }
@@ -3114,7 +3118,11 @@ function mgTableHtml(b){
     if(c.row==null || c.col==null){ orphan.push(c); return; }
     at[c.row+'-'+c.col]=c;
   });
-  const emitted={};                                /* 실제로 <td> 로 나간 칸의 번호(cell) */
+  const emitted=new Set();                         /* 실제로 <td> 로 나간 칸 — 칸 객체 자체로 가린다.
+                                                       cell 번호가 표 안에서 유일하다는 보장은 다른 파일
+                                                       (pu-hwp-edit.js)의 몫이라 여기서 기대면, 그 파일이
+                                                       바뀌어 번호가 겹치는 날 칸이 표에도 orphan 에도 없이
+                                                       조용히 사라진다. */
   let h='<table class="mgtbl">';
   for(let r=0;r<rows;r++){
     h+='<tr>';
@@ -3126,7 +3134,7 @@ function mgTableHtml(b){
       for(let dr=0;dr<rs;dr++) for(let dc=0;dc<cs;dc++)
         if(dr||dc) taken[(r+dr)+'-'+(c+dc)]=1;
       h+=`<td rowspan="${rs}" colspan="${cs}">`+cell.units.map(mgLineHtml).join('')+'</td>';
-      emitted[cell.cell]=1;
+      emitted.add(cell);
     }
     h+='</tr>';
   }
@@ -3138,7 +3146,7 @@ function mgTableHtml(b){
      건져 자리 모르는 칸 상자로 보낸다. 자리는 몰라도 고칠 수는 있어야 한다. */
   b.cells.forEach(c=>{
     if(c.row==null || c.col==null) return;         /* 이미 위에서 orphan 에 들어갔다 */
-    if(!emitted[c.cell]) orphan.push(c);
+    if(!emitted.has(c)) orphan.push(c);
   });
   /* 자리를 못 읽은 칸도 고칠 수 있어야 한다. 조용히 빼면 영영 못 고친다. */
   if(orphan.length){
