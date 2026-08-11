@@ -1310,6 +1310,18 @@ test('사진에 분류를 붙인다 — read.kind 와 다른 칸에 둔다', asy
   assert.equal(u[key], 'k1');
 });
 
+test('고정 분류로 옮길 때 이전 직접분류를 한 번에 해제한다', async () => {
+  const S = loadStore();
+  const db = fakeDbFor({});
+  S.init({ uid: 'U1', db: db });
+  const read = { kind: 'contract', auto: false, fields: {} };
+  await S.setPrimaryKind('2026', 'p1', read, null);
+  assert.equal(db.updates.length, 1, '분류와 이전 분류 해제가 따로 저장됩니다');
+  const u = db.updates[0];
+  assert.deepEqual(u['puphotos/u/U1/items/2026/p1/read'], read);
+  assert.equal(u['puphotos/u/U1/items/2026/p1/customKind'], null);
+});
+
 test('분류를 뗄 수 있다', async () => {
   const S = loadStore();
   const db = fakeDbFor({});

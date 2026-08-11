@@ -322,8 +322,8 @@ test('분류 탭은 여섯 가지다 — 어느 탭에도 안 드는 사진이 �
   assert.match(tabs[0], /key: 'other'[\s\S]*?kinds: null/,
     '기타서류가 나머지를 받는 그물이 아닙니다 — 빠지는 사진이 생깁니다');
   // 판독을 안 한 사진도 반드시 어딘가에 든다
-  // 2026-08-06: 직접분류가 생기며 tabOf(하나) → tabsOf(여럿)로 바뀌었다 —
-  // AI 분류와 직접분류를 "더하는 것이지 기타서류에서 빼앗지 않는다"(대표 승인 목업).
+  // 직접 지정한 분류가 있으면 그 분류 하나만 대표 분류로 쓴다.
+  // 그래야 옮긴 사진이 이전 분류에 중복으로 남지 않는다.
   const fn = app.match(/function tabsOf\([\s\S]*?\n\}/);
   assert.ok(fn, 'tabsOf 를 찾을 수 없습니다');
   assert.match(fn[0], /'other'/, '판독 안 한 사진이 갈 곳이 없습니다');
@@ -1643,11 +1643,11 @@ test('탭 줄에 「+ 분류 추가」가 있다', () => {
   assert.match(app, /class="add" onclick="openAddKind\(\)"/);
 });
 
-test('직접분류는 AI 분류와 다른 칸(customKind)에 붙는다 — read.kind 를 안 건드린다', () => {
+test('직접분류는 대표 분류가 되어 이전 AI 분류와 중복 표시되지 않는다', () => {
   const fn = app.match(/function tabsOf\([\s\S]*?\n\}/)[0];
   assert.match(fn, /it\.meta\.customKind/);
-  // 더하는 것이지 기타서류에서 빼앗지 않는다 — AI 분류 하나 + 직접분류(있으면) 둘 다 담아야 한다
-  assert.match(fn, /out\.push\(customTabKey/);
+  assert.match(fn, /return \[customTabKey\(ck\)\]/, '직접분류 하나만 반환하지 않습니다');
+  assert.doesNotMatch(fn, /out\.push\(customTabKey/, '이전 분류에 직접분류를 더해 중복 표시합니다');
 });
 
 test('직접분류 탭도 순서 목록·장수 세기에 들어간다', () => {
@@ -1655,7 +1655,7 @@ test('직접분류 탭도 순서 목록·장수 세기에 들어간다', () => {
   assert.match(order, /allTabKeys\(\)/, 'kindOrder 가 직접분류를 모릅니다');
   const counts = app.match(/function tabCounts\(\)[\s\S]*?\n\}/)[0];
   assert.match(counts, /allTabKeys\(\)/, 'tabCounts 가 직접분류 칸을 0으로 안 채웁니다');
-  assert.match(counts, /tabsOf\(it\)\.forEach/, '사진 하나가 여러 탭에 더해지지 않습니다');
+  assert.match(counts, /tabsOf\(it\)\.forEach/, '대표 분류의 개수를 세지 않습니다');
 });
 
 test('새 분류 만들기 — 이름을 물어보고 만들자마자 그 탭으로 넘어간다', () => {
@@ -1687,8 +1687,8 @@ test('분류 지정은 항목별 실제 소유자 자리에 쓴다', () => {
   assert.ok(fn, 'retagPhotos 본문을 찾을 수 없습니다');
   assert.match(fn[0], /setCustomKind\(gridYear, id, custom, it\.meta\.__ownerUid \|\| gridOwner\)/,
     '직접분류를 올린 사람 자리가 아닌 곳에 씁니다');
-  assert.match(fn[0], /saveRead\(gridYear, id, read, photoOwner\(id\)\)/,
-    '판독 결과를 올린 사람 자리가 아닌 곳에 씁니다');
+  assert.match(fn[0], /setPrimaryKind\(gridYear, id, read, null, photoOwner\(id\)\)/,
+    '판독 결과와 이전 직접분류 해제를 올린 사람 자리에 함께 쓰지 않습니다');
 });
 
 test('★ 눌러서 지정하는 길과 끌어다 놓는 길이 같은 한 곳을 쓴다', () => {
@@ -1733,7 +1733,7 @@ test('사진을 탭에 끌어다 놓으면 분류가 바뀐다', () => {
   assert.match(ds[0], /selected\.size && selected\.has\(id\)/, '고른 여러 장을 함께 옮기지 않습니다');
   const fn = app.match(/function retagPhotos\([\s\S]*?\n\}/);
   assert.ok(fn, 'retagPhotos 를 찾을 수 없습니다');
-  assert.match(fn[0], /PuPhotoStore\.saveRead\(/, '바꾼 분류를 저장하지 않습니다');
+  assert.match(fn[0], /PuPhotoStore\.setPrimaryKind\(/, '바꾼 분류를 저장하지 않습니다');
 });
 
 test('분류를 바꿔도 읽어 둔 항목은 살린다', () => {

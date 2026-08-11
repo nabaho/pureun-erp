@@ -727,6 +727,7 @@ table.sbox td.none{text-align:center;color:#8b98b3;padding:34px 10px}
 .pctool:hover{background:#f6f8fc;border-color:#d9e0ee}
 .pctool.on{background:#eef4ff;border-color:#bcd0f2;color:#1e2a47;font-weight:600}
 #pcPageSize,#pcSort{border:1px solid #e8ecf3;border-radius:11px;padding:8px 10px;font-size:13px;color:#33415e;background:#fff;cursor:pointer}
+#pcMgrFilter{border:1px solid #e8ecf3;border-radius:11px;padding:8px 10px;font-size:13px;color:#33415e;background:#fff;cursor:pointer;max-width:145px}
 .pchint{font-size:12.5px;color:#8b98b3;padding:6px 22px 10px}
 /* 선택 도구 — 목록을 밀지 않게 화면 아래에 띄운다 (대표 승인 2026-08-08).
    예전에는 표 위에 한 줄이 끼어들어, 방금 고른 줄이 아래로 밀려 눈에서 사라졌다.
@@ -1085,6 +1086,9 @@ body.pc #pcDetail{display:flex}
       <div id="pcTools">
         <button id="incompleteBtn" class="pctool" onclick="this.classList.toggle('on');state.onlyIncomplete=!state.onlyIncomplete;state.page=0;render()" title="전화·이메일이 모두 있지 않은 명함만 보기 (빠진 정보 채우기용)">정보부족</button>
         <button id="privateBtn" class="pctool" onclick="this.classList.toggle('on');state.onlyPrivate=!state.onlyPrivate;state.page=0;render()" title="개인으로 지정한 명함만 보기">개인</button>
+        <select id="pcMgrFilter" onchange="filterErpMgr(this.value)" title="담당 노무사로 명함 걸러보기">
+          <option value="">담당 전체</option>
+        </select>
         <div style="position:relative">
           <button id="colBtn" class="pctool" onclick="toggleColMenu(event)" title="표에 보일 열 선택 (체크로 켜고 끄기)">열 ▾</button>
           <div id="colMenu" style="display:none;position:absolute;top:38px;right:0;width:180px;background:#fff;border:1px solid #dde3ee;border-radius:10px;box-shadow:0 6px 22px rgba(20,30,50,.13);padding:8px;z-index:60"></div>
@@ -7604,8 +7608,8 @@ function toggleSidebar(){ $('pcRoot').classList.toggle('sidehidden'); }
 /* 열 너비 드래그 조절 */
 /* 열 기본 너비 (더블클릭 복원용) — colgroup 정의와 일치 */
 const COL_DEFAULT_W = {
-  card: { name:'7%', company:'11%', title:'10%', mobile:'9%', companyTel:'9%', companyFax:'9%', email:'12%', companyAddr:'13%', date:'74px' },
-  biz:  { company:'19%', ceo:'9%', bizno:'12%', bizType:'12%', bizItem:'14%', address:'auto', date:'82px' }
+  card: { name:'7%', company:'11%', title:'10%', mobile:'9%', companyTel:'9%', companyFax:'9%', email:'12%', companyAddr:'13%', date:'74px', manager:'128px' },
+  biz:  { company:'19%', ceo:'9%', bizno:'12%', bizType:'12%', bizItem:'14%', address:'auto', date:'82px', manager:'128px' }
 };
 /* 열 너비 더블클릭 → 원래 크기로 복원 */
 function resetColWidth(e, key){
@@ -8057,6 +8061,20 @@ function renderPCTable(){
     : (isCard?'전체 명함':'사업자등록증');
   $('pcCount').textContent = items.length.toLocaleString()+'개';
   $('pcSort').value = state.sort;
+  /* 배지를 눌러야만 알 수 있던 담당 필터를 상단에 항상 보이게 한다.
+     주담당과 부담당을 모두 포함하며 같은 이름은 한 번만 나온다. */
+  const mgrSel = $('pcMgrFilter');
+  if (mgrSel) {
+    const mgrs = [...new Set(Object.values(allItems())
+      .filter(function (it) { return it.kind === state.tab; })
+      .flatMap(function (it) { return ErpMatch.mgrs(it); })
+      .filter(Boolean))].sort(function (a, b) { return a.localeCompare(b, 'ko'); });
+    mgrSel.innerHTML = '<option value="">담당 전체</option>' + mgrs.map(function (name) {
+      return '<option value="' + esc(name) + '">' + esc(name) + '</option>';
+    }).join('');
+    mgrSel.value = state.erpMgr || '';
+    mgrSel.style.display = state.tab === 'card' ? '' : 'none';
+  }
   /* 지역 드롭다운은 제거됨 (상단 한 줄 정리) — 지역 조건은 저장된 탭에서만 사용 */
   const incBtn=$('incompleteBtn');
   if(incBtn){
@@ -8163,21 +8181,17 @@ function renderPCTable(){
   /* 담당 칸이 48px 이던 때는 table-layout:fixed 라 「자문 김보람」이 잘려
      담당 노무사가 누구인지 안 보였다(대표 지시 2026-08-11). 이름이 다 보일 만큼 준다. */
   const cgFront = state.tab==='card' ? `<col style="width:30px"><col style="width:52px">` : `<col style="width:32px"><col style="width:52px">`;
-  /* 담당 칸 폭 — 표가 table-layout:fixed 라 **반드시 숫자로 정해야** 한다(비워 두면
-     남은 폭을 이 칸이 다 먹는다). 실제로 재 본 값(칸 여백 포함):
-       자문 박재원                  101px   ← 흔한 경우
-       자문 박재원 담               113px
-       자문 박재원 +2 담 🚪 ⚠       155px
-       자문 선우정아 +2 담 🚪 ⚠     167px   ← 지금 쓰는 유형(자문·급여)의 최악
-       사무대행 선우정아 +2 담 🚪 ⚠ 191px   ← 사무대행은 현재 0건
-     168px 로 둔다 — 쓰이는 유형은 배지가 다 붙어도 접히거나 잘리지 않는다.
-     ⚠ 예전 158px 은 이보다 좁아서 배지가 두세 줄로 접혔다. 다시 좁히지 말 것. */
-  const cgBack  = state.tab==='card' ? `<col style="width:168px"><col style="width:54px">` : `<col style="width:168px"><col style="width:60px">`;
+  /* 담당 칸도 다른 열과 같은 방식으로 폭을 저장한다. 기본은 128px로 줄이고,
+     헤더 경계선을 끌면 50px 이상에서 자유롭게 조절할 수 있다. */
+  const managerW = cw.manager || DW.manager || '128px';
+  const cgBack  = state.tab==='card'
+    ? `<col data-col="manager" style="width:${managerW}"><col style="width:54px">`
+    : `<col data-col="manager" style="width:${managerW}"><col style="width:60px">`;
   const colg = `<colgroup>${cgFront}${order.map(colFrag).join('')}${cgBack}</colgroup>`;
   const filterRow = '';
   const allChecked = pageItems.length>0 && pageItems.every(it=>state.sel[it.id]);
   const headChk = `<th><input type="checkbox" ${allChecked?'checked':''} onchange="toggleSelectAll(this.checked)" title="이 페이지 전체 선택"></th>`;
-  const thead = `<tr>${headChk}<th class="num">#</th>${order.map(k=>TH[k]||'').join('')}<th style="text-align:right">담당</th><th style="text-align:center">관리</th></tr>` + filterRow;
+  const thead = `<tr>${headChk}<th class="num">#</th>${order.map(k=>TH[k]||'').join('')}<th style="text-align:right">담당${rz('manager')}</th><th style="text-align:center">관리</th></tr>` + filterRow;
   let rows='';
   pageItems.forEach((it,pi)=>{
     const i = start + pi;

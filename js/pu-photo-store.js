@@ -549,6 +549,17 @@
     return deps.db.ref().update(u);
   }
 
+  /* 고정 분류로 옮길 때 판독 종류와 직접분류 해제를 한 번에 저장한다.
+     둘을 따로 쓰면 첫 저장 뒤 연결이 끊겼을 때 두 분류에 동시에 남는다. */
+  function setPrimaryKind(year, id, read, customKind, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var u = {};
+    var p = metaPath(year, id, owner);
+    u[p + '/read'] = read;
+    u[p + '/customKind'] = customKind || null;
+    return deps.db.ref().update(u);
+  }
+
   /* ── 직접 만드는 분류 ──
      AI 자동 분류를 코드로 늘리려면 프롬프트를 고치고 배포해야 한다 —
      '아무 때나 새 분류를 만든다'는 지시와 안 맞는다. 그래서 사람이 직접
@@ -1288,6 +1299,7 @@
     newId: newId,
     savePhoto: savePhoto,
     saveRead: saveRead,
+    setPrimaryKind: setPrimaryKind,
     setShare: setShare,
     listSharedToMe: listSharedToMe,
     fillSharedNames: fillSharedNames,

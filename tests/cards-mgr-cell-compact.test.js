@@ -75,10 +75,10 @@ test('계약해지 문패는 색을 갖는다 — 회색이면 눈에 안 걸린
   assert.match(app, /#pcTable \.mgq\{[^}]*color:#/, '계약해지 표시가 칸의 회색을 물려받습니다');
 });
 
-test('담당 칸 폭을 다시 좁히지 않는다', () => {
-  /* 표가 table-layout:fixed 라 폭을 숫자로 정해야 하고, 좁히면 배지가 잘리거나 접힌다.
-     쓰이는 유형(자문·급여)에 배지가 다 붙은 줄이 167px 였다 — 그보다 좁으면 안 된다. */
-  const m = app.match(/const cgBack\s*=[\s\S]{0,200}?width:(\d+)px/);
-  assert.ok(m, '담당 칸 폭을 찾을 수 없습니다');
-  assert.ok(Number(m[1]) >= 167, '담당 칸이 ' + m[1] + 'px 로 좁아 배지가 잘립니다 (167px 이상)');
+test('담당 칸은 기본 폭이 작고 사용자가 조절할 수 있다', () => {
+  assert.match(app, /manager:'128px'/, '담당 칸 기본 폭이 128px가 아닙니다');
+  assert.match(app, /<col data-col="manager" style="width:\$\{managerW\}">/,
+    '담당 칸 폭이 다른 열처럼 저장·적용되지 않습니다');
+  assert.match(app, /담당\$\{rz\('manager'\)\}/,
+    '담당 헤더에 폭 조절 손잡이가 없습니다');
 });

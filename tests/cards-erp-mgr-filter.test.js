@@ -109,6 +109,15 @@ test('목록 걸러내기가 mgrs 로 견준다 — label 로 견주면 부담�
   assert.match(fn, /ErpMatch\.mgrs\(it\)/, '배지 글자로 견주고 있습니다');
 });
 
+test('담당자를 직접 고르는 필터가 상단에 있다', () => {
+  assert.match(app, /id="pcMgrFilter"[^>]*onchange="filterErpMgr\(this\.value\)"/,
+    '담당자 선택 필터가 없습니다');
+  const fn = fnBody('renderPCTable');
+  assert.match(fn, /ErpMatch\.mgrs\(it\)/, '필터 목록에 부담당을 포함하지 않습니다');
+  assert.match(fn, /mgrSel\.value = state\.erpMgr \|\| ''/,
+    '현재 선택한 담당자가 필터에 표시되지 않습니다');
+});
+
 test('「담당」 배지를 누르면 걸러진다 — 줄 클릭과 겹치지 않게 막는다', () => {
   const fn = fnBody('renderPCTable');
   assert.match(fn, /filterErpMgr\(/, '배지가 안 눌립니다');
