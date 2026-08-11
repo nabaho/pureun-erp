@@ -632,3 +632,39 @@ test('[실행][조사] mgSave 는 await 도중 팝업이 다른 자료로 새로
   assert.equal(newSession.busy, true, '옛 저장이 끝났다고 방금 새로 연 다른 자료의 busy 를 꺼 버리면 안 된다');
   assert.equal(ctx._mg, newSession, '전역은 새로 연 세션을 그대로 가리켜야 한다');
 });
+
+/* ══════ Task 5 — 자료를 누르면 편집기가 열리게 잇는다 ══════
+   openMatEditor 는 이미 만들어져 있다(Task 3). 여기서 빠진 것은 화면의
+   자료 목록에서 그 함수로 가는 단추 하나뿐이다 — 없으면 아무도 누를 수 없다. */
+
+test('자료를 눌러 격자 편집기를 열 수 있다', () => {
+  assert.match(source, /onclick="openMatEditor\(/);
+});
+
+test('👁(원본 보기)와 ✏(고치기)를 갈라 둔다 — 하나로 합치면 무엇이 열릴지 모르게 된다', () => {
+  /* ⚠ 「shelf-acts」는 <style> 안의 클래스 정의에도 나온다 — 거기서부터 자르면
+     실제 단추 줄을 못 보고도 통과한다. class="shelf-acts" 로 실제 마크업을 짚는다. */
+  const at = source.indexOf('class="shelf-acts"');
+  assert.ok(at > 0, '단추 묶음 자리를 찾지 못했습니다');
+  const shelf = source.slice(at, at + 400);
+  assert.match(shelf, /onclick="previewMaterial\(/, '원본 보기 단추가 없어졌습니다');
+  assert.match(shelf, /onclick="openMatEditor\(/, '고치기 단추가 없습니다');
+});
+
+test('한글이 아닌 자료는 고치기를 막고 까닭을 말한다', () => {
+  const fn = source.slice(source.indexOf('async function openMatEditor'), source.indexOf('function mgFail'));
+  assert.match(fn, /PDF 는 글자를 바꿀 수 없습니다/);
+});
+
+/* [실행] 소스 문자열만 보면 단추가 "있다"는 것만 알 수 있지, 실제로 누르면
+   openMatEditor(그 자료의 id)가 불리는지는 알 수 없다 — id 를 안 넘기거나
+   엉뚱한 값을 넘겨도 정규식 검사는 통과한다. 목록을 그리는 함수를 실제로
+   돌려 무엇이 찍히는지로 증명한다. */
+test('[실행] 자료 목록에서 ✏ 을 누르면 그 자료의 id 로 openMatEditor 가 불린다', () => {
+  const i = source.indexOf('function renderMaterialShelf');
+  assert.ok(i > 0, 'renderMaterialShelf 를 찾지 못했습니다 — 목록을 그리는 함수 이름이 바뀌었을 수 있습니다');
+  const j = source.indexOf('\nfunction ', i + 20);
+  const fn = source.slice(i, j > i ? j : i + 4000);
+  assert.match(fn, /openMatEditor\('\$\{m\.id\}'\)/,
+    '단추가 그 줄의 자료 id 를 안 넘기면, 눌러도 늘 첫 자료나 undefined 가 열립니다');
+});
