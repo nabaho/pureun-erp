@@ -54,3 +54,26 @@ test('파일이 없으면 조용히 넘기지 않고 알린다', () => {
   const fn = source.slice(source.indexOf('async function matBytes'), source.indexOf('async function matBytes') + 600);
   assert.match(fn, /throw new Error/);
 });
+
+test('큰 팝업이 표를 세로 목록이 아니라 표로 그린다', () => {
+  assert.match(source, /function openMatEditor/);
+  assert.match(source, /PuHwpEdit\.readGrid\(/);
+  assert.match(source, /rowspan="\$\{/);
+  assert.match(source, /colspan="\$\{/);
+});
+
+test('격자를 그릴 때 자리를 짐작하지 않는다', () => {
+  /* Math.floor(i/cols) 를 새로 쓰면 합친 칸이 있는 서식이 전부 어긋난다 */
+  const mg = source.slice(source.indexOf('function mgTableHtml'), source.indexOf('function mgInput'));
+  assert.ok(mg.length > 200, 'mgTableHtml 을 찾지 못했습니다');
+  assert.doesNotMatch(mg, /Math\.floor\([^)]*cols/);
+});
+
+test('자리를 못 읽은 칸은 표 아래에 따로 내놓는다', () => {
+  assert.match(source, /자리를 모르는 칸/);
+});
+
+test('큰 팝업이 화면을 꽉 채운다', () => {
+  assert.match(source, /\.mged\{position:fixed;inset:0/);
+  assert.match(source, /\.mged-box\{width:min\(1240px,97vw\)/);
+});
