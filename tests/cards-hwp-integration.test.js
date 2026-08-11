@@ -365,3 +365,270 @@ test('강제 정리(mgClose)는 저장 여부를 묻지 않는다 — 이미 지
   assert.ok(mgClose.length > 10, 'mgClose 를 찾지 못했습니다');
   assert.doesNotMatch(mgClose, /confirm\(/, 'mgClose 안에서 물어보면 강제 정리가 막힌다');
 });
+
+/* ══════ Task 4 — 저장·내려받기·원본 모습 ══════ */
+
+test('저장은 되돌릴 수 없으니 먼저 물어본다', () => {
+  const fn = source.slice(source.indexOf('async function mgSave'), source.indexOf('function mgDownload'));
+  assert.ok(fn.length > 200, 'mgSave 를 찾지 못했습니다');
+  assert.match(fn, /confirm\(/);
+  assert.match(fn, /putMaterial\(/);
+});
+
+test('넣지 못한 줄을 조용히 넘기지 않는다', () => {
+  assert.match(source, /function mgTellFailed/);
+  assert.match(source, /넣지 못한 곳/);
+});
+
+test('문서에 넣은 뒤 반드시 다시 읽는다', () => {
+  /* 넣고 나면 줄 길이가 달라진다 — 안 읽으면 다음 저장이 어긋난다 */
+  const fn = source.slice(source.indexOf('function mgApply'), source.indexOf('function mgTellFailed'));
+  assert.ok(fn.length > 120, 'mgApply 를 찾지 못했습니다');
+  assert.match(fn, /PuHwpEdit\.readGrid\(_mg\.doc\)/);
+  assert.match(fn, /_mg\.edited\s*=\s*\{\}/);
+});
+
+test('원본 모습은 문서가 아니라 바이트로 그린다', () => {
+  /* 문서를 넘기면 엔진이 가져가 편집이 죽는다 */
+  const fn = source.slice(source.indexOf('function mgPreview'), source.indexOf('function mgPreview') + 700);
+  assert.match(fn, /renderPreview\([^)]*_mg\.bytes/);
+  assert.doesNotMatch(fn, /renderPreview\([^)]*_mg\.doc/);
+});
+
+/* ══════ 실행해서 검증 ══════
+   위 네 검사는 소스 문자열만 본다 — "다시 읽는다"·"실패를 알린다"가 실제로 동작하는지는
+   함수를 직접 돌려야 증명된다. mgApply·mgTellFailed·mgSave·mgDownload·mgPreview 다섯 조각을
+   한 vm 샌드박스에 올려 필요한 의존만(PuHwpEdit·putMaterial·confirm·toast 등) 손으로 쥔다. */
+/* mgApply 는 vm 샌드박스 코드가 만든 객체를 돌려준다 — 그 객체의 Object.prototype 은 이
+   테스트 파일(바깥 realm)의 Object.prototype 과 다른 것이라 assert.deepEqual 이 "구조는
+   같은데 참조가 다르다"며 그냥 실패한다. JSON 을 한 번 오가며 이 파일의 realm 으로 만든다. */
+const plain = v => JSON.parse(JSON.stringify(v));
+
+function loadMgSaveBlock(){
+  const i = source.indexOf('function mgApply');
+  const j = source.indexOf('function heApply');
+  assert.ok(i > 0, 'mgApply 를 찾지 못했습니다');
+  assert.ok(j > i, 'mgApply 블록 끝(heApply 시작)을 찾지 못했습니다');
+  const code = source.slice(i, j);
+
+  const calls = { toast: [], confirm: [], putMaterial: [], renderPreview: [], download: [], mgRender: 0 };
+  const seq = [];   /* applyRows 가 readGrid 보다 먼저 불렸는지 순서를 남긴다 */
+
+  function makeEl(){
+    return { style:{}, _html:'', get innerHTML(){ return this._html; },
+      set innerHTML(v){ this._html=v; }, appendChild(){} };
+  }
+
+  const ctx = {
+    _mg: null,
+    $: id => ctx._els[id],
+    _els: { mgedBody: makeEl() },
+    esc: s => String(s),
+    document: { createElement: () => makeEl() },
+    toast: (msg, ms) => calls.toast.push({msg, ms}),
+    confirm: msg => { calls.confirm.push(msg); return ctx._confirmReturns.shift() ?? true; },
+    _confirmReturns: [],
+    matType: () => ({ mime:'application/x-hwp' }),
+    _matMeta: {},
+    putMaterial: (id, name, file) => { calls.putMaterial.push({id, name, file}); return ctx._putMaterialImpl ? ctx._putMaterialImpl(id, name, file) : Promise.resolve(); },
+    _putMaterialImpl: null,
+    mgChanged: () => (ctx._mg ? ctx.PuHwpEdit.changedRows(ctx._mg.grid.units, ctx._mg.edited).length : 0),
+    mgRender: () => { calls.mgRender++; },
+    PuHwpEdit: {
+      changedRows: (units, edited) => Object.keys(edited).map(Number).map(i => ({ no: units[i].no, next: edited[i] })),
+      applyRows: (doc, ch) => { seq.push('applyRows'); return ctx._applyRowsReturns || { ok: ch.length, failed: [] }; },
+      exportBytes: (doc, name) => 'NEWBYTES:'+name,
+      readGrid: (doc) => { seq.push('readGrid'); return { units:[{no:1,text:'다시 읽음'}], blocks:[], warn:{badCellInfo:0,textBoxes:0}, fresh:true }; },
+      editedName: name => name.replace(/(\.[a-z0-9]+)$/i, '(수정)$1'),
+      extOf: name => /\.hwpx$/i.test(name) ? 'hwpx' : 'hwp'
+    },
+    PureunHwp: {
+      renderPreview: (el, bytes, name) => { calls.renderPreview.push({el, bytes, name}); return Promise.resolve(); },
+      download: (bytes, name, ext) => { calls.download.push({bytes, name, ext}); }
+    },
+    File   /* vm 샌드박스는 바깥 전역을 안 물려받는다 — mgSave 가 쓰는 File 을 직접 쥐여줘야
+              "File is not defined" 로 죽지 않는다(죽으면 catch 에 잡혀 putMaterial 을 영영 못 본다) */
+  };
+  vm.createContext(ctx);
+  vm.runInContext(code, ctx);
+  ctx._calls = calls;
+  ctx._seq = seq;
+  return ctx;
+}
+
+test('[실행] mgApply 는 넣은 뒤 반드시 다시 읽고, 고친 표시를 비운다', () => {
+  const ctx = loadMgSaveBlock();
+  ctx._mg = { id:'m1', name:'문서.hwp', bytes:'OLD', doc:'DOC',
+    edited:{0:'바뀐 글'}, grid:{ units:[{no:1,text:'옛 글'}], blocks:[], warn:{} } };
+  const res = ctx.mgApply();
+  assert.deepEqual(plain(res), { ok:1, failed:[] });
+  assert.equal(ctx._mg.bytes, 'NEWBYTES:문서.hwp', '다시 내보낸 바이트로 바뀌어야 한다');
+  assert.equal(ctx._mg.grid.fresh, true, 'readGrid 로 다시 읽은 grid 로 바뀌어야 한다');
+  assert.deepEqual(plain(ctx._mg.edited), {}, '넣은 뒤 고친 표시는 비워야 한다');
+  assert.deepEqual(ctx._seq, ['applyRows','readGrid'], 'applyRows 로 넣은 다음에 readGrid 로 다시 읽어야 한다 — 순서가 바뀌면 줄 길이가 어긋난다');
+});
+
+test('[실행] mgApply 는 고친 곳이 없으면 문서를 건드리지 않는다', () => {
+  const ctx = loadMgSaveBlock();
+  ctx._mg = { id:'m1', name:'문서.hwp', bytes:'OLD', doc:'DOC', edited:{}, grid:{ units:[{no:1,text:'옛 글'}], blocks:[], warn:{} } };
+  const res = ctx.mgApply();
+  assert.deepEqual(plain(res), { ok:0, failed:[] });
+  assert.equal(ctx._mg.bytes, 'OLD', '고친 곳이 없으면 새 바이트를 만들 이유가 없다');
+  assert.deepEqual(ctx._seq, [], 'applyRows·readGrid 를 부르면 안 된다');
+});
+
+test('[실행] 넣지 못한 곳은 번호와 이유를 담아 toast 로 알린다', () => {
+  const ctx = loadMgSaveBlock();
+  ctx.mgTellFailed({ ok:1, failed:[{no:3, why:'글상자'}, {no:7, why:'자리 없음'}] });
+  assert.equal(ctx._calls.toast.length, 1);
+  assert.match(ctx._calls.toast[0].msg, /넣지 못한 곳/);
+  assert.match(ctx._calls.toast[0].msg, /3번\(글상자\)/);
+  assert.match(ctx._calls.toast[0].msg, /7번\(자리 없음\)/);
+});
+
+test('[실행] 실패가 없으면 mgTellFailed 는 아무것도 알리지 않는다', () => {
+  const ctx = loadMgSaveBlock();
+  ctx.mgTellFailed({ ok:2, failed:[] });
+  assert.equal(ctx._calls.toast.length, 0);
+});
+
+test('[실행] mgSave 는 고친 곳이 없으면 물어보지도 저장하지도 않는다', async () => {
+  const ctx = loadMgSaveBlock();
+  ctx._mg = { id:'m1', name:'문서.hwp', bytes:'OLD', doc:'DOC', edited:{}, grid:{ units:[{no:1,text:'옛 글'}], blocks:[], warn:{} }, busy:false };
+  await ctx.mgSave();
+  assert.equal(ctx._calls.confirm.length, 0);
+  assert.equal(ctx._calls.putMaterial.length, 0);
+  assert.match(ctx._calls.toast[0].msg, /고친 곳이 없습니다/);
+});
+
+test('[실행] mgSave 는 취소하면 자료함에 손대지 않는다', async () => {
+  const ctx = loadMgSaveBlock();
+  ctx._confirmReturns = [false];
+  ctx._mg = { id:'m1', name:'문서.hwp', bytes:'OLD', doc:'DOC', edited:{0:'바뀐 글'}, grid:{ units:[{no:1,text:'옛 글'}], blocks:[], warn:{} }, busy:false };
+  await ctx.mgSave();
+  assert.equal(ctx._calls.confirm.length, 1);
+  assert.equal(ctx._calls.putMaterial.length, 0, '취소했으면 절대 저장하면 안 된다');
+  assert.deepEqual(ctx._mg.edited, {0:'바뀐 글'}, '취소했으면 고친 내용도 그대로 남아야 한다');
+});
+
+test('[실행] mgSave 는 확인 후 다시 읽은 바이트를 자료함 이름으로 저장하고 화면을 다시 그린다', async () => {
+  const ctx = loadMgSaveBlock();
+  ctx._matMeta = { m1: { id:'m1', name:'표시 이름.hwp', cat:'제안서' } };  /* 자료함에 걸린 이름은 원본 파일명과 다를 수 있다 */
+  ctx._mg = { id:'m1', name:'원본파일명.hwp', bytes:'OLD', doc:'DOC', edited:{0:'바뀐 글'},
+    grid:{ units:[{no:1,text:'옛 글'}], blocks:[], warn:{} }, busy:false };
+  await ctx.mgSave();
+  assert.equal(ctx._calls.confirm.length, 1);
+  assert.match(ctx._calls.confirm[0], /원본파일명\.hwp/);
+  assert.equal(ctx._calls.putMaterial.length, 1);
+  const put = ctx._calls.putMaterial[0];
+  assert.equal(put.id, 'm1');
+  assert.equal(put.name, '표시 이름.hwp', '자료함에 걸린 이름을 그대로 얹어야 갈래·설명이 안 흩어진다');
+  assert.equal(put.file.name, '원본파일명.hwp');
+  const buf = Buffer.from(await put.file.arrayBuffer());
+  assert.equal(buf.toString(), 'NEWBYTES:원본파일명.hwp', '다시 읽은(re-read) 바이트가 그대로 파일이 되어야 한다');
+  assert.equal(ctx._calls.mgRender, 1, '저장 뒤 화면을 다시 그려야 한다');
+  assert.match(ctx._calls.toast.at(-1).msg, /저장했습니다/);
+  assert.equal(ctx._mg.busy, false, '끝나면 busy 를 반드시 풀어야 한다');
+});
+
+test('[실행] mgSave 는 일부만 못 넣어도 넣은 것은 저장하고 실패는 알린다', async () => {
+  const ctx = loadMgSaveBlock();
+  ctx._applyRowsReturns = { ok:1, failed:[{no:5, why:'글상자'}] };
+  ctx._matMeta = { m1: { id:'m1', name:'문서.hwp' } };
+  ctx._mg = { id:'m1', name:'문서.hwp', bytes:'OLD', doc:'DOC', edited:{0:'바뀐 글'},
+    grid:{ units:[{no:1,text:'옛 글'}], blocks:[], warn:{} }, busy:false };
+  await ctx.mgSave();
+  assert.match(ctx._calls.toast.some(t=>/넣지 못한 곳/.test(t.msg)) ? '넣지 못한 곳' : '', /넣지 못한 곳/);
+  assert.equal(ctx._calls.putMaterial.length, 1, '넣은 것은 그대로 저장해야 한다 — 실패했다고 전부 버리면 안 된다');
+});
+
+test('[실행] mgSave 도중 오류가 나면 삼키지 않고 알리며 busy 를 반드시 푼다', async () => {
+  const ctx = loadMgSaveBlock();
+  ctx._putMaterialImpl = () => Promise.reject(new Error('네트워크 오류'));
+  ctx._matMeta = { m1: { id:'m1', name:'문서.hwp' } };
+  ctx._mg = { id:'m1', name:'문서.hwp', bytes:'OLD', doc:'DOC', edited:{0:'바뀐 글'},
+    grid:{ units:[{no:1,text:'옛 글'}], blocks:[], warn:{} }, busy:false };
+  await ctx.mgSave();
+  assert.match(ctx._calls.toast.at(-1).msg, /저장하지 못했습니다/);
+  assert.match(ctx._calls.toast.at(-1).msg, /네트워크 오류/);
+  assert.equal(ctx._mg.busy, false, '오류가 나도 busy 에 갇히면 다시는 저장을 못 누른다');
+});
+
+test('[실행] mgDownload 는 자료함을 건드리지 않고 고친 이름으로 파일만 내려받는다', () => {
+  const ctx = loadMgSaveBlock();
+  ctx._mg = { id:'m1', name:'문서.hwpx', bytes:'OLD', doc:'DOC', edited:{0:'바뀐 글'},
+    grid:{ units:[{no:1,text:'옛 글'}], blocks:[], warn:{} }, busy:false };
+  ctx.mgDownload();
+  assert.equal(ctx._calls.putMaterial.length, 0, '내려받기는 자료함 원본을 바꾸면 안 된다');
+  assert.equal(ctx._calls.download.length, 1);
+  assert.equal(ctx._calls.download[0].bytes, 'NEWBYTES:문서.hwpx');
+  assert.equal(ctx._calls.download[0].name, '문서(수정).hwpx');
+  assert.equal(ctx._calls.download[0].ext, 'hwpx');
+  assert.equal(ctx._calls.mgRender, 1, '고친 표시(disabled)를 되돌리려면 다시 그려야 한다');
+});
+
+test('[실행] mgPreview 는 doc 이 아니라 bytes 를 엔진에 넘긴다', async () => {
+  const ctx = loadMgSaveBlock();
+  ctx._mg = { id:'m1', name:'문서.hwp', bytes:'REAL_BYTES', doc:'LIVE_DOC', edited:{},
+    grid:{ units:[{no:1,text:'글'}], blocks:[], warn:{} }, busy:false };
+  ctx.mgPreview();
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(ctx._calls.renderPreview.length, 1);
+  assert.equal(ctx._calls.renderPreview[0].bytes, 'REAL_BYTES', 'doc 를 넘기면 그 문서가 죽는다');
+  assert.notEqual(ctx._calls.renderPreview[0].bytes, 'LIVE_DOC');
+});
+
+test('[실행] mgPreview 는 고친 내용이 있으면 버릴지 물어보고, 취소하면 그대로 둔다', async () => {
+  const ctx = loadMgSaveBlock();
+  ctx._confirmReturns = [false];
+  ctx._mg = { id:'m1', name:'문서.hwp', bytes:'B', doc:'D', edited:{0:'바뀐 글'},
+    grid:{ units:[{no:1,text:'옛 글'}], blocks:[], warn:{} }, busy:false };
+  ctx.mgPreview();
+  assert.equal(ctx._calls.confirm.length, 1);
+  assert.equal(ctx._calls.renderPreview.length, 0, '취소했으면 그리면 안 된다');
+  assert.deepEqual(ctx._mg.edited, {0:'바뀐 글'}, '취소했으면 고친 내용이 남아 있어야 한다');
+});
+
+/* ══════ 사라진 자료에 저장하는 문제 — 조사 ══════
+   mgSave 는 await putMaterial(...) 전에 id 와 file 을 이미 손에 쥔다. 그 사이 다른 곳에서
+   같은 id 를 지워도(mgClose 가 _mg=null 로 만들어도) 이미 쥔 값으로 그대로 쓴다.
+   이 자체는 막을 수 없다는 것을 실행으로 못박아 둔다 — heSave 도 같은 모양이라
+   여기서 막으면 두 편집기가 다르게 행동하게 된다(과제 범위 밖, putMaterial 재설계가 필요).
+   실제로 이 경로가 열리려면: (1) 같은 탭 안에서는 편집기 팝업(.mged, position:fixed;inset:0;
+   z-index:140)이 화면을 덮어 삭제 버튼을 못 누르게 막고, (2) _matMeta 는 시작할 때 한 번만
+   불러올 뿐 실시간으로 안 바뀌니 다른 사람이 지워도 이 탭엔 그 사실이 반영되지 않는다 —
+   그래서 실제로는 다다르기 어렵다. 그래도 "쥔 뒤에는 멈출 수 없다"는 사실 자체는 참이므로
+   실행으로 확인해 둔다. */
+test('[실행][조사] mgSave 는 await 도중 _mg 가 놓여도(mgClose) 이미 쥔 id·file 로 그대로 저장한다', async () => {
+  const ctx = loadMgSaveBlock();
+  ctx._matMeta = { m1: { id:'m1', name:'문서.hwp' } };
+  ctx._mg = { id:'m1', name:'문서.hwp', bytes:'OLD', doc:'DOC', edited:{0:'바뀐 글'},
+    grid:{ units:[{no:1,text:'옛 글'}], blocks:[], warn:{} }, busy:false };
+  ctx._putMaterialImpl = (id, name, file) => {
+    /* putMaterial 이 도는(await) 사이에 다른 어딘가(예: deleteMaterial)가 같은 자료를 지웠다고 흉내낸다 */
+    delete ctx._matMeta[id];
+    ctx._mg = null;
+    return Promise.resolve();
+  };
+  await ctx.mgSave();     /* 이 await 이 던지면(TypeError 등) 위 finally 가 null 을 건드린 것이다 */
+  assert.equal(ctx._calls.putMaterial.length, 1, 'await 전에 이미 쥔 값으로 저장 자체는 진행된다');
+  assert.equal(ctx._calls.putMaterial[0].id, 'm1');
+  assert.equal(ctx._mg, null, 'mgSave 가 끝난다고 놓인 자료를 되살리면 안 된다 — 전역은 null 그대로여야 한다');
+  assert.match(ctx._calls.toast.at(-1).msg, /저장했습니다/, '저장 자체(자료함 쓰기)는 끝까지 진행되어 성공으로 끝난다');
+});
+
+/* mgSave 가 finally 에서 "_mg.busy=false" 처럼 전역을 그대로 건드리면, await 도중 팝업이
+   다른 자료로 새로 열렸을 때(_mg 가 그 새 세션으로 바뀌었을 때) 방금 연 남의 세션의 busy 를
+   엉뚱하게 꺼 버린다 — 그 세션이 실제로는 아직 저장 중이어도 저장 버튼이 다시 눌려 버린다.
+   이 옛 mgSave 호출은 자신이 시작할 때 쥔 자료(m1)만 건드려야 한다. */
+test('[실행][조사] mgSave 는 await 도중 팝업이 다른 자료로 새로 열려도 그 새 세션의 busy 를 건드리지 않는다', async () => {
+  const ctx = loadMgSaveBlock();
+  ctx._matMeta = { m1: { id:'m1', name:'문서.hwp' } };
+  const newSession = { id:'m2', name:'딴문서.hwp', bytes:'X', doc:'D2', edited:{}, grid:{units:[],blocks:[],warn:{}}, busy:true };
+  ctx._mg = { id:'m1', name:'문서.hwp', bytes:'OLD', doc:'DOC', edited:{0:'바뀐 글'},
+    grid:{ units:[{no:1,text:'옛 글'}], blocks:[], warn:{} }, busy:false };
+  ctx._putMaterialImpl = () => { ctx._mg = newSession; return Promise.resolve(); };
+  await ctx.mgSave();
+  assert.equal(newSession.busy, true, '옛 저장이 끝났다고 방금 새로 연 다른 자료의 busy 를 꺼 버리면 안 된다');
+  assert.equal(ctx._mg, newSession, '전역은 새로 연 세션을 그대로 가리켜야 한다');
+});

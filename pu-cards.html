@@ -3172,6 +3172,81 @@ function mgInput(i, el){
   if($('mgDownB')) $('mgDownB').disabled=!n;
 }
 
+/* 고친 것을 문서에 넣고 새 바이트를 만든다.
+   ⚠ 넣은 뒤에는 줄 길이가 달라졌다 — 반드시 다시 읽어야 다음 저장이 어긋나지 않는다. */
+function mgApply(){
+  const ch = PuHwpEdit.changedRows(_mg.grid.units, _mg.edited);
+  if(!ch.length) return {ok:0, failed:[]};
+  const res = PuHwpEdit.applyRows(_mg.doc, ch);
+  _mg.bytes = PuHwpEdit.exportBytes(_mg.doc, _mg.name);
+  _mg.grid = PuHwpEdit.readGrid(_mg.doc);
+  _mg.edited = {};
+  return res;
+}
+/* 실패한 곳을 조용히 넘기면 「저장했다는데 안 바뀌었다」가 된다 */
+function mgTellFailed(res){
+  if(!res.failed.length) return;
+  toast('넣지 못한 곳: '+res.failed.map(f=>f.no+'번('+f.why+')').join(', '), 9000);
+}
+
+async function mgSave(){
+  if(!_mg || _mg.busy) return;
+  const n = mgChanged();
+  if(!n) return toast('고친 곳이 없습니다');
+  if(!confirm('고친 '+n+'곳을 자료함의 「'+_mg.name+'」에 저장합니다.\n예전 내용은 남지 않습니다. 진행할까요?')) return;
+  /* ⚠ 이 저장이 다루는 자료를 여기서 미리 쥔다(m). await putMaterial 이 도는 사이
+     자료가 지워지거나(mgClose) 팝업이 다른 자료로 새로 열리면 전역 _mg 는 바뀌거나
+     null 이 된다 — 그때 마지막에 "_mg.busy=false" 를 그대로 쓰면 null 을 건드려 죽거나,
+     엉뚱하게도 방금 새로 열린 남의 세션의 busy 를 꺼 버린다. m 은 이 호출이 시작할 때의
+     그 자료 그대로를 계속 가리키므로 이 저장은 언제나 자신이 쥔 것만 건드린다. */
+  const m = _mg;
+  m.busy=true;
+  try{
+    const res = mgApply();
+    mgTellFailed(res);
+    const t = matType(m.name) || {mime:'application/octet-stream'};
+    const file = new File([m.bytes], m.name, {type:t.mime});
+    const cur = _matMeta[m.id] || {};
+    await putMaterial(m.id, cur.name || m.name, file);   /* 갈래·설명·순서는 그대로 얹힌다 */
+    toast('✅ 자료함에 저장했습니다');
+    mgRender();
+  }catch(e){
+    toast('저장하지 못했습니다 — '+((e&&e.message)||''), 8000);
+  }finally{ m.busy=false; }
+}
+
+function mgDownload(){
+  if(!_mg || _mg.busy) return;
+  try{
+    const res = mgApply();
+    mgTellFailed(res);
+    PureunHwp.download(_mg.bytes, PuHwpEdit.editedName(_mg.name), PuHwpEdit.extOf(_mg.name));
+    toast('📥 고친 문서를 내려받았습니다 — 자료함의 원본은 그대로입니다');
+    mgRender();
+  }catch(e){ toast('만들지 못했습니다 — '+((e&&e.message)||''), 8000); }
+}
+
+/* 원본 모습 — 한글로 인쇄한 그대로 그린다.
+   ⚠ 반드시 _mg.bytes 를 넘긴다. renderPreview 는 받은 바이트로 제 문서를 열고
+     끝나면 닫는다(pu-hwp-engine.js). _mg.doc 를 넘기면 그 문서가 죽어
+     편집이 통째로 멈춘다. */
+function mgPreview(){
+  if(!_mg) return;
+  const b=$('mgedBody'); if(!b) return;
+  if(mgChanged() && !confirm('고친 내용을 아직 저장하지 않았습니다.\n버리고 원본 모습을 볼까요?')) return;
+  _mg.edited={};
+  b.innerHTML='<div class="mpmsg">모습을 그리는 중…</div>';
+  PureunHwp.renderPreview(b, _mg.bytes, _mg.name).then(()=>{
+    const back=document.createElement('div');
+    back.style.cssText='text-align:center;padding:10px 0 18px';
+    back.innerHTML='<button onclick="mgRender()" style="border:1px solid #cbd5e6;background:#fff;border-radius:8px;padding:7px 14px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit">← 고치기로 돌아가기</button>';
+    b.appendChild(back);
+  }).catch(e=>{
+    b.innerHTML='<div class="mpmsg">모습을 그리지 못했습니다 — '+esc((e&&e.message)||'')
+      +'<br><button onclick="mgRender()" style="margin-top:10px;border:1px solid #cbd5e6;background:#fff;border-radius:8px;padding:7px 14px;font-size:12.5px;cursor:pointer;font-family:inherit">← 고치기로 돌아가기</button></div>';
+  });
+}
+
 /* 고친 줄을 문서에 넣고 새 바이트를 만든다.
    ⚠ 넣은 뒤에는 줄 길이가 달라졌다 — 반드시 다시 읽어야 다음 저장이 어긋나지 않는다. */
 function heApply(){
