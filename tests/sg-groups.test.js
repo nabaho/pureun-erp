@@ -26,13 +26,21 @@ t('묶음 수', GROUPS.length, 3);
 t('이름과 순서 (포털 화면 순서 그대로)', GROUPS.map(function(g){ return g.label; }),
   ['업무지원', '직접업무', '기타 건의']);
 
-console.log('\n[② 어느 항목이 어느 묶음인가 — 포털 타일 배치를 따른다]');
-function names(g){ return CATS.filter(function(c){ return c.g === g; }).map(function(c){ return c.name; }); }
-t('업무지원 = 업무를 돕는 도구', names('sup'),
-  ['푸른이알피', '컨설팅 일정', '업무관리', '명함첩', '문서·이력', '포털']);
-t('직접업무 = 직접 수행하는 업무', names('direct'), ['기금관리', '취업규칙', '급여관리']);
-t('기타 건의 = 프로그램이 아닌 것', names('misc'),
-  ['업무 개선', '규정·제도', '교육·연수', '사무환경·비품', '인사·복지', '기타']);
+/* ⚠ 2026-08-10 다시 겨눔 — 여기서 **보이는 이름**을 못 박고 있었다.
+   그래서 「컨설팅 일정」을 「정부사업일정」으로 고치자마자 이 검사가 깨졌고,
+   이름을 바꾼 것 말고는 아무 잘못이 없는데 **모든 앱의 배포가 막혔다.**
+   지켜야 할 것은 「무엇이 어느 묶음에 있나」이지 그것을 뭐라고 부르나가 아니다.
+   그래서 이제 key 로 견준다 — key 는 지난 건의 기록에 박혀 있어 못 바꾼다(④). */
+console.log('\n[② 어느 항목이 어느 묶음인가 — 이름이 아니라 key 로 본다]');
+function keysOf(g){ return CATS.filter(function(c){ return c.g === g; }).map(function(c){ return c.key; }); }
+t('업무지원 = 업무를 돕는 도구', keysOf('sup'),
+  ['erp', 'consult', 'work', 'cards', 'docs', 'portal']);
+t('직접업무 = 직접 수행하는 업무', keysOf('direct'), ['fund', 'rules', 'payroll']);
+t('기타 건의 = 프로그램이 아닌 것', keysOf('misc'),
+  ['bizwork', 'policy', 'edu', 'office', 'hrwelf', 'etc']);
+/* 이름은 자유롭게 고치되, **비어 있으면 안 된다** — 빈 칩은 눌러도 뭔지 모른다 */
+t('이름이 빈 항목은 없다',
+  CATS.filter(function(c){ return !String(c.name || '').trim(); }).map(function(c){ return c.key; }), []);
 
 console.log('\n[③ 빠뜨린 항목이 없다]');
 const known = { sup:1, direct:1, misc:1 };

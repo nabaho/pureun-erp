@@ -1,0 +1,201 @@
+/* 마지막 본 화면 — 다시 들어오면 그 자리로 (대표 지시 2026-08-10)
+   "로그아웃 또는 다른 화면을 보다가 다시 명함·메일로 들어오면 마지막 들어왔던
+    화면으로 기록해서 들어오게 해달라. 그리고 로그인 하는 사람마다 다를 텐데
+    그 사람마다 각자 마지막 본 화면으로 보게 해라."
+
+   ⚠ 이 기능에서 가장 위험한 것은 **남의 화면이 열리는 것**이다.
+     한 PC를 여러 사람이 쓴다 — 열쇠에 계정이 안 들어가면 앞사람이 보던 화면이
+     뒷사람에게 열리고, 그것이 「보낸 메일」이면 남의 일까지 보인다. */
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const root = path.join(__dirname, '..');
+const app = fs.readFileSync(path.join(root, 'pu-cards.html'), 'utf8');
+
+/* ⚠ 한 줄짜리 함수를 먼저 본다. 여러 줄용 규칙(다음 줄머리 `}` 까지)을 그대로
+   쓰면 한 줄 함수에서 **다음 함수까지 통째로** 집어삼킨다(그래서 처음에 터졌다). */
+function fn(name) {
+  const one = app.match(new RegExp('function ' + name + '\\([^)]*\\)\\{[^\\n]*\\}'));
+  if (one) return one[0];
+  const m = app.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\r?\\n\\}'));
+  assert.ok(m, name + ' 을 찾을 수 없습니다');
+  return m[0];
+}
+
+/* 진짜로 돌려 본다 — 적고, 사람이 바뀌고, 다시 읽는 흐름 전체 */
+function boot(who) {
+  const store = {};
+  const opened = [];
+  const ctx = {
+    JSON, Object,
+    myUid: who || '', myEmail: '',
+    state: { view: 'list', tab: 'card', mailSent: false },
+    localStorage: {
+      getItem: k => (k in store ? store[k] : null),
+      setItem: (k, v) => { store[k] = String(v); }
+    },
+    __store: store,
+    opened: opened,
+    /* ⚠ this 를 쓰지 않는다 — 화면 코드가 openSentBox() 처럼 그냥 부르므로
+       vm 안에서 this 가 없다(처음에 여기서 터졌다). */
+    openMatPage() { opened.push('mat'); },
+    openMailPage() { opened.push('mail'); },
+    openSentBox() { opened.push('sent'); },
+    openSchedBox() { opened.push('sched'); },
+    switchTab(t) { opened.push('tab:' + t); }
+  };
+  vm.createContext(ctx);
+  vm.runInContext(app.match(/const LASTV_PREFIX = [^\n]*/)[0], ctx);
+  vm.runInContext("var _lastScreenSig = ''; var _lastScreenDone = false;", ctx);
+  ['lastScreenKey', 'saveLastScreen', 'restoreLastScreen'].forEach(n => vm.runInContext(fn(n), ctx));
+  return ctx;
+}
+
+/* ── 사람마다 따로 (가장 중요) ── */
+test('★ 사람마다 자기 화면만 기억한다 — 앞사람 화면이 열리면 안 된다', () => {
+  const a = boot('uid-A');
+  a.state.view = 'mail'; a.state.mailSent = true;   // 갑이 「보낸 메일」을 보고 나감
+  a.saveLastScreen();
+
+  /* 같은 PC 에 을이 로그인 — 갑의 자리를 그대로 물려받으면 안 된다 */
+  const b = boot('uid-B');
+  Object.keys(a.__store).forEach(k => { b.__store[k] = a.__store[k]; });
+  b.restoreLastScreen();
+  assert.deepEqual(Array.from(b.opened), [],
+    '앞사람이 보던 화면이 뒷사람에게 열립니다: ' + JSON.stringify(b.opened));
+
+  /* 갑이 다시 들어오면 제 화면으로 */
+  const a2 = boot('uid-A');
+  Object.keys(a.__store).forEach(k => { a2.__store[k] = a.__store[k]; });
+  a2.restoreLastScreen();
+  assert.deepEqual(Array.from(a2.opened), ['sent'], '자기 화면으로 안 돌아옵니다');
+});
+
+test('★ 누구인지 모르는 동안에는 적지 않는다', () => {
+  /* 로그인 전에도 render 가 돈다 — 거기서 적으면 빈 계정 자리에 남아 샌다. */
+  const c = boot('');
+  c.state.view = 'mail'; c.state.mailSent = 'sched';
+  c.saveLastScreen();
+  assert.deepEqual(Object.keys(c.__store), [], '로그인 전에 화면을 적고 있습니다');
+});
+
+test('★ 로그인 전에 부른 것이 「다 했다」로 처리되면 안 된다', () => {
+  /* 여기가 이 기능에서 가장 조용히 깨지는 자리다 — 로그인 전에 한 번 부르고
+     「했다」고 표시해 버리면, 정작 로그인한 뒤에는 **영영 안 옮겨진다.**
+     화면은 멀쩡해 보이고 기능만 죽는다. */
+  const w = boot('uid-A');
+  w.state.view = 'mat'; w.saveLastScreen();
+
+  const r = boot('');                          // 아직 로그인 전
+  Object.keys(w.__store).forEach(k => { r.__store[k] = w.__store[k]; });
+  r.restoreLastScreen();
+  assert.deepEqual(Array.from(r.opened), [], '로그인 전에 화면을 옮기고 있습니다');
+
+  r.myUid = 'uid-A';                            // 이제 로그인됐다
+  r.restoreLastScreen();
+  assert.deepEqual(Array.from(r.opened), ['mat'],
+    '로그인 전에 한 번 불렸다고 그 뒤로 영영 안 옮겨집니다');
+});
+
+test('★ 열쇠에 계정이 들어간다', () => {
+  const a = boot('uid-A'), b = boot('uid-B');
+  assert.notEqual(a.lastScreenKey(), b.lastScreenKey(), '두 사람이 같은 자리를 씁니다');
+  assert.match(a.lastScreenKey(), /uid-A/);
+});
+
+/* ── 어느 화면이든 그 자리로 ── */
+test('★ 화면마다 제자리로 돌아온다', () => {
+  const cases = [
+    [{ view: 'mat' }, 'mat'],
+    [{ view: 'mail', mailSent: false }, 'mail'],
+    [{ view: 'mail', mailSent: true }, 'sent'],
+    [{ view: 'mail', mailSent: 'sched' }, 'sched'],
+    [{ view: 'list', tab: 'biz' }, 'tab:biz']
+  ];
+  cases.forEach(function (c) {
+    const w = boot('uid-A');
+    Object.assign(w.state, { view: 'list', tab: 'card', mailSent: false }, c[0]);
+    w.saveLastScreen();
+    const r = boot('uid-A');
+    Object.keys(w.__store).forEach(k => { r.__store[k] = w.__store[k]; });
+    r.restoreLastScreen();
+    assert.deepEqual(Array.from(r.opened), [c[1]],
+      JSON.stringify(c[0]) + ' 에서 나갔는데 ' + JSON.stringify(r.opened) + ' 으로 옵니다');
+  });
+});
+
+test('★ 보던 자리와 같으면 화면을 흔들지 않는다', () => {
+  /* 명함 목록에서 나갔다가 명함 목록으로 들어오는데 switchTab 을 부르면
+     걸어 둔 조건·고른 것이 다 풀린다. */
+  const w = boot('uid-A');
+  w.saveLastScreen();                       // view:list, tab:card (기본 그대로)
+  const r = boot('uid-A');
+  Object.keys(w.__store).forEach(k => { r.__store[k] = w.__store[k]; });
+  r.restoreLastScreen();
+  assert.deepEqual(Array.from(r.opened), [], '같은 자리인데 화면을 다시 그립니다');
+});
+
+test('★ 처음 오신 분은 기본 화면 그대로', () => {
+  const r = boot('uid-새사람');
+  r.restoreLastScreen();
+  assert.deepEqual(Array.from(r.opened), [], '적어 둔 것이 없는데 어딘가로 옮깁니다');
+});
+
+test('★ 두 번 부르지 않는다', () => {
+  const w = boot('uid-A');
+  w.state.view = 'mat'; w.saveLastScreen();
+  const r = boot('uid-A');
+  Object.keys(w.__store).forEach(k => { r.__store[k] = w.__store[k]; });
+  r.restoreLastScreen();
+  r.restoreLastScreen();
+  assert.equal(r.opened.length, 1,
+    '명함 목록이 새로 올 때마다 화면이 튕겨 나갑니다 — 일하다 말고 자꾸 옮겨집니다');
+});
+
+test('★ 망가진 값이 있어도 앱이 죽지 않는다', () => {
+  const r = boot('uid-A');
+  r.__store[r.lastScreenKey()] = '{{망가진 값';
+  assert.doesNotThrow(() => r.restoreLastScreen());
+  assert.deepEqual(Array.from(r.opened), []);
+});
+
+/* ── 붙어 있는 자리 ── */
+test('★ 화면이 바뀔 때마다 적는다', () => {
+  assert.match(app, /function render\(\)\{[^\n]*saveLastScreen\(\)/,
+    'render 에서 안 적으면 어느 화면에서 나갔는지 모릅니다');
+});
+
+test('★ 명함이 도착한 뒤에 옮긴다', () => {
+  /* 먼저 옮기면 빈 화면이 잠깐 보이고, 자료함·보낸 메일은 아직 읽히지도 않았다. */
+  const i = app.indexOf("/items').on('value'");
+  assert.ok(i > 0, '명함 구독을 찾을 수 없습니다');
+  assert.match(app.slice(i, i + 400), /restoreLastScreen\(\)/,
+    '자료가 오기 전에 화면을 옮깁니다');
+});
+
+test('★ 이 기기에만 적는다 — 서버에 올리지 않는다', () => {
+  /* 화면 취향은 자리마다 다르다. 서버에 두면 사무실 PC 에서 보던 것이 폰에서 열린다. */
+  const s = fn('saveLastScreen');
+  assert.match(s, /localStorage\.setItem/, '기기에 안 적습니다');
+  assert.ok(!/firebase|database\(\)|\.ref\(/.test(s), '서버에 올리고 있습니다');
+});
+
+test('★ 바뀔 때만 적는다 (render 는 수시로 돈다)', () => {
+  /* render 는 명함 하나 고칠 때마다도 돈다. 그때마다 저장소에 쓰면 헛일이다.
+     ⚠ 겉모습(_lastScreenSig 라는 글자)만 보면 안 된다 — 견주는 줄을 지워도
+        그 글자는 남아 통과한다. 실제로 몇 번 적었는지 센다. */
+  const c = boot('uid-A');
+  let writes = 0;
+  const orig = c.localStorage.setItem;
+  c.localStorage.setItem = function (k, v) { writes++; orig(k, v); };
+  c.saveLastScreen();
+  c.saveLastScreen();
+  c.saveLastScreen();
+  assert.equal(writes, 1, '안 바뀌었는데 ' + writes + '번 적었습니다');
+  c.state.view = 'mat';
+  c.saveLastScreen();
+  assert.equal(writes, 2, '바뀌었는데 안 적었습니다');
+});
