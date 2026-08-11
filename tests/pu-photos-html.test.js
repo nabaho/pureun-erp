@@ -380,10 +380,92 @@ test('끌 때 사진 자체가 아니라 표만 넘긴다', () => {
   const fn = app.match(/\$\('grid'\)\.addEventListener\('dragstart'[\s\S]*?\n\}\);/);
   assert.ok(fn, '격자 dragstart 본문을 찾을 수 없습니다');
   assert.ok(!/it\.thumb|loadFull|blob/.test(fn[0]), '사진 데이터를 넘기고 있습니다');
+  /* 2026-08-10 다시 겨눔 — 표를 만드는 일이 dragRefOf 로 모였다.
+     지켜야 할 것은 「사진이 아니라 표를 넘긴다」와 「표에 찾아갈 것이 다 들어 있다」이지
+     그 코드가 어느 함수에 적혀 있느냐가 아니다. */
+  const ref = app.match(/function dragRefOf\([\s\S]*?\n\}/);
+  assert.ok(ref, 'dragRefOf 본문을 찾을 수 없습니다');
+  assert.ok(!/it\.thumb|loadFull|blob/.test(ref[0]), '표에 사진 데이터를 담고 있습니다');
   // 어디 있는 무엇인지가 다 들어가야 받는 쪽이 가져올 수 있다
   for (const k of ['year:', 'owner:', 'id:']) {
-    assert.ok(fn[0].indexOf(k) >= 0, '표에 ' + k + ' 가 없습니다');
+    assert.ok(ref[0].indexOf(k) >= 0, '표에 ' + k + ' 가 없습니다');
   }
+});
+
+/* ══════ 고른 여러 장을 밖으로 (대표 지시 2026-08-10) ══════
+   "체크된 서류 및 사진들 한꺼번에 화면 안과 화면 밖으로 옮길 수 있게 해줘"
+   예전에는 8장을 끌어도 받는 쪽엔 1장만 도착했다 — 규약이 한 장짜리였다. */
+test('★ 고른 것을 끌면 전부 함께 나간다', () => {
+  const fn = app.match(/\$\('grid'\)\.addEventListener\('dragstart'[\s\S]*?\n\}\);/)[0];
+  /* ⚠ setMany 라는 글자만 보면 안 된다 — 그 줄이 **닿지 않는 곳**에 있어도 통과한다
+     (실제로 조건을 false 로 바꿔 봤더니 안 잡혔다). 조건까지 함께 본다. */
+  assert.match(fn, /if \(refs\.length > 1\) PuDrag\.setMany\(/,
+    '여러 장일 때 여러 장으로 보내지 않습니다 — 1장만 도착합니다');
+  assert.match(fn, /photoDragIds\.filter/, '고른 전부를 표로 만들지 않습니다');
+});
+
+test('★ 집은 사진이 맨 앞에 간다', () => {
+  /* 한 장만 읽는 옛 앱에서도 **대표님이 집은 그 사진**이 가야 한다.
+     목록 첫 장이 가면 엉뚱한 것을 받은 것처럼 보인다. */
+  const fn = app.match(/\$\('grid'\)\.addEventListener\('dragstart'[\s\S]*?\n\}\);/)[0];
+  assert.match(fn, /const order = \[id\]\.concat\(/, '집은 사진이 맨 앞이 아닙니다');
+});
+
+test('★ 규약이 여러 장을 담되 옛 앱을 깨지 않는다', () => {
+  const drag = fs.readFileSync(path.join(root, 'js', 'pu-drag.js'), 'utf8');
+  const set = drag.match(/function setMany\([\s\S]*?\n  \}/);
+  assert.ok(set, 'setMany 가 없습니다');
+  assert.match(set[0], /head\.items = list/, '여러 장을 담지 않습니다');
+  assert.match(set[0], /list\[0\]/,
+    '첫 장을 맨 윗칸에 두지 않으면 한 장만 읽는 옛 앱이 빈손이 됩니다');
+  const all = drag.match(/function readAll\([\s\S]*?\n  \}/);
+  assert.ok(all, 'readAll 이 없습니다');
+  assert.match(all[0], /return \[ref\]/, '한 장짜리로 온 것을 못 읽습니다');
+  assert.match(all[0], /x\.id/, '번호 없는 표를 걸러 내지 않습니다');
+  assert.match(drag, /readAll: readAll/, '밖으로 내주지 않습니다');
+  assert.match(drag, /setMany: setMany/, '밖으로 내주지 않습니다');
+});
+
+test('★ 규약이 실제로 여러 장을 실어 나른다', () => {
+  /* 겉모습이 아니라 진짜로 돌려 본다 — 넣은 것이 그대로 나와야 한다. */
+  const drag = fs.readFileSync(path.join(root, 'js', 'pu-drag.js'), 'utf8');
+  const g = {};
+  vm.createContext(g);
+  vm.runInContext(drag + '\n;globalThis.PuDrag = PuDrag || globalThis.PuDrag;', g);
+  const PuDrag = g.PuDrag;
+  assert.ok(PuDrag, 'PuDrag 를 만들지 못했습니다');
+
+  const bag = {};
+  const dt = {
+    types: [],
+    setData(t, v) { bag[t] = v; this.types.push(t); },
+    getData(t) { return bag[t] || ''; }
+  };
+  const list = [
+    { app: 'pu-photos', kind: 'photo', year: '2026', owner: 'u1', id: 'a', name: '가' },
+    { app: 'pu-photos', kind: 'photo', year: '2026', owner: 'u1', id: 'b', name: '나' },
+    { app: 'pu-photos', kind: 'photo', year: '2026', owner: 'u1', id: 'c', name: '다' }
+  ];
+  assert.equal(PuDrag.setMany(dt, list), true);
+
+  const got = PuDrag.readAll(dt);
+  assert.equal(got.length, 3, '세 장을 실었는데 ' + got.length + '장만 나옵니다');
+  /* ⚠ vm 안에서 만든 배열은 밖의 배열과 **다른 종류**로 취급된다(deepEqual 이 튕긴다).
+     알맹이만 견주려고 글자로 이어 붙인다. */
+  assert.equal(got.map(x => x.id).join(','), 'a,b,c', '순서가 어긋납니다');
+
+  /* 한 장만 읽는 옛 앱 */
+  const one = PuDrag.read(dt);
+  assert.equal(one.id, 'a', '옛 앱이 첫 장을 못 받습니다');
+
+  /* 한 장짜리로 보낸 것도 배열로 읽힌다 */
+  const bag2 = {};
+  const dt2 = { types: [], setData(t, v) { bag2[t] = v; this.types.push(t); }, getData(t) { return bag2[t] || ''; } };
+  PuDrag.set(dt2, list[0]);
+  assert.equal(PuDrag.readAll(dt2).map(x => x.id).join(','), 'a', '한 장짜리를 못 읽습니다');
+
+  assert.match(PuDrag.label({ kind: 'photo', docKind: 'doc', items: list }), /3장/,
+    '몇 장인지 안 알려 줍니다');
 });
 
 test('컨설팅이 사진첩 사진을 받는다', () => {
