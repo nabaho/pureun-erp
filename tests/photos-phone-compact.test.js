@@ -36,7 +36,8 @@ function fakeDom() {
              firstChild: null, focus() {} };
   }
   const ids = ['phoneBar','side','chipRow','pickBtn','docBtn','row2',
-               'needBox','oldBox','upWrap','findBar','q','phUpRow','phMenuBtn','phSheet'];
+               'needBox','oldBox','upWrap','findBar','q','phUpRow','phMenuBtn','phSheet',
+               'ownerPick','phTop','phOwner'];
   const nodes = {};
   ids.forEach(function (i) { nodes[i] = el(i); });
   /* 처음에는 PC 자리 — 대시보드와 row2 안 */
@@ -44,6 +45,7 @@ function fakeDom() {
   nodes.docBtn.parentNode = nodes.row2;
   nodes.needBox.parentNode = nodes.side;
   nodes.oldBox.parentNode = nodes.side;
+  nodes.ownerPick.parentNode = nodes.side;
   return nodes;
 }
 function runPlace(width) {
@@ -56,6 +58,7 @@ function runPlace(width) {
   };
   ctx.isPhone = function () { return ctx.window.innerWidth <= ctx.PHONE_MAX; };
   ctx.renderPhMenuBtn = function () {};
+  ctx.renderPhNeedBtn = function () {};
   ctx.closePhSheet = function () {};
   const m = html.match(/function placeForWidth\(\)[\s\S]*?\n\}/);
   vm.createContext(ctx);
@@ -73,10 +76,26 @@ test('★ 폰이면 아래 줄에 카메라를 두지 않는다', () => {
   assert.ok(!/id="camBtn"/.test(html), '없애기로 한 단추가 아직 있습니다.');
 });
 
-test('★ 사진·서류 고르기는 창 안으로 들어간다', () => {
+/* ⚠ 2026-08-10 다시 겨눔 — 대표 지시로 폰에서 **두 갈래를 없앴다**:
+   "사진 고르기 서류 고르기 필요 없다. 분류 기능 없애고 업로드 기능만 만들어라."
+   이제 맨 윗줄의 「＋ 사진 올리기」 하나가 그 일을 한다. */
+test('★ 폰에서는 올리는 단추가 맨 위에 하나뿐이다', () => {
+  assert.ok(/id="phTop"/.test(html), '폰 맨 윗줄이 없습니다.');
+  assert.ok(/id="phUpBtn" onclick="phUpload\(\)"/.test(html), '올리는 단추가 없습니다.');
+  const m = html.match(/function phUpload\(\)[^\n]*/);
+  assert.ok(m, 'phUpload 가 없습니다.');
+  assert.ok(/docInput/.test(m[0]),
+    '서류 통로를 안 타면 화질이 낮게 담겨 글씨를 못 읽습니다.');
+  /* 두 갈래 단추는 폰에서 보이지 않는다(.row2 는 감춰지고 #side 는 안 뜬다) */
+  const css = html.match(/@media \(max-width:820px\)\{[\s\S]*?\n\}\r?\n#chipRow/)[0];
+  assert.ok(/\.row2\{display:none!important\}/.test(css), '서류 고르기가 아직 보입니다.');
+});
+
+test('★ 폰에서도 「누구 사진」(관리자)에 갈 길이 남는다', () => {
+  /* 창을 없앴으니 담을 데가 없다 — 맨 윗줄로 올라와야 한다.
+     안 옮기면 관리자가 폰에서 남의 사진을 아예 못 본다. */
   const n = runPlace(390);
-  assert.equal(n.pickBtn.parentNode.id, 'phUpRow');
-  assert.equal(n.docBtn.parentNode.id, 'phUpRow');
+  assert.equal(n.ownerPick.parentNode.id, 'phTop');
 });
 
 test('★ PC 에서는 하나도 안 옮긴다', () => {
@@ -93,14 +112,17 @@ test('★ 폰에서 PC 로 넓히면 제자리로 돌아온다 (화면을 돌릴
   };
   ctx.isPhone = function () { return ctx.window.innerWidth <= ctx.PHONE_MAX; };
   ctx.renderPhMenuBtn = function () {};
+  ctx.renderPhNeedBtn = function () {};
   ctx.closePhSheet = function () {};
   vm.createContext(ctx);
   vm.runInContext(html.match(/function placeForWidth\(\)[\s\S]*?\n\}/)[0], ctx);
   ctx.placeForWidth();
-  assert.equal(nodes.pickBtn.parentNode.id, 'phUpRow');
+  assert.equal(nodes.ownerPick.parentNode.id, 'phTop');
   ctx.window.innerWidth = 1400;          // 가로로 돌리거나 창을 넓혔다
   ctx.placeForWidth();
-  assert.equal(nodes.pickBtn.parentNode.id, 'side', '넓혔는데 창 안에 남으면 안 됩니다.');
+  assert.equal(nodes.ownerPick.parentNode.id, 'side',
+    '넓혔는데 「누구 사진」이 폰 자리에 남으면 대시보드에서 사라집니다.');
+  assert.equal(nodes.pickBtn.parentNode.id, 'side');
   assert.equal(nodes.docBtn.parentNode.id, 'row2');
 });
 
@@ -126,34 +148,58 @@ test('★ 아래 줄에 가려 마지막 사진이 잘리지 않는다', () => {
     '떠 있는 줄 뒤에 여백이 없으면 마지막 줄 사진을 못 누릅니다.');
 });
 
-test('아래 줄의 빈 자리는 클릭이 뚫린다', () => {
-  const m = html.match(/#phoneBar\{display:flex[^}]*\}/);
-  assert.ok(m && /pointer-events:none/.test(m[0]),
-    '안 보이는 판이 사진을 덮으면 사진을 못 누릅니다.');
-  assert.ok(/#phoneBar > \*\{pointer-events:auto\}/.test(html), '단추 자체는 눌려야 합니다.');
+/* ⚠ 2026-08-10 다시 겨눔 — 떠 있던 아래 줄을 없앴다. 맨 윗줄은 **흐름 안**에
+   있어 사진을 덮지 않는다. 덮는 판이 없으니 클릭이 막힐 일도 없다. */
+test('★ 떠 있는 판이 사진을 덮지 않는다', () => {
+  /* ⚠ 폰 덩어리를 「@media 부터 #chipRow 까지」로 잘라 보면 안 된다 —
+     파일에 max-width:820px 덩어리가 여럿이라 앞엣것에 걸려 **숨기는 규칙까지
+     함께** 딸려 온다. 그러면 여기서 보는 것이 #phTop{display:none} 이 되어,
+     정작 폰 규칙에 position:fixed 를 넣어도 안 잡힌다(실제로 그랬다).
+     그러니 폰에서 뜨는 그 규칙을 **콕 집어** 본다. */
+  const i = html.indexOf('#phTop{display:flex');
+  assert.ok(i > 0, '폰 맨 윗줄 꾸밈을 찾지 못했습니다.');
+  const rule = html.slice(i, html.indexOf('}', i) + 1);
+  assert.ok(!/position:fixed|position:absolute/.test(rule),
+    '맨 윗줄이 떠 있으면 그 아래 사진을 못 누릅니다: ' + rule);
+  assert.ok(!/#phoneBar\{display:flex/.test(html), '없앤 아래 줄이 아직 뜹니다.');
 });
 
-/* ══ 분류 + 올리기 창 (대표 지시 2026-08-07: 캡쳐 둘을 합쳐 팝업으로) ══ */
-test('★ 폰에서는 분류 탭 줄이 화면에서 사라진다', () => {
+/* ══ 폰에서 분류를 없앴다 (대표 지시 2026-08-10) ══
+   "캡처1처럼 분류하면 많이 혼란스럽다. 현재는 분류 기능 없애고 업로드 기능만." */
+test('★ 폰에서는 분류가 통째로 사라진다 (탭 줄·창·알약 모두)', () => {
   const m = html.match(/@media \(max-width:820px\)\{[\s\S]*?\n\}\r?\n#chipRow/);
   assert.ok(m, '폰 전용 꾸밈 덩어리를 찾지 못했습니다.');
-  assert.ok(/#kinds,#chipRow,#needBox,#oldBox,#ownerPick\{display:none!important\}/.test(m[0]),
-    '탭 줄·확인 필요·누구 사진이 남아 있으면 합친 뜻이 없습니다(대표 화면 2026-08-07).');
-  assert.ok(/#phMenuBtn\{display:flex\}/.test(m[0]));
+  assert.ok(/#kinds,#chipRow,#needBox,#oldBox\{display:none!important\}/.test(m[0]),
+    '탭 줄·확인 필요가 남아 있으면 화면이 그대로입니다.');
+  assert.ok(!/#phMenuBtn\{display:flex\}/.test(m[0]), '창을 여는 알약이 아직 뜹니다.');
+  assert.ok(!/#phSheet\.on\{display:block\}/.test(m[0]), '분류 창이 아직 열립니다.');
+});
+
+test('★ 「⚠ 확인 필요」 딱지 하나만 남긴다 (대표 승인 목업 ②안)', () => {
+  /* 분류를 없애면 손봐야 할 사진으로 가는 길이 폰에서 아예 사라진다. */
+  assert.ok(/id="phNeedBtn" onclick="phGoNeed\(\)"/.test(html), '딱지가 없습니다.');
+  const m = html.match(/function renderPhNeedBtn\(\)[\s\S]*?\r?\n\}/);
+  assert.ok(m, 'renderPhNeedBtn 이 없습니다.');
+  assert.ok(/needsCheck/.test(m[0]), '무엇을 세는지가 없습니다.');
+  assert.ok(/if \(!n\)/.test(m[0]),
+    '0장일 때도 딱지가 떠 있으면 없앤 뜻이 반쯤 사라집니다.');
+  assert.ok(/needOnly \?/.test(m[0]), '눌러 들어간 뒤 나올 길이 딱지에 안 적힙니다.');
+  /* 격자를 다시 그릴 때 숫자도 따라와야 한다 */
+  assert.ok(/renderPhNeedBtn\(\);/.test(html.match(/renderBackBar\(\);[\s\S]{0,220}/)[0]),
+    '사진이 늘거나 줄어도 딱지 숫자가 그대로입니다.');
 });
 
 /* ⚠ 실제 고장(2026-08-07) — 「보이게」는 폰 구간에, 「숨기기」는 그보다 **뒤**에 적어서
    같은 힘인데 뒤엣것이 이겼다. 그래서 폰에서 왼쪽 단추가 아예 안 떴다.
    숨기는 규칙은 반드시 폰 구간보다 **앞**에 있어야 한다. */
 test('★ 숨기는 규칙이 폰 규칙보다 앞에 있다 (뒤에 두면 폰에서 안 뜬다)', () => {
-  const hide = html.indexOf('#phMenuBtn{display:none}');
-  const show = html.indexOf('#phMenuBtn{display:flex}');
+  /* 2026-08-10 다시 겨눔 — 이제 폰에서 뜨는 것은 맨 윗줄(#phTop)이다.
+     함정은 그대로다: 같은 힘이면 **뒤에 적힌 것이 이긴다.** */
+  const hide = html.indexOf('#phTop{display:none}');
+  const show = html.indexOf('#phTop{display:flex');
   assert.ok(hide >= 0 && show >= 0, '두 규칙이 다 있어야 합니다.');
   assert.ok(hide < show,
-    '숨기는 규칙이 뒤에 있으면 폰에서 단추가 안 뜹니다 — 실제로 그랬습니다.');
-  const hideS = html.indexOf('#phSheet{display:none}');
-  assert.ok(hideS >= 0 && hideS < html.indexOf('#phSheet.on{display:block}'),
-    '창도 같은 함정에 빠집니다.');
+    '숨기는 규칙이 뒤에 있으면 폰에서 올리기 단추가 안 뜹니다 — 실제로 그랬습니다.');
 });
 
 test('★ 아래 단추에 지금 보는 분류와 장수를 적는다', () => {
