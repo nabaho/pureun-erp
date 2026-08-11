@@ -113,8 +113,11 @@ test('「담당」 배지를 누르면 걸러진다 — 줄 클릭과 겹치지 
   const fn = fnBody('renderPCTable');
   assert.match(fn, /filterErpMgr\(/, '배지가 안 눌립니다');
   assert.match(fn, /event\.stopPropagation\(\);filterErpMgr/, '누르면 상세보기까지 함께 열립니다');
-  /* 배지에 적힌 짧은 글자가 아니라 주담당 이름을 넘겨야 한다 */
-  assert.match(fn, /ErpMatch\.mgrs\(it\)\[0\]/, '배지 글자를 조건으로 넘기고 있습니다');
+  /* 배지에 적힌 짧은 글자(label)가 아니라 **주담당 이름**을 넘겨야 한다.
+     ⚠ 어느 변수에 담는지는 바뀔 수 있다(2026-08-11 컴팩트 정리 때 _all[0] 로 바뀌었다).
+       못 박을 것은 **label 을 조건으로 쓰지 않는 것**이다. */
+  assert.match(fn, /ErpMatch\.mgrs\(it\)/, '주담당 이름을 안 가져옵니다');
+  assert.ok(!/filterErpMgr\('\$\{esc\(_mgr\)/.test(fn), '배지 글자를 조건으로 넘기고 있습니다');
 });
 
 test('같은 것을 다시 누르면 풀리고, 페이지와 고른 것을 되돌린다', () => {
