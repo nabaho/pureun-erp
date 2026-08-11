@@ -3001,15 +3001,21 @@ function heBig(){ if(_he) openMaterialHwp(_he.bytes, _he.name); }
    ⚠ 원본 모습은 renderPreview(el, _mg.bytes, …) 로 그린다. bytes 다.
      doc 을 넘기면 그 문서가 죽어 편집이 통째로 멈춘다. */
 let _mg = null;   /* {id,name,bytes,doc,grid,edited,busy} */
+let _mgGen = 0;   /* 겹쳐 열 때 차례표 — 기다리는 사이 새로 열렸으면 나는 옛 호출이다 */
 
 function mgChanged(){
   return _mg ? PuHwpEdit.changedRows(_mg.grid.units, _mg.edited).length : 0;
 }
-function closeMatEditor(){
-  if(_mg && mgChanged() && !confirm('고친 내용을 아직 저장하지 않았습니다.\n버리고 닫을까요?')) return;
+/* 확인 없이 곧장 놓는다 — 자료가 이미 지워졌거나 다른 파일로 바뀐 강제 정리에 쓴다.
+   그때는 저장할 곳 자체가 없어졌으니 "버릴까요" 를 물을 이유가 없다. */
+function mgClose(){
   if(_mg){ try{ if(_mg.doc && _mg.doc.free) _mg.doc.free(); }catch(_){} }
   _mg=null;
   const el=$('mgedBack'); if(el) el.remove();
+}
+function closeMatEditor(){
+  if(_mg && mgChanged() && !confirm('고친 내용을 아직 저장하지 않았습니다.\n버리고 닫을까요?')) return;
+  mgClose();
 }
 
 async function openMatEditor(id){
@@ -3017,8 +3023,12 @@ async function openMatEditor(id){
   const name = m.fileName || m.name || '한글자료.hwp';
   if(!/^(hwp|hwpx)$/.test(matExt(name)))
     return toast('한글 문서(.hwp·.hwpx)만 고칠 수 있습니다 — PDF 는 글자를 바꿀 수 없습니다', 7000);
-  if(_mg) closeMatEditor();
+  /* ⚠ _mg 는 두 await 를 지나야 채워진다. 그 사이 겹쳐 누르면 _mg 는 아직 null 이라
+     _mg 가 있을 때만 닫는 식으로는 못 막는다 — matHwp 남매(openMaterialHwp)처럼
+     조건 없이 먼저 닫는다. closeMatEditor 는 _mg 가 없어도 남은 #mgedBack 을 지운다. */
+  closeMatEditor();
   if(_mg) return;                                  /* 닫기를 취소했다 */
+  const gen = ++_mgGen;                             /* 이 호출의 차례표를 찍어 둔다 */
 
   const back=document.createElement('div');
   back.className='mged'; back.id='mgedBack';
@@ -3032,7 +3042,10 @@ async function openMatEditor(id){
   try{
     const arr = await matBytes(id);
     const doc = await PureunHwp.openDoc(arr, name);
-    if(!$('mgedBack')){ try{doc.free()}catch(_){} return; }   /* 기다리는 사이 닫았다 */
+    /* 기다리는 사이 닫혔거나(#mgedBack 없음) 새로 열렸다(내 차례표가 낡았다).
+       둘 다 화면은 이미 다른 것을 그리고 있으니 문서만 놓고 물러난다 —
+       화면을 만지면 최신 호출이 그려 둔 것을 밀어낸다. */
+    if(!$('mgedBack') || gen!==_mgGen){ try{doc.free()}catch(_){} return; }
     _mg={id:id, name:name, bytes:arr, doc:doc, grid:{units:[],blocks:[],warn:{badCellInfo:0,textBoxes:0}},
          edited:{}, busy:false};
     try{ _mg.grid = PuHwpEdit.readGrid(doc); }catch(e){
@@ -3101,6 +3114,7 @@ function mgTableHtml(b){
     if(c.row==null || c.col==null){ orphan.push(c); return; }
     at[c.row+'-'+c.col]=c;
   });
+  const emitted={};                                /* 실제로 <td> 로 나간 칸의 번호(cell) */
   let h='<table class="mgtbl">';
   for(let r=0;r<rows;r++){
     h+='<tr>';
@@ -3112,10 +3126,20 @@ function mgTableHtml(b){
       for(let dr=0;dr<rs;dr++) for(let dc=0;dc<cs;dc++)
         if(dr||dc) taken[(r+dr)+'-'+(c+dc)]=1;
       h+=`<td rowspan="${rs}" colspan="${cs}">`+cell.units.map(mgLineHtml).join('')+'</td>';
+      emitted[cell.cell]=1;
     }
     h+='</tr>';
   }
   h+='</table>';
+  /* ⚠ 화면에 안 나온 칸은 사용자가 영영 못 고친다 — 조용히 사라지는 것이 진짜 위험이다.
+     rows·cols 가 실제 칸 수보다 작아 표 밖으로 밀렸든(0×0 표에 칸만 60개인 경우 등),
+     row·col 이 겹쳐 last-writer-wins 로 밀려났든, 합친 칸이 덮은 자리라 continue 로
+     건너뛰었든 — 위 두 for 문을 실제로 지나간 칸(emitted)에 못 든 칸은 전부 여기서
+     건져 자리 모르는 칸 상자로 보낸다. 자리는 몰라도 고칠 수는 있어야 한다. */
+  b.cells.forEach(c=>{
+    if(c.row==null || c.col==null) return;         /* 이미 위에서 orphan 에 들어갔다 */
+    if(!emitted[c.cell]) orphan.push(c);
+  });
   /* 자리를 못 읽은 칸도 고칠 수 있어야 한다. 조용히 빼면 영영 못 고친다. */
   if(orphan.length){
     h+='<div class="mgorph">⚠ 자리를 모르는 칸 '+orphan.length+'개 — 표 어디인지 알 수 없지만 고칠 수는 있습니다.'
@@ -3985,6 +4009,7 @@ async function pickDelMat(){
       delete _matMeta[id];
       if(state.matPrevId===id) state.matPrevId='';
       if(_he && _he.id===id) heClose();
+      if(_mg && _mg.id===id) mgClose();
     });
     pickClear('mat'); matRefresh();
     toast(`🗑 자료 ${ids.length}개를 지웠습니다`, 5000);
@@ -4413,6 +4438,7 @@ async function replaceMaterialFile(id, input){
   const cur = _matMeta[id]; if(!cur) return;
   /* 열어 둔 한글 문서는 옛 파일이다 — 놓아야 새 파일을 보게 된다 */
   if(_he && _he.id===id) heClose();
+  if(_mg && _mg.id===id) mgClose();
   await putMaterial(id, cur.name, file);
 }
 /* 파일 본문은 명함 사진과 같은 방식으로 DB에 저장 (Storage 미사용 — 권한설정 불필요) */
@@ -4475,6 +4501,7 @@ async function deleteMaterial(id){
     /* 지운 자료를 미리보기가 들고 있으면 함께 접는다 */
     if(state.matPrevId===id){ state.matPrevId=''; if(_mpFor===id){ _mpFor=null; _mpHtml=''; } }
     if(_he && _he.id===id) heClose();          /* 지운 자료의 문서를 들고 있으면 안 된다 */
+    if(_mg && _mg.id===id) mgClose();          /* 격자 편집기도 마찬가지다 */
     matRefresh();
     toast('삭제했습니다');
   }catch(e){ toast('삭제 실패: '+((e&&e.message)||'')); }
