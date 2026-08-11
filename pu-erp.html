@@ -3728,8 +3728,40 @@ var DIFF_KEYS = ['companies','cases','consultings','funds','other_projects','pay
           });
           };
           _pushWithSrvCheck(0);
+        } else if(erpObjIsMap(v)){
+          /* ── 묶음표(객체) 자료: 통째로 덮지 말고 «바뀐 열쇠만» 얹는다 (2026-08-11) ──
+             전에는 서버가 최신이면 내 변경을 버리고, 아니면 통째로 set 했다.
+             거래내역 「골라 둔 짝」처럼 여럿이 동시에 만지는 자리에서
+             A가 3번 줄, B가 5번 줄을 골라도 나중 사람이 앞사람 것을 지웠다.
+             목록형 자료가 이미 하고 있던 트랜잭션 병합을 묶음표에도 준다.
+             ⚠ 비우기(모두 지우기)는 막지 않는다 — 통장 처리표 초기화처럼
+               일부러 비우는 자리가 있고, 전에도 그대로 통과하던 길이다. */
+          var _md = erpObjDiff(prev, v);
+          if(_md && _md.n === 0){ _metaRollback(); return true; }   // 실질 변경 없음
+          var _mGuard = '';
+          fbDb.ref('data/'+k).transaction(function(cur){
+            // 서버가 이미 다른 모양(배열·숫자 등)이면 손대지 않는다 — 병합할 수가 없다
+            if(cur && cur.v !== undefined && cur.v !== null && !erpObjIsMap(cur.v)){ _mGuard = '형태'; return; }
+            var merged = erpObjMerge(cur && cur.v, _md);
+            var newTs = Math.max(((cur && typeof cur.u === 'number') ? cur.u : 0) + 1, Date.now());
+            return { v: merged, u: newTs };
+          }, function(err, committed, snap){
+            if(err || !committed || !snap){
+              console.warn('[병합저장] '+k+': 묶음표 트랜잭션 미완료' + (_mGuard ? ' ('+_mGuard+' 가드)' : ''));
+              _metaRollback(); _markPending();
+              try { showToast('⚠ 서버 저장 실패 — 이 기기엔 남아있습니다. 다시 저장해 주세요'); } catch(_){}
+              return;
+            }
+            try {
+              var _sv3 = snap.val() || {};
+              localStorage.setItem(KEY+k, JSON.stringify(_sv3.v === undefined ? {} : _sv3.v));
+              localStorage.setItem(KEY+'_meta_'+k, String(typeof _sv3.u === 'number' ? _sv3.u : Date.now()));
+              _dbCache[k] = (_sv3.v === undefined ? {} : _sv3.v);
+              if(typeof _scheduleFbChanged === 'function') _scheduleFbChanged(k);
+            } catch(_){}
+          });
         } else {
-          // 되돌림 방지(객체/스칼라 설정): 서버가 이 기기 기준보다 최신이면 덮어쓰지 말고 서버 원본을 raw 그대로 수신
+          // 되돌림 방지(스칼라 설정): 서버가 이 기기 기준보다 최신이면 덮어쓰지 말고 서버 원본을 raw 그대로 수신
           fbDb.ref('data/'+k).once('value').then(function(snap){
             var sv2 = snap.val();
             var srvU2 = (sv2 && typeof sv2.u === 'number') ? sv2.u : 0;
@@ -3830,6 +3862,34 @@ function computeArrayDiff(prev, next){
   });
 
   return { upserts:upserts, removes:removes, totalChange: upserts.length + removes.length };
+}
+
+// ── 묶음표(객체) 자료의 «바뀐 열쇠만» 골라내기 (2026-08-11) ──────────
+// 목록형(배열) 자료는 이미 트랜잭션으로 병합해 왔는데, 묶음표 자료는 통째로 덮었다.
+// 거래내역 「골라 둔 짝」·「보류」, 성과%, 권한, 마감 잠금이 전부 묶음표다.
+// → A가 3번 줄을 고르고 B가 5번 줄을 고르면, 나중 사람이 앞사람 것을 통째로 지웠다.
+//   (내 것만 남고 남의 것이 사라진다. 여럿이 함께 쓰라고 만든 자리인데 그랬다.)
+function erpObjIsMap(x){
+  return !!(x && typeof x === 'object' && !Array.isArray(x));
+}
+function erpObjDiff(prev, next){
+  if(!erpObjIsMap(next)) return null;
+  var p = erpObjIsMap(prev) ? prev : {};
+  var set = {}, del = [];
+  Object.keys(next).forEach(function(k){
+    if(JSON.stringify(next[k]) !== JSON.stringify(p[k])) set[k] = next[k];
+  });
+  Object.keys(p).forEach(function(k){ if(!(k in next)) del.push(k); });
+  return { set:set, del:del, n:Object.keys(set).length + del.length };
+}
+// 서버 현재값 위에 내 변경분만 얹는다. 내가 안 만진 열쇠는 그대로 둔다.
+function erpObjMerge(cur, diff){
+  var out = {};
+  if(erpObjIsMap(cur)) Object.keys(cur).forEach(function(k){ out[k] = cur[k]; });
+  if(!diff) return out;
+  Object.keys(diff.set).forEach(function(k){ out[k] = diff.set[k]; });
+  diff.del.forEach(function(k){ delete out[k]; });
+  return out;
 }
 
 // ============ 건별 쓰기 프리미티브 (Phase 0 — 과거회귀 근본대책) ============
