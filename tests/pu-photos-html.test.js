@@ -146,10 +146,75 @@ test('서류 고르기 버튼이 따로 있고 서류로 표시된다', () => {
 
 test('미리보기를 끼워 넣을 때 서류 딱지를 지우지 않는다', () => {
   // 칸 내용을 innerHTML 로 통째로 바꾸면 딱지가 사라진다.
-  const fill = app.match(/function fillThumbs\(\)[\s\S]*?\n\}/);
-  assert.ok(fill, 'fillThumbs 본문을 찾을 수 없습니다');
-  assert.ok(!/cell\.innerHTML\s*=/.test(fill[0]), '칸 내용을 통째로 바꿔 딱지가 지워집니다');
-  assert.match(fill[0], /insertBefore/);
+  // 2026-08-10 다시 겨눔 — 끼워 넣는 일이 paintThumb 한 곳으로 모였다.
+  const fn = app.match(/function paintThumb\([\s\S]*?\n\}/);
+  assert.ok(fn, 'paintThumb 본문을 찾을 수 없습니다');
+  assert.ok(!/cell\.innerHTML\s*=/.test(fn[0]), '칸 내용을 통째로 바꿔 딱지가 지워집니다');
+  assert.match(fn[0], /insertBefore/);
+});
+
+/* ══════ 미리보기를 묶음으로 받는다 (대표 보고 2026-08-10) ══════
+   "로그인하면 사진 나오는데 너무 시간이 많이 걸린다."
+   원인은 양이 아니라 **오간 횟수**였다 — 한 장씩, 그것도 앞 장이 끝나야
+   다음 장을 청했다. 99장이면 99번을 차례로 오간다. */
+test('★ 미리보기를 한 장씩 줄줄이 청하지 않는다', () => {
+  const fn = app.match(/function fillThumbs\(\)[\s\S]*?\n\}/);
+  assert.ok(fn, 'fillThumbs 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /loadThumbsYear\(/, '한 해 치를 묶음으로 청하지 않습니다');
+  assert.ok(!/chain = chain\.then/.test(fn[0]),
+    '앞 장이 끝나야 다음 장을 청하는 방식이 남아 있습니다 — 99장이면 99번 오갑니다');
+});
+
+test('★ 묶음이 막히면 한 장씩 받는 길로 물러선다', () => {
+  /* 공유받은 사진은 규칙이 **사진 한 장마다** 권한을 따져 묶음 읽기가 막힌다.
+     빠르게 하려다 사진이 아예 안 보이면 그게 더 큰 사고다. */
+  const fn = app.match(/function fillThumbs\(\)[\s\S]*?\n\}/)[0];
+  assert.match(fn, /gridOwner === SHARED_OWNER/, '공유받은 사진에 묶음을 쓰면 아무것도 안 보입니다');
+  assert.match(fn, /fillThumbsOneByOne\(/, '물러설 길이 없습니다');
+  assert.match(fn, /catch\(/, '묶음이 실패하면 그대로 멈춥니다');
+  const one = app.match(/function fillThumbsOneByOne\([\s\S]*?\n\}/);
+  assert.ok(one, 'fillThumbsOneByOne 이 없습니다');
+  assert.match(one[0], /loadThumb\(/, '한 장씩 받는 길이 실제로 받지 않습니다');
+});
+
+test('★ 묶음에서 빠진 사진은 옛 자리에서 다시 찾는다', () => {
+  const fn = app.match(/function fillThumbs\(\)[\s\S]*?\n\}/)[0];
+  assert.match(fn, /const left = gridItems\.filter/,
+    '묶음에 없던 사진(옛 자리에 남은 것)이 영영 안 보이게 됩니다');
+});
+
+test('★ 해를 바꾸면 먼저 청한 미리보기를 엉뚱한 화면에 그리지 않는다', () => {
+  /* 묶음이 도착하기 전에 대표님이 다른 해를 고를 수 있다.
+     ⚠ 되돌아오는 자리가 **둘**이다 — 묶음이 도착했을 때, 그리고 모든 묶음이
+        끝난 뒤 빠진 것을 찾을 때. 하나만 막으면 다른 하나로 새 나간다
+        (실제로 한 곳을 지워 보니 검사가 못 잡았다). */
+  const fn = app.match(/function fillThumbs\(\)[\s\S]*?\n\}/)[0];
+  assert.match(fn, /const year = gridYear;/, '청한 해를 기억하지 않습니다');
+  const guards = (fn.match(/if \(year !== gridYear\) return;/g) || []).length;
+  assert.ok(guards >= 2,
+    '되돌아오는 자리마다 막아야 합니다 — 지금 ' + guards + '곳뿐입니다');
+  /* 한 장씩 받는 길도 마찬가지다 — 청하기 전과 받은 뒤, 두 번 다 확인해야 한다.
+     한 번만 보면 청하는 사이에 해가 바뀐 것을 놓친다. */
+  const one = app.match(/function fillThumbsOneByOne\([\s\S]*?\n\}/)[0];
+  const g2 = (one.match(/year !== gridYear/g) || []).length;
+  assert.ok(g2 >= 2, '한 장씩 받는 길이 남의 해에 그립니다 — 지금 ' + g2 + '곳뿐입니다');
+});
+
+test('★ 너무 많으면 묶지 않는다 (한 묶음이 지나치게 커진다)', () => {
+  const m = app.match(/const THUMB_BULK_MAX = (\d+);/);
+  assert.ok(m, 'THUMB_BULK_MAX 가 없습니다.');
+  const n = +m[1];
+  assert.ok(n >= 100, '너무 낮으면 묶음이 거의 안 쓰여 다시 느려집니다: ' + n);
+  assert.ok(n <= 2000, '한 묶음이 지나치게 커집니다: ' + n);
+});
+
+test('★ 미리보기 묶음을 저장 층이 내준다', () => {
+  const store = fs.readFileSync(path.join(root, 'js', 'pu-photo-store.js'), 'utf8');
+  assert.match(store, /function loadThumbsYear\(/, 'loadThumbsYear 가 없습니다');
+  assert.match(store, /loadThumbsYear: loadThumbsYear/, '밖으로 내주지 않습니다');
+  const fn = store.match(/function loadThumbsYear\([\s\S]*?\n  \}/)[0];
+  assert.match(fn, /'\/thumbs\/' \+ year/, '미리보기 자리가 아닌 곳을 읽습니다');
+  assert.ok(!/blobs/.test(fn), '격자가 본문(1600px)까지 받으면 수십 MB가 됩니다');
 });
 
 /* ── 내려받기 ── */

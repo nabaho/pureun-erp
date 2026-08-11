@@ -848,6 +848,25 @@
     return withLegacy(blobPath(year, id, owner), legacyRoot('blobs') + '/' + year + '/' + id);
   }
 
+  /* ── 한 해의 미리보기를 **한 번에** 받아온다 (대표 보고 2026-08-10) ──
+     "로그인하면 사진 나오는데 너무 시간이 많이 걸린다."
+
+     원인은 데이터 양이 아니라 **오간 횟수**였다. 화면이 미리보기를 한 장씩,
+     그것도 앞 장이 끝나야 다음 장을 청하는 식으로 받았다. 99장이면 99번을
+     차례로 오간다. 폰에서 한 번 오가는 데 0.2초면 그것만으로 20초다.
+     받는 양(240px 짜리 99장 ≈ 1.7MB)은 몇 초면 끝나는 크기다.
+
+     그래서 한 해 치를 한 묶음으로 청한다 — 오가는 횟수가 99번에서 한 번이 된다.
+     ⚠ 규칙이 이것을 허락하는 자리라야 한다. 내 사진(u/{나}) 과 관리자가 보는
+        남의 사진은 윗칸에 읽기 권한이 있어 묶음으로 받아진다. 공유받은 사진은
+        **사진 한 장마다** 권한을 따지므로 묶음이 막힌다 — 화면이 그때는
+        한 장씩 받는 옛 길로 물러선다. */
+  function loadThumbsYear(year, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(base(owner) + '/thumbs/' + year).once('value')
+      .then(function (s) { return s.val() || {}; });
+  }
+
   function withLegacy(newPath, oldPath) {
     return readOnce(newPath).then(function (v) {
       if (v) return v;
@@ -1291,6 +1310,7 @@
     dropLegacy: dropLegacy,
     listYear: listYear,
     loadThumb: loadThumb,
+    loadThumbsYear: loadThumbsYear,
     loadFull: loadFull,
     init: init,
     getMode: getMode,
