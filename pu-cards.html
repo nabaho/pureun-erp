@@ -717,6 +717,12 @@ table.sbox td.none{text-align:center;color:#8b98b3;padding:34px 10px}
 #pcErpTabs{display:flex;gap:6px;flex-wrap:wrap;align-items:center;min-width:0}
 #pcTools{margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 #pcSort{margin-left:auto;padding:8px 12px;border:1px solid #e8ecf3;border-radius:11px;background:#fff;color:#1b2536}
+/* 걸어 둔 「담당 노무사」 띠 — 안 보이면 왜 몇 건만 나오는지 모른다 */
+.mgrchip{display:inline-flex;align-items:center;gap:5px;background:#eaf4ec;border:1px solid #bfdcc6;
+  color:#1c5f36;border-radius:11px;padding:7px 8px 7px 12px;font-size:12.5px;font-weight:600}
+.mgrchip b{font-weight:800}
+.mgrchip .x{cursor:pointer;color:#4a7a58;padding:0 5px;border-radius:7px;font-weight:700}
+.mgrchip .x:hover{background:#d6ebdb;color:#0f3f21}
 .pctool{background:#fff;border:1px solid #e8ecf3;border-radius:11px;padding:8px 14px;font-size:13px;cursor:pointer;color:#33415e;transition:.15s;display:inline-flex;align-items:center;gap:5px}
 .pctool:hover{background:#f6f8fc;border-color:#d9e0ee}
 .pctool.on{background:#eef4ff;border-color:#bcd0f2;color:#1e2a47;font-weight:600}
@@ -1345,7 +1351,7 @@ function backfillIdx(){
   }catch(_){}
 }
 
-const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, colOrder:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, onlyPrivate:false, unlocked:{}, items:{}, groups:{}, trash:{}, views:{}, rules:{}, mailBlock:{},
+const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', erpMgr:'', sort:'date', sortKey:null, sortDir:'desc', page:0, pageSize:100, selMode:false, sel:{}, collapsed:{}, colFilter:{}, hiddenCols:{}, colW:{}, colOrder:{}, onlyPhone:false, onlyEmail:false, onlyDup:false, onlyIncomplete:false, onlyPrivate:false, unlocked:{}, items:{}, groups:{}, trash:{}, views:{}, rules:{}, mailBlock:{},
   isAdmin:false, privOpen:false, priv:{items:{},groups:{},trash:{}},
   /* 자료함 — 찾는 말·메일틀 갈래는 화면에만 쓰고 저장하지 않는다.
      sendLog 는 명함을 열 때만 그 명함 것을 읽어 담는다. */
@@ -1703,6 +1709,15 @@ const ErpMatch = {
   },
   /* ERP 업체 유형: '자문'|'급여'|'노조'|'기금'|'' */
   type(it){ const m = ErpMatch.match(it); return (m && m.type) || ''; },
+  /* 이 명함을 맡은 노무사 **전부** — 주담당과 부담당을 한 줄에.
+     ⚠ 걸러낼 때는 label() 을 쓰면 안 된다. 그것은 배지에 적을 짧은 글자라
+       「김보람 +2」처럼 이름이 아닌 것이 섞이고, 부담당은 이름이 아예 빠진다 →
+       부담당으로 맡은 업체가 걸러내기에서 통째로 사라진다. */
+  mgrs(it){
+    const m = ErpMatch.match(it); if(!m) return [];
+    return [m.main].concat(m.subs||[])
+      .map(v=>String(v==null?'':v).trim()).filter(Boolean);
+  },
   /* 이 명함 주인이 그 업체의 실무 담당자로 등록돼 있는가 */
   isContact(it){
     const m = ErpMatch.match(it); if(!m || !m.contact) return false;
@@ -4693,6 +4708,10 @@ function listItems(){
         else if (state.erpFilter==='linked'){ if(!m) return false; }
         else { if(!m || (m.type||'')!==state.erpFilter) return false; }
       }
+      /* 담당 노무사 필터 — 표의 「담당」 배지를 눌러 걸린다(대표 지시 2026-08-11).
+         유형 필터(위)와 따로 걸린다 — 「급여」만 보기와 「김보람 담당만 보기」는 다른 일이고,
+         둘을 함께 걸면 「급여 중에서 김보람이 맡은 것」이 된다. */
+      if (state.erpMgr && !ErpMatch.mgrs(it).includes(state.erpMgr)) return false;
       return true;
     });
   /* 중복만 보기 */
@@ -5090,6 +5109,7 @@ function listNarrowed(){
   if(state.group && state.group!=='all') return true;
   if(state.vtab) return true;
   if(state.erpFilter) return true;
+  if(state.erpMgr) return true;
   if(state.owner && state.owner!=='all') return true;
   if(state.onlyPhone||state.onlyEmail||state.onlyDup||state.onlyIncomplete||state.onlyPrivate) return true;
   if(Object.values(state.colFilter||{}).some(v=>String(v||'').trim())) return true;
@@ -5103,6 +5123,7 @@ function narrowLabel(){
   if(state.group && state.group!=='all'){ const g=state.groups[state.group]; if(g) bits.push(`📁 ${g.name}`); }
   if(state.vtab){ const v=(state.views||{})[state.vtab]; if(v) bits.push(`🏷 ${v.name}`); }
   if(state.erpFilter) bits.push(state.erpFilter);
+  if(state.erpMgr) bits.push('담당 '+state.erpMgr);
   if(state.onlyIncomplete) bits.push('정보부족');
   if(state.onlyPrivate) bits.push('개인');
   return bits.join(' · ') || '현재 조건';
@@ -7402,7 +7423,7 @@ function renderPCSide(){
     const unlocked = isLocked && state.unlocked && state.unlocked[g.id];
     const icon = isPriv ? '🔓' : (isLocked ? (unlocked ? '🔓' : '🔒') : '📁');
     /* 폴더를 옮기면 앞 폴더의 탭 조건(ERP유형·칸검색)은 해제 — 탭은 폴더마다 따로이므로 */
-    const reset = `state.view='list';state.owner='all';state.region='';state.erpFilter='';state.colFilter={};state.page=0;`;
+    const reset = `state.view='list';state.owner='all';state.region='';state.erpFilter='';state.erpMgr='';state.colFilter={};state.page=0;`;
     const openClick = isLocked
       ? `if(tryUnlockFolder('${g.id}')){state.group='${g.id}';${reset}}render()`
       : `state.group='${g.id}';${reset}render()`;
@@ -7551,7 +7572,7 @@ function toggleSentBy(){
 }
 
 function switchTab(t){ state.view='list'; state.tab=t; state.group='all'; state.owner='all'; state.region='';
-  state.erpFilter=''; state.colFilter={}; state.page=0; state.sel={}; state.view='list'; render(); }
+  state.erpFilter=''; state.erpMgr=''; state.colFilter={}; state.page=0; state.sel={}; state.view='list'; render(); }
 function toggleSidebar(){ $('pcRoot').classList.toggle('sidehidden'); }
 
 /* 열 너비 드래그 조절 */
@@ -8011,8 +8032,13 @@ function renderPCTable(){
     if(state.onlyIncomplete){ incBtn.style.background='#3a4a73'; incBtn.style.color='#fff'; incBtn.style.borderColor='#3a4a73'; incBtn.textContent='✓ 정보부족'; }
     else { incBtn.style.background='#fff'; incBtn.style.color='#33415e'; incBtn.style.borderColor='#dde3ee'; incBtn.textContent='정보부족'; }
   }
-  /* 조건 필터 버튼 제거됨 — pcFilters 영역 비움 */
-  $('pcFilters').innerHTML = '';
+  /* 걸어 둔 「담당 노무사」를 여기 띠로 보여준다 — 안 보이면 왜 몇 건만 나오는지 모른다.
+     ✕ 로 바로 푼다(대표 지시 2026-08-11). */
+  $('pcFilters').innerHTML = state.erpMgr
+    ? `<span class="mgrchip" title="이 담당 노무사가 맡은 명함만 보고 있습니다">
+         👤 담당 <b>${esc(state.erpMgr)}</b> · ${items.length.toLocaleString()}건
+         <span class="x" onclick="filterErpMgr('')" title="이 조건 풀기">✕</span></span>`
+    : '';
   /* 현재 페이지 분량만 잘라서 렌더 (메모리 보호) */
   const size = state.pageSize || 100;
   const totalPages = Math.max(1, Math.ceil(items.length/size));
@@ -8129,7 +8155,18 @@ function renderPCTable(){
          올려야 보이는 곳)에만 있었다. 「ERP·」는 이 칸이 죄다 ERP 라 늘 같은 말이어서 버리고,
          그 자리에 정작 알고 싶은 담당자 이름을 넣는다 → 「자문 김보람」 (대표 지시 2026-08-11). */
       const _mgr = ErpMatch.label(it);
-      let h = t ? `<span title="푸른이알피 업체관리 연결 · ${esc(ErpMatch.full(it))||'담당 노무사 미지정'}" style="display:inline-block;background:${cMap[t]||'#475569'}18;color:${cMap[t]||'#475569'};border:1px solid ${cMap[t]||'#475569'}44;border-radius:8px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap">${esc(t)}${_mgr?' '+esc(_mgr):''}</span>` : '';
+      /* 눌러서 그 담당 노무사 것만 걸러 본다(대표 지시 2026-08-11).
+         ⚠ 걸러낼 이름은 배지 글자(label)가 아니라 **주담당 이름**이다 —
+           배지에는 「김보람 +2」처럼 사람 이름이 아닌 것이 섞인다.
+         ⚠ stopPropagation — 줄을 누르면 상세보기가 열리므로 막지 않으면 둘이 겹친다. */
+      const _one = ErpMatch.mgrs(it)[0] || '';
+      const _click = _one
+        ? ` onclick="event.stopPropagation();filterErpMgr('${esc(_one).replace(/'/g,"\\'")}')"`
+        : '';
+      const _tip = _one
+        ? `눌러서 ${esc(_one)} 님이 맡은 명함만 보기 · ${esc(ErpMatch.full(it))}`
+        : `푸른이알피 업체관리 연결 · 담당 노무사 미지정`;
+      let h = t ? `<span title="${_tip}"${_click} style="display:inline-block;background:${cMap[t]||'#475569'}18;color:${cMap[t]||'#475569'};border:1px solid ${cMap[t]||'#475569'}44;border-radius:8px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap${_one?';cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px':''}">${esc(t)}${_mgr?' '+esc(_mgr):''}</span>` : '';
       /* 이 사람이 그 회사의 ERP 대표자/담당자인지 */
       const _role = ErpMatch.role(it);
       if (_role==='ceo') h += ` <span title="이 명함 주인이 푸른이알피 업체관리에 이 회사 대표자로 등록됨" style="display:inline-block;background:#e0e7ff;color:#3730a3;border:1px solid #a5b4fc;border-radius:8px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap">🏢 대표자</span>`;
@@ -8170,7 +8207,7 @@ function viewSnapshot(){
   return {
     q: s ? s.value.trim() : '',
     group: state.group||'all', owner: state.owner||'all', region: state.region||'',
-    erpFilter: state.erpFilter||'', colFilter: Object.assign({}, state.colFilter||{}),
+    erpFilter: state.erpFilter||'', erpMgr: state.erpMgr||'', colFilter: Object.assign({}, state.colFilter||{}),
     onlyPhone: !!state.onlyPhone, onlyEmail: !!state.onlyEmail,
     onlyIncomplete: !!state.onlyIncomplete, onlyPrivate: !!state.onlyPrivate, onlyDup: !!state.onlyDup,
     vtab: state.vtab||'',
@@ -8181,13 +8218,13 @@ function viewSnapshot(){
 function countMatching(f){
   f=f||{};
   const s=$('search');
-  const sv={ group:state.group, owner:state.owner, region:state.region, erpFilter:state.erpFilter,
+  const sv={ group:state.group, owner:state.owner, region:state.region, erpFilter:state.erpFilter, erpMgr:state.erpMgr,
     colFilter:state.colFilter, onlyPhone:state.onlyPhone, onlyEmail:state.onlyEmail,
     onlyIncomplete:state.onlyIncomplete, onlyPrivate:state.onlyPrivate, onlyDup:state.onlyDup,
     vtab:state.vtab, sort:state.sort, sortKey:state.sortKey, q:(s?s.value:'') };
   try{
     state.group=f.group||'all'; state.owner=f.owner||'all'; state.region=f.region||'';
-    state.erpFilter=f.erpFilter||''; state.colFilter=f.colFilter||{};
+    state.erpFilter=f.erpFilter||''; state.erpMgr=f.erpMgr||''; state.colFilter=f.colFilter||{};
     state.onlyPhone=!!f.onlyPhone; state.onlyEmail=!!f.onlyEmail;
     state.onlyIncomplete=!!f.onlyIncomplete; state.onlyPrivate=!!f.onlyPrivate; state.onlyDup=!!f.onlyDup;
     state.vtab=f.vtab||'';
@@ -8196,7 +8233,7 @@ function countMatching(f){
     return listItems().length;
   }catch(e){ return 0; }
   finally{
-    state.group=sv.group; state.owner=sv.owner; state.region=sv.region; state.erpFilter=sv.erpFilter;
+    state.group=sv.group; state.owner=sv.owner; state.region=sv.region; state.erpFilter=sv.erpFilter; state.erpMgr=sv.erpMgr||'';
     state.colFilter=sv.colFilter; state.onlyPhone=sv.onlyPhone; state.onlyEmail=sv.onlyEmail;
     state.onlyIncomplete=sv.onlyIncomplete; state.onlyPrivate=sv.onlyPrivate; state.onlyDup=sv.onlyDup;
     state.vtab=sv.vtab; state.sort=sv.sort; state.sortKey=sv.sortKey; if(s) s.value=sv.q;
@@ -8205,7 +8242,7 @@ function countMatching(f){
 /* 지금 화면이 그 탭과 같은 조건인지 비교용 서명 (정렬은 제외 — 정렬 바꿔도 탭 선택 유지) */
 function viewSig(f){
   f=f||{}; const c=f.colFilter||{};
-  return JSON.stringify([f.q||'', f.group||'all', f.owner||'all', f.region||'', f.erpFilter||'',
+  return JSON.stringify([f.q||'', f.group||'all', f.owner||'all', f.region||'', f.erpFilter||'', f.erpMgr||'',
     c.name||'', c.company||'', c.phone||'', c.email||'',
     !!f.onlyPhone, !!f.onlyEmail, !!f.onlyIncomplete, !!f.onlyPrivate, !!f.onlyDup, f.vtab||'']);
 }
@@ -8214,7 +8251,7 @@ function applyView(id){
   const f=v.f||{};
   if((v.kind||'card')!==state.tab){ state.tab=v.kind||'card'; }
   state.group=f.group||'all'; state.owner=f.owner||'all'; state.region=f.region||'';
-  state.erpFilter=f.erpFilter||''; state.colFilter=Object.assign({}, f.colFilter||{});
+  state.erpFilter=f.erpFilter||''; state.erpMgr=f.erpMgr||''; state.colFilter=Object.assign({}, f.colFilter||{});
   state.onlyPhone=!!f.onlyPhone; state.onlyEmail=!!f.onlyEmail;
   state.onlyIncomplete=!!f.onlyIncomplete; state.onlyPrivate=!!f.onlyPrivate; state.onlyDup=!!f.onlyDup;
   state.vtab=f.vtab||'';
@@ -8228,7 +8265,7 @@ function applyView(id){
 function saveCurrentAsView(){
   const f=viewSnapshot();
   /* 폴더는 탭의 '소속'이라 조건으로 치지 않는다 — 폴더 안에서 조건 없이 만들면 '담는 탭' */
-  const hasCond = f.q||f.region||f.erpFilter||(f.owner&&f.owner!=='all')
+  const hasCond = f.q||f.region||f.erpFilter||f.erpMgr||(f.owner&&f.owner!=='all')
     ||f.onlyPhone||f.onlyEmail||f.onlyIncomplete||f.onlyPrivate||f.onlyDup
     ||Object.keys(f.colFilter||{}).some(k=>f.colFilter[k]);
   /* 조건이 없으면 '담는 탭' — 명함을 직접 골라 담는 칸으로 만든다 */
@@ -8237,7 +8274,7 @@ function saveCurrentAsView(){
     const name0=(prompt(`담는 탭 이름을 입력하세요\n(예: 푸른노무법인, 대전충청노무사)`,'')||'').trim();
     if(!name0) return;
     const id=uid();
-    const mf={ q:'', group:(state.group||'all'), owner:'all', region:'', erpFilter:'', colFilter:{},
+    const mf={ q:'', group:(state.group||'all'), owner:'all', region:'', erpFilter:'', erpMgr:'', colFilter:{},
       onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false,
       vtab:id, sort:'date', sortKey:null, sortDir:'desc' };
     Store.putView({ id, name:name0, kind:state.tab, scope:(state.group||'all'), manual:true, order:Date.now(), f:mf });
@@ -8250,6 +8287,7 @@ function saveCurrentAsView(){
   if(f.q) cond.push(`검색 "${f.q}"`);
   if(f.region) cond.push('지역 '+f.region);
   if(f.erpFilter) cond.push('ERP '+f.erpFilter);
+  if(f.erpMgr) cond.push('담당 '+f.erpMgr);
   if(c.company) cond.push(`회사에 "${c.company}"`);
   if(c.name) cond.push(`이름에 "${c.name}"`);
   if(c.phone) cond.push(`전화에 "${c.phone}"`);
@@ -8303,7 +8341,7 @@ function createManualTabAndAdd(){
   const name=(prompt(`📁 ${curScopeName()} 안에 '담는 탭'을 만듭니다.\n선택한 ${ids.length}개가 바로 담깁니다.\n\n탭 이름을 입력하세요 (예: 푸른노무법인)`,'')||'').trim();
   if(!name) return;
   const id=uid();
-  const mf={ q:'', group:(state.group||'all'), owner:'all', region:'', erpFilter:'', colFilter:{},
+  const mf={ q:'', group:(state.group||'all'), owner:'all', region:'', erpFilter:'', erpMgr:'', colFilter:{},
     onlyPhone:false, onlyEmail:false, onlyIncomplete:false, onlyPrivate:false, onlyDup:false,
     vtab:id, sort:'date', sortKey:null, sortDir:'desc' };
   const v={ id, name, kind:state.tab, scope:(state.group||'all'), manual:true, order:Date.now(), f:mf };
@@ -8391,6 +8429,7 @@ function openViewManager(){
     if(f.owner&&f.owner!=='all') out.push('담당 '+f.owner);
     if(f.region) out.push('지역 '+f.region);
     if(f.erpFilter) out.push('ERP '+f.erpFilter);
+    if(f.erpMgr) out.push('담당 '+f.erpMgr);
     if(c.company) out.push(`회사에 "${c.company}"`);
     if(c.name) out.push(`이름에 "${c.name}"`);
     if(c.phone) out.push(`전화에 "${c.phone}"`);
@@ -8425,7 +8464,7 @@ function openViewManager(){
 /* 지금 폴더는 그대로 두고 탭·검색·필터만 모두 푼다.
    폴더를 다시 누르는 것과 결과는 같지만, 눈이 목록에서 왼쪽 끝까지 갔다 오지 않아도 된다. */
 function showAllInFolder(){
-  state.erpFilter=''; state.vtab=''; state.owner='all'; state.region='';
+  state.erpFilter=''; state.erpMgr=''; state.vtab=''; state.owner='all'; state.region='';
   state.colFilter={};
   state.onlyPhone=false; state.onlyEmail=false; state.onlyDup=false;
   state.onlyIncomplete=false; state.onlyPrivate=false;
@@ -9024,6 +9063,18 @@ function sortBy(key){
   state.page=0; render();
 }
 
+/* 「담당」 배지를 눌렀을 때 — 그 담당 노무사가 맡은 명함만 본다(대표 지시 2026-08-11).
+   같은 것을 다시 누르면 풀린다. 빈 이름을 넘기면 조건이 풀린다(띠의 ✕).
+   ⚠ 페이지를 0 으로 되돌린다 — 안 그러면 3쪽을 보던 중에 걸어 「없습니다」가 뜬다.
+   ⚠ 골라 둔 것도 비운다 — 안 보이게 된 명함이 골라진 채 남으면 그것까지 지워진다. */
+function filterErpMgr(name){
+  const v = String(name||'').trim();
+  state.erpMgr = (state.erpMgr===v) ? '' : v;
+  state.page = 0; state.sel = {};
+  render();
+  if(state.erpMgr) toast(`👤 ${state.erpMgr} 님이 맡은 명함만 봅니다 — 위 띠의 ✕ 로 풀립니다`, 5000);
+}
+
 /* 화면 분기: PC면 관리자 UI, 폰이면 리멤버식 UI */
 const renderMobile = render;
 render = function(){
@@ -9040,7 +9091,7 @@ loadColPrefs();
 try{
   const _uq = new URLSearchParams(location.search).get('q');
   if(_uq){
-    state.tab='card'; state.group='all'; state.erpFilter='';
+    state.tab='card'; state.group='all'; state.erpFilter=''; state.erpMgr='';
     state.onlyPhone=false; state.onlyEmail=false; state.onlyDup=false; state.onlyIncomplete=false; state.region='';
     const _s=$('search'); if(_s) _s.value=_uq; const _ps=$('pcSearch'); if(_ps) _ps.value=_uq;
     try{ _syncSearchX(); }catch(_){}    /* 이알피·사진첩에서 넘어와도 ✕ 가 보이게 */
