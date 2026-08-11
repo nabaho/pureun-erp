@@ -30,6 +30,7 @@ function boot(over) {
     document: { createElement: () => ({ getContext: () => ({}) }) },
     setInterval: () => 1, clearInterval() {},
     camBusy: false,
+    camCaptureMode: 'document',
     camShoot: () => { shots.push(Date.now()); },
     $: (id) => (id === 'camOv' ? { style: { display: 'flex' }, videoWidth: 640, videoHeight: 480 }
                                : { style: {}, textContent: '', videoWidth: 640, videoHeight: 480 }),

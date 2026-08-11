@@ -27,20 +27,15 @@ test('★ 명함틀이 초점 잡히는 거리로 줄었다', () => {
     '틀이 ' + width + '% 로 너무 작습니다 — 명함에 남는 화소가 모자라 글씨를 못 읽습니다.');
 });
 
-test('★ 흐릴 때 「가까워서 그렇다」고 알려 준다', () => {
-  assert.ok(/너무 가까우면 초점이 안 잡힙니다/.test(html),
-    '「화면을 눌러 초점을 잡으라」고만 하면, 초점이 안 잡히는 거리에서는 아무 소용이 없습니다.');
-  assert.ok(/20cm/.test(html), '얼마나 떨어져야 하는지 숫자로 말해야 따라 할 수 있습니다.');
+test('명함·서류 모드는 초점 거리 안내를 보여 준다', () => {
+  assert.match(html, /20cm/);
+  assert.match(html, /camCaptureMode === 'document'/);
 });
 
-/* ── 촬영 화면 정리 ── */
-test('★ 촬영 중 스위치를 둘로 줄였다', () => {
-  const m = html.match(/<div id="camCtl">[\s\S]*?<div class="row">/);
-  assert.ok(m, 'camCtl 을 찾지 못했습니다.');
-  const boxes = (m[0].match(/<input type="checkbox"/g) || []).length;
-  assert.ok(boxes <= 1, '촬영 중 체크칸이 ' + boxes + '개입니다 — 찍는 데 필요한 것만 남겨야 합니다.');
-  assert.ok(/id="camAuto"/.test(m[0]), '저절로 찍기는 흔들림을 줄여 주므로 남깁니다.');
-  assert.ok(/id="camFrameBtn"/.test(m[0]), '명함틀은 찍는 중에 바꿔야 합니다.');
+test('촬영 화면은 일반사진과 명함·서류 두 모드가 명확하다', () => {
+  assert.match(html, /id="camModePhoto"/);
+  assert.match(html, /id="camModeDocument"/);
+  assert.doesNotMatch(html, /id="camFrameBtn"/);
 });
 
 test('★ 잘라내기는 명함틀을 따라간다 (스위치를 합쳤다)', () => {
