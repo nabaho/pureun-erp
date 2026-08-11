@@ -126,9 +126,13 @@ test('올릴 크기는 저장 층이 정한다 — 화면이 숫자를 갖지 �
   // 서류 2560 / 사진 1600. 폰·PC·당겨오기 창이 같은 값을 써야 하므로
   // 숫자는 PuPhotoStore.uploadSpec 한 곳에만 있어야 한다.
   assert.match(app, /PuPhotoStore\.uploadSpec\(/);
-  assert.match(app, /shrink\(f, spec\.maxEdge, spec\.quality\)/);
-  assert.match(app, /shrink\(f, spec\.thumbEdge/);
-  assert.ok(!/shrink\(f,\s*\d/.test(app), '화면에 축소 크기 숫자가 박혀 있습니다');
+  /* ⚠ 2026-08-11 다시 겨눔 — 같은 사진을 두 번 풀던 것을 shrinkMany 로 한 번에
+     묶었다(폰에서 한 장에 1.5~2초가 통으로 멎던 자리). 지킬 것은 **숫자가 화면에
+     박혀 있지 않다**이지 shrink 를 두 번 부르는 모양이 아니다. */
+  assert.match(app, /maxEdge: spec\.maxEdge, quality: spec\.quality/);
+  assert.match(app, /maxEdge: spec\.thumbEdge/);
+  assert.ok(!/shrink(Many)?\(f,\s*\d/.test(app), '화면에 축소 크기 숫자가 박혀 있습니다');
+  assert.ok(!/maxEdge:\s*\d/.test(app), '화면에 축소 크기 숫자가 박혀 있습니다');
   // 카메라 원본이 그대로 클라우드로 가는 길이 없어야 한다. 아이폰 호환을 위해
   // 읽는 단계에서 dataURL을 쓸 수는 있지만, 대기열에는 shrink 결과만 넣는다.
   assert.match(app, /full:\s*full\.dataUrl/);
@@ -344,7 +348,7 @@ test('탭 순서는 끌어서 바꾸고 이 기기에 기억된다 — 전체사
 
 test('분류 탭과 「확인 필요」는 함께 걸린다', () => {
   /* 하나만 적용하면 확인 필요를 켠 채 탭을 옮겼을 때 다른 탭 사진이 섞여 나온다. */
-  const fn = app.match(/function shownItems\([\s\S]*?\n\}/);
+  const fn = app.match(/function shownItemsFresh\([\s\S]*?\n\}/);
   assert.ok(fn, 'shownItems 를 찾을 수 없습니다');
   assert.match(fn[0], /kindTab/, '분류 탭을 안 봅니다');
   assert.match(fn[0], /needsCheck/, '확인 필요를 안 봅니다');

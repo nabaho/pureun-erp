@@ -86,7 +86,7 @@ test('★ 사진을 어버이로 올린다 (사라지지 않게)', async () => {
 
 /* ── 화면 ── */
 test('★ 상위를 고르면 하위까지 함께 보인다', () => {
-  const m = html.match(/function shownItems\(\)[\s\S]*?\n\}/);
+  const m = html.match(/function shownItemsFresh\(\)[\s\S]*?\n\}/);
   assert.ok(/FOLDERS\[g\] && FOLDERS\[g\]\.parent === folderPick/.test(m[0]),
     '나눠 놓고도 한눈에 볼 수 있어야 합니다(대표 승인 목업).');
 });

@@ -180,7 +180,7 @@ test('관리자 카드는 탭과 원래 조건을 함께 지킨다', () => {
 /* ══ ③ 지난 것만 보기 ══ */
 test('★ 지난 사진을 눈으로 볼 수 있다 (숫자만 보여 주지 않는다)', () => {
   assert.ok(/<button id="oldBox"[^>]*onclick="toggleOld\(\)"/.test(html), '「지난 것만」 단추가 없습니다.');
-  const m = html.match(/function shownItems\(\)[\s\S]*?\n\}/);
+  const m = html.match(/function shownItemsFresh\(\)[\s\S]*?\n\}/);
   assert.ok(m && /if \(oldOnly\) list = list\.filter\(isOldItem\);/.test(m[0]),
     '걸러보기가 격자에 걸려 있지 않습니다.');
 });
