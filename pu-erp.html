@@ -39065,10 +39065,18 @@ function FinanceLedger(){
         else if(vat==='wht88') taxType='wht88';
         else if(vat) taxType=true;
       }
-      var perfBase=baseAmt;
-      if(taxType===false) perfBase=Math.round(baseAmt/1.1);
-      else if(taxType==='wht33') perfBase=Math.round(baseAmt/0.967);
-      else if(taxType==='wht88') perfBase=Math.round(baseAmt/0.912);
+      /* 성과 기준액 — 확정할 때 저장해 둔 값을 그대로 쓴다.
+         ★ 전에는 여기서 baseAmt ÷ 0.912 로 «세전으로 되짚어» 900,000원 입금이
+           986,842원 기준이 됐다 — 들어온 돈보다 큰 금액으로 성과를 잡은 것이다.
+           대표 지시(2026-08-11): 기타소득·사업소득은 «세금 뗀 뒤 남은 금액» 기준.
+         저장된 값이 없는 옛 자료만 유형으로 되짚되, 그때도 세금을 «뺀다». */
+      var perfBase = fi.perfBaseAmount || 0;
+      if(!perfBase){
+        perfBase = baseAmt;
+        if(taxType==='wht33') perfBase = erpWithholdTax(baseAmt, 'biz').net;
+        else if(taxType==='wht88') perfBase = erpWithholdTax(baseAmt, 'misc', 8.8).net;
+        else if(taxType===false) perfBase = Math.round(baseAmt/1.1);   // 부가세 포함 → 공급가
+      }
       // 새 성과급 계산
       var newShares=[];
       if(newMain){
@@ -39839,7 +39847,10 @@ function IncomePendingTab(){
       var _subsPR = (it.managerSubs||[]).filter(function(s){return s;});
       if(_mainSid){
         var _mainRate = adjPctMap[_mainSid] != null ? adjPctMap[_mainSid] : _baseRatePR(_mainSid);
-        var _mainBase = Math.round(p.amount * effMainPct / 100);
+        /* ★ 세금 뺀 뒤 남은 금액으로 나눈다 (2026-08-11 대표 지시).
+           전에는 약정액(p.amount)으로 나눠, 세금도 안 뺀 데다 분할입금이면
+           들어오지도 않은 돈까지 성과로 잡혔다. calc 는 실제입금(payAmt) 기준이다. */
+        var _mainBase = Math.round(calc.perfBaseAmount * effMainPct / 100);
         var _mainAmt = Math.round(_mainBase * _mainRate / 100);
         if(_mainAmt > 0){
           perfShares.push({ sid:_mainSid, name:_nameOfPR(_mainSid), pct:_mainRate, amount:_mainAmt, role:'주담당', sharePct:effMainPct, baseAmount:_mainBase, adjusted:true });
@@ -39848,7 +39859,7 @@ function IncomePendingTab(){
       _subsPR.forEach(function(sid){
         var _subPct = (effSubMap && effSubMap[sid] != null) ? effSubMap[sid] : (splitOn && _subsPR.length>0 ? (100-effMainPct)/_subsPR.length : 0);
         var _rate = adjPctMap[sid] != null ? adjPctMap[sid] : _baseRatePR(sid);
-        var _base = Math.round(p.amount * _subPct / 100);
+        var _base = Math.round(calc.perfBaseAmount * _subPct / 100);   // 주담당과 같은 기준(세후)
         var _amt = Math.round(_base * _rate / 100);
         if(_amt > 0){
           perfShares.push({ sid:sid, name:_nameOfPR(sid), pct:_rate, amount:_amt, role:'부담당', sharePct:_subPct, baseAmount:_base, adjusted:true });
@@ -40187,6 +40198,21 @@ function IncomePendingTab(){
       var rateOverrideReason = confirmModal.rateOverrideReason || '';
       var hasAnyOverride = (mainRateOverride != null) || Object.keys(subRateOverrideMap).some(function(k){return subRateOverrideMap[k] != null;});
 
+      /* ── 분배 미리보기는 「실제로 저장될 금액」과 같아야 한다 (2026-08-11 대표 지시) ──
+         대표 지시: "기타소득이나 사업소득의 경우 성과급 반영 시 세금을 공제하고
+         남은 금액에 성과급을 반영해야 한다."
+         전에는 화면이 약정액(세전)으로 나눠 보여 주고 저장은 세후 기준으로 했다 —
+         900,000원·기타소득 8.8% 면 화면 135,000원, 저장 123,120원. 화면이 거짓말을 했다.
+         ★ 저장 로직(saveConfirm)의 payAmt·calcDeductions 와 같은 셈을 쓴다. */
+      var _cmDed = confirmModal.deductions || {};
+      var _cmPrev = (it.splitPayments || []).filter(function(x){ return x && x.kind === confirmModal.p.kindLabel; })
+                      .reduce(function(s, x){ return s + (x.amount || 0); }, 0);
+      var _cmRemain = confirmModal.p.amount - _cmPrev;
+      // 카드결제는 수수료를 떼여도 매출·성과는 잔액 전액 기준 (저장 로직과 같다)
+      var _cmPay = confirmModal.cardMode ? _cmRemain
+                 : Math.min((confirmModal.actualAmt != null ? confirmModal.actualAmt : _cmRemain), _cmRemain);
+      var _perfBase = calcDeductions(_cmPay, _cmDed).perfBaseAmount;
+
       function setM(o){ setConfirmModal(Object.assign({}, confirmModal, o)); }
       function setSubPct(sid, v){
         var m = Object.assign({}, subPctMap); m[sid] = v;
@@ -40309,7 +40335,11 @@ function IncomePendingTab(){
             // 분할 비율 입력
             split && h('div', { style:{padding:'12px',background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'6px',marginBottom:'10px'} },
               h('div', { style:{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px'} },
-                h('div', { style:{fontSize:'11px',color:'#64748b'} }, '※ 직책 요율은 본인 직책별 % (환경설정). 분할 % × 직책 요율 = 실 지급액'),
+                h('div', { style:{fontSize:'11px',color:'#64748b'} },
+                  // 무엇을 나누는지 금액으로 못박는다 — 아래 칸의 금액과 반드시 맞는다
+                  '※ 성과 기준 ' + _perfBase.toLocaleString() + '원 × 분할 % × 직책 요율 = 실 지급액',
+                  _perfBase !== _cmPay && h('span', { style:{color:'#854d0e',fontWeight:700} },
+                    ' (세금 ' + (_cmPay - _perfBase).toLocaleString() + '원 뺀 뒤)')),
                 hasAnyOverride && h('button', { onClick:clearAllOverrides,
                   style:{padding:'3px 8px', background:'#fffbeb', color:'#854d0e', border:'1px solid #fde68a', borderRadius:'5px', fontSize:'10px', cursor:'pointer', fontWeight:600} },
                   '↺ 기본값 복원')),
@@ -40320,7 +40350,8 @@ function IncomePendingTab(){
                 var baseRate = resolveBaseRate(mainSid);
                 var rate = mainRateOverride != null ? mainRateOverride : baseRate;
                 var isOverride = mainRateOverride != null && mainRateOverride !== baseRate;
-                var base = Math.round(confirmModal.p.amount * mainPct / 100);
+                // 세금 뺀 성과 기준으로 나눈다 (저장 로직 calcPerfShares 와 같은 값이 나와야 한다)
+                var base = Math.round(_perfBase * mainPct / 100);
                 var amt = Math.round(base * rate / 100);
                 return h('div', { style:{padding:'8px',background:'#eff6ff',borderRadius:'5px',marginBottom:'8px',border: isOverride ? '2px solid #fbbf24' : '1px solid #bfdbfe'} },
                   h('div', { style:{display:'grid',gridTemplateColumns:'30px 1fr 78px 78px 96px',gap:'6px',alignItems:'center'} },
@@ -40360,7 +40391,8 @@ function IncomePendingTab(){
                 var rate = subRateOverrideMap[sid] != null ? subRateOverrideMap[sid] : baseRate;
                 var isOverride = subRateOverrideMap[sid] != null && subRateOverrideMap[sid] !== baseRate;
                 var pct = parseFloat(subPctMap[sid]) || 0;
-                var base = Math.round(confirmModal.p.amount * pct / 100);
+                // 주담당과 같은 기준(세후)으로 나눈다
+                var base = Math.round(_perfBase * pct / 100);
                 var amt = Math.round(base * rate / 100);
                 return h('div', { key:sid, style:{padding:'8px',background:'#bfdbfe',borderRadius:'5px',marginBottom:'6px',border: isOverride ? '2px solid #fbbf24' : '1px solid #bfdbfe'} },
                   h('div', { style:{display:'grid',gridTemplateColumns:'30px 1fr 78px 78px 96px',gap:'6px',alignItems:'center'} },
