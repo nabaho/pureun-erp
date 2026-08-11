@@ -16460,6 +16460,79 @@ function calcLegalSeverance(sid, hireDate, retireDate){
 // ─────────────────────────────────────────────
 
 // 차감 후 성과 산정 기준액 계산
+/* ══════════ 원천징수 — 한 곳에서만 센다 ══════════
+   (2026-08-11 대표 지적: "기타소득이 8.8%인데 수령금액이 이상하다")
+
+   같은 셈이 세 곳에 흩어져 있었고 그중 입금확정만 틀렸다.
+     · 급여관리(비정기)          지급액×40% → ×20% + 지방세  = 실효 8.8%   맞음
+     · 확정이력 수정             지급액 ÷ 0.912 로 되짚음                  맞음
+     · 입금확정(calcDeductions)  지급액×40% → ×8.8%          = 3.52%      틀림
+
+   ★ 8.8% 는 «필요경비 60% 를 이미 반영한» 실효세율이다.
+     거기에 40% 를 또 곱하면 반의반(3.52%)이 된다 — 900,000원에서 31,680원만 뗐다.
+
+   법대로:
+     기타소득 8.8%  필요경비 60% 인정(강연료·원고료·자문료 등)
+                    소득금액 = 지급액×40% → 소득세 20% + 지방세(소득세의 10%) = 지급액×8.8%
+     기타소득 22%   필요경비 없음(사례금·위약금 등)
+                    소득금액 = 지급액      → 소득세 20% + 지방세             = 지급액×22%
+     사업소득 3.3%  지급액 × 3% + 지방세(소득세의 10%)                      = 지급액×3.3%
+
+   세금은 항목마다 «원 단위를 버린다»(원단위 절사) — 급여관리가 이미 그렇게 하고 있다.
+   ★ 이제 이 함수 하나만 고치면 모든 화면이 함께 바뀐다. */
+function erpWithholdTax(amount, kind, rate){
+  // 0원 이하·숫자가 아닌 값은 여기서 끝난다 (아래에서 다시 막을 필요가 없다)
+  var amt = parseInt(amount, 10) || 0;
+  if(amt <= 0) return { taxable:0, incomeTax:0, localTax:0, total:0, net:0 };
+  var taxable, r;
+  if(kind === 'biz'){
+    taxable = amt; r = 0.03;                    // 사업소득 3.3%
+  } else {
+    var pct = Number(rate) || 8.8;
+    // 10% 이하로 적은 세율은 «실효세율» 을 뜻한다 — 필요경비 60% 가 이미 들어 있다
+    taxable = (pct <= 10) ? (amt * 0.4) : amt;
+    r = 0.20;
+  }
+  var incomeTax = Math.floor(taxable * r / 10) * 10;      // 원단위 절사
+  var localTax  = Math.floor(incomeTax * 0.10 / 10) * 10; // 지방소득세 = 소득세의 10%
+  var total = incomeTax + localTax;
+  return { taxable:Math.round(taxable), incomeTax:incomeTax, localTax:localTax,
+           total:total, net:amt - total };
+}
+if(typeof window !== 'undefined') window.erpWithholdTax = erpWithholdTax;
+
+/* ── 이미 확정된 기타소득 건 다시 재기 (콘솔: erpEtcTaxAudit()) ──
+   고치기 «전» 에 확정한 건은 3.52% 만 떼인 채로 저장돼 있다.
+   성과 기준이 그만큼 부풀려져 성과급도 많이 잡혔다.
+   ★ 여기서 고치지는 않는다 — 지난 성과급을 말없이 바꾸면 이미 지급한 것과 어긋난다.
+     어느 건이 얼마나 어긋났는지만 보여 주고, 고칠지는 사람이 정한다. */
+function erpEtcTaxAudit(){
+  var rows = [];
+  try {
+    (dbGet('finance_income', []) || []).forEach(function(fi){
+      if(!fi || fi.undoneDate) return;
+      var d = fi.deductions || {};
+      if(!d.etcIncomeTax) return;
+      var amt = parseInt(fi.amount, 10) || 0;
+      if(amt <= 0) return;
+      var right = erpWithholdTax(amt, 'misc', d.etcIncomeTaxRate || 8.8).total;
+      var had = amt - (parseInt(fi.perfBaseAmount, 10) || amt);   // 그때 실제로 뗀 값
+      if(had === right) return;                                   // 이미 맞다
+      rows.push({ 날짜:fi.date || '', 업체:fi.companyName || '', 금액:amt,
+                  세율:(d.etcIncomeTaxRate || 8.8) + '%',
+                  '뗀 값':had, '맞는 값':right, 차이:right - had, id:fi.id });
+    });
+  } catch(e){ console.error(e); }
+  if(!rows.length){ console.log('✅ 기타소득으로 확정한 건 가운데 어긋난 것이 없습니다.'); return rows; }
+  console.log('⚠️ 고치기 전에 확정한 기타소득 ' + rows.length + '건 — 세금을 덜 뗐습니다.');
+  console.table(rows);
+  var sum = rows.reduce(function(s, r){ return s + r.차이; }, 0);
+  console.log('덜 뗀 세금 합계 ' + sum.toLocaleString() + '원 — 그만큼 성과 기준이 부풀려져 있습니다.');
+  console.log('고치려면 각 건을 「확정 이력」에서 되돌린 뒤 다시 확정하세요.');
+  return rows;
+}
+if(typeof window !== 'undefined') window.erpEtcTaxAudit = erpEtcTaxAudit;
+
 function calcDeductions(amount, ded){
   ded = ded || {};
   var total = 0;
@@ -16470,14 +16543,14 @@ function calcDeductions(amount, ded){
     vat = Math.round(amount / 11);
     base = amount - vat; total = vat;
   } else if(ded.bizIncomeTax){
-    // 사업소득세는 입금 총액 기준
-    biz = Math.round(amount * (ded.bizIncomeTaxRate || 3.3) / 100);
+    // 사업소득세 3.3% — 셈은 erpWithholdTax 한 곳에서 (급여관리와 같은 값이 나와야 한다)
+    biz = erpWithholdTax(amount, 'biz').total;
     base = amount - biz; total = biz;
   } else if(ded.etcIncomeTax){
-    // 기타소득세는 입금 총액 기준 (8.8%는 60% 경비공제 후)
-    var rate = ded.etcIncomeTaxRate || 8.8;
-    var taxBase = rate <= 10 ? roundKRW(amount * 0.4) : amount;
-    etc = roundKRW(taxBase * rate / 100);
+    /* 기타소득세 — 셈은 erpWithholdTax 한 곳에서.
+       ★ 전에는 여기서 지급액×40% 에 다시 8.8% 를 곱해 실효 3.52% 가 됐다(대표 지적).
+         8.8% 에는 필요경비 60% 가 이미 들어 있다. */
+    etc = erpWithholdTax(amount, 'misc', ded.etcIncomeTaxRate || 8.8).total;
     base = amount - etc; total = etc;
   }
   return { perfBaseAmount: base, totalDeducted: total, vatAmount:vat, bizIncomeTaxAmount:biz, etcIncomeTaxAmount:etc };
@@ -68398,18 +68471,16 @@ function calcIrregularTax(type, amount){
     // 사용자가 일별 입력 시 자동계산 - 단순화: 0원 (수동 입력)
     return { incomeTax:0, localTax:0, netPay:amount };
   }
+  /* ★ 셈은 erpWithholdTax 한 곳에서 (2026-08-11).
+     여기 것은 맞았고 입금확정 것이 틀렸는데, 둘이 따로 세고 있어서 어긋난 줄도 몰랐다.
+     이제 한 함수를 함께 쓰므로 두 화면이 다른 값을 낼 수 없다. */
   if(type === 'misc'){
-    // 기타소득: 필요경비 60%, 잔액 22% (실효 8.8%)
-    var taxable = amount * 0.4;
-    var income = Math.floor(taxable * 0.20 / 10) * 10;
-    var local  = Math.floor(income * 0.10 / 10) * 10;
-    return { incomeTax:income, localTax:local, netPay:amount-income-local };
+    var m = erpWithholdTax(amount, 'misc', 8.8);   // 필요경비 60% → 실효 8.8%
+    return { incomeTax:m.incomeTax, localTax:m.localTax, netPay:m.net };
   }
   if(type === 'biz'){
-    // 사업소득: 3.3%
-    var income = Math.floor(amount * 0.03 / 10) * 10;
-    var local  = Math.floor(income * 0.10 / 10) * 10;
-    return { incomeTax:income, localTax:local, netPay:amount-income-local };
+    var b = erpWithholdTax(amount, 'biz');         // 사업소득 3.3%
+    return { incomeTax:b.incomeTax, localTax:b.localTax, netPay:b.net };
   }
   return { incomeTax:0, localTax:0, netPay:amount };
 }
