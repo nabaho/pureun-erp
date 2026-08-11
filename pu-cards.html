@@ -2096,6 +2096,18 @@ const MAT_TYPES = {
 const MAT_ACCEPT = Object.keys(MAT_TYPES).map(e=>'.'+e).join(',');
 const matExt  = n => ((String(n||'').match(/\.([a-z0-9]+)$/i)||[])[1]||'').toLowerCase();
 const matType = n => MAT_TYPES[matExt(n)];
+/* 자료함에 올린 파일을 바이트로 읽는다.
+   같은 코드가 세 군데(내려받기·미리보기·보기) 있어 한 곳으로 모았다 —
+   여러 벌이면 한 곳만 고쳐져 어긋난다. */
+async function matBytes(id){
+  const s = await firebase.database().ref(DB_ROOT+'/materialFiles/'+id).once('value');
+  const dataUrl = s.val();
+  if(!dataUrl) throw new Error('파일 데이터가 없습니다 — 자료함에서 파일을 다시 올려주세요');
+  const bin = atob(String(dataUrl).split(',')[1]||'');
+  const arr = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+  return arr;
+}
 const matIcon = n => (matType(n)||{}).ic || '📄';
 
 /* ── 자료 보내기 (고객 명함에서: 고르기만) ── */
@@ -2535,12 +2547,7 @@ function sendLogHtml(cardId){
 async function downloadMaterial(id){
   const m=_matMeta[id]; if(!m) throw new Error('자료 정보 없음');
   if(m.url){ window.open(m.url,'_blank'); return; }   /* 예전 Storage 방식 호환 */
-  const s = await firebase.database().ref(DB_ROOT+'/materialFiles/'+id).once('value');
-  const dataUrl = s.val();
-  if(!dataUrl) throw new Error('파일 데이터 없음');
-  const bin = atob(dataUrl.split(',')[1]);
-  const arr = new Uint8Array(bin.length);
-  for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+  const arr = await matBytes(id);
   const t = matType(m.fileName) || {mime:'application/octet-stream'};
   const blob = new Blob([arr], {type:t.mime});
   const a = document.createElement('a');
@@ -2805,14 +2812,9 @@ async function fillMatPreview(id){
   }
   box.innerHTML='<div class="mpmsg">불러오는 중…</div>';
   try{
-    const s=await firebase.database().ref(DB_ROOT+'/materialFiles/'+id).once('value');
+    const arr = await matBytes(id);
     if(state.matPrevId!==id) return;              /* 기다리는 사이 다른 것을 눌렀다 */
-    const dataUrl=s.val();
-    if(!dataUrl) throw new Error('파일 데이터가 없습니다 — 자료함에서 파일을 다시 올려주세요');
     if(_mpUrl){ try{URL.revokeObjectURL(_mpUrl)}catch(_){} _mpUrl=null; }
-    const bin=atob(String(dataUrl).split(',')[1]||'');
-    const arr=new Uint8Array(bin.length);
-    for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
     if(/^(hwp|hwpx)$/.test(matExt(m.fileName))){
       /* 한글 자료는 오른쪽 칸에서 바로 보고 고친다 — 팝업으로 띄우지 않는다.
          담아 두기(_mpHtml)를 쓰지 않는다: 문서를 들고 있어야 고친 것이 살아 있다. */
@@ -4270,12 +4272,7 @@ async function previewMaterial(id){
   if (m.url){ window.open(m.url,'_blank'); return; }  /* 예전 Storage 방식으로 올린 자료 호환 */
   toast('여는 중…');
   try{
-    const s = await firebase.database().ref(DB_ROOT+'/materialFiles/'+id).once('value');
-    const dataUrl = s.val();
-    if(!dataUrl){ toast('파일 데이터가 없습니다 — 자료를 다시 올려주세요'); return; }
-    const bin = atob(dataUrl.split(',')[1]);
-    const arr = new Uint8Array(bin.length);
-    for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+    const arr = await matBytes(id);
     if(/^(hwp|hwpx)$/.test(matExt(m.fileName))){ await openMaterialHwp(arr,m.fileName||m.name||'한글자료.hwp'); return; }
     const t = matType(m.fileName) || {mime:'application/octet-stream'};
     const url = URL.createObjectURL(new Blob([arr], {type:t.mime}));

@@ -29,3 +29,26 @@ test('한글 자료 창은 모바일에서 화면을 넘지 않는다', () => {
   assert.match(source, /\.mat-hwp-modal\{width:min\(1100px,96vw\)/);
   assert.match(source, /@media\(max-width:760px\)[\s\S]*?\.mat-hwp-modal\{width:100%;height:94vh/);
 });
+
+test('자료 바이트 읽기는 한 곳에만 있다', () => {
+  /* 같은 코드가 여러 벌이면 한 곳만 고쳐져 어긋난다.
+     읽기(once)는 한 곳이어야 한다 — 쓰기(set)·지우기(remove)는 그대로 둔다.
+     charCodeAt 으로 세지 않는다: 자료함과 상관없는 _unb64 도 그것을 쓴다. */
+  assert.match(source, /async function matBytes\(id\)/);
+  const reads = (source.match(/materialFiles\/'\+id\)\.once\('value'\)/g) || []).length;
+  assert.equal(reads, 1, '자료 파일을 읽는 곳이 아직 여러 곳입니다');
+});
+
+test('자료를 읽는 세 곳이 모두 matBytes 를 쓴다', () => {
+  const each = ['async function downloadMaterial', 'async function fillMatPreview', 'async function previewMaterial'];
+  each.forEach(head => {
+    const at = source.indexOf(head);
+    assert.ok(at > 0, head + ' 을 찾지 못했습니다');
+    assert.match(source.slice(at, at + 2200), /await matBytes\(id\)/, head + ' 이 아직 직접 읽습니다');
+  });
+});
+
+test('파일이 없으면 조용히 넘기지 않고 알린다', () => {
+  const fn = source.slice(source.indexOf('async function matBytes'), source.indexOf('async function matBytes') + 600);
+  assert.match(fn, /throw new Error/);
+});
