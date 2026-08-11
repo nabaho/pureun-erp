@@ -3972,6 +3972,38 @@ function _recServerWrite(k, childPaths){ // childPaths: { '{id}' 또는 '{id}/{f
 function _recCanDirect(k){
   return !!(fbDb && fbShouldSync(k) && _fbSynced && _fbObjForm[k] === true);
 }
+
+// ── 한 건을 저장할 때 «바뀐 칸만» 보낸다 (2026-08-11) ───────────────
+// 전에는 레코드를 통째로 덮어써서, 같은 업체를 두 사람이 «서로 다른 칸» 을
+// 고쳐도 나중 사람이 앞사람 칸을 되돌렸다. A는 전화번호, B는 주소를 고쳤는데
+// B가 저장하면 A의 전화번호가 옛 값으로 돌아간다 — 아무 말도 없이.
+// 통째 저장(dbSet)은 이미 칸 단위인데 한 건 저장만 통째였다. 같은 규칙으로 맞춘다.
+//
+// ⚠ 통째로 보내야 하는 두 경우
+//   ① 새 레코드(prev 없음) — 보낼 «바뀐 칸» 이라는 개념이 없다.
+//   ② 칸 이름에 Firebase 금지문자(. # $ [ ] /)가 있음 — 경로가 깨진다.
+//     하나라도 있으면 그 레코드는 통째로. 일부만 보내면 반쪽짜리가 남는다.
+var _FIELD_BADKEY = /[.#$\[\]\/]/;
+function _recFieldPaths(item, prev){
+  var whole = {}; whole[item.id] = item;
+  if(!prev) return whole;
+  var out = {}, bad = false;
+  Object.keys(item).forEach(function(f){
+    if(_FIELD_BADKEY.test(f)){ bad = true; return; }
+    if(JSON.stringify(item[f]) !== JSON.stringify(prev[f])){
+      out[item.id + '/' + f] = (item[f] === undefined ? null : item[f]);
+    }
+  });
+  Object.keys(prev).forEach(function(f){
+    if(_FIELD_BADKEY.test(f)){ bad = true; return; }
+    if(!(f in item)) out[item.id + '/' + f] = null;   // 지워진 칸
+  });
+  if(bad) return whole;
+  // id 는 늘 함께 보낸다 — 서버에 그 건이 없던 경우에도 최소한 «누구인지» 는 남는다.
+  //   id 없는 항목은 병합·정규화에서 통째로 버려지므로 이 한 줄이 그물이다.
+  out[item.id + '/id'] = item.id;
+  return out;
+}
 // ── 근태·휴가 마감월 관문 ─────────────────────────────────────
 // 근태 기록을 고치는 자리가 달력·근태관리·휴가·외부인력·이음센터에 걸쳐 스무 곳이 넘는다.
 // 한 곳씩 막으면 반드시 빠뜨리므로, 레코드 저장 함수 이 한 자리에서 막는다.
@@ -4021,8 +4053,8 @@ function dbUpsert(k, item){
   if(!found) next = next.concat([item]);
   if(_recCanDirect(k) && !_REC_BADKEY.test(item.id)){
     if(!_recLocalSave(k, next)) return false;
-    var cp = {}; cp[item.id] = item;
-    _recServerWrite(k, cp);
+    // 바뀐 칸만 보낸다 — 남이 만진 다른 칸을 되돌리지 않게 (dbPatch 와 같은 규칙)
+    _recServerWrite(k, _recFieldPaths(item, _prevRec));
     return true;
   }
   return dbSet(k, next); // 폴백: 전체 보호 경유 (동기화 전 보류 포함)
@@ -16532,6 +16564,47 @@ function erpEtcTaxAudit(){
   return rows;
 }
 if(typeof window !== 'undefined') window.erpEtcTaxAudit = erpEtcTaxAudit;
+
+/* ── 성과급을 «세전» 으로 나눈 옛 건 찾기 (콘솔: erpPerfBaseAudit()) ──
+   대표 확정(2026-08-11): 성과급은 세금을 뗀 뒤 남은 금액으로 나눈다.
+   그 전에 개인수익·성과수정 화면에서 저장된 건은 세전 금액으로 나뉘어 있어
+   성과급이 실제보다 많이 잡혔다.
+   ★ 여기서 고치지 않는다 — 이미 지급한 성과급과 어긋난다. 얼마나 차이 나는지만 보여 준다.
+     숫자를 보고 고칠지는 대표가 정한다. */
+function erpPerfBaseAudit(){
+  var rows = [];
+  try {
+    (dbGet('finance_income', []) || []).forEach(function(fi){
+      if(!fi || fi.undoneDate || fi.perfExclude) return;
+      var shares = fi.perfShares || [];
+      if(!shares.length) return;
+      var amt = parseInt(fi.amount, 10) || 0;
+      var base = parseInt(fi.perfBaseAmount, 10) || amt;
+      if(base >= amt) return;                       // 세금을 뗀 적이 없는 건 — 볼 것 없다
+      var now = 0, right = 0, wrong = false;
+      shares.forEach(function(s){
+        var pct = (s.sharePct != null) ? s.sharePct : 100;
+        var rate = parseFloat(s.pct) || 0;
+        now += parseInt(s.amount, 10) || 0;
+        right += Math.round(Math.round(base * pct / 100) * rate / 100);
+        // 세전 금액으로 나눈 흔적 — 그 사람 몫의 기준액이 «입금액» 기준이다
+        if(Math.abs((parseInt(s.baseAmount, 10) || 0) - Math.round(amt * pct / 100)) <= 1) wrong = true;
+      });
+      if(!wrong || now === right) return;
+      rows.push({ 날짜:fi.date || '', 업체:fi.companyName || '', 입금액:amt,
+                  '성과 기준(세후)':base, '지금 성과급':now, '세후로 다시':right,
+                  '더 잡힌 금액':now - right, id:fi.id });
+    });
+  } catch(e){ console.error(e); }
+  if(!rows.length){ console.log('✅ 성과급을 세전으로 나눈 건이 없습니다.'); return rows; }
+  console.log('⚠️ 성과급을 «세전» 으로 나눈 ' + rows.length + '건 — 실제보다 많이 잡혀 있습니다.');
+  console.table(rows);
+  var sum = rows.reduce(function(s, r){ return s + r['더 잡힌 금액']; }, 0);
+  console.log('더 잡힌 성과급 합계 ' + sum.toLocaleString() + '원.');
+  console.log('고치려면 각 건을 「확정 이력」에서 되돌린 뒤 다시 확정하세요 (이 도구는 아무것도 바꾸지 않습니다).');
+  return rows;
+}
+if(typeof window !== 'undefined') window.erpPerfBaseAudit = erpPerfBaseAudit;
 
 function calcDeductions(amount, ded){
   ded = ded || {};
