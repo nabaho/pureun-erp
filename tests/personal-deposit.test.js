@@ -57,10 +57,11 @@ const PD = src.slice(src.indexOf('function personalDepositBlock(){'),
 t('계약 단위 칸이다 (종류별이 아니다)', /f\.personalDeposit/.test(PD), true);
 t('켜고 끌 수 있다', /personalDeposit: e\.target\.checked/.test(PD), true);
 t('무엇인지 이름으로 말한다', /'👤 개인입금 \(법인 아닌 개인 계좌\)'/.test(PD), true);
-/* ⚠ data-tip 은 이 파일에 그리는 CSS 가 없어 «아무것도 안 뜬다». 반드시 title 이어야 한다. */
+/* data-tip(.erp-tip, css/pu-erp.css)은 실제로 잘 뜨지만 white-space:normal 이라 줄바꿈을 못 살린다.
+   이 안내는 \n 으로 나뉜 여러 줄 문구라 title 이 맞는 선택이다. */
 t('★ 도움말이 실제로 뜨는 방식(title)이다', /title:'법인 통장이 아니라 개인 계좌로/.test(PD), true);
-// 주석에는 「쓰지 말 것」이라고 적혀 있으므로, 실제 «속성으로 쓰였는지» 만 본다
-t('★ 안 뜨는 방식을 실제로 쓰지 않았다', /'data-tip':/.test(PD), false);
+// 여러 줄 문구라 data-tip 이 아니라 title 로 쓰였는지 속성으로 확인한다
+t('★ 여러 줄 문구라 data-tip 이 아니라 title 을 썼다', /'data-tip':/.test(PD), false);
 t('켜면 무슨 일이 생기는지 알려 준다', /입금확정 시 「개인수익」 자동 체크/.test(PD), true);
 /* ★ 함수가 «있다» 만 보면 안 된다 — 만들어 놓고 화면에 안 붙이면 그대로 안 보인다.
    실제로 그려지는 자리(CMS 와 같은 박스 바닥)에 «불리고» 있는지를 본다. */
