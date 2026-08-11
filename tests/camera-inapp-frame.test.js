@@ -94,7 +94,11 @@ test('★ 꺽쇠를 찾은 네모에 맞춘다 — 안 맞추면 종이가 잘�
   assert.ok(/camSeenRect/.test(fn[0]), '찾은 자리를 안 씁니다.');
   assert.ok(/Math\.max\(e\.width \/ v\.videoWidth, e\.height \/ v\.videoHeight\)/.test(fn[0]),
     '미리보기는 object-fit:cover 라 화면 자리와 원본 화소 자리가 다릅니다 — 같은 계산을 써야 합니다.');
-  assert.ok(/FRAME_PAD/.test(fn[0]), '딱 맞게 자르면 테두리 가까운 글자가 깎입니다.');
+  /* ⚠ 이름만 보면 FRAME_PAD = 1.00 으로 두어도 통과한다 — 값이 실제로
+     1 보다 커야 넉넉히 잡는 것이다. */
+  assert.ok(/FRAME_PAD/.test(fn[0]), '넉넉히 잡는 값을 안 씁니다.');
+  const pad = Number((html.match(/const FRAME_PAD = ([\d.]+);/) || [])[1]);
+  assert.ok(pad > 1, 'FRAME_PAD 가 ' + pad + ' 입니다 — 딱 맞게 자르면 테두리 가까운 글자가 깎입니다.');
   const watch = html.match(/function frameWatchTick\(\)[\s\S]*?\n\}/);
   assert.ok(/if \(want && ok\) fitFrameToRect\(\)/.test(watch[0]),
     '켜져 있는 동안 자리를 안 따라가면 종이를 움직일 때 꺽쇠가 뒤처집니다.');
