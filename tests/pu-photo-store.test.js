@@ -465,7 +465,7 @@ function fakeDb(data) {
   };
 }
 
-test('savePhoto — 사진 한 장이 세 경로에 update 한 번으로 담긴다', async () => {
+test('savePhoto — 사진 세 경로와 사용자 색인이 update 한 번으로 담긴다', async () => {
   const S = loadStore();
   const db = fakeDb();
   S.init({ uid: 'U1', db });
@@ -481,7 +481,8 @@ test('savePhoto — 사진 한 장이 세 경로에 update 한 번으로 담긴�
   assert.equal(db.calls.update[0].path, '');
   const u = db.calls.update[0].u;
   assert.deepEqual(Object.keys(u).sort(), [
-    'puphotos/u/U1/blobs/2026/p1', 'puphotos/u/U1/items/2026/p1', 'puphotos/u/U1/thumbs/2026/p1'
+    'puphotos/owners/U1', 'puphotos/u/U1/blobs/2026/p1',
+    'puphotos/u/U1/items/2026/p1', 'puphotos/u/U1/thumbs/2026/p1'
   ]);
   assert.equal(u['puphotos/u/U1/blobs/2026/p1'], 'data:full');
   assert.equal(u['puphotos/u/U1/thumbs/2026/p1'], 'data:thumb');
@@ -493,7 +494,8 @@ test('savePhoto — 촬영 시각을 모르는 사진은 unknown 연도로', asy
   S.init({ uid: 'U1', db });
   const r = await S.savePhoto({ id: 'p2', takenAt: null, meta: {}, full: 'f', thumb: 't' });
   assert.equal(r.year, 'unknown');
-  assert.ok(Object.keys(db.calls.update[0].u).every(k => k.includes('/unknown/')));
+  const photoKeys = Object.keys(db.calls.update[0].u).filter(k => k !== 'puphotos/owners/U1');
+  assert.ok(photoKeys.every(k => k.includes('/unknown/')));
 });
 
 test('savePhoto — 실시간DB가 없으면 한국어로 거절한다', async () => {
@@ -585,8 +587,22 @@ test('savePhoto 는 내 자리에만 쓴다 — 남의 자리에 쓰는 길이 �
   S.init({ uid: 'U1', db });
   await S.savePhoto({ id: 'p1', takenAt: new Date(2026, 6, 15).getTime(), meta: {}, full: 'f', thumb: 't' });
   for (const k of Object.keys(db.calls.update[0].u)) {
-    assert.ok(k.indexOf('puphotos/u/U1/') === 0, '내 자리 밖에 썼습니다: ' + k);
+    assert.ok(k.indexOf('puphotos/u/U1/') === 0 || k === 'puphotos/owners/U1',
+      '내 자리와 내 사용자 색인 밖에 썼습니다: ' + k);
   }
+});
+
+test('savePhoto — 업로드할 때 사용자 색인도 함께 남겨 다른 기기 전체사진에 보인다', async () => {
+  const S = loadStore();
+  const db = fakeDb();
+  S.init({ uid: 'U1', name: '김보람', db });
+  await S.savePhoto({
+    id: 'phone1', takenAt: new Date(2026, 7, 11).getTime(),
+    meta: { byName: '김보람' }, full: 'f', thumb: 't'
+  });
+  const owner = db.calls.update[0].u['puphotos/owners/U1'];
+  assert.equal(owner.name, '김보람');
+  assert.ok(owner.lastAt > 0);
 });
 
 test('listYear·loadThumb·loadFull 은 남의 자리도 읽을 수 있다 (관리자용)', async () => {

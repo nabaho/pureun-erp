@@ -597,7 +597,7 @@ test('남의 사진은 지우거나 고칠 수 없다 (판독은 2026-08-10 부�
         올리는 것은 보는 화면과 무관하게 **늘 내 자리로** 간다(savePhoto)。
         지우기·판독은 위에서 보듯 viewingOther() 그대로 — 남의 사진이 섞여 있다. */
   /* ⚠ camBtn 은 없앴다(2026-08-10) — 목록에 남겨 두면 없는 단추를 부르다 멎는다 */
-  assert.match(app, /\['pickBtn', 'docBtn'\][\s\S]{0,120}viewingOnlyOther\(\)/);
+  assert.match(app, /\['docBtn'\][\s\S]{0,120}viewingOnlyOther\(\)/);
   assert.match(app, /function viewingOnlyOther\(\) \{ return viewingOther\(\) && gridOwner !== ALL_OWNERS; \}/,
     '「전체 근로자」만 예외여야 합니다 — 한 사람을 골라 볼 때는 여전히 잠깁니다.');
 });
@@ -1334,7 +1334,7 @@ test('올릴 수 없는 상황이면 아무 말 없이 끝내지 않는다', () 
   const fn = app.match(/async function addFiles\([\s\S]*?\n  if \(!files\.length\) return;/);
   assert.ok(fn, 'addFiles 시작 부분을 찾을 수 없습니다');
   assert.match(fn[0], /로그인이 풀렸습니다/, '로그인 해제를 조용하게 넘깁니다');
-  assert.match(fn[0], /올릴 준비가 끝나지 않았습니다/, '준비가 안 된 상태를 조용하게 넘깁니다');
+  assert.match(fn[0], /사진 올리기를 준비하지 못했습니다/, '준비가 안 된 상태를 조용하게 넘깁니다');
   // 사진이 안 올라갔다는 것을 분명하게 말해야 다시 올린다
   assert.match(fn[0], /사진은 아직 올라가지 않았습니다/);
 });

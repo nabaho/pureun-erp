@@ -257,6 +257,13 @@
     u[metaPath(year, p.id)] = p.meta;
     u[blobPath(year, p.id)] = p.full;
     u[thumbPath(year, p.id)] = p.thumb;
+    /* 업로드 성공과 사용자 색인을 한 번에 저장한다. 로그인 때 touchOwner가
+       일시적으로 실패해도 이 색인이 남아야 다른 휴대폰·PC의 「전체 근로자」
+       화면에서 방금 올린 사진을 빠뜨리지 않고 찾을 수 있다. */
+    u[ownerPath(deps.uid)] = {
+      name: deps.name || (p.meta && p.meta.byName) || '',
+      lastAt: Date.now()
+    };
     return deps.db.ref().update(u).then(function () { return { year: year, id: p.id }; });
   }
 
@@ -1016,6 +1023,22 @@
     return deps.db.ref(DB_ROOT + '/owners').once('value')
       .then(function (s) { return s.val() || {}; });
   }
+
+  /* 관리자가 사진첩을 켜 둔 동안 다른 휴대폰에서 업로드하면 owners/{uid}.lastAt 이
+     함께 바뀐다. 큰 사진 목록 전체를 계속 감시하지 않고 이 작은 색인만 감시해
+     PC 목록을 다시 읽을 때를 알려 준다. 첫 value는 구독 직후의 현재값이므로 넘긴다. */
+  function watchUploadIndex(changed) {
+    if (!deps.isAdmin || !deps.db || typeof changed !== 'function') return function () {};
+    var ref = deps.db.ref(DB_ROOT + '/owners');
+    var first = true;
+    function handler() {
+      if (first) { first = false; return; }
+      changed();
+    }
+    function failed() { /* 실시간 알림이 막혀도 수동 새로고침과 포커스 갱신은 남는다 */ }
+    ref.on('value', handler, failed);
+    return function () { ref.off('value', handler); };
+  }
   function readOnce(path) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     return deps.db.ref(path).once('value').then(function (s) { return s.val(); });
@@ -1304,6 +1327,7 @@
     lookupName: lookupName,
     touchOwner: touchOwner,
     listOwners: listOwners,
+    watchUploadIndex: watchUploadIndex,
     listYearAll: listYearAll,
     listYearsAll: listYearsAll,
     migrateLegacy: migrateLegacy,
