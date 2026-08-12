@@ -3120,16 +3120,29 @@ function mgRender(){
       +'<button class="x" onclick="closeMatEditor()">✕</button></div>'
     +'<div class="mged-bar">'
       +'<button onclick="mgPreview()">👁 원본 모습</button>'
-      +'<button class="go" id="mgSaveB" onclick="mgSave()"'+(n?'':' disabled')+'>💾 자료함에 저장</button>'
-      +'<button id="mgDownB" onclick="mgDownload()"'+(n?'':' disabled')+'>📥 내려받기</button>'
+      +'<button class="go" id="mgSaveB" onclick="mgSave()"'+((n && !_mg.broken)?'':' disabled')+'>💾 자료함에 저장</button>'
+      /* 저장이 실패했으면 고친 것이 화면에만 남는다. 그걸 못 꺼내면 갇힌다 —
+         rescue 일 때는 고친 곳이 0 이어도 내려받기를 열어 둔다. */
+      +'<button id="mgDownB" onclick="mgDownload()"'+((n || _mg.rescue)?'':' disabled')+'>📥 내려받기</button>'
       +'<span class="cnt" id="mgCnt">'+(n?'고친 곳 <b>'+n+'</b>개':'고친 곳 없음')+'</span>'
     +'</div>'
     +'<div class="mged-body" id="mgedBody">'+mgGridHtml()+'</div>'
-    +(miss.length
-      ? '<div class="mged-note">⚠ 아직 못 읽는 것이 있습니다 — '+esc(miss.join(', '))
-        +'. 이 부분은 한글에서 고쳐 주십시오.</div>'
-      : '');
+    + mgNoteHtml(miss);
   mgFitAll();
+}
+
+/* 팝업 아래 알림줄 — 알림창(toast)과 달리 **덮이지 않고 남는다.**
+   여기에 들어가는 셋은 모두 「모르고 지나가면 손해 보는」 것들이다.
+   ① 저장 결과 ② 넣지 못한 곳(어디인지 번호까지) ③ 아직 못 읽는 부분. */
+function mgNoteHtml(miss){
+  const out=[];
+  if(_mg.saveMsg) out.push(esc(_mg.saveMsg));
+  if(_mg.failed && _mg.failed.length)
+    out.push('넣지 못한 곳 — '+esc(_mg.failed.map(f=>f.no+'번('+(f.why||'까닭 모름')+')').join(', '))
+      +'<br>이 줄들은 문서에 안 들어갔습니다. 한글에서 직접 고쳐 주십시오.');
+  if(miss.length)
+    out.push('⚠ 아직 못 읽는 것이 있습니다 — '+esc(miss.join(', '))+'. 이 부분은 한글에서 고쳐 주십시오.');
+  return out.length ? '<div class="mged-note">'+out.join('<hr style="border:0;border-top:1px solid #f0d9a8;margin:7px 0">')+'</div>' : '';
 }
 
 function mgGridHtml(){
@@ -3219,19 +3232,38 @@ function mgInput(i, el){
 
 /* 고친 것을 문서에 넣고 새 바이트를 만든다.
    ⚠ 넣은 뒤에는 줄 길이가 달라졌다 — 반드시 다시 읽어야 다음 저장이 어긋나지 않는다. */
+/* 고친 것을 문서에 넣고 새 바이트를 만든다.
+
+   ⚠ 차례가 중요하다. 예전엔 exportBytes → readGrid → edited={} 였는데,
+     exportBytes(WASM)나 readGrid 가 도중에 터지면 **문서는 이미 바뀌었는데**
+     edited 와 grid 는 옛것 그대로 남았다. 그 상태로 다시 저장을 누르면 옛 길이로
+     같은 자리를 또 지우고 또 넣어 「가나다」→「가나다라마」가 「라마가나다라마」가 된다.
+     실제로 재현했다. 그래서 넣자마자 **먼저 edited 를 비운다** — 두 번 넣히지 않는다.
+
+   ⚠ 그래도 문서와 바이트가 어긋난 채 남을 수 있다. 그때는 broken 을 세워
+     이 세션으로는 더 저장하지 못하게 막는다. 어긋난 바이트를 올리면 대표가 고친 것이
+     조용히 사라진다. 다시 열라고 말하는 편이 낫다. */
 function mgApply(){
   const ch = PuHwpEdit.changedRows(_mg.grid.units, _mg.edited);
   if(!ch.length) return {ok:0, failed:[]};
   const res = PuHwpEdit.applyRows(_mg.doc, ch);
-  _mg.bytes = PuHwpEdit.exportBytes(_mg.doc, _mg.name);
-  _mg.grid = PuHwpEdit.readGrid(_mg.doc);
-  _mg.edited = {};
+  _mg.edited = {};                       /* 넣은 것을 또 넣지 않도록 제일 먼저 */
+  try{
+    _mg.grid  = PuHwpEdit.readGrid(_mg.doc);
+    _mg.bytes = PuHwpEdit.exportBytes(_mg.doc, _mg.name);
+  }catch(e){
+    _mg.broken = true;
+    throw e;
+  }
   return res;
 }
-/* 실패한 곳을 조용히 넘기면 「저장했다는데 안 바뀌었다」가 된다 */
+/* 넣지 못한 곳은 **팝업 안에 남긴다.**
+   예전엔 알림창(toast)으로 띄웠는데, 그 알림창은 한 칸짜리라 바로 뒤따라오는
+   「업로드 중…」과 「✅ 저장했습니다」가 덮어 버렸다. 대표는 ✅ 만 보게 되고,
+   반만 저장된 계약서를 다 저장된 줄 안다. 화면에 남아 있어야 읽을 수 있다. */
 function mgTellFailed(res){
-  if(!res.failed.length) return;
-  toast('넣지 못한 곳: '+res.failed.map(f=>f.no+'번('+f.why+')').join(', '), 9000);
+  if(!_mg) return;
+  _mg.failed = (res.failed||[]).slice();
 }
 
 async function mgSave(){
@@ -3245,6 +3277,7 @@ async function mgSave(){
      엉뚱하게도 방금 새로 열린 남의 세션의 busy 를 꺼 버린다. m 은 이 호출이 시작할 때의
      그 자료 그대로를 계속 가리키므로 이 저장은 언제나 자신이 쥔 것만 건드린다. */
   const m = _mg;
+  if(m.broken) return toast('문서가 어긋나 더 저장할 수 없습니다 — 팝업을 닫고 다시 열어 주십시오', 9000);
   m.busy=true;
   try{
     const res = mgApply();
@@ -3252,23 +3285,46 @@ async function mgSave(){
     const t = matType(m.name) || {mime:'application/octet-stream'};
     const file = new File([m.bytes], m.name, {type:t.mime});
     const cur = _matMeta[m.id] || {};
-    await putMaterial(m.id, cur.name || m.name, file);   /* 갈래·설명·순서는 그대로 얹힌다 */
-    toast('✅ 자료함에 저장했습니다');
+    /* putMaterial 은 안에서 실패를 삼키고 false 를 돌려준다. 돌려준 값을 봐야
+       「올라갔다」고 말할 자격이 생긴다 — 안 보고 ✅ 를 띄우면 거짓말이 된다. */
+    const ok = await putMaterial(m.id, cur.name || m.name, file);
+    m.saveMsg = ok
+      ? (res.failed.length
+          ? '⚠ 일부만 저장했습니다 — 넣지 못한 곳 '+res.failed.length+'군데는 아래에 있습니다'
+          : '✅ 자료함에 저장했습니다')
+      : '❌ 저장하지 못했습니다 — 고친 내용은 아직 화면에 있습니다. 📥 내려받기로 받아 두십시오';
+    /* 못 올렸으면 고친 것이 갇히면 안 된다. 내려받기는 반드시 열어 둔다. */
+    m.rescue = !ok;
+    toast(m.saveMsg, ok ? 4000 : 12000);
     mgRender();
   }catch(e){
-    toast('저장하지 못했습니다 — '+((e&&e.message)||''), 8000);
+    m.saveMsg = '❌ 저장하지 못했습니다 — '+((e&&e.message)||'')
+      + (m.broken ? ' (문서가 어긋났습니다. 팝업을 닫고 다시 열어 주십시오)' : '');
+    m.rescue = !m.broken;
+    toast(m.saveMsg, 12000);
+    try{ mgRender(); }catch(_){}
   }finally{ m.busy=false; }
 }
 
 function mgDownload(){
   if(!_mg || _mg.busy) return;
+  if(_mg.broken) return toast('문서가 어긋나 만들 수 없습니다 — 팝업을 닫고 다시 열어 주십시오', 9000);
   try{
     const res = mgApply();
     mgTellFailed(res);
     PureunHwp.download(_mg.bytes, PuHwpEdit.editedName(_mg.name), PuHwpEdit.extOf(_mg.name));
-    toast('📥 고친 문서를 내려받았습니다 — 자료함의 원본은 그대로입니다');
+    _mg.saveMsg = res.failed.length
+      ? '⚠ 일부만 들어간 문서를 내려받았습니다 — 넣지 못한 곳은 아래에 있습니다. 자료함의 원본은 그대로입니다'
+      : '📥 고친 문서를 내려받았습니다 — 자료함의 원본은 그대로입니다';
+    _mg.rescue = false;                 /* 꺼냈으니 갇힌 상태가 아니다 */
+    toast(_mg.saveMsg, res.failed.length ? 9000 : 4000);
     mgRender();
-  }catch(e){ toast('만들지 못했습니다 — '+((e&&e.message)||''), 8000); }
+  }catch(e){
+    _mg.saveMsg = '❌ 만들지 못했습니다 — '+((e&&e.message)||'');
+    toast(_mg.saveMsg, 9000);
+    /* mgApply 가 도중에 터졌으면 화면의 단추 상태가 실제와 어긋난다 — 반드시 다시 그린다 */
+    try{ mgRender(); }catch(_){}
+  }
 }
 
 /* 원본 모습 — 한글로 인쇄한 그대로 그린다.
@@ -3277,9 +3333,16 @@ function mgDownload(){
      편집이 통째로 멈춘다. */
 function mgPreview(){
   if(!_mg) return;
+  /* 저장이 도는 중에 화면을 갈아엎으면, 저장이 끝나며 부르는 mgRender 와 서로 덮는다 */
+  if(_mg.busy) return toast('저장하는 중입니다 — 끝나고 눌러 주십시오');
   const b=$('mgedBody'); if(!b) return;
   if(mgChanged() && !confirm('고친 내용을 아직 저장하지 않았습니다.\n버리고 원본 모습을 볼까요?')) return;
+  /* 고친 것을 버렸으니 도구줄의 「고친 곳 N개」와 단추도 같이 꺼져야 한다.
+     본문만 갈아 끼우면 도구줄이 옛 숫자를 그대로 들고 있어, 눌러도 「고친 곳이 없습니다」만 뜬다. */
   _mg.edited={};
+  const bar=$('mgCnt'); if(bar) bar.innerHTML='고친 곳 없음';
+  const sb=$('mgSaveB'); if(sb) sb.disabled=true;
+  const db=$('mgDownB'); if(db) db.disabled=!_mg.rescue;
   b.innerHTML='<div class="mpmsg">모습을 그리는 중…</div>';
   PureunHwp.renderPreview(b, _mg.bytes, _mg.name).then(()=>{
     const back=document.createElement('div');
@@ -4571,8 +4634,14 @@ async function replaceMaterialFile(id, input){
   await putMaterial(id, cur.name, file);
 }
 /* 파일 본문은 명함 사진과 같은 방식으로 DB에 저장 (Storage 미사용 — 권한설정 불필요) */
+/* 올렸는지 못 올렸는지를 **돌려준다**(true/false).
+   예전엔 아무것도 안 돌려주고 안에서 실패 알림만 띄웠다. 그래서 부르는 쪽은
+   실패를 알 길이 없어 「✅ 저장했습니다」를 덧씌워 버렸다 — 계약서가 안 올라갔는데
+   올라갔다고 말하는 셈이다. 부르는 쪽이 사실을 알 수 있어야 한다.
+   ⚠ 던지지 않고 false 를 돌려준다. 이미 이 함수를 쓰는 여섯 곳이 반환값을 안 보므로
+     던지면 그쪽들이 다 깨진다. */
 async function putMaterial(id, name, file){
-  if (file.size > 8*1024*1024){ toast(`파일이 너무 큽니다 (${(file.size/1024/1024).toFixed(1)}MB) — 8MB 이하만 올릴 수 있습니다`); return; }
+  if (file.size > 8*1024*1024){ toast(`파일이 너무 큽니다 (${(file.size/1024/1024).toFixed(1)}MB) — 8MB 이하만 올릴 수 있습니다`); return false; }
   toast('업로드 중…');
   try{
     const dataUrl = await new Promise((res,rej)=>{
@@ -4597,9 +4666,11 @@ async function putMaterial(id, name, file){
        그대로라 **올렸는데 목록에 안 나타난다.** 지금 보고 있는 쪽을 다시 그린다. */
     matRefresh();
     toast('✅ 올렸습니다');
+    return true;
   }catch(e){
     console.warn('[upload]', e&&e.message);
     toast('업로드 실패: '+((e&&e.message)||'알 수 없는 오류'));
+    return false;
   }
 }
 async function previewMaterial(id){

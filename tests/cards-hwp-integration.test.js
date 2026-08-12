@@ -1,4 +1,4 @@
-const test = require('node:test');
+﻿const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -425,12 +425,27 @@ function loadMgSaveBlock(){
     _els: { mgedBody: makeEl() },
     esc: s => String(s),
     document: { createElement: () => makeEl() },
-    toast: (msg, ms) => calls.toast.push({msg, ms}),
+    /* ⚠ 진짜 toast 는 #toast 한 칸을 돌려 쓴다 — 뒤에 뜬 것이 앞의 것을 **지운다.**
+       예전 가짜는 배열에 쌓기만 해서, 실제로는 덮여 사라지는 알림도 "떴다"고 통과시켰다.
+       두 Critical 이 정확히 그 틈에 숨어 있었다. 마지막 하나만 보이도록 흉내 낸다. */
+    toast: (msg, ms) => { calls.toast.push({msg, ms}); ctx._visibleToast = msg; },
+    _visibleToast: '',
     confirm: msg => { calls.confirm.push(msg); return ctx._confirmReturns.shift() ?? true; },
     _confirmReturns: [],
     matType: () => ({ mime:'application/x-hwp' }),
     _matMeta: {},
-    putMaterial: (id, name, file) => { calls.putMaterial.push({id, name, file}); return ctx._putMaterialImpl ? ctx._putMaterialImpl(id, name, file) : Promise.resolve(); },
+    /* ⚠ 진짜 putMaterial 은 **던지지 않는다.** 안에서 실패를 삼키고 알림만 띄운 뒤
+       true/false 를 돌려준다. 들어가자마자 「업로드 중…」도 띄운다(앞 알림을 덮는다).
+       가짜가 이보다 너그러우면 부르는 쪽의 거짓 성공을 못 잡는다. */
+    putMaterial: (id, name, file) => {
+      calls.putMaterial.push({id, name, file});
+      ctx.toast('업로드 중…');
+      if (ctx._putMaterialImpl) return ctx._putMaterialImpl(id, name, file);
+      ctx.toast('✅ 올렸습니다');
+      return Promise.resolve(true);
+    },
+    /* 실패를 흉내낼 때 쓴다 — 진짜처럼 reject 가 아니라 false 로 resolve 한다 */
+    _putMaterialFails: () => { ctx.toast('업로드 실패: permission_denied'); return Promise.resolve(false); },
     _putMaterialImpl: null,
     mgChanged: () => (ctx._mg ? ctx.PuHwpEdit.changedRows(ctx._mg.grid.units, ctx._mg.edited).length : 0),
     mgRender: () => { calls.mgRender++; },
@@ -477,18 +492,21 @@ test('[실행] mgApply 는 고친 곳이 없으면 문서를 건드리지 않는
   assert.deepEqual(ctx._seq, [], 'applyRows·readGrid 를 부르면 안 된다');
 });
 
-test('[실행] 넣지 못한 곳은 번호와 이유를 담아 toast 로 알린다', () => {
+test('[실행] 넣지 못한 곳은 덮이지 않게 팝업에 남긴다', () => {
+  /* toast 로 띄우면 바로 뒤따르는 「업로드 중…」과 「✅ 저장했습니다」가 덮어 버린다.
+     대표는 ✅ 만 보고 반만 저장된 계약서를 다 저장된 줄 안다. */
   const ctx = loadMgSaveBlock();
+  ctx._mg = { id:'m1', failed:[] };
   ctx.mgTellFailed({ ok:1, failed:[{no:3, why:'글상자'}, {no:7, why:'자리 없음'}] });
-  assert.equal(ctx._calls.toast.length, 1);
-  assert.match(ctx._calls.toast[0].msg, /넣지 못한 곳/);
-  assert.match(ctx._calls.toast[0].msg, /3번\(글상자\)/);
-  assert.match(ctx._calls.toast[0].msg, /7번\(자리 없음\)/);
+  assert.deepEqual(plain(ctx._mg.failed), [{no:3, why:'글상자'}, {no:7, why:'자리 없음'}]);
+  assert.equal(ctx._calls.toast.length, 0, '덮일 수 있는 toast 에 기대면 안 된다');
 });
 
-test('[실행] 실패가 없으면 mgTellFailed 는 아무것도 알리지 않는다', () => {
+test('[실행] 실패가 없으면 남길 것도 없다', () => {
   const ctx = loadMgSaveBlock();
+  ctx._mg = { id:'m1', failed:[{no:1, why:'옛것'}] };
   ctx.mgTellFailed({ ok:2, failed:[] });
+  assert.deepEqual(plain(ctx._mg.failed), [], '지난번 실패 목록이 남아 있으면 안 된다');
   assert.equal(ctx._calls.toast.length, 0);
 });
 
@@ -599,7 +617,12 @@ test('[실행] mgPreview 는 고친 내용이 있으면 버릴지 물어보고, 
    불러올 뿐 실시간으로 안 바뀌니 다른 사람이 지워도 이 탭엔 그 사실이 반영되지 않는다 —
    그래서 실제로는 다다르기 어렵다. 그래도 "쥔 뒤에는 멈출 수 없다"는 사실 자체는 참이므로
    실행으로 확인해 둔다. */
-test('[실행][조사] mgSave 는 await 도중 _mg 가 놓여도(mgClose) 이미 쥔 id·file 로 그대로 저장한다', async () => {
+/* ⚠ 이것은 「이래야 옳다」가 아니라 **알면서 남겨 둔 구멍**을 붙잡아 두는 검사다.
+   putMaterial 은 materials/<id> 와 materialFiles/<id> 에 .set() 을 한다 — 있는지 보지 않는다.
+   그래서 저장이 도는 사이 다른 사람이 그 자료를 지웠으면, 이 저장이 **지워진 기록을
+   되살린다.** 고치려면 putMaterial 자체를 손봐야 하고 그건 옛 편집기(heSave)와도 얽혀
+   있어 따로 정할 일이다. 여기서는 적어도 「죽지 않고, 놓인 전역을 되살리지 않는다」만 지킨다. */
+test('[실행][조사·알려진구멍] 저장 도중 자료가 지워져도 mgSave 는 죽지 않고 전역을 되살리지 않는다', async () => {
   const ctx = loadMgSaveBlock();
   ctx._matMeta = { m1: { id:'m1', name:'문서.hwp' } };
   ctx._mg = { id:'m1', name:'문서.hwp', bytes:'OLD', doc:'DOC', edited:{0:'바뀐 글'},
@@ -608,13 +631,13 @@ test('[실행][조사] mgSave 는 await 도중 _mg 가 놓여도(mgClose) 이미
     /* putMaterial 이 도는(await) 사이에 다른 어딘가(예: deleteMaterial)가 같은 자료를 지웠다고 흉내낸다 */
     delete ctx._matMeta[id];
     ctx._mg = null;
-    return Promise.resolve();
+    ctx.toast('✅ 올렸습니다');
+    return Promise.resolve(true);
   };
   await ctx.mgSave();     /* 이 await 이 던지면(TypeError 등) 위 finally 가 null 을 건드린 것이다 */
   assert.equal(ctx._calls.putMaterial.length, 1, 'await 전에 이미 쥔 값으로 저장 자체는 진행된다');
   assert.equal(ctx._calls.putMaterial[0].id, 'm1');
   assert.equal(ctx._mg, null, 'mgSave 가 끝난다고 놓인 자료를 되살리면 안 된다 — 전역은 null 그대로여야 한다');
-  assert.match(ctx._calls.toast.at(-1).msg, /저장했습니다/, '저장 자체(자료함 쓰기)는 끝까지 진행되어 성공으로 끝난다');
 });
 
 /* mgSave 가 finally 에서 "_mg.busy=false" 처럼 전역을 그대로 건드리면, await 도중 팝업이
@@ -667,4 +690,81 @@ test('[실행] 자료 목록에서 ✏ 을 누르면 그 자료의 id 로 openMa
   const fn = source.slice(i, j > i ? j : i + 4000);
   assert.match(fn, /openMatEditor\('\$\{m\.id\}'\)/,
     '단추가 그 줄의 자료 id 를 안 넘기면, 눌러도 늘 첫 자료나 undefined 가 열립니다');
+});
+
+/* ══════ 저장이 실패했는데 성공했다고 말하지 않는가 ══════
+   계약서·위임장·급여문서를 다루는 화면이다. 「저장했습니다」가 거짓이면
+   대표는 고친 것이 남은 줄 알고 창을 닫고, 고친 내용은 그대로 사라진다. */
+
+test('[실행] 저장이 실패하면 ✅ 라고 말하지 않는다', async () => {
+  const ctx = loadMgSaveBlock();
+  ctx._putMaterialImpl = ctx._putMaterialFails;
+  ctx._mg = { id:'m1', name:'근로계약서.hwp', bytes:'OLD', doc:'DOC',
+    edited:{0:'고친 줄'}, grid:{ units:[{no:1,text:'옛 줄'}], blocks:[], warn:{} }, busy:false };
+  await ctx.mgSave();
+  assert.doesNotMatch(ctx._mg.saveMsg, /✅/, '못 올렸는데 ✅ 를 붙이면 안 된다');
+  assert.match(ctx._mg.saveMsg, /저장하지 못했습니다/);
+  assert.doesNotMatch(ctx._visibleToast, /✅ 자료함에 저장/, '마지막에 보이는 알림이 거짓이면 안 된다');
+});
+
+test('[실행] 저장이 실패하면 고친 것을 꺼낼 길을 열어 둔다', async () => {
+  /* mgApply 가 이미 edited 를 비웠으므로 「고친 곳 0」이 된다. 그대로 두면
+     내려받기 단추까지 꺼져 고친 내용이 화면 안에 갇힌다. */
+  const ctx = loadMgSaveBlock();
+  ctx._putMaterialImpl = ctx._putMaterialFails;
+  ctx._mg = { id:'m1', name:'근로계약서.hwp', bytes:'OLD', doc:'DOC',
+    edited:{0:'고친 줄'}, grid:{ units:[{no:1,text:'옛 줄'}], blocks:[], warn:{} }, busy:false };
+  await ctx.mgSave();
+  assert.equal(ctx._mg.rescue, true, '내려받기를 열어 둬야 고친 것을 꺼낼 수 있다');
+});
+
+test('[실행] 다 저장되면 ✅ 라고 말하고 꺼낼 길은 따로 열지 않는다', async () => {
+  const ctx = loadMgSaveBlock();
+  ctx._mg = { id:'m1', name:'근로계약서.hwp', bytes:'OLD', doc:'DOC',
+    edited:{0:'고친 줄'}, grid:{ units:[{no:1,text:'옛 줄'}], blocks:[], warn:{} }, busy:false };
+  await ctx.mgSave();
+  assert.match(ctx._mg.saveMsg, /✅ 자료함에 저장했습니다/);
+  assert.ok(!ctx._mg.rescue);
+});
+
+test('[실행] 일부만 들어갔으면 「저장했습니다」로 끝내지 않는다', async () => {
+  const ctx = loadMgSaveBlock();
+  ctx._applyRowsReturns = { ok:1, failed:[{no:5, why:'글상자'}] };
+  ctx._mg = { id:'m1', name:'위임장.hwp', bytes:'OLD', doc:'DOC',
+    edited:{0:'고친 줄'}, grid:{ units:[{no:1,text:'옛 줄'}], blocks:[], warn:{} }, busy:false };
+  await ctx.mgSave();
+  assert.match(ctx._mg.saveMsg, /일부만/, '반만 저장된 것이 다 된 것처럼 보이면 안 된다');
+  assert.equal(ctx._mg.failed.length, 1, '어느 줄이 빠졌는지 화면에 남아야 한다');
+});
+
+/* ══════ 도중에 터졌을 때 다시 눌러도 문서가 망가지지 않는가 ══════ */
+
+test('[실행] exportBytes 가 터지면 고친 표시는 이미 비워져 두 번 넣히지 않는다', () => {
+  /* 옛 차례(exportBytes → readGrid → edited={})에서는 여기서 edited 가 남아,
+     다시 저장을 누르면 옛 길이로 같은 자리를 또 지우고 또 넣었다.
+     「가나다」→「가나다라마」가 「라마가나다라마」가 되는 것을 재현했었다. */
+  const ctx = loadMgSaveBlock();
+  ctx.PuHwpEdit.exportBytes = () => { throw new Error('WASM 내보내기 실패'); };
+  ctx._mg = { id:'m1', name:'문서.hwp', bytes:'OLD', doc:'DOC',
+    edited:{0:'가나다라마'}, grid:{ units:[{no:1,text:'가나다'}], blocks:[], warn:{} } };
+  assert.throws(() => ctx.mgApply(), /WASM/);
+  assert.deepEqual(plain(ctx._mg.edited), {}, '터져도 고친 표시는 비어 있어야 두 번 안 넣힌다');
+  assert.equal(ctx._mg.broken, true, '문서와 바이트가 어긋났음을 표시해야 한다');
+});
+
+test('[실행] 어긋난 세션으로는 더 저장하지 못한다', async () => {
+  const ctx = loadMgSaveBlock();
+  ctx._mg = { id:'m1', name:'문서.hwp', bytes:'OLD', doc:'DOC', broken:true,
+    edited:{0:'고친 줄'}, grid:{ units:[{no:1,text:'옛 줄'}], blocks:[], warn:{} }, busy:false };
+  await ctx.mgSave();
+  assert.equal(ctx._calls.putMaterial.length, 0, '어긋난 바이트를 올리면 고친 것이 조용히 사라진다');
+  assert.match(ctx._visibleToast, /다시 열어/);
+});
+
+test('[실행] 저장하는 중에는 원본 모습으로 넘어가지 않는다', () => {
+  const ctx = loadMgSaveBlock();
+  ctx._mg = { id:'m1', name:'문서.hwp', bytes:'OLD', doc:'DOC', busy:true,
+    edited:{}, grid:{ units:[{no:1,text:'옛 줄'}], blocks:[], warn:{} } };
+  ctx.mgPreview();
+  assert.equal(ctx._calls.renderPreview.length, 0, '저장이 끝나며 그리는 화면과 서로 덮는다');
 });
