@@ -115,7 +115,11 @@
      이미 현장에서 검증된 프롬프트를 새로 쓰지 않는다. */
   var PROMPT_ALL =
     '이 이미지가 어떤 서류인지 가리고 정보를 추출해 JSON으로만 답하세요.' +
-    '\nkind 는 다음 중 하나입니다: card(명함), bizreg(사업자등록증), sme(중소기업확인서 또는 중견기업확인서), payslip(급여 관련 서류 — 급여명세서·임금대장·급여이체내역·４대보험 산정보수 등 사람의 임금 금액이 적힌 것), meeting(회의·현장 사진 — 사람들이 모여 있거나 사업장·작업 현장 모습), contract(계약서 — 자문계약서·위임계약서·용역계약서·수임약정서 등 우리 사무소와 업체가 맺은 약정 문서), other(위 여섯이 아님).' +
+    '\nkind 는 다음 중 하나입니다: card(명함), bizreg(사업자등록증), sme(중소기업확인서 또는 중견기업확인서), payslip(급여 관련 서류 — 급여명세서·임금대장·급여이체내역·４대보험 산정보수 등 사람의 임금 금액이 적힌 것), meeting(회의·현장 사진 — 사람들이 모여 있거나 사업장·작업 현장 모습), contract(계약서 — 자문계약서·위임계약서·용역계약서·수임약정서 등 우리 사무소와 업체가 맺은 약정 문서), chat(대화 캡처 — 카카오톡·문자·메일 화면을 찍거나 캡처한 것. 말풍선이나 메일 본문이 보이면 대화입니다), other(위 일곱이 아님).' +
+    /* 대화가 급여 얘기를 담고 있어도 대화다(대표 지시 2026-08-12) — 캡처 하나가
+       「급여대장」으로 분류돼 급여서류 경고까지 뜬 실사례에서 나온 규칙이다.
+       서류는 서류 자체를 찍은 것이고, 대화는 서류에 **대해 말한** 것이다. */
+    '\n⚠ 대화 캡처가 급여·계약 이야기를 담고 있어도 kind=chat 입니다. 서류 자체를 찍은 것만 payslip·contract 입니다.' +
     '\nkind=card 이면 키: name(이름), company(회사명), dept(부서), title(직책), mobile(휴대폰), tel(직통전화), fax(개인팩스), email(이메일), companyTel(회사 대표번호), companyFax(회사 팩스), companyAddr(회사 주소), website(홈페이지), address(개인 주소), memo(기타 정보).' +
     '\nkind=bizreg 이면 키: company(상호/법인명), ceo(대표자), bizno(사업자등록번호), corpno(법인등록번호), openDate(개업연월일), bizType(업태), bizItem(종목), companyTel(대표번호), companyFax(팩스), address(사업장 소재지), memo(기타).' +
     '\nkind=sme 이면 키: company(상호/법인명), bizno(사업자등록번호), ceo(대표자), smeType(기업규모 — 소기업/중기업/중견기업 등), issueNo(발급번호), issueDate(발급일), expiry(유효기간 만료일), industry(주업종).' +
@@ -128,6 +132,14 @@
        급여는 사람마다 다른 임금이라 안 담지만, 계약 보수는 우리 사무소의
        수임 조건이라 나중에 찾아볼 일이 실제로 있다. */
     '\nkind=contract 이면 키: company(상대 업체 상호), ceo(상대 업체 대표자), docName(계약서 이름 그대로 — 예 자문계약서·위임계약서), signDate(계약 체결일 — 2026-08-10 형식), startDate(계약 시작일), endDate(계약 종료일 — 없으면 빈 문자열), term(계약 기간을 적은 그대로 — 예 1년, 자동연장), fee(월 자문료·용역비 — 적힌 그대로, 예 300,000원/월), retainer(착수금), success(성공보수 — 예 승소시 청구액의 10%), deposit(계약금), memo(위에 안 담긴 특약이나 눈여겨볼 조건 한 줄). **없는 항목은 빈 문자열로 두고 지어내지 마세요.**' +
+    /* 대화 캡처(대표 지시 2026-08-12): "대화 내용 요약하고 정리할 수 있게.
+       상대방이 입력한 부분 우선 정리해서 기록하고 업무 수행할 수 있게."
+       금액·주민번호는 담지 않는다 — 급여서류에서 금액을 안 읽는 것과 같은 이유다. */
+    '\nkind=chat 이면 키: company(상대방 회사·사업장 이름 — 대화방 제목이나 말풍선 옆 이름에서), name(상대방 이름·직함 — 예 임대순 대표), channel(카톡·문자·메일 중 무엇인지), chatDate(대화 날짜가 보이면 2026-08-12 형식), summary(대화 전체를 두 문장 이내로 요약), todos(할 일 목록 — 아래 규칙).' +
+    '\ntodos 규칙: [{"t":"할 일 한 줄","done":true/false,"ours":true/false}] 배열입니다.' +
+    ' **상대방이 보낸 요청·전달사항을 먼저** 담고(ours=false), 우리 쪽이 하기로 약속한 일을 다음에 담으세요(ours=true).' +
+    ' 대화 안에서 이미 처리된 것으로 보이면(예: "송부 드렸습니다") done=true.' +
+    ' 인사말·잡담은 담지 말고, **급여 금액과 주민등록번호는 t 에 적지 마세요.**' +
     '\nkind=other 이면 kind 만 담으세요.' +
     /* 한글 우선(2026-08-07 대표 지시) — 명함은 같은 내용을 한글·영문으로 나란히
        적어 두는 일이 많다. 그때 영문을 담으면 **명함첩·업체관리에서 한글로 찾는
@@ -161,7 +173,7 @@
 
   var NTS_URL = 'https://api.odcloud.kr/api/nts-businessman/v1/status?serviceKey=';
 
-  var KINDS = { card: 1, bizreg: 1, sme: 1, payslip: 1, meeting: 1, contract: 1, other: 1 };
+  var KINDS = { card: 1, bizreg: 1, sme: 1, payslip: 1, meeting: 1, contract: 1, chat: 1, other: 1 };
 
   /* ── 판독기 판 번호 ──
      읽어 둔 결과에 이 번호를 함께 적는다. 가릴 수 있는 종류를 늘리면 번호를
@@ -171,7 +183,7 @@
      'other' 로 굳은 사진들이었다. 사람이 한 장씩 「다시 판독」을 눌러야만
      풀리는 상태는 자동 분류라고 할 수 없다.
      ⚠ 종류를 늘리거나 프롬프트를 고치면 이 번호를 반드시 올릴 것. */
-  var READ_VERSION = 3;   // 1 = card·bizreg·sme·meeting·other / 2 = payslip 추가 / 3 = 한글 우선
+  var READ_VERSION = 4;   // 1 = card·bizreg·sme·meeting·other / 2 = payslip 추가 / 3 = 한글 우선 / 4 = chat(대화 캡처) 추가
 
   function fail(message) {
     return { kind: 'other', fields: {}, bizNoOk: null, ntsChecked: false, ntsState: null, error: message };
@@ -420,6 +432,9 @@
        계약서에서 만든 업체는 이름만 있는 빈 껍데기가 되어 같은 회사가 두 벌 쌓인다.
        done: true — 넣을 곳이 없는 것은 할 일이 아니다(급여서류와 같은 이유). */
     if (r.kind === 'contract') return { auto: false, why: '계약서입니다 — 사진첩에만 보관합니다', done: true };
+    /* 대화 캡처도 명함첩·업체관리로 보내지 않는다 — 요약·할 일이 사진에 붙어
+       그 자리에서 일하는 물건이다. done: true — 넣을 곳이 없는 것은 할 일이 아니다. */
+    if (r.kind === 'chat') return { auto: false, why: '대화 캡처입니다 — 요약과 할 일을 뽑아 두었습니다', done: true };
 
     var f = r.fields || {};
     /* 회사도 이름도 못 읽었으면 넣을 것이 없다 — 빈 껍데기를 만들면 나중에 지우는 일이 생긴다. */
