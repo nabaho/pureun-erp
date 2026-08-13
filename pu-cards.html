@@ -9450,6 +9450,32 @@ function loadCoInfo(cb){
 }
 const coKeyOf = it => { const d=digits(it.bizno||''); return d.length>=10 ? d : ('n'+_norm(it.company||'')); };
 
+/* 회사 열쇠가 이름 열쇠(n...)에서 사업자번호 열쇠로 바뀌면, 옛 이름 열쇠에 있던
+   folder·tags 가 안 보이게 된다 — 사업자등록증이 나중에 들어온 회사가 이 경우다
+   (설계서 2026-08-13, "회사 열쇠가 바뀌어 폴더가 끊어짐" 대비).
+   ⚠ 조용한 배경 쓰기로 옮기지 않는다. 옮기다 실패하면 대표가 모르는 새 사라진다.
+     읽을 때 두 열쇠의 값을 합쳐 보여준다 — 사람이 다시 손대면 그때부터 새 열쇠에 남는다. */
+function coEffectiveExtra(key, name, coInfoMap){
+  const cur = coInfoMap[key];
+  const nameKey = 'n'+_norm(name||'');
+  if(nameKey===key) return cur || null;   /* 합칠 상대가 없다 */
+  const old = coInfoMap[nameKey];
+  if(!old) return cur || null;
+  if(!cur) return old;
+  /* 폴더는 하나만 있을 수 있다 — 새 열쇠에서 사람이 다시 정한 것을 우선한다.
+     탭은 여럿 겹칠 수 있다 — 옛 것도 새 것도 버리지 않는다. */
+  const tags = {}; for(let k in old.tags||{}) tags[k] = old.tags[k]; for(let k in cur.tags||{}) tags[k] = cur.tags[k];
+  const docs = {}; for(let k in old.docs||{}) docs[k] = old.docs[k]; for(let k in cur.docs||{}) docs[k] = cur.docs[k];
+  const folder = cur.folder || old.folder || '';
+  const result = {};
+  for(let k in old) if(old.hasOwnProperty(k)) result[k] = old[k];
+  for(let k in cur) if(cur.hasOwnProperty(k)) result[k] = cur[k];
+  result.tags = tags;
+  result.docs = docs;
+  result.folder = folder;
+  return result;
+}
+
 /* 흩어진 것을 회사 하나로 모은다. 사업자등록증이 뼈대가 되고, 명함·ERP·서식이 살을 붙인다. */
 function coList(){
   const by = {};
@@ -9480,8 +9506,9 @@ function coList(){
   Object.values(by).forEach(o=>{
     const m = ErpMatch.match({ bizno:o.bizno, company:o.name });
     if(m){ o.erp = m; if(!o.ceo && m.ceoRaw) o.ceo = m.ceoRaw; }
-    /* ④ 서식에서 읽은 칸 */
-    const ex = _coInfo[o.key]; if(ex) o.extra = ex;
+    /* ④ 서식에서 읽은 칸 + 폴더·탭. 열쇠가 바뀌었어도 옛 기록을 합쳐 보여준다. */
+    const ex = coEffectiveExtra(o.key, o.name, _coInfo);
+    if(ex){ o.extra = ex; o.folder = ex.folder || ''; }
   });
   return Object.values(by).filter(o=>o.name)
     .sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));
