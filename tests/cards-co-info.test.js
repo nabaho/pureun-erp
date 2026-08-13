@@ -203,10 +203,12 @@ test('유형(자문·급여)은 제 칸을 갖는다', () => {
   /* 상호 옆에 붙이면 상호가 길 때 유형이 밀려 안 보인다 */
   const at = source.indexOf('function coListHtml');
   const fn = source.slice(at, source.indexOf('function coToggle', at));
-  const th = fn.match(/<th[^>]*>[^<]*<\/th>/g) || [];
+  /* ⚠ 유형 칸에 열 깔때기(span)가 들어가면서 <th>...</th> 사이에 다른 태그가
+     생겼다 — [^<]* 로는 더는 못 잡는다. 태그를 다 지운 뒤 남는 글자로 본다. */
+  const th = fn.match(/<th[^>]*>[\s\S]*?<\/th>/g) || [];
   const labels = th.map(x => x.replace(/<[^>]+>/g, '').replace(/\$\{[^}]*\}/g, '').trim());
   const iName = labels.indexOf('상호');
-  const iType = labels.indexOf('유형');
+  const iType = labels.findIndex(l => l.indexOf('유형') === 0);
   assert.ok(iName >= 0 && iType === iName + 1, '상호 바로 다음 칸이 유형이 아니다');
 });
 

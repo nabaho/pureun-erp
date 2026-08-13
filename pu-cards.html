@@ -734,6 +734,15 @@ table.sbox td.none{text-align:center;color:#8b98b3;padding:34px 10px}
 #folderMenu .fmi{padding:10px 14px;font-size:13.5px;color:#33415e;cursor:pointer;border-radius:7px;white-space:nowrap}
 #folderMenu .fmi:hover{background:#f1f4fa}
 #folderMenu .fmi.danger{color:#c0392b}
+/* 열 깔때기 팝업에서 지금 고른 값을 짚어 준다 — 어느 값으로 걸러 놨는지 모르고
+   또 눌러 헷갈리면 안 된다 */
+#folderMenu .fmi.on{background:#eef3fc;color:#1d4fc4;font-weight:700}
+#folderMenu .fmn{float:right;margin-left:16px;color:#9aa6bf;font-size:12px;font-weight:400}
+#folderMenu .fmi.on .fmn{color:#1d4fc4}
+/* 표 머리의 열 깔때기 — 정렬 화살표(▾▴)와 헷갈리지 않게 다른 모양(▽)을 쓴다 */
+.cofunnel{margin-left:5px;font-size:10px;color:#c3cddf;cursor:pointer;padding:2px 3px;border-radius:4px}
+.cofunnel:hover{background:#e6ecf7;color:#5b6784}
+.cofunnel.on{color:#1d4fc4;font-weight:700}
 .movefolder{display:flex;align-items:center;gap:10px;padding:13px 16px;font-size:14.5px;color:#1e2a47;
   border:1px solid #e4e8f0;border-radius:10px;cursor:pointer;background:#fff;transition:all .12s}
 .movefolder:hover{background:#eef3fb;border-color:#3a4a73}
@@ -1471,7 +1480,7 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', e
   isAdmin:false, privOpen:false, priv:{items:{},groups:{},trash:{}},
   /* 자료함 — 찾는 말·메일틀 갈래는 화면에만 쓰고 저장하지 않는다.
      sendLog 는 명함을 열 때만 그 명함 것을 읽어 담는다. */
-  matQ:'', matMailCat:'', matPrevId:'', sendLog:{}, coQ:'', coPick:'', coTag:'', coErpOnly:false, coSel:{}, coSort:{key:'name',dir:'asc'},
+  matQ:'', matMailCat:'', matPrevId:'', sendLog:{}, coQ:'', coPick:'', coTag:'', coErpOnly:false, coSel:{}, coSort:{key:'name',dir:'asc'}, coColFilter:{},
   /* 메일 화면 — mailSent 가 true 면 보낸 메일함, 아니면 쓰기 */
   mailSent:false, mailDrawer:true, sentBox:{}, schedBox:{}, sentQ:'', sentMine:false, sentCat:'', sentBy:'',
   showBcc:false, draftAt:'', matPick:'', drawerQ:'', drawerOpen:{},
@@ -9515,13 +9524,28 @@ function toggleCoErpOnly(){
 
 /* 지금 화면에 보이는 목록 — 「전체 고르기」와 화면 그리기가 **같은 목록**을 봐야 한다.
    따로 계산하면 거르개를 켠 채 전체 고르기를 눌렀을 때 안 보이는 회사까지 골라진다. */
-function coVisible(){
+/* 거르는 차례는 여기 한 곳에만 둔다 — 예전에 renderCoPage 가 따로 걸러서
+   정렬(coSorted)이 화면엔 안 먹힌 적이 있다. 열 깔때기(coColFilter)도 같은 실수를
+   반복하지 않으려고 처음부터 이 함수 안에 넣는다.
+   skipCol 을 주면 그 칸의 깔때기만 빼고 거른다 — 깔때기를 열 때 "이 칸을 지금 값으로
+   거르지 않았다면 무엇이 보일까"를 보여줘야 하기 때문이다(안 그러면 목록이 늘 하나만
+   남아 다른 값으로 못 바꾼다). */
+function coFilteredList(skipCol){
   const q = String(state.coQ||'').trim().toLowerCase();
   let list = coList();
   if(state.coErpOnly) list = list.filter(o=>o.erp);
+  if(state.coFolder) list = list.filter(o=>o.folder===state.coFolder);
   if(state.coTag) list = list.filter(o=>coTagsOf(o).indexOf(state.coTag)>=0);
   if(q) list = list.filter(o=>(o.name+' '+(o.bizno||'')+' '+(o.ceo||'')).toLowerCase().indexOf(q)>=0);
-  return coSorted(list);
+  Object.keys(state.coColFilter||{}).forEach(f=>{
+    if(f===skipCol) return;
+    const get = CO_SORT[f]; if(!get) return;
+    list = list.filter(o=>get(o)===state.coColFilter[f]);
+  });
+  return list;
+}
+function coVisible(){
+  return coSorted(coFilteredList(null));
 }
 
 /* 열 머리를 눌러 정렬한다 — 사업자 표와 같은 손놀림.
@@ -9557,6 +9581,37 @@ function coSortBy(key){
   state.coPick=''; renderCoPage();
 }
 const coArrow = k => (state.coSort && state.coSort.key===k) ? (state.coSort.dir==='desc'?' ▾':' ▴') : '';
+
+/* 열 깔때기 — 유형·담당처럼 값 가짓수가 적은 칸만 둔다. 상호·사업자번호는 회사마다
+   달라 골라서 거르는 게 뜻이 없다(대표 지시 2026-08-14).
+   ⚠ #folderMenu 를 재사용한다 — 명함 폴더 메뉴와 같은 팝업이고, 한 번에 하나만
+     열리므로 새 DOM 을 안 만들어도 된다. */
+function openCoColFilter(ev, field){
+  const get = CO_SORT[field]; if(!get) return;
+  /* 이 칸의 깔때기만 빼고 거른 목록으로 값을 센다 — 안 그러면 이미 고른 값만
+     남아 있어 다른 값으로 못 바꾼다. */
+  const rows = coFilteredList(field);
+  const counts = {};
+  rows.forEach(o=>{ const v=get(o); if(v) counts[v]=(counts[v]||0)+1; });
+  const cur = (state.coColFilter||{})[field] || '';
+  const m = $('folderMenu');
+  let html = `<div class="fmi ${!cur?'on':''}" onclick="closeFolderMenu();coApplyColFilter('${field}','')">전체 <span class="fmn">${rows.length}</span></div>`;
+  Object.keys(counts).sort((a,b)=>a.localeCompare(b,'ko')).forEach(v=>{
+    const safe = v.replace(/'/g,"\\'");
+    html += `<div class="fmi ${cur===v?'on':''}" onclick="closeFolderMenu();coApplyColFilter('${field}','${safe}')">${esc(v)} <span class="fmn">${counts[v]}</span></div>`;
+  });
+  m.innerHTML = html;
+  m.style.display='block';
+  const x=Math.min(ev.clientX, window.innerWidth-170), y=Math.min(ev.clientY, window.innerHeight-260);
+  m.style.left=x+'px'; m.style.top=y+'px';
+  setTimeout(()=>document.addEventListener('click', closeFolderMenu, {once:true}), 0);
+}
+function coApplyColFilter(field, value){
+  state.coColFilter = state.coColFilter || {};
+  if(value) state.coColFilter[field]=value; else delete state.coColFilter[field];
+  state.coPick=''; renderCoPage();
+}
+
 function renderCoPage(){
   const el=$('pcCo'); if(!el) return;
   const all = coList();
@@ -9601,10 +9656,10 @@ function coListHtml(list){
       <th><input type="checkbox" ${allOn?'checked':''} onchange="coSelAll(this.checked)" title="이 목록 전체 고르기"></th>
       <th class="num">#</th>
       <th class="cosort" onclick="coSortBy('name')" title="상호로 정렬">상호${coArrow('name')}</th>
-      <th class="cosort" onclick="coSortBy('type')" title="자문·급여 유형으로 정렬">유형${coArrow('type')}</th>
+      <th class="cosort" onclick="coSortBy('type')" title="자문·급여 유형으로 정렬">유형${coArrow('type')}<span class="cofunnel ${state.coColFilter.type?'on':''}" onclick="event.stopPropagation();openCoColFilter(event,'type')" title="유형으로 거르기">▽</span></th>
       <th class="cosort" onclick="coSortBy('bizno')" title="사업자번호로 정렬">사업자번호${coArrow('bizno')}</th>
       <th class="cosort" onclick="coSortBy('docs')" title="가진 등록증 수로 정렬 — 빠진 곳을 찾을 때">가진 것${coArrow('docs')}</th>
-      <th class="cosort" onclick="coSortBy('mgr')" title="담당 노무사로 정렬">담당${coArrow('mgr')}</th>
+      <th class="cosort" onclick="coSortBy('mgr')" title="담당 노무사로 정렬">담당${coArrow('mgr')}<span class="cofunnel ${state.coColFilter.mgr?'on':''}" onclick="event.stopPropagation();openCoColFilter(event,'mgr')" title="담당으로 거르기">▽</span></th>
       <th></th>
     </tr></thead><tbody>${list.map((o,i)=>{
     const t = o.erp && o.erp.type;
