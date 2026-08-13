@@ -12,9 +12,9 @@
    2. 정보·미리보기·값을 가른다. 목록만 읽을 때 본문을 내려받으면 안 된다.
    3. 로그인하지 않았으면 경로를 만들지 않고 알린다 — 빈 uid 로 만든
       paydata/u//items 자리에 실데이터가 들어가면 되돌리기 어렵다.
-   4. 아래 칸 이름(items·pending·values·thumbs·trash·deputy)은 **콘솔 규칙과
-      한 글자도 다르면 안 된다.** 규칙이 u/$owner 아래 칸마다 쓰기를 열기 때문에,
-      이름이 어긋나면 그 칸은 아무도 못 쓴다(조용히 저장이 안 된다). */
+   4. 아래 칸 이름(items·pending·values·thumbs·trash·deputy·folders)은 **콘솔
+      규칙과 한 글자도 다르면 안 된다.** 규칙이 u/$owner 아래 칸마다 쓰기를 열기
+      때문에, 이름이 어긋나면 그 칸은 아무도 못 쓴다(조용히 저장이 안 된다). */
 (function (global) {
   'use strict';
 
@@ -104,6 +104,11 @@
   function pendingPath(id, owner) { return base(owner) + '/pending/' + id; }
   function deputyPath(deputyUid, owner) { return base(owner) + '/deputy/' + deputyUid; }
   function trashPath(id, owner) { return base(owner) + '/trash/' + id; }
+
+  /* 내 폴더 — 분류 탭과 다른 축이다(사진첩과 같은 원리). 탭은 「무엇인가」
+     (근태·급여대장…), 폴더는 「어느 일인가」(예: 「2026 정기감사」). 사업장마다
+     따로 관리한다 — 한 사업장의 일이 다른 사업장 서랍에 섞여 보이면 안 된다. */
+  function foldersPath(companyId, owner) { return base(owner) + '/folders/' + companyId; }
 
   /* 한 칸(귀속월 또는 keep) 안의 목록 자리 — 본문·미리보기는 따라오지 않는다. */
   function slotPath(slot, owner) { return base(owner) + '/items/' + slot; }
@@ -313,6 +318,74 @@
     return deps.storage.ref(path).getDownloadURL();
   }
 
+  /* ══════ 내 폴더 (사진첩과 같은 방식, 2026-08-13 추가) ══════
+     ⚠ 콘솔 규칙에 이 칸이 없으면(2026-08-13 이전에 게시한 규칙) 아래 쓰기 함수가
+     전부 「권한 거부」로 실패한다 — docs/급여데이터함-규칙-붙여넣기.md 1장 참고. */
+  function listFolders(companyId, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(foldersPath(companyId, owner)).once('value').then(function (s) { return s.val() || {}; });
+  }
+
+  /* parentId 를 주면 그 폴더의 하위폴더가 된다 — 한 단계까지만(사진첩과 같은 원칙,
+     좁은 칸에서 계속 파고들면 「어디 뒀더라」가 된다). 하위폴더 밑에 또 만들려
+     하면 그 위(상위)로 끌어올린다. 같은 어버이 안에서 이름이 겹치면 새로 안 만든다. */
+  function addFolder(companyId, name, parentId, owner) {
+    var clean = String(name || '').trim();
+    if (!companyId) return Promise.reject(new Error('사업장을 알 수 없습니다'));
+    if (!clean) return Promise.reject(new Error('폴더 이름을 입력해 주세요'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return listFolders(companyId, owner).then(function (existing) {
+      var parent = parentId || null;
+      if (parent && existing[parent] && existing[parent].parent) parent = existing[parent].parent;
+      var norm = clean.toLowerCase();
+      var dupId = Object.keys(existing).filter(function (id) {
+        var f = existing[id] || {};
+        return (f.parent || null) === parent && String(f.name || '').trim().toLowerCase() === norm;
+      })[0];
+      if (dupId) return { id: dupId, created: false, parent: parent };
+      var id = deps.db.ref(foldersPath(companyId, owner)).push().key;
+      var up = {};
+      up[foldersPath(companyId, owner) + '/' + id] = { name: clean, createdAt: Date.now(), parent: parent };
+      return deps.db.ref().update(up).then(function () { return { id: id, created: true, parent: parent }; });
+    });
+  }
+
+  function renameFolder(companyId, folderId, name, owner) {
+    var clean = String(name || '').trim();
+    if (!folderId) return Promise.reject(new Error('어느 폴더인지 알 수 없습니다'));
+    if (!clean) return Promise.reject(new Error('폴더 이름을 입력해 주세요'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var up = {};
+    up[foldersPath(companyId, owner) + '/' + folderId + '/name'] = clean;
+    return deps.db.ref().update(up);
+  }
+
+  /* ⚠ 폴더를 지워도 자료는 안 지운다 — 이름표만 없앤다(사진첩과 같은 원칙).
+     자료에 남은 folder 값은 가리키는 폴더가 없으므로 화면이 「전체」로만 본다.
+     하위폴더가 있으면 함께 지운다 — 어버이만 지우면 하위폴더가 고아가 되어
+     어느 목록에도 안 나온다. */
+  function deleteFolder(companyId, folderId, owner) {
+    if (!folderId) return Promise.reject(new Error('어느 폴더인지 알 수 없습니다'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return listFolders(companyId, owner).then(function (existing) {
+      var up = {};
+      up[foldersPath(companyId, owner) + '/' + folderId] = null;
+      Object.keys(existing).forEach(function (id) {
+        if ((existing[id] || {}).parent === folderId) up[foldersPath(companyId, owner) + '/' + id] = null;
+      });
+      return deps.db.ref().update(up).then(function () { return { removed: Object.keys(up).length }; });
+    });
+  }
+
+  /* 자료 하나를 폴더에 넣거나(folderId) 뺀다(folderId 없이 호출). 한 자료는
+     폴더 하나에만 — 여러 곳에 겹치면 「어디에 뒀더라」가 된다. */
+  function setFolder(slot, id, folderId, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var up = {};
+    up[itemPath(slot, id, owner) + '/folder'] = folderId || null;
+    return deps.db.ref().update(up);
+  }
+
   /* ══════ 업체관리 명단 ══════
      사업장 서랍의 기준은 푸른이알피 업체관리다(대표 결정 2026-08-13).
      데이터함이 제 명단을 만들면 이름 글자 맞추기 어긋남이 늘어난다.
@@ -427,6 +500,12 @@
     listSlot: listSlot,
     isExpired: isExpired,
     fileDownloadUrl: fileDownloadUrl,
+    foldersPath: foldersPath,
+    listFolders: listFolders,
+    addFolder: addFolder,
+    renameFolder: renameFolder,
+    deleteFolder: deleteFolder,
+    setFolder: setFolder,
     ERP_COMPANIES: ERP_COMPANIES,
     normalizeCompanies: normalizeCompanies,
     listCompanies: listCompanies,

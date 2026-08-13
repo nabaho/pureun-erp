@@ -70,6 +70,29 @@ h1{font-size:18px;margin-bottom:4px}
 
 .expbadge{font-size:11.5px;color:var(--warn);font-weight:700;white-space:nowrap}
 
+/* ── 내 폴더 (사진첩과 같은 방식) ── 분류 탭과 다른 축 — 탭은 「무엇인가」,
+   폴더는 「어느 일인가」. 점선 테두리로 "직접 만든 것"임을 가른다. */
+.foldbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:11px}
+.foldbar button{border:1px dashed #93c5fd;background:#fff;color:var(--navy);border-radius:9px;
+  padding:6px 11px;font-size:12.5px;font-weight:700;font-family:inherit;display:flex;align-items:center;gap:5px}
+.foldbar button.on{background:var(--navy);border-style:solid;color:#fff}
+.foldbar button.sub{margin-left:14px}
+.foldbar .n{font-weight:800;opacity:.75;font-size:11px}
+.foldbar .dots{border-radius:5px;padding:0 4px;opacity:.75}
+.foldbar .dots:hover{background:rgba(0,0,0,.08)}
+.foldbar button.add{color:var(--sub);border-color:var(--line)}
+.foldedit{display:inline-flex;gap:5px;align-items:center}
+.foldedit.sub{margin-left:14px}
+.foldedit input{border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.5px;
+  font-family:inherit;width:140px}
+.foldedit button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:5px 9px;
+  font-size:12px;font-family:inherit;cursor:pointer}
+.foldmenu{position:fixed;z-index:60;background:#fff;border:1px solid var(--line);border-radius:10px;
+  padding:5px;min-width:150px;box-shadow:0 8px 22px rgba(20,30,80,.18)}
+.foldmenu div{padding:8px 10px;font-size:12.5px;border-radius:7px;cursor:pointer}
+.foldmenu div:hover{background:#f1f5fb}
+.foldmenu .del{color:var(--bad)}
+
 /* ── 확대 보기 (사진첩과 같은 방식) ──
    클릭하면 전체화면으로 보이고, 사진은 다시 눌러 원본 크기로 확대한다(서류 글씨를
    읽어야 한다). 엑셀·PDF 는 사진이 아니라 새 창에서 여는 안내만 보여준다. */
@@ -213,11 +236,15 @@ const App = {
   companies: [], pending: {}, arrivals: {}, trash: null, me: null, pick: {},
   itemsKeep: null, itemsMonth: null, itemsMonthSlot: '',
   viewerId: '', viewerUrl: '', viewerZoom: false, viewerErr: '',
+  folders: {}, foldersCompanyId: '', folderPick: 'all', folderEdit: { mode: '', fid: '', value: '' },
 
   go(screen, o) {
+    // 사업장을 바꿔 들어가면 남의 폴더가 골라진 채로 남지 않게 되돌린다 —
+    // 폴더 번호는 사업장마다 따로다(다른 사업장 폴더 번호와 우연히 같을 수 있다).
+    if (o && o.companyId && o.companyId !== App.companyId) o = Object.assign({ folderPick: 'all' }, o);
     Object.assign(App, o || {});
     App.screen = screen;
-    if (screen === 'drawer') ensureDrawerData();
+    if (screen === 'drawer') { ensureDrawerData(); ensureFolders(); }
     App.render();
   },
 
@@ -506,6 +533,21 @@ function searchRows(rows, query) {
   return (rows || []).filter(r => String(r.filename || '').toLowerCase().indexOf(q) >= 0);
 }
 
+/* ══════ 내 폴더 (사진첩과 같은 방식) ══════
+   탭이 「무엇인가」라면 폴더는 「어느 일인가」다. 지금 고른 탭의 자료(rows)
+   안에서만 센다 — 탭을 넘나들면 세는 대상도 달라진다(사진첩과 같은 방식). */
+function folderCounts(rows) {
+  const counts = { all: (rows || []).length };
+  (rows || []).forEach(r => { if (r && r.folder) counts[r.folder] = (counts[r.folder] || 0) + 1; });
+  return counts;
+}
+
+/* 'all' 이면 다 보여준다. 폴더를 고르면 그 폴더로 이름표가 붙은 것만. */
+function folderRows(rows, folderPick) {
+  if (!folderPick || folderPick === 'all') return rows || [];
+  return (rows || []).filter(r => r && r.folder === folderPick);
+}
+
 /* keep 칸은 한 번만, 이 달 칸은 달이 바뀔 때만 다시 읽는다 — 매번 두 칸을
    전부 새로 읽으면 탭만 눌러도 실시간DB를 불필요하게 두드린다. */
 function ensureDrawerData() {
@@ -523,18 +565,143 @@ function ensureDrawerData() {
   if (jobs.length) Promise.all(jobs).then(() => App.render());
 }
 
+/* 사업장이 바뀌면 폴더 목록도 다시 읽는다 — 폴더는 사업장마다 따로 관리된다. */
+function ensureFolders(force) {
+  if (!force && App.foldersCompanyId === App.companyId) return Promise.resolve();
+  return S.listFolders(App.companyId).then(v => {
+    App.folders = v; App.foldersCompanyId = App.companyId; App.render();
+  }).catch(e => {
+    console.warn('[폴더]', e && e.code);
+    App.folders = {}; App.foldersCompanyId = App.companyId;
+  });
+}
+
+/* 폴더 칸 — 전체 + 내가 만든 폴더들(한 단계 하위폴더까지). 점선 테두리로
+   "직접 만든 것"임을 가른다(사진첩과 같은 방식). */
+function folderBar(folders, folderPick, counts) {
+  const f = folders || {};
+  const byAge = (a, b) => (f[a].createdAt || 0) - (f[b].createdAt || 0);
+  const tops = Object.keys(f).filter(id => !f[id].parent).sort(byAge);
+  const kidsOf = pid => Object.keys(f).filter(id => f[id].parent === pid).sort(byAge);
+  const chip = (fid, label, n, sub) =>
+    '<button class="' + (folderPick === fid ? 'on' : '') + (sub ? ' sub' : '') + '" onclick="pickFolder(\''
+    + esc(fid) + '\')">' + esc(label) + '<span class="n">' + (n || 0) + '</span>'
+    + (fid !== 'all' ? '<span class="dots" title="이름 바꾸기·하위폴더·지우기"'
+      + ' onclick="event.stopPropagation();folderMenu(event,\'' + esc(fid) + '\')">⋯</span>' : '') + '</button>';
+
+  let h = '<div class="foldbar">';
+  h += chip('all', '📁 전체', counts.all, false);
+  if (App.folderEdit.mode === 'new') h += folderEditorHtml(false);
+  tops.forEach(fid => {
+    if (App.folderEdit.mode === 'rename' && App.folderEdit.fid === fid) h += folderEditorHtml(false);
+    else h += chip(fid, '📁 ' + (f[fid].name || ''), counts[fid], false);
+    kidsOf(fid).forEach(kid => {
+      if (App.folderEdit.mode === 'rename' && App.folderEdit.fid === kid) h += folderEditorHtml(true);
+      else h += chip(kid, '↳ ' + (f[kid].name || ''), counts[kid], true);
+    });
+    if (App.folderEdit.mode === 'sub' && App.folderEdit.fid === fid) h += folderEditorHtml(true);
+  });
+  if (App.folderEdit.mode !== 'new') h += '<button class="add" onclick="openFolderEditor(\'new\')">＋ 폴더</button>';
+  h += '</div>';
+  return h;
+}
+
+/* 이름 적는 칸을 그 자리에 연다(사진첩과 같은 방식, 브라우저 prompt 대신) —
+   누른 자리와 적는 자리가 멀면 헷갈린다. */
+function folderEditorHtml(sub) {
+  return '<span class="foldedit' + (sub ? ' sub' : '') + '">'
+    + '<input id="foldInput" type="text" maxlength="30" placeholder="폴더 이름"'
+    + ' value="' + esc(App.folderEdit.value || '') + '" onkeydown="foldKeyDown(event)">'
+    + '<button onclick="submitFolderEditor()">✓</button>'
+    + '<button onclick="cancelFolderEditor()">✕</button></span>';
+}
+
+function openFolderEditor(mode, fid, value) {
+  App.folderEdit = { mode: mode, fid: fid || '', value: value || '' };
+  App.render();
+  setTimeout(() => { const el = $('foldInput'); if (el) { el.focus(); el.select(); } }, 0);
+}
+function cancelFolderEditor() { App.folderEdit = { mode: '', fid: '', value: '' }; App.render(); }
+function foldKeyDown(e) {
+  if (e.key === 'Enter') { e.preventDefault(); submitFolderEditor(); }
+  else if (e.key === 'Escape') { e.preventDefault(); cancelFolderEditor(); }
+}
+function submitFolderEditor() {
+  const inp = $('foldInput');
+  const name = inp ? String(inp.value || '').trim() : '';
+  const mode = App.folderEdit.mode, fid = App.folderEdit.fid;
+  // 빈 이름은 그냥 접는다 — 지우기가 아니다(지우기는 ⋯ 차림표에 따로 있다).
+  if (!name) { cancelFolderEditor(); return; }
+  App.folderEdit = { mode: '', fid: '', value: '' };
+  if (mode === 'rename') {
+    S.renameFolder(App.companyId, fid, name).then(() => ensureFolders(true))
+      .catch(e => { alert('이름을 바꾸지 못했습니다 — ' + (e.message || e)); App.render(); });
+    return;
+  }
+  S.addFolder(App.companyId, name, mode === 'sub' ? fid : null).then(r =>
+    ensureFolders(true).then(() => { App.folderPick = r.id; App.render(); })
+  ).catch(e => { alert('폴더를 만들지 못했습니다 — ' + (e.message || e)); App.render(); });
+}
+
+/* ⋯ 차림표 — 이름 바꾸기·하위폴더 만들기·지우기를 한자리에. */
+function folderMenu(ev, fid) {
+  closeFolderMenu();
+  const f = (App.folders || {})[fid] || {};
+  const m = document.createElement('div');
+  m.className = 'foldmenu'; m.id = 'foldMenu';
+  m.innerHTML = '<div onclick="renameFolderAsk(\'' + esc(fid) + '\')">✏ 이름 바꾸기</div>'
+    + (f.parent ? '' : '<div onclick="openFolderEditor(\'sub\',\'' + esc(fid) + '\')">📁 하위폴더 만들기</div>')
+    + '<div class="del" onclick="removeFolderAsk(\'' + esc(fid) + '\')">🗑 폴더 지우기</div>';
+  document.body.appendChild(m);
+  const r = ev.target.getBoundingClientRect();
+  m.style.left = Math.min(r.left, window.innerWidth - 170) + 'px';
+  m.style.top = (r.bottom + 4) + 'px';
+  setTimeout(() => document.addEventListener('click', closeFolderMenu, { once: true }), 0);
+}
+function closeFolderMenu() { const m = $('foldMenu'); if (m && m.parentNode) m.parentNode.removeChild(m); }
+function renameFolderAsk(fid) { closeFolderMenu(); openFolderEditor('rename', fid, ((App.folders || {})[fid] || {}).name || ''); }
+function removeFolderAsk(fid) {
+  closeFolderMenu();
+  if (!confirm('이 폴더를 지울까요?\n담긴 자료는 지워지지 않고 「전체」에 그대로 남습니다.')) return;
+  S.deleteFolder(App.companyId, fid).then(() => {
+    if (App.folderPick === fid) App.folderPick = 'all';
+    return ensureFolders(true);
+  }).catch(e => { alert('지우지 못했습니다 — ' + (e.message || e)); App.render(); });
+}
+function pickFolder(fid) { App.folderPick = fid; App.render(); }
+
+/* 자료 한 건을 폴더에 넣거나(folderId) 뺀다('' 로 부르면 뺀다).
+   서버에 쓰는 동안 화면이 멈추지 않게, 저장이 끝나면 우리가 들고 있는 자료에도
+   바로 반영해 다시 읽지 않고 새로고침한다. */
+function assignFolder(id, folderId) {
+  const slot = S.isKeepKind(App.kind) ? S.KEEP : (S.monthKey(App.month) || S.KEEP);
+  S.setFolder(slot, id, folderId).then(() => {
+    const box = S.isKeepKind(App.kind) ? App.itemsKeep : App.itemsMonth;
+    if (box && box[id]) box[id].folder = folderId || null;
+    App.render();
+  }).catch(e => alert('저장 실패: ' + (e.code || e.message) + '\n다시 시도해 주세요.'));
+}
+window.pickFolder = pickFolder; window.folderMenu = folderMenu; window.closeFolderMenu = closeFolderMenu;
+window.renameFolderAsk = renameFolderAsk; window.removeFolderAsk = removeFolderAsk;
+window.openFolderEditor = openFolderEditor; window.cancelFolderEditor = cancelFolderEditor;
+window.submitFolderEditor = submitFolderEditor; window.foldKeyDown = foldKeyDown;
+window.assignFolder = assignFolder;
+
 function screenDrawer() {
   if (!App.month) App.month = thisMonth();
   const counts = drawerCounts(App.itemsKeep, App.itemsMonth, App.companyId);
   const model = drawerModel(App.itemsKeep, App.itemsMonth, App.companyId, App.kind, Date.now());
-  const rows = searchRows(model.rows, App.query);
+  const foldCounts = folderCounts(model.rows);
+  const foldered = folderRows(model.rows, App.folderPick);
+  const rows = searchRows(foldered, App.query);
   const ids = rows.map(r => r.id);
   const sel = pickPrune(pickOf('drawer'), ids); pickPut('drawer', sel);
 
   let h = '<div style="margin-bottom:10px"><button class="btn" onclick="App.go(\'sites\')">← 사업장</button></div>'
     + '<h1>' + esc(App.companyName || App.companyId) + '</h1>'
     + '<div class="sub">' + model.rows.length + '건'
-    + (App.query ? ' 중 ' + rows.length + '건 찾음' : '') + '</div>';
+    + (App.folderPick !== 'all' ? ' 중 이 폴더 ' + foldered.length + '건' : '')
+    + (App.query ? ' · 찾은 것 ' + rows.length + '건' : '') + '</div>';
 
   if (!S.isKeepKind(App.kind)) {
     h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">기준 월'
@@ -549,8 +716,14 @@ function screenDrawer() {
     + '\';App.query=\'\';ensureDrawerData();App.render()">' + esc(k.label)
     + '<span class="n">' + counts[k.key] + '</span></button>').join('') + '</div>';
 
+  /* 내 폴더 — 분류 탭과 다른 축이다(사진첩과 같은 방식). 탭은 「무엇인가」,
+     폴더는 「어느 일인가」다. 그래서 탭을 넘나들어도 고른 폴더는 그대로 둔다. */
+  h += folderBar(App.folders, App.folderPick, foldCounts);
+
   h += '<div id="findBar"><input placeholder="파일 이름으로 찾기" value="' + esc(App.query) + '"'
     + ' oninput="App.query=this.value;App.render()"></div>';
+
+  const folderOpts = folderOptionsHtml(App.folders);
 
   h += '<div class="card">' + (rows.length ? pickBar('drawer', ids, '') + rows.map((r, i) =>
     '<div class="row' + (pickOn(sel, r.id) ? ' pkon' : '') + '">'
@@ -561,9 +734,31 @@ function screenDrawer() {
     + esc(r.filename || '(이름 없음)') + '</b>'
     + (r.expired ? '<span class="expbadge">지난 것</span>' : '')
     + '<span class="sub" style="margin:0">' + (r.filedAt ? new Date(r.filedAt).toLocaleDateString() : '') + '</span>'
+    + '<select class="btn" style="font-size:11.5px;padding:4px 6px" onclick="event.stopPropagation()"'
+    + ' onchange="assignFolder(\'' + esc(r.id) + '\',this.value)">'
+    + folderOpts.replace('value="' + esc(r.folder || '') + '"', 'value="' + esc(r.folder || '') + '" selected')
+    + '</select>'
     + '</div>').join('')
-    : '<div class="empty">' + (App.query ? '찾는 자료가 없습니다.' : '이 칸에 담긴 자료가 없습니다. 다른 월이나 다른 종류를 보세요.') + '</div>')
+    : '<div class="empty">' + (App.query ? '찾는 자료가 없습니다.'
+      : (App.folderPick !== 'all' ? '이 폴더에 담긴 자료가 없습니다.'
+        : '이 칸에 담긴 자료가 없습니다. 다른 월이나 다른 종류를 보세요.')) + '</div>')
     + '</div>';
+  return h;
+}
+
+/* 자료 한 줄의 「폴더 지정」 골라잡기 — 있는 폴더만 나온다. 새 폴더는 폴더 칸의
+   「+ 폴더」로 만든다(그 자리에서 이름을 적는 방식 하나로 통일한다). */
+function folderOptionsHtml(folders) {
+  const f = folders || {};
+  const tops = Object.keys(f).filter(id => !f[id].parent)
+    .sort((a, b) => (f[a].createdAt || 0) - (f[b].createdAt || 0));
+  let h = '<option value="">폴더 없음</option>';
+  tops.forEach(fid => {
+    h += '<option value="' + esc(fid) + '">' + esc(f[fid].name || '') + '</option>';
+    Object.keys(f).filter(id => f[id].parent === fid)
+      .sort((a, b) => (f[a].createdAt || 0) - (f[b].createdAt || 0))
+      .forEach(kid => { h += '<option value="' + esc(kid) + '">↳ ' + esc(f[kid].name || '') + '</option>'; });
+  });
   return h;
 }
 
