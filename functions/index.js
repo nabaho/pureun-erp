@@ -370,7 +370,19 @@ async function requestRollback(body) {
   return { status: "rollback_requested" };
 }
 
-exports.developmentAutomation = functions
+/* ── 🤖 자동개발 — 지금은 배포하지 않는다 (2026-08-13 대표 결정: "추후에 필요하면 한다") ──
+   OpenAI 에 돈을 내고 코드를 짜게 하는 기능인데 지금은 쓰지 않는다.
+   그런데도 여기서 AUTOMATION_BRIDGE_KEY 를 요구하고 있어서, 그 값이 없는 상태로는
+   `firebase deploy --only functions` (전체 배포)가 검증 단계에서 통째로 멈췄다.
+   메일 세 개와 건의 알림까지 못 올리게 막는 셈이라 내보내기(export)만 잠가 둔다.
+
+   ⚠ 코드는 그대로 둔다 — 나중에 켤 때 아래 한 줄만 되살리면 된다.
+   켜려면 함께 갖춰야 할 것:
+     · AUTOMATION_BRIDGE_KEY  — GitHub 저장소 비밀값과 Firebase 비밀값에 «같은» 임의 문자열
+     · AUTOMATION_ENDPOINT    — 배포된 이 함수 URL 을 GitHub 저장소 비밀값에
+     · OPENAI_API_KEY         — codex-issue-implementation.yml 이 쓴다 (유료)
+     · GITHUB_AUTOMATION_TOKEN — 이미 있음 (2026-08-13 재발급) */
+const _parkedDevelopmentAutomation = functions
   .runWith({ secrets: ["GITHUB_AUTOMATION_TOKEN", "AUTOMATION_BRIDGE_KEY"] })
   .https.onRequest(async (req, res) => {
     setAutomationCors(req, res);
@@ -396,6 +408,8 @@ exports.developmentAutomation = functions
       res.status(error.status || 500).json({ ok: false, error: cleanText(error && error.message || error || "자동개발 처리 실패", 500) });
     }
   });
+// 켤 때 이 줄을 되살린다:  exports.developmentAutomation = _parkedDevelopmentAutomation;
+void _parkedDevelopmentAutomation;   // 안 쓰는 변수 경고만 막는다
 
 // ══════════ 새 건의 → 관리자 폰 알림 (웹푸시 · FCM) ══════════
 //  건의가 등록되면 포털이 suggestions_meta_private/{id} 에 경량 메타를 함께 적는다.
