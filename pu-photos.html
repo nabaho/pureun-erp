@@ -124,6 +124,10 @@ button{font-family:inherit;cursor:pointer}
 #dropzone .s{font-size:12px;color:var(--sub);margin-top:4px}
 .tag{font-size:10.5px;font-weight:700;background:#e8eefc;color:#1e40af;padding:1px 6px;border-radius:5px;margin-left:5px}
 #grid .cell .tag{position:absolute;left:4px;top:4px;margin:0;background:var(--blue);color:#fff}
+/* 접힌 문서 — 몇 쪽짜리인지. 이 표가 없으면 한 장인 줄 알고 지웠다가
+   여섯 장이 사라진다(대표 지시 2026-08-13). 오른쪽 위, 딱지와 안 겹치는 자리. */
+#grid .cell .pgs{position:absolute;right:4px;top:4px;background:rgba(16,24,40,.78);color:#fff;
+  font-size:10px;font-weight:800;border-radius:5px;padding:2px 6px;letter-spacing:-.2px}
 #grid .cell{position:relative}
 /* ── 쓸어서 고르기 (대표 지시 2026-08-10) ──
    "마우스 드래그로 한번에 다 체크하고 체크해제 할 수 있게 해줘"
@@ -243,6 +247,17 @@ button{font-family:inherit;cursor:pointer}
 .tsbox .tsbtns button{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:8px;
   padding:7px 11px;font-size:12px;font-weight:700;font-family:inherit}
 .tsbox .tsbtns button.pri{background:var(--blue);color:#fff;border-color:var(--blue)}
+/* 여러 쪽 문서 — 쪽 넘기기와 나누기 (대표 지시 2026-08-13) */
+.docnav{display:flex;align-items:center;gap:8px;margin:9px 0;padding:7px 9px;
+  border:1px solid var(--line);border-radius:8px;background:#f8fafc}
+.docnav b{flex:1;text-align:center;font-size:12.5px;font-weight:800;color:var(--ink)}
+.docnav button{border:1px solid var(--line);background:#fff;color:var(--blue);border-radius:7px;
+  padding:6px 11px;font-size:12px;font-weight:700;font-family:inherit;flex:none}
+.docnav button:disabled{color:#cbd5e1;background:#f1f5f9}
+.docsplit{border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin:8px 0}
+.docsplit .t{font-size:11.5px;color:var(--sub);line-height:1.5;margin-bottom:7px}
+.docsplit button{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:8px;
+  padding:7px 11px;font-size:12px;font-weight:700;font-family:inherit;margin:0 6px 0 0}
 #bkList{font-size:12px;color:var(--sub);margin:2px 0 8px}
 .bkopt{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;color:var(--ink);margin:4px 0 8px;cursor:pointer}
 .bkopt span{font-weight:500;color:var(--sub)}
@@ -1008,6 +1023,9 @@ button{font-family:inherit;cursor:pointer}
         <!-- 이미 판독은 됐지만 검증에 걸려 명함첩에 안 간 것들을 한 번에 보낸다.
              한 장씩 열어 보내면 스무 장에 스무 번이다(대표 지시 2026-08-10). -->
         <button id="sendSelBtn" class="rd" onclick="sendSelected()" style="display:none">📇 명함첩으로 보내기</button>
+        <!-- 따로 올라온 사진 여러 장을 한 문서로 묶는다(대표 지시 2026-08-13) —
+             카톡으로 한 장씩 온 계약서는 묶어야 판독이 한 번에 읽는다. -->
+        <button id="mergeBtn" class="rd" onclick="mergeSelectedDoc()" style="display:none">📎 한 문서로 묶기</button>
         <button id="delBtn" class="del" onclick="deleteSelected()" style="display:none">🗑 지우기</button>
         <button id="selCancel" onclick="clearSel()" style="display:none">취소</button>
         <span id="gridCount"></span>
@@ -4173,7 +4191,8 @@ function renderGrid() {
   const counts = {};
   visibleItems.forEach(it => {
     const k = dayKey(it.meta.takenAt || it.meta.upAt || 0);
-    counts[k] = (counts[k] || 0) + 1;
+    /* 접힌 문서는 한 칸이지만 여섯 장이다 — 사람이 세는 것은 장이다 */
+    counts[k] = (counts[k] || 0) + idsOf(it).length;
   });
 
   let html = '', lastDay = '';
@@ -4193,6 +4212,10 @@ function renderGrid() {
     const t = safeSrc(it.thumb);
     const tag = it.meta.kind === 'doc' ? '<span class="tag">서류</span>' : '';
     const on = selected.has(it.id) ? ' on' : '';
+    /* 접힌 문서 — 몇 쪽짜리인지 칸에 적는다. 이 표가 없으면 한 장인 줄 알고
+       지웠다가 여섯 장이 사라진다(대표 지시 2026-08-13). */
+    const pageN = idsOf(it).length;
+    const stack = pageN > 1 ? '<span class="pgs">📄 ' + pageN + '쪽</span>' : '';
     /* 확인이 필요한 사진은 칸에서 바로 보인다 — 눌러 봐야 아는 일이 없게.
        ⚠ 「확인 필요」만 보는 중에는 **왜 걸렸는지**를 칸에 적는다(대표 보고 2026-08-10:
           "확인필요 3장 클릭했는데 어떻게 하라는 건가 상황에 대한 판단이 안 선다").
@@ -4219,7 +4242,7 @@ function renderGrid() {
          **전부 그 자리에서 풀어 그린다.** 80장이면 폰에서 몇 백 밀리초가 통으로 멎는다.
          lazy 는 화면에 들어올 때까지 미루고, async 는 푸는 일을 화면 그리기와 갈라 놓는다. */
       (t ? '<img src="' + t + '" alt="" loading="lazy" decoding="async" draggable="false">' : '')
-      + tag + warn + who + cap + '<span class="ck">✓</span></div>';
+      + tag + stack + warn + who + cap + '<span class="ck">✓</span></div>';
   });
   html += '</div>';
   if (visibleItems.length < items.length) {
@@ -4657,7 +4680,48 @@ function shownItemsFresh() {
   if (oldOnly) list = list.filter(isOldItem);
   /* 찾는 말도 같은 자리에서 건다 — 걸러보기·분류 탭과 어긋나면 안 된다. */
   if (gridQ) list = list.filter(matchQ);
-  return list;
+  return foldDocs(list);
+}
+
+/* ══════ 여러 쪽 문서를 한 칸으로 접기 (대표 지시 2026-08-13) ══════
+   "계약서의 경우 2장이 있는데 각각 분리하는 것은 의미가 없다.
+    2장을 하나로 정리하는 게 좋은데 어떻게 하는 게 가장 적절한가"
+
+   판독은 이미 문서 통째로 한 번 읽는다(2026-08-10). 남은 것은 **목록**이었다 —
+   6쪽짜리 계약서가 6칸으로 흩어져 보였다. 첫 쪽 한 칸으로 접고 「6쪽」을 적는다.
+
+   ⚠ 사진을 합치지 않는다. 보이는 방식만 바뀐다 — 접힌 칸을 고르면 **그 문서의
+     모든 쪽**이 함께 골라져(idsOf) 지우기·내려받기·분류가 문서 단위로 움직인다.
+   ⚠ 걸러본 결과에 일부 쪽만 남았으면 **남은 것 중 첫 쪽**을 대표로 세운다.
+     원래 1쪽이 걸러져 나갔는데 대표를 못 찾아 문서가 통째로 사라지면 안 된다. */
+function foldDocs(list) {
+  const seen = {};
+  const out = [];
+  list.forEach(function (it) {
+    const g = it.meta && it.meta.doc && it.meta.doc.group;
+    if (!g) { out.push(it); return; }
+    const at = seen[g];
+    if (at === undefined) {
+      seen[g] = out.length;
+      out.push(Object.assign(Object.create(Object.getPrototypeOf(it)), it, { _pages: [it.id] }));
+      return;
+    }
+    /* 이미 대표가 선 문서 — 쪽 번호만 모은다(대표는 그대로 둔다) */
+    out[at]._pages.push(it.id);
+  });
+  return out;
+}
+
+/* 이 칸이 가리키는 사진 번호들 — 접힌 문서면 그 문서의 모든 쪽.
+   고르기·지우기·내려받기가 전부 이 하나를 쓴다. 한 곳이라도 빠뜨리면
+   「6쪽인데 1쪽만 지워지는」 사고가 난다. */
+function idsOf(it) {
+  return (it && it._pages && it._pages.length) ? it._pages.slice() : (it ? [it.id] : []);
+}
+
+/* 걸러본 결과의 **사진 장수**(접기 전 기준) — 사람이 세는 것은 쪽이 아니라 장이다 */
+function shownCount() {
+  return shownItems().reduce(function (n, it) { return n + idsOf(it).length; }, 0);
 }
 
 /* 탭마다 몇 장인지 — 「확인 필요」와 무관하게 그 탭의 전체 장수를 센다.
@@ -5418,8 +5482,11 @@ function dayItems(k) {
 function toggleDay(k) {
   const list = dayItems(k);
   if (!list.length) return;
-  const allOn = list.every(function (it) { return selected.has(it.id); });
-  list.forEach(function (it) { if (allOn) selected.delete(it.id); else selected.add(it.id); });
+  /* 접힌 문서는 쪽 전부가 함께 움직인다 — 한 칸만 고르고 「6장 지우기」라고
+     하면서 1장만 지우면 사진을 잃는다(대표 지시 2026-08-13). */
+  const ids = list.reduce(function (a, it) { return a.concat(idsOf(it)); }, []);
+  const allOn = ids.every(function (id) { return selected.has(id); });
+  ids.forEach(function (id) { if (allOn) selected.delete(id); else selected.add(id); });
   renderGrid();
 }
 
@@ -5430,9 +5497,14 @@ function clearSel() {
 }
 
 function toggleOne(id) {
-  if (selected.has(id)) selected.delete(id); else selected.add(id);
+  /* 접힌 문서 칸이면 그 문서의 **모든 쪽**이 함께 움직인다 —
+     칸 하나가 여섯 쪽을 대신하므로(대표 지시 2026-08-13). */
+  const it = shownItems().find(function (x) { return x.id === id; });
+  const ids = it ? idsOf(it) : [id];
+  const on = !selected.has(id);
+  ids.forEach(function (x) { if (on) selected.add(x); else selected.delete(x); });
   const cell = document.querySelector('.cell[data-id="' + id + '"]');
-  if (cell) cell.classList.toggle('on', selected.has(id));
+  if (cell) cell.classList.toggle('on', on);
   renderGridBar();
 }
 
@@ -5567,7 +5639,9 @@ window.addEventListener('mouseup', bandEnd);
 window.addEventListener('blur', bandEnd);
 
 function renderGridBar() {
-  const shown = shownItems().length;
+  /* 사람이 세는 것은 **사진 장수**다 — 접힌 문서는 한 칸이지만 여섯 장이다.
+     칸 수로 세면 「5장」이라 해 놓고 「10장 지우기」가 되어 말이 어긋난다. */
+  const shown = shownCount();
   const n = selected.size;
   $('gridBar').style.display = (shown || needOnly || oldOnly || gridQ) ? 'flex' : 'none';
   /* 고른 것이 있을 때만 단추가 나온다 — 「고르기」 단계가 없어졌다. */
@@ -5576,6 +5650,10 @@ function renderGridBar() {
   });
   /* 남의 사진(전체 근로자 포함)은 분류를 지정할 수 없다 — 보기만 가능. */
   if (viewingOther()) $('tagBtn').style.display = 'none';
+  /* 📎 한 문서로 묶기 — 두 장 이상 골랐을 때만. 한 장으로는 묶을 것이 없어
+     늘 띄우면 눌러도 아무 일이 없는 헛단추가 된다. */
+  $('mergeBtn').style.display = (n >= 2 && !viewingOther()) ? 'inline-block' : 'none';
+  $('mergeBtn').textContent = '📎 ' + n + '장을 한 문서로';
   $('delBtn').textContent = '🗑 ' + n + '장 지우기';
   if (!$('dlBtn').disabled) $('dlBtn').textContent = '⬇ ' + n + '장 내려받기';
   $('readSelBtn').disabled = reading;
@@ -5838,6 +5916,137 @@ function openViewer(id) {
       showNoBody(it, '');
     }
   }).catch(function (e) { showNoBody(it, (e && e.message) || String(e)); });
+}
+
+/* ══════ 문서 쪽 넘기기 · 나누기 · 묶기 (대표 지시 2026-08-13) ══════
+   "2장을 하나로 정리하는 게 좋은데 … 각각 2장을 나눠서 OCR 해야 되는데
+    합쳐서 처리한 건 어떻게 나누게 하는 게 좋은가"
+
+   접힌 문서를 열면 ◀ 1/6 ▶ 로 쪽을 넘긴다. 그리고 나누는 길 셋:
+     · 쪽마다 따로 읽기 — 한 파일에 다른 서류가 섞여 들어온 경우
+     · 이 쪽만 떼어내기 — 여섯 쪽 중 한 쪽만 다른 서류일 때
+     · 고른 것을 한 문서로 묶기 — 카톡으로 한 장씩 온 계약서를 나중에 합칠 때
+   ⚠ 셋 다 **사진을 건드리지 않는다.** 묶는 방식(meta.doc)만 고친다. */
+function docNav(it) {
+  const pages = docPages(it && it.id);
+  if (pages.length < 2) return '';
+  const i = pages.findIndex(function (p) { return p.id === (it && it.id); });
+  const at = i < 0 ? 0 : i;
+  const btn = function (to, label, on) {
+    return '<button' + (on ? ' onclick="openViewer(\'' + esc(pages[to].id) + '\')"' : ' disabled') +
+      '>' + label + '</button>';
+  };
+  return '<div class="docnav">' +
+    btn(at - 1, '◀ 앞쪽', at > 0) +
+    '<b>' + (at + 1) + ' / ' + pages.length + '쪽</b>' +
+    btn(at + 1, '다음쪽 ▶', at < pages.length - 1) +
+    '</div>';
+}
+
+/* 이 문서의 쪽들을 어떻게 나눌지 — 크게 보기 안 단추 줄 */
+function docSplitBox(it) {
+  const pages = docPages(it && it.id);
+  if (pages.length < 2) return '';
+  if (viewingOther()) return '';        // 남의 사진은 보기만
+  return '<div class="docsplit">' +
+    '<div class="t">이 문서는 ' + pages.length + '쪽이 한 덩어리입니다 — 판독도 한 번에 합니다</div>' +
+    '<button onclick="splitDocPages()">✂ 쪽마다 따로 읽기</button>' +
+    '<button onclick="detachOnePage()">📄 이 쪽만 떼어내기</button>' +
+    '</div>';
+}
+
+/* 지금 보는 문서를 통째로 풀어 **쪽마다 독립 서류**로 만들고 각각 다시 읽는다.
+   한 파일에 계약서와 사업자등록증이 섞여 들어온 경우가 이 길이다. */
+function splitDocPages() {
+  const it = gridItems.find(function (x) { return x.id === viewerId; });
+  const pages = docPages(viewerId);
+  if (!it || pages.length < 2) return;
+  if (blockedIfOther(viewerId)) return;
+  if (!confirm(pages.length + '쪽을 각각 따로 읽습니다.\n' +
+      '지금 문서로 읽어 둔 결과는 쪽마다 새로 읽혀 바뀝니다.\n\n계속할까요?')) return;
+  const ids = pages.map(function (p) { return p.id; });
+  PuPhotoStore.setDocs(gridYear, ids.map(function (id) { return { id: id, doc: null }; }),
+    it.meta.__ownerUid || gridOwner)
+    .then(function () {
+      /* 화면의 값도 함께 푼다 — 서버만 고치면 새로고침 전까지 접힌 채로 보인다 */
+      ids.forEach(function (id) {
+        const p = gridItems.find(function (x) { return x.id === id; });
+        if (!p) return;
+        const meta = Object.assign({}, p.meta);
+        delete meta.doc;
+        p.meta = meta;
+      });
+      renderGrid();
+      closeViewer();
+      toast(ids.length + '쪽을 따로 떼어 각각 읽습니다');
+      ids.forEach(function (id) { queuePhotoRead(id); });
+    })
+    .catch(function (e) {
+      console.warn('[쪽 나누기]', e);
+      alert('나누지 못했습니다 — ' + ((e && e.message) || e));
+    });
+}
+
+/* 이 쪽 하나만 문서에서 빼낸다. 나머지 쪽은 그대로 묶여 있다.
+   ⚠ 남은 쪽이 한 장뿐이 되면 그것도 함께 푼다 — 「1쪽짜리 문서」는 뜻이 없다. */
+function detachOnePage() {
+  const it = gridItems.find(function (x) { return x.id === viewerId; });
+  const pages = docPages(viewerId);
+  if (!it || pages.length < 2) return;
+  if (blockedIfOther(viewerId)) return;
+  const rest = pages.filter(function (p) { return p.id !== it.id; });
+  const ups = [{ id: it.id, doc: null }];
+  if (rest.length === 1) ups.push({ id: rest[0].id, doc: null });
+  PuPhotoStore.setDocs(gridYear, ups, it.meta.__ownerUid || gridOwner)
+    .then(function () {
+      ups.forEach(function (u) {
+        const p = gridItems.find(function (x) { return x.id === u.id; });
+        if (!p) return;
+        const meta = Object.assign({}, p.meta);
+        delete meta.doc;
+        p.meta = meta;
+      });
+      renderGrid();
+      renderReadPanel(gridItems.find(function (x) { return x.id === viewerId; }));
+      toast('이 쪽을 문서에서 떼어냈습니다 — 「다시 판독」으로 따로 읽을 수 있습니다');
+    })
+    .catch(function (e) {
+      console.warn('[쪽 떼어내기]', e);
+      alert('떼어내지 못했습니다 — ' + ((e && e.message) || e));
+    });
+}
+
+/* 고른 사진들을 한 문서로 묶는다 — 카톡으로 한 장씩 온 계약서를 나중에 합칠 때.
+   ⚠ 쪽 차례는 **촬영 시각 순**이다. 고른 차례로 하면 사람마다 달라진다. */
+function mergeSelectedDoc() {
+  const ids = Array.from(selected);
+  if (ids.length < 2) { alert('두 장 이상 고른 뒤에 눌러 주세요.'); return; }
+  if (blockedIfOther(ids)) return;
+  const items = ids.map(function (id) { return gridItems.find(function (x) { return x.id === id; }); })
+    .filter(Boolean)
+    .sort(function (a, b) { return (a.meta.takenAt || 0) - (b.meta.takenAt || 0); });
+  if (items.length < 2) return;
+  const name = (prompt('이 문서의 이름을 적어 주세요.', items[0].meta.company || '문서') || '').trim();
+  if (!name) return;
+  const group = PuPhotoStore.newId();
+  const total = items.length;
+  const ups = items.map(function (p, i) {
+    return { id: p.id, doc: { name: name, page: i + 1, total: total, taken: total, group: group } };
+  });
+  PuPhotoStore.setDocs(gridYear, ups, items[0].meta.__ownerUid || gridOwner)
+    .then(function () {
+      ups.forEach(function (u) {
+        const p = gridItems.find(function (x) { return x.id === u.id; });
+        if (p) p.meta = Object.assign({}, p.meta, { doc: u.doc });
+      });
+      selected.clear();
+      renderGrid();
+      toast(total + '장을 「' + name + '」 한 문서로 묶었습니다 — 판독도 한 번에 합니다');
+    })
+    .catch(function (e) {
+      console.warn('[문서 묶기]', e);
+      alert('묶지 못했습니다 — ' + ((e && e.message) || e));
+    });
 }
 
 /* ── 본문이 없을 때 (대표 보고 2026-08-13: "화면이 전혀 안 나오는 경우") ──
@@ -6615,6 +6824,8 @@ function renderReadPanel(it) {
     chatTodoBox(it) +
     timesheetBox(it) +
     formPairsBox(it) +
+    docNav(it) +
+    docSplitBox(it) +
     box +
     (read.ack ? '<p class="note">✓ ' + esc(read.ack.by || '') +
         '님이 확인해 할 일에서 치웠습니다 · 「다시 판독」을 누르면 되돌아옵니다</p>' : '') +
