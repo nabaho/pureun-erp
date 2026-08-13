@@ -33,7 +33,9 @@ test('이름 열쇠와 사업자번호 열쇠가 같은 회사면 옛 기록을 
   };
   const r = fn('3128100001', '한서정공', map);
   assert.equal(r.folder, 'f1', '옛 열쇠의 폴더가 안 보인다');
-  assert.deepEqual(r.tags, {'2026 통합기술보호지원반':true}, '옛 열쇠의 탭이 안 보인다');
+  /* r.tags 는 vm 컨텍스트 안에서 만든 객체라 원형(prototype)이 달라 deepEqual 이
+     그대로는 실패한다 — JSON 을 거쳐 원형을 지우고 견준다. */
+  assert.deepEqual(JSON.parse(JSON.stringify(r.tags)), {'2026 통합기술보호지원반':true}, '옛 열쇠의 탭이 안 보인다');
   assert.equal(r.docName, '사업자등록증', '새 열쇠의 값이 없어졌다');
 });
 
@@ -55,7 +57,7 @@ test('탭은 옛 열쇠·새 열쇠 것을 모두 합친다', () => {
     '3128100001': { tags:{'새탭':true} }
   };
   const r = fn('3128100001', '한서정공', map);
-  assert.deepEqual(r.tags, {'옛탭':true, '새탭':true});
+  assert.deepEqual(JSON.parse(JSON.stringify(r.tags)), {'옛탭':true, '새탭':true});
 });
 
 test('지금 열쇠가 이미 이름 열쇠면 그대로 돌려준다 — 합칠 상대가 없다', () => {
