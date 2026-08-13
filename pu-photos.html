@@ -772,6 +772,9 @@ button{font-family:inherit;cursor:pointer}
 #viewer .bar{display:flex;align-items:center;justify-content:space-between;padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;color:#fff}
 #viewer .bar span{font-size:12.5px;opacity:.85}
 #viewer .bar button{background:none;border:none;color:#fff;font-size:14px;font-weight:700;padding:6px}
+/* ← 돌아가기 — 닫는 길이 셋(바깥·Esc·✕)이나 있었지만 **눈에 보이는** 것이 없었다
+   (대표 지시 2026-08-13). 왼쪽 위, 어느 화면에서나 뒤로 가기가 있는 그 자리다. */
+#viewer .bar .vback{background:rgba(255,255,255,.16);border-radius:9px;padding:8px 14px;font-size:13px;flex:none}
 #viewer .hint{text-align:center;color:#fff;font-size:12px;opacity:.6;padding:10px 0 calc(env(safe-area-inset-bottom) + 12px)}
 
 /* 사진과 판독 결과를 담는 자리. 좁은 화면은 위·아래, 넓은 화면은 좌·우 (대표 승인 목업).
@@ -1260,7 +1263,9 @@ button{font-family:inherit;cursor:pointer}
 
   <!-- 크게 보기 — 격자를 누르면 저장된 축소본(1600px) 원판을 보여준다 -->
   <div id="viewer">
-    <div class="bar"><span id="viewerInfo"></span><button onclick="closeViewer()">닫기 ✕</button></div>
+    <!-- ← 돌아가기 — 바깥 클릭·Esc·✕ 로도 닫히지만, 눈에 보이는 단추가 있어야
+         길을 몰라도 나온다(대표 지시 2026-08-13: "백 버튼이 있으면 좋겠다") -->
+    <div class="bar"><button class="vback" onclick="closeViewer()">← 돌아가기</button><span id="viewerInfo"></span><button onclick="closeViewer()">닫기 ✕</button></div>
     <div id="viewerBody">
       <!-- 사진을 누르면 원본 크기, 사진 바깥(어두운 곳)을 누르면 닫힌다 -->
       <!-- draggable="false": 이 그림을 끌면 창이 남의 파일로 오해해 같은 사진을
@@ -5732,9 +5737,29 @@ function deleteOne() {
 
 let viewerId = null;
 
+/* ── 폰의 뒤로 가기 단추로도 닫힌다 (대표 지시 2026-08-13: "백 버튼") ──
+   열 때 역사에 한 칸을 쌓아 두면, 폰 뒤로 가기가 그 칸을 빼면서 popstate 가
+   울린다 — 그때 닫는다. 이게 없으면 뒤로 가기가 **사진첩을 통째로** 나가 버린다.
+   ⚠ 단추·바깥·Esc 로 닫을 때는 쌓아 둔 칸을 우리가 빼 줘야(history.back)
+      다음 뒤로 가기가 헛칸을 밟지 않는다. popstate 로 닫힐 때는 이미 빠졌으니
+      또 빼면 안 된다 — viewerPushed 표시 하나가 그 둘을 가른다. */
+let viewerPushed = false;
+function viewerHistPush() {
+  try { history.pushState({ puViewer: 1 }, ''); viewerPushed = true; }
+  catch (_) { viewerPushed = false; }
+}
+window.addEventListener('popstate', function () {
+  if (!viewerId) return;            // 크게 보기가 안 열려 있으면 우리 일이 아니다
+  viewerPushed = false;             // 역사 칸은 이미 빠졌다 — closeViewer 가 또 빼면 안 된다
+  closeViewer();
+});
+
 function openViewer(id) {
   const it = gridItems.find(x => x.id === id);
   const v = $('viewer');
+  /* 열려 있는 채 다른 장으로 바꿀 때(배송표 등)는 또 쌓지 않는다 —
+     쌓인 만큼 뒤로 가기를 여러 번 눌러야 닫히게 된다. */
+  if (!viewerId) viewerHistPush();
   viewerId = id;
   v.style.display = 'flex';
   /* 여러 쪽짜리 스캔이면 어느 문서 몇 쪽인지 제목줄에 먼저 적는다 —
@@ -5774,6 +5799,12 @@ function closeViewer() {
   $('viewerImg').src = '';
   $('readPanel').innerHTML = '';
   viewerId = null;
+  /* 단추·바깥·Esc 로 닫았다 — 열 때 쌓아 둔 역사 칸을 빼 준다.
+     안 빼면 다음 뒤로 가기가 그 헛칸을 밟아 「눌렀는데 아무 일도 없는」 게 된다. */
+  if (viewerPushed) {
+    viewerPushed = false;
+    try { history.back(); } catch (_) { }
+  }
 }
 
 /* 사진 자리를 눌렀을 때.
@@ -5867,8 +5898,8 @@ const READ_ROWS = [
      이름표가 없는 항목은 패널에 아예 안 나와서 "안 읽혔다"로 보인다. */
   /* 대화 캡처 — 요약·할 일은 표가 아니라 chatTodoBox 가 그린다 */
   ['channel', '어디서'], ['chatDate', '대화 날짜'], ['period', '귀속'],
-  ['docName', '서류이름'], ['signDate', '계약일'], ['startDate', '시작일'],
-  ['endDate', '종료일'], ['term', '계약기간'], ['fee', '보수'],
+  ['docName', '서류이름'], ['scope', '위임사무'], ['signDate', '계약일'], ['startDate', '시작일'],
+  ['endDate', '종료일'], ['term', '계약기간'], ['fee', '보수'], ['vat', '부가세'],
   ['retainer', '착수금'], ['success', '성공보수'], ['deposit', '계약금'],
   ['dept', '부서'], ['title', '직책'], ['mobile', '휴대폰'], ['tel', '전화'],
   ['companyTel', '대표번호'], ['email', '이메일'], ['address', '소재지'], ['companyAddr', '회사주소']
@@ -6422,7 +6453,9 @@ function formCopy() {
    ⚠ 명함·사업자등록증은 절반을 쓰지 않는다 — 읽은 칸이 몇 개뿐이라 판만 넓어지고
       정작 사진이 좁아져 글자 대조가 안 된다. */
 function wideKind(read) {
-  return !!(read && (read.kind === 'timesheet' || read.kind === 'form'));
+  /* 계약서도 절반을 쓴다(대표 지시 2026-08-13) — 위임사무·부가세·상대 연락처까지
+     읽게 되어 칸이 열 개를 넘는다. 440px 에서는 한 줄이 두 줄로 접혀 대조가 안 된다. */
+  return !!(read && (read.kind === 'timesheet' || read.kind === 'form' || read.kind === 'contract'));
 }
 
 function renderReadPanel(it) {
