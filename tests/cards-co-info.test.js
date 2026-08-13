@@ -165,3 +165,27 @@ test('설명만 하던 머리줄을 지웠다', () => {
   assert.doesNotMatch(source, /사업자등록증·명함·푸른이알피를 회사로 모았습니다/);
 });
 
+test('찾기 칸은 화면 맨 위 하나만 쓴다', () => {
+  /* 같은 일을 하는 칸이 둘이면 어느 쪽에 쳐야 하는지 헷갈리고,
+     한쪽에 남은 글자가 다른 쪽 결과를 조용히 거른다(대표 지시 2026-08-13). */
+  assert.doesNotMatch(source, /class="coq"/, '화면 안 찾기 칸이 아직 있다');
+  assert.match(source, /function syncPcSearchFor/);
+  assert.match(source, /p\.placeholder = '상호·사업자번호·대표자로 찾기'/);
+});
+
+test('기업정보에서 친 글자를 명함첩 찾기칸에 옮기지 않는다', () => {
+  /* 회사 이름을 친 채 명함으로 나가면 명함 목록이 그 글자로 조용히 걸러진다 — 실제로 그랬다 */
+  const at = source.indexOf('function onPcSearchInput');
+  const fn = source.slice(at, source.indexOf('function clearPcSearch', at));
+  const co = fn.indexOf("state.view === 'co'");
+  assert.ok(co > 0, '기업정보 갈림길을 찾지 못했습니다');
+  /* 갈림길 **앞쪽**에 #search 에 값을 넣는 줄이 하나라도 있으면 안 된다.
+     자리만 견주면(co < setSearch) 앞에 한 줄 더 끼워 넣어도 안 걸린다 — 실제로 안 걸렸다. */
+  const before = fn.slice(0, co);
+  assert.doesNotMatch(before, /\$\('search'\)/, '기업정보 갈림길보다 먼저 #search 를 건드린다');
+  assert.doesNotMatch(before, /\.value\s*=\s*v/, '기업정보 갈림길보다 먼저 값을 옮긴다');
+});
+
+test('기업정보를 나서면 안내글을 되돌린다', () => {
+  assert.match(source, /if\(!isCo\) syncPcSearchFor\('list'\)/);
+});
