@@ -50,7 +50,10 @@ test('묶음 미리보기가 막혀도 네 갈래까지만 동시에 받아 팝�
 });
 
 test('사진 저장과 사용자 색인을 한 번에 저장해 다른 기기 전체사진에서 누락되지 않는다', () => {
-  const fn = store.match(/function savePhoto\([\s\S]*?\n  \}/)[0];
+  /* 2026-08-13 창고 저장으로 savePhoto 는 分기만 하고, 실제 쓰기는
+     saveMetaOnly(창고)·saveToRtdb(옛 방식) 두 갈래로 나뉘었다 — 어느 길로
+     가도 색인 쓰기가 함께 있는지는 그 갈래들까지 봐야 한다. */
+  const fn = store.match(/function savePhoto\([\s\S]*?function saveToRtdb\([\s\S]*?\n  \}/)[0];
   assert.match(fn, /u\[ownerPath\(deps\.uid\)\]/);
   assert.match(fn, /deps\.db\.ref\(\)\.update\(u\)/);
 });

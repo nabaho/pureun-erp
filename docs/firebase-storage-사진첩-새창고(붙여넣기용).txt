@@ -1,0 +1,44 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // 사진첩(pu-photos.html) 전용 새 창고(pureun-erp-hrphotos, 서울 리전) —
+    // 이 버켓에는 이것만 있다. 사람별 자리(u/{uid})는 본인만 읽고 쓴다.
+    //
+    // ⚠ 총괄 관리자의 "남의 자리" 접근(이사 도구 migrateToStorage, 관리자가
+    //   남의 사진을 지울 때의 영구삭제)은 이 규칙만으로는 안 된다 — 창고 규칙은
+    //   실시간DB(uid_roles/isAdmin)를 읽을 방법이 없어 "이 사람이 관리자인가"를
+    //   여기서 판정할 수 없다. 지금은 관리자가 본인 소유 사진을 옮기는 것만
+    //   되고, 다른 직원 사진을 옮기려 하면(이사 도구를 여러 사람 것에 돌릴 때)
+    //   창고 쪽 쓰기/지우기가 막혀 그 사람 몫은 실패(failed)로 잡힌다 —
+    //   사진을 잃지는 않는다(실시간DB에 그대로 남는다), 다만 창고로는 안 옮겨진다.
+    //   여러 직원 사진을 한꺼번에 관리자가 옮기고 싶다면, 이 규칙 대신
+    //   서버(Cloud Functions, Admin SDK)로 옮기는 도구를 따로 만들어야 한다 —
+    //   지금 이 붙여넣기만으로는 그 경우까지 되지 않는다는 점을 알아두면 된다.
+    match /pu_photos/u/{uid}/{allPaths=**} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if signedIn() && request.auth.uid == uid && okImage();
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    // 창고 연결 점검(probePath) — 사람 구분 없이 아주 짧은 글자 하나만 오간다.
+    // 사진이 아니라 okImage 를 걸지 않는다(text/plain 이라 막히면 점검 자체가 안 된다).
+    match /pu_photos/_probe/{allPaths=**} {
+      allow read, write, delete: if signedIn();
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    function signedIn() {
+      return request.auth != null && request.auth.token.firebase.sign_in_provider == 'password';
+    }
+    function okImage() {
+      return request.resource != null
+          && request.resource.size < 10 * 1024 * 1024
+          && request.resource.contentType.matches('image/.*');
+    }
+  }
+}
