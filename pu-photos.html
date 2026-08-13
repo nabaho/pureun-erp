@@ -4072,6 +4072,19 @@ function photoOwner(id) {
   return undefined;                    /* 내 자리 (저장 층이 알아서 나로 본다) */
 }
 
+/* 이 사진이 **몇 해 자리에 있는가** — 주인과 똑같이, 해도 «사진의 성질»이지 화면의 성질이 아니다.
+   ⚠ 2026-08-13 김보람 제보 「올린 사진이 검은 화면만 뜬다」의 뿌리가 이것이었다.
+     받은 사진은 주인의 해(2025 등)에 놓여 있는데 화면은 늘 올해(gridYear)로 두드렸다.
+     본문도 미리보기도 다 빗나가 통째로 까맣게 나왔다. 「받은 사진」 화면에는 해 고르는
+     칸도 없어 사용자가 피해 갈 방법이 없었다.
+     listSharedToMe 가 __sharedYear 를 만들어 두고도 아무도 안 쓰고 있었다. */
+function photoYearOf(id) {
+  const it = gridItems.find(function (x) { return x.id === id; });
+  const m = it && it.meta;
+  const y = m && (m.__year || m.__sharedYear);
+  return y ? String(y) : gridYear;
+}
+
 /* 고른 사진에 손을 대도 되는가.
    ① 내 사진이면 언제나 된다.
    ② 총괄 관리자는 남의 사진도 된다 (대표 지시 2026-08-10:
@@ -4211,7 +4224,15 @@ function addToGrid(job) {
      올린 뒤 화면에 안 뜨고, 새로고침해야 나타나 「안 올라갔나」 싶어진다. */
   if (PuPhotoStore.photoYear(job.meta) !== gridYear) return; // 지난 연도는 다음 방문 때
   if (gridItems.some(it => it.id === job.id)) return;
-  gridItems.unshift({ id: job.id, meta: job.meta, thumb: job.thumb });
+  /* 주인·해를 지금 새겨 둔다. 이게 없으면 방금 올린 사진은 목록을 다시 읽기 전까지
+     주인을 모른 채로 남고, 「전체 근로자」 화면(gridOwner='__all__')에서 열면
+     puphotos/u/__all__ 이라는 없는 자리를 두드려 검은 화면이 된다.
+     새로고침하면 멀쩡해지는 「가끔」의 정체가 이것이었다 (2026-08-13 김보람 제보). */
+  gridItems.unshift({ id: job.id, thumb: job.thumb,
+    meta: Object.assign({}, job.meta, {
+      __ownerUid: job.meta.__ownerUid || PuPhotoStore.myUid(),
+      __year: PuPhotoStore.photoYear(job.meta)
+    }) });
   gridItems.sort(comparePhotosNewest);
   renderGrid();
 }
@@ -4416,7 +4437,9 @@ function fillThumbsOneByOne(items) {
     const it = pending.shift();
     if (!it || year !== gridYear) return Promise.resolve();
     if (it.thumb) return worker();
-    return PuPhotoStore.loadThumb(year, it.id, thumbOwnerOf(it)).then(function (t) {
+    /* 해도 사진마다 다르다 — 받은 사진은 주인의 해(2025 등)에 놓여 있다.
+       화면의 해로 두드리면 미리보기까지 빈 채로 남아 칸이 통째로 까맣게 보인다. */
+    return PuPhotoStore.loadThumb(photoYearOf(it.id), it.id, thumbOwnerOf(it)).then(function (t) {
       if (year !== gridYear) return;
       it.thumb = t;
       paintThumb(it);
@@ -4532,7 +4555,7 @@ function saveBlob(blob, name) {
 function downloadOne(id) {
   const it = gridItems.find(function (x) { return x.id === id; });
   if (!it) return;
-  PuPhotoStore.loadFull(gridYear, id, it.meta.__ownerUid || gridOwner).then(function (full) {
+  PuPhotoStore.loadFull(photoYearOf(id), id, photoOwner(id)).then(function (full) {
     if (!safeSrc(full)) throw new Error('사진 본문을 불러오지 못했습니다');
     return toBlob(full);
   }).then(function (blob) {
@@ -4555,7 +4578,7 @@ function canShareFiles() {
 function shareOne(id) {
   const it = gridItems.find(function (x) { return x.id === id; });
   if (!it) return;
-  PuPhotoStore.loadFull(gridYear, id, it.meta.__ownerUid || gridOwner).then(function (full) {
+  PuPhotoStore.loadFull(photoYearOf(id), id, photoOwner(id)).then(function (full) {
     if (!safeSrc(full)) throw new Error('사진 본문을 불러오지 못했습니다');
     return toBlob(full);
   }).then(function (blob) {
@@ -4600,7 +4623,7 @@ function downloadSelected() {
         if (!it) return;
         btn.textContent = '모으는 중… ' + (n + 1) + '/' + ids.length;
         /* 한 장씩 받는다 — 한꺼번에 받으면 폰 메모리가 버티지 못한다. */
-        return PuPhotoStore.loadFull(gridYear, id, it.meta.__ownerUid || gridOwner).then(function (full) {
+        return PuPhotoStore.loadFull(photoYearOf(id), id, photoOwner(id)).then(function (full) {
           if (!safeSrc(full)) return;
           const b64 = String(full).split(',')[1] || '';
           if (!b64) return;
@@ -6042,7 +6065,7 @@ function openViewer(id) {
   $('viewerHint').textContent = '불러오는 중…';
   const img = $('viewerImg');
   img.src = safeSrc(it && it.thumb) || ''; // 우선 미리보기를 깔고
-  PuPhotoStore.loadFull(gridYear, id, (it && it.meta.__ownerUid) || gridOwner).then(function (full) { // 원판으로 바꾼다
+  PuPhotoStore.loadFull(photoYearOf(id), id, photoOwner(id)).then(function (full) { // 원판으로 바꾼다
     const src = safeSrc(full);
     if (src && v.style.display !== 'none') {
       img.src = src;
@@ -7106,7 +7129,7 @@ function readPhoto(id) {
      한 번으로 준다. */
   const pages = docPages(id);
   return Promise.all(pages.map(function (p) {
-    return PuPhotoStore.loadFull(gridYear, p.id, photoOwner(p.id))
+    return PuPhotoStore.loadFull(photoYearOf(p.id), p.id, photoOwner(p.id))
       .catch(function () { return ''; });
   })).then(function (fulls) {
     const imgs = fulls.filter(function (f) { return safeSrc(f); });
@@ -8178,7 +8201,11 @@ function backupYear() {
           const it = { id: id, meta: items[id] || {} };
           btn.textContent = '모으는 중… ' + (made + 1) + '/' + total;
           /* 한 장씩 받는다 — 한꺼번에 받으면 폰 메모리가 버티지 못한다. */
-          return PuPhotoStore.loadFull(y, id, gridOwner).then(function (full) {
+          /* 이 목록은 해(y)를 정해 놓고 읽으므로 해는 y 가 맞다.
+             다만 주인은 표(__all__)일 수 있어 그대로 넘기면 없는 자리를 두드린다. */
+          const _o = (items[id] && items[id].__ownerUid)
+            || (gridOwner && gridOwner !== ALL_OWNERS && gridOwner !== SHARED_OWNER ? gridOwner : undefined);
+          return PuPhotoStore.loadFull(y, id, _o).then(function (full) {
             if (!safeSrc(full)) return;
             const b64 = String(full).split(',')[1] || '';
             if (!b64) return;

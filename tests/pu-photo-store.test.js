@@ -530,9 +530,24 @@ test('listYear — 그 연도 목록만 한 번 읽는다', async () => {
   S.init({ uid: 'U1', db });
   const items = await S.listYear('2026');
   // 샌드박스(vm) 안에서 만들어진 객체는 프로토타입이 달라 복사본으로 비교한다
-  assert.deepEqual(JSON.parse(JSON.stringify(items)), { a: { takenAt: 1 } });
+  const got = JSON.parse(JSON.stringify(items));
+  /* 모양을 통째로 못 박지 않는다 — 칸이 하나 늘 때마다 배포가 막힌다.
+     여기서 볼 것은 「그 해 사진이 나온다」와 「원래 값이 살아 있다」 두 가지다. */
+  assert.deepEqual(Object.keys(got), ['a']);
+  assert.equal(got.a.takenAt, 1);
   // 옮기기 전에도 사진이 보이도록 옛 자리도 함께 읽는다
   assert.deepEqual(db.calls.once.sort(), ['puphotos/items/2026', 'puphotos/u/U1/items/2026']);
+});
+
+/* 2026-08-13 김보람 제보 — 받은 사진·다른 해 사진이 검은 화면만 뜨던 일.
+   본문·미리보기를 «화면의 해»로 찾다가 빗나간 것이 뿌리였다.
+   목록이 사진마다 「어느 해 자리에서 왔는지」를 새겨 주어야 화면이 제대로 찾아간다. */
+test('listYear — 사진마다 어느 해 자리인지 새겨 준다', async () => {
+  const S = loadStore();
+  S.init({ uid: 'U1', db: fakeDb({ a: { takenAt: 1 }, b: { takenAt: 2 } }) });
+  const items = await S.listYear('2025');
+  assert.equal(items.a.__year, '2025');
+  assert.equal(items.b.__year, '2025');
 });
 
 test('listYear — 비어 있으면 빈 객체', async () => {

@@ -330,11 +330,21 @@
        옛 자리 null 한 줄 때문에 **모든 지우기가 통째로 실패**했다
        (2026-08-06 대표 보고: "자꾸 에러 난다"). 옛 자리는 이미 비워서
        옮겼으므로 여기서 함께 비울 것도 없다. */
+    /* ⚠ 「못 읽었다」와 「원래 없다」를 갈라야 한다.
+       둘 다 null 로 뭉뚱그리면, 통신이 잠깐 끊긴 사이에 지우기를 누른 것만으로
+       휴지통에는 빈 껍데기('')가 들어가고 원본은 지워진다 — 되살려도 본문이 없다.
+       실제로 2026-08-09 용량 초과로 읽기가 막혔을 때 이런 사진이 생겼다
+       (검은 화면 + 「사진 본문을 불러오지 못했습니다」).
+       읽기가 «실패» 하면 아예 지우지 않는다. 원래 없는 것은 그대로 지울 수 있다. */
+    var FAIL = {};
     return Promise.all([
-      readOnce(metaPath(year, id, owner)).catch(function () { return null; }),
-      loadFull(year, id, owner).catch(function () { return null; }),
-      loadThumb(year, id, owner).catch(function () { return null; })
+      readOnce(metaPath(year, id, owner)).catch(function () { return FAIL; }),
+      loadFull(year, id, owner).catch(function () { return FAIL; }),
+      loadThumb(year, id, owner).catch(function () { return FAIL; })
     ]).then(function (r) {
+      if (r[0] === FAIL || r[1] === FAIL || r[2] === FAIL) {
+        throw new Error('사진을 읽지 못해 지우지 않았습니다 — 잠시 뒤 다시 시도해 주세요');
+      }
       var meta = r[0];
       if (!meta && !r[1] && !r[2]) {
         throw new Error('사진을 읽지 못해 지우지 않았습니다 — 잠시 뒤 다시 시도해 주세요');
@@ -514,8 +524,11 @@
         if (!r.owner || !r.year) return null;
         return readOnce(metaPath(r.year, id, r.owner)).then(function (meta) {
           if (!meta) return null;   // 원본이 지워졌다 — 목록에서 그냥 뺀다
+          /* __year 도 함께 새긴다 — 화면이 본문·미리보기를 찾을 때 쓰는 값이다.
+             __sharedYear 는 예전부터 있었지만 아무도 안 읽어, 받은 사진이
+             늘 «올해» 자리에서 찾히다 통째로 까맣게 나왔다 (2026-08-13 김보람 제보). */
           return { id: id, meta: Object.assign({}, meta, {
-            __ownerUid: r.owner, __sharedYear: String(r.year)
+            __ownerUid: r.owner, __sharedYear: String(r.year), __year: String(r.year)
           }) };
         }).catch(function () { return null; });
       })).then(function (rows) {
@@ -813,6 +826,9 @@
       Object.keys(mine).forEach(function (id) {
         out[id] = Object.assign({}, out[id] || {}, mine[id] || {});
       });
+      /* 어느 해 자리에서 꺼냈는지 사진에 새겨 준다 — 본문·미리보기를 찾을 때 쓴다.
+         화면의 해(gridYear)로 두드리면 다른 해 사진은 통째로 못 찾는다. */
+      Object.keys(out).forEach(function (id) { out[id].__year = String(year); });
       return out;
     });
   }

@@ -1617,13 +1617,35 @@ test('전체 근로자 화면에서는 사진마다 누구 것인지 보인다',
 });
 
 test('전체 근로자 화면에서 사진을 받을 때 그 사람 자리로 정확히 찾아간다', () => {
-  // gridOwner 하나만 쓰면 '전체' 자체를 계정으로 착각해 엉뚱한 경로를 읽는다.
+  /* gridOwner 하나만 쓰면 '전체'(__all__) 자체를 계정으로 착각해 엉뚱한 경로를 읽는다.
+     ⚠ 2026-08-13 다시 겨눔 — 예전에는 __ownerUid 라는 «낱말»이 있는지만 봤다.
+       그래서 `it.meta.__ownerUid || gridOwner` 처럼 표를 거르지 않는 코드도 통과했고,
+       실제로 방금 올린 사진(주인 없음 + 화면은 __all__)이 검은 화면으로 떴다.
+       지킬 것은 「거르는 함수를 거쳤는가」다 — photoOwner()·photoYearOf(). */
   const sites = ['downloadOne', 'shareOne', 'downloadSelected', 'openViewer'];
   sites.forEach(function (name) {
     const fn = app.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n\\}'));
     assert.ok(fn, name + ' 본문을 찾을 수 없습니다');
-    assert.match(fn[0], /__ownerUid/, name + ' 이 항목별 실제 소유자를 쓰지 않습니다');
+    assert.match(fn[0], /photoOwner\(/, name + ' 이 주인을 거르지 않고 넘깁니다 (photoOwner 를 거쳐야 합니다)');
+    assert.match(fn[0], /photoYearOf\(/, name + ' 이 화면의 해로 찾습니다 (photoYearOf 를 거쳐야 합니다)');
+    assert.doesNotMatch(fn[0], /\|\|\s*gridOwner/, name + ' 이 아직 gridOwner 를 그대로 씁니다');
   });
+});
+
+/* 사진이 놓인 해는 «사진의 성질»이지 화면의 성질이 아니다.
+   받은 사진은 주인의 해(2025 등)에 있는데 화면은 늘 올해를 두드려
+   본문도 미리보기도 못 찾아 통째로 까맣게 나왔다 (2026-08-13 김보람 제보). */
+test('사진마다 제 해에서 본문을 찾는다 — 화면의 해로 두드리지 않는다', () => {
+  assert.match(app, /function photoYearOf\(/, '사진의 해를 찾는 함수가 없습니다');
+  const fn = fnBody('photoYearOf');
+  assert.match(fn, /__year/, 'photoYearOf 가 사진에 새겨진 해를 안 봅니다');
+  assert.match(fn, /__sharedYear/, 'photoYearOf 가 받은 사진의 해를 안 봅니다');
+  // 미리보기도 같은 길을 타야 한다 — 본문만 고치면 칸은 여전히 비어 보인다
+  assert.match(fnBody('fillThumbsOneByOne'), /photoYearOf\(/, '미리보기가 화면의 해로 찾습니다');
+  // 방금 올린 사진에도 주인·해가 바로 새겨져야 한다 (새로고침 전에도)
+  const add = fnBody('addToGrid');
+  assert.match(add, /__ownerUid/, '방금 올린 사진에 주인이 안 붙습니다');
+  assert.match(add, /__year/, '방금 올린 사진에 해가 안 붙습니다');
 });
 
 test('전체 근로자를 보는 중에는 업로드·삭제가 잠긴다 — 남의 것이라서', () => {
@@ -1956,7 +1978,9 @@ test('판독은 사진 주인 자리에서 본문을 받고 그 자리에 결과
   const fn = fnBody('readPhoto');
   /* ⚠ 2026-08-10 다시 겨눔 — 여러 쪽짜리는 쪽마다 주인을 따로 본다
      (photoOwner(p.id)). 지킬 것은 「주인 자리를 본다」이지 변수 이름이 아니다. */
-  assert.match(fn, /loadFull\([^)]*photoOwner\(/, '남의 사진 본문을 못 찾습니다 (주인을 안 넘깁니다)');
+  /* 인자 안에 괄호가 들어갈 수 있다 — loadFull(photoYearOf(id), id, photoOwner(id)).
+     [^)]* 로는 첫 닫는 괄호에서 끊겨 멀쩡한 코드도 못 알아본다 (2026-08-13). */
+  assert.match(fn, /loadFull\([\s\S]{0,120}?photoOwner\(/, '남의 사진 본문을 못 찾습니다 (주인을 안 넘깁니다)');
   assert.match(fn, /saveRead\([^)]*photoOwner\(/, '판독 결과가 내 자리에 저장됩니다');
   assert.match(app, /function photoOwner\(/, '사진 주인을 찾는 함수가 없습니다');
   /* 「전체 근로자」·「받은 사진」 표를 사람 아이디로 넘기면 없는 자리를 두드린다 */
