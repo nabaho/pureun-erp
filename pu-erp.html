@@ -370,6 +370,36 @@ var BUILD_SEQ = 150;
     };
   }catch(e){}
 })();
+/* ── 바깥 부름에 시간 제한 ──────────────────────────────────────
+   AI·구글·국세청·NAS 로 나가는 부름에 시간 제한이 «하나도» 없었다.
+   답이 안 오면 fetch 는 영영 기다린다 — 화면은 「불러오는 중…」에 갇히고,
+   사람이 할 수 있는 일은 새로고침뿐이다.
+   ⚠ 끊긴 것과 그냥 실패한 것을 갈라 준다. 「시간이 지났습니다」와
+     「연결에 실패했습니다」는 다음에 할 일이 다르다(다시 눌러볼지, 설정을 볼지). */
+var FETCH_MS = 20000;
+function fetchT(url, opts, ms){
+  opts = opts || {};
+  var wait = ms || FETCH_MS;
+  // 아주 옛 브라우저는 끊을 수가 없다 — 그래도 부르기는 해야 하므로 그냥 넘긴다
+  if(typeof AbortController === 'undefined') return fetch(url, opts);
+  var ac = new AbortController();
+  var timer = setTimeout(function(){ ac.abort(); }, wait);
+  var o = {};
+  for(var k in opts){ if(Object.prototype.hasOwnProperty.call(opts, k)) o[k] = opts[k]; }
+  o.signal = ac.signal;
+  return fetch(url, o).then(function(r){
+    clearTimeout(timer);
+    return r;
+  }, function(e){
+    clearTimeout(timer);
+    if(e && e.name === 'AbortError'){
+      var t = new Error(Math.round(wait/1000) + '초 안에 답이 오지 않았습니다');
+      t.timeout = true;
+      throw t;
+    }
+    throw e;
+  });
+}
 // fb_data_changed 디바운스: 다발 변경을 150ms로 묶어 리렌더 폭증 방지
 var _fbChangedKeys=null, _fbChangedTimer=null;
 function _scheduleFbChanged(k){
@@ -1133,10 +1163,10 @@ function openAddressSearch(onComplete, prefill){
   window.lookupBizNoFromNTS = function(bizNo){
     var key = (typeof dbGet==='function'?dbGet('nts_api_key',null):null) || (window.PU_CFG && window.PU_CFG.ntsKey) || null;
     if(!key){ if(typeof showToast==='function') showToast('💡 환경설정에서 국세청 API 키 등록 필요'); return Promise.resolve(null); }
-    return fetch('https://api.odcloud.kr/api/nts-businessman/v1/status?serviceKey='+encodeURIComponent(key), {
+    return fetchT('https://api.odcloud.kr/api/nts-businessman/v1/status?serviceKey='+encodeURIComponent(key), {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({b_no:[(bizNo||'').replace(/[^0-9]/g,'')]})
-    }).then(function(r){return r.json();}).then(function(j){
+    }, 15000).then(function(r){return r.json();}).then(function(j){
       return (j.data && j.data[0]) ? j.data[0] : null;
     }).catch(function(){ return null; });
   };
@@ -1716,7 +1746,7 @@ function _vgOnSig(sig){
 /* HEAD 가 막힌 서버를 위한 옛 방식 — 본문을 받아 길이를 잰다.
    여기 오면 화면이 잠깐 멈추므로, 정말 못 쓸 때만 온다. */
 function _vgCheckBody(now){
-  fetch(location.pathname + '?_cb=' + now, { cache:'no-store' })
+  fetchT(location.pathname + '?_cb=' + now, { cache:'no-store' }, 20000)
     .then(function(r){ return r.ok ? r.text() : null; })
     .then(function(html){
       if(!html) return;
@@ -1734,7 +1764,7 @@ function _vgCheckHtml(force){
     if(!force && (now - _vgLastFetch) < 300000) return;     // 5분 throttle
     _vgLastFetch = now;
     if(_vgHeadBad){ _vgCheckBody(now); return; }
-    fetch(location.pathname + '?_cb=' + now, { method:'HEAD', cache:'no-store' })
+    fetchT(location.pathname + '?_cb=' + now, { method:'HEAD', cache:'no-store' }, 10000)
       .then(function(r){
         if(!r || !r.ok){ _vgHeadBad = true; _vgCheckBody(now); return; }
         var sig = _vgSigOf(r);
@@ -9486,7 +9516,7 @@ function ConsultLogModal(props){
     var allText = f.entries.map(function(e){ return e.text; }).join('\n') + (newEntry.trim() ? '\n'+newEntry.trim() : '');
     if(!allText.trim()){ showToast('요약할 상담 내용이 없습니다'); return; }
     setAiLoading(true);
-    fetch('https://api.anthropic.com/v1/messages',{
+    fetchT('https://api.anthropic.com/v1/messages',{        // AI 는 좀 느릴 수 있어 45초
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
@@ -9495,14 +9525,19 @@ function ConsultLogModal(props){
         system:'당신은 노무법인의 상담내용 정리 전문가입니다. 아래 상담 내용을 다음 형식으로 간결하게 정리해주세요:\n\n1. 핵심 쟁점\n2. 의뢰인 요구사항\n3. 추천 업무 유형 (자문/사건/컨설팅 등)\n4. 다음 단계\n\n100자 내외로 각 항목을 작성하세요.',
         messages:[{role:'user', content:'상담 내용:\n'+allText}]
       })
-    })
+    }, 45000)
     .then(function(r){ return r.json(); })
     .then(function(d){
       var text = (d.content||[]).filter(function(x){return x.type==='text';}).map(function(x){return x.text;}).join('');
       upd('summary', text);
       showToast('✅ AI 요약 완료');
     })
-    .catch(function(e){ showToast('AI 요약 실패: '+e.message); })
+    .catch(function(e){
+      // 시간이 지난 것과 그냥 실패한 것은 다음에 할 일이 다르다
+      showToast(e && e.timeout
+        ? '⏱ AI 요약이 45초 안에 오지 않았습니다 — 다시 눌러 주세요'
+        : 'AI 요약 실패: '+(e&&e.message||''));
+    })
     .finally(function(){ setAiLoading(false); });
   }
 
@@ -17722,11 +17757,11 @@ function CompanyManagement(){
     headers.push('Content-Type: text/plain; charset="UTF-8"');
     headers.push('Content-Transfer-Encoding: base64');
     var raw = headers.join('\r\n')+'\r\n\r\n'+btoa(unescape(encodeURIComponent(body)));
-    return fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{
+    return fetchT('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{
       method:'POST',
       headers:{ 'Authorization':'Bearer '+window._gcalToken, 'Content-Type':'application/json' },
       body: JSON.stringify({ raw: b64url(raw) })
-    }).then(function(r){ if(!r.ok) return r.json().then(function(j){ throw new Error((j.error&&j.error.message)||('HTTP '+r.status)); }); return r.json(); });
+    }, 30000).then(function(r){ if(!r.ok) return r.json().then(function(j){ throw new Error((j.error&&j.error.message)||('HTTP '+r.status)); }); return r.json(); });
   }
   function gmailSendAll(groups){
     if(!window._gcalToken || Date.now() >= (window._gcalExpiry||0)-60000){
@@ -27834,7 +27869,7 @@ function rhwpFullText(doc){
   return parts.join('\n').replace(/\n{3,}/g,'\n\n').trim();
 }
 function rhwpCheckLatest(cb){ // cb(err, latestVer)
-  fetch('https://data.jsdelivr.com/v1/packages/npm/@rhwp/core/resolved')
+  fetchT('https://data.jsdelivr.com/v1/packages/npm/@rhwp/core/resolved', null, 10000)
     .then(function(r){ return r.json(); })
     .then(function(j){ cb(null, j && j.version); })
     .catch(function(){ cb('최신 버전 조회 실패'); });
@@ -32985,7 +33020,7 @@ function NasBackupSettings(){
   }
 
   function nasLogin(){
-    return fetch(getNasBase()+'/webapi/auth.cgi?api=SYNO.API.Auth&version=7&method=login&account='+encodeURIComponent(cfg.user)+'&passwd='+encodeURIComponent(cfg.pass)+'&session=FileStation&format=sid', {credentials:'omit'})
+    return fetchT(getNasBase()+'/webapi/auth.cgi?api=SYNO.API.Auth&version=7&method=login&account='+encodeURIComponent(cfg.user)+'&passwd='+encodeURIComponent(cfg.pass)+'&session=FileStation&format=sid', {credentials:'omit'}, 20000)
       .then(function(r){return r.json();})
       .then(function(d){
         if(d.success) return d.data.sid;
@@ -32993,7 +33028,7 @@ function NasBackupSettings(){
       });
   }
   function nasLogout(sid){
-    return fetch(getNasBase()+'/webapi/auth.cgi?api=SYNO.API.Auth&version=7&method=logout&session=FileStation&_sid='+sid, {credentials:'omit'}).catch(function(){});
+    return fetchT(getNasBase()+'/webapi/auth.cgi?api=SYNO.API.Auth&version=7&method=logout&session=FileStation&_sid='+sid, {credentials:'omit'}, 10000).catch(function(){});
   }
 
   function doBackup(){
@@ -33015,11 +33050,11 @@ function NasBackupSettings(){
     nasLogin().then(function(sid){
       addLog('NAS 로그인 성공','ok');
       // 폴더 먼저 생성 (이미 있어도 무시)
-      return fetch(getNasBase()+'/webapi/entry.cgi', {
+      return fetchT(getNasBase()+'/webapi/entry.cgi', {
         method:'POST', credentials:'omit',
         headers:{'Content-Type':'application/x-www-form-urlencoded'},
         body:'api=SYNO.FileStation.CreateFolder&version=2&method=create&folder_path='+encodeURIComponent(cfg.folder)+'&name=.&_sid='+sid
-      }).then(function(){ return sid; });
+      }, 20000).then(function(){ return sid; });
     }).then(function(sid){
       // 최신 백업 파일 업로드
       var blob = new Blob([json], {type:'application/json'});
@@ -33032,7 +33067,7 @@ function NasBackupSettings(){
       fd.append('overwrite', 'true');
       fd.append('_sid', sid);
       fd.append('file', blob, latest);
-      return fetch(getNasBase()+'/webapi/entry.cgi', {method:'POST', body:fd, credentials:'omit'})
+      return fetchT(getNasBase()+'/webapi/entry.cgi', {method:'POST', body:fd, credentials:'omit'}, 60000)
         .then(function(r){return r.json();})
         .then(function(d){
           if(!d.success) throw new Error('업로드 실패 코드: '+(d.error&&d.error.code));
@@ -33041,7 +33076,7 @@ function NasBackupSettings(){
           var fd2=new FormData(); fd2.append('api','SYNO.FileStation.Upload'); fd2.append('version','3'); fd2.append('method','upload');
           fd2.append('path',cfg.folder); fd2.append('create_parents','true'); fd2.append('overwrite','true'); fd2.append('_sid',sid);
           fd2.append('file', new Blob([json],{type:'application/json'}), filename);
-          return fetch(getNasBase()+'/webapi/entry.cgi', {method:'POST', body:fd2, credentials:'omit'}).then(function(){return sid;});
+          return fetchT(getNasBase()+'/webapi/entry.cgi', {method:'POST', body:fd2, credentials:'omit'}, 60000).then(function(){return sid;});
         });
     }).then(function(sid){
       addLog('날짜별 백업: '+filename+' 저장','ok');
@@ -33060,7 +33095,7 @@ function NasBackupSettings(){
     nasLogin().then(function(sid){
       addLog('NAS 로그인 성공','ok');
       var url = getNasBase()+'/webapi/entry.cgi?api=SYNO.FileStation.Download&version=2&method=download&path='+encodeURIComponent(cfg.folder+'/pureun_erp_latest.json')+'&mode=download&_sid='+sid;
-      return fetch(url, {credentials:'omit'}).then(function(r){
+      return fetchT(url, {credentials:'omit'}, 60000).then(function(r){   // 백업 파일은 크다 — 넉넉히
         if(!r.ok) throw new Error('파일 없음 (아직 백업 안 됨)');
         return r.json().then(function(data){
           var count=0;
@@ -45686,17 +45721,21 @@ function HelpBot(props){
         system: HELP_SYSTEM_PROMPT + '\n\n## 현재 사용자 위치\n' + screenCtx,
         messages: newMsgs
       };
-      var res = await fetch(proxyUrl,{
+      // 답이 안 오면 「생각 중…」에 갇힌다 — 45초에서 끊고 사람에게 말해 준다
+      var res = await fetchT(proxyUrl,{
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify(body)
-      });
+      }, 45000);
       var data = await res.json();
       var reply = data.reply || data.text || (data.content||[]).filter(function(b){return b.type==='text';}).map(function(b){return b.text;}).join('');
       if(!reply) reply = '죄송합니다, 잠시 후 다시 시도해주세요.';
       setMessages(newMsgs.concat([{role:'assistant', content:reply}]));
     }catch(e){
-      setMessages(newMsgs.concat([{role:'assistant', content:'연결 오류가 발생했습니다. 인터넷 연결을 확인해주세요.'}]));
+      // 시간이 지난 것과 연결이 안 된 것은 다음에 할 일이 다르다
+      setMessages(newMsgs.concat([{role:'assistant', content: (e && e.timeout)
+        ? '⏱ 45초 동안 답이 오지 않았습니다. 질문을 조금 짧게 줄여 다시 물어봐 주세요.'
+        : '연결 오류가 발생했습니다. 인터넷 연결을 확인해주세요.'}]));
     }
     setLoading(false);
   }
@@ -50747,11 +50786,11 @@ function CorpDashboard(props){
     return htmlLink;
   }
   function gcalApiCall(method, path, body, cb){
-    fetch('https://www.googleapis.com/calendar/v3'+path,{
+    fetchT('https://www.googleapis.com/calendar/v3'+path,{
       method:method,
       headers:{ 'Authorization':'Bearer '+window._gcalToken, 'Content-Type':'application/json' },
       body: body ? JSON.stringify(body) : undefined
-    }).then(function(r){ return r.status===204?Promise.resolve({}):r.json(); }).then(cb).catch(function(e){ showToast('❌ 오류: '+e.message); });
+    }, 20000).then(function(r){ return r.status===204?Promise.resolve({}):r.json(); }).then(cb).catch(function(e){ showToast('❌ 오류: '+e.message); });
   }
   // ERP 레코드에 gcalEventId가 있으면 구글 캘린더에서도 삭제
   // ★ moveGcalEventToDate 내부에 갇혀 있던 것을 밖으로 — 외부 호출부에서 ReferenceError 나던 버그 수정
@@ -50814,7 +50853,7 @@ function CorpDashboard(props){
   useEffect(function(){
     if(!evDetail || evDetail.ev.type !== 'gcal'){ setGcalEvFull(null); return; }
     setGcalEvFullLoad(true); setGcalEvFull(null);
-    fetch('https://www.googleapis.com/calendar/v3/calendars/'+encodeURIComponent(GCAL_CAL_ID)+'/events/'+encodeURIComponent(evDetail.ev.evId)+'?key='+GCAL_API_KEY)
+    fetchT('https://www.googleapis.com/calendar/v3/calendars/'+encodeURIComponent(GCAL_CAL_ID)+'/events/'+encodeURIComponent(evDetail.ev.evId)+'?key='+GCAL_API_KEY, null, 20000)
       .then(function(r){return r.json();})
       .then(function(d){ setGcalEvFull(d); setGcalEvFullLoad(false); })
       .catch(function(){ setGcalEvFullLoad(false); });
@@ -51061,7 +51100,7 @@ function CorpDashboard(props){
       +encodeURIComponent(GCAL_CAL_ID)+'/events?key='+GCAL_API_KEY
       +'&timeMin='+tMin+'&timeMax='+tMax+'&singleEvents=true&orderBy=startTime&maxResults=500';
     setGcalLoading(true); setGcalErr('');
-    fetch(url)
+    fetchT(url, null, 20000)
       .then(function(r){ return r.json(); })
       .then(function(data){
         if(data.error){ setGcalErr(data.error.message||'API 오류'); setGcalLoading(false); return; }
@@ -61780,7 +61819,7 @@ function ocrWithGoogleVision(base64){
   if(!key) return Promise.reject(new Error('NO_VISION_KEY')); // 키 없으면 로컬 OCR로 폴백
   var pure = (base64 && base64.indexOf(',') >= 0) ? base64.split(',')[1] : base64;
   if(!pure) return Promise.reject(new Error('NO_IMAGE'));
-  return fetch('https://vision.googleapis.com/v1/images:annotate?key=' + key, {
+  return fetchT('https://vision.googleapis.com/v1/images:annotate?key=' + key, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -61790,7 +61829,7 @@ function ocrWithGoogleVision(base64){
         imageContext: { languageHints: ['ko','en'] }
       }]
     })
-  }).then(function(r){ return r.json(); }).then(function(data){
+  }, 30000).then(function(r){ return r.json(); }).then(function(data){
     if(data.error) throw new Error(data.error.message || 'VISION_ERROR');
     var resp = data.responses && data.responses[0];
     var text = resp && resp.fullTextAnnotation ? resp.fullTextAnnotation.text : '';
@@ -64360,20 +64399,22 @@ function LeavePromotion(){
     try { u = (window.firebase && firebase.auth && firebase.auth().currentUser) || null; } catch(e){}
     if(!u) return Promise.reject(new Error('로그인 후 이용해 주세요.'));
     return u.getIdToken().then(function(tok){
-      return fetch(url, {
+      return fetchT(url, {
         method:'POST',
         headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + tok },
         body: JSON.stringify(payload)
-      }).catch(function(){
+      }, 30000).catch(function(e){
         /* 서버 함수가 아직 옛 버전이면 Authorization 헤더를 허용하지 않아 요청이 막힌다.
            그 사이에도 급여명세서가 나가야 하므로 예전 방식으로 한 번 더 시도한다.
            ※ 새 함수는 증표 없는 요청을 401 로 되돌리므로 이 되돌림이 구멍이 되지는 않는다.
              functions 배포가 끝나면 이 catch 는 지워도 된다. */
-        return fetch(url, {
+        // ⚠ 시간이 지난 것은 「옛 서버」 때문이 아니다 — 다시 걸면 30초를 또 기다릴 뿐이다
+        if(e && e.timeout) throw e;
+        return fetchT(url, {
           method:'POST',
           headers:{ 'Content-Type':'application/json' },
           body: JSON.stringify(payload)
-        });
+        }, 30000);
       });
     });
   }
@@ -73005,7 +73046,7 @@ function ERPMain(props){
       var fname = 'pureun_erp_auto_'+today+'.json';
 
       // NAS 로그인 → 업로드
-      fetch(base+'/webapi/auth.cgi?api=SYNO.API.Auth&version=7&method=login&account='+encodeURIComponent(cfg.user)+'&passwd='+encodeURIComponent(cfg.pass)+'&session=FileStation&format=sid', {credentials:'omit'})
+      fetchT(base+'/webapi/auth.cgi?api=SYNO.API.Auth&version=7&method=login&account='+encodeURIComponent(cfg.user)+'&passwd='+encodeURIComponent(cfg.pass)+'&session=FileStation&format=sid', {credentials:'omit'}, 20000)
         .then(function(r){return r.json();})
         .then(function(d){
           if(!d.success) throw new Error('로그인 실패');
@@ -73015,14 +73056,14 @@ function ERPMain(props){
           fd.append('path', folder); fd.append('create_parents','true'); fd.append('overwrite','true');
           fd.append('_sid', sid);
           fd.append('file', new Blob([json],{type:'application/json'}), fname);
-          return fetch(base+'/webapi/entry.cgi', {method:'POST', body:fd, credentials:'omit'})
+          return fetchT(base+'/webapi/entry.cgi', {method:'POST', body:fd, credentials:'omit'}, 60000)
             .then(function(r){return r.json();})
             .then(function(res){
               if(res.success){
                 localStorage.setItem(AUTO_KEY, String(now));
                 showToast('🖥️ NAS 자동 백업 완료 ('+today+')');
                 // 로그아웃
-                fetch(base+'/webapi/auth.cgi?api=SYNO.API.Auth&version=7&method=logout&session=FileStation&_sid='+sid, {credentials:'omit'}).catch(function(){});
+                fetchT(base+'/webapi/auth.cgi?api=SYNO.API.Auth&version=7&method=logout&session=FileStation&_sid='+sid, {credentials:'omit'}, 10000).catch(function(){});
               }
             });
         })
