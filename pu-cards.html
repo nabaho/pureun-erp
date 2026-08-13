@@ -314,6 +314,15 @@ body.mresizing{user-select:none;cursor:col-resize}
   color:#1b2536;background:#fff;font-family:inherit}
 .mdsearch input:focus{outline:none;border-color:#1e2a47}
 .mdlist{max-height:300px;overflow:auto;border:1px solid #e4e8f0;border-radius:9px;background:#fff}
+/* 갈래 머리 — 접었다 폈다 한다. 자료가 늘어도 필요한 갈래만 펴서 고른다. */
+.mdcatg+.mdcatg{border-top:1px solid #e9edf5}
+.mdcath{display:flex;align-items:center;gap:6px;padding:7px 9px;cursor:pointer;background:#f7f9fd;font-size:12px;font-weight:800;color:#42506e;user-select:none}
+.mdcath:hover{background:#eef3fc}
+.mdcath.open{background:#eef3fc}
+.mdcath .ar{flex:0 0 auto;color:#8a97b4;font-size:10px}
+.mdcath .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mdcath .c{flex:0 0 auto;background:#dde5f3;color:#3b4a6b;border-radius:9px;padding:1px 7px;font-size:11px}
+.mdcath .p{flex:0 0 auto;background:#dcfce7;color:#166534;border-radius:9px;padding:1px 7px;font-size:11px}
 .mdrow{display:flex;align-items:center;gap:6px;padding:7px 9px;border-bottom:1px solid #f1f4f9;font-size:12.5px}
 .mdrow:last-child{border-bottom:none}
 .mdrow.on{background:#eef4ff}
@@ -1388,7 +1397,7 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', e
   matQ:'', matMailCat:'', matPrevId:'', sendLog:{},
   /* 메일 화면 — mailSent 가 true 면 보낸 메일함, 아니면 쓰기 */
   mailSent:false, mailDrawer:true, sentBox:{}, schedBox:{}, sentQ:'', sentMine:false, sentCat:'', sentBy:'',
-  showBcc:false, draftAt:'', matPick:'', drawerQ:'',
+  showBcc:false, draftAt:'', matPick:'', drawerQ:'', drawerOpen:{},
   bodyFont:'맑은고딕', bodySize:'10', bodyBold:false, bodyItalic:false, drawerW:300,
   view:'list', vtab:'' };
 
@@ -3658,7 +3667,7 @@ function mailWriteHtml(){
           /* ⚠ 줄을 누르면 **미리보기**가 열린다(대표 지시 2026-08-10).
              담기는 왼쪽 네모로 한다 — 어떤 서류인지 보고 나서 담는 것이 순서다.
              예전에는 줄을 누르면 바로 담겨, 무엇인지 모른 채 붙는 일이 있었다. */
-          return `<div class="mdlist">${list.map(m=>{
+          const row = m => {
             const on = c.ids.indexOf(m.id)>=0;
             const seen = state.matPrevId===m.id;
             return `<div class="mdrow ${on?'on':''} ${seen?'seen':''}">
@@ -3670,7 +3679,24 @@ function mailWriteHtml(){
                 <i>${m.size?fmtMB(m.size):''}</i></span>
               <span class="v ${seen?'on':''}" onclick="previewInDrawer('${m.id}')" title="내용 보기">👁</span>
             </div>`;
-          }).join('')}</div>`;
+          };
+          /* 갈래로 묶어 접는다. 자료가 늘수록 평평한 목록은 훑기 어려워진다 —
+             보낼 때 필요한 건 보통 한 갈래뿐이라, 그 갈래만 펴서 고르면 된다
+             (대표 지시 2026-08-12). 담긴 것이 있는 갈래는 접혀 있어도 숫자로 알려준다. */
+          return '<div class="mdlist">' + drawerGroups(list).map(g=>{
+            const open = drawerCatOpen(g.cat, list.length);
+            const picked = g.items.filter(m=>c.ids.indexOf(m.id)>=0).length;
+            return `<div class="mdcatg">
+              <div class="mdcath ${open?'open':''}" onclick="toggleDrawerCat('${esc(g.cat)}')"
+                title="${open?'접기':'펴기'}">
+                <span class="ar">${open?'▾':'▸'}</span>
+                <span class="t">${esc(g.cat)}</span>
+                <span class="c">${g.items.length}</span>
+                ${picked?`<span class="p" title="이 갈래에서 담은 자료">담음 ${picked}</span>`:''}
+              </div>
+              ${open ? g.items.map(row).join('') : ''}
+            </div>`;
+          }).join('') + '</div>';
         })()}
         ${state.matPrevId ? (function(){
           const m=_matMeta[state.matPrevId]||{};
@@ -3688,6 +3714,33 @@ function mailWriteHtml(){
         <div class="mdlink" onclick="openMatPage()">자료 올리기·관리는 자료함에서 →</div>
       </div>
     </div>`;
+}
+/* ── 자료 서랍을 갈래로 묶기 ──
+   자료함의 갈래 차례를 그대로 따른다. 서랍만 다른 순서로 보이면 같은 자료를 두 곳에서
+   다르게 찾게 된다. 갈래에 없는 값이 붙은 자료도 버리지 않고 뒤에 붙인다 —
+   목록에서 사라지면 영영 못 고른다. */
+function drawerGroups(list){
+  const order = MAT_CATS_NOW();
+  const by = {};
+  list.forEach(m=>{ const k = matCat(m) || '기타'; (by[k] = by[k] || []).push(m); });
+  const out = [];
+  order.forEach(c=>{ if(by[c] && by[c].length){ out.push({cat:c, items:by[c]}); delete by[c]; } });
+  Object.keys(by).forEach(c=> out.push({cat:c, items:by[c]}));
+  return out;
+}
+/* 어느 갈래를 펴 둘지.
+   ① 찾는 말을 치는 중이면 전부 편다 — 접힌 곳에 답이 숨으면 「없다」고 오해한다
+   ② 자료가 적으면(6개 이하) 굳이 접을 이유가 없다
+   ③ 그 밖에는 대표가 눌러서 편 것만 편다 */
+function drawerCatOpen(cat, total){
+  if(String(state.drawerQ||'').trim()) return true;
+  if(total <= 6) return true;
+  return !!(state.drawerOpen||{})[cat];
+}
+function toggleDrawerCat(cat){
+  state.drawerOpen = state.drawerOpen || {};
+  state.drawerOpen[cat] = !state.drawerOpen[cat];
+  grabCompose(); renderMailPage();
 }
 function focusDrawerQ(){ const q=$('mdQ'); if(q){ q.focus(); q.setSelectionRange(q.value.length,q.value.length); } }
 
