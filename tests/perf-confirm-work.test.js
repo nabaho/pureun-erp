@@ -34,9 +34,26 @@ ctx.S.me = { sid:'u1' };
 ok('★ 쓰기 함수는 모두 pcMySid() 로 사번을 얻는다',
    (blk.match(/var sid\s*=\s*pcMySid\(\)/g) || []).length >= 4,
    (blk.match(/var sid\s*=\s*pcMySid\(\)/g) || []).length + '곳');
+/* 대표가 쓸 수 있는 것은 «이의 답변» 하나뿐이다.
+   직원의 확인·이의·완료를 대신 누르면 확인의 뜻이 사라지므로 그건 여전히 막는다. */
 const admBlk = blk.slice(blk.indexOf('function pcAdminHTML'));
-ok('★ 대표 전체 현황에는 쓰기가 하나도 없다 (읽기 전용)',
-   !/\.update\(|\.set\(|pcSetOk\(|pcSaveObj\(|pcMarkDone\(|pcWithdrawObj\(/.test(admBlk));
+ok('★ 대표가 직원의 확인·이의·완료를 대신 누르지 못한다',
+   !/pcSetOk\(|pcSaveObj\(|pcMarkDone\(|pcWithdrawObj\(/.test(admBlk));
+ok('★ 대표가 쓰는 자리는 items/<fid>/reply 하나뿐',
+   (admBlk.match(/fbDb\.ref\(/g) || []).length === 1
+   && /PC_PATH\+'\/'\+ym\+'\/p\/'\+sid\+'\/items\/'\+fid\+'\/reply'/.test(admBlk),
+   (admBlk.match(/fbDb\.ref\(/g) || []).length + '곳');
+const rpBlk = admBlk.slice(admBlk.indexOf('function pcReply('), admBlk.indexOf('/* ── 안내 띠'));
+ok('★ 답변은 금액을 건드리지 않는다 (고치는 것은 원본의 일)',
+   !/amount|total|pct/.test(rpBlk), rpBlk.length + '자');
+ok('답변하면 그 이의가 닫힌다', /state:'done'/.test(admBlk));
+ok('답변 뒤 다시 읽어 화면·띠·배지를 맞춘다', /pcRefresh\(\)\.then\(route\)/.test(admBlk));
+ok('빈 답변은 저장하지 않는다', /if\(t\.length<2\)/.test(admBlk));
+/* 대표가 답할 이의를 세는 곳 — 띠와 배지가 같은 셈을 써야 두 곳이 어긋나지 않는다 */
+ok('★ 답할 이의를 세는 곳이 하나다',
+   (blk.match(/function pcAdmPending\(\)/g) || []).length === 1);
+ok('띠와 배지가 같은 셈을 쓴다',
+   /pcAdmPending\(\)/.test(blk.slice(blk.indexOf('function pcBand'))) );
 ok('경로를 항상 내 사번으로 만든다', /PC_PATH\+'\/'\+ym\+'\/p\/'\+sid/.test(blk));
 ok('viewer() 를 안 쓴다', blk.indexOf('viewer(') < 0);
 
@@ -94,9 +111,12 @@ ok('★ 전체 현황은 총괄·대행만 (isAdmin) — 서버에 물어본다'
 ok('★ 성과급 코드에 fin 은 안 쓴다', blk.indexOf("'/fin'") < 0);
 ok('권한 없으면 전체를 아예 안 읽는다', /if\(!fin\) return \[\];/.test(blk));
 ok('전체 현황은 대표만 채워진다', /pcAdminHTML/.test(blk) && /S\.perfAll\|\|\[\]/.test(blk));
-ok('전체 현황에 쓰기 기능은 없다',
-   !/pcAdminHTML[\s\S]{0,4000}?(\.update\(|\.set\()/.test(blk));
-ok('처리·답변은 푸른이알피로 보낸다', /이의 답변은 푸른이알피/.test(blk));
+/* 답변은 여기서 한다(역할 나누기). 금액을 고치는 것은 여전히 푸른이알피 원본의 일이다 —
+   여기서 금액까지 만지면 사본과 원본이 어긋난다. */
+ok('금액을 고치려면 푸른이알피로 보낸다',
+   /금액을 고쳐야 하면 푸른이알피 <b>입금관리 → 성과분배<\/b>/.test(blk));
+ok('마감은 여전히 푸른이알피에서 한다',
+   /푸른이알피 성과관리 → 확인 현황에서 마감하세요/.test(blk));
 
 /* ── 달력 줄 + 사람 탭 ── */
 ok('달을 앞뒤로 옮길 수 있다', /function pcAdmMove\(d\)/.test(blk) && /pcAdmMove\(-1\)/.test(blk) && /pcAdmMove\(1\)/.test(blk));
