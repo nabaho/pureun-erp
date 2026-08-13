@@ -746,6 +746,27 @@
     return deps.db.ref().update(u);
   }
 
+  /* ── 문서 묶음 고치기 (대표 지시 2026-08-13) ──
+     여러 쪽짜리 문서는 meta.doc = {name,page,total,taken,group} 로 묶여 있다.
+     사람이 「쪽마다 따로 읽기」·「이 쪽만 떼어내기」·「한 문서로 묶기」를 할 때
+     그 칸을 고쳐 준다. doc 이 null 이면 묶음에서 빠져 홑장이 된다.
+
+     ⚠ **한 묶음(update)으로 한 번에 쓴다.** 나눠 쓰다 중간에 끊기면 어떤 쪽은
+        묶여 있고 어떤 쪽은 풀린 반쪽 상태가 되어, 판독이 문서를 못 모은다.
+     ⚠ 사진 본문·미리보기는 건드리지 않는다 — 묶는 방식만 바뀔 뿐 사진은 그대로다. */
+  function setDocs(year, entries, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var list = entries || [];
+    if (!list.length) return Promise.resolve();
+    var u = {};
+    list.forEach(function (e) {
+      if (!e || !e.id) return;      // 번호가 없으면 상위 노드를 가리키게 된다
+      u[metaPath(year, e.id, owner) + '/doc'] = e.doc || null;
+    });
+    if (!Object.keys(u).length) return Promise.resolve();
+    return deps.db.ref().update(u);
+  }
+
   /* 한 연도의 사진 목록(정보만). 본문·미리보기는 안 딸려 온다 — 경로가 갈라져 있어서.
      owner 를 넘기면 그 사람 것을 읽는다(관리자만 규칙이 허락한다). */
   function listYear(year, owner) {
@@ -1346,6 +1367,7 @@
     addCustomKind: addCustomKind,
     renameCustomKind: renameCustomKind,
     setCustomKind: setCustomKind,
+    setDocs: setDocs,
     deletePhoto: deletePhoto,
     listTrash: listTrash,
     restorePhoto: restorePhoto,
