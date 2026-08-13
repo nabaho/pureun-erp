@@ -74,13 +74,24 @@ test('★ 새 근태표는 「표를 원본과 대조」로 눈에 띈다', () =
     'needsCheck 와 순서가 어긋나면 걸린 이유와 적힌 이유가 달라집니다');
 });
 
-test('★ 근태표일 때만 판이 화면 절반을 쓴다', () => {
-  /* 대표 지시의 핵심 — "그렇게 해야 정밀하게 찾을 수 있다" */
+test('★ 넓은 표 종류만 판이 화면 절반을 쓴다', () => {
+  /* 대표 지시의 핵심 — "그렇게 해야 정밀하게 찾을 수 있다"
+     2026-08-13 다시 겨눔: 서식(form)도 절반을 쓰게 되어 종류 판단이
+     wideKind 한 곳으로 모였다. 지키는 것은 「넓은 표 종류만 넓힌다」이다. */
   assert.match(app, /#readPanel\.wide\{flex:0 0 50%\}/, '넓은 판 꾸밈이 없습니다');
   const p = fnOf(app, 'renderReadPanel');
-  assert.match(p, /classList\.toggle\('wide', !!\(it && it\.meta && it\.meta\.read && it\.meta\.read\.kind === 'timesheet'\)\)/,
-    '명함까지 절반을 쓰면 사진이 좁아집니다 — 근태표만 넓힙니다');
+  assert.match(p, /classList\.toggle\('wide', !!\(it && it\.meta && wideKind\(it\.meta\.read\)\)\)/,
+    '판을 넓힐지는 wideKind 한 곳이 정해야 합니다');
   assert.match(p, /timesheetBox\(it\)/, '함수만 있고 안 부르면 화면에 아무것도 없습니다');
+
+  /* wideKind 를 실제로 돌려 본다 — 명함까지 절반을 쓰면 사진이 좁아진다 */
+  const ctx = {};
+  vm.createContext(ctx);
+  vm.runInContext(fnOf(app, 'wideKind'), ctx);
+  assert.equal(ctx.wideKind({ kind: 'timesheet' }), true, '근태표가 안 넓혀집니다');
+  assert.equal(ctx.wideKind({ kind: 'form' }), true, '서식이 안 넓혀집니다');
+  assert.equal(ctx.wideKind({ kind: 'card' }), false, '명함까지 넓히면 사진이 좁아집니다');
+  assert.equal(ctx.wideKind(null), false);
 });
 
 /* ── 날짜 정직함 ── */
