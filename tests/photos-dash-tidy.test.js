@@ -98,15 +98,18 @@ test('★ PDF를 200dpi 넘게 담는다', () => {
     '배율 ' + m[1] + ' 는 200dpi 에 못 미칩니다 — 작은 글씨가 안 읽힙니다.');
 });
 
-test('키운 PDF가 저장 층 상한에 걸려 도로 줄지 않는다', () => {
-  /* A4 를 배율 3 으로 그리면 긴 쪽이 2525px 이다. 서류 상한(3200)보다 작아야
-     키운 보람이 있다 — 상한을 넘으면 저장하면서 도로 줄여 버린다. */
+test('★ PDF를 저장 상한보다 크게 그린 뒤 줄인다 — 작게 그려 늘리면 안 된다', () => {
+  /* 2026-08-13: 서류 상한이 3200 → 2000 으로 내려갔다(비용). 그래서 A4 를 배율 3
+     으로 그린 2525px 은 저장하면서 2000 으로 줄어든다 — 그것이 **맞다.**
+     크게 그린 뒤 줄이면 글자 획이 여러 점에 걸쳐 평균나 오히려 또렷해진다
+     (supersampling). 반대로 상한보다 **작게** 그리면 없는 화소를 늘리는 셈이라
+     흐린 그림이 커질 뿐이고, 상한을 놀리는 것이 된다. */
   const store = fs.readFileSync(path.join(__dirname, '..', 'js', 'pu-photo-store.js'), 'utf8');
   const spec = store.match(/function uploadSpec\([\s\S]*?\n  \}/);
   assert.ok(spec, 'uploadSpec 을 찾지 못했습니다.');
   const doc = spec[0].match(/maxEdge: (\d+), quality: [\d.]+, thumbEdge: \d+ \}\s*:/);
   assert.ok(doc, '서류 쪽 상한을 찾지 못했습니다.');
   const scale = Number(app.match(/getViewport\(\{ scale: (\d+(?:\.\d+)?) \}\)/)[1]);
-  assert.ok(842 * scale <= Number(doc[1]),
-    'A4 긴 쪽 ' + Math.round(842 * scale) + 'px 이 상한 ' + doc[1] + 'px 을 넘어 도로 줄어듭니다.');
+  assert.ok(842 * scale >= Number(doc[1]),
+    '★ A4 긴 쪽 ' + Math.round(842 * scale) + 'px 이 상한 ' + doc[1] + 'px 에 못 미칩니다 — 상한을 놀립니다.');
 });
