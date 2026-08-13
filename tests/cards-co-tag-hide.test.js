@@ -97,15 +97,23 @@ test('loadCoTagHidden 은 클라우드 모드가 아니면 콜백만 부른다',
 });
 
 /* 옆줄 「사업별」 목록에서 숨긴 탭을 거르는 부분만 따로 잘라 실제로 돌린다.
-   이 조각은 tags·_coTagHidden·state.coShowHidden 만 갖고 shown/hiddenN 을 계산하는
-   순수 로직이라 작게 잘라내기 쉽다. */
+   ⚠ 이 두 줄을 검사 파일 안에 손으로 다시 적으면 안 된다 — 화면 코드가 바뀌어도
+     검사는 자기 사본만 보고 계속 통과해 회귀를 못 잡는다(실제로 한 번 이렇게 되어
+     "!" 를 화면 코드에서 지워도 검사가 안 잡힌 적이 있다). 반드시 pu-cards.html 에서
+     그 줄을 그대로 잘라와 돌린다. const 를 var 로만 바꾼다 — vm 최상위 const 는
+     컨텍스트 프로퍼티로 안 붙어서 밖에서 못 읽는다(선언 방식만 바꾼 것, 로직은 그대로). */
+function loadShownTagsCode(){
+  const at = source.indexOf('const shown = tags.filter(');
+  assert.ok(at > 0, 'shown 계산 줄을 찾지 못했습니다');
+  const end = source.indexOf('\n', source.indexOf('const hiddenN = tags.filter(', at));
+  assert.ok(end > at, 'hiddenN 계산 줄을 찾지 못했습니다');
+  return source.slice(at, end).replace('const shown', 'var shown').replace('const hiddenN', 'var hiddenN');
+}
+
 function computeShownTags(tags, coTagHidden, showHidden){
   const ctx = { tags, _coTagHidden: coTagHidden, state: { coShowHidden: showHidden } };
   vm.createContext(ctx);
-  vm.runInContext(`
-    var shown = tags.filter(x=>state.coShowHidden || !_coTagHidden[x.t]);
-    var hiddenN = tags.filter(x=>_coTagHidden[x.t]).length;
-  `, ctx);
+  vm.runInContext(loadShownTagsCode(), ctx);
   return { shown: ctx.shown, hiddenN: ctx.hiddenN };
 }
 
