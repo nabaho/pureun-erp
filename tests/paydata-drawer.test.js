@@ -144,3 +144,80 @@ test('탭을 옮기면 대기 칸 처럼 사업장을 안 섞고 요청한다', 
   assert.ok(m, 'ensureDrawerData 함수를 찾을 수 없습니다');
   assert.match(m[0], /itemsMonthSlot/);
 });
+
+/* ══════ 내 폴더 (사진첩과 같은 방식) ══════ */
+
+function loadFolderCalc() {
+  const sandbox = { window: {}, console };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  new vm.Script([
+    cut('folderCounts'), cut('folderRows'),
+    'window.folderCounts = folderCounts; window.folderRows = folderRows;'
+  ].join('\n'), { filename: 'foldcalc.js' }).runInContext(sandbox);
+  return sandbox.window;
+}
+
+const FOLDER_ROWS = [
+  { id: 'a1', filename: '근태.jpg', folder: 'f1' },
+  { id: 'a2', filename: '대장.xlsx', folder: 'f1' },
+  { id: 'a3', filename: '따로.jpg', folder: 'f2' },
+  { id: 'a4', filename: '폴더없음.jpg' }
+];
+
+test('★ 「전체」는 지금 탭의 자료 수 전부다', () => {
+  const W = loadFolderCalc();
+  assert.equal(W.folderCounts(FOLDER_ROWS).all, 4);
+});
+
+test('폴더별 장수를 센다', () => {
+  const W = loadFolderCalc();
+  const c = W.folderCounts(FOLDER_ROWS);
+  assert.equal(c.f1, 2);
+  assert.equal(c.f2, 1);
+});
+
+test('★ 폴더가 없는 자료는 「전체」에는 들어가되 어느 폴더에도 안 잡힌다', () => {
+  const W = loadFolderCalc();
+  const c = W.folderCounts(FOLDER_ROWS);
+  assert.equal(Object.keys(c).indexOf('undefined'), -1);
+  assert.equal(Object.keys(c).indexOf(''), -1);
+});
+
+test('폴더를 고르면 그 폴더 자료만 남는다', () => {
+  const W = loadFolderCalc();
+  assert.equal(W.folderRows(FOLDER_ROWS, 'f1').length, 2);
+  assert.equal(W.folderRows(FOLDER_ROWS, 'f2').length, 1);
+});
+
+test('★ 「전체」를 고르면 폴더 없는 자료도 함께 보인다', () => {
+  const W = loadFolderCalc();
+  assert.equal(W.folderRows(FOLDER_ROWS, 'all').length, 4);
+  assert.equal(W.folderRows(FOLDER_ROWS, '').length, 4);
+});
+
+test('★ 서랍 화면에 폴더 칸이 있다', () => {
+  const m = html.match(/function screenDrawer[\s\S]*?\n\}/);
+  assert.match(m[0], /folderBar\(/);
+});
+
+test('★ 자료 줄마다 폴더 지정 골라잡기가 있다', () => {
+  const m = html.match(/function screenDrawer[\s\S]*?\n\}/);
+  assert.match(m[0], /onchange="assignFolder\(/);
+});
+
+test('★ 폴더 이름은 그 자리에서 적는다 — prompt() 를 쓰지 않는다', () => {
+  const m = html.match(/function (submitFolderEditor|openFolderEditor|folderEditorHtml)[\s\S]*?\n\}/g);
+  assert.ok(m && m.length === 3);
+  m.forEach(fn => assert.equal(/\bprompt\(/.test(fn), false, '자리에서 적는 대신 prompt() 를 쓰고 있습니다'));
+});
+
+test('폴더 이름이 비면 만들지 않고 그냥 접는다 — 지우는 손짓이 아니다', () => {
+  const m = html.match(/function submitFolderEditor[\s\S]*?\n\}/);
+  assert.match(m[0], /if \(!name\) \{ cancelFolderEditor/);
+});
+
+test('폴더를 지워도 자료가 함께 지워진다는 안내가 없다 — 실제로도 안 지운다', () => {
+  const m = html.match(/function removeFolderAsk[\s\S]*?\n\}/);
+  assert.match(m[0], /지워지지 않고/);
+});
