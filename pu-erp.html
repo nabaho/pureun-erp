@@ -4748,7 +4748,14 @@ function erpLearnPayerAlias(memo, cand){
     if(!coName) return false;
     var key = erpNormName(raw);
     if(!key) return false;
-    if(key === erpNormName(coName)) return false;   // 적요=업체명이면 배울 것이 없음
+    if(key === erpNormName(coName)){
+      /* 적요=업체명이면 새로 배울 것은 없다. 그런데 «전에 잘못 배운 것» 은 지워야 한다.
+         2026-08-13 김보람 제보의 「(자)천안청화공사 → 웅천새마을금고」 가 이 구멍이었다.
+         적요가 곧 업체명이라 그냥 false 로 돌아섰고, 틀린 별칭이 그대로 남아
+         고쳐 잡아도 다음 달에 또 웅천새마을금고로 끌려갔다. */
+      erpForgetPayerAlias(key);
+      return false;
+    }
 
     var st = erpAliasStore();
     var cur = st[key];
@@ -37830,6 +37837,15 @@ function FinanceLedger(){
                   // ══ 처리 — 단추 크기를 하나로 맞춘다 ══
                   h('td',{style:Object.assign({},tdS,{borderLeft:'2px solid #f8fafc',textAlign:'right',
                       whiteSpace:'nowrap',padding:'4px 6px'})},
+                    /* ★ 붙어 있는 후보가 «틀렸을 때» 그 자리에서 뗀다 (2026-08-13 김보람 제보).
+                       「찾기」·「등록」은 후보가 하나도 없을 때(state==='none')만 나온다.
+                       후보가 붙는 순간 사라지므로, 엉뚱한 곳에 붙어도 떼어낼 길이 그 자리에 없었다
+                       — 일단 확정한 뒤 「확정 이력 ▸ 업체 바꾸기」 로 돌아가야 했다.
+                       확정하지 않는다. 이미 있는 찾기 창을 열 뿐이다. */
+                    _st.state!=='none' && !isCms && h('button',{onClick:function(){ openFindRow(row); },
+                      title:'붙어 있는 후보가 틀렸을 때 — 확정하지 않고 다시 고릅니다\n'
+                           +'사무관리에 아예 없는 건이면 그 창에서 「수입으로만 등록」 을 고르세요',
+                      style:_actBtn('#fff','#475569','#e2e8f0')},'↔ 바꾸기'),
                     _st.state==='ready' && pItem && h('button',{onClick:function(){ confirmRow(row,pItem,{feeAmount:_st.fee}); },
                       style:_actBtn('#16a34a','#fff','#16a34a')},'확정'),
                     // CMS 줄은 「확인」 대신 CMS 하나만 — 단추 둘이 나란히 서면 무엇을 눌러야 할지 헷갈린다
@@ -38612,12 +38628,25 @@ function FinanceLedger(){
         : _sg;
       function _pick(pid){
         if(inMatch[sugPopK] !== pid){
+          // 바꾸기 전에 무엇이 붙어 있었는지 — 「A 를 B 로 고쳤다」 고 말해 주려면 지금 잡아 둬야 한다
+          var _was = (_sel && pendById[_sel]) ? (pendById[_sel].companyName || '') : '';
           var nm=Object.assign({},inMatch); nm[sugPopK]=pid; setInMatch(nm);
           savePick(sugPopK, pid);
           try{
             var _c=pendById[pid];
-            if(_c && _memo && erpLearnPayerAlias(_memo, _c))
-              showToast('🔖 기억함 — 다음부터 「'+_memo+'」 은 '+_c.companyName+' 로 찾아옵니다');
+            var _learned = !!(_c && _memo && erpLearnPayerAlias(_memo, _c));
+            if(_c){
+              /* 틀린 것을 고친 것인지, 처음 고른 것인지를 갈라 말한다.
+                 고친 경우 «전에 배운 것도 함께 지워진다» 는 것을 알려야 한다 —
+                 안 알리면 다음 달에 또 틀리게 붙었을 때 왜 그런지 알 수 없다. */
+              if(_was && _was !== _c.companyName){
+                showToast('↔ ' + _was + ' → ' + _c.companyName + ' 로 바꿨습니다'
+                  + (_learned ? (' · 「'+_memo+'」 학습도 새로 고친 곳으로 바뀝니다') : '')
+                  + ' · 확정은 표의 [확정] 단추로');
+              } else if(_learned){
+                showToast('🔖 기억함 — 다음부터 「'+_memo+'」 은 '+_c.companyName+' 로 찾아옵니다');
+              }
+            }
           }catch(_le){ if(window._erpErrLog) window._erpErrLog(_le); }
         }
         setSugPopK(''); setSugPopQ('');
@@ -38634,6 +38663,15 @@ function FinanceLedger(){
             h('span',{style:{fontSize:'11px',opacity:0.9}},
               _pq ? ('찾은 것 '+_rows.length+'건') : ('후보 '+_sg.length+'건')),
             h('button',{className:'x',onClick:function(){setSugPopK('');setSugPopQ('');},style:{color:'#fff'}},'×')),
+          /* 지금 «무엇이 붙어 있는지» 를 먼저 보여준다 — 바꾸러 온 사람은 이것부터 봐야 한다.
+             전에는 목록 안 라디오 단추 하나로만 표시돼, 무엇을 바꾸는 중인지 알기 어려웠다. */
+          _sel && pendById[_sel] && h('div',{style:{padding:'7px 12px',background:'#fffbeb',
+              borderBottom:'1px solid #fde68a',fontSize:'11.5px',color:'#854d0e',lineHeight:1.55}},
+            h('b',null,'지금 붙어 있는 것 — '+(pendById[_sel].companyName||'-')),
+            h('span',null,' · '+(pendById[_sel].label||'-')
+              +(_pendStaff(pendById[_sel])?(' · 담당 '+_pendStaff(pendById[_sel])):'')),
+            h('div',{style:{fontSize:'10.5px',opacity:0.9}},
+              '아래에서 다른 것을 고르면 바뀝니다. 아직 확정한 것이 아닙니다')),
           // ── 직접 찾기 — 추천이 못 좁혀 줄 때 여기서 이름·번호로 고른다 ──
           h('div',{style:{padding:'8px 10px',borderBottom:'1px solid #f8fafc',background:'#f8fafc',
             display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}},
@@ -38716,8 +38754,39 @@ function FinanceLedger(){
                       (s.reasons||[]).join(' · '))
                   );
                 })),
+          /* ── 목록에 «맞는 것이 없을 때» 의 길 ──
+             이현아 건(2026-01-28)처럼 사건 자체가 등록돼 있지 않으면 아무리 뒤져도 후보가 없다.
+             이 길들은 원래 있었지만 «후보가 하나도 없는 줄» 에서만 보였다.
+             후보가 엉뚱하게 붙은 줄에서는 화면에서 사라져, 여기까지 와서도 막다른 길이었다. */
+          h('div',{style:{padding:'8px 12px',borderTop:'1px solid #e2e8f0',background:'#f8fafc',
+              display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap'}},
+            h('span',{style:{fontSize:'11px',color:'#64748b',marginRight:'2px'}},'맞는 것이 없나요?'),
+            h('button',{onClick:function(){
+                var _c = null;
+                try{ _c = erpConsultMatch(_row, _intakes); }catch(_e){}
+                setSugPopK(''); setSugPopQ('');
+                setDirPop({row:_row, name:(_c&&_c.name)||String(_memo||'').trim(),
+                  kind:'상담료', doc:'cash', consultId:(_c&&_c.id)||'',
+                  mainSid:(CURRENT_USER&&CURRENT_USER.sid)||'', vatIncluded:true, perfOn:true,
+                  cardMode:false, grossAmt:_row.amount});
+              },
+              title:'사무관리에 사건·자문이 없는 입금을 수입으로만 남깁니다 — 상담료·현금영수증 등',
+              style:_expBtn},'✎ 사무관리에 없음 — 수입으로만 등록'),
+            pending.length>=2 && h('button',{onClick:function(){
+                var init={};
+                if(_sel){ var pi=pending.find(function(p){return p.id===_sel;}); if(pi) init[_sel]=pi.expect||pi.amount; }
+                setSugPopK(''); setSugPopQ('');
+                setSpSel(init); setSpGap(''); setSpQ(''); setSpRows(null); setSpRow(_row); setSpOpen(_row._k);
+              },
+              title:'한 입금이 여러 건으로 갈릴 때',
+              style:_expBtn},'⊞ 나눠담기'),
+            h('button',{onClick:function(){ setSugPopK(''); setSugPopQ(''); holdRow(_row); },
+              title:'누가 왜 보낸 돈인지 모를 때 — 지우지 않고 남겨 둡니다',
+              style:_expBtn},'🗄 보류함에 넣기')),
           h('div',{style:{padding:'8px 12px',borderTop:'1px solid #f8fafc',fontSize:'11px',color:'#64748b'}},
-            '고르면 창이 닫히고 표에 반영됩니다 — 확정은 표의 [확정] 단추로 합니다')));
+            '고르면 창이 닫히고 표에 반영됩니다 — 확정은 표의 [확정] 단추로 합니다',
+            _sel && h('span',{style:{color:'#d97706',fontWeight:700}},
+              ' · 지금 붙어 있는 것을 바꾸면 「'+(_memo||'-')+'」 에 대한 학습도 새로 고른 곳으로 바뀝니다'))));
     })(),
 
     // ── 1-1 입금 상세 팝업 (행 클릭 시) ──
