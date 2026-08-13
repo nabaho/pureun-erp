@@ -40,6 +40,7 @@
     { key: 'career',  name: '이력관리',     icon: '🗂', url: 'kcareer.html',        desc: '개인 이력서' },
     { key: 'cards',   name: '명함·메일',    icon: '📇', url: 'pu-cards.html',       desc: '사업자·명함·계약서' },
     { key: 'photos',  name: '사진첩',       icon: '🖼️', url: 'pu-photos.html',      desc: '사진·서류' },
+    { key: 'paydata', name: '급여데이터함',  icon: '💼', url: 'pu-paydata.html',     desc: '급여자료 사업장별' },
     { key: 'fund',    name: '기금관리',     icon: '🏦', url: 'fund.html',           desc: '근로복지기금 운영' },
     { key: 'rules',   name: '취업규칙 관리', icon: '📋', url: 'rules.html',          desc: '작성·검토·개정·신고' },
     { key: 'docs',    name: '문서관리',     icon: '📄', url: 'docs-esign.html',     desc: '계약서 전자송부' },
