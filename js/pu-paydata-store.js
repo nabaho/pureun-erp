@@ -249,6 +249,57 @@
     return (Number(now || Date.now()) - at) > PENDING_STALE_DAYS * 86400000;
   }
 
+  /* ══════ 파일 받기 ══════
+     사진첩은 이미지만 담기지만 급여자료는 엑셀·PDF·한글 파일이 섞여 있다. */
+  var UPLOAD_MAX = 25 * 1024 * 1024;   // 창고 한 건 상한. 넘으면 미리 막는다
+  var BAD_EXT = ['exe', 'js', 'html', 'htm', 'bat', 'cmd', 'sh', 'com', 'scr', 'vbs', 'jar'];
+  var MIME_EXT = {
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/heic': 'heic', 'image/webp': 'webp',
+    'application/pdf': 'pdf'
+  };
+
+  function extOf(name, mime) {
+    var m = String(name || '').match(/\.([A-Za-z0-9]{1,8})$/);
+    if (m) return m[1].toLowerCase();
+    if (mime && MIME_EXT[mime]) return MIME_EXT[mime];
+    return 'bin';
+  }
+
+  /* 받을 수 있는 파일인가. **조용히 실패하지 않는다** —
+     「올렸다」고 생각하고 원본을 지우는 것이 가장 나쁘다. */
+  function acceptFile(file) {
+    if (!file) return { ok: false, why: '파일이 없습니다' };
+    var size = Number(file.size || 0);
+    if (!size) return { ok: false, why: '빈 파일입니다 — 다시 골라 주세요' };
+    if (size > UPLOAD_MAX) {
+      return { ok: false, why: '파일이 너무 큽니다 (' + Math.round(size / 1048576) + 'MB) — 25MB 아래로 줄여 주세요' };
+    }
+    var ext = extOf(file.name, file.type);
+    if (BAD_EXT.indexOf(ext) >= 0) return { ok: false, why: '이 종류(' + ext + ')는 담지 않습니다' };
+    return { ok: true, why: '' };
+  }
+
+  /* 창고에 올리고 **그 뒤에** 대기 칸 정보를 쓴다.
+     순서가 뒤집히면 파일 없는 유령 자료가 목록에 남는다. */
+  function saveFile(file, meta) {
+    var chk = acceptFile(file);
+    if (!chk.ok) return Promise.reject(new Error(chk.why));
+    meta = meta || {};
+    var id = meta.id || newId();
+    var ext = extOf(file.name, file.type);
+    var at = meta.at || Date.now();
+    var where = filePath('pending', id, ext);   // 대기 칸 자료는 아직 귀속월 칸이 없다
+    return deps.storage.ref(where).put(file).then(function () {
+      var rec = pendingRecord({
+        filename: file.name, file: where, mime: file.type,
+        bytes: file.size, at: at, from: meta.from || 'upload'
+      });
+      var up = {};
+      up[pendingPath(id)] = rec;
+      return deps.db.ref().update(up).then(function () { return id; });
+    });
+  }
+
   /* ══════ 실제로 쓰는 층 (얇게) ══════
      묶음을 만드는 것은 위의 순수 함수가 하고, 여기는 보내기만 한다.
      ⚠ ref() 를 인자 없이 부르고 update 한다 — 다중 경로 쓰기의 유일한 방법이다. */
@@ -491,6 +542,10 @@
     drawerUpdate: drawerUpdate,
     claimShared: claimShared,
     isStalePending: isStalePending,
+    UPLOAD_MAX: UPLOAD_MAX,
+    extOf: extOf,
+    acceptFile: acceptFile,
+    saveFile: saveFile,
     savePending: savePending,
     moveToDrawer: moveToDrawer,
     claimSharedNow: claimSharedNow,

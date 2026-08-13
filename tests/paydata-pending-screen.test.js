@@ -79,3 +79,29 @@ test('대기 칸 화면에도 넘버링·ㅁ 체크가 있다', () => {
   assert.match(m[0], /pickBar\('pending'/);
   assert.match(m[0], /pkno/);
 });
+
+test('★ 자료가 하나도 없어도 파일 올리기 단추는 보인다', () => {
+  // 예전에는 목록이 비면 화면 전체를 일찍 끝내 올리기 단추까지 함께 사라졌다 —
+  // 처음 쓰는 사람은 올릴 방법 자체를 못 찾는다.
+  const m = html.match(/function screenPending[\s\S]*?\n\}/);
+  const beforeReturn = m[0].slice(0, m[0].indexOf('if (!ids.length)'));
+  assert.match(beforeReturn, /pickFiles\(\)/);
+  assert.match(beforeReturn, /id="filePick"/);
+});
+
+test('올리기 칸은 엑셀·PDF·한글·사진을 받는다 — 사진만 받지 않는다', () => {
+  const m = html.match(/function screenPending[\s\S]*?\n\}/);
+  assert.match(m[0], /accept="\.xlsx,\.xls,\.csv,\.pdf,\.hwp,\.hwpx,\.jpg,\.jpeg,\.png,\.heic,\.webp"/);
+});
+
+test('★ 파일을 고르면 uploadFiles 로 이어진다', () => {
+  const m = html.match(/function screenPending[\s\S]*?\n\}/);
+  assert.match(m[0], /onchange="uploadFiles\(this\.files\)"/);
+});
+
+test('여러 장을 올리면 하나가 막혀도 나머지는 올라간다', () => {
+  const m = html.match(/function uploadFiles[\s\S]*?\n\}/);
+  assert.ok(m, 'uploadFiles 함수를 찾을 수 없습니다');
+  assert.match(m[0], /\.catch\(/);
+  assert.match(m[0], /Promise\.all/);
+});
