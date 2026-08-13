@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
@@ -3778,6 +3778,51 @@ function undoDup(i) {
      사진 한 장으로 업체를 만들면 유령 업체가 쌓인다. */
 const CO_KINDS = { bizreg: 1, sme: 1 };
 
+/* ══════ 기업정보(명함첩 🏢)로 보내기 ══════
+   서식·신청서는 갈 곳이 없었다 — 18개 칸을 읽어 놓고도 어디에도 안 남았다.
+   업체관리와 달리 **업체가 없어도 받는다.** 거래처가 아니어도 「이 회사에 대해
+   아는 것」은 값이 있다(대표 지시 2026-08-12).
+   사업자번호를 못 읽었으면 어느 회사인지 알 수 없으므로 단추를 안 띄운다. */
+function canSendCoInfo(read) {
+  if (!read || read.error) return false;
+  if (read.filedInfo && read.filedInfo.at) return false;
+  const f = read.fields || {};
+  return String(f.bizno || '').replace(/\D/g, '').length >= 10;
+}
+
+function sendCoInfo(id) {
+  const it = gridItems.find(function (x) { return x.id === id; });
+  const read = it && it.meta && it.meta.read;
+  if (!canSendCoInfo(read)) return Promise.resolve();
+  return PuDocFile.sendToCoInfo({
+    fields: read.fields,
+    byName: PuPhotoStore.myName() || ''
+  }).then(function (res) {
+    /* ⚠ filled 가 빈 배열이면 실시간DB 가 아예 안 적는다 — 읽는 쪽은 늘 || [] 로 받는다.
+       그래서 개수(n)를 숫자로 따로 남긴다. */
+    read.filedInfo = { at: Date.now(), by: PuPhotoStore.myName() || '',
+                       n: (res.filled || []).length, message: res.message || '' };
+    if (it) it.meta = Object.assign({}, it.meta, { read: read });
+    if (viewerId === id) renderReadPanel(it);
+    /* 주인 자리에 남긴다 — 남의 사진을 관리자가 보냈을 때 내 자리에 쓰면
+       주인 화면에는 「아직 안 보냄」으로 남아 또 보내게 된다(업체관리와 같은 까닭). */
+    return PuPhotoStore.saveRead(gridYear, id, read, photoOwner(id));
+  }).catch(function (e) {
+    console.warn('[기업정보 보내기]', e);
+    read.filedInfoError = (e && e.message) || String(e);
+    if (viewerId === id) renderReadPanel(it);
+  });
+}
+
+/* 크게 보기의 「🏢 기업정보로 보내기」 단추가 부른다 */
+function sendCoInfoNow() {
+  const id = viewerId;
+  if (!id) return;
+  const b = $('readPanel').querySelector('.sendinfo');
+  if (b) { b.disabled = true; b.textContent = '보내는 중…'; }
+  sendCoInfo(id);
+}
+
 function canSendCo(read) {
   return !!(read && !read.error && CO_KINDS[read.kind] && !(read.filedCo && read.filedCo.at));
 }
@@ -6856,6 +6901,19 @@ function renderReadPanel(it) {
       '<button class="again sendco" onclick="sendCompanyNow()">업체관리로 다시 보내기</button>';
   } else if (CO_KINDS[read.kind] && !read.error) {
     box += '<button class="again sendco" onclick="sendCompanyNow()">업체관리로 보내기</button>';
+  }
+
+  /* 기업정보(명함첩 🏢) — 업체관리와 또 따로 보여준다.
+     서식·신청서는 여기 말고는 갈 곳이 없다. 업체관리와 달리 거래처가 아니어도 받는다. */
+  if (read.filedInfo && read.filedInfo.at) {
+    box += '<p class="sent">✓ 기업정보에 넣었습니다'
+        + (read.filedInfo.n ? ' (' + read.filedInfo.n + '개 칸)' : '') + '</p>';
+  } else if (canSendCoInfo(read)) {
+    box += '<button class="again sendinfo" onclick="sendCoInfoNow()">🏢 기업정보로 보내기</button>';
+  } else if (!read.error && read.kind === 'form') {
+    /* 서식인데 사업자번호를 못 읽었다 — 왜 단추가 없는지 말해 준다.
+       아무 말 없이 단추만 없으면 「왜 안 되지」로 시간을 버린다. */
+    box += '<p class="note">🏢 사업자번호를 읽지 못해 기업정보로 보낼 수 없습니다 — 위에서 채워 주세요</p>';
   }
 
   /* 딱지(kd)와 설명(msg)이 같은 말이면 설명을 아예 만들지 않는다 —
