@@ -45,7 +45,10 @@ const it = (read) => ({ meta: { read } });
 const CASES = [
   ['급여서류', { kind: 'payslip', fields: {} }, /지워/],
   ['판독 실패', { kind: 'card', error: 'AI 응답 없음', fields: {} }, /다시 판독/],
-  ['본문이 빈 사진', { kind: 'card', error: '사진 본문을 불러오지 못했습니다', fields: {} }, /비었습니다/],
+  /* ⚠ 2026-08-13 다시 겨눔 — 「비었습니다 · 지워 주세요」였다. 지우라고 하면
+     멀쩡히 읽어 둔 값까지 함께 잃는다(사진만 다시 올리면 되는 상황이다).
+     이 검사가 지키는 것은 「할 일이 적혀 있다」이지 그 문구가 아니다. */
+  ['본문이 빈 사진', { kind: 'card', error: '사진 본문을 불러오지 못했습니다', fields: {} }, /다시 올려/],
   ['종류를 못 가림', { kind: 'other', fields: { name: '홍길동' } }, /분류 지정/],
   ['검증에 걸림', { kind: 'bizreg', auto: false, fields: { bizNo: '123' } }, /미덥지/],
   ['명함첩에 아직 안 감', { kind: 'card', auto: true, fields: {} }, /명함첩/],
