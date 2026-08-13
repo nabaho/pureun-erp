@@ -6,9 +6,14 @@ const vm = require('node:vm');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'pu-photos.html'), 'utf8');
 
+/* photoTime 은 늘 같이 넣는다 — 날짜 ✓ 가 「어느 날 사진인가」를 이것으로 센다
+   (2026-08-13 부터 올린 때 기준). 안 넣으면 진짜 고장이 아니라 여기서 터진다. */
 function load(names, over) {
-  const ctx = Object.assign({ Set, Object, Array }, over || {});
+  const ctx = Object.assign({ Set, Object, Array, Number, String, Math }, over || {});
   vm.createContext(ctx);
+  const pt = html.match(/function photoTime\([\s\S]*?\n\}/);
+  assert.ok(pt, 'photoTime 함수가 없습니다.');
+  vm.runInContext(pt[0], ctx);
   names.forEach(n => {
     const m = html.match(new RegExp('function ' + n + '\\([\\s\\S]*?\\n\\}'));
     assert.ok(m, n + ' 함수가 없습니다.');

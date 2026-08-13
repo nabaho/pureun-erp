@@ -471,7 +471,8 @@ test('savePhoto — 사진 세 경로와 사용자 색인이 update 한 번으�
   S.init({ uid: 'U1', db });
   const r = await S.savePhoto({
     id: 'p1', takenAt: new Date(2026, 6, 15).getTime(),
-    meta: { takenAt: 1 }, full: 'data:full', thumb: 'data:thumb'
+    meta: { takenAt: 1, upAt: new Date(2026, 6, 15).getTime() },
+    full: 'data:full', thumb: 'data:thumb'
   });
   // 주의: 샌드박스(vm) 안에서 만들어진 객체는 프로토타입이 달라 strict 비교가
   // 실패한다 — 복사본으로 비교한다.

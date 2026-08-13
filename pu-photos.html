@@ -3111,6 +3111,13 @@ async function addFiles(fileList, isDoc, opts) {
   const pairs = (opts && opts.pairs) || {};
   const caps = (opts && opts.caps) || [];
   const idAt = {};
+  /* ── 올린 때·차례(2026-08-13 대표 지시) ──
+     "입력된 사진은 사진의 저장된 시간이 아닌 **지금 올린 시간과 순서**대로 저장되게 해라"
+     ⚠ 시각은 **한 번만 잰다**. 장마다 Date.now() 를 부르면 한 장에 1~2초씩 벌어져
+       한 번에 고른 묶음이 목록에서 흩어지고, 「같이 올린 것」이라는 표시가 사라진다.
+     ⚠ 차례(seq)는 **고른 차례**다 — 시각이 같을 때 목록 차례를 이것이 정한다.
+       없으면 같은 시각끼리 번호순으로 흩어져 찍은 차례가 뒤집힌다. */
+  const batchUpAt = Date.now();
   for (let fi = 0; fi < files.length; fi++) {
     const f = files[fi];
     try {
@@ -3132,7 +3139,8 @@ async function addFiles(fileList, isDoc, opts) {
       idAt[fi] = id;
       const meta = {
         takenAt: takenAt,
-        upAt: Date.now(),
+        upAt: batchUpAt,
+        seq: fi,
         by: u.uid,
         byName: PuPhotoStore.myName() || u.email || '',
         kind: isDoc ? 'doc' : 'photo',
@@ -3564,7 +3572,9 @@ function docJobs(job) {
 }
 
 function startRead(job) {
-  const year = PuPhotoStore.yearOf(job.takenAt);
+  /* ⚠ 저장한 자리와 **같은 셈법**이어야 한다(올린 때 기준). 촬영 시각으로 세면
+     2019년 사진을 오늘 올렸을 때 판독 결과를 2019년 자리에 적어 사라진다. */
+  const year = PuPhotoStore.photoYear(job.meta);
   job._reading = true;
   renderUp();
   /* 여러 쪽짜리는 **문서 통째로 한 번** 읽는다(대표 결정 2026-08-10) —
@@ -3658,7 +3668,11 @@ function sendCards(id, year, job) {
       full2: safeSrc(back) || '',
       thumb2: (backIt && safeSrc(backIt.thumb)) || '',
       photoId: id,
-      takenAt: (it && it.meta.takenAt) || Date.now(),
+      /* ⚠ 명함첩에 적히는 날짜도 **올린 때**다(2026-08-13 대표 지시:
+         "지금 올린 시간과 순서대로 사진첩에 저장되고 명함첩에 내용이 저장되게").
+         찍은 때로 적으면 오래된 명함 사진을 오늘 정리했는데 명함첩 목록
+         한참 아래에 꽂혀 방금 넣은 명함을 못 찾는다. */
+      takenAt: photoTime(it || job) || Date.now(),
       /* **찍은 사람**을 남긴다. 남의 사진을 대신 보낼 때 내 이름을 적으면
          명함첩의 「누가 가져온 명함인가」가 틀어진다. */
       byName: (it && it.meta && it.meta.__ownerName) || PuPhotoStore.myName() || (u && u.email) || ''
@@ -4064,17 +4078,26 @@ function purgeEveryYearTrash() {
   return purgeYears(out);
 }
 
-/* 촬영 시각을 우선하고, 없는 옛 사진은 업로드 시각으로 정렬한다. 같은 시각이면
-   업로드 시각·사진 번호로 순서를 고정해 새로고침할 때 자리가 뒤섞이지 않는다. */
+/* ── 목록 차례는 「올린 때」가 정한다(2026-08-13 대표 지시) ──
+   "입력된 사진은 사진의 저장된 시간 날짜가 아닌 지금 올린 시간과 순서대로"
+   ⚠ 촬영 시각(takenAt)을 앞세우면 폰에 있던 2019년 사진을 오늘 올렸을 때
+     목록 한참 아래로 파묻힌다 — 방금 올린 것을 못 찾는다.
+   ⚠ upAt 이 없는 **옛 사진**은 촬영 시각으로 되짚는다. 0 으로 두면 옛 사진이
+     전부 맨 아래로 몰려 그날그날의 차례를 잃는다.
+   촬영 시각은 지우지 않는다 — 크게 보기에 그대로 보이고, 보유기간도 그것으로 센다. */
 function photoTime(it) {
   const m = (it && it.meta) || {};
-  return Number(m.takenAt || m.upAt || 0);
+  return Number(m.upAt || m.takenAt || 0);
 }
 function comparePhotosNewest(a, b) {
-  const byTaken = photoTime(b) - photoTime(a);
-  if (byTaken) return byTaken;
-  const byUpload = Number((b.meta && b.meta.upAt) || 0) - Number((a.meta && a.meta.upAt) || 0);
+  const byUpload = photoTime(b) - photoTime(a);
   if (byUpload) return byUpload;
+  /* 한 번에 올린 묶음은 시각이 같다 — 고른 차례(seq)가 차례를 정한다.
+     ⚠ 여기만 **작은 것이 먼저**다. 1번으로 고른 장이 묶음 맨 앞에 와야 한다. */
+  const bySeq = Number((a.meta && a.meta.seq) || 0) - Number((b.meta && b.meta.seq) || 0);
+  if (bySeq) return bySeq;
+  const byTaken = Number((b.meta && b.meta.takenAt) || 0) - Number((a.meta && a.meta.takenAt) || 0);
+  if (byTaken) return byTaken;
   return String(b.id || '').localeCompare(String(a.id || ''));
 }
 
@@ -4129,7 +4152,9 @@ function showGridError(why) {
 }
 
 function addToGrid(job) {
-  if (PuPhotoStore.yearOf(job.takenAt) !== gridYear) return; // 지난 연도는 다음 방문 때
+  /* ⚠ 저장한 자리와 **같은 셈법**(올린 때 기준). 촬영 시각으로 세면 옛 사진을
+     올린 뒤 화면에 안 뜨고, 새로고침해야 나타나 「안 올라갔나」 싶어진다. */
+  if (PuPhotoStore.photoYear(job.meta) !== gridYear) return; // 지난 연도는 다음 방문 때
   if (gridItems.some(it => it.id === job.id)) return;
   gridItems.unshift({ id: job.id, meta: job.meta, thumb: job.thumb });
   gridItems.sort(comparePhotosNewest);
@@ -4190,14 +4215,14 @@ function renderGrid() {
 
   const counts = {};
   visibleItems.forEach(it => {
-    const k = dayKey(it.meta.takenAt || it.meta.upAt || 0);
+    const k = dayKey(photoTime(it));
     /* 접힌 문서는 한 칸이지만 여섯 장이다 — 사람이 세는 것은 장이다 */
     counts[k] = (counts[k] || 0) + idsOf(it).length;
   });
 
   let html = '', lastDay = '';
   visibleItems.forEach(it => {
-    const ts = it.meta.takenAt || it.meta.upAt || 0;
+    const ts = photoTime(it);
     const k = dayKey(ts);
     if (k !== lastDay) {
       if (lastDay) html += '</div>';
@@ -4374,9 +4399,11 @@ function dragRefOf(id) {
     year: gridYear,
     owner: it.meta.__ownerUid || gridOwner || PuPhotoStore.myUid(),
     id: id,
-    name: (r.fields && (r.fields.company || r.fields.name)) || dayLabel(it.meta.takenAt || 0) + ' 사진',
+    /* 날짜는 **올린 때**로 적는다 — 받는 앱의 목록에서도 사진첩과 같은 날에
+       놓여야 "그때 넘긴 그 사진"을 찾을 수 있다(2026-08-13). */
+    name: (r.fields && (r.fields.company || r.fields.name)) || dayLabel(photoTime(it)) + ' 사진',
     docKind: it.meta.kind || 'photo',
-    takenAt: it.meta.takenAt || 0
+    takenAt: photoTime(it)
   };
 }
 
@@ -4417,7 +4444,9 @@ $('grid').addEventListener('dragstart', function (ev) {
 /* 파일 이름 — 날짜와 회사명이 들어가야 나중에 찾을 수 있다.
    파일 이름에 쓸 수 없는 글자(\ / : * ? " < > |)는 지운다. */
 function fileNameOf(it, ext) {
-  const d = new Date(it.meta.takenAt || it.meta.upAt || Date.now());
+  /* 화면의 날짜 줄과 **같은 날**이어야 한다 — 목록에서 8/13 자리에 있던 사진이
+     받아 보니 2019 로 시작하면 어느 것을 받았는지 못 맞춘다. */
+  const d = new Date(photoTime(it) || Date.now());
   const ymd = d.getFullYear() + '-' +
     String(d.getMonth() + 1).padStart(2, '0') + '-' +
     String(d.getDate()).padStart(2, '0');
@@ -5352,14 +5381,18 @@ function hayOf(it) {
       if (p.v) bits.push(String(p.v));
     });
   }
-  if (m.takenAt) {
-    const d = new Date(m.takenAt);
+  /* 날짜로 찾기 — **찍은 날과 올린 날 둘 다** 받는다(2026-08-13).
+     목록 차례는 올린 날이 정하므로 「8월13일」로 쳐서 오늘 올린 것이 안 나오면
+     사람은 사진이 없어진 줄 안다. 반대로 찍은 날을 빼면 옛 사진을 못 찾는다. */
+  [m.takenAt, m.upAt].forEach(function (ts) {
+    if (!ts) return;
+    const d = new Date(ts);
     const p2 = n => String(n).padStart(2, '0');
     /* 2026-08-06 · 2026.08.06 · 8월6일 — 사람이 치는 여러 꼴을 다 받는다 */
     bits.push(d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()));
     bits.push(d.getFullYear() + '.' + p2(d.getMonth() + 1) + '.' + p2(d.getDate()));
     bits.push((d.getMonth() + 1) + '월' + d.getDate() + '일');
-  }
+  });
   it._hay = bits.filter(Boolean).join(' ').toLowerCase();
   it._hayFor = it.meta;
   return it._hay;
@@ -5475,7 +5508,7 @@ function renderNeedBox() {
    전체 목록에서 고르면 안 된다. 안 보이는 사진이 조용히 딸려 와 함께 지워진다. */
 function dayItems(k) {
   return shownItems().filter(function (it) {
-    return dayKey(it.meta.takenAt || it.meta.upAt || 0) === k;
+    return dayKey(photoTime(it)) === k;
   });
 }
 
@@ -5891,7 +5924,7 @@ function openViewer(id) {
      한 장씩 따로 판독하므로, 이 줄이 없으면 무엇의 몇 쪽인지 알 길이 없다. */
   $('viewerInfo').textContent = it
     ? [it.meta.kind === 'doc' ? '서류' : '', docLabel(it.meta),
-       it.meta.takenAt ? dayLabel(it.meta.takenAt) : '', it.meta.byName || '']
+       photoTime(it) ? dayLabel(photoTime(it)) : '', it.meta.byName || '']
       .filter(function (x) { return x; }).join(' · ')
     : '';
   renderReadPanel(it);
@@ -6120,14 +6153,14 @@ function viewerDragOut(e) {
         app: 'pu-photos', kind: 'photo', year: gridYear,
         owner: it.meta.__ownerUid || gridOwner || PuPhotoStore.myUid(),
         id: viewerId,
-        name: it.meta.company || dayLabel(it.meta.takenAt || 0) + ' 사진'
+        name: it.meta.company || dayLabel(photoTime(it)) + ' 사진'
       });
     }
   } catch (_) { }
   /* ② 밖으로 나갈 때 쓸 파일 이름·주소 */
   try {
     const co = (it && it.meta && it.meta.company) || '';
-    const day = (it && it.meta && it.meta.takenAt) ? dayKey(it.meta.takenAt) : '';
+    const day = photoTime(it) ? dayKey(photoTime(it)) : '';
     /* 파일 이름에 못 쓰는 글자를 걷어낸다 — 남겨 두면 저장이 통째로 실패한다 */
     const name = ((day ? day + ' ' : '') + (co || '사진')).replace(/[\\/:*?"<>|]/g, '') + '.jpg';
     const url = dataUrlToBlobUrl(img.src);
@@ -6231,7 +6264,7 @@ function ackRead() {
 
 /* 크게 보기에 지금 붙은 직접분류를 알려주고 뗄 길을 준다("지정은 언제든
    되돌릴 수 있다" — 대표 승인 목업). 남의 사진(전체 근로자 포함)은 보기만. */
-/* 직접 적은 것 저장 — 업체·설명은 정보 한 줄, 촬영일은 해가 바뀌면 자리까지 옮긴다 */
+/* 직접 적은 것 저장 — 업체·설명·촬영일 모두 정보 한 줄만 고친다 */
 async function saveMyNote() {
   const id = viewerId; if (!id || viewingOther()) return;
   const it = gridItems.find(function (x) { return x.id === id; });
@@ -6247,7 +6280,10 @@ async function saveMyNote() {
     it.meta.note = noteV.trim() || undefined;
     it.meta = Object.assign({}, it.meta);   // 검색 캐시를 새로 만들게 한다(hayOf)
 
-    /* 촬영일 — 바뀐 때만. 해가 바뀌면 사진이 그 해 자리로 옮겨간다. */
+    /* 촬영일 — 바뀐 때만. 정보 한 줄만 바뀐다.
+       ⚠ 2026-08-13 부터 **사진은 안 옮긴다**. 자리는 올린 때가 정하므로(photoYear)
+         촬영일을 아무 날로 고쳐도 목록에서 사라지지 않는다. 예전에는 해가 바뀌면
+         사진·미리보기를 통째로 날라야 했다. */
     const wasYmd = ymdOf(it.meta.takenAt);
     if (dateV && dateV !== wasYmd) {
       const parts = dateV.split('-').map(Number);
@@ -6255,16 +6291,10 @@ async function saveMyNote() {
       const old = new Date(Number(it.meta.takenAt) || Date.now());
       const ts = new Date(parts[0], parts[1] - 1, parts[2],
         old.getHours(), old.getMinutes(), old.getSeconds()).getTime();
-      const movedTo = await PuPhotoStore.setTakenAt(gridYear, id, ts);
+      await PuPhotoStore.setTakenAt(gridYear, id, ts);
       it.meta.takenAt = ts;
-      if (movedTo && movedTo !== String(gridYear)) {
-        closeViewer();
-        toast('촬영일을 고쳤습니다 — 사진이 ' + movedTo + '년으로 옮겨졌습니다');
-        await refreshYears();
-        loadGrid();
-        return;
-      }
-      gridItems.sort(function (a, b) { return (b.meta.takenAt || 0) - (a.meta.takenAt || 0); });
+      it.meta = Object.assign({}, it.meta);
+      gridItems.sort(comparePhotosNewest);
     }
     renderGrid();
     renderReadPanel(it);
@@ -6455,6 +6485,22 @@ function myNoteBox(it) {
     '<button class="save" onclick="saveMyNote()">저장</button>' +
     '<p class="hint">돌리기는 사진 위 ↺ ↻ 를 누르세요. 돌린 뒤 「다시 판독」하면 글씨를 제대로 읽습니다.</p>' +
     '</div>';
+}
+
+/* ── 올린 때 / 찍은 때 (2026-08-13) ──
+   목록 차례를 **올린 때**로 바꾸면서, 찍은 때가 화면 어디에도 안 남으면
+   "언제 찍은 사진인지" 를 영영 잃는다. 그래서 크게 보기에 두 줄을 함께 적는다.
+   ⚠ 찍은 날이 올린 날과 **같은 날이면 한 줄만** 적는다 — 방금 찍어 바로 올린
+     사진(대부분)에 똑같은 날짜를 두 번 찍으면 읽는 사람이 헷갈린다. */
+function whenBox(it) {
+  const m = (it && it.meta) || {};
+  const up = Number(m.upAt || 0);
+  const taken = Number(m.takenAt || 0);
+  if (!up && !taken) return '';
+  if (!up) return '<p class="note">📅 찍은 때 ' + esc(whenText(taken)) + '</p>';
+  const line = '📅 올린 때 ' + whenText(up);
+  if (!taken || dayKey(taken) === dayKey(up)) return '<p class="note">' + esc(line) + '</p>';
+  return '<p class="note">' + esc(line + ' · 찍은 때 ' + whenText(taken)) + '</p>';
 }
 
 function customKindNote(it) {
@@ -6756,7 +6802,7 @@ function renderReadPanel(it) {
     const isDoc = it.meta.kind === 'doc';
     el.innerHTML = '<div class="box"><p class="note" style="margin:0">' +
       (isDoc ? '아직 판독하지 않은 서류입니다.' : '명함·사업자등록증이면 글자를 읽어 정보를 뽑아냅니다.') +
-      '</p>' + customKindNote(it) + myNoteBox(it) + shareBox(it) + actsRow('글자 판독하기') + '</div>';
+      '</p>' + whenBox(it) + customKindNote(it) + myNoteBox(it) + shareBox(it) + actsRow('글자 판독하기') + '</div>';
     return;
   }
   const warn = read.auto ? '' : ' warn';
@@ -6829,6 +6875,7 @@ function renderReadPanel(it) {
     box +
     (read.ack ? '<p class="note">✓ ' + esc(read.ack.by || '') +
         '님이 확인해 할 일에서 치웠습니다 · 「다시 판독」을 누르면 되돌아옵니다</p>' : '') +
+    whenBox(it) +
     customKindNote(it) +
     myNoteBox(it) +
     shareBox(it) +
@@ -7779,6 +7826,9 @@ function keepUntil(meta) {
     d.setFullYear(d.getFullYear() + KEEP_USED_YEARS);
     return d.getTime();
   }
+  /* ⚠ 여기만 **촬영일이 먼저**다. 목록 차례(photoTime)와 같게 맞추지 말 것 —
+     2019년에 찍은 사진을 오늘 올렸다고 보유기간이 오늘부터 다시 1년이 되면
+     개인정보를 규정보다 오래 갖고 있는 것이 된다(docs/사진-개인정보-보유기준.md). */
   const base = m.takenAt || m.upAt || 0;
   if (!base) return Infinity;                      // 언제 것인지 모르면 세지 않는다
   const d2 = new Date(base);

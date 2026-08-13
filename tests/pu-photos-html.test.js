@@ -888,7 +888,7 @@ test('파일 이름 등 바깥 문자열은 이스케이프해서 화면에 넣�
 test('한 번에 올릴 장수 상한을 지키고, 넘치면 몇 장이 남았는지 알린다', () => {
   // 조용히 자르면 "왜 몇 장이 안 올라갔지"가 되고 그게 증빙 누락으로 이어진다.
   assert.match(app, /PuPhotoStore\.UPLOAD_MAX/);
-  const fn = bodyAfter('async function addFiles(', 5200);
+  const fn = bodyAfter('async function addFiles(', 6400);
   assert.match(fn, /files\.length > MAX/, '상한을 넘겨도 그대로 받습니다');
   assert.match(fn, /나머지 ' \+ over \+ '장은 다시 골라/, '남은 장수를 알리지 않습니다');
   // 안내 문구의 숫자도 저장 층에서 가져온다(두 곳에 적으면 어긋난다)

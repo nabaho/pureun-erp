@@ -27,6 +27,24 @@
     return String(new Date(n).getFullYear());
   }
 
+  /* ── 사진이 담기는 자리(연도)는 「올린 때」가 정한다 (대표 지시 2026-08-13) ──
+     "폰에서 한 번에 입력했는데 업로드된 것은 폰의 저장시간에 따라 저장되었다.
+      그럴 경우 추후에 언제 사진을 찍었는지 모두 확인해야 한다. … 지금 올린 시간과
+      순서대로 사진첩에 저장되고 명함첩에 내용이 저장되게 해라. 그래야 찾기가 쉬워진다."
+
+     전에는 **촬영 시각**이 자리를 정했다. 그래서 2019년에 찍힌 사진을 오늘 올리면
+     2019년 칸으로 들어가 오늘 화면에서는 아예 안 보였다(해를 바꿔야 나온다).
+     카톡을 거쳐 날짜가 지워진 사진은 「1월 1일」 같은 엉뚱한 날로도 갔다.
+     **올린 때로 담으면 방금 올린 것은 언제나 지금 화면에 있다.**
+     ⚠ 촬영일(takenAt)은 지우지 않는다 — 화면에 그대로 보여 주고, 보유기간도
+       여전히 촬영일로 센다(docs/사진-개인정보-보유기준.md 5번). 자리만 바뀐다.
+     ⚠ 옛 사진은 옮기지 않는다. 이미 촬영 연도 칸에 있는 것을 옮기려면 사진 본문을
+       통째로 나르는 일이라, 새로 올리는 것부터 적용한다. */
+  function photoYear(meta) {
+    var m = meta || {};
+    return yearOf(m.upAt || m.takenAt);
+  }
+
   /* ── 사람별 자리 ──
      직원은 자기 사진만, 총괄 관리자만 전체를 본다(2026-08-03 대표 지시).
      **실시간DB는 규칙으로 목록을 걸러 주지 못한다** — 어떤 노드를 읽을 수 있으면
@@ -252,7 +270,9 @@
       return Promise.reject(new Error('파일 창고 저장은 아직 준비되지 않았습니다'));
     }
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
-    var year = yearOf(p.takenAt);
+    /* 자리는 **올린 때**가 정한다(2026-08-13) — photoYear 참고.
+       화면도 같은 함수를 쓰므로 담는 자리와 찾는 자리가 어긋나지 않는다. */
+    var year = photoYear(p.meta);
     var u = {};
     u[metaPath(year, p.id)] = p.meta;
     u[blobPath(year, p.id)] = p.full;
@@ -431,39 +451,19 @@
   }
 
   /* ── 촬영일 고치기 ──
-     ⚠ 촬영 시각은 **보관 연도를 정한다**(yearOf). 해가 바뀌는 날짜로 고치면
-     사진·미리보기까지 새 해 자리로 **옮겨야** 한다. 정보만 고치면 목록에서 사라진다
-     (그 해 목록에는 없고, 새 해 자리에는 사진이 없다).
-     같은 해 안에서 고치는 것은 정보 한 줄만 바꾸면 된다. */
+     ⚠ 2026-08-13 부터 **자리는 촬영일이 안 정한다**(photoYear — 올린 때가 정한다).
+        그래서 촬영일을 아무 날로 고쳐도 사진을 옮기지 않는다. 정보 한 줄만 바꾼다.
+        전에는 해가 바뀌면 사진·미리보기를 통째로 날랐다 — 큰 일이었고, 옮기는
+        도중에 끊기면 사진을 잃을 위험이 있는 유일한 자리였다. 그 위험이 사라졌다.
+     ⚠ 촬영일은 여전히 **보유기간을 센다**(docs/사진-개인정보-보유기준.md 5번).
+        그래서 지우는 것이 아니라 그대로 담아 둔다. */
   function setTakenAt(year, id, ts, owner) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     var n = Number(ts);
     if (!Number.isFinite(n) || n <= 0) return Promise.reject(new Error('날짜가 올바르지 않습니다'));
-    var to = yearOf(n);
-    if (to === String(year)) {
-      var u = {};
-      u[metaPath(year, id, owner) + '/takenAt'] = n;
-      return deps.db.ref().update(u);
-    }
-    /* 해가 바뀐다 — 정보·사진·미리보기를 통째로 옮긴다.
-       ⚠ **한 묶음(update)으로** 넣고 지운다. 나눠서 하다 중간에 끊기면 사진을 잃는다. */
-    return Promise.all([
-      readOnce(metaPath(year, id, owner)),
-      loadFull(year, id, owner).catch(function () { return ''; }),
-      loadThumb(year, id, owner).catch(function () { return ''; })
-    ]).then(function (r) {
-      var meta = r[0];
-      if (!meta) throw new Error('사진 정보를 찾지 못했습니다');
-      meta.takenAt = n;
-      var u = {};
-      u[metaPath(to, id, owner)] = meta;
-      if (r[1]) u[blobPath(to, id, owner)] = r[1];
-      if (r[2]) u[thumbPath(to, id, owner)] = r[2];
-      u[metaPath(year, id, owner)] = null;
-      u[blobPath(year, id, owner)] = null;
-      u[thumbPath(year, id, owner)] = null;
-      return deps.db.ref().update(u).then(function () { return to; });
-    });
+    var u = {};
+    u[metaPath(year, id, owner) + '/takenAt'] = n;
+    return deps.db.ref().update(u).then(function () { return String(year); });
   }
 
   /* ── 돌린 사진 저장 ──
@@ -1334,6 +1334,7 @@
     DB_ROOT: DB_ROOT,
     BUCKET_ROOT: BUCKET_ROOT,
     yearOf: yearOf,
+    photoYear: photoYear,
     metaPath: metaPath,
     blobPath: blobPath,
     thumbPath: thumbPath,
