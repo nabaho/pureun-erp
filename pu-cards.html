@@ -671,6 +671,11 @@ table.sbox td.none{text-align:center;color:#8b98b3;padding:34px 10px}
 .cotabs button.erponly:hover{background:#e0e7ff}
 .cotabs button.erponly.on{background:#4338ca;border-color:#4338ca;color:#fff}
 .cosep{width:1px;background:#dbe3f0;margin:2px 4px}
+/* 목록에서 회사를 고르면 뜨는 도구줄 — 명함첩 선택 도구줄과 같은 결 */
+.coselbar{display:flex;align-items:center;gap:8px;background:#eef3fc;border:1px solid #b5d4f4;border-radius:10px;padding:9px 13px;margin:0 0 10px;font-size:13px}
+.coselbar b{color:#185fa5;margin-right:4px}
+.coselbar button{border:1px solid #b5d4f4;background:#fff;border-radius:8px;padding:6px 11px;font-size:12.5px;font-weight:700;cursor:pointer;color:#185fa5;font-family:inherit}
+.coselbar button:hover{background:#dbe9fb}
 .corow .tg{font-size:11px;background:#f3e8ff;color:#6b21a8;border:1px solid #d8b4fe;border-radius:9px;padding:1px 8px;font-weight:700}
 .coq{width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font-size:13.5px;font-family:inherit;margin:0 0 12px}
 .coq:focus{outline:0;border-color:#1d4fc4}
@@ -9752,10 +9757,17 @@ function renderCoPage(){
 function coListHtml(list){
   if(!list.length) return `<div class="cpnone" style="padding:20px 2px">회사를 찾지 못했습니다</div>`;
   const allOn = list.length>0 && list.every(o=>state.coSel[o.key]);
+  const nSel = Object.keys(state.coSel).length;
+  const selbar = nSel ? `<div class="coselbar">
+      <b>${nSel}곳 선택</b>
+      <button onclick="coMoveToFolder()">📁 폴더로 옮기기</button>
+      <button onclick="coAssignTag()">🏷 탭에 담기</button>
+      <button onclick="state.coSel={};renderCoPage()">선택 해제</button>
+    </div>` : '';
   /* ⚠ 마지막에 **남는 폭을 먹는 빈 칸**을 둔다. 없으면 상호 칸이 남은 폭을 다 먹어
      사업자번호·가진 것·담당이 화면 오른쪽 끝까지 밀려난다 — 눈이 좌우로 멀리 오간다
      (대표 화면 2026-08-13). 유형(자문·급여…)도 상호 옆에 붙이지 않고 제 칸을 준다. */
-  return `<table class="cotbl">
+  return `${selbar}<table class="cotbl">
     <colgroup><col style="width:34px"><col style="width:46px"><col style="width:300px">
       <col style="width:76px"><col style="width:132px"><col style="width:170px">
       <col style="width:110px"><col></colgroup>
@@ -9821,6 +9833,72 @@ function openCoDoc(year, id, owner){
   window.open('pu-photos.html?' + q, '_blank');
 }
 function coToggle(k){ if(state.coSel[k]) delete state.coSel[k]; else state.coSel[k]=1; renderCoPage(); }
+
+/* 탭 이름 다듬기 — js/pu-doc-file.js 의 sendToCoInfo 와 같은 규칙이다.
+   ⚠ 두 곳이 같은 규칙을 따로 두고 있다. 한쪽만 고치면 사진첩에서 자동으로 붙는 탭과
+     여기서 손으로 만드는 탭의 이름 규칙이 어긋난다 — 다음에 규칙을 바꿀 때 두 곳을 같이 본다. */
+function coCleanTagName(s){
+  return String(s||'').trim().replace(/[.#$/[\]]/g,' ').replace(/\s+/g,' ').trim();
+}
+
+/* ── 골라 둔 회사를 폴더로 옮기거나 탭에 담기 ──
+   이미 있는 명함 폴더 이동 그림(#folderDlg, .movefolder — selPickGroup 이 쓰는 것과
+   같다)을 그대로 쓴다. 새로 그림을 만들지 않는다. */
+function coMoveToFolder(){
+  const keys = Object.keys(state.coSel);
+  if(!keys.length) return toast('회사를 먼저 선택하세요');
+  let opts = `<div class="movefolder" onclick="coMoveSelTo('')"><span class="mfic">📭</span> 폴더 없음</div>`;
+  opts += Object.values(_coFolders).sort((a,b)=>(a.order||0)-(b.order||0))
+    .map(f=>`<div class="movefolder" onclick="coMoveSelTo('${f.id}')"><span class="mfic">📁</span> ${esc(f.name)}</div>`).join('');
+  $('folderDlg').innerHTML = `
+    <div class="mhead"><b>${keys.length}곳을 옮길 폴더</b>
+      <button class="iconbtn" onclick="folderDlgBg.classList.remove('open')">✕</button></div>
+    <div style="font-size:12.5px;color:#8b98b3;padding:0 6px 10px">아래 폴더를 누르면 선택한 회사가 옮겨집니다</div>
+    <div style="max-height:46vh;overflow:auto;padding:2px;display:flex;flex-direction:column;gap:6px">${opts}</div>
+    <div class="mfoot"><button class="btn ghost" onclick="folderDlgBg.classList.remove('open')">취소</button></div>`;
+  $('folderDlgBg').classList.add('open');
+}
+async function coMoveSelTo(folderId){
+  const keys = Object.keys(state.coSel);
+  const upd = {};
+  keys.forEach(k=>{ upd['coInfo/'+k+'/folder'] = folderId || null; });
+  await Store.db.ref(DB_ROOT).update(upd);
+  $('folderDlgBg').classList.remove('open');
+  state.coSel={};
+  toast(`${keys.length}곳을 옮겼습니다`);
+  renderCoPage();
+}
+function coAssignTag(){
+  const keys = Object.keys(state.coSel);
+  if(!keys.length) return toast('회사를 먼저 선택하세요');
+  const tags = coTagList(coList()).map(x=>x.t);
+  const opts = tags.map(t=>`<div class="movefolder" onclick="coApplyTag('${esc(t).replace(/'/g,"\\'")}')"><span class="mfic">🏷</span> ${esc(t)}</div>`).join('');
+  $('folderDlg').innerHTML = `
+    <div class="mhead"><b>${keys.length}곳에 붙일 탭</b>
+      <button class="iconbtn" onclick="folderDlgBg.classList.remove('open')">✕</button></div>
+    <div class="field"><input id="newCoTagName" placeholder="새 탭 이름 (예: 2026 통합기술보호지원반)"
+       onkeydown="if(event.key==='Enter')coApplyTag($('newCoTagName').value)"></div>
+    ${opts?`<div style="font-size:11.5px;color:#8b98b3;padding:4px 6px 6px">이미 있는 탭</div>
+      <div style="max-height:30vh;overflow:auto;padding:2px;display:flex;flex-direction:column;gap:6px">${opts}</div>`:''}
+    <div class="mfoot">
+      <button class="btn primary" onclick="coApplyTag($('newCoTagName').value)">담기</button>
+      <button class="btn ghost" onclick="folderDlgBg.classList.remove('open')">취소</button></div>`;
+  $('folderDlgBg').classList.add('open');
+  setTimeout(()=>{ const i=$('newCoTagName'); if(i) i.focus(); }, 50);
+}
+async function coApplyTag(raw){
+  const tag = coCleanTagName(raw);
+  if(!tag) return toast('탭 이름을 입력해 주세요');
+  const keys = Object.keys(state.coSel);
+  if(!keys.length) return toast('회사를 먼저 선택하세요');
+  const upd = {};
+  keys.forEach(k=>{ upd['coInfo/'+k+'/tags/'+tag] = true; });
+  await Store.db.ref(DB_ROOT).update(upd);
+  $('folderDlgBg').classList.remove('open');
+  state.coSel={};
+  toast(`${keys.length}곳에 「${tag}」 탭을 붙였습니다`);
+  renderCoPage();
+}
 function coSelAll(on){
   const list = coVisible();
   state.coSel = {};
