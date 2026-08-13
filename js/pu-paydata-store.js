@@ -35,7 +35,7 @@
     { key: 'etc',      label: '기타' }
   ];
 
-  var deps = { db: null, storage: null, uid: '', isAdmin: false, name: '' };
+  var deps = { db: null, storage: null, uid: '', isAdmin: false, name: '', fetch: null };
 
   /* 파이어베이스 객체와 계정을 받아 저장 층을 준비한다.
      이미 넣어 둔 값은 안 넘기면 그대로 둔다 — 로그인 뒤 권한만 나중에 알려 줄 수 있어야 한다. */
@@ -46,6 +46,8 @@
     if (o.uid !== undefined) deps.uid = o.uid || '';
     if (o.isAdmin !== undefined) deps.isAdmin = !!o.isAdmin;
     if (o.name) deps.name = o.name;
+    if (o.fetch) deps.fetch = o.fetch;
+    else if (deps.fetch === null) deps.fetch = (typeof global.fetch === 'function' ? global.fetch.bind(global) : null);
     return DB_ROOT;
   }
 
@@ -423,6 +425,30 @@
     if (!deps.storage) return Promise.reject(new Error('창고가 연결되지 않았습니다'));
     if (!path) return Promise.reject(new Error('파일 자리를 알 수 없습니다'));
     return deps.storage.ref(path).getDownloadURL();
+  }
+
+  /* 바이트 배열 → base64. btoa 가 있으면(브라우저) 그것을 쓰고, 없으면(검사 환경)
+     Buffer 로 같은 계산을 한다 — 결과가 같아야 검사와 실제 화면이 같은 것을 본다. */
+  function bytesToBase64(bytes) {
+    var bin = '';
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    if (typeof global.btoa === 'function') return global.btoa(bin);
+    return Buffer.from(bin, 'binary').toString('base64');
+  }
+
+  /* 창고 파일(사진첩과 달리 실시간DB가 아니라 Storage 에 있다)을 AI 판독기에
+     바로 실을 수 있는 data URL 로 바꾼다. 사진첩은 사진을 실시간DB 블롭으로 두어
+     이 변환이 필요 없었지만, 급여데이터함은 Storage 를 쓰므로 새로 만든다. */
+  function fileToDataUrl(path, mime) {
+    if (!deps.fetch) return Promise.reject(new Error('파일을 불러올 수 없습니다'));
+    return fileDownloadUrl(path).then(function (url) {
+      return deps.fetch(url).then(function (r) {
+        if (!r || !r.ok) throw new Error('파일을 불러오지 못했습니다');
+        return r.arrayBuffer();
+      });
+    }).then(function (buf) {
+      return 'data:' + (mime || 'application/octet-stream') + ';base64,' + bytesToBase64(new Uint8Array(buf));
+    });
   }
 
   /* ══════ 내 폴더 (사진첩과 같은 방식, 2026-08-13 추가) ══════
@@ -833,6 +859,7 @@
     listSlot: listSlot,
     isExpired: isExpired,
     fileDownloadUrl: fileDownloadUrl,
+    fileToDataUrl: fileToDataUrl,
     foldersPath: foldersPath,
     listFolders: listFolders,
     deputyBoxPath: deputyBoxPath,
