@@ -320,6 +320,80 @@
     ' 쪽마다 따로 답하지 말고 **전체를 함께 읽어 한 벌의 JSON**만 주세요.' +
     ' 항목이 여러 쪽에 흩어져 있으면 찾아서 채우고, 어느 쪽에도 없으면 빈 문자열로 두세요.';
 
+  /* ── 급여표 판독 (급여데이터함 전용) ──
+     위 PROMPT_ALL 의 kind=payslip 은 사진첩·명함첩·업체관리가 함께 쓰는 프롬프트라
+     **일부러** 금액·이름을 담지 않는다(위 주석 참고). 급여데이터함은 그 반대로
+     사람별 금액이 꼭 필요하므로, 기존 프롬프트를 건드리지 않고 **새 프롬프트로
+     새 함수**를 만든다 — 다른 세 앱의 동작은 한 글자도 바뀌지 않는다. */
+  var WAGE_PROMPT =
+    '이 이미지는 급여명세서·임금대장 같은 급여 관련 서류입니다. 표에 적힌 사람별 항목과 금액을 JSON으로만 답하세요.' +
+    '\n키: company(사업장·회사명), period(귀속 연월 — 2026-04 형식), docName(서류 이름 그대로 — 예 급여명세서·임금대장), rows(사람별 줄 — 아래 규칙).' +
+    '\nrows 규칙: [{"name":"이름","pairs":[{"item":"항목 이름 그대로","value":"금액 그대로"}]}] 배열입니다.' +
+    ' 한 사람에 여러 항목(기본급·상여·공제 등)이 있으면 pairs 에 모두 담으세요 — 항목 이름은 문서에 적힌 그대로 쓰고 바꿔 적지 마세요(예: "기본급"을 "기본임금"으로 바꾸지 마세요).' +
+    ' 금액은 문서에 적힌 표기 그대로 담으세요(콤마 포함 등).' +
+    ' **흐려서 읽을 수 없는 항목은 지어내지 말고 건너뛰세요.**' +
+    ' 표에 없는 사람을 만들어 내지 마세요. JSON 외 텍스트 금지.';
+
+  function wageFail(message) {
+    return { ok: false, error: message, company: '', period: '', docName: '', rows: [] };
+  }
+
+  /* 판독 결과를 급여데이터함이 바로 buildValueRows 에 넘길 수 있는 꼴로 다듬는다.
+     이름 없는 줄·항목 없는 pairs 는 버린다 — 빈 껍데기 값 줄이 저장되면 안 된다. */
+  function afterWageRead(parsed) {
+    var rows = Array.isArray(parsed.rows) ? parsed.rows : [];
+    var cleaned = rows.map(function (p) {
+      var pairs = Array.isArray(p && p.pairs) ? p.pairs : [];
+      return {
+        name: String((p && p.name) || '').trim(),
+        pairs: pairs.map(function (pr) {
+          return { item: String((pr && pr.item) || '').trim(), value: String((pr && pr.value) || '').trim() };
+        }).filter(function (pr) { return pr.item; })
+      };
+    }).filter(function (r) { return r.name; });
+    return {
+      ok: true, error: null,
+      company: String(parsed.company || '').trim(),
+      period: String(parsed.period || '').trim(),
+      docName: String(parsed.docName || '').trim(),
+      rows: cleaned
+    };
+  }
+
+  /* 급여표(급여명세서·임금대장) 한 장(또는 여러 쪽)을 사람별 금액까지 판독한다.
+     read() 와 같은 모델·재시도·키 조달 배관을 그대로 쓰되, 프롬프트와 결과 꼴만 다르다. */
+  function readWageTable(dataUrl) {
+    if (!deps.fetch) return Promise.resolve(wageFail('판독 준비가 되지 않았습니다'));
+    var imgs = (Array.isArray(dataUrl) ? dataUrl : [dataUrl])
+      .map(function (u) { return String(u || '').split(',')[1] || ''; })
+      .filter(Boolean);
+    if (!imgs.length) return Promise.resolve(wageFail('사진을 읽을 수 없습니다'));
+
+    var keyP = deps.getKey ? Promise.resolve().then(deps.getKey) : Promise.resolve('');
+    return keyP.catch(function () { return ''; }).then(function (key) {
+      if (!key) return wageFail('AI 키가 없습니다 — 포털 설정에서 등록해 주세요');
+      var parts = imgs.map(function (b64) {
+        return { inline_data: { mime_type: 'image/jpeg', data: b64 } };
+      });
+      parts.push({ text: WAGE_PROMPT + (imgs.length > 1 ? MULTI_NOTE : '') });
+      var body = {
+        contents: [{ parts: parts }],
+        generationConfig: { temperature: 0 }
+      };
+      return askAny(key, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      }).then(function (j) {
+        var parsed = parseReply(j);
+        if (!parsed) throw new Error('AI가 알아볼 수 없는 답을 보냈습니다');
+        return afterWageRead(parsed);
+      }).catch(function (e) {
+        return wageFail((e && e.message) || String(e));
+      });
+    });
+  }
+
   function read(dataUrl) {
     if (!deps.fetch) return Promise.resolve(fail('판독 준비가 되지 않았습니다'));
     /* 한 장이면 그대로, 여러 장이면 **한 문서의 여러 쪽**으로 본다. */
@@ -520,6 +594,7 @@
     PROMPTS: { all: PROMPT_ALL },
     READ_VERSION: READ_VERSION,
     read: read,
+    readWageTable: readWageTable,
     autoOk: autoOk
   };
 })(typeof window !== 'undefined' ? window : globalThis);
