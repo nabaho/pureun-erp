@@ -198,3 +198,18 @@ test('읽어 온 서류 목록을 회사 상세에 보여준다', () => {
   const at = source.indexOf('function coDetailHtml');
   assert.match(source.slice(at, at + 900), /coDocsHtml\(o\)/, '상세에 안 끼웠다');
 });
+
+test('유형(자문·급여)은 제 칸을 갖는다', () => {
+  /* 상호 옆에 붙이면 상호가 길 때 유형이 밀려 안 보인다 */
+  assert.match(source, /<th>상호<\/th><th>유형<\/th>/);
+});
+
+test('마지막에 남는 폭을 먹는 빈 칸을 둔다', () => {
+  /* 없으면 상호 칸이 남은 폭을 다 먹어 사업자번호·가진 것·담당이 화면 오른쪽 끝까지
+     밀려난다 — 눈이 좌우로 멀리 오간다(대표 화면 2026-08-13). */
+  const at = source.indexOf('<colgroup><col style="width:34px">');
+  assert.ok(at > 0, '기업정보 표의 colgroup 을 찾지 못했습니다');
+  const cg = source.slice(at, at + 260);
+  assert.match(cg, /width:300px/, '상호 칸에 폭을 안 줬다 — 남은 폭을 다 먹는다');
+  assert.match(cg, /<col><\/colgroup>/, '남는 폭을 먹는 빈 칸이 없다');
+});
