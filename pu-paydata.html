@@ -93,6 +93,20 @@ h1{font-size:18px;margin-bottom:4px}
 .foldmenu div:hover{background:#f1f5fb}
 .foldmenu .del{color:var(--bad)}
 
+/* ── 남의 자리 보기 · 열람 사유 · 자리 맡기기 ── */
+.modalWrap{display:none;position:fixed;inset:0;background:rgba(15,20,30,.45);z-index:40;
+  align-items:center;justify-content:center;padding:16px}
+.modalWrap.on{display:flex}
+.modalCard{background:#fff;border-radius:14px;max-width:420px;width:100%;max-height:80vh;
+  overflow-y:auto;padding:16px}
+.modalCard h2{font-size:15px;margin:0}
+.modalCard .row{padding:9px 4px}
+.seatbar{border-radius:12px;padding:9px 14px;font-size:13px;display:flex;align-items:center;
+  gap:10px;margin-bottom:14px}
+.seatbar.view{background:#FBF1DE;border:1px solid #F0D9A8;color:#7C4A03}
+.seatbar.deputy{background:#EEF2FF;border:1px solid #C7D2FE;color:#3730A3}
+.seatbar button{margin-left:auto}
+
 /* ── 확대 보기 (사진첩과 같은 방식) ──
    클릭하면 전체화면으로 보이고, 사진은 다시 눌러 원본 크기로 확대한다(서류 글씨를
    읽어야 한다). 엑셀·PDF 는 사진이 아니라 새 창에서 여는 안내만 보여준다. */
@@ -117,7 +131,10 @@ h1{font-size:18px;margin-bottom:4px}
 <body>
 <header>
   <div class="brand" onclick="App.go('sites')">푸 급여데이터함</div>
-  <div class="who"><span id="whoami"></span><button class="out" onclick="App.logout()">로그아웃</button></div>
+  <div class="who"><span id="whoami"></span>
+    <button class="out" onclick="openStaffPicker()">🔁 담당자</button>
+    <button class="out" onclick="App.go('deputy')">🗓 자리 맡기기</button>
+    <button class="out" onclick="App.logout()">로그아웃</button></div>
 </header>
 <div id="gate" class="gate">로그인을 확인하고 있습니다…</div>
 <main id="main" style="display:none"></main>
@@ -233,10 +250,15 @@ function pickBar(kind, ids, acts) {
    어느 화면인가 · 어느 사업장인가 · 어느 달인가. 자료는 여기 모아 두고 화면이 읽는다. */
 const App = {
   screen: 'sites', companyId: '', companyName: '', month: '', kind: 'attend', query: '',
-  companies: [], pending: {}, arrivals: {}, trash: null, me: null, pick: {},
+  companies: [], pending: {}, arrivals: {}, trash: null, me: null, pick: {}, myName: '',
   itemsKeep: null, itemsMonth: null, itemsMonthSlot: '',
   viewerId: '', viewerUrl: '', viewerZoom: false, viewerErr: '',
   folders: {}, foldersCompanyId: '', folderPick: 'all', folderEdit: { mode: '', fid: '', value: '' },
+  /* 남의 자리 보기 — viewingUid 가 비어 있으면 내 자리다.
+     viewingDeputy 는 그 자리를 대리로 맡고 있는지(수정 가능한지)다. */
+  viewingUid: '', viewingName: '', viewingDeputy: false,
+  staffOpen: false, staffQuery: '', staffList: [], reasonPrompt: null,
+  deputies: {},
 
   go(screen, o) {
     // 사업장을 바꿔 들어가면 남의 폴더가 골라진 채로 남지 않게 되돌린다 —
@@ -246,6 +268,7 @@ const App = {
     App.screen = screen;
     if (screen === 'drawer') { ensureDrawerData(); ensureFolders(); }
     if (screen === 'trash') ensureTrash();
+    if (screen === 'deputy') { ensureDeputies(); loadDeputyScreen(); }
     App.render();
   },
 
@@ -253,11 +276,14 @@ const App = {
 
   render() {
     const m = $('main');
-    if (App.screen === 'sites') { m.innerHTML = screenSites(); renderViewer(); return; }
-    if (App.screen === 'pending') { m.innerHTML = screenPending(); renderViewer(); return; }
-    if (App.screen === 'drawer') { m.innerHTML = screenDrawer(); renderViewer(); return; }
-    if (App.screen === 'trash') { m.innerHTML = screenTrash(); renderViewer(); return; }
-    m.innerHTML = '<div class="card"><div class="empty">아직 만들지 않은 화면입니다.</div></div>';
+    const banner = bannerHtml();
+    if (App.screen === 'sites') { m.innerHTML = banner + screenSites(); }
+    else if (App.screen === 'pending') { m.innerHTML = banner + screenPending(); }
+    else if (App.screen === 'drawer') { m.innerHTML = banner + screenDrawer(); }
+    else if (App.screen === 'trash') { m.innerHTML = banner + screenTrash(); }
+    else if (App.screen === 'deputy') { m.innerHTML = screenDeputy(); }
+    else { m.innerHTML = '<div class="card"><div class="empty">아직 만들지 않은 화면입니다.</div></div>'; }
+    m.innerHTML += staffPickerHtml();
     renderViewer();
   }
 };
@@ -291,6 +317,12 @@ function afterLogin() {
     .then(s => { const r = s.val() || {}; S.init({ isAdmin: !!r.isAdmin }); })
     .catch(e => console.warn('[권한]', e && e.code));
 
+  /* 이름을 찾아 화면·명단에 반영한다 — 남이 나를 「이름으로」 고르려면
+     내가 먼저 한 번 로그인해야 한다(명단에 내가 적힌다). */
+  S.signIn(App.me.email || '', App.me.email || '').then(name => {
+    if (name) { App.myName = name; $('whoami').textContent = name; App.render(); }
+  }).catch(e => console.warn('[이름 찾기]', e && e.message));
+
   $('gate').style.display = 'none';
   $('main').style.display = '';
   loadSites();
@@ -301,7 +333,7 @@ function afterLogin() {
 function loadSites() {
   Promise.all([
     S.listCompanies().catch(e => { console.warn('[업체관리]', e && e.code); return []; }),
-    S.listMyPending().catch(e => { console.warn('[대기 칸]', e && e.code); return {}; }),
+    S.listMyPending(App.viewingUid).catch(e => { console.warn('[대기 칸]', e && e.code); return {}; }),
     S.listArrivals().catch(e => { console.warn('[도착 칸]', e && e.code); return {}; })
   ]).then(([companies, pending, arrivals]) => {
     App.companies = companies;
@@ -451,13 +483,15 @@ function screenPending() {
   const ids = Object.keys(App.pending || {}).sort((a, b) => ((App.pending[b].at || 0) - (App.pending[a].at || 0)));
   let h = '<div style="margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
     + '<button class="btn" onclick="App.go(\'sites\')">← 사업장</button>'
-    + '<button class="btn pri" onclick="pickFiles()">＋ 파일 올리기</button>'
-    + '<input type="file" id="filePick" multiple style="display:none"'
-    + ' accept=".xlsx,.xls,.csv,.pdf,.hwp,.hwpx,.jpg,.jpeg,.png,.heic,.webp"'
-    + ' onchange="uploadFiles(this.files)">'
-    + '<button class="btn" onclick="pickShot()">📷 찍어서 올리기</button>'
-    + '<input type="file" id="shotPick" accept="image/*" capture="environment" style="display:none"'
-    + ' onchange="shotToPending(this.files)">'
+    + (canWrite() ?
+      '<button class="btn pri" onclick="pickFiles()">＋ 파일 올리기</button>'
+      + '<input type="file" id="filePick" multiple style="display:none"'
+      + ' accept=".xlsx,.xls,.csv,.pdf,.hwp,.hwpx,.jpg,.jpeg,.png,.heic,.webp"'
+      + ' onchange="uploadFiles(this.files)">'
+      + '<button class="btn" onclick="pickShot()">📷 찍어서 올리기</button>'
+      + '<input type="file" id="shotPick" accept="image/*" capture="environment" style="display:none"'
+      + ' onchange="shotToPending(this.files)">'
+      : '')
     + '</div>'
     + '<h1>미정 대기 칸</h1><div class="sub">사업장·귀속월을 채우면 서랍으로 내려갑니다 · ' + ids.length + '건</div>';
 
@@ -487,7 +521,7 @@ function screenPending() {
       + '<input class="btn" id="mo_' + id + '" style="width:104px" placeholder="2026-08" value="' + esc(g.month) + '">'
       + '<select class="btn" id="kd_' + id + '">' + kindOpts.replace('value="' + esc(g.kind) + '"',
         'value="' + esc(g.kind) + '" selected') + '</select>'
-      + '<button class="btn pri" onclick="fileToDrawer(\'' + esc(id) + '\')">서랍으로</button>'
+      + (canWrite() ? '<button class="btn pri" onclick="fileToDrawer(\'' + esc(id) + '\')">서랍으로</button>' : '')
       + '</div></div>';
   }).join('') + '</div>';
   return h;
@@ -496,6 +530,7 @@ function screenPending() {
 /* 대기 칸에서 서랍으로. 저장 층이 한 묶음으로 쓴다 —
    자료 생기기·대기 칸 지우기·도착 표시가 함께 들어간다. */
 function fileToDrawer(id) {
+  if (!canWrite()) return;   // 서버가 어차피 거절하지만 이중으로 잠근다
   const rec = App.pending[id];
   if (!rec) return;
   const coId = $('co_' + id).value;
@@ -505,7 +540,7 @@ function fileToDrawer(id) {
   let up;
   try { up = S.drawerUpdate(id, rec, tag); }
   catch (e) { alert(e.message); return; }     // 무엇이 비었는지 사람에게 알린다
-  S.moveToDrawer(id, tag, rec)
+  S.moveToDrawer(id, tag, rec, App.viewingUid)
     .then(() => { delete App.pending[id]; App.render(); })
     .catch(e => alert('저장 실패: ' + (e.code || e.message) + '\n다시 시도해 주세요.'));
 }
@@ -517,16 +552,17 @@ window.pickFiles = pickFiles;
 /* 여러 장을 한꺼번에 받는다. 한 장이 막혀도 나머지는 올라간다 —
    전부 되돌리면 방금 고른 것을 처음부터 다시 골라야 한다. */
 function uploadFiles(files) {
+  if (!canWrite()) return;
   const list = Array.prototype.slice.call(files || []);
   if (!list.length) return;
   const bad = [];
   Promise.all(list.map(f =>
-    S.saveFile(f, { at: Date.now(), from: 'upload' })
+    S.saveFile(f, { at: Date.now(), from: 'upload', owner: App.viewingUid })
       .catch(e => { bad.push(f.name + ' — ' + e.message); return null; })
   )).then(() => {
     if (bad.length) alert('담지 못한 파일이 있습니다:\n' + bad.join('\n'));
     $('filePick').value = '';   // 같은 파일을 다시 골라도 onchange 가 또 울리게 한다
-    S.listMyPending().then(p => { App.pending = p; App.render(); })
+    S.listMyPending(App.viewingUid).then(p => { App.pending = p; App.render(); })
       .catch(e => console.warn('[대기 칸]', e && e.code));
   });
 }
@@ -539,16 +575,17 @@ window.pickShot = pickShot;
    갈린다. 폰 기본 카메라(<input capture>)는 한 번에 한 장이 보통이지만,
    기기에 따라 여러 장을 돌려줄 수 있어 목록으로 받는다. */
 function shotToPending(files) {
+  if (!canWrite()) return;
   const list = Array.prototype.slice.call(files || []);
   if (!list.length) return;
   const bad = [];
   Promise.all(list.map(f =>
-    S.saveFile(f, { at: Date.now(), from: 'camera' })
+    S.saveFile(f, { at: Date.now(), from: 'camera', owner: App.viewingUid })
       .catch(e => { bad.push(f.name + ' — ' + e.message); return null; })
   )).then(() => {
     if (bad.length) alert('담지 못했습니다:\n' + bad.join('\n'));
     $('shotPick').value = '';
-    S.listMyPending().then(p => { App.pending = p; App.render(); })
+    S.listMyPending(App.viewingUid).then(p => { App.pending = p; App.render(); })
       .catch(e => console.warn('[대기 칸]', e && e.code));
   });
 }
@@ -610,11 +647,11 @@ function ensureDrawerData() {
   const monthSlot = S.monthKey(App.month) || S.KEEP;
   const jobs = [];
   if (!App.itemsKeep) {
-    jobs.push(S.listSlot(S.KEEP).then(v => { App.itemsKeep = v; })
+    jobs.push(S.listSlot(S.KEEP, App.viewingUid).then(v => { App.itemsKeep = v; })
       .catch(e => { console.warn('[서랍·keep]', e && e.code); App.itemsKeep = {}; }));
   }
   if (App.itemsMonthSlot !== monthSlot) {
-    jobs.push(S.listSlot(monthSlot).then(v => { App.itemsMonth = v; App.itemsMonthSlot = monthSlot; })
+    jobs.push(S.listSlot(monthSlot, App.viewingUid).then(v => { App.itemsMonth = v; App.itemsMonthSlot = monthSlot; })
       .catch(e => { console.warn('[서랍·' + monthSlot + ']', e && e.code); App.itemsMonth = {}; App.itemsMonthSlot = monthSlot; }));
   }
   if (jobs.length) Promise.all(jobs).then(() => App.render());
@@ -623,7 +660,7 @@ function ensureDrawerData() {
 /* 사업장이 바뀌면 폴더 목록도 다시 읽는다 — 폴더는 사업장마다 따로 관리된다. */
 function ensureFolders(force) {
   if (!force && App.foldersCompanyId === App.companyId) return Promise.resolve();
-  return S.listFolders(App.companyId).then(v => {
+  return S.listFolders(App.companyId, App.viewingUid).then(v => {
     App.folders = v; App.foldersCompanyId = App.companyId; App.render();
   }).catch(e => {
     console.warn('[폴더]', e && e.code);
@@ -638,25 +675,26 @@ function folderBar(folders, folderPick, counts) {
   const byAge = (a, b) => (f[a].createdAt || 0) - (f[b].createdAt || 0);
   const tops = Object.keys(f).filter(id => !f[id].parent).sort(byAge);
   const kidsOf = pid => Object.keys(f).filter(id => f[id].parent === pid).sort(byAge);
+  const editable = canWrite();
   const chip = (fid, label, n, sub) =>
     '<button class="' + (folderPick === fid ? 'on' : '') + (sub ? ' sub' : '') + '" onclick="pickFolder(\''
     + esc(fid) + '\')">' + esc(label) + '<span class="n">' + (n || 0) + '</span>'
-    + (fid !== 'all' ? '<span class="dots" title="이름 바꾸기·하위폴더·지우기"'
+    + (fid !== 'all' && editable ? '<span class="dots" title="이름 바꾸기·하위폴더·지우기"'
       + ' onclick="event.stopPropagation();folderMenu(event,\'' + esc(fid) + '\')">⋯</span>' : '') + '</button>';
 
   let h = '<div class="foldbar">';
   h += chip('all', '📁 전체', counts.all, false);
-  if (App.folderEdit.mode === 'new') h += folderEditorHtml(false);
+  if (editable && App.folderEdit.mode === 'new') h += folderEditorHtml(false);
   tops.forEach(fid => {
-    if (App.folderEdit.mode === 'rename' && App.folderEdit.fid === fid) h += folderEditorHtml(false);
+    if (editable && App.folderEdit.mode === 'rename' && App.folderEdit.fid === fid) h += folderEditorHtml(false);
     else h += chip(fid, '📁 ' + (f[fid].name || ''), counts[fid], false);
     kidsOf(fid).forEach(kid => {
-      if (App.folderEdit.mode === 'rename' && App.folderEdit.fid === kid) h += folderEditorHtml(true);
+      if (editable && App.folderEdit.mode === 'rename' && App.folderEdit.fid === kid) h += folderEditorHtml(true);
       else h += chip(kid, '↳ ' + (f[kid].name || ''), counts[kid], true);
     });
-    if (App.folderEdit.mode === 'sub' && App.folderEdit.fid === fid) h += folderEditorHtml(true);
+    if (editable && App.folderEdit.mode === 'sub' && App.folderEdit.fid === fid) h += folderEditorHtml(true);
   });
-  if (App.folderEdit.mode !== 'new') h += '<button class="add" onclick="openFolderEditor(\'new\')">＋ 폴더</button>';
+  if (editable && App.folderEdit.mode !== 'new') h += '<button class="add" onclick="openFolderEditor(\'new\')">＋ 폴더</button>';
   h += '</div>';
   return h;
 }
@@ -689,11 +727,11 @@ function submitFolderEditor() {
   if (!name) { cancelFolderEditor(); return; }
   App.folderEdit = { mode: '', fid: '', value: '' };
   if (mode === 'rename') {
-    S.renameFolder(App.companyId, fid, name).then(() => ensureFolders(true))
+    S.renameFolder(App.companyId, fid, name, App.viewingUid).then(() => ensureFolders(true))
       .catch(e => { alert('이름을 바꾸지 못했습니다 — ' + (e.message || e)); App.render(); });
     return;
   }
-  S.addFolder(App.companyId, name, mode === 'sub' ? fid : null).then(r =>
+  S.addFolder(App.companyId, name, mode === 'sub' ? fid : null, App.viewingUid).then(r =>
     ensureFolders(true).then(() => { App.folderPick = r.id; App.render(); })
   ).catch(e => { alert('폴더를 만들지 못했습니다 — ' + (e.message || e)); App.render(); });
 }
@@ -717,8 +755,9 @@ function closeFolderMenu() { const m = $('foldMenu'); if (m && m.parentNode) m.p
 function renameFolderAsk(fid) { closeFolderMenu(); openFolderEditor('rename', fid, ((App.folders || {})[fid] || {}).name || ''); }
 function removeFolderAsk(fid) {
   closeFolderMenu();
+  if (!canWrite()) return;
   if (!confirm('이 폴더를 지울까요?\n담긴 자료는 지워지지 않고 「전체」에 그대로 남습니다.')) return;
-  S.deleteFolder(App.companyId, fid).then(() => {
+  S.deleteFolder(App.companyId, fid, App.viewingUid).then(() => {
     if (App.folderPick === fid) App.folderPick = 'all';
     return ensureFolders(true);
   }).catch(e => { alert('지우지 못했습니다 — ' + (e.message || e)); App.render(); });
@@ -729,8 +768,9 @@ function pickFolder(fid) { App.folderPick = fid; App.render(); }
    서버에 쓰는 동안 화면이 멈추지 않게, 저장이 끝나면 우리가 들고 있는 자료에도
    바로 반영해 다시 읽지 않고 새로고침한다. */
 function assignFolder(id, folderId) {
+  if (!canWrite()) return;
   const slot = S.isKeepKind(App.kind) ? S.KEEP : (S.monthKey(App.month) || S.KEEP);
-  S.setFolder(slot, id, folderId).then(() => {
+  S.setFolder(slot, id, folderId, App.viewingUid).then(() => {
     const box = S.isKeepKind(App.kind) ? App.itemsKeep : App.itemsMonth;
     if (box && box[id]) box[id].folder = folderId || null;
     App.render();
@@ -779,6 +819,7 @@ function screenDrawer() {
     + ' oninput="App.query=this.value;App.render()"></div>';
 
   const folderOpts = folderOptionsHtml(App.folders);
+  const editable = canWrite();
 
   h += '<div class="card">' + (rows.length ? pickBar('drawer', ids, '') + rows.map((r, i) =>
     '<div class="row' + (pickOn(sel, r.id) ? ' pkon' : '') + '">'
@@ -789,11 +830,13 @@ function screenDrawer() {
     + esc(r.filename || '(이름 없음)') + '</b>'
     + (r.expired ? '<span class="expbadge">지난 것</span>' : '')
     + '<span class="sub" style="margin:0">' + (r.filedAt ? new Date(r.filedAt).toLocaleDateString() : '') + '</span>'
-    + '<select class="btn" style="font-size:11.5px;padding:4px 6px" onclick="event.stopPropagation()"'
-    + ' onchange="assignFolder(\'' + esc(r.id) + '\',this.value)">'
-    + folderOpts.replace('value="' + esc(r.folder || '') + '"', 'value="' + esc(r.folder || '') + '" selected')
-    + '</select>'
-    + '<button class="btn" onclick="event.stopPropagation();toTrash(\'' + esc(r.id) + '\')" title="휴지통으로">🗑</button>'
+    + (editable
+      ? '<select class="btn" style="font-size:11.5px;padding:4px 6px" onclick="event.stopPropagation()"'
+        + ' onchange="assignFolder(\'' + esc(r.id) + '\',this.value)">'
+        + folderOpts.replace('value="' + esc(r.folder || '') + '"', 'value="' + esc(r.folder || '') + '" selected')
+        + '</select>'
+        + '<button class="btn" onclick="event.stopPropagation();toTrash(\'' + esc(r.id) + '\')" title="휴지통으로">🗑</button>'
+      : (r.folder && App.folders[r.folder] ? '<span class="sub" style="margin:0">' + esc(App.folders[r.folder].name) + '</span>' : ''))
     + '</div>').join('')
     : '<div class="empty">' + (App.query ? '찾는 자료가 없습니다.'
       : (App.folderPick !== 'all' ? '이 폴더에 담긴 자료가 없습니다.'
@@ -872,10 +915,11 @@ function renderViewer() {
 /* 서랍에서 지운다. findRow 가 keep 칸·이 달 칸을 모두 뒤져 자료를 찾는다
    (뷰어가 쓰는 것과 같은 함수 — 두 칸 중 어디 있는지 화면이 몰라도 된다). */
 function toTrash(id) {
+  if (!canWrite()) return;
   const rec = findRow(id);
   if (!rec) return;
   if (!confirm('휴지통으로 옮길까요?\n30일 안에는 되살릴 수 있습니다.')) return;
-  db.ref().update(S.trashUpdate(id, rec)).then(() => {
+  db.ref().update(S.trashUpdate(id, rec, App.viewingUid)).then(() => {
     if (App.itemsKeep && App.itemsKeep[id]) delete App.itemsKeep[id];
     if (App.itemsMonth && App.itemsMonth[id]) delete App.itemsMonth[id];
     App.render();
@@ -884,7 +928,7 @@ function toTrash(id) {
 window.toTrash = toTrash;
 
 function ensureTrash() {
-  return S.listTrash().then(v => { App.trash = v; App.render(); })
+  return S.listTrash(App.viewingUid).then(v => { App.trash = v; App.render(); })
     .catch(e => { console.warn('[휴지통]', e && e.code); App.trash = {}; App.render(); });
 }
 
@@ -903,15 +947,17 @@ function screenTrash() {
       + '<span style="flex:1">' + esc(r.filename || '(이름 없음)')
       + '<div class="sub" style="margin:2px 0 0">' + esc(r.companyName || r.companyId || '') + '</div></span>'
       + (over ? '<span class="expbadge">30일 지남</span>' : '')
-      + '<button class="btn" onclick="restoreItem(\'' + esc(id) + '\')">되살리기</button></div>';
+      + (canWrite() ? '<button class="btn" onclick="restoreItem(\'' + esc(id) + '\')">되살리기</button>' : '')
+      + '</div>';
   }).join('') + '</div>';
   return h;
 }
 
 function restoreItem(id) {
+  if (!canWrite()) return;
   const rec = (App.trash || {})[id];
   if (!rec) return;
-  db.ref().update(S.restoreUpdate(id, rec)).then(() => {
+  db.ref().update(S.restoreUpdate(id, rec, App.viewingUid)).then(() => {
     delete App.trash[id];
     // 되살아난 칸을 다시 읽어야 서랍이 최신 자료를 본다 — 다음에 그 서랍에
     // 들어갈 때 새로 읽어 오게 캐시를 비운다.
@@ -920,6 +966,191 @@ function restoreItem(id) {
   }).catch(e => alert('실패: ' + (e.code || e.message)));
 }
 window.restoreItem = restoreItem;
+
+/* ══════ 2차 — 이름 골라 보기 · 열람 사유 · 휴가 대리 ══════
+   남의 자리를 볼 때는 항상 이 흐름을 거친다: 이름 고르기 → (대리가 아니면)
+   사유 적기 → 자리 전환. 대리로 맡은 자리는 사유 없이 바로 들어간다 —
+   맡아 달라고 부탁받은 자리라 매번 이유를 적게 하면 일이 안 된다. */
+
+/* 지금 이 자리에서 고칠 수 있는가 — 내 자리이거나, 대리로 맡은 자리일 때만.
+   서버 규칙이 어차피 막지만, 단추를 안 보이게 해 헛눌러 실패하는 일을 줄인다. */
+function canWrite() { return !App.viewingUid || App.viewingDeputy; }
+
+function bannerHtml() {
+  if (!App.viewingUid) return '';
+  return App.viewingDeputy
+    ? '<div class="seatbar deputy">✏ <b>' + esc(App.viewingName) + ' 자리</b> — 맡은 자리입니다'
+      + '<button class="btn" onclick="leaveSeat()">내 자리로</button></div>'
+    : '<div class="seatbar view">👁 <b>' + esc(App.viewingName) + ' 자리</b> — 보기만 가능합니다'
+      + '<button class="btn" onclick="leaveSeat()">내 자리로</button></div>';
+}
+
+function openStaffPicker() {
+  App.staffOpen = true; App.staffQuery = ''; App.reasonPrompt = null;
+  App.render();
+  S.listOwners().then(v => {
+    App.staffList = Object.keys(v).map(uid => Object.assign({ uid: uid }, v[uid]));
+    App.render();
+  }).catch(e => { console.warn('[담당자 명단]', e && e.code); App.staffList = []; App.render(); });
+}
+function closeStaffPicker() { App.staffOpen = false; App.reasonPrompt = null; App.render(); }
+window.openStaffPicker = openStaffPicker; window.closeStaffPicker = closeStaffPicker;
+
+function staffPickerHtml() {
+  if (!App.staffOpen) return '';
+  let body;
+  if (App.reasonPrompt) {
+    body = '<div class="sub">' + esc(App.reasonPrompt.targetName || App.reasonPrompt.targetUid) + ' 자리를 왜 보시나요?</div>'
+      + '<input id="reasonInput" class="btn" style="width:100%;margin:8px 0" placeholder="예: 급여 문의 확인"'
+      + ' onkeydown="if(event.key===\'Enter\'){event.preventDefault();submitReason();}">'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end">'
+      + '<button class="btn" onclick="App.reasonPrompt=null;App.render()">취소</button>'
+      + '<button class="btn pri" onclick="submitReason()">확인</button></div>';
+  } else {
+    const q = String(App.staffQuery || '').trim().toLowerCase();
+    const list = (App.staffList || []).filter(o => o.uid !== S.myUid())
+      .filter(o => !q || String(o.name || '').toLowerCase().indexOf(q) >= 0)
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ko'));
+    body = '<input class="btn" style="width:100%;margin-bottom:8px" placeholder="이름으로 찾기"'
+      + ' value="' + esc(App.staffQuery) + '" oninput="App.staffQuery=this.value;App.render()">'
+      + (list.length ? list.map(o =>
+        '<div class="row" style="cursor:pointer" onclick="pickStaff(\'' + esc(o.uid) + '\',\''
+        + esc(o.name || o.uid) + '\')"><b style="flex:1">' + esc(o.name || o.uid) + '</b></div>').join('')
+        : '<div class="empty">한 번이라도 로그인한 다른 사람이 아직 없습니다.</div>');
+  }
+  return '<div class="modalWrap on"><div class="modalCard">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+    + '<h2>' + (App.reasonPrompt ? '열람 사유' : '담당자 고르기') + '</h2>'
+    + '<button class="btn" onclick="closeStaffPicker()">✕</button></div>' + body + '</div></div>';
+}
+
+/* 이름을 고르면 먼저 대리 여부부터 확인한다 — 맡은 자리면 사유 없이 바로 들어간다. */
+function pickStaff(uid, name) {
+  db.ref(S.deputyPath(S.myUid(), uid)).once('value').then(s => {
+    const active = S.isActiveDeputy(s.val(), Date.now());
+    if (active) { enterSeat(uid, name, true); closeStaffPicker(); }
+    else {
+      App.reasonPrompt = { targetUid: uid, targetName: name };
+      App.render();
+      setTimeout(() => { const el = $('reasonInput'); if (el) el.focus(); }, 0);
+    }
+  }).catch(e => alert('확인하지 못했습니다 — ' + (e.code || e.message)));
+}
+window.pickStaff = pickStaff;
+
+function submitReason() {
+  const p = App.reasonPrompt; if (!p) return;
+  const inp = $('reasonInput');
+  const reason = inp ? String(inp.value || '').trim() : '';
+  if (!reason) { alert('사유를 적어 주세요.'); return; }
+  S.logAccess({ targetUid: p.targetUid, targetName: p.targetName, reason: reason }).then(() => {
+    enterSeat(p.targetUid, p.targetName, false);
+    closeStaffPicker();
+  }).catch(e => alert('기록하지 못했습니다 — ' + (e.code || e.message)));
+}
+window.submitReason = submitReason;
+
+/* 자리를 옮긴다. 대기 칸·서랍·폴더·휴지통 캐시를 모두 비운다 — 안 비우면
+   방금 전 자리의 자료가 새 자리 화면에 그대로 남는다. */
+function resetOwnerCaches() {
+  App.pending = {}; App.itemsKeep = null; App.itemsMonth = null; App.itemsMonthSlot = '';
+  App.folders = {}; App.foldersCompanyId = ''; App.folderPick = 'all'; App.trash = null; App.pick = {};
+}
+function enterSeat(uid, name, isDeputy) {
+  App.viewingUid = uid; App.viewingName = name; App.viewingDeputy = !!isDeputy;
+  resetOwnerCaches();
+  App.screen = 'sites';
+  loadSites();
+  App.render();
+}
+function leaveSeat() {
+  App.viewingUid = ''; App.viewingName = ''; App.viewingDeputy = false;
+  resetOwnerCaches();
+  App.screen = 'sites';
+  loadSites();
+  App.render();
+}
+window.leaveSeat = leaveSeat;
+
+/* ══════ 휴가 대리 — 자리 맡기기 화면 ══════ */
+function ensureDeputies() {
+  return S.listMyDeputies().then(v => { App.deputies = v; App.render(); })
+    .catch(e => { console.warn('[대리]', e && e.code); App.deputies = {}; App.render(); });
+}
+
+function screenDeputy() {
+  const ids = Object.keys(App.deputies || {});
+  const now = Date.now();
+  const today = new Date().toISOString().slice(0, 10);
+  const staffOpts = '<option value="">맡길 사람 고르기</option>'
+    + (App.staffList || []).filter(o => o.uid !== S.myUid())
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ko'))
+      .map(o => '<option value="' + esc(o.uid) + '">' + esc(o.name || o.uid) + '</option>').join('');
+
+  let h = '<div style="margin-bottom:10px"><button class="btn" onclick="App.go(\'sites\')">← 사업장</button></div>'
+    + '<h1>자리 맡기기</h1><div class="sub">휴가·출장으로 자리를 비울 때, 내 자료를 고칠 수 있는 사람을 정합니다.</div>';
+
+  h += '<div class="card" style="padding:14px;margin-bottom:14px">'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+    + '<select class="btn" id="depWho">' + staffOpts + '</select>'
+    + '<input class="btn" type="date" id="depFrom" value="' + today + '">'
+    + '<span>부터</span>'
+    + '<input class="btn" type="date" id="depTo">'
+    + '<span>까지</span>'
+    + '<button class="btn pri" onclick="submitDeputy()">맡기기</button>'
+    + '</div>'
+    + '<div class="sub" style="margin-top:8px">🔒 끝나는 날이 지나면 저절로 닫힙니다 — 따로 거두실 필요가 없습니다.</div>'
+    + '</div>';
+
+  h += '<h1 style="font-size:15px">지금 맡기고 있는 사람 <span class="sub" style="margin:0;font-weight:400">' + ids.length + '명</span></h1>';
+  if (!ids.length) {
+    h += '<div class="card"><div class="empty">아직 아무에게도 맡기지 않았습니다.</div></div>';
+  } else {
+    h += '<div class="card">' + ids.map(uid => {
+      const d = App.deputies[uid];
+      const active = S.isActiveDeputy(d, now);
+      return '<div class="row">'
+        + '<b style="flex:1">' + esc(d.name || uid) + '</b>'
+        + '<span class="' + (active ? '' : 'sub') + '" style="margin:0;font-size:12.5px'
+        + (active ? ';color:var(--navy);font-weight:700' : '') + '">'
+        + (active ? new Date(d.to).toLocaleDateString() + '까지' : '기간 끝남') + '</span>'
+        + '<button class="btn" onclick="cancelDeputy(\'' + esc(uid) + '\')">지금 거두기</button>'
+        + '</div>';
+    }).join('') + '</div>';
+  }
+  return h;
+}
+
+/* 담당자 명단을 미리 읽어 둬야 「맡길 사람 고르기」에 이름이 뜬다 —
+   이름 골라 보기와 같은 명단을 쓴다. */
+function loadDeputyScreen() {
+  if (App.staffList && App.staffList.length) { App.render(); return; }
+  S.listOwners().then(v => {
+    App.staffList = Object.keys(v).map(uid => Object.assign({ uid: uid }, v[uid]));
+    App.render();
+  }).catch(e => console.warn('[담당자 명단]', e && e.code));
+}
+
+function submitDeputy() {
+  const who = $('depWho').value;
+  const fromV = $('depFrom').value, toV = $('depTo').value;
+  if (!who) { alert('맡길 사람을 골라 주세요.'); return; }
+  if (!toV) { alert('끝나는 날을 골라 주세요.'); return; }
+  const staff = (App.staffList || []).filter(o => o.uid === who)[0];
+  const from = fromV ? new Date(fromV).getTime() : Date.now();
+  const to = new Date(toV + 'T23:59:59').getTime();
+  S.setDeputy(who, staff ? staff.name : who, from, to)
+    .then(() => ensureDeputies())
+    .catch(e => alert('맡기지 못했습니다 — ' + (e.code || e.message)));
+}
+window.submitDeputy = submitDeputy;
+
+function cancelDeputy(uid) {
+  if (!confirm('지금 거둘까요? 그 사람은 곧바로 내 자리를 고칠 수 없게 됩니다.')) return;
+  S.revokeDeputy(uid).then(() => ensureDeputies())
+    .catch(e => alert('거두지 못했습니다 — ' + (e.code || e.message)));
+}
+window.cancelDeputy = cancelDeputy;
 </script>
 </body>
 </html>

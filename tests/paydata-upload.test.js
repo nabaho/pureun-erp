@@ -122,3 +122,18 @@ test('찍은 것과 올린 것을 from 값으로 구분한다', () => {
     assert.equal(written[S.pendingPath(id)].from, 'camera');
   });
 });
+
+test('★ 휴가 대리로 올리면 정보는 맡긴 사람 자리, 파일은 내 자리에 남는다', () => {
+  const S = loadStore();
+  let written = null;
+  S.init({
+    uid: 'U1',   // 대리인
+    storage: { ref: (p) => { assert.match(p, /^pu_paydata\/U1\//, '파일이 내 창고 자리가 아닙니다'); return { put: () => Promise.resolve({}) }; } },
+    db: { ref: () => ({ update: (u) => { written = u; return Promise.resolve(); } }) }
+  });
+  return S.saveFile({ name: 'a.jpg', size: 10, type: 'image/jpeg' }, { at: 1, owner: 'U2' }).then(id => {
+    // 정보는 U2(맡긴 사람) 자리로 가야 그 사람 대기 칸에 보인다.
+    assert.ok(written[S.pendingPath(id, 'U2')], '맡긴 사람 자리에 정보가 안 갔습니다');
+    assert.equal(written[S.pendingPath(id)], undefined, '내 자리에도 함께 담기면 안 됩니다');
+  });
+});

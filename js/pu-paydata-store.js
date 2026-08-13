@@ -285,6 +285,9 @@
 
   /* 창고에 올리고 **그 뒤에** 대기 칸 정보를 쓴다.
      순서가 뒤집히면 파일 없는 유령 자료가 목록에 남는다. */
+  /* meta.owner 를 주면 대기 칸 정보가 **그 사람 자리**에 담긴다(휴가 대리로
+     맡은 자리에 올릴 때 쓴다) — 파일 자체는 **항상 올린 사람**(나) 자리에 남는다.
+     창고 규칙이 실시간DB를 못 봐서 대리인 판정을 창고에서 못 하기 때문이다. */
   function saveFile(file, meta) {
     var chk = acceptFile(file);
     if (!chk.ok) return Promise.reject(new Error(chk.why));
@@ -292,14 +295,14 @@
     var id = meta.id || newId();
     var ext = extOf(file.name, file.type);
     var at = meta.at || Date.now();
-    var where = filePath('pending', id, ext);   // 대기 칸 자료는 아직 귀속월 칸이 없다
+    var where = filePath('pending', id, ext);   // 대기 칸 자료는 아직 귀속월 칸이 없다 — 항상 내 창고 자리
     return deps.storage.ref(where).put(file).then(function () {
       var rec = pendingRecord({
         filename: file.name, file: where, mime: file.type,
         bytes: file.size, at: at, from: meta.from || 'upload'
       });
       var up = {};
-      up[pendingPath(id)] = rec;
+      up[pendingPath(id, meta.owner)] = rec;
       return deps.db.ref().update(up).then(function () { return id; });
     });
   }
