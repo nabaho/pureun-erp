@@ -1480,7 +1480,7 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', e
   isAdmin:false, privOpen:false, priv:{items:{},groups:{},trash:{}},
   /* 자료함 — 찾는 말·메일틀 갈래는 화면에만 쓰고 저장하지 않는다.
      sendLog 는 명함을 열 때만 그 명함 것을 읽어 담는다. */
-  matQ:'', matMailCat:'', matPrevId:'', sendLog:{}, coQ:'', coPick:'', coTag:'', coErpOnly:false, coSel:{}, coSort:{key:'name',dir:'asc'}, coColFilter:{},
+  matQ:'', matMailCat:'', matPrevId:'', sendLog:{}, coQ:'', coPick:'', coTag:'', coErpOnly:false, coSel:{}, coSort:{key:'name',dir:'asc'}, coColFilter:{}, coFolder:'',
   /* 메일 화면 — mailSent 가 true 면 보낸 메일함, 아니면 쓰기 */
   mailSent:false, mailDrawer:true, sentBox:{}, schedBox:{}, sentQ:'', sentMine:false, sentCat:'', sentBy:'',
   showBcc:false, draftAt:'', matPick:'', drawerQ:'', drawerOpen:{},
@@ -7697,9 +7697,19 @@ function renderPCSide(){
   if(state.view==='co'){
     const cos = coList();
     const erpN = cos.filter(o=>o.erp).length;
-    h += `<div class="pcsec">폴더</div>`;
-    h += pcItem(`onclick="pickCoFolder('')"`, '📋 전체', cos.length, !state.coErpOnly && !state.coTag);
-    h += pcItem(`onclick="pickCoFolder('erp')"`, '🏢 거래처만', erpN, state.coErpOnly && !state.coTag);
+    h += `<div class="pcsec" style="display:flex;align-items:center">폴더
+        <span style="margin-left:auto;cursor:pointer;font-weight:700" onclick="openCoFolderDialog()" title="새 폴더">＋</span></div>`;
+    h += pcItem(`onclick="pickCoFolder('')"`, '📋 전체', cos.length, !state.coErpOnly && !state.coTag && !state.coFolder);
+    h += pcItem(`onclick="pickCoFolder('erp')"`, '🏢 거래처만', erpN, state.coErpOnly && !state.coTag && !state.coFolder);
+    /* 손으로 만든 폴더 — 명함 폴더와 같은 결(gname·gcount·gmenu)로 그린다 */
+    Object.values(_coFolders).sort((a,b)=>(a.order||0)-(b.order||0)).forEach(f=>{
+      const n = cos.filter(o=>o.folder===f.id).length;
+      h += `<div class="pcitem folderrow ${state.coFolder===f.id?'on':''}" style="padding-left:11px">
+          <span class="gname" onclick="pickCoFolder('f:${f.id}')">📁 ${esc(f.name)}</span>
+          <span class="gcount">${n}</span>
+          <span class="gmenu" onclick="event.stopPropagation();openCoFolderMenu(event,'${f.id}')" title="관리">⋮</span>
+        </div>`;
+    });
     const tags = coTagList(cos);
     if(tags.length){
       h += `<div class="pcsec">사업별</div>`;
@@ -9518,7 +9528,7 @@ const _norm = s => String(s||'').replace(/\s|\(주\)|주식회사|㈜/g,'').toLo
 function openCoPage(){ state.view='co'; state.coPick='';
   try{ state.coErpOnly = !!localStorage.getItem('pucards_co_erponly'); }catch(_){}
   render();
-  loadCoInfo(); try{ $('pcMain').scrollTop=0; }catch(_){} }
+  loadCoInfo(); loadCoFolders(); try{ $('pcMain').scrollTop=0; }catch(_){} }
 function closeCoPage(){ state.view='list'; render(); }
 function pickCo(k){ state.coPick = (state.coPick===k ? '' : k); renderCoPage(); }
 
@@ -9532,14 +9542,84 @@ function coTagList(list){
   return Object.keys(c).sort((a,b)=>c[b]-c[a] || a.localeCompare(b,'ko')).map(t=>({t, n:c[t]}));
 }
 function pickCoTag(t){ state.coTag = (state.coTag===t ? '' : t); state.coPick=''; renderCoPage(); }
+
+/* ── 기업정보 폴더 ── 손으로 만들고 회사를 담는다.
+   명함이 폴더를 갖듯 회사도 갖는다. 회사는 폴더 하나에만 든다 — 여러 사업에 걸치는
+   것은 탭이 맡는다(설계서 2026-08-13, "폴더와 탭을 왜 둘 다 두나"). */
+let _coFolders = {};
+let _coFoldersOn = false;
+function loadCoFolders(cb){
+  if(_coFoldersOn || Store.mode!=='firebase'){ cb && cb(); return; }
+  _coFoldersOn = true;
+  /* 사업자·자료함처럼 renderPC() 를 부른다 — 폴더 개수가 옆줄에도 보이므로
+     renderCoPage() 만 부르면 옆줄 숫자가 안 바뀐다. */
+  Store.db.ref(DB_ROOT+'/coFolders').on('value', s=>{ _coFolders = s.val() || {}; if(state.view==='co') renderPC(); });
+  cb && cb();
+}
+function putCoFolder(folder){
+  if(Store.mode!=='firebase') return toast('클라우드에 연결된 상태에서만 됩니다');
+  Store.db.ref(DB_ROOT+'/coFolders/'+folder.id).set(folder);
+}
+function openCoFolderDialog(){
+  $('folderDlg').innerHTML = `
+    <div class="mhead"><b>새 폴더 만들기</b>
+      <button class="iconbtn" onclick="folderDlgBg.classList.remove('open')">✕</button></div>
+    <div class="field"><input id="newCoFolderName" placeholder="폴더 이름 (예: 컨설팅 신청)"
+       onkeydown="if(event.key==='Enter')confirmNewCoFolder()"></div>
+    <div class="mfoot">
+      <button class="btn primary" onclick="confirmNewCoFolder()">만들기</button>
+      <button class="btn ghost" onclick="folderDlgBg.classList.remove('open')">취소</button></div>`;
+  $('folderDlgBg').classList.add('open');
+  setTimeout(()=>{ const i=$('newCoFolderName'); if(i) i.focus(); }, 50);
+}
+function confirmNewCoFolder(){
+  const name=$('newCoFolderName').value.trim(); if(!name) return toast('폴더 이름을 입력하세요');
+  let by=''; try{ by=(firebase.auth().currentUser||{}).email||''; }catch(_){}
+  putCoFolder({ id:uid(), name, order:Date.now(), at:Date.now(), by });
+  $('folderDlgBg').classList.remove('open');
+  toast('폴더를 만들었습니다');
+}
+function renameCoFolder(id){
+  const f=_coFolders[id]; if(!f) return;
+  const name=prompt('폴더 이름 변경', f.name);
+  if(name===null || !name.trim()) return;
+  putCoFolder(Object.assign({}, f, { name:name.trim() }));
+}
+/* 폴더를 지워도 회사는 안 지운다 — 폴더 값만 비운다. 회사 자체(명함·사업자등록증)는
+   기업정보가 손댈 물건이 아니다(설계서 "안 하기로 한 것": 회사를 손으로 새로 만들지도
+   지우지도 않는다). */
+function deleteCoFolder(id){
+  const f=_coFolders[id]; if(!f) return;
+  if(!confirm(`「${f.name}」 폴더를 삭제할까요?\n(안에 있던 회사는 폴더 없음으로 돌아갑니다)`)) return;
+  const upd = {};
+  Object.keys(_coInfo).forEach(k=>{ if(_coInfo[k] && _coInfo[k].folder===id) upd['coInfo/'+k+'/folder']=null; });
+  upd['coFolders/'+id] = null;
+  Store.db.ref(DB_ROOT).update(upd).then(()=>{
+    if(state.coFolder===id) state.coFolder='';
+    toast('폴더를 삭제했습니다');
+  });
+}
+function openCoFolderMenu(ev, id){
+  const m=$('folderMenu');
+  const f=_coFolders[id]; if(!f) return;
+  m.innerHTML = `
+    <div class="fmi" onclick="closeFolderMenu();renameCoFolder('${id}')">✏️ 이름 변경</div>
+    <div class="fmi danger" onclick="closeFolderMenu();deleteCoFolder('${id}')">🗑 폴더 삭제</div>`;
+  m.style.display='block';
+  const x=Math.min(ev.clientX, window.innerWidth-170), y=Math.min(ev.clientY, window.innerHeight-120);
+  m.style.left=x+'px'; m.style.top=y+'px';
+  setTimeout(()=>document.addEventListener('click', closeFolderMenu, {once:true}), 0);
+}
+
 /* 거르개는 기억해 둔다 — 대표가 대개 거래처만 본다면 들어올 때마다 다시 누르게 하면 안 된다 */
 /* 옆줄 폴더 하나로 「전체 / 거래처만 / 사업별」을 다 고른다 — 셋이 서로 배타적이라
    한 자리에서 고르는 편이 헷갈리지 않는다. */
 function pickCoFolder(k){
   state.coPick=''; state.coSel={};
-  if(k==='erp'){ state.coErpOnly=true; state.coTag=''; }
-  else if(k.indexOf('t:')===0){ state.coTag=k.slice(2); state.coErpOnly=false; }
-  else { state.coErpOnly=false; state.coTag=''; }
+  if(k==='erp'){ state.coErpOnly=true; state.coTag=''; state.coFolder=''; }
+  else if(k.indexOf('t:')===0){ state.coTag=k.slice(2); state.coErpOnly=false; state.coFolder=''; }
+  else if(k.indexOf('f:')===0){ state.coFolder=k.slice(2); state.coErpOnly=false; state.coTag=''; }
+  else { state.coErpOnly=false; state.coTag=''; state.coFolder=''; }
   try{ localStorage.setItem('pucards_co_erponly', state.coErpOnly?'1':''); }catch(_){}
   render();
 }
@@ -9751,9 +9831,11 @@ function coDetailHtml(o){
   const val = f => o.extra[f] || o[f] || '';
   const rows = CO_FIELDS.filter(([f])=>val(f)).map(([f,label])=>
     `<div class="cof"><span>${esc(label)}</span><b>${esc(val(f))}</b></div>`).join('');
+  const folder = o.folder ? _coFolders[o.folder] : null;
   return `<div class="codet">
     <div class="h"><button class="setback" onclick="pickCo('')">← 회사 목록</button>
-      <b>${esc(o.name)}</b>${o.erp&&o.erp.type?`<span class="ty">${esc(o.erp.type)}</span>`:''}</div>
+      <b>${esc(o.name)}</b>${o.erp&&o.erp.type?`<span class="ty">${esc(o.erp.type)}</span>`:''}
+      ${folder?`<span class="ty" style="background:#fdf6e8;color:#92400e;border-color:#eeddb5">📁 ${esc(folder.name)}</span>`:''}</div>
     ${rows || '<div class="cpnone" style="padding:14px 2px">아직 읽어 둔 항목이 없습니다</div>'}
     ${coDocsHtml(o)}
     ${o.cards.length?`<div class="pcsec" style="margin:16px 4px 8px">이 회사 사람 ${o.cards.length}명</div>
