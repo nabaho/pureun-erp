@@ -1,4 +1,4 @@
-/* 푸른사진첩 — 사진 저장 층
+﻿/* 푸른사진첩 — 사진 저장 층
    사진을 어디에 어떤 경로로 담을지 정하는 유일한 파일이다.
    '파일 창고(Firebase Storage)'와 '실시간DB' 두 방식을 모두 알고 있고,
    어느 쪽을 쓸지는 이 파일 안에서 정한다. 화면 코드는 방식을 모른다.
@@ -596,6 +596,31 @@
 
   /* 이름이 같은 분류를 두 번 만들지 않는다(대소문자·앞뒤 공백 무시) —
      안 그러면 "자문등계약서"와 "자문등계약서 " 가 따로 쌓여 사람이 헷갈린다. */
+  /* 분류 이름 고치기.
+     ⚠ 사진은 이름이 아니라 **번호(id)** 로 분류를 가리킨다. 그래서 이름만 갈면 되고
+       사진은 한 장도 안 건드린다 — 잘못 만든 이름("자문등계약서")을 고쳐도
+       그 분류에 든 사진은 그대로 남는다.
+     이름이 겹치는 것은 만들 때와 같은 규칙으로 막는다. 안 막으면 같은 이름이 둘이 되어
+     어느 쪽에 넣었는지 사람이 못 가린다. */
+  function renameCustomKind(id, name) {
+    var clean = String(name || '').trim();
+    if (!id) return Promise.reject(new Error('어떤 분류인지 알 수 없습니다'));
+    if (!clean) return Promise.reject(new Error('분류 이름을 입력해 주세요'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return listCustomKinds().then(function (existing) {
+      if (!existing[id]) throw new Error('이미 지워진 분류입니다');
+      var norm = clean.toLowerCase();
+      var dupId = Object.keys(existing).find(function (k) {
+        return k !== id && String((existing[k] || {}).name || '').trim().toLowerCase() === norm;
+      });
+      if (dupId) throw new Error('「' + clean + '」은 이미 있는 분류입니다');
+      if (String(existing[id].name || '').trim() === clean) return { id: id, changed: false };
+      return deps.db.ref(customKindsPath() + '/' + id)
+        .update({ name: clean, renamedAt: Date.now() })
+        .then(function () { return { id: id, changed: true }; });
+    });
+  }
+
   function addCustomKind(name) {
     var clean = String(name || '').trim();
     if (!clean) return Promise.reject(new Error('분류 이름을 입력해 주세요'));
@@ -1319,6 +1344,7 @@
     markRetentionChecked: markRetentionChecked,
     retentionPath: retentionPath,
     addCustomKind: addCustomKind,
+    renameCustomKind: renameCustomKind,
     setCustomKind: setCustomKind,
     deletePhoto: deletePhoto,
     listTrash: listTrash,
