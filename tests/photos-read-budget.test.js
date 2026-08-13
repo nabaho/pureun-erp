@@ -1,0 +1,146 @@
+/* 자동 판독이 원본을 되풀이해 내려받지 않게 (비용 조사 2026-08-13)
+
+   판독 한 장은 실시간DB 에서 **원본(수 MB)**을 내려받는다. 판독기 판 번호를
+   올리면 읽어 둔 사진이 **전부** 다시 읽을 것이 되는데, 예전에는 그것을 안 읽은
+   사진과 똑같이 한 번에 20장씩 처리했다. 직원 다섯이 하루 몇 번씩 열면 같은
+   사진을 되풀이해 내려받아 GB 단위가 된다(8/1~8/11 실시간DB 내려받기 ₩28,833).
+
+   ⚠ 이 검사가 지키는 두 가지
+     ① 판 번호 올림이 **한 번에 몇 장으로** 묶이는가 (돈)
+     ② 그래도 **안 읽은 사진은 그대로 다 읽히는가** (일이 밀리면 안 된다) */
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+const app = fs.readFileSync(path.join(__dirname, '..', 'pu-photos.html'), 'utf8');
+
+function fnOf(name) {
+  const m = app.match(new RegExp('^(?:async )?function ' + name + '\\([\\s\\S]*?\\r?\\n\\}', 'm'));
+  assert.ok(m, name + ' 를 찾을 수 없습니다');
+  return m[0];
+}
+function constOf(name) {
+  const m = app.match(new RegExp('^const ' + name + ' = [^\\n]*;', 'm'));
+  assert.ok(m, name + ' 를 찾을 수 없습니다');
+  return m[0].replace('const ', 'var ');
+}
+
+function load(items) {
+  const queued = [];
+  const note = { style: {}, textContent: '' };
+  const ctx = {
+    Math, Object, String, Number,
+    PuDocRead: { READ_VERSION: 8 },
+    gridItems: items || [],
+    queuePhotoRead: function (id) { queued.push(id); },
+    $: function (id) { return id === 'autoNote' ? note : null; },
+    _queued: queued, _note: note
+  };
+  ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  vm.runInContext([
+    constOf('AUTO_READ_MAX'), constOf('AUTO_RESTALE_MAX'),
+    app.match(/^const RESTALE_SKIP = \{[^\n]*\};/m)[0].replace('const ', 'var '),
+    fnOf('neverRead'), fnOf('staleRead'), fnOf('needsRead'), fnOf('autoReadPending')
+  ].join('\n'), ctx);
+  return ctx;
+}
+
+const fresh = function (id) { return { id: id, meta: {} }; };
+const stale = function (id, kind) { return { id: id, meta: { read: { kind: kind || 'card', rv: 7 } } }; };
+const done = function (id) { return { id: id, meta: { read: { kind: 'card', rv: 8 } } }; };
+
+test('★ 판 번호가 올라 다시 읽는 것은 한 번에 몇 장뿐이다', () => {
+  const list = [];
+  for (let i = 0; i < 50; i++) list.push(stale('s' + i));
+  const c = load(list);
+  c.autoReadPending();
+  assert.equal(c._queued.length, 3,
+    '★ 다시 읽기를 20장씩 하면 원본 수십 MB 를 열 때마다 내려받습니다: ' + c._queued.length);
+  assert.match(c._note.textContent, /남은 47장/, '남은 장수를 안 알리면 「왜 저건 안 됐지」가 됩니다');
+});
+
+test('★ 안 읽은 사진은 그대로 20장까지 읽는다 — 일이 밀리면 안 된다', () => {
+  const list = [];
+  for (let i = 0; i < 30; i++) list.push(fresh('f' + i));
+  const c = load(list);
+  c.autoReadPending();
+  assert.equal(c._queued.length, 20, '새로 올린 사진까지 줄이면 「올렸는데 판독이 안 된다」가 됩니다');
+});
+
+test('★ 안 읽은 것이 먼저다 — 새로 올린 사진이 뒤로 밀리면 안 된다', () => {
+  const list = [];
+  for (let i = 0; i < 25; i++) list.push(stale('s' + i));
+  list.push(fresh('NEW'));
+  const c = load(list);
+  c.autoReadPending();
+  assert.ok(c._queued.indexOf('NEW') >= 0, '★ 방금 올린 사진이 다시 읽기에 밀려 안 읽힙니다');
+  assert.equal(c._queued[0], 'NEW', '안 읽은 것이 앞에 서야 합니다');
+  assert.equal(c._queued.length, 1 + 3);
+});
+
+test('★ 회의사진·급여서류는 판 번호가 올라도 다시 안 읽는다', () => {
+  /* 담는 것이 한 줄뿐이라 다시 읽어도 새로 나올 것이 없다.
+     그런데 원본 내려받기 값은 똑같이 든다. */
+  const c = load([stale('m1', 'meeting'), stale('p1', 'payslip'), stale('c1', 'card')]);
+  c.autoReadPending();
+  assert.deepEqual(c._queued, ['c1'], '★ 나올 것 없는 사진을 다시 읽고 있습니다');
+});
+
+test('★ 「기타서류(other)」는 반드시 다시 읽는다 — 판 번호의 존재 이유다', () => {
+  /* 종류를 못 가려 굳은 사진을 되살리는 것이 판 번호를 올리는 까닭이다
+     (2026-08-06: 회의사진 0장인데 기타서류에 6장이 앉아 있었다) */
+  const c = load([stale('o1', 'other')]);
+  c.autoReadPending();
+  assert.deepEqual(c._queued, ['o1'], '★ other 를 건너뛰면 잘못 굳은 사진이 영영 안 풀립니다');
+  assert.ok(!/other/.test(app.match(/^const RESTALE_SKIP = \{[^\n]*\};/m)[0]),
+    '★ 건너뛸 종류에 other 가 들어갔습니다');
+});
+
+test('★ 다시 읽기를 0 으로 막으면 안 된다 — 판독기를 고쳐도 안 고쳐진다', () => {
+  assert.match(app, /const AUTO_RESTALE_MAX = [1-9]/,
+    '★ 0 이면 옛 판으로 읽힌 사진이 영영 그대로입니다');
+});
+
+test('사람이 확인한 것은 안 뒤집는다', () => {
+  const c = load([{ id: 'a', meta: { read: { kind: 'card', rv: 7, ack: true } } }]);
+  c.autoReadPending();
+  assert.deepEqual(c._queued, []);
+});
+
+test('다 읽은 사진은 안 건드린다', () => {
+  const c = load([done('a'), done('b')]);
+  c.autoReadPending();
+  assert.deepEqual(c._queued, []);
+  assert.equal(c._note.style.display, 'none', '할 일이 없으면 안내도 없어야 합니다');
+});
+
+test('모으는 중인 장은 아직 안 읽는다', () => {
+  const c = load([{ id: 'a', meta: { doc: { group: 'g', collecting: true } } }]);
+  c.autoReadPending();
+  assert.deepEqual(c._queued, []);
+  assert.equal(c.needsRead({ meta: { doc: { collecting: true } } }), false);
+});
+
+test('★ 여러 쪽 문서는 문서마다 한 번만 — 안 읽은 쪽·다시 읽을 쪽 둘 다', () => {
+  /* 쪽마다 걸면 첫 쪽이 문서 전체를 읽어 답을 써 놓은 뒤에도 나머지 쪽이
+     같은 문서를 또 읽는다 — 원본을 쪽수만큼 더 내려받는다. */
+  const c = load([
+    { id: 'p1', meta: { doc: { group: 'g1', page: 1 } } },
+    { id: 'p2', meta: { doc: { group: 'g1', page: 2 } } },
+    { id: 'q1', meta: { doc: { group: 'g2', page: 1 }, read: { kind: 'card', rv: 7 } } },
+    { id: 'q2', meta: { doc: { group: 'g2', page: 2 }, read: { kind: 'card', rv: 7 } } }
+  ]);
+  c.autoReadPending();
+  assert.deepEqual(c._queued, ['p1', 'q1'], '★ 같은 문서를 두 번 읽습니다');
+});
+
+test('needsRead 는 둘을 합친 것이다 — 다른 곳이 쓰는 판정이 어긋나면 안 된다', () => {
+  const c = load([]);
+  assert.equal(c.needsRead(fresh('a')), true);
+  assert.equal(c.needsRead(stale('b')), true);
+  assert.equal(c.needsRead(stale('c', 'meeting')), false);
+  assert.equal(c.needsRead(done('d')), false);
+});

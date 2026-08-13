@@ -259,8 +259,12 @@ test('★ 판독은 문서마다 한 번만, 그러나 다른 문서는 빠뜨�
   const queued = [];
   const el = { style: {}, textContent: '' };
   const ctx = {
-    Object, Array, String,
-    AUTO_READ_MAX: 20,
+    Object, Array, String, Math,
+    AUTO_READ_MAX: 20, AUTO_RESTALE_MAX: 3,
+    /* 2026-08-13 부터 판정이 둘로 갈렸다 — 여기서는 「전부 안 읽은 것」으로 둔다.
+       문서마다 한 번씩 거르는 규칙은 두 갈래에 **똑같이** 걸려야 한다. */
+    neverRead: function () { return true; },
+    staleRead: function () { return false; },
     needsRead: function () { return true; },
     queuePhotoRead: function (id) { queued.push(id); },
     $: function () { return el; },

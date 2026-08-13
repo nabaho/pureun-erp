@@ -1867,12 +1867,16 @@ test('옛 판 판독기로 읽은 사진은 스스로 다시 읽는다', () => {
   /* 회의사진·급여서류를 가르치기 전에 읽힌 사진이 'other' 로 굳어 기타서류에
      영원히 남았다(2026-08-06 대표 화면: 회의사진 0장, 기타서류 6장).
      사람이 한 장씩 「다시 판독」을 눌러야만 풀리는 것은 자동 분류가 아니다. */
-  const fn = app.match(/function needsRead\([\s\S]*?\n\}/);
-  assert.ok(fn, 'needsRead 를 찾을 수 없습니다');
+  /* 2026-08-13 부터 판정이 둘로 갈렸다 — 안 읽은 것(neverRead)과 옛 판으로 읽은
+     것(staleRead). 옛 판 다시 읽기는 **한 번에 몇 장만** 한다(비용).
+     자세한 검사는 tests/photos-read-budget.test.js 에 있다. */
+  const fn = app.match(/function staleRead\([\s\S]*?\n\}/);
+  assert.ok(fn, 'staleRead 를 찾을 수 없습니다');
   assert.match(fn[0], /PuDocRead\.READ_VERSION/, '판독기 판 번호를 보지 않습니다');
   assert.match(fn[0], /r\.ack/, '사람이 확인한 것까지 도로 뒤집습니다');
   const auto = app.match(/function autoReadPending\([\s\S]*?\n\}/);
-  assert.match(auto[0], /filter\(needsRead\)/, '자동 판독이 옛 결과를 안 집어 옵니다');
+  assert.match(auto[0], /filter\(staleRead\)/, '자동 판독이 옛 결과를 안 집어 옵니다');
+  assert.match(auto[0], /filter\(neverRead\)/, '자동 판독이 안 읽은 사진을 안 집어 옵니다');
   // 읽을 때마다 어느 판으로 읽었는지 적어야 다음에 비교할 수 있다
   assert.match(app, /rv: PuDocRead\.READ_VERSION/, '판독 결과에 판 번호를 안 적습니다');
 });

@@ -54,9 +54,11 @@ test('★ 모으는 중인 장은 올라와도 판독을 안 건다', () => {
 test('★ 다음에 열 때 자동 판독도 건너뛴다', () => {
   /* 이 줄이 없으면 화면을 다시 열자마자 autoReadPending 이 장마다 따로 읽어,
      모으기가 막으려던 헛읽기가 그대로 난다 */
-  const ctx = { PuDocRead: { READ_VERSION: 8 } };
+  const ctx = { PuDocRead: { READ_VERSION: 8 }, Object };
   vm.createContext(ctx);
-  vm.runInContext(fnOf('needsRead'), ctx);
+  /* needsRead 는 2026-08-13 부터 neverRead·staleRead 를 합친 것이다 */
+  vm.runInContext(app.match(/^const RESTALE_SKIP = \{[^\n]*\};/m)[0].replace('const ', 'var ') + '\n' +
+    fnOf('neverRead') + '\n' + fnOf('staleRead') + '\n' + fnOf('needsRead'), ctx);
   assert.equal(ctx.needsRead({ meta: { doc: { collecting: true } } }), false,
     '★ 모으는 중인 장을 자동 판독이 집어갑니다');
   assert.equal(ctx.needsRead({ meta: {} }), true, '안 읽은 사진은 읽어야 합니다');
