@@ -98,3 +98,39 @@ test('사업 갈래를 실제로 화면에 끼운다', () => {
   assert.match(fn, /\$\{tabs\}/, '갈래 탭을 화면에 끼우지 않는다');
   assert.match(fn, /const tabs = /, '갈래 탭을 만들지 않는다');
 });
+
+test('푸른이알피 거래처만 보는 거르개가 있다', () => {
+  /* 명함의 회사 이름만으로 잡힌 곳이 대부분이라 전체가 4천 곳을 넘는다.
+     실제로 관리하는 곳은 그중 일부다(대표 지시 2026-08-13). */
+  assert.match(source, /function toggleCoErpOnly/);
+  assert.match(source, /if\(state\.coErpOnly\) list = list\.filter\(o=>o\.erp\)/);
+  assert.match(source, /onclick="toggleCoErpOnly\(\)"/);
+});
+
+test('거르개를 실제로 화면에 끼운다', () => {
+  /* 만들어 놓고 안 끼워도 소스 검사만으로는 통과한다 — 끼우는 줄을 직접 본다.
+     ⚠ 파일 전체에서 'const tabs = ' 를 찾으면 안 된다. 자료함(renderMatPage)에도
+       같은 이름의 변수가 있어 엉뚱한 곳을 보게 된다 — 실제로 그렇게 걸렸다. */
+  const fnAt = source.indexOf('function renderCoPage');
+  assert.ok(fnAt > 0, 'renderCoPage 를 찾지 못했습니다');
+  const fn = source.slice(fnAt, source.indexOf('\nfunction coListHtml', fnAt));
+  assert.match(fn, /class="erponly/, '거르개 단추를 탭 줄에 안 넣었다');
+  assert.match(fn, /\$\{tabs\}/, '탭 줄 자체를 화면에 안 끼웠다');
+});
+
+test('거래처 수를 거르개에 함께 보여준다', () => {
+  /* 몇 곳이 걸러지는지 모르고 누르면 「왜 갑자기 비었지」가 된다 */
+  assert.match(source, /const erpN = all\.filter\(o=>o\.erp\)\.length/);
+});
+
+test('거르개는 기억한다', () => {
+  /* 대개 거래처만 본다면 들어올 때마다 다시 누르게 하면 안 된다 */
+  assert.match(source, /localStorage\.setItem\('pucards_co_erponly'/);
+  assert.match(source, /localStorage\.getItem\('pucards_co_erponly'\)/);
+});
+
+test('거르개는 사업 갈래와 성질이 달라 갈라 놓는다', () => {
+  /* 나란히 두면 사업 하나를 고르는 것으로 잘못 읽힌다 */
+  assert.match(source, /class="cosep"/);
+  assert.match(source, /\.cotabs button\.erponly\{/);
+});
