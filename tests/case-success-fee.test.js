@@ -41,13 +41,21 @@ eq('원 모드 0', amt({ successFeeType: 'amount', successFee: 0 }), 0);
 eq('null', amt(null), 0);
 eq('빈 객체', amt({}), 0);
 
-/* ── 미입금 대기가 helper 를 쓰는가 (15원 버그 재발 방지) ── */
-ok('미입금 대기가 helper 를 쓴다',
-  /var _sucAmt = caseSuccessFeeAmount\(it\);/.test(html)
-  && /kind:'success', kindLabel:'성공보수',[\s\S]{0,80}amount:_sucAmt/.test(html));
-ok('미입금 대기가 successFee 를 금액으로 쓰지 않는다',
-  !/kind:'success', kindLabel:'성공보수',\s*\n?\s*amount:it\.successFee/.test(html));
-ok('금액 0이면 대기에 안 올린다', /if\(_sucAmt > 0 && !successDoneFlag\)/.test(html));
+/* ── 미입금 판단이 helper 를 쓰는가 (15원 버그 재발 방지) ──
+   2026-08-13 부터 입금관리·거래내역이 erpUnpaidParts 한 곳에서만 판단한다.
+   낱말을 못 박지 말고 «실제로 돌려» 확인한다 — 어디로 옮겨 가도 뜻은 지켜진다. */
+vm.runInContext('function erpPaidSoFar(item, kindLabel, legacy){ return parseInt(legacy,10)||0; }', ctx);
+vm.runInContext(slice('function erpUnpaidParts(it){', "if(typeof window !== 'undefined'){"), ctx);
+const parts = ctx.erpUnpaidParts;
+const suc = it => (parts(it).filter(p => p.kind === 'success')[0] || null);
+
+ok('미입금 판단이 % 요율을 실금액으로 편다 — 15가 15원이 되지 않는다',
+  suc({ successFeeType: 'percent', successFee: 15, judgmentAmount: 33721575 }).fee === 5058236);
+ok('원 모드는 그대로', suc({ successFeeType: 'amount', successFee: 3000000 }).fee === 3000000);
+ok('금액 0이면 대기에 안 올린다',
+  suc({ successFeeType: 'percent', successFee: 15, judgmentAmount: 0 }) === null);
+ok('이미 받았으면 안 올린다 (날짜)', suc({ successFee: 100, successPaidDate: '2026-01-02' }) === null);
+ok('이미 받았으면 안 올린다 (표시)', suc({ successFee: 100, successPaid: true }) === null);
 
 /* ── 표시 지점이 모두 helper 를 쓰는가 ── */
 const uses = (html.match(/caseSuccessFeeAmount\(/g) || []).length;

@@ -5035,6 +5035,66 @@ function erpPaidSoFar(item, kindLabel, legacyAmt){
 // 거래내역 후보 종류 → splitPayments 의 종류 이름표 (없으면 분할기록을 쓰지 않는 종류)
 var ERP_SPLIT_KIND = { retainer:'착수금', success:'성공보수', contractFee:'계약금', balance:'잔금' };
 
+/* ══════════ 「이 건에서 아직 안 받은 것」 — 한 곳에서만 판단한다 ══════════
+   (2026-08-13 대표 지적) 입금관리 «미입금 대기» 와 거래내역 «후보» 가 서로 따로 판단해
+   목록이 어긋났다. 실데이터로 재 보니 5건이 한쪽에만 있었고, 까닭은 셋이었다.
+
+     ① 다 받았나 — 입금관리는 «날짜» 만 봤고 거래내역은 «표시+날짜» 를 봤다.
+        확정은 둘 다 찍고 되돌리기는 둘 다 지우므로, 어느 하나라도 있으면 받은 것이다.
+     ② 접은 건 — 거래내역은 종료·영구보관을 뺐고 입금관리는 남겼다.
+        사무관리에서 접었어도 «돈은 아직 못 받았다» 는 그대로다(입금관리 쪽이 옳다).
+        그래서 둘 다 남기고, 대신 접힌 건임을 표로 알린다.
+        거래내역에서 「후보 없음」 이 나던 입금 일부가 이걸로 찾아진다.
+     ③ 성공보수 — 거래내역은 successFee 를 그대로 썼다. % 사건은 「15」 가 15원이 된다.
+        caseSuccessFeeAmount() 로 실금액을 낸다.
+
+   돌려주는 것: [{ kind, splitLabel, kindLabel, fee, paid, taxType, vatIncluded }]
+   kind 는 거래내역이 쓰던 이름을 그대로 쓴다(retainer·success·contractFee·balance·legacy).
+   ⚠ taxType 은 «날것 그대로» 실어 나른다 — contractFeeVatIncluded 에는 true/false 말고
+     'wht33'(원천징수 3.3%) 도 들어간다. 참·거짓으로 뭉개면 원천징수 건의 예상 입금액이
+     ×0.967 이 아니라 그대로가 되어 「금액 안 맞음」 으로 떨어진다. */
+function erpUnpaidParts(it){
+  if(!it || it._deleted) return [];
+  var out = [];
+  // 표시든 날짜든 하나라도 찍혔으면 다 받은 것으로 본다
+  function done(flagKey, dateKey){ return !!(it[flagKey] || it[dateKey]); }
+  function add(kind, splitLabel, kindLabel, fee, legacyKey, taxType){
+    var f = parseInt(fee, 10) || 0;
+    if(f <= 0) return;
+    out.push({ kind:kind, splitLabel:splitLabel, kindLabel:kindLabel, fee:f,
+               paid:erpPaidSoFar(it, splitLabel, it[legacyKey]),
+               taxType:(taxType === undefined ? false : taxType),   // 날것 — 'wht33' 이 살아 있어야 한다
+               vatIncluded:(taxType === true) });
+  }
+  var cVat = it.contractFeeVatIncluded || false, bVat = it.balanceFeeVatIncluded || false;
+  if(!done('retainerPaid', 'retainerPaidDate'))
+    add('retainer', '착수금', '착수금', it.retainerFee, 'retainerPaidAmount', cVat);
+  if(!done('successPaid', 'successPaidDate'))
+    add('success', '성공보수', '성공보수',
+        (typeof caseSuccessFeeAmount === 'function') ? caseSuccessFeeAmount(it) : it.successFee,
+        'successPaidAmount', bVat);
+  if(!done('contractPaid', 'contractPaidDate'))
+    add('contractFee', '계약금', '계약금', it.contractFee, 'contractPaidAmount', cVat);
+  if(!done('balancePaid', 'balancePaidDate'))
+    add('balance', '잔금', '잔금', it.balanceFee, 'balancePaidAmount', bVat);
+  // 옛 컨설팅 한 칸짜리 — 분할기록을 쓰지 않으므로 splitLabel 이 없다
+  if(!done('paid', 'paidDate') && (parseInt(it.consultingFee, 10) || 0) > 0)
+    out.push({ kind:'legacy', splitLabel:'', kindLabel:'컨설팅비',
+               fee:parseInt(it.consultingFee, 10) || 0, paid:0, vatIncluded:false });
+  return out;
+}
+/* 사무관리에서 접힌 건인가 — 뺄 근거가 아니라 «표를 붙일» 근거다.
+   돈을 못 받은 것은 그대로이므로 두 목록에 모두 남긴다. */
+function erpItemClosedTag(it){
+  if(!it) return null;
+  if(it.permanentArchived) return { label:'보관', why:'영구보관된 건 — 돈은 아직 못 받았습니다' };
+  if(it.closedDate) return { label:'종료', why:'사무관리 종료 ' + String(it.closedDate).slice(0,10) + ' — 입금만 남았습니다' };
+  return null;
+}
+if(typeof window !== 'undefined'){
+  window.erpUnpaidParts = erpUnpaidParts; window.erpItemClosedTag = erpItemClosedTag;
+}
+
 /* ── 🏥 현장클리닉 묶음 입금 ──
    비즈사업비·한국생산성본부는 «현장클리닉» 사업장 여러 곳의 비용을 한 번에 보낸다.
    적요에 사업장 이름이 없으니 이름으로는 못 찾는다 — 그 대신 현장클리닉 건만 추려 올린다.
@@ -35453,39 +35513,24 @@ function FinanceLedger(){
     var vat = Math.round(fee * 0.1);
     return '공급가 '+fee.toLocaleString()+' + 부가세 '+vat.toLocaleString();
   }
+  /* ★ 「아직 안 받았나」 는 erpUnpaidParts 한 곳에서만 판단한다 (2026-08-13).
+     전에는 여기서 따로 봤고 입금관리 미입금 대기가 또 따로 봐서 목록이 어긋났다.
+     ★ 종료·영구보관된 건도 이제 뺴지 않는다 — 사무관리에서 접었어도 못 받은 돈은 그대로다.
+       전에는 여기서 빼는 바람에 그 입금이 「후보 없음」 으로 떨어졌다. */
+  var SUFFIX = { retainer:'-r', success:'-s', contractFee:'-k', balance:'-b', legacy:'-c' };
+  var KINDNAME = { retainer:'(착수)', success:'(성공보수)', contractFee:'(계약금)', balance:'(잔금)', legacy:'' };
   STORES.forEach(function(s){
-    (dbGet(s.key,[])||[]).filter(function(it){return !it.permanentArchived&&!it.closedDate;}).forEach(function(it){
+    (dbGet(s.key,[])||[]).forEach(function(it){
+      if(!it || it._deleted) return;
       var nm=it.companyName||it.name||'-';
-      var cVat=it.contractFeeVatIncluded||false, bVat=it.balanceFeeVatIncluded||false;
-      // 이미 받은 돈은 분할기록(입금관리)과 누계(거래내역) 중 큰 쪽 — 두 화면에서 나눠 받아도 맞는다
-      var _pdR=erpPaidSoFar(it,'착수금',it.retainerPaidAmount);
-      var _pdS=erpPaidSoFar(it,'성공보수',it.successPaidAmount);
-      var _pdK=erpPaidSoFar(it,'계약금',it.contractPaidAmount);
-      var _pdB=erpPaidSoFar(it,'잔금',it.balancePaidAmount);
-      if(it.retainerFee&&!it.retainerPaid&&!it.retainerPaidDate)
-        pending.push({id:it.id+'-r',store:s.key,label:s.label+'(착수)',companyName:nm,
-          amount:it.retainerFee, expect:_expect(it.retainerFee,cVat,_pdR),
-          vatLabel:_vatLabel(it.retainerFee,cVat), paidAmount:_pdR,
-          item:it,kind:'retainer'});
-      if(it.successFee&&!it.successPaid&&!it.successPaidDate)
-        pending.push({id:it.id+'-s',store:s.key,label:s.label+'(성공보수)',companyName:nm,
-          amount:it.successFee, expect:_expect(it.successFee,bVat,_pdS),
-          vatLabel:_vatLabel(it.successFee,bVat), paidAmount:_pdS,
-          item:it,kind:'success'});
-      if(it.contractFee&&!it.contractPaid)
-        pending.push({id:it.id+'-k',store:s.key,label:s.label+'(계약금)',companyName:nm,
-          amount:it.contractFee, expect:_expect(it.contractFee,cVat,_pdK),
-          vatLabel:_vatLabel(it.contractFee,cVat), paidAmount:_pdK,
-          item:it,kind:'contractFee'});
-      if(it.balanceFee&&!it.balancePaid)
-        pending.push({id:it.id+'-b',store:s.key,label:s.label+'(잔금)', companyName:nm,
-          amount:it.balanceFee, expect:_expect(it.balanceFee,bVat,_pdB),
-          vatLabel:_vatLabel(it.balanceFee,bVat), paidAmount:_pdB,
-          item:it,kind:'balance'});
-      if(it.consultingFee&&!it.paid)
-        pending.push({id:it.id+'-c',store:s.key,label:s.label,          companyName:nm,
-          amount:it.consultingFee, expect:it.consultingFee, vatLabel:'', paidAmount:0,
-          item:it,kind:'contract'});
+      var tag=erpItemClosedTag(it);
+      erpUnpaidParts(it).forEach(function(u){
+        pending.push({ id:it.id+(SUFFIX[u.kind]||'-x'), store:s.key,
+          label:s.label+(KINDNAME[u.kind]||''), companyName:nm,
+          amount:u.fee, expect:_expect(u.fee, u.taxType, u.paid),
+          vatLabel:_vatLabel(u.fee, u.taxType), paidAmount:u.paid,
+          closedTag:tag, item:it, kind:(u.kind==='legacy' ? 'contract' : u.kind) });
+      });
     });
   });
   // (업체 월 자문료 후보는 rows 가 정해진 뒤에 더한다 — 아래 addAdvisoryPending 참고)
@@ -36101,15 +36146,23 @@ function FinanceLedger(){
       try{
         var _it = pItem.item||{};
         var _main = _it.managerMain || _it.manager || '';
+        /* ★ 공제 첫 설정을 입금관리 확정창과 «같은 함수» 로 낸다 (2026-08-13 대표 지시).
+           전에는 여기서 부가세 포함 여부만 봤다. 그래서 계약에 「👤 개인입금」 이 표시돼 있어도
+           거래내역에서 확정하면 법인 매출로 잡혀 부가세 신고 대상에 들어갔고,
+           성과 기준액도 확정창을 거친 건과 달랐다 — 같은 건인데 어느 화면에서
+           확정하느냐에 따라 성과급이 달라지는 셈이었다.
+           (지금 개인입금이 표시된 계약은 없다. 이 줄은 그런 계약이 생겼을 때를 위한 것이다.) */
+        _ded = erpInitDeductions(_it, opts.vatIncluded ? 'inclusive' : 'separate');
+        _perfBase = calcDeductions(row.amount, _ded).perfBaseAmount;
         if(_main){
-          if(opts.vatIncluded) _ded = {vatIncluded:true};
-          _perfBase = calcDeductions(row.amount, _ded).perfBaseAmount;
           _perfShares = calcPerfShares(_perfBase, _main, _it.managerSubs||[],
             pItem.store==='companies'?'company':pItem.store.replace(/s$/,''),
             undefined, {paidDate:paidDate}) || [];
         }
       }catch(_pe){ if(window._erpErrLog) window._erpErrLog(_pe); }
     }
+    // 개인수익·원천징수분은 법인 매출이 아니다 — 확정창이 붙이는 표를 여기서도 붙인다
+    var _isPersonal = !!(_ded.bizIncomeTax || _ded.etcIncomeTax || _ded.personalRevenue);
     /* 만든 기록의 열쇠를 «먼저» 지어 둔다 — 되돌리기(Ctrl+Z)가 방금 만든 이 한 건을
        찾아 물어야 하는데, 나중에 목록에서 뒤지면 같은 금액 다른 건을 물 수 있다. */
     var _fiId = 'fi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
@@ -36126,6 +36179,7 @@ function FinanceLedger(){
       sourceId:pItem.item.id,
       managerSid: isAdv ? undefined : ((pItem.item||{}).managerMain || (pItem.item||{}).manager || ''),
       deductions: _ded, perfBaseAmount: _perfBase,
+      isPersonalIncome: _isPersonal || undefined,
       autoConfirmed: opts.withPerf ? true : undefined,
       perfShares:_perfShares, confirmedAt:new Date().toISOString(), confirmedBy:CURRENT_USER?CURRENT_USER.sid:''});
     if(isAdv) return _fiId;
@@ -40113,42 +40167,27 @@ function IncomePendingTab(){
     { key:'other_projects', sourceKind:'other',      incomeCategory:'inc-other',     feeKindLabel:'기타용역비', label:'기타',   icon:'📋', color:'#16a34a', bg:'#f0fdf4' }
   ];
 
+  /* ★ 「아직 안 받았나」 는 erpUnpaidParts 한 곳에서만 판단한다 (2026-08-13).
+     전에는 여기서 «날짜만» 봤고 거래내역은 «표시+날짜» 를 봐서 두 목록이 어긋났다.
+     종료·영구보관된 건은 그대로 남긴다 — 사무관리 종료 ≠ 입금 완료.
+     거래내역도 이제 같은 판단을 쓰므로 두 화면이 같은 것을 본다. */
   function extractPending(){
     var arr = [];
+    // 거래내역이 쓰는 종류 이름 → 이 화면이 쓰던 이름
+    var KMAP = { retainer:'retainer', success:'success', contractFee:'contract', balance:'balance', legacy:'contract' };
     STORES.forEach(function(store){
       var items = dbGet(store.key, []);
       if(!Array.isArray(items)) return;
       items.forEach(function(it){
-        if(it._deleted) return;
-        // 종료(status='closed'/permanentArchived)되어도 미입금이 남아있으면 표시
-        // (사무관리 종료 ≠ 입금관리 종료. 입금확정될 때까지 입금관리에서 별도 진행)
-        if(store.isCase){
-          // 사건: 완납 여부는 PaidDate로 판단 (분할입금 중이면 잔액 대기 유지)
-          var retainerDone = !!it.retainerPaidDate;
-          var successDoneFlag = !!it.successPaidDate;
-          if((it.retainerFee||0) > 0 && !retainerDone){
-            arr.push({ store:store, itemId:it.id, kind:'retainer', kindLabel:'착수금',   amount:it.retainerFee, item:it });
-          }
-          // % 모드는 successFee 가 요율이므로 승소금액을 곱한 실금액으로 담는다.
-          // 그대로 쓰면 '15%' 사건이 15원으로 뜬다. 승소금액 미입력(=0)이면 청구할 금액이
-          // 없으므로 대기에 올리지 않는다 (사건 모달에서 넣으라고 알려 준다).
-          var _sucAmt = caseSuccessFeeAmount(it);
-          if(_sucAmt > 0 && !successDoneFlag){
-            // 패소·회수불능 처리된 성공보수는 별도 표시 (미납 대기에서 제외)
-            arr.push({ store:store, itemId:it.id, kind:'success', kindLabel:'성공보수',
-              amount:_sucAmt, item:it,
-              // 회수불능은 종료된 사건에서만 적용 (해제된 사건은 복귀)
-              isUnrecoverable: it.successFeeStatus === 'unrecoverable' && it.status === 'closed' });
-          }
-        } else {
-          // 컨설팅/기금/기타: contractPaid/balancePaid 플래그
-          if((it.contractFee||0) > 0 && !it.contractPaid){
-            arr.push({ store:store, itemId:it.id, kind:'contract', kindLabel:'계약금', amount:it.contractFee, item:it });
-          }
-          if((it.balanceFee||0) > 0 && !it.balancePaid){
-            arr.push({ store:store, itemId:it.id, kind:'balance',  kindLabel:'잔금',   amount:it.balanceFee,  item:it });
-          }
-        }
+        if(!it || it._deleted) return;
+        erpUnpaidParts(it).forEach(function(u){
+          arr.push({ store:store, itemId:it.id, kind:KMAP[u.kind] || u.kind,
+            kindLabel:u.kindLabel, amount:u.fee, paidSoFar:u.paid, item:it,
+            closedTag:erpItemClosedTag(it),
+            // 패소·회수불능 처리된 성공보수는 별도 표시 (해제된 사건은 복귀)
+            isUnrecoverable: u.kind === 'success'
+              && it.successFeeStatus === 'unrecoverable' && it.status === 'closed' });
+        });
       });
     });
     return arr;
@@ -40475,48 +40514,50 @@ function IncomePendingTab(){
   var tdS = { padding:'5px 8px', borderBottom:'1px solid #f8fafc', fontSize:'11px' };
 
   return h('div', null,
-    // 안내 박스
-    h('div', { style:{padding:'5px 8px',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'7px',marginBottom:'6px',display:'flex',alignItems:'center',gap:'12px'} },
-      h('div', { style:{fontSize:'14px',flexShrink:0} }, '⏳'),
-      h('div', { style:{flex:1} },
-        h('div', { style:{fontWeight:700,color:'#991b1b',fontSize:'10.5px',marginBottom:'1px'} }, '입금 도착 → [입금확정] → 성과 자동 분배'),
-        h('div', { style:{fontSize:'10px',color:'#991b1b',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'} }, '착수금·성공보수 미입금 목록 | 확정 시 성과 자동 배분')
-      ),
-      (function(){
-        var normalPending = pending.filter(function(p){ return !p.isUnrecoverable; });
-        var unrecoverable = pending.filter(function(p){ return p.isUnrecoverable; });
-        var normalAmt = normalPending.reduce(function(s,p){return s+(p.amount||0);},0);
-        var unrecoverAmt = unrecoverable.reduce(function(s,p){return s+(p.amount||0);},0);
-        return h('div', { style:{display:'flex',flexDirection:'column',gap:'4px',alignItems:'flex-end'} },
-          h('div', { style:{padding:'3px 8px',background:'#fff',border:'1px solid #fecaca',borderRadius:'10px',fontSize:'11px',fontWeight:700,color:'#991b1b'} },
-            '대기 ' + normalPending.length + '건 / ' + normalAmt.toLocaleString() + '원'),
-          unrecoverable.length > 0 && h('div', { style:{padding:'4px 14px',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'6px',fontSize:'11px',fontWeight:700,color:'#991b1b'} },
-            '🔴 회수불능 ' + unrecoverable.length + '건 / ' + unrecoverAmt.toLocaleString() + '원')
-        );
-      })(),
-      h('button', { onClick:function(){setTrashModalOpen(true);},
-        style:{padding:'2px 6px',background:'#fff',border:'1px solid #cbd5e1',borderRadius:'10px',cursor:'pointer',fontSize:'10px',flexShrink:0,fontWeight:700,color:'#475569'} },
-        '🗑️ 휴지통 (' + trashItems.length + ')')
-    ),
-
-    // 종류별 필터
-    h('div', { style:{display:'flex',gap:'4px',marginBottom:'5px',overflowX:'auto',flexWrap:'nowrap',WebkitOverflowScrolling:'touch'} },
+    /* ── 안내·건수·종류 고르개를 «한 줄» 로 (2026-08-13 대표 지시) ──
+       전에는 안내 띠와 고르개 줄이 따로 두 줄을 차지해, 목록이 그만큼 아래로 밀렸다.
+       안내 두 문장은 한 문장으로 줄이고 나머지는 옆으로 붙인다.
+       좁은 화면에서는 가로로 밀어 볼 수 있게 둔다 — 줄을 접으면 다시 두 줄이 된다. */
+    h('div', { style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'6px',
+        padding:'4px 8px',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'7px',
+        overflowX:'auto',flexWrap:'nowrap',WebkitOverflowScrolling:'touch'} },
+      h('span', { title:'착수금·성공보수 미입금 목록 — 확정하면 성과급이 자동으로 나뉩니다',
+        style:{fontWeight:700,color:'#991b1b',fontSize:'10.5px',whiteSpace:'nowrap',flexShrink:0} },
+        '⏳ 입금 도착 → [입금확정] → 성과 자동 분배'),
+      h('span', { style:{width:'1px',alignSelf:'stretch',background:'#fecaca',flexShrink:0} }),
       h('button', { onClick:function(){setSrcFilter('all');},
-        style:{padding:'2px 7px',border:'1px solid '+(srcFilter==='all'?'#1e40af':'#e2e8f0'),background:srcFilter==='all'?'#1e40af':'#fff',color:srcFilter==='all'?'#fff':'#475569',borderRadius:'6px',cursor:'pointer',fontSize:'11.5px',fontWeight:srcFilter==='all'?700:500} },
+        style:{padding:'2px 7px',border:'1px solid '+(srcFilter==='all'?'#1e40af':'#e2e8f0'),background:srcFilter==='all'?'#1e40af':'#fff',color:srcFilter==='all'?'#fff':'#475569',borderRadius:'6px',cursor:'pointer',fontSize:'11.5px',fontWeight:srcFilter==='all'?700:500,whiteSpace:'nowrap',flexShrink:0} },
         '전체 (' + pending.length + ')'),
       STORES.map(function(s){
         var info = byKind[s.sourceKind];
         var on = srcFilter === s.sourceKind;
         return h('button', { key:s.sourceKind, onClick:function(){setSrcFilter(s.sourceKind);},
-          style:{padding:'2px 7px',border:'1px solid '+(on?s.color:'#e2e8f0'),background:on?s.color:'#fff',color:on?'#fff':s.color,borderRadius:'6px',cursor:'pointer',fontSize:'11.5px',fontWeight:on?700:500} },
+          style:{padding:'2px 7px',border:'1px solid '+(on?s.color:'#e2e8f0'),background:on?s.color:'#fff',color:on?'#fff':s.color,borderRadius:'6px',cursor:'pointer',fontSize:'11.5px',fontWeight:on?700:500,whiteSpace:'nowrap',flexShrink:0} },
           s.icon + ' ' + s.label + ' (' + info.count + ')');
       }),
       // 종료건만 — 사무관리에서 종료·마감됐는데 입금이 안 끝난 항목만 (입금 오해 방지) · 진행상태 열 헤더와 동일 필터
-      h('span', { style:{width:'1px',alignSelf:'stretch',background:'#e2e8f0',margin:'0 2px'} }),
       h('button', { onClick:function(){setProgFilter(progFilter==='closed'?'all':'closed');},
         title:'사무관리에서 종료·마감됐지만 입금이 남아있는 항목만 보기',
-        style:{padding:'2px 7px',border:'1px solid '+(progFilter==='closed'?'#d97706':'#fbbf24'),background:progFilter==='closed'?'#fbbf24':'#fffbeb',color:progFilter==='closed'?'#fff':'#854d0e',borderRadius:'6px',cursor:'pointer',fontSize:'11.5px',fontWeight:progFilter==='closed'?700:600} },
-        '🏁 종료건만 (' + closedCount + ')')
+        style:{padding:'2px 7px',border:'1px solid '+(progFilter==='closed'?'#d97706':'#fbbf24'),background:progFilter==='closed'?'#fbbf24':'#fffbeb',color:progFilter==='closed'?'#fff':'#854d0e',borderRadius:'6px',cursor:'pointer',fontSize:'11.5px',fontWeight:progFilter==='closed'?700:600,whiteSpace:'nowrap',flexShrink:0} },
+        '🏁 종료건만 (' + closedCount + ')'),
+      // 오른쪽 끝 — 건수·회수불능·휴지통
+      h('span', { style:{flex:1,minWidth:'6px'} }),
+      (function(){
+        var normalPending = pending.filter(function(p){ return !p.isUnrecoverable; });
+        var unrecoverable = pending.filter(function(p){ return p.isUnrecoverable; });
+        var normalAmt = normalPending.reduce(function(s,p){return s+(p.amount||0);},0);
+        var unrecoverAmt = unrecoverable.reduce(function(s,p){return s+(p.amount||0);},0);
+        return [
+          h('span', { key:'w', style:{padding:'3px 8px',background:'#fff',border:'1px solid #fecaca',borderRadius:'10px',fontSize:'11px',fontWeight:700,color:'#991b1b',whiteSpace:'nowrap',flexShrink:0} },
+            '대기 ' + normalPending.length + '건 / ' + normalAmt.toLocaleString() + '원'),
+          unrecoverable.length > 0 && h('span', { key:'u', title:'패소·회수불능으로 표시된 성공보수 — 대기 건수에서 뺀 금액입니다',
+            style:{padding:'3px 8px',background:'#fff',border:'1px solid #fecaca',borderRadius:'10px',fontSize:'11px',fontWeight:700,color:'#991b1b',whiteSpace:'nowrap',flexShrink:0} },
+            '🔴 회수불능 ' + unrecoverable.length + '건 / ' + unrecoverAmt.toLocaleString() + '원')
+        ];
+      })(),
+      h('button', { onClick:function(){setTrashModalOpen(true);},
+        style:{padding:'2px 6px',background:'#fff',border:'1px solid #cbd5e1',borderRadius:'10px',cursor:'pointer',fontSize:'10px',flexShrink:0,fontWeight:700,color:'#475569',whiteSpace:'nowrap'} },
+        '🗑️ 휴지통 (' + trashItems.length + ')')
     ),
 
     // 검색·금액·날짜 필터

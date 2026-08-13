@@ -30,8 +30,36 @@ console.log('\n[성과급 — 확정하면 성과가 함께 붙는다]');
 // 이게 빠지면 확정분이 「성과 미반영」에 쌓인다 — 연쇄 처리의 핵심
 ok('saveIncome 이 opts.withPerf 일 때 성과를 나눈다',
    /opts\.withPerf\s*&&\s*!isAdv[\s\S]{0,700}?calcPerfShares\(/.test(src));
-ok('부가세 포함이면 1\/11 뺀 금액이 성과 기준',
-   /opts\.vatIncluded\)\s*_ded\s*=\s*\{vatIncluded:true\}[\s\S]{0,200}?calcDeductions\(row\.amount,\s*_ded\)\.perfBaseAmount/.test(src));
+/* 공제 첫 설정은 «입금관리 확정창과 같은 함수» 로 낸다 (2026-08-13).
+   전에는 여기서 부가세 포함 여부만 따로 봐서, 계약에 「개인입금」이 표시돼 있어도
+   거래내역에서 확정하면 법인 매출로 잡혔다 — 같은 건인데 화면마다 결과가 달랐다. */
+ok('공제 첫 설정을 확정창과 같은 함수(erpInitDeductions)로 낸다',
+   /_ded = erpInitDeductions\(_it, opts\.vatIncluded \? 'inclusive' : 'separate'\);/.test(src));
+ok('그 공제로 성과 기준액을 낸다',
+   /_perfBase = calcDeductions\(row\.amount, _ded\)\.perfBaseAmount;/.test(src));
+ok('개인수익·원천징수분은 법인 매출이 아니라고 표를 남긴다',
+   /isPersonalIncome: _isPersonal \|\| undefined/.test(src));
+
+// ── 낱말이 아니라 «셈» 으로 — 소스의 진짜 두 함수를 꺼내 돌린다 ──
+(function(){
+  const vm = require('vm');
+  const cut = (a, b) => { const i = src.indexOf(a), j = src.indexOf(b, i); return src.slice(i, j); };
+  const ctx = { console, Math, Object, JSON, parseInt, parseFloat };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext('function erpWithholdTax(a, k, r){ return { total: Math.round(a * (k === "biz" ? 0.033 : (r||8.8)/100)) }; }', ctx);
+  vm.runInContext(cut('function erpInitDeductions(item, vatType){', '\nfunction CaseEditModal'), ctx);
+  const base = (amt, item, vatIncluded) =>
+    ctx.calcDeductions(amt, ctx.erpInitDeductions(item, vatIncluded ? 'inclusive' : 'separate')).perfBaseAmount;
+
+  ok('부가세 포함이면 1/11 뺀 금액이 성과 기준  (1,100,000 → 1,000,000)',
+     base(1100000, {}, true) === 1000000, '받음 ' + base(1100000, {}, true));
+  ok('부가세 별도면 받은 금액 그대로', base(1000000, {}, false) === 1000000);
+  ok('개인입금 계약은 부가세를 빼지 않는다 — 법인 매출이 아니다',
+     base(1100000, { personalDeposit:true }, true) === 1100000, '받음 ' + base(1100000, { personalDeposit:true }, true));
+  ok('개인입금 계약은 개인수익으로 표시된다',
+     ctx.erpInitDeductions({ personalDeposit:true }, 'inclusive').personalRevenue === true);
+})();
 ok('계산한 성과를 실제로 저장한다 (perfShares:[] 로 비우지 않는다)',
    /perfShares:_perfShares,\s*confirmedAt/.test(src));
 ok('확정한 건은 표시가 남는다 (나중에 되돌릴 때 구분)',

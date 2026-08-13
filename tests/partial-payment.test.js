@@ -127,7 +127,10 @@ function has(name, re){ if(re.test(src)){ pass++; console.log('  PASS ' + name);
 has('거래내역이 분할기록에도 적는다', /_sp\.splitPayments\s*=\s*\(_it\.splitPayments\|\|\[\]\)\.concat/);
 has('입금관리가 누계 칸도 맞춘다', /srcPatch\[_legacyField\]\s*=\s*_prevPaid\s*\+\s*payAmt/);
 has('입금관리 잔액이 erpPaidSoFar 를 쓴다', /var _prevPaid = erpPaidSoFar\(p\.item, _kindLabel/);
-has('거래내역 후보가 erpPaidSoFar 를 쓴다', /_pdR=erpPaidSoFar\(it,'착수금'/);
+// 2026-08-13: 두 화면이 erpUnpaidParts 한 곳에서 판단하게 모았다 — 그 안에서 erpPaidSoFar 를 쓴다
+has('미입금 판단이 erpPaidSoFar 를 쓴다',
+  /function erpUnpaidParts\(it\)\{[\s\S]{0,1400}?paid:erpPaidSoFar\(it, splitLabel, it\[legacyKey\]\)/);
+has('거래내역 후보가 그 판단을 쓴다', /erpUnpaidParts\(it\)\.forEach\(function\(u\)\{[\s\S]{0,400}?paidAmount:u\.paid/);
 has('미수금관리가 받은 돈을 뺀다', /function _remain\(item, fee, kindLabel, legacyField\)/);
 has('미수금 배지도 같은 셈', /function _left\(item, fee, kindLabel, legacyField\)/);
 has('자문료를 금액으로 센다', /paidAmt\[_k\] = \(paidAmt\[_k\] \|\| 0\) \+ \(parseInt\(i\.amount, 10\) \|\| 0\)/);
