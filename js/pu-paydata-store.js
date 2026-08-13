@@ -314,6 +314,54 @@
     return deps.db.ref().update(drawerUpdate(id, rec, tag, owner)).then(function () { return true; });
   }
 
+  /* ══════ 휴지통 ══════
+     정보만 옮긴다. **창고 파일은 그 자리에 남긴다** — 함께 지우면 되살릴 수 없다.
+     창고 파일 실삭제는 30일 뒤 사람이 확인해서 한다(자동 삭제 없음). */
+  function trashUpdate(id, rec, owner) {
+    if (!id || !rec) throw new Error('지울 자료를 찾을 수 없습니다');
+    var slot = String(rec.month || KEEP);
+    var t = {};
+    Object.keys(rec).forEach(function (k) { t[k] = rec[k]; });
+    t.trashedAt = Date.now();
+    t.trashedBy = deps.uid || '';
+    var up = {};
+    up[trashPath(id, owner)] = t;
+    up[itemPath(slot, id, owner)] = null;
+    /* 도착 표시도 함께 내린다 — 안 내리면 자료가 없는데 수신함이 「도착」이라 한다. */
+    if (rec.companyId && rec.kind) {
+      up[arrivalPath(rec.companyId, slot) + '/' + rec.kind + '/' + id] = null;
+    }
+    return up;
+  }
+
+  function restoreUpdate(id, rec, owner) {
+    if (!id || !rec) throw new Error('되살릴 자료를 찾을 수 없습니다');
+    var slot = String(rec.month || KEEP);
+    var back = {};
+    Object.keys(rec).forEach(function (k) {
+      if (k !== 'trashedAt' && k !== 'trashedBy') back[k] = rec[k];
+    });
+    var up = {};
+    up[itemPath(slot, id, owner)] = back;
+    up[trashPath(id, owner)] = null;
+    if (rec.companyId && rec.kind) {
+      var marks = arrivalMarks(rec.companyId, slot, rec.kind, id, Date.now());
+      Object.keys(marks).forEach(function (k) { up[k] = marks[k]; });
+    }
+    return up;
+  }
+
+  function listTrash(owner) {
+    return deps.db.ref(trashBoxPath(owner)).once('value')
+      .then(function (s) { return s.val() || {}; });
+  }
+
+  function trashExpired(rec, now) {
+    var at = Number((rec && rec.trashedAt) || 0);
+    if (!at) return false;
+    return (Number(now || Date.now()) - at) > TRASH_DAYS * 86400000;
+  }
+
   function claimSharedNow(id, rec) {
     return deps.db.ref().update(claimShared(id, rec)).then(function () { return true; });
   }
@@ -557,6 +605,10 @@
     fileDownloadUrl: fileDownloadUrl,
     foldersPath: foldersPath,
     listFolders: listFolders,
+    trashUpdate: trashUpdate,
+    restoreUpdate: restoreUpdate,
+    listTrash: listTrash,
+    trashExpired: trashExpired,
     addFolder: addFolder,
     renameFolder: renameFolder,
     deleteFolder: deleteFolder,
