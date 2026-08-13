@@ -110,6 +110,10 @@
      따로 관리한다 — 한 사업장의 일이 다른 사업장 서랍에 섞여 보이면 안 된다. */
   function foldersPath(companyId, owner) { return base(owner) + '/folders/' + companyId; }
 
+  /* 휴가 대리 — 내가 맡긴 사람들. 콘솔 규칙이 이 칸의 쓰기를 **주인만**으로
+     막아 둔다(대리인이 자기 기간을 늘리지 못하게). */
+  function deputyBoxPath(owner) { return base(owner) + '/deputy'; }
+
   /* 한 칸(귀속월 또는 keep) 안의 목록 자리 — 본문·미리보기는 따라오지 않는다. */
   function slotPath(slot, owner) { return base(owner) + '/items/' + slot; }
   function pendingBoxPath(owner) { return base(owner) + '/pending'; }
@@ -548,6 +552,140 @@
     return null;
   }
 
+  /* ══════ 로그인한 사람 이름 (사진첩과 같은 방식) ══════
+     화면에 「p001@pureun.kr」가 아니라 사람 이름이 떠야 한다. 포털(enter.html)이
+     쓰는 길을 그대로 쓴다: 공개 명부 data/user_dir 를 먼저 보고, 막히면
+     data/user_accounts(재무권한자만 읽힌다) 순서. 사번을 이메일로 바꾸는 규칙도
+     같아야 한다 — 다르면 같은 사람을 못 찾는다. */
+  function sidToEmail(sid) {
+    return String(sid || '').toLowerCase().replace(/-/g, '') + '@pureun.kr';
+  }
+
+  function pickFromRoster(list, email) {
+    if (!list) return '';
+    var em = String(email || '').toLowerCase();
+    var arr = list;
+    if (!Array.isArray(arr) && typeof arr === 'object') {
+      arr = Object.keys(arr).map(function (k) { return arr[k]; });
+    }
+    if (!Array.isArray(arr)) return '';
+    for (var i = 0; i < arr.length; i++) {
+      var x = arr[i];
+      if (x && x.sid && sidToEmail(x.sid) === em && x.name) return x.name;
+    }
+    return '';
+  }
+
+  function readRoster(path) {
+    return deps.db.ref(path).once('value').then(function (s) {
+      var raw = s.val();
+      return (raw && raw.v !== undefined) ? raw.v : raw;
+    });
+  }
+
+  function lookupName(email) {
+    if (!email || !deps.db) return Promise.resolve('');
+    return readRoster('data/user_dir').then(function (dir) {
+      var got = pickFromRoster(dir, email);
+      if (got) return got;
+      return readRoster('data/user_accounts')
+        .then(function (l) { return pickFromRoster(l, email); })
+        .catch(function () { return ''; });
+    }).catch(function () {
+      return readRoster('data/user_accounts')
+        .then(function (l) { return pickFromRoster(l, email); })
+        .catch(function () { return ''; });
+    });
+  }
+
+  /* ══════ 이름 골라 보기 — 담당자 명단 ══════
+     paydata/owners 는 「이름 고르개용 얇은 명단」이다(설계서 10장) — 이름·최근
+     활동만 담고 자료는 넣지 않는다. 로그인할 때마다 내 이름을 적어 둔다 —
+     그래야 남이 나를 「이름으로」 고를 수 있다.
+
+     ⚠ 사진첩의 owners 는 관리자만 읽지만, 여기는 **전 직원이 읽는다**
+     (대표 결정 2026-08-13 — 남의 자리를 전 직원이 이름 골라 볼 수 있다). */
+  function touchOwner(name) {
+    if (!deps.db || !deps.uid) return Promise.resolve();
+    var up = {};
+    up[ownerPath(deps.uid)] = { name: name || deps.uid, lastAt: Date.now() };
+    return deps.db.ref().update(up).catch(function (e) { console.warn('[담당자 명단]', e && e.code); });
+  }
+
+  function listOwners() {
+    if (!deps.db) return Promise.resolve({});
+    return deps.db.ref(ownerBoxPath()).once('value').then(function (s) { return s.val() || {}; });
+  }
+
+  /* 로그인 마무리 — 이름을 찾고 명단에 나를 적어 둔다. 이름을 못 찾아도
+     로그인은 막지 않는다(이메일이라도 보이는 것이 빈칸보다 낫다). */
+  function signIn(email, fallbackName) {
+    deps.name = fallbackName || email || deps.uid || '';
+    return lookupName(email).then(function (found) {
+      if (found) deps.name = found;
+      return touchOwner(deps.name);
+    }).catch(function () { /* 명단 갱신 실패가 로그인을 막지 않는다 */ })
+      .then(function () { return deps.name; });
+  }
+
+  /* ══════ 열람 기록 ══════
+     남의 자리를 볼 때 「왜 보는가」를 남긴다(대표 결정 2026-08-13 — 전 직원
+     열람 가능 + 사유 적기). 콘솔 규칙이 관리자만 읽게 하고, 한 번 쓰면
+     못 고치게 막는다(!data.exists()) — 기록을 지울 수 있으면 기록이 아니다. */
+  function logAccess(o) {
+    o = o || {};
+    var targetUid = String(o.targetUid || '');
+    var reason = String(o.reason || '').trim();
+    if (!targetUid) return Promise.reject(new Error('누구 자리인지 알 수 없습니다'));
+    if (!reason) return Promise.reject(new Error('사유를 적어 주세요'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var id = newId();
+    var up = {};
+    up[accessLogPath(id)] = {
+      byUid: deps.uid || '', byName: deps.name || '',
+      targetUid: targetUid, targetName: String(o.targetName || ''),
+      reason: reason, at: Date.now()
+    };
+    return deps.db.ref().update(up).then(function () { return id; });
+  }
+
+  /* ══════ 휴가 대리 ══════
+     자리를 맡기는 것은 **주인만** 할 수 있다(콘솔 규칙이 deputy 칸 쓰기를
+     $owner===auth.uid 로 막는다). 기간이 지나면 규칙이 저절로 닫는다 —
+     사람이 거두지 않아도 닫히는 것이 이 설계의 핵심이다. */
+  function setDeputy(deputyUid, deputyName, fromMs, toMs) {
+    if (!deputyUid) return Promise.reject(new Error('맡길 사람을 골라 주세요'));
+    if (!(toMs > (fromMs || 0))) return Promise.reject(new Error('끝나는 날이 시작하는 날보다 뒤여야 합니다'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var up = {};
+    up[deputyBoxPath() + '/' + deputyUid] = {
+      name: deputyName || deputyUid, from: Number(fromMs || Date.now()), to: Number(toMs)
+    };
+    return deps.db.ref().update(up);
+  }
+
+  /* 기간 중에도 바로 거둔다 — 굳이 기다릴 필요가 없다고 말씀하시면. */
+  function revokeDeputy(deputyUid) {
+    if (!deputyUid) return Promise.reject(new Error('누구를 거둘지 알 수 없습니다'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var up = {};
+    up[deputyBoxPath() + '/' + deputyUid] = null;
+    return deps.db.ref().update(up);
+  }
+
+  /* 내가 맡긴 사람들 목록 — 내 자리 설정 화면이 보여준다. */
+  function listMyDeputies(owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(deputyBoxPath(owner)).once('value').then(function (s) { return s.val() || {}; });
+  }
+
+  /* 지금 이 순간 유효한 대리인가 — 콘솔 규칙과 **같은 조건**이어야 한다
+     (root.child(...).val() >= now). 여기서 다르게 판정하면 화면은 "맡았다"고
+     보여 주는데 서버는 거절하는 어긋남이 생긴다. */
+  function isActiveDeputy(rec, now) {
+    return !!(rec && Number(rec.to || 0) >= Number(now || Date.now()));
+  }
+
   global.PuPaydataStore = {
     DB_ROOT: DB_ROOT,
     BUCKET_ROOT: BUCKET_ROOT,
@@ -605,6 +743,19 @@
     fileDownloadUrl: fileDownloadUrl,
     foldersPath: foldersPath,
     listFolders: listFolders,
+    deputyBoxPath: deputyBoxPath,
+    sidToEmail: sidToEmail,
+    pickFromRoster: pickFromRoster,
+    readRoster: readRoster,
+    lookupName: lookupName,
+    touchOwner: touchOwner,
+    listOwners: listOwners,
+    signIn: signIn,
+    logAccess: logAccess,
+    setDeputy: setDeputy,
+    revokeDeputy: revokeDeputy,
+    listMyDeputies: listMyDeputies,
+    isActiveDeputy: isActiveDeputy,
     trashUpdate: trashUpdate,
     restoreUpdate: restoreUpdate,
     listTrash: listTrash,
