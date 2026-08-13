@@ -37,19 +37,28 @@ test('빈 이름은 빈 문자열', () => {
 });
 
 /* 실제 Firebase 쓰기까지 실행해 본다 — coMoveSelTo·coApplyTag 가 만드는
-   update 꾸러미가 정확한지는 실제로 돌려야 증명된다(js/pu-doc-file.js 검사와 같은 방식). */
+   update 꾸러미가 정확한지는 실제로 돌려야 증명된다(js/pu-doc-file.js 검사와 같은 방식).
+   ⚠ _norm 도 실제 소스에서 그대로 잘라온다 — coMoveSelTo 가 옛 이름 열쇠를 계산할 때
+     쓰는 것과 검사가 기대하는 계산이 다른 데서 나오면, 화면 코드가 바뀌어도 검사는
+     자기 사본만 보고 계속 통과하는 예전 실수(tests/cards-co-tag-hide.test.js 의
+     computeShownTags 사고)를 반복한다. */
 function loadAssignBlock(){
+  const normAt = source.indexOf('const _norm = s =>');
+  assert.ok(normAt > 0, '_norm 정의를 찾지 못했습니다');
+  const normEnd = source.indexOf('\n', normAt);
   const cleanAt = source.indexOf('function coCleanTagName');
   const cleanEnd = source.indexOf('\n}', cleanAt) + 2;
   const at = source.indexOf('function coMoveToFolder');
   assert.ok(at > 0, 'coMoveToFolder 를 찾지 못했습니다');
   const end = source.indexOf('\nfunction ', source.indexOf('function coApplyTag', at) + 10);
-  const code = source.slice(cleanAt, cleanEnd) + '\n' + source.slice(at, end);
+  const code = source.slice(normAt, normEnd) + '\n' + source.slice(cleanAt, cleanEnd) + '\n' + source.slice(at, end);
 
   const writes = [];
+  const calls = { rendered: 0, pcRendered: 0 };
   const ctx = {
-    state: { coSel: {} },
+    state: { view:'co', coSel: {} },
     _coFolders: {},
+    coList: () => [],   /* 검사마다 필요하면 ctx.coList 를 다시 준다 */
     esc: s => String(s),
     toast: () => {},
     confirm: () => true,
@@ -57,11 +66,13 @@ function loadAssignBlock(){
     folderDlgBg: { classList: { add(){}, remove(){} } },
     Store: { db: { ref: p => ({ update: v => { writes.push({ path:p, val:v }); return Promise.resolve(); } }) } },
     DB_ROOT: 'pucards',
-    renderCoPage: () => {}
+    renderCoPage: () => { calls.rendered++; },
+    renderPC: () => { calls.pcRendered++; }
   };
   vm.createContext(ctx);
   vm.runInContext(code, ctx);
   ctx._writes = writes;
+  ctx._calls = calls;
   return ctx;
 }
 
@@ -137,6 +148,72 @@ test('옮기기 전에 고른 수를 보여준다 — 모르고 몇백 곳을 �
     set innerHTML(v){ shown = v; }, get innerHTML(){ return shown; } });
   c.coMoveToFolder();
   assert.match(shown, /3곳을 옮길 폴더/);
+});
+
+/* 최종 전체 리뷰 2026-08-14 — 아래부터 리뷰가 찾은 것을 증명하는 검사 */
+
+test('coMoveSelTo 는 성공하면 renderCoPage 가 아니라 renderPC 를 부른다', async () => {
+  /* 옆줄 폴더 개수가 이 조작으로 바뀌므로 renderCoPage 만 부르면 옆줄 숫자가
+     안 바뀐 채로 남는다(loadCoFolders 가 renderPC 를 부르는 것과 같은 이유). */
+  const c = loadAssignBlock();
+  c.state.coSel = { 'a':1 };
+  await c.coMoveSelTo('f1');
+  assert.equal(c._calls.pcRendered, 1);
+  assert.equal(c._calls.rendered, 0);
+});
+
+test('coApplyTag 는 성공하면 renderCoPage 가 아니라 renderPC 를 부른다', async () => {
+  const c = loadAssignBlock();
+  c.state.coSel = { 'a':1 };
+  await c.coApplyTag('2026 통합기술보호지원반');
+  assert.equal(c._calls.pcRendered, 1);
+  assert.equal(c._calls.rendered, 0);
+});
+
+test('coMoveSelTo 는 쓰기가 실패하면 안내만 하고 고른 것·창을 그대로 둔다', async () => {
+  const c = loadAssignBlock();
+  c.Store = { db: { ref: () => ({ update: () => Promise.reject(new Error('권한 없음')) }) } };
+  const toasts = [];
+  c.toast = msg => toasts.push(msg);
+  c.state.coSel = { 'a':1 };
+  await c.coMoveSelTo('f1');
+  assert.match(toasts[0], /옮기기 실패/);
+  assert.deepEqual(JSON.parse(JSON.stringify(c.state.coSel)), { a:1 }, '실패했으면 고른 것을 지우면 안 된다');
+  assert.equal(c._calls.pcRendered, 0, '실패했으면 다시 그리면 안 된다');
+});
+
+test('coApplyTag 는 쓰기가 실패하면 안내만 하고 고른 것을 그대로 둔다', async () => {
+  const c = loadAssignBlock();
+  c.Store = { db: { ref: () => ({ update: () => Promise.reject(new Error('권한 없음')) }) } };
+  const toasts = [];
+  c.toast = msg => toasts.push(msg);
+  c.state.coSel = { 'a':1 };
+  await c.coApplyTag('2026 통합기술보호지원반');
+  assert.match(toasts[0], /담기 실패/);
+  assert.deepEqual(JSON.parse(JSON.stringify(c.state.coSel)), { a:1 });
+});
+
+test('coMoveSelTo 는 회사 열쇠가 사업자번호로 바뀐 뒤에도 옛 이름 열쇠의 folder 를 같이 비운다', async () => {
+  /* 다라기업이 이름 열쇠(n다라기업)로 폴더에 있다가 사업자번호를 얻어 열쇠가
+     3128100003 으로 바뀐 경우 — coEffectiveExtra 가 cur.folder(null) 대신
+     old.folder 를 다시 끌어와 옮기기가 안 먹힌 것처럼 보이던 버그(최종 전체 리뷰
+     2026-08-14). 새 열쇠만 비우면 이 버그가 되살아난다. */
+  const c = loadAssignBlock();
+  c.coList = () => [{ key:'3128100003', name:'다라기업' }];
+  c.state.coSel = { '3128100003': 1 };
+  await c.coMoveSelTo('');
+  const w = c._writes[0].val;
+  assert.equal(w['coInfo/3128100003/folder'], null);
+  assert.equal(w['coInfo/n다라기업/folder'], null, '옛 이름 열쇠도 같이 비워야 한다');
+});
+
+test('coMoveSelTo 는 지금 열쇠가 이미 이름 열쇠면 옛 열쇠를 따로 안 만든다', async () => {
+  const c = loadAssignBlock();
+  c.coList = () => [{ key:'n다라기업', name:'다라기업' }];
+  c.state.coSel = { 'n다라기업': 1 };
+  await c.coMoveSelTo('f1');
+  const w = c._writes[0].val;
+  assert.equal(Object.keys(w).length, 1, '자기 자신 말고 옛 열쇠를 또 만들면 안 된다');
 });
 
 test('화면: 선택 도구줄이 목록 위에 있다', () => {

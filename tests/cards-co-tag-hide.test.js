@@ -40,12 +40,13 @@ function loadTagHideBlock(){
   const ctx = {
     _coTagHidden: {},
     _coTagHiddenOn: false,
-    state: { view:'co', coShowHidden:false },
+    state: { view:'co', coShowHidden:false, coTag:'' },
     Store: { mode:'firebase', db: { ref: p => ({
       on: () => {},
-      update: upd => { calls.updates.push({ path:p, upd }); }
+      update: upd => { calls.updates.push({ path:p, upd }); return Promise.resolve(); }
     }) } },
     DB_ROOT: 'pucards',
+    toast: msg => { calls.toasts = calls.toasts||[]; calls.toasts.push(msg); },
     renderPC: () => { calls.pcRendered = true; }
   };
   vm.createContext(ctx);
@@ -54,9 +55,10 @@ function loadTagHideBlock(){
   return ctx;
 }
 
-test('hideCoTag 는 그 탭을 숨김으로 표시한다 — 배정을 지우지 않는다', () => {
+test('hideCoTag 는 그 탭을 숨김으로 표시한다 — 배정을 지우지 않는다', async () => {
   const c = loadTagHideBlock();
   c.hideCoTag('2026 통합기술보호지원반');
+  await Promise.resolve();
   assert.equal(c._calls.updates.length, 1);
   const upd = c._calls.updates[0].upd;
   assert.equal(upd['coTagHidden/2026 통합기술보호지원반'], true);
@@ -69,6 +71,33 @@ test('unhideCoTag 는 숨김 표시를 지운다', () => {
   c.unhideCoTag('2026 통합기술보호지원반');
   const upd = c._calls.updates[0].upd;
   assert.equal(upd['coTagHidden/2026 통합기술보호지원반'], null);
+});
+
+/* 최종 전체 리뷰 2026-08-14: 지금 이 탭으로 걸러 보던 중에 그 탭을 숨기면, 옆줄엔
+   아무 표시도 없이 목록만 계속 좁혀져 보인다 — 걸러 둔 탭도 같이 풀어야 한다. */
+test('hideCoTag 는 지금 그 탭으로 거르고 있었으면 거르기를 푼다', async () => {
+  const c = loadTagHideBlock();
+  c.state.coTag = '2026 통합기술보호지원반';
+  c.hideCoTag('2026 통합기술보호지원반');
+  await Promise.resolve();
+  assert.equal(c.state.coTag, '');
+  assert.equal(c._calls.pcRendered, true);
+});
+
+test('hideCoTag 는 다른 탭으로 거르고 있었으면 그 거르기를 안 건드린다', async () => {
+  const c = loadTagHideBlock();
+  c.state.coTag = '다른탭';
+  c.hideCoTag('2026 통합기술보호지원반');
+  await Promise.resolve();
+  assert.equal(c.state.coTag, '다른탭');
+});
+
+test('hideCoTag 는 클라우드 모드가 아니면 안 쓰고 안내만 한다', () => {
+  const c = loadTagHideBlock();
+  c.Store.mode = 'demo';
+  c.hideCoTag('2026 통합기술보호지원반');
+  assert.equal(c._calls.updates.length, 0);
+  assert.equal((c._calls.toasts||[]).length, 1);
 });
 
 test('toggleCoShowHidden 은 숨긴 것 보기를 뒤집고 다시 그린다', () => {

@@ -7724,8 +7724,8 @@ function renderPCSide(){
           <span class="gname" onclick="pickCoFolder('t:${esc(x.t)}')">📁 ${esc(x.t)}</span>
           <span class="gcount">${x.n}</span>
           ${_coTagHidden[x.t]
-            ? `<span class="gmenu" onclick="event.stopPropagation();unhideCoTag('${esc(x.t).replace(/'/g,"\\'")}')" title="다시 보이기">🙈</span>`
-            : `<span class="gmenu" onclick="event.stopPropagation();hideCoTag('${esc(x.t).replace(/'/g,"\\'")}')" title="목록에서 숨기기(지우지 않음)">👁</span>`}
+            ? `<span class="gmenu" onclick="event.stopPropagation();unhideCoTag('${esc(x.t.replace(/'/g,"\\'"))}')" title="다시 보이기">🙈</span>`
+            : `<span class="gmenu" onclick="event.stopPropagation();hideCoTag('${esc(x.t.replace(/'/g,"\\'"))}')" title="목록에서 숨기기(지우지 않음)">👁</span>`}
         </div>`; });
       if(hiddenN && !state.coShowHidden){
         h += `<div class="pchintside" style="cursor:pointer;text-decoration:underline" onclick="toggleCoShowHidden()">숨긴 사업 ${hiddenN}개 보기</div>`;
@@ -9473,7 +9473,9 @@ let _coInfoOn = false;
 function loadCoInfo(cb){
   if(_coInfoOn || Store.mode!=='firebase'){ cb && cb(); return; }
   _coInfoOn = true;
-  Store.db.ref(DB_ROOT+'/coInfo').on('value', s=>{ _coInfo = s.val() || {}; if(state.view==='co') renderCoPage(); });
+  /* 폴더·탭 개수가 옆줄에도 보이므로 renderCoPage() 만 부르면 옆줄 숫자가 안 바뀐다
+     (최종 전체 리뷰 2026-08-14 — loadCoFolders/loadCoTagHidden 과 같은 이유). */
+  Store.db.ref(DB_ROOT+'/coInfo').on('value', s=>{ _coInfo = s.val() || {}; if(state.view==='co') renderPC(); });
   cb && cb();
 }
 const coKeyOf = it => { const d=digits(it.bizno||''); return d.length>=10 ? d : ('n'+_norm(it.company||'')); };
@@ -9541,7 +9543,11 @@ function coList(){
   return Object.values(by).filter(o=>o.name)
     .sort((a,b)=>String(a.name).localeCompare(String(b.name),'ko'));
 }
-const _norm = s => String(s||'').replace(/\s|\(주\)|주식회사|㈜/g,'').toLowerCase();
+/* ⚠ 사업자번호가 없는 회사는 이 이름꼴이 그대로 Realtime DB 열쇠(coInfo/n회사이름/...)가
+   된다. DB 열쇠에 못 쓰는 글자(. # $ [ ] /)가 이름에 있으면 쓰기가 그 자리에서 막히거나
+   (점 등) 딴 경로로 새 버린다(슬래시). coCleanTagName 과 같은 글자를 뺀다
+   (최종 전체 리뷰 2026-08-14, "이름꼴 열쇠 미검증"). */
+const _norm = s => String(s||'').replace(/\s|\(주\)|주식회사|㈜/g,'').replace(/[.#$/[\]]/g,'').toLowerCase();
 
 function openCoPage(){ state.view='co'; state.coPick='';
   try{ state.coErpOnly = !!localStorage.getItem('pucards_co_erponly'); }catch(_){}
@@ -9572,10 +9578,17 @@ function loadCoTagHidden(cb){
   cb && cb();
 }
 function hideCoTag(tag){
-  Store.db.ref(DB_ROOT).update({ ['coTagHidden/'+tag]: true });
+  if(Store.mode!=='firebase') return toast('클라우드에 연결된 상태에서만 됩니다');
+  Store.db.ref(DB_ROOT).update({ ['coTagHidden/'+tag]: true }).then(()=>{
+    /* 지금 이 탭으로 걸러 보던 중이면, 숨긴 뒤에도 그 탭이 골라진 채로 남아
+       옆줄엔 아무 표시도 없이 목록만 계속 좁혀져 보인다(최종 전체 리뷰 2026-08-14). */
+    if(state.coTag===tag){ state.coTag=''; if(state.view==='co') renderPC(); }
+  }).catch(e=>toast('저장 실패: '+((e&&e.message)||'')));
 }
 function unhideCoTag(tag){
-  Store.db.ref(DB_ROOT).update({ ['coTagHidden/'+tag]: null });
+  if(Store.mode!=='firebase') return toast('클라우드에 연결된 상태에서만 됩니다');
+  Store.db.ref(DB_ROOT).update({ ['coTagHidden/'+tag]: null })
+    .catch(e=>toast('저장 실패: '+((e&&e.message)||'')));
 }
 function toggleCoShowHidden(){ state.coShowHidden = !state.coShowHidden; renderPC(); }
 
@@ -9594,7 +9607,8 @@ function loadCoFolders(cb){
 }
 function putCoFolder(folder){
   if(Store.mode!=='firebase') return toast('클라우드에 연결된 상태에서만 됩니다');
-  Store.db.ref(DB_ROOT+'/coFolders/'+folder.id).set(folder);
+  Store.db.ref(DB_ROOT+'/coFolders/'+folder.id).set(folder)
+    .catch(e=>toast('저장 실패: '+((e&&e.message)||'')));
 }
 function openCoFolderDialog(){
   $('folderDlg').innerHTML = `
@@ -9631,9 +9645,12 @@ function deleteCoFolder(id){
   Object.keys(_coInfo).forEach(k=>{ if(_coInfo[k] && _coInfo[k].folder===id) upd['coInfo/'+k+'/folder']=null; });
   upd['coFolders/'+id] = null;
   Store.db.ref(DB_ROOT).update(upd).then(()=>{
-    if(state.coFolder===id) state.coFolder='';
+    /* 지운 폴더를 보고 있었으면 다시 그린다 — 이 목록을 만든 _coInfo/_coFolders
+       구독이 update() 가 로컬에 반영되는 순간 먼저 불려, coFolder 를 비우기 전에
+       이미 "회사를 찾지 못했습니다"로 그려질 수 있다(최종 전체 리뷰 2026-08-14). */
+    if(state.coFolder===id){ state.coFolder=''; if(state.view==='co') renderPC(); }
     toast('폴더를 삭제했습니다');
-  });
+  }).catch(e=>toast('삭제 실패: '+((e&&e.message)||'')));
 }
 function openCoFolderMenu(ev, id){
   const m=$('folderMenu');
@@ -9891,19 +9908,33 @@ function coMoveToFolder(){
 }
 async function coMoveSelTo(folderId){
   const keys = Object.keys(state.coSel);
+  const byKey = {}; coList().forEach(o=>{ byKey[o.key]=o; });
   const upd = {};
-  keys.forEach(k=>{ upd['coInfo/'+k+'/folder'] = folderId || null; });
-  await Store.db.ref(DB_ROOT).update(upd);
+  keys.forEach(k=>{
+    upd['coInfo/'+k+'/folder'] = folderId || null;
+    /* 회사 열쇠가 사업자번호로 바뀐 뒤에도 옛 이름 열쇠에 folder 값이 남아 있으면,
+       coEffectiveExtra 가 그걸 다시 끌어와 "폴더 없음"으로 옮겨도 그대로 보인다
+       (최종 전체 리뷰 2026-08-14). 사람이 누른 한 번의 조작 안에서 옛 열쇠도 같이
+       비운다 — 조용한 배경 쓰기가 아니라 이 옮기기 자체가 하는 일이다. */
+    const o = byKey[k];
+    const nameKey = o ? 'n'+_norm(o.name||'') : null;
+    if(nameKey && nameKey!==k) upd['coInfo/'+nameKey+'/folder'] = null;
+  });
+  try{
+    await Store.db.ref(DB_ROOT).update(upd);
+  }catch(e){
+    return toast('옮기기 실패: '+((e&&e.message)||''));
+  }
   $('folderDlgBg').classList.remove('open');
   state.coSel={};
   toast(`${keys.length}곳을 옮겼습니다`);
-  renderCoPage();
+  if(state.view==='co') renderPC();
 }
 function coAssignTag(){
   const keys = Object.keys(state.coSel);
   if(!keys.length) return toast('회사를 먼저 선택하세요');
   const tags = coTagList(coList()).map(x=>x.t);
-  const opts = tags.map(t=>`<div class="movefolder" onclick="coApplyTag('${esc(t).replace(/'/g,"\\'")}')"><span class="mfic">🏷</span> ${esc(t)}</div>`).join('');
+  const opts = tags.map(t=>`<div class="movefolder" onclick="coApplyTag('${esc(t.replace(/'/g,"\\'"))}')"><span class="mfic">🏷</span> ${esc(t)}</div>`).join('');
   $('folderDlg').innerHTML = `
     <div class="mhead"><b>${keys.length}곳에 붙일 탭</b>
       <button class="iconbtn" onclick="folderDlgBg.classList.remove('open')">✕</button></div>
@@ -9924,11 +9955,15 @@ async function coApplyTag(raw){
   if(!keys.length) return toast('회사를 먼저 선택하세요');
   const upd = {};
   keys.forEach(k=>{ upd['coInfo/'+k+'/tags/'+tag] = true; });
-  await Store.db.ref(DB_ROOT).update(upd);
+  try{
+    await Store.db.ref(DB_ROOT).update(upd);
+  }catch(e){
+    return toast('담기 실패: '+((e&&e.message)||''));
+  }
   $('folderDlgBg').classList.remove('open');
   state.coSel={};
   toast(`${keys.length}곳에 「${tag}」 탭을 붙였습니다`);
-  renderCoPage();
+  if(state.view==='co') renderPC();
 }
 function coSelAll(on){
   const list = coVisible();

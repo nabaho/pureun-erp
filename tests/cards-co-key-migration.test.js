@@ -86,3 +86,47 @@ test('상호에 (주)·띄어쓰기가 있어도 같은 이름 열쇠로 찾는�
   const r = fn('3128100001', '(주) 한서정공', map);
   assert.equal(r.folder, 'f1', '_norm 을 안 거쳐 못 찾았다');
 });
+
+/* 최종 전체 리뷰 2026-08-14: 사업자번호가 없는 회사는 이름꼴 그대로가 Realtime DB
+   열쇠(coInfo/n회사이름/...)가 된다. 이름에 DB 열쇠가 못 쓰는 글자(. # $ [ ] /)가
+   있으면 점 등은 그 자리에서 쓰기가 막히고, 슬래시는 딴 경로로 새 버린다 —
+   coCleanTagName 이 탭 이름에서 이미 하는 것과 같은 걸 회사 열쇠에도 해야 한다. */
+function loadCoKeyOf(){
+  const digitsAt = source.indexOf('const digits = s =>');
+  assert.ok(digitsAt > 0, 'digits 정의를 찾지 못했습니다');
+  const digitsEnd = source.indexOf('\n', digitsAt);
+  const normAt = source.indexOf('const _norm = s =>');
+  const normEnd = source.indexOf('\n', normAt);
+  const at = source.indexOf('const coKeyOf =');
+  assert.ok(at > 0, 'coKeyOf 를 찾지 못했습니다');
+  const end = source.indexOf('\n', at);
+  /* coKeyOf 는 top-level const 라 vm 컨텍스트 프로퍼티로 안 붙는다 — var 로만
+     바꿔서 잘라온다(coCleanTagName·coEffectiveExtra 는 function 이라 이 문제가 없다). */
+  const keyLine = source.slice(at, end).replace('const coKeyOf', 'var coKeyOf');
+  const code = source.slice(digitsAt, digitsEnd) + '\n' + source.slice(normAt, normEnd) + '\n' + keyLine;
+  const ctx = {};
+  vm.createContext(ctx);
+  vm.runInContext(code, ctx);
+  return ctx.coKeyOf;
+}
+
+test('회사 이름에 DB 열쇠가 못 쓰는 글자(. # $ [ ] /)가 있으면 이름 열쇠에서 뺀다', () => {
+  const coKeyOf = loadCoKeyOf();
+  assert.doesNotMatch(coKeyOf({ company:'에이.에스.티 산업' }), /\./, '점이 그대로 남으면 안 된다');
+  assert.doesNotMatch(coKeyOf({ company:'A#B 지원' }), /#/);
+  assert.doesNotMatch(coKeyOf({ company:'C$D 상사' }), /\$/);
+  assert.doesNotMatch(coKeyOf({ company:'[대표] 이엔지' }), /[\[\]]/);
+  assert.doesNotMatch(coKeyOf({ company:'대한산업 서울/경기' }), /\//,
+    '슬래시가 남으면 딴 경로(coInfo/n대한산업서울/경기/folder)로 새 버린다');
+});
+
+test('coKeyOf 와 coEffectiveExtra 의 이름 열쇠 계산이 같은 회사에서 어긋나지 않는다', () => {
+  /* 둘 다 _norm 하나만 쓰므로 항상 같이 가야 한다 — 따로 고치면 coKeyOf 가 만든
+     열쇠를 coEffectiveExtra 가 못 찾는 사고가 난다. */
+  const coKeyOf = loadCoKeyOf();
+  const fn = loadCoEffectiveExtra();
+  const key = coKeyOf({ company:'에이.에스.티 산업' });
+  const map = { [key]: { folder:'f1' } };
+  const r = fn('3128199999', '에이.에스.티 산업', map);
+  assert.equal(r.folder, 'f1', 'coKeyOf 가 만든 열쇠를 coEffectiveExtra 가 못 찾았다');
+});

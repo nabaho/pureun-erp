@@ -65,8 +65,8 @@ function loadCoFoldersBlock(){
     state: { view: 'co', coFolder: '', coErpOnly: false, coTag: '', coPick: '', coSel: {} },
     Store: { mode: 'firebase', db: { ref: p => ({
       on: () => {},
-      set: v => { calls.sets.push({ path: p, v }); },
-      update: upd => { calls.updates.push({ path: p, upd }); return { then: cb => cb && cb() }; }
+      set: v => { calls.sets.push({ path: p, v }); return Promise.resolve(); },
+      update: upd => { calls.updates.push({ path: p, upd }); return Promise.resolve(); }
     }) } },
     uid: () => 'uid_' + Math.random().toString(36).slice(2, 8),
     toast: msg => { calls.toasts.push(msg); },
@@ -96,7 +96,7 @@ function loadCoFoldersBlock(){
   return ctx;
 }
 
-test('deleteCoFolder 는 확인을 받은 뒤 그 폴더 회사만 folder 를 비우고 폴더도 지운다', () => {
+test('deleteCoFolder 는 확인을 받은 뒤 그 폴더 회사만 folder 를 비우고 폴더도 지운다', async () => {
   const c = loadCoFoldersBlock();
   c._coFolders = { f1: { id:'f1', name:'컨설팅 신청' } };
   c._coInfo = {
@@ -107,6 +107,7 @@ test('deleteCoFolder 는 확인을 받은 뒤 그 폴더 회사만 folder 를 �
   c.state.coFolder = 'f1';
   c.confirm = () => true;
   c.deleteCoFolder('f1');
+  await Promise.resolve(); await Promise.resolve(); /* update() 뒤 .then() 이 뜨는 것을 기다린다 */
 
   assert.equal(c._calls.updates.length, 1, 'update 를 정확히 한 번 불러야 한다');
   const upd = c._calls.updates[0].upd;
@@ -115,6 +116,9 @@ test('deleteCoFolder 는 확인을 받은 뒤 그 폴더 회사만 folder 를 �
   assert.equal(upd['coFolders/f1'], null);
   assert.equal('coInfo/b/folder' in upd, false, '다른 폴더(f2)에 있던 b 는 upd 에 끼면 안 된다');
   assert.equal(Object.keys(upd).length, 3, 'a·c 의 folder 와 coFolders/f1 말고 다른 키가 없어야 한다');
+  assert.equal(c._calls.pcRendered, true, '지운 폴더를 보고 있었으면 다시 그려야 한다 — ' +
+    '_coInfo/_coFolders 구독이 update() 가 로컬 반영되는 순간 먼저 불려 coFolder 를 비우기 ' +
+    '전에 이미 그려질 수 있다(최종 전체 리뷰 2026-08-14)');
   assert.equal(c.state.coFolder, '', '지운 폴더를 보고 있었으면 선택을 되돌려야 한다');
 });
 
