@@ -3301,7 +3301,7 @@ function onQueueChange(list) {
    올라간 서류를 AI로 읽어 종류·항목을 알아내고, 사업자등록번호는 기계로 검증한다.
    결과는 사진 정보 아래 'read' 칸에만 적는다 — 아직 각 앱에 등록하지는 않는다.
    판독이 실패해도 사진은 이미 안전하게 올라가 있다(판독은 덧붙이는 일이다). */
-const READ_LABEL = { chat: '카톡·메일 대화', timesheet: '근태·휴무표', card: '명함', bizreg: '사업자등록증', sme: '중소기업확인서',
+const READ_LABEL = { chat: '카톡·메일 대화', timesheet: '근태·휴무표', form: '서식·신청서', card: '명함', bizreg: '사업자등록증', sme: '중소기업확인서',
   payslip: '급여서류', meeting: '회의·현장 사진', other: '서류로 보이지 않음' };
 
 /* ══════ 분류 탭 ══════
@@ -3336,6 +3336,9 @@ const KIND_TABS = [
   /* 근태·휴무표(대표 지시 2026-08-13) — 임금 금액이 없는 근무·휴무 날짜 메모.
      급여서류(안 받음)와 다르다: 그 기준은 「임금 금액이 적힌 것」 때문이었다. */
   { key: 'timesheet', label: '근태표',     short: '근태',   kinds: ['timesheet'], main: 'timesheet' },
+  /* 일반 서식(대표 지시 2026-08-13) — 신청서·확인서·공문. 아는 종류가 아니면
+     아무것도 안 읽고 「서류로 보이지 않음」으로 버리던 것을 여기서 받는다. */
+  { key: 'form',    label: '서식',        short: '서식',   kinds: ['form'], main: 'form' },
   { key: 'other',   label: '기타서류',     short: '기타',   kinds: null, main: 'other' },  // 나머지 전부
   { key: 'meeting', label: '회의사진',     short: '회의',   kinds: ['meeting'], main: 'meeting' }
 ];
@@ -4552,6 +4555,8 @@ function checkWhy(it) {
   if (r.kind === 'chat') return '대화 캡처 — 할 일 확인';
   /* 근태표는 표를 원본과 대조해야 한다 — 손글씨 숫자는 확인 전까지 못 믿는다. */
   if (r.kind === 'timesheet') return '근태표 — 표를 원본과 대조';
+  /* 서식도 읽은 칸을 한 번 봐야 한다 — 보고 나면 「확인했음」. */
+  if (r.kind === 'form') return '서식 — 읽은 칸 확인';
   if (!r.auto) return '읽은 값이 미덥지 않음 — 열어서 확인';
   if (CARD_KINDS[r.kind] && !(r.filed && r.filed.id)) return '명함첩에 아직 안 감 — 보내기';
   if (CO_KINDS[r.kind] && !coFilledOk(r)) {
@@ -5222,6 +5227,14 @@ function hayOf(it) {
   /* 근태표의 사람 이름도 — 「배영승」으로 치면 그분이 적힌 달이 나와야 한다 */
   if (Array.isArray(f.rows)) {
     f.rows.forEach(function (row) { if (row && row.name) bits.push(String(row.name)); });
+  }
+  /* 서식의 칸 이름·값도 — 「매출액」이나 「가야엔지니어링」으로 찾아진다 */
+  if (Array.isArray(f.pairs)) {
+    f.pairs.forEach(function (p) {
+      if (!p) return;
+      if (p.k) bits.push(String(p.k));
+      if (p.v) bits.push(String(p.v));
+    });
   }
   if (m.takenAt) {
     const d = new Date(m.takenAt);
@@ -6363,11 +6376,60 @@ function tsCopy() {
   }, function () { alert(tsv); });
 }
 
+/* ══════ 일반 서식 — 모든 칸을 이름:값으로 (대표 지시 2026-08-13) ══════
+   "캡처되거나 PDF로 들어온 서식들 글자를 선명하게 읽고 정리하고 싶다."
+   아는 칸(상호·대표자·사업자번호…)은 위 READ_ROWS 표에 이미 나온다.
+   여기는 **그 밖의 모든 칸**(매출액·근로자 수·희망시기…)을 그린다 —
+   서식마다 칸이 달라서 이름표를 미리 정할 수 없기 때문이다. */
+function formPairsBox(it) {
+  const r = it && it.meta && it.meta.read;
+  if (!r || r.kind !== 'form') return '';
+  const pairs = (r.fields && Array.isArray(r.fields.pairs) ? r.fields.pairs : [])
+    .filter(function (p) { return p && p.k && String(p.v || '').trim() !== ''; });
+  let h = '';
+  if (pairs.length) {
+    h += '<table>' + pairs.map(function (p) {
+      return '<tr><td class="k">' + esc(p.k) + '</td><td>' + esc(p.v) + '</td></tr>';
+    }).join('') + '</table>';
+  } else if (!r.error) {
+    h += '<p class="note">칸을 못 읽은 서식입니다 — 「다시 판독」을 눌러 보세요.</p>';
+  }
+  /* 「정리」의 끝은 옮겨 쓰는 것이다 — 이름표\t값 꼴이라 엑셀에 두 열로 붙는다 */
+  h += '<div class="tsbtns"><button onclick="formCopy()">📋 전체 칸 복사 — 엑셀에 붙여넣기</button></div>';
+  return h;
+}
+
+function formCopy() {
+  const it = gridItems.find(function (x) { return x.id === viewerId; });
+  const r = it && it.meta && it.meta.read;
+  if (!r) return;
+  const f = r.fields || {};
+  const lines = [];
+  /* 아는 칸 먼저(화면 표와 같은 차례) — 그다음 나머지 칸 전부 */
+  READ_ROWS.forEach(function (p) {
+    if (f[p[0]] && typeof f[p[0]] === 'string') lines.push(p[1] + '\t' + f[p[0]]);
+  });
+  (Array.isArray(f.pairs) ? f.pairs : []).forEach(function (p) {
+    if (p && p.k && String(p.v || '').trim() !== '') lines.push(p.k + '\t' + p.v);
+  });
+  if (!lines.length) { toast('복사할 칸이 없습니다'); return; }
+  navigator.clipboard.writeText(lines.join('\n')).then(function () {
+    toast(lines.length + '칸을 복사했습니다 — 엑셀에서 붙여넣으세요');
+  }, function () { alert(lines.join('\n')); });
+}
+
+/* 판이 화면 절반을 쓰는 종류 — 표가 넓어야 원본과 대조가 된다(대표 지시 2026-08-13).
+   ⚠ 명함·사업자등록증은 절반을 쓰지 않는다 — 읽은 칸이 몇 개뿐이라 판만 넓어지고
+      정작 사진이 좁아져 글자 대조가 안 된다. */
+function wideKind(read) {
+  return !!(read && (read.kind === 'timesheet' || read.kind === 'form'));
+}
+
 function renderReadPanel(it) {
   const el = $('readPanel');
-  /* 근태표는 판이 **화면 절반**을 쓴다(대표 지시 2026-08-13) — A4 손글씨를
-     원본과 나란히 대조하려면 표가 좁으면 안 된다. 다른 서류는 그대로 440px. */
-  el.classList.toggle('wide', !!(it && it.meta && it.meta.read && it.meta.read.kind === 'timesheet'));
+  /* 근태표·서식은 판이 **화면 절반**을 쓴다 — A4 를 원본과 나란히 대조하려면
+     표가 좁으면 안 된다. 다른 서류는 그대로 440px. */
+  el.classList.toggle('wide', !!(it && it.meta && wideKind(it.meta.read)));
   if (!it) { el.classList.remove('wide'); el.innerHTML = ''; return; }
   const read = it.meta.read;
   if (!read) {
@@ -6445,6 +6507,7 @@ function renderReadPanel(it) {
     (rows ? '<table>' + rows + '</table>' : '') +
     chatTodoBox(it) +
     timesheetBox(it) +
+    formPairsBox(it) +
     box +
     (read.ack ? '<p class="note">✓ ' + esc(read.ack.by || '') +
         '님이 확인해 할 일에서 치웠습니다 · 「다시 판독」을 누르면 되돌아옵니다</p>' : '') +
