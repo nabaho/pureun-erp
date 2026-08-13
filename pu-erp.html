@@ -1880,15 +1880,47 @@ try {
 var _dbCache = {};
 var _fbObjForm = {};  // 키별 서버형식: true=클린 객체형(칸 단위 동기화 안전) / 미설정·false=배열형(통째 폴백). id없는 항목 섞인 키는 변환 안 함.
 function _dbCacheClear(k){ if(k){ delete _dbCache[k]; } else { _dbCache = {}; } }
+// 목록을 달라고 하면 «반드시 목록으로» 돌려준다.
+// 서버(RTDB)는 중간이 빈 목록을 {"0":…,"3":…} 꼴 덩어리로 돌려주고,
+// 칸 단위로 고친 뒤에도 덩어리가 남는다. 부르는 곳 296군데가 곧바로
+// .forEach / .filter / .map 을 쓰므로 (dbGet(…)||[]) 로는 못 막는다
+// — || 는 «비었을 때»만 막지 «덩어리일 때»는 그대로 통과시킨다.
+// 2026-08-13 「(dbGet(…) || []).forEach is not a function」 장애의 뿌리.
+// 같은 덩어리는 «같은 목록»으로 딱 한 번만 편다 —
+// 렌더마다 다시 펴면 느려지고, 매번 새 목록이면 화면이 쓸데없이 다시 그려진다.
+var _dbListMemo = (typeof WeakMap === 'function') ? new WeakMap() : null;
+function _dbAsList(v){
+  if(Array.isArray(v)) return v;
+  if(v == null || typeof v !== 'object') return [];
+  if(_dbListMemo && _dbListMemo.has(v)) return _dbListMemo.get(v);
+  var out = Object.keys(v)
+    .sort(function(a, b){
+      var na = Number(a), nb = Number(b);
+      if(isFinite(na) && isFinite(nb)) return na - nb;   // "0","1","10" 을 숫자 순으로
+      return String(a).localeCompare(String(b));
+    })
+    .map(function(key){ return v[key]; })
+    .filter(function(x){ return x != null; });
+  if(_dbListMemo) _dbListMemo.set(v, out);
+  return out;
+}
+if(typeof window !== 'undefined'){ window._dbAsList = _dbAsList; }
 function dbGet(k, def){
-  if(_dbCache.hasOwnProperty(k)){ var _c = _dbCache[k]; return (_c == null) ? def : _c; }
-  try {
-    var v = localStorage.getItem(KEY+k);
-    var parsed = v ? JSON.parse(v) : def;
-    if(parsed == null) parsed = def;
-    _dbCache[k] = parsed;
-    return parsed;
-  } catch(e){ return def; }
+  var out;
+  if(_dbCache.hasOwnProperty(k)){
+    var _c = _dbCache[k];
+    out = (_c == null) ? def : _c;
+  } else {
+    try {
+      var v = localStorage.getItem(KEY+k);
+      var parsed = v ? JSON.parse(v) : def;
+      if(parsed == null) parsed = def;
+      _dbCache[k] = parsed;
+      out = parsed;
+    } catch(e){ return def; }
+  }
+  if(Array.isArray(def) && !Array.isArray(out)) return _dbAsList(out);
+  return out;
 }
 
 
@@ -5227,8 +5259,9 @@ function _erpInvBuild(){
 
   // 이미 입금된 계산서 판정용 — 업체별 입금액 목록 (미수금관리와 같은 기준을 예상 입금액까지 확장)
   var paidByName = {};
-  var incs = dbGet('finance_income', []) || [];
-  if(!Array.isArray(incs)) incs = [];
+  // 덩어리로 와도 «버리지 말고» 편다 — 전에는 통째로 [] 로 갈아치워
+  // 이미 입금된 계산서를 하나도 못 알아봤다
+  var incs = _dbAsList(dbGet('finance_income', []));
   incs.forEach(function(i){
     if(!i) return;
     var nm = erpNormName(i.companyName);
@@ -8202,6 +8235,28 @@ function idbGetByIndex(storeName, indexName, value){
       var idx = tx.objectStore(storeName).index(indexName);
       var req = idx.getAll(value);
       req.onsuccess = function(e){ resolve(e.target.result || []); };
+      req.onerror = function(e){ reject(e.target.error); };
+    });
+  });
+}
+/* 색인 값이 lo~hi 사이인 것만 읽는다 (양끝 포함).
+   발행관리 화면이 «보고 있는 달» 의 홈택스분만 가져오려고 쓴다 —
+   수만 건을 통째로 읽어 걸러내면 화면이 멈춘다.
+   max 를 넘으면 거기서 끊고 몇 건에서 끊었는지 함께 돌려준다. */
+function idbGetRange(storeName, indexName, lo, hi, max){
+  return idbOpen().then(function(db){
+    return new Promise(function(resolve, reject){
+      var out = [], capped = false;
+      var tx = db.transaction([storeName], 'readonly');
+      var req = tx.objectStore(storeName).index(indexName)
+        .openCursor(window.IDBKeyRange.bound(lo, hi));
+      req.onsuccess = function(e){
+        var cur = e.target.result;
+        if(!cur){ resolve({ rows:out, capped:capped }); return; }
+        out.push(cur.value);
+        if(max && out.length >= max){ capped = true; resolve({ rows:out, capped:true }); return; }
+        cur.continue();
+      };
       req.onerror = function(e){ reject(e.target.error); };
     });
   });
@@ -34825,7 +34880,10 @@ if(typeof window !== 'undefined'){ window.erpWhoOf = erpWhoOf; window.erpTitleOf
 function erpInvoiceMatchAll(invs, incs, asOf){
   var out = { paid:[], unpaid:[], noInvoice:[], sumUnpaid:0, sumNoInv:0 };
   var _incs = [];
-  (incs || []).forEach(function(i){
+  // 목록 대신 덩어리가 와도 화면을 죽이지 않는다 (2026-08-13 세금계산서 렌더링 오류)
+  var _asList = (typeof _dbAsList === 'function') ? _dbAsList
+    : function(v){ return Array.isArray(v) ? v : (v && typeof v === 'object' ? Object.keys(v).map(function(k){ return v[k]; }) : []); };
+  _asList(incs).forEach(function(i){
     if(!i) return;
     var a = parseInt(i.amount, 10) || 0;
     if(a <= 0) return;
@@ -34833,7 +34891,7 @@ function erpInvoiceMatchAll(invs, incs, asOf){
                  used:false, raw:i });
   });
   var t0 = new Date(String(asOf || '').slice(0,10)).getTime();
-  (invs || []).forEach(function(iv){
+  _asList(invs).forEach(function(iv){
     if(!iv) return;
     if(iv.status && iv.status !== '발행') return;          // 미발행(예정)은 대조 대상이 아니다
     var amt = parseInt(iv.amount, 10) || 0;
@@ -45378,11 +45436,38 @@ function erpInvParseSheet(rows, SSF){
   }
   return { rows:out, why:why, header:pick.idx, cols:c, usedMerged:pick.merged };
 }
+/* 기간 고르개('' 전체 · '2026' · '2026-Q1' · '2026-03')를 날짜 두 끝으로 바꾼다.
+   -31 로 끊어도 2월은 탈이 없다 — 글자 비교라 '2026-02-31' 보다 큰 2월 날짜는 없다. */
+function erpInvPeriodRange(monthFilter){
+  var f = String(monthFilter === null || monthFilter === undefined ? '' : monthFilter);
+  if(!f) return { lo:'0000-00-00', hi:'9999-99-99' };
+  if(/^\d{4}$/.test(f)) return { lo:f+'-01-01', hi:f+'-12-31' };
+  var q = f.match(/^(\d{4})-Q([1-4])$/);
+  if(q){
+    var m1 = String((Number(q[2]) - 1) * 3 + 1).padStart(2, '0');
+    var m2 = String(Number(q[2]) * 3).padStart(2, '0');
+    return { lo:q[1]+'-'+m1+'-01', hi:q[1]+'-'+m2+'-31' };
+  }
+  if(/^\d{4}-\d{2}$/.test(f)) return { lo:f+'-01', hi:f+'-31' };
+  return { lo:'0000-00-00', hi:'9999-99-99' };
+}
+/* 홈택스 발행이력 한 줄 → 발행관리 목록이 읽는 꼴로.
+   홈택스에는 «공급가액» 만 있으므로 부가세는 늘 별도로 본다.
+   __hometax 표가 붙은 줄은 화면에서만 보이고 서버에 오르지 않으며 고치거나 지울 수 없다. */
+function erpInvHtRow(r){
+  r = r || {};
+  return { id:'ht|'+String(r._id || ''), __hometax:true,
+           issueDate:String(r.date || ''), companyName:String(r.company || ''),
+           bizNo:String(r.biznum || ''), itemName:String(r.item || ''),
+           note:String(r.note || ''), approvalNo:'',
+           amount:parseInt(r.supply, 10) || 0, vatType:'separate', status:'발행' };
+}
 if(typeof window !== 'undefined'){
   window.erpInvFillGroup = erpInvFillGroup; window.erpInvMergeHeader = erpInvMergeHeader;
   window.erpInvColOf = erpInvColOf;         window.erpInvCols = erpInvCols;
   window.erpInvPickHeader = erpInvPickHeader; window.erpInvDateOf = erpInvDateOf;
   window.erpInvParseSheet = erpInvParseSheet;
+  window.erpInvPeriodRange = erpInvPeriodRange; window.erpInvHtRow = erpInvHtRow;
 }
 
 function FinanceInvoice(){
@@ -45407,6 +45492,13 @@ function FinanceInvoice(){
   var arY = useState('all'); var arcYear = arY[0]; var setArcYear = arY[1];
   var ulSt = useState({ status:'idle', msg:'', progress:0 });
   var uploadState = ulSt[0]; var setUploadState = ulSt[1];
+  /* ── 발행관리 목록에 «홈택스로 올린 것» 도 함께 보여준다 (2026-08-13) ──
+     김보람 제보: 발행관리 탭에서 엑셀을 올렸는데 목록은 그대로 「없음」 이었다.
+     담기는 곳은 아카이브였고 발행관리는 손으로 발행한 것만 봤기 때문이다.
+     서버에 올리지는 않는다 — 홈택스 수천 건이 미수금·성과급으로 새면 안 된다.
+     보고 있는 달의 것만 읽어 온다. 통째로 읽으면 수만 건에 화면이 멈춘다. */
+  var htS = useState({ rows:[], capped:false, loading:true });
+  var ht = htS[0]; var setHt = htS[1];
 
   // 아카이브 탭 진입 시 IndexedDB 로드
   useEffect(function(){
@@ -45419,6 +45511,24 @@ function FinanceInvoice(){
       setInvLoaded(true);
     });
   }, [tab]);
+
+  // 발행관리 탭에서 보고 있는 기간의 홈택스분을 읽어 온다
+  var HT_SHOW_MAX = 1500;   // 이보다 많으면 끊고 «몇 건에서 끊었는지» 화면에 적는다
+  useEffect(function(){
+    if(tab !== 'issue'){ return; }
+    var live = true;
+    var rg = erpInvPeriodRange(monthFilter);
+    setHt(function(p){ return { rows:p.rows, capped:p.capped, loading:true }; });
+    idbGetRange('invoice_history', 'date', rg.lo, rg.hi, HT_SHOW_MAX).then(function(res){
+      if(!live) return;
+      setHt({ rows:(res.rows || []).map(erpInvHtRow), capped:!!res.capped, loading:false });
+    }).catch(function(err){
+      // 아카이브를 못 읽어도 «손으로 발행한 것» 은 그대로 보여야 한다
+      console.error('홈택스 아카이브 로드 실패:', err);
+      if(live) setHt({ rows:[], capped:false, loading:false });
+    });
+    return function(){ live = false; };
+  }, [tab, monthFilter, uploadState.status]);
 
   function loadInvoiceHistory(companyName){
     setSelInvCompany(companyName);
@@ -45437,11 +45547,11 @@ function FinanceInvoice(){
       showToast('⚠️ XLSX 로드 실패 — 인터넷 연결 확인 후 새로고침 해주세요.');
       return;
     }
-    if(!(await popConfirm('선택한 '+files.length+'개 파일에서 세금계산서 데이터를 가져옵니다.\n\n'
-      + '✓ 새 업체: 추가 등록\n'
-      + '✓ 기존 업체: 건수·금액 누적 가산\n\n'
-      + '⚠️ 같은 파일을 두 번 업로드하면 데이터가 중복 누적됩니다.\n'
-      + '   필요시 먼저 [전체 삭제] 후 다시 업로드하세요.\n\n'
+    if(!(await popConfirm('선택한 '+files.length+'개 파일에서 세금계산서를 가져옵니다.\n\n'
+      + '✓ «업체별 아카이브»에 담깁니다 (발행관리 목록에는 회색으로 함께 보입니다)\n'
+      + '✓ 재무관리·미수금·성과급에는 들어가지 않습니다\n'
+      + '✓ 같은 줄은 다시 담지 않습니다 — 같은 파일을 두 번 올려도 겹치지 않습니다\n'
+      + '✓ 정기 자문업체(최근 12개월 6회 이상)는 자동으로 뺍니다\n\n'
       + '진행할까요?'))){
       e.target.value = '';
       return;
@@ -45497,16 +45607,47 @@ function FinanceInvoice(){
         var autoExclude = new Set();
         Object.keys(freqByName).forEach(function(n){ if(freqByName[n] >= 6) autoExclude.add(n); });
 
+        // 뺀 것을 «몇 곳 몇 건» 인지 세어 둔다 — 조용히 사라지면 0건과 구별이 안 된다
+        var skipNames = {}, skipCnt = 0;
         var filteredRows = allRows.filter(function(r){
-          return !advisoryNames.has(r.name) && !autoExclude.has(r.name);
+          if(advisoryNames.has(r.name) || autoExclude.has(r.name)){
+            skipNames[r.name] = (skipNames[r.name] || 0) + 1; skipCnt++;
+            return false;
+          }
+          return true;
+        });
+        var skipCos = Object.keys(skipNames);
+
+        /* ── 같은 파일을 두 번 올려도 겹쳐 쌓이지 않게 ──
+           전에는 열쇠에 Math.random() 을 섞어서, 똑같은 줄도 매번 «새 줄» 이 됐다.
+           이제 「업체|날짜|공급가액|품목#몇번째」 로 열쇠를 짓는다.
+           #몇번째 를 붙이는 까닭 — 같은 날 같은 금액으로 두 장을 끊는 일이 실제로 있다.
+           그 둘은 #1·#2 로 갈라져 둘 다 남고, 같은 파일을 다시 올리면 열쇠가 같아 겹치지 않는다. */
+        var seq = {};
+        var keyed = filteredRows.map(function(r){
+          var base = r.name + '|' + r.date + '|' + r.supply + '|' + (r.item || '');
+          seq[base] = (seq[base] || 0) + 1;
+          return { _id:base + '#' + seq[base], company:r.name, biznum:r.biznum,
+                   date:r.date, supply:r.supply, item:r.item, note:r.note };
         });
 
-        // 업체별 집계
+        // 이번 파일에 나온 업체의 기존 이력만 읽어 «이미 있는 열쇠» 를 가린다
+        setUploadState({ status:'saving', msg:'이미 담긴 것과 대조 중...', progress:52 });
+        var namesInFile = Object.keys(keyed.reduce(function(m, r){ m[r.company] = 1; return m; }, {}));
+        var haveIds = {};
+        for(var ni = 0; ni < namesInFile.length; ni++){
+          var prev = await idbGetByIndex('invoice_history', 'company', namesInFile[ni]).catch(function(){ return []; });
+          (prev || []).forEach(function(p){ if(p && p._id) haveIds[p._id] = 1; });
+        }
+        var invoices = keyed.filter(function(r){ return !haveIds[r._id]; });
+        var dupCnt = keyed.length - invoices.length;
+
+        // 업체별 집계 — «새로 담는 줄만» 센다. 이미 있는 줄까지 더하면 건수·금액이 부풀어 오른다.
         var byCompany = {};
-        filteredRows.forEach(function(r){
-          var key = r.name;
+        invoices.forEach(function(r){
+          var key = r.company;
           if(!byCompany[key]){
-            byCompany[key] = { name:r.name, biznum:r.biznum, totalCnt:0, totalSupply:0, firstDate:r.date, lastDate:r.date };
+            byCompany[key] = { name:r.company, biznum:r.biznum, totalCnt:0, totalSupply:0, firstDate:r.date, lastDate:r.date };
           }
           var c = byCompany[key];
           c.totalCnt += 1;
@@ -45516,10 +45657,7 @@ function FinanceInvoice(){
           if(!c.biznum && r.biznum) c.biznum = r.biznum;
         });
         var companies = Object.values(byCompany);
-        var invoices = filteredRows.map(function(r){
-          return { _id:r.name+'|'+r.date+'|'+r.supply+'|'+Math.random().toString(36).slice(2,7),
-            company:r.name, date:r.date, supply:r.supply, item:r.item, note:r.note };
-        });
+        var newCoCnt = 0;   // 이번에 처음 보는 업체 (아래에서 기존 목록과 맞춰 센다)
 
         setUploadState({ status:'saving', msg:'IndexedDB 저장 중... ('+companies.length+'개 업체, '+invoices.length.toLocaleString()+'건)', progress:60 });
         var existingCompanies = await idbGetAll('invoice_companies');
@@ -45527,6 +45665,7 @@ function FinanceInvoice(){
         (existingCompanies||[]).forEach(function(c){ existingMap[c.name] = c; });
         var mergedCompanies = companies.map(function(c){
           var ex = existingMap[c.name];
+          if(!ex) newCoCnt++;
           if(ex){
             return Object.assign({}, ex, {
               biznum: c.biznum || ex.biznum,
@@ -45553,10 +45692,17 @@ function FinanceInvoice(){
 
         var allCompanies = await idbGetAll('invoice_companies');
         setInvoiceCompanies(allCompanies);
+        /* 무슨 일이 있었는지 «세 갈래» 로 나눠 적는다.
+           전에는 「업체 0개, 발행이력 0건」 한 줄뿐이라 실패인지 걸러진 건지 알 수 없었다. */
         setUploadState({ status:'done', progress:100,
-          msg:'✅ 완료: 업체 '+companies.length+'개, 발행이력 '+invoices.length.toLocaleString()+'건'
+          msg:'✅ 완료: 읽은 줄 '+allRows.length.toLocaleString()+'건 중 '
+            + invoices.length.toLocaleString()+'건을 업체 '+companies.length+'곳으로 «업체별 아카이브»에 담았습니다'
+            + (newCoCnt ? ('  · 처음 보는 업체 '+newCoCnt+'곳') : '')
+            + (skipCnt ? ('\nℹ 정기 자문업체 '+skipCos.length+'곳 / '+skipCnt.toLocaleString()+'건은 자동으로 뺐습니다'
+                + ' — ' + skipCos.slice(0, 6).join(', ') + (skipCos.length > 6 ? (' 외 '+(skipCos.length-6)+'곳') : '')) : '')
+            + (dupCnt ? ('\n⚠ 이미 담겨 있어 건너뛴 '+dupCnt.toLocaleString()+'건 (같은 파일을 다시 올려도 겹치지 않습니다)') : '')
             // 여러 파일 중 못 읽은 것이 있으면 «성공 옆에» 함께 적는다 — 조용히 넘어가지 않는다
-            + (bad.length ? ('\n⚠ 못 읽은 파일 '+bad.length+'개\n'+bad.join('\n')) : '') });
+            + (bad.length ? ('\n❌ 못 읽은 파일 '+bad.length+'개\n'+bad.join('\n')) : '') });
         setTimeout(function(){ setUploadState({ status:'idle', msg:'', progress:0 }); }, 12000);
       } catch(err){
         console.error(err);
@@ -45629,11 +45775,28 @@ function FinanceInvoice(){
     return true;
   }).sort(function(a,b){ return (b.issueDate||'').localeCompare(a.issueDate||''); });
 
+  /* 윗줄 합계(전체 발행·공급가·부가세)는 «손으로 발행한 것만» 센다.
+     홈택스분은 눈으로 대조하라고 얹은 것이라, 여기에 넣으면 재무 숫자가 흔들린다. */
   var totalAmount = filtered.reduce(function(s,i){return s+(i.amount||0);}, 0);
   var totalVat = filtered.reduce(function(s,i){
     var vat = (i.vatType === 'separate' || i.vatType === 'exclusive') ? Math.round((i.amount||0) * 0.1) : Math.round((i.amount||0) / 11);
     return s + vat;
   }, 0);
+
+  /* 홈택스분을 이름·품목으로 한 번 더 거른 뒤 목록에 섞는다.
+     기간은 이미 읽어올 때 걸렀다. 같은 날이면 손으로 발행한 것을 위에 둔다. */
+  var htShown = ht.rows.filter(function(r){
+    if(!query) return true;
+    var q = query.toLowerCase();
+    return (r.companyName||'').toLowerCase().indexOf(q) >= 0
+        || (r.bizNo||'').replace(/[^0-9]/g,'').indexOf(query.replace(/[^0-9]/g,'')) >= 0
+        || (r.itemName||'').toLowerCase().indexOf(q) >= 0;
+  });
+  var listRows = filtered.concat(htShown).sort(function(a,b){
+    var d = (b.issueDate||'').localeCompare(a.issueDate||'');
+    if(d !== 0) return d;
+    return (a.__hometax ? 1 : 0) - (b.__hometax ? 1 : 0);
+  });
 
   /* ─── 입금 대조 ───
      끊어 놓고 아직 안 들어온 계산서 · 들어왔는데 안 끊은 입금을 갈라 보여준다.
@@ -45884,7 +46047,8 @@ function FinanceInvoice(){
           h('button', { onClick:addNew,
             style:{ background:'#1e40af', color:'#fff', border:'none', padding:'7px 14px', borderRadius:'4px', fontSize:'12px', fontWeight:600, cursor:'pointer' } }, '+ 세금계산서 발행'),
           h(FileDropBtn,{label:'엑셀 일괄 업로드',icon:'📁',accept:'.xlsx,.xls',multiple:true,onFile:handleInvoiceUpload,btnStyle:{background:'#16a34a',padding:'7px 14px',borderRadius:'4px',fontSize:'12px',fontWeight:600}}),
-          h('span', { style:{ fontSize:'11px', color:'#94a3b8', whiteSpace:'nowrap' } }, '화면 아무 곳에나 끌어다 놓아도 됩니다'),
+          h('span', { style:{ fontSize:'11px', color:'#94a3b8', whiteSpace:'nowrap' } },
+            '홈택스 파일 → 업체별 아카이브에 담깁니다 (여기엔 회색으로 함께 보입니다)'),
           h('input', { placeholder:'🔍 업체명·사업자번호 검색', value:query,
             onChange:function(e){ setQuery(e.target.value); },
             style:{ width:'220px', padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12px' } }),
@@ -45916,11 +46080,24 @@ function FinanceInvoice(){
           mode === 'all' && h('span', { style:{padding:'7px 14px', fontSize:'12px', color:'#94a3b8', fontWeight:600, background:'#f8fafc', border:'1px dashed #cbd5e1', borderRadius:'6px'} }, '전체 기간')
         );
       })(),
+      // 무엇을 몇 건 보고 있는지 한 줄로 밝힌다 — 끊긴 것도 숨기지 않는다
+      h('div', { style:{ display:'flex', gap:'10px', alignItems:'center', flexWrap:'wrap',
+          fontSize:'11px', color:'#64748b', marginBottom:'8px' } },
+        h('span', null, '📋 직접발행 ', h('strong', { style:{ color:'#1e40af' } }, filtered.length + '건')),
+        h('span', { style:{ color:'#cbd5e1' } }, '·'),
+        h('span', null, '📁 홈택스 ',
+          h('strong', { style:{ color:'#475569' } }, ht.loading ? '읽는 중…' : (htShown.length + '건')),
+          h('span', { style:{ color:'#94a3b8' } }, ' (아카이브 · 화면에만)')),
+        ht.capped && h('span', { style:{ color:'#854d0e', background:'#fffbeb',
+            border:'1px solid #fde68a', borderRadius:'5px', padding:'1px 7px', fontWeight:700 } },
+          '⚠ 홈택스분은 ' + HT_SHOW_MAX.toLocaleString() + '건에서 끊었습니다 — 기간을 좁혀 보세요')
+      ),
       h('div', { style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'10px', overflow:'auto', maxHeight:'calc(100vh - 380px)' } },
         h('table', { className:'dt' },
           h('thead', null, h('tr', null,
             h('th', { style:{ width:'30px' } }, '#'),
             h('th', null, '발행일'),
+            h('th', null, '구분'),
             h('th', null, '승인번호'),
             h('th', null, '업체명'),
             h('th', null, '사업자번호'),
@@ -45935,32 +46112,44 @@ function FinanceInvoice(){
             h('th', { className:'ac' }, '관리')
           )),
           h('tbody', null,
-            filtered.length === 0
-              ? h('tr', null, h('td', { colSpan:14, className:'ac', style:{ color:'#94a3b8', padding:'40px' } }, '발행된 세금계산서 없음'))
-              : filtered.map(function(it, idx){
+            listRows.length === 0
+              ? h('tr', null, h('td', { colSpan:15, className:'ac', style:{ color:'#94a3b8', padding:'40px' } },
+                  ht.loading ? '불러오는 중…' : '발행된 세금계산서 없음'))
+              : listRows.map(function(it, idx){
+                  var isHt = !!it.__hometax;   // 홈택스분 — 회색으로, 고치거나 지울 수 없다
                   var vat = (it.vatType === 'separate' || it.vatType === 'exclusive') ? Math.round((it.amount||0) * 0.1) : Math.round((it.amount||0) / 11);
                   var supply = it.vatType === 'separate' ? (it.amount||0) : ((it.amount||0) - vat);
                   var total = it.vatType === 'separate' ? ((it.amount||0) + vat) : (it.amount||0);
-                  return h('tr', { key:it.id },
+                  var dim = isHt ? '#64748b' : null;
+                  return h('tr', { key:it.id, style:isHt ? { background:'#fcfdfe' } : null },
   h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, idx + 1),
-                    h('td', { style:{ fontFamily:'monospace', fontSize:'11.5px' } }, it.issueDate || '-'),
+                    h('td', { style:{ fontFamily:'monospace', fontSize:'11.5px', color:dim } }, it.issueDate || '-'),
+                    h('td', null, isHt
+                      ? h('span', { style:{ background:'#f1f5f9', color:'#64748b', border:'1px solid #e2e8f0', fontSize:'10px', padding:'1px 7px', borderRadius:'99px', fontWeight:700, whiteSpace:'nowrap' } }, '홈택스')
+                      : h('span', { style:{ background:'#eff6ff', color:'#1e40af', border:'1px solid #bfdbfe', fontSize:'10px', padding:'1px 7px', borderRadius:'99px', fontWeight:700, whiteSpace:'nowrap' } }, '직접발행')),
                     h('td', { style:{ fontFamily:'monospace', fontSize:'10px', color:'#64748b' } }, (it.approvalNo||'-').slice(-12)),
-                    h('td', { style:{ fontWeight:600 } }, it.companyName || '-'),
-                    h('td', { style:{ fontFamily:'monospace', fontSize:'11px' } }, it.bizNo || '-'),
-                    h('td', { style:{ fontSize:'11px' } }, it.ceoName || '-'),
-                    h('td', { style:{ fontSize:'10.5px', color:'#2563eb', maxWidth:'140px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, it.email1 || it.email2 || '-'),
+                    h('td', { style:{ fontWeight:isHt?600:700, color:dim } }, it.companyName || '-'),
+                    h('td', { style:{ fontFamily:'monospace', fontSize:'11px', color:dim } }, it.bizNo || '-'),
+                    h('td', { style:{ fontSize:'11px', color:dim } }, it.ceoName || '-'),
+                    h('td', { style:{ fontSize:'10.5px', color:isHt?'#94a3b8':'#2563eb', maxWidth:'140px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, it.email1 || it.email2 || '-'),
                     h('td', { style:{ fontSize:'10.5px', color:'#475569' } }, it.itemName || '-'),
-                    h('td', { style:{ fontSize:'10.5px', textAlign:'center' } }, h('span', { style:{ background: it.payType==='영수'?'#f0fdf4':'#eff6ff', color: it.payType==='영수'?'#166534':'#1e40af', fontSize:'10.5px', padding:'1px 6px', borderRadius:'8px', fontWeight:700 } }, it.payType||'-')),
-                    h('td', { className:'ar', style:{ fontFamily:'monospace' } }, supply.toLocaleString()),
-                    h('td', { className:'ar', style:{ fontFamily:'monospace', color:'#854d0e' } }, vat.toLocaleString()),
-                    h('td', { className:'ar', style:{ fontFamily:'monospace', fontWeight:700, color:'#1e40af' } }, total.toLocaleString()),
+                    h('td', { style:{ fontSize:'10.5px', textAlign:'center' } }, it.payType
+                      ? h('span', { style:{ background: it.payType==='영수'?'#f0fdf4':'#eff6ff', color: it.payType==='영수'?'#166534':'#1e40af', fontSize:'10.5px', padding:'1px 6px', borderRadius:'8px', fontWeight:700 } }, it.payType)
+                      : '-'),
+                    h('td', { className:'ar', style:{ fontFamily:'monospace', color:dim } }, supply.toLocaleString()),
+                    h('td', { className:'ar', style:{ fontFamily:'monospace', color:isHt?'#94a3b8':'#854d0e' } }, vat.toLocaleString()),
+                    h('td', { className:'ar', style:{ fontFamily:'monospace', fontWeight:700, color:isHt?'#64748b':'#1e40af' } }, total.toLocaleString()),
                     h('td', null, h('span', { style:{ background: it.status === '발행' ? '#f0fdf4' : '#fffbeb', color: it.status === '발행' ? '#166534' : '#854d0e', fontSize:'10.5px', padding:'2px 7px', borderRadius:'10px', fontWeight:700 } }, it.status || '발행')),
-                    h('td', { className:'ac' },
-                      h('button', { onClick:function(){ setDetailModal(it); },
-                        style:{ background:'#eff6ff', color:'#1e40af', border:'1px solid #bfdbfe', padding:'2px 8px', borderRadius:'5px', fontSize:'10.5px', fontWeight:600, cursor:'pointer', marginRight:'2px' } }, '수정'),
-                      h('button', { onClick:function(){ delItem(it.id); },
-                        style:{ background:'#fef2f2', color:'#991b1b', border:'1px solid #fecaca', padding:'2px 8px', borderRadius:'5px', fontSize:'10.5px', fontWeight:600, cursor:'pointer' } }, '삭제')
-                    )
+                    h('td', { className:'ac' }, isHt
+                      // 홈택스분은 서버에 없다 — 여기서 고치거나 지울 대상이 아니다
+                      ? h('span', { title:'홈택스에서 올린 것입니다. 지우려면 [업체별 아카이브 ▸ 전체 삭제]',
+                          style:{ color:'#94a3b8', fontSize:'10px' } }, '읽기전용')
+                      : [
+                        h('button', { key:'e', onClick:function(){ setDetailModal(it); },
+                          style:{ background:'#eff6ff', color:'#1e40af', border:'1px solid #bfdbfe', padding:'2px 8px', borderRadius:'5px', fontSize:'10.5px', fontWeight:600, cursor:'pointer', marginRight:'2px' } }, '수정'),
+                        h('button', { key:'d', onClick:function(){ delItem(it.id); },
+                          style:{ background:'#fef2f2', color:'#991b1b', border:'1px solid #fecaca', padding:'2px 8px', borderRadius:'5px', fontSize:'10.5px', fontWeight:600, cursor:'pointer' } }, '삭제')
+                      ])
                   );
                 })
           )

@@ -120,13 +120,19 @@
     box.style.cssText = 'width:min(680px,100%);max-height:min(720px,90vh);overflow:auto;background:#fff;border-radius:16px;padding:18px;color:#172033;box-shadow:0 20px 60px #0005;';
     var title = window.document.createElement('div');
     title.style.cssText = 'display:flex;justify-content:space-between;align-items:center;font-weight:900;font-size:17px;margin-bottom:12px;';
-    title.innerHTML = '<span>시스템 장애 알림 (' + adminAlerts.length + ')</span><button type="button" aria-label="닫기" style="border:0;background:#eef2f7;border-radius:8px;padding:6px 10px;cursor:pointer">닫기</button>';
+    title.innerHTML = '<span></span><button type="button" aria-label="닫기" style="border:0;background:#eef2f7;border-radius:8px;padding:6px 10px;cursor:pointer">닫기</button>';
+    var titleText = title.querySelector('span');
     title.querySelector('button').onclick = function () { panel.remove(); };
     box.appendChild(title);
     if (!adminAlerts.length) {
       var empty = window.document.createElement('p'); empty.textContent = '처리할 장애 알림이 없습니다.'; box.appendChild(empty);
     }
-    adminAlerts.slice(0, 30).forEach(function (item) {
+    // 창에 실제로 그려 넣은 줄 수 — 마지막 한 줄을 처리하면 «닫기»만 남은 빈 창을 남기지 않는다.
+    // adminAlerts 는 서버 청취기가 뒤늦게 갱신하므로 세어서 쓸 수 없다.
+    var shown = adminAlerts.slice(0, 30);
+    var left = shown.length;
+    titleText.textContent = '시스템 장애 알림 (' + adminAlerts.length + ')';
+    shown.forEach(function (item) {
       var row = window.document.createElement('div');
       row.style.cssText = 'border:1px solid #dce3ec;border-radius:10px;padding:11px;margin:8px 0;font-size:12px;line-height:1.5;';
       var when = new Date(Number(item.createdAt || 0)).toLocaleString('ko-KR');
@@ -136,7 +142,16 @@
       resolve.style.cssText = 'float:right;border:0;border-radius:7px;background:#17365f;color:#fff;padding:5px 9px;cursor:pointer;';
       resolve.onclick = function () {
         resolve.disabled = true;
-        app.database().ref('systemAlerts/' + item.uid + '/' + item.id).update({ status: 'resolved', resolvedAt: Date.now(), resolvedBy: app.auth().currentUser.uid }).then(function () { row.remove(); });
+        app.database().ref('systemAlerts/' + item.uid + '/' + item.id).update({ status: 'resolved', resolvedAt: Date.now(), resolvedBy: app.auth().currentUser.uid }).then(function () {
+          row.remove();
+          left -= 1;
+          if (left <= 0) { panel.remove(); return; }   // 다 처리했으면 창도 함께 닫는다
+          titleText.textContent = '시스템 장애 알림 (' + left + ')';
+        }).catch(function () {
+          // 못 지웠으면 다시 누를 수 있어야 한다 — 영영 잠긴 단추를 남기지 않는다
+          resolve.disabled = false;
+          resolve.textContent = '처리 실패 — 다시';
+        });
       };
       row.appendChild(resolve); box.appendChild(row);
     });
