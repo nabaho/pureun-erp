@@ -52,8 +52,8 @@ test('붙박이가 실제로 붙게 돼 있다', () => {
   assert.match(source, /\.pcside-top\{position:sticky;top:0/);
   /* 배경이 없으면 밑의 폴더가 글자 뒤로 비쳐 보인다 */
   assert.match(source, /\.pcside-top\{[^}]*background:#1e2a47/);
-  /* 옆줄 안쪽 여백만큼 좌우로 물려야 배경이 끝까지 닿는다 */
-  assert.match(source, /\.pcside-top\{[^}]*margin:-18px -14px 0/);
+  /* 좌우만 음수로 물린다 — 배경이 옆줄 끝까지 닿게 하되 흐름은 안 건드린다 */
+  assert.match(source, /\.pcside-top\{[^}]*margin:0 -14px 0/);
 });
 
 test('옆줄이 스크롤되는 상자여야 붙박이가 뜻이 있다', () => {
@@ -87,7 +87,18 @@ test('「전체」는 폴더·담당자 거르개를 모두 푼다', () => {
 });
 
 test('붙박이는 얇게 — 늘 같은 자리를 먹는 것일수록 얇아야 한다', () => {
-  assert.match(source, /\.pcside-top\{[^}]*padding:14px 14px 4px/);
+  assert.match(source, /\.pcside-top\{[^}]*padding:16px 14px 4px/);
   assert.match(source, /\.pcside-top \.pclogo\{margin-bottom:0/);
   assert.match(source, /\.pcside-top \.sidetab\{margin:7px 0 0\}/);
 });
+
+test('붙박이에 음수 위 여백을 쓰지 않는다', () => {
+  /* 음수 위 여백은 자기만 올라가는 게 아니라 **뒤따르는 줄까지** 그만큼 끌어올린다.
+     그래서 붙박이가 바로 아래 줄(「메일 쓰기」)을 정확히 18px 덮었다
+     (대표 보고 2026-08-12). 옆줄의 위 여백을 0 으로 두고 덩어리가 직접 갖는다. */
+  const m = /\.pcside-top\{([^}]*)\}/.exec(source);
+  assert.ok(m, '.pcside-top 규칙을 찾지 못했습니다');
+  assert.doesNotMatch(m[1], /margin:\s*-\d/, '음수 위 여백이 아래 줄을 덮는다');
+  assert.match(source, /#pcSide\{[^}]*padding:0 14px 18px/, '옆줄 위 여백이 남아 있으면 붙박이가 그 위를 못 덮는다');
+});
+
