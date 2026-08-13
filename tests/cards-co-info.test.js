@@ -64,7 +64,7 @@ test('서식 칸은 항목(items)이 아니라 따로 둔다', () => {
 
 test('빠진 서류를 눈에 띄게 알린다', () => {
   /* 288곳 중 어디에 서류가 비었는지 지금은 알 길이 없다 — 이게 이 화면의 값어치다 */
-  assert.match(source, /사업자번호 없음/);
+  assert.match(source, /miss\('없음'\)/, '사업자번호가 빈 것을 안 짚는다');
   assert.match(source, /등록증 없음/);
   assert.match(source, /\.corow \.bits i\.miss\{background:#fee2e2/);
 });
@@ -89,14 +89,12 @@ test('빠진 서류 경고는 우리가 일하는 회사에만 띄운다', () =>
   assert.match(source, /const miss = s => care \?/);
 });
 
-test('사업 갈래를 실제로 화면에 끼운다', () => {
-  /* 갈래를 만들어 놓고 화면에 안 넣어도 「cotabs 가 소스에 있다」로는 통과한다 —
-     실제로 ${tabs} 를 지워 봤더니 아무 검사도 안 걸렸다. 끼우는 줄을 직접 본다. */
-  const at = source.indexOf('function renderCoPage');
-  const fn = source.slice(at, source.indexOf('\nfunction coListHtml', at));
-  assert.ok(fn.length > 300, 'renderCoPage 를 찾지 못했습니다');
-  assert.match(fn, /\$\{tabs\}/, '갈래 탭을 화면에 끼우지 않는다');
-  assert.match(fn, /const tabs = /, '갈래 탭을 만들지 않는다');
+test('사업 갈래는 옆줄 폴더로 그린다', () => {
+  /* 화면 위 탭에서 옆줄로 내렸다(대표 지시 2026-08-13) */
+  const at = source.indexOf('function renderPCSide');
+  const fn = source.slice(at, source.indexOf('\nfunction ', at + 20));
+  assert.match(fn, /coTagList\(cos\)/, '옆줄이 사업 갈래를 안 만든다');
+  assert.match(fn, /사업별/, '사업별 머리가 없다');
 });
 
 test('푸른이알피 거래처만 보는 거르개가 있다', () => {
@@ -107,15 +105,16 @@ test('푸른이알피 거래처만 보는 거르개가 있다', () => {
   assert.match(source, /onclick="toggleCoErpOnly\(\)"/);
 });
 
-test('거르개를 실제로 화면에 끼운다', () => {
-  /* 만들어 놓고 안 끼워도 소스 검사만으로는 통과한다 — 끼우는 줄을 직접 본다.
-     ⚠ 파일 전체에서 'const tabs = ' 를 찾으면 안 된다. 자료함(renderMatPage)에도
-       같은 이름의 변수가 있어 엉뚱한 곳을 보게 된다 — 실제로 그렇게 걸렸다. */
-  const fnAt = source.indexOf('function renderCoPage');
-  assert.ok(fnAt > 0, 'renderCoPage 를 찾지 못했습니다');
-  const fn = source.slice(fnAt, source.indexOf('\nfunction coListHtml', fnAt));
-  assert.match(fn, /class="erponly/, '거르개 단추를 탭 줄에 안 넣었다');
-  assert.match(fn, /\$\{tabs\}/, '탭 줄 자체를 화면에 안 끼웠다');
+test('거르개는 옆줄 폴더로 옮겼다', () => {
+  /* 화면 위 탭에서 옆줄로 내렸다 — 폴더 자리에 있어야 명함첩과 같은 손놀림이 되고,
+     화면 위는 목록에 온전히 내준다(대표 지시 2026-08-13). */
+  const at = source.indexOf('function renderPCSide');
+  const fn = source.slice(at, source.indexOf('\nfunction ', at + 20));
+  assert.match(fn, /pickCoFolder\('erp'\)/, '옆줄에 「거래처만」 폴더가 없다');
+  assert.match(fn, /pickCoFolder\(''\)/, '옆줄에 「전체」 폴더가 없다');
+  /* ⚠ 「글자 + 쌍점」을 정규식에 그대로 쓰면 「그 PC 절대경로 금지」 검사가
+     드라이브 경로(c:/ 같은 것)로 오해한다. 쌍점을 빼고 앞부분만 본다. */
+  assert.match(fn, /pickCoFolder\('t/, '옆줄에 사업별 폴더가 없다');
 });
 
 test('거래처 수를 거르개에 함께 보여준다', () => {
@@ -134,3 +133,35 @@ test('거르개는 사업 갈래와 성질이 달라 갈라 놓는다', () => {
   assert.match(source, /class="cosep"/);
   assert.match(source, /\.cotabs button\.erponly\{/);
 });
+
+test('목록은 한 줄에 한 회사인 표다', () => {
+  /* 명함첩 목록과 같은 결 — 왼쪽에 네모, 그다음 번호 */
+  assert.match(source, /class="cotbl"/);
+  assert.match(source, /<th class="num">#<\/th>/);
+  assert.match(source, /onchange="coToggle\(/, '줄마다 고르는 네모가 없다');
+  assert.match(source, /onchange="coSelAll\(this\.checked\)"/, '전체 고르기 네모가 없다');
+});
+
+test('번호는 보이는 목록 기준으로 1부터', () => {
+  assert.match(source, /list\.map\(\(o,i\)=>\{/);
+  assert.match(source, /<td class="num">\$\{i\+1\}<\/td>/);
+});
+
+test('전체 고르기는 보이는 것만 고른다', () => {
+  /* 따로 계산하면 거르개를 켠 채 눌렀을 때 안 보이는 회사까지 골라진다 */
+  assert.match(source, /function coVisible\(\)/);
+  const at = source.indexOf('function coSelAll');
+  assert.match(source.slice(at, at + 220), /coVisible\(\)/);
+});
+
+test('네모를 눌러도 회사가 안 열린다', () => {
+  /* 줄을 누르면 상세가 열리므로 막지 않으면 둘이 겹친다 */
+  const at = source.indexOf('onchange="coToggle(');
+  assert.match(source.slice(Math.max(0, at - 200), at), /event\.stopPropagation\(\)/);
+});
+
+test('설명만 하던 머리줄을 지웠다', () => {
+  /* 옆줄에 이미 「기업정보」가 있고, 한 번 읽으면 그만인 설명이 늘 한 줄을 먹었다 */
+  assert.doesNotMatch(source, /사업자등록증·명함·푸른이알피를 회사로 모았습니다/);
+});
+

@@ -675,8 +675,16 @@ table.sbox td.none{text-align:center;color:#8b98b3;padding:34px 10px}
 .coq{width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font-size:13.5px;font-family:inherit;margin:0 0 12px}
 .coq:focus{outline:0;border-color:#1d4fc4}
 .colist{border:1px solid #e6ebf4;border-radius:11px;background:#fff;overflow:hidden}
-.corow{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:11px 13px;border-bottom:1px solid #f1f4f9;cursor:pointer;font-size:13.5px}
-.corow:last-child{border-bottom:0}
+/* 명함첩 목록과 같은 결 — 한 줄에 한 회사, 왼쪽에 네모와 번호 */
+.cotbl{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e6ebf4;border-radius:11px;table-layout:fixed}
+.cotbl thead th{position:sticky;top:0;background:#f8fafc;font-size:12px;color:#7c89a6;text-align:left;
+  padding:9px 12px;border-bottom:1px solid #e6ebf4;font-weight:700;z-index:1}
+.cotbl td{padding:10px 12px;border-bottom:1px solid #f1f4f9;font-size:13.5px;color:#33415e;vertical-align:middle}
+.cotbl tbody tr:last-child td{border-bottom:0}
+.cotbl .num{color:#9aa6bf;font-size:12px;text-align:right}
+.cotbl .bz{color:#5b6784;font-size:12.5px;white-space:nowrap}
+.cotbl .mgr{text-align:right;color:#5b6784;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.corow{cursor:pointer}
 .corow:hover{background:#f6f9ff}
 .corow .nm{font-weight:800;color:#1a2540}
 .corow .ty{font-size:11px;background:#e6f1fb;color:#185fa5;border:1px solid #b5d4f4;border-radius:9px;padding:1px 8px;font-weight:700}
@@ -1456,7 +1464,7 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', e
   isAdmin:false, privOpen:false, priv:{items:{},groups:{},trash:{}},
   /* 자료함 — 찾는 말·메일틀 갈래는 화면에만 쓰고 저장하지 않는다.
      sendLog 는 명함을 열 때만 그 명함 것을 읽어 담는다. */
-  matQ:'', matMailCat:'', matPrevId:'', sendLog:{}, coQ:'', coPick:'', coTag:'', coErpOnly:false,
+  matQ:'', matMailCat:'', matPrevId:'', sendLog:{}, coQ:'', coPick:'', coTag:'', coErpOnly:false, coSel:{},
   /* 메일 화면 — mailSent 가 true 면 보낸 메일함, 아니면 쓰기 */
   mailSent:false, mailDrawer:true, sentBox:{}, schedBox:{}, sentQ:'', sentMine:false, sentCat:'', sentBy:'',
   showBcc:false, draftAt:'', matPick:'', drawerQ:'', drawerOpen:{},
@@ -7623,8 +7631,24 @@ function renderPCSide(){
     <button class="${!onMail&&state.tab==='biz'?'on':''}" onclick="switchTab('biz')" title="사업자등록증">📄<em>사업자</em><span>${all.filter(i=>i.kind==='biz').length.toLocaleString()}</span></button>
     <button class="${state.view==='co'?'on':''}" onclick="openCoPage()" title="회사 하나에 얽힌 것을 한자리에 — 사업자등록증·명함·푸른이알피">🏢<em>기업정보</em></button>
   </div></div>`;
-  /* 기업정보는 회사 단위 화면이라 명함 폴더와 상관이 없다 — 옆줄은 여기서 끝낸다 */
-  if(state.view==='co'){ $('pcSide').innerHTML = h; return; }
+  /* 기업정보의 폴더 — 명함이 폴더를 갖듯 회사도 갖는다.
+     「거래처만」을 화면 위 탭에서 옆줄로 내렸다. 폴더 자리에 있어야 명함첩과 같은 손놀림이
+     되고, 화면 위는 목록에 온전히 내준다(대표 지시 2026-08-13). */
+  if(state.view==='co'){
+    const cos = coList();
+    const erpN = cos.filter(o=>o.erp).length;
+    h += `<div class="pcsec">폴더</div>`;
+    h += pcItem(`onclick="pickCoFolder('')"`, '📋 전체', cos.length, !state.coErpOnly && !state.coTag);
+    h += pcItem(`onclick="pickCoFolder('erp')"`, '🏢 거래처만', erpN, state.coErpOnly && !state.coTag);
+    const tags = coTagList(cos);
+    if(tags.length){
+      h += `<div class="pcsec">사업별</div>`;
+      tags.forEach(x=>{ h += pcItem(`onclick="pickCoFolder('t:${esc(x.t)}')"`, '📁 '+esc(x.t), x.n, state.coTag===x.t); });
+    }else{
+      h += `<div class="pchintside">사진첩에서 서식·신청서를<br>기업정보로 보내면<br>그 서류 이름으로 폴더가 생깁니다</div>`;
+    }
+    $('pcSide').innerHTML = h; return;
+  }
   /* 메일 갈래에서는 메일 전용 폴더를 그린다 — 명함 폴더는 여기서 쓸 일이 없다 */
   if(onMail){ h += mailSideHtml(); $('pcSide').innerHTML = h; return; }
   /* 현재 탭에 속한 폴더만 — 계층 없이 1단계로 평평하게.
@@ -9419,12 +9443,32 @@ function coTagList(list){
 }
 function pickCoTag(t){ state.coTag = (state.coTag===t ? '' : t); state.coPick=''; renderCoPage(); }
 /* 거르개는 기억해 둔다 — 대표가 대개 거래처만 본다면 들어올 때마다 다시 누르게 하면 안 된다 */
+/* 옆줄 폴더 하나로 「전체 / 거래처만 / 사업별」을 다 고른다 — 셋이 서로 배타적이라
+   한 자리에서 고르는 편이 헷갈리지 않는다. */
+function pickCoFolder(k){
+  state.coPick=''; state.coSel={};
+  if(k==='erp'){ state.coErpOnly=true; state.coTag=''; }
+  else if(k.indexOf('t:')===0){ state.coTag=k.slice(2); state.coErpOnly=false; }
+  else { state.coErpOnly=false; state.coTag=''; }
+  try{ localStorage.setItem('pucards_co_erponly', state.coErpOnly?'1':''); }catch(_){}
+  render();
+}
 function toggleCoErpOnly(){
   state.coErpOnly = !state.coErpOnly; state.coPick='';
   try{ localStorage.setItem('pucards_co_erponly', state.coErpOnly?'1':''); }catch(_){}
   renderCoPage();
 }
 
+/* 지금 화면에 보이는 목록 — 「전체 고르기」와 화면 그리기가 **같은 목록**을 봐야 한다.
+   따로 계산하면 거르개를 켠 채 전체 고르기를 눌렀을 때 안 보이는 회사까지 골라진다. */
+function coVisible(){
+  const q = String(state.coQ||'').trim().toLowerCase();
+  let list = coList();
+  if(state.coErpOnly) list = list.filter(o=>o.erp);
+  if(state.coTag) list = list.filter(o=>coTagsOf(o).indexOf(state.coTag)>=0);
+  if(q) list = list.filter(o=>(o.name+' '+(o.bizno||'')+' '+(o.ceo||'')).toLowerCase().indexOf(q)>=0);
+  return list;
+}
 function renderCoPage(){
   const el=$('pcCo'); if(!el) return;
   const q = String(state.coQ||'').trim().toLowerCase();
@@ -9448,20 +9492,28 @@ function renderCoPage(){
         title="${esc(x.t)}">${esc(x.t)} <i>${x.n}</i></button>`).join('')}
       ${tags.length?'':'<span class="cohint">사진첩에서 서식·신청서를 기업정보로 보내면 그 서류 이름으로 갈래가 생깁니다</span>'}
     </div>`;
+  /* 머리줄은 지웠다 — 옆줄에 이미 「🏢 기업정보」가 있고, 무엇을 모았는지는 한 번 읽으면
+     그만인 설명이라 화면 맨 위 한 줄을 늘 차지할 값어치가 없었다(대표 지시 2026-08-13). */
   el.innerHTML =
     `<div class="setwrap">
-      <div class="sethead"><button class="setback" onclick="closeCoPage()">← 목록으로</button>
-        <b>🏢 기업정보</b>
-        <span style="color:var(--sub);font-size:12.5px">사업자등록증·명함·푸른이알피를 회사로 모았습니다 · ${list.length}곳</span></div>
-      ${tabs}
       <input class="coq" placeholder="🔍 상호·사업자번호·대표자로 찾기" value="${esc(state.coQ||'')}"
         oninput="state.coQ=this.value;renderCoPage()">
       ${one ? coDetailHtml(one) : coListHtml(list)}
     </div>`;
 }
+/* 명함첩 목록과 같은 결로 — 한 줄에 한 회사, 왼쪽에 네모와 번호.
+   회사가 수백 곳이면 「몇 번째까지 봤더라」를 번호로 짚고, 골라서 한꺼번에 다루려면
+   네모가 있어야 한다(대표 지시 2026-08-13). */
 function coListHtml(list){
   if(!list.length) return `<div class="cpnone" style="padding:20px 2px">회사를 찾지 못했습니다</div>`;
-  return `<div class="colist">${list.map(o=>{
+  const allOn = list.length>0 && list.every(o=>state.coSel[o.key]);
+  return `<table class="cotbl">
+    <colgroup><col style="width:34px"><col style="width:46px"><col><col style="width:132px">
+      <col style="width:150px"><col style="width:96px"></colgroup>
+    <thead><tr>
+      <th><input type="checkbox" ${allOn?'checked':''} onchange="coSelAll(this.checked)" title="이 목록 전체 고르기"></th>
+      <th class="num">#</th><th>상호</th><th>사업자번호</th><th>가진 것</th><th style="text-align:right">담당</th>
+    </tr></thead><tbody>${list.map((o,i)=>{
     const t = o.erp && o.erp.type;
     /* ⚠ 빠진 것을 붉게 알리는 건 **우리가 일하는 회사**에만 뜻이 있다.
        명함 한 장만 있는 회사까지 붉게 칠하니 4,140곳이 온통 붉어져, 정작 봐야 할
@@ -9469,18 +9521,29 @@ function coListHtml(list){
        사업 딱지가 붙은 회사만 짚는다. */
     const care = !!(o.erp || coTagsOf(o).length);
     const miss = s => care ? `<i class="miss">${s}</i>` : '';
-    return `<div class="corow" onclick="pickCo('${esc(o.key)}')">
-      <span class="nm">${esc(o.name)}</span>
-      ${t?`<span class="ty">${esc(t)}</span>`:''}
-      ${coTagsOf(o).map(x=>`<span class="tg">${esc(x)}</span>`).join('')}
-      <span class="bits">
-        ${o.bizno?`<i>${esc(o.bizno)}</i>`:miss('사업자번호 없음')}
+    return `<tr class="corow" onclick="pickCo('${esc(o.key)}')">
+      <td onclick="event.stopPropagation()"><input type="checkbox" ${state.coSel[o.key]?'checked':''}
+        onchange="coToggle('${esc(o.key)}')"></td>
+      <td class="num">${i+1}</td>
+      <td><span class="nm">${esc(o.name)}</span>
+        ${t?`<span class="ty">${esc(t)}</span>`:''}
+        ${coTagsOf(o).map(x=>`<span class="tg">${esc(x)}</span>`).join('')}</td>
+      <td class="bz">${o.bizno?esc(o.bizno):miss('없음')}</td>
+      <td class="bits">
         ${o.cards.length?`<i>명함 ${o.cards.length}</i>`:''}
         ${o.docs?`<i>등록증 ${o.docs}</i>`:miss('등록증 없음')}
-      </span>
-      ${o.erp&&o.erp.main?`<span class="mgr">담당 ${esc(o.erp.main)}</span>`:''}
-    </div>`;
-  }).join('')}</div>`;
+        ${o.photos&&o.photos.length?`<i class="ph">사진 ${o.photos.length}</i>`:''}
+      </td>
+      <td class="mgr">${o.erp&&o.erp.main?esc(o.erp.main):''}</td>
+    </tr>`;
+  }).join('')}</tbody></table>`;
+}
+function coToggle(k){ if(state.coSel[k]) delete state.coSel[k]; else state.coSel[k]=1; renderCoPage(); }
+function coSelAll(on){
+  const list = coVisible();
+  state.coSel = {};
+  if(on) list.forEach(o=>{ state.coSel[o.key]=1; });
+  renderCoPage();
 }
 function coDetailHtml(o){
   const val = f => o.extra[f] || o[f] || '';

@@ -81,8 +81,11 @@ test('갈래 단추와 겹치는 이름을 쓰지 않는다', () => {
 
 test('「전체」는 폴더·담당자 거르개를 모두 푼다', () => {
   /* 폴더에 들어갔다가 돌아올 길이 이 줄뿐이다 */
+  /* ⚠ 「📋 전체」는 기업정보 폴더에도 있다(그쪽은 pickCoFolder 가 맡는다).
+     명함 쪽 것은 **뒤에** 나오므로 lastIndexOf 로 잡는다(2026-08-13). */
   const fn = sideFn();
-  const at = fn.indexOf("'📋 전체'");
+  const at = fn.lastIndexOf("'📋 전체'");
+  assert.ok(at > 0, '「전체」 줄을 찾지 못했습니다');
   assert.match(fn.slice(Math.max(0, at - 120), at), /switchTab\(/);
 });
 
