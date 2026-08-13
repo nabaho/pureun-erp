@@ -64,3 +64,12 @@ test('주소에 넣는 값은 인코딩한다', () => {
 test('사진 번호가 없는 옛 기록은 까닭을 말한다', () => {
   assert.match(cards, /예전 방식으로 보낸 서류입니다/);
 });
+
+test('주인도 맞춘 다음 목록을 부른다', () => {
+  /* 연도만 맞추고 주인을 그대로 두면 **내 사진 목록**을 불러오므로 남이 올린 서류는
+     아무리 찾아도 없다 — 「원본 보기가 안 된다」의 진짜 까닭이었다(2026-08-13). */
+  const at = photos.indexOf('function goPhotoIfAsked');
+  const fn = photos.slice(at, photos.indexOf('function openCamIfAsked', at));
+  assert.match(fn, /gridOwner = who/, '주인을 안 맞춘다');
+  assert.match(fn, /who !== me\.uid/, '내 사진인데도 남의 자리로 바꾸면 안 된다');
+});
