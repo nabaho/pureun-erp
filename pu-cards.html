@@ -677,6 +677,8 @@ table.sbox td.none{text-align:center;color:#8b98b3;padding:34px 10px}
 .colist{border:1px solid #e6ebf4;border-radius:11px;background:#fff;overflow:hidden}
 /* 명함첩 목록과 같은 결 — 한 줄에 한 회사, 왼쪽에 네모와 번호 */
 .cotbl{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e6ebf4;border-radius:11px;table-layout:fixed}
+.cotbl thead th.cosort{cursor:pointer;user-select:none}
+.cotbl thead th.cosort:hover{background:#eef3fc;color:#1d4fc4}
 .cotbl thead th{position:sticky;top:0;background:#f8fafc;font-size:12px;color:#7c89a6;text-align:left;
   padding:9px 12px;border-bottom:1px solid #e6ebf4;font-weight:700;z-index:1}
 .cotbl td{padding:10px 12px;border-bottom:1px solid #f1f4f9;font-size:13.5px;color:#33415e;vertical-align:middle}
@@ -1469,7 +1471,7 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', e
   isAdmin:false, privOpen:false, priv:{items:{},groups:{},trash:{}},
   /* 자료함 — 찾는 말·메일틀 갈래는 화면에만 쓰고 저장하지 않는다.
      sendLog 는 명함을 열 때만 그 명함 것을 읽어 담는다. */
-  matQ:'', matMailCat:'', matPrevId:'', sendLog:{}, coQ:'', coPick:'', coTag:'', coErpOnly:false, coSel:{},
+  matQ:'', matMailCat:'', matPrevId:'', sendLog:{}, coQ:'', coPick:'', coTag:'', coErpOnly:false, coSel:{}, coSort:{key:'name',dir:'asc'},
   /* 메일 화면 — mailSent 가 true 면 보낸 메일함, 아니면 쓰기 */
   mailSent:false, mailDrawer:true, sentBox:{}, schedBox:{}, sentQ:'', sentMine:false, sentCat:'', sentBy:'',
   showBcc:false, draftAt:'', matPick:'', drawerQ:'', drawerOpen:{},
@@ -9519,20 +9521,51 @@ function coVisible(){
   if(state.coErpOnly) list = list.filter(o=>o.erp);
   if(state.coTag) list = list.filter(o=>coTagsOf(o).indexOf(state.coTag)>=0);
   if(q) list = list.filter(o=>(o.name+' '+(o.bizno||'')+' '+(o.ceo||'')).toLowerCase().indexOf(q)>=0);
-  return list;
+  return coSorted(list);
 }
+
+/* 열 머리를 눌러 정렬한다 — 사업자 표와 같은 손놀림.
+   ⚠ 숫자 칸(명함·등록증)은 글자로 견주면 10 이 9 보다 앞선다. 칸마다 무엇으로
+     견줄지 따로 정한다. 빈 값은 늘 뒤로 보낸다 — 없는 것이 위로 올라오면
+     정작 봐야 할 것이 아래로 밀린다. */
+const CO_SORT = {
+  name:  o => String(o.name||''),
+  type:  o => String((o.erp && o.erp.type) || ''),
+  bizno: o => String(o.bizno||''),
+  cards: o => o.cards.length,
+  docs:  o => o.docs||0,
+  mgr:   o => String((o.erp && o.erp.main) || '')
+};
+function coSorted(list){
+  const s = state.coSort || {};
+  const get = CO_SORT[s.key]; if(!get) return list;
+  const dir = s.dir==='desc' ? -1 : 1;
+  return list.slice().sort((a,b)=>{
+    const x=get(a), y=get(b);
+    if(typeof x==='number') return (x-y)*dir;
+    /* 빈 값은 방향과 상관없이 뒤로 */
+    if(!x && y) return 1;
+    if(x && !y) return -1;
+    return String(x).localeCompare(String(y),'ko')*dir;
+  });
+}
+function coSortBy(key){
+  const s = state.coSort || {};
+  state.coSort = (s.key===key)
+    ? { key:key, dir: s.dir==='asc' ? 'desc' : 'asc' }
+    : { key:key, dir: (key==='cards'||key==='docs') ? 'desc' : 'asc' };  /* 숫자는 많은 것부터가 쓸모 있다 */
+  state.coPick=''; renderCoPage();
+}
+const coArrow = k => (state.coSort && state.coSort.key===k) ? (state.coSort.dir==='desc'?' ▾':' ▴') : '';
 function renderCoPage(){
   const el=$('pcCo'); if(!el) return;
-  const q = String(state.coQ||'').trim().toLowerCase();
   const all = coList();
   const tags = coTagList(all);
-  let list = all;
-  /* 명함의 회사 이름만으로 잡힌 곳이 대부분이라 전체가 4천 곳을 넘는다. 실제로 관리하는
-     곳은 그중 일부다 — 푸른이알피 업체관리에 있는 거래처만 보는 길을 둔다(대표 지시 2026-08-13). */
+  /* ⚠ 거르는 차례는 coVisible() 한 곳에만 둔다 — 예전엔 여기서 따로 거르고 있어
+     정렬(coSorted)을 coVisible 안에만 붙였더니 이 화면에는 안 먹혔다.
+     두 곳에서 같은 일을 하면 한쪽만 고쳤을 때 이렇게 어긋난다. */
+  const list = coVisible();
   const erpN = all.filter(o=>o.erp).length;
-  if(state.coErpOnly) list = list.filter(o=>o.erp);
-  if(state.coTag) list = list.filter(o=>coTagsOf(o).indexOf(state.coTag)>=0);
-  if(q) list = list.filter(o=>(o.name+' '+(o.bizno||'')+' '+(o.ceo||'')).toLowerCase().indexOf(q)>=0);
   const one = state.coPick ? list.find(o=>o.key===state.coPick) : null;
   /* 사업 탭 — 서식을 보낼수록 저절로 늘어난다. 손으로 만들 필요가 없다. */
   const tabs = `<div class="cotabs">
@@ -9566,7 +9599,13 @@ function coListHtml(list){
       <col style="width:110px"><col></colgroup>
     <thead><tr>
       <th><input type="checkbox" ${allOn?'checked':''} onchange="coSelAll(this.checked)" title="이 목록 전체 고르기"></th>
-      <th class="num">#</th><th>상호</th><th>유형</th><th>사업자번호</th><th>가진 것</th><th>담당</th><th></th>
+      <th class="num">#</th>
+      <th class="cosort" onclick="coSortBy('name')" title="상호로 정렬">상호${coArrow('name')}</th>
+      <th class="cosort" onclick="coSortBy('type')" title="자문·급여 유형으로 정렬">유형${coArrow('type')}</th>
+      <th class="cosort" onclick="coSortBy('bizno')" title="사업자번호로 정렬">사업자번호${coArrow('bizno')}</th>
+      <th class="cosort" onclick="coSortBy('docs')" title="가진 등록증 수로 정렬 — 빠진 곳을 찾을 때">가진 것${coArrow('docs')}</th>
+      <th class="cosort" onclick="coSortBy('mgr')" title="담당 노무사로 정렬">담당${coArrow('mgr')}</th>
+      <th></th>
     </tr></thead><tbody>${list.map((o,i)=>{
     const t = o.erp && o.erp.type;
     /* ⚠ 빠진 것을 붉게 알리는 건 **우리가 일하는 회사**에만 뜻이 있다.

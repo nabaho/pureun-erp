@@ -201,7 +201,13 @@ test('읽어 온 서류 목록을 회사 상세에 보여준다', () => {
 
 test('유형(자문·급여)은 제 칸을 갖는다', () => {
   /* 상호 옆에 붙이면 상호가 길 때 유형이 밀려 안 보인다 */
-  assert.match(source, /<th>상호<\/th><th>유형<\/th>/);
+  const at = source.indexOf('function coListHtml');
+  const fn = source.slice(at, source.indexOf('function coToggle', at));
+  const th = fn.match(/<th[^>]*>[^<]*<\/th>/g) || [];
+  const labels = th.map(x => x.replace(/<[^>]+>/g, '').replace(/\$\{[^}]*\}/g, '').trim());
+  const iName = labels.indexOf('상호');
+  const iType = labels.indexOf('유형');
+  assert.ok(iName >= 0 && iType === iName + 1, '상호 바로 다음 칸이 유형이 아니다');
 });
 
 test('마지막에 남는 폭을 먹는 빈 칸을 둔다', () => {
@@ -212,4 +218,40 @@ test('마지막에 남는 폭을 먹는 빈 칸을 둔다', () => {
   const cg = source.slice(at, at + 260);
   assert.match(cg, /width:300px/, '상호 칸에 폭을 안 줬다 — 남은 폭을 다 먹는다');
   assert.match(cg, /<col><\/colgroup>/, '남는 폭을 먹는 빈 칸이 없다');
+});
+
+test('열 머리를 눌러 정렬한다 — 사업자 표와 같은 손놀림', () => {
+  assert.match(source, /function coSortBy/);
+  assert.match(source, /onclick="coSortBy\('name'\)"/);
+  assert.match(source, /onclick="coSortBy\('docs'\)"/);
+  assert.match(source, /onclick="coSortBy\('mgr'\)"/);
+});
+
+test('숫자 칸은 숫자로 견준다 — 글자로 견주면 10 이 9 보다 앞선다', () => {
+  const at = source.indexOf('const CO_SORT = {');
+  const fn = source.slice(at, at + 400);
+  assert.match(fn, /cards:\s*o => o\.cards\.length/, '명함 수를 숫자로 안 뽑는다');
+  assert.match(fn, /docs:\s*o => o\.docs\|\|0/, '등록증 수를 숫자로 안 뽑는다');
+});
+
+test('빈 값은 방향과 상관없이 뒤로 간다', () => {
+  const at = source.indexOf('function coSorted');
+  const fn = source.slice(at, source.indexOf('function coSortBy', at));
+  assert.match(fn, /if\(!x && y\) return 1/);
+  assert.match(fn, /if\(x && !y\) return -1/);
+});
+
+test('renderCoPage 는 coVisible 하나만 거치고 따로 거르지 않는다', () => {
+  /* 두 곳에서 같은 일을 하면 한쪽만 고쳤을 때 어긋난다 — 실제로 정렬이
+     coVisible 에만 붙어 화면에는 안 먹힌 적이 있다. */
+  const at = source.indexOf('function renderCoPage');
+  const fn = source.slice(at, source.indexOf('function coListHtml', at));
+  assert.match(fn, /const list = coVisible\(\);/);
+  assert.doesNotMatch(fn, /list = list\.filter/, 'renderCoPage 가 따로 거르고 있다');
+});
+
+test('같은 칸을 두 번 누르면 방향이 바뀐다', () => {
+  const at = source.indexOf('function coSortBy');
+  const fn = source.slice(at, at + 400);
+  assert.match(fn, /s\.dir==='asc' \? 'desc' : 'asc'/);
 });
