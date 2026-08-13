@@ -404,9 +404,17 @@ exports.developmentAutomation = functions
 //
 //  ⚠ data 전용 메시지를 보낸다. notification 필드를 함께 실으면 브라우저가 자체 알림을
 //    띄우고 firebase-messaging-sw.js 도 띄워 알림이 두 번 뜬다.
+//  ⚠ enter.html 의 SG_CATS 15개와 짝을 맞춘다. 여기 없는 분류는 알림에 "기타"로 찍혀
+//    무슨 건의인지 폰에서 알 수 없다 (전에 8개가 빠져 있었다).
 const SG_CAT_NAME = {
-  erp: "푸른이알피", consult: "컨설팅 일정", cards: "명함첩",
-  portal: "포털", work: "업무관리", rules: "취업규칙", etc: "기타",
+  // 업무지원
+  erp: "푸른이알피", consult: "정부사업일정", work: "업무관리",
+  cards: "명함·메일", docs: "문서·이력", portal: "포털",
+  // 직접업무
+  fund: "기금관리", rules: "취업규칙", payroll: "급여관리",
+  // 기타 건의
+  bizwork: "업무 개선", policy: "규정·제도", edu: "교육·연수",
+  office: "사무환경·비품", hrwelf: "인사·복지", etc: "기타",
 };
 
 exports.notifySuggestion = functions.database
