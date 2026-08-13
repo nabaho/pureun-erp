@@ -1485,7 +1485,7 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', e
   isAdmin:false, privOpen:false, priv:{items:{},groups:{},trash:{}},
   /* 자료함 — 찾는 말·메일틀 갈래는 화면에만 쓰고 저장하지 않는다.
      sendLog 는 명함을 열 때만 그 명함 것을 읽어 담는다. */
-  matQ:'', matMailCat:'', matPrevId:'', sendLog:{}, coQ:'', coPick:'', coTag:'', coErpOnly:false, coSel:{}, coSort:{key:'name',dir:'asc'}, coColFilter:{}, coFolder:'',
+  matQ:'', matMailCat:'', matPrevId:'', sendLog:{}, coQ:'', coPick:'', coTag:'', coErpOnly:false, coSel:{}, coSort:{key:'name',dir:'asc'}, coColFilter:{}, coFolder:'', coShowHidden:false,
   /* 메일 화면 — mailSent 가 true 면 보낸 메일함, 아니면 쓰기 */
   mailSent:false, mailDrawer:true, sentBox:{}, schedBox:{}, sentQ:'', sentMine:false, sentCat:'', sentBy:'',
   showBcc:false, draftAt:'', matPick:'', drawerQ:'', drawerOpen:{},
@@ -7716,9 +7716,22 @@ function renderPCSide(){
         </div>`;
     });
     const tags = coTagList(cos);
+    const shown = tags.filter(x=>state.coShowHidden || !_coTagHidden[x.t]);
+    const hiddenN = tags.filter(x=>_coTagHidden[x.t]).length;
     if(tags.length){
       h += `<div class="pcsec">사업별</div>`;
-      tags.forEach(x=>{ h += pcItem(`onclick="pickCoFolder('t:${esc(x.t)}')"`, '📁 '+esc(x.t), x.n, state.coTag===x.t); });
+      shown.forEach(x=>{ h += `<div class="pcitem folderrow ${state.coTag===x.t?'on':''}" style="padding-left:11px">
+          <span class="gname" onclick="pickCoFolder('t:${esc(x.t)}')">📁 ${esc(x.t)}</span>
+          <span class="gcount">${x.n}</span>
+          ${_coTagHidden[x.t]
+            ? `<span class="gmenu" onclick="event.stopPropagation();unhideCoTag('${esc(x.t).replace(/'/g,"\\'")}')" title="다시 보이기">🙈</span>`
+            : `<span class="gmenu" onclick="event.stopPropagation();hideCoTag('${esc(x.t).replace(/'/g,"\\'")}')" title="목록에서 숨기기(지우지 않음)">👁</span>`}
+        </div>`; });
+      if(hiddenN && !state.coShowHidden){
+        h += `<div class="pchintside" style="cursor:pointer;text-decoration:underline" onclick="toggleCoShowHidden()">숨긴 사업 ${hiddenN}개 보기</div>`;
+      }else if(state.coShowHidden && hiddenN){
+        h += `<div class="pchintside" style="cursor:pointer;text-decoration:underline" onclick="toggleCoShowHidden()">숨긴 사업 접기</div>`;
+      }
     }else{
       h += `<div class="pchintside">사진첩에서 서식·신청서를<br>기업정보로 보내면<br>그 서류 이름으로 폴더가 생깁니다</div>`;
     }
@@ -9533,7 +9546,7 @@ const _norm = s => String(s||'').replace(/\s|\(주\)|주식회사|㈜/g,'').toLo
 function openCoPage(){ state.view='co'; state.coPick='';
   try{ state.coErpOnly = !!localStorage.getItem('pucards_co_erponly'); }catch(_){}
   render();
-  loadCoInfo(); loadCoFolders(); try{ $('pcMain').scrollTop=0; }catch(_){} }
+  loadCoInfo(); loadCoFolders(); loadCoTagHidden(); try{ $('pcMain').scrollTop=0; }catch(_){} }
 function closeCoPage(){ state.view='list'; render(); }
 function pickCo(k){ state.coPick = (state.coPick===k ? '' : k); renderCoPage(); }
 
@@ -9547,6 +9560,24 @@ function coTagList(list){
   return Object.keys(c).sort((a,b)=>c[b]-c[a] || a.localeCompare(b,'ko')).map(t=>({t, n:c[t]}));
 }
 function pickCoTag(t){ state.coTag = (state.coTag===t ? '' : t); state.coPick=''; renderCoPage(); }
+
+/* 탭은 지우지 않는다 — 숨기기만 둔다. 사업이 끝나도 「그때 누가 신청했었나」를
+   나중에 다시 봐야 할 수 있다. 지우면 그 연결이 영영 사라진다. */
+let _coTagHidden = {};
+let _coTagHiddenOn = false;
+function loadCoTagHidden(cb){
+  if(_coTagHiddenOn || Store.mode!=='firebase'){ cb && cb(); return; }
+  _coTagHiddenOn = true;
+  Store.db.ref(DB_ROOT+'/coTagHidden').on('value', s=>{ _coTagHidden = s.val() || {}; if(state.view==='co') renderPC(); });
+  cb && cb();
+}
+function hideCoTag(tag){
+  Store.db.ref(DB_ROOT).update({ ['coTagHidden/'+tag]: true });
+}
+function unhideCoTag(tag){
+  Store.db.ref(DB_ROOT).update({ ['coTagHidden/'+tag]: null });
+}
+function toggleCoShowHidden(){ state.coShowHidden = !state.coShowHidden; renderPC(); }
 
 /* ── 기업정보 폴더 ── 손으로 만들고 회사를 담는다.
    명함이 폴더를 갖듯 회사도 갖는다. 회사는 폴더 하나에만 든다 — 여러 사업에 걸치는
