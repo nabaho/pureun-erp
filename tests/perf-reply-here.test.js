@@ -35,16 +35,23 @@ test('쓰는 자리는 직원이 못 쓰는 items/<fid>/reply 다', () => {
   assert.match(r, /PC_PATH\+'\/'\+ym\+'\/p\/'\+sid\+'\/items\/'\+fid\+'\/reply'/);
 });
 
-test('답변 모양이 푸른이알피가 쓰던 것과 같다', () => {
-  // 두 곳이 다른 모양으로 쓰면 한쪽에서 답한 것이 다른 쪽에서 안 닫힌다
+test('답변 모양은 옛 푸른이알피 것과 같다 (읽는 쪽이 그대로 읽을 수 있게)', () => {
   const r = grab('pcReply');
   assert.match(r, /text:t\.slice\(0,500\)/, '길이 제한도 같아야 한다');
   assert.match(r, /at:new Date\(\)\.toISOString\(\)/);
   assert.match(r, /by:pcMySid\(\)/);
-  assert.match(r, /state:'done'/);
+  assert.match(r, /state:'done'/, "이게 없으면 그 이의가 안 닫힌다");
+});
+
+test('★ 답변을 쓰는 곳은 온 시스템에서 여기 하나뿐이다', () => {
+  // 두 곳에서 쓰면 같은 자료를 보면서 어디서 손댔는지 알 수 없다
   const erp = fs.readFileSync(path.join(__dirname, '..', 'pu-erp.html'), 'utf8').replace(/\r\n/g, '\n');
-  const e = erp.slice(erp.indexOf('function pcfReply('), erp.indexOf('function pcfReply(') + 400);
-  assert.match(e, /text: String\(text\|\|''\)\.slice\(0,500\), at:new Date\(\)\.toISOString\(\), by:by\|\|'', state:'done'/);
+  assert.ok(erp.indexOf('function pcfReply(') < 0, '푸른이알피에서는 걷어냈다');
+  assert.ok(!/\/reply'\)\.set\(/.test(erp));
+  assert.match(erp, /답변은 업무관리에서 합니다/, '어디서 답하는지는 알려 줘야 한다');
+  // 읽는 쪽은 양쪽 다 그대로 — 무엇이라 답했는지는 보여야 한다
+  assert.match(erp, /o\.closed && o\.it\.reply/);
+  assert.match(src, /it\.reply && it\.reply\.text/);
 });
 
 test('빈 답변은 저장하지 않는다', () => {
