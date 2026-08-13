@@ -621,6 +621,24 @@
     });
   }
 
+  /* 분류 지우기 (대표 지시 2026-08-13: "분류 한 것에 이름을 변경하거나 삭제할 수 있게").
+     ⚠ **사진은 한 장도 안 지운다.** 이름표만 없앤다 — 폴더 지우기와 같은 원칙이다.
+        직접분류는 "더하는 것이지 기타서류에서 빼앗지 않는" 자리라, 이름표가 사라져도
+        사진은 원래 있던 탭(회의사진·기타서류 등)에 그대로 남는다.
+     ⚠ 사진에 남은 customKind 값은 **안 건드린다**(대표 선택 2026-08-13).
+        건드리려면 사진을 전부 훑어야 하는데, 규칙상 내가 볼 수 있는 것은 내 사진뿐이라
+        다른 직원 사진에는 표시가 남아 반쪽이 된다. 가리키는 분류가 없으면 화면이
+        그냥 안 보여 주므로(tabsOf 가 CUSTOM_KINDS 에 있는지 본다) 해가 없다.
+     ⚠ 그래서 **되돌릴 수 없다** — 같은 이름으로 다시 만들어도 번호가 달라
+        옛 사진이 저절로 돌아오지 않는다. 화면이 지우기 전에 이 말을 해야 한다. */
+  function deleteCustomKind(id) {
+    if (!id) return Promise.reject(new Error('어떤 분류인지 알 수 없습니다'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var u = {};
+    u[customKindsPath() + '/' + id] = null;
+    return deps.db.ref().update(u);
+  }
+
   function addCustomKind(name) {
     var clean = String(name || '').trim();
     if (!clean) return Promise.reject(new Error('분류 이름을 입력해 주세요'));
@@ -1367,6 +1385,7 @@
     retentionPath: retentionPath,
     addCustomKind: addCustomKind,
     renameCustomKind: renameCustomKind,
+    deleteCustomKind: deleteCustomKind,
     setCustomKind: setCustomKind,
     setDocs: setDocs,
     deletePhoto: deletePhoto,
