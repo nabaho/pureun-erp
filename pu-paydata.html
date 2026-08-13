@@ -245,6 +245,7 @@ const App = {
     Object.assign(App, o || {});
     App.screen = screen;
     if (screen === 'drawer') { ensureDrawerData(); ensureFolders(); }
+    if (screen === 'trash') ensureTrash();
     App.render();
   },
 
@@ -255,6 +256,7 @@ const App = {
     if (App.screen === 'sites') { m.innerHTML = screenSites(); renderViewer(); return; }
     if (App.screen === 'pending') { m.innerHTML = screenPending(); renderViewer(); return; }
     if (App.screen === 'drawer') { m.innerHTML = screenDrawer(); renderViewer(); return; }
+    if (App.screen === 'trash') { m.innerHTML = screenTrash(); renderViewer(); return; }
     m.innerHTML = '<div class="card"><div class="empty">아직 만들지 않은 화면입니다.</div></div>';
     renderViewer();
   }
@@ -373,6 +375,7 @@ function screenSites() {
     + ' onchange="App.go(\'sites\',{month:this.value})">'
     + '<span class="sub" style="margin:0">예: 2026-08</span>'
     + '<button class="btn" onclick="App.go(\'pending\')">📥 대기 칸</button>'
+    + '<button class="btn" onclick="App.go(\'trash\')">🗑 휴지통</button>'
     + '</div>';
 
   /* 넘버링 + ㅁ 체크로 골라 둘 수 있다(대표 지시 2026-08-10 명함첩 · 2026-08-13
@@ -790,6 +793,7 @@ function screenDrawer() {
     + ' onchange="assignFolder(\'' + esc(r.id) + '\',this.value)">'
     + folderOpts.replace('value="' + esc(r.folder || '') + '"', 'value="' + esc(r.folder || '') + '" selected')
     + '</select>'
+    + '<button class="btn" onclick="event.stopPropagation();toTrash(\'' + esc(r.id) + '\')" title="휴지통으로">🗑</button>'
     + '</div>').join('')
     : '<div class="empty">' + (App.query ? '찾는 자료가 없습니다.'
       : (App.folderPick !== 'all' ? '이 폴더에 담긴 자료가 없습니다.'
@@ -859,6 +863,63 @@ function renderViewer() {
       + '<a href="' + esc(App.viewerUrl) + '" target="_blank" rel="noopener">새 창에서 열기</a></div>';
   }
 }
+
+/* ══════ 휴지통 (Task 12) ══════
+   지운 자료는 정보만 옮긴다. 창고 파일은 그 자리에 그대로 둔다 —
+   함께 지우면 되살릴 수 없다. 30일 뒤 실삭제는 사람이 확인해서 한다
+   (자동 삭제는 어디에도 만들지 않는다). */
+
+/* 서랍에서 지운다. findRow 가 keep 칸·이 달 칸을 모두 뒤져 자료를 찾는다
+   (뷰어가 쓰는 것과 같은 함수 — 두 칸 중 어디 있는지 화면이 몰라도 된다). */
+function toTrash(id) {
+  const rec = findRow(id);
+  if (!rec) return;
+  if (!confirm('휴지통으로 옮길까요?\n30일 안에는 되살릴 수 있습니다.')) return;
+  db.ref().update(S.trashUpdate(id, rec)).then(() => {
+    if (App.itemsKeep && App.itemsKeep[id]) delete App.itemsKeep[id];
+    if (App.itemsMonth && App.itemsMonth[id]) delete App.itemsMonth[id];
+    App.render();
+  }).catch(e => alert('실패: ' + (e.code || e.message)));
+}
+window.toTrash = toTrash;
+
+function ensureTrash() {
+  return S.listTrash().then(v => { App.trash = v; App.render(); })
+    .catch(e => { console.warn('[휴지통]', e && e.code); App.trash = {}; App.render(); });
+}
+
+function screenTrash() {
+  const box = App.trash || {};
+  const ids = Object.keys(box).sort((a, b) => (box[b].trashedAt || 0) - (box[a].trashedAt || 0));
+  let h = '<div style="margin-bottom:10px"><button class="btn" onclick="App.go(\'sites\')">← 사업장</button></div>'
+    + '<h1>휴지통</h1><div class="sub">지운 뒤 ' + S.TRASH_DAYS + '일 안에는 되살릴 수 있습니다 · ' + ids.length + '건</div>';
+  if (!ids.length) return h + '<div class="card"><div class="empty">휴지통이 비어 있습니다.</div></div>';
+  const now = Date.now();
+  h += '<div class="card">' + ids.map((id, i) => {
+    const r = box[id];
+    const over = S.trashExpired(r, now);
+    return '<div class="row">'
+      + '<span class="pkno">' + (i + 1) + '</span>'
+      + '<span style="flex:1">' + esc(r.filename || '(이름 없음)')
+      + '<div class="sub" style="margin:2px 0 0">' + esc(r.companyName || r.companyId || '') + '</div></span>'
+      + (over ? '<span class="expbadge">30일 지남</span>' : '')
+      + '<button class="btn" onclick="restoreItem(\'' + esc(id) + '\')">되살리기</button></div>';
+  }).join('') + '</div>';
+  return h;
+}
+
+function restoreItem(id) {
+  const rec = (App.trash || {})[id];
+  if (!rec) return;
+  db.ref().update(S.restoreUpdate(id, rec)).then(() => {
+    delete App.trash[id];
+    // 되살아난 칸을 다시 읽어야 서랍이 최신 자료를 본다 — 다음에 그 서랍에
+    // 들어갈 때 새로 읽어 오게 캐시를 비운다.
+    App.itemsKeep = null; App.itemsMonthSlot = ''; App.itemsMonth = null;
+    App.render();
+  }).catch(e => alert('실패: ' + (e.code || e.message)));
+}
+window.restoreItem = restoreItem;
 </script>
 </body>
 </html>
