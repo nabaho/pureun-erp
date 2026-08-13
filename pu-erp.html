@@ -4812,7 +4812,10 @@ function erpForgetExpenseCat(key){
 // 이런 입금은 업체관리 업체들의 월 자문료 합계이므로, 후보 하나를 고르는 대신
 // "합계를 이루는 업체들을 체크"하는 방식으로 매칭한다 (CmsMatchModal).
 // 표식은 배열로 두어 새 채널이 생기면 여기만 늘리면 된다.
-var CMS_MEMO_MARKERS = ['더빌','더빌이체','나이스빌','nicebill','cms','자동이체'];
+// 효성CMS(효성에프엠에스) 정산 입금도 여기서 알아본다 — 일부 업체가 효성으로 걷는다.
+// ⚠ 「효성」 한 낱말은 넣지 않는다: 효성중공업 같은 일반 업체 입금까지 CMS 로 오인한다.
+var CMS_MEMO_MARKERS = ['더빌','더빌이체','나이스빌','nicebill','cms','자동이체',
+  '효성에프엠에스', '효성에프엠', '효성fms', 'hyosungfms', '에프엠에스'];
 
 function erpIsCmsMemo(memo){
   try {
@@ -33818,17 +33821,36 @@ window.CMS_NOTE_RE = CMS_NOTE_RE;
 var CMS_LEDGER_KEY = 'cms_ledger';
 var CMS_LEDGER_MAX = 1500;              // 용량 가드 — 최신 1,500건까지만 보관
 
+/* ── CMS 회사별 파일 생김새 ──
+   자문료 자동이체는 나이스빌만 쓰다가 일부 업체가 효성CMS(효성에프엠에스)로도 걷는다.
+   회사마다 엑셀 열 이름이 다르므로, «이름 열 + 금액 열» 짝을 회사별로 두고
+   먼저 맞는 회사로 알아본다. 알아본 뒤에는 같은 창고(cms_ledger)에 담는다 —
+   매칭·나눠담기·팝업이 전부 그 창고만 보므로 아래는 손댈 것이 없다.
+   ⚠ 이름 열 후보에 은행 통장·카드 명세 열(적요·가맹점 등)이 섞이면
+     통장 파일이 CMS 로 오인된다 — 회원·납부자·고객 계열만 둔다. */
+var CMS_LAYOUTS = [
+  { layout:'nicebill', names:['회원명'], amts:['납부금액'] },
+  { layout:'hyosung',  names:['회원명','납부자명','고객명','회원성명','수납자명'],
+    amts:['납부금액','청구금액','출금금액','출금액','수납금액','청구액'] }
+];
 // 헤더 글자 → 내부 필드 (긴 것·고유한 것부터 — '출금일'과 '출금기관/출금번호'가 섞이지 않게)
+// 나이스빌·효성 표기를 한 표에 합쳤다: 먼저 맞는 것을 쓰므로 긴 표기가 앞에 와야 한다
 var NB_HDR_MAP = [
-  ['회원명','name'], ['납부금액','amount'],
-  ['정산예정일','setdate'], ['취소일','canceldate'], ['출금일','wdate'],
-  ['수수료','fee'], ['상태','status'], ['사업자번호','bizNo'], ['회원코드','code'],
-  ['출금기관','bank'], ['출금번호','acct'], ['상품명','product'], ['비고','note']
+  ['정산예정일','setdate'], ['입금예정일','setdate'], ['정산일','setdate'], ['입금일','setdate'],
+  ['취소일','canceldate'],
+  ['출금일','wdate'], ['수납일','wdate'], ['이체일','wdate'],
+  ['수수료','fee'],
+  ['출금결과','status'], ['수납결과','status'], ['상태','status'], ['결과','status'],
+  ['사업자번호','bizNo'],
+  ['회원코드','code'], ['회원번호','code'], ['고객번호','code'],
+  ['출금기관','bank'], ['은행','bank'],
+  ['출금번호','acct'], ['계좌번호','acct'],
+  ['상품명','product'], ['비고','note']
 ];
 function _nbNorm(v){ return String(v===null||v===undefined?'':v).replace(/\s+/g,''); }
 function _nbDigits(v){ return String(v===null||v===undefined?'':v).replace(/[^0-9]/g,''); }
 
-// 시트 첫 20행에서 '회원명 + 납부금액' 헤더 행을 찾는다 → {hdr, col:{…}} / 못 찾으면 null
+// 시트 첫 20행에서 CMS 헤더 행을 찾는다 → {hdr, col:{…}, layout:'nicebill'|'hyosung'} / 못 찾으면 null
 function erpDetectNicebillSheet(raw){
   if(!raw || !raw.length) return null;
   var lim = Math.min(raw.length, 20);
@@ -33837,26 +33859,30 @@ function erpDetectNicebillSheet(raw){
     if(!r || !r.length) continue;
     var cells = [], ci;
     for(ci=0; ci<r.length; ci++) cells.push(_nbNorm(r[ci]));
-    var hasName = false, hasAmt = false;
-    for(ci=0; ci<cells.length; ci++){
-      if(cells[ci] === '회원명') hasName = true;
-      if(cells[ci] === '납부금액') hasAmt = true;
+    // 어느 회사 파일인지 — 이름 열과 금액 열이 «정확히» 있는 첫 회사
+    var lay = null, col = {};
+    for(var L=0; L<CMS_LAYOUTS.length && !lay; L++){
+      var cand = CMS_LAYOUTS[L];
+      var nameAt, amtAt;
+      for(ci=0; ci<cells.length; ci++){
+        if(nameAt === undefined && cand.names.indexOf(cells[ci]) >= 0) nameAt = ci;
+        else if(amtAt === undefined && cand.amts.indexOf(cells[ci]) >= 0) amtAt = ci;
+      }
+      if(nameAt !== undefined && amtAt !== undefined){
+        lay = cand.layout; col = { name:nameAt, amount:amtAt };
+      }
     }
-    if(!hasName || !hasAmt) continue;          // 이 두 열이 없으면 나이스빌 파일이 아니다
-    var col = {};
+    if(!lay) continue;                         // 이름+금액 짝이 없으면 CMS 파일이 아니다
     for(ci=0; ci<cells.length; ci++){
       var s = cells[ci];
-      if(!s) continue;
+      if(!s || ci === col.name || ci === col.amount) continue;
       for(var m=0; m<NB_HDR_MAP.length; m++){
         var key = NB_HDR_MAP[m][0], fld = NB_HDR_MAP[m][1];
         if(col[fld] !== undefined) continue;   // 먼저 나온 열을 쓴다
-        // 회원명·납부금액은 정확히 일치할 때만, 나머지는 표기 변형(indexOf)까지 허용
-        var hit = (fld === 'name' || fld === 'amount') ? (s === key) : (s.indexOf(key) >= 0);
-        if(hit){ col[fld] = ci; break; }
+        if(s.indexOf(key) >= 0){ col[fld] = ci; break; }
       }
     }
-    if(col.name === undefined || col.amount === undefined) continue;
-    return { hdr:i, col:col };
+    return { hdr:i, col:col, layout:lay };
   }
   return null;
 }
@@ -33871,11 +33897,17 @@ function _nbReason(s){
   }
   return '';
 }
-// 상태 → ok / pending / fail (대괄호 앞 첫 낱말로 판정)
+/* 상태 → ok / pending / fail (대괄호 앞 첫 낱말로 판정)
+   나이스빌은 «출금성공/출금실패/출금중», 효성은 «정상/미납/불능/잔액부족» 계열을 쓴다.
+   두 어휘가 서로 겹치지 않아 한 판정기로 합쳤다 — 여기서 못 알아보면 pending 이 되어
+   정산 합계 대조(ok 만 센다)에서 통째로 빠지므로, 새 표기를 보면 이 표에 더할 것. */
 function _nbStatusOf(s){
   var lead = _nbNorm(String(s===null||s===undefined?'':s).split('[')[0]);
-  if(lead.indexOf('출금성공') === 0) return 'ok';
-  if(lead.indexOf('출금실패') === 0) return 'fail';
+  if(!lead) return 'pending';
+  if(lead.indexOf('출금성공') === 0 || lead.indexOf('정상') === 0
+     || lead === '성공' || lead === '완료' || lead === '수납') return 'ok';
+  if(lead.indexOf('출금실패') === 0
+     || /미납|불능|실패|취소|잔액부족|지급정지|오류|해지|정지/.test(lead)) return 'fail';
   return 'pending';                             // 출금중 [자동출금] 등
 }
 // 정렬·중복제거용 기준일 (정산예정일 없으면 출금일)
@@ -33941,6 +33973,7 @@ function erpParseNicebill(raw, det){
     else { status = _nbStatusOf(stRaw); reason = _nbReason(stRaw); }
     rows.push({
       _k: 'nb' + j,
+      src: det.layout || 'nicebill',                               // 어느 회사 파일에서 온 줄인지 (나이스빌·효성)
       wdate: (wdate && wdate.length >= 8) ? wdate : '',
       setdate: (setdate && setdate.length >= 8) ? setdate : '',
       name: name,
@@ -34031,10 +34064,17 @@ function erpNicebillAttachCo(rows, idx){
 
 // ── 저장 (cms_ledger) — 슬림 행만, 지문으로 중복 제거, 최신 1,500건 ──
 function erpNbSlimRow(r){
-  return { _k:String(r._k||''), wdate:r.wdate||'', setdate:r.setdate||'', name:r.name||'',
+  return { _k:String(r._k||''), src:(r.src==='hyosung'?'hyosung':'nicebill'),
+           wdate:r.wdate||'', setdate:r.setdate||'', name:r.name||'',
            bizNo:r.bizNo||'', amount:parseInt(r.amount,10)||0, fee:parseInt(r.fee,10)||0,
            statusRaw:r.statusRaw||'', status:r.status||'', reason:r.reason||'',
            code:r.code||'', bank:r.bank||'' };
+}
+// 이 줄들이 어느 회사에서 왔는지 이름표 — 화면에 「나이스빌 5곳」 「효성 3곳」 으로 쓰인다
+function erpCmsProviderName(rows){
+  var nb = false, hs = false;
+  (rows || []).forEach(function(r){ if(!r) return; if(r.src === 'hyosung') hs = true; else nb = true; });
+  return (nb && hs) ? 'CMS' : (hs ? '효성' : '나이스빌');
 }
 function erpCmsLedgerGet(){
   var v = dbGet(CMS_LEDGER_KEY, null);
@@ -35798,8 +35838,9 @@ function FinanceLedger(){
         var _nbDet = erpDetectNicebillSheet(_raw0);
         if(_nbDet){
           var _p = erpParseNicebill(_raw0, _nbDet);
+          var _prov = _nbDet.layout === 'hyosung' ? '효성' : '나이스빌';
           if(!_p.rows.length){
-            showToast('❌ 나이스빌 CMS 파일에서 읽을 행이 없습니다 (회원명·납부금액을 확인해주세요)');
+            showToast('❌ '+_prov+' CMS 파일에서 읽을 행이 없습니다 (이름·금액 열을 확인해주세요)');
             setBusy(false); return;
           }
           var _saved = erpCmsLedgerSave(file.name, new Date().toISOString(), _p.rows) || null;
@@ -35809,14 +35850,14 @@ function FinanceLedger(){
           setNb({ fileName:file.name, uploadedAt:(_saved && _saved.uploadedAt) || new Date().toISOString(),
                   rows:_rows, byDate:erpNbGroupByDate(_rows), stat:erpNbStat(_rows), linked:_linked });
           setNbRestored(false); setNbFailOnly(false);
-          showToast('🏦 나이스빌 CMS 파일로 인식했습니다 — 성공 '+_p.stat.ok+'건 · 진행 '+_p.stat.pending+'건 · 실패 '+_p.stat.fail+'건');
+          showToast('🏦 '+_prov+' CMS 파일로 인식했습니다 — 성공 '+_p.stat.ok+'건 · 진행 '+_p.stat.pending+'건 · 실패 '+_p.stat.fail+'건');
           var _un = _rows.length - _linked;
           if(_un > 0) setTimeout(function(){ showToast('⚠️ ERP 업체와 연결되지 않은 행 '+_un+'건 — 회원명을 확인해주세요'); }, 900);
           if(!_saved) setTimeout(function(){ showToast('⚠️ CMS 내역 저장에 실패했습니다 (화면에는 표시됩니다)'); }, 1600);
           setBusy(false); return;
         }
         if(fileType === 'nicebill'){
-          showToast('❌ 나이스빌 CMS 형식이 아닙니다 (회원명·납부금액 열을 찾지 못했습니다)');
+          showToast('❌ CMS 형식이 아닙니다 — 나이스빌은 「회원명·납부금액」, 효성은 「납부자명·청구금액」 같은 열이 있어야 합니다');
           setBusy(false); return;
         }
         var result = parseFile(wb, fileType, _raw0);
@@ -36913,7 +36954,8 @@ function FinanceLedger(){
       if(lockCache[ym]){ lockN++; return; }                // 마감월은 건너뛴다 (행마다 토스트가 뜨지 않게)
       var co = { name:r.co.name, fee:(parseInt(r.amount,10) || r.co.fee || 0),
                  payDay:r.co.payDay || '', mainSid:r.co.mainSid || '', mainName:_uName(r.co.mainSid) };
-      if(erpAddCompanyIncome(co, m, y, d, '[나이스빌CMS] ' + (r.statusRaw||'')
+      // 어느 회사로 걷었는지 메모에 남긴다 — 나중에 「이 업체는 효성으로 걷는다」를 되짚을 수 있게
+      if(erpAddCompanyIncome(co, m, y, d, '['+(r.src==='hyosung'?'효성CMS':'나이스빌CMS')+'] ' + (r.statusRaw||'')
           + ' · ' + (base==='wdate' ? '걷은 달' : '들어온 달') + ' 기준')){ okN++; doneRows.push(r); }
       else skipN++;                                        // 이미 입금됨 · 저장 실패
     });
@@ -36923,10 +36965,11 @@ function FinanceLedger(){
     var feeOk = false;
     if(feeSum > 0){
       var _fd = erpCmsDateOf(doneRows[0], erpCmsYmBase(doneRows[0].co)) || todayYMD();
+      var _fp = erpCmsProviderName(doneRows) + ' CMS';   // 나이스빌 CMS · 효성 CMS (섞이면 그냥 CMS)
       feeOk = dbUpsert('finance_expense', {
         id:'fe-nb-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
-        date:_fd, amount:feeSum, category:'exp-bankfee', payee:'나이스빌 CMS',
-        note:'나이스빌 CMS 이체수수료 — '+doneRows.length+'건',
+        date:_fd, amount:feeSum, category:'exp-bankfee', payee:_fp,
+        note:_fp+' 이체수수료 — '+doneRows.length+'건',
         paid:true, paidDate:_fd, branch:'cheonan'}) !== false;
     }
     var cmsSet = doneRows.length ? nbWriteCmsFlags(doneRows) : 0;
@@ -36952,7 +36995,7 @@ function FinanceLedger(){
 
   // 🗑 보관된 CMS 내역 비우기
   async function nbClear(){
-    if(!(await popConfirm('보관된 나이스빌 CMS 내역을 모두 비웁니다.\n\n→ 이미 만들어진 입금표시·CMS 등록은 그대로 유지됩니다'))) return;
+    if(!(await popConfirm('보관된 CMS 내역(나이스빌·효성)을 모두 비웁니다.\n\n→ 이미 만들어진 입금표시·CMS 등록은 그대로 유지됩니다'))) return;
     try{ dbSet(CMS_LEDGER_KEY, { fileName:'', uploadedAt:'', rows:[] }); }catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
     setNb(null); setNbRestored(false); setNbFailOnly(false); setFName('');
     showToast('🗑 CMS 내역을 비웠습니다');
@@ -37069,9 +37112,11 @@ function FinanceLedger(){
     // ══════════════════════════════════════════════
     fileType==='nicebill' && !nb && !busy && h('div',{style:{background:'#eff6ff',border:'1px dashed #bfdbfe',
       borderRadius:'8px',padding:'18px',textAlign:'center',color:'#2563eb',fontSize:'12px',fontWeight:600}},
-      '🏦 나이스빌 → CMS 출금 결과 내역을 엑셀로 내려받아 올려주세요',
+      '🏦 나이스빌 · 효성CMS 출금 결과 내역을 엑셀로 내려받아 올려주세요',
       h('div',{style:{marginTop:'4px',fontSize:'11px',color:'#60a5fa',fontWeight:500}},
-        '회원명 · 납부금액 · 출금일 · 정산예정일 · 상태 열을 읽습니다 (정산예정일 합계 = 통장 더빌이체 입금액)')
+        '이름 · 금액 · 출금일 · 정산예정일 · 상태 열을 읽습니다 (정산예정일 합계 = 통장 입금액)',
+        h('br'),
+        '나이스빌은 「회원명·납부금액」, 효성은 「납부자명·청구금액」 처럼 이름만 달라도 알아서 알아봅니다 — 둘 다 한 곳에 쌓입니다')
     ),
 
     fileType==='nicebill' && nb && h('div',null,
@@ -37166,7 +37211,17 @@ function FinanceLedger(){
                   h('td',{style:Object.assign({},tdS,{color:'#64748b',whiteSpace:'nowrap'})},r.wdate||'-'),
                   h('td',{style:Object.assign({},tdS,{whiteSpace:'nowrap',fontWeight:r.setdate?700:400,color:r.setdate?'#2563eb':'#cbd5e1'})},r.setdate||'미정'),
                   h('td',{style:Object.assign({},tdS,{color:'#1e293b'})},
-                    h('div',{style:{fontWeight:600}},r.name),
+                    h('div',{style:{fontWeight:600,display:'flex',alignItems:'center',gap:'5px',flexWrap:'wrap'}},
+                      r.name,
+                      /* 어느 회사로 걷은 줄인지 — 두 회사 명세가 한 표에 섞여 쌓인다.
+                         색은 팔레트(5계열)만 쓴다 — 새 색을 만들면 화면이 다시 어지러워진다.
+                         둘 다 «정보» 이므로 파랑 한 계열 안에서 진하기만 달리한다. */
+                      h('span',{title:r.src==='hyosung'?'효성CMS(효성에프엠에스) 명세':'나이스빌 CMS 명세',
+                        style:{fontSize:'8.5px',fontWeight:700,borderRadius:'7px',padding:'0 4px',
+                          background:'#eff6ff',
+                          color:r.src==='hyosung'?'#1e40af':'#2563eb',
+                          border:'1px solid #bfdbfe'}},
+                        r.src==='hyosung'?'효성':'나이스빌')),
                     r.co
                       ? (diffName && h('div',{style:{fontSize:'10px',color:'#2563eb'}},'→ '+r.co.name))
                       : h('div',{title:'회원명·사업자번호로 ERP 업체를 찾지 못했습니다 — 업체관리의 이름을 확인하거나 통장 매칭에서 한 번 수동 연결하면 학습됩니다',
@@ -37617,7 +37672,7 @@ function FinanceLedger(){
                                return '· '+(r.name||'-')+' '+((r.amount||0).toLocaleString())+'원'; }).join('\n')
                            +(_nbHit.rows.length>12?('\n… 외 '+(_nbHit.rows.length-12)+'곳'):''))
                          : (_grp.length?_grp.map(function(g){return g.company;}).join(' / '):'')},
-                    _cmsHit ? ('🏦 나이스빌 '+_nbHit.rows.length+'곳')
+                    _cmsHit ? ('🏦 '+erpCmsProviderName(_nbHit.rows)+' '+_nbHit.rows.length+'곳')
                       : (_grp.length ? _grp[0].company
                           /* 후보가 없어도 «지난번에 손으로 나눈 적» 이 있으면 그것을 내민다.
                              비즈사업비처럼 한 입금이 여러 곳으로 갈라지는 건은 적요→업체 학습(1:1)이
@@ -38764,7 +38819,7 @@ function FinanceLedger(){
             h('button',{onClick:close,style:{padding:'4px 10px',background:'#f8fafc',border:'none',
               borderRadius:'5px',fontSize:'11px',cursor:'pointer'}},'닫기')),
           h('div',{style:{fontSize:'11.5px',color:'#d97706',marginBottom:'10px'}},
-            _mCms ? ('🏦 나이스빌이 '+_mHit.rows.length+'곳 몫을 모아 보낸 돈입니다') : ('⚠️ '+_st.label)),
+            _mCms ? ('🏦 '+erpCmsProviderName(_mHit.rows)+'이 '+_mHit.rows.length+'곳 몫을 모아 보낸 돈입니다') : ('⚠️ '+_st.label)),
           /* ⓪ 더빌이체 — 명세부터 보여준다. 이것이 이 돈의 «정체» 다 */
           _mCms && h('div',{style:{marginBottom:'10px',border:'1px solid #bfdbfe',borderRadius:'6px',padding:'8px 10px'}},
             h('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'5px'}},

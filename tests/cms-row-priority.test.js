@@ -52,7 +52,8 @@ t('맞춤 판정에 수수료를 넘긴다', /exact:_nbAmtFits\(total, want, fee
 const FL = slice('function FinanceLedger(){', '\nfunction FinanceIncome');
 
 t('명세를 찾았는지 한 번만 잰다', /var _cmsHit = !!\(isCms && _nbHit && _nbHit\.rows && _nbHit\.rows\.length\);/.test(FL), true);
-t('업체 칸에 「나이스빌 N곳」', /_cmsHit \? \('🏦 나이스빌 '\+_nbHit\.rows\.length\+'곳'\)/.test(FL), true);
+// (2026-08-13) 효성CMS 도 받게 되어 회사 이름을 줄에서 골라 쓴다 (나이스빌 · 효성 · 섞이면 CMS)
+t('업체 칸에 「회사 N곳」', /_cmsHit \? \('🏦 '\+erpCmsProviderName\(_nbHit\.rows\)\+' '\+_nbHit\.rows\.length\+'곳'\)/.test(FL), true);
 t('업체 칸 도움말에 명세가 뜬다', /'나이스빌 명세 '\+_nbHit\.rows\.length\+'곳 · 합계 '/.test(FL), true);
 t('현황 칸도 명세가 앞선다', /_cmsHit\s*\n?\s*\? h\('span',\{style:\{color:_nbHit\.exact\?'#166534':'#d97706'\}/.test(FL), true);
 t('★ 한 업체와의 차액을 적지 않는다', /!_cmsHit && _st\.diff!==0 && h\('span'/.test(FL), true);
@@ -63,7 +64,7 @@ t('명세가 없으면 올리라고 말한다', /CMS 일괄이체 — 명세를 
 /* ══════ ④ 확인 창에서도 명세가 앞선다 ══════ */
 const POP = slice('/* ── 확인 창 (노란 줄) ──', '/* ── 묶어 확정 권유');
 t('창에서도 명세를 찾는다', /var _mCms = !!\(_mHit && _mHit\.rows && _mHit\.rows\.length\);/.test(POP), true);
-t('머리글이 무슨 돈인지 말한다', /'🏦 나이스빌이 '\+_mHit\.rows\.length\+'곳 몫을 모아 보낸 돈입니다'/.test(POP), true);
+t('머리글이 무슨 돈인지 말한다', /'🏦 '\+erpCmsProviderName\(_mHit\.rows\)\+'이 '\+_mHit\.rows\.length\+'곳 몫을 모아 보낸 돈입니다'/.test(POP), true);
 t('명세를 줄줄이 보여준다', /erpNicebillMatchCo\(_idx, r\.name, r\.bizNo\)/.test(POP), true);
 t('연결 안 된 회원은 빨갛게', /color:_co\?'#1e293b':'#dc2626'/.test(POP), true);
 t('담당자도 함께 보여준다', /_sidName\(_co\.mainSid\)/.test(POP), true);
