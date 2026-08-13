@@ -1568,41 +1568,56 @@ const Store = {
       if (R === DB_ROOT) writeIdx(it);
     }
     else { state.items[it.id]=it; this._ls(); render(); } },
-  /* 삭제 = 휴지통으로 이동 (30일 보관). 사진도 함께 보관 */
+  /* ── 삭제 = 휴지통으로 이동 (30일 보관) ──
+     ⚠ **원본 사진을 휴지통 기록에 복사하지 않는다**(2026-08-13 비용 조사).
+        예전에는 `_photo`/`_photo2` 에 원본을 base64 로 통째 넣었다. 그런데 휴지통은
+        `.on('value')` 로 통째 구독하는 자리라, **명함첩을 열 때마다 30일치 원본을
+        전부 내려받았다.** 8/1~8/11 청구서에서 실시간DB 내려받기가 ₩28,833(전체의 93%)
+        이었고 이것이 큰 몫이다.
+     그래서 사진은 **있던 자리에 그대로 둔다**(창고 pucards/photos, 썸네일 thumbs).
+     지우는 것은 30일 뒤 영구삭제(hardDel) 가 맡는다 — 휴지통의 뜻과도 맞는다.
+     ⚠ 옛 기록(_photo 가 든 것)도 그대로 복원된다 — 아래 restore 가 둘 다 받는다. */
   async del(id){
     const priv = !!(state.priv && state.priv.items && state.priv.items[id]);
     const it = priv ? state.priv.items[id] : state.items[id]; if(!it) return;
-    const photo = await this.getPhoto(id).catch(()=>'');
-    const photo2 = await this.getPhoto(id+'_b').catch(()=>'');
-    /* 썸네일은 이제 items 밖에 있다 — 함께 챙겨 넣지 않으면 복원해도 사진이 빈 채로 돌아온다 */
+    /* 썸네일은 items 밖에 있다 — 휴지통 목록에 그림이 보여야 하므로 이것만 챙긴다
+       (장당 약 20KB. 원본은 장당 수 MB 라 성격이 다르다) */
     const th1 = it.thumb || await this.getThumb(id).catch(()=>'');
     const th2 = it.thumb2 || await this.getThumb(id+'_b').catch(()=>'');
-    const rec = { ...it, thumb: th1||'', thumb2: th2||'',
-      _deletedAt: Date.now(), _photo: photo||'', _photo2: photo2||'' };
+    const rec = { ...it, thumb: th1||'', thumb2: th2||'', _deletedAt: Date.now() };
     if (this.mode==='firebase'){
       /* ★ 개인 명함은 개인 휴지통으로. 공용 휴지통은 직원 누구나 읽으므로,
          그리로 보내면 숨겨 둔 것이 지우는 순간 드러난다. */
       const R = priv ? privRoot() : DB_ROOT;
       await this.db.ref(`${R}/trash/${id}`).set(rec);
-      this.delPhoto(id); this.delPhoto(id+'_b');
-      this.delThumb(id); this.delThumb(id+'_b');
+      /* ⚠ 사진·썸네일은 **안 지운다**. 지우면 휴지통에서 복원해도 빈 사진이 온다. */
       this.db.ref(`${R}/items/${id}`).remove();
       if (!priv) removeIdx(id, it);  /* 개인 명함은 애초에 검색목록에 없다 */
     } else {
       const t=JSON.parse(localStorage.getItem('pucards_local_trash')||'{}'); t[id]=rec;
       try{ localStorage.setItem('pucards_local_trash', JSON.stringify(t)); }catch(e){}
       state.trash[id]=rec;
-      this.delPhoto(id); this.delPhoto(id+'_b');
       delete state.items[id]; this._ls(); render();
     }
   },
-  /* 영구 삭제 (휴지통에서 완전 제거) */
+  /* 영구 삭제 (휴지통에서 완전 제거).
+     ⚠ **여기서 사진·썸네일까지 지운다**(2026-08-13). 삭제 때 안 지우기로 했으므로
+       여기서 안 지우면 창고에 영영 남아 용량만 먹는다. */
   hardDel(id){
-    if (this.mode==='firebase'){ this.db.ref(`${DB_ROOT}/trash/${id}`).remove(); }
+    if (this.mode==='firebase'){
+      this.delPhoto(id); this.delPhoto(id+'_b');
+      this.delThumb(id); this.delThumb(id+'_b');
+      this.db.ref(`${DB_ROOT}/trash/${id}`).remove();
+    }
     else { const t=JSON.parse(localStorage.getItem('pucards_local_trash')||'{}'); delete t[id];
-      localStorage.setItem('pucards_local_trash', JSON.stringify(t)); delete state.trash[id]; render(); }
+      localStorage.setItem('pucards_local_trash', JSON.stringify(t));
+      this.delPhoto(id); this.delPhoto(id+'_b');
+      delete state.trash[id]; render(); }
   },
-  /* 휴지통에서 복원 (사진까지) */
+  /* 휴지통에서 복원.
+     ⚠ 새 기록은 사진이 **있던 자리에 그대로** 있으므로 되돌릴 것이 없다.
+       옛 기록(_photo 가 든 것)만 창고로 되돌려 준다 — 그것까지 안 챙기면
+       예전에 지운 명함을 복원했을 때 사진이 빈 채로 돌아온다. */
   async restore(id){
     let rec=null;
     if (this.mode==='firebase'){ const s=await this.db.ref(`${DB_ROOT}/trash/${id}`).once('value'); rec=s.val(); }
@@ -1613,7 +1628,11 @@ const Store = {
     if(photo) this.putPhoto(id, photo);
     if(photo2) this.putPhoto(id+'_b', photo2);
     this.put(it);
-    this.hardDel(id);
+    /* ⚠ hardDel 은 이제 사진까지 지운다 — 복원한 뒤에 부르면 방금 살린 사진을
+       도로 지운다. 그래서 여기서는 **휴지통 기록만** 없앤다. */
+    if (this.mode==='firebase') this.db.ref(`${DB_ROOT}/trash/${id}`).remove();
+    else { const t=JSON.parse(localStorage.getItem('pucards_local_trash')||'{}'); delete t[id];
+      localStorage.setItem('pucards_local_trash', JSON.stringify(t)); delete state.trash[id]; render(); }
   },
   /* ══════ 원본 사진 — 파일 창고(Storage)에 둔다 (대표 결정 2026-08-09) ══════
      예전에는 실시간DB(`pucards/photos/{id}`)에 base64 로 넣었다. 명함 4,400장이
@@ -6348,6 +6367,31 @@ function purgeTrash(){
     });
     if(n) console.log(`휴지통 자동 정리: ${n}건`);
   }catch(e){ console.error('휴지통 정리 실패', e); }
+  slimTrashPhotos();
+}
+
+/* ── 옛 휴지통 기록에서 원본 사진을 빼낸다 (2026-08-13 비용 조사) ──
+   8/13 이전에 지운 명함은 원본이 `_photo` 안에 base64 로 들어 있다. 휴지통은
+   통째로 구독하는 자리라 **명함첩을 열 때마다 그 전부를 내려받는다.**
+   ⚠ 그냥 지우면 안 된다 — 그때는 창고 사진을 함께 지웠으므로, `_photo` 가 그
+     명함의 **유일한 사진**이다. 그래서 **창고로 되돌려 놓고 나서** 뺀다.
+   ⚠ 되돌리기가 실패하면 안 뺀다. 못 옮겼는데 빼면 사진을 잃는다.
+   한 번 지나가면 다시 할 일이 없다(뺀 기록에는 _photo 가 없다). */
+async function slimTrashPhotos(){
+  if (Store.mode!=='firebase') return;
+  const fat = Object.values(state.trash||{})
+    .filter(it => it && it.id && (it._photo || it._photo2));
+  if (!fat.length) return;
+  let moved=0, failed=0;
+  for (const it of fat){
+    try{
+      if (it._photo)  await Store.putPhoto(it.id, it._photo);
+      if (it._photo2) await Store.putPhoto(it.id+'_b', it._photo2);
+      await Store.db.ref(`${DB_ROOT}/trash/${it.id}`).update({ _photo:null, _photo2:null });
+      moved++;
+    }catch(e){ failed++; console.warn('[휴지통 사진 옮기기]', it.id, e && e.message); }
+  }
+  console.log(`휴지통 원본 사진 창고로 이동: ${moved}건${failed?` (실패 ${failed}건 — 다음에 다시 시도합니다)`:''}`);
 }
 
 /* 현재 목록 인쇄 / PDF */
