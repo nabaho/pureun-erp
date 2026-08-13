@@ -1453,7 +1453,10 @@ function renderPerf(){
   var app=$('app'); if(!app) return;
   if(S.perfData===undefined){ app.innerHTML=loadingHTML(); pcRefresh(); return; }
   var list=S.perfData||[], adm=S.perfAll||[];
-  var h='';
+  /* 성과급은 읽는 화면이지 늘어놓는 화면이 아니다. 최대 너비를 두지 않으면
+     넓은 모니터에서 「확인한 때」가 저 멀리 붙어 눈이 따라가지 못한다.
+     (업무 목록처럼 칸이 많은 화면은 넓어야 하므로 #app 전체가 아니라 여기서만 좁힌다) */
+  var h='<div style="max-width:860px">';
   if(!list.length){
     h+='<div class="card" style="text-align:center;padding:32px 20px;color:var(--faint);margin-bottom:14px">'
       +'<div style="font-size:30px;margin-bottom:10px">⭐</div>'
@@ -1464,7 +1467,7 @@ function renderPerf(){
     h+=list.map(pcMonthHTML).join('');
   }
   h+=pcAdminHTML();                    /* 총괄·대행에게만 채워진다 */
-  app.innerHTML=h;
+  app.innerHTML=h+'</div>';
 }
 
 /* ── 대표만 보는 전체 현황 (읽기 전용) ────────────────────────
@@ -1537,7 +1540,8 @@ function pcAdminHTML(){
   });
   h+='</div>';
 
-  h+= sel ? pcAdmOneHTML(ym, all[sel], mask) : pcAdmAllHTML(ym, all, sids, st, mask);
+  /* 사번을 따로 넘긴다 — 사본 안의 p.sid 를 믿지 않는다(답변을 엉뚱한 사람에게 쓸 수 없게) */
+  h+= sel ? pcAdmOneHTML(ym, sel, all[sel], mask) : pcAdmAllHTML(ym, all, sids, st, mask);
   h+='</div>';
   return h;
 }
@@ -1601,7 +1605,7 @@ function pcAdmAllHTML(ym, all, sids, st, mask){
 }
 
 /* 사람 탭 — 그 사람이 어느 줄에서 멈췄는지 */
-function pcAdmOneHTML(ym, p, mask){
+function pcAdmOneHTML(ym, sid, p, mask){
   var items=p.items||{}, c=pcCounts(p), w=pcWho(p);
   var ids=Object.keys(items).sort(function(a,b){ return String(items[a].date||'')<String(items[b].date||'')?-1:1; });
   var h='<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--faint);margin-bottom:12px">'
@@ -1633,18 +1637,93 @@ function pcAdmOneHTML(ym, p, mask){
       h+='<div style="background:#eff6ff;border-radius:6px;padding:8px 11px;margin-top:7px;font-size:12.5px;color:#1e40af;line-height:1.7">'
         +'<b>답변</b> '+esc(String(it.reply.at||'').slice(0,10))+'<br>'+esc(it.reply.text)+'</div>';
     }
+    /* 아직 안 답한 이의에만 답변칸을 낸다 — 답하면 그 이의는 닫힌다 */
+    if(st==='obj' && ob && !(it.reply && it.reply.state==='done')){
+      h+='<div style="margin-top:8px">'
+        +'<textarea id="rp-'+esc(fid)+'" rows="2" placeholder="답변을 적어주세요 — 직원 화면에 그대로 보입니다" '
+        +'style="width:100%;box-sizing:border-box;padding:7px 10px;font-size:12.5px;line-height:1.6;'
+        +'border:1px solid var(--bd);border-radius:6px;resize:vertical;font-family:inherit"></textarea>'
+        +'<div style="display:flex;justify-content:flex-end;margin-top:6px">'
+        +'<button id="rpb-'+esc(fid)+'" onclick="pcReply(\''+escJ(ym)+'\',\''+escJ(sid)+'\',\''+escJ(fid)+'\')" '
+        +'style="padding:6px 14px;font-size:12px;font-weight:700;border:none;border-radius:6px;'
+        +'background:#1e40af;color:#fff;cursor:pointer">답변하고 닫기</button></div></div>';
+    }
     h+='</div>';
   });
 
   if(w.k==='obj') h+='<div style="margin-top:10px;font-size:11.5px;color:var(--faint);line-height:1.7">'
-    +'이의 답변은 푸른이알피 <b>성과관리 → 확인 현황</b>에서 합니다. 여기서는 보기만 합니다.</div>';
+    +'답변하면 그 자리에서 직원 화면에 그대로 보이고, 그 이의는 닫힙니다.<br>'
+    +'금액을 고쳐야 하면 푸른이알피 <b>입금관리 → 성과분배</b>에서 고친 뒤 다시 발행하세요.</div>';
   return h;
+}
+
+/* ── 이의 답변 — 대표가 여기서 바로 답한다 ──────────────────────
+   전에는 보기만 되고 답변은 푸른이알피 「확인 현황」에서 해야 했다. 같은 자료를
+   두 화면에서 보면서 손은 한 곳에서만 쓸 수 있으니 늘 오가야 했다.
+   ⚠ 쓰는 자리는 items/<fid>/reply — 직원은 못 쓰는 자리다(규칙).
+     data/perf_confirm 위쪽에 .write:isAdmin 이 걸려 있어 대표는 여기서도 쓸 수 있다.
+   ⚠ 금액은 여기서 못 고친다. 고치는 것은 원본(입금관리 성과분배)의 일이다. */
+function pcReplyRef(ym,sid,fid){ return fbDb.ref(PC_PATH+'/'+ym+'/p/'+sid+'/items/'+fid+'/reply'); }
+function pcReply(ym,sid,fid){
+  var el=$('rp-'+fid); if(!el) return;
+  var t=String(el.value||'').trim();
+  if(t.length<2){ toast('답변을 적어주세요','err'); return; }
+  if(typeof fbDb==='undefined'||!fbDb){ toast('서버에 연결돼 있지 않습니다','err'); return; }
+  var btn=$('rpb-'+fid); if(btn){ btn.disabled=true; btn.textContent='저장 중…'; }
+  pcReplyRef(ym,sid,fid).set({ text:t.slice(0,500), at:new Date().toISOString(),
+      by:pcMySid(), state:'done' })   /* state:'done' 이라야 그 이의가 닫힌다 */
+    .then(function(){
+      toast('답변했습니다 — 직원 화면에 그대로 보입니다');
+      /* 다시 읽어야 화면·띠·배지가 함께 맞는다 (안 읽으면 방금 답한 이의가 그대로 열려 보인다) */
+      return pcRefresh().then(route);
+    })
+    .catch(function(e){
+      if(btn){ btn.disabled=false; btn.textContent='답변하고 닫기'; }
+      toast('답변 저장 실패 — '+(e&&e.message||''),'err');
+    });
+}
+
+/* 대표가 답해야 할 이의 — 몇 건인지, 가장 오래된 것이 며칠째인지.
+   직원에게는 「확인이 남았습니다」 띠가 뜨는데 대표에게는 아무것도 없어서,
+   이의가 올라와도 열어봐야 알았다. 같은 자리를 대표용으로도 쓴다. */
+function pcAdmPending(){
+  var n=0, people=0, oldest=0, months={};
+  (S.perfAll||[]).forEach(function(m){
+    Object.keys(m.all||{}).forEach(function(sid){
+      var p=m.all[sid]||{}, w=pcWho(p);
+      if(w.k!=='obj') return;
+      people++; n+=w.open.length; months[(+m.ym.slice(5,7))+'월']=1;
+      w.open.forEach(function(fid){
+        var d=pcDaysAgo((((p.objection||{}).byItem||{})[fid]||{}).at);
+        if(d>oldest) oldest=d;
+      });
+    });
+  });
+  return { n:n, people:people, oldest:oldest, months:Object.keys(months) };
 }
 
 /* ── 안내 띠 — 확인이 남아 있으면 화면 맨 위에 계속 남는다 ── */
 function pcBand(){
   var el=$('perfband'); if(!el) return;
   var pend=(S.perfData||[]).filter(function(x){ return !x.p.done; });
+  /* 내 확인이 다 끝났어도, 대표라면 답할 이의가 남았을 수 있다 —
+     내 것을 먼저 보이고(내 일이 우선), 없을 때 대표 것을 보인다. */
+  if(!pend.length && S.view!=='perf'){
+    var a=pcAdmPending();
+    if(a.n){
+      var slow=a.oldest>=3;                      /* 사흘 넘게 답을 못 받으면 급한 것으로 본다 */
+      el.style.display='';
+      el.innerHTML='<div onclick="go(\'perf\')" style="cursor:pointer;display:flex;align-items:center;gap:10px;flex-wrap:wrap;'
+        +'background:'+(slow?'#fef2f2':'#fffbeb')+';border-bottom:2px solid '+(slow?'#fca5a5':'#fbbf24')
+        +';padding:9px 16px;font-size:13px;color:'+(slow?'#b91c1c':'#854d0e')+'">'
+        +'<b>'+(slow?'⏰':'⚠')+' 성과급 이의 '+a.n+'건이 답을 기다립니다</b>'
+        +'<span style="font-size:12px">'+esc(a.months.join('·'))+' · '+a.people+'명'
+        +(a.oldest?' · 가장 오래된 것 '+a.oldest+'일째':'')+'</span>'
+        +'<span style="margin-left:auto;background:#fff;border:1px solid currentColor;border-radius:6px;'
+        +'padding:4px 12px;font-size:12px;font-weight:700">답변하러 가기 →</span></div>';
+      return;
+    }
+  }
   if(!pend.length || S.view==='perf'){ el.style.display='none'; el.innerHTML=''; return; }
   var n=pend.reduce(function(s,x){ return s+pcCounts(x.p).todo; },0);
   var late=pend.some(function(x){ return pcDueLate(x.p.due); });
@@ -1791,7 +1870,9 @@ function route(){
   var ca=$('cnt-ar'); if(ca)ca.textContent=allItems().filter(function(it){return it.state==='done';}).length||'';
   var ck=$('cnt-kb'); if(ck)ck.textContent=kbAll().length||'';
   var ch=$('cnt-ho'); if(ch){ var n2=hoBadgeCount(); ch.textContent=n2||''; ch.style.color=n2?'#c0392b':''; ch.style.fontWeight=n2?'800':''; }
-  var cp=$('cnt-perf'); if(cp){ var n3=(S.perfData||[]).filter(function(x){return !x.p.done;}).length;
+  /* 내가 확인할 달 + (대표라면) 답할 이의 건수를 함께 센다 — 둘 다 「내 성과급」에서 하는 일이다 */
+  var cp=$('cnt-perf'); if(cp){
+    var n3=(S.perfData||[]).filter(function(x){return !x.p.done;}).length + pcAdmPending().n;
     cp.textContent=n3||''; cp.style.color=n3?'#c0392b':''; cp.style.fontWeight=n3?'800':''; }
   pcBand();   /* 화면을 옮길 때마다 띠를 다시 판단한다 (성과급 화면에서는 숨긴다) */
   if(S.view==='team') renderTeam();
