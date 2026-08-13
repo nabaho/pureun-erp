@@ -281,6 +281,38 @@
       .then(function (s) { return s.val() || {}; });
   }
 
+  /* 한 칸(귀속월 또는 keep)의 자료 목록. 본문·미리보기는 안 따라온다.
+     ⚠ 이 칸에는 **모든 사업장**의 자료가 섞여 있다(itemPath 에 사업장 번호가 없다) —
+     사업장별로 가르는 것은 화면이 companyId 로 걸러서 한다. */
+  function listSlot(slot, owner) {
+    return deps.db.ref(slotPath(slot, owner)).once('value')
+      .then(function (s) { return s.val() || {}; });
+  }
+
+  /* 보유기간(3년)이 지났는가 — 표시만 한다. 지우는 코드는 어디에도 없다.
+     귀속월이 있는 자료는 그 달 말일부터, keep 자료(근로계약서 등)는 담은 날부터 센다. */
+  function isExpired(rec, now) {
+    var slot = String((rec && rec.month) || '');
+    var at;
+    if (slot === KEEP || !/^\d{6}$/.test(slot)) {
+      at = Number((rec && rec.filedAt) || (rec && rec.at) || 0);
+    } else {
+      var y = parseInt(slot.slice(0, 4), 10), mo = parseInt(slot.slice(4), 10);
+      at = new Date(y, mo, 0, 23, 59, 59).getTime();   // 귀속월 말일
+    }
+    if (!at) return false;
+    return (Number(now || Date.now()) - at) > KEEP_YEARS * 365 * 86400000;
+  }
+
+  /* 창고 파일의 내려받기 주소 — 「확대」 보기·다운로드 링크에 쓴다.
+     사진첩과 달리 여기는 엑셀·PDF도 섞여 있어 항상 <img> 로 보여줄 수 없다 —
+     부르는 쪽이 mime 을 보고 그림인지 아닌지 가른다. */
+  function fileDownloadUrl(path) {
+    if (!deps.storage) return Promise.reject(new Error('창고가 연결되지 않았습니다'));
+    if (!path) return Promise.reject(new Error('파일 자리를 알 수 없습니다'));
+    return deps.storage.ref(path).getDownloadURL();
+  }
+
   /* ══════ 업체관리 명단 ══════
      사업장 서랍의 기준은 푸른이알피 업체관리다(대표 결정 2026-08-13).
      데이터함이 제 명단을 만들면 이름 글자 맞추기 어긋남이 늘어난다.
@@ -392,6 +424,9 @@
     listMyPending: listMyPending,
     listSharedPending: listSharedPending,
     listArrivals: listArrivals,
+    listSlot: listSlot,
+    isExpired: isExpired,
+    fileDownloadUrl: fileDownloadUrl,
     ERP_COMPANIES: ERP_COMPANIES,
     normalizeCompanies: normalizeCompanies,
     listCompanies: listCompanies,

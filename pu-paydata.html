@@ -52,6 +52,42 @@ h1{font-size:18px;margin-bottom:4px}
 .pkbar label{display:flex;align-items:center;gap:6px;cursor:pointer}
 .pkbar .pkn{color:var(--navy);font-weight:700}
 .pkbar .pkx{margin-left:auto;padding:3px 9px}
+
+/* ── 분류 탭 · 찾기 줄 틀고정 (사진첩과 같은 방식, 대표 지시 2026-08-13) ──
+   자료가 쌓이면 아래로 내려간 뒤 탭을 누르려고 다시 맨 위로 올라와야 한다.
+   배경색을 반드시 준다 — 투명하면 목록이 그 밑으로 비쳐 글씨를 덮는다. */
+#tabsBar{position:sticky;top:0;z-index:6;background:var(--paper);
+  display:flex;gap:6px;padding:8px 0 9px;flex-wrap:wrap}
+#tabsBar button{border:1px solid var(--line);background:#fff;color:var(--sub);border-radius:9px;
+  padding:7px 13px;font-size:12.5px;font-weight:700;font-family:inherit;white-space:nowrap}
+#tabsBar button.on{border-color:var(--navy);background:var(--navy);color:#fff}
+#tabsBar button .n{font-weight:800;opacity:.75;margin-left:5px;font-size:11px}
+/* 찾기 줄도 탭 바로 아래 붙는다(탭 높이만큼 내려서 겹치지 않게 한다) */
+#findBar{position:sticky;top:44px;z-index:5;background:var(--paper);padding:0 0 10px}
+#findBar input{width:100%;border:1px solid var(--line);background:#fff;color:var(--ink);
+  border-radius:9px;padding:8px 12px;font-size:13px;font-family:inherit}
+#findBar input:focus{outline:none;border-color:var(--navy)}
+
+.expbadge{font-size:11.5px;color:var(--warn);font-weight:700;white-space:nowrap}
+
+/* ── 확대 보기 (사진첩과 같은 방식) ──
+   클릭하면 전체화면으로 보이고, 사진은 다시 눌러 원본 크기로 확대한다(서류 글씨를
+   읽어야 한다). 엑셀·PDF 는 사진이 아니라 새 창에서 여는 안내만 보여준다. */
+#viewer{display:none;position:fixed;inset:0;background:rgba(8,10,16,.96);z-index:30;flex-direction:column}
+#viewer.on{display:flex}
+#viewer .bar{display:flex;align-items:center;justify-content:space-between;
+  padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;color:#fff}
+#viewer .bar span{font-size:12.5px;opacity:.85}
+#viewer .back{background:rgba(255,255,255,.16);border:none;color:#fff;border-radius:9px;
+  padding:8px 14px;font-size:13px;font-family:inherit}
+#viewerBody{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;
+  overflow:auto;padding:0 12px 16px}
+#viewerBody img{max-width:100%;max-height:100%;object-fit:contain;cursor:zoom-in}
+#viewerBody.zoom{align-items:flex-start;justify-content:flex-start}
+#viewerBody.zoom img{max-width:none;max-height:none;cursor:zoom-out}
+#viewerBody .doc{color:#fff;text-align:center;padding:20px}
+#viewerBody .doc a{color:#fff;font-weight:700}
+
 @media(max-width:520px){main{padding:12px}}
 </style>
 </head>
@@ -62,6 +98,10 @@ h1{font-size:18px;margin-bottom:4px}
 </header>
 <div id="gate" class="gate">로그인을 확인하고 있습니다…</div>
 <main id="main" style="display:none"></main>
+<div id="viewer">
+  <div class="bar"><button class="back" onclick="closeViewer()">← 돌아가기</button><span id="viewerName"></span></div>
+  <div id="viewerBody" onclick="toggleViewerZoom(event)"></div>
+</div>
 
 <script>
 /* ══════ 설정 (다른 앱과 같은 파이어베이스 프로젝트) ══════ */
@@ -133,6 +173,11 @@ function pickPut(kind, sel) { App.pick = App.pick || {}; App.pick[kind] = sel; }
    화면에서 값을 미리 받아 두면 안 그린 채 눌렸을 때 낡은 값으로 처리하게 된다. */
 function pickVisible(kind) {
   if (kind === 'sites') return sitesModel(App.companies, App.pending, App.arrivals, App.month, Date.now()).rows.map(r => r.id);
+  if (kind === 'pending') return Object.keys(App.pending || {});
+  if (kind === 'drawer') {
+    const rows = drawerModel(App.itemsKeep, App.itemsMonth, App.companyId, App.kind, Date.now()).rows;
+    return searchRows(rows, App.query).map(r => r.id);
+  }
   return [];
 }
 function pickHit(kind, id) { pickPut(kind, pickToggle(pickOf(kind), id)); App.render(); }
@@ -164,12 +209,15 @@ function pickBar(kind, ids, acts) {
 /* ══════ 화면 상태 ══════
    어느 화면인가 · 어느 사업장인가 · 어느 달인가. 자료는 여기 모아 두고 화면이 읽는다. */
 const App = {
-  screen: 'sites', companyId: '', companyName: '', month: '', kind: 'attend',
-  companies: [], pending: {}, arrivals: {}, items: null, trash: null, me: null, pick: {},
+  screen: 'sites', companyId: '', companyName: '', month: '', kind: 'attend', query: '',
+  companies: [], pending: {}, arrivals: {}, trash: null, me: null, pick: {},
+  itemsKeep: null, itemsMonth: null, itemsMonthSlot: '',
+  viewerId: '', viewerUrl: '', viewerZoom: false, viewerErr: '',
 
   go(screen, o) {
     Object.assign(App, o || {});
     App.screen = screen;
+    if (screen === 'drawer') ensureDrawerData();
     App.render();
   },
 
@@ -177,8 +225,11 @@ const App = {
 
   render() {
     const m = $('main');
-    if (App.screen === 'sites') { m.innerHTML = screenSites(); return; }
+    if (App.screen === 'sites') { m.innerHTML = screenSites(); renderViewer(); return; }
+    if (App.screen === 'pending') { m.innerHTML = screenPending(); renderViewer(); return; }
+    if (App.screen === 'drawer') { m.innerHTML = screenDrawer(); renderViewer(); return; }
     m.innerHTML = '<div class="card"><div class="empty">아직 만들지 않은 화면입니다.</div></div>';
+    renderViewer();
   }
 };
 window.App = App;
@@ -312,7 +363,7 @@ function screenSites() {
       + (pickOn(siteSel, r.id) ? 'checked' : '') + ' onchange="pickHit(\'sites\',\'' + esc(r.id) + '\')"></label>'
       + '<span class="pkno">' + (i + 1) + '</span>'
       + '<b style="flex:1;cursor:pointer" onclick="App.go(\'drawer\',{companyId:\'' + esc(r.id)
-      + '\',companyName:\'' + esc(r.name) + '\',items:null})">' + esc(r.name) + '</b>'
+      + '\',companyName:\'' + esc(r.name) + '\',kind:\'attend\',query:\'\'})">' + esc(r.name) + '</b>'
       + '<span class="chip" style="background:' + (r.arrived ? 'var(--ok)' : 'var(--warn)') + '">'
       + (r.arrived ? '도착' : '미도착') + '</span>'
       + '<span class="sub" style="margin:0">' + r.count + '장</span></div>').join('');
@@ -335,6 +386,231 @@ function screenSites() {
         + '<span class="sub" style="margin:0">' + u.count + '장</span></div>').join('') + '</div>';
   }
   return h;
+}
+
+/* ══════ 미정 대기 칸 (Task 8) ══════ */
+
+/* 파일 이름에서 이름표를 짐작한다. 빈칸으로 두면 아무도 안 채운다. 그렇다고
+   아무거나 골라 넣으면 틀린 서랍에 들어가고 아무도 모른다 — 못 알아본 것은 빈칸으로 남긴다. */
+function guessTag(rec, companies) {
+  const text = String((rec && rec.filename) || '') + ' ' + String((rec && rec.note) || '');
+  const hit = S.matchCompanyName(text, companies || []);
+
+  let month = '';
+  let m = text.match(/(20\d{2})\D{0,3}(\d{1,2})\s*월/);          // '2026년 8월'
+  if (!m) m = text.match(/(20\d{2})[.\-_](\d{1,2})(?!\d)/);      // '2026-08'
+  if (!m) {
+    const yy = text.match(/(?:^|\D)(\d{2})\s*년\s*(\d{1,2})\s*월/); // '25년 07월'
+    if (yy) m = [yy[0], '20' + yy[1], yy[2]];
+  }
+  if (m) {
+    const mo = parseInt(m[2], 10);
+    if (mo >= 1 && mo <= 12) month = m[1] + '-' + (mo < 10 ? '0' : '') + mo;
+  }
+
+  let kind = 'etc';
+  if (/근로계약|계약서/.test(text)) kind = 'contract';
+  else if (/명세서|이체|신고|취득|상실/.test(text)) kind = 'output';
+  else if (/급여대장|노임|임금대장|대장/.test(text)) kind = 'ledger';
+  else if (/근태|출근|출역|근무|시간/.test(text)) kind = 'attend';
+
+  return { companyId: hit ? hit.id : '', companyName: hit ? hit.name : '', month: month, kind: kind };
+}
+
+function screenPending() {
+  const ids = Object.keys(App.pending || {}).sort((a, b) => ((App.pending[b].at || 0) - (App.pending[a].at || 0)));
+  let h = '<div style="margin-bottom:10px"><button class="btn" onclick="App.go(\'sites\')">← 사업장</button></div>'
+    + '<h1>미정 대기 칸</h1><div class="sub">사업장·귀속월을 채우면 서랍으로 내려갑니다 · ' + ids.length + '건</div>';
+
+  if (!ids.length) return h + '<div class="card"><div class="empty">대기 중인 자료가 없습니다.</div></div>';
+
+  const now = Date.now();
+  const kindOpts = S.KINDS.map(k => '<option value="' + k.key + '">' + esc(k.label) + '</option>').join('');
+  const coOpts = '<option value="">사업장 고르기</option>'
+    + App.companies.map(c => '<option value="' + esc(c.id) + '">' + esc(c.name) + '</option>').join('');
+
+  h += '<div class="card">' + pickBar('pending', ids, '') + ids.map((id, i) => {
+    const rec = App.pending[id];
+    const g = guessTag(rec, App.companies);
+    const stale = S.isStalePending(rec, now);
+    const sel = pickOf('pending');
+    return '<div class="row' + (pickOn(sel, id) ? ' pkon' : '') + '" style="display:block">'
+      + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">'
+      + '<label onclick="event.stopPropagation()"><input type="checkbox" ' + (pickOn(sel, id) ? 'checked' : '')
+      + ' onchange="pickHit(\'pending\',\'' + esc(id) + '\')"></label>'
+      + '<span class="pkno">' + (i + 1) + '</span>'
+      + '<b style="flex:1">' + esc(rec.filename || '(이름 없음)') + '</b>'
+      + (stale ? '<span class="expbadge">3일 넘음</span>' : '')
+      + '</div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding-left:34px">'
+      + '<select class="btn" id="co_' + id + '">' + coOpts.replace('value="' + esc(g.companyId) + '"',
+        'value="' + esc(g.companyId) + '" selected') + '</select>'
+      + '<input class="btn" id="mo_' + id + '" style="width:104px" placeholder="2026-08" value="' + esc(g.month) + '">'
+      + '<select class="btn" id="kd_' + id + '">' + kindOpts.replace('value="' + esc(g.kind) + '"',
+        'value="' + esc(g.kind) + '" selected') + '</select>'
+      + '<button class="btn pri" onclick="fileToDrawer(\'' + esc(id) + '\')">서랍으로</button>'
+      + '</div></div>';
+  }).join('') + '</div>';
+  return h;
+}
+
+/* 대기 칸에서 서랍으로. 저장 층이 한 묶음으로 쓴다 —
+   자료 생기기·대기 칸 지우기·도착 표시가 함께 들어간다. */
+function fileToDrawer(id) {
+  const rec = App.pending[id];
+  if (!rec) return;
+  const coId = $('co_' + id).value;
+  const co = App.companies.filter(c => c.id === coId)[0];
+  const tag = { companyId: coId, companyName: co ? co.name : '', month: $('mo_' + id).value,
+    kind: $('kd_' + id).value, at: Date.now() };
+  let up;
+  try { up = S.drawerUpdate(id, rec, tag); }
+  catch (e) { alert(e.message); return; }     // 무엇이 비었는지 사람에게 알린다
+  S.moveToDrawer(id, tag, rec)
+    .then(() => { delete App.pending[id]; App.render(); })
+    .catch(e => alert('저장 실패: ' + (e.code || e.message) + '\n다시 시도해 주세요.'));
+}
+window.fileToDrawer = fileToDrawer;
+
+/* ══════ 사업장 서랍 (Task 9) — 사진첩과 같은 틀고정 탭·찾기 줄·확대 보기 ══════ */
+
+/* 근로계약서(keep)는 귀속월과 무관한 다른 칸에 있다 — 그 칸의 자료까지 세어야
+   「근로계약서 3」처럼 탭에 정확한 장수가 뜬다. 두 칸(keep·이 달)을 함께 받는다. */
+function drawerCounts(itemsKeep, itemsMonth, companyId) {
+  const counts = {};
+  S.KINDS.forEach(k => {
+    const box = k.keep ? (itemsKeep || {}) : (itemsMonth || {});
+    counts[k.key] = Object.keys(box).filter(id => {
+      const r = box[id];
+      return r && r.companyId === companyId && r.kind === k.key;
+    }).length;
+  });
+  return counts;
+}
+
+/* 지금 고른 탭(kind)에 맞는 칸만 본다 — keep 탭이면 keep 칸, 아니면 이 달 칸. */
+function drawerModel(itemsKeep, itemsMonth, companyId, kind, now) {
+  const box = S.isKeepKind(kind) ? (itemsKeep || {}) : (itemsMonth || {});
+  const rows = Object.keys(box).map(id => {
+    const r = box[id];
+    return Object.assign({ id: id, expired: S.isExpired(r, now) }, r);
+  }).filter(r => r.companyId === companyId && r.kind === kind)
+    .sort((a, b) => (Number(b.filedAt || 0) - Number(a.filedAt || 0)));
+  return { rows: rows };
+}
+
+/* 파일 이름으로 좁힌다 — 사진첩의 찾기 줄과 같은 자리(탭 바로 아래)에 둔다. */
+function searchRows(rows, query) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return rows || [];
+  return (rows || []).filter(r => String(r.filename || '').toLowerCase().indexOf(q) >= 0);
+}
+
+/* keep 칸은 한 번만, 이 달 칸은 달이 바뀔 때만 다시 읽는다 — 매번 두 칸을
+   전부 새로 읽으면 탭만 눌러도 실시간DB를 불필요하게 두드린다. */
+function ensureDrawerData() {
+  if (!App.month) App.month = thisMonth();
+  const monthSlot = S.monthKey(App.month) || S.KEEP;
+  const jobs = [];
+  if (!App.itemsKeep) {
+    jobs.push(S.listSlot(S.KEEP).then(v => { App.itemsKeep = v; })
+      .catch(e => { console.warn('[서랍·keep]', e && e.code); App.itemsKeep = {}; }));
+  }
+  if (App.itemsMonthSlot !== monthSlot) {
+    jobs.push(S.listSlot(monthSlot).then(v => { App.itemsMonth = v; App.itemsMonthSlot = monthSlot; })
+      .catch(e => { console.warn('[서랍·' + monthSlot + ']', e && e.code); App.itemsMonth = {}; App.itemsMonthSlot = monthSlot; }));
+  }
+  if (jobs.length) Promise.all(jobs).then(() => App.render());
+}
+
+function screenDrawer() {
+  if (!App.month) App.month = thisMonth();
+  const counts = drawerCounts(App.itemsKeep, App.itemsMonth, App.companyId);
+  const model = drawerModel(App.itemsKeep, App.itemsMonth, App.companyId, App.kind, Date.now());
+  const rows = searchRows(model.rows, App.query);
+  const ids = rows.map(r => r.id);
+  const sel = pickPrune(pickOf('drawer'), ids); pickPut('drawer', sel);
+
+  let h = '<div style="margin-bottom:10px"><button class="btn" onclick="App.go(\'sites\')">← 사업장</button></div>'
+    + '<h1>' + esc(App.companyName || App.companyId) + '</h1>'
+    + '<div class="sub">' + model.rows.length + '건'
+    + (App.query ? ' 중 ' + rows.length + '건 찾음' : '') + '</div>';
+
+  if (!S.isKeepKind(App.kind)) {
+    h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">기준 월'
+      + ' <input class="btn" style="width:110px" value="' + esc(App.month) + '"'
+      + ' onchange="App.month=this.value;ensureDrawerData();App.render()"></div>';
+  } else {
+    h += '<div class="sub">근로계약서는 월과 상관없이 모두 보입니다.</div>';
+  }
+
+  h += '<div id="tabsBar">' + S.KINDS.map(k =>
+    '<button class="' + (App.kind === k.key ? 'on' : '') + '" onclick="App.kind=\'' + k.key
+    + '\';App.query=\'\';ensureDrawerData();App.render()">' + esc(k.label)
+    + '<span class="n">' + counts[k.key] + '</span></button>').join('') + '</div>';
+
+  h += '<div id="findBar"><input placeholder="파일 이름으로 찾기" value="' + esc(App.query) + '"'
+    + ' oninput="App.query=this.value;App.render()"></div>';
+
+  h += '<div class="card">' + (rows.length ? pickBar('drawer', ids, '') + rows.map((r, i) =>
+    '<div class="row' + (pickOn(sel, r.id) ? ' pkon' : '') + '">'
+    + '<label onclick="event.stopPropagation()"><input type="checkbox" ' + (pickOn(sel, r.id) ? 'checked' : '')
+    + ' onchange="pickHit(\'drawer\',\'' + esc(r.id) + '\')"></label>'
+    + '<span class="pkno">' + (i + 1) + '</span>'
+    + '<b style="flex:1;cursor:pointer" onclick="openViewer(\'' + esc(r.id) + '\')">'
+    + esc(r.filename || '(이름 없음)') + '</b>'
+    + (r.expired ? '<span class="expbadge">지난 것</span>' : '')
+    + '<span class="sub" style="margin:0">' + (r.filedAt ? new Date(r.filedAt).toLocaleDateString() : '') + '</span>'
+    + '</div>').join('')
+    : '<div class="empty">' + (App.query ? '찾는 자료가 없습니다.' : '이 칸에 담긴 자료가 없습니다. 다른 월이나 다른 종류를 보세요.') + '</div>')
+    + '</div>';
+  return h;
+}
+
+/* ── 확대 보기 (사진첩과 같은 방식) ──
+   사진은 눌러서 원본 크기로 확대한다(서류 글씨를 읽어야 한다). 엑셀·PDF 는
+   미리 볼 수 없으니 새 창에서 여는 안내만 보여준다. */
+function findRow(id) {
+  const boxes = [App.itemsKeep, App.itemsMonth];
+  for (let i = 0; i < boxes.length; i++) { if (boxes[i] && boxes[i][id]) return boxes[i][id]; }
+  return null;
+}
+function openViewer(id) {
+  App.viewerId = id; App.viewerUrl = ''; App.viewerZoom = false; App.viewerErr = '';
+  App.render();
+  const rec = findRow(id);
+  if (!rec) { App.viewerErr = '자료를 찾을 수 없습니다.'; App.render(); return; }
+  S.fileDownloadUrl(rec.file).then(url => { App.viewerUrl = url; App.render(); })
+    .catch(e => { App.viewerErr = e.message; App.render(); });
+}
+function closeViewer() { App.viewerId = ''; App.render(); }
+function toggleViewerZoom(ev) {
+  if (ev && ev.target && ev.target.tagName !== 'IMG') return;   // 바깥을 눌러도 확대되지 않는다
+  App.viewerZoom = !App.viewerZoom; App.render();
+}
+window.openViewer = openViewer; window.closeViewer = closeViewer; window.toggleViewerZoom = toggleViewerZoom;
+
+/* App.render() 가 화면을 바꿀 때마다 함께 그린다 — 뷰어는 어느 화면 위에도 뜰 수 있다. */
+function renderViewer() {
+  const v = $('viewer');
+  if (!v) return;
+  const rec = App.viewerId ? findRow(App.viewerId) : null;
+  v.classList.toggle('on', !!App.viewerId);
+  if (!App.viewerId) return;
+  $('viewerName').textContent = rec ? (rec.filename || '') : '';
+  const body = $('viewerBody');
+  body.classList.toggle('zoom', App.viewerZoom);
+  const isImage = rec && /^image\//.test(rec.mime || '');
+  if (App.viewerErr) {
+    body.innerHTML = '<div class="doc">불러오지 못했습니다 — ' + esc(App.viewerErr) + '</div>';
+  } else if (!App.viewerUrl) {
+    body.innerHTML = '<div class="doc">불러오는 중…</div>';
+  } else if (isImage) {
+    body.innerHTML = '<img src="' + esc(App.viewerUrl) + '" alt="">';
+  } else {
+    body.innerHTML = '<div class="doc">이 파일은 미리 볼 수 없습니다.<br>'
+      + '<a href="' + esc(App.viewerUrl) + '" target="_blank" rel="noopener">새 창에서 열기</a></div>';
+  }
 }
 </script>
 </body>
