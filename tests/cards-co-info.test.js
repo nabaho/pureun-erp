@@ -68,3 +68,23 @@ test('빠진 서류를 눈에 띄게 알린다', () => {
   assert.match(source, /등록증 없음/);
   assert.match(source, /\.corow \.bits i\.miss\{background:#fee2e2/);
 });
+
+test('사업 갈래(탭)는 서식 이름으로 저절로 생긴다', () => {
+  /* 기업정보는 「특정 사업 때문에」 모이는 일이 많다 — 손으로 탭을 만들 필요가 없어야 한다 */
+  assert.match(source, /const coTagsOf = o => Object\.keys\(\(o\.extra && o\.extra\.tags\)/);
+  assert.match(source, /function coTagList/);
+  assert.match(source, /class="cotabs"/);
+  assert.match(source, /onclick="pickCoTag\(/);
+});
+
+test('갈래가 없으면 어떻게 생기는지 알려준다', () => {
+  /* 빈 줄만 있으면 「왜 아무것도 없지」로 끝난다 */
+  assert.match(source, /사진첩에서 서식·신청서를 기업정보로 보내면 그 서류 이름으로 갈래가 생깁니다/);
+});
+
+test('빠진 서류 경고는 우리가 일하는 회사에만 띄운다', () => {
+  /* 명함 한 장만 있는 회사까지 붉게 칠하니 4,140곳이 온통 붉어져,
+     정작 봐야 할 거래처의 빠진 서류가 묻혔다(대표 화면 2026-08-13). */
+  assert.match(source, /const care = !!\(o\.erp \|\| coTagsOf\(o\)\.length\)/);
+  assert.match(source, /const miss = s => care \?/);
+});

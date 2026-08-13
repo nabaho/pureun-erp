@@ -396,6 +396,13 @@
         add[k] = String(v).trim();
         filled.push(k);
       });
+      /* 어떤 사업으로 들어온 회사인지 딱지를 붙인다 — 서류이름이 곧 사업 이름이다.
+         기업정보 화면이 이 딱지로 갈래(탭)를 저절로 만든다. 손으로 만들 필요가 없다
+         (대표 지시 2026-08-12). 이름이 「값 없음」이 되지 않도록 . # $ [ ] / 를 뺀다 —
+         실시간DB 는 열쇠에 이 글자들을 못 쓴다. */
+      var tag = String(fields.docName || '').trim().replace(/[.#$/[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (tag && !(cur.tags && cur.tags[tag])) { add['tags/' + tag] = true; filled.push('갈래'); }
+
       if (!filled.length) {
         return { ok: true, filled: [], message: '새로 채울 칸이 없습니다 — 이미 다 들어 있습니다' };
       }

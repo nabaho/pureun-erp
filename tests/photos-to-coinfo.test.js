@@ -78,11 +78,29 @@ test('사업자번호가 없으면 아무것도 안 쓰고 까닭을 말한다',
   assert.match(r.message, /사업자번호/);
 });
 
-test('채울 것이 없으면 쓰지 않는다', async () => {
-  const c = load({ docName:'이미 있음' });
-  const r = await c.sendToCoInfo({ fields: { bizno:FORM.bizno, docName:'같은 것' } });
+test('채울 칸도 없고 갈래도 이미 있으면 쓰지 않는다', async () => {
+  const c = load({ docName:'기술·경영 혁신 지원신청서', tags:{ '기술·경영 혁신 지원신청서': true } });
+  const r = await c.sendToCoInfo({ fields: { bizno:FORM.bizno, docName:'기술·경영 혁신 지원신청서' } });
   assert.equal(c._writes.length, 0);
   assert.match(r.message, /이미 다 들어 있습니다/);
+});
+
+test('서류이름이 다르면 새 사업 갈래로 붙는다', async () => {
+  /* 한 회사가 여러 사업에 들어갈 수 있다 — 앞 사업 딱지를 지우면 안 된다 */
+  const c = load({ docName:'앞선 신청서', tags:{ '앞선 신청서': true } });
+  const r = await c.sendToCoInfo({ fields: { bizno:FORM.bizno, docName:'기술·경영 혁신 지원신청서' } });
+  assert.equal(c._writes[0].val['tags/기술·경영 혁신 지원신청서'], true);
+  assert.equal(c._writes[0].val['tags/앞선 신청서'], undefined, '앞 갈래를 건드리면 안 된다');
+  assert.ok(r.filled.indexOf('갈래') >= 0);
+});
+
+test('갈래 이름에서 실시간DB 가 못 쓰는 글자를 빼낸다', async () => {
+  /* . # $ [ ] / 가 들어가면 열쇠로 못 쓴다 — 통째로 저장이 실패한다 */
+  const c = load({});
+  await c.sendToCoInfo({ fields: { bizno:FORM.bizno, docName:'2026. 기술/경영 [혁신] #지원' } });
+  const k = Object.keys(c._writes[0].val).find(x => x.indexOf('tags/') === 0);
+  assert.ok(k, '갈래를 안 붙였다');
+  assert.doesNotMatch(k.slice(5), /[.#$/[\]]/, '못 쓰는 글자가 남았다');
 });
 
 test('기업정보 화면이 모르는 칸은 보내지 않는다', async () => {
@@ -116,3 +134,4 @@ test('보낸 표시는 사진 주인 자리에 남긴다', () => {
   const at = html.indexOf('function sendCoInfo(');
   assert.match(html.slice(at, at + 1400), /saveRead\(gridYear, id, read, photoOwner\(id\)\)/);
 });
+

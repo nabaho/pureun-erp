@@ -658,6 +658,14 @@ table.sbox td.none{text-align:center;color:#8b98b3;padding:34px 10px}
 .pcside-top .pclogo span{margin-top:2px;font-size:11px}
 .pcside-top .sidetab{margin:7px 0 0}
 /* ── 기업정보 화면 ── */
+/* 사업 탭 — 서식을 보낼수록 저절로 늘어난다. 이름이 길어 줄바꿈을 허용한다. */
+.cotabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}
+.cotabs button{border:1px solid #cbd5e6;background:#fff;border-radius:9px;padding:6px 12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;color:#28324a;max-width:100%}
+.cotabs button:hover{background:#eef3fc}
+.cotabs button.on{background:#1d4fc4;border-color:#1d4fc4;color:#fff}
+.cotabs button i{font-style:normal;margin-left:5px;font-size:11px;opacity:.7}
+.cohint{font-size:12px;color:#7c89a6;align-self:center;line-height:1.5}
+.corow .tg{font-size:11px;background:#f3e8ff;color:#6b21a8;border:1px solid #d8b4fe;border-radius:9px;padding:1px 8px;font-weight:700}
 .coq{width:100%;box-sizing:border-box;border:1px solid #dbe3f0;border-radius:10px;padding:10px 12px;font-size:13.5px;font-family:inherit;margin:0 0 12px}
 .coq:focus{outline:0;border-color:#1d4fc4}
 .colist{border:1px solid #e6ebf4;border-radius:11px;background:#fff;overflow:hidden}
@@ -1442,7 +1450,7 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', e
   isAdmin:false, privOpen:false, priv:{items:{},groups:{},trash:{}},
   /* 자료함 — 찾는 말·메일틀 갈래는 화면에만 쓰고 저장하지 않는다.
      sendLog 는 명함을 열 때만 그 명함 것을 읽어 담는다. */
-  matQ:'', matMailCat:'', matPrevId:'', sendLog:{}, coQ:'', coPick:'',
+  matQ:'', matMailCat:'', matPrevId:'', sendLog:{}, coQ:'', coPick:'', coTag:'',
   /* 메일 화면 — mailSent 가 true 면 보낸 메일함, 아니면 쓰기 */
   mailSent:false, mailDrawer:true, sentBox:{}, schedBox:{}, sentQ:'', sentMine:false, sentCat:'', sentBy:'',
   showBcc:false, draftAt:'', matPick:'', drawerQ:'', drawerOpen:{},
@@ -9392,17 +9400,39 @@ function openCoPage(){ state.view='co'; state.coPick=''; render();
 function closeCoPage(){ state.view='list'; render(); }
 function pickCo(k){ state.coPick = (state.coPick===k ? '' : k); renderCoPage(); }
 
+/* 회사가 어떤 사업으로 들어왔는지 — 사진첩에서 서식을 보낼 때 그 서류이름이 딱지가 된다.
+   기업정보는 「특정 사업 때문에」 모이는 일이 많다(대표 지시 2026-08-12). 명함이 폴더를
+   갖듯 회사도 사업으로 갈라 봐야 「이번 지원사업에 넣은 곳이 어디였더라」에 답할 수 있다. */
+const coTagsOf = o => Object.keys((o.extra && o.extra.tags) || {});
+function coTagList(list){
+  const c = {};
+  list.forEach(o=>coTagsOf(o).forEach(t=>{ c[t] = (c[t]||0)+1; }));
+  return Object.keys(c).sort((a,b)=>c[b]-c[a] || a.localeCompare(b,'ko')).map(t=>({t, n:c[t]}));
+}
+function pickCoTag(t){ state.coTag = (state.coTag===t ? '' : t); state.coPick=''; renderCoPage(); }
+
 function renderCoPage(){
   const el=$('pcCo'); if(!el) return;
   const q = String(state.coQ||'').trim().toLowerCase();
-  let list = coList();
+  const all = coList();
+  const tags = coTagList(all);
+  let list = all;
+  if(state.coTag) list = list.filter(o=>coTagsOf(o).indexOf(state.coTag)>=0);
   if(q) list = list.filter(o=>(o.name+' '+(o.bizno||'')+' '+(o.ceo||'')).toLowerCase().indexOf(q)>=0);
   const one = state.coPick ? list.find(o=>o.key===state.coPick) : null;
+  /* 사업 탭 — 서식을 보낼수록 저절로 늘어난다. 손으로 만들 필요가 없다. */
+  const tabs = `<div class="cotabs">
+      <button class="${state.coTag?'':'on'}" onclick="pickCoTag('')">전체 <i>${all.length}</i></button>
+      ${tags.map(x=>`<button class="${state.coTag===x.t?'on':''}" onclick="pickCoTag('${esc(x.t)}')"
+        title="${esc(x.t)}">${esc(x.t)} <i>${x.n}</i></button>`).join('')}
+      ${tags.length?'':'<span class="cohint">사진첩에서 서식·신청서를 기업정보로 보내면 그 서류 이름으로 갈래가 생깁니다</span>'}
+    </div>`;
   el.innerHTML =
     `<div class="setwrap">
       <div class="sethead"><button class="setback" onclick="closeCoPage()">← 목록으로</button>
         <b>🏢 기업정보</b>
         <span style="color:var(--sub);font-size:12.5px">사업자등록증·명함·푸른이알피를 회사로 모았습니다 · ${list.length}곳</span></div>
+      ${tabs}
       <input class="coq" placeholder="🔍 상호·사업자번호·대표자로 찾기" value="${esc(state.coQ||'')}"
         oninput="state.coQ=this.value;renderCoPage()">
       ${one ? coDetailHtml(one) : coListHtml(list)}
@@ -9412,14 +9442,20 @@ function coListHtml(list){
   if(!list.length) return `<div class="cpnone" style="padding:20px 2px">회사를 찾지 못했습니다</div>`;
   return `<div class="colist">${list.map(o=>{
     const t = o.erp && o.erp.type;
+    /* ⚠ 빠진 것을 붉게 알리는 건 **우리가 일하는 회사**에만 뜻이 있다.
+       명함 한 장만 있는 회사까지 붉게 칠하니 4,140곳이 온통 붉어져, 정작 봐야 할
+       거래처의 빠진 서류가 묻혔다(대표 화면 2026-08-13). 푸른이알피 거래처이거나
+       사업 딱지가 붙은 회사만 짚는다. */
+    const care = !!(o.erp || coTagsOf(o).length);
+    const miss = s => care ? `<i class="miss">${s}</i>` : '';
     return `<div class="corow" onclick="pickCo('${esc(o.key)}')">
       <span class="nm">${esc(o.name)}</span>
       ${t?`<span class="ty">${esc(t)}</span>`:''}
+      ${coTagsOf(o).map(x=>`<span class="tg">${esc(x)}</span>`).join('')}
       <span class="bits">
-        ${o.bizno?`<i>${esc(o.bizno)}</i>`:'<i class="miss">사업자번호 없음</i>'}
+        ${o.bizno?`<i>${esc(o.bizno)}</i>`:miss('사업자번호 없음')}
         ${o.cards.length?`<i>명함 ${o.cards.length}</i>`:''}
-        ${o.docs?`<i>등록증 ${o.docs}</i>`:'<i class="miss">등록증 없음</i>'}
-        ${Object.keys(o.extra||{}).length?`<i>서식 ✓</i>`:''}
+        ${o.docs?`<i>등록증 ${o.docs}</i>`:miss('등록증 없음')}
       </span>
       ${o.erp&&o.erp.main?`<span class="mgr">담당 ${esc(o.erp.main)}</span>`:''}
     </div>`;
