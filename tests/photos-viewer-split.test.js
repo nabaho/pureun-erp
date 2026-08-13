@@ -137,12 +137,41 @@ test('끄는 동안 글자가 잡히지 않는다', () => {
 /* ── 단추를 한 줄에 ── */
 
 test('★ 단추가 한 줄에 모두 들어간다', () => {
-  assert.match(app, /#readPanel \.acts\{display:flex;gap:6px/,
+  assert.match(app, /#readPanel \.acts\{position:sticky;top:0;z-index:3;display:flex/,
     '★ 두 칸 격자면 공유·지우기가 한 줄씩 차지해 석 줄이 됩니다');
-  assert.match(app, /#readPanel \.acts button\{flex:1 1 0;min-width:0;/,
-    '칸 수가 3~5개로 달라지므로 똑같이 나눠 가져야 합니다');
+  assert.match(app, /#readPanel \.acts button\{flex:0 0 auto;/,
+    '단추는 제 글 만큼만 차지해야 한 줄에 다 들어갑니다');
+  assert.match(app, /#readPanel \.acts \.rd\{flex:1 1 auto;min-width:0;/,
+    '남은 자리는 글이 긴 「다시 판독」이 가져야 줄이 안 넘칩니다');
   assert.ok(!/#readPanel \.acts \.wide\{grid-column/.test(app),
     '한 줄 통으로 쓰던 규칙이 남아 있습니다');
+});
+
+test('★ 도구줄이 판 맨 위에 붙박여 있다 — 표가 길어도 늘 보인다', () => {
+  /* 대표 지시 2026-08-13: "상단에 틀고정". 근태표·서식은 표가 길어
+     아래에 두면 끝까지 스크롤해야 단추가 나왔다. */
+  assert.match(app, /#readPanel \.acts\{position:sticky;top:0/);
+  assert.match(app, /#readPanel \.acts\{[^}]*background:#fff/,
+    '★ 배경이 비치면 아래 표 글자가 단추 뒤로 지나갑니다');
+  const fn = fnOf('renderReadPanel');
+  /* 판을 그리는 두 갈래(판독 전·후) 모두에서 **맨 위**여야 한다 */
+  const a = fn.indexOf("actsRow('글자 판독하기')");
+  const b = fn.indexOf("actsRow('다시 판독'");
+  assert.ok(a > 0 && b > 0, '두 갈래에 모두 있어야 합니다');
+  assert.ok(a < fn.indexOf('whenBox(it)'), '★ 판독 전 화면에서 도구줄이 아래에 있습니다');
+  assert.ok(b < fn.indexOf("'<table>' + rows"), '★ 표보다 뒤에 있으면 스크롤해야 나옵니다');
+});
+
+test('★ 쪽 넘기기도 같은 줄에 들어간다', () => {
+  const fn = fnOf('actsRow');
+  assert.match(fn, /docNavBtns\(\)/, '쪽 넘기기가 딴 줄이면 한 줄이 아닙니다');
+  const nav = fnOf('docNavBtns');
+  assert.match(nav, /if \(pages\.length < 2\) return '';/,
+    '홑장에 「1/1쪽」과 눌리지 않는 화살표를 두면 자리만 먹습니다');
+  assert.match(nav, /class="pg"/);
+  assert.match(nav, /class="pgn"/);
+  // 본문 쪽 안내는 단추 없이 말만 한다(같은 일을 두 번 하지 않는다)
+  assert.ok(!/openViewer/.test(fnOf('docNav')), '★ 쪽 넘기기 단추가 두 곳에 생겼습니다');
 });
 
 test('★ 「지우기」는 맨 끝에, 틈을 두고 놓는다', () => {
@@ -152,21 +181,19 @@ test('★ 「지우기」는 맨 끝에, 틈을 두고 놓는다', () => {
   ['downloadOne(viewerId)', 'readAgain()'].forEach(function (other) {
     assert.ok(fn.indexOf(other) < del, '★ 「' + other + '」보다 뒤에 있어야 합니다');
   });
-  assert.match(app, /#readPanel \.acts \.rm\{[^}]*margin-left:6px/,
+  assert.match(app, /#readPanel \.acts \.rm\{[^}]*margin-left:5px/,
     '★ 틈이 없으면 「다시 판독」을 누르려다 지웁니다');
   assert.match(app, /#readPanel \.acts \.rm\{border-color:#f0b4b4;color:#b91c1c/, '빨강으로 갈라야 합니다');
 });
 
-test('★ 글이 잘려도 무슨 단추인지 알 수 있다', () => {
-  /* 한 줄에 넣으면 칸이 좁아 「공유·사진앱에 저…」처럼 잘린다 */
+test('★ 아이콘만 남아도 무슨 단추인지 알 수 있다', () => {
+  /* 한 줄에 다 넣으려면 아이콘만 남는다 — title 이 없으면 무슨 단추인지 모른다 */
   const fn = fnOf('actsRow');
+  assert.match(fn, /title="내려받기"/);
   assert.match(fn, /title="공유·사진앱에 저장"/);
   assert.match(fn, /title="확인했음 — 할 일에서 치우기"/);
   assert.match(fn, /title="이 사진 지우기"/);
   assert.match(fn, /title="' \+ esc\(readBtn\) \+ '"/);
-  // 짧은 이름으로 바꿨는지
-  assert.match(fn, />📤 공유</);
-  assert.match(fn, />🗑 지우기</);
 });
 
 test('단추 글도 이스케이프한다 — title 과 보이는 글 둘 다', () => {
