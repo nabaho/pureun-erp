@@ -268,6 +268,13 @@
       .then(function (s) { return s.val() || {}; });
   }
 
+  /* 도착 칸 전체 — 업체·귀속월·종류·장수만 담긴 얇은 칸이라 통째로 읽어도 가볍다.
+     이 칸이 있어서 남의 자리를 열지 않고도 「어느 업체가 자료를 보냈나」를 안다. */
+  function listArrivals() {
+    return deps.db.ref(arrivalBoxPath()).once('value')
+      .then(function (s) { return s.val() || {}; });
+  }
+
   /* 공용 대기 칸 목록 — 서버가 메일로 받은 것(5차에 채워진다). */
   function listSharedPending() {
     return deps.db.ref(sharedPendingBoxPath()).once('value')
@@ -384,6 +391,7 @@
     claimSharedNow: claimSharedNow,
     listMyPending: listMyPending,
     listSharedPending: listSharedPending,
+    listArrivals: listArrivals,
     ERP_COMPANIES: ERP_COMPANIES,
     normalizeCompanies: normalizeCompanies,
     listCompanies: listCompanies,
