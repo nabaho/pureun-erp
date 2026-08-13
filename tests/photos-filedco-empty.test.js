@@ -30,12 +30,17 @@ function loadNeedsCheck() {
     return m[0];
   };
   const ctx = {
+    Number, Math, String,
     CARD_KINDS: { card: 1, bizreg: 1 },
     CO_KINDS: { bizreg: 1, sme: 1 },
     readAnyField: function () { return false; }
   };
   vm.createContext(ctx);
-  vm.runInContext(pick('coFilledOk') + '\n' + pick('needsCheck') + '\n' + pick('checkWhy'), ctx);
+  /* 원본이 작은 서류 판정(2026-08-13)도 needsCheck 가 기댄다 — 진짜 함수를 넣는다 */
+  const minEdge = app.match(/^const MIN_READ_EDGE = \{[\s\S]*?\n\};/m);
+  assert.ok(minEdge, 'MIN_READ_EDGE 를 찾지 못했습니다');
+  vm.runInContext(minEdge[0].replace('const ', 'var ') + '\n' + pick('tooSmall') + '\n' +
+    pick('coFilledOk') + '\n' + pick('needsCheck') + '\n' + pick('checkWhy'), ctx);
   return ctx;
 }
 
