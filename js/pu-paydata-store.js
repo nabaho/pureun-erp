@@ -274,6 +274,69 @@
       .then(function (s) { return s.val() || {}; });
   }
 
+  /* ══════ 업체관리 명단 ══════
+     사업장 서랍의 기준은 푸른이알피 업체관리다(대표 결정 2026-08-13).
+     데이터함이 제 명단을 만들면 이름 글자 맞추기 어긋남이 늘어난다.
+
+     ⚠ 자리 모양이 두 가지다 — data/companies = {v: 목록, u: 갱신시각} 이고
+     목록은 **배열**이거나 **번호 맵**이다(푸른이알피가 둘 다 쓴다).
+     한쪽만 읽으면 명단이 통째로 빈다. 벗기는 곳은 여기 한 군데뿐이다.
+
+     ⚠ 콘솔 규칙에는 최상위 `companies` 열쇠도 있지만 **어느 파일도 그 자리를
+     쓰지 않는다**(2026-08-13 확인). 실데이터는 data/companies 에 있다. */
+  var ERP_COMPANIES = 'data/companies';
+  var NAME_KEYS = ['업체명', 'name', '사업장', '회사명'];
+
+  function pickName(o) {
+    for (var i = 0; i < NAME_KEYS.length; i++) {
+      var v = o && o[NAME_KEYS[i]];
+      if (v != null && String(v).trim() !== '') return String(v).trim();
+    }
+    return '';
+  }
+
+  function normalizeCompanies(raw) {
+    var box = (raw && typeof raw === 'object' && raw.v !== undefined) ? raw.v : raw;
+    if (!box || typeof box !== 'object') return [];
+    var out = [], keys = Object.keys(box);
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i], row = box[k];
+      if (!row || typeof row !== 'object') continue;
+      var name = pickName(row);
+      if (!name) continue;                                  // 이름 없으면 그릴 수 없다
+      var id = String(row.id || row.companyId || (Array.isArray(box) ? '' : k) || '');
+      out.push({ id: id, name: name, biz: String(row.사업자등록번호 || row.biz || '') });
+    }
+    return out;
+  }
+
+  function listCompanies() {
+    return deps.db.ref(ERP_COMPANIES).once('value').then(function (s) {
+      return normalizeCompanies(s.val());
+    });
+  }
+
+  /* 이름으로 업체 맞추기 — 급여관리 설정카드는 「화담원 아산점」처럼 적혀 있어
+     글자가 똑같지 않다. 앞가지(주식회사·㈜)와 괄호·빈칸을 떼고 견준다.
+     **긴 이름부터** 봐서 「화담원」이 「화담원산업」을 가로채지 않게 한다. */
+  function coreName(s) {
+    return String(s || '').replace(/\(.*?\)|㈜|주식회사|유한회사|\s/g, '');
+  }
+
+  function matchCompanyName(text, list) {
+    var want = coreName(text);
+    if (!want) return null;
+    var sorted = (list || []).slice().sort(function (a, b) {
+      return coreName(b.name).length - coreName(a.name).length;
+    });
+    for (var i = 0; i < sorted.length; i++) {
+      var c = coreName(sorted[i].name);
+      if (!c) continue;
+      if (c === want || want.indexOf(c) >= 0 || c.indexOf(want) >= 0) return sorted[i];
+    }
+    return null;
+  }
+
   global.PuPaydataStore = {
     DB_ROOT: DB_ROOT,
     BUCKET_ROOT: BUCKET_ROOT,
@@ -320,6 +383,10 @@
     moveToDrawer: moveToDrawer,
     claimSharedNow: claimSharedNow,
     listMyPending: listMyPending,
-    listSharedPending: listSharedPending
+    listSharedPending: listSharedPending,
+    ERP_COMPANIES: ERP_COMPANIES,
+    normalizeCompanies: normalizeCompanies,
+    listCompanies: listCompanies,
+    matchCompanyName: matchCompanyName
   };
 })(typeof window !== 'undefined' ? window : globalThis);
