@@ -112,5 +112,100 @@ test('화면: ✎ 를 눌러도 분류가 바뀌지 않는다', () => {
 
 test('화면: 사진은 그대로라고 알려준다', () => {
   /* 이름을 고치면 사진이 사라질까 봐 안 누르게 된다 */
-  assert.match(html, /이 분류에 들어 있는 사진은 그대로 있습니다/);
+  assert.match(html, /이름을 고쳐도 사진은 그대로 있습니다/);
+});
+
+/* ══════ 분류 지우기 (대표 지시 2026-08-13) ══════
+   "분류 한 것에 이름을 변경하거나 삭제할 수 있게 해달라"
+   ⚠ 가장 위험한 것: 분류를 지웠는데 **사진까지 사라지는 것**. 그래서
+     저장 층이 이름표 칸 하나만 만지는지를 못박는다. */
+
+function loadDelete() {
+  const i = src.indexOf('function deleteCustomKind');
+  const j = src.indexOf('function addCustomKind');
+  assert.ok(i > 0 && j > i, 'deleteCustomKind 를 찾지 못했습니다');
+  const writes = [];
+  const ctx = {
+    Promise, Object, String, Date,
+    deps: { db: {} },
+    customKindsPath: () => 'puphotos/customKinds',
+    _writes: writes
+  };
+  ctx.deps.db.ref = () => ({ update: v => { writes.push(v); return Promise.resolve(); } });
+  vm.createContext(ctx);
+  vm.runInContext(src.slice(i, j), ctx);
+  return ctx;
+}
+
+test('★ 분류를 지워도 사진 자리는 한 곳도 안 건드린다', async () => {
+  const c = loadDelete();
+  await c.deleteCustomKind('k1');
+  assert.equal(c._writes.length, 1, '한 번의 update 로 끝나야 한다');
+  const u = c._writes[0];
+  assert.deepEqual(Object.keys(u), ['puphotos/customKinds/k1']);
+  assert.equal(u['puphotos/customKinds/k1'], null);
+  // 사진 자리(items/blobs/thumbs)를 건드리면 사진이 사라진다
+  assert.ok(!Object.keys(u).some(k => /items|blobs|thumbs/.test(k)),
+    '★ 사진 자리를 건드렸습니다 — 분류를 지우면 사진까지 사라집니다');
+});
+
+test('어떤 분류인지 모르면 아무것도 안 지운다', async () => {
+  const c = loadDelete();
+  await assert.rejects(() => c.deleteCustomKind(''), /알 수 없습니다/);
+  await assert.rejects(() => c.deleteCustomKind(null), /알 수 없습니다/);
+  assert.equal(c._writes.length, 0,
+    '★ 번호가 없으면 윗자리(customKinds 통째)를 가리켜 분류가 전부 날아갑니다');
+});
+
+test('화면: 지우기는 「분류 고치기」 창 안에 있다', () => {
+  /* ✎ 로 들어온 사람이 「없애는 건 어디서 하지」를 다시 찾게 하지 않는다 */
+  assert.match(html, /id="kindPopupDel"/);
+  const at = html.indexOf('function openRenameKind(');
+  assert.match(html.slice(at, at + 1600), /showKindDelBtn\(function \(\) \{ askDeleteKind\(/);
+});
+
+test('★ 화면: 지우기 단추는 쓰는 창에서만 뜬다', () => {
+  /* 한 창을 여러 일에 돌려 쓴다 — 안 끄면 「새 분류 만들기」 창에도 남아
+     무엇을 지우는지 모르는 단추가 생긴다 */
+  assert.match(html, /style="display:none"[^>]*>지우기|id="kindPopupDel" style="display:none"/);
+  const at = html.indexOf('function closeKindPopup(');
+  assert.match(html.slice(at, at + 400), /showKindDelBtn\(null\)/,
+    '창을 닫을 때 지우기를 안 끕니다');
+});
+
+test('★ 화면: 지우기 전에 되돌릴 수 없다는 것과 사진은 남는다는 것을 함께 말한다', () => {
+  const at = html.indexOf('function askDeleteKind(');
+  assert.ok(at > 0, 'askDeleteKind 가 없습니다');
+  const fn = html.slice(at, at + 1800);
+  assert.match(fn, /confirm\(/, '묻지 않고 지우면 안 됩니다');
+  assert.match(fn, /지워지지 않습니다/, '사진이 남는다는 말이 없으면 무서워서 못 누릅니다');
+  assert.match(fn, /되살릴 수 없습니다/, '되돌릴 수 없다는 말을 안 하면 가볍게 누릅니다');
+  assert.match(fn, /다른 사람 화면에서도 사라집니다/, '공용이라는 말이 없습니다');
+  // 장수를 넣어 「몇 장짜리 분류를 지우는지」 알려야 한다
+  assert.match(fn, /'장은 지워지지 않습니다/);
+});
+
+test('★ 화면: 묻는 말에 「아니오」면 아무것도 안 지운다', () => {
+  const at = html.indexOf('function askDeleteKind(');
+  const fn = html.slice(at, at + 1800);
+  assert.match(fn, /if \(!confirm\(msg\)\) return;/,
+    '★ 물어만 보고 그대로 지우면 물어본 뜻이 없습니다');
+  const del = fn.indexOf('deleteCustomKind');
+  const ask = fn.indexOf('if (!confirm(msg)) return;');
+  assert.ok(ask > 0 && del > ask, '★ 묻기 전에 지웁니다');
+});
+
+test('보고 있던 분류를 지우면 전체사진으로 돌아간다', () => {
+  const at = html.indexOf('function askDeleteKind(');
+  const fn = html.slice(at, at + 1800);
+  assert.match(fn, /if \(kindTab === customTabKey\(id\)\) pickKind\('all'\);/,
+    '없는 분류를 보며 빈 화면에 남겨 두면 안 됩니다');
+});
+
+test('창에 몇 장짜리 분류인지·누가 만들었는지 적는다', () => {
+  /* 분류 이름표는 전 직원 공용이다 — 내가 지우면 남의 화면에서도 사라진다 */
+  const at = html.indexOf('function openRenameKind(');
+  const fn = html.slice(at, at + 1600);
+  assert.match(fn, /tabCounts\(\)\[customTabKey\(id\)\]/, '든 사진 장수를 안 셉니다');
+  assert.match(fn, /createdBy/, '누가 만든 분류인지 안 적습니다');
 });

@@ -386,6 +386,8 @@ button{font-family:inherit;cursor:pointer}
 #kindPopup .btns button{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:8px;
   padding:8px 15px;font-size:13px;font-weight:700;font-family:inherit}
 #kindPopup .btns .pri{background:var(--blue);color:#fff;border-color:var(--blue)}
+/* 지우기 — 왼쪽 끝으로 밀어 「고치기」와 손가락 거리를 벌린다. 되돌릴 수 없는 단추다. */
+#kindPopup .btns .del{color:#b91c1c;border-color:#fecaca;margin-right:auto}
 #kindPopup .err{color:#b91c1c;font-size:12px;margin-top:6px}
 /* 폰에서는 한 줄에 들어가게 좁힌다 — 두 줄이 되면 대시보드(300px)에 더해져
    첫 화면에서 사진이 거의 안 보인다. 짧은 이름(.narrow-only)과 함께 쓴다.
@@ -1314,6 +1316,9 @@ button{font-family:inherit;cursor:pointer}
       <div class="h" id="kindPopupTitle"></div>
       <div class="b" id="kindPopupBody"></div>
       <div class="btns">
+        <!-- 지우기는 왼쪽 끝에 떨어뜨려 둔다(margin-right:auto) — 「고치기」 옆에 붙이면
+             고치려다 잘못 눌러 되돌릴 수 없는 일이 벌어진다. 쓰는 창에서만 켠다. -->
+        <button class="del" id="kindPopupDel" style="display:none">지우기</button>
         <button onclick="closeKindPopup()">취소</button>
         <button class="pri" id="kindPopupOk"></button>
       </div>
@@ -5178,6 +5183,9 @@ function pickKind(key) {
 function closeKindPopup() {
   $('kindPopup').style.display = 'none';
   $('kindPopupBody').innerHTML = '';
+  /* ⚠ 「지우기」를 반드시 여기서 끈다. 한 창을 여러 일에 돌려 쓰므로, 안 끄면
+     분류를 고치다 닫은 뒤 「새 분류 만들기」 창에도 지우기가 남아 있게 된다. */
+  showKindDelBtn(null);
 }
 
 /* ── 「어떻게 올리나요」 (대표 지시 2026-08-10) ──
@@ -5224,25 +5232,70 @@ function openAddKind() {
   $('kindNameInput').focus();
 }
 
-/* 이름 고치기 — 직접 만든 분류만.
+/* 이름 고치기·지우기 — 직접 만든 분류만.
    사진은 번호(id)로 분류를 가리키므로 이름만 갈면 되고, 그 분류에 든 사진은
-   한 장도 안 움직인다. 그래서 마음 놓고 고칠 수 있다. */
+   한 장도 안 움직인다. 그래서 마음 놓고 고칠 수 있다.
+   지우기도 같은 창에 둔다(대표 지시 2026-08-13) — ✎ 를 눌러 들어온 사람이
+   「이름은 바꾸겠는데 없애는 건 어디서 하지」를 다시 찾게 하지 않는다. */
 function openRenameKind(key) {
   const id = String(key).slice('custom:'.length);
-  const cur = (CUSTOM_KINDS[id] && CUSTOM_KINDS[id].name) || '';
+  const rec = CUSTOM_KINDS[id] || {};
+  const cur = rec.name || '';
   if (!cur) { toast && toast('이미 지워진 분류입니다'); return; }
-  $('kindPopupTitle').textContent = '분류 이름 고치기';
+  /* 몇 장이 든 분류인지·누가 만든 분류인지 먼저 말한다 — 분류 이름표는 전 직원이
+     함께 보는 공용이라, 내가 지우면 남의 화면에서도 사라진다. */
+  const n = tabCounts()[customTabKey(id)] || 0;
+  const who = rec.createdBy ? esc(rec.createdBy) + ' 님이 만듦' : '';
+  $('kindPopupTitle').textContent = '분류 고치기';
   $('kindPopupBody').innerHTML =
     '<input type="text" id="kindNameInput" maxlength="30" value="' + esc(cur) + '">' +
     '<div class="err" id="kindNameErr" style="display:none"></div>' +
     '<div style="font-size:12px;color:var(--sub);line-height:1.6;margin-top:8px">' +
-    '이 분류에 들어 있는 사진은 그대로 있습니다 — 이름표만 바뀝니다.</div>';
+    '이 분류에 든 사진 <b>' + n + '장</b>' + (who ? ' · ' + who : '') + '<br>' +
+    '이름을 고쳐도 사진은 그대로 있습니다 — 이름표만 바뀝니다.</div>';
   const ok = $('kindPopupOk');
   ok.textContent = '고치기';
   ok.onclick = function () { submitRenameKind(id); };
+  /* 지우기는 저장 단추에서 **멀리** 떨어뜨린다(왼쪽 끝) — 고치려다 잘못 누르면
+     되돌릴 수 없는 일이다. */
+  showKindDelBtn(function () { askDeleteKind(id, cur, n); });
   $('kindPopup').style.display = 'flex';
   const inp = $('kindNameInput');
   inp.focus(); inp.select();
+}
+
+/* 창 왼쪽 끝의 「지우기」. 쓰는 창(분류 고치기)에서만 켜고, 다른 창에서는 감춘다 —
+   닫을 때 지우지 않으면 「새 분류 만들기」 창에도 남아 있게 된다. */
+function showKindDelBtn(fn) {
+  const b = $('kindPopupDel');
+  if (!b) return;
+  b.style.display = fn ? 'inline-block' : 'none';
+  b.onclick = fn || null;
+}
+
+/* ⚠ 지우기는 되돌릴 수 없다 — 사진은 안 지워지지만, 사진에 붙여 둔 표시는
+   못 되살린다(다시 만들면 번호가 달라진다). 그래서 사실을 먼저 말하고 묻는다. */
+function askDeleteKind(id, name, n) {
+  const msg = '「' + name + '」 분류를 지웁니다.\n\n' +
+    '· 이 분류에 든 사진 ' + n + '장은 지워지지 않습니다 — 원래 있던 분류에 그대로 남습니다.\n' +
+    '· 분류 이름표는 전 직원이 함께 보는 것이라 다른 사람 화면에서도 사라집니다.\n' +
+    '· 사진에 붙여 둔 「' + name + '」 표시는 되살릴 수 없습니다 —\n' +
+    '  같은 이름으로 다시 만들어도 사진이 저절로 돌아오지 않습니다.\n\n계속할까요?';
+  if (!confirm(msg)) return;
+  $('kindPopupOk').disabled = true;
+  PuPhotoStore.deleteCustomKind(id).then(function () {
+    /* 보고 있던 분류를 지웠으면 「전체사진」으로 돌아간다 —
+       없는 분류를 보며 빈 화면에 남겨 두지 않는다. */
+    if (kindTab === customTabKey(id)) pickKind('all');
+    return loadCustomKinds();
+  }).then(function () {
+    closeKindPopup();
+    renderGrid();
+    toast && toast('「' + name + '」 분류를 지웠습니다 — 사진은 그대로 있습니다');
+  }).catch(function (e) {
+    console.warn('[분류 지우기]', e);
+    showKindErr('kindNameErr', (e && e.message) || String(e));
+  }).then(function () { $('kindPopupOk').disabled = false; });
 }
 
 function submitRenameKind(id) {
