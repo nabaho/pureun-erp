@@ -101,6 +101,7 @@
   function itemPath(slot, id, owner) { return base(owner) + '/items/' + slot + '/' + id; }
   function thumbPath(slot, id, owner) { return base(owner) + '/thumbs/' + slot + '/' + id; }
   function valuePath(slot, rowId, owner) { return base(owner) + '/values/' + slot + '/' + rowId; }
+  function valueBoxPath(slot, owner) { return base(owner) + '/values/' + slot; }
   function pendingPath(id, owner) { return base(owner) + '/pending/' + id; }
   function deputyPath(deputyUid, owner) { return base(owner) + '/deputy/' + deputyUid; }
   function trashPath(id, owner) { return base(owner) + '/trash/' + id; }
@@ -492,6 +493,74 @@
     return deps.db.ref().update(up);
   }
 
+  /* ══════ 값 층 ══════
+     원본(사진·엑셀·PDF)과 값(근로자·항목·금액)을 두 층으로 나눈다(설계서 3장).
+     사진 한 장에 근로자가 열 명이면 값은 **열 줄**이다 — 사진 한 장 = 값 한 줄이 아니다.
+     값 한 줄에는 반드시 **출처(원본 번호)**가 붙는다 — 없으면 몇 달 뒤 "이 수당
+     어디서 나온 거냐"에 답을 못 한다. */
+
+  /* 판독 결과({company,period,docName,rows:[{name,pairs:[{item,value}]}]}) →
+     값 줄 배열. 순수 함수라 AI 없이도 검사할 수 있다.
+     ⚠ item·value 는 문서에 적힌 이름 그대로 담는다(판독 층의 pairs 규칙과 같다) —
+     "기본급"을 "기본임금"으로 바꿔 적으면 원본과 대조할 수 없다. */
+  function buildValueRows(parsed, tag) {
+    tag = tag || {};
+    if (!tag.sourceId) throw new Error('출처(원본 번호)가 없습니다');
+    if (!tag.companyId) throw new Error('사업장을 알 수 없습니다');
+    var slot = tag.slot || (tag.month ? monthKey(tag.month) : null);
+    if (!slot) throw new Error('귀속월을 알 수 없습니다');
+    var people = (parsed && parsed.rows) || [];
+    var at = Number(tag.at || Date.now());
+    return people.map(function (p) {
+      return {
+        id: newId(),
+        sourceId: tag.sourceId,
+        companyId: tag.companyId,
+        companyName: String(tag.companyName || parsed.company || ''),
+        month: slot,
+        name: String((p && p.name) || ''),
+        pairs: ((p && p.pairs) || []).map(function (pr) {
+          return { item: String((pr && pr.item) || ''), value: String((pr && pr.value) || '') };
+        }),
+        confirmed: false,
+        by: deps.uid || '',
+        at: at
+      };
+    });
+  }
+
+  /* 같은 사업장·귀속월·근로자 값이 이미 있으면 그 자리 id 를 돌려준다 — 있으면
+     「덮을까요」를 물을 수 있게. 캡처는 실제로 두 번 올라온다. */
+  function findDuplicateValue(existingRows, companyId, month, name) {
+    var ids = Object.keys(existingRows || {});
+    for (var i = 0; i < ids.length; i++) {
+      var r = existingRows[ids[i]];
+      if (r && r.companyId === companyId && r.month === month && r.name === name) return ids[i];
+    }
+    return null;
+  }
+
+  /* 값 줄들을 한 묶음으로 쓴다 — 다 쓰거나 하나도 안 쓰거나. */
+  function saveValues(slot, rows, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var up = {};
+    (rows || []).forEach(function (r) { up[valuePath(slot, r.id, owner)] = r; });
+    return deps.db.ref().update(up).then(function () { return (rows || []).length; });
+  }
+
+  function listValues(slot, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(valueBoxPath(slot, owner)).once('value').then(function (s) { return s.val() || {}; });
+  }
+
+  /* 값 한 줄을 확인 처리한다 — 기계가 못 읽어 사람이 채운 것을 표시해 둔다. */
+  function confirmValue(slot, rowId, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var up = {};
+    up[valuePath(slot, rowId, owner) + '/confirmed'] = true;
+    return deps.db.ref().update(up);
+  }
+
   /* ══════ 업체관리 명단 ══════
      사업장 서랍의 기준은 푸른이알피 업체관리다(대표 결정 2026-08-13).
      데이터함이 제 명단을 만들면 이름 글자 맞추기 어긋남이 늘어난다.
@@ -787,6 +856,12 @@
     renameFolder: renameFolder,
     deleteFolder: deleteFolder,
     setFolder: setFolder,
+    valueBoxPath: valueBoxPath,
+    buildValueRows: buildValueRows,
+    findDuplicateValue: findDuplicateValue,
+    saveValues: saveValues,
+    listValues: listValues,
+    confirmValue: confirmValue,
     ERP_COMPANIES: ERP_COMPANIES,
     normalizeCompanies: normalizeCompanies,
     listCompanies: listCompanies,
