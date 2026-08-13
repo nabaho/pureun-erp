@@ -88,3 +88,13 @@ test('빠진 서류 경고는 우리가 일하는 회사에만 띄운다', () =>
   assert.match(source, /const care = !!\(o\.erp \|\| coTagsOf\(o\)\.length\)/);
   assert.match(source, /const miss = s => care \?/);
 });
+
+test('사업 갈래를 실제로 화면에 끼운다', () => {
+  /* 갈래를 만들어 놓고 화면에 안 넣어도 「cotabs 가 소스에 있다」로는 통과한다 —
+     실제로 ${tabs} 를 지워 봤더니 아무 검사도 안 걸렸다. 끼우는 줄을 직접 본다. */
+  const at = source.indexOf('function renderCoPage');
+  const fn = source.slice(at, source.indexOf('\nfunction coListHtml', at));
+  assert.ok(fn.length > 300, 'renderCoPage 를 찾지 못했습니다');
+  assert.match(fn, /\$\{tabs\}/, '갈래 탭을 화면에 끼우지 않는다');
+  assert.match(fn, /const tabs = /, '갈래 탭을 만들지 않는다');
+});
