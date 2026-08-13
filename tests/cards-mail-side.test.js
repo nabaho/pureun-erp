@@ -24,8 +24,12 @@ test('메일 옆줄은 명함 폴더를 그리기 전에 끝낸다', () => {
   assert.ok(fnAt > 0, 'renderPCSide 를 찾지 못했습니다');
   const fn = source.slice(fnAt, source.indexOf('\nfunction ', fnAt + 20));
   const at = fn.indexOf('if(onMail){');
-  const folders = fn.indexOf('전체 사업자등록');
+  /* 명함 폴더 목록이 시작되는 자리로 「폴더」 머리를 쓴다.
+     예전엔 「전체 사업자등록」이라는 이름표를 표지로 삼았는데, 그 이름표가
+     겹말이라 없어지면서 검사가 엉뚱한 곳을 보게 됐다(2026-08-12). */
+  const folders = fn.indexOf('">폴더');
   assert.ok(at > 0, 'renderPCSide 안에서 onMail 갈림길을 찾지 못했습니다');
+  assert.ok(folders > 0, '명함 폴더 머리를 찾지 못했습니다');
   assert.ok(folders > at, '메일 옆줄이 명함 폴더보다 뒤에 있으면 둘 다 그려진다');
 });
 

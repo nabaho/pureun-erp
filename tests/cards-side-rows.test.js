@@ -60,3 +60,34 @@ test('옆줄이 스크롤되는 상자여야 붙박이가 뜻이 있다', () => 
   /* position:sticky 는 **스크롤하는 조상** 안에서만 붙는다 */
   assert.match(source, /#pcSide\{[^}]*overflow-y:auto/);
 });
+
+test('「전체」는 폴더 목록의 첫 줄이다', () => {
+  /* 갈래 단추 바로 밑에 「📇 전체 명함 274」로 있었는데, 위 단추가 「📇 명함 274」라
+     아이콘도 숫자도 똑같아 한 줄이 두 번 그려진 것처럼 보였다. */
+  const fn = sideFn();
+  const sec = fn.indexOf('">폴더');
+  const all = fn.indexOf("'📋 전체'");
+  assert.ok(sec > 0, '폴더 머리를 찾지 못했습니다');
+  assert.ok(all > sec, '「전체」가 아직 폴더 머리보다 위에 있다');
+});
+
+test('갈래 단추와 겹치는 이름을 쓰지 않는다', () => {
+  /* ⚠ 주석에도 옛 이름이 예시로 남아 있다 — 화면에 찍히는 **따옴표 안 이름표**만 본다.
+     그냥 글자로 찾으면 「왜 그렇게 고쳤는지」 적은 주석까지 걸려 헛되이 실패한다. */
+  const fn = sideFn();
+  assert.doesNotMatch(fn, /'📇 전체 명함'/, '갈래 단추가 이미 「명함」이라 겹말이 된다');
+  assert.doesNotMatch(fn, /'📄 전체 사업자등록증'/);
+});
+
+test('「전체」는 폴더·담당자 거르개를 모두 푼다', () => {
+  /* 폴더에 들어갔다가 돌아올 길이 이 줄뿐이다 */
+  const fn = sideFn();
+  const at = fn.indexOf("'📋 전체'");
+  assert.match(fn.slice(Math.max(0, at - 120), at), /switchTab\(/);
+});
+
+test('붙박이는 얇게 — 늘 같은 자리를 먹는 것일수록 얇아야 한다', () => {
+  assert.match(source, /\.pcside-top\{[^}]*padding:14px 14px 4px/);
+  assert.match(source, /\.pcside-top \.pclogo\{margin-bottom:0/);
+  assert.match(source, /\.pcside-top \.sidetab\{margin:7px 0 0\}/);
+});
