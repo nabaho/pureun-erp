@@ -8,8 +8,11 @@ const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'pu-photos.html'), 'utf8');
 const store = fs.readFileSync(path.join(root, 'js', 'pu-photo-store.js'), 'utf8');
 
-test('전체사진은 촬영시각, 업로드시각, 사진번호 순으로 안정되게 정렬한다', () => {
-  const ctx = {};
+/* 2026-08-13 대표 지시로 기준이 바뀌었다 — 촬영시각이 아니라 **올린 시각**이 먼저다.
+   ("입력된 사진은 사진의 저장된 시간 날짜가 아닌 지금 올린 시간과 순서대로")
+   자세한 검사는 tests/photos-upload-order.test.js 에 있다. */
+test('전체사진은 올린시각, 고른차례, 촬영시각, 사진번호 순으로 안정되게 정렬한다', () => {
+  const ctx = { Number, String, Math };
   vm.createContext(ctx);
   for (const name of ['photoTime', 'comparePhotosNewest']) {
     const m = html.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n\\}'));
@@ -19,10 +22,18 @@ test('전체사진은 촬영시각, 업로드시각, 사진번호 순으로 안�
   const list = [
     { id: 'old', meta: { takenAt: 10, upAt: 100 } },
     { id: 'fallback', meta: { upAt: 200 } },
-    { id: 'new', meta: { takenAt: 300, upAt: 50 } }
+    { id: 'shotLate', meta: { takenAt: 300, upAt: 50 } }
   ];
   list.sort(ctx.comparePhotosNewest);
-  assert.deepEqual(list.map(x => x.id), ['new', 'fallback', 'old']);
+  // 늦게 찍혔어도 먼저 올렸으면 아래다 — 자리는 올린 때가 정한다
+  assert.deepEqual(list.map(x => x.id), ['fallback', 'old', 'shotLate']);
+  // 올린 시각이 같으면 고른 차례가 가른다(1번으로 고른 장이 앞)
+  const batch = [
+    { id: 'b', meta: { upAt: 500, seq: 1 } },
+    { id: 'a', meta: { upAt: 500, seq: 0 } }
+  ];
+  batch.sort(ctx.comparePhotosNewest);
+  assert.deepEqual(batch.map(x => x.id), ['a', 'b']);
 });
 
 test('휴대폰은 첫 60장만 먼저 그리고 아래로 갈 때 이어 그린다', () => {
