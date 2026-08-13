@@ -6319,6 +6319,30 @@ const READ_ROWS = [
   ['companyTel', '대표번호'], ['email', '이메일'], ['address', '소재지'], ['companyAddr', '회사주소']
 ];
 
+/* ── 읽은 칸을 **문서 차례대로** (대표 지시 2026-08-13) ──
+   "데이터를 읽을 때 맨 위에서부터 순서대로 읽었으면 좋겠다. 데이터 순서가 바뀐다."
+
+   pairs 는 판독기가 **문서에 적힌 차례 그대로** 담아 준 칸들이다(READ_VERSION 8 부터
+   모든 서류 종류에 담긴다). 그것이 있으면 그대로 그린다 — 원본과 한 줄씩 짚어 갈 수 있다.
+
+   ⚠ READ_ROWS 는 코드에 박아 둔 **고정 차례**라 원본과 어긋난다. 지우면 안 된다 —
+     8판 전에 읽어 둔 서류에는 pairs 가 없어서, 다시 판독하기 전까지 표가 통째로 빈다.
+   ⚠ 이름표도 pairs 쪽은 **문서에 적힌 그대로**다(「상호」가 아니라 「업체명」).
+     대조하려면 이름도 같아야 한다는 대표 선택이다. */
+function docPairs(read) {
+  const f = (read && read.fields) || {};
+  return (Array.isArray(f.pairs) ? f.pairs : [])
+    .filter(function (p) { return p && p.k && String(p.v || '').trim() !== ''; });
+}
+function readRows(read) {
+  const pairs = docPairs(read);
+  if (pairs.length) return pairs.map(function (p) { return [p.k, p.v]; });
+  const f = (read && read.fields) || {};
+  return READ_ROWS
+    .filter(function (p) { return f[p[0]] && typeof f[p[0]] === 'string'; })
+    .map(function (p) { return [p[1], f[p[0]]]; });
+}
+
 /* 내려받기·공유 줄. 공유는 되는 기기(주로 폰)에만 보인다 —
    PC 에 보이면 눌러도 아무 일이 없어 헛단추가 된다. */
 /* 크게 보기의 단추 줄 — 두 칸씩 놓는다(대표 승인 목업).
@@ -6834,22 +6858,17 @@ function tsCopy() {
   }, function () { alert(tsv); });
 }
 
-/* ══════ 일반 서식 — 모든 칸을 이름:값으로 (대표 지시 2026-08-13) ══════
+/* ══════ 일반 서식 — 옮겨 쓰기 (대표 지시 2026-08-13) ══════
    "캡처되거나 PDF로 들어온 서식들 글자를 선명하게 읽고 정리하고 싶다."
-   아는 칸(상호·대표자·사업자번호…)은 위 READ_ROWS 표에 이미 나온다.
-   여기는 **그 밖의 모든 칸**(매출액·근로자 수·희망시기…)을 그린다 —
-   서식마다 칸이 달라서 이름표를 미리 정할 수 없기 때문이다. */
+   ⚠ 칸 표는 이제 **위 표 하나뿐**이다(readRows — 문서 차례 그대로).
+      예전에는 여기서 「그 밖의 칸」을 따로 한 표 더 그렸고, 그래서 차례가
+      두 덩어리로 갈려 원본과 대조가 안 됐다(대표 지시 2026-08-13, 두 번째).
+   여기 남은 것은 「못 읽었다」는 말과 옮겨 쓰기 단추다. */
 function formPairsBox(it) {
   const r = it && it.meta && it.meta.read;
   if (!r || r.kind !== 'form') return '';
-  const pairs = (r.fields && Array.isArray(r.fields.pairs) ? r.fields.pairs : [])
-    .filter(function (p) { return p && p.k && String(p.v || '').trim() !== ''; });
   let h = '';
-  if (pairs.length) {
-    h += '<table>' + pairs.map(function (p) {
-      return '<tr><td class="k">' + esc(p.k) + '</td><td>' + esc(p.v) + '</td></tr>';
-    }).join('') + '</table>';
-  } else if (!r.error) {
+  if (!readRows(r).length && !r.error) {
     h += '<p class="note">칸을 못 읽은 서식입니다 — 「다시 판독」을 눌러 보세요.</p>';
   }
   /* 「정리」의 끝은 옮겨 쓰는 것이다 — 이름표\t값 꼴이라 엑셀에 두 열로 붙는다 */
@@ -6861,15 +6880,9 @@ function formCopy() {
   const it = gridItems.find(function (x) { return x.id === viewerId; });
   const r = it && it.meta && it.meta.read;
   if (!r) return;
-  const f = r.fields || {};
-  const lines = [];
-  /* 아는 칸 먼저(화면 표와 같은 차례) — 그다음 나머지 칸 전부 */
-  READ_ROWS.forEach(function (p) {
-    if (f[p[0]] && typeof f[p[0]] === 'string') lines.push(p[1] + '\t' + f[p[0]]);
-  });
-  (Array.isArray(f.pairs) ? f.pairs : []).forEach(function (p) {
-    if (p && p.k && String(p.v || '').trim() !== '') lines.push(p.k + '\t' + p.v);
-  });
+  /* ⚠ 화면 표와 **같은 차례**로 담는다. 여기만 딴 차례로 담으면 엑셀에 붙인 것과
+     화면이 어긋나, 원본과 대조하려고 복사한 뜻이 없어진다. */
+  const lines = readRows(r).map(function (p) { return p[0] + '\t' + p[1]; });
   if (!lines.length) { toast('복사할 칸이 없습니다'); return; }
   navigator.clipboard.writeText(lines.join('\n')).then(function () {
     toast(lines.length + '칸을 복사했습니다 — 엑셀에서 붙여넣으세요');
@@ -6904,9 +6917,9 @@ function renderReadPanel(it) {
     return;
   }
   const warn = read.auto ? '' : ' warn';
-  const rows = READ_ROWS
-    .filter(function (p) { return read.fields && read.fields[p[0]]; })
-    .map(function (p) { return '<tr><td class="k">' + p[1] + '</td><td>' + esc(read.fields[p[0]]) + '</td></tr>'; })
+  /* 문서 차례 그대로 — 이름표까지 원본에 적힌 말이므로 이쪽도 esc 한다 */
+  const rows = readRows(read)
+    .map(function (r) { return '<tr><td class="k">' + esc(r[0]) + '</td><td>' + esc(r[1]) + '</td></tr>'; })
     .join('');
   /* 실패했으면 AI가 준 설명까지 통째로 보여준다 — 줄바꿈도 살린다.
      이것을 우리 문구로 덮었다가 원인을 잘못 짚은 적이 있다(모델 종료 사고). */

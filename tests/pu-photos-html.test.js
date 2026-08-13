@@ -988,7 +988,11 @@ test('판독 실패를 「서류로 보이지 않음」이라고 말하지 않�
 test('판독 결과도 이스케이프해서 화면에 넣는다', () => {
   // AI가 돌려준 문자열을 그대로 넣으면 화면이 뚫린다
   assert.match(app, /esc\(readLine\(/);
-  assert.match(app, /esc\(read\.fields\[/);
+  /* 값뿐 아니라 **이름표까지** — 2026-08-13 부터 이름표도 문서에서 읽어 온 말이다
+     (「업체명」처럼 원본에 적힌 그대로). 우리가 지은 말이 아니므로 믿으면 안 된다. */
+  const fn = app.match(/function renderReadPanel\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /esc\(r\[0\]\)/, '이름표를 안 걸렀습니다');
+  assert.match(fn, /esc\(r\[1\]\)/, '값을 안 걸렀습니다');
 });
 
 /* ── 명함첩으로 보내기 ── */
