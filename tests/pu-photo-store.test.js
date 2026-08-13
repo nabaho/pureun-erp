@@ -433,16 +433,32 @@ test('한 번에 올릴 수 있는 장수 상한이 저장 층에 있다', () =>
 
 /* ── 서류 고화질 ── */
 
-test('올릴 크기 — 서류는 3200px 고품질, 일반 사진은 1600px', () => {
+test('올릴 크기 — 서류는 2000px 고품질, 일반 사진은 1600px', () => {
   const S = loadStore();
   // 서류(명함·사업자등록증·중소기업확인서)는 글씨를 읽어야 하는 물건이라
   // 일반 현장사진과 기준이 달라야 한다(2026-08-03 대표 지시).
-  assert.equal(S.uploadSpec(true).maxEdge, 3200);
+  // 3200 → 2000 (대표 결정 2026-08-13, 비용): 실시간DB 내려받기가 청구서의 93%였다.
+  assert.equal(S.uploadSpec(true).maxEdge, 2000);
   assert.equal(S.uploadSpec(false).maxEdge, 1600);
   assert.ok(S.uploadSpec(true).quality > S.uploadSpec(false).quality,
     '서류 품질이 일반 사진보다 높지 않습니다');
   // 미리보기는 종류와 무관하게 격자용 작은 것으로 통일한다.
   assert.equal(S.uploadSpec(true).thumbEdge, S.uploadSpec(false).thumbEdge);
+});
+
+test('★ 서류 상한이 「원본이 작습니다」 문턱보다 커야 한다', () => {
+  /* 사진첩은 계약서·서식·근태표가 1600px 미만이면 「원본이 작습니다 — 지어냈을 수
+     있습니다」로 경고하고 할 일에 올린다(MIN_READ_EDGE). 올리는 상한을 그 아래로
+     내리면 **새로 올린 서류가 죄다 경고를 달고 쌓인다** — 경고가 무의미해진다. */
+  const S = loadStore();
+  const app = fs.readFileSync(path.join(__dirname, '..', 'pu-photos.html'), 'utf8');
+  const m = app.match(/^const MIN_READ_EDGE = \{[\s\S]*?\n\};/m);
+  assert.ok(m, 'MIN_READ_EDGE 를 찾을 수 없습니다');
+  const worst = (m[0].match(/:\s*(\d+)/g) || [])
+    .map(function (s) { return Number(s.replace(/[^\d]/g, '')); })
+    .reduce(function (a, b) { return Math.max(a, b); }, 0);
+  assert.ok(S.uploadSpec(true).maxEdge >= worst,
+    '★ 올리는 상한(' + S.uploadSpec(true).maxEdge + ')이 경고 문턱(' + worst + ')보다 작습니다');
 });
 
 /* ── B단계: 실시간DB 저장·읽기 ── */
