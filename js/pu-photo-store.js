@@ -217,17 +217,68 @@
   }
 
   /* 파일 창고 방식의 파일 경로.
-     kind: 'full' = 긴 변 1600px 축소본 / 'thumb' = 격자용 작은 미리보기
+     kind: 'full' = 축소본 / 'thumb' = 격자용 작은 미리보기
 
      모르는 kind는 곧바로 예외를 던진다. 예전에는 'thumb'이 아닌 모든 값을 축소본으로
      처리했는데, 그러면 'thumbnail' 같은 오타 한 번으로 격자용 미리보기가 원본 축소본을
      덮어쓴다. 사진은 증빙 자료라 덮어쓰면 되돌릴 수 없다 —
-     오타가 조용히 사고로 이어지는 것보다 즉시 터지는 게 낫다. */
-  function filePath(year, id, kind) {
+     오타가 조용히 사고로 이어지는 것보다 즉시 터지는 게 낫다.
+
+     ── 사람별 자리 (2026-08-13 비용 조사 뒤 대표 선택: "구별을 둔다") ──
+     ⚠ 처음 만들 때는 경로에 주인이 없었다(`pu_photos/{연도}/{번호}.jpg`). 실시간DB는
+       사람마다 자리(u/{나}/...)가 갈려 있어 서버가 남의 자리를 막는데(위 base() 주석),
+       창고 경로에는 그 벽이 아예 없어 번호만 알면 아무나 남의 사진을 겨눌 수 있었다.
+       사업자등록증·명함·계약서가 들어 있는 자리라 실시간DB와 같은 벽이 필요하다.
+       그래서 실시간DB와 **같은 모양**으로 판다(u/{주인}/{blobs|thumbs}/{연도}/{번호}) —
+       콘솔 규칙도 실시간DB에 이미 있는 것과 같은 문장으로 하나만 더 쓰면 된다. */
+  function filePath(year, id, kind, owner) {
     if (kind !== 'full' && kind !== 'thumb') {
       throw new Error('파일 종류는 full 또는 thumb만 가능합니다: ' + kind);
     }
-    return BUCKET_ROOT + '/' + year + '/' + id + (kind === 'thumb' ? '_t' : '') + '.jpg';
+    var who = owner || deps.uid;
+    if (!who) throw new Error('사진을 담을 계정을 알 수 없습니다 — 로그인을 확인해 주세요');
+    return BUCKET_ROOT + '/u/' + who + '/' + (kind === 'thumb' ? 'thumbs' : 'blobs') +
+      '/' + year + '/' + id + '.jpg';
+  }
+
+  /* ── 파일 창고에 실제로 올리고 받는다 (2026-08-13, 비용 조사 뒤 실행) ──
+     같은 방식을 명함첩이 먼저 검증했다(pu-cards.html 의 `_photoRef`·
+     `_fetchFromBucket`·`_putToBucket`). data:URL ↔ 창고 파일을 그대로 오간다 —
+     화면도 다시 판독기도 data:URL 을 기대하므로 그 모양을 그대로 맞춘다. */
+  function putToBucket(path, dataUrl) {
+    return deps.storage.ref(path).putString(String(dataUrl), 'data_url');
+  }
+  function deleteFromBucket(path) {
+    return deps.storage.ref(path).delete();
+  }
+  function fetchFromBucket(path) {
+    return deps.storage.ref(path).getDownloadURL().then(function (url) {
+      return fetch(url);
+    }).then(function (res) {
+      if (!res.ok) throw new Error('창고 응답 ' + res.status);
+      return res.blob();
+    }).then(function (blob) {
+      return new Promise(function (ok, no) {
+        var r = new FileReader();
+        r.onload = function () { ok(String(r.result || '')); };
+        r.onerror = function () { no(r.error); };
+        r.readAsDataURL(blob);
+      });
+    });
+  }
+
+  /* 읽기 순서 — **창고 먼저, 안 되면 실시간DB**(명함첩과 같은 순서, 2026-08-09 결정을
+     그대로 물려받는다). 옮기다 만 것이 있어도, 창고에 없으면 조용히 실시간DB로
+     물러난다 — 한쪽만 보면 사진이 사라진 것처럼 보이는 일이 없다.
+     ⚠ deps.storage 가 없으면(아직 안 이어 준 화면) 곧바로 rtdbFallback — 이 파일을
+       쓰는 화면이 전부 창고를 넘겨줄 때까지 기다리지 않아도 된다. */
+  function withStorage(pathFn, rtdbFallback) {
+    if (!deps.storage) return rtdbFallback();
+    var path;
+    try { path = pathFn(); } catch (e) { return rtdbFallback(); }
+    return fetchFromBucket(path).then(function (v) {
+      return v || rtdbFallback();
+    }).catch(function () { return rtdbFallback(); });
   }
 
   /* ── 저장 방식 ──
@@ -277,17 +328,48 @@
     return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   }
 
-  /* 사진 한 장 저장 — 정보·본문·미리보기를 다중 경로 update 한 번에 담는다.
+  /* 사진 한 장 저장.
+     실시간DB 방식은 정보·본문·미리보기를 다중 경로 update 한 번에 담는다.
      반드시 이 모양이어야 한다: 상위 노드를 set 으로 통째로 쓰면 남의 사진이
-     지워진다(2026-07 실데이터 사고). update 는 적은 경로만 만들고 나머지는 안 건드린다. */
+     지워진다(2026-07 실데이터 사고). update 는 적은 경로만 만들고 나머지는 안 건드린다.
+
+     ⚠ 창고 방식(mode==='storage')은 본문·미리보기를 **창고에 먼저** 올리고,
+       **둘 다 성공한 뒤에야** 실시간DB에 정보만 적는다(meta.loc:'storage' 표시와
+       함께) — 본문 없이 정보만 있는 사진이 생기면 안 된다.
+     ⚠ 창고 올리기가 실패하면(권한·요금제 등) **실시간DB 방식으로 물러난다**
+       (명함첩 putPhoto 와 같은 원칙 — "사진을 잃는 것보다 낫다"). 그래서 창고가
+       막혀도 올리기 자체는 항상 끝까지 된다. */
   function savePhoto(p) {
-    if (mode === 'storage') {
-      return Promise.reject(new Error('파일 창고 저장은 아직 준비되지 않았습니다'));
-    }
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     /* 자리는 **올린 때**가 정한다(2026-08-13) — photoYear 참고.
        화면도 같은 함수를 쓰므로 담는 자리와 찾는 자리가 어긋나지 않는다. */
     var year = photoYear(p.meta);
+    if (mode === 'storage' && deps.storage) {
+      return putToBucket(filePath(year, p.id, 'full'), p.full)
+        .then(function () { return putToBucket(filePath(year, p.id, 'thumb'), p.thumb); })
+        .then(function () { return saveMetaOnly(p, year); })
+        .catch(function (e) {
+          console.warn('[사진첩] 창고 저장 실패 — 실시간DB로 보관합니다', e && e.message);
+          return saveToRtdb(p, year);
+        });
+    }
+    return saveToRtdb(p, year);
+  }
+
+  /* 창고 저장 성공 뒤 — 실시간DB에는 **정보만** 남긴다(본문·미리보기는 창고에 있다).
+     ⚠ loc:'storage' 를 반드시 적는다. 안 적으면 지우기·복원·용량 계산이
+       본문이 실시간DB에 있는 줄 알고 없는 자리를 헤맨다. */
+  function saveMetaOnly(p, year) {
+    var u = {};
+    u[metaPath(year, p.id)] = Object.assign({}, p.meta, { loc: 'storage' });
+    u[ownerPath(deps.uid)] = {
+      name: deps.name || (p.meta && p.meta.byName) || '',
+      lastAt: Date.now()
+    };
+    return deps.db.ref().update(u).then(function () { return { year: year, id: p.id }; });
+  }
+
+  function saveToRtdb(p, year) {
     var u = {};
     u[metaPath(year, p.id)] = p.meta;
     u[blobPath(year, p.id)] = p.full;
@@ -345,12 +427,47 @@
        옛 자리 null 한 줄 때문에 **모든 지우기가 통째로 실패**했다
        (2026-08-06 대표 보고: "자꾸 에러 난다"). 옛 자리는 이미 비워서
        옮겼으므로 여기서 함께 비울 것도 없다. */
-    /* ⚠ 「못 읽었다」와 「원래 없다」를 갈라야 한다.
+    /* ⚠ 창고 사진(meta.loc==='storage')은 본문을 트래시에 **복사하지 않는다**
+       (2026-08-13, 비용 조사). 명함첩 휴지통이 원본을 통째로 복사해 두었다가
+       열 때마다 30일치를 다시 내려받던 것과 같은 실수를 사진첩에서 미리 막는다.
+       본문은 창고의 **원래 자리에 그대로 둔다** — 영구삭제(purgeOne/
+       purgeOldTrash) 때에야 창고에서 지운다. */
+    return readOnce(metaPath(year, id, owner))
+      .catch(function () {
+        throw new Error('사진을 읽지 못해 지우지 않았습니다 — 잠시 뒤 다시 시도해 주세요');
+      })
+      .then(function (meta) {
+        /* 창고 사진은 본문을 안 만지므로, 정보만 읽히면 그것으로 충분하다 —
+           본문이 실제로 창고에 있는지까지 여기서 확인할 필요가 없다(안 건드리니까). */
+        if (meta && meta.loc === 'storage') return deleteStorageMeta(year, id, owner, meta, why);
+        return deleteRtdbBody(year, id, owner, why);
+      });
+  }
+
+  function deleteStorageMeta(year, id, owner, meta, why) {
+    var u = {};
+    var now = Date.now();
+    u[trashPath(year, id, owner)] = { meta: meta, delAt: now, loc: 'storage' };
+    u[logPath(id, owner)] = {
+      year: year, what: whatOf(meta), delAt: now,
+      by: deps.uid || '', byName: deps.name || '',
+      why: why || ''
+    };
+    u[metaPath(year, id, owner)] = null;
+    Object.keys((meta && meta.shareWith) || {}).forEach(function (who) {
+      u[sharedToPath(who, id)] = null;
+    });
+    return deps.db.ref().update(u);
+  }
+
+  /* 옛 방식(본문이 실시간DB에 있음) — 지우기 전의 동작을 그대로 지킨다.
+     ⚠ 「못 읽었다」와 「원래 없다」를 갈라야 한다.
        둘 다 null 로 뭉뚱그리면, 통신이 잠깐 끊긴 사이에 지우기를 누른 것만으로
        휴지통에는 빈 껍데기('')가 들어가고 원본은 지워진다 — 되살려도 본문이 없다.
        실제로 2026-08-09 용량 초과로 읽기가 막혔을 때 이런 사진이 생겼다
        (검은 화면 + 「사진 본문을 불러오지 못했습니다」).
        읽기가 «실패» 하면 아예 지우지 않는다. 원래 없는 것은 그대로 지울 수 있다. */
+  function deleteRtdbBody(year, id, owner, why) {
     var FAIL = {};
     return Promise.all([
       readOnce(metaPath(year, id, owner)).catch(function () { return FAIL; }),
@@ -406,18 +523,35 @@
     });
   }
 
-  /* 되살리기 — 휴지통에서 꺼내 원래 자리로. */
+  /* 되살리기 — 휴지통에서 꺼내 원래 자리로.
+     ⚠ 창고 사진(t.loc==='storage')은 본문을 안 옮긴다 — 지울 때 애초에 창고의
+       원래 자리에 그대로 뒀으므로 되살릴 것이 없다. 정보만 되돌리면 끝이다. */
   function restorePhoto(year, id) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     return readOnce(trashPath(year, id)).then(function (t) {
       if (!t) throw new Error('휴지통에 그 사진이 없습니다');
       var u = {};
       u[metaPath(year, id)] = t.meta || {};
-      if (t.full) u[blobPath(year, id)] = t.full;
-      if (t.thumb) u[thumbPath(year, id)] = t.thumb;
+      if (t.loc !== 'storage') {
+        if (t.full) u[blobPath(year, id)] = t.full;
+        if (t.thumb) u[thumbPath(year, id)] = t.thumb;
+      }
       u[trashPath(year, id)] = null;
       return deps.db.ref().update(u);
     });
+  }
+
+  /* 창고 사진은 지울 때 본문을 안 건드렸다(트래시에 loc 만 적어 뒀다) — 그래서
+     **영구삭제 때에야** 창고 본문을 지운다. 명함첩 hardDel 과 같은 순서다:
+     지울 때는 안 지우고, 완전히 지울 때 지운다.
+     ⚠ 창고 지우기가 실패해도(권한·이미 없음 등) 넘어간다 — 실시간DB의 트래시
+       기록은 지워야 한다. 창고에 파일이 하나 남는 것이 트래시가 안 지워지는 것보다 낫다. */
+  function purgeStorageBody(year, id, owner) {
+    if (!deps.storage) return Promise.resolve();
+    return Promise.all([
+      deleteFromBucket(filePath(year, id, 'full', owner)).catch(function () {}),
+      deleteFromBucket(filePath(year, id, 'thumb', owner)).catch(function () {})
+    ]);
   }
 
   /* 30일 지난 것만 완전히 지운다. 지운 때가 없는 것은 건드리지 않는다
@@ -426,25 +560,37 @@
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     return deps.db.ref(base(owner) + '/trash/' + year).once('value').then(function (s) {
       var raw = s.val() || {};
-      var u = {}, n = 0;
       var cut = Date.now() - TRASH_DAYS * 86400000;
-      Object.keys(raw).forEach(function (id) {
+      var due = Object.keys(raw).filter(function (id) {
         var t = raw[id] || {};
-        if (t.delAt && t.delAt < cut) { u[trashPath(year, id, owner)] = null; n++; }
+        return t.delAt && t.delAt < cut;
       });
-      if (!n) return 0;
-      return deps.db.ref().update(u).then(function () { return n; });
+      if (!due.length) return 0;
+      /* 창고 본문부터 지운다 — 한 장이 실패해도 나머지는 계속 지운다. */
+      return Promise.all(due.map(function (id) {
+        return (raw[id].loc === 'storage') ? purgeStorageBody(year, id, owner) : Promise.resolve();
+      })).then(function () {
+        var u = {};
+        due.forEach(function (id) { u[trashPath(year, id, owner)] = null; });
+        return deps.db.ref().update(u).then(function () { return due.length; });
+      });
     });
   }
 
   /* 휴지통에서 한 장만 완전히 지운다. */
   function purgeOne(year, id) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
-    var u = {};
-    u[trashPath(year, id)] = null;
-    /* 기록은 지우지 않는다 — 완전히 지운 때만 덧붙인다. */
-    u[logPath(id) + '/purgedAt'] = Date.now();
-    return deps.db.ref().update(u);
+    return readOnce(trashPath(year, id)).then(function (t) {
+      var finish = function () {
+        var u = {};
+        u[trashPath(year, id)] = null;
+        /* 기록은 지우지 않는다 — 완전히 지운 때만 덧붙인다. */
+        u[logPath(id) + '/purgedAt'] = Date.now();
+        return deps.db.ref().update(u);
+      };
+      if (t && t.loc === 'storage') return purgeStorageBody(year, id).then(finish);
+      return finish();
+    });
   }
 
   /* 지운 기록 목록 — 최근 것이 먼저. */
@@ -916,7 +1062,11 @@
           var raw = s.val() || {}, bytes = 0, n = 0;
           Object.keys(raw).forEach(function (id) {
             var m = raw[id] || {};
-            bytes += Number(m.size) || 0;
+            /* ⚠ 창고 사진은 실시간DB 용량에 안 넣는다(2026-08-13) — 본문이 창고에
+               있으니 실시간DB 1GB 한도를 안 먹는다. 넣으면 옮겨도 계기판이
+               안 줄어 "옮긴 보람이 없다"로 보인다. 장수(n)는 그대로 센다 —
+               사진이 준 게 아니라 자리만 바뀐 것이다. */
+            if (m.loc !== 'storage') bytes += Number(m.size) || 0;
             n++;
           });
           return { year: y, bytes: bytes, count: n };
@@ -954,11 +1104,17 @@
 
   /* 미리보기·본문은 볼 때만 한 장씩 받아온다.
      새 자리에 없으면 옛 자리에서 찾는다(옮기기 전에도 사진이 보여야 한다). */
+  /* ⚠ 창고를 먼저 본다(withStorage) — 옮긴 사진은 거기 있다. 없으면(아직 안
+     옮겼거나, 이 화면이 창고를 안 이어 줬으면) 실시간DB 옛 길로 물러난다. */
   function loadThumb(year, id, owner) {
-    return withLegacy(thumbPath(year, id, owner), legacyRoot('thumbs') + '/' + year + '/' + id);
+    return withStorage(function () { return filePath(year, id, 'thumb', owner); }, function () {
+      return withLegacy(thumbPath(year, id, owner), legacyRoot('thumbs') + '/' + year + '/' + id);
+    });
   }
   function loadFull(year, id, owner) {
-    return withLegacy(blobPath(year, id, owner), legacyRoot('blobs') + '/' + year + '/' + id);
+    return withStorage(function () { return filePath(year, id, 'full', owner); }, function () {
+      return withLegacy(blobPath(year, id, owner), legacyRoot('blobs') + '/' + year + '/' + id);
+    });
   }
 
   /* ── 한 해의 미리보기를 **한 번에** 받아온다 (대표 보고 2026-08-10) ──
@@ -1235,6 +1391,91 @@
     return deps.db.ref().update(u).then(function () { legacyDone = false; });
   }
 
+  /* ── 실시간DB → 창고 이사 (2026-08-13, 비용 조사 뒤 실행) ──
+     "비용을 최소화할 수 있는 방향 검토해 달라" — 8/1~8/11 실시간DB 내려받기가
+     청구서(₩31,045)의 93%였다. 사진 본문을 창고로 옮기면 내려받기 값이
+     실시간DB 요금의 8분의 1 안팎으로 떨어진다(명함첩 이전 때 확인된 값).
+
+     명함첩이 먼저 검증한 순서를 그대로 따른다(pu-cards.html
+     pucardsMovePhotosToStorage): **올리고 → 되읽어 확인하고 → 그제야
+     실시간DB에서 지운다.** 순서를 바꾸면(먼저 지우고 나중에 올리면) 중간에
+     끊길 때 사진을 통째로 잃는다.
+
+     ⚠ 이미 옮긴 사진(meta.loc==='storage')은 건너뛴다 — **되풀이해도
+       안전하다**(resumable). 한 번에 다 못 옮겨도, 다시 부르면 남은 것만 본다.
+     ⚠ 한 장이 실패해도 나머지를 옮긴다 — migrateLegacy 와 같은 원칙이다.
+     ⚠ 총괄 관리자만 — 전 직원의 모든 자리를 훑는 일이다. */
+  function migrateToStorage(onStep) {
+    if (!deps.isAdmin) {
+      return Promise.reject(new Error('사진 옮기기는 총괄 관리자만 할 수 있습니다'));
+    }
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    if (!deps.storage) return Promise.reject(new Error('파일 창고가 연결되지 않았습니다'));
+
+    var out = { moved: 0, skipped: 0, failed: 0 };
+    return listOwners().then(function (owners) {
+      var uids = Object.keys(owners);
+      if (uids.indexOf(deps.uid) < 0) uids.push(deps.uid);   // 나 자신도 포함한다
+      return uids.reduce(function (chain, uid) {
+        return chain.then(function () { return migrateOwnerToStorage(uid, out, onStep); });
+      }, Promise.resolve());
+    }).then(function () { return out; });
+  }
+
+  function migrateOwnerToStorage(uid, out, onStep) {
+    return listYears(uid).then(function (years) {
+      return years.reduce(function (chain, year) {
+        return chain.then(function () { return migrateYearToStorage(uid, year, out, onStep); });
+      }, Promise.resolve());
+    }).catch(function (e) {
+      console.warn('[사진 이사]', uid, e && e.message);   // 이 사람만 실패 — 나머지는 계속한다
+    });
+  }
+
+  function migrateYearToStorage(uid, year, out, onStep) {
+    return listYear(year, uid).then(function (items) {
+      var ids = Object.keys(items);
+      return ids.reduce(function (chain, id) {
+        return chain.then(function () { return migrateOneToStorage(uid, year, id, items[id], out, onStep); });
+      }, Promise.resolve());
+    });
+  }
+
+  function migrateOneToStorage(uid, year, id, meta, out, onStep) {
+    if (meta && meta.loc === 'storage') {
+      out.skipped++;
+      if (onStep) onStep(out);
+      return Promise.resolve();
+    }
+    return Promise.all([loadFull(year, id, uid), loadThumb(year, id, uid)])
+      .then(function (r) {
+        var full = r[0], thumb = r[1];
+        /* 본문이 없는 사진(2026-08-13 알림: "화면이 전혀 안 나오는 경우")은
+           옮길 것이 없다 — 건너뛴다. 실패로 세면 관리자가 헛되이 다시 시도한다. */
+        if (!full) { out.skipped++; if (onStep) onStep(out); return; }
+        return putToBucket(filePath(year, id, 'full', uid), full)
+          .then(function () { return thumb ? putToBucket(filePath(year, id, 'thumb', uid), thumb) : null; })
+          /* 올리고 나서 실제로 되읽어 본다 — "올렸다고 답했는데 실은 못 올라간" 것을
+             잡는다. 이것을 안 하고 지우면, 지운 뒤에야 못 올라간 것을 안다 —
+             그때는 사진을 잃은 뒤다. */
+          .then(function () { return fetchFromBucket(filePath(year, id, 'full', uid)); })
+          .then(function (back) {
+            if (!back) throw new Error('올린 사진을 다시 못 읽었습니다');
+            var u = {};
+            u[metaPath(year, id, uid) + '/loc'] = 'storage';
+            u[blobPath(year, id, uid)] = null;
+            u[thumbPath(year, id, uid)] = null;
+            return deps.db.ref().update(u);
+          })
+          .then(function () { out.moved++; if (onStep) onStep(out); });
+      })
+      .catch(function (e) {
+        console.warn('[사진 이사]', uid, year, id, e && e.message);
+        out.failed++;
+        if (onStep) onStep(out);
+      });
+  }
+
   /* ── 창고 점검 ──
      파일 창고를 이 저장소에서 실제로 써본 적이 없다. 그래서 사진을 담기 전에
      작은 파일 하나로 올리기·주소받기·지우기를 확인한다.
@@ -1443,6 +1684,7 @@
     listYearsAll: listYearsAll,
     migrateLegacy: migrateLegacy,
     dropLegacy: dropLegacy,
+    migrateToStorage: migrateToStorage,
     listYear: listYear,
     loadThumb: loadThumb,
     loadThumbsYear: loadThumbsYear,

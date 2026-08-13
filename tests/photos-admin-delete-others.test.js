@@ -16,7 +16,10 @@ const store = fs.readFileSync(path.join(root, 'js', 'pu-photo-store.js'), 'utf8'
 const rules = fs.readFileSync(
   path.join(root, 'docs', 'firebase-rules-현재적용본.json'), 'utf8');
 
-const del = store.match(/function deletePhoto\([\s\S]*?\n  \}/);
+/* 2026-08-13 창고 이전으로 deletePhoto 는 分기만 하고, 실제 자리 읽기·쓰기는
+   deleteStorageMeta(창고 사진)·deleteRtdbBody(옛 방식) 두 갈래로 나뉘었다 —
+   주인이 실제로 실리는지는 그 갈래들을 봐야 한다. */
+const del = store.match(/function deletePhoto\([\s\S]*?function deleteRtdbBody\([\s\S]*?\n  \}/);
 
 test('★ 저장 층이 주인을 받는다', () => {
   assert.ok(del, 'deletePhoto 를 찾지 못했습니다.');
