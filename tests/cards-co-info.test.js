@@ -189,3 +189,12 @@ test('기업정보에서 친 글자를 명함첩 찾기칸에 옮기지 않는�
 test('기업정보를 나서면 안내글을 되돌린다', () => {
   assert.match(source, /if\(!isCo\) syncPcSearchFor\('list'\)/);
 });
+
+test('읽어 온 서류 목록을 회사 상세에 보여준다', () => {
+  assert.match(source, /function coDocsHtml/);
+  assert.match(source, /읽어 온 서류 \$\{docs\.length\}건/);
+  /* 최신 것이 위로 — 방금 보낸 서류를 맨 밑에서 찾게 하면 안 된다 */
+  assert.match(source, /sort\(\(a,b\)=>\(b\.at\|\|0\)-\(a\.at\|\|0\)\)/);
+  const at = source.indexOf('function coDetailHtml');
+  assert.match(source.slice(at, at + 900), /coDocsHtml\(o\)/, '상세에 안 끼웠다');
+});

@@ -403,6 +403,22 @@
       var tag = String(fields.docName || '').trim().replace(/[.#$/[\]]/g, ' ').replace(/\s+/g, ' ').trim();
       if (tag && !(cur.tags && cur.tags[tag])) { add['tags/' + tag] = true; filled.push('갈래'); }
 
+      /* 어느 서류에서 온 값인지 남긴다.
+         값만 옮기면 나중에 「이 숫자 어디서 봤더라」에 답할 수 없다 — 사진첩에 그 서류가
+         그대로 있는데도 다시 찾아 헤매게 된다(대표 지시 2026-08-13).
+         ⚠ 덮어쓰지 않고 사진 하나에 한 줄씩 쌓는다. 한 회사에 서류가 여러 장 오고,
+           나중 것이 앞 것을 지우면 이력이 사라진다. 같은 사진을 두 번 보내면 같은
+           자리에 다시 쓰여 줄이 늘지 않는다(사진 번호를 열쇠로 삼는다). */
+      var ph = o.photo || {};
+      if (ph.id) {
+        var dk = String(ph.year || 'unknown') + '_' + String(ph.id).replace(/[.#$/[\]]/g, '_');
+        if (!(cur.docs && cur.docs[dk])) {
+          add['docs/' + dk] = { name: tag || '서식', year: String(ph.year || ''), id: String(ph.id),
+                                owner: String(ph.owner || ''), at: Date.now(), by: o.byName || '' };
+          filled.push('서류');
+        }
+      }
+
       if (!filled.length) {
         return { ok: true, filled: [], message: '새로 채울 칸이 없습니다 — 이미 다 들어 있습니다' };
       }

@@ -135,3 +135,47 @@ test('보낸 표시는 사진 주인 자리에 남긴다', () => {
   assert.match(html.slice(at, at + 1400), /saveRead\(gridYear, id, read, photoOwner\(id\)\)/);
 });
 
+test('어느 서류에서 온 값인지 남긴다', async () => {
+  /* 값만 옮기면 「이 숫자 어디서 봤더라」에 답할 수 없다 — 사진첩에 그 서류가
+     그대로 있는데도 다시 찾아 헤매게 된다(대표 지시 2026-08-13). */
+  const c = load({});
+  await c.sendToCoInfo({ fields: FORM, byName:'권형하', photo:{ year:'2026', id:'p1', owner:'u1' } });
+  const v = c._writes[0].val;
+  const k = Object.keys(v).find(x => x.indexOf('docs/') === 0);
+  assert.ok(k, '서류 기록을 안 남겼다');
+  assert.equal(v[k].id, 'p1');
+  assert.equal(v[k].year, '2026');
+  assert.equal(v[k].owner, 'u1');
+  assert.equal(v[k].by, '권형하');
+  assert.ok(v[k].at > 0);
+});
+
+test('서류는 사진마다 한 줄씩 쌓인다', async () => {
+  /* 한 회사에 서류가 여러 장 온다. 나중 것이 앞 것을 지우면 이력이 사라진다. */
+  const c = load({ docs:{ '2025_p9':{ name:'사업자등록증', id:'p9' } } });
+  await c.sendToCoInfo({ fields: FORM, photo:{ year:'2026', id:'p1' } });
+  const keys = Object.keys(c._writes[0].val).filter(x => x.indexOf('docs/') === 0);
+  assert.deepEqual(keys, ['docs/2026_p1'], '앞 서류를 덮었거나 새 것을 안 남겼다');
+});
+
+test('같은 사진을 두 번 보내도 줄이 늘지 않는다', async () => {
+  const c = load({ docs:{ '2026_p1':{ name:'서식', id:'p1' } }, docName:'기술·경영 혁신 지원신청서',
+                   tags:{'기술·경영 혁신 지원신청서':true} });
+  const r = await c.sendToCoInfo({ fields: { bizno:FORM.bizno, docName:'기술·경영 혁신 지원신청서' },
+                                   photo:{ year:'2026', id:'p1' } });
+  assert.equal(c._writes.length, 0, '같은 사진인데 또 썼다');
+  assert.match(r.message, /이미 다 들어 있습니다/);
+});
+
+test('사진 번호가 없으면 서류 기록도 안 남긴다', async () => {
+  /* 옛 방식으로 보낸 것에는 사진 번호가 없다 — 없는 채로 빈 줄을 만들면 안 된다 */
+  const c = load({});
+  await c.sendToCoInfo({ fields: FORM });
+  const k = Object.keys(c._writes[0].val).find(x => x.indexOf('docs/') === 0);
+  assert.equal(k, undefined);
+});
+
+test('사진첩이 사진 번호·연도·주인을 함께 넘긴다', () => {
+  const at = html.indexOf('function sendCoInfo(');
+  assert.match(html.slice(at, at + 900), /photo: \{ year: gridYear, id: id, owner: photoOwner\(id\)/);
+});
