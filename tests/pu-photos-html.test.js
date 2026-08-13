@@ -1188,14 +1188,20 @@ test('판독 카드는 밝은색이다 — 어두운 화면에서 글이 잘 보
   assert.match(app, /#readPanel table\{[^}]*color:var\(--ink\)/, '판독 글자가 어두운 화면용 색입니다');
 });
 
-test('단추는 두 칸씩 놓고 지우기는 혼자 한 줄을 쓴다', () => {
-  // 한 줄에 하나씩이면 세로로 길어져 판독 내용을 가린다.
-  assert.match(app, /#readPanel \.acts\{display:grid;grid-template-columns:1fr 1fr/);
+/* 2026-08-13 대표 지시로 바뀌었다 — "한 줄에 모든 셀 넣어달라".
+   예전에는 두 칸 격자에 공유·지우기가 한 줄씩 통으로 차지해 석 줄이었고,
+   판 아래가 길어져 정작 읽은 칸 표가 화면 밖으로 밀렸다.
+   자세한 검사는 tests/photos-viewer-split.test.js 에 있다. */
+test('단추는 한 줄에 모두 놓고, 지우기는 맨 끝에 틈을 두고 놓는다', () => {
+  assert.match(app, /#readPanel \.acts\{display:flex;gap:6px/);
   const fn = app.match(/function actsRow\([\s\S]*?\n\}/);
   assert.ok(fn, 'actsRow 본문을 찾을 수 없습니다');
-  // 지우기는 되돌리기 어려우니 늘 한 줄을 통째로 — 잘못 누르기 어렵게
-  assert.match(fn[0], /class="rm wide"/, '지우기가 다른 단추와 나란히 있습니다');
-  assert.match(app, /#readPanel \.acts \.wide\{grid-column:1 \/ -1\}/);
+  // 지우기는 되돌리기 어려우니 맨 끝 + 앞에 틈 — 잘못 누르기 어렵게
+  assert.match(fn[0], /class="rm"/);
+  assert.ok(fn[0].indexOf('readAgain()') < fn[0].indexOf('deleteOne()'),
+    '지우기가 맨 끝이 아닙니다');
+  assert.match(app, /#readPanel \.acts \.rm\{[^}]*margin-left:6px/,
+    '틈이 없으면 옆 단추를 누르려다 지웁니다');
 });
 
 test('공유 단추는 되는 기기에만 나온다 — PC 에 헛단추를 두지 않는다', () => {
