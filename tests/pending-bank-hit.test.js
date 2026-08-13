@@ -83,8 +83,12 @@ t('미입금 대기에 「통장」 칸이 있다', /'💰 통장 ↕'/.test(src
 t('머리에 「통장에 들어온 것 (N)」 을 센다', /'💰 통장에 들어온 것 \(' \+ n \+ '\)'/.test(src), true);
 t('통장에 들어온 줄은 확정 단추가 초록', /background:hit\?'#16a34a':'#1e40af'/.test(src), true);
 t('그 단추를 누르면 통장 날짜로 창이 열린다', /if\(hit\)\{ openFromBank\(p, hit\); return; \}/.test(src), true);
-t('확정창이 어디서 가져온 날짜인지 밝힌다', /💰 통장에서 가져왔습니다 — /.test(src), true);
-t('못 찾았으면 오늘이라고 밝힌다', /통장에서 찾지 못했습니다 — 오늘 날짜입니다/.test(src), true);
+// 문구는 바뀔 수 있다 — 지켜야 할 것은 「근거(날짜·금액·적요)를 보여주는가」 이다
+t('확정창이 어디서 가져온 날짜인지 밝힌다',
+  /confirmModal\.bankRow[\s\S]{0,600}?통장에서 가져온 날짜입니다[\s\S]{0,400}?적요/.test(src), true);
+t('못 찾았으면 오늘이라고 밝힌다', /통장에서 못 찾았습니다[\s\S]{0,40}오늘 날짜/.test(src), true);
+t('날짜 칸이 통장에서 왔으면 초록으로 물든다',
+  /confirmModal\.bankRow \? \{borderColor:'#bbf7d0',background:'#f0fdf4'/.test(src), true);
 t('부분입금이 목록에 보인다', /'◐ '\+p\.paidSoFar\.toLocaleString\(\)\+' 받음 · '/.test(src), true);
 
 console.log('\n■ 두 번 확정되지 않게');

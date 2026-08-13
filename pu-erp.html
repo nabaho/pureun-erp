@@ -40928,6 +40928,8 @@ function IncomePendingTab(){
       var _cmPay = confirmModal.cardMode ? _cmRemain
                  : Math.min((confirmModal.actualAmt != null ? confirmModal.actualAmt : _cmRemain), _cmRemain);
       var _perfBase = calcDeductions(_cmPay, _cmDed).perfBaseAmount;
+      // 성과급 미리보기가 이것들을 보므로 «옵션 칸보다 먼저» 정해 둔다 (기본 ON)
+      var _perfOn = confirmModal.perfEnabled !== false;
 
       function setM(o){ setConfirmModal(Object.assign({}, confirmModal, o)); }
       function setSubPct(sid, v){
@@ -40947,129 +40949,200 @@ function IncomePendingTab(){
       function clearAllOverrides(){
         setM({mainRateOverride:null, subRateOverrideMap:{}, rateOverrideReason:''});
       }
+      /* ── 창을 «한 줄씩» 으로 (2026-08-13 대표 지시) ──
+         세로로 13줄까지 늘어져 아래가 잘렸다. 업체·종류를 제목으로 올리고,
+         담당·약정을 한 줄에, 입금일과 통장 근거를 한 줄에 붙인다. 520 → 600px.
+         ★ 주담당·부담당은 오른쪽 위 회색 잔글씨라 눈에 안 띄었다 — 파란 알약으로 맨 위에 둔다. */
+      function whoName(sid){
+        if(!sid) return '';
+        var u = users.find(function(x){ return x.sid === sid; });
+        if(u) return u.name;
+        var byName = users.find(function(x){ return x.name === sid; });   // 이름으로 저장된 옛 자료
+        return byName ? byName.name : sid;
+      }
+      var chipMain = { display:'inline-flex', alignItems:'center', gap:'4px', padding:'2px 9px',
+                       borderRadius:'99px', fontSize:'11.5px', fontWeight:800, whiteSpace:'nowrap',
+                       background:'#1e40af', color:'#fff' };
+      var chipSub  = { display:'inline-flex', alignItems:'center', gap:'4px', padding:'2px 9px',
+                       borderRadius:'99px', fontSize:'11.5px', fontWeight:800, whiteSpace:'nowrap',
+                       background:'#eff6ff', color:'#1e40af', border:'1px solid #bfdbfe' };
+      var lineS = { display:'flex', alignItems:'center', gap:'8px', padding:'6px 0',
+                    borderBottom:'1px dashed #f8fafc', fontSize:'12px', flexWrap:'wrap' };
+      var keyS  = { color:'#64748b', fontWeight:700, fontSize:'11px', minWidth:'56px', flexShrink:0 };
       return h('div', { className:'modal-bg', onClick:function(){setConfirmModal(null);} },
-        h('div', { className:'modal', style:{width:'520px'}, onClick:function(e){e.stopPropagation();} },
+        h('div', { className:'modal', style:{width:'600px',maxWidth:'96vw'}, onClick:function(e){e.stopPropagation();} },
           h('div', { className:'modal-h' },
-            h('div', { className:'t' }, '💰 입금확정'),
+            h('div', { className:'t' }, '💰 입금확정 — ' + (it.companyName||'-')
+              + ' · ' + confirmModal.p.store.label + ' ' + confirmModal.p.kindLabel),
             h('button', { className:'x', onClick:function(){setConfirmModal(null);} }, '×')
           ),
           h('div', { className:'modal-b' },
-            h('div', { style:{padding:'12px',background:'#f8fafc',borderRadius:'6px',marginBottom:'14px',fontSize:'12px'} },
-              h('div', { style:{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'10px'} },
-                h('div', null,
-                  h('div', { style:{marginBottom:'4px'} }, h('strong', null, '업체: '), it.companyName||'-'),
-                  h('div', { style:{marginBottom:'4px'} }, h('strong', null, '종류: '), confirmModal.p.store.label + ' ' + confirmModal.p.kindLabel),
-                  h('div', { style:{display:'flex',flexDirection:'column',gap:'4px',marginTop:'6px'} },
-                h('div', { style:{fontSize:'16px',fontWeight:800,color:'#1e40af'} }, '약정 ' + confirmModal.p.amount.toLocaleString() + '원'),
-                (function(){
-                  var prevSplits = (confirmModal.p.item.splitPayments||[]).filter(function(x){return x.kind===confirmModal.p.kindLabel;});
-                  var alreadyPaid = prevSplits.reduce(function(s,x){return s+(x.amount||0);},0);
-                  var remaining = confirmModal.p.amount - alreadyPaid;
-                  var aAmt = confirmModal.actualAmt != null ? confirmModal.actualAmt : remaining;
-                  var cardMode = !!confirmModal.cardMode;
-                  var isPartial = !cardMode && aAmt < remaining && aAmt > 0;
-                  var cardFee = cardMode ? Math.max(0, remaining - aAmt) : 0;
-                  return h('div', { style:{display:'flex',flexDirection:'column',gap:'4px'} },
-                    h('div', { style:{display:'flex',alignItems:'center',gap:'6px'} },
-                      h('span', { style:{fontSize:'11px',color:'#1e293b',fontWeight:600,whiteSpace:'nowrap'} }, '결제수단'),
-                      h('button', { type:'button', onClick:function(){ setConfirmModal(Object.assign({},confirmModal,{cardMode:false})); }, style:{padding:'3px 10px',borderRadius:'12px',border:'1px solid '+(!cardMode?'#1e40af':'#cbd5e1'),background:!cardMode?'#eff6ff':'#fff',color:!cardMode?'#1e40af':'#64748b',fontWeight:!cardMode?700:400,fontSize:'11px',cursor:'pointer'} }, '계좌'),
-                      h('button', { type:'button', onClick:function(){ setConfirmModal(Object.assign({},confirmModal,{cardMode:true})); }, style:{padding:'3px 10px',borderRadius:'12px',border:'1px solid '+(cardMode?'#2563eb':'#cbd5e1'),background:cardMode?'#eff6ff':'#fff',color:cardMode?'#2563eb':'#64748b',fontWeight:cardMode?700:400,fontSize:'11px',cursor:'pointer'} }, '카드')
-                    ),
-                    alreadyPaid > 0 && h('div', { style:{fontSize:'11px',color:'#fbbf24',fontWeight:700} },
-                      '기납입: '+alreadyPaid.toLocaleString()+'원 / 잔액: '+remaining.toLocaleString()+'원'),
-                    h('div', { style:{display:'flex',alignItems:'center',gap:'6px'} },
-                      h('span', { style:{fontSize:'11px',color:'#1e293b',fontWeight:600,whiteSpace:'nowrap'} }, '💵 실제입금'),
-                      h('span', { className:'erp-tip tip-wrap', 'data-tip':'분할입금 방법 — 실제 들어온 금액만 입력하고 확정하세요. 약정액보다 적게 넣으면 자동으로 분할로 기록되고 잔액이 남습니다. 잔금이 또 들어오면 그 금액을 입력해 다시 확정하면 됩니다.', style:{fontSize:'11px',color:'#2563eb',cursor:'help',whiteSpace:'nowrap'} }, 'ⓘ'),
-                      h('input', {
-                        type:'text', value:aAmt.toLocaleString(),
-                        onChange:function(e){
-                          var v=parseInt(e.target.value.replace(/[^0-9]/g,''),10)||0;
-                          setConfirmModal(Object.assign({},confirmModal,{actualAmt:Math.min(v,remaining)}));
-                        },
-                        style:{flex:1,padding:'4px 8px',border:'1.5px solid '+(isPartial?'#fbbf24':'#16a34a'),borderRadius:'4px',
-                          fontSize:'13px',fontWeight:800,textAlign:'right',fontFamily:'monospace',color:isPartial?'#d97706':'#16a34a'}}),
-                      isPartial && h('span',{style:{fontSize:'10px',color:'#fbbf24',fontWeight:700,whiteSpace:'nowrap'}},'분할'),
-                      !isPartial && h('span',{style:{fontSize:'10px',color:'#16a34a',fontWeight:700,whiteSpace:'nowrap'}},'완납')
-                    ),
-                    cardMode && h('div', { style:{fontSize:'10.5px',color:'#2563eb',fontWeight:700,background:'#eff6ff',borderRadius:'4px',padding:'3px 6px'} },
-                      '💳 카드수수료 ' + cardFee.toLocaleString() + '원 · 매출 ' + remaining.toLocaleString() + '원 유지 · 완납'),
-                    remaining > 10000 && h('div',{style:{display:'flex',gap:'4px'}},
-                      h('button',{type:'button',onClick:function(){setConfirmModal(Object.assign({},confirmModal,{actualAmt:remaining}));},
-                        style:{flex:1,padding:'3px',border:'1px solid #16a34a',borderRadius:'5px',background:'#f0fdf4',color:'#16a34a',cursor:'pointer',fontSize:'10px',fontWeight:700}},
-                        '완납 '+remaining.toLocaleString())
-                    )
-                  );
-                })()
-              )
-                ),
-                h('div', { style:{textAlign:'right',flexShrink:0} },
-                  h('div', { style:{fontSize:'10.5px',marginBottom:'3px'} },
-                    h('span', { style:{color:'#94a3b8'} }, '주담당 '),
-                    h('span', { style:{fontWeight:700, color: mainSid ? '#1e293b' : '#dc2626'} },
-                      (function(){
-                        if(!mainSid) return '⚠ 미지정';
-                        var u = users.find(function(x){return x.sid===mainSid;});
-                        if(u) return u.name;
-                        // SID가 아닌 이름으로 저장된 경우 폴백
-                        var byName = users.find(function(x){return x.name===mainSid;});
-                        if(byName) return byName.name;
-                        return mainSid; // 그대로 표시
-                      })()
-                    )
-                  ),
-                  subSids.length > 0 && h('div', { style:{fontSize:'10.5px',color:'#64748b'} },
-                    h('span', { style:{color:'#94a3b8'} }, '부담당 '),
-                    h('span', { style:{fontWeight:700,color:'#1e293b'} },
-                      subSids.map(function(s){ var u=users.find(function(x){return x.sid===s;}); return u?u.name:s; }).join(', ')
-                    )
-                  )
-                )
-              )
+            // ── 담당 · 약정 (한 줄) ──
+            h('div', { style:lineS },
+              h('span', { style:keyS }, '담당'),
+              mainSid ? h('span', { style:chipMain }, '주 ' + whoName(mainSid))
+                      : h('span', { style:Object.assign({}, chipSub, {background:'#fef2f2',color:'#991b1b',border:'1px solid #fecaca'}) }, '⚠ 주담당 미지정'),
+              subSids.map(function(s){ return h('span', { key:s, style:chipSub }, '부 ' + whoName(s)); }),
+              h('span', { style:{color:'#94a3b8',fontSize:'11px'} },
+                hasSubs ? '· 체크 안 하면 주담당 100%' : '· 부담당 없음 · 주담당 100%'),
+              h('span', { style:{flex:1} }),
+              h('span', { style:{color:'#64748b',fontSize:'11px'} }, '약정'),
+              h('span', { style:{fontFamily:'monospace',fontWeight:800,fontSize:'15px',color:'#1e40af'} },
+                confirmModal.p.amount.toLocaleString() + '원')
             ),
-            h('div', { className:'fld' },
-              h('label', null, '입금일 *'),
+            // ── 입금일 · 통장 근거 (한 줄) ──
+            h('div', { style:lineS },
+              h('span', { style:keyS }, '입금일 *'),
               h('input', { type:'date', value:confirmModal.date,
                 onChange:function(e){setM({date:e.target.value});},
-                style:Object.assign({width:'100%'},
+                style:Object.assign({padding:'4px 8px',border:'1px solid #cbd5e1',borderRadius:'5px',fontSize:'12px'},
                   confirmModal.bankRow ? {borderColor:'#bbf7d0',background:'#f0fdf4',fontWeight:700,color:'#166534'} : {}) }),
-              /* 통장에서 채웠으면 «어디서 왔는지» 를 적는다 (2026-08-13 대표 지시).
-                 전에는 늘 오늘로 채워져 손으로 고쳐야 했고, 잊으면 실제 입금일이 아니라
-                 «처리한 날» 이 장부에 남았다. 근거를 보여야 고쳐야 할지 알 수 있다. */
-              confirmModal.bankRow && h('div', { style:{fontSize:'10.5px',color:'#166534',marginTop:'3px',lineHeight:1.5} },
-                '💰 통장에서 가져왔습니다 — ',
-                h('b', null, (confirmModal.bankRow.src === 'card' ? '카드' : '통장') + ' '
-                  + String(confirmModal.bankRow.date || '').slice(0,10) + ' · '
-                  + (confirmModal.bankRow.amount || 0).toLocaleString() + '원'),
-                h('div', { style:{color:'#64748b'} }, '적요 「' + (confirmModal.bankRow.memo || '-') + '」'),
-                (function(){
-                  var want = confirmModal.p ? (confirmModal.p.expect || confirmModal.p.amount || 0) : 0;
-                  var d = (confirmModal.bankRow.amount || 0) - want;
-                  if(!want || d === 0) return null;
-                  return h('div', { style:{color:'#854d0e',fontWeight:700} },
-                    d < 0 ? ('◐ 받을 돈보다 ' + Math.abs(d).toLocaleString() + '원 모자랍니다 — 아래 실제입금 칸을 확인하세요')
-                          : ('받을 돈보다 ' + d.toLocaleString() + '원 많습니다'));
-                })()),
-              !confirmModal.bankRow && h('div', { style:{fontSize:'10.5px',color:'#94a3b8',marginTop:'3px'} },
-                '통장에서 찾지 못했습니다 — 오늘 날짜입니다. 실제 입금일로 고쳐 주세요')
+              /* 통장에서 채웠으면 «어디서 왔는지» 를 한 줄로 적는다 (2026-08-13 대표 지시).
+                 전에는 좁은 칸에 갇혀 일곱 줄로 흘러내렸다. 금액 차이는 실제입금 줄에서 알린다. */
+              confirmModal.bankRow
+                ? h('span', { style:{fontSize:'10.5px',color:'#166534',whiteSpace:'nowrap',overflow:'hidden',
+                      textOverflow:'ellipsis',flex:1,minWidth:0},
+                    title:'통장에서 가져온 날짜입니다 — 적요 「'+(confirmModal.bankRow.memo||'-')+'」' },
+                    '💰 ' + (confirmModal.bankRow.src === 'card' ? '카드' : '통장') + ' '
+                    + String(confirmModal.bankRow.date || '').slice(5,10) + ' · '
+                    + (confirmModal.bankRow.amount || 0).toLocaleString()
+                    + ' · 적요 「' + (confirmModal.bankRow.memo || '-') + '」')
+                : h('span', { style:{fontSize:'10.5px',color:'#94a3b8'} },
+                    '통장에서 못 찾았습니다 — 오늘 날짜입니다. 실제 입금일로 고쳐 주세요')
             ),
+            // ── 실제입금 · 완납/분할 · 결제수단 (한 줄) ──
+            (function(){
+              var prevSplits = (confirmModal.p.item.splitPayments||[]).filter(function(x){return x.kind===confirmModal.p.kindLabel;});
+              var alreadyPaid = prevSplits.reduce(function(s,x){return s+(x.amount||0);},0);
+              var remaining = confirmModal.p.amount - alreadyPaid;
+              var aAmt = confirmModal.actualAmt != null ? confirmModal.actualAmt : remaining;
+              var cardMode = !!confirmModal.cardMode;
+              var isPartial = !cardMode && aAmt < remaining && aAmt > 0;
+              var cardFee = cardMode ? Math.max(0, remaining - aAmt) : 0;
+              // 통장 금액과 다르면 여기서 알린다 — 고칠 칸 바로 옆이라야 눈에 들어온다
+              var bankAmt = confirmModal.bankRow ? (confirmModal.bankRow.amount || 0) : 0;
+              var want = confirmModal.p.expect || confirmModal.p.amount || 0;
+              var bankGap = bankAmt ? (bankAmt - want) : 0;
+              function payBtn(on, label, onClick){
+                return h('button', { type:'button', onClick:onClick,
+                  style:{padding:'3px 10px',borderRadius:'12px',border:'1px solid '+(on?'#1e40af':'#cbd5e1'),
+                    background:on?'#eff6ff':'#fff',color:on?'#1e40af':'#64748b',fontWeight:on?700:400,
+                    fontSize:'11px',cursor:'pointer',whiteSpace:'nowrap'} }, label);
+              }
+              return h('div', null,
+                h('div', { style:lineS },
+                  h('span', { style:keyS }, '실제입금'),
+                  h('span', { className:'erp-tip tip-wrap', 'data-tip':'분할입금 방법 — 실제 들어온 금액만 입력하고 확정하세요. 약정액보다 적게 넣으면 자동으로 분할로 기록되고 잔액이 남습니다. 잔금이 또 들어오면 그 금액을 입력해 다시 확정하면 됩니다.', style:{fontSize:'11px',color:'#2563eb',cursor:'help'} }, 'ⓘ'),
+                  h('input', { type:'text', value:aAmt.toLocaleString(),
+                    onChange:function(e){
+                      var v=parseInt(e.target.value.replace(/[^0-9]/g,''),10)||0;
+                      setConfirmModal(Object.assign({},confirmModal,{actualAmt:Math.min(v,remaining)}));
+                    },
+                    style:{width:'120px',padding:'4px 8px',border:'1.5px solid '+(isPartial?'#fbbf24':'#16a34a'),borderRadius:'4px',
+                      fontSize:'13px',fontWeight:800,textAlign:'right',fontFamily:'monospace',color:isPartial?'#d97706':'#16a34a'}}),
+                  h('span', { style:{fontSize:'10px',fontWeight:700,whiteSpace:'nowrap',padding:'2px 8px',borderRadius:'99px',
+                      background:isPartial?'#fffbeb':'#f0fdf4',color:isPartial?'#854d0e':'#166534',
+                      border:'1px solid '+(isPartial?'#fde68a':'#bbf7d0')} }, isPartial?'분할':'완납'),
+                  bankGap !== 0 && h('span', { title:'통장은 '+bankAmt.toLocaleString()+'원입니다',
+                    style:{fontSize:'10px',fontWeight:700,whiteSpace:'nowrap',padding:'2px 8px',borderRadius:'99px',
+                      background:'#fffbeb',color:'#854d0e',border:'1px solid #fde68a'} },
+                    '◐ 통장보다 ' + Math.abs(bankGap).toLocaleString() + (bankGap < 0 ? ' 적음' : ' 많음')),
+                  remaining > 10000 && aAmt !== remaining && h('button',{type:'button',
+                    onClick:function(){setConfirmModal(Object.assign({},confirmModal,{actualAmt:remaining}));},
+                    style:{padding:'3px 9px',border:'1px solid #16a34a',borderRadius:'5px',background:'#f0fdf4',color:'#16a34a',cursor:'pointer',fontSize:'10px',fontWeight:700,whiteSpace:'nowrap'}},
+                    '완납 '+remaining.toLocaleString()),
+                  h('span', { style:{flex:1} }),
+                  payBtn(!cardMode, '계좌', function(){ setConfirmModal(Object.assign({},confirmModal,{cardMode:false})); }),
+                  payBtn(cardMode, '카드', function(){ setConfirmModal(Object.assign({},confirmModal,{cardMode:true})); })
+                ),
+                (alreadyPaid > 0 || cardMode) && h('div', { style:{fontSize:'10.5px',padding:'2px 0 4px',display:'flex',gap:'10px',flexWrap:'wrap'} },
+                  alreadyPaid > 0 && h('span', { style:{color:'#854d0e',fontWeight:700} },
+                    '◐ 기납입 '+alreadyPaid.toLocaleString()+' · 잔액 '+remaining.toLocaleString()),
+                  cardMode && h('span', { style:{color:'#2563eb',fontWeight:700} },
+                    '💳 카드수수료 ' + cardFee.toLocaleString() + '원 · 매출 ' + remaining.toLocaleString() + '원 유지 · 완납'))
+              );
+            })(),
 
-            // 분할 옵션
-            h('div', { style:{padding:'10px 12px',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'6px',marginBottom:'10px'} },
-              h('label', { style:{display:'flex',alignItems:'center',gap:'8px',cursor:hasSubs?'pointer':'not-allowed',opacity:hasSubs?1:0.5} },
-                h('input', { type:'checkbox', checked:split, disabled:!hasSubs,
-                  onChange:function(e){
-                    var on = e.target.checked;
-                    var initMap = {};
-                    subSids.forEach(function(s){ initMap[s] = on ? (subPctMap[s]||0) : 0; });
-                    setM({split:on, mainPct: on ? mainPct : 100, subPctMap: initMap});
-                  } }),
-                h('span', { style:{fontWeight:700,color:'#854d0e',fontSize:'12px'} },
-                  hasSubs ? '⚖️ 부담당과 분할 (체크 안 하면 주담당 100%)' : '⚠️ 부담당이 지정되지 않아 분할 불가 (계약관리에서 지정)')
-              )
+            /* ── ⭐ 성과급 미리보기 (2026-08-13 대표 지시) ──
+               「누구에게 얼마를 몇 % 로」 가 확정 «전에» 보여야 확정이 편해진다.
+               전에는 「분할」 을 체크했을 때만 나왔다 — 주담당 100% 인 흔한 경우엔 아무것도 안 보였다.
+               ★ 셈은 저장할 때 쓰는 calcPerfShares 를 그대로 쓴다. 여기 숫자와 실제가 다르면 안 된다. */
+            !split && h('div', { style:{border:'1px solid #bfdbfe',background:'#eff6ff',borderRadius:'7px',
+                padding:'8px 10px',margin:'8px 0'} },
+              h('div', { style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'5px'} },
+                h('span', { style:{fontSize:'11px',color:'#1e40af',fontWeight:800} }, '⭐ 성과급 — 확정하면 이렇게 나뉩니다'),
+                hasSubs && h('label', { style:{display:'flex',alignItems:'center',gap:'5px',cursor:'pointer',fontSize:'11px',color:'#854d0e',fontWeight:700} },
+                  h('input', { type:'checkbox', checked:split,
+                    onChange:function(e){
+                      var on = e.target.checked;
+                      var initMap = {};
+                      subSids.forEach(function(s){ initMap[s] = on ? (subPctMap[s]||0) : 0; });
+                      setM({split:on, mainPct: on ? mainPct : 100, subPctMap: initMap});
+                    } }),
+                  '⚖️ 부담당과 나누기')),
+              (function(){
+                if(!_perfOn) return h('div', { style:{fontSize:'11.5px',color:'#854d0e',fontWeight:700} },
+                  '성과급 자동 반영을 껐습니다 — 이 건은 성과에 잡히지 않습니다');
+                if(_cmDed.personalRevenue) return h('div', { style:{fontSize:'11.5px',color:'#854d0e',fontWeight:700} },
+                  '👤 개인수익 — 성과 배분은 아래 개인수익 칸에서 정합니다');
+                if(!mainSid) return h('div', { style:{fontSize:'11.5px',color:'#991b1b',fontWeight:700} },
+                  '⚠ 주담당이 지정되지 않아 성과급을 나눌 수 없습니다 (계약관리에서 지정)');
+                var _sh = [];
+                try{
+                  _sh = calcPerfShares(_perfBase, mainSid, subSids,
+                    confirmModal.p.store.sourceKind, 100, { paidDate:confirmModal.date }) || [];
+                }catch(_pe){ if(window._erpErrLog) window._erpErrLog(_pe); }
+                /* 나누기를 끄면 부담당 몫이 0% 가 된다 — 0원짜리 줄까지 늘어놓으면 어지럽다.
+                   다만 수습·퇴사로 0원이 된 사람은 «까닭이 있으므로» 남겨서 알린다. */
+                _sh = _sh.filter(function(s){
+                  return (s.amount || 0) > 0 || s.probation || s.retired || s.role === '주담당';
+                });
+                if(!_sh.length) return h('div', { style:{fontSize:'11.5px',color:'#64748b'} },
+                  '나눌 성과급이 없습니다 (요율 0% 이거나 대상이 아닙니다)');
+                var _tot = 0; _sh.forEach(function(s){ _tot += s.amount || 0; });
+                var gS = { display:'grid', gridTemplateColumns:'30px 1fr 54px 46px 92px', gap:'6px',
+                           alignItems:'center', fontSize:'11.5px', padding:'2px 0' };
+                return h('div', null,
+                  h('div', { style:Object.assign({}, gS, {color:'#64748b',fontSize:'10px',fontWeight:700}) },
+                    h('span', null, ''), h('span', null, '이름'),
+                    h('span', { style:{textAlign:'right'} }, '분할'),
+                    h('span', { style:{textAlign:'right'} }, '요율'),
+                    h('span', { style:{textAlign:'right'} }, '지급액')),
+                  _sh.map(function(s, i){
+                    var isMain = s.role === '주담당' || s.sid === mainSid;
+                    return h('div', { key:s.sid || i, style:gS },
+                      h('span', { style:Object.assign({}, isMain ? chipMain : chipSub, {justifyContent:'center',padding:'1px 0'}) }, isMain ? '주' : '부'),
+                      h('span', { style:{fontWeight:700,overflow:'hidden',textOverflow:'ellipsis'} },
+                        s.name || whoName(s.sid),
+                        // 0원이 된 까닭을 밝힌다 — 안 밝히면 셈이 틀린 줄 안다
+                        s.probation && h('span', { style:{marginLeft:'4px',fontSize:'9.5px',fontWeight:700,color:'#854d0e'} }, '수습 · 미지급'),
+                        s.retired && h('span', { style:{marginLeft:'4px',fontSize:'9.5px',fontWeight:700,color:'#991b1b'} }, '퇴사 · 미지급')),
+                      h('span', { style:{textAlign:'right',fontFamily:'monospace'} }, (s.sharePct != null ? s.sharePct : 100) + '%'),
+                      h('span', { style:{textAlign:'right',fontFamily:'monospace'} }, (s.pct || 0) + '%'),
+                      h('span', { style:{textAlign:'right',fontFamily:'monospace',fontWeight:800,color:'#1e40af'} },
+                        (s.amount || 0).toLocaleString()));
+                  }),
+                  h('div', { style:{borderTop:'1px solid #bfdbfe',marginTop:'5px',paddingTop:'5px',
+                      display:'flex',justifyContent:'space-between',fontSize:'11.5px',fontWeight:800,color:'#1e40af'} },
+                    h('span', null, '총 성과급'),
+                    h('span', { style:{fontFamily:'monospace'} }, _tot.toLocaleString() + '원')),
+                  h('div', { style:{fontFamily:'monospace',fontSize:'10.5px',color:'#64748b',
+                      background:'#f8fafc',borderRadius:'5px',padding:'3px 7px',marginTop:'5px'} },
+                    '입금 ' + _cmPay.toLocaleString()
+                    + (_perfBase !== _cmPay ? (' − 차감 ' + (_cmPay - _perfBase).toLocaleString()) : '')
+                    + ' = 성과 기준 ' + _perfBase.toLocaleString())
+                );
+              })()
             ),
 
             // 분할 비율 입력
             split && h('div', { style:{padding:'12px',background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'6px',marginBottom:'10px'} },
+              // 나누기를 끌 수 있게 — 켜는 자리(미리보기)와 끄는 자리가 같아야 헷갈리지 않는다
+              h('label', { style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',fontSize:'11.5px',
+                  color:'#854d0e',fontWeight:700,marginBottom:'8px'} },
+                h('input', { type:'checkbox', checked:true,
+                  onChange:function(){ var m={}; subSids.forEach(function(s){ m[s]=0; }); setM({split:false, mainPct:100, subPctMap:m}); } }),
+                '⚖️ 부담당과 나누기 (끄면 주담당 100%)'),
               h('div', { style:{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px'} },
                 h('div', { style:{fontSize:'11px',color:'#64748b'} },
                   // 무엇을 나누는지 금액으로 못박는다 — 아래 칸의 금액과 반드시 맞는다
