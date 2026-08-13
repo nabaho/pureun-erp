@@ -147,27 +147,105 @@ function afterLogin() {
 function loadSites() {
   Promise.all([
     S.listCompanies().catch(e => { console.warn('[업체관리]', e && e.code); return []; }),
-    S.listMyPending().catch(e => { console.warn('[대기 칸]', e && e.code); return {}; })
-  ]).then(([companies, pending]) => {
+    S.listMyPending().catch(e => { console.warn('[대기 칸]', e && e.code); return {}; }),
+    S.listArrivals().catch(e => { console.warn('[도착 칸]', e && e.code); return {}; })
+  ]).then(([companies, pending, arrivals]) => {
     App.companies = companies;
     App.pending = pending;
+    App.arrivals = arrivals;
     App.render();
   });
 }
 
-/* Task 7 에서 사업장 목록·도착 칩·미정 띠로 채운다. */
+/* ── 첫 화면 계산 ──
+   화면 그리기와 갈라 둔다 — 계산만 따로 검사할 수 있어야 한다.
+
+   ⚠ 장수는 **도착 칸**에서 센다(그 업체·그 달에 몇 장 왔나). 내 자리 목록을 세지
+   않는 까닭은 두 가지다. ① 첫 화면에서 사람마다 자리를 다 열면 느리다.
+   ② 남이 담은 장수까지 세면 권한 경계가 첫 화면에서 새어 나간다.
+   도착 칸에는 업체·귀속월·종류·장수만 있고 누가 담았는지는 없다.
+
+   근로계약서는 월과 무관한 keep 칸에 있으므로 **그 칸도 함께** 센다 —
+   안 세면 계약서만 있는 업체가 「0장」으로 보인다. */
+function sitesModel(companies, pending, arrivals, month, now) {
+  const slot = S.monthKey(month);
+  const pend = pending || {};
+  const arr = arrivals || {};
+  const pendIds = Object.keys(pend);
+  const rows = (companies || []).map(c => {
+    const node = arr[c.id] || {};
+    let count = 0;
+    S.KINDS.forEach(k => {
+      count += S.arrivalCount(node[S.KEEP], k.key);
+      if (slot) count += S.arrivalCount(node[slot], k.key);
+    });
+    return { id: c.id, name: c.name, arrived: count > 0, count: count };
+  });
+  const known = {};
+  (companies || []).forEach(c => { known[c.id] = true; });
+  const unlisted = Object.keys(arr).filter(id => !known[id]).map(id => {
+    let n = 0;
+    Object.keys(arr[id] || {}).forEach(sl => {
+      S.KINDS.forEach(k => { n += S.arrivalCount(arr[id][sl], k.key); });
+    });
+    return { id: id, name: id, count: n };
+  });
+  return {
+    pendingCount: pendIds.length,
+    staleCount: pendIds.filter(id => S.isStalePending(pend[id], now)).length,
+    rows: rows,
+    unlisted: unlisted
+  };
+}
+
 function screenSites() {
   if (!App.month) App.month = thisMonth();
-  const pendCount = Object.keys(App.pending || {}).length;
+  const m = sitesModel(App.companies, App.pending, App.arrivals, App.month, Date.now());
   let h = '';
-  if (pendCount) {
-    h += '<div class="warnbar"><b>미정 ' + pendCount + '건</b>'
-      + '<span style="margin-left:auto">사업장·귀속월을 채워 주세요</span></div>';
+
+  /* 미정 띠 — 맨 위에 늘 있다. 사업장을 안 고른 자료는 어느 서랍에도 없어서,
+     여기 없으면 영원히 안 보인다. */
+  if (m.pendingCount) {
+    h += '<div class="warnbar" onclick="App.go(\'pending\')">'
+      + '<b>미정 ' + m.pendingCount + '건</b>'
+      + (m.staleCount ? '<span>3일 넘은 것 ' + m.staleCount + '건</span>' : '')
+      + '<span style="margin-left:auto">사업장·귀속월을 채워 주세요 →</span></div>';
   }
-  h += '<h1>사업장</h1><div class="sub">업체관리 명단 기준 · ' + App.companies.length + '곳</div>';
-  h += '<div class="card">' + (App.companies.length
-    ? App.companies.map(c => '<div class="row"><b style="flex:1">' + esc(c.name) + '</b></div>').join('')
-    : '<div class="empty">업체관리 명단을 읽지 못했습니다. 푸른이알피에서 업체를 먼저 등록해 주세요.</div>') + '</div>';
+
+  h += '<h1>사업장</h1><div class="sub">업체관리 명단 기준 · ' + m.rows.length + '곳'
+    + ' · 장수는 그 업체에 온 자료 전체입니다</div>';
+
+  h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">'
+    + '<span>기준 월</span>'
+    + '<input class="btn" style="width:110px;text-align:center" value="' + esc(App.month) + '"'
+    + ' onchange="App.go(\'sites\',{month:this.value})">'
+    + '<span class="sub" style="margin:0">예: 2026-08</span>'
+    + '<button class="btn" onclick="App.go(\'pending\')">📥 대기 칸</button>'
+    + '</div>';
+
+  h += '<div class="card">' + (m.rows.length ? m.rows.map(r =>
+    '<div class="row" style="cursor:pointer" onclick="App.go(\'drawer\',{companyId:\'' + esc(r.id)
+    + '\',companyName:\'' + esc(r.name) + '\',items:null})">'
+    + '<span class="chip" style="background:' + (r.arrived ? 'var(--ok)' : 'var(--warn)') + '">'
+    + (r.arrived ? '도착' : '미도착') + '</span>'
+    + '<b style="flex:1">' + esc(r.name) + '</b>'
+    + '<span class="sub" style="margin:0">' + r.count + '장</span></div>').join('')
+    : '<div class="empty">업체관리 명단을 읽지 못했습니다.<br>푸른이알피 업체관리에 업체를 먼저 등록해 주세요.</div>')
+    + '</div>';
+
+  /* 명단에 없는 업체 — 자료는 왔는데 업체관리에 없다. 숨기면 그 업체가 빠진 줄도 모른다.
+     ⚠ 도착 칸에는 업체 **번호**만 있고 이름이 없다(전 직원이 읽는 칸이라 얇게 뒀다).
+     그래서 여기는 번호로 보인다 — 업체관리에서 지워진 업체이거나, 업체를 고른 뒤
+     명단에서 빠진 경우다. 이름을 알려면 그 자리에 담은 사람의 서랍을 봐야 한다. */
+  if (m.unlisted.length) {
+    h += '<h1 style="font-size:15px;margin-top:20px">업체관리에서 못 찾은 번호'
+      + ' <span class="sub" style="margin:0;font-weight:400">' + m.unlisted.length + '곳</span></h1>'
+      + '<div class="sub">자료는 와 있는데 업체관리 명단에 그 업체가 없습니다.'
+      + ' 지워졌거나 이름이 바뀐 것일 수 있습니다 — 업체관리에서 확인해 주세요.</div>'
+      + '<div class="card">' + m.unlisted.map(u =>
+        '<div class="row"><span style="flex:1;font-family:monospace">' + esc(u.id) + '</span>'
+        + '<span class="sub" style="margin:0">' + u.count + '장</span></div>').join('') + '</div>';
+  }
   return h;
 }
 </script>
