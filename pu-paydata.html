@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>급여데이터함 — 푸른노무법인</title>
+<!--
+  급여데이터함 — 급여 아웃소싱에 쓰는 근로자·임금 자료를 사업장별로 담는 앱.
+  설계서: docs/superpowers/specs/2026-08-13-급여데이터함-design.md
+  계획서: docs/superpowers/plans/2026-08-13-급여데이터함-1차.md
+
+  사진첩과 부품은 공유하고 함은 분리한다 — 보관 기간(3년)·볼 수 있는 사람·파일
+  종류가 셋 다 달라서, 같은 함에 두면 한쪽 기준이 다른 쪽을 망친다.
+
+  ⚠ 이 파일에는 실시간DB·창고 경로를 적지 않는다.
+    경로를 아는 곳은 js/pu-paydata-store.js 한 군데뿐이다(검사가 지킨다).
+-->
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-check-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js"></script>
+<script src="js/pu-resilience.js"></script>
+<script src="js/pu-health.js"></script>
+<script src="js/pu-version.js"></script>
+<script src="js/pu-paydata-store.js"></script>
+<script src="js/pu-appbar.js"></script>
+<style>
+:root{--navy:#2E3A8C;--violet:#7C6CE0;--ok:#2E7D4F;--warn:#B26A00;--bad:#C43D3D;
+--ink:#23263B;--sub:#6B6F87;--line:#E3E5EF;--paper:#F5F6FA;--card:#FFF;}
+*{box-sizing:border-box;margin:0}
+body{font-family:'Noto Sans KR','Malgun Gothic',sans-serif;background:var(--paper);color:var(--ink);font-size:14px}
+header{background:var(--navy);color:#fff;display:flex;align-items:center;gap:12px;padding:12px 18px}
+header .brand{font-weight:800;font-size:16px;cursor:pointer}
+header .who{margin-left:auto;font-size:12px;display:flex;align-items:center;gap:10px}
+header .out{background:#ffffff22;border:1px solid #ffffff66;color:#fff;border-radius:8px;padding:3px 10px;cursor:pointer;font-size:12px;font-family:inherit}
+main{padding:16px;max-width:1100px;margin:0 auto}
+.gate{padding:40px 18px;text-align:center;color:var(--sub)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.empty{padding:28px 18px;text-align:center;color:var(--sub)}
+h1{font-size:18px;margin-bottom:4px}
+.sub{font-size:12px;color:var(--sub);margin-bottom:12px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px 12px;font-size:13px;cursor:pointer;font-family:inherit;color:var(--ink)}
+.btn.pri{background:var(--navy);border-color:var(--navy);color:#fff}
+.warnbar{background:#FBF1DE;border:1px solid #F0D9A8;color:#7C4A03;border-radius:12px;padding:10px 14px;font-size:13px;display:flex;align-items:center;gap:12px;margin-bottom:14px;cursor:pointer}
+.row{display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:none}
+.chip{width:58px;flex:0 0 58px;font-size:11.5px;color:#fff;border-radius:99px;padding:3px 0;text-align:center}
+@media(max-width:520px){main{padding:12px}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand" onclick="App.go('sites')">푸 급여데이터함</div>
+  <div class="who"><span id="whoami"></span><button class="out" onclick="App.logout()">로그아웃</button></div>
+</header>
+<div id="gate" class="gate">로그인을 확인하고 있습니다…</div>
+<main id="main" style="display:none"></main>
+
+<script>
+/* ══════ 설정 (다른 앱과 같은 파이어베이스 프로젝트) ══════ */
+const FB_APPCHECK_KEY = '6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
+const FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA',
+  databaseURL: 'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app',
+  projectId: 'pureun-erp',
+  storageBucket: 'pureun-erp.firebasestorage.app',
+  appId: '1:936817166182:web:9bd31f70d0afdf5fca2aa7',
+  messagingSenderId: '936817166182'
+};
+
+const $ = id => document.getElementById(id);
+
+/* 바깥에서 온 글자(파일 이름·업체명 등)를 화면에 넣기 전에 이스케이프한다.
+   사람이 지은 이름이라 <script> 가 들어올 수 있다. */
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+let db = null, store = null;
+const S = window.PuPaydataStore;
+
+/* 이번 달을 'YYYY-MM' 으로 — 사람이 손으로 고칠 수 있는 칸의 첫 값. */
+function thisMonth() {
+  const d = new Date();
+  return d.getFullYear() + '-' + (d.getMonth() + 1 < 10 ? '0' : '') + (d.getMonth() + 1);
+}
+
+/* ══════ 화면 상태 ══════
+   어느 화면인가 · 어느 사업장인가 · 어느 달인가. 자료는 여기 모아 두고 화면이 읽는다. */
+const App = {
+  screen: 'sites', companyId: '', companyName: '', month: '', kind: 'attend',
+  companies: [], pending: {}, arrivals: {}, items: null, trash: null, me: null,
+
+  go(screen, o) {
+    Object.assign(App, o || {});
+    App.screen = screen;
+    App.render();
+  },
+
+  logout() { firebase.auth().signOut().then(() => location.reload()); },
+
+  render() {
+    const m = $('main');
+    if (App.screen === 'sites') { m.innerHTML = screenSites(); return; }
+    m.innerHTML = '<div class="card"><div class="empty">아직 만들지 않은 화면입니다.</div></div>';
+  }
+};
+window.App = App;
+
+/* ══════ 시작 ══════ */
+firebase.initializeApp(FIREBASE_CONFIG);
+try { if (firebase.appCheck) firebase.appCheck().activate(new firebase.appCheck.ReCaptchaV3Provider(FB_APPCHECK_KEY), true); }
+catch (e) { console.warn('[AppCheck]', e && e.message); }
+
+db = firebase.database();
+try { store = firebase.storage(); } catch (e) { store = null; }
+
+firebase.auth().onAuthStateChanged(function (user) {
+  if (user) { App.me = user; afterLogin(); return; }
+  /* 로그인은 통합 포털 한 곳에서만 한다 — 앱마다 두면 계정 문제를 앱 수만큼 겪는다. */
+  if (!/[?&]login=1/.test(location.search) && location.protocol !== 'file:') {
+    location.replace('enter.html?v=' + Math.floor(Date.now() / 600000));
+    return;
+  }
+  $('gate').textContent = '포털(enter.html)에서 로그인해 주세요.';
+});
+
+function afterLogin() {
+  /* 저장 층에 계정을 알려 준다 — 자리 계산이 이걸로 된다. */
+  S.init({ db: db, storage: store, uid: App.me.uid, name: App.me.email || '' });
+  $('whoami').textContent = App.me.email || '';
+
+  /* 권한은 나중에 알려 줘도 된다 — 못 읽어도 화면은 떠야 한다. */
+  db.ref('uid_roles/' + App.me.uid).once('value')
+    .then(s => { const r = s.val() || {}; S.init({ isAdmin: !!r.isAdmin }); })
+    .catch(e => console.warn('[권한]', e && e.code));
+
+  $('gate').style.display = 'none';
+  $('main').style.display = '';
+  loadSites();
+}
+
+/* 첫 화면 자료를 읽어 온다. 한쪽이 실패해도 화면은 뜬다 —
+   빈 화면에 「권한 거부」만 남으면 무엇을 해야 할지 알 수 없다. */
+function loadSites() {
+  Promise.all([
+    S.listCompanies().catch(e => { console.warn('[업체관리]', e && e.code); return []; }),
+    S.listMyPending().catch(e => { console.warn('[대기 칸]', e && e.code); return {}; })
+  ]).then(([companies, pending]) => {
+    App.companies = companies;
+    App.pending = pending;
+    App.render();
+  });
+}
+
+/* Task 7 에서 사업장 목록·도착 칩·미정 띠로 채운다. */
+function screenSites() {
+  if (!App.month) App.month = thisMonth();
+  const pendCount = Object.keys(App.pending || {}).length;
+  let h = '';
+  if (pendCount) {
+    h += '<div class="warnbar"><b>미정 ' + pendCount + '건</b>'
+      + '<span style="margin-left:auto">사업장·귀속월을 채워 주세요</span></div>';
+  }
+  h += '<h1>사업장</h1><div class="sub">업체관리 명단 기준 · ' + App.companies.length + '곳</div>';
+  h += '<div class="card">' + (App.companies.length
+    ? App.companies.map(c => '<div class="row"><b style="flex:1">' + esc(c.name) + '</b></div>').join('')
+    : '<div class="empty">업체관리 명단을 읽지 못했습니다. 푸른이알피에서 업체를 먼저 등록해 주세요.</div>') + '</div>';
+  return h;
+}
+</script>
+</body>
+</html>
