@@ -523,7 +523,14 @@
       var name = pickName(row);
       if (!name) continue;                                  // 이름 없으면 그릴 수 없다
       var id = String(row.id || row.companyId || (Array.isArray(box) ? '' : k) || '');
-      out.push({ id: id, name: name, biz: String(row.사업자등록번호 || row.biz || '') });
+      /* managerMain·managerSubs 는 업체관리(푸른이알피)가 쓰는 것과 **같은 이름·같은
+         자료형**(사번 문자열, 사번 배열)이다 — 대표 지시 2026-08-13 "업체는 푸른이알피에서
+         당겨오기". 담당자별 대시보드는 여기서 이 두 칸을 가지고 가른다. */
+      out.push({
+        id: id, name: name, biz: String(row.사업자등록번호 || row.biz || ''),
+        managerMain: String(row.managerMain || ''),
+        managerSubs: Array.isArray(row.managerSubs) ? row.managerSubs.slice() : []
+      });
     }
     return out;
   }
@@ -532,6 +539,19 @@
     return deps.db.ref(ERP_COMPANIES).once('value').then(function (s) {
       return normalizeCompanies(s.val());
     });
+  }
+
+  /* 이 업체를 내가 담당하는가 — 사번을 이메일로 바꿔 견준다(sidToEmail 규칙이
+     명함첩·포털과 같아야 같은 사람을 찾는다). 주담당·부담당 모두 「내 담당」이다. */
+  function isMyCompany(co, myEmail) {
+    if (!co || !myEmail) return false;
+    var em = String(myEmail).toLowerCase();
+    if (co.managerMain && sidToEmail(co.managerMain) === em) return true;
+    var subs = co.managerSubs || [];
+    for (var i = 0; i < subs.length; i++) {
+      if (sidToEmail(subs[i]) === em) return true;
+    }
+    return false;
   }
 
   /* 이름으로 업체 맞추기 — 급여관리 설정카드는 「화담원 아산점」처럼 적혀 있어
@@ -770,6 +790,7 @@
     ERP_COMPANIES: ERP_COMPANIES,
     normalizeCompanies: normalizeCompanies,
     listCompanies: listCompanies,
-    matchCompanyName: matchCompanyName
+    matchCompanyName: matchCompanyName,
+    isMyCompany: isMyCompany
   };
 })(typeof window !== 'undefined' ? window : globalThis);

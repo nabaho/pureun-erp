@@ -87,6 +87,53 @@ test('★ 이름으로 업체를 맞출 때 앞가지·괄호를 무시한다', 
   assert.equal(S.matchCompanyName('', list), null);
 });
 
+/* ══════ 담당자별 대시보드 — 업체는 푸른이알피에서 당겨온다 (대표 지시 2026-08-13) ══════ */
+
+test('★ 업체관리의 담당자(managerMain·managerSubs)를 그대로 가져온다', () => {
+  const S = loadStore();
+  const out = S.normalizeCompanies([{ id: 'co_1', 업체명: '화담원', managerMain: 'p-001', managerSubs: ['p-002'] }]);
+  assert.equal(out[0].managerMain, 'p-001');
+  assert.equal(out[0].managerSubs.join(','), 'p-002');
+});
+
+test('담당자가 없는 업체도 빈 값으로 정상 처리된다', () => {
+  // vm 안에서 만든 배열은 Array 프로토타입이 달라 deepStrictEqual 이 실패한다 — 길이로 견준다.
+  const S = loadStore();
+  const out = S.normalizeCompanies([{ id: 'co_1', 업체명: '화담원' }]);
+  assert.equal(out[0].managerMain, '');
+  assert.equal(out[0].managerSubs.length, 0);
+});
+
+test('★ 주담당이면 내 업체다', () => {
+  const S = loadStore();
+  const co = { managerMain: 'p-001', managerSubs: [] };
+  assert.equal(S.isMyCompany(co, 'p001@pureun.kr'), true);
+});
+
+test('★ 부담당이어도 내 업체다', () => {
+  const S = loadStore();
+  const co = { managerMain: 'p-002', managerSubs: ['p-001', 'p-003'] };
+  assert.equal(S.isMyCompany(co, 'p001@pureun.kr'), true);
+});
+
+test('담당이 아니면 내 업체가 아니다', () => {
+  const S = loadStore();
+  const co = { managerMain: 'p-002', managerSubs: ['p-003'] };
+  assert.equal(S.isMyCompany(co, 'p001@pureun.kr'), false);
+});
+
+test('이메일 대소문자를 가리지 않는다', () => {
+  const S = loadStore();
+  const co = { managerMain: 'p-001', managerSubs: [] };
+  assert.equal(S.isMyCompany(co, 'P001@PUREUN.KR'), true);
+});
+
+test('업체나 이메일이 없으면 조용히 false — 터지지 않는다', () => {
+  const S = loadStore();
+  assert.equal(S.isMyCompany(null, 'p001@pureun.kr'), false);
+  assert.equal(S.isMyCompany({ managerMain: 'p-001' }, ''), false);
+});
+
 test('★ 짧은 이름이 긴 이름을 가로채지 않는다', () => {
   const S = loadStore();
   const list = S.normalizeCompanies([

@@ -141,3 +141,31 @@ test('업체가 없으면 체크박스도 순번도 안 만든다', () => {
   const html2 = sb.window.screenSites.call(sb);
   assert.equal(/type="checkbox"/.test(html2), false);
 });
+
+/* ══════ 내 담당 업체 — 업체는 푸른이알피에서 당겨온다 ══════ */
+
+test('★ 내 담당 업체 구역에 주담당 업체가 나온다', () => {
+  const sb = loadScreen();
+  sb.window.App.me = { email: 'p001@pureun.kr' };
+  sb.window.App.companies = [
+    { id: 'co_1', name: '화담원', managerMain: 'p-001', managerSubs: [] },
+    { id: 'co_2', name: '이비', managerMain: 'p-002', managerSubs: [] }
+  ];
+  sb.window.App.arrivals = {};
+  const html2 = sb.window.screenSites.call(sb);
+  assert.match(html2, /내 담당 업체/);
+  const before = html2.indexOf('내 담당 업체'), after = html2.indexOf('사업장 전체');
+  const mineSection = html2.slice(before, after);
+  assert.match(mineSection, /화담원/);
+  assert.equal(/이비/.test(mineSection), false, '내 담당이 아닌 업체가 섞였습니다');
+});
+
+test('담당 업체가 없으면 빈 안내를 보여준다 — 구역 자체를 숨기지 않는다', () => {
+  const sb = loadScreen();
+  sb.window.App.me = { email: 'p099@pureun.kr' };
+  sb.window.App.companies = [{ id: 'co_1', name: '화담원', managerMain: 'p-001', managerSubs: [] }];
+  sb.window.App.arrivals = {};
+  const html2 = sb.window.screenSites.call(sb);
+  assert.match(html2, /내 담당 업체/);
+  assert.match(html2, /등록된 업체가 없습니다/);
+});

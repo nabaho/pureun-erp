@@ -101,3 +101,29 @@ test('자료가 없어도 터지지 않는다', () => {
   assert.equal(a.pendingCount, 0);
   assert.equal(a.unlisted.length, 0);
 });
+
+/* ══════ 내 담당 업체 — 업체는 푸른이알피에서 당겨온다 (대표 지시 2026-08-13) ══════ */
+
+test('★ 내가 주담당인 업체에 mine 표시가 붙는다', () => {
+  const model = loadModel();
+  const cos = [{ id: 'co_1', name: '화담원', managerMain: 'p-001', managerSubs: [] },
+    { id: 'co_2', name: '이비', managerMain: 'p-002', managerSubs: [] }];
+  const out = model(cos, {}, {}, '2026-08', 0, 'p001@pureun.kr');
+  const byId = {}; out.rows.forEach(r => { byId[r.id] = r; });
+  assert.equal(byId.co_1.mine, true);
+  assert.equal(byId.co_2.mine, false);
+});
+
+test('내가 부담당이어도 mine 이다', () => {
+  const model = loadModel();
+  const cos = [{ id: 'co_1', name: '화담원', managerMain: 'p-002', managerSubs: ['p-001'] }];
+  const out = model(cos, {}, {}, '2026-08', 0, 'p001@pureun.kr');
+  assert.equal(out.rows[0].mine, true);
+});
+
+test('내 이메일을 안 주면 아무 업체도 mine 이 아니다', () => {
+  const model = loadModel();
+  const cos = [{ id: 'co_1', name: '화담원', managerMain: 'p-001', managerSubs: [] }];
+  const out = model(cos, {}, {}, '2026-08', 0, '');
+  assert.equal(out.rows[0].mine, false);
+});
