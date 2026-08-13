@@ -1193,14 +1193,14 @@ test('판독 카드는 밝은색이다 — 어두운 화면에서 글이 잘 보
    판 아래가 길어져 정작 읽은 칸 표가 화면 밖으로 밀렸다.
    자세한 검사는 tests/photos-viewer-split.test.js 에 있다. */
 test('단추는 한 줄에 모두 놓고, 지우기는 맨 끝에 틈을 두고 놓는다', () => {
-  assert.match(app, /#readPanel \.acts\{display:flex;gap:6px/);
+  assert.match(app, /#readPanel \.acts\{position:sticky;top:0;z-index:3;display:flex/);
   const fn = app.match(/function actsRow\([\s\S]*?\n\}/);
   assert.ok(fn, 'actsRow 본문을 찾을 수 없습니다');
   // 지우기는 되돌리기 어려우니 맨 끝 + 앞에 틈 — 잘못 누르기 어렵게
   assert.match(fn[0], /class="rm"/);
   assert.ok(fn[0].indexOf('readAgain()') < fn[0].indexOf('deleteOne()'),
     '지우기가 맨 끝이 아닙니다');
-  assert.match(app, /#readPanel \.acts \.rm\{[^}]*margin-left:6px/,
+  assert.match(app, /#readPanel \.acts \.rm\{[^}]*margin-left:5px/,
     '틈이 없으면 옆 단추를 누르려다 지웁니다');
 });
 

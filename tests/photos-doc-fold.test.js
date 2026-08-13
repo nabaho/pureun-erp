@@ -203,22 +203,36 @@ test('★ 묶기 단추는 두 장 이상 골랐을 때만 뜬다', () => {
   assert.match(app, /id="mergeBtn"[^>]*onclick="mergeSelectedDoc\(\)"/);
 });
 
+/* 2026-08-13 부터 쪽 넘기기 **단추**는 맨 위 도구줄(docNavBtns)이 갖는다.
+   본문의 docNav 는 「무엇의 몇 쪽인가」를 말로만 적는다 — 같은 일을 두 번 하지 않는다. */
 test('★ 크게 보기에서 쪽을 넘길 수 있다', () => {
-  const c = load(['docNav']);
+  const c = load(['docNavBtns']);
   vm.runInContext('var esc = function(s){ return String(s); };' +
+    'var viewerId = "b";' +
     'var docPages = function(){ return [{id:"a"},{id:"b"},{id:"c"}]; };', c);
-  const h = c.docNav({ id: 'b' });
-  assert.match(h, /2 \/ 3쪽/, '몇 쪽 중 몇 쪽인지 안 적으면 어디인지 모릅니다');
+  const h = c.docNavBtns();
+  assert.match(h, /2\/3쪽/, '몇 쪽 중 몇 쪽인지 안 적으면 어디인지 모릅니다');
   assert.match(h, /openViewer\('a'\)/, '앞쪽으로 못 갑니다');
   assert.match(h, /openViewer\('c'\)/, '다음쪽으로 못 갑니다');
 
   /* 첫 쪽에서는 앞쪽이 잠긴다 */
-  const first = c.docNav({ id: 'a' });
-  assert.match(first, /<button disabled>◀ 앞쪽<\/button>/, '없는 쪽으로 가는 단추가 살아 있습니다');
+  vm.runInContext('viewerId = "a";', c);
+  assert.match(c.docNavBtns(), /disabled title="◀"/, '없는 쪽으로 가는 단추가 살아 있습니다');
 
   /* 홑장에는 아예 안 그린다 */
   vm.runInContext('docPages = function(){ return [{id:"a"}]; };', c);
-  assert.equal(c.docNav({ id: 'a' }), '', '홑장에 쪽 넘기기가 뜨면 헛단추입니다');
+  assert.equal(c.docNavBtns(), '', '홑장에 쪽 넘기기가 뜨면 헛단추입니다');
+});
+
+test('본문에도 몇 쪽짜리 문서인지 적는다 — 접힌 문서를 알아볼 길', () => {
+  const c = load(['docNav']);
+  vm.runInContext('var esc = function(s){ return String(s); };' +
+    'var docPages = function(){ return [{id:"a"},{id:"b"},{id:"c"}]; };', c);
+  const h = c.docNav({ id: 'b', meta: { doc: { name: '위임계약서' } } });
+  assert.match(h, /위임계약서/);
+  assert.match(h, /3쪽 중 2쪽/);
+  vm.runInContext('docPages = function(){ return [{id:"a"}]; };', c);
+  assert.equal(c.docNav({ id: 'a' }), '', '홑장에는 안 적습니다');
 });
 
 test('★ 나누기 상자는 여러 쪽일 때만, 남의 사진에는 안 뜬다', () => {
