@@ -145,6 +145,135 @@
   function myName() { return deps.name; }
   function amAdmin() { return deps.isAdmin; }
 
+  /* ══════ 자료 한 건 ══════
+     대기 칸 자료와 서랍 자료는 **같은 것**이다. 다른 점은 사업장·귀속월·종류를
+     아는가뿐이다. 그래서 모양을 하나로 두고 칸만 옮긴다 — 두 모양으로 두면
+     내려보낼 때 옮겨 담다 칸을 빠뜨린다. */
+  function pendingRecord(o) {
+    o = o || {};
+    return {
+      filename: String(o.filename || ''),
+      file: String(o.file || ''),          // 창고 자리. 내려보낼 때 **바뀌지 않는다**
+      mime: String(o.mime || ''),
+      bytes: Number(o.bytes || 0),
+      at: Number(o.at || 0),               // 올린 시각
+      by: String(o.by || deps.uid || ''),  // 담은 사람
+      companyId: String(o.companyId || ''),
+      companyName: String(o.companyName || ''),
+      month: String(o.month || ''),
+      kind: String(o.kind || ''),
+      from: String(o.from || 'upload'),    // upload · camera · photos · mail · share
+      note: String(o.note || '')
+    };
+  }
+
+  /* 대기 칸 자료 + 사람이 채운 이름표 → 서랍 자료.
+     담은 사람(by)은 그대로 두고 내려보낸 사람(filedBy)을 따로 남긴다 —
+     휴가 대리로 남이 손댄 자료를 나중에 구분할 수 있어야 한다. */
+  function itemRecord(rec, tag) {
+    tag = tag || {};
+    var out = pendingRecord(rec);
+    out.companyId = String(tag.companyId || '');
+    out.companyName = String(tag.companyName || out.companyName || '');
+    out.month = slotOf(tag.kind, tag.month) || '';
+    out.kind = String(tag.kind || '');
+    out.filedAt = Number(tag.at || 0);       // 서랍으로 내려간 시각
+    out.filedBy = String(deps.uid || '');    // 내려보낸 사람(대리인일 수 있다)
+    return out;
+  }
+
+  /* ══════ 도착 표시 ══════
+     자료마다 한 자리를 만든다. 다중 경로 update 는 숫자를 늘릴 수 없고(트랜잭션이
+     필요하다), 자리 수로 세면 같은 자료를 두 번 담아도 장수가 어긋나지 않는다.
+
+     ⚠ 여기에는 **숫자(시각)만** 넣는다. 도착 칸은 전 직원이 읽는다 —
+     파일 이름에는 근로자 성명이 흔히 들어 있다. */
+  function arrivalMarks(companyId, slot, kind, id, at) {
+    var out = {};
+    if (!companyId || !slot || !kind || !id) return out;
+    out[arrivalPath(companyId, slot) + '/' + kind + '/' + id] = Number(at || 0);
+    out[arrivalPath(companyId, slot) + '/last'] = Number(at || 0);
+    return out;
+  }
+
+  /* 그 업체·그 달에 그 종류가 몇 장 왔나 — 자리 수를 센다. */
+  function arrivalCount(node, kind) {
+    if (!node || !kind || !node[kind] || typeof node[kind] !== 'object') return 0;
+    return Object.keys(node[kind]).length;
+  }
+
+  /* ══════ 대기 칸 → 서랍 ══════
+     다중 경로 묶음을 만드는 **순수 함수**다(파이어베이스 없이 검사할 수 있다).
+     자료 생기기 · 대기 칸에서 지우기 · 도착 표시를 **한 묶음**으로 만든다 —
+     따로 쓰면 「자료는 있는데 도착 표시가 없다」가 된다. */
+  function drawerUpdate(id, rec, tag, owner) {
+    tag = tag || {};
+    if (!id) throw new Error('자료 번호가 없습니다');
+    if (!tag.companyId) throw new Error('사업장을 골라 주세요');
+    if (!tag.kind) throw new Error('종류를 골라 주세요');
+    var slot = slotOf(tag.kind, tag.month);
+    if (!slot) throw new Error('귀속월을 적어 주세요 (예: 2026-08)');
+
+    var up = {};
+    up[itemPath(slot, id, owner)] = itemRecord(rec, tag);
+    up[pendingPath(id, owner)] = null;
+    var marks = arrivalMarks(tag.companyId, slot, tag.kind, id, tag.at);
+    Object.keys(marks).forEach(function (k) { up[k] = marks[k]; });
+    return up;
+  }
+
+  /* 공용 대기 칸에서 집어 내 자리로. 집은 사람을 남긴다 —
+     서버가 받은 것이라 「누가 맡았는지」가 아니면 아무도 책임지지 않는다. */
+  function claimShared(id, rec) {
+    if (!id) throw new Error('자료 번호가 없습니다');
+    var mine = pendingRecord(rec);
+    mine.by = deps.uid || '';
+    mine.claimedBy = deps.uid || '';
+    mine.claimedAt = Date.now();
+    var up = {};
+    up[pendingPath(id)] = mine;
+    up[sharedPendingPath(id)] = null;
+    return up;
+  }
+
+  /* 대기 칸에 오래 묵었는가. 시각이 없으면 오래된 것으로 본다 —
+     안 보이면 영원히 남는다. */
+  function isStalePending(rec, now) {
+    var at = Number((rec && rec.at) || 0);
+    if (!at) return true;
+    return (Number(now || Date.now()) - at) > PENDING_STALE_DAYS * 86400000;
+  }
+
+  /* ══════ 실제로 쓰는 층 (얇게) ══════
+     묶음을 만드는 것은 위의 순수 함수가 하고, 여기는 보내기만 한다.
+     ⚠ ref() 를 인자 없이 부르고 update 한다 — 다중 경로 쓰기의 유일한 방법이다. */
+  function savePending(o) {
+    var id = (o && o.id) || newId();
+    var up = {};
+    up[pendingPath(id)] = pendingRecord(o);
+    return deps.db.ref().update(up).then(function () { return id; });
+  }
+
+  function moveToDrawer(id, tag, rec, owner) {
+    return deps.db.ref().update(drawerUpdate(id, rec, tag, owner)).then(function () { return true; });
+  }
+
+  function claimSharedNow(id, rec) {
+    return deps.db.ref().update(claimShared(id, rec)).then(function () { return true; });
+  }
+
+  /* 내 대기 칸 목록 — 본문은 창고에 있으므로 여기 담긴 것은 정보뿐이다. */
+  function listMyPending(owner) {
+    return deps.db.ref(pendingBoxPath(owner)).once('value')
+      .then(function (s) { return s.val() || {}; });
+  }
+
+  /* 공용 대기 칸 목록 — 서버가 메일로 받은 것(5차에 채워진다). */
+  function listSharedPending() {
+    return deps.db.ref(sharedPendingBoxPath()).once('value')
+      .then(function (s) { return s.val() || {}; });
+  }
+
   global.PuPaydataStore = {
     DB_ROOT: DB_ROOT,
     BUCKET_ROOT: BUCKET_ROOT,
@@ -179,6 +308,18 @@
     newId: newId,
     myUid: myUid,
     myName: myName,
-    amAdmin: amAdmin
+    amAdmin: amAdmin,
+    pendingRecord: pendingRecord,
+    itemRecord: itemRecord,
+    arrivalMarks: arrivalMarks,
+    arrivalCount: arrivalCount,
+    drawerUpdate: drawerUpdate,
+    claimShared: claimShared,
+    isStalePending: isStalePending,
+    savePending: savePending,
+    moveToDrawer: moveToDrawer,
+    claimSharedNow: claimSharedNow,
+    listMyPending: listMyPending,
+    listSharedPending: listSharedPending
   };
 })(typeof window !== 'undefined' ? window : globalThis);
