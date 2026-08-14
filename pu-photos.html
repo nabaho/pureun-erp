@@ -1227,6 +1227,12 @@ button{font-family:inherit;cursor:pointer}
          <button class="wide" onclick="runMigrate()">사진 옮기기</button>
          <button class="wide" id="dropBtn" style="display:none" onclick="runDropLegacy()">옛 자리 지우기</button>
          <pre id="migOut"></pre>
+         <div class="row" style="border:none;margin-top:12px"><span>전체 직원 사진 창고로 옮기기</span></div>
+         <p class="mignote">2026-08-13 부터 사진을 파일 창고에 담기 시작했습니다. 그 전에 올라온 사진은
+           자동으로 안 옮겨집니다 — 아래 버튼으로 옮길 수 있습니다. <b>한 번 옮기면 실시간DB에서는
+           지워집니다</b>(창고에는 그대로 남습니다). 사진·직원이 많으면 여러 번 눌러야 끝납니다.</p>
+         <button class="wide" onclick="runServerMigrate()">전체 직원 사진 창고로 옮기기</button>
+         <pre id="serverMigOut"></pre>
        </div>
      </div>
     </main>
@@ -8064,6 +8070,42 @@ function runDropLegacy() {
   }).catch(function (e) {
     $('migOut').textContent = '지우지 못했습니다 — ' + ((e && e.message) || e);
   });
+}
+
+const SERVER_MIGRATE_URL = 'https://us-central1-pureun-erp.cloudfunctions.net/migratePhotosToStorage';
+
+async function runServerMigrate() {
+  async function callServerMigrate(limit) {
+    const u = firebase.auth().currentUser;
+    if (!u) throw new Error('로그인이 풀렸습니다');
+    const token = await u.getIdToken();
+    const res = await fetch(SERVER_MIGRATE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ limit: limit })
+    });
+    let j = null;
+    try { j = await res.json(); } catch (_) {}
+    if (!res.ok || !j || !j.ok) throw new Error((j && j.error) || ('서버 응답 ' + res.status));
+    return j;
+  }
+  if (!confirm('전체 직원의 사진을 파일 창고로 옮깁니다.\n한 번 옮기면 실시간DB에서는 지워집니다(창고에는 그대로 남습니다). 계속할까요?')) return;
+  const out = $('serverMigOut');
+  const total = { moved: 0, skipped: 0, failed: 0 };
+  out.textContent = '옮기는 중…';
+  try {
+    let done = false;
+    while (!done) {
+      const r = await callServerMigrate(30);
+      total.moved += r.moved; total.skipped += r.skipped; total.failed += r.failed;
+      done = r.done;
+      out.textContent = '옮기는 중… 옮김 ' + total.moved + ' · 건너뜀 ' + total.skipped + ' · 실패 ' + total.failed;
+    }
+    out.textContent = '끝났습니다 — 옮김 ' + total.moved + ' · 건너뜀 ' + total.skipped + ' · 실패 ' + total.failed
+      + (total.failed ? '\n실패한 사진은 실시간DB에 그대로 남아 있습니다 — 나중에 버튼을 다시 눌러 보세요.' : '');
+  } catch (e) {
+    out.textContent = '멈췄습니다 — ' + ((e && e.message) || e) + '\n다시 눌러 이어서 할 수 있습니다.';
+  }
 }
 
 /* ══════ 설정 ══════ */
