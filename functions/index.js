@@ -6,6 +6,7 @@ const { getApps, initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
 const { getDatabase } = require("firebase-admin/database");
 const { getMessaging } = require("firebase-admin/messaging");
+const { getStorage } = require("firebase-admin/storage");
 const { Resend } = require("resend");
 const {
   REPO,
@@ -664,3 +665,107 @@ exports.sendScheduledMail = functions
     console.log("sendScheduledMail", { looked: ids.length, sent: sent, failed: failed });
     return null;
   });
+
+// ═══ 사진첩 — 서버 쪽 사진 이사 (2026-08-13, PR #192 뒤) ═══
+// 대표 지시: 총괄 관리자가 자기 아닌 다른 직원 사진도 창고로 옮길 수 있어야
+// 한다. 창고 규칙은 실시간DB(uid_roles)를 못 읽어 "관리자인가"를 판정 못
+// 하므로, 클라이언트 쪽 이사 도구(js/pu-photo-store.js 의 migrateToStorage)는
+// 관리자 자기 자신의 사진만 옮길 수 있다. 이 함수는 Admin SDK 로 창고 규칙을
+// 완전히 우회해 여러 사람 자리에 한꺼번에 쓴다.
+const { migrateBatch } = require("./photos-migrate");
+
+const PHOTOS_DB_ROOT = "puphotos"; // js/pu-photo-store.js 의 DB_ROOT 와 반드시 같아야 한다
+
+async function requirePhotoAdmin(req) {
+  const match = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ""));
+  if (!match) {
+    const error = new Error("로그인 확인 정보가 없습니다.");
+    error.status = 401;
+    throw error;
+  }
+  const decoded = await getAuth().verifyIdToken(match[1], true);
+  const roleSnapshot = await getDatabase().ref(`uid_roles/${decoded.uid}`).once("value");
+  const role = roleSnapshot.val() || {};
+  if (role.isAdmin !== true) {
+    const error = new Error("총괄관리자만 사진을 옮길 수 있습니다.");
+    error.status = 403;
+    throw error;
+  }
+  return decoded;
+}
+
+// functions/photos-migrate.js 가 기대하는 db 모양으로 실제 RTDB 를 얇게 감싼다.
+function realPhotoDb() {
+  const db = getDatabase();
+  return {
+    listOwners() {
+      return db.ref(`${PHOTOS_DB_ROOT}/owners`).once("value")
+        .then((s) => Object.keys(s.val() || {}));
+    },
+    listYears(uid) {
+      return db.ref(`${PHOTOS_DB_ROOT}/u/${uid}/items`).once("value")
+        .then((s) => Object.keys(s.val() || {}));
+    },
+    listYear(uid, year) {
+      return db.ref(`${PHOTOS_DB_ROOT}/u/${uid}/items/${year}`).once("value")
+        .then((s) => s.val() || {});
+    },
+    readItem(uid, year, id) {
+      return Promise.all([
+        db.ref(`${PHOTOS_DB_ROOT}/u/${uid}/blobs/${year}/${id}`).once("value"),
+        db.ref(`${PHOTOS_DB_ROOT}/u/${uid}/thumbs/${year}/${id}`).once("value"),
+      ]).then(([f, t]) => {
+        const full = f.val();
+        if (!full) return null;
+        return { full, thumb: t.val() || "" };
+      });
+    },
+    writeMigrated(uid, year, id) {
+      const u = {};
+      u[`${PHOTOS_DB_ROOT}/u/${uid}/items/${year}/${id}/loc`] = "storage";
+      u[`${PHOTOS_DB_ROOT}/u/${uid}/blobs/${year}/${id}`] = null;
+      u[`${PHOTOS_DB_ROOT}/u/${uid}/thumbs/${year}/${id}`] = null;
+      return db.ref().update(u);
+    },
+  };
+}
+
+// photos-migrate.js 가 기대하는 bucket 모양으로 실제 Storage 를 얇게 감싼다.
+// ⚠ 되읽어 확인(exists)은 메타데이터만 본다 — 전체를 다시 내려받지 않는다.
+//   (클라이언트 쪽은 getDownloadURL+fetch 로 전체를 다시 받는다 — 서버는 그럴
+//   필요가 없다, 대역폭을 아낀다. 설계서 5절 참고.)
+function realPhotoBucket() {
+  // 창고 이름은 PR #192 에서 만든 것과 반드시 같아야 한다 — pu-photos.html 이 보는 창고.
+  const bucket = getStorage().bucket("pureun-erp-hrphotos");
+  return {
+    upload(objectPath, dataUrl) {
+      const base64 = String(dataUrl || "").replace(/^data:[^,]*,/, "");
+      const buf = Buffer.from(base64, "base64");
+      return bucket.file(objectPath).save(buf, { contentType: "image/jpeg" });
+    },
+    exists(objectPath) {
+      return bucket.file(objectPath).exists().then((r) => !!(r && r[0]));
+    },
+  };
+}
+
+exports.migratePhotosToStorage = functions.https.onRequest(async (req, res) => {
+  setAutomationCors(req, res);
+  if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+  if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
+  try {
+    await requirePhotoAdmin(req);
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const limit = Number(body.limit) > 0 ? Number(body.limit) : 30;
+    const result = await migrateBatch(realPhotoDb(), realPhotoBucket(), limit);
+    res.status(200).json({
+      ok: true, moved: result.moved, skipped: result.skipped,
+      failed: result.failed, done: result.done,
+    });
+  } catch (error) {
+    console.error("migratePhotosToStorage", error && error.stack || error);
+    res.status(error.status || 500).json({
+      ok: false, error: String((error && error.message) || error || "사진 이사 실패"),
+    });
+  }
+});
