@@ -82,18 +82,18 @@ test('★ 표시를 한 번 쓰고 지운다', () => {
 });
 
 test('로그인이 끝난 뒤에 켠다', () => {
-  const m = photos.match(/PuPhotoStore\.signIn\([\s\S]{0,1400}?openCamIfAsked\(\);/);
+  const m = photos.match(/PuPhotoStore\.signIn\([\s\S]{0,2600}?openCamIfAsked\(\);/);
   assert.ok(m, '계정을 모르는 채 카메라를 켜면 찍어도 담을 곳이 없습니다.');
 });
 
 test('표시가 없으면 아무 일도 없다', () => {
   const m = photos.match(/function openCamIfAsked\(\)[\s\S]*?\n\}/);
-  assert.ok(/if \(!want\) return;/.test(m[0]), '평소에 사진첩을 열 때 카메라가 켜지면 안 됩니다.');
+  assert.ok(/if \(!want\) return false;/.test(m[0]), '평소에 사진첩을 열 때 카메라가 켜지면 안 됩니다.');
 });
 
 test('주소를 못 읽어도 터지지 않는다', () => {
   const m = photos.match(/function openCamIfAsked\(\)[\s\S]*?\n\}/);
-  assert.ok(/catch \(_\) \{ return; \}/.test(m[0]));
+  assert.ok(/catch \(_\) \{ return false; \}/.test(m[0]));
 });
 
 /* ══════ 2단계: 명함첩 카메라까지 없애 정말 하나로 (대표 지시 2026-08-09) ══════

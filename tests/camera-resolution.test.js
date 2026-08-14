@@ -30,7 +30,8 @@ test('해상도를 못 올려도 카메라는 열린다', () => {
 
 test('낮은 미리보기에서도 별도 확인 없이 고해상도 촬영을 시도한다', () => {
   assert.doesNotMatch(photos, /id="camNative"|function useNativeCam\(\)/);
-  assert.match(photos, /takePhoto\(camPhotoBest\(\)\)/);
+  assert.match(photos, /const photoOpts = camPhotoBest\(\)/);
+  assert.match(photos, /capture\.takePhoto\(photoOpts\)/);
 });
 
 test('앱 안 카메라는 운영체제 확인형 카메라로 우회하지 않는다', () => {
