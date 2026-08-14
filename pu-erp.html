@@ -45956,6 +45956,11 @@ function FinanceInvoice(){
      보고 있는 달의 것만 읽어 온다. 통째로 읽으면 수만 건에 화면이 멈춘다. */
   var htS = useState({ rows:[], capped:false, loading:true });
   var ht = htS[0]; var setHt = htS[1];
+  // ── 발행관리 표 머리 깔때기 (2026-08-14 대표 지시) — 구분·업체명·상태 ──
+  var invFS = useState({}); var invFunnel = invFS[0]; var setInvFunnel = invFS[1];
+  function invFGet(k){ return invFunnel[k] || []; }
+  function invFSet(k, arr){ var n = Object.assign({}, invFunnel); if(arr.length) n[k] = arr; else delete n[k]; setInvFunnel(n); }
+  function invFClearAll(){ setInvFunnel({}); }
 
   // 아카이브 탭 진입 시 IndexedDB 로드
   useEffect(function(){
@@ -46254,6 +46259,32 @@ function FinanceInvoice(){
     if(d !== 0) return d;
     return (a.__hometax ? 1 : 0) - (b.__hometax ? 1 : 0);
   });
+  /* ── 표 머리 깔때기 — 구분·업체명·상태 (2026-08-14 대표 지시) ──
+     칸끼리는 «그리고», 같은 칸 안은 «또는» — 업체관리·계약관리와 같은 규칙.
+     값 목록(items)은 «다른 깔때기를 이미 반영한» listRows 기준으로 세어야
+     건수가 서로 안 맞는 일이 없다 — 업체관리가 쓰는 것과 같은 요령. */
+  function invFItems(axis, rowsBase){
+    var m = {};
+    rowsBase.forEach(function(r){
+      var v = axis === 'kind' ? (r.__hometax ? '홈택스' : '직접발행')
+            : axis === 'company' ? (r.companyName || '(업체명 없음)')
+            : (r.status || '발행');
+      m[v] = (m[v] || 0) + 1;
+    });
+    return Object.keys(m).sort(function(a, b){ return a.localeCompare(b, 'ko'); })
+      .map(function(v){ return { v:v, label:v, n:m[v] }; });
+  }
+  function invFPass(r){
+    var fKind = invFGet('kind');
+    if(fKind.length && fKind.indexOf(r.__hometax ? '홈택스' : '직접발행') < 0) return false;
+    var fCo = invFGet('company');
+    if(fCo.length && fCo.indexOf(r.companyName || '(업체명 없음)') < 0) return false;
+    var fSt = invFGet('status');
+    if(fSt.length && fSt.indexOf(r.status || '발행') < 0) return false;
+    return true;
+  }
+  var listRowsF = listRows.filter(invFPass);
+  var invFActiveCount = Object.keys(invFunnel).length;
 
   /* ─── 입금 대조 ───
      끊어 놓고 아직 안 들어온 계산서 · 들어왔는데 안 끊은 입금을 갈라 보여준다.
@@ -46463,20 +46494,20 @@ function FinanceInvoice(){
   }
 
   // ─── 발행관리 렌더 ───
-  function renderIssue(){
-    return h('div', null,
-      h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:'4px', marginBottom:'8px' } },
-        h('div', { style:{ background:'#eff6ff', border:'1px solid #bfdbfe', borderRadius:'7px', padding:'5px 8px', textAlign:'center' } },
-          h('div', { style:{ fontSize:'8.5px', color:'#1e40af', fontWeight:700, whiteSpace:'nowrap' } }, '🧾 전체 발행'),
-          h('div', { style:{ fontSize:'13px', fontWeight:800, color:'#1e40af', lineHeight:1.2 } }, filtered.length + '건')),
-        h('div', { style:{ background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:'7px', padding:'5px 8px', textAlign:'center' } },
-          h('div', { style:{ fontSize:'8.5px', color:'#166534', fontWeight:700, whiteSpace:'nowrap' } }, '💰 공급가'),
-          h('div', { style:{ fontSize:'11px', fontWeight:800, color:'#166534', lineHeight:1.4, fontFamily:'monospace', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, totalAmount.toLocaleString() + '원')),
-        h('div', { style:{ background:'#fffbeb', border:'1px solid #fde68a', borderRadius:'7px', padding:'5px 8px', textAlign:'center' } },
-          h('div', { style:{ fontSize:'8.5px', color:'#854d0e', fontWeight:700, whiteSpace:'nowrap' } }, '📑 부가세'),
-          h('div', { style:{ fontSize:'11px', fontWeight:800, color:'#854d0e', lineHeight:1.4, fontFamily:'monospace', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, totalVat.toLocaleString() + '원'))
-      ),
-      (function(){
+  /* 세 알약 — 3칸 그리드였던 것. 탭 줄 오른쪽에 붙여 «줄을 하나 아낀다» (2026-08-14 대표 지시). */
+  function renderIssueStats(){
+    return h('span', { style:{ display:'inline-flex', gap:'4px', flexWrap:'wrap' } },
+      h('span', { style:{ padding:'3px 9px', borderRadius:'99px', background:'#eff6ff', color:'#1e40af', fontSize:'10.5px', fontWeight:700, whiteSpace:'nowrap' } },
+        '🧾 전체발행 ' + filtered.length + '건'),
+      h('span', { style:{ padding:'3px 9px', borderRadius:'99px', background:'#f0fdf4', color:'#166534', fontSize:'10.5px', fontWeight:700, whiteSpace:'nowrap' } },
+        '💰 공급가 ' + totalAmount.toLocaleString()),
+      h('span', { style:{ padding:'3px 9px', borderRadius:'99px', background:'#fffbeb', color:'#854d0e', fontSize:'10.5px', fontWeight:700, whiteSpace:'nowrap' } },
+        '📑 부가세 ' + totalVat.toLocaleString())
+    );
+  }
+  // 도구줄+검색+기간모드 — 원래도 한 줄(flexWrap)이었다. 틀고정 덩어리 안으로 옮기려고 따로 뗀다.
+  function renderIssueToolbar(){
+    return (function(){
         var thisYM = todayYM();
         var thisY = String((new Date()).getFullYear());
         var thisQ = thisY+'-Q'+Math.ceil(((new Date()).getMonth()+1)/3);
@@ -46538,7 +46569,11 @@ function FinanceInvoice(){
           ),
           mode === 'all' && h('span', { style:{padding:'7px 14px', fontSize:'12px', color:'#94a3b8', fontWeight:600, background:'#f8fafc', border:'1px dashed #cbd5e1', borderRadius:'6px'} }, '전체 기간')
         );
-      })(),
+      })();
+  }
+  // 요약줄 + 표 — 틀고정 덩어리 «밖» 에 둔다. 표가 제 몸 안에서 구르는 상자다.
+  function renderIssueBody(){
+    return h('div', null,
       // 무엇을 몇 건 보고 있는지 한 줄로 밝힌다 — 끊긴 것도 숨기지 않는다
       h('div', { style:{ display:'flex', gap:'10px', alignItems:'center', flexWrap:'wrap',
           fontSize:'11px', color:'#64748b', marginBottom:'8px' } },
@@ -46549,32 +46584,62 @@ function FinanceInvoice(){
           h('span', { style:{ color:'#94a3b8' } }, ' (아카이브 · 화면에만)')),
         ht.capped && h('span', { style:{ color:'#854d0e', background:'#fffbeb',
             border:'1px solid #fde68a', borderRadius:'5px', padding:'1px 7px', fontWeight:700 } },
-          '⚠ 홈택스분은 ' + HT_SHOW_MAX.toLocaleString() + '건에서 끊었습니다 — 기간을 좁혀 보세요')
+          '⚠ 홈택스분은 ' + HT_SHOW_MAX.toLocaleString() + '건에서 끊었습니다 — 기간을 좁혀 보세요'),
+        invFActiveCount > 0 && h('span', { style:{ color:'#1e40af', fontWeight:700 } },
+          '· 걸린 조건 ' + invFActiveCount + '개 · ' + listRowsF.length + '/' + listRows.length + '건'),
+        invFActiveCount > 0 && h('span', { onClick:invFClearAll,
+          style:{ color:'#2563eb', cursor:'pointer', fontWeight:600, textDecoration:'underline' } }, '▽ 필터 풀기')
       ),
       h('div', { style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'10px', overflow:'auto', maxHeight:'calc(100vh - 380px)' } },
         h('table', { className:'dt' },
-          h('thead', null, h('tr', null,
-            h('th', { style:{ width:'30px' } }, '#'),
-            h('th', null, '발행일'),
-            h('th', null, '구분'),
-            h('th', null, '승인번호'),
-            h('th', null, '업체명'),
-            h('th', null, '사업자번호'),
-            h('th', null, '대표자'),
-            h('th', null, '이메일'),
-            h('th', null, '품목'),
-            h('th', null, '영수/청구'),
-            h('th', { className:'ar' }, '공급가'),
-            h('th', { className:'ar' }, '부가세'),
-            h('th', { className:'ar' }, '합계'),
-            h('th', null, '상태'),
-            h('th', { className:'ac' }, '관리')
+          /* ★ 깔때기 — 값 목록은 «다른 깔때기를 이미 반영한» listRowsF 기준으로 센다
+             (내가 지금 보는 칸 자신이 건 조건은 빼고 세야, 고른 값이 0건으로 보이지 않는다). */
+          h('thead', { style:{ position:'sticky', top:0, zIndex:2, background:'#f8fafc' } }, h('tr', null,
+            h('th', { style:{ width:'30px', background:'#f8fafc' } }, '#'),
+            h('th', { style:{ background:'#f8fafc' } }, '발행일'),
+            h('th', { style:{ background:'#f8fafc', whiteSpace:'nowrap' } }, '구분',
+              h(FunnelBtn, { label:'구분', mini:true, color:'#1e40af',
+                items:invFItems('kind', listRows.filter(function(r){
+                  var fCo=invFGet('company'), fSt=invFGet('status');
+                  if(fCo.length && fCo.indexOf(r.companyName||'(업체명 없음)')<0) return false;
+                  if(fSt.length && fSt.indexOf(r.status||'발행')<0) return false;
+                  return true;
+                })),
+                sel:invFGet('kind'), onApply:function(arr){ invFSet('kind', arr); } })),
+            h('th', { style:{ background:'#f8fafc' } }, '승인번호'),
+            h('th', { style:{ background:'#f8fafc', whiteSpace:'nowrap' } }, '업체명',
+              h(FunnelBtn, { label:'업체명', mini:true, color:'#1e40af',
+                items:invFItems('company', listRows.filter(function(r){
+                  var fKind=invFGet('kind'), fSt=invFGet('status');
+                  if(fKind.length && fKind.indexOf(r.__hometax?'홈택스':'직접발행')<0) return false;
+                  if(fSt.length && fSt.indexOf(r.status||'발행')<0) return false;
+                  return true;
+                })),
+                sel:invFGet('company'), onApply:function(arr){ invFSet('company', arr); } })),
+            h('th', { style:{ background:'#f8fafc' } }, '사업자번호'),
+            h('th', { style:{ background:'#f8fafc' } }, '대표자'),
+            h('th', { style:{ background:'#f8fafc' } }, '이메일'),
+            h('th', { style:{ background:'#f8fafc' } }, '품목'),
+            h('th', { style:{ background:'#f8fafc' } }, '영수/청구'),
+            h('th', { className:'ar', style:{ background:'#f8fafc' } }, '공급가'),
+            h('th', { className:'ar', style:{ background:'#f8fafc' } }, '부가세'),
+            h('th', { className:'ar', style:{ background:'#f8fafc' } }, '합계'),
+            h('th', { style:{ background:'#f8fafc', whiteSpace:'nowrap' } }, '상태',
+              h(FunnelBtn, { label:'상태', mini:true, color:'#1e40af',
+                items:invFItems('status', listRows.filter(function(r){
+                  var fKind=invFGet('kind'), fCo=invFGet('company');
+                  if(fKind.length && fKind.indexOf(r.__hometax?'홈택스':'직접발행')<0) return false;
+                  if(fCo.length && fCo.indexOf(r.companyName||'(업체명 없음)')<0) return false;
+                  return true;
+                })),
+                sel:invFGet('status'), onApply:function(arr){ invFSet('status', arr); } })),
+            h('th', { className:'ac', style:{ background:'#f8fafc' } }, '관리')
           )),
           h('tbody', null,
-            listRows.length === 0
+            listRowsF.length === 0
               ? h('tr', null, h('td', { colSpan:15, className:'ac', style:{ color:'#94a3b8', padding:'40px' } },
-                  ht.loading ? '불러오는 중…' : '발행된 세금계산서 없음'))
-              : listRows.map(function(it, idx){
+                  ht.loading ? '불러오는 중…' : (listRows.length ? '깔때기에 걸려 아무것도 안 보입니다 — 위 「▽ 필터 풀기」를 눌러 보세요' : '발행된 세금계산서 없음')))
+              : listRowsF.map(function(it, idx){
                   var isHt = !!it.__hometax;   // 홈택스분 — 회색으로, 고치거나 지울 수 없다
                   var vat = (it.vatType === 'separate' || it.vatType === 'exclusive') ? Math.round((it.amount||0) * 0.1) : Math.round((it.amount||0) / 11);
                   var supply = it.vatType === 'separate' ? (it.amount||0) : ((it.amount||0) - vat);
@@ -46663,8 +46728,13 @@ function FinanceInvoice(){
       zIndex:9000, background:'#16a34a', color:'#fff', padding:'10px 18px', borderRadius:'10px',
       fontSize:'13px', fontWeight:700, boxShadow:'0 6px 20px rgba(0,0,0,.18)', pointerEvents:'none' } },
       '📁 여기에 놓으면 세금계산서를 불러옵니다'),
-    // 탭
-    h('div', { style:{ display:'flex', gap:'4px', marginBottom:'14px', borderBottom:'2px solid #e2e8f0' } },
+    /* ── 탭+통계+도구줄을 «두 줄» 로 + 틀고정 (2026-08-14 대표 지시) ──
+       전에는 탭·통계 3칸·도구줄·요약줄이 따로 네 줄을 차지했다.
+       통계를 알약으로 줄여 탭 옆에 붙이고(첫 줄), 도구줄은 그대로 한 줄(둘째 줄) —
+       둘을 감싸는 칸 하나에만 sticky 를 건다 (다른 화면들과 같은 요령). */
+    h('div', { style:{ position:'sticky', top:0, zIndex:5, background:'#fff', paddingBottom:'2px' } },
+    // 탭 + (발행관리 탭일 때) 통계 알약
+    h('div', { style:{ display:'flex', gap:'4px', marginBottom:'8px', borderBottom:'2px solid #e2e8f0', alignItems:'center', flexWrap:'wrap' } },
       [
         { v:'issue', label:'🧾 발행관리 ('+invoices.length+')' },
         { v:'match', label:'💰 입금 대조'+(_ivmSum.todo?(' · 미입금 '+_ivmSum.todo):'') },
@@ -46676,7 +46746,9 @@ function FinanceInvoice(){
             background: on?'#1e40af':'transparent', color: on?'#fff':'#475569',
             border:'none', borderBottom:'none',
             marginBottom:'0' } }, x.label);
-      })
+      }),
+      h('span', { style:{ flex:1, minWidth:'4px' } }),
+      tab === 'issue' && renderIssueStats()
     ),
     /* ── 올리기 진행·결과 — ★ 어느 탭에서 올려도 보인다 (2026-08-10 김보람 제보) ──
        전에는 이 안내를 「업체별 아카이브」 탭 안에만 그렸다. 그래서 발행관리 탭에서
@@ -46691,7 +46763,9 @@ function FinanceInvoice(){
       (uploadState.status==='parsing' || uploadState.status==='saving') && h('div', {
           style:{ marginTop:'6px', height:'6px', background:'#e2e8f0', borderRadius:'5px', overflow:'hidden' } },
         h('div', { style:{ height:'100%', width:uploadState.progress+'%', background:'#1e40af', transition:'width 0.3s' } }))),
-    tab === 'issue' && renderIssue(),
+    tab === 'issue' && renderIssueToolbar()
+    ),   // ↑ 탭·통계·도구줄 sticky 덩어리 닫음
+    tab === 'issue' && renderIssueBody(),
     tab === 'match' && renderMatch(),
     tab === 'archive' && renderArchive(),
     detailModal && h(InvoiceDetailModal, { cur:detailModal, onSave:saveItem, onClose:function(){ setDetailModal(null); } })

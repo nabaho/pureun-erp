@@ -63,8 +63,9 @@ t('윗줄 합계는 직접발행분(filtered)만 센다',
   /var totalAmount = filtered\.reduce/.test(src), true);
 t('합계에 홈택스분을 더하지 않는다',
   /var totalAmount = (listRows|ht)\b/.test(src), false);
-t('표를 listRows 로 그린다 — filtered 로 그리면 홈택스분이 안 보인다',
-  /listRows\.map\(function\(it, idx\)\{/.test(src), true);
+// 2026-08-14: 표는 깔때기로 한 번 더 거른 listRowsF 를 그린다 — listRows(직접발행+홈택스)에서 파생된 것이다
+t('표는 listRows 에서 파생된 것을 그린다 — filtered 로 그리면 홈택스분이 안 보인다',
+  /var listRowsF = listRows\.filter\(invFPass\);/.test(src) && /listRowsF\.map\(function\(it, idx\)\{/.test(src), true);
 t('홈택스 줄은 고치거나 지울 수 없다 (읽기전용)',
   /isHt[\s\S]{0,300}?'읽기전용'/.test(src), true);
 t('「구분」 칸이 생겼다', /h\('th', null, '구분'\)/.test(src), true);
