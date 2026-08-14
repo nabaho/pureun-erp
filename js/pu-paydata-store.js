@@ -35,7 +35,7 @@
     { key: 'etc',      label: '기타' }
   ];
 
-  var deps = { db: null, storage: null, uid: '', isAdmin: false, name: '', fetch: null };
+  var deps = { db: null, storage: null, uid: '', isAdmin: false, isFin: false, name: '', fetch: null };
 
   /* 파이어베이스 객체와 계정을 받아 저장 층을 준비한다.
      이미 넣어 둔 값은 안 넘기면 그대로 둔다 — 로그인 뒤 권한만 나중에 알려 줄 수 있어야 한다. */
@@ -45,6 +45,7 @@
     if (o.storage) deps.storage = o.storage;
     if (o.uid !== undefined) deps.uid = o.uid || '';
     if (o.isAdmin !== undefined) deps.isAdmin = !!o.isAdmin;
+    if (o.isFin !== undefined) deps.isFin = !!o.isFin;
     if (o.name) deps.name = o.name;
     if (o.fetch) deps.fetch = o.fetch;
     else if (deps.fetch === null) deps.fetch = (typeof global.fetch === 'function' ? global.fetch.bind(global) : null);
@@ -162,6 +163,11 @@
   function myUid() { return deps.uid; }
   function myName() { return deps.name; }
   function amAdmin() { return deps.isAdmin; }
+  function amFin() { return deps.isFin; }
+  /* 급여관리(payroll_os)로 값을 넘길 수 있는가 — 콘솔 규칙이 그 칸 쓰기를
+     재무권한(fin) 또는 관리자로 이미 막아 뒀다(급여데이터함이 새로 여는 게 아니다).
+     화면이 이 함수로 미리 갈라야 권한 없는 사람이 헛눌러 실패하는 일이 없다. */
+  function canHandoffPayroll() { return deps.isAdmin || deps.isFin; }
 
   /* ══════ 자료 한 건 ══════
      대기 칸 자료와 서랍 자료는 **같은 것**이다. 다른 점은 사업장·귀속월·종류를
@@ -832,6 +838,42 @@
     return deps.db.ref().update(up).then(function () { return id; });
   }
 
+  /* ══════ 급여관리(payroll_os)로 넘기기 (4차) ══════
+     이 저장 층이 원래 다루는 자리(paydata) 밖으로 쓰는 유일한 함수다.
+     payroll_os/inbox 는 급여관리의 수신함이 이미 읽는 자리이고, 그 모양
+     {ts,filename,사업장,월,종류,상태,출처} 은 급여관리 쪽 도움말에 적힌 그대로다
+     (메일 서비스가 나중에 같은 자리에 쓰기로 되어 있다 — 급여데이터함도 같은 자리에
+     하나 더 쓰는 것뿐이라 급여관리 화면을 손대지 않아도 된다).
+     ⚠ payroll_os 쓰기는 재무권한(fin) 또는 관리자만 되도록 콘솔 규칙에 이미
+     막혀 있다 — 급여데이터함이 새로 여는 권한이 아니다. 화면은 반드시
+     canHandoffPayroll() 로 미리 갈라 단추를 감춰야 한다(안 그러면 눌러도
+     서버가 거절해 헛수고가 된다). */
+  function payrollInboxPath(id) { return 'payroll_os/inbox/' + id; }
+
+  function handoffToPayroll(o) {
+    o = o || {};
+    if (!o.companyName) return Promise.reject(new Error('사업장을 알 수 없습니다'));
+    if (!o.month) return Promise.reject(new Error('귀속월을 알 수 없습니다'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var at = Number(o.at || Date.now());
+    var inboxId = newId(), logId = newId();
+    var up = {};
+    up[payrollInboxPath(inboxId)] = {
+      ts: at,
+      filename: o.companyName + ' ' + o.month + ' 값',
+      사업장: o.companyName,
+      월: o.month,
+      종류: o.kindLabel || '급여데이터함 값',
+      상태: '대기',
+      출처: '급여데이터함'
+    };
+    up[handoffLogPath(logId)] = {
+      companyId: String(o.companyId || ''), companyName: o.companyName, month: o.month,
+      byUid: deps.uid || '', byName: deps.name || '', at: at
+    };
+    return deps.db.ref().update(up).then(function () { return inboxId; });
+  }
+
   /* ══════ 휴가 대리 ══════
      자리를 맡기는 것은 **주인만** 할 수 있다(콘솔 규칙이 deputy 칸 쓰기를
      $owner===auth.uid 로 막는다). 기간이 지나면 규칙이 저절로 닫는다 —
@@ -904,6 +946,10 @@
     myUid: myUid,
     myName: myName,
     amAdmin: amAdmin,
+    amFin: amFin,
+    canHandoffPayroll: canHandoffPayroll,
+    payrollInboxPath: payrollInboxPath,
+    handoffToPayroll: handoffToPayroll,
     pendingRecord: pendingRecord,
     itemRecord: itemRecord,
     arrivalMarks: arrivalMarks,

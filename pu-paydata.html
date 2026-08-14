@@ -375,9 +375,11 @@ function afterLogin() {
   S.init({ db: db, storage: store, uid: App.me.uid, name: App.me.email || '' });
   $('whoami').textContent = App.me.email || '';
 
-  /* 권한은 나중에 알려 줘도 된다 — 못 읽어도 화면은 떠야 한다. */
+  /* 권한은 나중에 알려 줘도 된다 — 못 읽어도 화면은 떠야 한다.
+     fin(재무권한)도 함께 읽는다 — 급여관리로 "이 달 값 넘기기" 단추가
+     이 값으로 갈린다(canHandoffPayroll, 4차). */
   db.ref('uid_roles/' + App.me.uid).once('value')
-    .then(s => { const r = s.val() || {}; S.init({ isAdmin: !!r.isAdmin }); })
+    .then(s => { const r = s.val() || {}; S.init({ isAdmin: !!r.isAdmin, isFin: !!r.fin }); App.render(); })
     .catch(e => console.warn('[권한]', e && e.code));
 
   /* 이름을 찾아 화면·명단에 반영한다 — 남이 나를 「이름으로」 고르려면
@@ -938,6 +940,11 @@ function screenDrawer() {
     h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">기준 월'
       + ' <input class="btn" style="width:110px" value="' + esc(App.month) + '"'
       + ' onchange="App.month=this.value;ensureDrawerData();App.render()"></div>';
+    // 급여관리로 이 달 값 넘기기 — 재무권한·관리자에게만 보인다(4차, canHandoffPayroll).
+    if (S.canHandoffPayroll()) {
+      h += '<div style="margin-bottom:12px"><button class="btn" onclick="handoffMonth()">'
+        + '📤 이 달 값 급여관리로 넘기기</button></div>';
+    }
   } else {
     h += '<div class="sub">근로계약서는 월과 상관없이 모두 보입니다.</div>';
   }
@@ -980,6 +987,21 @@ function screenDrawer() {
     + '</div>';
   return h;
 }
+
+/* 급여관리로 이 달 값 넘기기(4차) — 사유를 묻지 않는다. 이미 서랍을 열어
+   확인한 사람이 스스로 넘기는 것이므로 열람 사유와는 다른 종류다(그저 넘긴
+   사실만 handoff_log 에 남는다). 권한 없는 사람은 단추 자체가 안 보인다. */
+function handoffMonth() {
+  if (!S.canHandoffPayroll()) return;
+  const counts = drawerCounts(App.itemsKeep, App.itemsMonth, App.companyId);
+  const total = S.KINDS.filter(k => !k.keep).reduce((n, k) => n + (counts[k.key] || 0), 0);
+  if (!total) { alert('이 달에 넘길 값이 없습니다.'); return; }
+  if (!confirm(App.companyName + ' ' + App.month + ' 자료(' + total + '건)를 급여관리 수신함으로 넘길까요?')) return;
+  S.handoffToPayroll({ companyId: App.companyId, companyName: App.companyName, month: App.month })
+    .then(() => alert('급여관리 수신함으로 넘겼습니다.'))
+    .catch(e => alert('넘기지 못했습니다 — ' + (e.code || e.message)));
+}
+window.handoffMonth = handoffMonth;
 
 /* 자료 한 줄의 「폴더 지정」 골라잡기 — 있는 폴더만 나온다. 새 폴더는 폴더 칸의
    「+ 폴더」로 만든다(그 자리에서 이름을 적는 방식 하나로 통일한다). */
