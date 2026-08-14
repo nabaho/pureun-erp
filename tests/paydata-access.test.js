@@ -109,6 +109,24 @@ test('★ 로그인 마무리(signIn)가 이름을 찾고 명단에 남긴다', 
   });
 });
 
+test('★ 로그인하면 이메일도 함께 적힌다 — 사람별 대시보드가 담당 업체를 가리는 데 쓴다', () => {
+  const S = loadStore();
+  const db = fakeDbMulti();
+  S.init({ db: db, uid: 'U1' });
+  return S.signIn('p001@pureun.kr', '권형하').then(() => {
+    assert.equal(getAtPath(db._tree, S.ownerPath('U1')).email, 'p001@pureun.kr');
+  });
+});
+
+test('touchOwner 에 이메일을 안 주면 그 칸을 만들지 않는다', () => {
+  const S = loadStore();
+  const db = fakeDbMulti();
+  S.init({ db: db, uid: 'U1' });
+  return S.touchOwner('권형하').then(() => {
+    assert.ok(!('email' in getAtPath(db._tree, S.ownerPath('U1'))));
+  });
+});
+
 /* ══════ 열람 기록 ══════ */
 
 test('★ 사유 없이는 기록되지 않는다', () => {
