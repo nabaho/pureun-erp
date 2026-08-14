@@ -41554,6 +41554,8 @@ function IncomeListTab(){
   var dt = useState(null); var detailModal = dt[0]; var setDetailModal = dt[1];
   var sb = useState({ key:'date', dir:'desc' }); var sortBy = sb[0]; var setSortBy = sb[1];
   var hbc = useState(true); var hideBeforeContract = hbc[0]; var setHideBeforeContract = hbc[1];
+  // 「유형」 칸 깔때기 — 출처(sourceKind)는 이미 드롭다운이 있지만 유형(kind)엔 없었다 (2026-08-14 대표 지시)
+  var kfS = useState([]); var kindFunnel = kfS[0]; var setKindFunnel = kfS[1];
 
   var users = getActiveUsers();
   // ── Phase 2: 건별 저장 (과거회귀 방지) — 그 1건만 서버 반영, 화면 배열 재사용 금지 ──
@@ -41626,8 +41628,26 @@ function IncomeListTab(){
     });
   }
 
+  // 유형 깔때기 값 목록 — 다른 조건(출처·월·검색)을 이미 반영한 나머지 기준으로 센다
+  var kindFunnelBase = incomes.filter(function(it){
+    if(sourceFilter !== 'all' && it.sourceKind !== sourceFilter) return false;
+    if(monthFilter){
+      if(monthFilter.length === 4){ if((it.date||'').slice(0,4) !== monthFilter) return false; }
+      else { if((it.date||'').slice(0,7) !== monthFilter) return false; }
+    }
+    if(query){ var qq2 = query.toLowerCase();
+      if(!((it.companyName||'').toLowerCase().indexOf(qq2)>=0 || (it.kind||'').toLowerCase().indexOf(qq2)>=0)) return false; }
+    return true;
+  });
+  var kindFunnelItems = (function(){
+    var m = {};
+    kindFunnelBase.forEach(function(it){ var k = it.kind || '(없음)'; m[k] = (m[k]||0)+1; });
+    return Object.keys(m).sort(function(a,b){ return a.localeCompare(b,'ko'); }).map(function(k){ return { v:k, label:k, n:m[k] }; });
+  })();
+
   var filtered = incomes.filter(function(it){
     if(sourceFilter !== 'all' && it.sourceKind !== sourceFilter) return false;
+    if(kindFunnel.length && kindFunnel.indexOf(it.kind || '(없음)') < 0) return false;
     if(monthFilter){
       if(monthFilter.length === 4){
         if((it.date||'').slice(0,4) !== monthFilter) return false;
@@ -41730,6 +41750,10 @@ function IncomeListTab(){
       ),
       mode === 'all' && h('span', { style:{padding:'7px 14px', fontSize:'12px', color:'#94a3b8', fontWeight:600, background:'#f8fafc', border:'1px dashed #cbd5e1', borderRadius:'6px'} }, '전체 기간'),
       h('div', { style:{flex:1} }),
+      kindFunnel.length > 0 && h('span', { onClick:function(){ setKindFunnel([]); },
+        title:'유형 깔때기 풀기',
+        style:{ color:'#2563eb', cursor:'pointer', fontWeight:600, fontSize:'11px', textDecoration:'underline' } },
+        '▽ 유형 필터 ' + kindFunnel.length + ' 풀기'),
       h('div', { style:{padding:'6px 12px',background:bg,color:color,borderRadius:'6px',fontSize:'11.5px',fontWeight:700} },
         '총 '+filtered.length+'건 / '+totalAmount.toLocaleString()+'원')
     ),
@@ -41758,14 +41782,16 @@ function IncomeListTab(){
     // 테이블
     h('div', { style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'10px', overflow:'auto', maxHeight:'calc(100vh - 380px)' } },
       h('table', { className:'dt' },
-        h('thead', null, h('tr', null,
-          h('th',{style:{width:'30px'}},'#'),
-          h('th',{onClick:function(){toggleSort('date');},style:{cursor:'pointer'}},'입금일'+sIcon('date')),
-          h('th',null,'출처'), h('th',null,'관련번호'),
-          h('th',{onClick:function(){toggleSort('companyName');},style:{cursor:'pointer'}},'업체명'+sIcon('companyName')),
-          h('th',null,'유형'),
-          h('th',{className:'ar',onClick:function(){toggleSort('amount');},style:{cursor:'pointer'}},'입금액'+sIcon('amount')),
-          h('th',{className:'ac'},'관리')
+        h('thead', { style:{ position:'sticky', top:0, zIndex:2, background:'#f8fafc' } }, h('tr', null,
+          h('th',{style:{width:'30px',background:'#f8fafc'}},'#'),
+          h('th',{onClick:function(){toggleSort('date');},style:{cursor:'pointer',background:'#f8fafc'}},'입금일'+sIcon('date')),
+          h('th',{style:{background:'#f8fafc'}},'출처'), h('th',{style:{background:'#f8fafc'}},'관련번호'),
+          h('th',{onClick:function(){toggleSort('companyName');},style:{cursor:'pointer',background:'#f8fafc'}},'업체명'+sIcon('companyName')),
+          h('th',{style:{background:'#f8fafc',whiteSpace:'nowrap'}},'유형',
+            h(FunnelBtn, { label:'유형', mini:true, color:'#1e40af',
+              items:kindFunnelItems, sel:kindFunnel, onApply:function(arr){ setKindFunnel(arr); } })),
+          h('th',{className:'ar',onClick:function(){toggleSort('amount');},style:{cursor:'pointer',background:'#f8fafc'}},'입금액'+sIcon('amount')),
+          h('th',{className:'ac',style:{background:'#f8fafc'}},'관리')
         )),
         h('tbody', null,
           filtered.length===0 ? h('tr',null,h('td',{colSpan:8,className:'ac',style:{color:'#94a3b8',padding:'40px'}},'등록된 데이터가 없습니다'))
