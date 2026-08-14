@@ -44,8 +44,13 @@ t('이름 찾기를 한 곳으로 모았다 (SID·이름 둘 다 받는다)',
   /function whoName\(sid\)\{[\s\S]{0,320}?byName \? byName\.name : sid/.test(MODAL), true);
 
 console.log('\n■ ③ 성과급 미리보기 — 늘 보이는가');
-t('분할을 안 켜도 보인다 (!split 일 때 그린다)',
-  /!split && h\('div',[\s\S]{0,900}?'⭐ 성과급 — 확정하면 이렇게 나뉩니다'/.test(MODAL), true);
+/* ★ 머리(제목 + 나누기 체크)는 «켜든 끄든 같은 자리» 에 있어야 한다 (2026-08-13 대표 지적).
+   전에는 켤 때는 오른쪽 위, 끄면 왼쪽 위로 옮겨 다녀 헷갈렸다. */
+t('성과급 머리는 split 과 상관없이 늘 그린다',
+  /\n\s*h\('div', \{ style:\{display:'flex',justifyContent:'space-between',alignItems:'center',\n\s*border:'1px solid #bfdbfe',borderBottom:'none'[\s\S]{0,300}?'⭐ 성과급 — 확정하면 이렇게 나뉩니다'/.test(MODAL), true);
+t('머리를 !split 로 감싸지 않는다',
+  /!split && h\('div',[\s\S]{0,200}?'⭐ 성과급 — 확정하면 이렇게 나뉩니다'/.test(MODAL), false);
+t('읽기표는 안 나눌 때만', /!split && h\('div', \{ style:\{border:'1px solid #bfdbfe',borderTop:'none'/.test(MODAL), true);
 t('저장할 때 쓰는 calcPerfShares 로 셈한다 — 화면과 실제가 달라선 안 된다',
   /_sh = calcPerfShares\(_perfBase, mainSid, subSids,\s*\n?\s*confirmModal\.p\.store\.sourceKind, 100, \{ paidDate:confirmModal\.date \}\)/.test(MODAL), true);
 t('이름·분할%·요율%·지급액을 적는다',
@@ -64,10 +69,26 @@ t('수습 표시', /'수습 · 미지급'/.test(MODAL), true);
 t('퇴사 표시', /'퇴사 · 미지급'/.test(MODAL), true);
 
 console.log('\n■ 나누기 켜고 끄기');
-t('미리보기 안에서 켠다', /'⚖️ 부담당과 나누기'\)/.test(MODAL), true);
-t('분할표 안에서 끈다', /'⚖️ 부담당과 나누기 \(끄면 주담당 100%\)'/.test(MODAL), true);
+// ★ 이 줄이 이번 요청의 핵심 — 체크가 두 군데 있으면 위치가 바뀐 것처럼 보인다
+t('나누기 체크는 창 안에 딱 하나', (MODAL.match(/'⚖️ 부담당과 나누기/g) || []).length, 1);
+t('그 하나가 머리에 있다',
+  /'⭐ 성과급 — 확정하면 이렇게 나뉩니다'\)[\s\S]{0,700}?'⚖️ 부담당과 나누기'/.test(MODAL), true);
 t('부담당이 없으면 켜는 칸을 안 보여준다', /hasSubs && h\('label'/.test(MODAL), true);
-t('켜면 분할표가 나온다', /split && h\('div', \{ style:\{padding:'12px',background:'#f8fafc'/.test(MODAL), true);
+t('켜면 입력표가 머리에 이어 붙는다',
+  /split && h\('div', \{ style:\{padding:'8px 10px',background:'#f8fafc',border:'1px solid #bfdbfe',borderTop:'none',borderRadius:'0 0 7px 7px'/.test(MODAL), true);
+t('읽기표도 같은 모양으로 이어 붙는다', /borderRadius:'0 0 7px 7px'/.test(MODAL), true);
+
+console.log('\n■ 차감·반영 옵션 — 칸을 줄였는가');
+t('알약 한 줄로 흘린다', /display:'flex',flexWrap:'wrap',gap:'5px',alignItems:'center'/.test(MODAL), true);
+t('알약을 만드는 함수가 있다', /function optChip\(on, label, tone, onChange, title, extra\)/.test(MODAL), true);
+t('이름을 짧게 — 부가세 1/11', /'부가세 1\/11'/.test(MODAL), true);
+t('이름을 짧게 — 사업 3.3%', /'사업 3\.3%'/.test(MODAL), true);
+t('두 칸 격자를 걷어냈다', /gridTemplateColumns:'1fr 1fr',gap:'6px',fontSize:'11\.5px'/.test(MODAL), false);
+t('머릿말 「차감·반영 옵션」 을 없앴다', /'💰 차감·반영 옵션'/.test(MODAL), false);
+// 같은 셈을 두 곳에서 적으면 숫자가 어긋난다 (여기는 약정액, 미리보기는 실제입금 기준이었다)
+t('「입금액 − 차감 = 성과 기준」 을 되풀이하지 않는다',
+  /'입금액 ' \+ confirmModal\.p\.amount\.toLocaleString\(\) \+ '원 - 차감 '/.test(MODAL), false);
+t('성과에 안 잡힌다는 경고는 남긴다', /⚠️ 성과급 미반영 — 성과관리에 표시되지 않음/.test(MODAL), true);
 
 console.log('\n■ 미리보기 값이 저장 값과 같은 셈인가 (진짜 함수로 확인)');
 (function(){
