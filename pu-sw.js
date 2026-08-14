@@ -36,6 +36,7 @@ self.addEventListener('activate', function (e) {
 
 var CARDS_SHARE = '/pu-cards-share';    // 명함첩 manifest 의 share_target.action
 var PHOTOS_SHARE = '/pu-photos.html';   // 사진첩 manifest 의 share_target.action
+var PAYDATA_SHARE = '/pu-paydata.html'; // 급여데이터함 manifest 의 share_target.action
 
 self.addEventListener('fetch', function (e) {
   if (e.request.method !== 'POST') return;          // GET 등은 건드리지 않는다(캐시 없음)
@@ -44,6 +45,7 @@ self.addEventListener('fetch', function (e) {
   var p = url.pathname;
   if (p.slice(-CARDS_SHARE.length) === CARDS_SHARE) { e.respondWith(takeCards(e.request)); return; }
   if (p.slice(-PHOTOS_SHARE.length) === PHOTOS_SHARE) { e.respondWith(takePhotos(e.request, url)); return; }
+  if (p.slice(-PAYDATA_SHARE.length) === PAYDATA_SHARE) { e.respondWith(takePaydata(e.request, url)); return; }
 });
 
 /* 303 — 받은 POST 를 GET 으로 바꿔 돌려보낸다(새로고침해도 다시 안 보낸다) */
@@ -122,6 +124,56 @@ function takePhotos(req, url) {
     return redirect(back + (n ? '?share=1' : '?share=none'));
   }).catch(function (err) {
     if (self.console) console.warn('[사진첩 공유 받기]', err);
+    return redirect(back + '?share=err');
+  });
+}
+
+/* ══════ 급여데이터함: 공유받은 자료를 IndexedDB 에 잠깐 둔다 ══════
+   사진첩과 같은 방식이지만 자리(store)는 따로 둔다 — 한 IndexedDB를 같이
+   쓰면 두 앱이 서로의 대기분을 집어가 버릴 수 있다. */
+var PAYDATA_IDB_NAME = 'pu-paydata-share', PAYDATA_IDB_STORE = 'inbox', PAYDATA_IDB_VER = 1;
+
+function openPaydataIdb() {
+  return new Promise(function (res, rej) {
+    var r = indexedDB.open(PAYDATA_IDB_NAME, PAYDATA_IDB_VER);
+    r.onupgradeneeded = function () {
+      var d = r.result;
+      if (!d.objectStoreNames.contains(PAYDATA_IDB_STORE)) {
+        d.createObjectStore(PAYDATA_IDB_STORE, { keyPath: 'id', autoIncrement: true });
+      }
+    };
+    r.onsuccess = function () { res(r.result); };
+    r.onerror = function () { rej(r.error); };
+  });
+}
+
+function keepPaydata(files) {
+  return openPaydataIdb().then(function (db) {
+    return new Promise(function (res, rej) {
+      var tx = db.transaction(PAYDATA_IDB_STORE, 'readwrite');
+      var st = tx.objectStore(PAYDATA_IDB_STORE);
+      var at = Date.now();
+      files.forEach(function (f, i) {
+        st.add({ blob: f, name: f.name || ('공유자료_' + (i + 1)), type: f.type || '', at: at });
+      });
+      tx.oncomplete = function () { db.close(); res(files.length); };
+      tx.onerror = function () { db.close(); rej(tx.error); };
+    });
+  });
+}
+
+function takePaydata(req, url) {
+  var back = url.origin + url.pathname;
+  return req.formData().then(function (fd) {
+    var files = fd.getAll('photos').filter(function (f) {
+      return f && typeof f === 'object' && f.size > 0;
+    });
+    if (!files.length) return 0;
+    return keepPaydata(files);
+  }).then(function (n) {
+    return redirect(back + (n ? '?share=1' : '?share=none'));
+  }).catch(function (err) {
+    if (self.console) console.warn('[급여데이터함 공유 받기]', err);
     return redirect(back + '?share=err');
   });
 }

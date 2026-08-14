@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>급여데이터함 — 푸른노무법인</title>
+<link rel="manifest" href="pu-paydata-manifest.json">
 <!--
   급여데이터함 — 급여 아웃소싱에 쓰는 근로자·임금 자료를 사업장별로 담는 앱.
   설계서: docs/superpowers/specs/2026-08-13-급여데이터함-design.md
@@ -391,6 +392,7 @@ function afterLogin() {
   $('gate').style.display = 'none';
   $('shell').style.display = '';
   loadSites();
+  takeShared();   // 카톡·갤러리에서 공유해 들어온 자료가 있으면 대기 칸으로
 }
 
 /* 첫 화면 자료를 읽어 온다. 한쪽이 실패해도 화면은 뜬다 —
@@ -728,6 +730,97 @@ function shotToPending(files) {
   });
 }
 window.shotToPending = shotToPending;
+
+/* 공유로 들어온 자료도 **같은 담기 층**을 쓰되, 어디서 왔는지는 따로 남긴다
+   (from:'share') — 나중에 "이게 왜 여기 있지"를 가릴 수 있어야 한다. */
+function shareToPending(files) {
+  if (!canWrite()) return;
+  const list = Array.prototype.slice.call(files || []);
+  if (!list.length) return;
+  const bad = [];
+  Promise.all(list.map(f =>
+    S.saveFile(f, { at: Date.now(), from: 'share', owner: App.viewingUid })
+      .catch(e => { bad.push(f.name + ' — ' + e.message); return null; })
+  )).then(() => {
+    if (bad.length) alert('담지 못한 자료가 있습니다:\n' + bad.join('\n'));
+    S.listMyPending(App.viewingUid).then(p => { App.pending = p; App.render(); })
+      .catch(e => console.warn('[대기 칸]', e && e.code));
+  });
+}
+window.shareToPending = shareToPending;
+
+/* ══════ 카톡·갤러리에서 공유 받기 ══════
+   폰에 앱으로 설치돼 있으면 공유 목록에 「급여데이터함」이 뜬다. 누르면 안드로이드가
+   자료를 POST 로 보내고, pu-sw.js 가 받아 IndexedDB 에 잠깐 둔 뒤 이 화면을
+   `?share=1` 로 돌려보낸다. 여기서 꺼내 곧장 대기 칸에 담는다 — 사진첩과 달리
+   미리보기 화면은 두지 않는다(급여데이터함은 촬영·올리기도 원래 미리보기 없이
+   바로 대기 칸으로 간다. 사업장·귀속월은 대기 칸에서 고른다).
+   ⚠ 아이폰은 애플이 막아 두어 안 된다 — 안드로이드 전용. */
+const SHARE_IDB = 'pu-paydata-share', SHARE_STORE = 'inbox';
+
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  /* 통합 워커 하나만 등록 — 앱마다 따로 등록하면 서로 밀어내 공유 받기가 죽는다(pu-sw.js 머리말) */
+  navigator.serviceWorker.register('pu-sw.js')
+    .catch(e => console.warn('[공유 받기 준비]', e));
+}
+
+function openShareIdb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(SHARE_IDB, 1);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      if (!d.objectStoreNames.contains(SHARE_STORE)) {
+        d.createObjectStore(SHARE_STORE, { keyPath: 'id', autoIncrement: true });
+      }
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+
+/* 꺼내면서 바로 비운다 — 안 비우면 새로고침할 때마다 같은 자료가 또 담긴다. */
+function drainShareIdb() {
+  return openShareIdb().then(db => new Promise((res, rej) => {
+    const tx = db.transaction(SHARE_STORE, 'readwrite');
+    const st = tx.objectStore(SHARE_STORE);
+    const got = st.getAll();
+    st.clear();
+    tx.oncomplete = () => { db.close(); res(got.result || []); };
+    tx.onerror = () => { db.close(); rej(tx.error); };
+  }));
+}
+
+function shareFlag() {
+  try { return new URLSearchParams(location.search).get('share'); } catch (_) { return null; }
+}
+/* 주소에서 share 표시를 지운다 — 남겨 두면 새로고침 때마다 "못 받았다"가 또 뜬다 */
+function clearShareFlag() {
+  try {
+    const u = new URL(location.href);
+    u.searchParams.delete('share');
+    history.replaceState(null, '', u.pathname + u.search + u.hash);
+  } catch (_) { /* 주소를 못 고쳐도 동작에는 지장 없다 */ }
+}
+
+function takeShared() {
+  const flag = shareFlag();
+  if (flag === 'none' || flag === 'err') {
+    clearShareFlag();
+    alert(flag === 'none'
+      ? '공유받은 자료가 없습니다.\n다시 공유해 주세요.'
+      : '공유받은 자료를 읽지 못했습니다.\n다시 시도해 주세요.');
+    return;
+  }
+  /* 표시가 없어도 한 번 살펴본다 — 공유 직후 로그인 화면을 거치면 표시가 날아간다.
+     남은 것이 없으면 아무 일도 일어나지 않는다. */
+  drainShareIdb().then(rows => {
+    clearShareFlag();
+    if (!rows.length) return;
+    const files = rows.map(r => new File([r.blob], r.name || '공유자료', { type: r.type || '' }));
+    shareToPending(files);
+    alert(files.length + '건을 대기 칸에 담았습니다. 사업장·귀속월을 골라 정리해 주세요.');
+  }).catch(e => { console.warn('[공유 받기]', e); clearShareFlag(); });
+}
 
 /* ══════ 사업장 서랍 (Task 9) — 사진첩과 같은 틀고정 탭·찾기 줄·확대 보기 ══════ */
 
