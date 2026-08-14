@@ -82,7 +82,7 @@ function loadScreen() {
     cut('esc'), cut('thisMonth'),
     cut('pickOn'), cut('pickToggle'), cut('pickSetAll'), cut('pickList'),
     cut('pickAllOn'), cut('pickPrune'), cut('pickOf'), cut('pickPut'),
-    cut('sitesModel'), cut('pickBar'), cut('screenSites'),
+    cut('companyDocCount'), cut('sitesModel'), cut('pickBar'), cut('screenSites'),
     'window.App = App; window.screenSites = screenSites;'
   ].join('\n'), { filename: 'screen.js' }).runInContext(sandbox);
   return sandbox;
