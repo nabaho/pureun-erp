@@ -15,11 +15,13 @@ function loadModel() {
   const store = fs.readFileSync(path.join(R, 'js', 'pu-paydata-store.js'), 'utf8');
   const m = html.match(/function sitesModel[\s\S]*?\n\}/);
   assert.ok(m, 'sitesModel 함수를 찾을 수 없습니다');
+  const cc = html.match(/function companyDocCount[\s\S]*?\n\}/);
+  assert.ok(cc, 'companyDocCount 함수를 찾을 수 없습니다');
   const sandbox = { window: {}, console };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   new vm.Script(store, { filename: 'store.js' }).runInContext(sandbox);
-  new vm.Script('const S = window.PuPaydataStore; S.init({uid:"U1"});\n' + m[0]
+  new vm.Script('const S = window.PuPaydataStore; S.init({uid:"U1"});\n' + cc[0] + '\n' + m[0]
     + '\nwindow.sitesModel = sitesModel;', { filename: 'model.js' }).runInContext(sandbox);
   return sandbox.window.sitesModel;
 }

@@ -29,4 +29,3 @@ test('로그아웃하면 카메라와 원격 사진 감시를 함께 정리한�
   assert.match(block, /camStop\(\)/);
   assert.match(block, /clearIdentity/);
 });
-
