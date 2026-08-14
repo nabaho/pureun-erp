@@ -53,3 +53,34 @@ test('firebase-admin/storage 를 실제로 불러온다', () => {
   assert.match(src, /require\(["']firebase-admin\/storage["']\)/,
     'getStorage 를 안 불러오면 실행 시(런타임)에야 터집니다 — import 를 소스에서 미리 확인합니다.');
 });
+
+/* 2026-08-13 최종 리뷰 뒤 보강 — 세 가지를 새로 못 박는다. */
+
+test('★ 권한 확인이 사진을 옮기기 전에 실제로 불린다 — 순서가 바뀌면 아무나 남의 사진을 옮깁니다', () => {
+  const block = src.match(/exports\.migratePhotosToStorage[\s\S]*?\n\}\);/)[0];
+  assert.match(block, /await requirePhotoAdmin\(req\)[\s\S]*migrateBatch\(/,
+    '★ requirePhotoAdmin 이 migrateBatch 보다 앞에서, await 로 불려야 합니다.');
+});
+
+test('★ 시간제한·메모리를 기본값보다 올린다 — 30장 배치가 기본 60초에 못 끝날 수 있습니다', () => {
+  const block = src.match(/exports\.migratePhotosToStorage[\s\S]*?\n\}\);/)[0];
+  const rw = block.match(/\.runWith\(\{[\s\S]*?\}\)/);
+  assert.ok(rw, 'runWith 설정을 찾지 못했습니다 — 기본 60초·256MB 로는 한 배치를 못 끝낼 수 있습니다.');
+  assert.match(rw[0], /timeoutSeconds:\s*\d{2,}/);
+});
+
+test('응답에 ownersCount 를 실어 실제 직원 수와 비교할 수 있게 한다', () => {
+  const block = src.match(/exports\.migratePhotosToStorage[\s\S]*?\n\}\);/)[0];
+  assert.match(block, /ownersCount/,
+    'owners 색인이 실제보다 적을 수 있다(옛 자리 옮기기만 한 사람은 로그인 전에는 색인에 없다) — ' +
+    '응답에 인원수를 실어야 관리자가 "끝났습니다"를 그대로 믿지 않고 확인할 수 있습니다.');
+});
+
+test('★ 창고에 올리기 전에 실제 base64 data URL 인지 확인한다 — 안 하면 깨진 값도 "올라갔다"로 통과해 원본을 지웁니다', () => {
+  const fn = src.match(/function realPhotoBucket\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /exec\(String\(dataUrl \|\| ["']["']\)\)/,
+    'base64 data URL 형태를 확인하는 정규식을 찾지 못했습니다.');
+  assert.match(fn, /Promise\.reject/,
+    'data URL 이 아닐 때 거절할 방법이 없으면, Buffer.from 이 조용히 깨진 바이트를 올리고 ' +
+    'exists() 는 여전히 참을 돌려줘 실시간DB 원본이 지워집니다.');
+});
