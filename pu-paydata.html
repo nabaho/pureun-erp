@@ -353,6 +353,18 @@ function loadSites() {
 
    근로계약서는 월과 무관한 keep 칸에 있으므로 **그 칸도 함께** 센다 —
    안 세면 계약서만 있는 업체가 「0장」으로 보인다. */
+/* 근로계약서(keep 칸, 월 무관) + 이 달 칸을 합쳐 센다 — 안 그러면 계약서만
+   있는 업체가 「0장」으로 보인다. 첫 화면(sitesModel)과 사람별 대시보드가
+   똑같이 쓴다 — 두 곳이 서로 다른 수를 보이면 안 된다. */
+function companyDocCount(node, slot) {
+  let n = 0;
+  S.KINDS.forEach(k => {
+    n += S.arrivalCount(node[S.KEEP], k.key);
+    if (slot) n += S.arrivalCount(node[slot], k.key);
+  });
+  return n;
+}
+
 function sitesModel(companies, pending, arrivals, month, now, myEmail) {
   const slot = S.monthKey(month);
   const pend = pending || {};
@@ -360,11 +372,7 @@ function sitesModel(companies, pending, arrivals, month, now, myEmail) {
   const pendIds = Object.keys(pend);
   const rows = (companies || []).map(c => {
     const node = arr[c.id] || {};
-    let count = 0;
-    S.KINDS.forEach(k => {
-      count += S.arrivalCount(node[S.KEEP], k.key);
-      if (slot) count += S.arrivalCount(node[slot], k.key);
-    });
+    const count = companyDocCount(node, slot);
     // 업체는 푸른이알피에서 당겨온다(대표 지시 2026-08-13) — 담당자 매칭도
     // 이알피가 쓰는 것과 같은 칸(managerMain·managerSubs)으로 한다.
     return { id: c.id, name: c.name, arrived: count > 0, count: count, mine: S.isMyCompany(c, myEmail) };
@@ -384,6 +392,41 @@ function sitesModel(companies, pending, arrivals, month, now, myEmail) {
     rows: rows,
     unlisted: unlisted
   };
+}
+
+/* ══════ 사람별 대시보드(좌측 고정 패널, 대표 지시 2026-08-14) ══════
+   "각 사람마다 대시보드에 자기 업체정리되어야 하며 업체는 푸른이알피에서
+   당겨오기" + "왼쪽에 사람별 대시보드". 나는 업체 순서를 마음대로 바꿀 수 있고
+   (myOrder), 다른 담당자는 업체 목록만 사유 없이 훑어본다 — 실제 서랍을 열 때만
+   사유를 묻는다(화면 쪽에서 처리, 여기는 계산만). */
+function personDashboardModel(owners, companies, arrivals, shares, myUid, myEmail, myName, myOrder, month, now, query) {
+  const slot = S.monthKey(month);
+  const arr = arrivals || {};
+  const cos = companies || [];
+  const q = String(query || '').trim().toLowerCase();
+
+  function companiesFor(email) {
+    return cos.filter(c => S.isMyCompany(c, email)).map(c => {
+      const node = arr[c.id] || {};
+      const count = companyDocCount(node, slot);
+      return { id: c.id, name: c.name, arrived: count > 0, count: count };
+    });
+  }
+
+  const me = { uid: myUid, name: myName || myUid, companies: S.applyOrder(companiesFor(myEmail), myOrder) };
+
+  const others = Object.keys(owners || {})
+    .filter(uid => uid !== myUid)
+    .map(uid => Object.assign({ uid: uid }, (owners || {})[uid]))
+    .filter(o => !q || String(o.name || '').toLowerCase().indexOf(q) >= 0)
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ko'))
+    .map(o => ({ uid: o.uid, name: o.name || o.uid, companies: companiesFor(o.email || '') }));
+
+  const shared = Object.keys(shares || {})
+    .map(id => Object.assign({ id: id }, shares[id]))
+    .sort((a, b) => Number(b.at || 0) - Number(a.at || 0));
+
+  return { me: me, others: others, shared: shared };
 }
 
 function screenSites() {
