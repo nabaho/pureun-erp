@@ -21,9 +21,14 @@ test('연도를 먼저 맞춘 다음 목록을 부른다', () => {
   /* ⚠ 'startUploadWatch();' 로 잡으면 함수 **정의**가 먼저 걸린다 — 부르는 자리를 곧바로 잡는다 */
   const ask = photos.indexOf('goPhotoIfAsked();');
   assert.ok(ask > 0, 'goPhotoIfAsked 를 부르는 자리를 찾지 못했습니다');
+  const boot = photos.indexOf('const finishPhotoBoot', ask);
   const load = photos.indexOf('loadGrid();', ask);
   assert.ok(load > ask, '연도를 맞추기 전에 목록을 부른다');
-  assert.ok(load - ask < 200, '둘이 너무 멀다 — 사이에 다른 일이 끼면 차례가 흐트러진다');
+  /* 계정이 바뀌거나 로그아웃된 뒤 느린 응답이 돌아오는 경우를 막기 위해 이제
+     목록 읽기는 finishPhotoBoot 안에서 계정 세대 검사를 거친다. 글자 수로 거리를
+     제한하지 말고, 주소 적용 → 안전한 부팅 → 목록 읽기 순서를 직접 확인한다. */
+  assert.ok(boot > ask && load > boot,
+    '주소 적용 뒤 안전한 부팅을 거쳐 목록을 읽는 순서가 아니다');
 });
 
 test('목록이 실린 뒤에 연다', () => {
@@ -70,6 +75,6 @@ test('주인도 맞춘 다음 목록을 부른다', () => {
      아무리 찾아도 없다 — 「원본 보기가 안 된다」의 진짜 까닭이었다(2026-08-13). */
   const at = photos.indexOf('function goPhotoIfAsked');
   const fn = photos.slice(at, photos.indexOf('function openCamIfAsked', at));
-  assert.match(fn, /gridOwner = who/, '주인을 안 맞춘다');
-  assert.match(fn, /who !== me\.uid/, '내 사진인데도 남의 자리로 바꾸면 안 된다');
+  assert.match(fn, /gridOwner = \(who === me\.uid\) \? null : who/, '주인을 안 맞춘다');
+  assert.match(fn, /who === me\.uid/, '내 사진인데도 남의 자리로 바꾸면 안 된다');
 });

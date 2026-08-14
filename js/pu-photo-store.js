@@ -289,6 +289,9 @@
      앱들이 각자 방식을 정하지 않는 것이 이 파일이 존재하는 이유다. */
   var mode = 'rtdb';
   var deps = { db: null, storage: null, uid: '', isAdmin: false, name: '' };
+  /* 같은 탭에서 로그아웃하거나 다른 계정으로 바뀌는 동안, 먼저 시작한 명부 조회가
+     늦게 끝나 새 계정의 이름·권한을 덮지 못하게 로그인 세대를 센다. */
+  var identityGeneration = 0;
 
   /* 파이어베이스 객체를 받아 저장 층을 준비한다.
 
@@ -1146,11 +1149,22 @@
   /* ── 사람 명단 ──
      내 칸만 갱신한다. 훑는 것은 관리자만 — 규칙도 그렇게 막지만, 화면이
      헛되게 두드려 오류를 만들 이유도 없다. */
-  function touchOwner(name) {
-    if (!deps.db || !deps.uid) return Promise.resolve();
+  function touchOwnerFor(name, uid, activeDb) {
+    if (!activeDb || !uid) return Promise.resolve();
     var u = {};
-    u[ownerPath(deps.uid)] = { name: name || '', lastAt: Date.now() };
-    return deps.db.ref().update(u);
+    u[ownerPath(uid)] = { name: name || '', lastAt: Date.now() };
+    return activeDb.ref().update(u);
+  }
+
+  function touchOwner(name) {
+    return touchOwnerFor(name, deps.uid, deps.db);
+  }
+
+  function clearIdentity() {
+    identityGeneration++;
+    deps.uid = '';
+    deps.isAdmin = false;
+    deps.name = '';
   }
 
   /* ── 로그인한 사람 ──
@@ -1159,18 +1173,49 @@
      짐작하면 안 된다(어차피 규칙이 한 번 더 막지만 이중으로 잠근다).
      경로에 계정이 필요하므로 **이것이 끝난 뒤에 사진을 읽어야 한다.** */
   function signIn(uid, email, fallbackName) {
-    deps.uid = uid || '';
+    var generation = ++identityGeneration;
+    var signedUid = uid || '';
+    var signedDb = deps.db;
+    var signedName = fallbackName || email || '';
+    deps.uid = signedUid;
     deps.isAdmin = false;
-    deps.name = fallbackName || email || '';
+    deps.name = signedName;
     if (!deps.db || !deps.uid) return Promise.resolve({ isAdmin: false, name: deps.name });
-    return deps.db.ref('uid_roles/' + deps.uid + '/isAdmin').once('value')
-      .then(function (s) { deps.isAdmin = s.val() === true; })
-      .catch(function () { deps.isAdmin = false; })
-      .then(function () { return lookupName(email); })
-      .then(function (found) { if (found) deps.name = found; })
-      .then(function () { return touchOwner(deps.name); })
-      .catch(function () { /* 명단 갱신 실패가 로그인을 막지 않는다 */ })
-      .then(function () { return { isAdmin: deps.isAdmin, name: deps.name }; });
+
+    /* 권한 확인과 이름 찾기는 서로 의존하지 않는다. 예전에는 권한 응답을 받은
+       뒤에야 이름을 찾기 시작해 휴대폰에서 서버 왕복을 두 번 연달아 기다렸다.
+       두 요청을 함께 시작하면 느린 한 번의 왕복만 기다리면 된다. */
+    var roleRead = signedDb.ref('uid_roles/' + signedUid + '/isAdmin').once('value')
+      .then(function (s) { return s.val() === true; })
+      .catch(function () { return false; });
+    var nameRead = lookupName(email, signedDb).catch(function () { return ''; });
+
+    return Promise.all([roleRead, nameRead]).then(function (read) {
+      var signedAdmin = read[0];
+      if (read[1]) signedName = read[1];
+
+      /* 로그아웃·계정 전환 뒤 도착한 예전 응답은 화면도 owners 색인도 건드리지 않는다. */
+      if (generation !== identityGeneration || deps.uid !== signedUid) {
+        var stale = new Error('이미 바뀐 로그인 응답입니다');
+        stale.code = 'auth/stale-session';
+        throw stale;
+      }
+      deps.isAdmin = signedAdmin;
+      deps.name = signedName;
+
+      /* owners 색인은 다음 로그인 때 사람 목록을 빠르게 찾기 위한 보조 기록이다.
+         이 쓰기가 느리거나 잠시 막혀도 현재 사용자의 로그인과 사진 열기를
+         기다리게 해서는 안 된다. 시작만 하고 결과는 조용히 처리한다. */
+      try {
+        Promise.resolve(touchOwnerFor(signedName, signedUid, signedDb)).catch(function () {
+          /* 명단 갱신 실패가 로그인을 막지 않는다 */
+        });
+      } catch (e) {
+        /* 동기 예외도 보조 기록 실패일 뿐 로그인 실패로 바꾸지 않는다 */
+      }
+
+      return { isAdmin: signedAdmin, name: signedName, uid: signedUid };
+    });
   }
 
   /* ── 로그인한 사람의 이름 ──
@@ -1198,8 +1243,8 @@
     return '';
   }
 
-  function readRoster(path) {
-    return deps.db.ref(path).once('value').then(function (s) {
+  function readRoster(path, activeDb) {
+    return (activeDb || deps.db).ref(path).once('value').then(function (s) {
       var raw = s.val();
       return (raw && raw.v !== undefined) ? raw.v : raw;
     });
@@ -1212,17 +1257,18 @@
     } catch (e) { return null; }
   }
 
-  function lookupName(email) {
-    if (!email || !deps.db) return Promise.resolve('');
-    return readRoster('data/user_dir').then(function (dir) {
+  function lookupName(email, activeDb) {
+    var nameDb = activeDb || deps.db;
+    if (!email || !nameDb) return Promise.resolve('');
+    return readRoster('data/user_dir', nameDb).then(function (dir) {
       var got = pickFromRoster(dir, email);
       if (got) return got;
       /* 공개 명부에 없으면 관리자 명부를 본다 — 일반 직원은 규칙이 막으므로 조용히 넘어간다. */
-      return readRoster('data/user_accounts')
+      return readRoster('data/user_accounts', nameDb)
         .then(function (l) { return pickFromRoster(l, email); })
         .catch(function () { return ''; });
     }).catch(function () {
-      return readRoster('data/user_accounts')
+      return readRoster('data/user_accounts', nameDb)
         .then(function (l) { return pickFromRoster(l, email); })
         .catch(function () { return ''; });
     }).then(function (got) {
@@ -1673,6 +1719,7 @@
     listDelLog: listDelLog,
     TRASH_DAYS: TRASH_DAYS,
     signIn: signIn,
+    clearIdentity: clearIdentity,
     amAdmin: amAdmin,
     myUid: myUid,
     myName: myName,

@@ -92,6 +92,8 @@ function collectCtx(over) {
     renderCollectBar: function () {},
     renderGrid: function () {},
     viewingOther: function () { return false; },
+    viewingOnlyOther: function () { return false; },
+    closePhSheet: function () {},
     toast: function (m) { calls.toast.push(m); },
     alert: function (m) { calls.alert.push(m); },
     prompt: function () { return calls.prompt.shift(); },

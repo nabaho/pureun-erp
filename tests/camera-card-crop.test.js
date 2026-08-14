@@ -196,11 +196,11 @@ test('★ 카메라 사진은 서류 화질로 담는다', () => {
 });
 
 test('★ 기기가 낼 수 있는 가장 큰 사진을 달라고 한다', () => {
-  assert.ok(/takePhoto\(camPhotoBest\(\)\)/.test(html),
+  assert.ok(/const photoOpts = camPhotoBest\(\)/.test(html) && /capture\.takePhoto\(photoOpts\)/.test(html),
     '안 적으면 기기가 미리보기 크기 그대로 주는 경우가 있습니다.');
   const m = html.match(/async function loadPhotoBest\(\)[\s\S]*?\n\}/);
   assert.ok(m && /getPhotoCapabilities/.test(m[0]) && /imageWidth: w\.max/.test(m[0]));
-  assert.ok(/catch \(_\) \{ camPhotoOpts = null; \}/.test(m[0]),
+  assert.ok(/catch \(_\) \{[\s\S]*sessionToken !== camSessionToken[\s\S]*camPhotoOpts = null;/.test(m[0]),
     '못 물어보는 기기에서는 기기 기본값으로 찍어야 합니다 — 여기서 터지면 카메라가 안 열립니다.');
 });
 

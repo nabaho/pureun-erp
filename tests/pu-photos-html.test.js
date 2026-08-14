@@ -549,13 +549,25 @@ test('사진이 없으면 왜 없는지 알려 준다', () => {
 
 /* ── 사람별 분리 ── */
 
-test('계정을 등록한 뒤에 사진을 읽는다', () => {
+test('계정을 등록한 뒤의 성공 부팅 단계에서 사진을 읽는다', () => {
   // 사진 자리가 사람별로 갈려 있어 계정을 모르면 경로를 만들 수 없다.
   // 순서가 어긋나면 앱이 뜨는 순간 사진이 안 보인다(실제로 그런 사고가 있었다).
-  assert.match(app, /PuPhotoStore\.signIn\(u\.uid/);
-  const blk = app.match(/PuPhotoStore\.signIn\(u\.uid[\s\S]{0,300}/);
-  assert.ok(blk, 'signIn 호출을 찾을 수 없습니다');
-  assert.match(blk[0], /loadGrid\(\)/, '계정 등록이 끝나기 전에 사진을 읽습니다');
+  /* 카메라 우선 부팅 때문에 loadGrid는 짧은 300자 안에 있지 않다. 중요한 계약은
+     글자 거리가 아니라 signIn 성공 콜백의 finishPhotoBoot 안에 있다는 점이다. */
+  const signAt = app.indexOf('PuPhotoStore.signIn(u.uid');
+  const successAt = app.indexOf('.then(function (me)', signAt);
+  const finishAt = app.indexOf('const finishPhotoBoot = function ()', successAt);
+  const loadAt = app.indexOf('loadGrid();', finishAt);
+  const loginCatchAt = app.indexOf("console.warn('[로그인]'", successAt);
+  assert.ok(signAt >= 0, 'signIn 호출을 찾을 수 없습니다');
+  assert.ok(successAt > signAt, '계정 등록 성공 콜백을 찾을 수 없습니다');
+  assert.ok(finishAt > successAt && loadAt > finishAt,
+    '사진 읽기는 계정 등록 성공 뒤의 부팅 단계에 있어야 합니다');
+  assert.ok(loginCatchAt > loadAt,
+    '사진 읽기가 계정 등록 성공 콜백 밖으로 빠졌습니다');
+  assert.match(app.slice(finishAt, loadAt + 'loadGrid();'.length),
+    /startUploadWatch\(\);\s*loadGrid\(\);/,
+    '계정 등록 뒤 원격 갱신 감시와 사진 읽기가 함께 시작되어야 합니다');
 });
 
 test('주소가 아니라 사람 이름이 뜬다', () => {
@@ -597,7 +609,8 @@ test('남의 사진은 지우거나 고칠 수 없다 (판독은 2026-08-10 부�
         올리는 것은 보는 화면과 무관하게 **늘 내 자리로** 간다(savePhoto)。
         지우기·판독은 위에서 보듯 viewingOther() 그대로 — 남의 사진이 섞여 있다. */
   /* ⚠ camBtn 은 없앴다(2026-08-10) — 목록에 남겨 두면 없는 단추를 부르다 멎는다 */
-  assert.match(app, /\['docBtn'\][\s\S]{0,120}viewingOnlyOther\(\)/);
+  assert.match(app, /\['docBtn', 'collectBtn', 'phUpBtn', 'phCollectBtn'\][\s\S]{0,180}viewingOnlyOther\(\)/,
+    'PC·모바일 올리기와 문서 모으기를 같은 기준으로 잠가야 합니다');
   assert.match(app, /function viewingOnlyOther\(\) \{ return viewingOther\(\) && gridOwner !== ALL_OWNERS; \}/,
     '「전체 근로자」만 예외여야 합니다 — 한 사람을 골라 볼 때는 여전히 잠깁니다.');
 });
@@ -888,7 +901,7 @@ test('파일 이름 등 바깥 문자열은 이스케이프해서 화면에 넣�
 test('한 번에 올릴 장수 상한을 지키고, 넘치면 몇 장이 남았는지 알린다', () => {
   // 조용히 자르면 "왜 몇 장이 안 올라갔지"가 되고 그게 증빙 누락으로 이어진다.
   assert.match(app, /PuPhotoStore\.UPLOAD_MAX/);
-  const fn = bodyAfter('async function addFiles(', 6400);
+  const fn = bodyAfter('async function addFiles(', 7200);
   assert.match(fn, /files\.length > MAX/, '상한을 넘겨도 그대로 받습니다');
   assert.match(fn, /나머지 ' \+ over \+ '장은 다시 골라/, '남은 장수를 알리지 않습니다');
   // 안내 문구의 숫자도 저장 층에서 가져온다(두 곳에 적으면 어긋난다)
@@ -1977,11 +1990,18 @@ test('「다시 판독」·「여러 장 판독」은 남의 사진에서도 눌
   assert.ok(!/blockedIfOther\(/.test(fnBody('readSelected')), 'readSelected 가 남의 사진을 막습니다');
 });
 
-test('올리기·지우기는 여전히 남의 사진을 막는다', () => {
-  /* 판독 잠금을 풀면서 이것까지 함께 풀리면 남의 사진을 지울 수 있게 된다. */
+test('올리기·지우기는 특정 다른 직원의 사진 화면에서 막는다', () => {
+  /* 전체 근로자 화면의 업로드는 내 자리로 저장되므로 허용한다. 특정 직원 한 명의
+     화면에서는 PC·모바일 단추뿐 아니라 실제 저장 입구까지 함께 막아야 한다. */
   assert.match(fnBody('deleteSelected'), /blockedIfOther\(/, '남의 사진을 지울 수 있습니다');
-  assert.match(app, /if \(viewingOther\(\)\) return false;\s*\/\/ 남의 사진첩을 보는 중에는 올릴 수 없다/,
-    '남의 사진첩에서 올리기가 열려 있습니다');
+  assert.match(app, /async function openCam\([\s\S]{0,360}?viewingOnlyOther\(\)/,
+    '특정 직원 화면에서 카메라가 열립니다');
+  assert.match(fnBody('phUpload'), /viewingOnlyOther\(\)/, '특정 직원 화면에서 모바일 올리기가 열립니다');
+  assert.match(fnBody('startCollect'), /viewingOnlyOther\(\)/, '특정 직원 화면에서 문서 모으기가 열립니다');
+  assert.match(app, /async function addFiles\([\s\S]{0,900}?viewingOnlyOther\(\)/,
+    '파일 저장 입구에서 특정 직원 화면 업로드를 막지 않습니다');
+  assert.match(app, /\['docBtn', 'collectBtn', 'phUpBtn', 'phCollectBtn'\][\s\S]{0,180}?viewingOnlyOther\(\)/,
+    'PC·모바일 올리기 단추가 함께 잠기지 않습니다');
 });
 
 test('판독은 사진 주인 자리에서 본문을 받고 그 자리에 결과를 쓴다', () => {

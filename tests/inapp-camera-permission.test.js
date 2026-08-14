@@ -15,10 +15,11 @@ test('앱 안 브라우저에서도 사진첩이나 기본 파일 선택기로 �
   assert.doesNotMatch(photos, /id="camInput"[^>]*capture|id="camNative"/);
 });
 
-test('포털 카메라 단추는 언제나 전용 카메라 관문으로 이동한다', () => {
+test('포털 카메라 단추는 사진첩 초기 화면을 거치지 않고 촬영 화면으로 바로 이동한다', () => {
   const wire = portal.match(/function wireCamFab\(\)[\s\S]*?\n  \}/);
   assert.ok(wire, '포털 카메라 연결 함수를 찾지 못했습니다');
-  assert.match(wire[0], /pu-camera\.html\?mode=photo&quick=1&from=portal&sso=1&v=/);
+  assert.match(wire[0], /pu-photos\.html\?cam=1&mode=photo&quick=1&from=portal&sso=1&v=/);
+  assert.doesNotMatch(wire[0], /pu-camera\.html/);
   assert.doesNotMatch(wire[0], /portalCamInput|needsDirectNativeCamera|\.click\(\)/);
 });
 

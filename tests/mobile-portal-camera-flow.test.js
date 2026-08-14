@@ -14,7 +14,8 @@ test('모바일 건의 단추는 카메라를 가리지 않는다', () => {
 test('포털 카메라는 일반사진 모드로 고정해 진입한다', () => {
   const fn = enter.match(/function wireCamFab\(\)\{[\s\S]*?\n  \}/)[0];
   assert.match(fn, /mode=photo&quick=1&from=portal/);
-  assert.doesNotMatch(fn, /pu-photos\.html|capture|input\.click/);
+  assert.match(fn, /pu-photos\.html\?cam=1/);
+  assert.doesNotMatch(fn, /pu-camera\.html|capture|input\.click/);
 });
 
 test('포털 촬영은 확인창 없이 계속 누적된다', () => {
@@ -28,7 +29,8 @@ test('로그인 이동 뒤에도 요청을 기억하고 실제로 열린 뒤 한
   const fn = photos.match(/function openCamIfAsked\(\) \{[\s\S]*?\n\}/)[0];
   assert.match(fn, /sessionStorage\.getItem\('pu_open_camera'\)/);
   assert.match(fn, /openCam\(\)\.then/);
-  assert.match(fn, /if \(opened\)[\s\S]*sessionStorage\.removeItem\('pu_open_camera'\)/);
+  assert.ok((fn.match(/clearCameraIntent\(\)/g) || []).length >= 2,
+    '성공과 최종 실패에서 모두 촬영 요청을 지워야 다음 실행 때 권한창이 되살아나지 않습니다.');
 });
 
 test('저장이 끝난 뒤 포털로 돌아간다', () => {
