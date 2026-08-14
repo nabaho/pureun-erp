@@ -120,6 +120,50 @@ test('회사 이름에 DB 열쇠가 못 쓰는 글자(. # $ [ ] /)가 있으면 
     '슬래시가 남으면 딴 경로(coInfo/n대한산업서울/경기/folder)로 새 버린다');
 });
 
+/* 최종 전체 리뷰 재검토 2026-08-14: loadCoInfo 의 on('value',...) 콜백이 실제로
+   renderPC 를 부르는지는 그동안 한 번도 실행해서 증명한 적이 없었다(다른 검사들은
+   on: () => {} 로 구독 자체를 흉내만 냈다) — 콜백을 붙잡아 직접 불러서 본다. */
+function loadLoadCoInfo(){
+  const at = source.indexOf('function loadCoInfo');
+  assert.ok(at > 0, 'loadCoInfo 를 찾지 못했습니다');
+  const end = source.indexOf('\nconst coKeyOf', at);
+  assert.ok(end > at, 'loadCoInfo 끝을 찾지 못했습니다');
+  const calls = { pcRendered: 0, coRendered: 0 };
+  let onValueCb = null;
+  const ctx = {
+    _coInfoOn: false,
+    _coInfo: {},
+    state: { view: 'co' },
+    Store: { mode: 'firebase', db: { ref: () => ({ on: (evt, cb) => { onValueCb = cb; } }) } },
+    DB_ROOT: 'pucards',
+    renderPC: () => { calls.pcRendered++; },
+    renderCoPage: () => { calls.coRendered++; }
+  };
+  vm.createContext(ctx);
+  vm.runInContext(source.slice(at, end), ctx);
+  ctx._calls = calls;
+  ctx._fireOnValue = v => onValueCb({ val: () => v });
+  return ctx;
+}
+
+test('loadCoInfo 의 구독 콜백은 기업정보 화면일 때 renderPC 를 부른다', () => {
+  const c = loadLoadCoInfo();
+  c.loadCoInfo();
+  c._fireOnValue({ a: { folder:'f1' } });
+  assert.equal(c._calls.pcRendered, 1, 'renderPC 를 안 불렀다');
+  assert.equal(c._calls.coRendered, 0, 'renderCoPage 를 부르면 옆줄 숫자가 안 바뀐다');
+  assert.deepEqual(JSON.parse(JSON.stringify(c._coInfo)), { a: { folder:'f1' } });
+});
+
+test('loadCoInfo 의 구독 콜백은 기업정보 화면이 아니면 아무 것도 다시 안 그린다', () => {
+  const c = loadLoadCoInfo();
+  c.state.view = 'list';
+  c.loadCoInfo();
+  c._fireOnValue({});
+  assert.equal(c._calls.pcRendered, 0);
+  assert.equal(c._calls.coRendered, 0);
+});
+
 test('coKeyOf 와 coEffectiveExtra 의 이름 열쇠 계산이 같은 회사에서 어긋나지 않는다', () => {
   /* 둘 다 _norm 하나만 쓰므로 항상 같이 가야 한다 — 따로 고치면 coKeyOf 가 만든
      열쇠를 coEffectiveExtra 가 못 찾는 사고가 난다. */

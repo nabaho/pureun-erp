@@ -208,12 +208,16 @@ test('coMoveSelTo 는 회사 열쇠가 사업자번호로 바뀐 뒤에도 옛 �
 });
 
 test('coMoveSelTo 는 지금 열쇠가 이미 이름 열쇠면 옛 열쇠를 따로 안 만든다', async () => {
+  /* ⚠ nameKey!==k 가드를 지우면 자기 자신(n다라기업)에 두 번 쓰게 되어(먼저 'f1',
+     바로 뒤 null) 키 개수는 그대로 1개라 안 잡힌다 — 실제로 옮긴 값(f1)이 남았는지도
+     같이 봐야 한다(최종 전체 리뷰 재검토 2026-08-14, 뮤테이션으로 확인). */
   const c = loadAssignBlock();
   c.coList = () => [{ key:'n다라기업', name:'다라기업' }];
   c.state.coSel = { 'n다라기업': 1 };
   await c.coMoveSelTo('f1');
   const w = c._writes[0].val;
   assert.equal(Object.keys(w).length, 1, '자기 자신 말고 옛 열쇠를 또 만들면 안 된다');
+  assert.equal(w['coInfo/n다라기업/folder'], 'f1', '자기 자신에 옛 열쇠 지우기를 덧써서 null 로 되돌리면 안 된다');
 });
 
 test('화면: 선택 도구줄이 목록 위에 있다', () => {
