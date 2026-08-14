@@ -695,12 +695,24 @@ async function requirePhotoAdmin(req) {
 }
 
 // functions/photos-migrate.js 가 기대하는 db 모양으로 실제 RTDB 를 얇게 감싼다.
+// ⚠ ownersCount 는 photoDb 위에 얹은 관찰용 값이다(순수 함수 migrateBatch 의
+//   반환 모양은 그대로 둔다) — 핸들러가 migrateBatch 를 다 부른 뒤 photoDb.ownersCount 를
+//   읽어 응답에 함께 싣는다.
 function realPhotoDb() {
   const db = getDatabase();
-  return {
+  const photoDb = {
+    ownersCount: 0,
     listOwners() {
+      // ⚠ owners 색인은 로그인(touchOwner) 또는 사진 올리기 때 채워진다 — 옛 자리
+      // 옮기기(migrateLegacy)만으로 사진이 들어온 사람은 로그인을 한 번도 안 했으면
+      // 이 색인에 없을 수 있다(최종 리뷰 2026-08-13). moved/skipped/failed 와 함께
+      // ownersCount 를 응답에 실어 두므로, 실제 직원 수와 크게 다르면 알 수 있다.
       return db.ref(`${PHOTOS_DB_ROOT}/owners`).once("value")
-        .then((s) => Object.keys(s.val() || {}));
+        .then((s) => {
+          const uids = Object.keys(s.val() || {});
+          photoDb.ownersCount = uids.length;
+          return uids;
+        });
     },
     listYears(uid) {
       return db.ref(`${PHOTOS_DB_ROOT}/u/${uid}/items`).once("value")
@@ -728,6 +740,7 @@ function realPhotoDb() {
       return db.ref().update(u);
     },
   };
+  return photoDb;
 }
 
 // photos-migrate.js 가 기대하는 bucket 모양으로 실제 Storage 를 얇게 감싼다.
@@ -739,9 +752,16 @@ function realPhotoBucket() {
   const bucket = getStorage().bucket("pureun-erp-hrphotos");
   return {
     upload(objectPath, dataUrl) {
-      const base64 = String(dataUrl || "").replace(/^data:[^,]*,/, "");
-      const buf = Buffer.from(base64, "base64");
-      return bucket.file(objectPath).save(buf, { contentType: "image/jpeg" });
+      // ⚠ 진짜 base64 data URL 인지 확인한다(최종 리뷰 2026-08-13) — 확인 없이
+      // Buffer.from 만 쓰면 이상한 값이 와도 조용히 깨진 바이트만 올리고, exists()는
+      // "올라갔다"로 통과해 실시간DB 원본을 지워 버린다(되돌릴 수 없다). 종류는
+      // 실린 mime 을 그대로 쓴다(전에는 image/jpeg 로 못 박았었다).
+      const m = /^data:([^;,]+)?(;base64)?,([\s\S]*)$/.exec(String(dataUrl || ""));
+      if (!m || !m[2]) {
+        return Promise.reject(new Error("사진 본문이 base64 data URL 이 아닙니다"));
+      }
+      const buf = Buffer.from(m[3], "base64");
+      return bucket.file(objectPath).save(buf, { contentType: m[1] || "image/jpeg" });
     },
     exists(objectPath) {
       return bucket.file(objectPath).exists().then((r) => !!(r && r[0]));
@@ -749,7 +769,15 @@ function realPhotoBucket() {
   };
 }
 
-exports.migratePhotosToStorage = functions.https.onRequest(async (req, res) => {
+// ⚠ 기본 시간제한(60초)·메모리(256MB)로는 30장 한 배치(읽기·올리기·확인·쓰기를
+//   차례로 30번)를 못 끝낼 수 있다(최종 리뷰 2026-08-13) — 배치로 나눈 이유 자체가
+//   시간제한 때문인데 기본값이면 그 위험이 그대로 남는다. sendMaterialMail(120초)·
+//   sendScheduledMail(540초)와 같은 이유. 리전은 그대로 둔다(실시간DB도 미국에
+//   있어 나머지 함수들과 맞춰 두는 쪽이 낫다 — 창고만 서울이라 올리기 구간에서
+//   지연이 있을 수 있지만, 관리자가 가끔 누르는 일회성 도구라 감내한다).
+exports.migratePhotosToStorage = functions
+  .runWith({ timeoutSeconds: 300, memory: "512MB" })
+  .https.onRequest(async (req, res) => {
   setAutomationCors(req, res);
   if (req.method === "OPTIONS") { res.status(204).send(""); return; }
   if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
@@ -757,10 +785,11 @@ exports.migratePhotosToStorage = functions.https.onRequest(async (req, res) => {
     await requirePhotoAdmin(req);
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const limit = Number(body.limit) > 0 ? Number(body.limit) : 30;
-    const result = await migrateBatch(realPhotoDb(), realPhotoBucket(), limit);
+    const db = realPhotoDb();
+    const result = await migrateBatch(db, realPhotoBucket(), limit);
     res.status(200).json({
       ok: true, moved: result.moved, skipped: result.skipped,
-      failed: result.failed, done: result.done,
+      failed: result.failed, done: result.done, ownersCount: db.ownersCount,
     });
   } catch (error) {
     console.error("migratePhotosToStorage", error && error.stack || error);
