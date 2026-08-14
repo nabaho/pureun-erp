@@ -132,6 +132,12 @@
   function ownerBoxPath() { return DB_ROOT + '/owners'; }
   function arrivalPath(companyId, slot) { return DB_ROOT + '/arrivals/' + companyId + '/' + slot; }
   function arrivalBoxPath() { return DB_ROOT + '/arrivals'; }
+  /* 업체 공유 — 내 업체를 다른 담당자에게 「이거 봐 주세요」로 알린다(대표 지시
+     2026-08-14). pending_shared 와 같은 열린 칸이다 — 받는 사람의 자리(u/$owner)
+     안이 아니라 자리 **밖**에 두는 이유는, 자리 밖 칸이라야 상대가 자기 것이
+     아닌데도 쓸 수 있기 때문이다(콘솔 규칙을 새로 열 필요가 없다). */
+  function sharePath(targetUid, id) { return DB_ROOT + '/shares/' + targetUid + '/' + id; }
+  function shareBoxPath(targetUid) { return DB_ROOT + '/shares/' + targetUid; }
   function accessLogPath(id) { return DB_ROOT + '/access_log/' + id; }
   function handoffLogPath(id) { return DB_ROOT + '/handoff_log/' + id; }
 
@@ -387,6 +393,33 @@
   function listArrivals() {
     return deps.db.ref(arrivalBoxPath()).once('value')
       .then(function (s) { return s.val() || {}; });
+  }
+
+  /* 내 업체를 다른 담당자에게 공유한다 — 공유는 권한을 주는 것이 아니라
+     「이거 봐 주세요」 알림이다(대표 결정 2026-08-14: 보기 권한은 원래대로,
+     대시보드에 표시만 뜬다). 공유사항(tags)은 최소 하나 있어야 한다 — 아무 표시
+     없이 이름만 넘기면 받는 사람이 왜 왔는지 모른다. */
+  function shareCompany(o) {
+    o = o || {};
+    var targetUid = String(o.targetUid || '');
+    var tags = Array.isArray(o.tags) ? o.tags.filter(Boolean) : [];
+    if (!targetUid) return Promise.reject(new Error('공유할 사람을 골라 주세요'));
+    if (!o.companyId) return Promise.reject(new Error('사업장을 알 수 없습니다'));
+    if (!tags.length) return Promise.reject(new Error('공유사항을 하나 이상 체크해 주세요'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var id = newId();
+    var up = {};
+    up[sharePath(targetUid, id)] = {
+      companyId: o.companyId, companyName: String(o.companyName || ''),
+      byUid: deps.uid || '', byName: deps.name || '',
+      tags: tags, at: Number(o.at || Date.now())
+    };
+    return deps.db.ref().update(up).then(function () { return id; });
+  }
+
+  function listShares(targetUid) {
+    if (!deps.db) return Promise.resolve({});
+    return deps.db.ref(shareBoxPath(targetUid)).once('value').then(function (s) { return s.val() || {}; });
   }
 
   /* 공용 대기 칸 목록 — 서버가 메일로 받은 것(5차에 채워진다). */
@@ -649,6 +682,21 @@
     return false;
   }
 
+  /* 내 업체 순서(사람별 대시보드, 대표 지시 2026-08-14: "마우스로 위아래 변경").
+     골라 둔 순서에 없는 업체(새로 맡거나 아직 안 옮긴 것)는 원래 자리 그대로
+     뒤에 붙는다 — 순서를 안 저장했다고 업체가 안 보이면 안 된다. */
+  function applyOrder(list, order) {
+    var ord = Array.isArray(order) ? order : [];
+    var idx = {};
+    ord.forEach(function (id, i) { idx[id] = i; });
+    var withKey = (list || []).map(function (c, i) {
+      var k = (c && Object.prototype.hasOwnProperty.call(idx, c.id)) ? idx[c.id] : ord.length + i;
+      return { c: c, k: k };
+    });
+    withKey.sort(function (a, b) { return a.k - b.k; });
+    return withKey.map(function (w) { return w.c; });
+  }
+
   /* 이름으로 업체 맞추기 — 급여관리 설정카드는 「화담원 아산점」처럼 적혀 있어
      글자가 똑같지 않다. 앞가지(주식회사·㈜)와 괄호·빈칸을 떼고 견준다.
      **긴 이름부터** 봐서 「화담원」이 「화담원산업」을 가로채지 않게 한다. */
@@ -723,10 +771,16 @@
 
      ⚠ 사진첩의 owners 는 관리자만 읽지만, 여기는 **전 직원이 읽는다**
      (대표 결정 2026-08-13 — 남의 자리를 전 직원이 이름 골라 볼 수 있다). */
-  function touchOwner(name) {
+  /* email 을 함께 적어 둔다 — 사람별 대시보드가 「이 사람이 어느 업체 담당인가」를
+     가리려면 사번을 이메일로 바꾼 값(sidToEmail)과 견줄 이 사람의 이메일이 있어야
+     한다. 이름·최근 활동만 있던 이 명단에 email 한 칸을 보태는 것뿐이라 콘솔 규칙은
+     그대로다(같은 칸 안의 필드 하나 늘리는 것 — owners/$uid 는 이미 본인만 쓴다). */
+  function touchOwner(name, email) {
     if (!deps.db || !deps.uid) return Promise.resolve();
     var up = {};
-    up[ownerPath(deps.uid)] = { name: name || deps.uid, lastAt: Date.now() };
+    var rec = { name: name || deps.uid, lastAt: Date.now() };
+    if (email) rec.email = email;
+    up[ownerPath(deps.uid)] = rec;
     return deps.db.ref().update(up).catch(function (e) { console.warn('[담당자 명단]', e && e.code); });
   }
 
@@ -735,13 +789,24 @@
     return deps.db.ref(ownerBoxPath()).once('value').then(function (s) { return s.val() || {}; });
   }
 
+  /* 내 업체 순서는 내 담당자 명단 칸(owners/$uid) 밑에 둔다 — 이미 나만 쓸 수 있는
+     칸이라 새 콘솔 규칙이 필요 없다. */
+  function myOrderPath(uid) { return ownerPath(uid) + '/order'; }
+
+  function saveMyCompanyOrder(order) {
+    if (!deps.db || !deps.uid) return Promise.reject(new Error('로그인이 필요합니다'));
+    var up = {};
+    up[myOrderPath(deps.uid)] = Array.isArray(order) ? order : [];
+    return deps.db.ref().update(up);
+  }
+
   /* 로그인 마무리 — 이름을 찾고 명단에 나를 적어 둔다. 이름을 못 찾아도
      로그인은 막지 않는다(이메일이라도 보이는 것이 빈칸보다 낫다). */
   function signIn(email, fallbackName) {
     deps.name = fallbackName || email || deps.uid || '';
     return lookupName(email).then(function (found) {
       if (found) deps.name = found;
-      return touchOwner(deps.name);
+      return touchOwner(deps.name, email);
     }).catch(function () { /* 명단 갱신 실패가 로그인을 막지 않는다 */ })
       .then(function () { return deps.name; });
   }
@@ -893,6 +958,13 @@
     normalizeCompanies: normalizeCompanies,
     listCompanies: listCompanies,
     matchCompanyName: matchCompanyName,
-    isMyCompany: isMyCompany
+    isMyCompany: isMyCompany,
+    applyOrder: applyOrder,
+    myOrderPath: myOrderPath,
+    saveMyCompanyOrder: saveMyCompanyOrder,
+    sharePath: sharePath,
+    shareBoxPath: shareBoxPath,
+    shareCompany: shareCompany,
+    listShares: listShares
   };
 })(typeof window !== 'undefined' ? window : globalThis);
