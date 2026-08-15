@@ -125,7 +125,7 @@ test('푸른이알피 청구 연동은 남의 원장을 건드리지 않는다',
 });
 
 test('서류 원본은 사진첩에 두고 기금은 참조만 갖는다', () => {
-  assert.match(SRC, /<script src="js\/pu-photo-store\.js"><\/script>/, '공용 저장 층을 쓰지 않는다');
+  assert.match(SRC, /<script src="js\/pu-photo-store\.js(\?v=\d+)?"><\/script>/, '공용 저장 층을 쓰지 않는다');
   assert.match(SRC, /var PHOTO_BUCKET='gs:\/\/pureun-erp-hrphotos'/, '사진첩 창고 지정이 없다');
   const album = fs.readFileSync(path.join(__dirname, '..', 'pu-photos.html'), 'utf8');
   assert.ok(album.includes("'pureun-erp-hrphotos'"), '사진첩 본체와 창고가 다르면 원본을 못 찾는다');
