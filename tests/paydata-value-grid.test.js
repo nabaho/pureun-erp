@@ -262,3 +262,19 @@ test('★ 회사이름에 쉼표가 있으면 제목 줄도 따옴표로 감싸�
   const lines = text.split('\r\n');
   assert.equal(lines[0], '"화,담원 2026-08 값"', '제목 줄도 다른 줄처럼 csvEsc를 거쳐야 합니다');
 });
+
+/* 항목 이름은 **서류에 적힌 그대로** 담긴다(판독 층 pairs 규칙) — 「비고(가,나)」
+   처럼 쉼표가 들어올 수 있다. 머리글 줄만 csvEsc 를 안 거치면 그 줄만 칸이 하나
+   늘어, 아래 모든 값이 한 칸씩 밀린 채 급여프로그램에 들어간다. */
+test('★ 항목 이름에 쉼표가 있으면 머리글 줄도 따옴표로 감싸진다', () => {
+  const { W } = loadOut();
+  W.App.values = {
+    v1: { companyId: 'co_1', name: '배영승', sourceId: 'a1',
+          pairs: [{ item: '비고(가,나)', value: '3일' }] }
+  };
+  W.valuesCsv();
+  const text = W.__blob().parts[0].replace(/^﻿/, '');
+  const lines = text.split('\r\n');
+  assert.equal(lines[1], '근로자,"비고(가,나)"', '머리글 줄도 몸통과 똑같이 감싸야 합니다');
+  assert.equal(lines[2], '배영승,3일', '값 줄은 그대로여야 합니다');
+});

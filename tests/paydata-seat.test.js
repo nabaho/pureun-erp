@@ -29,14 +29,14 @@ function loadApp(appState) {
     'const App = ' + JSON.stringify(Object.assign({
       pick: {}, companies: [], pending: {}, arrivals: {}, trash: {},
       folders: {}, folderPick: 'all', folderEdit: { mode: '', fid: '', value: '' },
-      staffList: [], deputies: {}, month: '2026-08', kind: 'attend',
+      staffList: [], deputies: {}, pendTag: {}, month: '2026-08', kind: 'attend',
       viewingUid: '', viewingName: '', viewingDeputy: false
     }, appState)) + ';',
-    cut('esc'), cut('thisMonth'),
+    cut('esc'), cut('jsq'), cut('thisMonth'),
     cut('pickOn'), cut('pickToggle'), cut('pickSetAll'), cut('pickList'),
     cut('pickAllOn'), cut('pickPrune'), cut('pickOf'), cut('pickPut'), cut('pickBar'),
     cut('canWrite'), cut('bannerHtml'),
-    cut('guessTag'), cut('screenPending'),
+    cut('guessTag'), cut('pendTagOf'), cut('setPendTag'), cut('screenPending'),
     cut('drawerCounts'), cut('drawerModel'), cut('searchRows'),
     cut('folderCounts'), cut('folderRows'), cut('folderBar'), cut('folderEditorHtml'),
     cut('folderOptionsHtml'), cut('screenDrawer'),
