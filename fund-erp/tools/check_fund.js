@@ -341,8 +341,15 @@ ok('전기이월 저장 목록을 OPEN_ACCT에서 뽑음',
 // 세무회계법인이 비영리조직회계기준으로 결산하는 기금이 있다(I공동·J공동)
 ok('비영리조직회계기준 계정', src.includes("'미수수익':'자산','미수금':'자산','단기금융상품':'자산','특정현금과예금':'자산'")
   && src.includes("'손실대비특별적립금':'자본'"));
-ok('그 계정들의 전기이월 칸', src.includes("accrued:'미수수익',recv:'미수금',stfund:'단기금융상품',spcash:'특정현금과예금'")
-  && src.includes("oi('accrued','미수수익')+oi('recv','미수금')"));
+ok('그 계정들의 전기이월 칸', src.includes("accrued:'미수수익',recv:'미수금',stfund:'단기금융상품',spcash:'특정현금과예금'"));
+/* 전기이월 칸을 손으로 나열하면 계정을 늘릴 때 빠진다 — 저장은 opening 마디를 통째로 바꿔 쓰므로
+   화면에 칸이 없는 열쇠는 **저장할 때 값이 지워진다**. 그리는 쪽도 저장하는 쪽과 같은 표를 쓴다. */
+ok('전기이월 칸을 계정표에서 뽑아 그린다',
+  src.includes("+'<div class=\"grid\" style=\"max-width:760px\">'+Object.keys(OPEN_ACCT).map(function(k){")
+  && src.includes("return oi(k, OPEN_ACCT[k]+(_n?"));
+ok('전기이월 칸을 손으로 나열하지 않는다', !/\+oi\('\w+','/.test(src));
+ok('저장도 같은 표에서 뽑는다',
+  src.includes("Object.keys(OPEN_ACCT).forEach(function(k){var el=$('op-'+k);if(el)o[k]=num(el.value)||0;});"));
 // 그런 기금은 당기운영이익이 0이 아니다(I공동 2025: 66,048원) → 자동조정을 끈다
 ok('준비금 자동조정 끄기', src.includes('.reserve_auto===false)')
   && src.includes('function _rsvAutoOf')
@@ -355,10 +362,12 @@ ok('재무상태표에 근거를 붙여 두 줄로', src.includes('법인세법 
   && src.includes('근로복지기본법 §62② · 이월')
   && src.includes("won(f.res1)") && src.includes("won(f.res2)"));
 ok('전기이월 준비금1·2 분리', src.includes("reserve:'고유목적사업준비금1',reserve2:'고유목적사업준비금2'")
-  && src.includes("oi('reserve2','고유목적사업준비금2 ")
   && src.includes('liab+=(num(opening.reserve)||0)+(num(opening.reserve2)||0);')
   && src.includes('bal[RESERVE_ACCTS[1]]+=Math.round(num(op.reserve2)||0);'));
-ok('전기이월에 매도가능증권 칸', src.includes("secu:'매도가능증권'") && src.includes("oi('secu','매도가능증권')"));
+// 두 준비금은 이름만으로는 무엇이 담기는지 알기 어렵다 — 칸 옆에 근거를 곁들인다
+ok('준비금 칸에 근거를 곁들인다',
+  src.includes("var OPEN_NOTE={reserve:'법인세법 §29 · 이자', reserve2:'근로복지기본법 §62② · 이월'};"));
+ok('전기이월에 매도가능증권 칸', src.includes("secu:'매도가능증권'"));
 ok('자산총계에 증권 합산', src.includes('cash+savings+loan+secu'));
 // 대부금은 기본재산을 헐어 나간 것이 아니라 그 자체가 자산이다 — 예입에서 빼지 않고 따로 더한다
 // (F공동 2024 제출본: ㉑ 674,108천 + ㉗ 239,720천 = ㉘ 913,828천)
