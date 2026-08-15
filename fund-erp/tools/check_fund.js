@@ -112,9 +112,18 @@ ok('별지15호 69번 잔액에 대부금 항이 없다', !src.includes('(run.lo
 // ㉙은 이자·잡수익만(준비금 환입 제외), ㉚은 그 해 준비금2 설정액, ㉞는 전기말 자산총계
 ok('별지15호 ㉙ 기금운용 수익금은 사업수익만', src.includes('src={income:fin.bizRev,')
   && src.includes("if(n!=='고유목적사업준비금환입') bizRev+=-s;"));
-// ㉚는 ⑰만. 기본재산 감소액(⑰+⑱)을 쓰면 ⑱ 분할로 딴 기금에 넘어간 몫까지 재원으로 잡힌다
-ok('별지15호 ㉚는 준비금2 설정액(⑰ 기본재산 사용)', src.includes('(num(rep.src_contrib)||0):bf.use,'));
+/* ㉚는 ⑰ 중에서도 «그 해 현금으로 들어온 출연금»까지다.
+   ⑱ 분할을 넣으면 딴 기금에 넘어간 몫이, 상한이 없으면 쌓아 둔 기본재산에서 꺼낸 몫이
+   재원에 섞인다. 뒤엣것은 ㉞ 이월금(전기말 자산총계)에 이미 들어 있어 두 번 세게 된다. */
+ok('별지15호 ㉚는 그 해 현금출연 한도 안의 ⑰', src.includes('):Math.min(bf.use,cashIn),')
+  && src.includes('var cashIn=_contribOf(arr);'));
 ok('별지15호 ㉚에 ⑱ 분할이 섞이지 않는다', !src.includes('(num(rep.src_contrib)||0):bfDec,'));
+ok('별지15호 ㉚에 상한이 있다', !/\):bf\.use,/.test(src));
+// ㉛·㉜·㉝ 는 사람이 적는 칸이라 이월금 안의 돈을 다시 적을 수 있다 — 앱이 고치지 않고 알린다
+ok('별지15호 재원이 그 해 있던 돈을 넘으면 붙잡는다',
+  src.includes('var srcCap=_openAssets(op)+cashIn+fin.bizRev;')
+  && src.includes('var srcOver=Math.max(0,src.total-srcCap);')
+  && src.includes("+(R.srcOver>0?'<tr>") && src.includes('그 해 있던 돈보다'));
 // 잔액이 음수 = 재원보다 많이 썼다 = 기본재산을 헐어 썼다. 대부사업 말고는 못 하는 일이라 붙잡는다
 // R.rest<0 는 숫자를 빨갛게 하는 자리에도 있다 — 경고 줄만 떼어내도 통과하지 않게 여는 <tr> 까지 본다
 ok('별지15호 잔액이 음수면 화면이 붙잡는다',

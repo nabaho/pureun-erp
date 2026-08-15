@@ -45,6 +45,8 @@ function load() {
     grabFn('acctType'), grabFn('isDrAcct'), grabFn('_openingOf'),
     grabFn('_splitsOf'), grabFn('expandSplits'), grabFn('journalOf'), grabFn('acctMoves'),
     grabFn('openingMoves'), grabFn('computeFin'), grabFn('guessBfKind'), grabFn('_k1000'),
+    // ㉚ 는 그 해 «현금» 출연금을 상한으로 삼는다 — 그 값을 세는 함수도 함께 들여온다
+    grabFn('_txnDone'), grabFn('_splitSum'), grabFn('_contribOf'),
     grabFn('_openAssets'), grabFn('buildF15'),
     'this.buildF15=buildF15; this.guessBfKind=guessBfKind; this._k1000=_k1000;',
     'this.F15_ROWS=F15_ROWS; this.BF_KINDS=BF_KINDS;',
@@ -160,6 +162,28 @@ test('㉚ 은 그 해 기본재산 사용액(⑰)과 같다 — 출연금×비�
   assert.ok(R2.bf.split > 0 && R2.bf.use === 0, '분할로 표시하면 ⑱ 로 간다');
   assert.equal(R2.src.contrib, 0, '㉚ 에 ⑱ 분할이 섞이면 안 된다');
   assert.equal(R2.bfDec, R2.bf.split, '⑱ 은 그대로 기본재산 감소이긴 하다');
+
+  /* ⑰ 중에서도 «그 해 현금으로 들어온 출연금»까지만 ㉚ 다.
+     쌓아 둔 기본재산에서 꺼내 쓴 몫은 ㉞ 이월금(전기말 자산총계)에 이미 들어 있어
+     또 더하면 같은 돈을 두 번 센다 — 재원 ㉟ 이 그 해 있던 돈보다 커진다. */
+  const big = TXNS.concat([
+    { _id: 'a9', date: '2025-12-31', memo: '준비금2 전입', withdraw: 0, amount: 9000000000,
+      debit: '기본재산', credit: '고유목적사업준비금2', approved: true }
+  ]);
+  const R3 = box.buildF15(big, 'F1', 2025, {}, SITES, WELF);
+  assert.equal(R3.bf.use, 9000000000, '⑰ 은 실제 기본재산 사용액 그대로다');
+  assert.equal(R3.src.contrib, R3.cashIn, '㉚ 는 그 해 현금출연을 넘지 않는다');
+  assert.ok(R3.src.contrib < R3.bf.use, '넘는 몫은 ㉚ 에 들어가지 않는다');
+  assert.equal(R3.srcOver, 0, '상한 덕분에 재원이 그 해 있던 돈을 안 넘는다');
+
+  // ㉜ 를 사람이 채워 이월금 안의 돈을 또 적으면 — 앱이 고치지 않고 «넘쳤다»고 알린다
+  const base = box.buildF15(TXNS, 'F1', 2025, {}, SITES, WELF);
+  assert.equal(base.srcOver, 0, '평소에는 넘치지 않는다');
+  const R4 = box.buildF15(TXNS, 'F1', 2025, { src_basic_range: '9000000000' }, SITES, WELF);
+  assert.equal(R4.srcCap, base.srcCap, '사람이 적은 값은 천장을 바꾸지 않는다');
+  assert.equal(R4.src.total, base.src.total + 9000000000, '적은 만큼 재원에 그대로 더해진다');
+  assert.ok(R4.srcOver > 0, '넘쳤다는 것을 알아챈다');
+  assert.equal(R4.srcOver, R4.src.total - R4.srcCap, '넘친 금액 = 재원 − 천장');
 });
 
 test('㉚·㉞ 는 수기 입력값이 있으면 그것을 먼저 쓴다', () => {
