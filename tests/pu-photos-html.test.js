@@ -615,6 +615,29 @@ test('남의 사진은 지우거나 고칠 수 없다 (판독은 2026-08-10 부�
     '「전체 근로자」만 예외여야 합니다 — 한 사람을 골라 볼 때는 여전히 잠깁니다.');
 });
 
+/* ── 담긴 양(용량) 자동으로 보이기 (대표 지시 2026-08-15) ── */
+
+test('★ 설정을 열 때 「용량·저장」탭이면 자동으로 센다', () => {
+  const fn = app.match(/function showView\([\s\S]*?\n\}/);
+  assert.ok(fn, 'showView 를 찾지 못했습니다.');
+  assert.match(fn[0], /if \(setTab === 'use'\) countUsage\(\);/,
+    '설정을 처음 열 때 「용량·저장」탭이 이미 골라져 있어도 손으로 [세어 보기]를 눌러야 보입니다.');
+});
+
+test('★ 「용량·저장」탭을 고를 때도 자동으로 센다', () => {
+  const fn = app.match(/function pickSetTab\([\s\S]*?\n\}/);
+  assert.ok(fn, 'pickSetTab 를 찾지 못했습니다.');
+  assert.match(fn[0], /if \(id === 'use'\) countUsage\(\);/,
+    '다른 탭을 보다가 「용량·저장」으로 옮겨도 자동으로 세어야 합니다.');
+});
+
+test('countUsage 는 이미 세는 중이면 다시 시작하지 않는다', () => {
+  // 자동 호출 두 곳(showView·pickSetTab)이 겹칠 수 있어 재진입 방지가 필요하다.
+  const fn = app.match(/function countUsage\(\)[\s\S]*?\n\}/);
+  assert.ok(fn, 'countUsage 를 찾지 못했습니다.');
+  assert.match(fn[0], /if \(btn\.disabled\) return;/);
+});
+
 /* ── 확인 필요 모아보기 · 여러 장 판독 ── */
 
 test('다시 판독해도 검증 통과분은 자동으로 명함첩에 간다', () => {
