@@ -4802,11 +4802,21 @@ function expandSplits(arr){
   (arr||[]).forEach(function(x){
     var sp=_splitsOf(x);
     if(!sp.length){ out.push(x); return; }
+    /* 현금이 오가지 않은 줄은 쪼개지 않고 그대로 둔다.
+       조각을 만들 때 «고정 쪽»을 입금/출금 방향으로 정하는데, 둘 다 0이면 방향을 알 수 없어
+       credit 을 고정 쪽으로 잡는다 — 그러면 차·대변이 같아져 **금액이 통째로 사라진다**
+       (현물출연 72.6억을 쪼개면 기본재산이 0이 됐다).
+       쪼개는 창은 금액 0을 이미 막지만, **쪼갠 뒤에 금액을 지우면** 막을 자리가 없다. */
+    if(!((num(x.deposit)||0)+(num(x.withdraw)||0))){ out.push(x); return; }
     var isDep=(num(x.deposit)||0)>0;
     var cash=(isDep?x.debit:x.credit)||'현금성자산';
     sp.forEach(function(s,i){
       var o=Object.assign({},x);
       o._id=x._id+'#'+(i+1); o.splits=null; o.amount=num(s.amount)||0;
+      /* 조각임을 남긴다 — 금액은 amount 에만 있다. deposit 은 첫 조각이 통장 한 줄 전체를
+         지니고 있어(잔액 대사용) 금액으로 쓰면 다른 조각 몫까지 딸려 온다.
+         _nocashSrc 는 «원래 줄이 현물출연이었나» — 조각에 붙는 nocash 와 뜻이 다르다. */
+      o._split=1; o._nocashSrc=x.nocash?1:0;
       if(isDep){ o.debit=cash; o.credit=s.acct; } else { o.debit=s.acct; o.credit=cash; }
       if(i>0){ o.deposit=0; o.withdraw=0; o.nocash=1; }   // 통장 금액은 첫 조각만 지닌다
       out.push(o);
@@ -5999,6 +6009,10 @@ function _reserveAcct(fin){
 function _contribOf(arr){
   var s=0; expandSplits(arr).forEach(function(x){
     if(!x.approved||x.credit!=='기본재산') return;
+    /* 분할 조각은 amount 가 곧 그 조각의 금액이다. 조각에 붙은 nocash 는 «현물»이 아니라
+       «통장 금액은 첫 조각에 있다»는 뜻이므로 여기서 빼면 안 된다 — 빼면 두 번째 조각에 든
+       출연금이 통째로 사라지고, 첫 조각이면 반대로 다른 조각 몫까지 딸려 와 부푼다. */
+    if(x._split){ if(!x._nocashSrc) s+=num(x.amount)||0; return; }
     if(x.nocash) return;                                  // 현물출연·대체분개는 제외
     var amt=num(x.deposit)||0;
     if(!amt&&(x.debit==='현금성자산'||x.debit==='정기예금')) amt=num(x.amount)||0;
@@ -6032,7 +6046,10 @@ function reserveAdjust(arr,fid,yr){
      미수이자는 뺀다 — I공동 2025는 이자수익 527,526 중 미수수익 66,048을 빼고 461,478만 전입했다. */
   var itc=0;
   expandSplits(arr).forEach(function(x){
-    if(!x.approved||x.credit!=='이자수익'||x.nocash) return;
+    if(!x.approved||x.credit!=='이자수익') return;
+    // 분할 조각은 amount 가 그 조각의 금액이다(위 _contribOf 와 같은 까닭)
+    if(x._split){ if(!x._nocashSrc) itc+=num(x.amount)||0; return; }
+    if(x.nocash) return;
     itc+=num(x.deposit)||num(x.amount)||0; });
   var r={kind:'', need:0, avail:avail, amount:0, acct:_reserveAcct(fin), fin:fin,
          contrib:contrib, rate:rate, cap:cap, setup:0, deficit:0, parts:[], interestCash:Math.round(itc)};

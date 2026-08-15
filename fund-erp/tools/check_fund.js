@@ -220,10 +220,29 @@ ok('설정액 입력칸과 저장', src.includes("<input id=\"op-rsvset\"")
   && src.includes('function _rsvSetOf'));
 ok('환입을 계정별 잔액 안에서 배분', src.includes('r.parts.push({acct:a,amount:take})'));
 ok('조정 분개 묶음 생성기', src.includes('function _reserveEntries'));
+/* ══ 분할 조각의 금액 ══
+   expandSplits 는 조각 2번째부터 nocash:1 을 붙인다 — 뜻은 «통장 금액은 첫 조각에 있다»인데,
+   출연금·이자를 세는 쪽이 그것을 «현금이 안 오간 현물출연»으로 읽어 통째로 버렸다.
+   반대로 첫 조각은 deposit 이 통장 한 줄 전체라 다른 조각 몫까지 딸려 왔다.
+   («출연금 5천만 + 이자 1천원» 한 줄에서 출연금이 50,001,000 으로 세졌고, 순서를 바꾸면 0 이 됐다.)
+   이 값은 준비금2 설정 한도와 별지15호 ㉚ 상한에 그대로 쓰여 돈에 직접 닿는다. */
+ok('조각임을 따로 표시한다', src.includes('o._split=1; o._nocashSrc=x.nocash?1:0;'));
+ok('출연금은 조각의 amount 를 쓴다', src.includes("if(x._split){ if(!x._nocashSrc) s+=num(x.amount)||0; return; }"));
+ok('현금 이자도 조각의 amount 를 쓴다', src.includes("if(x._split){ if(!x._nocashSrc) itc+=num(x.amount)||0; return; }"));
+// 현물출연을 쪼갠 조각은 여전히 «현금 아님» — 원래 줄의 nocash 를 조각이 물려받아 가른다
+ok('현물출연 조각은 현금 출연금에서 빠진다', src.includes('_nocashSrc'));
+/* 현금이 안 오간 줄은 쪼개지 않는다 — 방향을 알 수 없어 고정 쪽을 credit 으로 잡으면
+   차·대변이 같아져 금액이 통째로 사라진다(현물출연 72.6억 → 기본재산 0). */
+ok('현금 없는 줄은 쪼개지 않는다',
+  src.includes("if(!((num(x.deposit)||0)+(num(x.withdraw)||0))){ out.push(x); return; }"));
+ok('쪼개는 창도 금액 0을 막는다', src.includes("if(!total){ toast('금액이 없는 거래는 쪼갤 수 없습니다','warn'); return; }"));
+// 0원 조각은 아예 조각이 되지 않는다 — 이 걸러내기가 없으면 빈 줄이 분개로 들어간다
+ok('조각은 계정과 금액이 있어야 조각이다',
+  src.includes("return s&&s.acct&&(num(s.amount)||0)>0; });"));
 // 검증한 열한 기금 모두 준비금1(법인세법 제29조)을 '현금 이자수익만큼 전입 후 환입'으로 적었다
 // 순이익·대차에는 영향이 없지만 손익계산서의 사업외수익·비용에 나타나야 제출본과 맞는다
 ok('준비금1 전입액을 이자수익만큼 자동 생성',
-  src.includes("if(!x.approved||x.credit!=='이자수익'||x.nocash) return;")
+  src.includes("if(!x.approved||x.credit!=='이자수익') return;")
   && src.includes('interestCash:Math.round(itc)')
   && src.includes("out.push({id:'rsv1set'+yr, e:_reserveEntry(yr,'전입',it,R1)});")
   && src.includes("out.push({id:'rsv1in'+yr, e:_reserveEntry(yr,'환입',it,R1)});"));
