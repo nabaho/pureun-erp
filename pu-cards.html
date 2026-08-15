@@ -1237,6 +1237,18 @@ body.pc #pcDetail{display:flex}
    null이면 "데모 모드"(이 기기에만 저장)로 동작합니다.
    ════════════════════════════════════════════════════════════ */
 const FB_APPCHECK_KEY = '6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_'; // ERP와 동일 reCAPTCHA v3 키
+/* ⚠ App Check 를 끈 채로 둔다 (2026-08-14).
+   자동화 브라우저로 이 화면을 열 때마다 reCAPTCHA 검증이 실패했고, 반복되자 구글이
+   사이트키 자체를 잠시 막아 사무실에서도 로그인이 안 되는 사고로 이어졌다.
+   대표가 Firebase 콘솔에서 직접 확인한 결과 Realtime Database·Storage·Authentication
+   의 App Check 는 전부 «모니터링»(강제 아님) 상태였다 — 강제였다면 토큰 없는 읽기가
+   PERMISSION_DENIED 로 막혔을 것이다. 즉 지금의 reCAPTCHA 호출은 지키는 것 없이
+   실패·잠금 위험만 만든다. Rules 의 auth != null 은 그대로 지킨다.
+   pu-erp.html 의 FB_APPCHECK_ON 과 같은 방식(그 파일의 tests/erp-appcheck.test.js 참고).
+
+   ★ 콘솔에서 App Check 강제를 켤 때는 아래를 true 로 되돌려야 한다.
+     되돌리지 않으면 모든 읽기·쓰기가 막힌다. */
+var FB_APPCHECK_ON = false;
 const FIREBASE_CONFIG = {
   apiKey: 'AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA',
   databaseURL: 'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app',
@@ -1507,7 +1519,7 @@ const Store = {
   init(){
     if (FIREBASE_CONFIG && typeof firebase !== 'undefined' && firebase.initializeApp) {
       firebase.initializeApp(FIREBASE_CONFIG);
-      if (FB_APPCHECK_KEY && firebase.appCheck){
+      if (FB_APPCHECK_ON && FB_APPCHECK_KEY && firebase.appCheck){
         try{ firebase.appCheck().activate(new firebase.appCheck.ReCaptchaV3Provider(FB_APPCHECK_KEY), true); }
         catch(e){ console.warn('[AppCheck]', e&&e.message); }
       }
@@ -1526,7 +1538,8 @@ const Store = {
           restoreLastScreen();
           if(!Store._idxDone){ setTimeout(backfillIdx, 3000); }
           /* 번호 열쇠 자리 첫 채우기 — 한 번만. 명함이 다 들어온 뒤라야 빠짐없이 찬다. */
-          if(!Store._byKeyDone){ Store._byKeyDone=true; setTimeout(ensureByKeyMap, 4000); } });
+          if(!Store._byKeyDone){ Store._byKeyDone=true; setTimeout(ensureByKeyMap, 4000); } },
+          e => { if(!FB_APPCHECK_ON && isDenied(e)) console.error('[App Check] 콘솔에서 App Check 강제를 켜셨다면 pu-cards.html 의 FB_APPCHECK_ON 을 true 로 되돌려야 합니다 — 그러지 않으면 모든 읽기·쓰기가 막힙니다'); });
         this.db.ref(DB_ROOT+'/groups').on('value', s => { state.groups = s.val()||{}; render();
           if(!Store._bizSeedDone){ Store._bizSeedDone=true; setTimeout(seedBizFolders, 3000); } });
         /* 내 탭(저장된 검색·필터 조건) — 전 직원 공유 */
