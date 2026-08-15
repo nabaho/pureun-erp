@@ -176,5 +176,45 @@ const t = (name, got, want) => {
   t('★ baseF.company.ceo 가 원래 값 그대로다(비변형)', baseF.company.ceo, '');
 }
 
-console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');
-process.exit(fail ? 1 : 0);
+(async () => {
+  /* ═══ 5. erpLoadMyContractPhotos — 캐시 로더 ═══ */
+  await (async () => {
+    const c = vm.createContext({ window: { _erpErrLog: null }, fbAuthUid: 'u1' });
+    vm.runInContext(slice('var _erpMyContractPhotos = null;', 'function erpLoadMyContractPhotos('), c); // 전역 변수 3개
+    vm.runInContext(fn('erpLoadMyContractPhotos'), c);
+
+    let listYearCalls = 0;
+    c.PuPhotoStore = {
+      listYears: function(){ return Promise.resolve(['2026', '2025']); },
+      listYear: function(year){
+        listYearCalls++;
+        if(year === '2026'){
+          return Promise.resolve({
+            a1: { read: { kind:'contract', fields:{ company:'가나다' } }, __year:'2026', upAt: 111 },
+            a2: { read: { kind:'card', fields:{} }, __year:'2026' }   // 계약서가 아닌 것 — 걸러져야 함
+          });
+        }
+        return Promise.resolve({
+          b1: { read: { kind:'contract', fields:{ company:'라마바' } }, __year:'2025', upAt: 222 }
+        });
+      }
+    };
+
+    await new Promise(function(resolve){
+      c.erpLoadMyContractPhotos(function(items){
+        t('계약서 kind 만 걸러진다(2건)', items.length, 2);
+        t('연도별 항목이 다 합쳐진다', items.map(x => x.id).sort(), ['a1', 'b1']);
+        // 두 번째 호출은 캐시에서 바로 온다 — listYear 가 다시 불리지 않아야 한다
+        const callsBefore = listYearCalls;
+        c.erpLoadMyContractPhotos(function(items2){
+          t('두 번째 호출은 캐시를 그대로 돌려준다', items2.length, 2);
+          t('두 번째 호출은 새로 안 읽는다', listYearCalls, callsBefore);
+          resolve();
+        });
+      });
+    });
+  })();
+
+  console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');
+  process.exit(fail ? 1 : 0);
+})();

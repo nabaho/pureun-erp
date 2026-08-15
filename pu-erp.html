@@ -12020,6 +12020,42 @@ function erpContractPhotoApplyPatch(fields, kindV, f){
   return { patch: patch, previewLines: lines, vatRaw: fields.vat || '' };
 }
 
+// 내(로그인한 사람) 사진첩의 계약서 사진만 한 번 긁어와 캐시한다.
+// 실시간 구독이 아니다 — 계약추가 창을 새로 열어야 새 사진이 반영된다(설계 확정 사항).
+var _erpMyContractPhotos = null;
+var _erpMyContractPhotosLoading = false;
+var _erpMyContractPhotosWaiters = [];
+function erpLoadMyContractPhotos(cb){
+  if(_erpMyContractPhotos){ cb && cb(_erpMyContractPhotos); return; }
+  if(_erpMyContractPhotosLoading){ if(cb) _erpMyContractPhotosWaiters.push(cb); return; }
+  if(typeof PuPhotoStore === 'undefined' || !fbAuthUid){ cb && cb([]); return; }
+  _erpMyContractPhotosLoading = true;
+  PuPhotoStore.listYears().then(function(years){
+    return Promise.all(years.map(function(y){ return PuPhotoStore.listYear(y); }));
+  }).then(function(yearMaps){
+    var out = [];
+    (yearMaps || []).forEach(function(map){
+      Object.keys(map || {}).forEach(function(id){
+        var meta = map[id];
+        if(meta && meta.read && meta.read.kind === 'contract'){
+          out.push({ id:id, year:meta.__year, fields:meta.read.fields || {}, at: meta.upAt || meta.takenAt || 0 });
+        }
+      });
+    });
+    _erpMyContractPhotos = out;
+    _erpMyContractPhotosLoading = false;
+    var waiters = _erpMyContractPhotosWaiters; _erpMyContractPhotosWaiters = [];
+    cb && cb(out);
+    waiters.forEach(function(w){ w(out); });
+  }).catch(function(e){
+    window._erpErrLog && window._erpErrLog(e);
+    _erpMyContractPhotosLoading = false;
+    var waiters = _erpMyContractPhotosWaiters; _erpMyContractPhotosWaiters = [];
+    cb && cb([]);
+    waiters.forEach(function(w){ w([]); });
+  });
+}
+
 // ============ 계약 모달 (3탭: 기업정보 / 계약정보 / 담당자정보) ============
 function ContractModal(props){
   useEscClose(props.onClose);
