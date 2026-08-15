@@ -3628,12 +3628,33 @@ function aiConsent(){
   return confirmM('AI 기능을 쓰면 이 업무의 진행 기록·기업명·의뢰인 정보가 회사에 설정된 AI 서비스로 전송됩니다.\n\n의뢰인 개인정보가 포함될 수 있으니 대표님이 승인한 경우에만 사용하세요.\n\n계속할까요? (이 브라우저에서 한 번만 묻습니다)',{ok:'동의하고 사용'})
     .then(function(ok){ if(ok) localStorage.setItem('work_ai_ok','1'); return ok; });
 }
+/* 바깥으로 나가는 부름은 이것 하나뿐이다(AI 프록시). 시간 제한이 없으면
+   답이 안 올 때 «영영» 기다린다 — 「기록·노트·회고를 읽고 있습니다…」 창은
+   닫는 단추가 없어서 그대로 갇히고, 단추들은 눌린 채로 멈춘다.
+   답만 오면(늦게라도 실패로) 부른 쪽들은 스스로 되돌아온다 — 이미 그렇게 짜여 있다. */
+var AI_WAIT_MS=60000;
+function aiFetch(url,opts){
+  if(typeof AbortController==='undefined') return fetch(url,opts);   // 아주 옛 브라우저
+  var ac=new AbortController();
+  var timer=setTimeout(function(){ ac.abort(); }, AI_WAIT_MS);
+  var o={}; for(var k in opts){ if(Object.prototype.hasOwnProperty.call(opts,k)) o[k]=opts[k]; }
+  o.signal=ac.signal;                                  // 넘겨받은 것은 고치지 않는다
+  return fetch(url,o).then(function(r){ clearTimeout(timer); return r; },
+    function(e){
+      clearTimeout(timer);
+      if(e&&e.name==='AbortError'){
+        var t=new Error(Math.round(AI_WAIT_MS/1000)+'초 안에 답이 오지 않았습니다 — 잠시 뒤 다시 해 주세요');
+        t.timeout=true; throw t;
+      }
+      throw e;
+    });
+}
 function aiCall(system,userText){
   var url=aiProxyUrl();
   if(!url) return Promise.reject(new Error('AI 프록시 주소가 없습니다 — 푸른이알피 설정에서 먼저 등록하세요'));
   var i=0;
   function attempt(){
-    return fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
+    return aiFetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({model:AI_MODELS[i],max_tokens:8000,system:system,
         messages:[{role:'user',content:userText}]})})
       .then(function(r){ return r.json(); })
@@ -3644,6 +3665,8 @@ function aiCall(system,userText){
         return t;
       })
       .catch(function(e){
+        // ⚠ 끊긴 것은 «모델 탓»이 아니다. 다음 모델로 다시 걸면 1분을 또 기다린다.
+        if(e&&e.timeout) throw e;
         if(i<AI_MODELS.length-1){ i++; return attempt(); }   // 프록시가 모델을 제한하면 다음 모델로
         throw e;
       });
