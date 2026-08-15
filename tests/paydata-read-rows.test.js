@@ -51,6 +51,33 @@ test('근태표: 빈 칸은 항목을 만들지 않는다 — 0 과 「없음」
   assert.equal(rows[0].pairs[0].value, '정상근무');
 });
 
+/* ══════ 판독기가 「못 읽었다」고 한 줄 (2026-08-15) ══════
+   근태표 프롬프트는 흐려서 못 읽은 숫자를 지어내지 말고 그 줄 note 에
+   「일부 판독 불확실」을 덧붙이라고 시킨다. 그 표시를 버리면 스무 명 중 한 명만
+   흐렸던 줄이 확신한 열아홉 줄과 똑같이 보인다 — 어디를 먼저 봐야 하는지 알 수 없다. */
+
+test('★ 「일부 판독 불확실」이 붙은 줄은 확실하지 않다고 달려 온다', () => {
+  const S = loadStore();
+  const parsed = { rows: [{ name: '배영승', paid: [1, 5], off: [], adj: '', note: '정상근무, 일부 판독 불확실' }] };
+  const rows = S.rowsFromRead('timesheet', parsed);
+  assert.equal(rows[0].iffy, true,
+    '판독기가 스스로 「못 읽었다」고 한 표시를 버리면 화면이 그 줄을 노랗게 칠할 수 없습니다');
+});
+
+test('확실히 읽은 줄은 노랗지 않다', () => {
+  const S = loadStore();
+  const rows = S.rowsFromRead('timesheet',
+    { rows: [{ name: '이옥자', paid: [1], off: [], adj: '', note: '정상근무' }] });
+  assert.equal(rows[0].iffy, false, '다 노랗게 뜨면 노란색이 아무 뜻도 없어집니다');
+});
+
+test('알림·급여대장 줄에 붙은 불확실 표시도 함께 온다', () => {
+  const S = loadStore();
+  const rows = S.rowsFromRead('notice',
+    { rows: [{ name: '김신입', note: '일부 판독 불확실', pairs: [{ item: '입사일', value: '2026-08-12' }] }] });
+  assert.equal(rows[0].iffy, true);
+});
+
 test('★ 급여대장·알림은 이미 맞는 모양이라 그대로 온다', () => {
   const S = loadStore();
   const parsed = { rows: [{ name: '홍길동', pairs: [{ item: '기본급', value: '3,200,000' }] }] };

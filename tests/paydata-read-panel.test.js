@@ -21,6 +21,10 @@ function cut(name) {
 const WAGE_FLAG = html.match(/const WAGE_READ_ON = (?:true|false);/);
 assert.ok(WAGE_FLAG, 'WAGE_READ_ON 상수를 찾을 수 없습니다');
 
+/* $ 는 화살표 함수라 cut() 으로 못 잘라 온다 — 실제 정의를 그대로 가져다 쓴다. */
+const DOLLAR = html.match(/const \$ = [^\r\n]+/);
+assert.ok(DOLLAR, '$ 정의를 찾을 수 없습니다');
+
 function loadApp(appState) {
   const sandbox = { window: {}, console, Date, document: { getElementById: () => null } };
   sandbox.globalThis = sandbox;
@@ -33,7 +37,7 @@ function loadApp(appState) {
       readState: { status: 'idle', rows: [], err: '' }
     }, appState)) + ';',
     WAGE_FLAG[0],
-    cut('esc'), cut('canWrite'), cut('readPanelHtml'),
+    cut('esc'), cut('canWrite'), cut('valueRowsHtml'), cut('readPanelHtml'),
     'window.App = App; window.readPanelHtml = readPanelHtml;'
   ].join('\n'), { filename: 'app.js' }).runInContext(sandbox);
   return sandbox.window;
@@ -67,6 +71,16 @@ test('읽는 중이면 그렇다고 말한다', () => {
   const h = loadApp({ readState: { status: 'reading', rows: [], err: '' } }).readPanelHtml();
   assert.match(h, /읽는 중/);
   assert.equal(/doRead\(\)/.test(h), false, '읽는 중에 또 누르면 두 번 나갑니다');
+});
+
+test('★ 확실하지 않은 줄이 있으면 몇 줄인지 알린다 — 그 띠는 나중에 걷을 수 있어야 한다', () => {
+  const h = loadApp({ readState: { status: 'done', err: '', rows: [
+    { name: '배영승', pairs: [{ item: '유급일수', value: '3일' }], iffy: true },
+    { name: '이옥자', pairs: [{ item: '유급일수', value: '5일' }] }
+  ] } }).readPanelHtml();
+  assert.match(h, /1줄<\/b>은 확실하지 않습니다/);
+  assert.match(h, /id="iffyLine"/,
+    '이름표가 없으면 사람이 그 줄을 고쳐도 띠를 걷을 수 없어 표를 통째로 다시 그려야 합니다');
 });
 
 test('실패하면 까닭을 보여주고 다시 누를 수 있다', () => {
@@ -110,13 +124,22 @@ function loadRun(appState, opts) {
   // ⚠ opts.defer=true 면 판독기가 바로 답하지 않는다 — calls.resolveRead(...)
   //   / calls.rejectRead(...) 를 부를 때까지 붙들어 둔다. 그 사이에 화면을
   //   다른 서류로 옮겨서 「늦게 온 답」을 흉내 내려는 것이다.
+  /* opts.dom=true 면 화면 요소가 있는 척한다 — 「고치면 노란 칠이 곧바로 걷히는가」를
+     보려면 실제로 손댈 요소가 있어야 한다(줄은 노란 채로 시작한다). */
+  const els = calls.els = {};
   const sandbox = {
     window: {}, console, Date, Buffer,
     // ⚠ Buffer 를 안 넣으면 S.fileToDataUrl 안의 bytesToBase64 가
     //   (가짜 window 엔 btoa 가 없어) Buffer.from(...) 으로 떨어지다가
     //   vm 안에는 Buffer 가 없어서 ReferenceError 로 조용히 터진다
     //   (tests/paydata-file-dataurl.test.js 와 같은 이유로 넣는다).
-    document: { getElementById: () => null },
+    document: {
+      getElementById: id => {
+        if (!opts.dom) return null;
+        if (!els[id]) els[id] = { id: id, className: /^vrow_/.test(id) ? 'iffy' : '', style: {}, innerHTML: '' };
+        return els[id];
+      }
+    },
     alert: m => calls.alerts.push(m),
     PuDocRead: {
       read: p => {
@@ -148,8 +171,9 @@ function loadRun(appState, opts) {
     }, appState)) + ';',
     'App.render = function(){};',
     WAGE_FLAG[0],                       // doRead 가 이 상수를 본다 — 안 넣으면 터진다
+    DOLLAR[0],
     cut('esc'), cut('canWrite'), cut('findRow'), cut('doRead'), cut('valueRowsHtml'),
-    cut('editVal'), cut('addValRow'), cut('delValRow'),
+    cut('editVal'), cut('refreshIffyMarks'), cut('addValRow'), cut('delValRow'),
     'window.App = App; window.doRead = doRead; window.valueRowsHtml = valueRowsHtml;',
     'window.editVal = editVal; window.addValRow = addValRow; window.delValRow = delValRow;'
   ].join('\n'), { filename: 'run.js' }).runInContext(sandbox);
@@ -207,6 +231,51 @@ test('★ 사람이 고치면 노란 표시가 걷힌다', () => {
   W.App.readState = { status: 'done', rows: [{ name: '이옥자', pairs: [{ item: '휴무일수', value: '5일' }], iffy: true }], err: '' };
   W.editVal(0, 'name', '이옥자2');
   assert.equal(W.App.readState.rows[0].iffy, false, '확인이 끝난 줄이 계속 노랗게 뜨면 표시를 못 믿습니다');
+});
+
+/* ══════ 「확실하지 않다」가 화면까지 오는가 (2026-08-15) ══════ */
+
+test('★ 판독기가 못 읽었다고 한 줄은 화면까지 노랗게 온다', async () => {
+  const { W } = loadRun({ kind: 'attend' }, {
+    readOut: { kind: 'timesheet', fields: { rows: [
+      { name: '배영승', paid: [1, 5], off: [], adj: '', note: '일부 판독 불확실' },
+      { name: '이옥자', paid: [2], off: [], adj: '', note: '정상근무' }
+    ] } }
+  });
+  W.doRead();
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(W.App.readState.rows[0].iffy, true,
+    '판독기가 스스로 「못 읽었다」고 한 표시가 화면까지 오지 않으면 노란 줄이 영영 안 뜹니다');
+  assert.equal(W.App.readState.rows[1].iffy, false);
+  const h = W.valueRowsHtml(W.App.readState.rows);
+  assert.match(h, /class="iffy"/, '표에서 그 줄이 노랗게 칠해져야 합니다');
+});
+
+test('★ 고치면 그 줄의 노란 칠이 화면에서 곧바로 걷힌다', () => {
+  const { W, calls } = loadRun({}, { dom: true });
+  W.App.readState = { status: 'done', err: '', rows: [
+    { name: '배영승', pairs: [{ item: '유급일수', value: '3일' }], iffy: true },
+    { name: '이옥자', pairs: [{ item: '휴무일수', value: '5일' }], iffy: true }
+  ] };
+  W.editVal(0, 'value', '4일', 0);
+  assert.equal(calls.els['vrow_0_0'].className, '',
+    '자료만 고치고 화면을 안 건드리면 노란색이 그대로 남습니다 — 표시가 없는 것과 같습니다');
+  assert.equal(calls.els['vrow_1_0'].className, 'iffy', '안 고친 줄은 그대로 노래야 합니다');
+  assert.match(calls.els['iffyLine'].innerHTML, /1줄/, '남은 줄 수도 함께 줄어야 합니다');
+});
+
+test('마지막 노란 줄까지 고치면 알림 띠가 사라진다', () => {
+  const { W, calls } = loadRun({}, { dom: true });
+  W.App.readState = { status: 'done', err: '',
+    rows: [{ name: '배영승', pairs: [{ item: '유급일수', value: '3일' }], iffy: true }] };
+  W.editVal(0, 'value', '4일', 0);
+  assert.equal(calls.els['iffyLine'].style.display, 'none');
+});
+
+test('★ 표의 줄마다 이름표가 있어야 그 줄만 손댈 수 있다', () => {
+  const { W } = loadRun({});
+  const h = W.valueRowsHtml([{ name: '배영승', pairs: [{ item: '유급일수', value: '3일' }], iffy: true }]);
+  assert.match(h, /id="vrow_0_0"/, '줄 이름표가 없으면 표를 통째로 다시 그려야 해 커서가 튑니다');
 });
 
 test('줄 더하기·지우기', () => {

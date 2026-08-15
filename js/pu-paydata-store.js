@@ -586,12 +586,21 @@
     if (v) pairs.push({ item: item, value: v });
   }
 
+  /* ── 판독기가 「이 줄은 확실하지 않다」고 말한 것 ──
+     근태표 프롬프트(js/pu-doc-read.js PROMPT_ALL)는 흐려서 못 읽은 숫자를 지어내지
+     말고 **그 줄 note 에 「일부 판독 불확실」을 덧붙이라**고 시킨다. 그 표시를 여기서
+     버리면 스무 명 중 한 명만 흐렸던 줄이 확신한 열아홉 줄과 똑같이 보인다 —
+     어디를 먼저 봐야 하는지 알 길이 없다. 그래서 값 줄에 iffy 로 달아 보낸다
+     (판독 패널이 그 줄을 노랗게 칠하고 「⚠ N줄은 확실하지 않습니다」로 센다). */
+  function isIffyNote(v) { return /불확실/.test(String(v == null ? '' : v)); }
+
   function rowsFromRead(readKind, parsed) {
     var src = (parsed && parsed.rows) || [];
     var out = [];
     src.forEach(function (r) {
       var name = String((r && r.name) || '').trim();
       if (!name) return;
+      var iffy = isIffyNote(r && r.note);
       var pairs = [];
       if (readKind === 'timesheet') {
         var paid = Array.isArray(r.paid) ? r.paid : [];
@@ -609,7 +618,7 @@
         return;                       // 모르는 방식은 아무것도 만들지 않는다
       }
       if (!pairs.length) return;      // 항목이 하나도 없으면 값 줄이 아니다
-      out.push({ name: name, pairs: pairs });
+      out.push({ name: name, pairs: pairs, iffy: iffy });
     });
     return out;
   }

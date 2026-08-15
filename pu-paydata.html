@@ -1438,7 +1438,9 @@ function valueRowsHtml(rows) {
         + '<th style="width:32%">항목</th><th>값</th><th style="width:26px"></th></tr>';
   (rows || []).forEach((r, i) => {
     (r.pairs || []).forEach((p, j) => {
-      h += '<tr class="' + (r.iffy ? 'iffy' : '') + '">'
+      /* 줄마다 이름표(id)를 준다 — 사람이 고칠 때 표를 통째로 다시 그리지 않고
+         이 줄의 노란 칠만 벗기기 위해서다(editVal 머리말 참고). */
+      h += '<tr id="vrow_' + i + '_' + j + '" class="' + (r.iffy ? 'iffy' : '') + '">'
         + '<td><input value="' + esc(r.name) + '" oninput="editVal(' + i + ',\'name\',this.value)"></td>'
         + '<td><input value="' + esc(p.item) + '" oninput="editVal(' + i + ',\'item\',this.value,' + j + ')"></td>'
         + '<td><input value="' + esc(p.value) + '" oninput="editVal(' + i + ',\'value\',this.value,' + j + ')"></td>'
@@ -1448,13 +1450,36 @@ function valueRowsHtml(rows) {
   return h + '</table>';
 }
 
-/* 고치면 그 줄의 노란 표시를 걷는다 — 확인이 끝났다는 뜻이다. */
+/* 고치면 그 줄의 노란 표시를 걷는다 — 확인이 끝났다는 뜻이다.
+   ⚠ 여기서 App.render() 를 부르면 안 된다. 이 함수는 oninput 으로 **글자 하나마다**
+   불린다 — 다시 그리면 지금 치고 있는 칸이 통째로 새로 만들어져 한 글자 칠 때마다
+   커서를 잃는다. 그래서 화면은 그 줄의 노란 칠과 「⚠ N줄」 알림만 손본다.
+   (자료만 고치고 화면을 안 건드리면 노란색이 안 걷혀, 표시가 없는 것과 같아진다) */
 function editVal(i, key, v, j) {
   const r = (App.readState.rows || [])[i];
   if (!r) return;
   if (key === 'name') r.name = v;
   else if (r.pairs && r.pairs[j]) r.pairs[j][key] = v;
+  if (!r.iffy) return;
   r.iffy = false;
+  refreshIffyMarks();
+}
+
+/* 노란 칠과 「⚠ N줄은 확실하지 않습니다」를 지금 화면에 맞춘다. */
+function refreshIffyMarks() {
+  const rows = (App.readState && App.readState.rows) || [];
+  rows.forEach((r, i) => {
+    (r.pairs || []).forEach((p, j) => {
+      const tr = $('vrow_' + i + '_' + j);
+      if (tr) tr.className = r.iffy ? 'iffy' : '';
+    });
+  });
+  const line = $('iffyLine');
+  if (!line) return;
+  const n = rows.filter(r => r.iffy).length;
+  if (!n) { line.style.display = 'none'; return; }
+  line.style.display = '';
+  line.innerHTML = '⚠ <b>' + n + '줄</b>은 확실하지 않습니다 — 노란 줄부터 봐 주세요.';
 }
 function addValRow() {
   App.readState.rows.push({ name: '', pairs: [{ item: '', value: '' }], iffy: false });
@@ -1558,7 +1583,7 @@ function readPanelHtml() {
     const n = st.rows.length;
     const iffy = st.rows.filter(r => r.iffy).length;
     body = '<div class="okline">사람 <b>' + n + '명</b>의 값을 읽었습니다. 원본과 견주어 확인해 주세요.</div>'
-      + (iffy ? '<div class="warnline">⚠ <b>' + iffy + '줄</b>은 확실하지 않습니다 — 노란 줄부터 봐 주세요.</div>' : '')
+      + (iffy ? '<div class="warnline" id="iffyLine">⚠ <b>' + iffy + '줄</b>은 확실하지 않습니다 — 노란 줄부터 봐 주세요.</div>' : '')
       + valueRowsHtml(st.rows)
       + '<div class="sub" style="margin-top:10px;line-height:1.7">저장하면 값마다 '
       + '<b>이 서류가 출처로</b> 붙습니다 — 나중에 값을 누르면 이 원본이 열립니다.</div>';
