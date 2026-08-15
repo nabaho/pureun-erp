@@ -14,6 +14,8 @@
 <script src="js/pu-hwp-engine.js?v=2"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js"></script>
+<!-- 회사 공용 사진·서류 저장 층 — 사진첩/명함첩/컨설팅과 같은 파일을 쓴다(판독·보관 방식이 한 곳) -->
+<script src="js/pu-photo-store.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -458,8 +460,26 @@ function toggleSide(){ document.body.classList.toggle('sideopen'); }
 function closeSide(){ document.body.classList.remove('sideopen'); }
 function _setTopUser(name,role){ var el=$('topuser'); if(!el)return;
   el.innerHTML=esc(name||'푸른노무법인')+'<span class="role">'+esc(role||'기금 운영')+'</span>'; }
+/* ══ 푸른사진첩 연동 ══
+   인가증·등기부·고유번호증 원본은 **사진첩이 보관**하고, 기금관리는 값과 참조만 갖는다.
+   · 저장 층은 회사 공용 js/pu-photo-store.js — 사진첩·명함첩·컨설팅이 같이 쓴다
+   · 사진첩 창고는 별도 버킷(pureun-erp-hrphotos)이라 이 앱 기본 버킷과 다르게 지정한다
+   · 사진은 사람별로 갈려 있다 — 총괄(대표노무사)은 전체, 그 외는 본인 것 */
+var PHOTO_BUCKET='gs://pureun-erp-hrphotos';
+var _psReady=false;
+function photoStoreReady(){
+  if(_psReady) return true;
+  if(typeof PuPhotoStore==='undefined'||!fbDb) return false;
+  var st=null; try{ st=firebase.app().storage(PHOTO_BUCKET); }catch(e){ st=null; }
+  var fu=null; try{ fu=firebase.auth().currentUser; }catch(e){}
+  if(!fu) return false;
+  PuPhotoStore.init({ db:fbDb, storage:st, uid:fu.uid, name:(S.user||''), isAdmin:_isBoss() });
+  _psReady=true; return true;
+}
+function _isBoss(){ return /대표|총괄|관리자/.test(String(S.role||qp('role')||'')); }
 function initTop(){
   var u=qp('user'), r=qp('role');
+  S.user=u||S.user||''; S.role=r||S.role||'';
   var fu=firebase.auth().currentUser;
   if(u){ _setTopUser(u,r); }   // 포털에서 이름 전달받은 경우
   else {
@@ -3410,9 +3430,11 @@ function infoForm(f){
   return '<div class="panel"><div class="row"><h2 style="margin:0">📥 서류 끌어놓기 → 자동 입력</h2>'
     +'<span class="muted" style="font-size:11.5px;margin-left:8px">인가증·등기부·고유번호증을 올리면 읽어서 아래 칸을 채웁니다</span></div>'
     +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">'
-    +'<div style="flex:1;min-width:210px">'+dropZone('dz-inka','설립인가증','인가번호·인가일·대표자·소재지','.pdf,image/*')+'</div>'
-    +'<div style="flex:1;min-width:210px">'+dropZone('dz-corpreg','법인 등기부등본','법인등록번호·설립등기일','.pdf,image/*')+'</div>'
-    +'<div style="flex:1;min-width:210px">'+dropZone('dz-taxid','고유번호증','고유번호·법인등록번호·대표자','.pdf,image/*')+'</div>'
+    +[['dz-inka','inka','설립인가증','인가번호·인가일·대표자·소재지'],
+      ['dz-corpreg','corpreg','법인 등기부등본','법인등록번호·설립등기일'],
+      ['dz-taxid','taxid','고유번호증','고유번호·법인등록번호·대표자']].map(function(z){
+      return '<div style="flex:1;min-width:210px">'+dropZone(z[0],z[2],z[3],'.pdf,image/*')+scanLink(z[1],z[0])+'</div>';
+    }).join('')
     +'</div><p class="muted" style="font-size:11.5px;margin:8px 0 0">스캔본은 OCR — <b>오독 가능, 반드시 확인</b> '+hlp('doc.read')+'</p>'
     +'<div id="docIntakeOut" style="margin-top:10px"></div></div>'
     +'<div class="panel"><h2>기금 정보</h2>'
@@ -3427,6 +3449,124 @@ function bindDocIntake(){
   });
 }
 var _docFound={}, _docOcr=false, _docFid=null;   // 판독 결과는 시작 시점 기금에 귀속
+/* ── 사진첩에서 서류 골라오기 ──
+   원본은 사진첩에 그대로 두고, 기금에는 값 + 참조(주인·연도·id)만 남긴다.
+   RTDB에 이미지를 넣으면 기금 목록 로딩이 통째로 느려지므로 절대 복사하지 않는다. */
+var _pick={kind:'',zid:'',items:[],year:0};
+function openAlbumPick(zid,kind){
+  if(!photoStoreReady()){ toast('사진첩과 연결되지 않았습니다 — 새로고침 후 다시','err'); return; }
+  _pick={kind:kind,zid:zid,items:[],year:new Date().getFullYear(),fid:S.fundId};
+  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">🖼 사진첩에서 '+esc(docZoneLabel(kind))+' 고르기</h2>'+hlp('album.pick')
+    +'<span style="flex:1"></span><select id="pk-year" onchange="albumPickLoad(+this.value)" style="padding:4px 8px;border:1px solid var(--line);border-radius:7px">'
+    +[0,1,2].map(function(d){var y=new Date().getFullYear()-d;return '<option value="'+y+'">'+y+'년</option>';}).join('')+'</select></div>'
+    +'<div id="pk-body" style="max-height:64vh;overflow:auto">'+loadingHTML('사진첩을 읽는 중…')+'</div>'
+    +'<p class="muted" style="font-size:11px;margin:8px 0 0">사진을 누르면 판독합니다 · 사진첩 원본은 그대로 남습니다</p>');
+  albumPickLoad(_pick.year);
+}
+function albumPickLoad(year){
+  _pick.year=year;
+  var boss=_isBoss();
+  var p=boss&&PuPhotoStore.listYearAll ? PuPhotoStore.listYearAll(String(year)).catch(function(){ return PuPhotoStore.listYear(String(year)); })
+                                       : PuPhotoStore.listYear(String(year));
+  p.then(function(items){
+    if(!$('pk-body')) return;
+    _pick.items=Object.keys(items||{}).map(function(id){ return {id:id,meta:items[id]||{}}; })
+      .sort(function(a,b){
+        var ad=(a.meta.kind==='doc')?0:1, bd=(b.meta.kind==='doc')?0:1;    // 서류를 먼저
+        return ad-bd || (b.meta.takenAt||0)-(a.meta.takenAt||0);
+      });
+    renderAlbumPick();
+  }).catch(function(e){
+    var b=$('pk-body'); if(b) b.innerHTML='<div class="msg err">사진 목록을 불러오지 못했습니다: '+esc((e&&e.message)||e)+'</div>';
+  });
+}
+function renderAlbumPick(){
+  var b=$('pk-body'); if(!b) return;
+  if(!_pick.items.length){ b.innerHTML='<div class="muted" style="padding:20px 4px;text-align:center">'+_pick.year+'년에 올린 사진이 없습니다.<br>폰으로 찍었다면 <b>푸른사진첩</b>에 먼저 올려 주세요.</div>'; return; }
+  b.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px">'
+    +_pick.items.map(function(it){
+      var d=new Date(it.meta.takenAt||0);
+      var who=it.meta.__ownerName?('<div class="muted" style="font-size:9.5px">'+esc(it.meta.__ownerName)+'</div>'):'';
+      return '<div onclick="pickAlbumPhoto(\''+it.id+'\')" style="cursor:pointer;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--bg)">'
+        +'<div id="pkt-'+it.id+'" style="height:82px;display:flex;align-items:center;justify-content:center;color:var(--faint);font-size:11px">…</div>'
+        +'<div style="padding:4px 6px"><div style="font-size:10.5px">'+(d.getMonth()+1)+'/'+d.getDate()
+        +(it.meta.kind==='doc'?' <span class="chip warn" style="font-size:9px">서류</span>':'')+'</div>'+who+'</div></div>';
+    }).join('')+'</div>';
+  // 썸네일은 한 장씩 뒤따라 채운다(한 번에 다 받으면 느리다)
+  _pick.items.slice(0,60).forEach(function(it){
+    var owner=it.meta.__ownerUid||undefined;
+    PuPhotoStore.loadThumb(String(_pick.year),it.id,owner).then(function(src){
+      var el=$('pkt-'+it.id); if(!el||!src) return;
+      el.innerHTML='<img src="'+src+'" style="width:100%;height:82px;object-fit:cover;display:block">';
+    }).catch(function(){ var el=$('pkt-'+it.id); if(el) el.textContent='×'; });
+  });
+}
+function pickAlbumPhoto(id){
+  var it=_pick.items.filter(function(x){return x.id===id;})[0]; if(!it) return;
+  var owner=it.meta.__ownerUid||undefined, year=String(_pick.year), kind=_pick.kind, zid=_pick.zid, fid=_pick.fid;
+  var b=$('pk-body'); if(b) b.innerHTML=loadingHTML('원본을 가져와 판독하는 중…');
+  PuPhotoStore.loadFull(year,id,owner).then(function(src){
+    if(!src) throw new Error('원본을 찾지 못했습니다');
+    closeM();
+    saveScanRef(fid,kind,{owner:owner||'',year:year,id:id});      // 참조만 저장(이미지는 복사하지 않음)
+    return _dataUrlToFile(src,kind+'.jpg');
+  }).then(function(file){
+    if(S.fundId!==fid) return;                                     // 그 사이 다른 기금으로 이동 → 버림
+    readDocInto(zid,kind,file);                                    // 기존 판독 경로를 그대로 탄다
+  }).catch(function(e){
+    var bb=$('pk-body');
+    var msg='가져오지 못했습니다: '+esc((e&&e.message)||e)
+      +'<div class="muted" style="font-size:11.5px;margin-top:6px">다른 사람이 올린 사진은 권한에 따라 열리지 않을 수 있습니다.</div>';
+    if(bb) bb.innerHTML='<div class="msg err">'+msg+'</div>'; else toast('사진을 가져오지 못했습니다','err');
+  });
+}
+function _dataUrlToFile(src,name){
+  return fetch(src).then(function(r){ return r.blob(); }).then(function(b){ return new File([b],name,{type:b.type||'image/jpeg'}); });
+}
+/* 기금에 붙인 스캔 참조 — funds/{fid}/scans/{kind} = {owner,year,id,at,by} */
+function saveScanRef(fid,kind,ref){
+  var o=Object.assign({at:ymd(),by:(S.user||'')},ref);
+  fbDb.ref(NS+'/funds/'+fid+'/scans/'+kind).set(o).then(function(){
+    if(funds[fid]){ funds[fid].scans=funds[fid].scans||{}; funds[fid].scans[kind]=o; }
+    toast('사진첩 원본을 이 기금에 연결했습니다');
+  }).catch(function(e){ toast('연결 저장 실패: '+e.message,'err'); });
+}
+function openScan(kind){
+  var f=funds[S.fundId]||{}, r=(f.scans||{})[kind]; if(!r) return;
+  if(!photoStoreReady()){ toast('사진첩과 연결되지 않았습니다','err'); return; }
+  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">'+esc(docZoneLabel(kind))+' 원본</h2>'
+    +'<span class="muted" style="font-size:11.5px">'+esc(r.year)+'년 · 연결 '+esc(r.at||'')+'</span>'
+    +'<span style="flex:1"></span><button onclick="unlinkScan(\''+kind+'\')" style="color:var(--danger)">연결 해제</button></div>'
+    +'<div id="scanBody" style="text-align:center">'+loadingHTML('사진첩에서 불러오는 중…')+'</div>');
+  PuPhotoStore.loadFull(String(r.year),r.id,r.owner||undefined).then(function(src){
+    var b=$('scanBody'); if(!b) return;
+    b.innerHTML=src?'<img src="'+src+'" style="max-width:100%;max-height:70vh;border:1px solid var(--line);border-radius:8px">'
+      :'<div class="msg err">원본을 찾지 못했습니다.</div>';
+  }).catch(function(e){
+    var b=$('scanBody'); if(b) b.innerHTML='<div class="msg err">불러오지 못했습니다: '+esc((e&&e.message)||e)
+      +'<div class="muted" style="font-size:11.5px;margin-top:6px">올린 사람의 사진첩 자리에 있습니다 — 권한이 없으면 열리지 않습니다.</div></div>';
+  });
+}
+function unlinkScan(kind){
+  var fid=S.fundId;
+  confirmM('이 기금과 사진첩 원본의 연결만 끊습니다.\n사진첩의 사진은 그대로 남습니다.',{ok:'연결 해제',danger:true}).then(function(ok){
+    if(!ok)return;
+    fbDb.ref(NS+'/funds/'+fid+'/scans/'+kind).remove().then(function(){
+      if(funds[fid]&&funds[fid].scans) delete funds[fid].scans[kind];
+      closeM(); renderFund(); toast('연결을 해제했습니다');
+    });
+  });
+}
+function docZoneLabel(kind){ return ({inka:'설립인가증',corpreg:'법인 등기부등본',taxid:'고유번호증'})[kind]||kind; }
+/* 드롭존 아래 한 줄 — 사진첩에서 고르기 / 이미 연결된 원본 보기 */
+function scanLink(kind,zid){
+  var f=funds[S.fundId]||{}, r=(f.scans||{})[kind];
+  return '<div class="row" style="gap:6px;margin-top:5px;font-size:11.5px">'
+    +'<button onclick="openAlbumPick(\''+zid+'\',\''+kind+'\')" style="padding:3px 9px;font-size:11.5px">🖼 사진첩에서</button>'
+    +(r?'<button onclick="openScan(\''+kind+'\')" style="padding:3px 9px;font-size:11.5px" title="'+esc(r.year+'년 · 연결 '+(r.at||''))+'">📎 원본 보기</button>'
+       :'<span class="muted" style="font-size:11px">원본 미연결</span>')
+    +'</div>';
+}
 function readDocInto(zid,kind,file){
   if(!file) return;
   var def=DOC_PARSE[kind], nm=file.name||'', isPdf=/\.pdf$/i.test(nm);
@@ -6772,6 +6912,10 @@ var HELP={
  'setup.flow':{t:'설립 진행',h:'<p>신규 설립 절차입니다. 중간에 나가도 <b>이 상태로 저장</b>되며, 목록에서 <b>🏗 설립중</b> 표시로 다시 찾아 이어서 진행할 수 있습니다.</p>'
    +'<p>12단계를 마치면 <b>[운영 전환]</b>으로 정식 운영 기금이 됩니다.</p><p>인가번호·등기 등 실제 값은 <b>[기금 정보] 탭</b>에 입력합니다.</p>'},
  'setup.list':{t:'설립중 기금 목록',h:'<p>[등록]까지 마친 신규 기금입니다.</p><p>열어서 이어서 진행하거나, 잘못 만든 것은 <b>삭제 보관함</b>으로 옮기세요(복원 가능).</p>'},
+ 'album.pick':{t:'사진첩에서 서류 고르기',h:'<p>폰으로 찍어 <b>푸른사진첩</b>에 올린 서류를 그대로 가져옵니다. PC로 파일을 옮길 필요가 없습니다.</p>'
+   +'<p><b>원본은 사진첩에 남고</b>, 기금에는 읽어낸 값과 <b>연결 정보만</b> 저장됩니다 — 기금 자료가 무거워지지 않습니다.</p>'
+   +'<p>서류로 표시된 사진이 위에 옵니다. 연도를 바꿔 지난 사진도 찾을 수 있습니다.</p>'
+   +'<p>사진첩은 <b>올린 사람별</b>로 나뉘어 있습니다. 대표·총괄은 전체가 보이고, 그 외에는 본인이 올린 것만 보입니다.</p>'},
  'doc.read':{t:'서류 자동 판독',h:'<p><b>전자문서 PDF</b>는 글자를 그대로 읽어 <b>정확</b>합니다.</p>'
    +'<p><b>스캔본·사진</b>은 OCR로 읽습니다(최초 1회 한국어 데이터 약 15MB 내려받기). <b>오독이 있을 수 있으니 반드시 확인</b>하세요.</p>'
    +'<p>판독 결과는 [아래 칸에 반영]을 눌러야 입력되고, 저장은 별도입니다.</p>'},
