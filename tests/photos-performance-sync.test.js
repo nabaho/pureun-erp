@@ -68,5 +68,11 @@ test('관리자 PC는 다른 휴대폰 업로드를 감지하고 자동으로 �
 
 test('회의사진은 독립 분류로 유지되고 확인필요 오류로 취급하지 않는다', () => {
   assert.match(html, /\{ key: 'meeting', label: '회의사진'/);
-  assert.match(html, /if \(r\.kind === 'meeting'\) return false/);
+  /* ⚠ 2026-08-15 다시 겨눔 — 「보관만 하는 갈래」를 KEEP_ONLY 한 곳으로 모았다.
+     예전에는 함수마다 갈래 이름을 따로 적었고, 그래서 계약서를 넣을 때 한쪽이
+     빠져 영영 안 없어지는 ⚠ 가 생겼다. 지킬 것은 「회의사진은 할 일이 아니다」
+     이지 그 판정이 어떤 글자로 적혀 있는가가 아니다. */
+  assert.match(html, /const KEEP_ONLY = \{[^}]*meeting: 1/,
+    '회의사진이 「보관만」 목록에서 빠졌습니다 — 확인 필요로 잡히게 됩니다');
+  assert.match(html, /if \(KEEP_ONLY\[r\.kind\]\) return false/);
 });
