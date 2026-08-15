@@ -119,6 +119,19 @@ ok('별지15호 ㉚는 그 해 현금출연 한도 안의 ⑰', src.includes('):
   && src.includes('var cashIn=_contribOf(arr);'));
 ok('별지15호 ㉚에 ⑱ 분할이 섞이지 않는다', !src.includes('(num(rep.src_contrib)||0):bfDec,'));
 ok('별지15호 ㉚에 상한이 있다', !/\):bf\.use,/.test(src));
+/* 확정 스냅샷에 별지15호 재원·잔액을 담는다 — 산식이 나중에 고쳐져도 «낸 값»이 남는다.
+   담아 두지 않으면 이미 제출한 해를 다시 인쇄할 때 숫자가 달라져도 알 수 없다. */
+['f15_src_income', 'f15_src_contrib', 'f15_src_carry', 'f15_src_total',
+ 'f15_sub_amt', 'f15_admin', 'f15_rest', 'f15_total'].forEach(function (k) {
+  ok('확정 스냅샷에 ' + k, new RegExp(k + ':\\s*R\\.').test(src));
+});
+ok('확정한 해가 달라지면 화면이 알린다', src.includes('function f15Drift')
+  && src.includes('var dr=f15Drift(R);') && src.includes('확정한 때와 숫자가 달라졌습니다'));
+// 예전에 확정한 해에는 이 칸들이 없다 — 없으면 «모른다»가 맞고 헛경보를 내면 안 된다
+ok('예전 스냅샷에는 헛경보를 안 낸다', src.includes('if(!_isLocked()||!snap||snap.f15_rest==null) return [];'));
+// 잔액이 0 으로 확정된 해도 있다 — falsy 로 보면 그 해를 통째로 못 본다
+ok('잔액 0 으로 확정된 해를 삼키지 않는다', !/snap\.f15_rest\)\s*return \[\]/.test(src)
+  && !src.includes('!snap.f15_rest) return []'));
 // ㉛·㉜·㉝ 는 사람이 적는 칸이라 이월금 안의 돈을 다시 적을 수 있다 — 앱이 고치지 않고 알린다
 ok('별지15호 재원이 그 해 있던 돈을 넘으면 붙잡는다',
   src.includes('var srcCap=_openAssets(op)+cashIn+fin.bizRev;')
