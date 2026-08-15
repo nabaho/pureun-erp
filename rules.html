@@ -231,6 +231,11 @@ table.daejo thead th{position:sticky;top:-18px;z-index:3;
 .stepnav button.done{border-color:#a7e3c8;background:#eefaf4;color:#0f766e}
 .stepnav button:disabled{color:var(--mute);border-style:dashed;cursor:default;opacity:.7}
 .stepnav i{font-style:normal;opacity:.75;margin-left:3px}
+/* 실행취소 알림 — 무엇을 되돌렸는지 잠깐 보여 준다 */
+#undo-toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(8px);
+  background:#111827;color:#fff;padding:9px 16px;border-radius:9px;font-size:12.5px;z-index:2147483000;
+  opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;box-shadow:0 8px 26px rgba(15,23,42,.34)}
+#undo-toast.on{opacity:.96;transform:translateX(-50%) translateY(0)}
 table.daejo td{border:1px solid var(--line);padding:6px 8px;vertical-align:top;line-height:1.55}
 table.daejo td.c{text-align:center;color:var(--mute)}
 table.daejo .rlabel{font-weight:600;font-size:11.5px}
@@ -416,6 +421,38 @@ table.daejo td.dj2{padding:0}
 #dropOverlay .box .ic{font-size:46px}
 #dropOverlay .box b{display:block;font-size:18px;margin:10px 0 4px;color:var(--accent)}
 #dropOverlay .box span{font-size:13px;color:var(--sub)}
+/* ══════ 인쇄 (Ctrl+P) ══════
+   화면을 그대로 인쇄하면 머리줄·단추·팝업 껍데기가 다 따라 나오고, 팝업은 max-height 때문에
+   보이는 만큼만 잘려 나온다. 제출 문서는 한글 파일로 받지만 검토 중 화면을 뽑을 일이 있다.
+   팝업이 열려 있으면 그 팝업만, 아니면 본문만 인쇄한다. */
+@media print{
+  @page{size:A4;margin:12mm}
+  html,body{background:#fff!important;height:auto!important}
+  /* 색이 뜻을 담은 곳(바뀐 낱말·배지·상태)은 그대로 찍히게 */
+  *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+  header,.toolbar,#split,.note,#ro-banner,.sample-banner,#dropOverlay,#undo-toast,
+  .logoutTimer,.stepnav,.tb-drawer,#daejo-tools,.rowacts,.rzchips,.stbtn,.mini,
+  .modal .foot,.modal h2 .x,#up-undo{display:none!important}
+  /* 팝업: 껍데기를 벗기고 잘린 곳 없이 전부 */
+  .overlay{display:none!important;position:static!important;background:none!important;padding:0!important}
+  .overlay.on{display:block!important}
+  .overlay.on .modal{max-width:none!important;width:auto!important;max-height:none!important;
+    box-shadow:none!important;border-radius:0!important;overflow:visible!important}
+  .overlay.on .modal .body{overflow:visible!important;max-height:none!important;padding:0!important}
+  .overlay.on .modal h2{padding:0 0 6px;border-bottom:1px solid #999;cursor:default}
+  /* 팝업이 열려 있으면 뒤 화면은 빼고 그 팝업만 */
+  body:has(.overlay.on) > *:not(.overlay){display:none!important}
+  body:has(.overlay.on) .overlay:not(.on){display:none!important}
+  /* 표는 쪽을 넘겨도 머리행을 반복하고 한 줄이 잘리지 않게 */
+  table.daejo{font-size:9pt;width:100%!important}
+  table.daejo thead{display:table-header-group}
+  table.daejo tr,.fitem,.rev-item{page-break-inside:avoid}
+  table.daejo thead th{position:static!important;box-shadow:none!important}
+  .fin-h{position:static!important}
+  #fin-body,#docpv-pages,#full-body,.preview{max-height:none!important;height:auto!important;overflow:visible!important}
+  /* 편집 칸의 점선 테두리는 인쇄에 필요 없다 */
+  [contenteditable]{outline:none!important;background:none!important}
+}
 </style>
   <!-- 프로그램 사이 이동 (공용 앱바) -->
   <script src="js/pu-appbar.js?v=1"></script>
@@ -581,6 +618,8 @@ table.daejo td.dj2{padding:0}
       <button class="stbtn" id="flt-changed" title="보기 — 바뀐 조문만 봅니다">변경 항목만</button>
       <button class="stbtn" id="flt-all" title="보기 — 전체 조문을 봅니다. 여기서 고치면 개정으로 잡혀 대조표에 들어옵니다">전체 조문</button>
       <button class="stbtn" id="wd-on" title="변경 전/후에서 바뀐 낱말만 색으로 짚어 줍니다(빠진 말=붉은 취소선, 넣은 말=파란 밑줄). 변경 후 칸을 클릭하면 표시가 걷히고 그냥 편집됩니다.">🔍 바뀐 낱말</button>
+      <button class="stbtn" id="edit-undo" disabled title="되돌리기 (Ctrl+Z)">↶</button>
+      <button class="stbtn" id="edit-redo" disabled title="다시 실행 (Ctrl+Shift+Z)">↷</button>
       <button class="stbtn" id="mode-partial" title="방식 — 기존 조번호 유지 · 신설은 가지번호(제N조의n) · 삭제는 결번">일부개정</button>
       <button class="stbtn" id="mode-full" title="방식 — 최종 순서대로 제1조부터 전면 재번호 · 삭제 조문 제외">전부개정</button>
       <button class="stbtn" id="pg-auto" title="용지 — 조문 길이를 재서 세로로도 읽을 만하면 세로, 문장이 토막나면 가로를 자동으로 씁니다">자동</button>
@@ -2823,6 +2862,56 @@ function alignedCell(it,i){
   }
   return `<td class="dj2" colspan="2"><div class="djgrid">${g}</div></td>`;
 }
+/* ══════ 실행취소 ══════
+   조문 편집은 고치는 즉시 저장된다. 자동제안이 있는 조문만 [현행유지]·[↩복원]으로 되돌릴 수 있어
+   노무사가 직접 쓴 문안을 실수로 지우면 되살릴 방법이 없었다.
+   고치기 '직전'의 CUR_ITEMS 를 통째로 담아 두고 되돌린다(조문 수십 개라도 30KB 남짓).
+   타이핑은 같은 칸을 이어 칠 때 한 덩어리로 묶는다 — 글자마다 되돌리면 못 쓴다. */
+const UNDO_MAX=40, UNDO_COALESCE=1500;
+let UNDO=[], REDO=[];
+function snapNow(){ try{ return JSON.stringify(CUR_ITEMS); }catch(e){ return null; } }
+function pushUndo(label,key){
+  if(READONLY)return;
+  const json=snapNow(); if(json==null)return;
+  const last=UNDO[UNDO.length-1];
+  /* 같은 칸을 이어 고치는 중이면 앞의 것을 유지한다 — 그래야 한 번에 되돌아간다 */
+  if(last&&key&&last.key===key&&(Date.now()-last.at)<UNDO_COALESCE){ last.at=Date.now(); return; }
+  if(last&&last.json===json)return;                   // 바뀐 게 없으면 쌓지 않는다
+  UNDO.push({json:json,label:label||"편집",key:key||"",at:Date.now()});
+  if(UNDO.length>UNDO_MAX)UNDO.shift();
+  REDO=[];                                            // 새로 고치면 다시실행 갈래는 버린다
+  syncUndoBtn();
+}
+function applySnap(json){
+  const arr=JSON.parse(json);
+  CUR_ITEMS.length=0; arr.forEach(x=>CUR_ITEMS.push(x));   // 배열은 그대로 두고 내용만 갈아 끼운다
+  renderEditor(); refreshDaejoSub(); saveWorkState();
+}
+function doUndo(){
+  if(READONLY||!UNDO.length)return;
+  const cur=snapNow(), e=UNDO.pop();
+  if(cur!=null)REDO.push({json:cur,label:e.label});
+  applySnap(e.json); syncUndoBtn(); undoToast("되돌렸습니다 — "+e.label);
+}
+function doRedo(){
+  if(READONLY||!REDO.length)return;
+  const cur=snapNow(), e=REDO.pop();
+  if(cur!=null)UNDO.push({json:cur,label:e.label,key:"",at:Date.now()});
+  applySnap(e.json); syncUndoBtn(); undoToast("다시 실행 — "+e.label);
+}
+function undoToast(msg){
+  let el=$("undo-toast");
+  if(!el){ el=document.createElement("div"); el.id="undo-toast"; document.body.appendChild(el); }
+  el.textContent=msg; el.className="on";
+  clearTimeout(undoToast._t); undoToast._t=setTimeout(()=>{ el.className=""; },1800);
+}
+function syncUndoBtn(){
+  const u=$("edit-undo"), r=$("edit-redo");
+  if(u){ u.disabled=READONLY||!UNDO.length;
+    u.title=UNDO.length?("되돌리기 (Ctrl+Z) — 직전: "+UNDO[UNDO.length-1].label):"되돌릴 것이 없습니다"; }
+  if(r){ r.disabled=READONLY||!REDO.length;
+    r.title=REDO.length?"다시 실행 (Ctrl+Shift+Z)":"다시 실행할 것이 없습니다"; }
+}
 function renderEditor(){
   const t=$("daejo-tbl");
   t.innerHTML='<thead><tr><th style="width:14%">조문 / 처리</th><th style="width:'+(RZ_NONE?"43":"33.5")+'%">현행 (변경 전)</th><th style="width:'+(RZ_NONE?"43":"33.5")+'%">변경 후 (클릭하여 편집)</th>'
@@ -2889,6 +2978,7 @@ function renderEditor(){
   // 항 단위로 나뉜 칸을 고치면 같은 조문의 칸들을 순서대로 다시 합쳐 저장(항은 줄바꿈으로 구분)
   tb.querySelectorAll(".dja.editable").forEach(el=>el.addEventListener("input",()=>{
     const i=+el.dataset.i;
+    pushUndo("조문 문안 수정","dja"+i+"_"+el.dataset.p);   // 같은 칸 연속 타이핑은 한 덩어리
     const parts=[...tb.querySelectorAll('.dja.editable[data-i="'+i+'"]')].map(x=>x.innerText.replace(/\s+$/,"")).filter(x=>x.trim());
     CUR_ITEMS[i].after=parts.join("\n"); refreshDaejoSub(); saveWip();   // 타이핑도 임시저장
   }));
@@ -2903,6 +2993,7 @@ function renderEditor(){
   });
   // 변경이유 직접 편집 — 저장값(reasonEdit)에 담아 문서에 그대로 반영
   tb.querySelectorAll(".rzedit").forEach(el=>el.addEventListener("input",()=>{
+    pushUndo("변경이유 수정","rz"+el.dataset.i);
     CUR_ITEMS[+el.dataset.i].reasonEdit=el.innerText.trim(); saveWorkState();
   }));
   tb.querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>{
@@ -2914,6 +3005,10 @@ function renderEditor(){
       return;
     }
     if(READONLY)return;   // 열람 전용 — 남의 완료본은 고치지 않는다
+    const ACTNAME={up:"순서 위로",down:"순서 아래로","rz-add":"변경이유에 근거 넣기",
+      "rz-clear":"변경이유 비우기",optin:"신설 여부",numok:"위치·번호 확인",
+      del:"삭제/삭제취소",revert:"현행유지",restore:"자동제안 복원",userec:"추천 위치로"};
+    pushUndo(ACTNAME[b.dataset.act]||"편집");
     if(b.dataset.act==="up"){moveItem(it,-1);return;}
     if(b.dataset.act==="down"){moveItem(it,1);return;}
     if(b.dataset.act==="rz-add"){   // 근거·검토권고를 변경이유에 덧붙이기
@@ -2932,8 +3027,10 @@ function renderEditor(){
     renderEditor();
   });
   tb.querySelectorAll("select.possel").forEach(s=>s.onchange=()=>{
-    if(READONLY)return; CUR_ITEMS[+s.dataset.i].insertAfter=s.value; renderEditor(); });
+    if(READONLY)return; pushUndo("신설 위치 변경");
+    CUR_ITEMS[+s.dataset.i].insertAfter=s.value; renderEditor(); });
   if($("add-ins"))$("add-ins").disabled=RO;   // 열람 전용에서는 신설 추가도 막는다
+  syncUndoBtn();
   $("flt-changed").className="stbtn"+(CUR_FILTER==="changed"?" on-adopt":"");
   $("flt-all").className="stbtn"+(CUR_FILTER==="all"?" on-adopt":"");
   if($("mode-partial"))$("mode-partial").className="stbtn"+(REV_MODE==="partial"?" on-adopt":"");
@@ -2985,6 +3082,18 @@ $("inc-note").addEventListener("click",()=>{INC_NOTE=!INC_NOTE;renderEditor();sa
 $("wd-on").addEventListener("click",()=>{
   WD_ON=!WD_ON; try{ localStorage.setItem(WD_KEY,WD_ON?"1":"0"); }catch(e){}
   renderEditor();
+});
+$("edit-undo").addEventListener("click",doUndo);
+$("edit-redo").addEventListener("click",doRedo);
+/* Ctrl+Z / Ctrl+Shift+Z — 조문 편집 화면이 열려 있을 때만 가로챈다.
+   브라우저 기본 되돌리기는 화면(DOM)만 되돌려 CUR_ITEMS 와 어긋나므로 우리 것이 이겨야 한다. */
+document.addEventListener("keydown",e=>{
+  if(!(e.ctrlKey||e.metaKey))return;
+  const k=String(e.key||"").toLowerCase();
+  if(k!=="z"&&k!=="y")return;
+  const ov=$("ov-daejo"); if(!ov||!ov.classList.contains("on"))return;
+  e.preventDefault();
+  if(k==="y"||e.shiftKey)doRedo(); else doUndo();
 });
 /* [⋯ 더보기] 서랍 — 바깥을 누르거나 Esc 로 닫는다 */
 $("tb-more").addEventListener("click",e=>{
