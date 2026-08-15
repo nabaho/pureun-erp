@@ -61,6 +61,15 @@ test('★ Firebase 배포 설정이 실시간DB 규칙을 건드리지 않는다
     'firebase.json 에 database 항목이 있으면 배포가 살아 있는 규칙을 덮어써 여러 앱이 먹통이 됩니다.');
 });
 
+/* 콘솔에 붙여넣는 파일이 원본이므로, 건의함이 관리자 전용인지는 그 파일에서 확인한다. */
+test('붙여넣기용 규칙에서 건의 원문·메타는 관리자만 읽는다', () => {
+  const rules = JSON.parse(fs.readFileSync(
+    path.resolve(__dirname, '..', 'docs', 'firebase-rules-급여데이터함-포함(붙여넣기용).json'), 'utf8')).rules;
+  for (const node of ['suggestions_private', 'suggestions_meta_private']) {
+    assert.match(rules[node]['.read'], /isAdmin'\)\.val\(\) == true/, node + ' 읽기는 관리자 전용이어야 한다');
+  }
+});
+
 test('건의 원문과 처리결과는 상위 data 권한의 영향을 받지 않는 비공개 경로를 사용한다', () => {
   assert.match(html, /SG_PRIVATE_PATH = 'suggestions_private'/);
   assert.match(html, /SG_META_PRIVATE_PATH = 'suggestions_meta_private'/);
