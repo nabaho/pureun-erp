@@ -149,9 +149,22 @@ test('★ 칸에 몇 쪽짜리인지 적는다', () => {
 });
 
 test('★ 걸러본 결과에 접기를 실제로 건다', () => {
+  /* ⚠ 「return foldDocs(list);」 라는 **글자 그대로**를 보던 검사였다.
+     2026-08-15 제목순 정렬이 들어오며 접은 결과를 한 번 변수에 받게 되자
+     멀쩡한 코드에서 터졌다. 볼 것은 모양이 아니라 **접은 것을 돌려주는가** 다. */
   const f = fnOf(app, 'shownItemsFresh');
-  assert.match(f, /return foldDocs\(list\);/,
+  assert.match(f, /foldDocs\(list\)/, '접기를 아예 안 겁니다');
+  assert.doesNotMatch(f, /return list;/,
     '만들어만 두고 안 걸면 목록은 그대로 흩어져 보입니다');
+});
+
+test('★ 제목순으로 견주는 것은 접은 뒤다 — 쪽이 따로 흩어지면 안 된다', () => {
+  /* 여러 쪽 문서는 대표 한 칸으로 접힌다. 접기 전에 정렬하면 2쪽·3쪽이
+     제 자리를 잡았다가 접히며 사라져 묶음 장수가 어긋난다. */
+  const f = fnOf(app, 'shownItemsFresh');
+  const fold = f.indexOf('foldDocs(list)');
+  const sort = f.indexOf('comparePhotosByTitle');
+  assert.ok(fold > 0 && sort > fold, '★ 접기보다 먼저 정렬하면 쪽이 흩어집니다');
 });
 
 /* ── ③ 나누기·묶기 ── */
