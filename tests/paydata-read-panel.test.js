@@ -448,9 +448,11 @@ function loadSave(existing, confirmYes, opts) {
         rows: opts.rows || [{ name: '배영승', pairs: [{ item: '유급일수', value: '3일' }] }] }
     }) + ';',
     'App.render = function(){};',
+    DOLLAR[0],
     cut('esc'), cut('canWrite'), cut('findRow'), cut('saveVals'), cut('valueGridModel'),
+    cut('editVal'), cut('refreshIffyMarks'),
     'window.App = App; window.saveVals = saveVals; window.__got = function(){ return __saved; };',
-    'window.valueGridModel = valueGridModel;'
+    'window.valueGridModel = valueGridModel; window.editVal = editVal;'
   ].join('\n'), { filename: 'save.js' }).runInContext(sandbox);
   return { W: sandbox.window, calls };
 }
@@ -494,6 +496,41 @@ test('★ 저장한 값은 확인된 값으로 들어간다 — 노란 표시가
     '사람이 확인하고 저장했는데 「확인 안 됨」으로 남습니다 — 값 표가 계속 노랗습니다');
   const g = W.valueGridModel(afterSave({}, up));
   assert.equal(g.people[0].cells['유급일수'].confirmed, true, '값 표에서도 확인된 값이어야 합니다');
+});
+
+/* ══════ AI가 「못 읽었다」고 한 줄은 저장 경계를 넘어도 살아 있어야 한다
+   (2026-08-15) ══════
+   근태표 스무 줄 중 이옥자 줄만 판독기가 흐려서 못 읽었다고 표시했다. 사람이
+   그 줄은 보지 않고 다른 줄(배영승)만 원본과 견줘 고친 뒤 「저장」을 누르는
+   보통의 흐름을 그대로 흉내 낸다 — buildValueRows 뿐 아니라 saveVals →
+   valueGridModel 까지 실제로 거쳐서, 값 표에 뜨는 노란 칸까지 확인한다. */
+test('★ 손대지 않은 iffy 줄은 저장해도 값 표에서 노랗게 남고, 손댄 줄은 하얗게 걷힌다', async () => {
+  const { W } = loadSave({}, false, { rows: [
+    { name: '이옥자', pairs: [{ item: '유급일수', value: '5일' }], iffy: true },   // 사람이 손대지 않는다
+    { name: '배영승', pairs: [{ item: '유급일수', value: '3일' }], iffy: true }    // 사람이 원본과 견줘 고친다
+  ] });
+  W.editVal(1, 'value', '4일', 0);   // 배영승 줄만 고쳤다 — editVal 이 iffy 를 false 로 내린다
+  assert.equal(W.App.readState.rows[0].iffy, true, '이옥자 줄은 그대로 iffy 여야 시험이 뜻이 있습니다');
+  assert.equal(W.App.readState.rows[1].iffy, false);
+
+  W.saveVals();
+  await new Promise(r => setTimeout(r, 10));
+  const up = W.__got();
+  assert.ok(up, '저장되지 않았습니다');
+  const saved = Object.values(up);
+  const 이옥자값 = saved.find(r => r.name === '이옥자');
+  const 배영승값 = saved.find(r => r.name === '배영승');
+  assert.equal(이옥자값.confirmed, false,
+    'AI가 못 읽었다고 한 줄을 사람이 보지도 않았는데 저장 한 번으로 확인됨이 되면, ' +
+    '그 숫자가 그대로 더존에 들어가도 아무도 못 잡습니다');
+  assert.equal(배영승값.confirmed, true,
+    '사람이 원본과 견줘 고친 줄까지 계속 확인 안 됨으로 남으면 노란 칸이 안 걷힙니다');
+
+  const g = W.valueGridModel(afterSave({}, up));
+  const 이옥자칸 = g.people.find(p => p.name === '이옥자').cells['유급일수'];
+  const 배영승칸 = g.people.find(p => p.name === '배영승').cells['유급일수'];
+  assert.equal(이옥자칸.confirmed, false, '값 표에서도 손대지 않은 이 칸은 노랗게 떠야 합니다');
+  assert.equal(배영승칸.confirmed, true, '값 표에서 손댄 이 칸은 하얗게 보여야 합니다');
 });
 
 test('★ 같은 서류를 다시 읽으면 묻는다', async () => {

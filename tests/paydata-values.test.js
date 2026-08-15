@@ -199,6 +199,41 @@ test('★ 사람이 받아들이지 않은 값은 여전히 확인 안 됨으로
     '기계가 만들기만 한 값까지 확인된 것으로 두면 표시 자체가 뜻이 없어집니다'));
 });
 
+/* ══════ 저장 경계에서 iffy 가 사라지면 안 된다 (2026-08-15) ══════
+   판독기(js/pu-doc-read.js)는 흐려서 못 읽은 줄에 note 「일부 판독 불확실」을
+   달고, rowsFromRead 가 그것을 값 줄의 iffy 로 옮겨 판독 패널까지 노랗게 살려
+   보낸다(위 isIffyNote 머리말). 그런데 saveVals 는 통째로 confirmed:true 인
+   tag 하나만 buildValueRows 에 건넨다 — 스무 줄 중 AI가 못 읽었다고 한 한 줄만
+   골라 false 로 남기는 것은 여기, buildValueRows 안에서만 할 수 있다.
+   여기서 p.iffy 를 안 보면, 사람이 그 줄을 보지도 않았는데 「저장」 한 번으로
+   확인됨이 되어 노란 칠이 걷힌다 — 값 표도 「확인 안 된 값 0개」로 읽혀,
+   AI가 스스로 못 읽었다고 한 그 숫자가 그대로 더존에 들어간다. */
+
+test('★ AI가 못 읽었다고 한 줄(iffy)은 저장 확인을 받아도 확인됨이 되지 않는다', () => {
+  const S = loadStore();
+  const parsed = { rows: [
+    { name: '이옥자', pairs: [{ item: '유급일수', value: '5일' }], iffy: true }
+  ] };
+  const rows = S.buildValueRows(parsed,
+    { sourceId: 'a1', companyId: 'co_1', month: '2026-08', at: 1, confirmed: true });
+  assert.equal(rows[0].confirmed, false,
+    'tag.confirmed 가 true 여도 이 줄은 AI 스스로 못 읽었다고 한 줄입니다 — ' +
+    '사람이 보지도 않았는데 확인됨이 되면 노란 칠이 걷혀 다시 못 찾습니다');
+});
+
+test('iffy 가 아닌 줄(사람이 고쳤거나 AI가 확신한 줄)은 같은 저장으로 확인됨이 된다', () => {
+  const S = loadStore();
+  const parsed = { rows: [
+    { name: '홍길동', pairs: [{ item: '기본급', value: '3,200,000' }], iffy: false },
+    { name: '김철수', pairs: [{ item: '기본급', value: '2,800,000' }] }   // iffy 자체가 없는 줄도 같다
+  ] };
+  const rows = S.buildValueRows(parsed,
+    { sourceId: 'a1', companyId: 'co_1', month: '2026-08', at: 1, confirmed: true });
+  rows.forEach(r => assert.equal(r.confirmed, true,
+    '같은 저장인데 iffy 만 다르다고 이 줄까지 확인 안 됨으로 남으면, ' +
+    '스무 명 중 확실한 열아홉 줄까지 매달 다시 들여다봐야 합니다'));
+});
+
 test('줄 하나만 따로 확인 처리하는 길은 두지 않는다 — 부르는 곳이 없었다', () => {
   const S = loadStore();
   assert.equal(S.confirmValue, undefined,
