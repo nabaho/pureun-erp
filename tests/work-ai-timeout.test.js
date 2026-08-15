@@ -133,6 +133,19 @@ test('실패하면 갇힌 화면이 풀린다', () => {
   assert.match(src, /<button onclick="closeM\(\)">닫기<\/button>/);
 });
 
-test('설정이 없으면 부르기 전에 말해 준다 (종전 그대로)', () => {
-  assert.match(grab('aiCall'), /AI 프록시 주소가 없습니다 — 푸른이알피 설정에서 먼저 등록하세요/);
+test('★ 설정이 없으면 «어디에» 넣는지까지 말해 준다', () => {
+  // 그 칸은 포털의 ⚙ 설정에만 있다(관리자 전용). 푸른이알피 설정을 가리키면
+  // 찾다가 못 찾고 포기한다 — 실제로 대표가 「어떻게 하는 건지 모르겠다」고 했다.
+  const c = grab('aiCall');
+  assert.match(c, /시작 화면\(포털\) 왼쪽 아래 \[⚙ 설정\] → 「AI 프록시 주소」/);
+  assert.match(c, /대표만 보입니다/, '직원이 찾아 헤매지 않게');
+  assert.ok(!/푸른이알피 설정에서 먼저 등록/.test(c), '푸른이알피에는 그 칸이 없다');
+});
+
+test('가리키는 곳이 실제로 있다', () => {
+  // 안내가 가리키는 칸이 포털에 정말 있는지 — 없으면 안 되는 걸 시키는 셈이다
+  const portal = fs.readFileSync(path.join(__dirname, '..', 'enter.html'), 'utf8');
+  assert.match(portal, /<label for="cfgProxy">AI 프록시 주소<\/label>/);
+  assert.match(portal, /\['cfgProxy','aiProxyUrl'\]/, '넣은 값이 app_config 로 저장돼야 한다');
+  assert.match(portal, /id="cfgFab"[^>]*>⚙ 설정/, '왼쪽 아래 ⚙ 설정 단추');
 });
