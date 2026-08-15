@@ -4161,7 +4161,18 @@ var SUB_RULE={
   '2023':{ per_worker:930000, apply_period:'상반기 (연도별 공고 확인)', rubric:'2024' },
   '2022':{ per_worker:888000, apply_period:'상반기 (연도별 공고 확인)', rubric:'2024' }
 };
-function subRule(y){ return SUB_RULE[String(y)]||SUB_RULE['2025']; }
+/* 모르는 해 — 종전에는 2025년 규칙을 그대로 돌려주어, 2027년 화면에도
+   「접수: 상반기 3.4.~4.18.」 이 **사실처럼** 떴다. 그대로 믿으면 접수 시기를 놓친다.
+   셈은 가장 가까운 해의 1인당 단가로 하되, 어느 해 기준인지와 «미확인»임을 화면에 적는다. */
+function subRule(y){
+  var k=String(y); if(SUB_RULE[k]) return SUB_RULE[k];
+  var ys=Object.keys(SUB_RULE).map(Number).sort(function(a,b){ return a-b; });
+  var n=Number(y)||0, near=ys[0];
+  ys.forEach(function(v){ if(Math.abs(v-n)<Math.abs(near-n)) near=v; });
+  var b=SUB_RULE[String(near)];
+  return {per_worker:b.per_worker, rubric:b.rubric, unconfirmed:near,
+          apply_period:k+'년 시행계획 미확인 — 근로복지넷 공고를 확인하세요 ('+near+'년 단가로 셈함)'};
+}
 // 지원요건(출연 주체)별 구간 한도 — 고시 제8·9조
 var SUB_REQ=[['1','둘 이상의 기업이 공동기금에 출연'],['2','대기업(원청)이 중소기업 공동기금에 출연'],['3','지방자치단체가 중소기업 공동기금에 출연']];
 var SUB_BAND={ '1':[200000000,500000000,1000000000,2000000000],     // 2억·5억·10억·20억 (기간 3·3·4·5년)
@@ -5841,11 +5852,17 @@ function buildClosingWb(fid,yr,arr,prevA,rep,sites,welf){
   s=wb.addWorksheet('1-3 이익잉여금처분계산서'); _xlWidths(s,[3,34,18,18]);
   _xlTitle(s,'이익잉여금처분계산서',4);
   _xlHead(s,4,['과목',yr+'년(당기)',(yr-1)+'년(전기)']); rw=5;
-  _xlRow(s,rw++,['Ⅰ. 미처분이익잉여금',fin.retained,prv.retained]);
-  _xlRow(s,rw++,['  1) 전기이월이익잉여금',num((fin.opening||{}).retained)||0,num((prv.opening||{}).retained)||0]);
-  _xlRow(s,rw++,['  2) 당기순이익',fin.net,prv.net]);
-  _xlRow(s,rw++,['Ⅱ. 이익잉여금처분액',0,0]);
-  _xlRow(s,rw++,['Ⅲ. 차기이월이익잉여금',fin.retained,prv.retained],{bold:true});
+  /* 결손이면 이름을 바꿔 **양수로** 적는다 — 재무제표에는 음수가 나오지 않아야 한다.
+     화면 재무제표는 _retLabel/_retVal 로 이미 그렇게 하고 있었는데 워크북만 원값을 썼다.
+     G사내 2025(결손금 37,079원 이월)처럼 결손이 있는 기금은 제출 서류에 음수가 찍혔다.
+     당기·전기의 방향이 다를 수 있으므로 이름은 **당기 기준**으로 적는다. */
+  var _rl=_retLabel(fin.retained)==='이월결손금';
+  _xlRow(s,rw++,[_rl?'Ⅰ. 미처리결손금':'Ⅰ. 미처분이익잉여금',_retVal(fin.retained),_retVal(prv.retained)]);
+  var _op=num((fin.opening||{}).retained)||0, _opP=num((prv.opening||{}).retained)||0;
+  _xlRow(s,rw++,[(_op<0?'  1) 전기이월결손금':'  1) 전기이월이익잉여금'),_retVal(_op),_retVal(_opP)]);
+  _xlRow(s,rw++,[(fin.net<0?'  2) 당기순손실':'  2) 당기순이익'),_retVal(fin.net),_retVal(prv.net)]);
+  _xlRow(s,rw++,[_rl?'Ⅱ. 결손금처리액':'Ⅱ. 이익잉여금처분액',0,0]);
+  _xlRow(s,rw++,[_rl?'Ⅲ. 차기이월결손금':'Ⅲ. 차기이월이익잉여금',_retVal(fin.retained),_retVal(prv.retained)],{bold:true});
 
   // ⑨ 익년도 사업계획서 · ⑩ 예산편성안 — 당기 실적을 기준선으로 깔고 예산칸은 비워 둔다
   s=wb.addWorksheet('2.익년도사업계획서'); _xlWidths(s,[3,34,18,18,30]);
@@ -5861,8 +5878,13 @@ function buildClosingWb(fid,yr,arr,prevA,rep,sites,welf){
   _xlHead(s,4,['과목',yr+'년 결산',(yr+1)+'년 예산','증감']); rw=5;
   _xlRow(s,rw++,['수입 — 기금운용 수익',fin.interest,null,null]);
   _xlRow(s,rw++,['수입 — 출연금',R.bf.employer+R.bf.other,null,null]);
-  _xlRow(s,rw++,['수입 — 이월금',fin.retained,null,null]);
-  _xlRow(s,rw++,['수입 합계',fin.interest+R.bf.employer+R.bf.other+fin.retained,null,null],{bold:true});
+  /* 결손금은 «수입»이 아니다 — 전기에서 넘어온 **보전해야 할 것**이라 수입에 음수로 넣으면
+     수입 합계가 그만큼 줄어 예산이 실제보다 작아 보인다. 이월금은 잉여일 때만 적고,
+     결손이면 아래에 따로 적어 «보전해야 한다»는 사실을 눈에 보이게 둔다. */
+  var _carry=Math.max(0,fin.retained), _loss=Math.max(0,-fin.retained);
+  _xlRow(s,rw++,['수입 — 이월금',_carry,null,null]);
+  _xlRow(s,rw++,['수입 합계',fin.interest+R.bf.employer+R.bf.other+_carry,null,null],{bold:true});
+  if(_loss) _xlRow(s,rw++,['(전기 이월결손금 — 잉여가 생기면 먼저 보전)',_loss,null,null]);
   _xlRow(s,rw++,['지출 — 목적사업비',fin.purpose,null,null]);
   _xlRow(s,rw++,['지출 — 일반관리비',fin.admin,null,null]);
   _xlRow(s,rw++,['지출 합계',fin.purpose+fin.admin,null,null],{bold:true});

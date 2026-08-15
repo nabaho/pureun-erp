@@ -66,6 +66,25 @@ const titleLine = (src.split(/\r?\n/).find(l => l.startsWith('var FM_TITLE=')) |
 });
 
 // ── ⑤ 지원금 — 연도별 1인당 한도(시행계획으로 확인한 값) ──
+/* ══ 결산서 워크북에도 음수가 나오면 안 된다 ══
+   화면 재무제표는 _retLabel/_retVal 로 이름을 바꿔 양수로 적는데 워크북 세 곳만 원값을 썼다.
+   결손금 이월 기금(실제 사례 있음)은 **제출 서류에 음수가 찍혔다**. */
+ok('워크북 처분계산서도 이름을 바꿔 양수로', src.includes("_rl?'Ⅰ. 미처리결손금':'Ⅰ. 미처분이익잉여금'")
+  && src.includes("_rl?'Ⅲ. 차기이월결손금':'Ⅲ. 차기이월이익잉여금'"));
+ok('워크북 처분계산서에 원값을 안 쓴다',
+  !src.includes("['Ⅰ. 미처분이익잉여금',fin.retained,prv.retained]")
+  && !src.includes("['Ⅲ. 차기이월이익잉여금',fin.retained,prv.retained]"));
+ok('당기순손실도 이름을 바꾼다', src.includes("(fin.net<0?'  2) 당기순손실':'  2) 당기순이익')"));
+/* 결손금은 «수입»이 아니다 — 수입에 음수로 넣으면 수입 합계가 그만큼 줄어 예산이 작아 보인다 */
+ok('예산편성안 이월금은 잉여일 때만', src.includes('var _carry=Math.max(0,fin.retained), _loss=Math.max(0,-fin.retained);')
+  && src.includes("_xlRow(s,rw++,['수입 — 이월금',_carry,null,null]);")
+  && src.includes('fin.interest+R.bf.employer+R.bf.other+_carry'));
+ok('이월결손금은 따로 적어 눈에 보이게', src.includes('전기 이월결손금 — 잉여가 생기면 먼저 보전'));
+/* 모르는 해에 2025년 규칙을 그대로 돌려주면, 2027년 화면에도 「접수: 상반기 3.4.~4.18.」 이
+   사실처럼 뜬다 — 그대로 믿고 접수 시기를 놓친다. 가장 가까운 해로 셈하되 «미확인»이라고 말한다. */
+ok('모르는 해는 미확인이라고 말한다', !src.includes("return SUB_RULE[String(y)]||SUB_RULE['2025'];")
+  && src.includes("apply_period:k+'년 시행계획 미확인")
+  && src.includes('if(Math.abs(v-n)<Math.abs(near-n)) near=v;'));
 ok('2025년 1인당 한도 930,000', /'2025':\{ per_worker:930000/.test(src));
 ok('2024년 1인당 한도 930,000', /'2024':\{ per_worker:930000/.test(src));
 ok('2022년 1인당 한도 888,000', /'2022':\{ per_worker:888000/.test(src));
