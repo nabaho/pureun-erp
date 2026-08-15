@@ -614,6 +614,59 @@ exports.sendMaterialMail = functions
 //   1분마다 돌리면 그만큼 요금이 붙고, 메일은 5분 늦어도 탈이 없다.
 // ⚠ 꺼낼 때 먼저 「보내는 중」으로 찜하고 보낸다. 안 그러면 앞 회차가 아직
 //   보내는 중인데 다음 회차가 같은 것을 또 집어 두 통이 나간다.
+// ═══ 여러 곳에 「한 통씩」 보내기 (2026-08-15, 대표 지시: 300곳 미만) ═══
+// ⚠ 여기서는 **보내지 않는다.** 받는 곳마다 예약 한 건씩을 자리에 담아 두기만 하고,
+//   실제 발송은 이미 돌고 있는 sendScheduledMail 이 5분마다 20통씩 빼 간다.
+//   새 발송기를 만들면 두 곳에서 같은 메일을 보낼 위험이 생긴다.
+// ⚠ 한꺼번에 쏟지 않는 것이 이 기능의 핵심이다 — 다음메일은 대량 발송용 계정이
+//   아니라 몰아 보내면 막히고, 막히면 평소 자료 발송까지 멈춘다.
+const MB = require("./mail-bulk");
+
+exports.sendBulkMail = functions
+  .region(MAIL_REGION)
+  .runWith({ timeoutSeconds: 120, memory: "512MB" })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
+
+    // ★ 누가 보내는지 먼저 확인한다 — 이 검사가 없으면 회사 메일이 공개 발송기가 된다.
+    let sender;
+    try {
+      sender = await requireStaff(req);
+    } catch (e) {
+      res.status(e.status || 401).json({ ok: false, error: String(e.message || e) });
+      return;
+    }
+
+    const body = (req.body && typeof req.body === "object") ? req.body : {};
+    const v = MB.validateBulk(body);
+    if (!v.ok) { res.status(400).json({ ok: false, error: v.error }); return; }
+
+    const db = getDatabase();
+    const now = Date.now();
+    const batchId = "b" + now.toString(36) + Math.random().toString(36).slice(2, 6);
+    const rows = MB.buildQueue(v, now, sender.email || "", batchId);
+
+    try {
+      // 한 번의 update 로 담는다 — 중간에 끊겨 «절반만 걸린» 상태가 남지 않게.
+      const upd = {};
+      rows.forEach((row) => {
+        const key = db.ref(MD.CARDS_ROOT + "/scheduled").push().key;
+        upd[key] = row;
+      });
+      await db.ref(MD.CARDS_ROOT + "/scheduled").update(upd);
+      res.json({
+        ok: true, n: rows.length, batchId: batchId,
+        skipped: v.skipped,
+        firstAt: rows[0].at, lastAt: rows[rows.length - 1].at,
+        eta: MB.etaText(rows.length, v.gapMs),
+      });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: "예약을 걸지 못했습니다: " + String((e && e.message) || e) });
+    }
+  });
+
 exports.sendScheduledMail = functions
   .region(MAIL_REGION)
   .runWith({ secrets: ["DAUM_MAIL_PASSWORD"], timeoutSeconds: 540, memory: "512MB" })

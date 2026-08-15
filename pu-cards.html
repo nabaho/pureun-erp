@@ -548,6 +548,19 @@ table.sbox td.none{text-align:center;color:#8b98b3;padding:34px 10px}
   font-size:14px;font-weight:700;cursor:pointer}
 .cpsendbtn:hover{background:#2a3a5e}
 .cpsendbtn:disabled{opacity:.4;cursor:default}
+/* ── 여러 곳에 한 통씩 (2026-08-15) ── */
+.cpbulk{display:inline-block;background:#eaf0fd;color:#1e40af;border:1px solid #c3d3f7;
+  border-radius:9px;padding:5px 12px;font-size:13px;font-weight:700}
+.cpbulk b{font-weight:800}
+.cpbulkx{margin-left:8px;font-size:11.5px;color:#8b98b3}
+.cpbulkoff{margin-left:8px;border:1px dashed #d7dfec;background:#fff;color:#8b98b3;
+  border-radius:8px;padding:4px 9px;font-size:11.5px;cursor:pointer;font-family:inherit}
+.cpbulkoff:hover{color:#c0392b;border-color:#f0c9c4}
+/* 시험 발송은 눈에 띄어야 한다 — 진짜로 보내기 전에 꼭 한 번 눌러 보라는 뜻 */
+.cptest{border-color:#bfe0c8!important;color:#166534!important;background:#f2fbf5!important;font-weight:700}
+.cptest:hover{background:#e6f6ec!important}
+/* 수신거부 중인 명함은 단추가 켜져 보인다 */
+#pcDetail .pdacts button.nomail-on{background:#fdeced;border-color:#f0c9c4;color:#c0392b}
 .cpghost{background:#fff;color:#33415e;border:1px solid #d7dfec;border-radius:9px;
   padding:9px 14px;font-size:13px;cursor:pointer}
 .cpghost:hover{background:#f2f6fc}
@@ -2621,10 +2634,148 @@ function renderCompose(){
    첨부가 붙으면 1분 넘게 걸리는 일이 있다(2026-08-10 64초). 그동안 화면이
    멈춘 것처럼 보여 다시 누르면 **같은 메일이 두 통** 나간다 — 실제로 그랬다. */
 let _sending = false;
+/* ══════ 여러 곳에 한 통씩 — 순수 로직 (테스트 대상) ══════
+   대표 지시 2026-08-15(300곳 미만). 서버(functions/mail-bulk.js)가 받는 곳마다
+   예약 한 건씩을 담고, 이미 돌고 있는 예약 발송기가 5분마다 20통씩 빼 간다.
+   여기서는 **보내기 전에 사람이 알아야 할 숫자**를 만든다. */
+
+/* 보내기 확인창에 적을 것들 — 되돌릴 수 없는 일이라 숫자를 다 보여주고 누르게 한다 */
+function bulkSummary(stat, gapSec, matNames){
+  const n = (stat && stat.ready) || 0;
+  const out = [];
+  out.push({ k:'보낼 곳', v: n.toLocaleString()+'곳' });
+  const skip = [];
+  if(stat && stat.noEmail) skip.push(`이메일 없음 ${stat.noEmail}`);
+  if(stat && stat.blocked) skip.push(`수신거부 ${stat.blocked}`);
+  if(stat && stat.dup)     skip.push(`중복 ${stat.dup}`);
+  if(skip.length) out.push({ k:'빠지는 곳', v: skip.reduce((a,b)=>a+b.replace(/\D+/g,'')*1,0)+`곳 (${skip.join(' · ')})` });
+  out.push({ k:'걸리는 시간', v: bulkEta(n, gapSec)+` (${gapSec}초에 한 통씩)` });
+  if(matNames && matNames.length) out.push({ k:'첨부', v: matNames.join(' · ') });
+  return out;
+}
+/* 서버(mail-bulk.js etaText)와 **같은 셈**이어야 한다 — 화면과 실제가 다르면 못 믿는다 */
+function bulkEta(n, gapSec){
+  const min = Math.max(1, Math.round((n * gapSec) / 60));
+  if(min < 60) return '약 '+min+'분';
+  const h = Math.floor(min/60), m = min%60;
+  return '약 '+h+'시간'+(m?' '+m+'분':'');
+}
+/* 시험 발송에 쓸 한 곳 — 첫 번째 곳으로 «실제로 나갈 모습»을 만든다.
+   ⚠ 받는 주소만 나로 바꾸고 글자는 그대로 둔다. 글자까지 바꾸면 시험한 뜻이 없다. */
+function bulkTestOne(targets, myAddr){
+  const t = (targets||[])[0];
+  if(!t || !myAddr) return null;
+  return { to: myAddr, name: t.name||'', company: t.company||'', title: t.title||'' };
+}
+/* ══════ 여러 곳에 한 통씩 — 화면 ══════ */
+
+const BULK_FN_URL = 'https://asia-northeast3-pureun-erp.cloudfunctions.net/sendBulkMail';
+const BULK_GAP_SEC = 15;   /* 통 사이 간격 — 서버 기본값과 같게 둔다 */
+
+async function postBulkMail(payload){
+  const u = firebase.auth().currentUser;
+  if(!u) throw new Error('로그인이 풀렸습니다');
+  const token = await u.getIdToken();
+  const res = await fetch(BULK_FN_URL, {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token },
+    body: JSON.stringify(payload)
+  });
+  let j=null; try{ j = await res.json(); }catch(_){}
+  if(!res.ok || !j || !j.ok) throw new Error((j&&j.error) || ('서버 응답 '+res.status));
+  return j;
+}
+
+/* ⋯ 메뉴에서 — 고른 명함들을 받는 곳으로 삼아 메일 쓰기로 간다 */
+function bulkMailStart(){
+  const r = selMailPick(); if(!r) return;
+  const tpl = matMailCfg();
+  _compose = {
+    cardId:'', to:'', cc:'', bcc:'',
+    subject: tpl.subject || '', body: tpl.body || '',
+    ids: [], files: [], picking: true,
+    bulk: r.ok, bulkStat: r.stat
+  };
+  state.view='mail'; state.mailSent=false; render();
+  toast(`📧 ${r.ok.length.toLocaleString()}곳을 받는 곳으로 잡았습니다 — 제목·본문에 {회사} {이름} 을 넣으면 곳마다 바뀝니다`, 9000);
+}
+
+/* 묶음을 풀고 보통 메일로 — 잘못 눌러 들어왔을 때 나갈 길이 있어야 한다 */
+function bulkCancel(){
+  grabCompose();
+  if(!_compose) return;
+  delete _compose.bulk; delete _compose.bulkStat;
+  renderMailPage();
+  toast('묶음을 풀었습니다 — 받는 사람을 직접 적어 보내세요');
+}
+
+/* ② 수신거부 — 「보내지 마세요」 회신이 오면 그 명함에서 바로 끈다.
+   ⚠ 명함에 표시(noMail)한다. 주소 목록(config/mailBlock)과 둘 다 보므로
+     어느 쪽으로 넣어도 단체 발송에서 빠진다(mailTargets). */
+function toggleNoMail(id){
+  const it = state.items[id]; if(!it) return;
+  const on = !it.noMail;
+  if(on && !confirm(`「${it.name||it.company||'이 명함'}」을 수신거부로 표시합니다.\n\n`+
+                    `앞으로 단체 발송에서 빠집니다. 한 곳에만 보내는 메일은 그대로 됩니다.`)) return;
+  it.noMail = on ? true : null;
+  Store.put(it);
+  toast(on ? '🚫 수신거부로 표시했습니다 — 단체 발송에서 빠집니다'
+           : '수신거부를 풀었습니다', 6000);
+  if(document.body.classList.contains('pc')) openPcDetail(id); else openDetail(id);
+}
+/* 고른 명함을 한꺼번에 — 회신이 여러 곳에서 오면 하나씩 열기 번거롭다 */
+function selNoMail(){
+  const ids = Object.keys(state.sel); if(!ids.length) return toast('명함을 먼저 선택하세요');
+  if(!confirm(`고른 ${ids.length}개를 수신거부로 표시합니다.\n앞으로 단체 발송에서 빠집니다.`)) return;
+  let n=0;
+  ids.forEach(id=>{ const it=state.items[id]; if(!it||it.noMail) return; it.noMail=true; Store.put(it); n++; });
+  state.sel={}; render();
+  toast(`🚫 ${n}개를 수신거부로 표시했습니다`, 6000);
+}
+
+/* ① 시험 발송 — 첫 곳 기준으로 «실제로 나갈 모습»을 나에게 한 통 */
+async function bulkTestSend(){
+  grabCompose();
+  const c=_compose; if(!c || !c.bulk) return;
+  const one = bulkTestOne(c.bulk, myEmail);
+  if(!one) return toast('시험 보낼 곳을 찾지 못했습니다');
+  if(!confirm(`첫 곳(${c.bulk[0].company||c.bulk[0].name||''}) 기준으로 만든 편지를\n`+
+              `내 주소(${myEmail})로 한 통만 보냅니다.\n\n실제 기업에는 나가지 않습니다.`)) return;
+  try{
+    await postBulkMail({ to:[one], subject:c.subject, body:c.body, matIds:c.ids, spacingSec: 5 });
+    toast('✉️ 시험 메일을 걸었습니다 — 1분 안에 내 메일함에서 확인하세요', 9000);
+  }catch(e){ toast('시험 발송 실패: '+((e&&e.message)||''), 9000); }
+}
+
+/* 진짜 보내기 */
+async function bulkSendAll(){
+  if(_sending) return toast('보내는 중입니다 — 잠시만 기다려 주세요', 5000);
+  grabCompose();
+  const c=_compose; if(!c || !c.bulk) return;
+  if(!String(c.subject||'').trim()) return toast('제목을 적어 주세요');
+  if(!String(c.body||'').trim()) return toast('본문을 적어 주세요');
+  const names = (c.ids||[]).map(id=>(_matMeta[id]||{}).name||'자료');
+  const lines = bulkSummary(c.bulkStat, BULK_GAP_SEC, names).map(x=>`· ${x.k} — ${x.v}`).join('\n');
+  if(!confirm(`${c.bulk.length.toLocaleString()}곳에 한 통씩 보냅니다.\n\n${lines}\n\n`+
+    `천천히 나가는 이유 — 한꺼번에 보내면 다음메일이 막습니다.\n`+
+    `창을 닫아도 서버가 계속 보냅니다. 진행은 「⏰ 예약한 메일」에서 보입니다.\n\n진행할까요?`)) return;
+  _sending = true; lockSendButtons(true);
+  try{
+    const r = await postBulkMail({ to:c.bulk, subject:c.subject, body:c.body,
+                                   matIds:c.ids, spacingSec: BULK_GAP_SEC });
+    _compose = null; clearDraft();
+    state.mailSent='sched'; render();
+    toast(`📨 ${r.n.toLocaleString()}곳에 걸었습니다 (${r.eta}) — 여기서 진행을 볼 수 있습니다`, 12000);
+  }catch(e){
+    toast('걸지 못했습니다: '+((e&&e.message)||''), 12000);
+  }finally{ _sending=false; lockSendButtons(false); }
+}
+
 async function sendCompose(){
   if(_sending) return toast('보내는 중입니다 — 잠시만 기다려 주세요', 5000);
   grabCompose();
   const c = _compose; if(!c) return;
+  if(c.bulk) return bulkSendAll();      /* 여러 곳에 한 통씩 — 다른 길로 간다 */
   const chk = composeCheck({ to:c.to, subject:c.subject, body:c.body,
                              bytes:attachTotal(c.ids,_matMeta,c.files) });
   if(!chk.ok) return toast(chk.error, 7000);
@@ -3749,11 +3900,15 @@ function mailWriteHtml(){
       <button class="cpsendbtn" onclick="sendCompose()" ${over?'disabled':''}>보내기</button>
       <button class="cpghost" onclick="saveDraft()">임시저장</button>
       <button class="cpghost" onclick="previewMail()">미리보기</button>
+      ${c.bulk ? `
+      <button class="cpghost cptest" onclick="bulkTestSend()"
+        title="첫 곳 기준으로 만든 편지를 내 주소로 한 통만 보냅니다 — 기업에는 안 나갑니다">✉️ 시험 발송</button>`
+      : `
       <label class="mchk" title="보낸 편지를 회사 메일로도 한 통 받습니다 (숨은참조)">
         <input type="checkbox" ${c.toMe?'checked':''} onchange="setComposeFlag('toMe',this.checked)"> 내게쓰기</label>
       <label class="mchk ${multi?'':'off'}" title="받는 사람이 여럿일 때 각자에게 따로 보냅니다 — 서로의 주소가 안 보입니다">
         <input type="checkbox" ${c.oneByOne?'checked':''} ${multi?'':'disabled'}
-          onchange="setComposeFlag('oneByOne',this.checked)"> 한명씩 발송</label>
+          onchange="setComposeFlag('oneByOne',this.checked)"> 한명씩 발송</label>`}
       <span class="mauto">${state.draftAt?'자동저장 '+state.draftAt:''}</span>
       <button class="setback" onclick="closeMailPage()">← 목록으로</button>
       <button class="mattab" onclick="toggleMailDrawer()">
@@ -3763,6 +3918,18 @@ function mailWriteHtml(){
       <div class="mmain">
         <div class="cprow"><span class="cpk">보내는사람</span>
           <span class="cpfrom">푸른노무법인 &lt;${esc(from)}&gt;</span></div>
+        ${c.bulk ? `
+        <div class="cprow" style="align-items:flex-start"><span class="cpk" style="padding-top:6px">받는사람</span>
+          <div style="flex:1">
+            <span class="cpbulk" title="한 통씩 따로 나갑니다 — 서로의 주소는 보이지 않습니다">
+              📧 고른 <b>${c.bulk.length.toLocaleString()}곳</b>에 한 통씩</span>
+            ${(function(){ const s=c.bulkStat||{}; const b=[];
+                if(s.noEmail) b.push(`이메일 없음 ${s.noEmail}`);
+                if(s.blocked) b.push(`수신거부 ${s.blocked}`);
+                if(s.dup)     b.push(`중복 ${s.dup}`);
+                return b.length ? `<span class="cpbulkx">${esc(b.join(' · '))} 제외</span>` : ''; })()}
+            <button class="cpbulkoff" onclick="bulkCancel()" title="한 곳에만 보내는 보통 메일로 돌아갑니다">✕ 묶음 풀기</button>
+          </div></div>` : `
         <div class="cprow" style="align-items:flex-start"><span class="cpk" style="padding-top:8px">받는사람</span>
           <div style="flex:1;position:relative">
             <input id="cpTo" value="${esc(c.to)}" autocomplete="off"
@@ -3773,7 +3940,7 @@ function mailWriteHtml(){
             title="숨은참조 열기·닫기">참조 <i>${state.showBcc?'⌃':'⌄'}</i></span>
           <input id="cpCc" value="${esc(c.cc||'')}" placeholder="필요할 때만 (쉼표로 여러 명)"></div>
         ${state.showBcc?`<div class="cprow"><span class="cpk">숨은참조</span>
-          <input id="cpBcc" value="${esc(c.bcc||'')}" placeholder="받는 사람에게 보이지 않습니다"></div>`:''}
+          <input id="cpBcc" value="${esc(c.bcc||'')}" placeholder="받는 사람에게 보이지 않습니다"></div>`:''}`}
         <div class="cprow"><span class="cpk">제목</span>
           <input id="cpSubj" value="${esc(c.subject||'')}"></div>
         <div class="cprow" style="align-items:flex-start"><span class="cpk" style="padding-top:8px">첨부</span>
@@ -6234,6 +6401,9 @@ function openPcDetail(id){
       <button onclick="downloadPhoto('${id}')" title="명함 원본 사진 내려받기">📥 원본 사진</button>
       <button onclick="sendToErp('${id}')" title="이 명함을 ERP 거래처로 등록">🏢 ERP 거래처</button>
       <button onclick="closeDetail();openEditor(state.items['${id}'])" title="이 명함 고치기">✏️ 수정</button>
+      <button onclick="toggleNoMail('${id}')" class="${it.noMail?'nomail-on':''}"
+        title="${it.noMail?'수신거부를 풉니다':'단체 발송에서 뺍니다 — 「보내지 마세요」 회신이 왔을 때'}"
+        >${it.noMail?'🚫 수신거부 중':'🚫 수신거부'}</button>
     </div>` : `
     <div class="pdacts three"><button onclick="copyCardInfo('${id}')" title="정보를 한 줄로 복사">📋 정보 복사</button><button onclick="downloadPhoto('${id}')" title="원본 사진 내려받기">📥 원본 사진</button><button onclick="closeDetail();openEditor(state.items['${id}'])">✏️ 수정</button></div>`;
   /* ── 한 화면에 담기(대표 지시 2026-08-10) ──
@@ -8538,8 +8708,10 @@ function openSelMore(ev){
   m.innerHTML = `
     <div class="fmi" onclick="closeFolderMenu();selPickOwner()">👤 담당자 지정</div>
     <div class="fmi" onclick="closeFolderMenu();copySelInfo()">📋 단체 복사</div>
-    <div class="fmi" onclick="closeFolderMenu();mailSel()">📧 단체 메일</div>
+    <div class="fmi" onclick="closeFolderMenu();bulkMailStart()">📧 푸른메일로 한 통씩 보내기 · ${n}곳</div>
+    <div class="fmi" onclick="closeFolderMenu();mailSel()">✉️ 내 메일앱으로 열기</div>
     <div class="fmi" onclick="closeFolderMenu();selMailCsv()">📇 주소록 내보내기</div>
+    <div class="fmi" onclick="closeFolderMenu();selNoMail()">🚫 수신거부로 표시</div>
     ${state.vtab?`<div class="fmi" onclick="closeFolderMenu();selRemoveFromTab()">🚫 탭에서 빼기</div>`:''}
     <div class="fmi danger" onclick="closeFolderMenu();delSel()">🗑 삭제 (휴지통)</div>`;
   m.style.display='block';
