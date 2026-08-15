@@ -134,7 +134,12 @@ h1{font-size:18px;margin-bottom:4px}
 .pkbar{display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12.5px;background:#FAFAFC}
 .pkbar label{display:flex;align-items:center;gap:6px;cursor:pointer}
 .pkbar .pkn{color:var(--navy);font-weight:700}
-.pkbar .pkx{margin-left:auto;padding:3px 9px}
+.pkbar .pkx{margin-left:6px;padding:3px 9px}
+/* 골랐을 때 뜨는 단추 묶음 — 오른쪽에 모아 두고 「고르기 취소」가 그 뒤에 붙는다.
+   단추가 없을 때는 이 묶음 자체가 안 그려지므로 취소가 그대로 오른쪽 끝이다. */
+.pkbar .pkacts{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+.pkbar .pkacts+.pkx{margin-left:6px}
+.pkbar .pkn+.pkx{margin-left:auto}
 
 /* ── 분류 탭 · 찾기 줄 틀고정 (사진첩과 같은 방식, 대표 지시 2026-08-13) ──
    자료가 쌓이면 아래로 내려간 뒤 탭을 누르려고 다시 맨 위로 올라와야 한다.
@@ -331,7 +336,10 @@ function pickVisible(kind) {
   if (kind === 'pending') return Object.keys(App.pending || {});
   if (kind === 'drawer') {
     const rows = drawerModel(App.itemsKeep, App.itemsMonth, App.companyId, App.kind, Date.now()).rows;
-    return searchRows(rows, App.query).map(r => r.id);
+    /* ⚠ 폴더로 거른 것까지 **똑같이** 걸러야 한다. 예전에는 찾기 줄만 걸러서,
+       폴더를 골라 세 건만 보고 있는데 「모두 고르기」가 안 보이는 것까지 골랐다.
+       한꺼번에 처리하는 단추가 생긴 지금은 안 보이는 자료가 함께 휴지통으로 간다. */
+    return searchRows(folderRows(rows, App.folderPick), App.query).map(r => r.id);
   }
   return [];
 }
@@ -345,7 +353,8 @@ function pickCancel(kind) { pickPut(kind, {}); App.render(); }
 window.pickHit = pickHit; window.pickToggleAll = pickToggleAll; window.pickCancel = pickCancel;
 
 /* 골라 둔 개수와 단추를 그리는 띠 — 목록이 늘어도 같은 모양이어야 한다.
-   acts 는 골랐을 때 보일 단추들(HTML) — 지금은 사업장 목록에 일괄 처리가 없어 빈 문자열. */
+   acts 는 **골랐을 때만** 보이는 단추들(HTML)이다. 아무것도 안 골랐으면
+   「☐ 를 눌러…」 안내만 뜬다 — 쓸 수 없는 단추를 미리 보여 주지 않는다. */
 function pickBar(kind, ids, acts) {
   const sel = pickPrune(pickOf(kind), ids); pickPut(kind, sel);
   const on = pickList(sel, ids);
@@ -696,7 +705,11 @@ function screenSites() {
 
   h += '<div class="card">';
   if (m.rows.length) {
-    h += pickBar('sites', siteIds, '');   // pruning·저장까지 여기서 한다
+    /* 사업장 목록에는 지울 것도 옮길 것도 없다. 실제로 필요한 일은
+       「누가 아직 안 보냈나」를 추려 밖으로 넘기는 것뿐이라 그 둘만 둔다. */
+    h += pickBar('sites', siteIds,
+      '<span class="pkacts"><button class="btn" onclick="copySiteNames()">📋 이름 복사</button>'
+      + '<button class="btn" onclick="downloadArrivalCsv()">⬇ 도착 현황 내려받기</button></span>');
     const siteSel = pickOf('sites');
     h += m.rows.map((r, i) =>
       '<div class="row' + (pickOn(siteSel, r.id) ? ' pkon' : '') + '">'
@@ -728,6 +741,40 @@ function screenSites() {
   }
   return h;
 }
+
+/* ══════ 골라서 한꺼번에 — 사업장 목록 (대표 승인 2026-08-15) ══════
+   지금 화면에 그려진 것과 **같은 식으로** 다시 뽑는다 — 미리 받아 두면
+   기준 월을 바꾼 뒤 눌렀을 때 낡은 숫자가 나간다(pickVisible 과 같은 원칙). */
+function selectedSiteRows() {
+  const myEmail = (App.me && App.me.email) || '';
+  const m = sitesModel(App.companies, App.pending, App.arrivals, App.month, Date.now(), myEmail);
+  const sel = pickOf('sites');
+  return m.rows.filter(r => pickOn(sel, r.id));
+}
+
+/* 고른 업체 이름만 복사한다 — 자료 안 온 곳을 카톡·메일로 챙길 때 그대로 붙여넣는다. */
+function copySiteNames() {
+  const rows = selectedSiteRows();
+  if (!rows.length) return;
+  const text = rows.map(r => r.name).join('\n');
+  navigator.clipboard.writeText(text).then(
+    () => alert(rows.length + '곳의 이름을 복사했습니다.'),
+    () => alert(text));     // 복사가 막힌 브라우저에서는 눈으로 옮길 수 있게 보여준다
+}
+window.copySiteNames = copySiteNames;
+
+/* 고른 업체의 그 달 도착 현황을 엑셀로. 「누가 아직 안 보냈나」를 그대로 넘긴다. */
+function downloadArrivalCsv() {
+  const rows = selectedSiteRows();
+  if (!rows.length) return;
+  const lines = [csvEsc(App.month + ' 도착 현황')]
+    .concat([['업체명', '도착', '장수'].map(csvEsc).join(',')])
+    .concat(rows.map(r => [r.name, r.arrived ? '도착' : '미도착', String(r.count)].map(csvEsc).join(',')));
+  const name = ('도착현황_' + App.month).replace(/[\\/:*?"<>|\s]+/g, '_');
+  /* ﻿ 는 BOM — 없으면 엑셀이 한글을 깨뜨린다(값 표 내려받기와 같은 방식) */
+  saveBlob(new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' }), name + '.csv');
+}
+window.downloadArrivalCsv = downloadArrivalCsv;
 
 /* ══════ 미정 대기 칸 (Task 8) ══════ */
 
@@ -799,7 +846,13 @@ function screenPending() {
   const coOpts = '<option value="">사업장 고르기</option>'
     + App.companies.map(c => '<option value="' + esc(c.id) + '">' + esc(c.name) + '</option>').join('');
 
-  h += '<div class="card">' + pickBar('pending', ids, '') + ids.map((id, i) => {
+  const pendActs = canWrite()
+    ? '<span class="pkacts">'
+      + '<button class="btn pri" onclick="bulkToDrawer()">📦 고른 것 서랍으로</button>'
+      + '<button class="btn" onclick="bulkPendingTrash()">🗑 휴지통으로</button></span>'
+    : '';
+
+  h += '<div class="card">' + pickBar('pending', ids, pendActs) + ids.map((id, i) => {
     const rec = App.pending[id];
     const g = pendTagOf(id, rec);
     const stale = S.isStalePending(rec, now);
@@ -825,18 +878,31 @@ function screenPending() {
   return h;
 }
 
+/* 그 줄에 채워져 있는 이름표를 읽는다. 화면에 그려져 있으면 화면 값이 먼저다 —
+   사람이 방금 고른 것이 언제나 가장 새롭다. 안 그려져 있으면(한꺼번에 처리할 때
+   화면 밖일 수 있다) 적어 둔 값을 쓴다(pendTagOf). */
+function pendTagLive(id, rec) {
+  const saved = pendTagOf(id, rec);
+  const co = $('co_' + id), mo = $('mo_' + id), kd = $('kd_' + id);
+  const companyId = co ? co.value : saved.companyId;
+  const hit = App.companies.filter(c => c.id === companyId)[0];
+  return {
+    companyId: companyId,
+    companyName: hit ? hit.name : '',
+    month: mo ? mo.value : saved.month,
+    kind: kd ? kd.value : saved.kind,
+    at: Date.now()
+  };
+}
+
 /* 대기 칸에서 서랍으로. 저장 층이 한 묶음으로 쓴다 —
    자료 생기기·대기 칸 지우기·도착 표시가 함께 들어간다. */
 function fileToDrawer(id) {
   if (!canWrite()) return;   // 서버가 어차피 거절하지만 이중으로 잠근다
   const rec = App.pending[id];
   if (!rec) return;
-  const coId = $('co_' + id).value;
-  const co = App.companies.filter(c => c.id === coId)[0];
-  const tag = { companyId: coId, companyName: co ? co.name : '', month: $('mo_' + id).value,
-    kind: $('kd_' + id).value, at: Date.now() };
-  let up;
-  try { up = S.drawerUpdate(id, rec, tag); }
+  const tag = pendTagLive(id, rec);
+  try { S.drawerUpdate(id, rec, tag); }
   catch (e) { alert(e.message); return; }     // 무엇이 비었는지 사람에게 알린다
   S.moveToDrawer(id, tag, rec, App.viewingUid)
     .then(() => {
@@ -850,6 +916,76 @@ function fileToDrawer(id) {
     .catch(e => alert('저장 실패: ' + (e.code || e.message) + '\n다시 시도해 주세요.'));
 }
 window.fileToDrawer = fileToDrawer;
+
+/* ══════ 골라서 한꺼번에 — 대기 칸 (대표 승인 2026-08-15) ══════
+   ☐ 는 세 목록에 진작 있었는데 골라도 할 수 있는 일이 하나도 없었다.
+   스무 건이 들어오면 「서랍으로」를 스무 번 눌러야 했다.
+
+   ⚠ 이름표가 덜 채워진 건은 **남긴다.** 사업장이나 귀속월이 비어 있으면 그 건만
+   대기 칸에 그대로 두고 나머지를 내려보낸다. 그리고 무엇이 왜 남았는지 파일 이름까지
+   적어 알린다 — 조용히 빠뜨리면 사람은 다 들어간 줄 알고 원본을 지운다.
+
+   ⚠ 쓰기는 **한 번**이다. 건마다 따로 쓰면 중간에 끊겼을 때 어디까지 갔는지
+   아무도 모른다(다중 경로 update 는 다 되거나 하나도 안 된다). */
+function bulkToDrawer() {
+  if (!canWrite()) return;
+  const ids = pickList(pickOf('pending'), Object.keys(App.pending || {}));
+  if (!ids.length) return;
+
+  const up = {}, done = [], left = [];
+  ids.forEach(id => {
+    const rec = App.pending[id];
+    if (!rec) return;
+    try {
+      const one = S.drawerUpdate(id, rec, pendTagLive(id, rec), App.viewingUid);
+      Object.keys(one).forEach(k => { up[k] = one[k]; });
+      done.push(id);
+    } catch (e) {
+      left.push((rec.filename || '(이름 없음)') + ' — ' + e.message);
+    }
+  });
+
+  if (!done.length) {
+    alert('내려보낼 수 있는 건이 없습니다 — 이름표를 채워 주세요.\n\n· ' + left.join('\n· '));
+    return;
+  }
+  if (!confirm(done.length + '건을 서랍으로 내려보낼까요?'
+    + (left.length ? '\n\n' + left.length + '건은 이름표가 덜 채워져 대기 칸에 남습니다.' : ''))) return;
+
+  db.ref().update(up).then(() => {
+    done.forEach(id => { delete App.pending[id]; delete App.pendTag[id]; });
+    pickPut('pending', {});
+    refreshArrivals();
+    App.render();
+    alert(ids.length + '건 중 ' + done.length + '건을 서랍으로 내려보냈습니다.'
+      + (left.length ? '\n\n남은 ' + left.length + '건:\n· ' + left.join('\n· ') : ''));
+  }).catch(e => alert('저장 실패: ' + (e.code || e.message) + '\n다시 시도해 주세요.'));
+}
+window.bulkToDrawer = bulkToDrawer;
+
+/* 대기 칸에서 고른 것을 휴지통으로. 서랍 자료와 지우는 길이 다르다 —
+   대기 칸 자료는 items 칸에 있지도 않다(저장 층 trashPendingUpdate 머리말). */
+function bulkPendingTrash() {
+  if (!canWrite()) return;
+  const ids = pickList(pickOf('pending'), Object.keys(App.pending || {}));
+  if (!ids.length) return;
+  if (!confirm(ids.length + '건을 휴지통으로 옮길까요?\n'
+    + S.TRASH_DAYS + '일 안에는 되살릴 수 있습니다(대기 칸으로 돌아옵니다).')) return;
+  const up = {};
+  ids.forEach(id => {
+    const rec = App.pending[id];
+    if (!rec) return;
+    const one = S.trashPendingUpdate(id, rec, App.viewingUid);
+    Object.keys(one).forEach(k => { up[k] = one[k]; });
+  });
+  db.ref().update(up).then(() => {
+    ids.forEach(id => { delete App.pending[id]; delete App.pendTag[id]; });
+    pickPut('pending', {});
+    App.trash = null;            // 다음에 휴지통을 열 때 새로 읽는다
+    App.render();
+  }).catch(e => alert('실패: ' + (e.code || e.message)));
+}
+window.bulkPendingTrash = bulkPendingTrash;
 
 function pickFiles() { $('filePick').click(); }
 window.pickFiles = pickFiles;
@@ -1187,6 +1323,52 @@ function assignFolder(id, folderId) {
     App.render();
   }).catch(e => alert('저장 실패: ' + (e.code || e.message) + '\n다시 시도해 주세요.'));
 }
+/* ══════ 골라서 한꺼번에 — 서랍 (대표 승인 2026-08-15) ══════ */
+
+/* 고른 자료를 한 폴더로 옮기거나 폴더에서 뺀다('').
+   차림표 첫 줄('__')은 안내문이라 아무 일도 하지 않는다. */
+function bulkSetFolder(folderId) {
+  if (!canWrite() || folderId === '__') return;
+  const ids = pickList(pickOf('drawer'), pickVisible('drawer'));
+  if (!ids.length) return;
+  const slot = S.isKeepKind(App.kind) ? S.KEEP : (S.monthKey(App.month) || S.KEEP);
+  const box = S.isKeepKind(App.kind) ? App.itemsKeep : App.itemsMonth;
+  S.setFolderMany(slot, ids, folderId, App.viewingUid).then(() => {
+    ids.forEach(id => { if (box && box[id]) box[id].folder = folderId || null; });
+    pickPut('drawer', {});
+    App.render();
+  }).catch(e => alert('저장 실패: ' + (e.code || e.message) + '\n다시 시도해 주세요.'));
+}
+window.bulkSetFolder = bulkSetFolder;
+
+/* 고른 자료를 한꺼번에 휴지통으로. 쓰기는 한 번이다 — 절반만 지워진 채로
+   끊기면 어디까지 갔는지 아무도 모른다. 창고 파일은 건드리지 않는다. */
+function bulkDrawerTrash() {
+  if (!canWrite()) return;
+  const ids = pickList(pickOf('drawer'), pickVisible('drawer'));
+  if (!ids.length) return;
+  if (!confirm(ids.length + '건을 휴지통으로 옮길까요?\n'
+    + S.TRASH_DAYS + '일 안에는 되살릴 수 있습니다.')) return;
+  const up = {};
+  ids.forEach(id => {
+    const rec = findRow(id);
+    if (!rec) return;
+    const one = S.trashUpdate(id, rec, App.viewingUid);
+    Object.keys(one).forEach(k => { up[k] = one[k]; });
+  });
+  db.ref().update(up).then(() => {
+    ids.forEach(id => {
+      if (App.itemsKeep && App.itemsKeep[id]) delete App.itemsKeep[id];
+      if (App.itemsMonth && App.itemsMonth[id]) delete App.itemsMonth[id];
+    });
+    pickPut('drawer', {});
+    App.trash = null;
+    refreshArrivals();     // 도착 표시도 함께 내려갔다
+    App.render();
+  }).catch(e => alert('실패: ' + (e.code || e.message)));
+}
+window.bulkDrawerTrash = bulkDrawerTrash;
+
 window.pickFolder = pickFolder; window.folderMenu = folderMenu; window.closeFolderMenu = closeFolderMenu;
 window.renameFolderAsk = renameFolderAsk; window.removeFolderAsk = removeFolderAsk;
 window.openFolderEditor = openFolderEditor; window.cancelFolderEditor = cancelFolderEditor;
@@ -1404,7 +1586,19 @@ function screenDrawer() {
   const folderOpts = folderOptionsHtml(App.folders);
   const editable = canWrite();
 
-  h += '<div class="card">' + (rows.length ? pickBar('drawer', ids, '') + rows.map((r, i) =>
+  /* 고른 뒤에 뜨는 단추 — 폴더로 옮기기·휴지통으로. 차림표는 고르고 나면
+     안내문('__')으로 되돌려 둔다. 안 되돌리면 방금 옮긴 폴더 이름이 남아
+     「지금 그 폴더에 들어 있다」처럼 보인다. */
+  const drawerActs = editable
+    ? '<span class="pkacts">'
+      + '<select class="btn" onchange="bulkSetFolder(this.value);this.value=\'__\'">'
+      + '<option value="__">📁 폴더로 옮기기…</option>'
+      + folderOptionsHtml(App.folders, '폴더에서 빼기')
+      + '</select>'
+      + '<button class="btn" onclick="bulkDrawerTrash()">🗑 휴지통으로</button></span>'
+    : '';
+
+  h += '<div class="card">' + (rows.length ? pickBar('drawer', ids, drawerActs) + rows.map((r, i) =>
     '<div class="row' + (pickOn(sel, r.id) ? ' pkon' : '') + '">'
     + '<label onclick="event.stopPropagation()"><input type="checkbox" ' + (pickOn(sel, r.id) ? 'checked' : '')
     + ' onchange="pickHit(\'drawer\',\'' + esc(r.id) + '\')"></label>'
@@ -1456,11 +1650,13 @@ window.handoffMonth = handoffMonth;
 
 /* 자료 한 줄의 「폴더 지정」 골라잡기 — 있는 폴더만 나온다. 새 폴더는 폴더 칸의
    「+ 폴더」로 만든다(그 자리에서 이름을 적는 방식 하나로 통일한다). */
-function folderOptionsHtml(folders) {
+/* firstLabel 은 「폴더 없음」 자리(값이 빈 줄)의 글자다 — 한꺼번에 옮기는
+   차림표에서는 같은 자리가 「폴더에서 빼기」라는 **행동**이 된다. */
+function folderOptionsHtml(folders, firstLabel) {
   const f = folders || {};
   const tops = Object.keys(f).filter(id => !f[id].parent)
     .sort((a, b) => (f[a].createdAt || 0) - (f[b].createdAt || 0));
-  let h = '<option value="">폴더 없음</option>';
+  let h = '<option value="">' + esc(firstLabel || '폴더 없음') + '</option>';
   tops.forEach(fid => {
     h += '<option value="' + esc(fid) + '">' + esc(f[fid].name || '') + '</option>';
     Object.keys(f).filter(id => f[id].parent === fid)
@@ -1862,7 +2058,11 @@ function screenTrash() {
     return '<div class="row">'
       + '<span class="pkno">' + (i + 1) + '</span>'
       + '<span style="flex:1">' + esc(r.filename || '(이름 없음)')
-      + '<div class="sub" style="margin:2px 0 0">' + esc(r.companyName || r.companyId || '') + '</div></span>'
+      /* 대기 칸에서 지운 것은 사업장이 없다 — 빈 줄로 두면 「업체를 못 읽었나」로
+         읽힌다. 어디서 지웠는지, 되살리면 어디로 가는지를 그대로 적는다. */
+      + '<div class="sub" style="margin:2px 0 0">'
+      + (r.fromPending ? '대기 칸에서 지움 — 되살리면 대기 칸으로'
+        : esc(r.companyName || r.companyId || '')) + '</div></span>'
       + (over ? '<span class="expbadge">30일 지남</span>' : '')
       + (canWrite() ? '<button class="btn" onclick="restoreItem(\'' + esc(id) + '\')">되살리기</button>' : '')
       + '</div>';
@@ -1879,6 +2079,13 @@ function restoreItem(id) {
     // 되살아난 칸을 다시 읽어야 서랍이 최신 자료를 본다 — 다음에 그 서랍에
     // 들어갈 때 새로 읽어 오게 캐시를 비운다.
     App.itemsKeep = null; App.itemsMonthSlot = ''; App.itemsMonth = null;
+    /* 대기 칸에서 지운 것은 대기 칸으로 돌아간다 — 그 칸도 다시 읽어야
+       「되살렸다는데 어디에도 없다」가 되지 않는다. */
+    if (rec.fromPending) {
+      const seat = seatNow();
+      S.listMyPending(seat).then(p => { if (seatSame(seat)) { App.pending = p; App.render(); } })
+        .catch(e => console.warn('[대기 칸]', e && e.code));
+    }
     refreshArrivals();   // 도착 표시가 다시 올라갔다 — 목록 숫자를 맞춘다
     App.render();
   }).catch(e => alert('실패: ' + (e.code || e.message)));

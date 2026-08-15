@@ -356,14 +356,40 @@
     return up;
   }
 
+  /* 대기 칸 자료를 휴지통으로 (2026-08-15 — 골라서 한꺼번에).
+     ⚠ trashUpdate 를 그대로 쓰면 안 된다. 그것은 **서랍** 자료를 지우는 것이라
+     items/<칸> 을 비우는데, 대기 칸 자료는 거기 있지도 않다 — pending 자리는
+     그대로 남아 휴지통과 대기 칸 **양쪽에** 같은 자료가 보이게 된다.
+     되살릴 때 어디로 돌려보낼지도 알아야 하므로 fromPending 표를 달아 둔다
+     (사업장·귀속월이 없으니 서랍으로 돌려보낼 수가 없다). */
+  function trashPendingUpdate(id, rec, owner) {
+    if (!id || !rec) throw new Error('지울 자료를 찾을 수 없습니다');
+    var t = {};
+    Object.keys(rec).forEach(function (k) { t[k] = rec[k]; });
+    t.trashedAt = Date.now();
+    t.trashedBy = deps.uid || '';
+    t.fromPending = true;
+    var up = {};
+    up[trashPath(id, owner)] = t;
+    up[pendingPath(id, owner)] = null;
+    return up;
+  }
+
   function restoreUpdate(id, rec, owner) {
     if (!id || !rec) throw new Error('되살릴 자료를 찾을 수 없습니다');
-    var slot = String(rec.month || KEEP);
     var back = {};
     Object.keys(rec).forEach(function (k) {
-      if (k !== 'trashedAt' && k !== 'trashedBy') back[k] = rec[k];
+      if (k !== 'trashedAt' && k !== 'trashedBy' && k !== 'fromPending') back[k] = rec[k];
     });
     var up = {};
+    /* 대기 칸에서 지운 것은 **대기 칸으로** 돌아간다 — 사업장·귀속월이 없어
+       서랍에 넣으면 어느 칸에도 안 걸리는 유령이 된다. */
+    if (rec.fromPending) {
+      up[pendingPath(id, owner)] = back;
+      up[trashPath(id, owner)] = null;
+      return up;
+    }
+    var slot = String(rec.month || KEEP);
     up[itemPath(slot, id, owner)] = back;
     up[trashPath(id, owner)] = null;
     if (rec.companyId && rec.kind) {
@@ -556,6 +582,18 @@
     var up = {};
     up[itemPath(slot, id, owner) + '/folder'] = folderId || null;
     return deps.db.ref().update(up);
+  }
+
+  /* 골라 둔 자료를 한꺼번에 옮긴다 — **쓰기는 한 번**이다.
+     건마다 따로 쓰면 중간에 끊겼을 때 절반만 옮겨진 채 아무도 모른다.
+     경로를 아는 곳은 이 파일 한 군데라는 원칙 때문에 화면이 아니라 여기서 만든다. */
+  function setFolderMany(slot, ids, folderId, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var list = (ids || []).filter(Boolean);
+    if (!list.length) return Promise.resolve(0);
+    var up = {};
+    list.forEach(function (id) { up[itemPath(slot, id, owner) + '/folder'] = folderId || null; });
+    return deps.db.ref().update(up).then(function () { return list.length; });
   }
 
   /* ══════ 값 층 ══════
@@ -1113,6 +1151,7 @@
     listMyDeputies: listMyDeputies,
     isActiveDeputy: isActiveDeputy,
     trashUpdate: trashUpdate,
+    trashPendingUpdate: trashPendingUpdate,
     restoreUpdate: restoreUpdate,
     listTrash: listTrash,
     trashExpired: trashExpired,
@@ -1120,6 +1159,7 @@
     renameFolder: renameFolder,
     deleteFolder: deleteFolder,
     setFolder: setFolder,
+    setFolderMany: setFolderMany,
     valueBoxPath: valueBoxPath,
     readKindFor: readKindFor,
     rowsFromRead: rowsFromRead,
