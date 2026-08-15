@@ -16,14 +16,18 @@ function loadBlock(list){
      쓰는 대로 이 함수 자신의 닫는 중괄호(줄 맨 앞 '}')에서 바로 끊는다. */
   const end = source.indexOf('\n}', at) + 2;
   assert.ok(at > 0 && end > at + 2, 'renderCoMobileList 를 찾지 못했습니다');
-  const calls = { html:'' };
+  const calls = { html:'', groupBtnHtml:'' };
   const ctx = {
     esc: s => String(s ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
-    state: { coSel:{}, selMode:false },
+    state: { coSel:{}, selMode:false, coErpOnly:false, coTag:'', coFolder:'' },
     _coFolders: {},
     coVisible: () => list,
     coTagsOf: o => Object.keys(o.tags||{}),
-    $: id => id==='list' ? { set innerHTML(v){ calls.html=v; }, get innerHTML(){ return calls.html; } } : null
+    $: id => {
+      if(id==='list') return { set innerHTML(v){ calls.html=v; }, get innerHTML(){ return calls.html; } };
+      if(id==='groupBtn') return { set innerHTML(v){ calls.groupBtnHtml=v; }, get innerHTML(){ return calls.groupBtnHtml; } };
+      return null;
+    }
   };
   vm.createContext(ctx);
   vm.runInContext(source.slice(at, end), ctx);
@@ -105,4 +109,39 @@ test('회사 키에 작은따옴표가 있어도 onclick 인자가 깨지지 않
     '작은따옴표가 백슬래시로 이스케이프된 채 coToggle 인자에 들어가야 합니다');
   assert.doesNotMatch(c2._calls.html, /onclick="coToggle\('nPapaJohn&#39;s'\)"/,
     '백슬래시 없이 그대로면 어트리뷰트 파싱 중 인자가 조기 종료됩니다');
+});
+
+/* render() 는 기업 상세 화면(state.view==='co')에서 renderSubbar() 를 건너뛰므로,
+   옆줄의 groupBtn 라벨은 renderCoMobileList() 자신이 다시 써 줘야 한다 — 안 그러면
+   명함 탭의 마지막 값(예: "전체 (6,271)")이 기업 상세 화면에서도 그대로 굳어 붙는다. */
+test('groupBtn — 아무것도 안 골랐으면 "전체"와 지금 목록 개수를 보여준다', () => {
+  const list = [
+    { key:'k1', name:'대명크라샤', bizno:'', erp:null, folder:'', cards:[], docs:0, tags:{} },
+    { key:'k2', name:'미래산업', bizno:'', erp:null, folder:'', cards:[], docs:0, tags:{} }
+  ];
+  const c = loadBlock(list);
+  c.renderCoMobileList();
+  assert.match(c._calls.groupBtnHtml, /^전체 \(2\)/);
+});
+
+test('groupBtn — 거래처만 골랐으면 그 이름을 보여준다', () => {
+  const c = loadBlock([{ key:'k1', name:'대명크라샤', bizno:'', erp:null, folder:'', cards:[], docs:0, tags:{} }]);
+  c.state.coErpOnly = true;
+  c.renderCoMobileList();
+  assert.match(c._calls.groupBtnHtml, /^거래처만 \(1\)/);
+});
+
+test('groupBtn — 태그를 골랐으면 그 태그 이름을 보여준다', () => {
+  const c = loadBlock([{ key:'k1', name:'대명크라샤', bizno:'', erp:null, folder:'', cards:[], docs:0, tags:{} }]);
+  c.state.coTag = '일터상생혁신';
+  c.renderCoMobileList();
+  assert.match(c._calls.groupBtnHtml, /^일터상생혁신 \(1\)/);
+});
+
+test('groupBtn — 폴더를 골랐으면 그 폴더 이름을 보여준다', () => {
+  const c = loadBlock([{ key:'k1', name:'대명크라샤', bizno:'', erp:null, folder:'f1', cards:[], docs:0, tags:{} }]);
+  c._coFolders = { f1:{ id:'f1', name:'현장클리닉' } };
+  c.state.coFolder = 'f1';
+  c.renderCoMobileList();
+  assert.match(c._calls.groupBtnHtml, /^현장클리닉 \(1\)/);
 });

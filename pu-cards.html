@@ -1142,7 +1142,7 @@ body.pc #pcDetail{display:flex}
 </div>
 
 <div id="subbar">
-  <button id="groupBtn" onclick="openGroupSheet()">전체 (0) <span class="v">▼</span></button>
+  <button id="groupBtn" onclick="openTopSheet()">전체 (0) <span class="v">▼</span></button>
   <div class="spacer"></div>
   <button class="subact" onclick="toggleSort()">⇅ <span id="sortLabel">등록일순</span></button>
   <button class="subact" onclick="toggleSelMode()">✎ <span id="selLabel">편집</span></button>
@@ -1172,6 +1172,7 @@ body.pc #pcDetail{display:flex}
 
 <div class="modalbg" id="addBg" onclick="if(event.target===this)this.classList.remove('open')"><div class="modal" id="addM"></div></div>
 <div class="modalbg" id="groupSheetBg" onclick="if(event.target===this)this.classList.remove('open')"><div class="modal" id="groupSheetM"></div></div>
+<div class="modalbg" id="folderSheetBg" onclick="if(event.target===this)this.classList.remove('open')"><div class="modal" id="folderSheetM"></div></div>
 <div class="modalbg" id="editorBg" onclick="if(event.target===this)tryCloseEditor()"><div class="modal" id="editorM"></div></div>
 <div class="modalbg" id="detailBg" onclick="if(event.target===this)closeDetail()"><div class="modal" id="detailM"></div></div>
 <div class="modalbg" id="setBg" onclick="if(event.target===this)setBg.classList.remove('open')"><div class="modal" id="setM"></div></div>
@@ -5121,6 +5122,37 @@ function restoreLastScreen(){
 
 /* 개인 창고 폴더도 이름이 나와야 한다 — allGroups 로 봐야 제목이 '전체'로 뭉개지지 않는다 */
 function groupName(id){ return id==='all' ? '전체' : (id==='' ? '미분류' : (allGroups()[id]?.name || '전체')); }
+
+/* 옆줄 「그룹」 자리를 명함·사업자·기업 상세가 함께 쓴다 — 탭마다 무엇을 고르는
+   시트를 열지만 다르다(대표 지시 2026-08-15, 기업 상세도 폰에 생기며 추가). */
+function openTopSheet(){
+  if(state.view==='co') openCoFolderSheet();
+  else openGroupSheet();
+}
+/* 기업 상세의 폴더·태그를 고르는 바텀시트 — 명함 탭의 openGroupSheet 과 같은 모양.
+   고른 뒤에는 기존 pickCoFolder(k) 를 그대로 부른다(render() 를 이미 통해 다시 그린다,
+   Task 6 에서 그 render() 가 폰에서도 맞게 그려지도록 손본다). */
+function openCoFolderSheet(){
+  const all = coList();
+  const erpN = all.filter(o=>o.erp).length;
+  const tags = coTagList(all);
+  const folders = Object.values(_coFolders).sort((a,b)=>(a.order||0)-(b.order||0));
+  let h = `<div class="mhead"><b>기업 상세 — 폴더/태그 선택</b><button class="iconbtn" onclick="folderSheetBg.classList.remove('open')">✕</button></div>`;
+  /* k('f:'+id, 't:'+이름)는 폴더·태그 손으로 지은 이름을 그대로 담고 있어, onclick
+     어트리뷰트에 작은따옴표가 그대로 들어가면 인자가 조기 종료된다 — esc() 앞에서
+     먼저 \\' 로 이스케이프한다(cards-co-mobile-list.test.js 가 잡아낸 같은 함정,
+     pu-cards.html ~7792·~10083 과 같은 처방). */
+  const mk=(k,label,n,on)=>`<button class="sheetbtn" onclick="folderSheetBg.classList.remove('open');pickCoFolder('${esc(String(k).replace(/'/g,"\\'"))}')">
+     ${on?'✅':'📁'} ${esc(label)}<span style="margin-left:auto;color:var(--sub);font-size:13px">${n}</span></button>`;
+  const noneOn = !state.coErpOnly && !state.coTag && !state.coFolder;
+  h += mk('', '전체', all.length, noneOn);
+  h += mk('erp', '거래처만', erpN, state.coErpOnly);
+  folders.forEach(f=> h += mk('f:'+f.id, f.name, all.filter(o=>o.folder===f.id).length, state.coFolder===f.id));
+  tags.forEach(x=> h += mk('t:'+x.t, x.t, x.n, state.coTag===x.t));
+  h += `<button class="sheetbtn" style="color:var(--orange)" onclick="folderSheetBg.classList.remove('open');openCoFolderDialog()">＋ 새 폴더 / 이알피에서 가져오기</button>`;
+  $('folderSheetM').innerHTML = h;
+  $('folderSheetBg').classList.add('open');
+}
 
 function renderSubbar(){
   const n = listItems().length;
@@ -10337,6 +10369,18 @@ function onMobileSearchInput(v){
 function renderCoMobileList(){
   const el = $('list'); if(!el) return;
   const list = coVisible();
+  /* renderSubbar() 의 groupBtn 은 이 화면(state.view==='co')에서는 render() 가 건너뛴다
+     — 그대로 두면 명함 탭의 마지막 값(예: "전체 (6,271)")이 굳어 붙어 있게 된다.
+     여기서 기업 상세의 지금 고른 것(전체/거래처만/폴더/태그)과 그 개수로 다시 쓴다
+     (대표 지시 2026-08-15, groupBtn 은 화면마다 자기 몫을 그려야 한다). */
+  const groupBtn = $('groupBtn');
+  if(groupBtn){
+    const label = state.coErpOnly ? '거래처만'
+      : state.coTag ? state.coTag
+      : state.coFolder ? ((_coFolders[state.coFolder]||{}).name || '전체')
+      : '전체';
+    groupBtn.innerHTML = `${esc(label)} (${list.length.toLocaleString()}) <span class="v">▼</span>`;
+  }
   if(!list.length){
     el.innerHTML = `<div class="empty">회사를 찾지 못했습니다.</div>`;
     return;
