@@ -151,3 +151,66 @@ test('★ 출처 없는 칸은 클릭할 수 있는 척하지 않는다(src 클�
   assert.ok(/\bsrc\b/.test(hasSrc[1]),
     '출처가 있는 칸은 원본을 열 수 있어야 하니 src 클래스가 있어야 합니다');
 });
+
+/* ══════ 내보내기 ══════ */
+function loadOut() {
+  const saved = { blob: null, name: '', copied: '' };
+  const sandbox = {
+    window: {}, console, Date, Blob: function (parts, o) { this.parts = parts; this.type = o && o.type; },
+    document: { getElementById: () => null },
+    navigator: { clipboard: { writeText: t => { saved.copied = t; return Promise.resolve(); } } },
+    alert: () => {}
+  };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  new vm.Script(store, { filename: 'store.js' }).runInContext(sandbox);
+  new vm.Script([
+    'const S = window.PuPaydataStore; S.init({uid:"U1"});',
+    'const App = ' + JSON.stringify({
+      companyId: 'co_1', companyName: '화담원', month: '2026-08',
+      values: {
+        v1: { companyId: 'co_1', name: '배영승', sourceId: 'a1',
+              pairs: [{ item: '유급일수', value: '3일' }, { item: '비고', value: '가,나' }] }
+      }
+    }) + ';',
+    'function saveBlob(b, n){ __b = b; __n = n; }',
+    'var __b = null, __n = "";',
+    cut('esc'), cut('valueGridModel'), cut('csvEsc'), cut('valuesTable'),
+    cut('valuesCsv'), cut('valuesCopy'),
+    'window.App = App; window.csvEsc = csvEsc; window.valuesTable = valuesTable;',
+    'window.valuesCsv = valuesCsv; window.valuesCopy = valuesCopy;',
+    'window.__blob = function(){ return __b; }; window.__name = function(){ return __n; };'
+  ].join('\n'), { filename: 'out.js' }).runInContext(sandbox);
+  return { W: sandbox.window, saved };
+}
+
+test('★ 쉼표 든 칸을 감싼다 — 안 감싸면 열이 밀린다', () => {
+  const { W } = loadOut();
+  assert.equal(W.csvEsc('가,나'), '"가,나"');
+  assert.equal(W.csvEsc('그냥'), '그냥');
+  assert.equal(W.csvEsc('말"표'), '"말""표"');
+});
+
+test('★ 표 머리에 근로자와 항목이 차례대로 온다', () => {
+  const { W } = loadOut();
+  const t = W.valuesTable();
+  assert.equal(t.head.join(','), '근로자,유급일수,비고');
+  assert.equal(t.body[0][0], '배영승');
+});
+
+test('★ 엑셀에서 한글이 안 깨진다 (BOM)', () => {
+  const { W } = loadOut();
+  W.valuesCsv();
+  const b = W.__blob();
+  assert.ok(b, '내려받지 않았습니다');
+  assert.match(b.parts[0], /^﻿/, 'BOM 이 없으면 엑셀에서 한글이 깨집니다');
+  assert.match(W.__name(), /화담원/);
+  assert.match(W.__name(), /\.csv$/);
+});
+
+test('★ 복사는 탭으로 나눈다 — 엑셀에 바로 붙는다', () => {
+  const { W, saved } = loadOut();
+  W.valuesCopy();
+  assert.match(saved.copied, /근로자\t유급일수/);
+  assert.match(saved.copied, /배영승\t3일/);
+});
