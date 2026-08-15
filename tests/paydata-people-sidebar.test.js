@@ -102,6 +102,20 @@ test('이름으로 찾으면 다른 담당자가 좁혀진다', () => {
   assert.match(h, /민미애/);
 });
 
+test('★ 다른 사람이 아직 없으면 그렇다고 말한다 — 제목만 덩그러니 두지 않는다', () => {
+  // 이름 명단은 한 번이라도 로그인한 사람만 담긴다 — 처음엔 나 혼자인 게 정상이다.
+  const { W } = loadApp({ companies: COMPANIES, owners: { U1: OWNERS.U1 } });
+  const h = W.peopleBarHtml();
+  assert.match(h, /다른 담당자/);
+  assert.match(h, /아직 급여데이터함에 들어온 다른 사람이 없습니다/);
+});
+
+test('찾는 이름이 없을 때는 「없다」가 아니라 「못 찾았다」로 말한다', () => {
+  const { W } = loadApp({ companies: COMPANIES, owners: OWNERS, sideQuery: '없는이름' });
+  const h = W.peopleBarHtml();
+  assert.match(h, /찾는 이름이 없습니다/);
+});
+
 test('★ 공유받음 칸이 개수와 함께 보인다', () => {
   const shares = { s1: { companyId: 'co_9', companyName: '참살이', byName: '민미애', tags: ['확인 부탁드립니다'], at: 1 } };
   const { W } = loadApp({ companies: COMPANIES, owners: OWNERS, shares });
