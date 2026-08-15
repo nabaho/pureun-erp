@@ -94,60 +94,60 @@ function runYear(o) {
    cash·reserve2·basic·assets 는 확정 결산서의 기말 수치.
    net 은 당기순이익(대개 0), deficit 은 재원이 모자라 결손금으로 이월되는 금액. */
 const CASES = [
-  { name: '청신공동 2022 (제1기)', year: 2022, opening: {},
+  { name: 'A공동 2022 (제1기)', year: 2022, opening: {},
     contribCash: 5010000, interest: 389, purpose: 0, admin: 4400,
     cash: 5005989, reserve2: 4504989, basic: 501000, setupWant: 4509000 },
-  { name: '청신공동 2023 (제2기)', year: 2023,
+  { name: 'A공동 2023 (제2기)', year: 2023,
     opening: { cash: 5005989, basic: 501000, reserve2: 4504989 },
     interest: 3444, purpose: 3410500, admin: 66900,
     cash: 1532033, reserve2: 1031033, basic: 501000, setupWant: 0 },
-  { name: '청신공동 2024 (제3기)', year: 2024,
+  { name: 'A공동 2024 (제3기)', year: 2024,
     opening: { cash: 1532033, basic: 501000, reserve2: 1031033 },
     contribCash: 13750000, interest: 4307, purpose: 8435500, admin: 62500,
     cash: 6788340, reserve2: 4912340, basic: 1876000, setupWant: 12375000 },
-  { name: '청신공동 2025 (제4기)', year: 2025,
+  { name: 'A공동 2025 (제4기)', year: 2025,
     opening: { cash: 6788340, basic: 1876000, reserve2: 4912340 },
     contribCash: 8000000, interest: 3357, purpose: 9735500, admin: 71300,
     cash: 4984897, reserve2: 2308897, basic: 2676000, setupWant: 7200000 },
 
-  { name: '배경공동 2022 (현물출연 72.6억)', year: 2022, opening: {},
+  { name: 'B공동 2022 (현물출연 72.6억)', year: 2022, opening: {},
     contribCash: 30000000, contribKind: 7261110330, interest: 7247, purpose: 7364300, admin: 225300,
     cash: 22417647, reserve2: 19417647, basic: 7264110330, secu: 7261110330,
     assets: 7283527977, setupWant: 27000000 },
-  { name: '배경공동 2025 (제4기)', year: 2025,
+  { name: 'B공동 2025 (제4기)', year: 2025,
     opening: { cash: 12121204, secu: 7261110330, basic: 7266110330, reserve2: 7121204 },
     contribCash: 8000000, interest: 8167, purpose: 10255900, admin: 66900,
     cash: 9806571, reserve2: 4006571, basic: 7266910330, secu: 7261110330,
     assets: 7270916901, setupWant: 7200000 },
 
   /* 수익이 비용보다 커서 '전입'하는 해 — 그래도 설정은 한다 */
-  { name: '안전공사공동 2022 (전입하는 해)', year: 2022, opening: {},
+  { name: 'C공동 2022 (전입하는 해)', year: 2022, opening: {},
     contribCash: 70004400, interest: 7649, purpose: 0, admin: 4400,
     cash: 70007649, reserve2: 63007209, basic: 7000440, setupWant: 63003960, kindWant: '전입' },
-  { name: '안전공사공동 2024 (출연금 0)', year: 2024,
+  { name: 'C공동 2024 (출연금 0)', year: 2024,
     opening: { cash: 51046392, basic: 8800440, reserve2: 42245952 },
     interest: 40618, purpose: 17607800, admin: 107640,
     cash: 33371570, reserve2: 24571130, basic: 8800440, setupWant: 0,
     f15: { admin: 107640, rest: 33371570, total: 51087010 } },
 
-  { name: '플러스동반성장 2024', year: 2024,
+  { name: 'D공동 2024', year: 2024,
     opening: { cash: 692612287, basic: 145000000, reserve2: 547612287 },
     interest: 253010, purpose: 127358807, admin: 1302640,
     cash: 564203850, reserve2: 419203850, basic: 145000000, setupWant: 0 },
 
-  { name: '일원공동 2024 (제1기)', year: 2024, opening: {},
+  { name: 'E공동 2024 (제1기)', year: 2024, opening: {},
     contribCash: 10000000, interest: 2287, purpose: 6600000, admin: 4400,
     cash: 3397887, reserve2: 2397887, basic: 1000000, setupWant: 9000000 },
 
   /* 협의회가 한도보다 적게 정한 해 — 설정액을 넣으면 그대로 쓴다 */
-  { name: '참살이공동 2024 (설정액 지정·대부사업)', year: 2024, opening: {}, setup: 412000000,
+  { name: 'F공동 2024 (설정액 지정·대부사업)', year: 2024, opening: {}, setup: 412000000,
     contribCash: 1032838188, interest: 81137, purpose: 101190224, admin: 4400,
     loanOut: 239720500, loanBack: 53270000,
     cash: 745274201, reserve2: 310886513, basic: 620838188, loan: 186450500,
     assets: 931724701, setupWant: 412000000 },
 
   /* 재원이 모자라 결손금이 남는 해 — 기본재산은 그대로 두어야 한다 */
-  { name: '현재기업사내 2025 (결손금 이월)', year: 2025, type: '사내',
+  { name: 'G사내 2025 (결손금 이월)', year: 2025, type: '사내',
     opening: { cash: 830860, secu: 2172724200, basic: 2173524200, reserve2: 30860 },
     interest: 831, admin: 68770,
     cash: 762921, reserve2: 0, basic: 2173524200, secu: 2172724200,
@@ -155,7 +155,7 @@ const CASES = [
     f15: { admin: 68770, rest: 2173487121, total: 2173555891 },
     note: '제출본은 환입을 준비금 잔액에 반영하지 않아 대차가 831원 어긋나 있다' },
 
-  { name: '디와이사내 2025 (증권 26억)', year: 2025, type: '사내',
+  { name: 'H사내 2025 (증권 26억)', year: 2025, type: '사내',
     opening: { cash: 1874382, secu: 2611059000, basic: 2611463400, reserve2: 1469982 },
     interest: 1468, misc: 1, purpose: 800000, admin: 351140,
     cash: 724711, reserve2: 320311, basic: 2611463400, secu: 2611059000,
@@ -163,7 +163,7 @@ const CASES = [
     note: '제출본은 계좌 간 이체 1원을 잡수익으로 이중계상해 1원씩 많다' },
 
   /* 비영리조직회계기준 — 준비금 자동조정을 끄고 당기운영이익을 남긴다 */
-  { name: '충남공동8호 2025 (자동조정 끔)', year: 2025, opening: {}, autoOff: true,
+  { name: 'I공동 2025 (자동조정 끔)', year: 2025, opening: {}, autoOff: true,
     contribCash: 1061002607, interest: 461478, accrued: 66048, misc: 6353,
     purpose: 431200000, admin: 30140000,
     extra: [
@@ -178,12 +178,12 @@ const CASES = [
     cash: 490822438, basic: 493638353, assets: 600273879, net: 66048, setupWant: 0 },
 
   /* 전기이월 칸을 늘렸을 때 재무제표 집계에서 빠지지 않는지 — 거래 없이 이월만 */
-  { name: '충남공동8호 2026 (이월만·거래 없음)', year: 2026, autoOff: true,
+  { name: 'I공동 2026 (이월만·거래 없음)', year: 2026, autoOff: true,
     opening: { cash: 490822438, accrued: 66048, recv: 77393, stfund: 106108000, spcash: 3200000,
                basic: 493638353, spresv: 106108000, retained: 66048, reserve: 461478 },
     cash: 490822438, basic: 493638353, assets: 600273879, net: 0, setupWant: 0 },
 
-  { name: '경기공동1호 2025 (설정액 지정)', year: 2025, opening: {}, setup: 423361360,
+  { name: 'J공동 2025 (설정액 지정)', year: 2025, opening: {}, setup: 423361360,
     contribCash: 897260180, interest: 323627, purpose: 395865000, admin: 27496360,
     extra: [
       { memo: '출연금 미수분', amount: 49820, nocash: 1, debit: '미수금', credit: '기본재산' },
@@ -219,7 +219,7 @@ CASES.forEach(c => {
 
 /* ══ 별지 제15호서식 — 확정 제출본과 칸별로 대조 ══
    결산이 맞아도 보고서 칸이 틀리면 소용이 없다. 천원 단위로 본다.
-   참살이공동 2024 제출본은 대부금 상환 53,270,000원을 반영하지 않아 ⑬·⑳·㉗·㉘·61 다섯 칸이
+   F공동 2024 제출본은 대부금 상환 53,270,000원을 반영하지 않아 ⑬·⑳·㉗·㉘·61 다섯 칸이
    그만큼 어긋난다 — 여기서는 **바로잡은 값**을 기대값으로 적고 제출본 값을 주석에 남긴다. */
 function f15Of(o) {
   funds.X.fund_type = o.type || '공동';
@@ -251,41 +251,41 @@ let R15 = f15Of({
   loanOut: 239720500, loanBack: 53270000,
   welf: [{ category: '대부사업', beneficiaries: 8, spent: 239720500 }],
 });
-/* 참살이공동 2024 — 괄호 안은 제출본 값(대부금 상환 미반영) */
-okK('    참살이 ⑬ 사업주 출연', R15.bf.employer, 1032838);      // 제출본 1,086,108
-okK('    참살이 ⑰ 기본재산 사용', R15.bf.use, 412000);
-okK('    참살이 ⑳ 기본재산 총액', R15.bfEnd, 620838);           // 제출본 674,108
-okK('    참살이 ㉗ 근로자 대부', R15.run.loan, 186451);          // 제출본 239,720
-okK('    참살이 ㉘ 합계', R15.run.total, 807289);               // 제출본 913,828
-okK('    참살이 ㉙ 기금운용 수익금', R15.src.income, 81);
-okK('    참살이 ㉚ 출연금 사용한도 범위', R15.src.contrib, 412000);
-okK('    참살이 ㉟ 재원 합계', R15.src.total, 412081);
-okK('    참살이 60 기금 운영비', R15.admin, 4);
-okK('    참살이 61 잔액', R15.rest, 257617);                    // 제출본 310,887
+/* F공동 2024 — 괄호 안은 제출본 값(대부금 상환 미반영) */
+okK('    F공동 ⑬ 사업주 출연', R15.bf.employer, 1032838);      // 제출본 1,086,108
+okK('    F공동 ⑰ 기본재산 사용', R15.bf.use, 412000);
+okK('    F공동 ⑳ 기본재산 총액', R15.bfEnd, 620838);           // 제출본 674,108
+okK('    F공동 ㉗ 근로자 대부', R15.run.loan, 186451);          // 제출본 239,720
+okK('    F공동 ㉘ 합계', R15.run.total, 807289);               // 제출본 913,828
+okK('    F공동 ㉙ 기금운용 수익금', R15.src.income, 81);
+okK('    F공동 ㉚ 출연금 사용한도 범위', R15.src.contrib, 412000);
+okK('    F공동 ㉟ 재원 합계', R15.src.total, 412081);
+okK('    F공동 60 기금 운영비', R15.admin, 4);
+okK('    F공동 61 잔액', R15.rest, 257617);                    // 제출본 310,887
 
 R15 = f15Of({
   year: 2024, opening: { cash: 51046392, basic: 8800440, reserve: 0, reserve2: 42245952 },
   interest: 40618, admin: 107640,
   costs: [['체육문화비', 5521600], ['장학금', 4027000], ['기타복지비', 8059200]],
 });
-okK('    안전공사 ㉙ 기금운용 수익금', R15.src.income, 41);
-okK('    안전공사 ㉞ 이월금', R15.src.carry, 51046);
-okK('    안전공사 ㉟ 재원 합계', R15.src.total, 51087);
-okK('    안전공사 67 복지사업비 소계', R15.subAmt, 17608);
-okK('    안전공사 68 기금 운영비', R15.admin, 108);
-okK('    안전공사 69 잔액', R15.rest, 33372);
-okK('    안전공사 70 합계', R15.total, 51087);
+okK('    C공동 ㉙ 기금운용 수익금', R15.src.income, 41);
+okK('    C공동 ㉞ 이월금', R15.src.carry, 51046);
+okK('    C공동 ㉟ 재원 합계', R15.src.total, 51087);
+okK('    C공동 67 복지사업비 소계', R15.subAmt, 17608);
+okK('    C공동 68 기금 운영비', R15.admin, 108);
+okK('    C공동 69 잔액', R15.rest, 33372);
+okK('    C공동 70 합계', R15.total, 51087);
 
 R15 = f15Of({
   year: 2025, type: '사내',
   opening: { cash: 830860, secu: 2172724200, basic: 2173524200, reserve: 0, reserve2: 30860 },
   interest: 831, admin: 68770,
 });
-okK('    현재기업 ㉞ 이월금', R15.src.carry, 2173555);
-okK('    현재기업 ㉟ 재원 합계', R15.src.total, 2173556);
-okK('    현재기업 68 기금 운영비', R15.admin, 69);
-okK('    현재기업 69 잔액', R15.rest, 2173487);
-okK('    현재기업 70 합계', R15.total, 2173556);
+okK('    G사내 ㉞ 이월금', R15.src.carry, 2173555);
+okK('    G사내 ㉟ 재원 합계', R15.src.total, 2173556);
+okK('    G사내 68 기금 운영비', R15.admin, 69);
+okK('    G사내 69 잔액', R15.rest, 2173487);
+okK('    G사내 70 합계', R15.total, 2173556);
 
 /* 결손금은 음수가 아니라 이름을 바꿔 양수로 적는다 */
 n++; if (_retLabel(-100) !== '이월결손금' || _retVal(-100) !== 100 || _retLabel(100) !== '이월잉여금' || _retVal(100) !== 100) {
