@@ -396,11 +396,40 @@ ok('사업장 서류: 참조가 subsidy_chk 안에 산다', src.includes("NS+'/s
 ok('열 전체 켜기가 참조를 건드리지 않는다', src.includes("fbDb.ref(_subChkPath()+'/site').update(up)"));
 ok('사업장 서류: 보기·해제', src.includes('function openSiteScan') && src.includes('function unlinkSiteScan'));
 ok('사업장 서류는 판독하지 않고 연결만', src.includes('if(_pick.sid){'));
-ok('고르는 사이 연도가 바뀌어도 그 해에 저장', src.includes('fid:S.fundId,sid:sid||\'\',yr:S.year}')
-  && src.includes('saveSiteScanRef(fid,_pick.yr,_pick.sid,kind,'));
+ok('고르는 사이 연도가 바뀌어도 그 해에 저장', src.includes("fid:S.fundId,sid:sid||'',yr:S.year")
+  && src.includes('saveSiteScanRef(fid,_pick.yr,_pick.sid,kind,')
+  && src.includes('saveShelfScanRef(fid,_pick.yr,_pick.shelf,'));
 ok('체크표 칸에 사진첩 단추', src.includes('var sr=_subScanOf(s._id,c[0]);')
   && src.includes('openSiteScan(') && src.includes("openAlbumPick(\\''"));
 ok('서류 이름표에 사업장 3종', /sme:'중소기업확인서',reg:'등기부등본',bizno:'사업자등록증'/.test(src));
+// 지원금 서류함 — 사진첩에서 담으면 참조만 남는다(앱 창고에 사본을 만들지 않는다)
+// 함수만 있고 단추가 화면에 안 걸리면 쓸 수 없다 — 배선까지 본다
+ok('서류함: 사진첩에서 담기', src.includes('function openSubDocPick') && src.includes('function saveShelfScanRef')
+  && src.includes('onclick="openSubDocPick()"'));
+ok('서류함: 참조로 담고 사본을 안 만든다', src.includes("rec={kind:kind,name:_shelfName(kind,meta),ref:")
+  && !/saveShelfScanRef[\s\S]{0,400}fbStore\.ref\(/.test(src));
+ok('서류함: 사진첩 것은 창으로, 앱 보관은 링크로', src.includes('function openShelfScan')
+  && src.includes("openShelfScan(\\'") && src.includes('<a href="\'+esc(x.url'));
+// «🖼 사진첩» 만 보면 담기 단추 글씨에도 걸린다 — 표의 딱지인지 닫는 태그까지 본다
+ok('서류함: 어디에 있는지 표에 보인다', src.includes('🖼 사진첩</span>') && src.includes('📎 앱 보관</span>'));
+// 사진첩에서 담는 길은 Storage 가 없어도 된다 — 없다고 서류함을 통째로 감추면 담긴 것도 못 본다
+ok('서류함: Storage 없이도 표와 사진첩 단추가 보인다',
+  !src.includes("? '<div class=\"msg warn\">파일 보관은 Firebase Storage가 필요합니다.</div>'")
+  && src.includes("+(fbStore?'<button onclick=\"uploadSubDoc()\""));
+// 참조 기록에는 path 가 없다 — 창고 지우기를 타면 안 되고, 사진첩 원본도 지우면 안 된다
+ok('서류함: 참조는 창고 삭제를 안 탄다', src.includes('if(fbStore&&d.path){'));
+ok('서류함: 참조 지울 때 사진첩은 그대로라고 알린다', src.includes('사진첩의 사진은 그대로 남습니다.\\n'));
+/* 표의 onclick 에 기록 id 를 그대로 끼워 넣는다 — id 에 따옴표가 섞이면 단추가 깨진다.
+   subsidy_docs 에 쓰는 곳이 .push() 뿐이어야 id 가 푸시 키(영숫자·_·-)로만 나온다. */
+{
+  // ref(...) 바로 뒤에 오는 첫 낱말만 본다. push/remove/once 말고 set·update 가 오면
+  // 사람이 정한 키가 들어올 수 있고, 그러면 표의 onclick 이 깨질 여지가 생긴다.
+  const first = [...src.matchAll(/fbDb\.ref\(NS\+'\/subsidy_docs\/'[^;\n]*?\)\.(\w+)\(/g)].map(m => m[1]);
+  const pushed = first.filter(x => x === 'push').length;
+  const bad = first.filter(x => x !== 'push' && x !== 'remove' && x !== 'once');
+  ok('서류함: 기록은 .push() 로만 만든다(id 가 푸시 키)', pushed >= 2 && bad.length === 0,
+    '첫 호출 ' + first.join(',') + ' / 어긋남 ' + bad.join(','));
+}
 // 원본을 그리는 코드가 두 벌이면 한쪽만 고쳐져 화면마다 다르게 동작한다
 ok('원본 그리기는 한 곳(_loadScanInto)', src.includes('function _loadScanInto')
   && (src.match(/PuPhotoStore\.loadFull\(String\(r\.year\)/g) || []).length === 1);

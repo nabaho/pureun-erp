@@ -3456,15 +3456,20 @@ var _pick={kind:'',zid:'',items:[],year:0};
 function _siteName(sid){ return ((S.sites||{})[sid]||{}).name||''; }
 /* sid 를 주면 «그 참여사업장의 제출서류»를 고르는 창이 된다(판독 없이 연결만 한다).
    연도(yr)를 고를 때 함께 붙잡아 둔다 — 고르는 사이에 화면 연도가 바뀌어도 엉뚱한 해에 저장되지 않는다. */
-function openAlbumPick(zid,kind,sid){
+/* shelf 를 주면 «서류함에 담기»가 된다 — 종류는 위 선택칸에서 가져온다 */
+function openSubDocPick(){
+  var k=($('subdoc-kind')&&$('subdoc-kind').value)||'기타';
+  openAlbumPick('','',null,k);
+}
+function openAlbumPick(zid,kind,sid,shelf){
   if(!photoStoreReady()){ toast('사진첩과 연결되지 않았습니다 — 새로고침 후 다시','err'); return; }
-  _pick={kind:kind,zid:zid,items:[],year:new Date().getFullYear(),fid:S.fundId,sid:sid||'',yr:S.year};
-  var _what=(sid?(_siteName(sid)+' '):'')+docZoneLabel(kind);
+  _pick={kind:kind,zid:zid,items:[],year:new Date().getFullYear(),fid:S.fundId,sid:sid||'',yr:S.year,shelf:shelf||''};
+  var _what=shelf?('서류함 · '+shelf):((sid?(_siteName(sid)+' '):'')+docZoneLabel(kind));
   showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">🖼 사진첩에서 '+esc(_what)+' 고르기</h2>'+hlp('album.pick')
     +'<span style="flex:1"></span><select id="pk-year" onchange="albumPickLoad(+this.value)" style="padding:4px 8px;border:1px solid var(--line);border-radius:7px">'
     +[0,1,2].map(function(d){var y=new Date().getFullYear()-d;return '<option value="'+y+'">'+y+'년</option>';}).join('')+'</select></div>'
     +'<div id="pk-body" style="max-height:64vh;overflow:auto">'+loadingHTML('사진첩을 읽는 중…')+'</div>'
-    +'<p class="muted" style="font-size:11px;margin:8px 0 0">사진을 누르면 '+(sid?'연결합니다':'판독합니다')+' · 사진첩 원본은 그대로 남습니다</p>');
+    +'<p class="muted" style="font-size:11px;margin:8px 0 0">사진을 누르면 '+((sid||shelf)?'연결합니다':'판독합니다')+' · 사진첩 원본은 그대로 남습니다</p>');
   albumPickLoad(_pick.year);
 }
 function albumPickLoad(year){
@@ -3510,8 +3515,13 @@ function pickAlbumPhoto(id){
   var owner=it.meta.__ownerUid||undefined, year=String(_pick.year), kind=_pick.kind, zid=_pick.zid, fid=_pick.fid;
   /* 참여사업장 서류(중소기업확인서·등기부·사업자등록증)는 판독하지 않는다 —
      기금 정보 칸을 채우는 서류가 아니라 «받았다»를 증명하는 서류다. 원본만 잇고 체크를 켠다. */
-  if(_pick.sid){
+  if(_pick.shelf){
     closeM();                                        // 원본을 받아 올 일이 없어 곧바로 닫는다
+    saveShelfScanRef(fid,_pick.yr,_pick.shelf,{owner:owner||'',year:year,id:id},it.meta);
+    return;
+  }
+  if(_pick.sid){
+    closeM();
     saveSiteScanRef(fid,_pick.yr,_pick.sid,kind,{owner:owner||'',year:year,id:id});
     return;
   }
@@ -3561,6 +3571,32 @@ function saveSiteScanRef(fid,yr,sid,kind,ref){
     S.subChk.scan.site[sid]=S.subChk.scan.site[sid]||{}; S.subChk.scan.site[sid][kind]=o;
     renderFund(); toast('사진첩 원본을 잇고 「받음」으로 표시했습니다');
   }).catch(function(e){ toast('연결 저장 실패: '+e.message,'err'); });
+}
+/* 서류함에 사진첩 사진을 **참조로** 담는다.
+   기존 업로드 기록과 같은 표(subsidy_docs)에 들어가되 url·path 대신 ref 를 갖는다 —
+   앱 창고에 사본을 만들지 않으므로 같은 서류가 두 곳에 쌓이지 않는다.
+   이름은 사진첩 메모를 먼저 쓰고, 없으면 «종류 + 찍은 날»로 짓는다(빈 이름이면 표에서 못 찾는다). */
+function _shelfName(kind,meta){
+  var t=String((meta&&meta.note)||'').trim().replace(/\s+/g,' ').slice(0,40);
+  if(t) return t;
+  var ms=(meta&&meta.takenAt)||0, d=new Date(ms);
+  var day=ms?(d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)):'';
+  return kind+(day?' '+day:'');
+}
+function saveShelfScanRef(fid,yr,kind,ref,meta){
+  var rec={kind:kind,name:_shelfName(kind,meta),ref:Object.assign({},ref),uploaded:ymd(),by:(S.user||'')};
+  fbDb.ref(NS+'/subsidy_docs/'+fid+'/'+yr).push().set(rec).then(function(){
+    if(S.fundId!==fid||S.year!==yr) return;
+    S.subDocFor=null; renderFund(); toast('사진첩 원본을 서류함에 담았습니다');
+  }).catch(function(e){ toast('담기 실패: '+e.message,'err'); });
+}
+function openShelfScan(id){
+  var x=(S.subDocs||{})[id], r=x&&x.ref; if(!r) return;
+  if(!photoStoreReady()){ toast('사진첩과 연결되지 않았습니다','err'); return; }
+  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">'+esc(x.name||x.kind||'서류')+'</h2>'
+    +'<span class="muted" style="font-size:11.5px">'+esc(x.kind||'')+' · '+esc(r.year)+'년 · 담은날 '+esc(x.uploaded||'')+'</span></div>'
+    +'<div id="scanBody" style="text-align:center">'+loadingHTML('사진첩에서 불러오는 중…')+'</div>');
+  _loadScanInto(r);
 }
 function openSiteScan(sid,kind){
   var r=_subScanOf(sid,kind); if(!r) return;
@@ -4481,8 +4517,16 @@ function subsidyDocsPanel(f){
 
   // ── 업로드 파일(기존 서류함) ──
   var dd=S.subDocs||{}, ids=Object.keys(dd);
+  /* 서류함에는 두 갈래가 섞여 있다 — 사진첩에서 담은 것(ref)과 앱 창고에 올린 것(url).
+     사진첩 원본은 내려받기 주소가 오래 살지 않아 링크로 걸지 않고 창으로 연다. */
   var urows=ids.map(function(id){ var x=dd[id];
-    return '<tr><td>'+esc(x.kind||'기타')+'</td><td><a href="'+esc(x.url||'#')+'" target="_blank" rel="noopener">'+esc(x.name||'')+'</a></td>'
+    var nm=esc(x.name||'(이름 없음)');
+    var cell=x.ref
+      ? '<button onclick="openShelfScan(\''+id+'\')" style="padding:2px 7px;font-size:12px">'+nm+'</button>'
+      : '<a href="'+esc(x.url||'#')+'" target="_blank" rel="noopener">'+nm+'</a>';
+    var where=x.ref?'<span class="chip" style="font-size:10px">🖼 사진첩</span>'
+                   :'<span class="chip" style="font-size:10px">📎 앱 보관</span>';
+    return '<tr><td>'+esc(x.kind||'기타')+'</td><td>'+cell+'</td><td>'+where+'</td>'
       +'<td class="muted">'+esc(x.uploaded||'')+'</td><td><button onclick="delSubDoc(\''+id+'\')" style="padding:2px 7px">×</button></td></tr>';
   }).join('');
   var opts=SUBDOC_KINDS.map(function(k){return '<option>'+k+'</option>';}).join('');
@@ -4506,12 +4550,16 @@ function subsidyDocsPanel(f){
     +'</div>'
 
     +'<div class="panel"><h2 style="font-size:15px">📎 파일 보관 <span class="muted" style="font-size:12px;font-weight:400">('+S.year+'년 · 공고·신청서·결정통지·정산보고 등)</span></h2>'
-    +(!fbStore
-      ? '<div class="msg warn">파일 보관은 Firebase Storage가 필요합니다.</div>'
-      : '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:8px">'
-        +'<div class="fld" style="margin:0"><label>서류 종류</label><select id="subdoc-kind" style="padding:6px 9px;border:1px solid var(--line);border-radius:7px">'+opts+'</select></div>'
-        +'<button class="primary" onclick="uploadSubDoc()">📎 파일 올리기</button></div>'
-        +(ids.length?'<div style="overflow-x:auto;margin-top:10px"><table><thead><tr><th>종류</th><th>파일</th><th>올린날</th><th></th></tr></thead><tbody>'+urows+'</tbody></table></div>':'<div class="muted" style="padding:12px 2px">올린 서류가 없습니다.</div>'))
+    /* 사진첩에서 담는 길은 Storage 없이도 된다 — 원본이 사진첩에 있고 여기는 참조만 갖기 때문이다.
+       그래서 종류 칸과 표는 늘 보이고, 창고에 올리는 단추만 Storage 가 있을 때 나온다.
+       (종전에는 Storage 가 없으면 서류함이 통째로 안내문 한 줄로 바뀌어 담긴 것도 못 봤다.) */
+    +'<div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:8px">'
+      +'<div class="fld" style="margin:0"><label>서류 종류</label><select id="subdoc-kind" style="padding:6px 9px;border:1px solid var(--line);border-radius:7px">'+opts+'</select></div>'
+      +'<button class="primary" onclick="openSubDocPick()" title="사진첩에 있는 사진을 담습니다 — 원본은 사진첩에 그대로 있고 여기엔 참조만 남습니다">🖼 사진첩에서 담기</button>'
+      +(fbStore?'<button onclick="uploadSubDoc()" title="이 앱 창고에 파일을 올립니다 — 사진첩에 없는 한글·PDF 같은 문서에 씁니다">📎 파일 올리기</button>'
+               :'<span class="muted" style="font-size:11px">파일 올리기는 Firebase Storage가 필요합니다</span>')
+    +'</div>'
+    +(ids.length?'<div style="overflow-x:auto;margin-top:10px"><table><thead><tr><th>종류</th><th>서류</th><th>어디에</th><th>담은날</th><th></th></tr></thead><tbody>'+urows+'</tbody></table></div>':'<div class="muted" style="padding:12px 2px">담아 둔 서류가 없습니다.</div>')
     +'</div>';
 }
 function _subChkPath(){ return NS+'/subsidy_chk/'+S.fundId+'/'+S.year; }
@@ -4586,7 +4634,10 @@ function uploadSubDoc(){
 }
 function delSubDoc(id){
   var d=(S.subDocs||{})[id]; if(!d) return;
-  confirmM('이 서류를 삭제할까요?\n('+(d.name||'')+')',{ok:'삭제',danger:true}).then(function(ok){ if(!ok)return;
+  /* 사진첩에서 담은 것은 참조만 지운다 — 사진첩의 사진은 그대로다. 그렇게 적어 준다. */
+  var _msg=d.ref ? '서류함에서 빼기만 합니다.\n사진첩의 사진은 그대로 남습니다.\n('+(d.name||'')+')'
+                 : '이 서류를 삭제할까요?\n올린 파일도 함께 지워집니다.\n('+(d.name||'')+')';
+  confirmM(_msg,{ok:d.ref?'빼기':'삭제',danger:true}).then(function(ok){ if(!ok)return;
     var _fid=S.fundId, _yr=S.year;
     var done=function(){ fbDb.ref(NS+'/subsidy_docs/'+_fid+'/'+_yr+'/'+id).remove().then(function(){ S.subDocFor=null; renderFund(); toast('삭제되었습니다'); }); };
     if(fbStore&&d.path){ fbStore.ref(d.path).delete().then(done).catch(done); } else done();
