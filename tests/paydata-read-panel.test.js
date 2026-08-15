@@ -107,6 +107,9 @@ test('★ 확대(zoom) CSS는 실제로 zoom 클래스가 붙는 요소를 겨�
 function loadRun(appState, opts) {
   opts = opts || {};
   const calls = { alerts: [], read: [] };
+  // ⚠ opts.defer=true 면 판독기가 바로 답하지 않는다 — calls.resolveRead(...)
+  //   / calls.rejectRead(...) 를 부를 때까지 붙들어 둔다. 그 사이에 화면을
+  //   다른 서류로 옮겨서 「늦게 온 답」을 흉내 내려는 것이다.
   const sandbox = {
     window: {}, console, Date, Buffer,
     // ⚠ Buffer 를 안 넣으면 S.fileToDataUrl 안의 bytesToBase64 가
@@ -116,9 +119,17 @@ function loadRun(appState, opts) {
     document: { getElementById: () => null },
     alert: m => calls.alerts.push(m),
     PuDocRead: {
-      read: p => { calls.read.push('read'); return Promise.resolve(opts.readOut || { kind: 'timesheet', fields: {} }); },
+      read: p => {
+        calls.read.push('read');
+        if (opts.defer) return new Promise((res, rej) => { calls.resolveRead = res; calls.rejectRead = rej; });
+        return Promise.resolve(opts.readOut || { kind: 'timesheet', fields: {} });
+      },
       readWageTable: p => { calls.read.push('wage'); return Promise.resolve(opts.wageOut || { ok: true, rows: [] }); },
-      readChangeNotice: p => { calls.read.push('notice'); return Promise.resolve(opts.noticeOut || { ok: true, rows: [] }); }
+      readChangeNotice: p => {
+        calls.read.push('notice');
+        if (opts.defer) return new Promise((res, rej) => { calls.resolveRead = res; calls.rejectRead = rej; });
+        return Promise.resolve(opts.noticeOut || { ok: true, rows: [] });
+      }
     }
   };
   sandbox.globalThis = sandbox;
@@ -205,4 +216,37 @@ test('줄 더하기·지우기', () => {
   assert.equal(W.App.readState.rows.length, 2);
   W.delValRow(0);
   assert.equal(W.App.readState.rows.length, 1);
+});
+
+/* ══════ 판독 도중 다른 서류로 옮겨 감 — 늦게 온 답이 새 화면을 덮으면
+   엉뚱한 원본이 출처로 붙는다(다음 저장 단계가 App.viewerId 를 출처로 찍는다) ══════ */
+
+test('★ 판독 중 다른 서류로 옮기면 늦게 온 성공 응답이 새 화면을 덮지 않는다', async () => {
+  const { W, calls } = loadRun({ kind: 'etc', viewerId: 'a1' }, { defer: true });
+  W.doRead();
+  await new Promise(r => setTimeout(r, 0));   // 판독기 호출까지는 진행되게 둔다
+  assert.equal(W.App.readState.status, 'reading', '아직 판독기가 답하기 전입니다');
+
+  W.App.viewerId = 'a2';   // 사람이 다른 서류로 옮겨 갔다
+  calls.resolveRead({ ok: true, rows: [{ name: '김신입', pairs: [{ item: '입사일', value: '2026-08-12' }] }] });
+  await new Promise(r => setTimeout(r, 10));
+
+  assert.notEqual(W.App.readState.status, 'done',
+    'a1 을 읽은 답이 a2 화면에 그대로 얹혔습니다 — 저장하면 a2 서류가 출처로 찍힙니다');
+  assert.equal(W.App.readState.status, 'reading', '옮겨 간 뒤 온 답은 버리고 이전 상태를 지켜야 합니다');
+});
+
+test('★ 판독 중 다른 서류로 옮기면 늦게 온 실패 응답도 새 화면에 묻히지 않는다', async () => {
+  const { W, calls } = loadRun({ kind: 'etc', viewerId: 'a1' }, { defer: true });
+  W.doRead();
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(W.App.readState.status, 'reading', '아직 판독기가 답하기 전입니다');
+
+  W.App.viewerId = 'a2';   // 사람이 다른 서류로 옮겨 갔다
+  calls.rejectRead(new Error('AI 키가 없습니다'));
+  await new Promise(r => setTimeout(r, 10));
+
+  assert.notEqual(W.App.readState.status, 'err',
+    'a1 판독 실패가 a2 화면에 까닭으로 얹혔습니다 — a2 와는 상관없는 오류입니다');
+  assert.equal(W.App.readState.status, 'reading', '옮겨 간 뒤 온 답은 버리고 이전 상태를 지켜야 합니다');
 });
