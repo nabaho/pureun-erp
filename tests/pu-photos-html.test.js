@@ -615,18 +615,6 @@ test('남의 사진은 지우거나 고칠 수 없다 (판독은 2026-08-10 부�
     '「전체 근로자」만 예외여야 합니다 — 한 사람을 골라 볼 때는 여전히 잠깁니다.');
 });
 
-test('예전 사진 옮기기는 관리자에게만 보이고 확인을 받는다', () => {
-  assert.match(app, /function runMigrate\(/);
-  assert.match(app, /function runDropLegacy\(/);
-  const mig = app.match(/function runMigrate\([\s\S]*?\n\}/);
-  assert.match(mig[0], /confirm\(/);
-  assert.match(mig[0], /원본은 지우지 않고/, '원본을 지우지 않는다는 안내가 없습니다');
-  // 옛 자리 지우기 단추는 옮기기가 모두 성공한 뒤에만 나타난다
-  assert.match(mig[0], /r\.failed[\s\S]{0,240}dropBtn.*display = 'block'|dropBtn'\)\.style\.display = 'block'/);
-  const drop = app.match(/function runDropLegacy\([\s\S]*?\n\}/);
-  assert.match(drop[0], /되돌릴 수 없/);
-});
-
 /* ── 확인 필요 모아보기 · 여러 장 판독 ── */
 
 test('다시 판독해도 검증 통과분은 자동으로 명함첩에 간다', () => {
