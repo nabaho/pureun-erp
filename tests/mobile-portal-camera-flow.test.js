@@ -137,3 +137,19 @@ test('찍어 둔 장이 있을 때 [취소]하면 카메라가 닫히지 않는�
   // closeCam 이 false 를 돌려줘야 popstate 쪽에서 역사 칸을 다시 쌓아 준다
   assert.match(photos, /if \(camShots\.length && !confirm\([^)]*\)\) return false;/);
 });
+
+/* 대표 화면 2026-08-15: 명함 촬영 중인데 「장애 알림 2건」·「새 버전 있음」·「즐겨찾기」가
+   셔터 줄과 명함 미리보기 위로 올라와 있었다. 이 딱지들은 z-index 가 21억이고
+   카메라 덮개는 60 이라 언제나 딱지가 이긴다. */
+test('카메라를 열면 떠다니는 딱지를 감춘다', () => {
+  assert.match(photos, /body\.cam-open #pu-health-admin-badge/);
+  assert.match(photos, /body\.cam-open #pu-version-fab/);
+  assert.match(photos, /body\.cam-open \[data-pu-appbar-btn\]/);
+  /* 덮개의 display 를 세우는 자리가 여러 군데라 부르는 쪽마다 표시를 붙이면 한 곳은 빠진다.
+     덮개 자체를 지켜봐야 어느 길로 열리든 따라간다. */
+  assert.match(photos, /new MutationObserver\(sync\)\.observe\(ov, \{ attributes: true/);
+  assert.match(photos, /classList\.toggle\('cam-open'/);
+  /* camOv 의 z-index 를 같이 올리는 것으로 때우지 않는다 —
+     같은 파일 안의 검토 화면·크게 보기와 겹침 순서가 얽힌다. */
+  assert.match(photos, /#camOv\{[^}]*z-index:60/);
+});

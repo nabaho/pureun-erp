@@ -605,6 +605,19 @@ button{font-family:inherit;cursor:pointer}
 /* ── 연속촬영 카메라 (대표 지시 2026-08-06) ──
    한 장 찍으면 닫히던 것을 — 셔터 연타로 모으고, 갤러리처럼 골라 한 번에 올린다. */
 #camOv{display:none;position:fixed;inset:0;z-index:60;background:#000;flex-direction:column}
+/* ── 카메라를 열면 떠다니는 딱지들을 잠시 감춘다 (대표 화면 2026-08-15) ──
+   「장애 알림 2건」·「새 버전 있음」·「즐겨찾기」 손잡이는 z-index 가 21억이라
+   카메라(60) 위로 올라온다. 실제로 셔터·저장 단추 줄과 명함 미리보기를 가렸다.
+   camOv 의 z-index 를 같이 올리는 방법은 쓰지 않는다 — 그러면 검토 화면(camRev)
+   이나 크게 보기 같은 같은 파일 안의 겹침 순서까지 흔들린다.
+   딱지는 카메라를 닫으면 그대로 돌아온다(감추기만 하고 지우지 않는다). */
+body.cam-open #pu-version-fab,
+body.cam-open #pu-version-notice,
+body.cam-open #pu-health-admin-badge,
+body.cam-open #pu-resilience-badge,
+body.cam-open #pu-backup-admin-button,
+body.cam-open [data-pu-appbar-btn],
+body.cam-open [data-pu-appbar-pop]{display:none!important}
 #camView{flex:1;position:relative;min-height:0}
 #camView video{width:100%;height:100%;object-fit:cover;display:block;background:#000}
 /* 위 줄 — 닫기 · 장수 · 손전등. 영상 위에 얹지 않고 제 줄을 갖는다:
@@ -2737,6 +2750,10 @@ function cropRotated(src, r) {
   const c = document.createElement('canvas');
   c.width = cw; c.height = chh;
   const x = c.getContext('2d');
+  /* 돌려서 그리면 화소가 격자에 안 맞아 반드시 다시 표본을 뜬다.
+     기본 품질('low')로 뜨면 글자 가장자리에 계단이 남는다 — 명함이 바로 이 길로 온다. */
+  x.imageSmoothingEnabled = true;
+  x.imageSmoothingQuality = 'high';
   x.translate(cw / 2, chh / 2);
   x.rotate(-r.angle);
   x.drawImage(src, -r.cx, -r.cy);
@@ -3880,12 +3897,30 @@ function shrink(file, maxEdge, quality) {
    ⚠ 다 만든 뒤에 닫는다(im.close). 첫 크기에서 닫으면 둘째가 빈 그림을 그린다. */
 function shrinkMany(file, sizes) {
   return decodeImage(file).then(function (im) {
+    /* ⚠ 축소본을 다시 줄여 미리보기를 만들지 않는다 — 둘 다 원본에서 뽑는다.
+       한 번 줄인 것을 또 줄이면 표본을 두 세대 거쳐 격자 미리보기가 흐려진다
+       (2026-08-15 재어 보고 되돌림 · drawScaled 주석 참고). */
     const out = sizes.map(function (s) { return drawScaled(im, s.maxEdge, s.quality); });
     if (im.close) im.close();
     return out;
   });
 }
 
+/* ── 줄일 때 글씨가 상하던 것 (대표 보고 2026-08-15: "화질이 안 좋다") ──
+   캔버스의 기본 보간 품질은 크롬에서 'low' 다. 4032px 스틸을 2000px 로 줄일 때
+   화소를 듬성듬성 집어 가느다란 획에 계단이 생긴다. 'high' 로 올리면 제대로 된
+   필터를 쓴다. **크기도 용량도 그대로다** — 올리는 크기 기준(2026-08-13 비용
+   결정, 서류 2000px)은 건드리지 않는다. 같은 용량으로 더 정확해질 뿐이다.
+
+   ── 재어 본 값 (2026-08-15, 크로미움) ──
+   면적평균을 정답으로 두고 벗어난 정도(작을수록 옳다):
+     서류 2000px   16.36 → 14.87
+     사진 1600px   14.82 → 12.61
+     미리보기 240px 35.50 →  6.15   ← 격자 미리보기가 특히 많이 좋아진다
+   ⚠ **절반씩 접어 내려가는 방법은 오히려 나빴다**(17.26 / 13.83 / 8.22).
+     크로미움의 'high' 가 이미 제대로 걸러 주므로, 미리 반씩 줄이면 표본을
+     한 세대 더 거치는 손해만 남는다. 넣었다가 재 보고 뺐다 — 다시 넣지 말 것.
+   ⚠ 같은 이유로 축소본에서 미리보기를 다시 뽑지 않는다. 둘 다 **원본에서** 뽑는다. */
 function drawScaled(im, maxEdge, quality) {
   const iw = im.naturalWidth || im.width;
   const ih = im.naturalHeight || im.height;
@@ -3894,7 +3929,10 @@ function drawScaled(im, maxEdge, quality) {
   const h = Math.max(1, Math.round(ih * scale));
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
-  c.getContext('2d').drawImage(im, 0, 0, w, h);
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(im, 0, 0, w, h);
   return { dataUrl: c.toDataURL('image/jpeg', quality || 0.85), w: w, h: h };
 }
 
@@ -6840,6 +6878,19 @@ window.addEventListener('pagehide', function () {
   try { if ($('camOv')) $('camOv').style.display = 'none'; } catch (_) {}
 });
 
+/* ── 카메라가 열려 있는 동안 body 에 표시를 붙인다 (떠다니는 딱지를 감추려고) ──
+   camOv 의 display 를 세우는 자리가 여덟 군데라 부르는 쪽마다 손대면 한 곳은 꼭 빠진다.
+   덮개 자체를 지켜보면 어느 길로 열리든 빠짐없이 따라간다. */
+(function watchCamOpen() {
+  const ov = $('camOv');
+  if (!ov || !window.MutationObserver) return;
+  const sync = function () {
+    document.body.classList.toggle('cam-open', ov.style.display === 'flex');
+  };
+  new MutationObserver(sync).observe(ov, { attributes: true, attributeFilter: ['style'] });
+  sync();
+})();
+
 function openViewer(id) {
   const it = gridItems.find(x => x.id === id);
   const v = $('viewer');
@@ -6866,9 +6917,12 @@ function openViewer(id) {
       /* 찍힌 길을 함께 보여 준다 — 화질이 낮다는 말이 나올 때 이 한 줄이면 원인이 갈린다.
          「화면캡처」로 나오면 기기가 고해상도 사진을 안 준 것이고, 「사진」인데도
          흐리면 초점 문제다. 예전에는 이걸 몰라 매번 추측만 했다. */
+      /* ⚠ 명함·서류는 세 장을 찍어 고르므로 way 가 'still-best-of-3' 다.
+         `cw === 'still'` 로만 보면 **제대로 찍힌 사진을 「화면캡처」라고 적었다.**
+         원인을 가르라고 만든 줄이 정반대로 알려 주고 있었다 — 앞부분으로 본다. */
       const cw = it && it.meta.capWay;
       const capTxt = !cw ? ''
-        : (cw === 'still' ? '사진 ' : '화면캡처 ') + (it.meta.capW || '?') + '×' + (it.meta.capH || '?') + ' → ';
+        : (String(cw).indexOf('still') === 0 ? '사진 ' : '화면캡처 ') + (it.meta.capW || '?') + '×' + (it.meta.capH || '?') + ' → ';
       /* 선명도도 함께 — 「크게 찍혔는데 왜 흐린가」를 이 숫자 하나로 가른다 */
       const sh = it && typeof it.meta.sharp === 'number'
         ? ' · 선명도 ' + it.meta.sharp + (it.meta.sharp < MIN_SHARP ? ' (흐림)' : '') : '';

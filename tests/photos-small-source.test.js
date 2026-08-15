@@ -122,3 +122,30 @@ test('앱이 작은 원본을 키우지 않는다는 사실은 그대로다', ()
   assert.match(fnOf('drawScaled'), /const scale = Math\.min\(1, maxEdge \/ Math\.max\(iw, ih\)\);/,
     '작은 그림을 억지로 키우면 흐린 그림이 커질 뿐이고, 판독은 더 나빠집니다');
 });
+
+/* 대표 보고 2026-08-15: "화질이 안 좋은데 선명도를 더 올리는 방법 없을까?"
+   ── 재어 보고 고른 것 ──
+   캔버스 보간 품질의 크롬 기본값은 'low' 다. 면적평균을 정답으로 두고 벗어난
+   정도를 재니 'high' 로 올리는 것만으로 서류 16.36→14.87, 미리보기 35.50→6.15
+   으로 좋아졌다. 크기도 용량도 그대로다.
+   ⚠ 「절반씩 접어 내려가기」도 같이 넣어 봤는데 **오히려 나빴다**(17.26/8.22).
+     크로미움의 'high' 가 이미 제대로 걸러 주므로 표본을 한 세대 더 거치는
+     손해만 남는다. 그래서 뺐다 — 다시 넣지 않도록 여기서 못 박는다. */
+test('줄일 때는 보간 품질을 high 로 올린다', () => {
+  const fn = fnOf('drawScaled');
+  assert.match(fn, /imageSmoothingQuality = 'high'/,
+    "크롬 기본값 'low' 로 줄이면 잔글씨에 계단이 생깁니다");
+  assert.doesNotMatch(fn, /while \(sw >= w \* 2/,
+    '절반씩 접어 내려가면 표본을 한 세대 더 거쳐 더 나빠집니다 (2026-08-15 측정)');
+});
+
+test('축소본을 다시 줄여 격자 미리보기를 만들지 않는다', () => {
+  // 둘 다 원본에서 뽑아야 미리보기가 흐려지지 않는다
+  const fn = fnOf('shrinkMany');
+  assert.match(fn, /sizes\.map\(function \(s\) \{ return drawScaled\(im, s\.maxEdge, s\.quality\); \}\)/);
+});
+
+test('명함을 돌려 펼 때도 보간 품질을 올린다', () => {
+  // 회전은 반드시 표본을 다시 뜬다 — 명함 자르기가 이 길로 온다
+  assert.match(fnOf('cropRotated'), /imageSmoothingQuality = 'high'/);
+});
