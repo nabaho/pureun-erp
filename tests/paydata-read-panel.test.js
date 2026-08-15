@@ -21,6 +21,9 @@ function cut(name) {
 const WAGE_FLAG = html.match(/const WAGE_READ_ON = (?:true|false);/);
 assert.ok(WAGE_FLAG, 'WAGE_READ_ON 상수를 찾을 수 없습니다');
 
+const NOTICE_FLAG = html.match(/const NOTICE_READ_ON = (?:true|false);/);
+assert.ok(NOTICE_FLAG, 'NOTICE_READ_ON 상수를 찾을 수 없습니다');
+
 /* $ 는 화살표 함수라 cut() 으로 못 잘라 온다 — 실제 정의를 그대로 가져다 쓴다. */
 const DOLLAR = html.match(/const \$ = [^\r\n]+/);
 assert.ok(DOLLAR, '$ 정의를 찾을 수 없습니다');
@@ -36,7 +39,7 @@ function loadApp(appState) {
       kind: 'attend', viewerId: 'a1', viewingUid: '',
       readState: { status: 'idle', rows: [], err: '' }
     }, appState)) + ';',
-    WAGE_FLAG[0],
+    WAGE_FLAG[0], NOTICE_FLAG[0],
     cut('esc'), cut('canWrite'), cut('valueRowsHtml'), cut('readPanelHtml'),
     'window.App = App; window.readPanelHtml = readPanelHtml;'
   ].join('\n'), { filename: 'app.js' }).runInContext(sandbox);
@@ -170,7 +173,7 @@ function loadRun(appState, opts) {
       readState: { status: 'idle', rows: [], err: '' }
     }, appState)) + ';',
     'App.render = function(){};',
-    WAGE_FLAG[0],                       // doRead 가 이 상수를 본다 — 안 넣으면 터진다
+    WAGE_FLAG[0], NOTICE_FLAG[0],       // doRead 가 이 상수들을 본다 — 안 넣으면 터진다
     DOLLAR[0],
     cut('esc'), cut('canWrite'), cut('findRow'), cut('doRead'), cut('valueRowsHtml'),
     cut('editVal'), cut('refreshIffyMarks'), cut('addValRow'), cut('delValRow'),
@@ -191,18 +194,31 @@ test('★ 근태 탭이면 근태 판독기를 부른다', async () => {
   assert.equal(W.App.readState.rows[0].name, '배영승');
 });
 
-test('★ 기타 탭이면 알림 판독기를 부른다', async () => {
+/* ══════ 알림(기타 탭) 판독은 꺼 둔다 — 대표 결정 2026-08-15 ══════
+   입퇴사 통보 캡처에는 거의 언제나 주민등록번호가 함께 찍혀 있다. 프롬프트로
+   「담지 마세요」라고 해도 사진 자체는 그대로 구글로 올라간다. 급여대장을 같은
+   까닭으로 막아 두고(WAGE_READ_ON) 알림만 보내면 말과 실제가 어긋난다. */
+
+test('★ 알림 판독은 아직 꺼져 있다 — 주민등록번호가 함께 나간다', () => {
+  // 켤 때 이 검사를 함께 고친다(처리위탁 근거 + 주민번호 가림이 먼저다).
+  assert.match(html, /const NOTICE_READ_ON = false/);
+  const h = loadApp({ kind: 'etc' }).readPanelHtml();
+  assert.equal(/doRead\(\)/.test(h), false, '아직 켜면 안 됩니다');
+  assert.match(h, /준비 중/, '급여대장과 같은 모양으로 알려야 고장인지 막은 것인지 압니다');
+});
+
+test('★ 기타 탭에서는 눌러도 알림 판독기를 부르지 않는다', async () => {
   const { W, calls } = loadRun({ kind: 'etc' }, {
     noticeOut: { ok: true, rows: [{ name: '김신입', pairs: [{ item: '입사일', value: '2026-08-12' }] }] }
   });
   W.doRead();
   await new Promise(r => setTimeout(r, 10));
-  assert.equal(calls.read[0], 'notice');
-  assert.equal(W.App.readState.rows[0].pairs[0].item, '입사일');
+  assert.equal(calls.read.length, 0, '캡처가 구글로 올라갔습니다 — 주민등록번호가 함께 찍혀 있습니다');
+  assert.equal(W.App.readState.status, 'idle');
 });
 
 test('★ 한 줄도 못 읽으면 그렇다고 말한다 — 빈 표를 띄우지 않는다', async () => {
-  const { W } = loadRun({ kind: 'etc' }, { noticeOut: { ok: true, rows: [] } });
+  const { W } = loadRun({ kind: 'attend' }, { readOut: { kind: 'timesheet', fields: { rows: [] } } });
   W.doRead();
   await new Promise(r => setTimeout(r, 10));
   assert.equal(W.App.readState.status, 'err');
@@ -210,7 +226,7 @@ test('★ 한 줄도 못 읽으면 그렇다고 말한다 — 빈 표를 띄우�
 });
 
 test('판독이 실패하면 까닭을 담는다', async () => {
-  const { W } = loadRun({ kind: 'etc' }, { noticeOut: { ok: false, error: 'AI 키가 없습니다', rows: [] } });
+  const { W } = loadRun({ kind: 'attend' }, { readOut: { error: 'AI 키가 없습니다', fields: {} } });
   W.doRead();
   await new Promise(r => setTimeout(r, 10));
   assert.equal(W.App.readState.status, 'err');
@@ -291,13 +307,13 @@ test('줄 더하기·지우기', () => {
    엉뚱한 원본이 출처로 붙는다(다음 저장 단계가 App.viewerId 를 출처로 찍는다) ══════ */
 
 test('★ 판독 중 다른 서류로 옮기면 늦게 온 성공 응답이 새 화면을 덮지 않는다', async () => {
-  const { W, calls } = loadRun({ kind: 'etc', viewerId: 'a1' }, { defer: true });
+  const { W, calls } = loadRun({ kind: 'attend', viewerId: 'a1' }, { defer: true });
   W.doRead();
   await new Promise(r => setTimeout(r, 0));   // 판독기 호출까지는 진행되게 둔다
   assert.equal(W.App.readState.status, 'reading', '아직 판독기가 답하기 전입니다');
 
   W.App.viewerId = 'a2';   // 사람이 다른 서류로 옮겨 갔다
-  calls.resolveRead({ ok: true, rows: [{ name: '김신입', pairs: [{ item: '입사일', value: '2026-08-12' }] }] });
+  calls.resolveRead({ kind: 'timesheet', fields: { rows: [{ name: '김신입', paid: [1], off: [], adj: '', note: '' }] } });
   await new Promise(r => setTimeout(r, 10));
 
   assert.notEqual(W.App.readState.status, 'done',
@@ -306,7 +322,7 @@ test('★ 판독 중 다른 서류로 옮기면 늦게 온 성공 응답이 새 
 });
 
 test('★ 판독 중 다른 서류로 옮기면 늦게 온 실패 응답도 새 화면에 묻히지 않는다', async () => {
-  const { W, calls } = loadRun({ kind: 'etc', viewerId: 'a1' }, { defer: true });
+  const { W, calls } = loadRun({ kind: 'attend', viewerId: 'a1' }, { defer: true });
   W.doRead();
   await new Promise(r => setTimeout(r, 0));
   assert.equal(W.App.readState.status, 'reading', '아직 판독기가 답하기 전입니다');
