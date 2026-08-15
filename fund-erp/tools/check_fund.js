@@ -60,6 +60,13 @@ ok('조판기 존재', src.includes('function typesetForm'));
 ok('조판 클래스 CSS(화면)', src.includes('.fmtitle{text-align:center'));
 ok('조판 클래스 CSS(인쇄)', (src.match(/\.fmtitle\{text-align:center/g) || []).length >= 2);
 ok('쪽 나눌 때 colgroup 이어붙임', src.includes(":scope > colgroup"));
+/* 쪽 나누기 안전장치(guard)에 걸려 멈추면 queue 에 남은 마디가 그대로 버려졌다 —
+   긴 서식의 뒷부분이 말없이 사라진다. 브라우저에서 guard 를 5로 낮춰 재 보니
+   문단 40개 중 36개가 없어졌고, 아래 보완을 넣으면 하나도 안 사라진다.
+   조판이 덜 되는 것(넘침 배지)이 글이 사라지는 것보다 낫다. */
+ok('안전장치에 걸려도 내용을 안 버린다',
+  src.includes('    if(queue.length){') && src.includes('      queue.forEach(function(nd){ body.appendChild(nd); });')
+  && src.includes('      queue.length=0;'));
 const titleLine = (src.split(/\r?\n/).find(l => l.startsWith('var FM_TITLE=')) || '');
 ['합의서', '확인서', '승낙서', '서약서', '신청서', '회의록', '정관', '필요서류', '목록표'].forEach(w => {
   ok('제목 어휘 «' + w + '»', titleLine.includes(w), titleLine.slice(0, 90));
