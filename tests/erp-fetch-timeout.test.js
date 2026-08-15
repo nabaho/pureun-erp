@@ -33,7 +33,8 @@ test('★ 시간 제한 없이 바깥으로 나가는 부름이 하나도 없다
 });
 
 test('AI 부름 두 곳 다 걸렸다', () => {
-  assert.match(app, /fetchT\('https:\/\/api\.anthropic\.com\/v1\/messages'/, 'AI 요약');
+  // 둘 다 프록시로 나간다 (api.anthropic.com 직접 호출은 걷어냈다)
+  assert.match(app, /fetchT\(_proxy,\{/, 'AI 요약');
   assert.match(app, /var res = await fetchT\(proxyUrl,\{/, 'AI 도우미 대화');
 });
 

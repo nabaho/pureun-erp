@@ -400,6 +400,19 @@ function fetchT(url, opts, ms){
     throw e;
   });
 }
+/* AI 로 보내는 길은 «프록시» 하나뿐이다.
+   ⚠ 브라우저에서 api.anthropic.com 을 바로 부르면 안 된다 — 열쇠를 실으면 화면 소스에
+     그대로 드러나고, 안 실으면 401 이며, 어느 쪽이든 그 주소는 CORS 로 막힌다.
+     실제로 AI 요약이 그렇게 부르고 있어서 «늘» 실패했다.
+   두 곳(AI 요약·AI 도우미)이 각자 설정을 읽으면 한쪽만 고쳐지므로 여기로 모은다. */
+function erpAiProxyUrl(){
+  try{
+    return (typeof dbGet==='function' ? dbGet('setting_ai_proxy_url','') : '')
+        || localStorage.getItem('pureun_v6_ai_proxy_url')
+        || (window.PU_CFG && window.PU_CFG.aiProxyUrl)
+        || '';
+  }catch(e){ return ''; }
+}
 // fb_data_changed 디바운스: 다발 변경을 150ms로 묶어 리렌더 폭증 방지
 var _fbChangedKeys=null, _fbChangedTimer=null;
 function _scheduleFbChanged(k){
@@ -9528,8 +9541,16 @@ function ConsultLogModal(props){
   function aiSummarize(){
     var allText = f.entries.map(function(e){ return e.text; }).join('\n') + (newEntry.trim() ? '\n'+newEntry.trim() : '');
     if(!allText.trim()){ showToast('요약할 상담 내용이 없습니다'); return; }
+    /* ⚠ 예전에는 브라우저에서 api.anthropic.com 을 바로 불렀다 — 열쇠도 안 싣고.
+       열쇠가 없으면 401 이고, 있어도 그 주소는 브라우저에서 CORS 로 막힌다.
+       즉 이 단추는 «늘» 실패했다. AI 도우미가 쓰는 프록시와 같은 길로 보낸다. */
+    var _proxy = erpAiProxyUrl();
+    if(!_proxy){
+      showToast('AI 설정이 없습니다 — 환경설정에서 AI 프록시 주소를 등록해 주세요');
+      return;
+    }
     setAiLoading(true);
-    fetchT('https://api.anthropic.com/v1/messages',{        // AI 는 좀 느릴 수 있어 45초
+    fetchT(_proxy,{                                        // AI 는 좀 느릴 수 있어 45초
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
@@ -9541,7 +9562,10 @@ function ConsultLogModal(props){
     }, 45000)
     .then(function(r){ return r.json(); })
     .then(function(d){
-      var text = (d.content||[]).filter(function(x){return x.type==='text';}).map(function(x){return x.text;}).join('');
+      // 프록시가 돌려주는 모양은 서버마다 다르다 — AI 도우미와 같은 순서로 읽는다
+      var text = d.reply || d.text
+        || (d.content||[]).filter(function(x){return x.type==='text';}).map(function(x){return x.text;}).join('');
+      if(!text){ showToast('AI 요약이 비어서 왔습니다 — 잠시 후 다시 눌러 주세요'); return; }
       upd('summary', text);
       showToast('✅ AI 요약 완료');
     })
@@ -45722,7 +45746,7 @@ function HelpBot(props){
         setLoading(false);
         return;
       }
-      var proxyUrl = dbGet('setting_ai_proxy_url','') || localStorage.getItem('pureun_v6_ai_proxy_url') || (window.PU_CFG && window.PU_CFG.aiProxyUrl) || '';
+      var proxyUrl = erpAiProxyUrl();   // AI 요약과 «같은» 설정을 읽는다 (따로 읽으면 한쪽만 고쳐진다)
       if(!proxyUrl){
         setMessages(newMsgs.concat([{role:'assistant', content:'아직 제가 아는 답에 없는 질문이에요. 아래 자주 묻는 질문 버튼을 눌러보시거나, 키워드로 다시 물어봐 주세요. (예: 입금, 이관, 직원, 업체, 급여, 휴가)'}]));
         setLoading(false);
