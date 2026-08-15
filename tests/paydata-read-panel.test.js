@@ -57,7 +57,12 @@ function loadApp(appState, rec) {
 }
 
 test('★ 판독 층을 불러온다', () => {
-  assert.match(html, /<script src="js\/pu-doc-read\.js">/);
+  /* ⚠ 2026-08-15 다시 겨눔 — 판독기 주소에 ?v= 를 붙였다(캐시에 묵은 옛 판독기를
+     쓰던 것을 막는다). 예전 규칙은 «?v= 가 없는 모양»을 못 박고 있어서, 정작
+     붙이려니 이 검사가 막았다. 지킬 것은 「판독 층을 싣는다」이지 주소 뒤에
+     아무것도 안 붙는 것이 아니다. 판 번호가 맞는지는
+     tests/photos-doc-title.test.js 가 모든 화면을 훑어 따로 지킨다. */
+  assert.match(html, /<script src="js\/pu-doc-read\.js(\?v=\d+)?">/);
   assert.match(html, /PuDocRead\.init\(/, '키를 어디서 얻는지 판독 층에 알려야 합니다');
 });
 
