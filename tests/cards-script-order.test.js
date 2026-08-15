@@ -44,7 +44,7 @@ test('인라인 스크립트 덩어리를 찾을 수 있다', () => {
 });
 
 /* 여러 덩어리에 걸쳐 쓰이는 함수들 — 여기 이름을 더하면 함께 지켜진다 */
-for (const name of ['allItems', 'allGroups', 'isPrivItem', 'isPrivGroup']) {
+for (const name of ['allItems', 'allGroups', 'isPrivItem', 'isPrivGroup', '_syncSearchX', 'syncPcSearchFor']) {
   test(`★ ${name} 은 쓰이기 전에 만들어져 있다`, () => {
     const d = defLine(name);
     assert.ok(d > 0, `${name} 정의를 찾지 못했습니다.`);
