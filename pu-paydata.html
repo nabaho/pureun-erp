@@ -338,7 +338,10 @@ function pickBar(kind, ids, acts) {
    어느 화면인가 · 어느 사업장인가 · 어느 달인가. 자료는 여기 모아 두고 화면이 읽는다. */
 const App = {
   screen: 'sites', companyId: '', companyName: '', month: '', kind: 'attend', query: '',
-  companies: [], pending: {}, arrivals: {}, trash: null, values: {}, me: null, pick: {}, myName: '',
+  /* values 는 **null 로 시작한다** — {} 는 「읽었는데 비었다」이고 null 은
+     「아직 안 읽었다」다. 둘을 같은 값으로 두면 안 읽은 것을 「값이 없습니다」로
+     단정하게 된다(값 표 화면·급여관리 알리기가 이 둘을 갈라 본다). */
+  companies: [], pending: {}, arrivals: {}, trash: null, values: null, me: null, pick: {}, myName: '',
   itemsKeep: null, itemsMonth: null, itemsMonthSlot: '',
   viewerId: '', viewerUrl: '', viewerZoom: false, viewerErr: '',
   readState: { status: 'idle', rows: [], err: '' },
@@ -362,6 +365,12 @@ const App = {
     // 사업장을 바꿔 들어가면 남의 폴더가 골라진 채로 남지 않게 되돌린다 —
     // 폴더 번호는 사업장마다 따로다(다른 사업장 폴더 번호와 우연히 같을 수 있다).
     if (o && o.companyId && o.companyId !== App.companyId) o = Object.assign({ folderPick: 'all' }, o);
+    /* 사업장이나 기준 월이 바뀌면 들고 있던 값을 **버린다**(다시 읽게 한다).
+       값은 「이 사업장 이 달」 것이라 업체·월이 바뀌면 통째로 남의 것이 된다.
+       안 버리면 앞 업체 근로자 이름이 이 업체 제목 밑에 그대로 뜨고, 그 화면에서
+       엑셀로 내려받으면 이 업체 이름을 단 파일에 남의 이름이 담긴다. */
+    if (o && ((o.companyId && o.companyId !== App.companyId)
+      || (o.month && o.month !== App.month))) App.values = null;
     Object.assign(App, o || {});
     App.screen = screen;
     if (screen === 'drawer') { ensureDrawerData(); ensureFolders(); }
@@ -932,6 +941,17 @@ function ensureDrawerData() {
   if (jobs.length) Promise.all(jobs).then(() => App.render());
 }
 
+/* 기준 월을 바꾼다 — 서랍만 다시 읽고 끝내면 안 된다. 값은 「이 달」 것이라
+   달이 바뀌면 들고 있던 값이 통째로 지난달 것이 된다. 그 수를 급여관리에
+   알리면 이 달이 정리된 것으로 잘못 적힌다(handoffMonth 머리말). */
+function changeMonth(v) {
+  App.month = v;
+  App.values = null;
+  ensureDrawerData();
+  App.render();
+}
+window.changeMonth = changeMonth;
+
 /* 사업장이 바뀌면 폴더 목록도 다시 읽는다 — 폴더는 사업장마다 따로 관리된다. */
 function ensureFolders(force) {
   if (!force && App.foldersCompanyId === App.companyId) return Promise.resolve();
@@ -1092,26 +1112,56 @@ function valueGridModel(valueRows) {
   return { items: items, people: people };
 }
 
-function ensureValues() {
+/* 이 사업장·이 달 값을 실시간DB에서 **그 자리에서 새로** 읽어 온다.
+   화면이 들고 있는 App.values 는 값 표 화면에 들어갈 때만 채워진다 — 업체를
+   바꾸거나 기준 월을 바꾸는 길에는 서랍만 다시 읽는다. 그래서 세어야 할 때는
+   화면 상태를 믿지 말고 여기로 다시 읽는다(급여관리 알리기가 이것을 쓴다). */
+function fetchValues(companyId) {
   const slot = S.monthKey(App.month) || S.KEEP;
+  const want = companyId || App.companyId;
   return S.listValues(slot, App.viewingUid).then(v => {
     /* 이 사업장 것만 남긴다 — 값 칸은 그 달 전체가 한 자리에 있다. */
     const mine = {};
     Object.keys(v || {}).forEach(id => {
-      if (v[id] && v[id].companyId === App.companyId) mine[id] = v[id];
+      if (v[id] && v[id].companyId === want) mine[id] = v[id];
     });
-    App.values = mine; App.render();
-  }).catch(e => { console.warn('[값]', e && e.code); App.values = {}; App.render(); });
+    return mine;
+  });
+}
+
+/* 값 표 화면이 쓸 값을 읽어 App.values 에 담는다. 읽는 동안에는 null 로 비운다 —
+   App.go('values') 가 이 함수를 부른 **뒤 곧바로** App.render() 하므로, 앞
+   사업장 값을 그대로 두면 한 판 동안 남의 근로자 이름이 이 사업장 제목 밑에 뜬다
+   (그 사이에 「엑셀로 내려받기」를 누르면 이 사업장 이름을 단 파일에 남의 이름이
+   담긴다). 읽는 중에 다른 사업장으로 옮겨 갔으면 늦게 온 답은 버린다. */
+function ensureValues() {
+  App.values = null;
+  const want = App.companyId;
+  return fetchValues(want).then(v => {
+    if (App.companyId !== want) return;
+    App.values = v; App.render();
+  }).catch(e => {
+    console.warn('[값]', e && e.code);
+    if (App.companyId !== want) return;
+    App.values = {}; App.render();
+  });
 }
 
 function screenValues() {
+  let h = '<div style="margin-bottom:10px"><button class="btn" onclick="App.go(\'drawer\')">← 서랍으로</button></div>'
+    + '<h1>' + esc(App.companyName || App.companyId) + ' — ' + esc(App.month) + ' 값</h1>';
+
+  /* 아직 안 읽었으면(null) 표를 그리지 않는다 — 「값이 없습니다」도 아니다.
+     앞 사업장에서 보던 줄이 이 제목 밑에 남는 것이 가장 나쁘다(내려받기까지 된다). */
+  if (App.values === null) {
+    return h + '<div class="card"><div class="empty">값을 불러오는 중입니다…</div></div>';
+  }
+
   const g = valueGridModel(App.values);
   const iffy = g.people.reduce((n, p) =>
     n + Object.keys(p.cells).filter(k => !p.cells[k].confirmed).length, 0);
 
-  let h = '<div style="margin-bottom:10px"><button class="btn" onclick="App.go(\'drawer\')">← 서랍으로</button></div>'
-    + '<h1>' + esc(App.companyName || App.companyId) + ' — ' + esc(App.month) + ' 값</h1>'
-    + '<div class="sub">근로자 ' + g.people.length + '명 · 항목 ' + g.items.length + '가지</div>';
+  h += '<div class="sub">근로자 ' + g.people.length + '명 · 항목 ' + g.items.length + '가지</div>';
 
   if (!g.people.length) {
     return h + '<div class="card"><div class="empty">아직 정리된 값이 없습니다.<br>'
@@ -1209,7 +1259,7 @@ function screenDrawer() {
   if (!S.isKeepKind(App.kind)) {
     h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">기준 월'
       + ' <input class="btn" style="width:110px" value="' + esc(App.month) + '"'
-      + ' onchange="App.month=this.value;ensureDrawerData();App.render()"></div>';
+      + ' onchange="changeMonth(this.value)"></div>';
     // 급여관리로 이 달 값 넘기기 — 재무권한·관리자에게만 보인다(4차, canHandoffPayroll).
     h += '<div style="display:flex;gap:8px;margin-bottom:12px">'
       + '<button class="btn" onclick="App.go(\'values\')">📋 이 달 값 보기</button>'
@@ -1264,15 +1314,24 @@ function screenDrawer() {
    사실만 handoff_log 에 남는다). 권한 없는 사람은 단추 자체가 안 보인다. */
 function handoffMonth() {
   if (!S.canHandoffPayroll()) return;
-  /* 서류 장수가 아니라 **값 줄 수**를 센다 — 급여관리가 보는 것은
-     「이 사업장 이 달 자료가 정리됐나」다(설계서 4장). */
-  const g = valueGridModel(App.values);
-  const total = g.people.reduce((n, p) => n + Object.keys(p.cells).length, 0);
-  if (!total) { alert('이 달에 정리된 값이 없습니다.\n먼저 서류를 판독해 값을 만들어 주세요.'); return; }
-  if (!confirm(App.companyName + ' ' + App.month + ' 값(' + total + '줄)이 정리됐다고 급여관리에 알릴까요?\n\n값 자체는 넘어가지 않습니다 — 계산은 바깥 프로그램에서 하십니다.')) return;
-  S.handoffToPayroll({ companyId: App.companyId, companyName: App.companyName, month: App.month, rowCount: total })
-    .then(() => alert('급여관리 수신함으로 넘겼습니다.'))
-    .catch(e => alert('넘기지 못했습니다 — ' + (e.code || e.message)));
+  /* ⚠ 값을 **여기서 새로 읽는다** — 화면이 들고 있는 App.values 를 세면 안 된다.
+     App.values 는 「이 달 값 보기」에 들어갈 때만 채워진다. 업체를 바꿔 들어오거나
+     기준 월을 바꾸거나 남의 자리로 옮기는 길에는 채워지지도, 비워지지도 않는다.
+     그래서 화담원 값 표(12줄)를 본 뒤 다른 업체로 와서 이 단추를 누르면
+     「그 업체 … 12줄」이라 묻고, 급여관리 수신함에도 그 업체가 12줄 정리된 것으로
+     적힌다. 급여관리 담당자가 「이 달 준비됐다」를 아는 유일한 신호가 거짓이 된다.
+     반대로 값 표를 한 번도 안 연 사람에게는 다 정리된 달을 「값이 없습니다」라고 한다. */
+  const companyId = App.companyId, companyName = App.companyName, month = App.month;
+  return fetchValues(companyId).then(values => {
+    /* 서류 장수가 아니라 **값 줄 수**를 센다 — 급여관리가 보는 것은
+       「이 사업장 이 달 자료가 정리됐나」다(설계서 4장). */
+    const g = valueGridModel(values);
+    const total = g.people.reduce((n, p) => n + Object.keys(p.cells).length, 0);
+    if (!total) { alert('이 달에 정리된 값이 없습니다.\n먼저 서류를 판독해 값을 만들어 주세요.'); return null; }
+    if (!confirm(companyName + ' ' + month + ' 값(' + total + '줄)이 정리됐다고 급여관리에 알릴까요?\n\n값 자체는 넘어가지 않습니다 — 계산은 바깥 프로그램에서 하십니다.')) return null;
+    return S.handoffToPayroll({ companyId: companyId, companyName: companyName, month: month, rowCount: total })
+      .then(() => alert('급여관리 수신함으로 넘겼습니다.'));
+  }).catch(e => alert('넘기지 못했습니다 — ' + (e.code || e.message)));
 }
 window.handoffMonth = handoffMonth;
 
@@ -1687,6 +1746,9 @@ window.submitReason = submitReason;
 function resetOwnerCaches() {
   App.pending = {}; App.itemsKeep = null; App.itemsMonth = null; App.itemsMonthSlot = '';
   App.folders = {}; App.foldersCompanyId = ''; App.folderPick = 'all'; App.trash = null; App.pick = {};
+  /* 값도 반드시 비운다 — 자리마다 값 칸이 따로다. 안 비우면 방금 보던 자리의
+     근로자 이름이 새 자리 값 표에 그대로 남고, 그 수가 급여관리 알림에 실린다. */
+  App.values = null;
 }
 function enterSeat(uid, name, isDeputy) {
   App.viewingUid = uid; App.viewingName = name; App.viewingDeputy = !!isDeputy; App.sharedBanner = null;
