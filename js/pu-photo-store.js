@@ -751,12 +751,23 @@
      ⚠ 이 인자가 없던 동안, 관리자가 남의 사진을 판독하면 결과가 자기 자리의
        없는 사진 밑으로 들어갔다. 그래서 화면이 판독 자체를 잠갔고, 결국 다른
        직원이 찍은 명함은 그 직원이 자기 화면을 열 때만 명함첩에 들어갔다
-       (대표 지시 2026-08-10로 바로잡음). */
+       (대표 지시 2026-08-10로 바로잡음).
+     ⚠ 쓰기 전에 그 사진 정보가 **아직 있는지** 먼저 본다(2026-08-15 발견).
+       판독(AI 호출)은 몇 초 걸린다 — 그 사이 사람이 사진을 지우면, 이 함수는
+       (지워진) items/{연도}/{id} 아래 read 한 칸만 부분 경로로 쓴다. 실시간DB는
+       없는 자리에 부분 경로를 쓰면 **그 자리를 새로 만든다** — 그러면 사진도
+       정보도 없이 read 만 있는 유령 항목이 생긴다(실데이터에서 여러 건 발견,
+       "명함첩에 새로 넣었습니다" 같은 표시까지 남아 있어 명함첩에도 헛짚힐 수
+       있었다). 지워졌으면 조용히 아무것도 안 쓴다 — 되살릴 것이 없다. */
   function saveRead(year, id, read, owner) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
-    var u = {};
-    u[metaPath(year, id, owner) + '/read'] = read;
-    return deps.db.ref().update(u);
+    var path = metaPath(year, id, owner);
+    return readOnce(path).then(function (meta) {
+      if (!meta) return null;
+      var u = {};
+      u[path + '/read'] = read;
+      return deps.db.ref().update(u);
+    });
   }
 
   /* 고정 분류로 옮길 때 판독 종류와 직접분류 해제를 한 번에 저장한다.
