@@ -54,7 +54,10 @@ function loadAssignBlock(){
   const code = source.slice(normAt, normEnd) + '\n' + source.slice(cleanAt, cleanEnd) + '\n' + source.slice(at, end);
 
   const writes = [];
-  const calls = { rendered: 0, pcRendered: 0 };
+  /* Task 6 — coMoveSelTo/coApplyTag 는 이제 renderPC()/renderCoPage() 를 직접 안 부르고
+     renderCoAny() 하나만 거친다(PC/폰 어느 쪽을 보고 있어도 맞게 다시 그리려고). renderPC·
+     renderCoPage 스텁은 "직접 불리면 안 된다"는 것을 잡아내려고 그대로 남겨 둔다. */
+  const calls = { rendered: 0, pcRendered: 0, anyRendered: 0 };
   const ctx = {
     state: { view:'co', coSel: {} },
     _coFolders: {},
@@ -67,7 +70,8 @@ function loadAssignBlock(){
     Store: { db: { ref: p => ({ update: v => { writes.push({ path:p, val:v }); return Promise.resolve(); } }) } },
     DB_ROOT: 'pucards',
     renderCoPage: () => { calls.rendered++; },
-    renderPC: () => { calls.pcRendered++; }
+    renderPC: () => { calls.pcRendered++; },
+    renderCoAny: () => { calls.anyRendered++; }
   };
   vm.createContext(ctx);
   vm.runInContext(code, ctx);
@@ -152,21 +156,25 @@ test('옮기기 전에 고른 수를 보여준다 — 모르고 몇백 곳을 �
 
 /* 최종 전체 리뷰 2026-08-14 — 아래부터 리뷰가 찾은 것을 증명하는 검사 */
 
-test('coMoveSelTo 는 성공하면 renderCoPage 가 아니라 renderPC 를 부른다', async () => {
+test('coMoveSelTo 는 성공하면 renderCoPage·renderPC 를 직접 안 부르고 renderCoAny 를 부른다', async () => {
   /* 옆줄 폴더 개수가 이 조작으로 바뀌므로 renderCoPage 만 부르면 옆줄 숫자가
-     안 바뀐 채로 남는다(loadCoFolders 가 renderPC 를 부르는 것과 같은 이유). */
+     안 바뀐 채로 남는다(loadCoFolders 가 renderPC 를 부르는 것과 같은 이유).
+     Task 6부터는 renderPC() 를 직접 부르지 않고, PC/폰 어느 쪽인지 renderCoAny() 가
+     가려서 다시 그린다(tests/cards-co-render-any.test.js 가 그 분기 자체를 검사한다). */
   const c = loadAssignBlock();
   c.state.coSel = { 'a':1 };
   await c.coMoveSelTo('f1');
-  assert.equal(c._calls.pcRendered, 1);
+  assert.equal(c._calls.anyRendered, 1);
+  assert.equal(c._calls.pcRendered, 0, 'renderPC() 를 직접 부르면 안 된다 — renderCoAny() 를 거쳐야 한다');
   assert.equal(c._calls.rendered, 0);
 });
 
-test('coApplyTag 는 성공하면 renderCoPage 가 아니라 renderPC 를 부른다', async () => {
+test('coApplyTag 는 성공하면 renderCoPage·renderPC 를 직접 안 부르고 renderCoAny 를 부른다', async () => {
   const c = loadAssignBlock();
   c.state.coSel = { 'a':1 };
   await c.coApplyTag('2026 통합기술보호지원반');
-  assert.equal(c._calls.pcRendered, 1);
+  assert.equal(c._calls.anyRendered, 1);
+  assert.equal(c._calls.pcRendered, 0, 'renderPC() 를 직접 부르면 안 된다 — renderCoAny() 를 거쳐야 한다');
   assert.equal(c._calls.rendered, 0);
 });
 

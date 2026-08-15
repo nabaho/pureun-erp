@@ -36,7 +36,7 @@ function loadTagHideBlock(){
      ctx._coTagHidden 으로 손을 못 댄다. 선언을 빼고 state 처럼 ctx 프로퍼티로 쥐여준다. */
   const declEnd = source.indexOf('\n', at) + 1;
   const code = source.slice(declEnd, end);
-  const calls = { updates: [], rendered: false, pcRendered: false };
+  const calls = { updates: [], rendered: false, pcRendered: false, anyRendered: false };
   const ctx = {
     _coTagHidden: {},
     _coTagHiddenOn: false,
@@ -47,7 +47,11 @@ function loadTagHideBlock(){
     }) } },
     DB_ROOT: 'pucards',
     toast: msg => { calls.toasts = calls.toasts||[]; calls.toasts.push(msg); },
-    renderPC: () => { calls.pcRendered = true; }
+    renderPC: () => { calls.pcRendered = true; },
+    /* Task 6 — hideCoTag 는 renderPC() 를 직접 안 부르고 renderCoAny() 하나에 위임한다
+       (PC/폰 어느 쪽인지는 renderCoAny() 가 가린다). toggleCoShowHidden 은 이 과제
+       범위 밖이라 renderPC() 를 그대로 직접 부른다. */
+    renderCoAny: () => { calls.anyRendered = true; }
   };
   vm.createContext(ctx);
   vm.runInContext(code, ctx);
@@ -81,7 +85,8 @@ test('hideCoTag 는 지금 그 탭으로 거르고 있었으면 거르기를 푼
   c.hideCoTag('2026 통합기술보호지원반');
   await Promise.resolve();
   assert.equal(c.state.coTag, '');
-  assert.equal(c._calls.pcRendered, true);
+  assert.equal(c._calls.anyRendered, true);
+  assert.equal(c._calls.pcRendered, false, 'renderPC() 를 직접 부르면 안 된다 — renderCoAny() 를 거쳐야 한다');
 });
 
 test('hideCoTag 는 다른 탭으로 거르고 있었으면 그 거르기를 안 건드린다', async () => {
