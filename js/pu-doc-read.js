@@ -360,9 +360,8 @@
     };
   }
 
-  /* 급여표(급여명세서·임금대장) 한 장(또는 여러 쪽)을 사람별 금액까지 판독한다.
-     read() 와 같은 모델·재시도·키 조달 배관을 그대로 쓰되, 프롬프트와 결과 꼴만 다르다. */
-  function readWageTable(dataUrl) {
+  /* 프롬프트만 갈아 끼우고 나머지(모델·재시도·키 조달·결과 다듬기)는 함께 쓴다. */
+  function readPairsWith(prompt, dataUrl) {
     if (!deps.fetch) return Promise.resolve(wageFail('판독 준비가 되지 않았습니다'));
     var imgs = (Array.isArray(dataUrl) ? dataUrl : [dataUrl])
       .map(function (u) { return String(u || '').split(',')[1] || ''; })
@@ -375,15 +374,11 @@
       var parts = imgs.map(function (b64) {
         return { inline_data: { mime_type: 'image/jpeg', data: b64 } };
       });
-      parts.push({ text: WAGE_PROMPT + (imgs.length > 1 ? MULTI_NOTE : '') });
-      var body = {
-        contents: [{ parts: parts }],
-        generationConfig: { temperature: 0 }
-      };
+      parts.push({ text: prompt + (imgs.length > 1 ? MULTI_NOTE : '') });
       return askAny(key, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        body: JSON.stringify({ contents: [{ parts: parts }], generationConfig: { temperature: 0 } })
       }).then(function (j) {
         var parsed = parseReply(j);
         if (!parsed) throw new Error('AI가 알아볼 수 없는 답을 보냈습니다');
@@ -392,6 +387,28 @@
         return wageFail((e && e.message) || String(e));
       });
     });
+  }
+
+  /* 급여표(급여명세서·임금대장) 한 장(또는 여러 쪽)을 사람별 금액까지 판독한다.
+     read() 와 같은 모델·재시도·키 조달 배관을 그대로 쓰되, 프롬프트와 결과 꼴만 다르다. */
+  function readWageTable(dataUrl) { return readPairsWith(WAGE_PROMPT, dataUrl); }
+
+  /* ── 알림 캡처 판독 (급여데이터함 전용, 2026-08-15) ──
+     문자·카톡으로 오는 「누가 며칠자 입사」·「OO씨 수당 얼마」를 읽는다.
+     표가 아니라 줄글이라 기존 판독기로는 안 된다.
+     결과 모양은 readWageTable 과 같게 맞춘다 — 부르는 쪽이 하나로 다룬다. */
+  var NOTICE_PROMPT =
+    '이 이미지는 급여 업무 관련 알림(문자·카카오톡·메일) 캡처입니다. 사람마다 무엇이 바뀌는지 JSON으로만 답하세요.' +
+    '\n키: company(사업장·회사명이 보이면), period(귀속 연월 — 2026-08 형식, 없으면 빈 문자열), docName(무슨 알림인지 한 마디 — 예 입사 통보·수당 변경), rows(사람별 줄 — 아래 규칙).' +
+    '\nrows 규칙: [{"name":"이름","pairs":[{"item":"바뀌는 것","value":"값"}]}] 배열입니다.' +
+    ' item 은 무엇이 바뀌는지입니다 — 예 입사일·퇴사일·기본급·식대·직책수당.' +
+    ' value 는 적힌 그대로 담으세요(날짜는 2026-08-12 형식, 금액은 적힌 표기 그대로).' +
+    ' **흐릿하거나 확실하지 않으면 지어내지 말고 그 줄을 빼세요.**' +
+    ' 인사말·잡담은 담지 마세요. **주민등록번호는 담지 마세요.**' +
+    ' 사람 이름이 없으면 그 줄을 담지 마세요. JSON 외 텍스트 금지.';
+
+  function readChangeNotice(dataUrl) {
+    return readPairsWith(NOTICE_PROMPT, dataUrl);
   }
 
   function read(dataUrl) {
@@ -595,6 +612,7 @@
     READ_VERSION: READ_VERSION,
     read: read,
     readWageTable: readWageTable,
+    readChangeNotice: readChangeNotice,
     autoOk: autoOk
   };
 })(typeof window !== 'undefined' ? window : globalThis);
