@@ -9689,6 +9689,53 @@ function putCoFolder(folder){
   Store.db.ref(DB_ROOT+'/coFolders/'+folder.id).set(folder)
     .catch(e=>toast('저장 실패: '+((e&&e.message)||'')));
 }
+
+/* ── "이알피에서 가져오기" — 사업 유형별로 회사를 한꺼번에 폴더에 담는다 ──
+   (대표 지시 2026-08-14) 폴더-이알피 실시간 연동은 안 한다 — 그 순간의 스냅샷만
+   담는다. 회사는 사업자번호(10자리)로 매칭한다 — 기업정보에 실제로 있는(명함·
+   사업자등록증) 회사만 담고, 없으면 건너뛰고 안내한다. */
+function coErpFolderCandidates(cb){
+  loadErpCaseCons(data=>{
+    if(!data){ cb([]); return; }
+    const byType = {};
+    Object.values(data.byBiz).forEach(recs=>recs.forEach(rec=>{
+      const label = (rec._kind==='case' ? '사건·' : '컨설팅·') +
+        (rec._kind==='case' ? (rec.typeName||'(이름 없음)') : erpConsTypeName(rec.typeCode||'(이름 없음)'));
+      (byType[label] = byType[label]||[]).push(rec);
+    }));
+    const list = Object.keys(byType).map(label=>({
+      label, kind: byType[label][0]._kind, n: byType[label].length, recs: byType[label]
+    })).sort((a,b)=>b.n-a.n);
+    cb(list);
+  });
+}
+async function coImportFolderFromType(label, recs){
+  const name = label.replace(/^(사건·|컨설팅·)/,'');
+  const existing = Object.values(_coFolders).find(f=>f.name===name);
+  const folderId = existing ? existing.id : uid();
+  if(!existing){
+    let by=''; try{ by=(firebase.auth().currentUser||{}).email||''; }catch(_){}
+    putCoFolder({ id:folderId, name, order:Date.now(), at:Date.now(), by });
+  }
+
+  const byKey = {}; coList().forEach(o=>{ const b=digits(o.bizno||''); if(b.length>=10) byKey[b]=o; });
+  const upd = {}; let matched=0, skipped=0;
+  recs.forEach(rec=>{
+    const b = digits(rec.bizNo||'');
+    const co = byKey[b];
+    if(!co){ skipped++; return; }
+    matched++;
+    upd['coInfo/'+co.key+'/folder'] = folderId;
+  });
+  if(!matched){ toast(`「${name}」 사업에서 담을 회사를 찾지 못했습니다`); return; }
+  try{
+    await Store.db.ref(DB_ROOT).update(upd);
+  }catch(e){
+    return toast('가져오기 실패: '+((e&&e.message)||''));
+  }
+  toast(`${matched}곳을 「${name}」 폴더에 담았습니다` + (skipped?` · ${skipped}곳은 명함·사업자등록증이 없어 건너뛰었습니다`:''));
+  if(state.view==='co') renderPC();
+}
 function openCoFolderDialog(){
   $('folderDlg').innerHTML = `
     <div class="mhead"><b>새 폴더 만들기</b>
