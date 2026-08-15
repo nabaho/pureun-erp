@@ -73,26 +73,89 @@ test('새 값 줄마다 번호가 겹치지 않는다', () => {
   assert.notEqual(rows[0].id, rows[1].id);
 });
 
-/* ══════ 같은 자료 중복 ══════ */
+/* ══════ 같은 자료 중복 ══════
+   값 줄 하나 = 「근로자 × 원본 서류」 하나다. 중복은 **같은 서류를 다시 읽은
+   것**뿐이다 — 사람만 같고 서류가 다르면 새 줄이지 중복이 아니다. */
 
-test('★ 같은 사업장·월·근로자 값이 있으면 그 자리 번호를 알려준다', () => {
+test('★ 같은 사업장·월·근로자·같은 서류 값이 있으면 그 자리 번호를 알려준다', () => {
   const S = loadStore();
-  const existing = { r1: { companyId: 'co_1', month: '202608', name: '홍길동' } };
-  assert.equal(S.findDuplicateValue(existing, 'co_1', '202608', '홍길동'), 'r1');
+  const existing = { r1: { companyId: 'co_1', month: '202608', name: '홍길동', sourceId: 'a1' } };
+  assert.equal(S.findDuplicateValue(existing, 'co_1', '202608', '홍길동', 'a1'), 'r1');
 });
 
 test('업체·월·이름 중 하나라도 다르면 중복이 아니다', () => {
   const S = loadStore();
-  const existing = { r1: { companyId: 'co_1', month: '202608', name: '홍길동' } };
-  assert.equal(S.findDuplicateValue(existing, 'co_2', '202608', '홍길동'), null);
-  assert.equal(S.findDuplicateValue(existing, 'co_1', '202609', '홍길동'), null);
-  assert.equal(S.findDuplicateValue(existing, 'co_1', '202608', '김철수'), null);
+  const existing = { r1: { companyId: 'co_1', month: '202608', name: '홍길동', sourceId: 'a1' } };
+  assert.equal(S.findDuplicateValue(existing, 'co_2', '202608', '홍길동', 'a1'), null);
+  assert.equal(S.findDuplicateValue(existing, 'co_1', '202609', '홍길동', 'a1'), null);
+  assert.equal(S.findDuplicateValue(existing, 'co_1', '202608', '김철수', 'a1'), null);
+});
+
+/* 같은 근로자라도 서류가 다르면 덮을 자리가 아니다 — 덮으면 근태표에서 나온
+   유급일수가 수당변경 카톡 저장 한 번에 통째로 사라진다. */
+test('★ 사람은 같아도 서류가 다르면 중복이 아니다 — 앞 서류 값을 덮으면 안 된다', () => {
+  const S = loadStore();
+  const existing = { r1: { companyId: 'co_1', month: '202608', name: '배영승', sourceId: '근태표a' } };
+  assert.equal(S.findDuplicateValue(existing, 'co_1', '202608', '배영승', '카톡b'), null,
+    '다른 서류를 「이미 있다」로 잡으면 앞 서류 값이 통째로 지워집니다');
+});
+
+/* 옛 자료에 이름만 같은 줄이 여럿 남아 있어도, 훑는 차례가 흔들리면 어느 줄을
+   덮을지가 새로고침마다 달라진다. 열쇠 이름 오름차순으로 못 박는다. */
+test('★ 맞는 줄을 고르는 차례가 흔들리지 않는다', () => {
+  const S = loadStore();
+  const existing = {
+    zz: { companyId: 'co_1', month: '202608', name: '배영승', sourceId: 'a9' },
+    aa: { companyId: 'co_1', month: '202608', name: '배영승', sourceId: 'a9' }
+  };
+  assert.equal(S.findDuplicateValue(existing, 'co_1', '202608', '배영승', 'a9'), 'aa');
 });
 
 test('아무것도 없으면 중복이 없다', () => {
   const S = loadStore();
-  assert.equal(S.findDuplicateValue({}, 'co_1', '202608', '홍길동'), null);
-  assert.equal(S.findDuplicateValue(null, 'co_1', '202608', '홍길동'), null);
+  assert.equal(S.findDuplicateValue({}, 'co_1', '202608', '홍길동', 'a1'), null);
+  assert.equal(S.findDuplicateValue(null, 'co_1', '202608', '홍길동', 'a1'), null);
+});
+
+/* ══════ 다른 서류와 항목 겹침 ══════ */
+
+test('★ 같은 사람·같은 항목이 다른 서류에도 있으면 알려준다', () => {
+  const S = loadStore();
+  const existing = { r1: { companyId: 'co_1', month: '202608', name: '배영승', sourceId: '근태표a',
+    pairs: [{ item: '유급일수', value: '22일' }, { item: '기본급', value: '100' }] } };
+  const laps = S.findValueOverlaps(existing,
+    { companyId: 'co_1', month: '202608', name: '배영승', sourceId: '대장b',
+      pairs: [{ item: '기본급', value: '200' }] });
+  assert.equal(laps.length, 1);
+  assert.equal(laps[0].name, '배영승');
+  assert.equal(laps[0].item, '기본급');
+  assert.equal(laps[0].sourceId, '근태표a', '어느 서류와 겹쳤는지까지 알려야 합니다');
+});
+
+test('겹치는 항목이 없으면 알릴 것도 없다 — 근태표+수당카톡이 보통이다', () => {
+  const S = loadStore();
+  const existing = { r1: { companyId: 'co_1', month: '202608', name: '배영승', sourceId: '근태표a',
+    pairs: [{ item: '유급일수', value: '22일' }] } };
+  const laps = S.findValueOverlaps(existing,
+    { companyId: 'co_1', month: '202608', name: '배영승', sourceId: '카톡b',
+      pairs: [{ item: '식대', value: '200,000' }] });
+  assert.equal(laps.length, 0);
+});
+
+test('같은 서류는 겹침이 아니라 다시 읽기다 — 알리지 않는다', () => {
+  const S = loadStore();
+  const existing = { r1: { companyId: 'co_1', month: '202608', name: '배영승', sourceId: 'a1',
+    pairs: [{ item: '기본급', value: '100' }] } };
+  const laps = S.findValueOverlaps(existing,
+    { companyId: 'co_1', month: '202608', name: '배영승', sourceId: 'a1',
+      pairs: [{ item: '기본급', value: '200' }] });
+  assert.equal(laps.length, 0);
+});
+
+test('겹침 찾기는 빈 자료에도 터지지 않는다', () => {
+  const S = loadStore();
+  assert.equal(S.findValueOverlaps(null, { name: '배영승', pairs: [] }).length, 0);
+  assert.equal(S.findValueOverlaps({}, null).length, 0);
 });
 
 /* ══════ 실제로 쓰는 층 ══════ */

@@ -644,15 +644,68 @@
     });
   }
 
-  /* 같은 사업장·귀속월·근로자 값이 이미 있으면 그 자리 id 를 돌려준다 — 있으면
-     「덮을까요」를 물을 수 있게. 캡처는 실제로 두 번 올라온다. */
-  function findDuplicateValue(existingRows, companyId, month, name) {
-    var ids = Object.keys(existingRows || {});
+  /* 값 줄 하나 = 「근로자 × 원본 서류」 하나다. 같은 사업장·귀속월·근로자에
+     **같은 출처 서류**의 값이 이미 있으면 그 자리 id 를 돌려준다 — 있으면
+     「덮을까요」를 물을 수 있게. 같은 캡처는 실제로 두 번 올라온다.
+
+     ⚠ 출처(sourceId)까지 봐야 하는 까닭 (2026-08-15)
+     예전에는 사업장·월·이름 셋만 봤다. 그러면 한 근로자의 근태표를 읽어 저장한
+     뒤 수당변경 카톡을 읽어 저장할 때 카톡이 「이미 있다」로 잡혔고, 동의를 받아
+     그 자리에 다시 쓰면 saveValues 가 **줄을 통째로** 바꾸므로 근태표에서 나온
+     유급일수·휴무일수가 함께 사라졌다. 화면에는 「－」로 보여 「아직 안 읽음」과
+     구별조차 되지 않고, 되살릴 길도 없었다.
+     한 근로자에게 서류가 여러 장 오는 것은 예외가 아니라 보통이다(설계서 1장).
+     넷이 다 같을 때라야 **같은 서류를 다시 읽은 것**이고, 그때만 그 자리에 다시
+     쓰는 것이 옳다. 서류가 다르면 중복이 아니라 제 자리를 가진 새 줄이다.
+
+     ⚠ 출처를 열쇠에 넣으면 실제로는 맞는 줄이 하나뿐이지만, 훑는 차례는 그래도
+     못 박는다 — Object.keys 차례는 실시간DB가 보장하지 않는다(값 표에서 at 로
+     줄을 세운 것과 같은 까닭). 옛 자료에 이름만 같은 줄이 둘 남아 있어도 어느
+     줄을 덮을지가 새로고침마다 달라지면 안 된다. */
+  function findDuplicateValue(existingRows, companyId, month, name, sourceId) {
+    var box = existingRows || {};
+    var ids = Object.keys(box).sort();
+    var want = String(sourceId == null ? '' : sourceId);
     for (var i = 0; i < ids.length; i++) {
-      var r = existingRows[ids[i]];
-      if (r && r.companyId === companyId && r.month === month && r.name === name) return ids[i];
+      var r = box[ids[i]];
+      if (!r) continue;
+      if (r.companyId !== companyId || r.month !== month || r.name !== name) continue;
+      if (String(r.sourceId == null ? '' : r.sourceId) !== want) continue;
+      return ids[i];
     }
     return null;
+  }
+
+  /* 「같은 근로자의 같은 항목이 **다른 서류**에서도 들어와 있다」를 찾는다.
+     겹쳐도 아무것도 지우지 않는다 — 옛 줄은 제 출처를 달고 그대로 남고, 값 표는
+     그중 나중에 저장한 값을 보여줄 뿐이다(valueGridModel 의 at 오름차순).
+     그래도 사람에게는 알려야 한다: 표에 보이던 금액이 방금 읽은 서류의 금액으로
+     바뀌기 때문이다. 모르고 지나가면 「왜 숫자가 달라졌지」가 된다.
+     돌려주는 모양: [{name, item, sourceId}] — 어느 서류와 겹쳤는지까지 알린다. */
+  function findValueOverlaps(existingRows, row) {
+    var box = existingRows || {};
+    var out = [];
+    if (!row) return out;
+    var mine = {};
+    ((row && row.pairs) || []).forEach(function (p) {
+      var it = String((p && p.item) || '').trim();
+      if (it) mine[it] = 1;
+    });
+    var seen = {};
+    Object.keys(box).sort().forEach(function (id) {
+      var r = box[id];
+      if (!r) return;
+      if (r.companyId !== row.companyId || r.month !== row.month || r.name !== row.name) return;
+      /* 같은 서류면 겹침이 아니라 「다시 읽기」다 — 그 줄은 어차피 이 자리에 다시 쓴다 */
+      if (String(r.sourceId == null ? '' : r.sourceId) === String(row.sourceId == null ? '' : row.sourceId)) return;
+      (r.pairs || []).forEach(function (p) {
+        var it = String((p && p.item) || '').trim();
+        if (!it || !mine[it] || seen[it]) return;
+        seen[it] = 1;
+        out.push({ name: row.name, item: it, sourceId: r.sourceId || '' });
+      });
+    });
+    return out;
   }
 
   /* 값 줄들을 한 묶음으로 쓴다 — 다 쓰거나 하나도 안 쓰거나. */
@@ -1050,6 +1103,7 @@
     rowsFromRead: rowsFromRead,
     buildValueRows: buildValueRows,
     findDuplicateValue: findDuplicateValue,
+    findValueOverlaps: findValueOverlaps,
     saveValues: saveValues,
     listValues: listValues,
     confirmValue: confirmValue,

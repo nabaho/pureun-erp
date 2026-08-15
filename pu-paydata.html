@@ -1407,24 +1407,50 @@ function saveVals() {
   catch (e) { alert(e.message); return; }
 
   S.listValues(slot, App.viewingUid).then(existing => {
-    /* 같은 사업장·월·근로자가 이미 있으면 묻는다 — 캡처는 실제로 두 번 올라온다.
+    /* ══════ 1) 같은 서류를 다시 읽었나 ══════
+       사업장·월·근로자 **그리고 출처 서류**가 다 같으면 같은 서류를 다시 읽은
+       것이다(캡처는 실제로 두 번 올라온다). 그때는 그 자리에 다시 쓰는 것이 옳다.
        findDuplicateValue 는 "그 자리"의 id 를 돌려준다 — 여기서 그 id 를 버리고
        buildValueRows 가 새로 붙인 id 그대로 저장하면, "덮을까요" 라고 물어놓고
        실제로는 새 자리에 하나 더 쓰는 꼴이 된다. 옛 줄은 그대로 남고 새 줄이
        하나 더 생기니, 막으려던 "근무일수 두 배"가 동의를 받고서 그대로 일어난다.
        그래서 확인을 받은 다음에는 반드시 그 줄의 id 를 옛 자리 id 로 바꿔 끼워야
-       실시간DB update() 가 같은 열쇠에 다시 써서 "덮어쓰기"가 이름 그대로 된다. */
+       실시간DB update() 가 같은 열쇠에 다시 써서 "덮어쓰기"가 이름 그대로 된다.
+
+       ⚠ **다른** 서류는 중복이 아니다 — 근태표를 읽어 둔 근로자에게 수당변경
+       카톡이 오는 것은 보통 있는 일이다. 그것까지 「이미 있다」로 잡아 덮으면
+       앞 서류에서 나온 값이 통째로 사라진다(saveValues 는 줄을 통째로 쓴다). */
     const dupIds = {};   // 새로 만든 id → 이미 있는 자리의 id
     rows.forEach(r => {
-      const existingId = S.findDuplicateValue(existing, r.companyId, r.month, r.name);
+      const existingId = S.findDuplicateValue(existing, r.companyId, r.month, r.name, r.sourceId);
       if (existingId) dupIds[r.id] = existingId;
     });
     const dup = rows.filter(r => dupIds[r.id]);
     if (dup.length) {
       const who = dup.map(r => r.name).join(', ');
-      if (!confirm('이미 있습니다 — 덮을까요?\n\n' + who + '\n\n「취소」를 누르면 그대로 둡니다.')) return null;
+      /* 「취소」는 이번 판독 전체를 안 쓰는 것이다(saveValues 가 한 묶음이라
+         일부만 쓰는 길이 없다). 그러니 겹치지 않는 사람도 함께 안 써진다 —
+         말과 실제가 어긋나지 않게 그 말을 그대로 적어 둔다. */
+      if (!confirm('같은 서류를 다시 읽었습니다 — 앞서 저장한 값을 덮을까요?\n\n' + who
+        + '\n\n「취소」를 누르면 이번 판독은 한 줄도 저장하지 않습니다'
+        + ' — 위에 이름이 없는 사람도 저장되지 않습니다.')) return null;
       /* 「덮어쓰기」에 동의했다 — 이제 그 자리 id 로 바꿔 끼워야 진짜로 덮인다. */
       rows.forEach(r => { if (dupIds[r.id]) r.id = dupIds[r.id]; });
+    }
+
+    /* ══════ 2) 다른 서류와 항목이 겹치나 ══════
+       겹쳐도 지우지 않는다 — 서류마다 제 줄이 남고, 값 표는 나중에 저장한 값을
+       보여준다. 그래도 알리는 까닭은 표에 보이던 금액이 이번 값으로 바뀌기
+       때문이다. 여기 「취소」도 위와 같은 뜻이다 — 한 줄도 저장하지 않는다. */
+    const laps = [];
+    rows.forEach(r => { (S.findValueOverlaps(existing, r) || []).forEach(o => laps.push(o)); });
+    if (laps.length) {
+      const lines = laps.map(o => '· ' + o.name + ' — ' + o.item).join('\n');
+      if (!confirm('다른 서류에서 이미 들어온 항목이 있습니다.\n\n' + lines
+        + '\n\n앞 서류의 값은 지우지 않고 그대로 둡니다(그 값을 누르면 그 서류가 열립니다).'
+        + '\n값 표에는 나중에 저장한 이번 값이 보입니다.'
+        + '\n\n「확인」을 누르면 이대로 저장하고,'
+        + ' 「취소」를 누르면 이번 판독은 한 줄도 저장하지 않습니다.')) return null;
     }
     return S.saveValues(slot, rows, App.viewingUid);
   }).then(n => {

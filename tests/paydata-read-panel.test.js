@@ -252,7 +252,8 @@ test('★ 판독 중 다른 서류로 옮기면 늦게 온 실패 응답도 새 
 });
 
 /* ══════ 저장·중복 ══════ */
-function loadSave(existing, confirmYes) {
+function loadSave(existing, confirmYes, opts) {
+  opts = opts || {};
   const calls = { alerts: [], confirms: [], saved: null };
   const sandbox = {
     window: {}, console, Date,
@@ -264,6 +265,9 @@ function loadSave(existing, confirmYes) {
   vm.createContext(sandbox);
   new vm.Script(store, { filename: 'store.js' }).runInContext(sandbox);
   sandbox.__existing = existing || {};
+  const viewerId = opts.viewerId || 'a1';
+  const items = {};
+  items[viewerId] = { companyId: 'co_1', kind: 'attend', month: '202608', file: 'p/' + viewerId + '.jpg' };
   new vm.Script([
     'const S = window.PuPaydataStore;',
     'S.init({uid:"U1", db:{ref:function(p){ return {'
@@ -273,17 +277,31 @@ function loadSave(existing, confirmYes) {
     'var __saved = null;',
     // db.ref() 를 인자 없이 부르면 update 를 쓰는 자리다 — 위 ref 가 둘 다 준다
     'const App = ' + JSON.stringify({
-      kind: 'attend', viewerId: 'a1', viewingUid: '', companyId: 'co_1',
+      kind: 'attend', viewerId: viewerId, viewingUid: '', companyId: 'co_1',
       companyName: '화담원', month: '2026-08',
-      itemsMonth: { a1: { companyId: 'co_1', kind: 'attend', month: '202608', file: 'p/a1.jpg' } },
-      itemsKeep: {},
-      readState: { status: 'done', err: '', rows: [{ name: '배영승', pairs: [{ item: '유급일수', value: '3일' }] }] }
+      itemsMonth: items,
+      itemsKeep: {}, values: {},
+      readState: { status: 'done', err: '',
+        rows: opts.rows || [{ name: '배영승', pairs: [{ item: '유급일수', value: '3일' }] }] }
     }) + ';',
     'App.render = function(){};',
-    cut('esc'), cut('canWrite'), cut('findRow'), cut('saveVals'),
-    'window.App = App; window.saveVals = saveVals; window.__got = function(){ return __saved; };'
+    cut('esc'), cut('canWrite'), cut('findRow'), cut('saveVals'), cut('valueGridModel'),
+    'window.App = App; window.saveVals = saveVals; window.__got = function(){ return __saved; };',
+    'window.valueGridModel = valueGridModel;'
   ].join('\n'), { filename: 'save.js' }).runInContext(sandbox);
   return { W: sandbox.window, calls };
+}
+
+/* 저장이 끝난 뒤 실시간DB 에 실제로 남아 있을 값 칸을 되살린다 —
+   update() 는 열쇠 하나하나에 덮어쓰므로, 옛 값 위에 쓴 것을 그대로 얹는다.
+   이렇게 해야 「무엇이 살아남았나」를 값 표로 끝까지 볼 수 있다. */
+function afterSave(existing, written) {
+  const box = JSON.parse(JSON.stringify(existing || {}));
+  Object.keys(written || {}).forEach(p => {
+    const id = p.split('/').pop();
+    box[id] = written[p];
+  });
+  return box;
 }
 
 test('★ 저장하면 값에 출처가 붙어 들어간다', async () => {
@@ -300,9 +318,9 @@ test('★ 저장하면 값에 출처가 붙어 들어간다', async () => {
   assert.match(calls.alerts[0], /저장/);
 });
 
-test('★ 같은 사람 값이 이미 있으면 묻는다', async () => {
+test('★ 같은 서류를 다시 읽으면 묻는다', async () => {
   const { W, calls } = loadSave(
-    { r1: { companyId: 'co_1', month: '202608', name: '배영승' } }, false);
+    { r1: { companyId: 'co_1', month: '202608', name: '배영승', sourceId: 'a1' } }, false);
   W.saveVals();
   await new Promise(r => setTimeout(r, 10));
   assert.equal(calls.confirms.length, 1, '묻지 않으면 근무일수가 두 배가 됩니다');
@@ -312,7 +330,7 @@ test('★ 같은 사람 값이 이미 있으면 묻는다', async () => {
 
 test('★ 덮어쓰기를 고르면 저장한다 — 새 자리가 아니라 옛 자리에 다시 쓴다', async () => {
   const { W } = loadSave(
-    { r1: { companyId: 'co_1', month: '202608', name: '배영승' } }, true);
+    { r1: { companyId: 'co_1', month: '202608', name: '배영승', sourceId: 'a1' } }, true);
   W.saveVals();
   await new Promise(r => setTimeout(r, 10));
   const up = W.__got();
@@ -321,6 +339,112 @@ test('★ 덮어쓰기를 고르면 저장한다 — 새 자리가 아니라 옛
   assert.equal(keys.length, 1, '한 사람 값인데 자리가 둘 이상 생겼습니다 — 근무일수가 두 배로 잡힙니다');
   assert.match(keys[0], /\/values\/202608\/r1$/,
     '「덮을까요」에 동의했는데 옛 자리(r1)가 아니라 새 자리에 썼습니다 — 옛 줄이 그대로 남아 두 줄이 됩니다');
+});
+
+/* ══════ 서류 두 장이 한 근로자에게 오는 보통 경우 (2026-08-15) ══════
+   근태표를 읽어 유급일수를 저장해 둔 근로자에게 수당변경 카톡이 온다.
+   설계서 1장이 네 가지 서류가 한 달에 모두 들어온다고 못 박았으니 이것은
+   드문 일이 아니라 **보통**이다. 사람만 보고 「이미 있다」로 잡아 덮으면
+   유급일수가 통째로 사라지고, 값 표에는 「－」로 보여 「아직 안 읽음」과
+   구별조차 되지 않는다. 되살릴 화면도 없다. */
+const 근태표줄 = {
+  r1: { companyId: 'co_1', month: '202608', name: '배영승', sourceId: '근태a', at: 100,
+        pairs: [{ item: '유급일수', value: '22일' }, { item: '휴무일수', value: '8일' }] }
+};
+const 카톡판독 = [{ name: '배영승', pairs: [{ item: '식대', value: '200,000' }] }];
+
+test('★ 다른 서류를 저장해도 앞 서류 값이 살아남는다 — 묻지도 않는다', async () => {
+  const { W, calls } = loadSave(근태표줄, true, { viewerId: '카톡b', rows: 카톡판독 });
+  W.saveVals();
+  await new Promise(r => setTimeout(r, 10));
+  const up = W.__got();
+  assert.ok(up, '저장되지 않았습니다');
+  assert.equal(calls.confirms.length, 0,
+    '겹치는 항목도 없는데 물었습니다 — 근태표+수당카톡은 보통 있는 일이라 물을 일이 아닙니다');
+  assert.equal(Object.keys(up).length, 1);
+  assert.ok(!up['paydata/u/U1/values/202608/r1'],
+    '다른 서류인데 근태표 자리(r1)를 덮었습니다 — 유급일수가 통째로 사라집니다');
+});
+
+test('★ 서류 두 장 값이 값 표에서 한 줄로 만나고 출처는 제각각 남는다', async () => {
+  const { W } = loadSave(근태표줄, true, { viewerId: '카톡b', rows: 카톡판독 });
+  W.saveVals();
+  await new Promise(r => setTimeout(r, 10));
+  const g = W.valueGridModel(afterSave(근태표줄, W.__got()));
+  assert.equal(g.people.length, 1, '한 근로자니 한 줄이어야 합니다');
+  const c = g.people[0].cells;
+  assert.equal(c['유급일수'] && c['유급일수'].value, '22일',
+    '근태표에서 나온 유급일수가 사라졌습니다 — 임금 계산이 통째로 틀어집니다');
+  assert.equal(c['휴무일수'] && c['휴무일수'].value, '8일');
+  assert.equal(c['식대'] && c['식대'].value, '200,000');
+  assert.equal(c['유급일수'].sourceId, '근태a', '값을 누르면 그 값이 나온 서류가 열려야 합니다');
+  assert.equal(c['식대'].sourceId, '카톡b');
+});
+
+/* 옛 자료에 한 근로자의 줄이 서류별로 여럿 있을 때, 그중 한 서류를 다시 읽으면
+   **그 서류의 줄**을 덮어야 한다. 아무 줄이나 집으면 남의 서류 값이 날아간다. */
+test('★ 같은 서류를 다시 읽으면 여러 줄 중 그 서류의 줄만 덮는다', async () => {
+  const 두줄 = {
+    r1: { companyId: 'co_1', month: '202608', name: '배영승', sourceId: '근태a', at: 100,
+          pairs: [{ item: '유급일수', value: '22일' }] },
+    r2: { companyId: 'co_1', month: '202608', name: '배영승', sourceId: '카톡b', at: 200,
+          pairs: [{ item: '식대', value: '200,000' }] }
+  };
+  const { W } = loadSave(두줄, true, {
+    viewerId: '카톡b', rows: [{ name: '배영승', pairs: [{ item: '식대', value: '250,000' }] }] });
+  W.saveVals();
+  await new Promise(r => setTimeout(r, 10));
+  const keys = Object.keys(W.__got() || {});
+  assert.equal(keys.length, 1);
+  assert.match(keys[0], /\/values\/202608\/r2$/,
+    '다시 읽은 서류(카톡b)의 줄은 r2 입니다 — r1 을 덮으면 근태표 유급일수가 날아갑니다');
+  const c = W.valueGridModel(afterSave(두줄, W.__got())).people[0].cells;
+  assert.equal(c['유급일수'].value, '22일', '건드리지 않은 서류의 값이 사라졌습니다');
+  assert.equal(c['식대'].value, '250,000');
+});
+
+/* 항목까지 겹칠 때(급여대장·근태표 둘 다 기본급을 적고 있는 등)는 지우지는
+   않되 알려야 한다 — 표에 보이던 금액이 이번 값으로 바뀌기 때문이다. */
+test('★ 다른 서류와 항목이 겹치면 지우지 않고 알린다', async () => {
+  const 겹침 = {
+    r1: { companyId: 'co_1', month: '202608', name: '배영승', sourceId: '근태a', at: 100,
+          pairs: [{ item: '기본급', value: '3,000,000' }, { item: '유급일수', value: '22일' }] }
+  };
+  const { W, calls } = loadSave(겹침, true, {
+    viewerId: '대장b', rows: [{ name: '배영승', pairs: [{ item: '기본급', value: '3,200,000' }] }] });
+  W.saveVals();
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(calls.confirms.length, 1, '겹친 사실을 알리지 않았습니다');
+  assert.match(calls.confirms[0], /배영승/);
+  assert.match(calls.confirms[0], /기본급/, '어느 항목이 겹쳤는지 이름을 대야 합니다');
+  assert.match(calls.confirms[0], /지우지 않고/, '앞 서류 값을 지우지 않는다고 말해야 합니다');
+  const keys = Object.keys(W.__got() || {});
+  assert.ok(!keys.some(k => /\/r1$/.test(k)), '알린다고 해놓고 앞 서류 줄을 덮었습니다');
+  const c = W.valueGridModel(afterSave(겹침, W.__got())).people[0].cells;
+  assert.equal(c['유급일수'].value, '22일', '겹치지 않은 항목까지 날아갔습니다');
+  assert.equal(c['기본급'].value, '3,200,000', '값 표에는 나중에 저장한 값이 보여야 합니다');
+});
+
+/* ══════ 「취소」의 뜻은 말과 실제가 같아야 한다 ══════
+   saveValues 는 한 묶음이라 일부만 쓰는 길이 없다 — 「취소」는 이번 판독 전체를
+   안 쓰는 것이다. 그런데 물음말에는 겹친 사람 이름만 나온다. 그러니 물음말이
+   「위에 이름이 없는 사람도 저장되지 않는다」까지 말해야 어긋나지 않는다. */
+test('★ 「취소」는 겹치지 않은 사람까지 저장하지 않는다 — 물음말이 그렇게 말한다', async () => {
+  const { W, calls } = loadSave(
+    { r1: { companyId: 'co_1', month: '202608', name: '배영승', sourceId: 'a1' } }, false,
+    { rows: [
+      { name: '배영승', pairs: [{ item: '유급일수', value: '3일' }] },
+      { name: '이옥자', pairs: [{ item: '유급일수', value: '5일' }] }
+    ] });
+  W.saveVals();
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(W.__got(), null, '「취소」인데 저장됐습니다');
+  const m = calls.confirms[0];
+  assert.doesNotMatch(m, /이옥자/, '겹치지 않은 사람은 물음말에 나오지 않습니다');
+  assert.match(m, /한 줄도 저장하지 않습니다/,
+    '실제로는 이옥자까지 통째로 버려집니다 — 물음말이 그렇게 말하지 않으면 말과 실제가 어긋납니다');
+  assert.match(m, /이름이 없는 사람도 저장되지 않습니다/,
+    '겹친 사람 이름만 보여주고서 「그대로 둡니다」라고만 하면, 이옥자 값이 사라진 까닭을 알 길이 없습니다');
 });
 
 test('★ 남의 자리에서는 저장하지 않는다', async () => {
