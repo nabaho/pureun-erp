@@ -26,12 +26,19 @@ test('모바일 건의 단추는 헤더 안에 있어 카메라와 겹치지 않
     '`.pbar #sgFab` 로 적지 않으면 PC용 order:4 에 져서 아래 줄로 밀립니다');
 });
 
-test('폰에서 밖에 나오는 단추는 카메라와 ⋯ 둘뿐이다', () => {
-  // 설정·백업·복구·최신은 ⋯ 안으로 데려온다(dockAdopt). 좌표는 한 곳(--fab-edge/--fab-bottom)에서 정한다.
+test('폰 아래 단추 자리는 한 곳(--fab-edge/--fab-bottom)에서만 정한다', () => {
+  /* 예전에는 enter.html·pu-backup.js·pu-version.js 가 각자 좌표를 써서 겹쳤다.
+     이제 모두 이 두 값에서 파생시킨다 — 백업·복구처럼 밖에 두는 것도 마찬가지다. */
   assert.match(enter, /--fab-edge:\s*\d+px;\s*--fab-bottom:\s*\d+px/);
   assert.match(enter, /#camFab\{[^}]*right:var\(--fab-edge\);bottom:var\(--fab-bottom\)/);
   assert.match(enter, /#moreFab\{[^}]*left:var\(--fab-edge\);bottom:var\(--fab-bottom\)/);
-  assert.match(enter, /DOCK_IDS = \['cfgFab', 'pu-backup-admin-button', 'pu-version-fab'\]/);
+  assert.match(enter, /#pu-backup-admin-button\{left:calc\(var\(--fab-edge\)[^}]*bottom:var\(--fab-bottom\)!important/,
+    '백업·복구도 제 좌표(pu-backup.js)를 쓰지 말고 여기서 정해야 겹치지 않습니다');
+});
+
+test('자주 안 쓰는 설정·최신만 ⋯ 안으로 넣는다', () => {
+  // 백업·복구는 자주 써서 밖에 둔다(대표 지시 2026-08-15)
+  assert.match(enter, /DOCK_IDS = \['cfgFab', 'pu-version-fab'\]/);
 });
 
 test('타일 마지막 줄이 아래 단추에 깔리지 않는다', () => {
