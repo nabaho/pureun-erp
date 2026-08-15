@@ -1183,6 +1183,39 @@
         남의 사진은 윗칸에 읽기 권한이 있어 묶음으로 받아진다. 공유받은 사진은
         **사진 한 장마다** 권한을 따지므로 묶음이 막힌다 — 화면이 그때는
         한 장씩 받는 옛 길로 물러선다. */
+  /* ── 미리보기 **주소만** 받아온다 (대표 보고 2026-08-15: 느리다·비용) ──
+     loadThumb 은 주소를 받은 뒤 파일을 내려받아 data: 로 바꿔 준다. 그러면
+     ①오가는 횟수가 두 배고 ②**브라우저가 캐시를 못 한다**(data: 는 주소가 아니라
+     내용이라 캐시 열쇠가 없다) — 사진첩을 열 때마다 302장을 새로 받는다.
+     주소를 그대로 <img src> 에 꽂으면 두 번째부터는 브라우저가 캐시에서 꺼낸다.
+     ⚠ 판독(OCR)은 여전히 loadFull 로 **내용**을 받아야 한다 — 거기는 안 바꾼다.
+     ⚠ 창고에 없는 옛 사진(실시간DB 보관)은 null 을 준다 — 부르는 쪽이 옛 길로 간다. */
+  function thumbUrl(year, id, owner) {
+    if (!deps.storage) return Promise.resolve(null);
+    var path;
+    try { path = filePath(year, id, 'thumb', owner); } catch (e) { return Promise.resolve(null); }
+    return deps.storage.ref(path).getDownloadURL().catch(function () { return null; });
+  }
+
+  /* 받아 둔 주소를 사진 정보에 적어 둔다 — 다음에 열 때는 주소받기조차 건너뛴다.
+     ⚠ 실패해도 조용히 넘긴다. 주소는 언제든 다시 받을 수 있으니, 이걸 못 적었다고
+        사진이 안 보이면 안 된다. */
+  function rememberThumbUrl(year, id, url, owner) {
+    if (!deps.db || !url) return Promise.resolve();
+    var u = {};
+    u[metaPath(year, id, owner) + '/thumbUrl'] = url;
+    return deps.db.ref().update(u).catch(function () { });
+  }
+
+  /* 적어 둔 주소가 못 쓰게 됐을 때(토큰을 새로 발급한 경우 등) 지운다 —
+     안 지우면 다음에도 같은 죽은 주소를 그대로 쓴다. */
+  function forgetThumbUrl(year, id, owner) {
+    if (!deps.db) return Promise.resolve();
+    var u = {};
+    u[metaPath(year, id, owner) + '/thumbUrl'] = null;
+    return deps.db.ref().update(u).catch(function () { });
+  }
+
   function loadThumbsYear(year, owner) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     return deps.db.ref(base(owner) + '/thumbs/' + year).once('value')
@@ -1705,6 +1738,9 @@
     listYear: listYear,
     loadThumb: loadThumb,
     loadThumbsYear: loadThumbsYear,
+    thumbUrl: thumbUrl,
+    rememberThumbUrl: rememberThumbUrl,
+    forgetThumbUrl: forgetThumbUrl,
     loadFull: loadFull,
     init: init,
     getMode: getMode,

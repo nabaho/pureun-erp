@@ -26,7 +26,7 @@ test('인라인 스크립트가 문법 오류 없이 파싱된다', () => {
 
 test('저장 층을 외부 파일로 불러온다', () => {
   // 저장 방식을 앱 안에 복사해 넣으면 당겨오기 창과 어긋난다.
-  assert.match(app, /<script src="js\/pu-photo-store\.js"><\/script>/);
+  assert.match(app, /<script src="js\/pu-photo-store\.js(\?v=\d+)?"><\/script>/);
 });
 
 test('저장소 공용 파일 3개를 불러온다', () => {
@@ -479,7 +479,7 @@ test('★ 규약이 실제로 여러 장을 실어 나른다', () => {
 test('컨설팅이 사진첩 사진을 받는다', () => {
   const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
   assert.match(gov, /<script src="js\/pu-drag\.js"><\/script>/);
-  assert.match(gov, /<script src="js\/pu-photo-store\.js"><\/script>/);
+  assert.match(gov, /<script src="js\/pu-photo-store\.js(\?v=\d+)?"><\/script>/);
   assert.match(gov, /PuDrag\.read\(/);
   assert.match(gov, /function dropFromAlbum\(/);
   // 파일을 놓는 기존 길이 살아 있어야 한다(사진첩만 되면 퇴보다)
