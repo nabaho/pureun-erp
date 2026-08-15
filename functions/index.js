@@ -424,7 +424,7 @@ void _parkedDevelopmentAutomation;   // 안 쓰는 변수 경고만 막는다
 const SG_CAT_NAME = {
   // 업무지원
   erp: "푸른이알피", consult: "정부사업일정", work: "업무관리",
-  cards: "명함·메일", docs: "문서·이력", portal: "포털",
+  cards: "기업정보함", docs: "문서·이력", portal: "포털",
   // 직접업무
   fund: "기금관리", rules: "취업규칙", payroll: "급여관리",
   // 기타 건의
