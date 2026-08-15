@@ -1065,7 +1065,20 @@ function valueGridModel(valueRows) {
   const box = valueRows || {};
   const items = [], seenItem = {};
   const people = [], byName = {};
-  Object.keys(box).forEach(id => {
+  /* Firebase .val()의 키 차례는 저장 차례를 보장하지 않는다 — 이 순서 그대로
+     돌면 열 순서가 새로고침마다 바뀔 수 있고, 더 나쁘게는 같은 사람·같은
+     항목이 서류 두 장(근태표·급여대장 등)에서 나왔을 때 어느 값이 남을지도
+     그때그때 달라진다(아래 p.cells[item] = ... 는 뒤에 온 값이 이긴다).
+     그래서 저장 시각(at) 오름차순으로 미리 줄을 세운다 — 시각이 같으면 id로
+     한 번 더 줄을 세워 흔들리지 않게 한다. 이러면 "가장 나중에 저장한 값이
+     이긴다"로 고정되어, 이 앱 다른 곳의 덮어쓰기 방식과 같아진다. */
+  const ids = Object.keys(box).sort((a, b) => {
+    const at1 = Number((box[a] && box[a].at) || 0);
+    const at2 = Number((box[b] && box[b].at) || 0);
+    if (at1 !== at2) return at1 - at2;
+    return a < b ? -1 : (a > b ? 1 : 0);
+  });
+  ids.forEach(id => {
     const r = box[id];
     if (!r || !r.name) return;
     let p = byName[r.name];
@@ -1121,7 +1134,9 @@ function screenValues() {
       + g.items.map(i => {
         const c = p.cells[i];
         if (!c) return '<td class="num">－</td>';
-        return '<td class="num src' + (c.confirmed ? '' : ' iffy') + '"'
+        /* 출처가 없는 값은 눌러도 열 원본이 없다 — src 클래스(커서·밑줄·hover)를
+           안 붙여야 "눌러도 되는 척"하지 않는다. */
+        return '<td class="num' + (c.sourceId ? ' src' : '') + (c.confirmed ? '' : ' iffy') + '"'
           + (c.sourceId ? ' onclick="openViewer(\'' + esc(c.sourceId) + '\')"' : '')
           + '>' + esc(c.value) + '</td>';
       }).join('') + '</tr>';
