@@ -46,10 +46,18 @@ function load(opts) {
         text() { return Promise.resolve(r.body || ''); }
       });
     },
-    Date
+    Date,
+    // 버전 확인도 이제 시간 제한(fetchT)을 거쳐 나간다 — 진짜 fetchT 를 함께 태운다
+    setTimeout, clearTimeout, AbortController, Error, Math, Object, Promise
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
+  (function(){
+    const i = app.indexOf('function fetchT(');
+    let d = 0, j = i;
+    for(;;j++){ if(app[j] === '{') d++; else if(app[j] === '}'){ d--; if(!d){ j++; break; } } }
+    vm.runInContext('var FETCH_MS = 20000;\n' + app.slice(i, j), sandbox);
+  })();
   vm.runInContext(app.slice(from, to), sandbox);
   return { sandbox, calls, store, reloads: () => reloads };
 }
