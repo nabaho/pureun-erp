@@ -293,16 +293,52 @@ test('★ 내려받는 파일 이름은 갈래가 아니라 제목으로 시작�
     '★ 제목이 있는데도 갈래 이름을 쓰면 파일 이름으로 못 가립니다');
 });
 
-test('차례 고르개가 찾기 줄에 있다 — 도구줄은 평소에 숨는다', () => {
-  /* gridBar 는 고른 것이 없으면 통째로 숨는다(display:none) — 거기 두면
-     평소에 고르개가 안 보인다. */
-  const i = app.indexOf('<div id="findBar">');
-  const j = app.indexOf('</div>', app.indexOf('id="qClear"'));
-  assert.ok(i > 0 && j > i);
-  const bar = app.slice(i, j + 400);
-  assert.match(bar, /id="sortSeg"/, '차례 고르개가 찾기 줄에 없습니다');
+/* ⚠ 2026-08-15 다시 겨눔 — 예전 검사는 고르개가 **찾기 줄에** 있기를 못 박았고,
+   그 근거로 「도구줄은 고른 것이 없으면 숨는다」를 들었다. 둘 다 틀렸다:
+     · renderGridBar 는 **보여 줄 사진이 하나도 없을 때만** 숨긴다(고르기와 무관).
+     · 정작 폰은 **찾기 줄**을 🔍 누르기 전까지 접어 둔다 — 고르개가 안 보였다.
+   지킬 것은 「폰에서 아무것도 안 누르고도 차례를 바꿀 수 있다」이지 어느 줄에
+   있는가가 아니다. */
+test('★ 차례 고르개가 폰에서 그냥 보인다 — 찾기를 펴지 않아도', () => {
+  /* 폰이 접는 것은 #findBar 다(placeForWidth). 고르개가 그 안에 있으면 안 된다. */
+  const fi = app.indexOf('<div id="findBar">');
+  const fend = app.indexOf('</div>', app.indexOf('id="qClear"'));
+  assert.ok(fi > 0 && fend > fi, '찾기 줄을 찾지 못했습니다');
+  assert.ok(app.slice(fi, fend).indexOf('id="sortSeg"') < 0,
+    '★ 고르개가 찾기 줄 안에 있습니다 — 폰에서는 🔍 를 눌러야만 보입니다');
+
+  const gi = app.indexOf('<div id="gridBar">');
+  const gend = app.indexOf('<div id="grid">');
+  assert.ok(gi > 0 && gend > gi, '도구줄을 찾지 못했습니다');
+  const bar = app.slice(gi, gend);
+  assert.match(bar, /id="sortSeg"/, '차례 고르개가 도구줄에 없습니다');
   assert.match(bar, /pickSort\('title'\)/);
   assert.match(bar, /pickSort\('new'\)/);
+});
+
+test('★ 도구줄은 「고른 것」이 아니라 「보여 줄 사진」이 없을 때만 숨는다', () => {
+  /* 이 사실이 위 자리 결정의 근거다 — 사진이 있으면 폰에서도 늘 떠 있고,
+     사진이 없으면 정렬할 것도 없다. 여기가 바뀌면 고르개가 또 숨는다. */
+  const f = fnOf(app, 'renderGridBar');
+  assert.match(f, /\$\('gridBar'\)\.style\.display = \(shown \|\| needOnly \|\| oldOnly \|\| gridQ\)/,
+    '도구줄 숨김 조건이 바뀌었습니다 — 고르개가 폰에서 안 보이게 될 수 있습니다');
+});
+
+test('폰 화면에서 도구줄을 감추지 않는다', () => {
+  /* 폰 구간에서 #kinds·#chipRow 처럼 통째로 감추는 목록에 gridBar 가 끼면
+     고르개도 함께 사라진다. */
+  const phone = app.match(/@media \(max-width:820px\)\{[\s\S]*?\n\}\r?\n#chipRow/);
+  assert.ok(phone, '폰 전용 규칙 덩어리를 찾지 못했습니다');
+  assert.ok(!/#gridBar[^{]*\{[^}]*display:\s*none/.test(phone[0]),
+    '폰에서 도구줄을 감추면 차례 고르개도 함께 사라집니다');
+});
+
+test('자리를 옮겨도 고르개 모습이 유지된다 — 꾸밈이 찾기 줄에 매여 있지 않다', () => {
+  /* 자리를 옮기면서 꾸밈 규칙을 안 옮겨 「테두리 없는 맨 단추 두 개」가 되는 일이 잦다 */
+  assert.ok(!/#findBar \.seg\{/.test(app),
+    '고르개 꾸밈이 아직 찾기 줄에 매여 있습니다 — 옮긴 자리에서 맨 단추로 보입니다');
+  assert.match(app, /^\.seg\{/m, '고르개 꾸밈 규칙이 없습니다');
+  assert.match(app, /^\.seg button\.on\{/m, '지금 어느 차례인지 켜 보이는 규칙이 없습니다');
 });
 
 test('★ 고른 차례를 기억한다 — 열 때마다 최신순으로 돌아가지 않는다', () => {
