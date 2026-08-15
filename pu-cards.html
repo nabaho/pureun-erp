@@ -9556,6 +9556,47 @@ function openCoPage(){ state.view='co'; state.coPick='';
 function closeCoPage(){ state.view='list'; render(); }
 function pickCo(k){ if(state.coPick===k){ state.coPick=''; closePcDetail(); return; } state.coPick = k; openCoDetailPanel(k); }
 
+/* ── 이알피(사무관리) 컨설팅·사건 기록 — 읽기 전용 ──
+   회사 상세 팝업에 이력을 보여주고, 폴더를 이알피 사업 유형에서 골라 만들 때 쓴다
+   (대표 지시 2026-08-14). ⚠ data/cases, data/consultings 는 이알피(pu-erp.html)의
+   원장이다 — 여기서는 절대 쓰지 않는다, 읽기만 한다.
+   ⚠ 사건관리는 레코드마다 typeName 이 이미 박혀 있지만, 컨설팅관리는 typeCode 만
+     있고 사람이 읽는 이름은 별도 사전(data/biz_cons_types, 통째 배열 자리 — 레코드별
+     자리가 아니다)에서 찾아야 한다. */
+let _erpCaseCons = null;
+let _erpCaseConsLoading = false;
+let _erpConsTypes = null;
+function loadErpCaseCons(cb){
+  if(_erpCaseCons || _erpCaseConsLoading){ cb && cb(_erpCaseCons); return; }
+  if(Store.mode!=='firebase' || typeof firebase==='undefined' || !firebase.database){ cb && cb(null); return; }
+  _erpCaseConsLoading = true;
+  Promise.all([
+    firebase.database().ref('data/cases/v').once('value'),
+    firebase.database().ref('data/consultings/v').once('value'),
+    firebase.database().ref('data/biz_cons_types').once('value'),
+  ]).then(([cs, ks, ts])=>{
+    const byBiz = {};
+    const push = (rec, kind) => {
+      const b = digits(rec.bizNo||''); if(b.length<10) return;
+      (byBiz[b] = byBiz[b]||[]).push(Object.assign({}, rec, { _kind: kind }));
+    };
+    Object.values(cs.val()||{}).forEach(r=>push(r,'case'));
+    Object.values(ks.val()||{}).forEach(r=>push(r,'consulting'));
+    _erpConsTypes = Array.isArray(ts.val()) ? ts.val() : Object.values(ts.val()||{});
+    _erpCaseCons = { byBiz };
+    _erpCaseConsLoading = false;
+    cb && cb(_erpCaseCons);
+  }).catch(e=>{
+    _erpCaseConsLoading = false;
+    console.warn('[erpCaseCons]', e&&e.message);
+    cb && cb(null);
+  });
+}
+function erpConsTypeName(typeCode){
+  const t = (_erpConsTypes||[]).find(x=>x && x.code===typeCode);
+  return t ? (t.name||typeCode) : typeCode;
+}
+
 /* 회사가 어떤 사업으로 들어왔는지 — 사진첩에서 서식을 보낼 때 그 서류이름이 딱지가 된다.
    기업정보는 「특정 사업 때문에」 모이는 일이 많다(대표 지시 2026-08-12). 명함이 폴더를
    갖듯 회사도 사업으로 갈라 봐야 「이번 지원사업에 넣은 곳이 어디였더라」에 답할 수 있다. */
