@@ -105,6 +105,7 @@ const t = (name, got, want) => {
 
   const r1 = c.erpBuildContractPhotoMatches('유원에프앤비', items);
   t('회사명이 일치/포함되는 사진만 후보로 나온다', r1.map(x => x.id).sort(), ['p1', 'p4']);
+  t('★ 점수 높은 것이 먼저 온다', r1.map(x => x.id), ['p1', 'p4']);
   t('회사명이 없는 사진은 후보에서 빠진다', r1.some(x => x.id === 'p3'), false);
   t('회사명이 2글자 미만이면 후보 없음', c.erpBuildContractPhotoMatches('유', items), []);
   t('빈 배열이면 후보 없음', c.erpBuildContractPhotoMatches('유원에프앤비', []), []);
