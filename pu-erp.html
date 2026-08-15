@@ -315,6 +315,22 @@ var BUILD_SEQ = 150;
     }catch(e){ btn.textContent='🎤'; btn.style.background='#166534'; alert('음성인식 시작 실패: '+(e&&e.message||e)); }
   };
 })();
+/* 무엇이 멈췄나 — 아래 감지기는 «얼마나» 멈췄는지만 알려 준다.
+   실제로 2026-08-15 에 「🐢 화면 멈춤 581ms」가 떴는데 「🐌 느린 화면」도
+   「🐌 느린 타이머」도 하나도 없었다. 즉 멈춘 것은 화면 그리기도 타이머도 아니다.
+   그래서 무거운 일이 «스스로 이름과 걸린 시간을 남기게» 하고, 멈춤이 잡히면
+   그 시각과 겹치는 것을 찾아 함께 찍는다.
+   시각 기준이 performance.now() 로 같아 정확히 맞출 수 있다. */
+window._erpBlame = [];
+window.erpBlameMark = function(name, t0){
+  try{
+    var t1 = performance.now(), d = t1 - t0;
+    if(d < 30) return;                       // 잔일까지 남기면 도리어 안 보인다
+    var b = window._erpBlame;
+    b.push({ n:name, a:t0, z:t1 });
+    if(b.length > 60) b.shift();             // 오래된 것은 흘려보낸다
+  }catch(e){}
+};
 // 화면 멈춤(메인스레드 블로킹) 감지기: 200ms+ 멈춤을 콘솔에 기록
 (function(){
   try{
@@ -324,11 +340,44 @@ var BUILD_SEQ = 150;
       list.getEntries().forEach(function(e){
         if(e.duration>=200){
           var now=Date.now(); if(now-_lastLT<800) return; _lastLT=now;
-          console.warn('🐢 화면 멈춤 '+Math.round(e.duration)+'ms @'+new Date().toLocaleTimeString());
+          // 그 멈춤과 «겹치는» 일을 찾아 오래 걸린 순으로 셋까지 보여준다
+          var who='무엇인지 못 잡음 — 아직 이름표가 안 붙은 일입니다';
+          try{
+            var end=e.startTime+e.duration;
+            var hit=(window._erpBlame||[]).filter(function(x){ return x.z>e.startTime && x.a<end; });
+            hit.sort(function(p,q){ return (q.z-q.a)-(p.z-p.a); });
+            if(hit.length) who=hit.slice(0,3).map(function(x){ return x.n+' '+Math.round(x.z-x.a)+'ms'; }).join(' · ');
+          }catch(_){}
+          console.warn('🐢 화면 멈춤 '+Math.round(e.duration)+'ms — '+who+' @'+new Date().toLocaleTimeString());
         }
       });
     });
     po.observe({entryTypes:['longtask']});
+  }catch(e){}
+})();
+/* 무거운 일에 이름표를 씌운다. 함수 선언은 끌어올려지므로(같은 script 안이다)
+   여기서 감싸도 아래에 있는 원래 함수를 잡을 수 있다 — 되도록 일찍 씌워야
+   부팅 때 도는 것도 잡힌다.
+   ⚠ 결과·오류를 그대로 흘려보낸다. 재는 것 때문에 앱이 달라지면 안 된다. */
+(function(){
+  try{
+    if(!window.performance || !performance.now) return;
+    if(typeof dbSet === 'function'){
+      var _dsRaw = dbSet;
+      dbSet = function(k, v){                       // 저장 = 4MB 를 글자로 만드는 일
+        var t0 = performance.now();
+        try { return _dsRaw.apply(this, arguments); }
+        finally { window.erpBlameMark('저장 '+k, t0); }
+      };
+    }
+    if(typeof _fbApplyRecord === 'function'){
+      var _faRaw = _fbApplyRecord;
+      _fbApplyRecord = function(k){                 // 동기화 적용 = 서버 자료를 푸는 일
+        var t0 = performance.now();
+        try { return _faRaw.apply(this, arguments); }
+        finally { window.erpBlameMark('동기화 적용 '+k, t0); }
+      };
+    }
   }catch(e){}
 })();
 /* 느린 타이머 이름표 — 위 감지기는 «800ms 멈췄다» 까지만 알려 준다.
@@ -1968,11 +2017,14 @@ function dbGet(k, def){
     out = (_c == null) ? def : _c;
   } else {
     try {
+      // 캐시에 없을 때만 온다 — 큰 열쇠는 여기서 몇 백 ms 가 걸릴 수 있다
+      var _t0 = (window.performance && performance.now) ? performance.now() : 0;
       var v = localStorage.getItem(KEY+k);
       var parsed = v ? JSON.parse(v) : def;
       if(parsed == null) parsed = def;
       _dbCache[k] = parsed;
       out = parsed;
+      if(_t0 && window.erpBlameMark) window.erpBlameMark('처음 읽기 '+k, _t0);
     } catch(e){ return def; }
   }
   if(Array.isArray(def) && !Array.isArray(out)) return _dbAsList(out);
