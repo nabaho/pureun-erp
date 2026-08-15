@@ -26,7 +26,7 @@ function loadBlock(){
   assert.ok(at > 0 && end > at, 'openTopSheet~renderSubbar 사이를 찾지 못했습니다');
   const calls = { html:'', opened:false, groupSheetCalled:false };
   const ctx = {
-    esc: s => String(s ?? ''),
+    esc: s => String(s ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
     state: { view:'list', coFolder:'', coTag:'', coErpOnly:false },
     _coFolders: {},
     coList: () => [],
@@ -84,13 +84,25 @@ test('시트 안에 새 폴더 만들기·이알피 가져오기로 가는 길�
    coTagList()·_coFolders 는 사람이 손으로 지은 이름을 그대로 담고 있어(예: "Papa John's"),
    이스케이프 없이 onclick="...pickCoFolder('t:이름')" 에 그대로 박으면 어트리뷰트 파싱
    중간에 인자가 조기 종료된다(cards-co-mobile-list.test.js 의 같은 함정, 대비 처방은
-   esc() 앞에서 먼저 \\' 로 이스케이프하는 것 — pu-cards.html ~7792·~10083 과 같은 결). */
+   esc() 앞에서 먼저 \\' 로 이스케이프하는 것 — pu-cards.html ~7792·~10083 과 같은 결).
+   이 loadBlock() 의 esc() 는 이제 진짜 HTML 이스케이프를 한다 — ' 는 &#39; 로 바뀐다.
+   순서가 뒤집히면(esc 먼저, replace 나중) replace 가 찾을 ' 가 이미 &#39; 로 사라진
+   뒤라 죽은 코드가 되어 백슬래시 없이 그대로 나온다. 그래서 아래 두 테스트는 "백슬래시가
+   붙은 &#39;" 를 요구해 순서가 맞았는지까지 검증한다(순서가 no-op esc 로는 가려지지
+   않던 부분). */
 test('폴더 이름에 작은따옴표가 있어도 onclick 인자가 깨지지 않는다', () => {
   const c = loadBlock();
   c.state.view = 'co';
-  c._coFolders = { f1:{ id:'f1', name:"Papa John's" } };
+  /* 폴더 id 자체엔 원래 uid() 만 들어가 작은따옴표가 낄 일이 없지만, mk()의 이스케이프는
+     id 값의 내용을 가리지 않는다 — 순서가 맞는지를 실제로 검증하려면 f.id 자리에
+     작은따옴표를 넣어봐야 한다(그래야 esc()가 no-op이 아닌 지금, replace-then-esc 와
+     esc-then-replace 가 실제로 다른 문자열을 낸다). */
+  c._coFolders = { f1:{ id:"Papa John's", name:"Papa John's" } };
   c.openCoFolderSheet();
-  assert.match(c._calls.html, /onclick="[^"]*pickCoFolder\('f:f1'\)/);
+  assert.match(c._calls.html, /onclick="[^"]*pickCoFolder\('f:Papa John\\&#39;s'\)/,
+    '작은따옴표가 백슬래시로 이스케이프된 채 pickCoFolder 인자에 들어가야 합니다');
+  assert.doesNotMatch(c._calls.html, /onclick="[^"]*pickCoFolder\('f:Papa John&#39;s'\)/,
+    '백슬래시 없이 그대로면 어트리뷰트 파싱 중 인자가 조기 종료됩니다');
 });
 
 test('태그 이름에 작은따옴표가 있어도 onclick 인자가 깨지지 않는다', () => {
@@ -99,6 +111,8 @@ test('태그 이름에 작은따옴표가 있어도 onclick 인자가 깨지지 
   c.coList = () => [{ key:'k1' }];
   c.coTagList = () => [{ t:"Papa John's", n:1 }];
   c.openCoFolderSheet();
-  assert.match(c._calls.html, /onclick="[^"]*pickCoFolder\('t:Papa John\\'s'\)/);
-  assert.doesNotMatch(c._calls.html, /onclick="[^"]*pickCoFolder\('t:Papa John's'\)/);
+  assert.match(c._calls.html, /onclick="[^"]*pickCoFolder\('t:Papa John\\&#39;s'\)/,
+    '작은따옴표가 백슬래시로 이스케이프된 채 pickCoFolder 인자에 들어가야 합니다');
+  assert.doesNotMatch(c._calls.html, /onclick="[^"]*pickCoFolder\('t:Papa John&#39;s'\)/,
+    '백슬래시 없이 그대로면 어트리뷰트 파싱 중 인자가 조기 종료됩니다');
 });
