@@ -220,6 +220,17 @@ ok('설정액 입력칸과 저장', src.includes("<input id=\"op-rsvset\"")
   && src.includes('function _rsvSetOf'));
 ok('환입을 계정별 잔액 안에서 배분', src.includes('r.parts.push({acct:a,amount:take})'));
 ok('조정 분개 묶음 생성기', src.includes('function _reserveEntries'));
+/* 설정은 기본재산을 준비금2로 **옮기는** 일이라 있는 것보다 많이 옮길 수 없다.
+   설정액 칸에 0 하나만 더 적어도 기본재산이 −8.99억이 되어 재무상태표·별지15호 ⑳·
+   재산변동상황보고서가 통째로 어긋난다(재무제표에 음수가 나오면 안 된다).
+   조용히 줄이지 않고 «얼마를 못 옮겼는지»를 확정할 때 알린다. */
+ok('설정액은 기본재산 잔액까지만', src.includes('var _bfAvail=Math.max(0,Math.round(fin.basic));')
+  && src.includes('if(want>_bfAvail){ r.setupCut=want-_bfAvail; want=_bfAvail; }'));
+ok('못 옮긴 설정액을 남긴다', src.includes('r.setupWant=want; r.setupCut=0;'));
+ok('확정할 때 잘라 낸 설정액을 알린다', src.includes('if(rc.setupCut>0)')
+  && src.includes('설정하지 못했습니다'));
+// 자동조정 꺼짐 갈래도 같은 칸을 지녀야 화면이 갈라지지 않는다
+ok('자동조정 꺼짐 갈래도 setupWant·setupCut 을 지닌다', src.includes('setupWant:0, setupCut:0};'));
 /* ══ 분할 조각의 금액 ══
    expandSplits 는 조각 2번째부터 nocash:1 을 붙인다 — 뜻은 «통장 금액은 첫 조각에 있다»인데,
    출연금·이자를 세는 쪽이 그것을 «현금이 안 오간 현물출연»으로 읽어 통째로 버렸다.

@@ -6031,7 +6031,8 @@ function reserveAdjust(arr,fid,yr){
      [결산·재무제표]의 '준비금 자동조정' 체크를 풀면 reserve_auto:false 가 저장된다. */
   if(((funds[fid]||{}).years||{})[yr] && ((funds[fid]||{}).years||{})[yr].reserve_auto===false)
     return {kind:'', need:0, avail:0, amount:0, acct:RESERVE_ACCTS[0], fin:fin, off:true,
-            contrib:_contribOf(arr), rate:_reserveRate(fid), cap:0, setup:0, deficit:0, parts:[]};
+            contrib:_contribOf(arr), rate:_reserveRate(fid), cap:0, setup:0, deficit:0, parts:[],
+            setupWant:0, setupCut:0};
   var op=_openingOf(fid,yr);
   /* 계정별 준비금 잔액 — 전기이월 칸은 하나뿐이라 준비금1에 얹는다 */
   var bal={};
@@ -6070,6 +6071,14 @@ function reserveAdjust(arr,fid,yr){
   var _man=num(((funds[fid]||{}).years||{})[yr]&&((funds[fid]||{}).years||{})[yr].reserve_setup);
   r.setupManual=(_man!==''&&_man>=0);
   var want=r.setupManual?_man:Math.max(0,cap);
+  /* 있는 것보다 많이 옮길 수는 없다 — 설정은 기본재산을 준비금2로 **옮기는** 일이다.
+     설정액 칸에 0 하나를 더 적으면 기본재산이 음수가 되어 재무상태표·별지15호 ⑳·
+     재산변동상황보고서가 통째로 어긋난다(재무제표에는 음수가 나오지 않아야 한다).
+     fin 은 설정 분개를 넣기 **전**의 잔액이므로 지금 옮길 수 있는 몫이 그대로 담겨 있다.
+     잘라 낸 만큼은 setupCut 으로 남겨 확정할 때 사람에게 알린다 — 조용히 줄이면 안 된다. */
+  var _bfAvail=Math.max(0,Math.round(fin.basic));
+  r.setupWant=want; r.setupCut=0;
+  if(want>_bfAvail){ r.setupCut=want-_bfAvail; want=_bfAvail; }
   if(want>0){ r.setup=want; bal[RESERVE_ACCTS[1]]=(bal[RESERVE_ACCTS[1]]||0)+want;
               avail+=want; r.avail=avail; }
   if(net>0){ r.kind='전입'; r.need=net; r.amount=net;
@@ -6136,6 +6145,10 @@ function lockClosing(){
   if(rc.setup>0) msg+='\n\n① 고유목적사업준비금2 '+won(rc.setup)+'을 기본재산에서 설정합니다'
     +'\n   (당기 출연금 '+won(rc.contrib)+' × '+Math.round(rc.rate*100)+'% = 사용한도 '+won(rc.cap)+')'
     +(rc.setupManual?'\n   설정액은 협의회 결정값으로 넣은 것입니다.':'\n   설정액을 협의회가 따로 정했다면 [결산·재무제표]의 설정액 칸에 넣으세요.');
+  /* 적어 둔 설정액이 기본재산보다 크면 잘라 냈다는 것을 반드시 알린다 */
+  if(rc.setupCut>0) msg+='\n\n⚠️ 적어 둔 설정액 '+won(rc.setupWant)+' 중 '+won(rc.setupCut)+'은 설정하지 못했습니다.'
+    +'\n   기본재산에 남은 것이 '+won(rc.setup)+'뿐입니다 — 설정은 기본재산을 준비금2로 옮기는 것이라'
+    +'\n   있는 것보다 많이 옮길 수 없습니다. 설정액 칸의 자릿수를 확인해 주세요.';
   if(rc.deficit>0) msg+='\n\n⚠️ 재원이 '+won(rc.deficit)+' 모자랍니다 — 당기순손실로 남아 다음 회계연도로 이월됩니다.'
     +'\n   기본재산은 대부사업에만 쓸 수 있어 복지사업에 사용한도를 넘겨 쓸 수 없습니다.'
     +'\n   목적사업비가 당기 출연금의 '+Math.round(rc.rate*100)+'%를 넘었다는 뜻이니, 출연금 분개가 빠진 것이 없는지 먼저 확인하세요.';
