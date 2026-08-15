@@ -1,0 +1,73 @@
+/* 회사 상세 팝업에 이알피 컨설팅·사건 이력을 사업자번호로 매칭해 읽기 전용으로
+   보여준다. 기록이 없으면 칸 자체를 안 그린다(메모 없으면 메모 칸을 안 그리는 것과
+   같은 결). */
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const source = fs.readFileSync(path.join(__dirname, '..', 'pu-cards.html'), 'utf8');
+
+function loadHistBlock(){
+  const nameAt = source.indexOf('function erpConsTypeName');
+  const nameEnd = source.indexOf('\n}', nameAt) + 2;
+  const cardAt = source.indexOf('function erpHistCardHtml');
+  assert.ok(cardAt > 0, 'erpHistCardHtml 을 찾지 못했습니다');
+  const renderAt = source.indexOf('function renderCoErpHistory');
+  assert.ok(renderAt > 0, 'renderCoErpHistory 를 찾지 못했습니다');
+  const renderEnd = source.indexOf('\nfunction ', source.indexOf('function renderCoErpHistory', renderAt) + 10);
+  /* erpConsTypeName 바로 뒤에 erpMgrName 이 붙어 있고(브리프 Step 3), 그 뒤로
+     erpHistCardHtml·renderCoErpHistory 가 이어진다 — 넷 다 소스에서 한 덩어리로 붙어
+     있으므로 nameAt~renderEnd 를 통째로 잘라야 erpMgrName 이 안 빠진다. [nameAt,nameEnd]
+     + [cardAt,renderEnd] 로 나눠 자르면 그 사이의 erpMgrName 정의가 통째로 누락되어
+     erpHistCardHtml 이 부르는 erpMgrName 이 ReferenceError 로 죽는다. */
+  const code = source.slice(nameAt, renderEnd);
+
+  const calls = { boxHtml: '' };
+  const ctx = {
+    esc: s => String(s ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
+    digits: s => String(s||'').replace(/\D/g,''),
+    _erpConsTypes: [{ code:'cons-ilteo', name:'일터상생혁신', agency:'노사발전재단' }],
+    ErpMatch: { nameByEmail: {} },
+    $: id => { if(id==='coErpHistBox') return { set innerHTML(v){ calls.boxHtml=v; }, get innerHTML(){ return calls.boxHtml; } }; return null; }
+  };
+  vm.createContext(ctx);
+  vm.runInContext(code, ctx);
+  ctx._calls = calls;
+  return ctx;
+}
+
+test('기록이 없으면 칸을 비운다', () => {
+  const c = loadHistBlock();
+  c.renderCoErpHistory({ bizno:'312-81-49225' }, null);
+  assert.equal(c._calls.boxHtml, '');
+  c.renderCoErpHistory({ bizno:'312-81-49225' }, { byBiz:{} });
+  assert.equal(c._calls.boxHtml, '');
+});
+
+test('사업자번호로 매칭되는 기록만 카드로 나열한다', () => {
+  const c = loadHistBlock();
+  const data = { byBiz: { '3128149225': [
+    { _kind:'case', typeName:'부당해고 구제신청', status:'pending', brief:'해고 구제 신청', managerMain:'p001' },
+    { _kind:'consulting', typeCode:'cons-ilteo', status:'active', fee:1000000, contractFee:1000000, balanceFee:500000, startDate:'2025-03-01', endDate:'2025-06-30', managerMain:'p002' }
+  ] } };
+  c.renderCoErpHistory({ bizno:'312-81-49225' }, data);
+  assert.match(c._calls.boxHtml, /부당해고 구제신청/);
+  assert.match(c._calls.boxHtml, /일터상생혁신/, '컨설팅은 typeCode 를 사람이 읽는 이름으로 바꿔 보여줘야 한다');
+  assert.match(c._calls.boxHtml, /1,500,000/, '컨설팅금과 잔금을 합쳐 보여줘야 한다');
+});
+
+test('다른 회사(다른 사업자번호)의 기록은 안 섞인다', () => {
+  const c = loadHistBlock();
+  const data = { byBiz: { '9999999999': [{ _kind:'case', typeName:'남의 회사 사건' }] } };
+  c.renderCoErpHistory({ bizno:'312-81-49225' }, data);
+  assert.equal(c._calls.boxHtml, '');
+});
+
+test('erpHistCardHtml 은 담당자 사번을 이름으로 바꿔 보여준다', () => {
+  const c = loadHistBlock();
+  c.ErpMatch.nameByEmail = { 'p001@pureun.kr': '김혜민' };
+  const html = c.erpHistCardHtml({ _kind:'case', typeName:'부당해고', managerMain:'p001' });
+  assert.match(html, /김혜민/);
+});

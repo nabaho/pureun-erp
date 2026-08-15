@@ -43,6 +43,7 @@ function loadPanelBlock(items){
     CO_FIELDS: [['bizno','사업자번호'],['ceo','대표자']],
     closeDetail: () => { calls.detailClosed++; },
     loadErpCaseCons: cb => cb && cb(null),
+    renderCoErpHistory: () => {},
     $: id => {
       if(id==='pcDetail') return { set innerHTML(v){ calls.panelHtml=v; }, get innerHTML(){ return calls.panelHtml; },
         classList: { add(){ calls.panelOpen=true; }, remove(){ calls.panelOpen=false; } } };
