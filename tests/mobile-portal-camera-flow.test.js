@@ -41,6 +41,20 @@ test('자주 안 쓰는 설정·최신만 ⋯ 안으로 넣는다', () => {
   assert.match(enter, /DOCK_IDS = \['cfgFab', 'pu-version-fab'\]/);
 });
 
+test('폰에서는 한 화면에 다 넣는다 — 바로가기는 헤더 안, 겹치는 제목은 숨김', () => {
+  /* 폰 브라우저는 위아래 바를 빼면 쓸 수 있는 높이가 760px 안팎이다.
+     타일 4줄을 그 안에 넣으려면 위쪽에서 줄을 벌어야 한다:
+       · 「업무 시스템」 제목 줄(.sec)은 아래 「업무지원·직접업무」와 겹치는 안내라 숨긴다
+       · 「로그인 후 바로가기」는 헤더 카드 안으로 옮긴다(moveHomeBar) */
+  /* @media(max-width:520px) 블록이 파일에 여러 개라 첫 블록만 보면 놓친다 — 전체에서 찾는다.
+     두 선택자 모두 폰용 블록에만 쓰이므로 이걸로 충분하다. */
+  assert.match(enter, /\.sec\{display:none;\}/);
+  assert.match(enter, /\.pbar #homeBar\{/);
+  assert.match(enter, /function moveHomeBar\(toHeader\)/);
+  assert.match(enter, /moveHomeBar\(phone\.matches\)/, 'PC로 넓히면 제자리로 돌아가야 합니다');
+  assert.match(enter, /grid-template-columns:repeat\(4,1fr\)/, '한 줄 4개(대표 지시)');
+});
+
 test('타일 마지막 줄이 아래 단추에 깔리지 않는다', () => {
   const mobile = enter.match(/@media\(max-width:520px\)\{[\s\S]*?\.portal\{padding-bottom:(\d+)px;\}/);
   assert.ok(mobile, '폰에서 .portal 아래 여백을 찾지 못했습니다');
