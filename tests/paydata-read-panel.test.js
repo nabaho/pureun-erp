@@ -28,19 +28,29 @@ assert.ok(NOTICE_FLAG, 'NOTICE_READ_ON 상수를 찾을 수 없습니다');
 const DOLLAR = html.match(/const \$ = [^\r\n]+/);
 assert.ok(DOLLAR, '$ 정의를 찾을 수 없습니다');
 
-function loadApp(appState) {
+/* ⚠ 판독 방식은 **열려 있는 서류**가 정한다(서랍 탭이 아니다) — 그래서 시험도
+   그 서류를 실제로 서랍에 넣어 둔다. appState.kind 는 서랍 탭이자 그 서류의
+   종류이고, rec 로 다른 종류·다른 파일형식을 따로 줄 수 있다. */
+function loadApp(appState, rec) {
+  const st = Object.assign({
+    kind: 'attend', viewerId: 'a1', viewingUid: '',
+    readState: { status: 'idle', rows: [], err: '' }
+  }, appState);
+  st.itemsMonth = { a1: Object.assign({
+    companyId: 'co_1', kind: st.kind, month: '202608',
+    filename: '근태.jpg', file: 'p/a1.jpg', mime: 'image/jpeg'
+  }, rec || {}) };
+  st.itemsKeep = {};
   const sandbox = { window: {}, console, Date, document: { getElementById: () => null } };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   new vm.Script(store, { filename: 'store.js' }).runInContext(sandbox);
   new vm.Script([
     'const S = window.PuPaydataStore; S.init({uid:"U1"});',
-    'const App = ' + JSON.stringify(Object.assign({
-      kind: 'attend', viewerId: 'a1', viewingUid: '',
-      readState: { status: 'idle', rows: [], err: '' }
-    }, appState)) + ';',
+    'const App = ' + JSON.stringify(st) + ';',
     WAGE_FLAG[0], NOTICE_FLAG[0],
-    cut('esc'), cut('canWrite'), cut('valueRowsHtml'), cut('readPanelHtml'),
+    cut('esc'), cut('canWrite'), cut('findRow'), cut('isImageRec'),
+    cut('valueRowsHtml'), cut('readPanelHtml'),
     'window.App = App; window.readPanelHtml = readPanelHtml;'
   ].join('\n'), { filename: 'app.js' }).runInContext(sandbox);
   return sandbox.window;
@@ -121,6 +131,26 @@ test('★ 확대(zoom) CSS는 실제로 zoom 클래스가 붙는 요소를 겨�
 });
 
 /* ══════ 판독 실행 ══════ */
+
+/* 서랍 탭(kind)과 **같은 종류의 서류**를 실제로 서랍에 넣어 둔다 — 판독 방식은
+   열려 있는 서류가 정하기 때문이다. opts.rec 로 그 서류의 종류·파일형식(PDF 등)만
+   따로 바꿀 수 있다. */
+function runState(appState, opts) {
+  const st = Object.assign({
+    kind: 'attend', viewerId: 'a1', viewingUid: '',
+    itemsKeep: {}, companyId: 'co_1', companyName: '화담원', month: '2026-08',
+    readState: { status: 'idle', rows: [], err: '' }
+  }, appState);
+  if (!st.itemsMonth) {
+    st.itemsMonth = {};
+    st.itemsMonth[st.viewerId] = Object.assign({
+      companyId: 'co_1', kind: st.kind, month: '202608',
+      filename: '근태.jpg', file: 'p/a1.jpg', mime: 'image/jpeg'
+    }, (opts && opts.rec) || {});
+  }
+  return st;
+}
+
 function loadRun(appState, opts) {
   opts = opts || {};
   const calls = { alerts: [], read: [] };
@@ -166,16 +196,11 @@ function loadRun(appState, opts) {
     'S.init({uid:"U1", storage:{ref:function(){return{getDownloadURL:function(){return Promise.resolve("https://x/f");}};}},'
       + ' fetch:function(){return Promise.resolve({ok:true,arrayBuffer:function(){return Promise.resolve(new ArrayBuffer(2));}});}});',
     'const PuDocRead = window.PuDocRead || globalThis.PuDocRead;',
-    'const App = ' + JSON.stringify(Object.assign({
-      kind: 'attend', viewerId: 'a1', viewingUid: '',
-      itemsMonth: { a1: { companyId: 'co_1', kind: 'attend', month: '202608', filename: '근태.jpg', file: 'p/a1.jpg', mime: 'image/jpeg' } },
-      itemsKeep: {}, companyId: 'co_1', companyName: '화담원', month: '2026-08',
-      readState: { status: 'idle', rows: [], err: '' }
-    }, appState)) + ';',
+    'const App = ' + JSON.stringify(runState(appState, opts)) + ';',
     'App.render = function(){};',
     WAGE_FLAG[0], NOTICE_FLAG[0],       // doRead 가 이 상수들을 본다 — 안 넣으면 터진다
     DOLLAR[0],
-    cut('esc'), cut('canWrite'), cut('findRow'), cut('doRead'), cut('valueRowsHtml'),
+    cut('esc'), cut('canWrite'), cut('findRow'), cut('isImageRec'), cut('doRead'), cut('valueRowsHtml'),
     cut('editVal'), cut('refreshIffyMarks'), cut('addValRow'), cut('delValRow'),
     'window.App = App; window.doRead = doRead; window.valueRowsHtml = valueRowsHtml;',
     'window.editVal = editVal; window.addValRow = addValRow; window.delValRow = delValRow;'
@@ -231,6 +256,59 @@ test('판독이 실패하면 까닭을 담는다', async () => {
   await new Promise(r => setTimeout(r, 10));
   assert.equal(W.App.readState.status, 'err');
   assert.match(W.App.readState.err, /키/);
+});
+
+/* ══════ 무엇을, 어떤 판독기로 (2026-08-15) ══════ */
+
+test('★ PDF·엑셀에는 판독 단추를 주지 않는다 — 눌러 봐야 오류 400 이다', () => {
+  const h = loadApp({ kind: 'attend' }, { filename: '근태.pdf', mime: 'application/pdf' }).readPanelHtml();
+  assert.equal(/doRead\(\)/.test(h), false,
+    '「이 파일은 미리 볼 수 없습니다」 옆에 판독 단추가 있으면 눌러 보고 서비스가 죽은 줄 압니다');
+  assert.match(h, /사진/, '왜 안 되는지 한국어로 말해야 합니다');
+});
+
+test('★ PDF 를 판독하려 해도 AI를 부르지 않는다', async () => {
+  const { W, calls } = loadRun({ kind: 'attend' }, { rec: { filename: '근태.pdf', mime: 'application/pdf' } });
+  W.doRead();
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(calls.read.length, 0,
+    '판독 층은 무엇을 싣든 image/jpeg 라고 보냅니다 — PDF 를 보내면 오류 400 만 돌아옵니다');
+  assert.equal(W.App.readState.status, 'err');
+  assert.match(W.App.readState.err, /PDF/);
+});
+
+test('사진은 그대로 판독한다', async () => {
+  const { W, calls } = loadRun({ kind: 'attend' }, {
+    readOut: { kind: 'timesheet', fields: { rows: [{ name: '배영승', paid: [1], off: [], adj: '', note: '' }] } }
+  });
+  W.doRead();
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(calls.read[0], 'read');
+});
+
+/* 값 표에서 출처 서류를 열면 App.kind 는 마지막으로 눌러 둔 탭 그대로다 —
+   그것으로 판독기를 고르면 근태표를 알림 판독기로 읽는 일이 실제로 일어난다. */
+test('★ 판독기는 열려 있는 서류가 정한다 — 서랍 탭이 아니다', async () => {
+  const { W, calls } = loadRun({ kind: 'etc' }, {   // 탭은 기타(알림), 열린 서류는 근태표
+    rec: { kind: 'attend' },
+    readOut: { kind: 'timesheet', fields: { rows: [{ name: '배영승', paid: [1], off: [], adj: '', note: '' }] } }
+  });
+  W.doRead();
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(calls.read[0], 'read',
+    '근태표를 열어 놓고 마지막에 눌러 둔 탭(기타)의 판독기로 읽었습니다');
+  assert.equal(W.App.readState.rows[0].name, '배영승');
+});
+
+test('★ 판독 패널도 열려 있는 서류를 따른다', () => {
+  // 탭은 근로계약서(판독 안 함)인데 열린 서류는 근태표 — 판독 단추가 있어야 한다.
+  const h = loadApp({ kind: 'contract' }, { kind: 'attend' }).readPanelHtml();
+  assert.match(h, /doRead\(\)/);
+});
+
+test('★ 어디에서도 서랍 탭으로 판독기를 고르지 않는다', () => {
+  assert.equal(/readKindFor\(App\.kind\)/.test(html), false,
+    '값 표에서 연 서류는 App.kind 와 아무 상관이 없습니다');
 });
 
 test('★ 표에 근로자·항목·값이 고칠 수 있게 그려진다', () => {

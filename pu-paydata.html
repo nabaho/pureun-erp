@@ -1372,6 +1372,13 @@ function findRow(id) {
   for (let i = 0; i < boxes.length; i++) { if (boxes[i] && boxes[i][id]) return boxes[i][id]; }
   return null;
 }
+
+/* 사진인가 — 뷰어가 <img> 로 그릴 수 있는가, 그리고 AI 판독기에 실을 수 있는가.
+   ⚠ 판독 층(js/pu-doc-read.js)은 무엇을 싣든 image/jpeg 라고 말하고 보낸다.
+   사진첩·명함첩·업체관리가 함께 쓰는 파일이라 이 함에서 고칠 수 없다. 그래서
+   PDF·엑셀을 보내면 구글이 400 을 돌려주고, 화면에는 「AI가 응답하지 않습니다
+   (오류 400)」로 떠 서비스가 죽은 것처럼 보인다 — 부르는 쪽에서 미리 가른다. */
+function isImageRec(rec) { return !!rec && /^image\//.test(rec.mime || ''); }
 function openViewer(id) {
   App.viewerId = id; App.viewerUrl = ''; App.viewerZoom = false; App.viewerErr = '';
   App.readState = { status: 'idle', rows: [], err: '' };
@@ -1406,12 +1413,23 @@ const NOTICE_READ_ON = false;
 /* 판독을 돌린다 — 사람이 「판독하기」를 눌렀을 때만(설계서 2장).
    창고 파일을 내려받아 base64 로 바꿔 판독 층에 싣는다. */
 function doRead() {
-  const rk = S.readKindFor(App.kind);
+  const rec = findRow(App.viewerId);
+  if (!rec) return;
+  /* 판독 방식은 **지금 열려 있는 서류**가 정한다 — 서랍 탭(App.kind)이 정하면,
+     월별 값 표에서 출처 서류를 눌러 열었을 때 마지막으로 눌러 둔 탭이 그대로
+     쓰인다. 근태표를 열어 놓고 알림 판독기로 읽는 일이 실제로 일어난다. */
+  const rk = S.readKindFor(rec.kind);
   if (!rk || !canWrite()) return;
   if (rk === 'wage' && !WAGE_READ_ON) return;
   if (rk === 'notice' && !NOTICE_READ_ON) return;
-  const rec = findRow(App.viewerId);
-  if (!rec) return;
+  /* 사진이 아니면 아예 부르지 않는다 — 보내 봐야 오류 400 이고(isImageRec 머리말),
+     그 사이 판독 한 번 값도 나간다. 무엇이 문제인지 한국어로 남긴다. */
+  if (!isImageRec(rec)) {
+    App.readState = { status: 'err', rows: [],
+      err: 'PDF·엑셀·한글 파일은 판독할 수 없습니다 — 사진으로 찍거나 화면을 캡처해 올려 주세요.' };
+    App.render();
+    return;
+  }
   App.readState = { status: 'reading', rows: [], err: '' };
   App.render();
 
@@ -1577,7 +1595,10 @@ window.saveVals = saveVals;
 
 /* 오른쪽 절반 — 판독 전에는 단추, 판독 뒤에는 값 표. */
 function readPanelHtml() {
-  const rk = S.readKindFor(App.kind);
+  /* 어떤 판독기를 쓰는지는 **열려 있는 서류**가 정한다(서랍 탭이 아니다) —
+     값 표에서 연 서류는 App.kind 와 아무 상관이 없다(doRead 머리말과 같은 까닭). */
+  const rec = App.viewerId ? findRow(App.viewerId) : null;
+  const rk = S.readKindFor(rec && rec.kind);
   const st = App.readState || { status: 'idle', rows: [], err: '' };
   let body;
 
@@ -1594,6 +1615,12 @@ function readPanelHtml() {
     body = '<div class="pre"><div class="big">📄</div><p>'
       + (!rk ? '이 종류는 값을 뽑지 않습니다.' : '남의 자리에서는 판독할 수 없습니다.')
       + '</p></div>';
+  } else if (!isImageRec(rec)) {
+    /* 「이 파일은 미리 볼 수 없습니다」 옆에 판독 단추를 두면 안 된다 — 눌러 봐야
+       오류 400 이고(isImageRec 머리말), 사람은 서비스가 죽은 줄 안다. */
+    body = '<div class="pre"><div class="big">📄</div><p><b>이 파일은 판독할 수 없습니다.</b><br>'
+      + 'AI는 사진만 읽습니다 — PDF·엑셀·한글 파일은<br>'
+      + '사진으로 찍거나 화면을 캡처해 올려 주세요.</p></div>';
   } else if (st.status === 'reading') {
     body = '<div class="pre"><div class="big">⏳</div><p>읽는 중입니다…</p></div>';
   } else if (st.status === 'done') {
@@ -1631,11 +1658,13 @@ function renderViewer() {
   if (!App.viewerId) return;
   $('viewerName').textContent = rec ? (rec.filename || '') : '';
   const outer = $('viewerBody');
-  const rk = S.readKindFor(App.kind);
+  /* 판 가르기도 **열려 있는 서류** 기준이다 — 서랍 탭으로 가르면 값 표에서 연
+     근로계약서 옆에 판독 패널이 붙거나, 근태표를 열었는데 안 붙는다. */
+  const rk = S.readKindFor(rec && rec.kind);
   outer.classList.toggle('split', !!rk);
   const body = $('viewerShot');
   body.classList.toggle('zoom', App.viewerZoom);
-  const isImage = rec && /^image\//.test(rec.mime || '');
+  const isImage = isImageRec(rec);
   if (App.viewerErr) {
     body.innerHTML = '<div class="doc">불러오지 못했습니다 — ' + esc(App.viewerErr) + '</div>';
   } else if (!App.viewerUrl) {
