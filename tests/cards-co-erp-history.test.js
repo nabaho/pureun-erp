@@ -22,7 +22,12 @@ function loadHistBlock(){
      있으므로 nameAt~renderEnd 를 통째로 잘라야 erpMgrName 이 안 빠진다. [nameAt,nameEnd]
      + [cardAt,renderEnd] 로 나눠 자르면 그 사이의 erpMgrName 정의가 통째로 누락되어
      erpHistCardHtml 이 부르는 erpMgrName 이 ReferenceError 로 죽는다. */
-  const code = source.slice(nameAt, renderEnd);
+    /* 유형 코드 도우미(erpTypeCodeOf 등)도 함께 떠 온다 — 흉내 내면 진짜와 어긋난다 */
+  const _pureAt = source.indexOf('/* \u2550\u2550\u2550\u2550\u2550\u2550 \uc774\uc54c\ud53c \ucf54\ub4dc\ud45c \uc77d\uae30 \u2014 \uc21c\uc218 \ub85c\uc9c1');
+  const _pureEnd = source.indexOf('/* \u2550\u2550\u2550\u2550\u2550\u2550 \uc774\uc54c\ud53c \ucf54\ub4dc\ud45c \uc77d\uae30 \u2014 \ud654\uba74');
+  assert.ok(_pureAt > 0 && _pureEnd > _pureAt, '\uc774\uc54c\ud53c \ucf54\ub4dc\ud45c \uc21c\uc218 \ub85c\uc9c1 \ubb36\uc74c\uc744 \ucc3e\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4');
+  const _pure = source.slice(_pureAt, _pureEnd);
+const code = _pure + '\n' + source.slice(nameAt, renderEnd);
 
   const calls = { boxHtml: '' };
   const ctx = {

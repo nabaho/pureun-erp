@@ -9769,7 +9769,12 @@ function loadErpCaseCons(cb){
     };
     Object.values(cs.val()||{}).forEach(r=>push(r,'case'));
     Object.values(ks.val()||{}).forEach(r=>push(r,'consulting'));
-    _erpConsTypes = Array.isArray(ts.val()) ? ts.val() : Object.values(ts.val()||{});
+    /* ⚠ 이알피의 코드표는 `{v: [...], u: 갱신시각}` 으로 싸여 있다.
+       이 껍데기를 안 벗기면 Object.values 가 `[[유형들], 갱신시각]` 을 만들어
+       유형을 하나도 못 찾고, 화면에 이름 대신 **코드가 그대로**(consulting-mp0w1084)
+       나온다(대표 보고 2026-08-15). 다른 앱들(gov-consulting·kcareer)은 이미 벗기고 있다.
+       바로 위 cases/consultings 는 `/v` 를 붙여 읽어서 이 문제가 없었다. */
+    _erpConsTypes = erpUnwrapList(ts.val());
     _erpCaseCons = { byBiz };
     _erpCaseConsLoading = false;
     const waiters = _erpCaseConsWaiters; _erpCaseConsWaiters = [];
@@ -9783,9 +9788,42 @@ function loadErpCaseCons(cb){
     waiters.forEach(w=>w(null));
   });
 }
+/* ══════ 이알피 코드표 읽기 — 순수 로직 (테스트 대상) ══════ */
+
+/* 이알피 자료는 `{v: [...], u: 갱신시각}` 으로 싸여 오기도 하고 그냥 오기도 한다.
+   껍데기를 벗기고 늘 배열로 돌려준다 — 다른 앱(gov-consulting·kcareer)과 같은 규칙이다. */
+function erpUnwrapList(raw){
+  const v = (raw && typeof raw==='object' && 'v' in raw) ? raw.v : raw;
+  if (Array.isArray(v)) return v.filter(Boolean);
+  if (v && typeof v==='object') return Object.values(v).filter(Boolean);
+  return [];
+}
+
+/* 이 기록이 어떤 유형인지 — 코드가 어디에 적혀 있는지가 자료마다 다르다.
+   이알피는 새 자료를 `typeCodes.consulting` 에, 옛 자료를 `typeCode` 에 적는다
+   (kcareer 의 typeCodeOf 와 같은 규칙). 한쪽만 보면 그 자료들이 「(이름 없음)」이 된다. */
+function erpTypeCodeOf(rec, kind){
+  if(!rec) return '';
+  const k = kind==='case' ? 'case' : 'consulting';
+  const c = rec.typeCodes && rec.typeCodes[k];
+  return String(c || rec.typeCode || '');
+}
+
+/* 코드 → 사람이 읽는 이름. 못 찾으면 코드를 그대로 돌려준다 —
+   빈칸으로 두면 「이름 없는 사업」이 여럿 생겨 어느 것이 어느 것인지 알 수 없다. */
+function erpTypeNameFrom(types, typeCode){
+  if(!typeCode) return '';
+  const t = (types||[]).find(x=>x && String(x.code)===String(typeCode));
+  return (t && t.name) ? t.name : typeCode;
+}
+
+/* ══════ 이알피 코드표 읽기 — 화면 ══════ */
+/* ⚠ 한 줄로 줄이지 말 것 — 검사 두 개가 이 함수를 선언 첫 글자부터
+   「줄 첫머리의 }」 까지로 잘라 쓴다(cards-erp-case-cons · cards-co-erp-import).
+   ⚠ 이 주석에 함수 이름을 그대로 쓰지 않는다 — 검사가 indexOf 로 찾다가
+     주석을 먼저 집어 주석 한가운데부터 잘라 문법오류가 난다(실제로 겪음). */
 function erpConsTypeName(typeCode){
-  const t = (_erpConsTypes||[]).find(x=>x && x.code===typeCode);
-  return t ? (t.name||typeCode) : typeCode;
+  return erpTypeNameFrom(_erpConsTypes, typeCode);
 }
 
 /* 담당자 사번(managerMain, 예: 'p001')을 사람 이름으로 — user_dir 매핑은 ErpMatch.load()
@@ -9798,7 +9836,9 @@ function erpMgrName(sid){
 }
 function erpHistCardHtml(rec){
   const isCase = rec._kind==='case';
-  const typeLabel = isCase ? (rec.typeName||'(이름 없음)') : erpConsTypeName(rec.typeCode||'');
+  /* 이력 카드도 같은 자리다 — 코드가 typeCodes 에만 있는 기록이면 여기서도 코드가 그대로 나왔다 */
+  const typeLabel = isCase ? (rec.typeName||'(이름 없음)')
+                           : (erpConsTypeName(erpTypeCodeOf(rec,'consulting')) || '(이름 없음)');
   const period = [rec.startDate||rec.receiveDate, rec.endDate||rec.closeDate].filter(Boolean).join(' ~ ');
   const fee = (rec.contractFee||0) + (rec.balanceFee||0) + (rec.retainerFee||0) + (rec.successFee||0) + (rec.fee&&!rec.contractFee ? rec.fee : 0);
   const STATUS_LABEL = { pending:'대기', active:'진행중', closed:'완료', cancelled:'취소' };
@@ -9886,7 +9926,9 @@ function coErpFolderCandidates(cb){
     const byType = {};
     Object.values(data.byBiz).forEach(recs=>recs.forEach(rec=>{
       const label = (rec._kind==='case' ? '사건·' : '컨설팅·') +
-        (rec._kind==='case' ? (rec.typeName||'(이름 없음)') : erpConsTypeName(rec.typeCode||'(이름 없음)'));
+        (rec._kind==='case'
+          ? (rec.typeName||'(이름 없음)')
+          : (erpConsTypeName(erpTypeCodeOf(rec,'consulting')) || '(이름 없음)'));
       (byType[label] = byType[label]||[]).push(rec);
     }));
     const list = Object.keys(byType).map(label=>({

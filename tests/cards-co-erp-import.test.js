@@ -17,7 +17,12 @@ function loadImportBlock(items){
   const at = source.indexOf('function coErpFolderCandidates');
   assert.ok(at > 0, 'coErpFolderCandidates 를 찾지 못했습니다');
   const end = source.indexOf('\nfunction ', source.indexOf('function coImportFolderFromType', at) + 10);
-  const code = source.slice(digitsAt, digitsEnd) + '\n' + source.slice(nameAt, nameEnd) + '\n' + source.slice(at, end);
+    /* 유형 코드 도우미(erpTypeCodeOf 등)도 함께 떠 온다 — 흉내 내면 진짜와 어긋난다 */
+  const _pureAt = source.indexOf('/* \u2550\u2550\u2550\u2550\u2550\u2550 \uc774\uc54c\ud53c \ucf54\ub4dc\ud45c \uc77d\uae30 \u2014 \uc21c\uc218 \ub85c\uc9c1');
+  const _pureEnd = source.indexOf('/* \u2550\u2550\u2550\u2550\u2550\u2550 \uc774\uc54c\ud53c \ucf54\ub4dc\ud45c \uc77d\uae30 \u2014 \ud654\uba74');
+  assert.ok(_pureAt > 0 && _pureEnd > _pureAt, '\uc774\uc54c\ud53c \ucf54\ub4dc\ud45c \uc21c\uc218 \ub85c\uc9c1 \ubb36\uc74c\uc744 \ucc3e\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4');
+  const _pure = source.slice(_pureAt, _pureEnd);
+const code = _pure + '\n' + source.slice(digitsAt, digitsEnd) + '\n' + source.slice(nameAt, nameEnd) + '\n' + source.slice(at, end);
 
   const writes = []; const sets = [];
   const ctx = {
