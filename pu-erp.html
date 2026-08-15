@@ -50823,11 +50823,27 @@ function CorpDashboard(props){
     return htmlLink;
   }
   function gcalApiCall(method, path, body, cb){
+    /* ⚠ 두 가지가 빠져 있었다.
+       ① 로그인 전에 부르면 'Bearer undefined' 가 나간다 — Gmail 쪽은 미리 확인하는데
+         여기만 안 했다. 사람에게는 아무 말도 없이 그냥 실패했다.
+       ② 구글이 돌려준 401·404 의 «본문»이 그대로 cb 로 넘어갔다. 부른 쪽은 그것을
+         성공한 자료로 받는다 — 삭제 화면은 안 지워졌는데도 「🗑️ 삭제됨」이라고 말했다.
+       실패는 cb 를 «부르지 않는 것»으로 알린다. 부르면 그 뒤 줄이 성공인 양 이어진다. */
+    if(!gcalHasToken()){
+      showToast('구글 로그인이 필요합니다 — 캘린더 위 [구글 로그인]을 눌러 주세요');
+      return;
+    }
     fetchT('https://www.googleapis.com/calendar/v3'+path,{
       method:method,
       headers:{ 'Authorization':'Bearer '+window._gcalToken, 'Content-Type':'application/json' },
       body: body ? JSON.stringify(body) : undefined
-    }, 20000).then(function(r){ return r.status===204?Promise.resolve({}):r.json(); }).then(cb).catch(function(e){ showToast('❌ 오류: '+e.message); });
+    }, 20000).then(function(r){
+      if(r.status===204) return {};                     // 지웠을 때는 본문이 없다
+      return r.json().then(function(j){
+        if(!r.ok || (j && j.error)) throw new Error((j && j.error && j.error.message) || ('HTTP '+r.status));
+        return j;
+      });
+    }).then(cb).catch(function(e){ showToast('❌ 구글 캘린더 오류: '+(e&&e.message||'')); });
   }
   // ERP 레코드에 gcalEventId가 있으면 구글 캘린더에서도 삭제
   // ★ moveGcalEventToDate 내부에 갇혀 있던 것을 밖으로 — 외부 호출부에서 ReferenceError 나던 버그 수정
@@ -50838,6 +50854,12 @@ function CorpDashboard(props){
     });
   }
   function moveGcalEventToDate(evId, newDate, cb){
+    /* 부른 쪽이 cb 를 기다리므로(끌어 옮기기가 여기서 멈춘다) 여기서 먼저 확인하고
+       «못 했다»고 알려 준다. gcalApiCall 은 실패하면 cb 를 안 부른다. */
+    if(!gcalHasToken()){
+      showToast('구글 로그인이 필요합니다 — 일정은 옮기지 못했습니다');
+      cb && cb(false); return;
+    }
     gcalApiCall('GET','/calendars/'+encodeURIComponent(GCAL_CAL_ID)+'/events/'+encodeURIComponent(evId)+'?key='+GCAL_API_KEY, null, function(ev){
       if(!ev || !ev.start){ cb && cb(false); return; }
       var patch;
