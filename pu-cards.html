@@ -4924,6 +4924,7 @@ function setTab(tab){ state.tab=tab; state.group='all';
   /* 기업 상세는 갈래가 아니라 화면이다 — 명함·사업자로 돌아올 때 그 화면에서 나온다.
      안 그러면 명함 탭을 눌러도 회사 목록이 그대로 남는다. */
   if(state.view==='co') state.view='list';
+  resetSelOnViewSwitch();
   /* 탭 «켜짐» 표시는 render()->syncMobileTabs() 가 상태에서 끌어내 그린다 — 여기서
      손으로 칠하지 않는다(두 곳에서 같은 일을 하면 한쪽만 고쳤을 때 어긋난다). */
   $('search').placeholder = tab==='card' ? '이름·회사·전화번호 검색' : '상호·대표자·사업자번호 검색';
@@ -4933,9 +4934,20 @@ function setTab(tab){ state.tab=tab; state.group='all';
    못 찾고, 「사업자등록증」으로 잘못 불리는 안내문이 여럿 생긴다(대표 지시 2026-08-12). */
 function openCoMobile(){
   state.view='co';
+  resetSelOnViewSwitch();
   /* 탭 «켜짐» 표시는 render()->syncMobileTabs() 가 상태에서 끌어내 그린다. */
   $('search').placeholder = '상호·사업자번호·대표자로 찾기';
   render();
+}
+/* 화면을 오갈 때(명함⇄사업자⇄기업 상세) 고른 것과 편집 모드를 푼다 — 안 그러면
+   기업 상세에서 회사를 고른 채 명함 탭으로 갔다가 되돌아왔을 때 예전에 고른 회사가
+   그대로 남아, 사람이 뜻하지 않은 회사에 폴더·탭을 붙일 수 있다(Task 5 리뷰,
+   대표 지시 2026-08-15). setTab·openCoMobile 둘 다 이 helper 하나를 거친다 —
+   따로 베끼면 한쪽만 고쳐져 어긋난다. */
+function resetSelOnViewSwitch(){
+  state.sel={}; state.coSel={}; state.selMode=false;
+  const sl=$('selLabel'); if(sl) sl.textContent='편집';
+  const fb=$('fab'); if(fb) fb.style.display='';
 }
 function toggleSort(){ state.sort = state.sort==='date' ? 'name' : 'date';
   $('sortLabel').textContent = state.sort==='date' ? '등록일순' : '이름순'; render(); }
@@ -5440,11 +5452,19 @@ window.pucardsShrinkPhotos = async function(){
 };
 
 /* ── ✎ 일괄 선택 모드 ── */
+/* ⚠ Task 5 리뷰(2026-08-15) — #subbar 의 「✎ 편집」 단추는 기업 상세 화면에서도
+   그대로 보인다(폰에서 숨기는 규칙이 없다 — body.pc 에서만 숨는다). 예전처럼
+   renderSelbar()+renderList() 를 무조건 부르면, 회사를 고르려고 편집을 누르는
+   순간 회사 목록이 명함 목록으로 덮어써진다. 화면별로 갈라 기업 상세 화면이면
+   renderCoMobileList() 만 다시 그리고 명함용 #selbar 는 손대지 않는다.
+   ⚠ render() 를 그냥 부르면 안 된다 — render() 는 renderSelbar() 를 안 불러
+   명함 화면에서 선택 띠가 안 그려진다. */
 function toggleSelMode(){
   state.selMode=!state.selMode; state.sel={}; state.coSel={};
   $('selLabel').textContent = state.selMode ? '완료' : '편집';
   $('fab').style.display = state.selMode ? 'none' : '';
-  renderSelbar(); renderList();
+  if(state.view==='co') renderCoMobileList();
+  else { renderSelbar(); renderList(); }
 }
 function toggleSel(id){ if(state.sel[id]) delete state.sel[id]; else state.sel[id]=1;
   renderSelbar(); render(); }
@@ -9606,7 +9626,7 @@ function loadCoInfo(cb){
   _coInfoOn = true;
   /* 폴더·탭 개수가 옆줄에도 보이므로 renderCoPage() 만 부르면 옆줄 숫자가 안 바뀐다
      (최종 전체 리뷰 2026-08-14 — loadCoFolders/loadCoTagHidden 과 같은 이유). */
-  Store.db.ref(DB_ROOT+'/coInfo').on('value', s=>{ _coInfo = s.val() || {}; if(state.view==='co') renderPC(); });
+  Store.db.ref(DB_ROOT+'/coInfo').on('value', s=>{ _coInfo = s.val() || {}; renderCoAny(); });
   cb && cb();
 }
 const coKeyOf = it => { const d=digits(it.bizno||''); return d.length>=10 ? d : ('n'+_norm(it.company||'')); };
@@ -9783,7 +9803,7 @@ function coTagList(list){
   list.forEach(o=>coTagsOf(o).forEach(t=>{ c[t] = (c[t]||0)+1; }));
   return Object.keys(c).sort((a,b)=>c[b]-c[a] || a.localeCompare(b,'ko')).map(t=>({t, n:c[t]}));
 }
-function pickCoTag(t){ state.coTag = (state.coTag===t ? '' : t); closePcDetail(); renderCoPage(); }
+function pickCoTag(t){ state.coTag = (state.coTag===t ? '' : t); closePcDetail(); renderCoAny(); }
 
 /* 탭은 지우지 않는다 — 숨기기만 둔다. 사업이 끝나도 「그때 누가 신청했었나」를
    나중에 다시 봐야 할 수 있다. 지우면 그 연결이 영영 사라진다. */
@@ -9792,7 +9812,7 @@ let _coTagHiddenOn = false;
 function loadCoTagHidden(cb){
   if(_coTagHiddenOn || Store.mode!=='firebase'){ cb && cb(); return; }
   _coTagHiddenOn = true;
-  Store.db.ref(DB_ROOT+'/coTagHidden').on('value', s=>{ _coTagHidden = s.val() || {}; if(state.view==='co') renderPC(); });
+  Store.db.ref(DB_ROOT+'/coTagHidden').on('value', s=>{ _coTagHidden = s.val() || {}; renderCoAny(); });
   cb && cb();
 }
 function hideCoTag(tag){
@@ -9800,7 +9820,7 @@ function hideCoTag(tag){
   Store.db.ref(DB_ROOT).update({ ['coTagHidden/'+tag]: true }).then(()=>{
     /* 지금 이 탭으로 걸러 보던 중이면, 숨긴 뒤에도 그 탭이 골라진 채로 남아
        옆줄엔 아무 표시도 없이 목록만 계속 좁혀져 보인다(최종 전체 리뷰 2026-08-14). */
-    if(state.coTag===tag){ state.coTag=''; if(state.view==='co') renderPC(); }
+    if(state.coTag===tag){ state.coTag=''; renderCoAny(); }
   }).catch(e=>toast('저장 실패: '+((e&&e.message)||'')));
 }
 function unhideCoTag(tag){
@@ -9820,7 +9840,7 @@ function loadCoFolders(cb){
   _coFoldersOn = true;
   /* 사업자·자료함처럼 renderPC() 를 부른다 — 폴더 개수가 옆줄에도 보이므로
      renderCoPage() 만 부르면 옆줄 숫자가 안 바뀐다. */
-  Store.db.ref(DB_ROOT+'/coFolders').on('value', s=>{ _coFolders = s.val() || {}; if(state.view==='co') renderPC(); });
+  Store.db.ref(DB_ROOT+'/coFolders').on('value', s=>{ _coFolders = s.val() || {}; renderCoAny(); });
   cb && cb();
 }
 function putCoFolder(folder){
@@ -9891,7 +9911,7 @@ async function coImportFolderFromType(label, recs){
   if(reassigned) parts.push(`${reassigned}곳은 다른 폴더에서 옮겨졌습니다`);
   if(skipped) parts.push(`${skipped}곳은 명함·사업자등록증이 없어 건너뛰었습니다`);
   toast(parts.join(' · '));
-  if(state.view==='co') renderPC();
+  renderCoAny();
 }
 let _coErpImportCache = null;
 let _coErpImportLoading = false;
@@ -9973,7 +9993,7 @@ function deleteCoFolder(id){
     /* 지운 폴더를 보고 있었으면 다시 그린다 — 이 목록을 만든 _coInfo/_coFolders
        구독이 update() 가 로컬에 반영되는 순간 먼저 불려, coFolder 를 비우기 전에
        이미 "회사를 찾지 못했습니다"로 그려질 수 있다(최종 전체 리뷰 2026-08-14). */
-    if(state.coFolder===id){ state.coFolder=''; if(state.view==='co') renderPC(); }
+    if(state.coFolder===id){ state.coFolder=''; renderCoAny(); }
     toast('폴더를 삭제했습니다');
   }).catch(e=>toast('삭제 실패: '+((e&&e.message)||'')));
 }
@@ -10004,7 +10024,7 @@ function pickCoFolder(k){
 function toggleCoErpOnly(){
   state.coErpOnly = !state.coErpOnly; closePcDetail();
   try{ localStorage.setItem('pucards_co_erponly', state.coErpOnly?'1':''); }catch(_){}
-  renderCoPage();
+  renderCoAny();
 }
 
 /* 지금 화면에 보이는 목록 — 「전체 고르기」와 화면 그리기가 **같은 목록**을 봐야 한다.
@@ -10204,7 +10224,7 @@ function openCoDoc(year, id, owner){
           + (owner ? '&owner=' + encodeURIComponent(owner) : '');
   window.open('pu-photos.html?' + q, '_blank');
 }
-function coToggle(k){ if(state.coSel[k]) delete state.coSel[k]; else state.coSel[k]=1; renderCoPage(); }
+function coToggle(k){ if(state.coSel[k]) delete state.coSel[k]; else state.coSel[k]=1; renderCoAny(); }
 
 /* 탭 이름 다듬기 — js/pu-doc-file.js 의 sendToCoInfo 와 같은 규칙이다.
    ⚠ 두 곳이 같은 규칙을 따로 두고 있다. 한쪽만 고치면 사진첩에서 자동으로 붙는 탭과
@@ -10255,7 +10275,7 @@ async function coMoveSelTo(folderId){
   $('folderDlgBg').classList.remove('open');
   state.coSel={};
   toast(`${keys.length}곳을 옮겼습니다`);
-  if(state.view==='co') renderPC();
+  renderCoAny();
 }
 function coAssignTag(){
   const keys = Object.keys(state.coSel);
@@ -10290,13 +10310,13 @@ async function coApplyTag(raw){
   $('folderDlgBg').classList.remove('open');
   state.coSel={};
   toast(`${keys.length}곳에 「${tag}」 탭을 붙였습니다`);
-  if(state.view==='co') renderPC();
+  renderCoAny();
 }
 function coSelAll(on){
   const list = coVisible();
   state.coSel = {};
   if(on) list.forEach(o=>{ state.coSel[o.key]=1; });
-  renderCoPage();
+  renderCoAny();
 }
 /* 회사 상세 — 오른쪽 팝업(#pcDetail, 명함 상세와 같은 패널) 안에 넣을 내용만 만든다.
    목록 화면을 통째로 바꿔 그리던 예전 coDetailHtml 은 없앤다(대표 지시 2026-08-14,
@@ -10361,6 +10381,17 @@ function filterErpMgr(name){
 function onMobileSearchInput(v){
   if(state.view==='co') state.coQ = v;
   render();
+}
+/* 기업 상세는 PC(표)·폰(카드 목록) 두 갈래로 그려진다. 저장 후 다시 그릴 때
+   "지금 보고 있는 쪽"만 정확히 다시 그리려면 이 함수 하나를 거쳐야 한다 —
+   renderPC() 를 폰에서 직접 부르면 존재하지도 않는 #pcCo 를 그리려다 아무 일도
+   안 일어나고, renderCoMobileList() 를 PC에서 부르면 존재하지도 않는 #list 를
+   찾다가 조용히 어긋난다(대표 지시 2026-08-15, 폰 기업 상세 추가로 처음 생긴
+   문제 — 예전엔 기업 상세가 PC에만 있어 state.view==='co' 하나로 충분했다). */
+function renderCoAny(){
+  if(state.view!=='co') return;
+  if(document.body.classList.contains('pc')) renderPC();
+  else renderCoMobileList();
 }
 /* 폰 기업 상세 카드 목록 — 명함 목록(renderList)과 같은 .row/.rowmain/.nm/.l1/.l2
    클래스를 그대로 쓴다(대표가 고른 A안: 카드 목록 + 전체화면 상세, 2026-08-15).

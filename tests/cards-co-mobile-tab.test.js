@@ -36,6 +36,7 @@ function loadTabBlock(){
   const at = source.indexOf('function setTab(tab)');
   const end = source.indexOf('\nfunction toggleSort', at);
   assert.ok(at > 0 && end > at, 'setTab~toggleSort 사이를 찾지 못했습니다');
+  const fabEl = { style:{} };
   const ctx = {
     state: { tab:'card', view:'list' },
     calls: { toggled: {}, placeholder: '', rendered: 0 },
@@ -44,12 +45,15 @@ function loadTabBlock(){
       if(id==='tabBiz')  return { classList: { toggle:(c,on)=>{ ctx.calls.toggled.tabBiz = on; } } };
       if(id==='tabCo')   return { classList: { toggle:(c,on)=>{ ctx.calls.toggled.tabCo = on; } } };
       if(id==='search')  return { set placeholder(v){ ctx.calls.placeholder = v; }, get placeholder(){ return ctx.calls.placeholder; } };
+      if(id==='selLabel') return { set textContent(v){ ctx._label=v; } };
+      if(id==='fab') return fabEl;
       return null;
     },
     render: () => { ctx.calls.rendered++; }
   };
   vm.createContext(ctx);
   vm.runInContext(source.slice(at, end), ctx);
+  ctx._fab = fabEl;
   return ctx;
 }
 
@@ -60,6 +64,31 @@ test('openCoMobile 은 state.view 를 co 로 바꾸고 state.tab 은 안 건드�
   assert.equal(c.state.view, 'co');
   assert.equal(c.state.tab, 'biz', 'state.tab 을 건드리면 안 된다 — 갈래가 아니라 화면이다');
   assert.equal(c.calls.rendered, 1);
+});
+
+/* (나) [Important] Task 5 리뷰(2026-08-15) — 화면을 오가면 예전에 고른 것이 남아
+   엉뚱한 회사에 폴더·탭이 붙을 수 있었다. setTab·openCoMobile 둘 다 고른 것과
+   편집 모드를 푸는지 확인한다. */
+test('openCoMobile 은 골라 둔 명함·회사와 편집 모드를 비운다', () => {
+  const c = loadTabBlock();
+  c.state.sel = { a:1 }; c.state.coSel = { b:1 }; c.state.selMode = true;
+  c.openCoMobile();
+  assert.deepEqual(JSON.parse(JSON.stringify(c.state.sel)), {});
+  assert.deepEqual(JSON.parse(JSON.stringify(c.state.coSel)), {});
+  assert.equal(c.state.selMode, false);
+  assert.equal(c._label, '편집');
+  assert.equal(c._fab.style.display, '');
+});
+
+test('setTab 은 골라 둔 명함·회사와 편집 모드를 비운다', () => {
+  const c = loadTabBlock();
+  c.state.sel = { a:1 }; c.state.coSel = { b:1 }; c.state.selMode = true;
+  c.setTab('card');
+  assert.deepEqual(JSON.parse(JSON.stringify(c.state.sel)), {});
+  assert.deepEqual(JSON.parse(JSON.stringify(c.state.coSel)), {});
+  assert.equal(c.state.selMode, false);
+  assert.equal(c._label, '편집');
+  assert.equal(c._fab.style.display, '');
 });
 
 test('openCoMobile 은 찾기 칸 안내문구를 회사용으로 바꾼다', () => {

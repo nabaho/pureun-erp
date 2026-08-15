@@ -30,6 +30,7 @@ function loadImportBlock(items){
     toast: () => {},
     state: { view:'co' },
     renderPC: () => {},
+    renderCoAny: () => {},
     DB_ROOT: 'pucards',
     Store: { mode:'firebase', db: { ref: p => ({
       update: v => { writes.push({ path:p, v }); return Promise.resolve(); },

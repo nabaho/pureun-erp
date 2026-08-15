@@ -128,7 +128,7 @@ function loadLoadCoInfo(){
   assert.ok(at > 0, 'loadCoInfo 를 찾지 못했습니다');
   const end = source.indexOf('\nconst coKeyOf', at);
   assert.ok(end > at, 'loadCoInfo 끝을 찾지 못했습니다');
-  const calls = { pcRendered: 0, coRendered: 0 };
+  const calls = { pcRendered: 0, coRendered: 0, anyRendered: 0 };
   let onValueCb = null;
   const ctx = {
     _coInfoOn: false,
@@ -137,7 +137,12 @@ function loadLoadCoInfo(){
     Store: { mode: 'firebase', db: { ref: () => ({ on: (evt, cb) => { onValueCb = cb; } }) } },
     DB_ROOT: 'pucards',
     renderPC: () => { calls.pcRendered++; },
-    renderCoPage: () => { calls.coRendered++; }
+    renderCoPage: () => { calls.coRendered++; },
+    /* Task 6 — loadCoInfo 의 콜백은 이제 state.view 를 직접 안 보고 renderCoAny() 하나에
+       위임한다(PC/폰 어느 쪽인지 가리는 것도, 기업정보 화면이 아니면 아무 것도 안 하는
+       것도 모두 renderCoAny() 의 몫 — tests/cards-co-render-any.test.js 가 그 분기를
+       검사한다). */
+    renderCoAny: () => { calls.anyRendered++; }
   };
   vm.createContext(ctx);
   vm.runInContext(source.slice(at, end), ctx);
@@ -146,20 +151,25 @@ function loadLoadCoInfo(){
   return ctx;
 }
 
-test('loadCoInfo 의 구독 콜백은 기업정보 화면일 때 renderPC 를 부른다', () => {
+test('loadCoInfo 의 구독 콜백은 renderPC·renderCoPage 를 직접 안 부르고 renderCoAny 를 부른다', () => {
   const c = loadLoadCoInfo();
   c.loadCoInfo();
   c._fireOnValue({ a: { folder:'f1' } });
-  assert.equal(c._calls.pcRendered, 1, 'renderPC 를 안 불렀다');
+  assert.equal(c._calls.anyRendered, 1, 'renderCoAny 를 안 불렀다');
+  assert.equal(c._calls.pcRendered, 0, 'renderPC() 를 직접 부르면 안 된다 — renderCoAny() 를 거쳐야 한다');
   assert.equal(c._calls.coRendered, 0, 'renderCoPage 를 부르면 옆줄 숫자가 안 바뀐다');
   assert.deepEqual(JSON.parse(JSON.stringify(c._coInfo)), { a: { folder:'f1' } });
 });
 
-test('loadCoInfo 의 구독 콜백은 기업정보 화면이 아니면 아무 것도 다시 안 그린다', () => {
+test('loadCoInfo 의 구독 콜백은 화면과 상관없이 renderCoAny 하나에 위임한다', () => {
+  /* 기업정보 화면이 아니면 아무 것도 다시 그리면 안 된다는 규칙 자체는 여전히 있지만,
+     이제 그 가림은 이 콜백이 아니라 renderCoAny() 안에서 한다(폰 기업 상세가 생기며
+     PC/폰 판별까지 같이 해야 해서 한 곳으로 모았다, 대표 지시 2026-08-15). */
   const c = loadLoadCoInfo();
   c.state.view = 'list';
   c.loadCoInfo();
   c._fireOnValue({});
+  assert.equal(c._calls.anyRendered, 1, 'renderCoAny() 는 화면과 상관없이 항상 불러야 한다');
   assert.equal(c._calls.pcRendered, 0);
   assert.equal(c._calls.coRendered, 0);
 });

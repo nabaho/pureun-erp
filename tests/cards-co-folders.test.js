@@ -56,7 +56,7 @@ test('openCoPage 가 폴더 목록도 불러온다', () => {
 function loadCoFoldersBlock(){
   const at = source.indexOf('function loadCoFolders');
   const end = source.indexOf('function toggleCoErpOnly', at);
-  const calls = { updates: [], sets: [], toasts: [], menuHtml: '', menuOpen: false, rendered: false, pcRendered: false, closePcDetailCalls: 0 };
+  const calls = { updates: [], sets: [], toasts: [], menuHtml: '', menuOpen: false, rendered: false, pcRendered: false, anyRendered: false, closePcDetailCalls: 0 };
   const ctx = {};
   Object.assign(ctx, {
     DB_ROOT: 'pucards',
@@ -88,6 +88,7 @@ function loadCoFoldersBlock(){
     closePcDetail: () => { calls.closePcDetailCalls++; ctx.state.coPick=''; },
     render: () => { calls.rendered = true; },
     renderPC: () => { calls.pcRendered = true; },
+    renderCoAny: () => { calls.anyRendered = true; },
     localStorage: { setItem: () => {}, getItem: () => null }
   });
   const code = source.slice(at, end);
@@ -117,9 +118,11 @@ test('deleteCoFolder 는 확인을 받은 뒤 그 폴더 회사만 folder 를 �
   assert.equal(upd['coFolders/f1'], null);
   assert.equal('coInfo/b/folder' in upd, false, '다른 폴더(f2)에 있던 b 는 upd 에 끼면 안 된다');
   assert.equal(Object.keys(upd).length, 3, 'a·c 의 folder 와 coFolders/f1 말고 다른 키가 없어야 한다');
-  assert.equal(c._calls.pcRendered, true, '지운 폴더를 보고 있었으면 다시 그려야 한다 — ' +
+  assert.equal(c._calls.anyRendered, true, '지운 폴더를 보고 있었으면 다시 그려야 한다 — ' +
     '_coInfo/_coFolders 구독이 update() 가 로컬 반영되는 순간 먼저 불려 coFolder 를 비우기 ' +
-    '전에 이미 그려질 수 있다(최종 전체 리뷰 2026-08-14)');
+    '전에 이미 그려질 수 있다(최종 전체 리뷰 2026-08-14). Task 6부터는 renderPC() 를 직접 ' +
+    '안 부르고 renderCoAny() 하나로 PC/폰 어느 쪽인지 가려서 다시 그린다.');
+  assert.equal(c._calls.pcRendered, false, 'renderPC() 를 직접 부르면 안 된다 — renderCoAny() 를 거쳐야 한다');
   assert.equal(c.state.coFolder, '', '지운 폴더를 보고 있었으면 선택을 되돌려야 한다');
 });
 
