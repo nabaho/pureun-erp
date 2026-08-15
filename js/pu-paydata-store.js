@@ -564,6 +564,56 @@
      값 한 줄에는 반드시 **출처(원본 번호)**가 붙는다 — 없으면 몇 달 뒤 "이 수당
      어디서 나온 거냐"에 답을 못 한다. */
 
+  /* ══════ 판독 결과 → 값 줄 (2026-08-15) ══════
+     판독 결과가 서류마다 모양이 다르다. buildValueRows 가 받는
+     {name, pairs:[{item,value}]} 하나로 맞춘다. 근태만 모양이 다르고
+     (paid·off 가 날짜 배열) 나머지 둘은 이미 맞는 모양이라 그대로 흘린다. */
+
+  /* 서랍 종류 → 판독 방식. null 이면 그 탭에는 판독 단추를 그리지 않는다.
+     근로계약서는 값을 뽑을 것이 아니고, 우리 산출물은 우리가 만든 것이라
+     다시 읽을 이유가 없다. */
+  function readKindFor(kind) {
+    if (kind === 'attend') return 'timesheet';
+    if (kind === 'ledger') return 'wage';
+    if (kind === 'etc') return 'notice';
+    return null;
+  }
+
+  /* 값이 비면 그 항목을 아예 만들지 않는다 — 0 과 「없음」은 다르다.
+     (월별 값 표에서 없는 항목은 0 이 아니라 「－」로 보여야 한다) */
+  function pushPair(pairs, item, value) {
+    var v = String(value == null ? '' : value).trim();
+    if (v) pairs.push({ item: item, value: v });
+  }
+
+  function rowsFromRead(readKind, parsed) {
+    var src = (parsed && parsed.rows) || [];
+    var out = [];
+    src.forEach(function (r) {
+      var name = String((r && r.name) || '').trim();
+      if (!name) return;
+      var pairs = [];
+      if (readKind === 'timesheet') {
+        var paid = Array.isArray(r.paid) ? r.paid : [];
+        var off = Array.isArray(r.off) ? r.off : [];
+        if (paid.length) pushPair(pairs, '유급일수', paid.length + '일');
+        if (off.length) pushPair(pairs, '휴무일수', off.length + '일');
+        pushPair(pairs, '가감', r.adj);
+        pushPair(pairs, '비고', r.note);
+      } else if (readKind === 'wage' || readKind === 'notice') {
+        (Array.isArray(r.pairs) ? r.pairs : []).forEach(function (p) {
+          var item = String((p && p.item) || '').trim();
+          if (item) pushPair(pairs, item, p && p.value);
+        });
+      } else {
+        return;                       // 모르는 방식은 아무것도 만들지 않는다
+      }
+      if (!pairs.length) return;      // 항목이 하나도 없으면 값 줄이 아니다
+      out.push({ name: name, pairs: pairs });
+    });
+    return out;
+  }
+
   /* 판독 결과({company,period,docName,rows:[{name,pairs:[{item,value}]}]}) →
      값 줄 배열. 순수 함수라 AI 없이도 검사할 수 있다.
      ⚠ item·value 는 문서에 적힌 이름 그대로 담는다(판독 층의 pairs 규칙과 같다) —
@@ -995,6 +1045,8 @@
     deleteFolder: deleteFolder,
     setFolder: setFolder,
     valueBoxPath: valueBoxPath,
+    readKindFor: readKindFor,
+    rowsFromRead: rowsFromRead,
     buildValueRows: buildValueRows,
     findDuplicateValue: findDuplicateValue,
     saveValues: saveValues,
