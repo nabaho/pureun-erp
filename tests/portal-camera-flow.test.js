@@ -39,3 +39,20 @@ test('연속촬영은 왼쪽 아래 최근 사진과 한꺼번에 저장을 유�
   assert.match(photos, /const files = picked\.map/);
   assert.match(photos, /await addFiles\(files,\s*true,\s*\{\s*fromCam:\s*true,/);
 });
+test('카메라를 닫지 않고 계속 찍으며 왼쪽 아래에 최근 사진을 보여 준다', () => {
+  assert.match(photos, /camShots\.push\(/);
+  assert.match(photos, /renderCamStrip\(\)/);
+  assert.match(photos, /id="camLast"[^>]*방금 찍은 사진/);
+  assert.match(photos, /\.camSpacer\{width:88px;[^}]*display:flex/);
+  assert.match(photos, /\.camSpacer img\{width:46px;height:46px/);
+  assert.match(photos, /last\.src = camShots\[n - 1\]\.url/);
+  assert.match(photos, /id="camCount"/);
+});
+
+test('저장이 끝난 뒤에만 포털 선택 화면으로 돌아간다', () => {
+  const start = photos.indexOf('async function camUpload()');
+  const end = photos.indexOf('/* ══════ 끌어다 놓기', start);
+  const flow = photos.slice(start, end);
+  assert.match(photos, /from === 'portal' \? 'enter\.html'/);
+  assert.ok(flow.indexOf('await addFiles(files') < flow.indexOf('camGoBack()'));
+});

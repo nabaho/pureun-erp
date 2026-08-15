@@ -747,7 +747,7 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 <script src="js/pu-drag.js"></script>
 <script src="js/pu-photo-store.js"></script>
   <!-- 프로그램 사이 이동 (공용 앱바) -->
-  <script src="js/pu-appbar.js?v=1"></script>
+  <script src="js/pu-appbar.js?v=2"></script>
 </head>
 <body>
 <div id="pu-boot-splash" style="position:fixed;inset:0;z-index:2147483000;background:#eef1f7;display:flex;align-items:center;justify-content:center">
@@ -3215,7 +3215,11 @@ async function doLogin(){
   if(!email){err.textContent='이메일 형식으로 입력하세요. (예: p001@pureun.kr)';err.classList.add('on');return;}
 
   q('#loginBtn').disabled=true; err.classList.remove('on');
-  const remember=q('#loginRemember')?.checked;
+  // 포털에서 자동로그인을 선택한 세션은 이 화면의 독립 로그인 때문에
+  // SESSION으로 낮아지지 않게 한다(Firebase 인증 저장소는 같은 주소에서 공유됨).
+  let portalAuto=false;
+  try{ portalAuto=localStorage.getItem('pu_portal_auto')==='1'; }catch(_){}
+  const remember=!!q('#loginRemember')?.checked || portalAuto;
   try{
     // 자동로그인 지속성
     const persist=remember?firebase.auth.Auth.Persistence.LOCAL:firebase.auth.Auth.Persistence.SESSION;
@@ -7298,6 +7302,11 @@ init();
    ERP와 같은 localStorage('pu_last_active') 키를 공유 → 두 앱 중 아무거나 쓰면 전체 리셋 */
 (function(){
   var LIMIT=60*60*1000, WARN=2*60*1000, AKEY='pu_last_active';
+  function persistentAutoLogin(){
+    try{ return localStorage.getItem('pu_portal_auto') === '1' || !!localStorage.getItem('p_autoSession'); }
+    catch(e){ return false; }
+  }
+  function shouldPauseIdle(){ return persistentAutoLogin() && document.hidden; }
   /* 포털 공용 설정의 자동 로그아웃 시간 반영 — 10~480분만 인정, 그 밖이면 기본값 유지 */
   function _applyIdleCfg(c){
     var m = c && parseInt(c.idleMinutes, 10);
@@ -7310,6 +7319,7 @@ init();
   function now(){ return Date.now(); }
   function getLast(){ try{ var v=parseInt(localStorage.getItem(AKEY)||'0',10); return v>0?v:now(); }catch(e){ return now(); } }
   function markActive(){ try{ localStorage.setItem(AKEY,String(now())); }catch(e){} hideWarn(); }
+  function resumeAutoSession(){ if(persistentAutoLogin()) markActive(); }
   function fmt(ms){ if(ms<0)ms=0; var s=Math.floor(ms/1000); return ('0'+Math.floor(s/60)).slice(-2)+':'+('0'+(s%60)).slice(-2); }
   function doAutoLogout(){
     try{
@@ -7345,9 +7355,14 @@ init();
   ['mousemove','mousedown','keydown','touchstart','scroll','click'].forEach(function(ev){
     window.addEventListener(ev, markActive, {passive:true, capture:true});
   });
+  window.addEventListener('pageshow', resumeAutoSession, {passive:true});
+  window.addEventListener('focus', resumeAutoSession, {passive:true});
+  document.addEventListener('visibilitychange', function(){ if(!document.hidden) resumeAutoSession(); }, {passive:true});
+  resumeAutoSession();
   try{ if(!localStorage.getItem(AKEY)) markActive(); }catch(e){}
   tick=setInterval(function(){
     if(!loggedIn()){ if(badge) badge.style.display='none'; hideWarn(); return; }
+    if(shouldPauseIdle()) return;
     ensureBadge();
     var rem=LIMIT-(now()-getLast());
     if(badge){ badge.style.display='inline-flex'; badge.textContent='⏱ '+fmt(rem); }

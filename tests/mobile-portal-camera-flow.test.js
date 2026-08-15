@@ -25,6 +25,14 @@ test('포털 촬영은 확인창 없이 계속 누적된다', () => {
   assert.match(shoot, /renderCamStrip\(\)/);
 });
 
+test('아이폰 기본 카메라 사진은 페이지 이동 전에 고화질 JPEG로 확정한다', () => {
+  assert.match(enter, /function portalCameraJpeg\(file\)/);
+  assert.match(enter, /maxEdge = 4096/);
+  assert.match(enter, /canvas\.toBlob\([\s\S]*?'image\/jpeg',\s*0\.95\)/);
+  assert.match(enter, /savePortalCameraFile\(file\)[\s\S]*?portalCameraJpeg\(file\)/);
+  assert.match(enter, /blob:photo\.blob/);
+});
+
 test('로그인 이동 뒤에도 요청을 기억하고 실제로 열린 뒤 한 번만 지운다', () => {
   const fn = photos.match(/function openCamIfAsked\(\) \{[\s\S]*?\n\}/)[0];
   assert.match(fn, /sessionStorage\.getItem\('pu_open_camera'\)/);
