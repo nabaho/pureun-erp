@@ -69,8 +69,40 @@ test('선택 모드일 때는 체크 표시를 그리고, 누르면 coToggle 을
 });
 
 test('선택된 회사는 체크 표시가 켜진다', () => {
-  const c = loadBlock([{ key:'k1', name:'대명크라샤', bizno:'', erp:null, folder:'', cards:[], docs:0, tags:{} }]);
+  const c = loadBlock([
+    { key:'k1', name:'대명크라샤', bizno:'', erp:null, folder:'', cards:[], docs:0, tags:{} },
+    { key:'k2', name:'미래산업', bizno:'', erp:null, folder:'', cards:[], docs:0, tags:{} }
+  ]);
   c.state.selMode = true; c.state.coSel = { k1:1 };
   c.renderCoMobileList();
-  assert.match(c._calls.html, /✅/);
+  /* 체크 표시가 '어딘가에' 있는지가 아니라, 선택된 k1(대명크라샤) 카드 자신에 붙었는지를
+     확인한다 — 다른 회사(k2, 미래산업) 카드에 잘못 켜져도 통과해버리는 약한 검증을 막는다. */
+  assert.match(c._calls.html, /<div class="selmark">✅<\/div>\s*<div class="rowmain"><div class="nm">대명크라샤<\/div>/,
+    '선택된 k1 카드에 체크 표시(✅)가 붙어야 합니다');
+  assert.match(c._calls.html, /<div class="selmark">⚪<\/div>\s*<div class="rowmain"><div class="nm">미래산업<\/div>/,
+    '선택되지 않은 k2 카드는 빈 동그라미(⚪)여야 합니다');
+});
+
+test('회사 키에 작은따옴표가 있어도 onclick 인자가 깨지지 않는다 (pickCo·coToggle 모두)', () => {
+  /* coKeyOf() 는 사업자번호가 없으면 'n'+_norm(name) 으로 대체 키를 만드는데, _norm 은
+     작은따옴표를 걸러내지 않는다(예: Papa John's). esc() 는 ' 를 &#39; 로 바꾸지만
+     그건 HTML 엔티티일 뿐 — onclick 어트리뷰트를 브라우저가 파싱할 때 그 엔티티가 다시
+     ' 로 풀리고 나서야 JS 로 넘어가므로, \\' 로 먼저 이스케이프해두지 않으면 인자가
+     조기 종료되어 탭해도 아무 일도 안 일어난다(무음 실패). */
+  const list = [{ key:"nPapaJohn's", name:'파파존스', bizno:'', erp:null, folder:'', cards:[], docs:0, tags:{} }];
+
+  const c1 = loadBlock(list);
+  c1.renderCoMobileList();
+  assert.match(c1._calls.html, /onclick="pickCo\('nPapaJohn\\&#39;s'\)"/,
+    '작은따옴표가 백슬래시로 이스케이프된 채 pickCo 인자에 들어가야 합니다');
+  assert.doesNotMatch(c1._calls.html, /onclick="pickCo\('nPapaJohn&#39;s'\)"/,
+    '백슬래시 없이 그대로면 어트리뷰트 파싱 중 인자가 조기 종료됩니다');
+
+  const c2 = loadBlock(list);
+  c2.state.selMode = true;
+  c2.renderCoMobileList();
+  assert.match(c2._calls.html, /onclick="coToggle\('nPapaJohn\\&#39;s'\)"/,
+    '작은따옴표가 백슬래시로 이스케이프된 채 coToggle 인자에 들어가야 합니다');
+  assert.doesNotMatch(c2._calls.html, /onclick="coToggle\('nPapaJohn&#39;s'\)"/,
+    '백슬래시 없이 그대로면 어트리뷰트 파싱 중 인자가 조기 종료됩니다');
 });
