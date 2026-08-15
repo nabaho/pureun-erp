@@ -127,7 +127,10 @@ function fnBody(name) {
 }
 
 test('판단 층을 불러온다', () => {
-  assert.match(app, /<script src="js\/pu-conflict\.js"><\/script>/);
+  /* ⚠ 주소를 «글자 그대로» 박아 두면 안 된다 — .js 를 고칠 때마다 캐시 번호(?v=)를
+     올려야 하는데, 그때마다 이 검사가 깨진다(2026-08-15 실제로 깨졌다).
+     확인할 것은 「그 파일을 불러오는가」이지 「번호가 몇인가」가 아니다. */
+  assert.match(app, /<script src="js\/pu-conflict\.js(\?v=\d+)?"><\/script>/);
 });
 
 test('판단은 공용 층에만 있다 — 화면에 베껴 넣지 않는다', () => {
