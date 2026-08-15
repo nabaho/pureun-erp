@@ -3453,14 +3453,18 @@ var _docFound={}, _docOcr=false, _docFid=null;   // 판독 결과는 시작 시�
    원본은 사진첩에 그대로 두고, 기금에는 값 + 참조(주인·연도·id)만 남긴다.
    RTDB에 이미지를 넣으면 기금 목록 로딩이 통째로 느려지므로 절대 복사하지 않는다. */
 var _pick={kind:'',zid:'',items:[],year:0};
-function openAlbumPick(zid,kind){
+function _siteName(sid){ return ((S.sites||{})[sid]||{}).name||''; }
+/* sid 를 주면 «그 참여사업장의 제출서류»를 고르는 창이 된다(판독 없이 연결만 한다).
+   연도(yr)를 고를 때 함께 붙잡아 둔다 — 고르는 사이에 화면 연도가 바뀌어도 엉뚱한 해에 저장되지 않는다. */
+function openAlbumPick(zid,kind,sid){
   if(!photoStoreReady()){ toast('사진첩과 연결되지 않았습니다 — 새로고침 후 다시','err'); return; }
-  _pick={kind:kind,zid:zid,items:[],year:new Date().getFullYear(),fid:S.fundId};
-  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">🖼 사진첩에서 '+esc(docZoneLabel(kind))+' 고르기</h2>'+hlp('album.pick')
+  _pick={kind:kind,zid:zid,items:[],year:new Date().getFullYear(),fid:S.fundId,sid:sid||'',yr:S.year};
+  var _what=(sid?(_siteName(sid)+' '):'')+docZoneLabel(kind);
+  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">🖼 사진첩에서 '+esc(_what)+' 고르기</h2>'+hlp('album.pick')
     +'<span style="flex:1"></span><select id="pk-year" onchange="albumPickLoad(+this.value)" style="padding:4px 8px;border:1px solid var(--line);border-radius:7px">'
     +[0,1,2].map(function(d){var y=new Date().getFullYear()-d;return '<option value="'+y+'">'+y+'년</option>';}).join('')+'</select></div>'
     +'<div id="pk-body" style="max-height:64vh;overflow:auto">'+loadingHTML('사진첩을 읽는 중…')+'</div>'
-    +'<p class="muted" style="font-size:11px;margin:8px 0 0">사진을 누르면 판독합니다 · 사진첩 원본은 그대로 남습니다</p>');
+    +'<p class="muted" style="font-size:11px;margin:8px 0 0">사진을 누르면 '+(sid?'연결합니다':'판독합니다')+' · 사진첩 원본은 그대로 남습니다</p>');
   albumPickLoad(_pick.year);
 }
 function albumPickLoad(year){
@@ -3504,6 +3508,13 @@ function renderAlbumPick(){
 function pickAlbumPhoto(id){
   var it=_pick.items.filter(function(x){return x.id===id;})[0]; if(!it) return;
   var owner=it.meta.__ownerUid||undefined, year=String(_pick.year), kind=_pick.kind, zid=_pick.zid, fid=_pick.fid;
+  /* 참여사업장 서류(중소기업확인서·등기부·사업자등록증)는 판독하지 않는다 —
+     기금 정보 칸을 채우는 서류가 아니라 «받았다»를 증명하는 서류다. 원본만 잇고 체크를 켠다. */
+  if(_pick.sid){
+    closeM();                                        // 원본을 받아 올 일이 없어 곧바로 닫는다
+    saveSiteScanRef(fid,_pick.yr,_pick.sid,kind,{owner:owner||'',year:year,id:id});
+    return;
+  }
   var b=$('pk-body'); if(b) b.innerHTML=loadingHTML('원본을 가져와 판독하는 중…');
   PuPhotoStore.loadFull(year,id,owner).then(function(src){
     if(!src) throw new Error('원본을 찾지 못했습니다');
@@ -3531,6 +3542,46 @@ function saveScanRef(fid,kind,ref){
     toast('사진첩 원본을 이 기금에 연결했습니다');
   }).catch(function(e){ toast('연결 저장 실패: '+e.message,'err'); });
 }
+/* 참여사업장 제출서류의 사진첩 참조.
+   자리: subsidy_chk/{기금}/{연도}/scan/site/{사업장}/{서류} = {owner,year,id,at,by}
+   체크 자리(site/…)와 **같은 마디 안**에 둔다 — 지금 있는 한 번 읽기에 그대로 따라오므로
+   화면을 열 때 왕복이 늘지 않는다. 열 전체 켜기(subChkCol)와 노동청 일괄 반영은
+   site/ 와 fund/ 만 건드리므로 이 참조를 지우지 않는다. */
+function _subScanOf(sid,kind){ return ((((S.subChk||{}).scan||{}).site||{})[sid]||{})[kind]; }
+function saveSiteScanRef(fid,yr,sid,kind,ref){
+  var o=Object.assign({at:ymd(),by:(S.user||'')},ref);
+  /* 참조와 체크를 한 번의 update 로 함께 쓴다 — 따로 쓰면 한쪽만 남아
+     «사진은 붙었는데 안 받은 것으로 세는» 상태가 생긴다. */
+  var up={}; up['scan/site/'+sid+'/'+kind]=o; up['site/'+sid+'/'+kind]=1;
+  fbDb.ref(NS+'/subsidy_chk/'+fid+'/'+yr).update(up).then(function(){
+    if(S.fundId!==fid||S.year!==yr) return;
+    S.subChk=S.subChk||{};
+    S.subChk.site=S.subChk.site||{}; S.subChk.site[sid]=S.subChk.site[sid]||{}; S.subChk.site[sid][kind]=1;
+    S.subChk.scan=S.subChk.scan||{}; S.subChk.scan.site=S.subChk.scan.site||{};
+    S.subChk.scan.site[sid]=S.subChk.scan.site[sid]||{}; S.subChk.scan.site[sid][kind]=o;
+    renderFund(); toast('사진첩 원본을 잇고 「받음」으로 표시했습니다');
+  }).catch(function(e){ toast('연결 저장 실패: '+e.message,'err'); });
+}
+function openSiteScan(sid,kind){
+  var r=_subScanOf(sid,kind); if(!r) return;
+  if(!photoStoreReady()){ toast('사진첩과 연결되지 않았습니다','err'); return; }
+  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">'+esc(_siteName(sid)+' '+docZoneLabel(kind))+'</h2>'
+    +'<span class="muted" style="font-size:11.5px">'+esc(r.year)+'년 · 연결 '+esc(r.at||'')+'</span>'
+    +'<span style="flex:1"></span><button onclick="unlinkSiteScan(\''+sid+'\',\''+kind+'\')" style="color:var(--danger)">연결 해제</button></div>'
+    +'<div id="scanBody" style="text-align:center">'+loadingHTML('사진첩에서 불러오는 중…')+'</div>');
+  _loadScanInto(r);
+}
+function unlinkSiteScan(sid,kind){
+  var fid=S.fundId, yr=S.year;
+  confirmM('이 서류와 사진첩 원본의 연결만 끊습니다.\n「받음」 체크와 사진첩의 사진은 그대로 둡니다.',{ok:'연결 해제',danger:true}).then(function(ok){
+    if(!ok)return;
+    fbDb.ref(NS+'/subsidy_chk/'+fid+'/'+yr+'/scan/site/'+sid+'/'+kind).remove().then(function(){
+      var sc=((S.subChk||{}).scan||{}).site||{};
+      if(S.fundId===fid&&S.year===yr&&sc[sid]) delete sc[sid][kind];
+      closeM(); renderFund(); toast('연결을 해제했습니다');
+    }).catch(function(e){ toast('해제 실패: '+e.message,'err'); });
+  });
+}
 function openScan(kind){
   var f=funds[S.fundId]||{}, r=(f.scans||{})[kind]; if(!r) return;
   if(!photoStoreReady()){ toast('사진첩과 연결되지 않았습니다','err'); return; }
@@ -3538,6 +3589,10 @@ function openScan(kind){
     +'<span class="muted" style="font-size:11.5px">'+esc(r.year)+'년 · 연결 '+esc(r.at||'')+'</span>'
     +'<span style="flex:1"></span><button onclick="unlinkScan(\''+kind+'\')" style="color:var(--danger)">연결 해제</button></div>'
     +'<div id="scanBody" style="text-align:center">'+loadingHTML('사진첩에서 불러오는 중…')+'</div>');
+  _loadScanInto(r);
+}
+// 기금 서류·사업장 서류가 같은 방식으로 그린다 — 한 곳에서만 고치도록 모아 둔다
+function _loadScanInto(r){
   PuPhotoStore.loadFull(String(r.year),r.id,r.owner||undefined).then(function(src){
     var b=$('scanBody'); if(!b) return;
     b.innerHTML=src?'<img src="'+src+'" style="max-width:100%;max-height:70vh;border:1px solid var(--line);border-radius:8px">'
@@ -3557,7 +3612,8 @@ function unlinkScan(kind){
     });
   });
 }
-function docZoneLabel(kind){ return ({inka:'설립인가증',corpreg:'법인 등기부등본',taxid:'고유번호증'})[kind]||kind; }
+function docZoneLabel(kind){ return ({inka:'설립인가증',corpreg:'법인 등기부등본',taxid:'고유번호증',
+  sme:'중소기업확인서',reg:'등기부등본',bizno:'사업자등록증'})[kind]||kind; }   // 뒤 셋은 참여사업장 몫
 /* 드롭존 아래 한 줄 — 사진첩에서 고르기 / 이미 연결된 원본 보기 */
 function scanLink(kind,zid){
   var f=funds[S.fundId]||{}, r=(f.scans||{})[kind];
@@ -4405,8 +4461,14 @@ function subsidyDocsPanel(f){
   // ── 참여사별 3종 격자 ──
   var srows=act.map(function(s){
     var d=schk[s._id]||{};
+    /* 체크 옆에 사진첩 단추 — 붙어 있으면 📎(원본 보기), 없으면 🖼(사진첩에서 고르기).
+       화면에 설명을 깔지 않고 단추의 도움말로 알린다. */
     var tds=SUB_SITE_DOCS.map(function(c){
-      return '<td style="text-align:center"><input type="checkbox"'+(d[c[0]]?' checked':'')+' onchange="subChkSite(\''+s._id+'\',\''+c[0]+'\',this.checked)"></td>';
+      var sr=_subScanOf(s._id,c[0]);
+      return '<td style="text-align:center;white-space:nowrap"><input type="checkbox"'+(d[c[0]]?' checked':'')+' onchange="subChkSite(\''+s._id+'\',\''+c[0]+'\',this.checked)">'
+        +(sr?'<button onclick="openSiteScan(\''+s._id+'\',\''+c[0]+'\')" title="'+esc(sr.year+'년 사진 · 연결 '+(sr.at||''))+'" style="padding:1px 5px;margin-left:4px;font-size:11px">📎</button>'
+            :'<button onclick="openAlbumPick(\'\',\''+c[0]+'\',\''+s._id+'\')" title="사진첩에서 골라 붙입니다 — 붙이면 「받음」으로 함께 표시됩니다" style="padding:1px 5px;margin-left:4px;font-size:11px;opacity:.5">🖼</button>')
+        +'</td>';
     }).join('');
     var miss=SUB_SITE_DOCS.filter(function(c){ return !d[c[0]]; }).length;
     return '<tr'+(miss?'':' style="background:var(--ok-bg,#f0fdf4)"')+'><td class="muted" style="width:44px">'+esc(s.seq_label||'')+'</td>'

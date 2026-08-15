@@ -374,5 +374,36 @@ ok('참여사업장명 입금을 출연금으로', src.includes('function _siteN
   && src.includes('if(isDep&&sites&&sites.length){')
   && src.includes("return {d:'현금성자산',c:'기본재산'};"));
 
+// ── 푸른사진첩 연동 — 원본은 사진첩에 두고 기금은 참조만 갖는다 ──
+// 이 배선은 조용히 끊기기 쉽다: 부르는 이름이 사진첩 쪽에서 바뀌면 화면에는 아무 표시 없이 안 열린다.
+{
+  const ps = fs.existsSync(path.join(__dirname, '..', '..', 'js', 'pu-photo-store.js'))
+    ? fs.readFileSync(path.join(__dirname, '..', '..', 'js', 'pu-photo-store.js'), 'utf8') : '';
+  ok('사진첩 저장층 파일이 있다', ps.length > 0);
+  const called = [...src.matchAll(/PuPhotoStore\.(\w+)/g)].map(m => m[1]);
+  [...new Set(called)].forEach(fn => {
+    ok('사진첩이 «' + fn + '» 를 실제로 내보낸다', new RegExp('^\\s*' + fn + ':\\s*' + fn + ',', 'm').test(ps));
+  });
+  ok('이미지를 RTDB로 복사하지 않는다(참조만)', src.includes('참조만 저장(이미지는 복사하지 않음)'));
+}
+// 참여사업장 제출서류 3종 — 체크만 있고 실물이 어디 있는지 알 수 없던 것을 사진첩과 이었다
+ok('사업장 서류: 사진첩 참조 읽기', src.includes('function _subScanOf'));
+ok('사업장 서류: 참조와 체크를 한 번에 쓴다', src.includes('function saveSiteScanRef')
+  && src.includes("up['scan/site/'+sid+'/'+kind]=o; up['site/'+sid+'/'+kind]=1;"));
+// 참조 자리는 체크 자리와 같은 마디 — 화면 열 때 읽기가 늘지 않는다
+ok('사업장 서류: 참조가 subsidy_chk 안에 산다', src.includes("NS+'/subsidy_chk/'+fid+'/'+yr+'/scan/site/'"));
+// 열 전체 켜기·노동청 일괄은 site/·fund/ 만 건드려야 한다 — scan 을 쓸면 사진 연결이 사라진다
+ok('열 전체 켜기가 참조를 건드리지 않는다', src.includes("fbDb.ref(_subChkPath()+'/site').update(up)"));
+ok('사업장 서류: 보기·해제', src.includes('function openSiteScan') && src.includes('function unlinkSiteScan'));
+ok('사업장 서류는 판독하지 않고 연결만', src.includes('if(_pick.sid){'));
+ok('고르는 사이 연도가 바뀌어도 그 해에 저장', src.includes('fid:S.fundId,sid:sid||\'\',yr:S.year}')
+  && src.includes('saveSiteScanRef(fid,_pick.yr,_pick.sid,kind,'));
+ok('체크표 칸에 사진첩 단추', src.includes('var sr=_subScanOf(s._id,c[0]);')
+  && src.includes('openSiteScan(') && src.includes("openAlbumPick(\\''"));
+ok('서류 이름표에 사업장 3종', /sme:'중소기업확인서',reg:'등기부등본',bizno:'사업자등록증'/.test(src));
+// 원본을 그리는 코드가 두 벌이면 한쪽만 고쳐져 화면마다 다르게 동작한다
+ok('원본 그리기는 한 곳(_loadScanInto)', src.includes('function _loadScanInto')
+  && (src.match(/PuPhotoStore\.loadFull\(String\(r\.year\)/g) || []).length === 1);
+
 console.log('\n' + (fail ? 'FAILURES ' + fail + ' / ' + n : 'ALL PASS (' + n + '건)'));
 process.exit(fail ? 1 : 0);
