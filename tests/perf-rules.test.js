@@ -81,7 +81,13 @@ const allowTop = ['systemAlerts','systemBackups','systemBackupsIndex','systemRes
   /* 2026-08-08 명함첩 개인 폴더. 잠근 명함·사진·폴더이름을 대표 계정만 읽을 수 있는
      자리로 옮긴다. 부모(pucards_private)에는 읽기를 주지 않는다 — 주면 누가 개인
      폴더를 갖고 있는지 목록이 드러난다. 사람별 분리는 puphotos 와 같은 방식. */
-  'pucards_private'];
+  'pucards_private',
+  /* 2026-08-15 급여데이터함. 사람별 자리(paydata/u/$owner)에 담고, 휴가 대리인은
+     기간(deputy/…/to >= now)이 살아 있는 동안만 주인 자료를 만진다. */
+  'paydata',
+  /* 2026-08-15 건의 폰 알림(웹푸시). 기기 토큰을 본인 자리에만 담는다 —
+     남의 토큰을 읽으면 그 사람 폰으로 알림을 밀어넣을 수 있다. */
+  'fcm_tokens'];
 
 const keys = Object.keys(R);
 const removed = baseTop.filter(function (k) { return keys.indexOf(k) < 0; });
