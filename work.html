@@ -1300,6 +1300,9 @@ function wkSide(inp,d){
    ★★ 반드시 로그인 본인(S.me.sid)이다. 열람 대상(S.vsid)을 따라가면 남의 성과급이 보인다.
        규칙이 uid 로 한 번 더 막지만, 코드에서도 절대 섞지 않는다. */
 var PC_PATH='data/perf_confirm';
+/* 몇 달치를 훑을까 — 내 것과 대표 전체 현황이 «같은 창»을 봐야 한다.
+   전에는 내 것만 넉 달이라, 대표 현황엔 있는 달이 내 화면엔 아예 없었다. */
+var PC_MONTHS=6;
 function pcMySid(){ return (S.me&&S.me.sid)||''; }        /* ★ S.vsid 아님 */
 function pcMonths(n){
   var out=[], d=new Date();
@@ -1321,7 +1324,7 @@ function pcAmFin(){
 function pcLoadAll(){
   return pcAmFin().then(function(fin){
     if(!fin) return [];
-    return Promise.all(pcMonths(6).map(function(ym){
+    return Promise.all(pcMonths(PC_MONTHS).map(function(ym){
       return fbDb.ref(PC_PATH+'/'+ym+'/p').once('value')
         .then(function(s){ var v=s.val(); return (v&&Object.keys(v).length)?{ym:ym,all:v}:null; })
         .catch(function(){ return null; });
@@ -1372,12 +1375,17 @@ function pcWho(p){
    발행 안 됐거나 내 것이 아니면 막히는데, 그게 정상이라 조용히 넘긴다. */
 function pcLoad(){
   var sid=pcMySid();
-  if(!sid || typeof fbDb==='undefined' || !fbDb) return Promise.resolve([]);
-  return Promise.all(pcMonths(4).map(function(ym){
+  if(!sid || typeof fbDb==='undefined' || !fbDb){ S.perfNone=[]; return Promise.resolve([]); }
+  return Promise.all(pcMonths(PC_MONTHS).map(function(ym){
     return fbDb.ref(PC_PATH+'/'+ym+'/p/'+sid).once('value')
-      .then(function(s){ var v=s.val(); return (v&&v.items)?{ym:ym,p:v}:null; })
-      .catch(function(){ return null; });
-  })).then(function(r){ return r.filter(Boolean); });
+      .then(function(s){ var v=s.val(); return {ym:ym, p:(v&&v.items)?v:null}; })
+      .catch(function(){ return {ym:ym, p:null}; });   /* 막힌 달도 «없는 달»로 본다 */
+  })).then(function(r){
+    /* ⚠ 빈 달도 기억해 둔다. 있는 달만 쌓아 보이니 한 달만 뜨면
+       「왜 저 달은 안 나오나」가 된다 — 화면에서 그 까닭을 말해 줘야 한다. */
+    S.perfNone = r.filter(function(x){ return x && !x.p; }).map(function(x){ return x.ym; });
+    return r.filter(function(x){ return x && x.p; }).map(function(x){ return {ym:x.ym, p:x.p}; });
+  });
 }
 function pcObjOf(p,fid){ return ((p.objection||{}).byItem||{})[fid]||null; }
 function pcRowState(p,fid){
@@ -1461,13 +1469,35 @@ function renderPerf(){
     h+='<div class="card" style="text-align:center;padding:32px 20px;color:var(--faint);margin-bottom:14px">'
       +'<div style="font-size:30px;margin-bottom:10px">⭐</div>'
       +'<div style="font-size:14px;margin-bottom:6px">확인할 내 성과급이 없습니다</div>'
-      +'<div style="font-size:12px;line-height:1.7">대표님이 그 달치를 내보내면 여기에 나타납니다.<br>'
+      +'<div style="font-size:12px;line-height:1.7">'
+      /* 어느 달을 봤는지 적어 준다 — 「몇 달치를 봤나」를 모르면 없다는 말도 못 믿는다 */
+      +'최근 '+PC_MONTHS+'개월('+esc((S.perfNone||[]).slice().sort().reverse().map(pcYmLabel).join(' · '))+')을 봤습니다.<br>'
+      +'대표님이 그 달치를 내보내면 여기에 나타납니다.<br>'
       +'분명히 있어야 하는데 안 보이면 대표님께 계정 연결을 확인해 달라고 하세요.</div></div>';
   } else {
     h+=list.map(pcMonthHTML).join('');
+    h+=pcNoneHTML();                   /* 없는 달을 말해 준다 — 안 그러면 「왜 안 나오나」가 된다 */
   }
   h+=pcAdminHTML();                    /* 총괄·대행에게만 채워진다 */
   app.innerHTML=h+'</div>';
+}
+
+/* ── 내 것이 «없는» 달 ────────────────────────────────────────
+   있는 달만 카드로 쌓으니, 한 달만 뜨면 나머지 달은 어디 갔는지 알 수가 없다.
+   훑어본 달을 다 적고, 없는 달은 없다고 말한다.
+   ⚠ 까닭은 둘인데 직원 화면에서는 갈라볼 수 없다 —
+     ① 그 달에 내게 붙은 건이 없었다  ② 대표가 아직 그 달을 발행하지 않았다.
+     둘 다 적어 준다. 하나만 적으면 절반은 거짓말이 된다. */
+function pcYmLabel(ym){ return (+String(ym).slice(5,7))+'월'; }
+function pcNoneHTML(){
+  var none=(S.perfNone||[]).slice().sort().reverse();
+  if(!none.length) return '';
+  return '<div class="card" style="padding:11px 14px;margin-bottom:14px;font-size:12px;'
+    +'color:var(--faint);line-height:1.8;background:#fbfcfe">'
+    +'<b style="color:var(--sub)">'+esc(none.map(pcYmLabel).join(' · '))+'</b> 은 내 성과급이 없습니다.'
+    +'<br>그 달에 나에게 붙은 건이 없었거나, 대표님이 아직 그 달을 내보내지 않았습니다.'
+    +'<br><span style="font-size:11.5px">최근 '+PC_MONTHS+'개월만 봅니다. 더 이전 달은 대표님께 문의하세요.</span>'
+    +'</div>';
 }
 
 /* ── 대표만 보는 전체 현황 (읽기 전용) ────────────────────────
