@@ -191,6 +191,17 @@ h1{font-size:18px;margin-bottom:4px}
 #viewerBody .doc a{color:#fff;font-weight:700}
 
 @media(max-width:520px){main{padding:12px}}
+
+table.vals{width:100%;border-collapse:collapse;font-size:12.5px}
+table.vals th{background:var(--paper);border-bottom:1px solid var(--line);padding:7px 6px;text-align:left;font-size:11.5px;color:var(--sub)}
+table.vals td{border-bottom:1px solid var(--line);padding:3px 4px}
+table.vals input{width:100%;border:1px solid transparent;border-radius:6px;padding:5px 6px;font-size:12.5px;font-family:inherit;background:transparent;color:var(--ink)}
+table.vals input:hover{border-color:var(--line)}
+table.vals input:focus{outline:none;border-color:var(--navy);background:#fff}
+table.vals tr.iffy{background:#FDF6E3}
+table.vals .del{color:var(--bad);cursor:pointer;padding:2px 6px;border-radius:5px}
+.okline{background:#EAF6EE;border:1px solid #B7E4C7;color:#1E5631;border-radius:9px;padding:8px 11px;font-size:12px;margin-bottom:10px}
+.warnline{background:#FDF6E3;border:1px solid #F0D9A8;color:#7C4A03;border-radius:9px;padding:8px 11px;font-size:12px;margin-bottom:10px}
 </style>
 </head>
 <body>
@@ -1163,6 +1174,69 @@ window.openViewer = openViewer; window.closeViewer = closeViewer; window.toggleV
    ⚠ 켤 때는 tests/paydata-read-panel.test.js 의 짝 검사도 함께 고친다. */
 const WAGE_READ_ON = false;
 
+/* 판독을 돌린다 — 사람이 「판독하기」를 눌렀을 때만(설계서 2장).
+   창고 파일을 내려받아 base64 로 바꿔 판독 층에 싣는다. */
+function doRead() {
+  const rk = S.readKindFor(App.kind);
+  if (!rk || !canWrite()) return;
+  if (rk === 'wage' && !WAGE_READ_ON) return;
+  const rec = findRow(App.viewerId);
+  if (!rec) return;
+  App.readState = { status: 'reading', rows: [], err: '' };
+  App.render();
+
+  S.fileToDataUrl(rec.file, rec.mime).then(dataUrl => {
+    if (rk === 'timesheet') {
+      return PuDocRead.read(dataUrl).then(r => ({
+        ok: !r.error, error: r.error, parsed: (r && r.fields) || {}
+      }));
+    }
+    const fn = (rk === 'wage') ? PuDocRead.readWageTable : PuDocRead.readChangeNotice;
+    return fn(dataUrl).then(r => ({ ok: r.ok, error: r.error, parsed: r }));
+  }).then(res => {
+    if (!res.ok) throw new Error(res.error || '판독하지 못했습니다');
+    const rows = S.rowsFromRead(rk, res.parsed);
+    if (!rows.length) throw new Error('사람별 값을 읽어내지 못했습니다 — 직접 적어 주세요.');
+    App.readState = { status: 'done', rows: rows, err: '' };
+    App.render();
+  }).catch(e => {
+    App.readState = { status: 'err', rows: [], err: (e && e.message) || String(e) };
+    App.render();
+  });
+}
+window.doRead = doRead;
+
+/* 읽어 온 값을 고칠 수 있는 표로. 한 줄 = 한 사람의 한 항목이다. */
+function valueRowsHtml(rows) {
+  let h = '<table class="vals"><tr><th style="width:28%">근로자</th>'
+        + '<th style="width:32%">항목</th><th>값</th><th style="width:26px"></th></tr>';
+  (rows || []).forEach((r, i) => {
+    (r.pairs || []).forEach((p, j) => {
+      h += '<tr class="' + (r.iffy ? 'iffy' : '') + '">'
+        + '<td><input value="' + esc(r.name) + '" oninput="editVal(' + i + ',\'name\',this.value)"></td>'
+        + '<td><input value="' + esc(p.item) + '" oninput="editVal(' + i + ',\'item\',this.value,' + j + ')"></td>'
+        + '<td><input value="' + esc(p.value) + '" oninput="editVal(' + i + ',\'value\',this.value,' + j + ')"></td>'
+        + '<td><span class="del" onclick="delValRow(' + i + ')">✕</span></td></tr>';
+    });
+  });
+  return h + '</table>';
+}
+
+/* 고치면 그 줄의 노란 표시를 걷는다 — 확인이 끝났다는 뜻이다. */
+function editVal(i, key, v, j) {
+  const r = (App.readState.rows || [])[i];
+  if (!r) return;
+  if (key === 'name') r.name = v;
+  else if (r.pairs && r.pairs[j]) r.pairs[j][key] = v;
+  r.iffy = false;
+}
+function addValRow() {
+  App.readState.rows.push({ name: '', pairs: [{ item: '', value: '' }], iffy: false });
+  App.render();
+}
+function delValRow(i) { App.readState.rows.splice(i, 1); App.render(); }
+window.editVal = editVal; window.addValRow = addValRow; window.delValRow = delValRow;
+
 /* 오른쪽 절반 — 판독 전에는 단추, 판독 뒤에는 값 표. */
 function readPanelHtml() {
   const rk = S.readKindFor(App.kind);
@@ -1178,6 +1252,14 @@ function readPanelHtml() {
       + '</p></div>';
   } else if (st.status === 'reading') {
     body = '<div class="pre"><div class="big">⏳</div><p>읽는 중입니다…</p></div>';
+  } else if (st.status === 'done') {
+    const n = st.rows.length;
+    const iffy = st.rows.filter(r => r.iffy).length;
+    body = '<div class="okline">사람 <b>' + n + '명</b>의 값을 읽었습니다. 원본과 견주어 확인해 주세요.</div>'
+      + (iffy ? '<div class="warnline">⚠ <b>' + iffy + '줄</b>은 확실하지 않습니다 — 노란 줄부터 봐 주세요.</div>' : '')
+      + valueRowsHtml(st.rows)
+      + '<div class="sub" style="margin-top:10px;line-height:1.7">저장하면 값마다 '
+      + '<b>이 서류가 출처로</b> 붙습니다 — 나중에 값을 누르면 이 원본이 열립니다.</div>';
   } else if (st.status === 'err') {
     body = '<div class="pre"><div class="big">⚠</div><p>' + esc(st.err) + '</p>'
       + '<button class="btn pri" onclick="doRead()">🔍 다시 판독</button></div>';
@@ -1187,8 +1269,13 @@ function readPanelHtml() {
       + '읽은 뒤 확인하고 저장해야 값으로 남습니다.</p>'
       + '<button class="btn pri" onclick="doRead()">🔍 판독하기</button></div>';
   }
+  const foot = (st.status === 'done')
+    ? '<div class="pfoot"><span class="sub">' + st.rows.length + '명</span>'
+      + '<button class="btn" onclick="addValRow()">＋ 줄</button>'
+      + '<button class="btn pri" onclick="saveVals()">저장</button></div>'
+    : '';
   return '<div id="readPanel"><div class="ph"><b>판독 결과</b></div>'
-    + '<div class="pbody">' + body + '</div></div>';
+    + '<div class="pbody">' + body + '</div>' + foot + '</div>';
 }
 
 /* App.render() 가 화면을 바꿀 때마다 함께 그린다 — 뷰어는 어느 화면 위에도 뜰 수 있다. */
