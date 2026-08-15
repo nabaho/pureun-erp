@@ -46,6 +46,7 @@ function loadApp(appState, opts) {
     cut('canWrite'), cut('bannerHtml'),
     cut('drawerCounts'), cut('drawerModel'), cut('searchRows'),
     cut('folderCounts'), cut('folderRows'), cut('folderBar'), cut('folderEditorHtml'), cut('folderOptionsHtml'),
+    cut('valueGridModel'),
     cut('screenDrawer'), cut('handoffMonth'),
     'window.App = App; window.screenDrawer = screenDrawer; window.handoffMonth = handoffMonth;'
   ].join('\n'), { filename: 'app.js' }).runInContext(sandbox);
@@ -100,7 +101,10 @@ test('확인을 취소하면 저장하지 않는다', () => {
       return { once() { return Promise.resolve({ val: () => null }); } };
     }
   };
-  const { W, calls } = loadApp({ itemsMonth: ITEMS_MONTH, itemsKeep: {} }, { isAdmin: true, db, confirmReturn: false });
+  const { W, calls } = loadApp({
+    itemsMonth: ITEMS_MONTH, itemsKeep: {},
+    values: { v1: { companyId: 'co_1', name: '배영승', pairs: [{ item: '유급일수', value: '3일' }] } }
+  }, { isAdmin: true, db, confirmReturn: false });
   W.handoffMonth();
   assert.equal(calls.confirms.length, 1);
   assert.equal(saved, false, '취소했는데 저장됐습니다');
@@ -114,7 +118,10 @@ test('★ 확인하면 급여관리 수신함과 handoff_log 에 저장되고 �
       return { once() { return Promise.resolve({ val: () => null }); } };
     }
   };
-  const { W, calls } = loadApp({ itemsMonth: ITEMS_MONTH, itemsKeep: {} }, { isAdmin: true, db, confirmReturn: true });
+  const { W, calls } = loadApp({
+    itemsMonth: ITEMS_MONTH, itemsKeep: {},
+    values: { v1: { companyId: 'co_1', name: '배영승', pairs: [{ item: '유급일수', value: '3일' }] } }
+  }, { isAdmin: true, db, confirmReturn: true });
   W.handoffMonth();
   await new Promise(r => setTimeout(r, 0));
   const inboxKeys = Object.keys(saved).filter(k => k.startsWith('payroll_os/inbox/'));
@@ -134,9 +141,12 @@ test('확인 문구에 업체명·월·건수가 들어간다', () => {
       return { once() { return Promise.resolve({ val: () => null }); } };
     }
   };
-  const { W, calls } = loadApp({ itemsMonth: ITEMS_MONTH, itemsKeep: {} }, { isAdmin: true, db });
+  const { W, calls } = loadApp({
+    itemsMonth: ITEMS_MONTH, itemsKeep: {},
+    values: { v1: { companyId: 'co_1', name: '배영승', pairs: [{ item: '유급일수', value: '3일' }] } }
+  }, { isAdmin: true, db });
   W.handoffMonth();
   assert.match(calls.confirms[0], /화담원/);
   assert.match(calls.confirms[0], /2026-08/);
-  assert.match(calls.confirms[0], /1건/);
+  assert.match(calls.confirms[0], /1줄/, '급여관리가 보는 것은 서류 장수가 아니라 값 줄 수입니다');
 });

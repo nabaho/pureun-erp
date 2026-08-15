@@ -910,10 +910,11 @@
     var up = {};
     up[payrollInboxPath(inboxId)] = {
       ts: at,
-      filename: o.companyName + ' ' + o.month + ' 값',
+      filename: o.companyName + ' ' + o.month + ' 값 ' + Number(o.rowCount || 0) + '줄',
       사업장: o.companyName,
       월: o.month,
       종류: o.kindLabel || '급여데이터함 값',
+      줄수: Number(o.rowCount || 0),
       상태: '대기',
       출처: '급여데이터함'
     };
