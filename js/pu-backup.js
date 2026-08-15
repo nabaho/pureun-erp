@@ -12,7 +12,12 @@
     'kcareer.html': { id: 'kcareer', paths: [] },
     'payroll-os.html': { id: 'payroll', paths: ['payroll_os'] },
     'pu-cards.html': { id: 'cards', paths: ['pucards'] },
-    'rules.html': { id: 'rules', paths: ['rules_mgmt'] },
+    /* ⚠ rules_mgmt 는 **통째로 읽을 수 없다**. 콘솔 규칙이 .read 를 아랫칸마다
+       따로 열어 두었기 때문이다(done·orig·archive·decisions·matchfix 는 직원 전체,
+       wip·worksession 은 본인만). 통째로 읽으려 하면 permission_denied 가 나고
+       그때마다 관리자 화면에 장애 알림이 떴다(2026-08 한 달에 68건).
+       그래서 읽을 수 있는 칸만 적는다 — 본인 칸은 getConfig 에서 붙인다. */
+    'rules.html': { id: 'rules', paths: ['rules_mgmt/done', 'rules_mgmt/archive', 'rules_mgmt/orig', 'rules_mgmt/decisions', 'rules_mgmt/matchfix'] },
     'work.html': { id: 'work', paths: ['work_erp'] }
   };
   var KEEP_DAYS = 30;
@@ -31,6 +36,10 @@
     if (!base) return null;
     var config = { id: base.id, paths: base.paths.slice() };
     if (base.id === 'kcareer') config.paths = ['kcareer/' + user.uid];
+    /* 규정관리의 실제 작업물(작성 중인 규정·작업 보관)은 사람마다 따로 있고
+       규칙이 남의 칸 읽기를 막는다 — 그래서 백업하는 사람 본인 칸만 담는다
+       (kcareer 와 같은 방식). 남의 작업까지 담으려면 콘솔 규칙을 열어야 한다. */
+    if (base.id === 'rules') config.paths = config.paths.concat(['rules_mgmt/wip/' + user.uid, 'rules_mgmt/worksession/' + user.uid]);
     return config;
   }
 
