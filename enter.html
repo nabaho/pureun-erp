@@ -20,6 +20,7 @@
 <script src="js/pu-version.js"></script>
 <script src="js/pu-backup.js"></script>
 <script src="js/pu-dev-automation.js"></script>
+<script src="js/pu-passkey.js?v=1"></script>
 <style>
 :root{
   --bg:#e2e8f0; --ink:#202124; --sub:#475569; --mute:#64748b;
@@ -540,6 +541,10 @@ body.portal-mode #moreFab{display:flex;}
       </div>
 
       <button class="btn" id="loginBtn" type="submit">로그인 <span>→</span></button>
+      <!-- 지문·간편 로그인 — 이 기기에 등록해 둔 사람에게만 보인다(등록 전에는 감춘다).
+           ⚠ 「지문」만 적지 않는다: 휴대폰 설정에 따라 얼굴·잠금번호가 뜬다. -->
+      <button class="btn" id="pkBtn" type="button"
+        style="display:none;margin-top:8px;background:#0E7C66;">🔒 지문·간편 로그인</button>
       <div class="err" id="errMsg"></div>
       </form>
     </div>
@@ -551,6 +556,8 @@ body.portal-mode #moreFab{display:flex;}
     <div class="pbar">
       <div class="logo">푸</div>
       <div class="nm"><b>푸른노무법인</b><small>PUREUN · LLF</small></div>
+      <!-- 이 휴대폰에 지문 로그인 등록 — 아직 등록 안 한 기기에서만 보인다 -->
+      <button class="logout" id="pkRegBtn" type="button" style="display:none;">🔒 이 휴대폰에 지문 등록</button>
       <button class="logout" id="logoutBtn">로그아웃</button>
       <button id="sgFab" type="button">💬 건의하기<span class="sg-fabbadge" id="sgFabBadge"></span></button>
       <div class="pmeta">
@@ -902,6 +909,69 @@ body.portal-mode #moreFab{display:flex;}
   });
 
   // ── 로그인 실행 ──
+  /* ── 지문·간편 로그인 ───────────────────────────────────────────────────
+     ★ 이 기기에 «등록해 둔 사번» 이 있을 때만 단추를 보인다.
+       등록도 안 했는데 단추가 보이면, 눌러 보고 「등록된 기기가 없습니다」를 듣는다.
+     ★ 비밀번호 로그인은 그대로 둔다 — 기기를 잃거나 바꿨을 때 들어올 길이 없으면 안 된다. */
+  var PK_SID_KEY = 'pu_passkey_sid';
+  function pkSavedSid(){ try { return localStorage.getItem(PK_SID_KEY) || ''; } catch(e){ return ''; } }
+  function pkShowButton(){
+    var btn = $('pkBtn');
+    if(!btn) return;
+    var ok = !!(window.PuPasskey && PuPasskey.supported()) && !!pkSavedSid();
+    btn.style.display = ok ? '' : 'none';
+    if(ok) btn.textContent = '🔒 지문·간편 로그인 (' + pkSavedSid() + ')';
+  }
+  function pkLogin(){
+    var sid = pkSavedSid();
+    if(!sid) return;
+    var btn = $('pkBtn');
+    btn.disabled = true; showErr('');
+    _freshLogin = true;
+    _persistenceReady.then(function(){
+      return auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+    }).then(function(){
+      return PuPasskey.login(sid);
+    }).then(function(token){
+      return auth.signInWithCustomToken(token);
+    }).catch(function(err){
+      var m = (err && err.message) || '지문 로그인에 실패했습니다';
+      /* 사람이 스스로 취소한 것은 «실패» 가 아니다 — 빨간 글씨로 겁주지 않는다 */
+      if(/NotAllowed|취소/i.test(m)) showErr('취소되었습니다. 비밀번호로도 들어올 수 있습니다.');
+      else showErr(m + ' — 비밀번호로 로그인해 주세요.');
+    }).then(function(){ btn.disabled = false; });
+  }
+
+  /* 등록 단추 — 이 기기에 «아직 등록 안 했을 때» 만 보인다.
+     ★ 등록은 이미 비밀번호로 들어온 사람만 할 수 있다(서버가 표를 확인한다) —
+       그래야 남이 내 계정에 자기 지문을 붙이지 못한다. */
+  function pkSetupRegister(sid, name){
+    var btn = $('pkRegBtn');
+    if(!btn || !sid) return;
+    var can = !!(window.PuPasskey && PuPasskey.supported());
+    var already = (pkSavedSid() === sid);
+    btn.style.display = (can && !already) ? '' : 'none';
+    if(btn._bound) return;
+    btn._bound = true;
+    btn.addEventListener('click', function(){
+      btn.disabled = true;
+      var label = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ? '휴대폰' : 'PC';
+      (auth.currentUser ? auth.currentUser.getIdToken() : Promise.reject(new Error('로그인이 필요합니다')))
+        .then(function(tok){ return PuPasskey.register(sid, name, label, tok); })
+        .then(function(){
+          try { localStorage.setItem(PK_SID_KEY, sid); } catch(e){}
+          btn.style.display = 'none';
+          alert('등록했습니다.\n다음부터 로그인 화면에서 「지문·간편 로그인」을 누르면 됩니다.\n\n비밀번호 로그인도 그대로 쓸 수 있습니다.');
+        })
+        .catch(function(err){
+          var m = (err && err.message) || '등록에 실패했습니다';
+          if(/NotAllowed|취소/i.test(m)) alert('등록을 취소했습니다.');
+          else alert('등록하지 못했습니다: ' + m);
+        })
+        .then(function(){ btn.disabled = false; });
+    });
+  }
+
   function doLogin(){
     var id = ($('loginId').value || '').trim();
     var pw = $('loginPw').value || '';
@@ -991,6 +1061,8 @@ body.portal-mode #moreFab{display:flex;}
 
   // 표준 form 제출 → 브라우저·삼성패스가 비번 저장/지문 자동입력을 인식 (버튼 클릭·Enter 모두 여기로)
   $('loginForm').addEventListener('submit', function(e){ e.preventDefault(); doLogin(); });
+  // 지문·간편 로그인 — 등록해 둔 기기에서만 단추가 보인다
+  if($('pkBtn')){ $('pkBtn').addEventListener('click', pkLogin); pkShowButton(); }
   $('loginId').addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); $('loginPw').focus(); } });
 
   // ── 로그인 화면 신선도 가드: 오래 방치된 탭은 크롬 절전으로 얼어 로그인이 안 먹으므로,
@@ -1270,6 +1342,7 @@ body.portal-mode #moreFab{display:flex;}
     var name = acct ? acct.name : (email || '사용자');
     var role = acct ? acct.role : 'member';
     _curRole = role;   // 바로가기(홈 앱) 권한 판정용
+    try { pkSetupRegister(mySid, name); } catch(e){}
     var title = acct ? (acct.title || '') : '';
     /* ★ 이름 옆에 «사번» 을 함께 적는다 (2026-08-10 제보의 핵심 고침).
        P005(박재원)·A005(박은비)처럼 숫자가 같은 사번이 있어, 아이디를 잘못 넣으면

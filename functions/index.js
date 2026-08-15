@@ -1020,3 +1020,13 @@ exports.receivePaydataMail = functions
     }
     return null;
   });
+
+
+/* 지문·간편 로그인(패스키) — 판단은 functions/passkey.js 한 곳에서만 한다.
+   로그인 문을 여는 코드라 다른 함수와 섞지 않는다. */
+const _passkey = require('./passkey');
+exports.passkeyRegisterStart  = _passkey.passkeyRegisterStart;
+exports.passkeyRegisterFinish = _passkey.passkeyRegisterFinish;
+exports.passkeyLoginStart     = _passkey.passkeyLoginStart;
+exports.passkeyLoginFinish    = _passkey.passkeyLoginFinish;
+exports.passkeyDevices        = _passkey.passkeyDevices;
