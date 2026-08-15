@@ -176,6 +176,18 @@ ok('별지15호 ㉞ 이월금은 전기말 자산총계', src.includes('function
 ok('별지15호 68번에서 준비금 전입액 제외', src.includes('var admin=fin.admin+fin.otherExp-(fin.resvExp||0);')
   && src.includes("if(n==='고유목적사업준비금전입액') resvExp+=s;"));
 ok('별지15호 70번 합계는 소계+대부+운영비+잔액', src.includes('total:subAmt+loanAmt+admin+rest,'));
+/* 수혜자수는 통장으로 검산할 수 없다 — 목적사업 탭에 적었는데 어느 항목에도 안 실리면
+   (분류를 안 골랐거나 서식에 없는 이름) 소계에서 조용히 빠지고, 그 소계가 제출본에 들어간다. */
+ok('어느 항목에도 안 실리는 수혜자를 센다', src.includes('var benefLost=0, benefLostCats=[];')
+  && src.includes("benefLost+=benef[c]; benefLostCats.push((c||'(분류 없음)')+' '+benef[c]+'명');"));
+ok('못 실은 수혜자를 화면이 붙잡는다', src.includes("+(R.benefLost>0?'<tr>")
+  && src.includes('어느 항목에도 실리지 않았습니다'));
+/* 대부 실행액은 별지15호가 목적사업 탭에서, 재무제표가 장부에서 가져온다 —
+   어긋나면 두 서류가 서로 다른 말을 한다(실제 제출본 사례 있음). */
+ok('대부 실행액을 장부와 맞대 본다', src.includes("var loanBook=Math.round((mv['근로자대부금']||{}).d||0);")
+  && src.includes('var loanMismatch=(loanAmt>0||loanBook>0)&&Math.round(loanAmt)!==loanBook;'));
+ok('대부 실행액 어긋남을 화면이 붙잡는다', src.includes("+(R.loanMismatch?'<tr>")
+  && src.includes('대부 실행액이 장부와 다릅니다'));
 ok('통장 파서가 거래상대방 열을 읽음', /보낸분\|받는분\|상대계좌\|입금자\|송금인\|거래처\|업체/.test(src));
 /* 사람이 적은 지출대장은 «입금» 칸이 아예 없다 — 입·출 두 칸을 모두 요구하면 파일 전체가
    null 로 떨어져 화면에는 「읽을 수 없는 파일」만 뜬다. 일자·적요까지 있을 때만 인정한다. */

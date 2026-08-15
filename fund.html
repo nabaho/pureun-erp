@@ -5205,6 +5205,20 @@ function buildF15(arr,fid,yr,rep,sites,welf){
   });
   var subAmt=items.reduce(function(s,x){return s+x.amt;},0);
   var subCnt=items.reduce(function(s,x){return s+x.cnt;},0);
+  /* 어느 항목에도 안 실리는 수혜자 — 분류를 안 골랐거나 서식에 없는 분류다.
+     수혜자수는 통장으로 검산할 수 없어 빠져도 알 방법이 없는데, 소계는 제출본에
+     그대로 들어간다. 몇 명이 어느 분류에서 빠졌는지 남겨 화면이 붙잡게 한다. */
+  var _known={}; F15_ROWS.forEach(function(r){ r[2].forEach(function(a){ _known[a]=1; }); });
+  var benefLost=0, benefLostCats=[];
+  Object.keys(benef).forEach(function(c){
+    if(_known[c]||!benef[c]) return;
+    benefLost+=benef[c]; benefLostCats.push((c||'(분류 없음)')+' '+benef[c]+'명');
+  });
+  /* 대부 실행액은 목적사업 탭에서 오고, 장부에는 근로자대부금 차변 발생액으로 남는다.
+     둘이 어긋나면 별지15호와 재무제표가 서로 다른 말을 한다 — F공동 2024 제출본이
+     그 사례다(대부금 상환을 반영하지 않아 5,327만원 어긋났다). */
+  var loanBook=Math.round((mv['근로자대부금']||{}).d||0);
+  var loanMismatch=(loanAmt>0||loanBook>0)&&Math.round(loanAmt)!==loanBook;
   /* 68. 기금 운영비 — 일반관리비와 그 밖의 운영비만. 준비금 전입액은 사업외비용이라 뺀다
      (C공동 2024는 이자 40,618원, G사내 2025는 831원만큼 부풀었었다). */
   var admin=fin.admin+fin.otherExp-(fin.resvExp||0);
@@ -5241,6 +5255,8 @@ function buildF15(arr,fid,yr,rep,sites,welf){
     run:run, src:src, ratio:ratio*100, cashIn:cashIn,
     items:items, subAmt:subAmt, subCnt:subCnt,
     loanAmt:loanAmt, loanBenef:loanBenef, admin:admin, rest:rest,
+    benefLost:benefLost, benefLostCats:benefLostCats,
+    loanBook:loanBook, loanMismatch:loanMismatch,
     srcCap:srcCap, srcOver:srcOver,
     total:subAmt+loanAmt+admin+rest,
     sel:{amt:num(rep.sel_amt)||0,cnt:num(rep.sel_cnt)||0},
@@ -5343,6 +5359,16 @@ function f15View(arr){
       +'<thead><tr><th>항목</th><th style="text-align:right">금액</th><th style="text-align:right">수혜자</th></tr></thead><tbody>'+itemRows
       +'<tr style="font-weight:700"><td>'+_f15n(67)+' 소계</td><td style="text-align:right">'+_n(_k1000(R.subAmt))+'</td><td style="text-align:right">'+_n(R.subCnt)+'</td></tr>'
       +'<tr><td>대부사업</td><td style="text-align:right">'+_n(_k1000(R.loanAmt))+'</td><td style="text-align:right">'+_n(R.loanBenef)+'</td></tr>'
+      /* 목적사업 탭에 적은 수혜자가 어느 항목에도 안 실리면 소계에서 조용히 빠진다 */
+      +(R.benefLost>0?'<tr><td colspan="3" style="padding:0"><div class="msg warn" style="margin:6px 0;font-size:11.5px;line-height:1.55">'
+        +'<b>⚠ 수혜자 '+_n(R.benefLost)+'명이 어느 항목에도 실리지 않았습니다.</b> '+esc(R.benefLostCats.join(' · '))+'<br>'
+        +'[목적사업] 탭에서 분류를 골라 주세요 — 분류가 비었거나 서식에 없는 이름이면 소계에서 빠집니다.'
+        +'</div></td></tr>':'')
+      /* 대부 실행액이 장부와 어긋나면 별지15호와 재무제표가 서로 다른 말을 한다 */
+      +(R.loanMismatch?'<tr><td colspan="3" style="padding:0"><div class="msg warn" style="margin:6px 0;font-size:11.5px;line-height:1.55">'
+        +'<b>⚠ 대부 실행액이 장부와 다릅니다.</b> 목적사업 탭 '+_n(_k1000(R.loanAmt))+'천원 · 장부(근로자대부금 지출) '+_n(_k1000(R.loanBook))+'천원<br>'
+        +'별지15호는 목적사업 탭 값을, 재무제표는 장부를 씁니다 — 둘을 맞춰 주세요.'
+        +'</div></td></tr>':'')
       +'<tr><td>'+_f15n(68)+' 기금 운영비</td><td style="text-align:right">'+_n(_k1000(R.admin))+'</td><td></td></tr>'
       +'<tr><td>'+_f15n(69)+' 잔액</td><td style="text-align:right'+(R.rest<0?';color:var(--danger);font-weight:700':'')+'">'+_n(_k1000(R.rest))+'</td><td></td></tr>'
       /* 잔액이 음수 = 그 해 재원보다 많이 썼다 = 기본재산을 헐어 썼다는 뜻이다.
