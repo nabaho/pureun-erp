@@ -88,3 +88,17 @@ test('★ 넓은 판은 판독하는 서류일 때만 — 명함처럼 좁은 �
   assert.match(rv, /readPanelHtml\(\)/, '함수만 있고 안 부르면 화면에 아무것도 없습니다');
   assert.match(html, /#readPanel\{[^}]*flex:0 0 50%/, '절반을 쓰는 꾸밈이 없습니다');
 });
+
+test('★ 확대(zoom) CSS는 실제로 zoom 클래스가 붙는 요소를 겨냥한다 — 딴 데를 겨냥하면 눌러도 조용히 안 커진다', () => {
+  const rv = html.match(/function renderViewer\(\)[\s\S]*?\n\}/)[0];
+  const toggle = rv.match(/const (\w+) = \$\('(\w+)'\);[\s\S]*?\1\.classList\.toggle\('zoom'/);
+  assert.ok(toggle, 'renderViewer 안에서 zoom 클래스를 토글하는 요소를 찾을 수 없습니다');
+  const zoomTargetId = toggle[2];
+
+  const cssRule = html.match(/#(\w+)\.zoom\{/);
+  assert.ok(cssRule, '.zoom CSS 규칙을 찾을 수 없습니다');
+
+  assert.equal(cssRule[1], zoomTargetId,
+    'zoom 클래스는 #' + zoomTargetId + ' 에 붙는데 CSS는 #' + cssRule[1] +
+    ' 을 겨냥합니다 — 사진을 눌러도 확대되지 않습니다');
+});
