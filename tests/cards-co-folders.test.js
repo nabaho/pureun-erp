@@ -56,7 +56,7 @@ test('openCoPage 가 폴더 목록도 불러온다', () => {
 function loadCoFoldersBlock(){
   const at = source.indexOf('function loadCoFolders');
   const end = source.indexOf('function toggleCoErpOnly', at);
-  const calls = { updates: [], sets: [], toasts: [], menuHtml: '', menuOpen: false, rendered: false, pcRendered: false };
+  const calls = { updates: [], sets: [], toasts: [], menuHtml: '', menuOpen: false, rendered: false, pcRendered: false, closePcDetailCalls: 0 };
   const ctx = {};
   Object.assign(ctx, {
     DB_ROOT: 'pucards',
@@ -85,6 +85,7 @@ function loadCoFoldersBlock(){
     document: { addEventListener: () => {} },
     setTimeout: f => f(),
     closeFolderMenu: () => {},
+    closePcDetail: () => { calls.closePcDetailCalls++; ctx.state.coPick=''; },
     render: () => { calls.rendered = true; },
     renderPC: () => { calls.pcRendered = true; },
     localStorage: { setItem: () => {}, getItem: () => null }
@@ -138,6 +139,9 @@ test("pickCoFolder 는 폴더·거래처만·사업탭·전체가 서로 배타�
   assert.equal(c.state.coFolder, 'abc');
   assert.equal(c.state.coErpOnly, false);
   assert.equal(c.state.coTag, '');
+  /* 최종 전체 리뷰 2026-08-14: 옆줄 폴더를 눌러 걸러도 열려 있던 상세 패널이 그대로
+     남으면, 걸러진 목록엔 없는 회사를 계속 보여준다 — closePcDetail() 로 닫아야 한다. */
+  assert.equal(c._calls.closePcDetailCalls, 1, 'closePcDetail 을 불러 패널도 닫아야 한다');
 
   c.pickCoFolder('erp');
   assert.equal(c.state.coErpOnly, true);

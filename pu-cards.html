@@ -9575,8 +9575,17 @@ function pickCo(k){ if(state.coPick===k){ state.coPick=''; closePcDetail(); retu
 let _erpCaseCons = null;
 let _erpCaseConsLoading = false;
 let _erpConsTypes = null;
+let _erpCaseConsWaiters = [];
+/* ⚠ 최종 전체 리뷰(2026-08-14): 조회가 아직 도는 중일 때 두 번째로 부르면 예전엔
+   cb(null) 로 바로 답해 버렸다 — 이 세션의 첫 조회는 이알피의 사건·컨설팅 전부를
+   가져오므로 짧은 순간이 아니다. 그 사이 가회사 패널을 열고 나회사 패널로 바꾸면,
+   가회사의 fetch 가 나중에 끝나면서 그 콜백이 지금 화면(나회사)의 이력 칸에 가회사
+   기록을 써 버리는 사고로 이어졌다. 도는 중이면 콜백을 큐에 담아 두고, 실제 결과가
+   오면(성공이든 실패든) 그때 한꺼번에 불러 준다 — 아무도 틀린 답(null)을 미리
+   받지 않는다. */
 function loadErpCaseCons(cb){
-  if(_erpCaseCons || _erpCaseConsLoading){ cb && cb(_erpCaseCons); return; }
+  if(_erpCaseCons){ cb && cb(_erpCaseCons); return; }
+  if(_erpCaseConsLoading){ if(cb) _erpCaseConsWaiters.push(cb); return; }
   if(Store.mode!=='firebase' || typeof firebase==='undefined' || !firebase.database){ cb && cb(null); return; }
   _erpCaseConsLoading = true;
   Promise.all([
@@ -9594,11 +9603,15 @@ function loadErpCaseCons(cb){
     _erpConsTypes = Array.isArray(ts.val()) ? ts.val() : Object.values(ts.val()||{});
     _erpCaseCons = { byBiz };
     _erpCaseConsLoading = false;
+    const waiters = _erpCaseConsWaiters; _erpCaseConsWaiters = [];
     cb && cb(_erpCaseCons);
+    waiters.forEach(w=>w(_erpCaseCons));
   }).catch(e=>{
     _erpCaseConsLoading = false;
     console.warn('[erpCaseCons]', e&&e.message);
+    const waiters = _erpCaseConsWaiters; _erpCaseConsWaiters = [];
     cb && cb(null);
+    waiters.forEach(w=>w(null));
   });
 }
 function erpConsTypeName(typeCode){
@@ -9648,7 +9661,7 @@ function coTagList(list){
   list.forEach(o=>coTagsOf(o).forEach(t=>{ c[t] = (c[t]||0)+1; }));
   return Object.keys(c).sort((a,b)=>c[b]-c[a] || a.localeCompare(b,'ko')).map(t=>({t, n:c[t]}));
 }
-function pickCoTag(t){ state.coTag = (state.coTag===t ? '' : t); state.coPick=''; renderCoPage(); }
+function pickCoTag(t){ state.coTag = (state.coTag===t ? '' : t); closePcDetail(); renderCoPage(); }
 
 /* 탭은 지우지 않는다 — 숨기기만 둔다. 사업이 끝나도 「그때 누가 신청했었나」를
    나중에 다시 봐야 할 수 있다. 지우면 그 연결이 영영 사라진다. */
@@ -9714,30 +9727,48 @@ function coErpFolderCandidates(cb){
   });
 }
 async function coImportFolderFromType(label, recs){
+  /* ⚠ 최종 전체 리뷰(2026-08-14) — 세 가지를 고쳤다.
+     1) 하나도 못 찾으면(matched===0) 폴더 자체를 안 만든다 — 예전엔 폴더부터 만들고
+        나서야 매칭을 셌는데, 그러면 담을 회사가 하나도 없어도 빈 폴더가 사이드바에
+        남아 손으로 지워야 했다. 매칭부터 세고, 있을 때만 폴더를 만들거나 이어 쓴다.
+     2) 이미 다른 폴더에 있던 회사를 조용히 옮기지 않는다 — 몇 곳이 다른 폴더에서
+        옮겨졌는지 안내에 포함한다(매칭 안 된 회사를 건너뛴 수를 알리는 것과 같은 결).
+     3) 새 폴더를 만든 것인지 이미 있는 폴더에 이어 담은 것인지 안내 문구로 구분한다
+        — 지금까지는 문구가 같아서 "이름이 같은 남의 폴더에 합쳐진 것"을 알 길이 없었다. */
+  if(Store.mode!=='firebase') return toast('클라우드에 연결된 상태에서만 됩니다');
   const name = label.replace(/^(사건·|컨설팅·)/,'');
-  const existing = Object.values(_coFolders).find(f=>f.name===name);
-  const folderId = existing ? existing.id : uid();
-  if(!existing){
-    let by=''; try{ by=(firebase.auth().currentUser||{}).email||''; }catch(_){}
-    putCoFolder({ id:folderId, name, order:Date.now(), at:Date.now(), by });
-  }
 
   const byKey = {}; coList().forEach(o=>{ const b=digits(o.bizno||''); if(b.length>=10) byKey[b]=o; });
-  const upd = {}; let matched=0, skipped=0;
+  const matchedCos = []; let skipped=0;
   recs.forEach(rec=>{
     const b = digits(rec.bizNo||'');
     const co = byKey[b];
     if(!co){ skipped++; return; }
-    matched++;
+    matchedCos.push(co);
+  });
+  if(!matchedCos.length){ toast(`「${name}」 사업에서 담을 회사를 찾지 못했습니다`); return; }
+
+  const existing = Object.values(_coFolders).find(f=>f.name===name);
+  const folderId = existing ? existing.id : uid();
+  let reassigned = 0;
+  const upd = {};
+  matchedCos.forEach(co=>{
+    if(co.folder && co.folder!==folderId) reassigned++;
     upd['coInfo/'+co.key+'/folder'] = folderId;
   });
-  if(!matched){ toast(`「${name}」 사업에서 담을 회사를 찾지 못했습니다`); return; }
+  if(!existing){
+    let by=''; try{ by=(firebase.auth().currentUser||{}).email||''; }catch(_){}
+    putCoFolder({ id:folderId, name, order:Date.now(), at:Date.now(), by });
+  }
   try{
     await Store.db.ref(DB_ROOT).update(upd);
   }catch(e){
     return toast('가져오기 실패: '+((e&&e.message)||''));
   }
-  toast(`${matched}곳을 「${name}」 폴더에 담았습니다` + (skipped?` · ${skipped}곳은 명함·사업자등록증이 없어 건너뛰었습니다`:''));
+  const parts = [`${matchedCos.length}곳을 「${name}」 폴더에 ${existing?'이어 ':''}담았습니다`];
+  if(reassigned) parts.push(`${reassigned}곳은 다른 폴더에서 옮겨졌습니다`);
+  if(skipped) parts.push(`${skipped}곳은 명함·사업자등록증이 없어 건너뛰었습니다`);
+  toast(parts.join(' · '));
   if(state.view==='co') renderPC();
 }
 let _coErpImportCache = null;
@@ -9840,7 +9871,7 @@ function openCoFolderMenu(ev, id){
 /* 옆줄 폴더 하나로 「전체 / 거래처만 / 사업별」을 다 고른다 — 셋이 서로 배타적이라
    한 자리에서 고르는 편이 헷갈리지 않는다. */
 function pickCoFolder(k){
-  state.coPick=''; state.coSel={};
+  closePcDetail(); state.coSel={};
   if(k==='erp'){ state.coErpOnly=true; state.coTag=''; state.coFolder=''; }
   else if(k.indexOf('t:')===0){ state.coTag=k.slice(2); state.coErpOnly=false; state.coFolder=''; }
   else if(k.indexOf('f:')===0){ state.coFolder=k.slice(2); state.coErpOnly=false; state.coTag=''; }
@@ -9849,7 +9880,7 @@ function pickCoFolder(k){
   render();
 }
 function toggleCoErpOnly(){
-  state.coErpOnly = !state.coErpOnly; state.coPick='';
+  state.coErpOnly = !state.coErpOnly; closePcDetail();
   try{ localStorage.setItem('pucards_co_erponly', state.coErpOnly?'1':''); }catch(_){}
   renderCoPage();
 }
@@ -9910,7 +9941,7 @@ function coSortBy(key){
   state.coSort = (s.key===key)
     ? { key:key, dir: s.dir==='asc' ? 'desc' : 'asc' }
     : { key:key, dir: (key==='cards'||key==='docs') ? 'desc' : 'asc' };  /* 숫자는 많은 것부터가 쓸모 있다 */
-  state.coPick=''; renderCoPage();
+  closePcDetail(); renderCoPage();
 }
 const coArrow = k => (state.coSort && state.coSort.key===k) ? (state.coSort.dir==='desc'?' ▾':' ▴') : '';
 
@@ -9941,7 +9972,7 @@ function openCoColFilter(ev, field){
 function coApplyColFilter(field, value){
   state.coColFilter = state.coColFilter || {};
   if(value) state.coColFilter[field]=value; else delete state.coColFilter[field];
-  state.coPick=''; renderCoPage();
+  closePcDetail(); renderCoPage();
 }
 
 function renderCoPage(){
@@ -10176,7 +10207,11 @@ function openCoDetailPanel(key){
     <div class="pdbody">${coDetailPanelHtml(o)}</div>`;
   $('pcDetail').classList.add('open');
   const ov=$('pcDetailOverlay'); if(ov) ov.style.display='block';
-  loadErpCaseCons(data=>renderCoErpHistory(o, data));
+  /* ⚠ 최종 전체 리뷰(2026-08-14): 이 조회가 도는 동안 다른 회사 패널로 옮겨 갔으면,
+     늦게 온 답을 지금 화면(다른 회사)의 이력 칸에 쓰면 안 된다 — #coErpHistBox 는
+     DOM 자리 하나라 회사가 바뀌어도 같은 id 를 그대로 쓴다. 지금도 이 회사를 보고
+     있을 때만(state.coPick===key) 그린다(_coFolderDialogTab 검사와 같은 결). */
+  loadErpCaseCons(data=>{ if(state.coPick===key) renderCoErpHistory(o, data); });
 }
 
 /* 헤더 클릭 정렬: 같은 칸 누르면 방향 토글 */
@@ -10235,9 +10270,13 @@ document.addEventListener('keydown', e=>{
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
   /* Ctrl+F: 검색창 포커스 */
   if((e.ctrlKey||e.metaKey) && e.key==='f'){ const s=$('pcSearch'); if(s){ e.preventDefault(); s.focus(); s.select(); } return; }
-  /* ESC: 열린 패널·창 닫기 */
+  /* ESC: 열린 패널·창 닫기
+     ⚠ 최종 전체 리뷰(2026-08-14): closeDetail() 만 부르면 기업정보 패널은 시각적으로
+       닫히지만 state.coPick 은 그대로 남아, 같은 회사를 다시 눌러도 "이미 열려 있는
+       걸 닫는다"는 토글로 오인해 아무 반응이 없었다. closePcDetail() 로 coPick 도
+       함께 비운다(다른 상세 패널을 닫을 땐 coPick 이 이미 비어 있어 해가 없다). */
   if(e.key==='Escape'){
-    closeDetail();
+    closePcDetail();
     ['menuBg','folderDlgBg','groupSheetBg','detailBg','dupBg'].forEach(id=>{ const el=$(id); if(el) el.classList.remove('open'); });
     closeFolderMenu(); closeColMenu();
     return;
@@ -10487,7 +10526,7 @@ function _syncSearchX(){
 function onPcSearchInput(v){
   /* ⚠ 기업정보에서 친 글자를 명함첩 찾기칸(#search)에 옮기면 안 된다 — 회사 이름을
      친 채 명함으로 나가면 명함 목록이 그 글자로 조용히 걸러진 채 보인다(실제로 그랬다). */
-  if(state.view === 'co'){ state.coQ = v; state.coPick=''; _syncSearchX(); renderCoPage(); return; }
+  if(state.view === 'co'){ state.coQ = v; closePcDetail(); _syncSearchX(); renderCoPage(); return; }
   const s = $('search'); if(s) s.value = v;
   state.page = 0; state.view = 'list';
   _syncSearchX();
@@ -10495,7 +10534,7 @@ function onPcSearchInput(v){
 }
 function clearPcSearch(){
   const p = $('pcSearch'); if(p) p.value = '';
-  if(state.view === 'co'){ state.coQ=''; state.coPick=''; _syncSearchX(); renderCoPage(); if(p) p.focus(); return; }
+  if(state.view === 'co'){ state.coQ=''; closePcDetail(); _syncSearchX(); renderCoPage(); if(p) p.focus(); return; }
   const s = $('search');   if(s) s.value = '';
   state.page = 0; state.view = 'list';
   _syncSearchX();

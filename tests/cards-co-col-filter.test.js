@@ -53,7 +53,7 @@ function loadColFilterBlock(items){
   const oAt = source.indexOf('function openCoColFilter');
   const oEnd = source.indexOf('\nfunction renderCoPage', oAt);
 
-  const calls = { menuHtml: '', menuOpen: false, docClicked: [] };
+  const calls = { menuHtml: '', menuOpen: false, docClicked: [], closePcDetailCalls: 0 };
   const ctx = {
     state: { coQ:'', coErpOnly:false, coFolder:'', coTag:'', coColFilter:{}, coPick:'' },
     coList: () => items.slice(),
@@ -64,6 +64,7 @@ function loadColFilterBlock(items){
     window: { innerWidth: 1200, innerHeight: 800 },
     document: { addEventListener: (t,f) => calls.docClicked.push(t) },
     closeFolderMenu: () => {},
+    closePcDetail: () => { calls.closePcDetailCalls++; ctx.state.coPick=''; },
     renderCoPage: () => { calls.rendered = true; },
     setTimeout: (f) => f()
   };
@@ -115,6 +116,10 @@ test('coApplyColFilter 는 값을 켜고 pick 을 비운다', () => {
   assert.equal(c.state.coColFilter.type, '자문');
   assert.equal(c.state.coPick, '');
   assert.equal(c._calls.rendered, true);
+  /* 최종 전체 리뷰 2026-08-14: state.coPick 만 비우고 패널을 안 닫으면, 필터를
+     바꿔도 열려 있던 상세 패널이 그대로 남아 걸러진 목록에 없는 회사를 계속
+     보여준다 — closePcDetail() 을 실제로 불러야 한다. */
+  assert.equal(c._calls.closePcDetailCalls, 1, 'closePcDetail 을 불러 패널도 닫아야 한다');
 });
 
 test("coApplyColFilter 에 빈 값을 주면 그 칸 조건을 지운다 — '전체'", () => {

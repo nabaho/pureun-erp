@@ -31,7 +31,7 @@ function loadImportBlock(items){
     state: { view:'co' },
     renderPC: () => {},
     DB_ROOT: 'pucards',
-    Store: { db: { ref: p => ({
+    Store: { mode:'firebase', db: { ref: p => ({
       update: v => { writes.push({ path:p, v }); return Promise.resolve(); },
       set: v => { sets.push(v); return Promise.resolve(); }
     }) } },
@@ -101,4 +101,55 @@ test('하나도 못 찾으면 update 를 안 부른다', async () => {
   const c = loadImportBlock([]);
   await c.coImportFolderFromType('컨설팅·일터상생혁신', [{ _kind:'consulting', typeCode:'cons-ilteo', bizNo:'999-99-99999' }]);
   assert.equal(c._writes.length, 0);
+});
+
+/* 최종 전체 리뷰 2026-08-14: 아래부터 리뷰가 찾은 것을 증명하는 검사 */
+
+test('하나도 못 찾으면 빈 폴더도 안 만든다', async () => {
+  const c = loadImportBlock([]);
+  await c.coImportFolderFromType('컨설팅·일터상생혁신', [{ _kind:'consulting', typeCode:'cons-ilteo', bizNo:'999-99-99999' }]);
+  assert.equal(Object.keys(c._coFolders).length, 0, '담을 회사가 없으면 폴더 자체를 만들면 안 된다');
+  assert.equal(c._sets.length, 0);
+});
+
+test('이미 다른 폴더에 있던 회사를 옮기면 몇 곳을 옮겼는지 안내한다', async () => {
+  const items = [{ key:'3128149225', name:'대명크라샤', bizno:'312-81-49225', folder:'f-old' }];
+  const c = loadImportBlock(items);
+  c._coFolders = { 'f-old': { id:'f-old', name:'예전 폴더' } };
+  const toasts = [];
+  c.toast = msg => toasts.push(msg);
+  await c.coImportFolderFromType('컨설팅·일터상생혁신', [{ _kind:'consulting', typeCode:'cons-ilteo', bizNo:'312-81-49225' }]);
+  assert.match(toasts[0], /1곳은 다른 폴더에서 옮겨졌습니다/, '기존 폴더에서 조용히 옮기면 안 된다 — 몇 곳인지 알려야 한다');
+});
+
+test('폴더가 없던 회사를 담을 때는 옮겼다는 안내를 안 한다', async () => {
+  const items = [{ key:'3128149225', name:'대명크라샤', bizno:'312-81-49225' }];
+  const c = loadImportBlock(items);
+  const toasts = [];
+  c.toast = msg => toasts.push(msg);
+  await c.coImportFolderFromType('컨설팅·일터상생혁신', [{ _kind:'consulting', typeCode:'cons-ilteo', bizNo:'312-81-49225' }]);
+  assert.doesNotMatch(toasts[0], /옮겨졌습니다/);
+});
+
+test('새로 만든 폴더인지 이미 있는 폴더에 이어 담은 것인지 안내 문구로 구분한다', async () => {
+  const items = [{ key:'3128149225', name:'대명크라샤', bizno:'312-81-49225' }];
+
+  const cNew = loadImportBlock(items);
+  const toastsNew = []; cNew.toast = msg => toastsNew.push(msg);
+  await cNew.coImportFolderFromType('컨설팅·일터상생혁신', [{ _kind:'consulting', typeCode:'cons-ilteo', bizNo:'312-81-49225' }]);
+  assert.doesNotMatch(toastsNew[0], /이어/, '새로 만들 땐 "이어"라는 말이 없어야 한다');
+
+  const cMerge = loadImportBlock(items);
+  cMerge._coFolders = { f9:{ id:'f9', name:'일터상생혁신' } };
+  const toastsMerge = []; cMerge.toast = msg => toastsMerge.push(msg);
+  await cMerge.coImportFolderFromType('컨설팅·일터상생혁신', [{ _kind:'consulting', typeCode:'cons-ilteo', bizNo:'312-81-49225' }]);
+  assert.match(toastsMerge[0], /이어 담았습니다/, '이미 있는 폴더에 담을 땐 구분되는 문구여야 한다');
+});
+
+test('클라우드 모드가 아니면 안내만 하고 아무 것도 안 쓴다', async () => {
+  const c = loadImportBlock([{ key:'3128149225', name:'대명크라샤', bizno:'312-81-49225' }]);
+  c.Store.mode = 'demo';
+  await c.coImportFolderFromType('컨설팅·일터상생혁신', [{ _kind:'consulting', typeCode:'cons-ilteo', bizNo:'312-81-49225' }]);
+  assert.equal(c._writes.length, 0);
+  assert.equal(c._sets.length, 0);
 });
