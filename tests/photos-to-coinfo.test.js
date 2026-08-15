@@ -122,7 +122,7 @@ test('누가 언제 넣었는지 남긴다', async () => {
 test('사업자번호를 못 읽었으면 단추를 안 띄우고 까닭을 말한다', () => {
   /* 아무 말 없이 단추만 없으면 「왜 안 되지」로 시간을 버린다 */
   assert.match(html, /function canSendCoInfo/);
-  assert.match(html, /사업자번호를 읽지 못해 기업정보로 보낼 수 없습니다/);
+  assert.match(html, /사업자번호를 읽지 못해 기업 상세로 보낼 수 없습니다/);
 });
 
 test('한 번 보낸 사진은 다시 안 보낸다', () => {

@@ -425,7 +425,7 @@
       add.at = Date.now();
       add.by = o.byName || '';
       return ref.update(add).then(function () {
-        return { ok: true, filled: filled, message: filled.length + '개 칸을 기업정보에 넣었습니다' };
+        return { ok: true, filled: filled, message: filled.length + '개 칸을 기업 상세에 넣었습니다' };
       });
     });
   }

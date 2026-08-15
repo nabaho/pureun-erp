@@ -20,7 +20,7 @@ test('옆줄에 기업정보 줄이 있다', () => {
   const at = source.indexOf('function renderPCSide');
   const fn = source.slice(at, source.indexOf('\nfunction ', at + 20));
   assert.match(fn, /onclick="openCoPage\(\)"/);
-  assert.match(fn, /🏢<em>기업정보<\/em>/);
+  assert.match(fn, /🏢<em>기업 상세<\/em>/);
 });
 
 test('기업정보 화면에서는 명함 폴더를 그리지 않는다', () => {
@@ -79,7 +79,7 @@ test('사업 갈래(탭)는 서식 이름으로 저절로 생긴다', () => {
 
 test('갈래가 없으면 어떻게 생기는지 알려준다', () => {
   /* 빈 줄만 있으면 「왜 아무것도 없지」로 끝난다 */
-  assert.match(source, /사진첩에서 서식·신청서를 기업정보로 보내면 그 서류 이름으로 갈래가 생깁니다/);
+  assert.match(source, /사진첩에서 서식·신청서를 기업 상세로 보내면 그 서류 이름으로 갈래가 생깁니다/);
 });
 
 test('빠진 서류 경고는 우리가 일하는 회사에만 띄운다', () => {
