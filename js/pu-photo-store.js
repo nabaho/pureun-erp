@@ -1355,90 +1355,12 @@
     return deps.db.ref(path).once('value').then(function (s) { return s.val(); });
   }
 
-  /* ── 옛 자리에서 사람별 자리로 이사 ──
-     2026-08-03 전에 올린 사진은 `puphotos/items|blobs|thumbs/{연도}/{id}` 에 모두
-     섞여 있다. 사람별 자리로 옮겨야 분리가 완성된다.
-
-     여기서 실수하면 사진을 잃는다. 그래서 규칙 하나: **복사가 끝날 때까지 옛 것을
-     지우지 않는다.** 지우기(dropLegacy)는 복사 완료 표시가 있을 때만 동작한다.
-     올린 사람을 모르는 사진(`by` 없음)은 조용히 버리지 않고 관리자 자리로 옮기고
-     그 수를 알린다. */
-  var legacyDone = false;
-
+  /* 옛 자리(2026-08-03 전 사람별 분리 전 흔적) 경로 — 그 자리를 옮기고 지우는
+     도구(migrateLegacy/dropLegacy)는 이사가 끝나 2026-08-15 지웠다. 이 함수만
+     남기는 이유: listYear·loadFull·loadThumb 가 지금도 옛 자리를 물러날 곳으로
+     함께 읽는다(그 자리는 이미 비어 있어 그냥 빈 값만 돌아온다 — 남겨 둬도
+     비용이 들지 않는다). */
   function legacyRoot(kind) { return DB_ROOT + '/' + kind; }
-
-  function migrateLegacy(onStep) {
-    if (!deps.isAdmin) {
-      return Promise.reject(new Error('사진 옮기기는 총괄 관리자만 할 수 있습니다'));
-    }
-    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
-
-    var out = { copied: 0, unknown: 0, failed: 0 };
-    return Promise.all([
-      deps.db.ref(legacyRoot('items')).once('value'),
-      deps.db.ref(legacyRoot('blobs')).once('value'),
-      deps.db.ref(legacyRoot('thumbs')).once('value')
-    ]).then(function (snaps) {
-      var items = snaps[0].val() || {};
-      var blobs = snaps[1].val() || {};
-      var thumbs = snaps[2].val() || {};
-
-      /* 옮길 것을 먼저 목록으로 뽑는다 — 도는 중에 무엇이 남았는지 알 수 있어야 한다. */
-      var jobs = [];
-      Object.keys(items).forEach(function (year) {
-        Object.keys(items[year] || {}).forEach(function (id) {
-          var meta = items[year][id] || {};
-          var owner = meta.by;
-          if (!owner) { owner = deps.uid; out.unknown++; }
-          jobs.push({ year: year, id: id, owner: owner, meta: meta,
-            full: (blobs[year] || {})[id], thumb: (thumbs[year] || {})[id] });
-        });
-      });
-
-      var chain = Promise.resolve();
-      jobs.forEach(function (j, i) {
-        chain = chain.then(function () {
-          var u = {};
-          u[DB_ROOT + '/u/' + j.owner + '/items/' + j.year + '/' + j.id] = j.meta;
-          if (j.full !== undefined && j.full !== null) {
-            u[DB_ROOT + '/u/' + j.owner + '/blobs/' + j.year + '/' + j.id] = j.full;
-          }
-          if (j.thumb !== undefined && j.thumb !== null) {
-            u[DB_ROOT + '/u/' + j.owner + '/thumbs/' + j.year + '/' + j.id] = j.thumb;
-          }
-          return deps.db.ref().update(u).then(function () {
-            out.copied++;
-            if (onStep) onStep(i + 1, jobs.length);
-          }).catch(function (e) {
-            /* 한 장이 실패해도 나머지를 옮긴다 — 다 멈추면 아무것도 못 옮긴다. */
-            console.warn('[이사]', j.year, j.id, e);
-            out.failed++;
-          });
-        });
-      });
-      return chain.then(function () {
-        /* 실패가 하나라도 있으면 '끝났다'고 표시하지 않는다 → 옛 자리를 못 지운다. */
-        legacyDone = jobs.length > 0 && out.failed === 0;
-        return out;
-      });
-    });
-  }
-
-  /* 옛 자리 지우기 — 복사가 끝났다는 표시가 있을 때만. */
-  function dropLegacy() {
-    if (!deps.isAdmin) {
-      return Promise.reject(new Error('옛 자리 지우기는 총괄 관리자만 할 수 있습니다'));
-    }
-    if (!legacyDone) {
-      return Promise.reject(new Error('먼저 사진을 옮겨 주세요 — 옮기기가 모두 성공한 뒤에만 지울 수 있습니다'));
-    }
-    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
-    var u = {};
-    u[legacyRoot('items')] = null;
-    u[legacyRoot('blobs')] = null;
-    u[legacyRoot('thumbs')] = null;
-    return deps.db.ref().update(u).then(function () { legacyDone = false; });
-  }
 
   /* ── 실시간DB → 창고 이사 (2026-08-13, 비용 조사 뒤 실행) ──
      "비용을 최소화할 수 있는 방향 검토해 달라" — 8/1~8/11 실시간DB 내려받기가
@@ -1732,8 +1654,6 @@
     watchUploadIndex: watchUploadIndex,
     listYearAll: listYearAll,
     listYearsAll: listYearsAll,
-    migrateLegacy: migrateLegacy,
-    dropLegacy: dropLegacy,
     migrateToStorage: migrateToStorage,
     listYear: listYear,
     loadThumb: loadThumb,
