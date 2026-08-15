@@ -38,14 +38,14 @@ function context(selected) {
 
 test('날짜 머리를 누르면 그 날짜 사진만 고른다', () => {
   const selected = new Set();
-  const c = load(['dayItems', 'idsOf', 'toggleDay'], context(selected));
+  const c = load(['dayItems', 'idsOf', 'toggleDay', 'toggleItems'], context(selected));
   c.toggleDay(D1);
   assert.deepEqual([...selected].sort(), ['a', 'b']);
 });
 
 test('그 날짜가 모두 골라져 있으면 그 날짜만 해제한다', () => {
   const selected = new Set(['a', 'b', 'c']);
-  const c = load(['dayItems', 'idsOf', 'toggleDay'], context(selected));
+  const c = load(['dayItems', 'idsOf', 'toggleDay', 'toggleItems'], context(selected));
   c.toggleDay(D1);
   assert.deepEqual([...selected], ['c']);
 });
@@ -59,7 +59,7 @@ test('★ 날짜 머리는 접힌 문서의 쪽 전부를 고른다', () => {
     { id: 'p1', meta: { takenAt: 1 }, _pages: ['p1', 'p2', 'p3'] },
     { id: 'x', meta: { takenAt: 1 } }
   ];
-  const c = load(['dayItems', 'idsOf', 'toggleDay'], {
+  const c = load(['dayItems', 'idsOf', 'toggleDay', 'toggleItems'], {
     selected, shownItems: () => folded,
     dayKey: () => D1, renderGrid() {}, $() { return null; }
   });
@@ -85,7 +85,44 @@ test('혼란을 주던 전체 297장 모두 고르기는 제거했다', () => {
   assert.doesNotMatch(html, /id="allBtn"/);
   assert.doesNotMatch(html, /function toggleAllShown\(/);
   assert.doesNotMatch(html, /function renderAllBtn\(/);
-  assert.match(html, /class="dayck" onclick="toggleDay\(/);
+  /* ⚠ 예전에는 onclick="toggleDay(" 글자를 그대로 봤다. 2026-08-15 제목순이
+     들어오며 묶음 머리가 날짜/제목 중 하나를 골라 부르게 되어(fn 변수) 터졌다.
+     볼 것은 **묶음 머리 ✓ 가 그 묶음만 고른다**는 것이다. */
+  assert.match(html, /class="dayck" onclick="' \+ fn \+ '\(/,
+    '묶음 머리 ✓ 가 없어졌습니다');
+  assert.match(html, /const fn = byTitle \? 'toggleTitleGroup' : 'toggleDay';/,
+    '날짜/제목 말고 다른 것을 부르고 있습니다');
+});
+
+/* ── 제목 묶음도 같은 손짓 (대표 지시 2026-08-15) ── */
+test('★ 제목 머리를 누르면 그 제목 사진만 고른다', () => {
+  const selected = new Set();
+  const items = [
+    { id: 'a', meta: { takenAt: 1 } },
+    { id: 'b', meta: { takenAt: 1 } },
+    { id: 'c', meta: { takenAt: 2 } }
+  ];
+  const c = load(['idsOf', 'toggleTitleGroup', 'toggleItems'], {
+    selected, shownItems: () => items,
+    titleKey: it => it.id === 'c' ? '사업자등록증' : '사업자등록증명',
+    decodeURIComponent, renderGrid() {}, $() { return null; }
+  });
+  c.toggleTitleGroup(encodeURIComponent('사업자등록증명'));
+  assert.deepEqual([...selected].sort(), ['a', 'b'],
+    '★ 제목이 다른 사진까지 골라지면 엉뚱한 것을 지웁니다');
+});
+
+test('★ 제목에 따옴표가 섞여도 고르기가 깨지지 않는다', () => {
+  /* 제목은 문서에 적힌 글자 그대로다 — 따옴표·괄호가 섞일 수 있다.
+     onclick 에 날것으로 넣으면 그 칸의 ✓ 가 통째로 죽는다. */
+  const selected = new Set();
+  const odd = '「갑」의 \'확인서\'';
+  const c = load(['idsOf', 'toggleTitleGroup', 'toggleItems'], {
+    selected, shownItems: () => [{ id: 'a', meta: {} }],
+    titleKey: () => odd, decodeURIComponent, renderGrid() {}, $() { return null; }
+  });
+  c.toggleTitleGroup(encodeURIComponent(odd));
+  assert.deepEqual([...selected], ['a']);
 });
 
 test('사진 한 장 및 날짜 단위 선택은 계속 제공한다', () => {
