@@ -113,8 +113,22 @@ test('사람이 고친 구분이 자동 추정을 이긴다', () => {
 
 test('㉑ 금융회사 예입은 현금 잔액이 아니라 기본재산 운용 내역이다', () => {
   const { box, R } = build();
-  assert.equal(R.run.total, R.bfEnd, '㉘ 합계 = ⑳ 기본재산 총액이어야 한다');
-  assert.equal(R.run.deposit, R.bfEnd - R.run.loan, '㉑ = 기본재산 − 다른 운용수단');
+  assert.equal(R.run.loan, 0, '이 표본에는 대부금이 없다 — 아래 두 줄의 전제');
+  assert.equal(R.run.total, R.bfEnd, '대부가 없으면 ㉘ 합계 = ⑳ 기본재산 총액');
+  assert.equal(R.run.deposit, R.bfEnd, '㉑ = 기본재산 − 운용상품');
+
+  /* 대부가 있으면 구조가 드러난다 — 확정 제출본에서
+       ㉑ 예입 674,108천(= ⑳) + ㉗ 근로자 대부 239,720천 = ㉘ 합계 913,828천
+     대부금은 예입에서 빼지 않고 따로 더한다. 빌려준 돈은 기본재산을 헐어 나간 것이 아니라
+     그 자체가 기금 자산이기 때문이다. */
+  const withLoan = TXNS.concat([
+    { _id: 'a8', date: '2025-11-30', memo: '근로자 대부', withdraw: 50000000, amount: 50000000,
+      debit: '근로자대부금', credit: '현금성자산', approved: true }
+  ]);
+  const RL = box.buildF15(withLoan, 'F1', 2025, {}, SITES, WELF);
+  assert.equal(RL.run.loan, 50000000);
+  assert.equal(RL.run.deposit, RL.bfEnd, '대부는 예입을 줄이지 않는다');
+  assert.equal(RL.run.total, RL.bfEnd + 50000000, '㉘ = ⑳ + 대부금');
 
   const R2 = box.buildF15(TXNS, 'F1', 2025, { run_trust: '100000000' }, SITES, WELF);
   assert.equal(R2.run.trust, 100000000);
@@ -136,9 +150,16 @@ test('㉚ 은 그 해 기본재산 사용액(⑰)과 같다 — 출연금×비�
   ]);
   const R = box.buildF15(withUse, 'F1', 2025, {}, SITES, WELF);
   assert.ok(R.bf.use > 0, '기본재산 차변이 ⑰ 사용으로 잡혀야 한다');
-  assert.equal(R.src.contrib, R.bfDec, '㉚ = 기본재산 감소액(⑰+⑱)');
+  assert.equal(R.src.contrib, R.bf.use, '㉚ = ⑰ 기본재산 사용액');
   assert.notEqual(R.src.contrib, Math.round((R.bf.employer + R.bf.other) * 0.5),
     '출연금 × 50% 로 잡으면 안 된다');
+
+  /* ⑱ 분할은 딴 기금으로 재산이 넘어간 것이지 이 기금이 쓰기로 정한 재원이 아니다.
+     감소액(⑰+⑱)으로 잡으면 분할한 해에 ㉚ 가 그만큼 부푼다. */
+  const R2 = box.buildF15(withUse, 'F1', 2025, { bf: { a7: 'split' } }, SITES, WELF);
+  assert.ok(R2.bf.split > 0 && R2.bf.use === 0, '분할로 표시하면 ⑱ 로 간다');
+  assert.equal(R2.src.contrib, 0, '㉚ 에 ⑱ 분할이 섞이면 안 된다');
+  assert.equal(R2.bfDec, R2.bf.split, '⑱ 은 그대로 기본재산 감소이긴 하다');
 });
 
 test('㉚·㉞ 는 수기 입력값이 있으면 그것을 먼저 쓴다', () => {
@@ -165,6 +186,9 @@ test('사업실적은 목적사업 계정 → 법정 항목으로 모인다', ()
   assert.equal(R.subAmt, R.items.reduce((s, x) => s + x.amt, 0), '소계 = 항목 합');
   assert.equal(K(R.admin), 32868, '기금 운영비');
   assert.equal(R.total, R.subAmt + R.loanAmt + R.admin + R.rest, '합계 = 소계+대부+운영비+잔액');
+  /* 69.잔액은 재원에서 사업비·운영비만 뺀다 — 대부금은 나가도 기금 자산으로 남는다.
+     대부금 항을 넣으면 대부가 이월된 이듬해에 거래가 없어도 잔액이 부푼다. */
+  assert.equal(R.rest, R.src.total - (R.subAmt + R.admin), '69.잔액 = ㉟ − 소계 − 운영비');
 
   const rows = box.F15_ROWS;
   const etcRow = rows.find(r => r[1] === '그 밖의 복지비');
