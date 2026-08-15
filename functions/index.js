@@ -798,3 +798,172 @@ exports.migratePhotosToStorage = functions
     });
   }
 });
+
+/* ══════════ 급여자료 메일 자동수신 (급여데이터함 5차) ══════════
+   대표 결정 2026-08-14 — 「전용 자리 + 10분마다 확인」.
+
+   ★ 왜 이 방식인가
+   회사 도메인의 메일 배달 경로(MX)를 바꾸면 도착 즉시 받을 수 있지만, 잘못
+   건드리면 **회사 메일 전체가 안 오는** 사고가 난다. 10분 빨라지자고 질 위험이
+   아니다. 그래서 이미 쓰고 있는 다음메일 계정에 **IMAP 으로 붙어** 정해진
+   폴더만 들여다본다 — 새 계정도, 새 비밀번호도, DNS 변경도 없다.
+
+   ⚠ 온 메일함을 뒤지지 않는다. 대표님이 다음메일에서 규칙으로 모아 두는
+     「급여자료」 폴더 **하나만** 본다. 다른 메일은 서버가 아예 열지 않는다.
+
+   ⚠ 아는 주소에서 온 것만 받는다(대표 결정). 명단은 업체관리·직원 명부에서
+     그때그때 만든다 — 사람이 따로 관리할 명단을 새로 만들지 않는다.
+
+   ⚠ 처리한 메일은 **읽음으로만 표시**하고 지우지 않는다. 폴더에 그대로 남아
+     있어야 "분명 보냈는데" 를 사람이 따라갈 수 있다.
+
+   ⚠ 담기는 자리는 공용 대기 칸(pending_shared)이다. 서버는 「누구 자리」가
+     없기 때문이다. 담당자가 집어가면 자기 자리로 내려간다(앱에 이미 있는 기능). */
+const MR = require("./mail-receive");
+
+const PAYDATA_ROOT = "paydata";
+const PAYDATA_BUCKET_ROOT = "pu_paydata";
+const PAYDATA_BUCKET = "pureun-erp.firebasestorage.app";  // 앱(pu-paydata.html)과 같은 창고
+const PAYMAIL_BOX = "급여자료";      // 다음메일에서 규칙으로 모아 두는 폴더
+const PAYMAIL_UPLOADER = "_mail";    // 창고 자리 — 사람이 아니라 서버가 담았다는 표시
+const PAYMAIL_MAX_PER_RUN = 30;      // 한 회차에 처리할 메일 수 — 오래 붙어 있지 않게
+
+function payMailId() {
+  return "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+/* 아는 주소 명단을 그때그때 만든다 — 한쪽을 못 읽어도 나머지로 계속한다. */
+async function payMailKnownList(db) {
+  const [coSnap, dirSnap] = await Promise.all([
+    db.ref("data/companies").once("value").catch(() => null),
+    db.ref("data/user_dir").once("value").catch(() => null),
+  ]);
+  return MR.buildKnownList(coSnap && coSnap.val(), dirSnap && dirSnap.val());
+}
+
+/* 첨부 하나를 창고에 담고 공용 대기 칸에 한 줄 적는다. */
+async function payMailStoreOne(db, bucket, att, mail) {
+  const id = payMailId();
+  const ext = MR.extOf(att.filename);
+  const where = PAYDATA_BUCKET_ROOT + "/" + PAYMAIL_UPLOADER + "/pending/" + id + (ext ? "." + ext : "");
+  await bucket.file(where).save(att.content, {
+    contentType: att.contentType || "application/octet-stream",
+    resumable: false,
+  });
+  const rec = MR.sharedPendingRecord({
+    filename: att.filename, file: where,
+    mime: att.contentType || "", bytes: att.size || (att.content && att.content.length) || 0,
+    at: Date.now(), mailFrom: mail.from, mailSubject: mail.subject,
+  });
+  const up = {};
+  up[PAYDATA_ROOT + "/pending_shared/" + id] = rec;
+  await db.ref().update(up);
+  return id;
+}
+
+exports.receivePaydataMail = functions
+  .region(MAIL_REGION)
+  .runWith({ secrets: ["DAUM_MAIL_PASSWORD"], timeoutSeconds: 540, memory: "512MB" })
+  .pubsub.schedule("every 10 minutes")
+  .timeZone("Asia/Seoul")
+  .onRun(async () => {
+    const user = await mailUserAsync();
+    const pass = mailPass();
+    if (!user || !pass) {
+      console.warn("receivePaydataMail: 메일 계정이 설정되지 않았습니다");
+      return null;
+    }
+
+    const { ImapFlow } = require("imapflow");
+    const { simpleParser } = require("mailparser");
+    const db = getDatabase();
+    const bucket = getStorage().bucket(PAYDATA_BUCKET);
+    const known = await payMailKnownList(db);
+
+    // 접속 아이디는 보내기와 **같은 후보 차례**를 쓴다(다음 계정마다 다르다).
+    let client = null;
+    let lastErr = null;
+    for (const id of MD.loginIds(user, process.env.DAUM_MAIL_ID)) {
+      const c = new ImapFlow({
+        host: "imap.daum.net", port: 993, secure: true,
+        auth: { user: id, pass: pass }, logger: false,
+      });
+      try { await c.connect(); client = c; break; } catch (e) {
+        lastErr = e;
+        try { await c.logout(); } catch (_) { /* 이미 끊겼다 */ }
+      }
+    }
+    if (!client) {
+      console.error("receivePaydataMail 접속 실패:", String((lastErr && lastErr.message) || lastErr));
+      return null;
+    }
+
+    let took = 0, skipped = 0, unknown = 0;
+    try {
+      let lock;
+      try {
+        lock = await client.getMailboxLock(PAYMAIL_BOX);
+      } catch (e) {
+        console.warn("receivePaydataMail: 「" + PAYMAIL_BOX + "」 폴더가 없습니다. 다음메일에서 만들어 주세요.");
+        return null;
+      }
+
+      // 먼저 다 받아 둔 뒤 처리한다 — 읽는 도중에 읽음 표시를 바꾸면 목록이 흔들린다.
+      const inbox = [];
+      try {
+        for await (const msg of client.fetch({ seen: false }, { uid: true, source: true })) {
+          inbox.push({ uid: msg.uid, source: msg.source });
+          if (inbox.length >= PAYMAIL_MAX_PER_RUN) break;
+        }
+      } finally {
+        lock.release();
+      }
+
+      for (const item of inbox) {
+        let parsed;
+        try {
+          parsed = await simpleParser(item.source);
+        } catch (e) {
+          console.warn("receivePaydataMail: 메일을 읽지 못했습니다", String((e && e.message) || e));
+          continue;   // 읽음 표시도 하지 않는다 — 다음 회차에 다시 해 본다
+        }
+
+        const fromText = (parsed.from && parsed.from.text) || "";
+        const sender = MR.senderOf(fromText);
+        const subject = String(parsed.subject || "");
+
+        if (!MR.isKnownSender(sender, known)) {
+          // 모르는 곳에서 온 것 — 담지 않는다. 지우지도 않는다(폴더에 그대로 남는다).
+          unknown++;
+          console.log("receivePaydataMail 모르는 주소라 건너뜀:", sender || "(주소 없음)");
+          await client.messageFlagsAdd({ uid: String(item.uid) }, ["\\Seen"], { uid: true });
+          continue;
+        }
+
+        const atts = Array.isArray(parsed.attachments) ? parsed.attachments : [];
+        for (const att of atts) {
+          const chk = MR.okAttachment(att);
+          if (!chk.ok) {
+            skipped++;
+            console.log("receivePaydataMail 첨부 건너뜀:", att.filename || "(이름 없음)", chk.why);
+            continue;
+          }
+          try {
+            await payMailStoreOne(db, bucket, att, { from: sender, subject: subject });
+            took++;
+          } catch (e) {
+            // 한 건이 막혀도 나머지는 담는다. 읽음 표시는 아래에서 한다.
+            skipped++;
+            console.error("receivePaydataMail 담기 실패:", att.filename, String((e && e.message) || e));
+          }
+        }
+        await client.messageFlagsAdd({ uid: String(item.uid) }, ["\\Seen"], { uid: true });
+      }
+      console.log("receivePaydataMail", { looked: inbox.length, took, skipped, unknown });
+    } catch (e) {
+      console.error("receivePaydataMail 실패:", String((e && e.message) || e));
+    } finally {
+      try { await client.logout(); } catch (_) { /* 이미 끊겼다 */ }
+    }
+    return null;
+  });
