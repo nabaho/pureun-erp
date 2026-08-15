@@ -150,6 +150,30 @@ const t = (name, got, want) => {
   const r3 = c.erpContractPhotoApplyPatch(fields1, 'consulting', filledF);
   t('★ 이미 채워진 대표자는 안 건드린다', r3.patch.company.ceo, '기존대표');
   t('비어 있던 주소는 그대로 채워진다', r3.patch.company.address, '서울시 강남구');
+
+  // 쉼표(천단위 구분)·통화기호가 들어간 금액도 온전히 파싱돼야 한다 —
+  // parseInt는 쉼표에서 멈추므로 "5,000,000원" 을 그대로 넣으면 5원으로 잘린다.
+  const fieldsComma = Object.assign({}, fields1, { deposit:'5,000,000원' });
+  const rComma = c.erpContractPhotoApplyPatch(fieldsComma, 'consulting', baseF);
+  t('★ 쉼표+통화기호가 섞인 계약금이 잘리지 않고 온전히 들어간다', rComma.patch.amounts.consulting, 5000000);
+  t('쉼표 없는 금액은 그대로(회귀 없음)', c.erpContractPhotoApplyPatch(Object.assign({}, fields1, { deposit:'500000' }), 'consulting', baseF).patch.amounts.consulting, 500000);
+
+  // 계약금(deposit)이 없고 수수료(fee)만 있으면 fee 로 대체돼야 한다
+  const fieldsFeeOnly = { fee:'1,200,000원', scope:'급여대행' };
+  const rFee = c.erpContractPhotoApplyPatch(fieldsFeeOnly, 'consulting', baseF);
+  t('★ 계약금이 없으면 수수료(fee)에서 금액을 가져온다', rFee.patch.amounts.consulting, 1200000);
+
+  // 계약금·수수료가 둘 다 없거나 0이면 patch 에 amounts 키 자체가 없어야 한다(0을 쓰지 않는다)
+  const rNoAmt = c.erpContractPhotoApplyPatch({ scope:'업무 없음' }, 'consulting', baseF);
+  t('★ 금액이 없으면 patch 에 amounts 키가 아예 없다', 'amounts' in rNoAmt.patch, false);
+  const rZeroAmt = c.erpContractPhotoApplyPatch({ deposit:'0원', fee:'0' }, 'consulting', baseF);
+  t('★ 금액이 0이어도 patch 에 amounts 키가 아예 없다', 'amounts' in rZeroAmt.patch, false);
+
+  // 위 호출들이 baseF 및 그 중첩 객체를 건드리지 않았어야 한다 — Preact 상태 업데이트는
+  // 새 객체를 필요로 하므로, 여기서 조용히 원본을 고치는 회귀는 눈에 안 띄고 상태갱신을 깨뜨린다.
+  t('★ baseF.amounts.consulting 이 원래 값 그대로다(비변형)', baseF.amounts.consulting, 0);
+  t('★ baseF.briefs.consulting 이 원래 값 그대로다(비변형)', baseF.briefs.consulting, '');
+  t('★ baseF.company.ceo 가 원래 값 그대로다(비변형)', baseF.company.ceo, '');
 }
 
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');
