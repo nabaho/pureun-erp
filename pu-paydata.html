@@ -222,9 +222,13 @@ table.vals input{width:100%;border:1px solid transparent;border-radius:6px;paddi
 table.vals input:hover{border-color:var(--line)}
 table.vals input:focus{outline:none;border-color:var(--navy);background:#fff}
 table.vals tr.iffy{background:#FDF6E3}
+/* 같은 이름이 둘 — 확실하지 않음(노랑)보다 급하다. 이대로는 저장이 막힌다. */
+table.vals tr.dup{background:#FDECEC}
+table.vals tr.dup input{color:#8A1C1C;font-weight:700}
 table.vals .del{color:var(--bad);cursor:pointer;padding:2px 6px;border-radius:5px}
 .okline{background:#EAF6EE;border:1px solid #B7E4C7;color:#1E5631;border-radius:9px;padding:8px 11px;font-size:12px;margin-bottom:10px}
 .warnline{background:#FDF6E3;border:1px solid #F0D9A8;color:#7C4A03;border-radius:9px;padding:8px 11px;font-size:12px;margin-bottom:10px}
+.badline{background:#FDECEC;border:1px solid #F0B4B4;color:#8A1C1C;border-radius:9px;padding:8px 11px;font-size:12px;line-height:1.6;margin-bottom:10px}
 table.grid{width:100%;border-collapse:collapse;font-size:12.5px}
 table.grid th{background:var(--paper);border-bottom:1px solid var(--line);padding:9px 8px;text-align:left;font-size:11.5px;color:var(--sub);white-space:nowrap}
 table.grid td{border-bottom:1px solid var(--line);padding:8px}
@@ -1763,16 +1767,54 @@ function doRead() {
 }
 window.doRead = doRead;
 
+/* ══════ 같은 이름이 둘 (대표 결정 2026-08-15 — 「지금은 막기만」) ══════
+   값은 근로자 **이름 하나로만** 묶인다(valueGridModel 이 byName 으로 모은다).
+   그래서 한 사업장·한 달에 김민수가 둘이면 두 사람 값이 **한 줄로 합쳐지고**
+   나중에 저장한 값이 앞 값을 덮는다 — 화면에는 「김민수」 한 줄로 보여
+   합쳐진 줄도 모른다. 급여에 그대로 쓰이는 숫자다.
+
+   ⚠ 한 서류 안에 같은 이름이 두 번 있으면 더 나쁘다. 그 서류를 다시 판독해
+   저장할 때 두 줄이 사업장·월·이름·출처가 모두 같아 **같은 자리**로 몰리고
+   (findDuplicateValue), 한 줄이 조용히 사라진다.
+
+   근본 해결(사번·근로자 명단)은 급여대장 판독을 켤 때 함께 정하기로 했다 —
+   지금 켜진 것은 근태표뿐이고 거기에는 사번이 거의 안 적혀 있어 가를 재료가 없다.
+   그때까지는 **저장을 막고 사람이 갈라 적게** 한다. */
+function dupNames(rows) {
+  const seen = {}, dup = [];
+  (rows || []).forEach(r => {
+    const n = String((r && r.name) || '').trim();
+    if (!n) return;                       // 빈 이름은 따로 본다(blankNames)
+    if (seen[n] === 1) { dup.push(n); seen[n] = 2; }
+    else if (!seen[n]) seen[n] = 1;
+  });
+  return dup;
+}
+
+/* 이름이 비어 있는 줄 — 저장해 봐야 값 표에 안 나온다(그쪽이 이름 없는 줄을 건너뛴다).
+   「직접 적기」로 연 빈 줄을 안 채우고 저장하면 그대로 쓰레기가 쌓인다. */
+function blankNames(rows) {
+  return (rows || []).filter(r => !String((r && r.name) || '').trim()).length;
+}
+
+/* 그 줄에 칠할 색 — 같은 이름(빨강)이 확실하지 않음(노랑)보다 급하다. */
+function rowMarkClass(r, dupMap) {
+  if (dupMap[String((r && r.name) || '').trim()]) return 'dup';
+  return r && r.iffy ? 'iffy' : '';
+}
+
 /* 읽어 온 값을 고칠 수 있는 표로. 한 줄 = 한 사람의 한 항목이다. */
 function valueRowsHtml(rows) {
+  const dupMap = {};
+  dupNames(rows).forEach(n => { dupMap[n] = 1; });
   let h = '<table class="vals"><tr><th style="width:28%">근로자</th>'
         + '<th style="width:32%">항목</th><th>값</th><th style="width:26px">지움</th></tr>';
   (rows || []).forEach((r, i) => {
     const pairs = r.pairs || [];
     pairs.forEach((p, j) => {
       /* 줄마다 이름표(id)를 준다 — 사람이 고칠 때 표를 통째로 다시 그리지 않고
-         이 줄의 노란 칠만 벗기기 위해서다(editVal 머리말 참고). */
-      h += '<tr id="vrow_' + i + '_' + j + '" class="' + (r.iffy ? 'iffy' : '') + '">'
+         이 줄의 칠만 손보기 위해서다(editVal 머리말 참고). */
+      h += '<tr id="vrow_' + i + '_' + j + '" class="' + rowMarkClass(r, dupMap) + '">'
         /* ⚠ 이름 칸은 **그 사람의 첫 줄에만** 둔다. 예전에는 항목마다 같은 이름 칸을
            되풀이해 그렸다 — 한 칸에서 이름을 고쳐도 아래 칸들은 옛 이름 그대로 남아,
            고치는 사람 눈에는 한 사람이 두 사람으로 갈라진 것처럼 보였다. */
@@ -1796,20 +1838,33 @@ function editVal(i, key, v, j) {
   if (!r) return;
   if (key === 'name') r.name = v;
   else if (r.pairs && r.pairs[j]) r.pairs[j][key] = v;
-  if (!r.iffy) return;
-  r.iffy = false;
+  if (r.iffy) r.iffy = false;
+  /* 이름을 고치면 **같은 이름 표시가 늘 수도 줄 수도** 있다 — 노란 칠만 걷던
+     예전과 달리 늘 다시 맞춘다(고치다 새로 겹치게 만들었는데 조용하면 안 된다). */
   refreshIffyMarks();
 }
 
-/* 노란 칠과 「⚠ N줄은 확실하지 않습니다」를 지금 화면에 맞춘다. */
+/* 줄 칠과 위쪽 알림 두 줄을 **다시 그리지 않고** 지금 화면에 맞춘다.
+   (이름이 「같은 이름」인지는 다른 줄까지 봐야 알 수 있어 그 줄만 볼 수 없다) */
 function refreshIffyMarks() {
   const rows = (App.readState && App.readState.rows) || [];
+  const dupMap = {}, dups = dupNames(rows);
+  dups.forEach(n => { dupMap[n] = 1; });
   rows.forEach((r, i) => {
     (r.pairs || []).forEach((p, j) => {
       const tr = $('vrow_' + i + '_' + j);
-      if (tr) tr.className = r.iffy ? 'iffy' : '';
+      if (tr) tr.className = rowMarkClass(r, dupMap);
     });
   });
+  const dupLine = $('dupLine');
+  if (dupLine) {
+    if (!dups.length) { dupLine.style.display = 'none'; }
+    else {
+      dupLine.style.display = '';
+      dupLine.innerHTML = '⚠ <b>같은 이름</b>이 있습니다 — ' + esc(dups.join(', '))
+        + '<br>뒤에 부서나 구분을 적어 갈라 주세요(예: 김민수(생산)). 그대로는 저장되지 않습니다.';
+    }
+  }
   const line = $('iffyLine');
   if (!line) return;
   const n = rows.filter(r => r.iffy).length;
@@ -1856,6 +1911,25 @@ function saveVals() {
   if (!canWrite()) return;
   const st = App.readState;
   if (!st || st.status !== 'done' || !st.rows.length) return;
+
+  /* ⚠ 같은 이름이 둘이면 **저장하지 않는다**(dupNames 머리말).
+     경고만 하고 저장을 열어 두면 아무도 안 읽는다 — 그리고 합쳐진 뒤에는
+     어느 값이 누구 것이었는지 되돌릴 길이 없다. */
+  const dups = dupNames(st.rows);
+  if (dups.length) {
+    alert('같은 이름이 둘 이상 있습니다 — 저장하지 않았습니다.\n\n' + dups.join(', ')
+      + '\n\n값은 근로자 이름으로 묶입니다. 그대로 저장하면 두 사람 값이 한 줄로 합쳐지고'
+      + '\n나중에 저장한 값이 앞 값을 덮습니다.'
+      + '\n\n뒤에 부서나 구분을 적어 갈라 주세요 — 예: 김민수(생산) · 김민수(관리)');
+    return;
+  }
+  const blank = blankNames(st.rows);
+  if (blank) {
+    alert('이름이 비어 있는 줄이 ' + blank + '개 있습니다 — 저장하지 않았습니다.'
+      + '\n이름이 없으면 값 표에 나오지 않습니다. 채우거나 ✕ 로 지워 주세요.');
+    return;
+  }
+
   const slot = S.monthKey(App.month) || S.KEEP;
   /* confirmed: true — **「저장」을 누른 것이 곧 사람의 확인이다.** 원본을 옆에 놓고
      줄을 고친 뒤 스스로 누른 것이므로 더 물을 것이 없다. 여기서 확인 표시를 안 하면
@@ -1959,7 +2033,16 @@ function readPanelHtml() {
   } else if (st.status === 'done') {
     const n = st.rows.length;
     const iffy = st.rows.filter(r => r.iffy).length;
+    const dups = dupNames(st.rows);
+    /* ⚠ 같은 이름 알림 자리는 **없어도 미리 만들어 둔다**(안 보이게). 사람이 이름을
+       고치다 새로 겹치게 만들 수 있는데, 그때는 다시 그리지 않으므로(글자마다 다시
+       그리면 커서를 잃는다) 자리가 없으면 알릴 곳이 없다.
+       노란 알림은 줄기만 하므로 그럴 필요가 없다. */
     body = '<div class="okline">사람 <b>' + n + '명</b>의 값을 읽었습니다. 원본과 견주어 확인해 주세요.</div>'
+      + '<div class="badline" id="dupLine"' + (dups.length ? '' : ' style="display:none"') + '>'
+      + (dups.length ? '⚠ <b>같은 이름</b>이 있습니다 — ' + esc(dups.join(', '))
+        + '<br>뒤에 부서나 구분을 적어 갈라 주세요(예: 김민수(생산)). 그대로는 저장되지 않습니다.' : '')
+      + '</div>'
       + (iffy ? '<div class="warnline" id="iffyLine">⚠ <b>' + iffy + '줄</b>은 확실하지 않습니다 — 노란 줄부터 봐 주세요.</div>' : '')
       + valueRowsHtml(st.rows)
       + '<div class="sub" style="margin-top:10px;line-height:1.7">저장하면 값마다 '

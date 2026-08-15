@@ -50,7 +50,7 @@ function loadApp(appState, rec) {
     'const App = ' + JSON.stringify(st) + ';',
     WAGE_FLAG[0], NOTICE_FLAG[0],
     cut('esc'), cut('canWrite'), cut('findRow'), cut('isImageRec'),
-    cut('valueRowsHtml'), cut('readPanelHtml'),
+    cut('dupNames'), cut('blankNames'), cut('rowMarkClass'), cut('valueRowsHtml'), cut('readPanelHtml'),
     'window.App = App; window.readPanelHtml = readPanelHtml;'
   ].join('\n'), { filename: 'app.js' }).runInContext(sandbox);
   return sandbox.window;
@@ -205,7 +205,7 @@ function loadRun(appState, opts) {
     'App.render = function(){};',
     WAGE_FLAG[0], NOTICE_FLAG[0],       // doRead 가 이 상수들을 본다 — 안 넣으면 터진다
     DOLLAR[0],
-    cut('esc'), cut('canWrite'), cut('findRow'), cut('isImageRec'), cut('doRead'), cut('valueRowsHtml'),
+    cut('esc'), cut('canWrite'), cut('findRow'), cut('isImageRec'), cut('doRead'), cut('dupNames'), cut('blankNames'), cut('rowMarkClass'), cut('valueRowsHtml'),
     cut('editVal'), cut('refreshIffyMarks'), cut('addValRow'), cut('startManualRows'),
     cut('delValRow'), cut('delValItem'),
     'window.App = App; window.doRead = doRead; window.valueRowsHtml = valueRowsHtml;',
@@ -496,7 +496,7 @@ function loadSave(existing, confirmYes, opts) {
     }) + ';',
     'App.render = function(){};',
     DOLLAR[0],
-    cut('esc'), cut('canWrite'), cut('findRow'), cut('saveVals'), cut('valueGridModel'),
+    cut('esc'), cut('canWrite'), cut('findRow'), cut('dupNames'), cut('blankNames'), cut('saveVals'), cut('valueGridModel'),
     cut('editVal'), cut('refreshIffyMarks'),
     'window.App = App; window.saveVals = saveVals; window.__got = function(){ return __saved; };',
     'window.valueGridModel = valueGridModel; window.editVal = editVal;'
@@ -716,4 +716,102 @@ test('★ 남의 자리에서는 저장하지 않는다', async () => {
   await new Promise(r => setTimeout(r, 10));
   assert.equal(W.__got(), null);
   assert.equal(calls.confirms.length, 0);
+});
+
+/* ══════ 같은 이름이 둘 (대표 결정 2026-08-15 — 「지금은 막기만」) ══════
+   값은 근로자 이름 하나로만 묶인다. 김민수가 둘이면 두 사람 값이 한 줄로 합쳐지고
+   나중에 저장한 값이 앞 값을 덮는다 — 화면에는 한 줄로 보여 합쳐진 줄도 모른다.
+   합쳐진 뒤에는 어느 값이 누구 것이었는지 되돌릴 길이 없어서, 경고가 아니라 **막는다.** */
+test('★ 같은 이름이 둘이면 저장하지 않는다', async () => {
+  const { W, calls } = loadSave({}, false, { rows: [
+    { name: '김민수', pairs: [{ item: '유급일수', value: '3일' }] },
+    { name: '김민수', pairs: [{ item: '유급일수', value: '5일' }] }
+  ] });
+  W.saveVals();
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(W.__got(), null, '두 사람 값이 한 줄로 합쳐진 채 저장됩니다');
+  assert.match(calls.alerts.join('\n'), /같은 이름/, '왜 안 되는지 말해 주지 않습니다');
+  assert.match(calls.alerts.join('\n'), /김민수/, '어느 이름이 겹치는지 말해 주지 않습니다');
+});
+
+test('앞뒤 빈칸만 다른 것도 같은 이름으로 본다 — 「김민수 」와 「김민수」는 한 사람이다', async () => {
+  const { W } = loadSave({}, false, { rows: [
+    { name: '김민수', pairs: [{ item: '유급일수', value: '3일' }] },
+    { name: ' 김민수 ', pairs: [{ item: '유급일수', value: '5일' }] }
+  ] });
+  W.saveVals();
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(W.__got(), null);
+});
+
+test('★ 구분해서 갈라 적으면 저장된다 — 막기만 하고 길을 막지는 않는다', async () => {
+  const { W } = loadSave({}, false, { rows: [
+    { name: '김민수(생산)', pairs: [{ item: '유급일수', value: '3일' }] },
+    { name: '김민수(관리)', pairs: [{ item: '유급일수', value: '5일' }] }
+  ] });
+  W.saveVals();
+  await new Promise(r => setTimeout(r, 10));
+  const up = W.__got();
+  assert.ok(up, '갈라 적었는데도 막히면 저장할 길이 없습니다');
+  assert.equal(Object.keys(up).length, 2);
+});
+
+/* 「직접 적기」로 연 빈 줄을 안 채우고 저장하면 값 표에 안 나오는 줄이 쌓인다
+   (값 표가 이름 없는 줄을 건너뛴다). */
+test('★ 이름이 빈 줄이 있으면 저장하지 않는다', async () => {
+  const { W, calls } = loadSave({}, false, { rows: [
+    { name: '', pairs: [{ item: '유급일수', value: '3일' }] }
+  ] });
+  W.saveVals();
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(W.__got(), null);
+  assert.match(calls.alerts.join('\n'), /이름이 비어/);
+});
+
+/* 고치는 중에는 다시 그리지 않으므로(글자마다 그리면 커서를 잃는다) 표시만 손본다 —
+   그래서 「고치다 새로 겹치게 만든 것」이 그 자리에서 보여야 한다. */
+test('★ 이름을 고쳐 새로 겹치게 만들면 그 자리에서 빨갛게 알린다', () => {
+  const { W, calls } = loadRun({ readState: { status: 'done', err: '', rows: [
+    { name: '김민수', pairs: [{ item: '유급일수', value: '3일' }] },
+    { name: '이옥자', pairs: [{ item: '유급일수', value: '5일' }] }
+  ] } }, { dom: true });
+  W.editVal(1, 'name', '김민수');
+  assert.equal(calls.els['vrow_0_0'].className, 'dup', '먼저 있던 줄도 함께 빨개져야 짝을 찾습니다');
+  assert.equal(calls.els['vrow_1_0'].className, 'dup');
+  assert.equal(calls.els['dupLine'].style.display, '', '겹쳤다는 알림이 안 뜹니다');
+  assert.match(calls.els['dupLine'].innerHTML, /김민수/);
+});
+
+test('겹친 것을 풀면 빨간 표시도 함께 걷힌다', () => {
+  const { W, calls } = loadRun({ readState: { status: 'done', err: '', rows: [
+    { name: '김민수', pairs: [{ item: '유급일수', value: '3일' }] },
+    { name: '김민수', pairs: [{ item: '유급일수', value: '5일' }] }
+  ] } }, { dom: true });
+  W.editVal(1, 'name', '김민수(관리)');
+  assert.equal(calls.els['vrow_0_0'].className, '');
+  assert.equal(calls.els['vrow_1_0'].className, '');
+  assert.equal(calls.els['dupLine'].style.display, 'none');
+});
+
+/* 판독이 끝난 그 순간에도 보여야 한다 — 저장을 눌러야 알면 그동안 헛일을 한다. */
+test('★ 판독 결과에 같은 이름이 있으면 표에서 바로 빨갛게 보인다', () => {
+  const W = loadApp({ readState: { status: 'done', err: '', rows: [
+    { name: '김민수', pairs: [{ item: '유급일수', value: '3일' }] },
+    { name: '김민수', pairs: [{ item: '유급일수', value: '5일' }] }
+  ] } });
+  const h = W.readPanelHtml();
+  assert.match(h, /class="dup"/, '겹친 줄이 표에서 안 보입니다');
+  assert.match(h, /id="dupLine"/);
+  assert.match(h, /같은 이름/);
+});
+
+/* 겹치지 않아도 자리는 미리 만들어 둔다 — 고치다 새로 겹치게 만들었을 때
+   알릴 곳이 있어야 한다(그때는 다시 그리지 않는다). */
+test('★ 안 겹쳤어도 알림 자리는 감춘 채로 있다', () => {
+  const W = loadApp({ readState: { status: 'done', err: '', rows: [
+    { name: '김민수', pairs: [{ item: '유급일수', value: '3일' }] }
+  ] } });
+  const h = W.readPanelHtml();
+  assert.match(h, /id="dupLine" style="display:none"/);
+  assert.equal(/class="dup"/.test(h), false);
 });
