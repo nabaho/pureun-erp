@@ -88,5 +88,27 @@ const t = (name, got, want) => {
   t('"포함"과 "별도"가 둘 다 있으면 건드리지 않음(null)', c.erpVatTextToFlag('부가세 별도(포함 여부 추후 확정)'), null);
 }
 
+/* ═══ 3. erpBuildContractPhotoMatches — 회사명으로 후보 찾기 ═══ */
+{
+  const c = vm.createContext({});
+  vm.runInContext(fn('erpNormName'), c);
+  vm.runInContext(slice('// 두 문자열의 최장 공통 부분문자열 길이', 'function _erpNameCmp('), c);
+  vm.runInContext(fn('_erpNameCmp'), c);
+  vm.runInContext(slice('var ERP_PHOTO_MATCH_MIN_SCORE', '// ============'), c);
+
+  const items = [
+    { id:'p1', year:'2026', fields:{ company:'주식회사 유원에프앤비' }, at:1000 },
+    { id:'p2', year:'2025', fields:{ company:'가야엔지니어링' }, at:2000 },
+    { id:'p3', year:'2026', fields:{ company:'' }, at:3000 },            // 회사명 없음 — 후보에서 빠져야 함
+    { id:'p4', year:'2024', fields:{ company:'유원에프앤비 지점' }, at:4000 }, // 부분 일치도 잡혀야 함
+  ];
+
+  const r1 = c.erpBuildContractPhotoMatches('유원에프앤비', items);
+  t('회사명이 일치/포함되는 사진만 후보로 나온다', r1.map(x => x.id).sort(), ['p1', 'p4']);
+  t('회사명이 없는 사진은 후보에서 빠진다', r1.some(x => x.id === 'p3'), false);
+  t('회사명이 2글자 미만이면 후보 없음', c.erpBuildContractPhotoMatches('유', items), []);
+  t('빈 배열이면 후보 없음', c.erpBuildContractPhotoMatches('유원에프앤비', []), []);
+}
+
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');
 process.exit(fail ? 1 : 0);
