@@ -824,6 +824,10 @@
      이름이 겹치는 것은 만들 때와 같은 규칙으로 막는다. 안 막으면 같은 이름이 둘이 되어
      어느 쪽에 넣었는지 사람이 못 가린다. */
   function renameCustomKind(id, name) {
+    /* ⚠ 총괄 관리자만(대표 지시 2026-08-15) — 분류 이름표는 전 직원이 함께 보는
+       공용이라, 누구나 고칠 수 있으면 오타 분류가 쌓여도 못 막는다.
+       사진에 분류를 「지정」하는 addCustomKind 는 다르다 — 그건 안 막는다. */
+    if (!deps.isAdmin) return Promise.reject(new Error('분류 이름 변경은 총괄 관리자만 할 수 있습니다'));
     var clean = String(name || '').trim();
     if (!id) return Promise.reject(new Error('어떤 분류인지 알 수 없습니다'));
     if (!clean) return Promise.reject(new Error('분류 이름을 입력해 주세요'));
@@ -853,6 +857,8 @@
      ⚠ 그래서 **되돌릴 수 없다** — 같은 이름으로 다시 만들어도 번호가 달라
         옛 사진이 저절로 돌아오지 않는다. 화면이 지우기 전에 이 말을 해야 한다. */
   function deleteCustomKind(id) {
+    /* ⚠ 총괄 관리자만(대표 지시 2026-08-15) — renameCustomKind 와 같은 이유. */
+    if (!deps.isAdmin) return Promise.reject(new Error('분류 삭제는 총괄 관리자만 할 수 있습니다'));
     if (!id) return Promise.reject(new Error('어떤 분류인지 알 수 없습니다'));
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     var u = {};
