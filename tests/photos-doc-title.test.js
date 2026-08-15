@@ -96,11 +96,72 @@ test('★ 판독기 파일의 ?v= 가 판 번호와 같다 — 캐시에 묵으�
      묻혔다. 여기서는 더 나쁘다 — 화면은 새것이라 제목 자리를 그리는데,
      판독기가 옛것이라 제목을 아예 안 담아 **빈 자리만** 보인다. */
   const rv = reader.match(/var READ_VERSION = (\d+);/);
-  const tag = app.match(/js\/pu-doc-read\.js\?v=(\d+)/);
-  assert.ok(tag, '★ pu-doc-read.js 에 ?v= 가 없습니다 — 브라우저가 옛 판독기를 씁니다');
-  assert.equal(tag[1], rv[1],
-    '★ 판독기 판 번호와 ?v= 가 어긋납니다 — 둘을 함께 올려 주세요');
+  /* ⚠ **판독기를 싣는 화면을 전부** 본다(2026-08-15). 예전에는 사진첩 하나만 봐서,
+     같은 모듈을 쓰는 급여데이터함이 ?v= 없이 실려 있어도 통과했다 — 같은 브라우저
+     안에서 사진첩은 새 판독기, 급여데이터함은 캐시에 묵은 옛 판독기로 갈렸다.
+     새 화면이 판독기를 싣기 시작해도 여기서 저절로 잡힌다. */
+  const loaders = fs.readdirSync(R)
+    .filter(function (f) { return /\.html$/.test(f); })
+    .map(function (f) { return { file: f, src: fs.readFileSync(path.join(R, f), 'utf8') }; })
+    .filter(function (x) { return /src="js\/pu-doc-read\.js/.test(x.src); });
+  assert.ok(loaders.length >= 2,
+    '판독기를 싣는 화면을 ' + loaders.length + '개만 찾았습니다 — 찾는 규칙이 어긋났습니다');
+  loaders.forEach(function (x) {
+    const tag = x.src.match(/js\/pu-doc-read\.js\?v=(\d+)/);
+    assert.ok(tag, '★ ' + x.file + ' 의 pu-doc-read.js 에 ?v= 가 없습니다 — 옛 판독기를 씁니다');
+    assert.equal(tag[1], rv[1],
+      '★ ' + x.file + ' 의 ?v= 가 판독기 판 번호와 어긋납니다 — 둘을 함께 올려 주세요');
+  });
 });
+
+/* ══════ ①-2 제목에 따옴표가 있어도 묶음 ✓ 가 살아 있다 ══════
+   ⚠ 실제로 죽었다: 「'23년 …」처럼 연도를 줄여 쓴 제목(공문서에 흔하다)이 붙으면
+     묶음 머리의 ✓(모두 고르기)를 눌러도 아무 일이 안 일어났다.
+     encodeURIComponent 는 작은따옴표를 안 바꾸고, esc() 가 적은 &#39; 는 브라우저가
+     onclick 속성을 읽을 때 ' 로 **되돌린 뒤** 자바스크립트로 넘기기 때문이다.
+   ⚠ 글자만 봐서는 증명이 안 된다 — 브라우저가 하는 일(엔티티 풀기 → JS 컴파일)을
+     그대로 흉내 내 **실제로 파싱해 본다.** */
+const escOf = new Function('return ' + fnOf(app, 'esc').replace(/^function esc/, 'function') + ';')();
+
+/* renderGrid 가 만드는 것과 같은 방식으로 열쇠를 싣는다 */
+function argFor(title) {
+  const m = app.match(/const arg = byTitle \? ([^;]+) : k;/);
+  assert.ok(m, '묶음 열쇠를 싣는 줄을 찾지 못했습니다');
+  return new Function('k', 'return ' + m[1] + ';')(title);
+}
+
+/* 브라우저: 속성값의 문자참조를 먼저 푼 뒤 그 결과를 JS 로 컴파일한다 */
+function attrToJs(attr) {
+  return attr.replace(/&#39;/g, "'").replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+
+const QUOTE_TITLES = [
+  "'23년 안전보건관리체계 구축 컨설팅 결과",   // 실제 공문서 이름 꼴
+  "사업자등록증명 (주)가야'S",
+  '큰따옴표 "인용" 이 든 제목',
+  '역슬래시 \\ 와 & < > 가 든 제목'
+];
+
+for (const title of QUOTE_TITLES) {
+  test('★ 「' + title.slice(0, 14) + '…」 묶음의 ✓ 가 눌린다', () => {
+    const attr = 'toggleTitleGroup(\'' + escOf(argFor(title)) + '\')';
+    const js = attrToJs(attr);
+    assert.doesNotThrow(function () { new Function(js); },
+      '단추의 onclick 이 깨집니다 — 눌러도 아무 일이 안 일어납니다: ' + js);
+  });
+
+  test('그 열쇠를 받는 쪽이 제목을 그대로 되돌린다: 「' + title.slice(0, 10) + '…」', () => {
+    /* 되돌린 값이 titleKey 와 안 맞으면 아무것도 안 골라진다 — 깨지지만 않는 것으로는 모자란다 */
+    const ctx = {};
+    vm.createContext(ctx);
+    vm.runInContext('let got=null; function toggleItems(x){got=x} function shownItems(){return []}\n'
+      + fnOf(app, 'toggleTitleGroup')
+      + '\nfunction __probe(enc){ let k; try{k=decodeURIComponent(enc)}catch(_){k=enc} return k; }', ctx);
+    assert.equal(ctx.__probe(argFor(title)), title,
+      '되돌린 제목이 원래와 다릅니다 — 그 묶음은 한 장도 안 골라집니다');
+  });
+}
 
 /* ══════ ② 제목 꺼내기 ══════ */
 
