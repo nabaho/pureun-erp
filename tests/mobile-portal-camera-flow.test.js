@@ -153,3 +153,41 @@ test('카메라를 열면 떠다니는 딱지를 감춘다', () => {
      같은 파일 안의 검토 화면·크게 보기와 겹침 순서가 얽힌다. */
   assert.match(photos, /#camOv\{[^}]*z-index:60/);
 });
+
+/* 대표 보고 2026-08-15: "갤럭시26 폰이다 화질 검토해서 카메라 수정"
+   요즘 갤럭시는 뒷면 카메라가 서넛(주카메라·초광각·망원)인데, 그동안은
+   `facingMode:'environment'` 만 주고 브라우저가 고르는 대로 썼다. 초광각이 잡히면
+   화각이 넓어 명함이 작게 찍히고, 최소 초점거리가 멀어 가까이 대면 초점이 안 잡힌다.
+   ⚠ 어느 렌즈가 실제로 잡히는지는 그 폰에서만 알 수 있다 —
+     그래서 자동 고르기 + 사람이 바꾸기 + 기기가 내놓은 값 보여주기를 함께 넣었다. */
+test('뒷면 렌즈를 골라 연다 — 초광각·망원은 뒤로 민다', () => {
+  assert.match(photos, /function lensScore\(label\)/);
+  // 안드로이드 관례: camera2 0 이 주카메라 (1 은 앞면, 2 이상이 보조)
+  assert.match(photos, /camera2\?\\s\+\(\\d\+\)/);
+  assert.match(photos, /ultra\|wide\|광각\|0\\\.5/);
+  assert.match(photos, /depth\|macro\|mono\|접사\|심도/);
+  // 앞면은 뒷면 목록에 들어오면 안 된다
+  assert.match(photos, /function isBackLabel\(label\)/);
+  assert.match(photos, /front\|facing front\|전면\|셀피/);
+});
+
+test('사람이 고른 렌즈는 자동 고르기가 되돌리지 않는다', () => {
+  /* 내 점수가 틀렸을 때 사용자의 선택을 매번 되돌리면 고칠 길이 없어진다 */
+  assert.match(photos, /if \(!chosen && best && camDevId && best\.deviceId !== camDevId\)/);
+  assert.match(photos, /localStorage\.setItem\(CAM_LENS_LS, next\.deviceId\)/);
+});
+
+test('기억해 둔 렌즈가 사라져도 카메라는 열린다', () => {
+  /* 다른 기기·다른 브라우저에서 고른 값이 남아 있을 수 있다.
+     한 번 조용히 잊고 브라우저에 맡기지 않으면 이 폰에서 카메라가 영영 안 열린다. */
+  assert.match(photos, /localStorage\.removeItem\(CAM_LENS_LS\)/);
+  assert.match(photos, /catch \(e0\) \{[\s\S]{0,600}camWantDevId = '';/);
+});
+
+test('기기가 내놓은 값을 그대로 보여 주는 화면이 있다', () => {
+  // 「화질이 안 좋다」에 추측으로 답하지 않으려고 만든 것
+  assert.match(photos, /function camShowDiag\(\)/);
+  assert.match(photos, /id="camDiag"/);
+  assert.match(photos, /이 기기 최대/);
+  assert.match(photos, /당겨찍기/);
+});

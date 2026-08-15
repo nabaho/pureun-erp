@@ -1371,6 +1371,10 @@ body.cam-open [data-pu-appbar-pop]{display:none!important}
     <div id="camTop">
       <button id="camClose" onclick="closeCam()" aria-label="닫기">✕</button>
       <div id="camCount" class="zero">아직 없음</div>
+      <!-- 뒷면 렌즈가 둘 이상인 기기(갤럭시 등)에서만 뜬다. 브라우저가 고르는
+           렌즈가 늘 주카메라인 것은 아니다 — 광각을 잡으면 가까이서 초점이 안 잡힌다. -->
+      <button id="camLens" onclick="camNextLens()" style="display:none" aria-label="렌즈 바꾸기">🔭</button>
+      <button id="camDiag" onclick="camShowDiag()" aria-label="화질 점검">ℹ️</button>
       <button id="camTorch" onclick="toggleTorch()" style="display:none" aria-label="손전등">⚡</button>
     </div>
     <div id="camModes" role="group" aria-label="촬영 방식">
@@ -1980,6 +1984,114 @@ function toast(msg) {
 
 let camStream = null, camCap = null, camBusy = false, camOpening = false;
 let camTrack = null, camCanFocus = false, camCanTorch = false, torchOn = false, camFocusTimer = null;
+
+/* ══════ 뒷면 렌즈 고르기 (대표 보고 2026-08-15 "갤럭시26 폰이다 화질 검토해서 카메라 수정") ══════
+   요즘 갤럭시는 뒷면 카메라가 서넛이다(주카메라·초광각·망원). 그동안은
+   `facingMode:'environment'` 만 주고 **브라우저가 고르는 대로** 썼는데,
+   그게 늘 주카메라인 것은 아니다. 초광각이 잡히면
+     · 화각이 넓어 명함이 작게 찍히고
+     · 최소 초점거리가 멀어 가까이 대면 **아예 초점이 안 잡힌다**
+   보내 주신 사진이 딱 그 모양이었다 — 책상이 넓게 보이고 명함만 흐렸다.
+
+   ⚠ 기기가 정말 어느 렌즈를 줬는지는 **그 폰에서만** 알 수 있다. 그래서
+     ① 안드로이드 관례대로 주카메라를 먼저 고르고(아래 점수),
+     ② 틀리면 사람이 🔭 로 바꿀 수 있게 하고 그 선택을 기억하며,
+     ③ ℹ️ 로 기기가 내놓은 값을 그대로 보여 준다.
+   추측만으로 코드를 바꾸지 않으려고 ③을 같이 넣었다. */
+const CAM_LENS_LS = 'puphotos.cam.lensId';
+let camBackCams = [];      // [{deviceId, label, score}]
+let camWantDevId = '';     // 다음에 열 때 쓸 렌즈(비면 브라우저에 맡긴다)
+let camDevId = '';         // 지금 열려 있는 렌즈
+
+/* 라벨로 렌즈를 가린다. 안드로이드 크로미움은 「camera2 0, facing back」처럼 준다.
+   숫자 0 이 주카메라라는 것이 안드로이드 관례다(1 은 앞면, 2 이상이 보조 렌즈). */
+function lensScore(label) {
+  const s = String(label || '').toLowerCase();
+  let score = 0;
+  const idx = s.match(/camera2?\s+(\d+)/);
+  if (idx) score -= Number(idx[1]) * 10;          // 번호가 작을수록 주카메라
+  // 이름에 드러나는 보조 렌즈는 확실히 뒤로 민다
+  if (/ultra|wide|광각|0\.5/.test(s)) score -= 100;
+  if (/tele|망원|zoom|2x|3x|5x/.test(s)) score -= 60;
+  if (/depth|macro|mono|접사|심도/.test(s)) score -= 200;
+  return score;
+}
+
+function isBackLabel(label) {
+  const s = String(label || '').toLowerCase();
+  if (/front|facing front|전면|셀피/.test(s)) return false;
+  return /back|rear|environment|후면/.test(s) || !s;   // 이름이 비면 판단을 미룬다
+}
+
+/* 권한을 받은 **뒤에야** 라벨이 채워진다 — 그래서 스트림을 연 다음에 부른다. */
+async function loadBackCams() {
+  try {
+    if (!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices)) return [];
+    const all = await navigator.mediaDevices.enumerateDevices();
+    const cams = all.filter(function (d) { return d.kind === 'videoinput' && isBackLabel(d.label); });
+    camBackCams = cams.map(function (d) {
+      return { deviceId: d.deviceId, label: d.label || '카메라', score: lensScore(d.label) };
+    }).sort(function (a, b) { return b.score - a.score; });
+  } catch (_) { camBackCams = []; }
+  const btn = $('camLens');
+  if (btn) btn.style.display = camBackCams.length > 1 ? 'block' : 'none';
+  return camBackCams;
+}
+
+/* 짧은 이름 — 「camera2 0, facing back」 을 「렌즈 0」 으로 줄인다 */
+function lensShort(label) {
+  const m = String(label || '').match(/camera2?\s+(\d+)/);
+  if (m) return '렌즈 ' + m[1];
+  return String(label || '카메라').slice(0, 12);
+}
+
+/* 🔭 — 다음 렌즈로 바꿔 다시 연다. 고른 렌즈는 기억한다. */
+async function camNextLens() {
+  if (camBackCams.length < 2) { toast('이 기기는 뒷면 렌즈가 하나입니다'); return; }
+  let i = camBackCams.findIndex(function (c) { return c.deviceId === camDevId; });
+  i = (i < 0 ? 0 : i + 1) % camBackCams.length;
+  const next = camBackCams[i];
+  camWantDevId = next.deviceId;
+  try { localStorage.setItem(CAM_LENS_LS, next.deviceId); } catch (_) { }
+  toast('🔭 ' + lensShort(next.label) + ' 로 바꿉니다');
+  camStop();
+  await openCam();
+}
+
+/* ℹ️ — 기기가 실제로 내놓은 값을 그대로 보여 준다.
+   「화질이 안 좋다」는 말에 추측으로 답하지 않으려고 만든 화면이다. */
+function camShowDiag() {
+  const v = $('camVid');
+  let set = {}, cap = {};
+  try { set = (camTrack && camTrack.getSettings && camTrack.getSettings()) || {}; } catch (_) { }
+  try { cap = (camTrack && camTrack.getCapabilities && camTrack.getCapabilities()) || {}; } catch (_) { }
+  const cur = camBackCams.find(function (c) { return c.deviceId === camDevId; });
+  const lines = [
+    '■ 지금 쓰는 렌즈',
+    '  ' + (cur ? cur.label : '(이름 없음)'),
+    '  뒷면 렌즈 ' + (camBackCams.length || 1) + '개' + (camBackCams.length > 1 ? ' — 🔭 로 바꿀 수 있습니다' : ''),
+    '',
+    '■ 미리보기 크기',
+    '  지금 ' + (set.width || '?') + '×' + (set.height || '?')
+      + '  (화면에 그려지는 것 ' + ((v && v.videoWidth) || '?') + '×' + ((v && v.videoHeight) || '?') + ')',
+    '  이 기기 최대 ' + ((cap.width && cap.width.max) || '?') + '×' + ((cap.height && cap.height.max) || '?'),
+    '',
+    '■ 사진 촬영',
+    '  고해상도 촬영 ' + (camCap ? '됨' : '안 됨(미리보기를 그대로 씁니다)'),
+    '  요청 크기 ' + (camPhotoOpts ? camPhotoOpts.imageWidth + '×' + camPhotoOpts.imageHeight : '기기 기본값'),
+    '',
+    '■ 초점',
+    '  초점 조절 ' + (camCanFocus ? '됨 (화면을 누르면 그 자리에 맞춥니다)' : '안 됨 — 기기가 알아서 잡습니다'),
+    '  기기가 말하는 초점 방식: ' + (cap.focusMode ? [].join.call(cap.focusMode, ', ') : '(안 알려줌)'),
+    '  손전등 ' + (camCanTorch ? '됨' : '안 됨'),
+    /* 당겨찍기가 되면, 가까이 붙는 대신 멀리서 당겨 찍어 초점을 잡을 수 있다 —
+       렌즈는 대개 10~15cm 보다 가까우면 초점을 못 잡는다. 되는지부터 본다. */
+    '  당겨찍기 ' + (cap.zoom ? (cap.zoom.min + '~' + cap.zoom.max + ' 배 (지금 ' + (set.zoom || 1) + ')') : '안 됨'),
+    '',
+    '이 내용을 그대로 알려 주시면 원인을 정확히 가릅니다.'
+  ];
+  alert(lines.join('\n'));
+}
 /* 카메라를 닫고 다시 열었는데 앞 세션의 느린 비동기 응답이 뒤늦게 도착하면
    새 카메라의 화질 설정을 덮어쓸 수 있다. 열 때마다 값을 바꾸고, 닫을 때도
    한 번 더 바꿔 앞 세션에서 시작한 모든 후속 작업을 무효로 만든다. */
@@ -2146,34 +2258,57 @@ async function openCam() {
   $('camTip').textContent = '카메라를 준비하는 중…';
   if (!camPushed) camHistPush();   // 폰 뒤로 가기로 닫히게
   $('camOv').style.display = 'flex';
+  /* 지난번에 고른 렌즈가 있으면 그것으로 연다 (기기마다 브라우저가 고르는 렌즈가 다르다) */
+  if (!camWantDevId) { try { camWantDevId = localStorage.getItem(CAM_LENS_LS) || ''; } catch (_) { } }
   try {
-    openingStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } },
-      audio: false
-    });
-  } catch (e) {
-    /* 이전 권한 요청이 끝나기 전에 닫거나 다시 열었다면 새 화면을 숨기지 않는다. */
-    if (sessionToken !== camSessionToken) return false;
-    /* 권한 거부를 제약 오류처럼 다시 요청하면 같은 권한창이 연달아 두 번 뜬다.
-       낮은 제약으로 다시 시도할 수 있는 경우만 한 번 물러난다. */
-    const retryable = e && (e.name === 'OverconstrainedError' || e.name === 'ConstraintNotSatisfiedError');
-    if (!retryable) {
-      const denied = e && (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError' || e.name === 'SecurityError');
-      toast(denied
-        ? '카메라 권한을 허용해 주세요 — 네이버 앱 안에서 계속 물으면 삼성 인터넷·Chrome에서 열어 주세요'
-        : '카메라를 열지 못했습니다 — 기본 브라우저에서 다시 열어 주세요');
-      camFail();
-      return false;
+    const want = { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } };
+    if (camWantDevId) want.deviceId = { exact: camWantDevId };
+    openingStream = await navigator.mediaDevices.getUserMedia({ video: want, audio: false });
+  } catch (e0) {
+    /* 기억해 둔 렌즈가 사라졌을 수 있다(다른 기기·다른 브라우저에서 고른 값).
+       그때는 한 번 조용히 잊고 브라우저에 맡긴다 — 안 그러면 이 폰에서 카메라가
+       영영 안 열린다. 잊은 뒤에도 실패하면 아래 예전 처리로 내려간다. */
+    let e = e0;
+    /* ⚠ **권한 거부일 때는 절대 다시 부르지 않는다.** 다시 부르면 같은 권한창이
+       연달아 두 번 뜬다(예전에 그 사고가 있어 검사로 막아 두었다).
+       렌즈가 사라졌을 때만 나는 오류로 좁힌다. */
+    const lensGone = e0 && (e0.name === 'OverconstrainedError'
+      || e0.name === 'ConstraintNotSatisfiedError' || e0.name === 'NotFoundError');
+    if (camWantDevId && lensGone) {
+      camWantDevId = '';
+      try { localStorage.removeItem(CAM_LENS_LS); } catch (_) { }
+      try {
+        openingStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } },
+          audio: false
+        });
+        e = null;
+      } catch (e1) { e = e1; }
     }
-    try {
-      openingStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
-    } catch (e2) {
+    if (e) {
+      /* 이전 권한 요청이 끝나기 전에 닫거나 다시 열었다면 새 화면을 숨기지 않는다. */
       if (sessionToken !== camSessionToken) return false;
-      /* 기본 file/capture 카메라로 물러나지 않는다. 그것이 매 장마다
-         「다시 시도/확인」을 띄우고 포털 촬영을 깨뜨린 직접 원인이었다. */
-      toast('카메라 권한을 허용한 뒤 다시 눌러 주세요');
-      camFail();
-      return false;
+      /* 권한 거부를 제약 오류처럼 다시 요청하면 같은 권한창이 연달아 두 번 뜬다.
+         낮은 제약으로 다시 시도할 수 있는 경우만 한 번 물러난다. */
+      const retryable = e.name === 'OverconstrainedError' || e.name === 'ConstraintNotSatisfiedError';
+      if (!retryable) {
+        const denied = e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError' || e.name === 'SecurityError';
+        toast(denied
+          ? '카메라 권한을 허용해 주세요 — 네이버 앱 안에서 계속 물으면 삼성 인터넷·Chrome에서 열어 주세요'
+          : '카메라를 열지 못했습니다 — 기본 브라우저에서 다시 열어 주세요');
+        camFail();
+        return false;
+      }
+      try {
+        openingStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+      } catch (e2) {
+        if (sessionToken !== camSessionToken) return false;
+        /* 기본 file/capture 카메라로 물러나지 않는다. 그것이 매 장마다
+           「다시 시도/확인」을 띄우고 포털 촬영을 깨뜨린 직접 원인이었다. */
+        toast('카메라 권한을 허용한 뒤 다시 눌러 주세요');
+        camFail();
+        return false;
+      }
     }
   }
 
@@ -2233,6 +2368,25 @@ async function openCam() {
     camCanTorch = !!caps.torch;
     torchOn = false;
     $('camTorch').style.display = camCanTorch ? 'block' : 'none';
+
+    /* ── 어느 렌즈가 열렸는지 확인하고, 주카메라가 아니면 한 번 바꿔 본다 ──
+       권한을 받은 뒤라야 렌즈 이름(라벨)이 채워진다. 갤럭시처럼 뒷면이 서넛인
+       기기에서 브라우저가 초광각을 잡으면 가까이서 초점이 안 잡힌다.
+       ⚠ **사람이 고른 적이 있으면 건드리지 않는다.** 내 점수가 틀렸을 때
+         사용자의 선택을 매번 되돌리면 고칠 길이 없어진다. */
+    try { camDevId = (camTrack.getSettings && camTrack.getSettings().deviceId) || ''; } catch (_) { camDevId = ''; }
+    await loadBackCams();
+    if (sessionToken !== camSessionToken || !camTrack) return false;
+    let chosen = '';
+    try { chosen = localStorage.getItem(CAM_LENS_LS) || ''; } catch (_) { }
+    const best = camBackCams[0];
+    if (!chosen && best && camDevId && best.deviceId !== camDevId) {
+      /* 한 번만 시도한다. 실패하면 지금 열린 렌즈를 그대로 쓴다. */
+      try {
+        await camTrack.applyConstraints({ deviceId: { exact: best.deviceId } });
+        camDevId = (camTrack.getSettings && camTrack.getSettings().deviceId) || camDevId;
+      } catch (_) { /* 트랙 바꾸기를 안 받아 주는 브라우저 — 🔭 로 사람이 바꾸면 된다 */ }
+    }
     $('camTorch').className = '';
 
   /* 이 기기가 낼 수 있는 **가장 큰 사진** 크기를 미리 물어 둔다.
