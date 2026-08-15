@@ -59,9 +59,6 @@ test('openCoMobile 은 state.view 를 co 로 바꾸고 state.tab 은 안 건드�
   c.openCoMobile();
   assert.equal(c.state.view, 'co');
   assert.equal(c.state.tab, 'biz', 'state.tab 을 건드리면 안 된다 — 갈래가 아니라 화면이다');
-  assert.equal(c.calls.toggled.tabCo, true);
-  assert.equal(c.calls.toggled.tabCard, false);
-  assert.equal(c.calls.toggled.tabBiz, false);
   assert.equal(c.calls.rendered, 1);
 });
 
@@ -78,8 +75,56 @@ test('명함·사업자 탭으로 돌아가면 기업 상세 화면에서 빠져
   c.setTab('card');
   assert.equal(c.state.view, 'list', '기업 상세 화면에 머문 채로 명함 탭을 그리면 안 된다');
   assert.equal(c.state.tab, 'card');
-  assert.equal(c.calls.toggled.tabCo, false);
-  assert.equal(c.calls.toggled.tabCard, true);
+});
+
+/* 탭 «켜짐» 표시는 이제 setTab·openCoMobile 이 직접 칠하지 않고, render() 가 부르는
+   syncMobileTabs() 가 상태(state.view/state.tab)에서 끌어내 그린다 — ☰ 자료함·메일을
+   닫고 나오는 길처럼 setTab/openCoMobile 을 안 거치고 화면만 바뀌는 경로에서도
+   탭 표시가 어긋나지 않게 하려는 것이다. 아래는 그 seam(syncMobileTabs) 을 직접 테스트한다. */
+function loadSyncBlock(){
+  const at = source.indexOf('function syncMobileTabs(){');
+  const end = source.indexOf('\n}', at) + 2;
+  assert.ok(at > 0 && end > at + 2, 'syncMobileTabs 를 찾지 못했습니다');
+  const ctx = {
+    state: { tab:'card', view:'list' },
+    toggled: {},
+    $: id => {
+      if(id==='tabCard') return { classList: { toggle:(c,on)=>{ ctx.toggled.tabCard = on; } } };
+      if(id==='tabBiz')  return { classList: { toggle:(c,on)=>{ ctx.toggled.tabBiz = on; } } };
+      if(id==='tabCo')   return { classList: { toggle:(c,on)=>{ ctx.toggled.tabCo = on; } } };
+      return null;
+    }
+  };
+  vm.createContext(ctx);
+  vm.runInContext(source.slice(at, end), ctx);
+  return ctx;
+}
+
+test('syncMobileTabs — 기업 상세 화면이면 tabCo 만 켜진다', () => {
+  const c = loadSyncBlock();
+  c.state.view = 'co'; c.state.tab = 'biz';
+  c.syncMobileTabs();
+  assert.equal(c.toggled.tabCo, true);
+  assert.equal(c.toggled.tabCard, false);
+  assert.equal(c.toggled.tabBiz, false);
+});
+
+test('syncMobileTabs — 명함 탭이면 tabCard 만 켜진다', () => {
+  const c = loadSyncBlock();
+  c.state.view = 'list'; c.state.tab = 'card';
+  c.syncMobileTabs();
+  assert.equal(c.toggled.tabCard, true);
+  assert.equal(c.toggled.tabBiz, false);
+  assert.equal(c.toggled.tabCo, false);
+});
+
+test('syncMobileTabs — 사업자 탭이면 tabBiz 만 켜진다', () => {
+  const c = loadSyncBlock();
+  c.state.view = 'list'; c.state.tab = 'biz';
+  c.syncMobileTabs();
+  assert.equal(c.toggled.tabBiz, true);
+  assert.equal(c.toggled.tabCard, false);
+  assert.equal(c.toggled.tabCo, false);
 });
 
 function loadMobileSearchBlock(){
