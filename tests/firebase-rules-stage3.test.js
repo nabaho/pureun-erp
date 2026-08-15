@@ -49,6 +49,13 @@ test('서버 백업 네 경로는 관리자 또는 위임관리인만 접근한�
   }
 });
 
+test('장애 알림 조회와 처리는 총괄관리자만 할 수 있다', () => {
+  assert.match(rules.systemAlerts['.read'], /isAdmin/);
+  assert.doesNotMatch(rules.systemAlerts['.read'], /isSubAdmin/);
+  assert.doesNotMatch(rules.systemAlerts.$uid.$id['.write'], /isSubAdmin/);
+  assert.match(rules.systemAlerts.$uid.$id['.write'], /auth\.uid === \$uid/);
+});
+
 test('모든 권한성 uid_roles 필드의 자가부여를 제한한다', () => {
   for (const key of ['fin', 'hr', 'isAdmin', 'isSubAdmin', 'isFullViewer']) {
     const validation = rules.uid_roles.$uid[key]['.validate'];

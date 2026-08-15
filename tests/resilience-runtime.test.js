@@ -60,12 +60,20 @@ test('mapped operational systems expose automatic backup and point-in-time resto
   }
 });
 
-test('current Firebase rules isolate fault creation and reserve alert reads for managers', () => {
+test('current Firebase rules isolate fault creation and reserve alert reads for the primary administrator', () => {
   const rules = JSON.parse(fs.readFileSync(path.join(root, 'docs', 'firebase-rules-현재적용본.json'), 'utf8')).rules;
   assert.match(rules.systemAlerts['.read'], /isAdmin/);
-  assert.match(rules.systemAlerts['.read'], /isSubAdmin/);
+  assert.doesNotMatch(rules.systemAlerts['.read'], /isSubAdmin/);
   const alertRule = rules.systemAlerts.$uid.$id;
+  assert.doesNotMatch(alertRule['.write'], /isSubAdmin/);
   assert.match(alertRule['.write'], /auth\.uid === \$uid/);
   assert.match(alertRule['.write'], /!data\.exists\(\)/);
   assert.match(alertRule.status['.validate'], /new\|resolved/);
+});
+
+test('health alert badge is shown only to the primary administrator', () => {
+  const runtime = fs.readFileSync(path.join(root, 'js', 'pu-health.js'), 'utf8');
+  const monitor = runtime.slice(runtime.indexOf('function monitorAdmin'), runtime.indexOf('function bindApp'));
+  assert.match(monitor, /role\.isAdmin/);
+  assert.doesNotMatch(monitor, /role\.isSubAdmin/);
 });

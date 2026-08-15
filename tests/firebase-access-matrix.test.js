@@ -124,6 +124,18 @@ test('역할표: 서버 백업은 관리자와 위임관리인만 허용한다',
   assert.equal(evaluate(rule, { auth: auth('staffUid') }), false);
 });
 
+test('역할표: 장애 알림은 총괄관리자만 조회하고 처리한다', () => {
+  const readRule = rules.systemAlerts['.read'];
+  const writeRule = rules.systemAlerts.$uid.$id['.write'];
+  const event = { uid: 'staffUid', kind: 'save', message: 'failed', page: 'work.html', createdAt: 1, status: 'new' };
+
+  assert.equal(evaluate(readRule, { auth: auth('adminUid') }), true);
+  assert.equal(evaluate(readRule, { auth: auth('subUid') }), false);
+  assert.equal(evaluate(writeRule, { auth: auth('staffUid'), $uid: 'staffUid', data: undefined, newData: event }), true);
+  assert.equal(evaluate(writeRule, { auth: auth('subUid'), $uid: 'staffUid', data: event, newData: { ...event, status: 'resolved' } }), false);
+  assert.equal(evaluate(writeRule, { auth: auth('adminUid'), $uid: 'staffUid', data: event, newData: { ...event, status: 'resolved' } }), true);
+});
+
 test('역할표: 일반 직원은 fin과 hr 권한을 스스로 true로 바꾸지 못한다', () => {
   for (const field of ['fin', 'hr']) {
     const validation = rules.uid_roles.$uid[field]['.validate'];
