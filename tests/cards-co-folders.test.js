@@ -42,7 +42,7 @@ test('회사 상세에 폴더 이름을 보여준다', () => {
 
 test('openCoPage 가 폴더 목록도 불러온다', () => {
   const at = source.indexOf('function openCoPage');
-  const fn = source.slice(at, at + 300);
+  const fn = source.slice(at, at + 800);
   assert.match(fn, /loadCoFolders\(/);
 });
 

@@ -148,10 +148,14 @@ test('번호는 보이는 목록 기준으로 1부터', () => {
 });
 
 test('전체 고르기는 보이는 것만 고른다', () => {
-  /* 따로 계산하면 거르개를 켠 채 눌렀을 때 안 보이는 회사까지 골라진다 */
+  /* 따로 계산하면 거르개를 켠 채 눌렀을 때 안 보이는 회사까지 골라진다.
+     나눠 보기(2026-08-15) 뒤로 「보이는 것」은 곧 **지금 쪽**이다 — 그리기와
+     같은 coPage() 하나를 본다. 찾은 전체를 고르는 길은 coSelAllMatching 으로 따로 있다. */
   assert.match(source, /function coVisible\(\)/);
-  const at = source.indexOf('function coSelAll');
-  assert.match(source.slice(at, at + 220), /coVisible\(\)/);
+  const at = source.indexOf('function coSelAll(');
+  const fn = source.slice(at, source.indexOf('function coSelAllMatching', at));
+  assert.match(fn, /coPage\(\)/, '그리는 것과 같은 쪽을 봐야 한다');
+  assert.doesNotMatch(fn, /coVisible\(\)/, '찾은 전체를 고르면 화면에 없는 회사가 딸려 간다');
 });
 
 test('네모를 눌러도 회사가 안 열린다', () => {
@@ -248,8 +252,13 @@ test('renderCoPage 는 coVisible 하나만 거치고 따로 거르지 않는다'
      coVisible 에만 붙어 화면에는 안 먹힌 적이 있다. */
   const at = source.indexOf('function renderCoPage');
   const fn = source.slice(at, source.indexOf('function coListHtml', at));
-  assert.match(fn, /const list = coVisible\(\);/);
+  /* 나눠 보기(2026-08-15) 뒤로 renderCoPage 는 coPage() 를 부르고, coVisible() 은
+     그 안에서 «한 번만» 불린다. 여기서 또 부르면 자르는 곳이 둘이 된다. */
+  assert.match(fn, /const info = coPage\(\);/);
+  assert.doesNotMatch(fn, /const list = coVisible\(\);/, 'renderCoPage 가 또 목록을 만든다');
   assert.doesNotMatch(fn, /list = list\.filter/, 'renderCoPage 가 따로 거르고 있다');
+  const cp = source.slice(source.indexOf('function coPage()'), source.indexOf('function coSetPageSize'));
+  assert.match(cp, /coVisible\(\)/, '거르는 차례는 여전히 coVisible 하나를 거쳐야 한다');
 });
 
 test('같은 칸을 두 번 누르면 방향이 바뀐다', () => {

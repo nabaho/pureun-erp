@@ -705,6 +705,19 @@ table.sbox.tight td.none{padding:26px 8px}
 .coselbar b{color:#185fa5;margin-right:4px}
 .coselbar button{border:1px solid #b5d4f4;background:#fff;border-radius:8px;padding:6px 11px;font-size:12.5px;font-weight:700;cursor:pointer;color:#185fa5;font-family:inherit}
 .coselbar button:hover{background:#dbe9fb}
+.coselbar .comore{border-color:#d9a441;color:#92400e;background:#fff8ec}
+.coselbar .comore:hover{background:#fdf0d8}
+/* 기업 상세 나눠 보기 — 「몇 개씩」 칸과 쪽 옮기기 (명함 표의 #pcPageSize·#pcPager 와 같은 결) */
+.copgbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 8px;font-size:12.5px;color:#5a6885}
+.copgbar .cnt b{color:#1d4fc4}
+.copgbar .sp{flex:1}
+.copgsize{border:1px solid #dde3ee;background:#fff;border-radius:8px;padding:5px 9px;
+  font-family:inherit;font-size:12.5px;color:#33415e;cursor:pointer}
+.copager{display:flex;align-items:center;justify-content:center;gap:14px;padding:14px;
+  font-size:13.5px;color:#5a6885}
+.copager button{border:1px solid #dde3ee;background:#fff;border-radius:8px;padding:7px 13px;
+  font-family:inherit;font-weight:700;color:#33415e;cursor:pointer}
+.copager button[disabled]{background:#f1f4fa;color:#b6bfd2;cursor:default}
 .cofdtab{font-size:12.5px;color:#8b98b3;padding:6px 12px;border-radius:8px;cursor:pointer}
 .cofdtab.on{font-weight:700;color:#1d4fc4;background:#eef3fc}
 .erpimport-row{display:flex;align-items:center;justify-content:space-between;padding:11px 12px;background:#f7f9fc;border-radius:9px;cursor:pointer}
@@ -1578,6 +1591,8 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', e
   /* 자료함 — 찾는 말·메일틀 갈래는 화면에만 쓰고 저장하지 않는다.
      sendLog 는 명함을 열 때만 그 명함 것을 읽어 담는다. */
   matQ:'', matMailCat:'', matPrevId:'', sendLog:{}, coQ:'', coPick:'', coTag:'', coErpOnly:false, coSel:{}, coSort:{key:'name',dir:'asc'}, coColFilter:{}, coFolder:'', coShowHidden:false,
+  /* 기업 상세 나눠 보기 — 쪽은 0부터(명함 표와 같게), 개수는 200곳이 기본 */
+  coPage:0, coPageSize:200,
   /* 메일 화면 — mailSent 가 true 면 보낸 메일함, 아니면 쓰기 */
   mailSent:false, mailDrawer:true, sentBox:{}, schedBox:{}, sentQ:'', sentMine:false, sentCat:'', sentBy:'',
   showBcc:false, draftAt:'', matPick:'', drawerQ:'', drawerOpen:{},
@@ -10042,6 +10057,10 @@ const _norm = s => String(s||'').replace(/\s|\(주\)|주식회사|㈜/g,'').repl
 
 function openCoPage(){ state.view='co'; state.coPick='';
   try{ state.coErpOnly = !!localStorage.getItem('pucards_co_erponly'); }catch(_){}
+  /* 몇 개씩 볼지는 이 PC에 기억해 둔다 — 열 때마다 다시 고르게 하면 안 된다.
+     쪽은 늘 첫 쪽부터 — 어제 보던 21쪽을 오늘 다시 열어 주는 것은 반갑지 않다. */
+  try{ state.coPageSize = coPageSizeOk(localStorage.getItem('pucards_co_pagesize')); }catch(_){}
+  state.coPage = 0;
   render();
   loadCoInfo(); loadCoFolders(); loadCoTagHidden(); try{ $('pcMain').scrollTop=0; }catch(_){} }
 function closeCoPage(){ state.view='list'; render(); }
@@ -10183,7 +10202,7 @@ function coTagList(list){
   list.forEach(o=>coTagsOf(o).forEach(t=>{ c[t] = (c[t]||0)+1; }));
   return Object.keys(c).sort((a,b)=>c[b]-c[a] || a.localeCompare(b,'ko')).map(t=>({t, n:c[t]}));
 }
-function pickCoTag(t){ state.coTag = (state.coTag===t ? '' : t); closePcDetail(); renderCoAny(); }
+function pickCoTag(t){ state.coTag = (state.coTag===t ? '' : t); state.coPage=0; closePcDetail(); renderCoAny(); }
 
 /* 탭은 지우지 않는다 — 숨기기만 둔다. 사업이 끝나도 「그때 누가 신청했었나」를
    나중에 다시 봐야 할 수 있다. 지우면 그 연결이 영영 사라진다. */
@@ -10395,6 +10414,7 @@ function openCoFolderMenu(ev, id){
 /* 옆줄 폴더 하나로 「전체 / 거래처만 / 사업별」을 다 고른다 — 셋이 서로 배타적이라
    한 자리에서 고르는 편이 헷갈리지 않는다. */
 function pickCoFolder(k){
+  state.coPage=0;
   closePcDetail(); state.coSel={};
   if(k==='erp'){ state.coErpOnly=true; state.coTag=''; state.coFolder=''; }
   else if(k.indexOf('t:')===0){ state.coTag=k.slice(2); state.coErpOnly=false; state.coFolder=''; }
@@ -10404,7 +10424,7 @@ function pickCoFolder(k){
   render();
 }
 function toggleCoErpOnly(){
-  state.coErpOnly = !state.coErpOnly; closePcDetail();
+  state.coErpOnly = !state.coErpOnly; state.coPage=0; closePcDetail();
   try{ localStorage.setItem('pucards_co_erponly', state.coErpOnly?'1':''); }catch(_){}
   renderCoAny();
 }
@@ -10433,6 +10453,90 @@ function coFilteredList(skipCol){
 }
 function coVisible(){
   return coSorted(coFilteredList(null));
+}
+
+/* ══════ 기업 상세 나눠 보기 — 순수 로직 (테스트 대상) ══════
+   거래처 4,138곳을 한 화면에 다 그리면 화면 조각이 57,818개가 되어 약 1초 멈춘다.
+   더 나쁜 것은 네모 하나 누를 때마다(coToggle→renderCoAny) 처음부터 다시 그린다는 점이다.
+   명함·사업자 표는 예전부터 「몇 개씩 보기」로 잘라 그리고 있었다(state.pageSize/state.page).
+   기업 상세만 그것이 없어 멈췄다 — 같은 방식을 그대로 붙인다(대표 지시 2026-08-15).
+
+   ⚠ 쪽 번호는 명함 표와 같이 **0부터** 센다. 화면에 적을 때만 +1 한다.
+     한쪽은 0부터, 다른 쪽은 1부터 세면 「1쪽인데 101번째부터 보인다」 같은 어긋남이 난다.
+   ⚠ 개수는 명함(state.pageSize)과 **따로** 둔다(state.coPageSize). 회사 한 줄은 명함 한 줄보다
+     칸이 많아 같은 숫자라도 무게가 다르고, 한쪽을 바꾸면 다른 쪽이 조용히 따라 바뀌는 것이
+     더 놀랍다. */
+const CO_PAGE_SIZES = [50, 100, 200, 300, 500, 999999];
+const CO_PAGE_DEFAULT = 200;
+/* 아는 값만 받는다 — 저장된 값이 깨졌거나 옛 값이어도 목록이 사라지면 안 된다 */
+function coPageSizeOk(v){
+  const n = (v === 'all') ? 999999 : Math.floor(Number(v));
+  return CO_PAGE_SIZES.indexOf(n) >= 0 ? n : CO_PAGE_DEFAULT;
+}
+/* 총 쪽수 — 빈 목록도 1쪽이다. 0쪽이면 「0/0쪽」이라고 적히고 앞뒤 단추가 둘 다 죽는다 */
+function coPageCount(total, size){
+  const s = coPageSizeOk(size);
+  return Math.max(1, Math.ceil((Number(total) || 0) / s));
+}
+/* 쪽 번호를 범위 안으로 — 21쪽을 보다가 「거래처만」을 누르면 그 쪽이 없어진다 */
+function coPageClamp(page, total, size){
+  const last = coPageCount(total, size) - 1;
+  const p = Math.floor(Number(page) || 0);
+  return p < 0 ? 0 : (p > last ? last : p);
+}
+/* 지금 쪽에 보일 것만 잘라 준다. 화면 그리기와 「전체 고르기」가 **이 하나**를 같이 본다 */
+function coPageSlice(list, page, size){
+  const all = Array.isArray(list) ? list : [];
+  const s = coPageSizeOk(size);
+  const total = all.length;
+  const pages = coPageCount(total, s);
+  const p = coPageClamp(page, total, s);
+  const start = p * s;
+  const rows = all.slice(start, start + s);
+  return { rows, page: p, pages, size: s, total,
+           from: total ? start + 1 : 0, to: start + rows.length };
+}
+/* ══════ 기업 상세 나눠 보기 — 화면 ══════ */
+/* 지금 쪽 — 그리기·전체 고르기가 갈라지지 않게 한 곳에서만 계산한다.
+   자르면서 쪽 번호가 범위 안으로 당겨졌으면 그것을 state 에 되꽂는다(안 그러면
+   「다음 ▶」이 이미 없는 쪽을 가리킨 채 남는다). */
+function coPage(){
+  const info = coPageSlice(coVisible(), state.coPage, state.coPageSize);
+  state.coPage = info.page;
+  return info;
+}
+function coSetPageSize(v){
+  const n = coPageSizeOk(v);
+  /* 「전체」는 남겨 둔다 — 4,138곳을 한꺼번에 골라 폴더로 옮겨야 할 때가 있다.
+     다만 왜 멈추는지는 눌렀을 때 한 번 알려 준다(대표 결정 2026-08-15). */
+  if(n >= 999999 && coVisible().length > 1000 &&
+     !confirm(coVisible().length.toLocaleString()+'곳을 한 화면에 모두 펼칩니다.\n\n'
+       + '그리는 데 1초쯤 멈추고, 네모를 누를 때마다 다시 멈춥니다.\n계속할까요?')) return;
+  state.coPageSize = n; state.coPage = 0;
+  try{ localStorage.setItem('pucards_co_pagesize', String(n)); }catch(_){}
+  closePcDetail(); renderCoAny();
+}
+function coGoPage(p){ state.coPage = p; closePcDetail(); renderCoAny(); }
+/* 몇 개씩 볼지 고르는 칸 — 명함 표의 #pcPageSize 와 같은 모양·같은 자리(목록 오른쪽 위) */
+function coSizeSelHtml(size){
+  const cur = coPageSizeOk(size);
+  const opt = (v, label) => `<option value="${v}" ${cur===v?'selected':''}>${label}</option>`;
+  return `<select class="copgsize" onchange="coSetPageSize(this.value)"
+      title="한 쪽에 보일 회사 수 — 적을수록 빨라집니다">
+    ${opt(50,'50개')}${opt(100,'100개')}${opt(200,'200개')}${opt(300,'300개')}${opt(500,'500개')}${opt(999999,'전체')}
+  </select>`;
+}
+/* 쪽 옮기기 — 명함 표의 #pcPager 와 같은 글귀("1–200 / 4,138개  (1/21쪽)") */
+function coPagerHtml(info){
+  if(info.pages <= 1) return '';
+  const btn = (label, pg, dis) => `<button ${dis?'disabled':''}
+    ${dis?'':`onclick="coGoPage(${pg})"`}>${label}</button>`;
+  return `<div class="copager">
+    ${btn('◀ 이전', info.page-1, info.page===0)}
+    <span>${info.from.toLocaleString()}–${info.to.toLocaleString()} / ${info.total.toLocaleString()}곳
+      &nbsp;(${info.page+1}/${info.pages}쪽)</span>
+    ${btn('다음 ▶', info.page+1, info.page>=info.pages-1)}
+  </div>`;
 }
 
 /* 열 머리를 눌러 정렬한다 — 사업자 표와 같은 손놀림.
@@ -10465,6 +10569,7 @@ function coSortBy(key){
   state.coSort = (s.key===key)
     ? { key:key, dir: s.dir==='asc' ? 'desc' : 'asc' }
     : { key:key, dir: (key==='cards'||key==='docs') ? 'desc' : 'asc' };  /* 숫자는 많은 것부터가 쓸모 있다 */
+  state.coPage=0;                                   /* 차례가 바뀌었으니 첫 쪽부터 다시 본다 */
   closePcDetail(); renderCoPage();
 }
 const coArrow = k => (state.coSort && state.coSort.key===k) ? (state.coSort.dir==='desc'?' ▾':' ▴') : '';
@@ -10496,6 +10601,7 @@ function openCoColFilter(ev, field){
 function coApplyColFilter(field, value){
   state.coColFilter = state.coColFilter || {};
   if(value) state.coColFilter[field]=value; else delete state.coColFilter[field];
+  state.coPage=0;
   closePcDetail(); renderCoPage();
 }
 
@@ -10506,7 +10612,9 @@ function renderCoPage(){
   /* ⚠ 거르는 차례는 coVisible() 한 곳에만 둔다 — 예전엔 여기서 따로 거르고 있어
      정렬(coSorted)을 coVisible 안에만 붙였더니 이 화면에는 안 먹혔다.
      두 곳에서 같은 일을 하면 한쪽만 고쳤을 때 이렇게 어긋난다. */
-  const list = coVisible();
+  /* ⚠ 여기서 coVisible() 을 또 부르지 않는다 — coPage() 안에서 부르고 그 결과를 잘라 준다.
+     자르는 곳이 둘이면 「전체 고르기」가 화면에 없는 회사까지 고르는 일이 다시 생긴다. */
+  const info = coPage();
   const erpN = all.filter(o=>o.erp).length;
   /* 사업 탭 — 서식을 보낼수록 저절로 늘어난다. 손으로 만들 필요가 없다. */
   const tabs = `<div class="cotabs">
@@ -10523,30 +10631,44 @@ function renderCoPage(){
   /* 찾기 칸은 화면 맨 위 것 하나만 쓴다 — 같은 일을 하는 칸이 둘이면 어느 쪽에
      쳐야 하는지 헷갈리고, 한쪽에 남은 글자가 다른 쪽 결과를 조용히 거른다. */
   syncPcSearchFor('co');
-  el.innerHTML = `<div class="setwrap">${coListHtml(list)}</div>`;
+  el.innerHTML = `<div class="setwrap">${coListHtml(info)}</div>`;
 }
 /* 명함첩 목록과 같은 결로 — 한 줄에 한 회사, 왼쪽에 네모와 번호.
    회사가 수백 곳이면 「몇 번째까지 봤더라」를 번호로 짚고, 골라서 한꺼번에 다루려면
    네모가 있어야 한다(대표 지시 2026-08-13). */
-function coListHtml(list){
-  if(!list.length) return `<div class="cpnone" style="padding:20px 2px">회사를 찾지 못했습니다</div>`;
+function coListHtml(info){
+  const list = info.rows;
+  if(!info.total) return `<div class="cpnone" style="padding:20px 2px">회사를 찾지 못했습니다</div>`;
   const allOn = list.length>0 && list.every(o=>state.coSel[o.key]);
   const nSel = Object.keys(state.coSel).length;
+  /* 이 쪽을 다 골랐는데 찾은 결과가 더 있으면 막대 안에서 알려 준다 — 명함 표와 같은 규칙.
+     이 안내가 없으면 200곳만 옮겨진 것을 모른 채 「다 옮겼다」고 여기게 된다. */
+  const moreBtn = (allOn && info.total > list.length && nSel < info.total)
+    ? `<button class="comore" onclick="coSelAllMatching()"
+         title="지금 조건에 맞는 회사를 모두 고릅니다">→ ${info.total.toLocaleString()}곳 모두</button>` : '';
   const selbar = nSel ? `<div class="coselbar">
-      <b>${nSel}곳 선택</b>
+      <b>${nSel}곳 선택</b>${moreBtn}
       <button onclick="coMoveToFolder()">📁 폴더로 옮기기</button>
       <button onclick="coAssignTag()">🏷 탭에 담기</button>
-      <button onclick="state.coSel={};renderCoPage()">선택 해제</button>
+      <button onclick="state.coSel={};renderCoAny()">선택 해제</button>
     </div>` : '';
+  /* 몇 개씩 볼지 + 지금 몇 번째를 보는지 — 표 바로 위 한 줄.
+     기업 상세 화면에서는 명함 표의 머리줄(#pcHead)이 통째로 숨겨지므로
+     #pcPageSize 를 같이 쓸 수 없다. 같은 모양을 여기에 따로 둔다. */
+  const topbar = `<div class="copgbar">
+    <span class="cnt">모두 <b>${info.total.toLocaleString()}</b>곳${
+      info.pages>1 ? ` · 지금 <b>${info.from.toLocaleString()}–${info.to.toLocaleString()}</b>번째` : ''}</span>
+    <span class="sp"></span>${coSizeSelHtml(info.size)}
+  </div>`;
   /* ⚠ 마지막에 **남는 폭을 먹는 빈 칸**을 둔다. 없으면 상호 칸이 남은 폭을 다 먹어
      사업자번호·가진 것·담당이 화면 오른쪽 끝까지 밀려난다 — 눈이 좌우로 멀리 오간다
      (대표 화면 2026-08-13). 유형(자문·급여…)도 상호 옆에 붙이지 않고 제 칸을 준다. */
-  return `${selbar}<table class="cotbl">
+  return `${selbar}${topbar}<table class="cotbl">
     <colgroup><col style="width:34px"><col style="width:46px"><col style="width:300px">
       <col style="width:76px"><col style="width:132px"><col style="width:170px">
       <col style="width:110px"><col></colgroup>
     <thead><tr>
-      <th><input type="checkbox" ${allOn?'checked':''} onchange="coSelAll(this.checked)" title="이 목록 전체 고르기"></th>
+      <th><input type="checkbox" ${allOn?'checked':''} onchange="coSelAll(this.checked)" title="이 쪽에 보이는 ${list.length}곳을 모두 고르거나 풉니다"></th>
       <th class="num">#</th>
       <th class="cosort" onclick="coSortBy('name')" title="상호로 정렬">상호${coArrow('name')}</th>
       <th class="cosort" onclick="coSortBy('type')" title="자문·급여 유형으로 정렬">유형${coArrow('type')}<span class="cofunnel ${state.coColFilter.type?'on':''}" onclick="event.stopPropagation();openCoColFilter(event,'type')" title="유형으로 거르기">▽</span></th>
@@ -10577,7 +10699,7 @@ function coListHtml(list){
     return `<tr class="corow" onclick="pickCo('${kJs}')">
       <td onclick="event.stopPropagation()"><input type="checkbox" ${state.coSel[o.key]?'checked':''}
         onchange="coToggle('${kJs}')"></td>
-      <td class="num">${i+1}</td>
+      <td class="num">${info.from + i}</td>
       <td class="conm"><span class="nm">${esc(o.name)}</span>
         ${coTagsOf(o).map(x=>`<span class="tg">${esc(x)}</span>`).join('')}</td>
       <td>${t?`<span class="ty">${esc(t)}</span>`:''}</td>
@@ -10589,7 +10711,7 @@ function coListHtml(list){
       <td class="mgr">${o.erp&&o.erp.main?esc(o.erp.main):''}</td>
       <td></td>
     </tr>`;
-  }).join('')}</tbody></table>`;
+  }).join('')}</tbody></table>${coPagerHtml(info)}`;
 }
 /* 이 회사 값이 어느 서류에서 왔는지 — 사진첩에서 보낼 때 남긴 기록.
    「이 숫자 어디서 봤더라」에 답하려면 출처가 보여야 한다.
@@ -10706,10 +10828,19 @@ async function coApplyTag(raw){
   toast(`${keys.length}곳에 「${tag}」 탭을 붙였습니다`);
   renderCoAny();
 }
+/* 표 머리의 네모 — **지금 쪽만** 고른다(명함 표와 같은 규칙).
+   200곳만 보이는데 4,138곳이 조용히 골라지면, 「폴더로 옮기기」를 눌렀을 때
+   화면에 없던 회사까지 함께 움직인다. 전부 다뤄야 할 때는 막대의
+   「→ 4,138곳 모두」를 누르면 된다(coSelAllMatching). */
 function coSelAll(on){
-  const list = coVisible();
-  state.coSel = {};
-  if(on) list.forEach(o=>{ state.coSel[o.key]=1; });
+  const rows = coPage().rows;
+  if(on) rows.forEach(o=>{ state.coSel[o.key]=1; });
+  else   rows.forEach(o=>{ delete state.coSel[o.key]; });
+  renderCoAny();
+}
+/* 지금 걸린 조건에 맞는 회사 전부 — 쪽을 넘겨 가며 고르지 않아도 되게 */
+function coSelAllMatching(){
+  coVisible().forEach(o=>{ state.coSel[o.key]=1; });
   renderCoAny();
 }
 /* 회사 상세 — 오른쪽 팝업(#pcDetail, 명함 상세와 같은 패널) 안에 넣을 내용만 만든다.
@@ -10773,7 +10904,7 @@ function filterErpMgr(name){
    (같은 일을 하는 칸이 둘이면 어느 쪽에 쳐야 하는지 헷갈린다, 대표 지시 2026-08-13
    기업정보 화면의 원칙과 동일). 기업 상세 화면일 때만 coQ 를 채워 coVisible() 이 읽게 한다. */
 function onMobileSearchInput(v){
-  if(state.view==='co') state.coQ = v;
+  if(state.view==='co'){ state.coQ = v; state.coPage=0; }
   render();
 }
 /* 기업 상세는 PC(표)·폰(카드 목록) 두 갈래로 그려진다. 저장 후 다시 그릴 때
@@ -10793,7 +10924,9 @@ function renderCoAny(){
    두 벌로 두면 한쪽만 고쳤을 때 어긋난다(기업정보 폴더 설계서의 교훈과 같다). */
 function renderCoMobileList(){
   const el = $('list'); if(!el) return;
-  const list = coVisible();
+  /* 폰도 잘라 그린다 — 손안의 기기가 4,138줄에 더 약하다 */
+  const info = coPage();
+  const list = info.rows;
   const nSel = Object.keys(state.coSel).length;
   const selbar = (state.selMode && nSel) ? `<div class="coselbar">
       <b>${nSel}곳 선택</b>
@@ -10810,9 +10943,10 @@ function renderCoMobileList(){
       : state.coTag ? state.coTag
       : state.coFolder ? ((_coFolders[state.coFolder]||{}).name || '전체')
       : '전체';
-    groupBtn.innerHTML = `${esc(label)} (${list.length.toLocaleString()}) <span class="v">▼</span>`;
+    /* 개수는 **찾은 전체**다 — 지금 쪽 수(200)를 적으면 회사가 200곳뿐인 줄 안다 */
+    groupBtn.innerHTML = `${esc(label)} (${info.total.toLocaleString()}) <span class="v">▼</span>`;
   }
-  if(!list.length){
+  if(!info.total){
     el.innerHTML = `<div class="empty">회사를 찾지 못했습니다.</div>`;
     return;
   }
@@ -10833,7 +10967,7 @@ function renderCoMobileList(){
         ${badges?`<div class="l2">${badges}</div>`:''}
       </div>
     </div>`;
-  }).join('');
+  }).join('') + coPagerHtml(info);
 }
 
 /* 화면 분기: PC면 관리자 UI, 폰이면 리멤버식 UI */
@@ -11139,7 +11273,7 @@ function closePrivateVault(){
 function onPcSearchInput(v){
   /* ⚠ 기업정보에서 친 글자를 명함첩 찾기칸(#search)에 옮기면 안 된다 — 회사 이름을
      친 채 명함으로 나가면 명함 목록이 그 글자로 조용히 걸러진 채 보인다(실제로 그랬다). */
-  if(state.view === 'co'){ state.coQ = v; closePcDetail(); _syncSearchX(); renderCoPage(); return; }
+  if(state.view === 'co'){ state.coQ = v; state.coPage=0; closePcDetail(); _syncSearchX(); renderCoPage(); return; }
   const s = $('search'); if(s) s.value = v;
   state.page = 0; state.view = 'list';
   _syncSearchX();
@@ -11147,7 +11281,7 @@ function onPcSearchInput(v){
 }
 function clearPcSearch(){
   const p = $('pcSearch'); if(p) p.value = '';
-  if(state.view === 'co'){ state.coQ=''; closePcDetail(); _syncSearchX(); renderCoPage(); if(p) p.focus(); return; }
+  if(state.view === 'co'){ state.coQ=''; state.coPage=0; closePcDetail(); _syncSearchX(); renderCoPage(); if(p) p.focus(); return; }
   const s = $('search');   if(s) s.value = '';
   state.page = 0; state.view = 'list';
   _syncSearchX();

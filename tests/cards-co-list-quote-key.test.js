@@ -40,9 +40,13 @@ function run(list, sel){
     'function coMgrCell(){ return \'\'; }'
   ].join('\n').replace('SEL', JSON.stringify(sel || {})), ctx);
   // 검사 대상 함수만 떼어 온다
-  vm.runInContext(src.slice(src.indexOf('function coListHtml(list){'),
-                            src.indexOf('function coSelAll(')), ctx);
-  return ctx.coListHtml(list);
+  /* 나눠 보기가 붙은 뒤로 coListHtml 은 «잘린 쪽»을 받는다(2026-08-15).
+     여기서 볼 것은 열쇠 이스케이프뿐이라 한 쪽에 다 담아 넘긴다. */
+  vm.runInContext("function coSizeSelHtml(){return ''} function coPagerHtml(){return ''}", ctx);
+  vm.runInContext(src.slice(src.indexOf('function coListHtml(info){'),
+                            src.indexOf('function coDocsHtml(')), ctx);
+  return ctx.coListHtml({ rows:list, total:list.length, page:0, pages:1, size:200,
+                          from:list.length?1:0, to:list.length });
 }
 
 /* 사업자번호가 없어 이름으로 열쇠를 만든 회사 — 이름에 작은따옴표가 있다 */
@@ -107,7 +111,7 @@ t('★ 줄의 체크가 켜져 있다', /<input type="checkbox" checked[\s\S]{0,
 t('머리의 「전체 고르기」와 헷갈리지 않았다', body.indexOf('coSelAll') < 0, true);
 
 console.log('\n[⑥ 순서가 맞다 — 먼저 역슬래시, 그 다음 esc]');
-const BLK = src.slice(src.indexOf('function coListHtml(list){'), src.indexOf('function coSelAll('));
+const BLK = src.slice(src.indexOf('function coListHtml(info){'), src.indexOf('function coDocsHtml('));
 t('★ 이 파일의 다른 곳과 같은 방식', /esc\(String\(o\.key\)\.replace\(\/'\/g,"\\\\'"\)\)/.test(BLK), true);
 t('★ 뒤집힌 죽은 코드가 아니다 (esc 뒤에 바꾸면 아무것도 안 걸린다)',
   /esc\(o\.key\)\.replace\(\/'\/g/.test(BLK), false);
