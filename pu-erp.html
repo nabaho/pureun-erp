@@ -64173,15 +64173,81 @@ function LeaveOfAbsenceTab(){
 // ⚠ 빈 배열로 남기지 않고 통째로 없앤다 — 남겨 두면 「엑셀 대장 불러오기」가
 //    빈 배열을 persist 해 **서버 연차대장을 지운다**(2026-07 실데이터 사고 경로).
 
+/* ── 연차대장 행에 열쇠(id) 붙이기 ──────────────────────────────
+   dbSet 은 «모든 항목에 id 가 있는 배열»만 트랜잭션으로 병합한다. 연차대장 행은
+   {이름, 연도, …} 라 id 가 없어서 병합을 못 타고 통째로 덮어쓰는 길로 빠졌다 —
+   둘이 동시에 고치면 나중 사람이 앞사람 것을 덮거나(되돌림방지가 잡으면) 자기 것을 잃었다.
+
+   자연스러운 열쇠는 «이름+연도» 다.
+   ⚠ 그런데 같은 사람·같은 해 행이 둘일 수도 있다(옛 자료·이관 중복). 그때 같은 id 를
+     주면 dbSet 의 중복제거가 «한 줄을 지운다» — 자료가 사라진다.
+     그래서 나온 순서대로 #2, #3 을 붙인다. 순서는 저장된 배열 그대로라 기기마다 같다. */
+function leaveLedgerWithIds(rows){
+  if(!Array.isArray(rows)) return { rows:[], changed:0, dup:0 };
+  var seen = {}, changed = 0, dup = 0;
+  var out = rows.map(function(r){
+    if(!r || typeof r !== 'object') return r;
+    var base = 'll-' + String(r.name==null?'':r.name) + '|' + String(r.year==null?'':r.year);
+    var n = seen[base] || 0; seen[base] = n + 1;
+    if(n) dup++;                                   // 같은 사람·같은 해가 또 나왔다
+    var id = n ? (base + '#' + (n+1)) : base;
+    if(r.id === id) return r;
+    changed++;
+    return Object.assign({}, r, { id:id });
+  });
+  return { rows:out, changed:changed, dup:dup };
+}
+
 function LeaveLedgerTab(){
-  var s = useState(dbGet('leave_ledger', [])); var ledger = s[0]; var setLedger = s[1];
-  function persist(next){ setLedger(next); dbSet('leave_ledger', next); }
+  var s = useState(function(){ return leaveLedgerWithIds(dbGet('leave_ledger', [])).rows; });
+  var ledger = s[0]; var setLedger = s[1];
+  /* 열려 있는 동안 다른 사람이 고치면 화면이 낡는다. 낡은 대장을 통째로 되쓰면
+     그 사람 변경이 지워지므로, 서버 변경 알림을 받아 다시 읽는다.
+     ⚠ 지금 고치고 있는 중이면 덮지 않는다 — 치던 숫자가 사라지면 더 나쁘다. */
+  var _editing = useRef(false);
+  useEffect(function(){
+    function onChange(e){
+      var k = e && e.detail;
+      if(k !== 'leave_ledger' && k !== 'batch') return;
+      if(_editing.current) return;
+      setLedger(leaveLedgerWithIds(dbGet('leave_ledger', [])).rows);
+    }
+    window.addEventListener('fb_data_changed', onChange);
+    return function(){ window.removeEventListener('fb_data_changed', onChange); };
+  }, []);
+  /* 한 번만: id 가 없던 행에 id 를 붙여 저장한다. 이걸 해 둬야 그 뒤부터 병합이 된다.
+     ⚠ 빈 대장일 때는 저장하지 않는다 — 빈 배열을 서버로 올리면 대장을 지운다
+       (2026-07 사고 경로. dbSet 의 0건 가드가 또 막지만, 여기서도 막는다). */
+  useEffect(function(){
+    var cur = dbGet('leave_ledger', []);
+    if(!Array.isArray(cur) || !cur.length) return;
+    var r = leaveLedgerWithIds(cur);
+    if(!r.changed) return;
+    dbSet('leave_ledger', r.rows);
+    if(r.dup) showToast('⚠ 연차대장에 같은 사람·같은 해 행이 '+r.dup+'건 겹쳐 있습니다 — 지우지 않고 그대로 두었습니다');
+  }, []);
+  function persist(next){
+    setLedger(next);
+    /* 저장 직전에 최신을 다시 읽어 «내가 고친 행만» 얹는다. 화면이 들고 있던 낡은
+       배열을 통째로 되쓰면 그 사이 남이 넣은 행이 사라진다. */
+    var cur = leaveLedgerWithIds(dbGet('leave_ledger', [])).rows;
+    var byId = {}; next.forEach(function(r){ if(r && r.id) byId[r.id] = r; });
+    var merged = cur.map(function(r){ return (r && r.id && byId[r.id]) ? byId[r.id] : r; });
+    var have = {}; merged.forEach(function(r){ if(r && r.id) have[r.id] = 1; });
+    next.forEach(function(r){ if(r && r.id && !have[r.id]) merged.push(r); });   // 내가 새로 만든 행
+    dbSet('leave_ledger', merged);
+  }
   /* security: 「엑셀 대장 불러오기」(importSeed)를 없앴다.
      실명 연차대장이 코드에 박혀 있어 지웠고, 시드만 비우고 이 함수를 남기면
      빈 배열을 persist 해 **서버 연차대장을 지운다**(2026-07 실데이터 사고 경로).
      대장은 이미 Firebase 에 들어가 있는 1회성 이관이라 없애도 손실이 없다. */
-  function updField(name, year, field, value){
-    persist(ledger.map(function(r){ if(r.name===name && r.year===year){ var c=Object.assign({},r); c[field]=value; return c; } return r; }));
+  /* ⚠ 전에는 이름·연도로 찾아 고쳤다. 같은 사람·같은 해 행이 둘이면 «둘 다» 바뀐다 —
+     한 줄만 고치려다 옆줄까지 같이 바뀐다. 이제 id 로 그 줄만 짚는다. */
+  function updField(id, field, value){
+    persist(ledger.map(function(r){
+      if(r && r.id === id){ var c=Object.assign({},r); c[field]=value; return c; }
+      return r;
+    }));
   }
   var years = ledger.reduce(function(acc,r){ if(acc.indexOf(r.year)<0) acc.push(r.year); return acc; }, []).sort(function(a,b){ return b-a; });
   var th = {padding:'5px 8px',background:'#f8fafc',color:'#475569',fontWeight:700,fontSize:'11px',textAlign:'left',borderBottom:'2px solid #e2e8f0',whiteSpace:'nowrap'};
@@ -64189,8 +64255,10 @@ function LeaveLedgerTab(){
   var inS = {width:'100%',padding:'2px 4px',border:'1px solid transparent',borderRadius:'4px',fontSize:'11.5px',textAlign:'right',fontFamily:'monospace',background:'transparent',boxSizing:'border-box'};
   function numInput(r, field){
     return h('input',{type:'text', value:(r[field]==null?'':r[field]),
-      onFocus:function(e){ try{ e.target.select(); }catch(_){} },
-      onChange:function(e){ var v=(e.target.value||'').trim(); updField(r.name,r.year,field, v===''?null:(isNaN(Number(v))?v:Number(v))); },
+      // 치는 동안에는 서버 변경으로 화면을 갈아끼우지 않는다 — 치던 숫자가 사라지면 더 나쁘다
+      onFocus:function(e){ _editing.current = true; try{ e.target.select(); }catch(_){} },
+      onBlur:function(){ _editing.current = false; },
+      onChange:function(e){ var v=(e.target.value||'').trim(); updField(r.id, field, v===''?null:(isNaN(Number(v))?v:Number(v))); },
       style:inS});
   }
   return h('div',null,
@@ -64225,8 +64293,9 @@ function LeaveLedgerTab(){
                     h('td',{style:Object.assign({},td,{fontSize:'10.5px',color:'#64748b',whiteSpace:'normal'})}, r.monthly||'-'),
                     h('td',{style:Object.assign({},td,{padding:'2px 4px'})},
                       h('input',{type:'text',value:(r.note||''),
-                        onFocus:function(e){ try{ e.target.select(); }catch(_){} },
-                        onChange:function(e){ updField(r.name,r.year,'note', e.target.value); },
+                        onFocus:function(e){ _editing.current = true; try{ e.target.select(); }catch(_){} },
+                        onBlur:function(){ _editing.current = false; },
+                        onChange:function(e){ updField(r.id,'note', e.target.value); },
                         style:Object.assign({},inS,{textAlign:'left'})}))
                   );
                 }))
