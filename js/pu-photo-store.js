@@ -643,11 +643,41 @@
     return deps.db.ref().update(u).then(function () { return String(year); });
   }
 
-  /* ── 돌린 사진 저장 ──
-     사진과 미리보기를 **같이** 바꾼다. 하나만 바꾸면 목록과 크게 보기가 서로 다르게 보인다. */
+  /* ── 돌린 사진 저장 · 본문 다시 올리기 ──
+     사진과 미리보기를 **같이** 바꾼다. 하나만 바꾸면 목록과 크게 보기가 서로 다르게 보인다.
+     돌리기(rotateOne)와 "본문이 없는 사진에 새로 올리기"(2026-08-15, showNoBody) 둘 다 이 함수를 쓴다.
+
+     ⚠ 창고 방식(mode==='storage')이면 savePhoto 와 같은 순서를 지킨다 — 올리고
+       → 되읽어 확인하고 → 그제야 정보에 loc:'storage' 를 적고 실시간DB 옛 자리를
+       비운다. 확인 전에 정보를 고치면, 못 올라간 사진인데 "창고에 있다"고
+       거짓 표시가 남아 다음에 읽을 때 빈손이 된다.
+     ⚠ 창고 올리기가 실패하면 실시간DB로 물러난다(savePhoto 와 같은 이유 —
+       "사진을 잃는 것보다 낫다"). */
   function replaceImage(year, id, full, thumb, owner) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     if (!full || !thumb) return Promise.reject(new Error('바꿀 사진이 없습니다'));
+    if (mode === 'storage' && deps.storage) {
+      var fp = filePath(year, id, 'full', owner);
+      return putToBucket(fp, full)
+        .then(function () { return putToBucket(filePath(year, id, 'thumb', owner), thumb); })
+        .then(function () { return fetchFromBucket(fp); })
+        .then(function (back) {
+          if (!back) throw new Error('올린 사진을 다시 확인하지 못했습니다');
+          var u = {};
+          u[metaPath(year, id, owner) + '/loc'] = 'storage';
+          u[blobPath(year, id, owner)] = null;
+          u[thumbPath(year, id, owner)] = null;
+          return deps.db.ref().update(u);
+        })
+        .catch(function (e) {
+          console.warn('[사진첩] 본문 다시 올리기 — 창고 실패, 실시간DB로 보관합니다', e && e.message);
+          return replaceImageRtdb(year, id, full, thumb, owner);
+        });
+    }
+    return replaceImageRtdb(year, id, full, thumb, owner);
+  }
+
+  function replaceImageRtdb(year, id, full, thumb, owner) {
     var u = {};
     u[blobPath(year, id, owner)] = full;
     u[thumbPath(year, id, owner)] = thumb;

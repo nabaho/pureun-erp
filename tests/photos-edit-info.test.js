@@ -116,11 +116,13 @@ test('안 넘긴 칸은 건드리지 않는다', async () => {
   assert.deepEqual(Object.keys(wrote[0]), ['m/p1/note'], '업체를 안 넘겼는데 지우면 안 됩니다.');
 });
 
-/* ── 돌리기 ── */
-test('★ 사진과 미리보기를 함께 바꾼다', async () => {
+/* ── 돌리기 · 본문 다시 올리기 ── */
+test('★ 사진과 미리보기를 함께 바꾼다 (실시간DB 방식)', async () => {
   const wrote = [];
   const ctx = { Promise, blobPath: (y, id) => 'b/' + id, thumbPath: (y, id) => 't/' + id,
+    mode: 'rtdb', // ★ storage 분기를 안 타야 이 검사가 예전처럼 실시간DB만 본다
     deps: { db: { ref: () => ({ update: (u) => { wrote.push(u); return Promise.resolve(); } }) } } };
+  ctx.replaceImageRtdb = fnFrom(store, 'replaceImageRtdb', ctx, '  ');
   const replaceImage = fnFrom(store, 'replaceImage', ctx, '  ');
   await replaceImage('2026', 'p1', 'F2', 'T2');
   /* vm 안에서 만든 객체는 프로토타입이 달라 그냥은 안 맞는다 — 값만 본다 */
