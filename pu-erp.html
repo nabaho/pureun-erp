@@ -8145,13 +8145,32 @@ function fbInitialSync(_isRetry){
     var remote = snap.val() || {};
     var keys = Object.keys(remote);
     var pulled = 0;
-    keys.forEach(function(k){
-      // 통일된 공용 적용기 사용 — 급감차단 게이트를 통과(deferGate: 대량 급감은 보류 큐로 모아 완료 후 일괄)
-      //   + 자가치유(selfHeal) 포함. 게이트로 보류된 급감 키는 pulled에서 제외(아직 미적용).
-      if(_fbApplyRecord(k, remote[k], { selfHeal:true, deferGate:true })) pulled++;
+    /* ⚠ 전에는 열두 열쇠(4MB 가까이)를 «쉼 없이» 한 번에 적용했다. 그 동안 화면이 통째로
+       멈춘다 — 대표 콘솔의 「🐢 화면 멈춤 581ms」가 화면 그리기도 타이머도 아니었던 까닭이
+       여기다(둘 다 이름표를 붙여 뒀는데 아무것도 안 걸렸다).
+       한 프레임(16ms)을 넘기면 숨을 돌려 브라우저가 그림을 그리게 한다.
+       #92 에서 입금추천 계산에 쓴 것과 같은 방식이다.
+       ⚠ 열쇠 «하나»가 16ms 를 넘는 것은 여기서 못 쪼갠다 — 그건 이름표가 이름을 알려 준다.
+       ⚠ 다 끝난 뒤에 promise 를 풀어야 뒤따르는 _drainShrinkQueue·_fbSynced 차례가 지켜진다. */
+    return new Promise(function(done){
+      var _now = (window.performance && performance.now)
+        ? function(){ return performance.now(); } : function(){ return Date.now(); };
+      var i = 0;
+      function step(){
+        var t0 = _now();
+        while(i < keys.length){
+          var k = keys[i++];
+          // 통일된 공용 적용기 사용 — 급감차단 게이트를 통과(deferGate: 대량 급감은 보류 큐로 모아 완료 후 일괄)
+          //   + 자가치유(selfHeal) 포함. 게이트로 보류된 급감 키는 pulled에서 제외(아직 미적용).
+          if(_fbApplyRecord(k, remote[k], { selfHeal:true, deferGate:true })) pulled++;
+          if(_now() - t0 >= 16) break;         // 한 프레임 넘겼으면 여기까지
+        }
+        if(i < keys.length){ setTimeout(step, 0); return; }
+        if(pulled > 0) console.log('[Firebase] 초기 동기화: '+pulled+'개 항목 적용');
+        done(pulled);
+      }
+      step();
     });
-    if(pulled > 0) console.log('[Firebase] 초기 동기화: '+pulled+'개 항목 적용');
-    return pulled;
   }).catch(function(e){ var _im = (e && (e.message||e.code||''))+''; if(/permission|PERMISSION_DENIED/i.test(_im) && !_isRetry && typeof firebase!=='undefined' && firebase.auth && firebase.auth().currentUser){ console.warn('[Firebase] 첫 읽기 권한오류 — 토큰 갱신 후 재시도'); return firebase.auth().currentUser.getIdToken(true).catch(function(){}).then(function(){ return new Promise(function(res){ setTimeout(res, 700); }); }).then(function(){ return fbInitialSync(true); }); } console.warn('[Firebase] 초기 동기화 실패:', _im); if(/permission|PERMISSION_DENIED/i.test(_im)){ if(typeof firebase!=='undefined' && firebase.auth && firebase.auth().currentUser){ console.warn('[Firebase] 통째 읽기 거부(권한 제한) — 키별 동기화 폴백'); if(!FB_APPCHECK_ON) console.error('[App Check] 콘솔에서 App Check 강제를 켜셨다면 pu-erp.html 의 FB_APPCHECK_ON 을 true 로 되돌려야 합니다 — 그러지 않으면 모든 읽기·쓰기가 막힙니다'); return _fbInitialSyncPerKey(); } window._reloginNotice = '🔒 서버 인증이 만료되어 다시 로그인이 필요합니다.'; try { window.dispatchEvent(new CustomEvent('fb_need_relogin')); } catch(_){} } return 0; })
     // 이 동기화(및 내부 키별폴백·재시도)에서 deferGate로 모아둔 급감 보류분을 완료 후 일괄 확인.
     //   모든 fbInitialSync 호출부(로그인·복귀재동기화·수동새로고침)를 한 곳에서 커버한다.
