@@ -1651,7 +1651,7 @@ test('★ purgeOldTrash — 30일 지난 창고 사진의 본문을 함께 지�
 
 test('saveRead — 사진 정보 아래 판독 칸만 쓴다 (사진·정보를 건드리지 않는다)', async () => {
   const S = loadStore();
-  const db = fakeDb();
+  const db = fakeDb({ takenAt: 1 });   // 사진 정보가 있어야 판독 결과를 쓴다
   S.init({ uid: 'U1', db });
   await S.saveRead('2026', 'p1', { kind: 'bizreg', auto: true });
   assert.equal(db.calls.update.length, 1);
@@ -1665,6 +1665,18 @@ test('saveRead — 실시간DB가 없으면 한국어로 거절한다', async ()
   const S = loadStore();
   S.init({ uid: 'U1' });
   await assert.rejects(() => S.saveRead('2026', 'p1', {}), /실시간DB/);
+});
+
+test('★ saveRead — 판독이 도는 사이 사진이 지워졌으면 되살리지 않는다', async () => {
+  // 실데이터에서 read 한 칸만 있고 사진·정보는 아무것도 없는 유령 항목을
+  // 여러 건 찾았다(2026-08-15) — 판독(AI 호출)이 몇 초 걸리는 동안 사람이
+  // 지운 사진에 뒤늦게 판독 결과가 부분 경로로 쓰이며 자리를 새로 만든 것이다.
+  const S = loadStore();
+  const db = fakeDb();   // 기본값(undefined) → once() 가 null 을 돌려준다 = 지워짐
+  S.init({ uid: 'U1', db });
+  await S.saveRead('2026', 'p1', { kind: 'card', auto: true });
+  assert.equal(db.calls.update.length, 0,
+    '★ 지워진 사진 자리에 read 만 새로 쓰면 유령 항목이 생깁니다.');
 });
 
 /* ══════ 지우기 실패 (2026-08-06 대표 보고: "자꾸 에러 난다") ══════
@@ -1955,7 +1967,7 @@ test('통과했을 때는 요금제 문구가 끼어들지 않는다', () => {
 
 test('saveRead — 주인을 넘기면 그 사람 자리에 쓴다', async () => {
   const S = loadStore();
-  const db = fakeDb();
+  const db = fakeDb({ takenAt: 1 });
   S.init({ uid: 'U1', db });
   await S.saveRead('2026', 'p1', { kind: 'card', auto: true }, 'U9');
   const u = db.calls.update[0].u;
@@ -1965,7 +1977,7 @@ test('saveRead — 주인을 넘기면 그 사람 자리에 쓴다', async () =>
 
 test('saveRead — 주인을 안 넘기면 예전처럼 내 자리 (기존 흐름 그대로)', async () => {
   const S = loadStore();
-  const db = fakeDb();
+  const db = fakeDb({ takenAt: 1 });
   S.init({ uid: 'U1', db });
   await S.saveRead('2026', 'p1', { kind: 'card' });
   assert.deepEqual(Object.keys(db.calls.update[0].u), ['puphotos/u/U1/items/2026/p1/read']);
