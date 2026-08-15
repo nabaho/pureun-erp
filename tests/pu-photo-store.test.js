@@ -614,6 +614,79 @@ test('★ savePhoto — 축소본은 올렸는데 미리보기가 실패해도 �
   })();
 });
 
+/* ── 본문 다시 올리기 · 돌리기 — 창고 방식 (2026-08-15, "원본이 없습니다" 복구) ── */
+
+test('★ replaceImage — 창고 방식은 새 본문을 올리고 확인한 뒤에야 loc·옛 실시간DB 본문을 정리한다', async () => {
+  const S = loadStore(webShims());
+  const db = mutableDb({
+    puphotos: { u: { U1: {
+      items: { 2026: { p1: { takenAt: 1 } } },
+      blobs: { 2026: { p1: 'data:old' } },
+      thumbs: { 2026: { p1: 'data:oldthumb' } }
+    } } }
+  });
+  const st = fakeStorage({});
+  S.init({ uid: 'U1', db, storage: st, mode: 'storage' });
+  await S.replaceImage('2026', 'p1', 'data:newfull', 'data:newthumb');
+  assert.ok(st.calls.some(c => c[0] === 'putString' && c[1] === 'pu_photos/u/U1/blobs/2026/p1.jpg' && c[2] === 'data:newfull'));
+  assert.ok(st.calls.some(c => c[0] === 'putString' && c[1] === 'pu_photos/u/U1/thumbs/2026/p1.jpg' && c[2] === 'data:newthumb'));
+  assert.equal(db.tree.puphotos.u.U1.items['2026'].p1.loc, 'storage',
+    '★ loc 표시가 없으면 다음에 읽을 때 실시간DB의 빈 자리를 찾습니다');
+  assert.equal(db.tree.puphotos.u.U1.blobs['2026'].p1, undefined, '옛 본문을 안 지웠습니다');
+  assert.equal(db.tree.puphotos.u.U1.thumbs['2026'].p1, undefined);
+});
+
+test('★ replaceImage — 순서는 반드시 올리기 → 확인 → 옛 본문 정리다(먼저 지우면 안 된다)', async () => {
+  const S = loadStore(webShims());
+  const db = mutableDb({
+    puphotos: { u: { U1: {
+      items: { 2026: { p1: { takenAt: 1 } } },
+      blobs: { 2026: { p1: 'data:old' } },
+      thumbs: { 2026: { p1: 'data:oldthumb' } }
+    } } }
+  });
+  const st = fakeStorage({});
+  const timeline = [];
+  const stPush = st.calls.push.bind(st.calls);
+  st.calls.push = function (c) { timeline.push('storage:' + c[0] + ':' + c[1]); return stPush(c); };
+  S.init({ uid: 'U1', db, storage: st, mode: 'storage' });
+  const dbPush = db.calls.update.push.bind(db.calls.update);
+  db.calls.update.push = function (c) {
+    const clearsBlob = Object.keys(c.u).some(function (k) { return k.indexOf('/blobs/') >= 0 && c.u[k] === null; });
+    timeline.push(clearsBlob ? 'db-clear-blob' : 'db-update');
+    return dbPush(c);
+  };
+  await S.replaceImage('2026', 'p1', 'data:newfull', 'data:newthumb');
+  const upAt = timeline.findIndex(s => s.startsWith('storage:putString:'));
+  let getAt = -1;
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    if (timeline[i].startsWith('storage:getDownloadURL:')) { getAt = i; break; }
+  }
+  const clearAt = timeline.indexOf('db-clear-blob');
+  assert.ok(upAt >= 0 && getAt >= 0 && clearAt >= 0, '★ 올리기·확인·정리 차례를 찾을 수 없습니다: ' + timeline.join(' > '));
+  assert.ok(upAt < getAt, '★ 확인하기 전에 이미 올렸어야 합니다(차례가 뒤집혔습니다): ' + timeline.join(' > '));
+  assert.ok(getAt < clearAt, '★ 확인하기 전에 실시간DB 옛 본문을 지우면 안 됩니다: ' + timeline.join(' > '));
+});
+
+test('★ replaceImage — 창고 올리기가 실패하면 실시간DB에 새 본문을 담는다(사진을 잃지 않는다)', async () => {
+  const S = loadStore();
+  const db = mutableDb({
+    puphotos: { u: { U1: {
+      items: { 2026: { p1: { takenAt: 1 } } },
+      blobs: { 2026: { p1: 'data:old' } },
+      thumbs: { 2026: { p1: 'data:oldthumb' } }
+    } } }
+  });
+  const st = fakeStorage({ upload: 'fail' });
+  S.init({ uid: 'U1', db, storage: st, mode: 'storage' });
+  await S.replaceImage('2026', 'p1', 'data:newfull', 'data:newthumb');
+  assert.equal(db.tree.puphotos.u.U1.blobs['2026'].p1, 'data:newfull',
+    '★ 창고가 막혔는데 실시간DB에도 새 본문이 없으면 사진을 잃습니다');
+  assert.equal(db.tree.puphotos.u.U1.thumbs['2026'].p1, 'data:newthumb');
+  assert.equal(db.tree.puphotos.u.U1.items['2026'].p1.loc, undefined,
+    '실시간DB로 물러났으면 loc 표시를 남기면 안 됩니다 — 본문이 실시간DB에 있습니다');
+});
+
 /* ── 읽기 — 창고 먼저, 안 되면 실시간DB (2026-08-13) ── */
 
 test('★ loadFull — 창고에 있으면 창고에서 받는다', async () => {

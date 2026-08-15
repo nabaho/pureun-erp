@@ -653,6 +653,36 @@ test('설명 띠도 이름 띠와 겹치지 않는다', () => {
     '이름 띠(.who) 뒤에 설명 띠(.cap)가 오면 설명이 이름에 덮여 안 보입니다.');
 });
 
+/* ── 본문 다시 올리기 (대표 지시 2026-08-15: "원본이 없습니다" 복구) ── */
+
+test('★ 「원본이 없습니다」 안내에 다시 올리기 버튼이 있다', () => {
+  const fn = app.match(/function showNoBody\([\s\S]*?\n\}/);
+  assert.ok(fn, 'showNoBody 를 찾지 못했습니다.');
+  assert.match(fn[0], /onclick="reuploadBody\(/,
+    '안내 문구는 "사진만 다시 올려 주세요"라면서 실제로 누를 버튼이 없으면 할 수 있는 일이 없습니다.');
+});
+
+test('★ 다시 올리기는 addFiles(새 항목 만들기)가 아니라 replaceImage(있는 자리 채우기)를 쓴다', () => {
+  const fn = app.match(/async function onReuploadFile\([\s\S]*?\n\}/);
+  assert.ok(fn, 'onReuploadFile 를 찾지 못했습니다.');
+  assert.match(fn[0], /PuPhotoStore\.replaceImage\(/,
+    '새 id 로 항목을 새로 만들면 읽어 둔 내용(업체·설명·명함첩 연결)을 잃습니다.');
+  assert.doesNotMatch(fn[0], /queue\.enqueue\(/,
+    '업로드 대기열을 타면 새 항목이 만들어져 원래 자리의 정보를 못 씁니다.');
+});
+
+test('다시 올릴 때도 서류·사진 크기 기준을 그대로 따른다', () => {
+  const fn = app.match(/async function onReuploadFile\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /PuPhotoStore\.uploadSpec\(it\.meta\.kind === 'doc'\)/,
+    '서류였던 사진을 다시 올릴 때 사진 기준(더 작은 크기)으로 줄이면 글자를 못 읽습니다.');
+});
+
+test('다시 올린 뒤에는 화면 캐시도 함께 채워 다시 열어도 빈손이 안 된다', () => {
+  const fn = app.match(/async function onReuploadFile\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /it\.full = full/);
+  assert.match(fn, /it\.thumb = thumb/);
+});
+
 /* ── 확인 필요 모아보기 · 여러 장 판독 ── */
 
 test('다시 판독해도 검증 통과분은 자동으로 명함첩에 간다', () => {

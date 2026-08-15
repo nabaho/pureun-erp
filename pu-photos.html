@@ -998,6 +998,10 @@ button{font-family:inherit;cursor:pointer}
       <button class="sec doc" id="collectBtn" onclick="startCollect()">📑 한 문서로 모으기</button>
     </div>
     <input type="file" id="docInput" accept="image/*,application/pdf" multiple hidden>
+    <!-- 본문 다시 올리기(2026-08-15) — 원본이 없는 사진에서만 쓴다. docInput 과
+         따로 두는 이유: docInput 은 여러 장·PDF 를 받아 새 항목을 만드는 자리라,
+         "이 자리에 사진 한 장만 채워 넣기"와 흐름이 다르다. -->
+    <input type="file" id="reuploadInput" accept="image/*" hidden onchange="onReuploadFile(this.files)">
 
     <!-- ⚠ 「보기」 제목 줄을 뺐다(대표 지시 2026-08-10 "대시보드 간략하게 정리").
          아래 「누구 사진」·「내 폴더」가 이미 무엇을 보는 칸인지 말해 주므로
@@ -6850,9 +6854,54 @@ function showNoBody(it, why) {
     '<br>올리는 도중에 끊겼거나, 다른 기기에서 지워졌을 수 있습니다.' +
     '<br><b>읽어 둔 내용(왼쪽 칸)은 그대로 쓰실 수 있습니다</b> — 사진만 다시 올려 주세요.' +
     (why ? '<br><br>원인: ' + esc(why) : '') +
-    '</div></div>';
+    '</div>' +
+    (it && it.id
+      ? '<button class="wide" style="margin-top:8px" onclick="reuploadBody(\'' + esc(it.id) + '\')">📷 사진만 다시 올리기</button>'
+      : '') +
+    '</div>';
   /* 읽어 둔 값을 덮지 않고 **맨 위에** 얹는다 — 판독 결과는 여전히 쓸 물건이다 */
   el.innerHTML = box + el.innerHTML;
+}
+
+/* ══════ 본문 다시 올리기 (원본이 없는 사진, 대표 지시 2026-08-15) ══════
+   showNoBody 가 뜬 사진에서만 쓴다. **새 사진으로 통째로 바꾸는 것이 아니다** —
+   읽어 둔 내용(업체·설명·명함첩 연결 여부)은 그대로 두고 본문·미리보기만 채운다.
+   그래서 addFiles(새 항목을 만드는 길)를 안 타고, PuPhotoStore.replaceImage
+   (돌리기와 같은 함수 — 있는 자리에 본문만 새로 쓴다)를 그대로 쓴다. */
+let reuploadTarget = null;   // 다시 올릴 사진의 id — 파일 선택 창이 뜬 동안 기억해 둔다
+
+function reuploadBody(id) {
+  reuploadTarget = id;
+  $('reuploadInput').click();
+}
+
+async function onReuploadFile(files) {
+  const f = files && files[0];
+  const id = reuploadTarget;
+  reuploadTarget = null;
+  $('reuploadInput').value = '';   // 같은 파일을 또 골라도 change 가 뜨게 비워 둔다
+  if (!f || !id) return;
+  const it = gridItems.find(function (x) { return x.id === id; });
+  if (!it) { alert('사진을 찾지 못했습니다 — 화면을 새로고침한 뒤 다시 시도해 주세요.'); return; }
+  $('viewerHint').textContent = '올리는 중…';
+  try {
+    /* 크기 기준은 저장 층이 정한다 — 서류·사진 어느 쪽이었는지는 안 바뀐다. */
+    const spec = PuPhotoStore.uploadSpec(it.meta.kind === 'doc');
+    const sized = await shrinkMany(f, [
+      { maxEdge: spec.maxEdge, quality: spec.quality },
+      { maxEdge: spec.thumbEdge, quality: 0.85 }
+    ]);
+    const full = sized[0].dataUrl, thumb = sized[1].dataUrl;
+    await PuPhotoStore.replaceImage(photoYearOf(id), id, full, thumb, photoOwner(id));
+    it.full = full; it.thumb = thumb;   // 화면 캐시도 함께 — 다시 열 때 또 빈손이 안 되게
+    toast('사진을 다시 올렸습니다.');
+    if (viewerId === id) openViewer(id);   // 지금 보는 중이면 다시 그려 확인시켜 준다
+    loadGrid();
+  } catch (e) {
+    console.warn('[본문 다시 올리기]', e);
+    alert('올리지 못했습니다 — ' + ((e && e.message) || e));
+    $('viewerHint').textContent = '사진 본문을 불러오지 못했습니다 — 아래 안내를 봐 주세요';
+  }
 }
 
 function closeViewer() {
