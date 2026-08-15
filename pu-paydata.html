@@ -202,6 +202,15 @@ table.vals tr.iffy{background:#FDF6E3}
 table.vals .del{color:var(--bad);cursor:pointer;padding:2px 6px;border-radius:5px}
 .okline{background:#EAF6EE;border:1px solid #B7E4C7;color:#1E5631;border-radius:9px;padding:8px 11px;font-size:12px;margin-bottom:10px}
 .warnline{background:#FDF6E3;border:1px solid #F0D9A8;color:#7C4A03;border-radius:9px;padding:8px 11px;font-size:12px;margin-bottom:10px}
+table.grid{width:100%;border-collapse:collapse;font-size:12.5px}
+table.grid th{background:var(--paper);border-bottom:1px solid var(--line);padding:9px 8px;text-align:left;font-size:11.5px;color:var(--sub);white-space:nowrap}
+table.grid td{border-bottom:1px solid var(--line);padding:8px}
+table.grid tr:last-child td{border-bottom:none}
+table.grid td.num{text-align:right;font-variant-numeric:tabular-nums}
+table.grid td.who{font-weight:700}
+table.grid td.src{cursor:pointer;color:var(--navy);text-decoration:underline dotted;text-underline-offset:3px}
+table.grid td.src:hover{background:#F5F7FF}
+table.grid td.iffy{background:#FDF6E3}
 </style>
 </head>
 <body>
@@ -329,7 +338,7 @@ function pickBar(kind, ids, acts) {
    어느 화면인가 · 어느 사업장인가 · 어느 달인가. 자료는 여기 모아 두고 화면이 읽는다. */
 const App = {
   screen: 'sites', companyId: '', companyName: '', month: '', kind: 'attend', query: '',
-  companies: [], pending: {}, arrivals: {}, trash: null, me: null, pick: {}, myName: '',
+  companies: [], pending: {}, arrivals: {}, trash: null, values: {}, me: null, pick: {}, myName: '',
   itemsKeep: null, itemsMonth: null, itemsMonthSlot: '',
   viewerId: '', viewerUrl: '', viewerZoom: false, viewerErr: '',
   readState: { status: 'idle', rows: [], err: '' },
@@ -357,6 +366,7 @@ const App = {
     App.screen = screen;
     if (screen === 'drawer') { ensureDrawerData(); ensureFolders(); }
     if (screen === 'trash') ensureTrash();
+    if (screen === 'values') ensureValues();
     if (screen === 'deputy') { ensureDeputies(); loadDeputyScreen(); }
     App.render();
   },
@@ -369,6 +379,7 @@ const App = {
     if (App.screen === 'sites') { m.innerHTML = banner + screenSites(); }
     else if (App.screen === 'pending') { m.innerHTML = banner + screenPending(); }
     else if (App.screen === 'drawer') { m.innerHTML = banner + screenDrawer(); }
+    else if (App.screen === 'values') { m.innerHTML = banner + screenValues(); }
     else if (App.screen === 'trash') { m.innerHTML = banner + screenTrash(); }
     else if (App.screen === 'deputy') { m.innerHTML = screenDeputy(); }
     else { m.innerHTML = '<div class="card"><div class="empty">아직 만들지 않은 화면입니다.</div></div>'; }
@@ -1046,6 +1057,79 @@ window.openFolderEditor = openFolderEditor; window.cancelFolderEditor = cancelFo
 window.submitFolderEditor = submitFolderEditor; window.foldKeyDown = foldKeyDown;
 window.assignFolder = assignFolder;
 
+/* ══════ 월별 값 표 (설계서 4장) ══════
+   값은 종류를 가로지른다 — 근태에서 나온 값과 급여대장에서 나온 값이 한 표에
+   섞이므로 서랍 탭이 아니라 별도 화면이다.
+   사람이 한 줄, 항목이 가로. 바깥 급여프로그램에 넣기 좋은 모양이다. */
+function valueGridModel(valueRows) {
+  const box = valueRows || {};
+  const items = [], seenItem = {};
+  const people = [], byName = {};
+  Object.keys(box).forEach(id => {
+    const r = box[id];
+    if (!r || !r.name) return;
+    let p = byName[r.name];
+    if (!p) { p = byName[r.name] = { name: r.name, cells: {} }; people.push(p); }
+    (r.pairs || []).forEach(pr => {
+      if (!pr || !pr.item) return;
+      if (!seenItem[pr.item]) { seenItem[pr.item] = 1; items.push(pr.item); }
+      p.cells[pr.item] = { value: pr.value, sourceId: r.sourceId || '', confirmed: !!r.confirmed };
+    });
+  });
+  return { items: items, people: people };
+}
+
+function ensureValues() {
+  const slot = S.monthKey(App.month) || S.KEEP;
+  return S.listValues(slot, App.viewingUid).then(v => {
+    /* 이 사업장 것만 남긴다 — 값 칸은 그 달 전체가 한 자리에 있다. */
+    const mine = {};
+    Object.keys(v || {}).forEach(id => {
+      if (v[id] && v[id].companyId === App.companyId) mine[id] = v[id];
+    });
+    App.values = mine; App.render();
+  }).catch(e => { console.warn('[값]', e && e.code); App.values = {}; App.render(); });
+}
+
+function screenValues() {
+  const g = valueGridModel(App.values);
+  const iffy = g.people.reduce((n, p) =>
+    n + Object.keys(p.cells).filter(k => !p.cells[k].confirmed).length, 0);
+
+  let h = '<div style="margin-bottom:10px"><button class="btn" onclick="App.go(\'drawer\')">← 서랍으로</button></div>'
+    + '<h1>' + esc(App.companyName || App.companyId) + ' — ' + esc(App.month) + ' 값</h1>'
+    + '<div class="sub">근로자 ' + g.people.length + '명 · 항목 ' + g.items.length + '가지</div>';
+
+  if (!g.people.length) {
+    return h + '<div class="card"><div class="empty">아직 정리된 값이 없습니다.<br>'
+      + '서랍에서 서류를 열고 「판독하기」를 눌러 주세요.</div></div>';
+  }
+
+  if (iffy) {
+    h += '<div class="warnline" style="margin-bottom:12px">⚠ <b>확인 안 된 값이 ' + iffy
+      + '개</b> 있습니다. 노란 칸을 눌러 원본과 견주어 주세요.</div>';
+  }
+
+  h += '<div class="bar" style="display:flex;gap:8px;margin-bottom:12px">'
+    + '<button class="btn" onclick="valuesCsv()">⬇ 엑셀로 내려받기</button>'
+    + '<button class="btn" onclick="valuesCopy()">📋 표 복사</button></div>';
+
+  h += '<div class="card" style="overflow-x:auto"><table class="grid">'
+    + '<tr><th>근로자</th>' + g.items.map(i => '<th>' + esc(i) + '</th>').join('') + '</tr>';
+  g.people.forEach(p => {
+    h += '<tr><td class="who">' + esc(p.name) + '</td>'
+      + g.items.map(i => {
+        const c = p.cells[i];
+        if (!c) return '<td class="num">－</td>';
+        return '<td class="num src' + (c.confirmed ? '' : ' iffy') + '"'
+          + (c.sourceId ? ' onclick="openViewer(\'' + esc(c.sourceId) + '\')"' : '')
+          + '>' + esc(c.value) + '</td>';
+      }).join('') + '</tr>';
+  });
+  h += '</table></div>';
+  return h;
+}
+
 function screenDrawer() {
   if (!App.month) App.month = thisMonth();
   const counts = drawerCounts(App.itemsKeep, App.itemsMonth, App.companyId);
@@ -1067,10 +1151,11 @@ function screenDrawer() {
       + ' <input class="btn" style="width:110px" value="' + esc(App.month) + '"'
       + ' onchange="App.month=this.value;ensureDrawerData();App.render()"></div>';
     // 급여관리로 이 달 값 넘기기 — 재무권한·관리자에게만 보인다(4차, canHandoffPayroll).
-    if (S.canHandoffPayroll()) {
-      h += '<div style="margin-bottom:12px"><button class="btn" onclick="handoffMonth()">'
-        + '📤 이 달 값 급여관리로 넘기기</button></div>';
-    }
+    h += '<div style="display:flex;gap:8px;margin-bottom:12px">'
+      + '<button class="btn" onclick="App.go(\'values\')">📋 이 달 값 보기</button>'
+      + (S.canHandoffPayroll()
+        ? '<button class="btn" onclick="handoffMonth()">📤 급여관리에 알리기</button>' : '')
+      + '</div>';
   } else {
     h += '<div class="sub">근로계약서는 월과 상관없이 모두 보입니다.</div>';
   }
