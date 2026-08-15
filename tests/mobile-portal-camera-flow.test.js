@@ -31,14 +31,31 @@ test('폰 아래 단추 자리는 한 곳(--fab-edge/--fab-bottom)에서만 정�
      이제 모두 이 두 값에서 파생시킨다 — 백업·복구처럼 밖에 두는 것도 마찬가지다. */
   assert.match(enter, /--fab-edge:\s*\d+px;\s*--fab-bottom:\s*\d+px/);
   assert.match(enter, /#camFab\{[^}]*right:var\(--fab-edge\);bottom:var\(--fab-bottom\)/);
-  assert.match(enter, /#moreFab\{[^}]*left:var\(--fab-edge\);bottom:var\(--fab-bottom\)/);
-  assert.match(enter, /#pu-backup-admin-button\{left:calc\(var\(--fab-edge\)[^}]*bottom:var\(--fab-bottom\)!important/,
-    '백업·복구도 제 좌표(pu-backup.js)를 쓰지 말고 여기서 정해야 겹치지 않습니다');
+  assert.match(enter, /#fabBar\{[^}]*left:var\(--fab-edge\);bottom:var\(--fab-bottom\)/);
+  // 화면에 제 좌표로 떠 있는 것은 카메라와 아래 바 둘뿐이어야 한다
+  const fixed = [...enter.matchAll(/^#([\w-]+)\{[^}]*position:fixed/gm)].map((m) => m[1]);
+  const bottomFixed = fixed.filter((id) => ['camFab', 'fabBar', 'moreDock', 'cfgFab'].includes(id));
+  assert.deepEqual(new Set(bottomFixed), new Set(['camFab', 'fabBar', 'moreDock', 'cfgFab']),
+    '아래 단추는 카메라·바·⋯패널만 제 좌표를 가진다(설정은 PC 전용 좌표)');
 });
 
 test('자주 안 쓰는 설정·최신만 ⋯ 안으로 넣는다', () => {
   // 백업·복구는 자주 써서 밖에 둔다(대표 지시 2026-08-15)
   assert.match(enter, /DOCK_IDS = \['cfgFab', 'pu-version-fab'\]/);
+});
+
+test('아래 왼쪽 단추는 모두 한 줄 바에 모은다', () => {
+  /* 조건부로만 나타나는 단추 둘을 처음에 놓쳤다 —
+       pu-health.js  장애 알림  left:12px  bottom:12px  → ⋯ 와 같은 자리
+       pu-resilience.js 연결 경고 right:12px bottom:12px → 카메라와 같은 자리
+     평소엔 안 보이다가 정작 문제가 생겼을 때 겹쳐서, 제일 봐야 할 알림이 가렸다.
+     #fabBar 안에 넣으면 좌표를 잃고 옆으로 이어 붙으므로 몇 개가 늘어도 안 겹친다. */
+  assert.match(enter, /BAR_IDS = \['pu-backup-admin-button', 'pu-health-admin-badge', 'pu-resilience-badge'\]/);
+  assert.match(enter, /#fabBar\{[^}]*left:var\(--fab-edge\);bottom:var\(--fab-bottom\)/);
+  // 바 안에서는 각자 좌표를 잃어야 한다
+  assert.match(enter, /#fabBar > \*\{position:static!important/);
+  // 오른쪽 카메라 자리는 비워 둔다 — 안 그러면 바가 카메라 밑으로 파고든다
+  assert.match(enter, /#fabBar\{[^}]*max-width:calc\(100vw[^}]*\)/);
 });
 
 test('폰에서는 한 화면에 다 넣는다 — 바로가기는 헤더 안, 겹치는 제목은 숨김', () => {
