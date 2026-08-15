@@ -54,24 +54,17 @@ test('★ 카메라가 이미 꺼졌으면 손대지 않는다', () => {
    한 줄이라 지나치기 쉬웠고 흐린 채로 담겼다(대표 지시: "자동으로 화질 검색").
    이제 답할 때까지 남는 물음창(#camWarn)이다. 못 박을 것은 **재고·알리고·
    버리지 않는다**이지 알리는 모양이 아니다. */
-test('★ 흐리게 찍히면 알려 준다', () => {
+test('촬영 후 흐림 확인창으로 연속촬영을 막지 않는다', () => {
   const m = html.match(/async function camShoot\([\s\S]*?\r?\n\}/);
-  assert.ok(m, 'camShoot 을 찾지 못했습니다.');
-  assert.ok(/grabSharp\(c, cw, ch\)/.test(m[0]) && /MIN_SHARP/.test(m[0]),
-    '찍은 사진이 흐린지 아무도 안 보면, 판독이 안 될 때에야 압니다.');
-  assert.ok(/setCamWarn\(true\)/.test(m[0]), '재고서 아무 말도 안 하면 잰 보람이 없습니다.');
-  assert.ok(/흐리게 찍혔습니다/.test(html), '무엇이 잘못됐는지 말해야 고치실 수 있습니다.');
+  assert.ok(m);
+  assert.doesNotMatch(m[0], /setCamWarn|confirm\(/);
+  assert.match(html, /sharp:/);
 });
 
-test('★ 흐려도 사진을 버리지는 않는다', () => {
+test('흐림 정도와 관계없이 촬영한 사진은 연속 목록에 남는다', () => {
   const m = html.match(/async function camShoot\([\s\S]*?\r?\n\}/);
-  const i = m[0].indexOf('setCamWarn(true)');
-  const j = m[0].indexOf('camShots.push(');
-  assert.ok(i > 0 && j > 0, '두 곳을 다 찾지 못했습니다.');
-  assert.ok(j < i, '담고 나서 물어야 합니다 — 먼저 물으면 딴 데를 누르는 순간 사진이 사라집니다.');
-  /* 빼는 것은 「다시 찍기」를 사람이 골랐을 때뿐이다(camWarnRetake). 여기서 스스로 버리면 안 된다. */
-  assert.ok(!/camShots\.pop\(\)/.test(m[0]),
-    '흐리다고 스스로 버리면, 다시 갈 수 없는 자리의 사진을 잃습니다.');
+  assert.ok(m && /camShots\.push\(/.test(m[0]));
+  assert.doesNotMatch(m[0], /camShots\.pop\(\)/);
 });
 
 test('★ 「작게 찍혔다」와 겹쳐 말하지 않는다', () => {

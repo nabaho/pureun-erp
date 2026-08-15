@@ -1,0 +1,1659 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>급여데이터함 — 푸른노무법인</title>
+<link rel="manifest" href="pu-paydata-manifest.json">
+<!--
+  급여데이터함 — 급여 아웃소싱에 쓰는 근로자·임금 자료를 사업장별로 담는 앱.
+  설계서: docs/superpowers/specs/2026-08-13-급여데이터함-design.md
+  계획서: docs/superpowers/plans/2026-08-13-급여데이터함-1차.md
+
+  사진첩과 부품은 공유하고 함은 분리한다 — 보관 기간(3년)·볼 수 있는 사람·파일
+  종류가 셋 다 달라서, 같은 함에 두면 한쪽 기준이 다른 쪽을 망친다.
+
+  ⚠ 이 파일에는 실시간DB·창고 경로를 적지 않는다.
+    경로를 아는 곳은 js/pu-paydata-store.js 한 군데뿐이다(검사가 지킨다).
+-->
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-check-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js"></script>
+<script src="js/pu-resilience.js"></script>
+<script src="js/pu-health.js"></script>
+<script src="js/pu-version.js"></script>
+<script src="js/pu-paydata-store.js"></script>
+<script src="js/pu-appbar.js"></script>
+<style>
+:root{--navy:#2E3A8C;--violet:#7C6CE0;--ok:#2E7D4F;--warn:#B26A00;--bad:#C43D3D;
+--ink:#23263B;--sub:#6B6F87;--line:#E3E5EF;--paper:#F5F6FA;--card:#FFF;}
+*{box-sizing:border-box;margin:0}
+body{font-family:'Noto Sans KR','Malgun Gothic',sans-serif;background:var(--paper);color:var(--ink);font-size:14px}
+header{background:var(--navy);color:#fff;display:flex;align-items:center;gap:12px;padding:12px 18px}
+header .brand{font-weight:800;font-size:16px;cursor:pointer}
+header .who{margin-left:auto;font-size:12px;display:flex;align-items:center;gap:10px}
+header .out{background:#ffffff22;border:1px solid #ffffff66;color:#fff;border-radius:8px;padding:3px 10px;cursor:pointer;font-size:12px;font-family:inherit}
+main{flex:1;min-width:0;padding:16px;max-width:1100px;margin:0 auto}
+.gate{padding:40px 18px;text-align:center;color:var(--sub)}
+
+/* ── 좌측 사람별 대시보드 (대표 지시 2026-08-14) ── */
+#shell{display:flex;align-items:flex-start}
+.peoplebar{width:230px;flex:0 0 230px;background:var(--card);border-right:1px solid var(--line);
+  min-height:calc(100vh - 49px);position:sticky;top:49px;align-self:flex-start;overflow-y:auto}
+.pbsearch{padding:10px 10px 6px}
+.pbsearch input{width:100%;border:1px solid var(--line);border-radius:9px;padding:7px 10px;font-size:12.5px;font-family:inherit}
+.pbdivider{padding:12px 12px 4px;font-size:11px;color:var(--sub);font-weight:700;letter-spacing:.02em;
+  display:flex;align-items:center;gap:6px}
+.pbdivider .n{background:var(--paper);border-radius:99px;padding:1px 7px;font-weight:700}
+.phead{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;font-size:13px}
+.phead:hover{background:#F5F7FF}
+.phead .car{width:14px;color:var(--sub);font-size:10px;transition:transform .12s}
+.phead.open .car{transform:rotate(90deg)}
+.phead b{flex:1;font-weight:700}
+.phead .n{font-size:11px;color:var(--sub);background:var(--paper);border-radius:99px;padding:1px 7px}
+.pnode.me .phead b{color:var(--navy)}
+.pkids{display:none;padding-bottom:4px}
+.pkids.open{display:block}
+.pco{display:flex;align-items:center;gap:6px;padding:6px 8px 6px 26px;font-size:12.5px;cursor:pointer;color:var(--ink)}
+.pco:hover{background:#F5F7FF}
+.pco .handle{cursor:grab;color:var(--sub);font-size:12px;flex:0 0 12px;user-select:none}
+.pco .dot{width:6px;height:6px;border-radius:99px;background:var(--line);flex:0 0 6px}
+.pco .dot.arr{background:var(--ok)}
+.pco span.nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pco .cnt{font-size:11px;color:var(--sub)}
+.pco .share{opacity:0;font-size:12px;color:var(--navy);padding:2px 4px;border-radius:6px}
+.pco:hover .share{opacity:1}
+.pco .share:hover{background:#E7EBFB}
+.pempty{padding:6px 12px 10px 30px;font-size:12px;color:var(--sub)}
+.shared-item{display:flex;align-items:center;gap:8px;padding:7px 12px;font-size:12.5px;cursor:pointer}
+.shared-item:hover{background:#F5F7FF}
+.shared-item .badge{background:#EAF6EE;color:var(--ok);border-radius:99px;padding:1px 7px;font-size:10.5px;font-weight:700}
+.shared-item .meta{flex:1;min-width:0}
+.shared-item .meta b{display:block;font-size:12.5px}
+.shared-item .meta span{display:block;font-size:11px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.seatbar.shared{background:#EAF6EE;border:1px solid #B7E4C7;color:#1E5631}
+.picklist{max-height:220px;overflow-y:auto;border:1px solid var(--line);border-radius:10px;margin-bottom:12px}
+.pickrow{padding:9px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--line)}
+.pickrow:last-child{border-bottom:none}
+.pickrow:hover{background:#F5F7FF}
+.pickrow.on{background:#E7EBFB;font-weight:700;color:var(--navy)}
+.taglist{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+.tagopt{display:flex;align-items:center;gap:8px;font-size:13px;border:1px solid var(--line);
+  border-radius:9px;padding:8px 10px;cursor:pointer}
+.tagopt input{margin:0}
+.tagopt.on{border-color:var(--navy);background:#F5F7FF}
+.sharedTo{font-size:12px;color:var(--sub);margin-bottom:10px}
+@media(max-width:760px){.peoplebar{display:none}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.empty{padding:28px 18px;text-align:center;color:var(--sub)}
+h1{font-size:18px;margin-bottom:4px}
+.sub{font-size:12px;color:var(--sub);margin-bottom:12px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px 12px;font-size:13px;cursor:pointer;font-family:inherit;color:var(--ink)}
+.btn.pri{background:var(--navy);border-color:var(--navy);color:#fff}
+.warnbar{background:#FBF1DE;border:1px solid #F0D9A8;color:#7C4A03;border-radius:12px;padding:10px 14px;font-size:13px;display:flex;align-items:center;gap:12px;margin-bottom:14px;cursor:pointer}
+.row{display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:none}
+.row.pkon{background:#F5F7FF}
+.chip{width:58px;flex:0 0 58px;font-size:11.5px;color:#fff;border-radius:99px;padding:3px 0;text-align:center}
+.pkno{width:22px;flex:0 0 22px;text-align:right;color:var(--sub);font-size:12px}
+.pkbar{display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12.5px;background:#FAFAFC}
+.pkbar label{display:flex;align-items:center;gap:6px;cursor:pointer}
+.pkbar .pkn{color:var(--navy);font-weight:700}
+.pkbar .pkx{margin-left:auto;padding:3px 9px}
+
+/* ── 분류 탭 · 찾기 줄 틀고정 (사진첩과 같은 방식, 대표 지시 2026-08-13) ──
+   자료가 쌓이면 아래로 내려간 뒤 탭을 누르려고 다시 맨 위로 올라와야 한다.
+   배경색을 반드시 준다 — 투명하면 목록이 그 밑으로 비쳐 글씨를 덮는다. */
+#tabsBar{position:sticky;top:0;z-index:6;background:var(--paper);
+  display:flex;gap:6px;padding:8px 0 9px;flex-wrap:wrap}
+#tabsBar button{border:1px solid var(--line);background:#fff;color:var(--sub);border-radius:9px;
+  padding:7px 13px;font-size:12.5px;font-weight:700;font-family:inherit;white-space:nowrap}
+#tabsBar button.on{border-color:var(--navy);background:var(--navy);color:#fff}
+#tabsBar button .n{font-weight:800;opacity:.75;margin-left:5px;font-size:11px}
+/* 찾기 줄도 탭 바로 아래 붙는다(탭 높이만큼 내려서 겹치지 않게 한다) */
+#findBar{position:sticky;top:44px;z-index:5;background:var(--paper);padding:0 0 10px}
+#findBar input{width:100%;border:1px solid var(--line);background:#fff;color:var(--ink);
+  border-radius:9px;padding:8px 12px;font-size:13px;font-family:inherit}
+#findBar input:focus{outline:none;border-color:var(--navy)}
+
+.expbadge{font-size:11.5px;color:var(--warn);font-weight:700;white-space:nowrap}
+
+/* ── 내 폴더 (사진첩과 같은 방식) ── 분류 탭과 다른 축 — 탭은 「무엇인가」,
+   폴더는 「어느 일인가」. 점선 테두리로 "직접 만든 것"임을 가른다. */
+.foldbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:11px}
+.foldbar button{border:1px dashed #93c5fd;background:#fff;color:var(--navy);border-radius:9px;
+  padding:6px 11px;font-size:12.5px;font-weight:700;font-family:inherit;display:flex;align-items:center;gap:5px}
+.foldbar button.on{background:var(--navy);border-style:solid;color:#fff}
+.foldbar button.sub{margin-left:14px}
+.foldbar .n{font-weight:800;opacity:.75;font-size:11px}
+.foldbar .dots{border-radius:5px;padding:0 4px;opacity:.75}
+.foldbar .dots:hover{background:rgba(0,0,0,.08)}
+.foldbar button.add{color:var(--sub);border-color:var(--line)}
+.foldedit{display:inline-flex;gap:5px;align-items:center}
+.foldedit.sub{margin-left:14px}
+.foldedit input{border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.5px;
+  font-family:inherit;width:140px}
+.foldedit button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:5px 9px;
+  font-size:12px;font-family:inherit;cursor:pointer}
+.foldmenu{position:fixed;z-index:60;background:#fff;border:1px solid var(--line);border-radius:10px;
+  padding:5px;min-width:150px;box-shadow:0 8px 22px rgba(20,30,80,.18)}
+.foldmenu div{padding:8px 10px;font-size:12.5px;border-radius:7px;cursor:pointer}
+.foldmenu div:hover{background:#f1f5fb}
+.foldmenu .del{color:var(--bad)}
+
+/* ── 남의 자리 보기 · 열람 사유 · 자리 맡기기 ── */
+.modalWrap{display:none;position:fixed;inset:0;background:rgba(15,20,30,.45);z-index:40;
+  align-items:center;justify-content:center;padding:16px}
+.modalWrap.on{display:flex}
+.modalCard{background:#fff;border-radius:14px;max-width:420px;width:100%;max-height:80vh;
+  overflow-y:auto;padding:16px}
+.modalCard h2{font-size:15px;margin:0}
+.modalCard .row{padding:9px 4px}
+.seatbar{border-radius:12px;padding:9px 14px;font-size:13px;display:flex;align-items:center;
+  gap:10px;margin-bottom:14px}
+.seatbar.view{background:#FBF1DE;border:1px solid #F0D9A8;color:#7C4A03}
+.seatbar.deputy{background:#EEF2FF;border:1px solid #C7D2FE;color:#3730A3}
+.seatbar button{margin-left:auto}
+
+/* ── 확대 보기 (사진첩과 같은 방식) ──
+   클릭하면 전체화면으로 보이고, 사진은 다시 눌러 원본 크기로 확대한다(서류 글씨를
+   읽어야 한다). 엑셀·PDF 는 사진이 아니라 새 창에서 여는 안내만 보여준다. */
+#viewer{display:none;position:fixed;inset:0;background:rgba(8,10,16,.96);z-index:30;flex-direction:column}
+#viewer.on{display:flex}
+#viewer .bar{display:flex;align-items:center;justify-content:space-between;
+  padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;color:#fff}
+#viewer .bar span{font-size:12.5px;opacity:.85}
+#viewer .back{background:rgba(255,255,255,.16);border:none;color:#fff;border-radius:9px;
+  padding:8px 14px;font-size:13px;font-family:inherit}
+#viewerBody{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;
+  overflow:auto;padding:0 12px 16px}
+#viewerBody img{max-width:100%;max-height:100%;object-fit:contain;cursor:zoom-in}
+#viewerBody.zoom{align-items:flex-start;justify-content:flex-start}
+#viewerBody.zoom img{max-width:none;max-height:none;cursor:zoom-out}
+#viewerBody .doc{color:#fff;text-align:center;padding:20px}
+#viewerBody .doc a{color:#fff;font-weight:700}
+
+@media(max-width:520px){main{padding:12px}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand" onclick="App.go('sites')">푸 급여데이터함</div>
+  <div class="who"><span id="whoami"></span>
+    <button class="out" onclick="openStaffPicker()">🔁 담당자</button>
+    <button class="out" onclick="App.go('deputy')">🗓 자리 맡기기</button>
+    <button class="out" onclick="App.logout()">로그아웃</button></div>
+</header>
+<div id="gate" class="gate">로그인을 확인하고 있습니다…</div>
+<div id="shell" style="display:none">
+  <aside id="peoplebar" class="peoplebar"></aside>
+  <main id="main"></main>
+</div>
+<div id="viewer">
+  <div class="bar"><button class="back" onclick="closeViewer()">← 돌아가기</button><span id="viewerName"></span></div>
+  <div id="viewerBody" onclick="toggleViewerZoom(event)"></div>
+</div>
+
+<script>
+/* ══════ 설정 (다른 앱과 같은 파이어베이스 프로젝트) ══════ */
+const FB_APPCHECK_KEY = '6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
+const FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA',
+  databaseURL: 'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app',
+  projectId: 'pureun-erp',
+  storageBucket: 'pureun-erp.firebasestorage.app',
+  appId: '1:936817166182:web:9bd31f70d0afdf5fca2aa7',
+  messagingSenderId: '936817166182'
+};
+
+const $ = id => document.getElementById(id);
+
+/* 바깥에서 온 글자(파일 이름·업체명 등)를 화면에 넣기 전에 이스케이프한다.
+   사람이 지은 이름이라 <script> 가 들어올 수 있다. */
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+let db = null, store = null;
+const S = window.PuPaydataStore;
+
+/* 이번 달을 'YYYY-MM' 으로 — 사람이 손으로 고칠 수 있는 칸의 첫 값. */
+function thisMonth() {
+  const d = new Date();
+  return d.getFullYear() + '-' + (d.getMonth() + 1 < 10 ? '0' : '') + (d.getMonth() + 1);
+}
+
+/* ══════ 목록 골라 한 번에 — 순수 로직 ══════
+   대표 지시(2026-08-10 명함첩, 2026-08-13 급여데이터함에도 적용) — "넘버링 넣고 ㅁ 로
+   체크해서 골라 처리할 수 있게 항상 해 달라." 명함첩(pu-cards.html)이 쓰는 것과
+   같은 설계를 따른다 — 목록마다 방식이 다르면 매번 새로 배워야 한다.
+   이 함에 목록이 늘어날 때(대기 칸·서랍)도 이 함수들을 그대로 쓴다.
+
+   ⚠ 골라 둔 것에서 **지금 목록에 없는 것을 반드시 걸러낸다**(pickPrune). 고른 뒤
+   기준 월을 바꾸거나 자료가 사라지면, 안 보이는 것이 조용히 딸려 와 함께 처리된다. */
+function pickOn(sel, id) { return !!(sel && sel[id]); }
+function pickToggle(sel, id) {
+  const s = Object.assign({}, sel || {});
+  if (s[id]) delete s[id]; else s[id] = true;
+  return s;
+}
+/* 지금 보이는 것 전부 켜기·끄기 — 걸러 놓은 것만 걸린다 */
+function pickSetAll(sel, ids, on) {
+  const s = Object.assign({}, sel || {});
+  (ids || []).forEach(id => { if (on) s[id] = true; else delete s[id]; });
+  return s;
+}
+/* 실제로 손댈 번호들 — **지금 목록에 있는 것만** */
+function pickList(sel, ids) { return (ids || []).filter(id => pickOn(sel, id)); }
+/* 보이는 것이 다 켜져 있나 (「모두 고르기」 단추의 상태) */
+function pickAllOn(sel, ids) { return !!(ids && ids.length) && ids.every(id => pickOn(sel, id)); }
+/* 목록에서 사라진 번호는 버린다 — 안 버리면 개수가 틀린다 */
+function pickPrune(sel, ids) {
+  const live = new Set(ids || []);
+  const s = {};
+  Object.keys(sel || {}).forEach(id => { if (live.has(id)) s[id] = true; });
+  return s;
+}
+
+/* 화면(kind)별로 따로 기억한다 — 사업장 목록에서 고른 것이 다른 목록에 딸려가면 안 된다 */
+function pickOf(kind) { App.pick = App.pick || {}; return App.pick[kind] || {}; }
+function pickPut(kind, sel) { App.pick = App.pick || {}; App.pick[kind] = sel; }
+
+/* 지금 화면에 보이는 번호들 — 목록마다 실제로 그리는 것과 **같은 식으로** 뽑는다.
+   화면에서 값을 미리 받아 두면 안 그린 채 눌렸을 때 낡은 값으로 처리하게 된다. */
+function pickVisible(kind) {
+  if (kind === 'sites') return sitesModel(App.companies, App.pending, App.arrivals, App.month, Date.now()).rows.map(r => r.id);
+  if (kind === 'pending') return Object.keys(App.pending || {});
+  if (kind === 'drawer') {
+    const rows = drawerModel(App.itemsKeep, App.itemsMonth, App.companyId, App.kind, Date.now()).rows;
+    return searchRows(rows, App.query).map(r => r.id);
+  }
+  return [];
+}
+function pickHit(kind, id) { pickPut(kind, pickToggle(pickOf(kind), id)); App.render(); }
+function pickToggleAll(kind) {
+  const ids = pickVisible(kind);
+  pickPut(kind, pickSetAll(pickOf(kind), ids, !pickAllOn(pickOf(kind), ids)));
+  App.render();
+}
+function pickCancel(kind) { pickPut(kind, {}); App.render(); }
+window.pickHit = pickHit; window.pickToggleAll = pickToggleAll; window.pickCancel = pickCancel;
+
+/* 골라 둔 개수와 단추를 그리는 띠 — 목록이 늘어도 같은 모양이어야 한다.
+   acts 는 골랐을 때 보일 단추들(HTML) — 지금은 사업장 목록에 일괄 처리가 없어 빈 문자열. */
+function pickBar(kind, ids, acts) {
+  const sel = pickPrune(pickOf(kind), ids); pickPut(kind, sel);
+  const on = pickList(sel, ids);
+  const allOn = pickAllOn(sel, ids);
+  return '<div class="pkbar">'
+    + '<label><input type="checkbox" ' + (allOn ? 'checked' : '')
+    + ' onchange="pickToggleAll(\'' + kind + '\')"> 모두 고르기'
+    + (ids.length ? ' (' + ids.length + ')' : '') + '</label>'
+    + (on.length
+      ? '<span class="pkn">' + on.length + '개 골랐습니다</span>' + (acts || '')
+        + '<button class="btn pkx" onclick="pickCancel(\'' + kind + '\')">고르기 취소</button>'
+      : '<span class="sub" style="margin:0">☐ 를 눌러 여러 곳을 골라 둘 수 있습니다</span>')
+    + '</div>';
+}
+
+/* ══════ 화면 상태 ══════
+   어느 화면인가 · 어느 사업장인가 · 어느 달인가. 자료는 여기 모아 두고 화면이 읽는다. */
+const App = {
+  screen: 'sites', companyId: '', companyName: '', month: '', kind: 'attend', query: '',
+  companies: [], pending: {}, arrivals: {}, trash: null, me: null, pick: {}, myName: '',
+  itemsKeep: null, itemsMonth: null, itemsMonthSlot: '',
+  viewerId: '', viewerUrl: '', viewerZoom: false, viewerErr: '',
+  folders: {}, foldersCompanyId: '', folderPick: 'all', folderEdit: { mode: '', fid: '', value: '' },
+  /* 남의 자리 보기 — viewingUid 가 비어 있으면 내 자리다.
+     viewingDeputy 는 그 자리를 대리로 맡고 있는지(수정 가능한지)다. */
+  viewingUid: '', viewingName: '', viewingDeputy: false,
+  staffOpen: false, staffQuery: '', staffList: [], reasonPrompt: null,
+  deputies: {},
+
+  /* ── 좌측 사람별 대시보드(대표 지시 2026-08-14) ──
+     owners·shares·myOrder 는 로그인 뒤 loadSites()가 채운다. sideOpen 은 펼친
+     사람 uid 를 담는다("나"는 명시적으로 접지 않는 한 항상 펼침, personBlock 참고).
+     sideReason 은 다른 담당자의 업체를 실제로 열 때만 뜨는 사유 프롬프트,
+     shareCtx 는 공유하기(사람 고르기 → 공유사항 체크) 진행 상태,
+     sharedBanner 는 "공유받음" 항목을 열었을 때 뜨는 초록 띠다. */
+  owners: {}, shares: {}, myOrder: [],
+  sideQuery: '', sideOpen: {}, sideReason: null, shareCtx: null, sharedBanner: null,
+
+  go(screen, o) {
+    // 사업장을 바꿔 들어가면 남의 폴더가 골라진 채로 남지 않게 되돌린다 —
+    // 폴더 번호는 사업장마다 따로다(다른 사업장 폴더 번호와 우연히 같을 수 있다).
+    if (o && o.companyId && o.companyId !== App.companyId) o = Object.assign({ folderPick: 'all' }, o);
+    Object.assign(App, o || {});
+    App.screen = screen;
+    if (screen === 'drawer') { ensureDrawerData(); ensureFolders(); }
+    if (screen === 'trash') ensureTrash();
+    if (screen === 'deputy') { ensureDeputies(); loadDeputyScreen(); }
+    App.render();
+  },
+
+  logout() { firebase.auth().signOut().then(() => location.reload()); },
+
+  render() {
+    const m = $('main');
+    const banner = bannerHtml();
+    if (App.screen === 'sites') { m.innerHTML = banner + screenSites(); }
+    else if (App.screen === 'pending') { m.innerHTML = banner + screenPending(); }
+    else if (App.screen === 'drawer') { m.innerHTML = banner + screenDrawer(); }
+    else if (App.screen === 'trash') { m.innerHTML = banner + screenTrash(); }
+    else if (App.screen === 'deputy') { m.innerHTML = screenDeputy(); }
+    else { m.innerHTML = '<div class="card"><div class="empty">아직 만들지 않은 화면입니다.</div></div>'; }
+    m.innerHTML += staffPickerHtml() + sideReasonHtml() + shareModalHtml();
+    const pb = $('peoplebar');
+    if (pb) pb.innerHTML = peopleBarHtml();
+    renderViewer();
+  }
+};
+window.App = App;
+
+/* ══════ 시작 ══════ */
+firebase.initializeApp(FIREBASE_CONFIG);
+try { if (firebase.appCheck) firebase.appCheck().activate(new firebase.appCheck.ReCaptchaV3Provider(FB_APPCHECK_KEY), true); }
+catch (e) { console.warn('[AppCheck]', e && e.message); }
+
+db = firebase.database();
+try { store = firebase.storage(); } catch (e) { store = null; }
+
+firebase.auth().onAuthStateChanged(function (user) {
+  if (user) { App.me = user; afterLogin(); return; }
+  /* 로그인은 통합 포털 한 곳에서만 한다 — 앱마다 두면 계정 문제를 앱 수만큼 겪는다. */
+  if (!/[?&]login=1/.test(location.search) && location.protocol !== 'file:') {
+    location.replace('enter.html?v=' + Math.floor(Date.now() / 600000));
+    return;
+  }
+  $('gate').textContent = '포털(enter.html)에서 로그인해 주세요.';
+});
+
+function afterLogin() {
+  /* 저장 층에 계정을 알려 준다 — 자리 계산이 이걸로 된다. */
+  S.init({ db: db, storage: store, uid: App.me.uid, name: App.me.email || '' });
+  $('whoami').textContent = App.me.email || '';
+
+  /* 권한은 나중에 알려 줘도 된다 — 못 읽어도 화면은 떠야 한다.
+     fin(재무권한)도 함께 읽는다 — 급여관리로 "이 달 값 넘기기" 단추가
+     이 값으로 갈린다(canHandoffPayroll, 4차). */
+  db.ref('uid_roles/' + App.me.uid).once('value')
+    .then(s => { const r = s.val() || {}; S.init({ isAdmin: !!r.isAdmin, isFin: !!r.fin }); App.render(); })
+    .catch(e => console.warn('[권한]', e && e.code));
+
+  /* 이름을 찾아 화면·명단에 반영한다 — 남이 나를 「이름으로」 고르려면
+     내가 먼저 한 번 로그인해야 한다(명단에 내가 적힌다). */
+  S.signIn(App.me.email || '', App.me.email || '').then(name => {
+    if (name) { App.myName = name; $('whoami').textContent = name; App.render(); }
+  }).catch(e => console.warn('[이름 찾기]', e && e.message));
+
+  $('gate').style.display = 'none';
+  $('shell').style.display = '';
+  loadSites();
+  takeShared();   // 카톡·갤러리에서 공유해 들어온 자료가 있으면 대기 칸으로
+}
+
+/* 첫 화면 자료를 읽어 온다. 한쪽이 실패해도 화면은 뜬다 —
+   빈 화면에 「권한 거부」만 남으면 무엇을 해야 할지 알 수 없다. */
+function loadSites() {
+  Promise.all([
+    S.listCompanies().catch(e => { console.warn('[업체관리]', e && e.code); return []; }),
+    S.listMyPending(App.viewingUid).catch(e => { console.warn('[대기 칸]', e && e.code); return {}; }),
+    S.listArrivals().catch(e => { console.warn('[도착 칸]', e && e.code); return {}; }),
+    S.listOwners().catch(e => { console.warn('[담당자 명단]', e && e.code); return {}; })
+  ]).then(([companies, pending, arrivals, owners]) => {
+    App.companies = companies;
+    App.pending = pending;
+    App.arrivals = arrivals;
+    App.owners = owners;
+    const myUid = (App.me && App.me.uid) || '';
+    App.myOrder = (owners[myUid] && owners[myUid].order) || [];
+    App.render();
+  });
+  // 공유받음은 나(로그인 계정)에게 온 것만 있으면 된다 — 자리(viewingUid)와 무관하다.
+  const myUid = (App.me && App.me.uid) || '';
+  if (myUid) {
+    S.listShares(myUid).then(shares => { App.shares = shares; App.render(); })
+      .catch(e => console.warn('[공유받음]', e && e.code));
+  }
+}
+
+/* ── 첫 화면 계산 ──
+   화면 그리기와 갈라 둔다 — 계산만 따로 검사할 수 있어야 한다.
+
+   ⚠ 장수는 **도착 칸**에서 센다(그 업체·그 달에 몇 장 왔나). 내 자리 목록을 세지
+   않는 까닭은 두 가지다. ① 첫 화면에서 사람마다 자리를 다 열면 느리다.
+   ② 남이 담은 장수까지 세면 권한 경계가 첫 화면에서 새어 나간다.
+   도착 칸에는 업체·귀속월·종류·장수만 있고 누가 담았는지는 없다.
+
+   근로계약서는 월과 무관한 keep 칸에 있으므로 **그 칸도 함께** 센다 —
+   안 세면 계약서만 있는 업체가 「0장」으로 보인다. */
+/* 근로계약서(keep 칸, 월 무관) + 이 달 칸을 합쳐 센다 — 안 그러면 계약서만
+   있는 업체가 「0장」으로 보인다. 첫 화면(sitesModel)과 사람별 대시보드가
+   똑같이 쓴다 — 두 곳이 서로 다른 수를 보이면 안 된다. */
+function companyDocCount(node, slot) {
+  let n = 0;
+  S.KINDS.forEach(k => {
+    n += S.arrivalCount(node[S.KEEP], k.key);
+    if (slot) n += S.arrivalCount(node[slot], k.key);
+  });
+  return n;
+}
+
+function sitesModel(companies, pending, arrivals, month, now, myEmail) {
+  const slot = S.monthKey(month);
+  const pend = pending || {};
+  const arr = arrivals || {};
+  const pendIds = Object.keys(pend);
+  const rows = (companies || []).map(c => {
+    const node = arr[c.id] || {};
+    const count = companyDocCount(node, slot);
+    // 업체는 푸른이알피에서 당겨온다(대표 지시 2026-08-13) — 담당자 매칭도
+    // 이알피가 쓰는 것과 같은 칸(managerMain·managerSubs)으로 한다.
+    return { id: c.id, name: c.name, arrived: count > 0, count: count, mine: S.isMyCompany(c, myEmail) };
+  });
+  const known = {};
+  (companies || []).forEach(c => { known[c.id] = true; });
+  const unlisted = Object.keys(arr).filter(id => !known[id]).map(id => {
+    let n = 0;
+    Object.keys(arr[id] || {}).forEach(sl => {
+      S.KINDS.forEach(k => { n += S.arrivalCount(arr[id][sl], k.key); });
+    });
+    return { id: id, name: id, count: n };
+  });
+  return {
+    pendingCount: pendIds.length,
+    staleCount: pendIds.filter(id => S.isStalePending(pend[id], now)).length,
+    rows: rows,
+    unlisted: unlisted
+  };
+}
+
+/* ══════ 사람별 대시보드(좌측 고정 패널, 대표 지시 2026-08-14) ══════
+   "각 사람마다 대시보드에 자기 업체정리되어야 하며 업체는 푸른이알피에서
+   당겨오기" + "왼쪽에 사람별 대시보드". 나는 업체 순서를 마음대로 바꿀 수 있고
+   (myOrder), 다른 담당자는 업체 목록만 사유 없이 훑어본다 — 실제 서랍을 열 때만
+   사유를 묻는다(화면 쪽에서 처리, 여기는 계산만). */
+function personDashboardModel(owners, companies, arrivals, shares, myUid, myEmail, myName, myOrder, month, now, query) {
+  const slot = S.monthKey(month);
+  const arr = arrivals || {};
+  const cos = companies || [];
+  const q = String(query || '').trim().toLowerCase();
+
+  function companiesFor(email) {
+    return cos.filter(c => S.isMyCompany(c, email)).map(c => {
+      const node = arr[c.id] || {};
+      const count = companyDocCount(node, slot);
+      return { id: c.id, name: c.name, arrived: count > 0, count: count };
+    });
+  }
+
+  const me = { uid: myUid, name: myName || myUid, companies: S.applyOrder(companiesFor(myEmail), myOrder) };
+
+  const others = Object.keys(owners || {})
+    .filter(uid => uid !== myUid)
+    .map(uid => Object.assign({ uid: uid }, (owners || {})[uid]))
+    .filter(o => !q || String(o.name || '').toLowerCase().indexOf(q) >= 0)
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ko'))
+    .map(o => ({ uid: o.uid, name: o.name || o.uid, companies: companiesFor(o.email || '') }));
+
+  const shared = Object.keys(shares || {})
+    .map(id => Object.assign({ id: id }, shares[id]))
+    .sort((a, b) => Number(b.at || 0) - Number(a.at || 0));
+
+  return { me: me, others: others, shared: shared };
+}
+
+function screenSites() {
+  if (!App.month) App.month = thisMonth();
+  const myEmail = (App.me && App.me.email) || '';
+  const m = sitesModel(App.companies, App.pending, App.arrivals, App.month, Date.now(), myEmail);
+  let h = '';
+
+  /* 미정 띠 — 맨 위에 늘 있다. 사업장을 안 고른 자료는 어느 서랍에도 없어서,
+     여기 없으면 영원히 안 보인다. */
+  if (m.pendingCount) {
+    h += '<div class="warnbar" onclick="App.go(\'pending\')">'
+      + '<b>미정 ' + m.pendingCount + '건</b>'
+      + (m.staleCount ? '<span>3일 넘은 것 ' + m.staleCount + '건</span>' : '')
+      + '<span style="margin-left:auto">사업장·귀속월을 채워 주세요 →</span></div>';
+  }
+
+  /* 내 담당 업체 — 업체는 푸른이알피에서 당겨오고, 담당자 매칭도 그쪽 칸
+     (managerMain·managerSubs)을 그대로 쓴다(대표 지시 2026-08-13: "각 사람마다
+     대시보드에 자기 업체정리되어야 하며 업체는 푸른이알피에서 당겨오기").
+     아래 전체 목록과 달리 체크·번호 없이 훑어보는 요약 줄이다 — 눌러 바로 들어간다. */
+  const mine = m.rows.filter(r => r.mine);
+  h += '<h1 style="font-size:15px">내 담당 업체'
+    + ' <span class="sub" style="margin:0;font-weight:400">' + mine.length + '곳</span></h1>';
+  h += '<div class="card" style="margin-bottom:16px">' + (mine.length
+    ? mine.map(r => '<div class="row" style="cursor:pointer" onclick="App.go(\'drawer\',{companyId:\'' + esc(r.id)
+      + '\',companyName:\'' + esc(r.name) + '\',kind:\'attend\',query:\'\'})">'
+      + '<b style="flex:1">' + esc(r.name) + '</b>'
+      + '<span class="chip" style="background:' + (r.arrived ? 'var(--ok)' : 'var(--warn)') + '">'
+      + (r.arrived ? '도착' : '미도착') + '</span>'
+      + '<span class="sub" style="margin:0">' + r.count + '장</span></div>').join('')
+    : '<div class="empty">업체관리에 주담당·부담당으로 등록된 업체가 없습니다.</div>')
+    + '</div>';
+
+  h += '<h1>사업장 전체</h1><div class="sub">업체관리 명단 기준 · ' + m.rows.length + '곳'
+    + ' · 장수는 그 업체에 온 자료 전체입니다</div>';
+
+  h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">'
+    + '<span>기준 월</span>'
+    + '<input class="btn" style="width:110px;text-align:center" value="' + esc(App.month) + '"'
+    + ' onchange="App.go(\'sites\',{month:this.value})">'
+    + '<span class="sub" style="margin:0">예: 2026-08</span>'
+    + '<button class="btn" onclick="App.go(\'pending\')">📥 대기 칸</button>'
+    + '<button class="btn" onclick="App.go(\'trash\')">🗑 휴지통</button>'
+    + '</div>';
+
+  /* 넘버링 + ㅁ 체크로 골라 둘 수 있다(대표 지시 2026-08-10 명함첩 · 2026-08-13
+     급여데이터함에도 적용 — 앞으로 만드는 목록에도 항상 이 방식을 쓴다).
+     업체명을 먼저, 도착 표시는 뒤로 — 눈이 업체명부터 읽게 한다(대표 지시 2026-08-13). */
+  const siteIds = m.rows.map(r => r.id);
+
+  h += '<div class="card">';
+  if (m.rows.length) {
+    h += pickBar('sites', siteIds, '');   // pruning·저장까지 여기서 한다
+    const siteSel = pickOf('sites');
+    h += m.rows.map((r, i) =>
+      '<div class="row' + (pickOn(siteSel, r.id) ? ' pkon' : '') + '">'
+      + '<label onclick="event.stopPropagation()"><input type="checkbox" '
+      + (pickOn(siteSel, r.id) ? 'checked' : '') + ' onchange="pickHit(\'sites\',\'' + esc(r.id) + '\')"></label>'
+      + '<span class="pkno">' + (i + 1) + '</span>'
+      + '<b style="flex:1;cursor:pointer" onclick="App.go(\'drawer\',{companyId:\'' + esc(r.id)
+      + '\',companyName:\'' + esc(r.name) + '\',kind:\'attend\',query:\'\'})">' + esc(r.name) + '</b>'
+      + '<span class="chip" style="background:' + (r.arrived ? 'var(--ok)' : 'var(--warn)') + '">'
+      + (r.arrived ? '도착' : '미도착') + '</span>'
+      + '<span class="sub" style="margin:0">' + r.count + '장</span></div>').join('');
+  } else {
+    h += '<div class="empty">업체관리 명단을 읽지 못했습니다.<br>푸른이알피 업체관리에 업체를 먼저 등록해 주세요.</div>';
+  }
+  h += '</div>';
+
+  /* 명단에 없는 업체 — 자료는 왔는데 업체관리에 없다. 숨기면 그 업체가 빠진 줄도 모른다.
+     ⚠ 도착 칸에는 업체 **번호**만 있고 이름이 없다(전 직원이 읽는 칸이라 얇게 뒀다).
+     그래서 여기는 번호로 보인다 — 업체관리에서 지워진 업체이거나, 업체를 고른 뒤
+     명단에서 빠진 경우다. 이름을 알려면 그 자리에 담은 사람의 서랍을 봐야 한다. */
+  if (m.unlisted.length) {
+    h += '<h1 style="font-size:15px;margin-top:20px">업체관리에서 못 찾은 번호'
+      + ' <span class="sub" style="margin:0;font-weight:400">' + m.unlisted.length + '곳</span></h1>'
+      + '<div class="sub">자료는 와 있는데 업체관리 명단에 그 업체가 없습니다.'
+      + ' 지워졌거나 이름이 바뀐 것일 수 있습니다 — 업체관리에서 확인해 주세요.</div>'
+      + '<div class="card">' + m.unlisted.map(u =>
+        '<div class="row"><span style="flex:1;font-family:monospace">' + esc(u.id) + '</span>'
+        + '<span class="sub" style="margin:0">' + u.count + '장</span></div>').join('') + '</div>';
+  }
+  return h;
+}
+
+/* ══════ 미정 대기 칸 (Task 8) ══════ */
+
+/* 파일 이름에서 이름표를 짐작한다. 빈칸으로 두면 아무도 안 채운다. 그렇다고
+   아무거나 골라 넣으면 틀린 서랍에 들어가고 아무도 모른다 — 못 알아본 것은 빈칸으로 남긴다. */
+function guessTag(rec, companies) {
+  const text = String((rec && rec.filename) || '') + ' ' + String((rec && rec.note) || '');
+  const hit = S.matchCompanyName(text, companies || []);
+
+  let month = '';
+  let m = text.match(/(20\d{2})\D{0,3}(\d{1,2})\s*월/);          // '2026년 8월'
+  if (!m) m = text.match(/(20\d{2})[.\-_](\d{1,2})(?!\d)/);      // '2026-08'
+  if (!m) {
+    const yy = text.match(/(?:^|\D)(\d{2})\s*년\s*(\d{1,2})\s*월/); // '25년 07월'
+    if (yy) m = [yy[0], '20' + yy[1], yy[2]];
+  }
+  if (m) {
+    const mo = parseInt(m[2], 10);
+    if (mo >= 1 && mo <= 12) month = m[1] + '-' + (mo < 10 ? '0' : '') + mo;
+  }
+
+  let kind = 'etc';
+  if (/근로계약|계약서/.test(text)) kind = 'contract';
+  else if (/명세서|이체|신고|취득|상실/.test(text)) kind = 'output';
+  else if (/급여대장|노임|임금대장|대장/.test(text)) kind = 'ledger';
+  else if (/근태|출근|출역|근무|시간/.test(text)) kind = 'attend';
+
+  return { companyId: hit ? hit.id : '', companyName: hit ? hit.name : '', month: month, kind: kind };
+}
+
+function screenPending() {
+  const ids = Object.keys(App.pending || {}).sort((a, b) => ((App.pending[b].at || 0) - (App.pending[a].at || 0)));
+  let h = '<div style="margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+    + '<button class="btn" onclick="App.go(\'sites\')">← 사업장</button>'
+    + (canWrite() ?
+      '<button class="btn pri" onclick="pickFiles()">＋ 파일 올리기</button>'
+      + '<input type="file" id="filePick" multiple style="display:none"'
+      + ' accept=".xlsx,.xls,.csv,.pdf,.hwp,.hwpx,.jpg,.jpeg,.png,.heic,.webp"'
+      + ' onchange="uploadFiles(this.files)">'
+      + '<button class="btn" onclick="pickShot()">📷 찍어서 올리기</button>'
+      + '<input type="file" id="shotPick" accept="image/*" capture="environment" style="display:none"'
+      + ' onchange="shotToPending(this.files)">'
+      : '')
+    + '</div>'
+    + '<h1>미정 대기 칸</h1><div class="sub">사업장·귀속월을 채우면 서랍으로 내려갑니다 · ' + ids.length + '건</div>';
+
+  if (!ids.length) return h + '<div class="card"><div class="empty">대기 중인 자료가 없습니다.</div></div>';
+
+  const now = Date.now();
+  const kindOpts = S.KINDS.map(k => '<option value="' + k.key + '">' + esc(k.label) + '</option>').join('');
+  const coOpts = '<option value="">사업장 고르기</option>'
+    + App.companies.map(c => '<option value="' + esc(c.id) + '">' + esc(c.name) + '</option>').join('');
+
+  h += '<div class="card">' + pickBar('pending', ids, '') + ids.map((id, i) => {
+    const rec = App.pending[id];
+    const g = guessTag(rec, App.companies);
+    const stale = S.isStalePending(rec, now);
+    const sel = pickOf('pending');
+    return '<div class="row' + (pickOn(sel, id) ? ' pkon' : '') + '" style="display:block">'
+      + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">'
+      + '<label onclick="event.stopPropagation()"><input type="checkbox" ' + (pickOn(sel, id) ? 'checked' : '')
+      + ' onchange="pickHit(\'pending\',\'' + esc(id) + '\')"></label>'
+      + '<span class="pkno">' + (i + 1) + '</span>'
+      + '<b style="flex:1">' + esc(rec.filename || '(이름 없음)') + '</b>'
+      + (stale ? '<span class="expbadge">3일 넘음</span>' : '')
+      + '</div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding-left:34px">'
+      + '<select class="btn" id="co_' + id + '">' + coOpts.replace('value="' + esc(g.companyId) + '"',
+        'value="' + esc(g.companyId) + '" selected') + '</select>'
+      + '<input class="btn" id="mo_' + id + '" style="width:104px" placeholder="2026-08" value="' + esc(g.month) + '">'
+      + '<select class="btn" id="kd_' + id + '">' + kindOpts.replace('value="' + esc(g.kind) + '"',
+        'value="' + esc(g.kind) + '" selected') + '</select>'
+      + (canWrite() ? '<button class="btn pri" onclick="fileToDrawer(\'' + esc(id) + '\')">서랍으로</button>' : '')
+      + '</div></div>';
+  }).join('') + '</div>';
+  return h;
+}
+
+/* 대기 칸에서 서랍으로. 저장 층이 한 묶음으로 쓴다 —
+   자료 생기기·대기 칸 지우기·도착 표시가 함께 들어간다. */
+function fileToDrawer(id) {
+  if (!canWrite()) return;   // 서버가 어차피 거절하지만 이중으로 잠근다
+  const rec = App.pending[id];
+  if (!rec) return;
+  const coId = $('co_' + id).value;
+  const co = App.companies.filter(c => c.id === coId)[0];
+  const tag = { companyId: coId, companyName: co ? co.name : '', month: $('mo_' + id).value,
+    kind: $('kd_' + id).value, at: Date.now() };
+  let up;
+  try { up = S.drawerUpdate(id, rec, tag); }
+  catch (e) { alert(e.message); return; }     // 무엇이 비었는지 사람에게 알린다
+  S.moveToDrawer(id, tag, rec, App.viewingUid)
+    .then(() => { delete App.pending[id]; App.render(); })
+    .catch(e => alert('저장 실패: ' + (e.code || e.message) + '\n다시 시도해 주세요.'));
+}
+window.fileToDrawer = fileToDrawer;
+
+function pickFiles() { $('filePick').click(); }
+window.pickFiles = pickFiles;
+
+/* 여러 장을 한꺼번에 받는다. 한 장이 막혀도 나머지는 올라간다 —
+   전부 되돌리면 방금 고른 것을 처음부터 다시 골라야 한다. */
+function uploadFiles(files) {
+  if (!canWrite()) return;
+  const list = Array.prototype.slice.call(files || []);
+  if (!list.length) return;
+  const bad = [];
+  Promise.all(list.map(f =>
+    S.saveFile(f, { at: Date.now(), from: 'upload', owner: App.viewingUid })
+      .catch(e => { bad.push(f.name + ' — ' + e.message); return null; })
+  )).then(() => {
+    if (bad.length) alert('담지 못한 파일이 있습니다:\n' + bad.join('\n'));
+    $('filePick').value = '';   // 같은 파일을 다시 골라도 onchange 가 또 울리게 한다
+    S.listMyPending(App.viewingUid).then(p => { App.pending = p; App.render(); })
+      .catch(e => console.warn('[대기 칸]', e && e.code));
+  });
+}
+window.uploadFiles = uploadFiles;
+
+function pickShot() { $('shotPick').click(); }
+window.pickShot = pickShot;
+
+/* 찍은 사진도 **같은 담기 층**을 쓴다 — 길을 따로 두면 상한·확장자 규칙이
+   갈린다. 폰 기본 카메라(<input capture>)는 한 번에 한 장이 보통이지만,
+   기기에 따라 여러 장을 돌려줄 수 있어 목록으로 받는다. */
+function shotToPending(files) {
+  if (!canWrite()) return;
+  const list = Array.prototype.slice.call(files || []);
+  if (!list.length) return;
+  const bad = [];
+  Promise.all(list.map(f =>
+    S.saveFile(f, { at: Date.now(), from: 'camera', owner: App.viewingUid })
+      .catch(e => { bad.push(f.name + ' — ' + e.message); return null; })
+  )).then(() => {
+    if (bad.length) alert('담지 못했습니다:\n' + bad.join('\n'));
+    $('shotPick').value = '';
+    S.listMyPending(App.viewingUid).then(p => { App.pending = p; App.render(); })
+      .catch(e => console.warn('[대기 칸]', e && e.code));
+  });
+}
+window.shotToPending = shotToPending;
+
+/* 공유로 들어온 자료도 **같은 담기 층**을 쓰되, 어디서 왔는지는 따로 남긴다
+   (from:'share') — 나중에 "이게 왜 여기 있지"를 가릴 수 있어야 한다. */
+function shareToPending(files) {
+  if (!canWrite()) return;
+  const list = Array.prototype.slice.call(files || []);
+  if (!list.length) return;
+  const bad = [];
+  Promise.all(list.map(f =>
+    S.saveFile(f, { at: Date.now(), from: 'share', owner: App.viewingUid })
+      .catch(e => { bad.push(f.name + ' — ' + e.message); return null; })
+  )).then(() => {
+    if (bad.length) alert('담지 못한 자료가 있습니다:\n' + bad.join('\n'));
+    S.listMyPending(App.viewingUid).then(p => { App.pending = p; App.render(); })
+      .catch(e => console.warn('[대기 칸]', e && e.code));
+  });
+}
+window.shareToPending = shareToPending;
+
+/* ══════ 카톡·갤러리에서 공유 받기 ══════
+   폰에 앱으로 설치돼 있으면 공유 목록에 「급여데이터함」이 뜬다. 누르면 안드로이드가
+   자료를 POST 로 보내고, pu-sw.js 가 받아 IndexedDB 에 잠깐 둔 뒤 이 화면을
+   `?share=1` 로 돌려보낸다. 여기서 꺼내 곧장 대기 칸에 담는다 — 사진첩과 달리
+   미리보기 화면은 두지 않는다(급여데이터함은 촬영·올리기도 원래 미리보기 없이
+   바로 대기 칸으로 간다. 사업장·귀속월은 대기 칸에서 고른다).
+   ⚠ 아이폰은 애플이 막아 두어 안 된다 — 안드로이드 전용. */
+const SHARE_IDB = 'pu-paydata-share', SHARE_STORE = 'inbox';
+
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  /* 통합 워커 하나만 등록 — 앱마다 따로 등록하면 서로 밀어내 공유 받기가 죽는다(pu-sw.js 머리말) */
+  navigator.serviceWorker.register('pu-sw.js')
+    .catch(e => console.warn('[공유 받기 준비]', e));
+}
+
+function openShareIdb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(SHARE_IDB, 1);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      if (!d.objectStoreNames.contains(SHARE_STORE)) {
+        d.createObjectStore(SHARE_STORE, { keyPath: 'id', autoIncrement: true });
+      }
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+
+/* 꺼내면서 바로 비운다 — 안 비우면 새로고침할 때마다 같은 자료가 또 담긴다. */
+function drainShareIdb() {
+  return openShareIdb().then(db => new Promise((res, rej) => {
+    const tx = db.transaction(SHARE_STORE, 'readwrite');
+    const st = tx.objectStore(SHARE_STORE);
+    const got = st.getAll();
+    st.clear();
+    tx.oncomplete = () => { db.close(); res(got.result || []); };
+    tx.onerror = () => { db.close(); rej(tx.error); };
+  }));
+}
+
+function shareFlag() {
+  try { return new URLSearchParams(location.search).get('share'); } catch (_) { return null; }
+}
+/* 주소에서 share 표시를 지운다 — 남겨 두면 새로고침 때마다 "못 받았다"가 또 뜬다 */
+function clearShareFlag() {
+  try {
+    const u = new URL(location.href);
+    u.searchParams.delete('share');
+    history.replaceState(null, '', u.pathname + u.search + u.hash);
+  } catch (_) { /* 주소를 못 고쳐도 동작에는 지장 없다 */ }
+}
+
+function takeShared() {
+  const flag = shareFlag();
+  if (flag === 'none' || flag === 'err') {
+    clearShareFlag();
+    alert(flag === 'none'
+      ? '공유받은 자료가 없습니다.\n다시 공유해 주세요.'
+      : '공유받은 자료를 읽지 못했습니다.\n다시 시도해 주세요.');
+    return;
+  }
+  /* 표시가 없어도 한 번 살펴본다 — 공유 직후 로그인 화면을 거치면 표시가 날아간다.
+     남은 것이 없으면 아무 일도 일어나지 않는다. */
+  drainShareIdb().then(rows => {
+    clearShareFlag();
+    if (!rows.length) return;
+    const files = rows.map(r => new File([r.blob], r.name || '공유자료', { type: r.type || '' }));
+    shareToPending(files);
+    alert(files.length + '건을 대기 칸에 담았습니다. 사업장·귀속월을 골라 정리해 주세요.');
+  }).catch(e => { console.warn('[공유 받기]', e); clearShareFlag(); });
+}
+
+/* ══════ 사업장 서랍 (Task 9) — 사진첩과 같은 틀고정 탭·찾기 줄·확대 보기 ══════ */
+
+/* 근로계약서(keep)는 귀속월과 무관한 다른 칸에 있다 — 그 칸의 자료까지 세어야
+   「근로계약서 3」처럼 탭에 정확한 장수가 뜬다. 두 칸(keep·이 달)을 함께 받는다. */
+function drawerCounts(itemsKeep, itemsMonth, companyId) {
+  const counts = {};
+  S.KINDS.forEach(k => {
+    const box = k.keep ? (itemsKeep || {}) : (itemsMonth || {});
+    counts[k.key] = Object.keys(box).filter(id => {
+      const r = box[id];
+      return r && r.companyId === companyId && r.kind === k.key;
+    }).length;
+  });
+  return counts;
+}
+
+/* 지금 고른 탭(kind)에 맞는 칸만 본다 — keep 탭이면 keep 칸, 아니면 이 달 칸. */
+function drawerModel(itemsKeep, itemsMonth, companyId, kind, now) {
+  const box = S.isKeepKind(kind) ? (itemsKeep || {}) : (itemsMonth || {});
+  const rows = Object.keys(box).map(id => {
+    const r = box[id];
+    return Object.assign({ id: id, expired: S.isExpired(r, now) }, r);
+  }).filter(r => r.companyId === companyId && r.kind === kind)
+    .sort((a, b) => (Number(b.filedAt || 0) - Number(a.filedAt || 0)));
+  return { rows: rows };
+}
+
+/* 파일 이름으로 좁힌다 — 사진첩의 찾기 줄과 같은 자리(탭 바로 아래)에 둔다. */
+function searchRows(rows, query) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return rows || [];
+  return (rows || []).filter(r => String(r.filename || '').toLowerCase().indexOf(q) >= 0);
+}
+
+/* ══════ 내 폴더 (사진첩과 같은 방식) ══════
+   탭이 「무엇인가」라면 폴더는 「어느 일인가」다. 지금 고른 탭의 자료(rows)
+   안에서만 센다 — 탭을 넘나들면 세는 대상도 달라진다(사진첩과 같은 방식). */
+function folderCounts(rows) {
+  const counts = { all: (rows || []).length };
+  (rows || []).forEach(r => { if (r && r.folder) counts[r.folder] = (counts[r.folder] || 0) + 1; });
+  return counts;
+}
+
+/* 'all' 이면 다 보여준다. 폴더를 고르면 그 폴더로 이름표가 붙은 것만. */
+function folderRows(rows, folderPick) {
+  if (!folderPick || folderPick === 'all') return rows || [];
+  return (rows || []).filter(r => r && r.folder === folderPick);
+}
+
+/* keep 칸은 한 번만, 이 달 칸은 달이 바뀔 때만 다시 읽는다 — 매번 두 칸을
+   전부 새로 읽으면 탭만 눌러도 실시간DB를 불필요하게 두드린다. */
+function ensureDrawerData() {
+  if (!App.month) App.month = thisMonth();
+  const monthSlot = S.monthKey(App.month) || S.KEEP;
+  const jobs = [];
+  if (!App.itemsKeep) {
+    jobs.push(S.listSlot(S.KEEP, App.viewingUid).then(v => { App.itemsKeep = v; })
+      .catch(e => { console.warn('[서랍·keep]', e && e.code); App.itemsKeep = {}; }));
+  }
+  if (App.itemsMonthSlot !== monthSlot) {
+    jobs.push(S.listSlot(monthSlot, App.viewingUid).then(v => { App.itemsMonth = v; App.itemsMonthSlot = monthSlot; })
+      .catch(e => { console.warn('[서랍·' + monthSlot + ']', e && e.code); App.itemsMonth = {}; App.itemsMonthSlot = monthSlot; }));
+  }
+  if (jobs.length) Promise.all(jobs).then(() => App.render());
+}
+
+/* 사업장이 바뀌면 폴더 목록도 다시 읽는다 — 폴더는 사업장마다 따로 관리된다. */
+function ensureFolders(force) {
+  if (!force && App.foldersCompanyId === App.companyId) return Promise.resolve();
+  return S.listFolders(App.companyId, App.viewingUid).then(v => {
+    App.folders = v; App.foldersCompanyId = App.companyId; App.render();
+  }).catch(e => {
+    console.warn('[폴더]', e && e.code);
+    App.folders = {}; App.foldersCompanyId = App.companyId;
+  });
+}
+
+/* 폴더 칸 — 전체 + 내가 만든 폴더들(한 단계 하위폴더까지). 점선 테두리로
+   "직접 만든 것"임을 가른다(사진첩과 같은 방식). */
+function folderBar(folders, folderPick, counts) {
+  const f = folders || {};
+  const byAge = (a, b) => (f[a].createdAt || 0) - (f[b].createdAt || 0);
+  const tops = Object.keys(f).filter(id => !f[id].parent).sort(byAge);
+  const kidsOf = pid => Object.keys(f).filter(id => f[id].parent === pid).sort(byAge);
+  const editable = canWrite();
+  const chip = (fid, label, n, sub) =>
+    '<button class="' + (folderPick === fid ? 'on' : '') + (sub ? ' sub' : '') + '" onclick="pickFolder(\''
+    + esc(fid) + '\')">' + esc(label) + '<span class="n">' + (n || 0) + '</span>'
+    + (fid !== 'all' && editable ? '<span class="dots" title="이름 바꾸기·하위폴더·지우기"'
+      + ' onclick="event.stopPropagation();folderMenu(event,\'' + esc(fid) + '\')">⋯</span>' : '') + '</button>';
+
+  let h = '<div class="foldbar">';
+  h += chip('all', '📁 전체', counts.all, false);
+  if (editable && App.folderEdit.mode === 'new') h += folderEditorHtml(false);
+  tops.forEach(fid => {
+    if (editable && App.folderEdit.mode === 'rename' && App.folderEdit.fid === fid) h += folderEditorHtml(false);
+    else h += chip(fid, '📁 ' + (f[fid].name || ''), counts[fid], false);
+    kidsOf(fid).forEach(kid => {
+      if (editable && App.folderEdit.mode === 'rename' && App.folderEdit.fid === kid) h += folderEditorHtml(true);
+      else h += chip(kid, '↳ ' + (f[kid].name || ''), counts[kid], true);
+    });
+    if (editable && App.folderEdit.mode === 'sub' && App.folderEdit.fid === fid) h += folderEditorHtml(true);
+  });
+  if (editable && App.folderEdit.mode !== 'new') h += '<button class="add" onclick="openFolderEditor(\'new\')">＋ 폴더</button>';
+  h += '</div>';
+  return h;
+}
+
+/* 이름 적는 칸을 그 자리에 연다(사진첩과 같은 방식, 브라우저 prompt 대신) —
+   누른 자리와 적는 자리가 멀면 헷갈린다. */
+function folderEditorHtml(sub) {
+  return '<span class="foldedit' + (sub ? ' sub' : '') + '">'
+    + '<input id="foldInput" type="text" maxlength="30" placeholder="폴더 이름"'
+    + ' value="' + esc(App.folderEdit.value || '') + '" onkeydown="foldKeyDown(event)">'
+    + '<button onclick="submitFolderEditor()">✓</button>'
+    + '<button onclick="cancelFolderEditor()">✕</button></span>';
+}
+
+function openFolderEditor(mode, fid, value) {
+  App.folderEdit = { mode: mode, fid: fid || '', value: value || '' };
+  App.render();
+  setTimeout(() => { const el = $('foldInput'); if (el) { el.focus(); el.select(); } }, 0);
+}
+function cancelFolderEditor() { App.folderEdit = { mode: '', fid: '', value: '' }; App.render(); }
+function foldKeyDown(e) {
+  if (e.key === 'Enter') { e.preventDefault(); submitFolderEditor(); }
+  else if (e.key === 'Escape') { e.preventDefault(); cancelFolderEditor(); }
+}
+function submitFolderEditor() {
+  const inp = $('foldInput');
+  const name = inp ? String(inp.value || '').trim() : '';
+  const mode = App.folderEdit.mode, fid = App.folderEdit.fid;
+  // 빈 이름은 그냥 접는다 — 지우기가 아니다(지우기는 ⋯ 차림표에 따로 있다).
+  if (!name) { cancelFolderEditor(); return; }
+  App.folderEdit = { mode: '', fid: '', value: '' };
+  if (mode === 'rename') {
+    S.renameFolder(App.companyId, fid, name, App.viewingUid).then(() => ensureFolders(true))
+      .catch(e => { alert('이름을 바꾸지 못했습니다 — ' + (e.message || e)); App.render(); });
+    return;
+  }
+  S.addFolder(App.companyId, name, mode === 'sub' ? fid : null, App.viewingUid).then(r =>
+    ensureFolders(true).then(() => { App.folderPick = r.id; App.render(); })
+  ).catch(e => { alert('폴더를 만들지 못했습니다 — ' + (e.message || e)); App.render(); });
+}
+
+/* ⋯ 차림표 — 이름 바꾸기·하위폴더 만들기·지우기를 한자리에. */
+function folderMenu(ev, fid) {
+  closeFolderMenu();
+  const f = (App.folders || {})[fid] || {};
+  const m = document.createElement('div');
+  m.className = 'foldmenu'; m.id = 'foldMenu';
+  m.innerHTML = '<div onclick="renameFolderAsk(\'' + esc(fid) + '\')">✏ 이름 바꾸기</div>'
+    + (f.parent ? '' : '<div onclick="openFolderEditor(\'sub\',\'' + esc(fid) + '\')">📁 하위폴더 만들기</div>')
+    + '<div class="del" onclick="removeFolderAsk(\'' + esc(fid) + '\')">🗑 폴더 지우기</div>';
+  document.body.appendChild(m);
+  const r = ev.target.getBoundingClientRect();
+  m.style.left = Math.min(r.left, window.innerWidth - 170) + 'px';
+  m.style.top = (r.bottom + 4) + 'px';
+  setTimeout(() => document.addEventListener('click', closeFolderMenu, { once: true }), 0);
+}
+function closeFolderMenu() { const m = $('foldMenu'); if (m && m.parentNode) m.parentNode.removeChild(m); }
+function renameFolderAsk(fid) { closeFolderMenu(); openFolderEditor('rename', fid, ((App.folders || {})[fid] || {}).name || ''); }
+function removeFolderAsk(fid) {
+  closeFolderMenu();
+  if (!canWrite()) return;
+  if (!confirm('이 폴더를 지울까요?\n담긴 자료는 지워지지 않고 「전체」에 그대로 남습니다.')) return;
+  S.deleteFolder(App.companyId, fid, App.viewingUid).then(() => {
+    if (App.folderPick === fid) App.folderPick = 'all';
+    return ensureFolders(true);
+  }).catch(e => { alert('지우지 못했습니다 — ' + (e.message || e)); App.render(); });
+}
+function pickFolder(fid) { App.folderPick = fid; App.render(); }
+
+/* 자료 한 건을 폴더에 넣거나(folderId) 뺀다('' 로 부르면 뺀다).
+   서버에 쓰는 동안 화면이 멈추지 않게, 저장이 끝나면 우리가 들고 있는 자료에도
+   바로 반영해 다시 읽지 않고 새로고침한다. */
+function assignFolder(id, folderId) {
+  if (!canWrite()) return;
+  const slot = S.isKeepKind(App.kind) ? S.KEEP : (S.monthKey(App.month) || S.KEEP);
+  S.setFolder(slot, id, folderId, App.viewingUid).then(() => {
+    const box = S.isKeepKind(App.kind) ? App.itemsKeep : App.itemsMonth;
+    if (box && box[id]) box[id].folder = folderId || null;
+    App.render();
+  }).catch(e => alert('저장 실패: ' + (e.code || e.message) + '\n다시 시도해 주세요.'));
+}
+window.pickFolder = pickFolder; window.folderMenu = folderMenu; window.closeFolderMenu = closeFolderMenu;
+window.renameFolderAsk = renameFolderAsk; window.removeFolderAsk = removeFolderAsk;
+window.openFolderEditor = openFolderEditor; window.cancelFolderEditor = cancelFolderEditor;
+window.submitFolderEditor = submitFolderEditor; window.foldKeyDown = foldKeyDown;
+window.assignFolder = assignFolder;
+
+function screenDrawer() {
+  if (!App.month) App.month = thisMonth();
+  const counts = drawerCounts(App.itemsKeep, App.itemsMonth, App.companyId);
+  const model = drawerModel(App.itemsKeep, App.itemsMonth, App.companyId, App.kind, Date.now());
+  const foldCounts = folderCounts(model.rows);
+  const foldered = folderRows(model.rows, App.folderPick);
+  const rows = searchRows(foldered, App.query);
+  const ids = rows.map(r => r.id);
+  const sel = pickPrune(pickOf('drawer'), ids); pickPut('drawer', sel);
+
+  let h = '<div style="margin-bottom:10px"><button class="btn" onclick="App.go(\'sites\')">← 사업장</button></div>'
+    + '<h1>' + esc(App.companyName || App.companyId) + '</h1>'
+    + '<div class="sub">' + model.rows.length + '건'
+    + (App.folderPick !== 'all' ? ' 중 이 폴더 ' + foldered.length + '건' : '')
+    + (App.query ? ' · 찾은 것 ' + rows.length + '건' : '') + '</div>';
+
+  if (!S.isKeepKind(App.kind)) {
+    h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">기준 월'
+      + ' <input class="btn" style="width:110px" value="' + esc(App.month) + '"'
+      + ' onchange="App.month=this.value;ensureDrawerData();App.render()"></div>';
+    // 급여관리로 이 달 값 넘기기 — 재무권한·관리자에게만 보인다(4차, canHandoffPayroll).
+    if (S.canHandoffPayroll()) {
+      h += '<div style="margin-bottom:12px"><button class="btn" onclick="handoffMonth()">'
+        + '📤 이 달 값 급여관리로 넘기기</button></div>';
+    }
+  } else {
+    h += '<div class="sub">근로계약서는 월과 상관없이 모두 보입니다.</div>';
+  }
+
+  h += '<div id="tabsBar">' + S.KINDS.map(k =>
+    '<button class="' + (App.kind === k.key ? 'on' : '') + '" onclick="App.kind=\'' + k.key
+    + '\';App.query=\'\';ensureDrawerData();App.render()">' + esc(k.label)
+    + '<span class="n">' + counts[k.key] + '</span></button>').join('') + '</div>';
+
+  /* 내 폴더 — 분류 탭과 다른 축이다(사진첩과 같은 방식). 탭은 「무엇인가」,
+     폴더는 「어느 일인가」다. 그래서 탭을 넘나들어도 고른 폴더는 그대로 둔다. */
+  h += folderBar(App.folders, App.folderPick, foldCounts);
+
+  h += '<div id="findBar"><input placeholder="파일 이름으로 찾기" value="' + esc(App.query) + '"'
+    + ' oninput="App.query=this.value;App.render()"></div>';
+
+  const folderOpts = folderOptionsHtml(App.folders);
+  const editable = canWrite();
+
+  h += '<div class="card">' + (rows.length ? pickBar('drawer', ids, '') + rows.map((r, i) =>
+    '<div class="row' + (pickOn(sel, r.id) ? ' pkon' : '') + '">'
+    + '<label onclick="event.stopPropagation()"><input type="checkbox" ' + (pickOn(sel, r.id) ? 'checked' : '')
+    + ' onchange="pickHit(\'drawer\',\'' + esc(r.id) + '\')"></label>'
+    + '<span class="pkno">' + (i + 1) + '</span>'
+    + '<b style="flex:1;cursor:pointer" onclick="openViewer(\'' + esc(r.id) + '\')">'
+    + esc(r.filename || '(이름 없음)') + '</b>'
+    + (r.expired ? '<span class="expbadge">지난 것</span>' : '')
+    + '<span class="sub" style="margin:0">' + (r.filedAt ? new Date(r.filedAt).toLocaleDateString() : '') + '</span>'
+    + (editable
+      ? '<select class="btn" style="font-size:11.5px;padding:4px 6px" onclick="event.stopPropagation()"'
+        + ' onchange="assignFolder(\'' + esc(r.id) + '\',this.value)">'
+        + folderOpts.replace('value="' + esc(r.folder || '') + '"', 'value="' + esc(r.folder || '') + '" selected')
+        + '</select>'
+        + '<button class="btn" onclick="event.stopPropagation();toTrash(\'' + esc(r.id) + '\')" title="휴지통으로">🗑</button>'
+      : (r.folder && App.folders[r.folder] ? '<span class="sub" style="margin:0">' + esc(App.folders[r.folder].name) + '</span>' : ''))
+    + '</div>').join('')
+    : '<div class="empty">' + (App.query ? '찾는 자료가 없습니다.'
+      : (App.folderPick !== 'all' ? '이 폴더에 담긴 자료가 없습니다.'
+        : '이 칸에 담긴 자료가 없습니다. 다른 월이나 다른 종류를 보세요.')) + '</div>')
+    + '</div>';
+  return h;
+}
+
+/* 급여관리로 이 달 값 넘기기(4차) — 사유를 묻지 않는다. 이미 서랍을 열어
+   확인한 사람이 스스로 넘기는 것이므로 열람 사유와는 다른 종류다(그저 넘긴
+   사실만 handoff_log 에 남는다). 권한 없는 사람은 단추 자체가 안 보인다. */
+function handoffMonth() {
+  if (!S.canHandoffPayroll()) return;
+  const counts = drawerCounts(App.itemsKeep, App.itemsMonth, App.companyId);
+  const total = S.KINDS.filter(k => !k.keep).reduce((n, k) => n + (counts[k.key] || 0), 0);
+  if (!total) { alert('이 달에 넘길 값이 없습니다.'); return; }
+  if (!confirm(App.companyName + ' ' + App.month + ' 자료(' + total + '건)를 급여관리 수신함으로 넘길까요?')) return;
+  S.handoffToPayroll({ companyId: App.companyId, companyName: App.companyName, month: App.month })
+    .then(() => alert('급여관리 수신함으로 넘겼습니다.'))
+    .catch(e => alert('넘기지 못했습니다 — ' + (e.code || e.message)));
+}
+window.handoffMonth = handoffMonth;
+
+/* 자료 한 줄의 「폴더 지정」 골라잡기 — 있는 폴더만 나온다. 새 폴더는 폴더 칸의
+   「+ 폴더」로 만든다(그 자리에서 이름을 적는 방식 하나로 통일한다). */
+function folderOptionsHtml(folders) {
+  const f = folders || {};
+  const tops = Object.keys(f).filter(id => !f[id].parent)
+    .sort((a, b) => (f[a].createdAt || 0) - (f[b].createdAt || 0));
+  let h = '<option value="">폴더 없음</option>';
+  tops.forEach(fid => {
+    h += '<option value="' + esc(fid) + '">' + esc(f[fid].name || '') + '</option>';
+    Object.keys(f).filter(id => f[id].parent === fid)
+      .sort((a, b) => (f[a].createdAt || 0) - (f[b].createdAt || 0))
+      .forEach(kid => { h += '<option value="' + esc(kid) + '">↳ ' + esc(f[kid].name || '') + '</option>'; });
+  });
+  return h;
+}
+
+/* ── 확대 보기 (사진첩과 같은 방식) ──
+   사진은 눌러서 원본 크기로 확대한다(서류 글씨를 읽어야 한다). 엑셀·PDF 는
+   미리 볼 수 없으니 새 창에서 여는 안내만 보여준다. */
+function findRow(id) {
+  const boxes = [App.itemsKeep, App.itemsMonth];
+  for (let i = 0; i < boxes.length; i++) { if (boxes[i] && boxes[i][id]) return boxes[i][id]; }
+  return null;
+}
+function openViewer(id) {
+  App.viewerId = id; App.viewerUrl = ''; App.viewerZoom = false; App.viewerErr = '';
+  App.render();
+  const rec = findRow(id);
+  if (!rec) { App.viewerErr = '자료를 찾을 수 없습니다.'; App.render(); return; }
+  S.fileDownloadUrl(rec.file).then(url => { App.viewerUrl = url; App.render(); })
+    .catch(e => { App.viewerErr = e.message; App.render(); });
+}
+function closeViewer() { App.viewerId = ''; App.render(); }
+function toggleViewerZoom(ev) {
+  if (ev && ev.target && ev.target.tagName !== 'IMG') return;   // 바깥을 눌러도 확대되지 않는다
+  App.viewerZoom = !App.viewerZoom; App.render();
+}
+window.openViewer = openViewer; window.closeViewer = closeViewer; window.toggleViewerZoom = toggleViewerZoom;
+
+/* App.render() 가 화면을 바꿀 때마다 함께 그린다 — 뷰어는 어느 화면 위에도 뜰 수 있다. */
+function renderViewer() {
+  const v = $('viewer');
+  if (!v) return;
+  const rec = App.viewerId ? findRow(App.viewerId) : null;
+  v.classList.toggle('on', !!App.viewerId);
+  if (!App.viewerId) return;
+  $('viewerName').textContent = rec ? (rec.filename || '') : '';
+  const body = $('viewerBody');
+  body.classList.toggle('zoom', App.viewerZoom);
+  const isImage = rec && /^image\//.test(rec.mime || '');
+  if (App.viewerErr) {
+    body.innerHTML = '<div class="doc">불러오지 못했습니다 — ' + esc(App.viewerErr) + '</div>';
+  } else if (!App.viewerUrl) {
+    body.innerHTML = '<div class="doc">불러오는 중…</div>';
+  } else if (isImage) {
+    body.innerHTML = '<img src="' + esc(App.viewerUrl) + '" alt="">';
+  } else {
+    body.innerHTML = '<div class="doc">이 파일은 미리 볼 수 없습니다.<br>'
+      + '<a href="' + esc(App.viewerUrl) + '" target="_blank" rel="noopener">새 창에서 열기</a></div>';
+  }
+}
+
+/* ══════ 휴지통 (Task 12) ══════
+   지운 자료는 정보만 옮긴다. 창고 파일은 그 자리에 그대로 둔다 —
+   함께 지우면 되살릴 수 없다. 30일 뒤 실삭제는 사람이 확인해서 한다
+   (자동 삭제는 어디에도 만들지 않는다). */
+
+/* 서랍에서 지운다. findRow 가 keep 칸·이 달 칸을 모두 뒤져 자료를 찾는다
+   (뷰어가 쓰는 것과 같은 함수 — 두 칸 중 어디 있는지 화면이 몰라도 된다). */
+function toTrash(id) {
+  if (!canWrite()) return;
+  const rec = findRow(id);
+  if (!rec) return;
+  if (!confirm('휴지통으로 옮길까요?\n30일 안에는 되살릴 수 있습니다.')) return;
+  db.ref().update(S.trashUpdate(id, rec, App.viewingUid)).then(() => {
+    if (App.itemsKeep && App.itemsKeep[id]) delete App.itemsKeep[id];
+    if (App.itemsMonth && App.itemsMonth[id]) delete App.itemsMonth[id];
+    App.render();
+  }).catch(e => alert('실패: ' + (e.code || e.message)));
+}
+window.toTrash = toTrash;
+
+function ensureTrash() {
+  return S.listTrash(App.viewingUid).then(v => { App.trash = v; App.render(); })
+    .catch(e => { console.warn('[휴지통]', e && e.code); App.trash = {}; App.render(); });
+}
+
+function screenTrash() {
+  const box = App.trash || {};
+  const ids = Object.keys(box).sort((a, b) => (box[b].trashedAt || 0) - (box[a].trashedAt || 0));
+  let h = '<div style="margin-bottom:10px"><button class="btn" onclick="App.go(\'sites\')">← 사업장</button></div>'
+    + '<h1>휴지통</h1><div class="sub">지운 뒤 ' + S.TRASH_DAYS + '일 안에는 되살릴 수 있습니다 · ' + ids.length + '건</div>';
+  if (!ids.length) return h + '<div class="card"><div class="empty">휴지통이 비어 있습니다.</div></div>';
+  const now = Date.now();
+  h += '<div class="card">' + ids.map((id, i) => {
+    const r = box[id];
+    const over = S.trashExpired(r, now);
+    return '<div class="row">'
+      + '<span class="pkno">' + (i + 1) + '</span>'
+      + '<span style="flex:1">' + esc(r.filename || '(이름 없음)')
+      + '<div class="sub" style="margin:2px 0 0">' + esc(r.companyName || r.companyId || '') + '</div></span>'
+      + (over ? '<span class="expbadge">30일 지남</span>' : '')
+      + (canWrite() ? '<button class="btn" onclick="restoreItem(\'' + esc(id) + '\')">되살리기</button>' : '')
+      + '</div>';
+  }).join('') + '</div>';
+  return h;
+}
+
+function restoreItem(id) {
+  if (!canWrite()) return;
+  const rec = (App.trash || {})[id];
+  if (!rec) return;
+  db.ref().update(S.restoreUpdate(id, rec, App.viewingUid)).then(() => {
+    delete App.trash[id];
+    // 되살아난 칸을 다시 읽어야 서랍이 최신 자료를 본다 — 다음에 그 서랍에
+    // 들어갈 때 새로 읽어 오게 캐시를 비운다.
+    App.itemsKeep = null; App.itemsMonthSlot = ''; App.itemsMonth = null;
+    App.render();
+  }).catch(e => alert('실패: ' + (e.code || e.message)));
+}
+window.restoreItem = restoreItem;
+
+/* ══════ 2차 — 이름 골라 보기 · 열람 사유 · 휴가 대리 ══════
+   남의 자리를 볼 때는 항상 이 흐름을 거친다: 이름 고르기 → (대리가 아니면)
+   사유 적기 → 자리 전환. 대리로 맡은 자리는 사유 없이 바로 들어간다 —
+   맡아 달라고 부탁받은 자리라 매번 이유를 적게 하면 일이 안 된다. */
+
+/* 지금 이 자리에서 고칠 수 있는가 — 내 자리이거나, 대리로 맡은 자리일 때만.
+   서버 규칙이 어차피 막지만, 단추를 안 보이게 해 헛눌러 실패하는 일을 줄인다. */
+function canWrite() { return !App.viewingUid || App.viewingDeputy; }
+
+function bannerHtml() {
+  // 공유받아 들어온 자리는 초록 띠가 우선이다 — "왜 여기 왔는지"가 사유 대신 이미 있다.
+  if (App.sharedBanner) {
+    return '<div class="seatbar shared">🤝 <b>' + esc(App.sharedBanner.byName) + '</b>님이 공유함 — '
+      + esc((App.sharedBanner.tags || []).join(', '))
+      + '<button class="btn" onclick="leaveSeat()">내 자리로</button></div>';
+  }
+  if (!App.viewingUid) return '';
+  return App.viewingDeputy
+    ? '<div class="seatbar deputy">✏ <b>' + esc(App.viewingName) + ' 자리</b> — 맡은 자리입니다'
+      + '<button class="btn" onclick="leaveSeat()">내 자리로</button></div>'
+    : '<div class="seatbar view">👁 <b>' + esc(App.viewingName) + ' 자리</b> — 보기만 가능합니다'
+      + '<button class="btn" onclick="leaveSeat()">내 자리로</button></div>';
+}
+
+function openStaffPicker() {
+  App.staffOpen = true; App.staffQuery = ''; App.reasonPrompt = null;
+  App.render();
+  S.listOwners().then(v => {
+    App.staffList = Object.keys(v).map(uid => Object.assign({ uid: uid }, v[uid]));
+    App.render();
+  }).catch(e => { console.warn('[담당자 명단]', e && e.code); App.staffList = []; App.render(); });
+}
+function closeStaffPicker() { App.staffOpen = false; App.reasonPrompt = null; App.render(); }
+window.openStaffPicker = openStaffPicker; window.closeStaffPicker = closeStaffPicker;
+
+function staffPickerHtml() {
+  if (!App.staffOpen) return '';
+  let body;
+  if (App.reasonPrompt) {
+    body = '<div class="sub">' + esc(App.reasonPrompt.targetName || App.reasonPrompt.targetUid) + ' 자리를 왜 보시나요?</div>'
+      + '<input id="reasonInput" class="btn" style="width:100%;margin:8px 0" placeholder="예: 급여 문의 확인"'
+      + ' onkeydown="if(event.key===\'Enter\'){event.preventDefault();submitReason();}">'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end">'
+      + '<button class="btn" onclick="App.reasonPrompt=null;App.render()">취소</button>'
+      + '<button class="btn pri" onclick="submitReason()">확인</button></div>';
+  } else {
+    const q = String(App.staffQuery || '').trim().toLowerCase();
+    const list = (App.staffList || []).filter(o => o.uid !== S.myUid())
+      .filter(o => !q || String(o.name || '').toLowerCase().indexOf(q) >= 0)
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ko'));
+    body = '<input class="btn" style="width:100%;margin-bottom:8px" placeholder="이름으로 찾기"'
+      + ' value="' + esc(App.staffQuery) + '" oninput="App.staffQuery=this.value;App.render()">'
+      + (list.length ? list.map(o =>
+        '<div class="row" style="cursor:pointer" onclick="pickStaff(\'' + esc(o.uid) + '\',\''
+        + esc(o.name || o.uid) + '\')"><b style="flex:1">' + esc(o.name || o.uid) + '</b></div>').join('')
+        : '<div class="empty">한 번이라도 로그인한 다른 사람이 아직 없습니다.</div>');
+  }
+  return '<div class="modalWrap on"><div class="modalCard">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+    + '<h2>' + (App.reasonPrompt ? '열람 사유' : '담당자 고르기') + '</h2>'
+    + '<button class="btn" onclick="closeStaffPicker()">✕</button></div>' + body + '</div></div>';
+}
+
+/* 이름을 고르면 먼저 대리 여부부터 확인한다 — 맡은 자리면 사유 없이 바로 들어간다. */
+function pickStaff(uid, name) {
+  db.ref(S.deputyPath(S.myUid(), uid)).once('value').then(s => {
+    const active = S.isActiveDeputy(s.val(), Date.now());
+    if (active) { enterSeat(uid, name, true); closeStaffPicker(); }
+    else {
+      App.reasonPrompt = { targetUid: uid, targetName: name };
+      App.render();
+      setTimeout(() => { const el = $('reasonInput'); if (el) el.focus(); }, 0);
+    }
+  }).catch(e => alert('확인하지 못했습니다 — ' + (e.code || e.message)));
+}
+window.pickStaff = pickStaff;
+
+function submitReason() {
+  const p = App.reasonPrompt; if (!p) return;
+  const inp = $('reasonInput');
+  const reason = inp ? String(inp.value || '').trim() : '';
+  if (!reason) { alert('사유를 적어 주세요.'); return; }
+  S.logAccess({ targetUid: p.targetUid, targetName: p.targetName, reason: reason }).then(() => {
+    enterSeat(p.targetUid, p.targetName, false);
+    closeStaffPicker();
+  }).catch(e => alert('기록하지 못했습니다 — ' + (e.code || e.message)));
+}
+window.submitReason = submitReason;
+
+/* 자리를 옮긴다. 대기 칸·서랍·폴더·휴지통 캐시를 모두 비운다 — 안 비우면
+   방금 전 자리의 자료가 새 자리 화면에 그대로 남는다. */
+function resetOwnerCaches() {
+  App.pending = {}; App.itemsKeep = null; App.itemsMonth = null; App.itemsMonthSlot = '';
+  App.folders = {}; App.foldersCompanyId = ''; App.folderPick = 'all'; App.trash = null; App.pick = {};
+}
+function enterSeat(uid, name, isDeputy) {
+  App.viewingUid = uid; App.viewingName = name; App.viewingDeputy = !!isDeputy; App.sharedBanner = null;
+  resetOwnerCaches();
+  App.screen = 'sites';
+  loadSites();
+  App.render();
+}
+function leaveSeat() {
+  App.viewingUid = ''; App.viewingName = ''; App.viewingDeputy = false; App.sharedBanner = null;
+  resetOwnerCaches();
+  App.screen = 'sites';
+  loadSites();
+  App.render();
+}
+window.leaveSeat = leaveSeat;
+
+/* enterSeat 과 같지만 사업장 목록을 거치지 않고 그 업체 서랍으로 곧장 들어간다
+   (좌측 대시보드에서 업체를 직접 골랐을 때 쓴다). sharedInfo 를 주면 "공유받음"
+   초록 띠가 뜨고, 안 주면 지금처럼 보기/대리 띠가 뜬다. */
+function enterSeatAt(uid, name, isDeputy, companyId, companyName, sharedInfo) {
+  App.viewingUid = uid; App.viewingName = name; App.viewingDeputy = !!isDeputy;
+  App.sharedBanner = sharedInfo || null;
+  resetOwnerCaches();
+  App.go('drawer', { companyId: companyId, companyName: companyName, kind: 'attend', query: '' });
+}
+
+/* ══════ 좌측 사람별 대시보드 (대표 지시 2026-08-14) ══════
+   "각 사람마다 대시보드에 자기 업체정리 + 왼쪽에 사람별 대시보드" — 모든 화면에
+   고정으로 뜨는 좌측 패널. 나는 업체 순서를 마음대로 바꿀 수 있고, 다른 담당자는
+   업체 목록만 사유 없이 훑어보되 실제 서랍을 열 때만 사유를 묻는다. */
+function peopleBarHtml() {
+  const myUid = (App.me && App.me.uid) || '';
+  const myEmail = (App.me && App.me.email) || '';
+  const model = personDashboardModel(App.owners, App.companies, App.arrivals, App.shares,
+    myUid, myEmail, App.myName, App.myOrder, App.month || thisMonth(), Date.now(), App.sideQuery);
+
+  function coRow(c, isMe, ownerUid, ownerName) {
+    const dragAttrs = isMe
+      ? ' draggable="true" ondragstart="sideDragStart(event,\'' + esc(c.id) + '\')"'
+        + ' ondragover="event.preventDefault()"'
+        + ' ondrop="sideDragDrop(event,\'' + esc(c.id) + '\')"'
+      : '';
+    return '<div class="pco"' + dragAttrs + '>'
+      + (isMe ? '<span class="handle">⠿</span>' : '')
+      + '<span class="dot' + (c.arrived ? ' arr' : '') + '"></span>'
+      + '<span class="nm" onclick="sideOpenCompany(\'' + esc(ownerUid) + '\',\'' + esc(ownerName) + '\',\''
+      + esc(c.id) + '\',\'' + esc(c.name) + '\',' + (isMe ? 'true' : 'false') + ')">' + esc(c.name) + '</span>'
+      + '<span class="cnt">' + (c.count || 0) + '건</span>'
+      + (isMe ? '<span class="share" onclick="event.stopPropagation();openShare(\'' + esc(c.id) + '\',\''
+        + esc(c.name) + '\')" title="다른 담당자와 공유">↗ 공유</span>' : '')
+      + '</div>';
+  }
+
+  function personBlock(uid, name, companies, isMe) {
+    // "나"는 명시적으로 접지 않는 한 항상 펼침, 남은 명시적으로 펼치기 전엔 접힘.
+    const open = isMe ? (App.sideOpen[uid] !== false) : !!App.sideOpen[uid];
+    let h = '<div class="pnode' + (isMe ? ' me' : '') + '">'
+      + '<div class="phead' + (open ? ' open' : '') + '" onclick="toggleSidePerson(\'' + esc(uid) + '\',' + (isMe ? 'true' : 'false') + ')">'
+      + '<span class="car">▶</span><b>' + esc(name) + '</b><span class="n">' + companies.length + '</span></div>';
+    h += '<div class="pkids' + (open ? ' open' : '') + '">';
+    h += companies.length ? companies.map(c => coRow(c, isMe, uid, name)).join('')
+      : '<div class="pempty">담당 업체가 없습니다.</div>';
+    h += '</div></div>';
+    return h;
+  }
+
+  let h = '<div class="pbsearch"><input placeholder="이름으로 찾기" value="' + esc(App.sideQuery)
+    + '" oninput="App.sideQuery=this.value;App.render()"></div>';
+  h += personBlock(model.me.uid, model.me.name, model.me.companies, true);
+
+  h += '<div class="pbdivider">공유받음<span class="n">' + model.shared.length + '</span></div>';
+  h += model.shared.length ? model.shared.map(s =>
+    '<div class="shared-item" onclick="openShared(\'' + esc(s.id) + '\')"><span class="badge">공유</span>'
+    + '<div class="meta"><b>' + esc(s.companyName) + '</b><span>' + esc(s.byName) + ' · '
+    + esc((s.tags || []).join(', ')) + '</span></div></div>').join('')
+    : '<div class="pempty" style="padding-left:12px">아직 받은 공유가 없습니다.</div>';
+
+  /* 아직 이 함에 들어온 다른 사람이 없으면 그렇다고 말한다 — 제목만 덩그러니
+     있으면 고장으로 보인다(공유받음 칸과 같은 원칙). 이름 명단(paydata/owners)은
+     **한 번이라도 로그인한 사람**만 담기므로, 처음 얼마간은 비어 있는 것이 정상이다. */
+  h += '<div class="pbdivider">다른 담당자</div>';
+  h += model.others.length
+    ? model.others.map(o => personBlock(o.uid, o.name, o.companies, false)).join('')
+    : '<div class="pempty" style="padding-left:12px">' + (App.sideQuery
+      ? '찾는 이름이 없습니다.'
+      : '아직 급여데이터함에 들어온 다른 사람이 없습니다.') + '</div>';
+  return h;
+}
+window.peopleBarHtml = peopleBarHtml;
+
+function toggleSidePerson(uid, isMe) {
+  const cur = isMe ? (App.sideOpen[uid] !== false) : !!App.sideOpen[uid];
+  App.sideOpen[uid] = !cur;
+  App.render();
+}
+window.toggleSidePerson = toggleSidePerson;
+
+/* 내 업체는 곧장 서랍으로. 남의 업체는 대리 여부부터 확인해 — 맡은 자리면
+   사유 없이 바로, 아니면 사유를 물은 뒤 들어간다(업체 "목록"을 보는 것 자체는
+   이미 사유가 필요 없다 — 여기는 실제로 "여는" 순간이다). */
+function sideOpenCompany(ownerUid, ownerName, companyId, companyName, isMe) {
+  if (isMe) { App.go('drawer', { companyId: companyId, companyName: companyName, kind: 'attend', query: '' }); return; }
+  db.ref(S.deputyPath(S.myUid(), ownerUid)).once('value').then(s => {
+    const active = S.isActiveDeputy(s.val(), Date.now());
+    if (active) { enterSeatAt(ownerUid, ownerName, true, companyId, companyName); }
+    else {
+      App.sideReason = { targetUid: ownerUid, targetName: ownerName, companyId: companyId, companyName: companyName };
+      App.render();
+      setTimeout(() => { const el = $('sideReasonInput'); if (el) el.focus(); }, 0);
+    }
+  }).catch(e => alert('확인하지 못했습니다 — ' + (e.code || e.message)));
+}
+window.sideOpenCompany = sideOpenCompany;
+
+function closeSideReason() { App.sideReason = null; App.render(); }
+window.closeSideReason = closeSideReason;
+
+function submitSideReason() {
+  const p = App.sideReason; if (!p) return;
+  const inp = $('sideReasonInput');
+  const reason = inp ? String(inp.value || '').trim() : '';
+  if (!reason) { alert('사유를 적어 주세요.'); return; }
+  S.logAccess({ targetUid: p.targetUid, targetName: p.targetName, reason: reason }).then(() => {
+    App.sideReason = null;
+    enterSeatAt(p.targetUid, p.targetName, false, p.companyId, p.companyName);
+  }).catch(e => alert('기록하지 못했습니다 — ' + (e.code || e.message)));
+}
+window.submitSideReason = submitSideReason;
+
+function sideReasonHtml() {
+  const p = App.sideReason;
+  if (!p) return '';
+  return '<div class="modalWrap on"><div class="modalCard">'
+    + '<h2>' + esc(p.targetName) + ' 자리 — ' + esc(p.companyName) + '</h2>'
+    + '<div class="sub">이 업체의 서랍을 왜 보시나요? (업체 목록을 보는 것 자체는 사유가 필요 없습니다)</div>'
+    + '<input id="sideReasonInput" class="btn" style="width:100%;margin:8px 0" placeholder="예: 급여 문의 확인"'
+    + ' onkeydown="if(event.key===\'Enter\'){event.preventDefault();submitSideReason();}">'
+    + '<div style="display:flex;gap:8px;justify-content:flex-end">'
+    + '<button class="btn" onclick="closeSideReason()">취소</button>'
+    + '<button class="btn pri" onclick="submitSideReason()">확인</button></div></div></div>';
+}
+
+/* 공유받은 것을 연다 — 이미 보낸 사람이 사유를 준 셈이라 또 묻지 않는다.
+   내가 그 사람 대리인이면 그 자격은 그대로 살려(수정 가능), 아니면 보기만. */
+function openShared(id) {
+  const s = (App.shares || {})[id];
+  if (!s) return;
+  db.ref(S.deputyPath(S.myUid(), s.byUid)).once('value').then(snap => {
+    const active = S.isActiveDeputy(snap.val(), Date.now());
+    enterSeatAt(s.byUid, s.byName, active, s.companyId, s.companyName, { byName: s.byName, tags: s.tags || [] });
+  }).catch(e => alert('확인하지 못했습니다 — ' + (e.code || e.message)));
+}
+window.openShared = openShared;
+
+/* ── 내 업체 순서 — 마우스로 끌어 바꾼다(대표 지시 2026-08-14) ──
+   화면에 보이는 차례(personDashboardModel 이 계산한 그대로)를 다시 구해
+   드롭한 자리로 옮기고, 즉시 다시 그린 뒤 서버에 저장한다. */
+let sideDragId = null;
+function sideDragStart(ev, id) { sideDragId = id; }
+function sideDragDrop(ev, overId) {
+  ev.preventDefault();
+  const dragId = sideDragId; sideDragId = null;
+  if (!dragId || dragId === overId) return;
+  const myUid = (App.me && App.me.uid) || '';
+  const myEmail = (App.me && App.me.email) || '';
+  const model = personDashboardModel(App.owners, App.companies, App.arrivals, App.shares,
+    myUid, myEmail, App.myName, App.myOrder, App.month || thisMonth(), Date.now(), App.sideQuery);
+  const ids = model.me.companies.map(c => c.id);
+  const from = ids.indexOf(dragId), to = ids.indexOf(overId);
+  if (from < 0 || to < 0) return;
+  ids.splice(from, 1);
+  ids.splice(to, 0, dragId);
+  App.myOrder = ids;
+  App.render();
+  S.saveMyCompanyOrder(ids).catch(e => alert('순서를 저장하지 못했습니다 — ' + (e.code || e.message)));
+}
+window.sideDragStart = sideDragStart; window.sideDragDrop = sideDragDrop;
+
+/* ── 업체 공유하기 — 사람 고르기 → 공유사항 체크(대표 지시 2026-08-14) ──
+   권한을 주는 것이 아니라 "이거 봐 주세요" 알림이다 — 보기 권한은 원래대로. */
+const SHARE_TAG_OPTIONS = ['확인 부탁드립니다', '서명·날인 필요', '급여 반영 요청', '참고만 하세요', '문제 있어 보입니다'];
+
+function openShare(companyId, companyName) {
+  App.shareCtx = { companyId: companyId, companyName: companyName, step: 'pick', query: '', targetUid: '', targetName: '', tags: {} };
+  App.render();
+}
+window.openShare = openShare;
+
+function closeShare() { App.shareCtx = null; App.render(); }
+window.closeShare = closeShare;
+
+function pickShareTarget(uid, name) {
+  if (!App.shareCtx) return;
+  App.shareCtx.targetUid = uid; App.shareCtx.targetName = name;
+  App.render();
+}
+window.pickShareTarget = pickShareTarget;
+
+function goShareTags() {
+  if (!App.shareCtx || !App.shareCtx.targetUid) { alert('공유할 사람을 먼저 골라 주세요.'); return; }
+  App.shareCtx.step = 'tags';
+  App.render();
+}
+window.goShareTags = goShareTags;
+
+function backShareStep() { if (App.shareCtx) { App.shareCtx.step = 'pick'; App.render(); } }
+window.backShareStep = backShareStep;
+
+function toggleShareTag(t) {
+  if (!App.shareCtx) return;
+  if (App.shareCtx.tags[t]) delete App.shareCtx.tags[t]; else App.shareCtx.tags[t] = true;
+  App.render();
+}
+window.toggleShareTag = toggleShareTag;
+
+function confirmShare() {
+  const ctx = App.shareCtx; if (!ctx) return;
+  const tags = Object.keys(ctx.tags || {});
+  if (!tags.length) { alert('공유사항을 하나 이상 체크해 주세요.'); return; }
+  S.shareCompany({ targetUid: ctx.targetUid, companyId: ctx.companyId, companyName: ctx.companyName, tags: tags })
+    .then(() => { App.shareCtx = null; App.render(); })
+    .catch(e => alert('공유하지 못했습니다 — ' + (e.code || e.message)));
+}
+window.confirmShare = confirmShare;
+
+function shareModalHtml() {
+  const ctx = App.shareCtx;
+  if (!ctx) return '';
+  if (ctx.step === 'tags') {
+    const tagsHtml = SHARE_TAG_OPTIONS.map(t =>
+      '<label class="tagopt' + (ctx.tags[t] ? ' on' : '') + '"><input type="checkbox" ' + (ctx.tags[t] ? 'checked' : '')
+      + ' onchange="toggleShareTag(\'' + esc(t) + '\')">' + esc(t) + '</label>').join('');
+    return '<div class="modalWrap on"><div class="modalCard">'
+      + '<h2>' + esc(ctx.companyName) + ' 공유하기</h2>'
+      + '<div class="sharedTo">' + esc(ctx.companyName) + ' 를(을) ' + esc(ctx.targetName) + '님에게</div>'
+      + '<div class="sub">무엇을 공유하는 건가요? (여러 개 고를 수 있습니다)</div>'
+      + '<div class="taglist">' + tagsHtml + '</div>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end">'
+      + '<button class="btn" onclick="backShareStep()">뒤로</button>'
+      + '<button class="btn pri" onclick="confirmShare()">공유하기</button></div></div></div>';
+  }
+  const q = String(ctx.query || '').trim().toLowerCase();
+  const myUid = (App.me && App.me.uid) || '';
+  const list = Object.keys(App.owners || {})
+    .filter(uid => uid !== myUid)
+    .map(uid => Object.assign({ uid: uid }, App.owners[uid]))
+    .filter(o => !q || String(o.name || '').toLowerCase().indexOf(q) >= 0)
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ko'));
+  return '<div class="modalWrap on"><div class="modalCard">'
+    + '<h2>' + esc(ctx.companyName) + ' 공유하기</h2>'
+    + '<div class="sub">누구와 공유할까요?</div>'
+    + '<input class="btn" style="width:100%;margin-bottom:10px" placeholder="이름으로 찾기" value="' + esc(ctx.query)
+    + '" oninput="App.shareCtx.query=this.value;App.render()">'
+    + '<div class="picklist">' + (list.length ? list.map(o =>
+      '<div class="pickrow' + (ctx.targetUid === o.uid ? ' on' : '') + '" onclick="pickShareTarget(\''
+      + esc(o.uid) + '\',\'' + esc(o.name || o.uid) + '\')">' + esc(o.name || o.uid) + '</div>').join('')
+      : '<div class="pempty">찾는 사람이 없습니다.</div>') + '</div>'
+    + '<div style="display:flex;gap:8px;justify-content:flex-end">'
+    + '<button class="btn" onclick="closeShare()">취소</button>'
+    + '<button class="btn pri" onclick="goShareTags()">다음</button></div></div></div>';
+}
+
+/* ══════ 휴가 대리 — 자리 맡기기 화면 ══════ */
+function ensureDeputies() {
+  return S.listMyDeputies().then(v => { App.deputies = v; App.render(); })
+    .catch(e => { console.warn('[대리]', e && e.code); App.deputies = {}; App.render(); });
+}
+
+function screenDeputy() {
+  const ids = Object.keys(App.deputies || {});
+  const now = Date.now();
+  const today = new Date().toISOString().slice(0, 10);
+  const staffOpts = '<option value="">맡길 사람 고르기</option>'
+    + (App.staffList || []).filter(o => o.uid !== S.myUid())
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ko'))
+      .map(o => '<option value="' + esc(o.uid) + '">' + esc(o.name || o.uid) + '</option>').join('');
+
+  let h = '<div style="margin-bottom:10px"><button class="btn" onclick="App.go(\'sites\')">← 사업장</button></div>'
+    + '<h1>자리 맡기기</h1><div class="sub">휴가·출장으로 자리를 비울 때, 내 자료를 고칠 수 있는 사람을 정합니다.</div>';
+
+  h += '<div class="card" style="padding:14px;margin-bottom:14px">'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+    + '<select class="btn" id="depWho">' + staffOpts + '</select>'
+    + '<input class="btn" type="date" id="depFrom" value="' + today + '">'
+    + '<span>부터</span>'
+    + '<input class="btn" type="date" id="depTo">'
+    + '<span>까지</span>'
+    + '<button class="btn pri" onclick="submitDeputy()">맡기기</button>'
+    + '</div>'
+    + '<div class="sub" style="margin-top:8px">🔒 끝나는 날이 지나면 저절로 닫힙니다 — 따로 거두실 필요가 없습니다.</div>'
+    + '</div>';
+
+  h += '<h1 style="font-size:15px">지금 맡기고 있는 사람 <span class="sub" style="margin:0;font-weight:400">' + ids.length + '명</span></h1>';
+  if (!ids.length) {
+    h += '<div class="card"><div class="empty">아직 아무에게도 맡기지 않았습니다.</div></div>';
+  } else {
+    h += '<div class="card">' + ids.map(uid => {
+      const d = App.deputies[uid];
+      const active = S.isActiveDeputy(d, now);
+      return '<div class="row">'
+        + '<b style="flex:1">' + esc(d.name || uid) + '</b>'
+        + '<span class="' + (active ? '' : 'sub') + '" style="margin:0;font-size:12.5px'
+        + (active ? ';color:var(--navy);font-weight:700' : '') + '">'
+        + (active ? new Date(d.to).toLocaleDateString() + '까지' : '기간 끝남') + '</span>'
+        + '<button class="btn" onclick="cancelDeputy(\'' + esc(uid) + '\')">지금 거두기</button>'
+        + '</div>';
+    }).join('') + '</div>';
+  }
+  return h;
+}
+
+/* 담당자 명단을 미리 읽어 둬야 「맡길 사람 고르기」에 이름이 뜬다 —
+   이름 골라 보기와 같은 명단을 쓴다. */
+function loadDeputyScreen() {
+  if (App.staffList && App.staffList.length) { App.render(); return; }
+  S.listOwners().then(v => {
+    App.staffList = Object.keys(v).map(uid => Object.assign({ uid: uid }, v[uid]));
+    App.render();
+  }).catch(e => console.warn('[담당자 명단]', e && e.code));
+}
+
+function submitDeputy() {
+  const who = $('depWho').value;
+  const fromV = $('depFrom').value, toV = $('depTo').value;
+  if (!who) { alert('맡길 사람을 골라 주세요.'); return; }
+  if (!toV) { alert('끝나는 날을 골라 주세요.'); return; }
+  const staff = (App.staffList || []).filter(o => o.uid === who)[0];
+  const from = fromV ? new Date(fromV).getTime() : Date.now();
+  const to = new Date(toV + 'T23:59:59').getTime();
+  S.setDeputy(who, staff ? staff.name : who, from, to)
+    .then(() => ensureDeputies())
+    .catch(e => alert('맡기지 못했습니다 — ' + (e.code || e.message)));
+}
+window.submitDeputy = submitDeputy;
+
+function cancelDeputy(uid) {
+  if (!confirm('지금 거둘까요? 그 사람은 곧바로 내 자리를 고칠 수 없게 됩니다.')) return;
+  S.revokeDeputy(uid).then(() => ensureDeputies())
+    .catch(e => alert('거두지 못했습니다 — ' + (e.code || e.message)));
+}
+window.cancelDeputy = cancelDeputy;
+</script>
+</body>
+</html>

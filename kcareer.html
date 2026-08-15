@@ -397,7 +397,7 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
   @page{size:A4;margin:14mm}
 }
 </style>
-<script src="js/pu-hwp-engine.js?v=13"></script>
+<script src="js/pu-hwp-engine.js?v=14"></script>
 <script src="hwpx_gen.js?v=13"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-check-compat.js"></script>
@@ -410,7 +410,7 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
 <script src="js/kcareer-scan.js"></script>
 <script src="js/kcareer-pusync.js"></script>
   <!-- 프로그램 사이 이동 (공용 앱바) -->
-  <script src="js/pu-appbar.js?v=1"></script>
+  <script src="js/pu-appbar.js?v=2"></script>
 </head>
 <body>
 <div id="pu-boot-splash" style="position:fixed;inset:0;z-index:2147483000;background:#eef1f7;display:flex;align-items:center;justify-content:center">
@@ -2049,6 +2049,12 @@ async function _puFetchPlan(){
     try{ var ts = await fbDb.ref('data/' + TK[tk]).once('value'); typeMap[tk] = _puUnwrap(ts.val()) || []; }
     catch(e){ typeMap[tk] = []; }
   }
+  /* 증명서 발급기관 추정에 쓸 기관 이름을 남겨둔다(_cdAgencyNames가 읽는다) */
+  try{
+    var ags = {};
+    for(var ak in typeMap){ (typeMap[ak] || []).forEach(function(t){ if(t && t.agency) ags[t.agency] = 1; }); }
+    LS.set(NS + 'pu_type_agencies', JSON.stringify(Object.keys(ags)));
+  }catch(e){}
   /* puRef 없는 기존 실적(시드 등)에 붙여 중복을 막기 위해 함께 넘긴다 */
   var existing = [];
   PU_SYNC_STORES.forEach(function(st){
@@ -2715,7 +2721,7 @@ async function loadPdfForEdit(file){
 async function _renderPdfEditPage(pageIdx){
   if(!window._pdfjs||!_pdfEditDoc) return;
   const pdfBytes=await _pdfEditDoc.save();
-  const pdf=await window._pdfjs.getDocument({data:pdfBytes}).promise;
+  const pdf=await window._pdfjs.getDocument({ isEvalSupported: false, data:pdfBytes}).promise;
   _pdfEditPage=Math.min(pageIdx,pdf.numPages-1);
   const page=await pdf.getPage(_pdfEditPage+1);
   const vp=page.getViewport({scale:_pdfEditScale});
@@ -2881,7 +2887,7 @@ async function mountEditor(buffer,name,cfg){
       prev.innerHTML='<div style="color:#ccc;font-size:12px">⏳ PDF 로딩 중...</div>';
       try{
         if(!window._pdfjs){ await new Promise(function(res,rej){ var sc=document.createElement('script'); sc.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'; sc.onload=function(){ window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; window._pdfjs=window.pdfjsLib; res(); }; sc.onerror=rej; document.head.appendChild(sc); }); }
-        const pdf=await window._pdfjs.getDocument({data:b64ToAb(abToB64(buffer))}).promise;
+        const pdf=await window._pdfjs.getDocument({ isEvalSupported: false, data:b64ToAb(abToB64(buffer))}).promise;
         prev.innerHTML='';
         for(var i=1;i<=Math.min(pdf.numPages,5);i++){
           const pg=await pdf.getPage(i); const vp=pg.getViewport({scale:1.4});
@@ -3177,8 +3183,47 @@ function _cdTable(rows, D){
 
 /* ===== 증명서 폴더 스캔 =====
    위촉장 스캔과 같은 폴더 핸들(fsRoot)을 쓰고, 판정도 js/kcareer-scan.js를 그대로 쓴다.
-   증명서로 판정된 파일만(파일명 끝이 실적증명서·경력증명서·참여확인서·수행확인서) 대상이다. */
+   증명서 낱말이 이름 어느 자리에 있어도 대상이다(끝만 보면 205건 중 15건만 잡혔다).
+   외부기관 발급(ext)과 본인 경력·재직증명(own)을 갈라 담고, own은 기본 체크 해제다. */
 var _cdScanCtx = null;
+
+/* pu-erp 유형 코드표의 수행기관 이름들 — 코드표는 동기화 때 읽으므로 캐시에서 가져온다 */
+function _puTypeAgencies(){
+  var out = [];
+  try{
+    var cached = JSON.parse(LS.get(NS + 'pu_type_agencies') || '[]');
+    if(Array.isArray(cached)) out = cached;
+  }catch(e){}
+  return out;
+}
+
+/* 기관 후보 — 새 사전을 만들지 않는다. 시스템이 이미 아는 이름만 모은다(설계서 6). */
+function _cdAgencyNames(){
+  var set = {};
+  function add(s){ s = String(s || '').trim(); if(s) set[s] = 1; }
+  _puTypeAgencies().forEach(add);
+  PU_SYNC_STORES.forEach(function(k){ get(k).forEach(function(r){ if(r) add(r.agency); }); });
+  get('certdoc').forEach(function(r){ if(r) add(r.issuer); });
+  /* 긴 이름이 먼저 매칭되게 정렬 — '한국능률협회'가 '능률협회'보다 앞 */
+  return Object.keys(set).sort(function(a,b){ return b.length - a.length; });
+}
+
+/* 발급기관 추정 — 폴더 경로에서 먼저, 없으면 파일명에서. 못 찾으면 빈 문자열(행의 🔍로 보정) */
+function _cdGuessIssuer(f){
+  var names = _cdAgencyNames();
+  if(!names.length) return '';
+  var dir = String(f.relPath || '');
+  var i = dir.lastIndexOf('/');
+  dir = i >= 0 ? dir.slice(0, i) : '';           /* 파일명을 뺀 경로만 */
+  var hayDir = _agencyNorm(dir), hayName = _agencyNorm(f.name || '');
+  for(var n = 0; n < names.length; n++){
+    if(hayDir.indexOf(_agencyNorm(names[n])) >= 0) return names[n];
+  }
+  for(var m = 0; m < names.length; m++){
+    if(hayName.indexOf(_agencyNorm(names[m])) >= 0) return names[m];
+  }
+  return '';
+}
 
 /* 원본 없는 기존 received 레코드를 파일명으로 찾아 경로만 붙인다(새 줄을 만들지 않는다) */
 function _cdFindAttachTarget(file, db){
@@ -3197,7 +3242,7 @@ async function cdScanNow(){
   var db = get('certdoc');
   var known = {};
   db.forEach(function(r){ if(r.relPath) known[r.relPath] = true; });
-  var adds = [], attaches = [], seen = {};
+  var ext = [], own = [], attaches = [], seen = {};
   files.forEach(function(f){
     var c = KcareerScan.classify(f.name);
     if(c.level !== 'sure' || c.store !== 'certdoc') return;
@@ -3205,11 +3250,12 @@ async function cdScanNow(){
     var ck = f.name + '|' + f.size;
     if(seen[ck]) return; seen[ck] = true;              /* 같은 파일 사본 */
     var t = _cdFindAttachTarget(f, db);
-    if(t) attaches.push({ id: t.id, f: f });
-    else adds.push(f);
+    if(t){ attaches.push({ id: t.id, f: f }); return; }
+    /* 외부기관이 발급한 실적증명(ext)과 본인 경력·재직증명(own)을 갈라 담는다 */
+    (c.certKind === 'own' ? own : ext).push({ f: f, certKind: c.certKind || 'ext' });
   });
   _cdScanCtx = { scanId: 'CS' + new Date().toISOString().slice(0,10).replace(/-/g,'') + '-' + String(Date.now()).slice(-4),
-                 adds: adds, attaches: attaches, total: files.length };
+                 ext: ext, own: own, attaches: attaches, pickOwn: false, total: files.length };
   renderCdScanPreview();
   $('modalCdScan').classList.add('open');
 }
@@ -3217,16 +3263,24 @@ async function cdScanNow(){
 function renderCdScanPreview(){
   if(!_cdScanCtx) return;
   var c = _cdScanCtx;
+  var willSave = c.ext.length + (c.pickOwn ? c.own.length : 0);
   $('cdScanBody').innerHTML = '<div style="font-size:12px;background:#F3F8F6;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:10px">'
-    + '증명서로 판정된 파일 <b>' + (c.adds.length + c.attaches.length) + '건</b> '
-    + '<span style="color:var(--text-mute)">(새로 등록 ' + c.adds.length + ' · 원본 없는 기존 증명서에 붙임 ' + c.attaches.length + ')</span>'
+    + '저장될 증명서 <b>' + willSave + '건</b> <span style="color:var(--text-mute)">(원본 없는 기존 증명서에 붙임 ' + c.attaches.length + '건 별도)</span>'
     + '<div style="color:var(--text-mute);margin-top:4px">원본은 복사하지 않고 경로만 저장합니다. 직접 만든 증명서는 건드리지 않습니다.</div></div>'
-    + (c.adds.length ? '<div style="font-size:12px;font-weight:600;margin:8px 0 4px">🟢 새로 등록</div>'
-        + c.adds.slice(0,50).map(function(f){ return '<div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--border-soft)">' + escapeHtml(f.name) + '</div>'; }).join('')
-        + (c.adds.length>50 ? '<div style="font-size:11px;color:var(--text-mute)">…외 ' + (c.adds.length-50) + '건</div>' : '') : '')
-    + (c.attaches.length ? '<div style="font-size:12px;font-weight:600;margin:12px 0 4px;color:var(--teal)">📎 기존 증명서에 원본만 붙임</div>'
+    + '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">'
+    + '<div class="card" style="flex:1;min-width:120px;text-align:center"><div style="font-size:20px;font-weight:700;color:var(--teal)">' + c.ext.length + '</div><div style="font-size:11px;color:var(--text-mute)">🏛 외부기관 발급 실적증명</div></div>'
+    + '<div class="card" style="flex:1;min-width:120px;text-align:center"><div style="font-size:20px;font-weight:700;color:' + (c.pickOwn ? 'var(--navy)' : 'var(--text-mute)') + '">' + c.own.length + '</div><div style="font-size:11px;color:var(--text-mute)">📄 본인 경력·재직증명</div></div>'
+    + '</div>'
+    + '<label style="display:flex;gap:6px;align-items:center;font-size:12px;padding:6px 0;margin-bottom:8px">'
+    + '<input type="checkbox"' + (c.pickOwn ? ' checked' : '') + ' onchange="toggleCdOwn()">'
+    + '<span>본인 경력·재직증명서 <b>' + c.own.length + '건</b>도 함께 등록 <span style="color:var(--text-mute)">(대개 같은 증명서의 연도별 사본입니다)</span></span></label>'
+    + '<div style="font-size:12px;font-weight:600;margin:8px 0 4px;color:var(--teal)">🏛 외부기관 발급 실적증명 (' + c.ext.length + ')</div>'
+    + c.ext.slice(0,50).map(function(a){ return '<div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--border-soft)">' + escapeHtml(a.f.name) + '</div>'; }).join('')
+    + (c.ext.length>50 ? '<div style="font-size:11px;color:var(--text-mute)">…외 ' + (c.ext.length-50) + '건</div>' : '')
+    + (c.attaches.length ? '<div style="font-size:12px;font-weight:600;margin:12px 0 4px">📎 기존 증명서에 원본만 붙임</div>'
         + c.attaches.map(function(a){ return '<div style="font-size:12px;padding:3px 0">' + escapeHtml(a.id) + ' ← ' + escapeHtml(a.f.name) + '</div>'; }).join('') : '');
 }
+function toggleCdOwn(){ if(!_cdScanCtx) return; _cdScanCtx.pickOwn = !_cdScanCtx.pickOwn; renderCdScanPreview(); }
 function closeCdScan(){ $('modalCdScan').classList.remove('open'); _cdScanCtx = null; }
 
 function cdScanCommit(){
@@ -3238,10 +3292,15 @@ function cdScanCommit(){
     while(db.some(function(x){ return x.id === mk(); })) seq++;
     return mk();
   }
-  c.adds.forEach(function(f){
-    db.unshift({ id: nextId(), kind: KcareerScan.cleanCore(f.name), org: '', issuer: '', usage: '', coverage: '',
+  /* 외부기관은 항상, 본인 것은 체크했을 때만 저장한다 */
+  var rows = c.ext.concat(c.pickOwn ? c.own : []);
+  rows.forEach(function(a){
+    var f = a.f;
+    /* 발급기관 추정은 Task 4에서 들어온다 — 없으면 비워 두고 행의 🔍로 채운다 */
+    var issuer = (typeof _cdGuessIssuer === 'function') ? _cdGuessIssuer(f) : '';
+    db.unshift({ id: nextId(), kind: KcareerScan.cleanCore(f.name), org: '', issuer: issuer, usage: '', coverage: '',
       year: (String(f.name).match(/(20\d{2})/)||[])[1] || String(f.mtime||'').slice(0,4), date: '', memo: '',
-      docSrc: 'received', src: 'fs', relPath: f.relPath, fileSize: f.size, fileMtime: f.mtime,
+      docSrc: 'received', certKind: a.certKind, src: 'fs', relPath: f.relPath, fileSize: f.size, fileMtime: f.mtime,
       scanId: c.scanId, submits: [], savedAt: new Date().toISOString() });
     n++;
   });
@@ -3255,7 +3314,7 @@ function cdScanCommit(){
   LS.set(NS + 'cd_scan_last_id', c.scanId);
   closeCdScan();
   renderDocStore('certdoc');
-  toast('✅ 증명서 새로 ' + n + '건 · 기존에 원본 붙임 ' + att + '건');
+  toast('✅ 증명서 새로 ' + n + '건' + (c.pickOwn ? ' (본인 경력증명 포함)' : '') + ' · 기존에 원본 붙임 ' + att + '건');
 }
 
 function cdUndoScan(scanId){
@@ -3809,7 +3868,7 @@ function showSidePreview(id){
           try{ await new Promise(function(res,rej){ var sc=document.createElement('script'); sc.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'; sc.onload=function(){ window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; window._pdfjs=window.pdfjsLib; res(); }; sc.onerror=function(){rej(new Error('CDN 로드 실패'));};  setTimeout(function(){rej(new Error('timeout'));},8000); document.head.appendChild(sc); }); loaded=true; }catch(le){ window._pdfjs=null; }
         } else loaded=true;
         if(window._pdfjs&&loaded!==false){
-          const pdf=await window._pdfjs.getDocument({data:b64ToAb(f.base64)}).promise;
+          const pdf=await window._pdfjs.getDocument({ isEvalSupported: false, data:b64ToAb(f.base64)}).promise;
           body.innerHTML='<div style="font-size:11px;color:#888;margin-bottom:6px;align-self:stretch;text-align:right">'+pdf.numPages+'페이지</div>';
           for(var pi=1;pi<=Math.min(pdf.numPages,3);pi++){
             const pg=await pdf.getPage(pi); const vp=pg.getViewport({scale:1.3});
@@ -4412,7 +4471,7 @@ async function showPDFInline(id,containerId){
         s.onload=()=>{ window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; window._pdfjs=window.pdfjsLib; res(); }; s.onerror=rej; document.head.appendChild(s); });
     }
     const pdfLib=window._pdfjs;
-    const pdf=await pdfLib.getDocument({data:b64ToAb(f.base64)}).promise;
+    const pdf=await pdfLib.getDocument({ isEvalSupported: false, data:b64ToAb(f.base64)}).promise;
     const n=pdf.numPages;
     box.innerHTML='<div style="background:#3d3d3d;padding:6px 10px;border-radius:8px 8px 0 0;display:flex;gap:8px;align-items:center">'
       +'<button class="btn primary" onclick="window.open(fileURL(\''+id+'\'),\'_blank\')">↗ 새 탭</button>'

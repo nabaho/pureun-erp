@@ -197,7 +197,10 @@ test('무시한 중복 건수를 사람에게 말해 준다', () => {
 test('src 를 저장한다 (없으면 통장·카드를 가를 수 없다)', () => {
   assert.match(app, /function _bankDraftSlimRow\(r, type, src\)\{/);
   assert.match(app, /src:\(src\|\|r\.src\|\|'bank'\)/);
-  assert.match(FL, /flat\.push\(_bankDraftSlimRow\(x,'income',x\.src\)\)/);
+  /* (2026-08-10) 줄의 정본이 초안 → ledger_batches(묶음마다 서버에)로 옮겨졌다.
+     그래서 초안에 줄을 담던 자리는 없어졌고, 대신 «올릴 때» 묶음으로 담는다. */
+  assert.match(FL, /_new\.push\(_bankDraftSlimRow\(x,'income',_src\)\)/);
+  assert.match(FL, /erpMakeBatch\(_new, \{ by:_me\.sid/, '올린 파일을 한 묶음으로 만든다');
 });
 
 test('보는 화면은 고른 종류만 보여준다', () => {
@@ -216,7 +219,9 @@ test('한 달만 비울 수 있다', () => {
   // 쌓아 두기 시작했으니 «전부 비우기» 하나로는 못 쓴다
   assert.match(FL, /async function clearMonth\(ym\)\{/);
   assert.match(FL, /'🗑 이 달'/);
-  assert.match(FL, /return !\(_srcOf\(r\)===_ldSrc && String\(r\.date\|\|''\)\.slice\(0,7\)===ym\);/);
+  // 한 달은 여러 묶음에 걸칠 수 있어 묶음을 반토막 낼 수 없다 → 이 기기에서만 치운다
+  assert.match(FL, /function gone\(r\)\{ return _srcOf\(r\)===_ldSrc && String\(r\.date\|\|''\)\.slice\(0,7\)===ym; \}/);
+  assert.match(FL, /if\(gone\(r\)\) hide2\[r\._k\] = 1;/, '치운 줄은 이 기기에 적어 둔다');
 });
 
 test('한 달 비우기는 지울 것과 남을 것을 미리 말한다', () => {

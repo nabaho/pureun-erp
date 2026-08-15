@@ -100,7 +100,14 @@
     user-select:none;transition:background .12s,color .12s}
   .vseg span:hover{color:var(--ink)}
   .vseg span.on{background:#fff;color:var(--acc2);box-shadow:0 1px 2px rgba(24,34,52,.13)}
-  .lay{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:0 12px 10px}
+  /* 거르개 — 묶음별 한 줄. 묶음 이름 너비를 못 박아 위아래 칩이 세로로 줄맞춤된다 */
+  .lays{padding:0 12px 10px;display:flex;flex-direction:column;gap:5px}
+  .lay{display:flex;align-items:flex-start;gap:5px;flex-wrap:wrap}
+  .laygp{flex-shrink:0;width:62px;padding:4px 0;font-size:10px;font-weight:800;color:#b3bccb;
+    letter-spacing:-.01em;white-space:nowrap;cursor:pointer;user-select:none;transition:color .12s}
+  .laygp:hover{color:var(--ink)}
+  .laygp.on{color:#7d8899}
+  .laygp .gi{margin-left:2px;font-size:9px;opacity:.75}
   .lchk{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:#8a94a6;
     border:1px solid #edf1f7;background:#fff;border-radius:999px;padding:3px 10px;cursor:pointer;user-select:none;
     transition:background .12s,border-color .12s,color .12s,opacity .12s;opacity:.62}
@@ -108,7 +115,6 @@
   .lchk .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 2px #fff inset}
   .lchk.on{opacity:1;color:var(--ink);background:#f8fafd;border-color:#dde5f0}
   .lchk:not(.on) .dot{background:#c9d2df !important}
-  .laynote{font-size:10.5px;color:#a6b0c0;margin-left:2px}
   .cgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}
   .cgrid.hd{border-top:1px solid #eef2f8;background:#fcfdff}
   .cdow{font-size:10px;font-weight:800;color:#a2adbe;text-align:center;padding:7px 0 6px;letter-spacing:.07em}
@@ -579,7 +585,7 @@
   @media (max-width:760px){#side{display:none}#main{margin-left:0}#qwrap{left:12px;right:12px}#app{padding:12px 12px 90px}}
 </style>
   <!-- 프로그램 사이 이동 (공용 앱바) -->
-  <script src="js/pu-appbar.js?v=1"></script>
+  <script src="js/pu-appbar.js?v=2"></script>
 </head>
 <body>
 <div id="root"><div class="gate">불러오는 중…</div></div>
@@ -1294,6 +1300,9 @@ function wkSide(inp,d){
    ★★ 반드시 로그인 본인(S.me.sid)이다. 열람 대상(S.vsid)을 따라가면 남의 성과급이 보인다.
        규칙이 uid 로 한 번 더 막지만, 코드에서도 절대 섞지 않는다. */
 var PC_PATH='data/perf_confirm';
+/* 몇 달치를 훑을까 — 내 것과 대표 전체 현황이 «같은 창»을 봐야 한다.
+   전에는 내 것만 넉 달이라, 대표 현황엔 있는 달이 내 화면엔 아예 없었다. */
+var PC_MONTHS=6;
 function pcMySid(){ return (S.me&&S.me.sid)||''; }        /* ★ S.vsid 아님 */
 function pcMonths(n){
   var out=[], d=new Date();
@@ -1315,7 +1324,7 @@ function pcAmFin(){
 function pcLoadAll(){
   return pcAmFin().then(function(fin){
     if(!fin) return [];
-    return Promise.all(pcMonths(6).map(function(ym){
+    return Promise.all(pcMonths(PC_MONTHS).map(function(ym){
       return fbDb.ref(PC_PATH+'/'+ym+'/p').once('value')
         .then(function(s){ var v=s.val(); return (v&&Object.keys(v).length)?{ym:ym,all:v}:null; })
         .catch(function(){ return null; });
@@ -1366,12 +1375,17 @@ function pcWho(p){
    발행 안 됐거나 내 것이 아니면 막히는데, 그게 정상이라 조용히 넘긴다. */
 function pcLoad(){
   var sid=pcMySid();
-  if(!sid || typeof fbDb==='undefined' || !fbDb) return Promise.resolve([]);
-  return Promise.all(pcMonths(4).map(function(ym){
+  if(!sid || typeof fbDb==='undefined' || !fbDb){ S.perfNone=[]; return Promise.resolve([]); }
+  return Promise.all(pcMonths(PC_MONTHS).map(function(ym){
     return fbDb.ref(PC_PATH+'/'+ym+'/p/'+sid).once('value')
-      .then(function(s){ var v=s.val(); return (v&&v.items)?{ym:ym,p:v}:null; })
-      .catch(function(){ return null; });
-  })).then(function(r){ return r.filter(Boolean); });
+      .then(function(s){ var v=s.val(); return {ym:ym, p:(v&&v.items)?v:null}; })
+      .catch(function(){ return {ym:ym, p:null}; });   /* 막힌 달도 «없는 달»로 본다 */
+  })).then(function(r){
+    /* ⚠ 빈 달도 기억해 둔다. 있는 달만 쌓아 보이니 한 달만 뜨면
+       「왜 저 달은 안 나오나」가 된다 — 화면에서 그 까닭을 말해 줘야 한다. */
+    S.perfNone = r.filter(function(x){ return x && !x.p; }).map(function(x){ return x.ym; });
+    return r.filter(function(x){ return x && x.p; }).map(function(x){ return {ym:x.ym, p:x.p}; });
+  });
 }
 function pcObjOf(p,fid){ return ((p.objection||{}).byItem||{})[fid]||null; }
 function pcRowState(p,fid){
@@ -1447,18 +1461,43 @@ function renderPerf(){
   var app=$('app'); if(!app) return;
   if(S.perfData===undefined){ app.innerHTML=loadingHTML(); pcRefresh(); return; }
   var list=S.perfData||[], adm=S.perfAll||[];
-  var h='';
+  /* 성과급은 읽는 화면이지 늘어놓는 화면이 아니다. 최대 너비를 두지 않으면
+     넓은 모니터에서 「확인한 때」가 저 멀리 붙어 눈이 따라가지 못한다.
+     (업무 목록처럼 칸이 많은 화면은 넓어야 하므로 #app 전체가 아니라 여기서만 좁힌다) */
+  var h='<div style="max-width:860px">';
   if(!list.length){
     h+='<div class="card" style="text-align:center;padding:32px 20px;color:var(--faint);margin-bottom:14px">'
       +'<div style="font-size:30px;margin-bottom:10px">⭐</div>'
       +'<div style="font-size:14px;margin-bottom:6px">확인할 내 성과급이 없습니다</div>'
-      +'<div style="font-size:12px;line-height:1.7">대표님이 그 달치를 내보내면 여기에 나타납니다.<br>'
+      +'<div style="font-size:12px;line-height:1.7">'
+      /* 어느 달을 봤는지 적어 준다 — 「몇 달치를 봤나」를 모르면 없다는 말도 못 믿는다 */
+      +'최근 '+PC_MONTHS+'개월('+esc((S.perfNone||[]).slice().sort().reverse().map(pcYmLabel).join(' · '))+')을 봤습니다.<br>'
+      +'대표님이 그 달치를 내보내면 여기에 나타납니다.<br>'
       +'분명히 있어야 하는데 안 보이면 대표님께 계정 연결을 확인해 달라고 하세요.</div></div>';
   } else {
     h+=list.map(pcMonthHTML).join('');
+    h+=pcNoneHTML();                   /* 없는 달을 말해 준다 — 안 그러면 「왜 안 나오나」가 된다 */
   }
   h+=pcAdminHTML();                    /* 총괄·대행에게만 채워진다 */
-  app.innerHTML=h;
+  app.innerHTML=h+'</div>';
+}
+
+/* ── 내 것이 «없는» 달 ────────────────────────────────────────
+   있는 달만 카드로 쌓으니, 한 달만 뜨면 나머지 달은 어디 갔는지 알 수가 없다.
+   훑어본 달을 다 적고, 없는 달은 없다고 말한다.
+   ⚠ 까닭은 둘인데 직원 화면에서는 갈라볼 수 없다 —
+     ① 그 달에 내게 붙은 건이 없었다  ② 대표가 아직 그 달을 발행하지 않았다.
+     둘 다 적어 준다. 하나만 적으면 절반은 거짓말이 된다. */
+function pcYmLabel(ym){ return (+String(ym).slice(5,7))+'월'; }
+function pcNoneHTML(){
+  var none=(S.perfNone||[]).slice().sort().reverse();
+  if(!none.length) return '';
+  return '<div class="card" style="padding:11px 14px;margin-bottom:14px;font-size:12px;'
+    +'color:var(--faint);line-height:1.8;background:#fbfcfe">'
+    +'<b style="color:var(--sub)">'+esc(none.map(pcYmLabel).join(' · '))+'</b> 은 내 성과급이 없습니다.'
+    +'<br>그 달에 나에게 붙은 건이 없었거나, 대표님이 아직 그 달을 내보내지 않았습니다.'
+    +'<br><span style="font-size:11.5px">최근 '+PC_MONTHS+'개월만 봅니다. 더 이전 달은 대표님께 문의하세요.</span>'
+    +'</div>';
 }
 
 /* ── 대표만 보는 전체 현황 (읽기 전용) ────────────────────────
@@ -1531,7 +1570,8 @@ function pcAdminHTML(){
   });
   h+='</div>';
 
-  h+= sel ? pcAdmOneHTML(ym, all[sel], mask) : pcAdmAllHTML(ym, all, sids, st, mask);
+  /* 사번을 따로 넘긴다 — 사본 안의 p.sid 를 믿지 않는다(답변을 엉뚱한 사람에게 쓸 수 없게) */
+  h+= sel ? pcAdmOneHTML(ym, sel, all[sel], mask) : pcAdmAllHTML(ym, all, sids, st, mask);
   h+='</div>';
   return h;
 }
@@ -1595,7 +1635,7 @@ function pcAdmAllHTML(ym, all, sids, st, mask){
 }
 
 /* 사람 탭 — 그 사람이 어느 줄에서 멈췄는지 */
-function pcAdmOneHTML(ym, p, mask){
+function pcAdmOneHTML(ym, sid, p, mask){
   var items=p.items||{}, c=pcCounts(p), w=pcWho(p);
   var ids=Object.keys(items).sort(function(a,b){ return String(items[a].date||'')<String(items[b].date||'')?-1:1; });
   var h='<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--faint);margin-bottom:12px">'
@@ -1627,18 +1667,93 @@ function pcAdmOneHTML(ym, p, mask){
       h+='<div style="background:#eff6ff;border-radius:6px;padding:8px 11px;margin-top:7px;font-size:12.5px;color:#1e40af;line-height:1.7">'
         +'<b>답변</b> '+esc(String(it.reply.at||'').slice(0,10))+'<br>'+esc(it.reply.text)+'</div>';
     }
+    /* 아직 안 답한 이의에만 답변칸을 낸다 — 답하면 그 이의는 닫힌다 */
+    if(st==='obj' && ob && !(it.reply && it.reply.state==='done')){
+      h+='<div style="margin-top:8px">'
+        +'<textarea id="rp-'+esc(fid)+'" rows="2" placeholder="답변을 적어주세요 — 직원 화면에 그대로 보입니다" '
+        +'style="width:100%;box-sizing:border-box;padding:7px 10px;font-size:12.5px;line-height:1.6;'
+        +'border:1px solid var(--bd);border-radius:6px;resize:vertical;font-family:inherit"></textarea>'
+        +'<div style="display:flex;justify-content:flex-end;margin-top:6px">'
+        +'<button id="rpb-'+esc(fid)+'" onclick="pcReply(\''+escJ(ym)+'\',\''+escJ(sid)+'\',\''+escJ(fid)+'\')" '
+        +'style="padding:6px 14px;font-size:12px;font-weight:700;border:none;border-radius:6px;'
+        +'background:#1e40af;color:#fff;cursor:pointer">답변하고 닫기</button></div></div>';
+    }
     h+='</div>';
   });
 
   if(w.k==='obj') h+='<div style="margin-top:10px;font-size:11.5px;color:var(--faint);line-height:1.7">'
-    +'이의 답변은 푸른이알피 <b>성과관리 → 확인 현황</b>에서 합니다. 여기서는 보기만 합니다.</div>';
+    +'답변하면 그 자리에서 직원 화면에 그대로 보이고, 그 이의는 닫힙니다.<br>'
+    +'금액을 고쳐야 하면 푸른이알피 <b>입금관리 → 성과분배</b>에서 고친 뒤 다시 발행하세요.</div>';
   return h;
+}
+
+/* ── 이의 답변 — 대표가 여기서 바로 답한다 ──────────────────────
+   전에는 보기만 되고 답변은 푸른이알피 「확인 현황」에서 해야 했다. 같은 자료를
+   두 화면에서 보면서 손은 한 곳에서만 쓸 수 있으니 늘 오가야 했다.
+   ⚠ 쓰는 자리는 items/<fid>/reply — 직원은 못 쓰는 자리다(규칙).
+     data/perf_confirm 위쪽에 .write:isAdmin 이 걸려 있어 대표는 여기서도 쓸 수 있다.
+   ⚠ 금액은 여기서 못 고친다. 고치는 것은 원본(입금관리 성과분배)의 일이다. */
+function pcReplyRef(ym,sid,fid){ return fbDb.ref(PC_PATH+'/'+ym+'/p/'+sid+'/items/'+fid+'/reply'); }
+function pcReply(ym,sid,fid){
+  var el=$('rp-'+fid); if(!el) return;
+  var t=String(el.value||'').trim();
+  if(t.length<2){ toast('답변을 적어주세요','err'); return; }
+  if(typeof fbDb==='undefined'||!fbDb){ toast('서버에 연결돼 있지 않습니다','err'); return; }
+  var btn=$('rpb-'+fid); if(btn){ btn.disabled=true; btn.textContent='저장 중…'; }
+  pcReplyRef(ym,sid,fid).set({ text:t.slice(0,500), at:new Date().toISOString(),
+      by:pcMySid(), state:'done' })   /* state:'done' 이라야 그 이의가 닫힌다 */
+    .then(function(){
+      toast('답변했습니다 — 직원 화면에 그대로 보입니다');
+      /* 다시 읽어야 화면·띠·배지가 함께 맞는다 (안 읽으면 방금 답한 이의가 그대로 열려 보인다) */
+      return pcRefresh().then(route);
+    })
+    .catch(function(e){
+      if(btn){ btn.disabled=false; btn.textContent='답변하고 닫기'; }
+      toast('답변 저장 실패 — '+(e&&e.message||''),'err');
+    });
+}
+
+/* 대표가 답해야 할 이의 — 몇 건인지, 가장 오래된 것이 며칠째인지.
+   직원에게는 「확인이 남았습니다」 띠가 뜨는데 대표에게는 아무것도 없어서,
+   이의가 올라와도 열어봐야 알았다. 같은 자리를 대표용으로도 쓴다. */
+function pcAdmPending(){
+  var n=0, people=0, oldest=0, months={};
+  (S.perfAll||[]).forEach(function(m){
+    Object.keys(m.all||{}).forEach(function(sid){
+      var p=m.all[sid]||{}, w=pcWho(p);
+      if(w.k!=='obj') return;
+      people++; n+=w.open.length; months[(+m.ym.slice(5,7))+'월']=1;
+      w.open.forEach(function(fid){
+        var d=pcDaysAgo((((p.objection||{}).byItem||{})[fid]||{}).at);
+        if(d>oldest) oldest=d;
+      });
+    });
+  });
+  return { n:n, people:people, oldest:oldest, months:Object.keys(months) };
 }
 
 /* ── 안내 띠 — 확인이 남아 있으면 화면 맨 위에 계속 남는다 ── */
 function pcBand(){
   var el=$('perfband'); if(!el) return;
   var pend=(S.perfData||[]).filter(function(x){ return !x.p.done; });
+  /* 내 확인이 다 끝났어도, 대표라면 답할 이의가 남았을 수 있다 —
+     내 것을 먼저 보이고(내 일이 우선), 없을 때 대표 것을 보인다. */
+  if(!pend.length && S.view!=='perf'){
+    var a=pcAdmPending();
+    if(a.n){
+      var slow=a.oldest>=3;                      /* 사흘 넘게 답을 못 받으면 급한 것으로 본다 */
+      el.style.display='';
+      el.innerHTML='<div onclick="go(\'perf\')" style="cursor:pointer;display:flex;align-items:center;gap:10px;flex-wrap:wrap;'
+        +'background:'+(slow?'#fef2f2':'#fffbeb')+';border-bottom:2px solid '+(slow?'#fca5a5':'#fbbf24')
+        +';padding:9px 16px;font-size:13px;color:'+(slow?'#b91c1c':'#854d0e')+'">'
+        +'<b>'+(slow?'⏰':'⚠')+' 성과급 이의 '+a.n+'건이 답을 기다립니다</b>'
+        +'<span style="font-size:12px">'+esc(a.months.join('·'))+' · '+a.people+'명'
+        +(a.oldest?' · 가장 오래된 것 '+a.oldest+'일째':'')+'</span>'
+        +'<span style="margin-left:auto;background:#fff;border:1px solid currentColor;border-radius:6px;'
+        +'padding:4px 12px;font-size:12px;font-weight:700">답변하러 가기 →</span></div>';
+      return;
+    }
+  }
   if(!pend.length || S.view==='perf'){ el.style.display='none'; el.innerHTML=''; return; }
   var n=pend.reduce(function(s,x){ return s+pcCounts(x.p).todo; },0);
   var late=pend.some(function(x){ return pcDueLate(x.p.due); });
@@ -1785,7 +1900,9 @@ function route(){
   var ca=$('cnt-ar'); if(ca)ca.textContent=allItems().filter(function(it){return it.state==='done';}).length||'';
   var ck=$('cnt-kb'); if(ck)ck.textContent=kbAll().length||'';
   var ch=$('cnt-ho'); if(ch){ var n2=hoBadgeCount(); ch.textContent=n2||''; ch.style.color=n2?'#c0392b':''; ch.style.fontWeight=n2?'800':''; }
-  var cp=$('cnt-perf'); if(cp){ var n3=(S.perfData||[]).filter(function(x){return !x.p.done;}).length;
+  /* 내가 확인할 달 + (대표라면) 답할 이의 건수를 함께 센다 — 둘 다 「내 성과급」에서 하는 일이다 */
+  var cp=$('cnt-perf'); if(cp){
+    var n3=(S.perfData||[]).filter(function(x){return !x.p.done;}).length + pcAdmPending().n;
     cp.textContent=n3||''; cp.style.color=n3?'#c0392b':''; cp.style.fontWeight=n3?'800':''; }
   pcBand();   /* 화면을 옮길 때마다 띠를 다시 판단한다 (성과급 화면에서는 숨긴다) */
   if(S.view==='team') renderTeam();
@@ -3511,12 +3628,33 @@ function aiConsent(){
   return confirmM('AI 기능을 쓰면 이 업무의 진행 기록·기업명·의뢰인 정보가 회사에 설정된 AI 서비스로 전송됩니다.\n\n의뢰인 개인정보가 포함될 수 있으니 대표님이 승인한 경우에만 사용하세요.\n\n계속할까요? (이 브라우저에서 한 번만 묻습니다)',{ok:'동의하고 사용'})
     .then(function(ok){ if(ok) localStorage.setItem('work_ai_ok','1'); return ok; });
 }
+/* 바깥으로 나가는 부름은 이것 하나뿐이다(AI 프록시). 시간 제한이 없으면
+   답이 안 올 때 «영영» 기다린다 — 「기록·노트·회고를 읽고 있습니다…」 창은
+   닫는 단추가 없어서 그대로 갇히고, 단추들은 눌린 채로 멈춘다.
+   답만 오면(늦게라도 실패로) 부른 쪽들은 스스로 되돌아온다 — 이미 그렇게 짜여 있다. */
+var AI_WAIT_MS=60000;
+function aiFetch(url,opts){
+  if(typeof AbortController==='undefined') return fetch(url,opts);   // 아주 옛 브라우저
+  var ac=new AbortController();
+  var timer=setTimeout(function(){ ac.abort(); }, AI_WAIT_MS);
+  var o={}; for(var k in opts){ if(Object.prototype.hasOwnProperty.call(opts,k)) o[k]=opts[k]; }
+  o.signal=ac.signal;                                  // 넘겨받은 것은 고치지 않는다
+  return fetch(url,o).then(function(r){ clearTimeout(timer); return r; },
+    function(e){
+      clearTimeout(timer);
+      if(e&&e.name==='AbortError'){
+        var t=new Error(Math.round(AI_WAIT_MS/1000)+'초 안에 답이 오지 않았습니다 — 잠시 뒤 다시 해 주세요');
+        t.timeout=true; throw t;
+      }
+      throw e;
+    });
+}
 function aiCall(system,userText){
   var url=aiProxyUrl();
   if(!url) return Promise.reject(new Error('AI 프록시 주소가 없습니다 — 푸른이알피 설정에서 먼저 등록하세요'));
   var i=0;
   function attempt(){
-    return fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
+    return aiFetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({model:AI_MODELS[i],max_tokens:8000,system:system,
         messages:[{role:'user',content:userText}]})})
       .then(function(r){ return r.json(); })
@@ -3527,6 +3665,8 @@ function aiCall(system,userText){
         return t;
       })
       .catch(function(e){
+        // ⚠ 끊긴 것은 «모델 탓»이 아니다. 다음 모델로 다시 걸면 1분을 또 기다린다.
+        if(e&&e.timeout) throw e;
         if(i<AI_MODELS.length-1){ i++; return attempt(); }   // 프록시가 모델을 제한하면 다음 모델로
         throw e;
       });
@@ -4333,16 +4473,28 @@ function stepAddGroupGo(id){
      새 일정 만들기·시간 변경은 [푸른이알피 캘린더] 버튼으로 넘긴다.
    ⚠ 구글 캘린더 레이어는 OAuth 토큰이 pu-erp 세션에 있어 여기서 못 읽는다.
    주 시작은 월요일 — 업무시트의 주차(logs weekKey)와 어긋나지 않게 맞췄다. */
+/* [열쇠, 이름, 색, 기본켬, 칩에 쓸 짧은 이름, 묶음]
+   ⚠ 아홉 개를 한 줄에 죽 늘어놓으니 어느 것이 «우리 것» 이고 어느 것이 «푸른이알피에서
+     가져온 것» 인지 알 수 없었다. 묶음으로 나눈다 — mine 은 여기서 고칠 수 있는 것,
+     erp 는 읽기만 하는 것. 묶음 이름이 앞에 붙으므로 칩 이름에서 겹치는 말은 뺀다
+     (「업무 기한」→「기한」). 긴 이름(CAL_NAME)은 달력 안 일정 글자에 그대로 쓴다. */
 var CAL_LAYERS=[
-  ['due', '업무 기한',  '#dc2626', 1],
-  ['next','다음 할 일', '#7c3aed', 1],
-  ['step','진행 단계',  '#0284c7', 1],
-  ['log', '주간 기록',  '#0f766e', 0],
-  ['sch', '일정',       '#2563eb', 1],
-  ['att', '휴가·근태',  '#0891b2', 1],
-  ['loa', '휴직',       '#94a3b8', 0],
-  ['dl',  '사건 마감',  '#b45309', 1],
-  ['sdue','단계 기한',  '#b91c1c', 1]
+  ['due', '업무 기한',  '#dc2626', 1, '기한',      'mine'],
+  ['next','다음 할 일', '#7c3aed', 1, '할 일',     'mine'],
+  ['step','진행 단계',  '#0284c7', 1, '단계',      'mine'],
+  ['log', '주간 기록',  '#0f766e', 0, '기록',      'mine'],
+  ['sch', '일정',       '#2563eb', 1, '일정',      'erp'],
+  ['att', '휴가·근태',  '#0891b2', 1, '근태',      'erp'],
+  ['loa', '휴직',       '#94a3b8', 0, '휴직',      'erp'],
+  ['dl',  '사건 마감',  '#b45309', 1, '마감',      'erp'],
+  ['sdue','단계 기한',  '#b91c1c', 1, '단계 기한', 'erp']
+];
+/* 묶음 이름은 누르면 그 묶음을 통째로 켜고 끈다 — 「내 것만 보기」가 한 번에 된다.
+   읽기 전용이라는 설명은 화면에 깔지 않고 ⓘ 로 넣는다 (전에는 아래 한 줄을 더 썼다). */
+var CAL_GROUPS=[
+  ['mine','내 업무',   ''],
+  ['erp', '푸른이알피','푸른이알피에서 가져온 자료입니다 — 여기서는 보기만 합니다.\n'
+                     +'새 일정 만들기·시간 변경은 위 [🗓 푸른이알피] 로 가서 하세요.']
 ];
 var CAL_SRC={sch:'my_schedules',att:'attendance_records',loa:'leave_of_absence'};
 var CAL_NAME={}; CAL_LAYERS.forEach(function(l){ CAL_NAME[l[0]]=l[1]; });
@@ -5269,11 +5421,21 @@ function calPanel(){
     +'<span class="cbtn" onclick="openPuerpCal()" title="일정 새로 만들기·시간 변경·구글 캘린더는 푸른이알피에서 합니다">🗓 푸른이알피</span>'
     +'<span class="cbtn gh" onclick="calToggle()" title="캘린더 접기">✕</span>'
     +'</div>'
-    +'<div class="lay">'+CAL_LAYERS.map(function(l){
-        return '<span class="lchk'+((S.calLay||{})[l[0]]?' on':'')+'" onclick="calLay(\''+l[0]+'\')" '
-          +'title="클릭하면 이 레이어를 켜고 끕니다"><span class="dot" style="background:'+l[2]+'"></span>'+esc(l[1])+'</span>';
+    // 거르개 — 묶음별 한 줄씩. 묶음 이름을 누르면 그 묶음이 통째로 켜지고 꺼진다.
+    +'<div class="lays">'+CAL_GROUPS.map(function(g){
+        var ls=CAL_LAYERS.filter(function(l){ return l[5]===g[0]; });
+        var anyOn=ls.some(function(l){ return (S.calLay||{})[l[0]]; });
+        return '<div class="lay">'
+          +'<span class="laygp'+(anyOn?' on':'')+'" onclick="calLayGroup(\''+g[0]+'\')"'
+          +' title="'+esc((anyOn?'이 묶음을 모두 끕니다':'이 묶음을 모두 켭니다')+(g[2]?'\n\n'+g[2]:''))+'">'
+          +esc(g[1])+(g[2]?'<span class="gi">ⓘ</span>':'')+'</span>'
+          +ls.map(function(l){
+              return '<span class="lchk'+((S.calLay||{})[l[0]]?' on':'')+'" onclick="calLay(\''+l[0]+'\')" '
+                +'title="'+esc(l[1])+' — 클릭하면 켜고 끕니다">'
+                +'<span class="dot" style="background:'+l[2]+'"></span>'+esc(l[4])+'</span>';
+            }).join('')
+          +'</div>';
       }).join('')
-    +'<span class="laynote">일정·근태·휴직·마감은 푸른이알피 자료 — 읽기 전용</span>'
     +'</div>';
   if(S.calView==='month'){
     h+='<div class="cgrid hd">'+WDS.map(function(w,i){return '<div class="cdow'+(i>=5?' we':'')+'">'+w+'</div>';}).join('')+'</div>'
@@ -5314,6 +5476,15 @@ function calBtn(){
 function calToggle(){ S.calOn=!S.calOn; calSavePrefs(); route(); }
 function calSetView(v){ S.calView=v; calSavePrefs(); route(); }
 function calLay(k){ S.calLay=S.calLay||calDefLay(); S.calLay[k]=!S.calLay[k]; calSavePrefs(); route(); }
+/* 묶음 통째로 — 하나라도 켜져 있으면 모두 끄고, 다 꺼져 있으면 모두 켠다.
+   「푸른이알피 것은 잠깐 치우고 내 것만 보기」가 한 번에 된다. */
+function calLayGroup(g){
+  S.calLay=S.calLay||calDefLay();
+  var ls=CAL_LAYERS.filter(function(l){ return l[5]===g; });
+  var anyOn=ls.some(function(l){ return S.calLay[l[0]]; });
+  ls.forEach(function(l){ S.calLay[l[0]]=!anyOn; });
+  calSavePrefs(); route();
+}
 function calGoToday(){ S.calDate=todayStr(); route(); }
 function calZoom(d){ S.calDate=d; S.calView='day'; calSavePrefs(); route(); }
 function calNav(n){

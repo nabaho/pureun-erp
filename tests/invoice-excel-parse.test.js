@@ -148,12 +148,12 @@ console.log('\n[⑨ 화면 — 어느 탭에서 올려도 진행·오류가 보�
 t('안내를 탭 밖에 그린다',
   /uploadState\.status !== 'idle' && h\('div', \{ style:\{ marginBottom:'12px'/.test(src), true);
 t('탭을 그리기 «전» 에 온다', src.indexOf("uploadState.status !== 'idle' && h('div', { style:{ marginBottom:'12px'")
-  < src.indexOf("tab === 'issue' && renderIssue()"), true);
+  < src.indexOf("tab === 'issue' && renderIssueToolbar()"), true);
 t('아카이브 안의 옛 안내는 걷어냈다',
   /uploadState\.status !== 'idle' && uploadState\.status !== 'done' && h\('div'/.test(src), false);
 /* 「pre-line」은 파일 곳곳에 있으므로 «이 안내 상자 안에» 있는지를 본다 */
 const BAND = src.slice(src.indexOf("uploadState.status !== 'idle' && h('div', { style:{ marginBottom:'12px'"),
-                       src.indexOf("tab === 'issue' && renderIssue()"));
+                       src.indexOf("tab === 'issue' && renderIssueToolbar()"));
 t('안내 상자를 잘라냈다', BAND.length > 300 && BAND.length < 1600, true);
 t('줄바꿈이 보이게 한다 (여러 파일 오류를 줄마다 적는다)', /whiteSpace:'pre-line'/.test(BAND), true);
 t('오류는 빨강, 완료는 초록', /uploadState\.status==='error' \? '#fef2f2' : uploadState\.status==='done' \? '#f0fdf4'/.test(src), true);
@@ -163,7 +163,8 @@ t('못 읽은 파일을 모은다', /bad\.push\(file\.name \+ ' — ' \+ \(got\.
 t('★ 한 줄도 못 읽었으면 실패로 알린다 (전에는 「✅ 완료: 0개」 였다)',
   /if\(!allRows\.length\)\{\s*\n\s*setUploadState\(\{ status:'error'/.test(src), true);
 t('무엇을 확인해야 하는지도 적는다', /홈택스 ▸ 조회\/발급 ▸ 전자세금계산서 ▸ 목록조회/.test(src), true);
-t('일부만 못 읽었으면 성공 옆에 함께 적는다', /bad\.length \? \('\\n⚠ 못 읽은 파일 '\+bad\.length/.test(src), true);
+// 표시는 ⚠·❌ 중 무엇이든 좋다 — 「못 읽은 파일을 성공 옆에 함께 적는가」만 지킨다
+t('일부만 못 읽었으면 성공 옆에 함께 적는다', /bad\.length \? \('\\n.{0,3}못 읽은 파일 '\+bad\.length/.test(src), true);
 t('장이 여럿이면 가장 많이 읽히는 장을 쓴다', /if\(res\.rows\.length > got\.rows\.length\) got = res;/.test(src), true);
 
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===\n');

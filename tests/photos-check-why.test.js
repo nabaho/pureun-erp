@@ -26,10 +26,18 @@ function load() {
     'const CARD_KINDS = { card: 1, bizreg: 1 };',
     'const CO_KINDS = { bizreg: 1, sme: 1 };',
     grab(/function readAnyField\([\s\S]*?\n\}/, 'readAnyField'),
+    /* ⚠ 2026-08-11 — 업체관리 판정을 coFilledOk 한 곳으로 모았다(filled 가 실시간DB
+       에서 사라져 화면이 멎던 사고). **진짜 함수를 함께 넣는다** — 가짜로 두면
+       그 판정이 틀려도 아래 「할 일과 이유가 어긋나지 않는다」가 못 잡는다. */
+    grab(/function coFilledOk\(read\)[\s\S]*?\n\}/, 'coFilledOk'),
+    /* ⚠ 2026-08-13 — 원본이 작은 서류 판정(tooSmall)도 **진짜 함수를 넣는다.**
+       가짜로 두면 그 판정이 틀려도 아래 「할 일과 이유가 어긋나지 않는다」가 못 잡는다. */
+    grab(/^const MIN_READ_EDGE = \{[\s\S]*?\n\};/m, 'MIN_READ_EDGE').replace('const ', 'var '),
+    grab(/function tooSmall\(it\)[\s\S]*?\n\}/, 'tooSmall'),
     grab(/function checkWhy\(it\)[\s\S]*?\n\}/, 'checkWhy'),
     grab(/function needsCheck\(it\)[\s\S]*?\n\}/, 'needsCheck')
   ].join('\n');
-  const ctx = {};
+  const ctx = { Number, Math, String };
   vm.createContext(ctx);
   vm.runInContext(src, ctx);
   return ctx;
@@ -41,7 +49,10 @@ const it = (read) => ({ meta: { read } });
 const CASES = [
   ['급여서류', { kind: 'payslip', fields: {} }, /지워/],
   ['판독 실패', { kind: 'card', error: 'AI 응답 없음', fields: {} }, /다시 판독/],
-  ['본문이 빈 사진', { kind: 'card', error: '사진 본문을 불러오지 못했습니다', fields: {} }, /비었습니다/],
+  /* ⚠ 2026-08-13 다시 겨눔 — 「비었습니다 · 지워 주세요」였다. 지우라고 하면
+     멀쩡히 읽어 둔 값까지 함께 잃는다(사진만 다시 올리면 되는 상황이다).
+     이 검사가 지키는 것은 「할 일이 적혀 있다」이지 그 문구가 아니다. */
+  ['본문이 빈 사진', { kind: 'card', error: '사진 본문을 불러오지 못했습니다', fields: {} }, /다시 올려/],
   ['종류를 못 가림', { kind: 'other', fields: { name: '홍길동' } }, /분류 지정/],
   ['검증에 걸림', { kind: 'bizreg', auto: false, fields: { bizNo: '123' } }, /미덥지/],
   ['명함첩에 아직 안 감', { kind: 'card', auto: true, fields: {} }, /명함첩/],
@@ -81,11 +92,16 @@ test('★ 할 일이면 반드시 이유가 있고, 할 일이 아니면 이유�
   }
   let checked = 0;
   for (const read of cases) {
-    const photo = it(read);
-    const n = need(photo), w = why(photo);
-    assert.equal(!!w, !!n,
-      '어긋났습니다 — 할 일=' + n + ' 인데 이유="' + w + '" (' + JSON.stringify(read) + ')');
-    checked++;
+    /* 원본 크기도 함께 훑는다(2026-08-13) — 작은 서류 판정이 한쪽에만 들어가면
+       「⚠ 는 떴는데 이유가 빈 칸」이 된다. 크기를 모르던 옛 사진(0)도 함께. */
+    for (const size of [{ w: 0, h: 0 }, { w: 512, h: 755 }, { w: 2480, h: 3508 }]) {
+      const photo = { meta: { w: size.w, h: size.h, read: read } };
+      const n = need(photo), w = why(photo);
+      assert.equal(!!w, !!n,
+        '어긋났습니다 — 할 일=' + n + ' 인데 이유="' + w + '" (' +
+        size.w + '×' + size.h + ' ' + JSON.stringify(read) + ')');
+      checked++;
+    }
   }
   assert.ok(checked > 100, '충분히 훑지 못했습니다: ' + checked);
 });

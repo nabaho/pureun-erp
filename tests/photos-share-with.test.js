@@ -104,7 +104,10 @@ test('원본이 지워졌으면 목록에서 뺀다', async () => {
 
 /* ── 지울 때 뒷정리 ── */
 test('★ 사진을 지우면 같이 보던 사람 목록에서도 뺀다', () => {
-  const m = store.match(/function deletePhoto[\s\S]*?\n  \}/);
+  /* 2026-08-13 창고 저장으로 deletePhoto 는 分기만 하고, 실제 지우기는
+     deleteStorageMeta(창고 사진)·deleteRtdbBody(옛 방식) 두 갈래로 나뉘었다 —
+     뒷정리는 두 갈래 모두에 있어야 어느 쪽으로 지워도 유령이 안 남는다. */
+  const m = store.match(/function deletePhoto[\s\S]*?function deleteRtdbBody[\s\S]*?\n  \}/);
   assert.ok(/meta && meta\.shareWith/.test(m[0]) && /sharedToPath\(who, id\)\] = null/.test(m[0]),
     '안 빼면 원본이 없는 유령이 「나와 공유된 사진」을 채웁니다.');
 });

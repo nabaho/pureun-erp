@@ -228,9 +228,16 @@ ok('마감을 풀면 푼 기록이 남는다', /unlocked: \{ at:new Date\(\)\.to
 ok('마감 풀 때 사유를 받는다', /왜 푸는지 적어 주세요/.test(html));
 ok('★ 마감된 달은 발행이 막힌다', /if\(busy \|\| !sent\.length \|\| lock\) return;/.test(html));
 ok('마감된 달은 단추 글자도 바뀐다', /lock \? '마감된 달입니다'/.test(html));
-ok('대표 답변은 직원이 못 쓰는 자리에 넣는다',
-   /'\/items\/' \+ fiId \+ '\/reply'/.test(html));
-ok('답변하면 그 이의는 닫힌다', /state:'done'/.test(html));
+/* 이의 답변은 업무관리(work.html)로 옮겼다 — 역할 나누기.
+   여기는 계산·조정·발행·마감을 맡는다. 답변칸이 두 곳에 있으면 어디서 손댔는지 알 수 없다. */
+ok('★ 여기서는 답변을 쓰지 않는다', !/\/reply'\)\.set\(/.test(html) && html.indexOf('function pcfReply(') < 0);
+ok('★ 답변 입력칸이 남아 있지 않다',
+   html.indexOf('답변을 적어주세요') < 0 && html.indexOf('답변하고 닫기') < 0);
+ok('어디서 답하는지 알려 준다', /답변은 업무관리에서 합니다/.test(html));
+ok('금액을 고치는 길은 여기 그대로 남는다', /입금 건 보기 ↗/.test(html));
+/* 읽는 쪽은 그대로 — 무엇이라 답했는지는 여기서도 보여야 판단이 된다 */
+ok('답한 내용은 여기서도 보인다', /o\.closed && o\.it\.reply/.test(html));
+ok('이의 내용도 그대로 보인다', /o\.ob\.text \|\| ''/.test(html));
 ok('원천으로 가는 길은 기존 방식을 쓴다',
    /sessionStorage\.setItem\('global_search_focus'/.test(html) && /window\.navigateTo\(menu\)/.test(html));
 ok('보낼 사람만 골라 쓴다', /pcfMergeAll\(sent, prev/.test(html));

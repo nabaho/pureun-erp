@@ -47,9 +47,27 @@ test('일반 사용자는 건의 작성 안내만 보고 전체 목록과 상세
   assert.match(html, /if\(!sgIsAdmin\(\)\)\{ box\.innerHTML=''; return; \}/);
 });
 
-test('Firebase 배포 설정은 관리자 전용 건의 규칙 파일을 사용한다', () => {
+/* ⚠ 2026-08-15 뒤집었다 — 예전에는 이 검사가 「firebase.json 이 규칙 파일을
+   배포하게 되어 있다」를 못 박았다. 그런데 그 설정이 살아 있는 규칙을 지웠다:
+   저장소의 규칙 파일에는 실제로 쓰이는 칸(puphotos·pucards_private·paydata)이
+   빠져 있어서, 배포하는 순간 사진첩·명함첩·급여데이터함이 통째로 먹통이 된다
+   (규칙은 없으면 거부다).
+   **콘솔이 원본이고 저장소 파일은 사본이다.** 사본으로 원본을 덮을 수 없으므로
+   8a9122a 에서 database 항목을 뺐고, 이제 firebase deploy 는 함수만 올린다.
+   그래서 이 검사도 반대를 지킨다 — 누가 다시 넣으면 여기서 걸린다. */
+test('★ Firebase 배포 설정이 실시간DB 규칙을 건드리지 않는다 (콘솔이 원본)', () => {
   const firebase = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'firebase.json'), 'utf8'));
-  assert.equal(firebase.database.rules, 'docs/firebase-rules-3순위-포털권한.json');
+  assert.equal(firebase.database, undefined,
+    'firebase.json 에 database 항목이 있으면 배포가 살아 있는 규칙을 덮어써 여러 앱이 먹통이 됩니다.');
+});
+
+/* 콘솔에 붙여넣는 파일이 원본이므로, 건의함이 관리자 전용인지는 그 파일에서 확인한다. */
+test('붙여넣기용 규칙에서 건의 원문·메타는 관리자만 읽는다', () => {
+  const rules = JSON.parse(fs.readFileSync(
+    path.resolve(__dirname, '..', 'docs', 'firebase-rules-급여데이터함-포함(붙여넣기용).json'), 'utf8')).rules;
+  for (const node of ['suggestions_private', 'suggestions_meta_private']) {
+    assert.match(rules[node]['.read'], /isAdmin'\)\.val\(\) == true/, node + ' 읽기는 관리자 전용이어야 한다');
+  }
 });
 
 test('건의 원문과 처리결과는 상위 data 권한의 영향을 받지 않는 비공개 경로를 사용한다', () => {

@@ -41,6 +41,9 @@
     .hwp-preview{min-height:300px;max-height:none}.hwp-actions{display:grid!important;grid-template-columns:1fr 1fr}.hwp-actions .btn{width:100%}
   }
 </style>
+<!-- 프로그램 사이 이동 (공용 앱바) — 이 한 줄이 빠져 있어서
+     문서관리에만 오른쪽 「즐겨찾기」 손잡이가 없었다(대표 보고 2026-08-13) -->
+<script src="js/pu-appbar.js?v=2"></script>
 </head>
 <body>
 <div class="top">
@@ -53,6 +56,9 @@
   <div class="card" id="viewList">
     <div style="display:flex;align-items:center;margin-bottom:12px">
       <b style="flex:1;font-size:15px">사건 목록</b>
+      <!-- 목록이 once 로만 받으므로(비용 절감, 2026-08-13) 다른 직원이 만들거나
+           마감한 사건은 스스로 안 나타난다 — 눌러서 새로 받는 길을 열어 둔다. -->
+      <button class="btn btn-sub" id="btnRefreshCases" title="다른 직원이 만들거나 마감한 사건도 봅니다" style="margin-right:8px">🔄 새로고침</button>
       <button class="btn btn-pri" id="btnNewCase">+ 새 사건</button>
     </div>
     <table>
@@ -77,7 +83,7 @@
 <script src="js/utils.js"></script>
 <script src="js/esign-crypto.js"></script>
 <script src="js/esign-docs.js"></script>
-<script src="js/pu-hwp-engine.js?v=1"></script>
+<script src="js/pu-hwp-engine.js?v=2"></script>
 <script src="js/pu-hwp-store.js?v=1"></script>
 <script>
 'use strict';
@@ -120,28 +126,53 @@ firebase.auth().onAuthStateChanged(function (u) {
 });
 
 // ── 사건 목록 ──
+// 캐시(casesCache)를 화면 표로 그린다. once 로 받은 뒤에도, 내가 한 일(사건
+// 생성·마감·파기)로 캐시를 직접 고친 다음에도 이 함수 하나로 다시 그린다.
+function renderCaseList() {
+  var ids = Object.keys(casesCache).sort(function (a, b) {
+    return ((casesCache[b].meta || {}).createdAt || 0) - ((casesCache[a].meta || {}).createdAt || 0);
+  });
+  var tb = $('caseRows');
+  if (!ids.length) { tb.innerHTML = '<tr><td colspan="6" style="color:#94a3b8">사건이 없습니다. [+ 새 사건]으로 시작하세요.</td></tr>'; return; }
+  tb.innerHTML = ids.map(function (id) {
+    var c = casesCache[id], m = c.meta || {};
+    var n = Object.keys(c.submissions || {}).length;
+    return '<tr>'
+      + '<td><a href="javascript:void(0)" onclick="openCase(\'' + id + '\')" style="color:#1e40af;font-weight:700">' + EsignDocs.esc(m.title || '(제목 없음)') + '</a></td>'
+      + '<td>' + EsignDocs.esc(m.company || '') + '</td>'
+      + '<td><b>' + n + '</b>명</td>'
+      + '<td><span class="badge b-' + (m.status === 'active' ? 'active' : 'closed') + '">' + EsignDocs.esc(m.status || '') + '</span></td>'
+      + '<td>' + (m.createdAt ? localYMD(new Date(m.createdAt)) : '') + '</td>'
+      + '<td><button class="btn btn-sub" onclick="shareCase(\'' + id + '\')">🔗 링크</button></td>'
+      + '</tr>';
+  }).join('');
+}
+
+/* ── 사건 목록 받기 (대표 지시 2026-08-13, 비용 조사) ──
+   "비용을 최소화할 수 있는 방향 검토해 달라" — 8/1~8/11 실시간DB 내려받기
+   ₩28,833(청구서의 93%).
+
+   ⚠ .on('value') 로 esign/cases 를 통째 구독하면, 그 아래 **모든 사건의 모든
+     제출**(암호문 + 서명 그림)까지 실시간DB 가 그대로 실어 보낸다. 화면은 그중
+     meta 와 제출 **개수**만 쓴다 — 나머지(제출 내용)는 내려받고서 버린다.
+     사건이 늘고 제출이 쌓일수록, **아무 관계 없는 사건의 제출 하나만 늘어도**
+     구독 중인 모든 탭에 전체가 다시 내려간다.
+   그래서 once 로 한 번만 받는다. 그 뒤로는 **내가 한 일**(사건 생성·마감·
+   파기)만 casesCache 를 직접 고쳐 화면을 바꾼다 — 서버에 다시 묻지 않는다.
+   ⚠ 다른 직원이 사건을 만들거나 마감한 것은 스스로 안 보인다 — [🔄 새로고침]을
+     눌러야 한다. 이 화면은 개인정보가 걸린 소수 사건을 다루는 관리자용 목록이라
+     실시간 협업(다른 직원 변경을 곧바로 보는 것)이 꼭 필요하지 않다고 봤다. */
 function loadCases() {
-  db.ref('esign/cases').on('value', function (snap) {
+  return db.ref('esign/cases').once('value').then(function (snap) {
     casesCache = snap.val() || {};
-    var ids = Object.keys(casesCache).sort(function (a, b) {
-      return ((casesCache[b].meta || {}).createdAt || 0) - ((casesCache[a].meta || {}).createdAt || 0);
-    });
+    renderCaseList();
+  }).catch(function (e) {
     var tb = $('caseRows');
-    if (!ids.length) { tb.innerHTML = '<tr><td colspan="6" style="color:#94a3b8">사건이 없습니다. [+ 새 사건]으로 시작하세요.</td></tr>'; return; }
-    tb.innerHTML = ids.map(function (id) {
-      var c = casesCache[id], m = c.meta || {};
-      var n = Object.keys(c.submissions || {}).length;
-      return '<tr>'
-        + '<td><a href="javascript:void(0)" onclick="openCase(\'' + id + '\')" style="color:#1e40af;font-weight:700">' + EsignDocs.esc(m.title || '(제목 없음)') + '</a></td>'
-        + '<td>' + EsignDocs.esc(m.company || '') + '</td>'
-        + '<td><b>' + n + '</b>명</td>'
-        + '<td><span class="badge b-' + (m.status === 'active' ? 'active' : 'closed') + '">' + EsignDocs.esc(m.status || '') + '</span></td>'
-        + '<td>' + (m.createdAt ? localYMD(new Date(m.createdAt)) : '') + '</td>'
-        + '<td><button class="btn btn-sub" onclick="shareCase(\'' + id + '\')">🔗 링크</button></td>'
-        + '</tr>';
-    }).join('');
+    tb.innerHTML = '<tr><td colspan="6" style="color:#b91c1c">사건 목록을 불러오지 못했습니다 — '
+      + EsignDocs.esc(String((e && e.message) || e)) + '</td></tr>';
   });
 }
+$('btnRefreshCases').onclick = loadCases;
 
 // ── 새 사건 생성 ──
 $('btnNewCase').onclick = function () {
@@ -172,14 +203,22 @@ $('btnNewCase').onclick = function () {
       var keys = await EsignCrypto.generateCaseKeys();
       var prot = await EsignCrypto.protectPrivKey(keys.privKeyJwk, pw);
       var ref = db.ref('esign/cases').push();
-      await trackedWrite(ref.child('meta').set({
+      var linkToken = EsignCrypto.randomToken();
+      var meta = {
         title: title, company: company, respondent: $('ncResp').value.trim(),
         ownerSid: curUser.email.split('@')[0],
-        pubKey: keys.pubKeyJwk, linkToken: EsignCrypto.randomToken(),
+        pubKey: keys.pubKeyJwk, linkToken: linkToken,
         createdAt: firebase.database.ServerValue.TIMESTAMP, status: 'active'
-      }));
+      };
+      await trackedWrite(ref.child('meta').set(meta));
       await trackedWrite(ref.child('secret/encPrivKey').set(prot));
       bg.remove();
+      /* ⚠ 목록을 once 로만 받으므로(비용 절감) 여기서 캐시에 직접 넣어야
+         한다 — 안 넣으면 [🔄 새로고침]을 누르기 전까지 방금 만든 사건이
+         목록에 안 보인다. createdAt 은 서버 시각을 몰라 지금 시각으로
+         어림한다(정렬에만 쓰인다 — 서버 값은 다음 새로고침 때 정확해진다). */
+      casesCache[ref.key] = { meta: Object.assign({}, meta, { createdAt: Date.now() }) };
+      renderCaseList();
       showToast('✅ 사건이 생성되었습니다 — [🔗 링크]로 근로자에게 공유하세요');
     } catch (e) {
       this.textContent = '사건 생성'; this.disabled = false;
@@ -502,6 +541,10 @@ async function genDocs() {
 function closeCase() {
   customConfirm('사건을 마감할까요?\n마감하면 근로자 링크로 더 이상 제출할 수 없습니다.', function () {
     trackedWrite(db.ref('esign/cases/' + curCaseId + '/meta/status').set('closed')).then(function () {
+      /* 목록을 once 로만 받으므로 캐시도 직접 고친다 — 안 고치면 목록으로
+         돌아갔을 때 마감했는데도 「진행중」으로 보인다. */
+      if (casesCache[curCaseId] && casesCache[curCaseId].meta) casesCache[curCaseId].meta.status = 'closed';
+      renderCaseList();
       showToast('사건이 마감되었습니다'); renderDetail();
     }).catch(function () {
       showToast('마감 실패 — 다시 시도해 주세요');
@@ -517,6 +560,14 @@ function purgeCase() {
       db.ref('esign/cases/' + curCaseId + '/arrears').remove(),
       db.ref('esign/cases/' + curCaseId + '/meta/status').set('purged')
     ])).then(function () {
+      /* 목록을 once 로만 받으므로 캐시도 직접 고친다 — 안 고치면 제출 개수가
+         지운 뒤에도 목록에 그대로 남는다. */
+      var c = casesCache[curCaseId];
+      if (c) {
+        if (c.meta) c.meta.status = 'purged';
+        delete c.submissions; delete c.arrears;
+      }
+      renderCaseList();
       showToast('제출 데이터가 파기되었습니다');
       closeDetail();
     }).catch(function () {

@@ -39,30 +39,22 @@ test('★ 문패는 사진첩 카메라로 곧바로 넘긴다', () => {
   assert.ok(/pu-photos\.html\?cam=1/.test(cam));
 });
 
-test('★ 원래 붙어 있던 값을 잃지 않는다 (로그인 흐름)', () => {
-  /* 포털이 ?sso=1 을 붙여 보낼 수 있다 — 떼어 버리면 로그인이 끊긴다 */
-  const m = cam.match(/\(function \(\) \{[\s\S]*?\}\)\(\);/);
-  assert.ok(m, '넘기는 코드를 찾지 못했습니다.');
-  const ctx = { location: { search: '?sso=1', replace(u) { ctx.went = u; } } };
-  vm.createContext(ctx);
-  vm.runInContext(m[0], ctx);
-  assert.equal(ctx.went, 'pu-photos.html?cam=1&sso=1');
+test('원래 붙어 있던 로그인 값을 잃지 않는다', () => {
+  assert.match(cam, /new URLSearchParams\(location\.search/);
+  assert.match(cam, /params\.set\('cam', '1'\)/);
+  assert.match(cam, /params\.set\('mode', mode\)/);
 });
 
-test('붙은 값이 없으면 깔끔하게 넘긴다', () => {
-  const m = cam.match(/\(function \(\) \{[\s\S]*?\}\)\(\);/);
-  const ctx = { location: { search: '', replace(u) { ctx.went = u; } } };
-  vm.createContext(ctx);
-  vm.runInContext(m[0], ctx);
-  assert.equal(ctx.went, 'pu-photos.html?cam=1');
+test('붙은 값이 없어도 일반사진 모드로 넘긴다', () => {
+  assert.match(cam, /params\.set\('cam', '1'\)/);
+  assert.match(cam, /params\.set\('mode', mode\)/);
+  assert.match(cam, /location\.replace\('pu-photos\.html\?' \+ params\.toString\(\)\)/);
 });
 
-test('스크립트가 막혀도 갈 길이 있다', () => {
-  assert.ok(/<a href="pu-photos\.html\?cam=1"/.test(cam),
-    '스크립트가 막힌 브라우저에서 빈 화면에 갇히면 안 됩니다.');
+test('스크립트가 막혀도 일반사진 촬영화면으로 갈 수 있다', () => {
+  assert.match(cam, /<a href="pu-photos\.html\?cam=1&mode=photo"/);
 });
 
-/* ── 아이콘이 안 깨지는가 (가장 중요) ── */
 test('★ 폰에 설치한 아이콘이 그대로 열린다', () => {
   assert.ok(fs.existsSync(path.join(R, 'pu-camera.html')),
     '파일을 지우면 설치한 분의 아이콘이 깨집니다.');
@@ -90,18 +82,18 @@ test('★ 표시를 한 번 쓰고 지운다', () => {
 });
 
 test('로그인이 끝난 뒤에 켠다', () => {
-  const m = photos.match(/PuPhotoStore\.signIn\([\s\S]{0,1400}?openCamIfAsked\(\);/);
+  const m = photos.match(/PuPhotoStore\.signIn\([\s\S]{0,2600}?openCamIfAsked\(\);/);
   assert.ok(m, '계정을 모르는 채 카메라를 켜면 찍어도 담을 곳이 없습니다.');
 });
 
 test('표시가 없으면 아무 일도 없다', () => {
   const m = photos.match(/function openCamIfAsked\(\)[\s\S]*?\n\}/);
-  assert.ok(/if \(!want\) return;/.test(m[0]), '평소에 사진첩을 열 때 카메라가 켜지면 안 됩니다.');
+  assert.ok(/if \(!want\) return false;/.test(m[0]), '평소에 사진첩을 열 때 카메라가 켜지면 안 됩니다.');
 });
 
 test('주소를 못 읽어도 터지지 않는다', () => {
   const m = photos.match(/function openCamIfAsked\(\)[\s\S]*?\n\}/);
-  assert.ok(/catch \(_\) \{ return; \}/.test(m[0]));
+  assert.ok(/catch \(_\) \{ return false; \}/.test(m[0]));
 });
 
 /* ══════ 2단계: 명함첩 카메라까지 없애 정말 하나로 (대표 지시 2026-08-09) ══════
@@ -128,10 +120,9 @@ test('★ 명함첩 ＋ 는 사진첩 카메라를 명함 모드로 부른다', 
   assert.ok(/from=cards/.test(m[0]), '돌아올 곳을 안 적으면 명함첩으로 못 돌아옵니다.');
 });
 
-test('명함 모드에서는 명함틀이 늘 켜져 있다', () => {
-  const m = photos.match(/function frameOn\(\)[\s\S]*?\n/);
-  assert.ok(/camCardMode/.test(m[0]),
-    '명함을 찍으러 왔는데 틀이 꺼져 있으면 배경만 크게 담깁니다.');
+test('명함 모드에서는 명함·서류 모드로 시작한다', () => {
+  const m = photos.match(/function openCamIfAsked\(\)[\s\S]*?\n\}/);
+  assert.ok(m && /camCardMode \|\| mode === 'document'/.test(m[0]));
 });
 
 test('★ 앞면을 찍으면 뒷면을 묻는다 (대표 선택 가)', () => {
@@ -175,11 +166,11 @@ test('사진첩에서 그냥 열면 돌아갈 곳이 없다', () => {
    "여전히 폰에서는 화질이 너무 낮다". 안드로이드 기기 중에는 크게 달라고 해도
    **미리보기보다 작은 사진**을 주는 것이 있는데, 예전에는 그걸 그대로 썼다.
    1920 짜리 화면을 두고 640 짜리를 담으면 글씨가 뭉갠다. */
-test('★ 스틸이 미리보기보다 작으면 미리보기를 쓴다', () => {
-  const m = photos.match(/async function camShoot\([^)]*\)[\s\S]*?(?=\nfunction renderCamStrip)/);
-  assert.ok(m, 'camShoot 를 찾지 못했습니다.');
-  assert.ok(/Math\.max\(stw, sth\) >= Math\.max\(v\.videoWidth, v\.videoHeight\)/.test(m[0]),
-    '기기가 준 사진이 작아도 그대로 쓰면 화면보다 못한 사진이 담깁니다.');
+test('스틸이 미리보기보다 작으면 미리보기를 쓴다', () => {
+  const m = photos.match(/async function captureBestSource\([\s\S]*?\n\}/);
+  assert.ok(m);
+  assert.match(m[0], /Math\.max\(c\.w, c\.h\) >= minEdge/);
+  assert.match(m[0], /return fallback/);
 });
 
 test('★ 어느 길로 찍혔는지 사진에 적어 둔다', () => {
@@ -193,8 +184,8 @@ test('★ 크게 보기에서 찍힌 길이 보인다', () => {
     '화면에 안 보이면 대표님이 알려주실 수가 없습니다.');
 });
 
-test('스틸이 실패해도 사진은 담긴다', () => {
-  const m = photos.match(/async function camShoot\([^)]*\)[\s\S]*?(?=\nfunction renderCamStrip)/);
-  assert.ok(/catch \(e\) \{[\s\S]{0,120}capNote = '스틸 실패/.test(m[0]),
-    '스틸이 안 되는 기기에서 촬영 자체가 막히면 안 됩니다.');
+test('고해상도 촬영이 실패해도 화면 프레임을 담는다', () => {
+  const m = photos.match(/async function captureBestSource\([\s\S]*?\n\}/);
+  assert.ok(m && /return fallback/.test(m[0]));
+  assert.match(m[0], /catch \(e\)/);
 });

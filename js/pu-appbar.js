@@ -27,17 +27,24 @@
 (function (global) {
   'use strict';
 
-  /* 프로그램 목록 — 포털(enter.html)의 타일과 같은 차례로 둔다.
-     새 프로그램이 생기면 여기 한 줄만 더한다. */
+  /* 프로그램 목록 — 포털(enter.html)의 타일과 같은 차례·같은 이름으로 둔다.
+     새 프로그램이 생기면 여기 한 줄만 더한다.
+     ⚠ 실제로 두 개(문서관리·급여관리)가 빠져 있어 그 앱들만 즐겨찾기가 안 떴다
+       (대표 보고 2026-08-13: "문서관리에는 왜 즐겨찾기 안 나오나"). 목록에 없으면
+       손잡이가 붙어도 그 앱이 목록에 안 보이고, script 를 안 실으면 손잡이 자체가
+       없다 — 이번엔 둘 다였다. 이름도 포털 개명(2026-08-11)을 따라잡았다. */
   var APPS = [
     { key: 'erp',     name: '푸른이알피',   icon: '🏢', url: 'pu-erp.html',         desc: '인사·급여·재무' },
+    { key: 'consult', name: '정부사업일정', icon: '📅', url: 'gov-consulting.html', desc: '보고서 일정및사진관리' },
     { key: 'work',    name: '업무관리',     icon: '📋', url: 'work.html',           desc: '주간 업무기록' },
-    { key: 'consult', name: '컨설팅 일정',  icon: '📅', url: 'gov-consulting.html', desc: '정부지원 관리' },
-    { key: 'cards',   name: '명함첩',       icon: '📇', url: 'pu-cards.html',       desc: '명함·사업자등록증' },
-    { key: 'photos',  name: '푸른사진첩',   icon: '🖼️', url: 'pu-photos.html',      desc: '현장·회의 사진' },
     { key: 'career',  name: '이력관리',     icon: '🗂', url: 'kcareer.html',        desc: '개인 이력서' },
-    { key: 'rules',   name: '취업규칙 관리', icon: '📋', url: 'rules.html',          desc: '작성·검토·개정' },
-    { key: 'fund',    name: '기금관리',     icon: '🏦', url: 'fund.html',           desc: '근로복지기금' }
+    { key: 'cards',   name: '명함·메일',    icon: '📇', url: 'pu-cards.html',       desc: '사업자·명함·계약서' },
+    { key: 'photos',  name: '사진첩',       icon: '🖼️', url: 'pu-photos.html',      desc: '사진·서류' },
+    { key: 'paydata', name: '급여데이터함',  icon: '💼', url: 'pu-paydata.html',     desc: '급여자료 사업장별' },
+    { key: 'fund',    name: '기금관리',     icon: '🏦', url: 'fund.html',           desc: '근로복지기금 운영' },
+    { key: 'rules',   name: '취업규칙 관리', icon: '📋', url: 'rules.html',          desc: '작성·검토·개정·신고' },
+    { key: 'docs',    name: '문서관리',     icon: '📄', url: 'docs-esign.html',     desc: '계약서 전자송부' },
+    { key: 'payroll', name: '급여관리',     icon: '💰', url: 'payroll-os.html',     desc: '급여 아웃소싱' }
   ];
 
   /* 단추에 적는 말 — 한 곳에서만 정한다. 바꾸려면 여기 한 줄. */

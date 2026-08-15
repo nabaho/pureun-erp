@@ -93,7 +93,7 @@ test('★ 남의 사진을 볼 때는 폴더 칸을 숨긴다', () => {
 });
 
 test('★ 폴더와 분류 탭이 함께 걸린다 (다른 축)', () => {
-  const m = html.match(/function shownItems\(\)[\s\S]*?\n\}/);
+  const m = html.match(/function shownItemsFresh\(\)[\s\S]*?\n\}/);
   assert.ok(/folderPick !== 'all'/.test(m[0]), '폴더로 좁혀 보는 길이 없습니다.');
   assert.ok(/kindTab !== 'all'/.test(m[0]), '분류 탭 거르기가 사라졌습니다.');
   const f = m[0].indexOf('folderPick'), k = m[0].indexOf('kindTab');

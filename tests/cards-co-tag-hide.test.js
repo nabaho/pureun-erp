@@ -1,0 +1,169 @@
+/* 탭은 지우지 않는다 — 숨기기만 둔다. 지우면 어느 회사가 그 사업이었는지 잃는다
+   (설계서 2026-08-13, "안 하기로 한 것: 탭 지우기").
+   ⚠ 이 검사는 실제로 함수를 돌려서 증명한다(대표 지시 2026-08-14) — cards-co-col-filter.test.js,
+     cards-co-folders.test.js 와 같은 방식. "소스에 이런 글자가 있나"만 보는 검사는 폴더 과제
+     때 부족하다는 지적을 받았다. */
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const source = fs.readFileSync(path.join(__dirname, '..', 'pu-cards.html'), 'utf8');
+
+test('탭 지우기 함수가 없다 — 숨기기만 있다', () => {
+  assert.doesNotMatch(source, /function deleteCoTag/, '탭을 지우는 함수를 만들면 안 된다');
+  assert.match(source, /function hideCoTag/);
+  assert.match(source, /function unhideCoTag/);
+});
+
+test('숨김 저장소가 있다', () => {
+  assert.match(source, /let _coTagHidden = \{\}/);
+  assert.match(source, /function loadCoTagHidden/);
+  assert.match(source, /DB_ROOT\+'\/coTagHidden'/);
+});
+
+/* hideCoTag·unhideCoTag·toggleCoShowHidden·loadCoTagHidden 을 실제로 돌려서 증명한다.
+   cards-co-folders.test.js 의 loadCoFoldersBlock 과 같은 방식 — Store.db.ref().update()
+   호출을 가로채 실제 쓰기값을 본다. */
+function loadTagHideBlock(){
+  const at = source.indexOf('let _coTagHidden = {};');
+  assert.ok(at > 0, '_coTagHidden 선언을 찾지 못했습니다');
+  const end = source.indexOf('\nfunction ', source.indexOf('function toggleCoShowHidden', at) + 10);
+  assert.ok(end > at, '이 블록의 끝을 찾지 못했습니다');
+  /* "let _coTagHidden = {}" 선언 줄은 일부러 안 담는다 — vm 에서 top-level let 은
+     컨텍스트 객체의 프로퍼티가 아니라 별도 렉시컬 환경에 들어가서, 밖에서
+     ctx._coTagHidden 으로 손을 못 댄다. 선언을 빼고 state 처럼 ctx 프로퍼티로 쥐여준다. */
+  const declEnd = source.indexOf('\n', at) + 1;
+  const code = source.slice(declEnd, end);
+  const calls = { updates: [], rendered: false, pcRendered: false };
+  const ctx = {
+    _coTagHidden: {},
+    _coTagHiddenOn: false,
+    state: { view:'co', coShowHidden:false, coTag:'' },
+    Store: { mode:'firebase', db: { ref: p => ({
+      on: () => {},
+      update: upd => { calls.updates.push({ path:p, upd }); return Promise.resolve(); }
+    }) } },
+    DB_ROOT: 'pucards',
+    toast: msg => { calls.toasts = calls.toasts||[]; calls.toasts.push(msg); },
+    renderPC: () => { calls.pcRendered = true; }
+  };
+  vm.createContext(ctx);
+  vm.runInContext(code, ctx);
+  ctx._calls = calls;
+  return ctx;
+}
+
+test('hideCoTag 는 그 탭을 숨김으로 표시한다 — 배정을 지우지 않는다', async () => {
+  const c = loadTagHideBlock();
+  c.hideCoTag('2026 통합기술보호지원반');
+  await Promise.resolve();
+  assert.equal(c._calls.updates.length, 1);
+  const upd = c._calls.updates[0].upd;
+  assert.equal(upd['coTagHidden/2026 통합기술보호지원반'], true);
+  assert.equal(Object.keys(upd).length, 1, '다른 키를 건드리면 안 된다');
+  assert.doesNotMatch(JSON.stringify(upd), /tags\//, '회사의 tags 배정 자체를 지우면 안 된다');
+});
+
+test('unhideCoTag 는 숨김 표시를 지운다', () => {
+  const c = loadTagHideBlock();
+  c.unhideCoTag('2026 통합기술보호지원반');
+  const upd = c._calls.updates[0].upd;
+  assert.equal(upd['coTagHidden/2026 통합기술보호지원반'], null);
+});
+
+/* 최종 전체 리뷰 2026-08-14: 지금 이 탭으로 걸러 보던 중에 그 탭을 숨기면, 옆줄엔
+   아무 표시도 없이 목록만 계속 좁혀져 보인다 — 걸러 둔 탭도 같이 풀어야 한다. */
+test('hideCoTag 는 지금 그 탭으로 거르고 있었으면 거르기를 푼다', async () => {
+  const c = loadTagHideBlock();
+  c.state.coTag = '2026 통합기술보호지원반';
+  c.hideCoTag('2026 통합기술보호지원반');
+  await Promise.resolve();
+  assert.equal(c.state.coTag, '');
+  assert.equal(c._calls.pcRendered, true);
+});
+
+test('hideCoTag 는 다른 탭으로 거르고 있었으면 그 거르기를 안 건드린다', async () => {
+  const c = loadTagHideBlock();
+  c.state.coTag = '다른탭';
+  c.hideCoTag('2026 통합기술보호지원반');
+  await Promise.resolve();
+  assert.equal(c.state.coTag, '다른탭');
+});
+
+test('hideCoTag 는 클라우드 모드가 아니면 안 쓰고 안내만 한다', () => {
+  const c = loadTagHideBlock();
+  c.Store.mode = 'demo';
+  c.hideCoTag('2026 통합기술보호지원반');
+  assert.equal(c._calls.updates.length, 0);
+  assert.equal((c._calls.toasts||[]).length, 1);
+});
+
+test('toggleCoShowHidden 은 숨긴 것 보기를 뒤집고 다시 그린다', () => {
+  const c = loadTagHideBlock();
+  c.toggleCoShowHidden();
+  assert.equal(c.state.coShowHidden, true);
+  assert.equal(c._calls.pcRendered, true);
+  c.toggleCoShowHidden();
+  assert.equal(c.state.coShowHidden, false);
+});
+
+test('loadCoTagHidden 은 이미 켜져 있으면 다시 구독을 안 걸고 콜백만 부른다', () => {
+  const c = loadTagHideBlock();
+  c._coTagHiddenOn = true;
+  let called = false;
+  c.loadCoTagHidden(() => { called = true; });
+  assert.equal(called, true);
+});
+
+test('loadCoTagHidden 은 클라우드 모드가 아니면 콜백만 부른다', () => {
+  const c = loadTagHideBlock();
+  c.Store.mode = 'demo';
+  let called = false;
+  c.loadCoTagHidden(() => { called = true; });
+  assert.equal(called, true);
+});
+
+/* 옆줄 「사업별」 목록에서 숨긴 탭을 거르는 부분만 따로 잘라 실제로 돌린다.
+   ⚠ 이 두 줄을 검사 파일 안에 손으로 다시 적으면 안 된다 — 화면 코드가 바뀌어도
+     검사는 자기 사본만 보고 계속 통과해 회귀를 못 잡는다(실제로 한 번 이렇게 되어
+     "!" 를 화면 코드에서 지워도 검사가 안 잡힌 적이 있다). 반드시 pu-cards.html 에서
+     그 줄을 그대로 잘라와 돌린다. const 를 var 로만 바꾼다 — vm 최상위 const 는
+     컨텍스트 프로퍼티로 안 붙어서 밖에서 못 읽는다(선언 방식만 바꾼 것, 로직은 그대로). */
+function loadShownTagsCode(){
+  const at = source.indexOf('const shown = tags.filter(');
+  assert.ok(at > 0, 'shown 계산 줄을 찾지 못했습니다');
+  const end = source.indexOf('\n', source.indexOf('const hiddenN = tags.filter(', at));
+  assert.ok(end > at, 'hiddenN 계산 줄을 찾지 못했습니다');
+  return source.slice(at, end).replace('const shown', 'var shown').replace('const hiddenN', 'var hiddenN');
+}
+
+function computeShownTags(tags, coTagHidden, showHidden){
+  const ctx = { tags, _coTagHidden: coTagHidden, state: { coShowHidden: showHidden } };
+  vm.createContext(ctx);
+  vm.runInContext(loadShownTagsCode(), ctx);
+  return { shown: ctx.shown, hiddenN: ctx.hiddenN };
+}
+
+test('사업별 목록은 숨긴 탭을 건너뛴다', () => {
+  const tags = [{t:'가',n:1},{t:'나',n:2}];
+  const r = computeShownTags(tags, {'나':true}, false);
+  assert.deepEqual(r.shown.map(x=>x.t), ['가']);
+  assert.equal(r.hiddenN, 1);
+});
+
+test('숨긴 것 보기를 켜면 숨긴 탭도 다시 보인다', () => {
+  const tags = [{t:'가',n:1},{t:'나',n:2}];
+  const r = computeShownTags(tags, {'나':true}, true);
+  assert.deepEqual(r.shown.map(x=>x.t), ['가','나']);
+  assert.equal(r.hiddenN, 1, '숨긴 개수는 보기를 켜도 그대로 세야 안내 문구가 맞다');
+});
+
+test('옆줄 사업별 목록에 숨기기·다시보기 아이콘이 있다', () => {
+  const at = source.indexOf("if(state.view==='co'){");
+  const fn = source.slice(at, at + 1900);
+  assert.match(fn, /hideCoTag/);
+  assert.match(fn, /unhideCoTag/);
+  assert.match(fn, /state\.coShowHidden/);
+});

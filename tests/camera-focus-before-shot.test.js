@@ -46,7 +46,7 @@ test('카메라가 닫히면 기다리기를 멈춘다', () => {
 });
 
 test('못 하는 기기에서는 초점 부르기를 건너뛴다', () => {
-  assert.ok(/if \(camTrack && camCanFocus\)/.test(settle[0]),
+  assert.ok(/if \(shotTrack && camCanFocus\)/.test(settle[0]),
     '못 받아 주는 기기에서 터지면 촬영 자체가 막힙니다.');
 });
 

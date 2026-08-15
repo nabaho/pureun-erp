@@ -105,11 +105,12 @@ test('화면은 실시간DB에 직접 쓰지 않는다 — 쓰기는 저장 층�
 
 test('사진 고르기 — 앨범에서 여러 장', () => {
   assert.match(app, /<input[^>]*type="file"[^>]*multiple/);
-  assert.match(app, /accept="image\/\*"/);
+  assert.match(app, /accept="image\/\*,application\/pdf"/);
 });
 
-test('카메라 즉석 촬영 입력이 있다', () => {
-  assert.match(app, /capture="environment"/);
+test('카메라는 확인형 파일 입력 없이 화면 안 연속촬영만 쓴다', () => {
+  assert.doesNotMatch(app, /capture="environment"|id="camInput"|id="camNative"/);
+  assert.match(app, /navigator\.mediaDevices\.getUserMedia/);
 });
 
 test('업로드 대기열 파일을 불러오고 쓴다', () => {
@@ -126,9 +127,13 @@ test('올릴 크기는 저장 층이 정한다 — 화면이 숫자를 갖지 �
   // 서류 2560 / 사진 1600. 폰·PC·당겨오기 창이 같은 값을 써야 하므로
   // 숫자는 PuPhotoStore.uploadSpec 한 곳에만 있어야 한다.
   assert.match(app, /PuPhotoStore\.uploadSpec\(/);
-  assert.match(app, /shrink\(f, spec\.maxEdge, spec\.quality\)/);
-  assert.match(app, /shrink\(f, spec\.thumbEdge/);
-  assert.ok(!/shrink\(f,\s*\d/.test(app), '화면에 축소 크기 숫자가 박혀 있습니다');
+  /* ⚠ 2026-08-11 다시 겨눔 — 같은 사진을 두 번 풀던 것을 shrinkMany 로 한 번에
+     묶었다(폰에서 한 장에 1.5~2초가 통으로 멎던 자리). 지킬 것은 **숫자가 화면에
+     박혀 있지 않다**이지 shrink 를 두 번 부르는 모양이 아니다. */
+  assert.match(app, /maxEdge: spec\.maxEdge, quality: spec\.quality/);
+  assert.match(app, /maxEdge: spec\.thumbEdge/);
+  assert.ok(!/shrink(Many)?\(f,\s*\d/.test(app), '화면에 축소 크기 숫자가 박혀 있습니다');
+  assert.ok(!/maxEdge:\s*\d/.test(app), '화면에 축소 크기 숫자가 박혀 있습니다');
   // 카메라 원본이 그대로 클라우드로 가는 길이 없어야 한다. 아이폰 호환을 위해
   // 읽는 단계에서 dataURL을 쓸 수는 있지만, 대기열에는 shrink 결과만 넣는다.
   assert.match(app, /full:\s*full\.dataUrl/);
@@ -146,10 +151,75 @@ test('서류 고르기 버튼이 따로 있고 서류로 표시된다', () => {
 
 test('미리보기를 끼워 넣을 때 서류 딱지를 지우지 않는다', () => {
   // 칸 내용을 innerHTML 로 통째로 바꾸면 딱지가 사라진다.
-  const fill = app.match(/function fillThumbs\(\)[\s\S]*?\n\}/);
-  assert.ok(fill, 'fillThumbs 본문을 찾을 수 없습니다');
-  assert.ok(!/cell\.innerHTML\s*=/.test(fill[0]), '칸 내용을 통째로 바꿔 딱지가 지워집니다');
-  assert.match(fill[0], /insertBefore/);
+  // 2026-08-10 다시 겨눔 — 끼워 넣는 일이 paintThumb 한 곳으로 모였다.
+  const fn = app.match(/function paintThumb\([\s\S]*?\n\}/);
+  assert.ok(fn, 'paintThumb 본문을 찾을 수 없습니다');
+  assert.ok(!/cell\.innerHTML\s*=/.test(fn[0]), '칸 내용을 통째로 바꿔 딱지가 지워집니다');
+  assert.match(fn[0], /insertBefore/);
+});
+
+/* ══════ 미리보기를 묶음으로 받는다 (대표 보고 2026-08-10) ══════
+   "로그인하면 사진 나오는데 너무 시간이 많이 걸린다."
+   원인은 양이 아니라 **오간 횟수**였다 — 한 장씩, 그것도 앞 장이 끝나야
+   다음 장을 청했다. 99장이면 99번을 차례로 오간다. */
+test('★ 미리보기를 한 장씩 줄줄이 청하지 않는다', () => {
+  const fn = app.match(/function fillThumbs\(\)[\s\S]*?\n\}/);
+  assert.ok(fn, 'fillThumbs 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /loadThumbsYear\(/, '한 해 치를 묶음으로 청하지 않습니다');
+  assert.ok(!/chain = chain\.then/.test(fn[0]),
+    '앞 장이 끝나야 다음 장을 청하는 방식이 남아 있습니다 — 99장이면 99번 오갑니다');
+});
+
+test('★ 묶음이 막히면 한 장씩 받는 길로 물러선다', () => {
+  /* 공유받은 사진은 규칙이 **사진 한 장마다** 권한을 따져 묶음 읽기가 막힌다.
+     빠르게 하려다 사진이 아예 안 보이면 그게 더 큰 사고다. */
+  const fn = app.match(/function fillThumbs\(\)[\s\S]*?\n\}/)[0];
+  assert.match(fn, /gridOwner === SHARED_OWNER/, '공유받은 사진에 묶음을 쓰면 아무것도 안 보입니다');
+  assert.match(fn, /fillThumbsOneByOne\(/, '물러설 길이 없습니다');
+  assert.match(fn, /catch\(/, '묶음이 실패하면 그대로 멈춥니다');
+  const one = app.match(/function fillThumbsOneByOne\([\s\S]*?\n\}/);
+  assert.ok(one, 'fillThumbsOneByOne 이 없습니다');
+  assert.match(one[0], /loadThumb\(/, '한 장씩 받는 길이 실제로 받지 않습니다');
+});
+
+test('★ 묶음에서 빠진 사진은 옛 자리에서 다시 찾는다', () => {
+  const fn = app.match(/function fillThumbs\(\)[\s\S]*?\n\}/)[0];
+  assert.match(fn, /const left = gridItems\.filter/,
+    '묶음에 없던 사진(옛 자리에 남은 것)이 영영 안 보이게 됩니다');
+});
+
+test('★ 해를 바꾸면 먼저 청한 미리보기를 엉뚱한 화면에 그리지 않는다', () => {
+  /* 묶음이 도착하기 전에 대표님이 다른 해를 고를 수 있다.
+     ⚠ 되돌아오는 자리가 **둘**이다 — 묶음이 도착했을 때, 그리고 모든 묶음이
+        끝난 뒤 빠진 것을 찾을 때. 하나만 막으면 다른 하나로 새 나간다
+        (실제로 한 곳을 지워 보니 검사가 못 잡았다). */
+  const fn = app.match(/function fillThumbs\(\)[\s\S]*?\n\}/)[0];
+  assert.match(fn, /const year = gridYear;/, '청한 해를 기억하지 않습니다');
+  const guards = (fn.match(/if \(year !== gridYear\) return;/g) || []).length;
+  assert.ok(guards >= 2,
+    '되돌아오는 자리마다 막아야 합니다 — 지금 ' + guards + '곳뿐입니다');
+  /* 한 장씩 받는 길도 마찬가지다 — 청하기 전과 받은 뒤, 두 번 다 확인해야 한다.
+     한 번만 보면 청하는 사이에 해가 바뀐 것을 놓친다. */
+  const one = app.match(/function fillThumbsOneByOne\([\s\S]*?\n\}/)[0];
+  const g2 = (one.match(/year !== gridYear/g) || []).length;
+  assert.ok(g2 >= 2, '한 장씩 받는 길이 남의 해에 그립니다 — 지금 ' + g2 + '곳뿐입니다');
+});
+
+test('★ 너무 많으면 묶지 않는다 (한 묶음이 지나치게 커진다)', () => {
+  const m = app.match(/const THUMB_BULK_MAX = (\d+);/);
+  assert.ok(m, 'THUMB_BULK_MAX 가 없습니다.');
+  const n = +m[1];
+  assert.ok(n >= 100, '너무 낮으면 묶음이 거의 안 쓰여 다시 느려집니다: ' + n);
+  assert.ok(n <= 2000, '한 묶음이 지나치게 커집니다: ' + n);
+});
+
+test('★ 미리보기 묶음을 저장 층이 내준다', () => {
+  const store = fs.readFileSync(path.join(root, 'js', 'pu-photo-store.js'), 'utf8');
+  assert.match(store, /function loadThumbsYear\(/, 'loadThumbsYear 가 없습니다');
+  assert.match(store, /loadThumbsYear: loadThumbsYear/, '밖으로 내주지 않습니다');
+  const fn = store.match(/function loadThumbsYear\([\s\S]*?\n  \}/)[0];
+  assert.match(fn, /'\/thumbs\/' \+ year/, '미리보기 자리가 아닌 곳을 읽습니다');
+  assert.ok(!/blobs/.test(fn), '격자가 본문(1600px)까지 받으면 수십 MB가 됩니다');
 });
 
 /* ── 내려받기 ── */
@@ -252,8 +322,8 @@ test('분류 탭은 여섯 가지다 — 어느 탭에도 안 드는 사진이 �
   assert.match(tabs[0], /key: 'other'[\s\S]*?kinds: null/,
     '기타서류가 나머지를 받는 그물이 아닙니다 — 빠지는 사진이 생깁니다');
   // 판독을 안 한 사진도 반드시 어딘가에 든다
-  // 2026-08-06: 직접분류가 생기며 tabOf(하나) → tabsOf(여럿)로 바뀌었다 —
-  // AI 분류와 직접분류를 "더하는 것이지 기타서류에서 빼앗지 않는다"(대표 승인 목업).
+  // 직접 지정한 분류가 있으면 그 분류 하나만 대표 분류로 쓴다.
+  // 그래야 옮긴 사진이 이전 분류에 중복으로 남지 않는다.
   const fn = app.match(/function tabsOf\([\s\S]*?\n\}/);
   assert.ok(fn, 'tabsOf 를 찾을 수 없습니다');
   assert.match(fn[0], /'other'/, '판독 안 한 사진이 갈 곳이 없습니다');
@@ -279,7 +349,7 @@ test('탭 순서는 끌어서 바꾸고 이 기기에 기억된다 — 전체사
 
 test('분류 탭과 「확인 필요」는 함께 걸린다', () => {
   /* 하나만 적용하면 확인 필요를 켠 채 탭을 옮겼을 때 다른 탭 사진이 섞여 나온다. */
-  const fn = app.match(/function shownItems\([\s\S]*?\n\}/);
+  const fn = app.match(/function shownItemsFresh\([\s\S]*?\n\}/);
   assert.ok(fn, 'shownItems 를 찾을 수 없습니다');
   assert.match(fn[0], /kindTab/, '분류 탭을 안 봅니다');
   assert.match(fn[0], /needsCheck/, '확인 필요를 안 봅니다');
@@ -315,10 +385,92 @@ test('끌 때 사진 자체가 아니라 표만 넘긴다', () => {
   const fn = app.match(/\$\('grid'\)\.addEventListener\('dragstart'[\s\S]*?\n\}\);/);
   assert.ok(fn, '격자 dragstart 본문을 찾을 수 없습니다');
   assert.ok(!/it\.thumb|loadFull|blob/.test(fn[0]), '사진 데이터를 넘기고 있습니다');
+  /* 2026-08-10 다시 겨눔 — 표를 만드는 일이 dragRefOf 로 모였다.
+     지켜야 할 것은 「사진이 아니라 표를 넘긴다」와 「표에 찾아갈 것이 다 들어 있다」이지
+     그 코드가 어느 함수에 적혀 있느냐가 아니다. */
+  const ref = app.match(/function dragRefOf\([\s\S]*?\n\}/);
+  assert.ok(ref, 'dragRefOf 본문을 찾을 수 없습니다');
+  assert.ok(!/it\.thumb|loadFull|blob/.test(ref[0]), '표에 사진 데이터를 담고 있습니다');
   // 어디 있는 무엇인지가 다 들어가야 받는 쪽이 가져올 수 있다
   for (const k of ['year:', 'owner:', 'id:']) {
-    assert.ok(fn[0].indexOf(k) >= 0, '표에 ' + k + ' 가 없습니다');
+    assert.ok(ref[0].indexOf(k) >= 0, '표에 ' + k + ' 가 없습니다');
   }
+});
+
+/* ══════ 고른 여러 장을 밖으로 (대표 지시 2026-08-10) ══════
+   "체크된 서류 및 사진들 한꺼번에 화면 안과 화면 밖으로 옮길 수 있게 해줘"
+   예전에는 8장을 끌어도 받는 쪽엔 1장만 도착했다 — 규약이 한 장짜리였다. */
+test('★ 고른 것을 끌면 전부 함께 나간다', () => {
+  const fn = app.match(/\$\('grid'\)\.addEventListener\('dragstart'[\s\S]*?\n\}\);/)[0];
+  /* ⚠ setMany 라는 글자만 보면 안 된다 — 그 줄이 **닿지 않는 곳**에 있어도 통과한다
+     (실제로 조건을 false 로 바꿔 봤더니 안 잡혔다). 조건까지 함께 본다. */
+  assert.match(fn, /if \(refs\.length > 1\) PuDrag\.setMany\(/,
+    '여러 장일 때 여러 장으로 보내지 않습니다 — 1장만 도착합니다');
+  assert.match(fn, /photoDragIds\.filter/, '고른 전부를 표로 만들지 않습니다');
+});
+
+test('★ 집은 사진이 맨 앞에 간다', () => {
+  /* 한 장만 읽는 옛 앱에서도 **대표님이 집은 그 사진**이 가야 한다.
+     목록 첫 장이 가면 엉뚱한 것을 받은 것처럼 보인다. */
+  const fn = app.match(/\$\('grid'\)\.addEventListener\('dragstart'[\s\S]*?\n\}\);/)[0];
+  assert.match(fn, /const order = \[id\]\.concat\(/, '집은 사진이 맨 앞이 아닙니다');
+});
+
+test('★ 규약이 여러 장을 담되 옛 앱을 깨지 않는다', () => {
+  const drag = fs.readFileSync(path.join(root, 'js', 'pu-drag.js'), 'utf8');
+  const set = drag.match(/function setMany\([\s\S]*?\n  \}/);
+  assert.ok(set, 'setMany 가 없습니다');
+  assert.match(set[0], /head\.items = list/, '여러 장을 담지 않습니다');
+  assert.match(set[0], /list\[0\]/,
+    '첫 장을 맨 윗칸에 두지 않으면 한 장만 읽는 옛 앱이 빈손이 됩니다');
+  const all = drag.match(/function readAll\([\s\S]*?\n  \}/);
+  assert.ok(all, 'readAll 이 없습니다');
+  assert.match(all[0], /return \[ref\]/, '한 장짜리로 온 것을 못 읽습니다');
+  assert.match(all[0], /x\.id/, '번호 없는 표를 걸러 내지 않습니다');
+  assert.match(drag, /readAll: readAll/, '밖으로 내주지 않습니다');
+  assert.match(drag, /setMany: setMany/, '밖으로 내주지 않습니다');
+});
+
+test('★ 규약이 실제로 여러 장을 실어 나른다', () => {
+  /* 겉모습이 아니라 진짜로 돌려 본다 — 넣은 것이 그대로 나와야 한다. */
+  const drag = fs.readFileSync(path.join(root, 'js', 'pu-drag.js'), 'utf8');
+  const g = {};
+  vm.createContext(g);
+  vm.runInContext(drag + '\n;globalThis.PuDrag = PuDrag || globalThis.PuDrag;', g);
+  const PuDrag = g.PuDrag;
+  assert.ok(PuDrag, 'PuDrag 를 만들지 못했습니다');
+
+  const bag = {};
+  const dt = {
+    types: [],
+    setData(t, v) { bag[t] = v; this.types.push(t); },
+    getData(t) { return bag[t] || ''; }
+  };
+  const list = [
+    { app: 'pu-photos', kind: 'photo', year: '2026', owner: 'u1', id: 'a', name: '가' },
+    { app: 'pu-photos', kind: 'photo', year: '2026', owner: 'u1', id: 'b', name: '나' },
+    { app: 'pu-photos', kind: 'photo', year: '2026', owner: 'u1', id: 'c', name: '다' }
+  ];
+  assert.equal(PuDrag.setMany(dt, list), true);
+
+  const got = PuDrag.readAll(dt);
+  assert.equal(got.length, 3, '세 장을 실었는데 ' + got.length + '장만 나옵니다');
+  /* ⚠ vm 안에서 만든 배열은 밖의 배열과 **다른 종류**로 취급된다(deepEqual 이 튕긴다).
+     알맹이만 견주려고 글자로 이어 붙인다. */
+  assert.equal(got.map(x => x.id).join(','), 'a,b,c', '순서가 어긋납니다');
+
+  /* 한 장만 읽는 옛 앱 */
+  const one = PuDrag.read(dt);
+  assert.equal(one.id, 'a', '옛 앱이 첫 장을 못 받습니다');
+
+  /* 한 장짜리로 보낸 것도 배열로 읽힌다 */
+  const bag2 = {};
+  const dt2 = { types: [], setData(t, v) { bag2[t] = v; this.types.push(t); }, getData(t) { return bag2[t] || ''; } };
+  PuDrag.set(dt2, list[0]);
+  assert.equal(PuDrag.readAll(dt2).map(x => x.id).join(','), 'a', '한 장짜리를 못 읽습니다');
+
+  assert.match(PuDrag.label({ kind: 'photo', docKind: 'doc', items: list }), /3장/,
+    '몇 장인지 안 알려 줍니다');
 });
 
 test('컨설팅이 사진첩 사진을 받는다', () => {
@@ -397,13 +549,25 @@ test('사진이 없으면 왜 없는지 알려 준다', () => {
 
 /* ── 사람별 분리 ── */
 
-test('계정을 등록한 뒤에 사진을 읽는다', () => {
+test('계정을 등록한 뒤의 성공 부팅 단계에서 사진을 읽는다', () => {
   // 사진 자리가 사람별로 갈려 있어 계정을 모르면 경로를 만들 수 없다.
   // 순서가 어긋나면 앱이 뜨는 순간 사진이 안 보인다(실제로 그런 사고가 있었다).
-  assert.match(app, /PuPhotoStore\.signIn\(u\.uid/);
-  const blk = app.match(/PuPhotoStore\.signIn\(u\.uid[\s\S]{0,300}/);
-  assert.ok(blk, 'signIn 호출을 찾을 수 없습니다');
-  assert.match(blk[0], /loadGrid\(\)/, '계정 등록이 끝나기 전에 사진을 읽습니다');
+  /* 카메라 우선 부팅 때문에 loadGrid는 짧은 300자 안에 있지 않다. 중요한 계약은
+     글자 거리가 아니라 signIn 성공 콜백의 finishPhotoBoot 안에 있다는 점이다. */
+  const signAt = app.indexOf('PuPhotoStore.signIn(u.uid');
+  const successAt = app.indexOf('.then(function (me)', signAt);
+  const finishAt = app.indexOf('const finishPhotoBoot = function ()', successAt);
+  const loadAt = app.indexOf('loadGrid();', finishAt);
+  const loginCatchAt = app.indexOf("console.warn('[로그인]'", successAt);
+  assert.ok(signAt >= 0, 'signIn 호출을 찾을 수 없습니다');
+  assert.ok(successAt > signAt, '계정 등록 성공 콜백을 찾을 수 없습니다');
+  assert.ok(finishAt > successAt && loadAt > finishAt,
+    '사진 읽기는 계정 등록 성공 뒤의 부팅 단계에 있어야 합니다');
+  assert.ok(loginCatchAt > loadAt,
+    '사진 읽기가 계정 등록 성공 콜백 밖으로 빠졌습니다');
+  assert.match(app.slice(finishAt, loadAt + 'loadGrid();'.length),
+    /startUploadWatch\(\);\s*loadGrid\(\);/,
+    '계정 등록 뒤 원격 갱신 감시와 사진 읽기가 함께 시작되어야 합니다');
 });
 
 test('주소가 아니라 사람 이름이 뜬다', () => {
@@ -427,10 +591,14 @@ test('직원에게는 남의 사진을 볼 길이 화면에도 없다', () => {
   assert.match(fn[0], /if \(!PuPhotoStore\.amAdmin\(\)\)/, '관리자 확인 없이 사람 고르기를 보여줍니다');
 });
 
-test('남의 사진은 보기만 된다 — 올리기·지우기·판독이 잠긴다', () => {
+test('남의 사진은 지우거나 고칠 수 없다 (판독은 2026-08-10 부터 허용)', () => {
+  /* ⚠ 예전에는 판독(readAgain·readSelected)도 이 목록에 있었다. 그래서 다른 직원이
+     찍은 명함은 **그 직원이 자기 화면을 열고 있을 때만** 명함첩에 들어갔다.
+     대표 지시(2026-08-10): "다른 직원이 사진찍은 데이터는 입력이 되어야 한다"
+     → 판독·명함첩 보내기는 풀고, **지우기·고치기는 그대로 잠근다.** */
   assert.match(app, /function viewingOther\(/);
   assert.match(app, /function blockedIfOther\(/);
-  for (const fname of ['deleteOne', 'deleteSelected', 'readAgain', 'readSelected']) {
+  for (const fname of ['deleteOne', 'deleteSelected']) {
     const fn = app.match(new RegExp('function ' + fname + '\\([\\s\\S]{0,160}'));
     assert.ok(fn, fname + ' 를 찾을 수 없습니다');
     assert.match(fn[0], /blockedIfOther\(/, fname + ' 이 남의 사진에도 동작합니다');
@@ -440,7 +608,9 @@ test('남의 사진은 보기만 된다 — 올리기·지우기·판독이 잠�
         거기서도 잠그면 앱을 열 때마다 화면을 바꿔야 올릴 수 있다.
         올리는 것은 보는 화면과 무관하게 **늘 내 자리로** 간다(savePhoto)。
         지우기·판독은 위에서 보듯 viewingOther() 그대로 — 남의 사진이 섞여 있다. */
-  assert.match(app, /\['pickBtn', 'docBtn', 'camBtn'\][\s\S]{0,120}viewingOnlyOther\(\)/);
+  /* ⚠ camBtn 은 없앴다(2026-08-10) — 목록에 남겨 두면 없는 단추를 부르다 멎는다 */
+  assert.match(app, /\['docBtn', 'collectBtn', 'phUpBtn', 'phCollectBtn'\][\s\S]{0,180}viewingOnlyOther\(\)/,
+    'PC·모바일 올리기와 문서 모으기를 같은 기준으로 잠가야 합니다');
   assert.match(app, /function viewingOnlyOther\(\) \{ return viewingOther\(\) && gridOwner !== ALL_OWNERS; \}/,
     '「전체 근로자」만 예외여야 합니다 — 한 사람을 골라 볼 때는 여전히 잠깁니다.');
 });
@@ -525,19 +695,21 @@ test('여러 장 판독 중 한 장이 실패해도 나머지를 계속한다', 
 
 /* ── 2단 화면 · 사진 지우기 ── */
 
-test('카메라 단추는 손으로 만지는 기기에만 보인다 — 판정은 스크립트가 한다', () => {
-  /* PC 에는 찍을 카메라가 없다(대표 지시). 예전에는 CSS 미디어(hover/pointer)로
-     갈랐는데 **폰의 웨일 브라우저가 그 판정에 안 걸려 카메라 단추가 통째로
-     사라졌다**(2026-08-06 대표 화면 — 옆 칸만 비어 보였다). 잘못 숨는 것이
-     잘못 보이는 것보다 나쁘므로 자바스크립트 터치 판정으로 켠다. */
-  assert.match(app, /#camBtn\{display:none\}/);
-  assert.match(app, /#home\.touch #camBtn\{display:block\}/);
-  assert.match(app, /function isTouchDevice\(\)/);
-  assert.match(app, /maxTouchPoints/, '터치 판정이 ontouchstart 하나에만 기댑니다');
-  assert.match(app, /classList\.add\('touch'\)/, '판정 결과를 화면에 반영하지 않습니다');
-  // CSS 미디어 판정으로 되돌아가면 웨일에서 또 사라진다
-  assert.ok(!/@media[^{]*hover:none[^{]*\{ ?#camBtn/.test(app),
-    'CSS 미디어로 카메라를 켜고 있습니다 — 웨일에서 사라졌던 방식입니다');
+/* 2026-08-10 다시 겨눔: 카메라 단추를 **없앴다**(대표 지시 "사진첩에 오른쪽
+   아래 카메라 기능 전혀 필요없다. 삭제해서 제거해 달라").
+   예전 검사는 「어느 기기에서 단추가 보이는가」를 못 박고 있었다 — 단추가
+   없어졌으니 지킬 것도 바뀐다: **단추는 사라졌고 촬영은 남아 있어야 한다.** */
+test('★ 사진첩에는 카메라 단추가 없다', () => {
+  assert.ok(!/id="camBtn"/.test(app), '없애기로 한 단추가 아직 있습니다.');
+  assert.ok(!/\$\('camBtn'\)/.test(app),
+    '없는 단추를 부르면 그 줄에서 화면이 통째로 멎습니다(2026-08-08 흰 화면과 같은 사고).');
+});
+
+test('★ 그래도 촬영 기능은 살아 있다 — 명함첩·포털이 불러 쓴다', () => {
+  /* 단추만 없앤 것이지 촬영을 지운 것이 아니다. 지우면 명함 촬영이 통째로 죽는다. */
+  assert.match(app, /function openCam\(/, '촬영을 여는 곳이 없어졌습니다.');
+  assert.match(app, /function openCamIfAsked\(/, '?cam=1 로 들어오는 길이 없어졌습니다.');
+  assert.match(app, /openCamIfAsked\(\);/, '들어와도 카메라를 안 켭니다.');
 });
 
 test('폰에서는 대시보드를 줄인다 — 사진이 화면 밖으로 밀리지 않게', () => {
@@ -545,8 +717,11 @@ test('폰에서는 대시보드를 줄인다 — 사진이 화면 밖으로 밀�
   assert.match(app, /@media \(max-width:899px\)/);
   const m = app.match(/@media \(max-width:899px\)\{([\s\S]*?)\n\}/);
   assert.ok(m, '폰 규칙을 찾을 수 없습니다');
-  // 서류·카메라 두 칸은 **카메라가 보이는 기기에서만** — 아니면 오른쪽이 빈 구멍이 된다
-  assert.match(m[1], /#home\.touch \.row2\{display:grid;grid-template-columns:1fr 1fr/);
+  /* ⚠ 2026-08-10 다시 겨눔 — 카메라 단추를 없애면서 row2 에 「서류 고르기」만
+     남았다. 두 칸으로 나누면 오른쪽이 빈 구멍이 된다(2026-08-06 에 실제로 그랬다).
+     지킬 것은 「빈 칸이 생기지 않는다」이지 두 칸 규칙이 있는 것이 아니다. */
+  assert.ok(!/\.row2\{display:grid;grid-template-columns:1fr 1fr/.test(m[1]),
+    '단추가 하나뿐인데 두 칸으로 나누면 오른쪽이 빈 구멍이 됩니다.');
   /* ⚠ 2026-08-08 다시 겨눔 — 안내 세 덩어리(다섯 줄)를 **한 줄**로 합쳤다(대표 지시:
      "대시보드가 헷갈린다"). 그래서 폰 전용 짧은 안내(.dochint.s)와 .maxhint 가 없어졌다.
      지켜야 할 것은 「폰에서 안내가 자리를 안 먹는다」이지 특정 클래스가 있는 것이 아니다. */
@@ -726,7 +901,7 @@ test('파일 이름 등 바깥 문자열은 이스케이프해서 화면에 넣�
 test('한 번에 올릴 장수 상한을 지키고, 넘치면 몇 장이 남았는지 알린다', () => {
   // 조용히 자르면 "왜 몇 장이 안 올라갔지"가 되고 그게 증빙 누락으로 이어진다.
   assert.match(app, /PuPhotoStore\.UPLOAD_MAX/);
-  const fn = bodyAfter('async function addFiles(', 5200);
+  const fn = bodyAfter('async function addFiles(', 7200);
   assert.match(fn, /files\.length > MAX/, '상한을 넘겨도 그대로 받습니다');
   assert.match(fn, /나머지 ' \+ over \+ '장은 다시 골라/, '남은 장수를 알리지 않습니다');
   // 안내 문구의 숫자도 저장 층에서 가져온다(두 곳에 적으면 어긋난다)
@@ -739,7 +914,10 @@ test('올린 사진은 종류를 가리지 않고 스스로 판독한다', () =>
   // 명함인지 서류인지 회의사진인지는 AI 가 가린다.
   assert.match(app, /<script src="js\/pu-doc-read\.js"><\/script>/);
   assert.match(app, /PuDocRead\.read\(/);
-  assert.match(app, /queueRead\(j\)/);
+  /* ⚠ 2026-08-10 다시 겨눔 — 여러 쪽짜리는 마지막 쪽이 올라간 뒤 **문서마다
+     한 번** 건다(대표 결정 "문서 통째로 한 번"). 지킬 것은 「사람이 단추를 누를
+     일이 없다」이지 무엇을 인자로 넘기는가가 아니다. */
+  assert.match(app, /queueRead\(sibs\[0\]\)/, '올린 것을 스스로 판독하지 않습니다');
   assert.ok(!/j\.kind === 'doc'\)\s*startRead/.test(app), '아직 서류만 판독합니다');
 });
 
@@ -757,8 +935,9 @@ test('이미 올라간 사진도 스스로 판독하되 상한을 두고 알린�
   // 상한에 걸려 남은 것을 조용히 버리지 않는다
   const fn = app.match(/function autoReadPending\([\s\S]*?\n\}/);
   assert.match(fn[0], /남은 .*장은 다음에 열 때/);
-  // 남의 사진은 손대지 않는다
-  assert.match(fn[0], /viewingOther\(\)/);
+  /* ⚠ 예전에는 여기서 viewingOther() 로 멈췄다. 그래서 다른 직원이 찍은 서류는
+     그 직원이 자기 화면을 열 때만 읽혔다 — 대표 지시(2026-08-10)로 열었다.
+     지금 무엇이 맞는지는 아래 「안 읽은 서류는 남의 사진첩에서도…」 검사가 지킨다. */
 });
 
 test('판독을 기다리는 줄은 사라지지 않는다', () => {
@@ -822,7 +1001,11 @@ test('판독 실패를 「서류로 보이지 않음」이라고 말하지 않�
 test('판독 결과도 이스케이프해서 화면에 넣는다', () => {
   // AI가 돌려준 문자열을 그대로 넣으면 화면이 뚫린다
   assert.match(app, /esc\(readLine\(/);
-  assert.match(app, /esc\(read\.fields\[/);
+  /* 값뿐 아니라 **이름표까지** — 2026-08-13 부터 이름표도 문서에서 읽어 온 말이다
+     (「업체명」처럼 원본에 적힌 그대로). 우리가 지은 말이 아니므로 믿으면 안 된다. */
+  const fn = app.match(/function renderReadPanel\([\s\S]*?\n\}/)[0];
+  assert.match(fn, /esc\(r\[0\]\)/, '이름표를 안 걸렀습니다');
+  assert.match(fn, /esc\(r\[1\]\)/, '값을 안 걸렀습니다');
 });
 
 /* ── 명함첩으로 보내기 ── */
@@ -940,7 +1123,9 @@ test('더한 것이 없을 때만 치운다 — 빈 칸을 채웠으면 두어�
 });
 
 test('치우기 전에 판독 결과를 먼저 남긴다 — 순서가 바뀌면 고리가 끊긴다', () => {
-  const i = app.indexOf('saveRead(year, id, read)');
+  /* 인자 개수를 못 박지 않는다 — 주인(owner)이 붙는 등 늘어날 수 있다.
+     여기서 볼 것은 **순서**뿐이다. */
+  const i = app.indexOf('saveRead(year, id, read');
   const j = app.indexOf('dropRedundant(id, year, res)');
   assert.ok(i > 0 && j > i, '기록보다 치우기가 먼저입니다');
 });
@@ -1016,14 +1201,20 @@ test('판독 카드는 밝은색이다 — 어두운 화면에서 글이 잘 보
   assert.match(app, /#readPanel table\{[^}]*color:var\(--ink\)/, '판독 글자가 어두운 화면용 색입니다');
 });
 
-test('단추는 두 칸씩 놓고 지우기는 혼자 한 줄을 쓴다', () => {
-  // 한 줄에 하나씩이면 세로로 길어져 판독 내용을 가린다.
-  assert.match(app, /#readPanel \.acts\{display:grid;grid-template-columns:1fr 1fr/);
+/* 2026-08-13 대표 지시로 바뀌었다 — "한 줄에 모든 셀 넣어달라".
+   예전에는 두 칸 격자에 공유·지우기가 한 줄씩 통으로 차지해 석 줄이었고,
+   판 아래가 길어져 정작 읽은 칸 표가 화면 밖으로 밀렸다.
+   자세한 검사는 tests/photos-viewer-split.test.js 에 있다. */
+test('단추는 한 줄에 모두 놓고, 지우기는 맨 끝에 틈을 두고 놓는다', () => {
+  assert.match(app, /#readPanel \.acts\{position:sticky;top:0;z-index:3;display:flex/);
   const fn = app.match(/function actsRow\([\s\S]*?\n\}/);
   assert.ok(fn, 'actsRow 본문을 찾을 수 없습니다');
-  // 지우기는 되돌리기 어려우니 늘 한 줄을 통째로 — 잘못 누르기 어렵게
-  assert.match(fn[0], /class="rm wide"/, '지우기가 다른 단추와 나란히 있습니다');
-  assert.match(app, /#readPanel \.acts \.wide\{grid-column:1 \/ -1\}/);
+  // 지우기는 되돌리기 어려우니 맨 끝 + 앞에 틈 — 잘못 누르기 어렵게
+  assert.match(fn[0], /class="rm"/);
+  assert.ok(fn[0].indexOf('readAgain()') < fn[0].indexOf('deleteOne()'),
+    '지우기가 맨 끝이 아닙니다');
+  assert.match(app, /#readPanel \.acts \.rm\{[^}]*margin-left:5px/,
+    '틈이 없으면 옆 단추를 누르려다 지웁니다');
 });
 
 test('공유 단추는 되는 기기에만 나온다 — PC 에 헛단추를 두지 않는다', () => {
@@ -1078,7 +1269,11 @@ test('닫는 길이 셋이다 — 단추·바깥 누르기·ESC', () => {
   // 사진을 눌러 닫던 길이 확대로 바뀌었으니 닫는 길을 잃으면 갇힌다.
   assert.match(app, /onclick="closeViewer\(\)">닫기/);
   assert.match(app, /onclick="picClick\(event\)"/);
-  assert.match(app, /e\.key === 'Escape' && viewerId\) closeViewer\(\)/);
+  /* ⚠ 2026-08-10 다시 겨눔 — ESC 처리를 escOnce() 하나로 모았다.
+     지킬 것은 「ESC 로도 닫힌다」이지 처리기가 어디에 적혀 있는가가 아니다. */
+  const esc = app.match(/function escOnce\(\)[\s\S]*?\n\}/);
+  assert.ok(esc && /if \(viewerId\) \{ closeViewer\(\); return; \}/.test(esc[0]),
+    'ESC 로 크게 보기를 닫는 길이 없습니다.');
 });
 
 test('다음 사진을 열 때 확대가 풀려 있다', () => {
@@ -1162,7 +1357,7 @@ test('올릴 수 없는 상황이면 아무 말 없이 끝내지 않는다', () 
   const fn = app.match(/async function addFiles\([\s\S]*?\n  if \(!files\.length\) return;/);
   assert.ok(fn, 'addFiles 시작 부분을 찾을 수 없습니다');
   assert.match(fn[0], /로그인이 풀렸습니다/, '로그인 해제를 조용하게 넘깁니다');
-  assert.match(fn[0], /올릴 준비가 끝나지 않았습니다/, '준비가 안 된 상태를 조용하게 넘깁니다');
+  assert.match(fn[0], /사진 올리기를 준비하지 못했습니다/, '준비가 안 된 상태를 조용하게 넘깁니다');
   // 사진이 안 올라갔다는 것을 분명하게 말해야 다시 올린다
   assert.match(fn[0], /사진은 아직 올라가지 않았습니다/);
 });
@@ -1186,7 +1381,11 @@ test('중소기업확인서가 아무 곳에도 안 들어가면 확인 필요�
   // 확인서는 명함첩에 가지 않는다 — 이 줄이 없으면 조용히 묻힌다.
   const fn = fnBodyOf('needsCheck');
   assert.match(fn, /CO_KINDS\[r\.kind\]/, '업체관리에 못 넣은 것을 놓칩니다');
-  assert.match(fn, /filedCo/);
+  /* ⚠ 2026-08-11 다시 겨눔 — 판정을 coFilledOk 로 모았다(filled 가 실시간DB 에서
+     사라져 화면이 멎던 사고). 지킬 것은 「업체관리에 못 넣은 것을 잡는다」이지
+     이 함수 안에서 filedCo 를 직접 읽는 모양이 아니다. */
+  assert.match(fn, /coFilledOk\(r\)/, '업체관리에 넣었는지 안 따집니다');
+  assert.match(app, /function coFilledOk\(read\)[\s\S]*?filedCo/, 'filedCo 를 보는 곳이 없습니다');
 });
 
 test('업체관리 결과를 명함첩 결과와 따로 보여 준다', () => {
@@ -1345,15 +1544,15 @@ test('막힌 드래그 표시는 스스로 풀린다', () => {
 /* ══════ 연속촬영 (2026-08-06 대표 요청) ══════
    한 장 찍으면 닫히던 카메라를 — 셔터 연타로 모으고, 갤러리처럼 골라 한 번에 올린다. */
 
-test('카메라 단추는 앱 안 카메라를 열고, 폰 기본 카메라는 예비 통로로 남는다', () => {
-  assert.match(app, /\$\('camBtn'\)\.onclick = function \(\) \{ openCam\(\); \}/,
-    '카메라 단추가 연속촬영을 열지 않습니다');
-  /* 카메라를 못 여는 폰(권한 거부 등)이 조용히 실패하면 안 된다 —
-     실패 안내와 함께 폰 기본 카메라로 물러난다. */
+test('포털 카메라 진입은 앱 안 카메라만 열고 폰 확인형 카메라로 물러나지 않는다', () => {
+  assert.doesNotMatch(app, /\$\('camBtn'\)/,
+    '삭제된 사진첩 카메라 단추를 다시 호출하면 시작 중 오류가 납니다');
+  assert.match(app, /function openCamIfAsked\(\)/,
+    '포털과 명함첩에서 카메라로 들어오는 길이 없습니다');
   const fn = app.match(/async function openCam\(\)[\s\S]*?\n\}/);
   assert.ok(fn, 'openCam 을 찾을 수 없습니다');
-  assert.match(fn[0], /\$\('camInput'\)\.click\(\)/, '예비 통로(폰 기본 카메라)가 없습니다');
-  assert.match(app, /id="camInput"[^>]*capture=/, 'camInput 이 사라졌습니다');
+  assert.match(fn[0], /navigator\.mediaDevices\.getUserMedia/);
+  assert.doesNotMatch(fn[0], /camInput|\.click\(\)/);
 });
 
 test('카메라를 닫으면 반드시 끈다 — 안 끄면 녹화 표시가 남고 배터리를 먹는다', () => {
@@ -1437,13 +1636,35 @@ test('전체 근로자 화면에서는 사진마다 누구 것인지 보인다',
 });
 
 test('전체 근로자 화면에서 사진을 받을 때 그 사람 자리로 정확히 찾아간다', () => {
-  // gridOwner 하나만 쓰면 '전체' 자체를 계정으로 착각해 엉뚱한 경로를 읽는다.
+  /* gridOwner 하나만 쓰면 '전체'(__all__) 자체를 계정으로 착각해 엉뚱한 경로를 읽는다.
+     ⚠ 2026-08-13 다시 겨눔 — 예전에는 __ownerUid 라는 «낱말»이 있는지만 봤다.
+       그래서 `it.meta.__ownerUid || gridOwner` 처럼 표를 거르지 않는 코드도 통과했고,
+       실제로 방금 올린 사진(주인 없음 + 화면은 __all__)이 검은 화면으로 떴다.
+       지킬 것은 「거르는 함수를 거쳤는가」다 — photoOwner()·photoYearOf(). */
   const sites = ['downloadOne', 'shareOne', 'downloadSelected', 'openViewer'];
   sites.forEach(function (name) {
     const fn = app.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n\\}'));
     assert.ok(fn, name + ' 본문을 찾을 수 없습니다');
-    assert.match(fn[0], /__ownerUid/, name + ' 이 항목별 실제 소유자를 쓰지 않습니다');
+    assert.match(fn[0], /photoOwner\(/, name + ' 이 주인을 거르지 않고 넘깁니다 (photoOwner 를 거쳐야 합니다)');
+    assert.match(fn[0], /photoYearOf\(/, name + ' 이 화면의 해로 찾습니다 (photoYearOf 를 거쳐야 합니다)');
+    assert.doesNotMatch(fn[0], /\|\|\s*gridOwner/, name + ' 이 아직 gridOwner 를 그대로 씁니다');
   });
+});
+
+/* 사진이 놓인 해는 «사진의 성질»이지 화면의 성질이 아니다.
+   받은 사진은 주인의 해(2025 등)에 있는데 화면은 늘 올해를 두드려
+   본문도 미리보기도 못 찾아 통째로 까맣게 나왔다 (2026-08-13 김보람 제보). */
+test('사진마다 제 해에서 본문을 찾는다 — 화면의 해로 두드리지 않는다', () => {
+  assert.match(app, /function photoYearOf\(/, '사진의 해를 찾는 함수가 없습니다');
+  const fn = fnBody('photoYearOf');
+  assert.match(fn, /__year/, 'photoYearOf 가 사진에 새겨진 해를 안 봅니다');
+  assert.match(fn, /__sharedYear/, 'photoYearOf 가 받은 사진의 해를 안 봅니다');
+  // 미리보기도 같은 길을 타야 한다 — 본문만 고치면 칸은 여전히 비어 보인다
+  assert.match(fnBody('fillThumbsOneByOne'), /photoYearOf\(/, '미리보기가 화면의 해로 찾습니다');
+  // 방금 올린 사진에도 주인·해가 바로 새겨져야 한다 (새로고침 전에도)
+  const add = fnBody('addToGrid');
+  assert.match(add, /__ownerUid/, '방금 올린 사진에 주인이 안 붙습니다');
+  assert.match(add, /__year/, '방금 올린 사진에 해가 안 붙습니다');
 });
 
 test('전체 근로자를 보는 중에는 업로드·삭제가 잠긴다 — 남의 것이라서', () => {
@@ -1467,11 +1688,11 @@ test('탭 줄에 「+ 분류 추가」가 있다', () => {
   assert.match(app, /class="add" onclick="openAddKind\(\)"/);
 });
 
-test('직접분류는 AI 분류와 다른 칸(customKind)에 붙는다 — read.kind 를 안 건드린다', () => {
+test('직접분류는 대표 분류가 되어 이전 AI 분류와 중복 표시되지 않는다', () => {
   const fn = app.match(/function tabsOf\([\s\S]*?\n\}/)[0];
   assert.match(fn, /it\.meta\.customKind/);
-  // 더하는 것이지 기타서류에서 빼앗지 않는다 — AI 분류 하나 + 직접분류(있으면) 둘 다 담아야 한다
-  assert.match(fn, /out\.push\(customTabKey/);
+  assert.match(fn, /return \[customTabKey\(ck\)\]/, '직접분류 하나만 반환하지 않습니다');
+  assert.doesNotMatch(fn, /out\.push\(customTabKey/, '이전 분류에 직접분류를 더해 중복 표시합니다');
 });
 
 test('직접분류 탭도 순서 목록·장수 세기에 들어간다', () => {
@@ -1479,7 +1700,7 @@ test('직접분류 탭도 순서 목록·장수 세기에 들어간다', () => {
   assert.match(order, /allTabKeys\(\)/, 'kindOrder 가 직접분류를 모릅니다');
   const counts = app.match(/function tabCounts\(\)[\s\S]*?\n\}/)[0];
   assert.match(counts, /allTabKeys\(\)/, 'tabCounts 가 직접분류 칸을 0으로 안 채웁니다');
-  assert.match(counts, /tabsOf\(it\)\.forEach/, '사진 하나가 여러 탭에 더해지지 않습니다');
+  assert.match(counts, /tabsOf\(it\)\.forEach/, '대표 분류의 개수를 세지 않습니다');
 });
 
 test('새 분류 만들기 — 이름을 물어보고 만들자마자 그 탭으로 넘어간다', () => {
@@ -1504,9 +1725,26 @@ test('분류 지정은 남의 사진(전체 근로자 포함)에는 못 한다',
 });
 
 test('분류 지정은 항목별 실제 소유자 자리에 쓴다', () => {
-  const fn = app.match(/function submitAssignKind\([\s\S]*?\n\/\* ESC/);
+  /* 2026-08-10 다시 겨눔 — 옮기는 일이 retagPhotos 한 곳으로 모였다.
+     지켜야 할 것은 「그 사진의 진짜 주인 자리에 쓴다」이지, 어느 함수에 있느냐가
+     아니다. 남의 자리에 쓰면 조용히 실패하거나 남의 사진을 건드린다. */
+  const fn = app.match(/function retagPhotos\([\s\S]*?\n\}/);
+  assert.ok(fn, 'retagPhotos 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /setCustomKind\(gridYear, id, custom, it\.meta\.__ownerUid \|\| gridOwner\)/,
+    '직접분류를 올린 사람 자리가 아닌 곳에 씁니다');
+  assert.match(fn[0], /setPrimaryKind\(gridYear, id, read, null, photoOwner\(id\)\)/,
+    '판독 결과와 이전 직접분류 해제를 올린 사람 자리에 함께 쓰지 않습니다');
+});
+
+test('★ 눌러서 지정하는 길과 끌어다 놓는 길이 같은 한 곳을 쓴다', () => {
+  /* 대표 보고(2026-08-10): 사업자등록증으로 옮길 수가 없었다. 원인이 이것이다 —
+     끌기는 「종류가 하나뿐인 칸」만, 누르기는 「직접 만든 분류」만 받아서
+     사업자등록증은 **양쪽 모두에서** 빠져 있었다. 두 길을 갈라 두면 또 어긋난다. */
+  const fn = app.match(/function submitAssignKind\([\s\S]*?\n\}/);
   assert.ok(fn, 'submitAssignKind 본문을 찾을 수 없습니다');
-  assert.match(fn[0], /PuPhotoStore\.setCustomKind\(gridYear, id, kindId, it\.meta\.__ownerUid \|\| gridOwner\)/);
+  assert.match(fn[0], /retagPhotos\(ids, val\)/, '누르는 길이 제 나름대로 저장하고 있습니다');
+  assert.ok(!/PuPhotoStore\.setCustomKind\(/.test(fn[0]),
+    '누르는 길이 따로 저장하면 한쪽만 고쳐집니다');
 });
 
 test('크게 보기에서 분류를 뗄 수 있다 — 지정은 되돌릴 수 있어야 한다', () => {
@@ -1540,7 +1778,7 @@ test('사진을 탭에 끌어다 놓으면 분류가 바뀐다', () => {
   assert.match(ds[0], /selected\.size && selected\.has\(id\)/, '고른 여러 장을 함께 옮기지 않습니다');
   const fn = app.match(/function retagPhotos\([\s\S]*?\n\}/);
   assert.ok(fn, 'retagPhotos 를 찾을 수 없습니다');
-  assert.match(fn[0], /PuPhotoStore\.saveRead\(/, '바꾼 분류를 저장하지 않습니다');
+  assert.match(fn[0], /PuPhotoStore\.setPrimaryKind\(/, '바꾼 분류를 저장하지 않습니다');
 });
 
 test('분류를 바꿔도 읽어 둔 항목은 살린다', () => {
@@ -1553,15 +1791,74 @@ test('분류를 바꿔도 읽어 둔 항목은 살린다', () => {
   assert.match(fn, /auto: false/, '사람이 정한 것을 기계가 정한 것으로 적고 있습니다');
 });
 
-test('아무 탭에나 놓을 수는 없다 — 애매한 탭은 막는다', () => {
-  /* 「전체사진」은 분류가 아니라 모아 보기이고, 「사업자등록증」은 두 종류
-     (bizreg·sme)를 함께 담아 어느 쪽으로 넣을지 정할 수 없다. */
-  const fn = app.match(/function canRetag\([\s\S]*?\n\}/);
-  assert.ok(fn, 'canRetag 를 찾을 수 없습니다');
-  assert.match(fn[0], /kinds\.length === 1/, '종류가 하나인 탭만 받도록 막지 않았습니다');
-  // 놓기 전에 어디로 갈지 눈에 보여야 한다
+/* 어느 칸에 놓을 수 있나 — 진짜로 돌려서 본다.
+   ⚠ 2026-08-10 이 검사가 「kinds.length === 1」이라는 **적는 방식**을 붙들고
+      있었다. 그래서 사업자등록증·기타서류가 막혀 있는 것을 「올바름」으로 지켰다.
+      지켜야 할 것은 「전체사진에는 못 넣는다」이지 그 판별식이 아니다. */
+function bootRetag(customKinds) {
+  const ctx = {
+    CUSTOM_KINDS: customKinds || {},
+    KIND_TABS: null
+  };
+  vm.createContext(ctx);
+  const tabs = app.match(/const KIND_TABS = \[[\s\S]*?\n\];/);
+  assert.ok(tabs, 'KIND_TABS 를 찾을 수 없습니다');
+  vm.runInContext(tabs[0].replace('const ', 'var '), ctx);
+  ['isCustomTab', 'canRetag', 'kindForTab'].forEach(function (n) {
+    const m = app.match(new RegExp('function ' + n + '\\([\\s\\S]*?\\r?\\n\\}'));
+    assert.ok(m, n + ' 를 찾을 수 없습니다');
+    vm.runInContext(m[0], ctx);
+  });
+  return ctx;
+}
+
+test('★ 「전체사진」에는 못 넣는다 — 분류가 아니라 모아 보기다', () => {
+  const c = bootRetag();
+  assert.equal(c.canRetag('all'), false,
+    '모아 보기에 「넣는다」는 말은 성립하지 않습니다.');
+  assert.equal(c.kindForTab('all'), null);
+});
+
+test('★ 사업자등록증·기타서류에도 넣을 수 있다 (대표 보고 2026-08-10)', () => {
+  /* 이 둘이 막혀 있어서 "분류가 안 되는 서류들을 사업자등록증으로 옮기려는데
+     분류 지정이 안 된다"가 됐다. 사람이 그 칸을 고르면 그건 분명한 뜻이다. */
+  const c = bootRetag();
+  assert.equal(c.canRetag('bizreg'), true, '사업자등록증으로 옮길 길이 막혀 있습니다.');
+  assert.equal(c.kindForTab('bizreg'), 'bizreg', '두 종류 중 어느 것으로 넣을지 안 정해 뒀습니다.');
+  assert.equal(c.canRetag('other'), true, '「그냥 기타로 둬라」도 분명한 뜻입니다.');
+  assert.equal(c.kindForTab('other'), 'other');
+});
+
+test('★ 「전체사진」 말고는 모든 칸이 사진을 받는다', () => {
+  const c = bootRetag();
+  const tabs = c.KIND_TABS.filter(function (t) { return t.key !== 'all'; });
+  assert.ok(tabs.length >= 6, '칸이 너무 적습니다: ' + tabs.length);
+  tabs.forEach(function (t) {
+    assert.equal(c.canRetag(t.key), true, '「' + t.label + '」로 옮길 수 없습니다.');
+  });
+});
+
+test('없는 직접분류에는 못 넣는다', () => {
+  const c = bootRetag({ k1: { name: '자문등록계약서' } });
+  assert.equal(c.canRetag('custom:k1'), true);
+  assert.equal(c.canRetag('custom:없는것'), false, '지워진 분류로 옮기면 사진이 사라집니다.');
+});
+
+test('놓을 자리가 눈에 보인다', () => {
   assert.match(app, /#kinds button\.drop\{/, '놓을 자리 표시가 없습니다');
   assert.match(app, /function markDropTab\(/);
+});
+
+test('★ 「분류 지정」 목록에 놓을 수 있는 칸이 모두 나온다', () => {
+  /* 대표 보고(2026-08-10): 여기에 직접 만든 분류만 나와서 사업자등록증을
+     고를 수가 없었다. 화면 위 칸과 같은 목록이어야 한다. */
+  const fn = app.match(/function openAssignKind\([\s\S]*?\n\}/);
+  assert.ok(fn, 'openAssignKind 본문을 찾을 수 없습니다');
+  assert.match(fn[0], /kindOrder\(\)\.filter\(canRetag\)/,
+    '고정 칸을 빼고 직접분류만 보여 주면 사업자등록증으로 옮길 길이 없습니다');
+  assert.ok(!/Object\.keys\(CUSTOM_KINDS\)/.test(fn[0]),
+    '직접분류만 훑고 있습니다');
+  assert.match(fn[0], /__new__/, '새 분류 만들기 길이 없어졌습니다');
 });
 
 test('분류 탭과 찾기 줄은 스크롤해도 위에 붙어 있다', () => {
@@ -1583,12 +1880,16 @@ test('옛 판 판독기로 읽은 사진은 스스로 다시 읽는다', () => {
   /* 회의사진·급여서류를 가르치기 전에 읽힌 사진이 'other' 로 굳어 기타서류에
      영원히 남았다(2026-08-06 대표 화면: 회의사진 0장, 기타서류 6장).
      사람이 한 장씩 「다시 판독」을 눌러야만 풀리는 것은 자동 분류가 아니다. */
-  const fn = app.match(/function needsRead\([\s\S]*?\n\}/);
-  assert.ok(fn, 'needsRead 를 찾을 수 없습니다');
+  /* 2026-08-13 부터 판정이 둘로 갈렸다 — 안 읽은 것(neverRead)과 옛 판으로 읽은
+     것(staleRead). 옛 판 다시 읽기는 **한 번에 몇 장만** 한다(비용).
+     자세한 검사는 tests/photos-read-budget.test.js 에 있다. */
+  const fn = app.match(/function staleRead\([\s\S]*?\n\}/);
+  assert.ok(fn, 'staleRead 를 찾을 수 없습니다');
   assert.match(fn[0], /PuDocRead\.READ_VERSION/, '판독기 판 번호를 보지 않습니다');
   assert.match(fn[0], /r\.ack/, '사람이 확인한 것까지 도로 뒤집습니다');
   const auto = app.match(/function autoReadPending\([\s\S]*?\n\}/);
-  assert.match(auto[0], /filter\(needsRead\)/, '자동 판독이 옛 결과를 안 집어 옵니다');
+  assert.match(auto[0], /filter\(staleRead\)/, '자동 판독이 옛 결과를 안 집어 옵니다');
+  assert.match(auto[0], /filter\(neverRead\)/, '자동 판독이 안 읽은 사진을 안 집어 옵니다');
   // 읽을 때마다 어느 판으로 읽었는지 적어야 다음에 비교할 수 있다
   assert.match(app, /rv: PuDocRead\.READ_VERSION/, '판독 결과에 판 번호를 안 적습니다');
 });
@@ -1635,9 +1936,10 @@ test('명함틀을 켜면 그 안만 잘라 담는다', () => {
     '화면 좌표를 원본 좌표로 옮기지 않습니다');
   /* 넘치면 검은 띠가 담긴다 */
   assert.match(fn[0], /Math\.min\(Math\.round\(fw\), sw - cx\)/, '자를 범위를 화면 안으로 가두지 않습니다');
-  // 켜고 끄기와 기억
-  assert.match(app, /function toggleFrame\(/);
-  assert.match(app, /localStorage\.setItem\(CAM_FRAME_LS/, '틀 상태를 기억하지 않습니다');
+  // 일반사진은 틀 없음, 명함·서류를 골랐을 때만 틀을 쓴다
+  assert.match(app, /function frameOn\(\) \{ return camCaptureMode === 'document'; \}/);
+  assert.match(app, /id="camModePhoto"[^>]*setCamCaptureMode\('photo'\)/);
+  assert.match(app, /id="camModeDocument"[^>]*setCamCaptureMode\('document'\)/);
 });
 
 test('몇 장 찍었는지 위 가운데에 크게 보인다', () => {
@@ -1656,4 +1958,78 @@ test('손전등을 켜 둔 채 카메라를 끄지 않는다', () => {
   const fn = app.match(/function camStop\([\s\S]*?\n\}/)[0];
   assert.match(fn, /torch: false/, '손전등을 끄지 않고 카메라를 닫습니다');
   assert.match(fn, /camTrack = null/, '트랙 참조가 남습니다');
+});
+
+/* ══════ 다른 직원이 찍은 서류도 명함첩으로 (2026-08-10 대표 지시) ══════
+   "중복되는것은 제외하더라도 추가로 다른 직원이 사진찍은 데이터는 입력이 되어야 한다".
+
+   그동안은 「남의 사진은 보기만」(viewingOther) 하나가 **판독까지** 막아,
+   다른 직원이 찍은 명함은 그 직원이 자기 화면을 열고 있을 때만 명함첩에 갔다.
+   판독·명함첩 보내기는 남의 사진에서도 되어야 하고, **지우기·올리기는 여전히
+   막혀 있어야 한다** — 이 둘을 함께 못 박는다. */
+
+/* 함수 본문 하나를 떠온다 — 들여쓰기 없는 function 선언만 쓴다.
+   정규식으로 짜면 [\s\S] 같은 조각이 셸·편집기를 거칠 때 깨진다. 글자로 자른다. */
+function fnBody(name) {
+  const head = '\nfunction ' + name + '(';
+  const i = app.indexOf(head);
+  assert.ok(i >= 0, name + ' 를 찾을 수 없습니다');
+  const j = app.indexOf('\n}', i);
+  assert.ok(j > i, name + ' 본문의 끝을 찾을 수 없습니다');
+  return app.slice(i, j + 2);
+}
+
+test('안 읽은 서류는 남의 사진첩에서도 스스로 판독된다', () => {
+  const fn = fnBody('autoReadPending');
+  assert.ok(!/viewingOther\(\)/.test(fn),
+    '남의 사진에서 판독이 멈춰 있습니다 — 그 직원이 열 때까지 명함첩에 안 갑니다');
+});
+
+test('「다시 판독」·「여러 장 판독」은 남의 사진에서도 눌린다', () => {
+  assert.ok(!/blockedIfOther\(/.test(fnBody('readAgain')), 'readAgain 이 남의 사진을 막습니다');
+  assert.ok(!/blockedIfOther\(/.test(fnBody('readSelected')), 'readSelected 가 남의 사진을 막습니다');
+});
+
+test('올리기·지우기는 특정 다른 직원의 사진 화면에서 막는다', () => {
+  /* 전체 근로자 화면의 업로드는 내 자리로 저장되므로 허용한다. 특정 직원 한 명의
+     화면에서는 PC·모바일 단추뿐 아니라 실제 저장 입구까지 함께 막아야 한다. */
+  assert.match(fnBody('deleteSelected'), /blockedIfOther\(/, '남의 사진을 지울 수 있습니다');
+  assert.match(app, /async function openCam\([\s\S]{0,360}?viewingOnlyOther\(\)/,
+    '특정 직원 화면에서 카메라가 열립니다');
+  assert.match(fnBody('phUpload'), /viewingOnlyOther\(\)/, '특정 직원 화면에서 모바일 올리기가 열립니다');
+  assert.match(fnBody('startCollect'), /viewingOnlyOther\(\)/, '특정 직원 화면에서 문서 모으기가 열립니다');
+  assert.match(app, /async function addFiles\([\s\S]{0,900}?viewingOnlyOther\(\)/,
+    '파일 저장 입구에서 특정 직원 화면 업로드를 막지 않습니다');
+  assert.match(app, /\['docBtn', 'collectBtn', 'phUpBtn', 'phCollectBtn'\][\s\S]{0,180}?viewingOnlyOther\(\)/,
+    'PC·모바일 올리기 단추가 함께 잠기지 않습니다');
+});
+
+test('판독은 사진 주인 자리에서 본문을 받고 그 자리에 결과를 쓴다', () => {
+  const fn = fnBody('readPhoto');
+  /* ⚠ 2026-08-10 다시 겨눔 — 여러 쪽짜리는 쪽마다 주인을 따로 본다
+     (photoOwner(p.id)). 지킬 것은 「주인 자리를 본다」이지 변수 이름이 아니다. */
+  /* 인자 안에 괄호가 들어갈 수 있다 — loadFull(photoYearOf(id), id, photoOwner(id)).
+     [^)]* 로는 첫 닫는 괄호에서 끊겨 멀쩡한 코드도 못 알아본다 (2026-08-13). */
+  assert.match(fn, /loadFull\([\s\S]{0,120}?photoOwner\(/, '남의 사진 본문을 못 찾습니다 (주인을 안 넘깁니다)');
+  assert.match(fn, /saveRead\([^)]*photoOwner\(/, '판독 결과가 내 자리에 저장됩니다');
+  assert.match(app, /function photoOwner\(/, '사진 주인을 찾는 함수가 없습니다');
+  /* 「전체 근로자」·「받은 사진」 표를 사람 아이디로 넘기면 없는 자리를 두드린다 */
+  assert.match(fnBody('photoOwner'), /ALL_OWNERS/, 'photoOwner 가 화면 표를 걸러내지 않습니다');
+  assert.match(fnBody('photoOwner'), /SHARED_OWNER/, 'photoOwner 가 화면 표를 걸러내지 않습니다');
+});
+
+test('명함첩 보내기도 사진 주인 자리를 본다', () => {
+  const fn = fnBody('sendCards');
+  assert.match(fn, /loadFull\([^)]*owner/, '남의 사진 본문을 못 받아 명함첩에 못 보냅니다');
+  assert.match(fn, /saveRead\([^)]*owner/, '보낸 표시가 내 자리에 저장됩니다');
+});
+
+test('남의 사진은 중복이어도 스스로 치우지 않는다', () => {
+  /* 남의 사진을 말없이 휴지통에 넣으면 그 사람은 왜 없어졌는지 알 수 없다.
+     내 사진일 때만 치운다 — 판독 잠금을 푸는 대가로 반드시 함께 있어야 한다. */
+  const fn = fnBody('dropRedundant');
+  assert.match(fn, /isMinePhoto\(/, '남의 사진까지 치울 수 있습니다');
+  /* 걸러내기가 deletePhoto **앞**에 있어야 한다 — 뒤면 이미 지운 뒤다 */
+  assert.ok(fn.indexOf('isMinePhoto(') < fn.indexOf('deletePhoto('),
+    '지운 다음에 내 것인지 봅니다');
 });

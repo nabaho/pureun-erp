@@ -45,32 +45,33 @@ test('★ 같은 해 안에서 고치면 정보 한 줄만 바꾼다', async () 
     '같은 해면 사진을 옮길 필요가 없습니다.');
 });
 
-test('★ 해가 바뀌면 사진·미리보기까지 함께 옮기고 옛 자리는 지운다', async () => {
+/* 2026-08-13 대표 지시로 자리를 정하는 값이 바뀌었다 — 촬영일이 아니라 올린 때다.
+   그래서 촬영일을 몇 해 전으로 고쳐도 **사진을 옮기지 않는다.**
+   ⚠ 이것이 좋은 소식인 이유: 예전에는 여기서 사진·미리보기를 통째로 날랐고,
+     저장소 전체에서 사진을 잃을 수 있는 유일한 자리였다. */
+test('★ 해가 바뀌어도 사진을 옮기지 않는다 — 날짜 한 줄만 고친다', async () => {
   const wrote = [];
+  let moved = false;
   const ctx = {
     Number, Promise, String,
     yearOf: (ts) => String(new Date(ts).getFullYear()),
     metaPath: (y, id) => 'm/' + y + '/' + id,
     blobPath: (y, id) => 'b/' + y + '/' + id,
     thumbPath: (y, id) => 't/' + y + '/' + id,
-    readOnce: () => Promise.resolve({ takenAt: 1, byName: '홍길동' }),
-    loadFull: () => Promise.resolve('FULL'),
-    loadThumb: () => Promise.resolve('THUMB'),
+    readOnce: () => { moved = true; return Promise.resolve({ takenAt: 1, byName: '홍길동' }); },
+    loadFull: () => { moved = true; return Promise.resolve('FULL'); },
+    loadThumb: () => { moved = true; return Promise.resolve('THUMB'); },
     deps: { db: { ref: () => ({ update: (u) => { wrote.push(u); return Promise.resolve(); } }) } }
   };
   const setTakenAt = fnFrom(store, 'setTakenAt', ctx, '  ');
   const ts = new Date(2025, 11, 20, 9, 0, 0).getTime();
   const to = await setTakenAt('2026', 'p1', ts);
-  assert.equal(to, '2025', '옮겨간 해를 알려 줘야 화면이 그 해로 옮겨 갑니다.');
-  assert.equal(wrote.length, 1, '★ 한 묶음으로 넣고 지워야 합니다 — 나눠서 하다 끊기면 사진을 잃습니다.');
-  const u = wrote[0];
-  assert.equal(u['m/2025/p1'].takenAt, ts, '새 자리에 고친 날짜가 들어가야 합니다.');
-  assert.equal(u['m/2025/p1'].byName, '홍길동', '나머지 정보도 따라가야 합니다.');
-  assert.equal(u['b/2025/p1'], 'FULL');
-  assert.equal(u['t/2025/p1'], 'THUMB');
-  assert.equal(u['m/2026/p1'], null);
-  assert.equal(u['b/2026/p1'], null, '옛 자리 사진을 안 지우면 용량이 두 배가 됩니다.');
-  assert.equal(u['t/2026/p1'], null);
+  assert.equal(to, '2026', '있던 자리를 그대로 돌려줘야 화면이 사진을 놓치지 않습니다.');
+  assert.equal(wrote.length, 1);
+  assert.deepEqual(Object.keys(wrote[0]), ['m/2026/p1/takenAt'],
+    '★ 날짜 한 줄만 고쳐야 합니다 — 사진을 나르면 옮기다 끊길 때 잃습니다.');
+  assert.equal(wrote[0]['m/2026/p1/takenAt'], ts);
+  assert.equal(moved, false, '★ 아직 사진 본문을 읽어 나르고 있습니다.');
 });
 
 test('이상한 날짜는 받지 않는다', async () => {
@@ -83,16 +84,15 @@ test('이상한 날짜는 받지 않는다', async () => {
   await assert.rejects(() => setTakenAt('2026', 'p1', 0));
 });
 
-test('사진 정보를 못 찾으면 옛 자리를 안 지운다', async () => {
-  const wrote = [];
+test('저장이 막히면 화면에도 안 고쳐진 것으로 알린다', async () => {
   const ctx = { Number, Promise, String,
     yearOf: () => '2025', metaPath: (y, id) => 'm/' + y, blobPath: (y) => 'b/' + y,
     thumbPath: (y) => 't/' + y, readOnce: () => Promise.resolve(null),
     loadFull: () => Promise.resolve('F'), loadThumb: () => Promise.resolve('T'),
-    deps: { db: { ref: () => ({ update: (u) => { wrote.push(u); return Promise.resolve(); } }) } } };
+    deps: { db: { ref: () => ({ update: () => Promise.reject(new Error('막힘')) }) } } };
   const setTakenAt = fnFrom(store, 'setTakenAt', ctx, '  ');
-  await assert.rejects(() => setTakenAt('2026', 'p1', Date.now()));
-  assert.equal(wrote.length, 0, '★ 못 읽었는데 옛 자리를 지우면 사진이 사라집니다.');
+  // 조용히 성공한 척하면 사람은 고쳐진 줄 알고 화면을 닫는다
+  await assert.rejects(() => setTakenAt('2026', 'p1', Date.now()), /막힘/);
 });
 
 /* ── 업체·설명 ── */
@@ -164,11 +164,14 @@ test('날짜만 고치고 시각은 지킨다', () => {
     '시각까지 0시로 밀면 그 날 사진 순서가 뒤집힙니다.');
 });
 
-test('해가 바뀌면 그 해 목록으로 데려간다', () => {
+/* 2026-08-13 부터 자리는 올린 때가 정한다 — 촬영일을 고쳐도 해가 안 바뀐다.
+   그러니 화면을 닫고 다른 해로 데려갈 일이 없다. 대신 그 자리에서 차례만 새로 매긴다. */
+test('촬영일을 고쳐도 화면을 안 닫고 그 자리에서 차례만 새로 매긴다', () => {
   const m = html.match(/async function saveMyNote\(\)[\s\S]*?\n\}/);
-  assert.ok(/movedTo !== String\(gridYear\)/.test(m[0]) && /loadGrid\(\)/.test(m[0]),
-    '옮겨 놓고 그대로 두면 사진이 사라진 것처럼 보입니다.');
-  assert.ok(/refreshYears\(\)/.test(m[0]), '새로 생긴 해가 해 고르개에 나와야 합니다.');
+  assert.ok(!/movedTo/.test(m[0]), '해가 바뀐다고 화면을 닫으면 안 됩니다 — 이제 안 옮깁니다.');
+  assert.ok(!/closeViewer\(\)/.test(m[0]), '보던 사진을 닫아 버립니다.');
+  assert.ok(/gridItems\.sort\(comparePhotosNewest\)/.test(m[0]),
+    '고친 뒤 차례를 새로 안 매기면 목록이 어제 상태로 남습니다.');
 });
 
 test('이미 쓴 업체 이름을 골라 쓸 수 있다', () => {

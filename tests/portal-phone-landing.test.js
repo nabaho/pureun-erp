@@ -36,6 +36,16 @@ function cut(a, b) {
   ok('기기별 캐시에도 저장한다', /localStorage\.setItem\(tilePrefLocalKey\(\)/.test(sv));
 })();
 
+/* ── 기본 줄이 바뀐 새 타일을 옛 사용자 저장값이 되돌리지 않는다 ── */
+(function () {
+  const apps = cut('var APPS = [', '\n  ];');
+  const apply = cut('function applyTileOrder(){', '\n  }');
+  ok('★ 급여데이터함의 기본 위치는 직접업무다',
+     /key:'paydata'[\s\S]*?row:'direct'/.test(apps));
+  ok('★ 옛 저장값이 업무지원이어도 급여데이터함은 직접업무로 보낸다',
+     /t\.dataset\.key === 'paydata'[\s\S]*?\? 'direct'/.test(apply));
+})();
+
 /* ── 폰에서는 설명이 셀을 밀어내지 않고 툴팁으로 남는다 ── */
 (function () {
   const bar = cut('function buildHomeBar(){', '\n  }');

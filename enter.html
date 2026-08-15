@@ -505,9 +505,8 @@ body.portal-mode #camFab{display:flex;}
 
 <!-- ── 로그인 직후 바로 찍기 — 화면 오른쪽 아래 구석(대표 지시 2026-08-09) ── -->
 <button id="camFab" type="button" title="사진 찍기 — 바로 촬영" aria-label="사진 찍기">📷</button>
-<!-- 아이폰 카카오톡 등 앱 내부 브라우저는 페이지 이동 뒤 웹 카메라 권한을 막는다.
-     그 기기에서는 이 입력을 사용해 '버튼을 누른 바로 그 순간' 기본 카메라를 연다. -->
-<input id="portalCamInput" type="file" accept="image/jpeg,image/png" capture="environment" hidden>
+<!-- 카메라 진입은 pu-camera.html 한 곳으로만 보낸다. 휴대폰 기본 file/capture 입력은
+     촬영할 때마다 「다시 시도/확인」을 띄우므로 포털에서는 사용하지 않는다. -->
 
 <!-- ── 시스템 설정 (관리자 전용) — 화면 왼쪽 아래 구석 ── -->
 <button id="cfgFab" type="button" title="시스템 설정 (관리자 전용)">⚙ 설정</button>
@@ -653,12 +652,18 @@ body.portal-mode #camFab{display:flex;}
     { key:'consult', name:'정부사업일정',  desc:'보고서 일정및사진관리',    icon:'📅', url:'gov-consulting.html', roles:null, row:'support' },
     { key:'work',    name:'업무관리',     desc:'주간 업무기록',    icon:'📋', url:'work.html',           roles:null, row:'support' },
     { key:'career',  name:'이력관리',     desc:'개인 이력서',      icon:'🗂', url:'kcareer.html',        roles:null, row:'support' },
-    { key:'cards',   name:'명함첩',       desc:'명함 사업자등록증', icon:'📇', url:'pu-cards.html',       roles:null, row:'support' },
-    { key:'photos',  name:'푸른사진첩',   desc:'현장·회의 사진',   icon:'🖼️', url:'pu-photos.html',      roles:null, row:'support' },
+    /* 이름·설명은 **지금 그 앱이 무엇을 하는가**를 적는다(대표 지시 2026-08-10).
+       명함첩은 메일 보내기까지 하고, 사진첩은 현장 사진보다 서류가 더 많다 —
+       처음 지을 때의 이름이 하는 일보다 좁아지면 사람이 엉뚱한 타일을 찾는다. */
+    { key:'cards',   name:'명함·메일',    desc:'사업자·명함·계약서', icon:'📇', url:'pu-cards.html',       roles:null, row:'support' },
+    { key:'photos',  name:'사진첩',       desc:'사진·서류',        icon:'🖼️', url:'pu-photos.html',      roles:null, row:'support' },
     { key:'fund',    name:'기금관리',     desc:'근로복지기금 운영', icon:'🏦', url:'fund.html',           roles:null, row:'direct' },
     { key:'rules',   name:'취업규칙 관리', desc:'작성·검토·개정·신고', icon:'📋', url:'rules.html',          roles:null, row:'direct' },
     { key:'docs',    name:'문서관리',     desc:'계약서 전자송부',  icon:'📄', url:'docs-esign.html',     roles:null, row:'direct' },
-    { key:'payroll', name:'급여관리',     desc:'급여 아웃소싱',    icon:'💰', url:'payroll-os.html',     roles:null, row:'direct' }
+    { key:'payroll', name:'급여관리',     desc:'급여 아웃소싱',    icon:'💰', url:'payroll-os.html',     roles:null, row:'direct' },
+    /* 대표 지시(2026-08-13): 급여데이터함은 급여 아웃소싱과 바로 이어지는 직접업무다 —
+       사진첩(업무지원)과 달리 이 줄에 둔다. */
+    { key:'paydata', name:'급여데이터함',  desc:'급여자료 사업장별', icon:'💼', url:'pu-paydata.html',     roles:null, row:'direct' }
   ];
   var APP_ROWS = [
     { id:'support', label:'업무지원',  hint:'업무를 돕는 도구' },
@@ -1068,42 +1073,21 @@ body.portal-mode #camFab{display:flex;}
     b._wired = true;
     b.addEventListener('click', function(){
       var _v = Math.floor(Date.now() / 600000);
+      /* 포털 카메라는 사진첩의 촬영 화면으로 바로 간다. 예전에는 중간 문패를
+         한 번 더 거쳐 같은 주소로 다시 이동해, 폰에서 검은 준비 화면이
+         길어졌다. 설치해 둔 「푸른카메라」 아이콘의 문패는 그대로 유지한다. */
+      var cameraUrl = 'pu-photos.html?cam=1&mode=photo&quick=1&from=portal&sso=1&v=' + _v;
+      /* 주소의 cam 표시가 로그인·업데이트 과정에서 사라져도 촬영 요청은 남긴다.
+         실제 촬영 화면이 열린 뒤에만 이 값을 지운다. */
+      try { sessionStorage.setItem('pu_open_camera', JSON.stringify({
+        mode:'photo', quick:true, from:'portal', at:Date.now()
+      })); } catch(e){}
       if(isMobile()){
-        /* 폰 기본 카메라(input capture)는 촬영할 때마다 휴대폰의
-           '다시 시도/확인' 화면을 강제로 띄운다. 연속촬영을 끊지 않도록
-           웹 카메라를 쓸 수 없는 기기에서만 최후 수단으로 사용한다. */
-        if(needsDirectNativeCamera()){
-          var input = $('portalCamInput');
-          if(input) input.click();
-          return;
-        }
-        /* 사진첩 화면은 보이지 않고 그 안의 연속촬영 카메라가 곧바로 열린다.
-           셔터를 계속 눌러 찍고 왼쪽 아래에서 최근 사진을 확인한 뒤 한 번에 저장한다. */
-        location.href = 'pu-photos.html?cam=1&quick=1&from=portal&sso=1&v=' + _v;
+        location.href = cameraUrl;
         return;
       }
-      openPortalApp({ key: 'camquick' }, 'pu-photos.html?cam=1&quick=1&from=portal&sso=1&v=' + _v);
+      openPortalApp({ key: 'camquick' }, cameraUrl);
     });
-
-    var input = $('portalCamInput');
-    if(input && !input._wired){
-      input._wired = true;
-      input.addEventListener('change', function(){
-        var file = input.files && input.files[0];
-        input.value = '';
-        if(!file) return; // 카메라에서 취소하면 포털에 그대로 머문다.
-        savePortalCameraFile(file).then(function(token){
-          location.href = 'pu-photos.html?sso=1&portalcam=' + encodeURIComponent(token);
-        }).catch(function(e){
-          alert('촬영한 사진을 임시 보관하지 못했습니다. 다시 찍어 주세요.\n' + ((e && e.message) || e));
-        });
-      });
-    }
-  }
-
-  function needsDirectNativeCamera(){
-    var noWebCamera = !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-    return noWebCamera;
   }
 
   /* 촬영 파일은 페이지가 바뀌면 사라지므로 사진첩의 안전 대기열로 옮길 때까지만
@@ -1228,16 +1212,15 @@ body.portal-mode #camFab{display:flex;}
       // 로그인은 됐는데 직원명부에 없다 — 이름 대신 이메일이 뜨는 까닭을 말해 준다
       puIdentityBand('⚠️ 로그인은 되었지만 직원명부에서 <b>' + email + '</b> 을 찾지 못했습니다.<br>'
         + '이름·권한이 제대로 나오지 않습니다 — 관리자에게 알려주세요.', 'warn');
-    } else if(info.via === 'auto'){
-      /* 남아 있던 세션으로 «저절로» 들어왔다 — 전 사람 세션이 남은 폰이면 여기서 걸린다 */
-      puIdentityBand('<b>' + name + '(' + (mySid || email) + ')</b> 님으로 자동 로그인되었습니다. '
-        + '본인이 아니면 <b>로그아웃</b> 후 본인 아이디로 로그인하세요.'
-        + ' <button type="button" id="puIdBandX" style="float:right;border:none;background:none;'
-        + 'color:inherit;font-size:14px;cursor:pointer;line-height:1;padding:0 2px">×</button>');
-      var _x = document.getElementById('puIdBandX');
-      if(_x) _x.addEventListener('click', function(){ puIdentityBand(''); });
     } else {
-      puIdentityBand('');   // 방금 친 로그인 + 명부 정상 — 띠는 그리지 않는다
+      /* 여느 때는 띠를 안 그린다.
+         ★ 「자동 로그인되었습니다 — 본인이 아니면 로그아웃」 안내는 걷어냈다(2026-08-10 대표 지시).
+           자동 로그인은 «늘» 일어나는 정상 동작이라, 들어올 때마다 뜨는 경고가 되어 버렸다.
+           날마다 보는 경고는 읽히지 않고 화면만 가린다.
+           신원 확인은 머리의 «이름 · 사번»(권형하 · 대표노무사 (admin) · P-001)이 맡는다 —
+           늘 떠 있고 자리를 안 차지하며, 남의 계정이면 사번이 다르니 그 자리에서 알아챈다.
+         띠는 «이상할 때만» 남는다: 같은 아이디가 여러 명 · 명부에 없음 (위 두 갈래). */
+      puIdentityBand('');
     }
 
     tileConts().forEach(function(c){ c.innerHTML = ''; });
@@ -1328,7 +1311,11 @@ body.portal-mode #camFab{display:flex;}
     // 저장된 순서대로 다시 담되, 각 타일은 자기 줄 상자로 보낸다.
     // (관리자가 줄 사이 이동을 허용해 옮겨 둔 것은 저장된 줄을 따른다)
     seq.forEach(function(t){
-      var row = (tilePrefs.rows && tilePrefs.rows[t.dataset.key]) || t.dataset.row;
+      /* 급여데이터함은 2026-08-13부터 직접업무로 확정됐다.
+         이전 버전에서 저장된 rows.paydata='support'가 새 기본 위치를 덮어쓰지 못하게 한다. */
+      var row = t.dataset.key === 'paydata'
+        ? 'direct'
+        : ((tilePrefs.rows && tilePrefs.rows[t.dataset.key]) || t.dataset.row);
       tileCont(row).appendChild(t);
     });
   }
@@ -1602,26 +1589,37 @@ body.portal-mode #camFab{display:flex;}
 
   // ══════════ 프로그램 건의함 ══════════
   // 건의 분류 — 프로그램뿐 아니라 업무·제도 등 사무 전반을 받는다.
-  //  g:'app'=프로그램 / 'biz'=업무·기타. key 는 CSS class(sg-b-*)로도 쓰이므로 영문 소문자만.
+  //  g:'sup'=업무지원 / 'direct'=직접업무 / 'misc'=기타 건의. key 는 CSS class(sg-b-*)로도 쓰이므로 영문 소문자만.
   //  ※ 기존 건의의 key(erp·consult·cards·portal·etc)는 그대로 유지해야 지난 건의 분류가 안 깨진다.
+  /* 묶음은 포털 첫 화면과 «같은 셋» 으로 나눈다 (2026-08-10 대표 지시:
+     "업무지원, 직접업무, 기타 건의 3가지로 항목 나눠달라").
+     포털에서 업무지원에 있는 프로그램은 건의함에서도 업무지원에 있어야
+     사람이 두 화면에서 같은 자리를 찾는다. */
   var SG_CATS = [
-    { key:'erp',      name:'푸른이알피',    g:'app' },
-    { key:'consult',  name:'정부사업일정',  g:'app' },
-    { key:'work',     name:'업무관리',      g:'app' },
-    { key:'fund',     name:'기금관리',      g:'app' },
-    { key:'rules',    name:'취업규칙',      g:'app' },
-    { key:'payroll',  name:'급여관리',      g:'app' },
-    { key:'cards',    name:'명함첩',        g:'app' },
-    { key:'docs',     name:'문서·이력',     g:'app' },
-    { key:'portal',   name:'포털',          g:'app' },
-    { key:'bizwork',  name:'업무 개선',     g:'biz' },
-    { key:'policy',   name:'규정·제도',     g:'biz' },
-    { key:'edu',      name:'교육·연수',     g:'biz' },
-    { key:'office',   name:'사무환경·비품', g:'biz' },
-    { key:'hrwelf',   name:'인사·복지',     g:'biz' },
-    { key:'etc',      name:'기타',          g:'biz' }
+    // 업무지원 — 업무를 돕는 도구 (포털 윗줄)
+    { key:'erp',      name:'푸른이알피',    g:'sup' },
+    { key:'consult',  name:'정부사업일정',  g:'sup' },
+    { key:'work',     name:'업무관리',      g:'sup' },
+    { key:'cards',    name:'명함·메일',     g:'sup' },
+    { key:'docs',     name:'문서·이력',     g:'sup' },
+    { key:'portal',   name:'포털',          g:'sup' },
+    // 직접업무 — 직접 수행하는 업무 (포털 아랫줄)
+    { key:'fund',     name:'기금관리',      g:'direct' },
+    { key:'rules',    name:'취업규칙',      g:'direct' },
+    { key:'payroll',  name:'급여관리',      g:'direct' },
+    // 기타 건의 — 프로그램이 아닌 것
+    { key:'bizwork',  name:'업무 개선',     g:'misc' },
+    { key:'policy',   name:'규정·제도',     g:'misc' },
+    { key:'edu',      name:'교육·연수',     g:'misc' },
+    { key:'office',   name:'사무환경·비품', g:'misc' },
+    { key:'hrwelf',   name:'인사·복지',     g:'misc' },
+    { key:'etc',      name:'기타',          g:'misc' }
   ];
-  var SG_GROUPS = [{ g:'app', label:'프로그램' }, { g:'biz', label:'업무·기타' }];
+  var SG_GROUPS = [
+    { g:'sup',    label:'업무지원' },
+    { g:'direct', label:'직접업무' },
+    { g:'misc',   label:'기타 건의' }
+  ];
   var SG_STATUS = { new:{t:'접수',c:'sg-st-new'}, ing:{t:'검토중',c:'sg-st-ing'}, done:{t:'완료',c:'sg-st-done'} };
   var SG = { uid:'', name:'', email:'', role:'member', draftCat:'erp', draftImgs:[], _all:[], listStatus:'open', listQ:'', replyDraftImgs:[] };
 
@@ -1874,7 +1872,11 @@ body.portal-mode #camFab{display:flex;}
       }).catch(function(){});
     } else if(SG.email || SG.uid){
       sgLoadOwnResolved().then(function(records){
-        var n = 0; Object.keys(records).forEach(function(id){ if(!(records[id]||{}).seen) n++; });
+        // 완료 알림만 센다 — 접수·검토중 상태 변화까지 세면 배지가 계속 켜져 있게 된다
+        var n = 0; Object.keys(records).forEach(function(id){
+          var v = records[id]||{};
+          if(!v.seen && (v.status||'done')==='done') n++;
+        });
         sgSetBadge(n);
       }).catch(function(){});
     }
@@ -2027,28 +2029,84 @@ body.portal-mode #camFab{display:flex;}
   }
   function sgClosePending(){ var m = $('sgPendModal'); if(m) m.style.display = 'none'; }
 
-  // ── 해결 알림: 내 건의가 완료 처리되면 로그인 직후 팝업 (확인하면 다시 안 뜸) ──
+  /* ── 해결 알림: 내 건의가 완료 처리되면 로그인 직후 팝업 ──
+     팝업에서 바로 «해결됐는지» 묻는다 (박재원 건의).
+       ✅ 해결됐어요  → 확인 기록(resolvedOk:true)을 남기고 닫는다
+       🙅 아직 안 됐어요 → 어디가 안 되는지 적게 하고, 그 내용을 «재요청 건의» 로 새로 접수한다
+                          (원본과 relatedId 로 이어진다 — 기존 알림·배지가 그대로 관리자에게 간다)
+     status 가 없던 옛 기록은 완료 팝업만 쓰던 시절 것이므로 완료로 본다. */
   function sgCheckResolved(){
     if(!SG.uid) return;
     sgLoadOwnResolved().then(function(records){
       var items = [];
-      Object.keys(records).forEach(function(id){ var v=records[id]||{}; if(!v.seen){ v._id=id; items.push(v); } });
+      Object.keys(records).forEach(function(id){
+        var v=records[id]||{};
+        if(!v.seen && (v.status||'done')==='done'){ v._id=id; items.push(v); }
+      });
       if(!items.length) return;
       items.sort(function(a,b){ return (a.at||0) - (b.at||0); });
-      $('sgDoneBody').innerHTML = items.map(function(it){
-        return '<div class="sgd-item">'
+      var path = sgResolvedUidPath(SG.uid);
+      $('sgDoneBody').innerHTML = items.map(function(it, i){
+        return '<div class="sgd-item" data-sgd="'+i+'">'
           + '<div class="sgd-t"><span class="sg-badge sg-b-'+sgCatClass(it.cat)+'">'+sgEsc(sgCatName(it.cat))+'</span>'+sgEsc(it.title||'')+'</div>'
           + '<div class="sgd-r">'+(it.reply ? sgEsc(it.reply) : '처리가 완료되었습니다.')
           + ((it.replyImages&&it.replyImages.length)? '<div style="margin-top:8px">'+it.replyImages.map(function(u){var su=sgImgSrc(u);return su?'<img src="'+su+'" style="max-width:100%;border-radius:8px;margin-top:6px;display:block">':'';}).join('')+'</div>':'')
-          + '</div></div>';
+          + '</div>'
+          + '<div class="sgd-ask" style="display:flex;gap:6px;margin-top:8px">'
+          + '<button type="button" class="sg-btn" data-sgd-ok="'+i+'" style="margin:0;flex:1;padding:8px">✅ 해결됐어요</button>'
+          + '<button type="button" class="sg-btn ghost" data-sgd-no="'+i+'" style="margin:0;flex:1;padding:8px">🙅 아직 안 됐어요</button></div>'
+          + '<div class="sgd-fb" data-sgd-fb="'+i+'" hidden style="margin-top:8px">'
+          + '<textarea data-sgd-txt="'+i+'" placeholder="어떤 부분이 해결되지 않았는지 자세히 적어주세요 — 그대로 재요청으로 접수됩니다" style="width:100%;min-height:72px;padding:8px;border:1px solid #fca5a5;border-radius:8px;font-size:.78rem"></textarea>'
+          + '<button type="button" class="sg-btn" data-sgd-send="'+i+'" style="margin-top:6px;background:#b91c1c">↩ 재요청 보내기</button></div>'
+          + '</div>';
       }).join('');
+      function _markSeen(it, extra){
+        var upd = { seen:true };
+        Object.keys(extra||{}).forEach(function(k){ upd[k]=extra[k]; });
+        db.ref(path+'/'+it._id).update(upd).catch(function(){});
+      }
+      function _row(i){ return $('sgDoneBody').querySelector('[data-sgd="'+i+'"]'); }
+      items.forEach(function(it, i){
+        var row=_row(i); if(!row) return;
+        row.querySelector('[data-sgd-ok="'+i+'"]').addEventListener('click', function(){
+          _markSeen(it, { resolvedOk:true, resolvedAt:Date.now() });
+          row.style.display='none'; sgUpdateBadge();
+          if(!items.some(function(x,j){ var r=_row(j); return r && r.style.display!=='none'; }))
+            $('sgDoneModal').style.display='none';
+        });
+        row.querySelector('[data-sgd-no="'+i+'"]').addEventListener('click', function(){
+          var fb=row.querySelector('[data-sgd-fb="'+i+'"]');
+          fb.hidden=!fb.hidden;
+          if(!fb.hidden) fb.querySelector('textarea').focus();
+        });
+        row.querySelector('[data-sgd-send="'+i+'"]').addEventListener('click', function(){
+          var txt=(row.querySelector('[data-sgd-txt="'+i+'"]').value||'').trim();
+          if(!txt){ alert('어떤 부분이 해결되지 않았는지 적어주세요.'); return; }
+          var btn=row.querySelector('[data-sgd-send="'+i+'"]'); btn.disabled=true; btn.textContent='접수 중…';
+          var rec={ cat:sgCatClass(it.cat), title:('↩ 재요청: '+(it.title||'')).slice(0,200), content:txt,
+            images:[], author:SG.name, authorEmail:SG.email, authorUid:SG.uid,
+            status:'new', reply:'', relatedId:it._id, createdAt:Date.now() };
+          var ref=db.ref(SG_PRIVATE_PATH).push();
+          ref.set(rec).then(function(){
+            db.ref(SG_META_PRIVATE_PATH+'/'+ref.key).set({ author:rec.author, authorEmail:rec.authorEmail,
+              authorUid:rec.authorUid, status:'new', cat:rec.cat, title:rec.title, createdAt:rec.createdAt }).catch(function(){});
+            db.ref(path+'/'+ref.key).set({ title:rec.title, cat:rec.cat, status:'new', at:rec.createdAt, seen:true }).catch(function(){});
+            _markSeen(it, { resolvedOk:false, feedback:txt.slice(0,2000), feedbackAt:Date.now() });
+            row.style.display='none'; sgUpdateBadge();
+            alert('재요청이 접수되었습니다. 관리자에게 알림이 갑니다.');
+            if(!items.some(function(x,j){ var r=_row(j); return r && r.style.display!=='none'; }))
+              $('sgDoneModal').style.display='none';
+          }).catch(function(err){
+            btn.disabled=false; btn.textContent='↩ 재요청 보내기';
+            alert('접수 실패: '+(err&&err.message||'알 수 없는 오류'));
+          });
+        });
+      });
       $('sgDoneModal').style.display = 'flex';
       setTimeout(function(){ $('sgDoneOk').focus(); }, 0);
+      // [나중에 확인] — 답을 안 정한 건은 그대로 두어 다음 로그인에 다시 묻는다
+      $('sgDoneOk').textContent = '나중에 확인';
       $('sgDoneOk').onclick = function(){
-        var upd = {};
-        items.forEach(function(it){ upd[it._id+'/seen'] = true; });
-        var path = sgResolvedUidPath(SG.uid);
-        db.ref(path).update(upd).catch(function(){});
         $('sgDoneModal').style.display = 'none';
         sgUpdateBadge();
       };
@@ -2123,14 +2181,55 @@ body.portal-mode #camFab{display:flex;}
   function sgOpen(){ $('sgModal').style.display = 'flex'; document.body.classList.add('sg-modal-open'); try{ _sgDrag.reset(); }catch(_){} pushRefresh(); (sgIsAdmin()?sgViewList():sgViewMemberHome()); setTimeout(function(){ $('sgClose').focus(); }, 0); }
   function sgCloseModal(){ $('sgModal').style.display = 'none'; document.body.classList.remove('sg-modal-open'); }
 
+  /* 일반 사용자 홈 — 새 건의 버튼 + «내 건의 진행상황» (박재원 건의).
+     전에는 낸 건의가 어떻게 됐는지 볼 길이 없어 같은 건의를 또 내는 일이 있었다.
+     본인 진행함(suggestions_resolved_private/본인)만 읽는다 — 남의 건의는 여전히 안 보인다. */
   function sgViewMemberHome(){
     $('sgTitle').textContent = '💬 건의하기';
     var bd = $('sgBody');
     bd.innerHTML = '<div style="text-align:center;padding:18px 8px 8px">'
       + '<div style="font-size:2rem;margin-bottom:8px">📝</div><b style="font-size:1rem;color:#1e293b">불편한 점을 남겨주세요</b>'
       + '<p style="font-size:.78rem;color:#64748b;line-height:1.6;margin:8px 0 16px">건의의 제목·내용·첨부파일은 관리자만 확인합니다.<br>처리가 끝나면 본인에게 결과를 알려드립니다.</p>'
-      + '<button class="sg-btn" id="sgMemberNew" style="margin:0">＋ 새 건의 작성</button></div>';
+      + '<button class="sg-btn" id="sgMemberNew" style="margin:0">＋ 새 건의 작성</button></div>'
+      + '<div id="sgMyList"></div>';
     $('sgMemberNew').addEventListener('click', sgViewCreate);
+    if(!SG.uid) return;
+    sgLoadOwnResolved().then(function(records){
+      var items = [];
+      Object.keys(records).forEach(function(id){ var v=records[id]||{}; v._id=id; items.push(v); });
+      if(!items.length) return;
+      items.sort(function(a,b){ return (b.at||0) - (a.at||0); });
+      var box = $('sgMyList'); if(!box) return;
+      box.innerHTML = '<div style="margin-top:14px;border-top:1px solid #e8edf5;padding-top:12px">'
+        + '<b style="font-size:.78rem;color:#475569">📋 내 건의 진행상황 <span style="font-weight:400;color:#94a3b8">'+items.length+'건</span></b>'
+        + items.map(function(it, i){
+            var st = SG_STATUS[it.status] || SG_STATUS.done;   // status 없던 옛 기록은 완료 팝업 시절 것
+            var hasReply = !!(it.reply || (it.replyImages&&it.replyImages.length));
+            return '<div style="border:1px solid #e8edf5;border-radius:9px;padding:8px 10px;margin-top:7px;text-align:left">'
+              + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
+              + '<span class="sg-badge sg-b-'+sgCatClass(it.cat)+'">'+sgEsc(sgCatName(it.cat))+'</span>'
+              + '<span class="sg-st '+st.c+'">'+st.t+'</span>'
+              + (it.resolvedOk===true?'<span style="font-size:.62rem;color:#15803d;font-weight:700">본인확인 ✓</span>':'')
+              + (it.resolvedOk===false?'<span style="font-size:.62rem;color:#b91c1c;font-weight:700">재요청함</span>':'')
+              + '<span style="font-size:.66rem;color:#94a3b8;margin-left:auto">'+sgFmt(it.at)+'</span></div>'
+              + '<div style="font-size:.78rem;color:#1e293b;font-weight:600;margin-top:4px">'+sgEsc(it.title||'')+'</div>'
+              + (hasReply
+                  ? '<button type="button" class="sg-btn ghost" data-sgmy="'+i+'" style="margin-top:6px;padding:5px 10px;font-size:.7rem">답변 보기</button>'
+                    + '<div data-sgmy-r="'+i+'" hidden style="margin-top:6px;background:#f8fafc;border-radius:7px;padding:8px;font-size:.74rem;line-height:1.55;color:#334155">'
+                    + sgEsc(it.reply||'')
+                    + ((it.replyImages&&it.replyImages.length)? '<div style="margin-top:6px">'+it.replyImages.map(function(u){var su=sgImgSrc(u);return su?'<img src="'+su+'" style="max-width:100%;border-radius:7px;margin-top:4px;display:block">':'';}).join('')+'</div>':'')
+                    + '</div>'
+                  : '')
+              + '</div>';
+          }).join('')
+        + '</div>';
+      Array.prototype.forEach.call(box.querySelectorAll('[data-sgmy]'), function(btn){
+        btn.addEventListener('click', function(){
+          var r = box.querySelector('[data-sgmy-r="'+btn.dataset.sgmy+'"]');
+          if(r){ r.hidden = !r.hidden; btn.textContent = r.hidden ? '답변 보기' : '답변 접기'; }
+        });
+      });
+    }).catch(function(){});
   }
 
   function sgViewList(){
@@ -2216,9 +2315,11 @@ body.portal-mode #camFab{display:flex;}
       var shots = (s.images && s.images.length) ? ' · 📎 '+s.images.length : '';
       var rep = s.reply ? ' · 답변 ✔' : '';
       var when = (SG.listStatus==='done' && s.repliedAt) ? ('완료 '+sgFmt(s.repliedAt)) : sgFmt(s.createdAt);
+      // 재요청(미해결 회신)은 목록에서도 바로 보이게 — 새 건의로 오해하지 않게
+      var reReq = s.relatedId ? '<span style="color:#b91c1c;font-weight:700"> · ↩ 재요청</span>' : '';
       return '<div class="sg-item" data-id="'+s._id+'">'
         + '<div class="sg-itl">'+sgEsc(s.title)+'</div>'
-        + '<div class="sg-meta"><span class="sg-badge sg-b-'+sgCatClass(s.cat)+'">'+sgEsc(sgCatName(s.cat))+'</span> · '+sgEsc(s.author||'')+' · '+when+shots+rep+'</div></div>';
+        + '<div class="sg-meta"><span class="sg-badge sg-b-'+sgCatClass(s.cat)+'">'+sgEsc(sgCatName(s.cat))+'</span> · '+sgEsc(s.author||'')+' · '+when+shots+rep+reReq+'</div></div>';
     }).join('') : '<div class="sg-empty">'+(arr.length? '조건에 맞는 건의가 없습니다.' : '아직 등록된 건의가 없습니다.<br>불편한 점을 자유롭게 남겨주세요.')+'</div>';
     var moreBtn = (list.length > shown)
       ? '<button id="sgMore" class="sg-btn ghost" style="margin-top:8px">더 보기 ('+(list.length-shown)+'건 남음)</button>' : '';
@@ -2343,6 +2444,11 @@ body.portal-mode #camFab{display:flex;}
         author: rec.author, authorEmail: rec.authorEmail, authorUid: rec.authorUid,
         status: 'new', cat: rec.cat, title: rec.title, createdAt: rec.createdAt
       }).catch(function(){});
+      /* 내 진행함에도 적는다 — 건의한 사람이 «접수/검토중/완료» 를 직접 볼 수 있게 (박재원 건의).
+         본인 노드는 본인이 읽고 쓸 수 있어 규칙 변경이 필요 없다. seen:true = 팝업 대상 아님. */
+      if(SG.uid) db.ref(sgResolvedUidPath(SG.uid)+'/'+ref.key).set({
+        title: rec.title, cat: rec.cat, status: 'new', at: rec.createdAt, seen: true
+      }).catch(function(){});
       SG.draftImgs = []; (sgIsAdmin()?sgViewList():sgViewMemberHome());
       if(sgIsAdmin()) sgUpdateBadge();
     }).catch(function(err){
@@ -2375,6 +2481,12 @@ body.portal-mode #camFab{display:flex;}
         + '<span class="sg-badge sg-b-'+sgCatClass(s.cat)+'">'+sgEsc(sgCatName(s.cat))+'</span>'
         + '<span class="sg-st '+st.c+'">'+st.t+'</span>'
         + '<span style="font-size:.72rem;color:#94a3b8;margin-left:auto">'+sgEsc(s.author||'')+' · '+sgFmt(s.createdAt)+'</span></div>'
+        // 재요청이면 원본과 이어준다 — 「전에 처리했다」고 넘기지 않게
+        + (s.relatedId ? '<div style="background:#fff5f5;border:1px solid #fecaca;border-radius:8px;padding:7px 10px;margin:8px 0;font-size:.72rem;color:#991b1b">'
+            + '↩ <b>재요청</b> — 건의자가 처리 결과를 「미해결」로 회신한 건입니다. '
+            + '<a href="#" id="sgRelOpen" style="color:#b91c1c;font-weight:700">원본 건의 보기</a></div>' : '')
+        // 건의자의 확인 상태 (완료 처리한 건에 본인이 어떻게 답했는지)
+        + '<div id="sgAckState"></div>'
         + '<div class="sg-detail-title">'+sgEsc(s.title)+'</div>'
         + '<div class="sg-detail-content">'+sgEsc(s.content)+'</div>';
       if(s.images && s.images.length){
@@ -2399,7 +2511,13 @@ body.portal-mode #camFab{display:flex;}
           + '<div class="sg-drop" id="sgReplyDrop">클릭해서 선택하거나 Ctrl+V로 붙여넣기</div>'
           + '<div class="sg-thumbs" id="sgReplyThumbs"></div><input type="file" id="sgReplyFile" accept="image/*" multiple style="display:none"></div></details>'
           + '<button class="sg-btn" id="sgSaveAdmin" style="margin-top:10px">처리 내용 저장</button></div></details>'
-          + '<details class="sg-section" id="sgDevBox"><summary>🤖 자동개발 <span class="sg-section-state">'+sgEsc(devStatus)+'</span></summary><div class="sg-section-body">'
+          + '<details class="sg-section" id="sgDevBox"><summary>🤖 자동개발 <span class="sg-section-state">꺼둠</span></summary><div class="sg-section-body">'
+          /* 2026-08-13 대표 결정으로 서버 기능을 배포하지 않는다 — 눌러도 아무 일이 없으므로
+             왜 그런지 여기서 먼저 알려 준다 (버튼은 그대로 두어 켤 때 손댈 곳이 없게). */
+          + '<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:9px;padding:9px;margin-bottom:9px;font-size:.72rem;line-height:1.6;color:#475569">'
+          + '<b style="color:#334155">지금은 꺼져 있습니다</b><br>'
+          + '건의를 AI가 직접 고치게 하는 기능입니다. 유료(OpenAI)라 켜지 않았습니다 — 필요하면 그때 켭니다.<br>'
+          + '<span style="color:#94a3b8">아래 버튼을 눌러도 동작하지 않습니다.</span></div>'
           + '<div style="background:#fff8e8;border:1px solid #fde3a7;border-radius:9px;padding:9px;margin-bottom:9px;font-size:.72rem;line-height:1.55"><b>현재 상태: '+sgEsc(devStatus)+'</b>'
           + (issueUrl?' · <a href="'+sgEsc(issueUrl)+'" target="_blank" rel="noopener">GitHub 이슈</a>':'')
           + (prUrl?' · <a href="'+sgEsc(prUrl)+'" target="_blank" rel="noopener">변경안(PR)</a>':'')
@@ -2448,6 +2566,21 @@ body.portal-mode #camFab{display:flex;}
         });
       });
       $('sgBackList2').addEventListener('click', sgViewList);
+      // 재요청 → 원본 건의로 건너뛰기
+      var _rel = $('sgRelOpen');
+      if(_rel) _rel.addEventListener('click', function(e){ e.preventDefault(); sgViewDetail(s.relatedId); });
+      // 건의자의 확인 상태 — 완료 처리 후 본인이 「해결됐어요/아직 안 됐어요」 중 무엇을 눌렀는지
+      if(s.authorUid){
+        db.ref(sgResolvedUidPath(s.authorUid)+'/'+id).once('value').then(function(rs){
+          var rv = rs.val(); var el = $('sgAckState');
+          if(!rv || !el) return;
+          if(rv.resolvedOk === true)
+            el.innerHTML = '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:7px 10px;margin:8px 0;font-size:.72rem;color:#15803d"><b>✅ 건의자가 해결을 확인했습니다</b>'+(rv.resolvedAt?' · '+sgFmt(rv.resolvedAt):'')+'</div>';
+          else if(rv.resolvedOk === false)
+            el.innerHTML = '<div style="background:#fff5f5;border:1px solid #fecaca;border-radius:8px;padding:7px 10px;margin:8px 0;font-size:.72rem;color:#991b1b"><b>🙅 건의자가 미해결로 회신했습니다</b>'+(rv.feedbackAt?' · '+sgFmt(rv.feedbackAt):'')
+              +(rv.feedback?'<div style="margin-top:4px;color:#7f1d1d">'+sgEsc(rv.feedback)+'</div>':'')+'</div>';
+        }).catch(function(){});
+      }
       if(sgIsAdmin()){
         sgRenderReplyThumbs();
         (function(){
@@ -2534,11 +2667,13 @@ body.portal-mode #camFab{display:flex;}
                   var rootPath = sgResolvedUidPath(authorUid);
                   var rref = db.ref(rootPath+'/'+id);
                   if(authorUid && !s.authorUid) db.ref(SG_PRIVATE_PATH+'/'+id+'/authorUid').set(authorUid).catch(function(){});
-                  if(newStatus === 'done'){
-                    rref.set({ title:s.title||'', reply:reply, replyImages:replyImages, cat:sgCatClass(s.cat), at:Date.now(), seen:false }).catch(function(){});
-                  } else {
-                    rref.remove().catch(function(){});   // 완료 취소 시 알림 회수
-                  }
+                  /* 어떤 상태든 건의자 진행함에 반영한다 — 검토중으로 바꿔도 본인이 볼 수 있게 (박재원 건의).
+                     set 이 아니라 update: 본인이 남긴 확인·피드백 기록(resolvedOk)을 덮지 않는다.
+                     완료일 때만 seen:false → 다음 로그인에 「해결되었습니다」 팝업이 뜬다.
+                     완료를 취소하면 예전처럼 지우지 않고 상태만 되돌린다 — 목록에서 사라지면 더 헷갈린다. */
+                  rref.update({ title:s.title||'', reply:reply, replyImages:replyImages,
+                    cat:sgCatClass(s.cat), status:newStatus, at:Date.now(),
+                    seen:(newStatus !== 'done') }).catch(function(){});
                 });
               }
               sgUpdateBadge();

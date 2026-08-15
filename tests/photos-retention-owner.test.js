@@ -131,7 +131,21 @@ test('못 읽어도 사진첩은 열린다', () => {
   assert.ok(l && /\.catch\(/.test(l[0]));
 });
 
-test('로그인이 끝난 뒤에 읽는다', () => {
-  const m = html.match(/PuPhotoStore\.signIn\([\s\S]{0,1000}?refreshYears\(\);/);
-  assert.ok(m && /loadRetention\(\);/.test(m[0]));
+test('로그인이 끝난 뒤의 부팅 단계에서 보유기준을 읽는다', () => {
+  /* 카메라 진입은 목록 부팅을 0.9초 늦출 수 있어, signIn과 loadRetention 사이의
+     단순 글자 수(예전 1000자)로 순서를 판정하면 안전한 코드도 실패한다.
+     signIn 성공 콜백 안에서 정의·실행되는 finishPhotoBoot를 실제 경계로 본다. */
+  const signAt = html.indexOf('PuPhotoStore.signIn(u.uid');
+  const successAt = html.indexOf('.then(function (me)', signAt);
+  const finishAt = html.indexOf('const finishPhotoBoot = function ()', successAt);
+  const retentionAt = html.indexOf('loadRetention();', finishAt);
+  const loginCatchAt = html.indexOf("console.warn('[로그인]'", successAt);
+  assert.ok(signAt >= 0 && successAt > signAt, '로그인 성공 콜백을 찾을 수 없습니다');
+  assert.ok(finishAt > successAt && retentionAt > finishAt,
+    '보유기준 읽기는 로그인 성공 뒤의 사진첩 부팅 단계에 있어야 합니다');
+  assert.ok(loginCatchAt > retentionAt,
+    '보유기준 읽기가 로그인 성공 콜백 밖으로 빠졌습니다');
+  const finishBody = html.slice(finishAt, retentionAt + 'loadRetention();'.length);
+  assert.match(finishBody, /loadGrid\(\);[\s\S]*loadRetention\(\);/,
+    '계정이 준비된 사진 목록과 같은 부팅 단계에서 보유기준을 읽어야 합니다');
 });

@@ -1,42 +1,44 @@
-const fs = require('fs');
-const path = require('path');
+const fs = require('node:fs');
+const path = require('node:path');
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const root = path.join(__dirname, '..');
 const portal = fs.readFileSync(path.join(root, 'enter.html'), 'utf8');
+const gateway = fs.readFileSync(path.join(root, 'pu-camera.html'), 'utf8');
 const photos = fs.readFileSync(path.join(root, 'pu-photos.html'), 'utf8');
-const erp = fs.readFileSync(path.join(root, 'pu-erp.html'), 'utf8');
 
-test('일반 모바일 포털 카메라는 사진첩 목록 없이 연속촬영 카메라를 바로 연다', () => {
-  const start = portal.indexOf('function wireCamFab()');
-  const end = portal.indexOf('function renderPortal', start);
-  const flow = portal.slice(start, end);
-  assert.match(flow, /location\.href\s*=\s*'pu-photos\.html\?cam=1&quick=1&from=portal&sso=1&v='/);
-  assert.match(portal, /id="portalCamInput"[^>]+capture="environment"/);
-  assert.match(flow, /needsDirectNativeCamera\(\)/);
-  assert.match(flow, /input\.click\(\)/);
-  const native = portal.match(/function needsDirectNativeCamera\(\)\{[\s\S]*?\n  \}/)[0];
-  assert.doesNotMatch(native, /KAKAOTALK|embedded/);
-  assert.match(native, /noWebCamera/);
+test('통합화면 카메라는 전용 카메라 문으로만 들어간다', () => {
+  const flow = portal.match(/function wireCamFab\(\)\{[\s\S]*?\n  \}/)[0];
+  assert.match(flow, /pu-photos\.html\?cam=1&mode=photo&quick=1&from=portal&sso=1&v=/);
+  assert.match(flow, /sessionStorage\.setItem\('pu_open_camera'/);
+  assert.doesNotMatch(flow, /pu-camera\.html|input\.click|needsDirectNativeCamera/);
+  assert.doesNotMatch(portal, /id="portalCamInput"[^>]*capture/);
 });
 
-test('앱 내부 브라우저 촬영 파일은 임시 보관 후 안전 대기열로 옮긴다', () => {
-  assert.match(portal, /indexedDB\.open\('puPortalCamera',\s*1\)/);
-  assert.match(portal, /pu-photos\.html\?sso=1&portalcam=/);
-  assert.match(portal, /function portalCameraJpeg\(file\)/);
-  assert.match(portal, /canvas\.toBlob\([\s\S]*?'image\/jpeg',\s*0\.95\)/);
-  assert.match(portal, /blob:photo\.blob/);
-  assert.match(photos, /function takePortalCameraFile\(\)/);
-  assert.match(photos, /await addFiles\(files,\s*true,\s*\{\s*fromCam:\s*true,\s*portalCapture:\s*true\s*\}\)/);
-  assert.match(photos, /촬영한 사진을 준비하고 있습니다/);
+test('카메라 문은 요청을 기억한 뒤 사진첩 촬영화면으로 넘긴다', () => {
+  assert.match(gateway, /sessionStorage\.setItem\('pu_open_camera'/);
+  assert.match(gateway, /params\.set\('cam', '1'\)/);
+  assert.match(gateway, /params\.set\('mode', mode\)/);
+  assert.match(gateway, /location\.replace\('pu-photos\.html\?' \+ params\.toString\(\)\)/);
 });
 
-test('연속촬영 사진은 사진첩의 기존 안전 대기열로 한꺼번에 보낸다', () => {
+test('실제 카메라가 열린 뒤에만 요청 표시를 지운다', () => {
+  const fn = photos.match(/function openCamIfAsked\(\) \{[\s\S]*?\n\}/)[0];
+  const openAt = fn.indexOf('openCam().then');
+  const clearAt = fn.indexOf('clearCameraIntent()');
+  assert.ok(openAt >= 0 && clearAt > openAt);
+  assert.ok((fn.match(/clearCameraIntent\(\)/g) || []).length >= 2,
+    '성공뿐 아니라 권한 거부·최종 실패도 요청 표시를 지워야 합니다.');
+});
+
+test('연속촬영은 왼쪽 아래 최근 사진과 한꺼번에 저장을 유지한다', () => {
+  assert.match(photos, /camShots\.push\(/);
+  assert.match(photos, /id="camLast"[^>]*방금 찍은 사진/);
+  assert.match(photos, /last\.src = camShots\[n - 1\]\.url/);
   assert.match(photos, /const files = picked\.map/);
   assert.match(photos, /await addFiles\(files,\s*true,\s*\{\s*fromCam:\s*true,/);
 });
-
 test('카메라를 닫지 않고 계속 찍으며 왼쪽 아래에 최근 사진을 보여 준다', () => {
   assert.match(photos, /camShots\.push\(/);
   assert.match(photos, /renderCamStrip\(\)/);
@@ -47,27 +49,10 @@ test('카메라를 닫지 않고 계속 찍으며 왼쪽 아래에 최근 사진
   assert.match(photos, /id="camCount"/);
 });
 
-test('카카오톡 포털도 기본 카메라 확인 화면 없이 연속촬영 화면으로 이동한다', () => {
-  const start = portal.indexOf('function wireCamFab()');
-  const end = portal.indexOf('function renderPortal', start);
-  const flow = portal.slice(start, end);
-  const native = portal.match(/function needsDirectNativeCamera\(\)\{[\s\S]*?\n  \}/)[0];
-  assert.match(flow, /pu-photos\.html\?cam=1&quick=1&from=portal/);
-  assert.doesNotMatch(native, /KAKAOTALK|embedded/);
-  assert.match(native, /noWebCamera/);
-  assert.match(photos, /if \(blurry && !camQuickMode\)/);
-});
-
 test('저장이 끝난 뒤에만 포털 선택 화면으로 돌아간다', () => {
   const start = photos.indexOf('async function camUpload()');
   const end = photos.indexOf('/* ══════ 끌어다 놓기', start);
   const flow = photos.slice(start, end);
   assert.match(photos, /from === 'portal' \? 'enter\.html'/);
   assert.ok(flow.indexOf('await addFiles(files') < flow.indexOf('camGoBack()'));
-});
-
-test('예전 ERP 홈 바로가기는 모바일에서 포털 선택 화면으로 보낸다', () => {
-  assert.match(erp, /mobile\s*&&\s*!fromPortal/);
-  assert.match(erp, /location\.replace\('enter\.html\?from=erp-shortcut/);
-  assert.match(erp, /fromPortal\s*=\s*\/\[\?&\]sso=1/);
 });

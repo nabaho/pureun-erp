@@ -74,7 +74,9 @@ t('어느 기준으로 넣었는지 기록에 남긴다', /'걷은 달' : '들�
 t('걷은 달로 넣은 건수를 알려 준다', /' · 걷은 달 기준 '\+wN\+'건'/.test(FL), true);
 
 t('수수료를 지출로 적는다', /var feeSum = erpCmsFeeSum\(doneRows\);/.test(FL), true);
-t('이체수수료 계정으로 적는다', /category:'exp-bankfee', payee:'나이스빌 CMS'/.test(FL), true);
+// (2026-08-13) 효성CMS 도 받게 되어 지급처를 실제 회사 이름으로 적는다 (나이스빌 CMS · 효성 CMS)
+t('이체수수료 계정으로 적는다', /category:'exp-bankfee', payee:_fp/.test(FL), true);
+t('지급처는 실제 CMS 회사 이름', /var _fp = erpCmsProviderName\(doneRows\) \+ ' CMS';/.test(FL), true);
 t('수수료 기록 실패를 조용히 삼키지 않는다', /⚠️ 수수료 기록 실패/.test(FL), true);
 
 t('업체별 기준을 저장하는 길이 있다', /function setCmsYmBase\(co, base\)/.test(FL), true);
@@ -87,7 +89,7 @@ t('출금실패는 미수로 남는다고 적는다', /'❌ 미수로 남음'/.t
 t('실패 사유를 도움말로 보여준다', /사유: '\+\(r\.reason\|\|r\.statusRaw\|\|'-'\)/.test(FL), true);
 
 t('통장 CMS 줄에 명세 요약이 뜬다', /var _nbHit = isCms \? erpCmsLedgerForDeposit\(row\.date, row\.amount\) : null;/.test(FL), true);
-t('몇 곳인지 줄에서 보여준다', /'🏦 나이스빌 '\+_nbHit\.rows\.length\+'곳/.test(FL), true);
+t('몇 곳인지 줄에서 보여준다', /'🏦 '\+erpCmsProviderName\(_nbHit\.rows\)\+' '\+_nbHit\.rows\.length\+'곳/.test(FL), true);
 t('합계가 맞는지 줄에서 보여준다', /_nbHit\.exact\?' · 합계 일치'/.test(FL), true);
 t('명세를 못 찾으면 그렇게 말한다', /명세를 못 찾았습니다/.test(FL), true);
 

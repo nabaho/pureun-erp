@@ -6,6 +6,7 @@ const { getApps, initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
 const { getDatabase } = require("firebase-admin/database");
 const { getMessaging } = require("firebase-admin/messaging");
+const { getStorage } = require("firebase-admin/storage");
 const { Resend } = require("resend");
 const {
   REPO,
@@ -370,7 +371,19 @@ async function requestRollback(body) {
   return { status: "rollback_requested" };
 }
 
-exports.developmentAutomation = functions
+/* ── 🤖 자동개발 — 지금은 배포하지 않는다 (2026-08-13 대표 결정: "추후에 필요하면 한다") ──
+   OpenAI 에 돈을 내고 코드를 짜게 하는 기능인데 지금은 쓰지 않는다.
+   그런데도 여기서 AUTOMATION_BRIDGE_KEY 를 요구하고 있어서, 그 값이 없는 상태로는
+   `firebase deploy --only functions` (전체 배포)가 검증 단계에서 통째로 멈췄다.
+   메일 세 개와 건의 알림까지 못 올리게 막는 셈이라 내보내기(export)만 잠가 둔다.
+
+   ⚠ 코드는 그대로 둔다 — 나중에 켤 때 아래 한 줄만 되살리면 된다.
+   켜려면 함께 갖춰야 할 것:
+     · AUTOMATION_BRIDGE_KEY  — GitHub 저장소 비밀값과 Firebase 비밀값에 «같은» 임의 문자열
+     · AUTOMATION_ENDPOINT    — 배포된 이 함수 URL 을 GitHub 저장소 비밀값에
+     · OPENAI_API_KEY         — codex-issue-implementation.yml 이 쓴다 (유료)
+     · GITHUB_AUTOMATION_TOKEN — 이미 있음 (2026-08-13 재발급) */
+const _parkedDevelopmentAutomation = functions
   .runWith({ secrets: ["GITHUB_AUTOMATION_TOKEN", "AUTOMATION_BRIDGE_KEY"] })
   .https.onRequest(async (req, res) => {
     setAutomationCors(req, res);
@@ -396,6 +409,8 @@ exports.developmentAutomation = functions
       res.status(error.status || 500).json({ ok: false, error: cleanText(error && error.message || error || "자동개발 처리 실패", 500) });
     }
   });
+// 켤 때 이 줄을 되살린다:  exports.developmentAutomation = _parkedDevelopmentAutomation;
+void _parkedDevelopmentAutomation;   // 안 쓰는 변수 경고만 막는다
 
 // ══════════ 새 건의 → 관리자 폰 알림 (웹푸시 · FCM) ══════════
 //  건의가 등록되면 포털이 suggestions_meta_private/{id} 에 경량 메타를 함께 적는다.
@@ -404,9 +419,17 @@ exports.developmentAutomation = functions
 //
 //  ⚠ data 전용 메시지를 보낸다. notification 필드를 함께 실으면 브라우저가 자체 알림을
 //    띄우고 firebase-messaging-sw.js 도 띄워 알림이 두 번 뜬다.
+//  ⚠ enter.html 의 SG_CATS 15개와 짝을 맞춘다. 여기 없는 분류는 알림에 "기타"로 찍혀
+//    무슨 건의인지 폰에서 알 수 없다 (전에 8개가 빠져 있었다).
 const SG_CAT_NAME = {
-  erp: "푸른이알피", consult: "컨설팅 일정", cards: "명함첩",
-  portal: "포털", work: "업무관리", rules: "취업규칙", etc: "기타",
+  // 업무지원
+  erp: "푸른이알피", consult: "정부사업일정", work: "업무관리",
+  cards: "명함·메일", docs: "문서·이력", portal: "포털",
+  // 직접업무
+  fund: "기금관리", rules: "취업규칙", payroll: "급여관리",
+  // 기타 건의
+  bizwork: "업무 개선", policy: "규정·제도", edu: "교육·연수",
+  office: "사무환경·비품", hrwelf: "인사·복지", etc: "기타",
 };
 
 exports.notifySuggestion = functions.database
@@ -495,11 +518,11 @@ exports.notifySuggestion = functions.database
 // ⚠ 첨부는 브라우저가 올려 보내지 않는다. 자료는 이미 실시간DB 안에 있으므로
 //   **서버가 직접 읽는다.** 8MB 짜리를 브라우저에서 다시 올리면 느리고, 도중에
 //   끊기면 절반만 간다.
-const MS = require("./mail-send");
+// 실제로 보내는 일은 mail-deliver.js 가 한다 — 「지금 보내기」와 「예약해 둔 것 보내기」가
+// 같은 코드를 쓰게 하려고 떼어 두었다. 두 벌이면 한쪽만 고치고 지나간다.
+const MD = require("./mail-deliver");
 
-const DAUM_HOST = "smtp.daum.net";
-const DAUM_PORT = 465;
-const CARDS_ROOT = "pucards";
+const CARDS_ROOT = MD.CARDS_ROOT;
 
 // 보내는 주소. 비밀이 아니므로 **명함첩 화면(자료함 → 메일 본문)에서 넣는다** —
 // 파일에만 둘 수도 있지만, 그러면 주소 하나 바꾸려고 다시 배포해야 한다.
@@ -514,18 +537,14 @@ async function mailUserAsync() {
 }
 function mailPass() { return String(process.env.DAUM_MAIL_PASSWORD || ""); }
 
-// 보내는 사람 표시 이름. 주소만 나가면 스팸으로 걸리기 쉽다.
-function fromLine(u) {
-  return u ? '푸른노무법인 <' + u + '>' : "";
-}
-
-// ★ 서울(asia-northeast3)에서 돈다. 다른 함수는 미국(us-central1)에 있지만 이것만 옮겼다.
+// ★ 서울(asia-northeast3)에서 돈다. 다른 함수는 미국(us-central1)에 있지만 메일만 옮겼다.
 //   다음메일이 **해외에서 오는 로그인을 막는** 경우가 있어서다. 비밀번호가 맞아도
 //   미국에서 붙으면 「535 authentication failed」로 거절당한다.
 //   덤으로 국내에서 쓰는 도구라 응답도 빠르다.
 //   ⚠ 리전을 바꾸면 주소가 바뀐다 — pu-cards.html 의 MAIL_FN_URL 도 함께 고쳐야 한다.
+const MAIL_REGION = "asia-northeast3";
 exports.sendMaterialMail = functions
-  .region("asia-northeast3")
+  .region(MAIL_REGION)
   .runWith({ secrets: ["DAUM_MAIL_PASSWORD"], timeoutSeconds: 120, memory: "512MB" })
   .https.onRequest(async (req, res) => {
     setCors(req, res);
@@ -541,191 +560,410 @@ exports.sendMaterialMail = functions
       return;
     }
 
-    const from = await mailUserAsync();
-    if (!from || !mailPass()) {
-      res.status(500).json({
-        ok: false,
-        error: !from
-          ? "보내는 주소가 비어 있습니다.\n명함첩 → 자료함 → ✉️ 메일 본문에서 「보내는 주소」를 넣어 주세요."
-          : "메일 비밀번호가 아직 없습니다.\nDAUM_MAIL_PASSWORD(앱 비밀번호)를 넣고 다시 배포하세요.",
-      });
-      return;
-    }
-
-    const body = (req.body && typeof req.body === "object") ? req.body : {};
     const db = getDatabase();
+    const body = (req.body && typeof req.body === "object") ? req.body : {};
+    const from = await mailUserAsync();
 
-    // 첨부 — 자료 번호만 받아 서버가 직접 읽는다
-    const matIds = Array.isArray(body.matIds) ? body.matIds.slice(0, 10) : [];
-    const attachments = [];
-    const names = [];
-    for (const id of matIds) {
-      if (!id || typeof id !== "string") continue;
-      const [metaSnap, fileSnap] = await Promise.all([
-        db.ref(CARDS_ROOT + "/materials/" + id).once("value"),
-        db.ref(CARDS_ROOT + "/materialFiles/" + id).once("value"),
-      ]);
-      const meta = metaSnap.val();
-      if (!meta) continue;                       // 지워진 자료 — 조용히 건너뛰지 않고 아래에서 알린다
-      const att = MS.toAttachment(meta, fileSnap.val());
-      if (!att) continue;
-      attachments.push(att);
-      names.push(String(meta.name || meta.fileName || "자료"));
-    }
-    if (matIds.length && !attachments.length) {
-      res.status(400).json({ ok: false, error: "붙일 자료를 찾지 못했습니다. 자료함에서 파일을 다시 올려 주세요." });
-      return;
-    }
-    // 고른 것 중 일부만 찾았다면 그 사실을 알린다 — 조용히 덜 보내면 다 보낸 줄 안다
-    const missing = matIds.length - attachments.length;
-
-    // ── 이번 편지에만 붙이는 파일 (내 PC 에서 고른 것) ──
-    // 자료함에 없는 파일이라 화면이 내용을 함께 보낸다. 한글에서 조항을 고친
-    // 계약서처럼 **이번 한 번만** 쓰는 파일이 여기로 온다.
-    // ⚠ 자료함에 저장하지 않는다. 저장하면 매번 고친 사본이 자료함에 쌓인다.
-    const extras = Array.isArray(body.files) ? body.files.slice(0, 10) : [];
-    for (const f of extras) {
-      if (!f || typeof f !== "object") continue;
-      const att = MS.toAttachment({ fileName: f.name }, f.dataUrl);
-      if (!att) continue;
-      attachments.push(att);
-      names.push(String(f.name || "첨부"));
-    }
-
-    const v = MS.validateSend({
-      to: body.to, cc: body.cc, subject: body.subject, body: body.body, attachments: attachments,
-    });
-    if (!v.ok) { res.status(400).json({ ok: false, error: v.error }); return; }
-
-    let nodemailer;
-    try { nodemailer = require("nodemailer"); }
-    catch (e) { res.status(500).json({ ok: false, error: "메일 도구를 불러오지 못했습니다: " + String(e.message || e) }); return; }
-
-    // ★ 접속 아이디는 보내는 주소와 **다르다.**
-    //   다음메일 설정 화면이 「아이디: 370-6 (접속 시 아이디)」라고 알려 준다 —
-    //   @ 앞부분이다. 주소 전체로도 되는 계정이 있어, 앞부분으로 먼저 붙어 보고
-    //   자격 문제로 막히면 주소 전체로 한 번 더 해 본다. 어느 쪽인지 알아내려고
-    //   사람이 시험 삼아 보내 볼 일을 없앤다.
-    const ids = [];
-    const envId = String(process.env.DAUM_MAIL_ID || "").trim();
-    if (envId) ids.push(envId);
-    const local = String(from).split("@")[0].trim();
-    if (local && ids.indexOf(local) < 0) ids.push(local);
-    if (ids.indexOf(from) < 0) ids.push(from);
-
-    // 「내게쓰기」 — 숨은참조에 보내는 주소 자신을 더한다. 받는 사람에게는 안 보인다.
-    const bcc = v.bcc.slice();
-    if (body.toMe && bcc.indexOf(from) < 0 && v.to.indexOf(from) < 0) bcc.push(from);
-
-    const baseMail = {
-      from: fromLine(from),
-      // 답장은 보낸 직원에게 가게 한다 — 회사 대표주소로만 오면 누구 건인지 모른다
-      replyTo: sender.email || undefined,
-      cc: v.cc.length ? v.cc.join(", ") : undefined,
-      bcc: bcc.length ? bcc.join(", ") : undefined,
-      subject: v.subject,
-      text: v.body,
-      attachments: v.attachments.map((a) => ({
-        filename: a.filename, content: a.content, encoding: a.encoding,
-      })),
-    };
-
-    // 「한명씩 발송」 — 받는사람마다 따로 보낸다. 서로의 주소가 보이지 않는다.
-    // ⚠ 참조·숨은참조는 **첫 통에만** 붙인다. 매 통에 붙이면 참조받는 사람이
-    //   같은 메일을 사람 수만큼 받는다.
-    const oneByOne = !!body.oneByOne && v.to.length > 1;
-    const batches = oneByOne
-      ? v.to.map((t, i) => Object.assign({}, baseMail, {
-          to: t,
-          cc: i === 0 ? baseMail.cc : undefined,
-          bcc: i === 0 ? baseMail.bcc : undefined,
-        }))
-      : [Object.assign({}, baseMail, { to: v.to.join(", ") })];
-
-    let lastErr = null, usedId = "";
-    for (const id of ids) {
+    // ── 예약 발송 ──
+    // 보내지 않고 자리에만 담아 둔다. 때가 되면 sendScheduledMail 이 꺼내 보낸다.
+    // ⚠ 담을 때 **누가 걸었는지**를 함께 적는다. 보낼 때는 사람이 없으므로
+    //   그때 가서 확인할 수가 없다. 답장 받을 곳도 이 값으로 정해진다.
+    const at = Number(body.scheduleAt || 0);
+    if (at > 0) {
+      if (at < Date.now() + 30000) {
+        res.status(400).json({ ok: false, error: "예약은 지금부터 30초 뒤 이후로만 걸 수 있습니다." });
+        return;
+      }
+      if (at > Date.now() + 1000 * 60 * 60 * 24 * 60) {
+        res.status(400).json({ ok: false, error: "예약은 60일 뒤까지만 걸 수 있습니다." });
+        return;
+      }
+      // 보내기 전에 미리 걸러 둔다 — 때가 되어서야 틀린 것을 알면 이미 늦다.
+      const pre = MD.errorsBefore(body);
+      if (pre) { res.status(400).json({ ok: false, error: pre }); return; }
       try {
-        const tx = nodemailer.createTransport({
-          host: DAUM_HOST, port: DAUM_PORT, secure: true,
-          // 기다리는 시간을 못 박는다. 안 박으면 다음 서버가 대답을 안 할 때
-          // 화면이 하염없이 「보내는 중」으로 멈춰 있고, 사람은 다시 눌러 두 통을 보낸다.
-          connectionTimeout: 20000, greetingTimeout: 20000, socketTimeout: 90000,
-          auth: { user: id, pass: mailPass() },
+        const ref = await db.ref(MD.CARDS_ROOT + "/scheduled").push({
+          at: at,
+          by: sender.email || "",
+          payload: MD.slimPayload(body),
+          madeAt: Date.now(),
+          state: "waiting",
         });
-        for (const m of batches) await tx.sendMail(m);
-        usedId = id;
-        lastErr = null;
-        break;
+        res.json({ ok: true, scheduled: true, at: at, id: ref.key, from: from });
       } catch (e) {
-        lastErr = e;
-        // 자격 문제(EAUTH)일 때만 다른 아이디로 다시 해 본다.
-        // 첨부가 크다거나 받는 주소가 틀린 것은 아이디를 바꿔도 똑같다 —
-        // 그런데도 되풀이하면 같은 메일이 여러 통 나갈 수 있다.
-        if (String((e && e.code) || "") !== "EAUTH") break;
+        res.status(500).json({ ok: false, error: "예약을 걸지 못했습니다: " + String((e && e.message) || e) });
       }
-    }
-    if (lastErr) {
-      console.error("sendMaterialMail", lastErr && lastErr.message);
-      // 무엇이 잘못됐는지에 따라 다음 걸음이 완전히 다르다. 뭉뚱그리면 엉뚱한 곳을 고치게 된다.
-      //   EAUTH / 535 → 우리가 로그인을 못 한 것 (앱 비밀번호)
-      //   550 5.1.1   → 로그인은 됐고 **받는 주소가 없는 것** (오타·없는 계정)
-      //   그 밖       → 연결 문제
-      const msg = String((lastErr && lastErr.message) || lastErr);
-      const auth = String((lastErr && lastErr.code) || "") === "EAUTH" || /\b535\b/.test(msg);
-      const noSuchUser = /\b550\b/.test(msg) || /does not exist|NoSuchUser|Recipient address rejected/i.test(msg);
-      let hint;
-      if (noSuchUser) {
-        hint = "\n\n받는 사람 주소가 없는 주소입니다. 오타가 없는지 확인해 주세요."
-             + "\n(로그인 계정 주소가 실제 메일함이 아닐 수 있습니다 — 회사 메일 주소로 보내 보세요)";
-      } else if (auth) {
-        hint = "\n\n비밀번호가 맞지 않습니다. 다음메일 설정 → IMAP/POP3 → 「비밀번호 확인하기」에서"
-             + " 앱 비밀번호를 새로 받아 다시 넣어 주세요. (평소 로그인 비밀번호로는 안 됩니다)";
-      } else {
-        hint = "\n\n다음메일에서 IMAP/SMTP 사용이 켜져 있는지 확인해 주세요.";
-      }
-      res.status(502).json({ ok: false, error: "메일 서버가 받지 않았습니다: " + msg + hint });
       return;
     }
 
-    // ★ 보낸 기록은 **실제로 나간 뒤** 서버가 남긴다.
-    //   화면이 남기면 '보냈다는데 안 왔다'를 가릴 수 없다.
-    //   개인 폴더 명함은 남기지 않는다 — 이 자리는 직원 누구나 읽는다.
-    const at = Date.now();
-    const cardId = String(body.cardId || "");
-    if (cardId && !/[.#$/\[\]]/.test(cardId)) {
+    const r = await MD.deliver({
+      db: db, body: body, from: from, pass: mailPass(),
+      envId: process.env.DAUM_MAIL_ID, byEmail: sender.email || "",
+    });
+    if (!r.ok) { res.status(r.status || 500).json({ ok: false, error: r.error }); return; }
+    res.json(r);
+  });
+
+// ════════════════════════════════════════════════════════════════════════════
+// 예약해 둔 메일 보내기 — 5분마다 서버가 스스로 깨어난다
+// ════════════════════════════════════════════════════════════════════════════
+// 예전에는 화면(브라우저)이 때를 재고 있었다. 창을 닫으면 안 나갔다 —
+// 「예약했는데 안 갔다」가 되는 자리라 서버로 옮긴다(대표 지시 2026-08-10).
+//
+// ⚠ 5분마다 도므로 정확히 그 분에 나가지는 않는다. 최대 5분 늦는다.
+//   1분마다 돌리면 그만큼 요금이 붙고, 메일은 5분 늦어도 탈이 없다.
+// ⚠ 꺼낼 때 먼저 「보내는 중」으로 찜하고 보낸다. 안 그러면 앞 회차가 아직
+//   보내는 중인데 다음 회차가 같은 것을 또 집어 두 통이 나간다.
+exports.sendScheduledMail = functions
+  .region(MAIL_REGION)
+  .runWith({ secrets: ["DAUM_MAIL_PASSWORD"], timeoutSeconds: 540, memory: "512MB" })
+  .pubsub.schedule("every 5 minutes")
+  .timeZone("Asia/Seoul")
+  .onRun(async () => {
+    const db = getDatabase();
+    const now = Date.now();
+    const snap = await db.ref(MD.CARDS_ROOT + "/scheduled")
+      .orderByChild("at").endAt(now).limitToFirst(20).once("value");
+    const all = snap.val() || {};
+    const ids = Object.keys(all);
+    if (!ids.length) return null;
+
+    const from = await mailUserAsync();
+    let sent = 0, failed = 0;
+
+    for (const id of ids) {
+      const row = all[id] || {};
+      if (row.state && row.state !== "waiting") continue;   // 이미 누가 집어 갔다
+
+      const ref = db.ref(MD.CARDS_ROOT + "/scheduled/" + id);
+      // 먼저 찜한다 — 두 번 보내지 않으려고. 이미 남이 찜했으면 건너뛴다.
+      const claim = await ref.child("state").transaction((cur) =>
+        (cur === "waiting" || cur === null || cur === undefined) ? "sending" : undefined);
+      if (!claim.committed) continue;
+
       try {
-        await db.ref(CARDS_ROOT + "/sendLog/" + cardId).push(MS.sentLogRec({
-          at: at, by: sender.email || "", to: v.to, names: names, set: body.set || "",
-        }));
-      } catch (e) { console.warn("sendLog", e && e.message); }
+        const r = await MD.deliver({
+          db: db,
+          body: Object.assign({}, row.payload || {}, { wasScheduled: true }),
+          from: from, pass: mailPass(),
+          envId: process.env.DAUM_MAIL_ID,
+          byEmail: row.by || "",
+        });
+        if (r.ok) {
+          await ref.remove();                    // 나갔으니 자리를 비운다
+          sent++;
+        } else {
+          // ⚠ 지우지 않는다. 왜 못 갔는지 화면에서 보이고, 사람이 고쳐 다시 걸 수 있어야 한다.
+          await ref.update({ state: "failed", error: String(r.error || ""), failedAt: Date.now() });
+          failed++;
+        }
+      } catch (e) {
+        await ref.update({ state: "failed", error: String((e && e.message) || e), failedAt: Date.now() });
+        failed++;
+      }
+    }
+    console.log("sendScheduledMail", { looked: ids.length, sent: sent, failed: failed });
+    return null;
+  });
+
+// ═══ 사진첩 — 서버 쪽 사진 이사 (2026-08-13, PR #192 뒤) ═══
+// 대표 지시: 총괄 관리자가 자기 아닌 다른 직원 사진도 창고로 옮길 수 있어야
+// 한다. 창고 규칙은 실시간DB(uid_roles)를 못 읽어 "관리자인가"를 판정 못
+// 하므로, 클라이언트 쪽 이사 도구(js/pu-photo-store.js 의 migrateToStorage)는
+// 관리자 자기 자신의 사진만 옮길 수 있다. 이 함수는 Admin SDK 로 창고 규칙을
+// 완전히 우회해 여러 사람 자리에 한꺼번에 쓴다.
+const { migrateBatch } = require("./photos-migrate");
+
+const PHOTOS_DB_ROOT = "puphotos"; // js/pu-photo-store.js 의 DB_ROOT 와 반드시 같아야 한다
+
+async function requirePhotoAdmin(req) {
+  const match = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ""));
+  if (!match) {
+    const error = new Error("로그인 확인 정보가 없습니다.");
+    error.status = 401;
+    throw error;
+  }
+  const decoded = await getAuth().verifyIdToken(match[1], true);
+  const roleSnapshot = await getDatabase().ref(`uid_roles/${decoded.uid}`).once("value");
+  const role = roleSnapshot.val() || {};
+  if (role.isAdmin !== true) {
+    const error = new Error("총괄관리자만 사진을 옮길 수 있습니다.");
+    error.status = 403;
+    throw error;
+  }
+  return decoded;
+}
+
+// functions/photos-migrate.js 가 기대하는 db 모양으로 실제 RTDB 를 얇게 감싼다.
+// ⚠ ownersCount 는 photoDb 위에 얹은 관찰용 값이다(순수 함수 migrateBatch 의
+//   반환 모양은 그대로 둔다) — 핸들러가 migrateBatch 를 다 부른 뒤 photoDb.ownersCount 를
+//   읽어 응답에 함께 싣는다.
+function realPhotoDb() {
+  const db = getDatabase();
+  const photoDb = {
+    ownersCount: 0,
+    listOwners() {
+      // ⚠ owners 색인은 로그인(touchOwner) 또는 사진 올리기 때 채워진다 — 옛 자리
+      // 옮기기(migrateLegacy)만으로 사진이 들어온 사람은 로그인을 한 번도 안 했으면
+      // 이 색인에 없을 수 있다(최종 리뷰 2026-08-13). moved/skipped/failed 와 함께
+      // ownersCount 를 응답에 실어 두므로, 실제 직원 수와 크게 다르면 알 수 있다.
+      return db.ref(`${PHOTOS_DB_ROOT}/owners`).once("value")
+        .then((s) => {
+          const uids = Object.keys(s.val() || {});
+          photoDb.ownersCount = uids.length;
+          return uids;
+        });
+    },
+    listYears(uid) {
+      return db.ref(`${PHOTOS_DB_ROOT}/u/${uid}/items`).once("value")
+        .then((s) => Object.keys(s.val() || {}));
+    },
+    listYear(uid, year) {
+      return db.ref(`${PHOTOS_DB_ROOT}/u/${uid}/items/${year}`).once("value")
+        .then((s) => s.val() || {});
+    },
+    readItem(uid, year, id) {
+      return Promise.all([
+        db.ref(`${PHOTOS_DB_ROOT}/u/${uid}/blobs/${year}/${id}`).once("value"),
+        db.ref(`${PHOTOS_DB_ROOT}/u/${uid}/thumbs/${year}/${id}`).once("value"),
+      ]).then(([f, t]) => {
+        const full = f.val();
+        if (!full) return null;
+        return { full, thumb: t.val() || "" };
+      });
+    },
+    writeMigrated(uid, year, id) {
+      const u = {};
+      u[`${PHOTOS_DB_ROOT}/u/${uid}/items/${year}/${id}/loc`] = "storage";
+      u[`${PHOTOS_DB_ROOT}/u/${uid}/blobs/${year}/${id}`] = null;
+      u[`${PHOTOS_DB_ROOT}/u/${uid}/thumbs/${year}/${id}`] = null;
+      return db.ref().update(u);
+    },
+  };
+  return photoDb;
+}
+
+// photos-migrate.js 가 기대하는 bucket 모양으로 실제 Storage 를 얇게 감싼다.
+// ⚠ 되읽어 확인(exists)은 메타데이터만 본다 — 전체를 다시 내려받지 않는다.
+//   (클라이언트 쪽은 getDownloadURL+fetch 로 전체를 다시 받는다 — 서버는 그럴
+//   필요가 없다, 대역폭을 아낀다. 설계서 5절 참고.)
+function realPhotoBucket() {
+  // 창고 이름은 PR #192 에서 만든 것과 반드시 같아야 한다 — pu-photos.html 이 보는 창고.
+  const bucket = getStorage().bucket("pureun-erp-hrphotos");
+  return {
+    upload(objectPath, dataUrl) {
+      // ⚠ 진짜 base64 data URL 인지 확인한다(최종 리뷰 2026-08-13) — 확인 없이
+      // Buffer.from 만 쓰면 이상한 값이 와도 조용히 깨진 바이트만 올리고, exists()는
+      // "올라갔다"로 통과해 실시간DB 원본을 지워 버린다(되돌릴 수 없다). 종류는
+      // 실린 mime 을 그대로 쓴다(전에는 image/jpeg 로 못 박았었다).
+      const m = /^data:([^;,]+)?(;base64)?,([\s\S]*)$/.exec(String(dataUrl || ""));
+      if (!m || !m[2]) {
+        return Promise.reject(new Error("사진 본문이 base64 data URL 이 아닙니다"));
+      }
+      const buf = Buffer.from(m[3], "base64");
+      return bucket.file(objectPath).save(buf, { contentType: m[1] || "image/jpeg" });
+    },
+    exists(objectPath) {
+      return bucket.file(objectPath).exists().then((r) => !!(r && r[0]));
+    },
+  };
+}
+
+// ⚠ 기본 시간제한(60초)·메모리(256MB)로는 30장 한 배치(읽기·올리기·확인·쓰기를
+//   차례로 30번)를 못 끝낼 수 있다(최종 리뷰 2026-08-13) — 배치로 나눈 이유 자체가
+//   시간제한 때문인데 기본값이면 그 위험이 그대로 남는다. sendMaterialMail(120초)·
+//   sendScheduledMail(540초)와 같은 이유. 리전은 그대로 둔다(실시간DB도 미국에
+//   있어 나머지 함수들과 맞춰 두는 쪽이 낫다 — 창고만 서울이라 올리기 구간에서
+//   지연이 있을 수 있지만, 관리자가 가끔 누르는 일회성 도구라 감내한다).
+exports.migratePhotosToStorage = functions
+  .runWith({ timeoutSeconds: 300, memory: "512MB" })
+  .https.onRequest(async (req, res) => {
+  setAutomationCors(req, res);
+  if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+  if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
+  try {
+    await requirePhotoAdmin(req);
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const limit = Number(body.limit) > 0 ? Number(body.limit) : 30;
+    const db = realPhotoDb();
+    const result = await migrateBatch(db, realPhotoBucket(), limit);
+    res.status(200).json({
+      ok: true, moved: result.moved, skipped: result.skipped,
+      failed: result.failed, done: result.done, ownersCount: db.ownersCount,
+    });
+  } catch (error) {
+    console.error("migratePhotosToStorage", error && error.stack || error);
+    res.status(error.status || 500).json({
+      ok: false, error: String((error && error.message) || error || "사진 이사 실패"),
+    });
+  }
+});
+
+/* ══════════ 급여자료 메일 자동수신 (급여데이터함 5차) ══════════
+   대표 결정 2026-08-14 — 「전용 자리 + 10분마다 확인」.
+
+   ★ 왜 이 방식인가
+   회사 도메인의 메일 배달 경로(MX)를 바꾸면 도착 즉시 받을 수 있지만, 잘못
+   건드리면 **회사 메일 전체가 안 오는** 사고가 난다. 10분 빨라지자고 질 위험이
+   아니다. 그래서 이미 쓰고 있는 다음메일 계정에 **IMAP 으로 붙어** 정해진
+   폴더만 들여다본다 — 새 계정도, 새 비밀번호도, DNS 변경도 없다.
+
+   ⚠ 온 메일함을 뒤지지 않는다. 대표님이 다음메일에서 규칙으로 모아 두는
+     「급여자료」 폴더 **하나만** 본다. 다른 메일은 서버가 아예 열지 않는다.
+
+   ⚠ 아는 주소에서 온 것만 받는다(대표 결정). 명단은 업체관리·직원 명부에서
+     그때그때 만든다 — 사람이 따로 관리할 명단을 새로 만들지 않는다.
+
+   ⚠ 처리한 메일은 **읽음으로만 표시**하고 지우지 않는다. 폴더에 그대로 남아
+     있어야 "분명 보냈는데" 를 사람이 따라갈 수 있다.
+
+   ⚠ 담기는 자리는 공용 대기 칸(pending_shared)이다. 서버는 「누구 자리」가
+     없기 때문이다. 담당자가 집어가면 자기 자리로 내려간다(앱에 이미 있는 기능). */
+const MR = require("./mail-receive");
+
+const PAYDATA_ROOT = "paydata";
+const PAYDATA_BUCKET_ROOT = "pu_paydata";
+const PAYDATA_BUCKET = "pureun-erp.firebasestorage.app";  // 앱(pu-paydata.html)과 같은 창고
+const PAYMAIL_BOX = "급여자료";      // 다음메일에서 규칙으로 모아 두는 폴더
+const PAYMAIL_UPLOADER = "_mail";    // 창고 자리 — 사람이 아니라 서버가 담았다는 표시
+const PAYMAIL_MAX_PER_RUN = 30;      // 한 회차에 처리할 메일 수 — 오래 붙어 있지 않게
+
+function payMailId() {
+  return "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+/* 아는 주소 명단을 그때그때 만든다 — 한쪽을 못 읽어도 나머지로 계속한다. */
+async function payMailKnownList(db) {
+  const [coSnap, dirSnap] = await Promise.all([
+    db.ref("data/companies").once("value").catch(() => null),
+    db.ref("data/user_dir").once("value").catch(() => null),
+  ]);
+  return MR.buildKnownList(coSnap && coSnap.val(), dirSnap && dirSnap.val());
+}
+
+/* 첨부 하나를 창고에 담고 공용 대기 칸에 한 줄 적는다. */
+async function payMailStoreOne(db, bucket, att, mail) {
+  const id = payMailId();
+  const ext = MR.extOf(att.filename);
+  const where = PAYDATA_BUCKET_ROOT + "/" + PAYMAIL_UPLOADER + "/pending/" + id + (ext ? "." + ext : "");
+  await bucket.file(where).save(att.content, {
+    contentType: att.contentType || "application/octet-stream",
+    resumable: false,
+  });
+  const rec = MR.sharedPendingRecord({
+    filename: att.filename, file: where,
+    mime: att.contentType || "", bytes: att.size || (att.content && att.content.length) || 0,
+    at: Date.now(), mailFrom: mail.from, mailSubject: mail.subject,
+  });
+  const up = {};
+  up[PAYDATA_ROOT + "/pending_shared/" + id] = rec;
+  await db.ref().update(up);
+  return id;
+}
+
+exports.receivePaydataMail = functions
+  .region(MAIL_REGION)
+  .runWith({ secrets: ["DAUM_MAIL_PASSWORD"], timeoutSeconds: 540, memory: "512MB" })
+  .pubsub.schedule("every 10 minutes")
+  .timeZone("Asia/Seoul")
+  .onRun(async () => {
+    const user = await mailUserAsync();
+    const pass = mailPass();
+    if (!user || !pass) {
+      console.warn("receivePaydataMail: 메일 계정이 설정되지 않았습니다");
+      return null;
     }
 
-    // ── 보낸 메일함 (명함과 무관한 한 줄 기록) ──
-    // 명함 안 기록만으로는 「이번 달 누가 무엇을 보냈나」를 볼 수 없다. 명함 없이
-    // 보낸 것도 여기에는 남는다.
-    // ⚠ 본문을 함께 남긴다 — 「같은 내용으로 다시 쓰기」가 이걸 읽는다.
-    //   이 자리는 직원 누구나 읽으므로, 개인 폴더 명함으로 보낸 것은 명함 번호를
-    //   빼고 남긴다(누구에게 보냈는지는 주소로 이미 드러나므로 굳이 더하지 않는다).
-    try {
-      await db.ref(CARDS_ROOT + "/sentBox").push({
-        at: at,
-        by: sender.email || "",
-        to: v.to.join(", "),
-        toName: String(body.toName || ""),
-        cc: v.cc.join(", "),
-        subject: v.subject,
-        body: v.body,
-        ids: (Array.isArray(body.matIds) ? body.matIds : []).filter((x) => typeof x === "string"),
-        names: names,
-        localNames: extras.map((f) => String((f && f.name) || "")).filter(Boolean),
-        set: String(body.set || ""),
-        cardId: cardId,
-        from: from,
-      });
-    } catch (e) { console.warn("sentBox", e && e.message); }
+    const { ImapFlow } = require("imapflow");
+    const { simpleParser } = require("mailparser");
+    const db = getDatabase();
+    const bucket = getStorage().bucket(PAYDATA_BUCKET);
+    const known = await payMailKnownList(db);
 
-    res.json({
-      ok: true, sent: v.to.length, files: attachments.length, missing: missing,
-      bytes: v.bytes, from: from, id: usedId,
-    });
+    // 접속 아이디는 보내기와 **같은 후보 차례**를 쓴다(다음 계정마다 다르다).
+    let client = null;
+    let lastErr = null;
+    for (const id of MD.loginIds(user, process.env.DAUM_MAIL_ID)) {
+      const c = new ImapFlow({
+        host: "imap.daum.net", port: 993, secure: true,
+        auth: { user: id, pass: pass }, logger: false,
+      });
+      try { await c.connect(); client = c; break; } catch (e) {
+        lastErr = e;
+        try { await c.logout(); } catch (_) { /* 이미 끊겼다 */ }
+      }
+    }
+    if (!client) {
+      console.error("receivePaydataMail 접속 실패:", String((lastErr && lastErr.message) || lastErr));
+      return null;
+    }
+
+    let took = 0, skipped = 0, unknown = 0;
+    try {
+      let lock;
+      try {
+        lock = await client.getMailboxLock(PAYMAIL_BOX);
+      } catch (e) {
+        console.warn("receivePaydataMail: 「" + PAYMAIL_BOX + "」 폴더가 없습니다. 다음메일에서 만들어 주세요.");
+        return null;
+      }
+
+      // 먼저 다 받아 둔 뒤 처리한다 — 읽는 도중에 읽음 표시를 바꾸면 목록이 흔들린다.
+      const inbox = [];
+      try {
+        for await (const msg of client.fetch({ seen: false }, { uid: true, source: true })) {
+          inbox.push({ uid: msg.uid, source: msg.source });
+          if (inbox.length >= PAYMAIL_MAX_PER_RUN) break;
+        }
+      } finally {
+        lock.release();
+      }
+
+      for (const item of inbox) {
+        let parsed;
+        try {
+          parsed = await simpleParser(item.source);
+        } catch (e) {
+          console.warn("receivePaydataMail: 메일을 읽지 못했습니다", String((e && e.message) || e));
+          continue;   // 읽음 표시도 하지 않는다 — 다음 회차에 다시 해 본다
+        }
+
+        const fromText = (parsed.from && parsed.from.text) || "";
+        const sender = MR.senderOf(fromText);
+        const subject = String(parsed.subject || "");
+
+        if (!MR.isKnownSender(sender, known)) {
+          // 모르는 곳에서 온 것 — 담지 않는다. 지우지도 않는다(폴더에 그대로 남는다).
+          unknown++;
+          console.log("receivePaydataMail 모르는 주소라 건너뜀:", sender || "(주소 없음)");
+          await client.messageFlagsAdd({ uid: String(item.uid) }, ["\\Seen"], { uid: true });
+          continue;
+        }
+
+        const atts = Array.isArray(parsed.attachments) ? parsed.attachments : [];
+        for (const att of atts) {
+          const chk = MR.okAttachment(att);
+          if (!chk.ok) {
+            skipped++;
+            console.log("receivePaydataMail 첨부 건너뜀:", att.filename || "(이름 없음)", chk.why);
+            continue;
+          }
+          try {
+            await payMailStoreOne(db, bucket, att, { from: sender, subject: subject });
+            took++;
+          } catch (e) {
+            // 한 건이 막혀도 나머지는 담는다. 읽음 표시는 아래에서 한다.
+            skipped++;
+            console.error("receivePaydataMail 담기 실패:", att.filename, String((e && e.message) || e));
+          }
+        }
+        await client.messageFlagsAdd({ uid: String(item.uid) }, ["\\Seen"], { uid: true });
+      }
+      console.log("receivePaydataMail", { looked: inbox.length, took, skipped, unknown });
+    } catch (e) {
+      console.error("receivePaydataMail 실패:", String((e && e.message) || e));
+    } finally {
+      try { await client.logout(); } catch (_) { /* 이미 끊겼다 */ }
+    }
+    return null;
   });

@@ -107,16 +107,35 @@ test('★ 걸러보기 중이면 걸러보기만 풀고, 다른 화면이면 사
   assert.ok(/clearAllFilters\(\)/.test(m[0]));
 });
 
+/* 2026-08-10 다시 겨눔 — 처리를 escOnce() 하나로 모았다. 예전에는 세 곳에서
+   따로 ESC 를 듣다가, 크게 보기를 닫은 처리기가 viewerId 를 비운 직후 「뒤로」
+   처리기가 그 빈 값을 보고 탭까지 풀어 버렸다(대표 보고: 기타서류에서 서류를
+   보다 ESC 를 누르면 전체사진으로 튄다). 지킬 것은 「한 번에 한 가지만」이다. */
 test('★ Esc 는 크게 보기·팝업·카메라를 앞질러 가지 않는다', () => {
-  const m = html.match(/document\.addEventListener\('keydown', function \(e\) \{[\s\S]*?\n\}\);/g);
-  const esc = (m || []).find(function (b) { return /goBack\(\)/.test(b); });
-  assert.ok(esc, 'Esc 로 뒤로 가는 처리가 없습니다.');
+  const esc = (html.match(/function escOnce\(\)[\s\S]*?\n\}/) || [])[0];
+  assert.ok(esc, 'Esc 처리를 한 곳에 모은 escOnce 가 없습니다.');
   for (const guard of ['viewerId', 'kindPopup', 'camOv', 'shareRev']) {
     assert.ok(esc.includes(guard),
       'Esc 를 눌렀을 때 ' + guard + ' 이 먼저 닫혀야 합니다 — 안 그러면 사진을 보다 말고 화면이 튑니다.');
   }
   assert.ok(/if \(!whereNow\(\)\) return;/.test(esc),
     '이미 처음 화면이면 아무 일도 없어야 합니다.');
+});
+
+test('★ ESC 를 듣는 곳은 하나뿐이다 — 둘이면 한 번 누른 것이 두 가지 일을 한다', () => {
+  const blocks = html.match(/addEventListener\('keydown'/g) || [];
+  assert.equal(blocks.length, 1,
+    'ESC 를 듣는 곳이 ' + blocks.length + '군데입니다 — 순서에 기대면 코드를 옮길 때 조용히 깨집니다.');
+});
+
+test('★ 크게 보기를 닫아도 탭·찾기는 그대로 둔다', () => {
+  const esc = html.match(/function escOnce\(\)[\s\S]*?\n\}/)[0];
+  const at = esc.indexOf('closeViewer()');
+  assert.ok(at > 0, '크게 보기를 닫는 곳이 없습니다.');
+  const line = esc.slice(esc.lastIndexOf('\n', at), esc.indexOf('\n', at));
+  assert.ok(/return;/.test(line),
+    '닫고 곧바로 끝내지 않으면 아래 goBack 까지 내려가 탭이 풀립니다.');
+  assert.ok(esc.indexOf('goBack()') > at, '뒤로 가기는 크게 보기보다 뒤에 와야 합니다.');
 });
 
 /* ── ⑤ 결과가 0장일 때 ── */

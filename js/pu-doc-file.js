@@ -1,4 +1,4 @@
-/* 푸른통합시스템 — 서류 등록 층
+﻿/* 푸른통합시스템 — 서류 등록 층
    판독한 서류를 명함첩과 업체관리에 넣는 유일한 파일이다.
    판독 층(pu-doc-read.js)이 "읽기"를 아는 유일한 파일인 것과 짝을 이룬다.
    화면은 이 파일의 함수 하나를 부르고 결과 문구만 띄운다 —
@@ -362,6 +362,74 @@
      나머지 칸(상호·대표자)은 사업자등록증이 더 정확한 원본이다. */
   var SME_ONLY = { companySize: 1, smeExpiry: 1, smeIssueNo: 1, smeIssueDate: 1 };
 
+  /* ══════ 기업정보(명함첩 🏢)로 보내기 ══════
+     서식·신청서는 지금까지 갈 곳이 없었다 — 읽어 놓고도 어디에도 안 남았다.
+     업체관리(ERP)와 다른 점: **업체가 없어도 받는다.** ERP 는 실제 거래처만 두는
+     곳이라 없는 업체를 만들면 유령이 쌓이지만, 기업정보는 「이 회사에 대해 아는 것」을
+     모으는 자리라 거래처가 아니어도 값이 있다(대표 지시 2026-08-12).
+
+     ⚠ 열쇠는 사업자번호다. 명함첩 기업정보 화면도 같은 열쇠로 회사를 가른다 —
+       한쪽만 바꾸면 보낸 것이 엉뚱한 회사에 붙거나 아예 안 보인다.
+     ⚠ 덮어쓰지 않고 **빈 칸만 채운다.** 나중에 읽은 서식이 먼저 읽은 값을 지우면,
+       사람이 고쳐 둔 것도 함께 날아간다. */
+  function sendToCoInfo(o) {
+    o = o || {};
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var fields = o.fields || {};
+    var key = bizKey(fields.bizno);
+    if (!key) {
+      return Promise.resolve({ ok: false, filled: [], message: '사업자번호를 읽지 못해 어느 회사인지 알 수 없습니다' });
+    }
+    /* 기업정보 화면(CO_FIELDS)이 이름표를 붙여 보여주는 칸들만 보낸다.
+       모르는 칸까지 밀어 넣으면 화면에 안 나오면서 저장소만 불어난다. */
+    var KEEP = ['company','ceo','corpno','address','companyTel','mobile','email','homepage',
+                'bizType','bizItem','openDate','smeType','docName','applyNo','applyItems',
+                'applyField','applyDetail','applyDate','dueDays','birth'];
+    var ref = deps.db.ref(CARDS_ROOT + '/coInfo/' + key);
+    return ref.once('value').then(function (s) {
+      var cur = s.val() || {};
+      var add = {}, filled = [];
+      KEEP.forEach(function (k) {
+        var v = fields[k];
+        if (v == null || String(v).trim() === '') return;
+        if (cur[k] != null && String(cur[k]).trim() !== '') return;   /* 이미 있으면 그대로 둔다 */
+        add[k] = String(v).trim();
+        filled.push(k);
+      });
+      /* 어떤 사업으로 들어온 회사인지 딱지를 붙인다 — 서류이름이 곧 사업 이름이다.
+         기업정보 화면이 이 딱지로 갈래(탭)를 저절로 만든다. 손으로 만들 필요가 없다
+         (대표 지시 2026-08-12). 이름이 「값 없음」이 되지 않도록 . # $ [ ] / 를 뺀다 —
+         실시간DB 는 열쇠에 이 글자들을 못 쓴다. */
+      var tag = String(fields.docName || '').trim().replace(/[.#$/[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (tag && !(cur.tags && cur.tags[tag])) { add['tags/' + tag] = true; filled.push('갈래'); }
+
+      /* 어느 서류에서 온 값인지 남긴다.
+         값만 옮기면 나중에 「이 숫자 어디서 봤더라」에 답할 수 없다 — 사진첩에 그 서류가
+         그대로 있는데도 다시 찾아 헤매게 된다(대표 지시 2026-08-13).
+         ⚠ 덮어쓰지 않고 사진 하나에 한 줄씩 쌓는다. 한 회사에 서류가 여러 장 오고,
+           나중 것이 앞 것을 지우면 이력이 사라진다. 같은 사진을 두 번 보내면 같은
+           자리에 다시 쓰여 줄이 늘지 않는다(사진 번호를 열쇠로 삼는다). */
+      var ph = o.photo || {};
+      if (ph.id) {
+        var dk = String(ph.year || 'unknown') + '_' + String(ph.id).replace(/[.#$/[\]]/g, '_');
+        if (!(cur.docs && cur.docs[dk])) {
+          add['docs/' + dk] = { name: tag || '서식', year: String(ph.year || ''), id: String(ph.id),
+                                owner: String(ph.owner || ''), at: Date.now(), by: o.byName || '' };
+          filled.push('서류');
+        }
+      }
+
+      if (!filled.length) {
+        return { ok: true, filled: [], message: '새로 채울 칸이 없습니다 — 이미 다 들어 있습니다' };
+      }
+      add.at = Date.now();
+      add.by = o.byName || '';
+      return ref.update(add).then(function () {
+        return { ok: true, filled: filled, message: filled.length + '개 칸을 기업정보에 넣었습니다' };
+      });
+    });
+  }
+
   function sendToCompany(o) {
     o = o || {};
     var kind = o.kind;
@@ -437,6 +505,7 @@
     whenText: whenText,
     sendToCards: sendToCards,
     findCompanyByBizNo: findCompanyByBizNo,
+    sendToCoInfo: sendToCoInfo,
     sendToCompany: sendToCompany
   };
 })(typeof window !== 'undefined' ? window : globalThis);
