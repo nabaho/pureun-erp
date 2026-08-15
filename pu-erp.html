@@ -11972,6 +11972,54 @@ function erpBuildContractPhotoMatches(companyName, items){
   return out;
 }
 
+// 고른 계약서 사진의 OCR 값으로, 계약추가 창에 실제로 덮어쓸 patch 와
+// 미리보기 문구를 함께 계산한다. UI(Task 7)는 이 결과를 그대로 쓰기만 한다 —
+// 값을 계산하는 로직을 컴포넌트 안에 두지 않아야 이 단위검사로 지킬 수 있다.
+function erpContractPhotoApplyPatch(fields, kindV, f){
+  fields = fields || {};
+  var patch = {};
+  var lines = [];
+
+  var amt = parseInt(fields.deposit, 10) || parseInt(fields.fee, 10) || 0;
+  if(amt > 0){
+    patch.amounts = Object.assign({}, f.amounts || {});
+    patch.amounts[kindV] = amt;
+    lines.push('계약금 ' + amt.toLocaleString() + '원');
+  }
+
+  if(fields.scope){
+    var briefMax = (typeof BRIEF_MAX !== 'undefined') ? BRIEF_MAX : 40;
+    patch.briefs = Object.assign({}, f.briefs || {});
+    patch.briefs[kindV] = String(fields.scope).slice(0, briefMax);
+    lines.push('업무 ' + patch.briefs[kindV]);
+  }
+
+  if(fields.signDate){ patch.signDate = fields.signDate; lines.push('계약일 ' + fields.signDate); }
+  if(fields.startDate) patch.startDate = fields.startDate;
+  if(fields.endDate) patch.endDate = fields.endDate;
+  if(fields.startDate || fields.endDate){
+    lines.push('기간 ' + (fields.startDate || '?') + '~' + (fields.endDate || '?'));
+  }
+
+  var vatFlag = erpVatTextToFlag(fields.vat);
+  if(vatFlag !== null){
+    patch.contractFeeVatIncluded = vatFlag;
+    lines.push('부가세 ' + (vatFlag ? '포함' : '별도'));
+  } else if(fields.vat){
+    lines.push('부가세 판단 안 됨 — 원문 "' + fields.vat + '"');
+  }
+
+  var nextCompany = Object.assign({}, f.company || {});
+  var companyChanged = false;
+  [['ceo','ceo'], ['address','address'], ['bizno','bizNo']].forEach(function(pair){
+    var src = pair[0], dest = pair[1];
+    if(!nextCompany[dest] && fields[src]){ nextCompany[dest] = fields[src]; companyChanged = true; }
+  });
+  if(companyChanged) patch.company = nextCompany;
+
+  return { patch: patch, previewLines: lines, vatRaw: fields.vat || '' };
+}
+
 // ============ 계약 모달 (3탭: 기업정보 / 계약정보 / 담당자정보) ============
 function ContractModal(props){
   useEscClose(props.onClose);

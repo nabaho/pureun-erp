@@ -111,5 +111,46 @@ const t = (name, got, want) => {
   t('빈 배열이면 후보 없음', c.erpBuildContractPhotoMatches('유원에프앤비', []), []);
 }
 
+/* ═══ 4. erpContractPhotoApplyPatch — 고를 값 계산 ═══ */
+{
+  const c = vm.createContext({});
+  vm.runInContext(fn('erpVatTextToFlag'), c);
+  vm.runInContext(fn('erpContractPhotoApplyPatch'), c);
+
+  const baseF = {
+    amounts:{ consulting:0 }, briefs:{ consulting:'' },
+    company:{ name:'유원에프앤비', bizNo:'', ceo:'', address:'' },
+    contractFeeVatIncluded:false
+  };
+  const fields1 = {
+    deposit:'500000', scope:'취업규칙 정비', signDate:'2026-07-01',
+    startDate:'2026-07-01', endDate:'2027-06-30', vat:'별도',
+    ceo:'김대표', address:'서울시 강남구', bizno:'1234567890'
+  };
+  const r1 = c.erpContractPhotoApplyPatch(fields1, 'consulting', baseF);
+  t('계약금이 채워진다', r1.patch.amounts.consulting, 500000);
+  t('업무요약이 채워진다', r1.patch.briefs.consulting, '취업규칙 정비');
+  t('계약일이 채워진다', r1.patch.signDate, '2026-07-01');
+  t('계약기간이 채워진다', [r1.patch.startDate, r1.patch.endDate], ['2026-07-01', '2027-06-30']);
+  t('★ 부가세 "별도" → 체크 해제', r1.patch.contractFeeVatIncluded, false);
+  t('비어 있던 대표자·주소·사업자번호가 덤으로 채워진다',
+    [r1.patch.company.ceo, r1.patch.company.address, r1.patch.company.bizNo],
+    ['김대표', '서울시 강남구', '1234567890']);
+  t('미리보기 줄에 계약금이 사람이 읽을 형태로 들어간다',
+    r1.previewLines.some(l => l.indexOf('500,000') >= 0), true);
+
+  // 부가세 문구가 애매하면 그 칸은 patch 에 아예 없어야 한다(안 건드림)
+  const fields2 = Object.assign({}, fields1, { vat:'추후 협의' });
+  const r2 = c.erpContractPhotoApplyPatch(fields2, 'consulting', baseF);
+  t('★ 부가세가 애매하면 patch 에 그 키 자체가 없다', 'contractFeeVatIncluded' in r2.patch, false);
+  t('애매한 부가세 원문을 미리보기에 남긴다', r2.previewLines.some(l => l.indexOf('추후 협의') >= 0), true);
+
+  // 이미 채워진 대표자·주소·사업자번호는 안 건드린다
+  const filledF = Object.assign({}, baseF, { company: Object.assign({}, baseF.company, { ceo:'기존대표' }) });
+  const r3 = c.erpContractPhotoApplyPatch(fields1, 'consulting', filledF);
+  t('★ 이미 채워진 대표자는 안 건드린다', r3.patch.company.ceo, '기존대표');
+  t('비어 있던 주소는 그대로 채워진다', r3.patch.company.address, '서울시 강남구');
+}
+
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');
 process.exit(fail ? 1 : 0);
