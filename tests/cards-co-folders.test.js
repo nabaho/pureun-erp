@@ -35,7 +35,7 @@ test('옆줄에 폴더 목록과 ＋가 있다', () => {
 });
 
 test('회사 상세에 폴더 이름을 보여준다', () => {
-  const at = source.indexOf('function coDetailHtml');
+  const at = source.indexOf('function coDetailPanelHtml');
   const fn = source.slice(at, source.indexOf('\n}', at));
   assert.match(fn, /_coFolders\[o\.folder\]/);
 });
