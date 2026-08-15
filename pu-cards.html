@@ -7640,11 +7640,14 @@ document.addEventListener('keydown', e=>{
   }
   try{ _applyIdleCfg(window.PU_CFG); }catch(e){}            /* 이미 로드됐으면 즉시 */
   try{ window.addEventListener('pu-cfg', function(ev){ _applyIdleCfg(ev.detail); }); }catch(e){}
+  function persistentAutoLogin(){ try{ return localStorage.getItem('pu_portal_auto') === '1'; }catch(e){ return false; } }
+  function shouldPauseIdle(){ return persistentAutoLogin() && document.hidden; }
   var warnBox=null, tick=null;
   function loggedIn(){ try{ var u=firebase.auth().currentUser; return !!(u&&u.email); }catch(e){ return false; } }
   function now(){ return Date.now(); }
   function getLast(){ try{ var v=parseInt(localStorage.getItem(AKEY)||'0',10); return v>0?v:now(); }catch(e){ return now(); } }
   function markActive(){ try{ localStorage.setItem(AKEY,String(now())); }catch(e){} hideWarn(); }
+  function resumeAutoSession(){ if(persistentAutoLogin()) markActive(); }
   function fmt(ms){ if(ms<0)ms=0; var s=Math.floor(ms/1000); return ('0'+Math.floor(s/60)).slice(-2)+':'+('0'+(s%60)).slice(-2); }
   function doAutoLogout(){
     try{
@@ -7669,10 +7672,15 @@ document.addEventListener('keydown', e=>{
   ['mousemove','mousedown','keydown','touchstart','scroll','click'].forEach(function(ev){
     window.addEventListener(ev, markActive, {passive:true, capture:true});
   });
+  window.addEventListener('pageshow', resumeAutoSession, {passive:true});
+  window.addEventListener('focus', resumeAutoSession, {passive:true});
+  document.addEventListener('visibilitychange', function(){ if(!document.hidden) resumeAutoSession(); }, {passive:true});
+  resumeAutoSession();
   try{ if(!localStorage.getItem(AKEY)) markActive(); }catch(e){}
   tick=setInterval(function(){
     var badges=document.querySelectorAll('.logoutTimer');
     if(!loggedIn()){ badges.forEach(function(b){ b.style.display='none'; }); hideWarn(); return; }
+    if(shouldPauseIdle()) return;
     var rem=LIMIT-(now()-getLast());
     badges.forEach(function(b){ b.style.display='inline-flex'; b.textContent='⏱ '+fmt(rem); });
     if(rem<=0){ clearInterval(tick); doAutoLogout(); return; }

@@ -20,8 +20,8 @@ test('camShoot 을 찾을 수 있다', () => {
 
 test('★ 흐리면 답할 때까지 남는 물음을 띄운다', () => {
   assert.ok(/id="camWarn"/.test(photos), '흐림 물음창이 없습니다.');
-  assert.ok(/if \(blurry\) \{ setCamWarn\(true\); return; \}/.test(shoot[0]),
-    '잠깐 뜨는 알림으로는 지나칩니다 — 답할 때까지 남아야 합니다.');
+  assert.ok(/if \(blurry && !camQuickMode\) \{ setCamWarn\(true\); return; \}/.test(shoot[0]),
+    '일반·명함 촬영은 흐림 물음을 남기되 포털 연속촬영은 끊지 않아야 합니다.');
 });
 
 test('★ 흐려도 사진은 이미 담겨 있다 (버리지 않는다)', () => {

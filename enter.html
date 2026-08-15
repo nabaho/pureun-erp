@@ -557,7 +557,7 @@ body.portal-mode #camFab{display:flex;}
       <label for="cfgIdle">자동 로그아웃 시간 (분)</label>
       <input type="number" id="cfgIdle" min="10" max="480" step="10" placeholder="60" autocomplete="off" style="width:120px">
       <p class="cfg-help">아무 조작이 없을 때 자동으로 로그아웃되는 시간. 포털 · 푸른이알피 · 명함첩 ·
-        규정관리 · 컨설팅 일정에 함께 적용됩니다. <b>비워두면 60분</b>이고,
+        규정관리 · 정부사업일정에 함께 적용됩니다. <b>비워두면 60분</b>이고,
         안전을 위해 10분~480분(8시간) 범위만 적용됩니다.</p>
 
       <label for="cfgTileCross">업무 시스템 — 줄 사이 이동</label>
@@ -650,7 +650,7 @@ body.portal-mode #camFab{display:flex;}
   // 줄이 다르면 서로 자리를 못 옮긴다(관리자가 설정에서 풀 수 있다).
   var APPS = [
     { key:'erp',     name:'푸른이알피',   desc:'인사·급여·재무',   icon:'🏢', url:'pu-erp.html',         roles:null, row:'support' },
-    { key:'consult', name:'컨설팅 일정',  desc:'정부지원 관리',    icon:'📅', url:'gov-consulting.html', roles:null, row:'support' },
+    { key:'consult', name:'정부사업일정',  desc:'보고서 일정및사진관리',    icon:'📅', url:'gov-consulting.html', roles:null, row:'support' },
     { key:'work',    name:'업무관리',     desc:'주간 업무기록',    icon:'📋', url:'work.html',           roles:null, row:'support' },
     { key:'career',  name:'이력관리',     desc:'개인 이력서',      icon:'🗂', url:'kcareer.html',        roles:null, row:'support' },
     { key:'cards',   name:'명함첩',       desc:'명함 사업자등록증', icon:'📇', url:'pu-cards.html',       roles:null, row:'support' },
@@ -750,6 +750,19 @@ body.portal-mode #camFab{display:flex;}
     if(localStorage.getItem('pu_portal_auto') === '1'){ $('autoLogin').checked = true; }
   } catch(e){}
 
+  // 브라우저를 다시 열었을 때도 저장된 Firebase 세션을 LOCAL 방식으로 복원한다.
+  // 다른 통합 앱이 같은 인증 저장소를 사용하므로, 인증 상태를 관찰하기 전에 먼저 맞춘다.
+  var _persistenceReady = Promise.resolve();
+  var _persistenceBootError = null;
+  try {
+    if(localStorage.getItem('pu_portal_auto') === '1'){
+      _persistenceReady = auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(err){
+        _persistenceBootError = err;
+        console.warn('자동로그인 저장소를 복원하지 못했습니다.', err);
+      });
+    }
+  } catch(_persistBootErr){}
+
   // ── 비번 표시 토글 ──
   $('eyeBtn').addEventListener('click', function(){
     var pw = $('loginPw');
@@ -779,23 +792,28 @@ body.portal-mode #camFab{display:flex;}
      포털이 말없이 열리면, 본인은 자기가 로그인한 줄 안다. */
   var _freshLogin = false;
   function _rmBootSplash(){ try { var s=document.getElementById('pu-boot-splash'); if(s) s.remove(); } catch(_e){} }
-  auth.onAuthStateChanged(function(user){
-    if(user && user.email){
-      try { sessionStorage.setItem('pu_auth_hint','1'); localStorage.setItem('pu_auth_hint','1'); } catch(_e){}   // 다음 포털 복귀 때 로그인화면 번쩍임 방지
-      if(!_handled){ _handled = true; enterPortal(user); }
-    } else if(_handled){
-      // 로그아웃됨(유휴 60분·다른 탭 로그아웃 포함) → 화면 바꿔치기 대신 '완전 새로고침'.
-      // 오래 방치된 탭은 브라우저 절전으로 얼어 있어, 그 안에서 화면만 바꿔치기하면
-      // 입력이 안 먹는 반깨움 상태가 됨. ERP·컨설팅·명함첩과 동일하게 fresh load로 통일.
-      _handled = false;
-      try { sessionStorage.setItem('pu_skip_home','1'); sessionStorage.removeItem('pu_auth_hint'); localStorage.removeItem('pu_auth_hint'); } catch(_e){}
-      try { location.replace(location.pathname + '?v=' + Date.now()); }
-      catch(_) { location.reload(); }
-    } else {
-      // 미로그인 확정 → 스플래시 내리고 로그인 화면 표시
-      try { sessionStorage.removeItem('pu_auth_hint'); localStorage.removeItem('pu_auth_hint'); } catch(_e){}
-      _rmBootSplash();
-    }
+  _persistenceReady.then(function(){
+    auth.onAuthStateChanged(function(user){
+      if(user && user.email){
+        try { sessionStorage.setItem('pu_auth_hint','1'); localStorage.setItem('pu_auth_hint','1'); } catch(_e){}   // 다음 포털 복귀 때 로그인화면 번쩍임 방지
+        if(!_handled){ _handled = true; enterPortal(user); }
+      } else if(_handled){
+        // 로그아웃됨(유휴 60분·다른 탭 로그아웃 포함) → 화면 바꿔치기 대신 '완전 새로고침'.
+        // 오래 방치된 탭은 브라우저 절전으로 얼어 있어, 그 안에서 화면만 바꿔치기하면
+        // 입력이 안 먹는 반깨움 상태가 됨. ERP·컨설팅·명함첩과 동일하게 fresh load로 통일.
+        _handled = false;
+        try { sessionStorage.setItem('pu_skip_home','1'); sessionStorage.removeItem('pu_auth_hint'); localStorage.removeItem('pu_auth_hint'); } catch(_e){}
+        try { location.replace(location.pathname + '?v=' + Date.now()); }
+        catch(_) { location.reload(); }
+      } else {
+        // 미로그인 확정 → 스플래시 내리고 로그인 화면 표시
+        try { sessionStorage.removeItem('pu_auth_hint'); localStorage.removeItem('pu_auth_hint'); } catch(_e){}
+        _rmBootSplash();
+        if(_persistenceBootError){
+          showErr('자동로그인 저장소를 열 수 없습니다. 삼성 인터넷 또는 Chrome에서 다시 로그인해 주세요.');
+        }
+      }
+    });
   });
 
   // ── 로그인 실행 ──
@@ -815,7 +833,8 @@ body.portal-mode #camFab{display:flex;}
     _freshLogin = true;                        // 이번 진입은 「방금 아이디를 친」 로그인이다
 
     // 자동 로그인 지속성 설정
-    var persistence = $('autoLogin').checked
+    var wantsAutoLogin = $('autoLogin').checked;
+    var persistence = wantsAutoLogin
       ? firebase.auth.Auth.Persistence.LOCAL
       : firebase.auth.Auth.Persistence.SESSION;
 
@@ -829,7 +848,13 @@ body.portal-mode #camFab{display:flex;}
       setTimeout(function(){ if(_settled) return; location.replace(location.pathname + '?v=' + Date.now()); }, 900);
     }, 12000);
 
-    auth.setPersistence(persistence).catch(function(){ /* 지속성 설정 실패해도 로그인은 진행 */ }).then(function(){
+    _persistenceReady.then(function(){
+      return auth.setPersistence(persistence);
+    }).catch(function(err){
+      // 자동로그인이 저장되지 않았는데 성공한 것처럼 로그인시키지 않는다.
+      if(err && typeof err === 'object') err.puPersistence = true;
+      throw err;
+    }).then(function(){
       return auth.signInWithEmailAndPassword(email, pw);
     }).then(function(cred){
       _settled = true; clearTimeout(_watchdog);
@@ -845,7 +870,9 @@ body.portal-mode #camFab{display:flex;}
           localStorage.removeItem('pu_portal_last_id');
         }
         // 자동 로그인 체크 상태 저장 (포털 전용)
-        localStorage.setItem('pu_portal_auto', $('autoLogin').checked ? '1' : '0');
+        localStorage.setItem('pu_portal_auto', wantsAutoLogin ? '1' : '0');
+        if(wantsAutoLogin) localStorage.setItem('pureun_v6_auto_flag','1');
+        else localStorage.removeItem('pureun_v6_auto_flag');
       } catch(e){}
       // 브라우저·삼성패스 비번 저장 보강(지원 브라우저 한정) → 다음부터 지문 자동입력
       try {
@@ -859,7 +886,11 @@ body.portal-mode #camFab{display:flex;}
       _settled = true; clearTimeout(_watchdog);
       $('loginBtn').disabled = false;
       var code = (err && err.code) || '';
-      if(code === 'auth/wrong-password' || code === 'auth/invalid-credential'){
+      if(err && err.puPersistence){
+        showErr(wantsAutoLogin
+          ? '이 브라우저에서는 자동로그인을 저장할 수 없습니다. 삼성 인터넷 또는 Chrome에서 다시 시도해 주세요.'
+          : '로그인 세션을 만들 수 없습니다. 브라우저의 쿠키·저장공간 허용 여부를 확인해 주세요.');
+      } else if(code === 'auth/wrong-password' || code === 'auth/invalid-credential'){
         showErr('비밀번호가 틀렸습니다.');
       } else if(code === 'auth/user-not-found'){
         showErr('계정을 찾을 수 없습니다. 관리자에게 문의하세요.');
@@ -1038,9 +1069,9 @@ body.portal-mode #camFab{display:flex;}
     b.addEventListener('click', function(){
       var _v = Math.floor(Date.now() / 600000);
       if(isMobile()){
-        /* 카카오톡·네이버 등 앱 내부 브라우저는 다음 페이지에서 getUserMedia를
-           부르면 사용자 터치로 인정하지 않아 사진첩만 보이는 경우가 있다.
-           이 환경에서만 현재 터치 안에서 폰 기본 카메라를 바로 연다. */
+        /* 폰 기본 카메라(input capture)는 촬영할 때마다 휴대폰의
+           '다시 시도/확인' 화면을 강제로 띄운다. 연속촬영을 끊지 않도록
+           웹 카메라를 쓸 수 없는 기기에서만 최후 수단으로 사용한다. */
         if(needsDirectNativeCamera()){
           var input = $('portalCamInput');
           if(input) input.click();
@@ -1071,10 +1102,8 @@ body.portal-mode #camFab{display:flex;}
   }
 
   function needsDirectNativeCamera(){
-    var ua = navigator.userAgent || '';
-    var embedded = /KAKAOTALK|NAVER|DaumApps|FBAN|FBAV|Instagram|Line\//i.test(ua);
     var noWebCamera = !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-    return embedded || noWebCamera;
+    return noWebCamera;
   }
 
   /* 촬영 파일은 페이지가 바뀌면 사라지므로 사진첩의 안전 대기열로 옮길 때까지만
@@ -1540,6 +1569,8 @@ body.portal-mode #camFab{display:flex;}
   // ── 유휴 자동 로그아웃 (ERP와 동일한 공유 타이머 'pu_last_active', 60분) ──
   (function(){
     var LIMIT = 60*60*1000, AKEY = 'pu_last_active';
+    function persistentAutoLogin(){ try{ return localStorage.getItem('pu_portal_auto') === '1'; }catch(e){ return false; } }
+    function shouldPauseIdle(){ return persistentAutoLogin() && document.hidden; }
   /* 포털 공용 설정의 자동 로그아웃 시간 반영 — 10~480분만 인정, 그 밖이면 기본값 유지 */
   function _applyIdleCfg(c){
     var m = c && parseInt(c.idleMinutes, 10);
@@ -1551,11 +1582,17 @@ body.portal-mode #camFab{display:flex;}
     // (ERP와 공유하는 대용량 localStorage에서) 메인스레드가 멈춘다. 10초에 한 번만 기록(유휴 판정은 60분 단위라 충분).
     var _lastMark = 0;
     function mark(){ var now = Date.now(); if(now - _lastMark < 10000) return; _lastMark = now; try{ localStorage.setItem(AKEY, String(now)); }catch(e){} }
+    function resumeAutoSession(){ if(persistentAutoLogin()) mark(); }
     ['mousemove','mousedown','keydown','touchstart','scroll','click'].forEach(function(ev){
       window.addEventListener(ev, mark, { passive:true, capture:true });
     });
+    window.addEventListener('pageshow', resumeAutoSession, {passive:true});
+    window.addEventListener('focus', resumeAutoSession, {passive:true});
+    document.addEventListener('visibilitychange', function(){ if(!document.hidden) resumeAutoSession(); }, {passive:true});
+    resumeAutoSession();
     setInterval(function(){
       if(!auth.currentUser) return;
+      if(shouldPauseIdle()) return;
       var last = 0;
       try{ last = parseInt(localStorage.getItem(AKEY)||'0', 10); }catch(e){}
       if(!last){ mark(); return; }
@@ -1569,7 +1606,7 @@ body.portal-mode #camFab{display:flex;}
   //  ※ 기존 건의의 key(erp·consult·cards·portal·etc)는 그대로 유지해야 지난 건의 분류가 안 깨진다.
   var SG_CATS = [
     { key:'erp',      name:'푸른이알피',    g:'app' },
-    { key:'consult',  name:'컨설팅 일정',   g:'app' },
+    { key:'consult',  name:'정부사업일정',  g:'app' },
     { key:'work',     name:'업무관리',      g:'app' },
     { key:'fund',     name:'기금관리',      g:'app' },
     { key:'rules',    name:'취업규칙',      g:'app' },

@@ -16,7 +16,9 @@ test('일반 모바일 포털 카메라는 사진첩 목록 없이 연속촬영 
   assert.match(portal, /id="portalCamInput"[^>]+capture="environment"/);
   assert.match(flow, /needsDirectNativeCamera\(\)/);
   assert.match(flow, /input\.click\(\)/);
-  assert.match(portal, /KAKAOTALK/);
+  const native = portal.match(/function needsDirectNativeCamera\(\)\{[\s\S]*?\n  \}/)[0];
+  assert.doesNotMatch(native, /KAKAOTALK|embedded/);
+  assert.match(native, /noWebCamera/);
 });
 
 test('앱 내부 브라우저 촬영 파일은 임시 보관 후 안전 대기열로 옮긴다', () => {
@@ -43,6 +45,17 @@ test('카메라를 닫지 않고 계속 찍으며 왼쪽 아래에 최근 사진
   assert.match(photos, /\.camSpacer img\{width:46px;height:46px/);
   assert.match(photos, /last\.src = camShots\[n - 1\]\.url/);
   assert.match(photos, /id="camCount"/);
+});
+
+test('카카오톡 포털도 기본 카메라 확인 화면 없이 연속촬영 화면으로 이동한다', () => {
+  const start = portal.indexOf('function wireCamFab()');
+  const end = portal.indexOf('function renderPortal', start);
+  const flow = portal.slice(start, end);
+  const native = portal.match(/function needsDirectNativeCamera\(\)\{[\s\S]*?\n  \}/)[0];
+  assert.match(flow, /pu-photos\.html\?cam=1&quick=1&from=portal/);
+  assert.doesNotMatch(native, /KAKAOTALK|embedded/);
+  assert.match(native, /noWebCamera/);
+  assert.match(photos, /if \(blurry && !camQuickMode\)/);
 });
 
 test('저장이 끝난 뒤에만 포털 선택 화면으로 돌아간다', () => {
