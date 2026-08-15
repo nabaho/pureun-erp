@@ -364,9 +364,12 @@ test('탭을 옮기면 고른 것을 비운다', () => {
 
 test('명함·서류·회의사진 세 가지를 가린다', () => {
   assert.match(app, /meeting: '회의·현장 사진'/);
-  // 회의사진은 명함첩에 넣을 것이 없으니 '확인 필요'로 잡지 않는다
+  /* 회의사진은 명함첩에 넣을 것이 없으니 '확인 필요'로 잡지 않는다.
+     ⚠ 2026-08-15 다시 겨눔 — 판정을 KEEP_ONLY 한 곳으로 모았다(갈래마다 따로
+     적다가 계약서가 빠져 영영 안 없어지는 ⚠ 가 생겼다). */
   const fn = app.match(/function needsCheck\([\s\S]*?\n\}/);
-  assert.match(fn[0], /kind === 'meeting'\) return false/);
+  assert.match(fn[0], /KEEP_ONLY\[r\.kind\]\) return false/);
+  assert.match(app, /const KEEP_ONLY = \{[^}]*meeting: 1/);
 });
 
 /* ── 다른 앱으로 끌어다 놓기 ── */
