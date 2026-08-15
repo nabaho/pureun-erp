@@ -102,10 +102,13 @@ test('경로가 연도로 갈라진다', () => {
 
 /* ── 저장 방식 선택 ── */
 
-test('저장 방식 기본값은 검증된 실시간DB다', () => {
+test('저장 방식 기본값은 창고다 — 2026-08-15 새 창고 점검 통과 뒤 확정', () => {
   const S = loadStore();
-  // 창고 점검을 통과하기 전에는 한 번도 안 써본 길로 가지 않는다.
-  assert.equal(S.getMode(), 'rtdb');
+  // 창고 점검(probe)을 통과하고 대표 승인을 받은 뒤에야 이 기본값을 바꿨다.
+  // 다시 되돌릴 일이 있으면(장애 등) js/pu-photo-store.js 의 var mode 한 줄만
+  // 'rtdb' 로 되돌리면 된다 — 이미 옮겨진 사진은 loc:'storage' 표시 덕에
+  // 계속 보인다(loadFull/loadThumb 이 창고를 먼저 본다).
+  assert.equal(S.getMode(), 'storage');
 });
 
 test('저장 방식을 바꿀 수 있다', () => {
