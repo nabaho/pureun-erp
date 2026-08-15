@@ -2048,6 +2048,7 @@ async function openCam() {
   /* 인증 콜백·빠른 두 번 터치가 겹쳐 카메라 스트림을 두 벌 열지 않게 한다. */
   if (camOpening) return false;
   if (camStream && camTrack && camTrack.readyState === 'live') {
+    if (!camPushed) camHistPush();   // 폰 뒤로 가기로 닫히게
     $('camOv').style.display = 'flex';
     return true;
   }
@@ -2075,6 +2076,7 @@ async function openCam() {
   renderCamStrip();
   applyFrameUI();
   $('camTip').textContent = '카메라를 준비하는 중…';
+  if (!camPushed) camHistPush();   // 폰 뒤로 가기로 닫히게
   $('camOv').style.display = 'flex';
   try {
     openingStream = await navigator.mediaDevices.getUserMedia({
@@ -2185,6 +2187,7 @@ async function openCam() {
     camCardStage = 'front'; camPairWith = -1;
     setCamAsk(false);
     renderCamStrip();
+    if (!camPushed) camHistPush();   // 폰 뒤로 가기로 닫히게
     $('camOv').style.display = 'flex';
     if (camCaptureMode === 'document') startFrameWatch();
     camOpening = false;
@@ -2512,9 +2515,14 @@ function camStop() {
 /* ✕ — 찍어 둔 게 있으면 말없이 버리지 않는다 */
 function closeCam() {
   stopAutoWatch();   // 카메라가 꺼졌는데 계속 재면 배터리만 먹는다
-  if (camShots.length && !confirm('찍어 둔 ' + camShots.length + '장을 올리지 않고 버립니다.\n계속할까요?')) return;
-  camDiscard();
+  if (camShots.length && !confirm('찍어 둔 ' + camShots.length + '장을 올리지 않고 버립니다.\n계속할까요?')) return false;
+  camDiscard();      // 여기서 영상이 먼저 꺼진다 — 화면을 넘기기 전에 꺼야 깨진 화면이 안 스친다
+  /* ✕ 로 닫을 때는 열면서 쌓아 둔 역사 칸을 우리가 빼 준다.
+     안 빼면 다음 뒤로 가기가 헛칸을 밟아 아무 일도 안 일어난다.
+     (popstate 로 닫힐 때는 이미 빠졌으므로 camPushed 가 false 다) */
+  if (camPushed) { camPushed = false; try { history.back(); } catch (_) {} return true; }
   if (camReturnTo) camGoBack();
+  return true;
 }
 function camDiscard() {
   stopAutoWatch();
@@ -6656,6 +6664,31 @@ window.addEventListener('popstate', function () {
   if (!viewerId) return;            // 크게 보기가 안 열려 있으면 우리 일이 아니다
   viewerPushed = false;             // 역사 칸은 이미 빠졌다 — closeViewer 가 또 빼면 안 된다
   closeViewer();
+});
+
+/* ── 카메라도 폰 뒤로 가기로 닫는다 (대표 보고 2026-08-15: "뒤로 가기 누르면 화면이 깨진 듯 스친다") ──
+   지금까지 카메라에는 이 처리가 없었다. 그래서 뒤로 가기가 카메라를 닫는 게 아니라
+   **페이지를 통째로** 빠져나갔고, 그 순간 카메라 영상이 아직 살아 있는 채로 화면이
+   넘어가면서 깨진 듯한 화면이 한순간 스쳤다.
+   「크게 보기」와 같은 방식이다 — 열 때 역사에 한 칸 쌓고, popstate 에서 닫는다.
+   ⚠ 찍어 둔 장이 있으면 closeCam 이 물어보는데, 거기서 [취소]를 누르면 카메라는 그대로
+     열려 있어야 한다. 역사 칸은 이미 빠졌으므로 다시 쌓아 줘야 다음 뒤로 가기가 또 먹힌다. */
+let camPushed = false;
+function camHistPush() {
+  try { history.pushState({ puCam: 1 }, ''); camPushed = true; }
+  catch (_) { camPushed = false; }
+}
+window.addEventListener('popstate', function () {
+  if (!$('camOv') || $('camOv').style.display !== 'flex') return;   // 카메라가 안 열렸으면 우리 일이 아니다
+  camPushed = false;                       // 칸은 이미 빠졌다
+  if (closeCam() === false) camHistPush();  // 사용자가 [취소] → 칸을 다시 쌓아 둔다
+});
+
+/* 그래도 페이지를 떠나게 되는 경우(주소 이동·앱 전환)를 위한 안전판.
+   검은 덮개와 영상을 먼저 걷어야 넘어가는 순간이 깔끔하다. */
+window.addEventListener('pagehide', function () {
+  try { camStop(); } catch (_) {}
+  try { if ($('camOv')) $('camOv').style.display = 'none'; } catch (_) {}
 });
 
 function openViewer(id) {

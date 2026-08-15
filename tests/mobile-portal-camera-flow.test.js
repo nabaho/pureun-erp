@@ -113,3 +113,27 @@ test('저장이 끝난 뒤 포털로 돌아간다', () => {
   const upload = photos.match(/async function camUpload\(\) \{[\s\S]*?\n\}/)[0];
   assert.match(upload, /if \(camReturnTo\) \{ camDiscard\(\); camGoBack\(\); \}/);
 });
+
+/* 대표 보고 2026-08-15: "카메라에서 뒤로 가기를 잠깐 누르면 깨진 듯한 화면이 아주 짧게 스친다"
+   원인 — 카메라에는 뒤로 가기 처리가 아예 없었다(「크게 보기」에는 있었다).
+   그래서 뒤로 가기가 카메라를 닫는 게 아니라 **페이지를 통째로** 빠져나갔고,
+   그 순간 카메라 영상이 아직 살아 있는 채로 화면이 넘어가면서 한순간 깨져 보였다. */
+test('카메라는 폰 뒤로 가기로 닫힌다 — 페이지를 빠져나가지 않는다', () => {
+  assert.match(photos, /function camHistPush\(\)/);
+  assert.match(photos, /history\.pushState\(\{ puCam: 1 \}/);
+  // 카메라를 여는 자리마다 역사 칸을 쌓아야 뒤로 가기가 먹힌다
+  const pushes = photos.match(/if \(!camPushed\) camHistPush\(\);/g) || [];
+  assert.ok(pushes.length >= 3, '카메라를 여는 모든 자리에서 쌓아야 합니다 (지금 ' + pushes.length + '곳)');
+  // popstate 에서 닫고, 사용자가 [취소]하면 칸을 다시 쌓는다
+  assert.match(photos, /if \(closeCam\(\) === false\) camHistPush\(\)/);
+});
+
+test('페이지를 떠날 때 카메라 영상을 먼저 끈다', () => {
+  // 스트림이 살아 있는 채로 화면이 넘어가면 깨진 화면이 스친다
+  assert.match(photos, /addEventListener\('pagehide', function \(\) \{[\s\S]{0,220}camStop\(\)/);
+});
+
+test('찍어 둔 장이 있을 때 [취소]하면 카메라가 닫히지 않는다', () => {
+  // closeCam 이 false 를 돌려줘야 popstate 쪽에서 역사 칸을 다시 쌓아 준다
+  assert.match(photos, /if \(camShots\.length && !confirm\([^)]*\)\) return false;/);
+});
