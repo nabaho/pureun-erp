@@ -1,0 +1,83 @@
+# 실시간DB 규칙 — 지금은 저장소에서 배포하지 않습니다
+
+## 한 줄 요약
+
+**`firebase deploy` 로 규칙을 올리지 마세요.** 진짜 규칙은 Firebase 콘솔에만 있고,
+저장소의 규칙 파일들은 그보다 낡았습니다. 그대로 올리면 살아 있는 규칙이 지워집니다.
+
+## 무슨 일이 있었나
+
+`firebase.json` 에 이렇게 적혀 있었습니다.
+
+```json
+"database": { "rules": "docs/firebase-rules-3순위-포털권한.json" }
+```
+
+이 상태로 `firebase deploy --only database` 를 실행하면 그 파일 하나가 콘솔의 규칙을
+**통째로 덮어씁니다.** 그런데 그 파일에는 실제로 쓰이고 있는 노드가 빠져 있었습니다.
+
+| 노드 | 쓰는 곳 | 배포 대상 파일에 |
+|---|---|---|
+| `puphotos` | `pu-photos.html` (푸른사진첩) | 없었음 → 지금은 합쳐 넣음 |
+| `pucards_private` | `pu-cards.html` (명함첩 개인 창고) | 없었음 → 지금은 합쳐 넣음 |
+| `paydata` | `js/pu-paydata-store.js` (급여데이터함) | **아직 없음** |
+
+Firebase 규칙은 없으면 **거부**입니다. 그대로 배포했다면 해당 앱들이 통째로 먹통이
+됐을 것입니다.
+
+`paydata` 는 저장소의 어느 규칙 파일에도 없습니다. 그 앱의 저장소 코드에도 근거가
+남아 있습니다 — `js/pu-paydata-store.js` 의 「휴가 대리」 주석:
+
+> 콘솔 규칙이 이 칸의 쓰기를 **주인만**으로 막아 둔다(대리인이 자기 기간을 늘리지 못하게).
+
+즉 **콘솔이 원본이고 저장소 파일은 사본**입니다. 사본이 원본을 덮어쓰면 안 됩니다.
+
+## 그래서 무엇을 했나
+
+`firebase.json` 에서 `database` 항목을 **뺐습니다.** 이제 `firebase deploy` 는
+함수만 올리고 규칙은 건드리지 않습니다. 실수로 규칙이 날아갈 일이 없습니다.
+
+## 규칙을 다시 저장소에서 관리하려면 (권장)
+
+순서를 지켜야 합니다. **먼저 내려받고, 그다음에 올립니다.**
+
+1. Firebase 콘솔 → Realtime Database → **규칙** 탭
+2. 화면의 규칙 전체를 복사해서 `docs/firebase-rules-현재적용본.json` 에 **덮어쓰기**
+   (이게 원본을 사본으로 가져오는 단계입니다)
+3. 그 파일에 `paydata` · `puphotos` · `pucards_private` · `fcm_tokens` 가 모두
+   들어 있는지 눈으로 확인
+4. `firebase.json` 에 아래를 다시 넣습니다
+
+   ```json
+   "database": { "rules": "docs/firebase-rules-현재적용본.json" }
+   ```
+
+5. 그다음부터는 규칙을 **파일에서만** 고치고 `firebase deploy --only database` 로
+   올립니다. 콘솔에서 직접 고치면 다시 어긋납니다.
+
+## 지금 당장 규칙 하나만 넣어야 할 때 (웹푸시)
+
+새 건의 폰 알림이 동작하려면 `fcm_tokens` 규칙이 필요합니다. 위 정리를 하기 전이라면
+**콘솔에서 직접** 아래 블록을 기존 규칙 안에 붙여 넣으세요.
+
+```json
+"fcm_tokens": {
+  "$uid": {
+    ".read": "auth != null && auth.uid == $uid",
+    ".write": "auth != null && auth.token.firebase.sign_in_provider === 'password' && auth.uid == $uid",
+    "$token": {
+      ".validate": "newData.hasChild('at')",
+      "at":   { ".validate": "newData.isNumber()" },
+      "name": { ".validate": "newData.isString() && newData.val().length <= 60" },
+      "ua":   { ".validate": "newData.isString() && newData.val().length <= 200" },
+      "$other": { ".validate": false }
+    }
+  }
+}
+```
+
+## 규칙 파일이 여러 개인 것도 정리 대상입니다
+
+`docs/` 안에 규칙 파일이 6개 있습니다. 어느 것이 진짜인지 이름만으로는 알 수 없고,
+이번 사고의 원인이기도 합니다. 위 4번까지 끝내면 **`현재적용본.json` 하나만 남기고**
+나머지는 `docs/archive/` 로 옮기시길 권합니다.

@@ -139,7 +139,7 @@
   async function extractPdfText(arrayBuffer, pdfjs) {
     const lib = pdfjs || global.pdfjsLib;
     if (!lib) throw new Error("pdf.js 라이브러리가 필요합니다.");
-    const doc = await lib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+    const doc = await lib.getDocument({ isEvalSupported: false,  data: new Uint8Array(arrayBuffer) }).promise;
     const pages = [];
     for (let p = 1; p <= doc.numPages; p++) {
       const page = await doc.getPage(p);
