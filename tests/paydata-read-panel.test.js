@@ -318,6 +318,21 @@ test('★ 저장하면 값에 출처가 붙어 들어간다', async () => {
   assert.match(calls.alerts[0], /저장/);
 });
 
+/* 「저장」을 누른 것이 곧 사람의 확인이다 — 원본을 옆에 놓고 줄을 고친 뒤 스스로
+   누른 것이므로. 이것이 없으면 값 표의 노란 칸과 「⚠ 확인 안 된 값이 N개」가
+   영영 안 걷힌다(설계서 3장 ②). */
+test('★ 저장한 값은 확인된 값으로 들어간다 — 노란 표시가 걷힌다', async () => {
+  const { W } = loadSave({});
+  W.saveVals();
+  await new Promise(r => setTimeout(r, 10));
+  const up = W.__got();
+  const key = Object.keys(up)[0];
+  assert.equal(up[key].confirmed, true,
+    '사람이 확인하고 저장했는데 「확인 안 됨」으로 남습니다 — 값 표가 계속 노랗습니다');
+  const g = W.valueGridModel(afterSave({}, up));
+  assert.equal(g.people[0].cells['유급일수'].confirmed, true, '값 표에서도 확인된 값이어야 합니다');
+});
+
 test('★ 같은 서류를 다시 읽으면 묻는다', async () => {
   const { W, calls } = loadSave(
     { r1: { companyId: 'co_1', month: '202608', name: '배영승', sourceId: 'a1' } }, false);

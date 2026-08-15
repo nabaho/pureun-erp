@@ -637,7 +637,14 @@
         pairs: ((p && p.pairs) || []).map(function (pr) {
           return { item: String((pr && pr.item) || ''), value: String((pr && pr.value) || '') };
         }),
-        confirmed: false,
+        /* 사람이 확인했는가 — **부르는 쪽이 정한다.** 화면에서 「저장」을 누른 것이
+           곧 사람의 확인이다(원본을 옆에 놓고 줄을 고친 뒤 스스로 누른 것이므로).
+           예전에는 여기서 false 로 못 박아, 확인이 끝난 줄까지 값 표에서 영영
+           노랗게 떴다 — 설계서 3장 ②가 막으라고 한 바로 그 상태다(한 달만 지나면
+           노랑을 「원래 그런 것」으로 읽어, 정말 확인 안 된 값이 그대로 더존에 들어간다).
+           기계가 만들기만 하고 사람이 받아들이지 않은 값은 이 칸을 안 주면 된다 —
+           그때는 그대로 false 로 남아 노랗게 뜬다. */
+        confirmed: !!tag.confirmed,
         by: deps.uid || '',
         at: at
       };
@@ -721,13 +728,11 @@
     return deps.db.ref(valueBoxPath(slot, owner)).once('value').then(function (s) { return s.val() || {}; });
   }
 
-  /* 값 한 줄을 확인 처리한다 — 기계가 못 읽어 사람이 채운 것을 표시해 둔다. */
-  function confirmValue(slot, rowId, owner) {
-    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
-    var up = {};
-    up[valuePath(slot, rowId, owner) + '/confirmed'] = true;
-    return deps.db.ref().update(up);
-  }
+  /* ⚠ confirmValue(값 한 줄만 확인 처리) 는 **일부러 두지 않는다**(2026-08-15).
+     만들어 두었지만 부르는 곳이 한 군데도 없었다 — 있는 것처럼 보이는 함수가
+     저장 층에 남아 있으면, 다음 사람이 「확인 처리는 이미 된다」고 믿고 넘어간다.
+     사람의 확인은 화면의 「저장」 하나로 들어온다(buildValueRows 의 tag.confirmed).
+     줄 하나만 따로 확인 처리할 화면이 생기면 그때 다시 만든다. */
 
   /* ══════ 업체관리 명단 ══════
      사업장 서랍의 기준은 푸른이알피 업체관리다(대표 결정 2026-08-13).
@@ -1106,7 +1111,6 @@
     findValueOverlaps: findValueOverlaps,
     saveValues: saveValues,
     listValues: listValues,
-    confirmValue: confirmValue,
     ERP_COMPANIES: ERP_COMPANIES,
     normalizeCompanies: normalizeCompanies,
     listCompanies: listCompanies,

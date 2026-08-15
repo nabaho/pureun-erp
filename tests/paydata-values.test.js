@@ -178,13 +178,31 @@ test('값 목록을 읽는다', () => {
   return S.listValues('202608').then(v => assert.equal(Object.keys(v).length, 1));
 });
 
-test('★ 값 한 줄을 확인 처리한다', () => {
+/* ══════ 확인 표시는 부르는 쪽이 정한다 (2026-08-15) ══════
+   예전에는 buildValueRows 가 confirmed 를 false 로 못 박았다. 그러면 사람이
+   원본과 견주어 고치고 저장한 값까지 값 표에서 영영 노랗게 뜬다 — 설계서 3장 ②가
+   막으라고 한 상태다. 한 달만 지나면 노랑을 「원래 그런 것」으로 읽게 되고,
+   그때 정말 확인 안 된 값이 그대로 바깥 급여프로그램에 들어간다. */
+
+test('★ 사람이 확인해 저장한 값은 확인 표시가 붙는다', () => {
   const S = loadStore();
-  let written = null;
-  S.init({ db: { ref: () => ({ update: (u) => { written = u; return Promise.resolve(); } }) } });
-  return S.confirmValue('202608', 'r1').then(() => {
-    assert.equal(written[S.valuePath('202608', 'r1') + '/confirmed'], true);
-  });
+  const rows = S.buildValueRows(PARSED,
+    { sourceId: 'a1', companyId: 'co_1', month: '2026-08', at: 1, confirmed: true });
+  rows.forEach(r => assert.equal(r.confirmed, true,
+    '저장을 누른 것이 곧 사람의 확인입니다 — 안 붙이면 노란 표시가 영영 안 걷힙니다'));
+});
+
+test('★ 사람이 받아들이지 않은 값은 여전히 확인 안 됨으로 남는다', () => {
+  const S = loadStore();
+  const rows = S.buildValueRows(PARSED, { sourceId: 'a1', companyId: 'co_1', month: '2026-08', at: 1 });
+  rows.forEach(r => assert.equal(r.confirmed, false,
+    '기계가 만들기만 한 값까지 확인된 것으로 두면 표시 자체가 뜻이 없어집니다'));
+});
+
+test('줄 하나만 따로 확인 처리하는 길은 두지 않는다 — 부르는 곳이 없었다', () => {
+  const S = loadStore();
+  assert.equal(S.confirmValue, undefined,
+    '아무도 안 부르는 함수가 남아 있으면 다음 사람이 「확인 처리는 이미 된다」고 믿습니다');
 });
 
 test('실시간DB가 없으면 알리고 거절한다', () => {
