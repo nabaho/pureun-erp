@@ -195,7 +195,17 @@ ok('사업장명 대조에 힌트 포함', src.includes("var mzz=strip(m+' '+Str
 // 은행이 상대방 이름을 잘라 적는다 — 잘린 쪽이 사업장명의 앞부분이면 같은 회사로 본다
 ok('전각 괄호도 지움', src.includes('（주）|（유）|주식회사|유한회사'));
 ok('잘려 적힌 회사명도 인식', src.includes('if(nm.indexOf(toks[q])===0)')
-  && src.includes(".map(strip).filter(function(t){ return t.length>=4; });"));
+  && src.includes("var toks=all.filter(function(t){ return t.length>=4; });"));
+/* 사업장명이 **더 긴 낱말의 앞부분**일 때는 그 사업장이 아니다.
+   붙여 놓은 글자열에서 찾기만 하던 때는 「에이이피렌탈 환불」이 '(주)에이이피' 로,
+   「가치평가수수료」가 '가치' 로 잡혔다 — 출연금으로 잘못 잡히면 기본재산이 부풀고
+   준비금2 한도·별지15호 ⑬⑳㉚ 가 함께 틀어진다. */
+ok('이름 뒤에 한글이 이어지면 다른 낱말로 본다', src.includes('var glued=function(nm){')
+  && src.includes('return !(nx&&/[가-힣]/.test(nx));')
+  && src.includes('if(nm.length>=4&&glued(nm))'));
+// 짧은 상호도 «토막 하나»로 오면 잡아야 한다 — 아예 못 쓰게 되면 안 된다
+ok('토막이 이름과 같으면 길이와 무관하게 잡는다', src.includes("if(all.indexOf(nm)>=0) return {d:'현금성자산',c:'기본재산'};"));
+ok('붙여 찾기를 그냥 쓰지 않는다', !src.includes("if(mzz.indexOf(nm)>=0) return {d:'현금성자산',c:'기본재산'};"));
 ok('엑셀 미국식 m/d/yy 인식', src.includes("m=t.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{2})$/);"));
 ok('빈 일자는 위 일자를 이음', src.includes("if(/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) lastDate=date; else if(!date) date=lastDate;"));
 
