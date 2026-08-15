@@ -157,3 +157,67 @@ test('render 가 기업 상세 화면이면 카드 목록으로 갈라진다', (
   assert.match(fn, /state\.view==='co'/);
   assert.match(fn, /renderCoMobileList\(\)/);
 });
+
+/* 위 테스트는 render() 소스 문자열을 정규식으로만 훑는다 — syncMobileTabs() 호출을
+   실수로 지워도 이 정규식들은 여전히 통과한다(render 는 이미 renderCoMobileList 와
+   state.view==='co' 를 다른 이유로 담고 있다). 실제로 render() 를 실행해서 탭 «켜짐»
+   표시가 그 실행의 결과로 바뀌는지까지 증명해야 render() 가 syncMobileTabs() 를
+   부른다는 사실 자체가 지켜진다. syncMobileTabs() 도 실제 소스를 그대로 잘라 함께
+   실행해, 두 함수가 이어지는 사슬 전체를 검증한다. */
+function loadRenderBlock(){
+  const syncAt = source.indexOf('function syncMobileTabs(){');
+  const syncEnd = source.indexOf('\n}', syncAt) + 2;
+  assert.ok(syncAt > 0 && syncEnd > syncAt + 2, 'syncMobileTabs 를 찾지 못했습니다');
+  const renderAt = source.indexOf('function render(){');
+  const renderEnd = source.indexOf('\n', renderAt);
+  assert.ok(renderAt > 0 && renderEnd > renderAt, 'render 를 찾지 못했습니다');
+
+  const fns = source.slice(syncAt, syncEnd) + '\n' + source.slice(renderAt, renderEnd);
+
+  const ctx = {
+    _quiet: false,
+    state: { tab:'card', view:'list' },
+    calls: { saveLastScreen:0, renderCoMobileList:0, renderSubbar:0, renderSidebar:0, renderList:0 },
+    toggled: {},
+    saveLastScreen: () => { ctx.calls.saveLastScreen++; },
+    renderCoMobileList: () => { ctx.calls.renderCoMobileList++; },
+    renderSubbar: () => { ctx.calls.renderSubbar++; },
+    renderSidebar: () => { ctx.calls.renderSidebar++; },
+    renderList: () => { ctx.calls.renderList++; },
+    $: id => {
+      if(id==='tabCard') return { classList: { toggle:(c,on)=>{ ctx.toggled.tabCard = on; } } };
+      if(id==='tabBiz')  return { classList: { toggle:(c,on)=>{ ctx.toggled.tabBiz = on; } } };
+      if(id==='tabCo')   return { classList: { toggle:(c,on)=>{ ctx.toggled.tabCo = on; } } };
+      return null;
+    }
+  };
+  vm.createContext(ctx);
+  vm.runInContext(fns, ctx);
+  return ctx;
+}
+
+test('★ render() 를 실제로 실행하면 syncMobileTabs() 가 불려 tabCo 켜짐이 바뀐다 (기업 상세 화면)', () => {
+  const c = loadRenderBlock();
+  c.state.view = 'co'; c.state.tab = 'biz';
+  c.render();
+  assert.equal(c.toggled.tabCo, true, 'render() 실행 결과로 tabCo 가 켜져야 한다');
+  assert.equal(c.toggled.tabCard, false);
+  assert.equal(c.toggled.tabBiz, false);
+  assert.equal(c.calls.renderCoMobileList, 1);
+  assert.equal(c.calls.renderSubbar, 0, '기업 상세 화면이면 renderSubbar 전에 돌아가야 한다');
+  assert.equal(c.calls.renderSidebar, 0);
+  assert.equal(c.calls.renderList, 0);
+});
+
+test('★ render() 를 실제로 실행하면 syncMobileTabs() 가 불려 tabCard 켜짐이 바뀐다 (명함 목록 화면)', () => {
+  const c = loadRenderBlock();
+  c.state.view = 'list'; c.state.tab = 'card';
+  c.render();
+  assert.equal(c.toggled.tabCard, true, 'render() 실행 결과로 tabCard 가 켜져야 한다');
+  assert.equal(c.toggled.tabBiz, false);
+  assert.equal(c.toggled.tabCo, false, 'render() 실행 결과로 tabCo 는 꺼져야 한다');
+  assert.equal(c.calls.renderCoMobileList, 0);
+  assert.equal(c.calls.renderSubbar, 1);
+  assert.equal(c.calls.renderSidebar, 1);
+  assert.equal(c.calls.renderList, 1);
+});
