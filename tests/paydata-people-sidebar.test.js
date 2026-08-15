@@ -48,7 +48,7 @@ function loadApp(appState, opts) {
     }, appState)) + ';',
     'App.render = function(){};',
     'App.go = function(screen, o){ Object.assign(App, o||{}); App.screen = screen; };',
-    cut('esc'), cut('thisMonth'), cut('companyDocCount'), cut('personDashboardModel'),
+    cut('esc'), cut('jsq'), cut('thisMonth'), cut('companyDocCount'), cut('personDashboardModel'),
     cut('peopleBarHtml'), cut('toggleSidePerson'),
     cut('resetOwnerCaches'), cut('enterSeatAt'),
     cut('sideOpenCompany'), cut('closeSideReason'), cut('submitSideReason'), cut('sideReasonHtml'),

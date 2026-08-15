@@ -270,6 +270,15 @@ function esc(s) {
     c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+/* on… 속성 안의 '…' 안에 값을 넣을 때는 esc() 만으로 모자란다.
+   브라우저는 속성을 읽을 때 &#39; 를 다시 ' 로 되돌리고 **그 뒤에** 자바스크립트로
+   읽는다. 그래서 업체 이름에 작은따옴표가 하나만 들어가도 그 자리에서 문자열이
+   끊겨 그 줄이 아예 안 눌린다(눌러도 아무 반응이 없어 원인을 못 찾는다).
+   여기서 먼저 \ 로 막아 두면 되돌아온 ' 가 문자열을 끊지 않는다. */
+function jsq(s) {
+  return esc(String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
+}
+
 let db = null, store = null;
 const S = window.PuPaydataStore;
 
@@ -369,6 +378,10 @@ const App = {
   viewingUid: '', viewingName: '', viewingDeputy: false,
   staffOpen: false, staffQuery: '', staffList: [], reasonPrompt: null,
   deputies: {},
+  /* 대기 칸에서 **사람이 직접 고친** 이름표만 담는다(pendTagOf 머리말).
+     짐작값은 여기 안 들어온다 — 안 그러면 파일 이름을 못 알아본 것과
+     사람이 일부러 비운 것을 가릴 수 없다. */
+  pendTag: {},
 
   /* ── 좌측 사람별 대시보드(대표 지시 2026-08-14) ──
      owners·shares·myOrder 는 로그인 뒤 loadSites()가 채운다. sideOpen 은 펼친
@@ -402,6 +415,7 @@ const App = {
 
   render() {
     const m = $('main');
+    const keep = focusSnapshot();
     const banner = bannerHtml();
     if (App.screen === 'sites') { m.innerHTML = banner + screenSites(); }
     else if (App.screen === 'pending') { m.innerHTML = banner + screenPending(); }
@@ -414,8 +428,37 @@ const App = {
     const pb = $('peoplebar');
     if (pb) pb.innerHTML = peopleBarHtml();
     renderViewer();
+    restoreFocus(keep);
   }
 };
+
+/* ── 다시 그려도 치던 자리를 잃지 않게 ──
+   이 화면은 무엇이 바뀌면 화면을 통째로 다시 그린다(innerHTML). 그러면 지금
+   글자를 치고 있던 칸이 **새로 만들어져** 커서가 빠진다 — 찾기 줄에 한 글자를
+   치면 두 글자째가 아무 데도 안 들어갔다(파일 이름 찾기·왼쪽 사람 찾기·담당자
+   고르기·공유할 사람 찾기 네 곳 모두).
+   그래서 다시 그리기 **전에** 어느 칸에 커서가 어디까지 가 있었는지 적어 두고,
+   다 그린 **뒤에** 같은 칸이 다시 있으면 그 자리로 돌려놓는다.
+   ⚠ 칸에 id 가 있어야 되찾을 수 있다 — 찾기 줄들에 id 를 붙여 둔 까닭이다.
+   ⚠ 이미 그 칸에 커서가 있으면 손대지 않는다 — 괜히 건드리면 폰에서 자판이
+     다시 올라오거나 고르고 있던 글자가 풀린다. */
+function focusSnapshot() {
+  const el = document.activeElement;
+  if (!el || !el.id) return null;
+  if (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') return null;
+  let start = null, end = null;
+  try { start = el.selectionStart; end = el.selectionEnd; } catch (_) { /* 날짜 칸 등은 못 읽는다 */ }
+  return { id: el.id, start: start, end: end };
+}
+
+function restoreFocus(snap) {
+  if (!snap) return;
+  const el = $(snap.id);
+  if (!el || el === document.activeElement) return;
+  el.focus();
+  if (snap.start == null) return;
+  try { el.setSelectionRange(snap.start, snap.end); } catch (_) { /* 커서 자리를 못 옮기는 칸도 있다 */ }
+}
 window.App = App;
 
 /* ══════ 시작 ══════ */
@@ -466,15 +509,26 @@ function afterLogin() {
   takeShared();   // 카톡·갤러리에서 공유해 들어온 자료가 있으면 대기 칸으로
 }
 
+/* ── 늦게 온 답 버리기 ──
+   자리를 옮기면(남의 자리 보기 → 내 자리로) 캐시는 그 자리에서 비우지만, 이미
+   보낸 읽기 요청은 **취소되지 않는다.** 그 답이 뒤늦게 도착해 화면에 그려지면
+   「내 자리」라고 적힌 화면에 남의 서류가 뜬다 — 화면만 보고는 알 길이 없다.
+   그래서 부르기 전에 지금 자리를 적어 두고, 답이 왔을 때 자리가 달라졌으면 버린다
+   (값 층 ensureValues 가 사업장으로 하는 것과 같은 방식). */
+function seatNow() { return App.viewingUid; }
+function seatSame(seat) { return App.viewingUid === seat; }
+
 /* 첫 화면 자료를 읽어 온다. 한쪽이 실패해도 화면은 뜬다 —
    빈 화면에 「권한 거부」만 남으면 무엇을 해야 할지 알 수 없다. */
 function loadSites() {
+  const seat = seatNow();
   Promise.all([
     S.listCompanies().catch(e => { console.warn('[업체관리]', e && e.code); return []; }),
-    S.listMyPending(App.viewingUid).catch(e => { console.warn('[대기 칸]', e && e.code); return {}; }),
+    S.listMyPending(seat).catch(e => { console.warn('[대기 칸]', e && e.code); return {}; }),
     S.listArrivals().catch(e => { console.warn('[도착 칸]', e && e.code); return {}; }),
     S.listOwners().catch(e => { console.warn('[담당자 명단]', e && e.code); return {}; })
   ]).then(([companies, pending, arrivals, owners]) => {
+    if (!seatSame(seat)) return;   // 그 사이 자리를 옮겼다 — 이 답은 버린다
     App.companies = companies;
     App.pending = pending;
     App.arrivals = arrivals;
@@ -483,6 +537,20 @@ function loadSites() {
     App.myOrder = (owners[myUid] && owners[myUid].order) || [];
     App.render();
   });
+  refreshShares();
+}
+
+/* 도착 칸만 다시 읽는다 — 업체·귀속월·종류·장수만 담긴 얇은 칸이라 가볍다.
+   서랍에 넣거나 휴지통에 버리거나 되살린 **뒤에** 부른다. 안 부르면 방금 넣은
+   자료가 사업장 목록에서는 「미도착 0장」으로 남아, 사람이 안 들어간 줄 안다.
+   도착 칸은 자리와 상관없이 전 직원이 함께 보는 칸이라 자리 검사가 필요 없다. */
+function refreshArrivals() {
+  return S.listArrivals().then(a => { App.arrivals = a; App.render(); })
+    .catch(e => console.warn('[도착 칸]', e && e.code));
+}
+window.refreshArrivals = refreshArrivals;
+
+function refreshShares() {
   // 공유받음은 나(로그인 계정)에게 온 것만 있으면 된다 — 자리(viewingUid)와 무관하다.
   const myUid = (App.me && App.me.uid) || '';
   if (myUid) {
@@ -600,8 +668,8 @@ function screenSites() {
   h += '<h1 style="font-size:15px">내 담당 업체'
     + ' <span class="sub" style="margin:0;font-weight:400">' + mine.length + '곳</span></h1>';
   h += '<div class="card" style="margin-bottom:16px">' + (mine.length
-    ? mine.map(r => '<div class="row" style="cursor:pointer" onclick="App.go(\'drawer\',{companyId:\'' + esc(r.id)
-      + '\',companyName:\'' + esc(r.name) + '\',kind:\'attend\',query:\'\'})">'
+    ? mine.map(r => '<div class="row" style="cursor:pointer" onclick="App.go(\'drawer\',{companyId:\'' + jsq(r.id)
+      + '\',companyName:\'' + jsq(r.name) + '\',kind:\'attend\',query:\'\'})">'
       + '<b style="flex:1">' + esc(r.name) + '</b>'
       + '<span class="chip" style="background:' + (r.arrived ? 'var(--ok)' : 'var(--warn)') + '">'
       + (r.arrived ? '도착' : '미도착') + '</span>'
@@ -633,10 +701,10 @@ function screenSites() {
     h += m.rows.map((r, i) =>
       '<div class="row' + (pickOn(siteSel, r.id) ? ' pkon' : '') + '">'
       + '<label onclick="event.stopPropagation()"><input type="checkbox" '
-      + (pickOn(siteSel, r.id) ? 'checked' : '') + ' onchange="pickHit(\'sites\',\'' + esc(r.id) + '\')"></label>'
+      + (pickOn(siteSel, r.id) ? 'checked' : '') + ' onchange="pickHit(\'sites\',\'' + jsq(r.id) + '\')"></label>'
       + '<span class="pkno">' + (i + 1) + '</span>'
-      + '<b style="flex:1;cursor:pointer" onclick="App.go(\'drawer\',{companyId:\'' + esc(r.id)
-      + '\',companyName:\'' + esc(r.name) + '\',kind:\'attend\',query:\'\'})">' + esc(r.name) + '</b>'
+      + '<b style="flex:1;cursor:pointer" onclick="App.go(\'drawer\',{companyId:\'' + jsq(r.id)
+      + '\',companyName:\'' + jsq(r.name) + '\',kind:\'attend\',query:\'\'})">' + esc(r.name) + '</b>'
       + '<span class="chip" style="background:' + (r.arrived ? 'var(--ok)' : 'var(--warn)') + '">'
       + (r.arrived ? '도착' : '미도착') + '</span>'
       + '<span class="sub" style="margin:0">' + r.count + '장</span></div>').join('');
@@ -690,6 +758,24 @@ function guessTag(rec, companies) {
   return { companyId: hit ? hit.id : '', companyName: hit ? hit.name : '', month: month, kind: kind };
 }
 
+/* ── 사람이 고른 이름표는 화면을 다시 그려도 남는다 ──
+   대기 칸의 사업장·귀속월·종류는 화면을 그릴 때마다 파일 이름에서 **다시 짐작**해
+   채웠다. 그래서 사업장을 손으로 골라 놓고 ☐ 를 누르거나 파일을 하나 더 올리면
+   (둘 다 화면을 다시 그린다) 방금 고른 것이 처음 짐작값으로 되돌아갔다.
+   여러 건을 정리할 때 반드시 겪는 일이라, 사람이 고친 것만 따로 적어 두고
+   짐작값 위에 덮어 쓴다. 안 고친 칸은 그대로 짐작값이다. */
+function pendTagOf(id, rec) {
+  return Object.assign(guessTag(rec, App.companies), App.pendTag[id] || {});
+}
+
+function setPendTag(id, key, value) {
+  App.pendTag[id] = Object.assign({}, App.pendTag[id]);
+  App.pendTag[id][key] = value;
+  /* 여기서 다시 그리지 않는다 — 귀속월은 글자 하나마다 불리므로 그리면 낭비다.
+     화면에 이미 사람이 고른 값이 들어가 있으니 지금 보이는 것과 어긋나지 않는다. */
+}
+window.setPendTag = setPendTag;
+
 function screenPending() {
   const ids = Object.keys(App.pending || {}).sort((a, b) => ((App.pending[b].at || 0) - (App.pending[a].at || 0)));
   let h = '<div style="margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
@@ -715,7 +801,7 @@ function screenPending() {
 
   h += '<div class="card">' + pickBar('pending', ids, '') + ids.map((id, i) => {
     const rec = App.pending[id];
-    const g = guessTag(rec, App.companies);
+    const g = pendTagOf(id, rec);
     const stale = S.isStalePending(rec, now);
     const sel = pickOf('pending');
     return '<div class="row' + (pickOn(sel, id) ? ' pkon' : '') + '" style="display:block">'
@@ -727,11 +813,12 @@ function screenPending() {
       + (stale ? '<span class="expbadge">3일 넘음</span>' : '')
       + '</div>'
       + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding-left:34px">'
-      + '<select class="btn" id="co_' + id + '">' + coOpts.replace('value="' + esc(g.companyId) + '"',
-        'value="' + esc(g.companyId) + '" selected') + '</select>'
-      + '<input class="btn" id="mo_' + id + '" style="width:104px" placeholder="2026-08" value="' + esc(g.month) + '">'
-      + '<select class="btn" id="kd_' + id + '">' + kindOpts.replace('value="' + esc(g.kind) + '"',
-        'value="' + esc(g.kind) + '" selected') + '</select>'
+      + '<select class="btn" id="co_' + id + '" onchange="setPendTag(\'' + jsq(id) + '\',\'companyId\',this.value)">'
+      + coOpts.replace('value="' + esc(g.companyId) + '"', 'value="' + esc(g.companyId) + '" selected') + '</select>'
+      + '<input class="btn" id="mo_' + id + '" style="width:104px" placeholder="2026-08" value="' + esc(g.month) + '"'
+      + ' oninput="setPendTag(\'' + jsq(id) + '\',\'month\',this.value)">'
+      + '<select class="btn" id="kd_' + id + '" onchange="setPendTag(\'' + jsq(id) + '\',\'kind\',this.value)">'
+      + kindOpts.replace('value="' + esc(g.kind) + '"', 'value="' + esc(g.kind) + '" selected') + '</select>'
       + (canWrite() ? '<button class="btn pri" onclick="fileToDrawer(\'' + esc(id) + '\')">서랍으로</button>' : '')
       + '</div></div>';
   }).join('') + '</div>';
@@ -752,7 +839,14 @@ function fileToDrawer(id) {
   try { up = S.drawerUpdate(id, rec, tag); }
   catch (e) { alert(e.message); return; }     // 무엇이 비었는지 사람에게 알린다
   S.moveToDrawer(id, tag, rec, App.viewingUid)
-    .then(() => { delete App.pending[id]; App.render(); })
+    .then(() => {
+      delete App.pending[id];
+      delete App.pendTag[id];      // 다 쓴 이름표는 버린다
+      /* 서랍에 들어갔으니 도착 칸 숫자도 달라졌다 — 다시 읽지 않으면 사업장
+         목록과 왼쪽 대시보드가 「미도착·0장」인 채로 남는다(새로고침해야 맞았다). */
+      refreshArrivals();
+      App.render();
+    })
     .catch(e => alert('저장 실패: ' + (e.code || e.message) + '\n다시 시도해 주세요.'));
 }
 window.fileToDrawer = fileToDrawer;
@@ -947,16 +1041,17 @@ function folderRows(rows, folderPick) {
 function ensureDrawerData() {
   if (!App.month) App.month = thisMonth();
   const monthSlot = S.monthKey(App.month) || S.KEEP;
+  const seat = seatNow();               // 늦게 온 답을 버리려고 지금 자리를 적어 둔다
   const jobs = [];
   if (!App.itemsKeep) {
-    jobs.push(S.listSlot(S.KEEP, App.viewingUid).then(v => { App.itemsKeep = v; })
-      .catch(e => { console.warn('[서랍·keep]', e && e.code); App.itemsKeep = {}; }));
+    jobs.push(S.listSlot(S.KEEP, seat).then(v => { if (seatSame(seat)) App.itemsKeep = v; })
+      .catch(e => { console.warn('[서랍·keep]', e && e.code); if (seatSame(seat)) App.itemsKeep = {}; }));
   }
   if (App.itemsMonthSlot !== monthSlot) {
-    jobs.push(S.listSlot(monthSlot, App.viewingUid).then(v => { App.itemsMonth = v; App.itemsMonthSlot = monthSlot; })
-      .catch(e => { console.warn('[서랍·' + monthSlot + ']', e && e.code); App.itemsMonth = {}; App.itemsMonthSlot = monthSlot; }));
+    jobs.push(S.listSlot(monthSlot, seat).then(v => { if (seatSame(seat)) { App.itemsMonth = v; App.itemsMonthSlot = monthSlot; } })
+      .catch(e => { console.warn('[서랍·' + monthSlot + ']', e && e.code); if (seatSame(seat)) { App.itemsMonth = {}; App.itemsMonthSlot = monthSlot; } }));
   }
-  if (jobs.length) Promise.all(jobs).then(() => App.render());
+  if (jobs.length) Promise.all(jobs).then(() => { if (seatSame(seat)) App.render(); });
 }
 
 /* 기준 월을 바꾼다 — 서랍만 다시 읽고 끝내면 안 된다. 값은 「이 달」 것이라
@@ -973,11 +1068,14 @@ window.changeMonth = changeMonth;
 /* 사업장이 바뀌면 폴더 목록도 다시 읽는다 — 폴더는 사업장마다 따로 관리된다. */
 function ensureFolders(force) {
   if (!force && App.foldersCompanyId === App.companyId) return Promise.resolve();
-  return S.listFolders(App.companyId, App.viewingUid).then(v => {
-    App.folders = v; App.foldersCompanyId = App.companyId; App.render();
+  const seat = seatNow(), want = App.companyId;
+  return S.listFolders(want, seat).then(v => {
+    if (!seatSame(seat) || App.companyId !== want) return;   // 자리·사업장이 바뀌었다 — 버린다
+    App.folders = v; App.foldersCompanyId = want; App.render();
   }).catch(e => {
     console.warn('[폴더]', e && e.code);
-    App.folders = {}; App.foldersCompanyId = App.companyId;
+    if (!seatSame(seat) || App.companyId !== want) return;
+    App.folders = {}; App.foldersCompanyId = want;
   });
 }
 
@@ -1242,7 +1340,10 @@ function valuesTable() {
 
 function valuesCsv() {
   const t = valuesTable();
-  const lines = [csvEsc(t.title.join(''))].concat([t.head.join(',')])
+  /* ⚠ 머리글 줄도 몸통과 **똑같이** 감싼다. 항목 이름은 서류에 적힌 그대로 담기므로
+     (「비고(가,나)」처럼) 쉼표가 들어올 수 있다 — 안 감싸면 그 줄만 칸이 하나 늘어
+     그 아래 모든 열이 통째로 밀린다. 제목 줄은 이미 감싸고 있었다. */
+  const lines = [csvEsc(t.title.join(''))].concat([t.head.map(csvEsc).join(',')])
     .concat(t.body.map(r => r.map(csvEsc).join(',')));
   const name = ('값_' + App.companyName + '_' + App.month).replace(/[\\/:*?"<>|\s]+/g, '_');
   /* ﻿ 는 BOM — 없으면 엑셀이 한글을 깨뜨린다 */
@@ -1297,7 +1398,7 @@ function screenDrawer() {
      폴더는 「어느 일인가」다. 그래서 탭을 넘나들어도 고른 폴더는 그대로 둔다. */
   h += folderBar(App.folders, App.folderPick, foldCounts);
 
-  h += '<div id="findBar"><input placeholder="파일 이름으로 찾기" value="' + esc(App.query) + '"'
+  h += '<div id="findBar"><input id="findInput" placeholder="파일 이름으로 찾기" value="' + esc(App.query) + '"'
     + ' oninput="App.query=this.value;App.render()"></div>';
 
   const folderOpts = folderOptionsHtml(App.folders);
@@ -1469,16 +1570,21 @@ window.doRead = doRead;
 /* 읽어 온 값을 고칠 수 있는 표로. 한 줄 = 한 사람의 한 항목이다. */
 function valueRowsHtml(rows) {
   let h = '<table class="vals"><tr><th style="width:28%">근로자</th>'
-        + '<th style="width:32%">항목</th><th>값</th><th style="width:26px"></th></tr>';
+        + '<th style="width:32%">항목</th><th>값</th><th style="width:26px">지움</th></tr>';
   (rows || []).forEach((r, i) => {
-    (r.pairs || []).forEach((p, j) => {
+    const pairs = r.pairs || [];
+    pairs.forEach((p, j) => {
       /* 줄마다 이름표(id)를 준다 — 사람이 고칠 때 표를 통째로 다시 그리지 않고
          이 줄의 노란 칠만 벗기기 위해서다(editVal 머리말 참고). */
       h += '<tr id="vrow_' + i + '_' + j + '" class="' + (r.iffy ? 'iffy' : '') + '">'
-        + '<td><input value="' + esc(r.name) + '" oninput="editVal(' + i + ',\'name\',this.value)"></td>'
-        + '<td><input value="' + esc(p.item) + '" oninput="editVal(' + i + ',\'item\',this.value,' + j + ')"></td>'
-        + '<td><input value="' + esc(p.value) + '" oninput="editVal(' + i + ',\'value\',this.value,' + j + ')"></td>'
-        + '<td><span class="del" onclick="delValRow(' + i + ')">✕</span></td></tr>';
+        /* ⚠ 이름 칸은 **그 사람의 첫 줄에만** 둔다. 예전에는 항목마다 같은 이름 칸을
+           되풀이해 그렸다 — 한 칸에서 이름을 고쳐도 아래 칸들은 옛 이름 그대로 남아,
+           고치는 사람 눈에는 한 사람이 두 사람으로 갈라진 것처럼 보였다. */
+        + (j === 0 ? '<td rowspan="' + pairs.length + '"><input id="vnm_' + i + '" value="' + esc(r.name)
+            + '" oninput="editVal(' + i + ',\'name\',this.value)"></td>' : '')
+        + '<td><input id="vit_' + i + '_' + j + '" value="' + esc(p.item) + '" oninput="editVal(' + i + ',\'item\',this.value,' + j + ')"></td>'
+        + '<td><input id="vvl_' + i + '_' + j + '" value="' + esc(p.value) + '" oninput="editVal(' + i + ',\'value\',this.value,' + j + ')"></td>'
+        + '<td><span class="del" title="이 항목만 지웁니다" onclick="delValItem(' + i + ',' + j + ')">✕</span></td></tr>';
     });
   });
   return h + '</table>';
@@ -1519,8 +1625,34 @@ function addValRow() {
   App.readState.rows.push({ name: '', pairs: [{ item: '', value: '' }], iffy: false });
   App.render();
 }
+
+/* AI가 못 읽었을 때 손으로 적기 시작한다 — 빈 표 한 줄로 연다.
+   판독을 거치지 않았을 뿐, 그 뒤(고치기·저장·출처 붙이기)는 완전히 같은 길이다. */
+function startManualRows() {
+  if (!canWrite()) return;
+  App.readState = { status: 'done', rows: [{ name: '', pairs: [{ item: '', value: '' }], iffy: false }], err: '' };
+  App.render();
+}
+window.startManualRows = startManualRows;
+/* 그 사람을 통째로 뺀다(항목 전부). 표의 ✕ 는 이것을 부르지 않는다 — 아래 참고. */
 function delValRow(i) { App.readState.rows.splice(i, 1); App.render(); }
-window.editVal = editVal; window.addValRow = addValRow; window.delValRow = delValRow;
+
+/* ✕ 는 **그 항목 하나만** 지운다.
+   예전에는 항목 옆의 ✕ 가 그 사람의 값을 통째로 지웠다 — 「식대」를 지우려고
+   눌렀는데 유급일수·가감까지 함께 사라졌고, 되돌릴 길이 없었다(칸에 이름표도
+   없어 무엇을 지우는 단추인지 알 수도 없었다).
+   마지막 항목을 지우면 그 사람도 함께 빠진다 — 항목이 하나도 없는 사람은
+   저장해도 값 줄이 되지 않기 때문이다(buildValueRows). */
+function delValItem(i, j) {
+  const rows = (App.readState && App.readState.rows) || [];
+  const r = rows[i];
+  if (!r) return;
+  (r.pairs || []).splice(j, 1);
+  if (!r.pairs || !r.pairs.length) rows.splice(i, 1);
+  App.render();
+}
+window.editVal = editVal; window.addValRow = addValRow;
+window.delValRow = delValRow; window.delValItem = delValItem;
 
 /* 확인한 값을 저장한다. 값마다 출처(이 서류 번호)가 붙는다 —
    buildValueRows 가 sourceId 없이는 거절한다. */
@@ -1637,13 +1769,17 @@ function readPanelHtml() {
       + '<div class="sub" style="margin-top:10px;line-height:1.7">저장하면 값마다 '
       + '<b>이 서류가 출처로</b> 붙습니다 — 나중에 값을 누르면 이 원본이 열립니다.</div>';
   } else if (st.status === 'err') {
+    /* 「직접 적어 주세요」라고 해 놓고 적을 칸을 안 주면 그 말이 거짓말이 된다 —
+       못 읽었을 때야말로 손으로 적을 길이 있어야 한다(예전에는 다시 판독뿐이었다). */
     body = '<div class="pre"><div class="big">⚠</div><p>' + esc(st.err) + '</p>'
-      + '<button class="btn pri" onclick="doRead()">🔍 다시 판독</button></div>';
+      + '<button class="btn pri" onclick="doRead()">🔍 다시 판독</button> '
+      + '<button class="btn" onclick="startManualRows()">✍ 직접 적기</button></div>';
   } else {
     body = '<div class="pre"><div class="big">🔍</div><p>아직 읽지 않았습니다.<br>'
       + '누르면 AI가 이 서류를 읽어 <b>사람별 표</b>로 만듭니다.<br>'
       + '읽은 뒤 확인하고 저장해야 값으로 남습니다.</p>'
-      + '<button class="btn pri" onclick="doRead()">🔍 판독하기</button></div>';
+      + '<button class="btn pri" onclick="doRead()">🔍 판독하기</button> '
+      + '<button class="btn" onclick="startManualRows()">✍ 직접 적기</button></div>';
   }
   const foot = (st.status === 'done')
     ? '<div class="pfoot"><span class="sub">' + st.rows.length + '명</span>'
@@ -1701,14 +1837,16 @@ function toTrash(id) {
   db.ref().update(S.trashUpdate(id, rec, App.viewingUid)).then(() => {
     if (App.itemsKeep && App.itemsKeep[id]) delete App.itemsKeep[id];
     if (App.itemsMonth && App.itemsMonth[id]) delete App.itemsMonth[id];
+    refreshArrivals();   // 도착 표시도 내려갔다 — 목록 숫자를 맞춘다
     App.render();
   }).catch(e => alert('실패: ' + (e.code || e.message)));
 }
 window.toTrash = toTrash;
 
 function ensureTrash() {
-  return S.listTrash(App.viewingUid).then(v => { App.trash = v; App.render(); })
-    .catch(e => { console.warn('[휴지통]', e && e.code); App.trash = {}; App.render(); });
+  const seat = seatNow();
+  return S.listTrash(seat).then(v => { if (!seatSame(seat)) return; App.trash = v; App.render(); })
+    .catch(e => { console.warn('[휴지통]', e && e.code); if (!seatSame(seat)) return; App.trash = {}; App.render(); });
 }
 
 function screenTrash() {
@@ -1741,6 +1879,7 @@ function restoreItem(id) {
     // 되살아난 칸을 다시 읽어야 서랍이 최신 자료를 본다 — 다음에 그 서랍에
     // 들어갈 때 새로 읽어 오게 캐시를 비운다.
     App.itemsKeep = null; App.itemsMonthSlot = ''; App.itemsMonth = null;
+    refreshArrivals();   // 도착 표시가 다시 올라갔다 — 목록 숫자를 맞춘다
     App.render();
   }).catch(e => alert('실패: ' + (e.code || e.message)));
 }
@@ -1796,11 +1935,11 @@ function staffPickerHtml() {
     const list = (App.staffList || []).filter(o => o.uid !== S.myUid())
       .filter(o => !q || String(o.name || '').toLowerCase().indexOf(q) >= 0)
       .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ko'));
-    body = '<input class="btn" style="width:100%;margin-bottom:8px" placeholder="이름으로 찾기"'
+    body = '<input id="staffFind" class="btn" style="width:100%;margin-bottom:8px" placeholder="이름으로 찾기"'
       + ' value="' + esc(App.staffQuery) + '" oninput="App.staffQuery=this.value;App.render()">'
       + (list.length ? list.map(o =>
-        '<div class="row" style="cursor:pointer" onclick="pickStaff(\'' + esc(o.uid) + '\',\''
-        + esc(o.name || o.uid) + '\')"><b style="flex:1">' + esc(o.name || o.uid) + '</b></div>').join('')
+        '<div class="row" style="cursor:pointer" onclick="pickStaff(\'' + jsq(o.uid) + '\',\''
+        + jsq(o.name || o.uid) + '\')"><b style="flex:1">' + esc(o.name || o.uid) + '</b></div>').join('')
         : '<div class="empty">한 번이라도 로그인한 다른 사람이 아직 없습니다.</div>');
   }
   return '<div class="modalWrap on"><div class="modalCard">'
@@ -1840,6 +1979,9 @@ window.submitReason = submitReason;
 function resetOwnerCaches() {
   App.pending = {}; App.itemsKeep = null; App.itemsMonth = null; App.itemsMonthSlot = '';
   App.folders = {}; App.foldersCompanyId = ''; App.folderPick = 'all'; App.trash = null; App.pick = {};
+  /* 고쳐 둔 이름표도 함께 버린다 — 자리마다 대기 칸이 따로라, 남겨 두면 번호가
+     우연히 같은 남의 자료에 내가 고른 사업장이 붙는다. */
+  App.pendTag = {};
   /* 값도 반드시 비운다 — 자리마다 값 칸이 따로다. 안 비우면 방금 보던 자리의
      근로자 이름이 새 자리 값 표에 그대로 남고, 그 수가 급여관리 알림에 실린다. */
   App.values = null;
@@ -1882,18 +2024,18 @@ function peopleBarHtml() {
 
   function coRow(c, isMe, ownerUid, ownerName) {
     const dragAttrs = isMe
-      ? ' draggable="true" ondragstart="sideDragStart(event,\'' + esc(c.id) + '\')"'
+      ? ' draggable="true" ondragstart="sideDragStart(event,\'' + jsq(c.id) + '\')"'
         + ' ondragover="event.preventDefault()"'
-        + ' ondrop="sideDragDrop(event,\'' + esc(c.id) + '\')"'
+        + ' ondrop="sideDragDrop(event,\'' + jsq(c.id) + '\')"'
       : '';
     return '<div class="pco"' + dragAttrs + '>'
       + (isMe ? '<span class="handle">⠿</span>' : '')
       + '<span class="dot' + (c.arrived ? ' arr' : '') + '"></span>'
-      + '<span class="nm" onclick="sideOpenCompany(\'' + esc(ownerUid) + '\',\'' + esc(ownerName) + '\',\''
-      + esc(c.id) + '\',\'' + esc(c.name) + '\',' + (isMe ? 'true' : 'false') + ')">' + esc(c.name) + '</span>'
+      + '<span class="nm" onclick="sideOpenCompany(\'' + jsq(ownerUid) + '\',\'' + jsq(ownerName) + '\',\''
+      + jsq(c.id) + '\',\'' + jsq(c.name) + '\',' + (isMe ? 'true' : 'false') + ')">' + esc(c.name) + '</span>'
       + '<span class="cnt">' + (c.count || 0) + '건</span>'
-      + (isMe ? '<span class="share" onclick="event.stopPropagation();openShare(\'' + esc(c.id) + '\',\''
-        + esc(c.name) + '\')" title="다른 담당자와 공유">↗ 공유</span>' : '')
+      + (isMe ? '<span class="share" onclick="event.stopPropagation();openShare(\'' + jsq(c.id) + '\',\''
+        + jsq(c.name) + '\')" title="다른 담당자와 공유">↗ 공유</span>' : '')
       + '</div>';
   }
 
@@ -1910,7 +2052,7 @@ function peopleBarHtml() {
     return h;
   }
 
-  let h = '<div class="pbsearch"><input placeholder="이름으로 찾기" value="' + esc(App.sideQuery)
+  let h = '<div class="pbsearch"><input id="sideFind" placeholder="이름으로 찾기" value="' + esc(App.sideQuery)
     + '" oninput="App.sideQuery=this.value;App.render()"></div>';
   h += personBlock(model.me.uid, model.me.name, model.me.companies, true);
 
@@ -2095,11 +2237,11 @@ function shareModalHtml() {
   return '<div class="modalWrap on"><div class="modalCard">'
     + '<h2>' + esc(ctx.companyName) + ' 공유하기</h2>'
     + '<div class="sub">누구와 공유할까요?</div>'
-    + '<input class="btn" style="width:100%;margin-bottom:10px" placeholder="이름으로 찾기" value="' + esc(ctx.query)
+    + '<input id="shareFind" class="btn" style="width:100%;margin-bottom:10px" placeholder="이름으로 찾기" value="' + esc(ctx.query)
     + '" oninput="App.shareCtx.query=this.value;App.render()">'
     + '<div class="picklist">' + (list.length ? list.map(o =>
       '<div class="pickrow' + (ctx.targetUid === o.uid ? ' on' : '') + '" onclick="pickShareTarget(\''
-      + esc(o.uid) + '\',\'' + esc(o.name || o.uid) + '\')">' + esc(o.name || o.uid) + '</div>').join('')
+      + jsq(o.uid) + '\',\'' + jsq(o.name || o.uid) + '\')">' + esc(o.name || o.uid) + '</div>').join('')
       : '<div class="pempty">찾는 사람이 없습니다.</div>') + '</div>'
     + '<div style="display:flex;gap:8px;justify-content:flex-end">'
     + '<button class="btn" onclick="closeShare()">취소</button>'

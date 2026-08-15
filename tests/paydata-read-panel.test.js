@@ -206,9 +206,11 @@ function loadRun(appState, opts) {
     WAGE_FLAG[0], NOTICE_FLAG[0],       // doRead 가 이 상수들을 본다 — 안 넣으면 터진다
     DOLLAR[0],
     cut('esc'), cut('canWrite'), cut('findRow'), cut('isImageRec'), cut('doRead'), cut('valueRowsHtml'),
-    cut('editVal'), cut('refreshIffyMarks'), cut('addValRow'), cut('delValRow'),
+    cut('editVal'), cut('refreshIffyMarks'), cut('addValRow'), cut('startManualRows'),
+    cut('delValRow'), cut('delValItem'),
     'window.App = App; window.doRead = doRead; window.valueRowsHtml = valueRowsHtml;',
-    'window.editVal = editVal; window.addValRow = addValRow; window.delValRow = delValRow;'
+    'window.editVal = editVal; window.addValRow = addValRow; window.delValRow = delValRow;',
+    'window.delValItem = delValItem; window.startManualRows = startManualRows;'
   ].join('\n'), { filename: 'run.js' }).runInContext(sandbox);
   return { W: sandbox.window, calls };
 }
@@ -322,7 +324,47 @@ test('★ 표에 근로자·항목·값이 고칠 수 있게 그려진다', () =
   assert.match(h, /배영승/);
   assert.match(h, /유급일수/);
   assert.match(h, /editVal\(/, '칸을 고칠 수 없으면 확인 화면이 아닙니다');
-  assert.match(h, /delValRow\(/);
+  assert.match(h, /delValItem\(/, '✕ 는 그 항목만 지웁니다 — 사람 통째로가 아닙니다');
+});
+
+/* ✕ 가 그 사람의 값을 통째로 지우던 것을 고쳤다(2026-08-15 검토).
+   「식대」를 지우려고 눌렀는데 유급일수까지 사라졌고 되돌릴 길이 없었다. */
+test('★ ✕ 는 그 항목 하나만 지운다 — 그 사람의 다른 항목은 남는다', () => {
+  const { W } = loadRun({});
+  W.App.readState = { status: 'done', err: '',
+    rows: [{ name: '배영승', pairs: [{ item: '유급일수', value: '3일' }, { item: '식대', value: '10만' }] }] };
+  W.delValItem(0, 1);
+  assert.equal(W.App.readState.rows.length, 1, '사람이 통째로 사라지면 안 됩니다');
+  assert.equal(W.App.readState.rows[0].pairs.length, 1);
+  assert.equal(W.App.readState.rows[0].pairs[0].item, '유급일수', '지우지 않은 항목이 남아야 합니다');
+});
+
+test('마지막 항목을 지우면 그 사람도 함께 빠진다 — 항목 없는 사람은 값이 아니다', () => {
+  const { W } = loadRun({});
+  W.App.readState = { status: 'done', err: '',
+    rows: [{ name: '배영승', pairs: [{ item: '유급일수', value: '3일' }] }] };
+  W.delValItem(0, 0);
+  assert.equal(W.App.readState.rows.length, 0);
+});
+
+/* 이름 칸이 항목마다 되풀이되면, 한 칸만 고쳤을 때 아래 칸들은 옛 이름으로 남아
+   한 사람이 두 사람처럼 보인다. 그래서 그 사람의 첫 줄에만 둔다. */
+test('★ 이름 칸은 그 사람의 첫 줄에만 있다', () => {
+  const { W } = loadRun({});
+  const h = W.valueRowsHtml([{ name: '배영승',
+    pairs: [{ item: '유급일수', value: '3일' }, { item: '식대', value: '10만' }] }]);
+  assert.equal((h.match(/editVal\(0,'name'/g) || []).length, 1, '이름 칸이 두 번 이상 그려졌습니다');
+  assert.match(h, /rowspan="2"/, '이름 칸이 그 사람의 줄 수만큼 이어져야 합니다');
+});
+
+/* 「사람별 값을 읽어내지 못했습니다 — 직접 적어 주세요」라고 해 놓고 적을 칸이
+   없었다. 못 읽었을 때야말로 손으로 적을 길이 있어야 한다. */
+test('★ 판독이 실패해도 직접 적기로 빈 표를 열 수 있다', () => {
+  const { W } = loadRun({});
+  W.App.readState = { status: 'err', rows: [], err: '사람별 값을 읽어내지 못했습니다 — 직접 적어 주세요.' };
+  W.startManualRows();
+  assert.equal(W.App.readState.status, 'done');
+  assert.equal(W.App.readState.rows.length, 1, '적을 줄이 하나는 열려야 합니다');
 });
 
 test('★ 사람이 고치면 노란 표시가 걷힌다', () => {

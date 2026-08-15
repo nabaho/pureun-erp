@@ -79,7 +79,7 @@ function loadScreen() {
   new vm.Script([
     'const S = window.PuPaydataStore; S.init({uid:"U1"});',
     'const App = { month:"2026-08", pick:{}, companies:[], pending:{}, arrivals:{} };',
-    cut('esc'), cut('thisMonth'),
+    cut('esc'), cut('jsq'), cut('thisMonth'),
     cut('pickOn'), cut('pickToggle'), cut('pickSetAll'), cut('pickList'),
     cut('pickAllOn'), cut('pickPrune'), cut('pickOf'), cut('pickPut'),
     cut('companyDocCount'), cut('sitesModel'), cut('pickBar'), cut('screenSites'),
