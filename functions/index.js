@@ -1030,3 +1030,55 @@ exports.passkeyRegisterFinish = _passkey.passkeyRegisterFinish;
 exports.passkeyLoginStart     = _passkey.passkeyLoginStart;
 exports.passkeyLoginFinish    = _passkey.passkeyLoginFinish;
 exports.passkeyDevices        = _passkey.passkeyDevices;
+
+
+// ══════════ 파이어베이스 사용액 받아 적기 (2026-08-15, 대표 지시) ══════════
+// 대표님: "결제한 금액 잔여량이 얼마인지 실시간으로 확인 가능한지, 화면에 넣을 수 있는지."
+//
+// ⚠ 화면(브라우저)이 구글에 직접 물어보게 만들 수 없다. 금액을 읽으려면 결제 열쇠가
+//   필요한데 우리 앱은 브라우저에서 도는 공개 파일이라, 열쇠를 넣으면 누구나 열어 본다.
+//   그 열쇠는 금액 조회를 넘어 결제 설정까지 닿는다. 그래서 반드시 서버를 거치고,
+//   서버는 **금액이라는 숫자 하나만** 내려 준다.
+//
+// ⚠ 「남은 금액」은 못 만든다 — Blaze 는 후불이라 남은 돈이라는 숫자 자체가 없다.
+//   이번 달 지금까지 쓴 금액만 적는다.
+//
+// ⚠ 완전한 실시간이 아니다. 구글은 금액이 움직일 때 쏘고 주기는 20~30분쯤이다.
+//   그래서 updatedAt 을 반드시 함께 적는다 — **언제 것인지 모르는 금액이 제일 위험하다.**
+const BA = require("./billing-alert");
+
+exports.recordBillingAlert = functions
+  .region(MAIL_REGION)
+  .pubsub.topic("billing-alerts")
+  .onPublish(async (message) => {
+    let raw;
+    try {
+      raw = message.json;
+    } catch (e) {
+      console.error("recordBillingAlert: 쪽지를 읽지 못했습니다", String((e && e.message) || e));
+      return null;   // 되던지면 Pub/Sub 이 같은 쪽지를 끝없이 다시 보낸다
+    }
+
+    const parsed = BA.parseAlert(raw);
+    if (!parsed.ok) {
+      console.log("recordBillingAlert 건너뜀:", parsed.why);
+      return null;
+    }
+
+    const ref = getDatabase().ref("billing/current/" + parsed.key);
+
+    // ⚠ 그냥 set 하지 않는다. Pub/Sub 은 순서를 지켜 주지 않아서, 늦게 도착한 옛 쪽지가
+    //   최신 금액을 더 작은 값으로 되돌린다. 화면에서는 금액이 줄어든 것처럼 보이고
+    //   아무도 그게 틀렸다는 걸 모른다. 트랜잭션으로 「더 큰 값만」 받는다.
+    const res = await ref.transaction((prev) => {
+      if (!BA.shouldApply(prev, parsed.row)) return;   // undefined = 그대로 둔다
+      return Object.assign({}, parsed.row, { updatedAt: Date.now() });
+    });
+
+    console.log("recordBillingAlert", {
+      key: parsed.key,
+      cost: parsed.row.cost,
+      applied: res.committed,
+    });
+    return null;
+  });
