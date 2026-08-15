@@ -5123,12 +5123,18 @@ function kbFlag(kind,key,id){
   confirmM('이 카드가 지금은 사실과 다릅니까?\n\n표시해 두면 카드에 정정 요청이 붙고, 다른 사람이 그 내용을 신뢰하지 않게 됩니다.',
     {ok:'지금은 다름으로 표시'}).then(function(ok){ if(!ok)return;
     var p=NS+'/kb/'+kind+'/'+key+'/'+id+'/flags';
-    fbDb.ref(p).once('value').then(function(s){
-      var arr=s.val()||[];
-      arr.push({by:(S.me&&S.me.sid)||'',byName:(S.me&&S.me.name)||'',at:new Date().toISOString()});
-      return fbDb.ref(p).set(arr);
-    }).then(function(){ toast('⚠ 정정 요청 표시됨'); renderDrawer(); route(); })
-      .catch(function(e){ toast('실패: '+e.message,'err'); });
+    /* ⚠ 전에는 읽어서 붙이고 다시 통째로 썼다. 읽기와 쓰기 사이가 벌어져 있어
+       둘이 거의 같은 때 표시하면 나중 사람이 앞사람 표시를 «지웠다».
+       트랜잭션은 서버가 그 사이 바뀌면 알아서 다시 해 준다 — 둘 다 남는다. */
+    var me={by:(S.me&&S.me.sid)||'',byName:(S.me&&S.me.name)||'',at:new Date().toISOString()};
+    fbDb.ref(p).transaction(function(cur){
+      var arr=Array.isArray(cur)?cur.slice():[];
+      arr.push(me);
+      return arr;
+    }, function(err,committed){
+      if(err||!committed){ toast('실패: '+((err&&err.message)||'다시 눌러 주세요'),'err'); return; }
+      toast('⚠ 정정 요청 표시됨'); renderDrawer(); route();
+    });
   });
 }
 function kbUnflag(kind,key,id){
