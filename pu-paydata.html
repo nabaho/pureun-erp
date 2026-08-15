@@ -1244,6 +1244,38 @@ function addValRow() {
 function delValRow(i) { App.readState.rows.splice(i, 1); App.render(); }
 window.editVal = editVal; window.addValRow = addValRow; window.delValRow = delValRow;
 
+/* 확인한 값을 저장한다. 값마다 출처(이 서류 번호)가 붙는다 —
+   buildValueRows 가 sourceId 없이는 거절한다. */
+function saveVals() {
+  if (!canWrite()) return;
+  const st = App.readState;
+  if (!st || st.status !== 'done' || !st.rows.length) return;
+  const slot = S.monthKey(App.month) || S.KEEP;
+  const tag = {
+    sourceId: App.viewerId, companyId: App.companyId,
+    companyName: App.companyName, slot: slot
+  };
+  let rows;
+  try { rows = S.buildValueRows({ rows: st.rows }, tag); }
+  catch (e) { alert(e.message); return; }
+
+  S.listValues(slot, App.viewingUid).then(existing => {
+    /* 같은 사업장·월·근로자가 이미 있으면 묻는다 — 캡처는 실제로 두 번 올라온다. */
+    const dup = rows.filter(r => S.findDuplicateValue(existing, r.companyId, r.month, r.name));
+    if (dup.length) {
+      const who = dup.map(r => r.name).join(', ');
+      if (!confirm('이미 있습니다 — 덮을까요?\n\n' + who + '\n\n「취소」를 누르면 그대로 둡니다.')) return null;
+    }
+    return S.saveValues(slot, rows, App.viewingUid);
+  }).then(n => {
+    if (n === null || n === undefined) return;
+    App.readState = { status: 'idle', rows: [], err: '' };
+    alert(n + '줄을 저장했습니다. 「이 달 값 보기」에서 볼 수 있습니다.');
+    App.render();
+  }).catch(e => alert('저장하지 못했습니다 — ' + (e.code || e.message)));
+}
+window.saveVals = saveVals;
+
 /* 오른쪽 절반 — 판독 전에는 단추, 판독 뒤에는 값 표. */
 function readPanelHtml() {
   const rk = S.readKindFor(App.kind);

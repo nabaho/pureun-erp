@@ -250,3 +250,79 @@ test('★ 판독 중 다른 서류로 옮기면 늦게 온 실패 응답도 새 
     'a1 판독 실패가 a2 화면에 까닭으로 얹혔습니다 — a2 와는 상관없는 오류입니다');
   assert.equal(W.App.readState.status, 'reading', '옮겨 간 뒤 온 답은 버리고 이전 상태를 지켜야 합니다');
 });
+
+/* ══════ 저장·중복 ══════ */
+function loadSave(existing, confirmYes) {
+  const calls = { alerts: [], confirms: [], saved: null };
+  const sandbox = {
+    window: {}, console, Date,
+    document: { getElementById: () => null },
+    alert: m => calls.alerts.push(m),
+    confirm: m => { calls.confirms.push(m); return !!confirmYes; }
+  };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  new vm.Script(store, { filename: 'store.js' }).runInContext(sandbox);
+  sandbox.__existing = existing || {};
+  new vm.Script([
+    'const S = window.PuPaydataStore;',
+    'S.init({uid:"U1", db:{ref:function(p){ return {'
+      + ' once:function(){ return Promise.resolve({val:function(){ return __existing; }}); },'
+      + ' update:function(u){ __saved = u; return Promise.resolve(); } }; },'
+      + ' }});',
+    'var __saved = null;',
+    // db.ref() 를 인자 없이 부르면 update 를 쓰는 자리다 — 위 ref 가 둘 다 준다
+    'const App = ' + JSON.stringify({
+      kind: 'attend', viewerId: 'a1', viewingUid: '', companyId: 'co_1',
+      companyName: '화담원', month: '2026-08',
+      itemsMonth: { a1: { companyId: 'co_1', kind: 'attend', month: '202608', file: 'p/a1.jpg' } },
+      itemsKeep: {},
+      readState: { status: 'done', err: '', rows: [{ name: '배영승', pairs: [{ item: '유급일수', value: '3일' }] }] }
+    }) + ';',
+    'App.render = function(){};',
+    cut('esc'), cut('canWrite'), cut('findRow'), cut('saveVals'),
+    'window.App = App; window.saveVals = saveVals; window.__got = function(){ return __saved; };'
+  ].join('\n'), { filename: 'save.js' }).runInContext(sandbox);
+  return { W: sandbox.window, calls };
+}
+
+test('★ 저장하면 값에 출처가 붙어 들어간다', async () => {
+  const { W, calls } = loadSave({});
+  W.saveVals();
+  await new Promise(r => setTimeout(r, 10));
+  const up = W.__got();
+  assert.ok(up, '저장되지 않았습니다');
+  const key = Object.keys(up)[0];
+  assert.match(key, /\/values\/202608\//);
+  assert.equal(up[key].sourceId, 'a1', '출처가 없으면 나중에 근거를 못 댑니다');
+  assert.equal(up[key].companyId, 'co_1');
+  assert.equal(up[key].name, '배영승');
+  assert.match(calls.alerts[0], /저장/);
+});
+
+test('★ 같은 사람 값이 이미 있으면 묻는다', async () => {
+  const { W, calls } = loadSave(
+    { r1: { companyId: 'co_1', month: '202608', name: '배영승' } }, false);
+  W.saveVals();
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(calls.confirms.length, 1, '묻지 않으면 근무일수가 두 배가 됩니다');
+  assert.match(calls.confirms[0], /배영승/);
+  assert.equal(W.__got(), null, '「그대로 두기」인데 저장됐습니다');
+});
+
+test('덮어쓰기를 고르면 저장한다', async () => {
+  const { W } = loadSave(
+    { r1: { companyId: 'co_1', month: '202608', name: '배영승' } }, true);
+  W.saveVals();
+  await new Promise(r => setTimeout(r, 10));
+  assert.ok(W.__got());
+});
+
+test('★ 남의 자리에서는 저장하지 않는다', async () => {
+  const { W, calls } = loadSave({});
+  W.App.viewingUid = 'U2'; W.App.viewingDeputy = false;
+  W.saveVals();
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(W.__got(), null);
+  assert.equal(calls.confirms.length, 0);
+});
