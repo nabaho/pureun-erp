@@ -92,7 +92,16 @@ t('통과하면 그 표로 들어간다', /auth\.signInWithCustomToken\(token\)/
 /* ★ 기기를 잃거나 바꿨을 때 들어올 길이 없으면 안 된다 */
 t('★ 비밀번호 로그인이 그대로 있다', /auth\.signInWithEmailAndPassword\(email, pw\)/.test(PORTAL), true);
 t('★ 스스로 취소한 것은 「실패」로 겁주지 않는다', /if\(\/NotAllowed\|취소\/i\.test\(m\)\) showErr\('취소되었습니다/.test(PORTAL), true);
-t('등록 단추는 아직 등록 안 한 기기에서만', /btn\.style\.display = \(can && !already\) \? '' : 'none';/.test(PORTAL), true);
+t('등록 안내는 아직 등록 안 한 기기에서만', /row\.style\.display = \(can && !already && !later\) \? 'flex' : 'none';/.test(PORTAL), true);
+/* ⚠ 처음에는 윗줄(로그아웃 옆) 작은 단추였는데 폰에서 «없는 것처럼» 보였다(대표 보고).
+   안 보이는 기능은 없는 기능이다 — 본문 맨 위 한 줄로 옮겼다. */
+t('★ 좁은 윗줄이 아니라 본문에 둔다', /id="pkRegRow"/.test(PORTAL), true);
+t('★ 무엇인지 한 줄로 말해 준다', /한 번 등록하면 다음부터 비밀번호 없이 지문으로 들어옵니다/.test(PORTAL), true);
+/* 매번 뜨면 성가시다 — 「나중에」를 누르면 다시 안 묻는다 */
+t('나중에 고를 수 있다', /id="pkRegLater"/.test(PORTAL), true);
+t('나중에를 기억한다', /localStorage\.setItem\(PK_LATER_KEY, sid\)/.test(PORTAL), true);
+/* 단추만 감추면 빈 띠가 남는다 — 줄 전체를 감춘다 */
+t('★ 등록하면 안내줄이 통째로 사라진다', /row\.style\.display = 'none';\n          alert\('등록했습니다/.test(PORTAL), true);
 t('등록할 때 내 표를 함께 보낸다', /auth\.currentUser\.getIdToken\(\)/.test(PORTAL), true);
 /* ⚠ 「지문」만 적으면 거짓말이다 — 휴대폰 설정에 따라 얼굴·잠금번호가 뜬다 */
 t('★ 문구를 「지문·간편 로그인」으로 적었다', /🔒 지문·간편 로그인/.test(PORTAL), true);
