@@ -25,6 +25,7 @@
 <script src="js/pu-health.js"></script>
 <script src="js/pu-version.js"></script>
 <script src="js/pu-paydata-store.js"></script>
+<script src="js/pu-doc-read.js"></script>
 <script src="js/pu-appbar.js"></script>
 <style>
 :root{--navy:#2E3A8C;--violet:#7C6CE0;--ok:#2E7D4F;--warn:#B26A00;--bad:#C43D3D;
@@ -86,6 +87,20 @@ main{flex:1;min-width:0;padding:16px;max-width:1100px;margin:0 auto}
 .tagopt.on{border-color:var(--navy);background:#F5F7FF}
 .sharedTo{font-size:12px;color:var(--sub);margin-bottom:10px}
 @media(max-width:760px){.peoplebar{display:none}}
+/* ── 판독 패널 — 원본 옆 절반 (대표 지시 2026-08-13: "화면의 나머지 절반에
+   인식된 내용을 정리해서 보여줄 수 있게, 그렇게 해야 정밀하게 찾을 수 있다") ── */
+#viewerBody.split{align-items:stretch;justify-content:stretch;padding:0}
+#viewerShot{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;overflow:auto;padding:0 12px 16px}
+#readPanel{flex:0 0 50%;background:#fff;display:flex;flex-direction:column;border-left:1px solid var(--line);color:var(--ink)}
+#readPanel .ph{padding:11px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
+#readPanel .ph b{flex:1;font-size:14px}
+#readPanel .pbody{flex:1;min-height:0;overflow-y:auto;padding:12px 14px}
+#readPanel .pfoot{border-top:1px solid var(--line);padding:10px 14px;display:flex;gap:8px;align-items:center}
+#readPanel .pfoot .sub{flex:1;margin:0}
+.pre{text-align:center;padding:36px 18px;color:var(--sub)}
+.pre .big{font-size:32px;margin-bottom:10px}
+.pre p{font-size:12.5px;line-height:1.7;margin-bottom:16px}
+@media(max-width:760px){#readPanel{flex:0 0 100%;border-left:none}#viewerShot{display:none}}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
 .empty{padding:28px 18px;text-align:center;color:var(--sub)}
 h1{font-size:18px;margin-bottom:4px}
@@ -193,7 +208,7 @@ h1{font-size:18px;margin-bottom:4px}
 </div>
 <div id="viewer">
   <div class="bar"><button class="back" onclick="closeViewer()">← 돌아가기</button><span id="viewerName"></span></div>
-  <div id="viewerBody" onclick="toggleViewerZoom(event)"></div>
+  <div id="viewerBody"><div id="viewerShot" onclick="toggleViewerZoom(event)"></div></div>
 </div>
 
 <script>
@@ -306,6 +321,7 @@ const App = {
   companies: [], pending: {}, arrivals: {}, trash: null, me: null, pick: {}, myName: '',
   itemsKeep: null, itemsMonth: null, itemsMonthSlot: '',
   viewerId: '', viewerUrl: '', viewerZoom: false, viewerErr: '',
+  readState: { status: 'idle', rows: [], err: '' },
   folders: {}, foldersCompanyId: '', folderPick: 'all', folderEdit: { mode: '', fid: '', value: '' },
   /* 남의 자리 보기 — viewingUid 가 비어 있으면 내 자리다.
      viewingDeputy 는 그 자리를 대리로 맡고 있는지(수정 가능한지)다. */
@@ -382,6 +398,12 @@ function afterLogin() {
   db.ref('uid_roles/' + App.me.uid).once('value')
     .then(s => { const r = s.val() || {}; S.init({ isAdmin: !!r.isAdmin, isFin: !!r.fin }); App.render(); })
     .catch(e => console.warn('[권한]', e && e.code));
+
+  /* 서류 판독 — AI 키가 어디 있는지도 판독 층이 안다(앱마다 복사하면 갈린다). */
+  PuDocRead.init(Object.assign(
+    { fetch: window.fetch.bind(window) },
+    PuDocRead.keysFrom(db)
+  ));
 
   /* 이름을 찾아 화면·명단에 반영한다 — 남이 나를 「이름으로」 고르려면
      내가 먼저 한 번 로그인해야 한다(명단에 내가 적힌다). */
@@ -1122,6 +1144,7 @@ function findRow(id) {
 }
 function openViewer(id) {
   App.viewerId = id; App.viewerUrl = ''; App.viewerZoom = false; App.viewerErr = '';
+  App.readState = { status: 'idle', rows: [], err: '' };
   App.render();
   const rec = findRow(id);
   if (!rec) { App.viewerErr = '자료를 찾을 수 없습니다.'; App.render(); return; }
@@ -1135,6 +1158,39 @@ function toggleViewerZoom(ev) {
 }
 window.openViewer = openViewer; window.closeViewer = closeViewer; window.toggleViewerZoom = toggleViewerZoom;
 
+/* 급여대장 판독은 만들어 두되 켜지 않는다 — 근로자 성명·임금액이 구글로 나가는
+   처리위탁 근거가 아직 정리되지 않았다(설계서 9장). 근태표는 임금액이 없어 켠다.
+   ⚠ 켤 때는 tests/paydata-read-panel.test.js 의 짝 검사도 함께 고친다. */
+const WAGE_READ_ON = false;
+
+/* 오른쪽 절반 — 판독 전에는 단추, 판독 뒤에는 값 표. */
+function readPanelHtml() {
+  const rk = S.readKindFor(App.kind);
+  const st = App.readState || { status: 'idle', rows: [], err: '' };
+  let body;
+
+  if (rk === 'wage' && !WAGE_READ_ON) {
+    body = '<div class="pre"><div class="big">🔒</div><p><b>급여대장 판독은 준비 중입니다.</b><br>'
+      + '근로자 성명·임금액이 밖으로 나가는 문제를 먼저 정리한 뒤 켭니다.</p></div>';
+  } else if (!rk || !canWrite()) {
+    body = '<div class="pre"><div class="big">📄</div><p>'
+      + (!rk ? '이 종류는 값을 뽑지 않습니다.' : '남의 자리에서는 판독할 수 없습니다.')
+      + '</p></div>';
+  } else if (st.status === 'reading') {
+    body = '<div class="pre"><div class="big">⏳</div><p>읽는 중입니다…</p></div>';
+  } else if (st.status === 'err') {
+    body = '<div class="pre"><div class="big">⚠</div><p>' + esc(st.err) + '</p>'
+      + '<button class="btn pri" onclick="doRead()">🔍 다시 판독</button></div>';
+  } else {
+    body = '<div class="pre"><div class="big">🔍</div><p>아직 읽지 않았습니다.<br>'
+      + '누르면 AI가 이 서류를 읽어 <b>사람별 표</b>로 만듭니다.<br>'
+      + '읽은 뒤 확인하고 저장해야 값으로 남습니다.</p>'
+      + '<button class="btn pri" onclick="doRead()">🔍 판독하기</button></div>';
+  }
+  return '<div id="readPanel"><div class="ph"><b>판독 결과</b></div>'
+    + '<div class="pbody">' + body + '</div></div>';
+}
+
 /* App.render() 가 화면을 바꿀 때마다 함께 그린다 — 뷰어는 어느 화면 위에도 뜰 수 있다. */
 function renderViewer() {
   const v = $('viewer');
@@ -1143,7 +1199,10 @@ function renderViewer() {
   v.classList.toggle('on', !!App.viewerId);
   if (!App.viewerId) return;
   $('viewerName').textContent = rec ? (rec.filename || '') : '';
-  const body = $('viewerBody');
+  const outer = $('viewerBody');
+  const rk = S.readKindFor(App.kind);
+  outer.classList.toggle('split', !!rk);
+  const body = $('viewerShot');
   body.classList.toggle('zoom', App.viewerZoom);
   const isImage = rec && /^image\//.test(rec.mime || '');
   if (App.viewerErr) {
@@ -1156,6 +1215,10 @@ function renderViewer() {
     body.innerHTML = '<div class="doc">이 파일은 미리 볼 수 없습니다.<br>'
       + '<a href="' + esc(App.viewerUrl) + '" target="_blank" rel="noopener">새 창에서 열기</a></div>';
   }
+  /* 판독 패널은 원본을 그린 뒤에 붙인다 — 위에서 innerHTML 을 갈아 끼우므로 */
+  const old = document.getElementById('readPanel');
+  if (old && old.parentNode) old.parentNode.removeChild(old);
+  if (rk) outer.insertAdjacentHTML('beforeend', readPanelHtml());
 }
 
 /* ══════ 휴지통 (Task 12) ══════
