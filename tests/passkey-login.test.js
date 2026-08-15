@@ -92,7 +92,10 @@ t('통과하면 그 표로 들어간다', /auth\.signInWithCustomToken\(token\)/
 /* ★ 기기를 잃거나 바꿨을 때 들어올 길이 없으면 안 된다 */
 t('★ 비밀번호 로그인이 그대로 있다', /auth\.signInWithEmailAndPassword\(email, pw\)/.test(PORTAL), true);
 t('★ 스스로 취소한 것은 「실패」로 겁주지 않는다', /if\(\/NotAllowed\|취소\/i\.test\(m\)\) showErr\('취소되었습니다/.test(PORTAL), true);
-t('등록 안내는 아직 등록 안 한 기기에서만', /row\.style\.display = \(can && !already && !later\) \? 'flex' : 'none';/.test(PORTAL), true);
+/* 세 갈래로 갈린다 — 되는 기기는 등록 권유, 앱 «안» 브라우저는 크롬 안내, 그 밖은 감춤.
+   자세한 것은 passkey-inapp.test.js 가 본다(여기서는 갈린다는 것만). */
+t('등록 안내는 아직 등록 안 한 기기에서만', /already \|\| later \? 'hide'/.test(PORTAL), true);
+t('되는 기기에는 등록을 권한다', /can \? 'reg'/.test(PORTAL), true);
 /* ⚠ 처음에는 윗줄(로그아웃 옆) 작은 단추였는데 폰에서 «없는 것처럼» 보였다(대표 보고).
    안 보이는 기능은 없는 기능이다 — 본문 맨 위 한 줄로 옮겼다. */
 t('★ 좁은 윗줄이 아니라 본문에 둔다', /id="pkRegRow"/.test(PORTAL), true);

@@ -36,6 +36,36 @@
       global.navigator.credentials && global.navigator.credentials.create);
   }
 
+  /* 네이버·카카오톡 앱 «안에서» 연 화면인가.
+     ⚠ 이 브라우저들에는 지문 기능(WebAuthn)이 아예 없다. 그래서 단추를 감추면
+       「기능이 없다」로 보인다 — 실제로는 «여기서만» 안 되는 것이다.
+       왜 안 되는지 말해 주고 크롬으로 가는 길을 열어 준다. */
+  function inApp() {
+    var ua = String((global.navigator && global.navigator.userAgent) || '');
+    return /NAVER\(inapp|KAKAOTALK|Instagram|FBAN|FBAV|Line\/|DaumApps|; wv\)/i.test(ua);
+  }
+
+  /* 크롬으로 다시 열기. 안드로이드는 intent 로 바로 넘어가고,
+     아이폰 등 안 되는 곳은 주소를 복사해 준다(붙여넣기만 하면 된다). */
+  function openInChrome() {
+    var url = global.location.href.split('#')[0];
+    var ua = String((global.navigator && global.navigator.userAgent) || '');
+    if (/Android/i.test(ua)) {
+      var bare = url.replace(/^https?:\/\//, '');
+      try {
+        global.location.href = 'intent://' + bare + '#Intent;scheme=https;package=com.android.chrome;end';
+        return 'chrome';
+      } catch (e) { /* 아래 복사로 내려간다 */ }
+    }
+    try {
+      if (global.navigator.clipboard && global.navigator.clipboard.writeText) {
+        global.navigator.clipboard.writeText(url);
+        return 'copied';
+      }
+    } catch (e) { /* 복사도 막힌 브라우저가 있다 */ }
+    return 'manual';
+  }
+
   function post(path, body, idToken) {
     var headers = { 'Content-Type': 'application/json' };
     if (idToken) headers.Authorization = 'Bearer ' + idToken;
@@ -128,6 +158,8 @@
 
   global.PuPasskey = {
     supported: supported,
+    inApp: inApp,
+    openInChrome: openInChrome,
     register: register,
     login: login,
     devices: devices,
