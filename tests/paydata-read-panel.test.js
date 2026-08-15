@@ -310,12 +310,17 @@ test('★ 같은 사람 값이 이미 있으면 묻는다', async () => {
   assert.equal(W.__got(), null, '「그대로 두기」인데 저장됐습니다');
 });
 
-test('덮어쓰기를 고르면 저장한다', async () => {
+test('★ 덮어쓰기를 고르면 저장한다 — 새 자리가 아니라 옛 자리에 다시 쓴다', async () => {
   const { W } = loadSave(
     { r1: { companyId: 'co_1', month: '202608', name: '배영승' } }, true);
   W.saveVals();
   await new Promise(r => setTimeout(r, 10));
-  assert.ok(W.__got());
+  const up = W.__got();
+  assert.ok(up, '저장되지 않았습니다');
+  const keys = Object.keys(up);
+  assert.equal(keys.length, 1, '한 사람 값인데 자리가 둘 이상 생겼습니다 — 근무일수가 두 배로 잡힙니다');
+  assert.match(keys[0], /\/values\/202608\/r1$/,
+    '「덮을까요」에 동의했는데 옛 자리(r1)가 아니라 새 자리에 썼습니다 — 옛 줄이 그대로 남아 두 줄이 됩니다');
 });
 
 test('★ 남의 자리에서는 저장하지 않는다', async () => {

@@ -1260,11 +1260,24 @@ function saveVals() {
   catch (e) { alert(e.message); return; }
 
   S.listValues(slot, App.viewingUid).then(existing => {
-    /* 같은 사업장·월·근로자가 이미 있으면 묻는다 — 캡처는 실제로 두 번 올라온다. */
-    const dup = rows.filter(r => S.findDuplicateValue(existing, r.companyId, r.month, r.name));
+    /* 같은 사업장·월·근로자가 이미 있으면 묻는다 — 캡처는 실제로 두 번 올라온다.
+       findDuplicateValue 는 "그 자리"의 id 를 돌려준다 — 여기서 그 id 를 버리고
+       buildValueRows 가 새로 붙인 id 그대로 저장하면, "덮을까요" 라고 물어놓고
+       실제로는 새 자리에 하나 더 쓰는 꼴이 된다. 옛 줄은 그대로 남고 새 줄이
+       하나 더 생기니, 막으려던 "근무일수 두 배"가 동의를 받고서 그대로 일어난다.
+       그래서 확인을 받은 다음에는 반드시 그 줄의 id 를 옛 자리 id 로 바꿔 끼워야
+       실시간DB update() 가 같은 열쇠에 다시 써서 "덮어쓰기"가 이름 그대로 된다. */
+    const dupIds = {};   // 새로 만든 id → 이미 있는 자리의 id
+    rows.forEach(r => {
+      const existingId = S.findDuplicateValue(existing, r.companyId, r.month, r.name);
+      if (existingId) dupIds[r.id] = existingId;
+    });
+    const dup = rows.filter(r => dupIds[r.id]);
     if (dup.length) {
       const who = dup.map(r => r.name).join(', ');
       if (!confirm('이미 있습니다 — 덮을까요?\n\n' + who + '\n\n「취소」를 누르면 그대로 둡니다.')) return null;
+      /* 「덮어쓰기」에 동의했다 — 이제 그 자리 id 로 바꿔 끼워야 진짜로 덮인다. */
+      rows.forEach(r => { if (dupIds[r.id]) r.id = dupIds[r.id]; });
     }
     return S.saveValues(slot, rows, App.viewingUid);
   }).then(n => {
