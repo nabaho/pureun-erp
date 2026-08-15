@@ -242,6 +242,20 @@ t('★ 지난달 계약은 세지 않는다', ctIss.some(x => /지난달/.test(x
 ctx.__reset({ contracts:[ { id:'c1', signDate:'2026-07-05', companyName:'사건건', managerMain:'권형하', amounts:{}, successFee:3000000 } ]});
 t('성공보수가 있으면 0원으로 지적하지 않는다', ctx.monthCloseIssues('contract', YM), []);
 
+// 입금
+ctx.__reset({ finance_income:[
+  { id:'i1', date:'2026-07-01', amount:100000, companyName:'유원에프앤비' },
+  { id:'i2', date:'2026-07-02', amount:50000,  companyName:'' }
+]});
+t('업체 빈 입금을 지적', ctx.monthCloseIssues('income', YM).some(x => /업체가 비어 있는 입금 1건/.test(x)), true);
+
+// 보류함(가수금) — 달로 자르지 않고 잔량 전체로 경고한다
+ctx.__reset({ finance_income:[ { id:'i1', date:'2026-07-01', amount:100000, companyName:'유원에프앤비' } ],
+  ledger_held:[ { k:'h1', amount:30000, date:'2026-06-20' } ] });
+t('★ 보류함에 남은 입금을 지적', ctx.monthCloseIssues('income', YM).some(x => /보류함에 남아 있는 입금 1건/.test(x)), true);
+ctx.__reset({ finance_income:[ { id:'i1', date:'2026-07-01', amount:100000, companyName:'유원에프앤비' } ], ledger_held:[] });
+t('보류함이 비었으면 지적하지 않는다', ctx.monthCloseIssues('income', YM).some(x => /보류함/.test(x)), false);
+
 // 출금
 ctx.__reset({ finance_expense:[
   { id:'e1', date:'2026-07-01', amount:100000, category:'exp-rent' },
