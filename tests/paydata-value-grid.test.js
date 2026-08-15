@@ -153,7 +153,7 @@ test('★ 출처 없는 칸은 클릭할 수 있는 척하지 않는다(src 클�
 });
 
 /* ══════ 내보내기 ══════ */
-function loadOut() {
+function loadOut(companyName) {
   const saved = { blob: null, name: '', copied: '' };
   const sandbox = {
     window: {}, console, Date, Blob: function (parts, o) { this.parts = parts; this.type = o && o.type; },
@@ -167,7 +167,7 @@ function loadOut() {
   new vm.Script([
     'const S = window.PuPaydataStore; S.init({uid:"U1"});',
     'const App = ' + JSON.stringify({
-      companyId: 'co_1', companyName: '화담원', month: '2026-08',
+      companyId: 'co_1', companyName: companyName || '화담원', month: '2026-08',
       values: {
         v1: { companyId: 'co_1', name: '배영승', sourceId: 'a1',
               pairs: [{ item: '유급일수', value: '3일' }, { item: '비고', value: '가,나' }] }
@@ -189,6 +189,13 @@ test('★ 쉼표 든 칸을 감싼다 — 안 감싸면 열이 밀린다', () =>
   assert.equal(W.csvEsc('가,나'), '"가,나"');
   assert.equal(W.csvEsc('그냥'), '그냥');
   assert.equal(W.csvEsc('말"표'), '"말""표"');
+});
+
+/* 줄바꿈(\n)뿐 아니라 캐리지리턴(\r) 하나만 든 값도 감싸야 한다 —
+   붙여넣기로 들어온 값에는 개행이 \r 하나로만 남는 경우가 있다. */
+test('★ 캐리지리턴(\\r) 하나만 있어도 감싼다', () => {
+  const { W } = loadOut();
+  assert.equal(W.csvEsc('가\r나'), '"가\r나"');
 });
 
 test('★ 표 머리에 근로자와 항목이 차례대로 온다', () => {
@@ -213,4 +220,45 @@ test('★ 복사는 탭으로 나눈다 — 엑셀에 바로 붙는다', () => {
   W.valuesCopy();
   assert.match(saved.copied, /근로자\t유급일수/);
   assert.match(saved.copied, /배영승\t3일/);
+});
+
+/* BOM으로 시작하는지만 보면 머리글·본문이 통째로 빠져도 시험이 통과해 버린다.
+   실제로 만들어진 CSV 안에 머리글 줄과 사람 줄이 그대로 들어있는지까지 본다. */
+test('★ 실제 CSV 출력 안에 머리글 줄과 사람 줄이 그대로 있다', () => {
+  const { W } = loadOut();
+  W.valuesCsv();
+  const b = W.__blob();
+  const text = b.parts[0].replace(/^﻿/, '');
+  const lines = text.split('\r\n');
+  assert.equal(lines[1], '근로자,유급일수,비고', '머리글 줄이 그대로 있어야 합니다');
+  assert.equal(lines[2], '배영승,3일,"가,나"', '사람 줄이 그대로 있고 쉼표 든 칸은 따옴표로 감싸져야 합니다');
+});
+
+/* csvEsc 단위 시험만으로는 실제 내보내기 경로(valuesCsv)가 그 함수를 쓰는지 증명하지 못한다.
+   loadOut()의 「비고: 가,나」칸이 진짜 valuesCsv() 출력에서 따옴표로 감싸지는지 직접 본다. */
+test('★ 쉼표 든 칸은 실제 valuesCsv() 출력에서도 따옴표로 감싸진다', () => {
+  const { W } = loadOut();
+  W.valuesCsv();
+  const b = W.__blob();
+  const text = b.parts[0].replace(/^﻿/, '');
+  assert.match(text, /"가,나"/, '비고 칸(가,나)이 실제 출력에서 따옴표로 감싸져야 합니다');
+});
+
+/* 복사(TSV)는 탭으로 칸을 나누므로 쉼표는 감쌀 필요가 없지만, 값 자체는
+   훼손되거나 다른 칸으로 밀리지 않고 그대로 살아남아야 한다. */
+test('★ 쉼표 든 칸은 복사(탭 구분) 결과에도 그대로 살아남는다', () => {
+  const { W, saved } = loadOut();
+  W.valuesCopy();
+  assert.match(saved.copied, /배영승\t3일\t가,나/, '쉼표 든 칸이 훼손되거나 다른 칸으로 밀리면 안 됩니다');
+});
+
+/* 회사이름에도 쉼표·따옴표가 들어갈 수 있다(한국 상호명에 흔함).
+   제목 줄만 csvEsc를 안 거치면 첫 줄이 깨져 그 아래 모든 열이 밀린다. */
+test('★ 회사이름에 쉼표가 있으면 제목 줄도 따옴표로 감싸진다', () => {
+  const { W } = loadOut('화,담원');
+  W.valuesCsv();
+  const b = W.__blob();
+  const text = b.parts[0].replace(/^﻿/, '');
+  const lines = text.split('\r\n');
+  assert.equal(lines[0], '"화,담원 2026-08 값"', '제목 줄도 다른 줄처럼 csvEsc를 거쳐야 합니다');
 });
