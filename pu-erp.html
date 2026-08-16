@@ -1945,6 +1945,30 @@ function fbShouldSync(k){
 }
 // ── [보안규칙 대비] 재무·급여 키 목록 (Firebase 규칙의 fin 전용 항목과 1:1 동일) ──
 var FB_FIN_KEYS = ['finance_income','finance_expense','finance_invoice','payroll_monthly','payroll_irregular','funds','mgr_rates','pay_items','dc_contributions','retirement_settlements','recurring_expenses','expense_budget','finance_bank_fee'];
+
+/* ── 부팅 때 「볼 수 있는 것만」 받기 (설계서 2026-08-16-부팅-받기-줄이기) ──
+   실측: 계정 10개 중 재무 권한(fin)은 2개뿐인데, 나머지 8명도 전 직원 급여
+   (payroll_monthly 373KB)·수입 내역(finance_income 958KB)을 매번 내려받아
+   브라우저에 깔고 있었다. 요금보다 자료보호가 먼저인 문제다.
+
+   FB_FIN_GATED — fin 권한이 **명시적으로 false** 인 기기에서 부팅 때 받지 않는 키.
+   ⚠ FB_FIN_KEYS 에서 funds·mgr_rates 는 **일부러 뺐다**(설계서와 다른 점, 구현 중 결정):
+     funds 는 기금 «업무» 목록이라 전 직원 업무 화면이 쓰고(7KB), mgr_rates 도
+     성과 계산 화면 밖에서 참조된다(8KB) — 작은 돈 아끼려고 업무 화면을 깨지 않는다.
+   ⚠ 대신 입금·장부 키(cms_ledger 240KB·ledger_batches 134KB·bank_processed 33KB·
+     ledger_held·payer_aliases)를 **더했다** — FB_FIN_KEYS 가 만들어진 뒤에 생긴
+     재무 데이터인데 목록에 안 올라 있었다. */
+var FB_FIN_GATED = ['finance_income','finance_expense','finance_invoice','payroll_monthly',
+  'payroll_irregular','pay_items','dc_contributions','retirement_settlements',
+  'recurring_expenses','expense_budget','finance_bank_fee',
+  'cms_ledger','ledger_batches','bank_processed','ledger_held','payer_aliases'];
+
+/* 부팅 때 아무에게도 안 받는 키(로그류). 보는·쓰는 화면이 그때 erpEnsureKeys 로 받는다.
+   ⚠ payroll_audit_log(133KB)만 넣었다 — closed_archive·audit_log 등은 크기가 작아(합 60KB)
+     읽기-덧붙이기-쓰기 경로를 전부 지키는 위험을 무릅쓸 값어치가 없다.
+   ⚠ co_merge_log(89KB)는 여기 없어도 빠진다 — FB_EXCLUDE 라 fbShouldSync 가 거른다.
+     (읽는 곳이 한 곳도 없는데 매번 내려오고 있었다.) */
+var FB_COLD_KEYS = ['payroll_audit_log'];
 // ── [보안규칙 대비] 전체 동기화 키 (키별 폴백 읽기/구독용 — fbUploadAll과 공유) ──
 var FB_ALL_SYNC_KEYS = [
   'contracts','cases','consultings','funds','other_projects','companies',
@@ -8393,7 +8417,147 @@ function _fbApplyRecord(k, v, opts){
   }
   return false;
 }
+/* ── 초기 동기화 갈림길 (설계서 2026-08-16) ──
+   ① 기본: 열쇠별 받기 — 「내가 볼 수 있는 것만」 + 리스너의 첫 값이 곧 초기값.
+      ⚠ 예전에는 once('value') 로 통째(2.83MB)를 받은 «뒤에» data.on() 을 붙여
+        **같은 것을 한 번 더** 받았다(once 가 떼어진 자리에 새 구독 = 서버가 다시
+        보낸다). 켤 때마다 5.7MB — 「여는 것 자체가 받기」의 가장 큰 조각이었다.
+        열쇠별 on('value') 은 첫 값이 초기 동기화이고 그대로 실시간 구독으로 남아
+        **한 번만** 받는다.
+   ② 예비: 계획이 안 서면(권한 조회 실패·명단 조회 실패·되돌림 스위치) 예전
+      통째 읽기(_fbInitialSyncFull) 그대로 — 모르면 다 받는다(fail-open).
+      재무 담당자가 빈 화면을 보는 것보다 요금을 조금 더 내는 쪽이 낫다. */
 function fbInitialSync(_isRetry){
+  if(!fbDb) return Promise.resolve(0);
+  return _bootKeyPlan().then(function(plan){
+    if(plan.mode !== 'perKey') return _fbInitialSyncFull(_isRetry);
+    window._fbPerKeyMode = true;
+    return _fbSyncKeys(plan.keys, {});
+  });
+}
+
+/* 무엇을 받을지 계획한다. 실패하면 무조건 { mode:'full' } — fail-open.
+   · 열쇠 명단: REST shallow(이름만, 몇 KB) — 굳은 목록이 아니라 **서버의 지금
+     명단**을 쓰므로 새 열쇠가 생겨도 저절로 포함된다(설계서 3.5의 표류 문제 해소).
+   · 권한: uid_roles/{uid}/fin — 규칙이 판단 근거로 쓰는 바로 그 값(아주 작다).
+     **명시적으로 false 일 때만** 재무 열쇠를 건너뛴다. undefined·조회실패 → 전부. */
+var _BOOT_PLAN_TIMEOUT_MS = 8000;   // 계획이 이보다 늦으면 통째 읽기로 간다 — 부팅을 세우지 않는다
+function _bootKeyPlan(){
+  try {
+    if(localStorage.getItem('pureun_v6_boot_full') === '1') return Promise.resolve({ mode:'full', why:'스위치' });
+  } catch(_){}
+  var u = (typeof firebase !== 'undefined' && firebase.auth) ? firebase.auth().currentUser : null;
+  if(!u || !u.uid) return Promise.resolve({ mode:'full', why:'인증 전' });
+  var work = Promise.all([
+    fbDb.ref('uid_roles/' + u.uid + '/fin').once('value').then(function(s){ return s.val(); }),
+    u.getIdToken().then(function(tok){
+      return _bootFetch(FB_DB_REST + '/data.json?shallow=true&auth=' + encodeURIComponent(tok));
+    })
+  ]).then(function(r){
+    var fin = r[0], shallow = r[1];
+    if(!shallow || typeof shallow !== 'object') return { mode:'full', why:'명단 없음' };
+    var keys = Object.keys(shallow).filter(fbShouldSync);           // 올리지 않는 것은 받지도 않는다
+    keys = keys.filter(function(k){ return FB_COLD_KEYS.indexOf(k) < 0; });
+    if(fin === false) keys = keys.filter(function(k){ return FB_FIN_GATED.indexOf(k) < 0; });
+    return { mode:'perKey', keys: keys, fin: fin };
+  });
+  var timeout = new Promise(function(res){ setTimeout(function(){ res({ mode:'full', why:'계획 지연' }); }, _BOOT_PLAN_TIMEOUT_MS); });
+  return Promise.race([work, timeout]).catch(function(){ return { mode:'full', why:'계획 실패' }; });
+}
+/* 주입 가능한 fetch — 검사에서 가짜로 갈아끼운다.
+   ⚠ fetchT(시간제한 래퍼)를 거친다 — 이 저장소 규칙: 바깥으로 나가는 부름에
+     시간 제한 없는 fetch 를 두지 않는다(답이 안 오면 영영 기다린다). */
+function _bootFetch(url){
+  return fetchT(url, null, _BOOT_PLAN_TIMEOUT_MS)
+    .then(function(r){ if(!r.ok) throw new Error('shallow ' + r.status); return r.json(); });
+}
+var FB_DB_REST = 'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app';
+
+/* 열쇠별로 구독을 붙인다. **첫 값이 초기 동기화**이고 구독은 그대로 남아
+   실시간 반영이 된다 — 받기는 열쇠당 한 번뿐이다.
+   ⚠ 이미 붙은 열쇠는 건너뛴다(두 번 안 받는다). 그래서 복귀 재동기화·수동
+     새로고침이 이 함수를 다시 불러도 값이 거의 0이다 — 구독이 살아 있으면
+     서버가 어차피 최신을 밀어 주고 있다.
+   ⚠ 한 열쇠가 침묵해도 부팅이 멎지 않는다(_FB_KEY_FIRST_TIMEOUT_MS).
+   ⚠ 첫 값은 부팅 적용(deferGate·selfHeal), 그 뒤는 실시간 적용(notify·폭풍감지). */
+var _fbKeyListeners = {};
+var _FB_KEY_FIRST_TIMEOUT_MS = 15000;
+var _fbBytesIn = 0;   // 이 세션이 서버에서 받은 양(대략) — 콘솔 erpBytesIn() 으로 본다
+function _fbSyncKeys(keys, opts){
+  opts = opts || {};
+  var fresh = (keys || []).filter(function(k){ return !_fbKeyListeners[k]; });
+  if(!fresh.length) return Promise.resolve(0);
+  var pulled = 0;
+  return Promise.all(fresh.map(function(k){
+    _fbKeyListeners[k] = true;
+    return new Promise(function(res){
+      var first = true;
+      var to = setTimeout(function(){ if(first){ first = false; res(); } }, _FB_KEY_FIRST_TIMEOUT_MS);
+      try {
+        fbDb.ref('data/' + k).on('value', function(snap){
+          var v = snap.val();
+          try { if(v) _fbBytesIn += JSON.stringify(v).length; } catch(_b){}
+          if(first){
+            first = false; clearTimeout(to);
+            if(v && _fbApplyRecord(k, v, { selfHeal:true, deferGate:true, notify:!!opts.notify })) pulled++;
+            res();
+          } else if(v){
+            if(typeof window._fbApplyRemote === 'function') window._fbApplyRemote(k, v);
+            else _fbApplyRecord(k, v, { notify:true });
+          }
+        }, function(_err){
+          /* 권한 없는 열쇠(재무 등) — 조용히 건너뛴다. 구독이 죽었으므로 표시를 지워
+             다음 ensure 가 다시 시도할 수 있게 한다. */
+          _fbKeyListeners[k] = false;
+          if(first){ first = false; clearTimeout(to); res(); }
+        });
+      } catch(_e){
+        _fbKeyListeners[k] = false;
+        if(first){ first = false; res(); }
+      }
+    });
+  })).then(function(){
+    try { _drainShrinkQueue(); } catch(_d){}
+    return pulled;
+  });
+}
+
+/* 부팅에서 안 받은 열쇠(payroll_audit_log 등)를 쓰는 화면·동작이 그때 받는다.
+   이미 받았으면 아무것도 안 한다. 통째 모드에서는 이미 다 있으므로 0. */
+window.erpEnsureKeys = function(keys){
+  if(!fbDb || !window._fbPerKeyMode) return Promise.resolve(0);
+  return _fbSyncKeys((keys || []).filter(fbShouldSync), { notify:true });
+};
+/* 되돌림 스위치 — 문제가 생기면 콘솔에서 erpBootFullSync(true) 후 새로고침. */
+window.erpBootFullSync = function(on){
+  try { localStorage.setItem('pureun_v6_boot_full', on ? '1' : ''); } catch(_){}
+  console.log('부팅 통째 읽기: ' + (on ? '켬' : '끔') + ' — 새로고침하면 적용됩니다');
+};
+window.erpBytesIn = function(){
+  console.log('이 세션이 서버에서 받은 양(대략): ' + (_fbBytesIn / 1024).toFixed(0) + 'KB');
+  return _fbBytesIn;
+};
+/* 표류 점검(관리자 콘솔 전용) — 서버 명단과 가르기 목록을 대조해 보고만 한다.
+   ⚠ 자동으로 부르지 않는다. shallow 라 몇 KB 지만, 점검은 사람이 부를 때만. */
+window.erpAuditSyncKeys = function(){
+  var u = firebase.auth().currentUser;
+  if(!u) { console.log('로그인 후에 실행하세요'); return Promise.resolve(null); }
+  return u.getIdToken().then(function(tok){
+    return _bootFetch(FB_DB_REST + '/data.json?shallow=true&auth=' + encodeURIComponent(tok));
+  }).then(function(shallow){
+    var all = Object.keys(shallow || {});
+    var report = {
+      전체: all.length,
+      부팅제외_로그류: all.filter(function(k){ return FB_COLD_KEYS.indexOf(k) >= 0; }),
+      부팅제외_올리지않는것: all.filter(function(k){ return !fbShouldSync(k); }),
+      재무가르기대상: all.filter(function(k){ return FB_FIN_GATED.indexOf(k) >= 0; })
+    };
+    console.table ? console.table(report) : console.log(report);
+    return report;
+  });
+};
+
+function _fbInitialSyncFull(_isRetry){
   if(!fbDb) return Promise.resolve(0);
   return fbDb.ref('data').once('value').then(function(snap){
     var remote = snap.val() || {};
@@ -8637,6 +8801,12 @@ function fbSetupListener(){
       } catch(_){}
     });
   }
+
+  /* ⚠ 열쇠별 모드에서는 여기서 멈춘다(2026-08-16). 초기 동기화가 붙인 열쇠별
+     구독이 이미 실시간 반영까지 맡고 있다 — 그 위에 data 통째 구독(child_added)을
+     또 붙이면 서버가 **모든 키를 한 번 더 보낸다**(주석에 "no-op" 이라 적혀 있던
+     그 발화가 CPU 만 공짜였지 내려받기는 통째 한 벌이었다. 켤 때마다 2.83MB×2). */
+  if(window._fbPerKeyMode) return;
 
   fbDb.ref('data').on('child_changed', function(snap){
     _applyRemote(snap.key, snap.val());
@@ -63771,19 +63941,30 @@ window.isAttendLocked   = isAttendLocked;
 // ── 월말 마감 끝 ──
 
 // 감사 로그
+/* ⚠ 이 로그는 부팅에서 안 받는다(FB_COLD_KEYS, 2026-08-16 — 133KB 를 매번 받을
+   까닭이 없다). 그래서 **덧붙이기 전에 반드시 서버 것을 먼저 받는다** — 안 받은
+   채 덧붙여 저장하면 이 기기의 낡은(또는 빈) 사본이 서버의 최신 기록을 덮어쓴다.
+   감사 기록은 몇 초 늦게 적혀도 되지만 지워지면 안 되는 기록이다. */
 function addPayrollAudit(empSid, ym, field, before, after, note){
-  var log = dbGet('payroll_audit_log', []);
-  var who = CURRENT_USER.name;
-  log.unshift({
-    ts:(new Date()).toISOString(),
-    by:who, empSid:empSid, ym:ym, field:field,
-    before: before==null?'':String(before),
-    after:  after==null?'':String(after),
-    note: note||''
-  });
-  // 최대 5,000건만 유지
-  if(log.length > 5000) log = log.slice(0, 5000);
-  dbSet('payroll_audit_log', log);
+  var doAdd = function(){
+    var log = dbGet('payroll_audit_log', []);
+    var who = CURRENT_USER.name;
+    log.unshift({
+      ts:(new Date()).toISOString(),
+      by:who, empSid:empSid, ym:ym, field:field,
+      before: before==null?'':String(before),
+      after:  after==null?'':String(after),
+      note: note||''
+    });
+    // 최대 5,000건만 유지
+    if(log.length > 5000) log = log.slice(0, 5000);
+    dbSet('payroll_audit_log', log);
+  };
+  if(window._fbPerKeyMode && !_fbKeyListeners['payroll_audit_log']){
+    window.erpEnsureKeys(['payroll_audit_log']).then(doAdd).catch(doAdd);
+    return;
+  }
+  doAdd();
 }
 // 직원의 최근 N개월 급여 이력 (실지급액 추이용)
 function getPayrollHistory(empSid, currentYM, months){
@@ -63806,6 +63987,12 @@ function getPayrollHistory(empSid, currentYM, months){
 }
 
 function getPayrollAuditFor(empSid, ym){
+  /* 부팅에서 안 받는 열쇠다 — 이 이력을 보는 화면이 열리면 그때 받아 온다.
+     받아지면 적용기가 fb_data_changed 를 쏘아 화면이 스스로 다시 그려진다.
+     (아직 안 온 동안은 빈 목록 — 「지워짐」이 아니라 「받는 중」이다) */
+  if(window._fbPerKeyMode && !_fbKeyListeners['payroll_audit_log']){
+    try { window.erpEnsureKeys(['payroll_audit_log']); } catch(_){}
+  }
   return dbGet('payroll_audit_log', []).filter(function(e){
     return e.empSid===empSid && e.ym===ym;
   });
