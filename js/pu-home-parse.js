@@ -8,6 +8,7 @@
      「다름」이 쏟아지는 것을 막는 유일한 자리다. */
   function tidy(s) {
     return String(s || '')
+      .replace(/<!--[\s\S]*?-->/g, ' ')
       .replace(/<[^>]+>/g, ' ')
       .replace(/&nbsp;/g, ' ')
       .replace(/&amp;/g, '&')
