@@ -38,8 +38,11 @@ test('왜 껐는지와 되돌리는 법이 코드에 적혀 있다', () => {
   assert.ok(around.includes('true 로 되돌려'), '되돌리는 법이 적혀 있어야 한다');
 });
 
-test('권한 거부가 나면 App Check 를 의심하라고 알려 준다', () => {
-  assert.match(app, /if\(!FB_APPCHECK_ON && isDenied\(e\)\) console\.error\('\[App Check\]/);
+test('권한 거부가 나면 원인을 갈라 알려 준다 — App Check 는 그중 하나다', () => {
+  /* 2026-08-16: 무조건 App Check 만 지목하던 것을 고쳤다. 로그인 만료가 훨씬 흔한
+     원인이라 먼저 가른다(itemsDeniedTell/deniedCauseOf, tests/cards-denied-cause.test.js).
+     App Check 안내 자체는 그대로 있어야 한다 — 강제를 켰다면 즉시 알아채야 한다. */
+  assert.match(app, /isDenied\(e\)\) itemsDeniedTell\(e\)/);
   assert.match(app, /FB_APPCHECK_ON 을 true 로 되돌려야 합니다/);
 });
 

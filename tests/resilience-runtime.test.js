@@ -106,7 +106,8 @@ test('the replay loop counts attempts and parks a write that keeps failing', () 
 test('parked writes are skipped by later replays but kept on disk', () => {
   const src = fs.readFileSync(path.join(root, 'js', 'pu-resilience.js'), 'utf8');
   const at = src.indexOf('function replayQueue(');
-  const head = src.slice(at, at + 400);
+  /* 30초 간격 확인이 앞에 붙어(2026-08-16) 머리가 길어졌다 — 넉넉히 잘라 본다 */
+  const head = src.slice(at, at + 800);
   assert.match(head, /!item\.parked/, '세워 둔 것을 또 보내면 되풀이가 그대로다');
 });
 

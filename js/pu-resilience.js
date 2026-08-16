@@ -167,6 +167,24 @@
     writeCensus[k] = (writeCensus[k] || 0) + 1;
   }
 
+  /* ── 실패 폭주 감지 ──
+     2026-08-16: 저장 수만 건이 한꺼번에 실패하자, 건마다 두 번씩 «다시 시도»가 붙어
+     실패가 세 배로 불었다. 다시 시도는 «가끔 한 건» 실패할 때 뜻이 있다 — 방금
+     실패가 수십 건이면 지금 또 보내 봐야 같이 실패할 뿐, 서버만 더 두들긴다.
+     최근 10초의 실패를 세어, 폭주 중이면 다시 시도를 건너뛰고 바로 대기줄로 보낸다. */
+  var FAIL_BURST_WINDOW_MS = 10000;
+  var FAIL_BURST_LIMIT = 30;
+  var recentFails = [];
+  function noteFail(now) {
+    recentFails.push(now);
+    if (recentFails.length > FAIL_BURST_LIMIT * 2) recentFails.splice(0, FAIL_BURST_LIMIT);
+  }
+  function inFailBurst(now) {
+    var cut = now - FAIL_BURST_WINDOW_MS, n = 0;
+    for (var i = recentFails.length - 1; i >= 0 && recentFails[i] >= cut; i--) n++;
+    return n >= FAIL_BURST_LIMIT;
+  }
+
   function callWithRetry(ref, method, args) {
     var callback = typeof args[args.length - 1] === 'function' ? args.pop() : null;
     var value = method === 'remove' ? null : args[0];
@@ -180,6 +198,9 @@
         return rawMethods[method].apply(ref, args);
       }).catch(function (error) {
         if (!isTransientError(error) || isExcludedPath(referencePath(ref))) return finishError(error);
+        var nowTs = Date.now();
+        noteFail(nowTs);
+        if (inFailBurst(nowTs)) attempt = RETRY_DELAYS.length;   /* 폭주 중 — 바로 대기줄로 */
         if (attempt < RETRY_DELAYS.length && window.navigator.onLine !== false) {
           var delay = RETRY_DELAYS[attempt++];
           emit('retrying', { method: method, path: referencePath(ref), attempt: attempt });
@@ -206,8 +227,20 @@
     try { return window.firebase.apps || []; } catch (_) { return []; }
   }
 
+  /* ── 다시 보내기 사이 최소 간격 ──
+     2026-08-16: 대기줄 다시 보내기는 «연결될 때마다» 나갔다. 서버가 폭주 때문에
+     연결을 끊으면 SDK 가 몇 초 만에 다시 붙고 → 또 보내고 → 또 끊기고 — 이 고리가
+     몇 시간 동안 초당 7건씩 오류를 만들었다(대표 콘솔, ErrorId 로 셈).
+     연결이 아무리 자주 오르내려도 다시 보내기는 30초에 한 번이면 충분하다 —
+     밀린 저장은 어차피 순서대로 나가고, 30초 늦는 것은 아무도 못 느낀다. */
+  var REPLAY_MIN_GAP_MS = 30000;
+  var lastReplayAt = 0;
+
   function replayQueue(app) {
     if (replaying || !app || !app.database) return Promise.resolve(false);
+    var nowTs = Date.now();
+    if (nowTs - lastReplayAt < REPLAY_MIN_GAP_MS) return Promise.resolve(false);
+    lastReplayAt = nowTs;
     var context = { project: String(app.options && (app.options.projectId || app.options.databaseURL) || 'default'), uid: app.auth && app.auth().currentUser && app.auth().currentUser.uid || '' };
     var queue = readQueue(context.project).filter(function (item) { return !item.parked; });
     if (!queue.length) return Promise.resolve(false);

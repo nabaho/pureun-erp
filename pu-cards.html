@@ -1633,7 +1633,7 @@ const Store = {
           if(!Store._idxDone){ setTimeout(backfillIdx, 3000); }
           /* 번호 열쇠 자리 첫 채우기 — 한 번만. 명함이 다 들어온 뒤라야 빠짐없이 찬다. */
           if(!Store._byKeyDone){ Store._byKeyDone=true; setTimeout(ensureByKeyMap, 4000); } },
-          e => { if(!FB_APPCHECK_ON && isDenied(e)) console.error('[App Check] 콘솔에서 App Check 강제를 켜셨다면 pu-cards.html 의 FB_APPCHECK_ON 을 true 로 되돌려야 합니다 — 그러지 않으면 모든 읽기·쓰기가 막힙니다'); });
+          e => { if(isDenied(e)) itemsDeniedTell(e); });
         this.db.ref(DB_ROOT+'/groups').on('value', s => { state.groups = s.val()||{}; renderSoon();
           if(!Store._bizSeedDone){ Store._bizSeedDone=true; setTimeout(seedBizFolders, 3000); } });
         /* 내 탭(저장된 검색·필터 조건) — 전 직원 공유 */
@@ -11415,6 +11415,31 @@ async function setPrivatePassword(){
 function isDenied(e){
   const m = String((e&&(e.code||e.message))||'');
   return /permission[_ ]denied|PERMISSION_DENIED/i.test(m);
+}
+/* 명함 구독이 서버에서 끊겼을 때 — 원인을 «맞게» 말한다.
+   예전에는 무조건 「App Check 를 켜셨다면…」이라고만 했다(2026-08-16 대표 콘솔).
+   그런데 같은 PERMISSION_DENIED 가 나는 훨씬 흔한 길이 따로 있다: 로그인 토큰이
+   만료되거나 다른 탭에서 로그아웃해 auth 가 비면, 규칙(auth != null)이 모든 구독을
+   끊는다. 엉뚱한 원인을 대면 사람이 App Check 를 뒤지느라 시간을 버린다. */
+function deniedCauseOf(user, appCheckOn){
+  if(!user) return 'auth';                 /* 로그인이 비어 있다 — 가장 흔한 원인 */
+  if(!appCheckOn) return 'appcheck';       /* 로그인은 있는데 막혔다 — App Check 강제이거나 규칙 */
+  return 'rules';
+}
+function itemsDeniedTell(e){
+  let user=null; try{ user = firebase.auth().currentUser; }catch(_){}
+  const why = deniedCauseOf(user, FB_APPCHECK_ON);
+  if(why==='auth'){
+    console.error('[명함첩] 로그인이 풀려 실시간 구독이 끊겼습니다 — 포털에서 다시 로그인해 주세요.');
+    toast('로그인이 풀렸습니다 — 다시 로그인해 주세요', 8000);
+    return;
+  }
+  if(why==='appcheck'){
+    console.error('[App Check] 로그인은 살아 있는데 읽기가 거부됐습니다. 콘솔에서 App Check 강제를 켜셨다면 '
+      + 'pu-cards.html 의 FB_APPCHECK_ON 을 true 로 되돌려야 합니다. 아니라면 규칙(Rules)이 바뀌었는지 확인해 주세요.');
+    return;
+  }
+  console.error('[명함첩] 읽기가 거부됐습니다 — 콘솔의 규칙(Rules)이 바뀌었는지 확인해 주세요.', (e&&e.message)||'');
 }
 function tellVaultRuleMissing(){
   /* 줄바꿈을 배열로 잇는다 — 붙여넣을 JSON 안에 따옴표가 많아 한 줄 문자열로 쓰면
