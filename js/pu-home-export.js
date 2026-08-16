@@ -5,30 +5,13 @@
 
   const ORIGIN = 'https://xn--o80bs5mdnbm0bf80anms.kr';
 
-  /* "태그 이름이 영문자로 시작하면 진짜 태그"라는 판별은 틀렸다. 노무·인사
-     경력 표기에는 <PM>, <HR>, <A등급> 처럼 영문 약어를 꺾쇠로 감싸는 표기가
-     흔해서, 그 규칙으로는 사람이 쓴 글자가 통째로 사라진다.
-     그래서 실제로 걷어낼 필요가 있는 진짜 HTML 태그 이름만 미리 목록으로
-     정해 두고, 이름이 정확히 이 목록의 것과 같을 때만 태그로 본다.
-     목록에 없는 이름(PM, HR, A등급, Team Leader, 노무담당 등)은 그대로 둔다. */
-  var KNOWN_TAGS = [
-    'div', 'span', 'p', 'br', 'a', 'b', 'strong', 'i', 'em', 'u', 's', 'font',
-    'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'td', 'th', 'img',
-    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'section', 'article', 'center', 'small', 'sub', 'sup'
-  ];
-
-  /* <\/?(태그이름)(?=[\s/>]) 로 이름 뒤에 공백·슬래시·> 가 와야만 태그로 본다
-     (그래야 '<A등급>'의 'a'가 태그 이름 'a'와 헷갈리지 않는다).
-     따옴표로 감싼 속성값 안의 >는 태그 끝으로 보지 않도록, 속성 부분은
-     따옴표 문자열 전체이거나 따옴표 밖의 >가 아닌 글자만 반복해서 삼킨 뒤
-     마지막에 오는 진짜 >에서 태그를 닫는다. */
-  var TAG_RE = new RegExp(
-    '<\\/?(?:' + KNOWN_TAGS.join('|') + ')(?=[\\s/>])(?:[^>"\']|"[^"]*"|\'[^\']*\')*>',
-    'gi'
-  );
-
+  /* 들어온 글자를 지우지 않는다. 공백만 정리한다.
+     ★ 태그처럼 생긴 것을 지우는 규칙을 세 번 만들었고 세 번 다 사람이 쓴 표기를
+     말없이 삭제했다(<S> 등급, <PM>, <Team Leader>, <노무담당>).
+     찌꺼기와 사람 글자를 기계가 가릴 방법이 없다. 지우지 말고 riskyLines 로 알린다.
+     "간단히 정규식으로 지우자"로 되돌리지 말 것. */
   function clean(line) {
-    return String(line || '').replace(TAG_RE, '').replace(/\s+/g, ' ').trim();
+    return String(line || '').replace(/\s+/g, ' ').trim();
   }
 
   /* 배열이 아니라 글자 하나가 와도 한 줄짜리로 받아준다 */
@@ -47,11 +30,11 @@
     return lines.join('\n');
   }
 
-  /* 다듬은 뒤에도 <, > 가 남은 줄. 홈페이지가 태그로 오인해 안 보일 수 있으니
-     자동으로 고치지 않고 사람이 판단하도록 그대로 돌려준다. */
+  /* 홈페이지 편집 칸은 HTML 을 받는다. 꺾쇠가 든 줄은 브라우저가 모르는 태그로 여겨
+     화면에서 안 보일 수 있다. 지우지 않고 사람에게 알린다. */
   function riskyLines(careers) {
-    return toLines(careers).map(clean).filter(Boolean).filter(function (l) {
-      return /[<>]/.test(l);
+    return toLines(careers).map(clean).filter(function (l) {
+      return l && /[<>]/.test(l);
     });
   }
 

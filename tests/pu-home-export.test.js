@@ -32,9 +32,9 @@ test('빈 줄은 버린다', () => {
   assert.equal(E.careersText(['現 가', '', '  ', '前 나']), '現 가\n前 나');
 });
 
-test('찌꺼기 태그는 넣지 않는다', () => {
+test('찌꺼기처럼 보이는 표기도 지우지 않는다', () => {
   const t = E.careersText(['<div>現 가', '前 나']);
-  assert.ok(!/</.test(t), '들어온 태그를 그대로 흘려보내면 안 된다');
+  assert.equal(t, '<div>現 가\n前 나');
 });
 
 test('구성원 편집 주소를 만든다', () => {
@@ -58,24 +58,24 @@ test('이름 없는 꺾쇠(부등호처럼 쓰인 것)도 살아남는다', () =
   assert.equal(t, '가 < 나, 다 > 라');
 });
 
-test('진짜 찌꺼기 태그(div)는 여전히 걷힌다', () => {
+test('<div> 같은 알려진 태그 이름이어도 이제 지우지 않는다', () => {
   const t = E.careersText(['<div>現 가']);
-  assert.ok(!/</.test(t), '<div> 는 진짜 태그이므로 걷혀야 한다');
+  assert.equal(t, '<div>現 가');
 });
 
-test('닫는 태그·자체닫힘 태그·속성 있는 태그도 걷힌다', () => {
-  assert.equal(E.careersText(['가나다</a>']), '가나다');
-  assert.equal(E.careersText(['가나다<br />마바사']), '가나다마바사');
-  assert.equal(E.careersText(['가나다<span class="x">마바사</span>']), '가나다마바사');
+test('닫는 태그·자체닫힘 태그·속성 있는 태그도 이제 지우지 않는다', () => {
+  assert.equal(E.careersText(['가나다</a>']), '가나다</a>');
+  assert.equal(E.careersText(['가나다<br />마바사']), '가나다<br />마바사');
+  assert.equal(E.careersText(['가나다<span class="x">마바사</span>']), '가나다<span class="x">마바사</span>');
 });
 
-test('riskyLines 는 다듬은 뒤에도 꺾쇠가 남은 줄만 집어낸다', () => {
+test('riskyLines 는 꺾쇠가 든 줄을 전부 집어낸다(지우는 단계가 없어져 태그처럼 보이는 줄도 집힌다)', () => {
   const risky = E.riskyLines(['현 (주)가나 <노무담당> 자문', '<div>깨끗한 줄', '평범한 줄']);
-  assert.deepEqual([...risky], ['현 (주)가나 <노무담당> 자문']);
+  assert.deepEqual([...risky], ['현 (주)가나 <노무담당> 자문', '<div>깨끗한 줄']);
 });
 
-test('riskyLines 는 멀쩡한 줄만 있으면 빈 배열을 돌려준다', () => {
-  const risky = E.riskyLines(['<div>現 가', '前 나']);
+test('riskyLines 는 꺾쇠가 아예 없는 줄들만 있으면 빈 배열을 돌려준다', () => {
+  const risky = E.riskyLines(['現 가', '(주)가나 자문', '前 나']);
   assert.deepEqual([...risky], []);
 });
 
@@ -106,22 +106,45 @@ test('영문 약어를 꺾쇠로 감싼 경력 표기는 태그가 아니므로 
   assert.equal(E.careersText(['현 <노무담당> 자문']), '현 <노무담당> 자문');
 });
 
-test('알려진 이름의 진짜 HTML 태그는 대소문자 가리지 않고 걷힌다', () => {
-  assert.equal(E.careersText(['<div>現 가']), '現 가');
-  assert.equal(E.careersText(['가나다</div>마바사']), '가나다마바사');
-  assert.equal(E.careersText(['가나다<br />마바사']), '가나다마바사');
-  assert.equal(E.careersText(['<DIV>現 가</DIV>']), '現 가');
-  assert.equal(E.careersText(['가나다<span class="x">마바사</span>']), '가나다마바사');
-  assert.equal(E.careersText(['가나다</a>마바사']), '가나다마바사');
+test('과거에 "아는 태그 이름"으로 취급하던 것들도 이제 대소문자 가리지 않고 지우지 않는다', () => {
+  assert.equal(E.careersText(['<div>現 가']), '<div>現 가');
+  assert.equal(E.careersText(['가나다</div>마바사']), '가나다</div>마바사');
+  assert.equal(E.careersText(['가나다<br />마바사']), '가나다<br />마바사');
+  assert.equal(E.careersText(['<DIV>現 가</DIV>']), '<DIV>現 가</DIV>');
+  assert.equal(E.careersText(['가나다<span class="x">마바사</span>']), '가나다<span class="x">마바사</span>');
+  assert.equal(E.careersText(['가나다</a>마바사']), '가나다</a>마바사');
 });
 
-test('속성값 안의 > 때문에 태그가 중간에서 끊기지 않는다', () => {
+test('속성값처럼 보이는 > 도 이제 지우지 않으므로 끊길 일이 없다', () => {
   const t = E.careersText(['가나다<span data-y="1 > 2">라마바']);
-  assert.equal(t, '가나다라마바');
-  assert.ok(!/[<>]/.test(t), '속성값의 >가 찌꺼기로 남으면 안 된다');
+  assert.equal(t, '가나다<span data-y="1 > 2">라마바');
 });
 
-test('riskyLines 는 살아남은 <PM> 같은 줄을 집어내고, 태그만 있던 줄은 안 집어낸다', () => {
+test('riskyLines 는 살아남은 <PM> 든 줄과 <div> 든 줄을 모두 집어낸다(태그만 있던 줄도 이제 안 지워지므로 함께 집힌다)', () => {
   const risky = E.riskyLines(['현 <PM> 직책 수행', '<div>現 가', '평범한 줄']);
-  assert.deepEqual([...risky], ['현 <PM> 직책 수행']);
+  assert.deepEqual([...risky], ['현 <PM> 직책 수행', '<div>現 가']);
+});
+
+/* ── 여기부터 "아무것도 지우지 않는다" 대표 결정(2026-08-16) 이후 추가한 검사 ──
+   태그처럼 생긴 것을 지우는 규칙을 세 번 만들었고(전체 태그, 영문자로 시작,
+   아는 이름 목록) 세 번 다 사람이 쓴 표기를 말없이 삭제했다(<S> 등급, <PM>,
+   <Team Leader>, <노무담당>). 지운 뒤 남은 것만 riskyLines 가 보므로 이미
+   지워진 글자는 경고에도 안 걸리는 사각지대가 구조적으로 있었다.
+   대표 결정: clean()은 이제 아무것도 지우지 않는다. 지우는 판단 자체를
+   없애고, 꺾쇠(<, >)가 든 줄은 지우지 않은 채 riskyLines 로 알린다. */
+
+test('들어온 글자를 지우지 않는다', () => {
+  assert.equal(E.careersText(['<div>現 가']), '<div>現 가');
+  assert.equal(E.careersText(['성과 <S> 등급']), '성과 <S> 등급');
+  assert.equal(E.careersText(['현 <노무담당> 자문']), '현 <노무담당> 자문');
+  assert.equal(E.careersText(['현 <PM> 직책']), '현 <PM> 직책');
+});
+
+test('꺾쇠가 든 줄은 경고 대상으로 집어낸다', () => {
+  assert.deepEqual([...E.riskyLines(['現 가', '<div>現 나', '성과 <S> 등급'])],
+    ['<div>現 나', '성과 <S> 등급']);
+});
+
+test('멀쩡한 줄은 경고하지 않는다', () => {
+  assert.deepEqual([...E.riskyLines(['現 가', '前 나'])], []);
 });
