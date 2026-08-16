@@ -47,8 +47,20 @@ test('관리자가 아니면 「전체 근로자」가 없다', () => {
     '직원에게 남의 사진을 볼 길이 화면에 보이면 안 됩니다(규칙도 막지만 이중으로).');
 });
 
-test('★ 전체 근로자 화면에서 누구 것인지 칸에 보인다', () => {
-  /* 모아 놓기만 하고 누구 것인지 모르면 「훑어보기」가 안 된다 */
-  assert.ok(/gridOwner === ALL_OWNERS && it\.meta\.__ownerName/.test(app),
-    '누구 사진인지 칸에서 안 보이면 열어 봐야만 압니다.');
+test('★ 누가 올렸는지 알 방법이 남아 있다', () => {
+  /* ⚠ 2026-08-16 대표 지시로 **칸의 이름 띠(.who)를 뺐다** — 띠가 셋이면
+     폰에서 칸 104px 중 60px 을 덮어 그림이 절반도 안 남았다.
+     그래서 「칸에 보인다」로 못 박지 않는다. 지킬 것은 자리가 아니라
+     **누가 올렸는지 알아낼 수 있는가**다.
+     이름이 담긴 곳은 `__ownerName` 하나뿐이라, 이것을 아무 데도 안 그리면
+     누구 사진인지 알 방법이 **아예 사라진다.** */
+  /* ⚠ 글자를 찾지 않고 **함수를 돌린다** — 「__ownerName 이 있나」로는 못 잡는다.
+     조건만 죽여도(`m.__ownerName ?` → `false ?`) 뒤쪽 문자열에 낱말이 남아 통과한다.
+     실제로 이 뮤테이션이 한 번 살아남았다. */
+  const i = app.indexOf('function whenBox(');
+  const body = app.slice(i, app.indexOf('\n}', i) + 2);
+  const whenBox = new Function('whenText', 'dayKey', 'esc', body + '\nreturn whenBox;')(
+    function () { return '때'; }, String, String);
+  assert.match(whenBox({ meta: { __ownerName: '김보람', upAt: 1786000000000 } }), /김보람/,
+    '사진을 열어도 올린 사람이 안 나오면, 누구 것인지 알 길이 없어집니다.');
 });
