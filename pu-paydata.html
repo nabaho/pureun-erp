@@ -31,6 +31,7 @@
        읽고, 판독 결과에 적히는 판 번호(rv)도 어긋나 「다시 읽어야 하나」 판정이
        서로 달라진다. tests/photos-doc-title.test.js 가 두 파일을 함께 지킨다. -->
 <script src="js/pu-doc-read.js?v=9"></script>
+<script src="js/pu-rrn-mask.js?v=1"></script>
 <script src="js/pu-appbar.js"></script>
 <style>
 :root{--navy:#2E3A8C;--violet:#7C6CE0;--ok:#2E7D4F;--warn:#B26A00;--bad:#C43D3D;
@@ -225,6 +226,16 @@ table.vals tr.iffy{background:#FDF6E3}
 /* 같은 이름이 둘 — 확실하지 않음(노랑)보다 급하다. 이대로는 저장이 막힌다. */
 table.vals tr.dup{background:#FDECEC}
 table.vals tr.dup input{color:#8A1C1C;font-weight:700}
+/* 가릴 곳 고르기 — 사진 위에 사각형을 얹는다. 칠하기는 캔버스가 아니라 겹친
+   칸으로 한다 — 하나하나 지울 수 있어야 하고, 사진은 손대지 않아야 한다. */
+.maskwrap{position:relative;display:inline-block;max-width:100%;touch-action:none;user-select:none}
+.maskwrap img{display:block;max-width:100%;height:auto}
+.maskbox{position:absolute;background:#000;border:2px solid #2E3A8C}
+.maskbox.ai{border-color:#C43D3D}
+.maskbox .x{position:absolute;right:-9px;top:-9px;background:#fff;border:1px solid var(--line);
+  border-radius:99px;width:18px;height:18px;line-height:16px;text-align:center;font-size:11px;
+  color:var(--bad);cursor:pointer}
+.maskhint{font-size:12px;color:var(--sub);margin-top:8px;line-height:1.6}
 table.vals .del{color:var(--bad);cursor:pointer;padding:2px 6px;border-radius:5px}
 .okline{background:#EAF6EE;border:1px solid #B7E4C7;color:#1E5631;border-radius:9px;padding:8px 11px;font-size:12px;margin-bottom:10px}
 .warnline{background:#FDF6E3;border:1px solid #F0D9A8;color:#7C4A03;border-radius:9px;padding:8px 11px;font-size:12px;margin-bottom:10px}
@@ -385,6 +396,10 @@ const App = {
   itemsKeep: null, itemsMonth: null, itemsMonthSlot: '',
   viewerId: '', viewerUrl: '', viewerZoom: false, viewerErr: '',
   readState: { status: 'idle', rows: [], err: '' },
+  /* 가릴 곳 고르기 — 판독기로 보내기 **전** 단계다(설계서 3장).
+     url 은 창고에서 받아 온 원본 data URL 이고, boxes 는 가릴 사각형이다.
+     by:'ai' 는 기계가 찾아 미리 칠한 것, by:'me' 는 사람이 그은 것. */
+  maskState: { status: 'idle', url: '', boxes: [], err: '', autoNote: '' },
   folders: {}, foldersCompanyId: '', folderPick: 'all', folderEdit: { mode: '', fid: '', value: '' },
   /* 남의 자리 보기 — viewingUid 가 비어 있으면 내 자리다.
      viewingDeputy 는 그 자리를 대리로 맡고 있는지(수정 가능한지)다. */
@@ -2007,6 +2022,47 @@ function saveVals() {
   }).catch(e => alert('저장하지 못했습니다 — ' + (e.code || e.message)));
 }
 window.saveVals = saveVals;
+
+/* ══════ 가릴 곳 고르기 (설계서 4장) ══════
+   판독기로 보내기 전에 반드시 거치는 화면이다. 판독 결과가 뜨던 자리를 그대로
+   쓴다 — 폰에서 위아래로 쌓이는 규칙(#viewerBody.split)을 다시 만들지 않으려고. */
+function maskPanelHtml() {
+  const ms = App.maskState;
+  if (ms.status === 'loading') {
+    return '<div id="readPanel"><div class="ph"><b>가릴 곳 고르기</b></div>'
+      + '<div class="pbody"><div class="pre"><div class="big">⏳</div>'
+      + '<p>사진을 불러오는 중입니다…</p></div></div></div>';
+  }
+  if (ms.status === 'err') {
+    return '<div id="readPanel"><div class="ph"><b>가릴 곳 고르기</b></div>'
+      + '<div class="pbody"><div class="pre"><div class="big">⚠</div><p>' + esc(ms.err) + '</p>'
+      + '<button class="btn" onclick="maskCancel()">닫기</button></div></div></div>';
+  }
+  const n = (ms.boxes || []).length;
+  const boxes = (ms.boxes || []).map((b, i) =>
+    '<div class="maskbox ' + (b.by === 'ai' ? 'ai' : 'me') + '" style="left:' + (b.x * 100)
+    + '%;top:' + (b.y * 100) + '%;width:' + (b.w * 100) + '%;height:' + (b.h * 100) + '%">'
+    + '<span class="x" onpointerdown="event.stopPropagation()" onclick="maskDelBox(' + i + ')">✕</span></div>').join('');
+  return '<div id="readPanel"><div class="ph"><b>가릴 곳 고르기</b></div>'
+    + '<div class="pbody">'
+    /* 이 문구는 기계가 몇 곳을 찾았든 사라지지 않는다 — 마지막 판단은 사람이다. */
+    + '<div class="badline">⚠ 기계가 못 찾은 것이 있을 수 있습니다 — 눈으로 한 번 훑어 주세요</div>'
+    + (ms.autoNote ? '<div class="maskhint">' + esc(ms.autoNote) + '</div>' : '')
+    + '<div id="maskWrap" class="maskwrap">'
+    + '<img id="maskImg" src="' + esc(ms.url) + '" alt="">' + boxes
+    + '<div id="maskPreview" class="maskbox me" style="display:none"></div>'
+    + '</div>'
+    + '<div class="maskhint">사진 위를 손가락이나 마우스로 그으면 그 자리가 가려집니다.<br>'
+    + '급여대장처럼 주민번호가 한 줄로 있으면 <b>세로로 길게 한 번</b>만 그으면 됩니다.</div>'
+    + '</div>'
+    + '<div class="pfoot">'
+    + (n ? '<button class="btn" onclick="maskUndo()">되돌리기</button>'
+         + '<button class="btn" onclick="maskClear()">다 지우기</button>' : '')
+    + '<span class="sub">' + (n ? n + '군데 가림' : '가린 곳 없음') + '</span>'
+    + '<button class="btn pri" onclick="maskConfirm()">'
+    + (n ? n + '군데 가리고 판독' : '가릴 것 없음 — 그대로 판독') + '</button>'
+    + '</div></div>';
+}
 
 /* 오른쪽 절반 — 판독 전에는 단추, 판독 뒤에는 값 표. */
 function readPanelHtml() {
