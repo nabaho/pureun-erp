@@ -157,7 +157,7 @@ console.log('\n[⑩ 나이스빌 CMS 표 틀고정]');
 const NB = grab('/* ── 정산예정일별 표 ──', "nbSortTh('todo','처리','처리',thS)");
 t('나이스빌 표 구역을 잘라냈다', NB.length > 400, true);
 // 손잡이 이름은 2026-08-16 에 공용 도우미(useFillHeight)로 바뀌었다 — 「같은 상자를 쓴다」만 본다
-t('통장 표와 같은 상자를 쓴다', /h\('div',\{ref:_ldFill\.ref,style:_ldBox\}/.test(NB), true);
+t('통장 표와 같은 상자를 쓴다', /h\('div',\{ref:[A-Za-z_$][\w$]*\.ref,style:_ldBox\}/.test(NB), true);
 t('옛 감싸개(높이 없는 overflowX)를 안 쓴다', /overflowX:'auto'/.test(NB), false);
 t('테두리를 떼어 놓는다 (합치면 붙은 머리줄의 선이 지워진다)',
   /borderCollapse:'separate',borderSpacing:0/.test(NB), true);

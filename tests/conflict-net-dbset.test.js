@@ -97,7 +97,9 @@ t('그만두면 저장하지 않는다', /\)\) return;/.test(SETTLE), true);
 
 console.log('\n[⑧ 판단 층을 고쳤으니 부르는 쪽 번호도 올렸다]');
 /* .js 를 고치고 ?v= 를 안 올리면 쓰던 사람 화면에는 옛 파일이 그대로 남는다 */
-t('★ 캐시 번호를 올렸다', /<script src="js\/pu-conflict\.js\?v=2"><\/script>/.test(src), true);
+/* ⚠ 번호를 «2» 라고 박아 두면 다음에 3 으로 올릴 때 이 검사가 깨진다.
+   지킬 것은 「번호가 붙어 있는가」이지 「몇 번인가」가 아니다. */
+t('★ 캐시 번호가 붙어 있다', /<script src="js\/pu-conflict\.js\?v=\d+"><\/script>/.test(src), true);
 
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===\n');
 process.exit(fail ? 1 : 0);

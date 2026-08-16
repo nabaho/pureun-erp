@@ -25,7 +25,9 @@ test('공용 도우미로 높이를 정한다 (화면마다 따로 만들지 않
 });
 
 test('못 쟀을 때를 대비한 높이가 있다', () => {
-  assert.match(FL, /maxHeight:\(_ldFill\.max \|\| 'calc\(100vh - 330px\)'\)/);
+  /* ⚠ 폴백 «값» 을 글자 그대로 박지 않는다 — 배치가 바뀌면 그 숫자도 바뀐다.
+     지킬 것은 「폴백이 있는가」이지 「330인가」가 아니다. */
+  assert.match(FL, /maxHeight:\([A-Za-z_$][\w$]*\.max \|\| 'calc\(100vh[^']*\)'\)/);
   assert.match(FL, /minHeight:'240px'/, '너무 납작해지지 않게');
 });
 

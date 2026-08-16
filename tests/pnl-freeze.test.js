@@ -37,10 +37,10 @@ const F = src.slice(a, a + 45000);
    공용 도우미로 바뀌면서 이 검사가 깨졌다. 여기서 지킬 것은 「제 몸 안에서 구른다」,
    즉 overflow:auto 와 높이 한도가 «있다» 는 것뿐이다. 얼마인지는 이 검사가 볼 일이 아니다. */
 t('월별 손익 표 상자가 overflow:auto + 높이 한도',
-  /viewMode==='month' \? h\('div',\s*\{\s*ref:_fill\d+\.ref,style:\{border:'1px solid #e2e8f0',borderRadius:'8px',overflow:'auto',maxHeight:\(/.test(F), true);
+  /viewMode==='month' \? h\('div',\s*\{\s*ref:[A-Za-z_$][\w$]*\.ref,style:\{border:'1px solid #e2e8f0',borderRadius:'8px',overflow:'auto',maxHeight:\(/.test(F), true);
 t('월별 손익 머리글이 sticky', /viewMode==='month'[\s\S]{0,400}?h\('thead',\{style:\{position:'sticky',top:0,zIndex:2\}\}/.test(F), true);
 t('카테고리별 지출 표 상자도 overflow:auto + 높이 한도',
-  /viewMode==='category' \? h\('div',\s*\{\s*ref:_fill\d+\.ref,style:\{border:'1px solid #e2e8f0',borderRadius:'8px',overflow:'auto',maxHeight:\(/.test(F), true);
+  /viewMode==='category' \? h\('div',\s*\{\s*ref:[A-Za-z_$][\w$]*\.ref,style:\{border:'1px solid #e2e8f0',borderRadius:'8px',overflow:'auto',maxHeight:\(/.test(F), true);
 t('카테고리별 지출 머리글도 sticky', /viewMode==='category'[\s\S]{0,400}?h\('thead',\{style:\{position:'sticky',top:0,zIndex:2\}\}/.test(F), true);
 
 console.log('\n■ 분석 차트·표 안 계산은 그대로 살아 있다 (건드리지 않았다)');

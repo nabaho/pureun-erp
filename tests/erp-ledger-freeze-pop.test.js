@@ -19,8 +19,9 @@ test('머리행이 위에 붙는다', () => {
 test('표만 구르는 상자 안에 있다 (페이지가 구르면 머리행이 밀려 올라간다)', () => {
   // sticky 는 «구르는 상자» 기준이라, 감싼 칸에 높이를 못 박아야 화면에 붙는다.
   // 높이는 공용 도우미(useFillHeight)가 재지만, 못 쟀을 때를 대비한 값이 늘 있어야 한다.
-  assert.match(FL, /var _ldBox=\{overflow:'auto',maxHeight:\(_ldFill\.max \|\| 'calc\(100vh - 330px\)'\)/);
-  const boxes = FL.match(/h\('div',\{ref:_ldFill\.ref,style:_ldBox\}/g) || [];
+  // 폴백 «값» 이 아니라 「폴백이 있는가」를 본다 — 배치가 바뀌면 그 숫자도 바뀐다
+  assert.match(FL, /var _ldBox=\{overflow:'auto',maxHeight:\([A-Za-z_$][\w$]*\.max \|\| 'calc\(100vh[^']*\)'\)/);
+  const boxes = FL.match(/h\('div',\{ref:[A-Za-z_$][\w$]*\.ref,style:_ldBox\}/g) || [];
   // 개수를 못 박지 않는다 — 표가 늘 때마다 검사가 깨지면 안 된다. 「큰 표는 모두」가 규칙이다.
   assert.ok(boxes.length >= 3, '입금·출금·나이스빌 CMS 표 모두 (지금 ' + boxes.length + '개)');
 });
@@ -44,7 +45,7 @@ test('머리행 밑줄을 그림자로 그린다 (붙은 칸은 테두리가 지
   // 테두리를 합치면(collapse) 붙은 칸의 선이 사라지므로 떼어 놓는다.
   // 개수가 아니라 «틀고정한 표 수만큼 있는가» 를 본다.
   const sep = FL.match(/borderCollapse:'separate',borderSpacing:0/g) || [];
-  const boxes = FL.match(/h\('div',\{ref:_ldFill\.ref,style:_ldBox\}/g) || [];
+  const boxes = FL.match(/h\('div',\{ref:[A-Za-z_$][\w$]*\.ref,style:_ldBox\}/g) || [];
   assert.ok(sep.length >= boxes.length, '틀고정한 표는 모두 테두리를 떼어 놓아야 한다');
 });
 
