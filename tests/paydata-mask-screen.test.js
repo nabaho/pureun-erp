@@ -180,3 +180,82 @@ test('다 지우기는 기계가 칠한 것까지 다 뺀다', () => {
   W.maskClear();
   assert.equal(W.App.maskState.boxes.length, 0);
 });
+
+/* ══════ 새는 길이 없어야 한다 ══════
+   가림을 거치지 않고 판독기가 불리는 길이 하나라도 있으면 이 기능은 없는 것과 같다. */
+test('★ 판독기를 부르는 곳은 runRead 하나뿐이다', () => {
+  const runRead = cut('runRead');
+  ['read', 'readWageTable', 'readChangeNotice'].forEach(fn => {
+    assert.ok(runRead.indexOf('PuDocRead.' + fn + '(') >= 0, 'runRead 가 ' + fn + ' 를 안 부릅니다');
+  });
+  const rest = html.replace(runRead, '');
+  assert.equal(/PuDocRead\.(read|readWageTable|readChangeNotice)\(/.test(rest), false,
+    '★ 가림을 거치지 않고 판독기를 부르는 길이 남아 있습니다');
+});
+
+test('★ runRead 를 부르는 곳은 maskConfirm 하나뿐이다', () => {
+  const calls = html.match(/runRead\(/g) || [];
+  assert.equal(calls.length, 2, 'runRead 는 정의 한 번 + maskConfirm 에서 한 번만 나와야 합니다');
+  assert.match(cut('maskConfirm'), /runRead\(/);
+});
+
+test('★ 「판독하기」 단추는 가림 화면을 연다 — 곧바로 판독하지 않는다', () => {
+  assert.match(html, /onclick="startMask\(\)"/, '단추가 가림 화면을 열지 않습니다');
+  assert.equal(/onclick="doRead\(\)"/.test(html), false, '옛 단추가 남아 있습니다');
+});
+
+/* 가린 사본을 만들어 넘기는지, 원본을 그대로 넘기는지 실제로 본다. */
+function loadConfirm(boxes) {
+  const got = { masked: null };
+  const els = {
+    maskImg: { naturalWidth: 2000, naturalHeight: 1000,
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 400, height: 200 }) }
+  };
+  const sandbox = {
+    window: {}, console,
+    document: { getElementById: id => els[id] || null },
+    alert: () => {},
+    PuRrnMask: {
+      maskToDataUrl: (img, bs) => { got.masked = bs.slice(); return 'data:image/jpeg;base64,MASKED'; }
+    }
+  };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  new vm.Script([
+    'const $ = id => document.getElementById(id);',
+    'const PuRrnMask = globalThis.PuRrnMask;',
+    'const S = { readKindFor: function(){ return "notice"; } };',
+    'const App = ' + JSON.stringify({
+      viewerId: 'a1',
+      itemsMonth: { a1: { kind: 'etc', file: 'p/a1.jpg', mime: 'image/jpeg' } },
+      itemsKeep: {},
+      maskState: { status: 'ready', url: 'data:image/jpeg;base64,PLAIN', boxes: boxes || [], err: '', autoNote: '' }
+    }) + ';',
+    'App.render = function(){};',
+    'function runRead(rk, dataUrl){ __got = dataUrl; }',
+    'var __got = null;',
+    cut('findRow'), cut('maskConfirm'),
+    'window.App = App; window.maskConfirm = maskConfirm; window.__got = function(){ return __got; };'
+  ].join('\n'), { filename: 'confirm.js' }).runInContext(sandbox);
+  return { W: sandbox.window, got };
+}
+
+test('★ 가린 곳이 있으면 **가린 사본**을 판독기에 넘긴다', () => {
+  const { W, got } = loadConfirm([{ x: 0.1, y: 0.1, w: 0.2, h: 0.1, by: 'me' }]);
+  W.maskConfirm();
+  assert.equal(W.__got(), 'data:image/jpeg;base64,MASKED', '★ 원본이 그대로 나갔습니다');
+  assert.equal(got.masked.length, 1);
+});
+
+test('가린 곳이 없으면 원본을 그대로 넘긴다 — 쓸데없이 다시 뽑지 않는다', () => {
+  const { W } = loadConfirm([]);
+  W.maskConfirm();
+  assert.equal(W.__got(), 'data:image/jpeg;base64,PLAIN');
+});
+
+test('★ 넘긴 뒤 가림 상태를 비운다 — 다음 서류에 앞 사진의 사각형이 남으면 안 된다', () => {
+  const { W } = loadConfirm([{ x: 0.1, y: 0.1, w: 0.2, h: 0.1, by: 'me' }]);
+  W.maskConfirm();
+  assert.equal(W.App.maskState.status, 'idle');
+  assert.equal(W.App.maskState.boxes.length, 0);
+});

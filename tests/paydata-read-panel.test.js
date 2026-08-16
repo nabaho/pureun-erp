@@ -56,6 +56,16 @@ function loadApp(appState, rec) {
   return sandbox.window;
 }
 
+/* 판독기는 이제 **가림 화면을 거쳐야** 불린다(2026-08-15 주민번호 가림).
+   그래서 검사도 사람이 하는 것과 같은 차례로 부른다:
+   「판독하기」(startMask) → 사진이 뜨면 → 「그대로 판독」(maskConfirm). */
+async function readNow(W) {
+  W.startMask();
+  await new Promise(r => setTimeout(r, 10));
+  W.maskConfirm();
+  await new Promise(r => setTimeout(r, 10));
+}
+
 test('★ 판독 층을 불러온다', () => {
   /* ⚠ 2026-08-15 다시 겨눔 — 판독기 주소에 ?v= 를 붙였다(캐시에 묵은 옛 판독기를
      쓰던 것을 막는다). 예전 규칙은 «?v= 가 없는 모양»을 못 박고 있어서, 정작
@@ -70,25 +80,25 @@ test('★ 아직 안 읽었으면 「판독하기」 단추가 있다', () => {
   const W = loadApp({ kind: 'attend' });
   const h = W.readPanelHtml();
   assert.match(h, /판독하기/);
-  assert.match(h, /doRead\(\)/);
+  assert.match(h, /startMask\(\)/);
 });
 
 test('★ 근로계약서·우리 산출물 탭에는 판독 단추가 없다', () => {
   ['contract', 'output'].forEach(k => {
     const h = loadApp({ kind: k }).readPanelHtml();
-    assert.equal(/doRead\(\)/.test(h), false, k + ' 에 판독 단추가 보입니다');
+    assert.equal(/startMask\(\)/.test(h), false, k + ' 에 판독 단추가 보입니다');
   });
 });
 
 test('★ 남의 자리에서는 판독 단추가 없다 — 남의 값을 만들면 안 된다', () => {
   const h = loadApp({ kind: 'attend', viewingUid: 'U2', viewingDeputy: false }).readPanelHtml();
-  assert.equal(/doRead\(\)/.test(h), false);
+  assert.equal(/startMask\(\)/.test(h), false);
 });
 
 test('읽는 중이면 그렇다고 말한다', () => {
   const h = loadApp({ readState: { status: 'reading', rows: [], err: '' } }).readPanelHtml();
   assert.match(h, /읽는 중/);
-  assert.equal(/doRead\(\)/.test(h), false, '읽는 중에 또 누르면 두 번 나갑니다');
+  assert.equal(/startMask\(\)/.test(h), false, '읽는 중에 또 누르면 두 번 나갑니다');
 });
 
 test('★ 확실하지 않은 줄이 있으면 몇 줄인지 알린다 — 그 띠는 나중에 걷을 수 있어야 한다', () => {
@@ -104,7 +114,7 @@ test('★ 확실하지 않은 줄이 있으면 몇 줄인지 알린다 — 그 �
 test('실패하면 까닭을 보여주고 다시 누를 수 있다', () => {
   const h = loadApp({ readState: { status: 'err', rows: [], err: 'AI 키가 없습니다' } }).readPanelHtml();
   assert.match(h, /AI 키가 없습니다/);
-  assert.match(h, /doRead\(\)/);
+  assert.match(h, /startMask\(\)/);
 });
 
 /* 2026-08-15 대표 지시로 켰다(그 전에는 「꺼져 있다」를 못 박고 있었다).
@@ -113,7 +123,7 @@ test('실패하면 까닭을 보여주고 다시 누를 수 있다', () => {
 test('★ 급여대장 판독이 켜져 있다 — 근로자 성명·임금액이 구글로 나간다(대표 판단)', () => {
   assert.match(html, /const WAGE_READ_ON = true/);
   const h = loadApp({ kind: 'ledger' }).readPanelHtml();
-  assert.match(h, /doRead\(\)/, '켰는데 판독 단추가 없습니다');
+  assert.match(h, /startMask\(\)/, '켰는데 판독 단추가 없습니다');
   assert.equal(/준비 중/.test(h), false, '켰는데 「준비 중」이 남아 있습니다');
 });
 
@@ -218,10 +228,10 @@ function loadRun(appState, opts) {
     'App.render = function(){};',
     WAGE_FLAG[0], NOTICE_FLAG[0],       // doRead 가 이 상수들을 본다 — 안 넣으면 터진다
     DOLLAR[0],
-    cut('esc'), cut('canWrite'), cut('findRow'), cut('isImageRec'), cut('doRead'), cut('dupNames'), cut('blankNames'), cut('rowMarkClass'), cut('valueRowsHtml'),
+    cut('esc'), cut('canWrite'), cut('findRow'), cut('isImageRec'), cut('startMask'), cut('maskConfirm'), cut('runRead'), cut('dupNames'), cut('blankNames'), cut('rowMarkClass'), cut('valueRowsHtml'),
     cut('editVal'), cut('refreshIffyMarks'), cut('addValRow'), cut('startManualRows'),
     cut('delValRow'), cut('delValItem'),
-    'window.App = App; window.doRead = doRead; window.valueRowsHtml = valueRowsHtml;',
+    'window.App = App; window.startMask = startMask; window.maskConfirm = maskConfirm; window.valueRowsHtml = valueRowsHtml;',
     'window.editVal = editVal; window.addValRow = addValRow; window.delValRow = delValRow;',
     'window.delValItem = delValItem; window.startManualRows = startManualRows;'
   ].join('\n'), { filename: 'run.js' }).runInContext(sandbox);
@@ -232,8 +242,7 @@ test('★ 근태 탭이면 근태 판독기를 부른다', async () => {
   const { W, calls } = loadRun({ kind: 'attend' }, {
     readOut: { kind: 'timesheet', fields: { rows: [{ name: '배영승', paid: [1, 5], off: [], adj: '', note: '' }] } }
   });
-  W.doRead();
-  await new Promise(r => setTimeout(r, 10));
+  await readNow(W);
   assert.equal(calls.read[0], 'read');
   assert.equal(W.App.readState.status, 'done');
   assert.equal(W.App.readState.rows[0].name, '배영승');
@@ -247,7 +256,7 @@ test('★ 근태 탭이면 근태 판독기를 부른다', async () => {
 test('★ 알림 판독이 켜져 있다 — 주민등록번호가 함께 나가는 것을 감수하고 켰다', () => {
   assert.match(html, /const NOTICE_READ_ON = true/);
   const h = loadApp({ kind: 'etc' }).readPanelHtml();
-  assert.match(h, /doRead\(\)/, '켰는데 판독 단추가 없습니다');
+  assert.match(h, /startMask\(\)/, '켰는데 판독 단추가 없습니다');
   assert.equal(/준비 중/.test(h), false, '켰는데 「준비 중」이 남아 있습니다');
 });
 
@@ -255,8 +264,7 @@ test('★ 기타 탭은 알림 판독기를 부른다 — 급여표 판독기가
   const { W, calls } = loadRun({ kind: 'etc' }, {
     noticeOut: { ok: true, rows: [{ name: '김신입', pairs: [{ item: '입사일', value: '2026-08-12' }] }] }
   });
-  W.doRead();
-  await new Promise(r => setTimeout(r, 10));
+  await readNow(W);
   assert.equal(JSON.stringify(calls.read), JSON.stringify(['notice']),
     '알림 캡처는 줄글이라 표 판독기로는 못 읽습니다');
   assert.equal(W.App.readState.status, 'done');
@@ -266,16 +274,14 @@ test('★ 기타 탭은 알림 판독기를 부른다 — 급여표 판독기가
 
 test('★ 한 줄도 못 읽으면 그렇다고 말한다 — 빈 표를 띄우지 않는다', async () => {
   const { W } = loadRun({ kind: 'attend' }, { readOut: { kind: 'timesheet', fields: { rows: [] } } });
-  W.doRead();
-  await new Promise(r => setTimeout(r, 10));
+  await readNow(W);
   assert.equal(W.App.readState.status, 'err');
   assert.match(W.App.readState.err, /읽어내지 못했습니다/);
 });
 
 test('판독이 실패하면 까닭을 담는다', async () => {
   const { W } = loadRun({ kind: 'attend' }, { readOut: { error: 'AI 키가 없습니다', fields: {} } });
-  W.doRead();
-  await new Promise(r => setTimeout(r, 10));
+  await readNow(W);
   assert.equal(W.App.readState.status, 'err');
   assert.match(W.App.readState.err, /키/);
 });
@@ -284,15 +290,14 @@ test('판독이 실패하면 까닭을 담는다', async () => {
 
 test('★ PDF·엑셀에는 판독 단추를 주지 않는다 — 눌러 봐야 오류 400 이다', () => {
   const h = loadApp({ kind: 'attend' }, { filename: '근태.pdf', mime: 'application/pdf' }).readPanelHtml();
-  assert.equal(/doRead\(\)/.test(h), false,
+  assert.equal(/startMask\(\)/.test(h), false,
     '「이 파일은 미리 볼 수 없습니다」 옆에 판독 단추가 있으면 눌러 보고 서비스가 죽은 줄 압니다');
   assert.match(h, /사진/, '왜 안 되는지 한국어로 말해야 합니다');
 });
 
 test('★ PDF 를 판독하려 해도 AI를 부르지 않는다', async () => {
   const { W, calls } = loadRun({ kind: 'attend' }, { rec: { filename: '근태.pdf', mime: 'application/pdf' } });
-  W.doRead();
-  await new Promise(r => setTimeout(r, 10));
+  await readNow(W);
   assert.equal(calls.read.length, 0,
     '판독 층은 무엇을 싣든 image/jpeg 라고 보냅니다 — PDF 를 보내면 오류 400 만 돌아옵니다');
   assert.equal(W.App.readState.status, 'err');
@@ -303,8 +308,7 @@ test('사진은 그대로 판독한다', async () => {
   const { W, calls } = loadRun({ kind: 'attend' }, {
     readOut: { kind: 'timesheet', fields: { rows: [{ name: '배영승', paid: [1], off: [], adj: '', note: '' }] } }
   });
-  W.doRead();
-  await new Promise(r => setTimeout(r, 10));
+  await readNow(W);
   assert.equal(calls.read[0], 'read');
 });
 
@@ -315,8 +319,7 @@ test('★ 판독기는 열려 있는 서류가 정한다 — 서랍 탭이 아�
     rec: { kind: 'attend' },
     readOut: { kind: 'timesheet', fields: { rows: [{ name: '배영승', paid: [1], off: [], adj: '', note: '' }] } }
   });
-  W.doRead();
-  await new Promise(r => setTimeout(r, 10));
+  await readNow(W);
   assert.equal(calls.read[0], 'read',
     '근태표를 열어 놓고 마지막에 눌러 둔 탭(기타)의 판독기로 읽었습니다');
   assert.equal(W.App.readState.rows[0].name, '배영승');
@@ -325,7 +328,7 @@ test('★ 판독기는 열려 있는 서류가 정한다 — 서랍 탭이 아�
 test('★ 판독 패널도 열려 있는 서류를 따른다', () => {
   // 탭은 근로계약서(판독 안 함)인데 열린 서류는 근태표 — 판독 단추가 있어야 한다.
   const h = loadApp({ kind: 'contract' }, { kind: 'attend' }).readPanelHtml();
-  assert.match(h, /doRead\(\)/);
+  assert.match(h, /startMask\(\)/);
 });
 
 test('★ 어디에서도 서랍 탭으로 판독기를 고르지 않는다', () => {
@@ -398,8 +401,7 @@ test('★ 판독기가 못 읽었다고 한 줄은 화면까지 노랗게 온다
       { name: '이옥자', paid: [2], off: [], adj: '', note: '정상근무' }
     ] } }
   });
-  W.doRead();
-  await new Promise(r => setTimeout(r, 10));
+  await readNow(W);
   assert.equal(W.App.readState.rows[0].iffy, true,
     '판독기가 스스로 「못 읽었다」고 한 표시가 화면까지 오지 않으면 노란 줄이 영영 안 뜹니다');
   assert.equal(W.App.readState.rows[1].iffy, false);
@@ -448,7 +450,9 @@ test('줄 더하기·지우기', () => {
 
 test('★ 판독 중 다른 서류로 옮기면 늦게 온 성공 응답이 새 화면을 덮지 않는다', async () => {
   const { W, calls } = loadRun({ kind: 'attend', viewerId: 'a1' }, { defer: true });
-  W.doRead();
+  W.startMask();
+  await new Promise(r => setTimeout(r, 10));  // 가림 화면에 사진이 뜰 때까지
+  W.maskConfirm();                            // 「가릴 것 없음 — 그대로 판독」
   await new Promise(r => setTimeout(r, 0));   // 판독기 호출까지는 진행되게 둔다
   assert.equal(W.App.readState.status, 'reading', '아직 판독기가 답하기 전입니다');
 
@@ -463,7 +467,9 @@ test('★ 판독 중 다른 서류로 옮기면 늦게 온 성공 응답이 새 
 
 test('★ 판독 중 다른 서류로 옮기면 늦게 온 실패 응답도 새 화면에 묻히지 않는다', async () => {
   const { W, calls } = loadRun({ kind: 'attend', viewerId: 'a1' }, { defer: true });
-  W.doRead();
+  W.startMask();
+  await new Promise(r => setTimeout(r, 10));
+  W.maskConfirm();
   await new Promise(r => setTimeout(r, 0));
   assert.equal(W.App.readState.status, 'reading', '아직 판독기가 답하기 전입니다');
 
@@ -842,8 +848,7 @@ test('★ 급여대장 탭은 급여표 판독기를 부르고 사람별 값이 
       { name: '이옥자', pairs: [{ item: '기본급', value: '2,300,000' }] }
     ] }
   });
-  W.doRead();
-  await new Promise(r => setTimeout(r, 10));
+  await readNow(W);
   assert.equal(JSON.stringify(calls.read), JSON.stringify(['wage']), '근태 판독기로는 금액을 못 읽습니다');
   assert.equal(W.App.readState.status, 'done');
   assert.equal(W.App.readState.rows.length, 2);
@@ -860,8 +865,7 @@ test('급여대장에서 이름이 없는 줄은 버린다 — 합계 줄이 사
       { name: '배영승', pairs: [{ item: '기본급', value: '2,100,000' }] }
     ] }
   });
-  W.doRead();
-  await new Promise(r => setTimeout(r, 10));
+  await readNow(W);
   assert.equal(W.App.readState.rows.length, 1);
   assert.equal(W.App.readState.rows[0].name, '배영승');
 });
