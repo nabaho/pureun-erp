@@ -96,3 +96,47 @@ test('다섯 번 실패하면 세워 두는 것(parked)은 그대로다', () => 
 test('일시적이지 않은 오류(권한 등)는 폭주와 상관없이 바로 실패로 알린다', () => {
   assert.equal(resilience.isTransientError({ code: 'PERMISSION_DENIED' }), false);
 });
+
+/* ══════ 우리가 못 멈추는 폭주는 «알려는» 준다 (2026-08-16) ══════
+   서버가 받아 줄 수 없는 크기의 쓰기가 한 번 나가면, 그 뒤로는 파이어베이스
+   라이브러리가 그것을 스스로 다시 보낸다 — 연결이 끊길 때마다, 우리 코드 밖에서.
+   그 창을 새로 열기 전에는 끝나지 않는다(대표 콘솔에서 ClientId 가 계속 바뀐 이유).
+   고칠 수 없으면 알려는 줘야 한다 — 조용히 두면 종일 요금만 나간다. */
+
+test('짧은 사이에 자꾸 다시 붙으면 「끊기고 있다」고 본다', () => {
+  const t = 1000000;
+  for (let i = 0; i < 5; i++) resilience._noteReconnect(t + i * 1000);
+  assert.equal(resilience._isFlapping(t + 5000, 2 * 60 * 1000, 5), true);
+});
+
+test('오래된 재접속은 세지 않는다 — 어제 것까지 세면 늘 폭주다', () => {
+  const t = 3000000;
+  assert.equal(resilience._isFlapping(t, 60 * 1000, 5), false);
+});
+
+test('기록이 무한히 쌓이지 않는다', () => {
+  const at = src.indexOf('function noteReconnect(');
+  const fn = src.slice(at, at + 300);
+  assert.match(fn, /splice/, '몇 시간 켜 두면 기록이 계속 늘어난다');
+});
+
+test('기준이 어이없지 않다 — 2분에 5번', () => {
+  assert.ok(resilience._flap.limit >= 3, '너무 낮으면 평범한 끊김에도 뜬다');
+  assert.ok(resilience._flap.window >= 30000, '창이 너무 짧으면 못 잡는다');
+});
+
+test('알림에 「새로고침」 단추가 있고 한 번만 뜬다', () => {
+  const at = src.indexOf('function showReloadBanner(');
+  const fn = src.slice(at, src.indexOf('function bindApp(', at));
+  assert.match(fn, /getElementById\('pu-reload-banner'\)/, '누를 때마다 여러 개가 쌓인다');
+  assert.match(fn, /location\.reload\(\)/, '눌러도 새로 열리지 않는다');
+  assert.match(fn, /새로 열어야 멈춥니다/, '무엇을 해야 하는지 안 적혀 있다');
+});
+
+test('재접속 신호에 감지가 걸려 있다 — 함수만 있고 안 부르면 소용없다', () => {
+  const at = src.indexOf('function bindApp(');
+  const fn = src.slice(at, at + 700);
+  assert.match(fn, /noteReconnect\(now\)/);
+  assert.match(fn, /isFlapping\(now/);
+  assert.match(fn, /showReloadBanner\(\)/);
+});

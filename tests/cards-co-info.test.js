@@ -94,7 +94,9 @@ test('사업 갈래는 옆줄 폴더로 그린다', () => {
   const at = source.indexOf('function renderPCSide');
   const fn = source.slice(at, source.indexOf('\nfunction ', at + 20));
   assert.match(fn, /coTagList\(cos\)/, '옆줄이 사업 갈래를 안 만든다');
-  assert.match(fn, /사업별/, '사업별 머리가 없다');
+  /* 2026-08-16 이름을 「서류 탭」으로 바꿨다 — 손으로 만든 폴더 탭과 가르기 위해서다.
+     이 검사가 보는 것은 «옆줄이 서식 갈래를 제 칸에 그리는가» 이지 그 이름이 아니다. */
+  assert.match(fn, /서류 탭/, '서식 갈래 머리가 없다');
 });
 
 test('푸른이알피 거래처만 보는 거르개가 있다', () => {

@@ -65,8 +65,12 @@ test('「전체」는 폴더 목록의 첫 줄이다', () => {
   /* 갈래 단추 바로 밑에 「📇 전체 명함 274」로 있었는데, 위 단추가 「📇 명함 274」라
      아이콘도 숫자도 똑같아 한 줄이 두 번 그려진 것처럼 보였다. */
   const fn = sideFn();
-  const sec = fn.indexOf('">폴더');
-  const all = fn.indexOf("'📋 전체'");
+  /* ⚠ 명함 옆줄 것을 봐야 한다. 기업 상세 옆줄에도 「폴더」 머리와 「📋 전체」가 있어
+     파일 앞쪽부터 찾으면 기업 상세 것이 먼저 걸린다(2026-08-16 기업 상세 옆줄 재구성). */
+  const coAt = fn.indexOf("if(state.view==='co'){");
+  const from = coAt >= 0 ? fn.indexOf("innerHTML = h; return;", coAt) : 0;
+  const sec = fn.indexOf('">폴더', from);
+  const all = fn.indexOf("'📋 전체'", from);
   assert.ok(sec > 0, '폴더 머리를 찾지 못했습니다');
   assert.ok(all > sec, '「전체」가 아직 폴더 머리보다 위에 있다');
 });

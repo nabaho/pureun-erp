@@ -709,6 +709,11 @@ table.sbox.tight td.none{padding:26px 8px}
 .coselbar .comore:hover{background:#fdf0d8}
 .coselbar .coclear{border-color:#f0c9c4;color:#c0392b;background:#fff;margin-left:auto}
 .coselbar .coclear:hover{background:#fdeced}
+/* 폴더 안의 탭 — 폴더보다 한 칸 더 들어가고, 글자도 한 단계 작다 */
+#pcSide .pcitem.coftab{padding-left:26px;font-size:12.5px;color:#a8b6d8}
+#pcSide .pcitem.coftab.on{background:#2a3a5e;color:#fff;font-weight:700}
+#pcSide .coftabadd{padding:5px 10px 7px 26px;font-size:11.5px;color:#8fa0c4;cursor:pointer}
+#pcSide .coftabadd:hover{color:#cdd8f0;text-decoration:underline}
 /* 기업 상세 나눠 보기 — 「몇 개씩」 칸과 쪽 옮기기 (명함 표의 #pcPageSize·#pcPager 와 같은 결) */
 .copgbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 8px;font-size:12.5px;color:#5a6885}
 .copgbar .cnt b{color:#1d4fc4}
@@ -1602,7 +1607,7 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', e
      sendLog 는 명함을 열 때만 그 명함 것을 읽어 담는다. */
   matQ:'', matMailCat:'', matPrevId:'', sendLog:{}, coQ:'', coPick:'', coTag:'', coErpOnly:false, coSel:{}, coSort:{key:'name',dir:'asc'}, coColFilter:{}, coFolder:'', coShowHidden:false,
   /* 기업 상세 나눠 보기 — 쪽은 0부터(명함 표와 같게), 개수는 200곳이 기본 */
-  coPage:0, coPageSize:200,
+  coPage:0, coPageSize:200, coFTab:'',
   /* 메일 화면 — mailSent 가 true 면 보낸 메일함, 아니면 쓰기 */
   mailSent:false, mailDrawer:true, sentBox:{}, schedBox:{}, sentQ:'', sentMine:false, sentCat:'', sentBy:'',
   showBcc:false, draftAt:'', matPick:'', drawerQ:'', drawerOpen:{},
@@ -8312,24 +8317,45 @@ function renderPCSide(){
   if(state.view==='co'){
     const cos = coList();
     const erpN = cos.filter(o=>o.erp).length;
-    h += `<div class="pcsec" style="display:flex;align-items:center">폴더
-        <span style="margin-left:auto;cursor:pointer;font-weight:700" onclick="openCoFolderDialog()" title="새 폴더">＋</span></div>`;
+    /* ── 「보기」와 「폴더」를 가른다 (대표 지시 2026-08-16) ──
+       예전에는 「거래처만」이 폴더 자리에 붙박이로 끼어 있었다. 폴더가 아닌데 폴더인 척
+       서 있어 새 폴더를 만들어도 늘 그 아래로 밀렸다. 「거래처만」은 폴더가 아니라
+       «보는 방법»이므로 위 칸으로 올린다 — 없애지는 않는다(자주 쓰는 길이다). */
+    h += `<div class="pcsec">보기</div>`;
     h += pcItem(`onclick="pickCoFolder('')"`, '📋 전체', cos.length, !state.coErpOnly && !state.coTag && !state.coFolder);
     h += pcItem(`onclick="pickCoFolder('erp')"`, '🏢 거래처만', erpN, state.coErpOnly && !state.coTag && !state.coFolder);
-    /* 손으로 만든 폴더 — 명함 폴더와 같은 결(gname·gcount·gmenu)로 그린다 */
-    Object.values(_coFolders).sort((a,b)=>(a.order||0)-(b.order||0)).forEach(f=>{
-      const n = cos.filter(o=>o.folder===f.id).length;
-      h += `<div class="pcitem folderrow ${state.coFolder===f.id?'on':''}" style="padding-left:11px">
+    h += `<div class="pcsec" style="display:flex;align-items:center">폴더
+        <span style="margin-left:auto;cursor:pointer;font-weight:700" onclick="openCoFolderDialog()" title="새 폴더">＋</span></div>`;
+    /* 손으로 만든 폴더 — 명함 폴더와 같은 결(gname·gcount·gmenu)로 그린다.
+       고른 폴더 바로 아래에 그 폴더의 탭이 펼쳐진다(명함의 담는 탭과 같은 방식). */
+    const folders = Object.values(_coFolders).sort((a,b)=>(a.order||0)-(b.order||0));
+    if(!folders.length){
+      h += `<div class="pchintside">＋ 를 눌러 폴더를 만들면<br>회사를 갈래로 정리할 수 있습니다</div>`;
+    }
+    folders.forEach(f=>{
+      const on = state.coFolder===f.id;
+      const cnt = coFTabCounts(cos, f.id);
+      h += `<div class="pcitem folderrow ${on?'on':''}" style="padding-left:11px">
           <span class="gname" onclick="pickCoFolder('f:${f.id}')">📁 ${esc(f.name)}</span>
-          <span class="gcount">${n}</span>
+          <span class="gcount">${cnt.all}</span>
           <span class="gmenu" onclick="event.stopPropagation();openCoFolderMenu(event,'${f.id}')" title="관리">⋮</span>
         </div>`;
+      if(!on) return;                       /* 펼쳐진 폴더의 탭만 보여준다 */
+      h += `<div class="pcitem coftab ${!state.coFTab?'on':''}" onclick="pickCoFTab('')">＃ 전체<span>${cnt.all}</span></div>`;
+      coFTabList(f).forEach(t=>{
+        h += `<div class="pcitem coftab folderrow ${state.coFTab===t.id?'on':''}">
+            <span class="gname" onclick="pickCoFTab('${t.id}')">＃ ${esc(t.name)}</span>
+            <span class="gcount">${cnt.byTab[t.id]||0}</span>
+            <span class="gmenu" onclick="event.stopPropagation();openCoFTabMenu(event,'${f.id}','${t.id}')" title="관리">⋮</span>
+          </div>`;
+      });
+      h += `<div class="coftabadd" onclick="newCoFTab('${f.id}')">＋ 이 폴더에 탭 만들기</div>`;
     });
     const tags = coTagList(cos);
     const shown = tags.filter(x=>state.coShowHidden || !_coTagHidden[x.t]);
     const hiddenN = tags.filter(x=>_coTagHidden[x.t]).length;
     if(tags.length){
-      h += `<div class="pcsec">사업별</div>`;
+      h += `<div class="pcsec">서류 탭</div>`;
       shown.forEach(x=>{ h += `<div class="pcitem folderrow ${state.coTag===x.t?'on':''}" style="padding-left:11px">
           <span class="gname" onclick="pickCoFolder('t:${esc(x.t.replace(/'/g,"\\'"))}')">📁 ${esc(x.t)}</span>
           <span class="gcount">${x.n}</span>
@@ -8343,7 +8369,7 @@ function renderPCSide(){
         h += `<div class="pchintside" style="cursor:pointer;text-decoration:underline" onclick="toggleCoShowHidden()">숨긴 사업 접기</div>`;
       }
     }else{
-      h += `<div class="pchintside">사진첩에서 서식·신청서를<br>기업 상세로 보내면<br>그 서류 이름으로 폴더가 생깁니다</div>`;
+      h += `<div class="pchintside">사진첩에서 서식·신청서를<br>기업 상세로 보내면<br>여기에 서류 탭이 생깁니다</div>`;
     }
     $('pcSide').innerHTML = h; return;
   }
@@ -10465,6 +10491,121 @@ function renderCoErpHistory(o, data){
    기업정보는 「특정 사업 때문에」 모이는 일이 많다(대표 지시 2026-08-12). 명함이 폴더를
    갖듯 회사도 사업으로 갈라 봐야 「이번 지원사업에 넣은 곳이 어디였더라」에 답할 수 있다. */
 const coTagsOf = o => Object.keys((o.extra && o.extra.tags) || {});
+
+/* ══════ 폴더 안의 탭 — 순수 로직 (테스트 대상) ══════
+   대표 지시 2026-08-16: "폴더 안에 메인에 탭을 만들 수 있도록 해달라."
+   명함의 「담는 탭」과 같은 것이다 — 폴더가 「어디에 두었나」라면, 탭은 그 안에서
+   「어떤 일로 묶었나」다. 한 회사는 폴더 하나에만 들어가지만 탭은 여럿 붙을 수 있다.
+
+   ⚠ 탭은 «폴더에 딸린다»(coFolders/{폴더}/tabs/{탭}). 폴더와 따로 두면 폴더를 지웠을 때
+     주인 없는 탭이 남고, 같은 이름 탭이 폴더마다 겹칠 때 어느 폴더 것인지 알 수 없다.
+   ⚠ 회사가 어느 탭에 담겼는지는 coInfo/{회사}/ftabs/{탭}=true 로 둔다 — 폴더(folder)와
+     같은 자리에 있어야 「폴더·탭 비우기」가 한 번에 뗄 수 있다. */
+const coFTabsOf = o => Object.keys((o.extra && o.extra.ftabs) || {});
+/* 이 폴더에 만들어 둔 탭들 — 만든 차례대로 */
+function coFTabList(folder){
+  const tabs = (folder && folder.tabs) || {};
+  return Object.keys(tabs).map(id => ({ id: id, name: (tabs[id] && tabs[id].name) || '이름 없음',
+                                        order: Number((tabs[id] && tabs[id].order) || 0) }))
+    .sort((a, b) => (a.order - b.order) || a.name.localeCompare(b.name, 'ko'));
+}
+/* 탭마다 회사가 몇 곳인가 — 이 폴더 «안에 있는» 회사만 센다.
+   폴더 밖 회사에 옛 탭 표시가 남아 있어도 세면 안 된다 — 숫자가 안 맞는다. */
+function coFTabCounts(list, folderId){
+  const inFolder = (list || []).filter(o => o && o.folder === folderId);
+  const c = {};
+  inFolder.forEach(o => coFTabsOf(o).forEach(t => { c[t] = (c[t] || 0) + 1; }));
+  return { all: inFolder.length, byTab: c };
+}
+/* 고른 회사를 탭에 담거나 빼는 통 — 한 곳씩 보내지 않는다(2026-08-16 폭주의 교훈) */
+function coFTabPlan(keys, tabId, on, chunk){
+  const arr = (keys || []).filter(Boolean);
+  const size = Math.max(1, Math.floor(Number(chunk)) || 1);
+  const out = [];
+  if(!tabId) return out;
+  for(let i = 0; i < arr.length; i += size){
+    const upd = {};
+    arr.slice(i, i + size).forEach(k => { upd['coInfo/' + k + '/ftabs/' + tabId] = on ? true : null; });
+    if(Object.keys(upd).length) out.push(upd);
+  }
+  return out;
+}
+/* ══════ 폴더 안의 탭 — 화면 ══════ */
+function pickCoFTab(tabId){
+  state.coFTab = (state.coFTab===tabId ? '' : tabId);
+  state.coPage = 0; state.coSel = {};
+  closePcDetail(); render();
+}
+function newCoFTab(folderId){
+  const f = _coFolders[folderId]; if(!f) return;
+  const raw = prompt(`「${f.name}」 폴더에 만들 탭 이름을 적어 주세요\n\n예: 4대보험 진행 · 계약 갱신 · 올해 상담`);
+  if(raw===null) return;
+  const name = coCleanTagName(raw);
+  if(!name) return toast('이름을 적어 주세요');
+  if(coFTabList(f).some(t=>t.name===name)) return toast('같은 이름의 탭이 이미 있습니다');
+  if(Store.mode!=='firebase') return toast('클라우드에 연결된 상태에서만 됩니다');
+  const id = uid();
+  Store.db.ref(`${DB_ROOT}/coFolders/${folderId}/tabs/${id}`).set({ name:name, order:Date.now() })
+    .then(()=>{ state.coFolder=folderId; state.coFTab=id; render();
+                toast(`＃${name} 탭을 만들었습니다 — 회사를 골라 「＃ 탭에 담기」 하세요`, 6000); })
+    .catch(e=>toast('저장 실패: '+((e&&e.message)||'')));
+}
+function openCoFTabMenu(ev, folderId, tabId){
+  const m=$('folderMenu'); if(!m) return;
+  m.innerHTML = `
+    <div class="fmi" onclick="closeFolderMenu();renameCoFTab('${folderId}','${tabId}')">✏️ 이름 변경</div>
+    <div class="fmi danger" onclick="closeFolderMenu();deleteCoFTab('${folderId}','${tabId}')">🗑 탭 삭제</div>`;
+  m.style.display='block';
+  const x=Math.min(ev.clientX, window.innerWidth-170), y=Math.min(ev.clientY, window.innerHeight-120);
+  m.style.left=x+'px'; m.style.top=y+'px';
+  setTimeout(()=>document.addEventListener('click', closeFolderMenu, {once:true}), 0);
+}
+function renameCoFTab(folderId, tabId){
+  const f = _coFolders[folderId]; if(!f || !f.tabs || !f.tabs[tabId]) return;
+  const raw = prompt('탭 이름', f.tabs[tabId].name||'');
+  if(raw===null) return;
+  const name = coCleanTagName(raw);
+  if(!name) return toast('이름을 적어 주세요');
+  Store.db.ref(`${DB_ROOT}/coFolders/${folderId}/tabs/${tabId}/name`).set(name)
+    .then(()=>render()).catch(e=>toast('저장 실패: '+((e&&e.message)||'')));
+}
+/* 탭을 지운다 — «회사는 지우지 않는다». 그 폴더에 그대로 남고 탭 묶음만 사라진다.
+   ⚠ 회사에 붙은 표시(coInfo/{회사}/ftabs/{탭})는 남겨 둔다. 4,000곳을 훑어 지우려면
+     또 수천 건의 쓰기가 나간다(2026-08-16 폭주의 원인). 탭이 없어지면 그 표시는
+     아무 데서도 안 쓰이는 헛것이 되고, coFTabCounts 는 «지금 있는 탭»만 센다. */
+function deleteCoFTab(folderId, tabId){
+  const f = _coFolders[folderId]; if(!f || !f.tabs || !f.tabs[tabId]) return;
+  const name = f.tabs[tabId].name||'';
+  if(!confirm(`＃${name} 탭을 지울까요?\n\n· 이 폴더의 회사는 그대로 남습니다\n· 탭 묶음만 사라집니다`)) return;
+  Store.db.ref(`${DB_ROOT}/coFolders/${folderId}/tabs/${tabId}`).remove()
+    .then(()=>{ if(state.coFTab===tabId) state.coFTab=''; render(); toast('탭을 지웠습니다'); })
+    .catch(e=>toast('삭제 실패: '+((e&&e.message)||'')));
+}
+/* 고른 회사를 이 폴더의 탭에 담는다 — 폴더를 보고 있을 때만 뜻이 있다 */
+function coAssignFTab(){
+  const keys = Object.keys(state.coSel);
+  if(!keys.length) return toast('회사를 먼저 선택하세요');
+  const f = _coFolders[state.coFolder];
+  if(!f) return toast('먼저 왼쪽에서 폴더를 고르세요');
+  const tabs = coFTabList(f);
+  if(!tabs.length) return toast('이 폴더에 탭이 없습니다 — 왼쪽 「＋ 이 폴더에 탭 만들기」로 만드세요', 6000);
+  const opts = tabs.map(t=>`<div class="movefolder" onclick="coPutFTab('${t.id}')"><span class="mfic">＃</span> ${esc(t.name)}</div>`).join('');
+  $('folderDlg').innerHTML = `
+    <div class="mhead"><b>＃ 탭에 담기 — ${esc(f.name)}</b>
+      <button class="iconbtn" onclick="folderDlgBg.classList.remove('open')">✕</button></div>
+    <div class="mbody"><p class="mhint">고른 ${keys.length.toLocaleString()}곳을 어느 탭에 담을까요?</p>${opts}</div>`;
+  $('folderDlgBg').classList.add('open');
+}
+async function coPutFTab(tabId){
+  const keys = Object.keys(state.coSel);
+  const plan = coFTabPlan(keys, tabId, true, CO_CLEAR_CHUNK);
+  try{
+    for(const upd of plan) await Store.db.ref(DB_ROOT).update(upd);
+  }catch(e){ return toast('담기 실패: '+((e&&e.message)||'')); }
+  $('folderDlgBg').classList.remove('open');
+  state.coSel={}; coListBust(); renderCoAny();
+  toast(`${keys.length.toLocaleString()}곳을 탭에 담았습니다`);
+}
 function coTagList(list){
   const c = {};
   list.forEach(o=>coTagsOf(o).forEach(t=>{ c[t] = (c[t]||0)+1; }));
@@ -10684,6 +10825,9 @@ function openCoFolderMenu(ev, id){
 function pickCoFolder(k){
   state.coPage=0;
   closePcDetail(); state.coSel={};
+  /* ⚠ 폴더가 바뀌면 그 안에서 고른 탭도 푼다 — 다른 폴더의 탭이 남아 있으면
+     그 조건에 맞는 회사가 없어 «빈 목록»이 나온다. */
+  state.coFTab='';
   if(k==='erp'){ state.coErpOnly=true; state.coTag=''; state.coFolder=''; }
   else if(k.indexOf('t:')===0){ state.coTag=k.slice(2); state.coErpOnly=false; state.coFolder=''; }
   else if(k.indexOf('f:')===0){ state.coFolder=k.slice(2); state.coErpOnly=false; state.coTag=''; }
@@ -10710,6 +10854,8 @@ function coFilteredList(skipCol){
   let list = coList();
   if(state.coErpOnly) list = list.filter(o=>o.erp);
   if(state.coFolder) list = list.filter(o=>o.folder===state.coFolder);
+  /* 폴더 안의 탭 — 폴더를 고른 상태에서만 뜻이 있다 */
+  if(state.coFolder && state.coFTab) list = list.filter(o=>coFTabsOf(o).indexOf(state.coFTab)>=0);
   if(state.coTag) list = list.filter(o=>coTagsOf(o).indexOf(state.coTag)>=0);
   if(q) list = list.filter(o=>(o.name+' '+(o.bizno||'')+' '+(o.ceo||'')).toLowerCase().indexOf(q)>=0);
   Object.keys(state.coColFilter||{}).forEach(f=>{
@@ -10872,7 +11018,8 @@ function coListHtml(info){
   const selbar = nSel ? `<div class="coselbar">
       <b>${nSel}곳 선택</b>${moreBtn}
       <button onclick="coMoveToFolder()">📁 폴더로 옮기기</button>
-      <button onclick="coAssignTag()">🏷 탭에 담기</button>
+      <button onclick="coAssignTag()">🏷 서류 탭에 담기</button>
+      ${state.coFolder ? '<button onclick="coAssignFTab()" title="이 폴더 안의 탭에 담습니다">＃ 탭에 담기</button>' : ''}
       <button onclick="state.coSel={};renderCoAny()">선택 해제</button>
       <button class="coclear" onclick="coClearOrg()"
         title="고른 회사에 붙여 둔 폴더·탭을 뗍니다 — 명함은 지워지지 않습니다">🧹 폴더·탭 비우기</button>
@@ -11024,9 +11171,11 @@ function coClearPlan(list, chunk){
     arr.slice(i, i + size).forEach(o => {
       upd['coInfo/' + o.key + '/folder'] = null;
       upd['coInfo/' + o.key + '/tags'] = null;
+      upd['coInfo/' + o.key + '/ftabs'] = null;
       if (o.nameKey && o.nameKey !== o.key){
         upd['coInfo/' + o.nameKey + '/folder'] = null;
         upd['coInfo/' + o.nameKey + '/tags'] = null;
+        upd['coInfo/' + o.nameKey + '/ftabs'] = null;
       }
     });
     if (Object.keys(upd).length) out.push(upd);
@@ -11259,7 +11408,7 @@ function renderCoMobileList(){
   const selbar = (state.selMode && nSel) ? `<div class="coselbar">
       <b>${nSel}곳 선택</b>
       <button onclick="coMoveToFolder()">📁 폴더로 옮기기</button>
-      <button onclick="coAssignTag()">🏷 탭에 담기</button>
+      <button onclick="coAssignTag()">🏷 서류 탭에 담기</button>
     </div>` : '';
   /* renderSubbar() 의 groupBtn 은 이 화면(state.view==='co')에서는 render() 가 건너뛴다
      — 그대로 두면 명함 탭의 마지막 값(예: "전체 (6,271)")이 굳어 붙어 있게 된다.

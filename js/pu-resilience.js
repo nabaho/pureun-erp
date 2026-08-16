@@ -295,12 +295,65 @@
     }, Promise.resolve());
   }
 
+  /* ══════ 연결이 자꾸 끊기면 사람에게 알린다 ══════
+     2026-08-16: 백업이 «서버가 받아 줄 수 없는 크기»의 쓰기를 한 번 보내면, 그 뒤로는
+     파이어베이스 라이브러리가 그것을 «스스로» 다시 보낸다 — 연결이 끊길 때마다.
+     우리 코드가 부르는 것이 아니라 라이브러리 안에서 일어나므로 «우리가 멈출 수 없다».
+     그 창을 새로 열기 전에는 끝나지 않는다(대표 콘솔에서 접속번호 ClientId 가 계속
+     바뀐 것이 그 증거다 — 끊기고 붙기를 되풀이했다).
+     고칠 수 없다면 «알려는 줘야 한다». 조용히 두면 종일 요금만 나간다. */
+  var FLAP_WINDOW_MS = 2 * 60 * 1000;
+  var FLAP_LIMIT = 5;                 /* 2분에 5번이면 정상적인 끊김이 아니다 */
+  var reconnects = [];
+  function noteReconnect(now) {
+    reconnects.push(now);
+    if (reconnects.length > FLAP_LIMIT * 4) reconnects.splice(0, reconnects.length - FLAP_LIMIT * 2);
+  }
+  function isFlapping(now, window, limit) {
+    var cut = now - window, n = 0;
+    for (var i = reconnects.length - 1; i >= 0 && reconnects[i] >= cut; i--) n++;
+    return n >= limit;
+  }
+  function showReloadBanner() {
+    if (!window.document || !window.document.body) return;
+    if (window.document.getElementById('pu-reload-banner')) return;   /* 한 번만 */
+    var box = window.document.createElement('div');
+    box.id = 'pu-reload-banner';
+    box.setAttribute('role', 'alert');
+    box.style.cssText = 'position:fixed;left:50%;top:max(10px,env(safe-area-inset-top));' +
+      'transform:translateX(-50%);z-index:2147483647;max-width:calc(100vw - 20px);' +
+      'display:flex;align-items:center;gap:10px;background:#b42318;color:#fff;' +
+      'border-radius:12px;padding:11px 14px;box-shadow:0 10px 30px rgba(20,10,10,.28);' +
+      'font:700 13px/1.45 system-ui,-apple-system,sans-serif';
+    box.innerHTML = '<span>서버 연결이 자꾸 끊기고 있습니다 · <b>이 창을 새로 열어야 멈춥니다</b></span>';
+    var go = window.document.createElement('button');
+    go.type = 'button';
+    go.textContent = '새로고침';
+    go.style.cssText = 'flex:none;border:0;border-radius:9px;padding:7px 13px;background:#fff;' +
+      'color:#b42318;font:800 12.5px/1.2 system-ui,sans-serif;cursor:pointer';
+    go.onclick = function () { window.location.reload(); };
+    var no = window.document.createElement('button');
+    no.type = 'button';
+    no.textContent = '✕';
+    no.title = '닫기';
+    no.style.cssText = 'flex:none;border:0;background:none;color:#ffd9d5;font-size:15px;cursor:pointer';
+    no.onclick = function () { box.remove(); };
+    box.appendChild(go); box.appendChild(no);
+    window.document.body.appendChild(box);
+  }
+
   function bindApp(app) {
     if (!app || app.__puResilienceBound) return;
     app.__puResilienceBound = true;
     try {
       if (app.auth) app.auth().onAuthStateChanged(function (user) { if (user) replayQueue(app); });
-      app.database().ref('.info/connected').on('value', function (snapshot) { if (snapshot.val() === true) replayQueue(app); });
+      app.database().ref('.info/connected').on('value', function (snapshot) {
+        if (snapshot.val() !== true) return;
+        var now = Date.now();
+        noteReconnect(now);
+        if (isFlapping(now, FLAP_WINDOW_MS, FLAP_LIMIT)) showReloadBanner();
+        replayQueue(app);
+      });
     } catch (_) {}
   }
 
@@ -358,6 +411,9 @@
     /* 세던 것을 0으로 — 「지금부터 5초 동안」을 재려면 필요하다 */
     resetCensus: function () { writeCensus = {}; },
     MAX_REPLAY_ATTEMPTS: MAX_REPLAY_ATTEMPTS,
+    _isFlapping: isFlapping,
+    _noteReconnect: noteReconnect,
+    _flap: { window: FLAP_WINDOW_MS, limit: FLAP_LIMIT },
     _readQueue: readQueue
   };
   if (window && window.document) install();

@@ -71,7 +71,8 @@ test('폴더와 탭만 비운다 — 다른 칸은 절대 안 건드린다', () 
   const C = load();
   const upd = C.coClearPlan([co('a', { folder: 'f1' })], 400)[0];
   const tails = Object.keys(upd).map(k => k.split('/').pop()).sort();
-  assert.deepEqual([...new Set(tails)], ['folder', 'tags']);
+  /* 2026-08-16 폴더 안 탭(ftabs)이 생기면서 함께 뗀다 — 반쯤 비우면 탭만 남는다 */
+  assert.deepEqual([...new Set(tails)].sort(), ['folder', 'ftabs', 'tags']);
 });
 
 test('비우는 값은 null 이다 — 빈 글자를 넣으면 값이 남는다', () => {
@@ -92,7 +93,7 @@ test('옛 이름 열쇠도 함께 비운다 — 안 그러면 비웠는데 그�
 test('열쇠가 이름 열쇠와 같으면 두 번 쓰지 않는다', () => {
   const C = load();
   const upd = C.coClearPlan([{ key: 'n한빛', name: '한빛', nameKey: 'n한빛' }], 400)[0];
-  assert.equal(Object.keys(upd).length, 2, '같은 자리를 두 번 적었다');
+  assert.equal(Object.keys(upd).length, 3, '같은 자리를 두 번 적었다');
 });
 
 test('4,138곳을 400곳씩 묶으면 11통 — 한 곳씩 보내면 4,138번이다', () => {
