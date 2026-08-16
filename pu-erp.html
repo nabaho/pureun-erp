@@ -1497,6 +1497,11 @@ function notifyDeviceLock(){
 //   data/ 와 완전히 분리된 경로라 데이터 동기화·급감차단과 전혀 섞이지 않음.
 // ============================================================
 var PRESENCE_STALE_MS = 90 * 1000;
+/* 이보다 오래 조용하면 «죽은 자리»로 보고 치운다(요금 조사 2026-08-16).
+   90초(STALE)와 일부러 멀리 띄웠다 — 90초로 지우면 잠깐 끊긴 멀쩡한 기기를
+   남이 지워 버려 접속자 목록이 서로를 지우며 깜빡인다. */
+var PRESENCE_DEAD_MS = 24 * 60 * 60 * 1000;
+var _presencePruned = false;   // 유령 치우기는 세션당 한 번만
 var _presenceList = [];        // 구독 결과(원본 배열)
 var _presenceAnnounced = {};   // 이미 알림 띄운 다른 기기 devId 모음 (세션 동안 1회만 알림)
 var _presenceHbTimer = null;
@@ -1536,7 +1541,10 @@ function _presenceName(p){
   }
   return nm || (p && p.sid) || '?';
 }
-function _writePresence(){
+/* 마지막으로 «통째로» 기록한 내용. 30초마다 이것과 견줘 「달라진 게 없으면
+   lastSeen 한 칸만」 쓴다(요금 조사 2026-08-16). */
+var _presenceLastFull = null;
+function _writePresence(full){
   if(!_presenceRef) return;
   // 이름/sid는 매 기록마다 '현재 세션'에서 새로 확인 → 낡은 CURRENT_USER로 인한 오표시 방지(자가복구)
   var sid = (typeof getSessionSid === 'function' ? getSessionSid() : '') || (_presencePayload && _presencePayload.sid) || '';
@@ -1544,6 +1552,22 @@ function _writePresence(){
   // 사번이 이름으로 기록되지 않도록 sidToName 폴백 추가 (명부 미수신 기기 대비)
   var name = (u && u.name) || (CURRENT_USER && CURRENT_USER.sid === sid && CURRENT_USER.name) || sidToName(sid) || (_presencePayload && _presencePayload.name) || sid || '';
   var loginAt = (_presencePayload && _presencePayload.loginAt) || Date.now();
+  /* ⚠ 예전에는 30초마다 **기록 전체**를 set() 했다. 바뀌는 것은 lastSeen 하나뿐인데,
+     그 한 번이 접속 중인 **모든 기기**에게 퍼진다(presence 를 통째로 구독한다).
+     기기 D 대면 30초마다 D×D 번이 오간다 — 아무도 일을 안 해도 계속 나가는 돈이다.
+     그래서 **달라진 게 없으면 lastSeen 한 칸만** 쓴다.
+     ⚠ 자가복구는 그대로 산다 — 이름·sid 가 실제로 달라지면 아래로 내려가 통째로
+       다시 쓴다(명부가 늦게 도착해 사번이 이름으로 찍혔던 경우가 이때 고쳐진다). */
+  var same = _presenceLastFull
+    && _presenceLastFull.sid === sid
+    && _presenceLastFull.name === name
+    && _presenceLastFull.device === DEVICE_NAME
+    && _presenceLastFull.loginAt === loginAt;
+  if(!full && same){
+    _presenceRef.update({ lastSeen: Date.now() }).catch(function(){});
+    return;
+  }
+  _presenceLastFull = { sid:sid, name:name, device:DEVICE_NAME, loginAt:loginAt };
   _presenceRef.set({ sid:sid, name:name, device:DEVICE_NAME, loginAt:loginAt, lastSeen:Date.now() }).catch(function(){});
 }
 function presenceListLive(){
@@ -1644,10 +1668,12 @@ function initPresence(sid, name){
     _presencePayload = { sid:sid, name:name, device:DEVICE_NAME, loginAt:Date.now() };
     _presenceKey = DEVICE_ID + '__' + String(sid).replace(/[.#$\[\]\/\u0000-\u001F\u007F]/g, '_');  // 기기ID+계정 → 같은 PC 다른 계정도 각각
     _presenceRef = fbDb.ref('presence/' + _presenceKey);
-    _writePresence();                       // 즉시 1회
+    _writePresence(true);                   // 즉시 1회 — 처음은 반드시 통째로
     _presenceRef.onDisconnect().remove();    // 닫힘/새로고침/크래시 시 서버가 자동 삭제
     if(_presenceHbTimer) clearInterval(_presenceHbTimer);
-    _presenceHbTimer = setInterval(_writePresence, 30 * 1000);  // 30초 하트비트(통째로 재기록 → 자가복구)
+    /* 30초 하트비트. ⚠ _writePresence 를 그대로 넘기지 않는다 — 넘기면 타이머가
+       주는 인자가 full 로 들어가 「통째로 쓰기」가 켜질 수 있다. 빈손으로 부른다. */
+    _presenceHbTimer = setInterval(function(){ _writePresence(); }, 30 * 1000);
     if(!_presenceSubbed){
       _presenceSubbed = true;
       try { window.addEventListener('presence_changed', _renderPresencePanel); } catch(_){}
@@ -1660,6 +1686,28 @@ function initPresence(sid, name){
         });
         _presenceList = arr;
         try { window.dispatchEvent(new CustomEvent('presence_changed')); } catch(_){}
+        /* ── 유령 접속자 치우기 (요금 조사 2026-08-16) ──
+           onDisconnect 가 놓친 자리가 몇 주씩 남는다(브라우저가 갑자기 죽거나
+           네트워크가 끊기면 서버가 지울 기회를 못 얻는다). 실데이터에서 10건 중
+           9건이 9~43일 된 유령이었다. 90초 규칙은 화면에서 «숨길» 뿐이라,
+           숨겨도 목록에는 계속 실려 와 접속 중인 모든 기기로 오간다.
+           ⚠ 세션당 한 번만 — 볼 때마다 지우면 기기들이 서로 쓰기를 퍼붓는다.
+           ⚠ **하루 넘게 조용한 것만** 지운다. 90초로 지우면 잠깐 끊긴 멀쩡한
+             기기를 남이 지워 버려, 접속자 목록이 서로를 지우며 깜빡인다.
+           ⚠ 내 자리는 건드리지 않는다. */
+        try {
+          if(!_presencePruned){
+            _presencePruned = true;
+            var deadBefore = Date.now() - PRESENCE_DEAD_MS;
+            var dead = arr.filter(function(p){
+              return p.devId !== _presenceKey && (!p.lastSeen || p.lastSeen < deadBefore);
+            });
+            dead.forEach(function(p){
+              fbDb.ref('presence/' + p.devId).remove().catch(function(){});
+            });
+            if(dead.length) console.log('[접속자] 유령 ' + dead.length + '건 치움');
+          }
+        } catch(_p){}
         // 나 외 다른 기기 접속 → 토스트로 1회만 알림 (자동 사라짐, 확인 불필요). 한 번 알린 기기는 세션 동안 재알림 안 함.
         try {
           var nowT = Date.now();
