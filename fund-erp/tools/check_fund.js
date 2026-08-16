@@ -175,6 +175,26 @@ ok('서천군은 장항등기소', src.includes("'충남 서천군':'대전지�
 /* 세무서 — 고유번호증을 낸 관서와 같아야 한다. 당진시가 서산이 아니라 «예산»세무서인 것이
    눈에 안 띄는 함정이라 못 박아 둔다(충남 8호 고유번호증: 예산세무서장). */
 ok('당진시는 예산세무서', src.includes("'충남 당진시':'예산세무서'"));
+/* ── 지원금 평가표(2025년 개정) ── 배점은 예상 수령액으로 이어진다.
+   화면 배선까지 봐야 한다 — 셈만 고치고 화면이 옛 글을 그대로 띄우면 사람이 속는다. */
+ok('2025·2026년은 2025년판 배점', /'2025':\{[^}]*rubric:'2025'/.test(src) && /'2026':\{[^}]*rubric:'2025'/.test(src));
+ok('2024년 이전은 옛 배점 그대로', /'2024':\{[^}]*rubric:'2024'/.test(src) && /'2023':\{[^}]*rubric:'2024'/.test(src));
+ok('③ 평균 근로자수 함수(30·50·80·100명)', src.includes('function _subP3avg(v){ return v<30?5:v<50?4:v<80?3:v<100?2:1; }'));
+ok('① 가중치를 배점판으로 가른다', src.includes('var w1=r25?3:5;'));
+ok('정성 상한을 배점판으로 가른다', src.includes('var qualMax=r25?40:30;')
+  && src.includes('Math.min(qualMax,num(o.qual)||0)'));
+ok('2025년판은 ②-2를 안 본다', /var p2b=r25\?5:\(nSite>=10\?_subP2b/.test(src));
+ok('2025년판 ③은 평균 근로자수로 셈한다', src.includes('var p3=r25?_subP3avg(avgEmp):_subP3('));
+// 화면: 배지·정성 상한 라벨·③ 입력칸 감추기·안내문이 모두 배점판을 따라야 한다
+ok('배지가 배점판 이름을 띄운다', src.includes(">'+c.rubric+'년 평가표 배점<"));
+ok('정성 입력 라벨이 상한을 따라간다', src.includes("정성평가(사업계획 '+c.qualMax+'점)"));
+ok('2025년판에는 ③ 입력칸을 아예 안 그린다', src.includes("+(c.rubric==='2025' ? ''")
+  && src.includes("③ 1인당 이미 지원받은 금액(원)"));
+ok('안 그린 ③ 칸을 0으로 덮어쓰지 않는다', src.includes("if($('sp-prev')) obj.prev_per_worker=v.prev;")
+  && !/var obj=\{ req_type:v\.type, qual_score:v\.qual, prev_per_worker/.test(src));
+ok('도움말이 옛 「2024년 평가표 기준」 경고를 더는 띄우지 않는다',
+  !src.includes('이 배점은 <b>2024년 평가표</b> 기준입니다'));
+
 ok('홍성군은 홍성세무서', src.includes("'충남 홍성군':'홍성세무서'"));
 ok('보령시는 보령세무서', src.includes("'충남 보령시':'보령세무서'"));
 
