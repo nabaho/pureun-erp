@@ -83,12 +83,26 @@ test('이알피: 폰에서 달 이름 칸을 줄여 「이번 달만」이 아�
    한 줄이 세 줄이 되고 있었다. 폰에서 실제로 그려 재 본 값(412px):
      서브탭 3줄→1줄(40px) · 출금단추 3줄→1줄(38px) · 깔때기 3줄→1줄(40px) */
 test('가로로 밀어 보는 줄은 폰에서도 접지 않는다', () => {
-  assert.match(erpCss, /\[style\*="overflow-x: auto"\] \{ flex-wrap: nowrap !important; \}/);
+  assert.match(erpCss, /\[style\*="overflow-x: auto"\] \{ flex-wrap: nowrap !important;/);
   // 접는 규칙 자체는 남아 있어야 한다 — 다른 단추 묶음은 접혀야 보인다
   assert.match(erpCss, /\[style\*="display: flex"\]\[style\*="gap"\] \{ flex-wrap: wrap; \}/);
   /* 순서가 중요하다 — 접지 않는 규칙이 뒤에 와야 이긴다(둘 다 같은 매체 질의 안) */
   assert.ok(erpCss.indexOf('[style*="display: flex"][style*="gap"] { flex-wrap: wrap; }')
-          < erpCss.indexOf('[style*="overflow-x: auto"] { flex-wrap: nowrap !important; }'));
+          < erpCss.indexOf('[style*="overflow-x: auto"] { flex-wrap: nowrap !important;'));
+});
+
+/* ★ 대표 화면 2026-08-15 — 내가 낸 사고. 접지 않게만 해 두었더니
+   출금관리에서 **화면 전체가 옆으로 밀려** 머리글·KPI·검색칸까지 잘렸다.
+   까닭: 이 줄들은 대개 다른 flex 상자의 아이템이고, flex 아이템의 기본값은
+   `min-width:auto` — 속에 든 것보다 작아지지 않는다. 그래서 단추 아홉의 폭이
+   그대로 부모를 밀었다. 폰에서 재어 보니 페이지 510px · 화면 412px 였다.
+   작아질 수 있게 풀어 줘야 넘치는 부분이 **그 줄 안에서** 밀린다. */
+test('★ 가로 스크롤 줄이 페이지를 옆으로 밀지 않는다', () => {
+  const rule = erpCss.match(/\[style\*="overflow-x: auto"\] \{[^}]*\}/);
+  assert.ok(rule, '가로 스크롤 줄 규칙을 찾지 못했습니다');
+  assert.match(rule[0], /min-width: 0 !important/,
+    '★ 없으면 줄이 안 줄어들어 화면 전체가 옆으로 밀립니다 (실제로 그렇게 났다)');
+  assert.match(rule[0], /max-width: 100% !important/);
 });
 
 test('알약 깔때기는 글자 입력칸용 16px·42px 에 부풀지 않는다', () => {
