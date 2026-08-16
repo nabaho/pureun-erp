@@ -161,3 +161,69 @@ test('★ 문턱이 0 이 아니다 — 0 이면 이 검사 전체가 뜻이 없
   assert.match(app, /var RESYNC_IDLE_MS = 6\d{4};/,
     '★ 문턱을 0 이나 너무 작은 값으로 낮추면 예전과 같은 문제가 됩니다');
 });
+
+/* ══════ 대시보드 🔄 새로고침 (요금 조사 2026-08-16) ══════
+   「나의 업무」·「법인 대시보드」의 🔄 가 fbInitialSync() 를 **조건 없이** 불렀다 —
+   한 번에 data 통째 2.83MB(실측). 다섯 번 누르면 14MB.
+   바로 옆 복귀 재동기화는 이미 막아 뒀는데 단추 쪽만 문이 없었다. */
+
+test('★ 🔄 를 되풀이 눌러도 통째로 다시 받지 않는다 — 이것이 새던 자리다', () => {
+  const clock = makeClock(1000000);
+  const { sandbox, calls } = loadResync({ clock });
+  assert.equal(typeof sandbox.window.erpRefreshData, 'function',
+    'erpRefreshData 가 없습니다');
+  assert.equal(sandbox.window.erpRefreshData(), true, '첫 번은 받아야 합니다');
+  clock.advance(1000);
+  sandbox.window.erpRefreshData();
+  clock.advance(1000);
+  sandbox.window.erpRefreshData();
+  assert.equal(calls.fbInitialSync, 1,
+    '★ 🔄 를 세 번 눌러 2.83MB 를 세 번 받았습니다');
+});
+
+test('★ 오래 지났으면 🔄 가 실제로 받는다 — 구독이 끊겼을 수 있다', () => {
+  const clock = makeClock(1000000);
+  const { sandbox, calls } = loadResync({ clock });
+  sandbox.window.erpRefreshData();
+  clock.advance(70000);                    // 문턱(60초) 넘김
+  assert.equal(sandbox.window.erpRefreshData(), true);
+  assert.equal(calls.fbInitialSync, 2, '오래 지났는데도 안 받으면 낡은 화면이 남습니다');
+});
+
+test('★ 복귀 재동기화와 시계를 함께 쓴다 — 방금 받아 놓고 단추로 또 받지 않는다', () => {
+  /* 시계를 따로 두면 「탭 복귀로 막 받았는데 🔄 를 누르니 또 받는」 겹치기가
+     그대로 남는다. 이 검사가 그 하나를 못박는다. */
+  const clock = makeClock(1000000);
+  const { sandbox, calls, listeners } = loadResync({ clock });
+  listeners.window.blur();
+  clock.advance(90000);
+  listeners.window.focus();                // 복귀 재동기화가 받음
+  assert.equal(calls.fbInitialSync, 1);
+  clock.advance(1000);
+  assert.equal(sandbox.window.erpRefreshData(), false,
+    '★ 방금 받았는데 단추가 또 받습니다');
+  assert.equal(calls.fbInitialSync, 1);
+});
+
+test('🔄 도 fbDb·동기화 전이면 아무것도 안 한다', () => {
+  const a = loadResync({ fbDb: null, clock: makeClock(100000) });
+  assert.equal(a.sandbox.window.erpRefreshData(), false);
+  assert.equal(a.calls.fbInitialSync, 0);
+  const b = loadResync({ fbSynced: false, clock: makeClock(100000) });
+  assert.equal(b.sandbox.window.erpRefreshData(), false);
+  assert.equal(b.calls.fbInitialSync, 0);
+});
+
+test('★ 두 대시보드가 모두 erpRefreshData 를 거친다 — 한쪽만 고치면 그쪽으로 샌다', () => {
+  /* ⚠ **주석을 걷어내고** 본다. 안 걷으면 "fbInitialSync() 를 바로 부르지 않는다"라고
+     적어 둔 설명 주석 자체가 「직접 부른다」로 잡힌다 — 실제로 여기서 한 번 속았다. */
+  const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  for (const fn of ['refreshDash', 'corpRefresh']) {
+    const m = app.match(new RegExp('function ' + fn + '\\(\\)\\{[\\s\\S]*?\\n  \\}'));
+    assert.ok(m, fn + ' 를 찾지 못했습니다');
+    const body = strip(m[0]);
+    assert.match(body, /window\.erpRefreshData\(\)/, fn + ' 이 문을 안 거칩니다');
+    assert.ok(!/\bfbInitialSync\s*\(/.test(body),
+      '★ ' + fn + ' 이 아직 fbInitialSync 를 직접 부릅니다 — 누를 때마다 2.83MB 입니다');
+  }
+});
