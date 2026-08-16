@@ -1618,7 +1618,7 @@ const Store = {
       this.mode = 'firebase';
       modeBadge.textContent='실시간 공유'; modeBadge.classList.add('live');
       const subscribe = () => {
-        this.db.ref(DB_ROOT+'/items').on('value', s => { state.items = s.val()||{}; render();
+        this.db.ref(DB_ROOT+'/items').on('value', s => { state.items = s.val()||{}; coListBust(); renderSoon();
           /* 명함이 도착한 **뒤에** 마지막 보던 화면으로 옮긴다(대표 지시 2026-08-10).
              먼저 옮기면 빈 화면이 잠깐 보이고, 자료함·보낸 메일은 아직 읽히지도 않았다. */
           restoreLastScreen();
@@ -1626,10 +1626,10 @@ const Store = {
           /* 번호 열쇠 자리 첫 채우기 — 한 번만. 명함이 다 들어온 뒤라야 빠짐없이 찬다. */
           if(!Store._byKeyDone){ Store._byKeyDone=true; setTimeout(ensureByKeyMap, 4000); } },
           e => { if(!FB_APPCHECK_ON && isDenied(e)) console.error('[App Check] 콘솔에서 App Check 강제를 켜셨다면 pu-cards.html 의 FB_APPCHECK_ON 을 true 로 되돌려야 합니다 — 그러지 않으면 모든 읽기·쓰기가 막힙니다'); });
-        this.db.ref(DB_ROOT+'/groups').on('value', s => { state.groups = s.val()||{}; render();
+        this.db.ref(DB_ROOT+'/groups').on('value', s => { state.groups = s.val()||{}; renderSoon();
           if(!Store._bizSeedDone){ Store._bizSeedDone=true; setTimeout(seedBizFolders, 3000); } });
         /* 내 탭(저장된 검색·필터 조건) — 전 직원 공유 */
-        this.db.ref(DB_ROOT+'/views').on('value', s => { state.views = s.val()||{}; render();
+        this.db.ref(DB_ROOT+'/views').on('value', s => { state.views = s.val()||{}; renderSoon();
           if(!Store._erpTabSeedDone){ Store._erpTabSeedDone=true; setTimeout(seedErpTabs, 3500); } });
         this.db.ref(DB_ROOT+'/trash').on('value', s => { state.trash = s.val()||{};
           if(!Store._trashPurgeDone){ Store._trashPurgeDone=true; setTimeout(purgeTrash, 2000); } });
@@ -1694,7 +1694,7 @@ const Store = {
       /* ★ 개인 명함은 공유 검색목록에 절대 넣지 않는다 — 다른 앱이 읽는 자리다 */
       if (R === DB_ROOT) writeIdx(it);
     }
-    else { state.items[it.id]=it; this._ls(); render(); } },
+    else { state.items[it.id]=it; coListBust(); this._ls(); render(); } },
   /* ── 삭제 = 휴지통으로 이동 (30일 보관) ──
      ⚠ **원본 사진을 휴지통 기록에 복사하지 않는다**(2026-08-13 비용 조사).
         예전에는 `_photo`/`_photo2` 에 원본을 base64 로 통째 넣었다. 그런데 휴지통은
@@ -1724,7 +1724,7 @@ const Store = {
       const t=JSON.parse(localStorage.getItem('pucards_local_trash')||'{}'); t[id]=rec;
       try{ localStorage.setItem('pucards_local_trash', JSON.stringify(t)); }catch(e){}
       state.trash[id]=rec;
-      delete state.items[id]; this._ls(); render();
+      delete state.items[id]; coListBust(); this._ls(); render();
     }
   },
   /* 영구 삭제 (휴지통에서 완전 제거).
@@ -1934,6 +1934,7 @@ const ErpMatch = {
         const n = ErpMatch._norm(co.name);    if(n && !byName[n]) byName[n]=rec;
       });
       ErpMatch.byBiz=byBiz; ErpMatch.byName=byName; ErpMatch.companies=cos; ErpMatch.ready=true;
+      coListBust();
       try{ render(); }catch(_){}
       /* 자문사 폴더 자동 분류 — 명함 데이터가 늦게 로드될 수 있어 4초 뒤 한 번 더(멱등) */
       ErpMatch.autoFolder();
@@ -7018,7 +7019,7 @@ async function wipeAll(){
     }
   } else {
     targets.forEach(it=>delete state.items[it.id]);
-    Store._ls(); render();
+    coListBust(); Store._ls(); render();
   }
   toast(`✅ ${kindLabel} ${targets.length.toLocaleString()}건을 모두 삭제했습니다`, 6000);
 }
@@ -10095,7 +10096,7 @@ function loadCoInfo(cb){
   _coInfoOn = true;
   /* 폴더·탭 개수가 옆줄에도 보이므로 renderCoPage() 만 부르면 옆줄 숫자가 안 바뀐다
      (최종 전체 리뷰 2026-08-14 — loadCoFolders/loadCoTagHidden 과 같은 이유). */
-  Store.db.ref(DB_ROOT+'/coInfo').on('value', s=>{ _coInfo = s.val() || {}; renderCoAny(); });
+  Store.db.ref(DB_ROOT+'/coInfo').on('value', s=>{ _coInfo = s.val() || {}; coListBust(); renderCoSoon(); });
   cb && cb();
 }
 const coKeyOf = it => { const d=digits(it.bizno||''); return d.length>=10 ? d : ('n'+_norm(it.company||'')); };
@@ -10127,7 +10128,28 @@ function coEffectiveExtra(key, name, coInfoMap){
 }
 
 /* 흩어진 것을 회사 하나로 모은다. 사업자등록증이 뼈대가 되고, 명함·ERP·서식이 살을 붙인다. */
+/* ══════ 회사 목록 다시 조립하기 — 순수 로직 (테스트 대상) ══════
+   기업 상세는 그릴 때마다 명함 6,616장을 두 번 훑고 회사 4,100곳마다 푸른이알피를
+   맞춰 «회사 목록을 통째로 다시 조립»했다. 한 번에 25ms, 한 번 그릴 때 두 번 부르니
+   50ms — 「50개씩 보기」로 줄여도 안 줄어드는 고정비다(대표 확인 2026-08-16,
+   50줄만 그리는데 53ms 중 51ms 가 이 조립이었다).
+
+   더 나쁜 것은 이것이 **한 번으로 안 끝난다**는 점이다. 명함·폴더·회사정보 세 자리를
+   실시간으로 듣고 있어, 저장이 한 건 오갈 때마다 화면을 다시 그린다. 저장이 몰리면
+   50ms 짜리가 수백 번 겹쳐 화면이 계속 멈춘다.
+
+   ⚠ 「언제 다시 조립할까」를 손으로 짚지 않는다 — 한 곳만 놓치면 새 명함이 회사
+     목록에 조용히 안 나타난다. 자료가 들어오는 «문»이 셋뿐이므로(명함·회사정보·
+     푸른이알피), 그 문에서만 표를 새로 뽑는다(coListBust). 문이 아닌 곳에서 값이
+     바뀌는 길은 없다 — 저장은 모두 그 문을 되돌아 들어온다. */
+let _coListMemo = null;
+function coListBust(){ _coListMemo = null; }
 function coList(){
+  if(_coListMemo) return _coListMemo;
+  return (_coListMemo = coListBuild());
+}
+function coListBuild(){
+  if(typeof _coWatch!=='undefined' && _coWatch) _coWatch.builds++;
   const by = {};
   const take = (k, src) => {
     const o = by[k] || (by[k] = { key:k, name:'', bizno:'', cards:[], docs:0, erp:null, extra:{} });
@@ -10176,8 +10198,48 @@ function openCoPage(){ state.view='co'; state.coPick='';
   try{ state.coPageSize = coPageSizeOk(localStorage.getItem('pucards_co_pagesize')); }catch(_){}
   state.coPage = 0;
   render();
-  loadCoInfo(); loadCoFolders(); loadCoTagHidden(); try{ $('pcMain').scrollTop=0; }catch(_){} }
+  loadCoInfo(); loadCoFolders(); loadCoTagHidden(); try{ $('pcMain').scrollTop=0; }catch(_){}
+  coWatchStart(); }
 function closeCoPage(){ state.view='list'; render(); }
+
+/* ══════ 기업 상세가 멈추면 스스로 이름을 대게 — 순수 로직 (테스트 대상) ══════
+   2026-08-16 대표 화면: 기업 상세에 들어가면 화면이 계속 멈추고 콘솔에 파이어베이스
+   오류가 1,000건 넘게 쏟아졌다. 코드를 아무리 읽어도 «무엇이» 그 오류를 내는지 못
+   짚었다 — 짐작으로 고치면 엉뚱한 곳을 건드린다. 그래서 다음에 또 멈추면 화면이
+   스스로 알려 주게 한다: 5초 동안 몇 번 다시 그렸고, 회사 목록을 몇 번 다시 조립했고,
+   서버가 안 받아 준 저장이 몇 건 밀려 있는지. */
+function coWatchVerdict(s){
+  const out = [];
+  if(s.parked > 0) out.push('서버가 거부한 저장 '+s.parked+'건이 밀려 있습니다 — 오류가 여기서 나옵니다');
+  else if(s.pending > 10) out.push('아직 못 보낸 저장 '+s.pending+'건이 밀려 있습니다');
+  if(s.renders > 10) out.push('화면을 '+s.renders+'번 다시 그렸습니다 — 저장이 몰려 들어오고 있습니다');
+  if(s.builds > 3) out.push('회사 목록을 '+s.builds+'번 다시 조립했습니다 — 한 번이면 됩니다');
+  if(s.blockedMs > 500) out.push('5초 중 '+Math.round(s.blockedMs)+'ms 멈춰 있었습니다');
+  return out.length ? out : ['눈에 띄는 문제 없음'];
+}
+let _coWatch = null;
+function coWatchStart(){
+  if(_coWatch) return;                       /* 이미 보고 있으면 그대로 둔다 */
+  _coWatch = { renders:0, builds:0, blockedMs:0 };
+  let obs = null;
+  try{
+    obs = new PerformanceObserver(list=>{
+      list.getEntries().forEach(e=>{ if(_coWatch && e.duration>50) _coWatch.blockedMs += e.duration; });
+    });
+    obs.observe({ entryTypes:['longtask'] });
+  }catch(_){}
+  setTimeout(()=>{
+    try{ obs && obs.disconnect(); }catch(_){}
+    const q = (window.PUResilience && PUResilience.stats) ? PUResilience.stats() : { pending:0, parked:0, worst:[] };
+    const s = { renders:_coWatch.renders, builds:_coWatch.builds,
+                blockedMs:_coWatch.blockedMs, pending:q.pending, parked:q.parked };
+    _coWatch = null;
+    console.log('🏢 기업 상세 5초 진단 — 다시 그림 '+s.renders+'번 · 회사목록 조립 '+s.builds
+      +'번 · 멈춤 '+Math.round(s.blockedMs)+'ms · 밀린 저장 '+s.pending+'건 · 거부된 저장 '+s.parked+'건');
+    coWatchVerdict(s).forEach(m=>console.log('   → '+m));
+    if(q.worst && q.worst.length) console.log('   거부된 저장:', q.worst);
+  }, 5000);
+}
 function pickCo(k){ if(state.coPick===k){ state.coPick=''; closePcDetail(); return; } state.coPick = k; openCoDetailPanel(k); }
 
 /* ── 이알피(사무관리) 컨설팅·사건 기록 — 읽기 전용 ──
@@ -10325,7 +10387,7 @@ let _coTagHiddenOn = false;
 function loadCoTagHidden(cb){
   if(_coTagHiddenOn || Store.mode!=='firebase'){ cb && cb(); return; }
   _coTagHiddenOn = true;
-  Store.db.ref(DB_ROOT+'/coTagHidden').on('value', s=>{ _coTagHidden = s.val() || {}; renderCoAny(); });
+  Store.db.ref(DB_ROOT+'/coTagHidden').on('value', s=>{ _coTagHidden = s.val() || {}; renderCoSoon(); });
   cb && cb();
 }
 function hideCoTag(tag){
@@ -10353,7 +10415,7 @@ function loadCoFolders(cb){
   _coFoldersOn = true;
   /* 사업자·자료함처럼 renderPC() 를 부른다 — 폴더 개수가 옆줄에도 보이므로
      renderCoPage() 만 부르면 옆줄 숫자가 안 바뀐다. */
-  Store.db.ref(DB_ROOT+'/coFolders').on('value', s=>{ _coFolders = s.val() || {}; renderCoAny(); });
+  Store.db.ref(DB_ROOT+'/coFolders').on('value', s=>{ _coFolders = s.val() || {}; renderCoSoon(); });
   cb && cb();
 }
 function putCoFolder(folder){
@@ -10675,6 +10737,7 @@ function coApplyColFilter(field, value){
 
 function renderCoPage(){
   const el=$('pcCo'); if(!el) return;
+  if(typeof _coWatch!=='undefined' && _coWatch) _coWatch.renders++;
   const all = coList();
   const tags = coTagList(all);
   /* ⚠ 거르는 차례는 coVisible() 한 곳에만 둔다 — 예전엔 여기서 따로 거르고 있어
@@ -10987,12 +11050,43 @@ function renderCoAny(){
   if(document.body.classList.contains('pc')) renderPC();
   else renderCoMobileList();
 }
+
+/* ══════ 몰아친 다시 그리기를 한 번으로 묶기 — 순수 로직 (테스트 대상) ══════
+   명함·폴더·회사정보 세 자리를 실시간으로 듣고 있어, 저장이 한 건 오갈 때마다 화면을
+   다시 그린다. 자동 폴더 배정처럼 저장이 몰리면 «한 건마다» 통째로 다시 그려 그 시간이
+   그대로 쌓인다 — 화면이 계속 멈춘 것처럼 보인다. 사람 눈에는 마지막 한 번만 보이면
+   되므로, 같은 프레임에 몰린 것을 한 번으로 묶는다.
+
+   ⚠ 「나중에 그린다」가 아니라 「몰린 것을 한 번만 그린다」다. 밀린 그리기는 다음
+     프레임에 반드시 일어난다 — 건너뛰면 저장한 것이 화면에 안 보인다.
+   ⚠ 사람이 누른 것(단추·네모)은 묶지 않는다. 그건 바로 보여야 한다. */
+function makeBurstRunner(schedule, run){
+  let waiting = false;
+  return function(){
+    if(waiting) return;          /* 이미 예약돼 있으면 그 한 번에 함께 실린다 */
+    waiting = true;
+    schedule(function(){ waiting = false; run(); });
+  };
+}
+/* 한 프레임 뒤에 부른다.
+   ⚠ 창이 숨어 있으면(다른 탭에 가 있으면) 브라우저가 프레임을 아예 안 준다. 그대로
+     두면 밀린 그리기가 영영 안 일어나 돌아왔을 때 옛 화면이 남는다. 숨어 있을 때는
+     시간으로 깨운다 — 이 앱은 창을 여러 개 띄워 놓고 쓴다. */
+const _soonTick = fn => {
+  const hidden = (typeof document !== 'undefined') && document.hidden;
+  if (hidden || typeof requestAnimationFrame !== 'function') return setTimeout(fn, 16);
+  requestAnimationFrame(fn);
+};
+/* 실시간으로 들어온 것 때문에 다시 그릴 때만 이것을 쓴다 */
+const renderSoon   = makeBurstRunner(_soonTick, () => { try{ render(); }catch(_){} });
+const renderCoSoon = makeBurstRunner(_soonTick, () => { try{ renderCoAny(); }catch(_){} });
 /* 폰 기업 상세 카드 목록 — 명함 목록(renderList)과 같은 .row/.rowmain/.nm/.l1/.l2
    클래스를 그대로 쓴다(대표가 고른 A안: 카드 목록 + 전체화면 상세, 2026-08-15).
    담는 자료는 PC 표(coListHtml)와 똑같이 coVisible() 을 쓴다 — 회사 목록 계산을
    두 벌로 두면 한쪽만 고쳤을 때 어긋난다(기업정보 폴더 설계서의 교훈과 같다). */
 function renderCoMobileList(){
   const el = $('list'); if(!el) return;
+  if(typeof _coWatch!=='undefined' && _coWatch) _coWatch.renders++;
   /* 폰도 잘라 그린다 — 손안의 기기가 4,138줄에 더 약하다 */
   const info = coPage();
   const list = info.rows;

@@ -18,6 +18,15 @@
   var MAX_QUEUE_ITEMS = 200;
   var MAX_ITEM_AGE = 7 * 24 * 60 * 60 * 1000;
   var RETRY_DELAYS = [600, 1600];
+  /* 다시 보내기를 몇 번까지 할 것인가.
+     ⚠ 이 숫자가 없으면 «영영 낫지 않는» 저장 하나가 연결될 때마다, 로그인할 때마다,
+       인터넷이 붙을 때마다 다시 나간다. 서버는 그때마다 오류를 돌려주고, 그 오류가
+       'internal' 로 분류돼(isTransientError) 또 다시 보내진다. 7일 동안 끝나지 않는
+       되풀이가 되어 콘솔이 오류로 뒤덮이고 화면이 계속 멈춘다(대표 화면 2026-08-16,
+       기업 상세에서 오류 1,000건 넘게 쏟아짐).
+     ⚠ 그렇다고 «지우지는» 않는다. 대표가 저장한 것을 우리가 조용히 버리면 안 된다.
+       더 안 보내고 한쪽에 세워 둔 뒤(parked) 사람에게 알린다. */
+  var MAX_REPLAY_ATTEMPTS = 5;
   var EXCLUDED_SEGMENTS = ['.info', 'activeWriter', 'presence', 'connections'];
   var installed = false;
   var replaying = false;
@@ -184,10 +193,11 @@
   function replayQueue(app) {
     if (replaying || !app || !app.database) return Promise.resolve(false);
     var context = { project: String(app.options && (app.options.projectId || app.options.databaseURL) || 'default'), uid: app.auth && app.auth().currentUser && app.auth().currentUser.uid || '' };
-    var queue = readQueue(context.project);
+    var queue = readQueue(context.project).filter(function (item) { return !item.parked; });
     if (!queue.length) return Promise.resolve(false);
     replaying = true;
     var restored = 0;
+    var parked = 0;
     var chain = Promise.resolve();
     queue.slice().forEach(function (item) {
       chain = chain.then(function () {
@@ -201,10 +211,28 @@
           writeQueue(context.project, latest);
           restored++;
         }).catch(function (error) {
+          /* ⚠ 몇 번 해 봤는지 «반드시» 적어 둔다. 예전에는 attempts 를 0으로 넣어 두고
+             아무도 올리지 않아, 낫지 않는 저장 하나가 연결될 때마다 영원히 다시 나갔다. */
+          var latest = readQueue(context.project);
+          var hit = null;
+          for (var i = 0; i < latest.length; i++) if (latest[i].id === item.id) { hit = latest[i]; break; }
+          if (hit) {
+            hit.attempts = Number(hit.attempts || 0) + 1;
+            hit.lastError = errorCode(error).slice(0, 120);
+            hit.lastTriedAt = Date.now();
+            if (hit.attempts >= MAX_REPLAY_ATTEMPTS) { hit.parked = true; parked++; }
+            try { writeQueue(context.project, latest); } catch (_) {}
+          }
           if (!isTransientError(error)) emit('failed', { error: errorCode(error), path: item.path });
           throw error;
         });
       });
+    });
+    chain = chain.catch(function (error) {
+      if (parked) emit('failed', {
+        message: '저장 ' + parked + '건을 여러 번 시도했지만 서버가 거부했습니다 · 관리자 확인이 필요합니다'
+      });
+      throw error;
     });
     return chain.then(function () {
       if (restored) emit('recovered', { restored: restored, pending: readQueue(context.project).length });
@@ -257,6 +285,20 @@
     isTransientError: isTransientError,
     isExcludedPath: isExcludedPath,
     referencePath: referencePath,
+    /* 지금 밀려 있는 저장이 몇 건인지 — 화면이 멈출 때 원인을 짚으려면 이게 보여야 한다.
+       parked 는 「여러 번 해 봤지만 서버가 거부한 것」이다. 지우지 않고 세워만 뒀다. */
+    stats: function (project) {
+      var q = readQueue(project);
+      var parked = q.filter(function (x) { return x.parked; });
+      return {
+        pending: q.length - parked.length,
+        parked: parked.length,
+        worst: parked.slice(0, 3).map(function (x) {
+          return { path: x.path, method: x.method, attempts: x.attempts, error: x.lastError || '' };
+        })
+      };
+    },
+    MAX_REPLAY_ATTEMPTS: MAX_REPLAY_ATTEMPTS,
     _readQueue: readQueue
   };
   if (window && window.document) install();

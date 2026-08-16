@@ -128,7 +128,7 @@ function loadLoadCoInfo(){
   assert.ok(at > 0, 'loadCoInfo 를 찾지 못했습니다');
   const end = source.indexOf('\nconst coKeyOf', at);
   assert.ok(end > at, 'loadCoInfo 끝을 찾지 못했습니다');
-  const calls = { pcRendered: 0, coRendered: 0, anyRendered: 0 };
+  const calls = { pcRendered: 0, coRendered: 0, anyRendered: 0, busted: 0 };
   let onValueCb = null;
   const ctx = {
     _coInfoOn: false,
@@ -138,6 +138,13 @@ function loadLoadCoInfo(){
     DB_ROOT: 'pucards',
     renderPC: () => { calls.pcRendered++; },
     renderCoPage: () => { calls.coRendered++; },
+    /* 2026-08-16 — 회사 목록을 기억해 두게 되면서, 자료가 들어오는 문에서는 반드시
+       새로 뽑아야 한다(안 그러면 새 회사정보가 목록에 조용히 안 나타난다). */
+    coListBust: () => { calls.busted++; },
+    /* 실시간으로 들어온 것은 한 프레임에 한 번으로 묶어 그린다. 여기서는 프레임을
+       기다리지 않고 바로 부르는 대역을 쓴다 — 이 검사가 보려는 것은 «누구에게
+       맡기는가» 이지 «언제 그리는가» 가 아니다. */
+    renderCoSoon: () => { ctx.renderCoAny(); },
     /* Task 6 — loadCoInfo 의 콜백은 이제 state.view 를 직접 안 보고 renderCoAny() 하나에
        위임한다(PC/폰 어느 쪽인지 가리는 것도, 기업정보 화면이 아니면 아무 것도 안 하는
        것도 모두 renderCoAny() 의 몫 — tests/cards-co-render-any.test.js 가 그 분기를
@@ -158,6 +165,7 @@ test('loadCoInfo 의 구독 콜백은 renderPC·renderCoPage 를 직접 안 부�
   assert.equal(c._calls.anyRendered, 1, 'renderCoAny 를 안 불렀다');
   assert.equal(c._calls.pcRendered, 0, 'renderPC() 를 직접 부르면 안 된다 — renderCoAny() 를 거쳐야 한다');
   assert.equal(c._calls.coRendered, 0, 'renderCoPage 를 부르면 옆줄 숫자가 안 바뀐다');
+  assert.equal(c._calls.busted, 1, '새 회사정보가 왔는데 회사 목록을 새로 안 뽑았다');
   assert.deepEqual(JSON.parse(JSON.stringify(c._coInfo)), { a: { folder:'f1' } });
 });
 
