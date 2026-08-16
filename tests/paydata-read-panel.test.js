@@ -107,12 +107,25 @@ test('실패하면 까닭을 보여주고 다시 누를 수 있다', () => {
   assert.match(h, /doRead\(\)/);
 });
 
-test('★ 급여대장 판독은 아직 꺼져 있다 — 처리위탁 근거 정리 전', () => {
-  // 설계서 9장. 켤 때 이 검사를 함께 고친다.
-  assert.match(html, /const WAGE_READ_ON = false/);
+/* 2026-08-15 대표 지시로 켰다(그 전에는 「꺼져 있다」를 못 박고 있었다).
+   ⚠ 스위치를 되돌리면 이 검사가 먼저 깨진다 — 그것이 의도다. 되돌리는 것은
+   지금 유일한 차단 수단이라, 실수로 왔다 갔다 하면 안 된다. */
+test('★ 급여대장 판독이 켜져 있다 — 근로자 성명·임금액이 구글로 나간다(대표 판단)', () => {
+  assert.match(html, /const WAGE_READ_ON = true/);
   const h = loadApp({ kind: 'ledger' }).readPanelHtml();
-  assert.equal(/doRead\(\)/.test(h), false, '아직 켜면 안 됩니다');
-  assert.match(h, /준비 중/);
+  assert.match(h, /doRead\(\)/, '켰는데 판독 단추가 없습니다');
+  assert.equal(/준비 중/.test(h), false, '켰는데 「준비 중」이 남아 있습니다');
+});
+
+/* 켰다고 위험이 없어진 것이 아니다 — 왜 위험한지가 코드에 남아 있어야
+   다음 사람이 「그냥 켜도 되는 것」으로 읽지 않는다. */
+test('★ 켠 뒤에도 무엇이 나가는지 코드에 적혀 있다', () => {
+  const head = html.match(/══════ 판독 스위치[\s\S]*?const WAGE_READ_ON/);
+  assert.ok(head, '판독 스위치 머리말을 찾을 수 없습니다');
+  assert.match(head[0], /주민등록번호/, '무엇이 함께 나가는지 안 적혀 있습니다');
+  assert.match(head[0], /사진 자체는 그대로/, '프롬프트로 못 막는다는 것이 안 적혀 있습니다');
+  assert.match(head[0], /false 로 되돌리는 것이 \*\*유일한 차단 수단\*\*/,
+    '어떻게 다시 막는지 안 적혀 있습니다');
 });
 
 test('★ 넓은 판은 판독하는 서류일 때만 — 명함처럼 좁은 것까지 반으로 가르지 않는다', () => {
@@ -226,27 +239,29 @@ test('★ 근태 탭이면 근태 판독기를 부른다', async () => {
   assert.equal(W.App.readState.rows[0].name, '배영승');
 });
 
-/* ══════ 알림(기타 탭) 판독은 꺼 둔다 — 대표 결정 2026-08-15 ══════
-   입퇴사 통보 캡처에는 거의 언제나 주민등록번호가 함께 찍혀 있다. 프롬프트로
-   「담지 마세요」라고 해도 사진 자체는 그대로 구글로 올라간다. 급여대장을 같은
-   까닭으로 막아 두고(WAGE_READ_ON) 알림만 보내면 말과 실제가 어긋난다. */
+/* ══════ 알림(기타 탭) 판독 — 2026-08-15 대표 지시로 켰다 ══════
+   입퇴사 통보 캡처에는 거의 언제나 주민등록번호가 함께 찍혀 있다. 프롬프트의
+   「담지 마세요」는 **답에 안 담으라는 말일 뿐** 사진 자체는 그대로 구글로 올라간다.
+   그 점을 대표께 알리고 「감수하고 켠다」는 답을 받았다. 가리는 장치는 아직 없다. */
 
-test('★ 알림 판독은 아직 꺼져 있다 — 주민등록번호가 함께 나간다', () => {
-  // 켤 때 이 검사를 함께 고친다(처리위탁 근거 + 주민번호 가림이 먼저다).
-  assert.match(html, /const NOTICE_READ_ON = false/);
+test('★ 알림 판독이 켜져 있다 — 주민등록번호가 함께 나가는 것을 감수하고 켰다', () => {
+  assert.match(html, /const NOTICE_READ_ON = true/);
   const h = loadApp({ kind: 'etc' }).readPanelHtml();
-  assert.equal(/doRead\(\)/.test(h), false, '아직 켜면 안 됩니다');
-  assert.match(h, /준비 중/, '급여대장과 같은 모양으로 알려야 고장인지 막은 것인지 압니다');
+  assert.match(h, /doRead\(\)/, '켰는데 판독 단추가 없습니다');
+  assert.equal(/준비 중/.test(h), false, '켰는데 「준비 중」이 남아 있습니다');
 });
 
-test('★ 기타 탭에서는 눌러도 알림 판독기를 부르지 않는다', async () => {
+test('★ 기타 탭은 알림 판독기를 부른다 — 급여표 판독기가 아니다', async () => {
   const { W, calls } = loadRun({ kind: 'etc' }, {
     noticeOut: { ok: true, rows: [{ name: '김신입', pairs: [{ item: '입사일', value: '2026-08-12' }] }] }
   });
   W.doRead();
   await new Promise(r => setTimeout(r, 10));
-  assert.equal(calls.read.length, 0, '캡처가 구글로 올라갔습니다 — 주민등록번호가 함께 찍혀 있습니다');
-  assert.equal(W.App.readState.status, 'idle');
+  assert.equal(JSON.stringify(calls.read), JSON.stringify(['notice']),
+    '알림 캡처는 줄글이라 표 판독기로는 못 읽습니다');
+  assert.equal(W.App.readState.status, 'done');
+  assert.equal(W.App.readState.rows[0].name, '김신입');
+  assert.equal(W.App.readState.rows[0].pairs[0].item, '입사일');
 });
 
 test('★ 한 줄도 못 읽으면 그렇다고 말한다 — 빈 표를 띄우지 않는다', async () => {
@@ -814,4 +829,39 @@ test('★ 안 겹쳤어도 알림 자리는 감춘 채로 있다', () => {
   const h = W.readPanelHtml();
   assert.match(h, /id="dupLine" style="display:none"/);
   assert.equal(/class="dup"/.test(h), false);
+});
+
+/* ══════ 켠 뒤 실제로 도는가 (2026-08-15) ══════
+   스위치만 켜고 길이 안 이어져 있으면 「눌러도 아무 일이 없다」가 된다.
+   급여대장은 지금까지 한 번도 돌아 본 적이 없는 길이라 끝까지 본다. */
+test('★ 급여대장 탭은 급여표 판독기를 부르고 사람별 값이 표로 온다', async () => {
+  const { W, calls } = loadRun({ kind: 'ledger' }, {
+    rec: { kind: 'ledger' },
+    wageOut: { ok: true, rows: [
+      { name: '배영승', pairs: [{ item: '기본급', value: '2,100,000' }, { item: '식대', value: '200,000' }] },
+      { name: '이옥자', pairs: [{ item: '기본급', value: '2,300,000' }] }
+    ] }
+  });
+  W.doRead();
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(JSON.stringify(calls.read), JSON.stringify(['wage']), '근태 판독기로는 금액을 못 읽습니다');
+  assert.equal(W.App.readState.status, 'done');
+  assert.equal(W.App.readState.rows.length, 2);
+  assert.equal(W.App.readState.rows[0].pairs.length, 2, '항목이 빠지면 급여에 그대로 빕니다');
+  assert.equal(W.App.readState.rows[0].pairs[0].value, '2,100,000',
+    '금액은 적힌 표기 그대로여야 원본과 대조할 수 있습니다');
+});
+
+test('급여대장에서 이름이 없는 줄은 버린다 — 합계 줄이 사람으로 들어오면 안 된다', async () => {
+  const { W } = loadRun({ kind: 'ledger' }, {
+    rec: { kind: 'ledger' },
+    wageOut: { ok: true, rows: [
+      { name: '', pairs: [{ item: '기본급', value: '4,400,000' }] },
+      { name: '배영승', pairs: [{ item: '기본급', value: '2,100,000' }] }
+    ] }
+  });
+  W.doRead();
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(W.App.readState.rows.length, 1);
+  assert.equal(W.App.readState.rows[0].name, '배영승');
 });
