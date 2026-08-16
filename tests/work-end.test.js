@@ -138,7 +138,19 @@ ok('연동되지 않은 자체 업무에는 그 표시가 없다',
   !(path_('W1', 'pe_nosync') in UPDATED));
 
 /* ── 푸른이알피 엔진 ── */
-const ENG = P.slice(P.indexOf('// ── 업무시트 ↔ 푸른이알피'), P.indexOf('function refreshDash()'));
+/* 엔진은 MyDeskV2 밖으로 나가 top-level wsSyncRun 이 됐다(그 화면을 열어야만 돌던 것을
+   앱 켤 때와 업무관리 신호에도 돌게 하려고). 주석 표시로 자르면 옮길 때마다 깨지므로
+   함수 본문을 괄호로 잡는다. */
+const ENG = (function () {
+  const i = P.indexOf('function wsSyncRun(');
+  if (i < 0) throw new Error('wsSyncRun 못 찾음');
+  let d = 0, st = false;
+  for (let j = i; j < P.length; j++) {
+    if (P[j] === '{') { d++; st = true; }
+    else if (P[j] === '}') { d--; if (st && !d) return P.slice(i, j + 1); }
+  }
+  throw new Error('wsSyncRun 끝 못 찾음');
+})();
 ok('엔진이 방식별 푸른이알피 상태를 쓴다',
   ENG.indexOf("done:{ st:'closed'") > 0 && ENG.indexOf("cancel:{ st:'cancelled'") > 0
   && ENG.indexOf("transfer:{ st:'transferred'") > 0);

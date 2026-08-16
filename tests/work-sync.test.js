@@ -84,7 +84,19 @@ ok('주담당은 바꾸지 않는다 (원본은 푸른이알피)', PULL.indexOf(
 ok('참여 요청을 푸른이알피에도 넘긴다', PULL.indexOf('rec.pe_addsub=[me.sid') > 0);
 ok('이미 있는 건이면 새로 만들지 않는다', PULL.indexOf("if(c._have){") > 0);
 ok('이미 붙어 있으면 아무것도 쓰지 않는다', PULL.indexOf('openDrawer(it._id); return;') > 0);
-const ENG = P.slice(P.indexOf('// ── 업무시트 ↔ 푸른이알피'), P.indexOf('function refreshDash()'));
+/* 엔진은 MyDeskV2 밖으로 나가 top-level wsSyncRun 이 됐다(그 화면을 열어야만 돌던 것을
+   앱 켤 때와 업무관리 신호에도 돌게 하려고). 주석 표시로 자르면 옮길 때마다 깨지므로
+   함수 본문을 괄호로 잡는다. */
+const ENG = (function () {
+  const i = P.indexOf('function wsSyncRun(');
+  if (i < 0) throw new Error('wsSyncRun 못 찾음');
+  let d = 0, st = false;
+  for (let j = i; j < P.length; j++) {
+    if (P[j] === '{') { d++; st = true; }
+    else if (P[j] === '}') { d--; if (st && !d) return P.slice(i, j + 1); }
+  }
+  throw new Error('wsSyncRun 끝 못 찾음');
+})();
 ok('엔진이 요청을 읽어 공동담당에 더한다',
   ENG.indexOf('Array.isArray(w.pe_addsub)') > 0
   && ENG.indexOf('dbPatch(t.store, t.id, { managerSubs:t.subs })') > 0);
@@ -142,6 +154,31 @@ ok('상자마다 깔려 있던 안내문이 사라졌다',
   ['업체 담당자와 다르면 여기에 적습니다', '부담당도 이 업무의 기록을 씁니다']
     .every(s => W.indexOf(s) < 0));
 ok('오류·주의 안내는 화면에 그대로 둔다', W.indexOf('업무 칸이 비어') > 0);
+
+/* ── 종료 즉시 반영 — 되돌아가면 안 되는 세 가지 ──
+   엔진을 MyDeskV2 밖으로 빼고, 업무관리가 찍는 신호로 곧바로 돌게 했다.
+   아래 셋은 어기면 조용히 망가진다 — 화면만 보아서는 알 수 없다. */
+
+// ① 신호는 종료 저장과 따로 보낸다. 한 묶음이면 이 자리 쓰기가 규칙에 막히는
+//    순간 묶음 전체가 실패해 종료 자체가 안 된다.
+ok('종료 저장 묶음에 신호를 섞지 않는다',
+  !/up\[NS\s*\+\s*'\/sync_ping'\]/.test(W)
+  && /fbDb\.ref\(NS\s*\+\s*'\/sync_ping'\)\.set\(/.test(W));
+ok('신호가 실패해도 종료는 살아 있다 (조용히 넘긴다)',
+  /sync_ping'\)\.set\(Date\.now\(\)\)\.catch\(function\(\)\{\}\)/.test(W));
+
+// ② 엔진은 work_erp/items 에도 쓴다. items 를 들으면 제가 쓴 걸 제가 듣고 끝없이 돈다.
+ok('푸른이알피는 items 가 아니라 sync_ping 만 지켜본다',
+  P.indexOf("fbDb.ref('work_erp/sync_ping')") > 0
+  && !/fbDb\.ref\('work_erp\/items'\)\.on\(/.test(P));
+ok('엔진이 items 에 쓰는 것은 그대로다 (되먹임을 막아야 하는 이유)',
+  ENG.indexOf("up['work_erp/items/'") > 0);
+
+// ③ 신호가 연달아 와도 엔진이 겹쳐 돌면 같은 것을 두 번 쓴다.
+ok('엔진에 겹침 방지 자물쇠가 있다',
+  /var _wsBusy = false;/.test(P) && ENG.indexOf('if(_wsBusy) return;') > 0
+  && ENG.indexOf('_wsBusy = true;') > 0);
+ok('어느 길로 끝나도 자물쇠를 푼다', (ENG.match(/fin\(\)/g) || []).length >= 4);
 
 console.log('\n' + (fail ? 'FAILED ' + fail + '/' + (pass + fail) : 'ALL ' + pass + ' PASS'));
 process.exit(fail ? 1 : 0);
