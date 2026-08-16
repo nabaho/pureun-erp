@@ -100,9 +100,25 @@
   ['pointerdown', 'keydown', 'input'].forEach(function (name) {
     window.addEventListener(name, function () { lastActivity = Date.now(); }, { passive: true });
   });
+  /* ── 어떤 저장 상태가 갈아타기를 막는가 ──
+     2026-08-16 교착: 저장 오류가 폭주하면 「다시 시도·대기줄」 신호가 쉼 없이 이어져
+     saveBlocked 가 «영원히» 켜진 채였다 — 그래서 옛 탭이 몇 시간째 새 버전으로 못
+     갈아탔고, 그 새 버전이 바로 폭주를 고치는 코드였다. 서로 물고 있는 교착이다.
+     ⚠ 'queued'(대기줄에 넣음)는 막지 않는다 — 대기줄은 localStorage 에 있어 화면을
+       새로 열어도 «그대로 남아 다시 나간다». 막을 이유가 애초에 없었다.
+     ⚠ 'saving'/'retrying' 도 3분 넘게 이어지면 놓아 준다 — 3분째 안 끝난 저장은
+       앞으로도 안 끝난다. 실패하면 어차피 대기줄로 가고, 대기줄은 살아남는다. */
+  var BLOCK_MAX_MS = 3 * 60 * 1000;
+  var blockedSince = 0;
+  function isBlockingState(state) { return state === 'saving' || state === 'retrying'; }
+  function blockedTooLong(since, now, max) { return !!since && (now - since) >= max; }
   window.addEventListener('pu:save-state', function (event) {
     var state = event.detail && event.detail.state;
-    saveBlocked = state === 'saving' || state === 'retrying' || state === 'queued';
+    var wantBlock = isBlockingState(state);
+    if (wantBlock && blockedTooLong(blockedSince, Date.now(), BLOCK_MAX_MS)) wantBlock = false;
+    if (wantBlock && !blockedSince) blockedSince = Date.now();
+    if (!wantBlock) blockedSince = 0;
+    saveBlocked = wantBlock;
     if (!saveBlocked && pendingVersion) scheduleApply(pendingVersion);
   });
 
