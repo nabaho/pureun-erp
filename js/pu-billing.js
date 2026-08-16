@@ -89,28 +89,51 @@
     return Math.round(cost / elapsed * whole);
   }
 
+  /* 쪼갠 칸이 전체보다 얼마나 낡으면 「그 밖」을 못 믿는 값으로 볼까 — 10분.
+     구글 예산 알림은 칸마다 따로 오고 20~30분씩 어긋나기도 한다. 전체만 새로 오고
+     실시간DB 칸이 낡아 있으면, 실시간DB가 오른 몫이 뺄셈에서 「그 밖」으로 새어
+     들어간다 — 2026-08-16 밤 실제로 그랬다(그 밖이 ₩3,725인데 ₩6,379로 보였고,
+     대표가 엉뚱한 칸을 의심하셨다). */
+  var PART_LAG_MS = 10 * 60 * 1000;
+
   /* 화면이 쓸 한 덩어리로 묶는다.
      ⚠ 쪼갠 항목을 더한 값이 전체와 같지 않다 — 예산을 안 건 서비스가 남기 때문이다.
        모자란 만큼을 「그 밖」으로 내놓는다. 안 그러면 쪼갠 것을 더해 보신 대표님이
-       전체와 안 맞는 것을 발견하시고, 그때부터 이 화면 전체를 못 믿게 된다. */
+       전체와 안 맞는 것을 발견하시고, 그때부터 이 화면 전체를 못 믿게 된다.
+     ⚠ 그런데 그 뺄셈은 **칸들이 같은 시각일 때만** 맞다. 어느 칸이 전체보다
+       10분 넘게 낡았으면 「그 밖」에 approx 표시를 얹고, 어느 칸을 기다리는
+       중인지(etcNote) 함께 내놓는다 — 화면이 ≈와 안내를 그릴 수 있게. */
   function summarize(current, now) {
     var cur = (current && typeof current === 'object') ? current : {};
     var total = cur.total || null;
+    var totalUpd = total ? num(total.updatedAt) : null;
 
     var parts = [];
     var sum = 0;
+    var lagged = [];   // 전체보다 10분 넘게 낡은 칸들의 이름표
     for (var i = 0; i < PARTS.length; i++) {
       var row = cur[PARTS[i]];
       if (!row || num(row.cost) === null) continue;
-      parts.push({ key: PARTS[i], label: row.label || PARTS[i], cost: num(row.cost) });
+      var label = row.label || PARTS[i];
+      parts.push({ key: PARTS[i], label: label, cost: num(row.cost) });
       sum += num(row.cost);
+      var pu = num(row.updatedAt);
+      if (totalUpd !== null && (pu === null || totalUpd - pu > PART_LAG_MS)) lagged.push(label);
     }
 
     var totalCost = total ? num(total.cost) : null;
+    var etcNote = null;
     if (totalCost !== null && parts.length) {
       var rest = totalCost - sum;
       // 1원 단위 반올림 차이로 「그 밖 3원」이 뜨는 것은 잡음이다.
-      if (rest > 1) parts.push({ key: 'etc', label: '그 밖', cost: rest });
+      if (rest > 1) {
+        var etc = { key: 'etc', label: '그 밖', cost: rest };
+        if (lagged.length) {
+          etc.approx = true;
+          etcNote = lagged.join('·') + ' 갱신 대기 중 — 그 몫이 「그 밖」에 섞여 보일 수 있습니다';
+        }
+        parts.push(etc);
+      }
     }
 
     /* ⚠ 눈금은 **구글 예산액이 아니다.**
@@ -129,6 +152,7 @@
       ratio: r,
       tone: tone(r),
       parts: parts,
+      etcNote: etcNote,
       projected: projectMonthEnd(total, now),
       updatedAt: upd,
       ago: agoText(upd, now),
@@ -155,6 +179,7 @@
     watch: watch,
     PARTS: PARTS,
     STALE_MS: STALE_MS,
+    PART_LAG_MS: PART_LAG_MS,
     fmtWon: fmtWon,
     ratio: ratio,
     tone: tone,
