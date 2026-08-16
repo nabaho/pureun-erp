@@ -13,7 +13,11 @@ const vm = require('node:vm');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'pu-erp.html'), 'utf8').replace(/\r\n/g, '\n');
 const SYNC = (function(){
-  const i = app.indexOf('function fbInitialSync(_isRetry){');
+  /* ⚠ 2026-08-16 부팅이 열쇠별 받기로 갈라지며 이 숨돌리기 고리는
+     _fbInitialSyncFull(통째 읽기 예비 경로)로 이름이 바뀌었다 — 행동은 그대로다.
+     이 검사가 지키는 것은 「쉼 없이 적용해 화면이 멎는 것」이지 함수 이름이 아니다. */
+  const i = app.indexOf('function _fbInitialSyncFull(_isRetry){');
+  assert.ok(i >= 0, '_fbInitialSyncFull 을 찾지 못했다 — 통째 읽기 예비 경로가 사라졌는가?');
   let d = 0, j = i;
   for(;;j++){ if(app[j] === '{') d++; else if(app[j] === '}'){ d--; if(!d){ j++; break; } } }
   return app.slice(i, j);
