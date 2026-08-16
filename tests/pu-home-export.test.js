@@ -92,3 +92,36 @@ test('editUrl 은 글 번호가 비어 있으면 null 을 돌려준다', () => {
 test('editUrl 은 모르는 kind 면 null 을 돌려준다', () => {
   assert.equal(E.editUrl('없는kind', 'x'), null);
 });
+
+/* ── 여기부터 "영문자로 시작하면 태그" 판별이 틀렸음을 고친 뒤 추가한 검사 ──
+   노무·인사 경력 표기에는 영문 약어를 꺾쇠로 감싸는 표기(<PM>, <HR> 등)가
+   흔하다. 태그 이름이 영문자로 시작한다고 진짜 태그로 보면 이런 글자가
+   통째로 사라진다. 실제 HTML 태그 이름 목록에 있는 것만 태그로 봐야 한다. */
+
+test('영문 약어를 꺾쇠로 감싼 경력 표기는 태그가 아니므로 살아남는다', () => {
+  assert.equal(E.careersText(['평가 <A등급> 우수']), '평가 <A등급> 우수');
+  assert.equal(E.careersText(['현 <Team Leader> 역할']), '현 <Team Leader> 역할');
+  assert.equal(E.careersText(['현 <PM> 직책 수행']), '현 <PM> 직책 수행');
+  assert.equal(E.careersText(['현 <HR> 팀 근무']), '현 <HR> 팀 근무');
+  assert.equal(E.careersText(['현 <노무담당> 자문']), '현 <노무담당> 자문');
+});
+
+test('알려진 이름의 진짜 HTML 태그는 대소문자 가리지 않고 걷힌다', () => {
+  assert.equal(E.careersText(['<div>現 가']), '現 가');
+  assert.equal(E.careersText(['가나다</div>마바사']), '가나다마바사');
+  assert.equal(E.careersText(['가나다<br />마바사']), '가나다마바사');
+  assert.equal(E.careersText(['<DIV>現 가</DIV>']), '現 가');
+  assert.equal(E.careersText(['가나다<span class="x">마바사</span>']), '가나다마바사');
+  assert.equal(E.careersText(['가나다</a>마바사']), '가나다마바사');
+});
+
+test('속성값 안의 > 때문에 태그가 중간에서 끊기지 않는다', () => {
+  const t = E.careersText(['가나다<span data-y="1 > 2">라마바']);
+  assert.equal(t, '가나다라마바');
+  assert.ok(!/[<>]/.test(t), '속성값의 >가 찌꺼기로 남으면 안 된다');
+});
+
+test('riskyLines 는 살아남은 <PM> 같은 줄을 집어내고, 태그만 있던 줄은 안 집어낸다', () => {
+  const risky = E.riskyLines(['현 <PM> 직책 수행', '<div>現 가', '평범한 줄']);
+  assert.deepEqual([...risky], ['현 <PM> 직책 수행']);
+});
