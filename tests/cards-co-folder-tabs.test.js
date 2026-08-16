@@ -138,15 +138,32 @@ test('고른 것이 없거나 묶음 크기가 헛값이어도 터지지 않는�
 
 /* ══════ ④ 화면에 걸린 방식 ══════ */
 
-test('「거래처만」이 폴더 칸에서 빠져 「보기」 칸으로 올라갔다', () => {
+/* 2026-08-16 저녁 대표 지시로 자리가 한 번 더 바뀌었다 — "기업상세에 거래처만
+   아래 폴더로 내려 보내달라". 오전 지시(「거래처만」이 폴더 자리에 끼어 새 폴더를
+   밀어내지 않게)와 저녁 지시(아래로 내려라)를 **둘 다** 만족하는 자리가 폴더 목록
+   **다음**이다. 그래서 못 박는 것도 「보기 칸에 있다」가 아니라 아래 둘로 바뀐다.
+   ★ 오전에 고친 문제(새 폴더가 밀린다)가 되살아나지 않는 것이 여기서도 핵심이다. */
+test('「거래처만」은 폴더 목록보다 «뒤»에 있다 — 새 폴더가 그 아래로 밀리지 않게', () => {
   const i = src.indexOf("if(state.view==='co'){");
   const side = src.slice(i, src.indexOf('$(\'pcSide\').innerHTML = h; return;', i));
-  const seeAt = side.indexOf('>보기<');
+  const allAt    = side.indexOf("pickCoFolder('')");
   const folderAt = side.indexOf('>폴더');
+  const foldersLoopAt = side.indexOf('folders.forEach');
+  const erpAt    = side.indexOf("pickCoFolder('erp')");
+  assert.ok(allAt >= 0, '「전체」가 없다');
+  assert.ok(folderAt > allAt, '「폴더」 칸이 「전체」보다 위에 있다');
+  assert.ok(erpAt > foldersLoopAt,
+    '「거래처만」이 폴더 목록보다 앞에 있다 — 새 폴더를 만들 때마다 아래로 밀린다(오전에 고쳤던 문제)');
+});
+
+test('「거래처만」과 폴더 목록 사이에 가르는 줄이 있다', () => {
+  /* 폴더가 아닌 것이 폴더 목록에 그대로 이어 붙으면 폴더로 잘못 읽힌다 */
+  const i = src.indexOf("if(state.view==='co'){");
+  const side = src.slice(i, src.indexOf('$(\'pcSide\').innerHTML = h; return;', i));
+  const sepAt = side.indexOf('coviewsep');
   const erpAt = side.indexOf("pickCoFolder('erp')");
-  assert.ok(seeAt >= 0, '「보기」 칸이 없다');
-  assert.ok(folderAt > seeAt, '「폴더」 칸이 「보기」보다 위에 있다');
-  assert.ok(erpAt > seeAt && erpAt < folderAt, '「거래처만」이 아직 폴더 칸에 끼어 있다');
+  assert.ok(sepAt >= 0 && sepAt < erpAt, '가르는 줄이 「거래처만」 앞에 없다');
+  assert.match(src, /\.coviewsep\{/, '.coviewsep 모양이 정의돼 있지 않다');
 });
 
 test('폴더를 고르면 그 폴더의 탭만 펼쳐진다', () => {
