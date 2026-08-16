@@ -163,7 +163,31 @@ ok('보관함이 아니라 종료다', W.indexOf("archive:'종료'") > 0 && !/<h
 ok('방식·결과로 걸러 본다',
   RA.indexOf('S.arWay') > 0 && RA.indexOf('S.arRes') > 0
   && RA.indexOf('endBadge(it)') > 0 && RA.indexOf('resBadge(it)') > 0);
-ok('결과가 하나도 없으면 결과 칩을 띄우지 않는다', RA.indexOf("if(!any) return '';") > 0);
+/* 코드 한 줄을 글자 그대로 박아 두면 같은 뜻으로 고쳐 써도 깨진다(실제로 깨졌다).
+   지켜야 하는 것은 「결과가 하나도 없으면 고르는 칸을 아예 안 낸다」는 뜻이다. */
+ok('결과가 하나도 없으면 결과 고르는 칸을 띄우지 않는다',
+  /if\s*\(\s*c\s*\)\s*resOpts\.push/.test(RA) && /resOpts\.length\s*>\s*1\s*\?/.test(RA));
+
+/* pesync 열쇠는 **푸른이알피가 만들고** 업무관리는 읽기만 한다. 규칙이 한 글자라도
+   다르면 — 실제로 그쪽만 하이픈을 _ 로 바꾸고 있었다 — 푸른이알피가 종료를 반영해도
+   배지가 영원히 「반영 대기」로 남는다. 화면만 보아서는 알 수 없는 회귀라 못 박는다. */
+ok('종료 배지 열쇠가 푸른이알피와 글자 단위로 같다', (function () {
+  const i = P.indexOf('function wsSafeKey(');
+  if (i < 0) return false;
+  let d = 0, st = false, src = '';
+  for (let j = i; j < P.length; j++) {
+    if (P[j] === '{') { d++; st = true; }
+    else if (P[j] === '}') { d--; if (st && d === 0) { src = P.slice(i, j + 1); break; } }
+  }
+  if (!src) return false;
+  const erp = new Function('return (' + src + ')')();
+  const work = new Function('return (' + grab('peSyncKey') + ')')();
+  return ['계약-2026-046', '-Nabc123', 'case:임금체불-2026-007', 'a b.c#d', '기술보호-2026-006']
+    .every(s => erp(s) === work(s));
+})());
+// 우리 쪽 자료의 열쇠(safeKey)는 그대로여야 한다 — 바꾸면 이미 쌓인 자료를 못 찾는다
+ok('safeKey 는 하이픈을 건드리지 않는다',
+  new Function('return (' + grab('safeKey') + ')')()('계약-2026-046') === '계약-2026-046');
 ok('이관은 넘긴 곳을 목록에 보여준다', RA.indexOf("endWay(it)==='transfer'&&it.end_to") > 0);
 ok('필터 초기화가 방식·결과도 푼다',
   grab('arReset').indexOf("S.arWay=''") > 0 && grab('arReset').indexOf("S.arRes=''") > 0);
