@@ -177,6 +177,22 @@
      42건·235건을 훑을 때 열 이름과 요일이 위로 사라지면 어느 칸인지 알 수 없다. */
   /* min-height는 두지 않는다 — 세 줄짜리 표(종료·업무량)가 빈 칸으로 길어진다 */
   .panel.tbl{padding:0;overflow:auto;max-height:calc(100vh - 250px)}
+  /* 도구줄 드롭다운 — 브라우저 기본 네모가 둥근 칩들 사이에 섞여 어수선했다.
+     칩과 같은 모양으로 맞추고 화살표는 삼각형 두 조각으로 얇게 그린다. */
+  select.tool{appearance:none;-webkit-appearance:none;border:1px solid var(--line);background-color:#fff;
+    border-radius:13px;padding:4px 26px 4px 11px;font-size:12px;color:var(--sub);cursor:pointer;
+    font-family:inherit;line-height:1.35;
+    background-image:linear-gradient(45deg,transparent 50%,#9aa5b6 50%),linear-gradient(135deg,#9aa5b6 50%,transparent 50%);
+    background-position:calc(100% - 14px) 52%,calc(100% - 9px) 52%;
+    background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+  select.tool:hover{border-color:#b9c4d4}
+  /* 조건이 걸린 칸은 파랗게 — 무엇 때문에 목록이 좁아졌는지 도구줄만 봐도 알게 */
+  select.tool.on{border-color:#cfe0ff;background-color:var(--acc-soft);color:var(--acc2);font-weight:700}
+  .sepv{width:1px;height:16px;background:var(--line);margin:0 3px;display:inline-block;vertical-align:-3px}
+  .cut{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+  td .kind{font-size:12.5px}
+  td .no{color:var(--sub);font-size:12px;font-variant-numeric:tabular-nums}
+  td .no .to{color:#5b21b6}
   .panel.tbl thead th{position:sticky;top:0;z-index:6;background:var(--panel);
     box-shadow:inset 0 -1px 0 var(--line)}
   .panel.tbl tbody tr:hover>td{background:#fbfcff}
@@ -2288,8 +2304,8 @@ function qBox(fn,ph,cls){
     +'oninput="onQ(this.value,'+fn+')" title="기업명·업무명·의뢰인·관리번호로 검색">'
     +(S.q?'<span class="chipbtn" onclick="S.q=\'\';'+fn+'()" title="검색 해제">✕</span>':'');
 }
-function catSelect(cur,handler){
-  return '<select onchange="'+handler+'" title="구분으로 좁히기">'
+function catSelect(cur,handler,cls){
+  return '<select'+(cls?' class="'+cls+'"':'')+' onchange="'+handler+'" title="구분으로 좁히기">'
     +'<option value="">구분 전체</option>'
     +catList().map(function(c){return '<option'+(cur===c?' selected':'')+'>'+esc(c)+'</option>';}).join('')+'</select>';
 }
@@ -5914,6 +5930,15 @@ function peSyncBadge(it){
   return '<span class="pesync wait" title="푸른이알피 나의 업무를 열 때 반영됩니다">🔗 반영 대기</span>';
 }
 function arReset(){ S.arMgr=''; S.arCat=''; S.arPeriod=''; S.q=''; S.arWay=''; S.arRes=''; renderArchive(); }
+/* 표 높이를 창 아래까지 채운다. 종전에는 100vh-250px 로 못 박아 두어, 머리를
+   네 줄에서 한 줄로 줄인 뒤에도 250px 를 잡아먹어 아래가 잘렸다. 실제 자리를
+   재서 남은 높이를 그대로 준다 — 머리가 또 바뀌어도 따라온다. */
+function arFit(){
+  var t=$('artbl'); if(!t) return;
+  var top=t.getBoundingClientRect().top;
+  t.style.maxHeight=Math.max(240,Math.round(window.innerHeight-top-26))+'px';
+}
+window.addEventListener('resize',function(){ if($('artbl')) arFit(); });
 function arFold(nm){ S.arFold=S.arFold||{}; S.arFold[nm]=!S.arFold[nm]; renderArchive(); }
 // 담당자가 여럿이면 하나씩 접는 것은 일이다. 화면의 묶음과 같은 목록을 써야 개수가 어긋나지 않는다.
 function arFoldAll(on){
@@ -5948,7 +5973,8 @@ function renderArchive(){
      그 안에 넣는다. 구분·기간이 이미 드롭다운이라 생김새도 맞는다. */
   function arCnt(fn){ return all.filter(fn).length; }
   function arSel(cur,onch,opts,title){
-    return '<select onchange="'+onch+'" title="'+esc(title)+'">'
+    // 고른 값이 있으면 파랗게 — 무엇 때문에 목록이 좁아졌는지 도구줄만 봐도 알게
+    return '<select class="tool'+(cur?' on':'')+'" onchange="'+onch+'" title="'+esc(title)+'">'
       +opts.map(function(o){
           return '<option value="'+esc(o[0])+'"'+(String(cur||'')===String(o[0])?' selected':'')+'>'+esc(o[1])+'</option>';
         }).join('')+'</select>';
@@ -5970,15 +5996,23 @@ function renderArchive(){
     if(c) resOpts.push([r[0],r[2]+' '+r[1]+' '+c]);
   });
   var nFold=names.filter(function(n){ return (S.arFold||{})[n]; }).length;
+  /* 기본은 평면(종료일 내림차순). 종료 화면에서 하는 일은 「그 회사 건 어떻게 끝났더라」와
+     「잘못 종료한 것 재개」이고 둘 다 축이 날짜다. 사람별로 세는 일은 업무량 화면이
+     이미 한다(담당별 표에 완료 열이 있다). 12건에 묶음 머리 5개는 배보다 배꼽이었다.
+     담당은 열로 두고, 한 사람만 보려면 담당 드롭다운으로 좁힌다. */
+  var flat=(S.arFlat===undefined)?true:!!S.arFlat;
   h+=qBox('renderArchive','🔍 기업·업무명·의뢰인')
+    +'<span class="sepv"></span>'
     +arSel(S.arWay,'S.arWay=this.value;renderArchive()',wayOpts,'끝낸 방식으로 좁히기 — 종료·취소·이관')
     +arSel(S.arMgr,'S.arMgr=this.value;renderArchive()',mgrOpts,'담당자로 좁히기')
-    +catSelect(S.arCat,'S.arCat=this.value;renderArchive()')
+    +catSelect(S.arCat,'S.arCat=this.value;renderArchive()','tool'+(S.arCat?' on':''))
     +arSel(S.arPeriod,'S.arPeriod=this.value;renderArchive()',
         [['','기간 전체'],['m1','최근 30일'],['m3','최근 90일'],['y','올해']],'종료일 기간으로 좁히기')
     +(resOpts.length>1?arSel(S.arRes,'S.arRes=this.value;renderArchive()',resOpts,'사건 결과로 좁히기'):'')
-    +'<span class="chipbtn'+(S.arFlat?' on':'')+'" onclick="S.arFlat=!S.arFlat;renderArchive()" title="담당자 묶음을 풀고 한 표로">평면</span>'
-    +(S.arFlat||S.arMgr?''
+    +'<span class="sepv"></span>'
+    +'<span class="chipbtn'+(flat?'':' on')+'" onclick="S.arFlat=!'+(flat?'true':'false')+';renderArchive()" '
+      +'title="'+(flat?'담당자별로 묶어 봅니다':'묶음을 풀고 한 표로 봅니다')+'">'+(flat?'👤 담당별 묶기':'▤ 한 표로')+'</span>'
+    +(flat?''
       :'<span class="chipbtn'+(nFold>=names.length?' off':'')+'" onclick="arFoldAll(true)" title="담당자 '+names.length+'명을 모두 접습니다">▸ 모두 접기</span>'
        +(nFold?'<span class="chipbtn" onclick="arFoldAll(false)" title="접힌 '+nFold+'명을 모두 폅니다">▾ 펼치기 '+nFold+'</span>':''))
     +((S.arMgr||S.arCat||S.arPeriod||S.q||S.arWay||S.arRes)?'<span class="chipbtn on" onclick="arReset()" title="모든 조건 해제">✕ 조건</span>':'')
@@ -5989,20 +6023,28 @@ function renderArchive(){
         return c?w[1]+' <b>'+c+'</b>':'';
       }).filter(Boolean).join(' · ')+'</span>'
     +'</div>';
-  h+='<div class="panel tbl"><table><thead><tr>'
-    +'<th class="rowno">#</th><th style="width:52px">방식</th><th style="width:56px">구분</th><th>기업 / 업무</th>'
-    +(S.arFlat||S.arMgr?'<th style="width:90px">담당</th>':'')
-    +'<th style="width:92px">종료일</th><th style="width:110px">푸른이알피</th>'
-    +'<th style="width:160px">마지막 기록</th><th style="width:72px"></th></tr></thead><tbody>';
-  var COLS=(S.arFlat||S.arMgr)?9:8;
+  /* 사업장·업무 종류·관리번호를 각각 제 열로. 한 칸에 이어 붙이면 기업명 길이에 따라
+     뒤 글자가 들쭉날쭉해 세로로 훑을 수가 없다. 이관 대상도 결국 사건번호라
+     관리번호 열에 → 로 이어 붙인다 — 어디서 어디로 갔는지가 한 줄에서 읽힌다. */
+  var flatRows=flat||!!S.arMgr, showMgr=flatRows;
+  h+='<div class="panel tbl" id="artbl"><table><thead><tr>'
+    +'<th class="rowno">#</th><th style="width:52px">방식</th><th style="width:56px">구분</th>'
+    +'<th style="width:186px">사업장</th><th style="width:196px">업무 종류</th><th style="width:236px">관리번호</th>'
+    +(showMgr?'<th style="width:84px">담당</th>':'')
+    +'<th style="width:88px">종료일</th><th style="width:96px">푸른이알피</th>'
+    +'<th>마지막 기록</th><th style="width:66px"></th></tr></thead><tbody>';
+  var COLS=10+(showMgr?1:0);
+  // 이관 대상의 consulting:·case: 접두어는 구분 배지에 이미 있는 정보라 뗀다
+  function shortRef(s){ return String(s||'').replace(/^[a-z]+:/,''); }
   function rowsOf(arr){
     return arr.map(function(it,i){
+      var op='onclick="openDrawer(\''+escJ(it._id)+'\')"';
       return '<tr>'+tdNo(i+1)+'<td>'+endBadge(it)+resBadge(it)+'</td><td>'+catBadge(it.cat)+'</td>'
-        +'<td class="itc" onclick="openDrawer(\''+escJ(it._id)+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
-        // 한 건이 한 줄로 끝나게 — 업무명·관리번호를 아래로 쌓지 않고 기업명 옆에 붙인다
-        +'<span class="sub">'+esc(itemName(it))+(it.no?' · '+esc(it.no):'')
-        +(endWay(it)==='transfer'&&it.end_to?' <span class="muted">→ '+esc(it.end_to)+'</span>':'')+'</span></td>'
-        +((S.arFlat||S.arMgr)?'<td style="font-size:12.5px">'+esc(_mgrOf(it))+'</td>':'')
+        +'<td class="itc" '+op+'><span class="cut co">'+esc(it.company||it.client||'—')+'</span></td>'
+        +'<td class="itc" '+op+'><span class="cut kind">'+esc(itemName(it)||'—')+'</span></td>'
+        +'<td><span class="cut no">'+esc(it.no||'—')
+        +(endWay(it)==='transfer'&&it.end_to?' <span class="to">→ '+esc(shortRef(it.end_to))+'</span>':'')+'</span></td>'
+        +(showMgr?'<td style="font-size:12.5px">'+esc(_mgrOf(it))+'</td>':'')
         +'<td style="font-size:12.5px;font-variant-numeric:tabular-nums">'+esc(it.done_date||'—')+'</td>'
         +'<td>'+(peSyncBadge(it)||'<span class="muted" style="font-size:11px">—</span>')+'</td>'
         +'<td>'+(it.last?'<span class="last">'+esc(it.last.t)+' <span class="ago">· '+esc(md(it.last.d))+'</span></span>':'<span class="muted" style="font-size:12px">기록 없음</span>')+'</td>'
@@ -6011,7 +6053,7 @@ function renderArchive(){
     }).join('');
   }
   if(!done.length){ h+='<tr><td colspan="'+COLS+'" class="moremark">조건에 맞는 업무가 없습니다.</td></tr>'; }
-  else if(S.arFlat||S.arMgr){ h+=rowsOf(done); }
+  else if(flatRows){ h+=rowsOf(done); }
   else {
     names.forEach(function(nm){
       var arr=done.filter(function(it){return _mgrOf(it)===nm;});
@@ -6026,6 +6068,7 @@ function renderArchive(){
   h+='</tbody></table></div>';
   h+='<div class="muted" style="font-size:12px;margin-top:8px">조건에 맞는 종료 업무 '+done.length+' / 전체 '+all.length+'건</div>';
   app.innerHTML=h;
+  arFit();
 }
 
 /* ── 푸른이알피 담당 업무 가져오기 (계약·사건·컨설팅·기금·기타) ── */
