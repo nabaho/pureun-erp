@@ -8473,46 +8473,110 @@ function _bootFetch(url){
 }
 var FB_DB_REST = 'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app';
 
-/* 열쇠별로 구독을 붙인다. **첫 값이 초기 동기화**이고 구독은 그대로 남아
-   실시간 반영이 된다 — 받기는 열쇠당 한 번뿐이다.
-   ⚠ 이미 붙은 열쇠는 건너뛴다(두 번 안 받는다). 그래서 복귀 재동기화·수동
-     새로고침이 이 함수를 다시 불러도 값이 거의 0이다 — 구독이 살아 있으면
-     서버가 어차피 최신을 밀어 주고 있다.
-   ⚠ 한 열쇠가 침묵해도 부팅이 멎지 않는다(_FB_KEY_FIRST_TIMEOUT_MS).
-   ⚠ 첫 값은 부팅 적용(deferGate·selfHeal), 그 뒤는 실시간 적용(notify·폭풍감지). */
-var _fbKeyListeners = {};
+/* ══ 안 바뀐 표는 다시 안 받기 (대표 승인 2026-08-16 저녁) ══
+   어제 받은 표의 대부분은 오늘도 그대로다 — 그런데 매번 전부 다시 받고 있었다.
+   모든 저장 경로(dbSet 건별·병합·통째, _recServerWrite)는 반드시 그 표의
+   「바뀐 시각」(data/{표}/u) 한 칸을 갱신한다. 그러니 표마다 그 **한 칸만
+   구독**하면(수십 바이트) 어떤 기기가 — 옛 코드라도 — 저장해도 놓치지 않는다.
+
+   표마다 두 단계:
+   · u-감시(_fbKeyWatch): 시각 한 칸만 구독. 첫 값에서 지난번 사본과 견줘
+     — 그대로면 **0바이트로 끝**(지난번 사본을 그대로 쓴다),
+     — 바뀌었거나 사본이 없으면 아래 «표 구독»으로 올라간다.
+   · 표 구독(_fbKeyLive): 표 전체를 구독. 첫 값이 그 표의 받기이고, 그 뒤는
+     바뀐 칸만(델타) 온다 — 재무처럼 큰 표를 함께 고치는 동안 통째 재수신이 없다.
+   u-감시 중이던 표가 나중에 바뀌면 그때 표 구독으로 올라간다 — 실시간 유지.
+
+   ⚠ 견줌 기준은 로컬 「마지막 동기화 시각」(_meta_) — 저장·적용이 이미 쓰고
+     있는 바로 그 값이라 새 기준을 만들지 않는다.
+   ⚠ 사본은 있는데 시각이 없으면(메타 초기화 등) 모른다 = 받는다(fail-open).
+   ⚠ 시각(u)이 아예 없는 옛 표는 사본이 없을 때만 받는다 — 그런 표는 갱신 주체가
+     없는 일회성 표시들이다.
+   ⚠ 한 표가 침묵해도 부팅이 멎지 않는다(_FB_KEY_FIRST_TIMEOUT_MS). */
+var _fbKeyWatch = {};   // 표 → u-감시 붙음
+var _fbKeyLive = {};    // 표 → 표 전체 구독 붙음(첫 값 = 받기, 이후 = 델타)
 var _FB_KEY_FIRST_TIMEOUT_MS = 15000;
 var _fbBytesIn = 0;   // 이 세션이 서버에서 받은 양(대략) — 콘솔 erpBytesIn() 으로 본다
+
+function _fbLocalU(k){
+  try { return parseInt(localStorage.getItem(KEY + '_meta_' + k) || '0', 10) || 0; } catch(_){ return 0; }
+}
+function _fbHasLocal(k){
+  try { return localStorage.getItem(KEY + k) !== null; } catch(_){ return false; }
+}
+
+/* 표 전체 구독으로 올린다. 첫 값이 그 표의 받기.
+   boot=true 면 부팅 적용(선치유·급감보류), 아니면 실시간 적용(알림·폭풍감지). */
+function _fbLive(k, opts){
+  opts = opts || {};
+  if(_fbKeyLive[k]) return Promise.resolve(false);
+  _fbKeyLive[k] = true;
+  return new Promise(function(res){
+    var first = true;
+    var to = setTimeout(function(){ if(first){ first = false; res(false); } }, _FB_KEY_FIRST_TIMEOUT_MS);
+    try {
+      fbDb.ref('data/' + k).on('value', function(snap){
+        var v = snap.val();
+        try { if(v) _fbBytesIn += JSON.stringify(v).length; } catch(_b){}
+        if(first){
+          first = false; clearTimeout(to);
+          var applied = false;
+          if(v){
+            if(opts.boot) applied = _fbApplyRecord(k, v, { selfHeal:true, deferGate:true });
+            else if(typeof window._fbApplyRemote === 'function') applied = window._fbApplyRemote(k, v);
+            else applied = _fbApplyRecord(k, v, { notify:true });
+          }
+          res(applied);
+        } else if(v){
+          if(typeof window._fbApplyRemote === 'function') window._fbApplyRemote(k, v);
+          else _fbApplyRecord(k, v, { notify:true });
+        }
+      }, function(_err){
+        /* 권한 없는 표(재무 등) — 조용히 건너뛴다. 표시를 지워 다음에 다시 시도할 수 있게 */
+        _fbKeyLive[k] = false;
+        if(first){ first = false; clearTimeout(to); res(false); }
+      });
+    } catch(_e){
+      _fbKeyLive[k] = false;
+      if(first){ first = false; res(false); }
+    }
+  });
+}
+
 function _fbSyncKeys(keys, opts){
   opts = opts || {};
-  var fresh = (keys || []).filter(function(k){ return !_fbKeyListeners[k]; });
+  var fresh = (keys || []).filter(function(k){ return !_fbKeyWatch[k] && !_fbKeyLive[k]; });
   if(!fresh.length) return Promise.resolve(0);
   var pulled = 0;
   return Promise.all(fresh.map(function(k){
-    _fbKeyListeners[k] = true;
+    _fbKeyWatch[k] = true;
     return new Promise(function(res){
       var first = true;
       var to = setTimeout(function(){ if(first){ first = false; res(); } }, _FB_KEY_FIRST_TIMEOUT_MS);
       try {
-        fbDb.ref('data/' + k).on('value', function(snap){
-          var v = snap.val();
-          try { if(v) _fbBytesIn += JSON.stringify(v).length; } catch(_b){}
+        fbDb.ref('data/' + k + '/u').on('value', function(snap){
+          var su = snap.val();
           if(first){
             first = false; clearTimeout(to);
-            if(v && _fbApplyRecord(k, v, { selfHeal:true, deferGate:true, notify:!!opts.notify })) pulled++;
-            res();
-          } else if(v){
-            if(typeof window._fbApplyRemote === 'function') window._fbApplyRemote(k, v);
-            else _fbApplyRecord(k, v, { notify:true });
+            var need;
+            if(typeof su !== 'number') need = !_fbHasLocal(k);        // 시각 없는 옛 표 — 사본 없을 때만
+            else need = (su > _fbLocalU(k)) || !_fbHasLocal(k);       // 바뀌었거나 사본이 없다
+            if(need){
+              _fbLive(k, { boot:true }).then(function(applied){ if(applied) pulled++; res(); });
+            } else {
+              res();                                                  // 그대로다 — 0바이트
+            }
+            return;
           }
+          /* 감시 중이던 표가 바뀌었다 — 표 구독으로 올린다(그 첫 값이 받기).
+             이미 올라간 표면 델타가 알아서 온다. */
+          if(!_fbKeyLive[k] && typeof su === 'number' && su > _fbLocalU(k)) _fbLive(k, {});
         }, function(_err){
-          /* 권한 없는 열쇠(재무 등) — 조용히 건너뛴다. 구독이 죽었으므로 표시를 지워
-             다음 ensure 가 다시 시도할 수 있게 한다. */
-          _fbKeyListeners[k] = false;
+          _fbKeyWatch[k] = false;
           if(first){ first = false; clearTimeout(to); res(); }
         });
       } catch(_e){
-        _fbKeyListeners[k] = false;
+        _fbKeyWatch[k] = false;
         if(first){ first = false; res(); }
       }
     });
@@ -8522,11 +8586,17 @@ function _fbSyncKeys(keys, opts){
   });
 }
 
-/* 부팅에서 안 받은 열쇠(payroll_audit_log 등)를 쓰는 화면·동작이 그때 받는다.
-   이미 받았으면 아무것도 안 한다. 통째 모드에서는 이미 다 있으므로 0. */
+/* 부팅에서 안 받은 표(payroll_audit_log 등)를 쓰는 화면·동작이 그때 받는다.
+   이미 받았으면 아무것도 안 한다. 통째 모드에서는 이미 다 있으므로 0.
+   ⚠ u-감시를 거치지 않고 곧바로 표 구독이다 — ensure 는 「지금 이 표가 손에
+     있어야 한다」는 뜻이라, 시각만 보고 사본을 믿는 지름길을 타면 안 된다
+     (감사 로그는 옛 코드 기기가 방금 덧붙였을 수 있다). */
 window.erpEnsureKeys = function(keys){
   if(!fbDb || !window._fbPerKeyMode) return Promise.resolve(0);
-  return _fbSyncKeys((keys || []).filter(fbShouldSync), { notify:true });
+  var want = (keys || []).filter(fbShouldSync).filter(function(k){ return !_fbKeyLive[k]; });
+  if(!want.length) return Promise.resolve(0);
+  return Promise.all(want.map(function(k){ return _fbLive(k, {}); }))
+    .then(function(rs){ return rs.filter(Boolean).length; });
 };
 /* 되돌림 스위치 — 문제가 생기면 콘솔에서 erpBootFullSync(true) 후 새로고침. */
 window.erpBootFullSync = function(on){
@@ -63960,7 +64030,7 @@ function addPayrollAudit(empSid, ym, field, before, after, note){
     if(log.length > 5000) log = log.slice(0, 5000);
     dbSet('payroll_audit_log', log);
   };
-  if(window._fbPerKeyMode && !_fbKeyListeners['payroll_audit_log']){
+  if(window._fbPerKeyMode && !_fbKeyLive['payroll_audit_log']){
     window.erpEnsureKeys(['payroll_audit_log']).then(doAdd).catch(doAdd);
     return;
   }
@@ -63990,7 +64060,7 @@ function getPayrollAuditFor(empSid, ym){
   /* 부팅에서 안 받는 열쇠다 — 이 이력을 보는 화면이 열리면 그때 받아 온다.
      받아지면 적용기가 fb_data_changed 를 쏘아 화면이 스스로 다시 그려진다.
      (아직 안 온 동안은 빈 목록 — 「지워짐」이 아니라 「받는 중」이다) */
-  if(window._fbPerKeyMode && !_fbKeyListeners['payroll_audit_log']){
+  if(window._fbPerKeyMode && !_fbKeyLive['payroll_audit_log']){
     try { window.erpEnsureKeys(['payroll_audit_log']); } catch(_){}
   }
   return dbGet('payroll_audit_log', []).filter(function(e){
