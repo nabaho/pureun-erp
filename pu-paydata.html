@@ -31,6 +31,7 @@
        읽고, 판독 결과에 적히는 판 번호(rv)도 어긋나 「다시 읽어야 하나」 판정이
        서로 달라진다. tests/photos-doc-title.test.js 가 두 파일을 함께 지킨다. -->
 <script src="js/pu-doc-read.js?v=9"></script>
+<script src="js/pu-rrn-mask.js?v=1"></script>
 <script src="js/pu-appbar.js"></script>
 <style>
 :root{--navy:#2E3A8C;--violet:#7C6CE0;--ok:#2E7D4F;--warn:#B26A00;--bad:#C43D3D;
@@ -225,6 +226,16 @@ table.vals tr.iffy{background:#FDF6E3}
 /* 같은 이름이 둘 — 확실하지 않음(노랑)보다 급하다. 이대로는 저장이 막힌다. */
 table.vals tr.dup{background:#FDECEC}
 table.vals tr.dup input{color:#8A1C1C;font-weight:700}
+/* 가릴 곳 고르기 — 사진 위에 사각형을 얹는다. 칠하기는 캔버스가 아니라 겹친
+   칸으로 한다 — 하나하나 지울 수 있어야 하고, 사진은 손대지 않아야 한다. */
+.maskwrap{position:relative;display:inline-block;max-width:100%;touch-action:none;user-select:none}
+.maskwrap img{display:block;max-width:100%;height:auto}
+.maskbox{position:absolute;background:#000;border:2px solid #2E3A8C}
+.maskbox.ai{border-color:#C43D3D}
+.maskbox .x{position:absolute;right:-9px;top:-9px;background:#fff;border:1px solid var(--line);
+  border-radius:99px;width:18px;height:18px;line-height:16px;text-align:center;font-size:11px;
+  color:var(--bad);cursor:pointer}
+.maskhint{font-size:12px;color:var(--sub);margin-top:8px;line-height:1.6}
 table.vals .del{color:var(--bad);cursor:pointer;padding:2px 6px;border-radius:5px}
 .okline{background:#EAF6EE;border:1px solid #B7E4C7;color:#1E5631;border-radius:9px;padding:8px 11px;font-size:12px;margin-bottom:10px}
 .warnline{background:#FDF6E3;border:1px solid #F0D9A8;color:#7C4A03;border-radius:9px;padding:8px 11px;font-size:12px;margin-bottom:10px}
@@ -385,6 +396,10 @@ const App = {
   itemsKeep: null, itemsMonth: null, itemsMonthSlot: '',
   viewerId: '', viewerUrl: '', viewerZoom: false, viewerErr: '',
   readState: { status: 'idle', rows: [], err: '' },
+  /* 가릴 곳 고르기 — 판독기로 보내기 **전** 단계다(설계서 3장).
+     url 은 창고에서 받아 온 원본 data URL 이고, boxes 는 가릴 사각형이다.
+     by:'ai' 는 기계가 찾아 미리 칠한 것, by:'me' 는 사람이 그은 것. */
+  maskState: { status: 'idle', url: '', boxes: [], err: '', autoNote: '' },
   folders: {}, foldersCompanyId: '', folderPick: 'all', folderEdit: { mode: '', fid: '', value: '' },
   /* 남의 자리 보기 — viewingUid 가 비어 있으면 내 자리다.
      viewingDeputy 는 그 자리를 대리로 맡고 있는지(수정 가능한지)다. */
@@ -1715,18 +1730,20 @@ window.openViewer = openViewer; window.closeViewer = closeViewer; window.toggleV
    이 점을 대표께 알리고 「감수하고 켠다」는 답을 받아 켰다(2026-08-15).
 
    ⚠ 다음에 손대는 사람이 반드시 알 것
-     · 지금 이 두 줄을 false 로 되돌리는 것이 **유일한 차단 수단**이다.
-     · 올리기 전에 주민등록번호 자리를 가리는 장치는 **아직 없다.**
-       그것을 만들면 이 머리말도 함께 고칠 것.
+     · 보내기 전에 **주민번호를 가리는 화면**이 있다(2026-08-15, startMask·maskConfirm).
+       그래도 마지막 판단은 사람이다 — 못 보고 넘긴 것은 그대로 나간다.
+     · 지금은 **사람이 손으로 칠한다.** 기계가 인쇄체를 찾아 미리 칠해 주는 것은
+       아직 없다(계획서 2026-08-15-주민번호-가림 2차). 그때까지는 눈으로 훑어야 한다.
      · 근태표는 임금액도 주민번호도 없어 처음부터 켜져 있었다(readKindFor).
    ⚠ 이 값을 바꿀 때는 tests/paydata-read-panel.test.js 의 짝 검사도 함께 고친다. */
 const WAGE_READ_ON = true;
 
 const NOTICE_READ_ON = true;
 
-/* 판독을 돌린다 — 사람이 「판독하기」를 눌렀을 때만(설계서 2장).
-   창고 파일을 내려받아 base64 로 바꿔 판독 층에 싣는다. */
-function doRead() {
+/* 「판독하기」를 누르면 **바로 판독하지 않는다** — 먼저 가릴 곳을 고른다(설계서 3장).
+   막을 것(종류·권한·스위치·사진인가)은 여기서 그대로 막는다. 창고 파일은 여기서
+   한 번만 받아 두고, 가림 화면과 사본 만들기가 그것을 함께 쓴다. */
+function startMask() {
   const rec = findRow(App.viewerId);
   if (!rec) return;
   /* 판독 방식은 **지금 열려 있는 서류**가 정한다 — 서랍 탭(App.kind)이 정하면,
@@ -1744,6 +1761,50 @@ function doRead() {
     App.render();
     return;
   }
+  App.readState = { status: 'idle', rows: [], err: '' };
+  App.maskState = { status: 'loading', url: '', boxes: [], err: '', autoNote: '' };
+  App.render();
+
+  const forId = App.viewerId;
+  S.fileToDataUrl(rec.file, rec.mime).then(dataUrl => {
+    if (App.viewerId !== forId) return;    // 다른 서류로 옮겨 갔다 — 이 답은 버린다
+    App.maskState = { status: 'ready', url: dataUrl, boxes: [], err: '', autoNote: '' };
+    App.render();
+  }).catch(e => {
+    if (App.viewerId !== forId) return;
+    App.maskState = { status: 'err', url: '', boxes: [], err: (e && e.message) || String(e), autoNote: '' };
+    App.render();
+  });
+}
+window.startMask = startMask;
+
+/* 가린 사본을 만들어 판독으로 넘긴다.
+   ⚠ 판독기로 가는 길은 **여기 하나뿐**이다(검사가 지킨다). 가린 곳이 없으면
+   원본을 그대로 넘긴다 — 가릴 것이 없다고 사람이 보고 누른 것이므로. */
+function maskConfirm() {
+  const ms = App.maskState;
+  if (!ms || ms.status !== 'ready') return;
+  const rec = findRow(App.viewerId);
+  if (!rec) return;
+  const rk = S.readKindFor(rec.kind);
+  if (!rk) return;
+  let dataUrl = ms.url;
+  if (ms.boxes.length) {
+    try { dataUrl = PuRrnMask.maskToDataUrl($('maskImg'), ms.boxes); }
+    catch (e) {
+      /* 못 만들었으면 **원본을 보내지 않는다.** 가리려던 것을 못 가린 채
+         보내는 것이 이 기능이 막으려던 바로 그 일이다. */
+      alert('가린 사진을 만들지 못했습니다 — ' + ((e && e.message) || e) + '\n판독하지 않았습니다.');
+      return;
+    }
+  }
+  App.maskState = { status: 'idle', url: '', boxes: [], err: '', autoNote: '' };
+  runRead(rk, dataUrl);
+}
+window.maskConfirm = maskConfirm;
+
+/* 실제 판독. **가림을 거쳐 나온 사본만** 여기로 들어온다. */
+function runRead(rk, dataUrl) {
   App.readState = { status: 'reading', rows: [], err: '' };
   App.render();
 
@@ -1751,16 +1812,12 @@ function doRead() {
      **엉뚱한 원본이 출처로 붙는다** — 값마다 출처를 붙이는 이 설계에서 가장
      나쁜 고장이다(없는 것보다 틀린 것이 나쁘다. 아무도 의심하지 않으므로). */
   const forId = App.viewerId;
+  const job = (rk === 'timesheet')
+    ? PuDocRead.read(dataUrl).then(r => ({ ok: !r.error, error: r.error, parsed: (r && r.fields) || {} }))
+    : ((rk === 'wage') ? PuDocRead.readWageTable(dataUrl) : PuDocRead.readChangeNotice(dataUrl))
+        .then(r => ({ ok: r.ok, error: r.error, parsed: r }));
 
-  S.fileToDataUrl(rec.file, rec.mime).then(dataUrl => {
-    if (rk === 'timesheet') {
-      return PuDocRead.read(dataUrl).then(r => ({
-        ok: !r.error, error: r.error, parsed: (r && r.fields) || {}
-      }));
-    }
-    const fn = (rk === 'wage') ? PuDocRead.readWageTable : PuDocRead.readChangeNotice;
-    return fn(dataUrl).then(r => ({ ok: r.ok, error: r.error, parsed: r }));
-  }).then(res => {
+  job.then(res => {
     if (App.viewerId !== forId) return;   // 이미 다른 서류를 보고 있다 — 이 답은 버린다
     if (!res.ok) throw new Error(res.error || '판독하지 못했습니다');
     const rows = S.rowsFromRead(rk, res.parsed);
@@ -1773,7 +1830,6 @@ function doRead() {
     App.render();
   });
 }
-window.doRead = doRead;
 
 /* ══════ 같은 이름이 둘 (대표 결정 2026-08-15 — 「지금은 막기만」) ══════
    값은 근로자 **이름 하나로만** 묶인다(valueGridModel 이 byName 으로 모은다).
@@ -2008,10 +2064,129 @@ function saveVals() {
 }
 window.saveVals = saveVals;
 
+/* ══════ 가릴 곳 고르기 (설계서 4장) ══════
+   판독기로 보내기 전에 반드시 거치는 화면이다. 판독 결과가 뜨던 자리를 그대로
+   쓴다 — 폰에서 위아래로 쌓이는 규칙(#viewerBody.split)을 다시 만들지 않으려고. */
+function maskPanelHtml() {
+  const ms = App.maskState;
+  if (ms.status === 'loading') {
+    return '<div id="readPanel"><div class="ph"><b>가릴 곳 고르기</b></div>'
+      + '<div class="pbody"><div class="pre"><div class="big">⏳</div>'
+      + '<p>사진을 불러오는 중입니다…</p></div></div></div>';
+  }
+  if (ms.status === 'err') {
+    return '<div id="readPanel"><div class="ph"><b>가릴 곳 고르기</b></div>'
+      + '<div class="pbody"><div class="pre"><div class="big">⚠</div><p>' + esc(ms.err) + '</p>'
+      + '<button class="btn" onclick="maskCancel()">닫기</button></div></div></div>';
+  }
+  const n = (ms.boxes || []).length;
+  const boxes = (ms.boxes || []).map((b, i) =>
+    '<div class="maskbox ' + (b.by === 'ai' ? 'ai' : 'me') + '" style="left:' + (b.x * 100)
+    + '%;top:' + (b.y * 100) + '%;width:' + (b.w * 100) + '%;height:' + (b.h * 100) + '%">'
+    + '<span class="x" onpointerdown="event.stopPropagation()" onclick="maskDelBox(' + i + ')">✕</span></div>').join('');
+  return '<div id="readPanel"><div class="ph"><b>가릴 곳 고르기</b></div>'
+    + '<div class="pbody">'
+    /* 이 문구는 기계가 몇 곳을 찾았든 사라지지 않는다 — 마지막 판단은 사람이다. */
+    + '<div class="badline">⚠ 기계가 못 찾은 것이 있을 수 있습니다 — 눈으로 한 번 훑어 주세요</div>'
+    + (ms.autoNote ? '<div class="maskhint">' + esc(ms.autoNote) + '</div>' : '')
+    + '<div id="maskWrap" class="maskwrap" onpointerdown="maskDown(event)"'
+    + ' onpointermove="maskMove(event)" onpointerup="maskUp(event)" onpointercancel="maskUp(event)">'
+    + '<img id="maskImg" src="' + esc(ms.url) + '" alt="">' + boxes
+    + '<div id="maskPreview" class="maskbox me" style="display:none"></div>'
+    + '</div>'
+    + '<div class="maskhint">사진 위를 손가락이나 마우스로 그으면 그 자리가 가려집니다.<br>'
+    + '급여대장처럼 주민번호가 한 줄로 있으면 <b>세로로 길게 한 번</b>만 그으면 됩니다.</div>'
+    + '</div>'
+    + '<div class="pfoot">'
+    + (n ? '<button class="btn" onclick="maskUndo()">되돌리기</button>'
+         + '<button class="btn" onclick="maskClear()">다 지우기</button>' : '')
+    + '<span class="sub">' + (n ? n + '군데 가림' : '가린 곳 없음') + '</span>'
+    + '<button class="btn pri" onclick="maskConfirm()">'
+    + (n ? n + '군데 가리고 판독' : '가릴 것 없음 — 그대로 판독') + '</button>'
+    + '</div></div>';
+}
+
+/* ── 긋기 ──
+   ⚠ 움직이는 동안 App.render() 를 부르면 안 된다. 다시 그리면 지금 손이 얹혀
+   있는 요소가 통째로 새로 만들어져 드래그가 끊긴다(판독 표에서 글자마다 다시
+   그리지 않는 것과 같은 까닭). 그래서 움직이는 동안에는 미리 보이는 칸 하나만
+   손보고, 손을 뗄 때 한 번 다시 그린다. */
+let maskDrag = null;
+
+/* 사진이 **화면에 보이는 크기** — 원본 크기가 아니다. 비율로 바꾸는 데 쓴다. */
+function maskViewRect() {
+  const img = $('maskImg');
+  return img ? img.getBoundingClientRect() : null;
+}
+
+function maskDown(ev) {
+  const r = maskViewRect();
+  if (!r) return;
+  ev.preventDefault();
+  maskDrag = { x0: ev.clientX - r.left, y0: ev.clientY - r.top, w: r.width, h: r.height };
+  try { ev.currentTarget.setPointerCapture(ev.pointerId); } catch (_) { /* 손가락 못 잡아도 그리기는 된다 */ }
+  maskShowPreview(maskDrag.x0, maskDrag.y0, maskDrag.x0, maskDrag.y0);
+}
+
+function maskMove(ev) {
+  if (!maskDrag) return;
+  const r = maskViewRect();
+  if (!r) return;
+  ev.preventDefault();
+  maskShowPreview(maskDrag.x0, maskDrag.y0, ev.clientX - r.left, ev.clientY - r.top);
+}
+
+function maskUp(ev) {
+  const d = maskDrag;
+  maskDrag = null;
+  maskHidePreview();
+  if (!d) return;
+  const r = maskViewRect();
+  if (!r) return;
+  const box = PuRrnMask.rectFromDrag(d.x0, d.y0, ev.clientX - r.left, ev.clientY - r.top, r.width, r.height);
+  if (!box) return;                       // 점만 찍은 것은 사각형이 아니다
+  box.by = 'me';
+  App.maskState.boxes.push(box);
+  App.render();
+}
+
+function maskShowPreview(x0, y0, x1, y1) {
+  const el = $('maskPreview');
+  const r = maskViewRect();
+  if (!el || !r) return;
+  const left = Math.min(x0, x1), top = Math.min(y0, y1);
+  el.style.display = '';
+  el.style.left = (left / r.width * 100) + '%';
+  el.style.top = (top / r.height * 100) + '%';
+  el.style.width = (Math.abs(x1 - x0) / r.width * 100) + '%';
+  el.style.height = (Math.abs(y1 - y0) / r.height * 100) + '%';
+}
+
+function maskHidePreview() {
+  const el = $('maskPreview');
+  if (el) el.style.display = 'none';
+}
+
+/* 기계가 칠한 것도 지울 수 있다 — 잘못 잡는 일이 실제로 있다(계좌번호 등). */
+function maskDelBox(i) { App.maskState.boxes.splice(i, 1); App.render(); }
+function maskUndo() { App.maskState.boxes.pop(); App.render(); }
+function maskClear() { App.maskState.boxes = []; App.render(); }
+
+/* 가림을 그만두면 판독도 안 한다 — 안 가린 채로 새는 길을 두지 않는다. */
+function maskCancel() {
+  App.maskState = { status: 'idle', url: '', boxes: [], err: '', autoNote: '' };
+  App.render();
+}
+window.maskDown = maskDown; window.maskMove = maskMove; window.maskUp = maskUp;
+window.maskDelBox = maskDelBox; window.maskUndo = maskUndo; window.maskClear = maskClear;
+window.maskCancel = maskCancel;
+
 /* 오른쪽 절반 — 판독 전에는 단추, 판독 뒤에는 값 표. */
 function readPanelHtml() {
+  /* 가릴 곳을 고르는 중이면 그 화면이 이 자리를 쓴다 — 판독 결과는 그다음이다. */
+  if (App.maskState && App.maskState.status !== 'idle') return maskPanelHtml();
   /* 어떤 판독기를 쓰는지는 **열려 있는 서류**가 정한다(서랍 탭이 아니다) —
-     값 표에서 연 서류는 App.kind 와 아무 상관이 없다(doRead 머리말과 같은 까닭). */
+     값 표에서 연 서류는 App.kind 와 아무 상관이 없다(startMask 머리말과 같은 까닭). */
   const rec = App.viewerId ? findRow(App.viewerId) : null;
   const rk = S.readKindFor(rec && rec.kind);
   const st = App.readState || { status: 'idle', rows: [], err: '' };
@@ -2059,13 +2234,13 @@ function readPanelHtml() {
     /* 「직접 적어 주세요」라고 해 놓고 적을 칸을 안 주면 그 말이 거짓말이 된다 —
        못 읽었을 때야말로 손으로 적을 길이 있어야 한다(예전에는 다시 판독뿐이었다). */
     body = '<div class="pre"><div class="big">⚠</div><p>' + esc(st.err) + '</p>'
-      + '<button class="btn pri" onclick="doRead()">🔍 다시 판독</button> '
+      + '<button class="btn pri" onclick="startMask()">🔍 다시 판독</button> '
       + '<button class="btn" onclick="startManualRows()">✍ 직접 적기</button></div>';
   } else {
     body = '<div class="pre"><div class="big">🔍</div><p>아직 읽지 않았습니다.<br>'
       + '누르면 AI가 이 서류를 읽어 <b>사람별 표</b>로 만듭니다.<br>'
       + '읽은 뒤 확인하고 저장해야 값으로 남습니다.</p>'
-      + '<button class="btn pri" onclick="doRead()">🔍 판독하기</button> '
+      + '<button class="btn pri" onclick="startMask()">🔍 판독하기</button> '
       + '<button class="btn" onclick="startManualRows()">✍ 직접 적기</button></div>';
   }
   const foot = (st.status === 'done')
