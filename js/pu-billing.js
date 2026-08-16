@@ -136,8 +136,23 @@
     };
   }
 
+  /* 금액을 지켜본다 — **읽기만 한다.**
+     ⚠ 화면이 `db.ref(...)` 를 직접 부르지 못하게 막혀 있다(2026-07 실데이터 사고 뒤로,
+       tests/pu-photos-html.test.js 가 지킨다). 읽기라고 예외를 두면 그 자리가 다시
+       열리므로 부르는 길을 여기 하나로 모은다 — 이 파일에는 set·update·remove 가 없다.
+     ⚠ 실패 콜백을 반드시 받아 넘긴다. 빠뜨리면 규칙에 막혔을 때 콘솔에 빨간 오류만
+       남고 화면은 영영 빈 채로 있는다. */
+  function watch(db, onValue, onError) {
+    if (!db || typeof db.ref !== 'function') return function () { };
+    var ref = db.ref(ROOT);
+    var cb = ref.on('value', function (snap) { onValue(snap.val()); },
+      function (e) { if (onError) onError(e); });
+    return function () { try { ref.off('value', cb); } catch (e) { /* 이미 끊겼다 */ } };
+  }
+
   global.PuBilling = {
     ROOT: ROOT,
+    watch: watch,
     PARTS: PARTS,
     STALE_MS: STALE_MS,
     fmtWon: fmtWon,

@@ -167,6 +167,51 @@ test('화면 한 덩어리로 묶기', async (t) => {
   });
 });
 
+test('금액 지켜보기는 읽기 전용이다', async (t) => {
+  await t.test('쓰기 수단이 아예 없다', () => {
+    /* ⚠ 화면은 실시간DB를 직접 못 만진다(2026-07 실데이터 사고 뒤로).
+       읽기 길을 이 파일로 모았으므로, 여기에 쓰기가 섞이면 막아 둔 문이
+       이 파일을 통해 다시 열린다. */
+    assert.equal(/\.set\(|\.update\(|\.remove\(/.test(src), false,
+      'pu-billing.js 에 쓰기가 들어왔습니다 — 이 파일은 읽기만 해야 합니다.');
+  });
+
+  await t.test('실패 콜백을 넘겨준다', () => {
+    const i = src.indexOf('function watch(');
+    const fn = src.slice(i, i + 700);
+    assert.match(fn, /if \(onError\) onError\(e\)/,
+      '막혔을 때 알려 주지 않으면 화면이 영영 빈 채로 있습니다.');
+  });
+
+  await t.test('그만 볼 수 있다', () => {
+    const i = src.indexOf('function watch(');
+    assert.match(src.slice(i, i + 700), /ref\.off\('value', cb\)/, '구독을 끊을 길이 없습니다.');
+  });
+
+  await t.test('DB가 아직 없으면 조용히 아무것도 안 한다', () => {
+    /* 로그인 전에는 db 가 없다. 여기서 터지면 사진첩 첫 화면이 통째로 죽는다. */
+    let called = 0;
+    const off = B.watch(null, function () { called++; });
+    assert.equal(typeof off, 'function', '끊는 함수는 늘 돌려줘야 합니다.');
+    off();
+    assert.equal(called, 0);
+  });
+
+  await t.test('값이 오면 그대로 넘긴다', () => {
+    let got = 'X';
+    const fakeDb = {
+      ref: function () {
+        return {
+          on: function (ev, ok) { ok({ val: function () { return { hi: 1 }; } }); return ok; },
+          off: function () { },
+        };
+      },
+    };
+    B.watch(fakeDb, function (v) { got = v; });
+    assert.equal(got && got.hi, 1);
+  });
+});
+
 test('관리자 화면에 붙는 자리 (pu-erp.html)', async (t) => {
   await t.test('저장 층을 싣는다', () => {
     assert.match(erp, /<script src="js\/pu-billing\.js(\?v=\d+)?"><\/script>/);
