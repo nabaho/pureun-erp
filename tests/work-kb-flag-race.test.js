@@ -78,6 +78,12 @@ test('★ 읽고 다시 쓰는 자리가 더 없다', () => {
     const re = /ref\(([^)]{1,60})\)\.once\('value'\)[\s\S]{0,500}?ref\(([^)]{1,60})\)\.set\(/g;
     let m;
     while((m = re.exec(pair[1]))){
+      /* 예외 (2026-08-16): 백업 명부 자가 치유 — pu-erp _lostSnapEnsureIds.
+         이 검사가 막는 것은 「읽고 고쳐 쓰는 사이 남의 갱신을 잃는 경합」이다.
+         자가 치유는 **불변인 스냅샷 본문**에서 유도한 명부를 **전용 잎(/ids)**에 쓴다 —
+         두 기기가 동시에 해도 같은 값이 두 번 적힐 뿐 잃을 갱신이 없다(멱등).
+         ⚠ 예외는 이 한 곳뿐이다. 다른 once→set 을 추가하려면 여기 사유를 적을 것. */
+      if(/\+ 'Index\/' \+ q\.fbKey \+ '\/ids'/.test(m[2])) continue;
       left.push(pair[0] + ':' + pair[1].slice(0, m.index).split('\n').length);
     }
   });
