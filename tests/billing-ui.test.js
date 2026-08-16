@@ -244,3 +244,94 @@ test('관리자 화면에 붙는 자리 (pu-erp.html)', async (t) => {
     assert.match(body, /ref\.off\('value', cb\)/);
   });
 });
+
+/* ══════ 「그 밖」 착시 (2026-08-16 밤 실제 사례) ══════
+   칸마다 구글 예산 알림이 따로 와서 갱신 시각이 어긋난다. 전체만 새로 오고
+   실시간DB 칸이 낡아 있으면, 실시간DB가 오른 몫이 뺄셈에서 「그 밖」으로 새어
+   보인다 — 그날 밤 그 밖이 실제 ₩3,725인데 ₩6,379로 보였고, 대표가 엉뚱한
+   칸(다른 구글 서비스)을 의심하셨다. 숫자는 그대로 두되(지어내지 않는다)
+   **못 믿는 값이라는 표시(≈)와 어느 칸을 기다리는지**를 함께 내놓는다. */
+test('「그 밖」이 낡은 칸 때문에 부풀 수 있으면 그렇다고 말한다', async (t) => {
+  const MIN = 60000;
+  const NOW = AUG + 15 * DAY + 21 * HOUR + 23 * MIN;   // 그날 밤 21:23쯤
+
+  /* 그날 밤 실제 값 그대로 — database 알림만 38분 낡았다 */
+  function nightCase(over) {
+    return Object.assign({
+      total:     { label: '전체',      cost: 81626, intervalStart: AUG, updatedAt: NOW },
+      database:  { label: '실시간DB',  cost: 75248, intervalStart: AUG, updatedAt: NOW - 38 * MIN },
+      storage:   { label: '사진 창고', cost: 0.12,  intervalStart: AUG, updatedAt: NOW - 2 * MIN },
+      functions: { label: '서버 · 메일', cost: 0,   intervalStart: AUG, updatedAt: NOW - 3 * MIN },
+    }, over || {});
+  }
+
+  await t.test('★ 그날 밤 사례 — 그 밖에 ≈ 가 붙고 실시간DB를 기다린다고 말한다', () => {
+    const s = B.summarize(nightCase(), NOW);
+    const etc = s.parts.find((p) => p.key === 'etc');
+    assert.ok(etc, '그 밖이 있어야 한다');
+    assert.equal(Math.round(etc.cost), 6378, '숫자 자체는 지어내지 않는다 — 표시만 얹는다');
+    assert.equal(etc.approx, true, '★ 표시가 없으면 대표가 엉뚱한 칸을 의심하신다');
+    assert.match(s.etcNote, /실시간DB/, '★ 어느 칸을 기다리는지 이름을 대야 한다');
+    assert.doesNotMatch(s.etcNote, /사진 창고/, '멀쩡한 칸까지 의심하게 하면 안 된다');
+  });
+
+  await t.test('모든 칸이 싱싱하면 ≈ 도 안내도 없다', () => {
+    const fresh = nightCase({ database: { label: '실시간DB', cost: 77901, intervalStart: AUG, updatedAt: NOW - 2 * MIN } });
+    const s = B.summarize(fresh, NOW);
+    const etc = s.parts.find((p) => p.key === 'etc');
+    assert.ok(etc);
+    assert.ok(!etc.approx, '멀쩡한데 ≈ 를 붙이면 표시가 값어치를 잃는다');
+    assert.equal(s.etcNote, null);
+  });
+
+  await t.test('경계 — 10분 안쪽 어긋남은 정상이다 (알림은 원래 조금씩 어긋난다)', () => {
+    const s = B.summarize(nightCase({
+      database: { label: '실시간DB', cost: 75248, intervalStart: AUG, updatedAt: NOW - 9 * MIN },
+    }), NOW);
+    const etc = s.parts.find((p) => p.key === 'etc');
+    assert.ok(!etc.approx, '9분 차이로 매번 ⚠ 가 뜨면 아무도 안 본다');
+
+    const s2 = B.summarize(nightCase({
+      database: { label: '실시간DB', cost: 75248, intervalStart: AUG, updatedAt: NOW - 11 * MIN },
+    }), NOW);
+    assert.equal(s2.parts.find((p) => p.key === 'etc').approx, true, '★ 11분부터는 말해야 한다');
+  });
+
+  await t.test('칸에 갱신 시각이 아예 없으면 — 언제 것인지 모르는 값이니 ≈', () => {
+    const s = B.summarize(nightCase({
+      database: { label: '실시간DB', cost: 75248, intervalStart: AUG },
+    }), NOW);
+    assert.equal(s.parts.find((p) => p.key === 'etc').approx, true);
+  });
+
+  await t.test('전체에 갱신 시각이 없으면 견줄 수 없다 — 표시하지 않는다', () => {
+    /* 견줄 기준이 없는데 ≈ 를 붙이면 근거 없는 경고다. 이 경우는 기존
+       stale(하루 넘게 조용함) 장치가 따로 지킨다. */
+    const s = B.summarize(nightCase({
+      total: { label: '전체', cost: 81626, intervalStart: AUG },
+    }), NOW);
+    const etc = s.parts.find((p) => p.key === 'etc');
+    assert.ok(etc && !etc.approx);
+    assert.equal(s.etcNote, null);
+  });
+
+  await t.test('화면 둘 다 표시를 그린다 — 판단은 pu-billing 한 곳', () => {
+    /* 값 층이 approx 를 내놓아도 화면이 안 그리면 없는 기능이다.
+       (⚠ 글자 확인이지만, 여기 렌더러는 React 없이 못 돌린다 — 존재만 본다) */
+    assert.match(erp, /p\.approx \? '≈ ' : ''/, '관리자 화면이 ≈ 를 안 그립니다');
+    assert.match(erp, /s\.etcNote/, '관리자 화면이 안내를 안 그립니다');
+    const photos = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
+    assert.match(photos, /p\.approx \? '≈ ' : ''/, '사진첩이 ≈ 를 안 그립니다');
+    assert.match(photos, /s\.etcNote/, '사진첩이 안내를 안 그립니다');
+  });
+
+  await t.test('값 층을 고쳤으면 ?v= 을 올렸다 — 안 올리면 고친 것이 캐시에 묻힌다', () => {
+    /* 실제로 당했다(서식 수정이 통째로 묻힘). pu-billing 은 ?v= 로 실린다. */
+    const photos = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
+    for (const html of [erp, photos]) {
+      const m = html.match(/js\/pu-billing\.js\?v=(\d+)/);
+      assert.ok(m, 'pu-billing.js 에 ?v= 가 없습니다');
+      assert.ok(Number(m[1]) >= 3, '★ ?v= 를 안 올려 approx 기능이 캐시에 묻힙니다');
+    }
+  });
+});
