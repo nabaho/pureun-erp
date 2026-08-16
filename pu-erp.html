@@ -47883,6 +47883,325 @@ function PersonalCalendar(props){
 }
 
 
+
+/* ── 업무시트 ↔ 푸른이알피 종료/재개 양방향 동기화 엔진 ──
+   ⚠ 원래 MyDeskV2(나의 업무) 안에 있어 **그 화면을 열어야만** 돌았다. 업무관리에서
+     종료해도 한참 뒤에야 반영돼 배지가 「반영 대기」로 남았다. 밖으로 뺀다.
+   로직은 한 줄도 바꾸지 않았다. 바뀐 것은 두 가지뿐 —
+     · setRfk 자리에 onDone 콜백(부른 쪽이 화면을 새로 그리도록)
+     · 겹쳐 돌지 않게 하는 자물쇠(_wsBusy). 두 번 돌면 같은 것을 두 번 쓴다.
+   ⚠ 이 엔진은 푸른이알피 마스터(계약·사건·컨설팅·기금)를 dbPatch 로 고친다.
+     첫 만남은 기준선만 기록하고 아무것도 바꾸지 않는다(대량 오종료 방지). */
+var _wsBusy = false;
+  var WS_STORE = { contract:'contracts', case:'cases', consulting:'consultings', fund:'funds', other:'other_projects' };
+  function wsSafeKey(s){ return String(s == null ? '' : s).replace(/[.#$\/\[\]'"`\\\s\u0000-\u001F\u007F -]/g, '_'); }
+  function wsToday(){ var d = new Date(), p = function(n){ return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
+  function wsSyncRun(onDone){
+    if(_wsBusy) return;              // 겹쳐 돌면 같은 것을 두 번 쓴다
+    _wsBusy = true;
+    var fin = function(){ _wsBusy = false; };
+    try{
+      if(typeof fbDb === 'undefined' || !fbDb){ fin(); return; }
+      Promise.all([
+        fbDb.ref('work_erp/items').once('value'),
+        fbDb.ref('work_erp/pesync').once('value'),
+        fbDb.ref('work_erp/steps').once('value')
+      ]).then(function(res){
+        var W = res[0].val() || {}, SN = res[1].val() || {}, ST = res[2].val() || {};
+        var up = {}, toPe = [], toWs = 0, now = new Date().toISOString();
+        var toPeB = [];                                    // 업무 요약 역방향 반영 대기열
+        var toPeS = [];                                    // 부담당 참여 요청 반영 대기열
+        // 진행 필드는 project_progress(배열 통째 저장)에 담긴다 — 업무시트가 직접 쓰면
+        // 다음 전체 저장에 덮여 사라지므로, 여기서 푸른이알피가 자기 손으로 쓴다.
+        var PP = dbGet('project_progress', []) || [];
+        if(!Array.isArray(PP)) PP = [];
+        var ppDirty = 0, toPg = 0, toPeC = [];
+        function wsProg(wid){                              // 진행 단계 → 퍼센트
+          var o = ST[wid] || {}, t = 0, d = 0;
+          Object.keys(o).forEach(function(k){ var s = o[k]; if(s && s.t){ t++; if(s.done) d++; } });
+          return t ? Math.round(d / t * 100) : null;
+        }
+        function pcOf(pe){                                 // 그 건의 사업장 담당자 첫 번째
+          var c = (pe && pe.company && pe.company.contacts) || [];
+          for(var i = 0; i < c.length; i++){ if(c[i] && (c[i].name || c[i].phone)) return c[i]; }
+          return null;
+        }
+        function ppFind(type, id){
+          for(var i = 0; i < PP.length; i++){
+            var p = PP[i];
+            if(p && p.sid === sid && p.projectType === type && p.projectId === id) return i;
+          }
+          return -1;
+        }
+        // 스냅샷과 비교해 한쪽만 바뀌었으면 그쪽, 양쪽이 다르게 바뀌었으면 최근 쪽.
+        // 바뀐 게 없으면 null을 돌려 아무것도 건드리지 않는다.
+        function pick3(sv, wv, pv, wNewer){
+          sv = String(sv == null ? '' : sv);
+          var wc = (wv !== sv), pc = (pv !== sv);
+          if(!wc && !pc) return null;
+          if(wc && !pc) return wv;
+          if(pc && !wc) return pv;
+          if(wv === pv) return wv;
+          return wNewer ? wv : pv;
+        }
+        Object.keys(W).forEach(function(wid){
+          var w = W[wid];
+          if(!w || !w.ref || !w.ref.type || !w.ref.id || w.pe_nosync) return;
+          var store = WS_STORE[w.ref.type]; if(!store) return;
+          var arr = dbGet(store, []) || [];
+          var pe = null;
+          for(var i = 0; i < arr.length; i++){ if(arr[i] && arr[i].id === w.ref.id){ pe = arr[i]; break; } }
+          if(!pe) return;                                  // 마스터에서 사라진 건 — 건드리지 않음
+          var key = w.ref.type + '-' + wsSafeKey(w.ref.id);
+          var snap = SN[key] || {};
+          // ── 부담당 참여 요청 (업무관리 → 푸른이알피) ──
+          // 업무관리에서 "부담당으로 가져오기"를 누르면 pe_addsub에 sid가 담긴다.
+          // 더하기만 한다 — 사람을 빼는 일은 푸른이알피에서 눈으로 보고 해야 한다.
+          // ⚠ 기준선만 찍고 돌아가는 아래 분기보다 앞에 두어야 한다. 새로 가져온 건은
+          //   첫 패스에서 그 분기로 빠지므로, 뒤에 두면 요청이 영영 처리되지 않는다.
+          if(Array.isArray(w.pe_addsub) && w.pe_addsub.length){
+            var curS = (pe.managerSubs || []).slice(), addN = 0;
+            w.pe_addsub.forEach(function(sd){
+              sd = String(sd || ''); if(!sd) return;
+              if(sd === pe.managerMain) return;             // 주담당을 부담당으로 또 넣지 않는다
+              if(curS.indexOf(sd) < 0){ curS.push(sd); addN++; }
+            });
+            if(addN) toPeS.push({ store:store, id:w.ref.id, subs:curS });
+            up['work_erp/items/' + wid + '/pe_addsub'] = null;   // 처리했으니 지운다
+          }
+          // ── 사건 단계 기한 → 업무관리 (한 방향) ──
+          // 법정 기한은 송달일·판정일에서 계산된 값이다. 사람이 적은 "다음 할 일"(next)에
+          // 넣으면 그 사람이 쓴 내용을 덮으므로 섞지 않고 따로 내려보낸다.
+          // 업무관리는 이 칸을 보여주기만 하고 되돌려 쓰지 않는다 — 그래서 pick3 를 타지 않는다.
+          // ⚠ 기준선만 찍고 돌아가는 아래 분기보다 앞에 두어야 새로 연결한 건도 첫 패스에 받는다.
+          if(w.ref.type === 'case' && typeof caseNextDue === 'function'){
+            // 끝난 사건의 기한은 내려보내지 않는다 (남아 있으면 달력에 계속 뜬다)
+            var _nd = isItemClosed(pe) ? null : caseNextDue(pe);
+            var _ndi = _nd ? (caseStageInfo(_nd.code) || {}) : null;
+            var _want = _nd ? { date:_nd.due,
+                                label:(_ndi.short || _ndi.name || '단계') + ' 기한',
+                                verified: _ndi.dueVerified === true } : null;
+            var _cur = w.pe_due || null;
+            var _same = (_cur && _want)
+              ? (String(_cur.date||'') === _want.date && String(_cur.label||'') === _want.label
+                 && (_cur.verified === true) === _want.verified)
+              : (!_cur && !_want);
+            if(!_same){ up['work_erp/items/' + wid + '/pe_due'] = _want; toWs++; }
+          }
+          var peClosed = isItemClosed(pe), wsDone = (w.state === 'done');
+          // 진행 필드는 담당자 본인 것만 맞춘다 — project_progress가 사람별 기록이라
+          // 남의 행을 여기서 만들거나 고치면 안 된다.
+          var mine = !!(w.mgr_main && w.mgr_main.sid && w.mgr_main.sid === sid);
+          var pi = mine ? ppFind(w.ref.type, w.ref.id) : -1;
+          var pp = pi >= 0 ? PP[pi] : null;
+          var wst = String(w.status || ''), wnt = String((w.next && w.next.text) || ''), wnd = String((w.next && w.next.date) || '');
+          var pst = String((pp && pp.status) || ''), pnt = String((pp && pp.nextAction) || ''), pnd = String((pp && pp.nextDate) || '');
+          var pct = wsProg(wid);
+          // 업무 요약은 마스터 레코드에 붙는 공용 정보 — 담당자 본인 것만 맞추는 진행 필드와 달리 mine 조건이 없다
+          var wbr = briefTrim(w.brief), pbr = briefTrim(pe.brief), sbr = wbr;
+          if(!snap.synced_at){                             // 기준선만 기록
+            up['work_erp/pesync/' + key] = { type:w.ref.type, id:w.ref.id, work_id:wid,
+              pe_closed:peClosed, ws_done:wsDone, st:wst, nt:wnt, nd:wnd, br:wbr,
+              ti:String(w.title || ''), cl:String(w.client || ''),
+              cn:String((pcOf(pe) || {}).name || ''), cr:String((pcOf(pe) || {}).role || ''),
+              cp:String((pcOf(pe) || {}).phone || ''),
+              pg:(pct === null ? '' : String(pct)), synced_at:now, note:'기준선' };
+            return;
+          }
+          var peChanged = (peClosed !== !!snap.pe_closed), wsChanged = (wsDone !== !!snap.ws_done);
+          var want = peClosed;                             // 아무 변화 없으면 지금 상태 유지
+          if(peChanged || wsChanged){
+            if(peChanged && wsChanged){
+              if(peClosed === wsDone) want = peClosed;      // 양쪽이 같아졌으면 스냅샷만 갱신
+              else {                                        // 충돌 — 더 최근에 바뀐 쪽을 따른다
+                var peAt = String(pe.updatedAt || pe.closedDate || ''), wsAt = String(w.state_at || w.done_date || '');
+                want = (peAt > wsAt) ? peClosed : wsDone;
+              }
+            } else want = peChanged ? peClosed : wsDone;
+            if(want !== peClosed){                          // 푸른이알피 반영
+              toPe.push({ store:store, id:w.ref.id, close:want, way:String(w.end_way || 'done'),
+                to:String(w.end_to || ''), res:String(w.end_result || ''),
+                name:(pe.companyName || pe.title || w.ref.id) });
+            }
+            if(want !== wsDone){                            // 업무시트 반영
+              up['work_erp/items/' + wid + '/state'] = want ? 'done' : null;
+              up['work_erp/items/' + wid + '/done_date'] = want ? wsToday() : null;
+              // 푸른이알피 status에서 끝낸 방식을 그대로 옮긴다
+              var pw = pe.status === 'cancelled' ? 'cancel'
+                     : pe.status === 'transferred' ? 'transfer' : 'done';
+              up['work_erp/items/' + wid + '/status'] =
+                want ? (pw === 'cancel' ? '취소' : pw === 'transfer' ? '이관' : '종료') : '진행중';
+              if(want){
+                up['work_erp/items/' + wid + '/end_way'] = pw;
+                if(pw === 'transfer' && pe.transferredTo)
+                  up['work_erp/items/' + wid + '/end_to'] = String(pe.transferredTo);
+                if(pe.caseResult) up['work_erp/items/' + wid + '/end_result'] = String(pe.caseResult);
+              }
+              up['work_erp/items/' + wid + '/state_at'] = now;
+              toWs++;
+            }
+          }
+          // ── 진행 필드(상태·다음 액션·다음 날짜) 양방향 ──
+          var sst = wst, snt = wnt, snd = wnd, spg = (pct === null ? '' : String(pct));
+          if(mine && !want){                                // 종료된 건은 진행 필드를 맞추지 않는다
+            var wNewer = String(w.up_at || w.state_at || '') > String((pp && pp.updatedAt) || '');
+            var nst = pick3(snap.st, wst, pst, wNewer);
+            var nnt = pick3(snap.nt, wnt, pnt, wNewer);
+            var nnd = pick3(snap.nd, wnd, pnd, wNewer);
+            var pf = {};
+            if(nst !== null){ sst = nst;
+              if(nst !== wst){ up['work_erp/items/' + wid + '/status'] = nst; toWs++; }
+              if(nst !== pst) pf.status = nst; }
+            if(nnt !== null || nnd !== null){
+              var fnt = (nnt === null ? wnt : nnt), fnd = (nnd === null ? wnd : nnd);
+              snt = fnt; snd = fnd;
+              if(fnt !== wnt || fnd !== wnd){
+                up['work_erp/items/' + wid + '/next'] = (fnt || fnd) ? { text:fnt, date:fnd } : null;
+                toWs++;
+              }
+              if(fnt !== pnt) pf.nextAction = fnt;
+              if(fnd !== pnd) pf.nextDate = fnd;
+            }
+            // 진행률은 업무시트의 진행 단계에서 계산한다 — 단계가 있을 때만 밀어 넣는다.
+            // (단계가 없으면 푸른이알피에서 손으로 넣은 값을 그대로 둔다)
+            if(pct !== null && pp && Number(pp.progress || 0) !== pct) pf.progress = pct;
+            if(pct !== null && !pp) pf.progress = pct;
+            // 메모는 비어 있을 때만 최근 기록 한 줄로 채운다 — 사람이 쓴 메모를 덮지 않는다
+            if(w.last && w.last.t && !(pp && String(pp.note || '').trim())) pf.note = String(w.last.t);
+            if(Object.keys(pf).length){
+              if(pi >= 0) PP[pi] = Object.assign({}, pp, pf, { updatedAt:now });
+              else PP.unshift(Object.assign({
+                id:'pp-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+                sid:sid, projectType:w.ref.type, projectId:w.ref.id,
+                projectNo:(pe.caseNo || pe.contractNo || pe.consultNo || pe.fundNo || pe.projectNo || pe.no || ''),
+                projectName:(pe.title || pe.caseName || pe.programName || ''),
+                companyName:(pe.companyName || pe.fundName || pe.targetName || ''),
+                progress:0, status:'', nextAction:'', nextDate:'', note:'',
+                createdAt:now
+              }, pf, { updatedAt:now }));
+              ppDirty = 1; toPg++;
+            }
+          }
+          // ── 업무 요약 양방향 ──
+          // 한쪽만 바뀌었으면 그쪽, 양쪽 다 바뀌었으면 최근에 손댄 쪽. 종료된 건도 요약은 계속 맞춘다.
+          var brNewer = String(w.up_at || w.state_at || '') > String(pe.updatedAt || '');
+          var nbr = pick3(snap.br, wbr, pbr, brNewer);
+          if(nbr !== null){
+            sbr = nbr;
+            if(nbr !== wbr){ up['work_erp/items/' + wid + '/brief'] = nbr || null; toWs++; }
+            if(nbr !== pbr) toPeB.push({ store:store, id:w.ref.id, brief:nbr });
+          }
+          // ── 기본정보(업무명·의뢰인·사업장 담당자) 양방향 ──
+          // 진행 필드와 달리 사람별 기록이 아니므로 담당자·종료 여부와 무관하게 맞춘다.
+          // 업체명·사업자번호·관리번호·유형·금액은 계약서·세금계산서와 엮여 있어 제외한다.
+          var pc0 = pcOf(pe) || {};
+          var wti = String(w.title || ''), pti = String(pe.title || '');
+          var wcl = String(w.client || ''), pcl = String(pe.payee || '');
+          var wc0 = w.contact || {};
+          var wcn = String(wc0.name || ''), wcr = String(wc0.rank || ''), wcp = String(wc0.phone || '');
+          var pcn = String(pc0.name || ''), pcr = String(pc0.role || ''), pcp = String(pc0.phone || '');
+          var cNewer = String(w.up_at || '') > String(pe.updatedAt || '');
+          var bw = {}, bp = {};
+          function bpick(sv, wv, pv, k){
+            var v = pick3(sv, wv, pv, cNewer);
+            if(v === null) return wv;                       // 변화 없음 — 지금 값 유지
+            if(v !== wv) bw[k] = v;
+            if(v !== pv) bp[k] = v;
+            return v;
+          }
+          var sti = bpick(snap.ti, wti, pti, 'ti');
+          var scl = bpick(snap.cl, wcl, pcl, 'cl');
+          var scn = bpick(snap.cn, wcn, pcn, 'cn');
+          var scr = bpick(snap.cr, wcr, pcr, 'cr');
+          var scp = bpick(snap.cp, wcp, pcp, 'cp');
+          if(bw.ti !== undefined){ up['work_erp/items/' + wid + '/title'] = bw.ti; toWs++; }
+          if(bw.cl !== undefined){ up['work_erp/items/' + wid + '/client'] = bw.cl; toWs++; }
+          if(bw.cn !== undefined || bw.cr !== undefined || bw.cp !== undefined){
+            // 업무관리는 이제 사업장 담당자를 여러 명 둔다(items/{id}/contacts).
+            // 첫 사람만 맞추고 뒷사람은 그대로 둔다 — 배열을 통째로 갈면 업무관리에서
+            // 손으로 더 적어 둔 담당자가 조용히 사라진다. contact(단수)는 contacts[0]과 같게 유지한다.
+            // 직책은 rank(옛 이름)와 position(공통 이름) 둘 다 적어 양쪽이 읽을 수 있게 한다.
+            var _c1 = (scn || scr || scp) ? { name:scn, rank:scr, position:scr, phone:scp } : null;
+            var _crest = (w.contacts || []).slice(1);
+            up['work_erp/items/' + wid + '/contact'] = _c1;
+            up['work_erp/items/' + wid + '/contacts'] =
+              _c1 ? [_c1].concat(_crest) : (_crest.length ? _crest : null);
+            toWs++;
+          }
+          var cpf = {};
+          if(bp.ti !== undefined) cpf.title = bp.ti;
+          if(bp.cl !== undefined) cpf.payee = bp.cl;
+          if(bp.cn !== undefined || bp.cr !== undefined || bp.cp !== undefined){
+            // company를 통째로 갈지 않고 첫 담당자만 바꿔 나머지 연락처를 지킨다
+            var comp = Object.assign({}, pe.company || {});
+            var cl2 = (comp.contacts || []).slice();
+            var i0 = -1;
+            for(var ci = 0; ci < cl2.length; ci++){
+              if(cl2[ci] && (cl2[ci].name || cl2[ci].phone)){ i0 = ci; break; }
+            }
+            var c0 = Object.assign({}, i0 >= 0 ? cl2[i0] : { isPrimary:true });
+            if(!c0.id) c0.id = 'mc-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+            // 직책은 role(계약 화면이 읽는 옛 칸)과 position(업체관리가 읽는 공통 칸) 둘 다 적는다.
+            // 판정·비교는 그대로 role 로 한다 — 기준선(pesync)을 흔들지 않기 위해서다.
+            c0.name = scn; c0.role = scr; c0.position = scr; c0.phone = scp;
+            if(i0 >= 0) cl2[i0] = c0; else cl2.unshift(c0);
+            comp.contacts = cl2;
+            cpf.company = comp;
+          }
+          if(Object.keys(cpf).length) toPeC.push({ store:store, id:w.ref.id, fields:cpf });
+          up['work_erp/pesync/' + key] = { type:w.ref.type, id:w.ref.id, work_id:wid,
+            pe_closed:want, ws_done:want, st:sst, nt:snt, nd:snd, br:sbr, pg:spg,
+            ti:sti, cl:scl, cn:scn, cr:scr, cp:scp, synced_at:now };
+        });
+        // 푸른이알피 쪽은 dbPatch로 (저장형태 안전)
+        var okPe = 0;
+        // 끝낸 방식 → 푸른이알피 상태. 한 덩어리로 'closed'만 쓰면 취소·이관 구분이 사라진다.
+        var WS_WAY = { done:{ st:'closed', r:'종료' }, cancel:{ st:'cancelled', r:'취소' },
+                       transfer:{ st:'transferred', r:'이관완료' } };
+        toPe.forEach(function(t){
+          var f;
+          if(t.close){
+            var m = WS_WAY[t.way] || WS_WAY.done;
+            f = { closedDate: wsToday(), closedAt: (new Date()).toISOString(),
+                  status: m.st, closeReason: m.r + ' (업무관리)', closedReason: m.r };
+            if(t.way === 'transfer' && t.to) f.transferredTo = t.to;
+            // 사건 결과 — 고른 것이 있을 때만 쓴다. 빈 값으로 덮으면 푸른이알피 기록이 지워진다
+            if(t.res) f.caseResult = t.res;
+          } else {
+            // 재개 — 종료 표시만 걷어낸다. 예전엔 status를 무조건 'progress'로 덮어
+            // 원래 취소·이관이었다는 사실이 사라졌다.
+            f = { closedDate: null, closedAt: null, closeDate: null, status: 'progress' };
+          }
+          try{ if(dbPatch(t.store, t.id, f)) okPe++; }catch(e){}
+        });
+        // 업무 요약 역방향 — 종료 반영과 같은 레코드면 한 번 더 patch 되지만 필드가 겹치지 않아 안전하다
+        toPeB.forEach(function(t){
+          try{ if(dbPatch(t.store, t.id, { brief:t.brief })) okPe++; }catch(e){}
+        });
+        // 기본정보 역방향 — 필드가 겹치지 않아 같은 레코드에 두 번 patch 되어도 안전하다
+        toPeC.forEach(function(t){
+          try{ if(dbPatch(t.store, t.id, t.fields)) okPe++; }catch(e){}
+        });
+        // 부담당 참여 — managerSubs만 건드린다(주담당은 그대로)
+        toPeS.forEach(function(t){
+          try{ if(dbPatch(t.store, t.id, { managerSubs:t.subs })) okPe++; }catch(e){}
+        });
+        // project_progress는 배열 통째 저장 — 푸른이알피 자신의 dbSet으로만 쓴다
+        if(ppDirty){ try{ dbSet('project_progress', PP); }catch(e){ toPg = 0; } }
+        var paths = Object.keys(up);
+        if(!paths.length && !okPe && !toPg){ fin(); return; }
+        (paths.length ? fbDb.ref().update(up) : Promise.resolve()).then(function(){
+          if(okPe || toWs || toPg){
+            try{ showToast('🔗 업무관리 동기화 — 푸른이알피 ' + (okPe + toPg) + '건, 업무관리 ' + toWs + '건 반영'); }catch(e){}
+            if(okPe || toPg){ try{ if(onDone) onDone(); }catch(e){} }
+          }
+          fin();
+        }).catch(fin);
+      }).catch(fin);
+    }catch(e){ fin(); }
+  }
+
 function MyDeskV2(props){
   var sid = CURRENT_USER.sid;
   var name = CURRENT_USER.name;
@@ -48176,316 +48495,13 @@ function MyDeskV2(props){
   }, []);
   function wsOpen(wid){ try{ window.open('work.html?sso=1#item=' + encodeURIComponent(wid), '_blank'); }catch(e){} }
 
-  // ── 업무시트 ↔ 푸른이알피 종료/재개 양방향 동기화 ──
-  // 양쪽 상태를 work_erp/pesync 스냅샷과 비교해 "변한 쪽"을 반대편에 반영한다.
-  // 첫 만남은 기준선만 기록하고 아무것도 바꾸지 않는다(대량 오종료 방지).
-  // 푸른이알피 쓰기는 반드시 dbPatch — 키별 배열/객체 저장형태를 알아서 처리한다.
-  var WS_STORE = { contract:'contracts', case:'cases', consulting:'consultings', fund:'funds', other:'other_projects' };
-  function wsSafeKey(s){ return String(s == null ? '' : s).replace(/[.#$\/\[\]'"`\\\s\u0000-\u001F\u007F -]/g, '_'); }
-  function wsToday(){ var d = new Date(), p = function(n){ return (n < 10 ? '0' : '') + n; };
-    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
+  // 업무시트 ↔ 푸른이알피 동기화 엔진은 밖으로 뺐다(wsSyncRun) — 이 화면을 열어야만
+  // 돌던 것을 앱 켤 때와 업무관리 신호에도 돌게 하려고. 여기서는 화면을 새로 그리려고
+  // 부르기만 한다. 엔진 설명은 wsSyncRun 위에 있다.
   useEffect(function(){
-    var done = false;
-    try{
-      if(typeof fbDb === 'undefined' || !fbDb) return;
-      Promise.all([
-        fbDb.ref('work_erp/items').once('value'),
-        fbDb.ref('work_erp/pesync').once('value'),
-        fbDb.ref('work_erp/steps').once('value')
-      ]).then(function(res){
-        if(done) return;
-        var W = res[0].val() || {}, SN = res[1].val() || {}, ST = res[2].val() || {};
-        var up = {}, toPe = [], toWs = 0, now = new Date().toISOString();
-        var toPeB = [];                                    // 업무 요약 역방향 반영 대기열
-        var toPeS = [];                                    // 부담당 참여 요청 반영 대기열
-        // 진행 필드는 project_progress(배열 통째 저장)에 담긴다 — 업무시트가 직접 쓰면
-        // 다음 전체 저장에 덮여 사라지므로, 여기서 푸른이알피가 자기 손으로 쓴다.
-        var PP = dbGet('project_progress', []) || [];
-        if(!Array.isArray(PP)) PP = [];
-        var ppDirty = 0, toPg = 0, toPeC = [];
-        function wsProg(wid){                              // 진행 단계 → 퍼센트
-          var o = ST[wid] || {}, t = 0, d = 0;
-          Object.keys(o).forEach(function(k){ var s = o[k]; if(s && s.t){ t++; if(s.done) d++; } });
-          return t ? Math.round(d / t * 100) : null;
-        }
-        function pcOf(pe){                                 // 그 건의 사업장 담당자 첫 번째
-          var c = (pe && pe.company && pe.company.contacts) || [];
-          for(var i = 0; i < c.length; i++){ if(c[i] && (c[i].name || c[i].phone)) return c[i]; }
-          return null;
-        }
-        function ppFind(type, id){
-          for(var i = 0; i < PP.length; i++){
-            var p = PP[i];
-            if(p && p.sid === sid && p.projectType === type && p.projectId === id) return i;
-          }
-          return -1;
-        }
-        // 스냅샷과 비교해 한쪽만 바뀌었으면 그쪽, 양쪽이 다르게 바뀌었으면 최근 쪽.
-        // 바뀐 게 없으면 null을 돌려 아무것도 건드리지 않는다.
-        function pick3(sv, wv, pv, wNewer){
-          sv = String(sv == null ? '' : sv);
-          var wc = (wv !== sv), pc = (pv !== sv);
-          if(!wc && !pc) return null;
-          if(wc && !pc) return wv;
-          if(pc && !wc) return pv;
-          if(wv === pv) return wv;
-          return wNewer ? wv : pv;
-        }
-        Object.keys(W).forEach(function(wid){
-          var w = W[wid];
-          if(!w || !w.ref || !w.ref.type || !w.ref.id || w.pe_nosync) return;
-          var store = WS_STORE[w.ref.type]; if(!store) return;
-          var arr = dbGet(store, []) || [];
-          var pe = null;
-          for(var i = 0; i < arr.length; i++){ if(arr[i] && arr[i].id === w.ref.id){ pe = arr[i]; break; } }
-          if(!pe) return;                                  // 마스터에서 사라진 건 — 건드리지 않음
-          var key = w.ref.type + '-' + wsSafeKey(w.ref.id);
-          var snap = SN[key] || {};
-          // ── 부담당 참여 요청 (업무관리 → 푸른이알피) ──
-          // 업무관리에서 "부담당으로 가져오기"를 누르면 pe_addsub에 sid가 담긴다.
-          // 더하기만 한다 — 사람을 빼는 일은 푸른이알피에서 눈으로 보고 해야 한다.
-          // ⚠ 기준선만 찍고 돌아가는 아래 분기보다 앞에 두어야 한다. 새로 가져온 건은
-          //   첫 패스에서 그 분기로 빠지므로, 뒤에 두면 요청이 영영 처리되지 않는다.
-          if(Array.isArray(w.pe_addsub) && w.pe_addsub.length){
-            var curS = (pe.managerSubs || []).slice(), addN = 0;
-            w.pe_addsub.forEach(function(sd){
-              sd = String(sd || ''); if(!sd) return;
-              if(sd === pe.managerMain) return;             // 주담당을 부담당으로 또 넣지 않는다
-              if(curS.indexOf(sd) < 0){ curS.push(sd); addN++; }
-            });
-            if(addN) toPeS.push({ store:store, id:w.ref.id, subs:curS });
-            up['work_erp/items/' + wid + '/pe_addsub'] = null;   // 처리했으니 지운다
-          }
-          // ── 사건 단계 기한 → 업무관리 (한 방향) ──
-          // 법정 기한은 송달일·판정일에서 계산된 값이다. 사람이 적은 "다음 할 일"(next)에
-          // 넣으면 그 사람이 쓴 내용을 덮으므로 섞지 않고 따로 내려보낸다.
-          // 업무관리는 이 칸을 보여주기만 하고 되돌려 쓰지 않는다 — 그래서 pick3 를 타지 않는다.
-          // ⚠ 기준선만 찍고 돌아가는 아래 분기보다 앞에 두어야 새로 연결한 건도 첫 패스에 받는다.
-          if(w.ref.type === 'case' && typeof caseNextDue === 'function'){
-            // 끝난 사건의 기한은 내려보내지 않는다 (남아 있으면 달력에 계속 뜬다)
-            var _nd = isItemClosed(pe) ? null : caseNextDue(pe);
-            var _ndi = _nd ? (caseStageInfo(_nd.code) || {}) : null;
-            var _want = _nd ? { date:_nd.due,
-                                label:(_ndi.short || _ndi.name || '단계') + ' 기한',
-                                verified: _ndi.dueVerified === true } : null;
-            var _cur = w.pe_due || null;
-            var _same = (_cur && _want)
-              ? (String(_cur.date||'') === _want.date && String(_cur.label||'') === _want.label
-                 && (_cur.verified === true) === _want.verified)
-              : (!_cur && !_want);
-            if(!_same){ up['work_erp/items/' + wid + '/pe_due'] = _want; toWs++; }
-          }
-          var peClosed = isItemClosed(pe), wsDone = (w.state === 'done');
-          // 진행 필드는 담당자 본인 것만 맞춘다 — project_progress가 사람별 기록이라
-          // 남의 행을 여기서 만들거나 고치면 안 된다.
-          var mine = !!(w.mgr_main && w.mgr_main.sid && w.mgr_main.sid === sid);
-          var pi = mine ? ppFind(w.ref.type, w.ref.id) : -1;
-          var pp = pi >= 0 ? PP[pi] : null;
-          var wst = String(w.status || ''), wnt = String((w.next && w.next.text) || ''), wnd = String((w.next && w.next.date) || '');
-          var pst = String((pp && pp.status) || ''), pnt = String((pp && pp.nextAction) || ''), pnd = String((pp && pp.nextDate) || '');
-          var pct = wsProg(wid);
-          // 업무 요약은 마스터 레코드에 붙는 공용 정보 — 담당자 본인 것만 맞추는 진행 필드와 달리 mine 조건이 없다
-          var wbr = briefTrim(w.brief), pbr = briefTrim(pe.brief), sbr = wbr;
-          if(!snap.synced_at){                             // 기준선만 기록
-            up['work_erp/pesync/' + key] = { type:w.ref.type, id:w.ref.id, work_id:wid,
-              pe_closed:peClosed, ws_done:wsDone, st:wst, nt:wnt, nd:wnd, br:wbr,
-              ti:String(w.title || ''), cl:String(w.client || ''),
-              cn:String((pcOf(pe) || {}).name || ''), cr:String((pcOf(pe) || {}).role || ''),
-              cp:String((pcOf(pe) || {}).phone || ''),
-              pg:(pct === null ? '' : String(pct)), synced_at:now, note:'기준선' };
-            return;
-          }
-          var peChanged = (peClosed !== !!snap.pe_closed), wsChanged = (wsDone !== !!snap.ws_done);
-          var want = peClosed;                             // 아무 변화 없으면 지금 상태 유지
-          if(peChanged || wsChanged){
-            if(peChanged && wsChanged){
-              if(peClosed === wsDone) want = peClosed;      // 양쪽이 같아졌으면 스냅샷만 갱신
-              else {                                        // 충돌 — 더 최근에 바뀐 쪽을 따른다
-                var peAt = String(pe.updatedAt || pe.closedDate || ''), wsAt = String(w.state_at || w.done_date || '');
-                want = (peAt > wsAt) ? peClosed : wsDone;
-              }
-            } else want = peChanged ? peClosed : wsDone;
-            if(want !== peClosed){                          // 푸른이알피 반영
-              toPe.push({ store:store, id:w.ref.id, close:want, way:String(w.end_way || 'done'),
-                to:String(w.end_to || ''), res:String(w.end_result || ''),
-                name:(pe.companyName || pe.title || w.ref.id) });
-            }
-            if(want !== wsDone){                            // 업무시트 반영
-              up['work_erp/items/' + wid + '/state'] = want ? 'done' : null;
-              up['work_erp/items/' + wid + '/done_date'] = want ? wsToday() : null;
-              // 푸른이알피 status에서 끝낸 방식을 그대로 옮긴다
-              var pw = pe.status === 'cancelled' ? 'cancel'
-                     : pe.status === 'transferred' ? 'transfer' : 'done';
-              up['work_erp/items/' + wid + '/status'] =
-                want ? (pw === 'cancel' ? '취소' : pw === 'transfer' ? '이관' : '종료') : '진행중';
-              if(want){
-                up['work_erp/items/' + wid + '/end_way'] = pw;
-                if(pw === 'transfer' && pe.transferredTo)
-                  up['work_erp/items/' + wid + '/end_to'] = String(pe.transferredTo);
-                if(pe.caseResult) up['work_erp/items/' + wid + '/end_result'] = String(pe.caseResult);
-              }
-              up['work_erp/items/' + wid + '/state_at'] = now;
-              toWs++;
-            }
-          }
-          // ── 진행 필드(상태·다음 액션·다음 날짜) 양방향 ──
-          var sst = wst, snt = wnt, snd = wnd, spg = (pct === null ? '' : String(pct));
-          if(mine && !want){                                // 종료된 건은 진행 필드를 맞추지 않는다
-            var wNewer = String(w.up_at || w.state_at || '') > String((pp && pp.updatedAt) || '');
-            var nst = pick3(snap.st, wst, pst, wNewer);
-            var nnt = pick3(snap.nt, wnt, pnt, wNewer);
-            var nnd = pick3(snap.nd, wnd, pnd, wNewer);
-            var pf = {};
-            if(nst !== null){ sst = nst;
-              if(nst !== wst){ up['work_erp/items/' + wid + '/status'] = nst; toWs++; }
-              if(nst !== pst) pf.status = nst; }
-            if(nnt !== null || nnd !== null){
-              var fnt = (nnt === null ? wnt : nnt), fnd = (nnd === null ? wnd : nnd);
-              snt = fnt; snd = fnd;
-              if(fnt !== wnt || fnd !== wnd){
-                up['work_erp/items/' + wid + '/next'] = (fnt || fnd) ? { text:fnt, date:fnd } : null;
-                toWs++;
-              }
-              if(fnt !== pnt) pf.nextAction = fnt;
-              if(fnd !== pnd) pf.nextDate = fnd;
-            }
-            // 진행률은 업무시트의 진행 단계에서 계산한다 — 단계가 있을 때만 밀어 넣는다.
-            // (단계가 없으면 푸른이알피에서 손으로 넣은 값을 그대로 둔다)
-            if(pct !== null && pp && Number(pp.progress || 0) !== pct) pf.progress = pct;
-            if(pct !== null && !pp) pf.progress = pct;
-            // 메모는 비어 있을 때만 최근 기록 한 줄로 채운다 — 사람이 쓴 메모를 덮지 않는다
-            if(w.last && w.last.t && !(pp && String(pp.note || '').trim())) pf.note = String(w.last.t);
-            if(Object.keys(pf).length){
-              if(pi >= 0) PP[pi] = Object.assign({}, pp, pf, { updatedAt:now });
-              else PP.unshift(Object.assign({
-                id:'pp-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-                sid:sid, projectType:w.ref.type, projectId:w.ref.id,
-                projectNo:(pe.caseNo || pe.contractNo || pe.consultNo || pe.fundNo || pe.projectNo || pe.no || ''),
-                projectName:(pe.title || pe.caseName || pe.programName || ''),
-                companyName:(pe.companyName || pe.fundName || pe.targetName || ''),
-                progress:0, status:'', nextAction:'', nextDate:'', note:'',
-                createdAt:now
-              }, pf, { updatedAt:now }));
-              ppDirty = 1; toPg++;
-            }
-          }
-          // ── 업무 요약 양방향 ──
-          // 한쪽만 바뀌었으면 그쪽, 양쪽 다 바뀌었으면 최근에 손댄 쪽. 종료된 건도 요약은 계속 맞춘다.
-          var brNewer = String(w.up_at || w.state_at || '') > String(pe.updatedAt || '');
-          var nbr = pick3(snap.br, wbr, pbr, brNewer);
-          if(nbr !== null){
-            sbr = nbr;
-            if(nbr !== wbr){ up['work_erp/items/' + wid + '/brief'] = nbr || null; toWs++; }
-            if(nbr !== pbr) toPeB.push({ store:store, id:w.ref.id, brief:nbr });
-          }
-          // ── 기본정보(업무명·의뢰인·사업장 담당자) 양방향 ──
-          // 진행 필드와 달리 사람별 기록이 아니므로 담당자·종료 여부와 무관하게 맞춘다.
-          // 업체명·사업자번호·관리번호·유형·금액은 계약서·세금계산서와 엮여 있어 제외한다.
-          var pc0 = pcOf(pe) || {};
-          var wti = String(w.title || ''), pti = String(pe.title || '');
-          var wcl = String(w.client || ''), pcl = String(pe.payee || '');
-          var wc0 = w.contact || {};
-          var wcn = String(wc0.name || ''), wcr = String(wc0.rank || ''), wcp = String(wc0.phone || '');
-          var pcn = String(pc0.name || ''), pcr = String(pc0.role || ''), pcp = String(pc0.phone || '');
-          var cNewer = String(w.up_at || '') > String(pe.updatedAt || '');
-          var bw = {}, bp = {};
-          function bpick(sv, wv, pv, k){
-            var v = pick3(sv, wv, pv, cNewer);
-            if(v === null) return wv;                       // 변화 없음 — 지금 값 유지
-            if(v !== wv) bw[k] = v;
-            if(v !== pv) bp[k] = v;
-            return v;
-          }
-          var sti = bpick(snap.ti, wti, pti, 'ti');
-          var scl = bpick(snap.cl, wcl, pcl, 'cl');
-          var scn = bpick(snap.cn, wcn, pcn, 'cn');
-          var scr = bpick(snap.cr, wcr, pcr, 'cr');
-          var scp = bpick(snap.cp, wcp, pcp, 'cp');
-          if(bw.ti !== undefined){ up['work_erp/items/' + wid + '/title'] = bw.ti; toWs++; }
-          if(bw.cl !== undefined){ up['work_erp/items/' + wid + '/client'] = bw.cl; toWs++; }
-          if(bw.cn !== undefined || bw.cr !== undefined || bw.cp !== undefined){
-            // 업무관리는 이제 사업장 담당자를 여러 명 둔다(items/{id}/contacts).
-            // 첫 사람만 맞추고 뒷사람은 그대로 둔다 — 배열을 통째로 갈면 업무관리에서
-            // 손으로 더 적어 둔 담당자가 조용히 사라진다. contact(단수)는 contacts[0]과 같게 유지한다.
-            // 직책은 rank(옛 이름)와 position(공통 이름) 둘 다 적어 양쪽이 읽을 수 있게 한다.
-            var _c1 = (scn || scr || scp) ? { name:scn, rank:scr, position:scr, phone:scp } : null;
-            var _crest = (w.contacts || []).slice(1);
-            up['work_erp/items/' + wid + '/contact'] = _c1;
-            up['work_erp/items/' + wid + '/contacts'] =
-              _c1 ? [_c1].concat(_crest) : (_crest.length ? _crest : null);
-            toWs++;
-          }
-          var cpf = {};
-          if(bp.ti !== undefined) cpf.title = bp.ti;
-          if(bp.cl !== undefined) cpf.payee = bp.cl;
-          if(bp.cn !== undefined || bp.cr !== undefined || bp.cp !== undefined){
-            // company를 통째로 갈지 않고 첫 담당자만 바꿔 나머지 연락처를 지킨다
-            var comp = Object.assign({}, pe.company || {});
-            var cl2 = (comp.contacts || []).slice();
-            var i0 = -1;
-            for(var ci = 0; ci < cl2.length; ci++){
-              if(cl2[ci] && (cl2[ci].name || cl2[ci].phone)){ i0 = ci; break; }
-            }
-            var c0 = Object.assign({}, i0 >= 0 ? cl2[i0] : { isPrimary:true });
-            if(!c0.id) c0.id = 'mc-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-            // 직책은 role(계약 화면이 읽는 옛 칸)과 position(업체관리가 읽는 공통 칸) 둘 다 적는다.
-            // 판정·비교는 그대로 role 로 한다 — 기준선(pesync)을 흔들지 않기 위해서다.
-            c0.name = scn; c0.role = scr; c0.position = scr; c0.phone = scp;
-            if(i0 >= 0) cl2[i0] = c0; else cl2.unshift(c0);
-            comp.contacts = cl2;
-            cpf.company = comp;
-          }
-          if(Object.keys(cpf).length) toPeC.push({ store:store, id:w.ref.id, fields:cpf });
-          up['work_erp/pesync/' + key] = { type:w.ref.type, id:w.ref.id, work_id:wid,
-            pe_closed:want, ws_done:want, st:sst, nt:snt, nd:snd, br:sbr, pg:spg,
-            ti:sti, cl:scl, cn:scn, cr:scr, cp:scp, synced_at:now };
-        });
-        // 푸른이알피 쪽은 dbPatch로 (저장형태 안전)
-        var okPe = 0;
-        // 끝낸 방식 → 푸른이알피 상태. 한 덩어리로 'closed'만 쓰면 취소·이관 구분이 사라진다.
-        var WS_WAY = { done:{ st:'closed', r:'종료' }, cancel:{ st:'cancelled', r:'취소' },
-                       transfer:{ st:'transferred', r:'이관완료' } };
-        toPe.forEach(function(t){
-          var f;
-          if(t.close){
-            var m = WS_WAY[t.way] || WS_WAY.done;
-            f = { closedDate: wsToday(), closedAt: (new Date()).toISOString(),
-                  status: m.st, closeReason: m.r + ' (업무관리)', closedReason: m.r };
-            if(t.way === 'transfer' && t.to) f.transferredTo = t.to;
-            // 사건 결과 — 고른 것이 있을 때만 쓴다. 빈 값으로 덮으면 푸른이알피 기록이 지워진다
-            if(t.res) f.caseResult = t.res;
-          } else {
-            // 재개 — 종료 표시만 걷어낸다. 예전엔 status를 무조건 'progress'로 덮어
-            // 원래 취소·이관이었다는 사실이 사라졌다.
-            f = { closedDate: null, closedAt: null, closeDate: null, status: 'progress' };
-          }
-          try{ if(dbPatch(t.store, t.id, f)) okPe++; }catch(e){}
-        });
-        // 업무 요약 역방향 — 종료 반영과 같은 레코드면 한 번 더 patch 되지만 필드가 겹치지 않아 안전하다
-        toPeB.forEach(function(t){
-          try{ if(dbPatch(t.store, t.id, { brief:t.brief })) okPe++; }catch(e){}
-        });
-        // 기본정보 역방향 — 필드가 겹치지 않아 같은 레코드에 두 번 patch 되어도 안전하다
-        toPeC.forEach(function(t){
-          try{ if(dbPatch(t.store, t.id, t.fields)) okPe++; }catch(e){}
-        });
-        // 부담당 참여 — managerSubs만 건드린다(주담당은 그대로)
-        toPeS.forEach(function(t){
-          try{ if(dbPatch(t.store, t.id, { managerSubs:t.subs })) okPe++; }catch(e){}
-        });
-        // project_progress는 배열 통째 저장 — 푸른이알피 자신의 dbSet으로만 쓴다
-        if(ppDirty){ try{ dbSet('project_progress', PP); }catch(e){ toPg = 0; } }
-        var paths = Object.keys(up);
-        if(!paths.length && !okPe && !toPg) return;
-        (paths.length ? fbDb.ref().update(up) : Promise.resolve()).then(function(){
-          if(okPe || toWs || toPg){
-            try{ showToast('🔗 업무관리 동기화 — 푸른이알피 ' + (okPe + toPg) + '건, 업무관리 ' + toWs + '건 반영'); }catch(e){}
-            if(okPe || toPg) setRfk(Date.now());
-          }
-        }).catch(function(){});
-      }).catch(function(){});
-    }catch(e){}
-    return function(){ done = true; };
+    var alive = true;
+    wsSyncRun(function(){ if(alive) setRfk(Date.now()); });
+    return function(){ alive = false; };
   }, []);
   function refreshDash(){
     setRfk(rfk+1);
@@ -74294,6 +74310,27 @@ function App(){
     };
     firebase.database().ref('uid_roles/' + u.uid).set(rec).catch(function(){});
   }
+
+  /* ── [업무관리 연동] 종료·재개를 곧바로 반영한다 ──
+     엔진(wsSyncRun)은 원래 「나의 업무」를 열어야만 돌았다. 여기서 앱이 켜질 때 한 번 돌리고,
+     업무관리가 종료·재개하며 찍는 신호(work_erp/sync_ping)를 지켜보다 바뀌면 다시 돌린다.
+     ⚠ 왜 items 가 아니라 따로 만든 sync_ping 을 듣는가 —
+       엔진은 work_erp/items 에도 쓴다. items 를 들으면 제가 쓴 걸 제가 듣고 끝없이 돈다.
+       sync_ping 은 업무관리만 쓰고 엔진은 절대 안 쓰므로 되먹임이 없다.
+     붙는 순간 한 번 오는 값은 건너뛴다 — 「바뀐 것」이 아니고, 바로 위에서 이미 돌렸다. */
+  useEffect(function(){
+    if(typeof fbDb === 'undefined' || !fbDb) return;
+    try{ wsSyncRun(); }catch(e){}
+    var first = true, t = null;
+    var ref = fbDb.ref('work_erp/sync_ping');
+    var onPing = function(){
+      if(first){ first = false; return; }
+      clearTimeout(t);                       // 몰아서 종료하면 신호가 연달아 온다 — 묶어서 한 번만
+      t = setTimeout(function(){ try{ wsSyncRun(); }catch(e){} }, 1200);
+    };
+    ref.on('value', onPing);
+    return function(){ clearTimeout(t); try{ ref.off('value', onPing); }catch(e){} };
+  }, []);
 
   // ── [포털 연동] enter.html에서 로그인해 온 경우: Firebase 인증이 확인되면 자동 로그인 (튕기기 없음) ──
   // sso=1 파라미터가 있으면 확인이 끝날 때까지 로그인 화면 대신 스플래시 표시 (번쩍임 방지)

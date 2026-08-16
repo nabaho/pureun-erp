@@ -163,7 +163,19 @@ ok('업무 요약은 미러에 넣지 않는다 (양방향이라 덮으면 안 �
   PE_MIRROR.indexOf('brief') < 0);
 
 /* ── 푸른이알피 엔진: 진행 필드는 그쪽이 자기 손으로 쓴다 ── */
-const ENG = P.slice(P.indexOf('// ── 업무시트 ↔ 푸른이알피'), P.indexOf('function refreshDash()'));
+/* 엔진은 MyDeskV2 밖으로 나가 top-level wsSyncRun 이 됐다(그 화면을 열어야만 돌던 것을
+   앱 켤 때와 업무관리 신호에도 돌게 하려고). 주석 표시로 자르면 옮길 때마다 깨지므로
+   함수 본문을 괄호로 잡는다. */
+const ENG = (function () {
+  const i = P.indexOf('function wsSyncRun(');
+  if (i < 0) throw new Error('wsSyncRun 못 찾음');
+  let d = 0, st = false;
+  for (let j = i; j < P.length; j++) {
+    if (P[j] === '{') { d++; st = true; }
+    else if (P[j] === '}') { d--; if (st && !d) return P.slice(i, j + 1); }
+  }
+  throw new Error('wsSyncRun 끝 못 찾음');
+})();
 ok('진행 필드는 project_progress 에 담기고 배열 통째로 저장된다',
   ENG.indexOf("dbGet('project_progress', [])") > 0 && ENG.indexOf("dbSet('project_progress', PP)") > 0);
 ok('업무시트가 그 배열을 직접 쓰지 않는다 (다음 전체 저장에 덮인다)',
