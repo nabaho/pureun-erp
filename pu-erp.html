@@ -8700,6 +8700,34 @@ if(fbDb){
       }
     }).catch(function(){});
   }
+  /* ── 대시보드 🔄 새로고침 (요금 조사 2026-08-16) ──
+     「나의 업무」·「법인 대시보드」의 🔄 단추가 fbInitialSync() 를 **아무 조건 없이**
+     불렀다 — 한 번 누를 때마다 data 노드 전체(실측 2.83MB: finance_income 958KB,
+     payroll_monthly 373KB, companies 281KB, cms_ledger 240KB …)가 다시 내려왔다.
+     다섯 번 누르면 14MB 다. 바로 옆 _resyncLatest 는 이미 「짧게 벗어났으면
+     건너뛴다」로 막아 뒀는데, 단추 쪽만 문이 없었다.
+
+     ⚠ 실시간 구독(.on('child_changed'/'child_added'))이 이미 최신을 밀어 준다.
+       그래서 대시보드가 정말 해야 하는 일은 **다시 그리기**이고, 통째 받기는
+       구독이 끊겼을 때만 필요하다.
+     ⚠ _lastResync 를 **_resyncLatest 와 함께 쓴다.** 시계를 따로 두면 「방금
+       복귀 재동기화로 받아 놓고 단추로 또 받는」 겹치기가 그대로 남는다.
+     ⚠ 건너뛰어도 화면은 setRfk 로 다시 그린다 — 사람 눈에는 늘 새로고침된다.
+     되돌린 값: 실제로 받았으면 true, 최신이라 건너뛰었으면 false. */
+  window.erpRefreshData = function(){
+    if(!fbDb || !_fbSynced) return false;
+    var now = Date.now();
+    if(now - _lastResync < RESYNC_IDLE_MS) return false;   // 구독이 최신을 들고 있다
+    _lastResync = now;
+    fbInitialSync().then(function(n){
+      if(n > 0){
+        _dbCacheClear();
+        try { window.dispatchEvent(new CustomEvent('fb_initial_done', {detail:n})); } catch(e){}
+      }
+    }).catch(function(){});
+    return true;
+  };
+
   try {
     document.addEventListener('visibilitychange', function(){
       if(document.hidden) _markAway(); else _resyncLatest();
@@ -49055,7 +49083,10 @@ function MyDeskV2(props){
   }, []);
   function refreshDash(){
     setRfk(rfk+1);
-    if(typeof fbInitialSync==='function'){ try{ fbInitialSync(); }catch(_){} }
+    /* ⚠ fbInitialSync() 를 바로 부르지 않는다 — 누를 때마다 data 통째(2.83MB)가
+       내려왔다(요금 조사 2026-08-16). erpRefreshData 가 「최근에 받았으면 건너뛴다」를
+       판단한다. 건너뛰어도 위 setRfk 로 화면은 다시 그려진다. */
+    if(typeof window.erpRefreshData==='function'){ try{ window.erpRefreshData(); }catch(_){} }
     showToast('🔄 새로고침');
   }
   // 위젯 접힌 상태 (localStorage)
@@ -51476,7 +51507,9 @@ function CorpDashboard(props){
   var lmRfkS = useState(0); var lmRfk = lmRfkS[0]; var setLmRfk = lmRfkS[1];
   function corpRefresh(){
     setCorpRfk(corpRfk+1);
-    if(typeof fbInitialSync==='function'){ try{ fbInitialSync(); }catch(_){} }
+    /* ⚠ refreshDash 와 같은 이유로 erpRefreshData 를 거친다(요금 조사 2026-08-16) —
+       두 대시보드가 같은 문을 써야 한쪽만 새는 일이 없다. */
+    if(typeof window.erpRefreshData==='function'){ try{ window.erpRefreshData(); }catch(_){} }
     showToast('🔄 새로고침');
   }
   var ccpS = useState(dbGet('corp_widget_collapsed', {})||{});
