@@ -2045,6 +2045,82 @@ function lensShort(label) {
   return String(label || '카메라').slice(0, 12);
 }
 
+/* ══════ 렌즈 자동 고르기 (대표 지시 2026-08-15 "자동으로 못 하나") ══════
+   이름만 보고 고르는 것은 **추측**이다 — 기기마다 라벨이 다르고, 라벨이 아예
+   비어 있는 브라우저도 있다. 그래서 처음 한 번은 **직접 열어 보고 재서** 고른다.
+
+   무엇으로 고르나 (앞의 것이 셀수록 확실하다):
+     ① 이 렌즈가 낼 수 있는 **최대 크기** — 주카메라가 거의 언제나 제일 크다.
+        초광각·망원·심도 렌즈는 낮게 나온다. 앞에 무엇이 놓여 있든 흔들리지 않는
+        값이라 제일 믿을 만하다.
+     ② 실제로 켜서 잰 **선명도** — 크기가 같을 때 가른다.
+     ③ 이름 점수 — 위 둘이 같을 때만 쓴다.
+   ⚠ 한 번만 한다. 결과를 기억해 두고 다음부터는 바로 그 렌즈로 연다
+     (2초쯤 걸리므로 매번 하면 「눌러도 안 켜진다」가 된다).
+   ⚠ 재다가 무엇이 잘못돼도 카메라는 열려야 한다 — 실패하면 빈 값을 돌려주고
+     예전처럼 브라우저에 맡긴다. */
+const CAM_LENS_AUTO_LS = 'puphotos.cam.lensAuto';
+
+/* 렌즈 하나를 잠깐 열어 크기와 선명도를 잰다. 무슨 일이 있어도 장치를 놓아 준다. */
+async function probeLens(deviceId, settleMs) {
+  let stream = null, vid = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { deviceId: { exact: deviceId }, width: { ideal: 3840 }, height: { ideal: 2160 } }, audio: false
+    });
+    const track = stream.getVideoTracks()[0];
+    if (!track) return null;
+    let cap = {};
+    try { cap = (track.getCapabilities && track.getCapabilities()) || {}; } catch (_) { cap = {}; }
+    /* 화면에 붙이지 않고 잰다 — 미리보기가 깜빡이면 안 된다 */
+    vid = document.createElement('video');
+    vid.playsInline = true; vid.muted = true; vid.srcObject = stream;
+    try { await vid.play(); } catch (_) { /* 재생이 막혀도 크기는 잴 수 있다 */ }
+    await camPause(settleMs);   // 초점이 한 번 도는 시간
+    const w = vid.videoWidth || 0, h = vid.videoHeight || 0;
+    return {
+      deviceId: deviceId,
+      maxEdge: Math.max((cap.width && cap.width.max) || 0, (cap.height && cap.height.max) || 0),
+      w: w, h: h,
+      sharp: w ? grabSharp(vid, w, h) : 0
+    };
+  } catch (_) {
+    return null;
+  } finally {
+    if (vid) { try { vid.srcObject = null; } catch (_) { } }
+    if (stream) stream.getTracks().forEach(function (t) { try { t.stop(); } catch (_) { } });
+  }
+}
+
+/* 뒷면 렌즈를 하나씩 재서 제일 나은 것을 고른다.
+   돌려주는 값 — 렌즈 아이디 / '' 고를 것이 없음 / null **아직 잴 때가 아님**
+   ⚠ null 이 왜 필요한가: 권한을 받기 **전에는 렌즈 이름이 비어 있다.**
+     이름이 없으면 앞면·뒷면을 못 가려 셀피 카메라까지 재게 되고, 자칫 그것을
+     고를 수도 있다. 그럴 때는 재지 말고 물러나야 한다 — 이번엔 예전처럼 열고,
+     권한이 생긴 다음 번에 제대로 잰다. */
+async function autoPickLens(sessionToken) {
+  const cams = await loadBackCams();
+  const named = cams.filter(function (c) { return c.label && c.label !== '카메라'; });
+  if (named.length !== cams.length || !cams.length) return null;   // 이름이 아직 안 온다
+  if (cams.length < 2) return '';
+  const tip = $('camTip');
+  const results = [];
+  for (let i = 0; i < cams.length; i++) {
+    if (sessionToken !== camSessionToken) return '';   // 그 사이 닫았으면 그만둔다
+    if (tip) tip.textContent = '카메라 렌즈를 고르는 중… (' + (i + 1) + '/' + cams.length + ')';
+    const r = await probeLens(cams[i].deviceId, 450);   // 렌즈당 0.45초 — 셋이면 2초 안쪽
+    if (r) results.push(Object.assign(r, { name: cams[i].label, hint: cams[i].score }));
+  }
+  if (!results.length) return '';
+  results.sort(function (a, b) {
+    return (b.maxEdge - a.maxEdge) || (b.sharp - a.sharp) || (b.hint - a.hint);
+  });
+  try { console.info('[렌즈]', results.map(function (r) {
+    return lensShort(r.name) + ' 최대' + r.maxEdge + ' 미리보기' + r.w + '×' + r.h + ' 선명도' + r.sharp;
+  }).join(' · ')); } catch (_) { }
+  return results[0].deviceId;
+}
+
 /* 🔭 — 다음 렌즈로 바꿔 다시 연다. 고른 렌즈는 기억한다. */
 async function camNextLens() {
   if (camBackCams.length < 2) { toast('이 기기는 뒷면 렌즈가 하나입니다'); return; }
@@ -2088,9 +2164,22 @@ function camShowDiag() {
        렌즈는 대개 10~15cm 보다 가까우면 초점을 못 잡는다. 되는지부터 본다. */
     '  당겨찍기 ' + (cap.zoom ? (cap.zoom.min + '~' + cap.zoom.max + ' 배 (지금 ' + (set.zoom || 1) + ')') : '안 됨'),
     '',
-    '이 내용을 그대로 알려 주시면 원인을 정확히 가릅니다.'
+    '렌즈를 처음부터 다시 재서 고를까요?',
+    '(2초쯤 걸립니다 · [취소]하면 지금 렌즈를 그대로 씁니다)'
   ];
-  alert(lines.join('\n'));
+  if (!confirm(lines.join('\n'))) return;
+  camRecalibrateLens();
+}
+
+/* 렌즈를 다시 재서 고른다 — 자동이 잘못 골랐거나 기기를 바꿨을 때 */
+async function camRecalibrateLens() {
+  try { localStorage.removeItem(CAM_LENS_LS); } catch (_) { }
+  try { localStorage.removeItem(CAM_LENS_AUTO_LS); } catch (_) { }
+  camWantDevId = ''; camDevId = '';
+  camStop();
+  await openCam();
+  const cur = camBackCams.find(function (c) { return c.deviceId === camDevId; });
+  toast('🔭 ' + (cur ? lensShort(cur.label) : '렌즈') + ' 을(를) 골랐습니다');
 }
 /* 카메라를 닫고 다시 열었는데 앞 세션의 느린 비동기 응답이 뒤늦게 도착하면
    새 카메라의 화질 설정을 덮어쓸 수 있다. 열 때마다 값을 바꾸고, 닫을 때도
@@ -2260,6 +2349,28 @@ async function openCam() {
   $('camOv').style.display = 'flex';
   /* 지난번에 고른 렌즈가 있으면 그것으로 연다 (기기마다 브라우저가 고르는 렌즈가 다르다) */
   if (!camWantDevId) { try { camWantDevId = localStorage.getItem(CAM_LENS_LS) || ''; } catch (_) { } }
+  /* ── 처음 한 번만: 뒷면 렌즈를 하나씩 열어 재서 주카메라를 고른다 ──
+     이름만 보고 고르면 틀릴 수 있어, 기기가 내놓는 값으로 직접 가른다.
+     2초쯤 걸리지만 결과를 기억하므로 다음부터는 바로 열린다.
+     ⚠ 권한이 없으면 여기서 권한창이 뜬다 — 거부하면 빈 값이 와서 아래 예전 길로 간다. */
+  if (!camWantDevId) {
+    let done = '';
+    try { done = localStorage.getItem(CAM_LENS_AUTO_LS) || ''; } catch (_) { }
+    if (!done) {
+      const picked = await autoPickLens(sessionToken);
+      if (sessionToken !== camSessionToken) return false;
+      /* null = 아직 잴 때가 아니다(권한 전이라 렌즈 이름이 비었다).
+         그때는 「했음」으로 적지 않는다 — 적어 두면 영영 다시 안 잰다. */
+      if (picked !== null) {
+        try { localStorage.setItem(CAM_LENS_AUTO_LS, 'done'); } catch (_) { }
+        if (picked) {
+          camWantDevId = picked;
+          try { localStorage.setItem(CAM_LENS_LS, picked); } catch (_) { }
+        }
+      }
+      $('camTip').textContent = '카메라를 준비하는 중…';
+    }
+  }
   try {
     const want = { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } };
     if (camWantDevId) want.deviceId = { exact: camWantDevId };

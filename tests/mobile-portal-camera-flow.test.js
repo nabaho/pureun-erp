@@ -191,3 +191,36 @@ test('기기가 내놓은 값을 그대로 보여 주는 화면이 있다', () =
   assert.match(photos, /이 기기 최대/);
   assert.match(photos, /당겨찍기/);
 });
+
+/* 대표 지시 2026-08-15: "자동으로 못 하나 니가"
+   이름만 보고 고르는 것은 추측이다 — 기기마다 라벨이 다르고 아예 비는 브라우저도 있다.
+   그래서 처음 한 번은 **직접 열어 보고 재서** 고른다. 가짜 카메라로 확인한 값:
+     · 이름 점수가 꼴찌(camera2 7)여도 최대 크기가 제일 큰 렌즈를 골랐다
+     · 처음 2.8초 · 두 번째부터 0.4초(재지 않고 바로 연다) */
+test('렌즈는 처음 한 번 재서 자동으로 고른다', () => {
+  assert.match(photos, /async function autoPickLens\(sessionToken\)/);
+  assert.match(photos, /async function probeLens\(deviceId, settleMs\)/);
+  /* 고르는 기준의 차례가 핵심이다 — 최대 크기가 먼저다.
+     앞에 무엇이 놓여 있든 흔들리지 않는 값이라 제일 믿을 만하다. */
+  assert.match(photos, /\(b\.maxEdge - a\.maxEdge\) \|\| \(b\.sharp - a\.sharp\) \|\| \(b\.hint - a\.hint\)/);
+  // 결과를 기억해 다음부터는 바로 연다 (매번 재면 「눌러도 안 켜진다」가 된다)
+  assert.match(photos, /localStorage\.setItem\(CAM_LENS_AUTO_LS, 'done'\)/);
+});
+
+test('권한을 받기 전에는 재지 않는다 — 셀피 카메라를 고를 수 있다', () => {
+  /* 권한 전 enumerateDevices 는 이름을 비워 준다. 이름이 없으면 앞뒤를 못 가려
+     앞면 카메라까지 재게 되고, 자칫 그것을 고를 수도 있다.
+     그때는 null 을 돌려주고 **「했음」으로 적지 않는다** — 적으면 영영 다시 안 잰다. */
+  assert.match(photos, /if \(named\.length !== cams\.length \|\| !cams\.length\) return null;/);
+  assert.match(photos, /if \(picked !== null\) \{[\s\S]{0,200}CAM_LENS_AUTO_LS, 'done'/);
+});
+
+test('재는 동안 무슨 일이 있어도 장치를 놓아 준다', () => {
+  // 놓지 않으면 카메라가 잡힌 채 남아 다음 열기가 실패한다
+  assert.match(photos, /finally \{[\s\S]{0,200}stream\.getTracks\(\)\.forEach\(function \(t\) \{ try \{ t\.stop\(\)/);
+});
+
+test('자동이 잘못 골랐을 때 다시 고를 길이 있다', () => {
+  assert.match(photos, /async function camRecalibrateLens\(\)/);
+  assert.match(photos, /removeItem\(CAM_LENS_AUTO_LS\)/);
+});
