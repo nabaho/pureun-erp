@@ -76,3 +76,107 @@ test('★ 가림 계산 층이 실려 있다 — 판 번호와 함께', () => {
   assert.match(html, /<script src="js\/pu-rrn-mask\.js\?v=\d+">/,
     '?v= 가 없으면 브라우저 캐시에 묵은 옛 파일이 그대로 돕니다');
 });
+
+/* 드래그는 화면 요소가 있어야 재 볼 수 있다 — 사진이 보이는 크기를 알아야
+   화면 좌표를 비율로 바꿀 수 있기 때문이다. */
+function loadDrag(maskState) {
+  const els = {
+    maskImg: { getBoundingClientRect: () => ({ left: 100, top: 50, width: 400, height: 200 }) },
+    maskPreview: { style: {} }
+  };
+  const mask = fs.readFileSync(path.join(R, 'js', 'pu-rrn-mask.js'), 'utf8');
+  const sandbox = { window: {}, console, document: { getElementById: id => els[id] || null } };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  new vm.Script(mask, { filename: 'pu-rrn-mask.js' }).runInContext(sandbox);
+  new vm.Script([
+    'const PuRrnMask = window.PuRrnMask;',
+    'const $ = id => document.getElementById(id);',
+    'const App = ' + JSON.stringify({
+      maskState: Object.assign({ status: 'ready', url: 'data:x', boxes: [], err: '', autoNote: '' }, maskState)
+    }) + ';',
+    'App.render = function(){ __renders += 1; };',
+    'var __renders = 0;',
+    /* ⚠ 잘라 온 함수가 쓰는 **다른 함수와 변수**도 함께 넣어야 한다 —
+       안 넣으면 ReferenceError 로 터진다(이 저장소에서 여러 번 겪었다). */
+    'let maskDrag = null;',
+    cut('maskViewRect'), cut('maskShowPreview'), cut('maskHidePreview'),
+    cut('maskDown'), cut('maskMove'), cut('maskUp'),
+    cut('maskDelBox'), cut('maskUndo'), cut('maskClear'),
+    'window.App = App; window.maskDown = maskDown; window.maskMove = maskMove; window.maskUp = maskUp;',
+    'window.maskDelBox = maskDelBox; window.maskUndo = maskUndo; window.maskClear = maskClear;',
+    'window.__renders = function(){ return __renders; };'
+  ].join('\n'), { filename: 'drag.js' }).runInContext(sandbox);
+  return { W: sandbox.window, els };
+}
+
+const ev = (x, y) => ({ clientX: x, clientY: y, preventDefault() {}, pointerId: 1,
+  currentTarget: { setPointerCapture() {}, releasePointerCapture() {} } });
+
+test('★ 그으면 그 자리가 사각형으로 담긴다', () => {
+  const { W } = loadDrag();
+  W.maskDown(ev(200, 100));
+  W.maskMove(ev(300, 150));
+  W.maskUp(ev(300, 150));
+  const b = W.App.maskState.boxes[0];
+  assert.equal(b.x, 0.25);
+  assert.equal(b.y, 0.25);
+  assert.equal(b.w, 0.25);
+  assert.equal(b.h, 0.25);
+  assert.equal(b.by, 'me', '사람이 그은 것으로 표시돼야 기계 것과 갈립니다');
+});
+
+test('★ 긋는 동안에는 다시 그리지 않는다 — 다시 그리면 손가락이 떨어진다', () => {
+  const { W } = loadDrag();
+  W.maskDown(ev(200, 100));
+  W.maskMove(ev(250, 120));
+  W.maskMove(ev(300, 150));
+  assert.equal(W.__renders(), 0, '움직이는 동안 다시 그리면 드래그가 끊깁니다');
+  W.maskUp(ev(300, 150));
+  assert.equal(W.__renders(), 1, '손을 떼면 한 번 다시 그려야 사각형이 남습니다');
+});
+
+test('긋는 동안 미리 보이는 칸이 따라온다', () => {
+  const { W, els } = loadDrag();
+  W.maskDown(ev(200, 100));
+  W.maskMove(ev(300, 150));
+  assert.equal(els.maskPreview.style.display, '');
+  assert.equal(els.maskPreview.style.left, '25%');
+  assert.equal(els.maskPreview.style.width, '25%');
+});
+
+test('점만 찍으면 아무 일도 없다', () => {
+  const { W } = loadDrag();
+  W.maskDown(ev(200, 100));
+  W.maskUp(ev(200, 100));
+  assert.equal(W.App.maskState.boxes.length, 0);
+});
+
+test('★ 사각형 하나를 지운다', () => {
+  const { W } = loadDrag({ boxes: [
+    { x: 0, y: 0, w: 0.2, h: 0.2, by: 'me' }, { x: 0.5, y: 0.5, w: 0.2, h: 0.2, by: 'ai' }] });
+  W.maskDelBox(0);
+  assert.equal(W.App.maskState.boxes.length, 1);
+  assert.equal(W.App.maskState.boxes[0].by, 'ai');
+});
+
+test('★ 기계가 잘못 잡은 것도 지울 수 있다', () => {
+  const { W } = loadDrag({ boxes: [{ x: 0, y: 0, w: 0.2, h: 0.2, by: 'ai' }] });
+  W.maskDelBox(0);
+  assert.equal(W.App.maskState.boxes.length, 0);
+});
+
+test('되돌리기는 마지막에 그은 것을 뺀다', () => {
+  const { W } = loadDrag({ boxes: [
+    { x: 0, y: 0, w: 0.2, h: 0.2, by: 'me' }, { x: 0.5, y: 0.5, w: 0.2, h: 0.2, by: 'me' }] });
+  W.maskUndo();
+  assert.equal(W.App.maskState.boxes.length, 1);
+  assert.equal(W.App.maskState.boxes[0].x, 0);
+});
+
+test('다 지우기는 기계가 칠한 것까지 다 뺀다', () => {
+  const { W } = loadDrag({ boxes: [
+    { x: 0, y: 0, w: 0.2, h: 0.2, by: 'ai' }, { x: 0.5, y: 0.5, w: 0.2, h: 0.2, by: 'me' }] });
+  W.maskClear();
+  assert.equal(W.App.maskState.boxes.length, 0);
+});
