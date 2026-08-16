@@ -707,6 +707,8 @@ table.sbox.tight td.none{padding:26px 8px}
 .coselbar button:hover{background:#dbe9fb}
 .coselbar .comore{border-color:#d9a441;color:#92400e;background:#fff8ec}
 .coselbar .comore:hover{background:#fdf0d8}
+.coselbar .coclear{border-color:#f0c9c4;color:#c0392b;background:#fff;margin-left:auto}
+.coselbar .coclear:hover{background:#fdeced}
 /* 기업 상세 나눠 보기 — 「몇 개씩」 칸과 쪽 옮기기 (명함 표의 #pcPageSize·#pcPager 와 같은 결) */
 .copgbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 8px;font-size:12.5px;color:#5a6885}
 .copgbar .cnt b{color:#1d4fc4}
@@ -8293,11 +8295,16 @@ function renderPCSide(){
      되는 순간 옆줄이 명함으로 뚝 떨어졌다 — 자료를 만지러 들어갔는데 명함첩에 와 있었다
      (대표 지시 2026-08-12). */
   const onMail = (state.view==='mail' || state.view==='mat');
+  /* ⚠ 기업 상세는 «갈래(state.tab)»가 아니라 «화면(state.view)»이다 — 그 화면에 있어도
+     state.tab 은 'card' 로 남아 있다. 그래서 이 조건에서 화면을 안 빼면 「명함」과
+     「기업 상세」가 «둘 다 켜진 채»로 보인다(대표 화면 2026-08-16). 켜진 것이 둘이면
+     지금 어디에 있는지 알 수 없다 — 켜지는 것은 언제나 하나여야 한다. */
+  const onCo = (state.view==='co');
   h += `<div class="sidetab sidetabv">
     <button class="${onMail?'on':''}" onclick="openMailPage()" title="메일 쓰기 — 보낸 메일·자료함도 여기 있습니다">✉️<em>메일</em></button>
-    <button class="${!onMail&&state.tab==='card'?'on':''}" onclick="switchTab('card')" title="명함">📇<em>명함</em><span>${all.filter(i=>i.kind==='card').length.toLocaleString()}</span></button>
-    <button class="${!onMail&&state.tab==='biz'?'on':''}" onclick="switchTab('biz')" title="사업자등록증">📄<em>사업자</em><span>${all.filter(i=>i.kind==='biz').length.toLocaleString()}</span></button>
-    <button class="${state.view==='co'?'on':''}" onclick="openCoPage()" title="회사 하나에 얽힌 것을 한자리에 — 사업자등록증·명함·푸른이알피">🏢<em>기업 상세</em></button>
+    <button class="${!onMail&&!onCo&&state.tab==='card'?'on':''}" onclick="switchTab('card')" title="명함">📇<em>명함</em><span>${all.filter(i=>i.kind==='card').length.toLocaleString()}</span></button>
+    <button class="${!onMail&&!onCo&&state.tab==='biz'?'on':''}" onclick="switchTab('biz')" title="사업자등록증">📄<em>사업자</em><span>${all.filter(i=>i.kind==='biz').length.toLocaleString()}</span></button>
+    <button class="${onCo?'on':''}" onclick="openCoPage()" title="회사 하나에 얽힌 것을 한자리에 — 사업자등록증·명함·푸른이알피">🏢<em>기업 상세</em></button>
   </div></div>`;
   /* 기업정보의 폴더 — 명함이 폴더를 갖듯 회사도 갖는다.
      「거래처만」을 화면 위 탭에서 옆줄로 내렸다. 폴더 자리에 있어야 명함첩과 같은 손놀림이
@@ -10867,6 +10874,8 @@ function coListHtml(info){
       <button onclick="coMoveToFolder()">📁 폴더로 옮기기</button>
       <button onclick="coAssignTag()">🏷 탭에 담기</button>
       <button onclick="state.coSel={};renderCoAny()">선택 해제</button>
+      <button class="coclear" onclick="coClearOrg()"
+        title="고른 회사에 붙여 둔 폴더·탭을 뗍니다 — 명함은 지워지지 않습니다">🧹 폴더·탭 비우기</button>
     </div>` : '';
   /* 몇 개씩 볼지 + 지금 몇 번째를 보는지 — 표 바로 위 한 줄.
      기업 상세 화면에서는 명함 표의 머리줄(#pcHead)이 통째로 숨겨지므로
@@ -10982,6 +10991,77 @@ function coMoveToFolder(){
     <div class="mfoot"><button class="btn ghost" onclick="folderDlgBg.classList.remove('open')">취소</button></div>`;
   $('folderDlgBg').classList.add('open');
 }
+/* ══════ 고른 회사의 폴더·탭 비우기 — 순수 로직 (테스트 대상) ══════
+   대표 지시 2026-08-16: 기업 상세에 「삭제」가 필요하다 → 물어보니 «명함을 지우는 것이
+   아니라» 붙여 둔 폴더·탭을 떼는 것이었다. 회사는 따로 저장된 기록이 아니라 명함과
+   등록증을 모아 만든 화면이라, 여기서 지울 수 있는 것은 «붙여 둔 것»뿐이다.
+   ⚠ 명함·사업자등록증은 절대 건드리지 않는다. 그것을 지우는 길은 명함 목록에만 둔다. */
+const CO_CLEAR_CHUNK = 400;
+const CO_CLEAR_TYPE_MIN = 20;      /* 이보다 많으면 「비우기」를 손으로 치게 한다 */
+/* 실제로 비워질 것이 얼마나 되는가 — 아무것도 안 붙은 회사는 세지 않는다.
+   「100곳 비웁니다」라고 해 놓고 실제로 3곳만 바뀌면 사람이 무엇을 한 건지 모른다. */
+function coClearStats(list){
+  let n = 0, folders = 0, tags = 0;
+  (list || []).forEach(o => {
+    const t = Math.max(0, Number((o && o.tagCount) || 0));
+    const f = !!(o && o.folder);
+    if (f) folders++;
+    if (t) tags += t;
+    if (f || t) n++;
+  });
+  return { n: n, folders: folders, tags: tags, total: (list || []).length };
+}
+/* 보낼 통을 만든다 — 한 곳씩 보내면 4,138번이 나간다(2026-08-16 폭주의 교훈).
+   ⚠ 옛 이름 열쇠도 함께 비운다. coEffectiveExtra 가 옛 열쇠의 값을 끌어와 합쳐
+     보여주므로, 새 열쇠만 비우면 «비웠는데 그대로 보이는» 일이 생긴다
+     (coMoveSelTo 가 같은 이유로 같은 일을 한다). */
+function coClearPlan(list, chunk){
+  const arr = (list || []).filter(o => o && o.key);
+  const size = Math.max(1, Math.floor(Number(chunk)) || 1);
+  const out = [];
+  for (let i = 0; i < arr.length; i += size){
+    const upd = {};
+    arr.slice(i, i + size).forEach(o => {
+      upd['coInfo/' + o.key + '/folder'] = null;
+      upd['coInfo/' + o.key + '/tags'] = null;
+      if (o.nameKey && o.nameKey !== o.key){
+        upd['coInfo/' + o.nameKey + '/folder'] = null;
+        upd['coInfo/' + o.nameKey + '/tags'] = null;
+      }
+    });
+    if (Object.keys(upd).length) out.push(upd);
+  }
+  return out;
+}
+/* ══════ 고른 회사의 폴더·탭 비우기 — 화면 ══════ */
+async function coClearOrg(){
+  const keys = Object.keys(state.coSel);
+  if(!keys.length) return toast('회사를 먼저 선택하세요');
+  const byKey = {}; coList().forEach(o=>{ byKey[o.key]=o; });
+  const list = keys.map(k=>{
+    const o = byKey[k];
+    return { key:k, name:(o&&o.name)||'', nameKey: o ? 'n'+_norm(o.name||'') : null,
+             folder:(o&&o.folder)||'', tagCount: o ? coTagsOf(o).length : 0 };
+  });
+  const s = coClearStats(list);
+  if(!s.n) return toast('고른 회사에는 뗄 폴더·탭이 없습니다');
+  const head = `회사 ${s.n.toLocaleString()}곳의 폴더·탭을 뗍니다.\n\n`
+    + `· 폴더 ${s.folders.toLocaleString()}곳 · 탭 ${s.tags.toLocaleString()}개가 떨어집니다\n`
+    + `· 명함과 사업자등록증은 지워지지 않습니다\n`
+    + `· 되돌리려면 다시 지정해야 합니다\n\n`;
+  if(s.n > CO_CLEAR_TYPE_MIN){
+    const ans = prompt(head + '비우려면 아래에 비우기 라고 입력하세요');
+    if(ans===null) return;
+    if(String(ans).trim()!=='비우기') return toast('입력이 달라 비우지 않았습니다');
+  } else if(!confirm(head + '계속할까요?')) return;
+  const plan = coClearPlan(list, CO_CLEAR_CHUNK);
+  try{
+    for(const upd of plan) await Store.db.ref(DB_ROOT).update(upd);
+  }catch(e){ return toast('비우기 실패: '+((e&&e.message)||'')); }
+  state.coSel = {}; coListBust(); closePcDetail(); renderCoAny();
+  toast(`🧹 ${s.n.toLocaleString()}곳의 폴더·탭을 뗐습니다 — 명함은 그대로입니다`, 6000);
+}
+
 async function coMoveSelTo(folderId){
   const keys = Object.keys(state.coSel);
   const byKey = {}; coList().forEach(o=>{ byKey[o.key]=o; });
