@@ -66,3 +66,71 @@ test('사진 밖으로 넘치는 사각형은 사진 안에서 끝난다', () =>
   assert.equal(p.x + p.w, 1000);
   assert.equal(p.y + p.h, 1000);
 });
+
+/* 캔버스를 가짜로 세워 **무엇을 어디에 칠했는지** 본다.
+   진짜 캔버스는 node 에 없고, 있어도 픽셀을 하나하나 보는 검사는 느리고 잘 깨진다. */
+function fakeCanvas() {
+  const calls = { drew: null, fills: [], style: null, out: null };
+  const ctx = {
+    drawImage(img, x, y, w, h) { calls.drew = { x, y, w, h }; },
+    fillRect(x, y, w, h) { calls.fills.push({ x, y, w, h }); },
+    set fillStyle(v) { calls.style = v; },
+    get fillStyle() { return calls.style; }
+  };
+  const make = (w, h) => ({
+    width: w, height: h,
+    getContext: () => ctx,
+    toDataURL: (type, q) => { calls.out = { type, q }; return 'data:image/jpeg;base64,ZZZ'; }
+  });
+  return { calls, make };
+}
+
+const IMG = { naturalWidth: 2000, naturalHeight: 1000 };
+
+test('★ 원본 크기 그대로 그린다 — 화면 크기로 그리면 가린 자리가 어긋난다', () => {
+  const M = load();
+  const { calls, make } = fakeCanvas();
+  M.maskToDataUrl(IMG, [], { makeCanvas: make });
+  assert.equal(JSON.stringify(calls.drew), JSON.stringify({ x: 0, y: 0, w: 2000, h: 1000 }));
+});
+
+test('★ 사각형 자리를 까맣게 칠한다', () => {
+  const M = load();
+  const { calls, make } = fakeCanvas();
+  M.maskToDataUrl(IMG, [{ x: 0.5, y: 0.25, w: 0.25, h: 0.5 }], { makeCanvas: make });
+  assert.equal(calls.style, '#000', '반투명하게 덮으면 밑이 비쳐 읽힙니다');
+  assert.equal(calls.fills.length, 1);
+  assert.equal(JSON.stringify(calls.fills[0]), JSON.stringify({ x: 1000, y: 250, w: 500, h: 500 }));
+});
+
+test('사각형 여러 개를 다 칠한다', () => {
+  const M = load();
+  const { calls, make } = fakeCanvas();
+  M.maskToDataUrl(IMG, [
+    { x: 0, y: 0, w: 0.1, h: 0.1 },
+    { x: 0.5, y: 0.5, w: 0.1, h: 0.1 }
+  ], { makeCanvas: make });
+  assert.equal(calls.fills.length, 2);
+});
+
+test('넓이가 0인 사각형은 칠하지 않는다', () => {
+  const M = load();
+  const { calls, make } = fakeCanvas();
+  M.maskToDataUrl(IMG, [{ x: 0.5, y: 0.5, w: 0, h: 0.5 }], { makeCanvas: make });
+  assert.equal(calls.fills.length, 0);
+});
+
+test('JPEG 로 뽑는다 — 사진이라 PNG 면 쓸데없이 크다', () => {
+  const M = load();
+  const { calls, make } = fakeCanvas();
+  const out = M.maskToDataUrl(IMG, [], { makeCanvas: make });
+  assert.equal(calls.out.type, 'image/jpeg');
+  assert.match(out, /^data:image\/jpeg;base64,/);
+});
+
+test('★ 사진 크기를 모르면 조용히 넘기지 않고 알린다 — 안 가려진 사진이 나가면 안 된다', () => {
+  const M = load();
+  const { make } = fakeCanvas();
+  assert.throws(() => M.maskToDataUrl({ naturalWidth: 0, naturalHeight: 0 }, [], { makeCanvas: make }),
+    /크기/);
+});

@@ -47,8 +47,35 @@
     };
   }
 
+  /* 원본을 그리고 사각형을 까맣게 칠한 뒤 JPEG data URL 로 뽑는다.
+     ⚠ **원본 크기**로 그린다. 화면에 보이는 크기로 그리면 좌표가 어긋나
+     엉뚱한 데가 덮이고 주민번호는 그대로 남는다.
+     ⚠ 반투명이 아니라 **완전히 까맣게** 칠한다 — 옅게 덮으면 밑이 비쳐 읽힌다.
+     ⚠ 사진 크기를 모르면 던진다. 조용히 원본을 돌려주면 **안 가려진 사진이 나간다.** */
+  function maskToDataUrl(img, boxes, opts) {
+    opts = opts || {};
+    var w = (img && (img.naturalWidth || img.width)) || 0;
+    var h = (img && (img.naturalHeight || img.height)) || 0;
+    if (!w || !h) throw new Error('사진 크기를 알 수 없습니다 — 다시 열어 주세요');
+    var make = opts.makeCanvas || function (cw, ch) {
+      var c = global.document.createElement('canvas');
+      c.width = cw; c.height = ch;
+      return c;
+    };
+    var canvas = make(w, h);
+    var ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, w, h);
+    ctx.fillStyle = '#000';
+    (boxes || []).forEach(function (b) {
+      var p = toPixels(b, w, h);
+      if (p.w > 0 && p.h > 0) ctx.fillRect(p.x, p.y, p.w, p.h);
+    });
+    return canvas.toDataURL('image/jpeg', opts.quality || 0.92);
+  }
+
   global.PuRrnMask = {
     rectFromDrag: rectFromDrag,
-    toPixels: toPixels
+    toPixels: toPixels,
+    maskToDataUrl: maskToDataUrl
   };
 })(typeof window !== 'undefined' ? window : globalThis);
