@@ -152,10 +152,26 @@
     return new Promise(function (resolve) { window.setTimeout(resolve, ms); });
   }
 
+  /* ── 저장이 어디로 몇 번 나갔는지 세기 ──
+     2026-08-16: 명함첩 콘솔에 서버 오류가 1ms 간격으로 5,000건 넘게 쌓였다. 코드를 읽어
+     서는 «무엇이» 그 많은 메시지를 보내는지 못 짚었다. 짐작으로 고치면 엉뚱한 곳을
+     건드린다. 그래서 나가는 저장을 «길목»에서 세어 둔다 — 여기가 유일한 길목이다.
+     칸 이름(밑 두 마디)까지만 센다. 명함 번호까지 세면 6,616 가지가 되어 못 읽는다. */
+  var writeCensus = {};
+  function censusKey(path) {
+    var parts = String(path || '').split('/').filter(Boolean).slice(0, 2);
+    return parts.join('/') || '(뿌리)';
+  }
+  function countWrite(path, method) {
+    var k = censusKey(path) + ' · ' + method;
+    writeCensus[k] = (writeCensus[k] || 0) + 1;
+  }
+
   function callWithRetry(ref, method, args) {
     var callback = typeof args[args.length - 1] === 'function' ? args.pop() : null;
     var value = method === 'remove' ? null : args[0];
     var attempt = 0;
+    try { countWrite(referencePath(ref), method); } catch (_) {}
 
     function finishOk(result) { if (callback) callback(null); return result; }
     function finishError(error) { if (callback) callback(error); throw error; }
@@ -290,14 +306,24 @@
     stats: function (project) {
       var q = readQueue(project);
       var parked = q.filter(function (x) { return x.parked; });
+      /* 많이 나간 칸부터 — 어디가 폭주하는지 한눈에 보이게 */
+      var busiest = Object.keys(writeCensus)
+        .map(function (k) { return { where: k, n: writeCensus[k] }; })
+        .sort(function (a, b) { return b.n - a.n; }).slice(0, 5);
+      var total = busiest.reduce(function (s, x) { return s + x.n; }, 0);
       return {
         pending: q.length - parked.length,
         parked: parked.length,
+        writes: Object.keys(writeCensus).reduce(function (s, k) { return s + writeCensus[k]; }, 0),
+        busiest: busiest,
+        busiestTotal: total,
         worst: parked.slice(0, 3).map(function (x) {
           return { path: x.path, method: x.method, attempts: x.attempts, error: x.lastError || '' };
         })
       };
     },
+    /* 세던 것을 0으로 — 「지금부터 5초 동안」을 재려면 필요하다 */
+    resetCensus: function () { writeCensus = {}; },
     MAX_REPLAY_ATTEMPTS: MAX_REPLAY_ATTEMPTS,
     _readQueue: readQueue
   };

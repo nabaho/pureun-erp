@@ -2027,6 +2027,15 @@ const ErpMatch = {
       /* 자동 관리 대상 폴더(여기 있으면 상태 변화에 따라 재배치 허용) */
       const AUTO_NAMES=['업체관리','업체퇴사','자문사','급여','기금','노조','사무대행'];
       const autoIds = new Set(Object.values(state.groups||{}).filter(g=>g&&AUTO_NAMES.indexOf(_canon(g.name))>=0).map(g=>g.id));
+      /* ⚠ 예전에는 여기서 명함 한 장마다 Store.put(it) 을 불렀다. 그 한 번이 서버로 가는
+         메시지 «세 개»다(items 한 번 + 공유 색인 idx·bykey 두 번). 명함 6,616장이면
+         2만 개가 한꺼번에 나간다 — 그것도 화면을 열 때마다, 4초 뒤 한 번 더.
+         2026-08-16 대표 콘솔에 1ms 간격으로 오류가 5,000건 넘게 쌓인 것이 이 규모다.
+         한 건씩 보내지 않고 «모아서 한 번에» 보낸다.
+         ⚠ 공유 색인(idx·bykey)은 손대지 않는다 — 색인에 담는 칸(idxRecord)에 폴더가
+           없고, 자동 폴더는 잠긴 폴더가 아니라서 색인에 들어가고 빠지는 것이 바뀌지
+           않는다. 바꾸지 않아도 되는 것을 쓰면 그만큼 메시지가 늘 뿐이다. */
+      const pend = [];
       let n=0;
       items.forEach(it=>{
         if(!it) return;
@@ -2038,16 +2047,17 @@ const ErpMatch = {
           /* 자동 배정분: 현재 자동 폴더 안에 있을 때만 상태 따라 재배치 (사용자가 딴 폴더로 옮겼으면 존중) */
           if(targetNm && autoIds.has(it.group)){
             const tg = ensure(targetNm,k);
-            if(it.group !== tg.id){ it.group=tg.id; it.updatedAt=Date.now(); Store.put(it); n++; }
+            if(it.group !== tg.id){ it.group=tg.id; it.updatedAt=Date.now(); pend.push(it); n++; }
           }
           return;
         }
         /* 미지정 + 매칭 → 대상 폴더로 자동 배정 */
         if((it.group||'')==='' && targetNm){
           const tg = ensure(targetNm,k);
-          it.group=tg.id; it.erpAutoFoldered=1; it.updatedAt=Date.now(); Store.put(it); n++;
+          it.group=tg.id; it.erpAutoFoldered=1; it.updatedAt=Date.now(); pend.push(it); n++;
         }
       });
+      if(pend.length) autoFolderFlush(pend);
       /* 비게 된 구 자동 폴더 정리 (명함용·사업자용 각각) */
       ['급여','기금','노조','자문사'].forEach(nm=>{
         ['card','biz'].forEach(k=>{
@@ -2057,8 +2067,46 @@ const ErpMatch = {
       });
       if(n>0){ toast('🗂 업체 폴더 자동 분류/이동 '+n+'건'); try{ render(); }catch(_){}}
     }catch(e){ console.warn('[autoFolder]', e&&e.message); }
+  },
+  /* 바뀐 폴더만 모아서 한 번에 저장한다.
+     ⚠ 개인 폴더 명함은 창고가 다르다(Store._rootOf) — 창고별로 갈라 보낸다.
+       한 통에 섞어 보내면 규칙이 다른 자리가 함께 걸려 통째로 거부된다.
+     ⚠ 한 통을 무한정 키우지 않는다. 너무 크면 서버가 통째로 되돌려 보내고,
+       그러면 어느 한 장 때문인지도 알 수 없게 된다. */
+  _flushChunk: 400,
+  flushPlan(list, rootOf, chunk){
+    const byRoot = {};
+    (list||[]).forEach(it=>{
+      if(!it || !it.id) return;
+      const R = rootOf(it.id);
+      (byRoot[R] = byRoot[R] || []).push(it);
+    });
+    const out = [];
+    Object.keys(byRoot).forEach(R=>{
+      const arr = byRoot[R];
+      for(let i=0;i<arr.length;i+=chunk){
+        const upd = {};
+        arr.slice(i, i+chunk).forEach(it=>{
+          upd[`${R}/items/${it.id}/group`] = it.group;
+          upd[`${R}/items/${it.id}/updatedAt`] = it.updatedAt;
+          if(it.erpAutoFoldered) upd[`${R}/items/${it.id}/erpAutoFoldered`] = 1;
+        });
+        out.push(upd);
+      }
+    });
+    return out;
   }
 };
+ErpMatch.autoFolderFlushImpl = function(list){
+  if(Store.mode!=='firebase') return;
+  const plan = ErpMatch.flushPlan(list, id=>Store._rootOf(id), ErpMatch._flushChunk);
+  plan.forEach(upd=>{
+    firebase.database().ref().update(upd)
+      .catch(e=>console.warn('[autoFolder] 저장 실패', (e&&e.message)||e));
+  });
+  return plan.length;
+};
+function autoFolderFlush(list){ return ErpMatch.autoFolderFlushImpl(list); }
 
 /* ── 유틸 ── */
 const $ = id => document.getElementById(id);
@@ -10218,17 +10266,40 @@ function closeCoPage(){ state.view='list'; render(); }
    서버가 안 받아 준 저장이 몇 건 밀려 있는지. */
 function coWatchVerdict(s){
   const out = [];
-  if(s.parked > 0) out.push('서버가 거부한 저장 '+s.parked+'건이 밀려 있습니다 — 오류가 여기서 나옵니다');
+  /* 서버로 나간 저장이 제일 먼저다 — 오류 폭주는 거의 언제나 여기서 나온다 */
+  if(s.writes > 100) out.push('5초 동안 저장을 '+s.writes.toLocaleString()+'번 보냈습니다'
+    + (s.busiest ? ' — 가장 많은 곳: '+s.busiest : ''));
+  if(s.parked > 0) out.push('서버가 거부한 저장 '+s.parked+'건이 밀려 있습니다');
   else if(s.pending > 10) out.push('아직 못 보낸 저장 '+s.pending+'건이 밀려 있습니다');
   if(s.renders > 10) out.push('화면을 '+s.renders+'번 다시 그렸습니다 — 저장이 몰려 들어오고 있습니다');
   if(s.builds > 3) out.push('회사 목록을 '+s.builds+'번 다시 조립했습니다 — 한 번이면 됩니다');
   if(s.blockedMs > 500) out.push('5초 중 '+Math.round(s.blockedMs)+'ms 멈춰 있었습니다');
   return out.length ? out : ['눈에 띄는 문제 없음'];
 }
+/* 콘솔은 오류에 파묻힌다(대표 화면 2026-08-16, 5,045건). 문제가 있을 때만 화면에 띄운다.
+   ⚠ 멀쩡할 때는 아무것도 안 띄운다 — 늘 떠 있는 알림은 곧 안 보게 된다. */
+function coWatchShow(lines){
+  if(!lines.length || lines[0]==='눈에 띄는 문제 없음') return;
+  let box = $('coWatchBox');
+  if(!box){
+    box = document.createElement('div');
+    box.id = 'coWatchBox';
+    box.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483646;max-width:440px;'
+      + 'background:#fff8e8;border:1px solid #f0dfae;border-radius:12px;padding:12px 14px;'
+      + 'box-shadow:0 8px 28px rgba(20,30,50,.16);font-size:12.5px;line-height:1.65;color:#5a4718';
+    document.body.appendChild(box);
+  }
+  box.innerHTML = '<b style="color:#92400e">🏢 기업 상세가 느린 까닭</b>'
+    + '<button style="float:right;border:none;background:none;cursor:pointer;font-size:14px;color:#a08a5a"'
+    + ' onclick="this.parentNode.remove()" title="닫기">✕</button>'
+    + lines.map(m=>'<div>· '+esc(m)+'</div>').join('');
+}
 let _coWatch = null;
 function coWatchStart(){
   if(_coWatch) return;                       /* 이미 보고 있으면 그대로 둔다 */
   _coWatch = { renders:0, builds:0, blockedMs:0 };
+  /* 「지금부터 5초 동안」 몇 번 저장이 나갔는지를 세려면 0에서 시작해야 한다 */
+  try{ window.PUResilience && PUResilience.resetCensus && PUResilience.resetCensus(); }catch(_){}
   let obs = null;
   try{
     obs = new PerformanceObserver(list=>{
@@ -10238,14 +10309,20 @@ function coWatchStart(){
   }catch(_){}
   setTimeout(()=>{
     try{ obs && obs.disconnect(); }catch(_){}
-    const q = (window.PUResilience && PUResilience.stats) ? PUResilience.stats() : { pending:0, parked:0, worst:[] };
-    const s = { renders:_coWatch.renders, builds:_coWatch.builds,
-                blockedMs:_coWatch.blockedMs, pending:q.pending, parked:q.parked };
+    const q = (window.PUResilience && PUResilience.stats)
+      ? PUResilience.stats() : { pending:0, parked:0, writes:0, busiest:[], worst:[] };
+    const top = (q.busiest && q.busiest[0]) ? (q.busiest[0].where+' '+q.busiest[0].n.toLocaleString()+'번') : '';
+    const s = { renders:_coWatch.renders, builds:_coWatch.builds, blockedMs:_coWatch.blockedMs,
+                pending:q.pending, parked:q.parked, writes:q.writes||0, busiest:top };
     _coWatch = null;
     console.log('🏢 기업 상세 5초 진단 — 다시 그림 '+s.renders+'번 · 회사목록 조립 '+s.builds
-      +'번 · 멈춤 '+Math.round(s.blockedMs)+'ms · 밀린 저장 '+s.pending+'건 · 거부된 저장 '+s.parked+'건');
-    coWatchVerdict(s).forEach(m=>console.log('   → '+m));
+      +'번 · 멈춤 '+Math.round(s.blockedMs)+'ms · 저장 보냄 '+s.writes+'번'
+      +' · 밀린 저장 '+s.pending+'건 · 거부된 저장 '+s.parked+'건');
+    const lines = coWatchVerdict(s);
+    lines.forEach(m=>console.log('   → '+m));
+    if(q.busiest && q.busiest.length) console.log('   저장이 나간 곳:', q.busiest);
     if(q.worst && q.worst.length) console.log('   거부된 저장:', q.worst);
+    coWatchShow(lines);
   }, 5000);
 }
 function pickCo(k){ if(state.coPick===k){ state.coPick=''; closePcDetail(); return; } state.coPick = k; openCoDetailPanel(k); }
