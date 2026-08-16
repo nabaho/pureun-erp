@@ -41471,9 +41471,47 @@ function IncomePendingTab(){
       var _perfOn = confirmModal.perfEnabled !== false;
 
       function setM(o){ setConfirmModal(Object.assign({}, confirmModal, o)); }
+
+      /* ── 분할 %는 «남는 쪽이 저절로» 채워진다 (2026-08-16 대표 지시) ──
+         전에는 한 사람 %를 고치면 「100%가 되어야 함」 빨간 글씨만 뜨고,
+         나머지 한 사람 %는 «사람이 손으로» 맞춰야 했다 — 한 번 고칠 일을 두 번 고쳤고,
+         잊으면 확정 단추가 막힌 채 무엇이 모자란지 모르고 서 있게 된다.
+         ★ 방금 고친 사람은 «그대로 두고», 남는 몫만 다른 쪽으로 넘긴다. 합계는 늘 100 이다. */
+      function _pctRound(v){ return Math.round((v || 0) * 10) / 10; }
+      function _pctIn(v){
+        var n = parseFloat(v);
+        if(isNaN(n)) n = 0;
+        return _pctRound(Math.max(0, Math.min(100, n)));
+      }
+      // 주담당을 고치면 → 남는 몫을 부담당들이 «똑같이» 나눠 갖는다
+      function setMainPct(v){
+        var mp = _pctIn(v);
+        if(!subSids.length){ setM({mainPct:100}); return; }
+        var rest = _pctRound(100 - mp);
+        var each = _pctRound(rest / subSids.length);
+        var m = Object.assign({}, subPctMap);
+        var used = 0;
+        subSids.forEach(function(sid, i){
+          // 나누어떨어지지 않는 나머지는 «마지막 사람» 이 받는다 — 그래야 합계가 딱 100 이 된다
+          var val = (i === subSids.length - 1) ? _pctRound(rest - used) : each;
+          if(val < 0) val = 0;
+          m[sid] = val;
+          used = _pctRound(used + val);
+        });
+        setM({mainPct:mp, subPctMap:m});
+      }
+      // 부담당을 고치면 → 남는 몫은 주담당이 받는다 (다른 부담당은 건드리지 않는다)
       function setSubPct(sid, v){
-        var m = Object.assign({}, subPctMap); m[sid] = v;
-        setM({subPctMap:m});
+        var others = 0;
+        subSids.forEach(function(s){
+          if(s !== sid) others = _pctRound(others + (parseFloat(subPctMap[s]) || 0));
+        });
+        // 다른 부담당이 이미 가져간 몫까지 달라고 하면 «남은 만큼» 만 준다 (주담당 0)
+        var room = _pctRound(100 - others);
+        if(room < 0) room = 0;
+        var val = Math.min(_pctIn(v), room);
+        var m = Object.assign({}, subPctMap); m[sid] = val;
+        setM({subPctMap:m, mainPct:_pctRound(room - val)});
       }
       // ★ 요율 override 헬퍼
       function setMainRateOverride(v){
@@ -41686,7 +41724,10 @@ function IncomePendingTab(){
                   // 무엇을 나누는지 금액으로 못박는다 — 아래 칸의 금액과 반드시 맞는다
                   '※ 성과 기준 ' + _perfBase.toLocaleString() + '원 × 분할 % × 직책 요율 = 실 지급액',
                   _perfBase !== _cmPay && h('span', { style:{color:'#854d0e',fontWeight:700} },
-                    ' (세금 ' + (_cmPay - _perfBase).toLocaleString() + '원 뺀 뒤)')),
+                    ' (세금 ' + (_cmPay - _perfBase).toLocaleString() + '원 뺀 뒤)'),
+                  // 저절로 채워진다는 것을 «미리» 알려야 사람이 나머지를 손으로 맞추려 들지 않는다
+                  h('div', { style:{marginTop:'2px',color:'#2563eb',fontWeight:700} },
+                    '↔ 한 사람의 분할 %를 고치면 나머지는 자동으로 채워집니다 (합계 100%)')),
                 hasAnyOverride && h('button', { onClick:clearAllOverrides,
                   style:{padding:'3px 8px', background:'#fffbeb', color:'#854d0e', border:'1px solid #fde68a', borderRadius:'5px', fontSize:'10px', cursor:'pointer', fontWeight:600} },
                   '↺ 기본값 복원')),
@@ -41722,8 +41763,8 @@ function IncomePendingTab(){
                     // 분할% 입력
                     h('div', { style:{display:'flex',alignItems:'center',gap:'4px'} },
                       h('input', { type:'number', min:0, max:100, value:mainPct,
-                        onChange:function(e){setM({mainPct:parseFloat(e.target.value)||0});},
-                        title:'분할 비율',
+                        onChange:function(e){setMainPct(e.target.value);},
+                        title:'분할 비율 — 고치면 나머지가 부담당에게 자동으로 넘어갑니다',
                         style:{width:'58px',padding:'3px 4px',border:'1px solid #cbd5e1',borderRadius:'5px',fontSize:'11.5px',textAlign:'right'} }),
                       h('span', { style:{fontSize:'10px',color:'#475569',fontWeight:600} }, '%')),
                     h('div', { style:{fontSize:'10.5px',color:isOverride?'#854d0e':'#1e40af',fontFamily:'monospace',textAlign:'right',fontWeight:700} }, amt.toLocaleString()+'원')
@@ -41761,8 +41802,8 @@ function IncomePendingTab(){
                       h('span', { style:{fontSize:'10px',color:'#475569',fontWeight:600} }, '%')),
                     h('div', { style:{display:'flex',alignItems:'center',gap:'4px'} },
                       h('input', { type:'number', min:0, max:100, value:pct,
-                        onChange:function(e){setSubPct(sid, parseFloat(e.target.value)||0);},
-                        title:'분할 비율',
+                        onChange:function(e){setSubPct(sid, e.target.value);},
+                        title:'분할 비율 — 고치면 나머지가 주담당에게 자동으로 넘어갑니다',
                         style:{width:'58px',padding:'3px 4px',border:'1px solid #cbd5e1',borderRadius:'5px',fontSize:'11.5px',textAlign:'right'} }),
                       h('span', { style:{fontSize:'10px',color:'#475569',fontWeight:600} }, '%')),
                     h('div', { style:{fontSize:'10.5px',color:isOverride?'#854d0e':'#2563eb',fontFamily:'monospace',textAlign:'right',fontWeight:700} }, amt.toLocaleString()+'원')
