@@ -55,3 +55,47 @@ test('홈페이지에 現 으로 있는데 기간이 끝난 것을 찾아낸다'
   const bad = C.expiredInLive(live, items, TODAY);
   assert.deepEqual(bad, ['現 대전질병판정위원회 위원']);
 });
+
+/* --- 검토 지적 반영 검사 --- */
+
+test('period 만 있고 범위 표시 없이 날짜 하나뿐이면 시작일로 보고 끝났다고 단정하지 않는다', () => {
+  const r1 = C.toLine({ org: '가', role: '나', period: '2020-01' }, TODAY);
+  assert.equal(r1.ended, false);
+  assert.equal(r1.unknown, true);
+
+  const r2 = C.toLine({ org: '가', role: '나', period: '2020-01-15' }, TODAY);
+  assert.equal(r2.ended, false);
+  assert.equal(r2.unknown, true);
+
+  const r3 = C.toLine({ org: '가', role: '나', period: '2022-05 ~ 2026-04' }, TODAY);
+  assert.equal(r3.ended, true);
+
+  const r4 = C.toLine({ org: '가', role: '나', period: '2024. 3. ~ 현재' }, TODAY);
+  assert.equal(r4.ended, false);
+  assert.equal(r4.unknown, true);
+});
+
+test('end 칸이 날짜로 안 읽히면 period 의 진짜 끝난 날짜를 본다', () => {
+  const r = C.toLine({ org: '가', role: '나', end: '현재', period: '2022-05 ~ 2026-04' }, TODAY);
+  assert.equal(r.ended, true);
+  assert.equal(r.text, '前 가 나');
+});
+
+test('공백 개수나 가운뎃점 표기가 달라도 만료 항목을 잡아낸다', () => {
+  const live = [
+    '現  충남지방노동위원회 심판담당공익위원 ',
+    '現 충남지방노동위원회·심판담당공익위원'
+  ];
+  const items = [
+    { org: '충남지방노동위원회', role: '심판담당공익위원', end: '2026-04-30' }
+  ];
+  const bad = [...C.expiredInLive(live, items, TODAY)];
+  assert.deepEqual(bad, live);
+});
+
+test('일자 없이 연-월만 있어도 지났는지 비교 방향은 맞다', () => {
+  /* end: '2026-04' 처럼 일자가 없으면 31일로 채운다. 실제로 없는 날짜(2026-04-31)가
+     만들어질 수 있지만, "이 기간이 지났는가"를 비교하는 방향은 항상 안전하다. */
+  const r = C.toLine({ org: '가', role: '나', end: '2026-04' }, TODAY);
+  assert.equal(r.ended, true);
+});
