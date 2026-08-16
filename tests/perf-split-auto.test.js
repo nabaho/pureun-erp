@@ -117,13 +117,17 @@ test('부담당이 없으면 주담당이 100 을 지킨다', () => {
 
 /* ── 화면과 실제로 이어져 있는지 ── */
 const _ms = SRC.indexOf("'⭐ 성과급 — 확정하면 이렇게 나뉩니다'");
-const _me = SRC.indexOf("'분배 합계'", _ms);
+// 끝은 창의 «바닥 단추줄» 로 잡는다 — 안쪽 문구를 표시로 삼으면 그 문구를 고칠 때 깨진다
+const _me = SRC.indexOf("h('div', { className:'modal-f' }", _ms);
+assert.ok(_ms > 0 && _me > _ms, '성과급 구역을 찾지 못했다');
 const MODAL = SRC.slice(_ms, _me);
 
-test('분할 % 칸 두 곳이 자동 배분을 거쳐 간다', () => {
-  /* 셈만 옳고 칸이 옛 길로 이어져 있으면 화면에서는 아무 일도 안 일어난다 */
-  const hits = MODAL.match(/onChange:function\(e\)\{set(Main|Sub)Pct\(/g) || [];
-  assert.strictEqual(hits.length, 2, '주담당·부담당 분할 % 칸이 모두 이어져야 한다');
+test('분할 % 칸이 자동 배분을 거쳐 간다', () => {
+  /* 셈만 옳고 칸이 옛 길로 이어져 있으면 화면에서는 아무 일도 안 일어난다.
+     ※ 주담당·부담당 «두 벌» 을 세지 않는다 — 2026-08-16 에 한 함수로 합쳤고, 합친 것이 옳다.
+       지킬 것은 「분할 칸이 배분 함수를 거친다」이다. */
+  assert.strictEqual(/setMainPct\(/.test(MODAL), true, '주담당 분할이 배분 함수를 거쳐야 한다');
+  assert.strictEqual(/setSubPct\(/.test(MODAL), true, '부담당 분할이 배분 함수를 거쳐야 한다');
 });
 
 test('분할 % 를 자동 배분을 건너뛰고 바로 넣는 길은 없다', () => {

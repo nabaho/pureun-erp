@@ -17284,6 +17284,83 @@ function getRateAt(sid, paidDate){
   return r.history[r.history.length-1].pct;
 }
 
+/* ── 분할 %의 «기본값» 을 정하는 한 곳 (2026-08-16 대표 지시) ─────────────────
+   대표 지시: "요율 0%인 사람은 분할에서 자동으로 빠진다 · 둘 다 대상자면 기본 주 50 / 부 50."
+
+   ★ 왜 필요했나 — 대표님 직책 요율은 0%(성과급 대상 아님)인데 분할 기본값이 「주담당 100%」였다.
+     요율 0%인 사람에게 분할을 주면 그 몫은 «누구에게도 안 가고 사라진다».
+     대표님이 주담당인 건이 많아, 실무 노무사가 성과급을 통째로 못 받고 있었다.
+     그런데 합계는 100 이라 화면은 초록 ✓ 를 띄웠다 — ✓ 는 「합계가 100」만 뜻하는데
+     사람은 「다 맞았다」로 읽는다.
+
+   ★ 여기는 «기본값을 정하는» 층이다. 나누는 셈(calcPerfShares)은 건드리지 않는다 —
+     거기서 몰래 재분배하면 화면에 보이는 %와 저장되는 금액이 달라진다.
+
+   ★ 입금확정 창과 자동확정이 «둘 다» 이 함수를 쓴다. 규칙이 두 군데로 갈라지면 언젠가 어긋난다. */
+function erpPerfMainPct(){
+  var p = dbGet('policy_perf', null) || {};
+  var v = (typeof p.confirmMainPct === 'number') ? p.confirmMainPct : 50;
+  if(isNaN(v)) v = 50;
+  return Math.max(0, Math.min(100, v));
+}
+/* 누가 이번 건에서 성과급을 받을 수 있나.
+   ★ 수습·퇴사·요율 판정을 여기서 «다시 하지 않는다» — 베껴 오면 언젠가 calcPerfShares 와
+     조용히 어긋난다(업무관리·푸른이알피가 열쇠를 따로 만들어 배지가 거짓말한 적이 있다).
+     돈을 계산하는 그 함수에 어림수를 넣어 「0원보다 큰가」만 본다.
+     어림수는 결과에 남지 않는다. 크게 잡아야 요율이 낮은 사람도 반올림으로 0이 되지 않는다. */
+function erpPerfEligibleSet(mainSid, subSids, paidDate){
+  var subs = (subSids || []).filter(function(s){ return s; });
+  var PROBE = 100000000;
+  var okMain = false, okSubs = [];
+  try {
+    if(mainSid){
+      var byMain = calcPerfShares(PROBE, mainSid, subs, 'case', 100, { paidDate:paidDate }) || [];
+      byMain.forEach(function(s){
+        if(s.role === '주담당' && (s.amount || 0) > 0) okMain = true;
+      });
+    }
+    if(subs.length){
+      var bySub = calcPerfShares(PROBE, mainSid, subs, 'case', 0, { paidDate:paidDate }) || [];
+      bySub.forEach(function(s){
+        if(s.role === '부담당' && (s.amount || 0) > 0 && okSubs.indexOf(s.sid) < 0) okSubs.push(s.sid);
+      });
+    }
+  } catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+  return { main:okMain, subs:okSubs };
+}
+function erpDefaultSplit(mainSid, subSids, paidDate){
+  var subs = (subSids || []).filter(function(s){ return s; });
+  var ok = erpPerfEligibleSet(mainSid, subs, paidDate);
+  var map = {}; subs.forEach(function(s){ map[s] = 0; });
+  var excluded = [];
+  if(mainSid && !ok.main) excluded.push(mainSid);
+  subs.forEach(function(s){ if(ok.subs.indexOf(s) < 0) excluded.push(s); });
+
+  function round1(v){ return Math.round((v || 0) * 10) / 10; }
+  /* 나머지를 여럿이 나눌 때 나누어떨어지지 않는 몫은 «마지막 사람» 이 받는다.
+     그래야 합계가 정확히 100 이 되어 「100%가 되어야 함」으로 확정이 막히지 않는다.
+     자동인데 막히면 손으로 할 때보다 나쁘다. */
+  function spread(list, total){
+    var each = round1(total / list.length), used = 0;
+    list.forEach(function(s, i){
+      var v = (i === list.length - 1) ? round1(total - used) : each;
+      if(v < 0) v = 0;
+      map[s] = v; used = round1(used + v);
+    });
+  }
+  var mainPct = 0;
+  if(ok.main && ok.subs.length){
+    mainPct = erpPerfMainPct();
+    spread(ok.subs, round1(100 - mainPct));
+  } else if(ok.main){
+    mainPct = 100;
+  } else if(ok.subs.length){
+    spread(ok.subs, 100);
+  }
+  return { mainPct:mainPct, subPctMap:map, excluded:excluded,
+           eligible:(ok.main ? 1 : 0) + ok.subs.length };
+}
+
 // 푸른노무법인 직인 (PDF에서 추출, 120x120 PNG, base64)
 var DEFAULT_STAMP_DATAURL = 'data:image/png;base64,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';
 
@@ -27450,7 +27527,7 @@ function ActivityLogViewer(){
 }
 
 function PerformancePolicySection(){
-  var DEFAULT = { autoReflect:false, autoReflectMain:false, autoReflectSub:false, vatExclDefault:true, monthMatchRule:'paidDate', subRatio:50 };
+  var DEFAULT = { autoReflect:false, autoReflectMain:false, autoReflectSub:false, vatExclDefault:true, monthMatchRule:'paidDate', subRatio:50, confirmMainPct:50 };
   var existing = dbGet('policy_perf', null);
   if(!existing){ dbSet('policy_perf', DEFAULT); existing = DEFAULT; }
   var s = useState(existing); var f = s[0]; var setF = s[1];
@@ -27477,9 +27554,22 @@ function PerformancePolicySection(){
       hint:'true=공급가액(부가세 제외) 기준 / false=총액 기준',
       control: h(ToggleSwitch, { checked:f.vatExclDefault, onChange:function(v){ set('vatExclDefault', v); } })
     }),
+    /* 입금확정 창이 열릴 때 미리 채워지는 분할 (2026-08-16 대표 지시).
+       전에는 늘 「주담당 100%」로 열려, 주담당이 요율 0%(대표님)면 성과급이 통째로 사라졌다. */
+    h(PolicyRow, {
+      label:'입금확정 기본 분할 — 주담당 %',
+      hint:'입금확정 창이 열릴 때 미리 채워지는 값. 나머지는 부담당들이 똑같이 나눠 갖습니다. '
+         + '직책 요율이 0%인 사람은 자동으로 빠집니다.',
+      control: h('input', {
+        type:'number', value:(f.confirmMainPct != null ? f.confirmMainPct : 50), min:0, max:100,
+        onChange:function(e){ set('confirmMainPct', Math.max(0, Math.min(100, parseInt(e.target.value||0, 10) || 0))); },
+        style:{ padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12.5px', fontFamily:'inherit', width:'80px', textAlign:'right' }
+      })
+    }),
     h(PolicyRow, {
       label:'부담당 성과 비율',
-      hint:'주담당 대비 부담당 분배 비율(%) — 예: 50 = 주담당의 절반',
+      // ⚠ 위의 「입금확정 기본 분할」과 이름이 비슷하지만 «뜻이 다른 값» 이다 — 합치면 둘 다 망가진다
+      hint:'법인 대시보드 직원 카드가 쓰는 어림값 — 위의 「입금확정 기본 분할」과는 다른 값입니다 (합치지 마세요)',
       control: h('input', {
         type:'number', value:f.subRatio, min:0, max:100,
         onChange:function(e){ set('subRatio', Math.max(0, Math.min(100, parseInt(e.target.value||0, 10)))); },
@@ -36825,9 +36915,13 @@ function FinanceLedger(){
         _ded = erpInitDeductions(_it, opts.vatIncluded ? 'inclusive' : 'separate');
         _perfBase = calcDeductions(row.amount, _ded).perfBaseAmount;
         if(_main){
+          /* 창을 안 거치는 길이다. 기본 분할을 여기서도 «같은 함수» 로 낸다 —
+             안 그러면 통장에서 자동 확정한 건만 주담당 100% 로 남아,
+             주담당이 요율 0%(대표님) 면 성과급이 통째로 사라진다. */
+          var _sp = erpDefaultSplit(_main, _it.managerSubs||[], paidDate);
           _perfShares = calcPerfShares(_perfBase, _main, _it.managerSubs||[],
             pItem.store==='companies'?'company':pItem.store.replace(/s$/,''),
-            undefined, {paidDate:paidDate}) || [];
+            _sp.mainPct, {paidDate:paidDate, subPctMap:_sp.subPctMap}) || [];
         }
       }catch(_pe){ if(window._erpErrLog) window._erpErrLog(_pe); }
     }
@@ -40429,6 +40523,19 @@ function FinanceIncome(){
   );
 }
 
+/* 분배 기록은 «있는데» 아무도 못 받은 건 (2026-08-16 대표 지시: 세어서 보여주기만).
+   ★ 전에는 이런 건이 어디에도 안 걸렸다 — 「성과 미반영」은 perfShares 가 «아예 없는» 것만
+     모으는데, 0원 건은 기록이 있고 금액만 0이라 조용히 통과했다.
+   ★ 기존 「분배 누락」과 섞지 않는다 — 고칠 방법이 서로 다르다.
+     누락은 담당자를 정해 주면 되고, 0원은 분할이나 요율을 봐야 한다. */
+function erpPerfPaidZero(fi){
+  var sh = (fi && fi.perfShares) || [];
+  if(!Array.isArray(sh) || !sh.length) return false;
+  var sum = 0;
+  sh.forEach(function(p){ sum += (p && p.amount) || 0; });
+  return sum === 0;
+}
+
 // ── 성과 미반영 입금 (재무관리/성과관리 공용 뷰) ──
 // 데이터는 그대로 finance_income(SSOT) 사용 — perfShares=[] 또는 perfExclude=true인 항목을 필터링·분류만 함
 function IncomeUnmatchedTab(props){
@@ -40469,7 +40576,7 @@ function IncomeUnmatchedTab(props){
   var allIncomes = dbGet('finance_income', []);
   var unmatched = allIncomes.filter(function(fi){
     if(fi.sourceKind === 'company') return false;  // 업체입금(자문료) 성과관리 제외
-    if(!(((fi.perfShares||[]).length === 0) || fi.perfExclude === true)) return false;
+    if(!(((fi.perfShares||[]).length === 0) || fi.perfExclude === true || erpPerfPaidZero(fi))) return false;
     if(monthFilter){
       if(monthFilter.length === 4){
         if((fi.date||'').slice(0,4) !== monthFilter) return false;
@@ -40484,6 +40591,8 @@ function IncomeUnmatchedTab(props){
   function classify(fi){
     var noShare = !(fi.perfShares||[]).length;
     if(fi.perfExclude === true) return { tag:'⛔ 명시적 제외', color:'#991b1b', bg:'#fef2f2', priority:2, group:'check' };
+    // 담당자는 정해져 있는데 아무도 못 받은 건 — 분할이나 요율을 봐야 한다
+    if(erpPerfPaidZero(fi)) return { tag:'💸 지급액 0원', color:'#991b1b', bg:'#fef2f2', priority:1, group:'check' };
     if(fi.sourceKind === 'company') return { tag:'📋 자문료', color:'#1e40af', bg:'#eff6ff', priority:3, group:'advisory' };
     if(fi.sourceId && fi.sourceKind && fi.sourceKind !== 'manual' && noShare){
       return { tag:'⚠️ 분배 누락', color:'#854d0e', bg:'#fffbeb', priority:1, group:'check' };
@@ -40881,10 +40990,24 @@ function IncomePendingTab(){
   /* 통장 줄을 눌러 확정창을 연다 — 입금일·실제입금액을 «통장에서» 채운다.
      전에는 늘 오늘 날짜로 채워져, 통장을 보고 손으로 고쳐 적어야 했다.
      잊으면 실제 입금일이 아니라 «처리한 날» 이 장부에 남는다. */
+  /* 창을 여는 길이 셋이다(통장 줄·거래내역 큐·입금확정 단추).
+     기본 분할을 «한 곳» 에서 얹지 않으면 어느 길로 열었느냐에 따라 성과급이 달라진다. */
+  function erpConfirmInit(p, base){
+    var st = base || {};
+    try {
+      var it = (p && p.item) || {};
+      var d = erpDefaultSplit(it.managerMain, it.managerSubs || [], st.date);
+      // 나눌 사람이 둘 이상일 때만 켜서 연다 — 꺼진 채 열면 정한 기본 분할이 적용되지 않는다
+      st.split = d.eligible > 1;
+      st.mainPct = st.split ? d.mainPct : 100;
+      st.subPctMap = d.subPctMap;
+    } catch(e){ if(window._erpErrLog) window._erpErrLog(e); }
+    return st;
+  }
   function openFromBank(p, hit){
-    setConfirmModal({ p:p, date:String((hit && hit.row && hit.row.date) || '').slice(0,10) || todayYMD(),
+    setConfirmModal(erpConfirmInit(p, { p:p, date:String((hit && hit.row && hit.row.date) || '').slice(0,10) || todayYMD(),
       deductions:erpInitDeductions(p.item, getVatType(p)),
-      bankRow:(hit && hit.row) || null });
+      bankRow:(hit && hit.row) || null }));
   }
   var sf = useState('all'); var srcFilter = sf[0]; var setSrcFilter = sf[1];
   var qs = useState(''); var query = qs[0]; var setQuery = qs[1];
@@ -40906,10 +41029,10 @@ function IncomePendingTab(){
       showToast('⚠️ '+(q.company||'해당 건')+' — 미입금 목록에 없습니다 (이미 확정됐을 수 있습니다)');
       advanceLedgerQueue(rest); return;
     }
-    setConfirmModal({p:hit, date:(q.row&&q.row.date)||todayYMD(),
+    setConfirmModal(erpConfirmInit(hit, {p:hit, date:(q.row&&q.row.date)||todayYMD(),
       // 거래내역에서 넘어온 건도 같은 규칙 — 계약이 개인입금이면 개인수익으로 연다
       deductions: erpInitDeductions(hit.item, getVatType(hit)),
-      actualAmt:(q.row&&q.row.amount)||0, fromLedger:q});
+      actualAmt:(q.row&&q.row.amount)||0, fromLedger:q}));
     setLedgerQ(rest && rest.length ? rest : null);
   }
   function advanceLedgerQueue(rest){
@@ -41413,7 +41536,7 @@ function IncomePendingTab(){
                     return h('button', { onClick:function(){
                         if(hit){ openFromBank(p, hit); return; }
                         // 계약에 「개인입금」이 표시돼 있으면 개인수익으로 연다
-                        setConfirmModal({p:p, date:todayYMD(), deductions:erpInitDeductions(p.item, getVatType(p))});
+                        setConfirmModal(erpConfirmInit(p, {p:p, date:todayYMD(), deductions:erpInitDeductions(p.item, getVatType(p))}));
                       },
                       title:hit ? ('통장 '+String(hit.row.date||'').slice(0,10)+' · '+hit.row.amount.toLocaleString()+'원으로 채워 엽니다')
                                 : '입금일을 손으로 넣어야 합니다 — 통장에서 찾지 못했습니다',
@@ -41469,6 +41592,54 @@ function IncomePendingTab(){
       var _perfBase = calcDeductions(_cmPay, _cmDed).perfBaseAmount;
       // 성과급 미리보기가 이것들을 보므로 «옵션 칸보다 먼저» 정해 둔다 (기본 ON)
       var _perfOn = confirmModal.perfEnabled !== false;
+
+      /* ── 누가 성과급을 받을 수 있고, 못 받으면 «왜» 인지 (2026-08-16 대표 지시) ──────
+         지금까지 이 창은 「합계가 100인가」만 봤다. 그래서 아무도 못 받는 건이
+         초록 ✓ 를 단 채 조용히 확정됐다 — 대표님(요율 0%)이 주담당인 건이 그랬다.
+         ★ 까닭은 저장할 때 쓰는 calcPerfShares 가 붙여 주는 표(probation·retired)를 그대로 읽는다.
+           여기서 다시 판정하면 언젠가 저장값과 어긋난다. */
+      var _elig = { main:false, subs:[] };
+      var _why = {};      // 사번 → 못 받는 까닭
+      try {
+        _elig = erpPerfEligibleSet(mainSid, subSids, confirmModal.date);
+        var _probe = calcPerfShares(100000000, mainSid, subSids, 'case', 0, { paidDate:confirmModal.date }) || [];
+        var _probeM = calcPerfShares(100000000, mainSid, subSids, 'case', 100, { paidDate:confirmModal.date }) || [];
+        _probe.concat(_probeM).forEach(function(s){
+          if(!s || !s.sid || _why[s.sid]) return;
+          if(s.probation) _why[s.sid] = '수습 · 미지급';
+          else if(s.retired) _why[s.sid] = '퇴사 · 미지급';
+        });
+        if(mainSid && !_elig.main && !_why[mainSid]) _why[mainSid] = '성과급 대상 아님 (직책 요율 0%)';
+        subSids.forEach(function(sid){
+          if(_elig.subs.indexOf(sid) < 0 && !_why[sid]) _why[sid] = '성과급 대상 아님 (직책 요율 0%)';
+        });
+      } catch(_ee){ if(window._erpErrLog) window._erpErrLog(_ee); }
+      var _eligN = (_elig.main ? 1 : 0) + _elig.subs.length;
+      function _canGet(sid){ return sid === mainSid ? _elig.main : _elig.subs.indexOf(sid) >= 0; }
+
+      /* 「합계 100%」와 「아무도 못 받음」은 다른 이야기다.
+         ★ 막되 빠져나갈 길을 둔다 — 정말 성과에 안 넣을 거면 「⭐ 성과급 반영」을 끄면 된다.
+           그러면 「⛔ 명시적 제외」로 남아, 잊은 것이 아니라 «정한 것» 으로 기록된다. */
+      var _perfSum = 0;
+      try {
+        (calcPerfShares(_perfBase, mainSid, subSids, confirmModal.p.store.sourceKind,
+          split ? mainPct : 100, { paidDate:confirmModal.date,
+            subPctMap:(split ? subPctMap : null),
+            mainRateOverride:confirmModal.mainRateOverride,
+            subRateOverrideMap:confirmModal.subRateOverrideMap || {} }) || [])
+          .forEach(function(s){ _perfSum += (s.amount || 0); });
+      } catch(_ze){ if(window._erpErrLog) window._erpErrLog(_ze); }
+      var _perfZero = _perfOn && !_cmDed.personalRevenue && !!mainSid
+        && confirmModal.p.store.sourceKind !== 'company' && _perfSum <= 0;
+
+      // 요율 칸은 «잠가» 둔다 — 늘 열려 있으면 실수로 만져 「변경 사유」 필수에 걸려 확정이 막힌다
+      var rateOpen = confirmModal.rateOpen || [];
+      function toggleRate(sid){
+        var next = rateOpen.slice();
+        var at = next.indexOf(sid);
+        if(at >= 0) next.splice(at, 1); else next.push(sid);
+        setM({rateOpen:next});
+      }
 
       function setM(o){ setConfirmModal(Object.assign({}, confirmModal, o)); }
 
@@ -41682,27 +41853,33 @@ function IncomePendingTab(){
                 if(!_sh.length) return h('div', { style:{fontSize:'11.5px',color:'#64748b'} },
                   '나눌 성과급이 없습니다 (요율 0% 이거나 대상이 아닙니다)');
                 var _tot = 0; _sh.forEach(function(s){ _tot += s.amount || 0; });
-                var gS = { display:'grid', gridTemplateColumns:'30px 1fr 54px 46px 92px', gap:'6px',
-                           alignItems:'center', fontSize:'11.5px', padding:'2px 0' };
+                /* 열 이름과 순서를 «입력표와 똑같이» 맞춘다 (2026-08-16).
+                   전에는 여기가 「분할 → 요율」, 나누기를 켜면 「요율 → 분할」로 뒤집혀
+                   어느 칸이 무엇인지 헷갈렸다 — 실수의 첫째 원인이었다.
+                   요율은 열이 아니라 «이름 아래 글씨» 로 내린다. */
+                var gS = { display:'grid', gridTemplateColumns:'26px 1fr 70px 88px', gap:'6px',
+                           alignItems:'center', fontSize:'11.5px', padding:'3px 0' };
                 return h('div', null,
-                  h('div', { style:Object.assign({}, gS, {color:'#64748b',fontSize:'10px',fontWeight:700}) },
-                    h('span', null, ''), h('span', null, '이름'),
-                    h('span', { style:{textAlign:'right'} }, '분할'),
-                    h('span', { style:{textAlign:'right'} }, '요율'),
-                    h('span', { style:{textAlign:'right'} }, '지급액')),
+                  h('div', { style:Object.assign({}, gS, {color:'#64748b',fontSize:'9.5px',fontWeight:700}) },
+                    h('span', null, ''), h('span', null, '담당'),
+                    h('span', { style:{textAlign:'center'} }, '분할'),
+                    h('span', { style:{textAlign:'right'} }, '받을 금액')),
                   _sh.map(function(s, i){
                     var isMain = s.role === '주담당' || s.sid === mainSid;
+                    var out = !s.probation && !s.retired && (s.amount || 0) <= 0;
                     return h('div', { key:s.sid || i, style:gS },
                       h('span', { style:Object.assign({}, isMain ? chipMain : chipSub, {justifyContent:'center',padding:'1px 0'}) }, isMain ? '주' : '부'),
-                      h('span', { style:{fontWeight:700,overflow:'hidden',textOverflow:'ellipsis'} },
-                        s.name || whoName(s.sid),
+                      h('span', { style:{overflow:'hidden'} },
+                        h('div', { style:{fontWeight:700,textOverflow:'ellipsis',overflow:'hidden'} }, s.name || whoName(s.sid)),
                         // 0원이 된 까닭을 밝힌다 — 안 밝히면 셈이 틀린 줄 안다
-                        s.probation && h('span', { style:{marginLeft:'4px',fontSize:'9.5px',fontWeight:700,color:'#854d0e'} }, '수습 · 미지급'),
-                        s.retired && h('span', { style:{marginLeft:'4px',fontSize:'9.5px',fontWeight:700,color:'#991b1b'} }, '퇴사 · 미지급')),
-                      h('span', { style:{textAlign:'right',fontFamily:'monospace'} }, (s.sharePct != null ? s.sharePct : 100) + '%'),
-                      h('span', { style:{textAlign:'right',fontFamily:'monospace'} }, (s.pct || 0) + '%'),
-                      h('span', { style:{textAlign:'right',fontFamily:'monospace',fontWeight:800,color:'#1e40af'} },
-                        (s.amount || 0).toLocaleString()));
+                        s.probation ? h('div', { style:{fontSize:'9.5px',fontWeight:700,color:'#854d0e'} }, '수습 · 미지급')
+                        : s.retired ? h('div', { style:{fontSize:'9.5px',fontWeight:700,color:'#991b1b'} }, '퇴사 · 미지급')
+                        : out ? h('div', { style:{fontSize:'9.5px',fontWeight:700,color:'#94a3b8'} }, '성과급 대상 아님 (직책 요율 0%)')
+                        : h('div', { style:{fontSize:'9.5px',fontWeight:600,color:'#64748b'} }, '직책 요율 ' + (s.pct || 0) + '%')),
+                      h('span', { style:{textAlign:'center',fontFamily:'monospace'} }, (s.sharePct != null ? s.sharePct : 100) + '%'),
+                      h('span', { style:{textAlign:'right',fontFamily:'monospace',fontWeight:800,
+                          color:(s.amount||0) > 0 ? '#1e40af' : '#dc2626'} },
+                        (s.amount || 0).toLocaleString() + '원'));
                   }),
                   h('div', { style:{borderTop:'1px solid #bfdbfe',marginTop:'5px',paddingTop:'5px',
                       display:'flex',justifyContent:'space-between',fontSize:'11.5px',fontWeight:800,color:'#1e40af'} },
@@ -41732,81 +41909,103 @@ function IncomePendingTab(){
                   style:{padding:'3px 8px', background:'#fffbeb', color:'#854d0e', border:'1px solid #fde68a', borderRadius:'5px', fontSize:'10px', cursor:'pointer', fontWeight:600} },
                   '↺ 기본값 복원')),
 
-              // 주담당
-              (function(){
-                var u = users.find(function(x){return x.sid===mainSid;});
-                var baseRate = resolveBaseRate(mainSid);
-                var rate = mainRateOverride != null ? mainRateOverride : baseRate;
-                var isOverride = mainRateOverride != null && mainRateOverride !== baseRate;
-                // 세금 뺀 성과 기준으로 나눈다 (저장 로직 calcPerfShares 와 같은 값이 나와야 한다)
-                var base = Math.round(_perfBase * mainPct / 100);
-                var amt = Math.round(base * rate / 100);
-                return h('div', { style:{padding:'8px',background:'#eff6ff',borderRadius:'5px',marginBottom:'8px',border: isOverride ? '2px solid #fbbf24' : '1px solid #bfdbfe'} },
-                  h('div', { style:{display:'grid',gridTemplateColumns:'30px 1fr 78px 78px 96px',gap:'6px',alignItems:'center'} },
-                    h('div', { style:{fontSize:'10px',fontWeight:700,color:'#1e40af',textAlign:'center'} }, '주'),
-                    h('div', { style:{fontSize:'12px',fontWeight:700} }, (u?u.name:mainSid),
-                      isOverride && h('span', { style:{background:'#fbbf24', color:'#fff', padding:'1px 6px', borderRadius:'8px', fontSize:'10px', marginLeft:'4px', fontWeight:700} },
-                        '기본 '+baseRate+'%')),
-                    // 요율% 입력
-                    h('div', { style:{display:'flex',alignItems:'center',gap:'4px'} },
-                      h('input', { type:'number', min:0, max:100, step:'0.1',
-                        value: rate,
-                        onChange:function(e){
-                          var v = parseFloat(e.target.value);
-                          if(isNaN(v)) v = 0;
-                          if(v === baseRate){ setMainRateOverride(null); }
-                          else { setMainRateOverride(v); }
-                        },
-                        title:'직책 요율 (이번 건만 적용. 기본: '+baseRate+'%)',
-                        style:{width:'58px',padding:'3px 4px',border:'1px solid '+(isOverride?'#fbbf24':'#cbd5e1'),borderRadius:'5px',fontSize:'11px',textAlign:'right',fontWeight:isOverride?700:400,background:isOverride?'#fffbeb':'#fff'} }),
-                      h('span', { style:{fontSize:'10px',color:'#475569',fontWeight:600} }, '%')),
-                    // 분할% 입력
-                    h('div', { style:{display:'flex',alignItems:'center',gap:'4px'} },
-                      h('input', { type:'number', min:0, max:100, value:mainPct,
-                        onChange:function(e){setMainPct(e.target.value);},
-                        title:'분할 비율 — 고치면 나머지가 부담당에게 자동으로 넘어갑니다',
-                        style:{width:'58px',padding:'3px 4px',border:'1px solid #cbd5e1',borderRadius:'5px',fontSize:'11.5px',textAlign:'right'} }),
-                      h('span', { style:{fontSize:'10px',color:'#475569',fontWeight:600} }, '%')),
-                    h('div', { style:{fontSize:'10.5px',color:isOverride?'#854d0e':'#1e40af',fontFamily:'monospace',textAlign:'right',fontWeight:700} }, amt.toLocaleString()+'원')
-                  )
-                );
-              })(),
+              /* 빠른 단추 — 자주 쓰는 비율을 한 번에.
+                 셈은 손으로 고칠 때와 «같은 함수» 를 거친다 (따로 셈하면 결과가 달라진다). */
+              h('div', { style:{display:'flex',gap:'5px',flexWrap:'wrap',marginBottom:'9px'} },
+                (function(){
+                  var half = erpPerfMainPct();
+                  return [['반반 '+half+':'+(100-half), half], ['주담당 70:30', 70], ['주담당이 다', 100]];
+                })().map(function(q, qi){
+                  var on = Math.abs(mainPct - q[1]) < 0.05;
+                  return h('button', { key:qi, type:'button', onClick:function(){ setMainPct(q[1]); },
+                    style:{fontSize:'10.5px',fontWeight:700,padding:'4px 10px',borderRadius:'99px',
+                      border:'1px solid #bfdbfe', background:on?'#1e40af':'#fff',
+                      color:on?'#fff':'#1e40af', cursor:'pointer'} }, q[0]);
+                })),
 
-              // 부담당들
-              subSids.map(function(sid){
+              // 열 이름표 — 나누기를 껐을 때 보이는 표와 «같은 순서» 다 (전에는 뒤집혀 있었다)
+              h('div', { style:{display:'grid',gridTemplateColumns:'26px 1fr 70px 88px',gap:'6px',
+                  fontSize:'9.5px',color:'#64748b',fontWeight:700,padding:'0 8px 3px'} },
+                h('span', null, ''), h('span', null, '담당'),
+                h('span', { style:{textAlign:'center'} }, '분할'),
+                h('span', { style:{textAlign:'right'} }, '받을 금액')),
+
+              /* 주담당·부담당을 «한 함수» 로 그린다.
+                 전에는 거의 같은 코드가 두 벌이라, 한쪽만 고쳐 서로 달라지기 쉬웠다. */
+              [mainSid].concat(subSids).filter(function(s){ return s; }).map(function(sid, ri){
+                var isMain = (ri === 0);
                 var u = users.find(function(x){return x.sid===sid;});
                 var baseRate = resolveBaseRate(sid);
-                var rate = subRateOverrideMap[sid] != null ? subRateOverrideMap[sid] : baseRate;
-                var isOverride = subRateOverrideMap[sid] != null && subRateOverrideMap[sid] !== baseRate;
-                var pct = parseFloat(subPctMap[sid]) || 0;
-                // 주담당과 같은 기준(세후)으로 나눈다
-                var base = Math.round(_perfBase * pct / 100);
-                var amt = Math.round(base * rate / 100);
-                return h('div', { key:sid, style:{padding:'8px',background:'#bfdbfe',borderRadius:'5px',marginBottom:'6px',border: isOverride ? '2px solid #fbbf24' : '1px solid #bfdbfe'} },
-                  h('div', { style:{display:'grid',gridTemplateColumns:'30px 1fr 78px 78px 96px',gap:'6px',alignItems:'center'} },
-                    h('div', { style:{fontSize:'10px',fontWeight:700,color:'#2563eb',textAlign:'center'} }, '부'),
-                    h('div', { style:{fontSize:'12px',fontWeight:700} }, (u?u.name:sid),
-                      isOverride && h('span', { style:{background:'#fbbf24', color:'#fff', padding:'1px 6px', borderRadius:'8px', fontSize:'10px', marginLeft:'4px', fontWeight:700} },
-                        '기본 '+baseRate+'%')),
-                    h('div', { style:{display:'flex',alignItems:'center',gap:'4px'} },
-                      h('input', { type:'number', min:0, max:100, step:'0.1',
-                        value: rate,
-                        onChange:function(e){
-                          var v = parseFloat(e.target.value);
-                          if(isNaN(v)) v = 0;
-                          if(v === baseRate){ setSubRateOverride(sid, null); }
-                          else { setSubRateOverride(sid, v); }
-                        },
-                        title:'직책 요율 (이번 건만 적용. 기본: '+baseRate+'%)',
-                        style:{width:'58px',padding:'3px 4px',border:'1px solid '+(isOverride?'#fbbf24':'#cbd5e1'),borderRadius:'5px',fontSize:'11px',textAlign:'right',fontWeight:isOverride?700:400,background:isOverride?'#fffbeb':'#fff'} }),
-                      h('span', { style:{fontSize:'10px',color:'#475569',fontWeight:600} }, '%')),
-                    h('div', { style:{display:'flex',alignItems:'center',gap:'4px'} },
-                      h('input', { type:'number', min:0, max:100, value:pct,
-                        onChange:function(e){setSubPct(sid, e.target.value);},
-                        title:'분할 비율 — 고치면 나머지가 주담당에게 자동으로 넘어갑니다',
-                        style:{width:'58px',padding:'3px 4px',border:'1px solid #cbd5e1',borderRadius:'5px',fontSize:'11.5px',textAlign:'right'} }),
-                      h('span', { style:{fontSize:'10px',color:'#475569',fontWeight:600} }, '%')),
-                    h('div', { style:{fontSize:'10.5px',color:isOverride?'#854d0e':'#2563eb',fontFamily:'monospace',textAlign:'right',fontWeight:700} }, amt.toLocaleString()+'원')
+                var ov = isMain ? mainRateOverride : subRateOverrideMap[sid];
+                var rate = ov != null ? ov : baseRate;
+                var isOverride = ov != null && ov !== baseRate;
+                var pct = isMain ? mainPct : (parseFloat(subPctMap[sid]) || 0);
+                var can = _canGet(sid);
+                // 세금 뺀 성과 기준으로 나눈다 (저장 로직 calcPerfShares 와 같은 값이 나와야 한다)
+                var amt = Math.round(Math.round(_perfBase * pct / 100) * rate / 100);
+                var open = rateOpen.indexOf(sid) >= 0;
+                return h('div', { key:sid,
+                  style:{padding:'8px',borderRadius:'6px',marginBottom:'6px',
+                    background: can ? '#fff' : '#f8fafc',
+                    border: isOverride ? '2px solid #fbbf24'
+                          : (can ? '1px solid #e2e8f0' : '1px dashed #cbd5e1')} },
+                  h('div', { style:{display:'grid',gridTemplateColumns:'26px 1fr 70px 88px',gap:'6px',alignItems:'center'} },
+                    h('div', { style:{fontSize:'9.5px',fontWeight:700,textAlign:'center',borderRadius:'99px',
+                        padding:'2px 0',color:'#fff',
+                        background: can ? (isMain ? '#1e40af' : '#2563eb') : '#94a3b8'} }, isMain ? '주' : '부'),
+                    h('div', null,
+                      h('div', { style:{fontSize:'12px',fontWeight:700,color: can ? '#1e293b' : '#64748b'} },
+                        (u?u.name:sid),
+                        isOverride && h('span', { style:{background:'#fbbf24', color:'#fff', padding:'1px 6px', borderRadius:'8px', fontSize:'9.5px', marginLeft:'4px', fontWeight:700} },
+                          '기본 '+baseRate+'%')),
+                      /* 요율은 «이름 아래 글씨» 다 — 늘 열린 칸으로 두면 실수로 만져
+                         「변경 사유」 필수에 걸리고, 무엇을 만졌는지 모른 채 확정이 막힌다. */
+                      !can
+                        ? h('div', { style:{fontSize:'9.5px',fontWeight:700,marginTop:'1px',
+                            color: (_why[sid]||'').indexOf('퇴사') === 0 ? '#991b1b'
+                                 : ((_why[sid]||'').indexOf('수습') === 0 ? '#854d0e' : '#94a3b8')} },
+                            _why[sid] || '성과급 대상 아님')
+                        : (open
+                          ? h('div', { style:{display:'flex',alignItems:'center',gap:'4px',marginTop:'2px'} },
+                              h('span', { style:{fontSize:'9.5px',color:'#854d0e',fontWeight:700} }, '요율'),
+                              h('input', { type:'number', min:0, max:100, step:'0.1', value:rate,
+                                onChange:function(e){
+                                  var v = parseFloat(e.target.value);
+                                  if(isNaN(v)) v = 0;
+                                  if(isMain) setMainRateOverride(v === baseRate ? null : v);
+                                  else setSubRateOverride(sid, v === baseRate ? null : v);
+                                },
+                                title:'직책 요율 (이번 건만 적용. 기본: '+baseRate+'%)',
+                                style:{width:'46px',padding:'2px 4px',border:'1px solid #fbbf24',borderRadius:'4px',fontSize:'11px',textAlign:'right',fontFamily:'monospace',fontWeight:700,background:'#fff'} }),
+                              h('span', { style:{fontSize:'9.5px',color:'#854d0e',fontWeight:700} }, '%'),
+                              h('button', { type:'button', onClick:function(){
+                                  if(isMain) setMainRateOverride(null); else setSubRateOverride(sid, null);
+                                  toggleRate(sid);
+                                },
+                                style:{fontSize:'9.5px',color:'#2563eb',textDecoration:'underline',background:'none',border:'none',padding:0,cursor:'pointer',fontFamily:'inherit'} }, '되돌리기'))
+                          : h('div', { style:{fontSize:'9.5px',color:'#64748b',fontWeight:600,marginTop:'1px'} },
+                              '직책 요율 ' + rate + '% · ',
+                              h('button', { type:'button', onClick:function(){ toggleRate(sid); },
+                                style:{fontSize:'9.5px',color:'#2563eb',textDecoration:'underline',background:'none',border:'none',padding:0,cursor:'pointer',fontFamily:'inherit'} }, '요율 조정'))),
+                      ),
+                    /* 못 받는 사람에게 분할 칸을 주지 않는다 —
+                       0% 를 적을 수 있게 두면 「왜 0원이지」를 그 칸에서 찾게 된다. */
+                    !can
+                      ? h('div', { style:{textAlign:'center',fontSize:'10px',color:'#cbd5e1'} }, '—')
+                      : (_eligN <= 1
+                        ? h('div', { style:{textAlign:'center',fontSize:'11px',fontWeight:800,color:'#1e40af',fontFamily:'monospace'} }, '100%')
+                        : h('div', { style:{display:'flex',alignItems:'center',gap:'3px',justifyContent:'flex-end'} },
+                            h('input', { type:'number', min:0, max:100, value:pct,
+                              onChange:function(e){
+                                if(isMain) setMainPct(e.target.value); else setSubPct(sid, e.target.value);
+                              },
+                              title:'분할 비율 — 고치면 나머지가 자동으로 채워집니다',
+                              style:{width:'46px',padding:'4px',border:'1px solid #cbd5e1',borderRadius:'5px',fontSize:'12px',fontWeight:700,textAlign:'right',fontFamily:'monospace'} }),
+                            h('span', { style:{fontSize:'10px',color:'#475569',fontWeight:700} }, '%'))),
+                    !can
+                      ? h('div', { style:{fontSize:'10.5px',color:'#94a3b8',fontWeight:600,textAlign:'right'} }, '분배 제외')
+                      : h('div', { style:{fontSize:'13px',fontFamily:'monospace',fontWeight:800,textAlign:'right',
+                          color: amt > 0 ? (isOverride?'#854d0e':'#1e40af') : '#dc2626'} }, amt.toLocaleString()+'원')
                   )
                 );
               }),
@@ -41824,13 +42023,28 @@ function IncomePendingTab(){
                 h('div', { style:{fontSize:'10px',color:'#854d0e',marginTop:'4px',fontStyle:'italic'} },
                   '※ 사유는 감사 로그에 영구 기록됩니다. (환경설정 → 데이터·로그)')),
 
-              // 합계 검증
-              h('div', { style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:'10px',padding:'6px 8px',background:valid?'#f0fdf4':'#fef2f2',borderRadius:'5px'} },
-                h('span', { style:{fontSize:'11px',fontWeight:700,color:valid?'#166534':'#991b1b'} }, '분배 합계'),
-                h('span', { style:{fontSize:'13px',fontWeight:800,color:valid?'#166534':'#991b1b'} },
-                  totalPct.toFixed(1) + '% ' + (valid ? '✓' : '(100%가 되어야 함)'))
-              )
+              /* ── 「총 성과급」이 결론이다 (2026-08-16 대표 지시) ─────────────────
+                 전에는 「분배 합계 100.0% ✓」 초록 줄이었다. ✓ 는 «합계가 100» 만 뜻하는데
+                 사람은 «다 맞았다» 로 읽는다 — 지급액이 전부 0원이어도 초록이었다. */
+              h('div', { style:{display:'flex',justifyContent:'space-between',alignItems:'center',
+                  marginTop:'10px',padding:'7px 9px',borderRadius:'6px',
+                  background:(_perfZero||!valid)?'#fef2f2':'#eff6ff',
+                  border:'1px solid '+((_perfZero||!valid)?'#fecaca':'#bfdbfe')} },
+                h('span', { style:{fontSize:'12px',fontWeight:800,color:(_perfZero||!valid)?'#991b1b':'#1e40af'} }, '총 성과급'),
+                h('span', { style:{fontSize:'13px',fontWeight:800,fontFamily:'monospace',color:(_perfZero||!valid)?'#991b1b':'#1e40af'} },
+                  !valid ? (totalPct.toFixed(1) + '% — 100%가 되어야 함') : (_perfSum.toLocaleString() + '원'))),
+              _perfZero && h('div', { style:{marginTop:'7px',background:'#fef2f2',border:'1px solid #fecaca',
+                  borderRadius:'6px',padding:'8px 9px',fontSize:'11px',color:'#991b1b',lineHeight:'1.6'} },
+                h('b', null, '⚠ 이대로 확정하면 아무도 성과급을 못 받습니다.'),
+                h('div', null, '분할을 다시 보시거나, 일부러 안 넣으실 거면 아래 「⭐ 성과급 반영」을 끄세요.'))
             ),
+
+            /* 나누기를 껐을 때도 0원이면 알린다 — 켰을 때만 알리면
+               「끄고 확정」이 그물을 빠져나가는 길이 된다. */
+            !split && _perfZero && h('div', { style:{marginTop:'-4px',marginBottom:'8px',background:'#fef2f2',
+                border:'1px solid #fecaca',borderRadius:'6px',padding:'8px 9px',fontSize:'11px',color:'#991b1b',lineHeight:'1.6'} },
+              h('b', null, '⚠ 이대로 확정하면 아무도 성과급을 못 받습니다.'),
+              h('div', null, '위 「⚖️ 부담당과 나누기」를 켜서 나누시거나, 일부러 안 넣으실 거면 아래 「⭐ 성과급 반영」을 끄세요.')),
 
             // 옵션: 부가세/세금/성과 반영
             (function(){
@@ -42031,10 +42245,16 @@ function IncomePendingTab(){
               setConfirmModal(null);
               if(confirmModal.fromLedger && ledgerQ && ledgerQ.length) setLedgerQ(null);
             } }, '취소'),
-            h('button', { className:'btn-primary', disabled: !valid || (hasAnyOverride && !rateOverrideReason.trim()),
-              style: (!valid || (hasAnyOverride && !rateOverrideReason.trim())) ? {opacity:0.5,cursor:'not-allowed'} : {},
+            h('button', { className:'btn-primary', disabled: !valid || _perfZero || (hasAnyOverride && !rateOverrideReason.trim()),
+              style: (!valid || _perfZero || (hasAnyOverride && !rateOverrideReason.trim())) ? {opacity:0.5,cursor:'not-allowed'} : {},
               onClick:function(){
                 if(!valid) return;
+                /* 조용히 0원으로 확정되던 것을 막는다. 빠져나갈 길은 「성과급 반영」 끄기다 —
+                   그러면 「⛔ 명시적 제외」로 남아 «정한 것» 으로 기록된다. */
+                if(_perfZero){
+                  showToast('⚠️ 아무도 성과급을 못 받습니다 — 분할을 보시거나 「⭐ 성과급 반영」을 끄세요');
+                  return;
+                }
                 if(hasAnyOverride && !rateOverrideReason.trim()){
                   showToast('⚠️ 요율 변경 사유를 입력하세요');
                   return;

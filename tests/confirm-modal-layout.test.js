@@ -53,8 +53,12 @@ t('머리를 !split 로 감싸지 않는다',
 t('읽기표는 안 나눌 때만', /!split && h\('div', \{ style:\{border:'1px solid #bfdbfe',borderTop:'none'/.test(MODAL), true);
 t('저장할 때 쓰는 calcPerfShares 로 셈한다 — 화면과 실제가 달라선 안 된다',
   /_sh = calcPerfShares\(_perfBase, mainSid, subSids,\s*\n?\s*confirmModal\.p\.store\.sourceKind, 100, \{ paidDate:confirmModal\.date \}\)/.test(MODAL), true);
-t('이름·분할%·요율%·지급액을 적는다',
-  /'이름'[\s\S]{0,200}?'분할'[\s\S]{0,120}?'요율'[\s\S]{0,120}?'지급액'/.test(MODAL), true);
+/* 지킬 것은 «누가 · 얼마나 나눠서 · 얼마 받는지» 가 다 보이는 것이다.
+   열 이름 넉 자를 글자 그대로 못 박으면, 요율을 이름 아래로 내리는 것 같은 «개선» 에도 깨진다
+   — 2026-08-16 에 실제로 그렇게 깨졌다. 요율은 이제 열이 아니라 이름 아래 글씨다. */
+t('누가·얼마나 나눠서·얼마 받는지를 다 적는다',
+  /'담당'[\s\S]{0,400}?'분할'[\s\S]{0,400}?'받을 금액'/.test(MODAL), true);
+t('요율도 어딘가에는 보인다 (열이 아니어도 된다)', /직책 요율/.test(MODAL), true);
 t('총 성과급도 적는다', /'총 성과급'/.test(MODAL), true);
 t('셈을 그대로 보여준다 (입금 − 차감 = 성과 기준)',
   /'입금 ' \+ _cmPay\.toLocaleString\(\)[\s\S]{0,260}?' = 성과 기준 ' \+ _perfBase/.test(MODAL), true);
