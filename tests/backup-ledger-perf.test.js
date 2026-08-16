@@ -140,7 +140,10 @@ function writeCtx(failAt){
     console: { log(){}, warn(){} }, Object, JSON, Array, String, Number, parseInt, isNaN, Math, Promise,
     window: {},
     fbDb: { ref: (p) => mkRef(p) },
-    _snapSummary(){ return '요약'; }
+    _snapSummary(){ return '요약'; },
+    /* 2026-08-16 부터 인덱스에 id 명부(ids)가 같이 실린다 — 유실 검사가 본문을
+       통째로 안 받게 하는 장치. 여기서는 흐름만 보므로 빈 명부로 대신한다. */
+    _snapIdIndex(){ return {}; }
   };
   vm.createContext(c);
   vm.runInContext(slice('var BACKUP_BATCH_CHARS =', '// 스냅샷 한 벌 삭제'), c);

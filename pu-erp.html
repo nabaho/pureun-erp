@@ -2695,7 +2695,9 @@ function serverBackupWrite(id, snap){
     p = p.then(function(){ return fbDb.ref('serverBackups/' + id).update(b); });
   });
   return p.then(function(){
-    return fbDb.ref('serverBackupsIndex/' + id).set({ savedAt: snap.savedAt, summary: _snapSummary(snap.data) });
+    /* ids = 백업 속 레코드 id 명부(몇십 KB) — 유실 검사가 이것만 읽고 끝나게 한다
+       (본문 2~5MB를 통째로 안 받는다). 2026-08-16 요금 구멍 막기. */
+    return fbDb.ref('serverBackupsIndex/' + id).set({ savedAt: snap.savedAt, summary: _snapSummary(snap.data), ids: _snapIdIndex(snap.data) });
   }).then(function(){ return batches.length; });
 }
 // 스냅샷 한 벌 삭제 — 통째 삭제도 한 번의 쓰기라 큰 스냅샷은 같은 한도에 걸린다.
@@ -2806,7 +2808,7 @@ function serverBackupRecent(){
   var sig = _quickHash(JSON.stringify(snap.data));
   if(localStorage.getItem('pureun_v6_recent_sig') === sig) return; // 변화 없음 → 건너뜀
   var key = String(Date.now()); // 13자리 ms → 사전순=시간순
-  var w = {}; w['serverBackupsRecent/'+key] = snap; w['serverBackupsRecentIndex/'+key] = { savedAt:snap.savedAt, summary:_snapSummary(snap.data) };
+  var w = {}; w['serverBackupsRecent/'+key] = snap; w['serverBackupsRecentIndex/'+key] = { savedAt:snap.savedAt, summary:_snapSummary(snap.data), ids:_snapIdIndex(snap.data) };
   fbDb.ref().update(w)
     .then(function(){
       localStorage.setItem('pureun_v6_recent_sig', sig);
@@ -2871,30 +2873,76 @@ var LOST_STORE_LABELS = { contracts:'계약', cases:'사건', consultings:'컨�
 var LOST_SCAN_MAX_DAILY = 8;   // 대역폭 보호: 일간 백업은 최신 8개만
 var LOST_SCAN_MAX_RECENT = 8;  // 수시 백업도 최신 8개만
 
+/* ══ 백업 속 레코드의 「id 명부」 (2026-08-16, 대표 승인) ══
+   유실 검사에 실제로 필요한 것은 백업 **본문**이 아니라 id(와 화면에 보일
+   번호·업체명)뿐이다. 그런데 종전에는 검사가 스냅샷을 통째로 내려받았다 —
+   한 벌에 2~5MB, 한 번 검사에 최대 16벌 ≈ 55MB. 요금의 큰 구멍이었다.
+   이 명부(몇십 KB)를 인덱스에 같이 실어 두면 검사는 명부만 읽으면 된다.
+   ⚠ _deleted(휴지통행)는 여기서부터 뺀다 — 검사도 어차피 걸러내며,
+     넣어 두면 「유실」로 잘못 세는 재료만 된다. */
+function _snapIdIndex(data){
+  var out = {};
+  if(!data || typeof data !== 'object') return out;
+  LOST_SCAN_STORES.forEach(function(st){
+    var rows = _fxRows(data[st]);
+    if(!rows.length) return;
+    var m = {};
+    rows.forEach(function(it){
+      if(!it || typeof it.id !== 'string' || !it.id) return;
+      if(it._deleted === true) return;
+      m[it.id] = { n:_fxNo(it), c:_fxCompany(it) };
+    });
+    if(Object.keys(m).length) out[st] = m;
+  });
+  return out;
+}
+
 // 보관함의 스냅샷 키 목록(최신→과거)을 경량 인덱스에서 뽑는다.
 // 인덱스가 없는 구버전 보관함이면 보관함을 1회 통째로 읽고 그 스냅샷을 캐시로 재사용(중복 수신 방지).
 async function _lostLoadSnapKeys(indexPath, fullPath, limit){
   try {
-    var s = await fbDb.ref(indexPath).once('value');
+    /* ⚠ 인덱스도 통째로 읽지 않는다 — 키가 시각순(사전순)이라 최신 N개만 잘라 받는다.
+       id 명부가 실리면서 인덱스 한 칸이 커졌기 때문에, 통째로 읽으면 명부를 만든
+       보람이 줄어든다. */
+    var s = await fbDb.ref(indexPath).orderByKey().limitToLast(limit).once('value');
     var idx = (s && s.val()) || {};
     var ks = Object.keys(idx);
     if(ks.length){
       ks.sort().reverse();               // YYYY-MM-DD·13자리 ms 모두 사전순=시간순
-      ks = ks.slice(0, limit);
       var meta = {};
-      ks.forEach(function(k){ meta[k] = { savedAt:(idx[k] || {}).savedAt || '' }; });
+      ks.forEach(function(k){ meta[k] = { savedAt:(idx[k] || {}).savedAt || '', ids:(idx[k] || {}).ids || null }; });
       return { keys:ks, cache:{}, meta:meta };
     }
   } catch(e){ window._erpErrLog && window._erpErrLog(e); }
   try {
-    var fs2 = await fbDb.ref(fullPath).once('value');
+    var fs2 = await fbDb.ref(fullPath).orderByKey().limitToLast(limit).once('value');
     var full = (fs2 && fs2.val()) || {};
     var ks2 = Object.keys(full).sort().reverse().slice(0, limit);
     var cache = {}, meta2 = {};
-    ks2.forEach(function(k){ cache[k] = full[k]; meta2[k] = { savedAt:(full[k] || {}).savedAt || '' }; });
+    ks2.forEach(function(k){ cache[k] = full[k]; meta2[k] = { savedAt:(full[k] || {}).savedAt || '', ids:null }; });
     return { keys:ks2, cache:cache, meta:meta2 };
   } catch(e2){ window._erpErrLog && window._erpErrLog(e2); }
   return { keys:[], cache:{}, meta:{} };
+}
+
+/* 스냅샷 하나의 id 명부를 얻는다 — 인덱스에 있으면 그걸로 끝(몇 KB).
+   없으면(명부가 생기기 전의 옛 백업) **이번 한 번만** 본문을 내려받아 명부를 만들고
+   인덱스에 적어 둔다(자가 치유) — 다음 검사부터는 그 백업도 명부만 읽는다.
+   ⚠ 이 자가 치유가 없으면 옛 백업이 다 밀려날 때까지 몇 주간 매 검사가 비싸다. */
+async function _lostSnapEnsureIds(q){
+  if(q.ids) return { ids:q.ids, snap:q.cached || null };
+  var snap = q.cached || null;
+  if(!snap){
+    try {
+      var ss = await fbDb.ref(q.path + '/' + q.fbKey).once('value');
+      snap = (ss && ss.val()) || null;
+    } catch(e){ window._erpErrLog && window._erpErrLog(e); return { ids:null, snap:null }; }
+  }
+  if(!snap || !snap.data) return { ids:null, snap:snap };
+  var ids = _snapIdIndex(snap.data);
+  // 인덱스 경로는 보관함 경로 + 'Index' — serverBackups(Index)·serverBackupsRecent(Index)
+  try { fbDb.ref(q.path + 'Index/' + q.fbKey + '/ids').set(ids); } catch(e2){ /* 못 적어도 이번 검사는 계속 */ }
+  return { ids:ids, snap:snap };
 }
 // 스냅샷 정렬용 시각 (savedAt 우선 → 수시키는 ms 숫자 → 일간키는 날짜 파싱)
 function _lostSnapTs(q){
@@ -2925,41 +2973,39 @@ async function erpScanLostRecords(){
   var recentInfo = await _lostLoadSnapKeys('serverBackupsRecentIndex', 'serverBackupsRecent', LOST_SCAN_MAX_RECENT);
   var queue = [];
   recentInfo.keys.forEach(function(k){
-    queue.push({ kind:'recent', path:'serverBackupsRecent', fbKey:k, savedAt:(recentInfo.meta[k] || {}).savedAt || '', cached:recentInfo.cache[k] });
+    queue.push({ kind:'recent', path:'serverBackupsRecent', fbKey:k, savedAt:(recentInfo.meta[k] || {}).savedAt || '', ids:(recentInfo.meta[k] || {}).ids || null, cached:recentInfo.cache[k] });
   });
   dailyInfo.keys.forEach(function(k){
-    queue.push({ kind:'daily', path:'serverBackups', fbKey:k, savedAt:(dailyInfo.meta[k] || {}).savedAt || '', cached:dailyInfo.cache[k] });
+    queue.push({ kind:'daily', path:'serverBackups', fbKey:k, savedAt:(dailyInfo.meta[k] || {}).savedAt || '', ids:(dailyInfo.meta[k] || {}).ids || null, cached:dailyInfo.cache[k] });
   });
   queue.sort(function(a,b){ return _lostSnapTs(b) - _lostSnapTs(a); }); // 최신→과거
 
   var seen = {}; // store/id — 더 최근 백업에서 이미 채택한 건 건너뜀(최신 버전 우선)
   for(var qi=0; qi<queue.length; qi++){
     var q = queue[qi];
-    var snap = q.cached;
-    if(!snap){
-      try {
-        var ss = await fbDb.ref(q.path + '/' + q.fbKey).once('value');
-        snap = (ss && ss.val()) || null;
-      } catch(e3){ window._erpErrLog && window._erpErrLog(e3); continue; }
-    }
-    if(!snap || !snap.data) continue;
+    /* ⚠ 본문(2~5MB)이 아니라 id 명부(몇십 KB)로 대조한다 — 2026-08-16 요금 구멍 막기.
+       명부가 없는 옛 백업만 한 번 내려받아 명부를 만들어 적어 둔다(자가 치유). */
+    var got = await _lostSnapEnsureIds(q);
+    if(!got.ids) continue;
     if(q.kind === 'daily') report.scanned.daily++; else report.scanned.recent++;
-    var savedAt = snap.savedAt || q.savedAt || '';
+    var savedAt = (got.snap && got.snap.savedAt) || q.savedAt || '';
     var label = (q.kind === 'daily') ? q.fbKey
               : (savedAt ? new Date(savedAt).toLocaleString('sv-SE').slice(5,16) : q.fbKey);
     var snapKey = q.kind + ':' + q.fbKey;
     LOST_SCAN_STORES.forEach(function(st){
-      var arr = snap.data[st];
-      if(!Array.isArray(arr)) return;
-      arr.forEach(function(it){
-        if(!it || typeof it.id !== 'string' || !it.id) return;
-        if(it._deleted === true) return;          // 소프트 삭제(휴지통) = 의도된 삭제
-        if(curIds[st][it.id]) return;             // 지금도 있음
-        if(trashIds[it.id]) return;               // trash_bin에 있음 = 의도된 삭제
-        var sk = st + '/' + it.id;
+      var m = got.ids[st];
+      if(!m || typeof m !== 'object') return;
+      Object.keys(m).forEach(function(id){
+        if(curIds[st][id]) return;                // 지금도 있음
+        if(trashIds[id]) return;                  // trash_bin에 있음 = 의도된 삭제
+        var sk = st + '/' + id;
         if(seen[sk]) return;
         seen[sk] = true;
-        report.candidates.push({ store:st, id:it.id, item:it, snapKey:snapKey, snapLabel:label, savedAt:savedAt });
+        var lab = m[id] || {};
+        /* item 은 비워 둔다 — 본문은 복원할 때 그 스냅샷 하나만 내려받아 채운다
+           (erpRestoreLostRecords 가 snapPath·snapFbKey 로 찾아온다). */
+        report.candidates.push({ store:st, id:id, item:null, no:(lab.n || '-'), companyName:(lab.c || '-'),
+          snapKey:snapKey, snapPath:q.path, snapFbKey:q.fbKey, snapLabel:label, savedAt:savedAt });
       });
     });
   }
@@ -3181,10 +3227,37 @@ async function _slimKeyImages(k){
 async function erpRestoreLostRecords(candidates){
   var res = { restored:0, failed:[], byStore:{} };
   if(!Array.isArray(candidates) || candidates.length === 0) return res;
+  /* ── 명부 기반 후보는 본문이 없다(item:null) — 복원할 때만 그 스냅샷을 내려받아 채운다.
+     같은 스냅샷에서 나온 후보들은 **한 번만** 받는다(스냅샷당 1회).
+     검사 때 다 받아 두는 옛 방식이 요금 구멍이었다(2026-08-16). */
+  var need = candidates.filter(function(c){ return c && !c.item && c.snapPath && c.snapFbKey && c.id; });
+  var _fetched = {};   // store/id → 스냅샷에서 찾아온 본문
+  var bySnap = {};
+  need.forEach(function(c){ var k = c.snapPath + '/' + c.snapFbKey; (bySnap[k] = bySnap[k] || []).push(c); });
+  var snapPaths = Object.keys(bySnap);
+  for(var si=0; si<snapPaths.length; si++){
+    var sp = snapPaths[si];
+    var body = null;
+    try {
+      var ssn = await fbDb.ref(sp).once('value');
+      body = (ssn && ssn.val()) || null;
+    } catch(ef){ window._erpErrLog && window._erpErrLog(ef); }
+    if(!body || !body.data) continue;
+    bySnap[sp].forEach(function(c){
+      var rows = _fxRows(body.data[c.store]);
+      for(var ri=0; ri<rows.length; ri++){
+        /* ⚠ c.item 에 바로 써넣지 않는다 — 후보는 화면 상태(React state) 객체라
+           제자리에서 고치면 안 보이는 데서 문다. 딴 그릇에 담아 아래에서 합친다. */
+        if(rows[ri] && rows[ri].id === c.id){ _fetched[c.store + '/' + c.id] = rows[ri]; break; }
+      }
+    });
+  }
   var nowIso = new Date().toISOString();
   var groups = {};
   candidates.forEach(function(c){
-    if(!c || !c.store || !c.item || typeof c.item.id !== 'string' || !c.item.id) return;
+    if(!c || !c.store) return;
+    c = (c.item || !_fetched[c.store + '/' + c.id]) ? c : Object.assign({}, c, { item:_fetched[c.store + '/' + c.id] });
+    if(!c.item || typeof c.item.id !== 'string' || !c.item.id) return;
     var cur = dbGet(c.store, []) || [];
     // 재확인: 그 사이 다시 나타났으면 건너뜀 (기존 데이터 보호)
     if(cur.some(function(x){ return x && x.id === c.item.id; })) return;
@@ -3352,10 +3425,10 @@ async function erpDataForensics(keyword){
   var recentInfo = await _lostLoadSnapKeys('serverBackupsRecentIndex', 'serverBackupsRecent', FORENSIC_MAX_RECENT);
   var queue = [];
   recentInfo.keys.forEach(function(k){
-    queue.push({ kind:'recent', path:'serverBackupsRecent', fbKey:k, savedAt:(recentInfo.meta[k] || {}).savedAt || '', cached:recentInfo.cache[k] });
+    queue.push({ kind:'recent', path:'serverBackupsRecent', fbKey:k, savedAt:(recentInfo.meta[k] || {}).savedAt || '', ids:(recentInfo.meta[k] || {}).ids || null, cached:recentInfo.cache[k] });
   });
   dailyInfo.keys.forEach(function(k){
-    queue.push({ kind:'daily', path:'serverBackups', fbKey:k, savedAt:(dailyInfo.meta[k] || {}).savedAt || '', cached:dailyInfo.cache[k] });
+    queue.push({ kind:'daily', path:'serverBackups', fbKey:k, savedAt:(dailyInfo.meta[k] || {}).savedAt || '', ids:(dailyInfo.meta[k] || {}).ids || null, cached:dailyInfo.cache[k] });
   });
   queue.sort(function(a,b){ return _lostSnapTs(b) - _lostSnapTs(a); });
 
@@ -3363,22 +3436,36 @@ async function erpDataForensics(keyword){
   for(var qi=0; qi<queue.length; qi++){
     var q = queue[qi];
     var snap = q.cached;
-    if(!snap){
-      try {
-        var ss = await fbDb.ref(q.path + '/' + q.fbKey).once('value');
-        snap = (ss && ss.val()) || null;
-      } catch(e3){ window._erpErrLog && window._erpErrLog(e3); continue; }
-    }
-    if(!snap || !snap.data) continue;
-    if(q.kind === 'daily') report.scanned.daily++; else report.scanned.recent++;
-    var savedAt = snap.savedAt || q.savedAt || '';
-    var snapKey = q.kind + ':' + q.fbKey;
+    /* ⚠ 낱말 찾기는 본문이 있어야 한다 — **그때만** 내려받는다.
+       낱말 없이(재고 확인만) 열었을 때는 id 명부로 건수만 센다.
+       종전에는 재고 확인에도 스냅샷 20벌을 통째로 받았다(2026-08-16 요금 구멍). */
     var cnt = {};
-    LOST_SCAN_STORES.forEach(function(st3){
-      var arr3 = snap.data[st3];
-      if(arr3 == null) return;
-      cnt[st3] = _fxLen(arr3);
-    });
+    if(kwLower){
+      if(!snap){
+        try {
+          var ss = await fbDb.ref(q.path + '/' + q.fbKey).once('value');
+          snap = (ss && ss.val()) || null;
+        } catch(e3){ window._erpErrLog && window._erpErrLog(e3); continue; }
+      }
+      if(!snap || !snap.data) continue;
+      LOST_SCAN_STORES.forEach(function(st3){
+        var arr3 = snap.data[st3];
+        if(arr3 == null) return;
+        cnt[st3] = _fxLen(arr3);
+      });
+    } else {
+      var got = await _lostSnapEnsureIds(q);   // 명부만 — 옛 백업은 한 번 받고 명부를 적어 둔다
+      if(!got.ids) continue;
+      snap = got.snap;
+      LOST_SCAN_STORES.forEach(function(st3){
+        var m3 = got.ids[st3];
+        if(!m3 || typeof m3 !== 'object') return;
+        cnt[st3] = Object.keys(m3).length;
+      });
+    }
+    if(q.kind === 'daily') report.scanned.daily++; else report.scanned.recent++;
+    var savedAt = (snap && snap.savedAt) || q.savedAt || '';
+    var snapKey = q.kind + ':' + q.fbKey;
     report.backups.push({ key:q.fbKey, kind:q.kind, snapKey:snapKey, savedAt:savedAt,
       savedAtText:(savedAt ? _fxTime(savedAt) : _fxTime(q.fbKey)), counts:cnt });
     if(!kwLower) continue;
@@ -32806,11 +32893,11 @@ function PayerAliasModal(props){
 // ── 유실 데이터 검사·선택 복원 모달 (환경설정 → 시스템) ──
 function LostRecordsModal(props){
   useEscClose(props.onClose);
-  var ss = useState({ loading:true, report:null }); var scan = ss[0]; var setScan = ss[1];
+  var ss = useState({ loading:false, report:null }); var scan = ss[0]; var setScan = ss[1];
   var cs = useState({}); var checked = cs[0]; var setChecked = cs[1];
   var bs = useState(false); var busy = bs[0]; var setBusy = bs[1];
   // ★ 포렌식: 로컬 vs 서버 건수 · 백업 재고 · 키워드 전수 검색
-  var fs2 = useState({ loading:true, report:null }); var fx = fs2[0]; var setFx = fs2[1];
+  var fs2 = useState({ loading:false, report:null }); var fx = fs2[0]; var setFx = fs2[1];
   var ks = useState(''); var kw = ks[0]; var setKw = ks[1];
   var bo = useState(false); var bkOpen = bo[0]; var setBkOpen = bo[1];
   var rk = useState(''); var rowBusy = rk[0]; var setRowBusy = rk[1];
@@ -32927,7 +33014,13 @@ function LostRecordsModal(props){
       setScan({ loading:false, report:{ candidates:[], scanned:{daily:0,recent:0}, storesChecked:[], error:'검사 중 오류가 발생했습니다' } });
     });
   }
-  useEffect(function(){ runScan(); runForensics(''); }, []);
+  /* ⚠ 화면을 연다고 검사를 자동으로 돌리지 않는다 (대표 승인 2026-08-16).
+     종전에는 여는 순간 백업 스냅샷을 최대 36벌(≈125MB) 통째로 내려받았다 —
+     **열람 자체가 ₩190짜리**였고, 8월 요금의 숨은 구멍이었다.
+     지금은 id 명부만 읽어 몇십 KB 로 싸졌지만, 옛 백업의 자가 치유(1회 본문 수신)가
+     남아 있는 동안은 값이 들 수 있어 [검사 시작]을 눌러야 돈다. */
+  function startAll(){ runScan(); runForensics(''); }
+  var notStarted = !scan.report && !scan.loading && !fx.report && !fx.loading;
 
   var rep = scan.report || {};
   var fxr = fx.report || {};
@@ -32976,6 +33069,14 @@ function LostRecordsModal(props){
             + (scan.loading ? '' : ' · 검사한 백업: 일간 ' + ((rep.scanned&&rep.scanned.daily)||0) + '개 / 수시 ' + ((rep.scanned&&rep.scanned.recent)||0) + '개'))),
         h('button', { onClick:props.onClose, style:{border:'none',background:'none',fontSize:'18px',color:'#94a3b8',cursor:'pointer'} }, '✕')
       ),
+      // 검사 시작 전 — 자동으로 안 돈다. 무엇을 얼마나 받는지 밝히고 단추로 연다.
+      notStarted ? h('div', { style:{background:'#f8fafc',border:'1px solid #cbd5e1',borderRadius:'8px',padding:'16px 14px',marginBottom:'12px',textAlign:'center'} },
+        h('div', { style:{fontSize:'12.5px',color:'#475569',lineHeight:'1.7',marginBottom:'10px'} },
+          '서버 백업과 현재 자료를 대조해 사라진 레코드를 찾습니다.', h('br', null),
+          '백업 명부를 읽어 오므로 통신량이 조금 듭니다 — 필요할 때만 눌러 주세요.'),
+        h('button', { onClick:startAll,
+          style:{padding:'9px 22px',background:'#2563eb',color:'#fff',border:'none',borderRadius:'8px',fontSize:'13px',fontWeight:800,cursor:'pointer'} },
+          '🔍 검사 시작')) : null,
       rep.error ? h('div', { style:{fontSize:'11.5px',color:'#991b1b',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'6px',padding:'8px 12px',marginBottom:'10px'} }, '⚠️ ' + rep.error) : null,
       fxr.error ? h('div', { style:{fontSize:'11.5px',color:'#991b1b',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'6px',padding:'8px 12px',marginBottom:'10px',fontWeight:700} }, '⚠️ ' + fxr.error) : null,
 
@@ -33187,6 +33288,8 @@ function LostRecordsModal(props){
                 )),
                 h('tbody', null,
                   cands.map(function(c){
+                    /* 명부 기반 후보는 본문(item)이 없다 — 번호·업체명은 명부(c.no·c.companyName)에서 온다.
+                       본문은 복원할 때만 내려받는다. */
                     var it = c.item || {};
                     var k = c.store+'/'+c.id;
                     var on = !!checked[k];
@@ -33194,8 +33297,8 @@ function LostRecordsModal(props){
                       h('td', { className:'ac' },
                         h('input', { type:'checkbox', checked:on, onChange:function(){ toggle(c); } })),
                       h('td', { style:{fontWeight:600,color:'#475569'} }, LOST_STORE_LABELS[c.store] || c.store),
-                      h('td', { style:{fontFamily:'monospace',fontWeight:700,color:'#2563eb'} }, it.no || it.caseNo || it.contractNo || '-'),
-                      h('td', null, it.companyName || it.name || '-'),
+                      h('td', { style:{fontFamily:'monospace',fontWeight:700,color:'#2563eb'} }, it.no || it.caseNo || it.contractNo || c.no || '-'),
+                      h('td', null, it.companyName || it.name || c.companyName || '-'),
                       h('td', null, it.managerMain ? userName(it.managerMain) : '-'),
                       h('td', { style:{fontSize:'10.5px',color:'#64748b',fontFamily:'monospace'} },
                         (c.savedAt || '').slice(0,16).replace('T',' ') || c.snapLabel || '-')
