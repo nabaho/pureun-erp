@@ -977,6 +977,7 @@ exports.readHomepage = functions
   .https.onRequest(async (req, res) => {
     setAutomationCors(req, res);
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
 
     try {
       const match = /^Bearer (.+)$/.exec(req.headers.authorization || "");
