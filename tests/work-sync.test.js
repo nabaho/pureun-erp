@@ -66,9 +66,14 @@ ok('배지도 계약으로 나온다', grab('catBadge').indexOf('catNorm(cat)') 
 /* ── 담당: 주담당·부담당을 함께 세운다 ── */
 ok('차례는 푸른이알피 sortOrder 를 쓴다', grab('_normStaff').indexOf('u.sortOrder') > 0);
 ok('내 업무에는 나를 뺀 나머지가 나온다', grab('rowHTML').indexOf("mgrLine(it,'other')") > 0);
-/* 부담당은 제 열로 뺐다(이름 길이에 따라 줄이 들쭉날쭉했다). 기업 칸에는
-   주담당만 남고, 그마저 묶어 볼 때는 묶음 머리에 이미 있으니 안 그린다. */
-ok('팀 전체 기업 칸에는 평면일 때만 주담당', grab('renderTeam').indexOf("perGroup?'':mgrLine(it,'main'") > 0);
+/* 주담당·부담당 둘 다 제 열로 뺐다 — 기업명 옆에 붙여 두면 이름 길이에 따라
+   줄이 들쭉날쭉해 세로로 훑을 수가 없다. 주담당 열은 평면일 때만 낸다
+   (묶어 볼 때는 묶음 머리에 이미 있다). */
+ok('팀 전체 주담당은 평면일 때 제 열에 그린다',
+  /showMain\?'<td>'\+mgrCell\(/.test(grab('renderTeam'))
+  && /var showMain=!!S\.teamFlat/.test(grab('renderTeam')));
+ok('기업 칸에는 담당 이름을 더 안 붙인다 (열로 갔다)',
+  grab('renderTeam').indexOf("mgrLine(it,'main'") < 0);
 ok('부담당은 제 열에 그린다', grab('renderTeam').indexOf("colTD('team','sub',subCell(it))") > 0);
 ok('주담당만 그리는 길이 실제로 있다', grab('mgrLine').indexOf("(mode==='main')?[]") > 0);
 ok('혼자 하는 업무에는 빈 줄을 그리지 않는다', grab('mgrLine').indexOf("return h?") > 0);
