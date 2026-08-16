@@ -195,6 +195,7 @@
   td.itc{cursor:pointer;min-width:110px}
   td.itc .co{font-weight:700}
   td.itc .sub{font-size:11px;color:var(--faint);font-weight:400}
+  td.itc span.sub{margin-left:6px}          /* 종료 화면 — 한 건을 한 줄로 */
   /* 담당 한 줄 — 주담당과 함께 하는 부담당(공동)을 나란히 */
   .mgl{display:flex;flex-wrap:wrap;align-items:center;gap:3px;margin-top:2px;font-weight:400}
   .mgk{font-size:9px;font-weight:800;color:var(--faint);letter-spacing:.04em}
@@ -5859,15 +5860,29 @@ function renderStats(){
 
 /* ── 보관함 — 종료된 업무를 담당자별로 관리 ── */
 function _mgrOf(it){ return (it.mgr_main&&it.mgr_main.name)||'(담당 미지정)'; }
+/* pesync 열쇠는 **푸른이알피가 만든다**(그쪽 wsSafeKey). 우리는 읽기만 하므로
+   글자 하나까지 같은 규칙을 써야 한다. 다른 점은 하나 — 그쪽은 하이픈(-)도 _ 로
+   바꾼다. 관리번호가 계약-2026-046 꼴이라 우리 safeKey 로 찾으면 거의 다 어긋나,
+   푸른이알피가 실제로 종료했는데도 배지가 영원히 「반영 대기」였다.
+   ⚠ safeKey 를 고치면 안 된다 — 그것은 우리 쪽 자료의 열쇠라 바꾸면 남의 자료를 잃는다. */
+function peSyncKey(s){ return String(s==null?'':s).replace(/[.#$\/\[\]'"`\\\s\u0000-\u001F\u007F -]/g,'_'); }
 function peSyncBadge(it){
   if(!peLinked(it)) return '';
   if(it.pe_nosync) return '<span class="pesync off" title="이 업무는 푸른이알피와 연동하지 않습니다">연동 안 함</span>';
-  var st=(pesync[it.ref.type+'-'+safeKey(it.ref.id)]||{});
+  // 옛 열쇠로 적힌 기록이 남아 있을 수 있어 둘 다 본다
+  var st=(pesync[it.ref.type+'-'+peSyncKey(it.ref.id)]
+        ||pesync[it.ref.type+'-'+safeKey(it.ref.id)]||{});
   if(st.synced_at&&st.pe_closed===true) return '<span class="pesync done" title="푸른이알피도 종료됨 · '+esc((st.synced_at||'').slice(0,10))+'">🔗 반영됨</span>';
   return '<span class="pesync wait" title="푸른이알피 나의 업무를 열 때 반영됩니다">🔗 반영 대기</span>';
 }
 function arReset(){ S.arMgr=''; S.arCat=''; S.arPeriod=''; S.q=''; S.arWay=''; S.arRes=''; renderArchive(); }
 function arFold(nm){ S.arFold=S.arFold||{}; S.arFold[nm]=!S.arFold[nm]; renderArchive(); }
+// 담당자가 여럿이면 하나씩 접는 것은 일이다. 화면의 묶음과 같은 목록을 써야 개수가 어긋나지 않는다.
+function arFoldAll(on){
+  S.arFold={};
+  if(on) allItems().forEach(function(it){ if(it.state==='done') S.arFold[_mgrOf(it)]=1; });
+  renderArchive();
+}
 function renderArchive(){
   var app=$('app'); if(!app)return;
   var all=allItems().filter(function(it){return it.state==='done';})
@@ -5890,51 +5905,51 @@ function renderArchive(){
     return true;
   }
   var done=all.filter(pass);
+  /* 머리를 네 줄에서 한 줄로. 방식·담당은 칩을 죽 늘어놓아 두 줄을 먹었는데,
+     고르는 값이지 늘 보아야 할 숫자가 아니다 — 드롭다운으로 접고, 숫자는
+     그 안에 넣는다. 구분·기간이 이미 드롭다운이라 생김새도 맞는다. */
+  function arCnt(fn){ return all.filter(fn).length; }
+  function arSel(cur,onch,opts,title){
+    return '<select onchange="'+onch+'" title="'+esc(title)+'">'
+      +opts.map(function(o){
+          return '<option value="'+esc(o[0])+'"'+(String(cur||'')===String(o[0])?' selected':'')+'>'+esc(o[1])+'</option>';
+        }).join('')+'</select>';
+  }
   var h='<div class="row" style="flex-wrap:wrap"><h1>종료</h1>'
-    +'<span class="muted" style="font-size:12.5px">끝난 업무 — 기록·인수인계 노트는 그대로 남고 통계에도 계속 포함됩니다</span></div>';
-  if(!all.length){ app.innerHTML=h+'<div class="panel" style="text-align:center;color:var(--sub);padding:40px">끝난 업무가 없습니다.</div>'; return; }
-  // 끝낸 방식별 — 종료·취소·이관을 한 덩어리로 두면 실적 셈이 틀어진다
-  h+='<div class="statbar">'
-    +'<span class="sb'+(S.arWay?'':' on')+'" onclick="S.arWay=\'\';renderArchive()" title="전부 보기">전체 '+all.length+'</span>'
-    +END_WAYS.map(function(w){
-        var c=all.filter(function(it){ return endWay(it)===w[0]; }).length;
-        if(!c&&w[0]!=='done') return '';
-        return '<span class="sb'+(S.arWay===w[0]?' on':'')+'" onclick="S.arWay='
-          +(S.arWay===w[0]?'\'\'':'\''+w[0]+'\'')+';renderArchive()" title="'+esc(w[2])+'">'
-          +w[1]+' '+c+'</span>';
-      }).join('')
-    // 사건 결과는 다른 축 — 결과가 붙은 건이 있을 때만 보여준다
-    +(function(){
-        var any=all.filter(function(it){ return !!it.end_result; }).length;
-        if(!any) return '';
-        return '<span class="sep">|</span>'
-          +CASE_RESULTS.map(function(r){
-              var c=all.filter(function(it){ return it.end_result===r[0]; }).length;
-              if(!c) return '';
-              return '<span class="sb'+(S.arRes===r[0]?' on':'')+'" onclick="S.arRes='
-                +(S.arRes===r[0]?'\'\'':'\''+r[0]+'\'')+';renderArchive()" title="사건 결과">'
-                +r[2]+' '+r[1]+' '+c+'</span>';
-            }).join('');
-      })()
-    +'</div>';
-  // 담당자별 종료 건수 요약 1줄 (클릭 = 그 사람만)
-  h+='<div class="statbar">'
-    +'<span class="sb'+(S.arMgr?'':' on')+'" onclick="S.arMgr=\'\';renderArchive()" title="전체 보기">전체 '+all.length+'</span>'
-    +names.map(function(nm){
-        var c=all.filter(function(it){return _mgrOf(it)===nm;}).length;
-        return '<span class="sb'+(S.arMgr===nm?' on':'')+'" onclick="S.arMgr='+(S.arMgr===nm?'\'\'':'\''+escJ(nm)+'\'')+';renderArchive()" '
-          +'title="'+esc(nm)+' 님이 종료한 건만">'+esc(nm)+' '+c+'</span>';
-      }).join('')
-    +'</div>';
-  h+='<div class="fbar">'
-    +qBox('renderArchive','🔍 기업·업무명·의뢰인')
+    +'<span class="cntpill" title="끝난 업무 — 기록·인수인계 노트는 그대로 남고 통계에도 계속 포함됩니다">'+all.length+'건</span>';
+  if(!all.length){ app.innerHTML=h+'</div><div class="panel" style="text-align:center;color:var(--sub);padding:40px">끝난 업무가 없습니다.</div>'; return; }
+  var wayOpts=[['','방식 전체 '+all.length]];
+  END_WAYS.forEach(function(w){
+    var c=arCnt(function(it){ return endWay(it)===w[0]; });
+    if(c||w[0]==='done') wayOpts.push([w[0],w[1]+' '+c]);
+  });
+  var mgrOpts=[['','담당 전체 '+all.length]];
+  names.forEach(function(nm){ mgrOpts.push([nm,nm+' '+arCnt(function(it){ return _mgrOf(it)===nm; })]); });
+  // 사건 결과는 끝낸 방식과 다른 축이다 — 결과가 붙은 건이 있을 때만 낸다
+  var resOpts=[['','결과 전체']];
+  CASE_RESULTS.forEach(function(r){
+    var c=arCnt(function(it){ return it.end_result===r[0]; });
+    if(c) resOpts.push([r[0],r[2]+' '+r[1]+' '+c]);
+  });
+  var nFold=names.filter(function(n){ return (S.arFold||{})[n]; }).length;
+  h+=qBox('renderArchive','🔍 기업·업무명·의뢰인')
+    +arSel(S.arWay,'S.arWay=this.value;renderArchive()',wayOpts,'끝낸 방식으로 좁히기 — 종료·취소·이관')
+    +arSel(S.arMgr,'S.arMgr=this.value;renderArchive()',mgrOpts,'담당자로 좁히기')
     +catSelect(S.arCat,'S.arCat=this.value;renderArchive()')
-    +'<select onchange="S.arPeriod=this.value;renderArchive()" title="종료일 기간으로 좁히기">'
-    +[['','기간 전체'],['m1','최근 30일'],['m3','최근 90일'],['y','올해']].map(function(o){
-        return '<option value="'+o[0]+'"'+(S.arPeriod===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select>'
+    +arSel(S.arPeriod,'S.arPeriod=this.value;renderArchive()',
+        [['','기간 전체'],['m1','최근 30일'],['m3','최근 90일'],['y','올해']],'종료일 기간으로 좁히기')
+    +(resOpts.length>1?arSel(S.arRes,'S.arRes=this.value;renderArchive()',resOpts,'사건 결과로 좁히기'):'')
     +'<span class="chipbtn'+(S.arFlat?' on':'')+'" onclick="S.arFlat=!S.arFlat;renderArchive()" title="담당자 묶음을 풀고 한 표로">평면</span>'
-    +'<span class="muted" style="font-size:11.5px">'+(done.length!==all.length?done.length+' / '+all.length:all.length)+'건</span>'
-    +((S.arMgr||S.arCat||S.arPeriod||S.q||S.arWay||S.arRes)?'<span class="chipbtn on" onclick="arReset()" title="모든 필터 해제">✕ 필터</span>':'')
+    +(S.arFlat||S.arMgr?''
+      :'<span class="chipbtn'+(nFold>=names.length?' off':'')+'" onclick="arFoldAll(true)" title="담당자 '+names.length+'명을 모두 접습니다">▸ 모두 접기</span>'
+       +(nFold?'<span class="chipbtn" onclick="arFoldAll(false)" title="접힌 '+nFold+'명을 모두 폅니다">▾ 펼치기 '+nFold+'</span>':''))
+    +((S.arMgr||S.arCat||S.arPeriod||S.q||S.arWay||S.arRes)?'<span class="chipbtn on" onclick="arReset()" title="모든 조건 해제">✕ 조건</span>':'')
+    +'<span style="flex:1"></span>'
+    // 방식별 숫자는 고르지 않아도 늘 보이게 — 드롭다운 안에만 두면 한눈에 안 들어온다
+    +'<span class="fnote">'+END_WAYS.map(function(w){
+        var c=arCnt(function(it){ return endWay(it)===w[0]; });
+        return c?w[1]+' <b>'+c+'</b>':'';
+      }).filter(Boolean).join(' · ')+'</span>'
     +'</div>';
   h+='<div class="panel tbl"><table><thead><tr>'
     +'<th class="rowno">#</th><th style="width:52px">방식</th><th style="width:56px">구분</th><th>기업 / 업무</th>'
@@ -5946,8 +5961,9 @@ function renderArchive(){
     return arr.map(function(it,i){
       return '<tr>'+tdNo(i+1)+'<td>'+endBadge(it)+resBadge(it)+'</td><td>'+catBadge(it.cat)+'</td>'
         +'<td class="itc" onclick="openDrawer(\''+escJ(it._id)+'\')"><span class="co">'+esc(it.company||it.client||'—')+'</span>'
-        +'<div class="sub">'+esc(itemName(it))+(it.no?' · '+esc(it.no):'')
-        +(endWay(it)==='transfer'&&it.end_to?' <span class="muted">→ '+esc(it.end_to)+'</span>':'')+'</div></td>'
+        // 한 건이 한 줄로 끝나게 — 업무명·관리번호를 아래로 쌓지 않고 기업명 옆에 붙인다
+        +'<span class="sub">'+esc(itemName(it))+(it.no?' · '+esc(it.no):'')
+        +(endWay(it)==='transfer'&&it.end_to?' <span class="muted">→ '+esc(it.end_to)+'</span>':'')+'</span></td>'
         +((S.arFlat||S.arMgr)?'<td style="font-size:12.5px">'+esc(_mgrOf(it))+'</td>':'')
         +'<td style="font-size:12.5px;font-variant-numeric:tabular-nums">'+esc(it.done_date||'—')+'</td>'
         +'<td>'+(peSyncBadge(it)||'<span class="muted" style="font-size:11px">—</span>')+'</td>'
