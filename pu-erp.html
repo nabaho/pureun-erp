@@ -7522,6 +7522,56 @@ function useEscClose(onClose){
 
 // ── Enter 키 저장 훅 ──
 // textarea / select / [data-no-enter] 위에서는 발동 안 함
+/* ── 표가 창 바닥까지 내려오게 (2026-08-16 대표 지시) ─────────────────────────
+   화면마다 「표가 구를 상자」의 높이를 calc(100vh - N px) 로 «못 박아» 두었다.
+   그런데 표 위의 도구줄·갈래단추·검색줄 높이는 그때그때 다르다(갈래 개수·창 너비에
+   따라 줄이 접힌다). N 은 «가장 높을 때» 를 기준으로 잡은 값이라 평소에는 아래가
+   한참 비고, 반대로 도구줄이 더 길어지면 표가 잘렸다. 화면마다 숫자가 달라
+   (240·260·280·310·380·480) 어느 것이 맞는지도 아무도 모른다.
+
+   ★ 숫자로 못 박지 말고 «재서» 정한다 — 상자의 화면상 위치를 재어 창 바닥까지 채운다.
+   ★ 상자 «뒤에 오는 형제» 들의 높이는 남긴다. 쪽 번호 줄이 대표적이다 —
+     안 남기면 표가 그것을 화면 밖으로 밀어내 「다음 쪽」을 누를 수 없다.
+     어느 화면에 무엇이 붙어 있는지 일일이 적지 않아도 되게 DOM 에서 직접 잰다.
+   ⚠ 뜬 것(모달·툴팁 position:fixed/absolute)은 자리를 차지하지 않는다 — 빼면 안 된다.
+     이걸 안 걸러내면 모달이 열린 화면에서 표가 240px 로 쪼그라든다. */
+function erpFillHeight(el, min){
+  if(!el || typeof window === 'undefined') return 0;
+  var top = el.getBoundingClientRect().top;
+  var below = 0;
+  var sib = el.nextElementSibling;
+  while(sib){
+    var pos = '';
+    try { pos = window.getComputedStyle(sib).position; } catch(e){ pos = ''; }
+    if(pos !== 'fixed' && pos !== 'absolute'){
+      below += sib.getBoundingClientRect().height;
+    }
+    sib = sib.nextElementSibling;
+  }
+  if(below > 0) below += 10;                 // 표와 아랫줄 사이 여백
+  return Math.max(min || 240, Math.round(window.innerHeight - top - below - 16));
+}
+/* 화면에서는 이것만 부르면 된다.
+   fill.ref 를 상자에 달고, maxHeight 에 (fill.max || 지금까지 쓰던 값) 을 준다.
+   ★ 아직 못 쟀으면 fill.max 가 없다 — 그때는 «지금까지 쓰던 값» 이 그대로 쓰인다.
+     재는 데 실패해도 오늘보다 나빠지지 않는다. */
+function useFillHeight(min){
+  var ref = useRef(null);
+  var st = useState(0); var h = st[0]; var setH = st[1];
+  function fit(){
+    var want = erpFillHeight(ref.current, min);
+    if(!want) return;
+    // 8px 안쪽 차이는 그대로 둔다 — 안 그러면 「재고 → 다시 그리고 → 또 재고」 가 끝나지 않는다
+    setH(function(prev){ return Math.abs(prev - want) < 8 ? prev : want; });
+  }
+  useEffect(function(){ fit(); });                       // 그릴 때마다 다시 잰다
+  useEffect(function(){
+    window.addEventListener('resize', fit);
+    return function(){ window.removeEventListener('resize', fit); };
+  }, []);
+  return { ref: ref, max: (h ? h + 'px' : null) };
+}
+
 function useEnterSave(onSave){
   useEffect(function(){
     if(!onSave) return;
@@ -17990,6 +18040,7 @@ var COMPANY_TYPE_FILTERS = [
 ];
 
 function CompanyManagement(){
+  var _fill1 = useFillHeight();   // 표가 창 바닥까지 (전: 100vh - 240px)
   var existing = dbGet('companies', null);
   // 로컬 캐시가 비어 있어도 서버에 쓰지 않는다(빈 값 덮어쓰기로 업체가 사라지는 사고 방지).
   // Firebase 동기화가 끝나면 목록이 채워진다.
@@ -19302,7 +19353,7 @@ function CompanyManagement(){
               );
             })
       )
-    : h('div', { style:{ overflow:'auto', maxHeight:'calc(100vh - 240px)', background:'#fff', border:'1px solid #e2e8f0', borderRadius:'6px' } },
+    : h('div', { ref:_fill1.ref, style:{ overflow:'auto', maxHeight:(_fill1.max || 'calc(100vh - 240px)'), background:'#fff', border:'1px solid #e2e8f0', borderRadius:'6px' } },
       h('style', null, coHideCss),
       h('table', { className: 'dt co-table' + (statusTab === 'suboffice' ? ' co-sub' : ' co-full'), style:{ minWidth:'1700px' } },
         h('thead', null, h('tr', null,
@@ -21385,6 +21436,7 @@ function CaseEditModal(props){
 }
 
 function CaseManagement(props){
+  var _fill2 = useFillHeight();   // 표가 창 바닥까지 (전: 100vh - 240px)
   var onNav = props.onNavigate || function(){};
   var existing = dbGet('cases', null);
   if(!existing){ dbSet('cases', []); existing = []; }
@@ -22144,7 +22196,7 @@ function CaseManagement(props){
               return _card;
             })
       )
-    : h('div', { style:{ overflow:'auto', maxHeight:'calc(100vh - 240px)', background:'#fff', border:'1px solid #e2e8f0', borderRadius:'6px' },
+    : h('div', { ref:_fill2.ref, style:{ overflow:'auto', maxHeight:(_fill2.max || 'calc(100vh - 240px)'), background:'#fff', border:'1px solid #e2e8f0', borderRadius:'6px' },
         onDragOver:function(ev){ ev.preventDefault(); try{ ev.dataTransfer.dropEffect='copy'; }catch(e){} },
         onDrop:function(ev){
           ev.preventDefault();
@@ -37128,22 +37180,12 @@ function FinanceLedger(){
        (⏳ 추천 계산 중·자문료 n건·미매칭 n건 같은 이름표가 줄을 늘린다)
        아래가 한참 남거나 반대로 표가 잘렸다. 그래서 «재서» 정한다:
        상자의 화면상 위치를 재어 창 바닥까지 채운다. */
-  var _ldBoxRef = useRef(null);
-  var _ldHS = useState(0); var _ldH = _ldHS[0]; var setLdH = _ldHS[1];
-  function _ldFit(){
-    var el = _ldBoxRef.current; if(!el) return;
-    var top = el.getBoundingClientRect().top;
-    var want = Math.max(240, Math.round(window.innerHeight - top - 16));   // 바닥에 16px 만 남긴다
-    // 8px 안쪽은 그대로 둔다 — 안 그러면 «고침 → 다시 그림 → 고침» 이 끝나지 않는다
-    setLdH(function(prev){ return Math.abs(prev - want) < 8 ? prev : want; });
-  }
-  useEffect(function(){ _ldFit(); });          // 그릴 때마다 다시 잰다 (도구줄 높이가 변한다)
-  useEffect(function(){
-    window.addEventListener('resize', _ldFit);
-    return function(){ window.removeEventListener('resize', _ldFit); };
-  }, []);
+  /* 셈은 공용 도우미(useFillHeight) 한 곳에서만 한다 — 여기 처음 만든 방식을
+     2026-08-16 에 모든 화면이 함께 쓰도록 옮겼다. 같은 일을 여러 군데서 만들면
+     한쪽만 고쳐지고 나머지는 조용히 뒤처진다. */
+  var _ldFill = useFillHeight();
   // maxHeight 로 둔다 — 목록이 짧으면 빈 상자가 크게 남지 않게
-  var _ldBox={overflow:'auto',maxHeight:(_ldH ? _ldH+'px' : 'calc(100vh - 330px)'),minHeight:'240px',
+  var _ldBox={overflow:'auto',maxHeight:(_ldFill.max || 'calc(100vh - 330px)'),minHeight:'240px',
     border:'1px solid #f8fafc',borderRadius:'6px'};
 
   /* 통장과 카드가 한 통에 쌓이므로, 지금 고른 종류의 것만 보여준다.
@@ -37925,7 +37967,7 @@ function FinanceLedger(){
            ① 머리줄의 position:sticky 가 이 상자를 기준으로 붙고
            ② 페이지 자체가 안 구르므로 위 도구줄·요약칩도 제자리에 남는다.
            (감싼 칸에 높이가 없으면 페이지 전체가 구르는 상자라 sticky 가 아무 일도 못 한다) */
-      h('div',{ref:_ldBoxRef,style:_ldBox},
+      h('div',{ref:_ldFill.ref,style:_ldBox},
         /* collapse 가 아니라 separate 다 — collapse 에서는 머리줄이 붙어 있어도
            칸 테두리가 함께 안 따라와 글자 위로 줄이 비쳐 보인다(통장 표와 같은 이유) */
         h('table',{style:{width:'100%',borderCollapse:'separate',borderSpacing:0}},
@@ -38300,7 +38342,7 @@ function FinanceLedger(){
             ldQ ? (ldHits.length ? (ldHits.length+'건 맞음 — Enter 로 다음') : '맞는 줄이 없습니다') : '글자를 넣으세요'),
           h('button',{onClick:function(){ setLdQ(null); },
             style:{background:'none',border:'none',color:'#94a3b8',fontSize:'13px',cursor:'pointer',padding:'0 2px',lineHeight:1}},'×')),
-        h('div',{ref:_ldBoxRef,style:_ldBox},
+        h('div',{ref:_ldFill.ref,style:_ldBox},
           h('table',{style:{width:'100%',borderCollapse:'separate',borderSpacing:0}},
             h('thead',null,h('tr',null,
               h('th',{style:Object.assign({},thS,{width:'26px',textAlign:'center',padding:'6px 2px'})},
@@ -38623,7 +38665,7 @@ function FinanceLedger(){
           '💸 '+(incMon?parseInt(incMon.slice(5),10)+'월 ':'')+'출금 내역 — 카테고리 선택 후 출금관리 등록',
           h('span',{style:{marginLeft:'auto',fontWeight:800,color:'#d97706'}},
             expList.length+'건 · 합계 '+expSum.toLocaleString()+'원')),
-        h('div',{ref:_ldBoxRef,style:_ldBox},
+        h('div',{ref:_ldFill.ref,style:_ldBox},
           h('table',{style:{width:'100%',borderCollapse:'separate',borderSpacing:0}},
             h('thead',null,h('tr',null,
               h('th',{style:Object.assign({},thS,{width:'34px',textAlign:'right'})},'#'),
@@ -40721,36 +40763,12 @@ function IncomePendingTab(){
   var users = getActiveUsers();
   function userName(sid){ var u=users.find(function(x){return x.sid===sid;}); return u?u.name:sid||'-'; }
 
-  /* ── 표가 창 바닥까지 내려오게 (2026-08-16 대표 지시) ─────────────────────
-     전에는 높이를 calc(100vh - 340px) 로 «못 박아» 두었다. 그런데 표 위의
-     안내띠·갈래단추·검색줄 높이가 그때그때 다르다(갈래 개수·창 너비에 따라 줄이 접힌다).
-     그래서 아래가 한참 비거나 반대로 표가 잘렸다 — 대표 화면에서는 «비는» 쪽이었다.
-     ★ 숫자로 못 박지 말고 «재서» 정한다: 상자의 화면상 위치를 재어 창 바닥까지 채운다.
-       거래내역(_ldFit)에서 같은 문제를 이미 이렇게 고쳤다 — 같은 방식을 쓴다. */
-  var _pbRef = useRef(null);
-  var _pgRef = useRef(null);                    // 표 아래 쪽 번호 줄 — 그 높이만큼 자리를 남긴다
-  var _pbHS = useState(0); var _pbH = _pbHS[0]; var setPbH = _pbHS[1];
-  function _pbFit(){
-    var el = _pbRef.current; if(!el) return;
-    var top = el.getBoundingClientRect().top;
-    /* ★ 표 «아래» 에 쪽 번호 줄이 있다 — 그만큼 자리를 남기지 않으면 표가 그것을
-       화면 밖으로 밀어내 「몇 쪽인지·다음 쪽」을 못 누른다. 실제 높이를 재서 뺀다
-       (글자 크기·창 너비에 따라 한 줄이 두 줄이 되기도 한다). */
-    var below = 0;
-    var pg = _pgRef.current;
-    if(pg) below = pg.getBoundingClientRect().height + 10;   // 표와 쪽번호 사이 여백
-    var want = Math.max(240, Math.round(window.innerHeight - top - below - 16));   // 바닥에 16px 만 남긴다
-    // 8px 안쪽 차이는 그대로 둔다 — 안 그러면 「고침 → 다시 그림 → 고침」 이 끝나지 않는다
-    setPbH(function(prev){ return Math.abs(prev - want) < 8 ? prev : want; });
-  }
-  useEffect(function(){ _pbFit(); });          // 그릴 때마다 다시 잰다 (윗줄 높이가 변한다)
-  useEffect(function(){
-    window.addEventListener('resize', _pbFit);
-    return function(){ window.removeEventListener('resize', _pbFit); };
-  }, []);
-  // maxHeight 로 둔다 — 목록이 짧으면 빈 상자가 크게 남지 않게
+  /* 표가 창 바닥까지 — 셈은 공용 도우미(useFillHeight) 한 곳에서만 한다.
+     ★ 어제는 여기 따로 만들어 두었다. 같은 일을 두 군데서 만들면 한쪽만 고쳐진다
+       (오늘 그 실수를 여러 번 보았다). 아래 쪽 번호 줄 자리도 도우미가 스스로 잰다. */
+  var _pbFill = useFillHeight();
   var _pbBox = { border:'1px solid #e2e8f0', borderRadius:'10px', overflow:'auto', background:'#fff',
-    maxHeight:(_pbH ? _pbH+'px' : 'calc(100vh - 340px)') };
+    maxHeight:(_pbFill.max || 'calc(100vh - 340px)') };
   var tm = useState(false); var trashModalOpen = tm[0]; var setTrashModalOpen = tm[1];
   var trashItems = dbGet('trash_bin', []);
 
@@ -41291,7 +41309,7 @@ function IncomePendingTab(){
           h('div', { style:{fontSize:'48px',marginBottom:'10px'} }, '✓'),
           h('div', { style:{fontWeight:700,fontSize:'14px',color:'#166534',marginBottom:'4px'} }, '미입금 대기 없음'),
           h('div', { style:{fontSize:'11.5px',color:'#166534'} }, '모든 사무관리 항목이 입금확정 처리되었습니다.'))
-      : h('div', { ref:_pbRef, style:_pbBox },
+      : h('div', { ref:_pbFill.ref, style:_pbBox },
           h('table', { style:{width:'100%',borderCollapse:'collapse',fontSize:'11.5px'} },
             h('thead', { style:{position:'sticky',top:0,zIndex:2} }, h('tr', null,
               h('th', {style:Object.assign({},thS,{width:'40px',textAlign:'center'})}, '#'),
@@ -41413,9 +41431,7 @@ function IncomePendingTab(){
           )
         ),
 
-    // 쪽 번호 줄을 감싼다 — 위 표가 이 줄만큼 자리를 남기려면 높이를 잴 수 있어야 한다
-    h('div', { ref:_pgRef },
-      h(PaginationBar, { page:pendPg.page, total:pendPg.total, setPage:pendPg.setPage, count:pendPg.count })),
+    h(PaginationBar, { page:pendPg.page, total:pendPg.total, setPage:pendPg.setPage, count:pendPg.count }),
 
     // 입금확정 모달
     confirmModal && (function(){
@@ -42042,6 +42058,7 @@ function IncomePendingTab(){
 
 // ── 입금 리스트 탭 (기존 통합 뷰) ──
 function IncomeListTab(){
+  var _fill3 = useFillHeight();   // 표가 창 바닥까지 (전: 100vh - 380px)
   var existing = dbGet('finance_income', []);
   var s = useState(existing); var incomes = s[0]; var setIncomes = s[1];
   var q = useState(''); var query = q[0]; var setQuery = q[1];
@@ -42297,7 +42314,7 @@ function IncomeListTab(){
         style:{ padding:'7px 12px', border:'1px solid #16a34a', background:'#f0fdf4', color:'#16a34a', borderRadius:'4px', fontSize:'11.5px', fontWeight:600, cursor:'pointer' } }, '📥 엑셀 다운로드')
     ),
     // 테이블
-    h('div', { style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'10px', overflow:'auto', maxHeight:'calc(100vh - 380px)' } },
+    h('div', { ref:_fill3.ref, style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'10px', overflow:'auto', maxHeight:(_fill3.max || 'calc(100vh - 380px)') } },
       h('table', { className:'dt' },
         h('thead', { style:{ position:'sticky', top:0, zIndex:2, background:'#f8fafc' } }, h('tr', null,
           h('th',{style:{width:'30px',background:'#f8fafc'}},'#'),
@@ -42343,6 +42360,7 @@ function IncomeListTab(){
 
 // ── 업체입금 탭 ──
 function IncomeCompanyTab(){
+  var _fill4 = useFillHeight();   // 표가 창 바닥까지 (전: 100vh - 240px)
   var rawIncomes = dbGet('finance_income', []);
   var inc = useState(rawIncomes); var incomes = inc[0]; var setIncomes = inc[1];
   var tt = useState('all'); var typeTab = tt[0]; var setTypeTab = tt[1];
@@ -43433,7 +43451,7 @@ function IncomeCompanyTab(){
       importState.msg
     ),
     // 매트릭스 테이블
-    h('div',{style:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',overflow:'auto',maxHeight:'calc(100vh - 240px)'}},
+    h('div', { ref:_fill4.ref,style:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',overflow:'auto',maxHeight:(_fill4.max || 'calc(100vh - 240px)')}},
       h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:'10.5px',tableLayout:'fixed'}},
         h('colgroup',null,
           h('col',{style:{width:'24px'}}),
@@ -46475,6 +46493,7 @@ if(typeof window !== 'undefined'){
 }
 
 function FinanceInvoice(){
+  var _fill5 = useFillHeight();   // 표가 창 바닥까지 (전: 100vh - 380px)
   var existing = dbGet('finance_invoice', []);
   var s = useState(existing); var invoices = s[0]; var setInvoices = s[1];
   var q = useState(''); var query = q[0]; var setQuery = q[1];
@@ -47137,7 +47156,7 @@ function FinanceInvoice(){
         invFActiveCount > 0 && h('span', { onClick:invFClearAll,
           style:{ color:'#2563eb', cursor:'pointer', fontWeight:600, textDecoration:'underline' } }, '▽ 필터 풀기')
       ),
-      h('div', { style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'10px', overflow:'auto', maxHeight:'calc(100vh - 380px)' } },
+      h('div', { ref:_fill5.ref, style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'10px', overflow:'auto', maxHeight:(_fill5.max || 'calc(100vh - 380px)') } },
         h('table', { className:'dt' },
           /* ★ 깔때기 — 값 목록은 «다른 깔때기를 이미 반영한» listRowsF 기준으로 센다
              (내가 지금 보는 칸 자신이 건 조건은 빼고 세야, 고른 값이 0건으로 보이지 않는다). */
@@ -55560,6 +55579,8 @@ function FinanceTxn(){
 }
 
 function FinancePnL(){
+  var _fill6 = useFillHeight();   // 표가 창 바닥까지 (전: 100vh - 260px)
+  var _fill7 = useFillHeight();   // 표가 창 바닥까지 (전: 100vh - 260px)
   var allIncomes  = dbGet('finance_income', []);
   var allExpenses = dbGet('finance_expense', []);
   var allPayrolls = dbGet('payroll_monthly', []); // 급여비용 참조
@@ -55670,7 +55691,7 @@ function FinancePnL(){
     )),   // ↑ 연도·KPI·탭 sticky 덩어리 닫음
 
     // 월별 손익 테이블 — 표 자신이 «제 몸 안에서» 구르는 상자라야 머리글이 그 안에서 붙는다
-    viewMode==='month' ? h('div',{style:{border:'1px solid #e2e8f0',borderRadius:'8px',overflow:'auto',maxHeight:'calc(100vh - 260px)'}},
+    viewMode==='month' ? h('div', { ref:_fill6.ref,style:{border:'1px solid #e2e8f0',borderRadius:'8px',overflow:'auto',maxHeight:(_fill6.max || 'calc(100vh - 260px)')}},
       h('table',{style:{width:'100%',borderCollapse:'collapse'}},
         h('thead',{style:{position:'sticky',top:0,zIndex:2}},h('tr',null,
           h('th',{style:Object.assign({},thS,{width:'40px',textAlign:'center'})},'#'),
@@ -55709,7 +55730,7 @@ function FinancePnL(){
     ) : null,
 
     // 카테고리별 지출 — 이 표도 제 몸 안에서만 구르게 해 머리글을 붙인다
-    viewMode==='category' ? h('div',{style:{border:'1px solid #e2e8f0',borderRadius:'8px',overflow:'auto',maxHeight:'calc(100vh - 260px)'}},
+    viewMode==='category' ? h('div', { ref:_fill7.ref,style:{border:'1px solid #e2e8f0',borderRadius:'8px',overflow:'auto',maxHeight:(_fill7.max || 'calc(100vh - 260px)')}},
       h('table',{style:{width:'100%',borderCollapse:'collapse'}},
         h('thead',{style:{position:'sticky',top:0,zIndex:2}},h('tr',null,
           h('th',{style:Object.assign({},thS,{width:'40px'})},'#'),
@@ -55808,6 +55829,7 @@ function FinancePnL(){
 
 // ============ 재무관리 - 미수금관리 ============
 function FinanceReceivable(props){
+  var _fill8 = useFillHeight();   // 표가 창 바닥까지 (전: 100vh - 480px)
   var onNav = props.onNavigate || function(){};
   var cases = dbGet('cases', []);
   var consultings = dbGet('consultings', []);
@@ -56047,7 +56069,7 @@ function FinanceReceivable(props){
     ),
 
     // 미수금 테이블
-    h('div', { style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'10px', overflow:'auto', maxHeight:'calc(100vh - 480px)' } },
+    h('div', { ref:_fill8.ref, style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'10px', overflow:'auto', maxHeight:(_fill8.max || 'calc(100vh - 480px)') } },
       h('table', { className:'dt' },
         h('thead', null, h('tr', null,
           h('th', { style:{ width:'30px' } }, '#'),
@@ -56413,6 +56435,7 @@ function OtherProjectManagement(props){
 }
 // ============ 사무관리 - 공통 컴포넌트 (컨설팅/기금/기타) ============
 function ProjectManagementShared(props){
+  var _fill9 = useFillHeight();   // 표가 창 바닥까지 (전: 100vh - 240px)
   var onNav = props.onNavigate || function(){};
   var existing = dbGet(props.storageKey, []);
   // 비어 있을 때 demoSeed 자동 채우기
@@ -57101,7 +57124,7 @@ function ProjectManagementShared(props){
               return _card;
             })
       )
-    : h('div', { style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'10px', overflow:'auto', maxHeight:'calc(100vh - 240px)' } },
+    : h('div', { ref:_fill9.ref, style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'10px', overflow:'auto', maxHeight:(_fill9.max || 'calc(100vh - 240px)') } },
       h('table', { className:'dt' },
         h('thead', null, h('tr', null,
           colVis.no && h('th', { style:{ width:'30px' } }, '#'),
@@ -57815,6 +57838,11 @@ function ProjectDetailModal(props){
 
 // ============ 종료관리 (취소/이관완료 보관함) ============
 function ClosedManagement(){
+  var _fill10 = useFillHeight();   // 표가 창 바닥까지 (전: 100vh - 310px)
+  var _fill11 = useFillHeight();   // 표가 창 바닥까지 (전: 100vh - 310px)
+  var _fill12 = useFillHeight();   // 표가 창 바닥까지 (전: 100vh - 310px)
+  var _fill13 = useFillHeight();   // 표가 창 바닥까지 (전: 100vh - 310px)
+  var _fill14 = useFillHeight();   // 표가 창 바닥까지 (전: 100vh - 310px)
   var existing = dbGet('closed_archive', []);
   var s = useState(existing); var archive = s[0]; var setArchive = s[1];
 
@@ -58371,7 +58399,7 @@ function ClosedManagement(){
               );
             })
       )
-    : h('div', { style:{ overflow:'auto', maxHeight:'calc(100vh - 310px)', background:'#fff', border:'1px solid #e2e8f0', borderRadius:'6px' } },
+    : h('div', { ref:_fill10.ref, style:{ overflow:'auto', maxHeight:(_fill10.max || 'calc(100vh - 310px)'), background:'#fff', border:'1px solid #e2e8f0', borderRadius:'6px' } },
       h('table', { className:'dt' },
         h('thead', null, h('tr', null,
           h('th', {style:{width:'32px',textAlign:'center'}}, '#'),
@@ -58452,7 +58480,7 @@ function ClosedManagement(){
 
   function renderContract(){
     var P = clPage(contractItems);
-    return h('div', { style:{ overflow:'auto', maxHeight:'calc(100vh - 310px)', background:'#fff', border:'1px solid #e2e8f0', borderRadius:'6px' } },
+    return h('div', { ref:_fill11.ref, style:{ overflow:'auto', maxHeight:(_fill11.max || 'calc(100vh - 310px)'), background:'#fff', border:'1px solid #e2e8f0', borderRadius:'6px' } },
       h('table', { className:'dt' },
         h('thead', null, h('tr', null,
           h('th', null, '#'), h('th', null, '종료일'), h('th', null, '구분'),
@@ -58504,7 +58532,7 @@ function ClosedManagement(){
   function renderCompany(){
     var companyTypes = dbGet('biz_company_types', COMPANY_TYPE_SEED);
     var P = clPage(closedCompanies);
-    return h('div', { style:{ overflow:'auto', maxHeight:'calc(100vh - 310px)', background:'#fff', border:'1px solid #e2e8f0', borderRadius:'6px' } },
+    return h('div', { ref:_fill12.ref, style:{ overflow:'auto', maxHeight:(_fill12.max || 'calc(100vh - 310px)'), background:'#fff', border:'1px solid #e2e8f0', borderRadius:'6px' } },
       h('table', { className:'dt' },
         h('thead', null, h('tr', null,
           h('th', null, '#'), h('th', null, '업체명'), h('th', null, '사업자번호'),
@@ -58559,7 +58587,7 @@ function ClosedManagement(){
 
   function renderCase(){
     var P = clPage(closedCases);
-    return h('div', { style:{ overflow:'auto', maxHeight:'calc(100vh - 310px)', background:'#fff', border:'1px solid #e2e8f0', borderRadius:'6px' } },
+    return h('div', { ref:_fill13.ref, style:{ overflow:'auto', maxHeight:(_fill13.max || 'calc(100vh - 310px)'), background:'#fff', border:'1px solid #e2e8f0', borderRadius:'6px' } },
       h('table', { className:'dt' },
         h('thead', null, h('tr', null,
           h('th', null, '#'), h('th', null, '사건번호'), h('th', null, '의뢰인'),
@@ -58603,7 +58631,7 @@ function ClosedManagement(){
   function renderBiz(srcKey, list){
     var showKindCol = false;
     var P = clPage(list);
-    return h('div', { style:{ overflow:'auto', maxHeight:'calc(100vh - 310px)', background:'#fff', border:'1px solid #e2e8f0', borderRadius:'6px' } },
+    return h('div', { ref:_fill14.ref, style:{ overflow:'auto', maxHeight:(_fill14.max || 'calc(100vh - 310px)'), background:'#fff', border:'1px solid #e2e8f0', borderRadius:'6px' } },
       h('table', { className:'dt' },
         h('thead', null, h('tr', null,
           h('th', null, '#'), h('th', null, '관리번호'),
@@ -67940,6 +67968,7 @@ function PayrollHistory(props){
 
 // ── 월별급여대장 (전직원 매트릭스) ──
 function PayrollLedger(props){
+  var _fill15 = useFillHeight();   // 표가 창 바닥까지 (전: 100vh - 280px)
   // 휴직자도 포함 (급여대장에 [휴직] 표시)
   var rawRecs = dbGet('payroll_monthly', []);
   // 해당 월 재직 여부 판단 헬퍼
@@ -68813,7 +68842,7 @@ function PayrollLedger(props){
           );
         })
       )
-    : h('div', { ref:_fzRef, style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'6px', overflow:'auto', maxHeight:'calc(100vh - 280px)' } },
+    : h('div', { ref:_fill15.ref, ref:_fzRef, style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'6px', overflow:'auto', maxHeight:(_fill15.max || 'calc(100vh - 280px)') } },
       h('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:'11px' } },
         h('thead', null, h('tr', null,
           h('th', { style:Object.assign({},thStyle, fzStyle('num','#f8fafc',6)) }, '#'),
