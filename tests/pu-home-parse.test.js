@@ -59,3 +59,18 @@ test('쪽 본문을 글자로 읽어낸다', () => {
   assert.ok(!/<div/.test(text), '태그가 남아 있으면 안 된다');
   assert.ok(!/메뉴 건너뛰기/.test(text), '머리말·메뉴는 빠져야 한다');
 });
+
+test('tidy() 는 주석 안에 태그가 들어 있어도 통째로 걷어낸다', () => {
+  const s = '앞글 <!-- <a href="https://푸른노무법인.kr/partner_board/185" data-srl="185"></a> --> 뒷글';
+  const out = P.tidy(s);
+  assert.equal(out, '앞글 뒷글');
+  assert.ok(!/-->/.test(out), '주석 닫는 표시가 남으면 안 된다');
+  assert.ok(!/<!--/.test(out), '주석 여는 표시가 남으면 안 된다');
+});
+
+test('partner.html 을 읽어도 주석 찌꺼기가 남지 않는다', () => {
+  const partner = fs.readFileSync(path.join(BK, 'partner.html'), 'utf8');
+  const text = P.parsePageText(partner);
+  assert.ok(!/-->/.test(text), '주석 닫는 표시가 남으면 안 된다');
+  assert.ok(!/<!--/.test(text), '주석 여는 표시가 남으면 안 된다');
+});
