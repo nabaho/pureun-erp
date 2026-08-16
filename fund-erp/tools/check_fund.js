@@ -56,6 +56,20 @@ ok('쪽별 행 높이(1쪽 9.2mm / 2쪽 6.2mm)',
   src.includes("['.pg1 th','height:9.2mm']") && src.includes("['.pg2 td','height:6.2mm']"));
 
 // ── ④ 서식 A4 조판기 ──
+/* 서식 31종 중 15종은 원본(.hwp·.xlsx)을 브라우저에 등록해야 나온다.
+   등록 전에 열면 한 줄짜리 「준비 중」만 뜨던 것을 길잡이로 바꿨다 —
+   무엇을 해야 하는지·어디로 가야 하는지가 없으면 «아직 안 만든 기능»으로 읽혀 사람이 기다린다. */
+ok('원본 미등록 서식이 길잡이를 준다', src.includes('원본 파일을 등록해야')
+  && src.includes('서식 원본 등록하러 가기')
+  && !src.includes(">준비 중인 서식입니다.</p>'"));
+// 왼쪽 메뉴의 서식 항목과 같은 손짓이어야 한다 — 한쪽만 고치면 화면이 갈라진다
+{
+  const NAV = "S.formsCtx=\\'library\\';S.formsHost=null;S._sideKind=null;go(\\'forms\\')";
+  const n = src.split(NAV).length - 1;
+  ok('서식 화면으로 가는 손짓이 메뉴와 같다', n >= 2, '같은 손짓 ' + n + '군데(메뉴 + 안내 단추)');
+}
+// 원본은 이 브라우저에만 둔다 — 저장소·서버에 올리지 않는다는 것을 사람에게 알린다
+ok('원본이 브라우저에만 있다는 것을 알린다', src.includes('이 브라우저에만 보관됩니다'));
 ok('조판기 존재', src.includes('function typesetForm'));
 ok('조판 클래스 CSS(화면)', src.includes('.fmtitle{text-align:center'));
 ok('조판 클래스 CSS(인쇄)', (src.match(/\.fmtitle\{text-align:center/g) || []).length >= 2);
