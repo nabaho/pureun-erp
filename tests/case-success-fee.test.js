@@ -45,7 +45,8 @@ eq('빈 객체', amt({}), 0);
    2026-08-13 부터 입금관리·거래내역이 erpUnpaidParts 한 곳에서만 판단한다.
    낱말을 못 박지 말고 «실제로 돌려» 확인한다 — 어디로 옮겨 가도 뜻은 지켜진다. */
 vm.runInContext('function erpPaidSoFar(item, kindLabel, legacy){ return parseInt(legacy,10)||0; }', ctx);
-vm.runInContext(slice('function erpUnpaidParts(it){', "if(typeof window !== 'undefined'){"), ctx);
+// erpUnpaidParts 가 「여기까지로 닫은 것」 판정을 함께 쓰므로 둘 다 담는다 (2026-08-16)
+vm.runInContext(slice('function erpClosedUnpaid(it, splitLabel){', "if(typeof window !== 'undefined'){"), ctx);
 const parts = ctx.erpUnpaidParts;
 const suc = it => (parts(it).filter(p => p.kind === 'success')[0] || null);
 

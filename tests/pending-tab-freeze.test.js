@@ -15,7 +15,8 @@ function t(name, got, want){
   else { fail++; console.log('  FAIL ' + name + '\n    받음 ' + G + '\n    기대 ' + W); }
 }
 // IncomePendingTab 조각만 떼어 본다 — 다음 최상위 함수 앞까지
-const a = src.indexOf('function IncomePendingTab(){');
+// 인자 목록까지 못 박지 않는다 — props 를 받게 되면 그 자리에서 깨진다 (2026-08-16 에 그랬다)
+const a = src.indexOf('function IncomePendingTab(');
 const b = src.indexOf('\nfunction FinanceExpense(){', a);
 const F = (a >= 0 && b >= 0) ? src.slice(a, b) : '';
 t('IncomePendingTab 조각을 찾았다', F.length > 3000, true);

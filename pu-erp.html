@@ -5287,11 +5287,31 @@ if(typeof window !== 'undefined') window.erpPartPaidNote = erpPartPaidNote;
    ⚠ taxType 은 «날것 그대로» 실어 나른다 — contractFeeVatIncluded 에는 true/false 말고
      'wht33'(원천징수 3.3%) 도 들어간다. 참·거짓으로 뭉개면 원천징수 건의 예상 입금액이
      ×0.967 이 아니라 그대로가 되어 「금액 안 맞음」 으로 떨어진다. */
+/* ── 「여기까지로 닫은」 남은 돈 (2026-08-16 대표 지시) ──────────────────────
+   못 받기로 한 미수는 지금까지 «닫을 길이 없어» 영원히 미입금 대기에 남았다
+   (포기 처리는 성공보수에만 있었다).
+
+   ★ xxxPaid 플래그를 세우지 «않는다». 그걸 세우면 「다 받았다」가 되어
+     «받지도 않은 돈이 받은 것으로» 보인다. 닫힘은 「안 받기로 했다」이지 「받았다」가 아니다.
+     그래서 따로 칸을 둔다: it.unpaidClosed = { '착수금': {amount, reason, at, by, byName} }
+
+   ★ 읽는 곳을 이 함수 하나로 모은다 — 미입금 대기·거래내역 후보·미수금관리가 모두 이걸 본다.
+     (「아직 안 받았나」를 한 곳에서만 판단하는 2026-08-13 구조를 그대로 따른다) */
+function erpClosedUnpaid(it, splitLabel){
+  var m = (it && it.unpaidClosed) || {};
+  var r = m[splitLabel];
+  // 금액 0짜리 껍데기는 닫힌 것으로 보지 않는다 — 왜 사라졌는지 알 길이 없어진다
+  return (r && (parseInt(r.amount, 10) || 0) > 0) ? r : null;
+}
 function erpUnpaidParts(it){
   if(!it || it._deleted) return [];
   var out = [];
-  // 표시든 날짜든 하나라도 찍혔으면 다 받은 것으로 본다
-  function done(flagKey, dateKey){ return !!(it[flagKey] || it[dateKey]); }
+  /* 표시든 날짜든 하나라도 찍혔으면 다 받은 것으로 본다.
+     「여기까지로 닫은」 것도 여기서 함께 빠진다 — 받은 것은 아니지만 «더 기다릴 것도 아니다». */
+  function done(flagKey, dateKey, splitLabel){
+    if(it[flagKey] || it[dateKey]) return true;
+    return !!erpClosedUnpaid(it, splitLabel);
+  }
   function add(kind, splitLabel, kindLabel, fee, legacyKey, taxType){
     var f = parseInt(fee, 10) || 0;
     if(f <= 0) return;
@@ -5301,15 +5321,15 @@ function erpUnpaidParts(it){
                vatIncluded:(taxType === true) });
   }
   var cVat = it.contractFeeVatIncluded || false, bVat = it.balanceFeeVatIncluded || false;
-  if(!done('retainerPaid', 'retainerPaidDate'))
+  if(!done('retainerPaid', 'retainerPaidDate', '착수금'))
     add('retainer', '착수금', '착수금', it.retainerFee, 'retainerPaidAmount', cVat);
-  if(!done('successPaid', 'successPaidDate'))
+  if(!done('successPaid', 'successPaidDate', '성공보수'))
     add('success', '성공보수', '성공보수',
         (typeof caseSuccessFeeAmount === 'function') ? caseSuccessFeeAmount(it) : it.successFee,
         'successPaidAmount', bVat);
-  if(!done('contractPaid', 'contractPaidDate'))
+  if(!done('contractPaid', 'contractPaidDate', '계약금'))
     add('contractFee', '계약금', '계약금', it.contractFee, 'contractPaidAmount', cVat);
-  if(!done('balancePaid', 'balancePaidDate'))
+  if(!done('balancePaid', 'balancePaidDate', '잔금'))
     add('balance', '잔금', '잔금', it.balanceFee, 'balancePaidAmount', bVat);
   // 옛 컨설팅 한 칸짜리 — 분할기록을 쓰지 않으므로 splitLabel 이 없다
   if(!done('paid', 'paidDate') && (parseInt(it.consultingFee, 10) || 0) > 0)
@@ -5325,6 +5345,28 @@ function erpItemClosedTag(it){
   if(it.closedDate) return { label:'종료', why:'사무관리 종료 ' + String(it.closedDate).slice(0,10) + ' — 입금만 남았습니다' };
   return null;
 }
+/* ── 남은 돈을 「여기까지로」 닫는다 / 되돌린다 (2026-08-16 대표 지시) ────────
+   ★ 되돌릴 수 있어야 한다 — 잘못 닫으면 돈이 통째로 사라진 것처럼 보인다.
+   ★ 「받았다」로 만들지 않는다 (위 erpClosedUnpaid 주석 참고). */
+function erpCloseUnpaid(storeKey, itemId, item, splitLabel, amount, reason, who){
+  var amt = parseInt(amount, 10) || 0;
+  if(!storeKey || !itemId || !splitLabel) return false;
+  if(amt <= 0) return false;
+  if(!String(reason || '').trim()) return false;     // 까닭 없이는 닫지 않는다
+  var next = Object.assign({}, (item && item.unpaidClosed) || {});
+  next[splitLabel] = { amount:amt, reason:String(reason).trim(),
+    at:new Date().toISOString(), by:(who && who.sid) || '', byName:(who && who.name) || '' };
+  return dbPatch(storeKey, itemId, { unpaidClosed:next }) !== false;
+}
+function erpReopenUnpaid(storeKey, itemId, item, splitLabel){
+  if(!storeKey || !itemId || !splitLabel) return false;
+  var cur = (item && item.unpaidClosed) || {};
+  if(!cur[splitLabel]) return false;
+  var next = {};
+  Object.keys(cur).forEach(function(k){ if(k !== splitLabel) next[k] = cur[k]; });
+  return dbPatch(storeKey, itemId, { unpaidClosed:next }) !== false;
+}
+
 /* 통장에 들어올 «예상 금액» — 세금 종류에 따라 달라지고, 이미 받은 만큼은 뺀다.
    taxType: true=부가세포함(그대로) · 'wht33'=원천징수 3.3% 차감 · false=공급가(×1.1) */
 function erpExpectAmount(fee, taxType, paidAmt){
@@ -5434,6 +5476,8 @@ function erpBankHitsForAll(cands, rows){
 }
 if(typeof window !== 'undefined'){
   window.erpUnpaidParts = erpUnpaidParts; window.erpItemClosedTag = erpItemClosedTag;
+  window.erpClosedUnpaid = erpClosedUnpaid; window.erpCloseUnpaid = erpCloseUnpaid;
+  window.erpReopenUnpaid = erpReopenUnpaid;
   window.erpExpectAmount = erpExpectAmount; window.erpBankIncomeRows = erpBankIncomeRows;
   window.erpBankHitFor = erpBankHitFor; window.erpBankHitsForAll = erpBankHitsForAll;
   window.erpBankHitIndex = erpBankHitIndex;
@@ -37071,9 +37115,12 @@ function FinanceLedger(){
                   contractFee:'contractPaidAmount', balance:'balancePaidAmount' }[pItem.kind];
       var _before = erpPaidSoFar(_it, _kl, _it[_lf]);
       var _after  = _before + row.amount;
+      /* 적요를 함께 적는다 (2026-08-16 대표 지시).
+         전에는 날짜·금액·종류만 남아 «누가 낸 돈인지» 를 알 수 없었다 —
+         근로자 39명이 나눠 내는 건에서 다음 달 마무리할 때 통장을 다시 뒤져야 했다. */
       _sp.splitPayments = (_it.splitPayments||[]).concat([{
         id:'sp-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
-        date:paidDate, amount:row.amount, kind:_kl }]);
+        date:paidDate, amount:row.amount, kind:_kl, memo:(row.memo || row.note || '') }]);
       _sp[_lf] = _after;
       /* 약정액을 다 채웠으면 「일부입금」을 골랐더라도 완납으로 본다.
          부가세 포함 여부에 따라 실제 받을 금액이 다르므로 _expect 와 같은 셈을 쓴다. */
@@ -40585,7 +40632,8 @@ function ImportLedgerModal(props){
   );
 }
 
-function FinanceIncome(){
+function FinanceIncome(props){
+  props = props || {};
   var st = usePersistedState('fin_income_tab', 'pending'); var subTab = st[0]; var setSubTab = st[1];
   var impIS = useState(false); var showImport = impIS[0]; var setShowImport = impIS[1];
 
@@ -40614,7 +40662,7 @@ function FinanceIncome(){
       h('button', { onClick:function(){ setShowImport(true); }, style:{ marginLeft:'auto', flexShrink:0, padding:'4px 10px', background:'#166534', color:'#fff', border:'none', borderRadius:'5px', fontSize:'11px', fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' } }, '📥 가져오기')
     ),
     // 탭별 컨텐츠
-    subTab === 'pending'    && h(IncomePendingTab),
+    subTab === 'pending'    && h(IncomePendingTab, { onNavigate:props.onNavigate }),
     subTab === 'list'       && h(IncomeListTab),
     subTab === 'unmatched'  && h(IncomeUnmatchedTab),
     subTab === 'company'    && h(IncomeCompanyTab),
@@ -40971,9 +41019,19 @@ function IncomeUnmatchedTab(props){
 }
 
 // ── 미입금 대기 탭 (재무관리에서 입금확정 게이트키퍼) ──
-function IncomePendingTab(){
+function IncomePendingTab(props){
+  props = props || {};
+  var onNavigate = props.onNavigate || function(){};
   var users = getActiveUsers();
   function userName(sid){ var u=users.find(function(x){return x.sid===sid;}); return u?u.name:sid||'-'; }
+
+  /* ── 🏁 마무리 (2026-08-16 대표 지시) ────────────────────────────────
+     일부만 받은 건을 «끝맺는» 자리. 지금까지는 못 받기로 해도 닫을 길이 없어
+     영원히 이 목록에 남았다(포기 처리는 성공보수에만 있었다).
+     세 갈래 — 나머지 확정 · 여기까지로 닫기 · 약정액 고치기. */
+  var fnS = useState(null); var finModal = fnS[0]; var setFinModal = fnS[1];
+  var crS = useState(''); var closeReason = crS[0]; var setCloseReason = crS[1];
+  var _canClose = (typeof isAdminByUser === 'function') && isAdminByUser(CURRENT_USER);
 
   /* 표가 창 바닥까지 — 셈은 공용 도우미(useFillHeight) 한 곳에서만 한다.
      ★ 어제는 여기 따로 만들어 두었다. 같은 일을 두 군데서 만들면 한쪽만 고쳐진다
@@ -41189,6 +41247,28 @@ function IncomePendingTab(){
 
   function refresh(){ setPending(extractPending()); }
 
+  /* 「여기까지로 닫기」 — 남은 돈을 못 받기로 한다.
+     ★ 까닭 없이는 닫지 않는다. 왜 12만을 포기했는지가 없으면 나중에 아무도 설명할 수 없다. */
+  function doCloseUnpaid(p){
+    var left = Math.max(0, (p.amount || 0) - (p.paidSoFar || 0));
+    if(!closeReason.trim()){ showToast('⚠️ 까닭을 적어야 닫을 수 있습니다'); return; }
+    if(!_canClose){ showToast('⚠️ 관리자만 할 수 있습니다'); return; }
+    var items = dbGet(p.store.key, []);
+    var src = items.find(function(x){ return x.id === p.itemId; });
+    if(!src){ showToast('❌ 원본 항목을 찾을 수 없습니다'); return; }
+    if(erpCloseUnpaid(p.store.key, p.itemId, src, p.kindLabel, left, closeReason, CURRENT_USER)){
+      if(typeof AuditLog !== 'undefined' && AuditLog.write){
+        AuditLog.write(p.store.key, p.itemId, 'unpaidClosed', left.toLocaleString()+'원 미수',
+          '못 받기로 정리', p.kindLabel + ' — ' + closeReason.trim());
+      }
+      setFinModal(null); setCloseReason('');
+      refresh();
+      showToast('🏁 정리했습니다 — ' + p.companyName + ' ' + p.kindLabel + ' ' + left.toLocaleString() + '원');
+    } else {
+      showToast('❌ 정리하지 못했습니다');
+    }
+  }
+
   function doConfirm(p, paidDate, splitOn, mainPct, subPctMap, rateOpts){
     if(!paidDate){ showToast('입금일을 입력하세요'); return; }
     if(isIncomeLocked((paidDate||'').slice(0,7))){ showToast('🔒 ' + (paidDate||'').slice(0,7) + ' 입금 마감 — 확정 불가'); return; }
@@ -41231,13 +41311,16 @@ function IncomePendingTab(){
         var dateKey   = p.kind === 'retainer' ? 'retainerPaidDate' : 'successPaidDate';
         var newIncome = { date:paidDate, amount:payAmt, kind:kindLabel, confirmed:true };
         srcPatch = { incomes:(_src.incomes||[]).concat([newIncome]) };
-        var _splitEntry = { id:'sp-'+Date.now().toString(36), date:paidDate, amount:payAmt, kind:kindLabel };
+        // 적요를 함께 적는다 — 통장에서 열지 않고 손으로 확정했으면 없다. 없는 것을 지어내지 않는다.
+        var _splitEntry = { id:'sp-'+Date.now().toString(36), date:paidDate, amount:payAmt, kind:kindLabel,
+                            memo:((confirmModal && confirmModal.bankRow && confirmModal.bankRow.memo) || '') };
         srcPatch.splitPayments = (_src.splitPayments||[]).concat([_splitEntry]);
         if(_isFullyPaid){ srcPatch[dateKey] = paidDate; }
       } else {
         var paidKey = p.kind === 'contract' ? 'contractPaid' : 'balancePaid';
         var dateKey2 = p.kind === 'contract' ? 'contractPaidDate' : 'balancePaidDate';
-        var _se = { id:'sp-'+Date.now().toString(36), date:paidDate, amount:payAmt, kind:(p.kind==='contract'?'계약금':'잔금') };
+        var _se = { id:'sp-'+Date.now().toString(36), date:paidDate, amount:payAmt, kind:(p.kind==='contract'?'계약금':'잔금'),
+                    memo:((confirmModal && confirmModal.bankRow && confirmModal.bankRow.memo) || '') };
         srcPatch = { splitPayments:(_src.splitPayments||[]).concat([_se]) };
         if(_isFullyPaid){ srcPatch[paidKey] = true; srcPatch[dateKey2] = paidDate; }
       }
@@ -41645,7 +41728,16 @@ function IncomePendingTab(){
                                 : '입금일을 손으로 넣어야 합니다 — 통장에서 찾지 못했습니다',
                       style:{padding:'4px 10px',background:hit?'#16a34a':'#1e40af',color:'#fff',border:'none',borderRadius:'4px',cursor:'pointer',fontSize:'10.5px',fontWeight:700,whiteSpace:'nowrap'} },
                       (hit ? '✅ ' : '') + '입금확정');
-                  })()),
+                  })(),
+                    /* 🏁 마무리 — 일부라도 받은 건에만. 한 푼도 안 받은 건에는 아직 마무리할 것이 없다.
+                       (2026-08-16 대표 지시: 미입금 대기 목록에 «바로» 두기로 정하셨다) */
+                    (p.paidSoFar > 0) && h('button', {
+                      onClick:function(){ setCloseReason(''); setFinModal(p); },
+                      title:'남은 ' + Math.max(0, p.amount - p.paidSoFar).toLocaleString() + '원을 어떻게 할지 정합니다',
+                      style:{marginLeft:'4px',padding:'4px 9px',background:'#fffbeb',color:'#854d0e',
+                        border:'1px solid #fde68a',borderRadius:'4px',cursor:'pointer',
+                        fontSize:'10.5px',fontWeight:700,whiteSpace:'nowrap',fontFamily:'inherit'} },
+                      '마무리')),
                   h('td', {style:Object.assign({},tdS,{textAlign:'center'})},
                     h('button', { onClick:function(){ deletePendingItem(p); },
                       title:'휴지통으로 이동 (복원 가능)',
@@ -41658,6 +41750,83 @@ function IncomePendingTab(){
         ),
 
     h(PaginationBar, { page:pendPg.page, total:pendPg.total, setPage:pendPg.setPage, count:pendPg.count }),
+
+    /* ── 🏁 마무리 창 (2026-08-16 대표 지시) ─────────────────────────────
+       세 갈래를 «먼저 보여주고» 고르게 한다. 바로 닫기 창이 열리면
+       「나머지가 들어왔을 뿐인데」도 못 받기로 닫아 버릴 수 있다. */
+    finModal && (function(){
+      var p = finModal;
+      var left = Math.max(0, (p.amount || 0) - (p.paidSoFar || 0));
+      function choice(ico, title, desc, onClick, dim){
+        return h('button', { onClick:onClick, type:'button',
+          style:{display:'flex',gap:'9px',alignItems:'flex-start',width:'100%',textAlign:'left',
+            padding:'10px',border:'1px solid #e2e8f0',borderRadius:'7px',marginBottom:'7px',
+            background:dim?'#f8fafc':'#fff',cursor:'pointer',fontFamily:'inherit'} },
+          h('span', { style:{fontSize:'17px',lineHeight:1.1,flexShrink:0} }, ico),
+          h('span', null,
+            h('b', { style:{fontSize:'12.5px',display:'block',color:'#1e293b'} }, title),
+            h('small', { style:{fontSize:'10.5px',color:'#64748b',display:'block',marginTop:'2px',lineHeight:1.55} }, desc)));
+      }
+      return h('div', { className:'modal-bg', onClick:function(e){ if(e.target===e.currentTarget){ setFinModal(null); setCloseReason(''); } } },
+        h('div', { className:'modal', style:{maxWidth:'520px'} },
+          h('div', { className:'modal-h' },
+            h('span', null, '🏁 마무리 — ' + p.companyName + ' · ' + p.kindLabel)),
+          h('div', { className:'modal-b' },
+            h('div', { style:{fontSize:'11px',color:'#64748b',marginBottom:'11px',fontFamily:'monospace'} },
+              '약정 ' + (p.amount||0).toLocaleString() + ' · 받은 ' + (p.paidSoFar||0).toLocaleString()
+              + ' · ', h('b', { style:{color:'#991b1b'} }, '남은 ' + left.toLocaleString())),
+
+            choice('💰', '나머지 ' + left.toLocaleString() + '원을 확정한다',
+              '돈이 들어왔습니다. 입금확정 창이 열립니다.',
+              function(){
+                var hit = hitOf(p);
+                setFinModal(null); setCloseReason('');
+                if(hit) openFromBank(p, hit);
+                else setConfirmModal(erpConfirmInit(p, {p:p, date:todayYMD(), deductions:erpInitDeductions(p.item, getVatType(p))}));
+              }),
+
+            /* 닫기는 관리자만 — 돈을 안 받기로 하는 결정이라,
+               담당자가 조용히 닫으면 미수가 사라진 줄도 모른다 (2026-08-16 대표 결정). */
+            _canClose
+              ? h('div', null,
+                  choice('🏁', '여기까지로 닫는다 — ' + left.toLocaleString() + '원은 못 받기로',
+                    '더 받을 가망이 없습니다. 까닭을 적어야 닫힙니다. 미입금 대기·미수금관리에서 빠지고, 되돌릴 수 있습니다.',
+                    function(){ setFinModal(Object.assign({}, p, {_mode:'close'})); }),
+                  p._mode === 'close' && h('div', { style:{padding:'10px',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'7px',marginBottom:'7px'} },
+                    h('label', { style:{display:'block',fontSize:'11px',fontWeight:700,color:'#854d0e',marginBottom:'4px'} },
+                      '까닭', !closeReason.trim() && h('span', { style:{color:'#dc2626',marginLeft:'5px',fontSize:'10px'} }, '(필수 입력)')),
+                    h('textarea', { value:closeReason, rows:2, autoFocus:true,
+                      placeholder:'예: 근로자 3명이 끝내 미납 — 대표와 협의하여 정리 / 폐업으로 회수 불가',
+                      onChange:function(e){ setCloseReason(e.target.value); },
+                      style:{width:'100%',padding:'6px 8px',border:'1px solid #fde68a',borderRadius:'4px',fontSize:'11.5px',fontFamily:'inherit',resize:'vertical'} }),
+                    h('div', { style:{fontSize:'10px',color:'#854d0e',marginTop:'4px',fontStyle:'italic'} },
+                      '※ 누가 언제 왜 정리했는지 감사 로그에 영구 기록됩니다.'),
+                    h('div', { style:{marginTop:'8px',padding:'7px 9px',background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:'6px',fontSize:'10.5px',color:'#166534',lineHeight:1.6} },
+                      '매출 숫자는 바뀌지 않습니다 — 실제 들어온 돈만 매출로 잡습니다. 「약정 '
+                      + (p.amount||0).toLocaleString() + ' 중 ' + left.toLocaleString() + '은 못 받기로 했다」는 기록이 남습니다.'),
+                    h('div', { style:{display:'flex',justifyContent:'flex-end',marginTop:'9px'} },
+                      h('button', { type:'button', disabled:!closeReason.trim(),
+                        onClick:function(){ doCloseUnpaid(p); },
+                        style:{padding:'6px 14px',borderRadius:'6px',fontSize:'11.5px',fontWeight:700,fontFamily:'inherit',
+                          border:'none',cursor:closeReason.trim()?'pointer':'not-allowed',
+                          background:closeReason.trim()?'#991b1b':'#e2e8f0',
+                          color:closeReason.trim()?'#fff':'#94a3b8'} },
+                        closeReason.trim() ? ('닫기 — ' + left.toLocaleString() + '원 정리') : '닫기 (까닭을 적으세요)'))))
+              : null,
+
+            choice('✏️', '약정액을 ' + (p.paidSoFar||0).toLocaleString() + '원으로 고친다',
+              '애초에 그 금액으로 합의한 것이라면 이쪽입니다. 계약 금액은 세금계산서·부가세와 얽혀 있어 그 화면에서 고칩니다.',
+              function(){
+                var goto = p.store.isCase ? 'biz/case'
+                  : (p.store.key === 'consultings' ? 'biz/consulting'
+                  : (p.store.key === 'funds' ? 'biz/fund' : 'biz/other'));
+                setFinModal(null); setCloseReason('');
+                showToast('👉 ' + p.companyName + ' — 그 화면에서 ' + p.kindLabel + ' 금액을 고치세요');
+                onNavigate(goto);
+              }, true)),
+          h('div', { className:'modal-f' },
+            h('button', { className:'btn-secondary', onClick:function(){ setFinModal(null); setCloseReason(''); } }, '닫기'))));
+    })(),
 
     // 입금확정 모달
     confirmModal && (function(){
@@ -41906,12 +42075,70 @@ function IncomePendingTab(){
                   payBtn(!cardMode, '계좌', function(){ setConfirmModal(Object.assign({},confirmModal,{cardMode:false})); }),
                   payBtn(cardMode, '카드', function(){ setConfirmModal(Object.assign({},confirmModal,{cardMode:true})); })
                 ),
-                (alreadyPaid > 0 || cardMode) && h('div', { style:{fontSize:'10.5px',padding:'2px 0 4px',display:'flex',gap:'10px',flexWrap:'wrap'} },
-                  alreadyPaid > 0 && h('span', { style:{color:'#854d0e',fontWeight:700} },
-                    '◐ 기납입 '+alreadyPaid.toLocaleString()+' · 잔액 '+remaining.toLocaleString()),
-                  cardMode && h('span', { style:{color:'#2563eb',fontWeight:700} },
+                cardMode && h('div', { style:{fontSize:'10.5px',padding:'2px 0 4px'} },
+                  h('span', { style:{color:'#2563eb',fontWeight:700} },
                     '💳 카드수수료 ' + cardFee.toLocaleString() + '원 · 매출 ' + remaining.toLocaleString() + '원 유지 · 완납'))
               );
+            })(),
+
+            /* ── 📥 이 건에 들어온 돈 (2026-08-16 대표 지시) ─────────────────────
+               대표 지시: "관리자가 거래내역에서 입금자를 모두 합쳐 정리한 경우
+               합쳐서 정리된 내역을 입금확정에 모두 볼 수 있어야 한다."
+
+               전에는 「◐ 기납입 5,880,000 · 잔액 120,000」 합계 «한 줄» 뿐이었다.
+               근로자 39명이 나눠 내는 건에서 다음 달 마무리할 때, 588만이 누구 것이었는지
+               알려면 통장을 다시 뒤져야 했다 — 사실상 불가능하다.
+               ★ 확정된 것과 «지금 붙일 것» 을 한 표에 놓는다. 한 줄뿐이어도 표로 그린다 —
+                 다음에 줄이 늘어날 자리이기 때문이다. */
+            (function(){
+              var _kl = confirmModal.p.kindLabel;
+              var _past = (confirmModal.p.item.splitPayments || []).filter(function(x){
+                return x && x.kind === _kl;
+              });
+              var _paid = 0; _past.forEach(function(x){ _paid += (x.amount || 0); });
+              var _now = _cmPay;
+              var _want = confirmModal.p.amount || 0;
+              var _left = Math.max(0, _want - _paid - _now);
+              var gS = { display:'grid', gridTemplateColumns:'52px 1fr 96px 64px', gap:'6px',
+                         alignItems:'center', fontSize:'11px', padding:'5px 6px',
+                         borderRadius:'5px', marginBottom:'4px' };
+              function row(key, d, memo, amt, tag, tone, now){
+                return h('div', { key:key, style:Object.assign({}, gS, {
+                    background: now ? '#eff6ff' : '#fff',
+                    border: '1px solid ' + (now ? '#bfdbfe' : '#e2e8f0') }) },
+                  h('span', { style:{fontFamily:'monospace',color:'#64748b'} }, String(d||'').slice(5,10) || '-'),
+                  h('span', { style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},
+                    title:memo || '' }, memo || '—'),
+                  h('span', { style:{textAlign:'right',fontFamily:'monospace',fontWeight:700,
+                    color: now ? '#1e40af' : '#1e293b'} }, (amt||0).toLocaleString()),
+                  h('span', { style:{textAlign:'right',fontSize:'9.5px',fontWeight:700,color:tone} }, tag));
+              }
+              return h('div', { style:{border:'1px solid #bfdbfe',borderRadius:'7px',overflow:'hidden',margin:'8px 0 0'} },
+                h('div', { style:{display:'flex',justifyContent:'space-between',alignItems:'center',
+                    background:'#eff6ff',padding:'7px 10px'} },
+                  h('span', { style:{fontSize:'11px',color:'#1e40af',fontWeight:800} }, '📥 이 건에 들어온 돈'),
+                  h('span', { style:{fontSize:'10.5px',color:'#64748b',fontWeight:700,fontFamily:'monospace'} },
+                    '약정 ' + _want.toLocaleString())),
+                h('div', { style:{padding:'7px 10px',background:'#f8fafc'} },
+                  h('div', { style:Object.assign({}, gS, {background:'none',border:'none',
+                      fontSize:'9.5px',color:'#64748b',fontWeight:700,padding:'0 6px 2px',marginBottom:0}) },
+                    h('span', null, '날짜'), h('span', null, '적요'),
+                    h('span', { style:{textAlign:'right'} }, '금액'),
+                    h('span', { style:{textAlign:'right'} }, '상태')),
+                  _past.map(function(sp, i){
+                    // 적요가 없는 옛 기록은 «없는 대로» 둔다 — 지어내면 더 나쁘다
+                    return row(sp.id || i, sp.date, sp.memo, sp.amount, '✓ 확정됨', '#166534', false);
+                  }),
+                  row('now', confirmModal.date,
+                      (confirmModal.bankRow && confirmModal.bankRow.memo) || '', _now, '← 지금', '#1e40af', true),
+                  h('div', { style:{display:'flex',justifyContent:'space-between',alignItems:'center',
+                      marginTop:'6px',padding:'6px 9px',borderRadius:'6px',fontSize:'11.5px',fontWeight:800,
+                      background:_left > 0 ? '#fffbeb' : '#f0fdf4',
+                      color:_left > 0 ? '#854d0e' : '#166534',
+                      border:'1px solid ' + (_left > 0 ? '#fde68a' : '#bbf7d0')} },
+                    h('span', { style:{fontFamily:'monospace'} },
+                      '받은 ' + (_paid + _now).toLocaleString() + ' · 남은 ' + _left.toLocaleString()),
+                    h('span', null, _left > 0 ? '일부입금' : '완납 ✓'))));
             })(),
 
             /* ── ⭐ 성과급 미리보기 (2026-08-13 대표 지시) ──
@@ -56237,9 +56464,51 @@ function FinanceReceivable(props){
   function _remain(item, fee, kindLabel, legacyField){
     var f = parseInt(fee, 10) || 0;
     if(f <= 0) return 0;
+    // 「여기까지로 닫은」 것은 미수가 아니다 — 아래 「정리된 미수」 칸에 따로 모인다
+    if(erpClosedUnpaid(item, kindLabel)) return 0;
     var got = erpPaidSoFar(item, kindLabel, item && item[legacyField]);
     var r = f - got;
     return r > 0 ? r : 0;
+  }
+
+  /* ── 🏁 정리된 미수 (2026-08-16 대표 지시) ────────────────────────────
+     못 받기로 하고 닫은 돈. «조용히 사라지면 안 되는 돈» 이므로 여기 모아 두고,
+     잘못 닫았으면 되돌릴 수 있게 한다. */
+  var closedUnpaid = [];
+  [{arr:cases, type:'사건', key:'cases', icon:'⚖️', menuId:'biz/case',
+    parts:[['착수금','retainerFee'],['성공보수','successFee']]},
+   {arr:consultings, type:'컨설팅', key:'consultings', icon:'📊', menuId:'biz/consulting',
+    parts:[['계약금','contractFee'],['잔금','balanceFee']]},
+   {arr:funds, type:'기금', key:'funds', icon:'🏦', menuId:'biz/fund',
+    parts:[['계약금','contractFee'],['잔금','balanceFee']]},
+   {arr:others, type:'기타', key:'other_projects', icon:'📋', menuId:'biz/other',
+    parts:[['계약금','contractFee'],['잔금','balanceFee']]}
+  ].forEach(function(g){
+    (g.arr||[]).forEach(function(x){
+      if(!x || x._deleted) return;
+      g.parts.forEach(function(pp){
+        var rec = erpClosedUnpaid(x, pp[0]);
+        if(!rec) return;
+        var fee = parseInt(x[pp[1]], 10) || 0;
+        closedUnpaid.push({ storeKey:g.key, itemId:x.id, item:x, splitLabel:pp[0],
+          sourceType:g.type, icon:g.icon, menuId:g.menuId,
+          sourceNo:x.caseNo || x.no || x.projectNo || '', companyName:x.companyName || x.name || '',
+          contractAmt:fee, paidAmt:Math.max(0, fee - (parseInt(rec.amount,10)||0)),
+          lostAmt:parseInt(rec.amount,10)||0, reason:rec.reason || '',
+          at:rec.at || '', byName:rec.byName || rec.by || '' });
+      });
+    });
+  });
+  closedUnpaid.sort(function(a,b){ return String(b.at).localeCompare(String(a.at)); });
+  var closedLostSum = closedUnpaid.reduce(function(s,x){ return s + x.lostAmt; }, 0);
+  async function reopenClosed(c){
+    if(!(await popConfirm('「' + c.companyName + ' · ' + c.splitLabel + '」 정리를 되돌립니다.\n\n'
+      + '못 받기로 했던 ' + c.lostAmt.toLocaleString() + '원이 다시 미수금·미입금 대기로 돌아옵니다.'))) return;
+    if(erpReopenUnpaid(c.storeKey, c.itemId, c.item, c.splitLabel)){
+      showToast('↺ 되돌렸습니다 — ' + c.companyName + ' ' + c.splitLabel);
+    } else {
+      showToast('❌ 되돌리지 못했습니다');
+    }
   }
 
   // 1. 사건 - 종결관리로 넘어간 사건만 (closedDate 있음)
@@ -56505,7 +56774,49 @@ h('td', { style:{ color:'#94a3b8', textAlign:'center', fontSize:'10.5px' } }, id
       )
     ),
     h('div', { style:{ marginTop:'6px', fontSize:'10.5px', color:'#94a3b8' } },
-      '※ 미수금은 종결관리로 넘어간 사건·컨설팅·기금·기타 중 입금확정 안 된 항목과 발행된 세금계산서 중 미입금 항목을 자동 집계합니다. 입금이 들어오면 재무관리 → 입금에서 처리하면 자동으로 사라집니다.')
+      '※ 미수금은 종결관리로 넘어간 사건·컨설팅·기금·기타 중 입금확정 안 된 항목과 발행된 세금계산서 중 미입금 항목을 자동 집계합니다. 입금이 들어오면 재무관리 → 입금에서 처리하면 자동으로 사라집니다.'),
+
+    /* ── 🏁 정리된 미수 (2026-08-16 대표 지시) ────────────────────────────
+       못 받기로 하고 닫은 돈. «조용히 사라지면 안 되는 돈» 이라 목록에 남겨 두고,
+       잘못 닫았으면 되돌릴 수 있게 한다. 하나도 없으면 아무것도 안 그린다 —
+       빈 칸을 띄우면 「무엇을 해야 하나」 싶은 자리가 하나 늘 뿐이다. */
+    closedUnpaid.length > 0 && h('div', { style:{ marginTop:'18px' } },
+      h('div', { style:{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'7px' } },
+        h('span', { style:{ fontSize:'13px', fontWeight:800, color:'#991b1b' } }, '🏁 정리된 미수'),
+        h('span', { style:{ fontSize:'11px', color:'#64748b' } },
+          closedUnpaid.length + '건 · 못 받기로 한 돈 ' + closedLostSum.toLocaleString() + '원')),
+      h('div', { style:{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:'8px', overflowX:'auto' } },
+        h('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:'11.5px', minWidth:'760px' } },
+          h('thead', null, h('tr', null,
+            ['정리일','업체','항목','약정','받은 돈','못 받음','까닭','처리'].map(function(t, i){
+              return h('th', { key:i, style:{ background:'#f8fafc', color:'#475569', fontWeight:700,
+                fontSize:'10px', padding:'6px 8px', borderBottom:'1px solid #e2e8f0',
+                textAlign:(i>=3 && i<=5) ? 'right' : 'left', whiteSpace:'nowrap' } }, t);
+            }))),
+          h('tbody', null, closedUnpaid.map(function(c, i){
+            var tdS = { padding:'7px 8px', borderBottom:'1px solid #e2e8f0', verticalAlign:'top' };
+            var numS = Object.assign({}, tdS, { textAlign:'right', fontFamily:'monospace', fontWeight:700, whiteSpace:'nowrap' });
+            return h('tr', { key:i },
+              h('td', { style:Object.assign({}, tdS, {fontFamily:'monospace', color:'#64748b'}) }, String(c.at||'').slice(0,10) || '-'),
+              h('td', { style:Object.assign({}, tdS, {fontWeight:700}) }, c.icon + ' ' + (c.companyName || '-'),
+                h('div', { style:{fontSize:'9.5px', color:'#94a3b8', fontWeight:400} }, c.sourceNo || '')),
+              h('td', { style:tdS }, c.splitLabel),
+              h('td', { style:Object.assign({}, numS, {color:'#94a3b8'}) }, c.contractAmt.toLocaleString()),
+              h('td', { style:Object.assign({}, numS, {color:'#166534'}) }, c.paidAmt.toLocaleString()),
+              h('td', { style:Object.assign({}, numS, {color:'#991b1b'}) }, c.lostAmt.toLocaleString()),
+              h('td', { style:Object.assign({}, tdS, {fontSize:'10.5px', color:'#475569', maxWidth:'260px'}) },
+                c.reason,
+                h('div', { style:{fontSize:'9.5px', color:'#94a3b8', marginTop:'1px'} },
+                  (c.byName || '-') + ' · ' + String(c.at||'').slice(5,16).replace('T',' '))),
+              h('td', { style:tdS },
+                h('button', { onClick:function(){ reopenClosed(c); },
+                  title:'못 받기로 했던 돈을 다시 미수금·미입금 대기로 되돌립니다',
+                  style:{ background:'#f8fafc', color:'#64748b', border:'1px solid #e2e8f0',
+                    borderRadius:'4px', padding:'4px 10px', fontSize:'10.5px', fontWeight:700,
+                    cursor:'pointer', whiteSpace:'nowrap', fontFamily:'inherit' } }, '↺ 되돌리기')));
+          })))),
+      h('div', { style:{ marginTop:'6px', fontSize:'10.5px', color:'#94a3b8' } },
+        '※ 매출 숫자는 바뀌지 않습니다 — 실제 들어온 돈만 매출로 잡으므로, 여기 적힌 것은 「약정과 실제가 왜 다른지」의 기록입니다.'))
   );
 }
 
@@ -57052,7 +57363,9 @@ function ProjectManagementShared(props){
       var totalPaidNow = alreadyPaid + payAmt;
       var isFullyPaid = totalPaidNow >= totalAmt;
 
-      var splitEntry = { id:'sp-'+Date.now().toString(36), date:today, amount:payAmt, kind:kindLabel };
+      // 적요를 함께 적는다 — 이 길은 통장을 안 거치므로 대개 빈 값이다 (지어내지 않는다)
+      var splitEntry = { id:'sp-'+Date.now().toString(36), date:today, amount:payAmt, kind:kindLabel,
+                         memo:(arguments[5] || '') };
       var srcPatch = { splitPayments: (it.splitPayments||[]).concat([splitEntry]) };
       if(isFullyPaid){ srcPatch[paidKey] = true; srcPatch[dateKey] = today; }
       itemPatch(itemId, srcPatch);
@@ -74355,7 +74668,8 @@ function ERPMain(props){
   } else if(current === 'fin/ledger'){
     mainContent = h(FinanceLedger, null);
   } else if(current === 'fin/income'){
-    mainContent = h(FinanceIncome, null);
+    // 「마무리 → 약정액 고치기」 가 사건·계약 화면으로 보내야 하므로 길을 내려 준다
+    mainContent = h(FinanceIncome, { onNavigate:selectMenu });
   } else if(current === 'fin/expense'){
     mainContent = h(FinanceExpense, null);
   } else if(current === 'fin/txn'){
