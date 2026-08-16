@@ -644,16 +644,27 @@ test('countUsage 는 이미 세는 중이면 다시 시작하지 않는다', () 
 /* ── 칸 아래 띠(이유·이름·설명) 겹침 (대표 보고 2026-08-15:
    "경고표시는 이름 뒤에 묻혀서 잘 안 보인다") ── */
 
-test('★ 「확인 필요」 이유 띠와 이름 띠가 겹치지 않는다', () => {
-  // warn(.wn.why) → who → cap 순으로 DOM 에 쌓인다(4933번째 줄 근처) — 셋 다
-  // 칸 아래를 가로로 채우는 절대위치 띠라, 위로 쌓지 않으면 뒤엣것이 덮는다.
-  assert.match(app, /#grid \.cell \.wn\.why ~ \.who\{bottom:\s*\d+px\}/,
-    '이유 띠(.wn.why) 뒤에 이름 띠(.who)가 오면 이유 글자가 이름에 덮여 안 보입니다.');
+/* ⚠ 2026-08-16 다시 겨눔 — 이름 띠(.who)를 칸에서 뺐다(대표 지시).
+   예전에는 「.wn.why ~ .who」·「.who ~ .cap」이라는 **띠 조합 하나하나**를 못 박고
+   있었다. 띠 하나가 사라지자 검사 둘이 같이 깨졌는데, 정작 지켜야 할 것은
+   그 조합이 아니라 **아래를 가로로 채우는 띠끼리 겹치지 않는다**는 것이다.
+   그래서 「지금 있는 띠들끼리 자리가 갈려 있는가」로 바꿔 겨눈다. */
+test('★ 칸 아래 띠끼리 겹치지 않는다', () => {
+  // 지금 남은 가로 띠는 .wn.why(이유) · .cap(업체·설명) · .ttl(서류 제목) 셋이다.
+  // 뒤에 그린 것이 앞엣것을 덮으므로, 겹칠 수 있는 짝마다 위로 올려 쌓아야 한다.
+  assert.match(app, /#grid \.cell \.wn\.why ~ \.cap\{bottom:\s*\d+px\}/,
+    '이유 띠(.wn.why) 뒤에 설명 띠(.cap)가 오면 이유가 덮여 안 보입니다.');
+  assert.match(app, /\.cap ~ \.ttl\{bottom:\s*\d+px\}/,
+    '설명 띠(.cap) 뒤에 제목 띠(.ttl)가 오면 설명이 덮여 안 보입니다.');
 });
 
-test('설명 띠도 이름 띠와 겹치지 않는다', () => {
-  assert.match(app, /#grid \.cell \.who ~ \.cap\{bottom:\s*\d+px\}/,
-    '이름 띠(.who) 뒤에 설명 띠(.cap)가 오면 설명이 이름에 덮여 안 보입니다.');
+test('띠가 세 겹으로 쌓이지 않는다 — 폰에서 칸의 절반이 덮였다', () => {
+  /* 대표 지시 2026-08-16: "서식·회사·담당자가 동시에 칸을 많이 차지한다".
+     폰 칸이 104px 인데 20px 짜리 띠 셋이면 60px — **절반이 넘게** 덮였다.
+     띠를 다시 늘리려는 변경을 여기서 막는다. */
+  const three = app.match(/#grid \.cell [^{]*~[^{]*~[^{]*\{bottom:\s*(\d+)px\}/g) || [];
+  const deep = three.filter(function (s) { return Number((s.match(/(\d+)px/) || [])[1]) >= 60; });
+  assert.equal(deep.length, 0, '띠가 60px 이상 쌓이면 폰에서 그림이 절반도 안 남습니다: ' + deep.join(' '));
 });
 
 /* ── 본문 다시 올리기 (대표 지시 2026-08-15: "원본이 없습니다" 복구) ── */
@@ -1691,11 +1702,20 @@ test('전체 근로자를 고르면 사람마다 모아 합치는 함수를 쓴�
     '공유받은 사진에도 자동 판독을 돌리면 안 됩니다 — 남의 사진입니다');
 });
 
-test('전체 근로자 화면에서는 사진마다 누구 것인지 보인다', () => {
-  assert.match(app, /class="who"/, '누구 것인지 알려주는 표시가 없습니다');
-  const fn = app.match(/function renderGrid\([\s\S]*?\n\}/)[0];
-  assert.match(fn, /__ownerName/);
-  assert.match(fn, /gridOwner === ALL_OWNERS/);
+test('누가 올렸는지 사진을 열면 나온다', () => {
+  /* ⚠ 2026-08-16 다시 겨눔 — 칸의 이름 띠(.who)를 뺐다(대표 지시: 띠 셋이
+     폰에서 칸의 절반을 덮었다). 그래서 「칸에 보인다」는 이제 틀린 못이다.
+     지킬 것은 자리가 아니라 **누가 올렸는지 알 수 있는가**다 —
+     이름은 `__ownerName` 한 곳에만 있어서, 아무 데도 안 그리면 알 길이 사라진다. */
+  /* ⚠ 글자를 찾지 않고 **함수를 돌린다** — 「__ownerName 이 있나」로는 못 잡는다.
+     조건만 죽여도(`m.__ownerName ?` → `false ?`) 뒤쪽 문자열에 낱말이 남아 통과한다.
+     실제로 이 뮤테이션이 한 번 살아남았다. */
+  const i = app.indexOf('function whenBox(');
+  const body = app.slice(i, app.indexOf('\n}', i) + 2);
+  const whenBox = new Function('whenText', 'dayKey', 'esc', body + '\nreturn whenBox;')(
+    function () { return '때'; }, String, String);
+  assert.match(whenBox({ meta: { __ownerName: '김보람', upAt: 1786000000000 } }), /김보람/,
+    '사진을 열어도 올린 사람이 안 나오면 누구 것인지 알 길이 없습니다.');
 });
 
 test('전체 근로자 화면에서 사진을 받을 때 그 사람 자리로 정확히 찾아간다', () => {
