@@ -45,7 +45,8 @@ global.funds = { X: { fund_type: '공동', years: {} } };
 /* 간접 eval — 이 파일은 strict 모드라 그냥 eval 하면 함수가 지역 스코프에 갇힌다 */
 (0, eval)(['ACCT_CHART', 'PURPOSE_ACCTS', 'OPEN_ACCT', 'RESERVE_ACCTS', 'F15_ROWS'].map(grabVar).join('\n') + '\n'
   + ['_openingOf', '_splitsOf', '_splitSum', '_txnDone', 'expandSplits', 'journalOf', 'acctMoves',
-     'computeFin', '_contribOf', '_reserveRate', '_reserveAcct', 'reserveAdjust',
+     // 준비금 1·2 배치는 기금마다 다르다 — 그것을 읽는 도우미도 함께 들여온다
+     'computeFin', '_contribOf', '_reserveRate', '_rsvSwapOf', '_rsvRoles', '_reserveAcct', 'reserveAdjust',
      '_reserveEntry', '_reserveEntries', 'finNegatives', '_retLabel', '_retVal',
      '_k1000', '_openAssets', 'guessBfKind', 'buildF15'].map(grabFn).join('\n'));
 

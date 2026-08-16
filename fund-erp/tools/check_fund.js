@@ -286,7 +286,25 @@ ok('못 옮긴 설정액을 남긴다', src.includes('r.setupWant=want; r.setupC
 ok('확정할 때 잘라 낸 설정액을 알린다', src.includes('if(rc.setupCut>0)')
   && src.includes('설정하지 못했습니다'));
 // 자동조정 꺼짐 갈래도 같은 칸을 지녀야 화면이 갈라지지 않는다
-ok('자동조정 꺼짐 갈래도 setupWant·setupCut 을 지닌다', src.includes('setupWant:0, setupCut:0};'));
+ok('자동조정 꺼짐 갈래도 setupWant·setupCut 을 지닌다', src.includes('setupWant:0, setupCut:0,'));
+/* ══ 준비금 1·2 배치는 기금마다 다르다 ══
+   어느 번호가 «이자»(법인세법 제29조)이고 어느 번호가 «이월»(근로복지기본법 제62조제2항)인지는
+   그 기금 결산서를 만든 쪽이 정한다. 환입/전입은 «잔액이 있는 쪽»을 골라 따라갔지만
+   **이자 왕복은 언제나 준비금1, 설정은 언제나 준비금2** 로 못 박혀 있어,
+   반대로 쓰는 기금에서는 이월분과 설정분이 두 계정으로 갈려 재무상태표 두 줄이 다 어긋났다. */
+ok('준비금 배치를 기금별로 정한다', src.includes('function _rsvSwapOf(fid){ return !!((funds[fid]||{}).reserve_swap); }')
+  && src.includes('function _rsvRoles(fid){')
+  && src.includes('return { interest:RESERVE_ACCTS[sw?1:0], carry:RESERVE_ACCTS[sw?0:1] };'));
+ok('자동 분개가 배치를 따른다',
+  src.includes('var out=[], R1=rc.acctInterest||RESERVE_ACCTS[0], R2=rc.acctCarry||RESERVE_ACCTS[1];'));
+ok('조정 결과가 배치를 담는다', src.includes('acctInterest:_roles.interest, acctCarry:_roles.carry, swap:_rsvSwapOf(fid),'));
+// 적요에 번호를 박아 두면 배치를 바꾼 기금에서 «준비금2 설정»이라 적히고 준비금1로 간다
+ok('설정 적요가 실제 계정 이름을 쓴다', src.includes("memo:acct+' 설정(출연금 사용한도 내)'")
+  && !src.includes("memo:'고유목적사업준비금2 설정(출연금 사용한도 내)'"));
+ok('배치를 화면에서 고를 수 있다', src.includes('id="op-rsvswap"')
+  && src.includes("up['funds/'+_fid+'/reserve_swap']=(rwOn?true:null);"));
+// 배치는 «기금» 단위다 — 세무대리인 방식이 해마다 바뀌지 않는다
+ok('배치는 연도가 아니라 기금 단위로 저장', !src.includes("years/'+_yr+'/reserve_swap"));
 /* ══ 분할 조각의 금액 ══
    expandSplits 는 조각 2번째부터 nocash:1 을 붙인다 — 뜻은 «통장 금액은 첫 조각에 있다»인데,
    출연금·이자를 세는 쪽이 그것을 «현금이 안 오간 현물출연»으로 읽어 통째로 버렸다.
@@ -394,8 +412,10 @@ ok('전기이월 준비금1·2 분리', src.includes("reserve:'고유목적사�
   && src.includes('liab+=(num(opening.reserve)||0)+(num(opening.reserve2)||0);')
   && src.includes('bal[RESERVE_ACCTS[1]]+=Math.round(num(op.reserve2)||0);'));
 // 두 준비금은 이름만으로는 무엇이 담기는지 알기 어렵다 — 칸 옆에 근거를 곁들인다
-ok('준비금 칸에 근거를 곁들인다',
-  src.includes("var OPEN_NOTE={reserve:'법인세법 §29 · 이자', reserve2:'근로복지기본법 §62② · 이월'};"));
+// 곁말도 배치를 따라야 한다 — 반대로 쓰는 기금에 「1 = 이자」라고 적히면 그대로 잘못 넣는다
+ok('준비금 칸의 근거가 배치를 따른다', src.includes('function _openNote(fid){')
+  && src.includes("return _rsvSwapOf(fid)?{reserve:B, reserve2:A}:{reserve:A, reserve2:B};")
+  && src.includes('var _n=_openNote(S.fundId)[k];'));
 ok('전기이월에 매도가능증권 칸', src.includes("secu:'매도가능증권'"));
 ok('자산총계에 증권 합산', src.includes('cash+savings+loan+secu'));
 // 대부금은 기본재산을 헐어 나간 것이 아니라 그 자체가 자산이다 — 예입에서 빼지 않고 따로 더한다
