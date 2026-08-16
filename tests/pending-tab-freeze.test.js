@@ -37,8 +37,11 @@ t('감싸는 칸 자신에만 sticky, 안쪽엔 더 없다 (자리다툼 방지)
   (WRAP.match(/position:'sticky'/g) || []).length, 1);
 
 console.log('\n■ 표는 제 몸 안에서만 구른다');
-t('표를 감싼 칸이 overflow:auto + maxHeight 를 가진다',
-  /overflow:'auto',maxHeight:'calc\(100vh - 340px\)'/.test(F), true);
+/* ⚠ 높이 «숫자» 를 글자 그대로 박아 두지 않는다 — 2026-08-16 에 창 바닥까지 채우도록
+   재서 정하는 방식으로 바뀌면서 이 검사가 깨졌다. 여기서 지킬 것은 「제 몸 안에서 구른다」,
+   즉 overflow:auto 와 «높이 한도가 있다» 는 것뿐이다. 얼마인지는 이 검사가 볼 일이 아니다. */
+t('표를 감싼 칸이 overflow:auto + 높이 한도를 가진다',
+  /overflow:'auto', background:'#fff',\n\s*maxHeight:/.test(F), true);
 t('overflow:hidden 으로 되돌아가지 않았다 (그러면 sticky 가 아무 일도 못 한다)',
   /overflow:'hidden',background:'#fff'\}\} \},\n\s*h\('table'/.test(F), false);
 t('표 머리글이 그 상자 기준 0 에 붙는다',

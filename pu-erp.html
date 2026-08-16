@@ -40720,6 +40720,37 @@ function IncomeUnmatchedTab(props){
 function IncomePendingTab(){
   var users = getActiveUsers();
   function userName(sid){ var u=users.find(function(x){return x.sid===sid;}); return u?u.name:sid||'-'; }
+
+  /* ── 표가 창 바닥까지 내려오게 (2026-08-16 대표 지시) ─────────────────────
+     전에는 높이를 calc(100vh - 340px) 로 «못 박아» 두었다. 그런데 표 위의
+     안내띠·갈래단추·검색줄 높이가 그때그때 다르다(갈래 개수·창 너비에 따라 줄이 접힌다).
+     그래서 아래가 한참 비거나 반대로 표가 잘렸다 — 대표 화면에서는 «비는» 쪽이었다.
+     ★ 숫자로 못 박지 말고 «재서» 정한다: 상자의 화면상 위치를 재어 창 바닥까지 채운다.
+       거래내역(_ldFit)에서 같은 문제를 이미 이렇게 고쳤다 — 같은 방식을 쓴다. */
+  var _pbRef = useRef(null);
+  var _pgRef = useRef(null);                    // 표 아래 쪽 번호 줄 — 그 높이만큼 자리를 남긴다
+  var _pbHS = useState(0); var _pbH = _pbHS[0]; var setPbH = _pbHS[1];
+  function _pbFit(){
+    var el = _pbRef.current; if(!el) return;
+    var top = el.getBoundingClientRect().top;
+    /* ★ 표 «아래» 에 쪽 번호 줄이 있다 — 그만큼 자리를 남기지 않으면 표가 그것을
+       화면 밖으로 밀어내 「몇 쪽인지·다음 쪽」을 못 누른다. 실제 높이를 재서 뺀다
+       (글자 크기·창 너비에 따라 한 줄이 두 줄이 되기도 한다). */
+    var below = 0;
+    var pg = _pgRef.current;
+    if(pg) below = pg.getBoundingClientRect().height + 10;   // 표와 쪽번호 사이 여백
+    var want = Math.max(240, Math.round(window.innerHeight - top - below - 16));   // 바닥에 16px 만 남긴다
+    // 8px 안쪽 차이는 그대로 둔다 — 안 그러면 「고침 → 다시 그림 → 고침」 이 끝나지 않는다
+    setPbH(function(prev){ return Math.abs(prev - want) < 8 ? prev : want; });
+  }
+  useEffect(function(){ _pbFit(); });          // 그릴 때마다 다시 잰다 (윗줄 높이가 변한다)
+  useEffect(function(){
+    window.addEventListener('resize', _pbFit);
+    return function(){ window.removeEventListener('resize', _pbFit); };
+  }, []);
+  // maxHeight 로 둔다 — 목록이 짧으면 빈 상자가 크게 남지 않게
+  var _pbBox = { border:'1px solid #e2e8f0', borderRadius:'10px', overflow:'auto', background:'#fff',
+    maxHeight:(_pbH ? _pbH+'px' : 'calc(100vh - 340px)') };
   var tm = useState(false); var trashModalOpen = tm[0]; var setTrashModalOpen = tm[1];
   var trashItems = dbGet('trash_bin', []);
 
@@ -41260,7 +41291,7 @@ function IncomePendingTab(){
           h('div', { style:{fontSize:'48px',marginBottom:'10px'} }, '✓'),
           h('div', { style:{fontWeight:700,fontSize:'14px',color:'#166534',marginBottom:'4px'} }, '미입금 대기 없음'),
           h('div', { style:{fontSize:'11.5px',color:'#166534'} }, '모든 사무관리 항목이 입금확정 처리되었습니다.'))
-      : h('div', { style:{border:'1px solid #e2e8f0',borderRadius:'10px',overflow:'auto',maxHeight:'calc(100vh - 340px)',background:'#fff'} },
+      : h('div', { ref:_pbRef, style:_pbBox },
           h('table', { style:{width:'100%',borderCollapse:'collapse',fontSize:'11.5px'} },
             h('thead', { style:{position:'sticky',top:0,zIndex:2} }, h('tr', null,
               h('th', {style:Object.assign({},thS,{width:'40px',textAlign:'center'})}, '#'),
@@ -41382,7 +41413,9 @@ function IncomePendingTab(){
           )
         ),
 
-    h(PaginationBar, { page:pendPg.page, total:pendPg.total, setPage:pendPg.setPage, count:pendPg.count }),
+    // 쪽 번호 줄을 감싼다 — 위 표가 이 줄만큼 자리를 남기려면 높이를 잴 수 있어야 한다
+    h('div', { ref:_pgRef },
+      h(PaginationBar, { page:pendPg.page, total:pendPg.total, setPage:pendPg.setPage, count:pendPg.count })),
 
     // 입금확정 모달
     confirmModal && (function(){
