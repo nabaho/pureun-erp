@@ -37,19 +37,23 @@ function loadApp(appState, opts) {
   vm.createContext(sandbox);
   new vm.Script(store, { filename: 'store.js' }).runInContext(sandbox);
   new vm.Script([
-    'const S = window.PuPaydataStore; S.init({uid:"U1", name:"권형하", db: db});',
+    'const S = window.PuPaydataStore; S.init({uid:"U1", name:"권형하", db: db'
+      + (opts.isAdmin ? ', isAdmin: true' : '') + '});',
     'const $ = id => document.getElementById(id);',
     'const App = ' + JSON.stringify(Object.assign({
       screen: 'sites', companyId: '', companyName: '', month: '2026-08', kind: 'attend', query: '',
       companies: [], pending: {}, arrivals: {}, trash: {}, me: { uid: 'U1', email: 'p001@pureun.kr' }, myName: '권형하',
-      pick: {}, owners: {}, shares: {}, myOrder: [],
-      sideQuery: '', sideOpen: {}, sideReason: null, shareCtx: null, sharedBanner: null,
+      pick: {}, owners: {}, shares: {}, myOrder: [], dir: null,
+      sideView: 'mine', colFilter: 'all', colQuery: '', sideFold: false,
+      sideReason: null, shareCtx: null, sharedBanner: null,
       viewingUid: '', viewingName: '', viewingDeputy: false
     }, appState)) + ';',
     'App.render = function(){};',
     'App.go = function(screen, o){ Object.assign(App, o||{}); App.screen = screen; };',
-    cut('esc'), cut('jsq'), cut('thisMonth'), cut('companyDocCount'), cut('personDashboardModel'),
-    cut('peopleBarHtml'), cut('toggleSidePerson'),
+    cut('esc'), cut('jsq'), cut('thisMonth'), cut('companyDocCount'), cut('coArrivedAt'),
+    cut('sideViewModel'), cut('sideListModel'), cut('sideCtx'),
+    cut('viewBarHtml'), cut('colListHtml'),
+    cut('pickSideView'), cut('pickColFilter'), cut('toggleSideFold'), cut('openColCompany'),
     cut('resetOwnerCaches'), cut('enterSeatAt'),
     cut('sideOpenCompany'), cut('closeSideReason'), cut('submitSideReason'), cut('sideReasonHtml'),
     cut('openShared'), cut('sideDragStart'), cut('sideDragDrop'),
@@ -58,7 +62,9 @@ function loadApp(appState, opts) {
     cut('toggleShareTag'), cut('confirmShare'), cut('shareModalHtml'),
     cut('canWrite'), cut('bannerHtml'),
     'window.App = App;',
-    'window.peopleBarHtml = peopleBarHtml; window.toggleSidePerson = toggleSidePerson;',
+    'window.viewBarHtml = viewBarHtml; window.colListHtml = colListHtml;',
+    'window.pickSideView = pickSideView; window.pickColFilter = pickColFilter;',
+    'window.toggleSideFold = toggleSideFold; window.openColCompany = openColCompany;',
     'window.sideOpenCompany = sideOpenCompany; window.closeSideReason = closeSideReason;',
     'window.submitSideReason = submitSideReason; window.sideReasonHtml = sideReasonHtml;',
     'window.openShared = openShared; window.sideDragStart = sideDragStart; window.sideDragDrop = sideDragDrop;',
@@ -77,69 +83,97 @@ const COMPANIES = [
 ];
 const OWNERS = { U1: { name: '권형하', email: 'p001@pureun.kr' }, U2: { name: '민미애', email: 'p002@pureun.kr' } };
 
-/* ══════ 렌더링 ══════ */
+/* ══════ 그리기 — 2중 대시보드(대표 결정 2026-08-17, 목업 4안+2안) ══════ */
 
 test('★ 내 업체에만 드래그 손잡이·공유 단추가 붙는다', () => {
-  const { W } = loadApp({ companies: COMPANIES, owners: OWNERS, sideOpen: { U1: true, U2: true } });
-  const h = W.peopleBarHtml();
+  const { W } = loadApp({ companies: COMPANIES, owners: OWNERS });
+  const h = W.colListHtml();          // 기본 보기는 「내 담당」
   assert.match(h, /draggable="true"/, '내 업체는 끌 수 있어야 합니다');
-  assert.match(h, /↗ 공유/);
-  // 남의 업체(이비) 줄에는 손잡이·공유 단추가 없어야 한다
-  const idx = h.indexOf('(주)이비');
-  const around = h.slice(Math.max(0, idx - 400), idx + 50);
-  assert.equal(/draggable="true"/.test(around), false, '남의 업체까지 끌 수 있으면 안 됩니다');
+  assert.match(h, /openShare/);
+  assert.equal(h.indexOf('(주)이비'), -1, '「내 담당」에 남의 업체가 섞이면 안 됩니다');
 });
 
-test('접힌 사람은 pkids 가 열려 있지 않다', () => {
-  const { W } = loadApp({ companies: COMPANIES, owners: OWNERS, sideOpen: {} });
-  const h = W.peopleBarHtml();
-  assert.equal(/class="pkids open"/.test(h.slice(h.indexOf('다른 담당자'))), false);
+test('★ 남의 업체 목록에서는 끌거나 공유할 수 없다', () => {
+  const { W } = loadApp({ companies: COMPANIES, owners: OWNERS, sideView: 'all' }, { isAdmin: true });
+  const h = W.colListHtml();
+  assert.match(h, /\(주\)이비/, '관리자는 전체 목록을 봅니다');
+  assert.equal(/draggable="true"/.test(h), false, '남의 업체까지 끌 수 있으면 안 됩니다');
 });
 
-test('이름으로 찾으면 다른 담당자가 좁혀진다', () => {
-  const { W } = loadApp({ companies: COMPANIES, owners: OWNERS, sideQuery: '미애' });
-  const h = W.peopleBarHtml();
-  assert.match(h, /민미애/);
+test('★ 담당자에게는 전체 보기와 담당자 명단이 안 뜬다', () => {
+  // 담당자는 자기 것만 본다(대표 지시 2026-08-17)
+  const { W } = loadApp({ companies: COMPANIES, owners: OWNERS });
+  const h = W.viewBarHtml();
+  assert.match(h, /내 담당/);
+  assert.equal(h.indexOf('전체 사업장'), -1);
+  assert.equal(h.indexOf('담당자'), -1);
 });
 
-test('★ 다른 사람이 아직 없으면 그렇다고 말한다 — 제목만 덩그러니 두지 않는다', () => {
-  // 이름 명단은 한 번이라도 로그인한 사람만 담긴다 — 처음엔 나 혼자인 게 정상이다.
-  const { W } = loadApp({ companies: COMPANIES, owners: { U1: OWNERS.U1 } });
-  const h = W.peopleBarHtml();
-  assert.match(h, /다른 담당자/);
-  assert.match(h, /아직 급여데이터함에 들어온 다른 사람이 없습니다/);
+test('★ 관리자에게는 담당자마다 진행률 막대가 붙는다', () => {
+  const { W } = loadApp({ companies: COMPANIES, owners: OWNERS }, { isAdmin: true });
+  const h = W.viewBarHtml();
+  assert.match(h, /전체 사업장/);
+  assert.match(h, /class="vbar"/, '진행률 막대가 없으면 누가 밀렸는지 모릅니다');
+  assert.match(h, /아직 \d+곳/);
 });
 
-test('찾는 이름이 없을 때는 「없다」가 아니라 「못 찾았다」로 말한다', () => {
-  const { W } = loadApp({ companies: COMPANIES, owners: OWNERS, sideQuery: '없는이름' });
-  const h = W.peopleBarHtml();
-  assert.match(h, /찾는 이름이 없습니다/);
+test('★ 급여데이터함에 안 들어온 담당자는 그렇다고 알린다', () => {
+  // 이름·업체는 보이되 그 사람 자리는 못 연다 — 미리 말해 줘야 헛걸음을 안 한다
+  const { W } = loadApp({ companies: COMPANIES, owners: { U1: OWNERS.U1 } }, { isAdmin: true });
+  const h = W.viewBarHtml();
+  assert.match(h, /아직 안 들어옴/);
 });
 
-test('★ 공유받음 칸이 개수와 함께 보인다', () => {
+test('★ 공유받음 보기가 개수와 함께 보인다', () => {
   const shares = { s1: { companyId: 'co_9', companyName: '참살이', byName: '민미애', tags: ['확인 부탁드립니다'], at: 1 } };
   const { W } = loadApp({ companies: COMPANIES, owners: OWNERS, shares });
-  const h = W.peopleBarHtml();
-  assert.match(h, /공유받음<span class="n">1<\/span>/);
+  assert.match(W.viewBarHtml(), /공유받음<\/b><span class="n">1<\/span>/);
+  const h = loadApp({ companies: COMPANIES, owners: OWNERS, shares, sideView: 'shared' }).W.colListHtml();
   assert.match(h, /참살이/);
   assert.match(h, /확인 부탁드립니다/);
 });
 
-/* ══════ 펼치기·접기 ══════ */
-
-test('★ 사람을 누르면 펼치고 다시 누르면 접는다', () => {
-  const { W } = loadApp({});
-  assert.equal(W.App.sideOpen.U2, undefined);
-  W.toggleSidePerson('U2', false);
-  assert.equal(W.App.sideOpen.U2, true);
-  W.toggleSidePerson('U2', false);
-  assert.equal(W.App.sideOpen.U2, false);
+test('찾는 사업장이 없을 때는 「없다」가 아니라 「못 찾았다」로 말한다', () => {
+  const { W } = loadApp({ companies: COMPANIES, owners: OWNERS, colQuery: '없는이름' });
+  assert.match(W.colListHtml(), /찾는 사업장이 없습니다/);
 });
 
-test('나는 처음부터 펼쳐져 있다가 누르면 접힌다', () => {
+/* ══════ 보기 고르기·접기 ══════ */
+
+test('★ 보기를 누르면 바뀐다', () => {
   const { W } = loadApp({});
-  W.toggleSidePerson('U1', true);
-  assert.equal(W.App.sideOpen.U1, false);
+  W.pickSideView('late');
+  assert.equal(W.App.sideView, 'late');
+});
+
+test('★ 상태 칩을 누르면 걸러진다', () => {
+  const { W } = loadApp({});
+  W.pickColFilter('no');
+  assert.equal(W.App.colFilter, 'no');
+});
+
+test('★ 첫 칸을 접었다 폈다 할 수 있다', () => {
+  const { W } = loadApp({});
+  W.toggleSideFold();
+  assert.equal(W.App.sideFold, true);
+  W.toggleSideFold();
+  assert.equal(W.App.sideFold, false);
+});
+
+test('★ 아직 안 들어온 담당자의 업체를 누르면 헛걸음 대신 안내가 뜬다', () => {
+  const { W, calls } = loadApp({});
+  W.openColCompany('co_3', '(주)이비', false, '', '민미애');
+  assert.equal(calls.alerts.length, 1);
+  assert.match(calls.alerts[0], /들어온 적이 없어/);
+  assert.equal(W.App.screen, 'sites', '빈 서랍으로 들어가면 안 됩니다');
+});
+
+test('담당자가 아예 없는 업체는 내 자리에서 연다', () => {
+  const { W, calls } = loadApp({});
+  W.openColCompany('co_5', '신흥기업', false, '', '');
+  assert.equal(calls.alerts.length, 0);
+  assert.equal(W.App.screen, 'drawer');
+  assert.equal(W.App.companyId, 'co_5');
 });
 
 /* ══════ 업체 열기 — 내 것/남의 것 ══════ */

@@ -878,6 +878,89 @@
     return false;
   }
 
+  /* ══════ 담당자 명단을 업체관리에서 뽑는다 (대표 지시 2026-08-17) ══════
+     "각 담당자를 대시보드에 넣고 사업장도 우선 배정해달라."
+
+     예전에는 paydata/owners — **한 번이라도 급여데이터함에 로그인한 사람** — 에서
+     뽑았다. 그래서 담당자 대부분이 아예 안 보이고 「아직 들어온 다른 사람이
+     없습니다」만 남았다. 배정이 없는 게 아니라 명단을 잘못된 곳에서 뽑은 것이다.
+
+     이제 급여 업체의 주담당·부담당(사번)을 모아 세운다 — **업체관리에 적힌 담당이
+     곧 배정이다.** 이알피에서 담당을 바꾸면 여기도 따라 바뀌고, 따로 배정하는
+     화면을 만들 필요가 없다.
+
+     사번 → 이메일(sidToEmail) → 공개 명부(data/user_dir)에서 이름,
+     paydata/owners 에서 uid. uid 를 못 찾으면 away(아직 안 들어옴)다 — 이름과
+     업체는 보이되 그 사람 자리는 못 연다(아직 그 자리에 자료가 없다).
+
+     ⚠ companies 는 **이미 급여만 걸러 온 명단**이어야 한다(payrollCompanies).
+     여기서 다시 거르지 않는다 — 거르는 판단은 isPayrollCompany 한 곳에만 둔다. */
+  function rosterNameMap(dirRows) {
+    var map = {}, arr = dirRows;
+    if (arr && typeof arr === 'object' && arr.v !== undefined) arr = arr.v;
+    if (arr && !Array.isArray(arr) && typeof arr === 'object') {
+      arr = Object.keys(arr).map(function (k) { return arr[k]; });
+    }
+    if (!Array.isArray(arr)) return map;
+    for (var i = 0; i < arr.length; i++) {
+      var x = arr[i];
+      if (x && x.sid && x.name) map[String(x.sid)] = String(x.name);
+    }
+    return map;
+  }
+
+  function managerRoster(companies, dirRows, owners) {
+    var names = rosterNameMap(dirRows);
+    var byEmail = {};
+    var ow = owners || {};
+    Object.keys(ow).forEach(function (uid) {
+      var o = ow[uid] || {};
+      if (o.email) byEmail[String(o.email).toLowerCase()] = { uid: uid, name: String(o.name || '') };
+    });
+
+    var bySid = {}, order = [], unassigned = [];
+    (companies || []).forEach(function (co) {
+      var sids = [], seen = {};
+      var push = function (s) {
+        s = String(s || '');
+        if (!s || seen[s]) return;      // 한 업체에 주·부담당으로 두 번 적혀도 한 번만
+        seen[s] = 1; sids.push(s);
+      };
+      if (co) push(co.managerMain);
+      ((co && co.managerSubs) || []).forEach(push);
+      if (!sids.length) { unassigned.push(co); return; }
+      sids.forEach(function (sid) {
+        if (!bySid[sid]) {
+          var email = sidToEmail(sid);
+          var own = byEmail[email] || null;
+          bySid[sid] = {
+            sid: sid, email: email,
+            /* 이름은 공개 명부가 먼저, 없으면 급여데이터함에 적힌 이름, 그래도
+               없으면 사번. 명부 한 번 못 읽었다고 담당자가 통째로 사라지면
+               그 사람 업체까지 같이 사라진다. */
+            name: names[sid] || (own && own.name) || sid,
+            uid: own ? own.uid : '',
+            away: !own,
+            companies: []
+          };
+          order.push(sid);
+        }
+        bySid[sid].companies.push(co);
+      });
+    });
+
+    var people = order.map(function (s) { return bySid[s]; });
+    people.sort(function (a, b) { return String(a.name).localeCompare(String(b.name), 'ko'); });
+    return { people: people, unassigned: unassigned };
+  }
+
+  /* 공개 명부 — 포털·로그인이 쓰는 그 길(data/user_dir)을 그대로 쓴다.
+     못 읽어도 빈 것으로 돌려준다(managerRoster 가 사번으로라도 세운다). */
+  function listUserDir() {
+    if (!deps.db) return Promise.resolve(null);
+    return readRoster('data/user_dir').catch(function () { return null; });
+  }
+
   /* 내 업체 순서(사람별 대시보드, 대표 지시 2026-08-14: "마우스로 위아래 변경").
      골라 둔 순서에 없는 업체(새로 맡거나 아직 안 옮긴 것)는 원래 자리 그대로
      뒤에 붙는다 — 순서를 안 저장했다고 업체가 안 보이면 안 된다. */
@@ -1202,6 +1285,8 @@
     payrollCompanies: payrollCompanies,
     matchCompanyName: matchCompanyName,
     isMyCompany: isMyCompany,
+    managerRoster: managerRoster,
+    listUserDir: listUserDir,
     applyOrder: applyOrder,
     myOrderPath: myOrderPath,
     saveMyCompanyOrder: saveMyCompanyOrder,
