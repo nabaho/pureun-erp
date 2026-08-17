@@ -20,6 +20,7 @@ const {
   safeGithubNumber,
   githubRequest,
 } = require("./dev-automation");
+const { homepageUrl } = require("./homepage-fetch");
 
 if (!getApps().length) initializeApp();
 
@@ -1208,4 +1209,37 @@ exports.readDoc = functions
       return;
     }
     res.json({ ok: true, reply: r.json });
+  });
+
+/* 홈페이지 읽어오기 — 통합시스템이 홈페이지와 대조할 수 있게 쪽 내용을 글자로 돌려준다.
+   읽기만 한다. 쓰기 경로가 없으므로 이 함수로는 홈페이지를 바꿀 수 없다.
+   총괄관리자만 부를 수 있다. */
+exports.readHomepage = functions
+  .runWith({ timeoutSeconds: 60, memory: "256MB" })
+  .https.onRequest(async (req, res) => {
+    setAutomationCors(req, res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
+
+    try {
+      const match = /^Bearer (.+)$/.exec(req.headers.authorization || "");
+      if (!match) { res.status(401).json({ error: "로그인이 필요합니다." }); return; }
+      const decoded = await getAuth().verifyIdToken(match[1], true);
+      const roleSnapshot = await getDatabase().ref(`uid_roles/${decoded.uid}`).once("value");
+      const role = roleSnapshot.val() || {};
+      if (role.isAdmin !== true) {
+        res.status(403).json({ error: "총괄관리자만 홈페이지를 읽어올 수 있습니다." });
+        return;
+      }
+
+      const url = homepageUrl((req.body && req.body.path) || "");
+      if (!url) { res.status(400).json({ error: "읽을 수 없는 쪽입니다." }); return; }
+
+      const page = await fetch(url, { headers: { "User-Agent": "pureun-erp-homepage-check" } });
+      if (!page.ok) { res.status(502).json({ error: `홈페이지 응답 ${page.status}` }); return; }
+      const html = await page.text();
+      res.json({ path: req.body.path, html: html, readAt: Date.now() });
+    } catch (err) {
+      res.status(err.status || 500).json({ error: err.message || "홈페이지를 읽지 못했습니다." });
+    }
   });
