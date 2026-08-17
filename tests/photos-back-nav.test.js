@@ -133,9 +133,20 @@ test('★ Esc 는 크게 보기·팝업·카메라를 앞질러 가지 않는다
 });
 
 test('★ ESC 를 듣는 곳은 하나뿐이다 — 둘이면 한 번 누른 것이 두 가지 일을 한다', () => {
-  const blocks = html.match(/addEventListener\('keydown'/g) || [];
-  assert.equal(blocks.length, 1,
-    'ESC 를 듣는 곳이 ' + blocks.length + '군데입니다 — 순서에 기대면 코드를 옮길 때 조용히 깨집니다.');
+  /* ⚠ 예전에는 **keydown 을 듣는 곳의 개수**를 셌다. 2026-08-17 에 앞뒤 사진
+     넘기기(← →)가 들어오면서 깨졌다 — 그 처리기는 Escape 를 아예 안 건드리는데도
+     「둘이 됐다」고 막았다. 고침이 옳은데 검사가 막은 것이다.
+     지키려는 것은 「듣는 곳이 하나」가 아니라 **「ESC 를 다루는 곳이 하나」**다. */
+  const marks = [];
+  const re = /addEventListener\('keydown'/g;
+  let m;
+  while ((m = re.exec(html))) marks.push(m.index);
+  assert.ok(marks.length >= 1, 'keydown 을 듣는 곳이 없습니다.');
+  const escOnes = marks.filter(function (i) {
+    return /Escape|escOnce/.test(html.slice(i, i + 600));
+  });
+  assert.equal(escOnes.length, 1,
+    'ESC 를 다루는 곳이 ' + escOnes.length + '군데입니다 — 순서에 기대면 코드를 옮길 때 조용히 깨집니다.');
 });
 
 test('★ 크게 보기를 닫아도 탭·찾기는 그대로 둔다', () => {

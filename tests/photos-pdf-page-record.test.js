@@ -101,8 +101,12 @@ test('★ 칸과 크게 보기 양쪽에 나온다', () => {
   const grid = app.match(/const capTxt = \[[^\]]*\]/);
   assert.ok(grid && /docLabel\(it\.meta\)/.test(grid[0]),
     '칸에 안 나오면 훑어볼 때 무엇의 몇 쪽인지 알 수 없습니다.');
-  const view = app.match(/\$\('viewerInfo'\)\.textContent = it[\s\S]*?: '';/);
-  assert.ok(view && /docLabel\(it\.meta\)/.test(view[0]),
+  /* ⚠ 예전에는 `$('viewerInfo').textContent = it … : '';` 라는 **표현식 모양**을
+     붙잡고 있었다. 2026-08-17 에 제목줄을 두 줄로 가르며 renderViewerTitle 로
+     옮겨 가자 깨졌다 — 서식명은 그대로 따라갔는데도다. 함수를 이름으로 찾는다. */
+  const vi = app.indexOf('function renderViewerTitle(');
+  assert.ok(vi > 0, '제목줄을 그리는 곳을 찾지 못했습니다 — 이름이 바뀌었나요?');
+  assert.ok(/docLabel\(it\.meta\)/.test(app.slice(vi, vi + 900)),
     '크게 보기 제목줄에 안 나오면 열어 봐도 알 수 없습니다.');
 });
 
