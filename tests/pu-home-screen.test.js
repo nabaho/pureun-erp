@@ -742,13 +742,16 @@ test('언제인지(기간·취득일)를 화면에 보여 줄 수 있다', () =>
 
 /* ══════ 최종 검토 4 — 퇴사 처리를 끝낸 사람에게 할 일이 남지 않는다 ══════ */
 
-test('★ 퇴사자를 내리고 나면 왼쪽 빨간 점이 사라진다', () => {
+test('★ 퇴사자를 내리고 나면 갈래 탭의 빨간 점이 사라진다', () => {
   const ctx = box();
   ctx.App = {
-    group: 'members', check: { members: { '190': { name: '나간사람', status: 'done', reason: '퇴사 처리 끝' } } },
+    group: 'members', staff: null,
+    check: { members: { '190': { name: '나간사람', status: 'done', reason: '퇴사 처리 끝' } } },
     members: { '190': { name: '나간사람', srl: '190', position1: '', position2: '' } }
   };
-  run(ctx, constLine('DONE_STATUS') + '\n' + fnSource('memberRows') + '\n' + fnSource('pageRows') + '\n'
+  run(ctx, constLine('DONE_STATUS') + '\n' + fnSource('todayString') + '\n'
+    + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n'
+    + fnSource('memberRows') + '\n' + fnSource('pageRows') + '\n'
     + fnSource('pageIdsOf') + '\n' + fnSource('rowsOf') + '\n' + fnSource('needsWork'));
   assert.equal(ctx.needsWork('members'), false, '할 일이 없는데 빨간 점이 남습니다');
 });
@@ -888,6 +891,20 @@ test('★ 쪽 안내에 「대조 기준 저장」만으로는 안 바뀌고 「
    ③ 주요업무 쪽 추가·분리  ④ 퇴사자 예외와 「명부에 없음」 보이기
    ══════════════════════════════════════════════════════════════════════════ */
 
+/* 화면 안 창(3차 설계 §1) 대역. 브라우저 기본 창을 안 쓰므로 이 셋을 갈아 끼운다.
+   ★ askText 는 «그만두기(null)»와 «빈 값('')»을 갈라 돌려준다 — 부르는 쪽이 그 둘을
+     다르게 다뤄야 하므로 대역도 그대로 흉내 낸다. */
+function dlgStubs(ctx, answers) {
+  const 답 = Array.isArray(answers) ? answers.slice() : [];
+  ctx.say = (t, b) => {
+    ctx.said.push(String(t) + ' ' + String(b == null ? '' : b));
+    return Promise.resolve();
+  };
+  ctx.askYes = () => Promise.resolve(true);
+  ctx.askText = () => Promise.resolve(답.length ? 답.shift() : null);
+  return ctx;
+}
+
 /* 목록·쪽 설정을 함께 돌리는 상자. 자료(homepage/config/pages)를 넣으면 그 목록이 된다. */
 function cfgBox(cfg) {
   const ctx = box();
@@ -901,11 +918,10 @@ function cfgBox(cfg) {
       once: () => Promise.resolve({ val: () => null })
     })
   };
-  ctx.alert = m => { ctx.said.push(String(m)); };
-  ctx.confirm = () => true;
+  dlgStubs(ctx);
   ctx.toast = m => { ctx.said.push(String(m)); };
   ctx.App = {
-    group: 'work', pick: '', pageConfig: {}, pages: {}, members: {}, check: null,
+    group: 'work', pick: '', pageConfig: {}, pages: {}, members: {}, check: null, staff: null,
     pageLines: {}, draft: null, dirty: false, lineFormat: 'plain', render() {}
   };
   run(ctx, constSource('PAGE_IDS') + '\n' + constObj('STATUS_TEXT') + '\n'
@@ -913,9 +929,11 @@ function cfgBox(cfg) {
     + fnSource('savePageConfig') + '\n' + fnSource('refuseIfPageConfigUnread') + '\n'
     + fnSource('addPage') + '\n'
     + fnSource('canDetachPage') + '\n' + fnSource('detachPage') + '\n'
-    + fnSource('pageIdsOf') + '\n' + fnSource('memberRows') + '\n' + fnSource('pageRows') + '\n'
+    + fnSource('pageIdsOf') + '\n' + fnSource('todayString') + '\n'
+    + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n'
+    + fnSource('memberRows') + '\n' + fnSource('pageRows') + '\n'
     + fnSource('rowsOf') + '\n' + fnSource('firstPickOf') + '\n' + fnSource('loadDraft') + '\n'
-    + fnSource('listHtml') + '\n'
+    + fnSource('rosterPillHtml') + '\n' + fnSource('listHtml') + '\n'
     + expose('PAGE_IDS') + expose('PAGE_LABEL') + expose('DEFAULT_PAGES'));
   ctx.syncPageConfig(cfg);
   return ctx;
@@ -966,9 +984,11 @@ test('★ 화면 번호가 «붙여넣을 글자»에는 절대 안 들어간다
     draft: { kind: 'member', key: '190', name: '권형하', position1: '대표', position2: '공인노무사',
              intro: '', srl: '190', careers: careers.slice() },
     members: { '190': { name: '권형하', srl: '190' } },
-    lineFormat: 'plain', dirty: false
+    staff: null, check: null, lineFormat: 'plain', dirty: false
   };
-  run(ctx, fnSource('riskReport') + '\n' + fnSource('srlConflict') + '\n' + fnSource('stamp') + '\n'
+  run(ctx, fnSource('todayString') + '\n' + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n'
+    + fnSource('memberBandHtml') + '\n'
+    + fnSource('riskReport') + '\n' + fnSource('srlConflict') + '\n' + fnSource('stamp') + '\n'
     + fnSource('memberEdit'));
   const nums = numbersIn(ctx.memberEdit(ctx.App.draft));
   assert.ok(nums.indexOf(1) >= 0 && nums.indexOf(3) >= 0, '경력사항 줄에 번호가 안 보입니다');
@@ -1175,7 +1195,7 @@ test('★ 쪽 이름 규칙을 어기면 «받지 않고» 이유를 말한다 �
   for (const bad of ['Work6', 'work 6', 'work-6', 'work.6', '한글쪽', 'a'.repeat(31),
                      'https://example.com/work6', '../admin']) {
     const ctx = cfgBox(null);
-    ctx.prompt = () => bad;
+    dlgStubs(ctx, [bad, '보일 이름']);
     await ctx.addPage();
     assert.equal(ctx.saved.length, 0, '「' + bad + '」 을(를) 자료에 적어 버렸습니다');
     assert.ok(ctx.said.length > 0, '「' + bad + '」 을(를) 조용히 무시했습니다 — 이유를 말해야 합니다');
@@ -1185,9 +1205,7 @@ test('★ 쪽 이름 규칙을 어기면 «받지 않고» 이유를 말한다 �
 
 test('★ 쪽을 추가하면 자료에 적히고 목록 끝에 붙는다', async () => {
   const ctx = cfgBox(null);
-  const 답 = ['work6', '중대재해 대응'];
-  let i = 0;
-  ctx.prompt = () => 답[i++];
+  dlgStubs(ctx, ['work6', '중대재해 대응']);
   await ctx.addPage();
   assert.equal(ctx.saved.length, 1, '자료에 안 적혔습니다');
   assert.match(ctx.saved[0].path, /homepage\/config\/pages/, '엉뚱한 자리에 적었습니다');
@@ -1201,7 +1219,7 @@ test('★ 쪽을 추가하면 자료에 적히고 목록 끝에 붙는다', asyn
 
 test('★ 이미 있는 쪽 이름은 두 번 넣지 않는다', async () => {
   const ctx = cfgBox(null);
-  ctx.prompt = () => 'work1';
+  dlgStubs(ctx, ['work1', '자문서비스']);
   await ctx.addPage();
   assert.equal(ctx.saved.length, 0, '같은 쪽을 또 적었습니다');
   assert.ok(ctx.said.some(m => /이미/.test(m)), '이미 있다고 말해 주지 않았습니다');
@@ -1209,11 +1227,10 @@ test('★ 이미 있는 쪽 이름은 두 번 넣지 않는다', async () => {
 
 test('★ 보일 이름을 안 적으면 추가하지 않는다', async () => {
   const ctx = cfgBox(null);
-  const 답 = ['work6', '   '];
-  let i = 0;
-  ctx.prompt = () => 답[i++];
+  dlgStubs(ctx, ['work6', '   ']);
   await ctx.addPage();
   assert.equal(ctx.saved.length, 0, '이름 없는 쪽을 목록에 넣었습니다');
+  assert.ok(ctx.said.length > 0, '왜 추가하지 않았는지 말하지 않았습니다');
 });
 
 test('★ 「목록에서 분리」는 홈페이지 쪽도, 우리 대조 기준 자료도 지우지 않는다', async () => {
@@ -1289,8 +1306,7 @@ function loadAllBox(dbRef) {
   ctx.saved = [];
   ctx.said = [];
   ctx.db = { ref: p => (dbRef ? dbRef(p, ctx) : { once: () => Promise.resolve({ val: () => null }) }) };
-  ctx.alert = m => { ctx.said.push(String(m)); };
-  ctx.confirm = () => true;
+  dlgStubs(ctx);
   ctx.toast = m => { ctx.said.push(String(m)); };
   ctx.App = {
     group: 'members', pick: '', me: null, myName: '', isAdmin: null,
@@ -1305,7 +1321,9 @@ function loadAllBox(dbRef) {
     + fnSource('syncPageConfig') + '\n' + fnSource('savePageConfig') + '\n'
     + fnSource('refuseIfPageConfigUnread') + '\n' + fnSource('addPage') + '\n'
     + fnSource('canDetachPage') + '\n' + fnSource('detachPage') + '\n'
-    + fnSource('pageIdsOf') + '\n' + fnSource('memberRows') + '\n' + fnSource('pageRows') + '\n'
+    + fnSource('pageIdsOf') + '\n' + fnSource('todayString') + '\n'
+    + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n'
+    + fnSource('memberRows') + '\n' + fnSource('pageRows') + '\n'
     + fnSource('rowsOf') + '\n' + fnSource('firstPickOf') + '\n' + fnSource('loadDraft') + '\n'
     + fnSource('loadAll') + '\n'
     + expose('PAGE_IDS') + expose('PAGE_LABEL') + expose('DEFAULT_PAGES'));
@@ -1331,9 +1349,7 @@ test('★ 「쪽 목록」을 못 읽은 채로는 「＋ 쪽 추가」가 거�
   await ctx.loadAll();
   assert.equal(ctx.App.pageConfigUnread, true);
 
-  const 답 = ['work6', '중대재해 대응'];
-  let i = 0;
-  ctx.prompt = () => 답[i++];
+  dlgStubs(ctx, ['work6', '중대재해 대응']);
   await ctx.addPage();
   assert.equal(ctx.saved.length, 0,
     '못 읽은 채로 「＋ 쪽 추가」가 자료를 덮어썼습니다 — 사장님이 저장해 둔 목록이 지워집니다');
@@ -1365,9 +1381,7 @@ test('★ 「쪽 목록」을 «정상적으로» 읽으면(자료가 있든 없
   await ctx.loadAll();
   assert.equal(ctx.App.pageConfigUnread, false, '정상 읽기인데 못 읽음으로 남았습니다');
 
-  const 답 = ['work6', '중대재해 대응'];
-  let i = 0;
-  ctx.prompt = () => 답[i++];
+  dlgStubs(ctx, ['work6', '중대재해 대응']);
   await ctx.addPage();
   assert.equal(ctx.saved.length, 1, '정상 읽기인데도 추가가 막혔습니다');
 });
@@ -1389,12 +1403,11 @@ function keepBox(member) {
       once: () => Promise.resolve({ val: () => (/members\//.test(p) ? member : null) })
     })
   };
-  ctx.alert = m => { ctx.said.push(String(m)); };
+  dlgStubs(ctx);
   ctx.toast = m => { ctx.said.push(String(m)); };
-  ctx.confirm = () => true;
   ctx.App = {
     group: 'members', pick: '190', members: { '190': member }, pages: {}, check: null,
-    dirty: false, lineFormat: 'plain', myName: '관리자', me: { email: 'a@b.c' },
+    staff: null, dirty: false, lineFormat: 'plain', myName: '관리자', me: { email: 'a@b.c' },
     draft: null, render() {}
   };
   run(ctx, fnSource('todayString') + '\n' + fnSource('currentUserName') + '\n'
@@ -1409,7 +1422,7 @@ function keepBox(member) {
 test('★ 사유를 안 적으면 「홈페이지에 남기기」로 두지 않는다', async () => {
   const ctx = keepBox({ name: '장한돌', position1: '세종지사장', position2: '공인노무사',
                         srl: '320', careers: [] });
-  ctx.prompt = () => '   ';
+  dlgStubs(ctx, ['   ']);
   await ctx.keepOnSiteAsk();
   assert.equal(ctx.saved.length, 0, '사유 없이 예외가 저장됐습니다 — 왜 남겼는지 알 수 없어집니다');
   assert.ok(ctx.said.some(m => /사유/.test(m)), '사유가 필요하다고 말해 주지 않았습니다');
@@ -1418,7 +1431,7 @@ test('★ 사유를 안 적으면 「홈페이지에 남기기」로 두지 않�
 test('★ 사유를 적으면 사유·누가·언제가 함께 남는다', async () => {
   const ctx = keepBox({ name: '장한돌', position1: '세종지사장', position2: '공인노무사',
                         srl: '320', careers: [] });
-  ctx.prompt = () => '세종지사장 — 고용관계가 아니어서 급여 명부에는 퇴사로 찍힙니다';
+  dlgStubs(ctx, ['세종지사장 — 고용관계가 아니어서 급여 명부에는 퇴사로 찍힙니다']);
   await ctx.keepOnSiteAsk();
   assert.equal(ctx.saved.length, 1, '예외가 저장되지 않았습니다');
   const rec = plain(ctx.saved[0].value);
@@ -1513,9 +1526,11 @@ test('★ 편집 화면에 「남기기」 상태와 사유가 보이고, 풀 �
     draft: { kind: 'member', key: '320', name: '장한돌', position1: '세종지사장', position2: '공인노무사',
              intro: '', srl: '320', careers: ['現 가'] },
     members: { '320': { name: '장한돌', srl: '320', keepOnSite: kept } },
-    lineFormat: 'plain', dirty: false
+    staff: null, check: null, lineFormat: 'plain', dirty: false
   };
-  run(ctx, fnSource('riskReport') + '\n' + fnSource('srlConflict') + '\n' + fnSource('stamp') + '\n'
+  run(ctx, fnSource('todayString') + '\n' + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n'
+    + fnSource('memberBandHtml') + '\n'
+    + fnSource('riskReport') + '\n' + fnSource('srlConflict') + '\n' + fnSource('stamp') + '\n'
     + fnSource('memberEdit'));
   const h = ctx.memberEdit(ctx.App.draft);
   assert.ok(h.indexOf('세종지사장 — 고용관계 아님') >= 0, '남긴 사유가 편집 화면에 없습니다');
@@ -1524,4 +1539,362 @@ test('★ 편집 화면에 「남기기」 상태와 사유가 보이고, 풀 �
   // 예외가 없는 사람에게는 «남기기» 길이 있다
   ctx.App.members['320'] = { name: '장한돌', srl: '320' };
   assert.match(ctx.memberEdit(ctx.App.draft), /남기기/, '「홈페이지에 남기기」 단추가 없습니다');
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   3차 설계 (docs/superpowers/specs/2026-08-17-홈페이지-관리-3차-design.md)
+   목업 docs/mockups/homepage-manage-v4.html
+   ① 브라우저 기본 창을 화면 안 창으로  ② 흔들리지 않는 붙박이 틀
+   ③ 퇴사 정보를 「확인 전」에도 보이기
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ══════ ① 브라우저 기본 창을 쓰지 않는다 ══════
+   사유를 브라우저 기본 입력창으로 받았더니 «앱으로 설치해 쓰는 창»에서 차단돼
+   「홈페이지에 남기기」가 눌러도 아무 일이 없었다(2026-08-17). 오류도 안 떠서
+   「클릭이 안 된다」로 보였다. 되풀이되면 안 되는 사고라 검사로 못 박는다. */
+
+test('★ 브라우저 기본 창을 하나도 쓰지 않는다', () => {
+  const 기본창 = [...html.matchAll(/(?:\bwindow\s*\.\s*)?\b(?:prompt|confirm|alert)\s*\(/g)]
+    .map(m => m[0].replace(/\s+/g, ''));
+  assert.deepEqual(기본창, [],
+    '브라우저 기본 창을 부르고 있습니다 — 앱으로 설치해 쓰는 창에서는 차단되어 눌러도 '
+    + '아무 일이 없고 오류도 안 뜹니다(2026-08-17 「홈페이지에 남기기」 사고). '
+    + '화면 안 창으로 바꾸십시오: ' + 기본창.join(', '));
+});
+
+/* 화면 안 창을 «실제로 돌려» 본다 — 가짜 DOM 을 주고 단추를 눌러 확인한다.
+   모양(HTML)은 견주지 않는다. 「물으면 답이 돌아오는가」만 본다. */
+function dlgBox() {
+  const ctx = box();
+  ctx.esc = escStub();
+  ctx.els = {};
+  ['dlg', 'dlgCard', 'dlgText'].forEach(id => {
+    const e = { on: false, innerHTML: '', value: '' };
+    e.classList = { add() { e.on = true; }, remove() { e.on = false; } };
+    ctx.els[id] = e;
+  });
+  ctx.$ = id => ctx.els[id] || null;
+  run(ctx, constLine('Dlg') + '\n' + fnSource('dlgEnd') + '\n' + fnSource('dlgShow') + '\n'
+    + fnSource('dlgOk') + '\n' + fnSource('dlgCancel') + '\n' + fnSource('dlgTextOk') + '\n'
+    + fnSource('say') + '\n' + fnSource('askYes') + '\n' + fnSource('askText'));
+  return ctx;
+}
+
+test('★ 「예·아니오」를 화면 안 창으로 묻는다 — 그만두기는 «아니오»다', async () => {
+  const ctx = dlgBox();
+  const p = ctx.askYes('물음', '몸말', '예');
+  assert.equal(ctx.els.dlg.on, true, '화면 안 창이 안 떴습니다');
+  ctx.dlgCancel();
+  assert.equal(await p, false, '그만두었는데 「예」로 봤습니다');
+  assert.equal(ctx.els.dlg.on, false, '창이 닫히지 않았습니다');
+
+  const q = ctx.askYes('물음');
+  ctx.dlgOk();
+  assert.equal(await q, true);
+});
+
+test('★ 사유 입력칸은 «빈 값»과 «그만두기»를 갈라 돌려준다', async () => {
+  const ctx = dlgBox();
+  ctx.els.dlgText.value = '   ';
+  const p = ctx.askText('사유', '몸말');
+  ctx.dlgTextOk();
+  assert.equal(await p, '   ', '적은 글자를 그대로 돌려주지 않습니다');
+
+  const q = ctx.askText('사유');
+  ctx.dlgCancel();
+  assert.equal(await q, null,
+    '그만두기가 빈 값과 구별되지 않습니다 — 왜 저장하지 않았는지 할 말이 달라집니다');
+});
+
+test('★ 알림도 화면 안에서 보여주고, 확인을 누르면 끝난다', async () => {
+  const ctx = dlgBox();
+  let 끝났나 = false;
+  ctx.say('알림', '몸말').then(() => { 끝났나 = true; });
+  assert.equal(ctx.els.dlg.on, true, '알림이 화면 안 창으로 안 떴습니다');
+  ctx.dlgOk();
+  await tick();
+  assert.equal(끝났나, true, '확인을 눌러도 끝나지 않습니다 — 부른 쪽이 영원히 기다립니다');
+  assert.equal(ctx.els.dlg.on, false);
+});
+
+test('★ 창이 겹쳐도 앞선 물음이 영원히 안 끝나는 일이 없다', async () => {
+  const ctx = dlgBox();
+  const 첫째 = ctx.askYes('첫 물음');
+  const 둘째 = ctx.askYes('둘째 물음');
+  assert.equal(await 첫째, false, '앞선 창이 답 없이 버려졌습니다 — 누른 사람이 영원히 기다립니다');
+  ctx.dlgOk();
+  assert.equal(await 둘째, true);
+});
+
+/* 창을 바꿔도 「사유를 반드시」(2차 설계 §4)는 그대로다 — 실제로 함수를 돌려서 본다 */
+test('★ 화면 안 창에서 사유가 비면 예외를 저장하지 않고 왜 안 했는지 말한다', async () => {
+  for (const 답 of ['', '   ', '\n\t ']) {
+    const ctx = keepBox({ name: '장한돌', position1: '세종지사장', position2: '공인노무사',
+                          srl: '320', careers: [] });
+    dlgStubs(ctx, [답]);
+    await ctx.keepOnSiteAsk();
+    assert.equal(ctx.saved.length, 0,
+      '사유가 빈 채로 예외가 저장됐습니다 — 나중에 왜 남겼는지 알 수 없어집니다');
+    assert.ok(ctx.said.some(m => /사유/.test(m)), '사유가 필요하다고 말해 주지 않았습니다');
+  }
+});
+
+test('★ 사유 창을 «그만두면» 저장도 안 하고 잔소리도 안 한다', async () => {
+  const ctx = keepBox({ name: '장한돌', srl: '320', careers: [] });
+  dlgStubs(ctx, []);          // 답이 없으면 «그만두기»(null)
+  await ctx.keepOnSiteAsk();
+  assert.equal(ctx.saved.length, 0);
+  assert.equal(ctx.said.length, 0, '사장님이 스스로 그만둔 것인데 잔소리를 했습니다');
+});
+
+/* ══════ ② 흔들리지 않는 붙박이 틀 ══════
+   ★ 높이·너비 «값»을 못 박지 않는다. 「한도가 있는가·제 몸 안에서 구르는가」만 본다. */
+
+/* <style> 안쪽만 본다 — 안내 문구에 적힌 글자에 걸리지 않게 */
+const css = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map(m => m[1]).join('\n');
+
+test('★ 페이지 자체가 굴러가지 않는다 (흔들림의 뿌리)', () => {
+  // «.body» 가 아니라 «body» 규칙이어야 한다 — 점 하나 차이로 뜻이 정반대다
+  assert.match(css, /(?:^|[\s,;}])body\s*\{[^}]*overflow\s*:\s*hidden/,
+    '몸통이 창에 안 묶여 있습니다 — 고르는 대상이 바뀔 때마다 페이지 길이가 늘었다 줄었다 합니다');
+});
+
+test('★ 목록과 편집칸이 «각각 제 몸 안에서» 구른다', () => {
+  // 목록 안의 구르는 칸과 편집칸 안의 구르는 칸이 «따로» 있어야 한다.
+  // 하나뿐이면 목록을 굴릴 때 편집칸이 함께 움직인다.
+  const 구르는칸 = [...css.matchAll(/\.(sc|esc)\s*\{[^}]*overflow-y\s*:\s*auto/g)].map(m => m[1]);
+  assert.ok(구르는칸.indexOf('sc') >= 0, '목록이 제 몸 안에서 구르지 않습니다');
+  assert.ok(구르는칸.indexOf('esc') >= 0, '편집칸 가운데가 제 몸 안에서 구르지 않습니다');
+});
+
+test('★ 목록 줄 높이에 한도가 있다 — 딱지가 둘이어도 줄이 안 밀린다', () => {
+  assert.match(css, /\.r\s*\{[^}]*min-height\s*:\s*\d+(?:\.\d+)?px/,
+    '목록 줄 높이에 한도가 없습니다 — 딱지가 하나인 줄과 둘인 줄의 높이가 달라집니다');
+});
+
+test('★ 머리띠와 갈래 탭이 위에 붙어 있다', () => {
+  assert.match(css, /position\s*:\s*sticky/, '굴리면 머리띠와 갈래가 사라집니다');
+});
+
+test('★ 갈래가 왼쪽 기둥이 아니라 «상단 탭»이다 — 목록이 그만큼 넓어진다', () => {
+  const ctx = box();
+  ctx.esc = escStub();
+  ctx.App = { group: 'members', members: {}, pages: {}, check: null, staff: null };
+  // constSource('PAGE_IDS') 는 GROUPS 까지 함께 떼어 온다 (PAGE_IDS 가 한 줄짜리라
+  // 다음 「\n];」까지 물려 온다). GROUPS 를 따로 넣으면 두 번 선언돼 터진다.
+  run(ctx, constSource('PAGE_IDS') + '\n'
+    + constLine('DONE_STATUS') + '\n' + fnSource('todayString') + '\n'
+    + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n'
+    + fnSource('memberRows') + '\n' + fnSource('pageRows') + '\n' + fnSource('pageIdsOf') + '\n'
+    + fnSource('rowsOf') + '\n' + fnSource('needsWork') + '\n' + fnSource('gtabsHtml'));
+  const h = ctx.gtabsHtml();
+  ['구성원 소개', '주요업무', '오시는길', '인사말'].forEach(label =>
+    assert.ok(h.indexOf(label) >= 0, '갈래 「' + label + '」 이 상단 탭에 없습니다'));
+  assert.match(h, /App\.go\(/, '갈래를 눌러도 옮겨갈 수 없습니다');
+  // 목록 칸이 예전(268~290px)보다 넓어졌는지 — 값을 박지 않고 «더 넓어졌는가»만 본다
+  const m = /\.list\s*\{[^}]*width\s*:\s*(\d+)px/.exec(css);
+  assert.ok(m, '목록 칸 너비가 정해져 있지 않습니다');
+  assert.ok(Number(m[1]) >= 340,
+    '목록 칸이 3차 지시(268 → 360px)만큼 넓어지지 않았습니다: ' + m[1] + 'px');
+});
+
+test('★ 편집칸의 머리와 발이 고정돼 가운데만 구른다', () => {
+  const ctx = box();
+  ctx.esc = escStub();
+  ctx.App = {
+    draft: { kind: 'member', key: '190', name: '권형하', position1: '대표', position2: '공인노무사',
+             intro: '', srl: '190', careers: ['現 가'] },
+    members: { '190': { name: '권형하', srl: '190' } },
+    staff: null, check: null, lineFormat: 'plain', dirty: false
+  };
+  run(ctx, fnSource('todayString') + '\n' + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n'
+    + fnSource('memberBandHtml') + '\n' + fnSource('riskReport') + '\n' + fnSource('srlConflict') + '\n'
+    + fnSource('stamp') + '\n' + fnSource('memberEdit'));
+  const h = ctx.memberEdit(ctx.App.draft);
+  const 가운데 = h.indexOf('class="esc"');
+  const 발 = h.lastIndexOf('class="eft"');
+  assert.ok(가운데 >= 0, '구르는 가운데 칸이 없습니다 — 경력이 길면 단추가 화면 밖으로 밀립니다');
+  assert.ok(발 > 가운데, '단추줄이 구르는 칸 안에 있습니다 — 굴려야 「저장」이 보입니다');
+  assert.ok(h.indexOf('저장', 발) >= 0, '「저장」 단추가 고정된 발에 없습니다');
+});
+
+/* ══════ ③ 퇴사 정보를 「확인 전」에도 보이기 ══════ */
+
+function rosterBox(staff, check) {
+  const ctx = cfgBox(null);
+  ctx.App.group = 'members';
+  ctx.App.staff = staff;
+  ctx.App.check = check || null;
+  return ctx;
+}
+
+test('★ 명부 딱지는 「홈페이지 다시 확인」을 «안 눌러도» 붙는다', () => {
+  const ctx = rosterBox([
+    { name: '권형하', leftAt: '' },
+    { name: '박성수', leftAt: '2026-06-30' }
+  ], null);
+  ctx.App.members = {
+    '190': { name: '권형하', position1: '대표', position2: '공인노무사' },
+    '193': { name: '박성수', position2: '공인노무사' }
+  };
+  const rows = plain(ctx.memberRows());
+  const 성수 = rows.find(r => r.name === '박성수');
+  const 형하 = rows.find(r => r.name === '권형하');
+  assert.ok(성수.roster, '대조를 안 눌렀다고 퇴사 딱지가 안 붙습니다 — 명부만 보면 아는 것입니다');
+  assert.equal(성수.roster.kind, 'left');
+  assert.equal(성수.status, '', '대조를 안 눌렀는데 대조 딱지가 붙었습니다');
+  assert.equal(형하.roster, null, '재직자에게 딱지가 붙었습니다');
+
+  const h = ctx.listHtml();
+  assert.ok(h.indexOf('2026-06-30') >= 0, '목록 줄에 퇴사일이 안 보입니다');
+  assert.ok(h.indexOf('확인 전') >= 0, '대조 딱지 자리(「확인 전」)가 사라졌습니다');
+});
+
+test('★ 대조 딱지와 명부 딱지를 섞지 않는다 — 서로 없어도 각자 뜬다', () => {
+  // 명부는 못 읽었고 대조는 했다 → 대조 딱지만
+  const a = rosterBox(null, { members: { '190': { name: '권형하', status: 'pending', reason: '내용이 다름' } } });
+  a.App.members = { '190': { name: '권형하', position1: '대표' } };
+  const ra = plain(a.memberRows())[0];
+  assert.equal(ra.roster, null, '명부를 못 읽었는데 명부 딱지를 지어냈습니다');
+  assert.equal(ra.status, 'pending');
+
+  // 명부는 읽었고 대조는 안 했다 → 명부 딱지만
+  const b = rosterBox([{ name: '권형하', leftAt: '2026-01-01' }], null);
+  b.App.members = { '190': { name: '권형하', position1: '대표' } };
+  const rb = plain(b.memberRows())[0];
+  assert.equal(rb.status, '', '대조를 안 눌렀는데 대조 딱지가 붙었습니다');
+  assert.equal(rb.roster.kind, 'left');
+});
+
+test('★ 「홈페이지 다시 확인」이 명부 딱지를 대조 결과에 섞어 저장하지 않는다', async () => {
+  const ctx = box();
+  ctx.App = {
+    members: { '193': { name: '박성수', srl: '193', position1: '', position2: '공인노무사', careers: [] } },
+    pages: {}, staff: [{ name: '박성수', leftAt: '2026-06-30' }],
+    check: null, saveErr: '', pageLines: {}
+  };
+  ctx.db = { ref: () => ({ set: () => Promise.resolve() }) };
+  run(ctx, constSource('PAGE_IDS') + '\n' + fnSource('todayString') + '\n' + fnSource('applyStatus'));
+  await ctx.applyStatus(
+    [{ srl: '193', name: '박성수', position1: '', position2: '공인노무사', careers: [] }], {}, []);
+  const rec = plain(ctx.App.check.members['193']);
+  assert.equal(rec.status, 'toRemove', '대조 딱지가 제 일을 안 했습니다');
+  assert.ok(!('roster' in rec), '명부 딱지를 대조 결과에 끼워 저장했습니다 — 둘은 다른 것입니다');
+});
+
+test('★ 목록 머리에 「구성원 몇 명 · 퇴사 몇」이 적힌다', () => {
+  const ctx = rosterBox([
+    { name: '권형하', leftAt: '' }, { name: '박성수', leftAt: '2026-06-30' },
+    { name: '임혜미', leftAt: '2026-05-22' }, { name: '장한돌', leftAt: '2023-12-31' }
+  ], null);
+  ctx.App.members = {
+    '190': { name: '권형하' }, '193': { name: '박성수' }, '281': { name: '임혜미' },
+    '320': { name: '장한돌', keepOnSite: { at: '2026-08-17', by: '관리자', why: '세종지사장' } },
+    '322': { name: '조현범' }
+  };
+  const h = ctx.listHtml();
+  assert.match(h, /구성원[^0-9]*5명/, '구성원이 몇 명인지 목록 머리에 없습니다');
+  assert.match(h, /퇴사[^0-9]*3/, '명부상 퇴사가 몇 명인지 목록 머리에 없습니다');
+  // 머리에 적은 숫자가 «목록 번호»로 새 나가면 안 된다
+  assert.deepEqual(numbersIn(h), [1, 2, 3, 4, 5], '목록 번호가 흔들렸습니다');
+});
+
+test('★ 명부에 없는 사람은 「명부에 없음」으로 밝힌다', () => {
+  const ctx = rosterBox([{ name: '권형하', leftAt: '' }], null);
+  ctx.App.members = { '322': { name: '조현범', position1: '대전지사장', position2: '공인노무사' } };
+  assert.equal(plain(ctx.memberRows())[0].roster.kind, 'none');
+  assert.ok(ctx.listHtml().indexOf('명부에 없음') >= 0, '명부에 없다는 사실이 목록에 안 보입니다');
+});
+
+test('★ 「남김」으로 표시한 사람에게는 퇴사 딱지 대신 「남김」을 보여준다', () => {
+  const ctx = rosterBox([{ name: '장한돌', leftAt: '2023-12-31' }], null);
+  ctx.App.members = {
+    '320': { name: '장한돌', position1: '세종지사장', position2: '공인노무사',
+             keepOnSite: { at: '2026-08-17', by: '관리자', why: '세종지사장 — 고용관계 아님' } }
+  };
+  const h = ctx.listHtml();
+  assert.ok(h.indexOf('남김') >= 0, '왜 퇴사 경고가 없는지 알 수 없습니다');
+  assert.ok(h.indexOf('세종지사장 — 고용관계 아님') >= 0, '남긴 사유가 목록에 안 보입니다');
+  assert.ok(h.indexOf('퇴사 2023-12-31') < 0,
+    '「남김」으로 둔 사람 줄에 퇴사 딱지가 그대로 붙었습니다 — 왜 예외인지 흐려집니다');
+});
+
+test('★ 사유가 빈 「남김」은 예외로 보지 않는다 — 부품과 같은 기준을 쓴다', () => {
+  const ctx = rosterBox([{ name: '장한돌', leftAt: '2023-12-31' }], null);
+  ctx.App.members = { '320': { name: '장한돌', keepOnSite: { at: 'x', by: 'y', why: '   ' } } };
+  const r = plain(ctx.memberRows())[0];
+  assert.equal(r.kept, false, '사유 없는 예외를 예외로 봤습니다 — 딱지 판정과 어긋납니다');
+  assert.ok(ctx.listHtml().indexOf('퇴사 2023-12-31') >= 0, '퇴사 딱지가 사라졌습니다');
+});
+
+function bandBox(member, staff, check) {
+  const ctx = box();
+  ctx.esc = escStub();
+  ctx.App = {
+    draft: Object.assign({ kind: 'member', key: '193', careers: [] }, member),
+    members: { '193': member }, staff: staff, check: check || null,
+    lineFormat: 'plain', dirty: false
+  };
+  run(ctx, fnSource('todayString') + '\n' + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n'
+    + fnSource('memberBandHtml') + '\n' + fnSource('riskReport') + '\n' + fnSource('srlConflict') + '\n'
+    + fnSource('stamp') + '\n' + fnSource('memberEdit'));
+  return ctx;
+}
+
+test('★ 편집칸 머리 띠가 퇴사를 알리고, «내리는 방법»을 삭제가 아니라 비공개로 적는다', () => {
+  const ctx = bandBox({ name: '박성수', position1: '', position2: '공인노무사', srl: '193', careers: [] },
+                      [{ name: '박성수', leftAt: '2026-06-30' }]);
+  const h = ctx.memberEdit(ctx.App.draft);
+  assert.ok(h.indexOf('2026-06-30') >= 0, '언제 퇴사했는지 편집칸에 안 보입니다');
+  assert.match(h, /비공개/, '내리는 방법이 안 적혀 있습니다');
+  assert.match(h, /삭제가 아니라|삭제하지/, '삭제가 아니라는 말이 없습니다 — 지우면 되살리기 어렵습니다');
+  assert.match(h, /되살릴/, '잘못 내렸을 때 되살릴 수 있다는 말이 없습니다');
+});
+
+test('★ 확인 전에는 홈페이지에 «아직 있다»고 단정하지 않는다 (그건 대조 딱지가 할 말이다)', () => {
+  const 확인전 = bandBox({ name: '박성수', srl: '193', careers: [] },
+                        [{ name: '박성수', leftAt: '2026-06-30' }], null);
+  const h1 = 확인전.memberEdit(확인전.App.draft);
+  assert.ok(h1.indexOf('2026-06-30') >= 0, '명부 딱지는 확인 전에도 보여야 합니다');
+  assert.ok(h1.indexOf('아직 올라가 있습니다') < 0,
+    '홈페이지를 안 읽었는데 아직 올라가 있다고 단정했습니다 — 명부 딱지가 대조 딱지 흉내를 냈습니다');
+  assert.match(h1, /홈페이지 다시 확인/, '올라가 있는지 어떻게 알 수 있는지 안 적혀 있습니다');
+
+  const 내려감 = bandBox({ name: '박성수', srl: '193', careers: [] },
+                        [{ name: '박성수', leftAt: '2026-06-30' }],
+                        { members: { '193': { name: '박성수', status: 'done', reason: '퇴사 처리 끝' } } });
+  const h2 = 내려감.memberEdit(내려감.App.draft);
+  assert.ok(h2.indexOf('아직 올라가 있습니다') < 0, '이미 내려간 사람인데 아직 있다고 합니다');
+  assert.match(h2, /내려/, '내려간 것이 확인됐다는 말이 없습니다');
+});
+
+test('★ 명부에 없는 사람은 편집칸에서도 그 사실을 밝힌다', () => {
+  const ctx = bandBox({ name: '조현범', position1: '대전지사장', position2: '공인노무사',
+                        srl: '322', careers: [] }, [{ name: '권형하', leftAt: '' }]);
+  const h = ctx.memberEdit(ctx.App.draft);
+  assert.ok(h.indexOf('명부에 없음') >= 0, '명부에 없다는 사실이 편집칸에 안 보입니다');
+  assert.match(h, /남기기/, '명부에 없는 분을 어떻게 두라는 안내가 없습니다');
+});
+
+test('★ 명부를 못 읽으면 편집칸 머리 띠를 지어내지 않는다', () => {
+  const ctx = bandBox({ name: '박성수', srl: '193', careers: [] }, null);
+  const h = ctx.memberEdit(ctx.App.draft);
+  assert.ok(h.indexOf('명부에 없음') < 0, '명부를 못 읽은 것을 「명부에 없음」으로 뭉갰습니다');
+  assert.ok(h.indexOf('명부: ') < 0, '명부를 못 읽었는데 명부 띠를 띄웠습니다');
+});
+
+test('★ 확인을 안 눌러도 명부상 퇴사자가 있으면 갈래 탭에 빨간 점이 켜진다', () => {
+  const ctx = rosterBox([{ name: '박성수', leftAt: '2026-06-30' }], null);
+  ctx.App.members = { '193': { name: '박성수' } };
+  run(ctx, constLine('DONE_STATUS') + '\n' + fnSource('needsWork'));
+  assert.equal(ctx.needsWork('members'), true, '확인 전에는 퇴사자가 있어도 조용합니다');
+
+  // 이미 내려간 사람(done)에게는 켜지지 않는다 — 손댈 것이 없다
+  ctx.App.check = { members: { '193': { name: '박성수', status: 'done', reason: '퇴사 처리 끝' } } };
+  assert.equal(ctx.needsWork('members'), false, '퇴사 처리를 끝냈는데 빨간 점이 남습니다');
+
+  // 「남김」으로 둔 사람에게도 켜지지 않는다
+  ctx.App.check = null;
+  ctx.App.members = { '193': { name: '박성수', keepOnSite: { at: 'x', by: 'y', why: '지사장' } } };
+  assert.equal(ctx.needsWork('members'), false, '「남김」으로 둔 사람 때문에 빨간 점이 남습니다');
 });

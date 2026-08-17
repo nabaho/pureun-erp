@@ -484,3 +484,64 @@ test('겹치는 사람이 없으면 조용하다', () => {
   assert.deepEqual(plain(D.duplicateOurKeys(ours)), []);
   assert.deepEqual(plain(D.duplicateOurKeys(null)), []);
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+   3차 설계 §3 — 「명부 딱지」는 홈페이지와 «상관없이» 명부만 보고 붙인다
+   docs/superpowers/specs/2026-08-17-홈페이지-관리-3차-design.md
+   ★ 대조 딱지(memberStatus)와 다른 것이다. 대조 딱지는 「홈페이지 다시 확인」을 누를 때만
+     새로 붙고, 명부 딱지는 화면을 열 때 바로 붙는다. 섞지 않는다.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+test('★ 명부 딱지는 홈페이지를 «한 번도 안 읽어도» 붙는다', () => {
+  const staff = [{ name: '박성수', leftAt: '2026-06-30' }];
+  const m = plain(D.rosterMark('박성수', staff, TODAY));
+  assert.equal(m.kind, 'left', '명부에 퇴사인데 딱지가 안 붙습니다');
+  assert.match(m.label, /퇴사/);
+  assert.match(m.label, /2026-06-30/, '언제 퇴사했는지 딱지에 안 보입니다');
+});
+
+test('★ 재직 중인 사람에게는 명부 딱지를 붙이지 않는다', () => {
+  assert.equal(D.rosterMark('권형하', [재직], TODAY), null);
+});
+
+test('★ 퇴사일이 아직 안 지났으면 퇴사로 보지 않는다 — 대조 딱지와 같은 기준을 쓴다', () => {
+  const 미래 = [{ name: '나갈사람', leftAt: '2099-12-31' }];
+  assert.equal(D.rosterMark('나갈사람', 미래, TODAY), null);
+  const ours = [{ key: '1', name: '나갈사람', careers: [] }];
+  const live = [{ srl: '1', name: '나갈사람', careers: [] }];
+  assert.notEqual(D.memberStatus(ours, live, 미래, TODAY)[0].status, 'toRemove',
+    '명부 딱지와 대조 딱지가 서로 다른 퇴사 기준을 쓰고 있습니다');
+});
+
+test('★ 퇴사일이 없고 「퇴사」 표시만 있어도 딱지를 붙인다 (공개 명부 폴백)', () => {
+  const m = plain(D.rosterMark('나간사람', [{ name: '나간사람', left: true }], TODAY));
+  assert.equal(m.kind, 'left');
+  assert.match(m.label, /퇴사/);
+  assert.ok(m.label.indexOf('undefined') < 0, '없는 날짜를 지어냈습니다');
+});
+
+test('★ 명부에 없는 사람은 «없다고» 밝힌다 — 조용히 넘기지 않는다', () => {
+  const m = plain(D.rosterMark('조현범', [재직], TODAY));
+  assert.equal(m.kind, 'none');
+  assert.match(m.label, /명부에 없음/);
+  assert.match(m.detail, /판단/, '왜 입·퇴사 판단을 못 했는지 안 적혀 있습니다');
+});
+
+test('★ 동명이인은 퇴사로 단정하지 않고 그 사실을 밝힌다', () => {
+  const staff = [{ name: '홍길동', leftAt: '2020-01-01' }, { name: '홍길동', leftAt: '' }];
+  const m = plain(D.rosterMark('홍길동', staff, TODAY));
+  assert.notEqual(m.kind, 'left', '누가 진짜인지 모르는데 퇴사로 단정했습니다');
+  assert.match(m.detail, /동명이인|둘 이상/);
+});
+
+test('★ 명부를 «못 읽었으면» 명부 딱지를 지어내지 않는다', () => {
+  assert.equal(D.rosterMark('권형하', null, TODAY), null);
+  assert.equal(D.rosterMark('권형하', undefined, TODAY), null);
+});
+
+test('★ 「남기기」 예외 판정을 화면과 부품이 «한 곳»에서 본다', () => {
+  // 사유가 빈 예외는 예외가 아니다(2차 설계 §4). 화면이 이 판단을 다시 만들면 서로 다른 답을 낸다.
+  assert.equal(D.keepOnSiteReason({ keepOnSite: { at: 'x', by: 'y', why: '  ' } }), '');
+  assert.equal(D.keepOnSiteReason({}), '');
+  assert.match(D.keepOnSiteReason({ keepOnSite: { why: '세종지사장' } }), /세종지사장/);
+});
