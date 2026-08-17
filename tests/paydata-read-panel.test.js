@@ -138,7 +138,9 @@ test('★ 켠 뒤에도 무엇이 나가는지 코드에 적혀 있다', () => {
      아니게 됐다. 이제 지켜야 할 것은 **무엇이 있고 무엇이 아직 없는지**다 —
      기계가 미리 칠해 주는 줄 알고 눈으로 안 훑으면 그대로 나간다. */
   assert.match(head[0], /주민번호를 가리는 화면/, '가리는 장치가 있다는 것이 안 적혀 있습니다');
-  assert.match(head[0], /사람이 손으로 칠한다/, '아직 기계가 없다는 것이 안 적혀 있습니다');
+  /* 2026-08-17 2차로 기계가 인쇄체를 찾아 준다. 이제 지켜야 할 것은 **기계가
+     못 하는 것**이다 — 손글씨는 사람이 칠해야 한다. */
+  assert.match(head[0], /손글씨는 사람이 칠해야 한다/, '기계가 못 하는 것이 안 적혀 있습니다');
 });
 
 test('★ 넓은 판은 판독하는 서류일 때만 — 명함처럼 좁은 것까지 반으로 가르지 않는다', () => {
@@ -238,6 +240,9 @@ function loadRun(appState, opts) {
     'App.render = function(){};',
     WAGE_FLAG[0], NOTICE_FLAG[0],       // doRead 가 이 상수들을 본다 — 안 넣으면 터진다
     DOLLAR[0],
+    /* 기계 찾기(2차)는 startMask 가 뒤에서 부른다 — 여기서 보려는 것은 판독 흐름이라
+       빈 것으로 세워 둔다. 기계 찾기 자체는 tests/paydata-mask-auto.test.js 가 본다. */
+    'function maskAutoFind(){}',
     cut('esc'), cut('canWrite'), cut('findRow'), cut('isImageRec'), cut('startMask'), cut('maskConfirm'), cut('runRead'), cut('dupNames'), cut('blankNames'), cut('rowMarkClass'), cut('valueRowsHtml'),
     cut('editVal'), cut('refreshIffyMarks'), cut('addValRow'), cut('startManualRows'),
     cut('delValRow'), cut('delValItem'),
