@@ -222,7 +222,14 @@ function loadRun(appState, opts) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   new vm.Script(store, { filename: 'store.js' }).runInContext(sandbox);
+  /* ⚠ 2026-08-17 — 가림의 «긋기·사본 만들기»가 공용 층으로 옮겨 갔다
+     (사진첩과 나눠 쓴다). maskConfirm 이 그 층을 부르므로 함께 실어야 한다. */
+  ['pu-rrn-mask.js', 'pu-rrn-mask-ui.js'].forEach(function (f) {
+    new vm.Script(fs.readFileSync(path.join(R, 'js', f), 'utf8'), { filename: f }).runInContext(sandbox);
+  });
   new vm.Script([
+    'const PuRrnMaskUi = window.PuRrnMaskUi;',
+    'PuRrnMaskUi.init({ state: function(){ return App.maskState; }, render: function(){ App.render(); } });',
     'const S = window.PuPaydataStore;',
     'S.init({uid:"U1", storage:{ref:function(){return{getDownloadURL:function(){return Promise.resolve("https://x/f");}};}},'
       + ' fetch:function(){return Promise.resolve({ok:true,arrayBuffer:function(){return Promise.resolve(new ArrayBuffer(2));}});}});',

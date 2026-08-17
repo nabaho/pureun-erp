@@ -79,32 +79,36 @@ test('★ 가림 계산 층이 실려 있다 — 판 번호와 함께', () => {
 
 /* 드래그는 화면 요소가 있어야 재 볼 수 있다 — 사진이 보이는 크기를 알아야
    화면 좌표를 비율로 바꿀 수 있기 때문이다. */
+/* ⚠ 2026-08-17 — 긋기·사본 만들기가 **공용 층(js/pu-rrn-mask-ui.js)으로 옮겨 갔다**
+   (사진첩도 같은 가림이 필요해졌는데, 복사하면 두 벌이 되어 한쪽만 고쳐진다).
+   그래서 여기서는 **어디서 불러오는지만** 바꿨다 — 아래 판정들은 한 글자도 안 건드렸다.
+   급여데이터함이 그 층을 제대로 이어 붙였는지는 맨 아래 「공용 층 배선」이 따로 본다. */
 function loadDrag(maskState) {
   const els = {
     maskImg: { getBoundingClientRect: () => ({ left: 100, top: 50, width: 400, height: 200 }) },
     maskPreview: { style: {} }
   };
-  const mask = fs.readFileSync(path.join(R, 'js', 'pu-rrn-mask.js'), 'utf8');
-  const sandbox = { window: {}, console, document: { getElementById: id => els[id] || null } };
+  const sandbox = { window: {}, console, document: { getElementById: id => els[id] || null }, Math };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  new vm.Script(mask, { filename: 'pu-rrn-mask.js' }).runInContext(sandbox);
+  ['pu-rrn-mask.js', 'pu-rrn-mask-ui.js'].forEach(function (f) {
+    new vm.Script(fs.readFileSync(path.join(R, 'js', f), 'utf8'), { filename: f }).runInContext(sandbox);
+  });
   new vm.Script([
-    'const PuRrnMask = window.PuRrnMask;',
-    'const $ = id => document.getElementById(id);',
+    /* 공용 층은 window 에 붙는다(화면과 같다) — 여기서 꺼내 쓴다 */
+    'const PuRrnMaskUi = window.PuRrnMaskUi;',
     'const App = ' + JSON.stringify({
       maskState: Object.assign({ status: 'ready', url: 'data:x', boxes: [], err: '', autoNote: '' }, maskState)
     }) + ';',
     'App.render = function(){ __renders += 1; };',
     'var __renders = 0;',
-    /* ⚠ 잘라 온 함수가 쓰는 **다른 함수와 변수**도 함께 넣어야 한다 —
-       안 넣으면 ReferenceError 로 터진다(이 저장소에서 여러 번 겪었다). */
-    'let maskDrag = null;',
-    cut('maskViewRect'), cut('maskShowPreview'), cut('maskHidePreview'),
-    cut('maskDown'), cut('maskMove'), cut('maskUp'), cut('maskCancelDrag'), cut('maskFinishDrag'),
-    cut('maskDelBox'), cut('maskUndo'), cut('maskClear'),
-    'window.App = App; window.maskDown = maskDown; window.maskMove = maskMove; window.maskUp = maskUp;',
-    'window.maskCancelDrag = maskCancelDrag; window.maskDelBox = maskDelBox; window.maskUndo = maskUndo; window.maskClear = maskClear;',
+    /* 화면이 붙이는 것과 **같은 방식**으로 붙인다 — 여기만 다르게 붙이면
+       화면에서 안 도는 것을 검사가 못 잡는다. */
+    'PuRrnMaskUi.init({ state: function(){ return App.maskState; }, render: function(){ App.render(); } });',
+    'window.App = App;',
+    'window.maskDown = PuRrnMaskUi.down; window.maskMove = PuRrnMaskUi.move; window.maskUp = PuRrnMaskUi.up;',
+    'window.maskCancelDrag = PuRrnMaskUi.cancelDrag; window.maskDelBox = PuRrnMaskUi.delBox;',
+    'window.maskUndo = PuRrnMaskUi.undo; window.maskClear = PuRrnMaskUi.clear;',
     'window.__renders = function(){ return __renders; };'
   ].join('\n'), { filename: 'drag.js' }).runInContext(sandbox);
   return { W: sandbox.window, els };
@@ -212,18 +216,22 @@ function loadConfirm(boxes) {
       getBoundingClientRect: () => ({ left: 0, top: 0, width: 400, height: 200 }) }
   };
   const sandbox = {
-    window: {}, console,
+    window: {}, console, Math,
     document: { getElementById: id => els[id] || null },
     alert: () => {},
+    /* 가림 계산은 여기서 가짜로 둔다 — 이 검사가 보는 것은 «무엇이 판독기로 가는가»다 */
     PuRrnMask: {
       maskToDataUrl: (img, bs) => { got.masked = bs.slice(); return 'data:image/jpeg;base64,MASKED'; }
     }
   };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  /* 사본 만들기도 공용 층으로 옮겨 갔다(2026-08-17) — 화면과 같은 방식으로 붙인다 */
+  new vm.Script(fs.readFileSync(path.join(R, 'js', 'pu-rrn-mask-ui.js'), 'utf8'),
+    { filename: 'pu-rrn-mask-ui.js' }).runInContext(sandbox);
   new vm.Script([
     'const $ = id => document.getElementById(id);',
-    'const PuRrnMask = globalThis.PuRrnMask;',
+    'const PuRrnMaskUi = window.PuRrnMaskUi;',
     'const S = { readKindFor: function(){ return "notice"; } };',
     'const App = ' + JSON.stringify({
       viewerId: 'a1',
@@ -234,6 +242,7 @@ function loadConfirm(boxes) {
     'App.render = function(){};',
     'function runRead(rk, dataUrl){ __got = dataUrl; }',
     'var __got = null;',
+    'PuRrnMaskUi.init({ state: function(){ return App.maskState; }, render: function(){ App.render(); } });',
     cut('findRow'), cut('maskConfirm'),
     'window.App = App; window.maskConfirm = maskConfirm; window.__got = function(){ return __got; };'
   ].join('\n'), { filename: 'confirm.js' }).runInContext(sandbox);

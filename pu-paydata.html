@@ -32,6 +32,8 @@
        서로 달라진다. tests/photos-doc-title.test.js 가 두 파일을 함께 지킨다. -->
 <script src="js/pu-doc-read.js?v=10"></script>
 <script src="js/pu-rrn-mask.js?v=1"></script>
+<!-- 긋기·사본 만들기 — 사진첩과 나눠 쓴다(2026-08-17 「안 1」) -->
+<script src="js/pu-rrn-mask-ui.js?v=1"></script>
 <script src="js/pu-appbar.js"></script>
 <!-- 로그아웃·사람 바뀜을 모든 프로그램에 퍼뜨린다 (2026-08-16) — 로그인 화면·공개 화면에는 넣지 않는다 -->
 <script src="js/pu-authsync.js?v=1"></script>
@@ -2705,17 +2707,15 @@ function maskConfirm() {
   if (!rec) return;
   const rk = S.readKindFor(rec.kind);
   if (!rk) return;
-  let dataUrl = ms.url;
-  if (ms.boxes.length) {
-    try { dataUrl = PuRrnMask.maskToDataUrl($('maskImg'), ms.boxes); }
-    catch (e) {
-      /* 못 만들었으면 **원본을 보내지 않는다.** 가리려던 것을 못 가린 채
-         보내는 것이 이 기능이 막으려던 바로 그 일이다. */
-      alert('가린 사진을 만들지 못했습니다 — ' + ((e && e.message) || e) + '\n판독하지 않았습니다.');
-      return;
-    }
+  let dataUrl;
+  try { dataUrl = PuRrnMaskUi.maskedDataUrl(); }
+  catch (e) {
+    /* 못 만들었으면 **원본을 보내지 않는다.** 가리려던 것을 못 가린 채
+       보내는 것이 이 기능이 막으려던 바로 그 일이다. */
+    alert('가린 사진을 만들지 못했습니다 — ' + ((e && e.message) || e) + '\n판독하지 않았습니다.');
+    return;
   }
-  App.maskState = { status: 'idle', url: '', boxes: [], err: '', autoNote: '' };
+  App.maskState = PuRrnMaskUi.blank();
   runRead(rk, dataUrl);
 }
 window.maskConfirm = maskConfirm;
@@ -3034,94 +3034,23 @@ function maskPanelHtml() {
     + '</div></div>';
 }
 
-/* ── 긋기 ──
-   ⚠ 움직이는 동안 App.render() 를 부르면 안 된다. 다시 그리면 지금 손이 얹혀
-   있는 요소가 통째로 새로 만들어져 드래그가 끊긴다(판독 표에서 글자마다 다시
-   그리지 않는 것과 같은 까닭). 그래서 움직이는 동안에는 미리 보이는 칸 하나만
-   손보고, 손을 뗄 때 한 번 다시 그린다. */
-let maskDrag = null;
-
-/* 사진이 **화면에 보이는 크기** — 원본 크기가 아니다. 비율로 바꾸는 데 쓴다. */
-function maskViewRect() {
-  const img = $('maskImg');
-  return img ? img.getBoundingClientRect() : null;
-}
-
-function maskDown(ev) {
-  const r = maskViewRect();
-  if (!r) return;
-  ev.preventDefault();
-  /* ⚠ 마지막으로 움직인 자리(x1·y1)를 따로 기억한다. 브라우저가 도중에 끊으면
-     (pointercancel) 그 순간 좌표는 시작점 언저리로 돌아와 있어, 그것만 믿으면
-     사람이 분명히 그은 사각형이 「너무 작다」며 버려진다 — 그래서 아무 칸도
-     안 생겼다(대표 지적 2026-08-16). */
-  const x0 = ev.clientX - r.left, y0 = ev.clientY - r.top;
-  maskDrag = { x0: x0, y0: y0, x1: x0, y1: y0, moved: false };
-  try { ev.currentTarget.setPointerCapture(ev.pointerId); } catch (_) { /* 손가락 못 잡아도 그리기는 된다 */ }
-  maskShowPreview(x0, y0, x0, y0);
-}
-
-function maskMove(ev) {
-  if (!maskDrag) return;
-  const r = maskViewRect();
-  if (!r) return;
-  ev.preventDefault();
-  maskDrag.x1 = ev.clientX - r.left;
-  maskDrag.y1 = ev.clientY - r.top;
-  maskDrag.moved = true;
-  maskShowPreview(maskDrag.x0, maskDrag.y0, maskDrag.x1, maskDrag.y1);
-}
-
-/* 손을 뗐다 — 뗀 자리가 가장 정확하다. */
-function maskUp(ev) {
-  const r = maskViewRect();
-  if (!r || !maskDrag) { maskFinishDrag(null, null); return; }
-  maskFinishDrag(ev.clientX - r.left, ev.clientY - r.top);
-}
-
-/* 브라우저가 끊었다 — 그 순간 좌표는 못 믿으니 **마지막으로 움직인 자리**를 쓴다.
-   막는 장치(draggable="false")가 실패해도 사람이 그은 것은 이 길로 남는다. */
-function maskCancelDrag() {
-  const d = maskDrag;
-  maskFinishDrag(d && d.moved ? d.x1 : null, d && d.moved ? d.y1 : null);
-}
-
-function maskFinishDrag(x1, y1) {
-  const d = maskDrag;
-  maskDrag = null;
-  maskHidePreview();
-  if (!d) return;
-  const r = maskViewRect();
-  if (!r) return;
-  if (x1 == null || y1 == null) return;   // 움직인 적이 없다 — 그냥 누르기만 했다
-  const box = PuRrnMask.rectFromDrag(d.x0, d.y0, x1, y1, r.width, r.height);
-  if (!box) return;                       // 점만 찍은 것은 사각형이 아니다
-  box.by = 'me';
-  App.maskState.boxes.push(box);
-  App.render();
-}
-
-function maskShowPreview(x0, y0, x1, y1) {
-  const el = $('maskPreview');
-  const r = maskViewRect();
-  if (!el || !r) return;
-  const left = Math.min(x0, x1), top = Math.min(y0, y1);
-  el.style.display = '';
-  el.style.left = (left / r.width * 100) + '%';
-  el.style.top = (top / r.height * 100) + '%';
-  el.style.width = (Math.abs(x1 - x0) / r.width * 100) + '%';
-  el.style.height = (Math.abs(y1 - y0) / r.height * 100) + '%';
-}
-
-function maskHidePreview() {
-  const el = $('maskPreview');
-  if (el) el.style.display = 'none';
-}
-
-/* 기계가 칠한 것도 지울 수 있다 — 잘못 잡는 일이 실제로 있다(계좌번호 등). */
-function maskDelBox(i) { App.maskState.boxes.splice(i, 1); App.render(); }
-function maskUndo() { App.maskState.boxes.pop(); App.render(); }
-function maskClear() { App.maskState.boxes = []; App.render(); }
+/* ── 긋기 ── **공용 층으로 옮겼다**(대표 결정 2026-08-17 「안 1」).
+   사진첩에도 같은 가림이 필요해졌는데, 복사하면 두 벌이 되어 한쪽만 고쳐진다 —
+   가림은 틀리면 **주민번호가 그대로 나가는** 기능이라 특히 위험하다.
+   ⚠ 옮긴 것은 «계산·긋기»뿐이다. 화면 모양(HTML·CSS)은 두 앱이 서로 달라 그대로 뒀다.
+   ⚠ 손잡이 이름과 요소 id(maskWrap·maskImg·maskPreview)는 그대로다 —
+     화면 HTML 을 한 글자도 안 고쳐도 되게 하려는 것이다. */
+PuRrnMaskUi.init({
+  state: function () { return App.maskState; },
+  render: function () { App.render(); }
+});
+const maskDown = PuRrnMaskUi.down;
+const maskMove = PuRrnMaskUi.move;
+const maskUp = PuRrnMaskUi.up;
+const maskCancelDrag = PuRrnMaskUi.cancelDrag;
+const maskDelBox = PuRrnMaskUi.delBox;
+const maskUndo = PuRrnMaskUi.undo;
+const maskClear = PuRrnMaskUi.clear;
 
 /* 가림을 그만두면 판독도 안 한다 — 안 가린 채로 새는 길을 두지 않는다. */
 function maskCancel() {
