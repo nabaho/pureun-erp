@@ -121,21 +121,27 @@ test('after 를 안 주면 예전처럼 «앞»에 꽂는다 (부르는 곳이 �
   assert.deepEqual(plain(c.reorderList(L, 'a', 'c')), plain(c.reorderList(L, 'a', 'c', false)));
 });
 
-/* ── 앞/뒤를 «어떻게» 정하는가 — 세로는 아래 절반, 가로(메인 탭)는 오른쪽 절반이 뒤 ── */
+/* ── 앞/뒤를 «어떻게» 정하는가 — 옆줄 폴더(세로)는 아래 절반, 윗줄 탭 칩(가로)은
+   오른쪽 절반이 뒤다.
+   ⚠ 2026-08-17: ＃탭(coftab)이 옆줄에서 윗줄 탭 칩으로 옮겨 가며 «축이 바뀌었다».
+     축을 안 따라 옮기면 가로로 늘어선 칩을 위/아래로 재게 되어, 눈에 보이는
+     세로선(#pcErpTabs .ord-dragover)과 실제로 놓이는 자리가 어긋난다. ── */
 const RECT = { left:100, top:200, width:200, height:40 };
 
-test('★ 세로 목록은 아래 절반에 놓으면 뒤, 위 절반이면 앞이다', () => {
+test('★ 세로 목록(옆줄 폴더)은 아래 절반에 놓으면 뒤, 위 절반이면 앞이다', () => {
   const c = loadReorder();
   assert.equal(c.ordIsAfter('group',    RECT, 150, 205), false, '위 절반은 앞');
   assert.equal(c.ordIsAfter('group',    RECT, 150, 235), true,  '아래 절반은 뒤');
   assert.equal(c.ordIsAfter('cofolder', RECT, 150, 235), true);
-  assert.equal(c.ordIsAfter('coftab',   RECT, 150, 235), true);
 });
 
-test('★ 가로 목록(메인 탭)은 오른쪽 절반에 놓으면 뒤다 — 축이 다르다', () => {
+test('★ 가로 목록(윗줄 탭 칩)은 오른쪽 절반에 놓으면 뒤다 — 축이 다르다', () => {
   const c = loadReorder();
   assert.equal(c.ordIsAfter('view', RECT, 110, 220), false, '왼쪽 절반은 앞');
   assert.equal(c.ordIsAfter('view', RECT, 290, 220), true,  '오른쪽 절반은 뒤');
+  /* 기업 상세의 ＃탭도 같은 윗줄에 있으므로 같은 축이어야 한다 */
+  assert.equal(c.ordIsAfter('coftab', RECT, 110, 220), false, '＃탭 왼쪽 절반은 앞');
+  assert.equal(c.ordIsAfter('coftab', RECT, 290, 220), true,  '＃탭 오른쪽 절반은 뒤');
   /* 같은 좌표라도 세로 목록이면 축이 달라 답이 다르다 — 갈래로 축을 정한다는 뜻 */
   assert.equal(c.ordIsAfter('group', RECT, 290, 220), false);
 });

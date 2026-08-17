@@ -14,6 +14,14 @@ function sideBlock(){
   assert.ok(at > 0 && end > at, 'renderPCSide 를 찾지 못했습니다');
   return source.slice(at, end);
 }
+/* 기업 상세의 ＃탭 줄 — 2026-08-17 대표 지시로 옆줄에서 «윗줄 탭 칩»으로 옮겼다.
+   그래서 ＃탭의 드래그 배선도 옆줄(sideBlock)이 아니라 여기서 본다. */
+function coTabsBlock(){
+  const at = source.indexOf('function renderCoFTabsHtml');
+  const end = source.indexOf('\nfunction ', at + 20);
+  assert.ok(at > 0 && end > at, 'renderCoFTabsHtml 을 찾지 못했습니다 — ＃탭 줄이 사라졌다');
+  return source.slice(at, end);
+}
 
 test('명함·사업자 폴더 줄이 순서 드래그를 건다', () => {
   const s = sideBlock();
@@ -46,17 +54,21 @@ test('★ 대표가 아니면 기업 상세 폴더 줄에 draggable 이 안 붙�
     ADMIN_GATE, '기업 상세 폴더 줄의 draggable 이 state.isAdmin 으로 갈리지 않는다');
 });
 
-test('★ 대표가 아니면 폴더 안 ＃탭 줄에 draggable 이 안 붙는다', () => {
-  assert.match(draggableOfRow(sideBlock(), "onOrdDragStart(event,'coftab'", '＃탭'),
-    ADMIN_GATE, '＃탭 줄의 draggable 이 state.isAdmin 으로 갈리지 않는다');
+test('★ 대표가 아니면 폴더 안 ＃탭 칩에 draggable 이 안 붙는다', () => {
+  assert.match(draggableOfRow(coTabsBlock(), "onOrdDragStart(event,'coftab'", '＃탭'),
+    ADMIN_GATE, '＃탭 칩의 draggable 이 state.isAdmin 으로 갈리지 않는다');
 });
 
-test('★ 옆줄에서 끌 수 있는 줄은 셋뿐이고 셋 다 대표로 갈린다', () => {
-  /* 줄이 하나 더 늘면 여기서 걸린다 — 새 줄도 게이트를 못 박으라는 뜻이다 */
+test('★ 옆줄에서 끌 수 있는 줄은 둘뿐이고 둘 다 대표로 갈린다', () => {
+  /* 줄이 하나 더 늘면 여기서 걸린다 — 새 줄도 게이트를 못 박으라는 뜻이다.
+     ⚠ 2026-08-17 전에는 셋이었다(＃탭이 옆줄에 있었다). ＃탭이 윗줄로 옮겨 가
+       옆줄에 남은 것은 명함·사업자 폴더와 기업 상세 폴더 둘뿐이다. */
   const s = sideBlock();
   const all = s.match(/draggable=[^\n]*/g) || [];
-  assert.equal(all.length, 3, '옆줄의 draggable 줄 수가 셋이 아니다: '+all.length);
+  assert.equal(all.length, 2, '옆줄의 draggable 줄 수가 둘이 아니다: '+all.length);
   all.forEach(line => assert.match(line, ADMIN_GATE, '대표로 안 갈리는 줄이 있다: '+line));
+  assert.ok(s.indexOf("onOrdDragStart(event,'coftab'") < 0,
+    '＃탭이 옆줄에 되살아났다 — 탭은 윗줄(#pcErpTabs)에 있어야 한다(대표 지시 2026-08-17)');
 });
 
 test('명함을 폴더로 끌어 넣는 기존 기능이 그대로다', () => {
@@ -103,8 +115,8 @@ test('「📋 전체」 칩은 끌 수 없다 — 저장된 탭이 아니라 늘
     '전체 칩에 드래그가 붙었다 — 저장할 자리가 없어 순서를 바꿀 수 없다');
 });
 
-test('폴더 안 ＃탭이 순서 드래그를 건다 — 부모 폴더를 scope 로 넘긴다', () => {
-  const s = sideBlock();
+test('폴더 안 ＃탭 칩이 순서 드래그를 건다 — 부모 폴더를 scope 로 넘긴다', () => {
+  const s = coTabsBlock();
   assert.match(s, /onOrdDragStart\(event,\s*'coftab'/, '＃탭에 onOrdDragStart 가 없다');
   assert.match(s, /onOrdDrop\(event,\s*'coftab'/, '＃탭에 onOrdDrop 이 없다');
   /* scope 를 안 넘기면 다른 폴더의 탭끼리 섞인다 */
@@ -112,11 +124,13 @@ test('폴더 안 ＃탭이 순서 드래그를 건다 — 부모 폴더를 scope
     '＃탭 드래그에 부모 폴더(scope)가 안 넘어간다');
 });
 
-test('＃탭의 「＃ 전체」 줄은 끌 수 없다 — 저장된 탭이 아니다', () => {
-  const s = sideBlock();
+test('＃탭의 「＃ 전체」 칩은 끌 수 없다 — 저장된 탭이 아니다', () => {
+  const s = coTabsBlock();
   const allAt = s.indexOf("pickCoFTab('')");
-  assert.ok(allAt >= 0, '＃ 전체 줄을 찾지 못했습니다');
-  const lineEnd = s.indexOf('`;', allAt);
-  assert.ok(s.slice(allAt, lineEnd).indexOf('onOrdDragStart') < 0,
-    '＃ 전체 줄에 드래그가 붙었다');
+  assert.ok(allAt >= 0, '＃ 전체 칩을 찾지 못했습니다');
+  /* 「＃ 전체」 칩부터 탭 목록이 시작되는 자리까지가 그 칩의 몫이다 */
+  const mapAt = s.indexOf('coFTabList(f).map');
+  assert.ok(mapAt > allAt, '탭 목록을 찾지 못했습니다');
+  assert.ok(s.slice(allAt, mapAt).indexOf('onOrdDragStart') < 0,
+    '＃ 전체 칩에 드래그가 붙었다 — 저장할 자리가 없어 순서를 바꿀 수 없다');
 });
