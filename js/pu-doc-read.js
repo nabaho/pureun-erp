@@ -121,8 +121,8 @@
        서류는 서류 자체를 찍은 것이고, 대화는 서류에 **대해 말한** 것이다. */
     '\n⚠ 대화 캡처가 급여·계약 이야기를 담고 있어도 kind=chat 입니다. 서류 자체를 찍은 것만 payslip·contract 입니다.' +
     '\nkind=card 이면 키: name(이름), company(회사명), dept(부서), title(직책), mobile(휴대폰), tel(직통전화), fax(개인팩스), email(이메일), companyTel(회사 대표번호), companyFax(회사 팩스), companyAddr(회사 주소), website(홈페이지), address(개인 주소), memo(기타 정보), pairs(명함에 적힌 모든 줄 — 아래 규칙).' +
-    '\nkind=bizreg 이면 키: company(상호/법인명), ceo(대표자), bizno(사업자등록번호), corpno(법인등록번호), openDate(개업연월일), bizType(업태), bizItem(종목), companyTel(대표번호), companyFax(팩스), address(사업장 소재지), memo(기타), pairs(문서의 모든 칸 — 아래 규칙).' +
-    '\nkind=sme 이면 키: company(상호/법인명), bizno(사업자등록번호), ceo(대표자), smeType(기업규모 — 소기업/중기업/중견기업 등), issueNo(발급번호), issueDate(발급일), expiry(유효기간 만료일), industry(주업종), pairs(문서의 모든 칸 — 아래 규칙).' +
+    '\nkind=bizreg 이면 키: docName(문서 제목 그대로 — 아래 【제목】 규칙), company(상호/법인명), ceo(대표자), bizno(사업자등록번호), corpno(법인등록번호), openDate(개업연월일), bizType(업태), bizItem(종목), companyTel(대표번호), companyFax(팩스), address(사업장 소재지), memo(기타), pairs(문서의 모든 칸 — 아래 규칙).' +
+    '\nkind=sme 이면 키: docName(문서 제목 그대로 — 아래 【제목】 규칙), company(상호/법인명), bizno(사업자등록번호), ceo(대표자), smeType(기업규모 — 소기업/중기업/중견기업 등), issueNo(발급번호), issueDate(발급일), expiry(유효기간 만료일), industry(주업종), pairs(문서의 모든 칸 — 아래 규칙).' +
     /* 급여서류는 **금액을 읽지 않는다.** 어느 회사·언제 것인지만 담는다.
        임금 금액은 사람마다 다른 민감정보인데, 사진첩은 그것을 어디에도 쓰지 않으므로
        읽어 둘 이유가 없다. 읽어서 담으면 클라우드에 한 벌 더 쌓이는 위험만 는다. */
@@ -178,13 +178,32 @@
     ' k 는 **문서에 적힌 이름 그대로** 쓰세요(예: "업체명", "휴대폰번호" — "상호"·"휴대폰"으로 바꾸지 마세요).' +
     ' 빈 칸은 건너뛰세요. 체크 표시 칸은 v 에 선택된 것을 적으세요(예: "있음 (푸른 노무법인 / 권형하)").' +
     ' 급여서류(payslip)·근태표(timesheet)·대화(chat)·회의사진(meeting)에는 pairs 를 담지 마세요.' +
-    '\nkind=other 이면 kind 만 담으세요.' +
+    /* 처음 보는 서류도 **제목만은 남긴다**(대표 지시 2026-08-15) — 갈래를 못 가려도
+       제목이 남으면 나중에 찾을 수 있고, 화면이 제목별로 묶어 새 서식을 알아볼 수 있다.
+       예전에는 kind 만 담으라고 해서, 못 가린 서류는 아무 실마리도 없이 쌓였다. */
+    '\nkind=other 이면 kind 와 docName(문서 제목이 보이면 그대로 — 아래 【제목】 규칙. 서류가 아니어서 제목이 없으면 빈 문자열) 만 담으세요.' +
     /* 한글 우선(2026-08-07 대표 지시) — 명함은 같은 내용을 한글·영문으로 나란히
        적어 두는 일이 많다. 그때 영문을 담으면 **명함첩·업체관리에서 한글로 찾는
        사람이 못 찾고**, 같은 회사가 두 벌로 쌓인다. 그래서 읽을 수 있으면 한글이다.
        ⚠ 이메일·홈페이지까지 한글로 바꾸라는 말이 아니다 — 그건 원래 영문이다.
        ⚠ 없는 한글을 지어내지 말 것 — 영문 이름을 한글로 옮겨 적으면 실제와 다른
           회사명이 만들어져 업체관리에 잘못 들어간다. */
+    /* 【제목】 규칙(대표 지시 2026-08-15) — "사업자등록증명 도 제목을 정확하게
+       인지하게해라. 모든 서식에 제목을 찾고 제목에 따라 정렬하는 프로세스로 만들어라."
+       ⚠ 실사례: 국세청 「사업자등록증명」(증명원)을 올렸더니 그냥 「사업자등록증」으로
+         읽혔다. 둘은 다른 서류인데 갈래 이름만 보여 구분할 길이 없었다.
+       ⚠ 갈래(kind)는 일부러 안 나눈다 — 증명원에도 상호·대표자·사업자번호가 똑같이
+         들어 있어 업체관리·명함첩으로 가는 길은 그대로여야 한다. 가르는 것은 **제목**이다.
+       ⚠ 그래서 「비슷한 이름으로 고쳐 적는 것」을 막는 것이 이 규칙의 전부다.
+         모델이 아는 이름(사업자등록증)으로 끌어당기면 이 기능이 통째로 무의미해진다. */
+    '\n【제목】 docName 에는 **문서 맨 위에 적힌 제목을 글자 그대로** 옮기세요.' +
+    ' 줄여 쓰거나, 늘려 쓰거나, 더 익숙한 이름으로 바꾸지 마세요.' +
+    ' 예: 「사업자등록증명」은 「사업자등록증」이 아닙니다 — 적힌 그대로 사업자등록증명 입니다.' +
+    ' 「중견기업확인서」를 「중소기업확인서」로 바꾸지 마세요.' +
+    ' 제목 옆·아래에 괄호로 딸린 말(예: (법인사업자))은 docName 에 넣지 말고 pairs 에만 담으세요.' +
+    ' 제목이 여러 줄로 나뉘어 적혀 있으면 한 줄로 이어 붙이고, 글자 사이 띄어쓰기는 정리하세요' +
+    '(예: "사 업 자 등 록 증 명" → 사업자등록증명).' +
+    ' 문서에 제목이 안 보이면 지어내지 말고 빈 문자열로 두세요.' +
     '\n【한글 우선】 한글과 영문이 함께 적힌 명함·서류는 **한글 표기를 담으세요.**' +
     ' 이름·회사명·부서·직책·주소가 두 언어로 나란히 있으면 한글 쪽을 고릅니다' +
     '(예: "Pureun Labor Law Firm / 푸른노무법인" → 푸른노무법인,' +
@@ -221,7 +240,7 @@
      'other' 로 굳은 사진들이었다. 사람이 한 장씩 「다시 판독」을 눌러야만
      풀리는 상태는 자동 분류라고 할 수 없다.
      ⚠ 종류를 늘리거나 프롬프트를 고치면 이 번호를 반드시 올릴 것. */
-  var READ_VERSION = 8;   // …/ 7 = 계약서에 위임사무·부가세·상대 연락처 / 8 = 문서 차례 그대로(pairs 를 모든 서류에)
+  var READ_VERSION = 9;   // …/ 7 = 계약서에 위임사무·부가세·상대 연락처 / 8 = 문서 차례 그대로(pairs 를 모든 서류에) / 9 = 모든 서류에 제목(docName), 사업자등록증명을 사업자등록증으로 줄여 쓰지 않기
 
   function fail(message) {
     return { kind: 'other', fields: {}, bizNoOk: null, ntsChecked: false, ntsState: null, error: message };
@@ -360,9 +379,8 @@
     };
   }
 
-  /* 급여표(급여명세서·임금대장) 한 장(또는 여러 쪽)을 사람별 금액까지 판독한다.
-     read() 와 같은 모델·재시도·키 조달 배관을 그대로 쓰되, 프롬프트와 결과 꼴만 다르다. */
-  function readWageTable(dataUrl) {
+  /* 프롬프트만 갈아 끼우고 나머지(모델·재시도·키 조달·결과 다듬기)는 함께 쓴다. */
+  function readPairsWith(prompt, dataUrl) {
     if (!deps.fetch) return Promise.resolve(wageFail('판독 준비가 되지 않았습니다'));
     var imgs = (Array.isArray(dataUrl) ? dataUrl : [dataUrl])
       .map(function (u) { return String(u || '').split(',')[1] || ''; })
@@ -375,15 +393,11 @@
       var parts = imgs.map(function (b64) {
         return { inline_data: { mime_type: 'image/jpeg', data: b64 } };
       });
-      parts.push({ text: WAGE_PROMPT + (imgs.length > 1 ? MULTI_NOTE : '') });
-      var body = {
-        contents: [{ parts: parts }],
-        generationConfig: { temperature: 0 }
-      };
+      parts.push({ text: prompt + (imgs.length > 1 ? MULTI_NOTE : '') });
       return askAny(key, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        body: JSON.stringify({ contents: [{ parts: parts }], generationConfig: { temperature: 0 } })
       }).then(function (j) {
         var parsed = parseReply(j);
         if (!parsed) throw new Error('AI가 알아볼 수 없는 답을 보냈습니다');
@@ -392,6 +406,28 @@
         return wageFail((e && e.message) || String(e));
       });
     });
+  }
+
+  /* 급여표(급여명세서·임금대장) 한 장(또는 여러 쪽)을 사람별 금액까지 판독한다.
+     read() 와 같은 모델·재시도·키 조달 배관을 그대로 쓰되, 프롬프트와 결과 꼴만 다르다. */
+  function readWageTable(dataUrl) { return readPairsWith(WAGE_PROMPT, dataUrl); }
+
+  /* ── 알림 캡처 판독 (급여데이터함 전용, 2026-08-15) ──
+     문자·카톡으로 오는 「누가 며칠자 입사」·「OO씨 수당 얼마」를 읽는다.
+     표가 아니라 줄글이라 기존 판독기로는 안 된다.
+     결과 모양은 readWageTable 과 같게 맞춘다 — 부르는 쪽이 하나로 다룬다. */
+  var NOTICE_PROMPT =
+    '이 이미지는 급여 업무 관련 알림(문자·카카오톡·메일) 캡처입니다. 사람마다 무엇이 바뀌는지 JSON으로만 답하세요.' +
+    '\n키: company(사업장·회사명이 보이면), period(귀속 연월 — 2026-08 형식, 없으면 빈 문자열), docName(무슨 알림인지 한 마디 — 예 입사 통보·수당 변경), rows(사람별 줄 — 아래 규칙).' +
+    '\nrows 규칙: [{"name":"이름","pairs":[{"item":"바뀌는 것","value":"값"}]}] 배열입니다.' +
+    ' item 은 무엇이 바뀌는지입니다 — 예 입사일·퇴사일·기본급·식대·직책수당.' +
+    ' value 는 적힌 그대로 담으세요(날짜는 2026-08-12 형식, 금액은 적힌 표기 그대로).' +
+    ' **흐릿하거나 확실하지 않으면 지어내지 말고 그 줄을 빼세요.**' +
+    ' 인사말·잡담은 담지 마세요. **주민등록번호는 담지 마세요.**' +
+    ' 사람 이름이 없으면 그 줄을 담지 마세요. JSON 외 텍스트 금지.';
+
+  function readChangeNotice(dataUrl) {
+    return readPairsWith(NOTICE_PROMPT, dataUrl);
   }
 
   function read(dataUrl) {
@@ -595,6 +631,7 @@
     READ_VERSION: READ_VERSION,
     read: read,
     readWageTable: readWageTable,
+    readChangeNotice: readChangeNotice,
     autoOk: autoOk
   };
 })(typeof window !== 'undefined' ? window : globalThis);

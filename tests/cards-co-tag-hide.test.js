@@ -167,7 +167,8 @@ test('숨긴 것 보기를 켜면 숨긴 탭도 다시 보인다', () => {
 
 test('옆줄 사업별 목록에 숨기기·다시보기 아이콘이 있다', () => {
   const at = source.indexOf("if(state.view==='co'){");
-  const fn = source.slice(at, at + 1900);
+  /* 2026-08-16 옆줄에 「보기」 칸과 폴더 안 탭이 생겨 이 덩어리가 길어졌다 — 넉넉히 자른다 */
+  const fn = source.slice(at, at + 4200);
   assert.match(fn, /hideCoTag/);
   assert.match(fn, /unhideCoTag/);
   assert.match(fn, /state\.coShowHidden/);

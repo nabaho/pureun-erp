@@ -19,8 +19,23 @@
 (function (global) {
   'use strict';
 
-  function num(v) { return typeof v === 'number' && isFinite(v) ? v : 0; }
   function str(v) { return v == null ? '' : String(v); }
+
+  /* 저장 시각을 읽는다 — 숫자(1755...)든 글자('2026-08-15T...')든 둘 다 받는다.
+     ⚠ 왜 둘 다인가
+     레코드 대부분은 _recStamp 가 Date.now() 숫자를 찍지만, 상담일지·업무일지처럼
+     화면이 제 손으로 new Date().toISOString() 글자를 넣는 자리가 여럿 있다.
+     숫자만 읽으면 그런 자리에서는 «시각을 모른다» 로 보여 겹침 판단이 통째로 꺼진다 —
+     경고가 안 뜨는 게 아니라 «있는 줄 알았는데 없었다». 조용한 구멍이 가장 나쁘다.
+     둘 다 밀리초로 바꾸면 서로 견줄 수 있다. */
+  function ts(v) {
+    if (typeof v === 'number') return isFinite(v) ? v : 0;
+    if (typeof v === 'string' && v) {
+      var t = Date.parse(v);
+      return isFinite(t) ? t : 0;
+    }
+    return 0;
+  }
 
   /* 두 판을 견주어 다른 칸 이름을 뽑는다.
      무엇과 견주느냐로 뜻이 달라진다 — 그 구분은 check 가 한다. */
@@ -52,8 +67,8 @@
   function check(stored, mine, opts) {
     opts = opts || {};
     if (!stored || !mine) return null;                  // 새로 만드는 것 — 겹칠 상대가 없다
-    var theirs = num(stored.updatedAt);
-    var readAt = num(mine.updatedAt);
+    var theirs = ts(stored.updatedAt);
+    var readAt = ts(mine.updatedAt);
     if (!theirs || !readAt) return null;                // 시각을 모른다 → 지어내지 않는다
     if (theirs <= readAt) return null;                  // 내가 읽어온 뒤로 바뀌지 않았다
     var who = str(stored.updatedBy);

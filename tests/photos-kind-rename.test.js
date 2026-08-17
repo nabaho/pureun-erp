@@ -12,15 +12,18 @@ const vm = require('node:vm');
 const src = fs.readFileSync(path.join(__dirname, '..', 'js', 'pu-photo-store.js'), 'utf8');
 const html = fs.readFileSync(path.join(__dirname, '..', 'pu-photos.html'), 'utf8');
 
-/* 저장소에서 renameCustomKind 와 그것이 쓰는 것만 떼어 돌린다 */
-function loadRename(kinds){
+/* 저장소에서 renameCustomKind 와 그것이 쓰는 것만 떼어 돌린다.
+   ⚠ isAdmin 기본값은 true 다(대표 지시 2026-08-15로 총괄 관리자 전용이 됨) —
+     그래야 아래 옛 검사들이 「관리자가 아니라 막힘」이 아니라 원래 보려던
+     이름 검사·중복 검사를 계속 본다. 권한 자체를 보는 검사는 따로 둔다. */
+function loadRename(kinds, isAdmin){
   const i = src.indexOf('function renameCustomKind');
   const j = src.indexOf('function addCustomKind');
   assert.ok(i > 0 && j > i, 'renameCustomKind 를 찾지 못했습니다');
   const writes = [];
   const ctx = {
     Promise, Object, String, Date,
-    deps: { db: {} },
+    deps: { db: {}, isAdmin: isAdmin !== false },
     customKindsPath: () => 'puphotos/customKinds',
     listCustomKinds: () => Promise.resolve(JSON.parse(JSON.stringify(kinds))),
     _writes: writes
@@ -98,15 +101,30 @@ test('이미 지워진 분류는 막는다', async () => {
   await assert.rejects(() => c.renameCustomKind('없는번호', '새이름'), /지워진 분류/);
 });
 
+test('★ 총괄 관리자가 아니면 이름을 못 고친다', async () => {
+  /* 분류 이름표는 전 직원 공용이라, 아무나 고칠 수 있으면 오타 분류가 쌓여도
+     못 막는다(대표 지시 2026-08-15). */
+  const c = loadRename(K(), false);
+  await assert.rejects(() => c.renameCustomKind('k1', '새이름'), /총괄 관리자/);
+  assert.equal(c._writes.length, 0, '★ 막았는데 썼습니다');
+});
+
 test('화면: 직접 만든 분류에만 ✎ 가 붙는다', () => {
   /* 고정 분류(명함·사업자등록증)는 코드가 정한 이름이라 못 고친다 */
-  assert.match(html, /const pen = \(!t && kindTab === k\)/);
+  assert.match(html, /const pen = \(!t && kindTab === k && PuPhotoStore\.amAdmin\(\)\)/);
   assert.match(html, /openRenameKind\(/);
+});
+
+test('★ 화면: 총괄 관리자가 아니면 ✎ 도 「+ 분류 추가」도 안 보인다', () => {
+  /* 대표 지시 2026-08-15 — 지금은 직원 누구나 공용 분류를 마음대로 바꿀·지울
+     수 있어, 오타 분류가 쌓이거나 누가 지워도 못 막는다. */
+  assert.match(html, /const pen = \(!t && kindTab === k && PuPhotoStore\.amAdmin\(\)\)/);
+  assert.match(html, /PuPhotoStore\.amAdmin\(\)\s*\n?\s*\?\s*'<button class="add"/);
 });
 
 test('화면: ✎ 를 눌러도 분류가 바뀌지 않는다', () => {
   /* stopPropagation 이 없으면 탭째 눌려 분류가 바뀐 뒤 창이 뜬다 */
-  const at = html.indexOf('const pen = (!t && kindTab === k)');
+  const at = html.indexOf('const pen = (!t && kindTab === k && PuPhotoStore.amAdmin())');
   assert.match(html.slice(at, at + 400), /event\.stopPropagation\(\)/);
 });
 
@@ -120,14 +138,14 @@ test('화면: 사진은 그대로라고 알려준다', () => {
    ⚠ 가장 위험한 것: 분류를 지웠는데 **사진까지 사라지는 것**. 그래서
      저장 층이 이름표 칸 하나만 만지는지를 못박는다. */
 
-function loadDelete() {
+function loadDelete(isAdmin) {
   const i = src.indexOf('function deleteCustomKind');
   const j = src.indexOf('function addCustomKind');
   assert.ok(i > 0 && j > i, 'deleteCustomKind 를 찾지 못했습니다');
   const writes = [];
   const ctx = {
     Promise, Object, String, Date,
-    deps: { db: {} },
+    deps: { db: {}, isAdmin: isAdmin !== false },
     customKindsPath: () => 'puphotos/customKinds',
     _writes: writes
   };
@@ -136,6 +154,12 @@ function loadDelete() {
   vm.runInContext(src.slice(i, j), ctx);
   return ctx;
 }
+
+test('★ 총괄 관리자가 아니면 분류를 못 지운다', async () => {
+  const c = loadDelete(false);
+  await assert.rejects(() => c.deleteCustomKind('k1'), /총괄 관리자/);
+  assert.equal(c._writes.length, 0, '★ 막았는데 썼습니다');
+});
 
 test('★ 분류를 지워도 사진 자리는 한 곳도 안 건드린다', async () => {
   const c = loadDelete();
@@ -208,4 +232,35 @@ test('창에 몇 장짜리 분류인지·누가 만들었는지 적는다', () =
   const fn = html.slice(at, at + 1600);
   assert.match(fn, /tabCounts\(\)\[customTabKey\(id\)\]/, '든 사진 장수를 안 셉니다');
   assert.match(fn, /createdBy/, '누가 만든 분류인지 안 적습니다');
+});
+
+/* ══════ 분류 관리는 총괄 관리자만 (대표 지시 2026-08-15) ══════
+   "분류추가에 변경삭제를 총괄관리자는 할 수 있게해달라" — 단추를 감춰도
+   함수를 직접 불러 우회할 수 있으므로, 화면 함수 자체도 막아야 한다.
+   ⚠ 사진에 분류를 「지정」하는 addCustomKind 는 다르다 — 판독 중 새 분류를
+     즉석에서 만드는 것은 전 직원이 계속할 수 있어야 한다(submitAssignKind). */
+test('★ 화면: openAddKind 는 함수 안에서도 관리자 여부를 본다', () => {
+  const at = html.indexOf('function openAddKind(');
+  assert.ok(at > 0, 'openAddKind 를 찾지 못했습니다');
+  const fn = html.slice(at, at + 300);
+  assert.match(fn, /if \(!PuPhotoStore\.amAdmin\(\)\)/,
+    '★ 단추만 감추면 콘솔에서 바로 불러 우회할 수 있습니다');
+});
+
+test('★ 화면: openRenameKind 도 함수 안에서 관리자 여부를 본다', () => {
+  const at = html.indexOf('function openRenameKind(');
+  assert.ok(at > 0, 'openRenameKind 를 찾지 못했습니다');
+  const fn = html.slice(at, at + 300);
+  assert.match(fn, /if \(!PuPhotoStore\.amAdmin\(\)\)/,
+    '★ 단추만 감추면 콘솔에서 바로 불러 우회할 수 있습니다 — 이름 고치기·지우기가 함께 뚫립니다');
+});
+
+test('★ addCustomKind 는 관리자 여부를 안 따진다 — 사진에 분류를 지정할 때도 쓴다', () => {
+  /* submitAssignKind() 가 "+ 새 분류 만들기" 를 고르면 이 함수를 그대로 부른다.
+     여기를 막으면 판독 화면에서 즉석으로 분류 만드는 길이 전 직원 앞에서 막힌다. */
+  const i = src.indexOf('function addCustomKind');
+  const j = src.indexOf('/* ══════ 내 폴더');
+  assert.ok(i > 0 && j > i, 'addCustomKind 를 찾지 못했습니다');
+  const fn = src.slice(i, j);
+  assert.ok(!/isAdmin/.test(fn), '★ addCustomKind 가 관리자만 되게 막혀 있습니다');
 });

@@ -292,6 +292,12 @@ function loadCoMobileList(list, folders){
     /* 진짜 coVisible 은 state.coFolder 로도 거른다 — 그 몫만 흉내 낸다.
        (여기서 거르지 않으면 「전체로 되돌리기」가 개수까지 맞추는지 증명할 수 없다) */
     coVisible: () => (ctx.state.coFolder ? list.filter(o=>o.folder===ctx.state.coFolder) : list),
+    /* renderCoMobileList 는 이제 쪽 나눠 그리기(coPage)를 거친다 — 여기서는 쪽 나눔이
+       관심사가 아니므로 coVisible 결과를 통째로 한 쪽처럼 돌려준다.
+       ⚠ coPage() 가 coVisible() 을 거치게 두는 것이 중요하다 — I3 의 「죽은 폴더를
+         비운 «뒤에» 개수를 센다」를 이 검사가 계속 지키려면 그 순서가 살아 있어야 한다. */
+    coPage: () => { const rows = ctx.coVisible(); return { rows, total:rows.length, page:0, pages:1 }; },
+    coPagerHtml: () => '',   /* 쪽 넘김 단추는 이 검사의 관심사가 아니다 */
     coTagsOf: o => Object.keys(o.tags||{}),
     $: id => {
       if(id==='list') return { set innerHTML(v){ calls.html=v; }, get innerHTML(){ return calls.html; } };

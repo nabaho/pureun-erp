@@ -182,9 +182,11 @@ ok('팀 전체에도 같은 깔때기가 붙었다',
   && RT.indexOf("fBtn('team','mgr'") > 0);
 ok('담당 묶음은 주담당 기준 — 부담당까지 묶으면 건수 합이 어긋난다',
   RT.indexOf('var names=teamNames();') > 0);
+/* 개수를 못 박지 않는다 — 칸에 id 하나만 붙여도 깨진다(실제로 깨졌다).
+   지켜야 하는 것은 「긴 표를 그리는 화면은 모두 이 껍데기를 쓴다」는 뜻이다. */
 ok('긴 목록에서 머리행이 붙어 있는다',
   /\.panel\.tbl thead th\{position:sticky;top:0/.test(W)
-  && (W.match(/<div class="panel tbl">/g) || []).length === 4);
+  && (W.match(/class="panel tbl[" ]/g) || []).length >= 4);
 ok('짧은 표가 빈 칸으로 길어지지 않는다 (min-height 없음)',
   !/\.panel\.tbl\{[^}]*min-height/.test(W));
 

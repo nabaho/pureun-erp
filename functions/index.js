@@ -7,6 +7,7 @@ const { getAuth } = require("firebase-admin/auth");
 const { getDatabase } = require("firebase-admin/database");
 const { getMessaging } = require("firebase-admin/messaging");
 const { getStorage } = require("firebase-admin/storage");
+const crypto = require("crypto");   // 내려받기 토큰 발급용 (downloadUrl)
 const { Resend } = require("resend");
 const {
   REPO,
@@ -614,6 +615,59 @@ exports.sendMaterialMail = functions
 //   1분마다 돌리면 그만큼 요금이 붙고, 메일은 5분 늦어도 탈이 없다.
 // ⚠ 꺼낼 때 먼저 「보내는 중」으로 찜하고 보낸다. 안 그러면 앞 회차가 아직
 //   보내는 중인데 다음 회차가 같은 것을 또 집어 두 통이 나간다.
+// ═══ 여러 곳에 「한 통씩」 보내기 (2026-08-15, 대표 지시: 300곳 미만) ═══
+// ⚠ 여기서는 **보내지 않는다.** 받는 곳마다 예약 한 건씩을 자리에 담아 두기만 하고,
+//   실제 발송은 이미 돌고 있는 sendScheduledMail 이 5분마다 20통씩 빼 간다.
+//   새 발송기를 만들면 두 곳에서 같은 메일을 보낼 위험이 생긴다.
+// ⚠ 한꺼번에 쏟지 않는 것이 이 기능의 핵심이다 — 다음메일은 대량 발송용 계정이
+//   아니라 몰아 보내면 막히고, 막히면 평소 자료 발송까지 멈춘다.
+const MB = require("./mail-bulk");
+
+exports.sendBulkMail = functions
+  .region(MAIL_REGION)
+  .runWith({ timeoutSeconds: 120, memory: "512MB" })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
+
+    // ★ 누가 보내는지 먼저 확인한다 — 이 검사가 없으면 회사 메일이 공개 발송기가 된다.
+    let sender;
+    try {
+      sender = await requireStaff(req);
+    } catch (e) {
+      res.status(e.status || 401).json({ ok: false, error: String(e.message || e) });
+      return;
+    }
+
+    const body = (req.body && typeof req.body === "object") ? req.body : {};
+    const v = MB.validateBulk(body);
+    if (!v.ok) { res.status(400).json({ ok: false, error: v.error }); return; }
+
+    const db = getDatabase();
+    const now = Date.now();
+    const batchId = "b" + now.toString(36) + Math.random().toString(36).slice(2, 6);
+    const rows = MB.buildQueue(v, now, sender.email || "", batchId);
+
+    try {
+      // 한 번의 update 로 담는다 — 중간에 끊겨 «절반만 걸린» 상태가 남지 않게.
+      const upd = {};
+      rows.forEach((row) => {
+        const key = db.ref(MD.CARDS_ROOT + "/scheduled").push().key;
+        upd[key] = row;
+      });
+      await db.ref(MD.CARDS_ROOT + "/scheduled").update(upd);
+      res.json({
+        ok: true, n: rows.length, batchId: batchId,
+        skipped: v.skipped,
+        firstAt: rows[0].at, lastAt: rows[rows.length - 1].at,
+        eta: MB.etaText(rows.length, v.gapMs),
+      });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: "예약을 걸지 못했습니다: " + String((e && e.message) || e) });
+    }
+  });
+
 exports.sendScheduledMail = functions
   .region(MAIL_REGION)
   .runWith({ secrets: ["DAUM_MAIL_PASSWORD"], timeoutSeconds: 540, memory: "512MB" })
@@ -739,6 +793,20 @@ function realPhotoDb() {
       u[`${PHOTOS_DB_ROOT}/u/${uid}/thumbs/${year}/${id}`] = null;
       return db.ref().update(u);
     },
+    /* 주소(내려받기 토큰이 붙은 URL)를 사진 정보에 적는다(2026-08-17).
+       창고 규칙은 실시간DB(uid_roles)를 못 읽어 「자기 사진만」으로 잠겨 있고,
+       그래서 관리자·공유받은 사람의 창고 요청이 403 으로 거부됐다(대표 화면:
+       남의 회의사진 46장 전부 회색, 콘솔 403 832건). 주소는 규칙과 무관하게
+       열리므로, 정보(실시간DB)를 읽을 수 있는 사람이 곧 사진도 볼 수 있게 된다
+       — 실시간DB 시절과 같은 접근 범위다.
+       ⚠ 없는 값은 안 쓴다 — 미리보기 없는 사진의 thumbUrl 을 null 로 덮지 않게. */
+    writeUrls(uid, year, id, urls) {
+      const u = {};
+      if (urls && urls.fullUrl) u[`${PHOTOS_DB_ROOT}/u/${uid}/items/${year}/${id}/fullUrl`] = urls.fullUrl;
+      if (urls && urls.thumbUrl) u[`${PHOTOS_DB_ROOT}/u/${uid}/items/${year}/${id}/thumbUrl`] = urls.thumbUrl;
+      if (!Object.keys(u).length) return Promise.resolve();
+      return db.ref().update(u);
+    },
   };
   return photoDb;
 }
@@ -766,6 +834,23 @@ function realPhotoBucket() {
     exists(objectPath) {
       return bucket.file(objectPath).exists().then((r) => !!(r && r[0]));
     },
+    /* 내려받기 주소(토큰 URL)를 만든다 — 파일에 토큰이 이미 있으면 그것을 쓰고,
+       없으면 하나 발급해 파일 메타데이터에 심는다(파이어베이스 표준 방식).
+       ⚠ 서명 URL(getSignedUrl)을 안 쓰는 이유: 만료가 있다 — 만료되면 사진첩의
+         모든 옛 사진이 어느 날 일제히 안 보이게 된다. 토큰 URL 은 안 만료된다.
+       파일이 없으면 null — 미리보기가 없는 사진도 있다(옛 자료). */
+    downloadUrl(objectPath) {
+      const file = bucket.file(objectPath);
+      return file.getMetadata().then(([meta]) => {
+        let tok = String((meta.metadata && meta.metadata.firebaseStorageDownloadTokens) || "").split(",")[0];
+        const ensure = tok
+          ? Promise.resolve()
+          : (tok = crypto.randomUUID(),
+            file.setMetadata({ metadata: { firebaseStorageDownloadTokens: tok } }));
+        return Promise.resolve(ensure).then(() =>
+          `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(objectPath)}?alt=media&token=${tok}`);
+      }).catch(() => null);
+    },
   };
 }
 
@@ -788,7 +873,7 @@ exports.migratePhotosToStorage = functions
     const db = realPhotoDb();
     const result = await migrateBatch(db, realPhotoBucket(), limit);
     res.status(200).json({
-      ok: true, moved: result.moved, skipped: result.skipped,
+      ok: true, moved: result.moved, linked: result.linked, skipped: result.skipped,
       failed: result.failed, done: result.done, ownersCount: db.ownersCount,
     });
   } catch (error) {
@@ -965,5 +1050,67 @@ exports.receivePaydataMail = functions
     } finally {
       try { await client.logout(); } catch (_) { /* 이미 끊겼다 */ }
     }
+    return null;
+  });
+
+
+/* 지문·간편 로그인(패스키) — 판단은 functions/passkey.js 한 곳에서만 한다.
+   로그인 문을 여는 코드라 다른 함수와 섞지 않는다. */
+const _passkey = require('./passkey');
+exports.passkeyRegisterStart  = _passkey.passkeyRegisterStart;
+exports.passkeyRegisterFinish = _passkey.passkeyRegisterFinish;
+exports.passkeyLoginStart     = _passkey.passkeyLoginStart;
+exports.passkeyLoginFinish    = _passkey.passkeyLoginFinish;
+exports.passkeyDevices        = _passkey.passkeyDevices;
+
+
+// ══════════ 파이어베이스 사용액 받아 적기 (2026-08-15, 대표 지시) ══════════
+// 대표님: "결제한 금액 잔여량이 얼마인지 실시간으로 확인 가능한지, 화면에 넣을 수 있는지."
+//
+// ⚠ 화면(브라우저)이 구글에 직접 물어보게 만들 수 없다. 금액을 읽으려면 결제 열쇠가
+//   필요한데 우리 앱은 브라우저에서 도는 공개 파일이라, 열쇠를 넣으면 누구나 열어 본다.
+//   그 열쇠는 금액 조회를 넘어 결제 설정까지 닿는다. 그래서 반드시 서버를 거치고,
+//   서버는 **금액이라는 숫자 하나만** 내려 준다.
+//
+// ⚠ 「남은 금액」은 못 만든다 — Blaze 는 후불이라 남은 돈이라는 숫자 자체가 없다.
+//   이번 달 지금까지 쓴 금액만 적는다.
+//
+// ⚠ 완전한 실시간이 아니다. 구글은 금액이 움직일 때 쏘고 주기는 20~30분쯤이다.
+//   그래서 updatedAt 을 반드시 함께 적는다 — **언제 것인지 모르는 금액이 제일 위험하다.**
+const BA = require("./billing-alert");
+
+exports.recordBillingAlert = functions
+  .region(MAIL_REGION)
+  .pubsub.topic("billing-alerts")
+  .onPublish(async (message) => {
+    let raw;
+    try {
+      raw = message.json;
+    } catch (e) {
+      console.error("recordBillingAlert: 쪽지를 읽지 못했습니다", String((e && e.message) || e));
+      return null;   // 되던지면 Pub/Sub 이 같은 쪽지를 끝없이 다시 보낸다
+    }
+
+    const parsed = BA.parseAlert(raw);
+    if (!parsed.ok) {
+      console.log("recordBillingAlert 건너뜀:", parsed.why);
+      return null;
+    }
+
+    const ref = getDatabase().ref("billing/current/" + parsed.key);
+
+    // ⚠ 그냥 set 하지 않는다. Pub/Sub 은 순서를 지켜 주지 않아서, 늦게 도착한 옛 쪽지가
+    //   최신 금액을 더 작은 값으로 되돌린다. 화면에서는 금액이 줄어든 것처럼 보이고
+    //   아무도 그게 틀렸다는 걸 모른다. 트랜잭션으로 「더 큰 값만」 받는다.
+    const res = await ref.transaction((prev) => {
+      if (!BA.shouldApply(prev, parsed.row)) return;   // undefined = 그대로 둔다
+      return Object.assign({}, parsed.row, { updatedAt: Date.now() });
+    });
+
+    console.log("recordBillingAlert", {
+      key: parsed.key,
+      cost: parsed.row.cost,
+      applied: res.committed,
+    });
     return null;
   });

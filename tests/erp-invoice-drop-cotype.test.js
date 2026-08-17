@@ -69,9 +69,13 @@ test('상세 창이 열려 있거나 올리는 중이면 받지 않는다', () =
 });
 
 test('목록이 짧아도 화면 아래 빈 곳이 받는 칸 안이다', () => {
-  assert.match(FI, /minHeight:'calc\(100vh - 150px\)'/);
+  /* ⚠ 「150px」 을 글자 그대로 박지 않는다 — 화면 배치가 바뀌면 이 숫자도 바뀌는데,
+     그때 깨지는 것은 «기능이 망가져서» 가 아니다. 지킬 것은 «화면 높이만큼 받는 칸이
+     있는가» 이지 몇 픽셀을 빼는가가 아니다. */
+  const mins = FI.match(/minHeight:'calc\(100vh[^']*\)'/g) || [];
+  assert.ok(mins.length >= 1, '받는 칸이 화면 높이를 따라가야 한다');
   // 끌고 있을 때와 아닐 때 «둘 다» 높이를 줘야 한다 (끌기 전부터 칸이 넓어야 놓을 수 있다)
-  assert.equal((FI.match(/minHeight:'calc\(100vh - 150px\)'/g) || []).length, 2);
+  assert.equal(mins.length, 2, '끌 때·안 끌 때 둘 다 (지금 ' + mins.length + '개)');
 });
 
 test('갈고리는 이른 return 뒤에 걸리지 않는다', () => {

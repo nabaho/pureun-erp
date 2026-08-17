@@ -251,10 +251,11 @@
   function deleteFromBucket(path) {
     return deps.storage.ref(path).delete();
   }
-  function fetchFromBucket(path) {
-    return deps.storage.ref(path).getDownloadURL().then(function (url) {
-      return fetch(url);
-    }).then(function (res) {
+  /* 주소(URL) 하나를 base64 로 받아온다 — 판독(AI)·내려받기는 data: 가 필요하다.
+     ⚠ 토큰이 붙은 주소는 창고 규칙과 무관하게 열린다 — 관리자·공유가 사진을
+       보는 길이 이것뿐이다(규칙은 「자기 사진만」이고 실시간DB 를 못 읽는다). */
+  function urlToDataUrl(url) {
+    return fetch(url).then(function (res) {
       if (!res.ok) throw new Error('창고 응답 ' + res.status);
       return res.blob();
     }).then(function (blob) {
@@ -265,6 +266,10 @@
         r.readAsDataURL(blob);
       });
     });
+  }
+
+  function fetchFromBucket(path) {
+    return deps.storage.ref(path).getDownloadURL().then(urlToDataUrl);
   }
 
   /* 읽기 순서 — **창고 먼저, 안 되면 실시간DB**(명함첩과 같은 순서, 2026-08-09 결정을
@@ -353,7 +358,20 @@
     if (mode === 'storage' && deps.storage) {
       return putToBucket(filePath(year, p.id, 'full'), p.full)
         .then(function () { return putToBucket(filePath(year, p.id, 'thumb'), p.thumb); })
-        .then(function () { return saveMetaOnly(p, year); })
+        /* 주소(토큰 URL)를 지금 받아 정보에 함께 적는다(2026-08-17) —
+           창고 규칙은 「자기 사진만」이라, 주인이 아닌 사람(관리자·공유)은 창고에
+           직접 주소를 못 청한다(403 — 대표 화면에서 남의 회의사진이 전부 회색이었다).
+           주소는 규칙과 무관하게 열리므로, **정보를 읽을 수 있으면 사진도 보인다**
+           — 실시간DB 시절과 같은 접근 범위가 된다.
+           ⚠ 주소받기 실패가 저장을 뒤집으면 안 된다 — 사진은 이미 창고에 안전하다.
+             그때는 주소 없이 저장하고, 서버 「주소 채우기」가 나중에 채운다. */
+        .then(function () {
+          return Promise.all([
+            deps.storage.ref(filePath(year, p.id, 'full')).getDownloadURL().catch(function () { return null; }),
+            deps.storage.ref(filePath(year, p.id, 'thumb')).getDownloadURL().catch(function () { return null; })
+          ]);
+        })
+        .then(function (urls) { return saveMetaOnly(p, year, urls[0], urls[1]); })
         .catch(function (e) {
           console.warn('[사진첩] 창고 저장 실패 — 실시간DB로 보관합니다', e && e.message);
           return saveToRtdb(p, year);
@@ -365,9 +383,12 @@
   /* 창고 저장 성공 뒤 — 실시간DB에는 **정보만** 남긴다(본문·미리보기는 창고에 있다).
      ⚠ loc:'storage' 를 반드시 적는다. 안 적으면 지우기·복원·용량 계산이
        본문이 실시간DB에 있는 줄 알고 없는 자리를 헤맨다. */
-  function saveMetaOnly(p, year) {
+  function saveMetaOnly(p, year, fullUrl, thumbUrl) {
+    var extra = { loc: 'storage' };
+    if (fullUrl) extra.fullUrl = fullUrl;
+    if (thumbUrl) extra.thumbUrl = thumbUrl;
     var u = {};
-    u[metaPath(year, p.id)] = Object.assign({}, p.meta, { loc: 'storage' });
+    u[metaPath(year, p.id)] = Object.assign({}, p.meta, extra);
     u[ownerPath(deps.uid)] = {
       name: deps.name || (p.meta && p.meta.byName) || '',
       lastAt: Date.now()
@@ -663,8 +684,18 @@
         .then(function () { return fetchFromBucket(fp); })
         .then(function (back) {
           if (!back) throw new Error('올린 사진을 다시 확인하지 못했습니다');
+          /* 새 본문의 주소도 같이 적는다(2026-08-17) — 안 적으면 옛 주소(돌리기 전
+             그림)가 남아, 남들 눈에는 안 돌린 사진이 계속 보인다. */
+          return Promise.all([
+            deps.storage.ref(fp).getDownloadURL().catch(function () { return null; }),
+            deps.storage.ref(filePath(year, id, 'thumb', owner)).getDownloadURL().catch(function () { return null; })
+          ]);
+        })
+        .then(function (urls) {
           var u = {};
           u[metaPath(year, id, owner) + '/loc'] = 'storage';
+          u[metaPath(year, id, owner) + '/fullUrl'] = urls[0] || null;
+          u[metaPath(year, id, owner) + '/thumbUrl'] = urls[1] || null;
           u[blobPath(year, id, owner)] = null;
           u[thumbPath(year, id, owner)] = null;
           return deps.db.ref().update(u);
@@ -751,12 +782,23 @@
      ⚠ 이 인자가 없던 동안, 관리자가 남의 사진을 판독하면 결과가 자기 자리의
        없는 사진 밑으로 들어갔다. 그래서 화면이 판독 자체를 잠갔고, 결국 다른
        직원이 찍은 명함은 그 직원이 자기 화면을 열 때만 명함첩에 들어갔다
-       (대표 지시 2026-08-10로 바로잡음). */
+       (대표 지시 2026-08-10로 바로잡음).
+     ⚠ 쓰기 전에 그 사진 정보가 **아직 있는지** 먼저 본다(2026-08-15 발견).
+       판독(AI 호출)은 몇 초 걸린다 — 그 사이 사람이 사진을 지우면, 이 함수는
+       (지워진) items/{연도}/{id} 아래 read 한 칸만 부분 경로로 쓴다. 실시간DB는
+       없는 자리에 부분 경로를 쓰면 **그 자리를 새로 만든다** — 그러면 사진도
+       정보도 없이 read 만 있는 유령 항목이 생긴다(실데이터에서 여러 건 발견,
+       "명함첩에 새로 넣었습니다" 같은 표시까지 남아 있어 명함첩에도 헛짚힐 수
+       있었다). 지워졌으면 조용히 아무것도 안 쓴다 — 되살릴 것이 없다. */
   function saveRead(year, id, read, owner) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
-    var u = {};
-    u[metaPath(year, id, owner) + '/read'] = read;
-    return deps.db.ref().update(u);
+    var path = metaPath(year, id, owner);
+    return readOnce(path).then(function (meta) {
+      if (!meta) return null;
+      var u = {};
+      u[path + '/read'] = read;
+      return deps.db.ref().update(u);
+    });
   }
 
   /* 고정 분류로 옮길 때 판독 종류와 직접분류 해제를 한 번에 저장한다.
@@ -813,6 +855,10 @@
      이름이 겹치는 것은 만들 때와 같은 규칙으로 막는다. 안 막으면 같은 이름이 둘이 되어
      어느 쪽에 넣었는지 사람이 못 가린다. */
   function renameCustomKind(id, name) {
+    /* ⚠ 총괄 관리자만(대표 지시 2026-08-15) — 분류 이름표는 전 직원이 함께 보는
+       공용이라, 누구나 고칠 수 있으면 오타 분류가 쌓여도 못 막는다.
+       사진에 분류를 「지정」하는 addCustomKind 는 다르다 — 그건 안 막는다. */
+    if (!deps.isAdmin) return Promise.reject(new Error('분류 이름 변경은 총괄 관리자만 할 수 있습니다'));
     var clean = String(name || '').trim();
     if (!id) return Promise.reject(new Error('어떤 분류인지 알 수 없습니다'));
     if (!clean) return Promise.reject(new Error('분류 이름을 입력해 주세요'));
@@ -842,6 +888,8 @@
      ⚠ 그래서 **되돌릴 수 없다** — 같은 이름으로 다시 만들어도 번호가 달라
         옛 사진이 저절로 돌아오지 않는다. 화면이 지우기 전에 이 말을 해야 한다. */
   function deleteCustomKind(id) {
+    /* ⚠ 총괄 관리자만(대표 지시 2026-08-15) — renameCustomKind 와 같은 이유. */
+    if (!deps.isAdmin) return Promise.reject(new Error('분류 삭제는 총괄 관리자만 할 수 있습니다'));
     if (!id) return Promise.reject(new Error('어떤 분류인지 알 수 없습니다'));
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     var u = {};
@@ -1142,14 +1190,38 @@
      새 자리에 없으면 옛 자리에서 찾는다(옮기기 전에도 사진이 보여야 한다). */
   /* ⚠ 창고를 먼저 본다(withStorage) — 옮긴 사진은 거기 있다. 없으면(아직 안
      옮겼거나, 이 화면이 창고를 안 이어 줬으면) 실시간DB 옛 길로 물러난다. */
+  /* ── 적어 둔 주소 먼저 (2026-08-17, 대표 보고 「사진이 안 뜬다·너무 늦다」) ──
+     창고 규칙은 「자기 사진만」이라, 관리자가 남의 사진을·직원이 공유받은 사진을
+     창고에 직접 청하면 403 이다 — 남의 사진이 회색 칸이 되고, 크게 보기에서는
+     「원본이 없습니다」로 둔갑했다(창고 실패 → 실시간DB 로 물러나는데 거기는 비었다).
+     정보에 적어 둔 주소(토큰 URL)는 규칙과 무관하게 열린다. 그래서 **주소부터**
+     쓰고, 죽은 주소(토큰 재발급 등)면 지운 뒤 옛 길로 물러난다.
+     ⚠ 주소가 없는 옛 사진은 서버 「주소 채우기」(migratePhotosToStorage)가 채운다. */
+  function loadVia(urlKey, year, id, owner, direct) {
+    return readOnce(metaPath(year, id, owner) + '/' + urlKey).then(function (u) {
+      /* 주소는 반드시 https 문자열이어야 한다 — 그 자리에 엉뚱한 값이 앉아 있어도
+         (옛 기록·손상) 보기가 통째로 죽으면 안 된다. 그때는 옛 길로 간다. */
+      if (typeof u !== 'string' || u.indexOf('https://') !== 0) return direct();
+      return urlToDataUrl(u).catch(function () {
+        var del = {};
+        del[metaPath(year, id, owner) + '/' + urlKey] = null;
+        try { deps.db.ref().update(del); } catch (_) { }
+        return direct();
+      });
+    });
+  }
   function loadThumb(year, id, owner) {
-    return withStorage(function () { return filePath(year, id, 'thumb', owner); }, function () {
-      return withLegacy(thumbPath(year, id, owner), legacyRoot('thumbs') + '/' + year + '/' + id);
+    return loadVia('thumbUrl', year, id, owner, function () {
+      return withStorage(function () { return filePath(year, id, 'thumb', owner); }, function () {
+        return withLegacy(thumbPath(year, id, owner), legacyRoot('thumbs') + '/' + year + '/' + id);
+      });
     });
   }
   function loadFull(year, id, owner) {
-    return withStorage(function () { return filePath(year, id, 'full', owner); }, function () {
-      return withLegacy(blobPath(year, id, owner), legacyRoot('blobs') + '/' + year + '/' + id);
+    return loadVia('fullUrl', year, id, owner, function () {
+      return withStorage(function () { return filePath(year, id, 'full', owner); }, function () {
+        return withLegacy(blobPath(year, id, owner), legacyRoot('blobs') + '/' + year + '/' + id);
+      });
     });
   }
 
@@ -1166,6 +1238,39 @@
         남의 사진은 윗칸에 읽기 권한이 있어 묶음으로 받아진다. 공유받은 사진은
         **사진 한 장마다** 권한을 따지므로 묶음이 막힌다 — 화면이 그때는
         한 장씩 받는 옛 길로 물러선다. */
+  /* ── 미리보기 **주소만** 받아온다 (대표 보고 2026-08-15: 느리다·비용) ──
+     loadThumb 은 주소를 받은 뒤 파일을 내려받아 data: 로 바꿔 준다. 그러면
+     ①오가는 횟수가 두 배고 ②**브라우저가 캐시를 못 한다**(data: 는 주소가 아니라
+     내용이라 캐시 열쇠가 없다) — 사진첩을 열 때마다 302장을 새로 받는다.
+     주소를 그대로 <img src> 에 꽂으면 두 번째부터는 브라우저가 캐시에서 꺼낸다.
+     ⚠ 판독(OCR)은 여전히 loadFull 로 **내용**을 받아야 한다 — 거기는 안 바꾼다.
+     ⚠ 창고에 없는 옛 사진(실시간DB 보관)은 null 을 준다 — 부르는 쪽이 옛 길로 간다. */
+  function thumbUrl(year, id, owner) {
+    if (!deps.storage) return Promise.resolve(null);
+    var path;
+    try { path = filePath(year, id, 'thumb', owner); } catch (e) { return Promise.resolve(null); }
+    return deps.storage.ref(path).getDownloadURL().catch(function () { return null; });
+  }
+
+  /* 받아 둔 주소를 사진 정보에 적어 둔다 — 다음에 열 때는 주소받기조차 건너뛴다.
+     ⚠ 실패해도 조용히 넘긴다. 주소는 언제든 다시 받을 수 있으니, 이걸 못 적었다고
+        사진이 안 보이면 안 된다. */
+  function rememberThumbUrl(year, id, url, owner) {
+    if (!deps.db || !url) return Promise.resolve();
+    var u = {};
+    u[metaPath(year, id, owner) + '/thumbUrl'] = url;
+    return deps.db.ref().update(u).catch(function () { });
+  }
+
+  /* 적어 둔 주소가 못 쓰게 됐을 때(토큰을 새로 발급한 경우 등) 지운다 —
+     안 지우면 다음에도 같은 죽은 주소를 그대로 쓴다. */
+  function forgetThumbUrl(year, id, owner) {
+    if (!deps.db) return Promise.resolve();
+    var u = {};
+    u[metaPath(year, id, owner) + '/thumbUrl'] = null;
+    return deps.db.ref().update(u).catch(function () { });
+  }
+
   function loadThumbsYear(year, owner) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     return deps.db.ref(base(owner) + '/thumbs/' + year).once('value')
@@ -1688,6 +1793,9 @@
     listYear: listYear,
     loadThumb: loadThumb,
     loadThumbsYear: loadThumbsYear,
+    thumbUrl: thumbUrl,
+    rememberThumbUrl: rememberThumbUrl,
+    forgetThumbUrl: forgetThumbUrl,
     loadFull: loadFull,
     init: init,
     getMode: getMode,

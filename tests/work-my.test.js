@@ -295,11 +295,19 @@ ok('정렬은 이름 글자에만 걸린다 (빈 자리를 눌러 엉뚱하게 �
    배포가 막힌다 — renderTeam 이 실제로 그리는 칸을 세어 서로 맞는지만 본다. */
 const teamHead = 2 + (RT.match(/\+t[fs]\('/g) || []).length;        // # + 열들 + 종료
 const teamBody = 3 + (RT.match(/colTD\('team','/g) || []).length;   // 번호·기업·종료 + 열들
-const teamSpan = (RT.match(/colspan="(\d+)"/g) || []).map(s => +s.match(/\d+/)[0]);
 ok('팀 머리행과 본문의 칸 수가 같다',
   teamHead > 3 && teamHead === teamBody);
-ok('소제목 colspan 도 같은 칸 수 (묶음 머리·빈 목록 두 곳)',
-  teamSpan.length >= 2 && teamSpan.every(n => n === teamHead));
+/* colspan 은 이제 숫자가 아니라 TCOLS 다 — 담당 열이 평면일 때만 늘기 때문이다.
+   출발 숫자가 머리·본문과 같은지, 그리고 세 곳(머리·본문·colspan)이 같은 조건으로
+   함께 움직이는지를 본다. 하나만 늘면 표가 어긋난다. */
+const tcols = RT.match(/TCOLS\s*=\s*(\d+)\s*\+/);
+ok('소제목 colspan 이 머리·본문과 같은 칸 수에서 출발한다',
+  !!tcols && Number(tcols[1]) === teamHead
+  && (RT.match(/colspan="'\+TCOLS\+'"/g) || []).length >= 2);
+ok('담당 열은 머리·본문·colspan 이 같은 조건으로 함께 늘어난다',
+  /showMain\?'<th[^']*담당/.test(RT)
+  && /showMain\?'<td>'\+mgrCell\(/.test(RT)
+  && /TCOLS\s*=\s*\d+\s*\+\s*\(showMain\s*\?\s*1\s*:\s*0\)/.test(RT));
 
 /* ── 구분별 묶어 보기 ── */
 const mk = (cat, no) => ({ _id: no, cat: cat, no: no });

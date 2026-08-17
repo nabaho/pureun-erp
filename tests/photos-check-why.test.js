@@ -34,6 +34,10 @@ function load() {
        가짜로 두면 그 판정이 틀려도 아래 「할 일과 이유가 어긋나지 않는다」가 못 잡는다. */
     grab(/^const MIN_READ_EDGE = \{[\s\S]*?\n\};/m, 'MIN_READ_EDGE').replace('const ', 'var '),
     grab(/function tooSmall\(it\)[\s\S]*?\n\}/, 'tooSmall'),
+    /* ⚠ 2026-08-15 — 「보관만 하는 갈래」 목록이 새로 생겼다(계약서가 영영 ⚠ 로
+       남던 사고). 화면에서 **그대로 가져온다** — 여기 베껴 적으면 갈래를 늘릴 때
+       검사만 옛 목록을 보게 된다. */
+    grab(/^const KEEP_ONLY = \{[^}]*\};/m, 'KEEP_ONLY').replace('const ', 'var '),
     grab(/function checkWhy\(it\)[\s\S]*?\n\}/, 'checkWhy'),
     grab(/function needsCheck\(it\)[\s\S]*?\n\}/, 'needsCheck')
   ].join('\n');

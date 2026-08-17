@@ -14,41 +14,26 @@ const app = fs.readFileSync(path.join(__dirname, '..', 'pu-erp.html'), 'utf8').r
 const FL = app.slice(app.indexOf('function FinanceLedger(){'), app.indexOf('function FinanceIncome'));
 const POP = FL.slice(FL.indexOf('sugPopK && (function(){'), FL.indexOf('// ── 1-1 입금 상세 팝업'));
 
-/* ── ① 표 높이를 재서 정한다 ── */
-test('상자의 화면상 위치를 재어 창 바닥까지 채운다', () => {
-  assert.match(FL, /var top = el\.getBoundingClientRect\(\)\.top;/);
-  assert.match(FL, /var want = Math\.max\(240, Math\.round\(window\.innerHeight - top - 16\)\);/);
-});
-
-test('재는 고리가 끝없이 돌지 않는다', () => {
-  // 고침 → 다시 그림 → 고침 … 이 되면 화면이 멈춘다. 8px 안쪽은 그대로 둔다.
-  assert.match(FL, /return Math\.abs\(prev - want\) < 8 \? prev : want;/);
-});
-
-test('그릴 때마다 다시 잰다 (도구줄 높이가 변한다)', () => {
-  assert.match(FL, /useEffect\(function\(\)\{ _ldFit\(\); \}\);/);
-});
-
-test('창 크기를 바꾸면 따라가고, 떠날 때 청취기를 걷는다', () => {
-  assert.match(FL, /window\.addEventListener\('resize', _ldFit\);/);
-  assert.match(FL, /window\.removeEventListener\('resize', _ldFit\);/);
-});
-
-test('타이머로 재지 않는다', () => {
-  // setInterval 로 재면 느린 타이머 이름표(🐌)에 걸리고 쓸데없이 일을 한다
-  const fit = FL.slice(FL.indexOf('var _ldBoxRef = useRef(null);'), FL.indexOf('var _ldBox={overflow'));
-  assert.ok(fit.indexOf('setInterval') < 0);
-  assert.ok(fit.indexOf('setTimeout') < 0);
+/* ── ① 표 높이를 재서 정한다 ──
+   ⚠ 2026-08-16: 여기서 처음 만든 이 방식을 «모든 화면이 함께 쓰도록» 공용 도우미
+     (useFillHeight)로 옮겼다. 그래서 재는 셈 자체는 여기서 볼 일이 아니다 —
+     pending-table-fill.test.js 가 도우미를 실제로 돌려 본다.
+     여기서는 «거래내역이 그 도우미를 쓰고 있는가» 만 지킨다. */
+test('공용 도우미로 높이를 정한다 (화면마다 따로 만들지 않는다)', () => {
+  assert.match(FL, /var _ldFill = useFillHeight\(\);/);
+  assert.ok(!/_ldFit|_ldBoxRef/.test(FL), '옛 자체 구현이 남아 있으면 한쪽만 고쳐진다');
 });
 
 test('못 쟀을 때를 대비한 높이가 있다', () => {
-  assert.match(FL, /maxHeight:\(_ldH \? _ldH\+'px' : 'calc\(100vh - 330px\)'\)/);
+  /* ⚠ 폴백 «값» 을 글자 그대로 박지 않는다 — 배치가 바뀌면 그 숫자도 바뀐다.
+     지킬 것은 「폴백이 있는가」이지 「330인가」가 아니다. */
+  assert.match(FL, /maxHeight:\([A-Za-z_$][\w$]*\.max \|\| 'calc\(100vh[^']*\)'\)/);
   assert.match(FL, /minHeight:'240px'/, '너무 납작해지지 않게');
 });
 
 test('maxHeight 로 둔다 (목록이 짧으면 빈 상자가 크게 남는다)', () => {
   const box = FL.slice(FL.indexOf('var _ldBox={overflow'), FL.indexOf('var _ldBox={overflow') + 200);
-  assert.ok(box.indexOf("height:(_ldH") < 0 || box.indexOf('maxHeight:(_ldH') >= 0);
+  assert.ok(box.indexOf('maxHeight:(_ldFill.max') >= 0);
 });
 
 /* ── ② 직접 찾아 고르기 ── */

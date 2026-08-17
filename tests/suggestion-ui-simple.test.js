@@ -34,10 +34,18 @@ test('휴대폰에서는 건의함이 화면 전체를 사용한다', () => {
   assert.match(html, /document\.body\.classList\.add\('sg-modal-open'\)/);
 });
 
-test('휴대폰 건의하기 버튼은 헤더 폭과 무관한 고정 터치 버튼이다', () => {
-  assert.match(html, /#sgFab\{position:fixed!important;[^}]*right:14px!important;bottom:78px!important;/s);
-  assert.match(html, /min-height:42px/);
+/* ⚠ 2026-08-15 뒤집었다 — 예전에는 「헤더 폭과 무관하게 화면에 띄운다」가 목표였다.
+   그런데 띄운 자리(오른쪽 아래 78px)가 pu-version.js 의 「최신」(96px)과 물렸고,
+   일부 삼성·네이버 브라우저는 fixed 좌표를 무시하고 단추를 헤더 자리로 되돌려
+   화면 위에서 잘랐다. !important 로도 막지 못했다.
+   그래서 폰에서는 헤더 카드 안(로그아웃 옆)에 두고, 대신 헤더가 두 줄로 꺾이도록 했다. */
+test('휴대폰 건의하기 버튼은 헤더 카드 안에 있다', () => {
+  assert.match(html, /#sgFab\{position:relative;display:inline-flex;/);
+  // PC용 `.pbar #sgFab{order:4}` 를 이기려면 같은 우선순위로 적어야 로그아웃 옆에 선다
+  assert.match(html, /\.pbar #sgFab\{order:0;/);
   assert.match(html, /\.sg-tip\{display:none!important;\}/);
+  // 헤더가 좁아지면 아래 줄로 꺾여야 단추가 밀려 잘리지 않는다
+  assert.match(html, /\.pbar\{flex-wrap:wrap;/);
 });
 
 test('일반 사용자는 건의 작성 안내만 보고 전체 목록과 상세에는 들어가지 못한다', () => {

@@ -265,8 +265,12 @@ function fnBody(name){
 test('배지는 정리 팝업과 같은 함수로 판정한다', () => {
   /* 예전에는 배지가 열쇠 개수만 세어, 「중복 아님」으로 적어 둔 짝도 배지가 남았다. */
   const fn = fnBody('renderPCTable');
-  assert.match(fn, /dupIdSet\(/, '배지가 옛 방식(열쇠 개수)으로 판정합니다');
+  /* 2026-08-16: 매번 다시 세면 64ms 라 답을 기억해 두는 dupIdSetCached 를 거친다.
+     기억해 두는 것과 «다르게 판정하는 것»은 다르다 — 그 함수는 dupIdSet 을 그대로 부른다. */
+  assert.match(fn, /dupIdSetCached\(/, '배지가 옛 방식(열쇠 개수)으로 판정합니다');
   assert.match(fn, /dupIgnoreSet\(\)/, '「중복 아님」을 배지가 안 봅니다');
+  assert.match(fnBody('dupIdSetCached'), /dupIdSet\(items, ignore\)/,
+    '기억해 두는 함수가 정리 팝업과 다른 방법으로 판정하면 안 됩니다');
 });
 
 test('배지를 눌러 팝업이 열린다 — 줄 클릭과 겹치지 않게 막는다', () => {

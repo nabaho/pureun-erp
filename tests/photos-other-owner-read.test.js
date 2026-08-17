@@ -90,7 +90,14 @@ function loadStore() {
 test('화면이 찾은 주인으로 저장하면 그 사람 사진 아래에 들어간다', () => {
   const S = loadStore();
   const paths = [];
-  S.init({ uid: 'ME', db: { ref: () => ({ update: (u) => { paths.push(Object.keys(u)[0]); return Promise.resolve(); } }) } });
+  // saveRead 가 쓰기 전에 사진 정보가 있는지 먼저 본다(2026-08-15) — once() 도 있어야 한다.
+  S.init({
+    uid: 'ME',
+    db: { ref: () => ({
+      update: (u) => { paths.push(Object.keys(u)[0]); return Promise.resolve(); },
+      once: () => Promise.resolve({ val: () => ({ takenAt: 1 }) })
+    }) }
+  });
   const f = loadPhotoOwner({ gridItems: [photo('p1', 'U9', '박은비')], gridOwner: '__all__' });
   return S.saveRead('2026', 'p1', { kind: 'card' }, f('p1')).then(function () {
     assert.deepEqual(paths, ['puphotos/u/U9/items/2026/p1/read'],

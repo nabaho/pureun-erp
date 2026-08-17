@@ -109,6 +109,10 @@ function loadListBlockWithSelBar(items){
     esc: s => String(s ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
     state: { coSel:{}, selMode:true },
     _coFolders: {},
+    /* 나눠 보기(2026-08-15) — 폰 목록도 «잘린 쪽»을 그린다. 여기서는 한 쪽에 다 담는다 */
+    coPage: () => { const l = items; return { rows:l, total:l.length, page:0, pages:1,
+                    size:200, from:l.length?1:0, to:l.length }; },
+    coPagerHtml: () => '',
     coVisible: () => items,
     coTagsOf: () => [],
     $: id => id==='list' ? { set innerHTML(v){ calls.html=v; }, get innerHTML(){ return calls.html; } } : null

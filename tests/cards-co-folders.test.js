@@ -53,6 +53,9 @@ test('기업 상세로 들어가는 공용 길(enterCoView)이 폴더 목록도 
 
 test('openCoPage 는 그 공용 길을 거친다', () => {
   const at = source.indexOf('function openCoPage');
+  /* openCoPage 는 이제 enterCoView() 를 거치는 한 줄이라 loadCoFolders 가 그 안에
+     직접 있지 않다 — 「공용 길을 거치는가」로 못 박는다. 실제로 구독이 시작되는지는
+     위 검사(enterCoView)와 cards-co-mobile-fix.test.js 가 각각 지킨다. */
   const fn = source.slice(at, at + 300);
   assert.match(fn, /enterCoView\(\)/);
 });

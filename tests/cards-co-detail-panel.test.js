@@ -17,7 +17,8 @@ test('renderCoPage 는 이제 항상 목록만 그린다 — state.coPick 으로
   const end = source.indexOf('\nfunction coListHtml', at);
   const fn = source.slice(at, end);
   assert.doesNotMatch(fn, /coDetailHtml/, 'renderCoPage 가 여전히 coDetailHtml 을 부르면 안 된다');
-  assert.match(fn, /coListHtml\(list\)/);
+  /* 나눠 보기(2026-08-15) 뒤로 목록은 «잘린 쪽»(info)으로 넘어간다 */
+  assert.match(fn, /coListHtml\(info\)/);
 });
 
 /* coDetailPanelHtml·openCoDetailPanel·pickCo·closePcDetail 을 실제로 돌려서 증명한다.

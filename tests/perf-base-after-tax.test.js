@@ -64,15 +64,20 @@ console.log('\n[④ 입금확정 미리보기 — 화면이 저장될 값과 같
 /* 입금확정 모달만 잘라 본다 — 「분배 합계」까지가 미리보기 구역이다.
    ※ 창 크기를 글자수로 못 박으면 코드가 조금만 길어져도 엉뚱한 데를 본다. 앞뒤를 이름으로 잡는다. */
 const _mStart = src.indexOf('var hasAnyOverride = (mainRateOverride != null)');
-const _mEnd = src.indexOf("'분배 합계'", _mStart);
+// 끝은 창의 «바닥 단추줄» 로 잡는다 — 안쪽 문구를 표시로 삼으면 그 문구를 고칠 때 깨진다
+const _mEnd = src.indexOf("h('div', { className:'modal-f' }", _mStart);
 const MODAL = src.slice(_mStart, _mEnd);
 t('미리보기 구역을 잘라냈다', _mStart > 0 && _mEnd > _mStart, true);
 t('★ 세후 기준을 미리 구해 둔다', /var _perfBase = calcDeductions\(_cmPay, _cmDed\)\.perfBaseAmount;/.test(MODAL), true);
 /* 체크한 차감 설정을 실제로 읽어야 한다 — 빈 값을 넘기면 계산식은 그대로인데
    기타소득 체크가 미리보기에 안 먹어 다시 세전 금액이 뜬다(변이 p4). */
 t('기타소득·사업소득 체크를 실제로 읽는다', /var _cmDed = confirmModal\.deductions \|\| \{\};/.test(MODAL), true);
-t('주담당 몫을 세후 기준으로 나눈다', /var base = Math\.round\(_perfBase \* mainPct \/ 100\);/.test(MODAL), true);
-t('부담당 몫도 같은 기준', /var base = Math\.round\(_perfBase \* pct \/ 100\);/.test(MODAL), true);
+/* 지킬 것은 「세후 기준(_perfBase)으로 나눈다」이지, 그 줄이 어떤 모양이냐가 아니다.
+   2026-08-16 에 주담당·부담당 줄을 «한 함수» 로 합치면서 이 검사가 깨졌다 — 합친 것이 옳다. */
+t('화면이 세후 기준으로 나눈다', /Math\.round\(_perfBase \* pct \/ 100\)/.test(MODAL), true);
+/* 주담당만 따로 셈하는 길이 없어야 한다 — 두 벌이면 한쪽만 고쳐 조용히 어긋난다.
+   (개인수익 배분은 이 창의 다른 구역에 제 셈이 따로 있다. 그건 별개다.) */
+t('주담당 전용 셈이 따로 없다', /_perfBase \* mainPct \/ 100/.test(MODAL), false);
 t('★ 약정액(세전)으로 나누던 옛 셈이 사라졌다',
   /Math\.round\(confirmModal\.p\.amount \* (mainPct|pct) \/ 100\)/.test(src), false);
 t('분할입금이면 실제 들어온 돈까지만 센다', /confirmModal\.actualAmt != null \? confirmModal\.actualAmt : _cmRemain/.test(MODAL), true);

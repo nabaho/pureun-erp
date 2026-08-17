@@ -34,10 +34,17 @@ test('권한 거부는 두 번째 권한 요청을 하지 않고 제약 오류�
   const fn = block('async function openCam()', 'function camFail()');
   assert.match(fn, /e\.name === 'OverconstrainedError'/);
   assert.match(fn, /e\.name === 'NotAllowedError'/);
-  const firstCatch = fn.slice(fn.indexOf('} catch (e) {'), fn.indexOf('/* 스트림을 받은 즉시'));
+  const firstCatch = fn.slice(fn.indexOf('} catch (e0) {'), fn.indexOf('/* 스트림을 받은 즉시'));
   assert.match(firstCatch, /if \(!retryable\)[\s\S]*return false;/);
-  assert.equal((firstCatch.match(/getUserMedia\(/g) || []).length, 1,
-    'fallback 권한 요청은 한 번만 있어야 합니다.');
+  /* 물러나는 getUserMedia 는 둘 — ① 기억해 둔 렌즈가 사라졌을 때 ② 제약 오류일 때.
+     둘 다 **권한 거부에서는 돌면 안 된다.** 돌면 같은 권한창이 연달아 두 번 뜬다.
+     ①은 렌즈가 사라졌을 때만 나는 오류로, ②는 retryable 로 각각 좁혀 두었다.
+     (2026-08-15 렌즈 고르기를 넣으면서 ①이 모든 오류에서 돌던 것을 이 검사가 잡았다.) */
+  assert.equal((firstCatch.match(/getUserMedia\(/g) || []).length, 2,
+    'fallback 권한 요청은 렌즈 재시도와 제약 재시도 둘뿐이어야 합니다.');
+  assert.match(firstCatch, /const lensGone = e0 && \(e0\.name === 'OverconstrainedError'/);
+  assert.match(firstCatch, /if \(camWantDevId && lensGone\)/,
+    '★ 권한 거부에서도 렌즈 재시도가 돌면 권한창이 두 번 뜹니다');
 });
 
 test('촬영 진입이면 사진 목록 초기화를 늦추고 카메라부터 연다', () => {

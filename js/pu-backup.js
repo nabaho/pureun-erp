@@ -11,8 +11,31 @@
     'gov-consulting.html': { id: 'gov-consulting', paths: ['scal_cos', 'scal_scheds', 'scal_roundlog', 'scal_staff'] },
     'kcareer.html': { id: 'kcareer', paths: [] },
     'payroll-os.html': { id: 'payroll', paths: ['payroll_os'] },
-    'pu-cards.html': { id: 'cards', paths: ['pucards'] },
-    'rules.html': { id: 'rules', paths: ['rules_mgmt'] },
+    /* ⚠ 'pucards' 통째 백업 금지 (2026-08-16 종일 오류 폭주의 근원).
+       그 안에는 명함 사진 원본(photos)·썸네일(thumbs)·첨부 원본(materialFiles)·
+       휴지통(trash)이 들어 있어 수백 MB 다. 실시간DB 는 한 번의 쓰기를 16MB 까지만
+       받아 주므로 이 백업 쓰기는 «영원히 성공할 수 없고», 실패하니 「오늘 했음」
+       표시가 안 남아 관리자 탭을 열 때마다 다시 통째로 읽고(과금) 다시 통째로
+       보냈다(서버가 조각조각 거부 — 콘솔에 오류 수만 건). 사람이 손으로 넣어
+       «되살릴 수 없는» 자료만 담는다.
+       ─ 안 담는 것과 이유 ─
+         photos·thumbs   : 사진 본문 — 크다. 지워지면 아프지만 백업이 막히는 것보다 낫다
+         materialFiles   : 첨부 파일 본문 — 크다. 이름·설명(materials)은 담는다
+         trash           : 휴지통 — 이미 지운 것의 사본
+         sentBox·sendLog·scheduled : 발송 기록(로그)
+         idx·bykey       : items 에서 언제든 다시 만드는 색인 */
+    'pu-cards.html': { id: 'cards',
+      paths: ['pucards/items', 'pucards/groups', 'pucards/views', 'pucards/classifyRules',
+              'pucards/config', 'pucards/coInfo', 'pucards/coFolders', 'pucards/coTagHidden',
+              'pucards/materials', 'pucards/matSets'],
+      /* 옛 명함에는 사진이 본문에 박혀 있던 시절 것이 남아 있다 — 그 칸만 뺀다 */
+      strip: { 'pucards/items': ['thumb', 'thumb2', 'photo', 'photo2'] } },
+    /* ⚠ rules_mgmt 는 **통째로 읽을 수 없다**. 콘솔 규칙이 .read 를 아랫칸마다
+       따로 열어 두었기 때문이다(done·orig·archive·decisions·matchfix 는 직원 전체,
+       wip·worksession 은 본인만). 통째로 읽으려 하면 permission_denied 가 나고
+       그때마다 관리자 화면에 장애 알림이 떴다(2026-08 한 달에 68건).
+       그래서 읽을 수 있는 칸만 적는다 — 본인 칸은 getConfig 에서 붙인다. */
+    'rules.html': { id: 'rules', paths: ['rules_mgmt/done', 'rules_mgmt/archive', 'rules_mgmt/orig', 'rules_mgmt/decisions', 'rules_mgmt/matchfix'] },
     'work.html': { id: 'work', paths: ['work_erp'] }
   };
   var KEEP_DAYS = 30;
@@ -29,22 +52,78 @@
   function getConfig(user) {
     var base = configs[pageName()];
     if (!base) return null;
-    var config = { id: base.id, paths: base.paths.slice() };
+    var config = { id: base.id, paths: base.paths.slice(), strip: base.strip || {} };
     if (base.id === 'kcareer') config.paths = ['kcareer/' + user.uid];
+    /* 규정관리의 실제 작업물(작성 중인 규정·작업 보관)은 사람마다 따로 있고
+       규칙이 남의 칸 읽기를 막는다 — 그래서 백업하는 사람 본인 칸만 담는다
+       (kcareer 와 같은 방식). 남의 작업까지 담으려면 콘솔 규칙을 열어야 한다. */
+    if (base.id === 'rules') config.paths = config.paths.concat(['rules_mgmt/wip/' + user.uid, 'rules_mgmt/worksession/' + user.uid]);
     return config;
   }
 
-  function readPaths(db, paths) {
+  /* 기록마다 무거운 칸(사진 등)을 뺀 사본 — 원본은 건드리지 않는다 */
+  function stripFields(value, fields) {
+    if (!value || typeof value !== 'object' || !fields || !fields.length) return value;
+    var out = {};
+    Object.keys(value).forEach(function (k) {
+      var rec = value[k];
+      if (rec && typeof rec === 'object') {
+        var copy = Object.assign({}, rec);
+        fields.forEach(function (f) { delete copy[f]; });
+        out[k] = copy;
+      } else out[k] = rec;
+    });
+    return out;
+  }
+
+  function readPaths(db, paths, strip) {
     var result = [];
     return paths.reduce(function (chain, dbPath) {
       return chain.then(function () {
         return db.ref(dbPath).once('value').then(function (snapshot) {
           var entry = { path: dbPath, exists: snapshot.exists() };
-          if (entry.exists) entry.value = snapshot.val();
+          if (entry.exists) entry.value = stripFields(snapshot.val(), strip && strip[dbPath]);
           result.push(entry);
         });
       });
     }, Promise.resolve()).then(function () { return result; });
+  }
+
+  /* ── 백업 한 통의 크기 지킴이 ──
+     실시간DB 는 한 번의 쓰기를 16MB 까지만 받아 준다. 넘치면 서버가 조각조각 거부해
+     오류가 수만 건 쌓이고, 「오늘 했음」 표시가 안 남아 탭마다 다시 시도했다(2026-08-16).
+     너무 큰 칸은 값을 담지 않고 «건너뛰었다»고 적는다 — 통이 반드시 들어가게.
+     ⚠ 길이(JSON 글자 수)로 잰다. 한글은 실제 바이트가 더 크지만, 한도를 넉넉히
+       낮게 잡아(8/12MB < 16MB) 그 오차를 덮는다. */
+  var MAX_ENTRY_CHARS = 8 * 1024 * 1024;
+  var MAX_TOTAL_CHARS = 12 * 1024 * 1024;
+  function entrySize(entry) {
+    try { return JSON.stringify(entry.value === undefined ? null : entry.value).length; }
+    catch (_) { return Infinity; }
+  }
+  function trimForWrite(entries) {
+    var sized = entries.map(function (entry) { return { entry: entry, size: entrySize(entry) }; });
+    var skipped = [];
+    /* ① 한 칸이 혼자 너무 크면 그 칸만 뺀다 */
+    sized.forEach(function (item) {
+      if (item.size > MAX_ENTRY_CHARS) {
+        skipped.push({ path: item.entry.path, chars: item.size });
+        item.entry = { path: item.entry.path, exists: item.entry.exists, skipped: 'too-big', chars: item.size };
+        item.size = 0;
+      }
+    });
+    /* ② 다 합쳐도 크면 큰 칸부터 뺀다 — 작은 칸이라도 살리는 쪽이 낫다 */
+    var total = sized.reduce(function (s, x) { return s + x.size; }, 0);
+    while (total > MAX_TOTAL_CHARS) {
+      var biggest = null;
+      sized.forEach(function (item) { if (item.size > 0 && (!biggest || item.size > biggest.size)) biggest = item; });
+      if (!biggest) break;
+      skipped.push({ path: biggest.entry.path, chars: biggest.size });
+      total -= biggest.size;
+      biggest.entry = { path: biggest.entry.path, exists: biggest.entry.exists, skipped: 'too-big', chars: biggest.size };
+      biggest.size = 0;
+    }
+    return { paths: sized.map(function (x) { return x.entry; }), skipped: skipped };
   }
 
   function snapshotKey(label) {
@@ -55,21 +134,43 @@
     var db = app.database();
     var user = app.auth().currentUser;
     if (!user || !config || !config.paths.length) return Promise.resolve(false);
-    return readPaths(db, config.paths).then(function (data) {
+    return readPaths(db, config.paths, config.strip).then(function (data) {
+      var trimmed = trimForWrite(data);
       var key = snapshotKey(label || 'manual');
       var record = {
         system: config.id,
         createdAt: Date.now(),
         createdBy: user.uid,
         label: label || 'manual',
-        paths: data
+        paths: trimmed.paths
       };
+      /* 못 담은 칸이 있으면 기록에도, 관리자 알림에도 남긴다 — 조용히 빠지면
+         복원할 때가 되어서야 없다는 것을 안다. */
+      if (trimmed.skipped.length) {
+        record.skipped = trimmed.skipped;
+        try { if (window.PUHealth) window.PUHealth.report('backup', new Error('백업에서 큰 칸을 건너뜀: ' + trimmed.skipped.map(function (x) { return x.path; }).join(', '))); } catch (_) {}
+      }
       var updates = {};
       updates['systemBackups/' + safeKey(config.id) + '/' + key] = record;
       updates['systemBackupsIndex/' + safeKey(config.id) + '/' + key] = { createdAt: record.createdAt, createdBy: user.uid, label: record.label };
-      return db.ref().update(updates).then(function () { return prune(app, config); }).then(function () { return record; });
+      return db.ref().update(updates).then(function () { clearFail(config.id); return prune(app, config); }).then(function () { return record; });
     });
   }
+
+  /* ── 실패 뒤 식힘 시간 ──
+     백업이 실패하면 「오늘 했음」 표시가 안 남아 관리자 탭을 «열 때마다» 처음부터
+     다시 했다 — 전체 읽기(과금)와 실패 쓰기가 종일 되풀이됐다(2026-08-16).
+     실패하면 6시간 쉬었다가 다시 해 본다. 지우는 것이 아니라 쉬는 것이다. */
+  var FAIL_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+  function failStampKey(id) { return 'pu_backup_fail_v1:' + safeKey(id); }
+  function inCooldown(id) {
+    try {
+      var t = Number(window.localStorage.getItem(failStampKey(id)) || 0);
+      return !!t && (Date.now() - t) < FAIL_COOLDOWN_MS;
+    } catch (_) { return false; }
+  }
+  function noteFail(id) { try { window.localStorage.setItem(failStampKey(id), String(Date.now())); } catch (_) {} }
+  function clearFail(id) { try { window.localStorage.removeItem(failStampKey(id)); } catch (_) {} }
 
   function prune(app, config) {
     var base = 'systemBackupsIndex/' + safeKey(config.id);
@@ -108,6 +209,21 @@
     });
   }
 
+  /* ── 무엇을 되돌릴 것인가 — 백업에 «담긴 것»만 쓴다 ──
+     예전에는 지금 설정(config.paths)을 기준으로 백업에 없는 칸을 null 로 지웠다.
+     2026-08-16 백업 대상을 통째('pucards')에서 낱칸으로 바꾸면서, 그 방식이면
+     옛 통째 백업을 복원할 때 낱칸들이 백업에 「없다」고 보여 «전부 지워질» 뻔했다.
+     백업에 담긴 칸만 쓰면 옛 백업(통째)과 새 백업(낱칸)이 모두 안전하다.
+     크기 때문에 건너뛴 칸(skipped)은 그대로 둔다 — 값이 없는데 지우면 안 된다. */
+  function restorePlan(backup) {
+    var updates = {};
+    (backup.paths || []).forEach(function (entry) {
+      if (!entry || !entry.path || entry.skipped) return;
+      updates[entry.path] = entry.exists === false ? null : (entry.value === undefined ? null : entry.value);
+    });
+    return updates;
+  }
+
   function restore(app, config, item, button) {
     if (window.navigator.onLine === false) { window.alert('오프라인에서는 복원할 수 없습니다. 연결 후 다시 시도해 주세요.'); return; }
     var when = new Date(Number(item.createdAt || 0)).toLocaleString('ko-KR');
@@ -118,10 +234,8 @@
     }).then(function (snapshot) {
       var backup = snapshot.val();
       if (!backup || !Array.isArray(backup.paths)) throw new Error('백업 본문이 없습니다.');
-      var updates = {};
-      var values = {};
-      backup.paths.forEach(function (entry) { if (entry && entry.path) values[entry.path] = entry.exists === false ? null : entry.value; });
-      config.paths.forEach(function (dbPath) { updates[dbPath] = Object.prototype.hasOwnProperty.call(values, dbPath) ? values[dbPath] : null; });
+      var updates = restorePlan(backup);
+      if (!Object.keys(updates).length) throw new Error('이 백업에는 복원할 내용이 없습니다.');
       return app.database().ref().update(updates).then(function () {
         return app.database().ref('systemRestoreLog/' + safeKey(config.id)).push({
           restoredAt: Date.now(), restoredBy: app.auth().currentUser.uid, backupKey: item.key
@@ -178,7 +292,13 @@
         current = { app: app, config: config };
         ensureButton(app, config);
         return app.database().ref('systemBackupsIndex/' + safeKey(config.id) + '/' + dayKey()).once('value').then(function (daily) {
-          if (!daily.exists()) return createSnapshot(app, config, 'daily');
+          if (daily.exists()) return;
+          /* 아침에 실패했으면 지금은 쉰다 — 열 때마다 다시 하면 그게 폭주다 */
+          if (inCooldown(config.id)) return;
+          return createSnapshot(app, config, 'daily').catch(function (error) {
+            noteFail(config.id);
+            throw error;
+          });
         });
       }).catch(function (error) { if (window.PUHealth) window.PUHealth.report('backup', error); });
     });
@@ -195,6 +315,9 @@
     return true;
   }
 
-  window.PUBackup = { install: install, snapshot: function () { return current ? createSnapshot(current.app, current.config, 'manual') : Promise.resolve(false); }, _config: getConfig, _dayKey: dayKey };
+  window.PUBackup = { install: install, snapshot: function () { return current ? createSnapshot(current.app, current.config, 'manual') : Promise.resolve(false); }, _config: getConfig, _dayKey: dayKey,
+    /* 검사용 — 순수 셈들 */
+    _trim: trimForWrite, _strip: stripFields, _restorePlan: restorePlan,
+    _limits: { entry: MAX_ENTRY_CHARS, total: MAX_TOTAL_CHARS, cooldown: FAIL_COOLDOWN_MS } };
   install();
 })(typeof window !== 'undefined' ? window : null);

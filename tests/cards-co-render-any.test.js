@@ -151,11 +151,20 @@ test('renderCoListOnly — 기업 상세 화면이 아니면 아무 것도 안 �
 });
 
 test('_coInfo/_coTagHidden/_coFolders 구독 콜백도 renderCoAny 를 쓴다', () => {
+  /* 2026-08-16: 실시간으로 들어오는 자리는 renderCoSoon() 을 쓴다 — 몰아친 것을 한
+     프레임에 한 번으로 묶기 위해서다. 묶어 주는 그 함수가 부르는 것은 renderCoAny()
+     하나이므로 「PC냐 폰이냐를 한 곳에서만 판별한다」는 이 검사의 뜻은 그대로다. */
   ['coInfo','coTagHidden','coFolders'].forEach(k=>{
     const at = source.indexOf(`DB_ROOT+'/${k}'`);
     assert.ok(at > 0, `${k} 구독을 찾지 못했습니다`);
     const end = source.indexOf('\n', at);
     const line = source.slice(at, end);
-    assert.match(line, /renderCoAny\(\)/, `${k} 구독 콜백이 renderCoAny() 를 불러야 합니다`);
+    assert.match(line, /renderCoSoon\(\)/, `${k} 구독 콜백이 renderCoSoon() 을 불러야 합니다`);
+    assert.doesNotMatch(line, /renderPC\(\)|renderCoPage\(\)|renderCoMobileList\(\)/,
+      `${k} 구독 콜백이 화면을 직접 골라 그리면 안 됩니다`);
   });
+  /* 묶어 주는 함수는 renderCoAny() 하나만 부른다 */
+  const at = source.indexOf('const renderCoSoon');
+  assert.ok(at > 0, 'renderCoSoon 을 찾지 못했습니다');
+  assert.match(source.slice(at, at + 200), /renderCoAny\(\)/);
 });

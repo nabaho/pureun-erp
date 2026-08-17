@@ -356,14 +356,40 @@
     return up;
   }
 
+  /* 대기 칸 자료를 휴지통으로 (2026-08-15 — 골라서 한꺼번에).
+     ⚠ trashUpdate 를 그대로 쓰면 안 된다. 그것은 **서랍** 자료를 지우는 것이라
+     items/<칸> 을 비우는데, 대기 칸 자료는 거기 있지도 않다 — pending 자리는
+     그대로 남아 휴지통과 대기 칸 **양쪽에** 같은 자료가 보이게 된다.
+     되살릴 때 어디로 돌려보낼지도 알아야 하므로 fromPending 표를 달아 둔다
+     (사업장·귀속월이 없으니 서랍으로 돌려보낼 수가 없다). */
+  function trashPendingUpdate(id, rec, owner) {
+    if (!id || !rec) throw new Error('지울 자료를 찾을 수 없습니다');
+    var t = {};
+    Object.keys(rec).forEach(function (k) { t[k] = rec[k]; });
+    t.trashedAt = Date.now();
+    t.trashedBy = deps.uid || '';
+    t.fromPending = true;
+    var up = {};
+    up[trashPath(id, owner)] = t;
+    up[pendingPath(id, owner)] = null;
+    return up;
+  }
+
   function restoreUpdate(id, rec, owner) {
     if (!id || !rec) throw new Error('되살릴 자료를 찾을 수 없습니다');
-    var slot = String(rec.month || KEEP);
     var back = {};
     Object.keys(rec).forEach(function (k) {
-      if (k !== 'trashedAt' && k !== 'trashedBy') back[k] = rec[k];
+      if (k !== 'trashedAt' && k !== 'trashedBy' && k !== 'fromPending') back[k] = rec[k];
     });
     var up = {};
+    /* 대기 칸에서 지운 것은 **대기 칸으로** 돌아간다 — 사업장·귀속월이 없어
+       서랍에 넣으면 어느 칸에도 안 걸리는 유령이 된다. */
+    if (rec.fromPending) {
+      up[pendingPath(id, owner)] = back;
+      up[trashPath(id, owner)] = null;
+      return up;
+    }
+    var slot = String(rec.month || KEEP);
     up[itemPath(slot, id, owner)] = back;
     up[trashPath(id, owner)] = null;
     if (rec.companyId && rec.kind) {
@@ -558,11 +584,82 @@
     return deps.db.ref().update(up);
   }
 
+  /* 골라 둔 자료를 한꺼번에 옮긴다 — **쓰기는 한 번**이다.
+     건마다 따로 쓰면 중간에 끊겼을 때 절반만 옮겨진 채 아무도 모른다.
+     경로를 아는 곳은 이 파일 한 군데라는 원칙 때문에 화면이 아니라 여기서 만든다. */
+  function setFolderMany(slot, ids, folderId, owner) {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var list = (ids || []).filter(Boolean);
+    if (!list.length) return Promise.resolve(0);
+    var up = {};
+    list.forEach(function (id) { up[itemPath(slot, id, owner) + '/folder'] = folderId || null; });
+    return deps.db.ref().update(up).then(function () { return list.length; });
+  }
+
   /* ══════ 값 층 ══════
      원본(사진·엑셀·PDF)과 값(근로자·항목·금액)을 두 층으로 나눈다(설계서 3장).
      사진 한 장에 근로자가 열 명이면 값은 **열 줄**이다 — 사진 한 장 = 값 한 줄이 아니다.
      값 한 줄에는 반드시 **출처(원본 번호)**가 붙는다 — 없으면 몇 달 뒤 "이 수당
      어디서 나온 거냐"에 답을 못 한다. */
+
+  /* ══════ 판독 결과 → 값 줄 (2026-08-15) ══════
+     판독 결과가 서류마다 모양이 다르다. buildValueRows 가 받는
+     {name, pairs:[{item,value}]} 하나로 맞춘다. 근태만 모양이 다르고
+     (paid·off 가 날짜 배열) 나머지 둘은 이미 맞는 모양이라 그대로 흘린다. */
+
+  /* 서랍 종류 → 판독 방식. null 이면 그 탭에는 판독 단추를 그리지 않는다.
+     근로계약서는 값을 뽑을 것이 아니고, 우리 산출물은 우리가 만든 것이라
+     다시 읽을 이유가 없다. */
+  function readKindFor(kind) {
+    if (kind === 'attend') return 'timesheet';
+    if (kind === 'ledger') return 'wage';
+    if (kind === 'etc') return 'notice';
+    return null;
+  }
+
+  /* 값이 비면 그 항목을 아예 만들지 않는다 — 0 과 「없음」은 다르다.
+     (월별 값 표에서 없는 항목은 0 이 아니라 「－」로 보여야 한다) */
+  function pushPair(pairs, item, value) {
+    var v = String(value == null ? '' : value).trim();
+    if (v) pairs.push({ item: item, value: v });
+  }
+
+  /* ── 판독기가 「이 줄은 확실하지 않다」고 말한 것 ──
+     근태표 프롬프트(js/pu-doc-read.js PROMPT_ALL)는 흐려서 못 읽은 숫자를 지어내지
+     말고 **그 줄 note 에 「일부 판독 불확실」을 덧붙이라**고 시킨다. 그 표시를 여기서
+     버리면 스무 명 중 한 명만 흐렸던 줄이 확신한 열아홉 줄과 똑같이 보인다 —
+     어디를 먼저 봐야 하는지 알 길이 없다. 그래서 값 줄에 iffy 로 달아 보낸다
+     (판독 패널이 그 줄을 노랗게 칠하고 「⚠ N줄은 확실하지 않습니다」로 센다). */
+  function isIffyNote(v) { return /불확실/.test(String(v == null ? '' : v)); }
+
+  function rowsFromRead(readKind, parsed) {
+    var src = (parsed && parsed.rows) || [];
+    var out = [];
+    src.forEach(function (r) {
+      var name = String((r && r.name) || '').trim();
+      if (!name) return;
+      var iffy = isIffyNote(r && r.note);
+      var pairs = [];
+      if (readKind === 'timesheet') {
+        var paid = Array.isArray(r.paid) ? r.paid : [];
+        var off = Array.isArray(r.off) ? r.off : [];
+        if (paid.length) pushPair(pairs, '유급일수', paid.length + '일');
+        if (off.length) pushPair(pairs, '휴무일수', off.length + '일');
+        pushPair(pairs, '가감', r.adj);
+        pushPair(pairs, '비고', r.note);
+      } else if (readKind === 'wage' || readKind === 'notice') {
+        (Array.isArray(r.pairs) ? r.pairs : []).forEach(function (p) {
+          var item = String((p && p.item) || '').trim();
+          if (item) pushPair(pairs, item, p && p.value);
+        });
+      } else {
+        return;                       // 모르는 방식은 아무것도 만들지 않는다
+      }
+      if (!pairs.length) return;      // 항목이 하나도 없으면 값 줄이 아니다
+      out.push({ name: name, pairs: pairs, iffy: iffy });
+    });
+    return out;
+  }
 
   /* 판독 결과({company,period,docName,rows:[{name,pairs:[{item,value}]}]}) →
      값 줄 배열. 순수 함수라 AI 없이도 검사할 수 있다.
@@ -587,22 +684,90 @@
         pairs: ((p && p.pairs) || []).map(function (pr) {
           return { item: String((pr && pr.item) || ''), value: String((pr && pr.value) || '') };
         }),
-        confirmed: false,
+        /* 사람이 확인했는가 — **부르는 쪽이 정한다.** 화면에서 「저장」을 누른 것이
+           곧 사람의 확인이다(원본을 옆에 놓고 줄을 고친 뒤 스스로 누른 것이므로).
+           예전에는 여기서 false 로 못 박아, 확인이 끝난 줄까지 값 표에서 영영
+           노랗게 떴다 — 설계서 3장 ②가 막으라고 한 바로 그 상태다(한 달만 지나면
+           노랑을 「원래 그런 것」으로 읽어, 정말 확인 안 된 값이 그대로 더존에 들어간다).
+           기계가 만들기만 하고 사람이 받아들이지 않은 값은 이 칸을 안 주면 된다 —
+           그때는 그대로 false 로 남아 노랗게 뜬다.
+
+           ⚠ 그런데 saveVals 는 서류 한 장(스무 줄)을 confirmed:true 하나로 통째로
+           보낸다 — 그 안에서 AI 스스로 「일부 판독 불확실」이라 표시한 줄(p.iffy,
+           rowsFromRead 머리말 참고)까지 함께 true 가 되면, 사람이 보지도 않은
+           줄이 확인된 값으로 값 표에서 하얗게 뜬다. 그러니 tag.confirmed 를
+           그대로 믿지 않고 그 줄 자신의 iffy 로 한 번 더 거른다 — 사람이 고치면
+          (editVal) iffy 가 false 로 내려가 다시 true 로 돌아온다(설계서 §8 1↔7·
+           4↔9·0↔6 같은 필체 오독을 사람이 마지막에 잡으라는 것이 §8 의 요지다). */
+        confirmed: !!tag.confirmed && !p.iffy,
         by: deps.uid || '',
         at: at
       };
     });
   }
 
-  /* 같은 사업장·귀속월·근로자 값이 이미 있으면 그 자리 id 를 돌려준다 — 있으면
-     「덮을까요」를 물을 수 있게. 캡처는 실제로 두 번 올라온다. */
-  function findDuplicateValue(existingRows, companyId, month, name) {
-    var ids = Object.keys(existingRows || {});
+  /* 값 줄 하나 = 「근로자 × 원본 서류」 하나다. 같은 사업장·귀속월·근로자에
+     **같은 출처 서류**의 값이 이미 있으면 그 자리 id 를 돌려준다 — 있으면
+     「덮을까요」를 물을 수 있게. 같은 캡처는 실제로 두 번 올라온다.
+
+     ⚠ 출처(sourceId)까지 봐야 하는 까닭 (2026-08-15)
+     예전에는 사업장·월·이름 셋만 봤다. 그러면 한 근로자의 근태표를 읽어 저장한
+     뒤 수당변경 카톡을 읽어 저장할 때 카톡이 「이미 있다」로 잡혔고, 동의를 받아
+     그 자리에 다시 쓰면 saveValues 가 **줄을 통째로** 바꾸므로 근태표에서 나온
+     유급일수·휴무일수가 함께 사라졌다. 화면에는 「－」로 보여 「아직 안 읽음」과
+     구별조차 되지 않고, 되살릴 길도 없었다.
+     한 근로자에게 서류가 여러 장 오는 것은 예외가 아니라 보통이다(설계서 1장).
+     넷이 다 같을 때라야 **같은 서류를 다시 읽은 것**이고, 그때만 그 자리에 다시
+     쓰는 것이 옳다. 서류가 다르면 중복이 아니라 제 자리를 가진 새 줄이다.
+
+     ⚠ 출처를 열쇠에 넣으면 실제로는 맞는 줄이 하나뿐이지만, 훑는 차례는 그래도
+     못 박는다 — Object.keys 차례는 실시간DB가 보장하지 않는다(값 표에서 at 로
+     줄을 세운 것과 같은 까닭). 옛 자료에 이름만 같은 줄이 둘 남아 있어도 어느
+     줄을 덮을지가 새로고침마다 달라지면 안 된다. */
+  function findDuplicateValue(existingRows, companyId, month, name, sourceId) {
+    var box = existingRows || {};
+    var ids = Object.keys(box).sort();
+    var want = String(sourceId == null ? '' : sourceId);
     for (var i = 0; i < ids.length; i++) {
-      var r = existingRows[ids[i]];
-      if (r && r.companyId === companyId && r.month === month && r.name === name) return ids[i];
+      var r = box[ids[i]];
+      if (!r) continue;
+      if (r.companyId !== companyId || r.month !== month || r.name !== name) continue;
+      if (String(r.sourceId == null ? '' : r.sourceId) !== want) continue;
+      return ids[i];
     }
     return null;
+  }
+
+  /* 「같은 근로자의 같은 항목이 **다른 서류**에서도 들어와 있다」를 찾는다.
+     겹쳐도 아무것도 지우지 않는다 — 옛 줄은 제 출처를 달고 그대로 남고, 값 표는
+     그중 나중에 저장한 값을 보여줄 뿐이다(valueGridModel 의 at 오름차순).
+     그래도 사람에게는 알려야 한다: 표에 보이던 금액이 방금 읽은 서류의 금액으로
+     바뀌기 때문이다. 모르고 지나가면 「왜 숫자가 달라졌지」가 된다.
+     돌려주는 모양: [{name, item, sourceId}] — 어느 서류와 겹쳤는지까지 알린다. */
+  function findValueOverlaps(existingRows, row) {
+    var box = existingRows || {};
+    var out = [];
+    if (!row) return out;
+    var mine = {};
+    ((row && row.pairs) || []).forEach(function (p) {
+      var it = String((p && p.item) || '').trim();
+      if (it) mine[it] = 1;
+    });
+    var seen = {};
+    Object.keys(box).sort().forEach(function (id) {
+      var r = box[id];
+      if (!r) return;
+      if (r.companyId !== row.companyId || r.month !== row.month || r.name !== row.name) return;
+      /* 같은 서류면 겹침이 아니라 「다시 읽기」다 — 그 줄은 어차피 이 자리에 다시 쓴다 */
+      if (String(r.sourceId == null ? '' : r.sourceId) === String(row.sourceId == null ? '' : row.sourceId)) return;
+      (r.pairs || []).forEach(function (p) {
+        var it = String((p && p.item) || '').trim();
+        if (!it || !mine[it] || seen[it]) return;
+        seen[it] = 1;
+        out.push({ name: row.name, item: it, sourceId: r.sourceId || '' });
+      });
+    });
+    return out;
   }
 
   /* 값 줄들을 한 묶음으로 쓴다 — 다 쓰거나 하나도 안 쓰거나. */
@@ -618,13 +783,11 @@
     return deps.db.ref(valueBoxPath(slot, owner)).once('value').then(function (s) { return s.val() || {}; });
   }
 
-  /* 값 한 줄을 확인 처리한다 — 기계가 못 읽어 사람이 채운 것을 표시해 둔다. */
-  function confirmValue(slot, rowId, owner) {
-    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
-    var up = {};
-    up[valuePath(slot, rowId, owner) + '/confirmed'] = true;
-    return deps.db.ref().update(up);
-  }
+  /* ⚠ confirmValue(값 한 줄만 확인 처리) 는 **일부러 두지 않는다**(2026-08-15).
+     만들어 두었지만 부르는 곳이 한 군데도 없었다 — 있는 것처럼 보이는 함수가
+     저장 층에 남아 있으면, 다음 사람이 「확인 처리는 이미 된다」고 믿고 넘어간다.
+     사람의 확인은 화면의 「저장」 하나로 들어온다(buildValueRows 의 tag.confirmed).
+     줄 하나만 따로 확인 처리할 화면이 생기면 그때 다시 만든다. */
 
   /* ══════ 업체관리 명단 ══════
      사업장 서랍의 기준은 푸른이알피 업체관리다(대표 결정 2026-08-13).
@@ -662,11 +825,38 @@
          당겨오기". 담당자별 대시보드는 여기서 이 두 칸을 가지고 가른다. */
       out.push({
         id: id, name: name, biz: String(row.사업자등록번호 || row.biz || ''),
+        /* 유형·상태·계약중단 — 셋 다 업체관리가 쓰는 이름 그대로다.
+           typeCode: '자문'|'급여'|'노조'|'기금'|'사무대행'(COMPANY_TYPE_SEED)
+           status:   'active'|'closed'|'suboffice' (종료하면 closed 로 바뀐다)
+           suspended: 계약 중단 체크 — status 와 **따로** 켜지는 칸이라
+                      중단해도 status 는 active 그대로다. 둘 다 봐야 한다. */
+        typeCode: String(row.typeCode || ''),
+        status: String(row.status || ''),
+        suspended: !!row.suspended,
         managerMain: String(row.managerMain || ''),
         managerSubs: Array.isArray(row.managerSubs) ? row.managerSubs.slice() : []
       });
     }
     return out;
+  }
+
+  /* 급여데이터함이 다룰 업체인가 (대표 지시 2026-08-17: "급여데이터함은 업체관리에서
+     사업장을 연결해서 관리하려는 것" — 유형이 「급여」인 곳만, 계약중단은 뺀다).
+     안 거르면 자문·노조·기금까지 371곳이 다 나와 내 업체를 못 찾는다.
+     status==='active' 는 업체관리 목록이 쓰는 기준 그대로다(종료한 업체 제외).
+
+     ⚠ 목록에서 감추는 것일 뿐, **이미 담긴 자료는 그대로 있다.** 유형이 급여가
+     아닌 곳에 담긴 자료는 첫 화면 아래쪽에 따로 모아 보여 준다(offType) —
+     감추기만 하면 자료가 사라진 줄 안다. */
+  function isPayrollCompany(co) {
+    if (!co) return false;
+    if (co.suspended) return false;
+    if (String(co.status || '') !== 'active') return false;
+    return String(co.typeCode || '') === '급여';
+  }
+
+  function payrollCompanies(list) {
+    return (list || []).filter(isPayrollCompany);
   }
 
   function listCompanies() {
@@ -860,10 +1050,11 @@
     var up = {};
     up[payrollInboxPath(inboxId)] = {
       ts: at,
-      filename: o.companyName + ' ' + o.month + ' 값',
+      filename: o.companyName + ' ' + o.month + ' 값 ' + Number(o.rowCount || 0) + '줄',
       사업장: o.companyName,
       월: o.month,
       종류: o.kindLabel || '급여데이터함 값',
+      줄수: Number(o.rowCount || 0),
       상태: '대기',
       출처: '급여데이터함'
     };
@@ -987,6 +1178,7 @@
     listMyDeputies: listMyDeputies,
     isActiveDeputy: isActiveDeputy,
     trashUpdate: trashUpdate,
+    trashPendingUpdate: trashPendingUpdate,
     restoreUpdate: restoreUpdate,
     listTrash: listTrash,
     trashExpired: trashExpired,
@@ -994,15 +1186,20 @@
     renameFolder: renameFolder,
     deleteFolder: deleteFolder,
     setFolder: setFolder,
+    setFolderMany: setFolderMany,
     valueBoxPath: valueBoxPath,
+    readKindFor: readKindFor,
+    rowsFromRead: rowsFromRead,
     buildValueRows: buildValueRows,
     findDuplicateValue: findDuplicateValue,
+    findValueOverlaps: findValueOverlaps,
     saveValues: saveValues,
     listValues: listValues,
-    confirmValue: confirmValue,
     ERP_COMPANIES: ERP_COMPANIES,
     normalizeCompanies: normalizeCompanies,
     listCompanies: listCompanies,
+    isPayrollCompany: isPayrollCompany,
+    payrollCompanies: payrollCompanies,
     matchCompanyName: matchCompanyName,
     isMyCompany: isMyCompany,
     applyOrder: applyOrder,

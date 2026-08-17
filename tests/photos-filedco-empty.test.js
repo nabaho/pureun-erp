@@ -33,6 +33,18 @@ function loadNeedsCheck() {
     Number, Math, String,
     CARD_KINDS: { card: 1, bizreg: 1 },
     CO_KINDS: { bizreg: 1, sme: 1 },
+    /* ⚠ 2026-08-15 — 「보관만 하는 갈래」 목록이 새로 생겼다. 화면에서 그대로
+       가져온다(베껴 적으면 갈래를 늘릴 때 검사만 옛 목록을 본다). */
+    KEEP_ONLY: (function () {
+      const m = app.match(/const KEEP_ONLY = \{([^}]*)\};/);
+      assert.ok(m, 'KEEP_ONLY 를 찾지 못했습니다');
+      const o = {};
+      m[1].split(',').forEach(function (s) {
+        const k = s.split(':')[0].trim();
+        if (k) o[k] = 1;
+      });
+      return o;
+    })(),
     readAnyField: function () { return false; }
   };
   vm.createContext(ctx);

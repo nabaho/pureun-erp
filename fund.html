@@ -14,6 +14,8 @@
 <script src="js/pu-hwp-engine.js?v=2"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js"></script>
+<!-- 회사 공용 사진·서류 저장 층 — 사진첩/명함첩/컨설팅과 같은 파일을 쓴다(판독·보관 방식이 한 곳) -->
+<script src="js/pu-photo-store.js?v=3"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -219,7 +221,7 @@ var EST_TMPL=[
   ['EST-11','법인 계좌 개설·인감 관리',false],
   ['EST-12','최초 출연금 입금 확인 → 운영 전환',false]
 ];
-/* 세무회계법인이 **비영리조직회계기준**으로 결산하는 기금이 있다(충남공동8호·경기공동1호).
+/* 세무회계법인이 **비영리조직회계기준**으로 결산하는 기금이 있다(I공동·J공동).
    발생주의 계정(미수수익·미수금)과 운용상품(단기금융상품·특정현금과예금), 적립금이 나온다.
    앱의 자산총계는 목록에 없는 자산 계정도 otherAsset으로 합산하므로 계정만 있으면 대차가 맞는다. */
 var ACCT_CHART={'현금성자산':'자산','정기예금':'자산','근로자대부금':'자산','매도가능증권':'자산',
@@ -233,29 +235,29 @@ var ACCT_RULES=[
   {kw:['이자','예금이자'],dir:'입금',d:'현금성자산',c:'이자수익'},
   {kw:['대부상환','대부금상환','상환','대출상환'],dir:'입금',d:'현금성자산',c:'근로자대부금'},
   /* 결산·등기 용역비는 어느 기금에나 매년 나간다. '수수료'만 있어 목적사업비로 잘못 갔다
-     (플러스동반성장 2024: 노무법인 결산비용 1,100,000 + 법무사 등기비용 143,240). */
+     (D공동 2024: 노무법인 결산비용 1,100,000 + 법무사 등기비용 143,240). */
   {kw:['수수료','지급수수료','이체수수료','인터넷뱅킹','인증서','노무법인','회계법인','세무법인','법무법인','세무사','법무사','변호사','등기'],dir:'출금',d:'지급수수료',c:'현금성자산'},
   /* 예금이자에 붙는 원천징수(결산법인세·이자소득지방소득세)는 모든 기금 통장에 반년마다 찍힌다.
-     '세금'만 있어 전부 미분류였다(안전공사공동 2024: 4,990원). */
+     '세금'만 있어 전부 미분류였다(C공동 2024: 4,990원). */
   {kw:['지방세','주민세','구청','시청','군청','세무서','세금','공과금','공과','법인세','소득세','원천세'],dir:'출금',d:'세금과공과',c:'현금성자산'},
   {kw:['격려금','격려','포상','상여','성과금','성과급'],dir:'출금',d:'격려금',c:'현금성자산'},
   {kw:['대부','대부금','대출','대여금','근로자대부'],dir:'출금',d:'근로자대부금',c:'현금성자산'},
   {kw:['경조','축의','조의','결혼','장례','부의','연말선물'],dir:'출금',d:'경조사비',c:'현금성자산'},
   {kw:['동호회','동아리','상품권','기프트카드','영화'],dir:'출금',d:'동호회비',c:'현금성자산'},
-  /* 체육·문화 지출은 상대방이 경기장·예매처 이름으로 찍힌다(안전공사공동 2024: 대전야구장·티켓링크) */
+  /* 체육·문화 지출은 상대방이 경기장·예매처 이름으로 찍힌다(C공동 2024: 대전야구장·티켓링크) */
   {kw:['체육','문화','레크레이션','체육대회','워크샵','야유회','야구장','경기장','티켓','공연','콘서트','관람','리조트','펜션','수련원','워터파크'],dir:'출금',d:'체육문화비',c:'현금성자산'},
   /* 학자금은 근로자에게 주는 대신 학교로 바로 보내는 일이 많아 적요·상대방에 '학자금'이 없다
-     (안전공사공동 2024: 국립한밭대학교산학협력단·숭실사이버대학교로 4,027,000원). */
+     (C공동 2024: 국립한밭대학교산학협력단·숭실사이버대학교로 4,027,000원). */
   {kw:['장학','학자금','교육비','대학교','대학원','산학협력단','장학재단','사이버대'],dir:'출금',d:'장학금',c:'현금성자산'},
   {kw:['생활안정','생활자금','긴급자금'],dir:'출금',d:'생활안정자금',c:'현금성자산'},
   {kw:['모성보호','출산','육아','출산축하','임신'],dir:'출금',d:'모성보호비',c:'현금성자산'},
-  /* 건강검진은 어느 기금에나 큰 항목이다(참살이공동 2024: 48,600,000원). 상대방이 병원·의료재단으로 찍힌다 */
+  /* 건강검진은 어느 기금에나 큰 항목이다(F공동 2024: 48,600,000원). 상대방이 병원·의료재단으로 찍힌다 */
   {kw:['건강검진','건강건진','종합검진','검진','의료재단','병원','의원','치과','한의원','약국','의료비'],dir:'출금',d:'의료비',c:'현금성자산'},
   /* 명절선물·장기근속상·기념품은 '기념품비'로 세우는 결산서가 많다 */
   {kw:['기념품','명절선물','설선물','추석선물','장기근속','근속상','창립기념'],dir:'출금',d:'기념품비',c:'현금성자산'},
   {kw:['근로자의날','근로자날','노동절'],dir:'출금',d:'근로자의날행사비',c:'현금성자산'},
   /* 시설·비품은 적요에 '시설'이라 적지 않고 물건 이름과 '공사·설치·보수'로 적힌다
-     (플러스동반성장 2024: 냉난방기 공사·철제 사물함·세탁기·게시판·신발장·청소기). */
+     (D공동 2024: 냉난방기 공사·철제 사물함·세탁기·게시판·신발장·청소기). */
   {kw:['복지시설','기숙사','사택','콘도','휴양','체육관','보육','공사','설치','보수','비품','냉난방','정수기','사물함','세탁기','청소기','게시판','신발장'],dir:'출금',d:'근로복지시설비',c:'현금성자산'},
   /* 명절 선물세트·작업복은 별지15호 66번 '그 밖의 복지비'로 간다 */
   {kw:['커피','원두','우유','식빵','식대','음료','주류','간식','떡','다과','계란','선물세트','명절선물','유니폼','작업복','피복','회식','주스','도시락','생수','과일'],dir:'출금',d:'기타복지비',c:'현금성자산'},
@@ -458,8 +460,26 @@ function toggleSide(){ document.body.classList.toggle('sideopen'); }
 function closeSide(){ document.body.classList.remove('sideopen'); }
 function _setTopUser(name,role){ var el=$('topuser'); if(!el)return;
   el.innerHTML=esc(name||'푸른노무법인')+'<span class="role">'+esc(role||'기금 운영')+'</span>'; }
+/* ══ 푸른사진첩 연동 ══
+   인가증·등기부·고유번호증 원본은 **사진첩이 보관**하고, 기금관리는 값과 참조만 갖는다.
+   · 저장 층은 회사 공용 js/pu-photo-store.js — 사진첩·명함첩·컨설팅이 같이 쓴다
+   · 사진첩 창고는 별도 버킷(pureun-erp-hrphotos)이라 이 앱 기본 버킷과 다르게 지정한다
+   · 사진은 사람별로 갈려 있다 — 총괄(대표노무사)은 전체, 그 외는 본인 것 */
+var PHOTO_BUCKET='gs://pureun-erp-hrphotos';
+var _psReady=false;
+function photoStoreReady(){
+  if(_psReady) return true;
+  if(typeof PuPhotoStore==='undefined'||!fbDb) return false;
+  var st=null; try{ st=firebase.app().storage(PHOTO_BUCKET); }catch(e){ st=null; }
+  var fu=null; try{ fu=firebase.auth().currentUser; }catch(e){}
+  if(!fu) return false;
+  PuPhotoStore.init({ db:fbDb, storage:st, uid:fu.uid, name:(S.user||''), isAdmin:_isBoss() });
+  _psReady=true; return true;
+}
+function _isBoss(){ return /대표|총괄|관리자/.test(String(S.role||qp('role')||'')); }
 function initTop(){
   var u=qp('user'), r=qp('role');
+  S.user=u||S.user||''; S.role=r||S.role||'';
   var fu=firebase.auth().currentUser;
   if(u){ _setTopUser(u,r); }   // 포털에서 이름 전달받은 경우
   else {
@@ -904,7 +924,11 @@ var REGISTRY_MAP={
   '충남 천안시':'대전지방법원 천안지원 등기과','충남 아산시':'대전지방법원 아산등기소',
   '충남 서산시':'대전지방법원 서산지원 등기과','충남 당진시':'대전지방법원 당진등기소','충남 태안군':'대전지방법원 태안등기소',
   '충남 서천군':'대전지방법원 장항등기소','충남 예산군':'대전지방법원 예산등기소',
-  '충남 청양군':'대전지방법원 청양등기소','충남 홍성군':'대전지방법원 홍성지원 등기과',
+  '충남 청양군':'대전지방법원 청양등기소',
+  /* 홍성지원은 「등기과」가 아니라 **등기계**다 — 등기사항전부증명서 세 장이 그렇게 적고 있다
+     (충남 5호 관할등기소 · 10호 관할·발행등기소 · 12호 발행등기소, 2026-03~04 발급).
+     다른 지원(서산·논산·공주)은 확인한 서류가 없어 「등기과」인 채로 둔다. */
+  '충남 홍성군':'대전지방법원 홍성지원 등기계',
   '충남 보령시':'대전지방법원 보령등기소','충남 논산시':'대전지방법원 논산지원 등기과','충남 계룡시':'대전지방법원 논산지원 등기과',
   '충남 공주시':'대전지방법원 공주지원 등기과','충남 부여군':'대전지방법원 부여등기소',
   // 충북 (청주지방법원)
@@ -931,7 +955,20 @@ var _SIDO_ABBR={'충청남도':'충남','충청북도':'충북','경상남도':'
   '대구광역시':'대구','인천광역시':'인천','광주광역시':'광주','대전광역시':'대전','울산광역시':'울산','세종특별자치시':'세종','전북특별자치도':'전북'};
 // 소재지 → [시도약자, 시군구, 구] — 정식(충청남도)·축약(충남) 표기 모두 인식
 function _addrParts(address){
-  var a=String(address||'').trim(); if(!a) return null;
+  var a=String(address||'').trim().replace(/\s+/g,' '); if(!a) return null;
+  /* 시도가 두 번 든 주소를 견딘다 — 「충남 충남 논산시 …」·「충청남도 충남 서산시 …」.
+     사람이 목록을 옮겨 적을 때 시도 칸과 주소 칸을 겹쳐 쓰면 이렇게 된다.
+     내려받아 둔 사업장 563곳 중 71곳(13%)이 이 꼴이었고, 그만큼 관할이 통째로 안 잡혔다.
+     자료를 고치는 것이 아니라 읽는 쪽이 견디게 한다 — 같은 실수는 계속 들어온다.
+     앞의 두 낱말이 «둘 다 아는 시도 이름»이고 같은 곳을 가리키면 앞의 하나를 지운다
+     (정식↔축약도 같은 것으로 본다: 충청남도 = 충남). */
+  var dup=/^(\S+)\s+(\S+)\s/.exec(a);
+  if(dup){
+    var _sd=function(t){ return _SIDO_ABBR[t]||t; };
+    var known=Object.keys(_SIDO_ABBR).concat(Object.keys(_SIDO_ABBR).map(function(k){ return _SIDO_ABBR[k]; }));
+    if(known.indexOf(dup[1])>=0 && known.indexOf(dup[2])>=0 && _sd(dup[1])===_sd(dup[2]))
+      a=a.slice(dup[1].length+1).trim();
+  }
   var full=/(\S+?(?:도|특별시|광역시|특별자치시|특별자치도))\s+(\S+?시)\s+(\S+?구)/.exec(a)
         || /(\S+?(?:도|특별시|광역시|특별자치시|특별자치도))\s+(\S+?(?:시|군|구))/.exec(a);
   if(full) return {sido:_SIDO_ABBR[full[1]]||full[1], sgg:full[2], gu:(full[3]||'')};
@@ -974,7 +1011,10 @@ var TAX_MAP={
 /* 관할 지방고용노동청·지청 — 기금 설립·변경 인가 신청서의 수신처(「○○지방고용노동청(○○지청)장 귀하」).
    고용노동부 직제 관할구역으로 검증(2026-07). **서산지청은 2025-12-30 서산출장소에서 승격**(서산시·태안군)
    되어 보령지청 관할에서 빠졌다 — 옛 자료를 그대로 쓰면 틀린다.
-   검증한 권역(서울 25구 전부·경기·충남·충북·대전)만 넣고, 나머지는 빈 값으로 두어 수기 입력하게 한다. */
+   검증한 권역(서울 25구 전부·경기·충남·충북·대전·대구·경북·경남)만 넣고, 나머지는 빈 값으로 두어 수기 입력하게 한다.
+   ⚠ 칠곡군은 **석적읍 중리 국가산업단지만 구미지청**이고 나머지는 대구서부지청이다 —
+      이 지도는 시·군·구 단위라 읍·면까지 못 가른다. 칠곡군은 서부지청으로 두되,
+      석적읍 국가산단에 있는 기금이면 사람이 구미지청으로 고쳐야 한다. */
 var LABOR_MAP={
   // 서울(25구 전부) — 본청 직할 4구 포함
   '서울 중구':'서울지방고용노동청','서울 종로구':'서울지방고용노동청','서울 서초구':'서울지방고용노동청','서울 동대문구':'서울지방고용노동청',
@@ -1014,7 +1054,37 @@ var LABOR_MAP={
   '충북 보은군':'대전지방고용노동청 청주지청','충북 옥천군':'대전지방고용노동청 청주지청','충북 영동군':'대전지방고용노동청 청주지청',
   '충북 증평군':'대전지방고용노동청 청주지청',
   '충북 충주시':'대전지방고용노동청 충주지청','충북 제천시':'대전지방고용노동청 충주지청',
-  '충북 음성군':'대전지방고용노동청 충주지청','충북 단양군':'대전지방고용노동청 충주지청'
+  '충북 음성군':'대전지방고용노동청 충주지청','충북 단양군':'대전지방고용노동청 충주지청',
+  // 대구·경북(대구청) — 고용노동부 관할관서찾기(대구/경북)로 확인
+  '대구 중구':'대구지방고용노동청','대구 수성구':'대구지방고용노동청','대구 북구':'대구지방고용노동청',
+  '대구 동구':'대구지방고용노동청','대구 군위군':'대구지방고용노동청','경북 군위군':'대구지방고용노동청',
+  '경북 경산시':'대구지방고용노동청','경북 영천시':'대구지방고용노동청','경북 청도군':'대구지방고용노동청',
+  '대구 남구':'대구지방고용노동청 대구서부지청','대구 서구':'대구지방고용노동청 대구서부지청',
+  '대구 달서구':'대구지방고용노동청 대구서부지청','대구 달성군':'대구지방고용노동청 대구서부지청',
+  '경북 고령군':'대구지방고용노동청 대구서부지청','경북 성주군':'대구지방고용노동청 대구서부지청',
+  '경북 칠곡군':'대구지방고용노동청 대구서부지청',        // 석적읍 중리 국가산단만 구미지청
+  '경북 구미시':'대구지방고용노동청 구미지청','경북 김천시':'대구지방고용노동청 구미지청',
+  '경북 포항시':'대구지방고용노동청 포항지청','경북 경주시':'대구지방고용노동청 포항지청',
+  '경북 영덕군':'대구지방고용노동청 포항지청','경북 울릉군':'대구지방고용노동청 포항지청',
+  '경북 울진군':'대구지방고용노동청 포항지청',
+  '경북 영주시':'대구지방고용노동청 영주지청','경북 봉화군':'대구지방고용노동청 영주지청',
+  '경북 문경시':'대구지방고용노동청 영주지청','경북 상주시':'대구지방고용노동청 영주지청',
+  '경북 안동시':'대구지방고용노동청 안동지청','경북 예천군':'대구지방고용노동청 안동지청',
+  '경북 의성군':'대구지방고용노동청 안동지청','경북 청송군':'대구지방고용노동청 안동지청',
+  '경북 영양군':'대구지방고용노동청 안동지청',
+  /* 경남(부산지방고용노동청) — 관할관서찾기 「부산/경남」이 이름을 댄 시·군만 넣는다.
+     고용센터는 수신처가 아니므로 그 관할도 «소속 지청»으로 적는다(하동군·남해군 → 진주지청,
+     마산회원·합포구와 함안·의령·창녕 → 창원지청, 거제시 → 통영지청).
+     ⚠ 거창군·함양군·합천군은 그 안내에 안 나와 비워 둔다 — 지어내면 인가신청서 수신처가 틀린다. */
+  '경남 창원시':'부산지방고용노동청 창원지청','경남 함안군':'부산지방고용노동청 창원지청',
+  '경남 의령군':'부산지방고용노동청 창원지청','경남 창녕군':'부산지방고용노동청 창원지청',
+  '경남 김해시':'부산지방고용노동청 양산지청','경남 밀양시':'부산지방고용노동청 양산지청',
+  '경남 양산시':'부산지방고용노동청 양산지청',
+  '경남 진주시':'부산지방고용노동청 진주지청','경남 사천시':'부산지방고용노동청 진주지청',
+  '경남 산청군':'부산지방고용노동청 진주지청',
+  '경남 하동군':'부산지방고용노동청 진주지청','경남 남해군':'부산지방고용노동청 진주지청',
+  '경남 통영시':'부산지방고용노동청 통영지청','경남 고성군':'부산지방고용노동청 통영지청',
+  '경남 거제시':'부산지방고용노동청 통영지청'
 };
 function guessLabor(address){
   var p=_addrParts(address); if(!p) return '';
@@ -1694,7 +1764,7 @@ function parseInka(txt){
   m=flat.match(/대표자\s*성명\s*:?\s*([가-힣]{2,5})/);
   if(m) o.chairman=m[1];
   /* 기금명·소재지 — 인가증은 라벨과 값이 엇갈려 추출된다.
-     실제 예: "1. 기금법인 명칭: 충남공동근로복지기금8호 충청남도 당진시 … (송악읍 2. 주사무소 소재지: 한진리) 3. 대표자 …"
+     생김새 예: "1. 기금법인 명칭: ○○공동근로복지기금N호 ○○도 ○○시 … (○○읍 2. 주사무소 소재지: ○○리) 3. 대표자 …"
      → ① 명칭~대표자 구간을 잘라 ② 소재지 라벨만 지우고 ③ 주소 시작(시·도+시/군/구)에서 이름/주소를 가른다. */
   var seg=flat.match(/기금법인\s*명칭\s*:?\s*(.*?)(?=\d\s*\.\s*대표자|대표자\s*성명|$)/);
   if(seg){
@@ -2355,6 +2425,14 @@ function paginateDoc(rawHTML){
       no++; page=_a4Page(no); ed.appendChild(page); pages.push(page);      // 다음 장 준비
       body=page.querySelector('.a4b'); limit=body.clientHeight;
     }
+    /* 안전장치(guard)에 걸려 멈췄는데 남은 마디가 있으면 **버리지 않는다**.
+       종전에는 그대로 사라져, 긴 서식의 뒷부분이 말없이 없어질 수 있었다.
+       마지막 장에 붙여 두면 넘침 배지가 떠서 사람이 [다시 나누기]로 처리할 수 있다 —
+       조판이 덜 되는 것이 글이 사라지는 것보다 낫다. */
+    if(queue.length){
+      queue.forEach(function(nd){ body.appendChild(nd); });
+      queue.length=0;
+    }
     // 내용이 하나도 안 담긴 빈 장은 버린다(앞 장이 꽉 차서 만들어진 뒤 남은 게 없을 때)
     var last=pages[pages.length-1], lb=last&&last.querySelector('.a4b');
     if(lb && !lb.childNodes.length && pages.length>1){ last.remove(); pages.pop(); no--; }
@@ -2406,7 +2484,7 @@ function fitDocA4(){
   var z=$('docZoomLbl'); if(z) z.textContent=Math.round(k*100)+'%';
 }
 function toggleDocZoom(){ S.docZoom=(S.docZoom===1)?'fit':1; fitDocA4(); }
-// 표준 정관 — 공동근로복지기금(배경공동 인가본 기준, 6장 42조)
+// 표준 정관 — 공동근로복지기금(B공동 인가본 기준, 6장 42조)
 function charterGong(f,sites){
   sites=sites||[]; var fn=esc(f.name||''), addr=dgV(f.address,18), ch=dgV(f.chairman);
   var cos=sites.map(function(s){return esc(s.name||'');}).filter(Boolean);
@@ -2472,7 +2550,7 @@ function charterGong(f,sites){
     +(cos.length?cos.map(function(c){return "<tr><td>"+c+" ＿＿＿＿ (인)</td><td>"+c+" ＿＿＿＿ (인)</td></tr>";}).join(''):"<tr><td>＿＿＿＿＿＿ (인)</td><td>＿＿＿＿＿＿ (인)</td></tr>")+"</table>");
   return P.join('');
 }
-// 표준 정관 — 사내근로복지기금(참살이 사내 인가본 기준, 5장 37조)
+// 표준 정관 — 사내근로복지기금(F사내 인가본 기준, 5장 37조)
 function charterSane(f){
   var fn=esc(f.name||''), addr=dgV(f.address,18), ch=dgV(f.chairman);
   var co=dgV(f.rep_org||f.company,10);
@@ -2769,7 +2847,18 @@ function docBody(kind,f,sites){
       +"<h2>위임 사항</h2><p>위 사람에게 <b>"+fname+"</b>의 설립등기 신청 및 이에 부수하는 일체의 행위(인감카드 발급, 등기부등본 발급 등)를 위임합니다.</p>"
       +"<p class='center'>"+dgToday()+"</p><div class='sign'>위임인: "+fname+"<br>이사장 "+dgV(chairman)+" (인)</div>";
   }
-  return '<p class="muted">준비 중인 서식입니다.</p>';
+  /* 여기까지 왔다는 것은 자동생성 초안이 없는 서식이라는 뜻이다 —
+     원본 파일을 브라우저에 등록하면 hwpFormHTML 이 위에서 잡아 원본 그대로 변환해 준다.
+     한 줄로 「준비 중」이라고만 하면 «아직 안 만든 기능»으로 읽혀 사람이 기다리게 된다.
+     무엇을 해야 하는지·어디로 가야 하는지를 적는다. */
+  return "<p class='note'>※ 이 서식은 <b>원본 파일을 등록해야</b> 만들어집니다 — 자동생성 초안이 없는 서식입니다.</p>"
+    +'<div class="msg warn" style="font-size:12.5px;line-height:1.6">'
+    +'<b>'+esc(docLabel(kind))+'</b> 원본이 아직 등록되지 않았습니다.<br>'
+    +'왼쪽 <b>서식</b> 메뉴에서 원본(.hwp·.xlsx)을 한 번 등록하면, 그다음부터 이 자리에 원본 그대로 나오고 기금 자료가 자동으로 채워집니다.<br>'
+    +'<span class="muted">원본은 이 브라우저에만 보관됩니다(저장소·서버에 올라가지 않습니다). 다른 PC에서는 그 PC에서 한 번 더 등록해야 합니다.</span>'
+    +'</div>'
+    /* 왼쪽 메뉴의 서식 항목과 **같은 손짓**을 쓴다(352행) — 한쪽만 고치면 화면이 갈라진다 */
+    +'<div style="margin-top:10px"><button class="primary" onclick="S.formsCtx=\'library\';S.formsHost=null;S._sideKind=null;go(\'forms\')">📎 서식 원본 등록하러 가기</button></div>';
 }
 /* ── 정렬 도구 ──
    한글에서 옮겨온 서식은 원본의 탭·자간으로 칸을 맞춘 것이 많아 변환 과정에서 정렬이 풀린다.
@@ -3410,9 +3499,11 @@ function infoForm(f){
   return '<div class="panel"><div class="row"><h2 style="margin:0">📥 서류 끌어놓기 → 자동 입력</h2>'
     +'<span class="muted" style="font-size:11.5px;margin-left:8px">인가증·등기부·고유번호증을 올리면 읽어서 아래 칸을 채웁니다</span></div>'
     +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">'
-    +'<div style="flex:1;min-width:210px">'+dropZone('dz-inka','설립인가증','인가번호·인가일·대표자·소재지','.pdf,image/*')+'</div>'
-    +'<div style="flex:1;min-width:210px">'+dropZone('dz-corpreg','법인 등기부등본','법인등록번호·설립등기일','.pdf,image/*')+'</div>'
-    +'<div style="flex:1;min-width:210px">'+dropZone('dz-taxid','고유번호증','고유번호·법인등록번호·대표자','.pdf,image/*')+'</div>'
+    +[['dz-inka','inka','설립인가증','인가번호·인가일·대표자·소재지'],
+      ['dz-corpreg','corpreg','법인 등기부등본','법인등록번호·설립등기일'],
+      ['dz-taxid','taxid','고유번호증','고유번호·법인등록번호·대표자']].map(function(z){
+      return '<div style="flex:1;min-width:210px">'+dropZone(z[0],z[2],z[3],'.pdf,image/*')+scanLink(z[1],z[0])+'</div>';
+    }).join('')
     +'</div><p class="muted" style="font-size:11.5px;margin:8px 0 0">스캔본은 OCR — <b>오독 가능, 반드시 확인</b> '+hlp('doc.read')+'</p>'
     +'<div id="docIntakeOut" style="margin-top:10px"></div></div>'
     +'<div class="panel"><h2>기금 정보</h2>'
@@ -3427,6 +3518,216 @@ function bindDocIntake(){
   });
 }
 var _docFound={}, _docOcr=false, _docFid=null;   // 판독 결과는 시작 시점 기금에 귀속
+/* ── 사진첩에서 서류 골라오기 ──
+   원본은 사진첩에 그대로 두고, 기금에는 값 + 참조(주인·연도·id)만 남긴다.
+   RTDB에 이미지를 넣으면 기금 목록 로딩이 통째로 느려지므로 절대 복사하지 않는다. */
+var _pick={kind:'',zid:'',items:[],year:0};
+function _siteName(sid){ return ((S.sites||{})[sid]||{}).name||''; }
+/* sid 를 주면 «그 참여사업장의 제출서류»를 고르는 창이 된다(판독 없이 연결만 한다).
+   연도(yr)를 고를 때 함께 붙잡아 둔다 — 고르는 사이에 화면 연도가 바뀌어도 엉뚱한 해에 저장되지 않는다. */
+/* shelf 를 주면 «서류함에 담기»가 된다 — 종류는 위 선택칸에서 가져온다 */
+function openSubDocPick(){
+  var k=($('subdoc-kind')&&$('subdoc-kind').value)||'기타';
+  openAlbumPick('','',null,k);
+}
+function openAlbumPick(zid,kind,sid,shelf){
+  if(!photoStoreReady()){ toast('사진첩과 연결되지 않았습니다 — 새로고침 후 다시','err'); return; }
+  _pick={kind:kind,zid:zid,items:[],year:new Date().getFullYear(),fid:S.fundId,sid:sid||'',yr:S.year,shelf:shelf||''};
+  var _what=shelf?('서류함 · '+shelf):((sid?(_siteName(sid)+' '):'')+docZoneLabel(kind));
+  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">🖼 사진첩에서 '+esc(_what)+' 고르기</h2>'+hlp('album.pick')
+    +'<span style="flex:1"></span><select id="pk-year" onchange="albumPickLoad(+this.value)" style="padding:4px 8px;border:1px solid var(--line);border-radius:7px">'
+    +[0,1,2].map(function(d){var y=new Date().getFullYear()-d;return '<option value="'+y+'">'+y+'년</option>';}).join('')+'</select></div>'
+    +'<div id="pk-body" style="max-height:64vh;overflow:auto">'+loadingHTML('사진첩을 읽는 중…')+'</div>'
+    +'<p class="muted" style="font-size:11px;margin:8px 0 0">사진을 누르면 '+((sid||shelf)?'연결합니다':'판독합니다')+' · 사진첩 원본은 그대로 남습니다</p>');
+  albumPickLoad(_pick.year);
+}
+function albumPickLoad(year){
+  _pick.year=year;
+  var boss=_isBoss();
+  var p=boss&&PuPhotoStore.listYearAll ? PuPhotoStore.listYearAll(String(year)).catch(function(){ return PuPhotoStore.listYear(String(year)); })
+                                       : PuPhotoStore.listYear(String(year));
+  p.then(function(items){
+    if(!$('pk-body')) return;
+    _pick.items=Object.keys(items||{}).map(function(id){ return {id:id,meta:items[id]||{}}; })
+      .sort(function(a,b){
+        var ad=(a.meta.kind==='doc')?0:1, bd=(b.meta.kind==='doc')?0:1;    // 서류를 먼저
+        return ad-bd || (b.meta.takenAt||0)-(a.meta.takenAt||0);
+      });
+    renderAlbumPick();
+  }).catch(function(e){
+    var b=$('pk-body'); if(b) b.innerHTML='<div class="msg err">사진 목록을 불러오지 못했습니다: '+esc((e&&e.message)||e)+'</div>';
+  });
+}
+function renderAlbumPick(){
+  var b=$('pk-body'); if(!b) return;
+  if(!_pick.items.length){ b.innerHTML='<div class="muted" style="padding:20px 4px;text-align:center">'+_pick.year+'년에 올린 사진이 없습니다.<br>폰으로 찍었다면 <b>푸른사진첩</b>에 먼저 올려 주세요.</div>'; return; }
+  b.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px">'
+    +_pick.items.map(function(it){
+      var d=new Date(it.meta.takenAt||0);
+      var who=it.meta.__ownerName?('<div class="muted" style="font-size:9.5px">'+esc(it.meta.__ownerName)+'</div>'):'';
+      return '<div onclick="pickAlbumPhoto(\''+it.id+'\')" style="cursor:pointer;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--bg)">'
+        +'<div id="pkt-'+it.id+'" style="height:82px;display:flex;align-items:center;justify-content:center;color:var(--faint);font-size:11px">…</div>'
+        +'<div style="padding:4px 6px"><div style="font-size:10.5px">'+(d.getMonth()+1)+'/'+d.getDate()
+        +(it.meta.kind==='doc'?' <span class="chip warn" style="font-size:9px">서류</span>':'')+'</div>'+who+'</div></div>';
+    }).join('')+'</div>';
+  // 썸네일은 한 장씩 뒤따라 채운다(한 번에 다 받으면 느리다)
+  _pick.items.slice(0,60).forEach(function(it){
+    var owner=it.meta.__ownerUid||undefined;
+    PuPhotoStore.loadThumb(String(_pick.year),it.id,owner).then(function(src){
+      var el=$('pkt-'+it.id); if(!el||!src) return;
+      el.innerHTML='<img src="'+src+'" style="width:100%;height:82px;object-fit:cover;display:block">';
+    }).catch(function(){ var el=$('pkt-'+it.id); if(el) el.textContent='×'; });
+  });
+}
+function pickAlbumPhoto(id){
+  var it=_pick.items.filter(function(x){return x.id===id;})[0]; if(!it) return;
+  var owner=it.meta.__ownerUid||undefined, year=String(_pick.year), kind=_pick.kind, zid=_pick.zid, fid=_pick.fid;
+  /* 참여사업장 서류(중소기업확인서·등기부·사업자등록증)는 판독하지 않는다 —
+     기금 정보 칸을 채우는 서류가 아니라 «받았다»를 증명하는 서류다. 원본만 잇고 체크를 켠다. */
+  if(_pick.shelf){
+    closeM();                                        // 원본을 받아 올 일이 없어 곧바로 닫는다
+    saveShelfScanRef(fid,_pick.yr,_pick.shelf,{owner:owner||'',year:year,id:id},it.meta);
+    return;
+  }
+  if(_pick.sid){
+    closeM();
+    saveSiteScanRef(fid,_pick.yr,_pick.sid,kind,{owner:owner||'',year:year,id:id});
+    return;
+  }
+  var b=$('pk-body'); if(b) b.innerHTML=loadingHTML('원본을 가져와 판독하는 중…');
+  PuPhotoStore.loadFull(year,id,owner).then(function(src){
+    if(!src) throw new Error('원본을 찾지 못했습니다');
+    closeM();
+    saveScanRef(fid,kind,{owner:owner||'',year:year,id:id});      // 참조만 저장(이미지는 복사하지 않음)
+    return _dataUrlToFile(src,kind+'.jpg');
+  }).then(function(file){
+    if(S.fundId!==fid) return;                                     // 그 사이 다른 기금으로 이동 → 버림
+    readDocInto(zid,kind,file);                                    // 기존 판독 경로를 그대로 탄다
+  }).catch(function(e){
+    var bb=$('pk-body');
+    var msg='가져오지 못했습니다: '+esc((e&&e.message)||e)
+      +'<div class="muted" style="font-size:11.5px;margin-top:6px">다른 사람이 올린 사진은 권한에 따라 열리지 않을 수 있습니다.</div>';
+    if(bb) bb.innerHTML='<div class="msg err">'+msg+'</div>'; else toast('사진을 가져오지 못했습니다','err');
+  });
+}
+function _dataUrlToFile(src,name){
+  return fetch(src).then(function(r){ return r.blob(); }).then(function(b){ return new File([b],name,{type:b.type||'image/jpeg'}); });
+}
+/* 기금에 붙인 스캔 참조 — funds/{fid}/scans/{kind} = {owner,year,id,at,by} */
+function saveScanRef(fid,kind,ref){
+  var o=Object.assign({at:ymd(),by:(S.user||'')},ref);
+  fbDb.ref(NS+'/funds/'+fid+'/scans/'+kind).set(o).then(function(){
+    if(funds[fid]){ funds[fid].scans=funds[fid].scans||{}; funds[fid].scans[kind]=o; }
+    toast('사진첩 원본을 이 기금에 연결했습니다');
+  }).catch(function(e){ toast('연결 저장 실패: '+e.message,'err'); });
+}
+/* 참여사업장 제출서류의 사진첩 참조.
+   자리: subsidy_chk/{기금}/{연도}/scan/site/{사업장}/{서류} = {owner,year,id,at,by}
+   체크 자리(site/…)와 **같은 마디 안**에 둔다 — 지금 있는 한 번 읽기에 그대로 따라오므로
+   화면을 열 때 왕복이 늘지 않는다. 열 전체 켜기(subChkCol)와 노동청 일괄 반영은
+   site/ 와 fund/ 만 건드리므로 이 참조를 지우지 않는다. */
+function _subScanOf(sid,kind){ return ((((S.subChk||{}).scan||{}).site||{})[sid]||{})[kind]; }
+function saveSiteScanRef(fid,yr,sid,kind,ref){
+  var o=Object.assign({at:ymd(),by:(S.user||'')},ref);
+  /* 참조와 체크를 한 번의 update 로 함께 쓴다 — 따로 쓰면 한쪽만 남아
+     «사진은 붙었는데 안 받은 것으로 세는» 상태가 생긴다. */
+  var up={}; up['scan/site/'+sid+'/'+kind]=o; up['site/'+sid+'/'+kind]=1;
+  fbDb.ref(NS+'/subsidy_chk/'+fid+'/'+yr).update(up).then(function(){
+    if(S.fundId!==fid||S.year!==yr) return;
+    S.subChk=S.subChk||{};
+    S.subChk.site=S.subChk.site||{}; S.subChk.site[sid]=S.subChk.site[sid]||{}; S.subChk.site[sid][kind]=1;
+    S.subChk.scan=S.subChk.scan||{}; S.subChk.scan.site=S.subChk.scan.site||{};
+    S.subChk.scan.site[sid]=S.subChk.scan.site[sid]||{}; S.subChk.scan.site[sid][kind]=o;
+    renderFund(); toast('사진첩 원본을 잇고 「받음」으로 표시했습니다');
+  }).catch(function(e){ toast('연결 저장 실패: '+e.message,'err'); });
+}
+/* 서류함에 사진첩 사진을 **참조로** 담는다.
+   기존 업로드 기록과 같은 표(subsidy_docs)에 들어가되 url·path 대신 ref 를 갖는다 —
+   앱 창고에 사본을 만들지 않으므로 같은 서류가 두 곳에 쌓이지 않는다.
+   이름은 사진첩 메모를 먼저 쓰고, 없으면 «종류 + 찍은 날»로 짓는다(빈 이름이면 표에서 못 찾는다). */
+function _shelfName(kind,meta){
+  var t=String((meta&&meta.note)||'').trim().replace(/\s+/g,' ').slice(0,40);
+  if(t) return t;
+  var ms=(meta&&meta.takenAt)||0, d=new Date(ms);
+  var day=ms?(d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)):'';
+  return kind+(day?' '+day:'');
+}
+function saveShelfScanRef(fid,yr,kind,ref,meta){
+  var rec={kind:kind,name:_shelfName(kind,meta),ref:Object.assign({},ref),uploaded:ymd(),by:(S.user||'')};
+  fbDb.ref(NS+'/subsidy_docs/'+fid+'/'+yr).push().set(rec).then(function(){
+    if(S.fundId!==fid||S.year!==yr) return;
+    S.subDocFor=null; renderFund(); toast('사진첩 원본을 서류함에 담았습니다');
+  }).catch(function(e){ toast('담기 실패: '+e.message,'err'); });
+}
+function openShelfScan(id){
+  var x=(S.subDocs||{})[id], r=x&&x.ref; if(!r) return;
+  if(!photoStoreReady()){ toast('사진첩과 연결되지 않았습니다','err'); return; }
+  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">'+esc(x.name||x.kind||'서류')+'</h2>'
+    +'<span class="muted" style="font-size:11.5px">'+esc(x.kind||'')+' · '+esc(r.year)+'년 · 담은날 '+esc(x.uploaded||'')+'</span></div>'
+    +'<div id="scanBody" style="text-align:center">'+loadingHTML('사진첩에서 불러오는 중…')+'</div>');
+  _loadScanInto(r);
+}
+function openSiteScan(sid,kind){
+  var r=_subScanOf(sid,kind); if(!r) return;
+  if(!photoStoreReady()){ toast('사진첩과 연결되지 않았습니다','err'); return; }
+  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">'+esc(_siteName(sid)+' '+docZoneLabel(kind))+'</h2>'
+    +'<span class="muted" style="font-size:11.5px">'+esc(r.year)+'년 · 연결 '+esc(r.at||'')+'</span>'
+    +'<span style="flex:1"></span><button onclick="unlinkSiteScan(\''+sid+'\',\''+kind+'\')" style="color:var(--danger)">연결 해제</button></div>'
+    +'<div id="scanBody" style="text-align:center">'+loadingHTML('사진첩에서 불러오는 중…')+'</div>');
+  _loadScanInto(r);
+}
+function unlinkSiteScan(sid,kind){
+  var fid=S.fundId, yr=S.year;
+  confirmM('이 서류와 사진첩 원본의 연결만 끊습니다.\n「받음」 체크와 사진첩의 사진은 그대로 둡니다.',{ok:'연결 해제',danger:true}).then(function(ok){
+    if(!ok)return;
+    fbDb.ref(NS+'/subsidy_chk/'+fid+'/'+yr+'/scan/site/'+sid+'/'+kind).remove().then(function(){
+      var sc=((S.subChk||{}).scan||{}).site||{};
+      if(S.fundId===fid&&S.year===yr&&sc[sid]) delete sc[sid][kind];
+      closeM(); renderFund(); toast('연결을 해제했습니다');
+    }).catch(function(e){ toast('해제 실패: '+e.message,'err'); });
+  });
+}
+function openScan(kind){
+  var f=funds[S.fundId]||{}, r=(f.scans||{})[kind]; if(!r) return;
+  if(!photoStoreReady()){ toast('사진첩과 연결되지 않았습니다','err'); return; }
+  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">'+esc(docZoneLabel(kind))+' 원본</h2>'
+    +'<span class="muted" style="font-size:11.5px">'+esc(r.year)+'년 · 연결 '+esc(r.at||'')+'</span>'
+    +'<span style="flex:1"></span><button onclick="unlinkScan(\''+kind+'\')" style="color:var(--danger)">연결 해제</button></div>'
+    +'<div id="scanBody" style="text-align:center">'+loadingHTML('사진첩에서 불러오는 중…')+'</div>');
+  _loadScanInto(r);
+}
+// 기금 서류·사업장 서류가 같은 방식으로 그린다 — 한 곳에서만 고치도록 모아 둔다
+function _loadScanInto(r){
+  PuPhotoStore.loadFull(String(r.year),r.id,r.owner||undefined).then(function(src){
+    var b=$('scanBody'); if(!b) return;
+    b.innerHTML=src?'<img src="'+src+'" style="max-width:100%;max-height:70vh;border:1px solid var(--line);border-radius:8px">'
+      :'<div class="msg err">원본을 찾지 못했습니다.</div>';
+  }).catch(function(e){
+    var b=$('scanBody'); if(b) b.innerHTML='<div class="msg err">불러오지 못했습니다: '+esc((e&&e.message)||e)
+      +'<div class="muted" style="font-size:11.5px;margin-top:6px">올린 사람의 사진첩 자리에 있습니다 — 권한이 없으면 열리지 않습니다.</div></div>';
+  });
+}
+function unlinkScan(kind){
+  var fid=S.fundId;
+  confirmM('이 기금과 사진첩 원본의 연결만 끊습니다.\n사진첩의 사진은 그대로 남습니다.',{ok:'연결 해제',danger:true}).then(function(ok){
+    if(!ok)return;
+    fbDb.ref(NS+'/funds/'+fid+'/scans/'+kind).remove().then(function(){
+      if(funds[fid]&&funds[fid].scans) delete funds[fid].scans[kind];
+      closeM(); renderFund(); toast('연결을 해제했습니다');
+    });
+  });
+}
+function docZoneLabel(kind){ return ({inka:'설립인가증',corpreg:'법인 등기부등본',taxid:'고유번호증',
+  sme:'중소기업확인서',reg:'등기부등본',bizno:'사업자등록증'})[kind]||kind; }   // 뒤 셋은 참여사업장 몫
+/* 드롭존 아래 한 줄 — 사진첩에서 고르기 / 이미 연결된 원본 보기 */
+function scanLink(kind,zid){
+  var f=funds[S.fundId]||{}, r=(f.scans||{})[kind];
+  return '<div class="row" style="gap:6px;margin-top:5px;font-size:11.5px">'
+    +'<button onclick="openAlbumPick(\''+zid+'\',\''+kind+'\')" style="padding:3px 9px;font-size:11.5px">🖼 사진첩에서</button>'
+    +(r?'<button onclick="openScan(\''+kind+'\')" style="padding:3px 9px;font-size:11.5px" title="'+esc(r.year+'년 · 연결 '+(r.at||''))+'">📎 원본 보기</button>'
+       :'<span class="muted" style="font-size:11px">원본 미연결</span>')
+    +'</div>';
+}
 function readDocInto(zid,kind,file){
   if(!file) return;
   var def=DOC_PARSE[kind], nm=file.name||'', isPdf=/\.pdf$/i.test(nm);
@@ -3919,17 +4220,33 @@ var SUB_TABS=[['plan','🧮 한도·점수'],['apply','📋 신청·정산'],['d
    출처: 「2025년 근로복지기금 지원사업 시행 안내」(근로복지넷 공지) + 별지 제3호의2 심사위원회 평가표.
    원본은 03_과거자료/2025년/2025년_근로복지기금_지원사업_안내/ 에 있다.
    ※ 해마다 바뀌는 값(1인당 한도·접수기간)은 연도별로 둔다 — 새 시행계획이 나오면 여기만 고친다.
-   ※ 평가표 배점은 **2024년판** 기준이다. 2025년에 정성 30→40점(소규모기업 기여도 신설),
-      정량 70→60점(①25→15점, ③1인당 기지원액 삭제→참여기업 1개소당 평균 근로자수 신설)으로
-      개정됐으므로, 최신 평가표를 받으면 SUB_RUBRIC를 교체해야 한다. 화면에도 그렇게 알린다. */
+   ※ 평가표는 **2025년에 개정**됐다(별지 제3호의2 <신설 2021.1.14., 2022.5.12., 2023.5.25., 2025>).
+      원본: 03_과거자료/2025년/2025년_근로복지기금_지원사업_안내/[첨부4] 설명자료(2025).pdf 17쪽.
+        · 정성(사업계획) 30 → **40점** — 「소규모기업 근로자 복지증진에 기여 정도」 신설(4항목 × 10점)
+        · ① 출연÷신청 25 → **15점**(가중치 5→3)
+        · ② 세부기준 단일화 — **②-2(상위 3개소 비중) 삭제**, 최다 기업 비중만 본다
+        · ③ 「1인당 이미 지원받은 금액」 삭제 → **「참여기업 1개소당 평균 근로자수」**(15점)
+        · ④ 참여 기업 수 15점 (그대로)
+      해마다 rubric 으로 갈라 쓴다 — 옛 해의 셈이 새 배점으로 바뀌면 그때 낸 서류와 어긋난다. */
 var SUB_RULE={
-  '2026':{ per_worker:930000, apply_period:'연도별 공고 확인 — 2026년 시행계획 미확인', rubric:'2024' },
-  '2025':{ per_worker:930000, apply_period:'상반기 3.4.~4.18. (하반기는 별도 공지)', rubric:'2024' },
+  '2026':{ per_worker:930000, apply_period:'연도별 공고 확인 — 2026년 시행계획 미확인', rubric:'2025' },
+  '2025':{ per_worker:930000, apply_period:'상반기 3.4.~4.18. (하반기는 별도 공지)', rubric:'2025' },
   '2024':{ per_worker:930000, apply_period:'상반기 3.15.~4.30.', rubric:'2024' },
   '2023':{ per_worker:930000, apply_period:'상반기 (연도별 공고 확인)', rubric:'2024' },
   '2022':{ per_worker:888000, apply_period:'상반기 (연도별 공고 확인)', rubric:'2024' }
 };
-function subRule(y){ return SUB_RULE[String(y)]||SUB_RULE['2025']; }
+/* 모르는 해 — 종전에는 2025년 규칙을 그대로 돌려주어, 2027년 화면에도
+   「접수: 상반기 3.4.~4.18.」 이 **사실처럼** 떴다. 그대로 믿으면 접수 시기를 놓친다.
+   셈은 가장 가까운 해의 1인당 단가로 하되, 어느 해 기준인지와 «미확인»임을 화면에 적는다. */
+function subRule(y){
+  var k=String(y); if(SUB_RULE[k]) return SUB_RULE[k];
+  var ys=Object.keys(SUB_RULE).map(Number).sort(function(a,b){ return a-b; });
+  var n=Number(y)||0, near=ys[0];
+  ys.forEach(function(v){ if(Math.abs(v-n)<Math.abs(near-n)) near=v; });
+  var b=SUB_RULE[String(near)];
+  return {per_worker:b.per_worker, rubric:b.rubric, unconfirmed:near,
+          apply_period:k+'년 시행계획 미확인 — 근로복지넷 공고를 확인하세요 ('+near+'년 단가로 셈함)'};
+}
 // 지원요건(출연 주체)별 구간 한도 — 고시 제8·9조
 var SUB_REQ=[['1','둘 이상의 기업이 공동기금에 출연'],['2','대기업(원청)이 중소기업 공동기금에 출연'],['3','지방자치단체가 중소기업 공동기금에 출연']];
 var SUB_BAND={ '1':[200000000,500000000,1000000000,2000000000],     // 2억·5억·10억·20억 (기간 3·3·4·5년)
@@ -3947,7 +4264,11 @@ function subTier(nSite,nEmp,type){
 function _subP1(ratio){ return ratio>=2?5:ratio>=1.75?4:ratio>=1.5?3:ratio>=1.25?2:ratio>=1?1:0; }  // ①출연÷신청
 function _subP2a(r){ return r<.5?5:r<.6?4:r<.7?3:r<.8?2:r<.9?1:0; }        // ②-1 최다 기업 근로자 비중
 function _subP2b(r){ return r<.7?5:r<.75?4:r<.8?3:r<.85?2:r<.9?1:0; }      // ②-2 상위 3개소 비중(참여 10개소 이상만)
-function _subP3(v){ return v<=400000?5:v<=600000?4:v<=800000?3:v<=1000000?2:1; }  // ③1인당 이미 지원받은 금액
+function _subP3(v){ return v<=400000?5:v<=600000?4:v<=800000?3:v<=1000000?2:1; }  // ③1인당 이미 지원받은 금액(2024년판)
+/* ③ 2025년판 — 참여기업 1개소당 평균 근로자수(전체 근로자수 ÷ 전체 참여기업 수).
+   «적을수록» 높은 점수다(소규모기업 공동기금을 밀어주려는 개정 취지). 사람이 넣을 값이 아니라
+   참여사업장 집계에서 저절로 나온다 — 그래서 2025년판에는 ③ 입력칸이 없다. */
+function _subP3avg(v){ return v<30?5:v<50?4:v<80?3:v<100?2:1; }
 function _subP4(n){ return n>=30?5:n>=10?4:n>=5?3:n>=3?2:n>=2?1:0; }      // ④참여 기업 수
 /* 지원금 산정 — 한도 3중 제약과 심사점수 차등지원율을 함께 계산한다.
    한도: ㉮구간 한도 ㉯근로자 1인당 한도×근로자수 ㉰출연(예정)금 100% → 셋 중 가장 작은 값
@@ -3963,18 +4284,28 @@ function subsidyCalc(o){
   if(!isFinite(maxApply)) maxApply=Math.min(band,perW);
   var ratio=apply>0?contrib/apply:0;
   var p1=_subP1(ratio);
+  /* 2025년 개정판과 그 이전판을 해마다 갈라 쓴다 — 옛 해를 새 배점으로 셈하면
+     그때 실제로 받은 점수와 어긋나, 지나간 신청을 되짚을 수 없게 된다. */
+  var r25=String(rule.rubric||'2024')==='2025';
+  var w1=r25?3:5;                                  // ① 15점(2025) / 25점(그 이전)
+  var qualMax=r25?40:30;                           // 정성 40점(2025) / 30점
   var p2a=_subP2a(nEmp?(num(o.maxEmp)||0)/nEmp:1);
-  var p2b=nSite>=10?_subP2b(nEmp?(num(o.top3)||0)/nEmp:1):5;   // ②-2는 참여 10개소 이상만 적용
-  var p2=Math.min(p2a,p2b), p3=_subP3(num(o.prevPerWorker)||0), p4=_subP4(nSite);
+  // ②-2(상위 3개소)는 2025년 「세부기준 단일화」로 없어졌다. 옛 해에서는 참여 10개소 이상만 적용.
+  var p2b=r25?5:(nSite>=10?_subP2b(nEmp?(num(o.top3)||0)/nEmp:1):5);
+  var p2=Math.min(p2a,p2b);
+  var avgEmp=nSite?nEmp/nSite:0;                   // ③ 2025년판 — 참여기업 1개소당 평균 근로자수
+  var p3=r25?_subP3avg(avgEmp):_subP3(num(o.prevPerWorker)||0);
+  var p4=_subP4(nSite);
   var excluded=(p1===0||p2===0||p4===0);
-  var qual=Math.max(0,Math.min(30,num(o.qual)||0));
-  var score=p1*5+p2*3+p3*3+p4*3+qual;
+  var qual=Math.max(0,Math.min(qualMax,num(o.qual)||0));
+  var score=p1*w1+p2*3+p3*3+p4*3+qual;
   var rate=score>=80?1:score>=60?.75:score>=40?.5:0;
   var expect=(excluded||!apply)?0:Math.min(Math.round(apply*rate),band,perW);
   return {tier:tier,band:band,bandLbl:bandLbl,perWorkerLimit:perW,perWorker:rule.per_worker,
     maxApply:maxApply,ratio:ratio,p1:p1,p2:p2,p2a:p2a,p2b:p2b,p3:p3,p4:p4,qual:qual,
+    rubric:r25?'2025':'2024',w1:w1,qualMax:qualMax,avgEmp:avgEmp,
     score:score,rate:rate,expect:expect,excluded:excluded,
-    quant:p1*5+p2*3+p3*3+p4*3};
+    quant:p1*w1+p2*3+p3*3+p4*3};
 }
 // 지원금 하위탭 전환 — 미저장 입력이 있으면 확인 후 이동(그냥 바꾸면 입력이 사라짐)
 function goSubTab(t){ _leaveGuard().then(function(ok){ if(!ok)return; S.subTab=t; renderFund(); }); }
@@ -4092,17 +4423,25 @@ function subsidyPlanPanel(f){
     +'</div>'
 
     +'<div class="panel"><div class="row"><h2 style="font-size:15px">📊 예상 심사점수</h2>'
-    +'<span class="chip warn" style="font-size:10px">2024년 평가표 배점</span>'+hlp('sub.score')+'</div>'
+    +'<span class="chip '+(c.rubric==='2025'?'ok':'warn')+'" style="font-size:10px">'+c.rubric+'년 평가표 배점</span>'+hlp('sub.score')+'</div>'
     +'<div class="grid" style="margin-top:10px">'
     +'<div class="fld"><label>신청액(원) — 저장하면 신청·정산에 반영</label><input id="sp-apply" type="text" value="'+esc(apply||'')+'" oninput="subPlanRecalc()"></div>'
-    +'<div class="fld"><label>정성평가(사업계획 30점) — 심사위원 재량</label><input id="sp-qual" type="text" value="'+esc(qual)+'" oninput="subPlanRecalc()"></div>'
-    +'<div class="fld"><label>③ 1인당 이미 지원받은 금액(원)</label><input id="sp-prev" type="text" value="'+esc(prev)+'" oninput="subPlanRecalc()"></div>'
+    +'<div class="fld"><label>정성평가(사업계획 '+c.qualMax+'점) — 심사위원 재량</label><input id="sp-qual" type="text" value="'+esc(qual)+'" oninput="subPlanRecalc()"></div>'
+    /* 2025년판 ③은 참여사업장 집계에서 저절로 나오므로 입력칸을 두지 않는다.
+       입력칸이 남아 있으면 «넣어야 하는 값»으로 읽혀 사람이 헛일을 한다.
+       다만 옛 해를 볼 때는 그대로 있어야 하므로 숨기지 않고 아예 안 그린다. */
+    +(c.rubric==='2025' ? ''
+      : '<div class="fld"><label>③ 1인당 이미 지원받은 금액(원)</label><input id="sp-prev" type="text" value="'+esc(prev)+'" oninput="subPlanRecalc()"></div>')
     +'<div class="fld"><label>지자체 출연(예정)금(원) — 참여사 출연금과 별도</label><input id="sp-gov" type="text" value="'+esc(gov||'')+'" oninput="subPlanRecalc()"></div>'
     +'</div>'
     +'<div style="overflow-x:auto;margin-top:10px"><table><thead><tr><th>항목</th><th style="width:70px;text-align:right">점수</th><th>계산 근거</th></tr></thead>'
     +'<tbody id="sp-score">'+_subScoreRows(g,c)+'</tbody></table></div>'
     +'<div class="row" style="margin-top:12px"><button class="primary" onclick="saveSubPlan()">💾 저장</button>'
-    +'<span class="muted" style="font-size:11px">2025년에 배점이 개정(정성 30→40, ①25→15, ③삭제→참여기업 1개소당 평균 근로자수)됐습니다. 최신 평가표를 받으면 배점을 교체해야 정확합니다.</span></div></div>'
+    +'<span class="muted" style="font-size:11px">'
+    +(c.rubric==='2025'
+      ? '2025년 개정 평가표(정성 40 · ①15 · ②단일화 · ③참여기업 1개소당 평균 근로자수 · ④15)로 셈합니다. 2024년 이전 연도를 고르면 그해 배점으로 바뀝니다.'
+      : '이 해는 개정 전 배점(정성 30 · ①25 · ③1인당 기지원액)으로 셈합니다 — 그때 낸 서류와 맞추기 위함입니다.')
+    +'</span></div></div>'
 
     +'<div class="panel"><div class="row"><h2 style="font-size:15px">🎯 신청액별 기대 수령액</h2>'+hlp('sub.opt')+'</div>'
     +'<p class="muted" style="font-size:11.5px;margin:6px 0 8px">지원율이 80·60·40점에서 계단처럼 떨어지므로 <b>신청액을 올리면 오히려 덜 받는 구간</b>이 생깁니다. 출연금보다 많이 신청하면 배제됩니다.</p>'
@@ -4110,13 +4449,19 @@ function subsidyPlanPanel(f){
 }
 function _subScoreRows(g,c){
   var pct=function(a,b){ return b?((a/b*100).toFixed(1)+'%'):'-'; };
+  var r25=(c.rubric==='2025');
   var r=[
-    ['① 출연(예정)금 ÷ 신청액', c.p1*5+'/25', c.ratio?(c.ratio.toFixed(2)+'배 → '+c.p1+'점 × 5'):'신청액을 입력하세요'],
+    ['① 출연(예정)금 ÷ 신청액', c.p1*c.w1+'/'+(5*c.w1), c.ratio?(c.ratio.toFixed(2)+'배 → '+c.p1+'점 × '+c.w1):'신청액을 입력하세요'],
     ['② 근로자수 편중', c.p2*3+'/15', '최다 기업 '+g.maxEmp+'/'+g.nEmp+' = '+pct(g.maxEmp,g.nEmp)+' → '+c.p2a+'점'
-      +(g.nSite>=10?(' · 상위 3개소 '+g.top3+'/'+g.nEmp+' = '+pct(g.top3,g.nEmp)+' → '+c.p2b+'점 (낮은 쪽 반영)'):' · 상위 3개소 기준은 참여 10개소 이상만 적용')],
-    ['③ 1인당 이미 지원받은 금액', c.p3*3+'/15', c.p3+'점 × 3 (2025년 개정으로 삭제된 항목)'],
+      +(r25?' × 3 (2025년 개정으로 상위 3개소 기준은 없어졌습니다)'
+           :(g.nSite>=10?(' · 상위 3개소 '+g.top3+'/'+g.nEmp+' = '+pct(g.top3,g.nEmp)+' → '+c.p2b+'점 (낮은 쪽 반영)'):' · 상위 3개소 기준은 참여 10개소 이상만 적용'))],
+    r25 ? ['③ 참여기업 1개소당 평균 근로자수', c.p3*3+'/15',
+           g.nEmp+'명 ÷ '+g.nSite+'개사 = '+(c.avgEmp?c.avgEmp.toFixed(1):'-')+'명 → '+c.p3+'점 × 3 (적을수록 높은 점수)']
+        : ['③ 1인당 이미 지원받은 금액', c.p3*3+'/15', c.p3+'점 × 3'],
     ['④ 참여 기업 수', c.p4*3+'/15', g.nSite+'개사 → '+c.p4+'점 × 3'],
-    ['정성평가(사업계획)', c.qual+'/30', '사업계획·정책부합성·복지개선 정도 — 심사위원 평가']
+    ['정성평가(사업계획)', c.qual+'/'+c.qualMax,
+      r25?'타당성·구체성 · 정책부합성 · 복지개선 정도 · 소규모기업 기여도 — 4항목 × 10점, 심사위원 평가'
+         :'사업계획·정책부합성·복지개선 정도 — 심사위원 평가']
   ];
   var body=r.map(function(x){ return '<tr><td>'+x[0]+'</td><td style="text-align:right;font-weight:600">'+x[1]+'</td><td class="muted">'+esc(x[2])+'</td></tr>'; }).join('');
   var badge=c.excluded?'<span class="chip dg">지원 배제</span>':'<span class="chip '+(c.rate===1?'ok':'warn')+'">지원율 '+Math.round(c.rate*100)+'%</span>';
@@ -4168,7 +4513,10 @@ function subPlanUse(a){ var e=$('sp-apply'); if(!e)return; e.value=a; subPlanRec
 function saveSubPlan(){
   var v=_subPlanRead(); if(!v){ toast('계산할 데이터가 없습니다','warn'); return; }
   var _fid=S.fundId, _yr=S.year;
-  var obj={ req_type:v.type, qual_score:v.qual, prev_per_worker:v.prev, gov_contrib:v.gov||'' };
+  var obj={ req_type:v.type, qual_score:v.qual, gov_contrib:v.gov||'' };
+  /* ③ 입력칸이 없는 해(2025년판)에서는 prev_per_worker 를 건드리지 않는다 —
+     안 그리는 칸을 0 으로 덮어써 두면, 나중에 그 해 배점을 되짚을 때 근거가 사라진다. */
+  if($('sp-prev')) obj.prev_per_worker=v.prev;
   if(v.apply) obj.request_amount=v.apply;
   fbDb.ref(NS+'/funds/'+_fid+'/years/'+_yr+'/subsidy').update(obj).then(function(){
     var t=funds[_fid]; if(t){ if(!t.years)t.years={}; if(!t.years[_yr])t.years[_yr]={};
@@ -4265,8 +4613,14 @@ function subsidyDocsPanel(f){
   // ── 참여사별 3종 격자 ──
   var srows=act.map(function(s){
     var d=schk[s._id]||{};
+    /* 체크 옆에 사진첩 단추 — 붙어 있으면 📎(원본 보기), 없으면 🖼(사진첩에서 고르기).
+       화면에 설명을 깔지 않고 단추의 도움말로 알린다. */
     var tds=SUB_SITE_DOCS.map(function(c){
-      return '<td style="text-align:center"><input type="checkbox"'+(d[c[0]]?' checked':'')+' onchange="subChkSite(\''+s._id+'\',\''+c[0]+'\',this.checked)"></td>';
+      var sr=_subScanOf(s._id,c[0]);
+      return '<td style="text-align:center;white-space:nowrap"><input type="checkbox"'+(d[c[0]]?' checked':'')+' onchange="subChkSite(\''+s._id+'\',\''+c[0]+'\',this.checked)">'
+        +(sr?'<button onclick="openSiteScan(\''+s._id+'\',\''+c[0]+'\')" title="'+esc(sr.year+'년 사진 · 연결 '+(sr.at||''))+'" style="padding:1px 5px;margin-left:4px;font-size:11px">📎</button>'
+            :'<button onclick="openAlbumPick(\'\',\''+c[0]+'\',\''+s._id+'\')" title="사진첩에서 골라 붙입니다 — 붙이면 「받음」으로 함께 표시됩니다" style="padding:1px 5px;margin-left:4px;font-size:11px;opacity:.5">🖼</button>')
+        +'</td>';
     }).join('');
     var miss=SUB_SITE_DOCS.filter(function(c){ return !d[c[0]]; }).length;
     return '<tr'+(miss?'':' style="background:var(--ok-bg,#f0fdf4)"')+'><td class="muted" style="width:44px">'+esc(s.seq_label||'')+'</td>'
@@ -4279,8 +4633,16 @@ function subsidyDocsPanel(f){
 
   // ── 업로드 파일(기존 서류함) ──
   var dd=S.subDocs||{}, ids=Object.keys(dd);
+  /* 서류함에는 두 갈래가 섞여 있다 — 사진첩에서 담은 것(ref)과 앱 창고에 올린 것(url).
+     사진첩 원본은 내려받기 주소가 오래 살지 않아 링크로 걸지 않고 창으로 연다. */
   var urows=ids.map(function(id){ var x=dd[id];
-    return '<tr><td>'+esc(x.kind||'기타')+'</td><td><a href="'+esc(x.url||'#')+'" target="_blank" rel="noopener">'+esc(x.name||'')+'</a></td>'
+    var nm=esc(x.name||'(이름 없음)');
+    var cell=x.ref
+      ? '<button onclick="openShelfScan(\''+id+'\')" style="padding:2px 7px;font-size:12px">'+nm+'</button>'
+      : '<a href="'+esc(x.url||'#')+'" target="_blank" rel="noopener">'+nm+'</a>';
+    var where=x.ref?'<span class="chip" style="font-size:10px">🖼 사진첩</span>'
+                   :'<span class="chip" style="font-size:10px">📎 앱 보관</span>';
+    return '<tr><td>'+esc(x.kind||'기타')+'</td><td>'+cell+'</td><td>'+where+'</td>'
       +'<td class="muted">'+esc(x.uploaded||'')+'</td><td><button onclick="delSubDoc(\''+id+'\')" style="padding:2px 7px">×</button></td></tr>';
   }).join('');
   var opts=SUBDOC_KINDS.map(function(k){return '<option>'+k+'</option>';}).join('');
@@ -4304,12 +4666,16 @@ function subsidyDocsPanel(f){
     +'</div>'
 
     +'<div class="panel"><h2 style="font-size:15px">📎 파일 보관 <span class="muted" style="font-size:12px;font-weight:400">('+S.year+'년 · 공고·신청서·결정통지·정산보고 등)</span></h2>'
-    +(!fbStore
-      ? '<div class="msg warn">파일 보관은 Firebase Storage가 필요합니다.</div>'
-      : '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:8px">'
-        +'<div class="fld" style="margin:0"><label>서류 종류</label><select id="subdoc-kind" style="padding:6px 9px;border:1px solid var(--line);border-radius:7px">'+opts+'</select></div>'
-        +'<button class="primary" onclick="uploadSubDoc()">📎 파일 올리기</button></div>'
-        +(ids.length?'<div style="overflow-x:auto;margin-top:10px"><table><thead><tr><th>종류</th><th>파일</th><th>올린날</th><th></th></tr></thead><tbody>'+urows+'</tbody></table></div>':'<div class="muted" style="padding:12px 2px">올린 서류가 없습니다.</div>'))
+    /* 사진첩에서 담는 길은 Storage 없이도 된다 — 원본이 사진첩에 있고 여기는 참조만 갖기 때문이다.
+       그래서 종류 칸과 표는 늘 보이고, 창고에 올리는 단추만 Storage 가 있을 때 나온다.
+       (종전에는 Storage 가 없으면 서류함이 통째로 안내문 한 줄로 바뀌어 담긴 것도 못 봤다.) */
+    +'<div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:8px">'
+      +'<div class="fld" style="margin:0"><label>서류 종류</label><select id="subdoc-kind" style="padding:6px 9px;border:1px solid var(--line);border-radius:7px">'+opts+'</select></div>'
+      +'<button class="primary" onclick="openSubDocPick()" title="사진첩에 있는 사진을 담습니다 — 원본은 사진첩에 그대로 있고 여기엔 참조만 남습니다">🖼 사진첩에서 담기</button>'
+      +(fbStore?'<button onclick="uploadSubDoc()" title="이 앱 창고에 파일을 올립니다 — 사진첩에 없는 한글·PDF 같은 문서에 씁니다">📎 파일 올리기</button>'
+               :'<span class="muted" style="font-size:11px">파일 올리기는 Firebase Storage가 필요합니다</span>')
+    +'</div>'
+    +(ids.length?'<div style="overflow-x:auto;margin-top:10px"><table><thead><tr><th>종류</th><th>서류</th><th>어디에</th><th>담은날</th><th></th></tr></thead><tbody>'+urows+'</tbody></table></div>':'<div class="muted" style="padding:12px 2px">담아 둔 서류가 없습니다.</div>')
     +'</div>';
 }
 function _subChkPath(){ return NS+'/subsidy_chk/'+S.fundId+'/'+S.year; }
@@ -4384,7 +4750,10 @@ function uploadSubDoc(){
 }
 function delSubDoc(id){
   var d=(S.subDocs||{})[id]; if(!d) return;
-  confirmM('이 서류를 삭제할까요?\n('+(d.name||'')+')',{ok:'삭제',danger:true}).then(function(ok){ if(!ok)return;
+  /* 사진첩에서 담은 것은 참조만 지운다 — 사진첩의 사진은 그대로다. 그렇게 적어 준다. */
+  var _msg=d.ref ? '서류함에서 빼기만 합니다.\n사진첩의 사진은 그대로 남습니다.\n('+(d.name||'')+')'
+                 : '이 서류를 삭제할까요?\n올린 파일도 함께 지워집니다.\n('+(d.name||'')+')';
+  confirmM(_msg,{ok:d.ref?'빼기':'삭제',danger:true}).then(function(ok){ if(!ok)return;
     var _fid=S.fundId, _yr=S.year;
     var done=function(){ fbDb.ref(NS+'/subsidy_docs/'+_fid+'/'+_yr+'/'+id).remove().then(function(){ S.subDocFor=null; renderFund(); toast('삭제되었습니다'); }); };
     if(fbStore&&d.path){ fbStore.ref(d.path).delete().then(done).catch(done); } else done();
@@ -4517,18 +4886,28 @@ var OPEN_ACCT={cash:'현금성자산',savings:'정기예금',loan:'근로자대�
                accrued:'미수수익',recv:'미수금',stfund:'단기금융상품',spcash:'특정현금과예금',
                spresv:'손실대비특별적립금',
                basic:'기본재산',retained:'이월잉여금',
-               /* 준비금은 1·2를 갈라 이월한다 — 기금마다 쓰는 쪽이 다르다(법인세법 제29조 / 근로복지기본법
-                  제62조제2항). 칸이 하나였을 때는 준비금2로 이월하는 기금(안전공사공동 2024:
-                  42,245,952원)이 재무상태표에서 준비금1로 표시돼 제출본과 달라졌다. */
+               /* 준비금은 1·2를 갈라 이월한다. **번호는 공식 서식이 정해 둔 것**이다 —
+                  근로복지공단 「설립인가신청서 양식」 2.사업계획서 각주:
+                    * 고유목적사업준비금1은 **법인세법 제29조**에 의한 준비금임(이자 등)
+                    * 고유목적사업준비금2는 **근로복지기본법 제62조2항**에 의한 준비금임(이월)
+                  칸이 하나였을 때는 준비금2로 이월하는 기금(C공동 2024: 42,245,952원)이
+                  재무상태표에서 준비금1로 표시돼 제출본과 달라졌다. */
                reserve:'고유목적사업준비금1',reserve2:'고유목적사업준비금2'};
 function acctType(n){ return ACCT_CHART[n]||'비용'; }
 function isDrAcct(n){ var t=acctType(n); return t==='자산'||t==='비용'; }   // 차변 잔액 계정
+/* 전기이월 칸에 곁들이는 근거 — 두 준비금은 이름만으로는 무엇이 담기는지 알기 어렵다 */
+/* 전기이월 칸에 곁들이는 근거 — 배치(reserve_swap)에 따라 뒤바뀐다.
+   이름만으로는 무엇이 담기는지 알 수 없어, 그 기금의 자리대로 적어 준다. */
+function _openNote(fid){
+  var A='법인세법 §29 · 이자', B='근로복지기본법 §62② · 이월';
+  return _rsvSwapOf(fid)?{reserve:B, reserve2:A}:{reserve:A, reserve2:B};
+}
 function _openingOf(fid,yr){
   var yd=(funds[fid]&&funds[fid].years&&funds[fid].years[yr])||{}; return yd.opening||{};
 }
 /* 승인 거래 → 분개 배열. 한 거래 = 차변 1 / 대변 1 (통장 기반이라 단순분개) */
 /* ══ 분할 분개 ══
-   통장 한 줄에 성격이 다른 금액이 함께 찍히는 일이 흔하다 — 이비공동은 송금 100,500원이
+   통장 한 줄에 성격이 다른 금액이 함께 찍히는 일이 흔하다 — L공동은 송금 100,500원이
    생활지원금 100,000 + 이체수수료 500이고, 제출한 결산서도 그렇게 갈라 적었다.
    은행이 준 줄은 하나이므로 **통장 잔액 대사를 깨뜨리지 않아야 한다**:
    첫 조각만 입·출금 금액을 지니고 나머지는 nocash로 만들어 금액(amount)으로만 회계에 넣는다.
@@ -4549,11 +4928,21 @@ function expandSplits(arr){
   (arr||[]).forEach(function(x){
     var sp=_splitsOf(x);
     if(!sp.length){ out.push(x); return; }
+    /* 현금이 오가지 않은 줄은 쪼개지 않고 그대로 둔다.
+       조각을 만들 때 «고정 쪽»을 입금/출금 방향으로 정하는데, 둘 다 0이면 방향을 알 수 없어
+       credit 을 고정 쪽으로 잡는다 — 그러면 차·대변이 같아져 **금액이 통째로 사라진다**
+       (현물출연 72.6억을 쪼개면 기본재산이 0이 됐다).
+       쪼개는 창은 금액 0을 이미 막지만, **쪼갠 뒤에 금액을 지우면** 막을 자리가 없다. */
+    if(!((num(x.deposit)||0)+(num(x.withdraw)||0))){ out.push(x); return; }
     var isDep=(num(x.deposit)||0)>0;
     var cash=(isDep?x.debit:x.credit)||'현금성자산';
     sp.forEach(function(s,i){
       var o=Object.assign({},x);
       o._id=x._id+'#'+(i+1); o.splits=null; o.amount=num(s.amount)||0;
+      /* 조각임을 남긴다 — 금액은 amount 에만 있다. deposit 은 첫 조각이 통장 한 줄 전체를
+         지니고 있어(잔액 대사용) 금액으로 쓰면 다른 조각 몫까지 딸려 온다.
+         _nocashSrc 는 «원래 줄이 현물출연이었나» — 조각에 붙는 nocash 와 뜻이 다르다. */
+      o._split=1; o._nocashSrc=x.nocash?1:0;
       if(isDep){ o.debit=cash; o.credit=s.acct; } else { o.debit=s.acct; o.credit=cash; }
       if(i>0){ o.deposit=0; o.withdraw=0; o.nocash=1; }   // 통장 금액은 첫 조각만 지닌다
       out.push(o);
@@ -4820,8 +5209,8 @@ var F15_ROWS=[
   [63,'모성보호, 일ㆍ가정 양립비용 지원',['모성보호비']],
   [64,'근로자의 날 행사 등 지원',['근로자의날행사비']],
   [65,'근로복지시설 설치 및 운영',['근로복지시설비']],
-  /* 건강검진비·기념품비는 결산서마다 별 항목으로 세우지만(참살이공동 '의료비지원',
-     가치를만들어가는사람들 '기념품비', 플러스동반성장 '기념품 지급') 별지15호에는
+  /* 건강검진비·기념품비는 결산서마다 별 항목으로 세우지만(F공동 '의료비지원',
+     K공동 '기념품비', D공동 '기념품 지급') 별지15호에는
      따로 칸이 없어 66번 '그 밖의 복지비'로 모인다. */
   [66,'그 밖의 복지비',['격려금','복리후생','의료비','기념품비','경조사비','기타복지비']]
 ];
@@ -4847,8 +5236,8 @@ function guessBfKind(e){
 }
 function _k1000(n){ return Math.round((n||0)/1000); }          // 원 → 천원
 /* 전기말 자산총계 — 전기이월 칸의 자산 계정을 모두 더한다.
-   별지15호 ㉞ 이월금은 전기에서 넘어온 재산 전부로 적는다(안전공사공동 2024 51,047천원
-   = 전기말 자산총계 51,046,392원, 현재기업사내 2025 2,173,555천원도 같다). */
+   별지15호 ㉞ 이월금은 전기에서 넘어온 재산 전부로 적는다(C공동 2024 51,047천원
+   = 전기말 자산총계 51,046,392원, G사내 2025 2,173,555천원도 같다). */
 function _openAssets(op){
   var s=0;
   Object.keys(OPEN_ACCT).forEach(function(k){
@@ -4874,8 +5263,8 @@ function buildF15(arr,fid,yr,rep,sites,welf){
   var bfInc=bf.employer+bf.other+bf.income+bf.merge, bfDec=bf.use+bf.split;
   var bfEnd=bfOpen+bfInc-bfDec;
   /* ㉑~㉘ 기금 운용·관리 — 이 칸은 '현금 잔액'이 아니라 **기본재산을 어떤 방법으로 운용했는지**다.
-     대부가 없는 기금(충남6호 2023)에서는 ㉑ 금융회사 예입 = ㉘ 합계 = ⑳ 기본재산 총액이다.
-     대부가 있는 기금에서 구조가 드러난다 — 참살이공동 2024 제출본은
+     대부가 없는 기금(M공동 2023)에서는 ㉑ 금융회사 예입 = ㉘ 합계 = ⑳ 기본재산 총액이다.
+     대부가 있는 기금에서 구조가 드러난다 — F공동 2024 제출본은
        ㉑ 예입 674,108천(= ⑳ 기본재산 총액) + ㉗ 근로자 대부 239,720천 = ㉘ 합계 913,828천
      으로, **대부금은 예입에서 빼지 않고 따로 더한다**. 대부는 기본재산을 헐어 나간 것이 아니라
      그 자체가 기금의 자산이기 때문이다. 신탁·유가증권 등 운용 상품만 예입에서 뺀다. */
@@ -4886,17 +5275,29 @@ function buildF15(arr,fid,yr,rep,sites,welf){
   run.deposit=Math.max(bfEnd-invested,0);
   run.total=run.deposit+invested+run.loan;
   // ㉙~㉟ 기금사업 재원
-  var contribYear=bf.employer+bf.other;                        // 당해연도 출연금
+  var contribYear=bf.employer+bf.other;                        // 당해연도 출연금(현물 포함)
+  /* 그 해 **현금으로** 들어온 출연금 — 현물출연(증권 등)은 그대로 쓸 수 없으므로 뺀다.
+     _contribOf 가 이미 현물·대체분개를 걸러 준다(준비금 계산에서도 같은 함수를 쓴다). */
+  var cashIn=_contribOf(arr);
   var ratio=(num(rep.use_ratio)||50)/100;                      // 출연금 사용한도 — 화면 표시용
   /* ㉙ 기금운용 수익금 — 이자·잡수익만. 준비금 환입은 회계상 수익이지만 재원이 아니다.
-     ㉚ 해당 회계연도 출연금액의 사용한도 범위 — 실제로는 **그 해 준비금2로 설정한 금액**이다.
-        기본재산에서 준비금2로 옮긴 것이 곧 그 해 쓰기로 정한 재원이라 ⑰ 기본재산 사용과 같은 값이다.
+     ㉚ 해당 회계연도 출연금액의 사용한도 범위 — 실제로는 **그 해 이월 쪽 준비금으로 설정한 금액**이다.
+        기본재산에서 그리로 옮긴 것이 곧 그 해 쓰기로 정한 재원이라 ⑰ 기본재산 사용과 같은 값이다.
+        (이월 쪽이 몇 번인지는 _rsvRoles 가 정한다 — 공식 서식 기준으로는 준비금2다.)
         출연금 × 비율로 잡으면 협의회가 한도보다 적게 정한 해에 틀린다
-        (참살이공동 2024는 출연금 1,086,108천원의 50%가 543,054천원인데 제출본 ⑰=㉚=412,000천원).
+        (F공동 2024는 출연금 1,086,108천원의 50%가 543,054천원인데 제출본 ⑰=㉚=412,000천원).
+        ⑰만 쓴다 — 기본재산 감소액(⑰+⑱)을 쓰면 ⑱ 기금법인 분할로 딴 기금에 넘어간 몫까지
+        이 기금의 재원으로 잡힌다. 분할은 재원이 아니라 재산이 빠져나간 것이다.
+        ⑰ 중에서도 **그 해 현금으로 들어온 출연금까지**만 여기 적는다. 쌓아 둔 기본재산에서
+        꺼내 쓴 몫(시행령 제46조의 직전 기본재산 20~30% 사용)은 전기에서 넘어온 재산이라
+        이미 ㉞ 이월금 안에 들어 있다 — 또 더하면 같은 돈을 두 번 센다.
+        확정 제출본 두 건이 이 규칙으로 함께 설명된다:
+          C공동 2024  ㉞ 51,046천(전기말 자산총계) · 그 해 출연금 0 → ㉚ 0
+          F공동 2024  ㉞ 0(제1기)          · 그 해 출연금 1,032,838천 중 412,000천 → ㉚ 412,000천
      ㉞ 이월금 — 전기에서 넘어온 재산 전부. 비워 두면 전기말 자산총계로 잡는다.
      세 칸 모두 수기 입력값이 있으면 그것을 먼저 쓴다. */
   var src={income:fin.bizRev,
-           contrib:(rep.src_contrib!==''&&rep.src_contrib!=null)?(num(rep.src_contrib)||0):bfDec,
+           contrib:(rep.src_contrib!==''&&rep.src_contrib!=null)?(num(rep.src_contrib)||0):Math.min(bf.use,cashIn),
            capExcess:num(rep.src_cap_excess)||0, basicRange:num(rep.src_basic_range)||0,
            support:num(rep.src_support)||0,
            carry:(rep.src_carry!==''&&rep.src_carry!=null)?(num(rep.src_carry)||0):_openAssets(op)};
@@ -4918,21 +5319,42 @@ function buildF15(arr,fid,yr,rep,sites,welf){
   });
   var subAmt=items.reduce(function(s,x){return s+x.amt;},0);
   var subCnt=items.reduce(function(s,x){return s+x.cnt;},0);
+  /* 어느 항목에도 안 실리는 수혜자 — 분류를 안 골랐거나 서식에 없는 분류다.
+     수혜자수는 통장으로 검산할 수 없어 빠져도 알 방법이 없는데, 소계는 제출본에
+     그대로 들어간다. 몇 명이 어느 분류에서 빠졌는지 남겨 화면이 붙잡게 한다. */
+  var _known={}; F15_ROWS.forEach(function(r){ r[2].forEach(function(a){ _known[a]=1; }); });
+  var benefLost=0, benefLostCats=[];
+  Object.keys(benef).forEach(function(c){
+    if(_known[c]||!benef[c]) return;
+    benefLost+=benef[c]; benefLostCats.push((c||'(분류 없음)')+' '+benef[c]+'명');
+  });
+  /* 대부 실행액은 목적사업 탭에서 오고, 장부에는 근로자대부금 차변 발생액으로 남는다.
+     둘이 어긋나면 별지15호와 재무제표가 서로 다른 말을 한다 — F공동 2024 제출본이
+     그 사례다(대부금 상환을 반영하지 않아 5,327만원 어긋났다). */
+  var loanBook=Math.round((mv['근로자대부금']||{}).d||0);
+  var loanMismatch=(loanAmt>0||loanBook>0)&&Math.round(loanAmt)!==loanBook;
   /* 68. 기금 운영비 — 일반관리비와 그 밖의 운영비만. 준비금 전입액은 사업외비용이라 뺀다
-     (안전공사공동 2024는 이자 40,618원, 현재기업사내 2025는 831원만큼 부풀었었다). */
+     (C공동 2024는 이자 40,618원, G사내 2025는 831원만큼 부풀었었다). */
   var admin=fin.admin+fin.otherExp-(fin.resvExp||0);
-  /* 69. 잔액 = 재원(㉟) + 대부금 잔액 − (복지사업비 소계 + 대부 실행액 + 기금 운영비).
-     대부금은 나갔어도 자산으로 남아 있으므로 재원 쪽에 되돌려 놓는다.
+  /* 69. 잔액 = 재원(㉟) − 복지사업비 소계 − 기금 운영비.
+     **대부금은 빼지 않는다** — 빌려준 돈은 나갔어도 기금 자산으로 남아 있다.
+     서식의 복지사업비 소계에는 대부 실행액이 들어 있으므로, 그것을 그대로 되돌려 놓는 셈이다.
      확정 제출본 세 건으로 검산했다(원 단위):
-       참살이공동 2024   (239,720,500 + 412,081,137) − (101,190,224 + 239,720,500 + 4,400)
-                        = 310,886,513  → 제출본 61.잔액 310,887천원
-       안전공사공동 2024 (0 + 51,087,010) − (17,607,800 + 0 + 107,640)
-                        = 33,371,570   → 제출본 69.잔액 33,372천원
-       현재기업사내 2025 (0 + 2,173,555,891) − (0 + 0 + 68,770)
-                        = 2,173,487,121 → 제출본 69.잔액 2,173,487천원
-     기말 자산총계로 잡으면 참살이처럼 출연금 일부만 재원으로 정한 해에 틀린다
-     (자산총계 984,995천원 vs 제출본 310,887천원). */
-  var rest=(run.loan+src.total)-(subAmt+loanAmt+admin);
+       F공동 2024   412,081,137 − 101,190,224 −   4,400 =   310,886,513 → 61.잔액 310,887천원
+       C공동 2024  51,087,010 −  17,607,800 − 107,640 =    33,371,570 → 69.잔액  33,372천원
+       G사내 2025 2,173,555,891 −        0 −  68,770 = 2,173,487,121 → 69.잔액 2,173,487천원
+     ⚠ 대부금 항을 넣지 말 것. 「기말 대부잔액을 더하고 그 해 실행액을 뺀다」는 식은 더하는 쪽과
+        빼는 쪽의 기준이 달라, 대부금이 이월된 이듬해에는 거래가 하나도 없어도 잔액이 대부잔액만큼
+        부풀고(1.86억 이월 → 4.97억으로 표시됐다), 상환이 있는 해에는 상환액만큼 줄어든다.
+        상환은 대부금이 현금으로 자리만 바꾸는 것이라 잔액을 바꾸지 않는다.
+     ⚠ 기말 자산총계로 잡아서도 안 된다 — F공동처럼 출연금 일부만 재원으로 정한 해에 틀린다
+        (자산총계 984,995천원 vs 제출본 310,887천원). */
+  var rest=src.total-(subAmt+admin);
+  /* 재원 ㉟ 의 천장 — 전기말 자산총계 + 그 해 현금출연 + 그 해 수익.
+     ㉛·㉜·㉝ 는 사람이 적는 칸이라, 이미 ㉞ 안에 든 돈을 다시 적으면 재원이 부풀어
+     잔액까지 함께 틀어진다. 앱이 그 값을 고쳐 쓰지는 않고 «넘쳤다»는 사실만 알린다. */
+  var srcCap=_openAssets(op)+cashIn+fin.bizRev;
+  var srcOver=Math.max(0,src.total-srcCap);
   // 근로자 수 — 참여사업장 합계(협력업체로 표시한 곳은 따로)
   var wk=0, pwk=0;
   sites.forEach(function(s){ var n=num(s.company_size)||0; if(s.partner) pwk+=n; else wk+=n; });
@@ -4944,9 +5366,12 @@ function buildF15(arr,fid,yr,rep,sites,welf){
           ceo:f.chairman||'',biz:rep.biz_type||f.biz_type||'',workers:wk,partner:pwk,capital:num(rep.capital)||0,
           type:(f.fund_type==='사내')?'사내':'공동'},
     bf:bf, bfOpen:bfOpen, bfInc:bfInc, bfDec:bfDec, bfEnd:bfEnd, bfList:bfList,
-    run:run, src:src, ratio:ratio*100,
+    run:run, src:src, ratio:ratio*100, cashIn:cashIn,
     items:items, subAmt:subAmt, subCnt:subCnt,
     loanAmt:loanAmt, loanBenef:loanBenef, admin:admin, rest:rest,
+    benefLost:benefLost, benefLostCats:benefLostCats,
+    loanBook:loanBook, loanMismatch:loanMismatch,
+    srcCap:srcCap, srcOver:srcOver,
     total:subAmt+loanAmt+admin+rest,
     sel:{amt:num(rep.sel_amt)||0,cnt:num(rep.sel_cnt)||0},
     estate:{name:rep.estate_name||'해당없음',amt:num(rep.estate_amt)||0,date:rep.estate_date||'해당없음'},
@@ -4974,6 +5399,20 @@ function f15Load(){
   return false;
 }
 function _isLocked(){ return !!(S.f15Close&&S.f15Close.locked); }
+/* 확정한 해를 다시 계산했더니 별지15호 숫자가 달라졌는가.
+   산식을 고치면(69.잔액·㉚ 처럼) 이미 낸 해의 인쇄물이 조용히 바뀐다 — 그것을 붙잡는다.
+   ⚠ 예전에 확정한 해에는 스냅샷에 이 칸들이 없다. 그때는 «모른다»가 맞으므로 비교하지 않는다. */
+function f15Drift(R){
+  var snap=(S.f15Close||{}).fin;
+  if(!_isLocked()||!snap||snap.f15_rest==null) return [];
+  var out=[];
+  [['㉟ 재원 합계','f15_src_total',R.src.total],['㉚ 출연금 사용한도 범위','f15_src_contrib',R.src.contrib],
+   ['㉞ 이월금','f15_src_carry',R.src.carry],['잔액','f15_rest',R.rest],['합계','f15_total',R.total]
+  ].forEach(function(p){
+    var was=Math.round(num(snap[p[1]])||0), now=Math.round(p[2]||0);
+    if(was!==now) out.push({name:p[0],was:was,now:now}); });
+  return out;
+}
 function _lockInfo(){ var c=S.f15Close||{}; return (c.locked_at||'')+(c.locked_by?' · '+c.locked_by:''); }
 function f15Save(){
   var fid=S.fundId, yr=S.year, o=Object.assign({},S.f15Rep||{});
@@ -5034,9 +5473,40 @@ function f15View(arr){
       +'<thead><tr><th>항목</th><th style="text-align:right">금액</th><th style="text-align:right">수혜자</th></tr></thead><tbody>'+itemRows
       +'<tr style="font-weight:700"><td>'+_f15n(67)+' 소계</td><td style="text-align:right">'+_n(_k1000(R.subAmt))+'</td><td style="text-align:right">'+_n(R.subCnt)+'</td></tr>'
       +'<tr><td>대부사업</td><td style="text-align:right">'+_n(_k1000(R.loanAmt))+'</td><td style="text-align:right">'+_n(R.loanBenef)+'</td></tr>'
+      /* 목적사업 탭에 적은 수혜자가 어느 항목에도 안 실리면 소계에서 조용히 빠진다 */
+      +(R.benefLost>0?'<tr><td colspan="3" style="padding:0"><div class="msg warn" style="margin:6px 0;font-size:11.5px;line-height:1.55">'
+        +'<b>⚠ 수혜자 '+_n(R.benefLost)+'명이 어느 항목에도 실리지 않았습니다.</b> '+esc(R.benefLostCats.join(' · '))+'<br>'
+        +'[목적사업] 탭에서 분류를 골라 주세요 — 분류가 비었거나 서식에 없는 이름이면 소계에서 빠집니다.'
+        +'</div></td></tr>':'')
+      /* 대부 실행액이 장부와 어긋나면 별지15호와 재무제표가 서로 다른 말을 한다 */
+      +(R.loanMismatch?'<tr><td colspan="3" style="padding:0"><div class="msg warn" style="margin:6px 0;font-size:11.5px;line-height:1.55">'
+        +'<b>⚠ 대부 실행액이 장부와 다릅니다.</b> 목적사업 탭 '+_n(_k1000(R.loanAmt))+'천원 · 장부(근로자대부금 지출) '+_n(_k1000(R.loanBook))+'천원<br>'
+        +'별지15호는 목적사업 탭 값을, 재무제표는 장부를 씁니다 — 둘을 맞춰 주세요.'
+        +'</div></td></tr>':'')
       +'<tr><td>'+_f15n(68)+' 기금 운영비</td><td style="text-align:right">'+_n(_k1000(R.admin))+'</td><td></td></tr>'
-      +'<tr><td>'+_f15n(69)+' 잔액</td><td style="text-align:right">'+_n(_k1000(R.rest))+'</td><td></td></tr>'
+      +'<tr><td>'+_f15n(69)+' 잔액</td><td style="text-align:right'+(R.rest<0?';color:var(--danger);font-weight:700':'')+'">'+_n(_k1000(R.rest))+'</td><td></td></tr>'
+      /* 잔액이 음수 = 그 해 재원보다 많이 썼다 = 기본재산을 헐어 썼다는 뜻이다.
+         기본재산은 대부사업에만 쓸 수 있으므로(근로복지기본법 제61조·유권해석) 그냥 넘길 수 없다.
+         숫자를 감추지 않고 무엇을 확인해야 하는지 함께 적는다. */
+      +(R.rest<0?'<tr><td colspan="3" style="padding:0"><div class="msg err" style="margin:6px 0;font-size:11.5px;line-height:1.55">'
+        +'<b>⚠ 잔액이 음수입니다.</b> 그 해 재원 ㉟ '+_n(_k1000(R.src.total))+'천원보다 <b>'+_n(_k1000(-R.rest))+'천원</b>을 더 썼습니다.<br>'
+        +'모자란 돈은 기본재산에서 나온 것인데, 기본재산은 <b>대부사업에만</b> 쓸 수 있습니다. 다음을 확인해 주세요 — '
+        +'㉚ 준비금2 설정액(현재 '+_n(_k1000(R.src.contrib))+'천원) · ㉞ 이월금(현재 '+_n(_k1000(R.src.carry))+'천원) · 목적사업 지출 분개.'
+        +'</div></td></tr>':'')
       +'<tr style="font-weight:700;background:var(--bg)"><td>'+_f15n(70)+' 합계</td><td style="text-align:right">'+_n(_k1000(R.total))+'</td><td></td></tr>'
+      /* 확정한 뒤에 산식이 고쳐지면 제출한 숫자와 화면이 달라진다 — 어느 칸인지 짚어 준다 */
+      +(function(){ var dr=f15Drift(R); if(!dr.length) return '';
+        return '<tr><td colspan="3" style="padding:0"><div class="msg warn" style="margin:6px 0;font-size:11.5px;line-height:1.55">'
+          +'<b>⚠ 확정한 때와 숫자가 달라졌습니다.</b> 확정 '+esc(_lockInfo())+' 이후 계산 방식이 바뀌었습니다.<br>'
+          +dr.map(function(d){ return esc(d.name)+' '+_n(_k1000(d.was))+' → '+_n(_k1000(d.now)); }).join(' · ')
+          +'<br>이미 제출한 서식은 <b>확정 당시 숫자</b>가 맞습니다. 그대로 두려면 ㉚·㉞ 칸에 그 값을 적어 두세요.'
+          +'</div></td></tr>'; })()
+      /* 재원이 그 해 있던 돈보다 많으면 같은 돈을 두 번 적은 것이다 — 잔액도 그만큼 틀어진다 */
+      +(R.srcOver>0?'<tr><td colspan="3" style="padding:0"><div class="msg err" style="margin:6px 0;font-size:11.5px;line-height:1.55">'
+        +'<b>⚠ 재원 ㉟ 이 그 해 있던 돈보다 '+_n(_k1000(R.srcOver))+'천원 많습니다.</b><br>'
+        +'그 해 쓸 수 있었던 돈은 전기말 재산 '+_n(_k1000(R.src.carry))+' + 현금출연 '+_n(_k1000(R.cashIn))+' + 수익 '+_n(_k1000(R.src.income))+' = '+_n(_k1000(R.srcCap))+'천원입니다.<br>'
+        +'㉛·㉜·㉝ 에 적은 금액이 ㉞ 이월금 안에 이미 들어 있지 않은지 보아 주세요 — 쌓아 둔 기본재산에서 꺼내 쓴 몫은 이월금에 이미 포함됩니다.'
+        +'</div></td></tr>':'')
       +'</tbody></table></div></div>'
     +'<details style="margin-top:14px"><summary style="cursor:pointer;font-weight:700">기본재산 변동 내역 — 구분 확인 ('+R.bfList.length+'건)</summary>'
       +'<p class="muted" style="font-size:11.5px;margin:6px 0">적요로 자동 추정했습니다. 틀린 것만 바꿔 주세요.</p>'
@@ -5048,9 +5518,12 @@ function f15View(arr){
       +ip('use_ratio','출연금 사용한도 %(50 또는 80)','50')
       +ip('run_trust','㉒ 투자신탁 수익증권(원)')+ip('run_secu','㉓ 유가증권 매입(원)')
       +ip('run_own','㉔ 자사주 유상증자(원)')+ip('run_reit','㉕ 부동산투자회사 주식(원)')
-      +ip('run_etc','㉖ 기타 운용(원)')+ip('src_cap_excess','㉛ 자본금 50% 초과액(천원)')
-      +ip('src_basic_range','㉜ 기본재산 20/30% 범위(천원)')+ip('src_support','㉝ 공동기금 지원액(천원)')
-      +ip('src_carry','㉞ 이월금 등(천원)')
+      +ip('run_etc','㉖ 기타 운용(원)')+ip('src_cap_excess','㉛ 자본금 50% 초과액(원)')
+      +ip('src_basic_range','㉜ 기본재산 20/30% 범위(원)')+ip('src_support','㉝ 공동기금 지원액(원)')
+      /* ㉚·㉞ 는 비워 두면 회계에서 자동으로 잡는다(㉚=⑰ 기본재산 사용, ㉞=전기말 자산총계).
+         협의회가 서식에 다른 값을 적기로 한 해에만 여기에 적는다. */
+      +ip('src_contrib','㉚ 출연금 사용한도 범위(원) — 비우면 ⑰ 기본재산 사용액','자동')
+      +ip('src_carry','㉞ 이월금 등(원) — 비우면 전기말 자산총계','자동')
       +ip('use80_pcnt','㊲ 출연금 80% 협력업체 수혜자(명)')+ip('use80_pamt','㊳ 출연금 80% 협력업체 사용액(천원)')
       +ip('use90_pcnt','㊵ 출연금 90% 협력업체 수혜자(명)')+ip('use90_pamt','㊶ 출연금 90% 협력업체 사용액(천원)')
       +ip('use20_total','㊷ 기본재산 20% 사용액(천원)')+ip('use20_partner','㊸ 협력업체 사용액(천원)')+ip('use20_pcnt','㊹ 협력업체 수혜자(명)')
@@ -5521,11 +5994,17 @@ function buildClosingWb(fid,yr,arr,prevA,rep,sites,welf){
   s=wb.addWorksheet('1-3 이익잉여금처분계산서'); _xlWidths(s,[3,34,18,18]);
   _xlTitle(s,'이익잉여금처분계산서',4);
   _xlHead(s,4,['과목',yr+'년(당기)',(yr-1)+'년(전기)']); rw=5;
-  _xlRow(s,rw++,['Ⅰ. 미처분이익잉여금',fin.retained,prv.retained]);
-  _xlRow(s,rw++,['  1) 전기이월이익잉여금',num((fin.opening||{}).retained)||0,num((prv.opening||{}).retained)||0]);
-  _xlRow(s,rw++,['  2) 당기순이익',fin.net,prv.net]);
-  _xlRow(s,rw++,['Ⅱ. 이익잉여금처분액',0,0]);
-  _xlRow(s,rw++,['Ⅲ. 차기이월이익잉여금',fin.retained,prv.retained],{bold:true});
+  /* 결손이면 이름을 바꿔 **양수로** 적는다 — 재무제표에는 음수가 나오지 않아야 한다.
+     화면 재무제표는 _retLabel/_retVal 로 이미 그렇게 하고 있었는데 워크북만 원값을 썼다.
+     G사내 2025(결손금 37,079원 이월)처럼 결손이 있는 기금은 제출 서류에 음수가 찍혔다.
+     당기·전기의 방향이 다를 수 있으므로 이름은 **당기 기준**으로 적는다. */
+  var _rl=_retLabel(fin.retained)==='이월결손금';
+  _xlRow(s,rw++,[_rl?'Ⅰ. 미처리결손금':'Ⅰ. 미처분이익잉여금',_retVal(fin.retained),_retVal(prv.retained)]);
+  var _op=num((fin.opening||{}).retained)||0, _opP=num((prv.opening||{}).retained)||0;
+  _xlRow(s,rw++,[(_op<0?'  1) 전기이월결손금':'  1) 전기이월이익잉여금'),_retVal(_op),_retVal(_opP)]);
+  _xlRow(s,rw++,[(fin.net<0?'  2) 당기순손실':'  2) 당기순이익'),_retVal(fin.net),_retVal(prv.net)]);
+  _xlRow(s,rw++,[_rl?'Ⅱ. 결손금처리액':'Ⅱ. 이익잉여금처분액',0,0]);
+  _xlRow(s,rw++,[_rl?'Ⅲ. 차기이월결손금':'Ⅲ. 차기이월이익잉여금',_retVal(fin.retained),_retVal(prv.retained)],{bold:true});
 
   // ⑨ 익년도 사업계획서 · ⑩ 예산편성안 — 당기 실적을 기준선으로 깔고 예산칸은 비워 둔다
   s=wb.addWorksheet('2.익년도사업계획서'); _xlWidths(s,[3,34,18,18,30]);
@@ -5541,8 +6020,13 @@ function buildClosingWb(fid,yr,arr,prevA,rep,sites,welf){
   _xlHead(s,4,['과목',yr+'년 결산',(yr+1)+'년 예산','증감']); rw=5;
   _xlRow(s,rw++,['수입 — 기금운용 수익',fin.interest,null,null]);
   _xlRow(s,rw++,['수입 — 출연금',R.bf.employer+R.bf.other,null,null]);
-  _xlRow(s,rw++,['수입 — 이월금',fin.retained,null,null]);
-  _xlRow(s,rw++,['수입 합계',fin.interest+R.bf.employer+R.bf.other+fin.retained,null,null],{bold:true});
+  /* 결손금은 «수입»이 아니다 — 전기에서 넘어온 **보전해야 할 것**이라 수입에 음수로 넣으면
+     수입 합계가 그만큼 줄어 예산이 실제보다 작아 보인다. 이월금은 잉여일 때만 적고,
+     결손이면 아래에 따로 적어 «보전해야 한다»는 사실을 눈에 보이게 둔다. */
+  var _carry=Math.max(0,fin.retained), _loss=Math.max(0,-fin.retained);
+  _xlRow(s,rw++,['수입 — 이월금',_carry,null,null]);
+  _xlRow(s,rw++,['수입 합계',fin.interest+R.bf.employer+R.bf.other+_carry,null,null],{bold:true});
+  if(_loss) _xlRow(s,rw++,['(전기 이월결손금 — 잉여가 생기면 먼저 보전)',_loss,null,null]);
   _xlRow(s,rw++,['지출 — 목적사업비',fin.purpose,null,null]);
   _xlRow(s,rw++,['지출 — 일반관리비',fin.admin,null,null]);
   _xlRow(s,rw++,['지출 합계',fin.purpose+fin.admin,null,null],{bold:true});
@@ -5654,18 +6138,36 @@ function closeSnapshot(arr,fid,yr,rep,sites,welf){
     contrib_employer:R.bf.employer, contrib_other:R.bf.other, bf_end:R.bfEnd, bf_use:R.bf.use,
     benef:R.subCnt, workers:R.head.workers, partner:R.head.partner,
     loan_amt:R.loanAmt, loan_benef:R.loanBenef,
+    /* 별지15호에서 **실제로 제출한 숫자** — 산식이 나중에 고쳐져도 낸 값이 남는다.
+       여기 없으면 다시 인쇄할 때 숫자가 달라져도 달라진 사실조차 알 수 없다. */
+    f15_src_income:R.src.income, f15_src_contrib:R.src.contrib, f15_src_carry:R.src.carry,
+    f15_src_total:R.src.total, f15_sub_amt:R.subAmt, f15_admin:R.admin,
+    f15_rest:R.rest, f15_total:R.total,
     txn_n:journalOf(arr).length
   };
 }
 /* ══ 고유목적사업준비금 자동 조정 ══
    공동·사내기금은 출연금을 준비금(부채)으로 적립해 두고, 결산에서 당기순이익을 0으로 맞춘다.
    방향이 두 가지다 — 실제 확정 결산서 두 건으로 확인했다.
-     · 비용 > 수익 (목적사업을 한 해)  → 준비금에서 **환입**(사업외수익). 청신공동 2025: 9,803,443원
-     · 수익 > 비용 (설립 첫해 등)      → 준비금으로 **전입**(사업외비용). 안전공사공동 2022: 3,249원
+     · 비용 > 수익 (목적사업을 한 해)  → 준비금에서 **환입**(사업외수익). A공동 2025: 9,803,443원
+     · 수익 > 비용 (설립 첫해 등)      → 준비금으로 **전입**(사업외비용). C공동 2022: 3,249원
    환입은 준비금 잔액을 넘을 수 없고, 전입은 이익만큼이라 한도가 없다.
    이미 조정 분개가 있으면 순이익이 0이 되어 필요액이 저절로 0이 된다(중복 생성 방지). */
 var RESERVE_ACCTS=['고유목적사업준비금1','고유목적사업준비금2'];
-/* 조정에 쓸 준비금 계정 — 잔액이 있는 쪽을 쓴다(없으면 준비금1). 기금마다 1·2를 달리 쓴다. */
+/* 조정에 쓸 준비금 계정 — 잔액이 있는 쪽을 쓴다(없으면 준비금1).
+   전기이월이 어느 번호에 들어와 있든 그쪽에서 환입해야 잔액이 음수가 되지 않는다. */
+/* 준비금 번호는 **공식 서식이 정해 둔 것**이다(공단 설립인가신청서 양식 각주) —
+     1 = 법인세법 제29조(이자) · 2 = 근로복지기본법 제62조2항(이월)
+   확정 제출본 11건도 모두 이 배치이고, 손에 있는 결산서 어디에도 반대는 없었다.
+   그래서 이것이 기본값이고 보통은 건드릴 일이 없다.
+   ⚠ reserve_swap 은 «기금마다 다르다»는 뜻이 아니다 — **과거 제출본이 서식과 반대로**
+     적혀 있어 전기 대비를 맞추려 그대로 재현해야 할 때만 켠다. 켜면 서식 각주와
+     어긋나므로, 새로 만드는 결산서에는 쓰지 않는다. 기금 단위다(해마다 바뀌지 않는다). */
+function _rsvSwapOf(fid){ return !!((funds[fid]||{}).reserve_swap); }
+function _rsvRoles(fid){
+  var sw=_rsvSwapOf(fid);
+  return { interest:RESERVE_ACCTS[sw?1:0], carry:RESERVE_ACCTS[sw?0:1] };
+}
 function _reserveAcct(fin){
   var best=RESERVE_ACCTS[0], bal=-1;
   RESERVE_ACCTS.forEach(function(a){
@@ -5677,13 +6179,17 @@ function _reserveAcct(fin){
 /* 당기 출연금 — 준비금2 설정 한도의 기준. **현금으로 들어온 출연금만** 센다.
    준비금2는 그 해에 목적사업에 쓸 수 있는 재원인데, 증권·부동산으로 받은 현물출연은
    처분해야 쓸 수 있어 실무 결산서도 한도 기준에서 뺀다.
-   배경공동 2022가 그 사례다 — 증권 7,261,110,330원을 현물출연받고 현금은 30,000,000원인데,
+   B공동 2022가 그 사례다 — 증권 7,261,110,330원을 현물출연받고 현금은 30,000,000원인데,
    현물까지 세면 한도가 65억이 되어 기본재산이 72.6억에서 7.3억으로 붕괴한다(제출본 설정액은
    현금 30,000,000 × 90% = 27,000,000원이다). 현금·자산총계·대차는 맞아도 기본재산 총액이
    틀어지면 별지15호와 재산변동상황보고서가 전부 어긋난다. */
 function _contribOf(arr){
   var s=0; expandSplits(arr).forEach(function(x){
     if(!x.approved||x.credit!=='기본재산') return;
+    /* 분할 조각은 amount 가 곧 그 조각의 금액이다. 조각에 붙은 nocash 는 «현물»이 아니라
+       «통장 금액은 첫 조각에 있다»는 뜻이므로 여기서 빼면 안 된다 — 빼면 두 번째 조각에 든
+       출연금이 통째로 사라지고, 첫 조각이면 반대로 다른 조각 몫까지 딸려 와 부푼다. */
+    if(x._split){ if(!x._nocashSrc) s+=num(x.amount)||0; return; }
     if(x.nocash) return;                                  // 현물출연·대체분개는 제외
     var amt=num(x.deposit)||0;
     if(!amt&&(x.debit==='현금성자산'||x.debit==='정기예금')) amt=num(x.amount)||0;
@@ -5698,11 +6204,13 @@ function reserveAdjust(arr,fid,yr){
   var fin=computeFin(arr,fid,yr);
   var net=Math.round(fin.net);
   /* 비영리조직회계기준으로 결산하는 기금은 당기운영이익이 0이 아니다 — 남는 이익을 미처분이익잉여금으로
-     이월한다(충남공동8호 2025: 66,048원). 그런 기금은 준비금 자동조정을 끈다.
+     이월한다(I공동 2025: 66,048원). 그런 기금은 준비금 자동조정을 끈다.
      [결산·재무제표]의 '준비금 자동조정' 체크를 풀면 reserve_auto:false 가 저장된다. */
   if(((funds[fid]||{}).years||{})[yr] && ((funds[fid]||{}).years||{})[yr].reserve_auto===false)
     return {kind:'', need:0, avail:0, amount:0, acct:RESERVE_ACCTS[0], fin:fin, off:true,
-            contrib:_contribOf(arr), rate:_reserveRate(fid), cap:0, setup:0, deficit:0, parts:[]};
+            contrib:_contribOf(arr), rate:_reserveRate(fid), cap:0, setup:0, deficit:0, parts:[],
+            setupWant:0, setupCut:0,
+            acctInterest:_rsvRoles(fid).interest, acctCarry:_rsvRoles(fid).carry, swap:_rsvSwapOf(fid)};
   var op=_openingOf(fid,yr);
   /* 계정별 준비금 잔액 — 전기이월 칸은 하나뿐이라 준비금1에 얹는다 */
   var bal={};
@@ -5712,32 +6220,45 @@ function reserveAdjust(arr,fid,yr){
   var avail=RESERVE_ACCTS.reduce(function(s,a){ return s+Math.max(0,bal[a]); },0);
   var contrib=_contribOf(arr), rate=_reserveRate(fid), cap=Math.round(contrib*rate);
   /* 법인세법 제29조 준비금(준비금1)은 **그 해에 현금으로 받은 이자수익만큼** 전입했다가 그대로 환입한다.
-     검증한 열한 기금이 모두 그렇게 적었다(가치 23,963·안전공사 40,618·플러스 253,010·이비 57,523·
-     일원 2,287·배경 7,247·참살이 81,137·충남6호 156,964·충남8호 461,478·경기1호 323,627·현재기업 831).
-     미수이자는 뺀다 — 충남8호 2025는 이자수익 527,526 중 미수수익 66,048을 빼고 461,478만 전입했다. */
+     검증한 열한 기금이 모두 그렇게 적었다(K공동 23,963·C공동 40,618·D공동 253,010·L공동 57,523·
+     E공동 2,287·B공동 7,247·F공동 81,137·M공동 156,964·I공동 461,478·J공동 323,627·G사내 831).
+     미수이자는 뺀다 — I공동 2025는 이자수익 527,526 중 미수수익 66,048을 빼고 461,478만 전입했다. */
   var itc=0;
   expandSplits(arr).forEach(function(x){
-    if(!x.approved||x.credit!=='이자수익'||x.nocash) return;
+    if(!x.approved||x.credit!=='이자수익') return;
+    // 분할 조각은 amount 가 그 조각의 금액이다(위 _contribOf 와 같은 까닭)
+    if(x._split){ if(!x._nocashSrc) itc+=num(x.amount)||0; return; }
+    if(x.nocash) return;
     itc+=num(x.deposit)||num(x.amount)||0; });
+  var _roles=_rsvRoles(fid);
   var r={kind:'', need:0, avail:avail, amount:0, acct:_reserveAcct(fin), fin:fin,
+         acctInterest:_roles.interest, acctCarry:_roles.carry, swap:_rsvSwapOf(fid),
          contrib:contrib, rate:rate, cap:cap, setup:0, deficit:0, parts:[], interestCash:Math.round(itc)};
   /* **기본재산에서 준비금2로 설정**해 목적사업 재원을 만든다(기본재산 차변 / 준비금2 대변).
      이 분개가 없으면 준비금2를 만들 방법이 아예 없어, 출연금을 그 해에 쓰는 공동기금은
      환입 재원이 전기이월분뿐이라 당기순이익이 0이 되지 않는다
-     (가치를만들어가는사람들 2024: 필요 112,264,937원 / 전기이월 160,291원).
+     (K공동 2024: 필요 112,264,937원 / 전기이월 160,291원).
      법은 한도를 '범위'로 정하므로 **그 안에서 얼마를 설정할지는 협의회가 정한다**.
      [결산·재무제표]의 설정액 칸에 넣은 값이 있으면 그것을 쓰고, 비워 두면 사용한도 전액으로 본다
-     — 가치를만들어가는사람들 2024·일원공동 2024·배경공동 2022~2025·청신공동 2022~2025는 한도 전액이었지만,
-     참살이공동 2024는 한도 929,554,369원 중 412,000,000원만 설정했다.
+     — K공동 2024·E공동 2024·B공동 2022~2025·A공동 2022~2025는 한도 전액이었지만,
+     F공동 2024는 한도 929,554,369원 중 412,000,000원만 설정했다.
      쓰지 않은 잔액은 준비금2로 남아 다음 해 전기이월 칸(reserve2)으로 넘어간다.
      **설정은 순이익 방향과 무관하다** — 그 해 출연금의 사용한도만큼 재원을 만드는 것이기 때문이다.
-     안전공사공동 2022는 수익이 비용보다 커서 전입(3,249원)을 하는 해였는데도 설정 63,003,960원
+     C공동 2022는 수익이 비용보다 커서 전입(3,249원)을 하는 해였는데도 설정 63,003,960원
      (출연금 70,004,400 × 90%)을 했다. 설정을 환입 분기에만 두었을 때는 기본재산이 70,004,400원으로
      나와 제출본(7,000,440원)과 63,003,960원 어긋났다 — 현금·자산총계·대차는 맞아서 화면만 보면
      정상으로 보이는 종류의 결함이다. */
   var _man=num(((funds[fid]||{}).years||{})[yr]&&((funds[fid]||{}).years||{})[yr].reserve_setup);
   r.setupManual=(_man!==''&&_man>=0);
   var want=r.setupManual?_man:Math.max(0,cap);
+  /* 있는 것보다 많이 옮길 수는 없다 — 설정은 기본재산을 준비금2로 **옮기는** 일이다.
+     설정액 칸에 0 하나를 더 적으면 기본재산이 음수가 되어 재무상태표·별지15호 ⑳·
+     재산변동상황보고서가 통째로 어긋난다(재무제표에는 음수가 나오지 않아야 한다).
+     fin 은 설정 분개를 넣기 **전**의 잔액이므로 지금 옮길 수 있는 몫이 그대로 담겨 있다.
+     잘라 낸 만큼은 setupCut 으로 남겨 확정할 때 사람에게 알린다 — 조용히 줄이면 안 된다. */
+  var _bfAvail=Math.max(0,Math.round(fin.basic));
+  r.setupWant=want; r.setupCut=0;
+  if(want>_bfAvail){ r.setupCut=want-_bfAvail; want=_bfAvail; }
   if(want>0){ r.setup=want; bal[RESERVE_ACCTS[1]]=(bal[RESERVE_ACCTS[1]]||0)+want;
               avail+=want; r.avail=avail; }
   if(net>0){ r.kind='전입'; r.need=net; r.amount=net;
@@ -5748,7 +6269,7 @@ function reserveAdjust(arr,fid,yr){
      복지사업에는 사용한도(해당 회계연도 출연금의 50% / 선택적복지·수급사업체 복리후생·중소기업 80% /
      2024년부터 90%)를 넘겨 쓸 수 없다. 모자라는 만큼은 그 해 **손실금**으로 남고, 근로복지공단
      실무에 따라 다음 회계연도로 이월된다(잉여금이 생기면 손실금을 보전한 뒤 기금에 전입한다).
-     현재기업사내 2025가 그 사례다 — 재원 30,860원에 필요액 67,939원이라 37,079원이 결손금이 된다.
+     G사내 2025가 그 사례다 — 재원 30,860원에 필요액 67,939원이라 37,079원이 결손금이 된다.
      제출본은 환입을 잔액에 반영하지 않아 대차가 831원 어긋났고, 앱이 전에 하던 '기본재산 사용'
      자동분개는 법이 막아 둔 처리였다. */
   r.amount=Math.max(0,Math.min(r.need,avail));
@@ -5765,7 +6286,9 @@ function reserveAdjust(arr,fid,yr){
 /* 현금이 오가지 않는 대체분개 — nocash:1 이라 통장 입·출금 합계와 잔액 대사에서 빠진다 */
 function _reserveEntry(yr,kind,amount,acct){
   var base={date:yr+'-12-31', amount:amount, deposit:0, withdraw:0, nocash:1, approved:true};
-  if(kind==='설정') return Object.assign(base,{memo:'고유목적사업준비금2 설정(출연금 사용한도 내)',
+  /* 적요에 번호를 박아 두면 배치를 바꾼 기금에서 «준비금2 설정»이라 적히고 준비금1로 간다 —
+     분개장을 보는 사람이 잘못을 의심하게 된다. 실제로 들어가는 계정 이름을 그대로 쓴다. */
+  if(kind==='설정') return Object.assign(base,{memo:acct+' 설정(출연금 사용한도 내)',
                                               debit:'기본재산', credit:acct});
   if(kind==='환입') return Object.assign(base,{memo:'고유목적사업준비금 환입(결산 자동)',
                                               debit:acct, credit:'고유목적사업준비금환입'});
@@ -5775,8 +6298,11 @@ function _reserveEntry(yr,kind,amount,acct){
 /* 결산 확정 때 쓸 조정 분개 전체 — 설정 → 기본재산 사용 → 환입(계정별) 순서.
    id를 고정해 두어 다시 확정해도 같은 자리에 덮어써지고 분개가 늘지 않는다. */
 function _reserveEntries(yr,rc){
-  var out=[], R1=RESERVE_ACCTS[0], R2=RESERVE_ACCTS[1];
-  /* 준비금1(법인세법 제29조) — 현금으로 받은 이자수익만큼 전입했다가 그대로 환입한다.
+  /* 어느 번호가 이자이고 어느 번호가 이월인지는 기금마다 다르다(_rsvRoles).
+     못 박아 두면 반대로 쓰는 기금에서 이월분과 설정분이 두 계정으로 갈려
+     재무상태표 두 줄이 다 제출본과 어긋난다. */
+  var out=[], R1=rc.acctInterest||RESERVE_ACCTS[0], R2=rc.acctCarry||RESERVE_ACCTS[1];
+  /* 이자 쪽 준비금(법인세법 제29조) — 현금으로 받은 이자수익만큼 전입했다가 그대로 환입한다.
      비용과 수익이 같은 금액이라 당기순이익·대차에는 영향이 없지만, 손익계산서의
      사업외비용('고유목적사업준비금전입액')과 사업외수익('준비금1 전입수입')에 나타나야 제출본과 맞는다. */
   var it=Math.round(rc.interestCash||0);
@@ -5784,7 +6310,7 @@ function _reserveEntries(yr,rc){
     out.push({id:'rsv1set'+yr, e:_reserveEntry(yr,'전입',it,R1)});
     out.push({id:'rsv1in'+yr, e:_reserveEntry(yr,'환입',it,R1)});
   }
-  if(rc.setup>0) out.push({id:'rsvset'+yr, e:_reserveEntry(yr,'설정',rc.setup,R2)});
+  if(rc.setup>0) out.push({id:'rsvset'+yr, e:_reserveEntry(yr,'설정',rc.setup,R2)});   // 이월 쪽 준비금
   (rc.parts||[]).forEach(function(p,i){
     if(p.amount>0) out.push({id:'rsv'+yr+(i?String.fromCharCode(97+i):''), e:_reserveEntry(yr,rc.kind,p.amount,p.acct)}); });
   return out;
@@ -5804,6 +6330,10 @@ function lockClosing(){
   if(rc.setup>0) msg+='\n\n① 고유목적사업준비금2 '+won(rc.setup)+'을 기본재산에서 설정합니다'
     +'\n   (당기 출연금 '+won(rc.contrib)+' × '+Math.round(rc.rate*100)+'% = 사용한도 '+won(rc.cap)+')'
     +(rc.setupManual?'\n   설정액은 협의회 결정값으로 넣은 것입니다.':'\n   설정액을 협의회가 따로 정했다면 [결산·재무제표]의 설정액 칸에 넣으세요.');
+  /* 적어 둔 설정액이 기본재산보다 크면 잘라 냈다는 것을 반드시 알린다 */
+  if(rc.setupCut>0) msg+='\n\n⚠️ 적어 둔 설정액 '+won(rc.setupWant)+' 중 '+won(rc.setupCut)+'은 설정하지 못했습니다.'
+    +'\n   기본재산에 남은 것이 '+won(rc.setup)+'뿐입니다 — 설정은 기본재산을 준비금2로 옮기는 것이라'
+    +'\n   있는 것보다 많이 옮길 수 없습니다. 설정액 칸의 자릿수를 확인해 주세요.';
   if(rc.deficit>0) msg+='\n\n⚠️ 재원이 '+won(rc.deficit)+' 모자랍니다 — 당기순손실로 남아 다음 회계연도로 이월됩니다.'
     +'\n   기본재산은 대부사업에만 쓸 수 있어 복지사업에 사용한도를 넘겨 쓸 수 없습니다.'
     +'\n   목적사업비가 당기 출연금의 '+Math.round(rc.rate*100)+'%를 넘었다는 뜻이니, 출연금 분개가 빠진 것이 없는지 먼저 확인하세요.';
@@ -6045,7 +6575,7 @@ function finNegatives(f){
   ].forEach(function(p){ if(Math.round(num(p[1])||0)<0) out.push({name:p[0],v:Math.round(p[1])}); });
   /* 준비금 잔액은 **전기이월을 더해서** 본다. 환입은 준비금 차변이라 당기 발생분만 보면
      전기이월로 덮인 정상 결산까지 음수로 보인다 — 검증한 여섯 기금 중 다섯이 헛경보였다
-     (이비·안전공사·플러스·디와이·현재기업). */
+     (L공동·C공동·D공동·H사내·G사내). */
   var op=(f&&f.opening)||{};
   RESERVE_ACCTS.forEach(function(a,i){
     var v=f.tb&&f.tb[a];
@@ -6072,7 +6602,7 @@ function computeFin(arr,fid,yr){
   var revenue=0,purpose=0,admin=0,otherExp=0,resvExp=0,bizRev=0,liab=0,otherAsset=0,otherEquity=0;
   Object.keys(tb).forEach(function(n){var v=tb[n],s=v.debit-v.credit;
     /* 사업수익은 준비금 환입을 뺀 것이다 — 별지15호 ㉙ '기금운용 수익금'은 이자·잡수익만 적는다
-       (참살이공동 2024 제출본 ㉙ = 81천원 = 이자 81,137원. 환입 101,113,487원은 들어가지 않는다). */
+       (F공동 2024 제출본 ㉙ = 81천원 = 이자 81,137원. 환입 101,113,487원은 들어가지 않는다). */
     if(v.type==='수익'){ revenue+=-s; if(n!=='고유목적사업준비금환입') bizRev+=-s; }
     else if(v.type==='부채')liab+=-s;
     else if(v.type==='자본'&&n!=='기본재산')otherEquity+=-s;
@@ -6098,7 +6628,7 @@ function computeFin(arr,fid,yr){
   otherAsset+=opAssetEtc; liab+=opLiabEtc; otherEquity+=opEquityEtc;
   var cash=sg('현금성자산')+(num(opening.cash)||0), savings=sg('정기예금')+(num(opening.savings)||0);
   var loan=sg('근로자대부금')+(num(opening.loan)||0), basic=-sg('기본재산')+(num(opening.basic)||0);
-  /* 기본재산을 증권으로 운용하는 기금이 있다(디와이사내: 26억). 칸이 없으면 대차가 그만큼 어긋난다. */
+  /* 기본재산을 증권으로 운용하는 기금이 있다(H사내: 26억). 칸이 없으면 대차가 그만큼 어긋난다. */
   var secu=sg('매도가능증권')+(num(opening.secu)||0);
   liab+=(num(opening.reserve)||0)+(num(opening.reserve2)||0);
   /* 준비금은 1·2를 갈라 내보낸다 — 제출본 재무상태표가 두 줄로 적고 근거 법령도 다르다.
@@ -6117,12 +6647,15 @@ function finPanel(arr){
   var op=f.opening||{};
   function oi(k,lbl){return '<div class="fld"><label>'+lbl+'</label><input id="op-'+k+'" value="'+esc(op[k]||'')+'" placeholder="0"></div>';}
   var openingHtml='<div style="margin-top:14px"><div style="font-weight:700;margin-bottom:6px">전기이월(기초잔액) — 있으면 입력</div>'
-      +'<div class="grid" style="max-width:760px">'+oi('cash','현금성자산')+oi('savings','정기예금')+oi('loan','근로자대부금')+oi('secu','매도가능증권')
-      +oi('accrued','미수수익')+oi('recv','미수금')+oi('stfund','단기금융상품')+oi('spcash','특정현금과예금')+oi('spresv','손실대비특별적립금')
-      +oi('basic','기본재산')+oi('retained','이월잉여금')+oi('reserve','고유목적사업준비금1 <span class="muted" style="font-weight:400;font-size:10px">법인세법 §29 · 이자</span>')
-      +oi('reserve2','고유목적사업준비금2 <span class="muted" style="font-weight:400;font-size:10px">근로복지기본법 §62② · 이월</span>')+'</div>'
+      /* 칸을 손으로 나열하면 OPEN_ACCT 에 계정을 늘릴 때 빠진다. 그러면 «저장이 안 되는»
+         정도가 아니라 **이미 들어 있던 값이 지워진다** — 저장은 opening 마디를 통째로 바꿔 쓰므로
+         화면에 칸이 없는 열쇠는 저장할 때 사라진다. 저장하는 쪽과 같은 표에서 뽑아 그린다. */
+      +'<div class="grid" style="max-width:760px">'+Object.keys(OPEN_ACCT).map(function(k){
+        var _n=_openNote(S.fundId)[k];
+        return oi(k, OPEN_ACCT[k]+(_n?' <span class="muted" style="font-weight:400;font-size:10px">'+_n+'</span>':''));
+      }).join('')+'</div>'
       /* 준비금2 설정액 — 법은 한도를 '범위'로 정하므로 그 안에서 얼마를 설정할지는 협의회가 정한다.
-         비워 두면 사용한도 전액으로 본다(참살이공동 2024는 한도의 절반도 안 되는 412,000,000원만 설정했다). */
+         비워 두면 사용한도 전액으로 본다(F공동 2024는 한도의 절반도 안 되는 412,000,000원만 설정했다). */
       +'<div style="font-weight:700;margin:14px 0 6px">고유목적사업준비금2 설정액 <span style="font-weight:400;color:var(--sub);font-size:11.5px">— 협의회가 정한 금액. 비우면 사용한도 전액</span></div>'
       +'<div class="grid" style="max-width:380px"><div class="fld"><label>설정액</label>'
       +'<input id="op-rsvset" value="'+esc(_rsvSetOf(S.fundId,S.year))+'" placeholder="비우면 한도 전액"></div></div>'
@@ -6131,6 +6664,13 @@ function finPanel(arr){
       +'<input type="checkbox" id="op-rsvauto"'+(_rsvAutoOf(S.fundId,S.year)?' checked':'')+'>'
       +'<span>결산 확정 때 준비금을 자동 조정해 당기순이익을 0으로 맞춥니다'
       +' <span class="muted">— 비영리조직회계기준으로 결산하는 기금은 체크를 풉니다</span></span></label>'
+      /* 준비금 1·2 중 어느 쪽이 이자이고 어느 쪽이 이월인지는 기금마다 다르다.
+         그 기금 결산서가 정한 자리를 따라야 이자 왕복과 설정이 제 자리로 간다. */
+      +'<label class="row" style="gap:6px;margin-top:8px;font-size:12.5px;cursor:pointer">'
+      +'<input type="checkbox" id="op-rsvswap"'+(_rsvSwapOf(S.fundId)?' checked':'')+'>'
+      +'<span>이 기금의 <b>과거 제출본이 서식과 반대로</b> 되어 있습니다(준비금1이 이월)'
+      +' <span class="muted">— 공식 서식은 1=법인세법 §29(이자)·2=근로복지기본법 §62②(이월)입니다.'
+      +' 전기 대비를 맞추려 옛 제출본을 그대로 재현할 때만 켜세요</span></span></label>'
       +'<button style="margin-top:8px" onclick="saveOpening()">💾 전기이월·설정액 저장</button></div>';
   if(!f.appr) return '<div class="panel"><div class="muted">승인된 거래가 없어 재무제표를 만들 수 없습니다. 위에서 계정 지정 후 승인하세요.</div>'+openingHtml+'</div>';
   // ⑻ 전기이월(기초잔액)을 시산표 맨 위에 표시 — 재무상태표와 대차가 맞는 이유를 드러냄
@@ -6202,11 +6742,15 @@ function saveOpening(){
   up['funds/'+_fid+'/years/'+_yr+'/reserve_setup']=(rsv===''?null:(num(rsv)||0));
   var ra=$('op-rsvauto'); var raOn=ra?!!ra.checked:true;
   up['funds/'+_fid+'/years/'+_yr+'/reserve_auto']=(raOn?null:false);
+  /* 준비금 배치는 **기금 단위**다 — 해마다 바뀌는 값이 아니라 그 기금 결산서의 방식이다 */
+  var rw=$('op-rsvswap'); var rwOn=rw?!!rw.checked:false;
+  up['funds/'+_fid+'/reserve_swap']=(rwOn?true:null);
   fbDb.ref(NS).update(up).then(function(){
     if(!funds[_fid].years)funds[_fid].years={}; if(!funds[_fid].years[_yr])funds[_fid].years[_yr]={};
     funds[_fid].years[_yr].opening=o;
     funds[_fid].years[_yr].reserve_setup=(rsv===''?null:(num(rsv)||0));
     funds[_fid].years[_yr].reserve_auto=(raOn?null:false);
+    funds[_fid].reserve_swap=(rwOn?true:null);
     renderFund(); toast('전기이월·설정액 저장됨');
   }).catch(function(e){toast('저장 실패: '+e.message,'err');});
 }
@@ -6286,7 +6830,7 @@ function proposeAcct(memo,isDep,sites,kind){
   var lk=_learnKey(m,isDep), lr=lk&&(_learned||{})[lk];   // 배운 것이 일반 규칙보다 우선
   if(lr&&lr.d&&lr.c) return {d:lr.d,c:lr.c,learned:true};
   /* 적요의 공백을 지우고 맞춘다. 통장 적요의 띄어쓰기는 제각각인데 키워드는 붙여 써 두어
-     '근로자의 날 기념품'이 '근로자의날'을 그냥 비껴갔다(가치를만들어가는사람들 2024). */
+     '근로자의 날 기념품'이 '근로자의날'을 그냥 비껴갔다(K공동 2024). */
   var mz=(m+' '+String(kind||'')).replace(/\s+/g,'');
   for(var i=0;i<ACCT_RULES.length;i++){ var r=ACCT_RULES[i];
     if(r.dir!==dir) continue;
@@ -6295,34 +6839,48 @@ function proposeAcct(memo,isDep,sites,kind){
   /* 참여사업장 이름으로 들어온 입금은 출연금이다. 공동기금 최대 유입인데 적요에는 '출연' 없이
      회사명만 찍히므로((주)수영로지콘·청원건설) 키워드로는 잡을 방법이 없다. */
   if(isDep&&sites&&sites.length){
-    /* 전각 괄호도 지운다 — 기업은행은 '（주）에이이피'처럼 전각으로 찍는다(일원공동 2024) */
+    /* 전각 괄호도 지운다 — 기업은행은 '（주）에이이피'처럼 전각으로 찍는다(E공동 2024) */
     var strip=function(t){ return String(t||'').replace(/\s+/g,'')
       .replace(/\(주\)|\(유\)|㈜|（주）|（유）|주식회사|유한회사/g,''); };
-    /* 힌트까지 함께 본다 — 이비공동은 적요가 'BZ뱅크'뿐이고 회사명이 '내용' 열에 있다. */
+    /* 힌트까지 함께 본다 — L공동은 적요가 'BZ뱅크'뿐이고 회사명이 '내용' 열에 있다. */
     var mzz=strip(m+' '+String(kind||''));
     /* 은행이 상대방 이름을 칸 길이에 맞춰 잘라 적는다('(주)이벌브소프트' → '(주)이벌브소프').
        힌트를 **토막으로 끊어** 각 토막이 사업장명의 앞부분인지 본다 — 붙여 놓고 비교하면
-       '인터넷 (주)에이이피'처럼 앞에 수단이 붙은 경우를 놓친다(일원공동 2024).
+       '인터넷 (주)에이이피'처럼 앞에 수단이 붙은 경우를 놓친다(E공동 2024).
        네 글자 이상만 본다: 'G마켓이벌브소'는 앞부분이 아니어서 걸리지 않고,
        두세 글자는 우연히 겹칠 수 있다. */
-    var toks=String(m+' '+String(kind||'')).split(/[\s,\/|()\uFF08\uFF09]+/)
-      .map(strip).filter(function(t){ return t.length>=4; });
+    var all=String(m+' '+String(kind||'')).split(/[\s,\/|()\uFF08\uFF09]+/).map(strip).filter(Boolean);
+    var toks=all.filter(function(t){ return t.length>=4; });
+    /* 이름 뒤에 한글이 이어지면 **다른 낱말의 앞부분**이다 — 그때는 그 사업장이 아니다.
+       '에이이피렌탈 환불'을 '(주)에이이피' 로, '가치평가수수료'를 '가치' 로 잡던 자리다.
+       출연금으로 잘못 잡히면 기본재산이 부풀고 준비금2 한도·별지15호 ⑬⑳㉚ 가 함께 틀어진다. */
+    var glued=function(nm){
+      var i=mzz.indexOf(nm); if(i<0) return false;
+      var nx=mzz.charAt(i+nm.length);
+      return !(nx&&/[가-힣]/.test(nx));   // 뒤가 한글이면 더 긴 낱말의 앞부분
+    };
     for(var k=0;k<sites.length;k++){ var nm=strip(sites[k]);
       if(nm.length<2) continue;
-      if(mzz.indexOf(nm)>=0) return {d:'현금성자산',c:'기본재산'};
-      for(var q=0;q<toks.length;q++){ if(nm.indexOf(toks[q])===0) return {d:'현금성자산',c:'기본재산'}; } }
+      /* ①토막이 이름과 정확히 같다 — 짧은 상호도 이 길로 잡힌다 */
+      if(all.indexOf(nm)>=0) return {d:'현금성자산',c:'기본재산'};
+      /* ②은행이 칸 길이에 맞춰 이름을 잘라 적었다('(주)이벌브소프트' → '(주)이벌브소프')
+         — 네 글자 이상만 본다. 두세 글자는 우연히 겹칠 수 있다. */
+      for(var q=0;q<toks.length;q++){ if(nm.indexOf(toks[q])===0) return {d:'현금성자산',c:'기본재산'}; }
+      /* ③띄어쓰기 없이 붙여 적은 경우('이체청원건설'). 네 글자 이상이고,
+         이름 뒤에 한글이 이어지지 않을 때만. */
+      if(nm.length>=4&&glued(nm)) return {d:'현금성자산',c:'기본재산'}; }
   }
   return {d:'',c:''};
 }
 function parseBank(rows){
   var hi=-1, col={};
   /* 머리글의 공백·줄바꿈을 지우고 맞춘다 — 손으로 적은 대장은 '일 시'처럼 띄어 쓴다
-     (플러스동반성장 2024 지출대장 56건이 일자·적요를 통째로 잃었다). */
+     (D공동 2024 지출대장 56건이 일자·적요를 통째로 잃었다). */
   function find(cells){col.kind=[];for(var c=0;c<cells.length;c++){var v=String(cells[c]||'').replace(/\s+/g,'');
     if(/날짜|거래일|일자|일시/.test(v)&&col.date==null)col.date=c;
     /* '세부내역'·'업체명'은 은행이 아니라 사람이 적은 대장의 머리글이다.
        설명 열이 둘 이상이면 첫 열만 적요로 쓰고 **나머지는 버리지 않고 성격 힌트로 모은다** —
-       이비공동은 적요가 'BZ뱅크'(수단)뿐이고 실제 상대방('(주)이벌브소프트')이 '내용' 열에 있어
+       L공동은 적요가 'BZ뱅크'(수단)뿐이고 실제 상대방('(주)이벌브소프트')이 '내용' 열에 있어
        출연금 50,000,000원을 알아볼 방법이 없었다. 하나은행의 '의뢰인/수취인'도 같은 경우다. */
     if(/적요|내용|내역|의뢰인|기재|가맹점/.test(v)){ if(col.memo==null)col.memo=c; else if(col.kind.indexOf(c)<0)col.kind.push(c); }
     /* 거래상대방 열 — 자동분개에 가장 중요한 정보가 여기 있다(청원건설=출연, 안산단원구=세금,
@@ -6334,11 +6892,11 @@ function parseBank(rows){
     /* 성격이 적힌 나머지 열들 — 적요 밖에 흩어져 있다. 적요에 합치지는 않는다:
        적요는 중복검사 키(hkey)의 재료라 바꾸면 이미 가져온 거래가 다시 신규로 들어온다.
          · 하나·기업은행 '구분'    — 예금이자 행은 적요·의뢰인을 비우고 여기에만 '예금이자'를 적는다
-                                    (가치를만들어가는사람들 2024: 이자 8건이 전부 미분류였다)
+                                    (K공동 2024: 이자 8건이 전부 미분류였다)
          · 농협 '거래기록사항'      — 적요('거래내용')에는 'G-국민은행'처럼 수단만 적히고
                                     실제 상대방('국립한밭대학교산학협')은 여기 있다
          · '이체메모'·'기재내용'    — '이자소득지방소득세'·'예금결산이자'처럼 성격이 그대로 적힌다
-         · '입금인코드'           — 참살이공동은 대부금 지출의 성격('09월사내대출')을 이 칸에만 적었다 */
+         · '입금인코드'           — F공동은 대부금 지출의 성격('09월사내대출')을 이 칸에만 적었다 */
     if(/구분|종류|기록사항|메모|비고|예금주|입금인/.test(v)&&!/계좌번호|통화|화폐/.test(v)&&col.kind.indexOf(c)<0)col.kind.push(c);}}
   /* 계좌번호 — 이체 자동매칭의 근거. 같은 날 같은 금액이라도 계좌가 다르면 확실한 이체다. */
   var acct='';
@@ -6351,15 +6909,27 @@ function parseBank(rows){
   // 1차: 날짜열까지 있는 헤더 우선(다단 헤더 오인 방지), 2차: 입·출금열만으로 폴백
   for(var i=0;i<lim;i++){ col={}; find(rows[i]||[]); if(col.dep!=null&&col.wd!=null&&col.date!=null){ hi=i; break; } }
   if(hi<0) for(var i2=0;i2<lim;i2++){ col={}; find(rows[i2]||[]); if(col.dep!=null&&col.wd!=null){ hi=i2; break; } }
+  /* 3차: 한쪽 칸만 있는 장부. 사람이 적은 **지출대장**은 입금 칸이 아예 없어
+     앞의 두 갈래가 모두 빗나가고 파일 전체가 null 로 떨어졌다 — 화면에는 «읽을 수 없는 파일»만
+     뜨고 왜 안 되는지 알 길이 없다. 아무 표나 장부로 오인하지 않도록
+     **일자·적요까지 함께 있을 때만** 인정한다. */
+  if(hi<0) for(var i3=0;i3<lim;i3++){ col={}; find(rows[i3]||[]);
+    if((col.dep!=null||col.wd!=null)&&col.date!=null&&col.memo!=null){ hi=i3; break; } }
   if(hi<0) return null;
   function normDate(s){ var t=String(s||'').replace(/\s+/g,' ').trim();
     var m=t.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
     if(m) return m[1]+'-'+('0'+m[2]).slice(-2)+'-'+('0'+m[3]).slice(-2);
-    /* 엑셀이 미국식으로 찍어 준 m/d/yy — 손으로 적은 대장에 흔하다(플러스동반성장 '1/3/24').
+    /* 엑셀이 미국식으로 찍어 준 m/d/yy — 손으로 적은 대장에 흔하다(D공동 '1/3/24').
        앞 숫자가 12를 넘으면 일·월 순서로 본다. */
     m=t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
     if(m){ var a=+m[1], b=+m[2], mo=(a<=12?a:b), dy=(a<=12?b:a);
            return '20'+m[3]+'-'+('0'+mo).slice(-2)+'-'+('0'+dy).slice(-2); }
+    /* 두 자리 연도 — 엑셀 셀 서식이 yy-mm-dd 이면 '24-01-03' 그대로 온다.
+       빗금(/)꼴은 위에서 월/일/년으로 이미 읽으므로 여기서는 -·. 만 본다.
+       가운데 수가 12를 넘으면 달일 수 없다 — 그때는 함부로 넘겨짚지 않고 원문을 그대로 둔다. */
+    m=t.match(/^(\d{2})[-.](\d{1,2})[-.](\d{1,2})$/);
+    if(m&&+m[2]>=1&&+m[2]<=12&&+m[3]>=1&&+m[3]<=31)
+      return '20'+m[1]+'-'+('0'+m[2]).slice(-2)+'-'+('0'+m[3]).slice(-2);
     return t; }
   var out=[], lastDate='';
   for(var r=hi+1;r<rows.length;r++){ var row=rows[r]; if(!row)continue;
@@ -6371,7 +6941,7 @@ function parseBank(rows){
     var who=col.who!=null?String(row[col.who]||'').trim():'';
     if(who&&who!==memo) memo=(who+' '+memo).trim();
     /* 합계 행은 거래가 아니다. 하나·기업·우리 모두 'No' 다음 칸(= 일자 칸)에 '합   계'라고
-       적는다 — 적요 칸만 보던 예전 가드는 이걸 그대로 놓쳤다. 가치를만들어가는사람들 2024는
+       적는다 — 적요 칸만 보던 예전 가드는 이걸 그대로 놓쳤다. K공동 2024는
        합계 행 한 줄이 입·출 동시 행으로 쪼개져 출금이 119,510,650원이나 부풀었다. */
     var dcell=col.date!=null?String(row[col.date]||'').trim():'';
     if(/^(합\s*계|소\s*계|총\s*계|누\s*계|총\s*\d+\s*건)/.test(dcell)) continue;
@@ -6400,7 +6970,7 @@ function parseBank(rows){
    통장 입·출금 합계에는 그대로 남아 잔액 대사도 어긋나지 않는다. */
 /* 계좌 간 이체로 자동 상계할 최소 금액. 실무의 자금 이동은 만원 단위 이상인데,
    1원·10원 같은 소액은 같은 날 같은 금액이 우연히 겹치는 일이 흔하다
-   (디와이사내 2025: 51-5 잡수익 1원과 02-9 정정 출금 1원이 이체로 오검출됐다).
+   (H사내 2025: 51-5 잡수익 1원과 02-9 정정 출금 1원이 이체로 오검출됐다).
    하한 미만은 확실(sure)로 보지 않고 추정(guess)으로 내려 사람이 확인하게 한다. */
 var XFER_MIN=10000;
 function findTransfers(arr){
@@ -6413,10 +6983,15 @@ function findTransfers(arr){
     var cands=wds.filter(function(w){
       return !used[w._id] && w._id!==d._id && w.date===d.date && (num(w.withdraw)||0)===amt;
     });
-    // 계좌가 다른 짝을 먼저 쓴다(확실). 없으면 계좌 정보가 없는 짝을 추정으로.
+    /* 계좌가 다르고 하한 이상이면 «확실». 그 밖에는 «추정»으로 내려 사람이 확인하게 한다:
+         · 계좌번호가 없는 옛 자료
+         · 계좌는 다른데 금액이 하한(1만원) 미만 — 우연히 겹칠 수 있어 확실로는 못 본다
+       같은 계좌 안의 입·출은 이체가 아니라 정정이므로 어느 쪽에도 넣지 않는다.
+       추정은 확인 창에만 뜨고 자동 적용되지 않는다(자동은 확실한 것만).
+       종전에는 소액 이체가 **아예 사라져** 한쪽은 수익, 다른 쪽은 지출로 남았다. */
     var sure=cands.filter(function(w){ return d.acct && w.acct && d.acct!==w.acct && amt>=XFER_MIN; });
     var pick=sure[0], kind='sure';
-    if(!pick){ pick=cands.filter(function(w){ return !d.acct || !w.acct; })[0]; kind='guess'; }
+    if(!pick){ pick=cands.filter(function(w){ return !d.acct || !w.acct || d.acct!==w.acct; })[0]; kind='guess'; }
     if(!pick) return;
     used[pick._id]=used[d._id]=1;
     pairs.push({inId:d._id, outId:pick._id, date:d.date, amount:amt, kind:kind,
@@ -6470,7 +7045,7 @@ function _applyXfer(){
 }
 function hkey(s){var h=0;for(var i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))|0;return 't'+(h>>>0).toString(36);}
 /* ══ 거래 직접 추가 ══
-   통장을 엑셀로 못 받는 은행이 있다(새마을금고는 PDF만 — 디와이사내가 그렇다).
+   통장을 엑셀로 못 받는 은행이 있다(새마을금고는 PDF만 — H사내가 그렇다).
    그런 기금은 [통장 엑셀 가져오기]로 아무것도 넣을 수 없어 회계를 시작조차 못 했다.
    일자·적요·입금·출금만 받아 한 줄씩 넣는다. 계좌번호를 적어 두면 이체 자동매칭도 걸린다. */
 function addTxnForm(){
@@ -6523,7 +7098,7 @@ function importBank(){
       try{
         var wb=XLSX.read(new Uint8Array(rd.result),{type:'array'});
         /* 시트를 **전부** 읽어 합친다. 은행이 월별 시트로 나눠 주는 경우가 있어
-           첫 시트에서 멈추면 나머지 달을 통째로 잃는다(안전공사 2022: 11월만 읽고 12월
+           첫 시트에서 멈추면 나머지 달을 통째로 잃는다(C공동 2022: 11월만 읽고 12월
            2,007,649원 누락 — 실측으로 확인). 첫 시트가 안내문인 파일도 함께 처리된다. */
         var txns=null, sheets=[], recognized=false;
         for(var si=0;si<wb.SheetNames.length;si++){
@@ -6537,7 +7112,7 @@ function importBank(){
         }
         if(recognized&&!txns) txns=[];
         if(txns&&txns.length){
-          /* 머리글에 계좌번호가 없는 파일도 있다(이비공동 '1. 계좌(100-034-394413)거래내역_2024년.xlsx').
+          /* 머리글에 계좌번호가 없는 파일도 있다(L공동 '1. 계좌(000-000-000000)거래내역_2024년.xlsx').
              그럴 때 **파일명**에서 계좌번호를 뽑아 채운다 — 있으면 이체 매칭이 '확실'로 동작한다. */
           if(!txns.some(function(x){ return x.acct; })){
             var fm=String(file.name||'').match(/(\d{2,}[-\s]\d{2,}[-\s]\d{2,}[-\s\d]*|\d{10,})/);
@@ -6566,7 +7141,7 @@ function importBank(){
               var n=(seen[base]=(seen[base]||0)+1);
               var key=hkey(n>1?base+'|'+n:base);   // 같은 날 동일 금액·적요 거래도 각각 보존
               /* 키가 겹치면 **정말 같은 거래인지** 확인한다. 적요가 'BZ뱅크'처럼 수단 이름뿐인 은행은
-                 계좌가 달라도 일자·금액·적요가 같아 키가 겹친다 — 참살이공동 2024는 두 계좌를
+                 계좌가 달라도 일자·금액·적요가 같아 키가 겹친다 — F공동 2024는 두 계좌를
                  따로 가져오면 겹치는 3건(23,934,000원)이 중복으로 버려졌다.
                  계좌번호나 거래 후 잔액이 다르면 다른 거래이므로 뒤에 번호를 붙여 살린다.
                  같은 파일을 다시 가져올 때는 계좌·잔액이 같아 그대로 '기존 유지'가 된다. */
@@ -6729,10 +7304,15 @@ var HELP={
    +'<b>㉰ 출연(예정)금 100%</b> — 낸 돈보다 많이 받을 수는 없습니다.</p>'
    +'<p>출연금은 <b>참여사업장 탭 → 연도별 기록</b>의 출연금을 먼저 쓰고, 없으면 사업장 명부의 <b>기본 출연금</b>을 씁니다.</p>'
    +'<p>근거: 2025년 근로복지기금 지원사업 시행 안내(근로복지넷), 고시 제8·9조.</p>'},
- 'sub.score':{t:'예상 심사점수',h:'<p>심사 100점 중 <b>정량 70점은 우리 데이터로 자동 계산</b>됩니다 — 출연금÷신청액, 근로자수 편중, 참여 기업 수.</p>'
-   +'<p><b>정성 30점</b>은 심사위원 재량이라 직접 넣습니다(실제 사례에서 18~28점).</p>'
+ 'sub.score':{t:'예상 심사점수',h:'<p><b>2025년에 평가표가 개정</b>됐습니다. 화면 위 배지가 <b>어느 해 배점으로 셈했는지</b> 알려 줍니다 — 연도를 바꾸면 그해 배점으로 따라 바뀝니다.</p>'
+   +'<p><b>2025년 이후(정량 60 · 정성 40)</b><br>'
+   +'① 출연금÷신청액 <b>15점</b> · ② 최다 기업 근로자 비중 15점 · ③ <b>참여기업 1개소당 평균 근로자수</b> 15점 · ④ 참여 기업 수 15점</p>'
+   +'<p>③은 <b>근로자수 ÷ 참여기업 수</b>라 참여사업장 자료에서 저절로 나옵니다 — 넣을 칸이 없습니다. '
+   +'소규모기업 공동기금을 밀어주려는 개정이라 <b>평균이 적을수록 점수가 높습니다</b>(30명 미만 만점).</p>'
+   +'<p><b>정성 40점</b>은 심사위원 재량이라 직접 넣습니다. 타당성·구체성, 정책부합성, 복지개선 정도에 <b>소규모기업 근로자 복지증진 기여도</b>가 더해져 4항목 × 10점입니다.</p>'
+   +'<p><b>2024년 이전</b>은 정량 70 · 정성 30(①25점, ③1인당 이미 지원받은 금액)으로 셈합니다 — 그때 낸 서류와 맞추기 위해 그대로 둡니다.</p>'
    +'<p><b>배제 사유</b>: 출연금보다 많이 신청 / 한 기업 근로자가 90% 이상 / 참여 2개소 미만.</p>'
-   +'<p>⚠ 이 배점은 <b>2024년 평가표</b> 기준입니다. 2025년에 정성 30→40점, 정량 70→60점(①25→15점, ③1인당 기지원액 삭제→참여기업 1개소당 평균 근로자수)으로 개정됐으니 최신 평가표를 받아 배점을 교체해야 정확합니다.</p>'},
+   +'<p>근거: 2025년 지원사업 설명자료 17쪽 「심사위원회 평가표 개정」, 별지 제3호의2.</p>'},
  'sub.opt':{t:'신청액을 얼마로 쓸까',h:'<p>지원율은 점수에 따라 <b>계단식</b>입니다 — 80점↑ 100%, 60~80점 75%, 40~60점 50%, 40점 미만 배제.</p>'
    +'<p>신청액을 올리면 <b>출연금÷신청액</b>이 낮아져 ①점수가 깎이고, 점수가 한 칸 내려가면 지원율이 뚝 떨어집니다. 그래서 <b>신청액을 올렸는데 받는 돈이 줄어드는 구간</b>이 생깁니다.</p>'
    +'<p>표에서 <b>예상 수령액이 가장 큰 행</b>이 추천입니다. [이 금액] 버튼으로 신청액에 넣고 저장하세요.</p>'},
@@ -6772,6 +7352,10 @@ var HELP={
  'setup.flow':{t:'설립 진행',h:'<p>신규 설립 절차입니다. 중간에 나가도 <b>이 상태로 저장</b>되며, 목록에서 <b>🏗 설립중</b> 표시로 다시 찾아 이어서 진행할 수 있습니다.</p>'
    +'<p>12단계를 마치면 <b>[운영 전환]</b>으로 정식 운영 기금이 됩니다.</p><p>인가번호·등기 등 실제 값은 <b>[기금 정보] 탭</b>에 입력합니다.</p>'},
  'setup.list':{t:'설립중 기금 목록',h:'<p>[등록]까지 마친 신규 기금입니다.</p><p>열어서 이어서 진행하거나, 잘못 만든 것은 <b>삭제 보관함</b>으로 옮기세요(복원 가능).</p>'},
+ 'album.pick':{t:'사진첩에서 서류 고르기',h:'<p>폰으로 찍어 <b>푸른사진첩</b>에 올린 서류를 그대로 가져옵니다. PC로 파일을 옮길 필요가 없습니다.</p>'
+   +'<p><b>원본은 사진첩에 남고</b>, 기금에는 읽어낸 값과 <b>연결 정보만</b> 저장됩니다 — 기금 자료가 무거워지지 않습니다.</p>'
+   +'<p>서류로 표시된 사진이 위에 옵니다. 연도를 바꿔 지난 사진도 찾을 수 있습니다.</p>'
+   +'<p>사진첩은 <b>올린 사람별</b>로 나뉘어 있습니다. 대표·총괄은 전체가 보이고, 그 외에는 본인이 올린 것만 보입니다.</p>'},
  'doc.read':{t:'서류 자동 판독',h:'<p><b>전자문서 PDF</b>는 글자를 그대로 읽어 <b>정확</b>합니다.</p>'
    +'<p><b>스캔본·사진</b>은 OCR로 읽습니다(최초 1회 한국어 데이터 약 15MB 내려받기). <b>오독이 있을 수 있으니 반드시 확인</b>하세요.</p>'
    +'<p>판독 결과는 [아래 칸에 반영]을 눌러야 입력되고, 저장은 별도입니다.</p>'},

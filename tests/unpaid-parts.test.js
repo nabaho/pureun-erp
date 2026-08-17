@@ -28,7 +28,9 @@ const grab = (from, to) => {
 };
 vm.runInContext(grab('function erpPaidSoFar(item, kindLabel, legacyAmt){', '\n// 거래내역 후보 종류'), ctx);
 vm.runInContext(grab('function caseSuccessFeeAmount(c){', '\nwindow.caseSuccessFeeAmount'), ctx);
-vm.runInContext(grab('function erpUnpaidParts(it){', "\nif(typeof window !== 'undefined'){\n  window.erpUnpaidParts"), ctx);
+/* erpUnpaidParts 가 「여기까지로 닫은 것」 판정(erpClosedUnpaid)을 함께 쓰므로 둘 다 담는다.
+   (2026-08-16 — 판정은 한 함수에만 두고 미입금 대기·거래내역·미수금관리가 그것만 본다) */
+vm.runInContext(grab('function erpClosedUnpaid(it, splitLabel){', "\nif(typeof window !== 'undefined'){\n  window.erpUnpaidParts"), ctx);
 const parts = ctx.erpUnpaidParts;
 const tag = ctx.erpItemClosedTag;
 const kinds = it => parts(it).map(p => p.kind);
