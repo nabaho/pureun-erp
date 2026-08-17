@@ -760,12 +760,18 @@ test('listYear — 비어 있으면 빈 객체', async () => {
 });
 
 test('loadThumb·loadFull — 한 장씩, 서로 다른 경로에서', async () => {
+  /* ⚠ 2026-08-17 부터 읽기 전에 적어 둔 주소(thumbUrl·fullUrl) 한 칸을 먼저
+     살핀다(창고 403 근본 수리) — 이 가짜 db 는 경로를 안 가리고 'data:x' 를
+     돌려주는데, 그것은 https 주소가 아니라서 옛 길로 물러난다. 지킬 것은
+     「미리보기는 thumbs 에서, 본문은 blobs 에서」이지 살펴보기 유무가 아니다. */
   const S = loadStore();
   const db = fakeDb('data:x');
   S.init({ uid: 'U1', db });
   assert.equal(await S.loadThumb('2026', 'p1'), 'data:x');
   assert.equal(await S.loadFull('2026', 'p1'), 'data:x');
-  assert.deepEqual(db.calls.once, ['puphotos/u/U1/thumbs/2026/p1', 'puphotos/u/U1/blobs/2026/p1']);
+  const dataReads = db.calls.once.filter(p => !/Url$/.test(p));
+  assert.deepEqual(dataReads, ['puphotos/u/U1/thumbs/2026/p1', 'puphotos/u/U1/blobs/2026/p1'],
+    '미리보기·본문이 서로 다른 자리에서 와야 합니다 — 뒤바뀌면 격자가 원본을 통째로 받습니다');
 });
 
 test('읽기 함수들 — 실시간DB가 없으면 한국어로 거절한다', async () => {

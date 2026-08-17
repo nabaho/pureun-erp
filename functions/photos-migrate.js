@@ -17,6 +17,36 @@ function photoPath(uid, year, id, kind) {
   return BUCKET_ROOT + '/u/' + uid + '/' + kind + '/' + year + '/' + id + '.jpg';
 }
 
+/* ── 주소(내려받기 토큰) 채우기 (2026-08-17, 대표 보고 「사진이 안 뜬다·너무 늦다」) ──
+   창고 규칙은 실시간DB(uid_roles)를 못 읽어 「자기 사진만」으로 잠겨 있다. 그래서
+   관리자·공유받은 사람이 창고에 주소를 직접 청하면 403 으로 거부된다 — 대표
+   화면에서 다른 직원의 회의사진 46장이 전부 회색 칸이었고, 콘솔에 403 이
+   832건 쌓여 있었다. 크게 보기에서는 남의 사진이 「원본이 없습니다」로 둔갑한다.
+
+   주소(토큰이 붙은 내려받기 URL)는 규칙과 무관하게 열린다. 그래서 주소를 사진
+   **정보(실시간DB)** 에 적어 두면, 정보를 읽을 수 있는 사람(주인·관리자·공유)이
+   곧 사진도 볼 수 있다 — 실시간DB 시절과 똑같은 접근 범위다.
+   이 통과는 **이미 옮겨진(loc=storage) 사진에 주소가 빠져 있으면** 만들어 적는다. */
+function tokenizeOne(db, bucket, uid, year, id, out) {
+  /* 주소를 못 만드는 창고(옛 감싸개 등)면 조용히 건너뛴다 — 이사 자체를
+     실패로 만들면 안 된다. 사진은 이미 안전하고, 주소는 다음에 채우면 된다. */
+  if (!bucket || typeof bucket.downloadUrl !== 'function' || typeof db.writeUrls !== 'function') {
+    out.skipped++;
+    return Promise.resolve();
+  }
+  return Promise.all([
+    bucket.downloadUrl(photoPath(uid, year, id, 'blobs')),
+    bucket.downloadUrl(photoPath(uid, year, id, 'thumbs'))
+  ]).then(function (urls) {
+    if (!urls[0] && !urls[1]) { out.skipped++; return; }   // 창고에 파일 자체가 없다
+    return db.writeUrls(uid, year, id, { fullUrl: urls[0] || null, thumbUrl: urls[1] || null })
+      .then(function () { out.linked++; });
+  }).catch(function (e) {
+    console.warn('[주소 채우기:서버]', uid, year, id, e && e.message);
+    out.failed++;
+  });
+}
+
 function migrateOne(db, bucket, uid, year, id, out) {
   return db.readItem(uid, year, id).then(function (item) {
     if (!item || !item.full) { out.skipped++; return; }
@@ -30,7 +60,12 @@ function migrateOne(db, bucket, uid, year, id, out) {
         if (!exists) throw new Error('올린 사진을 다시 확인하지 못했습니다');
         return db.writeMigrated(uid, year, id);
       })
-      .then(function () { out.moved++; });
+      .then(function () { out.moved++; })
+      /* 방금 옮긴 사진도 주소를 바로 적는다 — 다음 통과를 기다릴 이유가 없다.
+         ⚠ 주소 채우기 실패가 이사 성공을 뒤집으면 안 된다(사진은 이미 안전하다). */
+      .then(function () {
+        return tokenizeOne(db, bucket, uid, year, id, { linked: 0, skipped: 0, failed: 0 });
+      });
   }).catch(function (e) {
     console.warn('[사진 이사:서버]', uid, year, id, e && e.message);
     out.failed++;
@@ -44,7 +79,11 @@ function migrateYear(db, bucket, uid, year, quotaLeft, out) {
       return chain.then(function () {
         if (!quotaLeft()) { out.done = false; return; }
         var meta = items[id];
-        if (meta && meta.loc === 'storage') { out.skipped++; return; }
+        if (meta && meta.loc === 'storage') {
+          /* 이미 옮겨졌다 — 주소만 확인한다. 둘 다 있으면 손대지 않는다(멱등). */
+          if (meta.fullUrl && meta.thumbUrl) { out.skipped++; return; }
+          return tokenizeOne(db, bucket, uid, year, id, out);
+        }
         return migrateOne(db, bucket, uid, year, id, out);
       });
     }, Promise.resolve());
@@ -67,8 +106,10 @@ function migrateOwner(db, bucket, uid, quotaLeft, out) {
 
 function migrateBatch(db, bucket, limit) {
   var cap = (Number(limit) > 0) ? Number(limit) : 30;
-  var out = { moved: 0, skipped: 0, failed: 0, done: true };
-  function quotaLeft() { return out.moved < cap; }
+  var out = { moved: 0, linked: 0, skipped: 0, failed: 0, done: true };
+  /* 주소 채우기(linked)도 한도에 넣는다 — 한 번에 수백 장의 토큰을 만들면
+     함수 시간제한(300초)에 걸린다. 여러 번 누르면 이어서 한다(멱등). */
+  function quotaLeft() { return (out.moved + out.linked) < cap; }
   return db.listOwners().then(function (uids) {
     return uids.reduce(function (chain, uid) {
       return chain.then(function () {
