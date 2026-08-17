@@ -1169,9 +1169,15 @@ async function readGeminiKey() {
   return "";
 }
 
+/* ⚠ `secrets: ["GEMINI_KEY"]` 를 아직 안 건다 — **없는 비밀을 걸면 배포가 막힌다.**
+   2026-08-17 실제로 막혔다: `Secret [projects/…/secrets/GEMINI_KEY] not found`.
+   지금은 서버가 실시간DB 에서 열쇠를 읽는다(readGeminiKey). 그것만으로도
+   **브라우저는 열쇠를 안 만지게** 되어 이번 단계의 목적은 이룬다.
+   나중에 `firebase functions:secrets:set GEMINI_KEY` 로 비밀을 넣은 뒤
+   여기에 secrets 를 걸고, 그때 실시간DB 의 열쇠를 지우면 완결된다. */
 exports.readDoc = functions
   .region(MAIL_REGION)
-  .runWith({ timeoutSeconds: 120, memory: "512MB", secrets: ["GEMINI_KEY"] })
+  .runWith({ timeoutSeconds: 120, memory: "512MB" })
   .https.onRequest(async (req, res) => {
     setCors(req, res);
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
