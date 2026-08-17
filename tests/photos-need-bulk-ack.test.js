@@ -41,6 +41,12 @@ function run(opts) {
     Promise, Object, Array, Date, String, console: { warn() {} },
     gridItems: grid,
     shownItems: () => shown,
+    /* 확인 창이 「어디를 치우는지」 말하려고 보는 것들 */
+    needOnly: !!opts.needOnly,
+    kindTab: opts.kindTab || 'all',
+    gridOwner: opts.gridOwner || null,
+    ALL_OWNERS: '__all__',
+    tabLabelOf: (k) => k,
     needsCheck: (it) => !!(it && it.need),
     idsOf: (it) => (it && it._pages && it._pages.length) ? it._pages.slice() : [it.id],
     blockedIfOther: () => !!opts.blocked,
@@ -99,6 +105,15 @@ test('★ 몇 장인지 먼저 말하고 묻는다 — 아니오면 아무것도
   assert.match(r.asked[0], /사진은 그대로/, '사진이 지워지는 줄 알면 무서워서 못 누릅니다');
 });
 
+test('★ 확인 창이 상황별로 어디를 치우는지 말한다', async () => {
+  const g = [P('a', true)];
+  assert.match(run({ grid: g, needOnly: true }).asked[0], /지금 보이는/);
+  assert.match(run({ grid: g, gridOwner: '__all__' }).asked[0], /전 직원의/,
+    '★ 전 직원인지 모르고 누르면 남의 할 일까지 치웁니다');
+  assert.match(run({ grid: g, kindTab: '계약서' }).asked[0], /「계약서」의/);
+  assert.match(run({ grid: g }).asked[0], /내 확인 필요/);
+});
+
 test('남의 사진이면 막는다', async () => {
   const r = run({ grid: [P('a', true)], blocked: true });
   await new Promise(res => setTimeout(res, 5));
@@ -135,15 +150,26 @@ test('★ 확인 필요가 제 칸으로 갈라져 있다', () => {
   assert.match(fn, /needCard/, '칸을 켜고 끄지 않습니다');
 });
 
-test('★ 한꺼번에 치우기는 「확인 필요」만 볼 때만 나온다', () => {
-  /* 전체 화면에서 내주면 지금 무엇을 치우는지 안 보고 누르게 된다. */
+test('★ 늘 두 칸이다 — 치우려고 매번 들어갔다 나오지 않는다', () => {
+  /* 대표 지시 2026-08-17: "항상 2개 대시보드로, 문제가 있으면 아래에서 문제만
+     체크할 수 있게." 처음에는 「확인 필요」에 들어갔을 때만 아래 칸을 냈다. */
   const fn = fnOf('renderNeedBox');
-  assert.match(fn, /needOnly \? needShownItems\(\)/,
-    '★ 걸러보기 밖에서도 나오면 화면에 없는 것까지 치웁니다');
+  assert.match(fn, /const m = needShownItems\(\)\.reduce/,
+    '★ needOnly 일 때만 세면 전체 화면에서 아래 칸이 사라집니다');
+  assert.ok(!/needOnly \? needShownItems\(\)/.test(fn),
+    '★ 옛 동작(들어가야만 나옴)으로 되돌아갔습니다');
 });
 
-test('한꺼번에 치우기 단추가 몇 장인지 적는다', () => {
-  assert.match(fnOf('renderNeedBox'), /보이는 ' \+ m \+ '장 확인 처리/);
+test('★ 무엇을 치우는지 단추와 확인 창에 적는다 — 전 직원 55장과 내 3장은 다르다', () => {
+  /* 전체 화면에서도 누를 수 있게 된 뒤로, 어디를 치우는지 모르고 누를 위험이 생겼다. */
+  const fn = fnOf('renderNeedBox');
+  assert.match(fn, /needOnly \? '보이는'/, '들어와 있을 때의 이름이 없습니다');
+  assert.match(fn, /gridOwner === ALL_OWNERS \? '전 직원' : '내'/, '전 직원인지 안 밝힙니다');
+  assert.match(fn, /tabLabelOf\(kindTab\)/, '분류를 좁혀 봤을 때 그 이름을 안 씁니다');
+  assert.match(fn, /'✓ ' \+ scope \+ ' ' \+ m \+ '장 확인 처리'/);
+  const ack = fnOf('ackAllShown');
+  assert.match(ack, /const where = needOnly/, '★ 확인 창이 어디를 치우는지 안 말합니다');
+  assert.match(ack, /confirm\(where \+ ' 확인 필요 '/);
 });
 
 /* ── 「지우기」 → 「삭제」 (대표 지시 2026-08-17) ── */
