@@ -113,3 +113,37 @@ test('자료가 없어도 터지지 않는다', () => {
   assert.equal(r.people.length, 0);
   assert.equal(r.unassigned.length, 0);
 });
+
+/* ══════ 담당자 칸에 사번이 아닌 값 (대표 지시 2026-08-17) ══════
+   업체관리 주담당에 「김보람(박은비)」 가 글자로 적힌 업체가 13곳 있었다.
+   사번이 아니면 이메일을 만들 수 없어 어느 계정과도 이어지지 못하는데, 화면에는
+   그냥 「아직 안 들어옴」으로 보였다 — 아무리 기다려도 안 풀리는 것을 기다리게 된다. */
+test('★ 사번이 아닌 담당자를 「안 들어옴」과 갈라 표시한다', () => {
+  const S = loadStore();
+  const r = S.managerRoster([
+    { id: 'co_1', name: '가나', managerMain: 'A-001', managerSubs: [] },
+    { id: 'co_2', name: '다라', managerMain: '김보람(박은비)', managerSubs: [] }
+  ], null, {});
+  const byName = {};
+  r.people.forEach(p => { byName[p.sid] = p; });
+  assert.equal(byName['A-001'].badSid, false, '멀쩡한 사번을 잘못됐다고 하면 안 됩니다');
+  assert.equal(byName['김보람(박은비)'].badSid, true, '★ 사번이 아닌 것을 못 짚었습니다');
+});
+
+test('사번 꼴 몇 가지를 다 받아 준다 — 멀쩡한 것을 빨갛게 칠하면 안 된다', () => {
+  const S = loadStore();
+  const cos = ['A-001', 'P-002', 'T-005', 'a001', 'A001'].map((sid, i) =>
+    ({ id: 'c' + i, name: '가' + i, managerMain: sid, managerSubs: [] }));
+  const r = S.managerRoster(cos, null, {});
+  r.people.forEach(p => assert.equal(p.badSid, false, p.sid + ' 를 잘못됐다고 봤습니다'));
+});
+
+test('사번이 잘못돼도 그 업체가 목록에서 사라지지는 않는다', () => {
+  const S = loadStore();
+  const r = S.managerRoster([
+    { id: 'co_2', name: '다라', managerMain: '김보람(박은비)', managerSubs: [] }
+  ], null, {});
+  const p = r.people[0];
+  assert.equal(p.companies.length, 1, '담당자 칸이 잘못됐다고 업체까지 숨기면 안 됩니다');
+  assert.equal(r.unassigned.length, 0, '담당이 적혀는 있으니 「담당 없음」이 아닙니다');
+});

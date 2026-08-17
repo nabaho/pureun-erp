@@ -909,6 +909,10 @@
     return map;
   }
 
+  /* 사번의 꼴 — A-001 · P-002 · T-005 처럼 「글자 하나 + 숫자 두세 자리」다.
+     여기 안 맞으면 사람 이름이나 메모가 잘못 들어간 것이다. */
+  var SID_RE = /^[A-Za-z]-?\d{2,3}$/;
+
   function managerRoster(companies, dirRows, owners) {
     var names = rosterNameMap(dirRows);
     var byEmail = {};
@@ -941,6 +945,13 @@
             name: names[sid] || (own && own.name) || sid,
             uid: own ? own.uid : '',
             away: !own,
+            /* ⚠ 담당자 칸에 **사번이 아닌 값**이 든 업체가 실제로 있다 —
+               2026-08-17 확인: 「김보람(박은비)」 가 13곳의 주담당에 글자로 적혀
+               있었다. 사번이 아니면 이메일을 만들 수 없어 어느 계정과도 이어지지
+               못하는데, 화면에는 그냥 「아직 안 들어옴」으로 보인다. 그러면 사람이
+               아직 안 들어온 것인지 자료가 잘못된 것인지 가릴 수가 없다 —
+               앞은 **기다리면** 되고 뒤는 **업체관리를 고쳐야** 한다(할 일이 다르다). */
+            badSid: !SID_RE.test(sid),
             companies: []
           };
           order.push(sid);
