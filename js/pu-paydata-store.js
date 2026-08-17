@@ -437,6 +437,36 @@
     return deps.db.ref().update(claimShared(id, rec)).then(function () { return true; });
   }
 
+  /* ⚠ 맡기는 **먼저 공용 칸에서 빼고** 내 자리에 넣는다(대표 지시 2026-08-17).
+     둘이 같은 것을 동시에 누를 때, 그냥 쓰면 둘 다 성공해 **한 자료가 두 사람
+     자리에 생긴다.** 빼는 것을 transaction 으로 하면 한 사람만 이긴다 —
+     진 사람에게는 false 를 돌려주어 화면이 「방금 다른 분이 맡았습니다」라고 한다.
+     ⚠ 빼고 나서 넣기가 실패하면 자료가 **어디에도 없게 된다.** 그래서 실패하면
+     공용 칸에 도로 넣고 오류를 올린다 — 사라지느니 두 번 보이는 편이 낫다. */
+  function claimSharedSafe(id) {
+    if (!id) return Promise.reject(new Error('자료 번호가 없습니다'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var got = null;
+    var ref = deps.db.ref(sharedPendingPath(id));
+    return ref.transaction(function (cur) {
+      if (cur === null || cur === undefined) { got = null; return; }
+      got = cur;
+      return null;
+    }).then(function (res) {
+      if (!res || !res.committed || !got) return false;
+      var mine = pendingRecord(got);
+      mine.by = deps.uid || '';
+      mine.claimedBy = deps.uid || '';
+      mine.claimedAt = Date.now();
+      var up = {};
+      up[pendingPath(id)] = mine;
+      return deps.db.ref().update(up).then(function () { return true; })
+        .catch(function (e) {
+          return ref.set(got).then(function () { throw e; }, function () { throw e; });
+        });
+    });
+  }
+
   /* 내 대기 칸 목록 — 본문은 창고에 있으므로 여기 담긴 것은 정보뿐이다. */
   function listMyPending(owner) {
     return deps.db.ref(pendingBoxPath(owner)).once('value')
@@ -477,10 +507,51 @@
     return deps.db.ref(shareBoxPath(targetUid)).once('value').then(function (s) { return s.val() || {}; });
   }
 
-  /* 공용 대기 칸 목록 — 서버가 메일로 받은 것(5차에 채워진다). */
+  /* 공용 대기 칸 목록 — 서버가 메일로 받은 것. */
   function listSharedPending() {
     return deps.db.ref(sharedPendingBoxPath()).once('value')
       .then(function (s) { return s.val() || {}; });
+  }
+
+  /* ══════ 메일로 온 것 (대표 지시 2026-08-17) ══════
+     서버는 보낸사람·제목을 **note 한 줄**에 적어 둔다(functions/mail-receive.js
+     sharedPendingRecord). 따로 칸을 만들면 집어가는 순간 앱이 모르는 칸이라
+     버려지기 때문이다. 그래서 화면은 그 한 줄을 도로 풀어 써야 한다.
+     ⚠ 모양이 「메일 <주소> · <제목>」이다 — 서버 쪽을 고치면 여기도 함께 고친다. */
+  function mailNote(note) {
+    var s = String(note == null ? '' : note).replace(/^메일\s*/, '');
+    var at = s.indexOf(' · ');
+    if (at < 0) return { from: s.trim(), subject: '' };
+    return { from: s.slice(0, at).trim(), subject: s.slice(at + 3).trim() };
+  }
+
+  /* 보낸 주소로 업체를 찾는다 — **이 길이 파일 이름 짐작보다 정확하다.**
+     업체관리의 메일 칸 이름이 앱마다·시기마다 달라(email·이메일·담당자메일…)
+     칸 이름을 못 박지 않고 값에서 주소처럼 생긴 것을 다 훑는다(서버와 같은 방식).
+     ⚠ 이름을 못 박으면 칸 이름이 바뀐 날 조용히 아무도 안 걸린다. */
+  var MAIL_RE = /[^\s@,;<>"']+@[^\s@,;<>"']+\.[^\s@,;<>"']{2,}/g;
+
+  function emailsIn(node, out, depth) {
+    out = out || []; depth = depth || 0;
+    if (node == null || depth > 4) return out;
+    if (typeof node === 'string') {
+      var m = node.match(MAIL_RE);
+      if (m) m.forEach(function (e) { out.push(e.toLowerCase()); });
+      return out;
+    }
+    if (typeof node !== 'object') return out;
+    Object.keys(node).forEach(function (k) { emailsIn(node[k], out, depth + 1); });
+    return out;
+  }
+
+  function companyByEmail(email, list) {
+    var want = String(email || '').trim().toLowerCase();
+    if (!want) return null;
+    var arr = list || [];
+    for (var i = 0; i < arr.length; i++) {
+      if (emailsIn(arr[i]).indexOf(want) >= 0) return arr[i];
+    }
+    return null;
   }
 
   /* 한 칸(귀속월 또는 keep)의 자료 목록. 본문·미리보기는 안 따라온다.
@@ -1318,8 +1389,11 @@
     moveToDrawer: moveToDrawer,
     saveFileToDrawer: saveFileToDrawer,
     claimSharedNow: claimSharedNow,
+    claimSharedSafe: claimSharedSafe,
     listMyPending: listMyPending,
     listSharedPending: listSharedPending,
+    mailNote: mailNote,
+    companyByEmail: companyByEmail,
     listArrivals: listArrivals,
     listSlot: listSlot,
     isExpired: isExpired,
