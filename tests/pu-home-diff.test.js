@@ -287,6 +287,93 @@ test('퇴사일이 «아직 안 온» 사람은 내리지 않는다 (표시만�
    퇴사 여부를 안 보면 !onLive 가 그대로 「새로 올릴 것」이 되어, 정상 흐름의 마지막
    걸음에서 화면이 정확히 반대(다시 올려라)를 가리킨다. 왼쪽 빨간 점도 영영 남는다. */
 
+/* ══════ 2차 설계 — 「홈페이지에 남기기」 예외 (§4-가) ══════
+   지사장은 고용관계가 아니어서 급여 명부에 퇴사로 찍혀 있거나 아예 없다.
+   급여 명부에 없다는 것이 지사장을 그만뒀다는 뜻은 아니다 — 장한돌 세종지사장이
+   실제로 이 경우다(명부상 2023-12-31 퇴사, 홈페이지에는 여전히 「세종지사장」). */
+
+test('★ keepOnSite 가 있으면 명부상 퇴사자라도 toRemove 를 달지 않고 내용 대조 결과를 쓴다', () => {
+  const ours = [{ key: '999', srl: '999', name: '장한돌', position1: '세종지사장', position2: '공인노무사',
+                  careers: [], keepOnSite: { at: '2026-08-17', by: '관리자', why: '지사장은 고용관계 아님' } }];
+  const live = [{ srl: '999', name: '장한돌', position1: '세종지사장', position2: '공인노무사', careers: [] }];
+  const staff = [{ name: '장한돌', leftAt: '2023-12-31' }]; // 명부상 퇴사
+  const r = D.memberStatus(ours, live, staff, TODAY)[0];
+  assert.equal(r.status, 'same', 'toRemove 가 아니라 내용 대조 결과(same)를 써야 한다');
+  assert.match(r.reason, /남기기|keepOnSite|예외/, '왜 딱지를 안 달았는지 사유가 없다');
+  assert.match(r.reason, /지사장은 고용관계 아님/, '남긴 사유 원문이 reason 에 담겨야 한다');
+});
+
+test('★ keepOnSite 가 있어도 내용이 다르면 pending 이다 — 예외가 대조 자체를 막지 않는다', () => {
+  const ours = [{ key: '999', srl: '999', name: '장한돌', position1: '세종지사장', position2: '공인노무사',
+                  careers: ['現 가', '現 나'], keepOnSite: { at: '2026-08-17', by: '관리자', why: '지사장' } }];
+  const live = [{ srl: '999', name: '장한돌', position1: '세종지사장', position2: '공인노무사', careers: ['現 가'] }];
+  const staff = [{ name: '장한돌', leftAt: '2023-12-31' }];
+  const r = D.memberStatus(ours, live, staff, TODAY)[0];
+  assert.equal(r.status, 'pending');
+  assert.match(r.reason, /내용이 다름/);
+  assert.match(r.reason, /지사장/);
+});
+
+test('keepOnSite 가 없으면 지금처럼 퇴사 판정이 toRemove 로 그대로 붙는다 (예외를 풀면 다시 판정받는다)', () => {
+  const ours = [{ key: '999', srl: '999', name: '장한돌', position1: '세종지사장', position2: '공인노무사', careers: [] }];
+  const live = [{ srl: '999', name: '장한돌', position1: '세종지사장', position2: '공인노무사', careers: [] }];
+  const staff = [{ name: '장한돌', leftAt: '2023-12-31' }];
+  const r = D.memberStatus(ours, live, staff, TODAY)[0];
+  assert.equal(r.status, 'toRemove');
+});
+
+/* ══════ 2차 설계 — 「명부에 없는 사람」 (§4-나) ══════
+   조현범 대전지사장이 실제로 이 경우다: 급여 명부(32명)에 이름 자체가 없다.
+   지금은 조용히 입·퇴사 판정을 안 한다 — 왜 경고가 없는지 사장님이 알 수 없다. */
+
+test('★ 명부에 이름이 없으면(대전지사장 사례) 내용이 같아도 reason 에 「판단 못 함」을 남긴다', () => {
+  const ours = [{ key: '888', srl: '888', name: '조현범', position1: '대전지사장', position2: '공인노무사', careers: [] }];
+  const live = [{ srl: '888', name: '조현범', position1: '대전지사장', position2: '공인노무사', careers: [] }];
+  const staff = [{ name: '권형하', leftAt: '' }]; // 명부는 있으나 조현범은 없음
+  const r = D.memberStatus(ours, live, staff, TODAY)[0];
+  assert.equal(r.status, 'same', '딱지 자체는 내용 대조 결과를 그대로 써야 한다');
+  assert.match(r.reason, /명부에 없/, '명부에 없어 판단을 못 했다는 사유가 없다');
+  assert.match(r.reason, /입.?퇴사/, '무엇을 못 했는지(입·퇴사 판단)가 사유에 없다');
+});
+
+test('★ 명부에 없는 사람도 내용이 다르면 pending 이고, 왜 판단을 못 했는지 사유가 함께 남는다', () => {
+  const ours = [{ key: '888', srl: '888', name: '조현범', position1: '대전지사장', position2: '공인노무사', careers: ['現 가'] }];
+  const live = [{ srl: '888', name: '조현범', position1: '', position2: '공인노무사', careers: [] }];
+  const staff = [{ name: '권형하', leftAt: '' }];
+  const r = D.memberStatus(ours, live, staff, TODAY)[0];
+  assert.equal(r.status, 'pending');
+  assert.match(r.reason, /내용이 다름/);
+  assert.match(r.reason, /명부에 없/);
+});
+
+test('★ 명부에 없고 홈페이지에도 없으면 toAdd 이고, 「홈페이지에 없음」과 「명부에 없음」 사유가 함께 남는다', () => {
+  const ours = [{ key: 'new-9', name: '조현범', position1: '대전지사장', position2: '공인노무사', careers: [] }];
+  const staff = [{ name: '권형하', leftAt: '' }];
+  const r = D.memberStatus(ours, [], staff, TODAY)[0];
+  assert.equal(r.status, 'toAdd');
+  assert.match(r.reason, /홈페이지에 없음/);
+  assert.match(r.reason, /명부에 없/);
+});
+
+test('명부에 이름이 있으면(재직 1명) 지금처럼 「판단 못 함」 사유가 붙지 않는다', () => {
+  const ours = [{ key: '190', srl: '190', name: '권형하', position1: '대표', position2: '공인노무사', careers: ['現 가'] }];
+  const live = [{ srl: '190', name: '권형하', position1: '대표', position2: '공인노무사', careers: ['現 가'] }];
+  const r = D.memberStatus(ours, live, [재직], TODAY)[0];
+  assert.equal(r.status, 'same');
+  assert.doesNotMatch(r.reason || '', /명부에 없/);
+});
+
+test('★ 명부에도 없고 keepOnSite 도 있으면(조현범 실제 사례) 두 사유가 함께 남는다', () => {
+  const ours = [{ key: '888', srl: '888', name: '조현범', position1: '대전지사장', position2: '공인노무사', careers: [],
+                  keepOnSite: { at: '2026-08-17', by: '관리자', why: '대전지사장·고용관계 아님' } }];
+  const live = [{ srl: '888', name: '조현범', position1: '대전지사장', position2: '공인노무사', careers: [] }];
+  const staff = [{ name: '권형하', leftAt: '' }];
+  const r = D.memberStatus(ours, live, staff, TODAY)[0];
+  assert.equal(r.status, 'same');
+  assert.match(r.reason, /명부에 없/);
+  assert.match(r.reason, /대전지사장·고용관계 아님/);
+});
+
 test('★ 퇴사자를 홈페이지에서 내리고 나면 「다시 올려라」로 뒤집히지 않는다', () => {
   const ours = [{ key: '190', srl: '190', name: '나간사람', position1: '', position2: '', careers: [] }];
   const staff = [{ name: '나간사람', leftAt: '2026-07-31' }];
