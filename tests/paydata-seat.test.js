@@ -39,7 +39,7 @@ function loadApp(appState) {
     cut('guessTag'), cut('pendTagOf'), cut('setPendTag'), cut('screenPending'),
     cut('drawerCounts'), cut('drawerModel'), cut('searchRows'),
     cut('folderCounts'), cut('folderRows'), cut('folderBar'), cut('folderEditorHtml'),
-    cut('folderOptionsHtml'), cut('monthShift'), cut('monthCount'), cut('monthAhead'), "const WEEKDAY = ['일','월','화','수','목','금','토'];", cut('todayLabel'), cut('monthStripHtml'), cut('sideCtx'), cut('guessTag'), cut('siteState'), cut('sideListModel'), cut('coArrivedAt'), cut('screenDrawer'),
+    cut('folderOptionsHtml'), cut('monthShift'), cut('monthCount'), cut('monthAhead'), "const WEEKDAY = ['일','월','화','수','목','금','토'];", cut('todayLabel'), cut('monthStripHtml'), cut('sideCtx'), cut('guessTag'), cut('siteState'), cut('sideListModel'), cut('coArrivedAt'), cut('seatNow'), cut('drawerSeats'), cut('byName'), cut('canEditRow'), cut('screenDrawer'),
     cut('screenTrash'), cut('screenDeputy'),
     'window.canWrite = canWrite; window.bannerHtml = bannerHtml;',
     'window.screenPending = screenPending; window.screenDrawer = screenDrawer;',

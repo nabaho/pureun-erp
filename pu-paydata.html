@@ -358,6 +358,13 @@ h1{font-size:18px;margin-bottom:4px}
 #findBar .dfind:focus{outline:none;border-color:var(--navy)}
 
 .expbadge{font-size:11.5px;color:var(--warn);font-weight:700;white-space:nowrap}
+/* ── 함께 맡은 업체 (대표 지시 2026-08-17) ──
+   누가 담았는지, 그리고 내가 못 고치는 줄이 어느 것인지. */
+.bywho{font-size:10.5px;background:var(--paper);color:var(--sub);border-radius:99px;
+  padding:2px 8px;white-space:nowrap;cursor:help}
+.offacts{opacity:.32;font-size:12px;white-space:nowrap;cursor:help;padding:0 4px}
+.coseat{display:flex;align-items:center;gap:8px;background:#EEF2FF;border:1px solid #C7D2FE;
+  color:#3730A3;border-radius:9px;padding:5px 10px;font-size:11.5px;margin-bottom:7px}
 
 /* ── 내 폴더 (사진첩과 같은 방식) ── 분류 탭과 다른 축 — 탭은 「무엇인가」,
    폴더는 「어느 일인가」. 점선 테두리로 "직접 만든 것"임을 가른다. */
@@ -2043,21 +2050,69 @@ function folderRows(rows, folderPick) {
 
 /* keep 칸은 한 번만, 이 달 칸은 달이 바뀔 때만 다시 읽는다 — 매번 두 칸을
    전부 새로 읽으면 탭만 눌러도 실시간DB를 불필요하게 두드린다. */
+/* ── 이 업체를 맡은 사람들의 자리 (대표 지시 2026-08-17 「각각 자기 사업장」) ──
+   담기는 늘 자기 자리인데 서랍은 자기 자리만 보여, 부담당이 열면 주담당이 담아
+   둔 것이 안 보였다(줄에는 3장, 서랍은 0건). 맡은 사람 자리를 모아 읽는다.
+   ⚠ **지금 보고 있는 자리를 맨 앞**에 둔다 — 자료 번호가 겹칠 때 지금 자리 것이
+   먼저 자리를 잡아야, 내가 담은 것이 남의 것에 가려지지 않는다.
+   ⚠ 아직 이 함에 안 들어온 담당자는 자리가 없어 빠진다(uid 가 없다). */
+function drawerSeats() {
+  const here = seatNow();
+  const out = [here];
+  const co = (App.companies || []).filter(c => c.id === App.companyId)[0];
+  if (co) {
+    const roster = S.managerRoster(App.companies, App.dir, App.owners);
+    roster.people.forEach(p => {
+      if (!p.uid) return;
+      if (p.companies.some(c => c.id === App.companyId)) out.push(p.uid);
+    });
+  }
+  /* 빈 문자열은 「내 자리」다 — 실제 uid 로 바꿔 두어야 겹치는 것을 걸러낼 수 있다.
+     ⚠ 겹치는 것을 반드시 뺀다 — 안 빼면 주담당이 자기 업체를 열었을 때 「함께 맡은
+     업체 — 김보람·김보람」이라고 뜬다. */
+  const seen = {};
+  return out.map(u => u || S.myUid()).filter(u => {
+    if (!u || seen[u]) return false;
+    seen[u] = 1; return true;
+  });
+}
+
 function ensureDrawerData() {
   if (!App.month) App.month = thisMonth();
   const monthSlot = S.monthKey(App.month) || S.KEEP;
   const seat = seatNow();               // 늦게 온 답을 버리려고 지금 자리를 적어 둔다
+  const seats = drawerSeats();
   const jobs = [];
   if (!App.itemsKeep) {
-    jobs.push(S.listSlot(S.KEEP, seat).then(v => { if (seatSame(seat)) App.itemsKeep = v; })
+    jobs.push(S.listSlotMany(S.KEEP, seats).then(v => { if (seatSame(seat)) App.itemsKeep = v; })
       .catch(e => { console.warn('[서랍·keep]', e && e.code); if (seatSame(seat)) App.itemsKeep = {}; }));
   }
   if (App.itemsMonthSlot !== monthSlot) {
-    jobs.push(S.listSlot(monthSlot, seat).then(v => { if (seatSame(seat)) { App.itemsMonth = v; App.itemsMonthSlot = monthSlot; } })
+    jobs.push(S.listSlotMany(monthSlot, seats).then(v => { if (seatSame(seat)) { App.itemsMonth = v; App.itemsMonthSlot = monthSlot; } })
       .catch(e => { console.warn('[서랍·' + monthSlot + ']', e && e.code); if (seatSame(seat)) { App.itemsMonth = {}; App.itemsMonthSlot = monthSlot; } }));
   }
   if (jobs.length) Promise.all(jobs).then(() => { if (seatSame(seat)) App.render(); });
 }
+
+/* 이 줄을 지금 자리에서 고칠 수 있나 — 내가 담은 것만이다.
+   ⚠ 남의 자리 자료는 파이어베이스 규칙이 쓰기를 막는다. 단추를 그대로 두면
+   눌러도 실패만 하므로 화면에서 미리 갈라 준다(숨기지는 않는다 — 안 보이면
+   「왜 나만 안 되지」가 아니라 「화면이 고장났나」가 된다). */
+/* 자리(uid) → 사람 이름. 못 찾으면 「다른 담당자」로 둔다 — 알 수 없는 번호를
+   그대로 보여 주면 무슨 말인지 알 수 없다. */
+function byName(uid) {
+  if (!uid) return '';
+  const o = (App.owners || {})[uid];
+  return (o && o.name) || '다른 담당자';
+}
+window.byName = byName;
+
+function canEditRow(r) {
+  if (!canWrite()) return false;
+  const here = seatNow() || S.myUid();
+  return !r || !r._by || r._by === here;
+}
+window.canEditRow = canEditRow;
 
 /* 기준 월을 바꾼다 — 서랍만 다시 읽고 끝내면 안 된다. 값은 「이 달」 것이라
    달이 바뀌면 들고 있던 값이 통째로 지난달 것이 된다. 그 수를 급여관리에
@@ -2184,7 +2239,10 @@ function pickFolder(fid) { App.folderPick = fid; App.render(); }
    서버에 쓰는 동안 화면이 멈추지 않게, 저장이 끝나면 우리가 들고 있는 자료에도
    바로 반영해 다시 읽지 않고 새로고침한다. */
 function assignFolder(id, folderId) {
-  if (!canWrite()) return;
+  const row = findRow(id);
+  /* ⚠ 남이 담은 줄은 그 사람 자리에 있다 — 규칙이 쓰기를 막으므로 눌러도 실패만
+     한다. 화면이 이미 갈라 보여 주지만, 여기서도 한 번 더 막는다. */
+  if (!canEditRow(row)) return;
   const slot = S.isKeepKind(App.kind) ? S.KEEP : (S.monthKey(App.month) || S.KEEP);
   S.setFolder(slot, id, folderId, App.viewingUid).then(() => {
     const box = S.isKeepKind(App.kind) ? App.itemsKeep : App.itemsMonth;
@@ -2198,11 +2256,19 @@ function assignFolder(id, folderId) {
    차림표 첫 줄('__')은 안내문이라 아무 일도 하지 않는다. */
 function bulkSetFolder(folderId) {
   if (!canWrite() || folderId === '__') return;
-  const ids = pickList(pickOf('drawer'), pickVisible('drawer'));
-  if (!ids.length) return;
+  /* 남이 담은 줄은 빼고 내 것만 옮긴다 — 한 묶음에 남의 자리를 섞으면 규칙이
+     **통째로** 거절해, 내 것까지 안 옮겨진다. 몇 건을 뺐는지는 말해 준다. */
+  const all = pickList(pickOf('drawer'), pickVisible('drawer'));
+  const ids = all.filter(id => canEditRow(findRow(id)));
+  const skipped = all.length - ids.length;
+  if (!ids.length) {
+    if (skipped) alert('고른 ' + skipped + '건은 다른 담당자가 담은 것이라 여기서는 못 옮깁니다.');
+    return;
+  }
   const slot = S.isKeepKind(App.kind) ? S.KEEP : (S.monthKey(App.month) || S.KEEP);
   const box = S.isKeepKind(App.kind) ? App.itemsKeep : App.itemsMonth;
   S.setFolderMany(slot, ids, folderId, App.viewingUid).then(() => {
+    if (skipped) alert(skipped + '건은 다른 담당자가 담은 것이라 그대로 두었습니다.');
     ids.forEach(id => { if (box && box[id]) box[id].folder = folderId || null; });
     pickPut('drawer', {});
     App.render();
@@ -2214,9 +2280,17 @@ window.bulkSetFolder = bulkSetFolder;
    끊기면 어디까지 갔는지 아무도 모른다. 창고 파일은 건드리지 않는다. */
 function bulkDrawerTrash() {
   if (!canWrite()) return;
-  const ids = pickList(pickOf('drawer'), pickVisible('drawer'));
-  if (!ids.length) return;
+  /* 내가 담은 것만 버린다 — 남의 자리를 한 묶음에 섞으면 규칙이 통째로 거절해
+     내 것까지 안 버려진다. */
+  const all = pickList(pickOf('drawer'), pickVisible('drawer'));
+  const ids = all.filter(id => canEditRow(findRow(id)));
+  const skipped = all.length - ids.length;
+  if (!ids.length) {
+    if (skipped) alert('고른 ' + skipped + '건은 다른 담당자가 담은 것이라 여기서는 못 버립니다.');
+    return;
+  }
   if (!confirm(ids.length + '건을 휴지통으로 옮길까요?\n'
+    + (skipped ? '(다른 담당자가 담은 ' + skipped + '건은 그대로 둡니다)\n' : '')
     + S.TRASH_DAYS + '일 안에는 되살릴 수 있습니다.')) return;
   const up = {};
   ids.forEach(id => {
@@ -2559,6 +2633,14 @@ function screenDrawer() {
 
   h += '</div>';   // .stickhead 끝 — 여기까지가 붙어 있는 머리다
 
+  /* 함께 맡은 업체라고 알려 준다 — 안 알리면 남의 이름이 붙은 줄을 보고
+     「왜 남의 자료가 내 서랍에 있지」 하게 된다(대표 지시 2026-08-17). */
+  const coNames = drawerSeats().map(byName).filter(Boolean);
+  if (coNames.length > 1) {
+    h += '<div class="coseat">👥 <b>함께 맡은 업체</b> — '
+      + esc(coNames.join('·')) + ' 님이 담은 것을 모아 보여 줍니다</div>';
+  }
+
   const folderOpts = folderOptionsHtml(App.folders);
   const editable = canWrite();
 
@@ -2582,14 +2664,24 @@ function screenDrawer() {
     + '<b style="flex:1;cursor:pointer" onclick="openViewer(\'' + esc(r.id) + '\')">'
     + esc(r.filename || '(이름 없음)') + '</b>'
     + (r.expired ? '<span class="expbadge">지난 것</span>' : '')
+    /* 누가 담았는지 — 함께 맡은 업체에서는 줄마다 다르다. 내 것은 굳이 안 적는다
+       (모두 내 것인 보통 업체에서 줄마다 「내가 담음」이 붙으면 눈만 시끄럽다). */
+    + (r._by && r._by !== (seatNow() || S.myUid())
+      ? '<span class="bywho" title="' + esc(byName(r._by)) + ' 님이 담았습니다 — 여기서는 못 고칩니다">'
+        + esc(byName(r._by)) + '</span>' : '')
     + '<span class="sub" style="margin:0">' + (r.filedAt ? new Date(r.filedAt).toLocaleDateString() : '') + '</span>'
-    + (editable
+    + (editable && canEditRow(r)
       ? '<select class="btn" style="font-size:11.5px;padding:4px 6px" onclick="event.stopPropagation()"'
         + ' onchange="assignFolder(\'' + esc(r.id) + '\',this.value)">'
         + folderOpts.replace('value="' + esc(r.folder || '') + '"', 'value="' + esc(r.folder || '') + '" selected')
         + '</select>'
         + '<button class="btn" onclick="event.stopPropagation();toTrash(\'' + esc(r.id) + '\')" title="휴지통으로">🗑</button>'
-      : (r.folder && App.folders[r.folder] ? '<span class="sub" style="margin:0">' + esc(App.folders[r.folder].name) + '</span>' : ''))
+      /* ⚠ 남의 줄에서도 단추를 **숨기지 않고 연하게** 둔다 — 안 보이면 「왜 나만
+         안 되지」가 아니라 「이 화면이 고장났나」가 된다. 얹으면 까닭이 나온다. */
+      : (editable
+        ? '<span class="offacts" title="' + esc(byName(r._by)) + ' 님이 담은 것이라 여기서는 못 고칩니다">'
+          + '📁 <span>🗑</span></span>'
+        : (r.folder && App.folders[r.folder] ? '<span class="sub" style="margin:0">' + esc(App.folders[r.folder].name) + '</span>' : '')))
     + '</div>').join('')
     : '<div class="empty">' + (App.query ? '찾는 자료가 없습니다.'
       : (App.folderPick !== 'all' ? '이 폴더에 담긴 자료가 없습니다.'
@@ -3277,9 +3369,14 @@ function renderViewer() {
 /* 서랍에서 지운다. findRow 가 keep 칸·이 달 칸을 모두 뒤져 자료를 찾는다
    (뷰어가 쓰는 것과 같은 함수 — 두 칸 중 어디 있는지 화면이 몰라도 된다). */
 function toTrash(id) {
-  if (!canWrite()) return;
   const rec = findRow(id);
   if (!rec) return;
+  /* 남이 담은 줄은 그 사람 자리에 있다 — 규칙이 막으므로 눌러도 실패만 한다. */
+  if (!canEditRow(rec)) {
+    alert(byName(rec._by) + ' 님이 담은 자료라 여기서는 못 버립니다.\n'
+      + '그 담당자에게 말씀해 주세요.');
+    return;
+  }
   if (!confirm('휴지통으로 옮길까요?\n30일 안에는 되살릴 수 있습니다.')) return;
   db.ref().update(S.trashUpdate(id, rec, App.viewingUid)).then(() => {
     if (App.itemsKeep && App.itemsKeep[id]) delete App.itemsKeep[id];
