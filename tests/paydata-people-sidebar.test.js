@@ -51,7 +51,7 @@ function loadApp(appState, opts) {
     'App.render = function(){};',
     'App.go = function(screen, o){ Object.assign(App, o||{}); App.screen = screen; };',
     cut('esc'), cut('jsq'), cut('thisMonth'), cut('companyDocCount'), cut('coArrivedAt'),
-    cut('sideViewModel'), cut('sideListModel'), cut('sideCtx'),
+    cut('sideViewModel'), cut('guessTag'), cut('siteState'), cut('sideListModel'), cut('sideCtx'),
     cut('viewBarHtml'), cut('colListHtml'),
     cut('pickSideView'), cut('pickColFilter'), cut('toggleSideFold'), cut('openColCompany'),
     cut('resetOwnerCaches'), cut('enterSeatAt'),

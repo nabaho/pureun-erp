@@ -127,6 +127,16 @@ main{flex:1;min-width:0;padding:16px 20px;max-width:1240px;margin:0}
 .dkpi b{color:var(--ink)}
 .dkpi .ok{color:var(--ok);font-weight:800}
 .dkpi .wa{color:var(--warn);font-weight:800}
+.dkpi .pd{color:#8A6100;font-weight:800}
+/* ── 사업장 줄의 자리 표시 (대표 지시 2026-08-17) ──
+   그다음 할 일이 곧 이름이다: 재촉하기 · 담기 · 판독하기 · 대조하기.
+   ⚠ 「대기」는 짐작이라 **테두리까지** 달라 담긴 것과 눈으로 안 섞인다. */
+.stpill{font-size:11px;border-radius:99px;padding:2px 9px;white-space:nowrap;cursor:help}
+.stpill.none{background:#FBF1DE;color:#7C4A03}
+.stpill.wait{background:#FDF0CE;color:#8A6100;border:1px solid #E6B023;font-weight:700}
+.stpill.in{background:#EAF6EE;color:#17603A;font-weight:700}
+.stpill.done{background:#E7EBFB;color:#2A3566;font-weight:700}
+.row .what{font-size:11px;color:var(--sub);white-space:nowrap}
 .mstrip{display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
 .mstrip .btn.sm:disabled{opacity:.35;cursor:default}
 .mo{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:4px 9px;
@@ -178,8 +188,13 @@ main{flex:1;min-width:0;padding:16px 20px;max-width:1240px;margin:0}
 .crow.sel .nm{color:var(--navy);font-weight:700}
 .crow.sel .cno{color:var(--navy)}
 .crow .handle{cursor:grab;color:var(--sub);font-size:11px;flex:0 0 11px;user-select:none}
+/* 네 자리를 점 색으로 갈라 준다(대표 지시 2026-08-17) — 좁은 칸이라 글자는 못 넣는다.
+   ⚠ 「대기」(노랑)는 파일 이름으로 알아낸 **짐작**이라 「담김」(초록)과 반드시 다른
+   색이어야 한다. 같은 색이면 짐작을 확정으로 읽는다. */
 .crow .dot{width:6px;height:6px;border-radius:99px;background:var(--line);flex:0 0 6px}
-.crow .dot.arr{background:var(--ok)}
+.crow .dot.arr,.crow .dot.in{background:var(--ok)}
+.crow .dot.done{background:var(--navy)}
+.crow .dot.wait{background:#E6B023;box-shadow:0 0 0 2px #FDF0CE}
 .crow .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .crow .own{font-size:9.5px;color:var(--sub);background:var(--paper);border-radius:99px;padding:1px 5px;
   max-width:56px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -883,6 +898,29 @@ function sideViewModel(ctx) {
   return { views: views, people: people, unassigned: roster.unassigned };
 }
 
+/* ── 그 사업장이 지금 어느 자리에 있나 (대표 지시 2026-08-17) ──
+   「미도착 / 도착」 둘뿐이라 다음에 할 일이 안 보였다. 네 자리로 갈라 **그다음
+   할 일이 곧 이름**이 되게 한다: 재촉하기 · 담기 · 판독하기 · 대조하기.
+   ⚠ 「대기」는 파일 이름으로 알아낸 **짐작**이다 — 담긴 것과 색부터 다르게 둔다. */
+function siteState(r) {
+  if (r.vals > 0) {
+    return { key: 'done', label: '표 ' + r.vals + '명',
+      tip: '판독까지 끝났습니다 — 원본과 대조한 뒤 급여관리로 넘기십시오' };
+  }
+  if (r.arrived) {
+    return { key: 'in', label: '담김 — 판독 전' + (r.pend ? ' · 대기 ' + r.pend : ''),
+      tip: '서랍에는 들어왔는데 아직 표가 없습니다 — 판독해서 사람별 표를 만드십시오'
+        + (r.pend ? '. 대기 칸에 ' + r.pend + '건이 더 있습니다' : '') };
+  }
+  if (r.pend > 0) {
+    return { key: 'wait', label: '대기 ' + r.pend,
+      tip: '왔는데 아직 서랍에 안 담겼습니다(파일 이름으로 보아 이 사업장 것 같습니다)'
+        + ' — 대기 칸에서 사업장·귀속월을 확정하십시오' };
+  }
+  return { key: 'none', label: '미도착', tip: '아무것도 안 왔습니다 — 사업장에 재촉하십시오' };
+}
+window.siteState = siteState;
+
 /* 둘째 칸 — 지금 고른 보기의 사업장 목록. view 는 보기 열쇠말이거나
    'p:<사번>'(관리자가 사람 줄을 눌렀을 때)이다. */
 function sideListModel(view, ctx, opt) {
@@ -936,9 +974,43 @@ function sideListModel(view, ctx, opt) {
     title = (who ? who.name : sid) + ' 담당';
   } else { v = 'mine'; list = cos.filter(isMine); canOrder = true; }
 
+  /* ── 「왔는데 아직 안 담긴 것」을 사업장 줄에 붙인다 (대표 지시 2026-08-17) ──
+     도착 표시는 **서랍에 담긴 것**만 센다. 그래서 근태표가 이미 대기 칸에 와 있어도
+     그 사업장은 「미도착」으로 보였고, 맨 위 「미정 N건」은 전체 합계라 어느 곳
+     것인지 알 수 없었다. 「들어온 것을 정확하게 확인」이 안 되던 첫째 까닭이다.
+     ⚠ 이것은 **짐작**이다 — 파일 이름에서 업체를 알아낸 것뿐이다. 그래서 담긴 것과
+     절대 같이 세지 않고 화면에서도 노란색으로 갈라 둔다.
+     ⚠ 짐작한 귀속월이 **다른 달**이면 이 달 줄에 붙이지 않는다 — 6월 자료를 8월
+     줄에 세면 그 줄이 또 거짓말을 한다. 달을 모르는 것은 붙인다(어느 달이든
+     담아야 할 일이라는 뜻은 같다). 어느 쪽이든 맨 위 「미정 N건」에는 그대로 남는다. */
+  const pendBy = {};
+  const pendBox = ctx.pending || {}, pendFix = ctx.pendTag || {};
+  Object.keys(pendBox).forEach(id => {
+    const t = Object.assign(guessTag(pendBox[id], cos), pendFix[id] || {});
+    if (!t.companyId) return;
+    const ms = S.monthKey(t.month);
+    if (ms && slot && ms !== slot) return;
+    pendBy[t.companyId] = (pendBy[t.companyId] || 0) + 1;
+  });
+
+  /* 그 사업장에 **무엇이** 왔나 — 「3장」만으로는 근태표인지 급여대장인지 모른다. */
+  const kindsOf = id => {
+    const node = arr[id] || {};
+    return S.KINDS.map(k => ({
+      label: k.label,
+      n: S.arrivalCount(node[S.KEEP], k.key) + (slot ? S.arrivalCount(node[slot], k.key) : 0)
+    })).filter(x => x.n > 0);
+  };
+
   let rows = list.map(c => {
     const mainP = mainOf[c.id] || null;
+    const node = arr[c.id] || {};
     return { id: c.id, name: c.name, arrived: cnt(c) > 0, count: cnt(c),
+      pend: pendBy[c.id] || 0,
+      /* 표까지 됐나 — 판독으로 값이 만들어질 때 도착 칸에 적어 둔 사람 수다.
+         값 자체는 사람 자리마다 따로 있어 여기서는 못 읽는다. */
+      vals: Number((slot && node[slot] && node[slot].vals) || 0),
+      kinds: kindsOf(c.id),
       owner: ownerOf[c.id] || '', mine: isMine(c),
       ownerUid: mainP ? mainP.uid : '', ownerName: mainP ? mainP.name : '' };
   });
@@ -1008,6 +1080,14 @@ function screenSites() {
      올라가 마흔 번째 업체를 볼 때 무슨 달을 보는지 알 수 없었다.
      ⚠ 설명은 **지우지 않고** 제목의 title 로 옮긴다 — 처음 쓰는 사람에게는
      여전히 필요한 말이다. */
+  /* 네 자리로 갈라 센다(대표 지시 2026-08-17) — 「온 곳 0」 하나로는 무엇을 해야
+     하는지 알 수 없었다. 표까지 된 곳 · 담겼지만 판독 전 · 대기 칸에 걸린 곳 ·
+     정말 아무것도 안 온 곳. ⚠ 대기는 짐작이라 담긴 것과 **따로** 센다. */
+  const st = v.rows.map(siteState);
+  const nDone = st.filter(s => s.key === 'done').length;
+  const nIn = st.filter(s => s.key === 'in').length;
+  const nWait = st.filter(s => s.key === 'wait').length;
+  const nNone = st.filter(s => s.key === 'none').length;
   const arrived = v.rows.filter(r => r.arrived).length;
   const tip = (App.sideView === 'all' || App.sideView === 'alllate'
     ? '업체관리에서 유형이 「급여」인 곳 · 계약중단·종료한 업체는 뺐습니다. ' : '')
@@ -1025,8 +1105,12 @@ function screenSites() {
     /* 제목도 왼쪽 칸과 **같은 말**이어야 한다 — 왼쪽이 「김보람 담당」이면 여기도
        그렇다. 예전에는 늘 「사업장 전체」라 적혀 있어 무엇을 보는지 어긋났다. */
     + '<b class="dtitle" title="' + esc(tip) + '">' + esc(v.title) + '</b>'
-    + '<span class="dkpi"><b>' + v.rows.length + '</b>곳 · 온 <b class="ok">' + arrived
-    + '</b> · 안 온 <b class="wa">' + (v.rows.length - arrived) + '</b></span>'
+    + '<span class="dkpi" title="표=판독까지 끝난 곳 · 담김=서랍에 있으나 판독 전 ·'
+    + ' 대기=왔지만 아직 안 담긴 곳(파일 이름으로 짐작) · 안 온=아무것도 없는 곳">'
+    + '<b>' + v.rows.length + '</b>곳 · 표 <b class="ok">' + nDone
+    + '</b> · 담김 <b class="ok">' + nIn
+    + '</b> · 대기 <b class="pd">' + nWait
+    + '</b> · 안 온 <b class="wa">' + nNone + '</b></span>'
     + '<span class="dacts">'
     + '<button class="btn sm" onclick="App.go(\'pending\')">📥 대기 칸</button>'
     + '<button class="btn sm" onclick="App.go(\'trash\')">🗑 휴지통</button>'
@@ -1073,8 +1157,13 @@ function screenSites() {
       + '\',' + (r.mine ? 'true' : 'false') + ',\'' + jsq(r.ownerUid) + '\',\'' + jsq(r.ownerName) + '\')">'
       + esc(r.name) + '</b>'
       + (v.showOwner && r.owner ? '<span class="sub" style="margin:0">' + esc(r.owner) + '</span>' : '')
-      + '<span class="chip" style="background:' + (r.arrived ? 'var(--ok)' : 'var(--warn)') + '">'
-      + (r.arrived ? '도착' : '미도착') + '</span>'
+      /* 무엇이 왔는지를 종류별로 적는다 — 「3장」만으로는 근태표인지 급여대장인지
+         모른다(대표 지시 2026-08-17). 왼쪽 좁은 칸에는 안 넣는다, 이름이 잘린다. */
+      + (r.kinds && r.kinds.length
+        ? '<span class="what">' + esc(r.kinds.map(k => k.label + ' ' + k.n).join(' · ')) + '</span>' : '')
+      + (function (s) {
+        return '<span class="stpill ' + s.key + '" title="' + esc(s.tip) + '">' + esc(s.label) + '</span>';
+      })(siteState(r))
       + '<span class="sub" style="margin:0">' + r.count + '장</span></div>').join('');
   } else {
     /* 빈 까닭을 갈라 말한다 — 「명단을 못 읽었다」와 「이 보기에 없다」는 다르다. */
@@ -2600,7 +2689,13 @@ function saveVals() {
         + '\n\n「확인」을 누르면 이대로 저장하고,'
         + ' 「취소」를 누르면 이번 판독은 한 줄도 저장하지 않습니다.')) return null;
     }
-    return S.saveValues(slot, rows, App.viewingUid);
+    /* 표가 몇 사람분인지를 **도착 칸에도** 적는다(대표 지시 2026-08-17) — 그래야
+       사업장 목록이 「담김 — 판독 전」과 「표 7명」을 가릴 수 있다.
+       ⚠ 이미 있던 줄과 이번 줄을 **함께** 센다. 이번 것만 세면 두 번째 서류를
+       읽었을 때 사람 수가 오히려 줄어든다. */
+    const co = App.companyId;
+    const people = S.valuePeopleCount(existing, co, rows);
+    return S.saveValues(slot, rows, App.viewingUid, { companyId: co, people: people });
   }).then(n => {
     if (n === null || n === undefined) return;
     App.readState = { status: 'idle', rows: [], err: '' };
@@ -3104,6 +3199,10 @@ function sideCtx() {
   return {
     companies: App.companies, dir: App.dir, owners: App.owners,
     arrivals: App.arrivals, shares: App.shares,
+    /* 대기 칸도 함께 넘긴다 — 「왔는데 아직 안 담긴 것」을 사업장 줄에 붙이려면
+       여기서 봐야 한다(대표 지시 2026-08-17 「들어온 것을 정확하게 확인」).
+       pendTag 는 사람이 고쳐 둔 이름표라 파일 이름 짐작보다 먼저다. */
+    pending: App.pending, pendTag: App.pendTag,
     myEmail: (App.me && App.me.email) || '', myUid: (App.me && App.me.uid) || '',
     month: App.month || thisMonth(), now: now,
     todayStart: new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(),
@@ -3221,7 +3320,9 @@ function colListHtml() {
       + ' onclick="openColCompany(\'' + jsq(r.id) + '\',\'' + jsq(r.name) + '\',' + (r.mine ? 'true' : 'false')
       + ',\'' + jsq(r.ownerUid) + '\',\'' + jsq(r.ownerName) + '\')">'
       + (m.canOrder ? '<span class="handle">⠿</span>' : '<span class="cno">' + (i + 1) + '</span>')
-      + '<span class="dot' + (r.arrived ? ' arr' : '') + '"></span>'
+      /* 왼쪽 칸은 좁아 글자를 더 넣을 수 없다 — **점 색깔**로만 갈라 준다.
+         표까지 됨(파랑) · 담김(초록) · 대기(노랑) · 미도착(회색). 뜻은 얹으면 나온다. */
+      + (function (s) { return '<span class="dot ' + s.key + '" title="' + esc(s.label) + '"></span>'; })(siteState(r))
       + '<span class="nm">' + esc(r.name) + '</span>'
       + (m.showOwner && r.owner ? '<span class="own" title="' + esc(r.owner) + '">' + esc(r.owner) + '</span>' : '')
       + '<span class="cnt">' + r.count + '</span>'
