@@ -562,6 +562,43 @@
       .then(function (s) { return s.val() || {}; });
   }
 
+  /* ══════ 한 업체를 여럿이 맡을 때 (대표 지시 2026-08-17) ══════
+     담기는 늘 **자기 자리**다. 그런데 서랍을 열면 자기 자리만 보여, 부담당이 그
+     업체를 열면 주담당이 담아 둔 것이 안 보였다 — 목록 줄에는 「3장」인데 서랍은
+     「0건」. 그 사람은 「아직 안 왔구나」 하고 업체에 다시 달라고 한다.
+     그래서 그 업체를 맡은 **모든 담당자 자리**를 모아 읽는다.
+     ⚠ 한 자리를 못 읽어도 나머지는 보여 준다 — 한 사람 것이 안 읽힌다고 서랍이
+     통째로 비면 자료가 사라진 것으로 읽힌다.
+     ⚠ 줄마다 **누가 담았는지**(_by)를 붙인다. 이것이 없으면 고칠 수 있는 것과
+     없는 것을 화면이 못 가른다 — 남의 자리 자료는 규칙이 쓰기를 막는다. */
+  function listSlotMany(slot, owners) {
+    var seen = {};
+    var list = (owners || []).filter(function (u) {
+      if (!u || seen[u]) return false;
+      seen[u] = 1; return true;
+    });
+    if (!list.length) return Promise.resolve({});
+    return Promise.all(list.map(function (uid) {
+      return listSlot(slot, uid).then(
+        function (v) { return { uid: uid, box: v || {} }; },
+        function (e) { return { uid: uid, box: {}, err: e }; });
+    })).then(function (parts) {
+      var out = {};
+      parts.forEach(function (p) {
+        Object.keys(p.box).forEach(function (id) {
+          var rec = p.box[id];
+          if (!rec || typeof rec !== 'object') return;
+          /* 자료 번호는 시각+무작위라 자리끼리 겹칠 일이 사실상 없다. 그래도
+             겹치면 **먼저 온 것을 지키고** 뒤엣것을 버리지 않도록 번호에 자리를
+             덧붙인다 — 조용히 한 건이 사라지는 것이 가장 나쁘다. */
+          var key = Object.prototype.hasOwnProperty.call(out, id) ? (p.uid + ':' + id) : id;
+          out[key] = Object.assign({}, rec, { _by: p.uid, _id: id });
+        });
+      });
+      return out;
+    });
+  }
+
   /* 보유기간(3년)이 지났는가 — 표시만 한다. 지우는 코드는 어디에도 없다.
      귀속월이 있는 자료는 그 달 말일부터, keep 자료(근로계약서 등)는 담은 날부터 센다. */
   function isExpired(rec, now) {
@@ -1391,6 +1428,7 @@
     claimSharedNow: claimSharedNow,
     claimSharedSafe: claimSharedSafe,
     listMyPending: listMyPending,
+    listSlotMany: listSlotMany,
     listSharedPending: listSharedPending,
     mailNote: mailNote,
     companyByEmail: companyByEmail,
