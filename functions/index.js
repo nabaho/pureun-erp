@@ -1114,3 +1114,91 @@ exports.recordBillingAlert = functions
     });
     return null;
   });
+
+
+// ══════════ 판독 대리인 — 열쇠를 브라우저에서 없앤다 (2026-08-17, 대표 지시) ══════════
+//
+// ⚠ 왜: 판독 열쇠가 실시간DB(`pucards/config/geminiKey`)에 평문으로 있고 규칙상
+//   **로그인한 모든 직원이 읽는다.** 게다가 `AQ.` 로 시작하는 AI 스튜디오 열쇠라
+//   구글 API 키 목록에 없어 **웹사이트 제한 같은 자물쇠를 채울 수도 없다**(확인 완료).
+//   브라우저에 두는 한 반드시 샌다. 서버가 대신 부르고 열쇠는 서버만 안다.
+//
+// ⚠ 서버는 **구글을 부르는 일만** 한다. 어떤 서류인지 가리고 자동 입력을 정하는
+//   판정(KINDS·autoOk)은 `js/pu-doc-read.js` 에 그대로 둔다 — 사진첩·명함첩·
+//   급여데이터함이 함께 쓰는 것이라 옮기면 두 벌이 되어 한쪽만 고쳐진다.
+const DR = require("./doc-read");
+
+// 판독은 **로그인한 직원이면** 할 수 있다.
+// ⚠ requireStaff 를 그대로 쓰지 않는다 — 그건 비밀번호 로그인만 받아서
+//   지문(패스키) 계정이 막힌다. 실시간DB 규칙과 **같은 기준**으로 맞춘다:
+//   password 또는 auth.token.passkey === true.
+async function requireReader(req) {
+  const match = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ""));
+  if (!match) {
+    const error = new Error("로그인 후 이용해 주세요.");
+    error.status = 401;
+    throw error;
+  }
+  const decoded = await getAuth().verifyIdToken(match[1], true);
+  const byPassword = decoded.firebase && decoded.firebase.sign_in_provider === "password";
+  if (!byPassword && decoded.passkey !== true) {
+    const error = new Error("회사 계정으로 로그인해 주세요.");
+    error.status = 403;
+    throw error;
+  }
+  return decoded;
+}
+
+/* 열쇠를 얻는다 — 서버 비밀이 먼저.
+   ⚠ 실시간DB 갈래는 **옮기는 동안만** 쓰는 임시 다리다. 네 앱(사진첩·명함첩·
+     enter·경력관리)을 다 옮기고 `firebase functions:secrets:set GEMINI_KEY` 를
+     넣은 뒤에는, DB 의 열쇠를 지우고 이 갈래도 지워야 완결된다.
+     남겨 두면 열쇠가 DB 에 그대로 있어 지금 문제가 안 풀린다. */
+async function readGeminiKey() {
+  const fromSecret = String(process.env.GEMINI_KEY || "").trim();
+  if (fromSecret) return fromSecret;
+  const db = getDatabase();
+  const paths = ["pucards/config/geminiKey", "data/app_config/geminiKey"];
+  for (const p of paths) {
+    try {
+      const snap = await db.ref(p).once("value");
+      const v = String(snap.val() || "").trim();
+      if (v) return v;
+    } catch (e) { /* 다음 자리로 */ }
+  }
+  return "";
+}
+
+exports.readDoc = functions
+  .region(MAIL_REGION)
+  .runWith({ timeoutSeconds: 120, memory: "512MB", secrets: ["GEMINI_KEY"] })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
+
+    // ★ 누가 부르는지 먼저 확인한다. 이 검사가 없으면 우리 열쇠가 공개 판독기가 된다.
+    try {
+      await requireReader(req);
+    } catch (e) {
+      res.status(e.status || 401).json({ ok: false, error: String(e.message || e) });
+      return;
+    }
+
+    const body = (req.body && typeof req.body === "object") ? req.body : {};
+    const v = DR.validate(body);
+    if (!v.ok) { res.status(400).json({ ok: false, error: v.error }); return; }
+
+    const key = await readGeminiKey();
+    if (!key) { res.status(503).json({ ok: false, error: "AI 키가 설정되지 않았습니다 — 관리자에게 알려 주세요." }); return; }
+
+    const r = await DR.callGemini(fetch, key, v.parts);
+    if (!r.ok) {
+      /* ⚠ 상태를 **그대로** 돌려준다. 브라우저의 재시도·모델 갈아타기 판단이
+         이 숫자를 보고 움직인다(429 면 잠시 뒤, 403 이면 곧바로 포기). */
+      res.status(r.status && r.status >= 400 ? r.status : 502)
+        .json({ ok: false, error: r.why || "AI가 응답하지 않습니다.", status: r.status || 0 });
+      return;
+    }
+    res.json({ ok: true, reply: r.json });
+  });
