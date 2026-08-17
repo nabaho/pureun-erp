@@ -31,7 +31,7 @@ function load(appState) {
     }, appState)) + ';',
     'App.render = function(){};',
     cut('esc'), cut('bannerHtml'), cut('jsq'), cut('thisMonth'), cut('canWrite'),
-    cut('monthShift'), cut('monthCount'), cut('monthAhead'), cut('monthStripHtml'),
+    cut('monthShift'), cut('monthCount'), cut('monthAhead'), "const WEEKDAY = ['일','월','화','수','목','금','토'];", cut('todayLabel'), cut('monthStripHtml'),
     cut('dropTargetNow'), cut('dropHintHtml'), cut('dropHasFiles'),
     'window.App = App; window.monthShift = monthShift; window.monthCount = monthCount;',
     'window.monthStripHtml = monthStripHtml; window.dropTargetNow = dropTargetNow;',
@@ -50,27 +50,28 @@ test('★ 달을 앞뒤로 옮긴다 — 해가 바뀌어도 맞다', () => {
   assert.equal(W.monthShift('2025-12', 1), '2026-01');
 });
 
-test('★ 월 줄에 최근 여섯 달이 나오고 고른 달이 맨 오른쪽이다', () => {
+/* 여섯 달을 늘어놓던 것을 **한 칸**으로 줄였다(대표 지시 2026-08-17
+   「월은 1개씩만 보면 된다」) — 줄이 길어 머리가 다시 두꺼워졌기 때문이다. */
+test('★ 달은 한 칸만 보인다 — 옆 달이 줄에 늘어서지 않는다', () => {
   const W = load({ month: '2026-08' });
   const h = W.monthStripHtml();
-  ['3월', '4월', '5월', '6월', '7월', '8월'].forEach(m =>
-    assert.ok(h.indexOf('>' + m + '<') >= 0, m + '이 없습니다'));
-  assert.ok(h.indexOf('9월') < 0, '고른 달보다 뒤가 보이면 안 됩니다');
-  assert.match(h, /class="mo on"[^>]*>8월/, '고른 달이 안 짚어졌습니다');
+  assert.equal((h.match(/class="mo/g) || []).length, 1, '★ 달 칸이 둘 이상입니다');
+  ['3월', '4월', '5월', '6월', '7월', '9월'].forEach(m =>
+    assert.equal(h.indexOf('>' + m + '<') >= 0, false, m + '이 남아 있습니다'));
 });
 
-/* 「없습니다」만 뜨던 자리에서 「5월·6월에는 있다」를 알 수 있어야 한다. */
-test('★ 그 달에 몇 장 있는지 숫자로 보인다 — 자료 있는 달은 따로 표시', () => {
+/* 달을 잘못 보고 있는 것이 모든 「자료가 없다」의 첫째 까닭이다 — 한 칸만
+   보이니 그 칸이 **몇 년 몇 월인지 · 몇 장인지**를 다 말해야 한다. */
+test('★ 그 한 칸이 몇 년 몇 월인지와 몇 장인지를 말한다', () => {
   const W = load({ month: '2026-08', arrivals: { co_1: {
     202605: { attend: { a: 1, b: 1 }, last: 1 },
-    202606: { ledger: { c: 1 }, last: 1 }
+    202608: { ledger: { c: 1 }, last: 1 }
   } } });
   assert.equal(W.monthCount('co_1', '2026-05'), 2);
-  assert.equal(W.monthCount('co_1', '2026-06'), 1);
-  assert.equal(W.monthCount('co_1', '2026-08'), 0);
+  assert.equal(W.monthCount('co_1', '2026-08'), 1);
   const h = W.monthStripHtml();
-  assert.match(h, /class="mo has"[^>]*>5월<span class="c">2</, '자료 있는 달이 안 갈립니다');
-  assert.match(h, /class="mo zero"[^>]*>4월/, '빈 달은 연하게 둡니다');
+  assert.match(h, /2026년 8월/, '해가 안 보이면 지난해 8월과 안 갈립니다');
+  assert.match(h, /<span class="c">1</, '장수가 없습니다');
 });
 
 test('평소에는 「직접 적기」 단추만, 누르면 적는 칸이 나온다', () => {
