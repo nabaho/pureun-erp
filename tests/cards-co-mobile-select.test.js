@@ -13,10 +13,19 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'pu-cards.html'), 'utf
 function loadToggleSelMode(){
   const at = source.indexOf('function toggleSelMode');
   const end = source.indexOf('\n}', at) + 2;
+  /* ★ 최종 전체 리뷰(2026-08-16) M4 — fab 을 켜고 끄는 규칙이 세 곳(toggleSelMode·
+     resetSelOnViewSwitch·render)에 흩어져 있으면 기업 상세 화면에서 편집을 껐을 때
+     「명함 추가」 카메라가 되살아난다. 규칙을 syncMobileChrome() 한 곳으로 모았으므로,
+     여기서도 스텁이 아니라 **진짜 소스**를 함께 넣어 fab 상태를 실제로 검증한다. */
+  const chromeAt = source.indexOf('function syncMobileChrome(){');
+  const chromeEnd = source.indexOf('\n}', chromeAt) + 2;
+  assert.ok(chromeAt > 0 && chromeEnd > chromeAt + 2, 'syncMobileChrome 을 찾지 못했습니다');
   const fabEl = { style:{} };
+  const sortEl = { style:{} };
   const ctx = {
     state: { selMode:false, sel:{a:1}, coSel:{b:1} },
-    $: id => id==='selLabel' ? { set textContent(v){ ctx._label=v; } } : (id==='fab' ? fabEl : null),
+    $: id => id==='selLabel' ? { set textContent(v){ ctx._label=v; } }
+           : (id==='fab' ? fabEl : (id==='sortBtn' ? sortEl : null)),
     /* toggleSelMode() 는 명함 쪽 재렌더도 함께 호출한다(renderSelbar/renderList) —
        이 테스트는 state.sel/state.coSel 이 비워지는지만 보므로 no-op 으로 흘려보낸다. */
     renderSelbar: () => {},
@@ -28,8 +37,9 @@ function loadToggleSelMode(){
     renderCoMobileList: () => { ctx._coRendered = (ctx._coRendered||0) + 1; }
   };
   vm.createContext(ctx);
-  vm.runInContext(source.slice(at, end), ctx);
+  vm.runInContext(source.slice(chromeAt, chromeEnd) + '\n' + source.slice(at, end), ctx);
   ctx._fab = fabEl;
+  ctx._sortBtn = sortEl;
   return ctx;
 }
 

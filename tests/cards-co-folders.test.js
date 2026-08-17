@@ -40,10 +40,21 @@ test('회사 상세에 폴더 이름을 보여준다', () => {
   assert.match(fn, /_coFolders\[o\.folder\]/);
 });
 
-test('openCoPage 가 폴더 목록도 불러온다', () => {
+/* ★ 최종 전체 리뷰(2026-08-16) C1 — 자료 준비가 openCoPage() 안에만 있어서 폰
+   진입로(openCoMobile)는 폴더를 영영 못 불러왔다. 이제 공용 진입로 enterCoView() 가
+   맡고 openCoPage() 는 그것을 거친다. 「폴더를 불러오는 길이 있다」를 그 공용 길에서
+   확인한다(두 진입로가 함께 지켜진다 — 실제 실행 증명은 cards-co-mobile-fix.test.js). */
+test('기업 상세로 들어가는 공용 길(enterCoView)이 폴더 목록도 불러온다', () => {
+  const at = source.indexOf('function enterCoView');
+  assert.ok(at > 0, 'enterCoView 를 찾지 못했습니다');
+  const fn = source.slice(at, source.indexOf('\n}', at));
+  assert.match(fn, /loadCoFolders\(/);
+});
+
+test('openCoPage 는 그 공용 길을 거친다', () => {
   const at = source.indexOf('function openCoPage');
   const fn = source.slice(at, at + 300);
-  assert.match(fn, /loadCoFolders\(/);
+  assert.match(fn, /enterCoView\(\)/);
 });
 
 /* 여기서부터는 putCoFolder·confirmNewCoFolder·renameCoFolder·deleteCoFolder·

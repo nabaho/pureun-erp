@@ -32,28 +32,44 @@ test('#search 의 oninput 이 onMobileSearchInput 을 쓴다', () => {
   assert.match(source.slice(at, end), /oninput="onMobileSearchInput\(this\.value\)"/);
 });
 
+/* ⚠ 이 자르기(setTab~toggleSort)에는 setTab·openCoMobile·resetSelOnViewSwitch 와 함께
+   syncMobileChrome·syncMobileSearchFor 도 들어 있다 — 셋이 한 덩어리로 움직여야 하는
+   화면 전환 코드라 일부러 나란히 둔다. 그 밖의 것(renderSelbar·enterCoView)은 스텁이다:
+   - renderSelbar 는 명함용 선택 띠(#selbar)를 감추는 한 곳(I1) — 여기서는 «불렀는지» 만 센다.
+     실제로 띠가 사라지는지는 tests/cards-co-mobile-fix.test.js 가 진짜 renderSelbar 로 본다.
+   - enterCoView 는 회사 자료 세 구독을 시작하는 공용 진입로(C1) — 마찬가지로 그쪽에서 본다. */
 function loadTabBlock(){
   const at = source.indexOf('function setTab(tab)');
   const end = source.indexOf('\nfunction toggleSort', at);
   assert.ok(at > 0 && end > at, 'setTab~toggleSort 사이를 찾지 못했습니다');
   const fabEl = { style:{} };
+  const sortEl = { style:{} };
+  const searchEl = { placeholder:'', value:'' };
   const ctx = {
-    state: { tab:'card', view:'list' },
-    calls: { toggled: {}, placeholder: '', rendered: 0 },
+    state: { tab:'card', view:'list', q:'', coQ:'' },
+    calls: { toggled: {}, rendered: 0, selbar: 0, entered: 0 },
     $: id => {
       if(id==='tabCard') return { classList: { toggle:(c,on)=>{ ctx.calls.toggled.tabCard = on; } } };
       if(id==='tabBiz')  return { classList: { toggle:(c,on)=>{ ctx.calls.toggled.tabBiz = on; } } };
       if(id==='tabCo')   return { classList: { toggle:(c,on)=>{ ctx.calls.toggled.tabCo = on; } } };
-      if(id==='search')  return { set placeholder(v){ ctx.calls.placeholder = v; }, get placeholder(){ return ctx.calls.placeholder; } };
+      if(id==='search')  return searchEl;
       if(id==='selLabel') return { set textContent(v){ ctx._label=v; } };
       if(id==='fab') return fabEl;
+      if(id==='sortBtn') return sortEl;
       return null;
     },
-    render: () => { ctx.calls.rendered++; }
+    render: () => { ctx.calls.rendered++; },
+    renderSelbar: () => { ctx.calls.selbar++; },
+    /* 진짜 enterCoView 는 state.view='co' 로 세우고 render() 뒤에 세 구독을 켠다 —
+       여기서는 이 블록 밖의 일이므로 그 두 가지 눈에 보이는 결과만 흉내 낸다. */
+    enterCoView: () => { ctx.calls.entered++; ctx.state.view='co'; ctx.render(); }
   };
   vm.createContext(ctx);
   vm.runInContext(source.slice(at, end), ctx);
   ctx._fab = fabEl;
+  ctx._sortBtn = sortEl;
+  ctx._search = searchEl;
+  Object.defineProperty(ctx.calls, 'placeholder', { get: () => searchEl.placeholder });
   return ctx;
 }
 
@@ -77,7 +93,9 @@ test('openCoMobile 은 골라 둔 명함·회사와 편집 모드를 비운다',
   assert.deepEqual(JSON.parse(JSON.stringify(c.state.coSel)), {});
   assert.equal(c.state.selMode, false);
   assert.equal(c._label, '편집');
-  assert.equal(c._fab.style.display, '');
+  /* ★ 최종 전체 리뷰(2026-08-16) M4 — 예전에는 여기서 fab 을 '' 로 «되살렸다».
+     ＋ 는 「명함 추가」 카메라라 회사 화면에서 누르면 엉뚱한 자리로 간다. 이제 감춘다. */
+  assert.equal(c._fab.style.display, 'none', '기업 상세 화면에서는 ＋ 카메라를 감춰야 합니다');
 });
 
 test('setTab 은 골라 둔 명함·회사와 편집 모드를 비운다', () => {
@@ -88,7 +106,7 @@ test('setTab 은 골라 둔 명함·회사와 편집 모드를 비운다', () =>
   assert.deepEqual(JSON.parse(JSON.stringify(c.state.coSel)), {});
   assert.equal(c.state.selMode, false);
   assert.equal(c._label, '편집');
-  assert.equal(c._fab.style.display, '');
+  assert.equal(c._fab.style.display, '', '명함 화면으로 돌아오면 ＋ 카메라가 다시 보여야 합니다');
 });
 
 test('openCoMobile 은 찾기 칸 안내문구를 회사용으로 바꾼다', () => {
@@ -197,15 +215,22 @@ function loadRenderBlock(){
   const syncAt = source.indexOf('function syncMobileTabs(){');
   const syncEnd = source.indexOf('\n}', syncAt) + 2;
   assert.ok(syncAt > 0 && syncEnd > syncAt + 2, 'syncMobileTabs 를 찾지 못했습니다');
+  /* render() 는 syncMobileChrome() 도 부른다(⇅ 정렬·＋ 카메라를 화면에 맞춰 감춘다) —
+     스텁으로 흘려보내지 않고 진짜 소스를 함께 넣어 사슬 전체를 검증한다. */
+  const chromeAt = source.indexOf('function syncMobileChrome(){');
+  const chromeEnd = source.indexOf('\n}', chromeAt) + 2;
+  assert.ok(chromeAt > 0 && chromeEnd > chromeAt + 2, 'syncMobileChrome 을 찾지 못했습니다');
   const renderAt = source.indexOf('function render(){');
   const renderEnd = source.indexOf('\n', renderAt);
   assert.ok(renderAt > 0 && renderEnd > renderAt, 'render 를 찾지 못했습니다');
 
-  const fns = source.slice(syncAt, syncEnd) + '\n' + source.slice(renderAt, renderEnd);
+  const fns = source.slice(syncAt, syncEnd) + '\n' + source.slice(chromeAt, chromeEnd)
+            + '\n' + source.slice(renderAt, renderEnd);
 
+  const fabEl = { style:{} }, sortEl = { style:{} };
   const ctx = {
     _quiet: false,
-    state: { tab:'card', view:'list' },
+    state: { tab:'card', view:'list', selMode:false },
     calls: { saveLastScreen:0, renderCoMobileList:0, renderSubbar:0, renderSidebar:0, renderList:0 },
     toggled: {},
     saveLastScreen: () => { ctx.calls.saveLastScreen++; },
@@ -217,11 +242,14 @@ function loadRenderBlock(){
       if(id==='tabCard') return { classList: { toggle:(c,on)=>{ ctx.toggled.tabCard = on; } } };
       if(id==='tabBiz')  return { classList: { toggle:(c,on)=>{ ctx.toggled.tabBiz = on; } } };
       if(id==='tabCo')   return { classList: { toggle:(c,on)=>{ ctx.toggled.tabCo = on; } } };
+      if(id==='fab')     return fabEl;
+      if(id==='sortBtn') return sortEl;
       return null;
     }
   };
   vm.createContext(ctx);
   vm.runInContext(fns, ctx);
+  ctx._fab = fabEl; ctx._sortBtn = sortEl;
   return ctx;
 }
 
