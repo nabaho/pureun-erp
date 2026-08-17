@@ -181,8 +181,29 @@ ok('사내기금에는 분류를 안 붙인다', src.includes("(f.fund_type==='�
 ok('분류 칸 유무는 표가 한 번에 정한다', src.includes('var showReg=list.some(')
   && src.includes('fundRow(f,i+1,mode,showReg)') && src.includes('function fundRow(f,no,mode,showReg)'));
 
-ok('지역기금을 분류로 한 겹 더 나눈다', src.includes("if(S.homeTab==='지역공동' && cur.length && S.homeView==='basic')")
-  && src.includes("S.homeReg=") && src.includes("chip('','전체',cur.length)"));
+ok('지역기금을 분류로 한 겹 더 나눈다', src.includes("if(S.homeTab==='지역공동' && S.homeView==='basic'){")
+  && src.includes("S.homeReg=") && src.includes("_chip('','전체',(G['지역공동']||[]).length)"));
+/* 고르는 곳(칩)과 나누는 곳(본문)이 각자 세면 「충남 12」인데 표는 11줄 같은 어긋남이 난다 */
+ok('칩과 본문이 같은 나눔(_rs·_rk)을 쓴다', src.includes('if(_rs && _rk.length>1 && cur.length){')
+  && src.includes('_rs[r].filter(function(f){ return cur.indexOf(f)>=0; })'));
+// 분류가 하나뿐이면 칩이 「전체 16 · 충남 16」으로 같은 말을 두 번 한다
+ok('분류가 하나뿐이면 칩을 안 그린다', src.includes('if(_rk.length>1){') && src.includes("} else S.homeReg='';"));
+
+/* ── 머리줄 한 줄 · 부드러운 알약 ── (대표 지시) */
+ok('보기 전환이 제 줄을 만들지 않는다',
+  /function homeViewBar\(\)\{[\s\S]{0,400}?return '<div class="segbar">/.test(src));
+ok('이름·개수·보기·분류가 한 줄에', src.includes("+_bar+homeViewBar()")
+  && src.includes("+(regBar?_bar+regBar:'')"));
+ok('분류 상자를 따로 만들지 않는다', !src.includes('<div class="panel" style="padding:8px 12px"><div class="segbar"'));
+/* 채운 파랑 → 옅은 바탕 위 흰 알약. 옛 규칙이 남아 있으면 새 것을 덮는다 */
+ok('알약형 세그먼트', src.includes('.segbar{display:inline-flex;gap:2px;border-radius:999px')
+  && src.includes('.segbar .seg.on{background:#fff;color:var(--acc2)'));
+ok('옛 채운-파랑 규칙은 지웠다', !/^\s*\.seg\.on\{background:var\(--acc\)/m.test(src)
+  && !src.includes('.seg-old{'));
+/* 한 줄에 많이 담으므로 좁아지면 접혀야 한다 — 980px 에서 화면 밖으로 넘치던 것을 브라우저로 봤다.
+   .row 는 넓은 화면에서 flex-wrap 이 없고 .search 는 min-width 220px 이라 안 줄어든다. */
+ok('좁아지면 머리줄이 접힌다', src.includes('style="gap:8px;flex-wrap:wrap"'));
+ok('검색칸이 줄어들 수 있다', src.includes('style="min-width:150px;max-width:260px;flex:1 1 150px"'));
 /* ⚠ 끌리는 단위가 «감싸는 상자»로 바뀌었다 — 선택자를 안 고치면 기금 현황만 목록에서 빠져
    순서 저장이 조용히 어긋난다(브라우저에서 실제로 끌어 확인했다). */
 ok('순서 저장이 감싸는 상자를 센다', src.includes("var NAV_SEL=':scope > [data-nav]';")
