@@ -409,6 +409,8 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
 <script src="js/pu-backup.js"></script>
 <script src="js/kcareer-scan.js"></script>
 <script src="js/kcareer-pusync.js"></script>
+<!-- AI 판독 호출기 — 열쇠는 회사 서버가 든다(브라우저는 모른다) -->
+<script src="js/pu-ai-call.js?v=1"></script>
   <!-- 프로그램 사이 이동 (공용 앱바) -->
   <script src="js/pu-appbar.js?v=3"></script>
   <!-- 로그아웃·사람 바뀜을 모든 프로그램에 퍼뜨린다 (2026-08-16) — 로그인 화면·공개 화면에는 넣지 않는다 -->
@@ -1100,8 +1102,13 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
         </div>
         <div class="tabpanel" id="tab-api"><div class="desc">Google Vision · Anthropic Claude · rhwp studioUrl</div>
           <div class="card">
-            <div class="api-row"><label>🟢 Gemini API 키 <span style="color:var(--teal);font-weight:600">(무료 · 추천 — OCR 여기로 처리)</span> <span style="color:var(--text-mute);font-size:11px">— aistudio.google.com에서 무료 발급</span></label>
-              <div style="display:flex;gap:6px"><input id="apiGM" type="password" class="tb-input" style="flex:1" placeholder="AIza... (Gemini 무료 키)" autocomplete="off"><button type="button" class="btn" onclick="toggleApiVis('apiGM',this)" style="flex-shrink:0;font-size:12px">👁 보기</button></div>
+            <!-- ⚠ 2026-08-17 — Gemini 열쇠 입력칸을 없앴다. 열쇠는 **회사 서버**가 든다.
+                 칸을 남겨 두면 직원이 다시 열쇠를 브라우저에 넣게 되고, 그러면
+                 꺼내 갈 수 있는 상태로 돌아간다(그게 이번에 고친 문제다). -->
+            <div class="api-row"><label>🟢 Gemini (OCR) <span style="color:var(--teal);font-weight:600">— 회사 서버가 처리</span></label>
+              <div style="font-size:12px;color:var(--text-mute);line-height:1.7;padding:2px 0">
+                열쇠를 넣을 것이 없습니다. <b>로그인하면 켜집니다.</b><br>
+                예전에는 여기에 열쇠를 넣었는데, 그러면 열쇠가 기기에 남아 누구나 꺼내 쓸 수 있었습니다.</div>
             </div>
             <div class="api-row"><label>Google Vision API 키 (월 1,000건 무료)</label>
               <div style="display:flex;gap:6px"><input id="apiGV" type="password" class="tb-input" style="flex:1" placeholder="AIza..." autocomplete="off"><button type="button" class="btn" onclick="toggleApiVis('apiGV',this)" style="flex-shrink:0;font-size:12px">👁 보기</button></div>
@@ -1372,6 +1379,10 @@ const LS={
 };
 /* ===== 코어: 데이터 계층 ===== */
 const NS='cm3_';
+/* ⚠ 2026-08-17 — 이 기기에 남아 있을 옛 Gemini 열쇠를 **켜자마자 지운다.**
+   설정 화면을 안 열어 보는 사람이 대부분이라, 거기서만 지우면 그대로 남는다.
+   판독은 이제 회사 서버가 열쇠를 들고 하므로 이 값은 쓰이지 않는다. */
+try{ LS.remove(NS+'gemini_key'); }catch(_){}
 const SEED = window.__SEED__ || {};
 /* 포털 공용 설정(data/app_config) — 대표가 포털 ⚙설정에서 한 번 넣으면 모든 앱이 함께 쓴다.
    이 기기에 직접 넣은 값이 있으면 그쪽이 우선. 값은 로그인 후 비동기로 채워지므로
@@ -3378,7 +3389,8 @@ async function cdReOcr(id){
   var db = get('certdoc'), r = db.find(function(x){ return x.id === id; });
   if(!r){ toast('증명서를 찾을 수 없습니다'); return; }
   if(_cdSrc(r) !== 'received'){ toast('직접 만든 증명서는 다시 읽기 대상이 아닙니다'); return; }
-  if(!getGeminiKey() && !getApiKey()){ toast('API 키가 필요합니다 — 위촉장 › ⋯ 더보기에서 키를 넣어주세요'); return; }
+  /* 2026-08-17: Gemini 는 열쇠가 아니라 로그인이 조건이다(서버가 열쇠를 든다) */
+  if(!aiReady() && !getApiKey()){ toast('로그인이 필요합니다 — 로그인하면 AI가 읽어 줍니다'); return; }
   toast('⏳ 증명서 읽는 중…');
   try{
     var got = await _cdFileBytes(r);
@@ -4111,14 +4123,15 @@ function openEditDrawer(page,id){ openForm(page,id,true); const ov=document.getE
 async function reOcrForm(){
   if(!_formCtx || !_formCtx.editId){ toast('저장된 항목에서 열어야 다시 읽기가 됩니다'); return; }
   var page=_formCtx.page, prompt=PAGE_OCR_PROMPT[page]; if(!prompt){ toast('이 화면은 다시읽기를 지원하지 않습니다'); return; }
-  var apiKey=getApiKey(),gvKey=getGVisionKey(),geminiKey=getGeminiKey();
-  if(!apiKey&&!gvKey&&!geminiKey){ toast('API 키가 필요합니다 — 환경설정 › API키 설정'); return; }
+  var apiKey=getApiKey(),gvKey=getGVisionKey();
+  /* 2026-08-17: Gemini 는 열쇠가 아니라 로그인이 조건이다(서버가 열쇠를 든다) */
+  if(!apiKey&&!gvKey&&!aiReady()){ toast('로그인이 필요합니다 — 또는 환경설정 › API키 설정'); return; }
   var f=await getFileAsync(_formCtx.editId);
   if(!f||!f.base64){ toast('첨부 원본이 없습니다 — 먼저 원본을 첨부하세요'); return; }
   var ext=(f.ext||'').toLowerCase(); if(['hwp','hwpx'].indexOf(ext)>=0){ toast('HWP 파일은 OCR로 읽을 수 없습니다'); return; }
   var isPDF=ext==='pdf', mt=isPDF?'application/pdf':ext==='png'?'image/png':'image/jpeg', b64=f.base64;
   toast('⏳ 원본을 다시 읽는 중...'); var parsed=null, err=null;
-  if(geminiKey){ var gj=await _geminiOCR(prompt,b64,mt); if(gj){ if(gj.parsed) parsed=gj.parsed; else if(gj.err) err=gj.err; } }
+  if(aiReady()){ var gj=await _geminiOCR(prompt,b64,mt); if(gj){ if(gj.parsed) parsed=gj.parsed; else if(gj.err) err=gj.err; } }
   if(!parsed && apiKey){ try{ var content=[isPDF?{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}}:{type:'image',source:{type:'base64',media_type:mt,data:b64}},{type:'text',text:prompt}];
     var resp=await kcFetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:1200,messages:[{role:'user',content}]})});
     if(resp.ok){ var rd=await resp.json(); var raw=rd.content.map(function(c){return c.text||'';}).join('').replace(/```json|```/g,'').trim(); var m=raw.match(/\{[\s\S]*\}/); if(m) parsed=JSON.parse(m[0]); } else { err='Claude '+resp.status; } }catch(e){ console.warn('reOCR claude',e); } }
@@ -4135,8 +4148,9 @@ async function reOcrForm(){
 /* 원본의 원문 텍스트를 추출해 선택 가능한 칸에 표시 → 드래그 복사 후 입력칸에 붙여넣기 */
 async function extractTextForm(){
   if(!_formCtx || !_formCtx.editId){ toast('저장된 항목에서 열어야 합니다'); return; }
-  var apiKey=getApiKey(),gvKey=getGVisionKey(),geminiKey=getGeminiKey();
-  if(!apiKey&&!gvKey&&!geminiKey){ toast('API 키가 필요합니다 — 환경설정 › API키 설정'); return; }
+  var apiKey=getApiKey(),gvKey=getGVisionKey();
+  /* 2026-08-17: Gemini 는 열쇠가 아니라 로그인이 조건이다(서버가 열쇠를 든다) */
+  if(!apiKey&&!gvKey&&!aiReady()){ toast('로그인이 필요합니다 — 또는 환경설정 › API키 설정'); return; }
   var box=document.getElementById('fsTextBox'); if(box) box.innerHTML='<div style="color:#999;font-size:12px;padding:8px">⏳ 원문 텍스트 추출 중...</div>';
   var f=await getFileAsync(_formCtx.editId);
   if(!f||!f.base64){ toast('첨부 원본이 없습니다'); if(box) box.innerHTML=''; return; }
@@ -4144,8 +4158,12 @@ async function extractTextForm(){
   var isPDF=ext==='pdf', mt=isPDF?'application/pdf':ext==='png'?'image/png':'image/jpeg', b64=f.base64;
   var tp='이 문서에 적힌 모든 글자를 원문 그대로, 줄바꿈 유지하며 빠짐없이 출력하세요. 설명·요약 없이 문서 텍스트만.';
   var text='';
-  if(geminiKey){ try{ var r=await kcFetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+encodeURIComponent(geminiKey),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:tp},{inline_data:{mime_type:mt,data:b64}}]}],generationConfig:{temperature:0,maxOutputTokens:2048}})});
-    if(r.ok){ var d=await r.json(); text=((((d.candidates||[])[0]||{}).content||{}).parts||[]).map(function(p){return p.text||'';}).join(''); } }catch(e){ console.warn('gemini text',e); } }
+  /* Gemini 는 서버가 부른다(2026-08-17) — 열쇠가 브라우저에 없다.
+     ⚠ 최대 길이 2048 은 그대로다. 원문 통째로 뽑는 자리라 짧으면 뒤가 잘린다. */
+  if(aiReady()){ try{
+    var reply=await PuAiCall.ask([{text:tp},{inline_data:{mime_type:mt,data:b64}}],
+      { auth: firebase.auth(), fetch: kcFetch, generationConfig:{temperature:0,maxOutputTokens:2048} });
+    text=PuAiCall.textOf(reply); }catch(e){ console.warn('gemini text',e); } }
   if(!text && gvKey && !isPDF){ try{ var vr=await kcFetch('https://vision.googleapis.com/v1/images:annotate?key='+encodeURIComponent(gvKey),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requests:[{image:{content:b64},features:[{type:'DOCUMENT_TEXT_DETECTION'}]}]})});
     if(vr.ok){ var vd=await vr.json(); text=(vd.responses&&vd.responses[0]&&vd.responses[0].fullTextAnnotation&&vd.responses[0].fullTextAnnotation.text)||''; } }catch(e){} }
   if(!text && apiKey){ try{ var content=[isPDF?{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}}:{type:'image',source:{type:'base64',media_type:mt,data:b64}},{type:'text',text:tp}];
@@ -4708,15 +4726,25 @@ function kcFetch(url, opts, ms){
 }
 function getApiKey(){ return LS.get(NS+'api_key')||''; }
 function getGVisionKey(){ return LS.get(NS+'gvision_key')||''; }
-function getGeminiKey(){ return LS.get(NS+'gemini_key') || PU_CFG.geminiKey || ''; }
-/* Gemini(무료) 멀티모달 OCR — 이미지/PDF를 직접 읽어 JSON 반환 */
-async function _geminiOCR(prompt,b64,mt){ var key=getGeminiKey(); if(!key) return null;
-  try{ var body={contents:[{parts:[{text:prompt},{inline_data:{mime_type:mt,data:b64}}]}],generationConfig:{temperature:0,maxOutputTokens:1500}};
-    var r=await kcFetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+encodeURIComponent(key),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if(!r.ok){ console.warn('Gemini',r.status,await r.text().catch(function(){return'';})); return {err:'Gemini '+r.status}; }
-    var d=await r.json(); var raw=((((d.candidates||[])[0]||{}).content||{}).parts||[]).map(function(p){return p.text||'';}).join('').replace(/```json|```/g,'').trim();
+/* ⚠ 2026-08-17 — **AI 열쇠를 브라우저에서 뺐다.** 서버(readDoc)가 열쇠를 든다.
+   예전에는 이 기기(LS)나 포털 설정(PU_CFG.geminiKey)에서 가져왔는데, 포털 자리는
+   규칙상 **로그인한 모든 직원이 읽는다** — 꺼내 개인 용도로 써도 요금은 회사에 붙었다.
+   게다가 AI 스튜디오 열쇠라 자물쇠(웹사이트 제한)를 채울 방법도 없었다.
+   ⚠ 「열쇠가 있나」 대신 **「로그인했나」**로 판정한다. 열쇠 판정을 남겨 두면
+     그 코드가 다시 열쇠를 읽어 온다. */
+function aiReady(){
+  try { return !!(firebase.auth && firebase.auth() && firebase.auth().currentUser); }
+  catch(_){ return false; }
+}
+/* Gemini(무료) 멀티모달 OCR — 이미지/PDF를 직접 읽어 JSON 반환.
+   ⚠ 프롬프트·온도·최대 길이(1500)는 그대로다 — 바꾸면 이미 읽힌 서류와 답이 갈린다. */
+async function _geminiOCR(prompt,b64,mt){ if(!aiReady()) return null;
+  try{
+    var reply=await PuAiCall.ask([{text:prompt},{inline_data:{mime_type:mt,data:b64}}],
+      { auth: firebase.auth(), fetch: kcFetch, generationConfig:{temperature:0,maxOutputTokens:1500} });
+    var raw=PuAiCall.textOf(reply);
     var m=raw.match(/\{[\s\S]*\}/); return m?{parsed:JSON.parse(m[0])}:null;
-  }catch(e){ console.warn('Gemini',e); return null; } }
+  }catch(e){ console.warn('Gemini',e); return (e&&e.status)?{err:'Gemini '+e.status}:null; } }
 const PAGE_OCR_PROMPT={
   certdoc:`이 문서(실적증명서·경력증명서·참여확인서·수행확인서)를 아주 꼼꼼히 읽고 JSON으로만 답하세요. 날짜는 문서에 적힌 그대로 정확히(YYYY.MM.DD), 추측하지 마세요.\n{"kind":"실적증명서/경력증명서/참여확인/용역수행확인 중 해당","issuer":"이 증명서를 발급해준 기관의 전체 명칭(직인·발급기관란)","date":"발급일 YYYY.MM.DD","coverage":"증명하는 기간(수행기간·경력기간). 예: 2019.01.01 ~ 2021.12.31 또는 2024","usage":"용도·제출처가 적혀 있으면"}\n※ 발급기관은 증명서를 떼어준 곳입니다(신청인이 아님). 없는 항목만 빈 문자열. 다른 말 없이 JSON만.`,
   wiccok:`이 문서(위촉장·협약서·임명장)를 아주 꼼꼼히 읽고 JSON으로만 답하세요. 문서에 적힌 날짜를 그대로 정확히 옮기고, 추측하거나 지어내지 마세요. 날짜는 반드시 YYYY.MM.DD 형식으로.\n{"docType":"위촉장/협약서/임명장 중 해당","org":"발급·위촉 기관의 전체 명칭","issuer":"위촉하는 사람·기관장 직함(예: ○○원장·○○회장·○○지사장, 서명자)","titleVal":"직책 또는 위촉 내용(예: 컨설턴트, 위원, 전담노무사)","issueDate":"발급일(문서에 적힌 날짜) YYYY.MM.DD","period":"위촉기간이 있으면 시작일 ~ 종료일 (YYYY.MM.DD ~ YYYY.MM.DD)","year":"발급연도 YYYY","note":"문서번호(제○호 등)"}\n※ 발급일과 위촉기간(시작·종료)은 서로 다를 수 있으니 각각 정확히 구분해 읽으세요. 없는 항목만 빈 문자열. 다른 말 없이 JSON만.`,
@@ -4760,8 +4788,9 @@ async function saveOCRRecord(page,parsed,file,ext,b64){
   return recId; }
 async function ocrDrop(files,page){ files=[...files]; if(!files.length) return;
   files.sort(function(a,b){ return String(a.name).localeCompare(String(b.name),'ko',{numeric:true}); }); /* 여러 개 올릴 때 파일명(날짜) 순서대로 처리 */
-  const apiKey=getApiKey(),gvKey=getGVisionKey(),geminiKey=getGeminiKey();
-  if(!apiKey&&!gvKey&&!geminiKey){ toast('API 키 필요 — 환경설정→API키 설정'); return; }
+  const apiKey=getApiKey(),gvKey=getGVisionKey();
+  /* 2026-08-17: Gemini 는 열쇠가 아니라 로그인이 조건이다(서버가 열쇠를 든다) */
+  if(!apiKey&&!gvKey&&!aiReady()){ toast('로그인이 필요합니다 — 또는 환경설정→API키 설정'); return; }
   let done=0,failed=0,apiErr=null;
   for(const file of files){ try{
     const ext=(file.name.split('.').pop()||'').toLowerCase();
@@ -4771,7 +4800,7 @@ async function ocrDrop(files,page){ files=[...files]; if(!files.length) return;
     const isPDF=ext==='pdf', mt=isPDF?'application/pdf':ext==='png'?'image/png':'image/jpeg';
     const prompt=PAGE_OCR_PROMPT[page]||PAGE_OCR_PROMPT.wiccok; let parsed=null;
     if(['hwp','hwpx'].includes(ext)){ const fb=quickParseFilename(file.name,page); if(fb){ await saveOCRRecord(page,fb,file,ext,b64); done++; toast('📝 HWP는 OCR 불가 — 파일명 등록+첨부'); } else failed++; continue; }
-    if(!parsed && geminiKey){ const gj=await _geminiOCR(prompt,b64,mt); if(gj){ if(gj.parsed) parsed=gj.parsed; else if(gj.err) apiErr=gj.err; } }
+    if(!parsed && aiReady()){ const gj=await _geminiOCR(prompt,b64,mt); if(gj){ if(gj.parsed) parsed=gj.parsed; else if(gj.err) apiErr=gj.err; } }
     if(gvKey&&!isPDF){ try{ const r=await kcFetch(`https://vision.googleapis.com/v1/images:annotate?key=${gvKey}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requests:[{image:{content:b64},features:[{type:'DOCUMENT_TEXT_DETECTION'}]}]})});
       if(r.ok){ const d=await r.json(); const text=d.responses?.[0]?.fullTextAnnotation?.text||d.responses?.[0]?.textAnnotations?.[0]?.description||'';
         if(text&&apiKey){ const resp=await kcFetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:1200,messages:[{role:'user',content:`다음 OCR 텍스트를 분석하세요:\n${text.slice(0,2000)}\n\n${prompt}`}]})});
@@ -4869,8 +4898,9 @@ function toggleApiVis(id,btn){ const inp=document.getElementById(id); if(!inp) r
 async function testApiConnection(){
   const box=document.getElementById('apiTestResult'); if(!box) return;
   box.style.display='block'; box.innerHTML='<div style="color:var(--text-mute);font-size:12px">⏳ 테스트 중...</div>';
-  const results=[]; const apiKey=getApiKey(), gvKey=getGVisionKey(), geminiKey=getGeminiKey();
-  if(!apiKey&&!gvKey&&!geminiKey){ box.innerHTML='<div style="color:var(--red);font-size:12px">⚠️ API 키가 없습니다. 위에 입력 후 저장하세요.</div>'; return; }
+  const results=[]; const apiKey=getApiKey(), gvKey=getGVisionKey();
+  /* Gemini 는 이제 열쇠가 아니라 **로그인**이 조건이다(2026-08-17 — 서버가 열쇠를 든다) */
+  if(!apiKey&&!gvKey&&!aiReady()){ box.innerHTML='<div style="color:var(--red);font-size:12px">⚠️ 쓸 수 있는 AI가 없습니다. 로그인했는지 확인하거나, 위에 다른 API 키를 넣고 저장하세요.</div>'; return; }
   // 프로토콜 체크
   const isFile=location.protocol==='file:';
   if(isFile){ box.innerHTML='<div style="color:var(--red);font-size:13px">🚫 <b>file://로 열려 있어 API 호출이 차단됩니다.</b><br><span style="font-size:12px">아래 방법 중 하나로 다시 여세요:<br>① 터미널에서 <code>python -m http.server 8080</code> → <a href="http://localhost:8080/kcareer.html" target="_blank">localhost:8080</a><br>② Netlify·GitHub Pages 배포</span></div>'; return; }
@@ -4886,21 +4916,32 @@ async function testApiConnection(){
     if(r.ok){ results.push('✅ Google Vision API 연결 성공'); }
     else { const e=await r.json(); results.push('❌ Vision API: '+(e.error?.message||r.status)); }
   }catch(e){ results.push('❌ Vision API: '+(e.message||e)); } }
-  // Gemini(무료) API 테스트
-  if(geminiKey){ try{
-    const r=await kcFetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+encodeURIComponent(geminiKey),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:'ok'}]}],generationConfig:{maxOutputTokens:5}})});
-    if(r.ok){ results.push('✅ Gemini(무료) 연결 성공'); }
-    else { const e=await r.json().catch(function(){return{};}); results.push('❌ Gemini: '+((e.error&&e.error.message)||r.status)); }
-  }catch(e){ results.push('❌ Gemini: '+(e.message||e)); } }
+  /* Gemini — 이제 **회사 서버**를 시험한다(2026-08-17). 열쇠는 서버가 든다.
+     ⚠ 사진 없이 글자만 보내면 서버가 400(사진이 없습니다)으로 돌려보낸다 —
+       그건 **서버까지 잘 닿았다는 뜻**이라 성공으로 친다. */
+  if(aiReady()){ try{
+    await PuAiCall.ask([{text:'ok'}], { auth: firebase.auth(), fetch: kcFetch, generationConfig:{maxOutputTokens:5} });
+    results.push('✅ Gemini(회사 서버) 연결 성공');
+  }catch(e){
+    const s=e&&e.status;
+    if(s===400) results.push('✅ Gemini(회사 서버) 연결 성공');
+    else if(s===401||s===403) results.push('❌ Gemini: 로그인이 만료됐습니다 — 새로고침 후 다시 로그인');
+    else if(s===503) results.push('❌ Gemini: 서버에 AI 열쇠가 없습니다 — 관리자에게 알려 주세요');
+    else results.push('❌ Gemini: '+((e&&e.message)||e));
+  } } else results.push('⚪ Gemini: 로그인하면 켜집니다');
   box.innerHTML=results.map(r=>`<div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--border)">${r}</div>`).join('');
 }
-function initApiTab(){ const gv=document.getElementById('apiGV'),an=document.getElementById('apiAN'),rh=document.getElementById('apiRH'),st=document.getElementById('apiStat'),gm=document.getElementById('apiGM'); if(!gv) return;
-  gv.value=LS.get(NS+'gvision_key')||''; an.value=LS.get(NS+'api_key')||''; rh.value=LS.get(NS+'rhwp_url')||rhwpStudioUrl(); if(gm) gm.value=LS.get(NS+'gemini_key')||'';
+/* ⚠ 2026-08-17 — Gemini 열쇠(apiGM)를 다루던 줄을 모두 걷어냈다.
+   그 열쇠는 이제 **회사 서버**가 든다.
+   (이 기기에 남은 옛 열쇠는 **켜자마자** 지운다 — NS 선언 바로 아래. 설정 화면을
+    안 열어 보는 사람이 대부분이라 여기서 지우면 늦다.) */
+function initApiTab(){ const gv=document.getElementById('apiGV'),an=document.getElementById('apiAN'),rh=document.getElementById('apiRH'),st=document.getElementById('apiStat'); if(!gv) return;
+  gv.value=LS.get(NS+'gvision_key')||''; an.value=LS.get(NS+'api_key')||''; rh.value=LS.get(NS+'rhwp_url')||rhwpStudioUrl();
   // 로드 시 항상 마스킹 상태 유지
-  gv.type='password'; an.type='password'; if(gm) gm.type='password';
-  const badge=()=>st.textContent=((gm&&gm.value)?'🟢 Gemini(무료) 연동':an.value?'🟢 Claude 연동':gv.value?'🟡 Vision만':'🔴 미설정');
+  gv.type='password'; an.type='password';
+  const badge=()=>st.textContent=(aiReady()?'🟢 Gemini(회사 서버) 연동':an.value?'🟢 Claude 연동':gv.value?'🟡 Vision만':'🔴 미설정');
   badge();
-  document.getElementById('apiSave').onclick=()=>{ LS.set(NS+'gvision_key',gv.value.trim()); LS.set(NS+'api_key',an.value.trim()); LS.set(NS+'rhwp_url',rh.value.trim()); if(gm) LS.set(NS+'gemini_key',gm.value.trim()); badge(); if(typeof fbSaveApiKeys==='function') fbSaveApiKeys(); toast('API 키 저장됨 (클라우드에도 보관 — 업데이트해도 유지)'); };
+  document.getElementById('apiSave').onclick=()=>{ LS.set(NS+'gvision_key',gv.value.trim()); LS.set(NS+'api_key',an.value.trim()); LS.set(NS+'rhwp_url',rh.value.trim()); badge(); if(typeof fbSaveApiKeys==='function') fbSaveApiKeys(); toast('API 키 저장됨 (클라우드에도 보관 — 업데이트해도 유지)'); };
 }
 
 /* ===== 환경설정: 개인정보·계좌·데이터·백업 ===== */
@@ -5808,16 +5849,20 @@ function fbLogoutConfirm(){
   fbLogout(); }
 function fbGatherLS(){ var o={}; for(var i=0;i<localStorage.length;i++){ var k=localStorage.key(i); if(!k||k.indexOf(NS)!==0) continue; var bare=k.slice(NS.length); if(FB_SKIP.indexOf(bare)>=0) continue; o[bare]=localStorage.getItem(k); } return o; }
 function fbDeviceLabel(){ return (/Mobile|Android|iPhone/i.test(navigator.userAgent)?'폰':'PC'); }
-/* API 키 개인 클라우드 보관 (kcareer/{uid}/_secrets — 본인 계정만 열람, 업데이트·기기변경에도 유지) */
+/* API 키 개인 클라우드 보관 (kcareer/{uid}/_secrets — 본인 계정만 열람, 업데이트·기기변경에도 유지)
+   ⚠ 2026-08-17 — Gemini 열쇠는 여기서 뺐다. 이제 **회사 서버**가 든다.
+     빼기만 하면 예전에 올려 둔 값이 클라우드에 그대로 남으므로 **지운다**(아래 null).
+     남겨 두면 기기를 바꿀 때마다 되살아나 브라우저로 다시 내려온다. */
 function fbSaveApiKeys(){ if(typeof fbDb==='undefined'||!fbDb||!fbUid) return;
-  try{ fbDb.ref('kcareer/'+fbUid+'/_secrets').set({ api_key:LS.get(NS+'api_key')||'', gvision_key:LS.get(NS+'gvision_key')||'', gemini_key:LS.get(NS+'gemini_key')||'', rhwp_url:LS.get(NS+'rhwp_url')||'', at:Date.now() }).catch(function(){}); }catch(e){} }
+  try{ fbDb.ref('kcareer/'+fbUid+'/_secrets').set({ api_key:LS.get(NS+'api_key')||'', gvision_key:LS.get(NS+'gvision_key')||'', gemini_key:null, rhwp_url:LS.get(NS+'rhwp_url')||'', at:Date.now() }).catch(function(){}); }catch(e){} }
 function fbLoadApiKeys(){ if(typeof fbDb==='undefined'||!fbDb||!fbUid) return;
   try{ fbDb.ref('kcareer/'+fbUid+'/_secrets').once('value').then(function(s){ var v=s.val(); if(!v) return; var restored=false;
+    /* 옛 Gemini 열쇠가 남아 있으면 **되살리지 않고 지운다.** */
+    if(v.gemini_key){ try{ fbDb.ref('kcareer/'+fbUid+'/_secrets/gemini_key').remove().catch(function(){}); }catch(_){} }
     if(v.api_key && !LS.get(NS+'api_key')){ LS.set(NS+'api_key', v.api_key); restored=true; }
     if(v.gvision_key && !LS.get(NS+'gvision_key')){ LS.set(NS+'gvision_key', v.gvision_key); restored=true; }
-    if(v.gemini_key && !LS.get(NS+'gemini_key')){ LS.set(NS+'gemini_key', v.gemini_key); restored=true; }
     if(v.rhwp_url && !LS.get(NS+'rhwp_url')){ LS.set(NS+'rhwp_url', v.rhwp_url); }
-    if(restored){ var an=document.getElementById('apiAN'); if(an) an.value=LS.get(NS+'api_key')||''; var gv=document.getElementById('apiGV'); if(gv) gv.value=LS.get(NS+'gvision_key')||''; var gm=document.getElementById('apiGM'); if(gm) gm.value=LS.get(NS+'gemini_key')||''; toast('API 키를 클라우드에서 복원했습니다'); }
+    if(restored){ var an=document.getElementById('apiAN'); if(an) an.value=LS.get(NS+'api_key')||''; var gv=document.getElementById('apiGV'); if(gv) gv.value=LS.get(NS+'gvision_key')||''; toast('API 키를 클라우드에서 복원했습니다'); }
   }).catch(function(){}); }catch(e){} }
 function fbPush(){ if(!fbUid){ toast('먼저 로그인하세요'); return; } if(!fbDb) return;
   var at=Date.now(); fbSetBase(at); var data=fbGatherLS(); var payload={ls:data, at:at, device:fbDeviceLabel(), keys:Object.keys(data).length};

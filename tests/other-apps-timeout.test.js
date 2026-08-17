@@ -37,14 +37,36 @@ function 남은부름(src, wrapper){
   return left;
 }
 
+/* ⚠ 2026-08-17 — 여기서 「몇 곳」인지 **개수를 못 박았다가** 판독을 서버로 옮길 때
+   깨졌다. 부름이 공용 호출기로 옮겨 가면서 수가 줄었을 뿐, 시간 제한은 그대로
+   붙어 있었다(감싸개를 호출기에 넘겨 준다). 고침이 옳았는데 검사가 막은 것이다.
+   그래서 개수 대신 **「시간 제한 없는 부름이 남았나」**만 본다 — 그게 이 검사의 뜻이다.
+   감싸개를 아예 안 쓰게 되는 것도 막아야 하므로 최소 한 곳은 쓰는지만 확인한다. */
+function 감싸개쓰나(src, wrapper){
+  const decl = src.indexOf('function ' + wrapper + '(');
+  const re = new RegExp(wrapper + '\\b', 'g');
+  let m, n = 0;
+  while((m = re.exec(src))) if(m.index !== decl + 'function '.length) n++;
+  return n;
+}
+
 test('★ 경력관리에 시간 제한 없는 바깥 부름이 없다', () => {
   assert.deepEqual(남은부름(kc, 'kcFetch'), []);
-  assert.equal((kc.match(/await kcFetch\(/g) || []).length, 11, 'OCR·AI 열한 곳');
+  assert.ok(감싸개쓰나(kc, 'kcFetch') >= 2, '감싸개를 아무 데서도 안 쓴다');
 });
 
 test('★ 명함첩에 시간 제한 없는 바깥 부름이 없다', () => {
   assert.deepEqual(남은부름(pc, 'pcFetch'), []);
-  assert.equal((pc.match(/await pcFetch\(/g) || []).length, 3);
+  assert.ok(감싸개쓰나(pc, 'pcFetch') >= 2, '감싸개를 아무 데서도 안 쓴다');
+});
+
+/* 공용 호출기에도 감싸개를 넘겨야 시간 제한이 따라간다 —
+   호출기 안에는 시간 제한이 없고, 넘겨받은 fetch 를 그대로 쓴다. */
+test('★ 서버 판독을 부를 때도 감싸개를 넘긴다', () => {
+  assert.match(kc, /PuAiCall\.ask\([\s\S]{0,200}?fetch:\s*kcFetch/,
+    '맨 fetch 로 부르면 답이 안 올 때 화면이 굳는다');
+  assert.match(pc, /PuAiCall\.ask\([\s\S]{0,200}?fetch:\s*pcFetch/,
+    '맨 fetch 로 부르면 답이 안 올 때 화면이 굳는다');
 });
 
 test('앞서 고친 두 앱도 그대로다', () => {
@@ -119,10 +141,19 @@ function sandbox(src, name, waitVar){
 
 /* ── 앞 script 에 둔 것이 뒤 script 에서도 쓰이는가 ── */
 test('★ 명함첩 감싸개는 부름들보다 «앞» 에 있다 (뒤 script 에서도 쓰려면)', () => {
+  /* ⚠ 예전에는 부르는 자리를 **글자 그대로** 적어 두었는데, 그 중 하나가
+     구글을 직접 부르는 줄이었다. 2026-08-17 에 판독을 서버로 옮기며 그 줄이
+     없어지자 이 검사가 「없다」고 깨졌다 — 고침이 옳았는데 검사가 막았다.
+     그래서 자리를 못 박지 않고 **부르는 자리를 전부 찾아** 앞뒤만 본다. */
   const at = pc.indexOf('function pcFetch(');
-  assert.ok(at > 0);
-  ['const res = await pcFetch(url);', 'await pcFetch(`https://generativelanguage'].forEach(function(t){
-    assert.ok(pc.indexOf(t) > at, t.slice(0, 40) + ' 보다 먼저 선언돼야 한다');
+  assert.ok(at > 0, 'pcFetch 선언을 찾지 못했다');
+  const uses = [];
+  const re = /pcFetch\b/g;
+  let m;
+  while ((m = re.exec(pc))) if (m.index !== at + 'function '.length) uses.push(m.index);
+  assert.ok(uses.length >= 2, '쓰는 자리가 너무 적다(' + uses.length + ') — 감싸개를 안 쓰게 된 것 아닌가');
+  uses.forEach(function (i) {
+    assert.ok(i > at, pc.slice(i - 40, i + 20).trim() + ' 보다 먼저 선언돼야 한다');
   });
 });
 

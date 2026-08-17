@@ -53,13 +53,27 @@ function validate(body) {
   if (size > MAX_BODY_BYTES) {
     return { ok: false, error: "사진이 너무 큽니다 — 장수를 나눠 판독해 주세요" };
   }
-  return { ok: true, parts: parts };
+  return { ok: true, parts: parts, cfg: body.generationConfig };
 }
 
-/* 구글에 보낼 몸통. 브라우저가 만들던 것과 **글자 그대로 같아야** 한다 —
-   temperature 0 이 빠지면 같은 사진에 다른 답이 나온다. */
-function geminiBody(parts) {
-  return { contents: [{ parts: parts }], generationConfig: { temperature: 0 } };
+/* 부르는 쪽이 정할 수 있는 값 — **여기 적힌 것만** 받는다.
+   ⚠ 통째로 넘기면 부르는 쪽이 마음대로 값을 키울 수 있고 그것이 곧 요금이다.
+     특히 maxOutputTokens 는 낸 만큼 돈이라 위를 막는다. */
+const MAX_OUTPUT_TOKENS = 8192;
+
+/* 구글에 보낼 몸통.
+   ⚠ temperature 는 **0 이 기본**이다 — 빠지면 같은 사진에 다른 답이 나온다.
+   ⚠ maxOutputTokens 는 부르는 쪽이 정할 수 있다 — 경력관리가 1500 을 쓴다.
+     안 받으면 긴 문서에서 답이 잘린다. */
+function geminiBody(parts, cfg) {
+  const g = { temperature: 0 };
+  const c = (cfg && typeof cfg === "object") ? cfg : {};
+  if (typeof c.temperature === "number" && c.temperature >= 0 && c.temperature <= 2) {
+    g.temperature = c.temperature;
+  }
+  const mot = Number(c.maxOutputTokens);
+  if (Number.isFinite(mot) && mot > 0) g.maxOutputTokens = Math.min(Math.round(mot), MAX_OUTPUT_TOKENS);
+  return { contents: [{ parts: parts }], generationConfig: g };
 }
 
 function modelUrl(model, key) {
@@ -81,8 +95,8 @@ function safeReason(json, key) {
 /* 모델을 차례로 시도한다 — 브라우저가 하던 것과 같은 규칙.
    404(모델이 없어짐)·429(그 모델 한도 없음)면 다음 모델로,
    401·403(열쇠 문제)은 모델을 바꿔도 같으므로 곧바로 포기한다. */
-async function callGemini(fetchFn, key, parts, waits) {
-  const body = JSON.stringify(geminiBody(parts));
+async function callGemini(fetchFn, key, parts, waits, cfg) {
+  const body = JSON.stringify(geminiBody(parts, cfg));
   const init = { method: "POST", headers: { "Content-Type": "application/json" }, body: body };
   const pauses = waits || [2000, 5000];
   let last = { status: 0, why: "" };
@@ -116,4 +130,7 @@ async function callGemini(fetchFn, key, parts, waits) {
   return { ok: false, status: last.status, why: last.why };
 }
 
-module.exports = { MODELS, MAX_BODY_BYTES, isTransient, validate, geminiBody, modelUrl, safeReason, callGemini };
+module.exports = {
+  MODELS, MAX_BODY_BYTES, MAX_OUTPUT_TOKENS,
+  isTransient, validate, geminiBody, modelUrl, safeReason, callGemini
+};

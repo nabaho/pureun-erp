@@ -17,6 +17,8 @@
 <script src="js/pu-version.js"></script>
 <script src="js/pu-backup.js"></script>
 <script src="js/pu-lockkey.js"></script>
+<!-- AI 판독 호출기 — 열쇠는 서버가 든다(2026-08-17). 브라우저는 사진만 보낸다. -->
+<script src="js/pu-ai-call.js?v=1"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
@@ -1410,7 +1412,10 @@ function allItems(){
 function allGroups(){
   return state.privOpen ? Object.assign({}, state.groups, state.priv.groups) : state.groups;
 }
-const GEMINI_KEY_LS = 'pucards_gemini_key';
+/* ⚠ 2026-08-17 — AI 열쇠를 브라우저에 두지 않는다(서버가 든다).
+   이 기기에 남아 있을 옛 열쇠는 **열 때 지운다.** 남겨 두면 그 기기에서
+   꺼내 갈 수 있고, 옛 코드가 되살아나면 그것부터 쓴다. */
+try { localStorage.removeItem('pucards_gemini_key'); } catch (_) { }
 
 /* ══════ 🔒 잠금 폴더(개인 전용) ══════
    잠근 사람만 폴더가 보이고, 다른 직원에게는 폴더도 명함도 보이지 않는다.
@@ -1435,9 +1440,9 @@ function inLockedGroup(it){
   const g = state.groups[(it&&it.group)||''];
   return !!g && !!g.locked;
 }
-/* AI 키 우선순위: ①이 기기 로컬 키 ②명함첩 공유 키 ③포털 공용 설정(data/app_config)
-   포털 ⚙설정에 넣어두면 앱마다 따로 넣을 필요가 없다. */
-let _sharedGKey='', _portalGKey='';
+/* ⚠ 2026-08-17 — 열쇠를 실시간DB 에서 가져오던 두 칸(_sharedGKey·_portalGKey)을 없앴다.
+   그 자리(pucards/config/geminiKey · data/app_config/geminiKey)는 규칙상
+   **로그인한 모든 직원이 읽는다.** 이제 열쇠는 서버만 안다. */
 /* 바깥 부름에 시간 제한 — 답이 안 오면 fetch 는 영영 기다린다.
    여기서 막히면: 창고에서 사진 받기가 안 끝나고, 명함 판독이 굳고,
    「AI 연결 확인 중…」 은 알림만 사라진 채 아무 말도 안 해 준다.
@@ -1463,12 +1468,15 @@ function pcFetch(url, opts, ms){
     throw e;
   });
 }
-function geminiKey(){ return (localStorage.getItem(GEMINI_KEY_LS)||'') || _sharedGKey || _portalGKey || ''; }
-function loadSharedGKey(){
-  try{ Store.db && Store.db.ref(DB_ROOT+'/config/geminiKey').once('value')
-    .then(s=>{ _sharedGKey = s.val()||''; }).catch(()=>{}); }catch(_){}
-  try{ Store.db && Store.db.ref('data/app_config/geminiKey').once('value')
-    .then(s=>{ _portalGKey = s.val()||''; }).catch(()=>{}); }catch(_){}
+/* ⚠ 2026-08-17 — **열쇠를 브라우저로 안 가져온다.** 서버가 들고 있다.
+   예전에는 여기서 실시간DB 의 열쇠를 읽어 왔는데, 그 자리는 규칙상
+   **로그인한 모든 직원이 읽는다** — 꺼내 개인 용도로 써도 요금은 회사에 붙었다.
+   ⚠ 그래서 `geminiKey()` 도 없앴다. 남겨 두면 「열쇠가 있나」로 AI 켜짐을
+     판정하는 코드가 되살아나고, 그러면 다시 열쇠를 읽게 된다.
+   이제 판정 기준은 **로그인했는가** 다 — 로그인하면 서버가 대신 불러 준다. */
+function aiReady(){
+  try { return !!(firebase.auth() && firebase.auth().currentUser); }
+  catch(_){ return false; }
 }
 
 /* ══════ 경량 검색 인덱스(pucards/idx) — 푸른이알피 계약창에서 회사·담당자 검색용 ══════
@@ -1721,7 +1729,9 @@ const Store = {
         firebase.auth().onAuthStateChanged(u=>{
           if (u && u.email){
             myEmail=(u.email||'').toLowerCase(); myUid=u.uid||'';
-            hideCardsLogin(); subscribe(); ErpMatch.load(); loadSharedGKey();
+            /* ⚠ loadSharedGKey() 를 뗐다(2026-08-17) — 로그인할 때마다 실시간DB 의
+               열쇠를 브라우저로 내려받던 자리다. 이제 열쇠는 서버만 안다. */
+            hideCardsLogin(); subscribe(); ErpMatch.load();
             /* 대표만 폴더를 잠글 수 있다 — 포털(enter.html)이 이미 쓰는 값을 그대로 읽는다.
                화면에서 숨기는 것은 편의일 뿐이고, 실제 차단은 규칙이 한다. */
             this.db.ref('uid_roles/'+u.uid+'/isAdmin').once('value')
@@ -6691,11 +6701,11 @@ async function pumpQueue(){
     try{ photo = await enhance(photo); }catch(_){}
     const thumb = await makeThumb(photo);
     let pre={};
-    if (geminiKey()){
+    if (aiReady()){
       toast('🤖 AI가 정보를 읽고 있습니다…',15000);
       try{ pre = await aiExtract(photo, state.tab); }
       catch(e){ console.error(e); toast('AI 추출 실패 — 직접 입력해주세요'); }
-    } else toast('AI 키가 없어 직접 입력 모드입니다 (☰ 설정에서 등록)');
+    } else toast('로그인하면 AI가 자동으로 읽어 줍니다 — 지금은 직접 입력 모드입니다');
     openEditor(null, {photo, thumb}, pre);
   }catch(e){ console.error(e); toast('파일을 읽을 수 없습니다'); processing=false; pumpQueue(); }
 }
@@ -6839,21 +6849,22 @@ window.addEventListener('paste',e=>{
   if(imgs.length){ e.preventDefault(); onFiles(imgs.map(i=>i.getAsFile())); }
 });
 
-/* ════════════ AI 자동 추출 (Gemini) ════════════ */
+/* ════════════ AI 자동 추출 ════════════
+   ⚠ 2026-08-17 — **열쇠를 브라우저에서 뺐다.** 서버(readDoc)가 열쇠를 들고
+     구글을 부르고, 여기서는 사진과 프롬프트만 보낸다.
+     예전에는 이 함수가 열쇠를 직접 들고 구글을 불렀는데, 그 열쇠가 실시간DB 에
+     평문으로 있고 규칙상 **로그인한 모든 직원이 읽었다.** 게다가 AI 스튜디오
+     열쇠라 웹사이트 제한 같은 자물쇠를 채울 방법도 없었다.
+   ⚠ 프롬프트는 **한 글자도 안 바꿨다** — 바꾸면 이미 읽힌 명함과 답이 갈린다. */
 async function aiExtract(dataUrl, kind){
-  const key=geminiKey();
   const prompt = kind==='card'
     ? `이 명함 이미지에서 정보를 추출해 JSON으로만 답하세요. 키: name(이름), company(회사명), dept(부서), title(직책), mobile(휴대폰), tel(직통전화), fax(개인팩스), email(이메일), companyTel(회사 대표번호), companyFax(회사 팩스), companyAddr(회사 주소), website(홈페이지), address(개인 주소), memo(기타 정보). 없는 값은 빈 문자열. 전화번호는 010-1234-5678 형식. JSON 외 텍스트 금지.`
     : `이 사업자등록증 이미지에서 정보를 추출해 JSON으로만 답하세요. 키: company(상호/법인명), ceo(대표자), bizno(사업자등록번호), corpno(법인등록번호), openDate(개업연월일), bizType(업태), bizItem(종목), companyTel(대표번호), companyFax(팩스), address(사업장 소재지), memo(기타). 없는 값은 빈 문자열. JSON 외 텍스트 금지.`;
-  const body={contents:[{parts:[
+  const parts=[
     {inline_data:{mime_type:'image/jpeg',data:dataUrl.split(',')[1]}},
-    {text:prompt}]}]};
-  const r=await pcFetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`,
-    {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  if(!r.ok) throw new Error('Gemini API 오류 '+r.status);
-  const j=await r.json();
-  const t=(j.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('');
-  return JSON.parse(t.replace(/```json|```/g,'').trim());
+    {text:prompt}];
+  const reply = await PuAiCall.ask(parts, { auth: firebase.auth(), fetch: pcFetch });
+  return JSON.parse(PuAiCall.textOf(reply));
 }
 
 /* ════════════ 등록/수정 ════════════ */
@@ -7365,62 +7376,50 @@ async function sendToErp(id){
   }catch(e){ console.error(e); toast('ERP 등록 실패 — 권한 또는 연결을 확인하세요'); }
 }
 
-/* ════════════ 설정 ════════════ */
+/* ════════════ 설정 ════════════
+   ⚠ 2026-08-17 — **AI 열쇠 입력칸을 없앴다.** 열쇠는 서버가 든다.
+     칸을 남겨 두면 직원이 다시 열쇠를 브라우저(·실시간DB)에 넣게 되고,
+     그 자리는 규칙상 로그인한 모든 직원이 읽는다 — 고친 뜻이 사라진다.
+     그래서 「저장」과 「공유」도 함께 없앴다. */
 function openSettings(){
-  const key=localStorage.getItem(GEMINI_KEY_LS)||'';
   $('setM').innerHTML=`
     <div class="mhead"><b>설정</b><button class="iconbtn" onclick="setBg.classList.remove('open')">✕</button></div>
     <div class="field"><label>연결 상태</label>
       <div style="font-size:14px;padding:4px 2px;line-height:1.7">${ Store.mode==='firebase'
         ? '🟢 Firebase 연결됨 — 전 직원 실시간 공유 중'
         : '🟠 데모 모드 — 이 기기에만 저장됩니다.<br>파일 상단 FIREBASE_CONFIG에 pu-erp의 설정을 붙여넣으면 공유가 시작됩니다.' }</div></div>
-    <div class="field"><label>Gemini API 키 (AI 자동 추출)</label>
-      <div style="font-size:13px;padding:2px 2px 8px;line-height:1.6">현재 상태: ${
-        localStorage.getItem(GEMINI_KEY_LS) ? '🟢 이 기기에 키 저장됨'
-        : (_sharedGKey ? '🟢 회사 공유 키 사용 중' : '🔴 키 없음 — 자동입력 꺼짐') }</div>
-      <input id="set_gkey" type="password" value="${esc(key)}" placeholder="AIza...">
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink);margin-top:8px;font-weight:400">
-        <input type="checkbox" id="set_gshare" ${_sharedGKey?'checked':''}> 이 키를 모든 기기(직원 폰·푸른카메라 포함)에 공유</label>
-      <button class="btn ghost" style="width:100%;margin-top:10px" onclick="testGemini()">🔌 AI 연결 테스트 (키가 되는지 확인)</button>
+    <div class="field"><label>글자 자동인식(AI)</label>
+      <div style="font-size:14px;padding:4px 2px;line-height:1.7">${
+        aiReady() ? '🟢 켜짐 — 명함을 찍으면 자동으로 읽습니다'
+                  : '🔴 로그인하면 켜집니다' }</div>
+      <button class="btn ghost" style="width:100%;margin-top:10px" onclick="testGemini()">🔌 AI 연결 테스트</button>
       <div style="font-size:12px;color:var(--sub);margin-top:8px;line-height:1.7">
-        무료 발급: <b>aistudio.google.com/apikey</b> → 로그인 → [API 키 만들기] → 복사해 붙여넣기.<br>
-        <b>공유 체크</b>를 하면 회사 전체 기기에서 자동인식이 켜집니다. 체크 안 하면 이 기기에만 저장됩니다.</div></div>
+        AI 열쇠는 <b>회사 서버가</b> 들고 있습니다 — 기기마다 넣을 것이 없습니다.
+        예전에는 이 화면에서 열쇠를 넣었는데, 그러면 열쇠가 직원 브라우저에 남아
+        누구나 꺼내 쓸 수 있었습니다(2026-08-17 고침).</div></div>
     <div class="mfoot">
-      <button class="btn ghost" onclick="setBg.classList.remove('open')">닫기</button>
-      <button class="btn primary" onclick="saveSettings()">저장</button></div>`;
+      <button class="btn primary" onclick="setBg.classList.remove('open')">닫기</button></div>`;
   $('setBg').classList.add('open');
-}
-async function saveSettings(){
-  const v=$('set_gkey').value.trim();
-  const share=$('set_gshare') && $('set_gshare').checked;
-  if(v) localStorage.setItem(GEMINI_KEY_LS,v); else localStorage.removeItem(GEMINI_KEY_LS);
-  if(v && share && Store.mode==='firebase'){
-    try{ await Store.db.ref(DB_ROOT+'/config/geminiKey').set(v); _sharedGKey=v;
-      toast('AI 키를 모든 기기에 공유했습니다 — 이제 어느 기기서든 자동 추출됩니다'); }
-    catch(e){ toast('공유 저장 실패: '+((e&&e.message)||'')); }
-  } else {
-    toast(v?'AI 키가 저장되었습니다 — 이제 촬영하면 자동 추출됩니다':'AI 키를 지웠습니다');
-  }
-  $('setBg').classList.remove('open');
 }
 /* AI 키가 실제로 되는지 확인 — 입력칸의 키(없으면 저장된 키)로 시험 호출 */
 async function testGemini(){
-  const key = (($('set_gkey')&&$('set_gkey').value.trim()) || geminiKey() || '');
-  if(!key){ alert('❌ AI 키가 없습니다.\n\n위 칸에 키(AIza...)를 붙여넣고 다시 눌러 보세요.'); return; }
+  /* ⚠ 이제 **열쇠가 아니라 서버**를 시험한다(2026-08-17). 열쇠는 서버가 든다.
+     ⚠ 사진 없이 글자만 보내면 서버가 400(사진이 없습니다)으로 돌려보낸다 —
+       그건 **서버까지 잘 닿았다는 뜻**이므로 정상으로 친다.
+       401(로그인 안 됨)·503(열쇠 없음)과 갈라 알려 준다. */
+  if(!aiReady()){ alert('❌ 로그인이 필요합니다.\n\n로그아웃 상태에서는 AI가 돌지 않습니다.'); return; }
   toast('AI 연결 확인 중…',8000);
   try{
-    const r = await pcFetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`,
-      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:'OK'}]}]})});
-    if(r.ok){ toast(''); alert('✅ AI 연결 정상입니다!\n\n[저장]을 누른 뒤 명함을 찍으면 이름·회사·전화가 자동으로 채워집니다.'); return; }
-    let msg=''; try{ const j=await r.json(); msg=(j.error&&j.error.message)||''; }catch(_){}
+    await PuAiCall.ask([{text:'OK'}], { auth: firebase.auth(), fetch: pcFetch });
+    toast(''); alert('✅ AI 연결 정상입니다!\n\n명함을 찍으면 이름·회사·전화가 자동으로 채워집니다.');
+  }catch(e){
     toast('');
-    if(r.status===400 && /API key not valid/i.test(msg))
-      alert('❌ 키가 올바르지 않습니다.\n\n구글에서 키를 다시 복사해 넣어 주세요. (오타·일부만 복사된 경우가 많습니다)');
-    else if(r.status===403)
-      alert('❌ 이 키는 Gemini(자동인식)를 쓸 수 없게 막혀 있습니다.\n\n원인은 둘 중 하나예요:\n1) 키에 제한이 걸림(예: Vision/Calendar 전용)\n2) 그 프로젝트에 Gemini API가 안 켜짐\n\n가장 쉬운 해결: aistudio.google.com/apikey 에서 제한 없는 새 키를 만들어 넣으세요.\n\n('+r.status+') '+msg);
-    else
-      alert('❌ 연결 실패 ('+r.status+')\n'+msg+'\n\n인터넷 연결을 확인하거나 새 키로 다시 시도해 주세요.');
-  }catch(e){ toast(''); alert('❌ 네트워크 오류: '+((e&&e.message)||'')+'\n\n인터넷 연결을 확인해 주세요.'); }
+    const s = e && e.status;
+    if(s===400){ alert('✅ AI 연결 정상입니다!\n\n명함을 찍으면 이름·회사·전화가 자동으로 채워집니다.'); return; }
+    if(s===401||s===403) alert('❌ 로그인이 만료되었습니다.\n\n새로고침한 뒤 다시 로그인해 주세요.');
+    else if(s===503) alert('❌ 서버에 AI 열쇠가 설정되지 않았습니다.\n\n관리자에게 알려 주세요.');
+    else alert('❌ 연결 실패'+(s?' ('+s+')':'')+'\n'+((e&&e.message)||'')+'\n\n인터넷 연결을 확인해 주세요.');
+  }
 }
 
 /* ════════════ 📷 카메라 — 사진첩 것 하나만 쓴다 (대표 지시 2026-08-09) ════════════
@@ -10686,7 +10685,7 @@ function renderSettingsPage(){
   const trashN=Object.keys(state.trash||{}).length;
   const viewN=Object.keys(state.views||{}).length;
   const folderN=Object.keys(state.groups||{}).length;
-  const aiOn=!!geminiKey();
+  const aiOn=aiReady();   // 2026-08-17: 「열쇠가 있나」가 아니라 「로그인했나」 — 열쇠는 서버가 든다
   const live=Store.mode==='firebase';
   const stat=(n,label)=>`<div><b>${typeof n==='number'?n.toLocaleString():n}</b><span>${label}</span></div>`;
   const btn=(fn,icon,label,desc,cls)=>`<button class="setbtn ${cls||''}" onclick="${fn}">${icon} ${label}
