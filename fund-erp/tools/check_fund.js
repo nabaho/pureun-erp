@@ -281,6 +281,19 @@ ok('연도별은 속살만 그린다(상자 이중 아님)', src.includes('funct
 /* 고른 하위 탭이 «실제로» 화면을 가르는지 — 조건을 굳혀 두면 탭만 있고 늘 같은 표가 나온다 */
 ok('고른 하위 탭이 표를 가른다', src.includes("var isYr=(S.siteTab==='years');")
   && src.includes('+(isYr ? sitesYearBody(arr)'));
+/* 두 표는 «같은 배열·같은 차례»를 받아 (i+1) 로 센다 — 따로 세면 명부 7번과 연도별 7번이 달라진다.
+   ⚠ 반드시 sitesYearBody «안»에서 찾아야 한다. 명부(sitesTab)에 글자가 똑같은 줄이 있어서
+      파일 전체에서 찾으면 명부를 보고 통과해 버린다(변이시험 3건이 그렇게 새어 나갔다). */
+{
+  const i0 = src.indexOf('function sitesYearBody(');
+  const yb = i0 < 0 ? '' : src.slice(i0, src.indexOf('\n}', i0));
+  ok('연도별 기록 함수를 찾았다', !!yb);
+  ok('연도별 기록에도 번호가 있다', /arr\.map\(function\(s,i\)\{/.test(yb)
+    && yb.includes('<td class="no">\'+(i+1)+\'</td>')
+    && yb.includes('<th class="no">번호</th><th>사업장</th>'));
+  // 번호 칸이 늘었으니 합계 줄도 맞춰야 숫자가 한 칸씩 밀리지 않는다
+  ok('연도별 합계 줄이 번호 칸만큼 맞춰졌다', yb.includes('<td colspan="2">합계</td>'));
+}
 
 ok('홍성군은 홍성세무서', src.includes("'충남 홍성군':'홍성세무서'"));
 ok('보령시는 보령세무서', src.includes("'충남 보령시':'보령세무서'"));
