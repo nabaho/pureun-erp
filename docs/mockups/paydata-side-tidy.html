@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>급여데이터함 — 왼쪽 칸 정리 (목업)</title>
+<!--
+  대표 지적 2026-08-17: 「대시보드 맨왼쪽 너무 이상하다」
+
+  지금은 담당자 한 사람이 **세 줄**을 먹는다 — 이름줄 + 진행률 막대 + 「아직 안
+  들어옴 · 아직 N곳」. 아홉 명이면 27줄이라 끝없이 스크롤된다. 게다가 세 줄이
+  같은 말을 되풀이한다(0/28 이면 28곳 남은 것이 당연한데 「아직 28곳」을 또 적는다).
+  「아직 안 들어옴」은 **전원에게 똑같이** 붙어 있어 알려 주는 것이 없는데 눈만 끈다.
+
+  고친 것: 한 사람 = 한 줄. 진행률은 줄 **바탕**에 옅게 깔고, 안 들어온 사람은
+  이름을 연하게 두고 그 뜻은 맨 위에 한 번만 적는다.
+-->
+<style>
+:root{--navy:#2E3A8C;--ok:#2E7D4F;--warn:#B26A00;--bad:#C43D3D;
+--ink:#23263B;--sub:#6B6F87;--line:#E3E5EF;--paper:#F5F6FA;--card:#FFF;}
+*{box-sizing:border-box;margin:0}
+body{font-family:'Noto Sans KR','Malgun Gothic',sans-serif;background:var(--paper);color:var(--ink);font-size:14px}
+main{padding:20px;max-width:1000px;margin:0 auto}
+h1{font-size:19px;margin-bottom:6px}
+.sub{font-size:12.5px;color:var(--sub);line-height:1.7}
+.note{background:#FFF8E6;border:1px solid #F0D9A8;border-radius:10px;padding:11px 14px;
+  font-size:12.5px;line-height:1.75;color:#7C4A03;margin:16px 0}
+.pair{display:flex;gap:20px;align-items:flex-start;margin-top:18px;flex-wrap:wrap}
+.side{width:200px;flex:0 0 200px;background:var(--card);border:1px solid var(--line);
+  border-radius:12px;padding-bottom:8px;overflow:hidden}
+.cap{font-size:12px;font-weight:800;margin-bottom:7px}
+.cap.now{color:var(--bad)}
+.cap.fix{color:var(--ok)}
+.tall{font-size:11px;color:var(--sub);margin-top:6px}
+
+/* ── 앱에서 그대로 옮긴 규칙 ── */
+.ctitle{padding:11px 10px 4px;font-size:10.5px;color:var(--sub);font-weight:700}
+.vrow{display:flex;align-items:center;gap:5px;padding:7px 10px;font-size:12.5px;cursor:pointer}
+.vrow:hover{background:#F5F7FF}
+.vrow.sel{background:#E7EBFB}
+.vrow.sel b{color:var(--navy)}
+.vrow b{flex:1;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vrow .n{font-size:10.5px;color:var(--sub);background:var(--paper);border-radius:99px;padding:1px 6px;white-space:nowrap}
+.vrow.warn .n{background:#FFF6E6;color:var(--warn)}
+.vrow.bad b{color:var(--bad)}
+.vrow.bad .n{background:#FDECEC;color:var(--bad)}
+.vbar{height:4px;background:var(--line);border-radius:99px;margin:2px 10px 0;overflow:hidden}
+.vbar i{display:block;height:100%;background:var(--ok);border-radius:99px}
+.vmeta{padding:1px 10px 7px;font-size:10px;color:var(--sub)}
+.vmeta .away{color:var(--warn);font-weight:700}
+
+/* ── 새로 만드는 것 ── */
+.pnote{padding:2px 10px 6px;font-size:10.5px;color:var(--sub);line-height:1.5}
+/* 진행률을 줄 바탕에 옅게 깐다 — 0%면 아무것도 안 보여 조용하다 */
+.prow{position:relative}
+.prow .fill{position:absolute;left:0;top:0;bottom:0;background:#EAF6EE;pointer-events:none}
+.prow>b,.prow>.n{position:relative}
+.prow.off b{color:#9AA0B4;font-weight:600}
+</style>
+</head>
+<body>
+<main>
+<h1>왼쪽 첫 칸 정리</h1>
+<div class="sub">같은 자료로 지금 모양과 고친 모양을 나란히 놓았습니다. 오른쪽 사업장 칸은 손대지 않습니다.</div>
+
+<div class="note">
+  <b>무엇이 문제인가</b><br>
+  담당자 한 사람이 <b>세 줄</b>을 씁니다 — 이름줄, 진행률 막대, 「아직 안 들어옴 · 아직 N곳」.
+  아홉 명이면 27줄이라 끝까지 훑으려면 계속 굴려야 합니다.<br>
+  그리고 세 줄이 <b>같은 말을 되풀이합니다.</b> <code>0/28</code> 이면 28곳이 남은 것이 당연한데
+  「아직 28곳」을 또 적습니다. 「아직 안 들어옴」은 <b>아홉 명 전원에게 똑같이</b> 붙어 있어
+  알려 주는 것이 없는데 빨갛게 눈만 끕니다. 막대는 전부 0%라 회색 줄만 자리를 먹습니다.
+</div>
+
+<div class="pair">
+
+  <div>
+    <div class="cap now">지금 — 담당자 한 명에 세 줄</div>
+    <div class="side">
+      <div class="ctitle">내 일</div>
+      <div class="vrow"><b>내 담당</b><span class="n">0</span></div>
+      <div class="vrow warn"><b>아직 안 온 곳</b><span class="n">0</span></div>
+      <div class="vrow"><b>오늘 들어온 것</b><span class="n">0</span></div>
+      <div class="vrow"><b>공유받음</b><span class="n">0</span></div>
+      <div class="ctitle">전체</div>
+      <div class="vrow"><b>전체 사업장</b><span class="n">112</span></div>
+      <div class="vrow warn"><b>전체 미도착</b><span class="n">112</span></div>
+      <div class="vrow bad"><b>담당 없음</b><span class="n">2</span></div>
+      <div class="ctitle">담당자</div>
+
+      <div class="vrow"><b>김보람</b><span class="n">0/28</span></div>
+      <div class="vbar"><i style="width:0%"></i></div>
+      <div class="vmeta"><span class="away">아직 안 들어옴</span> · 아직 28곳</div>
+
+      <div class="vrow"><b>김보람(박찬미)</b><span class="n">0/12</span></div>
+      <div class="vbar"><i style="width:0%"></i></div>
+      <div class="vmeta"><span class="away">아직 안 들어옴</span> · 아직 12곳</div>
+
+      <div class="vrow"><b>김혜민</b><span class="n">0/1</span></div>
+      <div class="vbar"><i style="width:0%"></i></div>
+      <div class="vmeta"><span class="away">아직 안 들어옴</span> · 아직 1곳</div>
+
+      <div class="vrow sel"><b>박은비</b><span class="n">0/13</span></div>
+      <div class="vbar"><i style="width:0%"></i></div>
+      <div class="vmeta"><span class="away">아직 안 들어옴</span> · 아직 13곳</div>
+
+      <div class="vrow"><b>박한별</b><span class="n">0/1</span></div>
+      <div class="vbar"><i style="width:0%"></i></div>
+      <div class="vmeta"><span class="away">아직 안 들어옴</span> · 아직 1곳</div>
+
+      <div class="vrow"><b>신욱임</b><span class="n">0/20</span></div>
+      <div class="vbar"><i style="width:0%"></i></div>
+      <div class="vmeta"><span class="away">아직 안 들어옴</span> · 아직 20곳</div>
+    </div>
+    <div class="tall">…아래로 주민정·최기운이 더 있습니다</div>
+  </div>
+
+  <div>
+    <div class="cap fix">고침 — 한 명에 한 줄</div>
+    <div class="side">
+      <div class="ctitle">내 일</div>
+      <div class="vrow"><b>내 담당</b><span class="n">0</span></div>
+      <div class="vrow warn"><b>아직 안 온 곳</b><span class="n">0</span></div>
+      <div class="vrow"><b>오늘 들어온 것</b><span class="n">0</span></div>
+      <div class="vrow"><b>공유받음</b><span class="n">0</span></div>
+      <div class="ctitle">전체</div>
+      <div class="vrow"><b>전체 사업장</b><span class="n">112</span></div>
+      <div class="vrow warn"><b>전체 미도착</b><span class="n">112</span></div>
+      <div class="vrow bad"><b>담당 없음</b><span class="n">2</span></div>
+
+      <div class="ctitle">담당자 · 도착/전체</div>
+      <div class="pnote">연한 이름은 아직 이 함에 들어오지 않은 사람입니다.</div>
+
+      <div class="vrow prow off"><span class="fill" style="width:0%"></span><b>김보람</b><span class="n">0/28</span></div>
+      <div class="vrow prow off"><span class="fill" style="width:0%"></span><b>김보람(박찬미)</b><span class="n">0/12</span></div>
+      <div class="vrow prow off"><span class="fill" style="width:0%"></span><b>김혜민</b><span class="n">0/1</span></div>
+      <div class="vrow prow off sel"><span class="fill" style="width:0%"></span><b>박은비</b><span class="n">0/13</span></div>
+      <div class="vrow prow off"><span class="fill" style="width:0%"></span><b>박한별</b><span class="n">0/1</span></div>
+      <div class="vrow prow off"><span class="fill" style="width:0%"></span><b>신욱임</b><span class="n">0/20</span></div>
+      <div class="vrow prow off"><span class="fill" style="width:0%"></span><b>주민정</b><span class="n">0/24</span></div>
+      <div class="vrow prow off"><span class="fill" style="width:0%"></span><b>최기운</b><span class="n">0/14</span></div>
+    </div>
+    <div class="tall">아홉 명이 다 보이고도 더 짧습니다</div>
+  </div>
+
+  <div>
+    <div class="cap fix">자료가 들어오기 시작하면</div>
+    <div class="side">
+      <div class="ctitle">담당자 · 도착/전체</div>
+      <div class="pnote">연한 이름은 아직 이 함에 들어오지 않은 사람입니다.</div>
+      <div class="vrow prow"><span class="fill" style="width:75%"></span><b>김보람</b><span class="n">21/28</span></div>
+      <div class="vrow prow"><span class="fill" style="width:100%"></span><b>김혜민</b><span class="n">1/1</span></div>
+      <div class="vrow prow sel"><span class="fill" style="width:31%"></span><b>박은비</b><span class="n">4/13</span></div>
+      <div class="vrow prow"><span class="fill" style="width:10%"></span><b>신욱임</b><span class="n">2/20</span></div>
+      <div class="vrow prow off"><span class="fill" style="width:0%"></span><b>주민정</b><span class="n">0/24</span></div>
+    </div>
+    <div class="tall">진행률은 줄 <b>바탕</b>에 옅게 깔립니다 —<br>많이 온 사람일수록 초록이 길어집니다</div>
+  </div>
+
+</div>
+
+<div class="note" style="margin-top:22px">
+  <b>무엇을 뺐고 무엇을 남겼나</b><br>
+  · <b>「아직 N곳」 뺌</b> — <code>0/28</code> 에 이미 들어 있는 말입니다<br>
+  · <b>진행률 막대를 줄 바탕으로</b> — 줄 하나를 아꼈고, 0%면 아무것도 안 보여 조용합니다<br>
+  · <b>「아직 안 들어옴」을 이름 색으로</b> — 아홉 번 적던 것을 맨 위 한 줄로 줄였습니다<br>
+  · <b>남긴 것</b>: 이름, 도착/전체 숫자, 눌러서 그 사람 사업장 보기, 진행률 —
+  누가 밀렸는지 보는 데 필요한 것은 그대로입니다
+</div>
+
+</main>
+</body>
+</html>

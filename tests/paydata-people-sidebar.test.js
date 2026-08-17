@@ -109,19 +109,31 @@ test('★ 담당자에게는 전체 보기와 담당자 명단이 안 뜬다', (
   assert.equal(h.indexOf('담당자'), -1);
 });
 
-test('★ 관리자에게는 담당자마다 진행률 막대가 붙는다', () => {
+test('★ 관리자에게는 담당자마다 진행률이 보인다', () => {
   const { W } = loadApp({ companies: COMPANIES, owners: OWNERS }, { isAdmin: true });
   const h = W.viewBarHtml();
   assert.match(h, /전체 사업장/);
-  assert.match(h, /class="vbar"/, '진행률 막대가 없으면 누가 밀렸는지 모릅니다');
-  assert.match(h, /아직 \d+곳/);
+  assert.match(h, /class="fill" style="width:\d/, '진행률이 없으면 누가 밀렸는지 모릅니다');
 });
 
-test('★ 급여데이터함에 안 들어온 담당자는 그렇다고 알린다', () => {
+/* 대표 지적 2026-08-17 「맨왼쪽 너무 이상하다」 — 한 사람이 세 줄(이름줄·막대·
+   「아직 N곳」)을 먹어 아홉 명이면 27줄이었다. 되돌아가면 또 그렇게 된다. */
+test('★ 담당자 한 사람은 한 줄이다 — 세 줄로 되돌아가면 안 된다', () => {
+  const { W } = loadApp({ companies: COMPANIES, owners: OWNERS }, { isAdmin: true });
+  const h = W.viewBarHtml();
+  assert.ok((h.match(/class="vrow prow/g) || []).length >= 1, '담당자 줄이 없습니다');
+  assert.equal(/class="vbar"/.test(h), false, '진행률이 제 줄을 차지하면 목록이 세 배가 됩니다');
+  assert.equal(/아직 \d+곳/.test(h), false, '0/28 이 이미 그 말입니다 — 되풀이하지 않습니다');
+});
+
+test('★ 급여데이터함에 안 들어온 담당자는 그렇다고 알린다 — 다만 한 번만', () => {
   // 이름·업체는 보이되 그 사람 자리는 못 연다 — 미리 말해 줘야 헛걸음을 안 한다
   const { W } = loadApp({ companies: COMPANIES, owners: { U1: OWNERS.U1 } }, { isAdmin: true });
   const h = W.viewBarHtml();
-  assert.match(h, /아직 안 들어옴/);
+  assert.match(h, /아직 이 함에 들어오지 않은 사람/, '안 들어온 사람이라는 것을 알려야 합니다');
+  assert.match(h, /class="vrow prow[^"]*off"/, '안 들어온 사람은 이름이 연해야 가려집니다');
+  assert.equal((h.match(/아직 이 함에 들어오지 않은 사람/g) || []).length, 1,
+    '사람마다 되풀이하면 아홉 줄이 됩니다 — 맨 위에 한 번만 적습니다');
 });
 
 test('★ 공유받음 보기가 개수와 함께 보인다', () => {
@@ -366,4 +378,40 @@ test('취소하면 공유 상태가 사라진다', () => {
   W.closeShare();
   assert.equal(W.App.shareCtx, null);
   assert.equal(W.shareModalHtml(), '');
+});
+
+/* ══════ 대시보드와 본문이 이어져야 한다 (대표 지적 2026-08-17) ══════
+   「대시보드와 사업장의 연결이 원활하지 않다」 — 본문에는 텃골이 열려 있는데
+   목록은 딴 담당자의 28곳을 보여 주고, 목록 어디에도 열린 곳 표시가 없었다. */
+
+test('★ 사업장 목록에 번호가 붙는다 — 「28곳 중 몇 번째」를 셀 수 있어야 한다', () => {
+  const { W } = loadApp({ companies: COMPANIES, owners: OWNERS, sideView: 'all' }, { isAdmin: true });
+  const h = W.colListHtml();
+  assert.match(h, /class="cno">1</, '첫 줄 번호가 없습니다');
+  assert.match(h, /class="cno">2</, '둘째 줄 번호가 없습니다');
+});
+
+test('★ 지금 서랍에 열어 놓은 곳이 목록에서 짚어진다', () => {
+  const { W } = loadApp({
+    companies: COMPANIES, owners: OWNERS, sideView: 'all',
+    screen: 'drawer', companyId: 'co_3', companyName: '(주)이비'
+  }, { isAdmin: true });
+  const h = W.colListHtml();
+  assert.match(h, /class="crow[^"]* sel"/, '열어 놓은 곳이 안 짚어지면 본문과 목록이 딴 말을 합니다');
+  const sel = h.match(/<div class="crow[^"]* sel"[\s\S]*?<\/div>\s*<\/div>/);
+  assert.ok(sel && sel[0].indexOf('이비') >= 0, '엉뚱한 줄이 짚어졌습니다');
+});
+
+test('첫 화면(서랍이 아닐 때)에는 아무 줄도 안 짚는다 — 열어 둔 것이 없다', () => {
+  const { W } = loadApp({
+    companies: COMPANIES, owners: OWNERS, sideView: 'all',
+    screen: 'sites', companyId: 'co_3'
+  }, { isAdmin: true });
+  assert.equal(/class="crow[^"]* sel"/.test(W.colListHtml()), false);
+});
+
+test('내 담당 목록은 번호 대신 끌 손잡이를 준다 — 순서를 바꾸는 칸이라서', () => {
+  const { W } = loadApp({ companies: COMPANIES, owners: OWNERS });
+  const h = W.colListHtml();
+  assert.match(h, /class="handle"/);
 });
