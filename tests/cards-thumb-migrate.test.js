@@ -84,6 +84,74 @@ test('빈 목록·없는 목록에도 안 깨진다', () => {
   assert.equal(C.countInlineThumbs([{ id:'a', thumb:'xx' }]).n, 1);
 });
 
+/* ══════ ①-2 이미 밖으로 나간 그림은 세지도, 옮기지도 않는다 ══════
+   ★ 이것이 2026-08-17 대표 보고("캡쳐4 눌렀다. 뭐해야되는지 모르겠더라")의 알맹이다.
+   목록(renderList → thumbFill)은 밖에서 받아 온 그림을 **items 에 되꽂는다**
+   (`if(it) it.thumb = t;` — 상세·확대·끌기가 그대로 쓰게 하려는 것). 그래서 몇 쪽만
+   내려도 «이미 옮긴 명함»이 «아직 안 옮긴 명함»과 똑같이 thumb 를 갖는다.
+   가르는 표는 Store.thumbCache 다 — 되꽂기는 반드시 getThumb() 를 지나고 그것이
+   캐시에 값을 남긴다. 진짜로 안에 박힌 그림은 renderList 가 it.thumb 를 그대로 쓰므로
+   (상태 ①) getThumb 를 부를 일이 없어 캐시에 없다.
+   ⚠ 세기와 계획이 **같은 규칙**을 봐야 한다 — 어긋나면 "3,000장"이라 해놓고
+     한 장도 안 옮기거나, 안 세어 둔 것을 옮기게 된다. */
+
+const cacheOf = m => ({ Store: { thumbCache: m } });
+
+test('★ 목록이 되꽂아 둔 그림(thumbCache 에 있는 것)은 세지 않는다', () => {
+  const C = load(cacheOf({ b: 'data:이미-밖에-있다' }));
+  const r = C.countInlineThumbs({
+    a: { id:'a', thumb:'AAA' },      /* 진짜 아직 안에 박힌 것 */
+    b: { id:'b', thumb:'BBBBB' }     /* 이미 옮겨졌고 화면이 되꽂아 둔 것 */
+  });
+  assert.equal(r.n, 1, '이미 옮긴 것까지 세면 대표가 보는 숫자가 부풀고, 할 일이 없는데 있는 것처럼 보인다');
+  assert.equal(r.bytes, 3, '크기도 되꽂힌 것을 빼고 세야 한다');
+});
+
+test('★ 계획도 똑같이 뺀다 — 세는 것과 하는 일이 같아야 한다', () => {
+  const C = load(cacheOf({ b: 'data:이미-밖에-있다' }));
+  const items = { a:{ id:'a', thumb:'AAA' }, b:{ id:'b', thumb:'BBBBB' } };
+  const plan = C.thumbMigrationPlan(items, shared, 50);
+  assert.equal(plan.length, 1);
+  assert.deepEqual(Object.keys(JSON.parse(JSON.stringify(plan[0]))).sort(),
+    ['pucards/items/a/thumb', 'pucards/thumbs/a'],
+    '이미 밖에 있는 b 를 또 옮기면 헛일이고, 셈과도 어긋난다');
+});
+
+test('★ 앞뒤를 따로 가른다 — 뒷면 캐시 열쇠는 <id>_b 다', () => {
+  const C = load(cacheOf({ 'a_b': 'data:뒷면은-이미-밖에' }));
+  const it = { id:'a', thumb:'F', thumb2:'BBBB' };
+  const r = C.countInlineThumbs({ a: it });
+  assert.equal(r.n, 1, '앞면이 아직 안에 있으니 한 장은 남았다');
+  assert.equal(r.bytes, 1, '뒷면(이미 밖에 있는 것)까지 크기에 넣으면 안 된다');
+  const upd = C.thumbMigrationPlan({ a: it }, shared, 50)[0];
+  assert.deepEqual(JSON.parse(JSON.stringify(upd)), {
+    'pucards/thumbs/a':      'F',
+    'pucards/items/a/thumb': null
+  }, '뒷면은 이미 밖에 있는데 또 쓰려 든다');
+});
+
+test('★ 앞뒤가 모두 이미 나가 있으면 셈도 0, 계획도 0통 — 「할 일 없음」이 정확해야 한다', () => {
+  const C = load(cacheOf({ a:'F', 'a_b':'B' }));
+  const items = { a:{ id:'a', thumb:'F', thumb2:'B' } };
+  assert.equal(C.countInlineThumbs(items).n, 0);
+  assert.equal(C.thumbMigrationPlan(items, shared, 50).length, 0);
+});
+
+test('캐시가 비어 있으면 예전과 똑같이 다 센다 — 옛 명함을 놓치면 안 된다', () => {
+  const C = load(cacheOf({}));
+  const items = { a:{ id:'a', thumb:'AAA' }, b:{ id:'b', thumb:'BBB' } };
+  assert.equal(C.countInlineThumbs(items).n, 2);
+  assert.equal(C.thumbMigrationPlan(items, shared, 50).length, 1);
+});
+
+test('캐시에 「사진 없음」(빈 문자열)이 박혀 있어도 이미 나간 것으로 본다', () => {
+  /* getThumb 는 못 찾으면 '' 를 캐시에 남긴다 — 그 명함의 items 쪽 thumb 는
+     되꽂히지 않으므로, 여기 thumb 가 남아 있다면 그것은 손으로 넣은 옛 값이 아니라
+     이미 밖을 한 번 다녀온 자리다. undefined 로만 「아직 안 다녀왔다」를 가린다. */
+  const C = load(cacheOf({ a: '' }));
+  assert.equal(C.countInlineThumbs({ a:{ id:'a', thumb:'AAA' } }).n, 0);
+});
+
 /* ══════ ② 안전 속성 — 넣기와 비우기가 같은 묶음 ══════ */
 
 test('★ 그림 넣기와 옛 자리 비우기가 같은 묶음에 들어간다', () => {
@@ -372,6 +440,38 @@ test('옮길 것이 없으면 확인도 안 묻고 끝난다', async () => {
   assert.equal(await C.migrateInlineThumbs(), null);
   assert.equal(C.calls.length, 0);
   assert.equal(C.askedMsg(), null);
+});
+
+/* ── 눌렀는데 무슨 일이 일어났는지 알 수 있어야 한다 (대표 보고 2026-08-17) ── */
+test('★ 옮길 것이 없으면 «왜» 없는지까지 말해 준다', () => {
+  const C = loadRunner({ state:{ isAdmin:true, items:{ a:{ id:'a', thumb:'' } }, priv:{ items:{} } } });
+  return C.migrateInlineThumbs().then(()=>{
+    const said = C.toasts.join(' ');
+    assert.match(said, /이미 다 옮겨져 있습니다/,
+      '"옮길 그림이 없습니다"만 뜨면 «내가 뭘 잘못했나»가 된다 — 이미 끝났다고 말해야 한다');
+    assert.match(said, /하실 일 없습니다|더 하실/, '다음에 할 일이 없다는 말이 없다');
+  });
+});
+
+test('★ 다 옮기고 나면 몇 장을 옮겼는지 알려 준다', async () => {
+  const C = loadRunner({ state:{ isAdmin:true, items:someCards(120), priv:{ items:{} } } });
+  await C.migrateInlineThumbs();
+  const last = C.toasts[C.toasts.length - 1];
+  assert.match(last, /120장/, '몇 장을 옮겼는지 안 알려 주면 눌러도 한 일을 알 수 없다');
+  assert.match(last, /끝났습니다/, '끝났다는 말이 없다');
+});
+
+test('★ 화면이 되꽂아 둔 그림은 단추를 눌러도 서버에 안 쓴다 (셈·확인·쓰기가 모두 같다)', async () => {
+  const C = loadRunner({ state:{ isAdmin:true, items:someCards(3), priv:{ items:{} } } });
+  /* c0·c1 은 이미 밖으로 나갔고 목록이 되꽂아 둔 것들이다 */
+  C.Store.thumbCache.c0 = 'data:이미-밖에';
+  C.Store.thumbCache.c1 = 'data:이미-밖에';
+  const r = await C.migrateInlineThumbs();
+  assert.match(C.askedMsg(), /1장/, '대표에게 물을 때부터 진짜 남은 수를 보여야 한다');
+  assert.equal(C.calls.length, 1, '이미 나간 것까지 또 쓰고 있다');
+  assert.deepEqual(Object.keys(C.calls[0]).sort(), ['pucards/items/c2/thumb', 'pucards/thumbs/c2']);
+  assert.equal(r.done, 1);
+  assert.equal(r.total, 1, '「1 / 3장」처럼 끝나지 않는 셈을 보여주면 안 된다');
 });
 
 test('50장씩 묶어 보낸다 — 한 장씩 보내면 서버가 막힌다', async () => {

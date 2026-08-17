@@ -694,15 +694,9 @@ table.sbox.tight td.none{padding:26px 8px}
 .cotabs button.on{background:#1d4fc4;border-color:#1d4fc4;color:#fff}
 .cotabs button i{font-style:normal;margin-left:5px;font-size:11px;opacity:.7}
 .cohint{font-size:12px;color:#7c89a6;align-self:center;line-height:1.5}
-/* 「거래처만」은 사업 갈래와 성질이 다른 거르개다 — 줄을 그어 갈라 놓는다.
-   나란히 두면 사업 하나를 고르는 것으로 잘못 읽힌다. */
-.cotabs button.erponly{border-color:#a5b4fc;color:#3730a3;background:#eef2ff}
-.cotabs button.erponly:hover{background:#e0e7ff}
-.cotabs button.erponly.on{background:#4338ca;border-color:#4338ca;color:#fff}
-.cosep{width:1px;background:#dbe3f0;margin:2px 4px}
-/* 옆줄에서 폴더 목록과 「거래처만」을 가르는 줄 — 위 .cosep 의 세로줄과 짝을 이루는
-   가로줄이다. 폴더가 아닌 것이 폴더 목록에 이어 붙은 것처럼 보이지 않게 한다. */
-.coviewsep{height:1px;background:#e2e8f2;margin:8px 6px 6px}
+/* 「거래처만」 거르개와 그 짝인 가르는 줄(.cosep·.coviewsep)은 대표 지시 2026-08-17 로
+   지웠다 — 대표가 손수 만든 폴더로 관리한다. 그와 함께 .cotabs button.erponly 모양도
+   쓰는 곳이 없어져 함께 지운다. */
 /* 목록에서 회사를 고르면 뜨는 도구줄 — 명함첩 선택 도구줄과 같은 결 */
 .coselbar{display:flex;align-items:center;gap:8px;background:#eef3fc;border:1px solid #b5d4f4;border-radius:10px;padding:9px 13px;margin:0 0 10px;font-size:13px}
 .coselbar b{color:#185fa5;margin-right:4px}
@@ -1631,7 +1625,7 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', e
   isAdmin:false, privOpen:false, priv:{items:{},groups:{},trash:{}},
   /* 자료함 — 찾는 말·메일틀 갈래는 화면에만 쓰고 저장하지 않는다.
      sendLog 는 명함을 열 때만 그 명함 것을 읽어 담는다. */
-  matQ:'', matMailCat:'', matPrevId:'', sendLog:{}, coQ:'', coPick:'', coTag:'', coErpOnly:false, coSel:{}, coSort:{key:'name',dir:'asc'}, coColFilter:{}, coFolder:'', coShowHidden:false,
+  matQ:'', matMailCat:'', matPrevId:'', sendLog:{}, coQ:'', coPick:'', coTag:'', coSel:{}, coSort:{key:'name',dir:'asc'}, coColFilter:{}, coFolder:'', coShowHidden:false,
   /* q — 폰 찾기 칸(#search)에 친 명함·사업자용 글자. 칸 하나를 기업 상세(coQ)와 나눠 쓰므로
      화면을 옮길 때 되돌려 놓을 값을 여기 적어 둔다(최종 전체 리뷰 I4). 실제 거르기는
      예전대로 listItems() 가 $('search').value 를 읽어 한다 — 두 벌로 만들지 않는다. */
@@ -2158,12 +2152,42 @@ function autoFolderFlush(list){ return ErpMatch.autoFolderFlushImpl(list); }
      그것까지 지우면 화면이 없는 그림을 매번 받으러 간다. 세지도, 옮기지도 않는다. */
 const _inlineThumbVal = v => (typeof v === 'string' && v) ? v : '';
 
+/* ── ★ 이미 밖으로 나간 그림은 세지도, 옮기지도 않는다 ──
+   ⚠ 목록(renderList)은 밖에 있는 그림을 받아 오면 **items 에 되꽂는다**
+     (thumbFill: `if(it) it.thumb = t;` — 상세·확대·끌기 등 나머지 화면이 그대로 쓰게 하려는 것).
+     그래서 몇 쪽만 내려도 «이미 옮긴 명함»이 «아직 안 옮긴 명함»과 똑같이 thumb 를 갖는다.
+     그것까지 세면 대표가 보는 숫자가 부풀고, 할 일이 없는데도 단추가 뭔가 남은 것처럼
+     보인다(대표 보고 2026-08-17: "캡쳐4 눌렀다. 뭐해야되는지 모르겠더라").
+   가르는 표는 **Store.thumbCache** 다:
+     · 되꽂기는 반드시 Store.getThumb() 를 지나고, getThumb 는 값을 thumbCache 에 남긴다.
+     · 아직 안에 박혀 있는 그림은 renderList 가 it.thumb 를 그대로 쓰므로(상태 ①)
+       getThumb 를 부를 일이 없다 → thumbCache 에 없다.
+     · getThumb 를 부르는 나머지 자리(Store.del·개인폴더 옮기기)는 모두
+       `it.thumb || await getThumb(...)` 라, 안에 박힌 그림이 있으면 아예 안 부른다.
+     · Store.put 은 저장할 때 putThumb 로 캐시에 넣는다 — 그 명함의 그림도 이미 밖에 있다.
+   앞면은 <id>, 뒷면은 <id>_b 로 따로 본다(캐시 열쇠가 그렇게 나뉘어 있다). */
+function _thumbCacheNow(){
+  return (typeof Store !== 'undefined' && Store && Store.thumbCache) ? Store.thumbCache : {};
+}
+/* 한 장에서 «정말 아직 안에 박혀 있는» 앞·뒷면만 골라낸다.
+   ★ 세기(countInlineThumbs)와 계획(thumbMigrationPlan)이 **같은 이 함수**를 본다 —
+     대표가 보는 숫자와 실제로 하는 일이 어긋나지 않게 하는 것이 핵심이다. */
+function _inlineThumbsOf(it, cache){
+  const c = (cache && typeof cache === 'object') ? cache : _thumbCacheNow();
+  const t1 = _inlineThumbVal(it.thumb), t2 = _inlineThumbVal(it.thumb2);
+  return {
+    t1: (t1 && c[it.id]        === undefined) ? t1 : '',
+    t2: (t2 && c[it.id + '_b'] === undefined) ? t2 : ''
+  };
+}
+
 /* ── 1. 대상 세기 — 아무 것도 저장하지 않는다 ── */
-function countInlineThumbs(items){
+function countInlineThumbs(items, cache){
   let n = 0, bytes = 0;
   Object.values(items||{}).forEach(it=>{
     if(!it || !it.id) return;
-    const t1 = _inlineThumbVal(it.thumb), t2 = _inlineThumbVal(it.thumb2);
+    const got = _inlineThumbsOf(it, cache);
+    const t1 = got.t1, t2 = got.t2;
     if(!t1 && !t2) return;
     n++; bytes += t1.length + t2.length;
   });
@@ -2179,14 +2203,17 @@ function countInlineThumbs(items){
      통째 쓰기는 그 사이 남이 고친 이름·전화를 되돌린다(2026-08-11 실제 사고).
    ⚠ 창고(root)별로 가른다. 공용(pucards)과 대표 개인 창고는 한 update() 에 못 섞는다.
    ⚠ 창고를 모르면(빈 문자열) 그 명함은 계획에서 뺀다 — 뿌리 없는 경로로 쓰면
-     엉뚱한 자리에 그림이 떨어진다. */
-function thumbMigrationPlan(items, rootOf, chunk){
+     엉뚱한 자리에 그림이 떨어진다.
+   ⚠ 이미 밖으로 나간 그림(thumbCache 에 있는 것)은 **세기와 똑같이** 뺀다 —
+     세는 것과 하는 일이 다르면 "3,000장" 이라 해놓고 한 장도 안 옮기게 된다. */
+function thumbMigrationPlan(items, rootOf, chunk, cache){
   const size = Math.max(1, Number(chunk) || 1);
   const rf = (typeof rootOf === 'function') ? rootOf : (()=>String(rootOf||''));
   const byRoot = {};
   Object.values(items||{}).forEach(it=>{
     if(!it || !it.id) return;
-    const t1 = _inlineThumbVal(it.thumb), t2 = _inlineThumbVal(it.thumb2);
+    const got = _inlineThumbsOf(it, cache);
+    const t1 = got.t1, t2 = got.t2;
     if(!t1 && !t2) return;
     const R = String(rf(it.id) || '');
     if(!R) return;
@@ -2239,7 +2266,9 @@ async function migrateInlineThumbs(){
   if(Store.mode!=='firebase'){ toast('클라우드에 연결된 상태에서만 됩니다'); return null; }
   const items = allItems();
   const c = countInlineThumbs(items);
-  if(!c.n){ toast('밖으로 옮길 그림이 없습니다 👍'); return null; }
+  /* 아무 일도 안 일어난 것처럼 보이면 안 된다 — 왜 할 일이 없는지까지 말한다
+     (대표 보고 2026-08-17: "눌렀다. 뭐해야되는지 모르겠더라"). */
+  if(!c.n){ toast('밖으로 뺄 그림이 없습니다 — 옛 명함의 그림은 이미 다 옮겨져 있습니다 👍 (더 하실 일 없습니다)', 7000); return null; }
   const mb = (c.bytes/1024/1024).toFixed(1);
   if(!confirm(`옛 명함 ${c.n.toLocaleString()}장에 그림이 박혀 있습니다 (약 ${mb}MB).\n\n`
     + `밖으로 옮기면 명함첩을 열 때 그만큼 덜 받습니다.\n`
@@ -2264,7 +2293,8 @@ async function migrateInlineThumbs(){
     }
   }
   try{ render(); }catch(_){}
-  toast(`✅ ${done.toLocaleString()}장을 밖으로 옮겼습니다 — 그림은 그대로 보입니다`, 7000);
+  toast(`✅ 다 끝났습니다 — 옛 명함 ${done.toLocaleString()}장의 그림(약 ${mb}MB)을 밖으로 옮겼습니다.`
+    + ` 그림은 그대로 보이고, 이제 명함첩을 열 때 그만큼 덜 받습니다`, 9000);
   return { done:done, total:c.n, stopped:false };
 }
 
@@ -5651,7 +5681,6 @@ function openTopSheet(){
    Task 6 에서 그 render() 가 폰에서도 맞게 그려지도록 손본다). */
 function openCoFolderSheet(){
   const all = coList();
-  const erpN = all.filter(o=>o.erp).length;
   const tags = coTagList(all);
   const folders = Object.values(_coFolders).sort((a,b)=>(a.order||0)-(b.order||0));
   let h = `<div class="mhead"><b>기업 상세 — 폴더/태그 선택</b><button class="iconbtn" onclick="folderSheetBg.classList.remove('open')">✕</button></div>`;
@@ -5663,10 +5692,10 @@ function openCoFolderSheet(){
      (최종 전체 리뷰 M5: 태그까지 📁 로 그려 둘이 구별되지 않았다). */
   const mk=(k,label,n,on,icon)=>`<button class="sheetbtn" onclick="folderSheetBg.classList.remove('open');pickCoFolder('${esc(String(k).replace(/'/g,"\\'"))}')">
      ${on?'✅':(icon||'📁')} ${esc(label)}<span style="margin-left:auto;color:var(--sub);font-size:13px">${n}</span></button>`;
-  const noneOn = !state.coErpOnly && !state.coTag && !state.coFolder;
-  /* 전체·거래처만·폴더는 예전 그대로 📁 다 — 리뷰가 짚은 것은 태그 하나뿐이라 그것만 바꾼다. */
+  const noneOn = !state.coTag && !state.coFolder;
+  /* 전체·폴더는 예전 그대로 📁 다 — 리뷰가 짚은 것은 태그 하나뿐이라 그것만 바꾼다.
+     ⚠ 「거래처만」 줄은 대표 지시 2026-08-17 로 없앴다(PC 옆줄과 같은 차림새다). */
   h += mk('', '전체', all.length, noneOn, '📁');
-  h += mk('erp', '거래처만', erpN, state.coErpOnly, '📁');
   folders.forEach(f=> h += mk('f:'+f.id, f.name, all.filter(o=>o.folder===f.id).length, state.coFolder===f.id, '📁'));
   tags.forEach(x=> h += mk('t:'+x.t, x.t, x.n, state.coTag===x.t, '🏷'));
   h += `<button class="sheetbtn" style="color:var(--orange)" onclick="folderSheetBg.classList.remove('open');openCoFolderDialog()">＋ 새 폴더 / 이알피에서 가져오기</button>`;
@@ -8657,6 +8686,31 @@ const IS_PC = matchMedia('(min-width:761px)').matches;
 function pcItem(attrs, label, n, on){
   return `<div class="pcitem ${on?'on':''}" ${attrs}>${label}${n!==undefined?`<span>${n}</span>`:''}</div>`;
 }
+/* ══════ 옆줄 맨 아래 붙박이 — 환경설정·개인 폴더 ══════
+   ⚠ 이 덩어리는 **어느 화면에서든** 그려져야 한다.
+     예전에는 renderPCSide 의 맨 끝에서 한 번만 붙였는데, 기업 상세와 메일은 그보다
+     먼저 `return` 해서 이 자리에 닿지 못했다 — 그 두 화면에서는 「⚙️ 환경설정」과
+     「🔒 개인 폴더 열기」가 통째로 사라져, 명함 목록으로 되돌아가야만 설정에 갈 수
+     있었다(대표 보고 2026-08-17: "기업상세 클릭하니 환경설정 사라졌다").
+   그래서 글자를 **여기 한 곳**에만 두고, 갈림길마다 이 함수를 부른다. 베끼면 다음에
+   단추가 하나 늘 때 한쪽만 고쳐진다.
+   ★ 새 갈림길을 만들 때도 `$('pcSide').innerHTML` 앞에 반드시 이것을 붙여야 한다 —
+     tests/cards-side-bottom.test.js 가 갈림길을 하나하나 실제로 돌려 확인한다. */
+function pcSideBottomHtml(){
+  /* 옛 방식으로 잠긴 폴더가 남아 있으면 그것부터 알린다.
+     그냥 두면 「🔒 개인폴더」(옛 방식, 비밀번호가 DB에 그대로)와
+     「🔒 개인 폴더 열기」(새 방식)가 나란히 보여 같은 것이 둘로 보인다. */
+  const oldLocked = Object.values(state.groups||{}).filter(g=>g && g.locked).length;
+  /* 로그아웃은 오른쪽 위(#pcTopRight)로 옮겼다 — 여기 없는 것이 맞다. */
+  return `<div class="pcside-bottom">
+    ${state.isAdmin && oldLocked ? `<button class="pcside-settings" onclick="migrateLockedFolders()"
+      style="background:#7a4a12;border-color:#a4671c"
+      title="옛 방식으로 잠긴 폴더는 비밀번호가 그대로 저장돼 있어 직원이 들여다볼 수 있습니다. 대표님 전용 창고로 옮기면 서버가 막아 줍니다.">⚠ 옛 잠금 폴더 ${oldLocked}개 옮기기</button>` : ''}
+    ${state.isAdmin ? `<button class="pcside-settings" onclick="openPrivateVault()"
+      title="대표만 보는 개인 폴더 — 비밀번호를 맞혀야 자료를 가져옵니다">${state.privOpen?'🔓 개인 폴더 닫기':'🔒 개인 폴더 열기'}</button>` : ''}
+    <button class="pcside-settings" onclick="openSettingsPage()" title="정리·데이터·연동·탭·계정 설정 (별도 화면으로 열림)">⚙️ 환경설정</button>
+  </div>`;
+}
 function renderPCSide(){
   /* 개인 폴더가 열려 있으면 그 명함도 함께 센다 — 대표 눈에는 한 목록이어야 한다 */
   const all = Object.values(allItems());
@@ -8689,19 +8743,14 @@ function renderPCSide(){
     <button class="${onCo?'on':''}" onclick="openCoPage()" title="회사 하나에 얽힌 것을 한자리에 — 사업자등록증·명함·푸른이알피">🏢<em>기업 상세</em></button>
   </div></div>`;
   /* 기업정보의 폴더 — 명함이 폴더를 갖듯 회사도 갖는다.
-     「거래처만」을 화면 위 탭에서 옆줄로 내렸다. 폴더 자리에 있어야 명함첩과 같은 손놀림이
-     되고, 화면 위는 목록에 온전히 내준다(대표 지시 2026-08-13). */
+     ⚠ 예전에 여기 「🏢 거래처만」 줄이 붙박이로 있었다. 대표 지시 2026-08-17 로 **없앴다**
+       ("거래처만 삭제해라. 내가 새로 폴더 만들어서 관리하겠다"). 이제 이 옆줄은
+       사업자 갈래 옆줄과 똑같이 「전체 → 폴더 ＋ → 대표가 만든 폴더」로만 읽힌다.
+       ⚠ 없앤 것은 «ERP 거래처만 보는 거르개» 하나뿐이다 — o.erp 로 붙는 유형(자문·급여…)
+         딱지는 그대로 산다. */
   if(state.view==='co'){
     const cos = coList();
-    const erpN = cos.filter(o=>o.erp).length;
-    /* ── 「거래처만」은 폴더 목록 **맨 아래**에 둔다 (대표 지시 2026-08-16 저녁) ──
-       같은 날 오전에는 「거래처만」이 폴더 자리에 **끼어 있어** 새 폴더를 만들 때마다
-       그 아래로 밀리는 것이 문제라, 위 「보기」 칸으로 올렸었다. 저녁에 다시 「아래
-       폴더로 내려 달라」고 하셨다 — 두 지시를 다 만족하는 자리가 **폴더들 다음**이다.
-       폴더가 언제나 먼저 보이므로 새 폴더가 밀리지 않고(오전 문제 해결), 「거래처만」도
-       내려간다(저녁 지시). 폴더가 아니라 «보는 방법»이라는 성질은 그대로라 폴더 목록이
-       끝난 뒤에 줄을 긋고 놓는다. */
-    h += pcItem(`onclick="pickCoFolder('')"`, '📋 전체', cos.length, !state.coErpOnly && !state.coTag && !state.coFolder);
+    h += pcItem(`onclick="pickCoFolder('')"`, '📋 전체', cos.length, !state.coTag && !state.coFolder);
     h += `<div class="pcsec" style="display:flex;align-items:center">폴더
         <span style="margin-left:auto;cursor:pointer;font-weight:700" onclick="openCoFolderDialog()" title="새 폴더">＋</span></div>`;
     /* 손으로 만든 폴더 — 명함 폴더와 같은 결(gname·gcount·gmenu)로 그린다.
@@ -8744,10 +8793,6 @@ function renderPCSide(){
       });
       h += `<div class="coftabadd" onclick="newCoFTab('${f.id}')">＋ 이 폴더에 탭 만들기</div>`;
     });
-    /* 폴더 목록이 끝난 자리 — 「거래처만」은 폴더가 아니라 «보는 방법»이라 줄을 긋고 놓는다.
-       폴더보다 뒤이므로 새 폴더를 만들어도 이것 때문에 밀리지 않는다. */
-    h += `<div class="coviewsep"></div>`;
-    h += pcItem(`onclick="pickCoFolder('erp')"`, '🏢 거래처만', erpN, state.coErpOnly && !state.coTag && !state.coFolder);
     const tags = coTagList(cos);
     const shown = tags.filter(x=>state.coShowHidden || !_coTagHidden[x.t]);
     const hiddenN = tags.filter(x=>_coTagHidden[x.t]).length;
@@ -8768,10 +8813,11 @@ function renderPCSide(){
     }else{
       h += `<div class="pchintside">사진첩에서 서식·신청서를<br>기업 상세로 보내면<br>여기에 서류 탭이 생깁니다</div>`;
     }
+    h += pcSideBottomHtml();
     $('pcSide').innerHTML = h; return;
   }
   /* 메일 갈래에서는 메일 전용 폴더를 그린다 — 명함 폴더는 여기서 쓸 일이 없다 */
-  if(onMail){ h += mailSideHtml(); $('pcSide').innerHTML = h; return; }
+  if(onMail){ h += mailSideHtml(); h += pcSideBottomHtml(); $('pcSide').innerHTML = h; return; }
   /* 현재 탭에 속한 폴더만 — 계층 없이 1단계로 평평하게.
      개인 창고를 열어 두었으면 그 폴더도 함께 보인다(allGroups).
      안 보이면 명함만 전체 목록에 섞여 나오고 어느 것이 개인 건지 알 수 없다.
@@ -8844,19 +8890,8 @@ function renderPCSide(){
       '👤 '+esc(o), kindArr.filter(it=>String(it.owner||'').trim()===o).length, state.owner===o);
   });
 
-  /* 맨 아래 고정 환경설정 — 로그아웃은 오른쪽 위(#pcTopRight)로 옮겼다 */
-  /* 옛 방식으로 잠긴 폴더가 남아 있으면 그것부터 알린다.
-     그냥 두면 「🔒 개인폴더」(옛 방식, 비밀번호가 DB에 그대로)와
-     「🔒 개인 폴더 열기」(새 방식)가 나란히 보여 같은 것이 둘로 보인다. */
-  const oldLocked = Object.values(state.groups).filter(g=>g && g.locked).length;
-  h += `<div class="pcside-bottom">
-    ${state.isAdmin && oldLocked ? `<button class="pcside-settings" onclick="migrateLockedFolders()"
-      style="background:#7a4a12;border-color:#a4671c"
-      title="옛 방식으로 잠긴 폴더는 비밀번호가 그대로 저장돼 있어 직원이 들여다볼 수 있습니다. 대표님 전용 창고로 옮기면 서버가 막아 줍니다.">⚠ 옛 잠금 폴더 ${oldLocked}개 옮기기</button>` : ''}
-    ${state.isAdmin ? `<button class="pcside-settings" onclick="openPrivateVault()"
-      title="대표만 보는 개인 폴더 — 비밀번호를 맞혀야 자료를 가져옵니다">${state.privOpen?'🔓 개인 폴더 닫기':'🔒 개인 폴더 열기'}</button>` : ''}
-    <button class="pcside-settings" onclick="openSettingsPage()" title="정리·데이터·연동·탭·계정 설정 (별도 화면으로 열림)">⚙️ 환경설정</button>
-  </div>`;
+  /* 맨 아래 고정 환경설정 — 갈림길마다 같은 것을 붙인다(pcSideBottomHtml) */
+  h += pcSideBottomHtml();
   $('pcSide').innerHTML = h;
 }
 /* ── 메일 갈래의 왼쪽 메뉴 ──
@@ -8936,9 +8971,9 @@ function mailSideHtml(){
   });
   if(!mats.length) h += `<div class="pchintside">자료가 없습니다.<br>위 <b>＋</b> 로 올려주세요</div>`;
 
-  h += `<div class="pcside-bottom">
-    <button class="pcside-settings" onclick="openSettingsPage()" title="정리·데이터·연동·탭·계정 설정">⚙️ 환경설정</button>
-  </div>`;
+  /* 맨 아래 붙박이(환경설정·개인 폴더)는 여기서 붙이지 않는다 — 부르는 쪽(renderPCSide)이
+     갈림길마다 pcSideBottomHtml() 로 한 번씩 붙인다. 여기서도 붙이면 두 벌이 그려지고,
+     메일 화면에서만 「개인 폴더」가 빠진 «반쪽짜리» 덩어리가 되었었다. */
   return h;
 }
 /* 왼쪽에서 자료 갈래를 고르면 오른쪽 서랍이 그 갈래만 보인다.
@@ -10709,7 +10744,6 @@ const _norm = s => String(s||'').replace(/\s|\(주\)|주식회사|㈜/g,'').repl
      그래서 함수 하나로 모은다. PC 전용 뒷정리($('pcMain').scrollTop=0)만 밖에 남긴다. */
 function enterCoView(){
   state.view='co'; state.coPick='';
-  try{ state.coErpOnly = !!localStorage.getItem('pucards_co_erponly'); }catch(_){}
   /* 몇 개씩 볼지는 이 PC에 기억해 둔다 — 열 때마다 다시 고르게 하면 안 된다.
      쪽은 늘 첫 쪽부터 — 어제 보던 21쪽을 오늘 다시 열어 주는 것은 반갑지 않다. */
   try{ state.coPageSize = coPageSizeOk(localStorage.getItem('pucards_co_pagesize')); }catch(_){}
@@ -11250,26 +11284,21 @@ function openCoFolderMenu(ev, id){
   setTimeout(()=>document.addEventListener('click', closeFolderMenu, {once:true}), 0);
 }
 
-/* 거르개는 기억해 둔다 — 대표가 대개 거래처만 본다면 들어올 때마다 다시 누르게 하면 안 된다 */
-/* 옆줄 폴더 하나로 「전체 / 거래처만 / 사업별」을 다 고른다 — 셋이 서로 배타적이라
-   한 자리에서 고르는 편이 헷갈리지 않는다. */
+/* 옆줄 폴더 하나로 「전체 / 폴더 / 사업별」을 다 고른다 — 셋이 서로 배타적이라
+   한 자리에서 고르는 편이 헷갈리지 않는다.
+   ⚠ 예전에는 여기에 'erp'(거래처만) 갈래가 하나 더 있었고 그 취향을 localStorage
+     (pucards_co_erponly)에 기억해 두었다. 대표 지시 2026-08-17 로 통째로 없앴다 —
+     "거래처만 삭제해라. 내가 새로 폴더 만들어서 관리하겠다". */
 function pickCoFolder(k){
   state.coPage=0;
   closePcDetail(); state.coSel={};
   /* ⚠ 폴더가 바뀌면 그 안에서 고른 탭도 푼다 — 다른 폴더의 탭이 남아 있으면
      그 조건에 맞는 회사가 없어 «빈 목록»이 나온다. */
   state.coFTab='';
-  if(k==='erp'){ state.coErpOnly=true; state.coTag=''; state.coFolder=''; }
-  else if(k.indexOf('t:')===0){ state.coTag=k.slice(2); state.coErpOnly=false; state.coFolder=''; }
-  else if(k.indexOf('f:')===0){ state.coFolder=k.slice(2); state.coErpOnly=false; state.coTag=''; }
-  else { state.coErpOnly=false; state.coTag=''; state.coFolder=''; }
-  try{ localStorage.setItem('pucards_co_erponly', state.coErpOnly?'1':''); }catch(_){}
+  if(k.indexOf('t:')===0){ state.coTag=k.slice(2); state.coFolder=''; }
+  else if(k.indexOf('f:')===0){ state.coFolder=k.slice(2); state.coTag=''; }
+  else { state.coTag=''; state.coFolder=''; }
   render();
-}
-function toggleCoErpOnly(){
-  state.coErpOnly = !state.coErpOnly; state.coPage=0; closePcDetail();
-  try{ localStorage.setItem('pucards_co_erponly', state.coErpOnly?'1':''); }catch(_){}
-  renderCoAny();
 }
 
 /* 지금 화면에 보이는 목록 — 「전체 고르기」와 화면 그리기가 **같은 목록**을 봐야 한다.
@@ -11283,7 +11312,6 @@ function toggleCoErpOnly(){
 function coFilteredList(skipCol){
   const q = String(state.coQ||'').trim().toLowerCase();
   let list = coList();
-  if(state.coErpOnly) list = list.filter(o=>o.erp);
   if(state.coFolder) list = list.filter(o=>o.folder===state.coFolder);
   /* 폴더 안의 탭 — 폴더를 고른 상태에서만 뜻이 있다 */
   if(state.coFolder && state.coFTab) list = list.filter(o=>coFTabsOf(o).indexOf(state.coFTab)>=0);
@@ -11415,12 +11443,10 @@ function renderCoPage(){
   /* ⚠ 여기서 coVisible() 을 또 부르지 않는다 — coPage() 안에서 부르고 그 결과를 잘라 준다.
      자르는 곳이 둘이면 「전체 고르기」가 화면에 없는 회사까지 고르는 일이 다시 생긴다. */
   const info = coPage();
-  const erpN = all.filter(o=>o.erp).length;
-  /* 사업 탭 — 서식을 보낼수록 저절로 늘어난다. 손으로 만들 필요가 없다. */
+  /* 사업 탭 — 서식을 보낼수록 저절로 늘어난다. 손으로 만들 필요가 없다.
+     ⚠ 맨 앞에 있던 「🏢 거래처만」 단추와 그 뒤 세로 가름줄은 대표 지시 2026-08-17 로
+       없앴다 — 회사 갈래는 대표가 만든 폴더(옆줄)로만 나눈다. */
   const tabs = `<div class="cotabs">
-      <button class="erponly ${state.coErpOnly?'on':''}" onclick="toggleCoErpOnly()"
-        title="푸른이알피 업체관리에 있는 거래처만 봅니다">🏢 거래처만 <i>${erpN}</i></button>
-      <span class="cosep"></span>
       <button class="${state.coTag?'':'on'}" onclick="pickCoTag('')">전체 <i>${all.length}</i></button>
       ${tags.map(x=>`<button class="${state.coTag===x.t?'on':''}" onclick="pickCoTag('${esc(x.t.replace(/'/g,"\\'"))}')"
         title="${esc(x.t)}">${esc(x.t)} <i>${x.n}</i></button>`).join('')}
@@ -11863,13 +11889,13 @@ function renderCoMobileList(){
     </div>` : '';
   /* renderSubbar() 의 groupBtn 은 이 화면(state.view==='co')에서는 render() 가 건너뛴다
      — 그대로 두면 명함 탭의 마지막 값(예: "전체 (6,271)")이 굳어 붙어 있게 된다.
-     여기서 기업 상세의 지금 고른 것(전체/거래처만/폴더/태그)과 그 개수로 다시 쓴다
-     (대표 지시 2026-08-15, groupBtn 은 화면마다 자기 몫을 그려야 한다). */
+     여기서 기업 상세의 지금 고른 것(전체/폴더/태그)과 그 개수로 다시 쓴다
+     (대표 지시 2026-08-15, groupBtn 은 화면마다 자기 몫을 그려야 한다).
+     ⚠ 「거래처만」 갈래는 대표 지시 2026-08-17 로 없앴다 — 이름표에서도 뺀다. */
   const groupBtn = $('groupBtn');
   if(groupBtn){
     /* 위에서 사라진 폴더를 이미 비웠으므로 여기 오는 state.coFolder 는 살아 있는 것뿐이다 */
-    const label = state.coErpOnly ? '거래처만'
-      : state.coTag ? state.coTag
+    const label = state.coTag ? state.coTag
       : state.coFolder ? (_coFolders[state.coFolder].name || '이름 없는 폴더')
       : '전체';
     /* 개수는 **찾은 전체**다 — 지금 쪽 수(200)를 적으면 회사가 200곳뿐인 줄 안다 */

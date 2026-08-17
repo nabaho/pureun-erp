@@ -99,41 +99,27 @@ test('사업 갈래는 옆줄 폴더로 그린다', () => {
   assert.match(fn, /서류 탭/, '서식 갈래 머리가 없다');
 });
 
-test('푸른이알피 거래처만 보는 거르개가 있다', () => {
-  /* 명함의 회사 이름만으로 잡힌 곳이 대부분이라 전체가 4천 곳을 넘는다.
-     실제로 관리하는 곳은 그중 일부다(대표 지시 2026-08-13). */
-  assert.match(source, /function toggleCoErpOnly/);
-  assert.match(source, /if\(state\.coErpOnly\) list = list\.filter\(o=>o\.erp\)/);
-  assert.match(source, /onclick="toggleCoErpOnly\(\)"/);
-});
-
-test('거르개는 옆줄 폴더로 옮겼다', () => {
-  /* 화면 위 탭에서 옆줄로 내렸다 — 폴더 자리에 있어야 명함첩과 같은 손놀림이 되고,
-     화면 위는 목록에 온전히 내준다(대표 지시 2026-08-13). */
+/* ── 「거래처만」 거르개는 없앴다 (대표 지시 2026-08-17) ──
+   "거래처만 삭제해라. 내가 새로 폴더 만들어서 관리하겠다".
+   예전에는 여기에 다섯 검사가 있었다 — 거르개가 있다 / 옆줄 폴더로 옮겼다 / 개수를
+   함께 보여준다 / 취향을 기억한다 / 사업 갈래와 갈라 놓는다(.cosep·.erponly 모양).
+   지운 기능을 지키는 검사를 남겨 두면 다음 사람이 되살리게 된다. 그래서 지우고,
+   그 자리에 «옆줄이 어떻게 읽혀야 하는가»만 남긴다. 「거래처만」이 되살아나지 않는지는
+   cards-co-folders.test.js 의 ★ 검사가 한곳에서 지킨다. */
+test('옆줄은 전체 → 폴더 ＋ → 대표가 만든 폴더로 읽힌다', () => {
+  /* 사업자 갈래 옆줄과 같은 차림새다 — 그 짝맞춤이 대표 지시의 요지였다. */
   const at = source.indexOf('function renderPCSide');
   const fn = source.slice(at, source.indexOf('\nfunction ', at + 20));
-  assert.match(fn, /pickCoFolder\('erp'\)/, '옆줄에 「거래처만」 폴더가 없다');
-  assert.match(fn, /pickCoFolder\(''\)/, '옆줄에 「전체」 폴더가 없다');
+  assert.match(fn, /pickCoFolder\(''\)/, '옆줄에 「전체」 줄이 없다');
   /* ⚠ 「글자 + 쌍점」을 정규식에 그대로 쓰면 「그 PC 절대경로 금지」 검사가
      드라이브 경로(c:/ 같은 것)로 오해한다. 쌍점을 빼고 앞부분만 본다. */
+  assert.match(fn, new RegExp("pickCoFolder\\('f"), '옆줄에 손으로 만든 폴더가 없다');
   assert.match(fn, /pickCoFolder\('t/, '옆줄에 사업별 폴더가 없다');
-});
-
-test('거래처 수를 거르개에 함께 보여준다', () => {
-  /* 몇 곳이 걸러지는지 모르고 누르면 「왜 갑자기 비었지」가 된다 */
-  assert.match(source, /const erpN = all\.filter\(o=>o\.erp\)\.length/);
-});
-
-test('거르개는 기억한다', () => {
-  /* 대개 거래처만 본다면 들어올 때마다 다시 누르게 하면 안 된다 */
-  assert.match(source, /localStorage\.setItem\('pucards_co_erponly'/);
-  assert.match(source, /localStorage\.getItem\('pucards_co_erponly'\)/);
-});
-
-test('거르개는 사업 갈래와 성질이 달라 갈라 놓는다', () => {
-  /* 나란히 두면 사업 하나를 고르는 것으로 잘못 읽힌다 */
-  assert.match(source, /class="cosep"/);
-  assert.match(source, /\.cotabs button\.erponly\{/);
+  const allAt = fn.indexOf("pickCoFolder('')");
+  const secAt = fn.indexOf('">폴더');
+  const loopAt = fn.indexOf('folders.forEach');
+  assert.ok(allAt > 0 && secAt > allAt && loopAt > secAt,
+    '「전체 → 폴더 ＋ → 폴더들」 차례가 아니다');
 });
 
 test('목록은 한 줄에 한 회사인 표다', () => {

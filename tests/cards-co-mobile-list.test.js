@@ -19,7 +19,7 @@ function loadBlock(list){
   const calls = { html:'', groupBtnHtml:'' };
   const ctx = {
     esc: s => String(s ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
-    state: { coSel:{}, selMode:false, coErpOnly:false, coTag:'', coFolder:'' },
+    state: { coSel:{}, selMode:false, coTag:'', coFolder:'' },
     _coFolders: {},
     /* 나눠 보기(2026-08-15) — 폰 목록도 «잘린 쪽»을 그린다. 여기서는 한 쪽에 다 담는다 */
     coPage: () => { const l = list; return { rows:l, total:l.length, page:0, pages:1,
@@ -128,11 +128,14 @@ test('groupBtn — 아무것도 안 골랐으면 "전체"와 지금 목록 개�
   assert.match(c._calls.groupBtnHtml, /^전체 \(2\)/);
 });
 
-test('groupBtn — 거래처만 골랐으면 그 이름을 보여준다', () => {
+/* 「거래처만」 이름표 검사는 지웠다 — 그 거르개 자체가 대표 지시 2026-08-17 로
+   없어졌다("거래처만 삭제해라. 내가 새로 폴더 만들어서 관리하겠다").
+   대신 옛 상태를 억지로 켜도 이름표가 그것을 따라가지 않는지를 본다. */
+test('groupBtn — 없앤 「거래처만」 상태를 억지로 켜도 이름표가 안 바뀐다', () => {
   const c = loadBlock([{ key:'k1', name:'대명크라샤', bizno:'', erp:null, folder:'', cards:[], docs:0, tags:{} }]);
-  c.state.coErpOnly = true;
+  c.state.coErpOnly = true;                 /* 옛 기기에 남아 있을 수 있는 찌꺼기 */
   c.renderCoMobileList();
-  assert.match(c._calls.groupBtnHtml, /^거래처만 \(1\)/);
+  assert.match(c._calls.groupBtnHtml, /^전체 \(1\)/, '없앤 거르개가 이름표에 되살아났다');
 });
 
 test('groupBtn — 태그를 골랐으면 그 태그 이름을 보여준다', () => {

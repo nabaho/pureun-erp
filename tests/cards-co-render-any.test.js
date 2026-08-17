@@ -67,7 +67,7 @@ const SITES = [
   { fn: 'pickCoTag', desc: '태그 고르기' },
   { fn: 'hideCoTag', desc: '태그 숨기기' },
   { fn: 'deleteCoFolder', desc: '폴더 삭제' },
-  { fn: 'toggleCoErpOnly', desc: '거래처만 보기' },
+  /* toggleCoErpOnly(거래처만 보기) 는 대표 지시 2026-08-17 로 없앴다 — 지킬 함수가 없다 */
   { fn: 'coMoveSelTo', desc: '폴더 이동' },
   { fn: 'coApplyTag', desc: '태그 담기' },
   { fn: 'coImportFolderFromType', desc: '이알피 가져오기' },

@@ -57,9 +57,9 @@ function loadEntryChain(){
   const fabEl = { style:{} }, sortEl = { style:{} }, selbarEl = { style:{} };
   const searchEl = { placeholder:'', value:'' };
   const ctx = {
-    state: { tab:'card', view:'list', q:'', coQ:'', coPick:'keep-me', coErpOnly:false },
+    state: { tab:'card', view:'list', q:'', coQ:'', coPick:'keep-me' },
     calls: { rendered:0, selbar:0 },
-    localStorage: { getItem: k => (k==='pucards_co_erponly' ? '1' : null), setItem(){} },
+    localStorage: { getItem: () => null, setItem(){} },
     $: id => {
       if(id==='search') return searchEl;
       if(id==='fab') return fabEl;
@@ -100,13 +100,15 @@ test('★ C1 — openCoMobile() 은 화면도 한 번 그린다(자료만 부르
   assert.equal(c.calls.rendered, 1, '화면을 두 번 그리거나 아예 안 그리면 안 됩니다');
 });
 
-test('★ C1 — openCoMobile() 도 state.coPick 을 비우고 pucards_co_erponly 를 되살린다', () => {
+/* 예전에는 여기서 「거래처만」 취향(pucards_co_erponly)이 폰에서도 되살아나는지 함께
+   봤다. 그 거르개는 대표 지시 2026-08-17 로 없어졌다 — 되살릴 취향 자체가 없다.
+   남은 알맹이(공용 진입로가 고른 회사를 비운다)만 지킨다. */
+test('★ C1 — openCoMobile() 도 state.coPick 을 비운다', () => {
   const c = loadEntryChain();
   c.state.coPick = '312-81-49225';
-  c.state.coErpOnly = false;
   c.openCoMobile();
   assert.equal(c.state.coPick, '', '예전에 고른 회사가 남으면 엉뚱한 회사 상세가 열립니다');
-  assert.equal(c.state.coErpOnly, true, '「거래처만」 취향이 폰에서만 안 되살아나면 안 됩니다');
+  assert.equal('coErpOnly' in c.state, false, '없앤 「거래처만」 상태를 되살리면 안 됩니다');
 });
 
 test('★ C1 — 두 진입로가 같은 공용 함수 하나를 거친다(베껴 두면 한쪽만 고쳐진다)', () => {
@@ -287,7 +289,7 @@ function loadCoMobileList(list, folders){
   const calls = { html:'', groupBtnHtml:'' };
   const ctx = {
     esc,
-    state: { coSel:{}, selMode:false, coErpOnly:false, coTag:'', coFolder:'' },
+    state: { coSel:{}, selMode:false, coTag:'', coFolder:'' },
     _coFolders: folders || {},
     /* 진짜 coVisible 은 state.coFolder 로도 거른다 — 그 몫만 흉내 낸다.
        (여기서 거르지 않으면 「전체로 되돌리기」가 개수까지 맞추는지 증명할 수 없다) */
@@ -461,7 +463,7 @@ function loadFolderSheet(){
   const calls = { html:'' };
   const ctx = {
     esc,
-    state: { view:'co', coFolder:'', coTag:'', coErpOnly:false },
+    state: { view:'co', coFolder:'', coTag:'' },
     _coFolders: { f1:{ id:'f1', name:'현장클리닉' } },
     coList: () => [{ key:'k1', folder:'f1' }],
     coTagList: () => [{ t:'일터상생혁신', n:2 }],

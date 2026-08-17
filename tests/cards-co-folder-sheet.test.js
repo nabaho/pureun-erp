@@ -27,7 +27,7 @@ function loadBlock(){
   const calls = { html:'', opened:false, groupSheetCalled:false };
   const ctx = {
     esc: s => String(s ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
-    state: { view:'list', coFolder:'', coTag:'', coErpOnly:false },
+    state: { view:'list', coFolder:'', coTag:'' },
     _coFolders: {},
     coList: () => [],
     coTagList: () => [],
@@ -52,7 +52,9 @@ test('명함·사업자 화면이면 openTopSheet 이 기존 openGroupSheet 을 
   assert.ok(c._calls.groupSheetCalled, '명함 화면에서는 기존 그룹 시트를 그대로 써야 합니다');
 });
 
-test('기업 상세 화면이면 openCoFolderSheet 이 전체·거래처만·폴더·태그를 나열한다', () => {
+/* 2026-08-17 대표 지시로 「거래처만」 줄은 시트에서도 빠졌다 — PC 옆줄과 같은 차림새다
+   ("거래처만 삭제해라. 내가 새로 폴더 만들어서 관리하겠다"). */
+test('기업 상세 화면이면 openCoFolderSheet 이 전체·폴더·태그를 나열한다(「거래처만」은 없다)', () => {
   const c = loadBlock();
   c.state.view = 'co';
   c._coFolders = { f1:{ id:'f1', name:'현장클리닉' } };
@@ -60,9 +62,9 @@ test('기업 상세 화면이면 openCoFolderSheet 이 전체·거래처만·폴
   c.coTagList = () => [{ t:'일터상생혁신', n:2 }];
   c.openTopSheet();
   assert.match(c._calls.html, /전체/);
-  assert.match(c._calls.html, /거래처만/);
   assert.match(c._calls.html, /현장클리닉/);
   assert.match(c._calls.html, /일터상생혁신/);
+  assert.doesNotMatch(c._calls.html, /거래처만/, '없앤 「거래처만」 줄이 폰 시트에 되살아났다');
   assert.ok(c._calls.opened);
 });
 

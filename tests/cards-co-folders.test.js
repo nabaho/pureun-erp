@@ -75,14 +75,18 @@ test('openCoPage 는 그 공용 길을 거친다', () => {
      쥐여줘야 테스트마다 회사 데이터를 갈아 끼울 수 있다. */
 function loadCoFoldersBlock(){
   const at = source.indexOf('function loadCoFolders');
-  const end = source.indexOf('function toggleCoErpOnly', at);
+  /* 끝 표시는 pickCoFolder 다음에 오는 첫 함수다. 예전엔 toggleCoErpOnly 를 썼는데
+     「거래처만」이 대표 지시 2026-08-17 로 사라지면서 그 함수도 없어졌다 —
+     이제 그 자리에 오는 coFilteredList 를 표시로 쓴다(코드는 더 안 들어온다,
+     선언문들뿐이라 vm 에서 돌려도 부작용이 없다). */
+  const end = source.indexOf('function coFilteredList', at);
   const calls = { updates: [], sets: [], toasts: [], menuHtml: '', menuOpen: false, rendered: false, pcRendered: false, anyRendered: false, closePcDetailCalls: 0 };
   const ctx = {};
   Object.assign(ctx, {
     DB_ROOT: 'pucards',
     _coFolders: {},
     _coInfo: {},
-    state: { view: 'co', coFolder: '', coErpOnly: false, coTag: '', coPick: '', coSel: {} },
+    state: { view: 'co', coFolder: '', coTag: '', coPick: '', coSel: {} },
     Store: { mode: 'firebase', db: { ref: p => ({
       on: () => {},
       set: v => { calls.sets.push({ path: p, v }); return Promise.resolve(); },
@@ -155,32 +159,50 @@ test('deleteCoFolder 는 취소하면 아무 것도 안 지운다', () => {
   assert.equal(c._calls.updates.length, 0, '취소했는데 write 가 나가면 안 된다');
 });
 
-test("pickCoFolder 는 폴더·거래처만·사업탭·전체가 서로 배타적이다", () => {
+/* 2026-08-17 대표 지시로 「거래처만」 갈래가 사라졌다 — 남은 셋(폴더·사업탭·전체)의
+   배타성만 못 박는다. 「거래처만」이 되살아나지 않는 것은 아래 별도 검사가 지킨다. */
+test("pickCoFolder 는 폴더·사업탭·전체가 서로 배타적이다", () => {
   const c = loadCoFoldersBlock();
 
   c.pickCoFolder('f:abc');
   assert.equal(c.state.coFolder, 'abc');
-  assert.equal(c.state.coErpOnly, false);
   assert.equal(c.state.coTag, '');
   /* 최종 전체 리뷰 2026-08-14: 옆줄 폴더를 눌러 걸러도 열려 있던 상세 패널이 그대로
      남으면, 걸러진 목록엔 없는 회사를 계속 보여준다 — closePcDetail() 로 닫아야 한다. */
   assert.equal(c._calls.closePcDetailCalls, 1, 'closePcDetail 을 불러 패널도 닫아야 한다');
 
-  c.pickCoFolder('erp');
-  assert.equal(c.state.coErpOnly, true);
-  assert.equal(c.state.coFolder, '', 'erp 를 고르면 폴더 선택은 풀려야 한다');
-  assert.equal(c.state.coTag, '');
-
   c.pickCoFolder('t:지원사업');
   assert.equal(c.state.coTag, '지원사업');
-  assert.equal(c.state.coErpOnly, false, '사업탭을 고르면 거래처만 선택은 풀려야 한다');
-  assert.equal(c.state.coFolder, '');
+  assert.equal(c.state.coFolder, '', '사업탭을 고르면 폴더 선택은 풀려야 한다');
 
   c.pickCoFolder('');
-  assert.equal(c.state.coErpOnly, false);
   assert.equal(c.state.coFolder, '');
-  assert.equal(c.state.coTag, '', '전체를 고르면 셋 다 풀려야 한다');
+  assert.equal(c.state.coTag, '', '전체를 고르면 둘 다 풀려야 한다');
   assert.equal(c._calls.rendered, true);
+});
+
+/* ── 「거래처만」은 지웠다 (대표 지시 2026-08-17) ──
+   "거래처만 삭제해라. 내가 새로 폴더 만들어서 관리하겠다".
+   ⚠ 지운 것은 «ERP 거래처만 보는 거르개» 하나뿐이다 — o.erp 로 붙는 유형 딱지는 산다. */
+test('★ 「거래처만」 거르개가 되살아나지 않는다 — 상태·저장·함수가 모두 없다', () => {
+  /* ⚠ 왜 지웠는지 적은 **주석**은 남겨 둔다 — 그래서 「글자가 있나」가 아니라
+     «코드 모양»으로 본다(state.…, localStorage.…Item('…'), function …). */
+  assert.doesNotMatch(source, /state\.coErpOnly/, 'state.coErpOnly 가 아직 남아 있다');
+  assert.doesNotMatch(source, /localStorage\.\w+Item\('pucards_co_erponly'/, '취향을 아직 localStorage 에 기억한다');
+  assert.doesNotMatch(source, /function toggleCoErpOnly/, 'toggleCoErpOnly 가 아직 있다');
+  assert.doesNotMatch(source, /onclick="toggleCoErpOnly\(\)"/, '화면에 「거래처만」 단추가 아직 걸려 있다');
+  assert.doesNotMatch(source, new RegExp("pickCoFolder\\('erp'\\)"), '옆줄·시트에 「거래처만」 줄이 아직 있다');
+  /* 유형 딱지는 ERP 짝맞추기에서 오는 것이라 그대로 살아 있어야 한다 */
+  assert.match(source, /o\.erp && o\.erp\.type/, 'ERP 유형 딱지까지 지우면 안 된다');
+});
+
+test('★ pickCoFolder 에 erp 갈래가 없다 — 없는 키를 주면 「전체」로 떨어진다', () => {
+  const c = loadCoFoldersBlock();
+  c.pickCoFolder('f:abc');
+  c.pickCoFolder('erp');            /* 옛 키 — 이제 아무 뜻도 없다 */
+  assert.equal(c.state.coFolder, '', '없어진 키가 폴더 선택을 남겨두면 안 된다');
+  assert.equal(c.state.coTag, '');
+  assert.equal('coErpOnly' in c.state, false, '없앤 state 를 되살리면 안 된다');
 });
 
 test('confirmNewCoFolder 는 입력한 이름과 새로 만든 id 로 폴더를 만든다', () => {

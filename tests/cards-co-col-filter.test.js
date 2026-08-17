@@ -55,7 +55,7 @@ function loadColFilterBlock(items){
 
   const calls = { menuHtml: '', menuOpen: false, docClicked: [], closePcDetailCalls: 0 };
   const ctx = {
-    state: { coQ:'', coErpOnly:false, coFolder:'', coTag:'', coColFilter:{}, coPick:'' },
+    state: { coQ:'', coFolder:'', coTag:'', coColFilter:{}, coPick:'' },
     coList: () => items.slice(),
     coTagsOf: () => [],
     esc: s => String(s),
