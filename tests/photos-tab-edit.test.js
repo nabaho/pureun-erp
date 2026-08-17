@@ -99,14 +99,40 @@ test('「전체사진」에는 ✎ 를 안 붙인다 — 돌아갈 자리다', (
   assert.match(fnOf(store, 'setKindHidden'), /key === 'all'\) return Promise\.reject/);
 });
 
-test('★ 고정 분류는 이름 고치기·탭 숨기기로 간다 — 갈래를 지우지 않는다', () => {
+test('★ 고정 분류는 이름 고치기·분류 삭제로 간다 — 사진은 지우지 않는다', () => {
   const fn = fnOf(app, 'openRenameKind');
   assert.match(fn, /if \(!isCustomTab\(key\)\) \{ openFixedKind\(key\); return; \}/,
     '고정 분류가 직접분류 창으로 가면 엉뚱한 곳을 지웁니다');
   const fx = fnOf(app, 'openFixedKind');
-  assert.match(fx, /탭 숨기기/, '숨기기 길이 없습니다');
+  assert.match(fx, /'분류 삭제'/, '★ 없애는 길이 없습니다 — 대표가 두 번 「삭제는 왜 없나」 하셨다');
   assert.match(fx, /보이는 이름표만/, '무엇이 바뀌는지 안 말합니다');
-  assert.match(fx, /기타서류/, '★ 없앨 수 없는 까닭을 안 적으면 「또 안 되네」가 됩니다');
+});
+
+/* ⚠ 이 검사가 이 작업의 핵심이다. 예전 창에는 «사실이 아닌» 두 줄이 있었다 —
+   ①「없앨 수는 없습니다」 ②「기타서류에서 계속 보입니다」. ②는 코드와 다르다:
+   tabsOf 는 갈래를 그대로 돌려주므로, 탭이 빠진 사진은 기타서류(갈래를 모르는
+   것을 받는 칸)에 안 들어가고 «전체사진»에만 남는다. 그 틀린 설명 때문에 대표가
+   삭제 기능이 아예 없는 줄 아셨다. 다시 그렇게 적히면 여기서 운다. */
+test('★ 창에 사실만 적는다 — 「기타서류에서 보인다」는 코드와 다른 말이다', () => {
+  const fx = fnOf(app, 'openFixedKind');
+  const ask = fnOf(app, 'askDeleteFixedKind');
+  for (const [name, fn] of [['분류 고치기 창', fx], ['확인 창', ask]]) {
+    assert.ok(!/기타서류/.test(fn), '★ ' + name + ' 이 기타서류로 간다고 거짓말합니다');
+    assert.ok(!/없앨 수는 없/.test(fn), '★ ' + name + ' 이 아직 「없앨 수 없다」고 말합니다');
+    assert.match(fn, /전체사진/, '★ ' + name + ' 이 사진이 어디 남는지 안 알려 줍니다');
+    assert.match(fn, /안 지워집니다|한 장도 안/,
+      '★ ' + name + ' 이 사진이 안 지워진다는 말을 안 합니다 — 무서워서 못 누릅니다');
+  }
+  /* 그리고 그 말이 진짜인지 코드로 확인한다 — tabsOf 가 숨김을 안 본다. */
+  assert.ok(!/KIND_HIDDEN/.test(fnOf(app, 'tabsOf')),
+    '★ tabsOf 가 숨김을 보면 없앤 분류의 사진이 기타서류로 쏟아집니다');
+});
+
+test('★ 없앤 분류를 되살리는 길이 남아 있다 — 사진을 잃지 않는다', () => {
+  const ask = fnOf(app, 'askDeleteFixedKind');
+  assert.match(ask, /분류 추가/, '되살리는 곳을 안 알려 주면 되돌릴 수 없다고 여깁니다');
+  assert.match(ask, /setKindHidden\(key, true\)/, '삭제가 사진 자리를 건드립니다');
+  assert.ok(!/remove|items|blobs/.test(ask), '★ 삭제가 사진을 지웁니다');
 });
 
 test('★ 숨겨도 사진은 안 지운다 — 저장 층이 이름표·숨김 칸만 만진다', () => {
@@ -131,15 +157,15 @@ test('빈 이름으로 고치면 원래 이름으로 돌아간다 — 되돌릴 
     '빈 값을 null 로 안 쓰면 이름표가 영영 덮인 채 남습니다');
 });
 
-test('★ 숨긴 탭은 탭 줄에서 빠지고, 되살리는 길이 있다', () => {
+test('★ 없앤 분류는 탭 줄에서 빠지고, 되살리는 길이 있다', () => {
   const fn = fnOf(app, 'renderKindTabs');
-  assert.match(fn, /k === 'all' \|\| !KIND_HIDDEN\[k\]/, '숨김이 탭 줄에 안 걸립니다');
+  assert.match(fn, /k === 'all' \|\| !KIND_HIDDEN\[k\]/, '삭제가 탭 줄에 안 걸립니다');
   const add = fnOf(app, 'openAddKind');
-  assert.match(add, /감춘 분류 되살리기/, '★ 숨기면 ✎ 로 못 들어가니 되살릴 길이 없어집니다');
+  assert.match(add, /없앤 분류 되살리기/, '★ 없애면 ✎ 로 못 들어가니 되살릴 길이 없어집니다');
   assert.match(add, /unhideKind/);
 });
 
-test('숨긴 탭을 보고 있었으면 전체사진으로 돌아간다 — 빈 화면에 남기지 않는다', () => {
+test('없앤 분류를 보고 있었으면 전체사진으로 돌아간다 — 빈 화면에 남기지 않는다', () => {
   const fn = fnOf(app, 'loadCustomKinds');
   assert.match(fn, /KIND_HIDDEN\[kindTab\]\) kindTab = 'all'/);
 });
