@@ -132,6 +132,38 @@ ok('시도가 두 번 든 주소를 견딘다', src.includes("var dup=/^(\\S+)\\
 // 둘 다 «아는 시도 이름»일 때만 지운다 — 안 그러면 「서울 서초구 …」의 첫 낱말을 지울 수 있다
 ok('아는 시도일 때만 중복을 지운다',
   src.includes('known.indexOf(dup[1])>=0 && known.indexOf(dup[2])>=0'));
+/* 관할 세 가지는 «같은 소재지»에서 나온다 — 함수도 단추도 하나로 합쳤다.
+   다시 셋으로 갈라지면 같은 42개 주소를 세 번 훑고 세 번 확인하게 된다. */
+ok('관할 일괄은 하나로 합쳐져 있다', src.includes('var BULK_OFFICES=[')
+  && src.includes('function bulkOffices(') && src.includes('function applyBulkOffices('));
+ok('노동청·세무서·등기소를 한 표에서 본다',
+  ["key:'labor_office'", "key:'tax_office'", "key:'registry_office'"].every(k => src.includes(k)));
+ok('옛 세 벌은 남지 않았다',
+  !/function bulkRegistry\(/.test(src) && !/function bulkTax\(/.test(src) && !/function bulkLabor\(/.test(src));
+ok('단추도 하나뿐', (src.match(/bulkOffices\(\)/g) || []).length >= 2
+  && !src.includes('bulkRegistry()') && !src.includes('bulkTax()') && !src.includes('bulkLabor()'));
+// 줄마다 제 칸에 넣어야 한다 — 한 칸에 몰아넣으면 세무서 값이 노동청 칸에 들어간다
+ok('적용기가 줄마다 제 칸에 넣는다', src.includes('var fld=function(p){ return field||p.key; };')
+  && src.includes("updates[p.id+'/'+fld(p)]=p.office;"));
+/* 추정값이 «사람이 확인해 넣은 값»을 덮으면 안 된다 — 그러면 조용히 틀린 관서가 서식에 나간다.
+   미리보기 때 한 번, 적용 직전에 서버 값으로 또 한 번 — 두 겹 다 있어야 한다. */
+ok('이미 든 값은 미리보기에서 빠진다', src.includes("if(String(f[o.key]||'').trim()) return;"));
+ok('적용 직전에도 다시 확인한다', src.includes("if(String(c[fld(p)]||'').trim()){ skip++; return; }"));
+// 소재지가 없으면 추정 자체가 불가능하다 — 몇 개가 그래서 빠졌는지 사람에게 알려야 한다
+ok('소재지 없는 기금을 세어 알린다', src.includes("if(!(f.address||'').trim()){ noAddr++; return; }")
+  && src.includes('소재지가 없어 제외'));
+ok('도움말도 하나로', src.includes("'bulk.office':{t:'관할 기관 일괄 추정'")
+  && !src.includes("'bulk.reg':") && !src.includes("'bulk.tax':") && !src.includes("'bulk.labor':"));
+/* 죽은 코드 — 되살아나면 다시 «부르는 곳 없는 짐»이 된다 */
+ok('단추를 뗀 「푸른이알피 업체 연결」 코드는 지웠다',
+  ['function pickCompany(', 'function renderCoList(', 'function chooseCompany(',
+   'function companyToSite(', 'function loadCompanies('].every(n => !src.includes(n)));
+ok('설립중 목록 모달·CLOSE_SHEETS·SITE_PARTNER_FIELD 도 지웠다',
+  !src.includes('function showSetupFunds(') && !src.includes('function openSetup(')
+  && !src.includes('var CLOSE_SHEETS=') && !src.includes('var SITE_PARTNER_FIELD='));
+// 임원 명부에 저장 단추를 또 두지 않는다 — 한 화면에 같은 일을 하는 단추가 둘이면 망설이게 된다
+ok('기금 정보 화면의 저장 단추는 하나', (src.match(/onclick="saveInfo\(\)"/g) || []).length === 1);
+
 ok('서산지청 승격 반영(서산시)', src.includes("'충남 서산시':'대전지방고용노동청 서산지청'"));
 ok('예산군은 천안지청', src.includes("'충남 예산군':'대전지방고용노동청 천안지청'"));
 ok('보령지청에 서산 없음',
