@@ -228,7 +228,10 @@ test('coMoveSelTo 는 지금 열쇠가 이미 이름 열쇠면 옛 열쇠를 따
   assert.equal(w['coInfo/n다라기업/folder'], 'f1', '자기 자신에 옛 열쇠 지우기를 덧써서 null 로 되돌리면 안 된다');
 });
 
-test('화면: 선택 도구줄이 목록 위에 있다', () => {
+/* ⚠ 이름만 고쳤다(2026-08-17) — 도구줄은 이제 목록 «위»가 아니라 «아래에 붙어 따라온다».
+   재는 것은 그대로다(도구줄이 있고, 두 단추가 그 안에 있다). 자리 자체는
+   cards-co-selbar-drag.test.js 가 못 박는다. */
+test('화면: 선택 도구줄이 목록에 그려진다', () => {
   const at = source.indexOf('function coListHtml');
   const fn = source.slice(at, source.indexOf('function coDocsHtml', at));
   assert.match(fn, /class="coselbar"/);

@@ -706,6 +706,30 @@ table.sbox.tight td.none{padding:26px 8px}
 .coselbar .comore:hover{background:#fdf0d8}
 .coselbar .coclear{border-color:#f0c9c4;color:#c0392b;background:#fff;margin-left:auto}
 .coselbar .coclear:hover{background:#fdeced}
+/* 「끌어서 폴더에 놓아도 됩니다」 — 도구줄 안의 작은 안내(대표 지시 2026-08-17) */
+.coselbar .codraghint{font-size:11.5px;color:#5a7ba8;white-space:nowrap}
+/* ── 고른 회사 도구줄을 «아래에 붙여» 따라오게 하는 감싸개 (대표 지시 2026-08-17) ──
+   ⚠ 예전에는 표 «맨 위»에 있었다. 4,138곳 가운데 171번째 줄까지 내려가 14곳을 골랐을 때
+     도구줄은 화면 밖 저 위에 있었다 — 고르고 나서 «무엇을 할 수 있는지»가 어디에도
+     안 보였다(대표 화면 2026-08-17). 기능은 있는데 보이지 않으면 없는 것과 같다.
+   ⚠ .coselbar 자체에 붙이면 «폰까지 샌다» — 폰 목록(renderCoMobileList)이 같은 반을
+     쓰고, 폰에는 제 도구줄이 따로 있다. 그래서 PC 표에서만 이 감싸개를 씌운다.
+   ⚠ 위(top:0)가 아니라 «아래(bottom:0)»에 붙인다 — 표 머리(.cotbl thead th)가 이미
+     top:0 로 붙어 있어, 위에 붙이면 「전체 고르기」 네모와 칸 이름이 가려진다.
+   ⚠ position:sticky 는 흐름 «안»에 제 자리를 그대로 차지한다. 맨 아래까지 내려가면
+     쪽넘김(coPagerHtml) «아래»에 내려앉으므로, 마지막 줄도 쪽넘김도 덮지 않는다.
+     떠 있는 막대(position:fixed)로 만들면 그 둘을 가려 따로 여백을 대야 한다. */
+.cosellift{position:sticky;bottom:0;z-index:30;padding:10px 0 8px;
+  background:linear-gradient(to top,#f3f5f9 66%,rgba(243,245,249,0))}
+.cosellift .coselbar{margin:0;box-shadow:0 2px 12px rgba(24,95,165,.18)}
+/* 고른 회사 줄은 끌 수 있다 — 손 모양으로 알린다(안 고른 줄은 draggable 이 안 붙는다) */
+.corow[draggable="true"]{cursor:grab}
+.corow.codragging{opacity:.45}
+/* 회사를 떨어뜨릴 폴더 줄 — 순서선(.ord-dragover)·명함 놓기(.dropover)와 «다른 표시»다.
+   셋이 같은 줄에 걸리므로 눈으로도 갈라져 보여야 무엇이 일어날지 알 수 있다.
+   ⚠ #pcSide 를 앞에 둔다 — 그냥 .folderrow.codrop 이면 뒤에 오는 .pcitem:hover 의
+     바탕색에 눌린다(끌어다 놓는 순간은 늘 hover 상태다). */
+#pcSide .folderrow.codrop{outline:2px solid #60a5fa;background:#33457a}
 /* ⚠ 폴더 안의 ＃탭 모양(#pcSide .coftab/.coftabadd)은 없앴다 — 탭은 이제 옆줄이 아니라
      윗줄(#pcErpTabs)에 명함·사업자의 탭 칩과 «같은 모양»으로 나온다(대표 지시 2026-08-17). */
 /* 기업 상세 나눠 보기 — 「몇 개씩」 칸과 쪽 옮기기 (명함 표의 #pcPageSize·#pcPager 와 같은 결) */
@@ -6443,6 +6467,61 @@ function onOrdDrop(e, kind, id, scope){
   saveOrder(kind, d.id, id, scope||'', after);
 }
 
+/* ══════ 고른 회사를 끌어서 옆줄 폴더에 놓기 (대표 지시 2026-08-17) ══════
+   「클릭한 것 마우스 드래그해서 폴더로 옮길 수 있게 하고」 — 표에서 체크한 회사를
+   집어 옆줄 폴더 줄에 떨어뜨리면 그 폴더로 옮겨진다.
+
+   ★ 같은 폴더 줄이 이제 «세 가지» 드래그를 받는다. 무엇을 끌고 있는지가 섞이면
+     순서를 바꾸려다 회사가 옮겨지는 사고가 난다. 그래서 신호를 셋 «따로» 둔다 —
+       dragId      … 명함 한 장을 끄는 중 (onRowDrag → onFolderOrCardDrop)
+       _dragOrd    … 폴더·탭의 순서를 바꾸는 중 (onOrdDragStart → onOrdDrop, 대표만)
+       _dragCo     … 고른 회사를 끄는 중 (onCoRowDragStart → onCoFolderDrop)  ← 새로 붙는 것
+     저마다의 받는 곳은 «제 신호가 없으면 곧바로 되돌아 나온다». 시작할 때 나머지 둘을
+     비우므로 두 신호가 동시에 켜져 있는 일도 없다.
+   ⚠ 폴더 «순서» 바꾸기는 대표만이지만, 회사를 폴더로 옮기는 것은 «누구나» 한다 —
+     지금도 직원이 「📁 폴더로 옮기기」로 하는 일이다. state.isAdmin 으로 막지 않는다. */
+let _dragCo = null;
+function onCoRowDragStart(e, key){
+  /* 체크한 줄만 끌린다 — 체크 안 한 줄을 끌면 아무 일도 안 일어난다.
+     ⚠ 「끈 줄 하나만 옮기기」로 하면, 14곳을 골라 둔 채 15번째 줄을 무심코 끌었을 때
+       골라 둔 14곳이 조용히 풀리고 엉뚱한 한 곳만 옮겨진다. 고른 것을 건드리지 않는
+       쪽이 예측할 수 있다(표에도 draggable 이 고른 줄에만 붙는다). */
+  if(!state.coSel || !state.coSel[key]) return;
+  const keys = Object.keys(state.coSel);
+  if(!keys.length) return;
+  _dragCo = { keys: keys };
+  dragId = null; dragFolderId = null; _dragOrd = null;
+  /* ⚠ 파이어폭스는 setData 가 없으면 드래그를 아예 시작하지 않는다 */
+  try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', String(keys.length)); }catch(_){}
+  /* 흐릿해지는 표시도 순서 드래그(.ord-dragging)와 «따로» 둔다 — 이름이 섞이면
+     다음 사람이 이 줄을 순서 드래그로 읽는다 */
+  if(e.currentTarget && e.currentTarget.classList) e.currentTarget.classList.add('codragging');
+  e.stopPropagation();
+}
+function onCoRowDragEnd(e){
+  _dragCo = null;
+  if(e.currentTarget && e.currentTarget.classList) e.currentTarget.classList.remove('codragging');
+  try{ document.querySelectorAll('.codrop').forEach(el=>el.classList.remove('codrop')); }catch(_){}
+}
+/* 「여기에 놓입니다」 — 커서 밑의 폴더 줄에만 표시한다 */
+function onCoFolderDragOver(e){
+  if(!_dragCo) return;                  /* 회사를 끄는 중이 아니면 순서·명함 길에 맡긴다 */
+  e.preventDefault(); e.stopPropagation();
+  try{ e.dataTransfer.dropEffect='move'; }catch(_){}
+  e.currentTarget.classList.add('codrop');
+}
+function onCoFolderDragLeave(e){ if(e.currentTarget && e.currentTarget.classList) e.currentTarget.classList.remove('codrop'); }
+function onCoFolderDrop(e, folderId){
+  if(e.currentTarget && e.currentTarget.classList) e.currentTarget.classList.remove('codrop');
+  if(!_dragCo) return;                  /* 순서 드래그(onOrdDrop)·명함 드래그가 맡는다 */
+  e.preventDefault(); e.stopPropagation();
+  const d = _dragCo; _dragCo = null;
+  if(!d.keys.length) return;
+  /* ⚠ 옮기는 길은 하나뿐이다 — coMoveSelTo. 여기서 따로 쓰면 옛 이름 열쇠 비우기·
+     한 통에 모아 보내기·알림이 두 벌이 되어 한쪽만 고쳐진다(그 함수가 알린다). */
+  return coMoveSelTo(folderId);
+}
+
 /* ── 사이드바 폭 조절(PC) ── */
 (function(){ const rz=$('resizer'); let on=false;
   rz.addEventListener('pointerdown',e=>{ on=true; rz.setPointerCapture(e.pointerId); });
@@ -8772,14 +8851,19 @@ function renderPCSide(){
     folders.forEach(f=>{
       const on = state.coFolder===f.id;
       const cnt = coFTabCounts(cos, f.id);
-      /* 대표만 끌어서 순서를 바꾼다 — 명함 폴더와 같은 손놀림 */
+      /* 대표만 끌어서 순서를 «바꾼다» — 명함 폴더와 같은 손놀림.
+         ⚠ 고른 회사를 이 줄에 «놓는» 것은 누구나 한다(직원도 「📁 폴더로 옮기기」를 쓴다).
+           그래서 받는 쪽(ondragover/ondragleave/ondrop)은 늘 붙어 있고, 순서 갈래는
+           _dragOrd 가 있을 때만·회사 갈래는 _dragCo 가 있을 때만 탄다 — 명함 폴더 줄이
+           순서와 명함 놓기를 가르는 방식 그대로다. */
       h += `<div class="pcitem folderrow ${on?'on':''}" style="padding-left:11px"
           draggable="${state.isAdmin ? 'true' : 'false'}"
           ondragstart="onOrdDragStart(event,'cofolder','${f.id}','')"
           ondragend="onOrdDragEnd(event)"
-          ondragover="onOrdDragOver(event)"
-          ondragleave="onOrdDragLeave(event)"
-          ondrop="onOrdDrop(event,'cofolder','${f.id}','')">
+          ondragover="onOrdDragOver(event);onCoFolderDragOver(event)"
+          ondragleave="onOrdDragLeave(event);onCoFolderDragLeave(event)"
+          ondrop="onOrdDrop(event,'cofolder','${f.id}','');onCoFolderDrop(event,'${f.id}')"
+          title="고른 회사를 여기에 끌어다 놓으면 이 폴더로 옮겨집니다">
           <span class="gname" onclick="pickCoFolder('f:${f.id}')">📁 ${esc(f.name)}</span>
           <span class="gcount">${cnt.all}</span>
           <span class="gmenu" onclick="event.stopPropagation();openCoFolderMenu(event,'${f.id}')" title="관리">⋮</span>
@@ -11519,7 +11603,12 @@ function coListHtml(info){
   const moreBtn = (allOn && info.total > list.length && nSel < info.total)
     ? `<button class="comore" onclick="coSelAllMatching()"
          title="지금 조건에 맞는 회사를 모두 고릅니다">→ ${info.total.toLocaleString()}곳 모두</button>` : '';
-  const selbar = nSel ? `<div class="coselbar">
+  /* 고른 것이 있을 때만 뜨고, 0곳이 되면 통째로 사라진다(nSel 하나로 갈린다).
+     ⚠ 감싸개(.cosellift)가 화면 «아래»에 붙여 따라오게 한다 — 171번째 줄까지 내려가
+       골랐는데 도구줄이 화면 밖 저 위에 있으면, 무엇을 할 수 있는지 아무 데도 안 보인다
+       (대표 화면 2026-08-17). 감싸개는 이 PC 표에만 씌운다 — 폰 목록도 .coselbar 를
+       쓰지만 폰에는 제 도구줄이 따로 있다(renderCoMobileList). */
+  const selbar = nSel ? `<div class="cosellift"><div class="coselbar">
       <b>${nSel}곳 선택</b>${moreBtn}
       <button onclick="coMoveToFolder()">📁 폴더로 옮기기</button>
       <button onclick="coAssignTag()">🏷 서류 탭에 담기</button>
@@ -11527,7 +11616,8 @@ function coListHtml(info){
       <button onclick="state.coSel={};renderCoAny()">선택 해제</button>
       <button class="coclear" onclick="coClearOrg()"
         title="고른 회사에 붙여 둔 폴더·탭을 뗍니다 — 명함은 지워지지 않습니다">🧹 폴더·탭 비우기</button>
-    </div>` : '';
+      <span class="codraghint">끌어서 왼쪽 폴더에 놓아도 옮겨집니다</span>
+    </div></div>` : '';
   /* 몇 개씩 볼지 + 지금 몇 번째를 보는지 — 표 바로 위 한 줄.
      기업 상세 화면에서는 명함 표의 보기도구(#pcTools — #pcPageSize 가 그 안에 있다)가
      .cohead 로 접히므로 같이 쓸 수 없다. 같은 모양을 여기에 따로 둔다.
@@ -11540,7 +11630,9 @@ function coListHtml(info){
   /* ⚠ 마지막에 **남는 폭을 먹는 빈 칸**을 둔다. 없으면 상호 칸이 남은 폭을 다 먹어
      사업자번호·가진 것·담당이 화면 오른쪽 끝까지 밀려난다 — 눈이 좌우로 멀리 오간다
      (대표 화면 2026-08-13). 유형(자문·급여…)도 상호 옆에 붙이지 않고 제 칸을 준다. */
-  return `${selbar}${topbar}<table class="cotbl">
+  /* ⚠ 도구줄(selbar)은 표 «뒤»에 온다 — 흐름 안의 마지막 자리라야 sticky 가 맨 아래까지
+       내려갔을 때 쪽넘김 아래로 내려앉아 마지막 줄도 쪽넘김도 덮지 않는다. */
+  return `${topbar}<table class="cotbl">
     <colgroup><col style="width:34px"><col style="width:46px"><col style="width:300px">
       <col style="width:76px"><col style="width:132px"><col style="width:170px">
       <col style="width:110px"><col></colgroup>
@@ -11573,8 +11665,14 @@ function coListHtml(info){
        ⚠ 폰 목록(renderCoMobileList)을 고쳤다는 327e3a0 은 «아직 main 에 없다»(다른 갈래).
          그쪽이 들어올 때 같은 자리를 또 손대게 되므로, 여기 규칙을 그대로 따르면 된다. */
     const kJs = esc(String(o.key).replace(/'/g,"\\'"));
-    return `<tr class="corow" onclick="pickCo('${kJs}')">
-      <td onclick="event.stopPropagation()"><input type="checkbox" ${state.coSel[o.key]?'checked':''}
+    /* 체크한 줄만 끌 수 있다 — 끌면 «고른 것 전부»가 함께 간다(onCoRowDragStart).
+       체크 안 한 줄에는 draggable 이 아예 안 붙어 끌어도 아무 일이 안 일어난다.
+       그래야 14곳을 골라 둔 채 다른 줄을 무심코 끌어도 골라 둔 것이 안 흐트러진다. */
+    const coOn = !!state.coSel[o.key];
+    return `<tr class="corow" draggable="${coOn?'true':'false'}"
+      ondragstart="onCoRowDragStart(event,'${kJs}')" ondragend="onCoRowDragEnd(event)"
+      onclick="pickCo('${kJs}')">
+      <td onclick="event.stopPropagation()"><input type="checkbox" ${coOn?'checked':''}
         onchange="coToggle('${kJs}')"></td>
       <td class="num">${info.from + i}</td>
       <td class="conm"><span class="nm">${esc(o.name)}</span>
@@ -11588,7 +11686,7 @@ function coListHtml(info){
       <td class="mgr">${o.erp&&o.erp.main?esc(o.erp.main):''}</td>
       <td></td>
     </tr>`;
-  }).join('')}</tbody></table>${coPagerHtml(info)}`;
+  }).join('')}</tbody></table>${coPagerHtml(info)}${selbar}`;
 }
 /* 이 회사 값이 어느 서류에서 왔는지 — 사진첩에서 보낼 때 남긴 기록.
    「이 숫자 어디서 봤더라」에 답하려면 출처가 보여야 한다.
