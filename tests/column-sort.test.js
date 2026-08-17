@@ -86,7 +86,7 @@ t('내림차순은 ▼', ctx.erpSortMark({ col:'co', dir:'desc' }, 'co'), '▼')
 t('다른 열은 ↕', ctx.erpSortMark({ col:'co', dir:'asc' }, 'staff'), '↕');
 
 /* ══════ ② 거래내역 표 ══════ */
-const FL = slice('function FinanceLedger(){', '\nfunction FinanceIncome');
+const FL = slice('function FinanceLedger(', '\nfunction FinanceIncome');
 t('정렬 상태를 둔다', /var ldSort=ldSortS\[0\]/.test(FL), true);
 t('값 꺼내는 법을 한 곳에 모았다', /var LD_SORT = \{/.test(FL), true);
 ['state','amount','date','memo','co','kind','staff'].forEach(function(c){

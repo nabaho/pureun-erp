@@ -11,7 +11,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'pu-erp.html'), 'utf8').replace(/\r\n/g, '\n');
-const FL = app.slice(app.indexOf('function FinanceLedger(){'), app.indexOf('function FinanceIncome'));
+const FL = app.slice(app.indexOf('function FinanceLedger('), app.indexOf('function FinanceIncome'));
 const POP = FL.slice(FL.indexOf('sugPopK && (function(){'), FL.indexOf('// ── 1-1 입금 상세 팝업'));
 
 /* ── ① 표 높이를 재서 정한다 ──

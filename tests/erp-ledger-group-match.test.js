@@ -13,7 +13,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'pu-erp.html'), 'utf8').replace(/\r\n/g, '\n');
-const FL = app.slice(app.indexOf('function FinanceLedger(){'), app.indexOf('function FinanceIncome'));
+const FL = app.slice(app.indexOf('function FinanceLedger('), app.indexOf('function FinanceIncome'));
 const MODAL = FL.slice(FL.indexOf('spOpen && spRow && (function(){'), FL.indexOf('// ── CMS 일괄이체 매칭 모달'));
 // 배분 고리만 — 뒤의 「초과분 기타입금」은 종전부터 있던 딴 길이라 넣지 않는다
 const CONFIRM = MODAL.slice(MODAL.indexOf('var _pool=rowsIn.map('),

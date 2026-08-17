@@ -49,7 +49,7 @@ t('묶음에 수수료를 담는다', /fee:feeSum, date:day,/.test(FIND), true);
 t('맞춤 판정에 수수료를 넘긴다', /exact:_nbAmtFits\(total, want, feeSum\)/.test(FIND), true);
 
 /* ══════ ③ 줄에서 명세가 앞선다 ══════ */
-const FL = slice('function FinanceLedger(){', '\nfunction FinanceIncome');
+const FL = slice('function FinanceLedger(', '\nfunction FinanceIncome');
 
 t('명세를 찾았는지 한 번만 잰다', /var _cmsHit = !!\(isCms && _nbHit && _nbHit\.rows && _nbHit\.rows\.length\);/.test(FL), true);
 // (2026-08-13) 효성CMS 도 받게 되어 회사 이름을 줄에서 골라 쓴다 (나이스빌 · 효성 · 섞이면 CMS)

@@ -15,7 +15,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'pu-erp.html'), 'utf8').replace(/\r\n/g, '\n');
-const FL = app.slice(app.indexOf('function FinanceLedger(){'), app.indexOf('function FinanceIncome'));
+const FL = app.slice(app.indexOf('function FinanceLedger('), app.indexOf('function FinanceIncome'));
 
 test('입금 표는 그릴 때만 자른다', () => {
   assert.match(FL, /h\('tbody',null,incList\.slice\(0,ldShow\)\.map\(/);

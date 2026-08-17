@@ -9581,10 +9581,14 @@ function MonthKpiHeader(props){
   );
   // 한 줄로 합칠지 — KPI 한 칸이 최소 100px 은 돼야 글자가 안 잘린다.
   // 월 네비(약 250px) + 오른쪽 단추(약 200px) 를 뺀 나머지로 판단한다.
-  var inlineKpi = kpis.length > 0 && (winW - 250 - 200 - 240) >= kpis.length * 100;   // 240 = 사이드바
+  /* props.kpiOwnRow — 「이 줄에는 도구줄이 들어오니 KPI 는 아랫줄을 쓰라」 (2026-08-16 출금관리).
+     ★ 기본값은 지금과 같다. 안 주면 화면 넓이로 판단하던 그대로다 —
+       이 부품은 여러 화면이 함께 쓰므로 새 옵션이 다른 화면을 건드리면 안 된다. */
+  var inlineKpi = !props.kpiOwnRow && kpis.length > 0 && (winW - 250 - 200 - 240) >= kpis.length * 100;   // 240 = 사이드바
   return h('div', { style:{ marginBottom:'6px' } },
     // 월 네비 (배경/border 제거 - KPI와 자연스럽게 연결)
-    h('div', { style:{ display:'flex', alignItems:'center', gap:'4px', marginBottom: inlineKpi ? '0' : '5px' } },
+    h('div', { style:{ display:'flex', alignItems:'center', gap:'4px', marginBottom: inlineKpi ? '0' : '5px',
+        flexWrap: props.kpiOwnRow ? 'wrap' : 'nowrap' } },
       h('button', { onClick:function(){shift(-1);}, title:'이전 달', style:btnNav }, '◀'),
       // 라벨 = picker 통합 (label 클릭 시 month picker 열림)
       h('label', { style:{ position:'relative', display:'inline-flex', alignItems:'center', gap:'4px', cursor:'pointer', padding:'4px 10px', borderRadius:'5px', background:'transparent' },
@@ -36840,7 +36844,8 @@ if(typeof window !== 'undefined'){
   window.erpHitIdx = erpHitIdx;           window.erpNextHit = erpNextHit;
   window.erpIsTyping = erpIsTyping;
 }
-function FinanceLedger(){
+function FinanceLedger(props){
+  props = props || {};
   /* ── 미입금 대기 목록 (입금 매칭 후보) ──
      2026-08-07 김보람 건의: 「일반 자문료 입금건은 매칭이 안 되고 컨설팅·사건만 된다」
      확인해 보니 후보를 만드는 항목 이름이 실제 자료와 여러 군데 어긋나 있었다.
@@ -36929,7 +36934,15 @@ function FinanceLedger(){
   var expCatS=useState({});    var expCat=expCatS[0];   var setExpCat=expCatS[1];
   var dragS=useState(false);   var dragOver=dragS[0];   var setDragOver=dragS[1];
   var sugOpenS=useState({});   var sugOpen=sugOpenS[0]; var setSugOpen=sugOpenS[1]; // 후보 펼침 (행별)
-  var ldTabS=usePersistedState('ledger_tab','inc'); var ldTab=ldTabS[0]; var setLdTab=ldTabS[1]; // 입금/출금 탭
+  /* 입금/출금 탭 — 평소에는 «마지막에 보던 탭» 을 기억한다.
+     ★ 다만 출금관리에서 열면 출금 탭으로 열려야 한다 (2026-08-16 대표 지시) —
+       출금 정리하러 눌렀는데 입금이 뜨면 「연동이 안 되나」로 읽힌다.
+     ★ 그렇다고 기억된 값을 덮어쓰면 안 된다 — 다음에 거래내역을 직접 열 때까지 바뀐 채로 남는다.
+       그래서 «이번 창에서만» 통하는 덮개를 두고, 사람이 탭을 누르면 덮개를 걷는다. */
+  var ldTabS=usePersistedState('ledger_tab','inc');
+  var ldOvS=useState(props.initialTab || '');
+  var ldTab = ldOvS[0] || ldTabS[0];
+  function setLdTab(v){ ldOvS[1](''); ldTabS[1](v); }
   var upAtS=useState('');      var upAt=upAtS[0];       var setUpAt=upAtS[1];       // 업로드 시각 (초안 복원용)
   var restS=useState(false);   var restored=restS[0];   var setRestored=restS[1];   // 저장된 초안에서 복원됨
   var cmsRowS=useState(null);  var cmsRow=cmsRowS[0];   var setCmsRow=cmsRowS[1];   // CMS 일괄이체 매칭 대상 행
@@ -37832,6 +37845,10 @@ function FinanceLedger(){
       date:row.date||todayYMD(),
       amount:row.amount, category:cat,
       payee:row.memo||'', note:'[하나'+(fileType==='bank'?'은행':'카드')+'] '+(row.note||row.memo||''),
+      /* 어디서 온 출금인지 표를 남긴다 (2026-08-16 대표 지시).
+         전에는 비고 머리에 「[하나은행]」이 섞여 들어갈 뿐이라 «읽어야» 알았다.
+         출금관리 목록이 이 표를 보고 「🏦 거래내역」 딱지를 붙인다. */
+      src:'ledger',
       paid:true, paidDate:row.date||todayYMD(),
       branch:'cheonan'});
   }
@@ -41092,7 +41109,8 @@ function ImportLedgerModal(props){
         h('button', { className:'x', onClick:props.onClose }, '×')
       ),
       h('div', { className:'modal-b', style:{ flex:1, overflowY:'auto' } },
-        h(FinanceLedger, null)
+        // 출금관리에서 열면 출금 탭으로 — 입금이 뜨면 「연동이 안 되나」로 읽힌다
+        h(FinanceLedger, { initialTab:props.initialTab || '' })
       )
     )
   );
@@ -45452,6 +45470,18 @@ function employerBurdenByWorker(ym){
   return { rows:rows, totals:totals };
 }
 
+/* 이 출금이 «어디서» 왔나 (2026-08-16 대표 지시) —
+   거래내역에서 정리한 것인지, 손으로 넣은 것인지.
+   ★ 옛 기록에는 표(src)가 없다. 그때는 비고 머리글자로 알아본다 —
+     자료를 고쳐 쓰지 않고도 지난 것까지 함께 보이게 하기 위함이다. */
+function erpExpenseFrom(it){
+  if(!it) return '';
+  if(it.src === 'ledger') return 'ledger';
+  if(/^\[하나(은행|카드)\]/.test(String(it.note || ''))) return 'ledger';
+  return '';
+}
+if(typeof window !== 'undefined') window.erpExpenseFrom = erpExpenseFrom;
+
 // ============ 재무관리 - 출금관리 ============
 function FinanceExpense(){
   var existing = dbGet('finance_expense', []);
@@ -45523,6 +45553,8 @@ function FinanceExpense(){
   var es2 = useState({}); var openSubGroup = es2[0]; var setOpenSubGroup = es2[1];
   // 법인카드 엑셀 업로드 모달
   var cim = useState(false); var showCardImport = cim[0]; var setShowCardImport = cim[1];
+  // 들여오는 길 셋을 여는 작은 메뉴 (2026-08-16) — 창 세 개는 그대로, 입구만 하나다
+  var imm = useState(false); var impMenu = imm[0]; var setImpMenu = imm[1];
   var impLS = useState(false); var showImport = impLS[0]; var setShowImport = impLS[1];
   // 지난달 복사 모달
   var lcm = useState(false); var showLastCopy = lcm[0]; var setShowLastCopy = lcm[1];
@@ -45806,55 +45838,15 @@ function FinanceExpense(){
        지점 필터와 검색을 «한 줄» 로 합치고, 전부를 한 덩어리로 감싸 sticky 를 건다.
        (IncomePendingTab 과 같은 요령 — 감싸는 칸 하나에만 sticky, 안쪽은 그대로 순서대로.) */
     h('div', { style:{ position:'sticky', top:0, zIndex:5, background:'#fff', paddingBottom:'2px' } },
-    // 헤더
-    h('div', { style:{ display:'flex', flexDirection:'column', gap:'4px', marginBottom:'8px' } },
-      h('div', { style:{ display:'flex', gap:'4px', overflowX:'auto', WebkitOverflowScrolling:'touch' } },
-        h('button', { onClick:downloadCSV,
-          style:{ padding:'3px 8px', background:'#fff', border:'1px solid #cbd5e1', borderRadius:'10px', cursor:'pointer', fontSize:'10px', fontWeight:600, color:'#475569', flexShrink:0 } }, '⬇ CSV'),
-        h('button', { onClick:function(){setShowBulk(true);},
-          style:{ padding:'3px 8px', background:'#fff', border:'1px solid #cbd5e1', borderRadius:'10px', cursor:'pointer', fontSize:'10px', fontWeight:600, color:'#475569', flexShrink:0 } }, '📋 일괄'),
-        h('button', { onClick:function(){setShowCardImport(true);},
-          style:{ padding:'3px 8px', background:'#fff', border:'1px solid #cbd5e1', borderRadius:'10px', cursor:'pointer', fontSize:'10px', fontWeight:600, color:'#475569', flexShrink:0 } }, '💳 카드엑셀'),
-        h('button', { onClick:function(){setShowLastCopy(true);},
-          style:{ padding:'3px 8px', background:'#fffbeb', border:'1px solid #fde68a', borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:600, color:'#854d0e', flexShrink:0 } }, '📋 지난달'),
-        h('button', { onClick:function(){setShowRecurring(true);},
-          style:{ padding:'3px 8px', background:'#fff', border:'1px solid #cbd5e1', borderRadius:'10px', cursor:'pointer', fontSize:'10px', fontWeight:600, color:'#475569', flexShrink:0 } }, '🔁 정기'),
-        h('button', { onClick:function(){setShowBudget(true);},
-          style:{ padding:'3px 8px', background:'#fff', border:'1px solid #cbd5e1', borderRadius:'10px', cursor:'pointer', fontSize:'10px', fontWeight:600, color:'#475569', flexShrink:0 } }, '📊 예산'),
-        h('button', { onClick:function(){setBulkFeeMode(!bulkFeeMode); setBulkSel({});},
-          style:{ padding:'3px 8px', background:bulkFeeMode?'#fbbf24':'#fff', color:bulkFeeMode?'#fff':'#475569', border:'1px solid '+(bulkFeeMode?'#fbbf24':'#cbd5e1'), borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:600, flexShrink:0 } }, '🏦 수수료'),
-        // 월 기준 토글: 지급일(실제 나간 날) ↔ 귀속월(내용상 해당 월)
-        h('button', { onClick:function(){ setBasisAccrual(!basisAccrual); },
-          title: basisAccrual ? '지금: 귀속월 기준 — 이 달에 해당(귀속)하는 지출 (예: 6월분 4대보험을 7월 납부해도 6월에 표시). 클릭 시 지급일 기준으로.' : '지금: 지급일 기준 — 실제 통장에서 나간 날. 클릭 시 귀속월 기준으로.',
-          style:{ padding:'3px 8px', background:basisAccrual?'#2563eb':'#fff', color:basisAccrual?'#fff':'#2563eb', border:'1px solid '+(basisAccrual?'#2563eb':'#bfdbfe'), borderRadius:'5px', cursor:'pointer', fontSize:'10px', fontWeight:700, flexShrink:0 } },
-          basisAccrual ? '📅 귀속월 기준' : '💸 지급일 기준'),
-        // ── 월 마감 잠금 토글
-        (function(){
-          var locked = isExpenseLocked(monthFilter);
-          return h('button', { onClick:async function(){
-              if(locked){
-                if(!(await monthCloseUnlockAsk('expense', monthFilter))) return;
-                showToast('🔓 ' + monthFilter + ' 잠금 해제');
-              } else {
-                if(!(await monthCloseLockAsk('expense', monthFilter,
-                  monthFilter + ' 출금내역을 마감(잠금)할까요?\n→ 이후 수정·추가·삭제 차단\n→ 같은 버튼으로 다시 해제 가능'))) return;
-                showToast('🔒 ' + monthFilter + ' 잠금 — 마감 완료');
-              }
-              setExpenses(dbGet('finance_expense', [])); // 화면 리렌더
-            },
-            title: locked ? monthFilter+' 잠긴 상태 — 클릭하여 해제' : monthFilter+'을(를) 마감 잠금',
-            style:{ padding:'3px 8px', background:locked?'#dc2626':'#fff', color:locked?'#fff':'#475569', border:'1px solid '+(locked?'#dc2626':'#cbd5e1'), borderRadius:'5px', cursor:'pointer', fontSize:'11.5px', fontWeight:locked?700:600 } },
-            locked ? '🔒 마감됨' : '🔓 마감 잠금');
-        })(),
-        h('button', { onClick:function(){ setShowImport(true); },
-          style:{ padding:'3px 10px', background:'#166534', color:'#fff', border:'none', borderRadius:'5px', cursor:'pointer', fontSize:'11.5px', fontWeight:700 } }, '📥 가져오기'),
-        h('button', { onClick:addManual,
-          style:{ padding:'3px 10px', background:isExpenseLocked(monthFilter)?'#cbd5e1':'#1e40af', color:'#fff', border:'none', borderRadius:'5px', cursor: isExpenseLocked(monthFilter)?'not-allowed':'pointer', fontSize:'11.5px', fontWeight:700 } }, '+ 출금 추가')
-      )
-    ),
 
-
-    // ── 한 줄 요약: 월 네비 + 총액 + 미납 + 정기출금 ──
+    /* ── 머리를 세 줄 → 두 줄로 (2026-08-16 대표 지시) ────────────────────────
+       대표 지시: "캡쳐1을 좀 더 깔끔하게 정리하고 중복되는 부분 삭제 · 캡쳐3 콤팩트하게".
+       전에는 도구줄 / 월네비+KPI / 지점+검색 이 각각 한 줄씩 세 줄을 먹었다.
+       ★ 기능은 하나도 안 없앤다 — 중복만 없애고 자리를 옮긴다.
+         ①「🔁 정기」 단추 = KPI 카드와 «같은 창» 을 열던 중복 → 단추를 뺐다(KPI 를 누른다)
+         ②들여오는 길 셋(일괄·카드엑셀·가져오기)이 흩어져 있던 것 → 입구 하나로 모았다
+         ③지점 줄은 서산·공통에 자료가 있을 때만 (없으면 전체와 천안이 같은 숫자를 두 번 적었다)
+       도구줄과 검색은 아래 MonthKpiHeader 의 extra 로 넘겨 «월 네비와 같은 줄» 에 놓는다. */
     (function(){
       var recList = getRecurringExpenses();
       var activeRec = recList.filter(function(r){return r.active!==false;});
@@ -45864,22 +45856,98 @@ function FinanceExpense(){
       });
       var unpaidTotal = unpaidItems.reduce(function(s,i){return s+(i.amount||0);},0);
       var avgPerItem = monthExpenses.length>0 ? Math.round(monthTotal/monthExpenses.length) : 0;
+      var locked = isExpenseLocked(monthFilter);
+      var pill = { padding:'3px 8px', background:'#fff', border:'1px solid #cbd5e1', borderRadius:'10px',
+                   cursor:'pointer', fontSize:'10px', fontWeight:600, color:'#475569', flexShrink:0, fontFamily:'inherit' };
       return h(MonthKpiHeader, {
         selYM: monthFilter,
         onMonthChange: function(ym){ setMonthFilter(ym); },
+        kpiOwnRow: true,          // 이 줄에는 도구줄이 들어온다 — KPI 는 아랫줄을 통째로 쓴다
+        extra: h('div', { style:{ display:'flex', gap:'4px', alignItems:'center', flexWrap:'wrap', flex:'1 1 auto', minWidth:0 } },
+          h('span', { style:{ width:'1px', height:'18px', background:'#e2e8f0', margin:'0 3px', flexShrink:0 } }),
+          h('button', { onClick:addManual,
+            style:{ padding:'3px 10px', background:locked?'#cbd5e1':'#1e40af', color:'#fff', border:'none', borderRadius:'5px',
+              cursor: locked?'not-allowed':'pointer', fontSize:'11.5px', fontWeight:700, flexShrink:0, fontFamily:'inherit' } }, '+ 출금 추가'),
+          /* 들여오는 길 셋을 «입구 하나» 로 — 창 세 개는 그대로 둔다.
+             창을 합치는 것은 위험하고, 지금 문제는 「단추가 흩어져 있다」이다. */
+          h('div', { style:{ position:'relative', flexShrink:0 } },
+            h('button', { onClick:function(){ setImpMenu(!impMenu); },
+              style:{ padding:'3px 10px', background:'#166534', color:'#fff', border:'none', borderRadius:'5px',
+                cursor:'pointer', fontSize:'11.5px', fontWeight:700, fontFamily:'inherit' } }, '📥 가져오기 ▾'),
+            impMenu && h('div', { style:{ position:'absolute', top:'100%', left:0, marginTop:'5px', zIndex:30,
+                background:'#fff', border:'1px solid #cbd5e1', borderRadius:'8px', boxShadow:'0 6px 18px rgba(30,41,59,0.12)',
+                padding:'5px', width:'268px' } },
+              [ ['🏦', '거래내역에서 가져오기', '통장·카드 내역에서 출금을 골라 등록합니다', function(){ setShowImport(true); }],
+                ['📋', '붙여넣기로 여러 건', '엑셀·메모에서 복사해 한 번에 넣습니다', function(){ setShowBulk(true); }],
+                ['💳', '카드 엑셀 파일', '카드사 엑셀을 그대로 올립니다', function(){ setShowCardImport(true); }]
+              ].map(function(m, mi){
+                return h('button', { key:mi, onClick:function(){ setImpMenu(false); m[3](); },
+                  style:{ display:'flex', gap:'8px', alignItems:'flex-start', width:'100%', textAlign:'left',
+                    padding:'8px 9px', border:'none', borderRadius:'6px', background:'#fff', cursor:'pointer', fontFamily:'inherit' } },
+                  h('span', { style:{ fontSize:'14px', flexShrink:0 } }, m[0]),
+                  h('span', null,
+                    h('b', { style:{ fontSize:'12px', display:'block', color:'#1e293b' } }, m[1]),
+                    h('small', { style:{ fontSize:'10.5px', color:'#64748b', display:'block', marginTop:'1px', lineHeight:1.5 } }, m[2])));
+              }))),
+          // 월 기준 토글: 지급일(실제 나간 날) ↔ 귀속월(내용상 해당 월)
+          h('button', { onClick:function(){ setBasisAccrual(!basisAccrual); },
+            title: basisAccrual ? '지금: 귀속월 기준 — 이 달에 해당(귀속)하는 지출 (예: 6월분 4대보험을 7월 납부해도 6월에 표시). 클릭 시 지급일 기준으로.' : '지금: 지급일 기준 — 실제 통장에서 나간 날. 클릭 시 귀속월 기준으로.',
+            style:{ padding:'3px 8px', background:basisAccrual?'#2563eb':'#fff', color:basisAccrual?'#fff':'#2563eb',
+              border:'1px solid '+(basisAccrual?'#2563eb':'#bfdbfe'), borderRadius:'5px', cursor:'pointer',
+              fontSize:'10px', fontWeight:700, flexShrink:0, fontFamily:'inherit' } },
+            basisAccrual ? '📅 귀속월 기준' : '💸 지급일 기준'),
+          h('button', { onClick:function(){setShowLastCopy(true);},
+            style:Object.assign({}, pill, { background:'#fffbeb', border:'1px solid #fde68a', borderRadius:'5px', color:'#854d0e' }) }, '📋 지난달'),
+          h('button', { onClick:function(){setShowBudget(true);}, style:pill }, '📊 예산'),
+          h('button', { onClick:function(){setBulkFeeMode(!bulkFeeMode); setBulkSel({});},
+            style:Object.assign({}, pill, { background:bulkFeeMode?'#fbbf24':'#fff', color:bulkFeeMode?'#fff':'#475569',
+              border:'1px solid '+(bulkFeeMode?'#fbbf24':'#cbd5e1'), borderRadius:'5px' }) }, '🏦 수수료'),
+          h('button', { onClick:downloadCSV, style:pill }, '⬇ CSV'),
+          h('button', { onClick:async function(){
+              if(locked){
+                if(!(await monthCloseUnlockAsk('expense', monthFilter))) return;
+                showToast('🔓 ' + monthFilter + ' 잠금 해제');
+              } else {
+                if(!(await monthCloseLockAsk('expense', monthFilter,
+                  monthFilter + ' 출금내역을 마감(잠금)할까요?\n→ 이후 수정·추가·삭제 차단\n→ 같은 버튼으로 다시 해제 가능'))) return;
+                showToast('🔒 ' + monthFilter + ' 잠금 — 마감 완료');
+              }
+              setExpenses(dbGet('finance_expense', []));
+            },
+            title: locked ? monthFilter+' 잠긴 상태 — 클릭하여 해제' : monthFilter+'을(를) 마감 잠금',
+            style:Object.assign({}, pill, { background:locked?'#dc2626':'#fff', color:locked?'#fff':'#475569',
+              border:'1px solid '+(locked?'#dc2626':'#cbd5e1'), borderRadius:'5px', fontSize:'11.5px', fontWeight:locked?700:600 }) },
+            locked ? '🔒 마감됨' : '🔓 마감 잠금'),
+          // 지점 줄이 사라져 검색이 갈 곳이 없다 — 도구줄 오른쪽 끝에 둔다
+          h('input', { type:'text', placeholder:'🔍 지급처·비고 검색', value:query,
+            onChange:function(e){ setQuery(e.target.value); },
+            style:{ flex:'1 1 150px', minWidth:'120px', padding:'4px 10px', border:'1px solid #cbd5e1',
+              borderRadius:'6px', fontSize:'11.5px', boxSizing:'border-box', fontFamily:'inherit' } })
+        ),
         kpis: [
           { label:'💸 이번 달 지출', value:monthTotal.toLocaleString()+'원', sub:monthExpenses.length+'건', bg:'#fef2f2', fg:'#991b1b', color:'#dc2626', border:'#fecaca' },
           { label:'📊 건당 평균', value:avgPerItem.toLocaleString()+'원', bg:'#eff6ff', fg:'#1e40af', color:'#1e40af', border:'#bfdbfe' },
-          { label:'⚠️ 미납', value:unpaidTotal.toLocaleString()+'원', sub:unpaidItems.length+'건', onClick: unpaidTotal>0 ? function(){setUnpaidOnly(!unpaidOnly);} : null,
+          { label:'⚠️ 미납', value:unpaidTotal.toLocaleString()+'원', sub:unpaidItems.length ? unpaidItems.length+'건' : '없음', onClick: unpaidTotal>0 ? function(){setUnpaidOnly(!unpaidOnly);} : null,
             bg:unpaidOnly?'#dc2626':(unpaidTotal>0?'#fef2f2':'#f8fafc'), fg:unpaidOnly?'#fff':'#991b1b', color:unpaidOnly?'#fff':'#dc2626', border:unpaidOnly?'#dc2626':'#fecaca' },
-          { label:'🔁 정기', value:activeRec.length+'건', sub:'활성', onClick:function(){setShowRecurring(true);},
+          /* 도구줄의 「🔁 정기」 단추를 뺐다 — 이 카드가 «같은 창» 을 연다.
+             ★ 눌리는 줄 모르면 기능을 잃는 것이다. 부제로 알린다. */
+          { label:'🔁 정기', value:activeRec.length+'건', sub:'눌러서 관리', onClick:function(){setShowRecurring(true);},
             bg:'#eff6ff', fg:'#1e40af', color:'#1e40af', border:'#bfdbfe' }
         ]
       });
     })(),
 
-    // ── 지점 필터 + 검색을 «한 줄» 로 (전에는 따로 두 줄) ──
-    h('div', { style:{ display:'flex', gap:'6px', marginBottom:'10px', flexWrap:'wrap', alignItems:'center' } },
+    /* ── 지점 줄은 «자료가 있는 지점이 둘 이상일 때만» (2026-08-16 대표 결정) ──
+       서산·공통에 이 달 자료가 한 건도 없으면 「전체 25건」과 「천안 25건」이 똑같아
+       한 줄을 통째로 쓰면서 알려 주는 것이 하나도 없었다.
+       ★ 자료가 있는 지점을 감추는 것이 아니다 — 한 곳뿐일 때 «고를 것이 없어서» 안 그린다.
+       검색은 위 도구줄로 옮겼으므로 이 줄이 없어도 빈자리가 생기지 않는다. */
+    (function(){
+      var _monthOf = function(it){ return monthFilter ? (it.date||'').slice(0,7)===monthFilter : true; };
+      var _kinds = {};
+      expenses.forEach(function(it){ if(_monthOf(it)) _kinds[it.branch || 'cheonan'] = 1; });
+      if(Object.keys(_kinds).length < 2) return null;
+      return h('div', { style:{ display:'flex', gap:'6px', marginBottom:'10px', flexWrap:'wrap', alignItems:'center' } },
       h('span', { style:{ fontSize:'11.5px', color:'#64748b', fontWeight:600, marginRight:'2px', flexShrink:0 } }, '🏢'),
       [
         { v:'all',     label:'전체', color:'#475569', bg:'#f8fafc' },
@@ -45900,10 +45968,9 @@ function FinanceExpense(){
             border: '1px solid '+(on ? b.color : b.bg) } },
           b.label + ' (' + bExps.length + '건 · ' + (bTotal>=10000 ? Math.round(bTotal/10000).toLocaleString()+'만' : bTotal.toLocaleString()) + ')'
         );
-      }),
-      h('input',{type:'text',placeholder:'🔍 지급처·비고 검색',value:query,onChange:function(e){setQuery(e.target.value);},
-        style:{flex:'1 1 160px',minWidth:'120px',padding:'5px 10px',border:'1px solid #cbd5e1',borderRadius:'6px',fontSize:'11.5px',boxSizing:'border-box'}})
-    )),   // ↑ 도구줄+지점·검색 sticky 덩어리 닫음
+      })
+    );
+    })()),   // ↑ 머리(월네비+도구줄+검색 / KPI / 지점) sticky 덩어리 닫음
 
     // ── 메인: 전체보기는 카테고리 그리드, 특정 카테고리는 거래 리스트 ──
     (function(){
@@ -46072,6 +46139,11 @@ function FinanceExpense(){
                         style:{fontSize:'10px',fontWeight:700,background:'#eff6ff',color:'#2563eb',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'1px 6px',flexShrink:0,whiteSpace:'nowrap'}},'📅 '+parseInt(_accYM.slice(5),10)+'월분'),
                       h('span',{style:{flex:1,color:'#1e293b'}},
                         it.payee||'-',
+                        /* 어디서 온 출금인지 (2026-08-16 대표 지시).
+                           전에는 비고에 「[하나은행]」이 섞여 들어갈 뿐이라 «읽어야» 알았다.
+                           손으로 넣은 건에는 안 붙인다 — 없는 것이 기본이다. */
+                        erpExpenseFrom(it) === 'ledger' && h('span',{title:'거래내역(통장·카드)에서 정리한 출금입니다',
+                          style:{marginLeft:'6px',fontSize:'9.5px',padding:'1px 7px',borderRadius:'99px',fontWeight:700,background:'#eff6ff',color:'#1e40af',border:'1px solid #bfdbfe',whiteSpace:'nowrap'}},'🏦 거래내역'),
                         it.source && acctMap[it.source] && h('span',{style:{marginLeft:'6px',fontSize:'10.5px',padding:'1px 6px',borderRadius:'8px',fontWeight:700,background:'#f8fafc',color:(acctMap[it.source].color||'#475569'),border:'1px solid #e2e8f0'}}, acctMap[it.source].label),
                         it.note && h('span',{style:{color:'#94a3b8',marginLeft:'8px',fontSize:'11px'}},'· '+it.note),
                         hasDetails && h('span',{style:{marginLeft:'6px',fontSize:'10.5px',padding:'1px 6px',borderRadius:'8px',fontWeight:700,background:'#eff6ff',color:'#1e40af'}},'📋 '+it.details.length+'항목'),
@@ -46145,7 +46217,8 @@ function FinanceExpense(){
       );
     })(),
 
-    showImport && h(ImportLedgerModal, { onClose:function(){ setShowImport(false); refreshExpenses(); } }),
+    // 출금관리에서 열었으니 «출금 탭» 으로 — 입금이 뜨면 「연동이 안 되나」로 읽힌다
+    showImport && h(ImportLedgerModal, { initialTab:'exp', onClose:function(){ setShowImport(false); refreshExpenses(); } }),
     detailModal && h(ExpenseDetailModal, { cur:detailModal, cats:cats, onSave:saveItem, onClose:function(){ setDetailModal(null); } }),
     showRecurring && h(RecurringExpenseModal, { cats:cats, onClose:function(){ setShowRecurring(false); setExpenses(dbGet('finance_expense', [])); } }),
     showBudget && h(ExpenseBudgetModal, { cats:cats, onClose:function(){ setShowBudget(false); } }),

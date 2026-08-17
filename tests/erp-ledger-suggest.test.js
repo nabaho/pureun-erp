@@ -18,7 +18,7 @@ const app = fs.readFileSync(path.join(__dirname, '..', 'pu-erp.html'), 'utf8').r
 
 function load(hooks) {
   const from = app.indexOf('function erpSugSig(');
-  const to = app.indexOf('function FinanceLedger(){');
+  const to = app.indexOf('function FinanceLedger(');
   assert.ok(from > 0 && to > from, '추천 다시쓰기 토막을 찾을 수 없습니다');
   const calls = { match: 0 };
   const sandbox = Object.assign({
@@ -141,13 +141,13 @@ test('맞는 후보가 없을 때만 계약 힌트를 본다', () => {
 test('사용자가 고른 매칭(inMatch)은 계산에 넣지 않는다', () => {
   // 넣으면 클릭할 때마다 다시 계산해 고치는 뜻이 없어진다.
   // 자동정리 관문·계산서 미발급은 캐시 밖에서 매번 다시 본다.
-  const src = app.slice(app.indexOf('function erpBuildSug('), app.indexOf('function FinanceLedger(){'));
+  const src = app.slice(app.indexOf('function erpBuildSug('), app.indexOf('function FinanceLedger('));
   assert.ok(src.indexOf('inMatch') < 0, 'erpBuildSug 는 inMatch 를 몰라야 한다');
 });
 
 /* ── 화면에 제대로 물렸나 ── */
 test('지문이 같으면 다시 계산하지 않는다', () => {
-  const fl = app.slice(app.indexOf('function FinanceLedger(){'));
+  const fl = app.slice(app.indexOf('function FinanceLedger('));
   // 조각 계산으로 바뀌면서 조건에 _sugSig 가드가 앞에 붙었다 — 뜻은 그대로다
   assert.match(fl, /if\(_sugSig && _sugCache\.current\.sig !== _sugSig\)\{/);
   assert.match(fl, /var _sugCache = useRef\(/);
@@ -155,7 +155,7 @@ test('지문이 같으면 다시 계산하지 않는다', () => {
 
 /* ── 조각내어 뒤에서 — 실측 2초짜리 계산이 화면을 멈추지 않게 ── */
 test('다시 계산할 때 한 번에 다 돌리지 않는다 (시간 예산으로 조각)', () => {
-  const fl = app.slice(app.indexOf('function FinanceLedger(){'));
+  const fl = app.slice(app.indexOf('function FinanceLedger('));
   // 25행 고정 → 조각 230ms. 5행 묶음 + 24ms 예산 → 여전히 211ms (무거운 행은
   // 하나에 40ms 라 5행 묶음이 예산 확인 전에 다 쓴다). 한 행마다 시계를 본다.
   assert.match(fl, /erpBuildSugChunk\(rowsArr, pendArr, i, i\+1, out\)/);
@@ -166,23 +166,23 @@ test('다시 계산할 때 한 번에 다 돌리지 않는다 (시간 예산으�
 
 test('낡은 결과를 보여주지 않는다 — 지문이 다르면 val 을 쓰지 않는다', () => {
   // 미입금이 확정된 직후 옛 후보로 또 확정하는 사고를 막는다
-  const fl = app.slice(app.indexOf('function FinanceLedger(){'));
+  const fl = app.slice(app.indexOf('function FinanceLedger('));
   assert.match(fl, /var _sug = \(_sugCache\.current\.sig === _sugSig\) \? _sugCache\.current\.val : null;/);
 });
 
 test('재료가 또 바뀌면 하던 계산을 버린다 (낡은 조각이 덮지 않게)', () => {
-  const fl = app.slice(app.indexOf('function FinanceLedger(){'));
+  const fl = app.slice(app.indexOf('function FinanceLedger('));
   assert.match(fl, /if\(_oldJob\) _oldJob\.cancel = true;/);
   assert.match(fl, /if\(job\.cancel\) return;/);
 });
 
 test('계산이 끝나면 한 번만 다시 그린다', () => {
-  const fl = app.slice(app.indexOf('function FinanceLedger(){'));
+  const fl = app.slice(app.indexOf('function FinanceLedger('));
   assert.match(fl, /setSugTick\(function\(t\)\{ return t\+1; \}\);/);
 });
 
 test('계산 중에는 왜 추천이 비어 보이는지 알린다', () => {
-  const fl = app.slice(app.indexOf('function FinanceLedger(){'));
+  const fl = app.slice(app.indexOf('function FinanceLedger('));
   assert.match(fl, /_sugComputing && h\('span'/);
   assert.match(fl, /추천 계산 중/);
 });
@@ -203,7 +203,7 @@ test('inMatch 를 쓰는 계산은 캐시 밖에 남아 매번 다시 본다', (
   /* (2026-08-09) 자동정리 3중 관문은 걷어냈다 — 확정이 단추 하나로 합쳐지면서 쓰는 데가
      없어졌는데도 행마다 관문을 다시 재느라 렌더마다 헛일을 했다.
      여기 남아야 하는 것은 «사람이 고른 것(inMatch)에 따라 답이 달라지는» 싼 계산뿐이다. */
-  const fl = app.slice(app.indexOf('function FinanceLedger(){'));
+  const fl = app.slice(app.indexOf('function FinanceLedger('));
   const cheap = fl.slice(fl.indexOf('if(_sug) incAll.forEach'), fl.indexOf('function bestSug('));
   assert.ok(cheap.indexOf('inMatch[row._k]') > 0, '고른 것에 따라 달라지는 계산은 여기 남는다');
   assert.ok(cheap.indexOf('invNone[row._k]=1') > 0);
@@ -216,7 +216,7 @@ test('오래 걸리면 콘솔에 남긴다 (다시 계산이 잦은지 눈으로
 });
 
 test('출금 탭에서는 아예 계산하지 않는다', () => {
-  const fl = app.slice(app.indexOf('function FinanceLedger(){'));
+  const fl = app.slice(app.indexOf('function FinanceLedger('));
   assert.match(fl, /ldTabEff==='inc'\) \? erpSugSig\(/);
 });
 

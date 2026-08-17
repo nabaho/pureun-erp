@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'pu-erp.html'), 'utf8').replace(/\r\n/g, '\n');
-const FL = app.slice(app.indexOf('function FinanceLedger(){'), app.indexOf('function FinanceIncome'));
+const FL = app.slice(app.indexOf('function FinanceLedger('), app.indexOf('function FinanceIncome'));
 
 /* ── ① 머리행 틀고정 ── */
 test('머리행이 위에 붙는다', () => {

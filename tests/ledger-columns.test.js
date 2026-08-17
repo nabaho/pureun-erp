@@ -25,7 +25,7 @@ const t = (name, got, want) => {
   else { fail++; console.log('FAIL ' + name + '\n  got  = ' + G + '\n  want = ' + W); }
 };
 
-const FL = slice('function FinanceLedger(){', '\nfunction FinanceIncome');
+const FL = slice('function FinanceLedger(', '\nfunction FinanceIncome');
 
 /* ══════ ① 세는 시점 — 추천이 채워진 뒤여야 한다 ══════ */
 const iSug   = FL.indexOf('incSug = _sug.incSug');

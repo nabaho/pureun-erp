@@ -64,7 +64,7 @@ t('수수료가 없으면 0', ctx.erpCmsFeeSum([{status:'ok'}]), 0);
 t('빈 목록도 안 터진다', ctx.erpCmsFeeSum(null), 0);
 
 /* ══════ ③ 화면에 제대로 붙었는지 ══════ */
-const FL = slice('function FinanceLedger(){', '\nfunction FinanceIncome');
+const FL = slice('function FinanceLedger(', '\nfunction FinanceIncome');
 
 t('입금표시가 업체별 기준을 쓴다', /var base = erpCmsYmBase\(r\.co\);/.test(FL), true);
 t('그 기준으로 달을 잡는다', /var ym = erpCmsYmOf\(r, base\);/.test(FL), true);

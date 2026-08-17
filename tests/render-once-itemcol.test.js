@@ -22,7 +22,7 @@ const t = (name, got, want) => {
   else { fail++; console.log('FAIL ' + name + '\n  got  = ' + G + '\n  want = ' + W); }
 };
 
-const FL = slice('function FinanceLedger(){', '\nfunction FinanceIncome');
+const FL = slice('function FinanceLedger(', '\nfunction FinanceIncome');
 
 /* ══════ ① 같은 계산을 두 번 하지 않는다 ══════ */
 t('요약 패스가 결과를 map 에 담는다', /rowInfo\[row\._k\] = \{ grp:grp, st:st \};/.test(FL), true);

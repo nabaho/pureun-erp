@@ -205,7 +205,7 @@ function afterDelete(){
 function afterPend(){
   const c = { console, Object, JSON, Array, String, Number, parseInt, isNaN, Math, window:{} };
   vm.createContext(c);
-  vm.runInContext(slice('function erpPendOptions(pending, usedBy', 'function FinanceLedger(){'), c);
+  vm.runInContext(slice('function erpPendOptions(pending, usedBy', 'function FinanceLedger('), c);
   const mk = (n, base) => new Array(n).fill(0).map((_, i) => ({ id:'p'+i, expect: base + i * 1000, companyName:'회사'+i, label:'자문료' }));
   {
     const po = c.erpPendOptions(mk(444, 100000), {}, 'row1', 130000, '', 30);

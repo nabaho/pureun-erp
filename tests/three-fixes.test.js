@@ -41,7 +41,7 @@ t('그 길이 명함첩으로 간다', /href:'pu-cards\.html', target:'_blank'/.
 t('OCR 뒤 원본 정리는 그대로', /if\(filled > 0 && \(field === 'bizLicenseImg' \|\| field === 'businessCardImg'\)\)\{ nc\[field\] = ''; \}/.test(src), true);
 
 /* ══════ ② 보류함 다시 보기 ══════ */
-const FL = slice('function FinanceLedger(){', '\nfunction FinanceIncome');
+const FL = slice('function FinanceLedger(', '\nfunction FinanceIncome');
 t('열 때만 다시 맞춰 본다', /if\(heldOpen && Array\.isArray\(_heldList\)\) _heldList\.forEach/.test(FL), true);
 t('지금 후보로 다시 맞춘다', /erpMatchTxnToPending\(\{date:x\.date, amount:x\.amount, memo:x\.memo\}, pending, 6\)/.test(FL), true);
 t('업체 묶기를 거쳐 본다', /var _g = erpGroupPendByCompany\(_sug\);/.test(FL), true);

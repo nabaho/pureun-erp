@@ -12,7 +12,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'pu-erp.html'), 'utf8').replace(/\r\n/g, '\n');
-const FL = app.slice(app.indexOf('function FinanceLedger(){'), app.indexOf('function FinanceIncome'));
+const FL = app.slice(app.indexOf('function FinanceLedger('), app.indexOf('function FinanceIncome'));
 
 function grab(name){
   const i = app.indexOf('function ' + name + '(');
