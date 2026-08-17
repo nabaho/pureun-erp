@@ -922,6 +922,12 @@ table.sbox.tight td.none{padding:26px 8px}
 #pcTable thead th:hover .colresize::after{background:#aab6cf}
 #pcTable thead th.col-dragging{opacity:.4}
 #pcTable thead th.col-dragover{box-shadow:inset 3px 0 0 #3a4a73}
+/* 끌어서 순서 바꾸기 — 표의 열 드래그(.col-dragging/.col-dragover)와 같은 결로 맞춘다.
+   가로 목록(메인 탭)은 세로줄, 세로 목록(폴더)은 가로줄로 「여기에 놓입니다」를 보인다. */
+.ord-dragging{opacity:.45}
+.ord-dragover{box-shadow:inset 0 3px 0 -1px #1d4ed8}
+#pcErpTabs .ord-dragover{box-shadow:inset 3px 0 0 -1px #1d4ed8}
+[draggable="true"].pcitem,[draggable="true"].folderrow{cursor:grab}
 #pcTable thead th{position:sticky;top:0;background:#f8fafc;font-size:12px;color:#7c89a6;text-align:left;
   padding:12px 14px;border-bottom:1px solid #eef2f7;font-weight:600;z-index:1}
 #pcTable td{padding:12px 14px;border-bottom:1px solid #f1f4f9;font-size:13.5px;color:#33415e;vertical-align:middle;
@@ -6127,6 +6133,105 @@ function reorderList(list, dragId, dropId){
   const out = [];
   arr.forEach((x,i)=>{ const n = i+1; if((x.order||0) !== n) out.push({ id:x.id, order:n }); });
   return out;
+}
+
+/* 목록마다 다른 것은 «형제가 누구인가»와 «어디에 저장하는가» 둘뿐이다.
+   그 둘만 여기서 알려 주고, 나머지(계산·저장·손놀림)는 네 목록이 함께 쓴다.
+   ⚠ 형제 범위를 틀리면 남의 목록 번호까지 다시 매긴다 — 명함 폴더와 사업자 폴더는
+     같은 state.groups 에 kind 로만 갈려 있어 특히 조심해야 한다. */
+function ordSiblings(kind, id, scope){
+  if(kind === 'group'){
+    const g = (state.groups||{})[id]; if(!g) return null;
+    /* moveFolderOrder 와 같은 형제 기준을 쓴다 — 두 곳이 다르면 메뉴와 드래그가 어긋난다 */
+    const list = Object.values(state.groups||{})
+      .filter(x=>x && (x.kind||'card')===(g.kind||'card') && (x.parent||'')===(g.parent||''))
+      .sort((a,b)=>(a.order||0)-(b.order||0));
+    return { list,
+      pathOf: i => 'groups/'+i+'/order',
+      applyLocal: (i,o) => { if(state.groups[i]) state.groups[i].order = o; } };
+  }
+  if(kind === 'cofolder'){
+    if(!(_coFolders||{})[id]) return null;
+    const list = Object.values(_coFolders||{}).sort((a,b)=>(a.order||0)-(b.order||0));
+    return { list,
+      pathOf: i => 'coFolders/'+i+'/order',
+      applyLocal: (i,o) => { if(_coFolders[i]) _coFolders[i].order = o; } };
+  }
+  if(kind === 'coftab'){
+    const f = (_coFolders||{})[scope]; if(!f || !f.tabs || !f.tabs[id]) return null;
+    const list = Object.keys(f.tabs)
+      .map(tid => ({ id:tid, order:Number((f.tabs[tid]||{}).order||0) }))
+      .sort((a,b)=>a.order-b.order);
+    return { list,
+      pathOf: i => 'coFolders/'+scope+'/tabs/'+i+'/order',
+      applyLocal: (i,o) => { if(f.tabs[i]) f.tabs[i].order = o; } };
+  }
+  if(kind === 'view'){
+    const v = (state.views||{})[id]; if(!v) return null;
+    /* renderMyTabsHtml 과 같은 거르개를 쓴다 — 지금 화면에 보이는 탭끼리만 형제다 */
+    const list = Object.values(state.views||{})
+      .filter(x=>x && x.id && (x.kind||'card')===(v.kind||'card') && (x.scope||'all')===(v.scope||'all'))
+      .sort((a,b)=>(a.order||0)-(b.order||0));
+    return { list,
+      pathOf: i => 'views/'+i+'/order',
+      applyLocal: (i,o) => { if(state.views[i]) state.views[i].order = o; } };
+  }
+  return null;
+}
+
+/* 바뀐 order 만 모아 **한 번의 update()** 로 보낸다.
+   ⚠ 레코드를 통째로 set 하면 안 된다 — 그 사이 남이 고친 이름이 되돌아간다
+     (2026-08-11 「한 건 저장이 레코드 통째라 남의 칸을 되돌리던 것」과 같은 종류). */
+function saveOrder(kind, dragId, dropId, scope){
+  if(!state.isAdmin){ return Promise.resolve(); }   /* 화면 게이트를 넘겨도 여기서 막는다 */
+  const spec = ordSiblings(kind, dragId, scope||'');
+  if(!spec) return Promise.resolve();
+  const changed = reorderList(spec.list, dragId, dropId);
+  if(!changed.length) return Promise.resolve();     /* 바꿀 것이 없으면 서버를 안 부른다 */
+  if(Store.mode!=='firebase'){ toast('클라우드에 연결된 상태에서만 순서를 바꿀 수 있습니다'); return Promise.resolve(); }
+  const upd = {};
+  changed.forEach(x=>{ upd[spec.pathOf(x.id)] = x.order; });
+  /* 화면이 곧바로 새 순서로 그려지게 메모리도 함께 바꾼다 — 서버 메아리를 기다리면 한 박자 늦다 */
+  changed.forEach(x=>{ spec.applyLocal(x.id, x.order); });
+  render();
+  return Store.db.ref(DB_ROOT).update(upd)
+    .then(()=>{ toast('순서를 바꿨습니다'); })
+    .catch(e=>{
+      toast('순서 저장 실패: '+((e&&e.message)||''));
+      render();   /* 서버의 실제 순서로 되돌린다 — 성공한 척 남지 않게 */
+    });
+}
+
+/* 지금 끌고 있는 것. 명함을 끄는 dragId·폴더를 끄는 dragFolderId 와 **따로** 둔다 —
+   같은 폴더 줄이 「명함을 받는 자리」이기도 해서, 무엇을 끌었는지 섞이면
+   순서를 바꾸려다 명함이 옮겨지는 사고가 난다. */
+let _dragOrd = null;
+function onOrdDragStart(e, kind, id, scope){
+  if(!state.isAdmin) return;
+  _dragOrd = { kind:kind, id:id, scope:scope||'' };
+  try{ e.dataTransfer.effectAllowed='move'; }catch(_){}
+  e.currentTarget.classList.add('ord-dragging');
+  e.stopPropagation();
+}
+function onOrdDragOver(e){
+  if(!_dragOrd) return;                 /* 명함을 끄는 중이면 기존 길에 맡긴다 */
+  e.preventDefault(); e.stopPropagation();
+  try{ e.dataTransfer.dropEffect='move'; }catch(_){}
+  e.currentTarget.classList.add('ord-dragover');
+}
+function onOrdDragLeave(e){ e.currentTarget.classList.remove('ord-dragover'); }
+function onOrdDragEnd(e){
+  e.currentTarget.classList.remove('ord-dragging');
+  _dragOrd = null;
+  document.querySelectorAll('.ord-dragover').forEach(n=>n.classList.remove('ord-dragover'));
+}
+function onOrdDrop(e, kind, id, scope){
+  e.currentTarget.classList.remove('ord-dragover');
+  if(!_dragOrd) return;                 /* 명함 드롭 — 기존 onFolderOrCardDrop 이 맡는다 */
+  e.preventDefault(); e.stopPropagation();
+  const d = _dragOrd; _dragOrd = null;
+  if(d.kind !== kind || (d.scope||'') !== (scope||'')) return;   /* 다른 목록끼리는 안 섞는다 */
+  saveOrder(kind, d.id, id, scope||'');
 }
 
 /* ── 사이드바 폭 조절(PC) ── */
