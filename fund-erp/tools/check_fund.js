@@ -149,7 +149,40 @@ ok('머리줄은 고른 묶음만 말한다', src.includes('var curInc=_curList.
 ok('빈 설립중·종료·삭제는 사이드바에서 숨긴다',
   src.includes("if(!n && (g[0]==='setup'||g[0]==='trash'||g[0]==='past')) return '';"));
 ok('[기금 현황]을 누르면 첫 하위로 (대표 선택 ②-나)',
-  src.includes("function goHome(){ S.homeTab='지역공동'; go('home'); }"));
+  /function goHome\(\)\{[\s\S]{0,240}?S\.homeTab='지역공동';[\s\S]{0,240}?go\('home'\);/.test(src));
+/* ── 하위 묶음 접기·펴기 ── (대표 지시)
+   접어 두면 다음에 열 때도 접혀 있어야 하고, 접힌 채로도 «어느 묶음을 보는지» 알 수 있어야 한다. */
+ok('접힘 상태를 이 브라우저에 적어 둔다', src.includes("var NAVSUB_LS='fund_navsub_open_v1';")
+  && src.includes('function navSubOpen(') && src.includes('function toggleNavSub('));
+/* 접었는데 다음에 열면 다시 펴져 있으면 «접기»가 아니다 — 토글이 실제로 «뒤집어» 저장하는지 본다.
+   ⚠ 함수 이름으로 범위를 잡으면 안 된다 — 바로 아래 goHome 에도 setItem 이 있어
+      그것을 보고 통과해 버린다(변이시험에서 새어 나갔다). */
+ok('접기를 누르면 그 상태를 저장한다',
+  src.includes("localStorage.setItem(NAVSUB_LS, navSubOpen()?'0':'1');"));
+ok('화살표가 접힘에 따라 바뀐다', src.includes("cx.textContent=open?'▾':'▸';")
+  && src.includes("host.className=open?'':'hid';"));
+ok('접혀 있으면 고른 묶음 이름을 머리줄에 덧붙인다',
+  src.includes("hc.textContent=(!open&&lbl?lbl+' · ':'')"));
+ok('[기금 현황]을 누르면 접힌 것을 펴 준다',
+  /function goHome\(\)\{[\s\S]{0,240}?if\(!navSubOpen\(\)\)/.test(src));
+ok('화살표를 눌러도 화면 이동은 안 된다(누름 전파 차단)',
+  src.includes('onclick="event.stopPropagation();toggleNavSub()"'));
+
+/* ── 분류(지역) ── 「지역」 칸 하나가 곧 분류다. */
+ok('분류 목록은 실제 값에서 뽑는다', src.includes('function regionsOf(')
+  && src.includes('function regSelect(') && src.includes('function setRegionQuick('));
+ok('새 분류를 그 자리에서 만들 수 있다', src.includes("<option value=\"__new\">＋ 새 분류…</option>")
+  && src.includes("if(val==='__new')"));
+/* 분류를 바꾸면 지역기금↔공동기금으로 «옮겨 간다» — 모르고 옮기면 목록에서 사라진 줄 안다 */
+ok('옮겨 가면 어디로 갔는지 알린다', src.includes('before=grp(f)') && src.includes('after=grp(funds[fid])')
+  && src.includes("toast(before!==after ?"));
+ok('사내기금에는 분류를 안 붙인다', src.includes("(f.fund_type==='사내'?'<span class=\"muted\">—</span>':regSelect(f))"));
+/* 유형이 섞인 목록(종료기금·설립중)에서 머리와 몸통 칸 수가 어긋나면 값이 옆으로 밀린다 */
+ok('분류 칸 유무는 표가 한 번에 정한다', src.includes('var showReg=list.some(')
+  && src.includes('fundRow(f,i+1,mode,showReg)') && src.includes('function fundRow(f,no,mode,showReg)'));
+
+ok('지역기금을 분류로 한 겹 더 나눈다', src.includes("if(S.homeTab==='지역공동' && cur.length && S.homeView==='basic')")
+  && src.includes("S.homeReg=") && src.includes("chip('','전체',cur.length)"));
 /* ⚠ 끌리는 단위가 «감싸는 상자»로 바뀌었다 — 선택자를 안 고치면 기금 현황만 목록에서 빠져
    순서 저장이 조용히 어긋난다(브라우저에서 실제로 끌어 확인했다). */
 ok('순서 저장이 감싸는 상자를 센다', src.includes("var NAV_SEL=':scope > [data-nav]';")

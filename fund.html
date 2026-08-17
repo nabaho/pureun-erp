@@ -42,8 +42,12 @@
   .sitem.on .ncnt{color:var(--acc2)}
   /* 하위 묶음 — 왼쪽 실선으로 «기금 현황에 딸린 것»임을 보인다 */
   #navsub{margin:2px 0 2px 12px;border-left:1px solid var(--line);padding-left:6px}
+  #navsub.hid{display:none}
   #navsub .sitem{padding:6px 9px;font-size:12.5px}
   #navsub .sep{height:1px;background:var(--line);margin:5px 6px}
+  /* 접기 화살표 — 누를 만한 크기를 주되 글자를 밀어내지 않게 폭을 고정한다 */
+  .cx{display:inline-block;width:14px;text-align:center;color:var(--faint);font-size:10px;flex:none;cursor:pointer}
+  .cx:hover{color:var(--acc2)}
   .sitem:hover .gr{color:#9aa5b6}
   .sitem.navdrag{background:var(--acc-soft);box-shadow:0 6px 18px rgba(37,99,235,.22);opacity:.95;cursor:grabbing}
   .sitem.navdrag .gr{cursor:grabbing}
@@ -389,7 +393,9 @@ function shell(){
        종전에는 본문 탭줄에 함께 늘어놓아, 축이 다른 둘이 한 층으로 보였다.
        하위는 끌어서 순서를 못 바꾼다(유형 차례가 바뀌면 오히려 헷갈린다). */
     +'<div data-nav="1" id="nav-home-wrap">'
-    +'<div class="sitem" id="nav-home" onclick="goHome()" title="드래그: 메뉴 순서 변경"><span class="gr">⋮⋮</span>🏛 기금 현황<span class="ncnt" id="nav-home-cnt"></span></div>'
+    +'<div class="sitem" id="nav-home" onclick="goHome()" title="드래그: 메뉴 순서 변경"><span class="gr">⋮⋮</span>'
+    +'<span class="cx" id="nav-cx" onclick="event.stopPropagation();toggleNavSub()" title="묶음 접기·펴기">▾</span>'
+    +'🏛 기금 현황<span class="ncnt" id="nav-home-cnt"></span></div>'
     +'<div id="navsub"></div>'
     +'</div>'
     +'<div class="sitem" data-nav="1" id="nav-billing" onclick="go(\'billing\')" title="드래그: 메뉴 순서 변경"><span class="gr">⋮⋮</span>💰 청구 관리</div>'
@@ -636,7 +642,7 @@ function lifeSelect(f){
   return '<select onclick="event.stopPropagation()" onchange="setLifecycleQuick(\''+f._id+'\',this.value)" style="padding:3px 6px;border:1px solid '+(v==='운영'?'var(--line)':'#e0a0a0')+';border-radius:6px;font-size:11.5px;background:'+(v==='운영'?'#fff':'#fbf0f0')+'">'
     +o('운영')+o('계약종료')+o('기록보관')+'</select>';
 }
-function fundRow(f,no,mode){
+function fundRow(f,no,mode,showReg){
   var n=nDone(f); var chip=n===5?'<span class="chip ok">정보 완비</span>':n>=3?'<span class="chip warn">정보 '+n+'/5</span>':'<span class="chip dg">정보 '+n+'/5</span>';
   var subn=mgrSubNames(f);
   var setupB=(f.setup_stage==='설립준비')?' <span class="chip warn" style="font-size:10px">🏗 설립중</span>':'';
@@ -645,6 +651,10 @@ function fundRow(f,no,mode){
     +'<td>'+esc(mgrMainName(f)||'—')+'</td>'
     +'<td class="muted mo">'+(subn?esc(subn):'—')+'</td>'
     +'<td class="mo">'+esc(f.chairman||'—')+'</td><td>'+chip+'</td>'
+    /* 분류 칸을 세울지는 표가 정한다(showReg) — 줄마다 제멋대로 빼면 유형이 섞인 목록
+       (종료기금·설립중)에서 머리와 몸통 칸 수가 어긋나 값이 옆으로 밀린다.
+       사내기금은 지역으로 나누지 않으므로 칸은 두되 비운다. */
+    +(showReg?('<td onclick="event.stopPropagation()">'+(f.fund_type==='사내'?'<span class="muted">—</span>':regSelect(f))+'</td>'):'')
     +'<td onclick="event.stopPropagation()">'+lifeSelect(f)+(f.end_date&&f.lifecycle!=='운영'?'<div class="muted" style="font-size:10.5px;margin-top:2px">'+esc(f.end_date)+(f.end_reason?' '+esc(f.end_reason):'')+'</div>':'')+'</td>'
     +(mode==='setup'?'<td onclick="event.stopPropagation()"><button onclick="trashFund(\''+f._id+'\')" title="삭제 보관함으로 이동(복원 가능)" style="padding:3px 9px;color:var(--danger)">🗑</button></td>':'')
     +'</tr>';
@@ -677,8 +687,12 @@ function fundTable(list,edit,mode){
       }).join('')+'</tbody></table></div>';
   }
   var actCol=(mode==='setup')?'<th>삭제</th>':'';
-  return '<div style="overflow-x:auto"><table><thead><tr><th>번호</th><th>기금명</th><th>주담당</th><th class="mo">부담당</th><th class="mo">대표자</th><th>정보</th><th>계약관계</th>'+actCol+'</tr></thead><tbody>'
-    +list.map(function(f,i){return fundRow(f,i+1,mode);}).join('')+'</tbody></table></div>';
+  /* 분류 칸은 «목록에 사내가 아닌 기금이 하나라도 있을 때»만 세운다 —
+     사내기금만 있는 표에 빈 칸을 세우면 머리와 몸통 칸 수가 어긋난다. */
+  var showReg=list.some(function(f){return f.fund_type!=='사내';});
+  var regCol=showReg?'<th title="지역·묶음 분류 — 바꾸면 지역기금↔공동기금으로 옮겨집니다">분류</th>':'';
+  return '<div style="overflow-x:auto"><table><thead><tr><th>번호</th><th>기금명</th><th>주담당</th><th class="mo">부담당</th><th class="mo">대표자</th><th>정보</th>'+regCol+'<th>계약관계</th>'+actCol+'</tr></thead><tbody>'
+    +list.map(function(f,i){return fundRow(f,i+1,mode,showReg);}).join('')+'</tbody></table></div>';
 }
 // 푸른이알피 재직자 명단 — Firebase data/user_accounts/v (pu-erp와 공유). 재직(active)만.
 var _staffCache=null;
@@ -881,6 +895,46 @@ function homeViewBar(){
 }
 /* 목록 하나에 보기만 갈아끼운다 — 기본정보는 기존 표(하위 그룹 나누기 포함),
    서식 준비·결산은 같은 목록에 열만 바꿔 매트릭스로 */
+/* ══ 분류(지역) ══ 「지역」 칸 하나가 곧 분류다.
+   ⚠ grp() 이 «지역이 있으면 지역기금, 없으면 공동기금»으로 가른다 —
+      분류를 지우면 그 기금이 공동기금으로, 넣으면 지역기금으로 «옮겨 간다».
+      사람이 모르고 옮기지 않도록 바꾼 뒤 어디로 갔는지 말해 준다. */
+function regionsOf(){
+  var s={};
+  Object.keys(funds).forEach(function(k){
+    var f=funds[k]; if(isTrashed(f)) return;
+    var r=String(f.region||'').trim(); if(r) s[r]=(s[r]||0)+1;
+  });
+  return Object.keys(s).sort(function(a,b){ return s[b]-s[a]||a.localeCompare(b,'ko'); });
+}
+function regSelect(f){
+  var v=String(f.region||'').trim();
+  var opts=['<option value=""'+(v?'':' selected')+'>(분류 없음)</option>'];
+  var list=regionsOf(); if(v&&list.indexOf(v)<0) list=list.concat([v]);
+  list.forEach(function(r){ opts.push('<option'+(v===r?' selected':'')+'>'+esc(r)+'</option>'); });
+  opts.push('<option value="__new">＋ 새 분류…</option>');
+  return '<select onclick="event.stopPropagation()" onchange="setRegionQuick(\''+f._id+'\',this)" '
+    +'style="padding:3px 6px;border:1px solid var(--line);border-radius:6px;font-size:11.5px;max-width:110px">'+opts.join('')+'</select>';
+}
+function setRegionQuick(fid,sel){
+  var val=sel.value;
+  if(val==='__new'){
+    var nv=prompt('새 분류 이름 (예: 충남, 경기, 부산)');
+    nv=String(nv||'').trim();
+    if(!nv){ renderHome(); return; }
+    val=nv;
+  }
+  var f=funds[fid]||{}, before=grp(f);
+  fbDb.ref(NS+'/funds/'+fid+'/region').set(val||null).then(function(){
+    funds[fid].region=val||'';
+    var after=grp(funds[fid]);
+    /* 유형이 바뀌면 목록에서 «사라진 것»처럼 보인다 — 어디로 갔는지 말해 준다 */
+    var GL={}; HOME_GROUPS.forEach(function(g){ GL[g[0]]=g[1]; });
+    toast(before!==after ? (GL[before]||before)+' → '+(GL[after]||after)+' 로 옮겼습니다'
+      : (val?'분류: '+val:'분류를 지웠습니다'));
+    renderHome();
+  }).catch(function(e){ toast('저장 실패: '+e.message,'err'); renderHome(); });
+}
 function homeBody(list,edit,mode,secFn){
   if(S.homeView==='docs')  return docsMatrixHTML(list);
   if(S.homeView==='close') return closeMatrixHTML(list);
@@ -924,11 +978,33 @@ function renderNav(){
       +g[1]+'<span class="ncnt">'+n+'</span></div>';
   }).join('');
   host.innerHTML=html;
+  var open=navSubOpen();
+  host.className=open?'':'hid';
+  var cx=$('nav-cx'); if(cx) cx.textContent=open?'▾':'▸';
   var hc=$('nav-home-cnt');
-  if(hc){ hc.textContent=B._all.length+(incAll?' · 미완비 '+incAll:''); hc.title=incAll?'전체 '+B._all.length+'개 · 기본정보가 덜 채워진 기금 '+incAll+'개':'전체 '+B._all.length+'개'; }
+  if(hc){
+    /* 접혀 있으면 어느 묶음을 보고 있는지 여기서 말해 준다 — 안 그러면 단서가 사라진다 */
+    var lbl=''; HOME_GROUPS.forEach(function(g){ if(g[0]===cur) lbl=g[1].replace(/^\S+\s*/,''); });
+    hc.textContent=(!open&&lbl?lbl+' · ':'')+B._all.length+(incAll?' · 미완비 '+incAll:'');
+    hc.title=incAll?'전체 '+B._all.length+'개 · 기본정보가 덜 채워진 기금 '+incAll+'개':'전체 '+B._all.length+'개';
+  }
 }
-/* [기금 현황]을 누르면 첫 하위(지역기금)로 들어간다 — 대표 선택(②-나). */
-function goHome(){ S.homeTab='지역공동'; go('home'); }
+/* 하위 묶음 접기·펴기 — 다음에 열 때도 접힌 채로 있어야 하므로 이 브라우저에 적어 둔다.
+   ⚠ 접혀 있어도 «지금 고른 묶음»은 알 수 있어야 한다 — 접으면 화살표를 ▸ 로 바꾸고
+      [기금 현황] 줄에 그 이름을 덧붙인다. 안 그러면 어디를 보고 있는지 사라진다. */
+var NAVSUB_LS='fund_navsub_open_v1';
+function navSubOpen(){ try{ return localStorage.getItem(NAVSUB_LS)!=='0'; }catch(e){ return true; } }
+function toggleNavSub(){
+  try{ localStorage.setItem(NAVSUB_LS, navSubOpen()?'0':'1'); }catch(e){}
+  renderNav();
+}
+/* [기금 현황]을 누르면 첫 하위(지역기금)로 들어간다 — 대표 선택(②-나).
+   접혀 있으면 펴 준다 — 안 그러면 눌렀는데 아무 일도 안 일어난 것처럼 보인다. */
+function goHome(){
+  S.homeTab='지역공동';
+  if(!navSubOpen()){ try{ localStorage.setItem(NAVSUB_LS,'1'); }catch(e){} }
+  go('home');
+}
 function goHomeTab(k){ S.homeTab=k; if(S.view==='home'){ closeSide(); renderHome(); renderNav(); } else go('home'); }
 function renderHome(){
   $('crumb').textContent='기금 현황';
@@ -1009,6 +1085,23 @@ function renderHome(){
   } else {
     var cur=(G[S.homeTab]||[]).slice();
     if(edit&&S.homeInc) cur=cur.filter(function(f){return nDone(f)<5;});
+    /* 지역기금은 분류(충남·경기…)로 한 겹 더 나눈다 — 16개가 한 덩이면 어디부터 어디까지가
+       충남인지 눈으로 세어야 했다. 칩으로 좁혀 보거나, [전체]에서 구획으로 나눠 본다. */
+    if(S.homeTab==='지역공동' && cur.length && S.homeView==='basic'){
+      var rs={}; cur.forEach(function(f){ var r=String(f.region||'').trim()||'(분류 없음)'; (rs[r]=rs[r]||[]).push(f); });
+      var rk=Object.keys(rs).sort(function(a,b){ return rs[b].length-rs[a].length||a.localeCompare(b,'ko'); });
+      if(!S.homeReg || (S.homeReg!=='' && rk.indexOf(S.homeReg)<0)) S.homeReg='';
+      var chip=function(k,lbl,n){ return '<button class="seg'+(S.homeReg===k?' on':'')+'" onclick="S.homeReg=\''+esc(k)+'\';renderHome()">'+esc(lbl)+' '+n+'</button>'; };
+      var chips='<div class="panel" style="padding:8px 12px"><div class="segbar" style="flex-wrap:wrap">'
+        +'<span class="muted" style="font-size:11.5px;margin-right:6px">분류</span>'
+        +chip('','전체',cur.length)+rk.map(function(r){ return chip(r,r,rs[r].length); }).join('')+'</div></div>';
+      var secs = S.homeReg
+        ? fundTable(rs[S.homeReg],edit,'')
+        : rk.map(function(r){
+            return '<div class="grp-h" style="margin:10px 0 4px 10px;font-size:12.5px;color:var(--sub)">'+esc(r)+' <span class="cnt">'+rs[r].length+'</span></div>'+fundTable(rs[r],edit,'');
+          }).join('');
+      body=chips+'<div class="panel">'+secs+'</div>';
+    } else
     body=cur.length?homeBody(cur,edit,'')
       :'<div class="panel"><div class="muted" style="padding:12px">'
         +(!S._fundsSynced ? '아직 서버에서 목록을 받지 못했습니다 — 연결을 확인하는 중입니다.'
