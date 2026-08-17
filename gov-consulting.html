@@ -1619,7 +1619,9 @@ const _NODE_KO={scal_staff:'담당자',scal_types:'컨설팅 종류',scal_cos:'�
 function _saveFailMsg(node,e){
   const ko=_NODE_KO[node]||node;
   if(_isDeniedErr(e))return '🔒 '+ko+' 저장 권한이 없습니다 — 총괄관리자에게 알려 주세요. (다시 눌러도 저장되지 않습니다)';
-  const why=String((e&&(e.code||e.message))||e||'알 수 없음').slice(0,70);
+  /* 이유는 «끝까지» 보여 준다 — 짧게 자르면 「in property 'scal…」에서 끊겨
+     어느 칸이 문제였는지가 사라진다(2026-08-17에 실제로 끊겼다). */
+  const why=String((e&&(e.code||e.message))||e||'알 수 없음').slice(0,160);
   return '⚠ '+ko+' 저장 실패 — '+why+' (이 문구를 그대로 알려 주세요)';
 }
 let _saveDenied=false;
@@ -1837,6 +1839,23 @@ function fbSubscribe(){
   }
 }
 
+/* ★ 실시간DB는 값이 undefined 인 칸이 «하나라도» 있으면 저장을 통째로 거부한다.
+   localStorage 는 JSON 으로 굳을 때 그 칸을 «그냥 빼» 버리므로, 기기에는 저장되고
+   클라우드만 조용히 막혔다 — 그래서 「기기에는 남았는데 안 올라간다」가 됐다.
+   여기서 같은 규칙으로 맞춘다: undefined 인 칸은 «없는 칸» 으로 본다.
+   ⚠ 뺀 칸은 반드시 콘솔에 남긴다. 조용히 버리면 값이 사라진 것을 아무도 모른다. */
+function _noUndef(v,path,dropped){
+  if(Array.isArray(v))return v.map((x,i)=>_noUndef(x,(path||'')+'['+i+']',dropped));
+  if(v&&typeof v==='object'){
+    const o={};
+    Object.keys(v).forEach(k=>{
+      if(v[k]===undefined){ if(dropped)dropped.push((path||'')+'.'+k); return; }
+      o[k]=_noUndef(v[k],(path||'')+'.'+k,dropped);
+    });
+    return o;
+  }
+  return v===undefined?null:v;
+}
 function _idRows(value){
   const rows=Array.isArray(value)?value:(value&&typeof value==='object'?Object.values(value):[]);
   return rows.filter(row=>row&&row.id);
@@ -1855,7 +1874,10 @@ function fbPushRecordDelta(lsKey,beforeValue,afterValue){
     const merged=_idMap(current);
     removed.forEach(id=>merged.delete(id));
     changed.forEach((row,id)=>merged.set(id,row));
-    return Array.from(merged.values());
+    const dropped=[];
+    const out=_noUndef(Array.from(merged.values()),node,dropped);
+    if(dropped.length)console.warn('[빈 칸 정리] 저장에서 빼고 올린 칸:',dropped);
+    return out;
   },undefined,false);
   const task=(_recordWriteQueue[node]||Promise.resolve()).catch(()=>{}).then(run)
     .then(result=>{
@@ -1891,7 +1913,10 @@ function fbPush(lsKey,value){
   const node=FB_NODES[lsKey];if(!node)return;
   _saveStart();
   try{
-    return _fbDB.ref(node).set(value)
+    const dropped=[];
+    const safe=_noUndef(value,node,dropped);
+    if(dropped.length)console.warn('[빈 칸 정리] 저장에서 빼고 올린 칸:',dropped);
+    return _fbDB.ref(node).set(safe)
       .then(()=>{_saveFinish(true);return true;})
       .catch(e=>{console.warn('FB 쓰기 실패',node,e);_saveFinish(false,e);
         toast(_saveFailMsg(node,e),'err');return false;});
@@ -5265,7 +5290,11 @@ async function saveEdit(){
   const idx=scheds.findIndex(s=>s.id===edit_id);
   if(idx===-1)return;
   scheds[idx].attId=attId;
-  scheds[idx].coAttIds=coAttIds; scheds[idx].coAttId=undefined;
+  scheds[idx].coAttIds=coAttIds;
+  /* ★ 옛 「부담당 한 명」 칸을 없애는 자리다. undefined 를 «넣으면» 안 된다 —
+     실시간DB는 undefined 가 섞인 저장을 «통째로 거부» 한다
+     (2026-08-17: 이 한 줄 때문에 일정 수정이 저장되지 않았다). 키를 지운다. */
+  delete scheds[idx].coAttId;
   scheds[idx].isField=edit_isField;
   scheds[idx].memo=q('#mEditMemo').value.trim();
   setScheds(scheds);closeModal('mbEdit');renderCal();renderDash();toast('수정됨');
@@ -5389,7 +5418,19 @@ async function saveCo(){
   if(!name){toast('사업장명을 입력해주세요','err');return;}
   const defAtt=q('#mCoAtt').value;const defCoAtts=co_selCoAtts.filter(id=>id&&id!==defAtt);
   const cos=getCos();
-  if(co_editId){const idx=cos.findIndex(c=>c.id===co_editId);if(idx!==-1)cos[idx]={...cos[idx],name,defAtt,defCoAtts,defCoAtt:undefined,types:[...co_selTypes],deadlines:{...co_deadlines},customRounds:{...co_rounds},customMandatory:{...co_mandatory}};}
+  if(co_editId){
+    const idx=cos.findIndex(c=>c.id===co_editId);
+    if(idx!==-1){
+      const next={...cos[idx],name,defAtt,defCoAtts,types:[...co_selTypes],
+        deadlines:{...co_deadlines},customRounds:{...co_rounds},customMandatory:{...co_mandatory}};
+      /* ★ 옛 「부담당 한 명」 칸을 없애는 자리다. 전에는 defCoAtt:undefined 를 «넣었다» —
+         펼치기(...)로는 키가 지워지지 않고 «값이 undefined 인 키» 가 남는데,
+         실시간DB는 그런 저장을 «통째로 거부» 한다
+         (2026-08-17: 이 한 줄 때문에 사업장 수정이 저장되지 않았다). */
+      delete next.defCoAtt;
+      cos[idx]=next;
+    }
+  }
   else cos.push({id:uid(),name,defAtt,defCoAtts,types:[...co_selTypes],deadlines:{...co_deadlines},customRounds:{...co_rounds},customMandatory:{...co_mandatory},active:true});
   setCos(cos);closeModal('mbCo');renderDash();renderCal();toast(co_editId?'수정됨':'추가됨');
 }
