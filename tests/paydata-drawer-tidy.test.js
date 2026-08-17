@@ -30,8 +30,8 @@ function load(appState) {
       kind: 'attend', query: '', arrivals: {}, monthEdit: false, viewingUid: '', viewingDeputy: false
     }, appState)) + ';',
     'App.render = function(){};',
-    cut('esc'), cut('jsq'), cut('thisMonth'), cut('canWrite'),
-    cut('monthShift'), cut('monthCount'), cut('monthStripHtml'),
+    cut('esc'), cut('bannerHtml'), cut('jsq'), cut('thisMonth'), cut('canWrite'),
+    cut('monthShift'), cut('monthCount'), cut('monthAhead'), cut('monthStripHtml'),
     cut('dropTargetNow'), cut('dropHintHtml'), cut('dropHasFiles'),
     'window.App = App; window.monthShift = monthShift; window.monthCount = monthCount;',
     'window.monthStripHtml = monthStripHtml; window.dropTargetNow = dropTargetNow;',
@@ -90,9 +90,16 @@ test('★ 서랍 머리가 한 줄이다 — 이름·건수·단추가 같은 �
 
 /* 자료가 쌓여 내려가도 탭·찾기를 쓰려고 맨 위까지 되올라오지 않아야 한다
    (대표 지시 2026-08-13, 사진첩과 같은 방식). 한 줄로 합치면서 잃기 쉽다. */
-test('★ 폴더·찾기를 한 줄로 합쳐도 탭 아래에 붙어 있다', () => {
-  assert.match(cut('screenDrawer'), /id="findBar" class="foldfind"/);
-  assert.match(html, /#findBar\{[^}]*position:sticky/, '붙어 있지 않으면 되올라와야 합니다');
+test('★ 폴더·찾기를 한 줄로 합쳐도 굴러가는 동안 붙어 있다', () => {
+  const d = cut('screenDrawer');
+  assert.match(d, /id="findBar" class="foldfind"/);
+  /* 2026-08-17 「틀고정」으로 **머리 덩어리 하나**가 통째로 붙게 바뀌었다 —
+     탭·찾기가 스스로 붙는 대신 그 덩어리 안에 들어 있다. 그래서 「#findBar 가
+     sticky 인가」가 아니라 「붙는 덩어리 안에 있는가」를 본다. */
+  assert.match(html, /\.stickhead\{[^}]*position:sticky/, '머리가 안 붙으면 되올라와야 합니다');
+  const head = d.slice(d.indexOf('stickhead'));
+  assert.ok(head.indexOf('.stickhead 끝') > head.indexOf('id="findBar"'),
+    '★ 찾기 줄이 붙는 덩어리 밖에 있습니다');
 });
 
 /* ══════ 끌어다 놓기 ══════ */
