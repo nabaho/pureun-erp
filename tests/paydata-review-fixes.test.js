@@ -165,7 +165,8 @@ test('★ 서랍 이동·휴지통·되살리기 뒤에 도착 칸을 다시 읽
    찾기 줄에 한 글자를 치면 화면을 통째로 다시 그려 그 칸이 새로 만들어졌고,
    커서가 빠져 두 글자째가 아무 데도 안 들어갔다. */
 test('★ 찾기 칸들에 id 가 있다 — 없으면 커서를 되찾을 수 없다', () => {
-  ['findInput', 'sideFind', 'staffFind', 'shareFind'].forEach(id => {
+  // colFind 는 2중 대시보드의 사업장 찾기 칸(옛 sideFind 자리, 2026-08-17)
+  ['findInput', 'colFind', 'staffFind', 'shareFind'].forEach(id => {
     assert.ok(html.indexOf('id="' + id + '"') >= 0, id + ' 칸에 이름표가 없습니다');
   });
 });
