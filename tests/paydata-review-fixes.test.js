@@ -162,8 +162,18 @@ test('★ 자리별로 읽는 함수는 모두 늦게 온 답을 버린다', () 
    안 읽으면 방금 넣은 자료가 사업장 목록에서 「미도착 0장」으로 남아,
    사람이 안 들어간 줄 알고 또 올린다. */
 test('★ 서랍 이동·휴지통·되살리기 뒤에 도착 칸을 다시 읽는다', () => {
+  /* 2026-08-17부터 **그 업체·그 달만** 읽는다(다섯이 동시에 쓰면 통째로 받는 것이
+     느려지고 요금이 된다). 그래서 「인자 없이 부르는가」가 아니라 「부르는가」를 본다. */
   ['fileToDrawer', 'toTrash', 'restoreItem'].forEach(name => {
-    assert.match(cut(name), /refreshArrivals\(\)/, name + ' 뒤에 도착 표시가 낡은 채로 남습니다');
+    assert.match(cut(name), /refreshArrivals\(/, name + ' 뒤에 도착 표시가 낡은 채로 남습니다');
+  });
+});
+
+/* ⚠ 통째로 읽는 길로 되돌아가면 다섯이 각자 112곳 × 열두 달을 반복해서 받는다. */
+test('★ 한 건 손댈 때는 그 업체·그 달만 읽는다', () => {
+  ['fileToDrawer', 'toTrash', 'restoreItem'].forEach(name => {
+    assert.match(cut(name), /refreshArrivals\([^)]+\)/,
+      name + ' 이 도착 칸을 통째로 다시 받습니다 — 자리를 집어 주세요');
   });
 });
 

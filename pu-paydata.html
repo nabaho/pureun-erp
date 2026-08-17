@@ -671,6 +671,8 @@ const App = {
     Object.assign(App, o || {});
     App.screen = screen;
     if (screen === 'drawer') { ensureDrawerData(); ensureFolders(); }
+    /* 서랍을 열면 그 자리를 지켜보고, 나가면 끊는다 — 안 끊으면 지켜보기가 쌓인다. */
+    watchDrawer();
     if (screen === 'trash') ensureTrash();
     if (screen === 'mail') ensureMail();
     if (screen === 'values') ensureValues();
@@ -836,11 +838,34 @@ function loadSites() {
    서랍에 넣거나 휴지통에 버리거나 되살린 **뒤에** 부른다. 안 부르면 방금 넣은
    자료가 사업장 목록에서는 「미도착 0장」으로 남아, 사람이 안 들어간 줄 안다.
    도착 칸은 자리와 상관없이 전 직원이 함께 보는 칸이라 자리 검사가 필요 없다. */
-function refreshArrivals() {
+/* ⚠ 업체·달을 주면 **그 자리만** 읽는다(대표 지시 2026-08-17 「다섯 이상 동시
+   접속」). 예전에는 한 건 담을 때마다 112곳 × 열두 달을 통째로 다시 받았다 —
+   다섯이 각자 그것을 반복하면 느려지고 요금이 된다.
+   자리를 안 주면(첫 화면·달 바꾸기) 예전처럼 전체를 읽는다 — 그때는 실제로
+   전체가 필요하다. */
+function refreshArrivals(companyId, month) {
+  const slot = month ? (S.monthKey(month) || S.KEEP) : '';
+  if (companyId && slot) {
+    return S.listArrivalOne(companyId, slot).then(node => {
+      putArrival(companyId, slot, node);
+      App.render();
+    }).catch(e => console.warn('[도착 칸]', e && e.code));
+  }
   return S.listArrivals().then(a => { App.arrivals = a; App.render(); })
     .catch(e => console.warn('[도착 칸]', e && e.code));
 }
 window.refreshArrivals = refreshArrivals;
+
+/* 읽어 온 한 자리를 손에 든 도착 칸에 끼워 넣는다.
+   ⚠ 비었으면 그 자리를 **지운다** — 남겨 두면 마지막으로 버린 자료가 계속
+   「1장」으로 세어져, 없는 것을 있다고 한다. */
+function putArrival(companyId, slot, node) {
+  if (!companyId || !slot) return;
+  App.arrivals = App.arrivals || {};
+  const co = App.arrivals[companyId] || (App.arrivals[companyId] = {});
+  if (node) co[slot] = node; else delete co[slot];
+}
+window.putArrival = putArrival;
 
 function refreshShares() {
   // 공유받음은 나(로그인 계정)에게 온 것만 있으면 된다 — 자리(viewingUid)와 무관하다.
@@ -1462,7 +1487,7 @@ function fileToDrawer(id) {
       delete App.pendTag[id];      // 다 쓴 이름표는 버린다
       /* 서랍에 들어갔으니 도착 칸 숫자도 달라졌다 — 다시 읽지 않으면 사업장
          목록과 왼쪽 대시보드가 「미도착·0장」인 채로 남는다(새로고침해야 맞았다). */
-      refreshArrivals();
+      refreshArrivals(tag.companyId, tag.month);
       App.render();
     })
     .catch(e => alert('저장 실패: ' + (e.code || e.message) + '\n다시 시도해 주세요.'));
@@ -1507,6 +1532,8 @@ function bulkToDrawer() {
   db.ref().update(up).then(() => {
     done.forEach(id => { delete App.pending[id]; delete App.pendTag[id]; });
     pickPut('pending', {});
+    /* 여기만 전체를 읽는다 — 한꺼번에 내려보낸 것은 **여러 업체·여러 달**에
+       걸칠 수 있어 자리를 하나로 못 집는다. */
     refreshArrivals();
     App.render();
     alert(ids.length + '건 중 ' + done.length + '건을 서랍으로 내려보냈습니다.'
@@ -1718,7 +1745,7 @@ function dropFiles(files) {
     /* 서랍 칸과 도착 표시를 다시 읽는다 — 안 읽으면 방금 놓은 것이 안 보인다. */
     App.itemsKeep = null; App.itemsMonth = null; App.itemsMonthSlot = '';
     ensureDrawerData();
-    refreshArrivals();
+    refreshArrivals(t.companyId, t.month);
     App.render();
     const n = list.length - bad.length - left.length;
     let msg = n + '건을 ' + t.companyName + ' ' + t.month + ' ' + S.kindLabel(t.kind) + '에 담았습니다.';
@@ -2077,6 +2104,46 @@ function drawerSeats() {
   });
 }
 
+/* ══════ 지금 열어 둔 서랍만 지켜본다 (대표 지시 2026-08-17) ══════
+   남이 담은 것이 새로고침 전까지 안 보였다 — 다섯이 같이 일하면 「방금 올렸다는데
+   안 보인다」가 난다.
+   ⚠ **전체를 지켜보지 않는다.** 다섯이 각자 112곳을 계속 받으면 요금이 된다.
+   지금 보고 있는 그 업체·그 달의 **도착 칸**(얇다)만 지켜보고, 그것이 바뀌면
+   그때 서랍을 다시 읽는다 — 담기·버리기가 도착 칸을 함께 고치므로 이 하나로
+   「남이 무언가 했다」를 안다.
+   ⚠ 폴더만 옮긴 것은 도착 칸이 안 바뀌어 안 따라온다 — 남이 옮긴 폴더는 어차피
+   내가 못 고치는 것이라 그대로 둔다.
+   ⚠ 끊기를 반드시 해야 한다. 안 끊으면 서랍을 옮길 때마다 지켜보기가 하나씩
+   쌓여, 한 번 담을 때 열 번 그려진다. */
+let drawerWatch = null;      // { key, off }
+
+function watchDrawer() {
+  const key = App.screen === 'drawer' && App.companyId
+    ? App.companyId + '|' + (S.isKeepKind(App.kind) ? S.KEEP : (S.monthKey(App.month) || S.KEEP))
+    : '';
+  if (drawerWatch && drawerWatch.key === key) return;   // 이미 그 자리를 보고 있다
+  if (drawerWatch) { drawerWatch.off(); drawerWatch = null; }
+  if (!key) return;
+  const [companyId, slot] = key.split('|');
+  let first = true;
+  const off = S.watchArrival(companyId, slot, node => {
+    putArrival(companyId, slot, node);
+    /* 처음 오는 값은 이미 손에 든 것과 같다 — 그때는 다시 안 읽는다(안 그러면
+       서랍을 열 때마다 두 번 읽는다). */
+    if (first) { first = false; App.render(); return; }
+    App.itemsKeep = null; App.itemsMonth = null; App.itemsMonthSlot = '';
+    ensureDrawerData();
+    App.render();
+  });
+  drawerWatch = { key: key, off: off };
+}
+window.watchDrawer = watchDrawer;
+
+function unwatchDrawer() {
+  if (drawerWatch) { drawerWatch.off(); drawerWatch = null; }
+}
+window.unwatchDrawer = unwatchDrawer;
+
 function ensureDrawerData() {
   if (!App.month) App.month = thisMonth();
   const monthSlot = S.monthKey(App.month) || S.KEEP;
@@ -2121,6 +2188,7 @@ function changeMonth(v) {
   App.month = v;
   App.values = null;
   ensureDrawerData();
+  watchDrawer();      // 달이 바뀌면 지켜보는 자리도 바뀐다
   App.render();
 }
 window.changeMonth = changeMonth;
@@ -2306,7 +2374,7 @@ function bulkDrawerTrash() {
     });
     pickPut('drawer', {});
     App.trash = null;
-    refreshArrivals();     // 도착 표시도 함께 내려갔다
+    refreshArrivals(App.companyId, App.month);     // 지금 열어 둔 그 자리만
     App.render();
   }).catch(e => alert('실패: ' + (e.code || e.message)));
 }
@@ -2624,8 +2692,9 @@ function screenDrawer() {
      넘나들어도 고른 폴더는 그대로 둔다. */
   h += '<div id="findBar" class="foldfind">'
     + '<div id="tabsBar">' + S.KINDS.map(k =>
+      /* 탭을 바꾸면 칸이 달라진다(근로계약서는 월 없는 칸) — 지켜보는 자리도 따라간다. */
       '<button class="' + (App.kind === k.key ? 'on' : '') + '" onclick="App.kind=\'' + k.key
-      + '\';App.query=\'\';ensureDrawerData();App.render()">' + esc(k.label)
+      + '\';App.query=\'\';ensureDrawerData();watchDrawer();App.render()">' + esc(k.label)
       + '<span class="n">' + counts[k.key] + '</span></button>').join('')
     + folderBar(App.folders, App.folderPick, foldCounts) + '</div>'
     + '<input id="findInput" class="dfind" placeholder="파일 이름으로 찾기" value="' + esc(App.query) + '"'
@@ -3381,7 +3450,9 @@ function toTrash(id) {
   db.ref().update(S.trashUpdate(id, rec, App.viewingUid)).then(() => {
     if (App.itemsKeep && App.itemsKeep[id]) delete App.itemsKeep[id];
     if (App.itemsMonth && App.itemsMonth[id]) delete App.itemsMonth[id];
-    refreshArrivals();   // 도착 표시도 내려갔다 — 목록 숫자를 맞춘다
+    /* ⚠ App.month 가 아니라 **그 자료의 칸**(rec.month)이다 — 근로계약서는 월이
+       없는 칸(keep)에 있어, 지금 보고 있는 달로 읽으면 엉뚱한 자리를 읽는다. */
+    refreshArrivals(rec.companyId, rec.month);
     App.render();
   }).catch(e => alert('실패: ' + (e.code || e.message)));
 }
@@ -3434,7 +3505,7 @@ function restoreItem(id) {
       S.listMyPending(seat).then(p => { if (seatSame(seat)) { App.pending = p; App.render(); } })
         .catch(e => console.warn('[대기 칸]', e && e.code));
     }
-    refreshArrivals();   // 도착 표시가 다시 올라갔다 — 목록 숫자를 맞춘다
+    refreshArrivals(rec.companyId, rec.month);   // 되살린 그 자리만
     App.render();
   }).catch(e => alert('실패: ' + (e.code || e.message)));
 }
