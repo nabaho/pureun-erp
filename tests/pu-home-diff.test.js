@@ -281,3 +281,87 @@ test('퇴사일이 «아직 안 온» 사람은 내리지 않는다 (표시만�
   const staff = [{ name: '예정자', leftAt: '2026-12-31', left: true }];
   assert.equal(D.memberStatus(ours, live, staff, TODAY)[0].status, 'same');
 });
+
+/* ══════ 최종 검토 4 — 퇴사자 글을 내린 «바로 다음 확인»에서 딱지가 뒤집히지 않는다 ══════
+   앱이 시킨 대로 홈페이지에서 비공개 처리하면 그 사람은 onLive 가 아니게 된다.
+   퇴사 여부를 안 보면 !onLive 가 그대로 「새로 올릴 것」이 되어, 정상 흐름의 마지막
+   걸음에서 화면이 정확히 반대(다시 올려라)를 가리킨다. 왼쪽 빨간 점도 영영 남는다. */
+
+test('★ 퇴사자를 홈페이지에서 내리고 나면 「다시 올려라」로 뒤집히지 않는다', () => {
+  const ours = [{ key: '190', srl: '190', name: '나간사람', position1: '', position2: '', careers: [] }];
+  const staff = [{ name: '나간사람', leftAt: '2026-07-31' }];
+  const r = plain(D.memberStatus(ours, [{ srl: '999', name: '남은사람', careers: [] }], staff, TODAY));
+  const mine = r.filter(x => x.key === '190')[0];
+  assert.ok(mine, '퇴사자 줄이 사라졌습니다');
+  assert.notEqual(mine.status, 'toAdd', '내린 사람을 다시 올리라고 시킵니다');
+  assert.equal(mine.status, 'done', '할 일이 없는 상태로 판정해야 왼쪽 빨간 점이 사라집니다');
+  assert.match(mine.reason, /퇴사/, '왜 할 일이 없는지 사유가 없습니다');
+});
+
+test('★ 퇴사 표시(날짜 없음)만 있는 사람도 홈페이지에서 내려갔으면 할 일이 없다', () => {
+  const ours = [{ key: '190', srl: '190', name: '나간사람', position1: '', position2: '', careers: [] }];
+  const staff = [{ name: '나간사람', leftAt: '', left: true }];
+  const r = plain(D.memberStatus(ours, [{ srl: '999', name: '남은사람', careers: [] }], staff, TODAY));
+  assert.equal(r.filter(x => x.key === '190')[0].status, 'done');
+});
+
+test('아직 퇴사하지 않은 사람이 홈페이지에 없으면 지금처럼 「새로 올릴 것」이다', () => {
+  const ours = [{ key: 'new-1', srl: '', name: '신입', position1: '', position2: '', careers: [] }];
+  const staff = [{ name: '신입', leftAt: '', left: false }];
+  const r = plain(D.memberStatus(ours, [{ srl: '999', name: '남은사람', careers: [] }], staff, TODAY));
+  assert.equal(r.filter(x => x.key === 'new-1')[0].status, 'toAdd');
+});
+
+test('★ 동명이인이면 홈페이지에 없어도 퇴사 판단을 보류하고 사유에 남긴다', () => {
+  const ours = [{ key: '500', srl: '500', name: '김노무', position1: '', position2: '', careers: [] }];
+  const staff = [
+    { name: '김노무', leftAt: '2026-07-01' },
+    { name: '김노무', leftAt: '' }
+  ];
+  const r = plain(D.memberStatus(ours, [{ srl: '999', name: '남은사람', careers: [] }], staff, TODAY));
+  const mine = r.filter(x => x.key === '500')[0];
+  assert.equal(mine.status, 'toAdd', '못 가리면 사람이 보게 두되 딱지는 지금대로 둔다');
+  assert.match(mine.reason, /동명이인/, '왜 퇴사 판단을 못 했는지 안 적혀 있습니다');
+});
+
+/* ══════ 최종 검토 3 — «우리 자료» 쪽 글 번호 겹침 ══════
+   duplicateLiveKeys 는 홈페이지 쪽만 본다. 우리 자료에서 두 사람이 같은 글 번호를 쓰면
+   편집 주소가 남의 글을 가리키고, 시킨 대로 붙여넣으면 남의 경력이 덮인다. */
+
+test('★ 우리 자료에서 두 사람이 같은 글 번호를 쓰면 찾아낸다', () => {
+  const ours = [
+    { key: '190', srl: '190', name: '권형하' },
+    { key: 'new-1', srl: '190', name: '신입 노무사' },
+    { key: '191', srl: '191', name: '다른사람' }
+  ];
+  const dup = plain(D.duplicateOurKeys(ours));
+  assert.equal(dup.length, 1, '겹친 글 번호를 못 찾았습니다');
+  assert.equal(dup[0].srl, '190');
+  assert.deepEqual(dup[0].keys.slice().sort(), ['190', 'new-1']);
+  assert.deepEqual(dup[0].names.slice().sort(), ['권형하', '신입 노무사'].sort());
+});
+
+test('글 번호가 빈 사람끼리는 겹친 것이 아니다', () => {
+  const ours = [
+    { key: 'new-1', srl: '', name: '가' },
+    { key: 'new-2', srl: '', name: '나' },
+    { key: 'new-3', name: '다' }
+  ];
+  assert.deepEqual(plain(D.duplicateOurKeys(ours)), []);
+});
+
+test('글 번호에 앞뒤 공백이 섞여도 같은 번호로 본다', () => {
+  const ours = [
+    { key: '190', srl: ' 190 ', name: '권형하' },
+    { key: 'new-1', srl: '190', name: '신입' }
+  ];
+  const dup = plain(D.duplicateOurKeys(ours));
+  assert.equal(dup.length, 1);
+  assert.equal(dup[0].srl, '190');
+});
+
+test('겹치는 사람이 없으면 조용하다', () => {
+  const ours = [{ key: '190', srl: '190', name: '권형하' }, { key: '191', srl: '191', name: '다른사람' }];
+  assert.deepEqual(plain(D.duplicateOurKeys(ours)), []);
+  assert.deepEqual(plain(D.duplicateOurKeys(null)), []);
+});

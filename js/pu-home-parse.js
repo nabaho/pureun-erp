@@ -46,6 +46,11 @@
     return out;
   }
 
+  /* ★ 여기서 나온 글자는 «대조 전용»이다. 홈페이지에 되붙일 수 «없다».
+     태그를 걷고 줄을 뭉치므로 지도 위젯·지사 탭·표·구획·스크립트가 전부 사라진 뒤
+     한 줄이 된다(오시는길은 275자 한 줄, 노동사건대리는 2412자 한 줄).
+     이 글자를 「붙여넣을 본문」으로 내주면 홈페이지가 부서지고, 부서진 쪽을 다시 읽으면
+     같은 글자가 나와 「같음」이 뜬다 — 조용히 틀린다. 붙여넣기용으로 쓰지 말 것. */
   function parsePageText(html) {
     const src = String(html || '');
     const inner = src.match(/<div class="content_inner clearfix">([\s\S]*?)<footer/);
