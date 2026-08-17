@@ -160,12 +160,48 @@ test('★ 내 담당 업체 구역에 주담당 업체가 나온다', () => {
   assert.equal(/이비/.test(mineSection), false, '내 담당이 아닌 업체가 섞였습니다');
 });
 
-test('담당 업체가 없으면 빈 안내를 보여준다 — 구역 자체를 숨기지 않는다', () => {
+/* 빈 것을 감추지 않는 것은 이 함의 원칙이다 — 숨기면 고장으로 보인다.
+   다만 그 안내가 **큰 빈 칸**으로 화면 맨 위를 차지하면, 담당이 없는 사람에게는
+   늘 그 상태라 자리만 먹는다(대표 지적 2026-08-17). 말은 그대로 하되 한 줄로 줄인다. */
+test('담당 업체가 없으면 그렇다고 말한다 — 다만 큰 빈 칸은 만들지 않는다', () => {
   const sb = loadScreen();
   sb.window.App.me = { email: 'p099@pureun.kr' };
   sb.window.App.companies = [{ id: 'co_1', name: '화담원', managerMain: 'p-001', managerSubs: [] }];
   sb.window.App.arrivals = {};
   const html2 = sb.window.screenSites.call(sb);
-  assert.match(html2, /내 담당 업체/);
-  assert.match(html2, /등록된 업체가 없습니다/);
+  assert.match(html2, /내 담당 업체 없음/, '없다는 것을 말해 줘야 고장으로 안 보입니다');
+  assert.match(html2, /등록된 업체가 없습니다/, '어떻게 해야 채워지는지도 적어야 합니다');
+  const head = html2.slice(0, html2.indexOf('사업장 전체'));
+  assert.equal(/class="empty"/.test(head), false,
+    '큰 빈 칸이 화면 맨 위를 차지하면 안 됩니다 — 한 줄이면 됩니다');
+});
+
+/* 대표 지적 2026-08-17 — 첫 화면에서 하려는 일은 「무슨 일이 있나 보기」인데
+   그 자리에 이름만 112줄 있어 아무것도 안 보였다(목업 E안). */
+test('★ 첫 화면 맨 위에 이 달 현황이 뜬다 — 몇 곳 중 몇 곳이 왔나', () => {
+  const sb = loadScreen();
+  sb.window.App.companies = [
+    { id: 'co_1', name: '화담원', managerMain: 'p-001', managerSubs: [] },
+    { id: 'co_2', name: '이비', managerMain: 'p-002', managerSubs: [] },
+    { id: 'co_3', name: '보문사', managerMain: 'p-002', managerSubs: [] }
+  ];
+  sb.window.App.arrivals = { co_1: { 202608: { attend: { a: 1 }, last: 1 } } };
+  const h = sb.window.screenSites.call(sb);
+  const head = h.slice(0, h.indexOf('사업장 전체'));
+  assert.match(head, /class="ovw"/, '현황이 없으면 112줄만 남습니다');
+  assert.match(head, /자료 온 곳<\/div><div class="v">1</, '온 곳을 잘못 셉니다');
+  assert.match(head, /아직 안 온 곳<\/div><div class="v">2</, '안 온 곳을 잘못 셉니다');
+});
+
+/* 왼쪽 칸과 **같은 수**를 세야 한다 — 두 곳이 다른 말을 하면 어느 쪽도 못 믿는다. */
+test('★ 현황의 사업장 수가 아래 목록 수와 같다', () => {
+  const sb = loadScreen();
+  sb.window.App.companies = [
+    { id: 'co_1', name: '화담원', managerMain: 'p-001', managerSubs: [] },
+    { id: 'co_2', name: '이비', managerMain: 'p-002', managerSubs: [] }
+  ];
+  sb.window.App.arrivals = {};
+  const h = sb.window.screenSites.call(sb);
+  assert.match(h, /사업장<\/div><div class="v">2</);
+  assert.match(h, /「급여」인 곳 · 2곳/);
 });
