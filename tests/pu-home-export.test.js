@@ -148,3 +148,45 @@ test('꺾쇠가 든 줄은 경고 대상으로 집어낸다', () => {
 test('멀쩡한 줄은 경고하지 않는다', () => {
   assert.deepEqual([...E.riskyLines(['現 가', '前 나'])], []);
 });
+
+/* ── 여기부터 「감싸기 경고」 판단을 화면에서 부품으로 옮긴 뒤 붙인 검사 ──
+   원래 이 판단은 pu-home.html 안 helper(divInLine)였고, 검사가 그 «이름»을 못 박고
+   있었다. 이름을 바꾸거나 파일만 옮겨도 검사가 깨지고, 검사 하나가 모든 앱 배포를
+   막는다. 이제 판단을 부품에 두고 «실제로 돌려» 확인한다. */
+
+test('★ 감싸기 모드에서는 이미 <div> 가 든 줄을 더 세게 경고한다', () => {
+  const r = E.riskReport(['<div>現 가', '성과 <S> 등급', '前 나'], 'div');
+  assert.deepEqual([...r.broken], ['<div>現 가'], '감싸기와 겹치는 줄을 못 가려냈습니다');
+  assert.deepEqual([...r.soft], ['성과 <S> 등급'], '꺾쇠만 든 줄은 약한 경고여야 합니다');
+  assert.deepEqual([...r.risky], ['<div>現 가', '성과 <S> 등급']);
+});
+
+test('★ 줄바꿈만 모드에서는 감싸기를 안 하므로 세게 경고할 줄이 없다', () => {
+  const r = E.riskReport(['<div>現 가', '성과 <S> 등급'], 'plain');
+  assert.deepEqual([...r.broken], [], '감싸기를 안 하는데 화면이 깨질 이유가 없습니다');
+  assert.deepEqual([...r.soft], ['<div>現 가', '성과 <S> 등급']);
+});
+
+test('format 을 안 주면 줄바꿈만으로 본다 (기본값이 안전한 쪽)', () => {
+  assert.deepEqual([...E.riskReport(['<div>現 가']).broken], []);
+});
+
+test('멀쩡한 줄만 있으면 경고가 하나도 없다', () => {
+  const r = E.riskReport(['現 가', '前 나'], 'div');
+  assert.deepEqual([...r.risky], []);
+  assert.deepEqual([...r.broken], []);
+  assert.deepEqual([...r.soft], []);
+});
+
+test('닫는 <div>·대문자 <DIV>·공백 낀 < / div > 도 감싸기와 겹치는 줄로 본다', () => {
+  assert.equal(E.divInLine('가나다</div>'), true);
+  assert.equal(E.divInLine('<DIV>現 가'), true);
+  assert.equal(E.divInLine('가나다< / div >라'), true);
+  assert.equal(E.divInLine('<div>'), true);
+});
+
+test('<division> 처럼 이름이 더 긴 것은 <div> 가 아니다 (엉뚱한 줄을 빨갛게 만들지 않는다)', () => {
+  assert.equal(E.divInLine('현 <division> 근무'), false);
+  assert.equal(E.divInLine('성과 <S> 등급'), false);
+  assert.equal(E.divInLine('現 가'), false);
+});

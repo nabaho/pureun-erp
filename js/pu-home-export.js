@@ -38,6 +38,26 @@
     });
   }
 
+  /* 「감싸기」로 내보낼 때, 줄에 이미 <div> 가 들어 있으면 짝이 안 맞는 HTML 이 되어
+     그 뒤 화면 구조가 통째로 깨진다. 그냥 꺾쇠가 든 것보다 훨씬 나쁘다.
+     ★ 이 판단은 원래 화면(pu-home.html) 안에 있었다. 화면에 두니 검사가 화면 안
+       helper 이름(divInLine)을 못 박았고, 파일만 옮겨도 검사가 깨져 모든 앱 배포를
+       막게 된다. 판단은 부품에 두고 검사는 «돌려서» 확인한다. */
+  function divInLine(line) {
+    return /<\s*\/?\s*div[\s>]/i.test(String(line || '') + ' ');
+  }
+
+  /* 경고를 두 세기로 가른다.
+       soft   — 꺾쇠가 들어 홈페이지에서 «안 보일 수» 있는 줄 (알리기만)
+       broken — 줄 모양이 '감싸기'인데 그 줄에 이미 <div> 가 있어 «화면 구조를 깨뜨릴» 줄
+     format 이 'div' 가 아니면 감싸기를 안 하므로 broken 은 없다. */
+  function riskReport(careers, format) {
+    const risky = riskyLines(careers);
+    const broken = (format === 'div') ? risky.filter(divInLine) : [];
+    const soft = risky.filter(function (l) { return broken.indexOf(l) < 0; });
+    return { risky: risky, broken: broken, soft: soft };
+  }
+
   function editUrl(kind, key) {
     if (kind !== 'member' && kind !== 'page') return null;
     if (kind === 'member') {
@@ -48,5 +68,8 @@
     return ORIGIN + '/admin';
   }
 
-  global.PuHomeExport = { ORIGIN: ORIGIN, careersText: careersText, riskyLines: riskyLines, editUrl: editUrl };
+  global.PuHomeExport = {
+    ORIGIN: ORIGIN, careersText: careersText, riskyLines: riskyLines, editUrl: editUrl,
+    divInLine: divInLine, riskReport: riskReport
+  };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -30,6 +30,31 @@
     return matches.length === 1 ? matches[0] : null;
   }
 
+  /* 짝짓기 열쇠 — «홈페이지 글 번호(srl)»가 있으면 그것으로 짝짓는다.
+     ★ 우리 자료의 열쇠(RTDB 열쇠)는 새로 넣은 사람이면 'new-1755300000000' 같은 모양이라
+       홈페이지 글 번호와 «절대» 안 맞는다. 그대로 짝지으면 사람이 글 번호를 적어 넣어도
+       영영 「새로 올릴 것」으로 남고, 같은 사람이 liveOnly 로 한 줄 더 뜬다.
+       「내릴 것(퇴사)」도 같은 짝짓기에 걸려 있어 새 구성원에겐 영영 안 붙는다.
+     ★ 돌려줄 때는 «우리 열쇠»를 그대로 돌려준다 — 화면의 편집·저장이 그 열쇠로 이뤄진다. */
+  function matchKeyOf(m) {
+    const srl = tidy(m && m.srl);
+    return srl || String((m && m.key) === undefined ? '' : m.key);
+  }
+
+  /* 퇴사 판정 — 퇴사일이 있으면 «날짜»로, 없고 「퇴사」 표시만 있으면 «표시»로 본다.
+     공개 명부(data/user_dir)에는 퇴사일 칸이 아예 없고 status 만 있다. 날짜가 없다고
+     퇴사를 못 본 척하면 「내릴 것」이 경고 한 줄 없이 영영 안 붙는다. */
+  function hasLeft(person, today) {
+    if (!person) return false;
+    if (person.leftAt) return String(person.leftAt) < String(today);
+    return person.left === true;
+  }
+  function leftReason(person) {
+    return person && person.leftAt
+      ? '퇴사일 ' + person.leftAt
+      : '명부에 퇴사로 표시됨 (퇴사일은 공개 명부에 없음)';
+  }
+
   function memberStatus(ours, live, staff, today) {
     const liveList = live || [];
     const liveBySrl = {};
@@ -45,8 +70,8 @@
     });
 
     const out = (ours || []).map(function (m) {
-      const key = String(m.key);
-      const onLive = liveBySrl[key];
+      const key = String(m.key);          // 화면에 돌려줄 우리 열쇠 (편집·저장이 이 열쇠를 쓴다)
+      const onLive = liveBySrl[matchKeyOf(m)];  // 짝짓기는 글 번호로
       const matches = staffMatches(staff, m.name);
 
       // 동명이인(2명 이상)이면 누가 진짜인지 확정할 수 없어 입·퇴사 판정을 하지 않는다.
@@ -60,9 +85,9 @@
 
       const person = matches.length === 1 ? matches[0] : null;
 
-      // 퇴사일이 지났는데 홈페이지에 아직 있으면 내릴 것
-      if (onLive && person && person.leftAt && String(person.leftAt) < String(today)) {
-        return { key: key, name: m.name, status: 'toRemove', reason: '퇴사일 ' + person.leftAt };
+      // 퇴사했는데 홈페이지에 아직 있으면 내릴 것
+      if (onLive && hasLeft(person, today)) {
+        return { key: key, name: m.name, status: 'toRemove', reason: leftReason(person) };
       }
       if (!onLive) return { key: key, name: m.name, status: 'toAdd', reason: '홈페이지에 없음' };
       if (signature(m) === signature(onLive)) {
@@ -71,7 +96,9 @@
       return { key: key, name: m.name, status: 'pending', reason: '내용이 다름' };
     });
 
-    const ourKeys = (ours || []).map(function (m) { return String(m.key); });
+    // 「홈페이지에만」 판정도 «글 번호»로 견준다. 우리 열쇠로 견주면 글 번호를 적어 넣은
+    // 새 구성원이 자기 글에 대해 liveOnly 로 한 줄 더 뜬다(같은 사람이 두 줄).
+    const ourKeys = (ours || []).map(matchKeyOf);
     liveSrlOrder.forEach(function (srlKey) {
       if (ourKeys.indexOf(srlKey) === -1) {
         const m = liveBySrl[srlKey];
@@ -130,6 +157,7 @@
 
   global.PuHomeDiff = {
     memberStatus: memberStatus, pageStatus: pageStatus, isTrustworthy: isTrustworthy,
-    nameLeftovers: nameLeftovers, signature: signature, duplicateLiveKeys: duplicateLiveKeys
+    nameLeftovers: nameLeftovers, signature: signature, duplicateLiveKeys: duplicateLiveKeys,
+    matchKeyOf: matchKeyOf
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -190,3 +190,94 @@ test("nameLeftovers('권형하', ...) 는 두 글자 이상이라 지금처럼 �
   ];
   assert.deepEqual(plain(D.nameLeftovers('권형하', pages)), [{ path: 'greeting', count: 1 }]);
 });
+
+/* ── 여기부터 검토 지적(Critical 1 · Important 3) 을 고친 뒤 붙인 검사 ──
+   ① 새 구성원의 RTDB 열쇠는 'new-1755300000000' 같은 모양이라 홈페이지 글 번호와
+      절대 안 맞는다. 열쇠로 짝지으면 사람이 글 번호를 적어 넣어도 영영
+      「새로 올릴 것」으로 남고, 같은 사람이 liveOnly 로 한 줄 더 뜬다.
+   ② 공개 명부(user_dir)에는 퇴사일 칸이 없다. 날짜가 없다고 퇴사를 못 본 척하면
+      「내릴 것」이 경고 한 줄 없이 영영 안 붙는다. */
+
+const 새열쇠 = 'new-1755300000000';
+
+test('★ 새 구성원이 글 번호를 적으면 그 번호로 짝지어진다 — 두 줄로 뜨지 않는다', () => {
+  const ours = [{ key: 새열쇠, srl: '999', name: '신입 노무사',
+                  position1: '', position2: '공인노무사', careers: ['現 가'] }];
+  const live = [{ srl: '999', name: '신입 노무사',
+                  position1: '', position2: '공인노무사', careers: ['現 가'] }];
+  const r = plain(D.memberStatus(ours, live, [], TODAY));
+  assert.equal(r.length, 1, '같은 사람이 두 줄로 떴습니다');
+  assert.equal(r[0].status, 'same', "글 번호로 짝지었으면 'same' 이어야 합니다");
+  assert.equal(r[0].key, 새열쇠, '돌려주는 열쇠는 RTDB 열쇠여야 편집·저장이 된다');
+  assert.ok(!r.some(x => x.status === 'liveOnly'), '「홈페이지에만」 유령 줄이 남았습니다');
+});
+
+test('★ 글 번호로 짝지은 새 구성원도 내용이 다르면 「안 올라감」이 된다', () => {
+  const ours = [{ key: 새열쇠, srl: '999', name: '신입 노무사',
+                  position1: '', position2: '공인노무사', careers: ['現 가', '現 나'] }];
+  const live = [{ srl: '999', name: '신입 노무사',
+                  position1: '', position2: '공인노무사', careers: ['現 가'] }];
+  const r = plain(D.memberStatus(ours, live, [], TODAY));
+  assert.equal(r.length, 1);
+  assert.equal(r[0].status, 'pending');
+  assert.equal(r[0].key, 새열쇠);
+});
+
+test('★ 글 번호가 아직 없는 진짜 새 사람은 지금처럼 「새로 올릴 것」이다', () => {
+  const ours = [{ key: 새열쇠, srl: '', name: '신입 노무사',
+                  position1: '', position2: '공인노무사', careers: [] }];
+  const r = plain(D.memberStatus(ours, [{ srl: '190', name: '권형하', careers: [] }], [], TODAY));
+  const mine = r.filter(x => x.key === 새열쇠);
+  assert.equal(mine.length, 1);
+  assert.equal(mine[0].status, 'toAdd');
+});
+
+test('★ 글 번호를 적은 새 구성원에게도 「내릴 것(퇴사)」 판정이 붙는다', () => {
+  const ours = [{ key: 새열쇠, srl: '999', name: '나간사람',
+                  position1: '', position2: '공인노무사', careers: [] }];
+  const live = [{ srl: '999', name: '나간사람', position1: '', position2: '공인노무사', careers: [] }];
+  const staff = [{ name: '나간사람', leftAt: '2026-07-31' }];
+  const r = plain(D.memberStatus(ours, live, staff, TODAY));
+  assert.equal(r.length, 1);
+  assert.equal(r[0].status, 'toRemove');
+  assert.equal(r[0].key, 새열쇠);
+});
+
+test('글 번호가 없으면 예전처럼 RTDB 열쇠로 짝짓는다 (기존 자료가 안 깨진다)', () => {
+  const ours = [{ key: '190', name: '권형하', position1: '대표', position2: '공인노무사', careers: ['現 가'] }];
+  const live = [{ srl: '190', name: '권형하', position1: '대표', position2: '공인노무사', careers: ['現 가'] }];
+  assert.equal(D.memberStatus(ours, live, [재직], TODAY)[0].status, 'same');
+});
+
+test('글 번호 칸에 앞뒤 공백이 섞여 있어도 짝지어진다', () => {
+  const ours = [{ key: 새열쇠, srl: ' 999 ', name: '신입 노무사', position1: '', position2: '', careers: [] }];
+  const live = [{ srl: '999', name: '신입 노무사', position1: '', position2: '', careers: [] }];
+  const r = plain(D.memberStatus(ours, live, [], TODAY));
+  assert.equal(r.length, 1);
+  assert.equal(r[0].status, 'same');
+});
+
+test('★ 퇴사일이 없어도 명부에 「퇴사」 표시가 있으면 「내릴 것」이 붙는다', () => {
+  /* 공개 명부(data/user_dir)에는 퇴사일이 없고 status 만 있다 — pu-erp 의 퇴사 처리가
+     status 를 'retired' 로 쓴다. 날짜가 없다고 넘어가면 딱지가 영영 안 붙는다. */
+  const ours = [{ key: '190', name: '나간사람', position1: '', position2: '', careers: [] }];
+  const live = [{ srl: '190', name: '나간사람', position1: '', position2: '', careers: [] }];
+  const staff = [{ name: '나간사람', leftAt: '', left: true }];
+  const r = plain(D.memberStatus(ours, live, staff, TODAY));
+  assert.equal(r[0].status, 'toRemove');
+  assert.match(r[0].reason, /퇴사/, '왜 내려야 하는지 사유가 없습니다');
+});
+
+test('퇴사 표시가 없는 재직자는 그대로 둔다', () => {
+  const ours = [{ key: '190', name: '권형하', position1: '', position2: '', careers: [] }];
+  const live = [{ srl: '190', name: '권형하', position1: '', position2: '', careers: [] }];
+  const staff = [{ name: '권형하', leftAt: '', left: false }];
+  assert.equal(D.memberStatus(ours, live, staff, TODAY)[0].status, 'same');
+});
+
+test('퇴사일이 «아직 안 온» 사람은 내리지 않는다 (표시만으로 앞지르지 않는다)', () => {
+  const ours = [{ key: '190', name: '예정자', position1: '', position2: '', careers: [] }];
+  const live = [{ srl: '190', name: '예정자', position1: '', position2: '', careers: [] }];
+  const staff = [{ name: '예정자', leftAt: '2026-12-31', left: true }];
+  assert.equal(D.memberStatus(ours, live, staff, TODAY)[0].status, 'same');
+});

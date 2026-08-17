@@ -26,8 +26,8 @@
 <script src="js/pu-appbar.js?v=3"></script>
 <script src="js/pu-home-parse.js?v=1"></script>
 <script src="js/pu-home-career.js?v=1"></script>
-<script src="js/pu-home-export.js?v=1"></script>
-<script src="js/pu-home-diff.js?v=1"></script>
+<script src="js/pu-home-export.js?v=2"></script>
+<script src="js/pu-home-diff.js?v=2"></script>
 <style>
 :root{--navy:#2E3A8C;--violet:#7C6CE0;--ok:#2E7D4F;--warn:#B26A00;--bad:#C43D3D;
 --ink:#23263B;--sub:#6B6F87;--line:#E3E5EF;--paper:#F5F6FA;--card:#FFF;}
@@ -230,6 +230,9 @@ function toast(msg) {
 const App = {
   group: 'members', pick: '', me: null, myName: '', isAdmin: null,
   members: {}, pages: {}, staff: null, staffErr: '', lineFormat: 'plain',
+  /* dataErr — homepage/* 를 «못 읽은» 것. 「아직 자료가 없습니다」와 반드시 갈라 보여준다.
+     saveErr — 딱지 강등처럼 사람이 안 누른 저장이 실패한 것. 조용히 삼키지 않는다. */
+  dataErr: '', saveErr: '',
   check: null, checking: false, checkMsg: '', checkBad: false,
   draft: null, dirty: false, loading: true,
 
@@ -332,35 +335,73 @@ function readRosterAt(path) {
     return Array.isArray(list) ? list : null;
   });
 }
-function readRoster() {
-  return readRosterAt('data/user_accounts')
-    .then(v => v || readRosterAt('data/user_dir'))
-    .catch(() => readRosterAt('data/user_dir'));
+/* ★ «어느 명부를 읽었는지»까지 돌려준다.
+   data/user_accounts 에는 퇴사일(retireDate)이 있지만 공개 명부 data/user_dir 에는 없다.
+   폴백을 탄 것을 안 알리면 명부가 비지 않아 오류 표시도 안 뜨는데 퇴사일이 전부 빈 값이라
+   「내릴 것」 딱지가 경고 한 줄 없이 영영 안 붙는다. 실패해도 거부하지 않고 source 로 알린다. */
+function readRosterSource() {
+  return readRosterAt('data/user_accounts').then(
+    v => (v ? { list: v, source: 'accounts' } : null),
+    e => { console.warn('[직원 명부·민감]', e && e.code); return null; }
+  ).then(hit => hit || readRosterAt('data/user_dir').then(
+    v => (v ? { list: v, source: 'dir' } : { list: null, source: 'none' }),
+    e => { console.warn('[직원 명부·공개]', e && e.code); return { list: null, source: 'fail' }; }
+  ));
+}
+function readRoster() { return readRosterSource().then(r => r.list); }
+
+/* 명부 → 대조 부품이 받는 모양. 퇴사일이 있으면 날짜로, 없으면 status 로 본다.
+   pu-erp 의 퇴사 처리는 status 를 'retired' 로 쓰고(pu-erp.html 퇴사 마법사), 공개 명부
+   user_dir 에도 그 status 만 실려 온다(pu-erp.html _syncUserDir). 짐작이 아니라 확인한 값이다. */
+function staffFromRoster(list, source) {
+  const staff = (list || []).map(u => ({
+    name: (u && u.name) || '',
+    leftAt: (u && u.retireDate) || '',
+    left: String((u && u.status) || '') === 'retired'
+  }));
+  const warn = (source === 'dir')
+    ? '직원 명부(data/user_accounts)를 읽지 못해 공개 명부(data/user_dir)로 대신 봤습니다 — '
+      + '공개 명부에는 «퇴사일»이 없어, 「내릴 것」은 명부의 「퇴사」 표시로만 판정합니다(날짜는 못 보여 드립니다).'
+    : '';
+  return { staff: staff, warn: warn };
 }
 
 /* ══════ 자료 읽기 ══════
    한쪽이 실패해도 화면은 뜬다 — 빈 화면에 「권한 거부」만 남으면 무엇을 해야 할지 알 수 없다. */
+/* 못 읽은 자리를 「자료가 없다」로 뭉개지 않는다 — 어느 자리가 막혔는지 모아 둔다 */
+function dataErrText(labels) {
+  if (!labels || !labels.length) return '';
+  return '홈페이지 자료를 읽지 못했습니다 — ' + labels.join(', ') + '. '
+    + '파이어베이스 «보안규칙이 아직 없을 수 있습니다»(homepage 노드에 규칙이 없으면 기본이 거부입니다). '
+    + '목록이 비어 보이는 것이 「자료가 없다」는 뜻은 아닙니다.';
+}
+
 function loadAll() {
   App.loading = true;
+  const failed = [];
+  /* 읽기 한 자리 — 못 읽으면 «어느 자리»인지 남긴다. console.warn 만 하면 화면에서는
+     규칙이 없어서인지 자료를 안 넣어서인지 구분할 방법이 없다. */
+  const read = (path, label, empty) => db.ref(path).once('value')
+    .then(s => { const v = s.val(); return (v === null || v === undefined) ? empty : v; })
+    .catch(e => { console.warn('[' + label + ']', e && e.code); failed.push(label); return empty; });
+
   Promise.all([
-    db.ref('homepage/members').once('value').then(s => s.val() || {})
-      .catch(e => { console.warn('[구성원]', e && e.code); return {}; }),
-    db.ref('homepage/pages').once('value').then(s => s.val() || {})
-      .catch(e => { console.warn('[쪽]', e && e.code); return {}; }),
-    db.ref('homepage/config/lineFormat').once('value').then(s => s.val() || 'plain')
-      .catch(() => 'plain'),
-    db.ref('homepage/check').once('value').then(s => s.val() || null)
-      .catch(() => null),
-    readRoster().catch(e => { console.warn('[직원 명부]', e && e.code); return null; })
+    read('homepage/members', '구성원', {}),
+    read('homepage/pages', '쪽 본문', {}),
+    read('homepage/config/lineFormat', '줄 모양 설정', 'plain'),
+    read('homepage/check', '지난 대조 결과', null),
+    readRosterSource()
   ]).then(([members, pages, lineFormat, check, roster]) => {
     App.members = members || {};
     App.pages = pages || {};
     App.lineFormat = (lineFormat === 'div') ? 'div' : 'plain';
     App.check = check;
-    if (roster) {
-      /* memberStatus 는 이름과 퇴사일만 본다. 푸른ERP 명부의 퇴사일 칸이 retireDate 다. */
-      App.staff = roster.map(u => ({ name: (u && u.name) || '', leftAt: (u && u.retireDate) || '' }));
-      App.staffErr = '';
+    App.dataErr = dataErrText(failed);
+    if (roster && roster.list) {
+      /* memberStatus 는 이름과 퇴사 여부만 본다. 푸른ERP 명부의 퇴사일 칸이 retireDate 다. */
+      const r = staffFromRoster(roster.list, roster.source);
+      App.staff = r.staff;
+      App.staffErr = r.warn;   // 폴백을 탔으면 그 사실을 띠로 알린다
     } else {
       App.staff = null;   // 못 읽었다 — 입·퇴사 딱지만 안 뜨고 나머지 대조는 그대로 돈다
       App.staffErr = '푸른ERP 직원 명부를 읽지 못해 입·퇴사 딱지는 표시하지 않습니다.';
@@ -505,13 +546,25 @@ window.careerDel = careerDel; window.careerMove = careerMove;
 /* ══════ 저장 ══════
    ★ 덮어쓰기 전에 «직전 값»을 반드시 남긴다. 되돌릴 근거가 없으면 실수를 못 되돌린다.
      되살리기도 이 함수를 그대로 쓴다 — 그래야 되살리기 직전 값도 이력에 남는다. */
+/* 이력 열쇠 — 시각(13자리) + 짧은 임의 글자.
+   ★ Date.now() 만 쓰면 같은 밀리초에 두 번 저장할 때 앞 이력이 조용히 덮어써진다
+     (되살리기 → 곧바로 저장 같은 자리에서 실제로 겹칠 수 있다).
+     앞이 시각이라 열쇠 정렬 순서는 그대로고, 숫자만 있던 «옛 이력»도 histTs 로 함께 읽힌다. */
+function histStamp() {
+  return String(Date.now()) + '-' + Math.random().toString(36).slice(2, 8);
+}
+function histTs(key) {
+  const n = parseInt(String(key), 10);
+  return isFinite(n) ? n : 0;
+}
+
 async function saveRecord(kind, key, next) {
   const base = (kind === 'member') ? 'homepage/members/' : 'homepage/pages/';
   const histKey = (kind === 'member') ? key : 'page:' + key;
   const ref = db.ref(base + key);
   const before = (await ref.once('value')).val();
   if (before) {
-    await db.ref('homepage/history/' + histKey + '/' + Date.now())
+    await db.ref('homepage/history/' + histKey + '/' + histStamp())
       .set({ before: before, updatedBy: currentUserName() });
   }
   await ref.set(Object.assign({}, next, {
@@ -523,6 +576,7 @@ async function saveRecord(kind, key, next) {
 async function saveDraft() {
   const d = App.draft;
   if (!d) return;
+  App.saveErr = '';   // 다시 저장하니 지난 실패 띠는 지운다
   try {
     if (d.kind === 'member') {
       const careers = d.careers.map(s => String(s || '').trim()).filter(Boolean);
@@ -555,7 +609,16 @@ function markChanged(kind, key) {
   if (box[key].status === 'same') {
     box[key].status = 'pending';
     box[key].reason = '통합시스템에서 고친 뒤 아직 확인 전';
-    db.ref('homepage/check').set(App.check).catch(() => {});
+    /* ★ 조용히 삼키지 않는다. 저장이 안 되면 «다른 사람 화면»에는 아직 「같음」으로 보이고,
+       안 올린 글을 올린 줄 알게 된다. 화면에 띠로 남긴다. */
+    db.ref('homepage/check').set(App.check).catch(e => {
+      console.warn('[딱지 강등 저장]', e && e.code);
+      App.saveErr = '딱지를 「안 올라감」으로 내린 것을 저장하지 못했습니다'
+        + (e && e.code ? '(' + e.code + ')' : '')
+        + ' — 이 화면에만 바뀌어 보이고, 다른 사람 화면에는 아직 「같음」으로 보입니다. '
+        + '「홈페이지 다시 확인」을 눌러 다시 맞춰 주십시오.';
+      App.render();
+    });
   }
 }
 
@@ -640,12 +703,26 @@ async function checkHomepage() {
       ? ('일부 쪽을 읽지 못했습니다(' + failed.map(m => PAGE_LABEL[m] || m).join(', ') + ') — 그 쪽은 지난 결과를 그대로 둡니다')
       : '';
     if (!failed.length) toast('홈페이지와 대조했습니다.');
+  } catch (e) {
+    /* ★ catch 가 없으면 로그인 토큰을 못 얻는 순간 예외가 밖으로 나가고 «아무 메시지도»
+       안 뜬다. 단추만 원래대로 돌아와 「눌렀는데 안 눌린」 것으로 보인다. */
+    console.warn('[홈페이지 확인]', e);
+    showCheckFailed(checkFailText(e));
   } finally {
     App.checking = false;
     App.render();
   }
 }
 window.checkHomepage = checkHomepage;
+
+/* 확인이 «중간에 엎어졌을 때» 사람에게 할 말. 무엇이 잘못됐는지 한국어로 적는다. */
+function checkFailText(e) {
+  const raw = (e && (e.code || e.message)) || String(e || '');
+  if (/token|auth|permission|unauthenticated|토큰|로그인|권한/i.test(raw)) {
+    return '로그인 확인을 못 해 홈페이지 확인을 못 했습니다 — 로그아웃했다가 다시 로그인해 주십시오 (' + raw + ')';
+  }
+  return '홈페이지 확인 중 문제가 생겨 멈췄습니다 — ' + raw;
+}
 
 function showCheckFailed(msg) {
   App.checkMsg = msg;
@@ -655,7 +732,10 @@ function showCheckFailed(msg) {
 
 /* 딱지 붙이기 — 못 읽은 쪽은 지난 결과를 그대로 물려받는다 */
 async function applyStatus(live, livePages, failed) {
-  const ours = Object.keys(App.members).map(k => Object.assign({ key: k }, App.members[k]));
+  /* ★ srl(홈페이지 글 번호)을 «그대로 함께» 넘긴다. 짝짓기는 부품(PuHomeDiff)이
+     글 번호로 하고, 돌려주는 열쇠는 우리 RTDB 열쇠 그대로다 — 편집·저장이 그 열쇠를 쓴다.
+     key 를 뒤에 두는 것도 일부러다: 자료에 key 칸이 섞여 들어와도 우리 열쇠를 덮지 못한다. */
+  const ours = Object.keys(App.members).map(k => Object.assign({}, App.members[k], { key: k }));
   const list = PuHomeDiff.memberStatus(ours, live, App.staff, todayString());
 
   const prev = App.check || {};
@@ -684,21 +764,23 @@ async function applyStatus(live, livePages, failed) {
   });
 
   App.check = next;
-  try { await db.ref('homepage/check').set(next); }
-  catch (e) { console.warn('[대조 결과 저장]', e && e.code); }
+  /* 대조 결과 저장 실패도 조용히 두지 않는다 — 이 화면에만 새 딱지가 보이고
+     다른 사람 화면에는 지난 딱지가 그대로 남는다. */
+  try { App.saveErr = ''; await db.ref('homepage/check').set(next); }
+  catch (e) {
+    console.warn('[대조 결과 저장]', e && e.code);
+    App.saveErr = '대조 결과를 저장하지 못했습니다' + (e && e.code ? '(' + e.code + ')' : '')
+      + ' — 이 화면에만 새 딱지가 보이고, 다른 사람 화면에는 지난 딱지가 그대로 남습니다.';
+  }
 }
 
 /* ══════ 붙여넣을 내용 ══════ */
 
-/* 「감싸기」로 내보낼 때, 줄에 이미 <div> 가 들어 있으면 짝이 안 맞는 HTML 이 되어
-   그 뒤 화면 구조가 통째로 깨진다. 그냥 꺾쇠가 든 것보다 훨씬 나쁘다. */
-function divInLine(line) { return /<\s*\/?\s*div[\s>]/i.test(String(line || '') + ' '); }
-
+/* 「감싸기」와 겹치는 <div> 를 가리는 판단은 부품(PuHomeExport.riskReport)이 한다.
+   화면 안에 두었더니 검사가 화면 안 helper 이름을 못 박았고, 파일만 옮겨도 검사가 깨져
+   모든 앱 배포를 막게 된다. 같은 판단을 화면에서 다시 만들지 말 것. */
 function riskReport(careers, format) {
-  const risky = PuHomeExport.riskyLines(careers) || [];
-  const broken = (format === 'div') ? risky.filter(divInLine) : [];
-  const soft = risky.filter(l => broken.indexOf(l) < 0);
-  return { risky: risky, broken: broken, soft: soft };
+  return PuHomeExport.riskReport(careers, format);
 }
 
 function copyText(text) {
@@ -782,7 +864,9 @@ function openHistory() {
   openModal('<h2>되돌리기</h2><div class="sub">이력을 읽고 있습니다…</div>');
   db.ref('homepage/history/' + histKey).limitToLast(30).once('value').then(s => {
     const v = s.val() || {};
-    const ts = Object.keys(v).sort((a, b) => Number(b) - Number(a));
+    /* 열쇠는 「시각-임의글자」다. 시각으로 먼저 견주고, 같은 밀리초면 열쇠 글자로 가른다 —
+       Number() 로 견주면 NaN 이 되어 최신 순서가 조용히 뒤섞인다. */
+    const ts = Object.keys(v).sort((a, b) => (histTs(b) - histTs(a)) || String(b).localeCompare(String(a)));
     let h = '<h2>되돌리기 — ' + esc(d.kind === 'member' ? d.name : (PAGE_LABEL[d.key] || d.key)) + '</h2>';
     h += '<div class="bar info">고른 시점의 내용을 <b>통합시스템 자료로만</b> 되살립니다. '
       + '홈페이지는 그대로입니다 — 되살린 뒤 <b>다시 붙여넣어야</b> 홈페이지가 바뀝니다.<br>'
@@ -796,7 +880,7 @@ function openHistory() {
         const line = (d.kind === 'member')
           ? ((b.name || '') + ' · 경력 ' + ((b.careers || []).length) + '줄')
           : (String(b.text || '').slice(0, 60) + (String(b.text || '').length > 60 ? '…' : ''));
-        return '<div class="pk"><div class="t"><b>' + esc(stamp(Number(t))) + '</b>'
+        return '<div class="pk"><div class="t"><b>' + esc(stamp(histTs(t))) + '</b>'
           + '<div class="d">' + esc(r.updatedBy || '') + ' · ' + esc(line) + '</div></div>'
           + '<button class="btn sm" onclick="restoreFrom(\'' + esc(histKey) + '\',\'' + esc(t) + '\')">이 시점으로</button></div>';
       }).join('') + '</div>';
@@ -867,24 +951,57 @@ function kcareerFromDb(uid) {
   });
 }
 
-/* 이름 → 사번 → 계정(uid). 한 번도 로그인 안 한 사람은 uid 가 없다. */
+/* 이름 → 사번 → 계정(uid). 한 번도 로그인 안 한 사람은 uid 가 없다.
+   ★ 「못 읽었다」와 「그런 사람이 없다」를 «갈라서» 돌려준다. 둘 다 null 로 삼켜 같은 말을
+     하면, 규칙이 막은 것을 사람이 없는 것으로 알고 엉뚱한 데(이름 철자)를 고치게 된다. */
 function uidOfName(name) {
   const want = String(name || '').trim();
-  return readRoster().then(list => {
-    const hits = (list || []).filter(u => u && String(u.name || '').trim() === want);
-    if (hits.length !== 1) return null;      // 0명이면 못 찾은 것, 2명 이상이면 동명이인이라 단정 못 한다
+  return readRosterSource().then(r => {
+    if (!r || !r.list) return { uid: null, why: 'rosterFail' };
+    const hits = r.list.filter(u => u && String(u.name || '').trim() === want);
+    if (!hits.length) return { uid: null, why: 'noName' };
+    if (hits.length > 1) return { uid: null, why: 'dupName' };
     const sid = hits[0].sid;
     return db.ref('uid_roles').once('value').then(s => {
       const v = s.val() || {};
       let best = null;
       Object.keys(v).forEach(uid => {
-        const r = v[uid];
-        if (!r || r.sid !== sid) return;
-        if (!best || (r.updatedAt || 0) > best.t) best = { uid: uid, t: r.updatedAt || 0 };
+        const r2 = v[uid];
+        if (!r2 || r2.sid !== sid) return;
+        if (!best || (r2.updatedAt || 0) > best.t) best = { uid: uid, t: r2.updatedAt || 0 };
       });
-      return best ? best.uid : null;
+      return best ? { uid: best.uid, why: 'ok' } : { uid: null, why: 'noAccount' };
+    }, e => {
+      console.warn('[계정 목록]', e && e.code);
+      return { uid: null, why: 'rolesFail', code: (e && e.code) || '' };
     });
-  }).catch(() => null);
+  });
+}
+
+/* 위 why 를 사람 말로. 못 읽은 것과 없는 것을 서로 다른 문장으로 적는다. */
+function uidFailText(name, r) {
+  const who = '「' + name + '」';
+  switch (r && r.why) {
+    case 'noName':
+      return '푸른ERP 직원 명부에 ' + who + ' 이름이 없습니다 — 이름 철자가 다를 수 있습니다.';
+    case 'dupName':
+      return '푸른ERP 직원 명부에 ' + who + ' 이름이 둘 이상이라 누구 것인지 단정할 수 없습니다 (동명이인).';
+    case 'noAccount':
+      return who + ' 님은 아직 통합시스템에 로그인한 적이 없어 계정(uid)이 없습니다 — 자료를 당겨올 곳이 없습니다.';
+    case 'rosterFail':
+      return '직원 명부를 «읽지 못했습니다» — ' + who + ' 님이 없다는 뜻이 아닙니다. '
+        + '권한이나 그물 문제일 수 있으니 잠시 뒤 다시 눌러 주십시오.';
+    case 'rolesFail':
+      return '계정 목록(uid_roles)을 «읽지 못했습니다»' + (r && r.code ? '(' + r.code + ')' : '')
+        + ' — ' + who + ' 님이 없다는 뜻이 아닙니다.';
+    default:
+      return who + ' 님의 계정을 찾지 못했습니다.';
+  }
+}
+
+/* 갈래를 통틀어 몇 건이나 읽혔는지 — 「0건」과 「못 읽음」을 가르는 데 쓴다 */
+function careerCount(items) {
+  return CAREER_KINDS.reduce((n, k) => n + (((items || {})[k.key]) || []).length, 0);
 }
 
 function openPull() {
@@ -893,11 +1010,33 @@ function openPull() {
   Pull.open = true; Pull.kind = 'wiccok'; Pull.items = {}; Pull.sel = {}; Pull.err = ''; Pull.name = d.name;
   openModal('<h2>경력관리에서 당겨오기</h2><div class="sub">경력관리 자료를 읽고 있습니다…</div>');
 
-  uidOfName(d.name).then(uid => {
+  uidOfName(d.name).then(r => {
+    const uid = r && r.uid;
     const myUid = (App.me && App.me.uid) || '';
-    if (uid && uid === myUid) { Pull.items = kcareerFromLocal(); renderPull(); return null; }
+    if (uid && uid === myUid) {
+      /* ★ 내 것은 먼저 이 브라우저(localStorage)에서 본다. 다만 이 브라우저에서 경력관리를
+         한 번도 안 열었으면 로컬이 «비어 있다» — 그걸 「없다」고 하면 거짓말이 된다.
+         경력관리가 밀어 넣은 클라우드 사본(kcareer/{uid}/ls)을 한 번 더 보고 나서 말한다.
+         (규칙상 kcareer/$uid 는 본인만 읽을 수 있으니 내 것은 이 길로 읽힌다.) */
+      const local = kcareerFromLocal();
+      if (careerCount(local) > 0) { Pull.items = local; renderPull(); return null; }
+      return kcareerFromDb(uid).then(items => {
+        Pull.items = items;
+        if (careerCount(items) === 0) {
+          Pull.err = '이 브라우저에도, 경력관리 클라우드 사본에도 자료가 없습니다 — '
+            + '경력관리(kcareer.html)를 열어 «클라우드 저장»을 한 번 눌러 주십시오.';
+        }
+        renderPull();
+      }).catch(e => {
+        console.warn('[경력관리 클라우드]', e && e.code);
+        Pull.items = local;
+        Pull.err = '이 브라우저에 경력관리 자료가 없고, 클라우드 사본도 «읽지 못했습니다»'
+          + (e && e.code ? '(' + e.code + ')' : '') + ' — 자료가 없다는 뜻이 아닙니다.';
+        renderPull();
+      });
+    }
     if (!uid) {
-      Pull.err = '푸른ERP 명부에서 「' + d.name + '」 계정을 찾지 못했습니다(이름이 다르거나 동명이인일 수 있습니다).';
+      Pull.err = uidFailText(d.name, r);
       Pull.items = {};
       renderPull();
       return null;
@@ -908,6 +1047,12 @@ function openPull() {
       Pull.items = {};
       renderPull();
     });
+  }).catch(e => {
+    /* 여기까지 새면 창이 「읽고 있습니다…」에 멈춰 버린다 — 조용히 멈추지 않는다 */
+    console.warn('[당겨오기]', e);
+    Pull.err = '경력관리 자료를 찾는 중 문제가 생겼습니다 — ' + ((e && (e.code || e.message)) || e);
+    Pull.items = {};
+    renderPull();
   });
 }
 window.openPull = openPull;
@@ -1064,7 +1209,11 @@ function bannersHtml() {
     h += '<div class="bar ' + (App.checkBad ? 'bad' : 'warn') + '"><b>확인 실패</b> — ' + esc(App.checkMsg)
       + '<div class="sub" style="color:inherit">자료와 지난 딱지는 건드리지 않았습니다.</div></div>';
   }
+  /* 못 읽은 것을 「아직 자료가 없습니다」로 뭉개면 규칙이 없어서인지 자료를 안 넣어서인지
+     구분할 방법이 없다. 빨간 띠로 「보안규칙이 아직 없을 수 있습니다」까지 적어 준다. */
+  if (App.dataErr) h += '<div class="bar bad">' + esc(App.dataErr) + '</div>';
   if (App.staffErr) h += '<div class="bar warn">' + esc(App.staffErr) + '</div>';
+  if (App.saveErr) h += '<div class="bar warn">' + esc(App.saveErr) + '</div>';
 
   const dup = (App.check && App.check.duplicates) || [];
   if (dup.length) {
@@ -1136,7 +1285,9 @@ function editHtml() {
     if (s && s.status === 'liveOnly') {
       return '<div class="edit"><div class="bar warn"><b>홈페이지에만 있는 글입니다</b><br>'
         + '통합시스템에는 이 사람 자료가 없습니다. 홈페이지 글 번호는 <b>' + esc(App.pick) + '</b> 입니다.<br>'
-        + '홈페이지에서 지우거나(비공개 권장), 통합시스템에 <b>＋ 새 구성원</b>으로 추가하고 글 번호를 적어 주십시오.'
+        + '홈페이지에서 지우거나(비공개 권장), 통합시스템에 <b>＋ 새 구성원</b>으로 추가하고 '
+        + '<b>홈페이지 글 번호</b> 칸에 <b>' + esc(App.pick) + '</b> 을(를) 적어 주십시오 — '
+        + '글 번호를 적으면 다음 확인부터 이 글과 짝지어져 이 줄은 사라집니다.'
         + '</div></div>';
     }
     return '<div class="edit"><div class="empty">왼쪽에서 항목을 고르십시오.</div></div>';
