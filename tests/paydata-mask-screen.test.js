@@ -101,10 +101,10 @@ function loadDrag(maskState) {
        안 넣으면 ReferenceError 로 터진다(이 저장소에서 여러 번 겪었다). */
     'let maskDrag = null;',
     cut('maskViewRect'), cut('maskShowPreview'), cut('maskHidePreview'),
-    cut('maskDown'), cut('maskMove'), cut('maskUp'),
+    cut('maskDown'), cut('maskMove'), cut('maskUp'), cut('maskCancelDrag'), cut('maskFinishDrag'),
     cut('maskDelBox'), cut('maskUndo'), cut('maskClear'),
     'window.App = App; window.maskDown = maskDown; window.maskMove = maskMove; window.maskUp = maskUp;',
-    'window.maskDelBox = maskDelBox; window.maskUndo = maskUndo; window.maskClear = maskClear;',
+    'window.maskCancelDrag = maskCancelDrag; window.maskDelBox = maskDelBox; window.maskUndo = maskUndo; window.maskClear = maskClear;',
     'window.__renders = function(){ return __renders; };'
   ].join('\n'), { filename: 'drag.js' }).runInContext(sandbox);
   return { W: sandbox.window, els };
@@ -258,4 +258,59 @@ test('★ 넘긴 뒤 가림 상태를 비운다 — 다음 서류에 앞 사진�
   W.maskConfirm();
   assert.equal(W.App.maskState.status, 'idle');
   assert.equal(W.App.maskState.boxes.length, 0);
+});
+
+/* ══════ 그어도 칸이 안 생기던 것 (대표 지적 2026-08-16) ══════
+   가림 화면에서 사진 위를 그어도 파란 칸이 안 생겼다. 화면은 뜨고 「가릴 것 없음 —
+   그대로 판독」은 되는데 긋기만 안 됐다.
+
+   ⚠ 가장 그럴듯한 까닭: **브라우저가 사진을 「끌어다 놓기」로 가로챈다.**
+   사진 위에서 누른 채 끌면 데스크톱 브라우저는 사진을 드래그앤드롭하려 들고,
+   그 순간 포인터 흐름을 **취소**한다(pointercancel). 취소 시점의 좌표는 시작점
+   언저리라, 그것만 믿고 사각형을 만들면 너무 작아 버려진다 — 아무 칸도 안 남는다.
+   `pointerdown` 에서 preventDefault() 를 불러도 `dragstart` 는 막히지 않는다.
+
+   그래서 두 겹으로 막는다: ①사진을 아예 못 끌게 한다 ②끊겨도 **마지막으로
+   움직인 자리**로 사각형을 만든다(막는 데 실패해도 사람이 그은 것은 남는다). */
+
+test('★ 사진을 브라우저가 끌어다 놓지 못하게 막는다 — 이것이 긋기를 가로챈다', () => {
+  const W = loadPanel({ status: 'ready', url: 'data:image/jpeg;base64,AAA' });
+  const h = W.maskPanelHtml();
+  assert.match(h, /<img id="maskImg"[^>]*draggable="false"/, '사진을 끌 수 있으면 긋기가 가로채입니다');
+  assert.match(h, /ondragstart="return false"/, '끌기 시작 자체를 막아야 합니다');
+  assert.match(html, /\.maskwrap img\{[^}]*user-drag:none/, '사파리·크롬은 CSS 로도 막아야 확실합니다');
+});
+
+test('★ 끌다 끊겨도(pointercancel) 그은 사각형이 남는다', () => {
+  const { W } = loadDrag();
+  W.maskDown(ev(200, 100));
+  W.maskMove(ev(300, 150));
+  /* 브라우저가 끊는다 — 그 순간 좌표는 시작점 언저리로 돌아와 있다. */
+  W.maskCancelDrag();
+  const b = W.App.maskState.boxes[0];
+  assert.ok(b, '★ 끊겼다고 사람이 그은 사각형을 버리면 안 됩니다');
+  assert.equal(b.w, 0.25, '마지막으로 움직인 자리까지가 사각형입니다');
+  assert.equal(b.h, 0.25);
+  assert.equal(b.by, 'me');
+});
+
+test('끊겼는데 움직인 적이 없으면 아무 일도 없다 — 그냥 누르기만 한 것이다', () => {
+  const { W } = loadDrag();
+  W.maskDown(ev(200, 100));
+  W.maskCancelDrag();
+  assert.equal(W.App.maskState.boxes.length, 0);
+});
+
+test('손을 뗀 자리가 마지막으로 움직인 자리보다 정확하다 — 뗀 좌표를 쓴다', () => {
+  const { W } = loadDrag();
+  W.maskDown(ev(200, 100));
+  W.maskMove(ev(250, 120));
+  W.maskUp(ev(300, 150));          // 마지막 움직임보다 더 간 자리에서 뗐다
+  const b = W.App.maskState.boxes[0];
+  assert.equal(b.w, 0.25, '뗀 자리까지 그려져야 합니다');
+});
+
+test('★ 끊기 처리는 화면에도 이어져 있다', () => {
+  assert.match(html, /onpointercancel="maskCancelDrag\(\)"/,
+    '끊김을 안 받으면 그 드래그는 통째로 사라집니다');
 });
