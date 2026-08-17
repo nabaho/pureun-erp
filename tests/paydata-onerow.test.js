@@ -30,8 +30,10 @@ function load(app) {
     }, app)) + ';',
     'App.render = function(){};',
     cut('esc'), cut('jsq'), cut('thisMonth'),
+    "const WEEKDAY = ['일','월','화','수','목','금','토'];",
+    cut('todayLabel'),
     cut('monthShift'), cut('monthCount'), cut('monthAhead'), cut('monthStripHtml'),
-    'window.App = App; window.monthAhead = monthAhead;',
+    'window.App = App; window.monthAhead = monthAhead; window.todayLabel = todayLabel;',
     'window.monthStripHtml = monthStripHtml; window.monthCount = monthCount;'
   ].join('\n'), { filename: 'app.js' }).runInContext(sandbox);
   return sandbox.window;
@@ -66,6 +68,33 @@ test('먼 달로 가는 길(직접 적기)은 막지 않는다', () => {
   const now = new Date();
   const cur = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
   assert.match(load({ month: cur }).monthStripHtml(), /직접 적기/);
+});
+
+/* ══════ 오늘 표시 (대표 지시 2026-08-17) ══════ */
+
+/* 근태는 요일로 세는 일이라 날짜만으로는 지금이 주 어디쯤인지 안 잡힌다. */
+test('★ 오늘이 요일까지 보인다', () => {
+  const W = load();
+  assert.equal(W.todayLabel('2026-08-17T09:00:00'), '8월 17일 (월)');
+  assert.equal(W.todayLabel('2026-01-03T09:00:00'), '1월 3일 (토)');
+  assert.match(W.monthStripHtml(), /오늘 \d+월 \d+일 \([일월화수목금토]\)/, '월 줄에 오늘이 없습니다');
+});
+
+/* 한 칸만 보이니 3월까지 내려갔다가 ▶ 를 다섯 번 누를 일이 없어야 한다. */
+test('★ 지난달을 보고 있으면 「오늘」이 돌아오는 길이 된다', () => {
+  const now = new Date();
+  const back = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+  const m = back.getFullYear() + '-' + String(back.getMonth() + 1).padStart(2, '0');
+  assert.match(load({ month: m }).monthStripHtml(), /class="today back"[^>]*onclick/,
+    '되돌아올 길이 없으면 ▶ 를 여러 번 눌러야 합니다');
+});
+
+test('이번 달을 보고 있을 때는 「오늘」이 그냥 표시다 — 누를 것이 없다', () => {
+  const now = new Date();
+  const cur = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  const h = load({ month: cur }).monthStripHtml();
+  assert.match(h, /class="today"/);
+  assert.equal(/class="today back"/.test(h), false);
 });
 
 /* ══════ ③ 달력은 하나만 ══════ */
