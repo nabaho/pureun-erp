@@ -637,6 +637,8 @@
   <script src="js/pu-appbar.js?v=4"></script>
   <!-- 로그아웃·사람 바뀜을 모든 프로그램에 퍼뜨린다 (2026-08-16) — 로그인 화면·공개 화면에는 넣지 않는다 -->
   <script src="js/pu-authsync.js?v=1"></script>
+  <!-- 상단 우측에 「지금 로그인한 사람」 (2026-08-16) — 로그인 화면·공개 화면에는 넣지 않는다 -->
+  <script src="js/pu-whoami.js?v=1"></script>
 </head>
 <body>
 <div id="root"><div class="gate">불러오는 중…</div></div>
@@ -966,19 +968,21 @@ function loadStaff(){
   return fbDb.ref('data/user_accounts/v').once('value').then(function(s){ _staffCache=_normStaff(s.val()); return _staffCache; })
     .catch(function(){ _staffCache=[]; return _staffCache; });
 }
+/* 「나는 누구인가」는 «로그인 이메일» 로만 정한다 (2026-08-16 대표 지시).
+   ⚠ 전에는 셋을 차례로 봤다: ①localStorage 의 work_me_sid ②이메일 ③주소의 user=.
+     ①은 «이 기기에 남은 앞사람 사번» 이라 다음 사람이 앞사람으로 잡혔고,
+     ③은 「타일을 누른 순간의 사진」이라 사람이 바뀌어도 안 바뀌었다.
+   ★ 기록의 작성자(by·byName)가 이 값으로 남는다 — 틀리면 «남의 이름으로 기록» 된다. */
 function resolveMe(){
   return loadStaff().then(function(list){
-    var uName=qp('user');
     var fu=firebase.auth().currentUser;
     var mail=(fu&&fu.email||'').toLowerCase(); var local=mail.split('@')[0].replace(/[^a-z0-9]/g,'');
     var me=null;
-    var saved=localStorage.getItem('work_me_sid');
-    if(saved) me=list.filter(function(x){return x.sid===saved;})[0]||null;
-    if(!me&&local) me=list.filter(function(x){return String(x.sid||'').toLowerCase().replace(/[^a-z0-9]/g,'')===local;})[0]||null;
-    if(!me&&uName) me=list.filter(function(x){return x.name===uName;})[0]||null;
-    S.me=me||{sid:'',name:uName||'미지정',title:''};
+    if(local) me=list.filter(function(x){return String(x.sid||'').toLowerCase().replace(/[^a-z0-9]/g,'')===local;})[0]||null;
+    S.me=me||{sid:'',name:'미지정',title:''};
     S.vsid=S.me.sid; S.vname=S.me.name;          // 열람 대상 기본값 = 본인
-    _setTopUser(S.me.name,S.me.title||qp('role'));
+    // 상단 이름은 공용 부품이 그린다 (이름·직책·사번) — 두 곳에서 그리면 언젠가 어긋난다
+    if(window.PuWhoami) PuWhoami.mount('#topuser'); else _setTopUser(S.me.name,S.me.title||'');
   });
 }
 // ⚠ 열람 대상과 신분은 별개. 아래는 "누구 업무를 보는가"만 바꾼다 —
@@ -2216,7 +2220,10 @@ function kbOnQ(v){
     var e=$('qbox'); if(e){ e.focus(); try{ e.setSelectionRange(e.value.length,e.value.length); }catch(x){} }
   },260);
 }
-function isAdmin(){ return !!(S.me&&/대표/.test(S.me.title||''))||/대표/.test(qp('role')||''); }
+/* ⚠ 전에는 «주소» 도 봤다: /대표/.test(qp('role')) —
+   즉 주소 끝에 &role=대표 를 붙이면 누구든 관리자가 됐다.
+   권한은 로그인한 사람의 «명부상 직책» 으로만 정한다 (2026-08-16). */
+function isAdmin(){ return !!(S.me&&/대표/.test(S.me.title||'')); }
 function noteDone(it){ var n=it.ho_note||{};
   return !!String((n.sit||'')+(n.todo||'')+(n.ppl||'')+(n.warn||'')+(n.files||'')).trim(); }
 function hoPendingToMe(){ return openItems().filter(function(it){ return it.ho&&!it.ho.confirmed&&it.ho.to&&
