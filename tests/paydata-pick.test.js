@@ -88,10 +88,11 @@ function loadScreen(opts) {
       me: { uid: 'U1', email: 'p001@pureun.kr' }, owners: {}, shares: {}, myOrder: [], dir: null,
       sideView: 'all', colFilter: 'all', colQuery: ''
     }, opts.app || {})) + ';',
-    cut('esc'), cut('jsq'), cut('thisMonth'), cut('coArrivedAt'),
+    cut('esc'), cut('bannerHtml'), cut('jsq'), cut('thisMonth'), cut('coArrivedAt'),
     cut('pickOn'), cut('pickToggle'), cut('pickSetAll'), cut('pickList'),
     cut('pickAllOn'), cut('pickPrune'), cut('pickOf'), cut('pickPut'),
     cut('companyDocCount'), cut('sitesModel'), cut('sideCtx'), cut('sideListModel'),
+    cut('monthShift'), cut('monthCount'), cut('monthAhead'), cut('monthStripHtml'),
     cut('pickBar'), cut('screenSites'),
     'window.App = App; window.screenSites = screenSites;'
   ].join('\n'), { filename: 'screen.js' }).runInContext(sandbox);
@@ -242,10 +243,13 @@ test('★ 첫 화면 맨 위에 이 달 현황이 뜬다 — 몇 곳 중 몇 곳
   ];
   sb.window.App.arrivals = { co_1: { 202608: { attend: { a: 1 }, last: 1 } } };
   const h = sb.window.screenSites.call(sb);
-  const head = h.slice(0, h.indexOf('사업장 전체'));
-  assert.match(head, /class="ovw"/, '현황이 없으면 112줄만 남습니다');
-  assert.match(head, /자료 온 곳<\/div><div class="v">1</, '온 곳을 잘못 셉니다');
-  assert.match(head, /아직 안 온 곳<\/div><div class="v">2</, '안 온 곳을 잘못 셉니다');
+  /* 상자 셋이던 것을 한 줄 숫자로 접었다(대표 지시 2026-08-17 「KPI와 대시보드
+     1줄로 정리」). 그래서 **생김새를 못 박지 않고** 「목록보다 먼저, 세 숫자가
+     맞게」만 본다 — 몇 곳·온 곳·안 온 곳. */
+  /* 현황이 이제 제목 **뒤**에 붙었다 — 제목 앞까지 잘라 보면 당연히 안 잡힌다. */
+  const kpi = (h.match(/class="dkpi">([\s\S]*?)<\/span>/) || [])[1];
+  assert.ok(kpi, '현황이 없으면 112줄만 남습니다');
+  assert.equal(kpi.replace(/<[^>]*>/g, ''), '3곳 · 온 1 · 안 온 2', '현황을 잘못 셉니다: ' + kpi);
 });
 
 /* 왼쪽 칸과 **같은 수**를 세야 한다 — 두 곳이 다른 말을 하면 어느 쪽도 못 믿는다. */
@@ -255,7 +259,7 @@ test('★ 현황의 사업장 수가 아래 목록 줄 수와 같다', () => {
     { id: 'co_2', name: '이비', managerMain: 'p-002', managerSubs: [] }
   ] } });
   const h = sb.window.screenSites.call(sb);
-  assert.match(h, /사업장<\/div><div class="v">2</);
+  assert.match(h, /class="dkpi"><b>2<\/b>곳/);
   assert.equal((h.match(/type="checkbox"/g) || []).length, 3, '「모두 고르기」 + 두 줄이어야 합니다');
 });
 
@@ -267,5 +271,5 @@ test('★ 보기를 좁히면 현황도 그 보기 기준으로 센다', () => {
     { id: 'co_2', name: '이비', managerMain: 'p-002', managerSubs: [] }
   ] } });
   const h = sb.window.screenSites.call(sb);
-  assert.match(h, /사업장<\/div><div class="v">1</, '내 담당은 한 곳인데 전체 수를 셌습니다');
+  assert.match(h, /class="dkpi"><b>1<\/b>곳/, '내 담당은 한 곳인데 전체 수를 셌습니다');
 });
