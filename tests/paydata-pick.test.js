@@ -91,7 +91,7 @@ function loadScreen(opts) {
     cut('esc'), cut('bannerHtml'), cut('jsq'), cut('thisMonth'), cut('coArrivedAt'),
     cut('pickOn'), cut('pickToggle'), cut('pickSetAll'), cut('pickList'),
     cut('pickAllOn'), cut('pickPrune'), cut('pickOf'), cut('pickPut'),
-    cut('companyDocCount'), cut('sitesModel'), cut('sideCtx'), cut('sideListModel'),
+    cut('companyDocCount'), cut('sitesModel'), cut('sideCtx'), cut('guessTag'), cut('siteState'), cut('sideListModel'),
     cut('monthShift'), cut('monthCount'), cut('monthAhead'), cut('monthStripHtml'),
     cut('pickBar'), cut('screenSites'),
     'window.App = App; window.screenSites = screenSites;'
@@ -115,9 +115,11 @@ test('★ 업체명이 도착 표시보다 먼저 나온다 — 위치를 바꾼
   const sb = loadScreen();
   sb.window.App.companies = COMPANIES; sb.window.App.arrivals = ARRIVALS;
   const html2 = sb.window.screenSites.call(sb);
-  const row = html2.slice(html2.indexOf('화담원') - 200, html2.indexOf('화담원') + 200);
+  const row = html2.slice(html2.indexOf('화담원') - 200, html2.indexOf('화담원') + 400);
   const nameAt = row.indexOf('화담원');
-  const chipAt = row.indexOf('도착');
+  /* 「도착/미도착」 둘이던 표시가 네 자리(미도착·대기·담김·표)로 갈렸다
+     (대표 지시 2026-08-17) — 글자를 못 박지 않고 **그 자리 표시**를 찾는다. */
+  const chipAt = row.indexOf('class="stpill');
   assert.ok(nameAt >= 0 && chipAt >= 0, '업체명이나 도착 표시를 찾을 수 없습니다');
   assert.ok(nameAt < chipAt, '업체명이 도착 표시보다 뒤에 있습니다 — 위치가 안 바뀌었습니다');
 });
@@ -247,9 +249,12 @@ test('★ 첫 화면 맨 위에 이 달 현황이 뜬다 — 몇 곳 중 몇 곳
      1줄로 정리」). 그래서 **생김새를 못 박지 않고** 「목록보다 먼저, 세 숫자가
      맞게」만 본다 — 몇 곳·온 곳·안 온 곳. */
   /* 현황이 이제 제목 **뒤**에 붙었다 — 제목 앞까지 잘라 보면 당연히 안 잡힌다. */
-  const kpi = (h.match(/class="dkpi">([\s\S]*?)<\/span>/) || [])[1];
+  const kpi = (h.match(/class="dkpi"[^>]*>([\s\S]*?)<\/span>/) || [])[1];
   assert.ok(kpi, '현황이 없으면 112줄만 남습니다');
-  assert.equal(kpi.replace(/<[^>]*>/g, ''), '3곳 · 온 1 · 안 온 2', '현황을 잘못 셉니다: ' + kpi);
+  /* 「온/안 온」 둘이던 것을 네 자리로 갈랐다(대표 지시 2026-08-17) —
+     표까지 됨 · 담겼지만 판독 전 · 대기 칸에 걸림 · 아무것도 안 옴. */
+  assert.equal(kpi.replace(/<[^>]*>/g, ''), '3곳 · 표 0 · 담김 1 · 대기 0 · 안 온 2',
+    '현황을 잘못 셉니다: ' + kpi);
 });
 
 /* 왼쪽 칸과 **같은 수**를 세야 한다 — 두 곳이 다른 말을 하면 어느 쪽도 못 믿는다. */
@@ -259,7 +264,7 @@ test('★ 현황의 사업장 수가 아래 목록 줄 수와 같다', () => {
     { id: 'co_2', name: '이비', managerMain: 'p-002', managerSubs: [] }
   ] } });
   const h = sb.window.screenSites.call(sb);
-  assert.match(h, /class="dkpi"><b>2<\/b>곳/);
+  assert.match(h, /class="dkpi"[^>]*><b>2<\/b>곳/);
   assert.equal((h.match(/type="checkbox"/g) || []).length, 3, '「모두 고르기」 + 두 줄이어야 합니다');
 });
 
@@ -271,5 +276,5 @@ test('★ 보기를 좁히면 현황도 그 보기 기준으로 센다', () => {
     { id: 'co_2', name: '이비', managerMain: 'p-002', managerSubs: [] }
   ] } });
   const h = sb.window.screenSites.call(sb);
-  assert.match(h, /class="dkpi"><b>1<\/b>곳/, '내 담당은 한 곳인데 전체 수를 셌습니다');
+  assert.match(h, /class="dkpi"[^>]*><b>1<\/b>곳/, '내 담당은 한 곳인데 전체 수를 셌습니다');
 });
