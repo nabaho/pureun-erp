@@ -15,9 +15,14 @@
   /* ── 주입받는 것 ── */
   var deps = {
     fetch: null,       // (url, init) => Promise<{ok,status,json()}>
-    getKey: null,      // () => Promise<string>  AI 키
+    getKey: null,      // () => Promise<string>  AI 키 (옛 길 — 서버 대리인이 없을 때만)
     getNtsKey: null,   // () => Promise<string>  국세청 키(없으면 조회를 건너뛴다)
-    delay: null        // (fn, ms) — 검사에서 기다림 없이 진행시키려고 주입받는다
+    delay: null,       // (fn, ms) — 검사에서 기다림 없이 진행시키려고 주입받는다
+    /* 서버 대리인 (2026-08-17) — 있으면 **브라우저는 열쇠를 모른다.**
+         readDocUrl : 판독 대리인 주소
+         getToken   : () => Promise<string>  로그인 증명(누가 부르는지 서버가 확인한다) */
+    readDocUrl: null,
+    getToken: null
   };
 
   function init(o) {
@@ -26,7 +31,16 @@
     deps.getKey = o.getKey || null;
     deps.getNtsKey = o.getNtsKey || null;
     deps.delay = o.delay || function (fn, ms) { setTimeout(fn, ms); };
+    deps.readDocUrl = o.readDocUrl || null;
+    deps.getToken = o.getToken || null;
     return true;
+  }
+
+  /* 서버 대리인을 쓸 수 있나 — 주소와 로그인 증명이 둘 다 있어야 한다.
+     ⚠ 하나만 있으면 안 쓴다. 토큰 없이 부르면 서버가 401 로 막아
+       「판독이 안 된다」로만 보이고 원인을 못 짚는다. */
+  function useProxy() {
+    return !!(deps.readDocUrl && deps.getToken);
   }
 
   /* ── 사업자등록번호 ── */
@@ -294,7 +308,32 @@
     }).catch(function () { return ''; });
   }
 
-  /* 모델을 차례로 시도한다. 기억해 둔 모델이 있으면 그것부터. */
+  /* ── 서버 대리인에게 맡긴다 (2026-08-17) ──
+     브라우저는 열쇠를 모르고, 사진과 프롬프트만 보낸다. 모델 고르기·재시도는 서버가 한다.
+     ⚠ 서버가 준 **상태 숫자를 그대로** 다시 세운다 — 위쪽 askAny 를 부르는 곳들이
+       이 숫자로 판단한다(429 면 잠시 뒤, 403 이면 곧바로 포기). 뭉개면 그 판단이 죽는다. */
+  function askProxy(parts) {
+    return Promise.resolve().then(deps.getToken).then(function (token) {
+      if (!token) throw new Error('로그인을 확인해 주세요');
+      return deps.fetch(deps.readDocUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ parts: parts })
+      });
+    }).then(function (r) {
+      return (r && r.json ? r.json() : Promise.resolve(null)).catch(function () { return null; })
+        .then(function (j) {
+          if (r && r.ok && j && j.ok) return j.reply;
+          var status = (j && j.status) || (r && r.status) || 0;
+          var e = new Error((j && j.error) || 'AI가 응답하지 않습니다 (오류 ' + status + ')');
+          e.status = status;
+          throw e;
+        });
+    });
+  }
+
+  /* 모델을 차례로 시도한다. 기억해 둔 모델이 있으면 그것부터.
+     ⚠ 서버 대리인이 있으면 여기 오지 않는다 — 아래 부르는 곳에서 갈린다. */
   function askAny(key, init) {
     var order = goodModel
       ? [goodModel].concat(MODELS.filter(function (m) { return m !== goodModel; }))
@@ -387,13 +426,25 @@
       .filter(Boolean);
     if (!imgs.length) return Promise.resolve(wageFail('사진을 읽을 수 없습니다'));
 
+    var parts = imgs.map(function (b64) {
+      return { inline_data: { mime_type: 'image/jpeg', data: b64 } };
+    });
+    parts.push({ text: prompt + (imgs.length > 1 ? MULTI_NOTE : '') });
+
+    /* 서버 대리인이 있으면 열쇠를 아예 안 챙긴다(2026-08-17) */
+    if (useProxy()) {
+      return askProxy(parts).then(function (j) {
+        var parsed = parseReply(j);
+        if (!parsed) throw new Error('AI가 알아볼 수 없는 답을 보냈습니다');
+        return afterWageRead(parsed);
+      }).catch(function (e) {
+        return wageFail((e && e.message) || String(e));
+      });
+    }
+
     var keyP = deps.getKey ? Promise.resolve().then(deps.getKey) : Promise.resolve('');
     return keyP.catch(function () { return ''; }).then(function (key) {
       if (!key) return wageFail('AI 키가 없습니다 — 포털 설정에서 등록해 주세요');
-      var parts = imgs.map(function (b64) {
-        return { inline_data: { mime_type: 'image/jpeg', data: b64 } };
-      });
-      parts.push({ text: prompt + (imgs.length > 1 ? MULTI_NOTE : '') });
       return askAny(key, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -438,13 +489,25 @@
       .filter(Boolean);
     if (!imgs.length) return Promise.resolve(fail('사진을 읽을 수 없습니다'));
 
+    var parts = imgs.map(function (b64) {
+      return { inline_data: { mime_type: 'image/jpeg', data: b64 } };
+    });
+    parts.push({ text: PROMPT_ALL + (imgs.length > 1 ? MULTI_NOTE : '') });
+
+    /* 서버 대리인이 있으면 열쇠를 아예 안 챙긴다(2026-08-17) */
+    if (useProxy()) {
+      return askProxy(parts).then(function (j) {
+        var parsed = parseReply(j);
+        if (!parsed) throw new Error('AI가 알아볼 수 없는 답을 보냈습니다');
+        return afterRead(parsed);
+      }).catch(function (e) {
+        return fail((e && e.message) || String(e));
+      });
+    }
+
     var keyP = deps.getKey ? Promise.resolve().then(deps.getKey) : Promise.resolve('');
     return keyP.catch(function () { return ''; }).then(function (key) {
       if (!key) return fail('AI 키가 없습니다 — 포털 설정에서 등록해 주세요');
-      var parts = imgs.map(function (b64) {
-        return { inline_data: { mime_type: 'image/jpeg', data: b64 } };
-      });
-      parts.push({ text: PROMPT_ALL + (imgs.length > 1 ? MULTI_NOTE : '') });
       var body = {
         contents: [{ parts: parts }],
         generationConfig: { temperature: 0 } // 같은 사진에 같은 답이 나와야 한다
@@ -557,8 +620,36 @@
     } catch (e) { return ''; }
   }
 
-  function keysFrom(db) {
+  /* 판독 대리인 주소 — 서버 함수가 사는 곳.
+     ⚠ 앱마다 적으면 한쪽만 고쳐진다. 여기 한 곳에만 둔다.
+       (다른 서버 함수들과 같은 프로젝트·지역: asia-northeast3 / pureun-erp) */
+  var READ_DOC_URL = 'https://asia-northeast3-pureun-erp.cloudfunctions.net/readDoc';
+
+  /* ── 판독을 어떻게 부르는가 (2026-08-17) ──
+     ⚠ 예전에는 여기서 **AI 열쇠를 브라우저로 가져왔다.** 그런데 그 열쇠는
+       실시간DB 에 평문으로 있고 규칙상 로그인한 모든 직원이 읽는다 —
+       꺼내 개인 용도로 써도 요금은 회사에 붙었다. 게다가 `AQ.` 로 시작하는
+       AI 스튜디오 열쇠라 **자물쇠(웹사이트 제한)를 채울 방법도 없다**(확인 완료).
+       그래서 **서버가 대신 부르고 브라우저는 열쇠를 아예 모른다.**
+
+     ⚠ `getKey` 를 아직 남겨 둔다 — 서버가 아직 안 올라갔거나 로그인 증명을 못 얻을 때
+       옛 길로 돌아가기 위해서다. 네 앱(사진첩·명함첩·enter·경력관리)이 다 옮겨지고
+       서버가 안정되면 **getKey 와 실시간DB 의 열쇠를 함께 지워야** 이 문제가 끝난다.
+       남겨 두면 열쇠가 DB 에 그대로 있어 지금 구멍이 안 막힌다. */
+  function keysFrom(db, opts) {
+    opts = opts || {};
+    var auth = opts.auth || null;   // firebase.auth() — 로그인 증명을 얻는 곳
     return {
+      readDocUrl: READ_DOC_URL,
+      /* 로그인 증명. 없으면 null 을 돌려 **서버 대리인을 안 쓰게** 한다
+         (토큰 없이 부르면 서버가 401 로 막아 원인을 못 짚는다). */
+      getToken: auth ? function () {
+        try {
+          var u = auth.currentUser;
+          if (!u) return Promise.resolve('');
+          return u.getIdToken().catch(function () { return ''; });
+        } catch (e) { return Promise.resolve(''); }
+      } : null,
       getKey: function () {
         var mine = localKey(LS_GEMINI);
         if (mine) return Promise.resolve(mine);
@@ -632,6 +723,10 @@
     read: read,
     readWageTable: readWageTable,
     readChangeNotice: readChangeNotice,
-    autoOk: autoOk
+    autoOk: autoOk,
+    /* 검사 전용 — 바깥 함수들은 실패를 한국어 글로 감싸 버려서, 서버가 준
+       **상태 숫자**가 살아 있는지 확인할 길이 없다. 그 안쪽을 열어 둔다.
+       ⚠ 앱에서 부르지 말 것. */
+    _askProxyForTest: function (parts) { return askProxy(parts); }
   };
 })(typeof window !== 'undefined' ? window : globalThis);
