@@ -56,7 +56,7 @@ function loadSites() {
     cut('esc'), cut('jsq'), cut('thisMonth'), cut('coArrivedAt'),
     cut('pickOn'), cut('pickToggle'), cut('pickSetAll'), cut('pickList'),
     cut('pickAllOn'), cut('pickPrune'), cut('pickOf'), cut('pickPut'),
-    cut('companyDocCount'), cut('sitesModel'), cut('sideCtx'), cut('sideListModel'),
+    cut('companyDocCount'), cut('sitesModel'), cut('sideCtx'), cut('guessTag'), cut('siteState'), cut('sideListModel'),
     cut('bannerHtml'), cut('monthShift'), cut('monthCount'), cut('monthAhead'), cut('monthStripHtml'),
     cut('pickBar'), cut('screenSites'),
     'window.App = App; window.screenSites = screenSites;'

@@ -486,6 +486,9 @@ test('★ 판독 중 다른 서류로 옮기면 늦게 온 실패 응답도 새 
 });
 
 /* ══════ 저장·중복 ══════ */
+/* 값 자리만 골라 센다 — 같은 묶음에 도착 칸의 「표 몇 명」 표시가 함께 들어간다. */
+const valKeys = up => Object.keys(up || {}).filter(k => k.indexOf('/values/') >= 0);
+
 function loadSave(existing, confirmYes, opts) {
   opts = opts || {};
   const calls = { alerts: [], confirms: [], saved: null };
@@ -546,7 +549,7 @@ test('★ 저장하면 값에 출처가 붙어 들어간다', async () => {
   await new Promise(r => setTimeout(r, 10));
   const up = W.__got();
   assert.ok(up, '저장되지 않았습니다');
-  const key = Object.keys(up)[0];
+  const key = valKeys(up)[0];
   assert.match(key, /\/values\/202608\//);
   assert.equal(up[key].sourceId, 'a1', '출처가 없으면 나중에 근거를 못 댑니다');
   assert.equal(up[key].companyId, 'co_1');
@@ -562,7 +565,7 @@ test('★ 저장한 값은 확인된 값으로 들어간다 — 노란 표시가
   W.saveVals();
   await new Promise(r => setTimeout(r, 10));
   const up = W.__got();
-  const key = Object.keys(up)[0];
+  const key = valKeys(up)[0];
   assert.equal(up[key].confirmed, true,
     '사람이 확인하고 저장했는데 「확인 안 됨」으로 남습니다 — 값 표가 계속 노랗습니다');
   const g = W.valueGridModel(afterSave({}, up));
@@ -621,7 +624,7 @@ test('★ 덮어쓰기를 고르면 저장한다 — 새 자리가 아니라 옛
   await new Promise(r => setTimeout(r, 10));
   const up = W.__got();
   assert.ok(up, '저장되지 않았습니다');
-  const keys = Object.keys(up);
+  const keys = valKeys(up);
   assert.equal(keys.length, 1, '한 사람 값인데 자리가 둘 이상 생겼습니다 — 근무일수가 두 배로 잡힙니다');
   assert.match(keys[0], /\/values\/202608\/r1$/,
     '「덮을까요」에 동의했는데 옛 자리(r1)가 아니라 새 자리에 썼습니다 — 옛 줄이 그대로 남아 두 줄이 됩니다');
@@ -647,7 +650,7 @@ test('★ 다른 서류를 저장해도 앞 서류 값이 살아남는다 — �
   assert.ok(up, '저장되지 않았습니다');
   assert.equal(calls.confirms.length, 0,
     '겹치는 항목도 없는데 물었습니다 — 근태표+수당카톡은 보통 있는 일이라 물을 일이 아닙니다');
-  assert.equal(Object.keys(up).length, 1);
+  assert.equal(valKeys(up).length, 1);
   assert.ok(!up['paydata/u/U1/values/202608/r1'],
     '다른 서류인데 근태표 자리(r1)를 덮었습니다 — 유급일수가 통째로 사라집니다');
 });
@@ -680,7 +683,7 @@ test('★ 같은 서류를 다시 읽으면 여러 줄 중 그 서류의 줄만 
     viewerId: '카톡b', rows: [{ name: '배영승', pairs: [{ item: '식대', value: '250,000' }] }] });
   W.saveVals();
   await new Promise(r => setTimeout(r, 10));
-  const keys = Object.keys(W.__got() || {});
+  const keys = valKeys(W.__got());
   assert.equal(keys.length, 1);
   assert.match(keys[0], /\/values\/202608\/r2$/,
     '다시 읽은 서류(카톡b)의 줄은 r2 입니다 — r1 을 덮으면 근태표 유급일수가 날아갑니다');
@@ -704,7 +707,7 @@ test('★ 다른 서류와 항목이 겹치면 지우지 않고 알린다', asyn
   assert.match(calls.confirms[0], /배영승/);
   assert.match(calls.confirms[0], /기본급/, '어느 항목이 겹쳤는지 이름을 대야 합니다');
   assert.match(calls.confirms[0], /지우지 않고/, '앞 서류 값을 지우지 않는다고 말해야 합니다');
-  const keys = Object.keys(W.__got() || {});
+  const keys = valKeys(W.__got());
   assert.ok(!keys.some(k => /\/r1$/.test(k)), '알린다고 해놓고 앞 서류 줄을 덮었습니다');
   const c = W.valueGridModel(afterSave(겹침, W.__got())).people[0].cells;
   assert.equal(c['유급일수'].value, '22일', '겹치지 않은 항목까지 날아갔습니다');
@@ -777,7 +780,7 @@ test('★ 구분해서 갈라 적으면 저장된다 — 막기만 하고 길을
   await new Promise(r => setTimeout(r, 10));
   const up = W.__got();
   assert.ok(up, '갈라 적었는데도 막히면 저장할 길이 없습니다');
-  assert.equal(Object.keys(up).length, 2);
+  assert.equal(valKeys(up).length, 2);
 });
 
 /* 「직접 적기」로 연 빈 줄을 안 채우고 저장하면 값 표에 안 나오는 줄이 쌓인다

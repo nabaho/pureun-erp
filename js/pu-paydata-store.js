@@ -793,11 +793,37 @@
     return out;
   }
 
-  /* 값 줄들을 한 묶음으로 쓴다 — 다 쓰거나 하나도 안 쓰거나. */
-  function saveValues(slot, rows, owner) {
+  /* ══════ 표까지 됐다는 것을 도착 칸에도 적는다 (대표 지시 2026-08-17) ══════
+     「우선 데이터가 들어온 것을 정확하게 확인해야 한다」 — 그런데 사진만 온 것과
+     **표까지 나온 것**이 사업장 목록에서 똑같이 「3장」으로 보였다. 다음에 할 일이
+     판독인지 대조인지 가릴 수가 없다.
+     ⚠ 값은 **사람 자리마다 따로** 있어(paydata/$uid/values) 남의 것을 세려면 자리를
+     옮겨야 한다. 도착 칸은 **전 직원 공용**이라, 여기에 적어야 사업장 목록이 한 번의
+     읽기로 안다. 값 자체가 아니라 **몇 사람분인지**만 적는다 — 이름은 안 나간다. */
+  function valsPath(companyId, slot) { return arrivalPath(companyId, slot) + '/vals'; }
+
+  /* 그 사업장 그 달 표에 이름이 몇인가. 이미 있던 줄과 이번에 저장할 줄을 함께
+     센다 — 이번 것만 세면 두 번째 서류를 읽을 때 사람 수가 오히려 줄어든다. */
+  function valuePeopleCount(box, companyId, extraRows) {
+    var seen = {};
+    var add = function (r) {
+      if (!r || r.companyId !== companyId) return;
+      var n = String(r.name == null ? '' : r.name).trim();
+      if (n) seen[n] = 1;
+    };
+    Object.keys(box || {}).forEach(function (id) { add((box || {})[id]); });
+    (extraRows || []).forEach(add);
+    return Object.keys(seen).length;
+  }
+
+  /* 값 줄들을 한 묶음으로 쓴다 — 다 쓰거나 하나도 안 쓰거나.
+     mark 를 주면 도착 칸의 「표 몇 명」도 **같은 묶음**으로 쓴다 — 따로 쓰면
+     「값은 있는데 목록은 판독 전이라고 한다」가 된다. */
+  function saveValues(slot, rows, owner, mark) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     var up = {};
     (rows || []).forEach(function (r) { up[valuePath(slot, r.id, owner)] = r; });
+    if (mark && mark.companyId && slot) up[valsPath(mark.companyId, slot)] = Number(mark.people || 0);
     return deps.db.ref().update(up).then(function () { return (rows || []).length; });
   }
 
@@ -1263,6 +1289,8 @@
     ownerPath: ownerPath,
     ownerBoxPath: ownerBoxPath,
     arrivalPath: arrivalPath,
+    valsPath: valsPath,
+    valuePeopleCount: valuePeopleCount,
     arrivalBoxPath: arrivalBoxPath,
     accessLogPath: accessLogPath,
     handoffLogPath: handoffLogPath,
