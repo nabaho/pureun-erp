@@ -27,7 +27,7 @@
 <script src="js/pu-home-parse.js?v=3"></script>
 <script src="js/pu-home-career.js?v=1"></script>
 <script src="js/pu-home-export.js?v=2"></script>
-<script src="js/pu-home-diff.js?v=4"></script>
+<script src="js/pu-home-diff.js?v=5"></script>
 <style>
 :root{--navy:#2E3A8C;--violet:#7C6CE0;--ok:#2E7D4F;--warn:#B26A00;--bad:#C43D3D;
 --ink:#23263B;--sub:#6B6F87;--line:#E3E5EF;--paper:#F5F6FA;--card:#FFF;}
@@ -102,6 +102,8 @@ main{padding:14px 16px 60px;max-width:1180px;margin:0 auto}
 .pill.liveOnly{background:#FFF7E6;color:#92400E;border:1px solid #FDE68A}
 .pill.done{background:#EAF6EE;color:#1E5631;border:1px solid #B7E4C7}
 .pill.unknown{background:#F2F4F7;color:#98A2B3}
+/* 기준 없음 — «오류(빨강)» 가 아니라 «해야 할 일(파랑)» 로 보이게 toAdd 와 같은 색을 쓴다 */
+.pill.noBase{background:#EFF6FF;color:#1D4ED8;border:1px solid #BFDBFE}
 .pill.none{background:#F8F9FC;color:#98A2B3;border:1px dashed var(--line)}
 /* 「홈페이지에 남기기」 예외 표시 — 왜 퇴사 경고가 없는지 목록에서 바로 보이게 한다 */
 .pill.keep{background:#EEF2FF;color:#3730A3;border:1px solid #C7D2FE}
@@ -253,7 +255,10 @@ const STATUS_TEXT = {
   toRemove: '내릴 것 (퇴사)', liveOnly: '홈페이지에만', unknown: '모름',
   /* 퇴사 처리를 끝낸 사람 — 홈페이지에서도 내려갔다. 「같음」으로 뭉개면 왜 조용한지
      알 수 없고, 「새로 올릴 것」으로 두면 방금 내린 글을 다시 올리라고 시킨다. */
-  done: '내려감 (퇴사 완료)'
+  done: '내려감 (퇴사 완료)',
+  /* 새로 추가한 쪽처럼 우리 대조 기준이 아직 없는 쪽. 「안 올라감」(pending)과 달리
+     방향이 반대다 — 우리 글이 안 올라간 게 아니라 우리에게 기준이 없다는 뜻이다. */
+  noBase: '기준 없음'
 };
 /* 손댈 것이 없는 딱지 — 왼쪽 빨간 점을 켤지 정할 때 쓴다 */
 const DONE_STATUS = { same: true, done: true };
@@ -294,6 +299,14 @@ const App = {
      ★ 우리가 저장해 둔 대조 기준 글자는 줄을 뭉쳐 놓은 것이라 줄 모양을 «지어낼 수 없다».
        그래서 홈페이지를 읽기 전에는 비어 있고, 화면은 그 사실을 정직하게 알린다. */
   pageConfig: {}, pageLines: {},
+  /* pageConfigUnread — 「쪽 목록(homepage/config/pages)」을 «못 읽었다»는 표시다.
+     ★ syncPageConfig 는 못 읽어서 null 이 온 것과 자료가 «아직 비어 있어» null 인 것을
+       가르지 않고 똑같이 기본 8쪽으로 채운다(화면이 갑자기 비면 안 되므로). 그런데
+       그 상태에서 「＋ 쪽 추가」·「목록에서 분리」를 누르면 기본 8쪽으로 set() 해 버려
+       사장님이 이미 저장해 둔 목록(분리·추가)을 통째로 덮어쓴다.
+       그래서 못 읽은 사실은 여기 따로 남겨 두고, addPage/detachPage 가 저장 전에
+       확인해서 거절한다 — 「자료가 없다」와 「못 읽었다」는 반드시 갈라야 한다. */
+  pageConfigUnread: false,
   /* dataErr — homepage/* 를 «못 읽은» 것. 「아직 자료가 없습니다」와 반드시 갈라 보여준다.
      saveErr — 딱지 강등처럼 사람이 안 누른 저장이 실패한 것. 조용히 삼키지 않는다. */
   dataErr: '', saveErr: '',
@@ -449,7 +462,9 @@ function loadAll() {
     .then(s => { const v = s.val(); return (v === null || v === undefined) ? empty : v; })
     .catch(e => { console.warn('[' + label + ']', e && e.code); failed.push(label); return empty; });
 
-  Promise.all([
+  // return 을 붙여도 유일한 호출부(줄 387)는 값을 안 본다 — 검사가 «다 읽고 나서»를
+  // 기다릴 수 있게(await loadAll()) 열어 두는 것뿐이다.
+  return Promise.all([
     read('homepage/members', '구성원', {}),
     read('homepage/pages', '쪽 본문', {}),
     read('homepage/config/lineFormat', '줄 모양 설정', 'plain'),
@@ -459,6 +474,9 @@ function loadAll() {
   ]).then(([members, pages, lineFormat, check, roster, pageCfg]) => {
     App.members = members || {};
     App.pages = pages || {};
+    // 「쪽 목록」 자리가 failed 에 있으면 «자료가 없음»이 아니라 «못 읽음»이다 — 갈라 남긴다.
+    // (read() 의 catch 만 failed 에 쌓는다. null 값을 정상적으로 읽은 것은 안 쌓인다.)
+    App.pageConfigUnread = failed.indexOf('쪽 목록') !== -1;
     syncPageConfig(pageCfg);   // 비어 있으면 기본 8쪽 — 화면이 갑자기 비지 않게
     App.lineFormat = (lineFormat === 'div') ? 'div' : 'plain';
     App.check = check;
@@ -514,9 +532,20 @@ function savePageConfig(next) {
   return db.ref('homepage/config/pages').set(next).then(() => { syncPageConfig(next); });
 }
 
+/* 쪽 목록을 못 읽은 채로 저장하면(=set) 사장님이 이미 저장해 둔 분리·추가가 통째로
+   지워진다(못 읽음 → syncPageConfig 가 기본 8쪽으로 채움 → 그 위에 한 줄 보태 덮어씀).
+   「＋ 쪽 추가」・「목록에서 분리」 둘 다 저장이라 여기서 함께 막는다. */
+function refuseIfPageConfigUnread() {
+  if (!App.pageConfigUnread) return false;
+  alert('쪽 목록을 못 읽었습니다. 「홈페이지 다시 확인」이 아니라 화면을 새로 고쳐(F5)\n'
+    + '목록을 먼저 읽어야 합니다 — 지금 저장하면 기존 설정이 지워집니다.');
+  return true;
+}
+
 /* 「＋ 쪽 추가」 — 홈페이지에 «먼저» 쪽이 있어야 한다. 없는 이름을 넣으면 대조에서
    「홈페이지를 읽지 못함」으로 뜰 뿐, 자료가 망가지지는 않는다. */
 async function addPage() {
+  if (refuseIfPageConfigUnread()) return;
   const raw = (prompt('홈페이지 쪽 이름을 적어 주십시오.\n'
     + '주소 전체가 아니라 «쪽 이름»만 적습니다 — 예: work6\n'
     + '(영문 소문자·숫자·밑줄만, 30자까지)') || '').trim();
@@ -557,6 +586,7 @@ function canDetachPage(mid) { return mid !== 'inquiry' && mid !== 'greeting'; }
    대조·관리하지 않는다는 뜻일 뿐이다. 우리가 가진 대조 기준 글자(homepage/pages/{mid})도
    그대로 둔다 — 다시 붙일 때 쓴다. 지우는 일은 사람이 홈페이지 관리자 화면에서 한다. */
 async function detachPage(mid) {
+  if (refuseIfPageConfigUnread()) return;
   if (!canDetachPage(mid)) {
     alert('「' + (PAGE_LABEL[mid] || mid) + '」은 왼쪽 갈래 자체라 분리할 수 없습니다.');
     return;
@@ -626,9 +656,12 @@ function pageRows(group) {
   return pageIdsOf(group).map(mid => {
     const p = App.pages[mid] || {};
     const s = st[mid] || {};
-    /* «못 읽음»과 «내용 없음»을 가른다 — 새로 넣은 쪽은 홈페이지에 그 이름이 없어서
-       못 읽는 것이고, 그건 자료가 망가진 것이 아니다. */
+    /* «못 읽음»·«기준 없음»·«아직 확인 전»을 가른다 — 셋은 원인이 다르다.
+       ★ s.status === 'noBase' 는 「홈페이지 다시 확인」을 «방금 실행해서» 얻은 결과다.
+         그런데 p.text(우리 대조 기준)만 보고 갈랐을 때는 확인을 방금 했어도 여전히
+         비어 있어 「다시 확인 전」이라고 거꾸로 적었었다 — 그래서 status 를 먼저 본다. */
     const note = (s.status === 'unknown') ? ' · 홈페이지에서 못 읽음'
+      : (s.status === 'noBase') ? ' · 기준 없음 — 홈페이지에서 읽어온 내용을 기준으로 삼으십시오'
       : (p.text ? '' : ' · 아직 내용 없음 (홈페이지 다시 확인 전)');
     return {
       key: mid, name: PAGE_LABEL[mid] || mid,
@@ -988,6 +1021,15 @@ async function applyStatus(live, livePages, failed) {
   PuHomeDiff.pageStatus(ourPages, livePages).forEach(r => {
     if (r.status === 'unknown' && prev.pages && prev.pages[r.path]) {
       next.pages[r.path] = prev.pages[r.path];   // 못 읽은 쪽 — 지난 결과 그대로
+      return;
+    }
+    /* 새로 추가한 쪽처럼 우리 대조 기준(App.pages[mid].text)이 «아직 비어 있을» 때,
+       홈페이지에는 내용이 있어 pageStatus 가 'pending'(=우리 글이 안 올라감)을 돌려준다.
+       그런데 진짜 뜻은 정반대다 — 우리 글이 안 올라간 게 아니라 «우리에게 대조 기준이
+       아직 없다». 쪽에는 붙여넣기 기능이 없어 사장님이 「안 올라감」을 보고 시킬 방법도
+       없다. 그래서 기준 없음을 따로 갈라 말한다. */
+    if (r.status !== 'unknown' && !(ourPages[r.path].text || '').trim()) {
+      next.pages[r.path] = { status: 'noBase', reason: '기준 없음 — 홈페이지에서 읽어온 내용을 기준으로 삼으십시오' };
       return;
     }
     next.pages[r.path] = { status: r.status, reason: r.status === 'unknown' ? '홈페이지를 읽지 못함' : '' };

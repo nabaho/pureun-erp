@@ -70,7 +70,12 @@
     const k = m && m.keepOnSite;
     if (!k || typeof k !== 'object') return '';
     const why = tidy(k.why);
-    return '홈페이지에 남기기로 함' + (why ? ' (' + why + ')' : '');
+    // 사유(why)가 없으면 예외로 보지 않는다 — 설계가 「사유를 반드시 적게 한다」고
+    // 못 박았다(2차 설계 §4). keepOnSite:{} 나 keepOnSite:[] 처럼 객체이기만 하고
+    // 사유가 비어 있으면 그냥 통과시키던 것을 막는다: 사유 없는 예외는 나중에 왜
+    // 남겼는지 알 수 없어 위험하다.
+    if (!why) return '';
+    return '홈페이지에 남기기로 함 (' + why + ')';
   }
 
   // 명부에 이름 자체가 없는 사람 — 급여 명부에 없다고 입·퇴사 여부를 «조용히» 넘기면

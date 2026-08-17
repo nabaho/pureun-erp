@@ -910,7 +910,8 @@ function cfgBox(cfg) {
   };
   run(ctx, constSource('PAGE_IDS') + '\n' + constObj('STATUS_TEXT') + '\n'
     + fnSource('isPageName') + '\n' + fnSource('syncPageConfig') + '\n'
-    + fnSource('savePageConfig') + '\n' + fnSource('addPage') + '\n'
+    + fnSource('savePageConfig') + '\n' + fnSource('refuseIfPageConfigUnread') + '\n'
+    + fnSource('addPage') + '\n'
     + fnSource('canDetachPage') + '\n' + fnSource('detachPage') + '\n'
     + fnSource('pageIdsOf') + '\n' + fnSource('memberRows') + '\n' + fnSource('pageRows') + '\n'
     + fnSource('rowsOf') + '\n' + fnSource('firstPickOf') + '\n' + fnSource('loadDraft') + '\n'
@@ -1070,6 +1071,44 @@ test('★ 대조는 여전히 «뭉친 글자»로 한다 — 줄 목록이 대�
   await ctx.applyStatus([{ srl: '190', name: '권형하', careers: [] }], { work1: 뭉친글자 }, []);
   assert.equal(plain(ctx.App.check.pages).work1.status, 'same',
     '뭉친 글자가 같은데 「안 올라감」이 떴습니다 — 대조 기준이 줄 목록으로 바뀌었습니다');
+});
+
+/* 머지 전 최종 수정 2 — 대조 기준(App.pages[mid].text)이 «아직 비어 있는» 쪽(예: 방금 추가한
+   새 쪽)은 홈페이지 내용과 달라 pageStatus 가 'pending'(=안 올라감)을 낸다. 그런데 진짜 뜻은
+   정반대다 — 우리 글이 안 올라간 게 아니라 우리에게 «대조 기준이 아직 없다». 쪽에는
+   붙여넣기 기능이 없어 「안 올라감」을 보고 사장님이 시킬 방법도 없다. */
+test('★ 대조 기준이 아직 없는 쪽(새로 추가한 쪽)은 「안 올라감」이 아니라 「기준 없음」이다', async () => {
+  const ctx = box();
+  ctx.App = { members: {}, pages: {}, staff: [], check: null, saveErr: '', pageLines: {} };
+  ctx.db = { ref: () => ({ set: () => Promise.resolve() }) };
+  run(ctx, constSource('PAGE_IDS') + '\n' + fnSource('todayString') + '\n' + fnSource('applyStatus'));
+
+  // work1 은 홈페이지에서 방금 «제대로» 읽혔다(livePages 에 실제 문장이 있다) — 「못 읽음」이 아니다.
+  await ctx.applyStatus([], { work1: '자문서비스 01 법률자문 최신 노동관계법령에 대한 자문과 상담을 수행합니다.' }, []);
+
+  const pages = plain(ctx.App.check.pages);
+  assert.equal(pages.work1.status, 'noBase',
+    '기준이 없을 뿐인데 「안 올라감(pending)」으로 떴습니다 — 방향이 반대입니다');
+  assert.match(pages.work1.reason, /기준 없음/, '왜 기준이 없는지 사유가 안 남았습니다');
+});
+
+test('★ 「기준 없음」쪽은 목록에서 상태로 바로 보이고, 확인을 방금 했어도 「다시 확인 전」이라고 하지 않는다', () => {
+  /* pageRows 의 note 는 예전에 App.pages[mid].text(우리 대조 기준)만 보고 갈랐다 —
+     그래서 방금 「홈페이지 다시 확인」을 눌러도 우리 대조 기준은 여전히 비어 있어
+     「아직 내용 없음 (홈페이지 다시 확인 전)」이라고 거꾸로 적었다. status(=noBase)를
+     먼저 보게 고쳤는지 확인한다. */
+  const ctx = box();
+  ctx.App = {
+    group: 'work', pages: {},
+    check: { pages: { work1: { status: 'noBase', reason: '기준 없음 — 홈페이지에서 읽어온 내용을 기준으로 삼으십시오' } } }
+  };
+  run(ctx, constSource('PAGE_IDS') + '\n' + fnSource('pageIdsOf') + '\n' + fnSource('pageRows'));
+  const rows = ctx.pageRows('work');
+  const w1 = rows.find(r => r.key === 'work1');
+  assert.equal(w1.status, 'noBase');
+  assert.doesNotMatch(w1.desc, /다시 확인 전/,
+    '방금 확인했는데 「다시 확인 전」이라고 거꾸로 적었습니다');
+  assert.match(w1.desc, /기준 없음/, '기준이 없다는 안내가 목록 줄에 안 보입니다');
 });
 
 test('★ 「홈페이지 다시 확인」이 줄 목록도 함께 채운다 (표본으로 돌려서 확인)', async () => {
@@ -1237,6 +1276,100 @@ test('★ 홈페이지에서 못 읽은 쪽은 목록에 그렇게 적힌다 (�
   const h = ctx.listHtml();
   assert.match(h, /못 읽/, '못 읽은 쪽인지 알 수 없습니다');
   assert.ok(h.indexOf('자문서비스') >= 0, '못 읽었다고 목록에서 사라지면 안 됩니다');
+});
+
+/* ══════ ③-보강: 「쪽 목록」을 «못 읽은» 채로 추가·분리하면 사장님 설정을 덮어쓴다 ══════
+   실제로 재현된 상황: 자료에는 work1,work2,work4,work5a,work5b,inquiry,greeting,work6
+   (사장님이 work3 를 분리하고 work6 를 추가해 둔 상태)이 있는데, 「쪽 목록」 읽기만 실패하면
+   loadAll() 이 그 실패를 기본 8쪽과 갈라 보지 않아 addPage/detachPage 가 기본 8쪽 위에
+   set() 을 해 버렸다 — work6 가 사라지고 work3 분리도 없던 일이 됐는데 화면은
+   「…목록에 넣었습니다」라고 성공했다고 말했다. loadAll() 을 «실제로 돌려서» 확인한다. */
+function loadAllBox(dbRef) {
+  const ctx = box();
+  ctx.saved = [];
+  ctx.said = [];
+  ctx.db = { ref: p => (dbRef ? dbRef(p, ctx) : { once: () => Promise.resolve({ val: () => null }) }) };
+  ctx.alert = m => { ctx.said.push(String(m)); };
+  ctx.confirm = () => true;
+  ctx.toast = m => { ctx.said.push(String(m)); };
+  ctx.App = {
+    group: 'members', pick: '', me: null, myName: '', isAdmin: null,
+    members: {}, pages: {}, staff: null, staffErr: '', lineFormat: 'plain',
+    pageConfig: {}, pageLines: {}, pageConfigUnread: false,
+    dataErr: '', saveErr: '', check: null, loading: true, draft: null, dirty: false,
+    render() {}
+  };
+  run(ctx, constSource('PAGE_IDS') + '\n' + fnSource('dataErrText') + '\n'
+    + fnSource('readRosterAt') + '\n' + fnSource('readRosterSource') + '\n'
+    + fnSource('staffFromRoster') + '\n' + fnSource('isPageName') + '\n'
+    + fnSource('syncPageConfig') + '\n' + fnSource('savePageConfig') + '\n'
+    + fnSource('refuseIfPageConfigUnread') + '\n' + fnSource('addPage') + '\n'
+    + fnSource('canDetachPage') + '\n' + fnSource('detachPage') + '\n'
+    + fnSource('pageIdsOf') + '\n' + fnSource('memberRows') + '\n' + fnSource('pageRows') + '\n'
+    + fnSource('rowsOf') + '\n' + fnSource('firstPickOf') + '\n' + fnSource('loadDraft') + '\n'
+    + fnSource('loadAll') + '\n'
+    + expose('PAGE_IDS') + expose('PAGE_LABEL') + expose('DEFAULT_PAGES'));
+  return ctx;
+}
+
+test('★ 「쪽 목록」읽기가 실패하면(자료가 없는 게 아니라 못 읽은 것) App 에 남는다', async () => {
+  const ctx = loadAllBox((p) => {
+    if (p === 'homepage/config/pages') return { once: () => Promise.reject({ code: 'PERMISSION_DENIED' }) };
+    return { once: () => Promise.resolve({ val: () => null }) };
+  });
+  await ctx.loadAll();
+  assert.equal(ctx.App.pageConfigUnread, true,
+    '읽기가 실패했는데 「못 읽음」이 App 에 안 남았습니다');
+  assert.match(ctx.App.dataErr, /쪽 목록/, '못 읽은 자리(쪽 목록)가 안내에 빠졌습니다');
+});
+
+test('★ 「쪽 목록」을 못 읽은 채로는 「＋ 쪽 추가」가 거절되고 이유를 말한다 — 저장하지 않는다', async () => {
+  const ctx = loadAllBox((p) => {
+    if (p === 'homepage/config/pages') return { once: () => Promise.reject({ code: 'PERMISSION_DENIED' }) };
+    return { once: () => Promise.resolve({ val: () => null }) };
+  });
+  await ctx.loadAll();
+  assert.equal(ctx.App.pageConfigUnread, true);
+
+  const 답 = ['work6', '중대재해 대응'];
+  let i = 0;
+  ctx.prompt = () => 답[i++];
+  await ctx.addPage();
+  assert.equal(ctx.saved.length, 0,
+    '못 읽은 채로 「＋ 쪽 추가」가 자료를 덮어썼습니다 — 사장님이 저장해 둔 목록이 지워집니다');
+  assert.ok(ctx.said.some(m => /못 읽/.test(m)), '왜 추가하지 않았는지 말하지 않았습니다');
+});
+
+test('★ 「쪽 목록」을 못 읽은 채로는 「목록에서 분리」도 거절된다 — 저장하지 않는다', async () => {
+  const ctx = loadAllBox((p) => {
+    if (p === 'homepage/config/pages') return { once: () => Promise.reject({ code: 'PERMISSION_DENIED' }) };
+    return { once: () => Promise.resolve({ val: () => null }) };
+  });
+  await ctx.loadAll();
+  await ctx.detachPage('work1');
+  assert.equal(ctx.saved.length, 0,
+    '못 읽은 채로 「목록에서 분리」가 자료를 덮어썼습니다');
+  assert.ok(ctx.said.some(m => /못 읽/.test(m)), '왜 분리하지 않았는지 말하지 않았습니다');
+});
+
+test('★ 「쪽 목록」을 «정상적으로» 읽으면(자료가 있든 없든) 추가·분리를 그대로 허용한다', async () => {
+  const ctx = loadAllBox((p, c) => {
+    if (p === 'homepage/config/pages') {
+      return {
+        once: () => Promise.resolve({ val: () => ({ work1: { label: '자문서비스', order: 1 } }) }),
+        set: v => { c.saved.push({ path: p, value: v }); return Promise.resolve(); }
+      };
+    }
+    return { once: () => Promise.resolve({ val: () => null }) };
+  });
+  await ctx.loadAll();
+  assert.equal(ctx.App.pageConfigUnread, false, '정상 읽기인데 못 읽음으로 남았습니다');
+
+  const 답 = ['work6', '중대재해 대응'];
+  let i = 0;
+  ctx.prompt = () => 답[i++];
+  await ctx.addPage();
+  assert.equal(ctx.saved.length, 1, '정상 읽기인데도 추가가 막혔습니다');
 });
 
 /* ══════ ④ 퇴사자 예외와 「명부에 없음」 보이기 ══════ */

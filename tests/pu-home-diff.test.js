@@ -322,6 +322,38 @@ test('keepOnSite 가 없으면 지금처럼 퇴사 판정이 toRemove 로 그대
   assert.equal(r.status, 'toRemove');
 });
 
+/* 사유 없는 예외는 거절한다 — keepOnSite 가 객체이기만 하면(사유가 비어 있어도)
+   퇴사 딱지를 떼 주던 자리(pu-home-diff.js:keepOnSiteReason). 설계(§4)는 「사유를
+   반드시 적게 한다」고 못 박았다 — 왜 남겼는지 알 수 없는 예외는 위험하다. 화면은
+   사유를 강제해 입력하지만, 부품(memberStatus)이 안 막으면 화면을 거치지 않고
+   {}/[] 를 직접 써 넣었을 때 조용히 뚫린다. */
+test('★ keepOnSite:{} 처럼 사유(why)가 없으면 예외로 보지 않고 toRemove 를 그대로 붙인다', () => {
+  const ours = [{ key: '999', srl: '999', name: '장한돌', position1: '세종지사장', position2: '공인노무사',
+                  careers: [], keepOnSite: {} }];
+  const live = [{ srl: '999', name: '장한돌', position1: '세종지사장', position2: '공인노무사', careers: [] }];
+  const staff = [{ name: '장한돌', leftAt: '2023-12-31' }];
+  const r = D.memberStatus(ours, live, staff, TODAY)[0];
+  assert.equal(r.status, 'toRemove', '사유 없는 keepOnSite:{} 는 예외가 아니다');
+});
+
+test('★ keepOnSite:[] (빈 배열)도 사유가 없으므로 예외로 보지 않는다', () => {
+  const ours = [{ key: '999', srl: '999', name: '장한돌', position1: '세종지사장', position2: '공인노무사',
+                  careers: [], keepOnSite: [] }];
+  const live = [{ srl: '999', name: '장한돌', position1: '세종지사장', position2: '공인노무사', careers: [] }];
+  const staff = [{ name: '장한돌', leftAt: '2023-12-31' }];
+  const r = D.memberStatus(ours, live, staff, TODAY)[0];
+  assert.equal(r.status, 'toRemove', '사유 없는 keepOnSite:[] 는 예외가 아니다');
+});
+
+test('★ keepOnSite.why 가 공백뿐이면 tidy 후 빈 사유이므로 예외로 보지 않는다', () => {
+  const ours = [{ key: '999', srl: '999', name: '장한돌', position1: '세종지사장', position2: '공인노무사',
+                  careers: [], keepOnSite: { at: '2026-08-17', by: '관리자', why: '   ' } }];
+  const live = [{ srl: '999', name: '장한돌', position1: '세종지사장', position2: '공인노무사', careers: [] }];
+  const staff = [{ name: '장한돌', leftAt: '2023-12-31' }];
+  const r = D.memberStatus(ours, live, staff, TODAY)[0];
+  assert.equal(r.status, 'toRemove', '공백뿐인 사유는 사유가 아니다');
+});
+
 /* ══════ 2차 설계 — 「명부에 없는 사람」 (§4-나) ══════
    조현범 대전지사장이 실제로 이 경우다: 급여 명부(32명)에 이름 자체가 없다.
    지금은 조용히 입·퇴사 판정을 안 한다 — 왜 경고가 없는지 사장님이 알 수 없다. */
