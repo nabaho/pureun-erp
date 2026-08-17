@@ -114,6 +114,37 @@ test('한 칸에 여러 쪽지가 오면 마지막 값으로 본다', () => {
   assert.strictEqual(h17.total, 60, '100 → 160 이어야 한다');
 });
 
+test('그 시각의 «누적액» 을 낸다 — 증가분과 다른 것이다', () => {
+  /* 대표 지시: "몇 시에 체크 시 «얼마» 그리고 «얼마 상승»" — 둘 다 있어야 한다. */
+  const b = B.hourBuckets({
+    total: { [T(16, 10)]: 100, [T(17, 5)]: 150 }
+  }, { tz: 0 });
+  const h17 = b.filter((x) => /T17$/.test(x.hour))[0];
+  assert.strictEqual(h17.cum, 150, '17시 누적액');
+  assert.strictEqual(h17.total, 50, '17시 증가분');
+  assert.notStrictEqual(h17.cum, h17.total, '누적액과 증가분이 같은 값이면 하나를 베낀 것이다');
+});
+
+test('첫 칸에도 누적액은 «있다» — 증가분만 모르는 것이다', () => {
+  /* 쪽지 하나면 누적액은 알 수 있다. 앞 칸을 알아야 하는 것은 증가분뿐이다.
+     여기를 함께 「모른다」로 묶으면 오늘 켠 날 표가 통째로 빈다. */
+  const b = B.hourBuckets({ total: { [T(16, 0)]: 100 } }, { tz: 0 });
+  assert.strictEqual(b[0].cumKnown, true, '첫 칸 누적액을 모른다고 한다');
+  assert.strictEqual(b[0].cum, 100);
+  assert.strictEqual(b[0].known.total, false, '첫 칸 증가분을 안다고 한다');
+});
+
+test('쪽지 없는 칸의 누적액은 앞 값을 끌어다 쓰지 않는다', () => {
+  /* 「그 시각에 그랬다」가 아니라 「그 뒤로 소식이 없다」일 뿐이다.
+     끌어다 쓰면 «실제로는 더 썼는데» 안 늘어난 것처럼 보인다. */
+  const b = B.hourBuckets({
+    total: { [T(16, 0)]: 100, [T(18, 0)]: 300 }
+  }, { tz: 0 });
+  const h17 = b.filter((x) => /T17$/.test(x.hour))[0];
+  assert.strictEqual(h17.cumKnown, false, '17시에 소식이 없었는데 안다고 한다');
+  assert.strictEqual(h17.cum, null);
+});
+
 test('첫 칸에는 증가분이 없다 — 0 이 아니다', () => {
   /* 앞이 없으니 「얼마 늘었나」를 모른다. 0 으로 적으면 「안 늘었다」로 읽힌다. */
   const buckets = B.hourBuckets({ total: { [T(16, 0)]: 100 } }, { tz: 0 });
@@ -189,9 +220,77 @@ const PORTAL = fs.readFileSync(path.join(ROOT, 'enter.html'), 'utf8');
 const bare = (s) => s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
 const P = bare(PORTAL);
 
-test('칸이 둘이다 (지금 · 기록)', () => {
-  assert.strictEqual(/id="billTabNow"/.test(P), true);
-  assert.strictEqual(/id="billTabHist"/.test(P), true);
+test('한 화면에 다 보인다 — 오갈 칸이 없다', () => {
+  /* 대표 지시(2026-08-17): "계속 클릭해서 보는게 불편하다.
+     한번 클릭으로 실시간 변화 등을 한번에 보고 싶다."
+     ★ 「지금」과 「기록」을 나누던 칸 단추가 «없어야» 한다. */
+  assert.strictEqual(/billTabNow|billTabHist/.test(P), false, '아직 칸 단추가 남아 있다');
+  assert.strictEqual(/id="billPaneNow"/.test(P), true);
+  assert.strictEqual(/id="billPaneHist"/.test(P), true);
+  // 둘 중 하나를 숨겨 두면 「한 화면」이 아니다
+  const now = P.slice(P.indexOf('id="billPaneNow"') - 40, P.indexOf('id="billPaneNow"') + 40);
+  const hist = P.slice(P.indexOf('id="billPaneHist"') - 40, P.indexOf('id="billPaneHist"') + 40);
+  assert.strictEqual(/display:\s*none/.test(now), false, '「지금」이 숨겨져 있다');
+  assert.strictEqual(/display:\s*none/.test(hist), false, '「기록」이 숨겨져 있다');
+});
+
+test('열면 시간별까지 «함께» 읽는다 — 한 번 클릭이다', () => {
+  /* 여는 함수가 기록을 안 부르면, 칸만 없앤 채 오른쪽이 영영 빈다. */
+  const fn = P.slice(P.indexOf('function billOpen'), P.indexOf('function billOpen') + 500);
+  assert.strictEqual(/billHistLoad\(\)/.test(fn), true, '열 때 기록을 안 읽는다');
+});
+
+test('항목 넷을 «한 표에» 늘어놓는다 — 두 번 그리지 않는다', () => {
+  /* 전에는 「지금」과 「시간당」이 각각 항목 넷을 늘어놓아 눈이 두 번 움직였다. */
+  assert.strictEqual(/id="billRate"/.test(P), false, '옛 시간당 표가 남아 있다');
+  assert.strictEqual(/id="billItems"/.test(P), true);
+  const fn = P.slice(P.indexOf('function billPaintItems'), P.indexOf('function billPaintItems') + 1800);
+  assert.strictEqual(/'지금까지'|>지금까지</.test(fn), true, '「지금까지」 열이 없다');
+  assert.strictEqual(/'시간당'|>시간당</.test(fn), true, '「시간당」 열이 없다');
+});
+
+/* 함수 «몸통만» 떼어낸다 — 창을 글자수로 잡으면 다음 함수까지 넘어가고,
+   그러면 「함수 정의」를 「호출」로 착각한다(2026-08-17 실제로 당했다). */
+function body(name) {
+  const a = P.indexOf('function ' + name);
+  if (a < 0) return '';
+  const b = P.indexOf('\n  function ', a + 5);
+  return P.slice(a, b < 0 ? P.length : b);
+}
+
+test('한쪽 값이 늦게 와도 다른 쪽을 지우지 않는다', () => {
+  /* 「지금까지」는 구독으로, 「시간당」은 기록에서 온다 — «도착 때가 다르다».
+     둘 다 같은 함수가 그려야 나중에 온 쪽이 먼저 온 쪽을 지우지 않는다.
+     ※ 「billPaintItems()」만 찾으면 함수 «정의» 가 걸린다 — 세미콜론까지 본다. */
+  assert.strictEqual(/billPaintItems\(\);/.test(body('billPaintModal')), true,
+    '구독 쪽이 항목 표를 안 그린다');
+  const hist = body('billPaintHist');
+  const after = hist.slice(hist.indexOf('hourlyRates(rows)'));
+  assert.strictEqual(/billPaintItems\(\);/.test(after), true,
+    '시간당을 낸 뒤 항목 표를 안 그린다');
+});
+
+test('「모르는 시간을 셈에서 뺐다」를 시간당 옆에 적는다', () => {
+  /* 이 말이 없으면 낮게 나온 숫자를 그대로 믿고 안심한다.
+     ※ 「칸 읽는 법」의 「소식이 없어」와 «다른» 문구다 — 하나로 갈음할 수 없다. */
+  const it = body('billPaintItems');
+  assert.strictEqual(/셈에서 뺐습니다/.test(it), true, '시간당 옆 안내가 없다');
+  assert.strictEqual(/«낮게»|낮게/.test(it), true, '「낮게 나온다」는 말이 없다');
+});
+
+test('기록이 비면 시간당도 함께 지운다', () => {
+  /* 기간을 「어제」로 바꿨는데 어제 기록이 없으면, 오늘 것으로 낸 시간당이
+     그대로 남아 «어제 값인 척» 한다. */
+  const fn = P.slice(P.indexOf('function billPaintHist'), P.indexOf('function billPaintHist') + 2600);
+  const empty = fn.slice(fn.indexOf('아직 쌓인 기록이 없습니다'), fn.indexOf('아직 쌓인 기록이 없습니다') + 300);
+  assert.strictEqual(/_billRates\s*=\s*null/.test(empty), true, '옛 시간당이 남는다');
+});
+
+test('좁은 화면에서는 위아래로 접힌다', () => {
+  /* 780px 를 그대로 밀어붙이면 노트북·휴대폰에서 표가 짜부라진다. */
+  const css = P.slice(P.indexOf('#billModal .bcols'), P.indexOf('#billModal .bwhen'));
+  assert.strictEqual(/@media/.test(css), true, '좁은 화면 대비가 없다');
+  assert.strictEqual(/flex-direction:\s*column/.test(css), true, '접히지 않는다');
 });
 
 test('항목 넷이 모두 열로 있다', () => {
@@ -204,6 +303,15 @@ test('항목 넷이 모두 열로 있다', () => {
 test('0 과 「—」 뜻풀이가 표에 붙어 있다', () => {
   /* 안 적으면 「0」과 「모른다」를 같은 것으로 읽는다 */
   assert.strictEqual(/소식이 없어/.test(P), true);
+});
+
+test('「전체」 열에 실제 값이 들어간다', () => {
+  /* ★ 열 이름만 있고 값은 «늘 비어» 있던 자리다(2026-08-17 발견).
+     대표 지시의 「몇 시에 «얼마»」가 바로 이 열이다 — 비어 있으면 지시의 절반이 없는 것이다. */
+  const fn = P.slice(P.indexOf('function billPaintHist'), P.indexOf('function billPaintHist') + 2600);
+  const row = fn.slice(fn.indexOf("':00</td>'"), fn.indexOf("':00</td>'") + 500);
+  assert.strictEqual(/cumKnown/.test(row), true, '누적값을 안 쓴다');
+  assert.strictEqual(/fmtWon\(\s*b\.cum\s*\)/.test(row), true, '누적값을 그리지 않는다');
 });
 
 test('기록이 켜는 날부터 쌓인다고 «두 곳에서» 말한다', () => {

@@ -243,10 +243,16 @@
     var seen = {};        // seen[key] = 마지막으로 알던 금액
     var out = [];
     order.forEach(function (h) {
-      var row = { hour: h, total: null, parts: {}, known: {} };
+      var row = { hour: h, total: null, cum: null, cumKnown: false, parts: {}, known: {} };
       KEYS.forEach(function (k) {
         var cur = last[k][h];
         if (!cur) { row.known[k] = false; if (k !== 'total') row.parts[k] = null; return; }
+        /* 「몇 시에 «얼마»」 — 그 시각의 누적 전체액.
+           ⚠ 증가분(row.total)과 «다른 것» 이다. 증가분은 앞 칸을 알아야 나오지만
+             누적액은 쪽지 하나로 알 수 있다 — 그래서 «첫 칸에도» 뜬다.
+           ⚠ 쪽지 없는 칸은 앞 값을 끌어다 쓰지 않는다. 「그 시각에 그랬다」가 아니라
+             「그 뒤로 소식이 없다」일 뿐이고, 실제로는 그 이상일 수 있다. */
+        if (k === 'total') { row.cum = cur.v; row.cumKnown = true; }
         var was = seen[k];
         if (was === undefined) { row.known[k] = false; if (k !== 'total') row.parts[k] = null; }
         else {
