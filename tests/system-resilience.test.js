@@ -69,7 +69,13 @@ test('government consulting requires a live server lock before editing', () => {
   assert.match(src, /async function acquireCompanyEditLock\(coId\)[\s\S]*?if\(!FB_READY\|\|!_fbDB\)[\s\S]*?return false/);
   assert.match(src, /ref\.onDisconnect\(\)\.remove\(\)/);
   assert.match(src, /async function verifyCompanyEditLock\(coId\)/);
-  assert.match(src, /cur&&cur\.tabId===EDIT_TAB_ID&&_editLockFresh\(cur\)/);
+  /* 2026-08-17 재조정 — 여기서 «버그의 모양» 을 못 박고 있었다.
+     옛 검사: /cur&&cur.tabId===EDIT_TAB_ID&&_editLockFresh\(cur\)/
+     그 식이 바로 「내 잠금이 낡거나 사라지면 저장을 막는」 고장이었는데,
+     검사가 그 모양을 요구해서 «고치면 검사가 깨지는» 상태였다.
+     지킬 규칙은 「저장 전에도 서버 잠금을 다시 확인한다」이지, 그 식이 아니다.
+     자세한 규칙(누구를 막고 누구를 통과시키나)은 tests/gov-edit-lock.test.js 가 본다. */
+  assert.match(src, /verifyCompanyEditLock[\s\S]*?_editLockRef\.transaction\(/);
   assert.match(src, /if\(_editLockCo===coId\)return verifyCompanyEditLock\(coId\)/);
 });
 

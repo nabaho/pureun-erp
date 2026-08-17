@@ -1649,7 +1649,20 @@ function _editLockRecord(coId){return {tabId:EDIT_TAB_ID,coId:coId,owner:_editLo
 function _readLocalEditLock(coId){try{return JSON.parse(localStorage.getItem(_editLockLocalKey(coId))||'null');}catch(e){return null;}}
 function _writeLocalEditLock(coId){try{localStorage.setItem(_editLockLocalKey(coId),JSON.stringify(_editLockRecord(coId)));}catch(e){}}
 function _removeLocalEditLock(coId){try{const v=_readLocalEditLock(coId);if(!v||v.tabId===EDIT_TAB_ID)localStorage.removeItem(_editLockLocalKey(coId));}catch(e){}}
-function _editLockedMessage(v){return `${(v&&v.owner)||'다른 사용자'}님이 이 사업장을 다른 창에서 편집 중입니다. 잠시 후 다시 시도하세요.`;}
+/* ★ 잠금을 «가져올 수 있나» — 한 규칙으로 모은다.
+   막아야 하는 경우는 «남의 창이 아직 살아서 잡고 있을 때» 하나뿐이다.
+   ⚠ 전에는 저장 전 확인(verify)만 더 엄했다(내 것 «그리고» 신선할 때만 통과).
+     그래서 내 잠금이 사라지거나(연결 끊김·onDisconnect) 낡으면
+     — 아무도 안 잡고 있는데도 — 「다른 사용자가 편집 중」이라며 저장을 막았다
+     (2026-08-17: 서버에 살아 있는 잠금이 하나도 없는데 김동현이 이 문구로 막혔다).
+   ⚠ 배경 탭은 브라우저가 타이머를 1분 이상으로 늦춘다 — 심장박동 12초는 그때 안 뛴다.
+     그러니 「내 것이 낡았다」는 흔한 일이고, 저장을 막을 이유가 아니다. */
+function _canTakeEditLock(cur){ return !_editLockFresh(cur) || cur.tabId===EDIT_TAB_ID; }
+function _editLockedMessage(v){
+  if(v&&v.owner)return `${v.owner}님이 이 사업장을 다른 창에서 편집 중입니다. 잠시 후 다시 시도하세요.`;
+  /* 누가 잡고 있는지 «모를» 때 「다른 사용자」라고 하면 거짓말이다 — 남 탓하지 않는다. */
+  return '편집 권한이 만료되었습니다. 창을 닫고 다시 열어 주세요.';
+}
 function _loseCompanyEditLock(v){
   const coId=_editLockCo;if(!coId)return;
   if(_editLockTimer){clearInterval(_editLockTimer);_editLockTimer=null;}
@@ -1657,7 +1670,7 @@ function _loseCompanyEditLock(v){
   _removeLocalEditLock(coId);
   _editLockCo='';_editLockRef=null;
   _editLockRemoteHandler=null;
-  setSaveState('locked','다른 창 편집 중',_editLockedMessage(v));
+  setSaveState('locked',(v&&v.owner)?'다른 창 편집 중':'편집 권한 만료',_editLockedMessage(v));
   toast('🔒 '+_editLockedMessage(v),'err');
   ['mbSingle','mbEdit','mbCo'].forEach(id=>{const el=q('#'+id);if(el)el.classList.remove('open');});
 }
@@ -1666,7 +1679,8 @@ function _startCompanyEditHeartbeat(){
   _editLockTimer=setInterval(()=>{
     if(!_editLockCo)return;
     _writeLocalEditLock(_editLockCo);
-    if(_editLockRef)_editLockRef.transaction(cur=>(cur&&cur.tabId===EDIT_TAB_ID)?_editLockRecord(_editLockCo):undefined,undefined,false).catch(()=>{});
+    /* 잠금이 사라졌으면 «다시 세운다» — 전에는 못 세워서 그대로 잃었다 */
+    if(_editLockRef)_editLockRef.transaction(cur=>_canTakeEditLock(cur)?_editLockRecord(_editLockCo):undefined,undefined,false).catch(()=>{});
   },EDIT_LOCK_HEARTBEAT);
 }
 async function acquireCompanyEditLock(coId){
@@ -1683,7 +1697,7 @@ async function acquireCompanyEditLock(coId){
   _writeLocalEditLock(coId);
   try{
     const ref=_fbDB.ref('activeWriter/gov_consulting/'+coId);
-    const result=await ref.transaction(cur=>(!_editLockFresh(cur)||cur.tabId===EDIT_TAB_ID)?_editLockRecord(coId):undefined,undefined,false);
+    const result=await ref.transaction(cur=>_canTakeEditLock(cur)?_editLockRecord(coId):undefined,undefined,false);
     if(!result.committed){const holder=result.snapshot&&result.snapshot.val();_removeLocalEditLock(coId);setSaveState('locked','다른 창 편집 중',_editLockedMessage(holder));toast('🔒 '+_editLockedMessage(holder),'err');return false;}
     _editLockRef=ref;
     try{ref.onDisconnect().remove();}catch(e){}
@@ -1706,7 +1720,9 @@ async function verifyCompanyEditLock(coId){
     return false;
   }
   try{
-    const result=await _editLockRef.transaction(cur=>(cur&&cur.tabId===EDIT_TAB_ID&&_editLockFresh(cur))?_editLockRecord(coId):undefined,undefined,false);
+    /* ★ 획득과 «같은 규칙» 을 쓴다 — 남의 살아 있는 잠금만 막는다.
+       전에는 여기만 엄해서, 내 잠금이 사라지거나 낡으면 저장이 막혔다. */
+    const result=await _editLockRef.transaction(cur=>_canTakeEditLock(cur)?_editLockRecord(coId):undefined,undefined,false);
     if(result.committed){_writeLocalEditLock(coId);return true;}
     const holder=result.snapshot&&result.snapshot.val();
     _loseCompanyEditLock(holder);
