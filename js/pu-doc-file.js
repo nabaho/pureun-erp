@@ -294,7 +294,12 @@
     /* 뒷면 사본은 `{id}_b` 자리에 — 명함첩 편집기·상세보기가 보는 자리와 같다.
        (명함첩이 자기 카메라로 찍던 시절부터 쓰던 자리라 화면은 안 고쳐도 된다) */
     if (o.full2) u[CARDS_ROOT + '/photos/' + id + '_b'] = o.full2;
-    var label = want === 'biz' ? '사업자등록증' : '명함';
+    /* 무엇으로 넣었는지 — **판독이 읽어 온 제목 그대로** 말한다(대표 지적 2026-08-17).
+       사업자등록증명(국세청 증명원)을 넣고도 「사업자등록증으로 넣었습니다」라고
+       하면 다른 서류가 들어간 줄 안다. 둘은 같은 갈래(bizreg)로 다뤄 같은 자리에
+       쌓이는 것이 맞지만, **말은 실제 서류 이름이어야 한다.** */
+    var docName = String((o.fields && o.fields.docName) || '').trim();
+    var label = docName || (want === 'biz' ? '사업자등록증' : '명함');
     return deps.db.ref().update(u).then(function () {
       return {
         id: id, created: true, filled: [],

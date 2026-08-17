@@ -1085,7 +1085,10 @@ test('판독 결과도 이스케이프해서 화면에 넣는다', () => {
 /* ── 명함첩으로 보내기 ── */
 
 test('등록 층을 불러오고, 명함첩 구조는 화면이 모른다', () => {
-  assert.match(app, /<script src="js\/pu-doc-file\.js"><\/script>/);
+  /* ⚠ ?v= 없는 모양을 그대로 보던 검사였다 — 2026-08-17 등록 층을 고치며 캐시
+     방지 ?v= 를 붙이자 멀쩡한 코드에서 터졌다(pu-doc-read 때와 같은 함정).
+     볼 것은 「등록 층을 싣는가」이지 주소 뒤에 무엇이 붙었는가가 아니다. */
+  assert.match(app, /<script src="js\/pu-doc-file\.js(\?v=\d+)?"><\/script>/);
   assert.match(app, /PuDocFile\.sendToCards\(/);
   // 화면에 명함첩 루트 이름이 들어오면 실데이터 가드가 깨지고,
   // 명함첩 구조가 두 곳에 흩어져 한쪽만 고쳐진다
