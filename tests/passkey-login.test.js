@@ -26,7 +26,12 @@ t('★ 서버가 보는 주소', /const RP_ID = "nabaho\.github\.io";/.test(SRV)
 t('★ 서버가 받아 주는 출처', /const ORIGIN = "https:\/\/nabaho\.github\.io";/.test(SRV), true);
 t('서버 리전(서울)', /const REGION = "asia-northeast3";/.test(SRV), true);
 t('★ 화면이 부르는 주소가 그 리전과 같다', /https:\/\/asia-northeast3-pureun-erp\.cloudfunctions\.net/.test(CLI), true);
-t('다섯 창구 모두 그 리전에 둔다', (SRV.match(/functions\.region\(REGION\)\.https\.onRequest/g) || []).length, 5);
+/* ⚠ 「다섯 창구」라고 개수를 못 박았었다. 창구가 하나 늘면 — 같은 리전에 제대로
+   둬도 — 검사가 막고, 반대로 창구 하나가 리전을 빠뜨려도 «다른 것이 다섯이면»
+   통과한다. 지키려는 것은 **「리전 없이 열린 창구가 없다」**이다.
+   리전이 어긋나면 등록한 지문이 통째로 무효가 된다. */
+t('창구가 있다', (SRV.match(/functions\.region\(REGION\)\.https\.onRequest/g) || []).length >= 1, true);
+t('★ 리전 없이 열린 창구가 없다', /functions\.https\.onRequest/.test(SRV), false);
 
 console.log('\n[② 남의 말을 그대로 믿지 않는다]');
 t('★ 도전값은 서버가 만들어 서버에 둔다', /await putChallenge\("reg", sid, options\.challenge\)/.test(SRV), true);
@@ -40,10 +45,23 @@ t('★ 등록용과 로그인용 도전값을 갈라 둔다', /pathSafe\(kind \+
 console.log('\n[③ 서명을 실제로 따져 본다]');
 t('등록 서명 확인', /await verifyRegistrationResponse\(\{/.test(SRV), true);
 t('로그인 서명 확인', /await verifyAuthenticationResponse\(\{/.test(SRV), true);
-t('★ 우리 주소에서 온 것만 받는다', (SRV.match(/expectedOrigin: ORIGIN/g) || []).length, 2);
-t('★ 우리 도메인 것만 받는다', (SRV.match(/expectedRPID: RP_ID/g) || []).length, 2);
-/* ★ 본인 확인(지문·얼굴·잠금번호) 없이 통과시키면 「간편」이 아니라 「무방비」다 */
-t('★ 본인 확인을 반드시 거치게 한다', (SRV.match(/requireUserVerification: true/g) || []).length, 2);
+/* ⚠ 예전에는 「두 곳」이라고 **개수**를 못 박았다. 서명을 따지는 창구가 하나
+   늘면 — 규칙을 제대로 지켜 늘려도 — 검사가 막았다. 더 나쁜 것은 그 반대다:
+   창구가 셋이 되고 그중 하나만 규칙을 빠뜨려도 «다른 곳이 두 번 나오면» 통과한다.
+   그래서 개수가 아니라 **서명을 따지는 자리마다 하나하나** 본다.
+   ★ 본인 확인(지문·얼굴·잠금번호) 없이 통과시키면 「간편」이 아니라 「무방비」다. */
+function 서명자리들(){
+  const out = [];
+  const re = /await verify(?:Registration|Authentication)Response\(\{/g;
+  let m;
+  while((m = re.exec(SRV))) out.push(SRV.slice(m.index, m.index + 700));
+  return out;
+}
+const 자리 = 서명자리들();
+t('서명을 따지는 자리가 있다', 자리.length >= 2, true);
+t('★ 우리 주소에서 온 것만 받는다', 자리.every(s => /expectedOrigin: ORIGIN/.test(s)), true);
+t('★ 우리 도메인 것만 받는다', 자리.every(s => /expectedRPID: RP_ID/.test(s)), true);
+t('★ 본인 확인을 반드시 거치게 한다', 자리.every(s => /requireUserVerification: true/.test(s)), true);
 t('★ 만들 때부터 본인 확인을 요구한다', /userVerification: "required"/.test(SRV), true);
 
 console.log('\n[④ 복제된 기기를 걸러 낸다]');

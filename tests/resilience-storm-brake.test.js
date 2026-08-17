@@ -18,6 +18,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { cutFn } = require('./cut-fn');
 const src = fs.readFileSync(path.join(__dirname, '..', 'js', 'pu-resilience.js'), 'utf8');
 const resilience = require('../js/pu-resilience.js');
 
@@ -54,10 +55,12 @@ test('다시 보내기 사이 최소 간격이 있다', () => {
 });
 
 test('replayQueue 가 간격 안에 다시 불리면 그냥 돌아간다', () => {
-  const at = src.indexOf('function replayQueue(');
-  const head = src.slice(at, at + 600);
-  assert.match(head, /lastReplayAt/, '지난번 언제 보냈는지 안 본다');
-  assert.match(head, /REPLAY_MIN_GAP_MS/, '간격을 안 지킨다');
+  /* ⚠ 예전에는 앞 600자만 봤다(함수는 2,683자). 「간격 확인이 앞에 있다」는 것은
+     바로 아래 검사가 «차례»로 따로 못 박고 있으니, 여기서는 함수 전체에
+     그 장치가 «있는가»만 본다 — 자리를 옮겼다고 깨질 이유가 없다. */
+  const fn = cutFn(src, 'function replayQueue(');
+  assert.match(fn, /lastReplayAt/, '지난번 언제 보냈는지 안 본다');
+  assert.match(fn, /REPLAY_MIN_GAP_MS/, '간격을 안 지킨다');
 });
 
 test('간격 확인이 «먼저»다 — 대기줄을 읽기 전에 돌아가야 헛일이 없다', () => {
@@ -73,8 +76,7 @@ test('간격 확인이 «먼저»다 — 대기줄을 읽기 전에 돌아가야
 
 test('연결·로그인 신호에는 여전히 다시 보내기가 걸려 있다', () => {
   /* 고리를 끊는다고 신호 자체를 떼면, 오프라인에서 돌아와도 밀린 저장이 안 나간다. */
-  const at = src.indexOf('function bindApp(');
-  const fn = src.slice(at, at + 500);
+  const fn = cutFn(src, 'function bindApp(');
   assert.match(fn, /onAuthStateChanged/, '로그인 때 다시 보내기가 없어졌다');
   assert.match(fn, /\.info\/connected/, '재연결 때 다시 보내기가 없어졌다');
 });

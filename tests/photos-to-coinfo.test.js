@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { cutFn } = require('./cut-fn');
 const src  = fs.readFileSync(path.join(__dirname, '..', 'js', 'pu-doc-file.js'), 'utf8');
 const html = fs.readFileSync(path.join(__dirname, '..', 'pu-photos.html'), 'utf8');
 
@@ -176,6 +177,7 @@ test('사진 번호가 없으면 서류 기록도 안 남긴다', async () => {
 });
 
 test('사진첩이 사진 번호·연도·주인을 함께 넘긴다', () => {
-  const at = html.indexOf('function sendCoInfo(');
-  assert.match(html.slice(at, at + 900), /photo: \{ year: gridYear, id: id, owner: photoOwner\(id\)/);
+  /* ⚠ 예전에는 앞 900자만 봤다(함수는 1,178자) — 함수를 통째로 본다. */
+  assert.match(cutFn(html, 'function sendCoInfo('),
+    /photo: \{ year: gridYear, id: id, owner: photoOwner\(id\)/);
 });
