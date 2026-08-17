@@ -203,6 +203,21 @@ var FIELDS=[['name','기금법인명','text'],['short_name','약칭','text'],['f
   ['tax_office','관할세무서','text'],['registry_office','관할등기소','text'],
   ['labor_office','관할 노동청','text'],['phone','전화','text'],['address','소재지','text']];
 var KEY5=['inka_no','inka_date','corp_reg_no','reg_date','tax_id_no'];
+/* 임원 명부 — 정관 제25조: 이사는 노·사 각 1~3인, **감사는 노·사 각 1인**.
+   직위를 「근로자측 감사」처럼 한 낱말로 담는다. 이미 있는 읽는 쪽들이
+   /이사|감사/ · /사용자/ · /근로자/ · /이사장/ 로 갈라 보고 있어서,
+   측과 직위를 따로 담으면 그 자리들이 조용히 빗나간다. */
+var OFFICER_ROLES=['이사장','사용자측 이사','근로자측 이사','사용자측 감사','근로자측 감사'];
+function _officersOf(f){ return (Array.isArray(f&&f.officers)?f.officers:[]).filter(function(o){ return o&&(o.role||o.name); }); }
+/* 감사보고서는 감사가 **각자** 쓴다 — 노·사 감사가 한 장씩이다.
+   명부에 측이 안 적힌 감사가 있으면 «측 없음»으로 한 장 낸다(빈 서류보다 낫다). */
+function _auditorsOf(f){
+  return _officersOf(f).filter(function(o){ return /감사/.test(o.role||''); })
+    .map(function(o){
+      var r=String(o.role||'');
+      return { side:/사용자/.test(r)?'사용자측':/근로자/.test(r)?'근로자측':'', name:String(o.name||'').trim() };
+    });
+}
 var TABS=[['info','기금 정보',1],['sites','참여사업장',1],['annual','연간 일정',1],['subsidy','지원금',1],
   ['closing','회계·결산',1],['welfare','목적사업·대부',1],['events','변경 이벤트',1]];
   // ※ 옛 'gen'(서류 생성) 비활성 탭 제거 — 실제 경로는 [📑 서식] 탭(docs) 하나뿐(이중 표현 혼선 방지)
@@ -1120,7 +1135,10 @@ function fillRegistry(){
    · 이름·약칭·유형은 신원 필드라 덮어쓰기 모드에서도 채우기만 한다(오인 개명·유형변경 방지).
    · 연도별 데이터(years)·담당(mgr_*)·설립(setup)·계약관계(lifecycle) 등은 아예 손대지 않는다. */
 var IMP_FIELDS=['inka_no','inka_date','corp_reg_no','reg_date','registry_office','tax_id_no','tax_office',
-  'address','phone','chairman','labor_office','fy_start_md','fy_end_md','region'];
+  'address','phone','chairman','labor_office','fy_start_md','fy_end_md','region','officers'];
+/* 글자가 아니라 «줄의 묶음»으로 다뤄야 하는 칸 — 임원 명부가 그렇다.
+   등기부에서 옮긴 명부를 한 번에 넣을 수 있어야, 감사보고서·회의록이 이름을 갖는다. */
+var _IMP_LIST={officers:1};
 /* status는 일부러 제외 — 로컬(파이썬)판의 status('운영'/'기록보관')는 웹에서 쓰지 않는다.
    웹은 계약관계를 lifecycle('계약종료'/'기록보관')로 따로 관리하므로, status를 넣으면 죽은 값만 쌓인다.
    기록보관 지정은 기금 현황의 [계약관계] 드롭다운으로 사람이 판단해 바꾼다. */
@@ -1152,7 +1170,17 @@ function _impPlan(data, over){
     if(!fid){ unmatched.push(rec.name||key); return; }
     var cur=funds[fid]||{}, set={}, names=[];
     IMP_FIELDS.forEach(function(f){
-      var v=rec[f]; if(v==null||String(v).trim()==='') return;
+      var v=rec[f]; if(v==null) return;
+      /* 임원 명부는 «줄의 묶음»이라 글자로 다룰 수 없다 —
+         String() 을 씌우면 [object Object] 가 저장돼 명부가 통째로 망가진다. */
+      if(_IMP_LIST[f]){
+        if(!Array.isArray(v)||!v.length) return;
+        var curL=Array.isArray(cur[f])?cur[f]:[];
+        if(curL.length&&!over) return;                             // 이미 든 명부는 안 덮는다
+        if(JSON.stringify(curL)===JSON.stringify(v)) return;       // 같으면 건너뜀
+        set[f]=v; names.push(f+'('+v.length+'명)'); return;
+      }
+      if(String(v).trim()==='') return;
       var has=String(cur[f]==null?'':cur[f]).trim()!=='';
       if(has&&!over) return;                       // 빈 칸만 채움
       if(has&&String(cur[f]).trim()===String(v).trim()) return;   // 동일값은 건너뜀
@@ -2195,7 +2223,11 @@ var DOC_TAX=[['tax_bizreg','법인설립신고 및 사업자등록신청서'],['
   ['tax_sublease','부동산 전대 사용동의서'],['tax_hometax','홈택스 이용신청서']];
 // ④ 운영 단계 제출·발급 서식 — 과거자료 '6. 운영관련'
 var DOC_OPS=[['ops_asset_change','재산변동상황보고서(설립 이후·노동부)'],['ops_minutes_use','협의회 회의록(기금사용내용)'],
-  ['ops_minutes_scope','협의회 회의록(기금사용범위 변경)']];
+  ['ops_minutes_scope','협의회 회의록(기금사용범위 변경)'],
+  /* 결산 3종 세트 — 정관 제16조의 «결산보고서 → 감사 의견 첨부 → 협의회 승인» 순서를 그대로 따른다.
+     운영상황보고서(별지15호)는 회계·결산 탭에서 나오므로 여기엔 나머지 둘만 둔다. */
+  ['ops_audit','감사보고서(결산·감사별 각 1장)'],
+  ['ops_minutes_close','협의회 회의록(결산 승인·별지 제13호)']];
   // ※ 기부금영수증·발급명세서는 제외(2026-07-26) — 원본이 타 법인(고려인삼연구) 서류라 우리 서식 아님
 // ⑤ 지원금 신청(공동 전용) — 과거자료 '4. 지원금신청' 번호순
 var DOC_SUB=[['sub_required','지원금 신청 시 필요서류(안내)','공동'],['subsidy','공동근로복지기금 지원신청서','공동'],
@@ -2643,6 +2675,54 @@ function hwpFormHTML(kind,f,sites){
   }
   return "<p class='note'>※ <b>원본 서식 그대로 변환</b>(03_과거자료 .hwp) — 라벨 옆 칸은 기금 데이터 자동 채움. 빈칸은 수기 기입. 이 창에서 바로 수정하세요.</p>"+d.innerHTML;
 }
+/* 감사 대상 회계연도 — 첫해는 «설립인가일부터»다(참살이 2019: 2019.08.14.~12.31.).
+   1월 1일로 적으면 법인이 없던 기간까지 감사한 것이 되어 사실과 다르다. */
+function _fyRange(f){
+  var y=S.year, sm=(f.fy_start_md||'01-01'), em=(f.fy_end_md||'12-31');
+  var s=y+'-'+sm, e=y+'-'+em;
+  var ik=String(f.inka_date||'').slice(0,10);
+  if(ik && ik.slice(0,4)===String(y) && ik>s) s=ik;    // 설립한 해면 인가일부터
+  var dot=function(d){ var p=String(d).split('-'); return p.length===3?(p[0]+'. '+p[1]+'. '+p[2]+'.'):String(d); };
+  return { start:dot(s), end:dot(e) };
+}
+/* 감사 의견 두 갈래 — 원본 문구가 「적정」이고, 지적사항이 있으면 사람이 이어서 적는다.
+   한 서류 안의 여러 장을 **한꺼번에** 바꾼다(감사마다 의견이 갈리는 일은 없다). */
+var AUDIT_OP={
+  '적정':'업무집행내용과 결산서의 각항은 정확하였으며, 그 회계처리는 적정하였습니다.',
+  '지적':'업무집행내용과 결산서의 각항을 확인한 결과 아래와 같은 지적사항이 있었습니다. ＿＿＿＿＿＿＿＿＿＿'
+};
+function _setAuditOp(k){
+  var t=AUDIT_OP[k]||AUDIT_OP['적정'];
+  Array.prototype.forEach.call(document.querySelectorAll('.audit-op'),function(p){ p.textContent=t; });
+}
+/* 감사보고서 한 장. 감싸는 .a4 는 부르는 쪽에서 붙인다. */
+function _auditSheet(f,a,fy){
+  var nm=esc(f.name||''), lbl=a.side?(a.side+' 감사'):'감사';
+  return "<div>"
+    +"<h1>감사보고서</h1>"
+    +"<p>본인은 <b>"+nm+"</b>의 "+esc(fy.start)+"부터 "+esc(fy.end)+"로 종결되는 회계연도의 업무집행 내용과 "
+    +"<b>"+nm+"</b>의 회계에 속하는 수입과 지출에 관한 제반 증빙서류와 장부를 일반적인 감사기준에 따라 감사를 실시하였습니다.</p>"
+    +"<p class='center'>(다 음)</p>"
+    +"<p class='audit-op'>"+AUDIT_OP['적정']+"</p>"
+    +"<p class='center'>"+dgToday()+"</p>"
+    +"<div class='sign'>"+nm+"<br>"+esc(lbl)+" "+dgV(a.name,6)+" (서명 또는 인)</div>"
+    +"<p>"+nm+" "+dgV(f.chairman,6)+" 대표이사 귀하</p></div>";
+}
+/* 회의록에 붙이는 결산 수치 — **확정한 해**만 넣는다.
+   확정 전 숫자를 회의록에 박아 두면, 뒤에 거래를 고쳤을 때 승인받은 숫자와 서류가 달라진다.
+   서식(별지 제13호)에는 없는 표라 지워도 되게 따로 감싼다. */
+function _closeFigures(yr){
+  var c=(S.f15Close||{}), fin=c.fin||{};
+  if(!c.locked||fin.f15_rest==null)
+    return "<p class='note'>회계·결산 탭에서 <b>"+yr+"년을 확정</b>하면 재원·지출·잔액이 여기 자동으로 들어옵니다. "
+      +"확정 전 숫자는 넣지 않습니다 — 나중에 거래를 고치면 승인받은 숫자와 달라지기 때문입니다.</p>";
+  var w=function(v){ return (Math.round(num(v)||0)).toLocaleString(); };
+  var used=(num(fin.f15_total)||0);
+  return "<table><tr><th style='width:220px'>기금사업 재원 (㉟)</th><td class='right'>"+w(fin.f15_src_total)+" 천원</td></tr>"
+    +"<tr><th>사업 집행액 합계</th><td class='right'>"+w(used)+" 천원</td></tr>"
+    +"<tr><th>잔액</th><td class='right'>"+w(fin.f15_rest)+" 천원</td></tr></table>"
+    +"<p class='note'>※ 별지 제13호 서식에는 없는 표입니다 — 승인 근거를 남기려고 더한 것이니 필요 없으면 지우세요.</p>";
+}
 function docBody(kind,f,sites){
   sites=sites||[];
   var _real=hwpFormHTML(kind,f,sites); if(_real) return _real;   // 원본 변환본 우선
@@ -2661,6 +2741,50 @@ function docBody(kind,f,sites){
       +"제4호: 설립 출연금을 "+dgWon(f.contribution_total)+"원으로 확정하였다.<br>제5호: 기타 설립 관련 제반 사항은 이사장에게 위임하기로 의결하였다.</p>"
       +"<p class='center'>"+dgToday()+"</p>"
       +"<div class='sign'>위원장(이사장): "+dgV(chairman)+" (인)<br>근로자대표: ＿＿＿＿＿＿ (인)<br>사용자대표: ＿＿＿＿＿＿ (인)</div>";
+  }
+  /* 감사보고서 — 원본: 03_과거자료/2020년/…/참살이근로복지기금/2019년감사/5. 감사보고서.hwp
+     표는 없다. A4 한 장짜리 서한이다(원본을 열어 확인했다).
+     감사는 노·사 각 1인이 **각자** 쓰므로 사람 수만큼 장을 낸다 — 그래서 「본인 등은」이 아니라 「본인은」이다. */
+  if(kind==='ops_audit'){
+    var auds=_auditorsOf(f);
+    if(!auds.length) return note
+      +"<h1>감사보고서</h1><p class='note'>임원 명부에 <b>감사</b>가 없습니다. "
+      +"[기금 정보] 탭의 <b>임원 명부</b>에 노·사 감사를 넣으면 각자 한 장씩 자동으로 만들어집니다.</p>";
+    var fy=_fyRange(f);
+    /* 장마다 .a4 로 감싼다 — paginateDoc 은 최상위 .a4 를 장 단위로 삼는다.
+       ⚠ .a4 가 하나라도 있으면 **그 밖의 마디는 버려진다** — 머리말도 첫 장 안에 넣어야 한다. */
+    var head=note+"<p class='note'>감사 "+auds.length+"명이 <b>각자 한 장씩</b> 씁니다"
+      +(auds.length<2?" — 정관은 노·사 각 1인이므로 임원 명부를 확인하세요. ":". ")
+      +"감사 의견: <select onchange=\"_setAuditOp(this.value)\">"
+      +"<option value='적정'>적정 (지적사항 없음)</option>"
+      +"<option value='지적'>지적사항 있음</option></select></p>";
+    return auds.map(function(a,i){
+      return "<div class='a4'>"+(i===0?head:'')+_auditSheet(f,a,fy)+"</div>";
+    }).join('');
+  }
+  /* 협의회 회의록(결산 승인) — 근로복지기본법 시행규칙 [별지 제13호서식] 개정 2016.1.19.
+     안건 문구는 충남 1호 협의회 회의자료의 실례를 따른다(「제1호 의안 : ○○년 회계결산 및 감사보고 건」).
+     정관 제16조: 결산보고서에 **감사 의견을 첨부**하여 회계연도 종료 후 2개월 이내 협의회 승인. */
+  if(kind==='ops_minutes_close'){
+    var yrC=S.year, offs2=_officersOf(f);
+    var side=function(re){ return offs2.filter(function(o){ return re.test(o.role||''); })
+      .map(function(o){ return String(o.name||''); }).filter(Boolean); };
+    var wk2=side(/근로자/), er2=side(/사용자/);
+    var lead=offs2.filter(function(o){ return /이사장/.test(o.role||''); })[0];
+    if(lead) er2=er2.concat([String(lead.name||'')]).filter(Boolean);
+    var all=wk2.concat(er2);
+    return note+"<p class='right'>■ 근로복지기본법 시행규칙 [별지 제13호서식] &lt;개정 2016. 1. 19.&gt;</p>"
+      +"<h1>근로복지기금협의회 회의록</h1>"
+      +"<table><tr><th style='width:100px'>회의 일시</th><td>"+dgV('',14)+"</td><th style='width:100px'>회의 장소</th><td>"+dgV(f.address,14)+"</td></tr>"
+      +"<tr><th>근로자위원</th><td>"+(wk2.length?esc(wk2.join(', ')):dgV('',12))+"</td>"
+      +"<th>사용자위원</th><td>"+(er2.length?esc(er2.join(', ')):dgV('',12))+"</td></tr>"
+      +"<tr><th>참석위원</th><td colspan='3'>"+(all.length?esc(all.join(', '))+' ('+all.length+'명)':dgV('',20))+"</td></tr></table>"
+      +"<h2>제1호 의안 : "+yrC+"년 회계결산 및 감사보고 건</h2>"
+      +_closeFigures(yrC)
+      +"<p>이사가 "+yrC+"년 회계연도 결산보고서를 작성하고 <b>감사의 의견을 첨부</b>하여 상정하였다(정관 제16조).</p>"
+      +"<h2>의결 사항</h2><p>제1호 의안은 참석위원 전원 찬성으로 <b>원안대로 의결</b>하였다.</p>"
+      +"<p class='center'>"+dgToday()+"</p>"
+      +"<div class='sign'>"+(all.length?all.map(function(n){ return esc(n)+" (서명 또는 인)"; }).join('<br>'):"위원 ＿＿＿＿＿＿ (서명 또는 인)")+"</div>";
   }
   if(kind==='agreement'){
     return note+"<h1>설 립 합 의 서</h1>"
@@ -3509,7 +3633,43 @@ function infoForm(f){
     +'<div class="panel"><h2>기금 정보</h2>'
     +'<div class="grid" style="margin-top:12px" oninput="markDirty()" onchange="markDirty()">'+flds+'</div>'
     +'<div class="row" style="margin-top:16px"><button class="primary" onclick="saveInfo()">💾 저장</button>'
-    +'<span class="muted" style="font-size:11px">담당은 푸른이알피 재직자에서 선택 · Ctrl+S로도 저장 · Firebase 저장</span></div></div>';
+    +'<span class="muted" style="font-size:11px">담당은 푸른이알피 재직자에서 선택 · Ctrl+S로도 저장 · Firebase 저장</span></div></div>'
+    +officerPanel(f);
+}
+/* 임원 명부 — 감사보고서·협의회 회의록이 여기서 이름을 가져간다.
+   이 칸이 비면 그 서류들이 «이름 없는 서류»로 나오므로, 비었을 때 그렇게 알린다. */
+function officerPanel(f){
+  var rows=_officersOf(f);
+  var aud=_auditorsOf(f);
+  var warn='';
+  if(!rows.length) warn='<span class="chip dg" style="font-size:10px">비어 있음 — 감사보고서·회의록에 이름이 안 들어갑니다</span>';
+  else if(aud.length<2) warn='<span class="chip warn" style="font-size:10px">감사가 '+aud.length+'명 — 정관은 노·사 각 1인입니다</span>';
+  return '<div class="panel"><div class="row"><h2 style="margin:0">👥 임원 명부</h2>'+warn+hlp('officers')+'</div>'
+    +'<p class="muted" style="font-size:11.5px;margin:6px 0 10px">등기부등본 「임원에 관한 사항」을 그대로 옮기세요. '
+    +'<b>감사보고서는 감사가 각자 한 장씩</b> 쓰므로 노·사 감사를 모두 넣어야 두 장이 나옵니다.</p>'
+    +'<div style="overflow-x:auto"><table><thead><tr><th style="width:190px">직위</th><th>성명</th><th style="width:44px"></th></tr></thead>'
+    +'<tbody id="off-rows">'+(rows.length?rows.map(_offRow).join(''):_offRow({role:'이사장',name:f.chairman||''}))+'</tbody></table></div>'
+    +'<div class="row" style="margin-top:10px"><button onclick="addOfficerRow()">+ 줄 추가</button>'
+    +'<button class="primary" onclick="saveInfo()">💾 저장</button>'
+    +'<span class="muted" style="font-size:11px">기금 정보와 함께 저장됩니다</span></div></div>';
+}
+function _offRow(o){
+  o=o||{};
+  var opts=OFFICER_ROLES.map(function(r){ return '<option'+(String(o.role||'')===r?' selected':'')+'>'+r+'</option>'; }).join('');
+  /* 명부에 이미 든 값이 목록에 없을 수 있다(옛 자료·손입력) — 지우지 말고 그대로 살려 둔다 */
+  if(o.role&&OFFICER_ROLES.indexOf(String(o.role))<0) opts='<option selected>'+esc(o.role)+'</option>'+opts;
+  return '<tr><td><select class="off-role" onchange="markDirty()">'+opts+'</select></td>'
+    +'<td><input class="off-name" type="text" value="'+esc(o.name||'')+'" oninput="markDirty()"></td>'
+    +'<td><button onclick="this.closest(\'tr\').remove();markDirty()" title="이 줄 지우기">✕</button></td></tr>';
+}
+function addOfficerRow(){ var b=$('off-rows'); if(!b)return; b.insertAdjacentHTML('beforeend',_offRow({})); markDirty(); }
+/* 화면에서 명부를 읽어 온다. 이름이 빈 줄은 버린다 — 빈 이름이 서류에 그대로 찍히면 못 쓴다. */
+function _readOfficers(){
+  var b=$('off-rows'); if(!b) return null;
+  return [].slice.call(b.querySelectorAll('tr')).map(function(tr){
+    var r=tr.querySelector('.off-role'), n=tr.querySelector('.off-name');
+    return { role:(r&&r.value)||'', name:((n&&n.value)||'').trim() };
+  }).filter(function(o){ return o.name; });
 }
 /* 서류 끌어놓기 → 판독 → 값 확인 후 폼에 반영 (저장은 [💾 저장] 눌러야 확정) */
 function bindDocIntake(){
@@ -3805,6 +3965,10 @@ function saveInfo(){
     patch.mgr_subs=subs.length?subs:null;
     patch.manager=[mainU?mainU.name:''].concat(subs.map(function(s){return s.name+'(부)';})).filter(Boolean).join(', ');
   } else { var txt=$('fd-mgr-text'); if(txt)patch.manager=txt.value.trim(); }
+  /* 임원 명부 — 화면에 표가 그려져 있을 때만 건드린다.
+     다른 화면에서 저장할 때 null 로 덮어써 명부를 통째로 날리지 않게. */
+  var offs=_readOfficers();
+  if(offs) patch.officers=offs.length?offs:null;
   // 저장 대상 기금을 고정 — 응답 오기 전에 다른 기금으로 옮겨도 그쪽 로컬값이 오염되지 않게
   var _fid=S.fundId;
   /* 바뀐 항목만 보낸다 — 화면을 열어둔 사이 다른 세션이 고친 다른 칸을
@@ -7293,6 +7457,11 @@ var HELP={
    +'<p>[↩ 복원]으로 되살릴 수 있고, [완전 삭제]는 되돌릴 수 없습니다.</p>'},
  'home.past':{t:'지난 기금',h:'<p>계약종료·기록보관을 <b>상태별로 분류</b>하고, 각 안에서 동종(지역/공동/사내)끼리 모았습니다.</p>'
    +'<p>집계·오늘 할 일에서 제외되며 <b>기록은 보존</b>됩니다. 오른쪽 <b>계약관계</b>를 [운영]으로 되돌리면 다시 운영 목록으로 올라옵니다.</p>'},
+ 'officers':{t:'임원 명부',h:'<p><b>등기부등본의 「임원에 관한 사항」</b>을 그대로 옮기는 칸입니다.</p>'
+   +'<p>정관 제25조에 따라 <b>이사는 노·사 각 1~3인, 감사는 노·사 각 1인</b>입니다.</p>'
+   +'<p>이 명부가 <b>감사보고서</b>와 <b>협의회 회의록</b>의 이름을 만듭니다. '
+   +'감사보고서는 감사가 <b>각자 한 장씩</b> 쓰므로, 노·사 감사를 모두 넣어야 두 장이 나옵니다.</p>'
+   +'<p>회의록의 근로자위원·사용자위원 칸도 여기서 갈라 채웁니다 — 직위에 「근로자측」·「사용자측」이 들어 있어야 갈립니다.</p>'},
  'life':{t:'계약관계 바꾸기',h:'<p>계약이 끝났거나 기금이 해산된 경우 상태를 바꾸면 목록의 <b>지난 기금</b>으로 이동하고 집계·오늘 할 일에서 제외됩니다.</p><p>기록은 보존됩니다.</p>'},
  'bulk.reg':{t:'관할등기소 일괄 추정',h:'<p>여기 값은 <b>추정값</b>입니다. 소재지의 시·군·구를 기준으로 뽑았습니다.</p>'
    +'<p>실제 관할은 <b>대법원 인터넷등기소(iros.go.kr)</b>에서 확인하세요.</p><p><b>비어 있는 기금만</b> 채웁니다 — 이미 값이 있는 기금은 그대로 둡니다.</p>'},

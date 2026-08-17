@@ -195,6 +195,59 @@ ok('안 그린 ③ 칸을 0으로 덮어쓰지 않는다', src.includes("if($('s
 ok('도움말이 옛 「2024년 평가표 기준」 경고를 더는 띄우지 않는다',
   !src.includes('이 배점은 <b>2024년 평가표</b> 기준입니다'));
 
+/* ── 임원 명부 · 감사보고서 · 협의회 회의록 ──
+   정관 제16조(결산→감사 의견→협의회 승인)와 제25조(감사 노·사 각 1인)를 서류로 옮긴 것.
+   명부가 비면 이름 없는 서류가 나가므로, 넣는 길과 알리는 길을 함께 못 박는다. */
+ok('임원 직위 다섯 가지(이사장·노사 이사·노사 감사)',
+  ['이사장', '사용자측 이사', '근로자측 이사', '사용자측 감사', '근로자측 감사']
+    .every(r => src.includes("'" + r + "'")) && src.includes('var OFFICER_ROLES='));
+ok('감사를 노·사로 갈라 읽는다', /_auditorsOf/.test(src)
+  && src.includes("side:/사용자/.test(r)?'사용자측':/근로자/.test(r)?'근로자측':''"));
+// 명부를 넣는 길이 실제로 있어야 한다 — 종전에는 읽기만 하고 쓰는 곳이 없어 42개 기금이 모두 비어 있었다
+ok('명부 입력 화면이 있다', src.includes('function officerPanel(') && src.includes('function addOfficerRow(')
+  && src.includes('function _readOfficers('));
+ok('명부가 기금 정보와 함께 저장된다', src.includes('officerPanel(f)')
+  && src.includes('if(offs) patch.officers=offs.length?offs:null;'));
+// 다른 화면에서 저장할 때 명부를 통째로 날리지 않아야 한다
+ok('표가 없으면 명부를 건드리지 않는다', /var offs=_readOfficers\(\);/.test(src)
+  && src.includes("var b=$('off-rows'); if(!b) return null;"));
+ok('명부가 비면 화면이 그렇게 알린다', src.includes('감사보고서·회의록에 이름이 안 들어갑니다'));
+
+ok('서식 목록에 감사보고서·결산 회의록이 있다',
+  src.includes("['ops_audit','감사보고서(결산·감사별 각 1장)']")
+  && src.includes("['ops_minutes_close','협의회 회의록(결산 승인·별지 제13호)']"));
+/* 감사는 «각자» 쓴다 — 함께 서명하는 「본인 등은」이 남아 있으면 안 된다 */
+// 서류 «본문»만 본다 — 왜 그렇게 했는지 적은 주석에도 「본인 등은」이 나오기 때문이다
+ok('감사보고서는 「본인은」으로 쓴다', src.includes('본인은 <b>')
+  && !src.includes('본인 등은 <b>'));
+ok('감사보고서를 감사 수만큼 낸다', /auds\.map\(function\(a,i\)\{/.test(src)
+  && src.includes("return \"<div class='a4'>\"+(i===0?head:'')+_auditSheet(f,a,fy)+\"</div>\";"));
+/* paginateDoc 은 최상위 .a4 가 있으면 그 «밖»의 마디를 버린다 — 머리말이 첫 장 안에 들어가야 한다 */
+ok('머리말을 첫 장 안에 넣는다(조판이 버리지 않게)', src.includes("(i===0?head:'')")
+  && src.includes('그 밖의 마디는 버려진다'));
+ok('감사가 없으면 명부를 채우라고 안내', src.includes('임원 명부에 <b>감사</b>가 없습니다'));
+ok('감사 의견 두 갈래', src.includes('var AUDIT_OP=') && src.includes("'적정':") && src.includes("'지적':")
+  && src.includes('function _setAuditOp('));
+ok('의견을 한꺼번에 바꾼다(장이 여럿이라 클래스로)', src.includes("querySelectorAll('.audit-op')")
+  && src.includes("<p class='audit-op'>"));
+/* 첫해 감사는 «인가일부터» — 1월 1일로 적으면 법인이 없던 기간까지 감사한 것이 된다 */
+ok('설립한 해는 인가일부터 감사', src.includes('if(ik && ik.slice(0,4)===String(y) && ik>s) s=ik;'));
+ok('회의록은 별지 제13호', src.includes('[별지 제13호서식]') && src.includes('제1호 의안 : "+yrC+"년 회계결산 및 감사보고 건'));
+ok('회의록이 정관 제16조를 근거로 든다', src.includes('감사의 의견을 첨부</b>하여 상정'));
+/* 확정 전 숫자를 회의록에 박으면 나중에 승인받은 숫자와 서류가 어긋난다 */
+ok('확정한 해만 결산 수치를 넣는다', src.includes('if(!c.locked||fin.f15_rest==null)')
+  && src.includes('확정 전 숫자는 넣지 않습니다'));
+ok('서식에 없는 표임을 밝힌다', src.includes('별지 제13호 서식에는 없는 표입니다'));
+ok('임원 명부 도움말', src.includes("'officers':{t:'임원 명부'"));
+/* 명부는 «줄의 묶음»이라 글자로 다루면 [object Object] 가 저장돼 통째로 망가진다.
+   등기부에서 옮긴 명부를 한 번에 넣을 수 있어야 서류가 이름을 갖는다. */
+ok('가져오기가 임원 명부를 받는다', /var IMP_FIELDS=\[[^\]]*'officers'/.test(src)
+  && src.includes('var _IMP_LIST={officers:1};'));
+ok('명부는 배열로 다룬다(String 으로 뭉개지 않는다)', src.includes('if(_IMP_LIST[f]){')
+  && src.includes('if(!Array.isArray(v)||!v.length) return;')
+  && src.includes('set[f]=v; names.push(f'));
+ok('이미 든 명부는 덮지 않는다', src.includes('if(curL.length&&!over) return;'));
+
 ok('홍성군은 홍성세무서', src.includes("'충남 홍성군':'홍성세무서'"));
 ok('보령시는 보령세무서', src.includes("'충남 보령시':'보령세무서'"));
 
