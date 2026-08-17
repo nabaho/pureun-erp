@@ -277,8 +277,18 @@
      물러난다 — 한쪽만 보면 사진이 사라진 것처럼 보이는 일이 없다.
      ⚠ deps.storage 가 없으면(아직 안 이어 준 화면) 곧바로 rtdbFallback — 이 파일을
        쓰는 화면이 전부 창고를 넘겨줄 때까지 기다리지 않아도 된다. */
-  function withStorage(pathFn, rtdbFallback) {
+  /* 창고에 직접 물어도 되는 사진인가 — **내 사진일 때만**이다.
+     ⚠ 창고 규칙은 「자기 사진만」이라, 남의 사진은 물으면 **반드시 403** 이다.
+       그런데도 물으면 콘솔이 403 으로 도배되고(대표 화면 2026-08-17: 그림 옆
+       빨간 줄 수십 개) 헛 요청만 나간다 — 답을 아는 물음은 하지 않는다.
+       남의 사진은 정보에 적힌 주소(토큰 URL)나 옛 자리(실시간DB)로 본다. */
+  function storageMine(owner) {
+    return !owner || owner === deps.uid;
+  }
+
+  function withStorage(pathFn, rtdbFallback, owner) {
     if (!deps.storage) return rtdbFallback();
+    if (!storageMine(owner)) return rtdbFallback();
     var path;
     try { path = pathFn(); } catch (e) { return rtdbFallback(); }
     return fetchFromBucket(path).then(function (v) {
@@ -1295,11 +1305,17 @@
       });
     });
   }
-  function loadThumb(year, id, owner) {
+  /* loc = 부르는 쪽이 이미 아는 보관 자리(meta.loc). 'storage' 가 **아니라고 알면**
+     창고를 두드리지 않는다 — 그 사진은 창고에 없어 404 만 돌아온다.
+     ⚠ 안 넘기면(모르면) 예전처럼 창고부터 본다. 값이 틀려서 사진을 못 보는 것보다
+       헛 요청 한 번이 낫기 때문이다. */
+  function loadThumb(year, id, owner, loc) {
     return loadVia('thumbUrl', year, id, owner, function () {
-      return withStorage(function () { return filePath(year, id, 'thumb', owner); }, function () {
+      var legacy = function () {
         return withLegacy(thumbPath(year, id, owner), legacyRoot('thumbs') + '/' + year + '/' + id);
-      });
+      };
+      if (loc && loc !== 'storage') return legacy();
+      return withStorage(function () { return filePath(year, id, 'thumb', owner); }, legacy, owner);
     });
   }
   /* 민감 서류 원본을 **서버에서** 받아온다 — 주소를 안 남기기로 했으므로 이 길이 있어야
@@ -1334,7 +1350,7 @@
     return loadVia('fullUrl', year, id, owner, function () {
       return withStorage(function () { return filePath(year, id, 'full', owner); }, function () {
         return withLegacy(blobPath(year, id, owner), legacyRoot('blobs') + '/' + year + '/' + id);
-      }).then(function (v) {
+      }, owner).then(function (v) {
         /* 창고에도 옛 자리에도 없다 — **민감 서류라 주소를 안 남긴 것**일 수 있다.
            그때는 서버에 청한다. 이 갈래가 없으면 계약서가 「원본이 없습니다」로 보인다. */
         if (v) return v;
@@ -1365,6 +1381,9 @@
      ⚠ 창고에 없는 옛 사진(실시간DB 보관)은 null 을 준다 — 부르는 쪽이 옛 길로 간다. */
   function thumbUrl(year, id, owner) {
     if (!deps.storage) return Promise.resolve(null);
+    /* ⚠ 남의 사진은 묻지 않는다 — 창고 규칙(자기 사진만)이 반드시 403 을 준다.
+       남의 사진 주소는 서버 「주소 채우기」가 정보에 적어 준다(migratePhotosToStorage). */
+    if (!storageMine(owner)) return Promise.resolve(null);
     var path;
     try { path = filePath(year, id, 'thumb', owner); } catch (e) { return Promise.resolve(null); }
     return deps.storage.ref(path).getDownloadURL().catch(function () { return null; });
