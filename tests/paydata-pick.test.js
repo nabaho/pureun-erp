@@ -71,18 +71,28 @@ test('보이는 것이 다 켜져야 「모두 고르기」가 켜진 것으로 
 });
 
 /* ══════ 사업장 목록 화면 — 실제 렌더링 ══════ */
-function loadScreen() {
+/* ⚠ 본문 목록은 이제 **왼쪽에서 고른 보기**를 따른다(2026-08-17 대표 지적
+   「분리된 느낌」). 그래서 시험도 보기를 정해 줘야 한다 — 기본은 「내 담당」이고,
+   전체를 보려면 sideView:'all' + 관리자여야 한다(계산 층이 막는다). */
+function loadScreen(opts) {
+  opts = opts || {};
   const sandbox = { window: {}, console, Date };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   new vm.Script(store, { filename: 'store.js' }).runInContext(sandbox);
   new vm.Script([
-    'const S = window.PuPaydataStore; S.init({uid:"U1"});',
-    'const App = { month:"2026-08", pick:{}, companies:[], pending:{}, arrivals:{} };',
-    cut('esc'), cut('jsq'), cut('thisMonth'),
+    'const S = window.PuPaydataStore; S.init({uid:"U1", name:"권형하"'
+      + (opts.isAdmin === false ? '' : ', isAdmin: true') + '});',
+    'const App = ' + JSON.stringify(Object.assign({
+      month: '2026-08', pick: {}, companies: [], pending: {}, arrivals: {},
+      me: { uid: 'U1', email: 'p001@pureun.kr' }, owners: {}, shares: {}, myOrder: [], dir: null,
+      sideView: 'all', colFilter: 'all', colQuery: ''
+    }, opts.app || {})) + ';',
+    cut('esc'), cut('jsq'), cut('thisMonth'), cut('coArrivedAt'),
     cut('pickOn'), cut('pickToggle'), cut('pickSetAll'), cut('pickList'),
     cut('pickAllOn'), cut('pickPrune'), cut('pickOf'), cut('pickPut'),
-    cut('companyDocCount'), cut('sitesModel'), cut('pickBar'), cut('screenSites'),
+    cut('companyDocCount'), cut('sitesModel'), cut('sideCtx'), cut('sideListModel'),
+    cut('pickBar'), cut('screenSites'),
     'window.App = App; window.screenSites = screenSites;'
   ].join('\n'), { filename: 'screen.js' }).runInContext(sandbox);
   return sandbox;
@@ -144,36 +154,81 @@ test('업체가 없으면 체크박스도 순번도 안 만든다', () => {
 
 /* ══════ 내 담당 업체 — 업체는 푸른이알피에서 당겨온다 ══════ */
 
-test('★ 내 담당 업체 구역에 주담당 업체가 나온다', () => {
-  const sb = loadScreen();
-  sb.window.App.me = { email: 'p001@pureun.kr' };
+/* 예전에는 본문 맨 위에 「내 담당 업체」 요약 구역이 따로 있고 그 아래에 전체
+   목록이 또 있었다. 이제 본문 목록이 **왼쪽에서 고른 보기**를 그대로 따르므로,
+   「내 담당」을 고르면 목록 자체가 내 담당이다 — 요약 구역은 중복이라 없앴다. */
+test('★ 「내 담당」 보기에서는 목록이 곧 내 담당이다 — 남의 업체가 안 섞인다', () => {
+  const sb = loadScreen({ app: { sideView: 'mine' } });
   sb.window.App.companies = [
     { id: 'co_1', name: '화담원', managerMain: 'p-001', managerSubs: [] },
     { id: 'co_2', name: '이비', managerMain: 'p-002', managerSubs: [] }
   ];
   sb.window.App.arrivals = {};
   const html2 = sb.window.screenSites.call(sb);
-  assert.match(html2, /내 담당 업체/);
-  const before = html2.indexOf('내 담당 업체'), after = html2.indexOf('사업장 전체');
-  const mineSection = html2.slice(before, after);
-  assert.match(mineSection, /화담원/);
-  assert.equal(/이비/.test(mineSection), false, '내 담당이 아닌 업체가 섞였습니다');
+  assert.match(html2, /내 담당 사업장/, '무엇을 보고 있는지 제목이 말해 줘야 합니다');
+  assert.match(html2, /화담원/);
+  assert.equal(/이비/.test(html2), false, '내 담당이 아닌 업체가 섞였습니다');
+});
+
+/* 대표 지적 2026-08-17 「오른쪽 대시보드 사업장 이름과 본문 사업장 이름이
+   일치해야 할 것 같다 · 분리된 느낌이다」 — 왼쪽 칸이 「김보람 담당 28곳」인데
+   본문은 「전체 112곳」이라 이름도 번호도 달랐다. */
+test('★ 본문 목록이 왼쪽에서 고른 보기를 그대로 따른다', () => {
+  const cos = [
+    { id: 'co_1', name: '화담원', managerMain: 'p-001', managerSubs: [] },
+    { id: 'co_2', name: '이비', managerMain: 'p-002', managerSubs: [] }
+  ];
+  const all = loadScreen({ app: { sideView: 'all', companies: cos } });
+  const hAll = all.window.screenSites.call(all);
+  assert.match(hAll, /화담원/);
+  assert.match(hAll, /이비/, '전체 보기인데 남의 업체가 빠졌습니다');
+
+  const mine = loadScreen({ app: { sideView: 'mine', companies: cos } });
+  const hMine = mine.window.screenSites.call(mine);
+  assert.equal(/이비/.test(hMine), false, '보기를 바꿨는데 본문이 안 따라옵니다');
+});
+
+test('★ 왼쪽 칸에서 걸러 둔 것이 본문에도 걸린다 — 두 목록이 같아야 한다', () => {
+  const sb = loadScreen({ app: { sideView: 'all', colQuery: '화담',
+    companies: [
+      { id: 'co_1', name: '화담원', managerMain: 'p-001', managerSubs: [] },
+      { id: 'co_2', name: '이비', managerMain: 'p-002', managerSubs: [] }
+    ] } });
+  const h = sb.window.screenSites.call(sb);
+  assert.match(h, /화담원/);
+  assert.equal(/이비/.test(h), false, '왼쪽에서 찾아 걸렀는데 본문에는 다 나옵니다');
+});
+
+/* 같은 사업장이 왼쪽에서는 안 열리고 본문에서는 열리던 어긋남 — 본문이 곧장
+   내 자리 서랍을 열어, 남의 담당 업체를 「0건」으로 보여 주었다. */
+test('★ 본문에서도 왼쪽과 같은 길로 연다 — 내 자리 서랍을 몰래 열지 않는다', () => {
+  const sb = loadScreen({ app: { sideView: 'all',
+    companies: [{ id: 'co_1', name: '화담원', managerMain: 'p-001', managerSubs: [] }] } });
+  const h = sb.window.screenSites.call(sb);
+  assert.match(h, /openColCompany\(/, '왼쪽과 다른 길로 열면 같은 사업장이 다르게 동작합니다');
 });
 
 /* 빈 것을 감추지 않는 것은 이 함의 원칙이다 — 숨기면 고장으로 보인다.
    다만 그 안내가 **큰 빈 칸**으로 화면 맨 위를 차지하면, 담당이 없는 사람에게는
    늘 그 상태라 자리만 먹는다(대표 지적 2026-08-17). 말은 그대로 하되 한 줄로 줄인다. */
-test('담당 업체가 없으면 그렇다고 말한다 — 다만 큰 빈 칸은 만들지 않는다', () => {
-  const sb = loadScreen();
-  sb.window.App.me = { email: 'p099@pureun.kr' };
-  sb.window.App.companies = [{ id: 'co_1', name: '화담원', managerMain: 'p-001', managerSubs: [] }];
-  sb.window.App.arrivals = {};
-  const html2 = sb.window.screenSites.call(sb);
-  assert.match(html2, /내 담당 업체 없음/, '없다는 것을 말해 줘야 고장으로 안 보입니다');
-  assert.match(html2, /등록된 업체가 없습니다/, '어떻게 해야 채워지는지도 적어야 합니다');
-  const head = html2.slice(0, html2.indexOf('사업장 전체'));
-  assert.equal(/class="empty"/.test(head), false,
-    '큰 빈 칸이 화면 맨 위를 차지하면 안 됩니다 — 한 줄이면 됩니다');
+/* 빈 것을 감추지 않는 것은 이 함의 원칙이다 — 숨기면 고장으로 보인다.
+   다만 「왜 비었는가」를 갈라 말해야 한다. 명단을 못 읽은 것과, 내 담당이
+   없는 것과, 찾다 못 찾은 것은 서로 다른 일이고 할 일도 다르다. */
+test('담당 업체가 없으면 그렇다고 말하고, 어떻게 하면 채워지는지도 적는다', () => {
+  const sb = loadScreen({ app: { sideView: 'mine', me: { uid: 'U1', email: 'p099@pureun.kr' },
+    companies: [{ id: 'co_1', name: '화담원', managerMain: 'p-001', managerSubs: [] }] } });
+  const h = sb.window.screenSites.call(sb);
+  assert.match(h, /내 담당 업체가 없습니다/, '없다는 것을 말해 줘야 고장으로 안 보입니다');
+  assert.match(h, /업체관리에 주담당·부담당으로 등록하면/, '어떻게 해야 채워지는지도 적어야 합니다');
+});
+
+test('명단을 못 읽은 것과 「이 보기에 없는 것」을 갈라 말한다', () => {
+  const none = loadScreen({ app: { sideView: 'mine', companies: [] } });
+  assert.match(none.window.screenSites.call(none), /업체관리 명단을 읽지 못했습니다/);
+
+  const nofind = loadScreen({ app: { sideView: 'all', colQuery: '없는이름',
+    companies: [{ id: 'co_1', name: '화담원', managerMain: 'p-001', managerSubs: [] }] } });
+  assert.match(nofind.window.screenSites.call(nofind), /찾는 사업장이 없습니다/);
 });
 
 /* 대표 지적 2026-08-17 — 첫 화면에서 하려는 일은 「무슨 일이 있나 보기」인데
@@ -194,14 +249,23 @@ test('★ 첫 화면 맨 위에 이 달 현황이 뜬다 — 몇 곳 중 몇 곳
 });
 
 /* 왼쪽 칸과 **같은 수**를 세야 한다 — 두 곳이 다른 말을 하면 어느 쪽도 못 믿는다. */
-test('★ 현황의 사업장 수가 아래 목록 수와 같다', () => {
-  const sb = loadScreen();
-  sb.window.App.companies = [
+test('★ 현황의 사업장 수가 아래 목록 줄 수와 같다', () => {
+  const sb = loadScreen({ app: { sideView: 'all', companies: [
     { id: 'co_1', name: '화담원', managerMain: 'p-001', managerSubs: [] },
     { id: 'co_2', name: '이비', managerMain: 'p-002', managerSubs: [] }
-  ];
-  sb.window.App.arrivals = {};
+  ] } });
   const h = sb.window.screenSites.call(sb);
   assert.match(h, /사업장<\/div><div class="v">2</);
-  assert.match(h, /「급여」인 곳 · 2곳/);
+  assert.equal((h.match(/type="checkbox"/g) || []).length, 3, '「모두 고르기」 + 두 줄이어야 합니다');
+});
+
+/* 보기를 좁히면 현황도 그 보기 기준이어야 한다 — 김보람을 골랐는데 「112곳」이
+   그대로 떠 있으면 무엇의 현황인지 알 수 없다. */
+test('★ 보기를 좁히면 현황도 그 보기 기준으로 센다', () => {
+  const sb = loadScreen({ app: { sideView: 'mine', companies: [
+    { id: 'co_1', name: '화담원', managerMain: 'p-001', managerSubs: [] },
+    { id: 'co_2', name: '이비', managerMain: 'p-002', managerSubs: [] }
+  ] } });
+  const h = sb.window.screenSites.call(sb);
+  assert.match(h, /사업장<\/div><div class="v">1</, '내 담당은 한 곳인데 전체 수를 셌습니다');
 });
