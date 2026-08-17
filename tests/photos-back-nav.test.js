@@ -42,7 +42,12 @@ test('★ 어느 화면에 있든 이름을 말해 준다', () => {
   assert.match(where({ oldOnly: true }), /보유기간 지난/);
   assert.match(where({ needOnly: true }), /확인이 필요/);
   assert.match(where({ gridQ: '삼성' }), /삼성/);
-  assert.match(where({ kindTab: 'card' }), /명함/);
+  /* ⚠ 분류 탭만 뺐다(대표 지시 2026-08-17: "이 셀 없애 달라") — 탭 줄이 바로
+     위에서 지금 어느 분류인지 파랗게 보여 주고 「전체사진」 탭도 거기 있어,
+     같은 말을 두 번 하는 자리였다. Esc 는 그대로 돌아간다(isFiltered 로 가른다 —
+     tests/photos-tab-edit.test.js 가 그 하나를 못박는다). */
+  assert.equal(where({ kindTab: 'card' }), null,
+    '분류 탭에서는 띠를 안 그린다 — 탭 줄이 이미 알려 준다');
 });
 
 test('걸러보기보다 화면 이름이 먼저다', () => {
@@ -51,7 +56,8 @@ test('걸러보기보다 화면 이름이 먼저다', () => {
 });
 
 test('모르는 분류에도 터지지 않는다', () => {
-  assert.match(where({ kindTab: '내가만든분류' }), /내가만든분류/);
+  /* 분류 탭은 이제 띠를 안 그린다(위 참고) — 지킬 것은 «터지지 않는다» 이다 */
+  assert.equal(where({ kindTab: '내가만든분류' }), null);
 });
 
 /* ── ② 띠가 실제로 그려지는가 ── */
@@ -118,7 +124,11 @@ test('★ Esc 는 크게 보기·팝업·카메라를 앞질러 가지 않는다
     assert.ok(esc.includes(guard),
       'Esc 를 눌렀을 때 ' + guard + ' 이 먼저 닫혀야 합니다 — 안 그러면 사진을 보다 말고 화면이 튑니다.');
   }
-  assert.ok(/if \(!whereNow\(\)\) return;/.test(esc),
+  /* ⚠ 예전에는 whereNow() 로 갈랐다. 2026-08-17 분류 탭에서 띠를 없애자
+     whereNow() 가 거기서 null 이 되어 **Esc 가 같이 죽었다** — 대표가 원한 것이
+     바로 그 Esc 였다. 그래서 「띠에 적을 말」과 「Esc 가 할 일이 있는가」를
+     갈랐다(isFiltered). */
+  assert.ok(/if \(!isFiltered\(\)\) return;/.test(esc),
     '이미 처음 화면이면 아무 일도 없어야 합니다.');
 });
 

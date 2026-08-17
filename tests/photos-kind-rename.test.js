@@ -109,22 +109,26 @@ test('★ 총괄 관리자가 아니면 이름을 못 고친다', async () => {
   assert.equal(c._writes.length, 0, '★ 막았는데 썼습니다');
 });
 
-test('화면: 직접 만든 분류에만 ✎ 가 붙는다', () => {
-  /* 고정 분류(명함·사업자등록증)는 코드가 정한 이름이라 못 고친다 */
-  assert.match(html, /const pen = \(!t && kindTab === k && PuPhotoStore\.amAdmin\(\)\)/);
+test('화면: 「전체사진」만 빼고 ✎ 가 붙는다', () => {
+  /* ⚠ 2026-08-17 바뀜(대표 지시, 두 번 요청): 예전에는 직접 만든 분류(!t)에만
+     붙였는데, 화면의 탭은 대부분 고정 분류라 ✎ 가 아예 안 보였다 — 그것이
+     "탭 수정·삭제 해달라고 했는데 왜 안 되나"의 답이었다. 이제 고정 분류에도
+     붙고, 창이 갈린다(직접분류=이름·삭제 / 고정분류=이름·탭 숨기기).
+     자세한 것은 tests/photos-tab-edit.test.js. */
+  assert.match(html, /const pen = \(k !== 'all' && kindTab === k && PuPhotoStore\.amAdmin\(\)\)/);
   assert.match(html, /openRenameKind\(/);
 });
 
 test('★ 화면: 총괄 관리자가 아니면 ✎ 도 「+ 분류 추가」도 안 보인다', () => {
-  /* 대표 지시 2026-08-15 — 지금은 직원 누구나 공용 분류를 마음대로 바꿀·지울
-     수 있어, 오타 분류가 쌓이거나 누가 지워도 못 막는다. */
-  assert.match(html, /const pen = \(!t && kindTab === k && PuPhotoStore\.amAdmin\(\)\)/);
+  /* 대표 지시 2026-08-15 — 분류 이름표는 전 직원이 함께 보는 공용이라,
+     누구나 바꿀 수 있으면 오타 분류가 쌓이거나 누가 지워도 못 막는다. */
+  assert.match(html, /const pen = \(k !== 'all' && kindTab === k && PuPhotoStore\.amAdmin\(\)\)/);
   assert.match(html, /PuPhotoStore\.amAdmin\(\)\s*\n?\s*\?\s*'<button class="add"/);
 });
 
 test('화면: ✎ 를 눌러도 분류가 바뀌지 않는다', () => {
   /* stopPropagation 이 없으면 탭째 눌려 분류가 바뀐 뒤 창이 뜬다 */
-  const at = html.indexOf('const pen = (!t && kindTab === k && PuPhotoStore.amAdmin())');
+  const at = html.indexOf("const pen = (k !== 'all' && kindTab === k && PuPhotoStore.amAdmin())");
   assert.match(html.slice(at, at + 400), /event\.stopPropagation\(\)/);
 });
 

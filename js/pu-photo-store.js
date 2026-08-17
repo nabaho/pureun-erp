@@ -822,6 +822,53 @@
     return deps.db.ref(customKindsPath()).once('value').then(function (s) { return s.val() || {}; });
   }
 
+  /* ── 고정 분류 손보기 (대표 지시 2026-08-17, 두 번 요청) ──
+     "탭 수정 변경 삭제 가능하게 해달라."
+
+     고정 분류(명함·사업자등록증·계약서…)는 **판독 AI 가 판정하는 갈래 그 자체**라
+     갈래를 없앨 수는 없다 — 없애면 AI 가 「계약서」로 판정한 사진이 담길 칸이
+     사라져 통째로 기타서류로 쏟아진다. 그래서 두 가지만 연다:
+       · 이름 고치기 → **보이는 이름표만** 바꾼다(갈래·판독·사진은 그대로).
+       · 탭 숨기기   → 탭 줄에서만 감춘다. 그 사진들은 기타서류에서 계속 보이고,
+                       되살리면 그대로 돌아온다. **사진은 한 장도 안 지워진다.**
+     둘 다 전 직원이 함께 보는 공용이라 총괄 관리자만 쓴다(customKinds 와 같은 규칙).
+     ⚠ 「전체사진」은 어느 쪽도 안 된다 — 돌아갈 자리는 늘 같은 곳에 있어야 한다. */
+  function kindLabelsPath() { return DB_ROOT + '/kindLabels'; }
+  function kindHiddenPath() { return DB_ROOT + '/kindHidden'; }
+
+  function listKindLabels() {
+    if (!deps.db) return Promise.resolve({});
+    return deps.db.ref(kindLabelsPath()).once('value')
+      .then(function (s) { return s.val() || {}; })
+      .catch(function () { return {}; });
+  }
+  function listHiddenKinds() {
+    if (!deps.db) return Promise.resolve({});
+    return deps.db.ref(kindHiddenPath()).once('value')
+      .then(function (s) { return s.val() || {}; })
+      .catch(function () { return {}; });
+  }
+
+  function renameFixedKind(key, name) {
+    if (!deps.isAdmin) return Promise.reject(new Error('분류 이름 변경은 총괄 관리자만 할 수 있습니다'));
+    if (!key || key === 'all') return Promise.reject(new Error('「전체사진」은 고칠 수 없습니다'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var clean = String(name || '').trim();
+    var u = {};
+    /* 빈 이름으로 고치면 «원래 이름으로 되돌리기» 다 — 덮어쓴 이름표를 지운다. */
+    u[kindLabelsPath() + '/' + key] = clean || null;
+    return deps.db.ref().update(u).then(function () { return { key: key, name: clean }; });
+  }
+
+  function setKindHidden(key, hidden) {
+    if (!deps.isAdmin) return Promise.reject(new Error('분류 숨기기는 총괄 관리자만 할 수 있습니다'));
+    if (!key || key === 'all') return Promise.reject(new Error('「전체사진」은 숨길 수 없습니다'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var u = {};
+    u[kindHiddenPath() + '/' + key] = hidden ? true : null;
+    return deps.db.ref().update(u);
+  }
+
   /* ── 보유기준 점검 담당자 ──
      기준(증빙 5년·나머지 1년)은 있는데 지우는 일이 아무에게도 안 걸려 있었다.
      자동 삭제는 일부러 만들지 않았으므로(사람 확인이 필수) 누가 언제 볼지를 정해 둔다.
@@ -1757,6 +1804,10 @@
     setFolder: setFolder,
     moveFolderPhotos: moveFolderPhotos,
     listCustomKinds: listCustomKinds,
+    listKindLabels: listKindLabels,
+    listHiddenKinds: listHiddenKinds,
+    renameFixedKind: renameFixedKind,
+    setKindHidden: setKindHidden,
     getRetention: getRetention,
     setRetentionOwner: setRetentionOwner,
     markRetentionChecked: markRetentionChecked,

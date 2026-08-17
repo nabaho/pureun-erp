@@ -32,6 +32,10 @@ function run(state) {
     phSheetOpen: function () { return !!state.sheet; },
     closePhSheet: function () { log.push('closePhSheet'); },
     whereNow: function () { return state.where || null; },
+    /* ⚠ 2026-08-17 부터 escOnce 는 whereNow(띠에 적을 말)가 아니라 isFiltered
+       (Esc 가 할 일이 있는가)로 가른다 — 분류 탭에서 띠를 없애도 Esc 는 살아야
+       하기 때문이다. 이 가짜는 「걸러보기 중인가」를 where 로 흉내 낸다. */
+    isFiltered: function () { return !!state.where; },
     goBack: function () { log.push('goBack'); },
     el: el
   };
