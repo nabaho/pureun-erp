@@ -159,10 +159,16 @@ eq('배열이 아니면 빈 배열', ordered(null), []);
 
 /* ══ ⑥ 시드는 전부 '확인 필요' ══ */
 const SEED_SRC = slice('var BIZ_CASE_STAGE_SEED = [', '// 기관 종류별 색');
-eq('★ 시드 9개 모두 dueVerified:false', (SEED_SRC.match(/dueVerified:false/g) || []).length, 9);
 ok('★ 시드에 dueVerified:true 가 하나도 없다', SEED_SRC.indexOf('dueVerified:true') < 0);
 reset();
 ok('불러온 시드도 전부 미확인', getStages('').every(function (s) { return s.dueVerified === false; }));
+/* ⚠ 예전에는 「시드 9개 모두」라고 **개수 9** 를 못 박았다. 단계를 하나 더 넣으면
+   — 미확인으로 제대로 넣어도 — 검사가 막았다. 지키려는 것은 개수가 아니라
+   **「시드마다 빠짐없이 적혀 있다」**이니, 시드 수와 견준다(숫자를 안 적는다).
+   ⚠ 「기본값이 false 라 괜찮다」로 두지 않는다 — 적어 두지 않으면 기본값이
+     바뀌는 날 전부 「확인됨」이 되어 기한을 사람이 안 보고 지나친다. */
+eq('★ 시드마다 dueVerified:false 가 적혀 있다',
+  (SEED_SRC.match(/dueVerified:false/g) || []).length, getStages('').length);
 ok('법정 기한 근거(dueNote)가 노무사가 읽을 수 있게 들어 있다',
   (stageInfo('lrc-local') || {}).dueNote.indexOf('10일 이내') >= 0
   && (stageInfo('lrc-central') || {}).dueNote.indexOf('15일 이내') >= 0);

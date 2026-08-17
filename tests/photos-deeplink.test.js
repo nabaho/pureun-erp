@@ -39,12 +39,46 @@ test('목록이 실린 뒤에 연다', () => {
   assert.ok(grid > 0 && open > grid, '목록을 그리기 전에 열려고 한다');
 });
 
+/* 함수 하나를 중괄호 짝을 세어 뽑는다 — 고정 폭으로 자르면 코드가 길어질 때 못 닿는다. */
+function cut(src, decl) {
+  const head = src.indexOf(decl);
+  assert.notEqual(head, -1, decl + ' 을 찾지 못했습니다');
+  let i = src.indexOf('{', head + decl.length), d = 0;
+  for (; i < src.length; i++) {
+    if (src[i] === '{') d++;
+    else if (src[i] === '}') { d--; if (!d) break; }
+  }
+  return src.slice(head, i + 1);
+}
+
 test('한 번 열면 지운다', () => {
-  /* 안 지우면 다른 해로 옮길 때마다 그 사진이 다시 튀어나온다 */
-  const at = photos.indexOf('function openAskedPhoto');
-  const fn = photos.slice(at, at + 900);
-  assert.equal((fn.match(/_askedPhoto = null/g) || []).length, 2,
-    '못 찾았을 때와 열었을 때 둘 다 지워야 한다');
+  /* 안 지우면 다른 해로 옮길 때마다 그 사진이 다시 튀어나온다.
+
+     ⚠ 예전에는 「_askedPhoto = null 이 두 번 나온다」고 **개수**를 셌다.
+       갈래가 하나 늘면 — 거기서도 제대로 지워도 — 검사가 막고, 거꾸로
+       한 갈래가 안 지워도 «다른 곳이 두 번이면» 통과한다. 거꾸로였다.
+       그래서 **실제로 돌려** 어느 갈래로 나가든 비워지는지 본다. */
+  const body = cut(photos, 'function openAskedPhoto(');
+  const run = function (found) {
+    const box = { _askedPhoto: { id: 'p1' }, opened: [], toasts: [] };
+    new Function('box', 'gridItems', 'openViewer', 'toast',
+      'var _askedPhoto = box._askedPhoto;' + body +
+      '\nopenAskedPhoto();\nbox._askedPhoto = _askedPhoto;')(
+      box,
+      found ? [{ id: 'p1' }] : [],
+      function (id) { box.opened.push(id); },
+      function (m) { box.toasts.push(m); });
+    return box;
+  };
+
+  const 찾음 = run(true);
+  assert.deepEqual(찾음.opened, ['p1'], '찾았는데 안 열립니다.');
+  assert.equal(찾음._askedPhoto, null, '열고 나서 안 지웠습니다 — 해를 옮길 때마다 또 튀어나옵니다.');
+
+  const 못찾음 = run(false);
+  assert.deepEqual(못찾음.opened, [], '없는 사진을 열려고 합니다.');
+  assert.equal(못찾음._askedPhoto, null, '못 찾았을 때 안 지웠습니다 — 해를 옮길 때마다 또 튀어나옵니다.');
+  assert.equal(못찾음.toasts.length, 1, '못 찾았다고 말해 주지 않으면 「고장」으로 읽습니다.');
 });
 
 test('못 찾으면 조용히 넘기지 않는다', () => {
@@ -60,10 +94,31 @@ test('기업정보에서 새 창으로 연다', () => {
 });
 
 test('주소에 넣는 값은 인코딩한다', () => {
-  /* 사진 번호에 &·= 가 들어가면 주소가 갈라진다 */
+  /* 사진 번호에 &·= 가 들어가면 주소가 갈라져 엉뚱한 사진이 열리거나 아무것도 안 열린다.
+
+     ⚠ 예전에는 「encodeURIComponent 가 세 번 나온다」고 **개수**를 셌다. 값을
+       하나 더 붙이면 — 제대로 감싸서 붙여도 — 검사가 막고, 거꾸로 하나를 안 감싸도
+       다른 곳이 세 번이면 통과했다. 그래서 **실제로 돌려** 험한 값을 넣어 본다. */
   const at = cards.indexOf('function openCoDoc');
-  const fn = cards.slice(at, at + 600);
-  assert.equal((fn.match(/encodeURIComponent/g) || []).length, 3);
+  assert.ok(at > 0, 'openCoDoc 를 찾지 못했습니다');
+  let i = cards.indexOf('{', at), d = 0;
+  for (; i < cards.length; i++) {
+    if (cards[i] === '{') d++;
+    else if (cards[i] === '}') { d--; if (!d) break; }
+  }
+  const body = cards.slice(at, i + 1);
+
+  let url = '';
+  new Function('encodeURIComponent', 'toast', 'window',
+    body + "\nopenCoDoc('2026&x', 'p 1=2&z', 'u#1');")(
+    encodeURIComponent, function () { }, { open: function (u) { url = u; } });
+
+  assert.ok(url.indexOf('pu-photos.html?') === 0, '새 창을 안 엽니다: ' + url);
+  /* 값 안에 든 & = # 가 그대로 나가면 주소가 갈라진다 */
+  const q = new URLSearchParams(url.slice(url.indexOf('?') + 1));
+  assert.equal(q.get('photo'), 'p 1=2&z', '사진 번호가 갈라졌습니다: ' + url);
+  assert.equal(q.get('year'), '2026&x', '연도가 갈라졌습니다: ' + url);
+  assert.equal(q.get('owner'), 'u#1', '주인이 갈라졌습니다: ' + url);
 });
 
 test('사진 번호가 없는 옛 기록은 까닭을 말한다', () => {

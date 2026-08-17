@@ -10,6 +10,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'js', 'pu-photo-store.js'), 'utf8');
+const { cutFn } = require('./cut-fn');
 const html = fs.readFileSync(path.join(__dirname, '..', 'pu-photos.html'), 'utf8');
 
 /* 저장소에서 renameCustomKind 와 그것이 쓰는 것만 떼어 돌린다.
@@ -243,19 +244,16 @@ test('창에 몇 장짜리 분류인지·누가 만들었는지 적는다', () =
    함수를 직접 불러 우회할 수 있으므로, 화면 함수 자체도 막아야 한다.
    ⚠ 사진에 분류를 「지정」하는 addCustomKind 는 다르다 — 판독 중 새 분류를
      즉석에서 만드는 것은 전 직원이 계속할 수 있어야 한다(submitAssignKind). */
+/* ⚠ 예전에는 앞 300자만 봤다(함수는 1,200~1,600자). 막는 줄이 그 안에 있어야만
+   통과하니, 줄이 조금만 아래로 내려가면 — 여전히 제대로 막고 있어도 — 깨졌다.
+   이제 함수를 통째로 본다. */
 test('★ 화면: openAddKind 는 함수 안에서도 관리자 여부를 본다', () => {
-  const at = html.indexOf('function openAddKind(');
-  assert.ok(at > 0, 'openAddKind 를 찾지 못했습니다');
-  const fn = html.slice(at, at + 300);
-  assert.match(fn, /if \(!PuPhotoStore\.amAdmin\(\)\)/,
+  assert.match(cutFn(html, 'function openAddKind('), /if \(!PuPhotoStore\.amAdmin\(\)\)/,
     '★ 단추만 감추면 콘솔에서 바로 불러 우회할 수 있습니다');
 });
 
 test('★ 화면: openRenameKind 도 함수 안에서 관리자 여부를 본다', () => {
-  const at = html.indexOf('function openRenameKind(');
-  assert.ok(at > 0, 'openRenameKind 를 찾지 못했습니다');
-  const fn = html.slice(at, at + 300);
-  assert.match(fn, /if \(!PuPhotoStore\.amAdmin\(\)\)/,
+  assert.match(cutFn(html, 'function openRenameKind('), /if \(!PuPhotoStore\.amAdmin\(\)\)/,
     '★ 단추만 감추면 콘솔에서 바로 불러 우회할 수 있습니다 — 이름 고치기·지우기가 함께 뚫립니다');
 });
 

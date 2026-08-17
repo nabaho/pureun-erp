@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const resilience = require('../js/pu-resilience.js');
+const { cutFn } = require('./cut-fn');
 const root = path.resolve(__dirname, '..');
 
 test('transient connection failures are retried', () => {
@@ -105,10 +106,11 @@ test('the replay loop counts attempts and parks a write that keeps failing', () 
 
 test('parked writes are skipped by later replays but kept on disk', () => {
   const src = fs.readFileSync(path.join(root, 'js', 'pu-resilience.js'), 'utf8');
-  const at = src.indexOf('function replayQueue(');
-  /* 30초 간격 확인이 앞에 붙어(2026-08-16) 머리가 길어졌다 — 넉넉히 잘라 본다 */
-  const head = src.slice(at, at + 800);
-  assert.match(head, /!item\.parked/, '세워 둔 것을 또 보내면 되풀이가 그대로다');
+  /* ⚠ 예전에는 앞 800자만 봤다(함수는 2,683자). 2026-08-16 에 간격 확인이 앞에 붙어
+     한 번 창을 넓혔는데, 그렇게 «숫자를 키우며 쫓아가는» 것이 못 박기다.
+     함수를 통째로 본다 — 그러면 다시는 자리 때문에 깨지지 않는다. */
+  assert.match(cutFn(src, 'function replayQueue('), /!item\.parked/,
+    '세워 둔 것을 또 보내면 되풀이가 그대로다');
 });
 
 test('the pending/parked counts can be read, so a stall can name its cause', () => {

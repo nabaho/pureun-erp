@@ -26,10 +26,14 @@ test('★ 시간 제한 없이 바깥으로 나가는 부름이 하나도 없다
   app.split('\n').forEach(function(t, i){
     if(/\bfetch\(/.test(t) && !/fetchT\(/.test(t)) left.push((i + 1) + ': ' + t.trim().slice(0, 80));
   });
-  // fetchT 안에서 진짜 fetch 를 부르는 두 곳만 남아야 한다
-  assert.equal(left.length, 2, '남은 곳:\n' + left.join('\n'));
-  assert.match(left[0], /return fetch\(url, opts\);/);
-  assert.match(left[1], /return fetch\(url, o\)/);
+  /* 남아도 되는 것은 **감싸개 자신이 진짜 fetch 를 부르는 줄**뿐이다.
+     ⚠ 「두 곳」이라고 개수를 못 박지 않는다 — 감싸개가 하나 늘어도 뜻은 그대로인데
+       검사가 막는다. 남은 줄이 «전부» 감싸개 자신인지를 본다(그게 지키려는 것이다). */
+  left.forEach(function (t) {
+    assert.match(t, /return fetch\(url, (?:opts|o)\)/,
+      '시간 제한 없이 나가는 부름이 남았습니다:\n' + left.join('\n'));
+  });
+  assert.ok(left.length >= 1, '감싸개가 진짜 fetch 를 부르는 줄이 사라졌습니다.');
 });
 
 test('AI 부름 두 곳 다 걸렸다', () => {
@@ -44,8 +48,12 @@ test('구글·국세청·NAS 도 걸렸다', () => {
     const re = new RegExp('fetchT\\(\'' + u.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&'));
     assert.match(app, re, u);
   });
-  assert.equal((app.match(/fetchT\(getNasBase\(\)/g) || []).length, 5, 'NAS 다섯 곳');
-  assert.equal((app.match(/fetchT\(base\+'\/webapi/g) || []).length, 3, 'NAS 자동 백업 세 곳');
+  /* ⚠ 예전에는 「NAS 다섯 곳·자동 백업 세 곳」이라고 **개수**를 못 박았다.
+     NAS 부름이 하나 늘면 — 제대로 감싸서 늘려도 — 검사가 막는다.
+     「빠짐없이 걸렸나」는 위 첫 검사가 이미 통째로 지킨다(감싸지 않은 fetch 가
+     한 줄이라도 남으면 거기서 걸린다). 여기서는 **있기는 한가**만 본다. */
+  assert.ok((app.match(/fetchT\(getNasBase\(\)/g) || []).length >= 1, 'NAS 부름이 사라졌습니다');
+  assert.ok((app.match(/fetchT\(base\+'\/webapi/g) || []).length >= 1, 'NAS 자동 백업이 사라졌습니다');
 });
 
 /* ── 도구가 제대로 도나 ── */

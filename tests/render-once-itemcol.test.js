@@ -43,7 +43,17 @@ t('머리에 「업체」와 「항목」이 따로 있다',
   /h\('span',\{style:\{flex:1,minWidth:0\}\},'업체'\)/.test(PICK)
   && /h\('span',\{style:\{width:'104px',flex:'none'\}\},'항목'\)/.test(PICK), true);
 t('업체 칸에는 업체만', /title:g\.company\},g\.company\),/.test(PICK), true);
-t('항목 칸이 너비를 못 박았다', (PICK.match(/width:'104px'/g) || []).length, 2);
+/* ⚠ 예전에는 「104px 이 두 번 나온다」고 **개수**를 셌다. 지키려는 것은 개수가 아니라
+   **머리 줄과 칸 줄의 너비가 같은 차례로 같다**는 것이다 — 어긋나면 표가 지그재그로 밀린다.
+   숫자를 바꾸는 것(104 → 120)은 옳은 고침인데 개수 세기로는 통과하고,
+   한쪽만 바꾸는 진짜 사고도 개수는 그대로라 통과한다. 거꾸로였다.
+   ⚠ 칸이 하나가 아니다(13·104·56·82·60) — 「다 같다」로 두면 오히려 틀린다.
+     머리 몫과 줄 몫이 **같은 차례로 되풀이되는지**를 본다. */
+const 너비들 = (PICK.match(/width:'\d+px'/g) || []);
+t('머리 줄과 칸 줄에 너비가 적혀 있다', 너비들.length >= 2 && 너비들.length % 2 === 0, true);
+const 절반 = 너비들.length / 2;
+t('★ 머리 줄과 칸 줄의 너비가 같은 차례로 같다',
+  JSON.stringify(너비들.slice(0, 절반)), JSON.stringify(너비들.slice(절반)));
 t('항목에 밀린 달 수가 붙는다', /erpKindLabel\(g\)\+\(g\.n>1\?\(' \('\+\(g\.months\.length\|\|g\.n\)\+'달\)'\):''\)/.test(PICK), true);
 t('마우스를 올리면 밀린 달 목록', /' — 밀린 달: '\+g\.months\.join\(', '\)/.test(PICK), true);
 t('옛 붙여쓰기가 없다', /g\.company\+' · '\+erpKindLabel\(g\)\+\(g\.n>1/.test(PICK), false);

@@ -22,6 +22,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { cutFn } = require('./cut-fn');
 const src = fs.readFileSync(path.join(__dirname, '..', 'pu-cards.html'), 'utf8');
 
 /* 몇 번 진짜로 셌는지 세어 준다 */
@@ -165,8 +166,10 @@ test('두 번째부터는 처음 준 것과 같은 답을 준다', () => {
 /* ══════ 화면에 실제로 걸려 있는가 ══════ */
 
 test('명함 표가 기억해 두는 쪽을 쓴다', () => {
-  const i = src.indexOf('function renderPCTable(){');
-  const fn = src.slice(i, i + 900);
+  /* ⚠ 예전에는 앞 900자만 봤다 — 이 함수는 16,000자가 넘어 **6%만** 보고 있었다.
+     부르는 자리가 조금만 아래로 내려가도, 고친 것이 옳은데 검사가 깨진다.
+     이제 함수를 통째로 본다. */
+  const fn = cutFn(src, 'function renderPCTable(');
   assert.ok(fn.includes('dupIdSetCached('), '표가 아직 매번 다시 센다');
 });
 

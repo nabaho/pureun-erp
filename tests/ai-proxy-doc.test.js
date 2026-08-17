@@ -67,8 +67,15 @@ test('★ 문서에 적은 모델이 코드와 같다', () => {
   assert.match(models, /'claude-sonnet-4-20250514'/);
   assert.match(doc, /`claude-opus-5`/);
   assert.match(doc, /`claude-sonnet-4-20250514`/);
-  // 푸른이알피 두 곳은 sonnet 고정
-  assert.equal((erp.match(/model: ?'claude-sonnet-4-20250514'/g) || []).length, 2);
+  /* 푸른이알피의 AI 부름은 sonnet 고정.
+     ⚠ 「두 곳」이라고 개수를 못 박지 않는다 — AI 부름이 하나 늘면, 같은 모델로
+       제대로 늘려도 검사가 막는다. 지키려는 것은 개수가 아니라
+       **「딴 모델을 쓰는 곳이 없다」**이다. */
+  const used = (erp.match(/model: ?'[^']+'/g) || []).map(function (s) { return s.replace(/model: ?/, ''); });
+  assert.ok(used.length >= 1, '푸른이알피에서 AI 모델을 고르는 자리가 사라졌습니다.');
+  used.forEach(function (m) {
+    assert.equal(m, "'claude-sonnet-4-20250514'", '문서에 없는 모델을 씁니다: ' + m);
+  });
 });
 
 test('★ 문서에 적은 max_tokens 가 코드와 같다', () => {

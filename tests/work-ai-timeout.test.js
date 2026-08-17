@@ -34,10 +34,14 @@ test('★ 바깥 부름에 시간 제한이 없는 곳이 없다', () => {
   src.split('\n').forEach(function(t, i){
     if(/\bfetch\(/.test(t) && !/aiFetch\(/.test(t)) left.push((i + 1) + ': ' + t.trim().slice(0, 80));
   });
-  // aiFetch 안에서 진짜 fetch 를 부르는 두 곳만 남아야 한다
-  assert.equal(left.length, 2, '남은 곳:\n' + left.join('\n'));
-  assert.match(left[0], /return fetch\(url,opts\);/);
-  assert.match(left[1], /return fetch\(url,o\)/);
+  /* 남아도 되는 것은 **감싸개 자신이 진짜 fetch 를 부르는 줄**뿐이다.
+     ⚠ 「두 곳」이라고 개수를 못 박지 않는다 — 감싸개가 늘어도 뜻은 그대로인데
+       검사가 막는다. 남은 줄이 «전부» 감싸개 자신인지를 본다. */
+  left.forEach(function (t) {
+    assert.match(t, /return fetch\(url,\s*(?:opts|o)\)/,
+      '시간 제한 없이 나가는 부름이 남았습니다:\n' + left.join('\n'));
+  });
+  assert.ok(left.length >= 1, '감싸개가 진짜 fetch 를 부르는 줄이 사라졌습니다.');
 });
 
 test('AI 호출이 aiFetch 를 쓴다', () => {
