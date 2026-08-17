@@ -44,7 +44,8 @@
     { key: 'fund',    name: '기금관리',     icon: '🏦', url: 'fund.html',           desc: '근로복지기금 운영' },
     { key: 'rules',   name: '취업규칙 관리', icon: '📋', url: 'rules.html',          desc: '작성·검토·개정·신고' },
     { key: 'docs',    name: '문서관리',     icon: '📄', url: 'docs-esign.html',     desc: '계약서 전자송부' },
-    { key: 'payroll', name: '급여관리',     icon: '💰', url: 'payroll-os.html',     desc: '급여 아웃소싱' }
+    { key: 'payroll', name: '급여관리',     icon: '💰', url: 'payroll-os.html',     desc: '급여 아웃소싱' },
+    { key: 'home',    name: '홈페이지 관리', icon: '🌐', url: 'pu-home.html',        desc: '구성원·주요업무 글' }
   ];
 
   /* 단추에 적는 말 — 한 곳에서만 정한다. 바꾸려면 여기 한 줄. */
