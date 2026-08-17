@@ -480,6 +480,30 @@
       .then(function (s) { return s.val() || {}; });
   }
 
+  /* ══════ 그 업체·그 달만 (대표 지시 2026-08-17 「다섯 이상 동시 접속」) ══════
+     ⚠ 자료를 한 건 담을 때마다 **도착 칸을 통째로** 다시 받고 있었다. 112곳 ×
+     열두 달 × 종류별로 쌓이면 다섯이 각자 그것을 반복한다 — 느려지고 요금이 된다.
+     담은 그 자리만 다시 읽으면 화면 숫자는 그대로 맞는다. */
+  function listArrivalOne(companyId, slot) {
+    if (!companyId || !slot) return Promise.resolve(null);
+    return deps.db.ref(arrivalPath(companyId, slot)).once('value')
+      .then(function (s) { return s.val() || null; });
+  }
+
+  /* 그 업체·그 달을 **지켜본다** — 남이 담으면 그 자리에 곧바로 뜬다.
+     ⚠ 전체를 지켜보지 않는다. 다섯이 각자 112곳을 계속 받으면 요금이 된다.
+     ⚠ once() 로 먼저 읽고 on() 을 또 걸면 **같은 값을 두 번 받는다.** 그래서
+     여기서는 on() 하나만 쓰고 **첫 번째로 오는 값을 처음 값으로** 삼는다.
+     ⚠ 돌려주는 함수를 반드시 불러 끊어야 한다 — 안 끊으면 서랍을 옮길 때마다
+     지켜보기가 하나씩 쌓여, 한 번 담을 때 열 번 그려진다. */
+  function watchArrival(companyId, slot, cb) {
+    if (!companyId || !slot || typeof cb !== 'function') return function () {};
+    var ref = deps.db.ref(arrivalPath(companyId, slot));
+    var handler = ref.on('value', function (s) { cb(s.val() || null); },
+      function (e) { console.warn('[도착 지켜보기]', e && e.code); });
+    return function () { try { ref.off('value', handler); } catch (_) { /* 이미 끊겼다 */ } };
+  }
+
   /* 내 업체를 다른 담당자에게 공유한다 — 공유는 권한을 주는 것이 아니라
      「이거 봐 주세요」 알림이다(대표 결정 2026-08-14: 보기 권한은 원래대로,
      대시보드에 표시만 뜬다). 공유사항(tags)은 최소 하나 있어야 한다 — 아무 표시
@@ -1429,6 +1453,8 @@
     claimSharedSafe: claimSharedSafe,
     listMyPending: listMyPending,
     listSlotMany: listSlotMany,
+    listArrivalOne: listArrivalOne,
+    watchArrival: watchArrival,
     listSharedPending: listSharedPending,
     mailNote: mailNote,
     companyByEmail: companyByEmail,
