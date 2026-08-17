@@ -825,11 +825,38 @@
          당겨오기". 담당자별 대시보드는 여기서 이 두 칸을 가지고 가른다. */
       out.push({
         id: id, name: name, biz: String(row.사업자등록번호 || row.biz || ''),
+        /* 유형·상태·계약중단 — 셋 다 업체관리가 쓰는 이름 그대로다.
+           typeCode: '자문'|'급여'|'노조'|'기금'|'사무대행'(COMPANY_TYPE_SEED)
+           status:   'active'|'closed'|'suboffice' (종료하면 closed 로 바뀐다)
+           suspended: 계약 중단 체크 — status 와 **따로** 켜지는 칸이라
+                      중단해도 status 는 active 그대로다. 둘 다 봐야 한다. */
+        typeCode: String(row.typeCode || ''),
+        status: String(row.status || ''),
+        suspended: !!row.suspended,
         managerMain: String(row.managerMain || ''),
         managerSubs: Array.isArray(row.managerSubs) ? row.managerSubs.slice() : []
       });
     }
     return out;
+  }
+
+  /* 급여데이터함이 다룰 업체인가 (대표 지시 2026-08-17: "급여데이터함은 업체관리에서
+     사업장을 연결해서 관리하려는 것" — 유형이 「급여」인 곳만, 계약중단은 뺀다).
+     안 거르면 자문·노조·기금까지 371곳이 다 나와 내 업체를 못 찾는다.
+     status==='active' 는 업체관리 목록이 쓰는 기준 그대로다(종료한 업체 제외).
+
+     ⚠ 목록에서 감추는 것일 뿐, **이미 담긴 자료는 그대로 있다.** 유형이 급여가
+     아닌 곳에 담긴 자료는 첫 화면 아래쪽에 따로 모아 보여 준다(offType) —
+     감추기만 하면 자료가 사라진 줄 안다. */
+  function isPayrollCompany(co) {
+    if (!co) return false;
+    if (co.suspended) return false;
+    if (String(co.status || '') !== 'active') return false;
+    return String(co.typeCode || '') === '급여';
+  }
+
+  function payrollCompanies(list) {
+    return (list || []).filter(isPayrollCompany);
   }
 
   function listCompanies() {
@@ -1171,6 +1198,8 @@
     ERP_COMPANIES: ERP_COMPANIES,
     normalizeCompanies: normalizeCompanies,
     listCompanies: listCompanies,
+    isPayrollCompany: isPayrollCompany,
+    payrollCompanies: payrollCompanies,
     matchCompanyName: matchCompanyName,
     isMyCompany: isMyCompany,
     applyOrder: applyOrder,

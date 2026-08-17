@@ -392,7 +392,9 @@ const App = {
   /* values 는 **null 로 시작한다** — {} 는 「읽었는데 비었다」이고 null 은
      「아직 안 읽었다」다. 둘을 같은 값으로 두면 안 읽은 것을 「값이 없습니다」로
      단정하게 된다(값 표 화면·급여관리 알리기가 이 둘을 갈라 본다). */
-  companies: [], pending: {}, arrivals: {}, trash: null, values: null, me: null, pick: {}, myName: '',
+  /* companies 는 급여 업체만 걸러 둔 것, allCompanies 는 업체관리 전체다
+     (대표 지시 2026-08-17). 화면·고르기는 companies 를, 이름 찾기만 allCompanies 를 쓴다. */
+  companies: [], allCompanies: [], pending: {}, arrivals: {}, trash: null, values: null, me: null, pick: {}, myName: '',
   itemsKeep: null, itemsMonth: null, itemsMonthSlot: '',
   viewerId: '', viewerUrl: '', viewerZoom: false, viewerErr: '',
   readState: { status: 'idle', rows: [], err: '' },
@@ -557,7 +559,13 @@ function loadSites() {
     S.listOwners().catch(e => { console.warn('[담당자 명단]', e && e.code); return {}; })
   ]).then(([companies, pending, arrivals, owners]) => {
     if (!seatSame(seat)) return;   // 그 사이 자리를 옮겼다 — 이 답은 버린다
-    App.companies = companies;
+    /* 급여데이터함은 **급여 아웃소싱 하는 사업장**만 다룬다(대표 지시 2026-08-17).
+       걸러낸 뒤 것을 App.companies 에 담아, 좌측 대시보드·사업장 목록·「담기」의
+       업체 고르기가 모두 같은 명단을 쓰게 한다. 전체 명단(allCompanies)은
+       이미 담긴 자료의 업체 **이름을 찾는 데만** 쓴다 — 유형이 급여가 아닌 곳에
+       담긴 자료가 번호만 덩그러니 남으면 지워진 업체로 오해한다. */
+    App.allCompanies = companies;
+    App.companies = S.payrollCompanies(companies);
     App.pending = pending;
     App.arrivals = arrivals;
     App.owners = owners;
@@ -609,7 +617,12 @@ function companyDocCount(node, slot) {
   return n;
 }
 
-function sitesModel(companies, pending, arrivals, month, now, myEmail) {
+/* companies 는 **급여 업체만** 걸러 온 명단이고, allCompanies 는 업체관리 전체다
+   (대표 지시 2026-08-17). 자료는 왔는데 급여 명단에 없는 업체는 두 갈래로 나뉜다.
+     offType  — 업체관리에는 있는데 유형이 급여가 아니거나 중단·종료된 곳. 이름을 안다.
+     unlisted — 업체관리에서 아예 못 찾은 번호. 예전부터 있던 칸이다.
+   섞어 놓으면 「지워진 업체」로 잘못 읽는다 — 자료는 멀쩡히 있는데 말이다. */
+function sitesModel(companies, pending, arrivals, month, now, myEmail, allCompanies) {
   const slot = S.monthKey(month);
   const pend = pending || {};
   const arr = arrivals || {};
@@ -623,18 +636,23 @@ function sitesModel(companies, pending, arrivals, month, now, myEmail) {
   });
   const known = {};
   (companies || []).forEach(c => { known[c.id] = true; });
-  const unlisted = Object.keys(arr).filter(id => !known[id]).map(id => {
+  const nameOf = {};
+  (allCompanies || []).forEach(c => { nameOf[c.id] = c.name; });
+
+  const leftover = Object.keys(arr).filter(id => !known[id]).map(id => {
     let n = 0;
     Object.keys(arr[id] || {}).forEach(sl => {
       S.KINDS.forEach(k => { n += S.arrivalCount(arr[id][sl], k.key); });
     });
-    return { id: id, name: id, count: n };
-  });
+    return { id: id, name: nameOf[id] || id, count: n, named: !!nameOf[id] };
+  }).filter(r => r.count > 0);   // 빈 칸만 남은 번호까지 알릴 것은 없다
+
   return {
     pendingCount: pendIds.length,
     staleCount: pendIds.filter(id => S.isStalePending(pend[id], now)).length,
     rows: rows,
-    unlisted: unlisted
+    offType: leftover.filter(r => r.named),
+    unlisted: leftover.filter(r => !r.named)
   };
 }
 
@@ -676,7 +694,7 @@ function personDashboardModel(owners, companies, arrivals, shares, myUid, myEmai
 function screenSites() {
   if (!App.month) App.month = thisMonth();
   const myEmail = (App.me && App.me.email) || '';
-  const m = sitesModel(App.companies, App.pending, App.arrivals, App.month, Date.now(), myEmail);
+  const m = sitesModel(App.companies, App.pending, App.arrivals, App.month, Date.now(), myEmail, App.allCompanies);
   let h = '';
 
   /* 미정 띠 — 맨 위에 늘 있다. 사업장을 안 고른 자료는 어느 서랍에도 없어서,
@@ -705,7 +723,11 @@ function screenSites() {
     : '<div class="empty">업체관리에 주담당·부담당으로 등록된 업체가 없습니다.</div>')
     + '</div>';
 
-  h += '<h1>사업장 전체</h1><div class="sub">업체관리 명단 기준 · ' + m.rows.length + '곳'
+  /* 「전체」라고 쓰되 무엇의 전체인지 못 박는다 — 371곳이 다 나오던 때(2026-08-17)
+     대표가 "왜 모든 사업장 다 가져왔나" 물었다. 반대로 걸러 놓고 말을 안 하면
+     이번에는 "내 업체가 왜 없나"가 된다. */
+  h += '<h1>사업장 전체</h1><div class="sub">업체관리에서 유형이 「급여」인 곳 · ' + m.rows.length + '곳'
+    + ' · 계약중단·종료한 업체는 뺐습니다'
     + ' · 장수는 그 업체에 온 자료 전체입니다</div>';
 
   h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">'
@@ -745,6 +767,22 @@ function screenSites() {
   }
   h += '</div>';
 
+  /* 급여 업체가 아닌 곳에 담긴 자료 — 유형이 자문·노조·기금이거나 중단·종료된 업체다.
+     위 목록에서 뺐다고 자료까지 없앤 것이 아니다(대표 지시 2026-08-17). 여기에
+     이름과 장수를 남겨 두고, 눌러서 그대로 열 수 있게 한다 — 안 그러면
+     "자료가 사라졌다"가 된다. */
+  if (m.offType.length) {
+    h += '<h1 style="font-size:15px;margin-top:20px">급여 업체가 아닌 곳에 담긴 자료'
+      + ' <span class="sub" style="margin:0;font-weight:400">' + m.offType.length + '곳</span></h1>'
+      + '<div class="sub">업체관리에서 유형이 「급여」가 아니거나 계약중단·종료된 업체입니다.'
+      + ' 자료는 그대로 있습니다 — 눌러서 열 수 있습니다.</div>'
+      + '<div class="card">' + m.offType.map(u =>
+        '<div class="row" style="cursor:pointer" onclick="App.go(\'drawer\',{companyId:\'' + jsq(u.id)
+        + '\',companyName:\'' + jsq(u.name) + '\',kind:\'attend\',query:\'\'})">'
+        + '<b style="flex:1">' + esc(u.name) + '</b>'
+        + '<span class="sub" style="margin:0">' + u.count + '장</span></div>').join('') + '</div>';
+  }
+
   /* 명단에 없는 업체 — 자료는 왔는데 업체관리에 없다. 숨기면 그 업체가 빠진 줄도 모른다.
      ⚠ 도착 칸에는 업체 **번호**만 있고 이름이 없다(전 직원이 읽는 칸이라 얇게 뒀다).
      그래서 여기는 번호로 보인다 — 업체관리에서 지워진 업체이거나, 업체를 고른 뒤
@@ -766,7 +804,7 @@ function screenSites() {
    기준 월을 바꾼 뒤 눌렀을 때 낡은 숫자가 나간다(pickVisible 과 같은 원칙). */
 function selectedSiteRows() {
   const myEmail = (App.me && App.me.email) || '';
-  const m = sitesModel(App.companies, App.pending, App.arrivals, App.month, Date.now(), myEmail);
+  const m = sitesModel(App.companies, App.pending, App.arrivals, App.month, Date.now(), myEmail, App.allCompanies);
   const sel = pickOf('sites');
   return m.rows.filter(r => pickOn(sel, r.id));
 }
