@@ -635,27 +635,25 @@ function fakeDbKeys(map) {
   };
 }
 
-test('AI 키 — 이 기기 → 명함첩 공유 → 포털 공용 순서로 찾는다', async () => {
+/* ⚠ 2026-08-17 — 여기 있던 검사 셋(「이 기기 → 명함첩 공유 → 포털 공용 순서로 찾는다」
+   등)은 **없앤 기능**을 재고 있었다. 열쇠는 이제 금고(Secret Manager)에 있고 서버만
+   안다. 명함첩 공유 자리·포털 공용 설정은 규칙상 **로그인한 모든 직원이 읽는** 자리라
+   그것이 바로 구멍이었다 — 그 자리의 열쇠도 지웠다.
+   그래서 「어떤 순서로 찾는가」가 아니라 **「아예 안 찾는다」**를 못 박는다. */
+test('★ AI 키를 브라우저로 «가져다 주지 않는다» — 열쇠는 서버만 안다', async () => {
   const R = loadRead({ window: { localStorage: { getItem: () => 'LOCAL' } } });
   const db = fakeDbKeys({ 'pucards/config/geminiKey': 'SHARED', 'data/app_config/geminiKey': 'PORTAL' });
-  assert.equal(await R.keysFrom(db).getKey(), 'LOCAL');
-
-  const R2 = loadRead({ window: { localStorage: { getItem: () => null } } });
-  assert.equal(await R2.keysFrom(db).getKey(), 'SHARED');
-
-  const R3 = loadRead({ window: { localStorage: { getItem: () => null } } });
-  assert.equal(await R3.keysFrom(fakeDbKeys({ 'data/app_config/geminiKey': 'PORTAL' })).getKey(), 'PORTAL');
+  const keys = R.keysFrom(db);
+  assert.equal(typeof keys.getKey, 'undefined',
+    '★ 열쇠를 돌려주면 그 순간 다시 브라우저로 내려옵니다.');
+  assert.ok(db.asked.every(p => p.indexOf('geminiKey') < 0),
+    '★ 실시간DB 의 열쇠 자리를 읽었습니다: ' + db.asked.join(', '));
 });
 
-test('AI 키 — 아무 데도 없으면 빈 문자열 (예외를 던지지 않는다)', async () => {
-  const R = loadRead({ window: { localStorage: { getItem: () => null } } });
-  assert.equal(await R.keysFrom(fakeDbKeys({})).getKey(), '');
-});
-
-test('AI 키 — 실시간DB 읽기가 막혀도 예외를 던지지 않는다', async () => {
-  const R = loadRead({ window: { localStorage: { getItem: () => null } } });
-  const badDb = { ref: () => ({ once: () => Promise.reject(new Error('권한 없음')) }) };
-  assert.equal(await R.keysFrom(badDb).getKey(), '');
+test('★ 이 기기에 옛 열쇠가 남아 있어도 쓰지 않는다', async () => {
+  /* 「내 열쇠를 넣으면 옛 길로 돈다」가 남으면 구멍이 그대로다. */
+  const R = loadRead({ window: { localStorage: { getItem: () => 'LOCAL' } } });
+  assert.equal(typeof R.keysFrom(fakeDbKeys({})).getKey, 'undefined');
 });
 
 test('국세청 키는 포털 공용 설정에서만 찾는다', async () => {
@@ -667,7 +665,6 @@ test('국세청 키는 포털 공용 설정에서만 찾는다', async () => {
 
 test('키 함수는 db 가 없어도 터지지 않는다', async () => {
   const R = loadRead({ window: { localStorage: { getItem: () => null } } });
-  assert.equal(await R.keysFrom(null).getKey(), '');
   assert.equal(await R.keysFrom(null).getNtsKey(), '');
 });
 

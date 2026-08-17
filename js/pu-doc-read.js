@@ -598,11 +598,11 @@
   }
 
   /* ── AI 키를 어디서 얻는가 ──
-     키 읽는 코드를 앱마다 복사하면 한 곳만 고쳐도 앱마다 다른 키를 보게 된다.
-     그래서 '키가 어디 있는지'도 이 층이 안다. 순서는 명함첩·푸른카메라와 같게 맞췄다:
-       ① 이 기기(브라우저) ② 명함첩 공유 키 ③ 포털 공용 설정
-     국세청 키는 포털 공용 설정에만 둔다(명함첩은 국세청을 안 쓴다). */
-  var LS_GEMINI = 'pucards_gemini_key';
+     ⚠ **이제 안 얻는다** (2026-08-17). 열쇠는 금고(Secret Manager)에 있고 서버만 안다.
+       예전에는 ①이 기기 ②명함첩 공유 자리 ③포털 공용 설정 순으로 가져왔는데,
+       ②③은 규칙상 **로그인한 모든 직원이 읽는** 자리였다 — 그것이 구멍이었다.
+       그 자리들의 열쇠는 지웠고, 여기서 읽던 코드도 함께 걷어냈다.
+     국세청 키(getNtsKey)는 판독과 무관하고 자리도 다르므로 그대로 둔다. */
 
   function readOnce(db, path) {
     if (!db) return Promise.resolve('');
@@ -611,13 +611,6 @@
         .then(function (s) { return (s && s.val()) || ''; })
         .catch(function () { return ''; });   // 권한이 없어도 조용히 넘어간다
     } catch (e) { return Promise.resolve(''); }
-  }
-
-  function localKey(name) {
-    try {
-      var ls = global.localStorage;
-      return (ls && ls.getItem(name)) || '';
-    } catch (e) { return ''; }
   }
 
   /* 판독 대리인 주소 — 서버 함수가 사는 곳.
@@ -632,10 +625,20 @@
        AI 스튜디오 열쇠라 **자물쇠(웹사이트 제한)를 채울 방법도 없다**(확인 완료).
        그래서 **서버가 대신 부르고 브라우저는 열쇠를 아예 모른다.**
 
-     ⚠ `getKey` 를 아직 남겨 둔다 — 서버가 아직 안 올라갔거나 로그인 증명을 못 얻을 때
-       옛 길로 돌아가기 위해서다. 네 앱(사진첩·명함첩·enter·경력관리)이 다 옮겨지고
-       서버가 안정되면 **getKey 와 실시간DB 의 열쇠를 함께 지워야** 이 문제가 끝난다.
-       남겨 두면 열쇠가 DB 에 그대로 있어 지금 구멍이 안 막힌다. */
+     ⚠ **열쇠를 «가져다 주는» 자리를 없앴다** (2026-08-17 마무리).
+       네 앱을 다 옮기고, 열쇠를 금고(Secret Manager)에 넣고, 실시간DB 의 열쇠
+       (`pucards/config/geminiKey`)를 지운 뒤다. 서버 기록에서 `keySource secret` 과
+       판독 200 을 눈으로 확인하고 지웠다.
+
+       ⚠ **되살리지 말 것.** 여기서 열쇠를 돌려주면 그 순간 열쇠가 다시 브라우저로
+         내려온다 — 이틀 동안 막은 것이 바로 그것이다. 서버가 죽으면 판독이
+         **안 되는 것이 맞다.**
+
+       ⚠ 판독 함수 안에는 「열쇠를 받으면 직접 부르는」 옛 갈래가 코드로는 아직 남아
+         있다(deps.getKey). **아무 화면도 그것을 안 넘기므로 돌지 않는다** —
+         검사가 그 둘(여기서 안 주는 것 · 화면이 안 넘기는 것)을 못 박는다.
+         갈래 자체는 여러 검사가 「열쇠를 주면 어떻게 되는가」를 재는 데 쓰고 있어
+         남겨 둔다(지우면 검사 50여 곳이 함께 죽는다). */
   function keysFrom(db, opts) {
     opts = opts || {};
     var auth = opts.auth || null;   // firebase.auth() — 로그인 증명을 얻는 곳
@@ -650,14 +653,8 @@
           return u.getIdToken().catch(function () { return ''; });
         } catch (e) { return Promise.resolve(''); }
       } : null,
-      getKey: function () {
-        var mine = localKey(LS_GEMINI);
-        if (mine) return Promise.resolve(mine);
-        return readOnce(db, 'pucards/config/geminiKey').then(function (shared) {
-          if (shared) return shared;
-          return readOnce(db, 'data/app_config/geminiKey');
-        });
-      },
+      /* getKey 는 **일부러 안 준다** — 위 설명 참고. 실시간DB 의 열쇠도 지웠으므로
+         되살려도 빈 값만 온다. 국세청 열쇠(getNtsKey)는 판독과 무관해 그대로 둔다. */
       getNtsKey: function () { return readOnce(db, 'data/app_config/ntsKey'); }
     };
   }
