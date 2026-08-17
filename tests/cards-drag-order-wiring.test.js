@@ -47,3 +47,24 @@ test('기업 상세 폴더 줄이 순서 드래그를 건다', () => {
   assert.match(s, /onOrdDragStart\(event,\s*'cofolder'/, '기업 상세 폴더에 onOrdDragStart 가 없다');
   assert.match(s, /onOrdDrop\(event,\s*'cofolder'/, '기업 상세 폴더에 onOrdDrop 이 없다');
 });
+
+test('메인 탭 칩이 순서 드래그를 건다', () => {
+  const at = source.indexOf('function renderMyTabsHtml');
+  const end = source.indexOf('\nfunction ', at + 20);
+  assert.ok(at > 0 && end > at, 'renderMyTabsHtml 을 찾지 못했습니다');
+  const s = source.slice(at, end);
+  assert.match(s, /onOrdDragStart\(event,\s*'view'/, '메인 탭에 onOrdDragStart 가 없다');
+  assert.match(s, /onOrdDrop\(event,\s*'view'/, '메인 탭에 onOrdDrop 이 없다');
+  assert.match(s, /draggable="\$\{state\.isAdmin \? 'true' : 'false'\}"/, '대표 갈림이 없다');
+});
+
+test('「📋 전체」 칩은 끌 수 없다 — 저장된 탭이 아니라 늘 맨 앞이다', () => {
+  const at = source.indexOf('function renderMyTabsHtml');
+  const end = source.indexOf('\nfunction ', at + 20);
+  const s = source.slice(at, end);
+  const allAt = s.indexOf('showAllInFolder()');
+  const mapAt = s.indexOf('h+=vs.map');
+  assert.ok(allAt >= 0 && mapAt > allAt, '전체 칩과 탭 목록을 찾지 못했습니다');
+  assert.ok(s.slice(allAt, mapAt).indexOf('onOrdDragStart') < 0,
+    '전체 칩에 드래그가 붙었다 — 저장할 자리가 없어 순서를 바꿀 수 없다');
+});
