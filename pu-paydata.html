@@ -281,7 +281,11 @@ table.vals tr.dup input{color:#8A1C1C;font-weight:700}
 /* 가릴 곳 고르기 — 사진 위에 사각형을 얹는다. 칠하기는 캔버스가 아니라 겹친
    칸으로 한다 — 하나하나 지울 수 있어야 하고, 사진은 손대지 않아야 한다. */
 .maskwrap{position:relative;display:inline-block;max-width:100%;touch-action:none;user-select:none}
-.maskwrap img{display:block;max-width:100%;height:auto}
+/* ⚠ 사진을 **못 끌게** 한다. 데스크톱 브라우저는 사진 위에서 누른 채 끌면
+   「사진을 끌어다 놓기」로 가로채고, 그 순간 포인터 흐름을 끊어 버린다 —
+   그러면 사람이 분명히 그었는데 아무 칸도 안 생긴다(대표 지적 2026-08-16).
+   pointerdown 에서 preventDefault() 를 불러도 이건 안 막힌다. */
+.maskwrap img{display:block;max-width:100%;height:auto;-webkit-user-drag:none;user-drag:none}
 .maskbox{position:absolute;background:#000;border:2px solid #2E3A8C}
 .maskbox.ai{border-color:#C43D3D}
 .maskbox .x{position:absolute;right:-9px;top:-9px;background:#fff;border:1px solid var(--line);
@@ -2330,9 +2334,14 @@ function maskPanelHtml() {
     /* 이 문구는 기계가 몇 곳을 찾았든 사라지지 않는다 — 마지막 판단은 사람이다. */
     + '<div class="badline">⚠ 기계가 못 찾은 것이 있을 수 있습니다 — 눈으로 한 번 훑어 주세요</div>'
     + (ms.autoNote ? '<div class="maskhint">' + esc(ms.autoNote) + '</div>' : '')
-    + '<div id="maskWrap" class="maskwrap" onpointerdown="maskDown(event)"'
-    + ' onpointermove="maskMove(event)" onpointerup="maskUp(event)" onpointercancel="maskUp(event)">'
-    + '<img id="maskImg" src="' + esc(ms.url) + '" alt="">' + boxes
+    /* ⚠ ondragstart 를 막는 것이 핵심이다 — 이것이 긋기를 가로챈다(위 CSS 머리말).
+       onpointercancel 은 **maskUp 이 아니라 maskCancelDrag** 를 부른다: 끊긴
+       순간의 좌표는 시작점 언저리라 믿을 수 없고, 마지막으로 움직인 자리를 써야
+       사람이 그은 사각형이 남는다. */
+    + '<div id="maskWrap" class="maskwrap" ondragstart="return false"'
+    + ' onpointerdown="maskDown(event)" onpointermove="maskMove(event)"'
+    + ' onpointerup="maskUp(event)" onpointercancel="maskCancelDrag()">'
+    + '<img id="maskImg" src="' + esc(ms.url) + '" alt="" draggable="false">' + boxes
     + '<div id="maskPreview" class="maskbox me" style="display:none"></div>'
     + '</div>'
     + '<div class="maskhint">사진 위를 손가락이나 마우스로 그으면 그 자리가 가려집니다.<br>'
@@ -2364,9 +2373,14 @@ function maskDown(ev) {
   const r = maskViewRect();
   if (!r) return;
   ev.preventDefault();
-  maskDrag = { x0: ev.clientX - r.left, y0: ev.clientY - r.top, w: r.width, h: r.height };
+  /* ⚠ 마지막으로 움직인 자리(x1·y1)를 따로 기억한다. 브라우저가 도중에 끊으면
+     (pointercancel) 그 순간 좌표는 시작점 언저리로 돌아와 있어, 그것만 믿으면
+     사람이 분명히 그은 사각형이 「너무 작다」며 버려진다 — 그래서 아무 칸도
+     안 생겼다(대표 지적 2026-08-16). */
+  const x0 = ev.clientX - r.left, y0 = ev.clientY - r.top;
+  maskDrag = { x0: x0, y0: y0, x1: x0, y1: y0, moved: false };
   try { ev.currentTarget.setPointerCapture(ev.pointerId); } catch (_) { /* 손가락 못 잡아도 그리기는 된다 */ }
-  maskShowPreview(maskDrag.x0, maskDrag.y0, maskDrag.x0, maskDrag.y0);
+  maskShowPreview(x0, y0, x0, y0);
 }
 
 function maskMove(ev) {
@@ -2374,17 +2388,35 @@ function maskMove(ev) {
   const r = maskViewRect();
   if (!r) return;
   ev.preventDefault();
-  maskShowPreview(maskDrag.x0, maskDrag.y0, ev.clientX - r.left, ev.clientY - r.top);
+  maskDrag.x1 = ev.clientX - r.left;
+  maskDrag.y1 = ev.clientY - r.top;
+  maskDrag.moved = true;
+  maskShowPreview(maskDrag.x0, maskDrag.y0, maskDrag.x1, maskDrag.y1);
 }
 
+/* 손을 뗐다 — 뗀 자리가 가장 정확하다. */
 function maskUp(ev) {
+  const r = maskViewRect();
+  if (!r || !maskDrag) { maskFinishDrag(null, null); return; }
+  maskFinishDrag(ev.clientX - r.left, ev.clientY - r.top);
+}
+
+/* 브라우저가 끊었다 — 그 순간 좌표는 못 믿으니 **마지막으로 움직인 자리**를 쓴다.
+   막는 장치(draggable="false")가 실패해도 사람이 그은 것은 이 길로 남는다. */
+function maskCancelDrag() {
+  const d = maskDrag;
+  maskFinishDrag(d && d.moved ? d.x1 : null, d && d.moved ? d.y1 : null);
+}
+
+function maskFinishDrag(x1, y1) {
   const d = maskDrag;
   maskDrag = null;
   maskHidePreview();
   if (!d) return;
   const r = maskViewRect();
   if (!r) return;
-  const box = PuRrnMask.rectFromDrag(d.x0, d.y0, ev.clientX - r.left, ev.clientY - r.top, r.width, r.height);
+  if (x1 == null || y1 == null) return;   // 움직인 적이 없다 — 그냥 누르기만 했다
+  const box = PuRrnMask.rectFromDrag(d.x0, d.y0, x1, y1, r.width, r.height);
   if (!box) return;                       // 점만 찍은 것은 사각형이 아니다
   box.by = 'me';
   App.maskState.boxes.push(box);
@@ -2419,6 +2451,7 @@ function maskCancel() {
   App.render();
 }
 window.maskDown = maskDown; window.maskMove = maskMove; window.maskUp = maskUp;
+window.maskCancelDrag = maskCancelDrag;
 window.maskDelBox = maskDelBox; window.maskUndo = maskUndo; window.maskClear = maskClear;
 window.maskCancel = maskCancel;
 
