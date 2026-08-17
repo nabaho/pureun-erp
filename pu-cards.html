@@ -2140,6 +2140,129 @@ ErpMatch.autoFolderFlushImpl = function(list){
 };
 function autoFolderFlush(list){ return ErpMatch.autoFolderFlushImpl(list); }
 
+/* ══════ 옛 명함에 박힌 썸네일을 밖으로 빼내기 (대표 지시 2026-08-16) ══════
+   items 는 `.on('value')` 로 통째 구독한다. 대표 기기에서 재 보니 items 4.92MB 중
+   **2.48MB 가 썸네일**이었다 — 나머지 아홉 칸을 다 합쳐도 0.7MB 가 안 된다.
+   `Store.put` 은 이미 저장할 때마다 썸네일을 `{root}/thumbs/{id}` 로 뺀다.
+   **그 변경 뒤로 한 번도 저장된 적 없는 옛 명함만** 아직 안에 품고 있다.
+   그러니 새 구조를 만드는 일이 아니라 **남은 것을 정해진 자리로 옮기는** 일이다.
+   설계: docs/superpowers/specs/2026-08-16-썸네일-빼내기-design.md */
+
+/* 옮길 값인가 — 문자열이면서 비어 있지 않을 때만.
+   ⚠ 빈 문자열('')은 「사진 없는 명함」을 뜻하는 상태다(renderList 주석 ②).
+     그것까지 지우면 화면이 없는 그림을 매번 받으러 간다. 세지도, 옮기지도 않는다. */
+const _inlineThumbVal = v => (typeof v === 'string' && v) ? v : '';
+
+/* ── 1. 대상 세기 — 아무 것도 저장하지 않는다 ── */
+function countInlineThumbs(items){
+  let n = 0, bytes = 0;
+  Object.values(items||{}).forEach(it=>{
+    if(!it || !it.id) return;
+    const t1 = _inlineThumbVal(it.thumb), t2 = _inlineThumbVal(it.thumb2);
+    if(!t1 && !t2) return;
+    n++; bytes += t1.length + t2.length;
+  });
+  return { n:n, bytes:bytes };
+}
+
+/* ── 2. 무엇을 어느 경로에 쓸지 (순수 함수 — 여기서는 아무 것도 안 보낸다) ──
+   ★ 한 장을 옮기는 것은 **한 번의 원자적 쓰기**다. 새 자리에 넣는 것과 옛 자리를
+     비우는 것을 **같은 묶음**에 담는다 — 둘 다 되거나 둘 다 안 된다. 그래서
+     그림이 어디에도 없는 중간 상태가 생기지 않는다. 「먼저 쓰고 나중에 지운다」는
+     사이에서 끊기면 어느 쪽인지 알 수 없다.
+   ⚠ `items/<id>` 를 **통째로 다시 쓰지 않는다.** `thumb` 칸만 null 로 지운다 —
+     통째 쓰기는 그 사이 남이 고친 이름·전화를 되돌린다(2026-08-11 실제 사고).
+   ⚠ 창고(root)별로 가른다. 공용(pucards)과 대표 개인 창고는 한 update() 에 못 섞는다.
+   ⚠ 창고를 모르면(빈 문자열) 그 명함은 계획에서 뺀다 — 뿌리 없는 경로로 쓰면
+     엉뚱한 자리에 그림이 떨어진다. */
+function thumbMigrationPlan(items, rootOf, chunk){
+  const size = Math.max(1, Number(chunk) || 1);
+  const rf = (typeof rootOf === 'function') ? rootOf : (()=>String(rootOf||''));
+  const byRoot = {};
+  Object.values(items||{}).forEach(it=>{
+    if(!it || !it.id) return;
+    const t1 = _inlineThumbVal(it.thumb), t2 = _inlineThumbVal(it.thumb2);
+    if(!t1 && !t2) return;
+    const R = String(rf(it.id) || '');
+    if(!R) return;
+    (byRoot[R] = byRoot[R] || []).push({ id:it.id, t1:t1, t2:t2 });
+  });
+  const out = [];
+  Object.keys(byRoot).forEach(R=>{
+    const arr = byRoot[R];
+    for(let i=0;i<arr.length;i+=size){
+      const upd = {};
+      arr.slice(i, i+size).forEach(c=>{
+        if(c.t1){ upd[`${R}/thumbs/${c.id}`]    = c.t1; upd[`${R}/items/${c.id}/thumb`]  = null; }
+        if(c.t2){ upd[`${R}/thumbs/${c.id}_b`]  = c.t2; upd[`${R}/items/${c.id}/thumb2`] = null; }
+      });
+      out.push(upd);
+    }
+  });
+  return out;
+}
+
+/* 방금 옮긴 묶음을 화면 쪽에도 반영한다 — 옮긴 그림을 thumbCache 에 넣어 두면
+   지금 보고 있는 화면이 같은 그림을 다시 받으러 가지 않는다(①→③ 이 되어도 그대로 보인다).
+   ★ 넣는 것을 **먼저** 다 하고 그 다음에 it.thumb 를 뗀다 — 순서가 바뀌면 그 사이에
+     화면을 다시 그릴 때 빈 자리가 보인다. 돌려주는 값은 이 묶음이 옮긴 명함 장수. */
+function applyThumbMigration(upd){
+  const keys = Object.keys(upd||{});
+  keys.forEach(k=>{
+    const m = /\/thumbs\/([^/]+)$/.exec(k);
+    if(m && upd[k]) Store.thumbCache[m[1]] = upd[k];
+  });
+  const done = {};
+  keys.forEach(k=>{
+    const m = /\/items\/([^/]+)\/(thumb2?)$/.exec(k);
+    if(!m || upd[k] !== null) return;
+    done[m[1]] = 1;
+    const it = state.items[m[1]] || ((state.priv && state.priv.items) || {})[m[1]];
+    if(it) delete it[m[2]];
+  });
+  return Object.keys(done).length;
+}
+
+/* 한 번에 50장씩. 한 장씩 보내면 수백 번의 쓰기가 몰려 서버가 막힌다
+   (2026-08-16 자동 폴더 배정이 한 장씩 저장해 폭주한 전례). 묶음 사이에 숨을 돌린다. */
+const THUMB_MIG_CHUNK = 50;
+const THUMB_MIG_BREATH = 300;
+
+/* ── 3. 옮기기 — 저절로 돌지 않는다. 대표가 누를 때만. ── */
+async function migrateInlineThumbs(){
+  if(!state.isAdmin){ toast('대표만 할 수 있습니다'); return null; }
+  if(Store.mode!=='firebase'){ toast('클라우드에 연결된 상태에서만 됩니다'); return null; }
+  const items = allItems();
+  const c = countInlineThumbs(items);
+  if(!c.n){ toast('밖으로 옮길 그림이 없습니다 👍'); return null; }
+  const mb = (c.bytes/1024/1024).toFixed(1);
+  if(!confirm(`옛 명함 ${c.n.toLocaleString()}장에 그림이 박혀 있습니다 (약 ${mb}MB).\n\n`
+    + `밖으로 옮기면 명함첩을 열 때 그만큼 덜 받습니다.\n`
+    + `그림은 그대로 보입니다 — 자리만 옮깁니다.\n\n진행할까요?`)) return null;
+  const plan = thumbMigrationPlan(items, id=>Store._rootOf(id), THUMB_MIG_CHUNK);
+  let done = 0;
+  for(let i=0;i<plan.length;i++){
+    try{
+      await Store.db.ref().update(plan[i]);
+    }catch(e){
+      /* 묶음 하나가 실패하면 거기서 멈춘다. 이미 옮긴 것은 원자적으로 끝났으므로
+         안전하고, 다시 누르면 남은 것만 다시 세어 이어서 한다. */
+      try{ render(); }catch(_){}
+      toast(`❌ ${done.toLocaleString()}장까지 옮기고 멈췄습니다 — 다시 누르면 남은 것부터 이어서 합니다`
+        + ` (${(e&&e.message)||'알 수 없음'})`, 9000);
+      return { done:done, total:c.n, stopped:true };
+    }
+    done += applyThumbMigration(plan[i]);
+    if(i < plan.length-1){
+      toast(`옮기는 중… ${done.toLocaleString()} / ${c.n.toLocaleString()}장`);
+      await new Promise(r=>setTimeout(r, THUMB_MIG_BREATH));
+    }
+  }
+  try{ render(); }catch(_){}
+  toast(`✅ ${done.toLocaleString()}장을 밖으로 옮겼습니다 — 그림은 그대로 보입니다`, 7000);
+  return { done:done, total:c.n, stopped:false };
+}
+
 /* ── 유틸 ── */
 const $ = id => document.getElementById(id);
 /* 폴더 이름 표준화 — 앞 번호("1." "01)" 등)와 공백을 무시해 자동폴더 이름을 인식 (예: "1. 업체관리" → "업체관리") */
@@ -10316,7 +10439,9 @@ function renderSettingsPage(){
     panel = note('글자 자동인식(AI) 키와 로그인을 관리합니다.')
       + btn('openSettings()','🤖','AI 키 설정',aiOn?'켜짐':'꺼짐')
       + (state.isAdmin ? btn('openPrivateVault()','🔒','개인 폴더', state.privOpen?'열림':'잠김')
-                       + btn('migrateLockedFolders()','📦','옛 잠금 폴더 옮기기','대표 전용 창고로') : '')
+                       + btn('migrateLockedFolders()','📦','옛 잠금 폴더 옮기기','대표 전용 창고로')
+                       /* 먼저 세어서 알려주고 확인을 받는다 — 누르는 즉시 쓰지 않는다 */
+                       + btn('migrateInlineThumbs()','🖼','옛 명함 그림 밖으로 빼기','명함첩·기업정보함이 빨라집니다') : '')
       + btn('doLogoutCards()','🔓','로그아웃','');
   } else {
     panel = note('⚠️ 되돌릴 수 없습니다. 실행 전 반드시 [데이터 → 지금 백업]을 받아 두세요.')
