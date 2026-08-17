@@ -52,14 +52,14 @@ function loadApp(appState, opts) {
       companyId: 'co_1', companyName: '화담원',
       viewingUid: '', viewingName: '', viewingDeputy: false
     }, appState)) + ';',
-    cut('esc'), cut('thisMonth'),
+    cut('esc'), cut('jsq'), cut('thisMonth'),
     cut('pickOn'), cut('pickToggle'), cut('pickSetAll'), cut('pickList'),
     cut('pickAllOn'), cut('pickPrune'), cut('pickOf'), cut('pickPut'), cut('pickBar'),
     cut('canWrite'), cut('bannerHtml'),
     cut('drawerCounts'), cut('drawerModel'), cut('searchRows'),
     cut('folderCounts'), cut('folderRows'), cut('folderBar'), cut('folderEditorHtml'), cut('folderOptionsHtml'),
     cut('valueGridModel'), cut('fetchValues'),
-    cut('screenDrawer'), cut('handoffMonth'),
+    cut('monthShift'), cut('monthCount'), cut('monthStripHtml'), cut('sideCtx'), cut('sideListModel'), cut('coArrivedAt'), cut('screenDrawer'), cut('handoffMonth'),
     'window.App = App; window.screenDrawer = screenDrawer; window.handoffMonth = handoffMonth;'
   ].join('\n'), { filename: 'app.js' }).runInContext(sandbox);
   return { W: sandbox.window, calls };

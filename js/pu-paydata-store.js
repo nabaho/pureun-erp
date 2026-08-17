@@ -336,6 +336,29 @@
     return deps.db.ref().update(drawerUpdate(id, rec, tag, owner)).then(function () { return true; });
   }
 
+  /* 파일 하나를 **곧장 서랍으로** 담는다 — 서랍 위에 끌어다 놓았을 때 쓴다
+     (대표 지시 2026-08-17: 「놓는 자리가 곧 이름표」).
+     사업장·귀속월·종류를 이미 사람이 정해 놓고 놓은 것이라 대기 칸을 거칠 이유가
+     없다. 창고에 올리고(saveFile) 곧바로 서랍 묶음을 쓴다.
+     ⚠ 이름표가 덜 채워졌으면 **대기 칸에 그대로 둔다.** 억지로 서랍에 넣으면
+     귀속월 없는 자료가 어느 칸에도 안 걸려 사라진 것처럼 된다.
+     돌려주는 것: { id, filed } — filed 가 false 면 대기 칸에 남았다는 뜻이다. */
+  function saveFileToDrawer(file, tag, owner) {
+    tag = tag || {};
+    return saveFile(file, { at: tag.at || Date.now(), from: tag.from || 'drop', owner: owner })
+      .then(function (id) {
+        var rec = pendingRecord({
+          filename: file.name, mime: file.type, bytes: file.size,
+          at: tag.at || Date.now(), from: tag.from || 'drop'
+        });
+        rec.file = filePath('pending', id, extOf(file.name, file.type), deps.uid);
+        var up;
+        try { up = drawerUpdate(id, rec, tag, owner); }
+        catch (_) { return { id: id, filed: false }; }   // 이름표가 덜 찼다 — 대기 칸에 둔다
+        return deps.db.ref().update(up).then(function () { return { id: id, filed: true }; });
+      });
+  }
+
   /* ══════ 휴지통 ══════
      정보만 옮긴다. **창고 파일은 그 자리에 남긴다** — 함께 지우면 되살릴 수 없다.
      창고 파일 실삭제는 30일 뒤 사람이 확인해서 한다(자동 삭제 없음). */
@@ -1248,6 +1271,7 @@
     saveFile: saveFile,
     savePending: savePending,
     moveToDrawer: moveToDrawer,
+    saveFileToDrawer: saveFileToDrawer,
     claimSharedNow: claimSharedNow,
     listMyPending: listMyPending,
     listSharedPending: listSharedPending,
