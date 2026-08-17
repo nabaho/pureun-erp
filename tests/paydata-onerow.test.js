@@ -130,6 +130,53 @@ test('★ 머리가 통째로 붙어 있다 — 굴려도 따라 올라가지 �
     assert.match(cut(fn), /class="stickhead"/, fn + ' 에 붙는 머리가 없습니다'));
 });
 
+/* ⚠ 대표 지적 2026-08-17 「틀고정은 했으나 뒤로 데이터가 보인다」 —
+   왼쪽 칸과 본문 머리는 머리띠 높이(49px)만큼 내려 붙는데, 정작 그 머리띠가
+   굴러 올라가 버려 위쪽 49px 이 빈 틈이 됐다. 자료가 그 틈으로 비쳤다. */
+test('★ 머리띠도 붙어 있다 — 안 붙으면 그 높이만큼 자료가 비친다', () => {
+  const h = html.match(/\nheader\{[^}]*\}/);
+  assert.ok(h, 'header 규칙을 찾을 수 없습니다');
+  assert.match(h[0], /position:sticky/, '★ 머리띠가 굴러 올라가면 그 자리로 자료가 비칩니다');
+  assert.match(h[0], /top:0/, '머리띠는 맨 위에 붙어야 합니다');
+  assert.match(h[0], /height:\d+px/, '높이가 정해져 있어야 아래 칸들이 그만큼 내려 붙습니다');
+});
+
+/* 큰 그림·차림표·모달(30 이상)이 머리띠에 가리면 안 된다. */
+test('★ 머리띠가 큰 그림·모달을 가리지 않는다', () => {
+  const z = s => Number((html.match(new RegExp(s + '[^}]*z-index:(\\d+)')) || [])[1] || 0);
+  const head = z('\\nheader\\{');
+  assert.ok(head > z('\\.stickhead\\{'), '머리띠가 화면 머리보다 위여야 합니다');
+  assert.ok(head < z('#viewer\\{'), '★ 큰 그림이 머리띠에 가립니다');
+  assert.ok(head < z('\\.modalWrap\\{'), '★ 차림표·모달이 머리띠에 가립니다');
+});
+
+/* 칸이 길어지면 페이지가 함께 굴러가, 붙어 있어도 위쪽이 밀려 자료가 비친다 —
+   칸 **안에서만** 굴러가야 한다(사업장 칸과 같은 방식). */
+test('★ 왼쪽 칸들은 칸 안에서만 굴러가고, 내려 붙는 만큼이 머리띠 높이와 같다', () => {
+  /* 숫자를 박지 않고 **머리띠에 적힌 높이**와 견준다 — 높이를 고치면 여기가
+     저절로 따라온다. 어긋나면 그 차이만큼 빈 틈이 생겨 자료가 비친다. */
+  const headH = (html.match(/\nheader\{[^}]*height:(\d+)px/) || [])[1];
+  assert.ok(headH, '머리띠 높이를 알 수 없습니다');
+  ['\\.viewbar\\{', '\\.colist\\{', '\\.colfold\\{', '\\.stickhead\\{'].forEach(sel => {
+    const m = html.match(new RegExp(sel + '[^}]*\\}'));
+    assert.ok(m, sel + ' 규칙을 찾을 수 없습니다');
+    const off = (m[0].match(/[^-]top:(\d+)px/) || [])[1];
+    assert.equal(off, headH, sel + ' 가 내려 붙는 만큼이 머리띠 높이와 다릅니다');
+  });
+  ['\\.viewbar\\{', '\\.colist\\{', '\\.colfold\\{'].forEach(sel => {
+    const m = html.match(new RegExp(sel + '[^}]*\\}'));
+    assert.match(m[0], /height:calc\(100vh[^)]*\)/, sel + ' 에 높이 한도가 없습니다');
+    assert.equal(/min-height:calc/.test(m[0]), false,
+      sel + ' 에 min-height 가 남아 있습니다 — 칸이 길어지면 페이지가 함께 굴러갑니다');
+  });
+});
+
+/* 사업장 칸 머리는 늘 보이고, 목록만 그 아래에서 굴러간다. */
+test('★ 사업장 칸은 머리를 두고 목록만 굴러간다', () => {
+  assert.match(html, /\.colist \.chead\{[^}]*background:/, '바탕색이 없으면 줄이 뒤로 비칩니다');
+  assert.match(html, /\.clist\{[^}]*overflow-y:auto/, '목록이 칸 안에서 굴러가지 않습니다');
+});
+
 /* 상자 셋(사업장·자료 온 곳·아직 안 온 곳)이 각각 제 줄을 먹어, 제목·설명
    두 줄·기준 월 줄까지 여섯 줄이 지나야 자료가 시작했다. */
 test('★ 첫 화면 현황이 한 줄로 접혔다 — 상자 셋이 사라졌다', () => {
