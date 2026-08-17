@@ -118,7 +118,12 @@
       parts.push({ key: PARTS[i], label: label, cost: num(row.cost) });
       sum += num(row.cost);
       var pu = num(row.updatedAt);
-      if (totalUpd !== null && (pu === null || totalUpd - pu > PART_LAG_MS)) lagged.push(label);
+      /* ⚠ 금액이 사실상 0원인 칸은 낡아도 의심하지 않는다(2026-08-17 아침 실사례).
+         구글은 금액이 움직일 때만 알림을 쏘므로 ₩0 칸은 영영 「낡은」 채다 —
+         그걸 매일 「갱신 대기 중」이라 하면 경고가 상시등이 되어 아무도 안 본다.
+         0원이 움직이기 시작하면 30분 안에 제 알림이 오고, 그때부터는 잡힌다. */
+      if (totalUpd !== null && num(row.cost) >= 100
+          && (pu === null || totalUpd - pu > PART_LAG_MS)) lagged.push(label);
     }
 
     var totalCost = total ? num(total.cost) : null;

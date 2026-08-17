@@ -304,6 +304,22 @@ test('「그 밖」이 낡은 칸 때문에 부풀 수 있으면 그렇다고 �
     assert.equal(s.parts.find((p) => p.key === 'etc').approx, true);
   });
 
+  await t.test('★ ₩0 칸이 며칠 조용해도 ⚠ 를 만들지 않는다 (2026-08-17 아침 실사례)', () => {
+    /* 구글은 금액이 움직일 때만 알림을 쏜다 — 서버(₩0)·사진 창고(₩0.12)는
+       영영 「낡은」 채다. 그날 아침 배지가 「사진 창고·서버 갱신 대기 중」이라는
+       상시 경고를 달고 있었다 — 매일 뜨는 경고는 곧 아무도 안 본다. */
+    const s = B.summarize(nightCase({
+      database:  { label: '실시간DB',  cost: 79670, intervalStart: AUG, updatedAt: NOW - 2 * MIN },
+      storage:   { label: '사진 창고', cost: 0.12,  intervalStart: AUG, updatedAt: NOW - 3 * DAY },
+      functions: { label: '서버 · 메일', cost: 0,   intervalStart: AUG, updatedAt: NOW - 15 * DAY },
+      total:     { label: '전체',      cost: 83903, intervalStart: AUG, updatedAt: NOW },
+    }), NOW);
+    const etc = s.parts.find((p) => p.key === 'etc');
+    assert.ok(etc, '그 밖 자체는 있어야 한다');
+    assert.ok(!etc.approx, '★ 0원 칸 때문에 ⚠ 가 상시등이 되면 진짜 경고도 안 보게 된다');
+    assert.equal(s.etcNote, null);
+  });
+
   await t.test('전체에 갱신 시각이 없으면 견줄 수 없다 — 표시하지 않는다', () => {
     /* 견줄 기준이 없는데 ≈ 를 붙이면 근거 없는 경고다. 이 경우는 기존
        stale(하루 넘게 조용함) 장치가 따로 지킨다. */
