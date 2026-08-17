@@ -7,6 +7,7 @@ const { getAuth } = require("firebase-admin/auth");
 const { getDatabase } = require("firebase-admin/database");
 const { getMessaging } = require("firebase-admin/messaging");
 const { getStorage } = require("firebase-admin/storage");
+const crypto = require("crypto");   // 내려받기 토큰 발급용 (downloadUrl)
 const { Resend } = require("resend");
 const {
   REPO,
@@ -792,6 +793,20 @@ function realPhotoDb() {
       u[`${PHOTOS_DB_ROOT}/u/${uid}/thumbs/${year}/${id}`] = null;
       return db.ref().update(u);
     },
+    /* 주소(내려받기 토큰이 붙은 URL)를 사진 정보에 적는다(2026-08-17).
+       창고 규칙은 실시간DB(uid_roles)를 못 읽어 「자기 사진만」으로 잠겨 있고,
+       그래서 관리자·공유받은 사람의 창고 요청이 403 으로 거부됐다(대표 화면:
+       남의 회의사진 46장 전부 회색, 콘솔 403 832건). 주소는 규칙과 무관하게
+       열리므로, 정보(실시간DB)를 읽을 수 있는 사람이 곧 사진도 볼 수 있게 된다
+       — 실시간DB 시절과 같은 접근 범위다.
+       ⚠ 없는 값은 안 쓴다 — 미리보기 없는 사진의 thumbUrl 을 null 로 덮지 않게. */
+    writeUrls(uid, year, id, urls) {
+      const u = {};
+      if (urls && urls.fullUrl) u[`${PHOTOS_DB_ROOT}/u/${uid}/items/${year}/${id}/fullUrl`] = urls.fullUrl;
+      if (urls && urls.thumbUrl) u[`${PHOTOS_DB_ROOT}/u/${uid}/items/${year}/${id}/thumbUrl`] = urls.thumbUrl;
+      if (!Object.keys(u).length) return Promise.resolve();
+      return db.ref().update(u);
+    },
   };
   return photoDb;
 }
@@ -819,6 +834,23 @@ function realPhotoBucket() {
     exists(objectPath) {
       return bucket.file(objectPath).exists().then((r) => !!(r && r[0]));
     },
+    /* 내려받기 주소(토큰 URL)를 만든다 — 파일에 토큰이 이미 있으면 그것을 쓰고,
+       없으면 하나 발급해 파일 메타데이터에 심는다(파이어베이스 표준 방식).
+       ⚠ 서명 URL(getSignedUrl)을 안 쓰는 이유: 만료가 있다 — 만료되면 사진첩의
+         모든 옛 사진이 어느 날 일제히 안 보이게 된다. 토큰 URL 은 안 만료된다.
+       파일이 없으면 null — 미리보기가 없는 사진도 있다(옛 자료). */
+    downloadUrl(objectPath) {
+      const file = bucket.file(objectPath);
+      return file.getMetadata().then(([meta]) => {
+        let tok = String((meta.metadata && meta.metadata.firebaseStorageDownloadTokens) || "").split(",")[0];
+        const ensure = tok
+          ? Promise.resolve()
+          : (tok = crypto.randomUUID(),
+            file.setMetadata({ metadata: { firebaseStorageDownloadTokens: tok } }));
+        return Promise.resolve(ensure).then(() =>
+          `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(objectPath)}?alt=media&token=${tok}`);
+      }).catch(() => null);
+    },
   };
 }
 
@@ -841,7 +873,7 @@ exports.migratePhotosToStorage = functions
     const db = realPhotoDb();
     const result = await migrateBatch(db, realPhotoBucket(), limit);
     res.status(200).json({
-      ok: true, moved: result.moved, skipped: result.skipped,
+      ok: true, moved: result.moved, linked: result.linked, skipped: result.skipped,
       failed: result.failed, done: result.done, ownersCount: db.ownersCount,
     });
   } catch (error) {
