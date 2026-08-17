@@ -73,9 +73,64 @@
     return canvas.toDataURL('image/jpeg', opts.quality || 0.92);
   }
 
+  /* ── 주민번호 꼴 (2차, 대표 지시 2026-08-15) ──
+     세 가지를 잡는다: 900101-1234567 · 900101 - 1234567 · 9001011234567.
+     ⚠ 하이픈 없는 13자리를 잡으면 계좌번호처럼 긴 숫자를 잘못 칠할 수 있다.
+     그래도 잡는다(대표 결정) — **잘못 칠한 것은 사람이 지우면 되지만 못 잡은
+     것은 그대로 나간다.**
+     ⚠ 앞뒤가 숫자면 아니다 — 14자리 이상인 것을 13자리로 잘라 잡으면 안 된다.
+     ⚠ 뒤돌아보기(lookbehind)를 쓰지 않는다 — 옛 아이폰 사파리에서 통째로 터진다. */
+  function looksLikeRrn(text) {
+    var t = String(text == null ? '' : text).replace(/\s+/g, '');
+    if (/(^|\D)\d{6}[-–—]\d{7}(\D|$)/.test(t)) return true;
+    if (/(^|\D)\d{13}(\D|$)/.test(t)) return true;
+    return false;
+  }
+
+  /* 글자 가장자리가 남으면 그 한 자리로도 읽힌다 — 조금 넓게 덮는다. */
+  var PAD = 0.01;
+
+  /* 글자인식이 준 낱말들 → 가릴 사각형(비율).
+     ⚠ 낱말이 「900101」 「-」 「1234567」 로 갈라져 오는 일이 흔하다. 그래서
+     한 낱말씩만 보지 않고 **이어 붙인 세 낱말까지** 본다. 긴 쪽을 먼저 본다 —
+     짧은 쪽부터 잡으면 뒷조각이 안 덮인 채로 끝난다. */
+  function boxesFromWords(words, imgW, imgH) {
+    var list = (words || []).filter(function (w) {
+      return w && String(w.text == null ? '' : w.text).trim();
+    });
+    var out = [];
+    var i = 0;
+    while (i < list.length) {
+      var hit = 0;
+      for (var n = 3; n >= 1; n--) {
+        if (i + n > list.length) continue;
+        var joined = list.slice(i, i + n).map(function (g) { return String(g.text).trim(); }).join('');
+        if (looksLikeRrn(joined)) { hit = n; break; }
+      }
+      if (!hit) { i += 1; continue; }
+      var group = list.slice(i, i + hit);
+      var x0 = Math.min.apply(null, group.map(function (g) { return Number(g.x0) || 0; }));
+      var y0 = Math.min.apply(null, group.map(function (g) { return Number(g.y0) || 0; }));
+      var x1 = Math.max.apply(null, group.map(function (g) { return Number(g.x1) || 0; }));
+      var y1 = Math.max.apply(null, group.map(function (g) { return Number(g.y1) || 0; }));
+      var x = clamp01(x0 / imgW - PAD);
+      var y = clamp01(y0 / imgH - PAD);
+      out.push({
+        x: x, y: y,
+        w: Math.min(1 - x, (x1 - x0) / imgW + PAD * 2),
+        h: Math.min(1 - y, (y1 - y0) / imgH + PAD * 2),
+        by: 'ai'
+      });
+      i += hit;
+    }
+    return out;
+  }
+
   global.PuRrnMask = {
     rectFromDrag: rectFromDrag,
     toPixels: toPixels,
-    maskToDataUrl: maskToDataUrl
+    maskToDataUrl: maskToDataUrl,
+    looksLikeRrn: looksLikeRrn,
+    boxesFromWords: boxesFromWords
   };
 })(typeof window !== 'undefined' ? window : globalThis);

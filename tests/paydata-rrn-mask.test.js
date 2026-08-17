@@ -134,3 +134,61 @@ test('★ 사진 크기를 모르면 조용히 넘기지 않고 알린다 — �
   assert.throws(() => M.maskToDataUrl({ naturalWidth: 0, naturalHeight: 0 }, [], { makeCanvas: make }),
     /크기/);
 });
+
+/* ══════ 2차 — 기계가 주민번호 자리를 찾아 준다 (Task 6) ══════ */
+
+test('★ 주민번호 꼴 세 가지를 다 잡는다', () => {
+  const M = load();
+  assert.equal(M.looksLikeRrn('900101-1234567'), true);
+  assert.equal(M.looksLikeRrn('900101 - 1234567'), true, '사이가 벌어진 것도 주민번호입니다');
+  assert.equal(M.looksLikeRrn('9001011234567'), true, '하이픈 없는 13자리도 잡습니다(대표 결정)');
+  assert.equal(M.looksLikeRrn('주민번호:900101-1234567'), true, '앞에 말이 붙어도 잡습니다');
+});
+
+test('★ 사업자등록번호를 주민번호로 잡지 않는다 — 잘못 칠하면 읽을 것을 못 읽는다', () => {
+  const M = load();
+  assert.equal(M.looksLikeRrn('123-45-67890'), false);
+  assert.equal(M.looksLikeRrn('2026-08-15'), false);
+  assert.equal(M.looksLikeRrn('2,100,000'), false);
+});
+
+test('13자리보다 긴 숫자는 주민번호가 아니다', () => {
+  const M = load();
+  assert.equal(M.looksLikeRrn('90010112345678'), false);
+});
+
+test('★ 찾은 자리가 사각형(비율)으로 나온다 — 조금 넓게 덮는다', () => {
+  const M = load();
+  const boxes = M.boxesFromWords(
+    [{ text: '900101-1234567', x0: 100, y0: 200, x1: 300, y1: 240 }], 1000, 1000);
+  assert.equal(boxes.length, 1);
+  assert.equal(boxes[0].by, 'ai', '기계가 찾은 것으로 표시돼야 사람 것과 갈립니다');
+  assert.ok(boxes[0].x < 0.1, '글자 가장자리가 남지 않게 조금 넓어야 합니다');
+  assert.ok(boxes[0].x + boxes[0].w > 0.3);
+});
+
+test('★ 낱말이 갈라져 있어도 이어 붙여 잡는다 — 「900101」 「-」 「1234567」', () => {
+  const M = load();
+  const boxes = M.boxesFromWords([
+    { text: '900101', x0: 100, y0: 200, x1: 180, y1: 240 },
+    { text: '-', x0: 182, y0: 200, x1: 190, y1: 240 },
+    { text: '1234567', x0: 192, y0: 200, x1: 300, y1: 240 }
+  ], 1000, 1000);
+  assert.equal(boxes.length, 1, '세 조각이 한 사각형으로 묶여야 합니다');
+  assert.ok(boxes[0].x + boxes[0].w > 0.3, '뒷조각까지 덮어야 합니다');
+});
+
+test('주민번호가 아닌 낱말은 지나간다', () => {
+  const M = load();
+  const boxes = M.boxesFromWords([
+    { text: '배영승', x0: 0, y0: 0, x1: 50, y1: 20 },
+    { text: '2,100,000', x0: 60, y0: 0, x1: 160, y1: 20 }
+  ], 1000, 1000);
+  assert.equal(boxes.length, 0);
+});
+
+test('빈 낱말이 섞여도 터지지 않는다', () => {
+  const M = load();
+  assert.equal(M.boxesFromWords([{ text: '' }, null, undefined], 1000, 1000).length, 0);
+  assert.equal(M.boxesFromWords(null, 1000, 1000).length, 0);
+});

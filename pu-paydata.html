@@ -31,7 +31,7 @@
        읽고, 판독 결과에 적히는 판 번호(rv)도 어긋나 「다시 읽어야 하나」 판정이
        서로 달라진다. tests/photos-doc-title.test.js 가 두 파일을 함께 지킨다. -->
 <script src="js/pu-doc-read.js?v=10"></script>
-<script src="js/pu-rrn-mask.js?v=1"></script>
+<script src="js/pu-rrn-mask.js?v=2"></script>
 <!-- 긋기·사본 만들기 — 사진첩과 나눠 쓴다(2026-08-17 「안 1」) -->
 <script src="js/pu-rrn-mask-ui.js?v=1"></script>
 <script src="js/pu-appbar.js"></script>
@@ -2689,8 +2689,10 @@ window.openViewer = openViewer; window.closeViewer = closeViewer; window.toggleV
    ⚠ 다음에 손대는 사람이 반드시 알 것
      · 보내기 전에 **주민번호를 가리는 화면**이 있다(2026-08-15, startMask·maskConfirm).
        그래도 마지막 판단은 사람이다 — 못 보고 넘긴 것은 그대로 나간다.
-     · 지금은 **사람이 손으로 칠한다.** 기계가 인쇄체를 찾아 미리 칠해 주는 것은
-       아직 없다(계획서 2026-08-15-주민번호-가림 2차). 그때까지는 눈으로 훑어야 한다.
+     · 기계가 **인쇄체만** 찾아 미리 칠한다(2026-08-17, maskAutoFind).
+       **손글씨는 사람이 칠해야 한다** — 그리고 기계가 몇 곳을 찾았든 「못 찾은
+       것이 있을 수 있습니다」를 지우지 않는다. 미리 칠해 주면 사람이 「다 됐구나」
+       하고 넘기기 때문이다. 눈으로 한 번은 훑어야 한다.
      · 근태표는 임금액도 주민번호도 없어 처음부터 켜져 있었다(readKindFor).
    ⚠ 이 값을 바꿀 때는 tests/paydata-read-panel.test.js 의 짝 검사도 함께 고친다. */
 const WAGE_READ_ON = true;
@@ -2727,6 +2729,7 @@ function startMask() {
     if (App.viewerId !== forId) return;    // 다른 서류로 옮겨 갔다 — 이 답은 버린다
     App.maskState = { status: 'ready', url: dataUrl, boxes: [], err: '', autoNote: '' };
     App.render();
+    maskAutoFind(dataUrl, forId);     // 기계 찾기는 뒤에서 돈다 — 기다리지 않는다
   }).catch(e => {
     if (App.viewerId !== forId) return;
     App.maskState = { status: 'err', url: '', boxes: [], err: (e && e.message) || String(e), autoNote: '' };
@@ -3095,6 +3098,69 @@ function maskCancel() {
   App.maskState = { status: 'idle', url: '', boxes: [], err: '', autoNote: '' };
   App.render();
 }
+
+/* ══════ 기계가 거들기 (설계서 5장, 2차) ══════
+   ⚠ 사진은 **밖으로 나가지 않는다.** 글자인식은 이 컴퓨터(브라우저) 안에서 돈다.
+     받아 오는 것은 사진이 아니라 도구와 글자 사전이다. 사진을 보내 읽게 하면
+     막으려던 것을 그대로 하는 꼴이다.
+   ⚠ 무거워서(사전까지 10MB 남짓) **처음 쓸 때** 받는다 — 판독을 안 쓰는 사람이
+     미리 받을 이유가 없다. */
+const OCR_SRC = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+let ocrLoading = null;
+
+function loadOcr() {
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  if (ocrLoading) return ocrLoading;
+  ocrLoading = new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = OCR_SRC;
+    s.onload = () => (window.Tesseract ? res(window.Tesseract) : rej(new Error('글자인식 도구를 못 읽었습니다')));
+    s.onerror = () => rej(new Error('글자인식 도구를 받지 못했습니다'));
+    document.head.appendChild(s);
+  });
+  return ocrLoading;
+}
+
+/* 낱말과 그 자리를 돌려준다. 주민번호는 숫자와 하이픈뿐이라 영문 사전으로 넉넉하다.
+   ⚠ 숫자만 읽으라고 묶어 두지(whitelist) 않는다 — 글자를 억지로 숫자로 우겨 넣어
+   엉뚱한 곳을 주민번호로 잡는다. */
+function ocrWords(dataUrl) {
+  return loadOcr().then(T => T.recognize(dataUrl, 'eng')).then(r => {
+    const words = (r && r.data && r.data.words) || [];
+    return words.map(w => {
+      const b = w.bbox || w;
+      return { text: w.text, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 };
+    });
+  });
+}
+
+/* 찾아서 미리 칠한다. **아무것도 던지지 않는다** — 기계가 못 도는 것이
+   판독을 막는 이유가 되면 안 된다(설계서 5장). 막으면 사람들은 스위치를 꺼
+   버리거나 다른 길로 돌아간다.
+   ⚠ 사람이 기다리는 동안 그어 둔 사각형을 지우거나 덮지 않는다 — 뒤에 더한다.
+   ⚠ 그 사이 다른 서류로 옮겨 갔으면 버린다 — 앞 사진의 자리가 이 사진에 얹히면
+     엉뚱한 데가 가려지고 진짜 주민번호는 그대로 나간다. */
+function maskAutoFind(dataUrl, forId) {
+  const img = new Image();
+  img.onload = () => {
+    ocrWords(dataUrl).then(words => {
+      if (App.viewerId !== forId || App.maskState.status !== 'ready') return;
+      const found = PuRrnMask.boxesFromWords(words, img.naturalWidth, img.naturalHeight);
+      App.maskState.boxes = App.maskState.boxes.concat(found);
+      App.maskState.autoNote = found.length
+        ? '기계가 ' + found.length + '곳을 찾아 미리 가렸습니다(빨간 칸).'
+        : '기계가 찾은 것은 없습니다 — 직접 봐 주세요.';
+      App.render();
+    }).catch(() => {
+      if (App.viewerId !== forId || App.maskState.status !== 'ready') return;
+      App.maskState.autoNote = '기계 찾기를 못 했습니다 — 직접 봐 주세요.';
+      App.render();
+    });
+  };
+  img.onerror = () => { /* 사진을 못 읽어도 사람이 칠하는 길은 그대로 열려 있다 */ };
+  img.src = dataUrl;
+}
+window.maskAutoFind = maskAutoFind;
 window.maskDown = maskDown; window.maskMove = maskMove; window.maskUp = maskUp;
 window.maskCancelDrag = maskCancelDrag;
 window.maskDelBox = maskDelBox; window.maskUndo = maskUndo; window.maskClear = maskClear;
