@@ -13,6 +13,11 @@ const vm = require('node:vm');
 const root = path.join(__dirname, '..');
 const src = fs.readFileSync(path.join(root, 'js', 'pu-doc-read.js'), 'utf8');
 const app = fs.readFileSync(path.join(root, 'pu-photos.html'), 'utf8');
+/* ⚠ readPhoto 는 **인자가 늘 수 있다**(2026-08-17: 가린 사본을 받는 자리가 붙었다).
+   `function readPhoto\(id\)` 로 붙잡아 두었더니 그때 깨졌다 — 뜻은 그대로였는데도다.
+   이름으로 찾고 중괄호 짝으로 자른다. */
+const { cutFn } = require('./cut-fn');
+const readPhotoFn = () => cutFn(app, 'function readPhoto(');
 
 /* 판독기를 실제로 돌려 **AI 에 무엇을 보내는지** 들여다본다.
    글자 모양만 보면 그림을 한 장만 실어 보내도 통과한다. */
@@ -97,7 +102,7 @@ test('★ 격자에서도 형제 쪽을 모아 한 번에 읽는다', () => {
     assert.ok(/\.sort\(/.test(fn[0]) && /doc\.page/.test(fn[0]),
       name + ' 이 쪽 차례로 안 세웁니다 — 섞이면 조문을 잘못 읽습니다.');
   });
-  const read = app.match(/function readPhoto\(id\)[\s\S]*?\n\}/);
+  const read = [readPhotoFn()];
   assert.ok(/docPages\(id\)/.test(read[0]), 'readPhoto 가 형제 쪽을 안 모읍니다.');
   assert.ok(/imgs\.length > 1 \? imgs : imgs\[0\]/.test(read[0]),
     '한 장짜리까지 배열로 보내면 「여러 쪽」이라고 잘못 말하게 됩니다.');
@@ -106,7 +111,7 @@ test('★ 격자에서도 형제 쪽을 모아 한 번에 읽는다', () => {
 test('★ 읽은 답을 모든 쪽에 남긴다', () => {
   /* 한 쪽에만 쓰면 나머지는 「안 읽음」으로 남아, 화면을 열 때마다 같은 문서를
      또 읽으러 간다 — 한도를 쪽수만큼 더 쓴다. */
-  const read = app.match(/function readPhoto\(id\)[\s\S]*?\n\}/)[0];
+  const read = readPhotoFn();
   assert.ok(/pages\.reduce\(/.test(read), '쪽마다 저장하지 않습니다.');
   assert.ok(/saveRead\(gridYear, p\.id, read, photoOwner\(p\.id\)\)/.test(read),
     '쪽마다 주인을 안 보고 저장합니다.');
@@ -117,7 +122,7 @@ test('★ 읽은 답을 모든 쪽에 남긴다', () => {
 
 test('★ 명함첩·업체관리에는 대표 쪽 하나만 보낸다', () => {
   /* 쪽마다 보내면 같은 업체가 쪽수만큼 쌓인다. */
-  const read = app.match(/function readPhoto\(id\)[\s\S]*?\n\}/)[0];
+  const read = readPhotoFn();
   assert.ok(/sendCards\(pages\[0\]\.id/.test(read), '쪽마다 명함첩으로 보냅니다.');
   assert.ok(/sendCompany\(pages\[0\]\.id/.test(read), '쪽마다 업체관리로 보냅니다.');
   const start = app.match(/function startRead\(job\)[\s\S]*?\n\}/)[0];

@@ -18,6 +18,9 @@
 <script src="js/pu-version.js"></script>
 <!-- ?v= 저장 층을 고치면 반드시 올린다 — 캐시에 묵으면 고친 것이 통째로 묻힌다. -->
 <script src="js/pu-photo-store.js?v=5"></script>
+<!-- 주민번호 가림 — 계산 층과, 급여데이터함과 나눠 쓰는 긋기 층 -->
+<script src="js/pu-rrn-mask.js?v=1"></script>
+<script src="js/pu-rrn-mask-ui.js?v=1"></script>
 <script src="js/pu-photo-queue.js"></script>
 <!-- ?v= 는 판독기 판 번호(READ_VERSION)와 **같이 올린다**(2026-08-15).
      이 파일이 캐시에 묵으면 옛 지시로 읽어 제목이 안 생기는데, 화면(pu-photos.html)은
@@ -620,6 +623,23 @@ button{font-family:inherit;cursor:pointer}
 /* 첫 장·마지막 장 — 없애지 않고 흐린다. 없어지면 「왜 사라졌지」가 되고,
    자리가 흔들려 옆 단추를 잘못 누른다. */
 .picnav:disabled{opacity:.28;cursor:default}
+/* ── 가릴 곳 고르기 (2026-08-17) ──
+   ⚠ 긋는 판은 **자리가 잡혀 있어야** 한다(position:relative) — 사각형이 %로 얹힌다.
+   ⚠ 사진을 못 끌게 막는 것이 핵심이다. 브라우저의 「끌어다 놓기」가 긋기를 가로챈다. */
+.maskwarn{background:#fef2f2;border:1px solid #f0b4b4;color:#b91c1c;border-radius:7px;
+  padding:8px 10px;font-size:12px;font-weight:700;margin:8px 0;line-height:1.6}
+.maskwrap{position:relative;background:#1e293b;border-radius:8px;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;max-height:52vh;touch-action:none}
+.maskwrap img{max-width:100%;max-height:52vh;display:block;user-select:none}
+.maskbox{position:absolute;background:#000;border:2px solid #4ade80}
+.maskbox .x{position:absolute;right:-9px;top:-9px;width:18px;height:18px;border-radius:50%;
+  background:#fff;border:1px solid var(--line);font-size:10px;line-height:16px;
+  text-align:center;color:var(--ink);cursor:pointer}
+.maskfoot{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:9px}
+#readPanel .again.pri{background:var(--blue);color:#fff;border-color:var(--blue);
+  width:100%;margin-top:8px}
+/* 판독 단추 옆의 🔒 — 눌러야 할 것이 둘이라 헷갈리지 않게 살짝 갈라 둔다 */
+.acts .rd.mask{background:#fff7ed;border-color:#fed7aa;color:#b45309}
 /* 확대해 놓으면 사진이 넘쳐 흐르며 화살표가 글씨를 가린다 —
    확대 중에는 감춘다(넘기면 확대가 풀리므로 곧 다시 나온다). */
 #viewerPic.zoom .picnav{display:none}
@@ -1836,6 +1856,21 @@ try { store = firebase.storage(); } catch (e) { store = null; }
      안 넘기면 «남의» 계약서가 「원본이 없습니다」로 보인다. 내 것은 창고에서
      곧바로 되므로, 증상이 관리자 화면에서만 늦게 드러난다. */
 PuPhotoStore.init({ db: db, storage: store, auth: firebase.auth() });
+
+/* 주민번호 가림 — 긋기·사본 만들기는 급여데이터함과 **함께 쓰는 층**이다.
+   ⚠ 손잡이 이름을 창(window)에 붙여야 화면 HTML 의 inline onpointerdown 이 부른다. */
+photoMask = PuRrnMaskUi.blank();
+PuRrnMaskUi.init({
+  state: function () { return photoMask; },
+  render: function () { renderReadPanel(maskItem()); }
+});
+window.maskDown = PuRrnMaskUi.down;
+window.maskMove = PuRrnMaskUi.move;
+window.maskUp = PuRrnMaskUi.up;
+window.maskCancelDrag = PuRrnMaskUi.cancelDrag;
+window.maskDelBox = PuRrnMaskUi.delBox;
+window.maskUndo = PuRrnMaskUi.undo;
+window.maskClear = PuRrnMaskUi.clear;
 
 /* 서류 판독 — **열쇠는 서버가 든다**(2026-08-17). 브라우저는 사진만 보내고 결과만 받는다.
    ⚠ auth 를 넘겨야 서버가 「누가 부르는지」를 확인할 수 있다. 안 넘기면 판독 층이
@@ -8339,10 +8374,16 @@ function actsRow(readBtn, showAck) {
      이것이 없으면 지워지지 않는 할 일이 쌓여 목록을 못 믿게 된다. */
   const ack = showAck
     ? '<button class="ok" title="확인했음 — 할 일에서 치우기" onclick="ackRead()">✓</button>' : '';
+  /* 🔒 가리고 판독 — 주민번호를 덮은 **사본만** 구글로 보낸다(2026-08-17).
+     ⚠ 판독 단추와 «나란히» 둔다. 아직 안 읽은 서류는 계약서인지 모르므로
+       (종류를 정하는 것이 판독이다) 사람이 고를 수 있어야 한다. */
+  const maskBtn = '<button class="rd mask" title="주민번호를 가린 뒤 판독합니다"' +
+    ' onclick="startPhotoMask()">🔒 가리고 판독</button>';
   return '<div class="acts">' +
     docNavBtns() +
     '<button class="dl" title="내려받기" onclick="downloadOne(viewerId)">⬇</button>' +
     '<button class="rd" title="' + esc(readBtn) + '" onclick="readAgain()">' + esc(readBtn) + '</button>' +
+    maskBtn +
     share + ack +
     /* 되돌릴 수 없는 단추라 **맨 끝**이다 — 앞 단추와 틈을 벌려 둔다(.rm 의 margin-left) */
     '<button class="rm" title="이 사진 삭제" onclick="deleteOne()">🗑</button></div>';
@@ -8950,6 +8991,9 @@ function splitStart(ev) {
 
 function renderReadPanel(it) {
   const el = $('readPanel');
+  /* 가림 화면이 열려 있으면 그것이 판 자리를 차지한다 — 판독 결과와 동시에 뜨면
+     사람이 「지금 무엇을 하는 중인지」를 잃는다. */
+  if (maskOn()) { el.classList.remove('wide'); el.innerHTML = maskPanelHtml(); applySplit(); return; }
   /* 근태표·서식은 판이 **화면 절반**을 쓴다 — A4 를 원본과 나란히 대조하려면
      표가 좁으면 안 된다. 다른 서류는 그대로 440px.
      ⚠ 사람이 끌어 정한 폭이 있으면 그것이 이긴다(applySplit). */
@@ -9096,7 +9140,10 @@ function docPages(id) {
     .sort(function (a, b) { return (a.meta.doc.page || 0) - (b.meta.doc.page || 0); });
 }
 
-function readPhoto(id) {
+/* masked = 사람이 가린 **사본**. 주면 창고에서 원본을 다시 받지 않고 이것을 읽힌다.
+   ⚠ 사본은 **판독기에만** 간다 — 창고의 원본은 손대지 않는다(계약서는 증빙이라
+     5년을 보관해야 하고, 잘못 가렸을 때 되돌릴 것이 있어야 한다). */
+function readPhoto(id, masked) {
   const it = gridItems.find(function (x) { return x.id === id; });
   if (!it) return Promise.resolve();
   /* 사진이 있는 **주인 자리**에서 본문을 받고, 결과도 그 자리에 쓴다.
@@ -9107,10 +9154,15 @@ function readPhoto(id) {
      따로 보면 2쪽 이후가 죄다 빈칸으로 돌아온다. AI 호출도 쪽수만큼에서
      한 번으로 준다. */
   const pages = docPages(id);
-  return Promise.all(pages.map(function (p) {
-    return PuPhotoStore.loadFull(photoYearOf(p.id), p.id, photoOwner(p.id))
-      .catch(function () { return ''; });
-  })).then(function (fulls) {
+  /* ⚠ 가린 사본이 왔으면 **그것만** 읽힌다. 여기서 원본을 함께 실으면 가린 뜻이 없다.
+     그래서 여러 쪽짜리도 그 한 장만 간다 — 가림은 보고 있는 쪽에 대해 한 것이다. */
+  const source = masked
+    ? Promise.resolve([masked])
+    : Promise.all(pages.map(function (p) {
+        return PuPhotoStore.loadFull(photoYearOf(p.id), p.id, photoOwner(p.id))
+          .catch(function () { return ''; });
+      }));
+  return source.then(function (fulls) {
     const imgs = fulls.filter(function (f) { return safeSrc(f); });
     if (!imgs.length) throw new Error('사진 본문을 불러오지 못했습니다');
     return PuDocRead.read(imgs.length > 1 ? imgs : imgs[0]);
@@ -9144,12 +9196,127 @@ function readPhoto(id) {
   });
 }
 
+/* ══════ 주민번호 가리고 판독 (보안 3건 계획 3단계, 대표 지시 2026-08-17) ══════
+
+   판독을 누르면 **원본이 그대로 구글로 간다.** 근로계약서에는 주민번호가 있다.
+   그래서 가릴 곳을 고른 뒤 **가린 사본만** 보내는 길을 둔다.
+
+   ⚠ 긋기·사본 만들기는 급여데이터함과 **함께 쓰는 공용 층**이다(js/pu-rrn-mask-ui.js).
+     복사하면 두 벌이 되고, 가림은 틀리면 주민번호가 그대로 나가는 기능이다.
+     겉모습(HTML·CSS)만 사진첩 것으로 그린다.
+
+   ⚠ **아직 안 읽은 서류는 계약서인지 모른다** — 종류를 정하는 것이 판독이라서다
+     (대표 확인 2026-08-17 「가」). 그래서 자동 판독은 그대로 두고, 사람이 누를 수 있는
+     길을 준다. 이미 계약서·근태표로 밝혀진 것은 **가림을 거치지 않으면 다시 못 읽는다.** */
+let photoMask = null;
+
+function maskOn() { return !!(photoMask && photoMask.status !== 'idle'); }
+function maskItem() { return gridItems.find(function (x) { return x.id === viewerId; }); }
+
+/* 지금 보는 사진이 이미 민감한 것으로 밝혀졌는가 — 목록은 저장 층 한 곳에서 온다. */
+function maskForced(it) {
+  return !!(it && PuPhotoStore.isSensitiveRead(it.meta && it.meta.read));
+}
+
+function startPhotoMask() {
+  const id = viewerId;
+  if (!id) return;
+  photoMask = Object.assign(PuRrnMaskUi.blank(), { status: 'loading' });
+  renderReadPanel(maskItem());
+  PuPhotoStore.loadFull(photoYearOf(id), id, photoOwner(id)).then(function (full) {
+    if (viewerId !== id) return;              // 다른 사진으로 옮겨 갔다 — 이 답은 버린다
+    if (!safeSrc(full)) throw new Error('사진 본문을 불러오지 못했습니다');
+    photoMask = Object.assign(PuRrnMaskUi.blank(), { status: 'ready', url: full });
+    renderReadPanel(maskItem());
+  }).catch(function (e) {
+    if (viewerId !== id) return;
+    photoMask = Object.assign(PuRrnMaskUi.blank(), { status: 'err', err: (e && e.message) || String(e) });
+    renderReadPanel(maskItem());
+  });
+}
+
+/* 가림을 그만두면 판독도 안 한다 — 안 가린 채로 새는 길을 두지 않는다. */
+function photoMaskCancel() {
+  photoMask = PuRrnMaskUi.blank();
+  renderReadPanel(maskItem());
+}
+
+function photoMaskConfirm() {
+  const id = viewerId;
+  if (!id || !photoMask || photoMask.status !== 'ready') return;
+  let dataUrl;
+  try { dataUrl = PuRrnMaskUi.maskedDataUrl(); }
+  catch (e) {
+    /* 못 만들었으면 **원본을 보내지 않는다.** 가리려던 것을 못 가린 채 보내는 것이
+       이 기능이 막으려던 바로 그 일이다. */
+    alert('가린 사진을 만들지 못했습니다 — ' + ((e && e.message) || e) + '\n판독하지 않았습니다.');
+    return;
+  }
+  photoMask = PuRrnMaskUi.blank();
+  $('readPanel').innerHTML = '<div class="box"><p class="note" style="margin:0">판독 중…</p></div>';
+  readPhoto(id, dataUrl).then(function () {
+    renderGridBar();
+    renderGrid();
+  }).catch(function (e) {
+    console.warn('[가리고 판독]', e);
+    if (viewerId === id) {
+      $('readPanel').innerHTML = '<div class="box"><p class="note" style="margin:0">판독하지 못했습니다 — ' +
+        esc((e && e.message) || e) + '</p><button class="again" onclick="startPhotoMask()">다시 시도</button></div>';
+    }
+  });
+}
+
+/* 가림 화면 — 판독 결과 판 자리에 그대로 그린다(폰에서도 위아래로 쌓인다). */
+function maskPanelHtml() {
+  const ms = photoMask || {};
+  if (ms.status === 'loading') {
+    return '<div class="box"><b>가릴 곳 고르기</b>' +
+      '<p class="note" style="margin:8px 0 0">사진을 불러오는 중입니다…</p></div>';
+  }
+  if (ms.status === 'err') {
+    return '<div class="box"><b>가릴 곳 고르기</b>' +
+      '<p class="note" style="margin:8px 0 0">' + esc(ms.err) + '</p>' +
+      '<button class="again" onclick="photoMaskCancel()">닫기</button></div>';
+  }
+  const n = (ms.boxes || []).length;
+  const boxes = (ms.boxes || []).map(function (b, i) {
+    return '<div class="maskbox" style="left:' + (b.x * 100) + '%;top:' + (b.y * 100) +
+      '%;width:' + (b.w * 100) + '%;height:' + (b.h * 100) + '%">' +
+      '<span class="x" onpointerdown="event.stopPropagation()" onclick="maskDelBox(' + i + ')">✕</span></div>';
+  }).join('');
+  return '<div class="box"><b>가릴 곳 고르기</b>' +
+    /* 이 문구는 몇 곳을 가렸든 사라지지 않는다 — 마지막 판단은 사람이다. */
+    '<div class="maskwarn">⚠ 눈으로 한 번 훑어 주세요 — 못 보고 지나친 자리가 있을 수 있습니다</div>' +
+    /* ⚠ ondragstart 를 막는 것이 핵심이다 — 브라우저의 「사진 끌어다 놓기」가
+       긋기를 가로챈다(2026-08-16 급여데이터함에서 겪은 그 문제). */
+    '<div id="maskWrap" class="maskwrap" ondragstart="return false"' +
+    ' onpointerdown="maskDown(event)" onpointermove="maskMove(event)"' +
+    ' onpointerup="maskUp(event)" onpointercancel="maskCancelDrag()">' +
+    '<img id="maskImg" src="' + esc(ms.url || '') + '" alt="" draggable="false">' + boxes +
+    '<div id="maskPreview" class="maskbox" style="display:none"></div>' +
+    '</div>' +
+    '<p class="note" style="margin:8px 0 0">사진 위를 손가락이나 마우스로 그으면 그 자리가 가려집니다.<br>' +
+    '주민번호가 한 줄로 있으면 <b>가로로 길게 한 번</b>만 그으면 됩니다.</p>' +
+    '<div class="maskfoot">' +
+    (n ? '<button class="again" onclick="maskUndo()">되돌리기</button>' +
+         '<button class="again" onclick="maskClear()">다 지우기</button>' : '') +
+    '<button class="again" onclick="photoMaskCancel()">그만두기</button>' +
+    '<span class="note" style="margin:0 0 0 auto">' + (n ? n + '군데 가림' : '가린 곳 없음') + '</span>' +
+    '</div>' +
+    '<button class="again pri" onclick="photoMaskConfirm()">' +
+    (n ? n + '군데 가리고 판독' : '가릴 것 없음 — 그대로 판독') + '</button>' +
+    '</div>';
+}
+
 /* ⚠ 여기서 남의 사진을 막지 않는다(2026-08-10). 판독은 남의 사진을 고치는 일이
    아니라 **읽어서 명함첩에 더하는** 일이다. 막아 두었더니 다른 직원이 찍은 명함이
    그 직원이 화면을 열 때까지 명함첩에 안 들어갔다. 지우기·고치기는 그대로 잠겨 있다. */
 function readAgain() {
   const id = viewerId;
   if (!id) return;
+  /* ⚠ 이미 계약서·근태표로 밝혀진 것은 **가림을 거치지 않으면 다시 못 읽는다.**
+     여기를 열어 두면 「다시 판독」 한 번으로 주민번호가 그대로 나간다. */
+  if (maskForced(maskItem())) { startPhotoMask(); return; }
   $('readPanel').innerHTML = '<div class="box"><p class="note" style="margin:0">판독 중…</p></div>';
   readPhoto(id).then(function () {
     renderGridBar();
