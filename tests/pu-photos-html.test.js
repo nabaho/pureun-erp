@@ -620,25 +620,39 @@ test('남의 사진은 지우거나 고칠 수 없다 (판독은 2026-08-10 부�
 
 /* ── 담긴 양(용량) 자동으로 보이기 (대표 지시 2026-08-15) ── */
 
-test('★ 설정을 열 때 「용량·저장」탭이면 자동으로 센다', () => {
+/* ⚠ 2026-08-17 다시 겨눔 — 설정 탭을 없앴다(대표 지시 「탭없앰」).
+   예전에는 부르는 곳이 showView·pickSetTab **둘**이라 각각 못 박고 있었다.
+   탭이 사라지면서 부르는 곳이 하나로 줄었다 — 지킬 것은 「어느 탭일 때 센다」가
+   아니라 **「손으로 안 눌러도 열면 보인다」**이다. */
+test('★ 설정을 열면 담긴 양이 자동으로 보인다', () => {
   const fn = app.match(/function showView\([\s\S]*?\n\}/);
   assert.ok(fn, 'showView 를 찾지 못했습니다.');
-  assert.match(fn[0], /if \(setTab === 'use'\) countUsage\(\);/,
-    '설정을 처음 열 때 「용량·저장」탭이 이미 골라져 있어도 손으로 [세어 보기]를 눌러야 보입니다.');
+  const set = fn[0].slice(fn[0].indexOf("name === 'settings'"));
+  assert.match(set, /countUsage\(\);/,
+    '설정을 열어도 안 세면, 없앤 [세어 보기] 단추 대신 볼 길이 없습니다.');
 });
 
-test('★ 「용량·저장」탭을 고를 때도 자동으로 센다', () => {
-  const fn = app.match(/function pickSetTab\([\s\S]*?\n\}/);
-  assert.ok(fn, 'pickSetTab 를 찾지 못했습니다.');
-  assert.match(fn[0], /if \(id === 'use'\) countUsage\(\);/,
-    '다른 탭을 보다가 「용량·저장」으로 옮겨도 자동으로 세어야 합니다.');
+test('★ 설정을 열면 지난 사진도 함께 센다', () => {
+  /* 예전에는 [지난 사진 찾기]를 눌러야만 알 수 있어, 담당자가 몇 장 밀렸는지
+     영영 모르고 지나쳤다. 그 단추를 없앴으므로 여는 김에 함께 센다. */
+  const fn = app.match(/function showView\([\s\S]*?\n\}/);
+  const set = fn[0].slice(fn[0].indexOf("name === 'settings'"));
+  assert.match(set, /findOld\(\);/, '지난 사진을 안 세면 할 일 줄에 영영 안 나옵니다.');
 });
 
-test('countUsage 는 이미 세는 중이면 다시 시작하지 않는다', () => {
-  // 자동 호출 두 곳(showView·pickSetTab)이 겹칠 수 있어 재진입 방지가 필요하다.
+test('겹쳐 부르기 방지가 남아 있다 — 단추가 아니라 깃발로', () => {
+  /* 단추의 disabled 로 「세는 중」을 알던 것을 깃발로 바꿨다(단추를 없앴으므로).
+     겹침 방지 자체는 그대로 필요하다 — 설정을 빠르게 여닫으면 두 번 겹치고,
+     겹치면 늦게 끝난 쪽이 옛 값으로 화면을 덮는다. */
   const fn = app.match(/function countUsage\(\)[\s\S]*?\n\}/);
   assert.ok(fn, 'countUsage 를 찾지 못했습니다.');
-  assert.match(fn[0], /if \(btn\.disabled\) return;/);
+  assert.match(fn[0], /if \(usageBusy\) return;/, '겹쳐 부르면 옛 값이 화면을 덮습니다.');
+  assert.ok(!/btn\.disabled/.test(fn[0]), '없앤 단추를 아직 만지고 있습니다 — 터집니다.');
+
+  const fo = app.match(/function findOld\(\)[\s\S]*?\n\}/);
+  assert.ok(fo, 'findOld 를 찾지 못했습니다.');
+  assert.match(fo[0], /if \(oldBusy\) return;/, 'findOld 도 겹쳐 부르면 안 됩니다.');
+  assert.ok(!/btn\.disabled/.test(fo[0]), '없앤 단추를 아직 만지고 있습니다 — 터집니다.');
 });
 
 /* ── 칸 아래 띠(이유·이름·설명) 겹침 (대표 보고 2026-08-15:
