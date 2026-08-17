@@ -179,8 +179,128 @@
     return function () { try { ref.off('value', cb); } catch (e) { /* 이미 끊겼다 */ } };
   }
 
+  /* ══ 시간별 기록 (2026-08-17 대표 지시) ═══════════════════════════════
+     대표 지시: "몇 시에 체크 시 얼마 그리고 얼마 상승 … 각 항목마다 시간당 얼마씩".
+
+     ★ 왜 «한 시간 칸» 으로 묶나 —
+       구글은 「금액이 움직일 때만」 쏜다. 어떤 때는 2분 만에, 어떤 때는 4시간 만에 온다.
+       그 간격으로 시간당을 내면 2분짜리 기록에서 «30배로 부풀어» 보이고,
+       그 숫자를 보고 놀라게 된다. 한 시간 칸으로 묶으면
+       「17시에 3,640원 늘었다」가 곧 「그 시간에 시간당 3,640원」이라 셈이 필요 없다.
+
+     ★ 왜 «0 과 「모른다」를 가르나» —
+       쪽지가 없는 시간은 「안 썼다」가 아니라 「구글이 안 쏴서 모른다」다.
+       0 으로 적으면 「그 시간엔 공짜였다」로 읽힌다. 이 저장소에서 없는 값을
+       0 으로 둔갑시켜 여러 번 당했다(위 num() 이 그것 때문에 있다). */
+
+  // 그 시각이 속한 시간 칸 이름. tz 는 시간대 옮김(분) — 검사는 0 으로 고정해 흔들리지 않게 한다.
+  function hourKey(ms, tzMin) {
+    var d = new Date(num(ms) + (num(tzMin) || 0) * 60000);
+    return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0')
+      + '-' + String(d.getUTCDate()).padStart(2, '0') + 'T' + String(d.getUTCHours()).padStart(2, '0');
+  }
+
+  /* 항목별 시계열({ts:금액}) → 한 시간 칸별 증가분.
+     history: { total:{…}, storage:{…}, database:{…}, functions:{…} } */
+  function hourBuckets(history, opts) {
+    if (!history || typeof history !== 'object') return [];
+    var tz = (opts && num(opts.tz) !== null) ? num(opts.tz) : -new Date().getTimezoneOffset();
+    var KEYS = ['total'].concat(PARTS);
+
+    // ① 항목마다 「그 칸의 마지막 값」을 모은다
+    var last = {};        // last[key][hour] = 금액
+    var hours = {};
+    KEYS.forEach(function (k) {
+      last[k] = {};
+      var series = history[k];
+      if (!series || typeof series !== 'object') return;
+      Object.keys(series).forEach(function (ts) {
+        var v = num(series[ts]);
+        if (v === null) return;
+        var h = hourKey(ts, tz);
+        hours[h] = 1;
+        // 같은 칸에 여러 쪽지 → 나중 것이 이긴다 (ts 가 클수록 나중)
+        var prev = last[k][h];
+        if (!prev || num(ts) >= prev.ts) last[k][h] = { ts: num(ts), v: v };
+      });
+    });
+
+    var have = Object.keys(hours).sort();
+    if (!have.length) return [];
+
+    /* 쪽지가 온 시간만 늘어놓으면 «소식 없던 시간이 화면에서 사라진다».
+       그러면 「13시엔 아무 일도 없었나?」를 알 수 없고, 시간당 평균도 부풀어 보인다.
+       ★ 처음과 끝 사이의 «모든 시간 칸» 을 채우고, 쪽지 없는 칸은 「모른다」로 남긴다. */
+    var order = [];
+    (function () {
+      var toMs = function (h) { return Date.parse(h.slice(0, 10) + 'T' + h.slice(11) + ':00:00Z'); };
+      var a = toMs(have[0]), b = toMs(have[have.length - 1]);
+      for (var t = a; t <= b; t += 3600000) order.push(hourKey(t - (num(tz) || 0) * 60000, tz));
+    })();
+
+    /* ② 칸마다 「앞서 알던 값」과 견줘 증가분을 낸다.
+       ⚠ 앞이 없으면(첫 칸) 증가분을 «모른다» — 0 이 아니다. */
+    var seen = {};        // seen[key] = 마지막으로 알던 금액
+    var out = [];
+    order.forEach(function (h) {
+      var row = { hour: h, total: null, parts: {}, known: {} };
+      KEYS.forEach(function (k) {
+        var cur = last[k][h];
+        if (!cur) { row.known[k] = false; if (k !== 'total') row.parts[k] = null; return; }
+        var was = seen[k];
+        if (was === undefined) { row.known[k] = false; if (k !== 'total') row.parts[k] = null; }
+        else {
+          var d = cur.v - was;
+          row.known[k] = true;
+          if (k === 'total') row.total = d; else row.parts[k] = d;
+        }
+        seen[k] = cur.v;
+      });
+      /* 「그 밖」 = 전체 − (쪼갠 것 합).
+         ⚠ 음수면 0 으로 깎는다 — 낡은 칸 몫이 새어 마이너스로 보이던 일이 있었다
+           (2026-08-16 「그 밖 착시」). 마이너스 지출은 사람이 이해할 수 없다. */
+      if (row.known.total) {
+        var s = 0, anyPart = false;
+        PARTS.forEach(function (k) { if (row.known[k]) { s += row.parts[k] || 0; anyPart = true; } });
+        row.parts.etc = Math.max(0, row.total - s);
+        row.known.etc = anyPart || s === 0;
+      } else {
+        row.parts.etc = null; row.known.etc = false;
+      }
+      out.push(row);
+    });
+    return out;
+  }
+
+  /* 항목별 시간당 평균.
+     ⚠ 나누는 것은 «아는 칸 수» 다. 소식 없는 칸을 0 으로 치고 나누면
+       시간당이 실제보다 «낮게» 나와 안심하게 된다. */
+  function hourlyRates(buckets) {
+    var res = { total: null, parts: {}, hours: 0 };
+    if (!buckets || !buckets.length) return res;
+    var KEYS = ['total'].concat(PARTS).concat(['etc']);
+    var sum = {}, cnt = {};
+    KEYS.forEach(function (k) { sum[k] = 0; cnt[k] = 0; });
+    buckets.forEach(function (b) {
+      if (!b || !b.known) return;
+      KEYS.forEach(function (k) {
+        if (!b.known[k]) return;
+        var v = (k === 'total') ? b.total : (b.parts || {})[k];
+        if (num(v) === null) return;
+        sum[k] += num(v); cnt[k]++;
+      });
+    });
+    res.hours = cnt.total;
+    res.total = cnt.total ? Math.round(sum.total / cnt.total) : null;
+    PARTS.concat(['etc']).forEach(function (k) {
+      res.parts[k] = cnt[k] ? Math.round(sum[k] / cnt[k]) : null;
+    });
+    return res;
+  }
+
   global.PuBilling = {
     ROOT: ROOT,
+    HISTORY_ROOT: 'billing/history',
     watch: watch,
     PARTS: PARTS,
     STALE_MS: STALE_MS,
@@ -192,5 +312,8 @@
     isStale: isStale,
     projectMonthEnd: projectMonthEnd,
     summarize: summarize,
+    hourKey: hourKey,
+    hourBuckets: hourBuckets,
+    hourlyRates: hourlyRates,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

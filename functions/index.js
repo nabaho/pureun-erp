@@ -1113,6 +1113,19 @@ exports.recordBillingAlert = functions
       return Object.assign({}, parsed.row, { updatedAt: Date.now() });
     });
 
+    /* ── 시간별 기록도 한 줄 쌓는다 (2026-08-17 대표 지시) ────────────────
+       current 는 「이 순간 값」만 덮어써서 지난 값이 안 남았다 —
+       「몇 시에 얼마였고 얼마 늘었나」를 알 길이 없었다.
+       ★ 기록 쓰기가 실패해도 위 current 갱신은 «살린다».
+         지금 값이 더 중요하다 — 기록 때문에 지금 값이 안 올라가면 손해가 크다. */
+    try {
+      const h = BA.historyEntry(parsed, Date.now());
+      if (h) await getDatabase().ref(h.path).set(h.value);
+    } catch (e) {
+      console.error("recordBillingAlert: 기록 남기기 실패(지금 값은 살렸습니다)",
+        String((e && e.message) || e));
+    }
+
     console.log("recordBillingAlert", {
       key: parsed.key,
       cost: parsed.row.cost,

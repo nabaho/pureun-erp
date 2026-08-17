@@ -93,4 +93,36 @@ function shouldApply(prev, next) {
   return next.cost > prevCost;
 }
 
-module.exports = { BUDGET_KEYS, LABELS, parseAlert, shouldApply };
+/* ── 기록 한 줄 (2026-08-17 대표 지시) ─────────────────────────────────
+   대표 지시: "몇 시에 체크 시 얼마 그리고 얼마 상승 … 각 시간별 금액을 표시".
+   지금까지는 `billing/current` 에 「이 순간 값」만 덮어써서 지난 값이 안 남았다.
+   그래서 알림이 올 때마다 «한 줄» 을 따로 쌓는다.
+
+   ★ 값은 «숫자 하나»(금액)만 적는다. 한 줄이 40바이트도 안 된다 —
+     사용액을 보려고 사용액을 늘리면 웃긴다. 눈금(budget)은 current 에 이미 있다.
+
+   ★ 달은 «집계 시작일(intervalStart)» 에서 뽑는다. 도착 시각으로 뽑으면
+     월말 자정 무렵 쪽지가 엉뚱한 달에 담기고, 달이 어긋나면 증가분이
+     «큰 마이너스» 로 터진다(구글은 달이 바뀌면 0 부터 다시 센다).
+
+   ★ current 는 「더 큰 값만」 받지만(늦게 온 옛 쪽지 방어) 기록은 «그 시각 값 그대로» 다.
+     기록은 「그때 얼마였나」이고, 늦게 온 쪽지도 그 시각의 사실이다. */
+function historyEntry(parsed, arrivedMs) {
+  if (!parsed || !parsed.ok || !parsed.key || !parsed.row) return null;
+  const at = num(arrivedMs);
+  if (at === null) return null;
+  const cost = num(parsed.row.cost);
+  if (cost === null) return null;
+
+  const startMs = num(parsed.row.intervalStart);
+  if (startMs === null) return null;
+  const d = new Date(startMs);
+  const ym = d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
+
+  return {
+    path: "billing/history/" + ym + "/" + parsed.key + "/" + Math.round(at),
+    value: cost,
+  };
+}
+
+module.exports = { BUDGET_KEYS, LABELS, parseAlert, shouldApply, historyEntry };
