@@ -363,6 +363,46 @@ const t = (name, got, want) => {
     t('채우고 나면 몇 가지를 채웠는지 알려 준다', /'📷 사진첩 계약서에서 ' \+ photoPreview\.result\.previewLines\.length \+ '가지를 채웠습니다'/.test(blk), true);
   }
 
+  /* ═══ 8. 📄 연결된 계약서 — 한 줄 + 팝업 안 팝업 ═══
+     대표 지시 2026-08-17: 「계약정보에 서식이 다 나오면 복잡하니 팝업으로」. */
+  {
+    const blk = slice('function ContractModal(props){', '\n// ============ 방금 들어온 건 표시 ============');
+    const applyBlk = slice('photoPreview && h(\'div\', {', '\n// ============ 방금 들어온 건 표시 ============');
+
+    /* ★ 출처를 남긴다 — 안 하면 적용하는 순간 어느 사진에서 왔는지 잃는다 */
+    t('★ 적용할 때 어느 사진에서 왔는지 계약에 적어 둔다',
+      /srcPhoto:\s*\{[\s\S]{0,240}?id: photoPreview\.item\.id[\s\S]{0,240}?year: photoPreview\.item\.year/.test(applyBlk), true);
+
+    /* ★ 한 줄은 «가져온 적 있는» 계약에만 — 옛 계약에는 안 나온다 */
+    t('★ 연결된 사진이 있을 때만 한 줄이 나온다', /f\.srcPhoto && f\.srcPhoto\.id &&/.test(blk), true);
+    t('한 줄에 「원본·판독 보기」 단추가 있다', /'원본·판독 보기'/.test(blk), true);
+    t('★ 누르면 팝업이 열린다 (계약정보에 바로 펼치지 않는다)', /setDocViewOpen\(true\)/.test(blk), true);
+    t('팝업이 실제로 그려진다', /docViewOpen && f\.srcPhoto && h\(ContractDocViewModal, \{/.test(blk), true);
+
+    const vw = fn('ContractDocViewModal');
+
+    /* ★ 겹치는 순서 — 미리보기 위에 떠야 한다. 아래로 깔리면 눌러도 안 보인다. */
+    const zView = Number((vw.match(/zIndex:\s*(\d+)/) || [])[1]);
+    const zPrev = Number((applyBlk.match(/zIndex:\s*(\d+)/) || [])[1]);
+    t('두 창의 겹침 순서를 읽을 수 있다', zView > 0 && zPrev > 0, true);
+    t('★ 원본 보기 창이 미리보기보다 위에 뜬다', zView > zPrev, true);
+
+    /* ★ 원본은 본인 것만 읽힌다 — 막히면 까닭을 적고, 판독 결과는 그대로 보여야 한다 */
+    t('★ 원본이 안 열려도 조용히 비워 두지 않는다', /원본을 열 수 없습니다/.test(vw), true);
+    t('원본 읽기는 공용 저장 층을 거친다', /PuPhotoStore\.loadFull\(src\.year, src\.id\)/.test(vw), true);
+    t('★ 판독 결과는 이미 받아 둔 목록에서 꺼낸다 (다시 안 읽는다)',
+      /erpLoadMyContractPhotos\(function\(items\)\{/.test(vw), true);
+
+    /* ★ 좁은 화면 — 좌우가 안 들어가니 한 쪽씩 보는 갈래를 둔다 */
+    t('★ 폰에서는 원본만 먼저 보여 준다', /useState\(IS_MOBILE \? 'scan' : 'both'\)/.test(vw), true);
+    t('나란히·원본만·판독만 세 갈래가 있다',
+      /'나란히 보기'/.test(vw) && /'원본만'/.test(vw) && /'판독만'/.test(vw), true);
+
+    /* 어느 칸으로 들어갔는지 표시 — 「이 금액 어디서 나왔지」를 여기서 끝낸다 */
+    t('판독 항목마다 어느 칸에 쓰였는지 적는다', /into: *'계약금'/.test(src), true);
+    t('★ 계약서의 모든 조항(pairs)까지 이어 보여 준다', /readFields\.pairs/.test(vw), true);
+  }
+
   console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');
   process.exit(fail ? 1 : 0);
 })();

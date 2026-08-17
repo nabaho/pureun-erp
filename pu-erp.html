@@ -12601,6 +12601,151 @@ function erpLoadMyContractPhotos(cb){
   });
 }
 
+/* ── 판독 항목 이름표 — 어느 칸으로 들어갔는지까지 보여 준다 ──
+   판독기가 쓰는 키(js/pu-doc-read.js 의 kind=contract)를 사람 말로 옮긴다.
+   into 는 「이 계약의 어느 칸에 들어갔나」 — 없으면 참고용 항목이다. */
+var ERP_DOC_FIELD_LABELS = [
+  { k:'deposit',    label:'계약금',      into:'계약금' },
+  { k:'fee',        label:'보수',        into:'계약금' },
+  { k:'vat',        label:'부가세',      into:'부가세 체크' },
+  { k:'signDate',   label:'계약일',      into:'계약일' },
+  { k:'startDate',  label:'시작일',      into:'계약기간' },
+  { k:'endDate',    label:'종료일',      into:'계약기간' },
+  { k:'scope',      label:'업무범위',    into:'업무 요약' },
+  { k:'docName',    label:'문서명',      into:'' },
+  { k:'company',    label:'상대 업체',   into:'' },
+  { k:'ceo',        label:'대표자',      into:'대표자(비어 있을 때만)' },
+  { k:'address',    label:'주소',        into:'주소(비어 있을 때만)' },
+  { k:'bizno',      label:'사업자번호',  into:'사업자번호(비어 있을 때만)' },
+  { k:'companyTel', label:'연락처',      into:'' },
+  { k:'term',       label:'계약기간',    into:'' },
+  { k:'retainer',   label:'착수금',      into:'' },
+  { k:'success',    label:'성공보수',    into:'' },
+  { k:'memo',       label:'특약',        into:'' }
+];
+
+/* ── 📄 연결된 계약서 — 원본과 판독 결과를 나란히 (계약창 위에 겹치는 팝업) ──
+   대표 지시 2026-08-17: 「계약정보에 서식이 다 나오면 복잡하니 팝업 안 팝업으로」.
+   ⚠ 사진 본문은 본인 것만 읽힌다(규칙이 막는다) — 남이 올린 계약서면 원본이 안 뜬다.
+     그때도 판독 결과는 보이므로, 원본 자리에만 까닭을 적는다.
+   ⚠ 좁은 화면에서는 좌우가 안 들어간다 — 한 쪽씩 보는 갈래를 둔다. */
+function ContractDocViewModal(props){
+  useEscClose(props.onClose);
+  var src = props.src || {};
+  var vs = useState(IS_MOBILE ? 'scan' : 'both'); var view = vs[0]; var setView = vs[1];
+  var is = useState(''); var imgUrl = is[0]; var setImgUrl = is[1];
+  var es = useState(''); var imgErr = es[0]; var setImgErr = es[1];
+  var fs2 = useState(null); var readFields = fs2[0]; var setReadFields = fs2[1];
+
+  // 원본 사진 — 창을 열 때 한 번만 받아온다(목록에는 안 딸려 오는 무거운 값이다)
+  useEffect(function(){
+    var gone = false;
+    if(!src.id || !src.year || typeof PuPhotoStore === 'undefined'){ setImgErr('사진을 찾을 수 없습니다'); return; }
+    PuPhotoStore.loadFull(src.year, src.id)
+      .then(function(u){ if(!gone) setImgUrl(u || ''); })
+      .catch(function(){ if(!gone) setImgErr('원본을 열 수 없습니다 — 내가 올린 사진만 볼 수 있습니다'); });
+    // 판독 결과는 이미 받아 둔 목록에서 꺼낸다(다시 읽지 않는다)
+    erpLoadMyContractPhotos(function(items){
+      if(gone) return;
+      var hit = (items || []).filter(function(x){ return x.id === src.id; })[0];
+      setReadFields(hit ? (hit.fields || {}) : {});
+    });
+    return function(){ gone = true; };
+  }, [src.id, src.year]);
+
+  function seg(v, label){
+    var on = view === v;
+    return h('button', { type:'button', onClick:function(){ setView(v); },
+      style:{ padding:'4px 11px', borderRadius:'6px', border:'none', cursor:'pointer',
+        fontSize:'10.5px', fontWeight: on ? 700 : 500,
+        background: on ? '#2563eb' : '#f8fafc', color: on ? '#fff' : '#64748b' } }, label);
+  }
+
+  var showScan = view === 'both' || view === 'scan';
+  var showRead = view === 'both' || view === 'read';
+
+  return h('div', {
+    /* 미리보기(211)보다 위 — 이 창은 그 위에 또 뜰 수 있다 */
+    style:{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:212,
+      display:'flex', alignItems:'center', justifyContent:'center', padding:'16px' },
+    onClick:function(e){ if(e.target === e.currentTarget) props.onClose(); }
+  },
+    h('div', { style:{ background:'#fff', borderRadius:'10px', width:'760px', maxWidth:'96vw',
+      maxHeight:'90vh', display:'flex', flexDirection:'column', overflow:'hidden' } },
+      h('div', { style:{ padding:'11px 15px', borderBottom:'1px solid #e2e8f0', display:'flex',
+        alignItems:'center', gap:'8px', flexShrink:0 } },
+        h('span', { style:{ fontSize:'13px', fontWeight:700 } },
+          '📄 ' + (src.docName || '계약서') + ' — 원본과 판독 결과'),
+        h('button', { onClick:props.onClose, 'aria-label':'닫기',
+          style:{ marginLeft:'auto', background:'none', border:'none', fontSize:'17px',
+            cursor:'pointer', color:'#64748b' } }, '×')
+      ),
+      h('div', { style:{ padding:'12px 15px', overflow:'auto' } },
+        h('div', { style:{ display:'flex', gap:'3px', marginBottom:'10px' } },
+          seg('both', '나란히 보기'), seg('scan', '원본만'), seg('read', '판독만')),
+        h('div', { style:{ display:'grid', gap:'11px',
+          gridTemplateColumns: (view === 'both') ? '1fr 1fr' : '1fr' } },
+          // ── 원본 ──
+          showScan && h('div', { style:{ background:'#1e293b', borderRadius:'7px', minHeight:'300px',
+            display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden' } },
+            imgUrl
+              ? h('img', { src:imgUrl, alt:'계약서 원본',
+                  style:{ maxWidth:'100%', maxHeight:'54vh', objectFit:'contain', display:'block' } })
+              : h('div', { style:{ color:'#94a3b8', fontSize:'11.5px', textAlign:'center',
+                  lineHeight:1.9, padding:'20px' } }, imgErr || '원본을 불러오는 중…')
+          ),
+          // ── 판독 결과 ──
+          showRead && h('div', { style:{ border:'1px solid #e2e8f0', borderRadius:'7px',
+            maxHeight:'54vh', overflow:'auto' } },
+            h('div', { style:{ background:'#f8fafc', padding:'6px 10px', fontSize:'10.5px',
+              fontWeight:700, color:'#475569', position:'sticky', top:0 } },
+              '🤖 판독기가 읽은 내용 — 파란 줄이 이 계약에 들어간 값'),
+            readFields === null
+              ? h('div', { style:{ padding:'16px', fontSize:'11.5px', color:'#94a3b8' } }, '읽는 중…')
+              : (function(){
+                  var rows = ERP_DOC_FIELD_LABELS
+                    .filter(function(d){ return readFields[d.k]; })
+                    .map(function(d){
+                      return h('div', { key:d.k, style:{ display:'flex', gap:'7px', padding:'5px 10px',
+                        borderBottom:'1px solid #f8fafc', fontSize:'10.5px', lineHeight:1.5,
+                        background: d.into ? '#eff6ff' : '' } },
+                        h('span', { style:{ minWidth:'70px', flexShrink:0,
+                          color: d.into ? '#2563eb' : '#94a3b8', fontWeight: d.into ? 700 : 400 } }, d.label),
+                        h('span', { style:{ color:'#1e293b', wordBreak:'break-all' } }, String(readFields[d.k])),
+                        d.into ? h('span', { style:{ marginLeft:'auto', flexShrink:0, alignSelf:'center',
+                          fontSize:'8.5px', background:'#2563eb', color:'#fff', padding:'1px 5px',
+                          borderRadius:'7px', whiteSpace:'nowrap' } }, d.into) : null
+                      );
+                    });
+                  /* pairs — 계약서의 모든 조항. 위에 안 담긴 것만 이어 붙인다. */
+                  var pairs = readFields.pairs;
+                  if(Array.isArray(pairs)){
+                    pairs.forEach(function(p, i){
+                      if(!p) return;
+                      var k = p.k || p.key || '', v = p.v || p.value || '';
+                      if(!k && !v) return;
+                      rows.push(h('div', { key:'p'+i, style:{ display:'flex', gap:'7px', padding:'5px 10px',
+                        borderBottom:'1px solid #f8fafc', fontSize:'10.5px', lineHeight:1.5 } },
+                        h('span', { style:{ minWidth:'70px', flexShrink:0, color:'#94a3b8' } }, String(k)),
+                        h('span', { style:{ color:'#1e293b', wordBreak:'break-all' } }, String(v))));
+                    });
+                  }
+                  return rows.length ? rows
+                    : h('div', { style:{ padding:'16px', fontSize:'11.5px', color:'#94a3b8' } },
+                        '판독 결과가 없습니다');
+                })()
+          )
+        )
+      ),
+      h('div', { style:{ padding:'10px 15px', borderTop:'1px solid #e2e8f0', display:'flex',
+        justifyContent:'flex-end', flexShrink:0 } },
+        h('button', { onClick:props.onClose,
+          style:{ padding:'6px 16px', border:'1px solid #cbd5e1', borderRadius:'6px',
+            background:'#fff', cursor:'pointer', fontSize:'12px' } }, '닫기'))
+    )
+  );
+}
+
 // 회사명으로 찾은 계약서 사진 후보 목록 — PucardsCompanyPickerModal 과 같은 모양을 그대로 본뜬다.
 function PhotoContractPickerModal(props){
   useEscClose(props.onClose);
@@ -12797,6 +12942,8 @@ function ContractModal(props){
   var ppv = useState(null); var photoPreview = ppv[0]; var setPhotoPreview = ppv[1];
   // 보수·계약금이 둘 다 읽혔을 때 사람이 고른 쪽('deposit'|'fee'). 빈 값이면 계약금(기본).
   var ppa = useState(''); var photoPickedAmt = ppa[0]; var setPhotoPickedAmt = ppa[1];
+  // 📄 연결된 계약서 원본·판독 보기 창 (계약창 위에 겹쳐 뜨는 팝업)
+  var pdv = useState(false); var docViewOpen = pdv[0]; var setDocViewOpen = pdv[1];
   // 창을 열 때 한 번만 읽는다 — 실시간 구독이 아니다(설계 확정)
   useEffect(function(){ erpLoadMyContractPhotos(function(){ setContractPhotosLoaded(true); }); }, []);
   useEffect(function(){
@@ -15045,7 +15192,23 @@ function ContractModal(props){
         }),
         // CMS 자동이체 — 계약 전체에 하나뿐인 값이므로 종류별 줄 밖, 박스 맨 아래에 둔다.
         // 금액을 넣은 자리에서 바로 이어 체크하도록 여기로 옮겼다(전에는 진행상태 아래에 떨어져 있었다).
-        cmsBlock()
+        cmsBlock(),
+        /* 📄 연결된 계약서 — 한 줄만. 판독 내용을 여기 통째로 펼치면 화면이 복잡해져
+           일을 못 한다(대표 지시 2026-08-17). 「보기」를 눌렀을 때만 창을 띄운다.
+           가져온 적이 없는 계약(옛 계약 포함)에는 이 줄 자체가 안 나온다. */
+        f.srcPhoto && f.srcPhoto.id && h('div', { style:{ display:'flex', alignItems:'center', gap:'9px',
+          background:'#eff6ff', border:'1px solid #bfdbfe', borderRadius:'7px',
+          padding:'8px 12px', fontSize:'11.5px', marginTop:'6px' } },
+          h('span', null, '📄'),
+          h('span', { style:{ fontWeight:700, color:'#1e40af' } }, f.srcPhoto.docName || '계약서'),
+          h('span', { style:{ color:'#64748b', fontSize:'10.5px' } },
+            (f.srcPhoto.signDate || (f.srcPhoto.at ? fmtDate(f.srcPhoto.at).slice(0,10) : '날짜 미상')) + ' 계약서'),
+          h('button', { type:'button', onClick:function(){ setDocViewOpen(true); },
+            title:'사진첩에 있는 원본과, 판독기가 읽은 내용을 나란히 봅니다',
+            style:{ marginLeft:'auto', padding:'4px 12px', borderRadius:'6px', border:'none',
+              background:'#1e40af', color:'#fff', fontSize:'11px', fontWeight:700, cursor:'pointer' } },
+            '원본·판독 보기')
+        )
       ),
       // 계약유형을 아직 안 골랐으면 위 박스가 없다 — 그래도 CMS 는 손댈 수 있어야 한다
       // (이미 CMS 가 켜진 옛 계약을 열었을 때 끌 길이 사라지면 안 된다)
@@ -15501,6 +15664,11 @@ function ContractModal(props){
     /* 사진첩 계약서 미리보기 — 「적용」을 눌러야 실제로 덮어쓴다.
        ★ 판독한 글자는 틀릴 수 있다. 말없이 금액·날짜를 바꿔 놓으면 바뀐 줄도 모르고 저장된다.
          무엇이 어떻게 바뀌는지 먼저 보여 주고 사람이 정하게 한다. */
+    // 📄 연결된 계약서 원본·판독 — 계약창 위에 겹쳐 뜬다(닫으면 입력하던 것 그대로)
+    docViewOpen && f.srcPhoto && h(ContractDocViewModal, {
+      src: f.srcPhoto,
+      onClose: function(){ setDocViewOpen(false); }
+    }),
     photoPreview && h('div', {
       style:{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:211, display:'flex', alignItems:'center', justifyContent:'center' },
       onClick:function(e){ if(e.target === e.currentTarget) setPhotoPreview(null); }
@@ -15544,6 +15712,20 @@ function ContractModal(props){
                   patch.amounts[photoPreview.kindV] = picked.amount;
                 }
               }
+              /* ★ 어느 사진에서 가져왔는지 계약에 적어 둔다 (대표 지시 2026-08-17).
+                 전에는 값만 옮기고 연결을 안 남겨, 적용하는 순간 출처를 잃었다 —
+                 나중에 「이 금액 어디서 나왔지」를 물을 데가 없었다.
+                 사진 번호 한 쌍이면 원본과 판독 결과를 언제든 다시 열 수 있다. */
+              patch = Object.assign({}, patch, {
+                srcPhoto: {
+                  id: photoPreview.item.id,
+                  year: photoPreview.item.year,
+                  docName: (photoPreview.item.fields || {}).docName || '',
+                  signDate: (photoPreview.item.fields || {}).signDate || '',
+                  at: photoPreview.item.at || 0,
+                  linkedAt: new Date().toISOString()
+                }
+              });
               setF(function(prev){ return Object.assign({}, prev, patch); });
               setPhotoPreview(null); setPhotoPickedAmt('');
               try { showToast('📷 사진첩 계약서에서 ' + photoPreview.result.previewLines.length + '가지를 채웠습니다'); } catch(_){}
