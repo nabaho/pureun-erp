@@ -74,9 +74,39 @@ test('두 저장 길 «모두» 권한 문구를 쓴다', () => {
     assert.ok(a > 0, name + ' 가 없다');
     const b = S.indexOf('\nfunction ', a + 5);
     const fn = S.slice(a, b < 0 ? S.length : b);
-    assert.strictEqual(/_isDeniedErr\(/.test(fn), true, name + ' 가 권한 여부를 안 가린다');
-    assert.strictEqual(/_SAVE_DENIED_MSG/.test(fn), true, name + ' 가 권한 안내를 안 쓴다');
+    assert.strictEqual(/_saveFailMsg\(\s*node\s*,\s*e\s*\)/.test(fn), true,
+      name + ' 가 실패 이유를 안 알린다');
   });
+});
+
+test('실패는 «어느 칸이» 막혔는지 말한다', () => {
+  /* 「scal_scheds」만 보여 주면 아무도 못 읽는다. 사람 말로 적어야
+     대표님이 「일정이 막혔다 / 담당자가 막혔다」를 구별해 알려 줄 수 있다. */
+  const m = S.match(/const _NODE_KO=\{([^}]+)\}/);
+  assert.ok(m, '칸 이름표가 없다');
+  ['scal_scheds', 'scal_cos', 'scal_staff'].forEach(function (n) {
+    assert.strictEqual(m[1].indexOf(n + ':') >= 0, true, n + ' 이름표가 없다');
+  });
+});
+
+test('권한이 «아닌» 실패는 이유를 그대로 보여 준다', () => {
+  /* ★ 이 고장에서 가장 뼈아픈 대목 — 「다시 시도해 주세요」만 뜨는 동안
+     대표님도 나도 무엇이 막혔는지 알 수 없었다. 이유를 적으면 한 번에 잡힌다. */
+  const a = S.indexOf('function _saveFailMsg');
+  const fn = S.slice(a, S.indexOf('\nfunction ', a + 5));
+  assert.ok(a > 0, '_saveFailMsg 가 없다');
+  assert.strictEqual(/e\.code\|\|e\.message/.test(fn), true, '오류 내용을 안 읽는다');
+  assert.strictEqual(/알려 주세요/.test(fn), true, '알려 달라는 말이 없다');
+  assert.strictEqual(/다시 시도/.test(fn), false, '아직 「다시 시도」를 권한다');
+});
+
+test('되돌려진 저장은 «되돌려졌다» 고 말한다', () => {
+  /* 서버가 저장을 되돌리면 이유가 안 온다. 전에는 영문 한 줄만 던져
+     화면이 「다시 시도해 주세요」로 뭉갰다. */
+  const a = S.indexOf('function fbPushRecordDelta(');
+  const fn = S.slice(a, S.indexOf('\nfunction ', a + 5));
+  assert.strictEqual(/되돌렸습니다|되돌려졌습니다/.test(fn), true, '되돌려진 것을 사람 말로 안 적는다');
+  assert.strictEqual(/TX_NOT_COMMITTED/.test(fn), true, '되돌려진 것을 가릴 표가 없다');
 });
 
 test('저장 실패 뒤처리가 «오류를 받아» 판단한다', () => {
