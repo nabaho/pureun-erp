@@ -45,8 +45,19 @@ test('응답은 moved·skipped·failed·done 을 그대로 돌려준다', () => 
 });
 
 test('창고는 서울 버킷(pureun-erp-hrphotos) — 사진첩 새 창고와 같아야 한다', () => {
-  assert.match(src, /getStorage\(\)\.bucket\(["']pureun-erp-hrphotos["']\)/,
-    'PR #192 에서 만든 창고 이름과 다릅니다 — pu-photos.html 이 보는 창고와 어긋납니다.');
+  /* ⚠ 예전에는 `getStorage().bucket("pureun-erp-hrphotos")` 라는 **글자 그대로**를
+     붙잡았다. 2026-08-17 에 창고 이름을 상수(PHOTO_BUCKET) 한 곳으로 모으자
+     깨졌다 — 이름은 그대로였고, 오히려 두 곳에 적히던 것을 한 곳으로 모은
+     «옳은 고침»이었다. 지키려는 것은 적는 «모양»이 아니라
+     **「사진 함수가 그 창고를 본다」**이다. */
+  assert.match(src, /"pureun-erp-hrphotos"/,
+    'PR #192 에서 만든 창고 이름이 사라졌습니다 — pu-photos.html 이 보는 창고와 어긋납니다.');
+  /* 이름을 두 곳에 적으면 한쪽만 고쳐진다 */
+  assert.equal((src.match(/"pureun-erp-hrphotos"/g) || []).length, 1,
+    '창고 이름이 두 곳 이상에 적혀 있습니다 — 한쪽만 고쳐지면 그 기능만 조용히 빈 창고를 봅니다.');
+  /* 사진을 다루는 자리들이 «기본 창고»를 보고 있지 않은지 */
+  assert.doesNotMatch(src, /getStorage\(\)\.bucket\(\)\.file\((?:PV|photoDb|BUCKET_ROOT)/,
+    '사진 자리가 기본 창고를 봅니다 — 「원본이 없습니다」만 돌려주게 됩니다.');
 });
 
 test('firebase-admin/storage 를 실제로 불러온다', () => {

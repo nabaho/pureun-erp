@@ -816,9 +816,14 @@ function realPhotoDb() {
 // ⚠ 되읽어 확인(exists)은 메타데이터만 본다 — 전체를 다시 내려받지 않는다.
 //   (클라이언트 쪽은 getDownloadURL+fetch 로 전체를 다시 받는다 — 서버는 그럴
 //   필요가 없다, 대역폭을 아낀다. 설계서 5절 참고.)
+/* 사진 창고 이름 — **한 곳**에만 적는다.
+   ⚠ 기본 창고가 아니다. 두 곳에 적혀 있으면 한쪽만 고쳐져, 그쪽 기능이
+     조용히 「원본이 없습니다」가 된다(사진 이사·민감 서류 보기가 이 이름을 함께 쓴다). */
+const PHOTO_BUCKET = "pureun-erp-hrphotos";
+
 function realPhotoBucket() {
   // 창고 이름은 PR #192 에서 만든 것과 반드시 같아야 한다 — pu-photos.html 이 보는 창고.
-  const bucket = getStorage().bucket("pureun-erp-hrphotos");
+  const bucket = getStorage().bucket(PHOTO_BUCKET);
   return {
     upload(objectPath, dataUrl) {
       // ⚠ 진짜 base64 data URL 인지 확인한다(최종 리뷰 2026-08-13) — 확인 없이
@@ -1209,6 +1214,113 @@ exports.readDoc = functions
       return;
     }
     res.json({ ok: true, reply: r.json });
+  });
+
+// ═══ 민감 서류 보기 (사진첩 보안 3건 계획 2단계, 대표 지시 2026-08-17) ═══
+// 계약서·근태표의 **원본 주소를 사진 정보에 안 남긴다.** 볼 때마다 여기로 와서
+// 로그인·권한을 확인받고 내용을 받아 간다. 까닭과 정한 것들은 photo-view.js 머리에.
+const PV = require("./photo-view");
+
+/* 사진 한 장을 볼 자격이 있는지 따진다 — 실시간DB 규칙과 같은 기준.
+   ⚠ 정보(items/…)를 **Admin SDK 로** 읽는다. 규칙을 우회하는 것이 아니라,
+     규칙이 못 보는 것(uid_roles 의 관리자 여부)을 여기서 대신 따지는 것이다. */
+async function photoGate(decoded, v) {
+  const db = getDatabase();
+  const [roleSnap, itemSnap] = await Promise.all([
+    db.ref(`uid_roles/${decoded.uid}`).once("value"),
+    db.ref(`${PHOTOS_DB_ROOT}/u/${v.owner}/items/${v.year}/${v.id}`).once("value"),
+  ]);
+  const item = itemSnap.val();
+  const seen = PV.canSee({ viewerUid: decoded.uid, owner: v.owner, role: roleSnap.val() || {}, item: item });
+  if (!seen.ok) return seen;
+  return PV.decide(item);
+}
+
+exports.photoView = functions
+  .region(MAIL_REGION)
+  .runWith({ timeoutSeconds: 60, memory: "512MB" })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
+
+    let decoded;
+    try {
+      decoded = await requireReader(req);
+    } catch (e) {
+      res.status(e.status || 401).json({ ok: false, error: String(e.message || e) });
+      return;
+    }
+
+    const body = (req.body && typeof req.body === "object") ? req.body : {};
+    const v = PV.validate(body);
+    if (!v.ok) { res.status(400).json({ ok: false, error: v.error }); return; }
+
+    let gate;
+    try {
+      gate = await photoGate(decoded, v);
+    } catch (e) {
+      console.error("photoView gate", e && e.message);
+      res.status(500).json({ ok: false, error: "권한을 확인하지 못했습니다." });
+      return;
+    }
+    if (!gate.ok) { res.status(gate.status || 403).json({ ok: false, error: gate.why }); return; }
+
+    /* 창고에서 내용을 받아 data:URL 로 돌려준다.
+       ⚠ 화면(loadFull)이 data:URL 을 기대한다 — 판독기도 그 모양을 받는다.
+         여기서 모양을 바꾸면 부르는 쪽 전부를 함께 고쳐야 한다. */
+    try {
+      /* ⚠ 사진 창고는 **기본 창고가 아니다.** 이름을 안 적으면 엉뚱한 창고를 보고
+         「원본이 없습니다」만 돌려준다. PHOTO_BUCKET 한 곳에서 온다. */
+      const file = getStorage().bucket(PHOTO_BUCKET).file(PV.storagePath(v.owner, v.year, v.id, "full"));
+      const [buf] = await file.download();
+      res.json({ ok: true, dataUrl: "data:image/jpeg;base64," + buf.toString("base64") });
+    } catch (e) {
+      /* 파일이 없는 경우와 그 밖의 실패를 갈라 준다 — 「원본이 없습니다」와
+         「서버가 못 줬습니다」는 사람이 해야 할 일이 다르다. */
+      const missing = e && (e.code === 404 || /No such object/i.test(String(e.message || "")));
+      console.error("photoView download", e && e.message);
+      res.status(missing ? 404 : 502).json({
+        ok: false,
+        error: missing ? "창고에 원본이 없습니다 — 옛 사진일 수 있습니다" : "원본을 받아오지 못했습니다",
+      });
+    }
+  });
+
+/* 이미 주소가 적힌 민감 서류를 훑고, 시키면 지운다 — 총괄관리자만.
+   ⚠ **세어 보고한 다음에 지운다**(mode:'scan' → 대표 확인 → mode:'clear').
+     지우면 그 사진들은 반드시 photoView 를 거쳐야 보인다. 몇 장인지 모르고
+     지우면, 안 보이게 됐을 때 무엇이 몇 장 영향받았는지도 알 수 없다. */
+exports.photoSensitiveSweep = functions
+  .region(MAIL_REGION)
+  .runWith({ timeoutSeconds: 300, memory: "512MB" })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
+
+    try {
+      await requirePhotoAdmin(req);
+    } catch (e) {
+      res.status(e.status || 401).json({ ok: false, error: String(e.message || e) });
+      return;
+    }
+
+    const db = getDatabase();
+    const snap = await db.ref(PHOTOS_DB_ROOT).once("value");
+    const hits = PV.sweep(snap.val() || {});
+    const byKind = {};
+    hits.forEach(function (h) { byKind[h.kind] = (byKind[h.kind] || 0) + 1; });
+
+    const mode = String((req.body && req.body.mode) || "scan");
+    if (mode !== "clear") {
+      res.json({ ok: true, mode: "scan", found: hits.length, byKind: byKind });
+      return;
+    }
+    const u = PV.clearPaths(hits, PHOTOS_DB_ROOT);
+    if (Object.keys(u).length) await db.ref().update(u);
+    console.log("photoSensitiveSweep cleared", hits.length, byKind);
+    res.json({ ok: true, mode: "clear", cleared: hits.length, byKind: byKind });
   });
 
 /* 홈페이지 읽어오기 — 통합시스템이 홈페이지와 대조할 수 있게 쪽 내용을 글자로 돌려준다.
