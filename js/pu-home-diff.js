@@ -85,6 +85,35 @@
     return matches.length === 0 ? '명부에 없어 입·퇴사 판단을 못함' : '';
   }
 
+  /* ══════ 명부 딱지 (3차 설계 §3) ══════
+     푸른ERP 명부«만» 보고 붙이는 표시다. 홈페이지를 읽지 않아도 알 수 있는 것이라
+     화면을 열 때 바로 붙는다.
+     ★ 대조 딱지(memberStatus)와 «다른 것»이다. 섞지 말 것 —
+       대조 딱지는 「홈페이지 다시 확인」을 누를 때만 새로 붙고, 명부 딱지는 늘 붙는다.
+     ★ 퇴사 판정은 memberStatus 와 «같은» hasLeft·staffMatches 를 쓴다. 화면에서 같은
+       판단을 다시 만들면 두 곳이 서로 다른 답을 낸다.
+     돌려주는 모양: null(붙일 것 없음) 또는 { kind, label, detail } */
+  function rosterMark(name, staff, today) {
+    if (!Array.isArray(staff)) return null;   // 명부를 못 읽었다 — 지어내지 않는다
+    const matches = staffMatches(staff, name);
+    if (matches.length === 0) {
+      return { kind: 'none', label: '명부에 없음', detail: notInStaffReason(matches) };
+    }
+    if (matches.length > 1) {
+      return { kind: 'dup', label: '동명이인',
+               detail: '명부에 같은 이름이 둘 이상 — 입·퇴사 판단을 보류함' };
+    }
+    const person = matches[0];
+    if (!hasLeft(person, today)) return null;   // 재직 중 — 붙일 딱지가 없다
+    return {
+      kind: 'left',
+      // 퇴사일이 없으면(공개 명부 폴백) 날짜를 지어내지 않고 「퇴사」로만 적는다
+      label: person.leftAt ? ('퇴사 ' + person.leftAt) : '퇴사',
+      detail: leftReason(person),
+      leftAt: person.leftAt ? String(person.leftAt) : ''
+    };
+  }
+
   function memberStatus(ours, live, staff, today) {
     const liveList = live || [];
     const liveBySrl = {};
@@ -232,6 +261,9 @@
   global.PuHomeDiff = {
     memberStatus: memberStatus, pageStatus: pageStatus, isTrustworthy: isTrustworthy,
     nameLeftovers: nameLeftovers, signature: signature, duplicateLiveKeys: duplicateLiveKeys,
-    duplicateOurKeys: duplicateOurKeys, matchKeyOf: matchKeyOf
+    duplicateOurKeys: duplicateOurKeys, matchKeyOf: matchKeyOf,
+    /* 화면도 이 둘을 그대로 쓴다 — 「퇴사인가」·「사유 있는 예외인가」를 두 곳에서
+       따로 만들면 목록 딱지와 판정 결과가 조용히 어긋난다. */
+    rosterMark: rosterMark, keepOnSiteReason: keepOnSiteReason
   };
 })(typeof window !== 'undefined' ? window : globalThis);
