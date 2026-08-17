@@ -759,3 +759,121 @@ test('「내려감」 딱지에 화면에 보일 이름이 있다', () => {
   assert.notEqual(t.done, t.same, '「같음」과 같은 말로 뭉갰습니다');
   assert.match(html, /\.pill\.done/, '딱지 모양(CSS)이 없어 글자만 떠 있습니다');
 });
+
+/* ══════ 머지 전 최종 수정 1 — 「이름 훑기」가 done(내려간 뒤)일 때도 돈다 ══════
+   설계가 잡은 상황은 «구성원 목록에서는 빠졌는데 인사말·업무 소개글에 이름이 남는 일»
+   — 즉 홈페이지에서 글을 «내린 뒤»다. 그게 toRemove 가 아니라 done 이다.
+   toRemove(아직 홈페이지에 남아 있음) 일 때 훑는 것도 그대로 지켜야 한다. */
+
+test('★ done(내려간) 사람도 이름 잔존을 훑는다 — toRemove 일 때도 여전히 훑는다', async () => {
+  const ctx = box();
+  ctx.App = {
+    members: {
+      '190': { name: '나간사람', srl: '190', position1: '', position2: '', careers: [] },
+      '191': { name: '아직안내림', srl: '191', position1: '', position2: '', careers: [] }
+    },
+    // leftAt 을 아주 옛날로 두어 오늘이 언제든 hasLeft 가 true 다 — 실제 시각에 기대지 않는다.
+    pages: {},
+    staff: [
+      { name: '나간사람', leftAt: '2020-01-01' },
+      { name: '아직안내림', leftAt: '2020-01-01' }
+    ],
+    check: null, saveErr: ''
+  };
+  ctx.db = { ref: () => ({ set: () => Promise.resolve() }) };
+  run(ctx, constSource('PAGE_IDS') + '\n' + fnSource('todayString') + '\n' + fnSource('applyStatus'));
+
+  // 190(나간사람)은 홈페이지 구성원 목록(live)에 없다 → done. 191(아직안내림)은 아직 있다 → toRemove.
+  const live = [{ srl: '191', name: '아직안내림', careers: [] }];
+  const livePages = { greeting: '나간사람 노무사가 인사말을 남겼습니다. 아직안내림 노무사도 함께 합니다.' };
+  await ctx.applyStatus(live, livePages, []);
+
+  const members = plain(ctx.App.check.members);
+  assert.equal(members['190'].status, 'done');
+  assert.equal(members['191'].status, 'toRemove');
+
+  const leftovers = plain(ctx.App.check.leftovers);
+  assert.ok(leftovers['나간사람'], 'done(내려간) 사람의 이름 잔존을 훑지 않았습니다');
+  assert.ok(leftovers['아직안내림'], 'toRemove 사람의 이름 잔존까지 훑지 못하게 되었습니다 — 회귀');
+});
+
+test('★ done 사람의 이름 잔존도 배너로 알린다 — toRemove 가 0명이어도 뜬다', () => {
+  const ctx = box();
+  ctx.App = {
+    check: {
+      members: { '190': { name: '나간사람', status: 'done', reason: '퇴사 처리 끝' } },
+      duplicates: [],
+      leftovers: { '나간사람': [{ path: 'greeting', count: 1 }] }
+    },
+    checkMsg: '', dataErr: '', staffErr: '', saveErr: '',
+    members: { '190': { name: '나간사람', srl: '190' } }
+  };
+  ctx.PAGE_LABEL = { greeting: '인사말' };
+  ctx.esc = escStub();
+  run(ctx, fnSource('bannersHtml'));
+  const h = ctx.bannersHtml();
+  assert.match(h, /나간사람/, 'toRemove 가 0명이라고 done 사람의 이름 잔존을 안 보여 줍니다');
+  assert.ok(!/홈페이지에서 내리는 법/.test(h), '이미 내려간 사람인데 «내리는 법» 안내가 뜹니다');
+});
+
+/* ══════ 머지 전 최종 수정 2 — 「※기간 모름」은 기간 개념이 있는 갈래에만 ══════
+   자격증·수료증·강의는 kcareer.html 의 CAREER_CFG 표에 기간 칸이 아예 없다
+   (license cols :4234, complete cols :4240, lecture cols :4259 — 취득일/수료일/일자만
+   있고 기간 칸이 없다). 위촉장(:4215)과 학력(:4246)만 기간 칸이 있다. 기간 개념이 없는
+   갈래는 pick() 이 period/end 를 안 주어 toLine 의 unknown 이 «언제나» true 가 되므로,
+   그 갈래에는 「기간 모름」 표시를 붙이면 안 된다 — 자료가 없어서가 아니라 개념이 없어서다. */
+
+test('★ 위촉장에는 「기간 모름」 꼬리표가 붙고 자격증·수료증·강의에는 안 붙는다 — 복사 결과(careersText)에도 안 실린다', () => {
+  const ctx = kindsBox();
+  ctx.App = { draft: { kind: 'member', careers: [] } };
+  ctx.Pull = {
+    open: true,
+    items: {
+      // 위촉장인데 period/periodEnd 를 안 적어 «진짜로» 기간을 모르는 경우
+      wiccok: [{ id: 'W1', type: '위촉장', org: '고용노동부', titleVal: '자문위원', issueDate: '2026.01.01' }],
+      license: [{ id: 'C1', title: '공인노무사', org: '한국산업인력공단', date: '2015.11.20' }],
+      complete: [{ id: 'C2', title: '노동법 심화과정 수료', org: '노동교육원', date: '2023.06.30' }],
+      edu: [],
+      lecture: [{ id: 'L1', topic: '중대재해처벌법 대응', org: '푸른상공회의소', date: '2026.03.10' }]
+    },
+    sel: { 'wiccok:0': true, 'license:0': true, 'complete:0': true, 'lecture:0': true }
+  };
+  ctx.closeModal = () => {};
+  ctx.toast = () => {};
+  run(ctx, fnSource('todayString') + '\n' + fnSource('kindHasPeriod') + '\n' + fnSource('pullApply'));
+  ctx.App.render = () => {};
+  ctx.pullApply();
+
+  const careers = ctx.App.draft.careers;
+  const wic = careers.find(t => /고용노동부/.test(t));
+  const lic = careers.find(t => /공인노무사/.test(t));
+  const com = careers.find(t => /노동법 심화과정/.test(t));
+  const lec = careers.find(t => /중대재해처벌법/.test(t));
+
+  assert.match(wic, /※기간 모름/, '위촉장은 기간 개념이 있는 갈래인데 표시가 없습니다');
+  assert.ok(lic && !/※기간 모름/.test(lic), '자격증에는 기간 개념이 없는데 「기간 모름」이 붙었습니다');
+  assert.ok(com && !/※기간 모름/.test(com), '수료증에는 기간 개념이 없는데 「기간 모름」이 붙었습니다');
+  assert.ok(lec && !/※기간 모름/.test(lec), '강의에는 기간 개념이 없는데 「기간 모름」이 붙었습니다');
+
+  // 복사 결과(공개 홈페이지로 붙여넣을 글자)에도 위촉장 한 줄에만 실려야 한다.
+  const copied = ctx.PuHomeExport.careersText(careers, 'plain');
+  const markedLines = copied.split('\n').filter(l => l.indexOf('※기간 모름') >= 0);
+  assert.equal(markedLines.length, 1, '「기간 모름」 표시가 위촉장 한 줄에만 있어야 하는데 다른 갈래에도 실렸습니다');
+  assert.match(markedLines[0], /고용노동부/);
+});
+
+/* ══════ 머지 전 최종 수정 3 — 「대조 기준 저장」만으로는 딱지가 안 바뀐다는 안내 ══════
+   markChanged 는 딱지가 same 일 때만 pending 으로 내린다. 「대조 기준 저장」을 눌러도
+   그것만으로는 딱지가 «다시» same 으로 바뀌지 않는다 — 「홈페이지 다시 확인」을 한 번
+   더 눌러야 새로 대조해 same 이 붙는다. 안내 3번에 이 말이 빠져 있었다. */
+
+test('★ 쪽 안내에 「대조 기준 저장」만으로는 안 바뀌고 「홈페이지 다시 확인」을 한 번 더 눌러야 한다는 말이 있다', () => {
+  const ctx = pageBox();
+  ctx.App = { draft: { kind: 'page', key: 'inquiry', text: '가나다' }, pages: {}, dirty: false };
+  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('pageEdit'));
+  const h = ctx.pageEdit(ctx.App.draft);
+  assert.match(h, /대조 기준 저장만으로는/, '저장만으로는 딱지가 안 바뀐다는 말이 없습니다');
+  assert.match(h, /한 번 더 눌러야/, '홈페이지 다시 확인을 «한 번 더» 눌러야 한다는 말이 없습니다');
+  assert.match(h, /홈페이지 다시 확인.*한 번 더|한 번 더.*홈페이지 다시 확인|「같음」으로 바뀝니다/,
+    '한 번 더 눌러야 「같음」으로 바뀐다는 결론이 없습니다');
+});

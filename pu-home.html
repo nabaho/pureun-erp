@@ -194,23 +194,30 @@ const GROUPS = [
      pick   — 경력관리 칸 이름 → 문장 부품이 받는 모양. 짐작하지 말고 실제 칸 이름을 쓴다.
    ★ 위촉 기간은 periodStart/periodEnd 로 저장된다(kcareer.html:4187 saveForm).
      옛 자료는 period 한 칸에 물결표로 들어 있어 둘 다 넘긴다. */
+/* ★ hasPeriod — 경력관리(kcareer.html)의 표에 «기간» 칸이 실제로 있는 갈래만 true 다.
+   위촉장은 위촉시작/위촉종료(kcareer.html:4215 cols), 학력은 재학기간(:4246 cols)이 있다.
+   자격증·수료증·강의는 표에 취득일/수료일/일자(하루)만 있고 기간 칸이 아예 없다
+   (:4234, :4240, :4259 cols) — 애초에 «기간이라는 개념이 없는 갈래»다. 이 갈래는
+   pick() 이 period/end 를 안 주므로 toLine 의 unknown 이 «언제나» true 가 되는데,
+   그건 자료가 없어서가 아니라 갈래 자체에 그런 칸이 없어서다. 그런데도 「※기간 모름」
+   꼬리표를 붙이면 늘 붙는 헛경고가 되어 careersText 에 그대로 실려 나간다. */
 const CAREER_KINDS = [
-  { key: 'wiccok', label: '위촉장', store: 'wiccok',
+  { key: 'wiccok', label: '위촉장', store: 'wiccok', hasPeriod: true,
     // 표창·포상은 위촉장이 아니다 — 경력관리도 같은 조건으로 가른다 (kcareer.html:4214)
     keep: r => r.type !== '표창' && r.type !== '포상',
     pick: r => ({ org: r.org, role: r.titleVal || r.type, period: r.period, end: r.periodEnd,
                   when: [r.periodStart || r.issueDate, r.periodEnd].filter(Boolean).join(' ~ ') }) },
   { key: 'license', label: '자격증', store: 'cert',
-    keep: r => !/수료|이수/.test(r.title || ''),          // kcareer.html:4233
+    keep: r => !/수료|이수/.test(r.title || ''),          // kcareer.html:4233 — 기간 칸 없음
     pick: r => ({ org: r.org, role: r.title, when: r.date }) },
-  { key: 'edu', label: '학력', store: 'edu',
+  { key: 'edu', label: '학력', store: 'edu', hasPeriod: true,
     // 학위는 deg 가 아니라 degree, 전공은 major 다 (kcareer.html:4245~4250)
     pick: r => ({ org: r.school, role: r.major, title: r.degree, period: r.period, when: r.period }) },
   { key: 'complete', label: '수료증', store: 'cert',
-    keep: r => /수료|이수/.test(r.title || ''),            // kcareer.html:4239
+    keep: r => /수료|이수/.test(r.title || ''),            // kcareer.html:4239 — 기간 칸 없음
     pick: r => ({ org: r.org, role: r.title, when: r.date }) },
   { key: 'lecture', label: '강의', store: 'lecture',
-    // 강의 제목은 topic 이다 (kcareer.html:4258~4263)
+    // 강의 제목은 topic 이다 (kcareer.html:4258~4263) — 기간 칸 없음, 일자(하루)만 있다
     pick: r => ({ org: r.org, role: r.topic, when: r.date || r.year }) }
 ];
 const KCAREER_NS = 'cm3_';   // 경력관리 앱이 쓰는 저장 이름표 (kcareer.html:1372 NS)
@@ -784,9 +791,13 @@ async function applyStatus(live, livePages, failed) {
   // 홈페이지에 같은 글 번호가 두 번 있으면 사람이 홈페이지를 손봐야 한다.
   next.duplicates = PuHomeDiff.duplicateLiveKeys(live) || [];
 
-  // 퇴사자 이름이 다른 쪽 본문에 남아 있는지 훑는다. 알리기만 하고 고치지 않는다.
+  /* 퇴사자 이름이 다른 쪽 본문에 남아 있는지 훑는다. 알리기만 하고 고치지 않는다.
+     ★ 설계가 잡은 상황은 «홈페이지에서 글을 내린 뒤»다 — 구성원 목록에서는 빠졌는데
+     인사말·업무 소개글에 이름이 남는 일. 그게 바로 toRemove 가 아니라 done(퇴사 완료)이다.
+     toRemove(아직 홈페이지에 있음)일 때도 다른 쪽에 이름이 남아 있으면 알아야 하므로
+     둘 다 훑는다 — 어느 한쪽만 보면 정작 봐야 할 순간(글을 내린 뒤)을 놓친다. */
   const pageArr = Object.keys(livePages).map(p => ({ path: p, text: livePages[p] }));
-  list.filter(r => r.status === 'toRemove').forEach(r => {
+  list.filter(r => r.status === 'toRemove' || r.status === 'done').forEach(r => {
     const hits = PuHomeDiff.nameLeftovers(r.name, pageArr) || [];
     if (hits.length) next.leftovers[r.name] = hits;
   });
@@ -990,6 +1001,14 @@ function careerKindOf(key) {
   return hit.length ? hit[0] : null;
 }
 
+/* 이 갈래가 경력관리 표에 «기간» 칸을 실제로 가지고 있는지. 없는 갈래(자격증·수료증·강의)는
+   기간을 몰라서가 아니라 애초에 기간이라는 개념이 없어 늘 unknown 이 뜬다 — 그 갈래에는
+   「기간 모름」 꼬리표를 붙이지 않는다. */
+function kindHasPeriod(key) {
+  const k = careerKindOf(key);
+  return !!(k && k.hasPeriod);
+}
+
 /* 읽어야 할 «저장통» 목록. 자격증과 수료증은 같은 통(cert)이라 한 번만 읽는다. */
 function kcareerStores() {
   const seen = {};
@@ -1190,12 +1209,15 @@ function renderPull() {
   if (!items.length) {
     h += '<div class="empty">이 갈래에 항목이 없습니다.</div>';
   } else {
+    // ★ 자격증·수료증·강의는 기간 개념이 없는 갈래라 늘 unknown 이 뜬다 — 그 헛경고를
+    //   보여 주지 않는다. kindHasPeriod 가 false 면 「現 으로 들어감」으로만 보여 준다.
+    const hasPeriod = kindHasPeriod(Pull.kind);
     h += '<div class="car">' + items.map((it, i) => {
       const line = PuHomeCareer.toLine(toCareerItem(it, Pull.kind), today);
       const id = Pull.kind + ':' + i;
-      const tag = line.ended
+      const tag = (hasPeriod && line.ended)
         ? '<span class="pill toRemove">기간 끝남 → 前</span>'
-        : (line.unknown ? '<span class="pill unknown">기간 모름 · 現 으로 넣음</span>'
+        : ((hasPeriod && line.unknown) ? '<span class="pill unknown">기간 모름 · 現 으로 넣음</span>'
                         : '<span class="pill toAdd">現 으로 들어감</span>');
       return '<label class="pk"><input type="checkbox" ' + (Pull.sel[id] ? 'checked' : '')
         + ' onchange="pullToggle(\'' + Pull.kind + '\',' + i + ')">'
@@ -1228,7 +1250,9 @@ function pullApply() {
     if (!it) return;
     const line = PuHomeCareer.toLine(toCareerItem(it, kind), today);
     let text = line.text;
-    if (line.unknown) text += '  ※기간 모름';   // 사람이 판단하도록 표시를 남긴다
+    // ★ 기간 개념이 있는 갈래(위촉장·학력)에서만 「기간 모름」을 붙인다 — 자격증·수료증·
+    //   강의는 애초에 기간이 없는 갈래라 이 표시가 늘 붙어 그대로 홈페이지 글로 나간다.
+    if (line.unknown && kindHasPeriod(kind)) text += '  ※기간 모름';
     if (d.careers.indexOf(text) < 0) { d.careers.push(text); added.push(text); }
   });
   App.dirty = true;
@@ -1320,8 +1344,8 @@ function bannersHtml() {
 
   const st = (App.check && App.check.members) || {};
   const outs = Object.keys(st).filter(k => st[k].status === 'toRemove');
+  const left = (App.check && App.check.leftovers) || {};
   if (outs.length) {
-    const left = (App.check && App.check.leftovers) || {};
     h += '<div class="bar bad"><b>퇴사한 노무사가 홈페이지에 남아 있습니다 — ' + outs.length + '명</b><br>'
       + outs.map(k => esc(st[k].name) + ' (' + esc(st[k].reason || '') + ')').join(' · ')
       + '<div class="guide" style="background:#fff"><b>홈페이지에서 내리는 법</b><ol>'
@@ -1329,15 +1353,18 @@ function bannersHtml() {
       + '<li><b>구성원 갤러리</b>에서 해당 글을 찾습니다</li>'
       + '<li><b>삭제하지 말고 「비공개」로 바꾸십시오.</b> 잘못 내렸어도 되살릴 수 있습니다</li>'
       + '<li>통합시스템으로 돌아와 <b>홈페이지 다시 확인</b></li>'
-      + '</ol></div>';
-    const names = Object.keys(left);
-    if (names.length) {
-      h += '<div style="margin-top:8px"><b>이름이 다른 쪽에도 남아 있습니다</b><br>'
-        + names.map(n => esc(n) + ' — '
-            + left[n].map(x => (PAGE_LABEL[x.path] || x.path) + ' ' + x.count + '회').join(', ')).join('<br>')
-        + '<div class="sub" style="color:inherit">동명이인일 수 있으니 알려만 드립니다. 자동으로 고치지 않습니다.</div></div>';
-    }
-    h += '</div>';
+      + '</ol></div></div>';
+  }
+
+  /* ★ 이름 잔존은 «퇴사했는데 아직 홈페이지에 있는»(toRemove) 사람만이 아니라
+     «홈페이지에서 이미 내린»(done) 사람에게도 뜬다 — 오히려 글을 내린 바로 다음이
+     정작 봐야 할 순간이다. outs(toRemove)가 0명이어도 이 띠는 따로 보여야 한다. */
+  const leftNames = Object.keys(left);
+  if (leftNames.length) {
+    h += '<div class="bar warn"><b>퇴사자 이름이 다른 쪽에도 남아 있습니다</b><br>'
+      + leftNames.map(n => esc(n) + ' — '
+          + left[n].map(x => (PAGE_LABEL[x.path] || x.path) + ' ' + x.count + '회').join(', ')).join('<br>')
+      + '<div class="sub" style="color:inherit">동명이인일 수 있으니 알려만 드립니다. 자동으로 고치지 않습니다.</div></div>';
   }
   return h;
 }
@@ -1483,7 +1510,9 @@ function pageEdit(d) {
   h += '<div class="guide"><b>이 쪽을 고치는 순서</b><ol>'
     + '<li>위 <b>홈페이지에서 이 쪽 열기</b> → 관리자 화면에서 직접 고치고 저장</li>'
     + '<li>통합시스템으로 돌아와 <b>홈페이지 다시 확인</b> → 딱지가 「안 올라감」으로 바뀝니다</li>'
-    + '<li>바꾼 내용을 그대로 두려면, 위 <b>대조 기준 글자</b>를 홈페이지와 맞춘 뒤 <b>대조 기준 저장</b></li>'
+    + '<li>바꾼 내용을 그대로 두려면, 위 <b>대조 기준 글자</b>를 홈페이지와 맞춘 뒤 <b>대조 기준 저장</b> — '
+    + '<b>대조 기준 저장만으로는 딱지가 바뀌지 않습니다.</b> 그 뒤 <b>홈페이지 다시 확인</b>을 '
+    + '한 번 더 눌러야 딱지가 「같음」으로 바뀝니다</li>'
     + '</ol></div>';
   return h + '</div>';
 }
