@@ -132,6 +132,34 @@ ok('시도가 두 번 든 주소를 견딘다', src.includes("var dup=/^(\\S+)\\
 // 둘 다 «아는 시도 이름»일 때만 지운다 — 안 그러면 「서울 서초구 …」의 첫 낱말을 지울 수 있다
 ok('아는 시도일 때만 중복을 지운다',
   src.includes('known.indexOf(dup[1])>=0 && known.indexOf(dup[2])>=0'));
+/* ── 기금 현황: 묶음을 사이드바 하위 트리로 ── (대표 지시)
+   유형(지역·공동·사내)과 상태(설립중·종료·삭제)를 본문 탭줄에 함께 늘어놓아
+   축이 다른 둘이 한 층으로 보였다. 사이드바로 옮기고 본문 세 줄을 두 줄로 줄였다. */
+ok('묶음 정의가 한 곳에 있다', src.includes('var HOME_GROUPS=[')
+  && ['지역공동', '개별공동', '사내', 'setup', 'past', 'trash'].every(k => new RegExp("\\['" + k + "',").test(src)));
+ok('「지난 기금」이 아니라 「종료기금」', src.includes("['past','🗂 종료기금']") && !src.includes("🗂 지난 기금"));
+/* 사이드바와 본문이 «같은 함수»에서 나와야 한다 — 따로 세면 16 vs 15 처럼 어긋나고
+   어느 쪽이 맞는지 알 수 없다 */
+ok('묶음 나누기는 homeBuckets 한 곳', src.includes('function homeBuckets(')
+  && src.includes('function renderNav(') && /renderNav\(\);/.test(src));
+ok('본문 묶음 탭줄은 없앴다', src.includes("var tabbar='';   // 묶음 고르기는 사이드바로 옮겼다"));
+ok('머리줄은 고른 묶음만 말한다', src.includes('var curInc=_curList.filter(')
+  && !src.includes("'<h1>기금 현황</h1><span class=\"stat\">운영 '"));
+// 빈 묶음을 사이드바에 남기면 누를 것도 없는 줄이 자리만 차지한다
+ok('빈 설립중·종료·삭제는 사이드바에서 숨긴다',
+  src.includes("if(!n && (g[0]==='setup'||g[0]==='trash'||g[0]==='past')) return '';"));
+ok('[기금 현황]을 누르면 첫 하위로 (대표 선택 ②-나)',
+  src.includes("function goHome(){ S.homeTab='지역공동'; go('home'); }"));
+/* ⚠ 끌리는 단위가 «감싸는 상자»로 바뀌었다 — 선택자를 안 고치면 기금 현황만 목록에서 빠져
+   순서 저장이 조용히 어긋난다(브라우저에서 실제로 끌어 확인했다). */
+ok('순서 저장이 감싸는 상자를 센다', src.includes("var NAV_SEL=':scope > [data-nav]';")
+  && src.includes('l.querySelectorAll(NAV_SEL)'));
+ok('옛 저장분(nav-home)을 새 이름으로 옮겨 준다',
+  src.includes("if(id==='nav-home') id='nav-home-wrap';"));
+ok('하위 묶음은 끌리지 않는다 (대표 지시 ④)',
+  src.includes("if(e.target.closest&&e.target.closest('#navsub')) return;")
+  && src.includes("e.target.closest('#navlist > [data-nav]')"));
+
 /* 관할 세 가지는 «같은 소재지»에서 나온다 — 함수도 단추도 하나로 합쳤다.
    다시 셋으로 갈라지면 같은 42개 주소를 세 번 훑고 세 번 확인하게 된다. */
 ok('관할 일괄은 하나로 합쳐져 있다', src.includes('var BULK_OFFICES=[')
