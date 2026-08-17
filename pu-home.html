@@ -24,10 +24,10 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
 <script src="js/pu-version.js"></script>
 <script src="js/pu-appbar.js?v=3"></script>
-<script src="js/pu-home-parse.js?v=1"></script>
+<script src="js/pu-home-parse.js?v=2"></script>
 <script src="js/pu-home-career.js?v=1"></script>
 <script src="js/pu-home-export.js?v=2"></script>
-<script src="js/pu-home-diff.js?v=2"></script>
+<script src="js/pu-home-diff.js?v=3"></script>
 <style>
 :root{--navy:#2E3A8C;--violet:#7C6CE0;--ok:#2E7D4F;--warn:#B26A00;--bad:#C43D3D;
 --ink:#23263B;--sub:#6B6F87;--line:#E3E5EF;--paper:#F5F6FA;--card:#FFF;}
@@ -86,6 +86,7 @@ main{padding:14px 16px 60px;max-width:1180px;margin:0 auto}
 .pill.toAdd{background:#EFF6FF;color:#1D4ED8;border:1px solid #BFDBFE}
 .pill.toRemove{background:#FFF7E6;color:#92400E;border:1px solid #FDE68A}
 .pill.liveOnly{background:#FFF7E6;color:#92400E;border:1px solid #FDE68A}
+.pill.done{background:#EAF6EE;color:#1E5631;border:1px solid #B7E4C7}
 .pill.unknown{background:#F2F4F7;color:#98A2B3}
 .pill.none{background:#F8F9FC;color:#98A2B3;border:1px dashed var(--line)}
 .pill.tail{margin-left:auto}
@@ -184,20 +185,45 @@ const GROUPS = [
   { key: 'greeting', label: '인사말' }
 ];
 
-/* 경력관리(kcareer)에서 당겨올 갈래. kcareer 의 저장 이름을 그대로 쓴다. */
+/* 경력관리(kcareer)에서 당겨올 갈래.
+   ★ 갈래 이름과 «저장통 이름»은 다르다. cm3_license·cm3_complete 라는 저장통은 «없다» —
+     자격증과 수료증은 둘 다 cm3_cert 한 통에 들어가고 제목의 「수료/이수」로 갈린다
+     (kcareer.html:4233 license / :4239 complete). 갈래 이름으로 읽으면 늘 0건이었다.
+   ★ store  — 경력관리가 실제로 쓰는 저장통 (kcareer.html:4213~4263 CAREER_CFG 의 store)
+     keep   — 그 저장통에서 이 갈래에 해당하는 것만 고르는 체 (경력관리의 filter 와 같은 조건)
+     pick   — 경력관리 칸 이름 → 문장 부품이 받는 모양. 짐작하지 말고 실제 칸 이름을 쓴다.
+   ★ 위촉 기간은 periodStart/periodEnd 로 저장된다(kcareer.html:4187 saveForm).
+     옛 자료는 period 한 칸에 물결표로 들어 있어 둘 다 넘긴다. */
 const CAREER_KINDS = [
-  { key: 'wiccok',   label: '위촉장' },
-  { key: 'license',  label: '자격증' },
-  { key: 'edu',      label: '학력' },
-  { key: 'complete', label: '수료증' },
-  { key: 'lecture',  label: '강의' }
+  { key: 'wiccok', label: '위촉장', store: 'wiccok',
+    // 표창·포상은 위촉장이 아니다 — 경력관리도 같은 조건으로 가른다 (kcareer.html:4214)
+    keep: r => r.type !== '표창' && r.type !== '포상',
+    pick: r => ({ org: r.org, role: r.titleVal || r.type, period: r.period, end: r.periodEnd,
+                  when: [r.periodStart || r.issueDate, r.periodEnd].filter(Boolean).join(' ~ ') }) },
+  { key: 'license', label: '자격증', store: 'cert',
+    keep: r => !/수료|이수/.test(r.title || ''),          // kcareer.html:4233
+    pick: r => ({ org: r.org, role: r.title, when: r.date }) },
+  { key: 'edu', label: '학력', store: 'edu',
+    // 학위는 deg 가 아니라 degree, 전공은 major 다 (kcareer.html:4245~4250)
+    pick: r => ({ org: r.school, role: r.major, title: r.degree, period: r.period, when: r.period }) },
+  { key: 'complete', label: '수료증', store: 'cert',
+    keep: r => /수료|이수/.test(r.title || ''),            // kcareer.html:4239
+    pick: r => ({ org: r.org, role: r.title, when: r.date }) },
+  { key: 'lecture', label: '강의', store: 'lecture',
+    // 강의 제목은 topic 이다 (kcareer.html:4258~4263)
+    pick: r => ({ org: r.org, role: r.topic, when: r.date || r.year }) }
 ];
-const KCAREER_NS = 'cm3_';   // 경력관리 앱이 쓰는 저장 이름표
+const KCAREER_NS = 'cm3_';   // 경력관리 앱이 쓰는 저장 이름표 (kcareer.html:1372 NS)
 
 const STATUS_TEXT = {
   same: '같음', pending: '안 올라감', toAdd: '새로 올릴 것',
-  toRemove: '내릴 것 (퇴사)', liveOnly: '홈페이지에만', unknown: '모름'
+  toRemove: '내릴 것 (퇴사)', liveOnly: '홈페이지에만', unknown: '모름',
+  /* 퇴사 처리를 끝낸 사람 — 홈페이지에서도 내려갔다. 「같음」으로 뭉개면 왜 조용한지
+     알 수 없고, 「새로 올릴 것」으로 두면 방금 내린 글을 다시 올리라고 시킨다. */
+  done: '내려감 (퇴사 완료)'
 };
+/* 손댈 것이 없는 딱지 — 왼쪽 빨간 점을 켤지 정할 때 쓴다 */
+const DONE_STATUS = { same: true, done: true };
 
 const $ = id => document.getElementById(id);
 
@@ -468,9 +494,11 @@ function firstPickOf(group) {
   return r.length ? r[0].key : '';
 }
 
-/* 갈래마다 손댈 것이 있는지 — 왼쪽 빨간 점 */
+/* 갈래마다 손댈 것이 있는지 — 왼쪽 빨간 점.
+   ★ 「내려감(퇴사 완료)」도 할 일이 없는 상태다. 여기서 빼지 않으면 퇴사 처리를 끝낸
+     사람 때문에 빨간 점이 영영 남는다. */
 function needsWork(group) {
-  return rowsOf(group).some(r => r.status && r.status !== 'same');
+  return rowsOf(group).some(r => r.status && !DONE_STATUS[r.status]);
 }
 
 /* ══════ 편집 초안 ══════
@@ -801,20 +829,51 @@ function fallbackCopy(text, done) {
   document.body.removeChild(ta);
 }
 
+/* 우리 자료에서 «다른» 사람이 같은 글 번호를 쓰고 있으면 그 이름들을 돌려준다.
+   ★ 초안(고치는 중인 글 번호)으로 견준다 — 저장 전에도 막아야 남의 글을 안 덮는다. */
+function srlConflict(key, srl) {
+  const want = String(srl == null ? '' : srl).trim();
+  if (!want) return [];
+  return Object.keys(App.members || {})
+    .filter(k => k !== key && String((App.members[k] || {}).srl || '').trim() === want)
+    .map(k => (App.members[k] || {}).name || '(이름 없음)');
+}
+
 function openPaste() {
   const d = App.draft;
   if (!d) return;
-  const isMember = d.kind === 'member';
-  const text = isMember
-    ? PuHomeExport.careersText(d.careers, App.lineFormat)
-    : String(d.text || '');
-  const url = isMember ? PuHomeExport.editUrl('member', d.srl) : PuHomeExport.editUrl('page', d.key);
-  const rep = isMember ? riskReport(d.careers, App.lineFormat) : { risky: [], broken: [], soft: [] };
+
+  /* ★ 쪽(주요업무·오시는길·인사말)은 «대조 전용»이다. 우리가 가진 쪽 글자는 태그를 걷고
+     줄을 뭉친 대조용이라, 그것을 붙여넣으면 지도 위젯·지사 탭·표·구획이 통째로 사라진다.
+     게다가 부서진 쪽을 다시 읽으면 같은 글자가 나와 「같음」이 떠서 조용히 틀린다.
+     안전하게 만들 방법이 없어 «붙여넣기 기능 자체»를 두지 않는다. */
+  if (d.kind !== 'member') {
+    openModal('<h2>' + esc(PAGE_LABEL[d.key] || d.key) + ' — 붙여넣기를 드리지 않습니다</h2>'
+      + '<div class="bar bad">' + pagePasteWhy() + '</div>' + modalFoot(''));
+    return;
+  }
+
+  /* ★ 우리 자료에서 두 사람이 같은 글 번호를 쓰면 편집 주소가 «남의 글»을 가리킨다.
+     시킨 대로 붙여넣으면 남의 경력이 통째로 덮인다 — 복사도 안내도 하지 않는다. */
+  const clash = srlConflict(d.key, d.srl);
+  if (clash.length) {
+    openModal('<h2>' + esc(d.name) + ' — 붙여넣기를 막았습니다</h2>'
+      + '<div class="bar bad"><b>홈페이지 글 번호 ' + esc(String(d.srl).trim()) + ' 을(를) '
+      + esc(clash.join(', ')) + ' 님도 쓰고 있습니다.</b><br>'
+      + '이대로 편집 화면을 열면 <b>' + esc(clash.join(', ')) + '</b> 님의 글이 열리고, '
+      + '붙여넣으면 그분 경력이 <b>' + esc(d.name) + '</b> 님 것으로 덮입니다.<br>'
+      + '두 사람 중 <b>어느 쪽 글 번호가 잘못 적혔는지</b> 먼저 고쳐 주십시오.</div>'
+      + modalFoot(''));
+    return;
+  }
+
+  const text = PuHomeExport.careersText(d.careers, App.lineFormat);
+  const url = PuHomeExport.editUrl('member', d.srl);
+  const rep = riskReport(d.careers, App.lineFormat);
 
   copyText(text);
 
-  const title = isMember ? (d.name + ' — 붙여넣을 경력사항') : ((PAGE_LABEL[d.key] || d.key) + ' — 붙여넣을 본문');
-  let h = '<h2>' + esc(title) + '</h2>';
+  let h = '<h2>' + esc(d.name + ' — 붙여넣을 경력사항') + '</h2>';
   h += '<div class="bar ok">내용이 복사되었습니다. 아래 순서대로 홈페이지에 붙여넣으세요.</div>';
 
   if (rep.broken.length) {
@@ -835,11 +894,9 @@ function openPaste() {
   h += '<div class="fld"><label>복사된 내용</label><div class="pre">' + esc(text || '(빈 내용)') + '</div></div>';
   h += '<div class="guide"><b>붙여넣는 자리</b><ol>'
     + '<li>홈페이지 관리자로 로그인 <span class="kbd">푸른노무법인.kr/admin</span></li>'
-    + (isMember
-      ? '<li><b>구성원 갤러리</b>에서 <b>' + esc(d.name) + '</b> 글을 찾아 <b>편집</b></li>'
-        + '<li><b>경력사항</b> 칸을 <span class="kbd">Ctrl+A</span>로 전체 선택하고 <span class="kbd">Ctrl+V</span>로 덮어쓰기</li>'
-      : '<li>해당 <b>페이지</b>를 찾아 <b>편집</b></li>'
-        + '<li>본문을 <span class="kbd">Ctrl+A</span>로 전체 선택하고 <span class="kbd">Ctrl+V</span>로 덮어쓰기</li>')
+    + '<li><b>구성원 갤러리</b>에서 <b>' + esc(d.name) + '</b> 글을 찾아 <b>편집</b></li>'
+    + '<li><b>경력사항</b> 칸을 <span class="kbd">Ctrl+A</span>로 전체 선택하고 <span class="kbd">Ctrl+V</span>로 덮어쓰기'
+    + ' <span class="sub">(경력사항 «칸 하나»입니다. 글 전체가 아닙니다)</span></li>'
     + '<li><b>저장</b> → 통합시스템으로 돌아와 <b>홈페이지 다시 확인</b></li>'
     + '</ol><div class="sub" style="margin-top:5px">4번까지 하면 딱지가 「안 올라감」에서 「같음」으로 바뀝니다. '
     + '안 바뀌면 붙여넣기가 안 된 것입니다.</div></div>';
@@ -928,26 +985,51 @@ window.restoreFrom = restoreFrom;
    규칙이 막을 수 있다 — 막히면 그 사람만 건너뛰고 화면에 알린다. */
 const Pull = { open: false, kind: 'wiccok', items: {}, sel: {}, err: '', name: '' };
 
-function kcareerFromLocal() {
-  /* 같은 주소(origin)에서 도는 앱이라 «내» 경력관리 자료는 이 브라우저에 그대로 있다.
-     서버 규칙이 남의 자료를 막아도 내 것은 이 길로 읽힌다. */
+function careerKindOf(key) {
+  const hit = CAREER_KINDS.filter(k => k.key === key);
+  return hit.length ? hit[0] : null;
+}
+
+/* 읽어야 할 «저장통» 목록. 자격증과 수료증은 같은 통(cert)이라 한 번만 읽는다. */
+function kcareerStores() {
+  const seen = {};
+  CAREER_KINDS.forEach(k => { seen[k.store] = true; });
+  return Object.keys(seen);
+}
+
+/* 저장통 → 갈래. 한 통(cert)에서 자격증과 수료증이 제목으로 갈린다. */
+function splitByKind(stores) {
   const out = {};
   CAREER_KINDS.forEach(k => {
-    try { out[k.key] = JSON.parse(localStorage.getItem(KCAREER_NS + k.key) || '[]') || []; }
-    catch (e) { out[k.key] = []; }
+    const rows = Array.isArray((stores || {})[k.store]) ? stores[k.store] : [];
+    out[k.key] = k.keep ? rows.filter(k.keep) : rows.slice();
   });
   return out;
 }
 
+function kcareerFromLocal() {
+  /* 같은 주소(origin)에서 도는 앱이라 «내» 경력관리 자료는 이 브라우저에 그대로 있다.
+     서버 규칙이 남의 자료를 막아도 내 것은 이 길로 읽힌다.
+     ★ 읽는 이름은 «갈래»가 아니라 «저장통»이다 — cm3_license 는 존재하지 않는다. */
+  const stores = {};
+  kcareerStores().forEach(name => {
+    try { stores[name] = JSON.parse(localStorage.getItem(KCAREER_NS + name) || '[]') || []; }
+    catch (e) { stores[name] = []; }
+  });
+  return splitByKind(stores);
+}
+
 function kcareerFromDb(uid) {
+  /* 클라우드 사본(kcareer/{uid}/ls)도 «cm3_ 를 뗀 저장통 이름»으로 들어 있다
+     (kcareer.html fbGatherLS 가 이름표만 떼서 올린다). 갈래 이름으로 찾으면 늘 빈손이다. */
   return db.ref('kcareer/' + uid + '/ls').once('value').then(s => {
     const ls = s.val() || {};
-    const out = {};
-    CAREER_KINDS.forEach(k => {
-      try { out[k.key] = JSON.parse(ls[k.key] || '[]') || []; }
-      catch (e) { out[k.key] = []; }
+    const stores = {};
+    kcareerStores().forEach(name => {
+      try { stores[name] = JSON.parse(ls[name] || '[]') || []; }
+      catch (e) { stores[name] = []; }
     });
-    return out;
+    return splitByKind(stores);
   });
 }
 
@@ -1058,19 +1140,20 @@ function openPull() {
 window.openPull = openPull;
 
 /* 경력관리 항목 → 문장 만들기 부품이 받는 모양.
-   갈래마다 칸 이름이 조금씩 달라 넉넉히 받아 준다. 만든 문장은 손으로 고칠 수 있다. */
-function toCareerItem(it) {
+   ★ 칸 이름은 갈래마다 «다르다». 아무거나 넉넉히 받아 주면 조용히 빈칸이 되므로
+     갈래별 pick(CAREER_KINDS)으로만 옮긴다. 만든 문장은 손으로 고칠 수 있다. */
+function toCareerItem(it, kind) {
   const o = it || {};
-  return {
-    org: o.org || o.school || o.issuer || o.agency || '',
-    role: o.titleVal || o.title || o.role || o.deg || o.course || o.name || '',
-    period: o.period || '',
-    end: o.end || o.expire || o.until || ''
-  };
+  const k = careerKindOf(kind);
+  const p = (k && k.pick) ? (k.pick(o) || {}) : {};
+  const s = v => String(v == null ? '' : v).trim();
+  return { org: s(p.org), role: s(p.role), title: s(p.title), period: s(p.period), end: s(p.end) };
 }
-function itemWhen(it) {
-  const o = it || {};
-  return o.period || o.issueDate || o.date || o.year || '';
+/* 화면에 「언제 것인지」를 보여 준다. 갈래마다 날짜 칸 이름이 다르다. */
+function itemWhen(it, kind) {
+  const k = careerKindOf(kind);
+  const p = (k && k.pick) ? (k.pick(it || {}) || {}) : {};
+  return String(p.when == null ? '' : p.when).trim();
 }
 
 function pullTab(kind) { Pull.kind = kind; renderPull(); }
@@ -1096,7 +1179,7 @@ function renderPull() {
 
   // 홈페이지에 現 으로 올라가 있는데 기간이 끝난 것 — 밖에서 보기에 나쁘다
   const all = [];
-  CAREER_KINDS.forEach(k => (Pull.items[k.key] || []).forEach(it => all.push(toCareerItem(it))));
+  CAREER_KINDS.forEach(k => (Pull.items[k.key] || []).forEach(it => all.push(toCareerItem(it, k.key))));
   const expired = (App.draft && App.draft.careers)
     ? (PuHomeCareer.expiredInLive(App.draft.careers, all, today) || []) : [];
   if (expired.length) {
@@ -1108,7 +1191,7 @@ function renderPull() {
     h += '<div class="empty">이 갈래에 항목이 없습니다.</div>';
   } else {
     h += '<div class="car">' + items.map((it, i) => {
-      const line = PuHomeCareer.toLine(toCareerItem(it), today);
+      const line = PuHomeCareer.toLine(toCareerItem(it, Pull.kind), today);
       const id = Pull.kind + ':' + i;
       const tag = line.ended
         ? '<span class="pill toRemove">기간 끝남 → 前</span>'
@@ -1117,7 +1200,7 @@ function renderPull() {
       return '<label class="pk"><input type="checkbox" ' + (Pull.sel[id] ? 'checked' : '')
         + ' onchange="pullToggle(\'' + Pull.kind + '\',' + i + ')">'
         + '<div class="t"><b>' + esc(line.text) + '</b>'
-        + '<div class="d">' + esc(itemWhen(it) || '기간 정보 없음') + '</div></div>' + tag + '</label>';
+        + '<div class="d">' + esc(itemWhen(it, Pull.kind) || '기간 정보 없음') + '</div></div>' + tag + '</label>';
     }).join('') + '</div>';
   }
 
@@ -1143,7 +1226,7 @@ function pullApply() {
     const kind = id.slice(0, at), i = Number(id.slice(at + 1));
     const it = (Pull.items[kind] || [])[i];
     if (!it) return;
-    const line = PuHomeCareer.toLine(toCareerItem(it), today);
+    const line = PuHomeCareer.toLine(toCareerItem(it, kind), today);
     let text = line.text;
     if (line.unknown) text += '  ※기간 모름';   // 사람이 판단하도록 표시를 남긴다
     if (d.careers.indexOf(text) < 0) { d.careers.push(text); added.push(text); }
@@ -1202,8 +1285,21 @@ function appbarHtml() {
 function bannersHtml() {
   let h = '';
 
-  h += '<div class="bar info">이 화면은 <b>홈페이지에 붙여넣을 내용</b>을 만들어 줍니다. '
-    + '홈페이지를 자동으로 바꾸지는 않습니다 — 마지막 붙여넣기 한 번은 사람이 합니다.</div>';
+  h += '<div class="bar info">이 화면은 <b>구성원 경력사항</b>에 한해 <b>붙여넣을 내용</b>을 만들어 줍니다. '
+    + '홈페이지를 자동으로 바꾸지는 않습니다 — 마지막 붙여넣기 한 번은 사람이 합니다.<br>'
+    + '<b>주요업무·오시는길·인사말은 대조만</b> 합니다 (붙여넣으면 지도·표·구획이 사라져 드리지 않습니다).</div>';
+
+  /* ★ «우리 자료» 쪽 글 번호 겹침. 홈페이지 쪽 겹침(duplicates)과 다른 사고다 —
+     이건 편집 주소가 남의 글을 가리키게 만들어 남의 경력을 덮어쓰게 한다.
+     대조를 한 번도 안 눌러도 보여야 하므로 App.check 가 아니라 지금 자료로 바로 센다. */
+  const ourDup = PuHomeDiff.duplicateOurKeys(
+    Object.keys(App.members || {}).map(k => Object.assign({}, App.members[k], { key: k })));
+  if (ourDup.length) {
+    h += '<div class="bar bad"><b>통합시스템 자료에서 같은 홈페이지 글 번호를 두 사람이 쓰고 있습니다</b><br>'
+      + ourDup.map(x => '글 번호 <b>' + esc(x.srl) + '</b> — ' + esc(x.names.join(', '))).join('<br>')
+      + '<div class="sub" style="color:inherit">이대로 두면 붙여넣기가 «남의 글»을 덮습니다. '
+      + '겹친 줄은 붙여넣기를 막아 두었습니다 — 어느 쪽 글 번호가 잘못 적혔는지 고쳐 주십시오.</div></div>';
+  }
 
   if (App.checkMsg) {
     h += '<div class="bar ' + (App.checkBad ? 'bad' : 'warn') + '"><b>확인 실패</b> — ' + esc(App.checkMsg)
@@ -1330,8 +1426,17 @@ function memberEdit(d) {
       + '이 줄은 홈페이지에서 안 보일 수 있습니다. 일부러 쓴 표기일 수 있어 지우지 않습니다.</div>';
   }
 
+  /* ★ 글 번호가 남과 겹치면 편집 주소가 남의 글이다 — 붙여넣기 단추부터 잠근다 */
+  const clash = srlConflict(d.key, d.srl);
+  if (clash.length) {
+    h += '<div class="bar bad"><b>홈페이지 글 번호가 ' + esc(clash.join(', ')) + ' 님과 겹칩니다</b> — '
+      + '이대로 붙여넣으면 그분 경력이 이 사람 것으로 덮입니다. '
+      + '어느 쪽 글 번호가 잘못 적혔는지 고칠 때까지 붙여넣기를 막아 둡니다.</div>';
+  }
+
   h += '<div class="foot">'
-    + '<button class="btn pri" onclick="openPaste()">붙여넣을 내용 복사</button>'
+    + '<button class="btn pri" onclick="openPaste()"' + (clash.length ? ' disabled' : '')
+    + '>붙여넣을 내용 복사</button>'
     + '<button class="btn" onclick="saveDraft()">저장</button>'
     + '<button class="btn" onclick="openPull()">경력관리에서 당겨오기</button>'
     + '<button class="btn" onclick="openHistory()">되돌리기</button>'
@@ -1342,27 +1447,50 @@ function memberEdit(d) {
   return h + '</div>';
 }
 
+/* 쪽에서 «왜» 붙여넣을 내용을 안 주는지. 덧창과 편집 화면이 같은 말을 쓴다 —
+   두 곳에 따로 쓰면 한쪽만 고쳐져 서로 다른 말을 하게 된다. */
+function pagePasteWhy() {
+  return '<b>이 쪽의 글은 «대조용»으로만 씁니다.</b><br>'
+    + '여기 보이는 글자는 홈페이지에서 태그를 걷고 줄을 뭉쳐 만든 것입니다. '
+    + '이 글자를 홈페이지에 붙여넣으면 <b>지도·표·구획·지사 탭</b>이 통째로 사라집니다. '
+    + '(오시는길은 한 줄 275자, 노동사건대리는 한 줄 2412자가 됩니다.)<br>'
+    + '게다가 그렇게 부서진 쪽을 다시 읽으면 같은 글자가 나와 딱지가 <b>「같음」</b>으로 떠서, '
+    + '부서진 줄도 모르게 됩니다.<br>'
+    + '쪽 내용은 <b>홈페이지 관리자 화면에서 직접</b> 고치십시오. '
+    + '통합시스템은 <b>올라갔는지 안 올라갔는지 대조만</b> 해 드립니다.';
+}
+
 function pageEdit(d) {
   const rec = App.pages[d.key] || {};
+  const url = PuHomeExport.editUrl('page', d.key);
   let h = '<div class="edit">';
-  h += '<div class="fld"><label>' + esc(PAGE_LABEL[d.key] || d.key) + ' — 본문 (/' + esc(d.key) + ')</label>'
+  h += '<div class="bar bad">' + pagePasteWhy() + '</div>';
+  /* ★ 편집칸은 «읽기 전용으로 만들지 않았다». 이 글자는 대조 기준값이라, 홈페이지를 직접
+     고친 뒤 기준값도 맞춰 주지 않으면 딱지가 영영 「안 올라감」에 묶인다. 고칠 길을 없애면
+     그 묶인 상태를 풀 방법이 사라진다. 대신 «홈페이지로 가지 않는다»고 칸 이름에 못 박는다. */
+  h += '<div class="fld"><label>' + esc(PAGE_LABEL[d.key] || d.key) + ' — 대조 기준 글자 (/' + esc(d.key) + ') '
+    + '· 이 글자는 홈페이지로 «가지 않습니다». 대조 결과를 맞출 때만 고치십시오</label>'
     + '<textarea rows="16" oninput="fieldEdit(\'text\',this.value)">' + esc(d.text) + '</textarea></div>';
   h += '<div class="foot">'
-    + '<button class="btn pri" onclick="openPaste()">붙여넣을 내용 복사</button>'
-    + '<button class="btn" onclick="saveDraft()">저장</button>'
+    + (url ? '<a class="btn pri" style="text-decoration:none" href="' + esc(url) + '" target="_blank" rel="noopener">'
+             + '홈페이지에서 이 쪽 열기</a>' : '')
+    + '<button class="btn" onclick="saveDraft()">대조 기준 저장</button>'
     + '<button class="btn" onclick="openHistory()">되돌리기</button>'
     + '<span id="dirtyMark" style="color:#C43D3D;font-size:12px;font-weight:700">' + (App.dirty ? '● 저장 안 됨' : '') + '</span>'
     + '<span style="flex:1"></span>'
     + '<span class="sub">' + (rec.updatedAt ? '마지막 수정: ' + esc(stamp(rec.updatedAt)) + ' · ' + esc(rec.updatedBy || '') : '수정 기록 없음') + '</span>'
     + '</div>';
-  h += '<div class="guide">쪽은 <b>통째로</b> 한 번에 붙여넣습니다. '
-    + '구성원과 달리 사람 단위로 나뉘어 있지 않습니다.</div>';
+  h += '<div class="guide"><b>이 쪽을 고치는 순서</b><ol>'
+    + '<li>위 <b>홈페이지에서 이 쪽 열기</b> → 관리자 화면에서 직접 고치고 저장</li>'
+    + '<li>통합시스템으로 돌아와 <b>홈페이지 다시 확인</b> → 딱지가 「안 올라감」으로 바뀝니다</li>'
+    + '<li>바꾼 내용을 그대로 두려면, 위 <b>대조 기준 글자</b>를 홈페이지와 맞춘 뒤 <b>대조 기준 저장</b></li>'
+    + '</ol></div>';
   return h + '</div>';
 }
 
 function legendHtml() {
   return '<div class="legend">'
-    + ['same', 'pending', 'toAdd', 'toRemove', 'liveOnly']
+    + ['same', 'pending', 'toAdd', 'toRemove', 'liveOnly', 'done']
         .map(s => '<span class="pill ' + s + '">' + esc(STATUS_TEXT[s]) + '</span>').join('')
     + '<span class="sub">딱지는 「홈페이지 다시 확인」을 누를 때만 새로 붙습니다. 저절로 돌지 않습니다.</span>'
     + '</div>';

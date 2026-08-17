@@ -48,6 +48,22 @@ function constSource(name) {
   return m[0];
 }
 
+/* 여러 줄짜리 객체 const (예: STATUS_TEXT) 를 그대로 떼어 온다 */
+function constObj(name) {
+  const re = new RegExp('\\nconst ' + name + ' = \\{[\\s\\S]*?\\n\\};');
+  const m = re.exec(html);
+  assert.ok(m, 'const ' + name + ' 을 찾지 못했습니다');
+  return m[0];
+}
+
+/* 한 줄짜리 const (예: KCAREER_NS) 를 그대로 떼어 온다 */
+function constLine(name) {
+  const re = new RegExp('\\nconst ' + name + ' = [^\\n]*;');
+  const m = re.exec(html);
+  assert.ok(m, 'const ' + name + ' 을 찾지 못했습니다');
+  return m[0];
+}
+
 /* 부품(js/pu-home-*.js)은 진짜를 싣는다 — 화면이 부품에 맡긴 판단까지 함께 확인한다 */
 function box(extra) {
   const ctx = Object.assign({ window: undefined, console: { warn() {}, log() {} } }, extra || {});
@@ -78,9 +94,13 @@ test('홈페이지에 글을 쓰는 경로가 없다', () => {
 });
 
 test('바깥으로 나가는 길은 홈페이지를 «읽는» 것 하나뿐이다', () => {
-  /* 이 화면은 홈페이지를 직접 바꾸지 않는다. 나가는 요청이 늘어나면 그 약속이 깨진다. */
-  const calls = html.match(/\bfetch\s*\(/g) || [];
-  assert.equal(calls.length, 1, '바깥으로 나가는 요청이 하나가 아닙니다');
+  /* 이 화면은 홈페이지를 직접 바꾸지 않는다. 지켜야 할 약속은 «어디로 보내는가»이지
+     «몇 번 보내는가»가 아니다 — 개수를 못 박으면 정당한 읽기 하나가 늘 때 깨지고,
+     이 저장소에서 검사 하나가 모든 앱 배포를 막은 적이 있다. 대상만 못 박는다. */
+  const targets = [...html.matchAll(/\bfetch\s*\(\s*([A-Za-z_$][\w$]*|['"`][^'"`]*['"`])/g)].map(m => m[1]);
+  assert.ok(targets.length > 0, 'fetch 를 하나도 찾지 못했습니다 — 홈페이지를 읽는 길이 사라졌습니다');
+  targets.forEach(t => assert.equal(t, 'READ_HOMEPAGE_URL',
+    '홈페이지를 «읽는» 곳 말고 다른 데로 나가는 요청이 있습니다: ' + t));
   assert.match(html, /READ_HOMEPAGE_URL/);
 });
 
@@ -465,4 +485,277 @@ test('포털 타일과 즐겨찾기 목록에 등록돼 있다', () => {
   const appbar = fs.readFileSync(path.join(R, 'js', 'pu-appbar.js'), 'utf8');
   assert.match(enter, /pu-home\.html/);
   assert.match(appbar, /pu-home\.html/);
+});
+
+/* ══════ 최종 검토 1 — 쪽은 «대조 전용». 붙여넣을 내용을 내주지 않는다 ══════
+   parsePageText 는 태그를 걷고 공백을 뭉친 «대조용» 글자다. 그것을 「붙여넣을 본문」으로
+   내주고 Ctrl+A → Ctrl+V 를 시키면 지도 위젯·지사 탭·구획·스크립트가 통째로 사라진다.
+   게다가 파괴한 쪽을 다시 읽으면 같은 글자가 나와 「같음」이 뜬다 — 조용히 틀린다. */
+
+/* 화면의 esc 는 정규식 리터럴이 들어 있어 함수 잘라내기로는 못 떼어 온다.
+   이스케이프 자체는 위의 「바깥에서 온 글자를 …」 검사가 지킨다. 여기서는 대역을 쓴다. */
+function escStub() {
+  return s => String(s == null ? '' : s).replace(/[&<>"']/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function pageBox() {
+  const ctx = box();
+  ctx.esc = escStub();
+  ctx.PAGE_LABEL = { inquiry: '오시는길', work1: '자문서비스' };
+  ctx.copied = [];
+  ctx.shown = [];
+  ctx.copyText = t => { ctx.copied.push(t); };
+  ctx.openModal = h => { ctx.shown.push(h); };
+  ctx.toast = () => {};
+  return ctx;
+}
+
+test('★ 쪽에서는 붙여넣을 내용을 «복사해 주지 않는다»', () => {
+  const ctx = pageBox();
+  ctx.App = { draft: { kind: 'page', key: 'inquiry', text: '오시는길 본문 한 줄로 뭉친 글자' },
+              lineFormat: 'plain', pages: {}, dirty: false };
+  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('modalFoot') + '\n' + fnSource('riskReport') + '\n'
+    + fnSource('openPaste'));
+  ctx.openPaste();
+  assert.equal(ctx.copied.length, 0, '쪽 본문을 복사해 줬습니다 — 이대로 붙여넣으면 홈페이지가 부서집니다');
+});
+
+test('★ 쪽 화면에 「붙여넣을 내용 복사」 단추가 없다', () => {
+  const src = fnSource('pageEdit');
+  assert.ok(src.indexOf('openPaste') < 0, '쪽에 붙여넣기 단추가 남아 있습니다');
+});
+
+test('★ 쪽 화면이 «왜» 붙여넣기를 안 주는지 한국어로 적는다', () => {
+  const ctx = pageBox();
+  ctx.App = { draft: { kind: 'page', key: 'inquiry', text: '가나다' }, pages: {}, dirty: false };
+  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('pageEdit'));
+  const h = ctx.pageEdit(ctx.App.draft);
+  assert.match(h, /대조/, '대조용이라는 말이 없습니다');
+  assert.match(h, /지도|표|구획/, '무엇이 사라지는지 안 적혀 있습니다');
+  assert.match(h, /관리자/, '그럼 어디서 고치라는 건지 안 적혀 있습니다');
+});
+
+test('★ 쪽 화면에서 홈페이지 관리자 화면으로 갈 길을 준다', () => {
+  const ctx = pageBox();
+  ctx.App = { draft: { kind: 'page', key: 'inquiry', text: '가나다' }, pages: {}, dirty: false };
+  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('pageEdit'));
+  const h = ctx.pageEdit(ctx.App.draft);
+  assert.ok(h.indexOf(ctx.PuHomeExport.editUrl('page', 'inquiry')) >= 0,
+    '홈페이지에서 이 쪽을 열 길이 없습니다');
+});
+
+test('구성원은 지금처럼 붙여넣을 내용을 만들어 준다 (쪽만 막은 것이 맞는지)', () => {
+  const ctx = pageBox();
+  ctx.App = {
+    draft: { kind: 'member', key: '190', srl: '190', name: '권형하', careers: ['現 가', '現 나'] },
+    members: { '190': { name: '권형하', srl: '190' } },
+    lineFormat: 'plain'
+  };
+  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('modalFoot') + '\n' + fnSource('riskReport') + '\n'
+    + fnSource('srlConflict') + '\n' + fnSource('openPaste'));
+  ctx.openPaste();
+  assert.equal(ctx.copied.length, 1, '구성원 붙여넣기까지 막혔습니다');
+  assert.equal(ctx.copied[0], '現 가\n現 나');
+});
+
+/* ══════ 최종 검토 3 — 우리 자료에서 글 번호가 겹치면 붙여넣기를 막는다 ══════
+   신입에게 실수로 권형하의 글 번호를 적으면 편집 주소가 권형하 글이다.
+   시킨 대로 하면 권형하 경력이 신입 것으로 덮인다. */
+
+test('★ 글 번호가 겹친 줄에서는 붙여넣기를 «막는다»', () => {
+  const ctx = pageBox();
+  ctx.App = {
+    draft: { kind: 'member', key: 'new-1', srl: '190', name: '신입 노무사', careers: ['現 가'] },
+    members: { '190': { name: '권형하', srl: '190' }, 'new-1': { name: '신입 노무사', srl: '190' } },
+    lineFormat: 'plain'
+  };
+  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('modalFoot') + '\n' + fnSource('riskReport') + '\n'
+    + fnSource('srlConflict') + '\n' + fnSource('openPaste'));
+  ctx.openPaste();
+  assert.equal(ctx.copied.length, 0, '남의 글에 덮어쓸 내용을 복사해 줬습니다');
+  assert.equal(ctx.shown.length, 1);
+  assert.match(ctx.shown[0], /권형하/, '누구와 겹쳤는지 안 알려 줍니다');
+});
+
+test('★ 겹친 사람을 이름으로 알려 준다', () => {
+  const ctx = box();
+  ctx.App = { members: { '190': { name: '권형하', srl: '190' }, 'new-1': { name: '신입', srl: ' 190 ' } } };
+  run(ctx, fnSource('srlConflict'));
+  assert.deepEqual(plain(ctx.srlConflict('new-1', '190')), ['권형하']);
+  assert.deepEqual(plain(ctx.srlConflict('190', '190')), ['신입']);
+  assert.deepEqual(plain(ctx.srlConflict('190', '')), [], '글 번호가 비었으면 겹친 것이 아니다');
+  assert.deepEqual(plain(ctx.srlConflict('190', '999')), []);
+});
+
+test('★ 겹친 글 번호를 빨간 띠로 알린다', () => {
+  const ctx = box();
+  ctx.App = {
+    check: null, checkMsg: '', dataErr: '', staffErr: '', saveErr: '',
+    members: { '190': { name: '권형하', srl: '190' }, 'new-1': { name: '신입 노무사', srl: '190' } }
+  };
+  ctx.PAGE_LABEL = {};
+  ctx.esc = escStub();
+  run(ctx, fnSource('bannersHtml'));
+  const h = ctx.bannersHtml();
+  assert.match(h, /bar bad/, '빨간 띠가 아닙니다');
+  assert.match(h, /권형하/);
+  assert.match(h, /신입 노무사/);
+});
+
+/* ══════ 최종 검토 2 — 경력관리가 «실제로» 저장하는 모양으로 당겨온다 ══════
+   지어낸 항목 모양으로 통과시키면 같은 일이 되풀이된다. 아래 검사는 kcareer.html 의
+   CAREER_CFG(저장통·거르개)와 폼 저장 칸 이름을 근거로 삼는다. */
+
+const kcareer = fs.readFileSync(path.join(R, 'kcareer.html'), 'utf8');
+
+/* vm 안의 const 는 상자 바깥(ctx)에서 안 보인다 — 검사에서 읽을 것만 밖으로 내놓는다 */
+function expose(name) { return '\nglobalThis.' + name + ' = ' + name + ';'; }
+
+function kindsBox() {
+  const ctx = box();
+  run(ctx, constSource('CAREER_KINDS') + '\n' + constLine('KCAREER_NS') + '\n'
+    + fnSource('careerKindOf') + '\n' + fnSource('kcareerStores') + '\n'
+    + fnSource('splitByKind') + '\n' + fnSource('kcareerFromLocal') + '\n'
+    + fnSource('kcareerFromDb') + '\n' + fnSource('toCareerItem') + '\n' + fnSource('itemWhen')
+    + expose('CAREER_KINDS') + expose('KCAREER_NS'));
+  return ctx;
+}
+
+/* 경력관리가 실제로 저장하는 항목들 (kcareer.html 의 폼·표가 읽는 칸 이름 그대로) */
+const 실제자료 = {
+  wiccok: JSON.stringify([
+    { id: 'W1', type: '위촉장', org: '중앙노동위원회', titleVal: '공익위원',
+      issueDate: '2020.01.01', periodStart: '2020.01.01', periodEnd: '2025.12.31' },
+    { id: 'W2', type: '위촉장', org: '고용노동부', titleVal: '자문위원',
+      issueDate: '2026.01.01', periodStart: '2026.01.01', periodEnd: '2027.12.31' },
+    { id: 'A1', type: '표창', org: '고용노동부', titleVal: '장관표창', issueDate: '2024.05.01' }
+  ]),
+  cert: JSON.stringify([
+    { id: 'C1', title: '공인노무사', org: '한국산업인력공단', date: '2015.11.20', num: '15-0001' },
+    { id: 'C2', title: '노동법 심화과정 수료', org: '노동교육원', date: '2023.06.30', duration: '40' }
+  ]),
+  edu: JSON.stringify([
+    { id: 'E1', school: '푸른대학교', major: '경영학', degree: '학사', period: '2008.03 ~ 2012.02', graduated: '졸업' }
+  ]),
+  lecture: JSON.stringify([
+    { id: 'L1', topic: '중대재해처벌법 대응', org: '푸른상공회의소', date: '2026.03.10', duration: '2' }
+  ])
+};
+
+test('★ 경력관리의 저장통 이름을 짐작하지 않는다 — kcareer.html 의 CAREER_CFG 와 같아야 한다', () => {
+  const ctx = kindsBox();
+  assert.match(kcareer, /const NS='cm3_'/, '경력관리의 저장 이름표가 바뀌었습니다');
+  assert.equal(ctx.KCAREER_NS, 'cm3_');
+  plain(ctx.CAREER_KINDS).forEach(k => {
+    const m = new RegExp('\\n\\s*' + k.key + ":\\{store:'([a-zA-Z_]+)'").exec(kcareer);
+    assert.ok(m, 'kcareer.html 의 CAREER_CFG 에 ' + k.key + ' 갈래가 없습니다');
+    assert.equal(k.store, m[1],
+      k.key + ' 갈래의 저장통이 경력관리와 다릅니다 — 경력관리는 ' + m[1] + ' 에 넣습니다');
+  });
+});
+
+test('★ 자격증·수료증은 «한 저장통(cm3_cert)»에서 제목으로 갈린다 — 늘 0건이 아니다', () => {
+  const ctx = kindsBox();
+  ctx.localStorage = { getItem: k => 실제자료[String(k).replace('cm3_', '')] || null };
+  const got = plain(ctx.kcareerFromLocal());
+  assert.equal(got.license.length, 1, '자격증이 0건입니다 — cm3_license 라는 저장통은 없습니다');
+  assert.equal(got.license[0].title, '공인노무사');
+  assert.equal(got.complete.length, 1, '수료증이 0건입니다');
+  assert.match(got.complete[0].title, /수료/);
+});
+
+test('★ 위촉장 탭에 표창·포상이 섞이지 않는다', () => {
+  const ctx = kindsBox();
+  ctx.localStorage = { getItem: k => 실제자료[String(k).replace('cm3_', '')] || null };
+  const got = plain(ctx.kcareerFromLocal());
+  assert.equal(got.wiccok.length, 2, '표창이 위촉장에 섞였습니다');
+  assert.ok(!got.wiccok.some(r => r.type === '표창' || r.type === '포상'));
+});
+
+test('★ 클라우드 사본도 «저장통 이름»으로 읽는다 (ls 는 cm3_ 를 뗀 이름으로 들어 있다)', async () => {
+  const ctx = kindsBox();
+  ctx.db = { ref: p => ({ once: () => Promise.resolve({ val: () => 실제자료 }) }) };
+  const got = plain(await ctx.kcareerFromDb('U1'));
+  assert.equal(got.license.length, 1);
+  assert.equal(got.complete.length, 1);
+  assert.equal(got.wiccok.length, 2);
+  assert.equal(got.edu.length, 1);
+  assert.equal(got.lecture.length, 1);
+});
+
+test('★ 위촉 기간이 지났으면 前 이 나온다 (periodStart/periodEnd 로 저장된다)', () => {
+  const ctx = kindsBox();
+  const items = JSON.parse(실제자료.wiccok);
+  const 끝난것 = ctx.PuHomeCareer.toLine(ctx.toCareerItem(items[0], 'wiccok'), '2026-08-16');
+  assert.match(끝난것.text, /^前 /, '기간이 지났는데 現 으로 나옵니다 — period/end 만 보고 있습니다');
+  assert.equal(끝난것.ended, true);
+  assert.match(끝난것.text, /중앙노동위원회/);
+  assert.match(끝난것.text, /공익위원/);
+  const 진행중 = ctx.PuHomeCareer.toLine(ctx.toCareerItem(items[1], 'wiccok'), '2026-08-16');
+  assert.match(진행중.text, /^現 /);
+});
+
+test('★ 홈페이지에 現 으로 걸린 만료 직함을 잡아낸다', () => {
+  const ctx = kindsBox();
+  const all = JSON.parse(실제자료.wiccok).map(it => ctx.toCareerItem(it, 'wiccok'));
+  const live = ['現 중앙노동위원회 공익위원', '現 고용노동부 자문위원'];
+  const 만료 = plain(ctx.PuHomeCareer.expiredInLive(live, all, '2026-08-16'));
+  assert.deepEqual(만료, ['現 중앙노동위원회 공익위원']);
+});
+
+test('★ 학력은 학교·전공·학위가 다 들어간다', () => {
+  const ctx = kindsBox();
+  const it = JSON.parse(실제자료.edu)[0];
+  const line = ctx.PuHomeCareer.toLine(ctx.toCareerItem(it, 'edu'), '2026-08-16');
+  assert.match(line.text, /푸른대학교/);
+  assert.match(line.text, /경영학/, '전공이 빠졌습니다 — major 칸을 안 보고 있습니다');
+  assert.match(line.text, /학사/, '학위가 빠졌습니다 — deg 가 아니라 degree 입니다');
+});
+
+test('★ 강의는 주제가 들어간다', () => {
+  const ctx = kindsBox();
+  const it = JSON.parse(실제자료.lecture)[0];
+  const line = ctx.PuHomeCareer.toLine(ctx.toCareerItem(it, 'lecture'), '2026-08-16');
+  assert.match(line.text, /중대재해처벌법 대응/, '주제가 빠졌습니다 — topic 칸을 안 보고 있습니다');
+  assert.match(line.text, /푸른상공회의소/);
+});
+
+test('자격증·수료증은 자격명과 발급기관이 들어간다', () => {
+  const ctx = kindsBox();
+  const certs = JSON.parse(실제자료.cert);
+  const a = ctx.PuHomeCareer.toLine(ctx.toCareerItem(certs[0], 'license'), '2026-08-16');
+  assert.match(a.text, /공인노무사/);
+  assert.match(a.text, /한국산업인력공단/);
+  const b = ctx.PuHomeCareer.toLine(ctx.toCareerItem(certs[1], 'complete'), '2026-08-16');
+  assert.match(b.text, /노동법 심화과정 수료/);
+});
+
+test('언제인지(기간·취득일)를 화면에 보여 줄 수 있다', () => {
+  const ctx = kindsBox();
+  assert.match(ctx.itemWhen(JSON.parse(실제자료.wiccok)[0], 'wiccok'), /2020\.01\.01/);
+  assert.match(ctx.itemWhen(JSON.parse(실제자료.cert)[0], 'license'), /2015\.11\.20/);
+  assert.match(ctx.itemWhen(JSON.parse(실제자료.lecture)[0], 'lecture'), /2026\.03\.10/);
+});
+
+/* ══════ 최종 검토 4 — 퇴사 처리를 끝낸 사람에게 할 일이 남지 않는다 ══════ */
+
+test('★ 퇴사자를 내리고 나면 왼쪽 빨간 점이 사라진다', () => {
+  const ctx = box();
+  ctx.App = {
+    group: 'members', check: { members: { '190': { name: '나간사람', status: 'done', reason: '퇴사 처리 끝' } } },
+    members: { '190': { name: '나간사람', srl: '190', position1: '', position2: '' } }
+  };
+  run(ctx, constLine('DONE_STATUS') + '\n' + fnSource('memberRows') + '\n' + fnSource('pageRows') + '\n'
+    + fnSource('pageIdsOf') + '\n' + fnSource('rowsOf') + '\n' + fnSource('needsWork'));
+  assert.equal(ctx.needsWork('members'), false, '할 일이 없는데 빨간 점이 남습니다');
+});
+
+test('「내려감」 딱지에 화면에 보일 이름이 있다', () => {
+  const ctx = box();
+  run(ctx, constObj('STATUS_TEXT') + expose('STATUS_TEXT'));
+  const t = plain(ctx.STATUS_TEXT);
+  assert.ok(t.done, '「내려감」 딱지에 한국어 이름이 없습니다');
+  assert.notEqual(t.done, t.same, '「같음」과 같은 말로 뭉갰습니다');
+  assert.match(html, /\.pill\.done/, '딱지 모양(CSS)이 없어 글자만 떠 있습니다');
 });

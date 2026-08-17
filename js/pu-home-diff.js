@@ -82,12 +82,26 @@
         }
         return { key: key, name: m.name, status: 'pending', reason: '내용이 다름 · 동명이인이 있어 입·퇴사 판단을 보류함' };
       }
+      // 홈페이지에도 없고 동명이인이라 퇴사 여부도 못 가리면, 「새로 올릴 것」으로 두되
+      // «왜 퇴사 판단을 못 했는지»를 반드시 적는다. 말없이 올리라고 시키지 않는다.
+      if (!onLive && matches.length > 1) {
+        return { key: key, name: m.name, status: 'toAdd',
+                 reason: '홈페이지에 없음 · 동명이인이 있어 퇴사 판단을 보류함' };
+      }
 
       const person = matches.length === 1 ? matches[0] : null;
 
       // 퇴사했는데 홈페이지에 아직 있으면 내릴 것
       if (onLive && hasLeft(person, today)) {
         return { key: key, name: m.name, status: 'toRemove', reason: leftReason(person) };
+      }
+      /* ★ 퇴사자가 홈페이지에도 «없으면» 할 일이 없는 상태다.
+         여기서 퇴사 여부를 안 보면, 앱이 시킨 대로 퇴사자 글을 비공개 처리한 «바로 다음
+         확인»에서 화면이 정확히 반대(다시 올려라)를 가리키고 왼쪽 빨간 점도 영영 남는다.
+         정상 흐름의 마지막 걸음에서 틀리는 자리다. */
+      if (!onLive && hasLeft(person, today)) {
+        return { key: key, name: m.name, status: 'done',
+                 reason: '퇴사 처리 끝 — 홈페이지에서도 내려감 (' + leftReason(person) + ')' };
       }
       if (!onLive) return { key: key, name: m.name, status: 'toAdd', reason: '홈페이지에 없음' };
       if (signature(m) === signature(onLive)) {
@@ -126,6 +140,29 @@
     return dup;
   }
 
+  /* 우리 자료 «쪽»에서 두 사람이 같은 홈페이지 글 번호를 쓰고 있는지 찾는다.
+     ★ duplicateLiveKeys 는 «홈페이지» 쪽만 본다 — 우리 쪽 겹침은 못 잡는다.
+       신입에게 실수로 남의 글 번호를 적으면 편집 주소가 «남의 글»이 되고,
+       화면이 시킨 대로 붙여넣으면 남의 경력이 통째로 덮인다. 조용히 틀리는 자리라
+       반드시 사람에게 보여야 한다. 돌려주는 모양: [{ srl, keys[], names[] }] */
+  function duplicateOurKeys(ours) {
+    const bySrl = {};
+    const order = [];
+    (ours || []).forEach(function (m) {
+      const srl = tidy(m && m.srl);
+      if (!srl) return;   // 글 번호를 아직 안 적은 사람끼리는 겹친 것이 아니다
+      if (!Object.prototype.hasOwnProperty.call(bySrl, srl)) { bySrl[srl] = []; order.push(srl); }
+      bySrl[srl].push(m);
+    });
+    return order.filter(function (srl) { return bySrl[srl].length > 1; }).map(function (srl) {
+      return {
+        srl: srl,
+        keys: bySrl[srl].map(function (m) { return String(m.key === undefined ? '' : m.key); }),
+        names: bySrl[srl].map(function (m) { return tidy(m.name); })
+      };
+    });
+  }
+
   /* 읽어낸 결과를 믿어도 되는지. 0명이면 사람이 사라진 게 아니라 화면 구조가 바뀐 것이다.
      이걸 안 물으면 구조가 바뀐 날 아홉 명이 전부 「안 올라감」으로 뜬다. */
   function isTrustworthy(live) {
@@ -158,6 +195,6 @@
   global.PuHomeDiff = {
     memberStatus: memberStatus, pageStatus: pageStatus, isTrustworthy: isTrustworthy,
     nameLeftovers: nameLeftovers, signature: signature, duplicateLiveKeys: duplicateLiveKeys,
-    matchKeyOf: matchKeyOf
+    duplicateOurKeys: duplicateOurKeys, matchKeyOf: matchKeyOf
   };
 })(typeof window !== 'undefined' ? window : globalThis);
