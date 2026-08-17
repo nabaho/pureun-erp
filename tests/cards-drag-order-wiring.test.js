@@ -41,3 +41,9 @@ test('폴더 순서 드래그 중일 때는 명함 드롭 처리로 안 넘어�
   const fn = source.slice(at, end);
   assert.match(fn, /_dragOrd/, '순서 드래그 중인지 확인하지 않는다 — 순서를 바꾸려다 명함이 옮겨진다');
 });
+
+test('기업 상세 폴더 줄이 순서 드래그를 건다', () => {
+  const s = sideBlock();
+  assert.match(s, /onOrdDragStart\(event,\s*'cofolder'/, '기업 상세 폴더에 onOrdDragStart 가 없다');
+  assert.match(s, /onOrdDrop\(event,\s*'cofolder'/, '기업 상세 폴더에 onOrdDrop 이 없다');
+});

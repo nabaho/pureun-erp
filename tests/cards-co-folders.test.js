@@ -25,7 +25,13 @@ test('만들기·이름바꾸기·지우기가 있다', () => {
 
 test('옆줄에 폴더 목록과 ＋가 있다', () => {
   const at = source.indexOf("if(state.view==='co'){");
-  const fn = source.slice(at, at + 1400);
+  /* 예전엔 여기서 고정 1400자만 잘라 봤다 — 폴더 줄이 드래그 정렬용 속성(draggable
+     등)을 얻으면서 글자수가 늘자 소리 없이 걸려 넘어졌다. 이 블록의 진짜 끝은 글자수가
+     아니라 `$('pcSide').innerHTML = h; return;` 이다 — cards-co-folder-tabs.test.js 의
+     sideBlock() 도 같은 경계를 쓴다. */
+  const end = source.indexOf("$('pcSide').innerHTML = h; return;", at);
+  assert.ok(at > 0 && end > at, '기업 상세 옆줄 덩어리를 찾지 못했습니다');
+  const fn = source.slice(at, end);
   assert.match(fn, /onclick="openCoFolderDialog\(\)"/, '＋ 를 못 찾았다');
   assert.match(fn, /_coFolders/, '옆줄이 폴더 목록을 안 그린다');
   /* 정규식 리터럴로 쓰면 tests-no-local-path 검사의 "따옴표+글자+콜론+슬래시"
