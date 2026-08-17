@@ -1198,7 +1198,8 @@ exports.readDoc = functions
     const key = await readGeminiKey();
     if (!key) { res.status(503).json({ ok: false, error: "AI 키가 설정되지 않았습니다 — 관리자에게 알려 주세요." }); return; }
 
-    const r = await DR.callGemini(fetch, key, v.parts);
+    // cfg = 부르는 쪽이 정한 값(온도·최대 길이). 걸러진 것만 넘어온다.
+    const r = await DR.callGemini(fetch, key, v.parts, null, v.cfg);
     if (!r.ok) {
       /* ⚠ 상태를 **그대로** 돌려준다. 브라우저의 재시도·모델 갈아타기 판단이
          이 숫자를 보고 움직인다(429 면 잠시 뒤, 403 이면 곧바로 포기). */

@@ -204,6 +204,31 @@ test('서버 대리인', async (t) => {
     assert.deepEqual(b.contents[0].parts, parts);
   });
 
+  /* 2026-08-17 — 경력관리가 긴 증명서를 읽을 때 답 길이를 1500 으로 지정한다.
+     안 받으면 답이 잘리고, 통째로 받으면 부르는 쪽이 마음대로 키울 수 있다(=요금).
+     그래서 **적힌 값만, 위를 막아** 받는다. */
+  await t.test('★ 부르는 쪽이 정한 답 길이를 받아 넘긴다', () => {
+    const v = DR.validate({ parts: parts, generationConfig: { maxOutputTokens: 1500 } });
+    assert.equal(v.ok, true);
+    const b = DR.geminiBody(v.parts, v.cfg);
+    assert.equal(b.generationConfig.maxOutputTokens, 1500,
+      '길이 지정이 사라졌습니다 — 긴 증명서에서 답이 잘립니다.');
+    assert.equal(b.generationConfig.temperature, 0, 'temperature 0 이 빠졌습니다.');
+  });
+
+  await t.test('★ 답 길이를 마음대로 키우지 못한다 — 낸 만큼이 요금이다', () => {
+    const b = DR.geminiBody(parts, { maxOutputTokens: 9999999 });
+    assert.equal(b.generationConfig.maxOutputTokens, DR.MAX_OUTPUT_TOKENS,
+      '한도를 넘겼습니다(' + b.generationConfig.maxOutputTokens + ') — 부르는 쪽이 요금을 정하게 됩니다.');
+  });
+
+  await t.test('★ 모르는 값은 안 받는다', () => {
+    const b = DR.geminiBody(parts, { topK: 40, temperature: 99, candidateCount: 8 });
+    assert.equal(b.generationConfig.topK, undefined, '적어 두지 않은 값이 그대로 넘어갔습니다.');
+    assert.equal(b.generationConfig.candidateCount, undefined, '답을 여러 벌 받으면 요금이 배가 됩니다.');
+    assert.equal(b.generationConfig.temperature, 0, '범위 밖 값을 그대로 썼습니다.');
+  });
+
   await t.test('★ 오류 글에 열쇠가 섞여 나가지 않는다', () => {
     /* ⚠ 열쇠꼴(AQ.·AIza)로 생긴 것은 무늬로도 지워진다. 그래서 무늬에 안 걸리는
        모양으로 시험해야 **「넘겨받은 열쇠를 지운다」**를 실제로 확인할 수 있다 —
@@ -286,5 +311,13 @@ test('앱 배선', async (t) => {
     assert.match(js, /READ_DOC_URL = 'https:\/\/asia-northeast3-pureun-erp\.cloudfunctions\.net\/readDoc'/);
     assert.ok(photos.indexOf('cloudfunctions.net/readDoc') < 0, '앱에 주소가 또 적혀 있습니다.');
     assert.ok(paydata.indexOf('cloudfunctions.net/readDoc') < 0, '앱에 주소가 또 적혀 있습니다.');
+  });
+
+  await t.test('★ 서버가 받아 둔 답 길이를 구글 부를 때 실제로 넘긴다', () => {
+    /* validate 가 cfg 를 받아 두어도 callGemini 에 안 넘기면 그냥 버려진다 —
+       경력관리의 긴 증명서가 조용히 잘린다. */
+    const idx = fs.readFileSync(path.join(R, 'functions', 'index.js'), 'utf8');
+    assert.match(idx, /callGemini\(fetch, key, v\.parts, null, v\.cfg\)/,
+      '받아 둔 답 길이를 구글에 안 넘깁니다.');
   });
 });
