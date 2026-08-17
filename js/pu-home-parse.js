@@ -59,9 +59,53 @@
                     .replace(/<style[\s\S]*?<\/style>/gi, ''));
   }
 
+  /* ★ 여기서 나온 글자는 «보는 전용»이다 — 홈페이지 화면과 같은 순서·같은 줄로 돌려준다.
+     parsePageText 처럼 뭉치지 않고 줄을 살려서, 사람이 몇 번째 줄을 고쳐야 하는지
+     눈으로 가릴 수 있게 한다. «대조»는 여전히 parsePageText(tidy 로 뭉친 글자)로 한다 —
+     대조 규칙은 이 함수와 무관하게 하나도 안 바꾼다.
+
+     만드는 방법:
+     1) <script>·<style> 덩어리와 주석(<!-- -->)을 먼저 통째로 걷어낸다.
+        ★ 주석을 줄로 쪼갠 «뒤에» 걷으면 <!--·--> 짝이 서로 다른 줄로 갈라져
+          한쪽만 남는다(예전에 --> 찌꺼기가 본문에 남은 사고와 같은 원인이다).
+          반드시 «쪼개기 전에» 통째로 없앤다.
+     2) 본문은 bh_page_widget_inner 부터 <footer 앞까지만 쓴다 — 머리말·메뉴·CSS 를 막는다.
+        ★ 표시 글자를 찾은 자리에서 바로 자르면 첫 줄에 'bh_page_widget_inner">' 같은
+          찌꺼기가 남는다. 그 div 의 여는 태그가 끝나는 '>' 뒤부터 잘라야 한다.
+        marker 를 못 찾으면(이 위젯이 없는 쪽 — 예: 게시판형 공지사항) 머리말·메뉴가
+        고스란히 섞이므로, 안전하게 빈 목록을 돌려준다(틀린 줄을 조용히 내주지 않는다).
+     3) 덩어리 태그의 닫는 표시(div p li h1~h6 td tr section article)와 <br> 을
+        줄바꿈으로 바꾼다. 원문에 이미 있던 줄바꿈은 그대로 둔다 — 홈페이지가 원래
+        보여주는 줄 모양을 지운 뒤 다시 지어내지 않는다.
+     4) 각 줄을 tidy() 로 다듬는다 — 남은 태그를 걷고, 개체표기를 풀고, 겹공백을 하나로
+        만들고, 앞뒤를 다듬는다. 빈 줄은 버린다. */
+  function parsePageLines(html) {
+    const src = String(html || '');
+    const noScript = src
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<!--[\s\S]*?-->/g, ' ');
+
+    const markerIdx = noScript.indexOf('bh_page_widget_inner');
+    if (markerIdx === -1) return [];
+    const gt = noScript.indexOf('>', markerIdx);
+    if (gt === -1) return [];
+    let body = noScript.slice(gt + 1);
+
+    const footerIdx = body.search(/<footer/i);
+    if (footerIdx !== -1) body = body.slice(0, footerIdx);
+
+    const withBreaks = body
+      .replace(/<\/(div|p|li|h[1-6]|td|tr|section|article)\s*>/gi, '\n')
+      .replace(/<br[^>]*>/gi, '\n');
+
+    return withBreaks.split('\n').map(tidy).filter(Boolean);
+  }
+
   global.PuHomeParse = {
     tidy: tidy,
     parseMembers: parseMembers,
-    parsePageText: parsePageText
+    parsePageText: parsePageText,
+    parsePageLines: parsePageLines
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -74,3 +74,60 @@ test('partner.html 을 읽어도 주석 찌꺼기가 남지 않는다', () => {
   assert.ok(!/-->/.test(text), '주석 닫는 표시가 남으면 안 된다');
   assert.ok(!/<!--/.test(text), '주석 여는 표시가 남으면 안 된다');
 });
+
+/* --- parsePageLines: 쪽 글을 홈페이지와 같은 줄 모양으로 --- */
+
+test('parsePageLines — work1.html 을 홈페이지와 같은 순서·같은 줄로 읽는다', () => {
+  /* 실제 줄 수는 19다(설계 문서 2026-08-17이 적었던 20은 §1 이 걸러내라고 지시한
+     bh_page_widget_inner 표시 찌꺼기가 첫 줄에 하나 더 낀 채로 잰 값이었다).
+     그 정확한 개수를 여기 다시 못 박지는 않는다 — 표본 파일을 새로 뜨거나 홈페이지
+     문구가 한 줄 늘어도 「줄이 나뉜다」는 그대로인데 개수만 달라 검사가 깨지면,
+     다음 사람은 무엇이 진짜로 망가졌는지 가릴 수 없다(tests/test-pin-guard.test.js 참고).
+     대신 ⑴ 한 덩어리로 뭉개지지 않고 여러 줄로 나뉘었는지 ⑵ 첫 세 줄의 순서·내용이
+     맞는지를 규칙으로 지킨다. */
+  const work1 = fs.readFileSync(path.join(BK, 'work1.html'), 'utf8');
+  const lines = P.parsePageLines(work1);
+  assert.ok(lines.length >= 10, '줄이 너무 적으면 한 덩어리로 뭉개진 것이다 (' + lines.length + '줄)');
+  assert.equal(lines[0], '자문서비스');
+  assert.equal(lines[1], '01');
+  assert.equal(lines[2], '법률자문');
+});
+
+test('parsePageLines — 어느 줄에도 태그·주석 찌꺼기·CSS 조각·메뉴 글자가 없다', () => {
+  const work1 = fs.readFileSync(path.join(BK, 'work1.html'), 'utf8');
+  const lines = P.parsePageLines(work1);
+  lines.forEach((line) => {
+    assert.ok(!/[<>]/.test(line), '태그 조각: ' + line);
+    assert.ok(!/-->/.test(line), '주석 닫는 표시: ' + line);
+    assert.ok(!/position:/.test(line), 'CSS 조각: ' + line);
+    assert.ok(!/메뉴 건너뛰기/.test(line), '머리말·메뉴 글자: ' + line);
+  });
+});
+
+test('parsePageLines — 첫 줄에 bh_page_widget_inner 표시 조각이 섞이지 않는다', () => {
+  const work1 = fs.readFileSync(path.join(BK, 'work1.html'), 'utf8');
+  const lines = P.parsePageLines(work1);
+  assert.ok(!/bh_page_widget_inner/.test(lines[0] || ''));
+});
+
+test('parsePageLines — inquiry.html 은 지사마다 줄이 나뉜다', () => {
+  /* work1.html 검사와 같은 이유로 정확한 줄 수(실제 20, 설계 문서의 21은 같은 찌꺼기 탓)를
+     못 박지 않는다. 지사별 주소·전화가 각각 다른 줄인 것을 규칙으로 지킨다. */
+  const inquiry = fs.readFileSync(path.join(BK, 'inquiry.html'), 'utf8');
+  const lines = P.parsePageLines(inquiry);
+  assert.ok(lines.length >= 10, '줄이 너무 적으면 한 덩어리로 뭉개진 것이다 (' + lines.length + '줄)');
+
+  const iName = lines.indexOf('천안본사');
+  const iAddr = lines.indexOf('충남 천안시 서북구 원두정8길 6, 301호(두정빌딩)');
+  const iTel = lines.indexOf('T. 041-556-0035');
+  assert.ok(iName !== -1 && iAddr !== -1 && iTel !== -1, '세 줄을 모두 찾아야 한다');
+  assert.ok(iName < iAddr && iAddr < iTel, '천안본사 / 주소 / 전화 순서로 각각 다른 줄이어야 한다');
+});
+
+test('parsePageLines — bh_page_widget_inner 가 없는 쪽(예: 게시판형)은 빈 줄을 돌려준다', () => {
+  /* 머리말·메뉴만 남는 페이지를 «틀린 줄»로 조용히 내주는 대신, 못 읽었다는 뜻으로
+     빈 배열을 돌려준다. notice.html(공지사항 게시판)이 실제로 이 모양이다. */
+  const notice = fs.readFileSync(path.join(BK, 'notice.html'), 'utf8');
+  // vm 컨텍스트(다른 realm)에서 만든 빈 배열은 전개(spread)로 이 realm 으로 옮겨 비교한다.
+  assert.deepEqual([...P.parsePageLines(notice)], []);
+});

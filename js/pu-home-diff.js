@@ -55,6 +55,36 @@
       : '명부에 퇴사로 표시됨 (퇴사일은 공개 명부에 없음)';
   }
 
+  // 2차 설계 §4 — 여러 사유를 « · »로 이어붙인다. 이미 코드에 있던
+  // '내용이 다름 · 동명이인이 있어…' 같은 조합 방식과 결을 맞춘다.
+  function joinReasons(parts) {
+    return parts.filter(Boolean).join(' · ');
+  }
+
+  // 「홈페이지에 남기기」 예외 — homepage/members/{id}/keepOnSite = { at, by, why }.
+  // 지사장은 고용관계가 아니라 급여 명부에 퇴사로 찍혀 있거나 아예 없을 수 있다.
+  // 급여 명부에 없다는 것이 그만뒀다는 뜻은 아니므로, 사람이 «사유를 남기고» 예외로
+  // 두면 여기서 퇴사 딱지를 달지 않는다. 사유가 없는 예외는 위험하니 사유를 그대로
+  // reason 에 담아 화면에서 늘 보이게 한다(숨기면 왜 경고가 없는지 알 수 없다).
+  function keepOnSiteReason(m) {
+    const k = m && m.keepOnSite;
+    if (!k || typeof k !== 'object') return '';
+    const why = tidy(k.why);
+    // 사유(why)가 없으면 예외로 보지 않는다 — 설계가 「사유를 반드시 적게 한다」고
+    // 못 박았다(2차 설계 §4). keepOnSite:{} 나 keepOnSite:[] 처럼 객체이기만 하고
+    // 사유가 비어 있으면 그냥 통과시키던 것을 막는다: 사유 없는 예외는 나중에 왜
+    // 남겼는지 알 수 없어 위험하다.
+    if (!why) return '';
+    return '홈페이지에 남기기로 함 (' + why + ')';
+  }
+
+  // 명부에 이름 자체가 없는 사람 — 급여 명부에 없다고 입·퇴사 여부를 «조용히» 넘기면
+  // 사장님이 왜 경고가 없는지 알 길이 없다. 딱지(status)는 내용 대조 결과 그대로 두고,
+  // reason 에만 「판단을 못 했다」는 사실을 밝힌다.
+  function notInStaffReason(matches) {
+    return matches.length === 0 ? '명부에 없어 입·퇴사 판단을 못함' : '';
+  }
+
   function memberStatus(ours, live, staff, today) {
     const liveList = live || [];
     const liveBySrl = {};
@@ -90,9 +120,12 @@
       }
 
       const person = matches.length === 1 ? matches[0] : null;
+      const kept = keepOnSiteReason(m);       // '' 이면 예외 없음
+      const notInStaff = notInStaffReason(matches);
 
-      // 퇴사했는데 홈페이지에 아직 있으면 내릴 것
-      if (onLive && hasLeft(person, today)) {
+      // 퇴사했는데 홈페이지에 아직 있으면 내릴 것 — 단, 「홈페이지에 남기기」 예외가
+      // 있으면 내리지 않고 아래 내용 대조(same/pending)로 넘어간다.
+      if (onLive && hasLeft(person, today) && !kept) {
         return { key: key, name: m.name, status: 'toRemove', reason: leftReason(person) };
       }
       /* ★ 퇴사자가 홈페이지에도 «없으면» 할 일이 없는 상태다.
@@ -103,11 +136,15 @@
         return { key: key, name: m.name, status: 'done',
                  reason: '퇴사 처리 끝 — 홈페이지에서도 내려감 (' + leftReason(person) + ')' };
       }
-      if (!onLive) return { key: key, name: m.name, status: 'toAdd', reason: '홈페이지에 없음' };
-      if (signature(m) === signature(onLive)) {
-        return { key: key, name: m.name, status: 'same', reason: '' };
+      if (!onLive) {
+        return { key: key, name: m.name, status: 'toAdd',
+                 reason: joinReasons(['홈페이지에 없음', notInStaff, kept]) };
       }
-      return { key: key, name: m.name, status: 'pending', reason: '내용이 다름' };
+      if (signature(m) === signature(onLive)) {
+        return { key: key, name: m.name, status: 'same', reason: joinReasons([notInStaff, kept]) };
+      }
+      return { key: key, name: m.name, status: 'pending',
+               reason: joinReasons(['내용이 다름', notInStaff, kept]) };
     });
 
     // 「홈페이지에만」 판정도 «글 번호»로 견준다. 우리 열쇠로 견주면 글 번호를 적어 넣은
