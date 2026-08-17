@@ -53,6 +53,9 @@ function loadApp(appState, extra) {
     'function ensureTrash(){ __calls.ensured.push("trash"); }',
     'function ensureValues(){ __calls.ensured.push("values"); }',
     'function ensureDeputies(){} function loadDeputyScreen(){}',
+    /* 화면을 옮길 때 지켜보는 자리도 함께 옮긴다(2026-08-17) — 여기서 보려는 것은
+       「값을 버리는가」라 빈 것으로 세워 둔다. 지켜보기는 제 검사가 따로 본다. */
+    'function watchDrawer(){} function ensureMail(){}',
     cut('esc'), cut('valueGridModel'), cut('screenValues'),
     cut('changeMonth'), cut('resetOwnerCaches'),
     'window.App = App; window.screenValues = screenValues;',
