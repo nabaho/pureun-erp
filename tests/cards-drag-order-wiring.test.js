@@ -68,3 +68,21 @@ test('「📋 전체」 칩은 끌 수 없다 — 저장된 탭이 아니라 늘
   assert.ok(s.slice(allAt, mapAt).indexOf('onOrdDragStart') < 0,
     '전체 칩에 드래그가 붙었다 — 저장할 자리가 없어 순서를 바꿀 수 없다');
 });
+
+test('폴더 안 ＃탭이 순서 드래그를 건다 — 부모 폴더를 scope 로 넘긴다', () => {
+  const s = sideBlock();
+  assert.match(s, /onOrdDragStart\(event,\s*'coftab'/, '＃탭에 onOrdDragStart 가 없다');
+  assert.match(s, /onOrdDrop\(event,\s*'coftab'/, '＃탭에 onOrdDrop 이 없다');
+  /* scope 를 안 넘기면 다른 폴더의 탭끼리 섞인다 */
+  assert.match(s, /onOrdDragStart\(event,'coftab','\$\{t\.id\}','\$\{f\.id\}'\)/,
+    '＃탭 드래그에 부모 폴더(scope)가 안 넘어간다');
+});
+
+test('＃탭의 「＃ 전체」 줄은 끌 수 없다 — 저장된 탭이 아니다', () => {
+  const s = sideBlock();
+  const allAt = s.indexOf("pickCoFTab('')");
+  assert.ok(allAt >= 0, '＃ 전체 줄을 찾지 못했습니다');
+  const lineEnd = s.indexOf('`;', allAt);
+  assert.ok(s.slice(allAt, lineEnd).indexOf('onOrdDragStart') < 0,
+    '＃ 전체 줄에 드래그가 붙었다');
+});
