@@ -160,10 +160,22 @@ test('기본값이 새 설정에도 들어간다', () => {
   assert.strictEqual(/confirmMainPct/.test(def), true);
 });
 
-test('이름이 비슷한 subRatio 와 다르다고 적어 둔다', () => {
-  /* ★ 둘은 뜻이 다른 값이다. 안 적어 두면 나중에 누가 하나로 합치려 든다 */
-  const subRow = POLICY.slice(POLICY.indexOf("'부담당 성과 비율'"), POLICY.indexOf("'월 매칭 기준'"));
-  assert.strictEqual(/다른 값|합치지/.test(subRow), true);
+test('돌려도 아무 일이 안 일어나는 손잡이를 두지 않는다', () => {
+  /* ★ 「부담당 성과 비율」(subRatio)은 법인 대시보드 카드 한 곳만 쓰던 어림값이었는데,
+     그 카드가 실제 지급액(perfShares)을 읽게 되면서 쓰는 데가 없어졌다(2026-08-16).
+     돌려 보고 안 바뀌면 사람은 화면 전체를 못 믿게 된다 — 그래서 칸을 없앴다.
+     지킬 것은 「이 이름이 없다」가 아니라 «설정 칸에는 읽는 곳이 있다» 이다. */
+  assert.strictEqual(/'부담당 성과 비율'/.test(POLICY), false, '읽는 곳이 없는 설정 칸이 남아 있다');
+  /* ※ 주석은 걷어내고 «코드만» 센다 — 「왜 없앴는지」는 주석에 남아 있어야 하는데,
+     글자만 찾으면 그 설명이 스스로를 걸고 넘어진다 (2026-08-16 에 실제로 그랬다). */
+  const code = SRC.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+  const readers = (code.match(/\.subRatio\b|\['subRatio'\]/g) || []);
+  assert.strictEqual(readers.length, 0, 'subRatio 를 읽는 코드가 남아 있다: ' + readers.join(' / '));
+});
+
+test('남아 있는 설정 칸은 읽는 곳이 있다', () => {
+  /* confirmMainPct 는 erpPerfMainPct() 가 읽는다 — 돌리면 실제로 결과가 바뀐다 */
+  assert.strictEqual(/p\.confirmMainPct/.test(SRC), true);
 });
 
 test('설정값은 0~100 밖으로 나가지 않는다', () => {

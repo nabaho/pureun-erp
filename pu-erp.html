@@ -28126,7 +28126,7 @@ function ActivityLogViewer(){
 }
 
 function PerformancePolicySection(){
-  var DEFAULT = { autoReflect:false, autoReflectMain:false, autoReflectSub:false, vatExclDefault:true, monthMatchRule:'paidDate', subRatio:50, confirmMainPct:50 };
+  var DEFAULT = { autoReflect:false, autoReflectMain:false, autoReflectSub:false, vatExclDefault:true, monthMatchRule:'paidDate', confirmMainPct:50 };
   var existing = dbGet('policy_perf', null);
   if(!existing){ dbSet('policy_perf', DEFAULT); existing = DEFAULT; }
   var s = useState(existing); var f = s[0]; var setF = s[1];
@@ -28165,16 +28165,12 @@ function PerformancePolicySection(){
         style:{ padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12.5px', fontFamily:'inherit', width:'80px', textAlign:'right' }
       })
     }),
-    h(PolicyRow, {
-      label:'부담당 성과 비율',
-      // ⚠ 위의 「입금확정 기본 분할」과 이름이 비슷하지만 «뜻이 다른 값» 이다 — 합치면 둘 다 망가진다
-      hint:'법인 대시보드 직원 카드가 쓰는 어림값 — 위의 「입금확정 기본 분할」과는 다른 값입니다 (합치지 마세요)',
-      control: h('input', {
-        type:'number', value:f.subRatio, min:0, max:100,
-        onChange:function(e){ set('subRatio', Math.max(0, Math.min(100, parseInt(e.target.value||0, 10)))); },
-        style:{ padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:'4px', fontSize:'12.5px', fontFamily:'inherit', width:'80px', textAlign:'right' }
-      })
-    }),
+    /* ★ 「부담당 성과 비율」(subRatio) 칸을 없앴다 (2026-08-16).
+       그 값은 법인 대시보드 직원 카드 «한 곳» 만 쓰던 어림셈이었는데,
+       그 카드가 이제 실제 지급액(perfShares)을 그대로 읽으므로 «쓰는 데가 없어졌다».
+       돌려도 아무 일이 안 일어나는 손잡이는 두면 안 된다 — 돌려 보고 안 바뀌면
+       화면 전체를 못 믿게 된다. 부담당 몫은 입금확정 창의 «분할 %» 로 정한다.
+       ⚠ 이미 저장된 policy_perf.subRatio 값은 지우지 않았다(그냥 안 읽을 뿐이다). */
     h(PolicyRow, {
       label:'월 매칭 기준',
       hint:'YYYY-MM 결정 방식',
@@ -55345,38 +55341,17 @@ function CorpDashboard(props){
                 pay = pms.find(function(r){return (r.sid===sid || r.empSid===sid) && r.ym===ym;}) || null;
               }
 
-              // 4) 성과 (해당 기간 입금 + 담당 분배)
+              /* 4) 성과 — «실제로 지급되는 값»(perfShares)에서 낸다 (2026-08-16 대표 지시).
+                 ★ 전에는 여기서만 「입금 전액 × 본인 요율 ×(부담당이면 subRatio)」로 다시 셌다.
+                   분할%·요율 조정·수습·퇴사·세금 차감이 하나도 안 들어가,
+                   같은 사람의 같은 달 성과급이 이 카드와 급여명세서에서 서로 달랐다.
+                 ★ 급여가 쓰는 것과 같은 자료·같은 거르개를 쓰는 erpPerfBreakdown 하나로 모았다. */
               var mgrRates = dbGet('mgr_rates', {}) || {};
-              var myRate = ((mgrRates[sid] && mgrRates[sid].pct != null ? mgrRates[sid].pct : (mgrRates[sid]||0)))/100;
-              var allIncomesPeriod = (dbGet('finance_income', [])||[]).filter(function(i){
-                var d = (i.depositDate||i.date||'');
-                return isYear ? d.slice(0,4)===year : d.slice(0,7)===ym;
-              });
-              var perfMain = 0, perfSub = 0, perfMainCnt = 0, perfSubCnt = 0;
-              allIncomesPeriod.forEach(function(inc){
-                var src = inc.sourceKind || inc.sourceType;
-                var srcId = inc.sourceId || inc.refId;
-                if(!src || !srcId) return;
-                var item = null;
-                if(src==='case') item = (cases||[]).find(function(c){return c.id===srcId;});
-                else if(src==='consulting') item = (consultings||[]).find(function(c){return c.id===srcId;});
-                else if(src==='fund') item = (funds||[]).find(function(c){return c.id===srcId;});
-                else if(src==='other') item = (others||[]).find(function(c){return c.id===srcId;});
-                else if(src==='contract' || src==='company') item = (allContracts||[]).find(function(c){return c.id===srcId;});
-                if(!item) return;
-                var amt = inc.amount || 0;
-                var _myNameD = (users||[]).find(function(x){return x.sid===selStaff.sid||x.sid===sid;});
-                var _myNameStr = _myNameD ? _myNameD.name : null;
-                var isMain = item.managerMain===sid || (_myNameStr && item.managerMain===_myNameStr);
-                var isSub = !isMain && (item.managerSub===sid || (item.managerSubs||[]).indexOf(sid)>=0 || (_myNameStr && (item.managerSub===_myNameStr || (item.managerSubs||[]).indexOf(_myNameStr)>=0)));
-                if(isMain){ perfMain += amt; perfMainCnt++; }
-                else if(isSub){ perfSub += amt; perfSubCnt++; }
-              });
-              var perfBonusMain = Math.round(perfMain * myRate);
-              var _policyPerf = dbGet('policy_perf', null) || {};
-              var _subRatio = (typeof _policyPerf.subRatio === 'number' ? _policyPerf.subRatio : 50) / 100;
-              var perfBonusSub  = Math.round(perfSub * myRate * _subRatio);
-              var perfBonusTotal = perfBonusMain + perfBonusSub;
+              var _pb = erpPerfBreakdown(sid, isYear ? year : ym);
+              var perfMain = _pb.mainAmt, perfSub = _pb.subAmt;
+              var perfMainCnt = _pb.mainCnt, perfSubCnt = _pb.subCnt;
+              var perfBonusMain = _pb.mainBonus, perfBonusSub = _pb.subBonus;
+              var perfBonusTotal = _pb.total;
 
               // 카드 공통 스타일
               var cardBox = { background:'#fff', border:'1px solid #e2e8f0', borderRadius:'10px', padding: window.innerWidth<=480?'4px 6px':'5px 8px' };
@@ -55491,10 +55466,16 @@ function CorpDashboard(props){
                       h('div', { style:cardTtl }, '🏆', '성과 (' + period + ')'),
                       h('button', { style:cardLink, onClick:function(){ navigate('hr/perf'); } }, '→ 상세')
                     ),
-                    h('div', { style:rowS }, h('span', { style:labelS }, '담당 비율'), h('span', { style:valS }, ((mgrRates[sid] && mgrRates[sid].pct != null ? mgrRates[sid].pct : (mgrRates[sid]||0))) + '%')),
-                    h('div', { style:rowS }, h('span', { style:labelS }, '주담당 입금 (건수)'),
+                    h('div', { style:rowS },
+                      h('span', { style:labelS, title:'환경설정의 직책 요율입니다. 건별로 조정된 것이 있으면 아래 금액에는 그 값이 반영됩니다.' }, '기본 담당 비율'),
+                      h('span', { style:valS }, ((mgrRates[sid] && mgrRates[sid].pct != null ? mgrRates[sid].pct : (mgrRates[sid]||0))) + '%')),
+                    /* 「입금」이 아니라 «몫» 이다 — 분할%가 이미 반영된 값이라,
+                       입금 전액으로 적으면 반반 나눈 건도 통째로 받은 것처럼 보인다. */
+                    h('div', { style:rowS },
+                      h('span', { style:labelS, title:'이 사람 앞으로 잡힌 성과 기준액입니다 (분할 % 와 세금 차감이 반영된 값)' }, '주담당 성과 기준액 (건수)'),
                       h('span', { style:valS }, perfMain.toLocaleString() + '원 (' + perfMainCnt + ')')),
-                    h('div', { style:rowS }, h('span', { style:labelS }, '부담당 입금 (건수)'),
+                    h('div', { style:rowS },
+                      h('span', { style:labelS, title:'이 사람 앞으로 잡힌 성과 기준액입니다 (분할 % 와 세금 차감이 반영된 값)' }, '부담당 성과 기준액 (건수)'),
                       h('span', { style:valS }, perfSub.toLocaleString() + '원 (' + perfSubCnt + ')')),
                     h('div', { style:rowS }, h('span', { style:labelS }, '주담당 성과급'), h('span', { style:moneyS('#1e40af') }, perfBonusMain.toLocaleString() + '원')),
                     h('div', { style:rowS }, h('span', { style:labelS }, '부담당 성과급'), h('span', { style:moneyS('#2563eb') }, perfBonusSub.toLocaleString() + '원')),
@@ -63711,6 +63692,48 @@ function parseReceipt(text){
 
   result.note = result.vendor;
   return result;
+}
+
+/* ── 한 사람의 성과급을 «실제 지급되는 값» 에서 낸다 (2026-08-16 대표 지시) ────────
+   대표 지시: "직원카드 어긋난 거 고쳐줘 — 법인 대시보드".
+
+   ★ 무엇이 어긋났나 — 법인 대시보드 직원 카드«만» perfShares 를 안 보고
+     「입금 전액 × 본인 요율 ×(부담당이면 subRatio)」로 따로 어림잡고 있었다.
+     그래서 분할%·요율 조정·수습·퇴사·세금 차감이 «하나도» 반영되지 않았다.
+     같은 사람의 같은 달 성과급이 대시보드와 급여명세서에서 서로 다르게 나왔다.
+
+   ★ 셈을 새로 만들지 않는다 — 급여가 쓰는 calcPerfBonus 와 «같은 자료·같은 거르개» 를 쓰고
+     역할(주담당·부담당)로 나누기만 한다. 두 화면이 다른 답을 내면 안 된다.
+     (거르개가 갈라지면 언젠가 조용히 어긋난다 — 오늘만 세 번째로 겪은 함정이다.)
+
+   period: 'YYYY-MM'(그 달) 또는 'YYYY'(그 해) — 글자수로 가른다 */
+function erpPerfBreakdown(empSid, period){
+  var out = { mainAmt:0, mainCnt:0, subAmt:0, subCnt:0, mainBonus:0, subBonus:0, total:0 };
+  if(!empSid || !period) return out;
+  var users = (typeof getActiveUsers === 'function') ? getActiveUsers() : (dbGet('user_accounts', []) || []);
+  var emp = users.find(function(u){ return u.sid === empSid; });
+  var empName = emp ? emp.name : '';
+  var n = String(period).length;                     // 7 = 그 달 · 4 = 그 해
+  (dbGet('finance_income', []) || []).forEach(function(item){
+    if(!item) return;
+    if(String(item.date || '').slice(0, n) !== String(period)) return;
+    if(item.sourceKind === 'company') return;        // 자문료 제외 (calcPerfBonus 와 같은 규칙)
+    if(item.isPersonalIncome) return;                // 개인소득 제외 (같은 규칙)
+    (item.perfShares || []).forEach(function(p){
+      if(!p) return;
+      // 옛 자료는 사번 자리에 이름이 들어 있다 — 급여 쪽과 같은 방식으로 찾는다
+      var match = p.sid === empSid || (empName && p.sid === empName) || (p.name && p.name === empName);
+      if(!match || (p.amount || 0) === 0) return;    // 0원(수습·퇴사·요율0)은 세지 않는다
+      var got = p.amount || 0;
+      /* 「몫」은 그 사람 앞으로 잡힌 성과 기준액이다 — 분할%가 이미 반영돼 있다.
+         입금 전액을 적으면 분할 50:50 인데도 100% 받은 것처럼 보인다. */
+      var base = (p.baseAmount != null) ? p.baseAmount : (+item.amount || 0);
+      if(p.role === '주담당'){ out.mainCnt++; out.mainAmt += base; out.mainBonus += got; }
+      else                   { out.subCnt++;  out.subAmt  += base; out.subBonus  += got; }
+      out.total += got;
+    });
+  });
+  return out;
 }
 
 // 성과금 자동 합산 (해당 직원의 해당 월 finance_income.perfShares 누적)
