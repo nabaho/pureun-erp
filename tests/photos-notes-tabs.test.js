@@ -121,60 +121,69 @@ test('점검했음을 누르면 미뤄 둔 것이 풀린다', () => {
     '미뤄 둔 채로 두면 다음 주기에 안 뜹니다.');
 });
 
-/* ══ ② 설정 탭 ══ */
-test('★ 설정이 이알피처럼 탭으로 갈린다', () => {
-  assert.ok(/<div id="setTabs"><\/div>/.test(html), '탭 줄이 없습니다.');
-  const m = html.match(/const SET_TABS = \[[\s\S]*?\];/);
-  assert.ok(m, 'SET_TABS 가 없습니다.');
-  for (const id of ['use', 'keep', 'backup', 'admin']) {
-    assert.ok(m[0].includes("id: '" + id + "'"), id + ' 탭이 없습니다.');
-  }
-  /* 카드가 어느 탭인지 다 적혀 있어야 한다 — 안 적힌 카드는 어느 탭에서도 안 보인다 */
+/* ══ ② 설정 화면 ══
+   ⚠ 2026-08-17 다시 겨눔 — 대표 지시(「탭없앰」)로 탭 줄을 걷어냈다.
+     예전에는 「탭으로 갈린다」·「마지막 본 탭 기억」·「탭 순서 바꾸기」를 못 박고 있었는데,
+     ①「관리자」 탭이 창고 이사가 끝나 **빈 껍데기**였고(실제 자료 확인: 직원 6명 중
+     실시간DB에 본문이 남은 사람 0명) ②카드가 셋뿐이라 **눌러야만 보이는 것이 손해**였다.
+     지킬 것은 「탭이 있다」가 아니라 **「설정이 한눈에 보이고, 밀린 일을 알 수 있다」**이다. */
+test('★ 설정에 탭이 없다 — 한 화면에 다 보인다', () => {
+  assert.ok(!/<div id="setTabs">/.test(html), '탭 줄이 되살아났습니다.');
+  assert.ok(!/const SET_TABS = \[/.test(html), 'SET_TABS 가 되살아났습니다.');
   const view = html.match(/<div id="viewSettings"[\s\S]*?\n     <\/div>/);
   assert.ok(view, 'viewSettings 를 찾지 못했습니다.');
-  const cards = view[0].match(/<div class="card"[^>]*>/g) || [];
-  assert.ok(cards.length >= 5, '설정 카드가 너무 적습니다: ' + cards.length);
-  cards.forEach(function (c) {
-    assert.ok(/data-sec="/.test(c), '어느 탭인지 안 적힌 카드가 있습니다: ' + c);
-  });
+  /* 카드에 data-sec 이 남아 있으면 「어느 탭 것인가」라는 죽은 표시다 */
+  assert.ok(!/data-sec="/.test(view[0]), '탭 표시(data-sec)가 카드에 남아 있습니다.');
 });
 
-test('마지막에 본 탭을 기억한다', () => {
-  assert.ok(/localStorage\.setItem\(SET_TAB_LS/.test(html));
-  const m = html.match(/function initSetTab\(\)[\s\S]*?\n\}/);
-  assert.ok(m && /visibleSetTabs\(\)\.find/.test(m[0]),
-    '없어진 탭을 기억하고 있으면 빈 화면이 뜹니다.');
+test('★ 맨 위에 밀린 일이 한 줄로 보인다', () => {
+  assert.ok(/<div id="setTodo"><\/div>/.test(html), '할 일 줄 자리가 없습니다.');
+  const m = html.match(/function renderSetTodo\(\)[\s\S]*?\n\}/);
+  assert.ok(m, 'renderSetTodo 가 없습니다.');
+  /* 셋 다 있어야 한다 — 하나라도 빠지면 그것만 영영 안 보인다 */
+  assert.ok(/확인 필요/.test(m[0]), '확인 필요가 빠졌습니다.');
+  assert.ok(/휴지통/.test(m[0]), '휴지통이 빠졌습니다.');
+  assert.ok(/지난 사진/.test(m[0]), '지난 사진이 빠졌습니다.');
+  /* 누르면 그 화면으로 가야 한다 — 숫자만 보여 주면 할 수 있는 일이 없다 */
+  assert.ok(/goNeed\(\)/.test(m[0]) && /goTrash\(\)/.test(m[0]) && /goRetCheck\(\)/.test(m[0]),
+    '숫자를 눌러도 갈 곳이 없으면 「몇 장 밀렸다」로 끝납니다.');
 });
 
-test('★ 관리자 탭은 관리자에게만 보인다', () => {
-  const m = html.match(/function visibleSetTabs\(\)[\s\S]*?\n\}/);
-  assert.ok(m && /amAdmin\(\)/.test(m[0]) && /t\.id !== 'admin'/.test(m[0]));
+test('★ 할 일 줄이 서버를 새로 두드리지 않는다', () => {
+  /* ⚠ 설정을 열 때마다 세면 그것이 곧 요금이다(2026-08-17 요금 조사).
+     이미 화면이 들고 있는 값(needShownItems·trashItems·findOld 결과)만 모은다. */
+  const m = html.match(/function renderSetTodo\(\)[\s\S]*?\n\}/);
+  assert.ok(!/PuPhotoStore\.(listYear|usage|listOwners)/.test(m[0]),
+    '할 일 줄이 저장소를 직접 읽고 있습니다 — 설정을 열 때마다 요금이 붙습니다.');
 });
 
-test('★ 탭 순서를 바꿔도 새 탭이 사라지지 않는다', () => {
-  const ctx = {
-    SET_TABS: [{ id: 'use' }, { id: 'keep' }, { id: 'backup' }, { id: 'admin' }],
-    SET_ORDER_LS: 'o', JSON,
-    localStorage: { getItem: () => JSON.stringify(['backup', 'use']) }   // 옛 순서 — keep·admin 없음
-  };
-  const got = fn('setTabsInOrder', ctx)().map(function (t) { return t.id; });
-  assert.deepEqual(got.slice(0, 2), ['backup', 'use'], '저장한 순서를 지켜야 합니다.');
-  assert.ok(got.includes('keep') && got.includes('admin'),
-    '나중에 만든 탭이 빠지면 그 설정에 영영 못 들어갑니다.');
+test('★ 지난 사진은 세어 본 적이 있을 때만 줄에 낸다', () => {
+  /* 0 과 「아직 모름」을 섞으면 「지난 것이 없다」로 잘못 읽힌다 */
+  const m = html.match(/function renderSetTodo\(\)[\s\S]*?\n\}/);
+  assert.ok(/setOldKnown !== null/.test(m[0]),
+    '안 세어 본 상태를 0 으로 뭉뚱그리면 밀린 일을 놓칩니다.');
 });
 
-test('망가진 순서 기록에도 터지지 않는다', () => {
-  const ctx = {
-    SET_TABS: [{ id: 'use' }, { id: 'keep' }], SET_ORDER_LS: 'o', JSON,
-    localStorage: { getItem: () => '{망가짐' }
-  };
-  assert.deepEqual(fn('setTabsInOrder', ctx)().map((t) => t.id), ['use', 'keep']);
+test('★ 옛 사진 옮기기는 관리자에게만 열린다', () => {
+  /* 탭이 없어졌으므로 조건은 renderSetCards 한 곳에서만 정한다 */
+  const m = html.match(/function renderSetCards\(\)[\s\S]*?\n\}/);
+  assert.ok(m && /migAllowed \? 'block' : 'none'/.test(m[0]),
+    '관리자가 아닌데 옛 사진 옮기기가 열리면 안 됩니다.');
 });
 
-test('관리자 카드는 탭과 원래 조건을 함께 지킨다', () => {
-  const m = html.match(/function renderSetTabs\(\)[\s\S]*?\n\}/);
-  assert.ok(/c\.id === 'mig'[\s\S]{0,120}migAllowed/.test(m[0]),
-    '관리자가 아닌데 탭만으로 옛 사진 옮기기가 열리면 안 됩니다.');
+test('★ 문제 해결 도구는 접혀 있다', () => {
+  /* 창고 점검·옛 사진 옮기기는 뭔가 잘못됐을 때 쓰는 것이다.
+     펼쳐 두면 대표님이 매번 「이건 눌러야 하나」를 판단해야 한다. */
+  assert.ok(/<details id="setTools">/.test(html), '도구가 접히지 않고 펼쳐져 있습니다.');
+  const m = html.match(/<details id="setTools">[\s\S]*?<\/details>/);
+  assert.ok(m && /id="mig"/.test(m[0]), '옛 사진 옮기기가 도구 안에 없습니다.');
+  assert.ok(m && /runProbe\(\)/.test(m[0]), '창고 점검이 도구 안에 없습니다.');
+});
+
+test('★ 없앤 단추가 되살아나지 않는다', () => {
+  /* 「세어 보기」 — 열면 알아서 센다. 「지난 사진 찾기」 — 「펼쳐 보기」와 겹쳤다. */
+  assert.ok(!/id="useBtn"/.test(html), '「세어 보기」 단추가 되살아났습니다.');
+  assert.ok(!/id="oldBtn"/.test(html), '「지난 사진 찾기」 단추가 되살아났습니다.');
 });
 
 /* ══ ③ 지난 것만 보기 ══ */
