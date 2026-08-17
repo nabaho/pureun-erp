@@ -406,7 +406,13 @@ function pickPut(kind, sel) { App.pick = App.pick || {}; App.pick[kind] = sel; }
 /* 지금 화면에 보이는 번호들 — 목록마다 실제로 그리는 것과 **같은 식으로** 뽑는다.
    화면에서 값을 미리 받아 두면 안 그린 채 눌렸을 때 낡은 값으로 처리하게 된다. */
 function pickVisible(kind) {
-  if (kind === 'sites') return sitesModel(App.companies, App.pending, App.arrivals, App.month, Date.now()).rows.map(r => r.id);
+  /* ⚠ 본문 목록은 **왼쪽에서 고른 보기**를 따른다(screenSites 머리말) — 여기서도
+     같은 모델을 써야 「모두 고르기」가 화면에 안 보이는 것까지 고르지 않는다. */
+  if (kind === 'sites') {
+    return sideListModel(App.sideView, sideCtx(), {
+      q: App.colQuery, filter: App.colFilter, order: App.myOrder
+    }).rows.map(r => r.id);
+  }
   if (kind === 'pending') return Object.keys(App.pending || {});
   if (kind === 'drawer') {
     const rows = drawerModel(App.itemsKeep, App.itemsMonth, App.companyId, App.kind, Date.now()).rows;
@@ -885,57 +891,41 @@ function screenSites() {
       + '<span style="margin-left:auto">사업장·귀속월을 채워 주세요 →</span></div>';
   }
 
+  /* ══════ 본문은 **왼쪽에서 고른 보기**를 그대로 따른다 (대표 지적 2026-08-17) ══════
+     예전에는 왼쪽 칸이 「김보람 담당 28곳」을 보여 주는데 본문은 「사업장 전체
+     112곳」을 그렸다. 이름도 번호도 서로 달라 대조가 안 됐고, 대표 말대로
+     「분리된 느낌」이었다. 이제 목록 하나를 두 곳이 나눠 그린다 —
+     **같은 보기 · 같은 차례 · 같은 번호.** 찾기 줄과 상태 칩도 함께 걸린다.
+
+     ⚠ 여기서 따로 세거나 따로 거르면 두 곳이 또 다른 말을 한다. 반드시
+     colListHtml 과 **똑같은 인자**로 부른다. */
+  const v = sideListModel(App.sideView, sideCtx(), {
+    q: App.colQuery, filter: App.colFilter, order: App.myOrder
+  });
+
   /* ── 이 달 현황 (대표 결정 2026-08-17, 목업 E안) ──
      첫 화면을 열었을 때 사람이 하려는 일은 「무슨 일이 있나 보기」다. 그런데 그
-     자리에 이름만 112줄 있으니 아무것도 안 보였다(대표 지적 「대시보드와 사업장의
-     연결이 원활하지 않다」). 목록은 그대로 두고 그 위에 숫자를 얹는다 —
-     몇 곳인가 · 몇 곳이 왔나 · 몇 곳이 아직인가.
-     ⚠ 왼쪽 칸과 **같은 수를 세야 한다.** 여기서 따로 세면 두 곳이 다른 말을 한다. */
-  const arrived = m.rows.filter(r => r.arrived).length;
+     자리에 이름만 112줄 있으니 아무것도 안 보였다. 목록 위에 숫자를 얹는다.
+     ⚠ 지금 **보고 있는 보기** 기준이다 — 김보람을 골랐으면 28곳이 기준이다. */
+  const arrived = v.rows.filter(r => r.arrived).length;
   h += '<div class="ovw">'
-    + '<div class="ov"><div class="k">사업장</div><div class="v">' + m.rows.length + '</div></div>'
+    + '<div class="ov"><div class="k">사업장</div><div class="v">' + v.rows.length + '</div></div>'
     + '<div class="ov ok"><div class="k">자료 온 곳</div><div class="v">' + arrived + '</div></div>'
     + '<div class="ov warn"><div class="k">아직 안 온 곳</div><div class="v">'
-    + (m.rows.length - arrived) + '</div></div>'
+    + (v.rows.length - arrived) + '</div></div>'
     + '</div>';
 
-  /* 내 담당 업체 — 업체는 푸른이알피에서 당겨오고, 담당자 매칭도 그쪽 칸
-     (managerMain·managerSubs)을 그대로 쓴다(대표 지시 2026-08-13: "각 사람마다
-     대시보드에 자기 업체정리되어야 하며 업체는 푸른이알피에서 당겨오기").
-     아래 전체 목록과 달리 체크·번호 없이 훑어보는 요약 줄이다 — 눌러 바로 들어간다.
-
-     ⚠ 담당 업체가 없어도 **감추지는 않는다** — 이 함의 원칙이다(빈 칸을 숨기면
-     고장으로 보인다. 「아직 받은 공유가 없습니다」와 같은 자리). 다만 예전에는
-     그 안내가 **큰 빈 칸**으로 화면 맨 위를 차지했다. 담당이 없는 사람에게는 늘
-     그 상태라 자리만 먹는다 — 그래서 말은 그대로 하되 **한 줄로** 줄인다
-     (대표 지적 2026-08-17). */
-  const mine = m.rows.filter(r => r.mine);
-  if (mine.length) {
-    h += '<h1 style="font-size:15px">내 담당 업체'
-      + ' <span class="sub" style="margin:0;font-weight:400">' + mine.length + '곳</span></h1>';
-    h += '<div class="card" style="margin-bottom:16px">'
-      + mine.map(r => '<div class="row" style="cursor:pointer" onclick="App.go(\'drawer\',{companyId:\'' + jsq(r.id)
-        + '\',companyName:\'' + jsq(r.name) + '\',kind:\'attend\',query:\'\'})">'
-        + '<b style="flex:1">' + esc(r.name) + '</b>'
-        + '<span class="chip" style="background:' + (r.arrived ? 'var(--ok)' : 'var(--warn)') + '">'
-        + (r.arrived ? '도착' : '미도착') + '</span>'
-        + '<span class="sub" style="margin:0">' + r.count + '장</span></div>').join('')
-      + '</div>';
-  } else {
-    h += '<div class="sub" style="margin-bottom:16px">내 담당 업체 없음'
-      + ' — 업체관리에 주담당·부담당으로 등록된 업체가 없습니다.</div>';
-  }
-
-  /* 「전체」라고 쓰되 무엇의 전체인지 못 박는다 — 371곳이 다 나오던 때(2026-08-17)
-     대표가 "왜 모든 사업장 다 가져왔나" 물었다. 반대로 걸러 놓고 말을 안 하면
-     이번에는 "내 업체가 왜 없나"가 된다. */
-  /* 두 목록의 **역할을 갈라 적는다**(목업 E안). 왼쪽 칸도 같은 사업장을 보여
-     주지만 그쪽은 「서랍을 보며 옆에서 옮겨 다니는 칸」이고, 여기는 「골라서
-     한꺼번에 처리하는 칸」이다. 안 적으면 같은 것이 왜 둘인지 알 수 없다. */
-  h += '<h1>사업장 전체</h1><div class="sub">업체관리에서 유형이 「급여」인 곳 · ' + m.rows.length + '곳'
-    + ' · 계약중단·종료한 업체는 뺐습니다'
-    + ' · 장수는 그 업체에 온 자료 전체입니다'
-    + '<br>골라서 한꺼번에 처리할 때 여기서 합니다 — 한 곳만 열어 볼 때는 왼쪽 목록이 빠릅니다</div>';
+  /* 제목도 왼쪽 칸과 **같은 말**이어야 한다 — 왼쪽이 「김보람 담당」이면 여기도
+     그렇다. 예전에는 늘 「사업장 전체」라 적혀 있어 무엇을 보고 있는지 어긋났다. */
+  h += '<h1>' + esc(v.title) + '</h1><div class="sub">'
+    + (App.sideView === 'all' || App.sideView === 'alllate'
+      ? '업체관리에서 유형이 「급여」인 곳 · 계약중단·종료한 업체는 뺐습니다 · '
+      : '')
+    + '장수는 그 업체에 온 자료 전체입니다'
+    + (App.colQuery || App.colFilter !== 'all'
+      ? '<br>왼쪽 칸에서 걸러 둔 것이 여기에도 걸려 있습니다'
+      : '<br>골라서 한꺼번에 처리할 때 여기서 합니다 — 한 곳만 열어 볼 때는 왼쪽 목록이 빠릅니다')
+    + '</div>';
 
   h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">'
     + '<span>기준 월</span>'
@@ -949,28 +939,52 @@ function screenSites() {
   /* 넘버링 + ㅁ 체크로 골라 둘 수 있다(대표 지시 2026-08-10 명함첩 · 2026-08-13
      급여데이터함에도 적용 — 앞으로 만드는 목록에도 항상 이 방식을 쓴다).
      업체명을 먼저, 도착 표시는 뒤로 — 눈이 업체명부터 읽게 한다(대표 지시 2026-08-13). */
-  const siteIds = m.rows.map(r => r.id);
+  const siteIds = v.rows.map(r => r.id);
 
   h += '<div class="card">';
-  if (m.rows.length) {
+  if (v.isShared) {
+    /* 공유받음은 업체 줄이 아니라 「누가 무엇을 왜」다 — 골라서 한꺼번에 할 것이
+       없으므로 체크·일괄을 두지 않는다(왼쪽 칸과 같은 줄 모양). */
+    h += v.rows.length
+      ? v.rows.map(r => '<div class="row" style="cursor:pointer" onclick="openShared(\'' + jsq(r.shareId) + '\')">'
+        + '<b style="flex:1">' + esc(r.name) + '</b>'
+        + '<span class="sub" style="margin:0">' + esc(r.owner) + ' · ' + esc((r.tags || []).join(', ')) + '</span>'
+        + '</div>').join('')
+      : '<div class="empty">아직 받은 공유가 없습니다.</div>';
+  } else if (v.rows.length) {
     /* 사업장 목록에는 지울 것도 옮길 것도 없다. 실제로 필요한 일은
        「누가 아직 안 보냈나」를 추려 밖으로 넘기는 것뿐이라 그 둘만 둔다. */
     h += pickBar('sites', siteIds,
       '<span class="pkacts"><button class="btn" onclick="copySiteNames()">📋 이름 복사</button>'
       + '<button class="btn" onclick="downloadArrivalCsv()">⬇ 도착 현황 내려받기</button></span>');
     const siteSel = pickOf('sites');
-    h += m.rows.map((r, i) =>
+    h += v.rows.map((r, i) =>
       '<div class="row' + (pickOn(siteSel, r.id) ? ' pkon' : '') + '">'
       + '<label onclick="event.stopPropagation()"><input type="checkbox" '
       + (pickOn(siteSel, r.id) ? 'checked' : '') + ' onchange="pickHit(\'sites\',\'' + jsq(r.id) + '\')"></label>'
       + '<span class="pkno">' + (i + 1) + '</span>'
-      + '<b style="flex:1;cursor:pointer" onclick="App.go(\'drawer\',{companyId:\'' + jsq(r.id)
-      + '\',companyName:\'' + jsq(r.name) + '\',kind:\'attend\',query:\'\'})">' + esc(r.name) + '</b>'
+      /* ⚠ 왼쪽 칸과 **같은 길로** 연다. 예전에는 여기서 곧장 App.go('drawer') 를
+         불러 **내 자리**의 서랍을 열었다 — 남의 담당 업체를 그렇게 열면 그 사람
+         자리에 있는 자료가 안 보이는데도 「0건」이라 적혀, 자료가 없는 것으로
+         읽혔다. 같은 사업장이 왼쪽에서는 안 열리고 여기서는 열리던 어긋남도
+         이것 때문이었다(대표 지적 「분리된 느낌」). */
+      + '<b style="flex:1;cursor:pointer" onclick="openColCompany(\'' + jsq(r.id) + '\',\'' + jsq(r.name)
+      + '\',' + (r.mine ? 'true' : 'false') + ',\'' + jsq(r.ownerUid) + '\',\'' + jsq(r.ownerName) + '\')">'
+      + esc(r.name) + '</b>'
+      + (v.showOwner && r.owner ? '<span class="sub" style="margin:0">' + esc(r.owner) + '</span>' : '')
       + '<span class="chip" style="background:' + (r.arrived ? 'var(--ok)' : 'var(--warn)') + '">'
       + (r.arrived ? '도착' : '미도착') + '</span>'
       + '<span class="sub" style="margin:0">' + r.count + '장</span></div>').join('');
   } else {
-    h += '<div class="empty">업체관리 명단을 읽지 못했습니다.<br>푸른이알피 업체관리에 업체를 먼저 등록해 주세요.</div>';
+    /* 빈 까닭을 갈라 말한다 — 「명단을 못 읽었다」와 「이 보기에 없다」는 다르다. */
+    h += '<div class="empty">'
+      + (!App.companies.length
+        ? '업체관리 명단을 읽지 못했습니다.<br>푸른이알피 업체관리에 업체를 먼저 등록해 주세요.'
+        : (App.colQuery ? '찾는 사업장이 없습니다.'
+          : (App.sideView === 'mine'
+            ? '내 담당 업체가 없습니다.<br>업체관리에 주담당·부담당으로 등록하면 여기 나옵니다.'
+            : '해당하는 사업장이 없습니다.')))
+      + '</div>';
   }
   h += '</div>';
 
@@ -1010,10 +1024,13 @@ function screenSites() {
    지금 화면에 그려진 것과 **같은 식으로** 다시 뽑는다 — 미리 받아 두면
    기준 월을 바꾼 뒤 눌렀을 때 낡은 숫자가 나간다(pickVisible 과 같은 원칙). */
 function selectedSiteRows() {
-  const myEmail = (App.me && App.me.email) || '';
-  const m = sitesModel(App.companies, App.pending, App.arrivals, App.month, Date.now(), myEmail, App.allCompanies);
+  /* 본문 목록과 **같은 모델**을 쓴다 — 다르게 세면 「이름 복사」가 화면에 없던
+     사업장을 뱉는다(screenSites 머리말과 같은 까닭). */
+  const v = sideListModel(App.sideView, sideCtx(), {
+    q: App.colQuery, filter: App.colFilter, order: App.myOrder
+  });
   const sel = pickOf('sites');
-  return m.rows.filter(r => pickOn(sel, r.id));
+  return v.rows.filter(r => pickOn(sel, r.id));
 }
 
 /* 고른 업체 이름만 복사한다 — 자료 안 온 곳을 카톡·메일로 챙길 때 그대로 붙여넣는다. */

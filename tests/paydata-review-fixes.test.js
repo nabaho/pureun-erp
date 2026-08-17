@@ -48,12 +48,16 @@ function loadSites() {
   vm.createContext(sandbox);
   new vm.Script(store, { filename: 'store.js' }).runInContext(sandbox);
   new vm.Script([
-    'const S = window.PuPaydataStore; S.init({uid:"U1"});',
-    'const App = { month:"2026-08", pick:{}, companies:[], pending:{}, arrivals:{} };',
-    cut('esc'), cut('jsq'), cut('thisMonth'),
+    /* 본문 목록은 왼쪽에서 고른 보기를 따른다(2026-08-17) — 그 계산 층도 함께 싣는다. */
+    'const S = window.PuPaydataStore; S.init({uid:"U1", name:"권형하", isAdmin:true});',
+    'const App = { month:"2026-08", pick:{}, companies:[], pending:{}, arrivals:{},'
+      + ' me:{uid:"U1", email:"p001@pureun.kr"}, owners:{}, shares:{}, myOrder:[], dir:null,'
+      + ' sideView:"all", colFilter:"all", colQuery:"" };',
+    cut('esc'), cut('jsq'), cut('thisMonth'), cut('coArrivedAt'),
     cut('pickOn'), cut('pickToggle'), cut('pickSetAll'), cut('pickList'),
     cut('pickAllOn'), cut('pickPrune'), cut('pickOf'), cut('pickPut'),
-    cut('companyDocCount'), cut('sitesModel'), cut('pickBar'), cut('screenSites'),
+    cut('companyDocCount'), cut('sitesModel'), cut('sideCtx'), cut('sideListModel'),
+    cut('pickBar'), cut('screenSites'),
     'window.App = App; window.screenSites = screenSites;'
   ].join('\n'), { filename: 'screen.js' }).runInContext(sandbox);
   return sandbox;
@@ -65,12 +69,13 @@ test("★ 업체 이름에 ' 가 있어도 onclick 이 성립한다", () => {
   const out = sb.window.screenSites.call(sb);
   /* 속성이 브라우저를 거친 뒤의 모습으로 되돌려 놓고 문법이 성립하는지 본다 —
      예전 코드는 여기서 SyntaxError 가 나 그 줄이 통째로 안 눌렸다. */
-  const m = out.match(/onclick="(App\.go\('drawer'[^"]*)"/);
+  /* 2026-08-17부터 본문 목록도 왼쪽과 **같은 길**로 연다(openColCompany). */
+  const m = out.match(/onclick="(openColCompany\([^"]*)"/);
   assert.ok(m, '업체 줄의 onclick 을 찾지 못했습니다');
   const asBrowserSees = m[1].replace(/&#39;/g, "'").replace(/&quot;/g, '"')
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
   assert.ok(asBrowserSees.indexOf("김\\'스토어") >= 0, '이름의 따옴표가 막혀 있지 않습니다: ' + asBrowserSees);
-  assert.doesNotThrow(() => new vm.Script('var App={go:function(){}};' + asBrowserSees),
+  assert.doesNotThrow(() => new vm.Script('function openColCompany(){};' + asBrowserSees),
     '이름의 작은따옴표가 문자열을 끊었습니다 — 그 줄은 눌러도 아무 일도 안 일어납니다');
 });
 
