@@ -64,11 +64,18 @@ test('★ 전 직원을 볼 때는 누구 것인지 꼬리표가 붙는다', () 
   /* 세는 규칙은 이미 맞다 — 담당자는 「누구 사진」에 남을 고를 줄이 아예 없고,
      총괄 관리자만 전 직원을 볼 수 있다. 다만 글자만 봐서는 내 것 3장인지
      전 직원 3장인지 구분이 안 됐다. */
+  /* ⚠ 2026-08-17: 꼬리표 만드는 곳이 needScopeLabel 로 빠졌다 — 위 칸과 아래
+     「모두 확인」 단추가 «같은 말»을 써야 해서다(따로 적었더니 위는 「전 직원」,
+     아래는 「내 사진」으로 갈렸다). 어느 함수에 있느냐가 아니라 «꼬리표가 붙느냐»
+     를 본다. */
   const fn = app.match(/function renderNeedBox\(\)[\s\S]*?\n\}/);
   assert.ok(fn, 'renderNeedBox 를 찾지 못했습니다.');
-  assert.ok(/gridOwner === ALL_OWNERS/.test(fn[0]),
+  const lab = app.match(/function needScopeLabel\(\)[\s\S]*?\n\}/);
+  assert.ok(lab, 'needScopeLabel 을 찾지 못했습니다.');
+  assert.ok(/needScopeLabel\(\)/.test(fn[0]), '확인 필요 칸에 꼬리표를 안 붙입니다.');
+  assert.ok(/gridOwner === ALL_OWNERS/.test(lab[0]),
     '전 직원을 보는 중인지 안 가리면 꼬리표가 늘 붙거나 늘 안 붙습니다.');
-  assert.ok(/전 직원/.test(fn[0]), '꼬리표 글자가 없습니다.');
+  assert.ok(/전 직원/.test(lab[0]), '꼬리표 글자가 없습니다.');
 });
 
 test('담당자는 남의 확인 필요를 볼 길이 없다', () => {
