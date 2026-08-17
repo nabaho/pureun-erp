@@ -936,6 +936,15 @@
      여기 안 맞으면 사람 이름이나 메모가 잘못 들어간 것이다. */
   var SID_RE = /^[A-Za-z]-?\d{2,3}$/;
 
+  /* 사번을 줄 세우기 좋은 열쇠로 바꾼다 — 하이픈은 있기도 없기도 하고(A-1 · A1),
+     숫자는 자릿수가 다르다(A-9 가 A-10 보다 앞이어야 한다). 글자는 대문자로,
+     숫자는 세 자리로 채워 글자순 비교 하나로 끝낸다. */
+  function sidKey(sid) {
+    var m = String(sid || '').match(/^([A-Za-z])-?(\d{1,4})$/);
+    if (!m) return 'zz' + String(sid || '');
+    return m[1].toUpperCase() + ('000' + m[2]).slice(-4);
+  }
+
   function managerRoster(companies, dirRows, owners) {
     var names = rosterNameMap(dirRows);
     var byEmail = {};
@@ -983,8 +992,16 @@
       });
     });
 
+    /* 사번 순으로 세운다(대표 지시 2026-08-17). 가나다순이면 「김보람」이 둘일 때
+       어느 쪽이 진짜인지 이름만으로는 안 갈린다 — 사번이 곧 그 사람이다.
+       ⚠ 사번이 아닌 값(badSid)은 **맨 아래**로 내린다. 사이에 섞여 번호를 받으면
+       멀쩡한 담당자처럼 보여, 고쳐야 할 것이 목록에 묻힌다. */
     var people = order.map(function (s) { return bySid[s]; });
-    people.sort(function (a, b) { return String(a.name).localeCompare(String(b.name), 'ko'); });
+    people.sort(function (a, b) {
+      if (a.badSid !== b.badSid) return a.badSid ? 1 : -1;
+      if (a.badSid) return String(a.name).localeCompare(String(b.name), 'ko');
+      return sidKey(a.sid) < sidKey(b.sid) ? -1 : (sidKey(a.sid) > sidKey(b.sid) ? 1 : 0);
+    });
     return { people: people, unassigned: unassigned };
   }
 
@@ -1321,6 +1338,7 @@
     matchCompanyName: matchCompanyName,
     isMyCompany: isMyCompany,
     managerRoster: managerRoster,
+    sidKey: sidKey,
     listUserDir: listUserDir,
     applyOrder: applyOrder,
     myOrderPath: myOrderPath,

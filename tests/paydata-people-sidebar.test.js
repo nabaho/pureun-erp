@@ -130,10 +130,13 @@ test('★ 급여데이터함에 안 들어온 담당자는 그렇다고 알린�
   // 이름·업체는 보이되 그 사람 자리는 못 연다 — 미리 말해 줘야 헛걸음을 안 한다
   const { W } = loadApp({ companies: COMPANIES, owners: { U1: OWNERS.U1 } }, { isAdmin: true });
   const h = W.viewBarHtml();
-  assert.match(h, /아직 이 함에 들어오지 않은 사람/, '안 들어온 사람이라는 것을 알려야 합니다');
+  /* 안내는 **한 줄**로 접혀 있고 긴 말은 title 에 있다(대표 지시 2026-08-17
+     「좌우가 균형있게」). 그래서 글자를 못 박지 않고 「안내가 하나 있고, 그것이
+     안 들어왔다는 뜻을 담고 있다」만 본다 — 문구는 다듬을 수 있어야 한다. */
+  const notes = h.match(/<div class="pnote"[^>]*>[^<]*<\/div>/g) || [];
+  assert.equal(notes.length, 1, '사람마다 되풀이하면 아홉 줄이 됩니다 — 맨 위에 한 번만 적습니다');
+  assert.match(notes[0], /안 들어옴|들어오지 않은/, '안 들어온 사람이라는 것을 알려야 합니다');
   assert.match(h, /class="vrow prow[^"]*off"/, '안 들어온 사람은 이름이 연해야 가려집니다');
-  assert.equal((h.match(/아직 이 함에 들어오지 않은 사람/g) || []).length, 1,
-    '사람마다 되풀이하면 아홉 줄이 됩니다 — 맨 위에 한 번만 적습니다');
 });
 
 test('★ 공유받음 보기가 개수와 함께 보인다', () => {
