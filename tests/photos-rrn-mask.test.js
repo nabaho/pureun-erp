@@ -225,7 +225,122 @@ test('★ 가린 사본을 못 만들면 원본을 보내지 않는다', () => {
   assert.doesNotMatch(arm, /readPhoto\(/, '★ 못 가린 원본이 판독기로 갑니다.');
 });
 
-/* ══════ ⑥ 단추 ══════ */
+/* ══════ ⑥ 주민번호 «말고 다른 것»이 덮이면 안 된다 (대표 지시 2026-08-17) ══════
+   계약기간·보수·상호까지 가려진 채로 읽히면 판독 결과가 비거나 **틀린 채로** 들어온다.
+   없는 것보다 틀린 것이 나쁘다 — 아무도 의심하지 않으므로. */
+function maskUi(boxes) {
+  const src = fs.readFileSync(path.join(R, 'js', 'pu-rrn-mask-ui.js'), 'utf8');
+  const ctx = { console, Math, Number, Object, Array, Promise, Error, String };
+  ctx.window = ctx; ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(src, ctx);
+  const state = { status: 'ready', url: 'data:x', boxes: boxes || [], err: '', autoNote: '' };
+  ctx.PuRrnMaskUi.init({ state: function () { return state; }, render: function () { } });
+  return ctx.PuRrnMaskUi;
+}
+
+test('덮인 넓이 재기', async (t) => {
+  await t.test('★ 주민번호 한 줄은 «좁다» — 되묻지 않는다', () => {
+    /* 가로로 길게 한 번 = 폭 60% × 높이 3% ≈ 1.8% */
+    const r = maskUi([{ x: .2, y: .5, w: .6, h: .03 }]).coveredRatio();
+    assert.ok(r < 0.2, '주민번호 한 줄인데 넓다고 봅니다(' + r + ') — 매번 되묻게 됩니다.');
+  });
+
+  await t.test('★ 종이를 통째로 덮으면 «넓다»', () => {
+    assert.ok(maskUi([{ x: 0, y: 0, w: 1, h: 1 }]).coveredRatio() > 0.2);
+  });
+
+  await t.test('★ 여러 곳을 조금씩 가린 것도 «합쳐» 센다', () => {
+    /* 주민번호가 두 곳인 계약서는 정상이다 — 그래도 합이 좁으면 안 되묻는다 */
+    const two = maskUi([{ x: .1, y: .2, w: .5, h: .03 }, { x: .1, y: .7, w: .5, h: .03 }]).coveredRatio();
+    assert.ok(two < 0.2, '주민번호 두 곳인데 되묻습니다(' + two + ')');
+    /* ⚠ **하나하나는 좁은데 합치면 넓은** 경우로 재야 한다. 큰 것 둘로 재면
+       「마지막 것만 보기」로 고장 나도 통과한다(뮤테이션에서 실제로 살아남았다). */
+    const many = maskUi([
+      { x: 0, y: 0, w: .5, h: .3 },      // 15%
+      { x: 0, y: .4, w: .5, h: .3 }      // 15%  → 합 30%
+    ]).coveredRatio();
+    assert.ok(many > 0.2,
+      '조금씩 여러 번 그어 덮은 것을 못 잡습니다(' + many + ') — 하나씩만 보고 있습니다.');
+  });
+
+  await t.test('가린 곳이 없으면 0', () => {
+    assert.equal(maskUi([]).coveredRatio(), 0);
+  });
+
+  await t.test('이상한 값이 와도 안 터진다', () => {
+    const r = maskUi([{ w: 'x', h: null }, {}, null]).coveredRatio();
+    assert.equal(r, 0, '이상한 값으로 되묻거나 터지면 안 됩니다: ' + r);
+  });
+});
+
+/* 되묻기를 **실제로 돌려** 본다.
+   ⚠ 글자로만 보면(「confirm 이 있나」) 한도를 1 로 바꾸거나 「예」를 눌러도 안 가게
+     만들어도 통과한다 — 뮤테이션에서 넷이 살아남아 이렇게 고쳤다. */
+function runConfirm(boxes, answer) {
+  const src = fs.readFileSync(path.join(R, 'js', 'pu-rrn-mask-ui.js'), 'utf8');
+  const got = { asked: [], read: 0, alerts: [] };
+  const ctx = {
+    console, Math, Number, Object, Array, Promise, Error, String, JSON,
+    viewerId: 'p1',
+    photoMask: { status: 'ready', url: 'data:image/jpeg;base64,AAA', boxes: boxes || [], err: '', autoNote: '' },
+    confirm: function (m) { got.asked.push(m); return !!answer; },
+    alert: function (m) { got.alerts.push(m); },
+    $: function () { return { innerHTML: '' }; },
+    readPhoto: function () { got.read++; return Promise.resolve(); },
+    renderGridBar: function () { }, renderGrid: function () { },
+    renderReadPanel: function () { }, maskItem: function () { return null; },
+    esc: String,
+    /* 사본 만들기는 캔버스가 필요하다 — 여기서는 가짜로 둔다(보는 것은 «되묻기»다) */
+    PuRrnMask: { maskToDataUrl: function () { return 'data:image/jpeg;base64,MASKED'; } }
+  };
+  ctx.window = ctx; ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(src, ctx);
+  ctx.PuRrnMaskUi.init({ state: function () { return ctx.photoMask; }, render: function () { } });
+  vm.runInContext(
+    app.slice(app.indexOf('const MASK_WIDE ='), app.indexOf('const MASK_WIDE =') + 40).split('\n')[0] + '\n' +
+    cutFn(app, 'function photoMaskConfirm(') + '\nphotoMaskConfirm();', ctx);
+  return got;
+}
+
+const 좁게 = [{ x: .2, y: .5, w: .6, h: .03 }];       // 주민번호 한 줄 ≈ 1.8%
+const 넓게 = [{ x: 0, y: 0, w: .8, h: .8 }];          // 64%
+
+test('넓게 가리면 되묻는다 — 막지는 않는다', async (t) => {
+  await t.test('★ 주민번호 한 줄에는 «안 묻는다» — 매번 물으면 사람이 그냥 눌러 버린다', () => {
+    const r = runConfirm(좁게, true);
+    assert.deepEqual(r.asked, [], '좁게 그었는데 되묻습니다 — 되묻기가 의미를 잃습니다.');
+    assert.equal(r.read, 1, '판독이 안 갔습니다.');
+  });
+
+  await t.test('★ 넓게 덮으면 «묻는다»', () => {
+    const r = runConfirm(넓게, true);
+    assert.equal(r.asked.length, 1, '계약기간·보수까지 덮였는데 그냥 보냅니다.');
+    assert.match(r.asked[0], /%/, '몇 %가 덮였는지 말해 줘야 사람이 판단합니다.');
+  });
+
+  await t.test('★ 「아니오」 면 판독하지 않는다', () => {
+    const r = runConfirm(넓게, false);
+    assert.equal(r.read, 0, '★ 되물어 놓고 「아니오」인데도 보냈습니다.');
+  });
+
+  await t.test('★ 「예」 면 그대로 판독한다 — 사람이 보고 정한 것을 막지 않는다', () => {
+    /* 주민번호가 두 곳인 계약서·큰 도장 자리 등 넓게 가리는 것이 맞는 경우가 있다.
+       기계가 가로막으면 그 서류를 영영 못 읽는다. */
+    const r = runConfirm(넓게, true);
+    assert.equal(r.read, 1, '「예」를 눌러도 안 갑니다 — 그 서류를 영영 못 읽습니다.');
+  });
+});
+
+test('★ 화면이 «주민번호 자리만» 가리라고 말한다', () => {
+  /* 「넓게 덮을수록 안전하다」고 생각하기 쉬운데 사실은 반대다 */
+  const h = panel({ status: 'ready', url: 'data:x', boxes: [] });
+  assert.match(h, /주민번호 자리만/);
+  assert.match(h, /판독 결과가 비거나 틀립니다/);
+});
+
+/* ══════ ⑦ 단추 ══════ */
 test('★ 판독 자리에 「가리고 판독」이 함께 있다', () => {
   /* ⚠ 「startPhotoMask 라는 낱말이 있나」로는 못 잡는다 — 단추를 만들어 놓고
      **줄에 안 붙이면** 그 낱말은 그대로 남는다(뮤테이션에서 실제로 살아남았다).

@@ -166,6 +166,29 @@
     return calc().maskToDataUrl(el('maskImg'), s.boxes);
   }
 
+  /* ── 얼마나 덮였나 (0~1) ──
+     ⚠ **가려야 할 것은 주민번호뿐이다**(대표 지시 2026-08-17). 계약기간·보수·상호까지
+       덮이면 판독 결과가 비거나 틀린 채로 들어온다 — 없는 것보다 틀린 것이 나쁘다
+       (아무도 의심하지 않으므로).
+     주민번호 한 줄은 종이의 몇 %에 지나지 않는다. 그보다 훨씬 넓게 덮였으면
+     사람이 손이 미끄러진 것이니 되묻는다.
+     ⚠ 겹친 자리는 두 번 세어 «넓게» 잡힌다 — 일부러 그렇게 둔다. 덜 묻는 것보다
+       한 번 더 묻는 쪽이 안전하다. */
+  function coveredRatio() {
+    /* ⚠ 숫자가 아닌 값이 섞이면 NaN 이 되고, NaN 은 어떤 비교에도 거짓이라
+       **되묻기가 통째로 죽는다**(넓게 덮여도 조용히 지나간다). 0 으로 떨어뜨린다. */
+    var num = function (v) {
+      var n = Number(v);
+      return (isFinite(n) && n > 0) ? n : 0;
+    };
+    var s = st();
+    var sum = 0;
+    ((s && s.boxes) || []).forEach(function (b) {
+      sum += num(b && b.w) * num(b && b.h);
+    });
+    return sum > 1 ? 1 : sum;
+  }
+
   /* 상태 첫값 — 두 앱이 같은 모양을 쓰게 한 곳에서 만든다.
      ⚠ 넘긴 뒤 반드시 비운다. 안 비우면 **다음 서류에 앞 사진의 사각형이 남는다.** */
   function blank() { return { status: 'idle', url: '', boxes: [], err: '', autoNote: '' }; }
@@ -175,6 +198,7 @@
     down: down, move: move, up: up, cancelDrag: cancelDrag,
     delBox: delBox, undo: undo, clear: clear,
     maskedDataUrl: maskedDataUrl,
+    coveredRatio: coveredRatio,
     blank: blank,
     _viewRect: viewRect
   };
