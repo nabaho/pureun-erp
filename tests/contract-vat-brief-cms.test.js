@@ -256,8 +256,19 @@ function cmsCtx(isCMS, extra){
   t('★ kinds 가 없어도 안 터진다', threw, '');
 }
 // 배선 — 박스 안으로 들어갔고, 옛 자리는 비었고, 유형 없을 때 대비가 있다
-t('★ CMS 가 종류별 세부설정 박스 안에 있다',
-  /\}\),\s*[\r\n]+\s*\/\/ CMS 자동이체 — 계약 전체에 하나뿐인 값[\s\S]{0,200}?cmsBlock\(\)\s*[\r\n]+\s*\),/.test(src), true);
+/* ★ 지키려는 것은 「CMS 가 종류별 세부설정 박스 «안에» 있다」이지, 「박스의 «맨 마지막»
+   이다」가 아니다. 전에는 cmsBlock() 바로 뒤에 박스 닫는 괄호가 오는 모양까지 못 박아,
+   뒤에 형제 한 줄(📄 연결된 계약서)이 붙자 뜻은 그대로인데 검사만 깨졌다.
+   이제 «종류별 줄 map 이 끝난 뒤 · 박스가 닫히기 전» 사이에 있는지만 본다. */
+t('★ CMS 가 종류별 세부설정 박스 안에 있다', (function(){
+  var open = src.indexOf("'📋 종류별 세부설정'");
+  if(open < 0) return false;
+  var cms = src.indexOf('cmsBlock()', open);
+  if(cms < 0) return false;
+  // 박스가 닫히는 곳 — 그 다음에 오는 「계약유형을 아직 안 골랐으면」 대비 줄이 경계다
+  var boxEnd = src.indexOf("(f.kinds||[]).length === 0 && h('div', { className:'fld' }", open);
+  return boxEnd > 0 && cms < boxEnd;
+})(), true);
 t('★ 진행상태 아래 옛 CMS 칸이 사라졌다',
   /\/\/ CMS 자동이체 \(자문\/급여대행 계약에 적용\)/.test(src), false);
 t('★ 계약유형을 안 골랐을 때도 CMS 를 손댈 수 있다',
