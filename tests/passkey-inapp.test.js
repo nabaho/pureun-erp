@@ -60,21 +60,18 @@ t('복사한 주소', copied, 'https://nabaho.github.io/pureunall/enter.html');
 t('★ 복사도 막히면 그렇게 알린다',
   mk('Mozilla/5.0 (iPhone) Instagram 300.0').PuPasskey.openInChrome(), 'manual');
 
-console.log('\n[④ 화면이 세 갈래로 갈린다]');
-const P = PORTAL;
-t('세 갈래로 정한다', /var mode = already \|\| later \? 'hide' : \(can \? 'reg' : \(inapp \? 'chrome' : 'hide'\)\);/.test(P), true);
-/* ★ 되는 기기 = 등록 권유 / 앱 안 = 크롬 안내 / 그 밖 = 아무 말 안 함(정말 안 되는 기기) */
-t('★ 앱 안이면 까닭을 말해 준다', /지금은 네이버·카카오 앱 안에서 보고 계십니다/.test(P), true);
-t('★ 제목도 바꾼다', /🔒 지문 로그인은 크롬에서만 됩니다/.test(P), true);
-t('그때는 등록 단추를 감춘다', /\$\('pkRegBtn'\)\.style\.display = 'none';/.test(P), true);
-t('크롬 단추를 보인다', /\$\('pkOpenChrome'\)\.style\.display = '';/.test(P), true);
-t('이미 등록했거나 「나중에」면 아무것도 안 뜬다', /already \|\| later \? 'hide'/.test(P), true);
-/* 정말 안 되는 기기(옛 폰 등)에는 조용히 감춘다 — 해 줄 수 있는 게 없다 */
-t('★ 앱도 아니고 안 되는 기기면 감춘다', /\(inapp \? 'chrome' : 'hide'\)/.test(P), true);
+/* ⚠ [④][⑤] 화면 갈래 검사를 걷어냈다 (2026-08-16 대표 지시).
+     대표: "우선 크롬으로 하는 건 중단해 달라. 추후에 다른 직원들과 논의하여 정리한다."
+     앱 안 브라우저에서 「크롬에서 열기」를 권하던 갈래가 «결정으로» 사라졌다 —
+     코드가 틀려서가 아니라 정책이 바뀌어서다.
 
-console.log('\n[⑤ 복사·안내 문구가 실제로 있다]');
-t('복사했다고 알린다', /주소를 복사했습니다/.test(P), true);
-t('복사도 안 되면 주소를 보여 준다', /크롬을 열고 아래 주소로 들어와 주십시오/.test(P), true);
+   ★ 여기 남은 것은 «부품» 검사다 — inApp() 판별과 openInChrome() 은 그대로 살아 있다.
+     다시 켤 때 새로 만들 필요가 없다.
+   ★ 지금의 화면 규칙(휴대폰에서만 뜬다)은 tests/passkey-phone-only.test.js 가 지킨다.
+     거기서는 코드 «모양» 을 못 박지 않고 함수를 실제로 돌려 어느 기기에서 뜨는지 본다. */
+console.log('\n[④ 다시 켤 때 쓸 부품은 남겨 둔다]');
+t('크롬으로 여는 부품이 살아 있다',
+  typeof mk('Mozilla/5.0 (Linux; Android 13) Chrome/120 Mobile NAVER(inapp)').PuPasskey.openInChrome, 'function');
 
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===\n');
 process.exit(fail ? 1 : 0);
