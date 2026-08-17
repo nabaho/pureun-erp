@@ -529,7 +529,8 @@ test('★ 쪽 화면에 「붙여넣을 내용 복사」 단추가 없다', () =
 test('★ 쪽 화면이 «왜» 붙여넣기를 안 주는지 한국어로 적는다', () => {
   const ctx = pageBox();
   ctx.App = { draft: { kind: 'page', key: 'inquiry', text: '가나다' }, pages: {}, dirty: false };
-  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('pageEdit'));
+  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
+    + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   assert.match(h, /대조/, '대조용이라는 말이 없습니다');
   assert.match(h, /지도|표|구획/, '무엇이 사라지는지 안 적혀 있습니다');
@@ -539,7 +540,8 @@ test('★ 쪽 화면이 «왜» 붙여넣기를 안 주는지 한국어로 적�
 test('★ 쪽 화면에서 홈페이지 관리자 화면으로 갈 길을 준다', () => {
   const ctx = pageBox();
   ctx.App = { draft: { kind: 'page', key: 'inquiry', text: '가나다' }, pages: {}, dirty: false };
-  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('pageEdit'));
+  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
+    + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   assert.ok(h.indexOf(ctx.PuHomeExport.editUrl('page', 'inquiry')) >= 0,
     '홈페이지에서 이 쪽을 열 길이 없습니다');
@@ -870,10 +872,523 @@ test('★ 위촉장에는 「기간 모름」 꼬리표가 붙고 자격증·수
 test('★ 쪽 안내에 「대조 기준 저장」만으로는 안 바뀌고 「홈페이지 다시 확인」을 한 번 더 눌러야 한다는 말이 있다', () => {
   const ctx = pageBox();
   ctx.App = { draft: { kind: 'page', key: 'inquiry', text: '가나다' }, pages: {}, dirty: false };
-  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('pageEdit'));
+  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
+    + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
   const h = ctx.pageEdit(ctx.App.draft);
   assert.match(h, /대조 기준 저장만으로는/, '저장만으로는 딱지가 안 바뀐다는 말이 없습니다');
   assert.match(h, /한 번 더 눌러야/, '홈페이지 다시 확인을 «한 번 더» 눌러야 한다는 말이 없습니다');
   assert.match(h, /홈페이지 다시 확인.*한 번 더|한 번 더.*홈페이지 다시 확인|「같음」으로 바뀝니다/,
     '한 번 더 눌러야 「같음」으로 바뀐다는 결론이 없습니다');
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   2차 설계 (docs/superpowers/specs/2026-08-17-홈페이지-관리-2차-design.md)
+   목업 docs/mockups/homepage-manage-v2.html
+   ① 목록에 번호  ② 쪽 글을 홈페이지와 같은 줄 모양으로
+   ③ 주요업무 쪽 추가·분리  ④ 퇴사자 예외와 「명부에 없음」 보이기
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* 목록·쪽 설정을 함께 돌리는 상자. 자료(homepage/config/pages)를 넣으면 그 목록이 된다. */
+function cfgBox(cfg) {
+  const ctx = box();
+  ctx.esc = escStub();
+  ctx.saved = [];
+  ctx.said = [];
+  ctx.db = {
+    ref: p => ({
+      set: v => { ctx.saved.push({ path: p, how: 'set', value: v }); return Promise.resolve(); },
+      remove: () => { ctx.saved.push({ path: p, how: 'remove' }); return Promise.resolve(); },
+      once: () => Promise.resolve({ val: () => null })
+    })
+  };
+  ctx.alert = m => { ctx.said.push(String(m)); };
+  ctx.confirm = () => true;
+  ctx.toast = m => { ctx.said.push(String(m)); };
+  ctx.App = {
+    group: 'work', pick: '', pageConfig: {}, pages: {}, members: {}, check: null,
+    pageLines: {}, draft: null, dirty: false, lineFormat: 'plain', render() {}
+  };
+  run(ctx, constSource('PAGE_IDS') + '\n' + constObj('STATUS_TEXT') + '\n'
+    + fnSource('isPageName') + '\n' + fnSource('syncPageConfig') + '\n'
+    + fnSource('savePageConfig') + '\n' + fnSource('addPage') + '\n'
+    + fnSource('canDetachPage') + '\n' + fnSource('detachPage') + '\n'
+    + fnSource('pageIdsOf') + '\n' + fnSource('memberRows') + '\n' + fnSource('pageRows') + '\n'
+    + fnSource('rowsOf') + '\n' + fnSource('firstPickOf') + '\n' + fnSource('loadDraft') + '\n'
+    + fnSource('listHtml') + '\n'
+    + expose('PAGE_IDS') + expose('PAGE_LABEL') + expose('DEFAULT_PAGES'));
+  ctx.syncPageConfig(cfg);
+  return ctx;
+}
+
+/* 목록에 실제로 그려진 번호를 «모양을 못 박지 않고» 읽어낸다 —
+   숫자만 들어 있는 칸의 글자를 순서대로 모은다. */
+function numbersIn(html) {
+  return [...String(html).matchAll(/>\s*(\d+)\s*</g)].map(m => Number(m[1]));
+}
+
+/* ══════ ① 목록에 번호 ══════ */
+
+test('★ 구성원 목록에 1부터 번호가 붙는다', () => {
+  const ctx = cfgBox(null);
+  ctx.App.group = 'members';
+  ctx.App.members = {
+    '190': { name: '권형하', position1: '대표', position2: '공인노무사' },
+    '193': { name: '박성수', position2: '공인노무사' },
+    '195': { name: '박한별', position2: '공인노무사' }
+  };
+  const h = ctx.listHtml();
+  assert.deepEqual(numbersIn(h), [1, 2, 3], '구성원 목록에 1·2·3 번호가 없습니다');
+  ['권형하', '박성수', '박한별'].forEach(n =>
+    assert.ok(h.indexOf(n) >= 0, n + ' 이(가) 목록에서 사라졌습니다'));
+});
+
+test('★ 쪽 목록에도 번호가 붙는다 (쪽을 추가하면 다음 번호로 이어진다)', () => {
+  const ctx = cfgBox(null);
+  ctx.App.group = 'work';
+  assert.deepEqual(numbersIn(ctx.listHtml()), [1, 2, 3, 4, 5, 6], '기본 주요업무 6쪽에 번호가 없습니다');
+
+  const cfg = Object.assign({}, plain(ctx.DEFAULT_PAGES));
+  cfg.work6 = { label: '중대재해 대응', order: 99 };
+  ctx.syncPageConfig(cfg);
+  const after = ctx.listHtml();
+  assert.deepEqual(numbersIn(after), [1, 2, 3, 4, 5, 6, 7], '추가한 쪽이 7번으로 안 이어집니다');
+  assert.ok(after.indexOf('중대재해 대응') >= 0, '추가한 쪽의 보일 이름이 목록에 없습니다');
+});
+
+test('★ 화면 번호가 «붙여넣을 글자»에는 절대 안 들어간다', () => {
+  /* 번호가 careersText 에 섞이면 홈페이지 구성원 소개에 숫자가 찍힌다.
+     화면(경력사항 칸)에는 번호가 보이고, 복사되는 글자에는 없어야 한다. */
+  const ctx = box();
+  ctx.esc = escStub();
+  const careers = ['現 푸른노무법인 대표', '現 충남 공무직인사위원회 위원', '現 충남 노동정책 추진단위원'];
+  ctx.App = {
+    draft: { kind: 'member', key: '190', name: '권형하', position1: '대표', position2: '공인노무사',
+             intro: '', srl: '190', careers: careers.slice() },
+    members: { '190': { name: '권형하', srl: '190' } },
+    lineFormat: 'plain', dirty: false
+  };
+  run(ctx, fnSource('riskReport') + '\n' + fnSource('srlConflict') + '\n' + fnSource('stamp') + '\n'
+    + fnSource('memberEdit'));
+  const nums = numbersIn(ctx.memberEdit(ctx.App.draft));
+  assert.ok(nums.indexOf(1) >= 0 && nums.indexOf(3) >= 0, '경력사항 줄에 번호가 안 보입니다');
+
+  const copied = ctx.PuHomeExport.careersText(ctx.App.draft.careers, 'plain');
+  assert.deepEqual(copied.split('\n'), careers, '붙여넣을 글자가 자료와 달라졌습니다');
+  copied.split('\n').forEach(l => assert.doesNotMatch(l, /^\s*\d/,
+    '붙여넣을 줄이 숫자로 시작합니다 — 홈페이지에 번호가 찍힙니다'));
+  const div = ctx.PuHomeExport.careersText(ctx.App.draft.careers, 'div');
+  assert.deepEqual(div.split('\n'), careers.map(l => '<div>' + l + '</div>'),
+    '「감싸기」로 내보낼 때 번호가 섞였습니다');
+});
+
+test('★ 당겨오기 목록에도 번호가 붙고, 넣은 줄에는 번호가 안 들어간다', () => {
+  const ctx = kindsBox();
+  ctx.esc = escStub();
+  ctx.App = { draft: { kind: 'member', careers: [] }, render() {} };
+  ctx.Pull = {
+    open: true, kind: 'lecture', name: '권형하', err: '', sel: {},
+    items: {
+      wiccok: [], license: [], complete: [], edu: [],
+      lecture: [
+        { id: 'L1', topic: '중대재해처벌법 대응', org: '가상공회의소', date: '2026.03.10' },
+        { id: 'L2', topic: '임금체계 개편', org: '나상공회의소', date: '2026.04.10' }
+      ]
+    }
+  };
+  ctx.shown = [];
+  ctx.openModal = h => { ctx.shown.push(h); };
+  ctx.closeModal = () => {};
+  ctx.toast = () => {};
+  run(ctx, fnSource('todayString') + '\n' + fnSource('kindHasPeriod') + '\n'
+    + fnSource('renderPull') + '\n' + fnSource('pullApply'));
+  ctx.renderPull();
+  const nums = numbersIn(ctx.shown[ctx.shown.length - 1]);
+  assert.ok(nums.indexOf(1) >= 0 && nums.indexOf(2) >= 0, '당겨오기 목록에 번호가 없습니다');
+
+  ctx.Pull.sel = { 'lecture:0': true, 'lecture:1': true };
+  ctx.pullApply();
+  assert.equal(ctx.App.draft.careers.length, 2);
+  ctx.App.draft.careers.forEach(l => assert.doesNotMatch(l, /^\s*\d/,
+    '당겨온 줄이 번호로 시작합니다 — 그대로 홈페이지에 실립니다'));
+});
+
+/* ══════ ② 쪽 글을 홈페이지와 같은 줄 모양으로 ══════ */
+
+test('★ 홈페이지를 읽었으면 쪽 글이 «줄마다 번호와 함께» 보인다', () => {
+  const ctx = pageBox();
+  ctx.App = {
+    draft: { kind: 'page', key: 'inquiry', text: '천안본사 충남 천안시 T. 041-556-0035' },
+    pages: {}, dirty: false, pageConfig: {},
+    pageLines: { inquiry: ['천안본사', '충남 천안시 서북구 원두정8길 6, 301호(두정빌딩)', 'T. 041-556-0035'] }
+  };
+  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
+    + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+  const h = ctx.pageEdit(ctx.App.draft);
+  assert.deepEqual(numbersIn(h).slice(0, 3), [1, 2, 3], '줄마다 번호가 붙지 않았습니다');
+  assert.ok(h.indexOf('천안본사') >= 0);
+  assert.ok(h.indexOf('T. 041-556-0035') >= 0, '홈페이지의 줄이 통째로 빠졌습니다');
+});
+
+test('★ 홈페이지를 아직 안 읽었으면 «빈 줄»이 아니라 그 사실을 알린다', () => {
+  const ctx = pageBox();
+  ctx.App = { draft: { kind: 'page', key: 'inquiry', text: '뭉쳐 있는 대조 기준 글자' },
+              pages: {}, dirty: false, pageLines: {}, pageConfig: {} };
+  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
+    + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+  const h = ctx.pageEdit(ctx.App.draft);
+  assert.match(h, /홈페이지 다시 확인/, '어떻게 하면 줄 모양으로 보이는지 안 적혀 있습니다');
+  assert.equal(numbersIn(h).length, 0, '못 읽은 것을 빈 줄로 지어내 보여 줬습니다');
+});
+
+test('★ 줄 꾸밈(소제목·구획번호)이 «자료»에 섞이지 않는다', () => {
+  const ctx = pageBox();
+  const 기준 = '자문서비스 01 법률자문 최신 노동관계법령에 대한 자문과 상담을 수행합니다.';
+  ctx.App = {
+    draft: { kind: 'page', key: 'work1', text: 기준 }, pages: {}, dirty: false, pageConfig: {},
+    pageLines: { work1: ['자문서비스', '01', '법률자문', '최신 노동관계법령에 대한 자문과 상담을 수행합니다.'] }
+  };
+  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
+    + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+  const h = ctx.pageEdit(ctx.App.draft);
+  assert.equal(ctx.App.draft.text, 기준, '보여 주기만 해야 하는데 초안(자료)이 바뀌었습니다');
+  assert.ok(h.indexOf(ctx.esc(기준)) >= 0, '대조 기준 글자 칸이 원문 그대로가 아닙니다');
+  // 꾸밈은 CSS 이름으로만 붙는다 — 줄 «글자»에 표시를 덧붙이지 않는다
+  assert.match(h, />\s*01\s*</, '구획번호 줄이 글자 그대로 보이지 않습니다');
+});
+
+test('★ 대조는 여전히 «뭉친 글자»로 한다 — 줄 목록이 대조 규칙을 바꾸지 않는다', async () => {
+  /* 줄 모양대로 견주면 공백 하나로 「다름」이 쏟아진다. 실제 홈페이지 표본으로 돌려 확인한다. */
+  const ctx = box();
+  const html = fs.readFileSync(path.join(R, 'docs', 'homepage-backup', '2026-08-16', 'work1.html'), 'utf8');
+  const 뭉친글자 = ctx.PuHomeParse.parsePageText(html);
+  assert.ok(ctx.PuHomeParse.parsePageLines(html).length > 5, '표본에서 줄 목록을 못 만들었습니다');
+
+  ctx.App = { members: {}, pages: { work1: { text: 뭉친글자 } }, staff: [], check: null,
+              saveErr: '', pageLines: {} };
+  ctx.db = { ref: () => ({ set: () => Promise.resolve() }) };
+  run(ctx, constSource('PAGE_IDS') + '\n' + fnSource('todayString') + '\n' + fnSource('applyStatus'));
+  await ctx.applyStatus([{ srl: '190', name: '권형하', careers: [] }], { work1: 뭉친글자 }, []);
+  assert.equal(plain(ctx.App.check.pages).work1.status, 'same',
+    '뭉친 글자가 같은데 「안 올라감」이 떴습니다 — 대조 기준이 줄 목록으로 바뀌었습니다');
+});
+
+test('★ 「홈페이지 다시 확인」이 줄 목록도 함께 채운다 (표본으로 돌려서 확인)', async () => {
+  const ctx = box();
+  const BK = path.join(R, 'docs', 'homepage-backup', '2026-08-16');
+  const 표본 = {
+    people: fs.readFileSync(path.join(BK, 'people.html'), 'utf8'),
+    work1: fs.readFileSync(path.join(BK, 'work1.html'), 'utf8'),
+    inquiry: fs.readFileSync(path.join(BK, 'inquiry.html'), 'utf8')
+  };
+  ctx.App = {
+    checking: false, checkMsg: '', checkBad: false, members: {}, pages: {}, staff: [],
+    check: null, saveErr: '', pageLines: {}, render() {}
+  };
+  ctx.db = { ref: () => ({ set: () => Promise.resolve() }) };
+  ctx.firebase = { auth: () => ({ currentUser: { getIdToken: () => Promise.resolve('T') } }) };
+  ctx.toast = () => {};
+  ctx.fetch = (url, opt) => {
+    const p = JSON.parse(opt.body).path;
+    if (!표본[p]) return Promise.resolve({ ok: false });
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({ html: 표본[p] }) });
+  };
+  run(ctx, constSource('PAGE_IDS') + '\n' + constLine('READ_HOMEPAGE_URL') + '\n'
+    + fnSource('todayString') + '\n' + fnSource('applyStatus') + '\n'
+    + fnSource('checkFailText') + '\n' + fnSource('showCheckFailed') + '\n' + fnSource('checkHomepage'));
+  await ctx.checkHomepage();
+
+  const lines = plain(ctx.App.pageLines);
+  assert.ok(lines.work1 && lines.work1.length > 5, '주요업무 쪽의 줄 목록을 안 채웠습니다');
+  assert.ok(lines.inquiry && lines.inquiry.length > 5, '오시는길 줄 목록을 안 채웠습니다');
+  assert.ok(lines.work1.every(l => l.indexOf('<') < 0 && l.indexOf('>') < 0),
+    '줄에 태그 찌꺼기가 섞였습니다');
+  assert.ok(!lines.work2, '못 읽은 쪽의 줄 목록을 지어냈습니다');
+});
+
+/* ══════ ③ 주요업무 쪽 추가·분리 ══════ */
+
+test('★ 쪽 목록이 비어 있으면 지금 쓰는 8개를 기본값으로 보여준다', () => {
+  const ctx = cfgBox(null);
+  assert.deepEqual([...ctx.PAGE_IDS],
+    ['work1', 'work2', 'work3', 'work4', 'work5a', 'work5b', 'inquiry', 'greeting'],
+    '자료가 비었는데 화면도 비어 버립니다 — 이미 자료가 들어 있는 쪽들입니다');
+  assert.equal(ctx.PAGE_LABEL.inquiry, '오시는길');
+  ctx.syncPageConfig({});
+  assert.equal(ctx.PAGE_IDS.length, 8, '빈 객체를 넣어도 기본 8개여야 합니다');
+});
+
+test('★ 관리 대상 쪽은 «자료»에서 온다 — 코드에 박아 두지 않는다', () => {
+  const ctx = cfgBox({
+    work1: { label: '자문서비스', order: 1 },
+    work6: { label: '중대재해 대응', order: 2 },
+    inquiry: { label: '오시는길', order: 8 },
+    greeting: { label: '인사말', order: 9 }
+  });
+  assert.deepEqual([...ctx.PAGE_IDS], ['work1', 'work6', 'inquiry', 'greeting'],
+    '자료에 적힌 쪽만, 적힌 순서대로여야 합니다');
+  assert.equal(ctx.PAGE_LABEL.work6, '중대재해 대응');
+  assert.deepEqual([...ctx.pageIdsOf('work')], ['work1', 'work6'], '새 쪽이 주요업무에 안 들어갔습니다');
+  assert.deepEqual([...ctx.pageIdsOf('inquiry')], ['inquiry']);
+  assert.deepEqual([...ctx.pageIdsOf('greeting')], ['greeting']);
+});
+
+test('★ 쪽 이름 규칙을 어기면 «받지 않고» 이유를 말한다 — 자료는 그대로', async () => {
+  for (const bad of ['Work6', 'work 6', 'work-6', 'work.6', '한글쪽', 'a'.repeat(31),
+                     'https://example.com/work6', '../admin']) {
+    const ctx = cfgBox(null);
+    ctx.prompt = () => bad;
+    await ctx.addPage();
+    assert.equal(ctx.saved.length, 0, '「' + bad + '」 을(를) 자료에 적어 버렸습니다');
+    assert.ok(ctx.said.length > 0, '「' + bad + '」 을(를) 조용히 무시했습니다 — 이유를 말해야 합니다');
+    assert.equal(ctx.PAGE_IDS.length, 8, '거절했는데 목록이 흔들렸습니다');
+  }
+});
+
+test('★ 쪽을 추가하면 자료에 적히고 목록 끝에 붙는다', async () => {
+  const ctx = cfgBox(null);
+  const 답 = ['work6', '중대재해 대응'];
+  let i = 0;
+  ctx.prompt = () => 답[i++];
+  await ctx.addPage();
+  assert.equal(ctx.saved.length, 1, '자료에 안 적혔습니다');
+  assert.match(ctx.saved[0].path, /homepage\/config\/pages/, '엉뚱한 자리에 적었습니다');
+  const cfg = plain(ctx.saved[0].value);
+  assert.ok(cfg.work6, '새 쪽이 자료에 없습니다');
+  assert.equal(cfg.work6.label, '중대재해 대응');
+  assert.equal(Object.keys(cfg).length, 9, '기본 8개가 함께 적히지 않으면 다음에 목록이 흔들립니다');
+  assert.deepEqual([...ctx.pageIdsOf('work')],
+    ['work1', 'work2', 'work3', 'work4', 'work5a', 'work5b', 'work6'], '새 쪽이 끝에 안 붙었습니다');
+});
+
+test('★ 이미 있는 쪽 이름은 두 번 넣지 않는다', async () => {
+  const ctx = cfgBox(null);
+  ctx.prompt = () => 'work1';
+  await ctx.addPage();
+  assert.equal(ctx.saved.length, 0, '같은 쪽을 또 적었습니다');
+  assert.ok(ctx.said.some(m => /이미/.test(m)), '이미 있다고 말해 주지 않았습니다');
+});
+
+test('★ 보일 이름을 안 적으면 추가하지 않는다', async () => {
+  const ctx = cfgBox(null);
+  const 답 = ['work6', '   '];
+  let i = 0;
+  ctx.prompt = () => 답[i++];
+  await ctx.addPage();
+  assert.equal(ctx.saved.length, 0, '이름 없는 쪽을 목록에 넣었습니다');
+});
+
+test('★ 「목록에서 분리」는 홈페이지 쪽도, 우리 대조 기준 자료도 지우지 않는다', async () => {
+  const ctx = cfgBox(null);
+  ctx.App.pages = { work1: { text: '자문서비스 본문' } };
+  await ctx.detachPage('work1');
+  assert.equal(ctx.saved.length, 1, '자료에 안 적혔습니다');
+  assert.match(ctx.saved[0].path, /homepage\/config\/pages/);
+  assert.ok(!plain(ctx.saved[0].value).work1, '분리했는데 목록에 남아 있습니다');
+  assert.ok(!ctx.saved.some(s => s.how === 'remove'),
+    '무언가를 «지웠습니다» — 분리는 관리를 그만두는 것일 뿐 지우는 것이 아닙니다');
+  assert.ok(ctx.App.pages.work1, '대조 기준 자료를 지웠습니다 — 다시 붙일 때 쓸 것입니다');
+  assert.deepEqual([...ctx.pageIdsOf('work')], ['work2', 'work3', 'work4', 'work5a', 'work5b']);
+});
+
+test('★ 오시는길·인사말은 분리할 수 없다 — 갈래 자체가 비어 버린다', async () => {
+  const ctx = cfgBox(null);
+  assert.equal(ctx.canDetachPage('work1'), true);
+  assert.equal(ctx.canDetachPage('inquiry'), false);
+  assert.equal(ctx.canDetachPage('greeting'), false);
+  await ctx.detachPage('inquiry');
+  assert.equal(ctx.saved.length, 0, '갈래 자체인 쪽을 분리해 버렸습니다');
+  assert.equal(ctx.PAGE_IDS.length, 8);
+});
+
+test('★ 「분리」가 홈페이지 쪽을 지우는 것이 아니라고 화면에 적는다', () => {
+  const ctx = pageBox();
+  ctx.App = { draft: { kind: 'page', key: 'work1', text: '가나다' }, pages: {}, dirty: false,
+              pageLines: {}, pageConfig: {} };
+  ctx.PAGE_LABEL = { work1: '자문서비스' };
+  run(ctx, fnSource('pagePasteWhy') + '\n' + fnSource('stamp') + '\n' + fnSource('canDetachPage') + '\n'
+    + fnSource('pageLinesHtml') + '\n' + fnSource('pageEdit'));
+  const h = ctx.pageEdit(ctx.App.draft);
+  assert.match(h, /분리/, '분리하는 길이 화면에 없습니다');
+  assert.match(h, /지우지 않습니다|지우는 것이 아닙니다/,
+    '홈페이지 쪽을 지우는 것으로 오해할 화면입니다');
+});
+
+test('★ 화면이 허락한 새 쪽 이름은 서버 함수도 읽을 수 있다', () => {
+  /* 화면과 함수가 서로 다른 규칙을 쓰면, 추가는 되는데 영영 못 읽는 쪽이 생긴다. */
+  const { homepageUrl } = require('../functions/homepage-fetch');
+  const ctx = cfgBox(null);
+  ['work6', 'work_2026', 'safety'].forEach(good => {
+    assert.equal(ctx.isPageName(good), true, '화면이 「' + good + '」 을 거절합니다');
+    assert.ok(homepageUrl(good), '함수가 「' + good + '」 을 거절합니다');
+  });
+  ['Work6', 'work 6', 'work-6', '../admin'].forEach(bad => {
+    assert.equal(ctx.isPageName(bad), false, '화면이 「' + bad + '」 을 받아 줍니다');
+    assert.equal(homepageUrl(bad), null, '함수가 「' + bad + '」 을 받아 줍니다');
+  });
+  // 관리자 주소는 이름 규칙을 통과해도 함수가 막는다 — 화면이 넣어도 못 읽을 뿐 자료는 안 망가진다
+  assert.equal(homepageUrl('admin'), null);
+});
+
+test('★ 홈페이지에서 못 읽은 쪽은 목록에 그렇게 적힌다 (자료는 멀쩡하다)', () => {
+  const ctx = cfgBox(null);
+  ctx.App.group = 'work';
+  ctx.App.pages = {};
+  ctx.App.check = { pages: { work1: { status: 'unknown', reason: '홈페이지를 읽지 못함' } } };
+  const h = ctx.listHtml();
+  assert.match(h, /못 읽/, '못 읽은 쪽인지 알 수 없습니다');
+  assert.ok(h.indexOf('자문서비스') >= 0, '못 읽었다고 목록에서 사라지면 안 됩니다');
+});
+
+/* ══════ ④ 퇴사자 예외와 「명부에 없음」 보이기 ══════ */
+
+function keepBox(member) {
+  const ctx = box();
+  ctx.esc = escStub();
+  ctx.saved = [];
+  ctx.said = [];
+  ctx.hist = [];
+  ctx.db = {
+    ref: p => ({
+      set: v => {
+        (/history/.test(p) ? ctx.hist : ctx.saved).push({ path: p, value: v });
+        return Promise.resolve();
+      },
+      once: () => Promise.resolve({ val: () => (/members\//.test(p) ? member : null) })
+    })
+  };
+  ctx.alert = m => { ctx.said.push(String(m)); };
+  ctx.toast = m => { ctx.said.push(String(m)); };
+  ctx.confirm = () => true;
+  ctx.App = {
+    group: 'members', pick: '190', members: { '190': member }, pages: {}, check: null,
+    dirty: false, lineFormat: 'plain', myName: '관리자', me: { email: 'a@b.c' },
+    draft: null, render() {}
+  };
+  run(ctx, fnSource('todayString') + '\n' + fnSource('currentUserName') + '\n'
+    + fnSource('histStamp') + '\n' + fnSource('saveRecord') + '\n'
+    + fnSource('writeKeepOnSite') + '\n' + fnSource('keepOnSiteAsk') + '\n'
+    + fnSource('keepOnSiteClear') + '\n' + fnSource('loadDraft') + '\n'
+    + fnSource('markChanged') + '\n' + fnSource('saveDraft'));
+  ctx.loadDraft();
+  return ctx;
+}
+
+test('★ 사유를 안 적으면 「홈페이지에 남기기」로 두지 않는다', async () => {
+  const ctx = keepBox({ name: '장한돌', position1: '세종지사장', position2: '공인노무사',
+                        srl: '320', careers: [] });
+  ctx.prompt = () => '   ';
+  await ctx.keepOnSiteAsk();
+  assert.equal(ctx.saved.length, 0, '사유 없이 예외가 저장됐습니다 — 왜 남겼는지 알 수 없어집니다');
+  assert.ok(ctx.said.some(m => /사유/.test(m)), '사유가 필요하다고 말해 주지 않았습니다');
+});
+
+test('★ 사유를 적으면 사유·누가·언제가 함께 남는다', async () => {
+  const ctx = keepBox({ name: '장한돌', position1: '세종지사장', position2: '공인노무사',
+                        srl: '320', careers: [] });
+  ctx.prompt = () => '세종지사장 — 고용관계가 아니어서 급여 명부에는 퇴사로 찍힙니다';
+  await ctx.keepOnSiteAsk();
+  assert.equal(ctx.saved.length, 1, '예외가 저장되지 않았습니다');
+  const rec = plain(ctx.saved[0].value);
+  assert.match(rec.keepOnSite.why, /세종지사장/, '사유 원문이 안 남았습니다');
+  assert.ok(rec.keepOnSite.by, '누가 표시했는지 안 남았습니다');
+  assert.ok(rec.keepOnSite.at, '언제 표시했는지 안 남았습니다');
+  assert.equal(rec.name, '장한돌', '예외를 다는 사이 다른 내용이 사라졌습니다');
+});
+
+test('★ 예외를 «풀 수» 있다 — 풀면 다시 퇴사 판정을 받는다', async () => {
+  const 남긴사람 = { name: '장한돌', position1: '세종지사장', position2: '공인노무사', srl: '320',
+                    careers: [], keepOnSite: { at: '2026-08-17', by: '관리자', why: '지사장' } };
+  const ctx = keepBox(남긴사람);
+  await ctx.keepOnSiteClear();
+  assert.equal(ctx.saved.length, 1, '예외를 풀 길이 없습니다');
+  const rec = plain(ctx.saved[0].value);
+  assert.ok(!rec.keepOnSite, '풀었는데 표시가 남아 있습니다');
+  assert.equal(rec.name, '장한돌');
+
+  // 부품을 돌려서: 예외가 사라지면 퇴사 딱지가 다시 붙는다
+  const live = [{ srl: '320', name: '장한돌', position1: '세종지사장', position2: '공인노무사', careers: [] }];
+  const staff = [{ name: '장한돌', leftAt: '2023-12-31' }];
+  const 전 = ctx.PuHomeDiff.memberStatus([Object.assign({ key: '320' }, 남긴사람)], live, staff, '2026-08-17')[0];
+  const 후 = ctx.PuHomeDiff.memberStatus([Object.assign({ key: '320' }, rec)], live, staff, '2026-08-17')[0];
+  assert.notEqual(전.status, 'toRemove', '예외가 있는데도 퇴사 딱지가 붙었습니다');
+  assert.equal(후.status, 'toRemove', '예외를 풀었는데 퇴사 판정을 다시 안 받습니다');
+});
+
+test('★ 경력을 고쳐 저장해도 「남기기」 표시가 지워지지 않는다', async () => {
+  const ctx = keepBox({ name: '장한돌', position1: '세종지사장', position2: '공인노무사', srl: '320',
+                        careers: ['現 가'], keepOnSite: { at: '2026-08-17', by: '관리자', why: '지사장' } });
+  ctx.App.draft.careers.push('現 나');
+  await ctx.saveDraft();
+  assert.equal(ctx.saved.length, 1);
+  const rec = plain(ctx.saved[0].value);
+  assert.ok(rec.keepOnSite, '저장 한 번에 예외가 조용히 사라졌습니다 — 퇴사 경고가 다시 쏟아집니다');
+  assert.match(rec.keepOnSite.why, /지사장/);
+  assert.equal(rec.careers.length, 2, '고친 내용이 저장되지 않았습니다');
+});
+
+test('★ 되돌리기도 「남기기」 표시를 지우지 않는다', async () => {
+  const 지금 = { name: '장한돌', position1: '세종지사장', position2: '공인노무사', srl: '320',
+                careers: ['現 가', '現 나'], keepOnSite: { at: '2026-08-17', by: '관리자', why: '지사장' } };
+  const ctx = keepBox(지금);
+  ctx.closeModal = () => {};
+  ctx.db = {
+    ref: p => ({
+      set: v => { (/history/.test(p) ? ctx.hist : ctx.saved).push({ path: p, value: v }); return Promise.resolve(); },
+      once: () => Promise.resolve({
+        val: () => (/history/.test(p)
+          ? { name: '장한돌', position1: '세종지사장', position2: '공인노무사', srl: '320', careers: ['現 가'] }
+          : 지금)
+      })
+    })
+  };
+  run(ctx, fnSource('todayString') + '\n' + fnSource('currentUserName') + '\n' + fnSource('histStamp') + '\n'
+    + fnSource('saveRecord') + '\n' + fnSource('loadDraft') + '\n' + fnSource('markChanged') + '\n'
+    + fnSource('restoreFrom'));
+  await ctx.restoreFrom('320', '1755300000000-aaaaaa');
+  assert.equal(ctx.saved.length, 1, '되살리지 못했습니다');
+  const rec = plain(ctx.saved[0].value);
+  assert.equal(rec.careers.length, 1, '옛 내용으로 되살아나지 않았습니다');
+  assert.ok(rec.keepOnSite, '되돌리기 한 번에 예외가 사라졌습니다');
+});
+
+test('★ 목록에 「남김」 표시와 사유가 보인다 — 왜 퇴사 경고가 없는지 알 수 있다', () => {
+  const ctx = cfgBox(null);
+  ctx.App.group = 'members';
+  ctx.App.members = {
+    '320': { name: '장한돌', position1: '세종지사장', position2: '공인노무사',
+             keepOnSite: { at: '2026-08-17', by: '관리자', why: '세종지사장 — 고용관계 아님' } },
+    '322': { name: '조현범', position1: '대전지사장', position2: '공인노무사' }
+  };
+  ctx.App.check = {
+    members: {
+      '320': { name: '장한돌', status: 'same', reason: '홈페이지에 남기기로 함 (세종지사장 — 고용관계 아님)' },
+      '322': { name: '조현범', status: 'same', reason: '명부에 없어 입·퇴사 판단을 못함' }
+    }
+  };
+  const h = ctx.listHtml();
+  assert.match(h, /남김/, '「남김」 표시가 없어 왜 퇴사 경고가 없는지 알 수 없습니다');
+  assert.ok(h.indexOf('세종지사장 — 고용관계 아님') >= 0, '남긴 사유가 목록에 안 보입니다');
+  assert.ok(h.indexOf('명부에 없어 입·퇴사 판단을 못함') >= 0,
+    '명부에 없다는 사유를 그대로 보여 주지 않습니다');
+});
+
+test('★ 편집 화면에 「남기기」 상태와 사유가 보이고, 풀 수 있는 길이 있다', () => {
+  const ctx = box();
+  ctx.esc = escStub();
+  const kept = { at: '2026-08-17', by: '관리자', why: '세종지사장 — 고용관계 아님' };
+  ctx.App = {
+    draft: { kind: 'member', key: '320', name: '장한돌', position1: '세종지사장', position2: '공인노무사',
+             intro: '', srl: '320', careers: ['現 가'] },
+    members: { '320': { name: '장한돌', srl: '320', keepOnSite: kept } },
+    lineFormat: 'plain', dirty: false
+  };
+  run(ctx, fnSource('riskReport') + '\n' + fnSource('srlConflict') + '\n' + fnSource('stamp') + '\n'
+    + fnSource('memberEdit'));
+  const h = ctx.memberEdit(ctx.App.draft);
+  assert.ok(h.indexOf('세종지사장 — 고용관계 아님') >= 0, '남긴 사유가 편집 화면에 없습니다');
+  assert.match(h, /풀|해제/, '예외를 풀 길이 없습니다');
+
+  // 예외가 없는 사람에게는 «남기기» 길이 있다
+  ctx.App.members['320'] = { name: '장한돌', srl: '320' };
+  assert.match(ctx.memberEdit(ctx.App.draft), /남기기/, '「홈페이지에 남기기」 단추가 없습니다');
 });

@@ -80,6 +80,20 @@ main{padding:14px 16px 60px;max-width:1180px;margin:0 auto}
 .list .r.on{background:#E7EBFB}
 .list .nm{font-weight:700}
 .list .po{font-size:11.5px;color:var(--sub)}
+/* 목록 번호 — 화면에서 세는 용도. 붙여넣을 글자에는 들어가지 않는다 */
+.num{width:22px;flex:none;text-align:right;color:#98A2B3;font-size:12px;font-weight:800;
+  font-variant-numeric:tabular-nums}
+/* 홈페이지와 같은 줄 모양으로 보여주는 칸 (보기 전용) */
+.rows{border:1px solid #CBD5E1;border-radius:8px;background:#fff;overflow:hidden;font-size:13.5px;
+  max-height:420px;overflow-y:auto}
+.rows .l{display:flex;gap:8px;padding:5px 9px;border-bottom:1px dashed #EEF1F5}
+.rows .l:last-child{border-bottom:0}
+.rows .l:hover{background:#FBFCFD}
+.rows .n{width:22px;flex:none;text-align:right;color:#B0B7C3;font-size:11.5px;font-weight:800;
+  font-variant-numeric:tabular-nums}
+.rows .t{flex:1;min-width:0;word-break:break-word}
+.rows .l.head .t{font-weight:800;color:var(--navy)}
+.rows .l.tag .t{font-weight:800;color:var(--warn);font-size:12.5px}
 .pill{font-size:11px;font-weight:800;border-radius:20px;padding:2px 8px;white-space:nowrap}
 .pill.same{background:#F2F4F7;color:#667085}
 .pill.pending{background:#FDECEC;color:#B42318;border:1px solid #F3C3C3}
@@ -89,6 +103,8 @@ main{padding:14px 16px 60px;max-width:1180px;margin:0 auto}
 .pill.done{background:#EAF6EE;color:#1E5631;border:1px solid #B7E4C7}
 .pill.unknown{background:#F2F4F7;color:#98A2B3}
 .pill.none{background:#F8F9FC;color:#98A2B3;border:1px dashed var(--line)}
+/* 「홈페이지에 남기기」 예외 표시 — 왜 퇴사 경고가 없는지 목록에서 바로 보이게 한다 */
+.pill.keep{background:#EEF2FF;color:#3730A3;border:1px solid #C7D2FE}
 .pill.tail{margin-left:auto}
 .edit{flex:1;min-width:0;padding:14px 16px}
 .fld{margin-bottom:11px}
@@ -167,7 +183,11 @@ const FIREBASE_CONFIG = {
 /* 홈페이지를 «읽기만» 하는 서버 함수. 쓰기 함수는 만들지 않았다. */
 const READ_HOMEPAGE_URL = 'https://us-central1-pureun-erp.cloudfunctions.net/readHomepage';
 
-/* 관리하는 쪽. functions/homepage-fetch.js 의 허용 목록과 같아야 한다.
+/* 관리하는 쪽.
+   ★ 2차 설계 §3 — «진짜»는 자료(homepage/config/pages/{mid} = { label, order })다.
+     아래 두 목록은 ⑴ 자료가 비어 있을 때 쓰는 기본값이고 ⑵ 자료를 읽은 뒤의 «현재값»이다.
+     syncPageConfig() 가 배열·객체를 그대로 두고 «안을» 갈아치운다 — 화면 곳곳(대조·목록·
+     안내)이 이 두 이름을 그대로 쓰기 때문에, 이름을 바꾸는 것보다 값을 바꿔 담는 것이 안전하다.
    자문사현황(partner)은 홈페이지에 회사명이 «글자로» 없어 이번 판에서 뺐다. */
 const PAGE_IDS = ['work1', 'work2', 'work3', 'work4', 'work5a', 'work5b', 'inquiry', 'greeting'];
 const PAGE_LABEL = {
@@ -175,7 +195,13 @@ const PAGE_LABEL = {
   work4: '산재보상', work5a: '사내근로복지기금', work5b: '공동근로복지기금',
   inquiry: '오시는길', greeting: '인사말'
 };
-const WORK_IDS = ['work1', 'work2', 'work3', 'work4', 'work5a', 'work5b'];
+/* 자료가 비어 있을 때 보여줄 기본 8쪽 — 위 두 목록에서 «그대로» 만든다.
+   같은 것을 두 번 적으면 한쪽만 고쳐져 서로 다른 답을 낸다.
+   ★ 시작할 때 한 번만 만든다. 그 뒤 PAGE_IDS 가 자료로 갈아치워져도 기본값은 그대로 남는다. */
+const DEFAULT_PAGES = {};
+PAGE_IDS.forEach(function (mid, i) {
+  DEFAULT_PAGES[mid] = { label: PAGE_LABEL[mid] || mid, order: i + 1 };
+});
 
 /* 왼쪽 갈래 넷 */
 const GROUPS = [
@@ -263,6 +289,11 @@ function toast(msg) {
 const App = {
   group: 'members', pick: '', me: null, myName: '', isAdmin: null,
   members: {}, pages: {}, staff: null, staffErr: '', lineFormat: 'plain',
+  /* pageConfig — 관리 대상 쪽 목록(자료 homepage/config/pages 그대로).
+     pageLines — 홈페이지에서 읽어온 «줄 목록». 보여주기 전용이고 저장하지 않는다.
+     ★ 우리가 저장해 둔 대조 기준 글자는 줄을 뭉쳐 놓은 것이라 줄 모양을 «지어낼 수 없다».
+       그래서 홈페이지를 읽기 전에는 비어 있고, 화면은 그 사실을 정직하게 알린다. */
+  pageConfig: {}, pageLines: {},
   /* dataErr — homepage/* 를 «못 읽은» 것. 「아직 자료가 없습니다」와 반드시 갈라 보여준다.
      saveErr — 딱지 강등처럼 사람이 안 누른 저장이 실패한 것. 조용히 삼키지 않는다. */
   dataErr: '', saveErr: '',
@@ -423,10 +454,12 @@ function loadAll() {
     read('homepage/pages', '쪽 본문', {}),
     read('homepage/config/lineFormat', '줄 모양 설정', 'plain'),
     read('homepage/check', '지난 대조 결과', null),
-    readRosterSource()
-  ]).then(([members, pages, lineFormat, check, roster]) => {
+    readRosterSource(),
+    read('homepage/config/pages', '쪽 목록', null)
+  ]).then(([members, pages, lineFormat, check, roster, pageCfg]) => {
     App.members = members || {};
     App.pages = pages || {};
+    syncPageConfig(pageCfg);   // 비어 있으면 기본 8쪽 — 화면이 갑자기 비지 않게
     App.lineFormat = (lineFormat === 'div') ? 'div' : 'plain';
     App.check = check;
     App.dataErr = dataErrText(failed);
@@ -446,6 +479,106 @@ function loadAll() {
   });
 }
 
+/* ══════ 관리 대상 쪽 목록 (2차 설계 §3) ══════
+   목록이 코드에 박혀 있으면 홈페이지에 쪽을 새로 만들 때마다 코드를 고쳐 함수를 다시
+   배포해야 했다. 목록을 자료로 옮긴다 — 안전(어느 주소를 읽어도 되는지)은 서버 함수의
+   이름 규칙이 그대로 지킨다. 목록을 여는 것이지 아무 주소나 읽게 여는 것이 아니다. */
+
+/* 쪽 이름 규칙 — functions/homepage-fetch.js 의 규칙과 «같아야» 한다.
+   화면이 더 넉넉하면 추가는 되는데 영영 못 읽는 쪽이 생기고, 화면이 더 깐깐하면
+   멀쩡한 쪽을 못 넣는다. 검사(pu-home-screen.test.js)가 두 규칙을 나란히 돌려 견준다. */
+function isPageName(mid) { return /^[a-z0-9_]{1,30}$/.test(String(mid == null ? '' : mid)); }
+
+/* 자료 → 화면이 쓰는 목록. 자료가 비어 있으면 기본 8쪽을 쓴다 —
+   이미 자료(homepage/pages)가 들어 있는 쪽들이라 화면이 갑자기 비면 안 된다.
+   order 로 줄세우고, order 가 같거나 없으면 쪽 이름으로 가른다 — 순서가 확인마다
+   뒤집히면 목록 번호가 뜻을 잃는다. */
+function syncPageConfig(cfg) {
+  const ok = (cfg && typeof cfg === 'object' && !Array.isArray(cfg)
+    && Object.keys(cfg).filter(isPageName).length > 0);
+  const src = ok ? cfg : DEFAULT_PAGES;
+  const ids = Object.keys(src).filter(isPageName).sort((a, b) => {
+    const oa = Number((src[a] || {}).order), ob = Number((src[b] || {}).order);
+    return ((isFinite(oa) ? oa : 9999) - (isFinite(ob) ? ob : 9999)) || String(a).localeCompare(String(b));
+  });
+  App.pageConfig = src;
+  PAGE_IDS.length = 0;
+  Object.keys(PAGE_LABEL).forEach(k => { delete PAGE_LABEL[k]; });
+  ids.forEach(mid => {
+    PAGE_IDS.push(mid);
+    PAGE_LABEL[mid] = String((src[mid] || {}).label || mid);
+  });
+}
+
+function savePageConfig(next) {
+  return db.ref('homepage/config/pages').set(next).then(() => { syncPageConfig(next); });
+}
+
+/* 「＋ 쪽 추가」 — 홈페이지에 «먼저» 쪽이 있어야 한다. 없는 이름을 넣으면 대조에서
+   「홈페이지를 읽지 못함」으로 뜰 뿐, 자료가 망가지지는 않는다. */
+async function addPage() {
+  const raw = (prompt('홈페이지 쪽 이름을 적어 주십시오.\n'
+    + '주소 전체가 아니라 «쪽 이름»만 적습니다 — 예: work6\n'
+    + '(영문 소문자·숫자·밑줄만, 30자까지)') || '').trim();
+  if (!raw) return;
+  const mid = raw.replace(/^\/+/, '');
+  if (!isPageName(mid)) {
+    alert('「' + raw + '」 은(는) 받을 수 없습니다.\n\n'
+      + '쪽 이름은 «영문 소문자·숫자·밑줄»만 쓸 수 있고 30자까지입니다.\n'
+      + '주소 전체(https://…)나 빗금·점·대문자·한글은 넣지 마십시오 — 예: work6');
+    return;
+  }
+  if (App.pageConfig[mid]) {
+    alert('「' + mid + '」 은(는) 이미 관리 목록에 있습니다.');
+    return;
+  }
+  const label = (prompt('화면에 보일 이름을 적어 주십시오 — 예: 중대재해 대응') || '').trim();
+  if (!label) { alert('화면에 보일 이름이 없으면 목록에서 알아볼 수 없습니다. 추가하지 않았습니다.'); return; }
+
+  const orders = Object.keys(App.pageConfig).map(k => Number((App.pageConfig[k] || {}).order) || 0);
+  const next = Object.assign({}, App.pageConfig);
+  next[mid] = { label: label, order: (orders.length ? Math.max.apply(null, orders) : 0) + 1 };
+  try {
+    await savePageConfig(next);
+    App.group = 'work'; App.pick = mid;
+    loadDraft(); App.render();
+    toast('「' + label + '」(/' + mid + ')을 목록에 넣었습니다. 「홈페이지 다시 확인」을 누르면 읽어 옵니다.');
+  } catch (e) {
+    alert('쪽 목록을 저장하지 못했습니다: ' + ((e && e.message) || e));
+  }
+}
+window.addPage = addPage;
+
+/* 오시는길·인사말은 왼쪽에서 «자기 갈래»를 하나씩 차지한다 — 분리하면 그 갈래가 통째로
+   비어 버리고, 목록이 아예 비면 기본 8쪽이 되살아나 분리한 것이 없던 일이 된다. */
+function canDetachPage(mid) { return mid !== 'inquiry' && mid !== 'greeting'; }
+
+/* 「목록에서 분리」 — ★ 홈페이지 쪽을 «지우지 않는다». 통합시스템이 이 쪽을 더 이상
+   대조·관리하지 않는다는 뜻일 뿐이다. 우리가 가진 대조 기준 글자(homepage/pages/{mid})도
+   그대로 둔다 — 다시 붙일 때 쓴다. 지우는 일은 사람이 홈페이지 관리자 화면에서 한다. */
+async function detachPage(mid) {
+  if (!canDetachPage(mid)) {
+    alert('「' + (PAGE_LABEL[mid] || mid) + '」은 왼쪽 갈래 자체라 분리할 수 없습니다.');
+    return;
+  }
+  if (!App.pageConfig[mid]) return;
+  if (!confirm('「' + (PAGE_LABEL[mid] || mid) + '」(/' + mid + ')을 관리 목록에서 분리할까요?\n\n'
+    + '홈페이지 쪽은 지우지 않습니다 — 통합시스템이 이 쪽을 더 이상 대조하지 않는다는 뜻입니다.\n'
+    + '홈페이지에서 실제로 없애려면 홈페이지 관리자 화면에서 지우거나 메뉴에서 빼야 합니다.')) return;
+
+  const next = Object.assign({}, App.pageConfig);
+  delete next[mid];
+  try {
+    await savePageConfig(next);
+    App.pick = firstPickOf(App.group);
+    loadDraft(); App.render();
+    toast('목록에서 분리했습니다. 홈페이지 쪽은 그대로 있습니다.');
+  } catch (e) {
+    alert('쪽 목록을 저장하지 못했습니다: ' + ((e && e.message) || e));
+  }
+}
+window.detachPage = detachPage;
+
 /* ══════ 목록 만들기 ══════ */
 
 /* 구성원 줄 — 우리 자료 + 대조에서 「홈페이지에만」으로 남은 것 */
@@ -459,10 +592,14 @@ function memberRows() {
   const rows = keys.map(k => {
     const m = App.members[k] || {};
     const s = st[k] || {};
+    /* 「홈페이지에 남기기」 예외는 «우리 자료»에 있다 — 대조를 한 번도 안 눌러도 보여야 한다.
+       숨기면 사장님이 왜 퇴사 경고가 없는지 알 수 없다(2차 설계 §4). */
+    const keep = (m.keepOnSite && typeof m.keepOnSite === 'object') ? m.keepOnSite : null;
     return {
       key: k, name: m.name || '(이름 없음)',
       desc: [m.position1, m.position2].filter(Boolean).join(' · '),
-      status: s.status || '', reason: s.reason || ''
+      status: s.status || '', reason: s.reason || '',
+      kept: !!keep, keptWhy: keep ? String(keep.why || '') : ''
     };
   });
   Object.keys(st).forEach(k => {
@@ -475,11 +612,13 @@ function memberRows() {
   return rows;
 }
 
+/* 갈래마다 어느 쪽이 들어가는지. 오시는길·인사말은 자기 이름의 쪽 하나만 갖고,
+   주요업무는 «그 둘을 뺀 나머지 전부»다 — 쪽을 추가하면 주요업무에 들어간다.
+   목록 자체는 PAGE_IDS(=자료)에서 오므로 여기에 쪽 이름을 더 박아 두지 않는다. */
 function pageIdsOf(group) {
-  if (group === 'work') return WORK_IDS;
-  if (group === 'inquiry') return ['inquiry'];
-  if (group === 'greeting') return ['greeting'];
-  return [];
+  if (group === 'inquiry' || group === 'greeting') return PAGE_IDS.filter(m => m === group);
+  if (group !== 'work') return [];
+  return PAGE_IDS.filter(m => m !== 'inquiry' && m !== 'greeting');
 }
 
 function pageRows(group) {
@@ -487,9 +626,13 @@ function pageRows(group) {
   return pageIdsOf(group).map(mid => {
     const p = App.pages[mid] || {};
     const s = st[mid] || {};
+    /* «못 읽음»과 «내용 없음»을 가른다 — 새로 넣은 쪽은 홈페이지에 그 이름이 없어서
+       못 읽는 것이고, 그건 자료가 망가진 것이 아니다. */
+    const note = (s.status === 'unknown') ? ' · 홈페이지에서 못 읽음'
+      : (p.text ? '' : ' · 아직 내용 없음 (홈페이지 다시 확인 전)');
     return {
       key: mid, name: PAGE_LABEL[mid] || mid,
-      desc: '/' + mid + (p.text ? '' : ' · 내용 없음'),
+      desc: '/' + mid + note,
       status: s.status || '', reason: s.reason || ''
     };
   });
@@ -617,6 +760,10 @@ async function saveDraft() {
       const careers = d.careers.map(s => String(s || '').trim()).filter(Boolean);
       const next = { name: d.name.trim(), position1: d.position1.trim(), position2: d.position2.trim(),
                      intro: d.intro, srl: d.srl, careers: careers };
+      /* ★ 「홈페이지에 남기기」 예외는 편집 칸에 없는 칸이다. 그대로 두지 않고 덮어쓰면
+         경력 한 줄 고칠 때마다 예외가 조용히 사라지고, 퇴사 경고가 다시 쏟아진다. */
+      const kept = (App.members[d.key] || {}).keepOnSite;
+      if (kept) next.keepOnSite = kept;
       await saveRecord('member', d.key, next);
       App.members[d.key] = Object.assign({}, next, { updatedAt: Date.now(), updatedBy: currentUserName() });
     } else {
@@ -676,6 +823,60 @@ async function addMember() {
 }
 window.addMember = addMember;
 
+/* ══════ 「홈페이지에 남기기」 예외 (2차 설계 §4) ══════
+   지사장은 고용관계가 아니어서 급여 명부에 퇴사로 찍혀 있거나 아예 없다. 급여 명부에
+   없다는 것이 지사장을 그만뒀다는 뜻은 아니고, 기계가 이걸 가릴 방법이 없다.
+   그래서 사람이 «사유를 남기고» 예외로 둔다 — 판정은 부품(PuHomeDiff)이 하고,
+   화면은 표시를 저장하고 보여주기만 한다. */
+
+/* 표시를 자료에 적는다. 저장은 saveRecord 로 한다 — 이력에 직전 값이 남아야
+   나중에 「누가 언제 예외를 걸었나」를 되짚을 수 있다.
+   ★ 편집 중인 초안(draft)이 아니라 «저장된 자료»에 표시만 얹는다. 초안을 건드리면
+     사장님이 고치던 내용이 이 단추 한 번에 저장돼 버린다. */
+async function writeKeepOnSite(key, mark) {
+  const rec = App.members[key] || {};
+  const next = Object.assign({}, rec);
+  delete next.updatedAt; delete next.updatedBy;   // saveRecord 가 새로 찍는다
+  if (mark) next.keepOnSite = mark; else delete next.keepOnSite;
+  try {
+    await saveRecord('member', key, next);
+    App.members[key] = Object.assign({}, next, { updatedAt: Date.now(), updatedBy: currentUserName() });
+    App.render();
+    toast(mark
+      ? '홈페이지에 남기기로 표시했습니다. 「홈페이지 다시 확인」을 누르면 퇴사 딱지를 달지 않습니다.'
+      : '예외를 풀었습니다. 「홈페이지 다시 확인」을 누르면 퇴사 판정을 다시 받습니다.');
+  } catch (e) {
+    alert('표시를 저장하지 못했습니다: ' + ((e && e.message) || e));
+  }
+}
+
+/* ★ 사유를 «반드시» 적게 한다. 사유 없는 예외는 나중에 왜 남겼는지 알 수 없어 위험하다.
+   비워 두면 저장하지 않고, 왜 안 했는지 말해 준다. */
+async function keepOnSiteAsk() {
+  const d = App.draft;
+  if (!d || d.kind !== 'member') return;
+  const why = (prompt('왜 홈페이지에 남기는지 적어 주십시오.\n'
+    + '예: 세종지사장 — 고용관계가 아니어서 급여 명부에는 퇴사로 찍힙니다\n\n'
+    + '사유 없이는 예외로 두지 않습니다.') || '').trim();
+  if (!why) {
+    alert('사유를 적지 않아 「홈페이지에 남기기」로 두지 않았습니다.\n'
+      + '사유가 없으면 나중에 왜 남겼는지 알 수 없어 위험합니다.');
+    return;
+  }
+  await writeKeepOnSite(d.key, { at: todayString(), by: currentUserName(), why: why });
+}
+window.keepOnSiteAsk = keepOnSiteAsk;
+
+/* 예외는 «풀 수» 있다. 풀면 다음 확인에서 다시 퇴사 판정을 받는다. */
+async function keepOnSiteClear() {
+  const d = App.draft;
+  if (!d || d.kind !== 'member') return;
+  if (!confirm('「홈페이지에 남기기」 예외를 풀까요?\n\n'
+    + '풀면 다음 「홈페이지 다시 확인」에서 명부대로 퇴사 판정을 다시 받습니다.')) return;
+  await writeKeepOnSite(d.key, null);
+}
+window.keepOnSiteClear = keepOnSiteClear;
+
 /* ══════ 줄 모양 설정 ══════ */
 function setLineFormat(v) {
   App.lineFormat = (v === 'div') ? 'div' : 'plain';
@@ -730,6 +931,10 @@ async function checkHomepage() {
       const html = await ask(mid);
       if (html === null) { failed.push(mid); continue; }   // 못 읽은 쪽은 손대지 않는다
       livePages[mid] = PuHomeParse.parsePageText(html);
+      /* ★ «보는 글»과 «대조하는 글»을 나눈다(2차 설계 ②).
+         대조는 위의 뭉친 글자로 하고, 화면에 보여줄 줄 목록은 따로 담는다.
+         못 읽은 쪽은 손대지 않는다 — 지난 줄 목록이 그대로 남는다(빈 줄로 지어내지 않는다). */
+      App.pageLines[mid] = PuHomeParse.parsePageLines(html);
     }
 
     await applyStatus(live, livePages, failed);
@@ -973,6 +1178,11 @@ async function restoreFrom(histKey, ts) {
     if (d.kind === 'member') {
       const next = { name: before.name || '', position1: before.position1 || '', position2: before.position2 || '',
                      intro: before.intro || '', srl: before.srl || '', careers: (before.careers || []).slice() };
+      /* 되돌리기는 «내용»을 되살리는 것이다. 「홈페이지에 남기기」는 내용이 아니라 사람이
+         내린 판단이므로 «지금 것»을 그대로 둔다 — 되살리기 한 번에 예외가 사라지면
+         퇴사 경고가 다시 쏟아지고, 왜 그런지 알 길이 없다. */
+      const kept = (App.members[d.key] || {}).keepOnSite;
+      if (kept) next.keepOnSite = kept;
       await saveRecord('member', d.key, next);
       App.members[d.key] = Object.assign({}, next);
     } else {
@@ -1219,8 +1429,10 @@ function renderPull() {
         ? '<span class="pill toRemove">기간 끝남 → 前</span>'
         : ((hasPeriod && line.unknown) ? '<span class="pill unknown">기간 모름 · 現 으로 넣음</span>'
                         : '<span class="pill toAdd">現 으로 들어감</span>');
+      /* 번호는 화면에서 세는 용도다 — 넣는 글자(line.text)에는 들어가지 않는다 */
       return '<label class="pk"><input type="checkbox" ' + (Pull.sel[id] ? 'checked' : '')
         + ' onchange="pullToggle(\'' + Pull.kind + '\',' + i + ')">'
+        + '<span class="num">' + (i + 1) + '</span>'
         + '<div class="t"><b>' + esc(line.text) + '</b>'
         + '<div class="d">' + esc(itemWhen(it, Pull.kind) || '기간 정보 없음') + '</div></div>' + tag + '</label>';
     }).join('') + '</div>';
@@ -1381,18 +1593,27 @@ function sideHtml() {
     + '</div>';
 }
 
+/* ★ 목록에는 «번호»를 붙인다(2차 설계 ①). 번호는 사장님이 화면에서 세는 용도다 —
+   자료에도, 붙여넣을 글자에도 들어가지 않는다. 번호를 글자에 섞으면 홈페이지에 숫자가 찍힌다. */
 function listHtml() {
   const rows = rowsOf(App.group);
   let h = '<div class="list">';
   if (App.group === 'members') {
     h += '<div class="lh"><span>구성원 ' + rows.length + '명</span><span style="flex:1"></span>'
       + '<button class="btn sm" onclick="addMember()">＋ 새 구성원</button></div>';
+  } else if (App.group === 'work') {
+    h += '<div class="lh"><span>관리 중인 쪽 ' + rows.length + '개</span><span style="flex:1"></span>'
+      + '<button class="btn sm" onclick="addPage()">＋ 쪽 추가</button></div>';
   }
   if (!rows.length) h += '<div class="empty">아직 자료가 없습니다.</div>';
-  h += rows.map(r =>
+  h += rows.map((r, i) =>
     '<div class="r ' + (r.key === App.pick ? 'on' : '') + '" onclick="App.select(\'' + esc(r.key) + '\')">'
+    + '<span class="num">' + (i + 1) + '</span>'
     + '<div style="min-width:0"><div class="nm">' + esc(r.name) + '</div>'
     + '<div class="po">' + esc(r.desc || '') + '</div>'
+    /* 「남김」 — 왜 퇴사 경고가 없는지 목록에서 바로 보이게 한다. 사유도 함께 적는다. */
+    + (r.kept ? '<div class="po"><span class="pill keep">남김</span> '
+        + esc(r.keptWhy || '(사유 없음)') + '</div>' : '')
     + (r.reason ? '<div class="po" style="color:#B26A00">' + esc(r.reason) + '</div>' : '')
     + '</div>' + '<span class="pill tail ' + (r.status || 'none') + '">'
     + esc(r.status ? (STATUS_TEXT[r.status] || r.status) : '확인 전') + '</span></div>'
@@ -1453,6 +1674,18 @@ function memberEdit(d) {
       + '이 줄은 홈페이지에서 안 보일 수 있습니다. 일부러 쓴 표기일 수 있어 지우지 않습니다.</div>';
   }
 
+  /* 「홈페이지에 남기기」 예외 — 표시가 있으면 «왜 남겼는지»를 늘 보여준다.
+     숨기면 명부상 퇴사자인데 왜 「내릴 것」 경고가 없는지 알 길이 없다. */
+  const kept = (rec.keepOnSite && typeof rec.keepOnSite === 'object') ? rec.keepOnSite : null;
+  if (kept) {
+    h += '<div class="bar warn"><b>「홈페이지에 남기기」로 표시된 사람입니다</b> — '
+      + '명부에 퇴사로 찍혀 있어도 「내릴 것(퇴사)」 딱지를 달지 않고 내용 대조만 합니다.<br>'
+      + '사유: <b>' + esc(kept.why || '(사유 없음)') + '</b>'
+      + '<div class="sub" style="color:inherit">표시한 사람 ' + esc(kept.by || '(모름)')
+      + ' · ' + esc(kept.at || '(날짜 모름)')
+      + ' · 예외를 풀면 다음 「홈페이지 다시 확인」에서 퇴사 판정을 다시 받습니다.</div></div>';
+  }
+
   /* ★ 글 번호가 남과 겹치면 편집 주소가 남의 글이다 — 붙여넣기 단추부터 잠근다 */
   const clash = srlConflict(d.key, d.srl);
   if (clash.length) {
@@ -1467,6 +1700,8 @@ function memberEdit(d) {
     + '<button class="btn" onclick="saveDraft()">저장</button>'
     + '<button class="btn" onclick="openPull()">경력관리에서 당겨오기</button>'
     + '<button class="btn" onclick="openHistory()">되돌리기</button>'
+    + (kept ? '<button class="btn" onclick="keepOnSiteClear()">남기기 예외 풀기</button>'
+            : '<button class="btn" onclick="keepOnSiteAsk()">홈페이지에 남기기</button>')
     + '<span id="dirtyMark" style="color:#C43D3D;font-size:12px;font-weight:700">' + (App.dirty ? '● 저장 안 됨' : '') + '</span>'
     + '<span style="flex:1"></span>'
     + '<span class="sub">' + (rec.updatedAt ? '마지막 수정: ' + esc(stamp(rec.updatedAt)) + ' · ' + esc(rec.updatedBy || '') : '수정 기록 없음') + '</span>'
@@ -1487,11 +1722,49 @@ function pagePasteWhy() {
     + '통합시스템은 <b>올라갔는지 안 올라갔는지 대조만</b> 해 드립니다.';
 }
 
+/* ★ 홈페이지와 «같은 순서·같은 줄»로 보여준다 (2차 설계 ②).
+   줄 목록은 부품(PuHomeParse.parsePageLines)이 만들고, 화면은 그대로 늘어놓기만 한다.
+   ★ 대조는 여전히 «뭉친 글자»(parsePageText)로 한다 — 줄 모양대로 견주면 공백 하나로
+     「다름」이 쏟아진다. 대조 규칙은 이 함수와 아무 상관이 없다.
+   ★ 줄 목록은 «홈페이지에서 읽어온 것»이라야 만들 수 있다. 우리가 저장해 둔 대조 기준
+     글자는 이미 뭉쳐 있어 줄을 되살릴 수 없다. 못 읽었으면 빈 줄로 지어내지 않고
+     그 사실을 그대로 말한다. */
+function pageLinesHtml(mid) {
+  const lines = (App.pageLines || {})[mid];
+  if (!Array.isArray(lines)) {
+    return '<div class="fld"><label>홈페이지 화면 그대로 보기</label>'
+      + '<div class="bar info">아직 홈페이지를 읽지 않았습니다 — 위 <b>홈페이지 다시 확인</b>을 '
+      + '누르면 홈페이지와 «같은 순서·같은 줄»로 보입니다.<br>'
+      + '아래 «대조 기준 글자»는 줄을 뭉쳐 둔 것이라 줄 모양을 되살릴 수 없습니다. '
+      + '없는 줄을 빈 줄로 지어내 보여 드리지 않습니다.</div></div>';
+  }
+  if (!lines.length) {
+    return '<div class="fld"><label>홈페이지 화면 그대로 보기</label>'
+      + '<div class="bar warn">홈페이지는 읽었지만 이 쪽에서 «본문 줄»을 찾지 못했습니다. '
+      + '게시판형 쪽이거나 홈페이지 화면 구조가 바뀐 것일 수 있습니다 — 아래 대조 기준 글자는 그대로 씁니다.</div></div>';
+  }
+  /* 소제목·구획번호(01 02)를 눈에 띄게 한다.
+     ★ 꾸밈은 «CSS 이름»으로만 붙인다. 줄 글자에 표시를 덧붙이면 그 표시가 자료로 흘러
+       홈페이지에 찍힌다. 줄 글자는 읽어온 그대로만 보여준다. */
+  const kindOf = t => {
+    if (/^\d{1,2}$/.test(t)) return ' tag';                    // 01 02 같은 구획번호
+    if (t.length <= 16 && !/\s/.test(t)) return ' head';        // 자문서비스·법률자문·천안본사
+    return '';
+  };
+  return '<div class="fld"><label>홈페이지 화면 그대로 보기 — ' + lines.length + '줄 '
+    + '· 번호는 «화면에서 세는 용도»입니다 (홈페이지로 가지 않습니다)</label>'
+    + '<div class="rows">' + lines.map((l, i) =>
+        '<div class="l' + kindOf(String(l)) + '"><span class="n">' + (i + 1) + '</span>'
+        + '<span class="t">' + esc(l) + '</span></div>').join('')
+    + '</div></div>';
+}
+
 function pageEdit(d) {
   const rec = App.pages[d.key] || {};
   const url = PuHomeExport.editUrl('page', d.key);
   let h = '<div class="edit">';
   h += '<div class="bar bad">' + pagePasteWhy() + '</div>';
+  h += pageLinesHtml(d.key);
   /* ★ 편집칸은 «읽기 전용으로 만들지 않았다». 이 글자는 대조 기준값이라, 홈페이지를 직접
      고친 뒤 기준값도 맞춰 주지 않으면 딱지가 영영 「안 올라감」에 묶인다. 고칠 길을 없애면
      그 묶인 상태를 풀 방법이 사라진다. 대신 «홈페이지로 가지 않는다»고 칸 이름에 못 박는다. */
@@ -1514,6 +1787,18 @@ function pageEdit(d) {
     + '<b>대조 기준 저장만으로는 딱지가 바뀌지 않습니다.</b> 그 뒤 <b>홈페이지 다시 확인</b>을 '
     + '한 번 더 눌러야 딱지가 「같음」으로 바뀝니다</li>'
     + '</ol></div>';
+
+  /* 「목록에서 분리」 — ★ 홈페이지 쪽을 지우는 것이 아니라고 화면에 분명히 적는다.
+     사장님이 「분리」를 «홈페이지에서 없애기»로 읽으면 지워진 줄 알고 확인을 안 하게 된다. */
+  if (canDetachPage(d.key)) {
+    h += '<div class="guide"><b>이 쪽을 통합시스템에서 그만 관리하려면</b><br>'
+      + '<b>「목록에서 분리」는 홈페이지 쪽을 지우지 않습니다.</b> '
+      + '통합시스템이 이 쪽을 더 이상 대조하지 않는다는 뜻일 뿐입니다. '
+      + '홈페이지에서 실제로 없애려면 홈페이지 관리자 화면에서 지우거나 메뉴에서 빼야 합니다 — '
+      + '그건 사람이 판단할 일입니다.'
+      + '<div style="margin-top:7px"><button class="btn sm" onclick="detachPage(\'' + esc(d.key) + '\')">'
+      + '목록에서 분리</button></div></div>';
+  }
   return h + '</div>';
 }
 
