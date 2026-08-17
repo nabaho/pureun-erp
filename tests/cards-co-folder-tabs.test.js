@@ -177,8 +177,11 @@ test('폴더 목록 뒤에 붙박이 줄이 끼어들지 않는다 — 새 폴�
   const folderAt = side.indexOf('>폴더');
   const foldersLoopAt = side.indexOf('folders.forEach');
   assert.ok(allAt >= 0, '「전체」가 없다');
-  assert.ok(folderAt > allAt, '「폴더」 칸이 「전체」보다 위에 있다');
-  assert.ok(foldersLoopAt > folderAt, '폴더 목록이 「폴더」 칸보다 앞에 있다');
+  /* ⚠ 2026-08-18: 사업자 옆줄과 차례를 맞췄다 — 「폴더 ＋」 머리가 먼저고 그 다음이
+     「전체」다(예전엔 거꾸로였다). 이 검사의 알맹이는 «폴더 목록이 밀리지 않는가» 이지
+     둘 중 어느 것이 위인가가 아니다 — 그래서 차례만 바꿔 담는다. */
+  assert.ok(allAt > folderAt, '「전체」가 「폴더」 칸보다 위에 있다 — 사업자와 어긋난다');
+  assert.ok(foldersLoopAt > allAt, '폴더 목록이 「전체」보다 앞에 있다');
   /* 폴더 다음에 오는 것은 서식에서 저절로 생기는 「서류 탭」뿐이다 */
   assert.ok(side.indexOf('coviewsep') < 0, '없앤 가름줄(.coviewsep)이 되살아났다');
   assert.doesNotMatch(src, /\.coviewsep\{/, '.coviewsep 모양이 아직 남아 있다');

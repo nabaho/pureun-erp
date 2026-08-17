@@ -106,8 +106,11 @@ test('사업 갈래는 옆줄 폴더로 그린다', () => {
    지운 기능을 지키는 검사를 남겨 두면 다음 사람이 되살리게 된다. 그래서 지우고,
    그 자리에 «옆줄이 어떻게 읽혀야 하는가»만 남긴다. 「거래처만」이 되살아나지 않는지는
    cards-co-folders.test.js 의 ★ 검사가 한곳에서 지킨다. */
-test('옆줄은 전체 → 폴더 ＋ → 대표가 만든 폴더로 읽힌다', () => {
-  /* 사업자 갈래 옆줄과 같은 차림새다 — 그 짝맞춤이 대표 지시의 요지였다. */
+test('옆줄은 폴더 ＋ → 전체 → 대표가 만든 폴더로 읽힌다', () => {
+  /* ⚠ 2026-08-18 바로잡음. 예전 이 검사는 「사업자와 같은 차림새」라고 적어 놓고
+     실제로는 «반대 차례»(전체 → 폴더)를 못 박고 있었다. 사업자 옆줄을 그려서 재 보니
+     「폴더 ＋」 머리가 먼저고 그 «다음»이 「전체」다(창 1400×900: 머리 18px · 전체 14px).
+     대표가 "조금 다르다"고 하신 것이 이것이다 — 이제 두 화면이 같은 차례다. */
   const at = source.indexOf('function renderPCSide');
   const fn = source.slice(at, source.indexOf('\nfunction ', at + 20));
   assert.match(fn, /pickCoFolder\(''\)/, '옆줄에 「전체」 줄이 없다');
@@ -118,8 +121,8 @@ test('옆줄은 전체 → 폴더 ＋ → 대표가 만든 폴더로 읽힌다',
   const allAt = fn.indexOf("pickCoFolder('')");
   const secAt = fn.indexOf('">폴더');
   const loopAt = fn.indexOf('folders.forEach');
-  assert.ok(allAt > 0 && secAt > allAt && loopAt > secAt,
-    '「전체 → 폴더 ＋ → 폴더들」 차례가 아니다');
+  assert.ok(secAt > 0 && allAt > secAt && loopAt > allAt,
+    '「폴더 ＋ → 전체 → 폴더들」 차례가 아니다 — 사업자 옆줄과 같아야 한다');
 });
 
 test('목록은 한 줄에 한 회사인 표다', () => {
