@@ -313,6 +313,36 @@ test('앱 배선', async (t) => {
     assert.ok(paydata.indexOf('cloudfunctions.net/readDoc') < 0, '앱에 주소가 또 적혀 있습니다.');
   });
 
+  /* ══════ 마무리 — 열쇠가 브라우저로 «내려올 길» 자체가 없다 (2026-08-17) ══════
+     금고에 넣고, 실시간DB 의 열쇠를 지우고, 서버 기록으로 `keySource secret` 을
+     확인한 뒤 걷어냈다. 되살아나면 이틀 동안 막은 것이 도로아미타불이다. */
+  await t.test('★ 판독 층이 열쇠를 «가져다 주지 않는다»', () => {
+    const js = fs.readFileSync(path.join(R, 'js', 'pu-doc-read.js'), 'utf8');
+    const at = js.indexOf('function keysFrom(');
+    assert.ok(at > 0, 'keysFrom 을 찾지 못했습니다');
+    let i = js.indexOf('{', at), d = 0;
+    for (; i < js.length; i++) {
+      if (js[i] === '{') d++;
+      else if (js[i] === '}') { d--; if (!d) break; }
+    }
+    const fn = js.slice(at, i + 1);
+    assert.doesNotMatch(fn, /getKey\s*:/,
+      '★ 열쇠를 돌려주면 그 순간 다시 브라우저로 내려옵니다.');
+    assert.doesNotMatch(fn, /geminiKey/,
+      '★ 실시간DB 의 열쇠 자리를 다시 읽습니다 — 그 자리는 전 직원이 읽습니다.');
+  });
+
+  await t.test('★ 어느 화면도 열쇠를 넘기지 않는다', () => {
+    /* 층이 안 줘도 화면이 제 손으로 넘기면 옛 갈래가 되살아난다. */
+    ['pu-photos.html', 'pu-paydata.html', 'pu-cards.html', 'kcareer.html'].forEach(function (f) {
+      const p = path.join(R, f);
+      if (!fs.existsSync(p)) return;
+      const src = fs.readFileSync(p, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:'"\w])\/\/[^\n]*/g, '$1');
+      assert.doesNotMatch(src, /getKey\s*:/, f + ' 이 판독 층에 열쇠를 넘깁니다.');
+    });
+  });
+
   await t.test('★ 서버가 받아 둔 답 길이를 구글 부를 때 실제로 넘긴다', () => {
     /* validate 가 cfg 를 받아 두어도 callGemini 에 안 넘기면 그냥 버려진다 —
        경력관리의 긴 증명서가 조용히 잘린다. */
