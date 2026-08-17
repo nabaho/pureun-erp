@@ -167,8 +167,14 @@ test('숨긴 것 보기를 켜면 숨긴 탭도 다시 보인다', () => {
 
 test('옆줄 사업별 목록에 숨기기·다시보기 아이콘이 있다', () => {
   const at = source.indexOf("if(state.view==='co'){");
-  /* 2026-08-16 옆줄에 「보기」 칸과 폴더 안 탭이 생겨 이 덩어리가 길어졌다 — 넉넉히 자른다 */
-  const fn = source.slice(at, at + 4200);
+  /* 예전엔 여기서 고정 글자수(4200자)만 잘라 봤다 — 옆줄에 「보기」 칸·폴더 안 탭·드래그
+     속성이 붙을 때마다 덩어리가 길어져, 남은 여유가 161자까지 줄어 있었다. 같은 덫이
+     cards-co-folders.test.js 에서 이미 한 번 터졌다. 이 덩어리의 진짜 끝은 글자수가
+     아니라 `$('pcSide').innerHTML = h; return;` 이다 — 형제 검사들과 같은 경계를 쓴다.
+     보는 «자리»만 바꾸고, 무엇을 확인하는지는 그대로 둔다. */
+  const end = source.indexOf("$('pcSide').innerHTML = h; return;", at);
+  assert.ok(at > 0 && end > at, '기업 상세 옆줄 덩어리를 찾지 못했습니다');
+  const fn = source.slice(at, end);
   assert.match(fn, /hideCoTag/);
   assert.match(fn, /unhideCoTag/);
   assert.match(fn, /state\.coShowHidden/);

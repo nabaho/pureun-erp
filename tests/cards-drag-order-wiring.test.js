@@ -21,10 +21,42 @@ test('명함·사업자 폴더 줄이 순서 드래그를 건다', () => {
   assert.match(s, /onOrdDrop\(event,\s*'group'/, '폴더 줄에 onOrdDrop 이 없다');
 });
 
-test('★ 대표가 아니면 폴더에 draggable 이 안 붙는다', () => {
+/* 그 줄의 draggable 이 «대표인지»로 갈리는지 줄마다 따로 본다.
+   ⚠ 예전 검사는 renderPCSide 어디든 한 군데만 맞으면 통과였다. 그런데 옆줄에는 끌 수 있는
+     줄이 셋(기업 상세 폴더·＃탭·명함 폴더)이라, 한 줄을 'true' 로 되돌려 놔도 나머지 둘
+     덕분에 초록이 나왔다 — 하필 그 명함 폴더 줄이 직원도 명함을 떨어뜨리는 자리다.
+     그래서 그 줄만의 표식(onOrdDragStart 호출)을 기준 삼아 «바로 앞의» draggable 을 본다. */
+function draggableOfRow(block, marker, label){
+  const at = block.indexOf(marker);
+  assert.ok(at > 0, label + ' 줄을 찾지 못했습니다: '+marker);
+  const dAt = block.lastIndexOf('draggable=', at);
+  assert.ok(dAt >= 0, label + ' 줄 앞에 draggable 이 없습니다');
+  const nl = block.indexOf('\n', dAt);
+  return block.slice(dAt, nl < 0 ? block.length : nl);
+}
+const ADMIN_GATE = /draggable="\$\{state\.isAdmin \? 'true' : 'false'\}"/;
+
+test('★ 대표가 아니면 명함·사업자 폴더 줄에 draggable 이 안 붙는다', () => {
+  assert.match(draggableOfRow(sideBlock(), "onOrdDragStart(event,'group'", '명함·사업자 폴더'),
+    ADMIN_GATE, '명함 폴더 줄의 draggable 이 state.isAdmin 으로 갈리지 않는다');
+});
+
+test('★ 대표가 아니면 기업 상세 폴더 줄에 draggable 이 안 붙는다', () => {
+  assert.match(draggableOfRow(sideBlock(), "onOrdDragStart(event,'cofolder'", '기업 상세 폴더'),
+    ADMIN_GATE, '기업 상세 폴더 줄의 draggable 이 state.isAdmin 으로 갈리지 않는다');
+});
+
+test('★ 대표가 아니면 폴더 안 ＃탭 줄에 draggable 이 안 붙는다', () => {
+  assert.match(draggableOfRow(sideBlock(), "onOrdDragStart(event,'coftab'", '＃탭'),
+    ADMIN_GATE, '＃탭 줄의 draggable 이 state.isAdmin 으로 갈리지 않는다');
+});
+
+test('★ 옆줄에서 끌 수 있는 줄은 셋뿐이고 셋 다 대표로 갈린다', () => {
+  /* 줄이 하나 더 늘면 여기서 걸린다 — 새 줄도 게이트를 못 박으라는 뜻이다 */
   const s = sideBlock();
-  assert.match(s, /draggable="\$\{state\.isAdmin \? 'true' : 'false'\}"/,
-    'draggable 이 state.isAdmin 으로 갈리지 않는다');
+  const all = s.match(/draggable=[^\n]*/g) || [];
+  assert.equal(all.length, 3, '옆줄의 draggable 줄 수가 셋이 아니다: '+all.length);
+  all.forEach(line => assert.match(line, ADMIN_GATE, '대표로 안 갈리는 줄이 있다: '+line));
 });
 
 test('명함을 폴더로 끌어 넣는 기존 기능이 그대로다', () => {
@@ -55,7 +87,9 @@ test('메인 탭 칩이 순서 드래그를 건다', () => {
   const s = source.slice(at, end);
   assert.match(s, /onOrdDragStart\(event,\s*'view'/, '메인 탭에 onOrdDragStart 가 없다');
   assert.match(s, /onOrdDrop\(event,\s*'view'/, '메인 탭에 onOrdDrop 이 없다');
-  assert.match(s, /draggable="\$\{state\.isAdmin \? 'true' : 'false'\}"/, '대표 갈림이 없다');
+  /* 옆줄과 같은 방식으로 «그 칩 줄의» draggable 을 본다 */
+  assert.match(draggableOfRow(s, "onOrdDragStart(event,'view'", '메인 탭 칩'),
+    ADMIN_GATE, '메인 탭 칩의 draggable 이 state.isAdmin 으로 갈리지 않는다');
 });
 
 test('「📋 전체」 칩은 끌 수 없다 — 저장된 탭이 아니라 늘 맨 앞이다', () => {

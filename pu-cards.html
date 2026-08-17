@@ -923,10 +923,15 @@ table.sbox.tight td.none{padding:26px 8px}
 #pcTable thead th.col-dragging{opacity:.4}
 #pcTable thead th.col-dragover{box-shadow:inset 3px 0 0 #3a4a73}
 /* 끌어서 순서 바꾸기 — 표의 열 드래그(.col-dragging/.col-dragover)와 같은 결로 맞춘다.
-   가로 목록(메인 탭)은 세로줄, 세로 목록(폴더)은 가로줄로 「여기에 놓입니다」를 보인다. */
+   가로 목록(메인 탭)은 세로줄, 세로 목록(폴더)은 가로줄로 「여기에 놓입니다」를 보인다.
+   ⚠ 선은 «앞에 꽂힘(.ord-dragover)»과 «뒤에 꽂힘(.ord-dragover-after)» 두 가지다 —
+     뒤쪽이 없으면 맨 끝자리에 놓을 길이 아예 없다(끝에 놓는 것을 눈으로 못 보여 준다).
+     둘은 절대 같이 붙지 않는다(onOrdDragOver 가 하나만 남긴다). */
 .ord-dragging{opacity:.45}
 .ord-dragover{box-shadow:inset 0 3px 0 -1px #1d4ed8}
+.ord-dragover-after{box-shadow:inset 0 -3px 0 -1px #1d4ed8}
 #pcErpTabs .ord-dragover{box-shadow:inset 3px 0 0 -1px #1d4ed8}
+#pcErpTabs .ord-dragover-after{box-shadow:inset -3px 0 0 -1px #1d4ed8}
 [draggable="true"].pcitem,[draggable="true"].folderrow{cursor:grab}
 #pcTable thead th{position:sticky;top:0;background:#f8fafc;font-size:12px;color:#7c89a6;text-align:left;
   padding:12px 14px;border-bottom:1px solid #eef2f7;font-weight:600;z-index:1}
@@ -6245,10 +6250,15 @@ function onFolderOrCardDrop(e,targetGid){
    ⚠ 이미 있는 ⋮ 메뉴의 「⬆위로 ⬇아래로」(moveFolderOrder)는 그대로 둔다 —
      드래그가 안 되는 자리(폰·터치)의 길이자, 이 기능이 고장 나도 쓸 수 있는 길이다. */
 
-/* 끈 것을 놓은 자리 «앞»에 끼워 넣고 1..n 으로 번호를 다시 매긴다.
+/* 끈 것을 놓은 자리 «앞»(after 가 거짓) 또는 «뒤»(after 가 참)에 끼워 넣고
+   1..n 으로 번호를 다시 매긴다.
+   ⚠ 늘 앞에만 꽂으면 **맨 끝자리에는 영영 놓을 수 없다** — [가,나,다,라] 에서 「가」를
+     「라」에 놓아도 [나,다,가,라] 가 될 뿐이다. 그래서 앞/뒤를 밖에서 받는다.
+   ⚠ 앞/뒤 판단은 여기서 하지 않는다 — 이 함수는 화면을 모르는 순수 계산으로 남긴다
+     (그래야 검사로 못 박을 수 있다). 판단은 ordIsAfter 하나가 맡는다.
    돌려주는 것은 **값이 실제로 달라진 것만** — 안 바뀐 것까지 저장하면
    서버에 쓸데없는 쓰기가 나가고, 남이 그 사이 고친 것과 부딪힐 일만 는다. */
-function reorderList(list, dragId, dropId){
+function reorderList(list, dragId, dropId, after){
   const arr = (list||[]).slice();
   if(dragId === dropId) return [];
   const from = arr.findIndex(x=>x && x.id===dragId);
@@ -6256,10 +6266,29 @@ function reorderList(list, dragId, dropId){
   if(from < 0 || to < 0) return [];
   const moved = arr.splice(from, 1)[0];
   const at = arr.findIndex(x=>x && x.id===dropId);
-  arr.splice(at, 0, moved);
+  arr.splice(after ? at+1 : at, 0, moved);
   const out = [];
   arr.forEach((x,i)=>{ const n = i+1; if((x.order||0) !== n) out.push({ id:x.id, order:n }); });
   return out;
+}
+
+/* 어느 목록이 «가로»인가 — 메인 탭(view) 하나뿐이고 나머지 셋은 세로다.
+   ⚠ CSS 를 훑어 축을 알아내면 안 된다 — 스타일을 손대는 순간 조용히 축이 뒤집힌다.
+     목록 갈래(kind)로 정하면 화면을 아무리 고쳐도 판단이 안 흔들린다. */
+const ORD_HORIZONTAL = { view:true };
+
+/* 가리킨 자리가 그 칸의 «뒤쪽 절반»이면 뒤에, «앞쪽 절반»이면 앞에 꽂는다.
+   세로 목록은 아래 절반이 뒤, 가로 목록(메인 탭)은 오른쪽 절반이 뒤다.
+   ⚠ 이 판단은 «선을 그리는 곳(onOrdDragOver)»과 «실제로 놓는 곳(onOrdDrop)» 둘이 쓴다.
+     두 곳이 따로 재면 선은 아래에 그어 놓고 위에 꽂히는 어긋남이 난다 — 그래서
+     한 함수로 모아 둘이 절대 갈라설 수 없게 한다.
+   ⚠ 화면을 읽지 않는다 — 네모(rect)와 좌표만 받는 순수 계산이라 검사로 못 박을 수 있다. */
+function ordIsAfter(kind, rect, clientX, clientY){
+  if(!rect) return false;
+  return ORD_HORIZONTAL[kind] === true          /* === true 로 본다 — 'constructor' 같은 이름이
+                                                   물려받은 값에 걸려 축이 뒤집히지 않게 */
+    ? (clientX - rect.left) > (rect.width  / 2)
+    : (clientY - rect.top ) > (rect.height / 2);
 }
 
 /* 목록마다 다른 것은 «형제가 누구인가»와 «어디에 저장하는가» 둘뿐이다.
@@ -6286,9 +6315,10 @@ function ordSiblings(kind, id, scope){
   }
   if(kind === 'coftab'){
     const f = (_coFolders||{})[scope]; if(!f || !f.tabs || !f.tabs[id]) return null;
-    const list = Object.keys(f.tabs)
-      .map(tid => ({ id:tid, order:Number((f.tabs[tid]||{}).order||0) }))
-      .sort((a,b)=>a.order-b.order);
+    /* 화면에 그리는 것과 «같은 함수»를 쓴다 — 여기서 따로 줄 세우면 order 가 같거나
+       비었을 때(coFTabList 는 이름 가나다순으로 가른다) 대표가 보고 있는 차례와
+       다른 차례로 번호가 다시 매겨진다. 베낀 두 벌보다 한 벌이 낫다. */
+    const list = coFTabList(f);
     return { list,
       pathOf: i => 'coFolders/'+scope+'/tabs/'+i+'/order',
       applyLocal: (i,o) => { if(f.tabs[i]) f.tabs[i].order = o; } };
@@ -6309,11 +6339,11 @@ function ordSiblings(kind, id, scope){
 /* 바뀐 order 만 모아 **한 번의 update()** 로 보낸다.
    ⚠ 레코드를 통째로 set 하면 안 된다 — 그 사이 남이 고친 이름이 되돌아간다
      (2026-08-11 「한 건 저장이 레코드 통째라 남의 칸을 되돌리던 것」과 같은 종류). */
-function saveOrder(kind, dragId, dropId, scope){
+function saveOrder(kind, dragId, dropId, scope, after){
   if(!state.isAdmin){ return Promise.resolve(); }   /* 화면 게이트를 넘겨도 여기서 막는다 */
   const spec = ordSiblings(kind, dragId, scope||'');
   if(!spec) return Promise.resolve();
-  const changed = reorderList(spec.list, dragId, dropId);
+  const changed = reorderList(spec.list, dragId, dropId, after);
   if(!changed.length) return Promise.resolve();     /* 바꿀 것이 없으면 서버를 안 부른다 */
   if(Store.mode!=='firebase'){ toast('클라우드에 연결된 상태에서만 순서를 바꿀 수 있습니다'); return Promise.resolve(); }
   const upd = {};
@@ -6340,25 +6370,42 @@ function onOrdDragStart(e, kind, id, scope){
   e.currentTarget.classList.add('ord-dragging');
   e.stopPropagation();
 }
+/* 선 두 가지를 한꺼번에 지운다 — 하나만 지우면 반대쪽 선이 남아 엉뚱한 자리를 가리킨다 */
+function ordUnmark(el){
+  if(!el || !el.classList) return;
+  el.classList.remove('ord-dragover');
+  el.classList.remove('ord-dragover-after');
+}
+/* 지금 이 줄의 어느 쪽에 꽂히는가 — 선 그리기와 실제 놓기가 «같은 한 줄»을 쓴다 */
+function ordAfterFromEvent(kind, el, e){
+  let r = null; try{ r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null; }catch(_){}
+  return ordIsAfter(kind, r, e.clientX, e.clientY);
+}
 function onOrdDragOver(e){
   if(!_dragOrd) return;                 /* 명함을 끄는 중이면 기존 길에 맡긴다 */
   e.preventDefault(); e.stopPropagation();
   try{ e.dataTransfer.dropEffect='move'; }catch(_){}
-  e.currentTarget.classList.add('ord-dragover');
+  /* 놓을 자리를 «놓기와 똑같은 계산»으로 정해 그쪽 모서리에만 선을 긋는다.
+     끌고 있는 것의 갈래로 축을 정한다 — 갈래가 다르면 어차피 onOrdDrop 이 안 받는다. */
+  const after = ordAfterFromEvent(_dragOrd.kind, e.currentTarget, e);
+  ordUnmark(e.currentTarget);
+  e.currentTarget.classList.add(after ? 'ord-dragover-after' : 'ord-dragover');
 }
-function onOrdDragLeave(e){ e.currentTarget.classList.remove('ord-dragover'); }
+function onOrdDragLeave(e){ ordUnmark(e.currentTarget); }
 function onOrdDragEnd(e){
   e.currentTarget.classList.remove('ord-dragging');
   _dragOrd = null;
-  document.querySelectorAll('.ord-dragover').forEach(n=>n.classList.remove('ord-dragover'));
+  document.querySelectorAll('.ord-dragover,.ord-dragover-after').forEach(ordUnmark);
 }
 function onOrdDrop(e, kind, id, scope){
-  e.currentTarget.classList.remove('ord-dragover');
+  ordUnmark(e.currentTarget);
   if(!_dragOrd) return;                 /* 명함 드롭 — 기존 onFolderOrCardDrop 이 맡는다 */
   e.preventDefault(); e.stopPropagation();
   const d = _dragOrd; _dragOrd = null;
   if(d.kind !== kind || (d.scope||'') !== (scope||'')) return;   /* 다른 목록끼리는 안 섞는다 */
-  saveOrder(kind, d.id, id, scope||'');
+  /* 선을 그릴 때와 같은 함수로 앞/뒤를 다시 정한다 — 보이던 선과 결과가 어긋나지 않는다 */
+  const after = ordAfterFromEvent(kind, e.currentTarget, e);
+  saveOrder(kind, d.id, id, scope||'', after);
 }
 
 /* ── 사이드바 폭 조절(PC) ── */
