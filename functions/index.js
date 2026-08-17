@@ -1175,28 +1175,32 @@ async function requireReader(req) {
      남겨 두면 열쇠가 DB 에 그대로 있어 지금 문제가 안 풀린다. */
 async function readGeminiKey() {
   const fromSecret = String(process.env.GEMINI_KEY || "").trim();
-  if (fromSecret) return fromSecret;
+  /* ⚠ **어디서 왔는지**를 남긴다(값은 절대 안 남긴다). 금고를 걸었는데도 옛 갈래로
+     돌고 있으면, 실시간DB 의 열쇠를 지우는 순간 판독이 멈춘다 — 지우기 전에
+     이 줄로 확인한다: `keySource secret` 이면 금고에서 온 것이다. */
+  if (fromSecret) { console.log("keySource secret"); return fromSecret; }
   const db = getDatabase();
   const paths = ["pucards/config/geminiKey", "data/app_config/geminiKey"];
   for (const p of paths) {
     try {
       const snap = await db.ref(p).once("value");
       const v = String(snap.val() || "").trim();
-      if (v) return v;
+      if (v) { console.log("keySource rtdb", p); return v; }
     } catch (e) { /* 다음 자리로 */ }
   }
   return "";
 }
 
-/* ⚠ `secrets: ["GEMINI_KEY"]` 를 아직 안 건다 — **없는 비밀을 걸면 배포가 막힌다.**
-   2026-08-17 실제로 막혔다: `Secret [projects/…/secrets/GEMINI_KEY] not found`.
-   지금은 서버가 실시간DB 에서 열쇠를 읽는다(readGeminiKey). 그것만으로도
-   **브라우저는 열쇠를 안 만지게** 되어 이번 단계의 목적은 이룬다.
-   나중에 `firebase functions:secrets:set GEMINI_KEY` 로 비밀을 넣은 뒤
-   여기에 secrets 를 걸고, 그때 실시간DB 의 열쇠를 지우면 완결된다. */
+/* 2026-08-17 — 대표님이 `firebase functions:secrets:set GEMINI_KEY` 로 비밀을 넣으셨다.
+   이제 열쇠는 **금고(Secret Manager)** 에서 온다.
+   ⚠ 이 줄은 비밀이 **실제로 있을 때만** 걸 수 있다. 없는 비밀을 걸면 배포가 통째로
+     막힌다(2026-08-17 에 실제로 막혔다: `Secret … GEMINI_KEY not found`).
+   ⚠ 실시간DB 갈래(readGeminiKey 안)는 **아직 남겨 둔다.** 금고가 실제로 도는 것을
+     사람이 확인하기 전에 지우면, 어긋났을 때 판독이 통째로 멈춘다.
+     확인 뒤에 DB 의 열쇠와 그 갈래를 함께 지운다. */
 exports.readDoc = functions
   .region(MAIL_REGION)
-  .runWith({ timeoutSeconds: 120, memory: "512MB" })
+  .runWith({ timeoutSeconds: 120, memory: "512MB", secrets: ["GEMINI_KEY"] })
   .https.onRequest(async (req, res) => {
     setCors(req, res);
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
