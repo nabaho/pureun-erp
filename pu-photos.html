@@ -7134,11 +7134,9 @@ function ackAllShown() {
   const ids = list.reduce(function (a, it) { return a.concat(idsOf(it)); }, []);
   if (blockedIfOther(ids)) return;
   /* 어디를 치우는지 함께 말한다 — 전체 화면에서도 누를 수 있게 된 뒤로(2026-08-17)
-     「전 직원 55장」인지 「이 분류 3장」인지 모르고 누를 위험이 생겼다. */
-  const where = needOnly ? '지금 보이는'
-    : (kindTab !== 'all' ? '「' + (tabLabelOf(kindTab) || '이 분류') + '」의'
-      : (gridOwner === ALL_OWNERS ? '전 직원의' : '내'));
-  if (!confirm(where + ' 확인 필요 ' + ids.length + '장을 「확인했음」으로 치웁니다.\n\n' +
+     「전 직원 55장」인지 「이 분류 3장」인지 모르고 누를 위험이 생겼다.
+     ⚠ 단추·칸과 **같은 말**을 쓴다(needScopeLabel) — 따로 적으면 어긋난다. */
+  if (!confirm(needScopeLabel() + ' 확인 필요 ' + ids.length + '장을 「확인했음」으로 치웁니다.\n\n' +
     '· 사진은 그대로 있습니다 — 할 일 목록에서만 빠집니다.\n' +
     '· 판독을 다시 걸지 않게 되므로, 값을 한 번 보신 뒤에 눌러 주세요.\n\n계속할까요?')) return;
   const btn = $('needAckAll');
@@ -7175,12 +7173,26 @@ function ackAllShown() {
 }
 
 function renderNeedBox() {
-  const n = gridItems.filter(needsCheck).length;
+  /* ── 두 칸이 **같은 것을 세고, 모양이 안 바뀐다** (대표 지시 2026-08-17) ──
+     "전체사진 보기 클릭하면 캡처1로 바뀐다. 색이나 내용 바뀔 필요 없다.
+      그냥 이대로 대시보드 두고 관리할 수 있게 해라."
+
+     ⚠ 예전에는 위 칸이 들어가면 「← 전체 사진 보기」(파랑)로, 나오면
+       「⚠ 확인 필요 N장」(주황)으로 **글자와 색이 통째로 바뀌었다.** 같은 자리가
+       오갈 때마다 다른 것처럼 보여, 대표가 「관리하는 칸」으로 못 쓰셨다.
+       이제 두 상태 다 같은 글·같은 색이다. 누르면 오갈 뿐이다.
+       (지금 걸러보기 중인지는 본문 맨 위 띠가 그대로 말해 준다 — whereNow)
+     ⚠ 세는 것도 맞췄다. 위는 gridItems(접기 전) 를, 아래는 shownItems(접은 뒤,
+       쪽 세기)를 세어 **38장 / 37장** 처럼 어긋나 보였다(대표 캡처). 이제 둘 다
+       「지금 화면에 보이는 확인 필요, 쪽 단위」 하나를 쓴다 — 아래 단추가 실제로
+       치우는 바로 그 수다. */
+  const need = needShownItems();
+  const n = need.reduce(function (a, it) { return a + idsOf(it).length; }, 0);
   const el = $('needBox');
   const card = $('needCard');
   if (card) card.style.display = (n || needOnly) ? 'block' : 'none';
   el.style.display = (n || needOnly) ? 'block' : 'none';
-  el.className = needOnly ? 'on' : '';
+  el.className = '';   // 색을 안 바꾼다(대표 지시) — 늘 「할 일」 색이다
   /* ── 늘 두 칸이다 (대표 지시 2026-08-17) ──
      "항상 2개 대시보드로, 문제가 있으면 아래 [칸에서] 문제만 체크할 수 있게."
      위 칸 = 들어가기·나오기, 아래 칸 = 문제만 골라 치우기.
@@ -7193,13 +7205,12 @@ function renderNeedBox() {
        할 일에서 사라진다. */
   const bulk = $('needAckAll'), hint = $('needHint');
   if (bulk) {
-    const m = needShownItems().reduce(function (a, it) { return a + idsOf(it).length; }, 0);
+    const m = n;   // 위 칸과 같은 수 — 어긋나 보이면 어느 쪽을 믿을지 모른다
     bulk.style.display = m ? 'block' : 'none';
-    /* 무엇을 치우는지 이름을 붙인다 — 「전체 근로자 55장」과 「내 사진 3장」은
-       누르는 뜻이 완전히 다르다. */
-    const scope = needOnly ? '보이는' :
-      (kindTab !== 'all' ? '「' + (tabLabelOf(kindTab) || '이 분류') + '」' :
-       (gridOwner === ALL_OWNERS ? '전 직원' : '내'));
+    /* 무엇을 치우는지 이름을 붙인다 — 「전 직원 55장」과 「내 3장」은 누르는 뜻이
+       완전히 다르다. ⚠ 들어가고 나오고에 따라 안 바꾼다(대표 지시) — 지금
+       무엇을 좁혀 보고 있는가만 말한다. */
+    const scope = needScopeLabel();
     bulk.textContent = '✓ ' + scope + ' ' + m + '장 확인 처리';
     bulk.disabled = false;
     if (hint) {
@@ -7211,10 +7222,19 @@ function renderNeedBox() {
      담당자는 자기 것만 세어진다 — 「누구 사진」 칸에 남을 고를 줄이 아예 없다.
      총괄 관리자만 전 직원을 볼 수 있고 그것이 기본값이라 전부 세어진다.
      ⚠ 세는 규칙은 이미 맞는데 **글자만 봐서는 구분이 안 됐다** — 내 것 3장인지
-     전 직원 3장인지 알 수 없었다. 그래서 전 직원을 보는 중에만 꼬리표를 붙인다. */
-  el.textContent = needOnly
-    ? '← 전체 사진 보기'
-    : '⚠ 확인 필요 ' + n + '장' + (gridOwner === ALL_OWNERS ? ' · 전 직원' : '');
+     전 직원 3장인지 알 수 없었다. 그래서 무엇을 좁혀 보는지 꼬리표를 붙인다.
+     ⚠ 들어가고 나오고에 따라 **안 바꾼다**(대표 지시 2026-08-17) — 같은 자리가
+       오갈 때마다 다른 것처럼 보이면 관리하는 칸으로 못 쓴다. */
+  el.textContent = '⚠ 확인 필요 ' + n + '장 · ' + needScopeLabel();
+}
+
+/* 지금 무엇을 좁혀 보고 있나 — 두 칸이 **같은 말**을 쓰게 한 곳에 둔다.
+   따로 적으면 위는 「전 직원」, 아래는 「보이는」처럼 어긋난다(대표 캡처). */
+function needScopeLabel() {
+  if (kindTab !== 'all') return '「' + (tabLabelOf(kindTab) || '이 분류') + '」';
+  if (gridOwner === ALL_OWNERS) return '전 직원';
+  if (gridOwner === SHARED_OWNER) return '받은 사진';
+  return '내 사진';
 }
 
 /* ══════ 여러 장 한 번에 고르기 (대표 요청 2026-08-07) ══════
