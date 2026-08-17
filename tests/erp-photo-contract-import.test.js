@@ -94,7 +94,14 @@ const t = (name, got, want) => {
   vm.runInContext(fn('erpNormName'), c);
   vm.runInContext(slice('// 두 문자열의 최장 공통 부분문자열 길이', 'function _erpNameCmp('), c);
   vm.runInContext(fn('_erpNameCmp'), c);
-  vm.runInContext(slice('var ERP_PHOTO_MATCH_MIN_SCORE', '// ============'), c);
+  /* 최저점수 상수는 함수 밖 전역이라 fn() 하나로는 안 딸려온다.
+     예전엔 그 뒤의 장식용 「// ====」 배너까지 slice 로 쓸어와 상수 + 함수 세 개를
+     통째로 물어왔다 — 배너 문구만 바꿔도 이 검사가 엉뚱한 이유로 깨졌다.
+     값은 여기 직접 넣고, 소스의 실제 값은 아래에서 따로 고정해 지킨다. */
+  c.ERP_PHOTO_MATCH_MIN_SCORE = 60;
+  vm.runInContext(fn('erpBuildContractPhotoMatches'), c);
+  t('★ 후보 최저점수가 60으로 고정돼 있다(바뀌면 의도한 것인지 봐야 한다)',
+    /var ERP_PHOTO_MATCH_MIN_SCORE\s*=\s*60;/.test(src), true);
 
   const items = [
     { id:'p1', year:'2026', fields:{ company:'주식회사 유원에프앤비' }, at:1000 },
@@ -168,6 +175,30 @@ const t = (name, got, want) => {
   t('★ 금액이 없으면 patch 에 amounts 키가 아예 없다', 'amounts' in rNoAmt.patch, false);
   const rZeroAmt = c.erpContractPhotoApplyPatch({ deposit:'0원', fee:'0' }, 'consulting', baseF);
   t('★ 금액이 0이어도 patch 에 amounts 키가 아예 없다', 'amounts' in rZeroAmt.patch, false);
+
+  /* ── 보수·계약금이 둘 다 읽혔을 때 — 기계가 고르지 않는다 ──
+     fee 는 판독기가 «보수·자문료·용역비» 를 모두 담는 칸이라 「보수」로 부른다. */
+  const rBoth = c.erpContractPhotoApplyPatch({ deposit:'3,000,000원', fee:'10,000,000원' }, 'consulting', baseF);
+  t('★ 계약금·보수가 다르면 둘 다 후보로 내놓는다',
+    (rBoth.amountChoices || []).map(x => [x.key, x.label, x.amount]),
+    [['deposit', '계약금', 3000000], ['fee', '보수', 10000000]]);
+  t('안 고르면 계약금이 기본값(칸 이름과 같다)', rBoth.patch.amounts.consulting, 3000000);
+  const rSame = c.erpContractPhotoApplyPatch({ deposit:'3,000,000원', fee:'3,000,000원' }, 'consulting', baseF);
+  t('둘이 같은 금액이면 고르라고 묻지 않는다', rSame.amountChoices, null);
+  t('한쪽만 있으면 고르라고 묻지 않는다', rFee.amountChoices, null);
+
+  /* ── ★ 못 읽은 금액은 «못 읽었다고 말한다» (부가세와 같은 태도) ──
+     "1,000만원" 은 쉼표만 떼면 1,000원이 된다 — 1만 배 틀린 값이 조용히 들어가면 안 된다.
+     단위를 해석하지는 않는다. 원문을 보여 주고 사람이 판단하게 한다. */
+  const rClean = c.erpContractPhotoApplyPatch({ deposit:'5,000,000원' }, 'consulting', baseF);
+  t('깨끗이 읽힌 금액에는 군말을 안 붙인다',
+    rClean.previewLines.some(l => l.indexOf('원문') >= 0), false);
+  const rMan = c.erpContractPhotoApplyPatch({ deposit:'1,000만원' }, 'consulting', baseF);
+  t('★ "1,000만원" 은 숫자만 읽혔다고 알려 준다',
+    rMan.previewLines.some(l => l.indexOf('원문') >= 0 && l.indexOf('1,000만원') >= 0), true);
+  const rRange = c.erpContractPhotoApplyPatch({ deposit:'1,000,000~2,000,000' }, 'consulting', baseF);
+  t('★ 범위로 적힌 금액도 알려 준다',
+    rRange.previewLines.some(l => l.indexOf('원문') >= 0), true);
 
   // 위 호출들이 baseF 및 그 중첩 객체를 건드리지 않았어야 한다 — Preact 상태 업데이트는
   // 새 객체를 필요로 하므로, 여기서 조용히 원본을 고치는 회귀는 눈에 안 띄고 상태갱신을 깨뜨린다.
@@ -294,6 +325,20 @@ const t = (name, got, want) => {
     t('회사명·유형 수·읽기 완료가 바뀌면 다시 찾는다',
       /\}, \[f\.company\.name, \(f\.kinds\|\|\[\]\)\.length, contractPhotosLoaded\]\);/.test(blk), true);
     t('★ 배지는 찾은 것이 있을 때만 보인다', /photoMatches\.length > 0 &&/.test(blk), true);
+    /* ★★ 배지가 «어느 탭에» 있는지 — 이 기능이 실제로 보이느냐를 가른다.
+       계약유형 체크박스는 계약정보 탭에 있고, 새 계약은 유형이 0개로 시작한다.
+       배지를 기업정보 탭(회사명 칸 옆)에 두면 「유형 하나만 체크」 조건이 그 화면에서는
+       영영 성립하지 않아, 새 계약에서는 배지가 한 번도 안 뜬다(수정 화면에서만 보였다).
+       실제로 그렇게 배포됐다 — 유형을 고르는 바로 그 화면에 있어야 한다. */
+    {
+      const badgeAt = blk.indexOf("'📷 계약서 ' + photoMatches.length");
+      const companyTabAt = blk.indexOf("if(tab === 'company'){");
+      const contractTabAt = blk.indexOf("} else if(tab === 'contract'){");
+      t('배지·두 탭의 자리를 모두 찾을 수 있다',
+        badgeAt > 0 && companyTabAt > 0 && contractTabAt > companyTabAt, true);
+      t('★ 배지는 계약정보 탭에 있다 (기업정보 탭이 아니다)',
+        badgeAt > contractTabAt, true);
+    }
     t('배지에 몇 건인지 적는다', /'📷 계약서 ' \+ photoMatches\.length \+ '건 발견'/.test(blk), true);
     t('★ 배지를 누르면 목록이 열린다', /onClick:function\(\)\{ setPhotoPickerOpen\(true\); \}/.test(blk), true);
     t('목록 팝업이 실제로 그려진다', /photoPickerOpen && h\(PhotoContractPickerModal, \{/.test(blk), true);
@@ -301,7 +346,17 @@ const t = (name, got, want) => {
     /* ★ 바로 안 채운다 — 판독 글자는 틀릴 수 있어 사람이 보고 정해야 한다 */
     t('★ 고른 뒤 바로 안 채우고 미리보기로 넘긴다', /setPhotoPreview\(\{ item: it, kindV: kindV, result: result \}\)/.test(blk), true);
     t('무엇이 바뀌는지 줄줄이 보여 준다', /photoPreview\.result\.previewLines\.map/.test(blk), true);
-    t('★ 「적용」을 눌러야 덮어쓴다', /Object\.assign\(\{\}, prev, photoPreview\.result\.patch\)/.test(blk), true);
+    /* ★ 지키려는 것은 「고를 때가 아니라 적용을 눌러야 비로소 f 를 덮어쓴다」는 것이지,
+       그 한 줄의 «생김새» 가 아니다. 전에는 표현식을 통째로 못 박아, 금액 고르기가 들어오면서
+       patch 를 지역 변수로 한 번 거치자 뜻은 그대로인데 검사만 깨졌다.
+       ContractModal 전체에는 setF 가 수십 군데 있으니(폼 전체의 공용 갱신 방식) 이 기능의
+       두 곳만 잘라서 본다 — 고르는 곳에는 없어야 하고, 적용하는 곳에는 있어야 한다. */
+    const pickBlk = slice('photoPickerOpen && h(PhotoContractPickerModal, {', 'photoPreview && h(\'div\', {');
+    t('★ 고르는 단계에서는 절대 안 덮어쓴다 (setF 가 없다)', /setF\(/.test(pickBlk), false);
+    const applyBlk = slice('photoPreview && h(\'div\', {', '\n// ============ 방금 들어온 건 표시 ============');
+    t('★ 적용하는 곳에서만 덮어쓴다', (applyBlk.match(/setF\(/g) || []).length, 1);
+    t('★ 덮어쓰는 값은 미리보기가 계산해 둔 patch 다',
+      /Object\.assign\(\{\}, prev, patch\)|Object\.assign\(\{\}, prev, photoPreview\.result\.patch\)/.test(applyBlk), true);
     t('가져올 값이 없으면 그렇게 말한다', /'이 계약서에서 가져올 값이 없습니다'/.test(blk), true);
     t('★ 그때는 「적용」을 누를 수 없다 (눌러도 아무 일 없는 단추를 두지 않는다)',
       /disabled: !photoPreview\.result\.previewLines\.length/.test(blk), true);
