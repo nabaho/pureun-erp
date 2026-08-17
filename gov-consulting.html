@@ -1600,11 +1600,25 @@ function setSaveState(kind,text,title){
   el.title=title||text||'저장 상태';
 }
 function _saveStart(){if(_savePending===0)_saveFailed=false;_savePending++;setSaveState('saving','저장 중…','클라우드에 변경사항을 저장하고 있습니다.');}
-function _saveFinish(ok){
+/* ★ 「권한이 없다」와 「연결이 안 된다」는 «다른 고장» 이다.
+   둘을 「다시 시도해 주세요」로 뭉개면, 권한이 막힌 사람은 인터넷만 확인하며
+   영영 다시 눌러 본다(2026-08-17 실제로 그렇게 2주를 지냈다). */
+function _isDeniedErr(e){
+  /* 실시간DB는 판마다 다른 자리에 담아 준다 — code 에만, message 에만, 또는 Error 글로만.
+     한 자리만 보면 어떤 판에서는 권한 문제를 「연결 문제」로 읽는다. */
+  const c=(String((e&&e.code)||'')+' '+String((e&&e.message)||'')+' '+String(e||'')).toLowerCase();
+  return c.indexOf('permission_denied')>=0||c.indexOf('permission denied')>=0;
+}
+const _SAVE_DENIED_MSG='저장 권한이 없습니다 — 총괄관리자에게 「일정관리 저장 권한」을 알려 주세요. (다시 눌러도 저장되지 않습니다)';
+let _saveDenied=false;
+function _saveFinish(ok,err){
   _savePending=Math.max(0,_savePending-1);
   if(!ok)_saveFailed=true;
+  if(!ok&&_isDeniedErr(err))_saveDenied=true;
   if(_savePending===0){
-    setSaveState(_saveFailed?'failed':'saved',_saveFailed?'저장 실패':'저장 완료',_saveFailed?'클라우드 저장에 실패했습니다. 인터넷 연결을 확인하세요.':'클라우드 저장이 완료되었습니다.');
+    if(_saveFailed&&_saveDenied)setSaveState('locked','저장 권한 없음',_SAVE_DENIED_MSG);
+    else setSaveState(_saveFailed?'failed':'saved',_saveFailed?'저장 실패':'저장 완료',_saveFailed?'클라우드 저장에 실패했습니다. 인터넷 연결을 확인하세요.':'클라우드 저장이 완료되었습니다.');
+    _saveDenied=false;
     if(_releaseLockAfterSave){_releaseLockAfterSave=false;_releaseCompanyEditLockNow();}
   }
 }
@@ -1836,7 +1850,8 @@ function fbPushRecordDelta(lsKey,beforeValue,afterValue){
       if(!result.committed)throw new Error('record transaction not committed');
       _saveFinish(true);return true;
     })
-    .catch(e=>{console.warn('FB 레코드 병합 저장 실패',node,e);_saveFinish(false);toast('클라우드 병합 저장 실패 — 다시 시도해 주세요.','err');return false;})
+    .catch(e=>{console.warn('FB 레코드 병합 저장 실패',node,e);_saveFinish(false,e);
+      toast(_isDeniedErr(e)?('🔒 '+_SAVE_DENIED_MSG):'클라우드 병합 저장 실패 — 다시 시도해 주세요.','err');return false;})
     .finally(()=>{
       _recordWritePending[node]=Math.max(0,(_recordWritePending[node]||1)-1);
       if(_recordWritePending[node]===0){
@@ -1860,8 +1875,9 @@ function fbPush(lsKey,value){
   try{
     return _fbDB.ref(node).set(value)
       .then(()=>{_saveFinish(true);return true;})
-      .catch(e=>{console.warn('FB 쓰기 실패',node,e);_saveFinish(false);toast('클라우드 저장 실패 — 인터넷 연결을 확인하세요','err');return false;});
-  }catch(e){console.warn('FB 쓰기 실패',node,e);_saveFinish(false);return Promise.resolve(false);}
+      .catch(e=>{console.warn('FB 쓰기 실패',node,e);_saveFinish(false,e);
+        toast(_isDeniedErr(e)?('🔒 '+_SAVE_DENIED_MSG):'클라우드 저장 실패 — 인터넷 연결을 확인하세요','err');return false;});
+  }catch(e){console.warn('FB 쓰기 실패',node,e);_saveFinish(false,e);return Promise.resolve(false);}
 }
 
 function updateFbStatus(icon){
