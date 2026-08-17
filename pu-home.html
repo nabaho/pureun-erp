@@ -1,0 +1,1221 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>홈페이지 관리 — 푸른노무법인</title>
+<!--
+  홈페이지 관리 — 회사 홈페이지(라이믹스)의 구성원 소개·주요업무·오시는길·인사말 글을
+  통합시스템에서 관리하고, 홈페이지에 «붙여넣을 내용»을 만들어 준다.
+
+  설계서: docs/superpowers/specs/2026-08-16-홈페이지-관리-design.md
+  목업:   docs/mockups/homepage-manage.html
+
+  ★ 이 화면은 홈페이지를 «직접 바꾸지 않는다». 마지막 붙여넣기 한 번은 사람이 한다.
+    자동 전송은 관리자 비밀번호를 서버에 두어야 해서 설계에서 일부러 뺐다.
+    "편해지니 자동으로 보내자"로 되돌리지 말 것.
+
+  ★ 판단은 전부 js/pu-home-*.js 네 부품이 한다. 화면은 그 결과를 보여주기만 한다.
+    같은 판단을 화면 안에서 다시 만들면 두 곳이 서로 다른 답을 낸다.
+-->
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-check-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
+<script src="js/pu-version.js"></script>
+<script src="js/pu-appbar.js?v=4"></script>
+<script src="js/pu-home-parse.js?v=1"></script>
+<script src="js/pu-home-career.js?v=1"></script>
+<script src="js/pu-home-export.js?v=1"></script>
+<script src="js/pu-home-diff.js?v=1"></script>
+<style>
+:root{--navy:#2E3A8C;--violet:#7C6CE0;--ok:#2E7D4F;--warn:#B26A00;--bad:#C43D3D;
+--ink:#23263B;--sub:#6B6F87;--line:#E3E5EF;--paper:#F5F6FA;--card:#FFF;}
+*{box-sizing:border-box;margin:0}
+body{font-family:'Noto Sans KR','Malgun Gothic',sans-serif;background:var(--paper);color:var(--ink);font-size:14px}
+header{background:var(--navy);color:#fff;display:flex;align-items:center;gap:12px;padding:12px 18px}
+header .brand{font-weight:800;font-size:16px;cursor:pointer}
+header .who{margin-left:auto;font-size:12px;display:flex;align-items:center;gap:10px}
+header .out{background:#ffffff22;border:1px solid #ffffff66;color:#fff;border-radius:8px;padding:3px 10px;
+  cursor:pointer;font-size:12px;font-family:inherit}
+main{padding:14px 16px 60px;max-width:1180px;margin:0 auto}
+.gate{padding:40px 18px;text-align:center;color:var(--sub)}
+.btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px 12px;font-size:13px;
+  cursor:pointer;font-family:inherit;color:var(--ink)}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.pri{background:var(--navy);border-color:var(--navy);color:#fff}
+.btn.sm{padding:4px 9px;font-size:12px;border-radius:7px}
+.sub{color:var(--sub);font-size:12px}
+
+/* ── 머리띠 ── */
+.appbar{display:flex;align-items:center;gap:10px;padding:10px 13px;background:var(--card);
+  border:1px solid var(--line);border-radius:12px;margin-bottom:11px;flex-wrap:wrap}
+.appbar .ttl{font-weight:800;font-size:15px}
+.appbar .sp{flex:1}
+.appbar select{border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:12.5px;font-family:inherit}
+
+/* ── 알림 띠 ── */
+.bar{border-radius:12px;padding:10px 14px;font-size:13px;margin-bottom:11px;line-height:1.75}
+.bar.bad{background:#FDECEC;border:1px solid #F3C3C3;color:#8C2B2B}
+.bar.warn{background:#FBF1DE;border:1px solid #F0D9A8;color:#7C4A03}
+.bar.ok{background:#EAF6EE;border:1px solid #B7E4C7;color:#1E5631}
+.bar.info{background:#EEF2FF;border:1px solid #C7D2FE;color:#3730A3}
+.bar b{font-weight:800}
+
+/* ── 3칸 ── */
+.body{display:flex;align-items:stretch;background:var(--card);border:1px solid var(--line);
+  border-radius:14px;overflow:hidden;min-height:460px}
+.side{width:188px;flex:0 0 188px;border-right:1px solid var(--line);background:#FBFCFD;padding:8px 0}
+.side .it{display:flex;align-items:center;gap:7px;padding:9px 13px;font-size:13.5px;cursor:pointer}
+.side .it:hover{background:#F5F7FF}
+.side .it.on{background:#E7EBFB;font-weight:800;box-shadow:inset 3px 0 0 var(--navy)}
+.side .cnt{margin-left:auto;font-size:11.5px;color:var(--sub)}
+.side .dot{width:7px;height:7px;border-radius:50%;background:var(--bad);flex:none}
+.list{width:290px;flex:0 0 290px;border-right:1px solid var(--line);overflow-y:auto;max-height:72vh}
+.list .lh{display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:1px solid var(--line);
+  background:#FAFAFC;font-size:12px;color:var(--sub)}
+.list .r{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #F2F4F7;
+  font-size:13.5px;cursor:pointer}
+.list .r:hover{background:#F5F7FF}
+.list .r.on{background:#E7EBFB}
+.list .nm{font-weight:700}
+.list .po{font-size:11.5px;color:var(--sub)}
+.pill{font-size:11px;font-weight:800;border-radius:20px;padding:2px 8px;white-space:nowrap}
+.pill.same{background:#F2F4F7;color:#667085}
+.pill.pending{background:#FDECEC;color:#B42318;border:1px solid #F3C3C3}
+.pill.toAdd{background:#EFF6FF;color:#1D4ED8;border:1px solid #BFDBFE}
+.pill.toRemove{background:#FFF7E6;color:#92400E;border:1px solid #FDE68A}
+.pill.liveOnly{background:#FFF7E6;color:#92400E;border:1px solid #FDE68A}
+.pill.unknown{background:#F2F4F7;color:#98A2B3}
+.pill.none{background:#F8F9FC;color:#98A2B3;border:1px dashed var(--line)}
+.pill.tail{margin-left:auto}
+.edit{flex:1;min-width:0;padding:14px 16px}
+.fld{margin-bottom:11px}
+.fld label{display:block;font-size:11.5px;font-weight:800;color:var(--sub);margin-bottom:3px}
+.fld input,.fld textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:7px 10px;
+  font-size:13.5px;font-family:inherit;color:var(--ink)}
+.fld textarea{resize:vertical;line-height:1.7}
+.two{display:flex;gap:9px}
+.two>div{flex:1;min-width:0}
+.car{border:1px solid var(--line);border-radius:9px;background:#fff;padding:4px}
+.car .l{display:flex;align-items:center;gap:5px;padding:3px 4px;border-bottom:1px dashed #EEF1F5}
+.car .l:last-child{border-bottom:0}
+.car .l input{flex:1;min-width:0;border:1px solid transparent;border-radius:6px;padding:5px 7px;
+  font-size:13px;font-family:inherit;color:var(--ink)}
+.car .l input:focus{border-color:var(--navy);outline:none}
+.car .l .no{width:22px;flex:none;text-align:right;color:#B0B7C3;font-size:11px}
+.car .l .x{border:none;background:none;color:var(--sub);cursor:pointer;font-size:13px;padding:2px 5px}
+.car .l .x:hover{color:var(--bad)}
+.car .add{color:var(--navy);font-weight:700;font-size:12.5px;padding:6px 8px;cursor:pointer}
+.foot{display:flex;align-items:center;gap:8px;margin-top:13px;padding-top:12px;
+  border-top:1px solid var(--line);flex-wrap:wrap}
+.empty{padding:40px 18px;text-align:center;color:var(--sub)}
+.guide{background:#F8FAFC;border:1px solid var(--line);border-radius:10px;padding:11px 13px;
+  margin-top:12px;font-size:12.5px;line-height:1.9}
+.guide ol{margin:5px 0 0;padding-left:19px}
+.kbd{background:#fff;border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:11.5px;font-weight:700}
+.legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:#475467;align-items:center}
+
+/* ── 덧창 ── */
+.modalWrap{display:none;position:fixed;inset:0;background:rgba(15,20,30,.45);z-index:40;
+  align-items:center;justify-content:center;padding:16px}
+.modalWrap.on{display:flex}
+.modalCard{background:#fff;border-radius:14px;max-width:620px;width:100%;max-height:86vh;
+  overflow-y:auto;padding:16px}
+.modalCard h2{font-size:15px;margin:0 0 4px}
+.pre{background:#F8FAFC;border:1px solid var(--line);border-radius:9px;padding:10px 12px;
+  font-size:12.5px;white-space:pre-wrap;word-break:break-all;max-height:220px;overflow-y:auto;line-height:1.8}
+.pk{display:flex;align-items:flex-start;gap:8px;padding:7px 6px;border-bottom:1px solid #F2F4F7;font-size:13px}
+.pk:last-child{border-bottom:0}
+.pk input{margin:3px 0 0}
+.pk .t{flex:1;min-width:0}
+.pk .t .d{font-size:11.5px;color:var(--sub)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+.tabs button{border:1px solid var(--line);background:#fff;color:var(--sub);border-radius:9px;
+  padding:6px 11px;font-size:12.5px;font-weight:700;font-family:inherit;cursor:pointer}
+.tabs button.on{border-color:var(--navy);background:var(--navy);color:#fff}
+#toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:#23263B;color:#fff;
+  border-radius:10px;padding:9px 16px;font-size:13px;z-index:70;display:none}
+@media(max-width:900px){.body{flex-direction:column}.side,.list{width:auto;flex:none;max-height:none;
+  border-right:0;border-bottom:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand" onclick="location.reload()">푸 홈페이지 관리</div>
+  <div class="who"><span id="whoami"></span>
+    <button class="out" onclick="App.logout()">로그아웃</button></div>
+</header>
+<div id="gate" class="gate">로그인을 확인하고 있습니다…</div>
+<main id="main" style="display:none"></main>
+<div id="modal" class="modalWrap" onclick="modalBackdrop(event)"><div class="modalCard" id="modalCard"></div></div>
+<div id="toast"></div>
+
+<script>
+/* ══════ 설정 (다른 앱과 같은 파이어베이스 프로젝트) ══════ */
+const FB_APPCHECK_KEY = '6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
+const FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyDkZz5QlKSoqMOYByp5YGeMNLNDrIghliA',
+  databaseURL: 'https://pureun-erp-default-rtdb.asia-southeast1.firebasedatabase.app',
+  projectId: 'pureun-erp',
+  storageBucket: 'pureun-erp.firebasestorage.app',
+  appId: '1:936817166182:web:9bd31f70d0afdf5fca2aa7',
+  messagingSenderId: '936817166182'
+};
+
+/* 홈페이지를 «읽기만» 하는 서버 함수. 쓰기 함수는 만들지 않았다. */
+const READ_HOMEPAGE_URL = 'https://us-central1-pureun-erp.cloudfunctions.net/readHomepage';
+
+/* 관리하는 쪽. functions/homepage-fetch.js 의 허용 목록과 같아야 한다.
+   자문사현황(partner)은 홈페이지에 회사명이 «글자로» 없어 이번 판에서 뺐다. */
+const PAGE_IDS = ['work1', 'work2', 'work3', 'work4', 'work5a', 'work5b', 'inquiry', 'greeting'];
+const PAGE_LABEL = {
+  work1: '자문서비스', work2: '인사노무컨설팅', work3: '노동사건대리',
+  work4: '산재보상', work5a: '사내근로복지기금', work5b: '공동근로복지기금',
+  inquiry: '오시는길', greeting: '인사말'
+};
+const WORK_IDS = ['work1', 'work2', 'work3', 'work4', 'work5a', 'work5b'];
+
+/* 왼쪽 갈래 넷 */
+const GROUPS = [
+  { key: 'members',  label: '구성원 소개' },
+  { key: 'work',     label: '주요업무' },
+  { key: 'inquiry',  label: '오시는길' },
+  { key: 'greeting', label: '인사말' }
+];
+
+/* 경력관리(kcareer)에서 당겨올 갈래. kcareer 의 저장 이름을 그대로 쓴다. */
+const CAREER_KINDS = [
+  { key: 'wiccok',   label: '위촉장' },
+  { key: 'license',  label: '자격증' },
+  { key: 'edu',      label: '학력' },
+  { key: 'complete', label: '수료증' },
+  { key: 'lecture',  label: '강의' }
+];
+const KCAREER_NS = 'cm3_';   // 경력관리 앱이 쓰는 저장 이름표
+
+const STATUS_TEXT = {
+  same: '같음', pending: '안 올라감', toAdd: '새로 올릴 것',
+  toRemove: '내릴 것 (퇴사)', liveOnly: '홈페이지에만', unknown: '모름'
+};
+
+const $ = id => document.getElementById(id);
+
+/* 바깥에서 온 글자(이름·본문 등)를 화면에 넣기 전에 이스케이프한다.
+   사람이 쓴 글이라 꺾쇠가 그대로 들어온다 — 경력사항에는 실제로 <div> 가 섞여 있다. */
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+let db = null;
+
+function todayString() {
+  const d = new Date();
+  const p = n => (n < 10 ? '0' : '') + n;
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+function stamp(ts) {
+  if (!ts) return '';
+  try { return new Date(ts).toLocaleString('ko-KR'); } catch (e) { return ''; }
+}
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg; t.style.display = 'block';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { t.style.display = 'none'; }, 2200);
+}
+
+/* ══════ 화면 상태 ══════ */
+const App = {
+  group: 'members', pick: '', me: null, myName: '', isAdmin: null,
+  members: {}, pages: {}, staff: null, staffErr: '', lineFormat: 'plain',
+  check: null, checking: false, checkMsg: '', checkBad: false,
+  draft: null, dirty: false, loading: true,
+
+  logout() { firebase.auth().signOut().then(() => location.reload()); },
+
+  go(group) {
+    if (!leaveDraft()) return;
+    App.group = group;
+    App.pick = firstPickOf(group);
+    loadDraft();
+    App.render();
+  },
+
+  select(key) {
+    if (key === App.pick) return;
+    if (!leaveDraft()) return;
+    App.pick = key;
+    loadDraft();
+    App.render();
+  },
+
+  render() { $('main').innerHTML = screen(); }
+};
+window.App = App;
+
+function currentUserName() {
+  return App.myName || (App.me && App.me.email) || '';
+}
+
+/* ══════ 시작 ══════ */
+firebase.initializeApp(FIREBASE_CONFIG);
+try { if (firebase.appCheck) firebase.appCheck().activate(new firebase.appCheck.ReCaptchaV3Provider(FB_APPCHECK_KEY), true); }
+catch (e) { console.warn('[AppCheck]', e && e.message); }
+
+db = firebase.database();
+
+firebase.auth().onAuthStateChanged(function (user) {
+  if (user) { App.me = user; afterLogin(); return; }
+  /* 로그인은 통합 포털 한 곳에서만 한다 — 앱마다 두면 계정 문제를 앱 수만큼 겪는다. */
+  if (!/[?&]login=1/.test(location.search) && location.protocol !== 'file:') {
+    location.replace('enter.html?v=' + Math.floor(Date.now() / 600000));
+    return;
+  }
+  $('gate').textContent = '포털(enter.html)에서 로그인해 주세요.';
+});
+
+/* 총괄관리자만 연다. 홈페이지 문구는 밖에서 보이는 글이라 아무나 고치면 안 된다.
+   권한을 «못 읽었을 때»도 열지 않는다 — 못 읽은 것을 권한 있음으로 치면 막는 뜻이 없다. */
+function afterLogin() {
+  $('whoami').textContent = App.me.email || '';
+  db.ref('uid_roles/' + App.me.uid).once('value')
+    .then(s => {
+      const r = s.val() || {};
+      App.isAdmin = r.isAdmin === true;
+      if (!App.isAdmin) { showLocked('총괄관리자만 쓸 수 있습니다.'); return; }
+      openApp();
+    })
+    .catch(e => {
+      console.warn('[권한]', e && e.code);
+      showLocked('권한을 확인하지 못했습니다. 총괄관리자만 쓸 수 있습니다.');
+    });
+}
+
+function showLocked(msg) {
+  $('main').style.display = 'none';
+  $('gate').style.display = '';
+  $('gate').innerHTML = '<div style="font-size:15px;font-weight:700;margin-bottom:6px">' + esc(msg) + '</div>'
+    + '<div class="sub">홈페이지에 올라가는 글이라 총괄관리자에게만 열려 있습니다.</div>';
+}
+
+function openApp() {
+  $('gate').style.display = 'none';
+  $('main').style.display = '';
+  App.render();
+  loadAll();
+  loadMyName();
+}
+
+/* 이름은 명부에서 찾는다 — 이력에 「누가 고쳤는지」가 이메일로만 남으면 알아보기 어렵다. */
+function loadMyName() {
+  readRoster().then(list => {
+    const em = String((App.me && App.me.email) || '').toLowerCase();
+    const hit = (list || []).filter(x => x && sidToEmail(x.sid) === em);
+    if (hit.length === 1 && hit[0].name) {
+      App.myName = hit[0].name;
+      $('whoami').textContent = hit[0].name;
+    }
+  }).catch(() => {});
+}
+function sidToEmail(sid) { return String(sid || '').toLowerCase().replace(/-/g, '') + '@pureun.kr'; }
+
+/* 명부 읽기 — enter.html 과 같은 방식({v:…} 래핑·객체 형태 모두 배열로) */
+function readRosterAt(path) {
+  return db.ref(path).once('value').then(snap => {
+    const raw = snap.val();
+    let list = (raw && raw.v !== undefined) ? raw.v : raw;
+    if (list && !Array.isArray(list) && typeof list === 'object') {
+      list = Object.keys(list).map(k => list[k]);
+    }
+    return Array.isArray(list) ? list : null;
+  });
+}
+function readRoster() {
+  return readRosterAt('data/user_accounts')
+    .then(v => v || readRosterAt('data/user_dir'))
+    .catch(() => readRosterAt('data/user_dir'));
+}
+
+/* ══════ 자료 읽기 ══════
+   한쪽이 실패해도 화면은 뜬다 — 빈 화면에 「권한 거부」만 남으면 무엇을 해야 할지 알 수 없다. */
+function loadAll() {
+  App.loading = true;
+  Promise.all([
+    db.ref('homepage/members').once('value').then(s => s.val() || {})
+      .catch(e => { console.warn('[구성원]', e && e.code); return {}; }),
+    db.ref('homepage/pages').once('value').then(s => s.val() || {})
+      .catch(e => { console.warn('[쪽]', e && e.code); return {}; }),
+    db.ref('homepage/config/lineFormat').once('value').then(s => s.val() || 'plain')
+      .catch(() => 'plain'),
+    db.ref('homepage/check').once('value').then(s => s.val() || null)
+      .catch(() => null),
+    readRoster().catch(e => { console.warn('[직원 명부]', e && e.code); return null; })
+  ]).then(([members, pages, lineFormat, check, roster]) => {
+    App.members = members || {};
+    App.pages = pages || {};
+    App.lineFormat = (lineFormat === 'div') ? 'div' : 'plain';
+    App.check = check;
+    if (roster) {
+      /* memberStatus 는 이름과 퇴사일만 본다. 푸른ERP 명부의 퇴사일 칸이 retireDate 다. */
+      App.staff = roster.map(u => ({ name: (u && u.name) || '', leftAt: (u && u.retireDate) || '' }));
+      App.staffErr = '';
+    } else {
+      App.staff = null;   // 못 읽었다 — 입·퇴사 딱지만 안 뜨고 나머지 대조는 그대로 돈다
+      App.staffErr = '푸른ERP 직원 명부를 읽지 못해 입·퇴사 딱지는 표시하지 않습니다.';
+    }
+    App.loading = false;
+    App.pick = firstPickOf(App.group);
+    loadDraft();
+    App.render();
+  });
+}
+
+/* ══════ 목록 만들기 ══════ */
+
+/* 구성원 줄 — 우리 자료 + 대조에서 「홈페이지에만」으로 남은 것 */
+function memberRows() {
+  const st = (App.check && App.check.members) || {};
+  const keys = Object.keys(App.members).sort((a, b) => {
+    const na = Number(a), nb = Number(b);
+    if (isFinite(na) && isFinite(nb)) return na - nb;
+    return String(a).localeCompare(String(b), 'ko');
+  });
+  const rows = keys.map(k => {
+    const m = App.members[k] || {};
+    const s = st[k] || {};
+    return {
+      key: k, name: m.name || '(이름 없음)',
+      desc: [m.position1, m.position2].filter(Boolean).join(' · '),
+      status: s.status || '', reason: s.reason || ''
+    };
+  });
+  Object.keys(st).forEach(k => {
+    if (App.members[k]) return;
+    const s = st[k];
+    if (s.status !== 'liveOnly') return;   // 사라진 딱지가 유령 줄로 남지 않게
+    rows.push({ key: k, name: s.name || '(홈페이지에만)', desc: '홈페이지 글 번호 ' + k,
+                status: 'liveOnly', reason: s.reason || '', liveOnly: true });
+  });
+  return rows;
+}
+
+function pageIdsOf(group) {
+  if (group === 'work') return WORK_IDS;
+  if (group === 'inquiry') return ['inquiry'];
+  if (group === 'greeting') return ['greeting'];
+  return [];
+}
+
+function pageRows(group) {
+  const st = (App.check && App.check.pages) || {};
+  return pageIdsOf(group).map(mid => {
+    const p = App.pages[mid] || {};
+    const s = st[mid] || {};
+    return {
+      key: mid, name: PAGE_LABEL[mid] || mid,
+      desc: '/' + mid + (p.text ? '' : ' · 내용 없음'),
+      status: s.status || '', reason: s.reason || ''
+    };
+  });
+}
+
+function rowsOf(group) { return group === 'members' ? memberRows() : pageRows(group); }
+function firstPickOf(group) {
+  const r = rowsOf(group);
+  return r.length ? r[0].key : '';
+}
+
+/* 갈래마다 손댈 것이 있는지 — 왼쪽 빨간 점 */
+function needsWork(group) {
+  return rowsOf(group).some(r => r.status && r.status !== 'same');
+}
+
+/* ══════ 편집 초안 ══════
+   화면 칸은 초안(draft)만 고친다. 「저장」을 눌러야 자료가 바뀐다. */
+function loadDraft() {
+  App.dirty = false;
+  if (!App.pick) { App.draft = null; return; }
+  if (App.group === 'members') {
+    const m = App.members[App.pick];
+    if (!m) { App.draft = null; return; }   // 「홈페이지에만」 줄은 고칠 우리 자료가 없다
+    App.draft = {
+      kind: 'member', key: App.pick,
+      name: m.name || '', position1: m.position1 || '', position2: m.position2 || '',
+      intro: m.intro || '', srl: m.srl || '', careers: (m.careers || []).slice()
+    };
+  } else {
+    const p = App.pages[App.pick] || {};
+    App.draft = { kind: 'page', key: App.pick, text: p.text || '' };
+  }
+}
+
+/* 저장 안 한 것이 있으면 물어본다 — 말없이 버리면 다시 쓸 수밖에 없다 */
+function leaveDraft() {
+  if (!App.dirty) return true;
+  return confirm('저장하지 않은 내용이 있습니다. 버리고 옮길까요?');
+}
+
+function fieldEdit(name, value) {
+  if (!App.draft) return;
+  App.draft[name] = value;
+  App.dirty = true;
+  markDirty();
+}
+window.fieldEdit = fieldEdit;
+
+/* 「저장 안 됨」 표시만 살짝 바꾼다 — 글자 칠 때마다 통째로 다시 그리면 커서가 튄다 */
+function markDirty() {
+  const el = $('dirtyMark');
+  if (el) el.textContent = App.dirty ? '● 저장 안 됨' : '';
+}
+
+function careerEdit(i, value) {
+  if (!App.draft) return;
+  App.draft.careers[i] = value;
+  App.dirty = true;
+  markDirty();
+}
+function careerAdd() {
+  if (!App.draft) return;
+  App.draft.careers.push('');
+  App.dirty = true;
+  App.render();
+  const boxes = document.querySelectorAll('#careerBox input');
+  if (boxes.length) boxes[boxes.length - 1].focus();
+}
+function careerDel(i) {
+  if (!App.draft) return;
+  App.draft.careers.splice(i, 1);
+  App.dirty = true;
+  App.render();
+}
+function careerMove(i, d) {
+  if (!App.draft) return;
+  const a = App.draft.careers, j = i + d;
+  if (j < 0 || j >= a.length) return;
+  const t = a[i]; a[i] = a[j]; a[j] = t;
+  App.dirty = true;
+  App.render();
+}
+window.careerEdit = careerEdit; window.careerAdd = careerAdd;
+window.careerDel = careerDel; window.careerMove = careerMove;
+
+/* ══════ 저장 ══════
+   ★ 덮어쓰기 전에 «직전 값»을 반드시 남긴다. 되돌릴 근거가 없으면 실수를 못 되돌린다.
+     되살리기도 이 함수를 그대로 쓴다 — 그래야 되살리기 직전 값도 이력에 남는다. */
+async function saveRecord(kind, key, next) {
+  const base = (kind === 'member') ? 'homepage/members/' : 'homepage/pages/';
+  const histKey = (kind === 'member') ? key : 'page:' + key;
+  const ref = db.ref(base + key);
+  const before = (await ref.once('value')).val();
+  if (before) {
+    await db.ref('homepage/history/' + histKey + '/' + Date.now())
+      .set({ before: before, updatedBy: currentUserName() });
+  }
+  await ref.set(Object.assign({}, next, {
+    updatedAt: Date.now(), updatedBy: currentUserName()
+  }));
+  return next;
+}
+
+async function saveDraft() {
+  const d = App.draft;
+  if (!d) return;
+  try {
+    if (d.kind === 'member') {
+      const careers = d.careers.map(s => String(s || '').trim()).filter(Boolean);
+      const next = { name: d.name.trim(), position1: d.position1.trim(), position2: d.position2.trim(),
+                     intro: d.intro, srl: d.srl, careers: careers };
+      await saveRecord('member', d.key, next);
+      App.members[d.key] = Object.assign({}, next, { updatedAt: Date.now(), updatedBy: currentUserName() });
+    } else {
+      const next = { text: d.text };
+      await saveRecord('page', d.key, next);
+      App.pages[d.key] = Object.assign({}, next, { updatedAt: Date.now(), updatedBy: currentUserName() });
+    }
+    App.dirty = false;
+    /* 고친 뒤에는 홈페이지와 달라졌다 — 「같음」 딱지를 그대로 두면 안 올린 것을 올린 줄 안다. */
+    markChanged(d.kind, d.key);
+    App.render();
+    toast('저장했습니다. 홈페이지는 붙여넣어야 바뀝니다.');
+  } catch (e) {
+    console.warn('[저장]', e);
+    alert('저장하지 못했습니다: ' + ((e && e.message) || e));
+  }
+}
+window.saveDraft = saveDraft;
+
+/* 우리 자료를 고쳤으니 딱지를 「안 올라감」으로 내린다. 확인은 사람이 눌러야 다시 돈다. */
+function markChanged(kind, key) {
+  if (!App.check) return;
+  const box = (kind === 'member') ? App.check.members : App.check.pages;
+  if (!box || !box[key]) return;
+  if (box[key].status === 'same') {
+    box[key].status = 'pending';
+    box[key].reason = '통합시스템에서 고친 뒤 아직 확인 전';
+    db.ref('homepage/check').set(App.check).catch(() => {});
+  }
+}
+
+/* 새 구성원 — 푸른ERP 에 입사한 노무사를 여기 올리면 「새로 올릴 것」으로 뜬다.
+   홈페이지 글 번호(srl)는 홈페이지에 글을 만든 뒤에 적는다. */
+async function addMember() {
+  const name = (prompt('새로 올릴 구성원의 이름') || '').trim();
+  if (!name) return;
+  const key = 'new-' + Date.now();
+  try {
+    await saveRecord('member', key, { name: name, position1: '', position2: '공인노무사',
+                                      intro: '', srl: '', careers: [] });
+    App.members[key] = { name: name, position1: '', position2: '공인노무사', intro: '', srl: '', careers: [] };
+    App.group = 'members'; App.pick = key;
+    loadDraft(); App.render();
+    toast('추가했습니다. 홈페이지에 글을 만든 뒤 글 번호를 적어 주세요.');
+  } catch (e) {
+    alert('추가하지 못했습니다: ' + ((e && e.message) || e));
+  }
+}
+window.addMember = addMember;
+
+/* ══════ 줄 모양 설정 ══════ */
+function setLineFormat(v) {
+  App.lineFormat = (v === 'div') ? 'div' : 'plain';
+  db.ref('homepage/config/lineFormat').set(App.lineFormat).catch(e => {
+    console.warn('[줄 모양]', e && e.code);
+    toast('줄 모양을 저장하지 못했습니다');
+  });
+  App.render();
+}
+window.setLineFormat = setLineFormat;
+
+/* ══════ 홈페이지 확인 ══════
+   ★ 이 함수의 요점은 «읽기에 실패한 것을 「안 올라감」으로 몰지 않는 것»이다.
+     실패를 안 올라감으로 몰면 사장님이 멀쩡한 쪽을 다시 붙여넣게 된다. */
+async function checkHomepage() {
+  if (App.checking) return;
+  App.checking = true; App.checkMsg = ''; App.checkBad = false;
+  App.render();
+  try {
+    const token = await firebase.auth().currentUser.getIdToken();
+    const ask = async (path) => {
+      try {
+        const res = await fetch(READ_HOMEPAGE_URL, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: path })
+        });
+        if (!res.ok) return null;            // 못 읽었으면 null. 「내용이 없다」와 구분한다.
+        const data = await res.json();
+        return (typeof data.html === 'string') ? data.html : null;
+      } catch (e) {
+        return null;                         // 그물이 끊긴 것도 못 읽은 것이다
+      }
+    };
+
+    const peopleHtml = await ask('people');
+    if (peopleHtml === null) {
+      showCheckFailed('홈페이지를 읽지 못했습니다 — 지난 확인 결과를 그대로 둡니다');
+      return;
+    }
+
+    const live = PuHomeParse.parseMembers(peopleHtml);
+    if (!PuHomeDiff.isTrustworthy(live)) {
+      // 구성원이 0명이면 사람이 사라진 게 아니라 화면 구조가 바뀐 것이다.
+      showCheckFailed('홈페이지 구조가 바뀐 것 같습니다 — 지난 확인 결과를 그대로 둡니다');
+      return;
+    }
+
+    const livePages = {};
+    const failed = [];
+    for (const mid of PAGE_IDS) {
+      const html = await ask(mid);
+      if (html === null) { failed.push(mid); continue; }   // 못 읽은 쪽은 손대지 않는다
+      livePages[mid] = PuHomeParse.parsePageText(html);
+    }
+
+    await applyStatus(live, livePages, failed);
+    App.checkBad = failed.length > 0;
+    App.checkMsg = failed.length
+      ? ('일부 쪽을 읽지 못했습니다(' + failed.map(m => PAGE_LABEL[m] || m).join(', ') + ') — 그 쪽은 지난 결과를 그대로 둡니다')
+      : '';
+    if (!failed.length) toast('홈페이지와 대조했습니다.');
+  } finally {
+    App.checking = false;
+    App.render();
+  }
+}
+window.checkHomepage = checkHomepage;
+
+function showCheckFailed(msg) {
+  App.checkMsg = msg;
+  App.checkBad = true;
+  // 자료도 지난 대조 결과도 건드리지 않는다.
+}
+
+/* 딱지 붙이기 — 못 읽은 쪽은 지난 결과를 그대로 물려받는다 */
+async function applyStatus(live, livePages, failed) {
+  const ours = Object.keys(App.members).map(k => Object.assign({ key: k }, App.members[k]));
+  const list = PuHomeDiff.memberStatus(ours, live, App.staff, todayString());
+
+  const prev = App.check || {};
+  const next = { at: Date.now(), members: {}, pages: {}, duplicates: [], leftovers: {} };
+
+  list.forEach(r => { next.members[r.key] = { name: r.name, status: r.status, reason: r.reason || '' }; });
+
+  const ourPages = {};
+  PAGE_IDS.forEach(mid => { ourPages[mid] = { text: (App.pages[mid] || {}).text || '' }; });
+  PuHomeDiff.pageStatus(ourPages, livePages).forEach(r => {
+    if (r.status === 'unknown' && prev.pages && prev.pages[r.path]) {
+      next.pages[r.path] = prev.pages[r.path];   // 못 읽은 쪽 — 지난 결과 그대로
+      return;
+    }
+    next.pages[r.path] = { status: r.status, reason: r.status === 'unknown' ? '홈페이지를 읽지 못함' : '' };
+  });
+
+  // 홈페이지에 같은 글 번호가 두 번 있으면 사람이 홈페이지를 손봐야 한다.
+  next.duplicates = PuHomeDiff.duplicateLiveKeys(live) || [];
+
+  // 퇴사자 이름이 다른 쪽 본문에 남아 있는지 훑는다. 알리기만 하고 고치지 않는다.
+  const pageArr = Object.keys(livePages).map(p => ({ path: p, text: livePages[p] }));
+  list.filter(r => r.status === 'toRemove').forEach(r => {
+    const hits = PuHomeDiff.nameLeftovers(r.name, pageArr) || [];
+    if (hits.length) next.leftovers[r.name] = hits;
+  });
+
+  App.check = next;
+  try { await db.ref('homepage/check').set(next); }
+  catch (e) { console.warn('[대조 결과 저장]', e && e.code); }
+}
+
+/* ══════ 붙여넣을 내용 ══════ */
+
+/* 「감싸기」로 내보낼 때, 줄에 이미 <div> 가 들어 있으면 짝이 안 맞는 HTML 이 되어
+   그 뒤 화면 구조가 통째로 깨진다. 그냥 꺾쇠가 든 것보다 훨씬 나쁘다. */
+function divInLine(line) { return /<\s*\/?\s*div[\s>]/i.test(String(line || '') + ' '); }
+
+function riskReport(careers, format) {
+  const risky = PuHomeExport.riskyLines(careers) || [];
+  const broken = (format === 'div') ? risky.filter(divInLine) : [];
+  const soft = risky.filter(l => broken.indexOf(l) < 0);
+  return { risky: risky, broken: broken, soft: soft };
+}
+
+function copyText(text) {
+  const done = () => toast('복사했습니다');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+    return;
+  }
+  fallbackCopy(text, done);
+}
+function fallbackCopy(text, done) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;left:-9999px';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); done(); }
+  catch (e) { alert('복사하지 못했습니다. 아래 글을 직접 골라 복사해 주세요.'); }
+  document.body.removeChild(ta);
+}
+
+function openPaste() {
+  const d = App.draft;
+  if (!d) return;
+  const isMember = d.kind === 'member';
+  const text = isMember
+    ? PuHomeExport.careersText(d.careers, App.lineFormat)
+    : String(d.text || '');
+  const url = isMember ? PuHomeExport.editUrl('member', d.srl) : PuHomeExport.editUrl('page', d.key);
+  const rep = isMember ? riskReport(d.careers, App.lineFormat) : { risky: [], broken: [], soft: [] };
+
+  copyText(text);
+
+  const title = isMember ? (d.name + ' — 붙여넣을 경력사항') : ((PAGE_LABEL[d.key] || d.key) + ' — 붙여넣을 본문');
+  let h = '<h2>' + esc(title) + '</h2>';
+  h += '<div class="bar ok">내용이 복사되었습니다. 아래 순서대로 홈페이지에 붙여넣으세요.</div>';
+
+  if (rep.broken.length) {
+    h += '<div class="bar bad"><b>⚠ 이 줄은 화면 구조를 통째로 깨뜨릴 수 있습니다 — '
+      + rep.broken.length + '줄</b><br>'
+      + '줄 모양을 「감싸기」로 고른 상태인데, 아래 줄에 이미 &lt;div&gt; 가 들어 있습니다. '
+      + '감싸기가 한 번 더 씌워지면 짝이 안 맞는 HTML 이 되어 <b>그 뒤 화면이 통째로 어긋날 수</b> 있습니다.<br>'
+      + '줄에서 &lt;div&gt; 를 지우거나, 줄 모양을 「줄바꿈만」으로 바꾸십시오.'
+      + '<div class="pre" style="margin-top:7px">' + rep.broken.map(esc).join('\n') + '</div></div>';
+  }
+  if (rep.soft.length) {
+    h += '<div class="bar warn"><b>이 줄은 홈페이지에서 안 보일 수 있습니다 — ' + rep.soft.length + '줄</b><br>'
+      + '꺾쇠(&lt; &gt;)가 들어 있어 브라우저가 태그로 여길 수 있습니다. '
+      + '사람이 일부러 쓴 표기일 수 있어 <b>지우지 않고 알리기만</b> 합니다.'
+      + '<div class="pre" style="margin-top:7px">' + rep.soft.map(esc).join('\n') + '</div></div>';
+  }
+
+  h += '<div class="fld"><label>복사된 내용</label><div class="pre">' + esc(text || '(빈 내용)') + '</div></div>';
+  h += '<div class="guide"><b>붙여넣는 자리</b><ol>'
+    + '<li>홈페이지 관리자로 로그인 <span class="kbd">푸른노무법인.kr/admin</span></li>'
+    + (isMember
+      ? '<li><b>구성원 갤러리</b>에서 <b>' + esc(d.name) + '</b> 글을 찾아 <b>편집</b></li>'
+        + '<li><b>경력사항</b> 칸을 <span class="kbd">Ctrl+A</span>로 전체 선택하고 <span class="kbd">Ctrl+V</span>로 덮어쓰기</li>'
+      : '<li>해당 <b>페이지</b>를 찾아 <b>편집</b></li>'
+        + '<li>본문을 <span class="kbd">Ctrl+A</span>로 전체 선택하고 <span class="kbd">Ctrl+V</span>로 덮어쓰기</li>')
+    + '<li><b>저장</b> → 통합시스템으로 돌아와 <b>홈페이지 다시 확인</b></li>'
+    + '</ol><div class="sub" style="margin-top:5px">4번까지 하면 딱지가 「안 올라감」에서 「같음」으로 바뀝니다. '
+    + '안 바뀌면 붙여넣기가 안 된 것입니다.</div></div>';
+
+  if (url) {
+    h += '<div style="margin-top:11px"><a class="btn pri" style="text-decoration:none;display:inline-block" '
+      + 'href="' + esc(url) + '" target="_blank" rel="noopener">홈페이지 편집 화면 열기</a></div>';
+  } else {
+    h += '<div class="bar warn" style="margin-top:11px">이 구성원은 홈페이지 글 번호가 아직 없습니다. '
+      + '홈페이지에서 글을 새로 만든 뒤 <b>글 번호</b> 칸에 번호를 적어 주세요.</div>';
+  }
+  h += modalFoot('복사한 내용을 다시 복사하려면 단추를 다시 누르세요.');
+  openModal(h);
+}
+window.openPaste = openPaste;
+
+/* ══════ 되돌리기 ══════ */
+function openHistory() {
+  const d = App.draft;
+  if (!d) return;
+  const histKey = (d.kind === 'member') ? d.key : 'page:' + d.key;
+  openModal('<h2>되돌리기</h2><div class="sub">이력을 읽고 있습니다…</div>');
+  db.ref('homepage/history/' + histKey).limitToLast(30).once('value').then(s => {
+    const v = s.val() || {};
+    const ts = Object.keys(v).sort((a, b) => Number(b) - Number(a));
+    let h = '<h2>되돌리기 — ' + esc(d.kind === 'member' ? d.name : (PAGE_LABEL[d.key] || d.key)) + '</h2>';
+    h += '<div class="bar info">고른 시점의 내용을 <b>통합시스템 자료로만</b> 되살립니다. '
+      + '홈페이지는 그대로입니다 — 되살린 뒤 <b>다시 붙여넣어야</b> 홈페이지가 바뀝니다.<br>'
+      + '되살리기도 저장이라 <b>되살리기 직전 값도 이력에 남습니다.</b></div>';
+    if (!ts.length) {
+      h += '<div class="empty">남아 있는 이전 내용이 없습니다. 한 번도 덮어쓴 적이 없습니다.</div>';
+    } else {
+      h += '<div class="car">' + ts.map(t => {
+        const r = v[t] || {};
+        const b = r.before || {};
+        const line = (d.kind === 'member')
+          ? ((b.name || '') + ' · 경력 ' + ((b.careers || []).length) + '줄')
+          : (String(b.text || '').slice(0, 60) + (String(b.text || '').length > 60 ? '…' : ''));
+        return '<div class="pk"><div class="t"><b>' + esc(stamp(Number(t))) + '</b>'
+          + '<div class="d">' + esc(r.updatedBy || '') + ' · ' + esc(line) + '</div></div>'
+          + '<button class="btn sm" onclick="restoreFrom(\'' + esc(histKey) + '\',\'' + esc(t) + '\')">이 시점으로</button></div>';
+      }).join('') + '</div>';
+    }
+    h += modalFoot('');
+    openModal(h);
+  }).catch(e => {
+    openModal('<h2>되돌리기</h2><div class="bar bad">이력을 읽지 못했습니다: ' + esc((e && e.message) || e) + '</div>' + modalFoot(''));
+  });
+}
+window.openHistory = openHistory;
+
+async function restoreFrom(histKey, ts) {
+  const d = App.draft;
+  if (!d) return;
+  if (!confirm('이 시점의 내용으로 되살릴까요?\n지금 내용은 이력에 남습니다.')) return;
+  try {
+    const snap = await db.ref('homepage/history/' + histKey + '/' + ts + '/before').once('value');
+    const before = snap.val();
+    if (!before) { alert('되살릴 내용을 찾지 못했습니다.'); return; }
+    // 되살리기도 저장이다 — saveRecord 를 그대로 써서 되살리기 «직전» 값도 이력에 남긴다.
+    if (d.kind === 'member') {
+      const next = { name: before.name || '', position1: before.position1 || '', position2: before.position2 || '',
+                     intro: before.intro || '', srl: before.srl || '', careers: (before.careers || []).slice() };
+      await saveRecord('member', d.key, next);
+      App.members[d.key] = Object.assign({}, next);
+    } else {
+      const next = { text: before.text || '' };
+      await saveRecord('page', d.key, next);
+      App.pages[d.key] = Object.assign({}, next);
+    }
+    markChanged(d.kind, d.key);
+    loadDraft();
+    closeModal();
+    App.render();
+    toast('되살렸습니다. 홈페이지는 다시 붙여넣어야 바뀝니다.');
+  } catch (e) {
+    alert('되살리지 못했습니다: ' + ((e && e.message) || e));
+  }
+}
+window.restoreFrom = restoreFrom;
+
+/* ══════ 경력관리에서 당겨오기 ══════
+   경력관리(kcareer)는 사람마다 «자기 계정»에 자료를 둔다. 그래서 남의 자료는
+   규칙이 막을 수 있다 — 막히면 그 사람만 건너뛰고 화면에 알린다. */
+const Pull = { open: false, kind: 'wiccok', items: {}, sel: {}, err: '', name: '' };
+
+function kcareerFromLocal() {
+  /* 같은 주소(origin)에서 도는 앱이라 «내» 경력관리 자료는 이 브라우저에 그대로 있다.
+     서버 규칙이 남의 자료를 막아도 내 것은 이 길로 읽힌다. */
+  const out = {};
+  CAREER_KINDS.forEach(k => {
+    try { out[k.key] = JSON.parse(localStorage.getItem(KCAREER_NS + k.key) || '[]') || []; }
+    catch (e) { out[k.key] = []; }
+  });
+  return out;
+}
+
+function kcareerFromDb(uid) {
+  return db.ref('kcareer/' + uid + '/ls').once('value').then(s => {
+    const ls = s.val() || {};
+    const out = {};
+    CAREER_KINDS.forEach(k => {
+      try { out[k.key] = JSON.parse(ls[k.key] || '[]') || []; }
+      catch (e) { out[k.key] = []; }
+    });
+    return out;
+  });
+}
+
+/* 이름 → 사번 → 계정(uid). 한 번도 로그인 안 한 사람은 uid 가 없다. */
+function uidOfName(name) {
+  const want = String(name || '').trim();
+  return readRoster().then(list => {
+    const hits = (list || []).filter(u => u && String(u.name || '').trim() === want);
+    if (hits.length !== 1) return null;      // 0명이면 못 찾은 것, 2명 이상이면 동명이인이라 단정 못 한다
+    const sid = hits[0].sid;
+    return db.ref('uid_roles').once('value').then(s => {
+      const v = s.val() || {};
+      let best = null;
+      Object.keys(v).forEach(uid => {
+        const r = v[uid];
+        if (!r || r.sid !== sid) return;
+        if (!best || (r.updatedAt || 0) > best.t) best = { uid: uid, t: r.updatedAt || 0 };
+      });
+      return best ? best.uid : null;
+    });
+  }).catch(() => null);
+}
+
+function openPull() {
+  const d = App.draft;
+  if (!d || d.kind !== 'member') return;
+  Pull.open = true; Pull.kind = 'wiccok'; Pull.items = {}; Pull.sel = {}; Pull.err = ''; Pull.name = d.name;
+  openModal('<h2>경력관리에서 당겨오기</h2><div class="sub">경력관리 자료를 읽고 있습니다…</div>');
+
+  uidOfName(d.name).then(uid => {
+    const myUid = (App.me && App.me.uid) || '';
+    if (uid && uid === myUid) { Pull.items = kcareerFromLocal(); renderPull(); return null; }
+    if (!uid) {
+      Pull.err = '푸른ERP 명부에서 「' + d.name + '」 계정을 찾지 못했습니다(이름이 다르거나 동명이인일 수 있습니다).';
+      Pull.items = {};
+      renderPull();
+      return null;
+    }
+    return kcareerFromDb(uid).then(items => { Pull.items = items; renderPull(); }).catch(e => {
+      Pull.err = '「' + d.name + '」 님의 경력관리 자료를 읽지 못했습니다. '
+        + '경력관리 자료는 본인 계정에만 열려 있어, 본인이 직접 뽑아 주셔야 합니다.';
+      Pull.items = {};
+      renderPull();
+    });
+  });
+}
+window.openPull = openPull;
+
+/* 경력관리 항목 → 문장 만들기 부품이 받는 모양.
+   갈래마다 칸 이름이 조금씩 달라 넉넉히 받아 준다. 만든 문장은 손으로 고칠 수 있다. */
+function toCareerItem(it) {
+  const o = it || {};
+  return {
+    org: o.org || o.school || o.issuer || o.agency || '',
+    role: o.titleVal || o.title || o.role || o.deg || o.course || o.name || '',
+    period: o.period || '',
+    end: o.end || o.expire || o.until || ''
+  };
+}
+function itemWhen(it) {
+  const o = it || {};
+  return o.period || o.issueDate || o.date || o.year || '';
+}
+
+function pullTab(kind) { Pull.kind = kind; renderPull(); }
+function pullToggle(kind, i) {
+  const id = kind + ':' + i;
+  if (Pull.sel[id]) delete Pull.sel[id]; else Pull.sel[id] = true;
+  renderPull();
+}
+window.pullTab = pullTab; window.pullToggle = pullToggle;
+
+function renderPull() {
+  const today = todayString();
+  const items = Pull.items[Pull.kind] || [];
+  let h = '<h2>' + esc(Pull.name) + ' — 경력관리에서 당겨오기</h2>';
+  h += '<div class="sub">체크한 것만 경력사항에 들어갑니다. 넣은 뒤 <b>표현은 손으로 다듬을 수 있습니다.</b></div>';
+  if (Pull.err) h += '<div class="bar warn" style="margin-top:9px">' + esc(Pull.err) + '</div>';
+
+  h += '<div class="tabs">' + CAREER_KINDS.map(k => {
+    const n = (Pull.items[k.key] || []).length;
+    return '<button class="' + (k.key === Pull.kind ? 'on' : '') + '" onclick="pullTab(\'' + k.key + '\')">'
+      + esc(k.label) + ' ' + n + '</button>';
+  }).join('') + '</div>';
+
+  // 홈페이지에 現 으로 올라가 있는데 기간이 끝난 것 — 밖에서 보기에 나쁘다
+  const all = [];
+  CAREER_KINDS.forEach(k => (Pull.items[k.key] || []).forEach(it => all.push(toCareerItem(it))));
+  const expired = (App.draft && App.draft.careers)
+    ? (PuHomeCareer.expiredInLive(App.draft.careers, all, today) || []) : [];
+  if (expired.length) {
+    h += '<div class="bar warn"><b>홈페이지에 만료된 직함이 걸려 있습니다 — ' + expired.length + '줄</b>'
+      + '<div class="pre" style="margin-top:6px">' + expired.map(esc).join('\n') + '</div></div>';
+  }
+
+  if (!items.length) {
+    h += '<div class="empty">이 갈래에 항목이 없습니다.</div>';
+  } else {
+    h += '<div class="car">' + items.map((it, i) => {
+      const line = PuHomeCareer.toLine(toCareerItem(it), today);
+      const id = Pull.kind + ':' + i;
+      const tag = line.ended
+        ? '<span class="pill toRemove">기간 끝남 → 前</span>'
+        : (line.unknown ? '<span class="pill unknown">기간 모름 · 現 으로 넣음</span>'
+                        : '<span class="pill toAdd">現 으로 들어감</span>');
+      return '<label class="pk"><input type="checkbox" ' + (Pull.sel[id] ? 'checked' : '')
+        + ' onchange="pullToggle(\'' + Pull.kind + '\',' + i + ')">'
+        + '<div class="t"><b>' + esc(line.text) + '</b>'
+        + '<div class="d">' + esc(itemWhen(it) || '기간 정보 없음') + '</div></div>' + tag + '</label>';
+    }).join('') + '</div>';
+  }
+
+  const n = Object.keys(Pull.sel).length;
+  h += '<div class="guide"><b>문장으로 바뀌는 규칙</b><ol>'
+    + '<li>기간이 <b>안 끝난 것</b> → <span class="kbd">現 …</span></li>'
+    + '<li>기간이 <b>끝난 것</b> → <span class="kbd">前 …</span></li>'
+    + '<li>기간을 <b>모르는 것</b>은 끝났다고 단정하지 않고 <b>現</b> 으로 두되 「기간 모름」 표시를 남깁니다</li>'
+    + '</ol></div>';
+  h += '<div class="foot"><button class="btn pri" onclick="pullApply()"' + (n ? '' : ' disabled') + '>'
+    + '체크한 것 넣기' + (n ? ' (' + n + '건)' : '') + '</button>'
+    + '<button class="btn" onclick="closeModal()">닫기</button></div>';
+  openModal(h);
+}
+
+function pullApply() {
+  const d = App.draft;
+  if (!d || d.kind !== 'member') return;
+  const today = todayString();
+  const added = [];
+  Object.keys(Pull.sel).forEach(id => {
+    const at = id.lastIndexOf(':');
+    const kind = id.slice(0, at), i = Number(id.slice(at + 1));
+    const it = (Pull.items[kind] || [])[i];
+    if (!it) return;
+    const line = PuHomeCareer.toLine(toCareerItem(it), today);
+    let text = line.text;
+    if (line.unknown) text += '  ※기간 모름';   // 사람이 판단하도록 표시를 남긴다
+    if (d.careers.indexOf(text) < 0) { d.careers.push(text); added.push(text); }
+  });
+  App.dirty = true;
+  closeModal();
+  App.render();
+  toast(added.length ? (added.length + '줄을 넣었습니다. 확인 후 저장하세요.') : '넣을 새 줄이 없습니다.');
+}
+window.pullApply = pullApply;
+
+/* ══════ 덧창 ══════ */
+function openModal(html) {
+  $('modalCard').innerHTML = html;
+  $('modal').classList.add('on');
+}
+function closeModal() { $('modal').classList.remove('on'); Pull.open = false; }
+function modalBackdrop(e) { if (e.target === $('modal')) closeModal(); }
+function modalFoot(note) {
+  return '<div class="foot">' + (note ? '<span class="sub">' + esc(note) + '</span>' : '')
+    + '<span style="flex:1"></span><button class="btn" onclick="closeModal()">닫기</button></div>';
+}
+window.closeModal = closeModal; window.modalBackdrop = modalBackdrop;
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+/* ══════ 화면 그리기 ══════ */
+function pillHtml(status) {
+  if (!status) return '<span class="pill none">확인 전</span>';
+  return '<span class="pill ' + status + '">' + esc(STATUS_TEXT[status] || status) + '</span>';
+}
+
+function screen() {
+  if (App.loading) return '<div class="empty">자료를 읽고 있습니다…</div>';
+  return appbarHtml() + bannersHtml()
+    + '<div class="body">' + sideHtml() + listHtml() + editHtml() + '</div>'
+    + legendHtml();
+}
+
+function appbarHtml() {
+  const at = App.check && App.check.at;
+  return '<div class="appbar">'
+    + '<div class="ttl">홈페이지 관리</div>'
+    + '<span class="sub">홈페이지 확인: ' + esc(at ? stamp(at) : '아직 안 함') + '</span>'
+    + '<div class="sp"></div>'
+    + '<label class="sub">줄 모양 '
+    + '<select onchange="setLineFormat(this.value)">'
+    + '<option value="plain"' + (App.lineFormat === 'plain' ? ' selected' : '') + '>줄바꿈만 (기본)</option>'
+    + '<option value="div"' + (App.lineFormat === 'div' ? ' selected' : '') + '>줄마다 감싸기</option>'
+    + '</select></label>'
+    + '<button class="btn" onclick="checkHomepage()"' + (App.checking ? ' disabled' : '') + '>'
+    + (App.checking ? '확인 중…' : '홈페이지 다시 확인') + '</button>'
+    + '<a class="btn" style="text-decoration:none" href="' + esc(PuHomeExport.ORIGIN) + '" target="_blank" rel="noopener">홈페이지 열기</a>'
+    + '</div>';
+}
+
+function bannersHtml() {
+  let h = '';
+
+  h += '<div class="bar info">이 화면은 <b>홈페이지에 붙여넣을 내용</b>을 만들어 줍니다. '
+    + '홈페이지를 자동으로 바꾸지는 않습니다 — 마지막 붙여넣기 한 번은 사람이 합니다.</div>';
+
+  if (App.checkMsg) {
+    h += '<div class="bar ' + (App.checkBad ? 'bad' : 'warn') + '"><b>확인 실패</b> — ' + esc(App.checkMsg)
+      + '<div class="sub" style="color:inherit">자료와 지난 딱지는 건드리지 않았습니다.</div></div>';
+  }
+  if (App.staffErr) h += '<div class="bar warn">' + esc(App.staffErr) + '</div>';
+
+  const dup = (App.check && App.check.duplicates) || [];
+  if (dup.length) {
+    h += '<div class="bar bad"><b>홈페이지에 같은 글 번호가 두 번 있습니다 — ' + esc(dup.join(', ')) + '</b><br>'
+      + '통합시스템은 먼저 나온 글을 기준으로 대조합니다. '
+      + '홈페이지 <b>구성원 갤러리</b>에서 겹친 글을 손봐 주십시오.</div>';
+  }
+
+  const st = (App.check && App.check.members) || {};
+  const outs = Object.keys(st).filter(k => st[k].status === 'toRemove');
+  if (outs.length) {
+    const left = (App.check && App.check.leftovers) || {};
+    h += '<div class="bar bad"><b>퇴사한 노무사가 홈페이지에 남아 있습니다 — ' + outs.length + '명</b><br>'
+      + outs.map(k => esc(st[k].name) + ' (' + esc(st[k].reason || '') + ')').join(' · ')
+      + '<div class="guide" style="background:#fff"><b>홈페이지에서 내리는 법</b><ol>'
+      + '<li>홈페이지 관리자 로그인 <span class="kbd">푸른노무법인.kr/admin</span></li>'
+      + '<li><b>구성원 갤러리</b>에서 해당 글을 찾습니다</li>'
+      + '<li><b>삭제하지 말고 「비공개」로 바꾸십시오.</b> 잘못 내렸어도 되살릴 수 있습니다</li>'
+      + '<li>통합시스템으로 돌아와 <b>홈페이지 다시 확인</b></li>'
+      + '</ol></div>';
+    const names = Object.keys(left);
+    if (names.length) {
+      h += '<div style="margin-top:8px"><b>이름이 다른 쪽에도 남아 있습니다</b><br>'
+        + names.map(n => esc(n) + ' — '
+            + left[n].map(x => (PAGE_LABEL[x.path] || x.path) + ' ' + x.count + '회').join(', ')).join('<br>')
+        + '<div class="sub" style="color:inherit">동명이인일 수 있으니 알려만 드립니다. 자동으로 고치지 않습니다.</div></div>';
+    }
+    h += '</div>';
+  }
+  return h;
+}
+
+function sideHtml() {
+  return '<div class="side">' + GROUPS.map(g => {
+    const rows = rowsOf(g.key);
+    return '<div class="it ' + (App.group === g.key ? 'on' : '') + '" onclick="App.go(\'' + g.key + '\')">'
+      + (needsWork(g.key) ? '<span class="dot"></span>' : '')
+      + esc(g.label) + '<span class="cnt">' + rows.length + '</span></div>';
+  }).join('')
+    + '<div class="it" style="color:#98A2B3;cursor:default" title="홈페이지에 회사명이 글자로 없어 이번 판에서 뺐습니다">'
+    + '자문사현황<span class="cnt">다음 판</span></div>'
+    + '</div>';
+}
+
+function listHtml() {
+  const rows = rowsOf(App.group);
+  let h = '<div class="list">';
+  if (App.group === 'members') {
+    h += '<div class="lh"><span>구성원 ' + rows.length + '명</span><span style="flex:1"></span>'
+      + '<button class="btn sm" onclick="addMember()">＋ 새 구성원</button></div>';
+  }
+  if (!rows.length) h += '<div class="empty">아직 자료가 없습니다.</div>';
+  h += rows.map(r =>
+    '<div class="r ' + (r.key === App.pick ? 'on' : '') + '" onclick="App.select(\'' + esc(r.key) + '\')">'
+    + '<div style="min-width:0"><div class="nm">' + esc(r.name) + '</div>'
+    + '<div class="po">' + esc(r.desc || '') + '</div>'
+    + (r.reason ? '<div class="po" style="color:#B26A00">' + esc(r.reason) + '</div>' : '')
+    + '</div>' + '<span class="pill tail ' + (r.status || 'none') + '">'
+    + esc(r.status ? (STATUS_TEXT[r.status] || r.status) : '확인 전') + '</span></div>'
+  ).join('');
+  return h + '</div>';
+}
+
+function editHtml() {
+  const d = App.draft;
+  if (!d) {
+    const st = (App.check && App.check.members) || {};
+    const s = st[App.pick];
+    if (s && s.status === 'liveOnly') {
+      return '<div class="edit"><div class="bar warn"><b>홈페이지에만 있는 글입니다</b><br>'
+        + '통합시스템에는 이 사람 자료가 없습니다. 홈페이지 글 번호는 <b>' + esc(App.pick) + '</b> 입니다.<br>'
+        + '홈페이지에서 지우거나(비공개 권장), 통합시스템에 <b>＋ 새 구성원</b>으로 추가하고 글 번호를 적어 주십시오.'
+        + '</div></div>';
+    }
+    return '<div class="edit"><div class="empty">왼쪽에서 항목을 고르십시오.</div></div>';
+  }
+  return (d.kind === 'member') ? memberEdit(d) : pageEdit(d);
+}
+
+function memberEdit(d) {
+  const rec = App.members[d.key] || {};
+  const rep = riskReport(d.careers, App.lineFormat);
+  let h = '<div class="edit">';
+  h += '<div class="fld"><label>이름</label>'
+    + '<input value="' + esc(d.name) + '" oninput="fieldEdit(\'name\',this.value)"></div>';
+  h += '<div class="two"><div class="fld"><label>직책1</label>'
+    + '<input value="' + esc(d.position1) + '" oninput="fieldEdit(\'position1\',this.value)"></div>'
+    + '<div class="fld"><label>직책2</label>'
+    + '<input value="' + esc(d.position2) + '" oninput="fieldEdit(\'position2\',this.value)"></div>'
+    + '<div class="fld" style="flex:0 0 130px"><label>홈페이지 글 번호</label>'
+    + '<input value="' + esc(d.srl) + '" oninput="fieldEdit(\'srl\',this.value)"></div></div>';
+  h += '<div class="fld"><label>메인 설명 (홈페이지 공개 화면에 안 나와 읽어올 수 없습니다 — 편집 화면을 보고 채우십시오)</label>'
+    + '<textarea rows="3" oninput="fieldEdit(\'intro\',this.value)">' + esc(d.intro) + '</textarea></div>';
+
+  h += '<div class="fld"><label>경력사항 — ' + d.careers.length + '줄</label>'
+    + '<div class="car" id="careerBox">'
+    + d.careers.map((line, i) =>
+        '<div class="l"><span class="no">' + (i + 1) + '</span>'
+        + '<input value="' + esc(line) + '" oninput="careerEdit(' + i + ',this.value)">'
+        + '<button class="x" title="위로" onclick="careerMove(' + i + ',-1)">▲</button>'
+        + '<button class="x" title="아래로" onclick="careerMove(' + i + ',1)">▼</button>'
+        + '<button class="x" title="줄 삭제" onclick="careerDel(' + i + ')">✕</button></div>').join('')
+    + '<div class="add" onclick="careerAdd()">＋ 줄 추가</div></div></div>';
+
+  if (rep.broken.length) {
+    h += '<div class="bar bad"><b>⚠ 「감싸기」와 겹치는 줄이 ' + rep.broken.length + '줄 있습니다</b> — '
+      + '이 상태로 내보내면 짝이 안 맞는 HTML 이 되어 <b>그 뒤 화면 구조가 통째로 깨질 수</b> 있습니다. '
+      + '줄에서 &lt;div&gt; 를 지우거나 줄 모양을 「줄바꿈만」으로 바꾸십시오.</div>';
+  }
+  if (rep.soft.length) {
+    h += '<div class="bar warn"><b>꺾쇠가 든 줄이 ' + rep.soft.length + '줄 있습니다</b> — '
+      + '이 줄은 홈페이지에서 안 보일 수 있습니다. 일부러 쓴 표기일 수 있어 지우지 않습니다.</div>';
+  }
+
+  h += '<div class="foot">'
+    + '<button class="btn pri" onclick="openPaste()">붙여넣을 내용 복사</button>'
+    + '<button class="btn" onclick="saveDraft()">저장</button>'
+    + '<button class="btn" onclick="openPull()">경력관리에서 당겨오기</button>'
+    + '<button class="btn" onclick="openHistory()">되돌리기</button>'
+    + '<span id="dirtyMark" style="color:#C43D3D;font-size:12px;font-weight:700">' + (App.dirty ? '● 저장 안 됨' : '') + '</span>'
+    + '<span style="flex:1"></span>'
+    + '<span class="sub">' + (rec.updatedAt ? '마지막 수정: ' + esc(stamp(rec.updatedAt)) + ' · ' + esc(rec.updatedBy || '') : '수정 기록 없음') + '</span>'
+    + '</div>';
+  return h + '</div>';
+}
+
+function pageEdit(d) {
+  const rec = App.pages[d.key] || {};
+  let h = '<div class="edit">';
+  h += '<div class="fld"><label>' + esc(PAGE_LABEL[d.key] || d.key) + ' — 본문 (/' + esc(d.key) + ')</label>'
+    + '<textarea rows="16" oninput="fieldEdit(\'text\',this.value)">' + esc(d.text) + '</textarea></div>';
+  h += '<div class="foot">'
+    + '<button class="btn pri" onclick="openPaste()">붙여넣을 내용 복사</button>'
+    + '<button class="btn" onclick="saveDraft()">저장</button>'
+    + '<button class="btn" onclick="openHistory()">되돌리기</button>'
+    + '<span id="dirtyMark" style="color:#C43D3D;font-size:12px;font-weight:700">' + (App.dirty ? '● 저장 안 됨' : '') + '</span>'
+    + '<span style="flex:1"></span>'
+    + '<span class="sub">' + (rec.updatedAt ? '마지막 수정: ' + esc(stamp(rec.updatedAt)) + ' · ' + esc(rec.updatedBy || '') : '수정 기록 없음') + '</span>'
+    + '</div>';
+  h += '<div class="guide">쪽은 <b>통째로</b> 한 번에 붙여넣습니다. '
+    + '구성원과 달리 사람 단위로 나뉘어 있지 않습니다.</div>';
+  return h + '</div>';
+}
+
+function legendHtml() {
+  return '<div class="legend">'
+    + ['same', 'pending', 'toAdd', 'toRemove', 'liveOnly']
+        .map(s => '<span class="pill ' + s + '">' + esc(STATUS_TEXT[s]) + '</span>').join('')
+    + '<span class="sub">딱지는 「홈페이지 다시 확인」을 누를 때만 새로 붙습니다. 저절로 돌지 않습니다.</span>'
+    + '</div>';
+}
+</script>
+</body>
+</html>
