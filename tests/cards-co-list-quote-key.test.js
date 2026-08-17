@@ -56,7 +56,9 @@ const ROWS = [row({ key:QUOTE_KEY, name:"오'brien 코리아" })];
 
 console.log('\n[① 열쇠가 자바스크립트 문자열로 성하게 실린다]');
 const html = run(ROWS);
-t('줄을 그렸다', html.indexOf('class="corow"') >= 0, true);
+/* ⚠ 닫는 따옴표까지 붙여 찾지 않는다 — 고른 줄에는 표시 클래스가 하나 더 붙는다
+   (2026-08-17 끌어서 고르기). 이 검사가 보려는 것은 «줄이 그려졌는가» 뿐이다. */
+t('줄을 그렸다', html.indexOf('class="corow') >= 0, true);
 /* 브라우저가 하는 일을 그대로 흉내낸다 — 속성값의 엔티티를 되돌린 뒤 자바스크립트로 읽는다 */
 function attrOf(h, name){
   const m = h.match(new RegExp(name + '="([^"]*)"'));

@@ -130,7 +130,9 @@ test('★ PC 명함/사업자 화면으로도 안 샌다 — 그쪽은 #selbar �
 /* ══════ ② 끌어 옮기기 — 표 쪽 배선 ══════ */
 test('★ 체크한 줄만 끌 수 있다 — 안 고른 줄은 끌어도 아무 일이 없다', () => {
   const h = runList(ROWS, { k1: 1 });
-  const rows = h.split('<tr class="corow"').slice(1);
+  /* ⚠ 닫는 따옴표까지 붙여 자르지 않는다 — 고른 줄에는 표시 클래스가 하나 더 붙는다
+     (2026-08-17 끌어서 고르기). 여기서 볼 것은 «어느 줄이 끌리는가» 뿐이다. */
+  const rows = h.split('<tr class="corow').slice(1);
   assert.equal(rows.length, 2, '줄이 둘이 아니다');
   assert.ok(rows[0].indexOf('draggable="true"') >= 0, '고른 줄이 안 끌린다');
   assert.ok(rows[1].indexOf('draggable="false"') >= 0, '안 고른 줄이 끌린다');
