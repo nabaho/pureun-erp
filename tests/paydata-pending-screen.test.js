@@ -89,9 +89,15 @@ test('★ 자료가 하나도 없어도 파일 올리기 단추는 보인다', (
   assert.match(beforeReturn, /id="filePick"/);
 });
 
-test('올리기 칸은 엑셀·PDF·한글·사진을 받는다 — 사진만 받지 않는다', () => {
+/* 목록을 통째로 못 박지 않는다 — 늘어난다(2026-08-17 카톡 .txt·.zip 이 빠져
+   있어 고르개에서 회색으로 눌리지도 않았다). 「사진만 받는 것이 아니다」와
+   「실제로 담기는 것은 다 고를 수 있다」만 본다. */
+test('올리기 칸은 사진만 받지 않는다 — 담기는 것은 고르개에도 다 있다', () => {
   const m = html.match(/function screenPending[\s\S]*?\n\}/);
-  assert.match(m[0], /accept="\.xlsx,\.xls,\.csv,\.pdf,\.hwp,\.hwpx,\.jpg,\.jpeg,\.png,\.heic,\.webp"/);
+  const acc = (m[0].match(/accept="([^"]*\.xlsx[^"]*)"/) || [])[1];
+  assert.ok(acc, '올리기 칸에 받는 종류가 안 적혀 있습니다');
+  ['.xlsx', '.pdf', '.hwp', '.jpg', '.png', '.txt', '.zip'].forEach(e =>
+    assert.ok(acc.split(',').indexOf(e) >= 0, e + ' 를 고를 수 없습니다: ' + acc));
 });
 
 test('★ 파일을 고르면 uploadFiles 로 이어진다', () => {
