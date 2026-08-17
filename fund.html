@@ -44,6 +44,19 @@
   #main{margin-left:216px;min-height:100vh}
   #topbar{position:sticky;top:0;z-index:15;background:rgba(250,251,253,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:9px 22px;display:flex;align-items:center;gap:12px;font-size:13px}
   #crumb{font-weight:700;color:var(--sub)}
+  /* 기금 머리(이름·식별번호 한 줄 + 탭 한 줄)를 위쪽에 붙여 둔다 —
+     사업장 16곳을 훑어 내려가면 어느 기금의 무슨 탭인지 사라져 되돌아 올려야 했다.
+     맨 위 #topbar 아래에 정확히 붙여야 하므로 그 높이를 --topbar-h 로 재어 쓴다. */
+  #fundhead{position:sticky;top:var(--topbar-h,48px);z-index:12;background:var(--bg);
+    border-bottom:1px solid var(--line);margin:0 0 12px;padding-top:2px}
+  .fhead{display:flex;align-items:center;gap:10px;padding:7px 0 5px;min-width:0}
+  .fhead h1{font-size:17px;margin:0;white-space:nowrap}
+  /* 식별번호는 줄바꿈 대신 «옆으로» 넘긴다 — 줄이 늘면 붙여 둔 머리가 화면을 잡아먹는다 */
+  .fhead .fid{display:flex;gap:14px;font-size:12px;color:var(--sub);white-space:nowrap;
+    overflow-x:auto;scrollbar-width:none;flex:1;min-width:0}
+  .fhead .fid::-webkit-scrollbar{display:none}
+  .fhead .fact{display:flex;gap:12px;flex:none;font-size:12.5px}
+  #fundhead .tabbar{margin:0}
   #topright{margin-left:auto;display:flex;align-items:center;gap:11px}
   #conn{font-size:12px;color:var(--sub)}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#cbd5e1;margin-right:5px}.dot.on{background:var(--ok)}
   #topuser{font-weight:700;font-size:12.5px}#topuser .role{color:var(--sub);font-weight:500;margin-left:4px}
@@ -1746,6 +1759,18 @@ var TPL={ setup:{key:'setup',label:'설립 서식(6종)',file:'2024년 근로복
    · PDF는 pdf.js로 글자를 직접 읽는다(좌표 기준 정렬 — 표 레이아웃에서 순서가 섞이는 것 방지).
      고용노동부 인가증은 전자문서라 글자가 심겨 있어 OCR 없이 100% 정확히 읽힌다.
    · 스캔 이미지(등기부·고유번호증 다수)는 글자가 없어 자동 판독 불가 → 미리보기만 띄워 수기 입력을 돕는다. */
+/* 한 줄짜리 좁은 띠 — 표 위처럼 «가끔 쓰는 입구»에 쓴다.
+   세 줄짜리 큰 상자는 표를 아래로 밀어내고 폭도 다 차지했다(참여사업장 화면).
+   끌어다 놓기·클릭·상태 표시는 큰 상자와 똑같이 동작한다(같은 dz* 처리기). */
+function dropZoneSlim(id,label,hint,accept){
+  return '<div id="'+id+'" class="dropz" ondragover="dzOver(event,1)" ondragleave="dzOver(event,0)" ondrop="dzDrop(event,\''+id+'\')" onclick="dzPick(\''+id+'\',\''+accept+'\')" '
+    +'title="'+esc(hint||'')+'" '
+    +'style="display:inline-flex;align-items:center;gap:8px;border:1px dashed var(--line);border-radius:8px;'
+    +'padding:6px 11px;cursor:pointer;background:var(--bg);transition:.15s;max-width:100%">'
+    +'<span style="font-size:12px;font-weight:700;white-space:nowrap">⬇ '+label+'</span>'
+    +'<span class="muted" style="font-size:11px;white-space:nowrap">끌어다 놓기 · 클릭해 선택</span>'
+    +'<span id="'+id+'-stat" style="font-size:11px"></span></div>';
+}
 function dropZone(id,label,hint,accept){
   return '<div id="'+id+'" class="dropz" ondragover="dzOver(event,1)" ondragleave="dzOver(event,0)" ondrop="dzDrop(event,\''+id+'\')" onclick="dzPick(\''+id+'\',\''+accept+'\')" '
     +'style="border:2px dashed var(--line);border-radius:10px;padding:16px;text-align:center;cursor:pointer;background:var(--bg);transition:.15s">'
@@ -3429,6 +3454,26 @@ function fillSubsidy(wb,f,sites){
   }
 }
 
+/* 붙여 둔 기금 머리를 맨 위 상태줄 «바로 아래»에 놓는다.
+   상태줄 높이는 글자 크기·화면 폭·글꼴이 다 갖춰졌는지에 따라 달라진다.
+   ⚠ 한 번만 재면 안 된다 — 첫 그림 때 잰 값이 굳어 89px 로 남고, 실제 53px 과
+      36px 틈이 벌어져 그 사이로 본문이 지나가는 것을 미리보기에서 확인했다.
+   그래서 크기가 «바뀔 때마다» 따라가게 한다. */
+var _topbarRO=null;
+function _syncTopbarH(again){
+  var t=$('topbar'); if(!t) return;
+  var h=Math.round(t.getBoundingClientRect().height);
+  if(h>0) document.documentElement.style.setProperty('--topbar-h',h+'px');
+  if(!_topbarRO && window.ResizeObserver){
+    _topbarRO=new ResizeObserver(function(){ _syncTopbarH(); });
+    _topbarRO.observe(t);
+  }
+  /* 그림이 다 그려진 «다음 칸»에 한 번 더 잰다 — 방금 갈아끼운 화면 때문에
+     상태줄 높이가 아직 안 잡힌 채로 잴 수 있다(89px 로 굳어 36px 틈이 벌어졌던 자리). */
+  if(!again && window.requestAnimationFrame) requestAnimationFrame(function(){ _syncTopbarH(1); });
+}
+window.addEventListener('resize',function(){ _syncTopbarH(); });
+window.addEventListener('load',function(){ _syncTopbarH(); });   // 글꼴이 늦게 오는 경우
 function renderFund(){
   var f=funds[S.fundId]; $('crumb').textContent=(f.short_name||f.name);
   var tags=f.fund_type==='사내'?'<span class="tag sanae">사내</span>':'<span class="tag gong">공동</span>';
@@ -3438,12 +3483,16 @@ function renderFund(){
       +(f.deleted_at?' ('+esc(f.deleted_at)+(f.deleted_by?' · '+esc(f.deleted_by):'')+')':'')
       +'. 목록·집계에서 제외되며 데이터는 보존됩니다. <a href="#" onclick="restoreFund(\''+S.fundId+'\');return false;">↩ 복원하기</a></div>':'')
     +(isPast(f)?'<div class="panel" style="background:var(--warn-bg);border-left:3px solid var(--warn);padding:8px 12px;font-size:12.5px">이 기금은 <b>'+esc(f.lifecycle)+'</b> 상태입니다'+(f.end_date?' ('+esc(f.end_date)+(f.end_reason?' · '+esc(f.end_reason):'')+')':'')+'. 집계에서 제외됩니다. <a href="#" onclick="setLifecycle(\''+S.fundId+'\');return false;">상태 변경 →</a></div>':'')
-    +'<div class="panel"><div class="row"><h1>'+esc(f.short_name||f.name)+'</h1>'+tags
-    +'<span style="flex:1"></span>'
-    +'<span class="muted" style="cursor:pointer;margin-right:12px" onclick="setLifecycle(\''+S.fundId+'\')" title="계약종료·기록보관 상태 관리">🔖 상태</span>'
-    +'<span class="muted" style="cursor:pointer" onclick="assignMgr(\''+S.fundId+'\')" title="담당자 지정">👤 담당 '+esc(mgrText(f))+' ✎</span></div>'
-    +'<div class="kv"><span>인가번호 <b>'+esc(f.inka_no||'—')+'</b></span><span>법인등록번호 <b>'+esc(f.corp_reg_no||'—')+'</b></span>'
-    +'<span>고유번호 <b>'+esc(f.tax_id_no||'—')+'</b></span><span>소재지 <b>'+esc(f.address||'—')+'</b></span></div></div>';
+    ;
+  /* 기금 이름·식별번호를 «한 줄»로 모은다 — 종전에는 상자 안에 두 줄이라
+     맨 위 상태줄까지 세 덩이가 화면 위쪽을 크게 차지했다. 이제 상태줄·이 줄·탭줄 셋뿐이다. */
+  var idline='<div class="fhead"><h1>'+esc(f.short_name||f.name)+'</h1>'+tags
+    +'<span class="fid">'
+    +'<span>인가 <b>'+esc(f.inka_no||'—')+'</b></span><span>법인 <b>'+esc(f.corp_reg_no||'—')+'</b></span>'
+    +'<span>고유 <b>'+esc(f.tax_id_no||'—')+'</b></span><span>소재지 <b>'+esc(f.address||'—')+'</b></span></span>'
+    +'<span class="fact">'
+    +'<span class="muted" style="cursor:pointer" onclick="setLifecycle(\''+S.fundId+'\')" title="계약종료·기록보관 상태 관리">🔖 상태</span>'
+    +'<span class="muted" style="cursor:pointer" onclick="assignMgr(\''+S.fundId+'\')" title="담당자 지정">👤 '+esc(mgrText(f))+' ✎</span></span></div>';
   var setupMode=(f.setup_stage==='설립준비');
   var tabbar='<div class="tabbar">'
     +(setupMode?'<div class="tab'+(S.tab==='setup'?' on':'')+'" onclick="goTab(\'setup\')">🏗 설립 진행</div>':'')
@@ -3464,7 +3513,10 @@ function renderFund(){
     : S.tab==='events' ? eventsTab(f)
     : S.tab==='closing' ? closingTab(f)
     : '<div class="panel muted">이 탭은 다음 단계에서 이전됩니다.</div>';
-  $('app').innerHTML=head+tabbar+body;
+  /* 이름 줄과 탭 줄을 한 덩이로 묶어 붙여 둔다(#fundhead). 안내 띠(삭제·계약종료)는
+     늘 있는 것이 아니라 붙이지 않는다 — 붙이면 그만큼 화면이 줄어든다. */
+  $('app').innerHTML=head+'<div id="fundhead">'+idline+tabbar+'</div>'+body;
+  _syncTopbarH();
   if(S.tab==='docs'){   // 서식은 기금 상세 안에 끼워 렌더(화면 이동 없음)
     S.formFund=S.fundId; S.formsCtx='fund'; S.formsHost='fundDocsHost'; renderForms();
   } else if(S.formsHost==='fundDocsHost'){ S.formsHost=null; }
@@ -4033,15 +4085,25 @@ function sitesTab(){
     ? '<div style="overflow-x:auto"><table><thead><tr><th>번호</th><th>상호</th><th>대표자</th><th>사업자번호</th><th>업종</th><th style="text-align:right">상시근로자</th><th title="별지15호 ⑩">협력</th><th>담당자</th><th class="mo">이메일</th><th>소재지</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
     : '<div class="muted" style="padding:20px 4px">등록된 참여사업장이 없습니다. [+ 사업장 추가] 또는 [📥 사업장 데이터 가져오기]로 시작하세요.</div>';
   setTimeout(bindSiteXlsx,0);
+  /* 명부와 연도별 기록은 «같은 16줄»을 두 번 그린다. 위아래로 놓으면 아래 표까지
+     두 화면을 내려가야 해 해마다 하는 입력이 고역이었다 — 한 번에 하나만 보인다. */
+  var isYr=(S.siteTab==='years');
+  var sub='<div class="tabbar" style="margin:10px 0 12px">'
+    +'<div class="tab'+(isYr?'':' on')+'" onclick="goSiteTab(\'list\')">📋 명부</div>'
+    +'<div class="tab'+(isYr?' on':'')+'" onclick="goSiteTab(\'years\')">📅 연도별 기록</div></div>';
   return '<div class="panel"><div class="row"><h2>참여사업장</h2>'
     +'<span class="stat">'+arr.length+'개사</span><span class="stat">상시근로자 '+totalEmp.toLocaleString()+'명</span>'
     +'<span style="flex:1"></span><button class="primary" onclick="editSite(\'\')">+ 사업장 추가</button>'
     +' <button onclick="importSites()" title="전체 기금 사업장 일괄 가져오기(담당자 포함)">📥 백업(JSON) 가져오기</button></div>'
-    +'<div style="margin-top:10px">'+dropZone('dz-sites','엑셀로 사업장 한번에 등록','상호·대표자·사업자번호·상시근로자·소재지 열을 자동으로 찾습니다','.xlsx,.xls,.csv')+'</div>'
-    +'<div id="siteXlsxOut"></div>'
-    +'<div style="margin-top:12px">'+tbl+'</div></div>'
-    +sitesYearPanel(arr);
+    +sub
+    +(isYr ? sitesYearBody(arr)
+      : '<div class="row" style="margin:0 0 10px">'
+        +dropZoneSlim('dz-sites','엑셀로 사업장 한번에 등록','상호·대표자·사업자번호·상시근로자·소재지 열을 자동으로 찾습니다','.xlsx,.xls,.csv')
+        +'</div><div id="siteXlsxOut"></div>'+tbl)
+    +'</div>';
 }
+/* 하위 탭 이동 — 미저장 입력이 있으면 확인 후 옮긴다(지원금 탭과 같은 규칙). */
+function goSiteTab(t){ _leaveGuard().then(function(ok){ if(!ok)return; S.siteTab=t; renderFund(); }); }
 function _primaryContact(s){
   var cts=[]; try{ cts=s&&s.contacts; if(typeof cts==='string')cts=JSON.parse(cts); }catch(e){}
   if(!Array.isArray(cts)) cts=[];
@@ -4162,8 +4224,9 @@ function syCopyPrev(){
     });
   });
 }
-function sitesYearPanel(arr){
-  if(!syLoad()) return '<div class="panel">'+loadingHTML()+'</div>';
+/* 연도별 기록 «속살»만 — 바깥 상자는 참여사업장 화면이 이미 그렸다(하위 탭 안). */
+function sitesYearBody(arr){
+  if(!syLoad()) return loadingHTML();
   var sy=S.sy||{};
   var tot={contrib:0,workers:0,benef:0};
   var rows=arr.map(function(s){
@@ -4175,11 +4238,11 @@ function sitesYearPanel(arr){
     }).join('');
     return '<tr><td style="font-weight:600">'+esc(s.name||'—')+(s.partner?' <span class="chip warn" style="font-size:9.5px">협력</span>':'')+'</td>'+tds+'</tr>';
   }).join('');
-  return '<div class="panel"><div class="row" style="flex-wrap:wrap"><h2 style="font-size:15px">사업장 연도별 기록</h2>'+hlp('site.years')
+  return '<div class="row" style="flex-wrap:wrap;margin:0 0 8px">'+hlp('site.years')
     +'<span class="muted" style="font-size:12px">'+S.year+'년</span>'+yearSel()
     +'<span class="stat">출연 '+_n(tot.contrib)+'원</span><span class="stat">근로자 '+_n(tot.workers)+'명</span>'
     +'<span style="flex:1"></span><button onclick="syCopyPrev()">↩ 작년 값 불러오기</button></div>'
-    +(arr.length?'<div style="overflow-x:auto;margin-top:8px"><table><thead><tr><th>사업장</th>'
+    +(arr.length?'<div style="overflow-x:auto"><table><thead><tr><th>사업장</th>'
       +SY_COLS.map(function(c){return '<th>'+c[1]+'</th>';}).join('')+'</tr></thead><tbody>'+rows
       +'<tr style="font-weight:700;border-top:2px solid var(--ink)"><td>합계</td><td style="text-align:right">'+_n(tot.contrib)+'</td>'
       +'<td style="text-align:right">'+_n(tot.workers)+'</td><td style="text-align:right">'+_n(tot.benef)+'</td></tr></tbody></table></div>'

@@ -248,6 +248,40 @@ ok('명부는 배열로 다룬다(String 으로 뭉개지 않는다)', src.inclu
   && src.includes('set[f]=v; names.push(f'));
 ok('이미 든 명부는 덮지 않는다', src.includes('if(curL.length&&!over) return;'));
 
+/* ── 화면: 붙여 둔 기금 머리(3줄) · 좁은 드롭존 · 참여사업장 하위 탭 ── */
+ok('기금 머리를 상태줄 아래에 붙인다',
+  src.includes('#fundhead{position:sticky;top:var(--topbar-h,48px)'));
+ok('이름·식별번호가 한 줄(.fhead)', src.includes('var idline=\'<div class="fhead">')
+  && src.includes('class="fid"'));
+ok('머리와 탭을 한 덩이로 감싼다', src.includes("'<div id=\"fundhead\">'+idline+tabbar+'</div>'"));
+/* 상태줄 높이를 한 번만 재면 첫 그림 때 값이 굳어 틈이 벌어진다(89 vs 53, 실제로 봤다) */
+ok('상태줄 높이를 계속 따라간다', src.includes('function _syncTopbarH(')
+  && src.includes('new ResizeObserver(function(){ _syncTopbarH(); })')
+  && src.includes('requestAnimationFrame(function(){ _syncTopbarH(1); })'));
+ok('창 크기·글꼴 로드에도 다시 잰다', /addEventListener\('resize',function\(\)\{ _syncTopbarH\(\); \}\)/.test(src)
+  && /addEventListener\('load',function\(\)\{ _syncTopbarH\(\); \}\)/.test(src));
+/* 식별번호는 줄바꿈 대신 옆으로 — 줄이 늘면 붙여 둔 머리가 화면을 잡아먹는다 */
+ok('식별번호는 옆으로 넘긴다(줄바꿈 아님)', /\.fhead \.fid\{[^}]*white-space:nowrap/.test(src)
+  && /\.fhead \.fid\{[^}]*overflow-x:auto/.test(src));
+
+ok('좁은 드롭존이 따로 있다', src.includes('function dropZoneSlim('));
+ok('참여사업장은 좁은 드롭존을 쓴다', src.includes("dropZoneSlim('dz-sites'"));
+ok('좁은 드롭존도 같은 처리기를 쓴다(끌어놓기·클릭이 살아 있다)',
+  /function dropZoneSlim\([\s\S]{0,700}?dzOver\(event,1\)[\s\S]{0,400}?dzDrop\(event/.test(src)
+  && /function dropZoneSlim\([\s\S]{0,900}?dzPick\(/.test(src));
+
+// onclick 안의 따옴표는 소스에서 \' 로 escape 돼 있다 — 그대로 찾으면 헛돈다
+ok('참여사업장이 명부·연도별 하위 탭으로 갈린다', /goSiteTab\(\\?'list\\?'\)/.test(src)
+  && /goSiteTab\(\\?'years\\?'\)/.test(src) && src.includes('function goSiteTab('));
+ok('하위 탭 이동도 미저장 입력을 지킨다', /function goSiteTab\(t\)\{ _leaveGuard\(\)/.test(src));
+// 두 표를 위아래로 함께 그리던 옛 함수가 남아 있으면 다시 두 번 그려진다
+ok('옛 sitesYearPanel 은 남지 않았다', !src.includes('sitesYearPanel'));
+ok('연도별은 속살만 그린다(상자 이중 아님)', src.includes('function sitesYearBody(')
+  && !/function sitesYearBody\(arr\)\{[\s\S]{0,200}?return '<div class="panel">/.test(src));
+/* 고른 하위 탭이 «실제로» 화면을 가르는지 — 조건을 굳혀 두면 탭만 있고 늘 같은 표가 나온다 */
+ok('고른 하위 탭이 표를 가른다', src.includes("var isYr=(S.siteTab==='years');")
+  && src.includes('+(isYr ? sitesYearBody(arr)'));
+
 ok('홍성군은 홍성세무서', src.includes("'충남 홍성군':'홍성세무서'"));
 ok('보령시는 보령세무서', src.includes("'충남 보령시':'보령세무서'"));
 
