@@ -116,3 +116,77 @@ test('퇴사자 이름이 다른 쪽에 남아 있으면 찾아낸다', () => {
 test('이름이 없으면 조용하다', () => {
   assert.deepEqual(plain(D.nameLeftovers('없는사람', [{ path: 'greeting', text: '가나다' }])), []);
 });
+
+/* --- 검토 지적 3건: 동명이인 오판 / 홈페이지 글번호 중복 / 한 글자 이름 오탐 --- */
+
+test('동명이인이면(퇴사자·재직자 각 1명) 재직자를 퇴사자로 몰지 않는다 — toRemove 안 뜨고 reason 에 동명이인 표시', () => {
+  const ours = [{ key: '500', name: '김노무', position1: '', position2: '공인노무사', careers: [] }];
+  const live = [{ srl: '500', name: '김노무', position1: '', position2: '공인노무사', careers: [] }];
+  const staff = [
+    { name: '김노무', isNomusa: true, joinedAt: '2010-01-01', leftAt: '2026-07-01' }, // 퇴사자 — 배열에서 먼저 옴
+    { name: '김노무', isNomusa: true, joinedAt: '2024-01-01', leftAt: '' } // 재직자
+  ];
+  const r = D.memberStatus(ours, live, staff, TODAY);
+  assert.notEqual(r[0].status, 'toRemove');
+  assert.match(r[0].reason, /동명이인/);
+});
+
+test('동명이인이 배열에서 어느 순서로 오든 결과가 같다', () => {
+  const ours = [{ key: '500', name: '김노무', position1: '', position2: '공인노무사', careers: [] }];
+  const live = [{ srl: '500', name: '김노무', position1: '', position2: '공인노무사', careers: [] }];
+  const 퇴사자 = { name: '김노무', isNomusa: true, joinedAt: '2010-01-01', leftAt: '2026-07-01' };
+  const 재직자2 = { name: '김노무', isNomusa: true, joinedAt: '2024-01-01', leftAt: '' };
+  const rA = D.memberStatus(ours, live, [퇴사자, 재직자2], TODAY);
+  const rB = D.memberStatus(ours, live, [재직자2, 퇴사자], TODAY);
+  assert.deepEqual(plain(rA), plain(rB));
+});
+
+test('이름이 하나뿐일 때는 지금처럼 toRemove 가 정상 동작한다 (동명이인 처리로 기존 동작이 깨지지 않았는지 확인)', () => {
+  const ours = [{ key: '999', name: '퇴사자', position1: '', position2: '공인노무사', careers: [] }];
+  const live = [{ srl: '999', name: '퇴사자', position1: '', position2: '공인노무사', careers: [] }];
+  const staff = [{ name: '퇴사자', isNomusa: true, joinedAt: '2020-01-01', leftAt: '2026-07-31' }];
+  assert.equal(D.memberStatus(ours, live, staff, TODAY)[0].status, 'toRemove');
+});
+
+test('홈페이지에 같은 글 번호가 두 번 나와도 liveOnly 는 한 번만 뜬다', () => {
+  const live = [
+    { srl: '888', name: '모르는사람A', position1: '', position2: '', careers: [] },
+    { srl: '888', name: '모르는사람B', position1: '', position2: '', careers: [] }
+  ];
+  const r = D.memberStatus([], live, [], TODAY);
+  const liveOnlyRows = r.filter(function (x) { return x.status === 'liveOnly'; });
+  assert.equal(liveOnlyRows.length, 1);
+});
+
+test('홈페이지 글 번호가 겹치고 우리 자료에도 있으면 먼저 것을 기준으로 대조한다 — 나중 것이 말없이 덮지 않는다', () => {
+  const ours = [{ key: '700', name: '첫번째', position1: '', position2: '', careers: [] }];
+  const live = [
+    { srl: '700', name: '첫번째', position1: '', position2: '', careers: [] },
+    { srl: '700', name: '다른내용', position1: '바뀜', position2: '', careers: [] }
+  ];
+  const r = D.memberStatus(ours, live, [], TODAY);
+  assert.equal(r.length, 1);
+  assert.equal(r[0].status, 'same');
+});
+
+test('겹친 글 번호를 알 수 있다', () => {
+  const live = [
+    { srl: '888', name: 'A', position1: '', position2: '', careers: [] },
+    { srl: '888', name: 'B', position1: '', position2: '', careers: [] },
+    { srl: '999', name: 'C', position1: '', position2: '', careers: [] }
+  ];
+  assert.deepEqual(plain(D.duplicateLiveKeys(live)), ['888']);
+});
+
+test("nameLeftovers('이', ...) 는 한 글자 이름이라 훑지 않고 빈 결과를 낸다", () => {
+  const pages = [{ path: 'greeting', text: '이것은 이상한 이야기 이렇게' }];
+  assert.deepEqual(plain(D.nameLeftovers('이', pages)), []);
+});
+
+test("nameLeftovers('권형하', ...) 는 두 글자 이상이라 지금처럼 정상 동작한다", () => {
+  const pages = [
+    { path: 'greeting', text: '인사말입니다 대표 공인노무사 권형하' },
+    { path: 'work4', text: '산재보상 안내' }
+  ];
+  assert.deepEqual(plain(D.nameLeftovers('권형하', pages)), [{ path: 'greeting', count: 1 }]);
+});
