@@ -296,7 +296,25 @@
      이미 창고로 옮겨진 사진은 loc:'storage' 표시 덕에 읽기(loadFull/loadThumb)가
      창고를 먼저 보므로 rtdb로 되돌려도 계속 보인다. */
   var mode = 'storage';
-  var deps = { db: null, storage: null, uid: '', isAdmin: false, name: '' };
+  /* ── 민감 서류 (사진첩 보안 3건 계획 2단계, 대표 지시 2026-08-17) ──
+     계약서·근태표의 **원본 주소를 사진 정보에 남기지 않는다.**
+
+     ⚠ 지금 적혀 있는 토큰 주소는 만료가 없고 로그인도 필요 없다 —
+       **공유를 풀어도 그대로 열린다.** 근로계약서에는 주민번호가 있다.
+     ⚠ 목록은 `functions/photo-view.js` 의 SENSITIVE_KINDS 와 **반드시 같아야 한다.**
+       두 벌이 되면 한쪽만 고쳐져, 화면은 안 적는데 서버는 「민감 아니다」로 막는다.
+     ⚠ 미리보기(thumbUrl)는 그대로 둔다 — 240px 로는 글씨를 못 읽고, 그것까지
+       서버로 돌리면 격자가 통째로 느려진다(2026-08-15 에 고친 바로 그 느림이다). */
+  var SENSITIVE_KINDS = { contract: 1, timesheet: 1, payslip: 1 };
+  /* 판독 전(read 없음)이면 **민감이 아니다** — 그렇게 안 하면 회의사진 수백 장이
+     죄다 서버를 거치게 된다. 민감 여부는 판독이 정한다. */
+  function isSensitiveRead(read) {
+    return !!(read && SENSITIVE_KINDS[String(read.kind || '')]);
+  }
+
+  var PHOTO_VIEW_URL = 'https://asia-northeast3-pureun-erp.cloudfunctions.net/photoView';
+
+  var deps = { db: null, storage: null, uid: '', isAdmin: false, name: '', auth: null };
   /* 같은 탭에서 로그아웃하거나 다른 계정으로 바뀌는 동안, 먼저 시작한 명부 조회가
      늦게 끝나 새 계정의 이름·권한을 덮지 못하게 로그인 세대를 센다. */
   var identityGeneration = 0;
@@ -313,6 +331,10 @@
     deps.storage = o.storage || null;
     deps.uid = o.uid || '';
     deps.isAdmin = !!o.isAdmin;
+    /* 민감 서류 원본을 서버에서 받아올 때 로그인 증명이 필요하다.
+       ⚠ 안 넘기면 계약서·근태표 원본이 «남의 것일 때» 안 열린다(내 것은 창고에서
+         곧바로 되므로 증상이 나중에, 관리자 화면에서만 드러난다). */
+    if (o.auth) deps.auth = o.auth;
     if (o.name) deps.name = o.name;
     if (o.mode) setMode(o.mode);
     return mode;
@@ -692,13 +714,20 @@
           ]);
         })
         .then(function (urls) {
-          var u = {};
-          u[metaPath(year, id, owner) + '/loc'] = 'storage';
-          u[metaPath(year, id, owner) + '/fullUrl'] = urls[0] || null;
-          u[metaPath(year, id, owner) + '/thumbUrl'] = urls[1] || null;
-          u[blobPath(year, id, owner)] = null;
-          u[thumbPath(year, id, owner)] = null;
-          return deps.db.ref().update(u);
+          /* ⚠ 민감 서류면 **원본 주소를 다시 적지 않는다**(보안 3건 계획 2단계).
+             이 갈래를 빠뜨리면 사진을 한 번 돌리는 것만으로 지워 둔 주소가
+             되살아난다 — 판독 때 지운 것이 조용히 무효가 된다.
+             한 번 더 읽는 값이지만 돌리기는 드문 일이라 값이 싸다. */
+          return readOnce(metaPath(year, id, owner) + '/read').catch(function () { return null; })
+            .then(function (read) {
+              var u = {};
+              u[metaPath(year, id, owner) + '/loc'] = 'storage';
+              u[metaPath(year, id, owner) + '/fullUrl'] = isSensitiveRead(read) ? null : (urls[0] || null);
+              u[metaPath(year, id, owner) + '/thumbUrl'] = urls[1] || null;
+              u[blobPath(year, id, owner)] = null;
+              u[thumbPath(year, id, owner)] = null;
+              return deps.db.ref().update(u);
+            });
         })
         .catch(function (e) {
           console.warn('[사진첩] 본문 다시 올리기 — 창고 실패, 실시간DB로 보관합니다', e && e.message);
@@ -790,6 +819,11 @@
        정보도 없이 read 만 있는 유령 항목이 생긴다(실데이터에서 여러 건 발견,
        "명함첩에 새로 넣었습니다" 같은 표시까지 남아 있어 명함첩에도 헛짚힐 수
        있었다). 지워졌으면 조용히 아무것도 안 쓴다 — 되살릴 것이 없다. */
+  /* ⚠ 판독이 **계약서·근태표로 가리면 그 자리에서 원본 주소를 지운다**
+     (보안 3건 계획 2단계, 2026-08-17). 민감 여부는 올릴 때가 아니라 **판독 뒤**에
+     정해지므로, 「올릴 때 안 적는다」로는 못 막는다 — 올릴 때는 서류인지까지만 안다.
+     주소를 남겨 두면 만료도 없고 로그인도 필요 없는 링크가 그대로 남아,
+     공유를 풀어도 열린다. */
   function saveRead(year, id, read, owner) {
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     var path = metaPath(year, id, owner);
@@ -797,6 +831,7 @@
       if (!meta) return null;
       var u = {};
       u[path + '/read'] = read;
+      if (isSensitiveRead(read)) u[path + '/fullUrl'] = null;
       return deps.db.ref().update(u);
     });
   }
@@ -809,6 +844,9 @@
     var p = metaPath(year, id, owner);
     u[p + '/read'] = read;
     u[p + '/customKind'] = customKind || null;
+    /* ⚠ 여기도 지운다. saveRead 한 곳만 고치면, 사람이 「계약서」로 손수 옮긴 사진의
+       주소는 그대로 남는다 — 손으로 옮기는 쪽이 오히려 정확한 분류다. */
+    if (isSensitiveRead(read)) u[p + '/fullUrl'] = null;
     return deps.db.ref().update(u);
   }
 
@@ -1264,10 +1302,43 @@
       });
     });
   }
+  /* 민감 서류 원본을 **서버에서** 받아온다 — 주소를 안 남기기로 했으므로 이 길이 있어야
+     관리자·공유받은 사람이 계약서를 볼 수 있다(창고 규칙은 「자기 사진만」이라 403 이다).
+     ⚠ 실패하면 **조용히 넘기지 않는다.** 왜 안 보이는지 말해 줘야 「고장」으로 안 읽는다. */
+  function fullFromServer(year, id, owner) {
+    var f = (typeof fetch === 'function') ? fetch : null;
+    if (!f || !deps.auth) return Promise.resolve('');
+    var user = null;
+    try { user = deps.auth.currentUser; } catch (_) { user = null; }
+    if (!user) return Promise.resolve('');
+    return user.getIdToken().then(function (t) {
+      return f(PHOTO_VIEW_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t },
+        body: JSON.stringify({ owner: owner || deps.uid, year: String(year), id: id })
+      });
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (j) {
+        if (r.ok && j && j.ok && j.dataUrl) return j.dataUrl;
+        /* 400 = 「민감 서류가 아니다」 — 부르는 쪽이 헛짚은 것이니 조용히 물러난다.
+           그 밖(403·404·502)은 사람이 알아야 하는 상태다. */
+        if (r.status === 400) return '';
+        var e = new Error((j && j.error) || ('원본을 받아오지 못했습니다 (오류 ' + r.status + ')'));
+        e.status = r.status;
+        throw e;
+      });
+    });
+  }
+
   function loadFull(year, id, owner) {
     return loadVia('fullUrl', year, id, owner, function () {
       return withStorage(function () { return filePath(year, id, 'full', owner); }, function () {
         return withLegacy(blobPath(year, id, owner), legacyRoot('blobs') + '/' + year + '/' + id);
+      }).then(function (v) {
+        /* 창고에도 옛 자리에도 없다 — **민감 서류라 주소를 안 남긴 것**일 수 있다.
+           그때는 서버에 청한다. 이 갈래가 없으면 계약서가 「원본이 없습니다」로 보인다. */
+        if (v) return v;
+        return fullFromServer(year, id, owner);
       });
     });
   }
@@ -1804,6 +1875,10 @@
     setFolder: setFolder,
     moveFolderPhotos: moveFolderPhotos,
     listCustomKinds: listCustomKinds,
+    /* 민감 서류 판정 — 화면도 같은 목록을 봐야 한다(경고 문구·자동 판독 제외 등).
+       ⚠ 화면이 저마다 목록을 적으면 두 벌이 되어 한쪽만 고쳐진다. */
+    SENSITIVE_KINDS: SENSITIVE_KINDS,
+    isSensitiveRead: isSensitiveRead,
     listKindLabels: listKindLabels,
     listHiddenKinds: listHiddenKinds,
     renameFixedKind: renameFixedKind,
