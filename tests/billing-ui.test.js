@@ -16,6 +16,9 @@ const vm = require('node:vm');
 const R = path.join(__dirname, '..');
 const src = fs.readFileSync(path.join(R, 'js', 'pu-billing.js'), 'utf8');
 const erp = fs.readFileSync(path.join(R, 'pu-erp.html'), 'utf8');
+/* 대표 지시 2026-08-17: 사용액을 푸른이알피 사이드바에서 «포털» 로 옮겼다.
+   이알피에 들어가야만 보이던 것을, 로그인하면 바로 보이게. */
+const enter = fs.readFileSync(path.join(R, 'enter.html'), 'utf8');
 
 const ctx = vm.createContext({ console });
 vm.runInContext(src, ctx);
@@ -212,36 +215,53 @@ test('금액 지켜보기는 읽기 전용이다', async (t) => {
   });
 });
 
-test('관리자 화면에 붙는 자리 (pu-erp.html)', async (t) => {
+test('관리자 화면에 붙는 자리 (enter.html — 포털)', async (t) => {
   await t.test('저장 층을 싣는다', () => {
-    assert.match(erp, /<script src="js\/pu-billing\.js(\?v=\d+)?"><\/script>/);
+    assert.match(enter, /<script src="js\/pu-billing\.js(\?v=\d+)?"><\/script>/);
+  });
+
+  await t.test('★ 이알피에는 더 이상 없다 — 자리가 둘이면 한쪽만 고쳐진다', () => {
+    // 2026-08-17 포털로 옮겼다. 되살아나면 두 자리가 서로 어긋난다.
+    assert.equal(/BillingBar|PuBilling/.test(erp), false);
   });
 
   await t.test('관리자에게만 그린다 — 회사 지출액이다', () => {
     // 대표 결정: 대표+관리자. 전 직원에게 보이면 안 된다.
-    assert.match(erp, /isAdminByUser\(CURRENT_USER\)\s*&&\s*h\(BillingBar/);
+    assert.match(enter, /function billIsAdmin\(role\)\{\s*return role === 'admin' \|\| role === 'admin-delegate';\s*\}/);
+  });
+
+  await t.test('★ 관리자가 아니면 구독조차 안 한다 — 감추기만 하면 값은 이미 와 있다', () => {
+    const i = enter.indexOf('function billStart(role){');
+    const body = enter.slice(i, i + 1500);
+    const guard = body.indexOf('if(!billIsAdmin(role)');
+    const watch = body.indexOf('PuBilling.watch');
+    assert.ok(guard >= 0 && watch > guard, '관리자 확인이 watch 보다 먼저여야 한다');
   });
 
   await t.test('숫자 판단을 화면이 따로 하지 않는다', () => {
-    const i = erp.indexOf('function BillingBar');
-    const j = erp.indexOf('\nfunction ', i + 10);
-    const body = erp.slice(i, j > i ? j : i + 6000);
+    const i = enter.indexOf('function billPaint()');
+    const body = enter.slice(i, i + 3000);
     // 여기서 직접 나누기 시작하면 pu-billing.js 와 두 벌이 되고, 한쪽만 고쳐진다.
     assert.equal(/\/\s*(row\.)?budget/.test(body), false, '비율 계산은 pu-billing.js 몫이다');
-    assert.match(body, /B\.summarize\(/);
+    assert.match(body, /PuBilling\.summarize\(/);
   });
 
   await t.test('규칙에 막히면 조용히 안 그린다', () => {
-    const i = erp.indexOf('function BillingBar');
-    const body = erp.slice(i, i + 6000);
-    // ref.on 의 두 번째(실패) 콜백을 빠뜨리면 콘솔에 빨간 오류만 남고 화면은 영영 빈 채다.
-    assert.match(body, /ref\.on\('value',[\s\S]{0,400}?function\(\)\{ setCur\(null\); \}\)/);
+    const i = enter.indexOf('function billStart(role){');
+    const body = enter.slice(i, i + 1500);
+    // watch 의 셋째(실패) 콜백을 빠뜨리면 콘솔에 빨간 오류만 남고 화면은 영영 빈 채다.
+    assert.match(body, /PuBilling\.watch\([\s\S]{0,300}?function\(\)\{ _billCur = null; billPaint\(\); \}\)/);
   });
 
-  await t.test('보다가 화면을 떠나면 구독을 끊는다', () => {
-    const i = erp.indexOf('function BillingBar');
-    const body = erp.slice(i, i + 6000);
-    assert.match(body, /ref\.off\('value', cb\)/);
+  await t.test('다른 계정으로 바뀌면 앞 구독을 끊는다', () => {
+    const i = enter.indexOf('function billStart(role){');
+    const body = enter.slice(i, i + 1500);
+    assert.match(body, /if\(_billStop\)\{[^}]*_billStop\(\)/);
+  });
+
+  await t.test('눌러서 자세히 보는 팝업이 있다', () => {
+    assert.match(enter, /id="billModal"/);
+    assert.match(enter, /\$\('billChip'\)\.addEventListener\('click', billOpen\)/);
   });
 });
 
@@ -334,8 +354,8 @@ test('「그 밖」이 낡은 칸 때문에 부풀 수 있으면 그렇다고 �
   await t.test('화면 둘 다 표시를 그린다 — 판단은 pu-billing 한 곳', () => {
     /* 값 층이 approx 를 내놓아도 화면이 안 그리면 없는 기능이다.
        (⚠ 글자 확인이지만, 여기 렌더러는 React 없이 못 돌린다 — 존재만 본다) */
-    assert.match(erp, /p\.approx \? '≈ ' : ''/, '관리자 화면이 ≈ 를 안 그립니다');
-    assert.match(erp, /s\.etcNote/, '관리자 화면이 안내를 안 그립니다');
+    assert.match(enter, /p\.approx \? '≈ ' : ''/, '포털이 ≈ 를 안 그립니다');
+    assert.match(enter, /s\.etcNote/, '포털이 안내를 안 그립니다');
     const photos = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
     assert.match(photos, /p\.approx \? '≈ ' : ''/, '사진첩이 ≈ 를 안 그립니다');
     assert.match(photos, /s\.etcNote/, '사진첩이 안내를 안 그립니다');
@@ -344,7 +364,7 @@ test('「그 밖」이 낡은 칸 때문에 부풀 수 있으면 그렇다고 �
   await t.test('값 층을 고쳤으면 ?v= 을 올렸다 — 안 올리면 고친 것이 캐시에 묻힌다', () => {
     /* 실제로 당했다(서식 수정이 통째로 묻힘). pu-billing 은 ?v= 로 실린다. */
     const photos = fs.readFileSync(path.join(R, 'pu-photos.html'), 'utf8');
-    for (const html of [erp, photos]) {
+    for (const html of [enter, photos]) {
       const m = html.match(/js\/pu-billing\.js\?v=(\d+)/);
       assert.ok(m, 'pu-billing.js 에 ?v= 가 없습니다');
       assert.ok(Number(m[1]) >= 3, '★ ?v= 를 안 올려 approx 기능이 캐시에 묻힙니다');
