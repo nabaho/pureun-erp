@@ -187,14 +187,27 @@ test('다 지우기는 기계가 칠한 것까지 다 뺀다', () => {
 
 /* ══════ 새는 길이 없어야 한다 ══════
    가림을 거치지 않고 판독기가 불리는 길이 하나라도 있으면 이 기능은 없는 것과 같다. */
-test('★ 판독기를 부르는 곳은 runRead 하나뿐이다', () => {
+/* ⚠ 예전에는 판독 함수 **이름 셋을 늘어놓고** 막았다. 그러면 새로 만든 판독
+   함수(readChatText 같은 것)가 그냥 지나간다 — 울타리를 세워 둔 줄 알고 있는데
+   문이 하나 더 생긴 것을 아무도 모른다.
+   그래서 반대로 한다: **사진을 안 보내는 것만** 이름을 적어 두고, 그 밖의 모든
+   PuDocRead 부르기를 새는 길로 본다. 판독 함수를 새로 만들면 이 검사가 먼저
+   깨진다 — 그것이 의도다. 통과시키려면 runRead 안에서 부르면 된다. */
+const DOCREAD_SAFE = ['init', 'bizNoDigits', 'bizNoValid', 'fmtBizNo', 'mapTo', 'keysFrom',
+  'MODELS', 'PROMPTS', 'READ_VERSION', 'autoOk'];
+
+test('★ 판독기를 부르는 곳은 runRead 하나뿐이다 — 이름을 늘어놓지 않고 막는다', () => {
   const runRead = cut('runRead');
-  ['read', 'readWageTable', 'readChangeNotice'].forEach(fn => {
-    assert.ok(runRead.indexOf('PuDocRead.' + fn + '(') >= 0, 'runRead 가 ' + fn + ' 를 안 부릅니다');
-  });
+  assert.match(runRead, /PuDocRead\.read\w*\(/, 'runRead 가 판독기를 안 부릅니다');
   const rest = html.replace(runRead, '');
-  assert.equal(/PuDocRead\.(read|readWageTable|readChangeNotice)\(/.test(rest), false,
-    '★ 가림을 거치지 않고 판독기를 부르는 길이 남아 있습니다');
+  const used = [];
+  const re = /PuDocRead\.(\w+)/g;
+  let m;
+  while ((m = re.exec(rest)) !== null) if (used.indexOf(m[1]) < 0) used.push(m[1]);
+  const leaks = used.filter(n => DOCREAD_SAFE.indexOf(n) < 0);
+  assert.deepEqual(leaks, [],
+    '★ 가림을 거치지 않고 판독기를 부르는 길이 남아 있습니다: ' + leaks.join(', ')
+    + ' — 사진을 안 보내는 것이면 DOCREAD_SAFE 에 이름을 더하고, 아니면 runRead 를 거치게 하세요');
 });
 
 test('★ runRead 를 부르는 곳은 maskConfirm 하나뿐이다', () => {
