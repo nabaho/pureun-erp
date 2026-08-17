@@ -192,7 +192,9 @@ test('★ 아이콘만 남아도 무슨 단추인지 알 수 있다', () => {
   assert.match(fn, /title="내려받기"/);
   assert.match(fn, /title="공유·사진앱에 저장"/);
   assert.match(fn, /title="확인했음 — 할 일에서 치우기"/);
-  assert.match(fn, /title="이 사진 지우기"/);
+  /* 「지우기」→「삭제」 (대표 지시 2026-08-17) — 지킬 것은 «무슨 단추인지 알 수
+     있는가»이지 낱말 하나가 아니다. tests/photos-need-bulk-ack.test.js 가 이름을 못박는다. */
+  assert.match(fn, /title="이 사진 삭제"/);
   assert.match(fn, /title="' \+ esc\(readBtn\) \+ '"/);
 });
 
