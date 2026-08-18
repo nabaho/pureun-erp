@@ -4072,6 +4072,33 @@ var DIFF_KEYS = ['companies','cases','consultings','funds','other_projects','pay
           var _md = erpObjDiff(prev, v);
           if(_md && _md.n === 0){ _metaRollback(); return true; }   // 실질 변경 없음
           var _mGuard = '';
+          /* ── 건별 올리기 (요금 조사 2026-08-18, 2단계) ──
+             트랜잭션은 **칸을 통째로 읽고 통째로 쓴다.** 그러면 서버가 「이 칸이
+             통째로 바뀌었다」고 보아, 건별로 구독하는 사람에게도 바뀐 건이 다 간다
+             — 1단계(읽기)를 고쳐도 값이 안 주는 까닭이 이것이다.
+             바뀐 건만 **경로별로** 올리면 서버도 그 건만 내려보낸다.
+
+             ⚠ 명단(FB_RECORD_KEYS)에 든 칸만 이 길로 간다. 그 칸들은 실제 자료로
+               「열쇠 = 그 건의 id」임을 확인했다. 모양이 다른 칸을 이 길로 보내면
+               `v` 아래에 엉뚱한 자리가 생겨 자료가 어긋난다.
+             ⚠ 트랜잭션이 하던 「서버가 다른 모양이면 안 만짐」 보호가 없어지므로,
+               **내 사본이 지도 모양일 때만** 올린다(아니면 옛 길로).
+             ⚠ 잃는 것은 없다 — 트랜잭션은 서로 «다른 건»을 고쳐도 한쪽이 되물리는
+               일이 있었는데, 건별로는 아예 부딪히지 않는다. 같은 건을 동시에 고치면
+               나중 사람이 이기는 것은 예전과 같다. */
+          if(_fbIsRecordKey(k) && erpObjIsMap(prev)){
+            var _ru = _fbRecordUpdate(k, _md, ts);
+            fbDb.ref().update(_ru).then(function(){
+              try {
+                localStorage.setItem(KEY+'_meta_'+k, String(ts));
+                if(typeof _scheduleFbChanged === 'function') _scheduleFbChanged(k);
+              } catch(_){}
+            }).catch(function(e){
+              _metaRollback(); _markPending(); fbSyncFail(e);
+              try { showToast('⚠ 서버 저장 실패 — 이 기기에는 남아 있습니다. 다시 저장해 주세요'); } catch(_){}
+            });
+            return true;
+          }
           fbDb.ref('data/'+k).transaction(function(cur){
             // 서버가 이미 다른 모양(배열·숫자 등)이면 손대지 않는다 — 병합할 수가 없다
             if(cur && cur.v !== undefined && cur.v !== null && !erpObjIsMap(cur.v)){ _mGuard = '형태'; return; }
@@ -8613,6 +8640,23 @@ function _fbWriteArr(k, arr, u){
    건별로 받으면 값 안에 칸 시각이 없어서, 로컬 meta 를 여기서 맞춘다.
    ⚠ 안 맞추면 다음에 켤 때 「서버가 더 새롭다」로 보고 칸을 통째로 다시 받는다. */
 var _fbServerU = {};
+
+/* 바뀐 건만 올릴 «경로 묶음»을 만든다 (요금 조사 2026-08-18, 2단계).
+   erpObjDiff 가 준 { set, del } 을 그대로 경로로 편다.
+
+   ⚠ **칸 시각(u)을 같은 묶음에 담는다.** 따로 쓰면 그 사이에 끊겼을 때
+     「자료는 바뀌었는데 시각은 옛 것」이 되어 다른 기기가 아무것도 안 받는다.
+     실시간DB 의 update 는 한 묶음이 통째로 되거나 통째로 안 된다.
+   ⚠ `data/{칸}` 자체는 **절대 담지 않는다.** 담는 순간 칸이 통째로 바뀐 것이 되어
+     고친 뜻이 사라진다(그것이 바로 지금 요금이 나가는 까닭이다). */
+function _fbRecordUpdate(k, diff, ts){
+  var u = {};
+  var base = 'data/' + k + '/v/';
+  Object.keys((diff && diff.set) || {}).forEach(function(id){ u[base + id] = diff.set[id]; });
+  ((diff && diff.del) || []).forEach(function(id){ u[base + id] = null; });
+  u['data/' + k + '/u'] = ts;
+  return u;
+}
 
 /* 건 하나를 로컬 배열에 끼워 넣는다(있으면 갈아 끼우고, 없으면 더한다). */
 function _fbApplyOne(k, id, val){
