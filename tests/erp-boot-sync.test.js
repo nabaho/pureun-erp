@@ -357,9 +357,26 @@ test('★ 열쇠별 모드에서는 data 통째 구독을 안 붙인다 — 붙�
     '★ 열쇠별 구독 위에 통째 구독을 또 붙이면 서버가 모든 키를 다시 보냅니다(2.83MB)');
 });
 
-test('통째 모드에서는 예전 그대로 구독 둘을 붙인다', () => {
-  assert.deepEqual(loadSetupListener(false).sort(),
-    ['data:child_added', 'data:child_changed']);
+test('★ 통째 모드에서도 child_added 를 안 붙인다 — 그것이 마지막 「두 번 받기」였다', () => {
+  /* 2026-08-16 에 열쇠별 모드의 두 번 받기를 막았는데, **통째 모드가 남아 있었다**
+     (2026-08-18 요금 조사에서 찾았다: 18일간 내려받기 189GB).
+     초기 동기화가 방금 다 받아 왔는데 child_added 를 붙이면 서버가 있는 키를
+     **전부 한 번 더** 보낸다 — 예전 주석의 「no-op 이라 괜찮다」는 CPU 이야기였고
+     내려받기는 한 벌 그대로였다. 켤 때마다 약 2.8MB.
+     ⚠ 고침이 값을 실제로 아끼는지는 «무엇을 구독하는가»로만 확인할 수 있다 —
+       화면은 둘 다 똑같이 도므로 눈으로는 못 가린다. */
+  assert.deepEqual(loadSetupListener(false).sort(), ['data:child_changed'],
+    '★ child_added 를 붙이면 켤 때마다 있는 키를 통째로 한 벌 더 받습니다.');
+});
+
+test('★ 두 모드가 같은 것을 구독한다 — 한쪽만 다르면 그쪽에서만 요금이 샌다', () => {
+  /* 열쇠별 = 아무것도 안 붙임(초기 동기화가 이미 실시간까지 맡는다)
+     통째   = child_changed 하나(고침만 받는다)
+     둘 다 **있는 키를 다시 받지 않는다**는 점이 같다. */
+  const perKey = loadSetupListener(true);
+  const full = loadSetupListener(false);
+  assert.ok(perKey.indexOf('data:child_added') < 0 && full.indexOf('data:child_added') < 0,
+    '어느 한쪽에라도 child_added 가 남으면 그 길로 들어온 사람은 두 배로 받습니다.');
 });
 
 /* ══════ ④ 급여 감사 로그 — 안 받은 채 덧붙이면 서버 기록을 덮는다 ══════ */
