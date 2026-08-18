@@ -45,11 +45,11 @@ const MEASURED_KEYS = ['finance_income','payroll_monthly','companies','cms_ledge
 function makeEnv(opts) {
   opts = opts || {};
   const serverU = opts.serverU || {};             // k → u (없으면 1000)
-  const reads = { watch: [], live: [], once: [], shallow: 0 };
+  const reads = { watch: [], live: [], recLive: [], once: [], shallow: 0 };
   const shallowObj = {};
   (opts.serverKeys || MEASURED_KEYS).forEach(k => { shallowObj[k] = true; });
 
-  const uListeners = {}, liveListeners = {};
+  const uListeners = {}, liveListeners = {}, recListeners = {};
   const applied = [];
   let fullCalls = 0;
 
@@ -78,17 +78,46 @@ function makeEnv(opts) {
     fbDb: {
       ref(p) {
         return {
-          once(_ev) {
+          /* ⚠ 콜백 꼴(once(ev, cb, err))도 받아야 한다 — 건별 구독이 「다 받았다」
+             신호를 그 꼴로 쓴다. 약속만 돌려주면 그 약속이 영영 안 풀려 15초 뒤
+             시간초과가 난다(실제로 그렇게 검사가 멈췄다). */
+          once(_ev, cb, _err) {
             reads.once.push(p);
+            let snap;
             if (p.indexOf('uid_roles/') === 0) {
-              if (opts.rolesReject) return Promise.reject(new Error('perm'));
-              return Promise.resolve({ val: () => (opts.fin === undefined ? null : opts.fin) });
+              if (opts.rolesReject) {
+                if (cb) return;                       // 콜백 꼴에서는 오류 콜백 몫이다
+                return Promise.reject(new Error('perm'));
+              }
+              snap = { val: () => (opts.fin === undefined ? null : opts.fin) };
+            } else {
+              snap = { val: () => null };
             }
-            return Promise.resolve({ val: () => null });
+            if (cb) { setTimeout(() => cb(snap), 0); return; }
+            return Promise.resolve(snap);
           },
+          off() { /* 오류 갈래에서 구독을 뗀다 */ },
           on(_ev, cb, err) {
             const mU = p.match(/^data\/([^/]+)\/u$/);
+            /* 건별 구독 자리 — data/{칸}/v.
+               ⚠ 옛 검사들은 「그 칸이 본문 구독으로 올라갔나」를 본다. 그 뜻은 그대로이므로
+                 reads.live 에도 함께 담는다. 건별인지 아닌지는 reads.recLive 로 가른다. */
+            const mV = p.match(/^data\/([^/]+)\/v$/);
             const mK = p.match(/^data\/([^/]+)$/);
+            if (mV) {
+              const k = mV[1];
+              if (reads.recLive.indexOf(k) < 0) { reads.recLive.push(k); reads.live.push(k); }
+              (recListeners[k] = recListeners[k] || {})[_ev] = { cb, err };
+              if (opts.holdFirst) return;
+              /* 붙일 때 있는 건들이 child_added 로 온다 — 그것이 곧 초기 적재다 */
+              if (_ev === 'child_added') {
+                setTimeout(() => {
+                  (opts.records && opts.records[k] ? opts.records[k] : [{ id: 'r1' }])
+                    .forEach(r => cb({ key: r.id, val: () => r }));
+                }, 0);
+              }
+              return;
+            }
             if (mU) {
               reads.watch.push(mU[1]);
               uListeners[mU[1]] = { cb, err };
@@ -111,6 +140,11 @@ function makeEnv(opts) {
         };
       }
     },
+    /* 건별 적용이 쓰는 바깥 조각들 — 이 검사가 보는 것은 «무엇을 구독하는가»라
+       실제 화면 갱신은 흉내만 낸다. 없으면 ReferenceError 로 비동기 중에 터진다. */
+    _dbCache: {},
+    _scheduleFbChanged() {},
+    confirm: () => (opts.confirmDelete !== false),
     _fbApplyRecord(k, v, o) { applied.push({ k, opts: o }); return true; },
     _drainShrinkQueue() {},
     _fbInitialSyncFull() { fullCalls++; return Promise.resolve(99); },
@@ -121,7 +155,7 @@ function makeEnv(opts) {
   new vm.Script(SRC_EXCLUDE + '\n' + SRC_CONSTS + '\n' + SRC_BOOT, { filename: 'boot-sync.js' })
     .runInContext(sandbox);
   return {
-    sandbox, reads, applied, uListeners, liveListeners,
+    sandbox, reads, applied, uListeners, liveListeners, recListeners,
     fullCalls: () => fullCalls,
     plan: () => sandbox._bootKeyPlan(),
     sync: (r) => sandbox.fbInitialSync(r)
@@ -248,21 +282,24 @@ test('★ 시각(u)이 없는 옛 표는 사본이 있으면 그대로 쓴다', 
 });
 
 test('★ 감시 중이던 표가 바뀌면 그때 본문 구독으로 올라간다 — 실시간이 산다', async () => {
-  const keys = ['companies'];
+  /* ⚠ 이 검사는 «칸 통째» 경로를 잰다 — 건별 칸(FB_RECORD_KEYS)으로 재면
+     건별 경로로 가서 깨진다. 명단 밖 칸(user_accounts)으로 잰다.
+     건별 경로는 아래 「건별 동기화」 검사가 따로 본다. */
+  const keys = ['user_accounts'];
   const env = makeEnv({
     fin: true, serverKeys: keys,
-    serverU: { companies: 500 },
+    serverU: { user_accounts: 500 },          // 사본과 같다 — 부팅에는 안 올라간다
     ls: withCache(keys, 500)
   });
   const remote = [];
   env.sandbox.window._fbApplyRemote = function (k, v) { remote.push(k); return true; };
   await env.sync();
   assert.equal(env.reads.live.length, 0);
-  env.uListeners.companies.cb({ val: () => 900 });   // 다른 기기가 저장했다
+  env.uListeners[keys[0]].cb({ val: () => 900 });   // 다른 기기가 저장했다
   await tick();
-  assert.deepEqual(env.reads.live, ['companies'],
+  assert.deepEqual(env.reads.live, keys,
     '★ 감시가 바뀜을 보고도 안 받으면 동료의 변경이 화면에 안 옵니다');
-  assert.deepEqual(remote, ['companies'], '실시간 적용기(알림·폭풍감지)로 가야 합니다');
+  assert.deepEqual(remote, keys, '실시간 적용기(알림·폭풍감지)로 가야 합니다');
 });
 
 test('★ 이미 본문 구독 중인 표는 시각이 또 바뀌어도 다시 안 받는다 — 델타가 온다', async () => {
@@ -282,16 +319,19 @@ test('★ 이미 본문 구독 중인 표는 시각이 또 바뀌어도 다시 �
 });
 
 test('★ 첫 받기는 부팅 적용(deferGate), 그 뒤 값은 실시간 적용으로 간다', async () => {
-  const keys = ['companies'];
-  const env = makeEnv({ fin: true, serverKeys: keys, serverU: { companies: 900 }, ls: withCache(keys, 1) });
+  /* ⚠ 이 검사는 «칸 통째» 경로를 잰다 — 건별 칸(FB_RECORD_KEYS)으로 재면
+     건별 경로로 가서 깨진다. 명단 밖 칸(user_accounts)으로 잰다.
+     건별 경로는 아래 「건별 동기화」 검사가 따로 본다. */
+  const keys = ['user_accounts'];
+  const env = makeEnv({ fin: true, serverKeys: keys, serverU: { user_accounts: 900 }, ls: withCache(keys, 1) });
   const remote = [];
   env.sandbox.window._fbApplyRemote = function (k) { remote.push(k); return true; };
   await env.sync();
   assert.ok(env.applied.length > 0);
   assert.ok(env.applied.every(a => a.opts && a.opts.deferGate === true),
     '첫 값이 급감 보류 큐를 안 거치면 로그인 직후 모달이 쏟아집니다');
-  env.liveListeners.companies.cb({ val: () => ({ v: [1, 2], u: 950 }) });
-  assert.deepEqual(remote, ['companies']);
+  env.liveListeners[keys[0]].cb({ val: () => ({ v: [1, 2], u: 950 }) });
+  assert.deepEqual(remote, keys);
 });
 
 test('★ 같은 표에 감시를 두 번 안 붙인다 — 재동기화가 공짜', async () => {
@@ -414,4 +454,119 @@ test('감사 로그 — 이미 받았으면 곧바로 덧붙인다', () => {
   const { calls } = loadAudit(true, true);
   assert.equal(calls.set.length, 1);
   assert.equal(calls.ensure.length, 0);
+});
+
+/* ══════ ⑤ 건별 동기화 — 「칸 전체」 대신 「바뀐 건만」 (요금 조사 2026-08-18) ══════
+   계약 한 건을 고치면 계약 115건 전부가 접속 중인 20대 모두로 내려갔다.
+   18일간 내려받기 189GB. 그 큰 칸들만 건별로 바꿨다.
+   ⚠ 「글자가 있나」로는 못 잡는다 — 어느 자리에 무엇을 붙였는지 **실제로 돌려** 센다. */
+
+test('★ 큰 칸은 data/{칸}/v 에 붙는다 — 칸 통째로 안 붙는다', async () => {
+  const keys = ['contracts'];
+  const env = makeEnv({ fin: true, serverKeys: keys, serverU: { contracts: 900 }, ls: withCache(keys, 1) });
+  await env.sync();
+  assert.deepEqual(env.reads.recLive, keys, '★ 건별로 안 붙으면 한 건 고침에 칸 전체가 오갑니다');
+  assert.ok(env.recListeners.contracts, '건별 구독이 없습니다');
+  assert.ok(env.reads.once.every(p => p !== 'data/contracts'),
+    '★ 칸을 통째로 한 번 더 받았습니다 — 그 「두 번 받기」로 이미 두 번 당했습니다');
+});
+
+test('★ 붙일 때 오는 건들이 초기 적재다 — 따로 통째로 안 받는다', async () => {
+  const keys = ['contracts'];
+  const env = makeEnv({
+    fin: true, serverKeys: keys, serverU: { contracts: 900 }, ls: withCache(keys, 1),
+    records: { contracts: [{ id: 'a' }, { id: 'b' }] }
+  });
+  await env.sync();
+  await tick();
+  const arr = JSON.parse(env.sandbox.localStorage.getItem('pureun_v6_contracts'));
+  assert.deepEqual(arr.map(x => x.id).sort(), ['a', 'b'], '초기 적재가 안 됐습니다');
+});
+
+test('★ 한 건을 고치면 그 건만 갈아 끼운다 — 나머지는 그대로', async () => {
+  const keys = ['contracts'];
+  const env = makeEnv({
+    fin: true, serverKeys: keys, serverU: { contracts: 900 }, ls: withCache(keys, 1),
+    records: { contracts: [{ id: 'a', n: 1 }, { id: 'b', n: 2 }] }
+  });
+  await env.sync();
+  await tick();
+  env.recListeners.contracts.child_changed.cb({ key: 'b', val: () => ({ id: 'b', n: 99 }) });
+  const arr = JSON.parse(env.sandbox.localStorage.getItem('pureun_v6_contracts'));
+  assert.equal(arr.length, 2, '건수가 달라졌습니다');
+  assert.equal(arr.find(x => x.id === 'b').n, 99, '고친 건이 안 반영됐습니다');
+  assert.equal(arr.find(x => x.id === 'a').n, 1, '★ 안 건드린 건이 바뀌었습니다');
+});
+
+test('★ 새 건은 더해진다 — 동료가 새로 만든 것이 보여야 한다', async () => {
+  const keys = ['contracts'];
+  const env = makeEnv({
+    fin: true, serverKeys: keys, serverU: { contracts: 900 }, ls: withCache(keys, 1),
+    records: { contracts: [{ id: 'a' }] }
+  });
+  await env.sync();
+  await tick();
+  env.recListeners.contracts.child_added.cb({ key: 'z', val: () => ({ id: 'z' }) });
+  const arr = JSON.parse(env.sandbox.localStorage.getItem('pureun_v6_contracts'));
+  assert.deepEqual(arr.map(x => x.id).sort(), ['a', 'z']);
+});
+
+test('★ 지운 건은 빠진다', async () => {
+  const keys = ['contracts'];
+  const env = makeEnv({
+    fin: true, serverKeys: keys, serverU: { contracts: 900 }, ls: withCache(keys, 1),
+    records: { contracts: [{ id: 'a' }, { id: 'b' }] }
+  });
+  await env.sync();
+  await tick();
+  env.recListeners.contracts.child_removed.cb({ key: 'a', val: () => null });
+  const arr = JSON.parse(env.sandbox.localStorage.getItem('pureun_v6_contracts'));
+  assert.deepEqual(arr.map(x => x.id), ['b']);
+});
+
+/* ── 급감 차단: 칸 단위 장치가 건별로 오면 한 번도 안 걸린다 ── */
+function manyRecords(n) {
+  const a = [];
+  for (let i = 0; i < n; i++) a.push({ id: 'r' + i });
+  return a;
+}
+
+test('★ 한꺼번에 절반 넘게 지워지면 사람에게 묻는다 — 안 물으면 조용히 사라진다', async () => {
+  const keys = ['contracts'];
+  const env = makeEnv({
+    fin: true, serverKeys: keys, serverU: { contracts: 900 }, ls: withCache(keys, 1),
+    records: { contracts: manyRecords(20) },
+    confirmDelete: false                       // 사람이 「아니오」
+  });
+  await env.sync();
+  await tick();
+  for (let i = 0; i < 12; i++) {
+    env.recListeners.contracts.child_removed.cb({ key: 'r' + i, val: () => null });
+  }
+  const arr = JSON.parse(env.sandbox.localStorage.getItem('pureun_v6_contracts'));
+  assert.ok(arr.length > 8,
+    '★ 「아니오」인데도 지웠습니다 — 요금 아끼려다 자료가 조용히 사라집니다(남은 ' + arr.length + '건)');
+});
+
+test('한두 건 지우는 것은 안 묻는다 — 매번 물으면 사람이 그냥 눌러 버린다', async () => {
+  const keys = ['contracts'];
+  const env = makeEnv({
+    fin: true, serverKeys: keys, serverU: { contracts: 900 }, ls: withCache(keys, 1),
+    records: { contracts: manyRecords(20) },
+    confirmDelete: false
+  });
+  await env.sync();
+  await tick();
+  env.recListeners.contracts.child_removed.cb({ key: 'r0', val: () => null });
+  const arr = JSON.parse(env.sandbox.localStorage.getItem('pureun_v6_contracts'));
+  assert.equal(arr.length, 19, '한 건 지움이 막혔습니다');
+});
+
+test('★ 건별 명단 밖 칸은 예전 그대로 — 모양이 다른 칸을 건드리면 자료가 어긋난다', async () => {
+  /* 사번키(mgr_rates)·연도키(insurance_rates)·납작한 것(min_wage)은 건별 지도가 아니다. */
+  const keys = ['user_accounts'];
+  const env = makeEnv({ fin: true, serverKeys: keys, serverU: { user_accounts: 900 }, ls: withCache(keys, 1) });
+  await env.sync();
+  assert.deepEqual(env.reads.recLive, [], '★ 모양이 다른 칸을 건별로 다뤘습니다');
+  assert.ok(env.liveListeners.user_accounts, '통째 구독이 없어졌습니다');
 });
