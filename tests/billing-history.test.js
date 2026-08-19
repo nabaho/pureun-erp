@@ -364,8 +364,16 @@ test('긴 설명은 ⓘ 로 접어 두되 지우지는 않는다', () => {
   /* 설명 셋(memo·foot·blegend)이 표를 화면 밖으로 밀어내고 있었다.
      그렇다고 지우면 안 된다 — 「0 과 —는 다르다」는 한 번은 읽어야 한다. */
   const css = billPhoneCss();
-  assert.match(css, /#billModal \.memo,#billModal \.bd>\.foot,#billModal \.blegend\{display:none;\}/);
+  /* ⚠ .memo 만 !important 다 — 코드가 `memo.style.display='block'` 으로 «칸에 직접»
+     적어 두어, 그냥 적으면 진다(실제로 폰에 노란 알림이 계속 떠 있었다). */
+  assert.match(css, /#billModal \.memo\{display:none!important;\}/,
+    '★ !important 가 없으면 칸에 직접 적힌 display:block 에 집니다');
+  assert.match(css, /#billModal \.bd>\.foot,#billModal \.blegend\{display:none;\}/);
+  assert.match(css, /\.box\.bhelp-on \.memo\{display:block!important;\}/);
   assert.match(css, /\.box\.bhelp-on \.blegend\{display:block;\}/);
+  // 금액과 「몇 분 전」은 한 줄에 — 두 줄 쓸 값이 아니다
+  assert.match(css, /#billModal \.big\{display:inline;/);
+  assert.match(css, /#billModal \.when\{display:inline;/);
   assert.match(enterHtml, /id="billHelpBtn"/);
   assert.match(enterHtml, /box\.classList\.toggle\('bhelp-on'\)/);
 });
