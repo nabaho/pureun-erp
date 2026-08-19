@@ -4,6 +4,8 @@
   if (!window || !window.document || window.PUVersion) return;
   var CHECK_MS = 5 * 60 * 1000;
   var SESSION_KEY = 'pu_loaded_release_v1';
+  /* 갈아타기를 한 번 했는데도 옛 코드가 오면 «그만둔다» — 안 그러면 무한히 새로 연다 */
+  var APPLIED_KEY = 'pu_applied_release_v1';
   var NOTICE_KEY = 'pu_updated_notice_v1';
   var IDLE_MS = 30 * 1000;
   var checking = false;
@@ -11,6 +13,15 @@
   var applyTimer = null;
   var lastActivity = Date.now();
   var saveBlocked = false;
+
+  /* 배포할 때 scripts/write-version.js 가 <head> 에 찍어 둔다. 로컬에는 없다. */
+  function docRelease() {
+    try {
+      var m = window.document.querySelector('meta[name="pu-release"]');
+      var v = m && m.getAttribute('content');
+      return (v && v !== 'local') ? v : '';
+    } catch (_) { return ''; }
+  }
 
   function versionUrl() {
     var script = Array.prototype.slice.call(window.document.scripts).find(function (item) { return /(?:^|\/)pu-version\.js(?:\?|$)/.test(item.src || ''); });
@@ -43,6 +54,7 @@
   function doApply(version) {
     try {
       window.sessionStorage.setItem(SESSION_KEY, version.sha);
+      window.sessionStorage.setItem(APPLIED_KEY, version.sha);
       window.sessionStorage.setItem(NOTICE_KEY, '1');
     } catch (_) {}
     var url = new URL(window.location.href);
@@ -86,6 +98,27 @@
       return response.json();
     }).then(function (version) {
       if (!version || !version.sha) return false;
+      /* ── 「내가 지금 무슨 판인가」는 문서에 찍힌 것이 진짜다 ──
+         (대표 보고 2026-08-17 "피시에서는 업데이트되었는데 폰에서는 안 된다")
+         예전에는 sessionStorage 만 봤다. 그런데 **새 탭은 그게 비어 있고**,
+         그때 서버가 말하는 판을 그대로 「내 판」으로 적어 버렸다. 그래서 폰이
+         캐시에 있던 **옛 화면**을 열어도 단추는 「최신」이라고 답했다 —
+         옛 코드를 돌리면서 최신이라고 적힌 화면이 그것이다.
+         배포할 때 찍어 두는 <meta name="pu-release"> 를 먼저 본다. */
+      var stamped = docRelease();
+      if (stamped) {
+        try { window.sessionStorage.setItem(SESSION_KEY, stamped); } catch (_) {}
+        if (stamped === version.sha) return false;          // 진짜 최신
+        /* 이미 이 판으로 갈아탔는데도 옛 코드가 온다 = 브라우저·CDN 이 옛 파일을
+           준다. 여기서 또 새로 열면 **무한 고리**가 된다 — 자동으로는 그만두고
+           단추만 띄운다(사람이 누르면 그때 간다). */
+        var applied = '';
+        try { applied = window.sessionStorage.getItem(APPLIED_KEY) || ''; } catch (_) {}
+        if (applied === version.sha) { pendingVersion = version; return true; }
+        scheduleApply(version);
+        return true;
+      }
+      /* 찍힌 것이 없으면(로컬에서 열어 볼 때) 예전 방식 그대로 */
       var loaded = '';
       try { loaded = window.sessionStorage.getItem(SESSION_KEY) || ''; } catch (_) {}
       if (!loaded) {
