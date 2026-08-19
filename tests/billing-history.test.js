@@ -329,3 +329,51 @@ test('기록은 «한 번만» 읽는다 — 구독하지 않는다', () => {
   assert.strictEqual(/\.once\(/.test(fn), true, 'once() 로 안 읽는다');
   assert.strictEqual(/\.on\(/.test(fn), false, '구독하고 있다');
 });
+
+/* 대표 지시 2026-08-17: "이거 한화면에 모두볼수있게 고쳐줘"
+   폰 412×760 에서 실제로 그려 재 보니 —
+     · 「시간별 기록」 제목이 y=558 : 표를 보려면 **먼저 스크롤**해야 했다
+     · 표가 433px 인데 들어갈 칸은 342px : 오른쪽 칸들이 **잘려 나갔다**
+   고친 뒤: 제목 y=383 · 표 384px = 칸 384px(안 잘림) · 창 안이 세로로 안 밀림.
+   ⚠ PC(1280)는 그대로 두 칸이고 ⓘ 는 안 보인다 — 함께 확인했다. */
+const enterHtml = fs.readFileSync(path.join(__dirname, '..', 'enter.html'), 'utf8');
+
+/* ⚠ enter.html 에는 `@media(max-width:520px)` 가 여럿이다(아래 단추 자리에도 있다).
+   그냥 첫 블록을 집으면 엉뚱한 것을 보게 된다 — 실제로 이 검사가 처음에 그렇게 틀렸다.
+   그래서 사용액 창 블록의 «머리말»부터 잘라 본다. */
+const BILL_PHONE_MARK = '/* ── 폰: 한 화면에 (대표 지시 2026-08-17';
+function billPhoneCss() {
+  const at = enterHtml.indexOf(BILL_PHONE_MARK);
+  assert.ok(at > 0, '사용액 창의 폰용 블록을 찾지 못했습니다');
+  const open = enterHtml.indexOf('@media(max-width:520px){', at);
+  const end = enterHtml.indexOf('\n}', open);
+  return enterHtml.slice(open, end + 2);
+}
+
+test('폰에서 사용액 창이 한 화면에 들어간다', () => {
+  const css = billPhoneCss();
+  // 창을 화면에 꽉 — 좁은 폭 그대로 두면 표가 짜부라진다
+  assert.match(css, /#billModal \.box\{width:100%;max-width:100%;max-height:96vh;\}/);
+  /* 창 «전체»가 밀리면 표가 화면 밖으로 나간다 — 칸 안에서만 밀어야 한다 */
+  assert.match(css, /#billModal \.bcols\{flex:1;min-height:0;overflow:hidden;\}/);
+  // 표가 남은 높이를 전부 가져간다(300px 고정이면 아래가 남거나 모자란다)
+  assert.match(css, /#billModal \.btwrap\{flex:1;min-height:0;max-height:none;\}/);
+});
+
+test('긴 설명은 ⓘ 로 접어 두되 지우지는 않는다', () => {
+  /* 설명 셋(memo·foot·blegend)이 표를 화면 밖으로 밀어내고 있었다.
+     그렇다고 지우면 안 된다 — 「0 과 —는 다르다」는 한 번은 읽어야 한다. */
+  const css = billPhoneCss();
+  assert.match(css, /#billModal \.memo,#billModal \.bd>\.foot,#billModal \.blegend\{display:none;\}/);
+  assert.match(css, /\.box\.bhelp-on \.blegend\{display:block;\}/);
+  assert.match(enterHtml, /id="billHelpBtn"/);
+  assert.match(enterHtml, /box\.classList\.toggle\('bhelp-on'\)/);
+});
+
+test('ⓘ 는 폰에서만 — 규칙이 폰 블록보다 앞에 있어야 한다', () => {
+  /* 뒤에 두면 기본 display:none 이 폰 규칙을 이겨 폰에서도 안 보인다
+     (실제로 그렇게 났고, 실제 브라우저로 그려 보고 잡았다). */
+  assert.ok(enterHtml.indexOf('#billModal .bhelp{display:none;}')
+          < enterHtml.indexOf(BILL_PHONE_MARK),
+    '★ ⓘ 기본 규칙이 폰 블록보다 뒤에 있으면 폰에서도 숨습니다');
+});
