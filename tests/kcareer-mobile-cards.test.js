@@ -29,9 +29,12 @@ test('폰에서는 표를 카드로 눕힌다 — 좌우로 밀 일이 없다', 
   assert.match(phone, /\.dt table\{min-width:0!important;width:100%\}/);
   assert.match(phone, /\.dt thead\{display:none\}/);
   assert.match(phone, /\.dt tbody,\.dt tr,\.dt td\{display:block;width:auto\}/);
-  /* 인라인으로 박힌 max-width·nowrap 을 풀어야 글자가 세로로 안 쪼개진다 */
-  assert.match(phone, /white-space:normal!important/);
+  /* 인라인으로 박힌 max-width:160px 를 풀어야 값이 제 폭을 쓴다.
+     ⚠ white-space 는 «nowrap» 이다 — 예전에 normal 로 두었더니 값이 두 줄로
+       접혀 카드가 들쭉날쭉해졌다(대표 지시로 한 줄 유지로 바꿨다). */
   assert.match(phone, /max-width:none!important/);
+  assert.doesNotMatch(phone, /white-space:normal!important/,
+    '★ normal 로 되돌리면 값이 다시 두 줄로 접힙니다');
 });
 
 test('머리글이 사라지므로 칸마다 이름표를 적어 둔다', () => {
@@ -43,19 +46,38 @@ test('머리글이 사라지므로 칸마다 이름표를 적어 둔다', () => 
   assert.match(kc, /stampCellLabels\(box\);/);
 });
 
-test('카드가 짧아지게 — 빈 칸은 접고 짧은 값은 둘씩 나란히', () => {
-  /* 값이 없는 칸('-')까지 한 줄씩 차지하면 컴팩트하게 만든 뜻이 없다 */
+test('빈 칸은 접는다 — 값 없는 줄이 쌓이면 컴팩트한 뜻이 없다', () => {
   assert.match(kc, /td\.setAttribute\('data-empty','1'\)/);
   assert.match(phone, /\.dt td\.rownum,\.dt td\[data-empty\]\{display:none\}/);
-  // 긴 값만 한 줄을 다 쓴다 — 짧은 값은 2열로 앉아 9줄이 6줄이 된다
-  assert.match(kc, /t\.length > 14\) td\.setAttribute\('data-long','1'\)/);
-  assert.match(phone, /grid-template-columns:1fr 1fr/);
-  assert.match(phone, /\.dt td\[data-long\],\.dt td:last-child\{grid-column:1 \/ -1\}/);
 });
 
-test('이름표의 괄호 설명은 뗀다', () => {
-  // 「위촉내용(직책)」이 좁은 이름표 칸에서 두 줄로 접혀 그 줄만 키가 컸다
-  assert.match(kc, /n\.replace\(\/\\s\*\\\(\.\*\\\)\\s\*\$\/, ''\)/);
+/* ── 한 줄에 한 칸씩 (대표 지시 2026-08-17 두 번째)
+     "탭 칸 줄 등 셀 전체적으로 한 줄씩 정렬해달라 … 가급 한 줄 안에 넣어달라"
+   처음엔 짧은 값을 둘씩 앉혀 카드를 줄였는데, 값 넣을 자리가 반뿐이라
+   「한국공인노무사회」 같은 이름이 두 줄로 접혔다(대표 화면에서 그랬다).
+   한 칸씩 쓰면 폭이 두 배가 되어 한 줄에 들어가고 이름표가 세로로 맞는다.
+   폰 412 에서 여섯 탭을 그려 재 봄: 접힌 칸 0 · 이름표 세로정렬 맞음 · 좌우넘침 없음 */
+test('카드는 한 줄에 한 칸씩 — 이름표가 세로로 맞아떨어진다', () => {
+  assert.match(phone, /\.dt tr\{[^}]*display:block\}/,
+    '★ 두 칸으로 되돌리면 긴 이름이 다시 두 줄로 접힙니다');
+  assert.doesNotMatch(phone, /grid-template-columns:1fr 1fr/);
+  // 이름표 폭이 고정이라야 세로로 맞는다
+  assert.match(phone, /\.dt td::before\{content:attr\(data-label\);flex:0 0 66px/);
+  assert.match(phone, /white-space:nowrap\}/);
+});
+
+test('값은 접지 않고 넘치면 … 로 자른다', () => {
+  /* 접히면 카드가 들쭉날쭉해지고 키가 커진다. 줄을 누르면 원래 화면이 열리므로
+     잘려도 못 보는 값은 없다. */
+  assert.match(phone, /\.dt td\{white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important\}/);
+});
+
+test('이 화면의 표 다섯 곳 모두에 이름표를 붙인다', () => {
+  /* CAREER_CFG 를 쓰는 열네 탭은 그리는 자리가 한 곳이라 한 번에 걸리지만,
+     개인정보·계좌·신분증·이름 표는 «각자» 그린다 — 빠뜨리면 그 탭만
+     이름표 없는 카드가 되어 무슨 값인지 알 수 없다. */
+  const calls = (kc.match(/stampCellLabels\(box\);/g) || []).length;
+  assert.ok(calls >= 5, '이름표를 붙이는 자리가 ' + calls + '곳뿐입니다 (표는 다섯 곳)');
 });
 
 test('넓은 화면은 예전 그대로 표다', () => {
