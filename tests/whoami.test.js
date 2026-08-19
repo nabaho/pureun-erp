@@ -75,11 +75,14 @@ test('이름 · 직책 · 사번을 적는다', () => {
     '권형하 대표노무사 · P-001');
 });
 
-test('이름을 아직 못 찾았으면 이메일이라도 보여 준다', () => {
-  /* 빈 자리가 뜨는 것보다 낫다 — 명부를 읽는 동안 잠깐이다 */
+test('이름을 아직 못 찾았으면 이메일 «앞부분»이라도 보여 준다', () => {
+  /* 빈 자리가 뜨는 것보다 낫다 — 명부를 읽는 동안 잠깐이다.
+     ⚠ 2026-08-17 대표 지시로 «통째»에서 «앞부분»으로 바꿨다:
+       화면 위에서 「p001@pureun.kr」은 읽을 거리도 아니고 자리만 넓게 먹는다.
+       사번이 뒤에 붙으므로 앞부분만으로 누구인지 갈린다. */
   const g = boot();
   assert.strictEqual(g.PuWhoami._text({ name: '', email: 'p001@pureun.kr', sid: 'P001' }),
-    'p001@pureun.kr · P-001');
+    'p001 · P-001');
 });
 
 test('로그아웃하면 아무것도 안 적는다', () => {
@@ -170,4 +173,40 @@ test('이름 자리가 있는 앱은 그 자리를 알려 준다', () => {
   ['fund.html', 'work.html'].forEach(function (f) {
     assert.strictEqual(/PuWhoami\.mount\('#topuser'\)/.test(read(f)), true, f + ' 가 자리를 안 알려 준다');
   });
+});
+
+/* 대표 지시 2026-08-17: "오른쪽 상단 로그인 아이디 사람 이름으로 바꾸고 화면 중복 안 되게 하라"
+   폰 화면에 「p001@pureun.kr · P-001」이 떠 있고, 그 딱지가 위쪽 안내글을 덮고 있었다. */
+
+test('★ 사번은 모양이 달라도 같은 사람으로 본다', () => {
+  /* 명부에 P-001 로 적힌 곳과 P001 로 적힌 곳이 섞여 있다. 글자 그대로 견주면
+     한쪽이 안 잡혀 이름이 빈 채로 남고, 그러면 화면에 이메일이 그대로 뜬다. */
+  const g = boot();
+  const W = g.PuWhoami;
+  const dir = [{ sid: 'P-001', name: '권형하', title: '대표노무사', status: 'active' }];
+  assert.ok(W._pick(dir, 'P001'), '★ 하이픈이 든 사번을 못 찾으면 이름 대신 이메일이 뜹니다');
+  assert.strictEqual(W._pick(dir, 'P001').name, '권형하');
+  // 거꾸로도 마찬가지
+  assert.strictEqual(W._pick([{ sid: 'P001', name: '권형하' }], 'P-001').name, '권형하');
+  // 다른 사람까지 끌어오면 안 된다
+  assert.strictEqual(W._pick(dir, 'P002'), null);
+});
+
+test('이름을 못 찾아도 이메일 통째로는 안 보여 준다', () => {
+  /* 「p001@pureun.kr」은 읽을 거리도 아니고 자리만 넓게 먹는다.
+     사번이 뒤에 붙으므로 앞부분만으로 충분하다. */
+  const g = boot();
+  const t = g.PuWhoami._text({ sid: 'P001', email: 'p001@pureun.kr', name: '', title: '' });
+  assert.ok(t.indexOf('@') < 0, '★ 이메일 통째로 보이면 안 됩니다: ' + t);
+  assert.match(t, /P-001/);
+});
+
+test('이력관리는 머리줄 «안»에 그린다 — 떠 있는 딱지가 안내글을 덮었다', () => {
+  const kc = read('kcareer.html');
+  assert.match(kc, /id="kcWho"/);
+  /* ⚠ 이름은 PuWhoami 다(PUWhoami 아님). 대문자를 틀리면 조용히 아무 일도 안 일어나고
+     떠 있는 딱지가 그대로 남는다 — 실제로 그렇게 났고 브라우저로 그려 보고 잡았다. */
+  assert.match(kc, /window\.PuWhoami\.mount\('#kcWho'\)/);
+  // 자리는 머리줄이 그려진 «뒤에» 생기므로 준비될 때까지 몇 번 두드려야 한다
+  assert.match(kc, /setInterval\(function\(\)\{ if\(mount\(\)\|\|\+\+n>40\) clearInterval\(iv\); \}, 150\)/);
 });

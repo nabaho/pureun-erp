@@ -60,9 +60,15 @@
     return Array.isArray(list) ? list : null;
   }
 
+  /* 사번을 견줄 때는 «모양»을 맞춘다 — 명부에 P-001 로 적힌 곳과 P001 로 적힌 곳이
+     섞여 있다. 글자 그대로 견주면 한쪽이 안 잡혀 이름이 빈 채로 남고, 그러면
+     화면에는 이메일이 그대로 뜬다(대표 보고 2026-08-17: 「p001@pureun.kr」이 보인다). */
+  function normSid(v) { return String(v == null ? '' : v).toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+
   function pick(list, sid) {
     if (!list || !sid) return null;
-    var all = list.filter(function (x) { return x && String(x.sid || '') === sid; });
+    var want = normSid(sid);
+    var all = list.filter(function (x) { return x && normSid(x.sid) === want; });
     // 겹치면 재직인 사람을 먼저 — 그래도 겹치면 첫 사람 (포털과 같은 규칙)
     var act = all.filter(function (x) { return (x.status || 'active') === 'active'; });
     return act[0] || all[0] || null;
@@ -110,7 +116,10 @@
        (동명이인·잘못 로그인). 포털 머리와 같은 모양이다. */
   function text() {
     if (!me) return '';
-    var nm = me.name || me.email || '';
+    /* 이름을 아직 못 찾았어도 «이메일 통째»는 보이지 않는다 — 화면 위에서
+       「p001@pureun.kr」은 읽을 거리도 아니고 자리만 넓게 먹는다(대표 지시).
+       사번이 이미 뒤에 붙으므로 앞부분만으로 충분하다. */
+    var nm = me.name || String(me.email || '').split('@')[0] || '';
     var ti = me.title || me.role || '';
     var sd = me.sid ? me.sid.replace(/^([A-Z]+)(\d+)$/, '$1-$2') : '';
     return nm + (ti ? ' ' + ti : '') + (sd ? ' · ' + sd : '');
@@ -172,6 +181,7 @@
     _emailToSid: emailToSid,
     _toList: toList,
     _pick: pick,
+    _normSid: normSid,
     _text: function (v) { var old = me; me = v; var t = text(); me = old; return t; },
     _resolve: resolve
   };
