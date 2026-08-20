@@ -23,6 +23,20 @@ test('「사진 작업」 시트에서 손가락으로 누르는 자리는 44px 
   assert.ok(h >= 44, '「누구 사진」 고르개가 ' + h + 'px 입니다.');
 });
 
+test('작업 단추 둘과 「누구 사진」은 한 줄에 나란히 선다', () => {
+  /* 대표 지시 2026-08-20 「셀 3개 1줄로」. display:contents 라야 단추 하나가
+     숨어도(모으는 중에는 「한 문서로」가 숨는다) 빈 칸이 남지 않는다. */
+  assert.match(photos, /<div id="phRow1">/);
+  assert.match(rule('#phActions,#phOwner'), /display:\s*contents/);
+  assert.match(rule('#phRow1'), /display:\s*flex/);
+  /* ★ nowrap 이면 「확인 필요」(100% 짜리)가 줄을 비집고 들어와 나머지를 14px 로
+     눌러 버린다 — 실제로 그렇게 났던 것을 재어 보고 고쳤다. */
+  assert.match(rule('#phRow1'), /flex-wrap:\s*wrap/,
+    '★ nowrap 이면 「확인 필요」가 뜰 때 한 줄이 무너집니다.');
+  assert.match(rule('#phActions #phNeedBtn'), /order:\s*1/,
+    '차례를 뒤로 미루지 않으면 「확인 필요」가 셋 사이에 끼어 세 줄이 됩니다.');
+});
+
 test('「누구 사진」 이름표는 한 줄로 옮겨졌을 뿐 사라지지 않았다', () => {
   /* ⚠ 2026-08-08 에 이름표를 뺐다가 2026-08-10 대표가 「다른직원이 올린 사진은
      왜 안 보이나」 하셨다 — 기능은 있었는데 그 칸인 줄을 알 수가 없었다.
@@ -31,8 +45,9 @@ test('「누구 사진」 이름표는 한 줄로 옮겨졌을 뿐 사라지지 
     '★ 「누구 사진」 이름표가 사라졌습니다 — 무엇을 고르는 칸인지 알 수 없게 됩니다.');
   const cap = rule('#phSheet #ownerPick .cap');
   assert.doesNotMatch(cap, /display:\s*none/);
-  /* 한 줄로 앉히는 것은 «감추기» 가 아니라 «나란히 놓기» 다 */
-  assert.match(rule('#phSheet #ownerPick'), /display:\s*flex/);
+  /* 이름표는 고르개 «위에» 얹혔다 — 줄을 더 쓰지 않으면서 살아남는 자리다.
+     (2026-08-20 셋을 한 줄로 만들며 옆에서 위로 옮겼다.) */
+  assert.match(rule('#phSheet #ownerPick .cap'), /font-size:\s*\d/);
 });
 
 test('한 문서로 모으는 중 안내는 폰과 PC 에 저마다 있는 길만 알려 준다', () => {
