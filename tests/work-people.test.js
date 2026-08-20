@@ -340,8 +340,12 @@ S = {}; STORE = {};
 ok('칩이 지금 상태를 보여준다', (function () {
   const off = viewChips(); STORE = { [VIEW_KEY]: 'cs' }; S = {};
   const on = viewChips();
-  return off.indexOf('빽빽하게') > 0 && off.indexOf('chipbtn on') < 0
-      && on.indexOf('✓ 빽빽하게') > 0 && (on.match(/chipbtn on/g) || []).length === 2;
+  /* ⚠ 글자 「chipbtn on」을 그대로 찾지 않는다 — 2026-08-20 에 손잡이 class 를
+     더하면서(vc-cmp·vc-nos) 사이에 낱말이 끼었고, 멀쩡한 고침이 이 검사에 걸렸다.
+     보는 것은 «켠 칩에 on 이 붙는가»이지 class 를 어떻게 적었는가가 아니다. */
+  const onN = (s) => (s.match(/class="chipbtn[^"]*\bon\b/g) || []).length;
+  return off.indexOf('빽빽하게') > 0 && onN(off) === 0
+      && on.indexOf('✓ 빽빽하게') > 0 && onN(on) === 2;
 })());
 ok('접었을 때 다시 펼 손잡이가 남는다 (없으면 되돌릴 수가 없다)',
   W.indexOf('id="sideOn"') > 0 && /body\.nos #sideOn\{display:block\}/.test(W)
