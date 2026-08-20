@@ -310,6 +310,40 @@
     return order.map(function (d) { return byDay[d]; });
   }
 
+  /* 여러 줄(시간 칸이든 날 칸이든)을 하나로 합친다 — 표 맨 아래 「합계」 줄에 쓴다.
+     (대표 지시 2026-08-20 「일별 토탈금액 볼 수 있게 해달라」)
+
+     ⚠ «아는 칸» 만 더한다. 모르는 칸을 0 으로 치면 「그때 안 썼다」는 거짓말이 되고,
+       그 거짓말이 합계에서는 눈에 띄지도 않는다.
+     ⚠ 「전체(누적)」는 더하지 않는다 — 누적끼리 더하면 아무 뜻도 없는 수가 나온다.
+       합계 줄의 「전체」는 «가장 나중에 아는 누적액» 이다.
+     ⚠ 늘어난 돈의 합은 이어 붙어(telescoping) 「끝 누적 − 앞 누적」과 같아진다 —
+       사이에 소식 없던 칸이 있어도 값이 새지 않는다. */
+  function sumBuckets(rows) {
+    var res = { rows: 0, total: 0, cum: null, cumKnown: false,
+                parts: {}, known: { total: false }, unknownRows: 0 };
+    var KEYS = PARTS.concat('etc');
+    KEYS.forEach(function (k) { res.parts[k] = 0; res.known[k] = false; });
+    if (!rows || !rows.length) return res;
+    rows.forEach(function (b) {
+      if (!b) return;
+      res.rows++;
+      if (b.known && b.known.total) { res.total += (num(b.total) || 0); res.known.total = true; }
+      else res.unknownRows++;
+      KEYS.forEach(function (k) {
+        if (b.known && b.known[k]) { res.parts[k] += (num((b.parts || {})[k]) || 0); res.known[k] = true; }
+      });
+      /* 가장 «나중» 누적액을 남긴다. 넘겨받는 차례가 오름차순일 수도, 내림차순일 수도
+         있으므로 날짜·시각 열쇠로 견준다(줄 차례에 기대지 않는다). */
+      if (b.cumKnown) {
+        var key = String(b.hour || b.day || '');
+        if (!res.cumKnown || key >= res._at) { res.cum = b.cum; res.cumKnown = true; res._at = key; }
+      }
+    });
+    delete res._at;
+    return res;
+  }
+
   function hourlyRates(buckets) {
     var res = { total: null, parts: {}, hours: 0 };
     if (!buckets || !buckets.length) return res;
@@ -350,6 +384,7 @@
     hourKey: hourKey,
     hourBuckets: hourBuckets,
     dayBuckets: dayBuckets,
+    sumBuckets: sumBuckets,
     hourlyRates: hourlyRates,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

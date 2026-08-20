@@ -456,3 +456,63 @@ test('화면: 「일별」 칸이 있고, 기간 칩만 기간을 바꾼다', ()
   assert.match(enter, /th1\.textContent = '날짜'/);
   assert.match(enter, /ttl\.textContent = '📅 일별 기록'/);
 });
+
+/* ══ 합계 줄 (대표 지시 2026-08-20 「일별 토탈금액 볼 수 있게 해달라 폰과 피시에서」) ══
+   줄마다 얼마인지는 보였는데 «다 해서 얼마인지» 를 볼 데가 없었다 — 눈으로 더하고
+   계셨다는 뜻이다. 여기서 지키는 것은 「합계가 줄들과 어긋나지 않는가」 하나다. */
+
+test('★ 합계 = 줄들의 합이다 (하나라도 빠지면 눈으로 더한 값과 어긋난다)', () => {
+  const hist = { total: {}, database: {}, storage: {}, functions: {} };
+  const put = (k, d, h, v) => { hist[k][ts(d, h)] = v; };
+  put('total', 18, 0, 1000); put('database', 18, 0, 800);
+  put('total', 18, 12, 1300); put('database', 18, 12, 1000);
+  put('total', 19, 9, 2000); put('database', 19, 9, 1500);
+  put('total', 20, 3, 2450); put('database', 20, 3, 1720);
+  const days = B.dayBuckets(B.hourBuckets(hist, { tz: KST }));
+  const sum = B.sumBuckets(days);
+  const byHand = days.reduce((a, d) => a + d.total, 0);
+  assert.strictEqual(sum.total, byHand);
+  assert.strictEqual(sum.parts.database, days.reduce((a, d) => a + d.parts.database, 0));
+  /* 시간 칸을 그대로 넘겨도 같은 값이어야 한다 — 날로 묶고 안 묶고가 합계를 바꾸면 안 된다 */
+  assert.strictEqual(B.sumBuckets(B.hourBuckets(hist, { tz: KST })).total, byHand);
+});
+
+test('★ 합계의 「전체」는 마지막으로 아는 누적액이다 — 누적을 더하지 않는다', () => {
+  /* 누적끼리 더하면 아무 뜻도 없는 수가 나오는데, 그런 수일수록 그럴듯해 보인다. */
+  const hist = { total: {}, database: {}, storage: {}, functions: {} };
+  hist.total[ts(18, 0)] = 1000; hist.total[ts(19, 0)] = 1500; hist.total[ts(20, 0)] = 2450;
+  const days = B.dayBuckets(B.hourBuckets(hist, { tz: KST }));
+  assert.strictEqual(B.sumBuckets(days).cum, 2450);
+  /* 최근 날이 위로 오게 뒤집어 그리므로, 줄 차례가 거꾸로여도 같아야 한다 */
+  assert.strictEqual(B.sumBuckets(days.slice().reverse()).cum, 2450);
+});
+
+test('★ 모르는 칸은 0 으로 치지 않고, 섞였다는 사실을 남긴다', () => {
+  /* 모르는 것을 0 으로 치면 「그때 안 썼다」는 거짓말이 되고, 합계에서는 눈에 띄지도 않는다. */
+  const rows = [
+    { hour: '2026-08-18T00', total: 100, cum: 100, cumKnown: true,
+      parts: { storage: 10, database: 90, functions: 0, etc: 0 },
+      known: { total: true, storage: true, database: true, functions: false, etc: false } },
+    { hour: '2026-08-18T01', total: null, cum: null, cumKnown: false,
+      parts: {}, known: { total: false } },
+  ];
+  const t = B.sumBuckets(rows);
+  assert.strictEqual(t.total, 100);
+  assert.ok(t.unknownRows >= 1, '모르는 줄이 섞였다는 사실을 남겨야 화면이 ≈ 를 붙일 수 있습니다');
+  assert.strictEqual(t.known.functions, false, '한 줄도 모르는 항목은 «모른다» 로 남아야 합니다');
+});
+
+test('화면: 합계 줄이 두 표(시간별·일별) 모두에 붙고, 스크롤해도 보인다', () => {
+  const enter = fs.readFileSync(path.join(ROOT, 'enter.html'), 'utf8');
+  /* 줄이 서른 개면 합계는 늘 화면 밖이고, 화면 밖에 있는 숫자는 없는 숫자다.
+     ⚠ 붙이기(sticky)를 tr 에 걸면 브라우저에 따라 먹지 않는다 — td 에 건다. */
+  assert.match(enter, /tr\.sumrow td\{[^}]*position:sticky/,
+    '★ 합계 줄을 td 에 붙여 두지 않으면 스크롤하는 순간 사라집니다.');
+  assert.match(enter, /tr\.sumrow td\{[^}]*bottom:0/);
+  /* 기간을 바꿨다고 합계가 사라지면 그게 더 이상하다 — 네 칩 모두 이름이 있어야 한다 */
+  const fn = enter.slice(enter.indexOf('function billPaintHist()'),
+                         enter.indexOf('function billOpen()'));
+  assert.ok((fn.match(/billSumRow\(/g) || []).length >= 2,
+    '★ 일별에만 붙이면 「이번 달」로 옮기는 순간 합계가 사라집니다.');
+  assert.match(fn, /billSumRow\(days,/, '일별 표에 합계가 없습니다.');
+});

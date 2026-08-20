@@ -460,6 +460,10 @@ body.portal-mode #moreFab{display:flex;}
   #billModal .bchip{padding:3px 8px;font-size:.64rem;}
   #billModal table.bhist th{padding:5px 2px;font-size:.56rem;}
   #billModal table.bhist td{padding:4px 2px;font-size:.58rem;}
+  /* 합계는 어느 줄보다 한 자릿수 길다 — 좁은 폰에서 그 한 줄 때문에 표 전체가
+     옆으로 밀리므로, 합계 줄만 여백을 깎는다(360px 에서 43px 넘치던 것이 딱 맞는다).
+     ⚠ 글씨는 안 줄인다 — 「볼 수 있게」 해 달라신 줄을 작게 만들면 앞뒤가 안 맞는다. */
+  #billModal table.bhist tr.sumrow td{padding-left:1px;padding-right:1px;}
 }
 #billModal .bwhen{display:flex;align-items:center;gap:5px;margin-bottom:9px;}
 #billModal .bwhen .bt{font-size:.8rem;font-weight:800;margin-right:auto;}
@@ -472,6 +476,15 @@ body.portal-mode #moreFab{display:flex;}
 #billModal table.bhist td{padding:5px 8px;border-bottom:1px solid #f8fafc;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
 #billModal table.bhist td:first-child{text-align:left;font-weight:700;}
 #billModal table.bhist tr.dayrow td{background:#f8fafc;font-weight:700;color:#475569;text-align:left;font-size:.68rem;}
+/* 합계 줄 — 표 아래에 «붙여» 둔다. 줄이 서른 개면 합계는 늘 화면 밖이고,
+   화면 밖에 있는 숫자는 없는 숫자다(대표 지시 2026-08-20).
+   ⚠ 붙이기(sticky)는 tr 에 걸면 브라우저에 따라 먹지 않는다 — td 에 건다.
+     머리줄(th)이 이미 top:0 으로 같은 방식을 쓰고 있다. */
+#billModal table.bhist tr.sumrow td{position:sticky;bottom:0;background:#eef2ff;
+  border-top:1.5px solid #c7d2fe;border-bottom:none;font-weight:800;color:#1e3a8a;}
+#billModal table.bhist tr.sumrow td:first-child{color:#1e40af;}
+#billModal table.bhist tr.sumrow td.z0,
+#billModal table.bhist tr.sumrow td.unk{color:#94a3b8;}
 #billModal .up{color:#dc2626;font-weight:700;}
 #billModal .z0{color:#cbd5e1;}
 #billModal .unk{color:#94a3b8;}
@@ -825,7 +838,10 @@ body.portal-mode #moreFab{display:flex;}
         <b>전체</b> 그 시각까지 쓴 돈(쌓인 값) ·
         <span class="up">+증가</span> 그 «한 시간»에 늘어난 돈 ·
         <span class="z0">회색 0</span> 그 시간엔 안 늘었다 ·
-        <span class="unk">—</span> 소식이 없어 «모른다»(0원이 아니다)</div>
+        <span class="unk">—</span> 소식이 없어 «모른다»(0원이 아니다) ·
+        <b>합계</b> 맨 아래 줄 — 「전체」는 마지막으로 아는 누적액이고
+        <span class="up">+증가</span>는 이 표에 있는 줄들을 다 더한 값이다
+        (<span class="unk">≈</span> 가 붙었으면 모르는 칸을 빼고 더했다는 뜻)</div>
       <div class="foot">구글은 «금액이 움직일 때만» 쏩니다 — 밤에 몇 시간 조용한 것은 정상입니다.<br>
         기록은 <b>켜는 날부터</b> 쌓입니다(전에는 「이 순간 값」만 덮어써 왔습니다).</div>
     </div>
@@ -1855,6 +1871,33 @@ body.portal-mode #moreFab{display:flex;}
     return '<td class="up">+' + n.toLocaleString('ko-KR') + '</td>';
   }
 
+  /* 표 맨 아래 「합계」 줄 (대표 지시 2026-08-20 「일별 토탈금액 볼 수 있게 해달라」).
+     줄마다 얼마인지는 보이는데 «다 해서 얼마인지» 를 볼 데가 없었다 — 날마다 눈으로
+     더하고 계셨다는 뜻이다.
+
+     ⚠ 「전체」 칸에는 마지막으로 아는 «누적액» 을 적는다. 누적끼리 더하면 아무 뜻도
+       없는 수가 나온다(그런데 그런 수일수록 그럴듯해 보인다).
+     ⚠ 모르는 칸이 섞였으면 ≈ 를 붙인다 — 소식 없던 시간이 있는데 딱 떨어지는
+       숫자를 내놓으면 그 자체가 거짓말이다.
+     ⚠ 줄이 스크롤로 올라가 버리면 「볼 수 있게」가 아니다 — 아래에 붙여 둔다(CSS). */
+  function billSumRow(rows, label){
+    var B = window.PuBilling;
+    if(!B || !B.sumBuckets || !rows || !rows.length) return '';
+    var t = B.sumBuckets(rows);
+    var approx = t.unknownRows ? '<span class="unk" title="소식이 없던 칸은 빼고 더한 값입니다">≈ </span>' : '';
+    return '<tr class="sumrow"><td>' + label + '</td>'
+      + '<td>' + (t.cumKnown ? B.fmtWon(t.cum) : '<span class="unk">—</span>') + '</td>'
+      /* ⚠ 아는 줄이 하나도 없으면 「+0」이 아니라 「—」다 — 0 은 「안 썼다」로 읽힌다. */
+      + (t.known.total
+          ? '<td class="up">' + approx + '+' + Math.round(t.total).toLocaleString('ko-KR') + '</td>'
+          : '<td class="unk">—</td>')
+      + billCell(t.parts.storage, t.known.storage)
+      + billCell(t.parts.database, t.known.database)
+      + billCell(t.parts.functions, t.known.functions)
+      + billCell(t.parts.etc, t.known.etc)
+      + '</tr>';
+  }
+
   function billPaintHist(){
     var B = window.PuBilling, body = $('billHistBody');
     if(!B || !body) return;
@@ -1887,7 +1930,8 @@ body.portal-mode #moreFab{display:flex;}
           + billCell(r.parts.etc, r.known.etc)
           + '</tr>';
       });
-      body.innerHTML = dh || '<tr><td colspan="7" class="unk">아직 쌓인 기록이 없습니다.</td></tr>';
+      body.innerHTML = (dh + billSumRow(days, '합계 ' + days.length + '일'))
+        || '<tr><td colspan="7" class="unk">아직 쌓인 기록이 없습니다.</td></tr>';
       _billRates = B.hourlyRates(rows);
       billPaintItems();
       return;
@@ -1914,7 +1958,8 @@ body.portal-mode #moreFab{display:flex;}
         + billCell(b.parts.etc, b.known.etc)
         + '</tr>';
     });
-    body.innerHTML = html;
+    body.innerHTML = html
+      + billSumRow(rows, ({ today:'오늘 합계', yday:'어제 합계', month:'이번 달 합계' })[_billSpan] || '합계');
 
     /* 항목별 시간당은 «왼쪽 항목 표» 가 그린다 — 항목 넷을 두 번 늘어놓지 않는다.
        ⚠ 「아는 칸」으로만 나눈 값이다(pu-billing 이 그렇게 낸다). */
