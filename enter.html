@@ -765,10 +765,12 @@ body.portal-mode #moreFab{display:flex;}
     </div>
     <div class="bd bR" id="billPaneHist">
       <div class="bwhen">
-        <b class="bt">🕘 시간별 기록</b>
+        <b class="bt" id="billHistTitle">🕘 시간별 기록</b>
         <button class="bchip on" data-span="today" type="button">오늘</button>
         <button class="bchip" data-span="yday" type="button">어제</button>
         <button class="bchip" data-span="month" type="button">이번 달</button>
+        <button class="bchip" data-span="day" type="button"
+                title="이번 달을 날마다 묶어 봅니다 — 하루에 얼마씩 나갔나">일별</button>
         <!-- 폰에서만 보인다 — 긴 설명을 접어 두었다가 눌러서 편다 -->
         <button class="bchip bhelp" id="billHelpBtn" type="button"
                 aria-expanded="false" title="설명 보기">ⓘ</button>
@@ -776,7 +778,7 @@ body.portal-mode #moreFab{display:flex;}
       <div class="btwrap">
         <table class="bhist">
           <thead><tr id="billHistHead">
-            <th>시각</th><th>전체</th><th>+증가</th>
+            <th id="billHistTh1">시각</th><th>전체</th><th>+증가</th>
             <th title="사진 창고">창고</th><th title="실시간DB">DB</th>
             <th title="서버 · 메일">서버</th><th>그 밖</th>
           </tr></thead>
@@ -1797,7 +1799,7 @@ body.portal-mode #moreFab{display:flex;}
     var day = function(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
     if(_billSpan === 'today') return hour.slice(0,10) === day(now);
     if(_billSpan === 'yday'){ var y = new Date(now.getTime() - 86400000); return hour.slice(0,10) === day(y); }
-    return true;   // 이번 달
+    return true;   // 이번 달 · 일별
   }
 
   function billCell(v, known){
@@ -1817,6 +1819,36 @@ body.portal-mode #moreFab{display:flex;}
       _billRates = null; billPaintItems();
       return;
     }
+    /* ── 일별 (대표 지시 2026-08-20 「일별 정산금액도 표시해줘」) ──
+       하루에 얼마씩 나갔는지를 한 줄로 본다. 시간별은 「언제 튀었나」를 보는 눈이고
+       일별은 「어느 날 많이 썼나」를 보는 눈이라 서로 대신하지 못한다.
+       ⚠ 「모른다(—)」는 날 칸에서도 그대로 「모른다」다 — 0 으로 적으면 거짓말이다. */
+    var th1 = $('billHistTh1'), ttl = $('billHistTitle');
+    if(_billSpan === 'day'){
+      if(th1) th1.textContent = '날짜';
+      if(ttl) ttl.textContent = '📅 일별 기록';
+      var days = B.dayBuckets(all).reverse();          // 최근 날이 위
+      var dh = '';
+      days.forEach(function(r){
+        var md = r.day.slice(5).replace('-', '/');
+        var wd = ['일','월','화','수','목','금','토'][new Date(r.day + 'T00:00:00').getDay()];
+        dh += '<tr><td>' + md + '<span class="unk" style="margin-left:4px">' + wd + '</span></td>'
+          + '<td>' + (r.cumKnown ? B.fmtWon(r.cum) : '<span class="unk">—</span>') + '</td>'
+          + billCell(r.total, r.known.total)
+          + billCell(r.parts.storage, r.known.storage)
+          + billCell(r.parts.database, r.known.database)
+          + billCell(r.parts.functions, r.known.functions)
+          + billCell(r.parts.etc, r.known.etc)
+          + '</tr>';
+      });
+      body.innerHTML = dh || '<tr><td colspan="7" class="unk">아직 쌓인 기록이 없습니다.</td></tr>';
+      _billRates = B.hourlyRates(rows);
+      billPaintItems();
+      return;
+    }
+    if(th1) th1.textContent = '시각';
+    if(ttl) ttl.textContent = '🕘 시간별 기록';
+
     var html = '', lastDay = '';
     rows.forEach(function(b){
       var d = b.hour.slice(0,10), h = b.hour.slice(11);
@@ -3386,11 +3418,14 @@ body.portal-mode #moreFab{display:flex;}
   $('billClose').addEventListener('click', billCloseModal);
   $('billModal').addEventListener('click', function(e){ if(e.target === $('billModal')) billCloseModal(); });
   // 기간 셋 (2026-08-17) — 칸 전환은 없앴다(한 화면에 다 보인다)
-  Array.prototype.forEach.call($('billPaneHist').querySelectorAll('.bchip'), function(b){
+  /* ⚠ ⓘ 도 .bchip 이라 이 고리에 걸렸다 — 누르면 기간이 undefined 가 되고
+     className 을 통째로 갈아 끼우며 bhelp 까지 지워졌다(2026-08-20 발견).
+     기간 칩은 «data-span 이 있는 것» 뿐이다. */
+  Array.prototype.forEach.call($('billPaneHist').querySelectorAll('.bchip[data-span]'), function(b){
     b.addEventListener('click', function(){
       _billSpan = b.dataset.span;
-      Array.prototype.forEach.call($('billPaneHist').querySelectorAll('.bchip'), function(o){
-        o.className = 'bchip' + (o === b ? ' on' : '');
+      Array.prototype.forEach.call($('billPaneHist').querySelectorAll('.bchip[data-span]'), function(o){
+        o.classList.toggle('on', o === b);
       });
       billPaintHist();
     });

@@ -281,6 +281,35 @@
   /* 항목별 시간당 평균.
      ⚠ 나누는 것은 «아는 칸 수» 다. 소식 없는 칸을 0 으로 치고 나누면
        시간당이 실제보다 «낮게» 나와 안심하게 된다. */
+  /* 시간 칸 → «날» 칸 (대표 지시 2026-08-20 「일별 정산금액도 표시해줘」).
+     ⚠ 「그 날 얼마 늘었나」는 시간 칸 증가분을 그냥 더하면 된다 — 증가분은
+       «앞서 알던 값과의 차이» 라 이어 붙으면(telescoping) 결국
+       「그 날 마지막으로 아는 값 − 어제 마지막으로 아는 값」과 같아진다.
+       소식 없던 시간이 사이에 끼어 있어도 값이 새지 않는다.
+     ⚠ 「모른다」는 그대로 「모른다」다. 아는 칸이 하나도 없는 날은 0 이 아니라 —.
+       (첫날은 견줄 앞 값이 없어 늘 «모른다»가 된다. 0 으로 적으면 거짓말이다.) */
+  function dayBuckets(buckets) {
+    if (!buckets || !buckets.length) return [];
+    var byDay = {}, order = [];
+    buckets.forEach(function (b) {
+      var d = String(b.hour || '').slice(0, 10);
+      if (!d) return;
+      if (!byDay[d]) {
+        var r = { day: d, total: 0, cum: null, cumKnown: false, parts: {}, known: { total: false } };
+        PARTS.concat('etc').forEach(function (k) { r.parts[k] = 0; r.known[k] = false; });
+        byDay[d] = r; order.push(d);
+      }
+      var row = byDay[d];
+      if (b.known && b.known.total) { row.total += (num(b.total) || 0); row.known.total = true; }
+      PARTS.concat('etc').forEach(function (k) {
+        if (b.known && b.known[k]) { row.parts[k] += (num(b.parts[k]) || 0); row.known[k] = true; }
+      });
+      /* 그 날 «마지막으로 아는» 누적액. 칸이 시간 오름차순이라 덮어쓰면 그것이 마지막이다. */
+      if (b.cumKnown) { row.cum = b.cum; row.cumKnown = true; }
+    });
+    return order.map(function (d) { return byDay[d]; });
+  }
+
   function hourlyRates(buckets) {
     var res = { total: null, parts: {}, hours: 0 };
     if (!buckets || !buckets.length) return res;
@@ -320,6 +349,7 @@
     summarize: summarize,
     hourKey: hourKey,
     hourBuckets: hourBuckets,
+    dayBuckets: dayBuckets,
     hourlyRates: hourlyRates,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

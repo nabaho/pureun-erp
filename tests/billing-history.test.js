@@ -385,3 +385,74 @@ test('ⓘ 는 폰에서만 — 규칙이 폰 블록보다 앞에 있어야 한�
           < enterHtml.indexOf(BILL_PHONE_MARK),
     '★ ⓘ 기본 규칙이 폰 블록보다 뒤에 있으면 폰에서도 숨습니다');
 });
+
+/* ── 일별 정산금액 (대표 지시 2026-08-20 「일별 정산금액도 표시해줘」) ──
+   시간별은 「언제 튀었나」를 보는 눈, 일별은 「어느 날 많이 썼나」를 보는 눈이다. */
+const KST = 540;
+function ts(d, h) { return Date.UTC(2026, 7, d, h - 9); }   // 한국시각 → ms
+
+test('★ 날 증가분의 합 = 누적액의 차 (소식 없는 시간이 사이에 껴도)', () => {
+  /* 증가분은 «앞서 알던 값과의 차이» 라 이어 붙으면 telescoping 으로
+     「마지막으로 아는 값 − 처음 아는 값」이 된다. 여기서 값이 새면
+     하루치가 통째로 사라지거나 두 번 잡힌다. */
+  const hist = { total: {}, database: {}, storage: {}, functions: {} };
+  const put = (k, d, h, v) => { hist[k][ts(d, h)] = v; };
+  put('total', 18, 0, 1000); put('database', 18, 0, 800);
+  put('total', 18, 12, 1300); put('database', 18, 12, 1000);
+  /* 18일 12시 ~ 19일 9시 = 소식 없음 */
+  put('total', 19, 9, 2000); put('database', 19, 9, 1500);
+  put('total', 20, 3, 2450); put('database', 20, 3, 1720);
+
+  const days = B.dayBuckets(B.hourBuckets(hist, { tz: KST }));
+  assert.strictEqual(days.length, 3);
+  const sum = days.filter(d => d.known.total).reduce((s, d) => s + d.total, 0);
+  assert.strictEqual(sum, 2450 - 1000, '날 증가분 합이 누적 차와 어긋납니다');
+  /* 소식이 19일에 왔으면 그 늘어난 값은 19일 몫이다 — 18일로 흘리지 않는다 */
+  assert.strictEqual(days[1].day.slice(5), '08-19');
+  assert.strictEqual(days[1].total, 700);
+});
+
+test('★ 아는 칸이 없는 날은 0 이 아니라 「모른다」', () => {
+  /* 0 은 「그 날 공짜였다」로 읽힌다. 첫날은 견줄 앞 값이 없어 늘 모른다. */
+  const hist = { total: {}, database: {}, storage: {}, functions: {} };
+  hist.total[ts(18, 5)] = 500;
+  const days = B.dayBuckets(B.hourBuckets(hist, { tz: KST }));
+  assert.strictEqual(days.length, 1);
+  assert.strictEqual(days[0].known.total, false, '첫날 증가분을 안다고 하면 안 됩니다');
+  /* 누적액은 쪽지 하나로 알 수 있다 — 증가분과 «다른 것» 이다 */
+  assert.strictEqual(days[0].cumKnown, true);
+  assert.strictEqual(days[0].cum, 500);
+});
+
+test('그 날 「전체」는 그 날 마지막으로 아는 누적액이다', () => {
+  const hist = { total: {}, database: {}, storage: {}, functions: {} };
+  hist.total[ts(18, 1)] = 100; hist.total[ts(18, 9)] = 300; hist.total[ts(18, 23)] = 700;
+  const days = B.dayBuckets(B.hourBuckets(hist, { tz: KST }));
+  assert.strictEqual(days[0].cum, 700);
+});
+
+test('항목별(창고·DB·서버·그 밖)도 날마다 따로 센다', () => {
+  const hist = { total: {}, database: {}, storage: {}, functions: {} };
+  const put = (k, d, h, v) => { hist[k][ts(d, h)] = v; };
+  put('total', 18, 0, 100); put('storage', 18, 0, 10); put('database', 18, 0, 90);
+  put('total', 18, 12, 160); put('storage', 18, 12, 30); put('database', 18, 12, 110);
+  const d0 = B.dayBuckets(B.hourBuckets(hist, { tz: KST }))[0];
+  assert.strictEqual(d0.parts.storage, 20);
+  assert.strictEqual(d0.parts.database, 20);
+  /* 그 밖 = 전체 − 쪼갠 것 합 = 60 − 40 */
+  assert.strictEqual(d0.parts.etc, 20);
+});
+
+test('화면: 「일별」 칸이 있고, 기간 칩만 기간을 바꾼다', () => {
+  const enter = fs.readFileSync(path.join(ROOT, 'enter.html'), 'utf8');
+  assert.match(enter, /data-span="day"/, '일별 칩이 없습니다.');
+  /* ★ ⓘ 도 .bchip 이라 예전에는 이 고리에 걸려, 누르면 기간이 undefined 가 되고
+     className 을 통째로 갈아 끼우며 bhelp class 까지 지워졌다(2026-08-20 발견). */
+  assert.match(enter, /querySelectorAll\('\.bchip\[data-span\]'\)/,
+    '★ data-span 으로 좁히지 않으면 ⓘ 를 눌러도 기간이 바뀝니다.');
+  assert.doesNotMatch(enter, /o\.className = 'bchip' \+ \(o === b \? ' on' : ''\)/,
+    '★ className 을 통째로 갈아 끼우면 bhelp 같은 다른 class 를 잃습니다.');
+  /* 날 칸이면 머리와 제목도 함께 바뀐다 — 「시각」이라 적힌 칸에 날짜가 있으면 안 된다 */
+  assert.match(enter, /th1\.textContent = '날짜'/);
+  assert.match(enter, /ttl\.textContent = '📅 일별 기록'/);
+});
