@@ -6069,20 +6069,52 @@ function teamReset(){ fResetCols('team'); S.fPop=''; S.teamNolog=false; S.teamSt
 
 /* ── 업무량 (사람별 비교·관리) ── */
 // 최근 n주 기록을 모두 로드
-function loadWeeks(n){
-  var arr=[]; for(var i=0;i<n;i++) arr.push(weekKeyOf(addDays(S.week,-7*i)));
-  return Promise.all(arr.map(loadWeekOnce)).then(function(){ return arr; });
-}
 function _dayDiff(a,b){ return Math.round((new Date(a+'T00:00:00')-new Date(b+'T00:00:00'))/86400000); }
-function setStW(n){ S.stW=n; renderStats(); }
+
+/* ══════ 업무량 기간 = «달» (대표 지시 2026-08-20) ══════════════════
+   전에는 주였다(이번 주·최근 4주·최근 12주). 노무 일은 달로 끊어 보는 것이
+   몸에 배어 있어(급여·성과급·마감이 모두 달) 달로 바꾼다.
+
+   ⚠ 기록은 «주» 열쇠로 쌓인다(2026-W34). 달과 주는 서로 걸친다.
+     그래서 겹치는 주를 모두 읽어 오되 **줄은 날짜로 다시 걸러** 센다 —
+     안 그러면 8월 1일이 낀 7월 마지막 주의 기록이 7월에도 8월에도 잡힌다.
+   ⚠ 날짜가 없는 옛 기록은 «그 주의 월요일» 것으로 본다. 늘 세면 이웃한 두 달에
+     겹쳐 잡히고, 늘 빼면 옛 기록이 통째로 사라진다. */
+var ST_PERIODS=[['m0','이번 달'],['m1','지난 달'],['m3','최근 3개월']];
+function stRange(p){
+  var n=new Date(), y=n.getFullYear(), m=n.getMonth();
+  if(p==='m1') return {from:new Date(y,m-1,1), to:new Date(y,m,0)};
+  if(p==='m3') return {from:new Date(y,m-2,1), to:new Date(y,m+1,0)};
+  return {from:new Date(y,m,1), to:new Date(y,m+1,0)};
+}
+/* 그 기간에 «걸치는» 주를 모두 — 첫날이 낀 주부터 끝날이 낀 주까지 */
+function stWeekKeys(from,to){
+  var out=[], d=mondayOf(from), end=mondayOf(to);
+  for(var g=0; d<=end && g<200; g++){ out.push(weekKeyOf(d)); d=addDays(d,7); }
+  return out;
+}
+function loadWeekKeys(keys){
+  return Promise.all(keys.map(loadWeekOnce)).then(function(){ return keys; });
+}
+function setStP(p){ S.stP=p; renderStats(); }
+/* 「2026년 8월」 · 「2026년 6~8월」 — 날짜 두 개보다 이쪽이 한눈에 읽힌다.
+   정확한 날짜는 말풍선에 남긴다(월말이 30일인지 31일인지 볼 일이 있다). */
+function stRangeLabel(R){
+  var a=R.from, b=R.to;
+  var ay=a.getFullYear(), am=a.getMonth()+1, by=b.getFullYear(), bm=b.getMonth()+1;
+  if(ay===by && am===bm) return ay+'년 '+am+'월';
+  if(ay===by) return ay+'년 '+am+'~'+bm+'월';
+  return ay+'년 '+am+'월 ~ '+by+'년 '+bm+'월';
+}
 function renderStats(){
   var app=$('app'); if(!app)return;
-  var n=S.stW||4;
-  app.innerHTML=loadingHTML('최근 '+n+'주 업무량 집계 중…');
-  loadWeeks(n).then(function(wks){
+  var per=S.stP||'m0';
+  var perName=(ST_PERIODS.filter(function(x){return x[0]===per;})[0]||ST_PERIODS[0])[1];
+  var R0=stRange(per), from=ymd(R0.from), to=ymd(R0.to);
+  app.innerHTML=loadingHTML(perName+' 업무량 집계 중…');
+  loadWeekKeys(stWeekKeys(R0.from,R0.to)).then(function(wks){
     if(S.view!=='stats') return;
     var today=todayStr(), open=openItems();
-    var from=ymd(addDays(S.week,-7*(n-1))), to=ymd(addDays(S.week,6));
     var rows={};
     function R(nm){ return rows[nm]=rows[nm]||{name:nm,open:0,cats:{},logged:{},lines:0,stale:0,due:0,over:0,done:0}; }
     var owner={};
@@ -6097,10 +6129,17 @@ function renderStats(){
       if(!ld||_dayDiff(today,ld)>=14) r.stale++;
     });
     wks.forEach(function(wk){ var w=wkCache[wk]||{};
+      /* 날짜가 없는 옛 기록은 그 주의 월요일 것으로 본다 (위 풀이글 참고) */
+      var wmon=ymd(mondayOfKey(wk));
       Object.keys(w).forEach(function(iid){
         var nm=owner[iid]; if(!nm) return;
-        var r=R(nm), c=Object.keys(w[iid]||{}).length;
-        r.lines+=c; if(c) r.logged[iid]=1;
+        var o=w[iid]||{}, c=0;
+        Object.keys(o).forEach(function(k){
+          var d=(o[k]&&o[k].d)||wmon;
+          if(d>=from && d<=to) c++;               /* 걸친 주에서 이 달 것만 센다 */
+        });
+        if(!c) return;
+        var r=R(nm); r.lines+=c; r.logged[iid]=1;
       });
     });
     allItems().forEach(function(it){
@@ -6125,10 +6164,11 @@ function renderStats(){
         +ks.slice(0,3).map(function(c){return esc(c)+' '+r.cats[c];}).join(' · ')+(ks.length>3?' …':'')+'</div>';
     }
     var h='<div class="row" style="flex-wrap:wrap"><h1>업무량</h1>'
-      +'<span class="muted" style="font-size:12.5px">'+esc(from)+' ~ '+esc(to)+' 기준</span>'
+      +'<span class="muted" style="font-size:12.5px" title="'+esc(from)+' ~ '+esc(to)+'">'
+        +esc(stRangeLabel(R0))+'</span>'
       +'<span style="flex:1"></span>'
-      +[[1,'이번 주'],[4,'최근 4주'],[12,'최근 12주']].map(function(p){
-          return '<span class="chipbtn'+(n===p[0]?' on':'')+'" onclick="setStW('+p[0]+')">'+p[1]+'</span>';}).join('')
+      +ST_PERIODS.map(function(x){
+          return '<span class="chipbtn'+(per===x[0]?' on':'')+'" onclick="setStP(\''+x[0]+'\')">'+x[1]+'</span>';}).join('')
       +'</div>';
     h+='<div class="statbar">'
       +'진행 <b>'+T.open+'</b>건'
