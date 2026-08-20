@@ -41,10 +41,13 @@ test('컨설팅 포털 인증 대기는 1.5초를 넘기지 않는다', () => {
   assert.ok(waits.every((ms) => ms <= 1500));
 });
 
-test('취업규칙 헤더 도구는 휴대폰에서 두 열로 재배치된다', () => {
+/* 2026-08-20 «두 열로 재배치» 를 뒤집었다 — 2단 격자로 쌓으니 폰 머리줄이 201px(화면 1/4)이
+   되었다. 이제는 한 줄 띠로 두고 옆으로 민다(77px). 그래서 보는 것도 「격자냐」가 아니라
+   **「따로 줄바꿈해 쌓지 않느냐」**로 바꾼다. 자세한 규칙은 tests/app-headers-onerow.test.js. */
+test('취업규칙 헤더 도구는 휴대폰에서 쌓이지 않고 한 줄로 남는다', () => {
   const src = read('rules.html');
   assert.match(src, /@media\(max-width:700px\)/);
-  assert.match(src, /header \.toolbar\{order:3;width:100%;display:grid;grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\)/);
+  assert.match(src, /header \.toolbar\{order:3;[^}]*flex-wrap:nowrap/);
   assert.match(src, /#daejo-tools\{flex-wrap:wrap!important;overflow-x:visible!important\}/);
 });
 
