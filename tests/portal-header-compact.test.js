@@ -19,17 +19,35 @@ function phoneBlock() {
   return enter.slice(mq, i + 1);
 }
 
-test('상태·이름과 사용액이 한 줄에 앉는다', () => {
-  /* 전에는 각자 한 줄씩 써서 머리 카드가 네 줄이었다(대표 지시 2026-08-20
-     "너무 많은 부분 차지"). 173px → 117px. */
+test('이름·사용액·바로가기가 «한 줄»에 앉는다', () => {
+  /* 네 줄 → 두 줄(로고 줄 + 이 한 줄). 173px → 84px (대표 지시 2026-08-20
+     "너무 많은 부분 차지" → "최대 1줄 가능할까"). */
   const b = phoneBlock();
-  assert.match(b, /\.pbar \.pmeta\{order:1;flex:1 1 \d+%/);
+  assert.match(b, /\.pbar \.pmeta\{order:1;flex:1 1 auto/);
   assert.match(b, /\.pbar #billChip\{order:2;flex:0 0 auto/);
-  /* ★ flex:1 1 0 으로 두면 «맨 윗줄에 끼어» 이름이 「권형하 · …」로 잘린다 —
-     제 줄로 내려가게 하려면 바닥 너비가 넉넉해야 한다(재어 보고 고쳤다). */
-  assert.doesNotMatch(b, /\.pbar \.pmeta\{order:1;flex:1 1 0/,
-    '★ 바닥 너비가 0 이면 이름 줄이 맨 윗줄로 끼어 들어가 잘립니다.');
+  assert.match(b, /\.pbar #homeBar\{order:3;flex:0 1 auto/);
+  /* ★ 640px 구간의 `.homebar{width:100%}` 가 살아 있어, width:auto 를 안 적으면
+     바로가기가 제 줄을 통째로 차지한다(재어 보고 찾았다). */
+  assert.match(b, /\.pbar #homeBar\{[^}]*width:auto/,
+    '★ width:auto 가 없으면 바로가기가 다시 제 줄로 내려갑니다.');
+  /* 줄어드는 차례 — 바로가기가 먼저 줄고 이름·사번은 끝까지 지킨다 */
+  assert.match(b, /\.pbar #homeBar select\{flex:0 1 auto/);
   assert.match(b, /\.pbar \.pmeta\{[^}]*min-width:\d+px/);
+});
+
+test('한 줄로 몰면서 접은 것은 «다른 데 같은 말이 있는 것» 뿐이다', () => {
+  const b = phoneBlock();
+  assert.match(b, /\.pbar \.pmeta \.un-role\{display:none;\}/, '(admin) — 직책이 이미 말한다');
+  assert.match(b, /\.pbar #billChip \.lb,\.pbar #billChip \.ago\{display:none;\}/);
+  assert.match(b, /\.pbar #homeBar \.hb-lb\{display:none;\}/);
+  /* ★ 사번은 «절대» 접지 않는다 — P005·A005 처럼 숫자가 같은 사번이 있어,
+     사번이 안 보이면 엉뚱한 계정으로 들어간 것을 알아챌 길이 없다(2026-08-10 고침). */
+  assert.doesNotMatch(b, /#userName\{[^}]*display:none/,
+    '★ 사번이 사라지면 남의 계정으로 들어간 것을 못 알아챕니다.');
+  assert.match(enter, /mySid \? ' · ' \+ _e\(mySid\.toUpperCase\(\)\)/);
+  /* 감춘 말은 «명부 값»과 섞이지 않게 감싸서 넣는다 */
+  assert.match(enter, /<span class="un-role">/);
+  assert.match(enter, /var _e = function\(v\)/, 'innerHTML 로 넣으면서 감싸지 않으면 위험합니다.');
 });
 
 test('사용액은 맨 윗줄(로그아웃 옆)로 올리지 않는다', () => {

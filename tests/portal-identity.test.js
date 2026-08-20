@@ -64,8 +64,16 @@ t('전원 퇴사면 그중 첫 사람이라도 (이름이 아예 안 뜨는 것�
   ctx.puDirMatch([{ sid:'A003', name:'김보람', status:'left' }], 'a003@pureun.kr').acct.name, '김보람');
 
 console.log('\n[③ 화면 — 이름 옆에 사번이 뜬다]');
-t('★ 머리에 사번을 함께 적는다',
-  /\$\('userName'\)\.textContent = name \+ \(title \? ' · ' \+ title : ''\) \+ ' \(' \+ role \+ '\)'\s*\n\s*\+ \(mySid \? ' · ' \+ mySid\.toUpperCase\(\) : ''\);/.test(src), true);
+/* ⚠ 글월 한 줄을 그대로 찾지 않는다 — 2026-08-20 에 「(admin)」만 폰에서 접으려고
+   span 으로 감싸면서 이 줄이 바뀌었고, 멀쩡한 고침이 걸렸다.
+   지켜야 할 것은 «머리에 이름·직책·역할·사번이 함께 뜨는가»다. */
+t('★ 머리에 사번을 함께 적는다', (function(){
+  var m = /\$\('userName'\)\.(?:textContent|innerHTML) =([\s\S]*?);/.exec(src);
+  if(!m) return false;
+  var line = m[1];
+  return /\bname\b/.test(line) && /\btitle\b/.test(line)
+      && /\brole\b/.test(line) && /mySid[\s\S]*toUpperCase\(\)/.test(line);
+})(), true);
 t('마우스를 올리면 로그인 이메일이 보인다', /\.title = '로그인 계정: ' \+ email;/.test(src), true);
 t('명부에 없어도 이메일에서 사번을 만들어 보여준다', /var mySid = acct \? String\(acct\.sid \|\| ''\) : puEmailToSid\(email\);/.test(src), true);
 
@@ -82,8 +90,12 @@ t('명부에 없으면 노란 띠', /직원명부에서 <b>' \+ email \+ '<\/b> 
    신원 확인은 머리의 «이름 · 사번» 이 맡는다 — 늘 떠 있고 자리를 안 차지한다. */
 t('★ 자동 로그인 안내 띠를 안 그린다', /님으로 자동 로그인되었습니다/.test(src), false);
 t('그 띠의 닫기 단추도 없앴다', /puIdBandX/.test(src), false);
+/* ★ 사번은 «절대» 감추지 않는다. P005·A005 처럼 숫자가 같은 사번이 있어,
+   사번이 안 보이면 엉뚱한 계정으로 들어간 것을 알아챌 길이 없다.
+   폰에서 머리 카드를 한 줄로 줄일 때도 사번만은 남겨 두었다(2026-08-20). */
 t('★ 그래도 사번은 늘 떠 있다 (신원 확인은 이것이 맡는다)',
-  /\+ \(mySid \? ' · ' \+ mySid\.toUpperCase\(\) : ''\);/.test(src), true);
+  /mySid \? ' · ' \+ (?:_e\()?mySid\.toUpperCase\(\)/.test(src)
+  && !/#userName[^{]*\{[^}]*display:none/.test(src), true);
 t('이상할 때는 여전히 알린다 — 겹침·명부 없음', /dupAll\.length > 1\)\{/.test(src) && /\} else if\(!acct\)\{/.test(src), true);
 t('띠는 하나만 그린다 (다시 그리면 갈아 끼움)', /var el = document\.getElementById\('puIdBand'\);\s*\n\s*if\(!el\)\{/.test(src), true);
 
