@@ -2001,7 +2001,12 @@ var FB_ALL_SYNC_KEYS = [
   'bank_processed','combo_whitelist','cms_ledger',
   // 올린 통장 자료 묶음 — 다른 PC 에서 올린 것도 받아 함께 보려면 이 목록에 있어야 한다
   'ledger_batches','ledger_held','ledger_split_recipes',
-  'ledger_picks'      // 골라 둔 짝 — A가 골라 두면 B 화면에도 보인다
+  'ledger_picks',     // 골라 둔 짝 — A가 골라 두면 B 화면에도 보인다
+  /* 사람마다의 «즐겨찾기 메뉴». 예전에는 localStorage 에만 두어 PC 에서 걸어 둔 것이
+     폰에는 영영 안 보였다(대표 지적 2026-08-20 "피시에서 즐겨찾기한거 왜 동기화 안 되나").
+     ⚠ 사람 것을 «한 자리»에 모은다({sid:[메뉴]}) — 열쇠를 사람마다 만들면
+       동기화 목록이 직원 수만큼 늘어나고, 새 직원이 들어올 때마다 코드를 고쳐야 한다. */
+  'ui_pins'
 ];
 // App Check reCAPTCHA v3 사이트키 — Firebase 콘솔에서 발급 후 따옴표 안에 붙여넣기 (비어있으면 비활성, 동작에 영향 없음)
 var FB_APPCHECK_KEY = '6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
@@ -4175,7 +4180,7 @@ window.erpFixMgrRates = function(){
 // 객체형 설정이 서버에 정상(객체)인지 / 뭉개짐(배열)인지 / 없음인지 점검
 window.erpAuditSettings = function(){
   if(!fbDb){ console.log('Firebase 미연결'); return; }
-  var OBJ_KEYS = ['min_wage','company_info','insurance_rates','mgr_rates','security_perms','policy_leave','pension_policy','withholding_tax','wage_reports','expense_budget','contract_docs','cold_storage','module_visits','alert_dismissed','corp_widget_collapsed','mydesk_widget_collapsed','dup_criteria','policy_vat','policy_perf','policy_loa','policy_special_leave','policy_access','app_settings','backup_config','finance_bank_fee','withholding_brackets'];
+  var OBJ_KEYS = ['min_wage','company_info','insurance_rates','mgr_rates','security_perms','policy_leave','pension_policy','withholding_tax','wage_reports','expense_budget','contract_docs','cold_storage','module_visits','alert_dismissed','corp_widget_collapsed','mydesk_widget_collapsed','dup_criteria','policy_vat','policy_perf','policy_loa','policy_special_leave','policy_access','app_settings','backup_config','finance_bank_fee','withholding_brackets','ui_pins'];
   return fbDb.ref('data').once('value').then(function(snap){
     var remote = snap.val() || {};
     var rows = [];
@@ -9883,16 +9888,53 @@ function Sidebar(props){
   var sq = useState(''); var sbQuery = sq[0]; var setSbQuery = sq[1];
   // 권형하 카드 클릭 메뉴
   var um = useState(false); var userMenu = um[0]; var setUserMenu = um[1];
-  // 즐겨찾기 (localStorage)
+  /* ── 즐겨찾기 — 사람마다, «기기를 넘어» 따라온다 (대표 지적 2026-08-20) ──
+     예전에는 localStorage 에만 두어 PC 에서 걸어 둔 것이 폰에는 영영 안 보였다.
+     이제 서버(data/ui_pins)에 사람별로 담는다. localStorage 는 «떠날 때 쓰는 밑값»
+     으로만 남긴다 — 서버가 아직 안 왔을 때 잠깐 예전 것을 보여 주려는 것이다. */
   var pinKey = 'pureun_v6_pinned_menus_'+CURRENT_USER.sid;
-  var pp = useState((function(){
+  function readPins(){
+    try{
+      var srv = dbGet('ui_pins', {}) || {};
+      var v = srv[CURRENT_USER.sid];
+      if(Array.isArray(v)) return v;
+    }catch(e){}
+    /* 서버에 아직 없으면 이 기기에 있던 것을 쓴다 — 첫 저장 때 서버로 올라간다 */
     try{ var s = localStorage.getItem(pinKey); return s ? JSON.parse(s) : []; }catch(e){ return []; }
-  })());
+  }
+  var pp = useState(readPins());
   var pinned = pp[0]; var setPinned = pp[1];
+  /* 다른 기기에서 바꾸면 그대로 따라온다 — 안 들으면 새로고침해야 보인다 */
+  useEffect(function(){
+    function onChange(){
+      var next = readPins();
+      setPinned(function(cur){
+        return (JSON.stringify(cur) === JSON.stringify(next)) ? cur : next;
+      });
+    }
+    window.addEventListener('fb_data_changed', onChange);
+    window.addEventListener('fb_initial_done', onChange);
+    return function(){
+      window.removeEventListener('fb_data_changed', onChange);
+      window.removeEventListener('fb_initial_done', onChange);
+    };
+  }, []);
   var dgS = useState(null); var dragPinIdx = dgS[0]; var setDragPinIdx = dgS[1];
   // 사이드바 뷰 모드: 'all'=전체 메뉴, 'fav'=즐겨찾기만 (상단 탭 전환)
   var svS = usePersistedState('pureun_v6_sb_view', 'all'); var sbView = svS[0]; var setSbView = svS[1];
   var PIN_MAX = 10;
+  /* 저장은 «한 곳»에서 — 껐다 켜기와 순서 바꾸기가 따로 적으면 언젠가 한쪽만 고친다.
+     (실제로 순서 바꾸기는 localStorage 에만 적고 있었다.) */
+  function savePins(next){
+    /* ⚠ 남의 즐겨찾기를 덮지 않게 «내 자리만» 바꿔 담는다 */
+    try{
+      var all = Object.assign({}, dbGet('ui_pins', {}) || {});
+      all[CURRENT_USER.sid] = next;
+      dbSet('ui_pins', all);
+    }catch(e){ window._erpErrLog && window._erpErrLog(e); }
+    /* 이 기기 밑값도 함께 — 서버가 늦게 올 때 잠깐 보여 줄 것이다 */
+    try{ localStorage.setItem(pinKey, JSON.stringify(next)); }catch(e){ window._erpErrLog && window._erpErrLog(e); }
+  }
   function togglePin(menuId){
     var isPinned = pinned.indexOf(menuId) >= 0;
     if(!isPinned && pinned.length >= PIN_MAX){
@@ -9900,8 +9942,7 @@ function Sidebar(props){
       return;
     }
     var next = isPinned ? pinned.filter(function(x){return x !== menuId;}) : pinned.concat([menuId]);
-    setPinned(next);
-    try{ localStorage.setItem(pinKey, JSON.stringify(next)); }catch(e){ window._erpErrLog && window._erpErrLog(e); }
+    setPinned(next); savePins(next);
     showToast(isPinned ? '⭐ 즐겨찾기 해제' : '⭐ 즐겨찾기 추가 (' + next.length + '/' + PIN_MAX + ')');
   }
   // 길게 누르기 (모바일 long-press)
@@ -10093,8 +10134,7 @@ function Sidebar(props){
                     var next = pinned.slice();
                     var moved = next.splice(from, 1)[0];
                     next.splice(pIdx, 0, moved);
-                    setPinned(next);
-                    try{ localStorage.setItem(pinKey, JSON.stringify(next)); }catch(e){ window._erpErrLog && window._erpErrLog(e); }
+                    setPinned(next); savePins(next);
                     setDragPinIdx(null);
                     showToast('⭐ 즐겨찾기 순서 변경');
                   },
