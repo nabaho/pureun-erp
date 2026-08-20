@@ -62,6 +62,21 @@ test('★ 폰에서는 «접는다» — 늘 보이는 것은 탭·확정·⚙ �
   });
 });
 
+test('접었을 때는 «고른 칸»으로 늘어놓는다 — 혼자 한 줄을 쓰는 칸이 없게', () => {
+  /* 흘려 놓으면 폭이 좁을 때 「⚙ 도구」가 혼자 한 줄을 썼다(대표 화면 2026-08-20).
+     칸을 나눠 두면 탭 둘과 ⚙ 가 늘 한 줄에 앉고, 큰 초록 단추가 그 아래를 통째로
+     쓴다 — 폭이 280px 이든 412px 이든 두 줄이다. */
+  const b = phoneBlock();
+  assert.match(b, /\.ld-bar:not\(\.on\)\{ display:grid !important/);
+  assert.match(b, /grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\) auto/,
+    '★ 셋을 똑같이 나누면 탭의 「미처리 232」가 잘립니다 — ⚙ 는 제 몸집만큼만.');
+  assert.match(b, /\.ld-bar:not\(\.on\) \.ld-bar-go\{ grid-column:1 \/ -1; \}/);
+  /* 요약 칩은 남는 자리를 서로 나눠 갖는다 — 줄 끝이 들쭉날쭉하지 않게 */
+  assert.match(b, /\.ld-sum > \*\{ flex:1 1 auto; \}/);
+  assert.match(b, /\.ld-sum \.ld-sum-amt\{ flex:0 1 auto/,
+    '금액을 늘리면 숫자 사이가 벌어져 읽기 어려워집니다.');
+});
+
 test('★ 「접는다」는 «없앤다»가 아니다 — ⚙ 한 번이면 다 나오고, 편 상태는 기억한다', () => {
   const b = phoneBlock();
   assert.match(b, /\.ld-tools-btn\{ display:inline-block/, '폰에 ⚙ 단추가 없으면 펼 길이 없습니다.');
