@@ -42,30 +42,36 @@ test('폰에서 끌어다 놓기 안내와 칸막이를 접는다', () => {
   assert.match(erp, /className:'ld-up-file'/);
 });
 
-test('달 띠는 옆으로 미는 한 줄이고, 목록 탭과 확정 단추가 앞에 온다', () => {
-  /* 2026-08-20 「한 줄을 통째로 쓰는 큰 단추」에서 바뀌었다 — 여백만 줄이니 폭이
-     좁아질수록(글자를 키우면 그렇다) 도로 여러 줄이 됐다. 줄바꿈을 없애면 폭과
-     상관없이 높이가 고정이다. 그러면 «무엇이 먼저 보이느냐»가 곧 짜임이 된다. */
+test('★ 폰에서는 «접는다» — 늘 보이는 것은 탭·확정·⚙ 도구뿐', () => {
+  /* 세 번 고쳐 여기까지 왔다.
+     ① 여백만 줄이니 폭이 좁아질수록 도로 나빠졌다.
+     ② 옆으로 밀게 하니 높이는 고정됐지만, 칸이 스물 남짓이라 「거기 뭐가 있는지
+        아는 사람」에게만 쓸 만한 화면이 됐다(대표 지적 "좌우로 너무 길다").
+     ③ 그래서 접는다. 폰에서 이 화면으로 하는 일은 «줄을 보고 확정하는 것»이고,
+        엑셀 올리기는 PC 에서 한다. */
   const b = phoneBlock();
-  assert.match(b, /\.ld-up,\.ld-bar\{[^}]*flex-wrap:nowrap !important/);
-  assert.match(b, /\.ld-up,\.ld-bar\{[^}]*overflow-x:auto/);
-  assert.match(b, /\.ld-up,\.ld-bar\{[^}]*min-width:0 !important/,
-    '★ nowrap 인 줄에 min-width:0 이 없으면 쪽 자체가 좌우로 넓어집니다.');
-  assert.match(b, /\.ld-up,\.ld-bar\{[^}]*max-width:100% !important/);
-  /* ★ 앞으로 당기려면 «음수» 여야 한다 — 손대지 않은 칸이 order:0 이라
-     order:1 로 두면 오히려 맨 뒤로 간다(실제로 그렇게 났다). */
-  const tab = b.match(/\.ld-bar \.ld-tab\{[^}]*order:\s*(-?\d+)/);
-  const go = b.match(/\.ld-bar \.ld-bar-go\{[^}]*order:\s*(-?\d+)/);
-  assert.ok(tab && Number(tab[1]) < 0, '★ 목록 탭 order 가 음수가 아니면 맨 뒤로 갑니다.');
-  assert.ok(go && Number(go[1]) < 0, '★ 확정 단추 order 가 음수가 아니면 맨 뒤로 갑니다.');
-  assert.ok(Number(tab[1]) < Number(go[1]), '탭이 확정 단추보다 앞이어야 합니다.');
-  assert.match(b, /\.ld-bar-gap\{[^}]*display:\s*none/,
-    '빈칸이 남아 있으면 미는 줄에서 자리만 벌립니다.');
-  /* 손잡이는 «확정 가능 N건 모두 확정» 단추에 붙어 있어야 한다 */
-  const at = erp.indexOf("className:'ld-bar-go'");
-  assert.ok(at > 0);
-  assert.ok(erp.slice(at, at + 400).includes("'✅ 확정 가능 '+readyRows.length+'건 모두 확정'"),
-    '★ ld-bar-go 가 확정 단추가 아닌 다른 단추에 붙었습니다.');
+  assert.match(b, /\.ld-up:not\(\.on\)\{ display:none !important; \}/,
+    '★ 올리기 판은 접어 둔다 — 폰으로 통장 엑셀을 받을 일이 없다.');
+  ['ld-bar-nav','ld-bar-mon','ld-bar-prog','ld-bar-pct','ld-bar-amt','ld-bar-auto'].forEach(function(c){
+    assert.match(b, new RegExp('\\.ld-bar:not\\(\\.on\\) \\.' + c), c + ' 가 접히지 않습니다.');
+  });
+  /* ★ 늘 보여야 하는 것 — 접으면 폰에서 할 일 자체를 못 한다 */
+  ['ld-tab', 'ld-bar-go'].forEach(function(c){
+    assert.doesNotMatch(b, new RegExp('\\.ld-bar:not\\(\\.on\\) \\.' + c + '[^,{]*[,{][^}]*display:none'),
+      '★ ' + c + ' 를 접으면 폰에서 목록을 고르거나 확정할 수가 없습니다.');
+  });
+});
+
+test('★ 「접는다」는 «없앤다»가 아니다 — ⚙ 한 번이면 다 나오고, 편 상태는 기억한다', () => {
+  const b = phoneBlock();
+  assert.match(b, /\.ld-tools-btn\{ display:inline-block/, '폰에 ⚙ 단추가 없으면 펼 길이 없습니다.');
+  assert.match(erp, /className:'ld-tools-btn'/);
+  assert.match(erp, /usePersistedState\('ledger_tools_open'/,
+    '★ 기억하지 않으면 화면을 옮길 때마다 다시 펴야 합니다.');
+  assert.match(erp, /className:'ld-up' \+ \(ldTools \? ' on' : ''\)/);
+  assert.match(erp, /className:'ld-bar' \+ \(ldTools \? ' on' : ''\)/);
+  /* 펴면 «밀지» 말고 늘어놓는다 — 일부러 편 것이니 찾기 쉬워야 한다 */
+  assert.match(b, /\.ld-up\.on\{[^}]*flex-wrap:wrap !important/);
 });
 
 test('한 번 읽으면 그만인 안내는 폰에서 접되 칩 자체는 남는다', () => {
