@@ -37,7 +37,9 @@ test('이름·사용액·바로가기가 «한 줄»에 앉는다', () => {
 
 test('한 줄로 몰면서 접은 것은 «다른 데 같은 말이 있는 것» 뿐이다', () => {
   const b = phoneBlock();
-  assert.match(b, /\.pbar \.pmeta \.un-role\{display:none;\}/, '(admin) — 직책이 이미 말한다');
+  /* 대표 지시 2026-08-20 「권형하와 아이디만 있으면 된다」 — 직책·역할을 접는다 */
+  assert.match(b, /\.pbar \.pmeta \.un-role,\.pbar \.pmeta \.un-title\{display:none;\}/);
+  assert.match(enter, /<span class="un-title">/, '직책을 감싸지 않으면 접을 수가 없습니다.');
   assert.match(b, /\.pbar #billChip \.lb,\.pbar #billChip \.ago\{display:none;\}/);
   assert.match(b, /\.pbar #homeBar \.hb-lb\{display:none;\}/);
   /* ★ 사번은 «절대» 접지 않는다 — P005·A005 처럼 숫자가 같은 사번이 있어,
