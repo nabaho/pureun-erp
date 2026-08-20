@@ -85,3 +85,31 @@ test('넓은 화면은 예전 그대로 표다', () => {
   assert.ok(phone.startsWith('@media(max-width:520px){'));
   assert.match(kc, /\.dt table\{min-width:640px\}/, 'PC·태블릿의 표 최소폭은 그대로 둡니다');
 });
+
+/* ── 관리 단추를 카드 오른쪽으로 (대표 지시 2026-08-20) ────────────
+   아래에 깔면 카드마다 줄이 하나씩 더 붙어, 스무 장이면 스무 줄이 늘어난다.
+   오른쪽으로 세우면 왼쪽 항목들이 쓰던 높이를 그대로 나눠 쓰므로 «공짜»다. */
+test('관리 단추는 카드 아래가 아니라 오른쪽에 세로로 선다', () => {
+  const kc = fs.readFileSync(path.join(__dirname, '..', 'kcareer.html'), 'utf8');
+  const at = kc.indexOf('@media(max-width:520px)');
+  const open = kc.indexOf('{', at + 20);
+  let depth = 0, i = open;
+  for (; i < kc.length; i++) {
+    if (kc[i] === '{') depth++;
+    else if (kc[i] === '}' && --depth === 0) break;
+  }
+  const b = kc.slice(at, i + 1);
+
+  assert.match(b, /\.dt tr\{display:grid!important;grid-template-columns:minmax\(0,1fr\)/);
+  assert.match(b, /\.dt td:last-child\{[^}]*grid-column:2/);
+  assert.match(b, /\.dt td:last-child\{[^}]*grid-row:1\/-1/,
+    '★ 단추 칸이 모든 줄을 가로지르지 않으면 첫 줄 옆에만 붙습니다.');
+  /* ★ grid-row:1/-1 은 «명시한» 줄만 셈한다 — 줄 수를 안 적으면 -1 이 1이 되어
+     단추가 첫 줄 높이에만 붙는다. */
+  assert.match(b, /\.dt tr\{[^}]*grid-template-rows:repeat\(\d+,auto\)/,
+    '★ 줄 수를 명시하지 않으면 grid-row:1\\/-1 이 첫 줄만 가리킵니다.');
+  /* 아래에 깔던 흔적(위쪽 점선·위 여백)이 남아 있으면 안 된다 */
+  assert.match(b, /\.dt td:last-child\{[^}]*border-top:none!important/);
+  /* 단추는 안쪽 style=inline-flex 로 감싸여 있어 !important 로 세워야 한다 */
+  assert.match(b, /\.dt td:last-child > span\{display:flex!important;flex-direction:column/);
+});
