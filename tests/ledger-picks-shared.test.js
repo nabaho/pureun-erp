@@ -74,8 +74,13 @@ t('옛 꼴(누가 골랐는지 없음)이면 null', ctx.erpPickWho({ k1:'pend-x'
 t('빈 값도 안 터진다', ctx.erpPickWho(null, 'k', 'P-001'), null);
 
 console.log('\n[⑥ 서버에 올린다 — 이것이 「함께 보이게」의 뼈대]');
-t('★ 동기화 목록에 있다 (없으면 여전히 이 PC 에만 남는다)',
-  /'ledger_picks'      \/\/ 골라 둔 짝/.test(src), true);
+/* ⚠ 줄 모양 그대로가 아니라 «목록 안에 있는가»를 본다 — 2026-08-20 에 뒤에
+   'ui_pins' 를 더하면서 쉼표·칸이 바뀌었고, 멀쩡한 고침이 이 검사에 걸렸다. */
+t('★ 동기화 목록에 있다 (없으면 여전히 이 PC 에만 남는다)', (function(){
+  var i = src.indexOf('var FB_ALL_SYNC_KEYS = [');
+  if(i < 0) return false;
+  return /'ledger_picks'/.test(src.slice(i, src.indexOf('];', i)));
+})(), true);
 t('서버 동기화에서 빠지지 않았다', /FB_EXCLUDE = \[[^\]]*'ledger_picks'/.test(src), false);
 t('★ 저장 직전에 다시 읽어 그 위에 얹는다 (낡은 판을 통째로 쓰면 남의 것이 지워진다)',
   /var cur = dbGet\(LEDGER_PICK_KEY, \{\}\) \|\| \{\};\s*\n\s*dbSet\(LEDGER_PICK_KEY, erpPickSet\(cur, rowKey, pid,/.test(src), true);
