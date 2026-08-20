@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { sliceFn } = require('./fnslice.js');   // 함수를 «통째로» 자른다(줄 수에 안 매인다)
 
 const cards = fs.readFileSync(path.join(__dirname, '..', 'pu-cards.html'), 'utf8');
 
@@ -12,14 +13,13 @@ test('★ 메일 화면이 폰에서도 그려진다', () => {
     '★ PC 칸만 보고 있으면 폰에서는 아무것도 안 그려집니다.');
   assert.match(cards, /function renderMailMobile\(\)/);
   /* 폰 render 가 메일 화면으로 가야 한다 — 안 가면 목록이 그대로 남는다 */
-  const fn = cards.match(/function render\(\)\{ if\(_quiet\)[\s\S]*?renderList\(\); \}/)[0];
+  const fn = sliceFn(cards, 'function render(){');
   assert.match(fn, /if\(state\.view==='mail'\) return renderMailMobile\(\);/);
 });
 
 test('폰 메일은 PC 것을 그대로 쓴다 — 폰용을 따로 만들지 않는다', () => {
   /* 따로 만들면 메일에 손댈 때마다 두 곳을 고쳐야 하고, 언젠가 한쪽만 고친다. */
-  const fn = cards.slice(cards.indexOf('function renderMailMobile()'),
-                         cards.indexOf('/* ── 쓰기 화면 ── */'));
+  const fn = sliceFn(cards, 'function renderMailMobile()');
   ['schedBoxHtml()', 'sentBoxHtml()', 'mailWriteHtml()'].forEach(function (f) {
     assert.ok(fn.includes(f), f + ' 를 안 쓰고 폰용을 따로 만들었습니다.');
   });

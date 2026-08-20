@@ -18,6 +18,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { sliceFn } = require('./fnslice.js');   // 함수를 «통째로» 자른다(줄 수에 안 매인다)
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'pu-cards.html'), 'utf8');
 
@@ -269,8 +270,7 @@ test('★ M4 — 기업 상세 화면에서는 ＋ 카메라(#fab)도 감춰진�
 });
 
 test('★ M4 — render() 는 화면이 바뀔 때마다 이 규칙을 다시 적용한다', () => {
-  const at = source.indexOf('function render(){');
-  const fn = source.slice(at, source.indexOf('\n', at));
+  const fn = sliceFn(source, 'function render(){');
   assert.match(fn, /syncMobileChrome\(\)/,
     'render() 가 안 부르면 ☰ 자료함·메일에서 되돌아오는 길처럼 진입로를 안 거치는 경로에서 어긋납니다');
   /* 기업 상세면 renderSubbar 전에 돌아가므로, 그보다 먼저 불려야 한다 */

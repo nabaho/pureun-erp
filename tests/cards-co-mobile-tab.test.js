@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { sliceFn } = require('./fnslice.js');   // 함수를 «통째로» 자른다(줄 수에 안 매인다)
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'pu-cards.html'), 'utf8');
 
@@ -198,9 +199,7 @@ test('onMobileSearchInput 은 기업 상세 화면일 때만 state.coQ 를 채�
 });
 
 test('render 가 기업 상세 화면이면 카드 목록으로 갈라진다', () => {
-  const at = source.indexOf('function render(){');
-  const end = source.indexOf('\n', at);
-  const fn = source.slice(at, end);
+  const fn = sliceFn(source, 'function render(){');
   assert.match(fn, /state\.view==='co'/);
   assert.match(fn, /renderCoMobileList\(\)/);
 });
@@ -212,28 +211,26 @@ test('render 가 기업 상세 화면이면 카드 목록으로 갈라진다', (
    부른다는 사실 자체가 지켜진다. syncMobileTabs() 도 실제 소스를 그대로 잘라 함께
    실행해, 두 함수가 이어지는 사슬 전체를 검증한다. */
 function loadRenderBlock(){
-  const syncAt = source.indexOf('function syncMobileTabs(){');
-  const syncEnd = source.indexOf('\n}', syncAt) + 2;
-  assert.ok(syncAt > 0 && syncEnd > syncAt + 2, 'syncMobileTabs 를 찾지 못했습니다');
+  const syncFn = sliceFn(source, 'function syncMobileTabs(){');
   /* render() 는 syncMobileChrome() 도 부른다(⇅ 정렬·＋ 카메라를 화면에 맞춰 감춘다) —
      스텁으로 흘려보내지 않고 진짜 소스를 함께 넣어 사슬 전체를 검증한다. */
-  const chromeAt = source.indexOf('function syncMobileChrome(){');
-  const chromeEnd = source.indexOf('\n}', chromeAt) + 2;
-  assert.ok(chromeAt > 0 && chromeEnd > chromeAt + 2, 'syncMobileChrome 을 찾지 못했습니다');
-  const renderAt = source.indexOf('function render(){');
-  const renderEnd = source.indexOf('\n', renderAt);
-  assert.ok(renderAt > 0 && renderEnd > renderAt, 'render 를 찾지 못했습니다');
+  const chromeFn = sliceFn(source, 'function syncMobileChrome(){');
+  const renderFn = sliceFn(source, 'function render(){');
 
-  const fns = source.slice(syncAt, syncEnd) + '\n' + source.slice(chromeAt, chromeEnd)
-            + '\n' + source.slice(renderAt, renderEnd);
+  const fns = syncFn + '\n' + chromeFn + '\n' + renderFn;
 
   const fabEl = { style:{} }, sortEl = { style:{} };
   const ctx = {
     _quiet: false,
     state: { tab:'card', view:'list', selMode:false },
-    calls: { saveLastScreen:0, renderCoMobileList:0, renderSubbar:0, renderSidebar:0, renderList:0 },
+    calls: { saveLastScreen:0, renderCoMobileList:0, renderSubbar:0, renderSidebar:0,
+             renderList:0, renderMailMobile:0 },
     toggled: {},
+    bodyClass: {},
+    /* render() 는 메일 화면일 때 <body> 에 표를 붙여 갈래 줄·거르개 줄을 접는다 */
+    document: { body: { classList: { toggle:(c,on)=>{ ctx.bodyClass[c] = on; } } } },
     saveLastScreen: () => { ctx.calls.saveLastScreen++; },
+    renderMailMobile: () => { ctx.calls.renderMailMobile++; },
     renderCoMobileList: () => { ctx.calls.renderCoMobileList++; },
     renderSubbar: () => { ctx.calls.renderSubbar++; },
     renderSidebar: () => { ctx.calls.renderSidebar++; },
@@ -264,6 +261,17 @@ test('★ render() 를 실제로 실행하면 syncMobileTabs() 가 불려 tabCo 
   assert.equal(c.calls.renderSubbar, 0, '기업 상세 화면이면 renderSubbar 전에 돌아가야 한다');
   assert.equal(c.calls.renderSidebar, 0);
   assert.equal(c.calls.renderList, 0);
+});
+
+test('★ render() 를 실제로 실행하면 메일 화면으로 갈라진다 (폰 메일)', () => {
+  /* 폰에서 메일이 «안 보인다» 던 일(대표 지시 2026-08-20)의 마지막 고리다 —
+     갈래가 없으면 메일을 골라도 명함 목록이 그대로 남는다. */
+  const c = loadRenderBlock();
+  c.state.view = 'mail';
+  c.render();
+  assert.equal(c.calls.renderMailMobile, 1, 'render() 가 메일 화면을 그려야 한다');
+  assert.equal(c.bodyClass.mailview, true, '메일 화면이면 <body> 에 표를 붙여 줄들을 접어야 한다');
+  assert.equal(c.calls.renderList, 0, '메일 화면이면 명함 목록을 그리기 전에 돌아가야 한다');
 });
 
 test('★ render() 를 실제로 실행하면 syncMobileTabs() 가 불려 tabCard 켜짐이 바뀐다 (명함 목록 화면)', () => {
