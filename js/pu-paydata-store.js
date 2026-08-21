@@ -1332,13 +1332,28 @@
      서버가 거절해 헛수고가 된다). */
   function payrollInboxPath(id) { return 'payroll_os/inbox/' + id; }
 
+  /* 같은 사업장·같은 달이면 같은 열쇠 — 다시 알리면 덮어쓴다.
+     실시간DB 열쇠에 못 쓰는 글자( . $ # [ ] / )는 밑줄로 바꾼다.
+     업체 번호가 없으면(예전 자료) 이름으로 만든다 — 이름조차 없으면
+     handoffToPayroll 이 앞에서 이미 막는다. */
+  function handoffInboxId(companyId, companyName, month) {
+    var who = String(companyId || companyName || '').replace(/[.$#[\]/\s]/g, '_');
+    return 'hd_' + who + '_' + monthKey(month);
+  }
+
   function handoffToPayroll(o) {
     o = o || {};
     if (!o.companyName) return Promise.reject(new Error('사업장을 알 수 없습니다'));
     if (!o.month) return Promise.reject(new Error('귀속월을 알 수 없습니다'));
     if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
     var at = Number(o.at || Date.now());
-    var inboxId = newId(), logId = newId();
+    /* 수신함 열쇠는 **사업장·달로 정해진 값**이다(무작위 번호가 아니다) —
+       두 번 알려도 같은 자리에 덮어써져 급여관리 「최근 수신 기록」에 같은
+       사업장·같은 달이 두 줄로 늘어나지 않는다. 두 줄이면 자료가 두 벌 온
+       줄로 읽는다(2026-08-17 지적).
+       ⚠ 넘긴 **사실**은 handoff_log 에 매번 새 번호로 쌓는다 — 누가 언제
+       넘겼는지가 덮어써지면 기록이 아니다. */
+    var inboxId = handoffInboxId(o.companyId, o.companyName, o.month), logId = newId();
     var up = {};
     up[payrollInboxPath(inboxId)] = {
       ts: at,
@@ -1434,6 +1449,7 @@
     amFin: amFin,
     canHandoffPayroll: canHandoffPayroll,
     payrollInboxPath: payrollInboxPath,
+    handoffInboxId: handoffInboxId,
     handoffToPayroll: handoffToPayroll,
     pendingRecord: pendingRecord,
     itemRecord: itemRecord,

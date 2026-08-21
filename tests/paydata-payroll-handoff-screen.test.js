@@ -50,8 +50,11 @@ function loadApp(appState, opts) {
       folders: {}, folderPick: 'all', folderEdit: { mode: '', fid: '', value: '' },
       staffList: [], deputies: {}, month: '2026-08', kind: 'attend',
       companyId: 'co_1', companyName: '화담원',
-      viewingUid: '', viewingName: '', viewingDeputy: false
+      viewingUid: '', viewingName: '', viewingDeputy: false,
+      handoffBusy: false
     }, appState)) + ';',
+    /* 넘기는 동안 단추를 잠그느라 다시 그린다 — 이 자리에는 화면이 없으니 빈 함수 */
+    'App.render = function(){};',
     cut('esc'), cut('jsq'), cut('thisMonth'),
     cut('pickOn'), cut('pickToggle'), cut('pickSetAll'), cut('pickList'),
     cut('pickAllOn'), cut('pickPrune'), cut('pickOf'), cut('pickPut'), cut('pickBar'),
