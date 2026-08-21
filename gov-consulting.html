@@ -520,6 +520,8 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 .gantt-stat-pct{font-size:12.5px;font-weight:900;color:var(--text);}
 .gantt-progress{width:64px;height:5px;background:var(--sf2);border-radius:4px;overflow:hidden;}
 .gantt-progress-bar{height:100%;border-radius:4px;}
+.erpask-blocked{border:1.5px solid #f0c98a;background:#fff8ec;color:#92400e;border-radius:9px;padding:9px 11px;margin:9px 12px;font-size:12px;font-weight:800;}
+.erpask-blocked .d{font-weight:500;color:#7c4a06;margin-top:4px;line-height:1.6;}
 .gantt-empty{text-align:center;padding:60px;color:var(--t2);font-size:13px;}
 /* 종료 행: 기본 숨김. 상태 선택에서 '전체/종료'를 고르면 다시 보인다 */
 .gantt-row.ended-row-g .gantt-co{text-decoration:line-through;text-decoration-color:rgba(0,0,0,.3);}
@@ -958,6 +960,8 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
     </div>
     <div id="erpStatus" style="font-size:11px;color:var(--t2);margin-bottom:5px;">ERP 데이터를 불러오는 중…</div>
     <div id="erpMapBody" style="flex:1;min-height:0;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);"></div>
+    <!-- 가져오지 않기로 한 건 — 지우지 않고 남겨 되살릴 수 있게(대표 결정 2026-08-21) -->
+    <div id="erpHoldBox" style="display:none;flex-shrink:0;max-height:120px;overflow-y:auto;"></div>
     <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
       <div style="font-size:11px;color:var(--t2);">🏢 연결된 종류만 가져옵니다 · 미리보기 확인 후 추가 · 일정은 만들지 않습니다</div>
       <button class="btn btn-p" id="erpImportBtn" style="font-size:11px;padding:5px 12px;">🏢 사업장 가져오기</button>
@@ -1197,6 +1201,30 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
       <span class="ta-count" style="font-size:11px;color:var(--t2);"></span>
       <button class="btn btn-s" style="margin-left:auto;font-size:11.5px;padding:5px 11px;" onclick="addTypeBlank()">직접 만들기</button>
       <button class="btn btn-p ta-add" style="font-size:11.5px;padding:5px 13px;" onclick="typeAddApply()" disabled>고른 것 추가</button>
+    </div>
+  </div>
+</div>
+
+<!-- 푸른ERP 신규 컨설팅 확인 — 로그인 뒤 하루 한 번(대표 결정 2026-08-21).
+     주담당·부담당 둘 다 뜬다. 먼저 누른 쪽이 이기고 나머지는 「이미 가져왔습니다」. -->
+<div class="mb" id="mbErpAsk">
+  <div class="modal md" style="max-height:80vh;display:flex;flex-direction:column;">
+    <div class="mhead" style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);">
+      <div>
+        <div style="font-size:15px;font-weight:800;">📥 푸른ERP에 새 컨설팅이 있습니다</div>
+        <div style="font-size:11px;color:var(--t2);margin-top:2px;">일정관리로 가져올지 고르세요</div>
+      </div>
+      <button class="mclose" onclick="erpAskLater()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--t2);">✕</button>
+    </div>
+    <div style="padding:7px 16px;background:rgba(21,101,192,.07);font-size:11px;color:var(--accent);line-height:1.6;">
+      가져오면 사업장과 담당이 만들어집니다. <b>일정은 만들지 않습니다</b> — 언제 갈지는 직접 정하세요.
+    </div>
+    <div id="erpAskBody" style="overflow:auto;flex:1;min-height:120px;"></div>
+    <div id="erpAskFoot" style="padding:9px 16px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <span class="ea-count" style="font-size:11px;color:var(--t2);"></span>
+      <button class="btn btn-s ea-never" style="margin-left:auto;font-size:11.5px;padding:5px 11px;border-color:#e6a3a3;color:#991b1b;" onclick="erpAskNever()">안 가져옴</button>
+      <button class="btn btn-s" style="font-size:11.5px;padding:5px 11px;" onclick="erpAskLater()">나중에</button>
+      <button class="btn btn-p ea-add" style="font-size:11.5px;padding:5px 13px;" onclick="erpAskApply()">가져오기</button>
     </div>
   </div>
 </div>
@@ -1519,9 +1547,9 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 
 <script>
 // ===== localStorage 안전 래퍼 (용량 초과 방지) =====
-const LS_VALID_KEYS=['p_staff','p_types','p_cos','p_scheds','p_env','p_fieldState','p_lastUserId','p_lastLoginEmail','p_session','p_autoSession','p_loginFails','p_loginLock','p_roundlog','p_favCos','p_autobackups','p_autoDl','p_autoKeep','p_lastAutoDl','p_autoDlFreq','p_dashW','p_dashHintSeen','p_dashMCollapsed','p_dashMineFirst','p_photoHashes','p_photoLog','p_stampSize','p_slotMigrated','p_erpTypeMap','p_dashFilterOpen','p_conflictMatrix','p_conflictMigrated','p_calMode','p_attFilter','p_dashAtt','p_dashStatus','p_endedYear','p_tlStatus','p_tlMineOnly'];
+const LS_VALID_KEYS=['p_staff','p_types','p_cos','p_scheds','p_env','p_fieldState','p_lastUserId','p_lastLoginEmail','p_session','p_autoSession','p_loginFails','p_loginLock','p_roundlog','p_favCos','p_autobackups','p_autoDl','p_autoKeep','p_lastAutoDl','p_autoDlFreq','p_dashW','p_dashHintSeen','p_dashMCollapsed','p_dashMineFirst','p_photoHashes','p_photoLog','p_stampSize','p_slotMigrated','p_erpTypeMap','p_dashFilterOpen','p_conflictMatrix','p_conflictMigrated','p_calMode','p_attFilter','p_dashAtt','p_dashStatus','p_endedYear','p_tlStatus','p_tlMineOnly','p_erpConsHold'];
 // 사용자별 동적 키(접두사 매칭) — 예: p_endConfirmHidden_<userId>
-const LS_VALID_PREFIXES=['p_endConfirmHidden_'];
+const LS_VALID_PREFIXES=['p_endConfirmHidden_','p_erpAskDay_'];
 function lsKeyValid(k){ return LS_VALID_KEYS.includes(k)||LS_VALID_PREFIXES.some(p=>k.startsWith(p)); }
 // 시작 시: 이 앱의 잔재 키(p_ 접두사인데 목록에 없는 것)만 제거 — 다른 앱(포털·ERP 등) 키는 절대 건드리지 않음
 (function cleanupLS(){
@@ -1587,7 +1615,7 @@ const FB_CONFIG={
   appId:"1:936817166182:web:9bd31f70d0afdf5fca2aa7"
 };
 // localStorage 키 → Firebase 노드 매핑 (scal_ 접두어)
-const FB_NODES={p_staff:'scal_staff',p_types:'scal_types',p_cos:'scal_cos',p_scheds:'scal_scheds',p_env:'scal_env',p_fieldState:'scal_fieldState',p_conflictMatrix:'scal_conflictMatrix',p_erpTypeMap:'scal_erpTypeMap'};
+const FB_NODES={p_staff:'scal_staff',p_types:'scal_types',p_cos:'scal_cos',p_scheds:'scal_scheds',p_env:'scal_env',p_fieldState:'scal_fieldState',p_conflictMatrix:'scal_conflictMatrix',p_erpTypeMap:'scal_erpTypeMap',p_erpConsHold:'scal_erpConsHold'};
 let FB_READY=false, _fbDB=null, _fbSuppress=false;
 let _savePending=0, _saveFailed=false, _releaseLockAfterSave=false;
 const _recordWriteQueue={},_recordWritePending={};
@@ -2823,9 +2851,27 @@ function buildNotifications(){
     });
   });
 
+  /* 푸른ERP 새 컨설팅 — 창을 닫아도 여기 한 줄로 남는다(놓치면 안 되니까).
+     로그인 확인이 아직 안 돌았으면 _erpAskRows 가 비어 있어 아무것도 안 붙는다. */
+  if(typeof _erpAskRows!=='undefined'&&_erpAskRows.length){
+    items.push({type:'erpnew',color:'var(--accent)',icon:'📥',
+      title:`푸른ERP 새 컨설팅 ${_erpAskRows.length}건`,
+      sub:_erpAskRows.map(r=>r.name).slice(0,3).join(' · ')+(_erpAskRows.length>3?' 외':''),
+      date:today,onClick:'openErpAsk()'});
+  }
+  /* 막힌 건은 담당자가 풀 수 없다 — 창을 띄우지 않고 여기서만 알린다.
+     관리자에게는 무엇을 해야 하는지까지 적어 준다. */
+  if(typeof _erpAskBlocked!=='undefined'&&_erpAskBlocked.length){
+    items.push({type:'erpblock',color:'#cc7700',icon:'⚠️',
+      title:`푸른ERP 가져오지 못한 건 ${_erpAskBlocked.length}건`,
+      sub:admin?'환경설정 → 푸른ERP 연결에서 종류를 잇거나 직원을 추가하세요'
+               :'관리자 확인이 필요합니다 — '+_erpAskBlocked.map(r=>r.name).slice(0,2).join(' · '),
+      date:today});
+  }
+
   // 정렬: 오늘 > 마감임박(가까운순)
-  const order={today:0,mfail:1,pace:2,deadline:3};
-  items.sort((a,b)=>(order[a.type]-order[b.type])||(a.date>b.date?1:-1));
+  const order={erpnew:-1,erpblock:-0.5,today:0,mfail:1,pace:2,deadline:3};
+  items.sort((a,b)=>((order[a.type]??9)-(order[b.type]??9))||(a.date>b.date?1:-1));
   return items;
 }
 
@@ -2844,9 +2890,10 @@ function toggleNotifPanel(){
   if(!items.length){
     body.innerHTML=`<div style="text-align:center;padding:30px;color:var(--t2);font-size:13px;">✅ 오늘 일정·임박 알림이 없습니다</div>`;
   } else {
+    /* onClick 이 있는 줄은 눌러서 바로 처리할 수 있게 한다(ERP 새 컨설팅) */
     body.innerHTML=items.map(it=>`
-      <div class="notif-item" style="border-left:3px solid ${it.color};">
-        <div style="font-size:12px;font-weight:800;display:flex;align-items:center;gap:5px;">${it.icon} ${it.title}</div>
+      <div class="notif-item" style="border-left:3px solid ${it.color};${it.onClick?'cursor:pointer;':''}"${it.onClick?` onclick="toggleNotifPanel();${it.onClick}"`:''}>
+        <div style="font-size:12px;font-weight:800;display:flex;align-items:center;gap:5px;">${it.icon} ${it.title}${it.onClick?'<span style="margin-left:auto;font-size:10px;color:var(--accent);">열기 →</span>':''}</div>
         <div style="font-size:10px;color:var(--t2);margin-top:2px;">${it.sub}</div>
       </div>`).join('');
   }
@@ -3438,6 +3485,9 @@ function applySession(){
   // attFilter: 비관리자도 자유롭게 사용 가능 (필터로 본인만 보기 가능)
   renderSummaryBar();renderDash();renderCal();renderNotifBadge();
   setTimeout(showEndConfirmPopup,500);
+  /* 푸른ERP 에 새로 생긴 내 컨설팅이 있으면 물어본다(하루 한 번).
+     종료확인 팝업과 겹치지 않게 뒤에 둔다. 실패해도 앱은 그대로 돈다. */
+  setTimeout(()=>{ checkErpNewOnLogin(); },1600);
 }
 
 // isOwner: 이 일정이 내 것인지
@@ -5809,10 +5859,14 @@ function erpBuildPlan(){
        동명이인이 있어도 정확히 이어진다. 사번이 없는 옛 직원은 이름으로 내려간다. */
     const mainId=govStaffIdByErp(c.managerMain,mainNm);
     const subIds=(c.managerSubs||[]).map(sid=>govStaffIdByErp(sid,erpSidName(sid))).filter(Boolean);
-    const row={erpId:c.id,name:nm,code,govType,mainNm,subNms,mainId,subIds,rawType:erpConsRawType(c)};
+    const row={erpId:c.id,name:nm,code,govType,mainNm,subNms,mainId,subIds,rawType:erpConsRawType(c),mainSid:c.managerMain||''};
     if(!govType){ row.status='skip'; row.note=code?'연결 안 된 종류':'ERP에 컨설팅 유형이 비어 있음'; }
     else{
-      const exist=cos.find(x=>norm(x.name)===norm(nm)&&!x.deleted);
+      /* erpId 를 먼저 본다 — 이름으로만 짝지으면 ERP 에서 업체명을 조금만 고쳐도
+         ((주)수성 → 주식회사 수성) 새 컨설팅으로 잡혀 사업장이 두 개 생긴다.
+         가져올 때 co.erpId 를 이미 남기고 있으므로 그것을 먼저 쓴다. */
+      const exist=cos.find(x=>x.erpId&&x.erpId===c.id&&!x.deleted)
+                 ||cos.find(x=>norm(x.name)===norm(nm)&&!x.deleted);
       if(exist&&(exist.types||[]).includes(govType)){ row.status='exists'; row.note='이미 있음'; row.coId=exist.id; }
       else if(!mainId){ row.status='warn'; row.note=`주담당 '${mainNm||'미지정'}' 을(를) 일정관리에서 찾을 수 없음`; row.coId=exist?exist.id:''; }
       else if(exist){ row.status='addtype'; row.note='기존 사업장에 종류 추가'; row.coId=exist.id; }
@@ -5822,6 +5876,243 @@ function erpBuildPlan(){
   });
   return plan;
 }
+/* ══════ 푸른ERP 신규 컨설팅 — 담당자에게 물어보기 ══════
+   대표 결정(2026-08-21): 주담당·부담당 **둘 다** 물어본다 · 하루 한 번 창 ·
+   보류한 건은 관리자도 본다.
+
+   ⚠ 둘 다 물어보므로 **먼저 누른 쪽이 이기고 나머지는 막아야** 한다.
+      안 그러면 같은 사업장이 두 개 생긴다. 넣기 직전에 최신 목록을 다시 읽어
+      erpId 로 확인한다(erpBuildPlan 과 같은 기준).
+   ⚠ 푸른ERP 는 읽기만 한다. 동의·보류 기록은 전부 이 앱에만 남는다. */
+
+function getErpHold(){ try{return JSON.parse(localStorage.getItem('p_erpConsHold')||'{}');}catch(e){return{};} }
+function setErpHold(m){ lsSet('p_erpConsHold',JSON.stringify(m)); fbPush('p_erpConsHold',m); }
+
+/* 나와 관련된 건인가 — 주담당이거나 부담당이면 참(대표 결정: 둘 다) */
+function erpRowIsMine(r){
+  const me=myId();
+  if(!me)return false;
+  return r.mainId===me||(r.subIds||[]).includes(me);
+}
+
+/* 보류를 자동으로 푸는 경우
+   ① ERP 에서 주담당이 바뀌었다 — 담당이 바뀐 건 새로운 상황이라 다시 묻는다.
+      앞사람의 판단을 새 담당에게 물려줄 이유가 없다.
+   ② ERP 에서 그 컨설팅이 사라졌거나 종료됐다 — 남은 기록을 조용히 치운다.
+      (erpBuildPlan 이 종료 건을 빼므로 목록에 안 나타나는 것으로 판별한다) */
+function erpCleanHold(plan){
+  const hold=getErpHold();
+  const byId={}; plan.forEach(r=>{ byId[r.erpId]=r; });
+  let changed=false;
+  Object.keys(hold).forEach(id=>{
+    const r=byId[id];
+    if(!r){ delete hold[id]; changed=true; return; }               // ② 사라짐·종료
+    const cur=String(r.mainSid||'');
+    if(hold[id].mainSid!==undefined && String(hold[id].mainSid||'')!==cur){
+      delete hold[id]; changed=true;                                // ① 주담당 바뀜
+    }
+  });
+  if(changed)setErpHold(hold);
+  return hold;
+}
+
+/* 내가 가져올 수 있는 새 건 */
+function erpMyPending(plan){
+  const hold=getErpHold();
+  return plan.filter(r=>(r.status==='new'||r.status==='addtype')&&!hold[r.erpId]&&erpRowIsMine(r));
+}
+/* 나와 관련은 있는데 지금은 못 가져오는 건 — 관리자가 풀어야 한다 */
+function erpMyBlocked(plan){
+  const me=myId();
+  return plan.filter(r=>{
+    if(r.status!=='skip'&&r.status!=='warn')return false;
+    /* 담당자 짝짓기가 안 된 건(warn)은 mainId 가 비어 있어 erpRowIsMine 으로는
+       걸리지 않는다 — 이름으로도 한 번 본다. */
+    if(erpRowIsMine(r))return true;
+    const my=(getStaff().find(s=>s.id===me)||{}).name||'';
+    return !!my&&(r.mainNm===my||(r.subNms||[]).includes(my));
+  });
+}
+
+/* 하루 한 번 — 사람마다 따로 센다(한 PC 를 여럿이 쓸 수 있다) */
+function erpAskDayKey(){ return 'p_erpAskDay_'+(myId()||'x'); }
+function erpAskedToday(){ return localStorage.getItem(erpAskDayKey())===todayStr(); }
+function markErpAsked(){ lsSet(erpAskDayKey(),todayStr()); }
+
+let _erpAskRows=[], _erpAskBlocked=[];
+
+/* 로그인 뒤 한 번 — 조용히 확인하고, 있을 때만 창을 띄운다.
+   ERP 를 못 읽으면 아무 일도 하지 않는다(기존 수동 가져오기가 그대로 있다). */
+async function checkErpNewOnLogin(){
+  try{
+    if(!myId())return;                       // 열람자 계정은 대상 아님
+    if(erpAskedToday())return;
+    if(!ERP.loaded){ await erpLoadAll(); }
+    if(!ERP.loaded)return;
+    const plan=erpBuildPlan();
+    erpCleanHold(plan);
+    _erpAskRows=erpMyPending(plan);
+    _erpAskBlocked=erpMyBlocked(plan);
+    renderNotifBadge();
+    /* 창은 **내가 가져올 수 있는 건이 있을 때만** 띄운다.
+       막힌 건(종류 미연결·직원 없음)은 담당자가 할 수 있는 일이 없어서,
+       매일 창을 띄우면 아무 일도 못 하고 닫기만 하게 된다 → 알림 줄로만 남긴다. */
+    if(!_erpAskRows.length)return;
+    markErpAsked();                          // 창을 띄웠으면 오늘은 끝
+    openErpAsk();
+  }catch(e){ console.warn('[ERP 신규 확인]',e); }
+}
+
+function openErpAsk(){
+  renderErpAsk();
+  q('#mbErpAsk').classList.add('open');
+}
+
+function renderErpAsk(){
+  const body=q('#erpAskBody'), foot=q('#erpAskFoot');
+  if(!body)return;
+  const blocked=_erpAskBlocked.length
+    ? `<div class="erpask-blocked">⚠️ 관리자 확인이 필요한 건 ${_erpAskBlocked.length}건
+         <div class="d">${_erpAskBlocked.slice(0,3).map(r=>`${escAttr(r.name)} — ${escAttr(r.note||'')}`).join('<br>')}${_erpAskBlocked.length>3?'<br>…':''}</div>
+         <div class="d">컨설팅 종류 연결 또는 직원 등록이 안 돼 있습니다. 관리자에게 알려 주세요.</div>
+       </div>`
+    : '';
+  if(!_erpAskRows.length){
+    body.innerHTML=blocked||`<div style="padding:24px;text-align:center;color:var(--t2);font-size:12.5px;">가져올 새 컨설팅이 없습니다.</div>`;
+    foot.querySelector('.ea-count').textContent='';
+    ['.ea-add','.ea-never'].forEach(s=>{ const b=foot.querySelector(s); if(b)b.style.display='none'; });
+    return;
+  }
+  ['.ea-add','.ea-never'].forEach(s=>{ const b=foot.querySelector(s); if(b)b.style.display=''; });
+  body.innerHTML=blocked+_erpAskRows.map((r,i)=>{
+    const t=getTypes().find(x=>x.id===r.govType);
+    const role=r.mainId===myId()?'주담당':'부담당';
+    const others=[r.mainNm,...(r.subNms||[])].filter(Boolean).join(' · ');
+    return `<label style="display:flex;align-items:flex-start;gap:9px;padding:9px 12px;border-bottom:1px solid var(--sf2);cursor:pointer;">
+      <input type="checkbox" class="ea-chk" data-i="${i}" checked onchange="updateErpAskCount()" style="margin-top:2px;">
+      <span style="min-width:0;flex:1;">
+        <span style="font-size:13px;font-weight:800;">${escAttr(r.name)}</span>
+        <span style="font-size:10.5px;font-weight:800;color:var(--accent);background:rgba(21,101,192,.1);padding:1px 6px;border-radius:5px;margin-left:5px;">${role}</span>
+        ${r.status==='addtype'?'<span style="font-size:10.5px;font-weight:800;color:#cc7700;margin-left:4px;">기존 사업장에 종류만 추가</span>':''}
+        <span style="display:block;font-size:11px;color:var(--t2);margin-top:2px;">
+          ${escAttr((t&&(t.fullName||t.name))||r.rawType||'')}${t&&t.agency?' · '+escAttr(t.agency):''}
+        </span>
+        <span style="display:block;font-size:10.5px;color:var(--t2);margin-top:1px;">담당 ${escAttr(others||'-')}</span>
+      </span>
+    </label>`;
+  }).join('');
+  updateErpAskCount();
+}
+
+function updateErpAskCount(){
+  const n=Array.from(qa('#erpAskBody .ea-chk:checked')).length;
+  const foot=q('#erpAskFoot');
+  if(!foot)return;
+  foot.querySelector('.ea-count').textContent=`새 컨설팅 ${_erpAskRows.length}건`;
+  const add=foot.querySelector('.ea-add'), nev=foot.querySelector('.ea-never');
+  if(add){ add.disabled=!n; add.textContent=n?`${n}건 가져오기`:'가져오기'; }
+  if(nev){ nev.disabled=!n; nev.textContent=n?`${n}건 안 가져옴`:'안 가져옴'; }
+}
+
+function erpAskPicked(){
+  return Array.from(qa('#erpAskBody .ea-chk:checked')).map(c=>_erpAskRows[+c.dataset.i]).filter(Boolean);
+}
+
+/* 가져오기 — 넣기 직전에 최신 목록을 다시 확인한다.
+   주담당·부담당이 동시에 쓰므로, 먼저 누른 쪽이 이미 만들었을 수 있다. */
+function erpAskApply(){
+  const picks=erpAskPicked();
+  if(!picks.length)return;
+  const norm=s=>String(s||'').replace(/\s/g,'');
+  const cos=getCos();
+  let added=0,typed=0,already=0;
+  picks.forEach(r=>{
+    const exist=cos.find(x=>x.erpId&&x.erpId===r.erpId&&!x.deleted)
+              ||cos.find(x=>norm(x.name)===norm(r.name)&&!x.deleted);
+    if(exist){
+      const list=exist.types||[];
+      if(list.includes(r.govType)){ already++; return; }   // 남이 먼저 가져갔다
+      list.push(r.govType);
+      exist.types=list;
+      if(!exist.erpId)exist.erpId=r.erpId;
+      if(!exist.defAtt)exist.defAtt=r.mainId;
+      typed++;
+      return;
+    }
+    cos.push({id:uid(),name:r.name,defAtt:r.mainId,defCoAtts:r.subIds,types:[r.govType],
+      deadlines:{},customRounds:{},customMandatory:{},active:true,erpId:r.erpId});
+    added++;
+  });
+  setCos(cos);
+  closeModal('mbErpAsk');
+  renderDash();renderCal();renderSummaryBar();renderNotifBadge();
+  const parts=[];
+  if(added)parts.push(`사업장 ${added}곳 추가`);
+  if(typed)parts.push(`종류 ${typed}건 추가`);
+  if(already)parts.push(`${already}건은 이미 다른 담당자가 가져왔습니다`);
+  toast(parts.join(' · ')||'변경된 것이 없습니다');
+}
+
+/* 나중에 — 아무것도 기록하지 않는다. 내일 다시 묻는다.
+   창을 그냥 닫아도 같다(실수로 닫아도 잃지 않게). */
+function erpAskLater(){ closeModal('mbErpAsk'); }
+
+/* 안 가져옴 — 지우지 않고 보류로 남긴다.
+   ERP 에 있는 건 회사가 실제로 수주한 사업이다. 「일정관리에 안 넣기로 한 것」과
+   「아예 없는 것」은 달라서, 나중에 왜 없는지 답할 수 있어야 한다. */
+function erpAskNever(){
+  const picks=erpAskPicked();
+  if(!picks.length)return;
+  if(!confirm(`${picks.length}건을 일정관리로 가져오지 않습니다.\n\n`
+    +`지워지지는 않습니다 — 환경설정 「푸른ERP 연결」에서 언제든 되살릴 수 있습니다.\n`
+    +`푸른ERP에서 주담당이 바뀌면 다시 물어봅니다.\n\n계속할까요?`))return;
+  const hold=getErpHold(), me=getStaff().find(s=>s.id===myId());
+  picks.forEach(r=>{
+    hold[r.erpId]={ at:Date.now(), by:myId(), byName:(me&&me.name)||'', name:r.name, mainSid:r.mainSid||'' };
+  });
+  setErpHold(hold);
+  _erpAskRows=_erpAskRows.filter(r=>!hold[r.erpId]);
+  renderNotifBadge();
+  if(!_erpAskRows.length&&!_erpAskBlocked.length){ closeModal('mbErpAsk'); toast('보류했습니다'); return; }
+  renderErpAsk();
+  toast(`${picks.length}건 보류`);
+}
+
+/* 보류 되살리기 — 환경설정에서. 관리자는 남의 것도 되살릴 수 있다(대표 결정). */
+function erpUnhold(erpId){
+  const hold=getErpHold();
+  if(!hold[erpId])return;
+  const nm=hold[erpId].name||'';
+  delete hold[erpId];
+  setErpHold(hold);
+  renderErpHold();
+  toast(`${nm} 되살렸습니다 — 담당자가 다음에 로그인하면 다시 물어봅니다`);
+}
+
+/* 환경설정 「푸른ERP 연결」 아래에 붙는 보류 목록.
+   관리자는 전부, 담당자는 자기가 보류한 것만 본다. */
+function renderErpHold(){
+  const box=q('#erpHoldBox');
+  if(!box)return;
+  const hold=getErpHold();
+  const me=myId(), admin=isAdmin();
+  const ids=Object.keys(hold).filter(id=>admin||hold[id].by===me);
+  if(!ids.length){ box.style.display='none'; box.innerHTML=''; return; }
+  box.style.display='';
+  ids.sort((a,b)=>(hold[b].at||0)-(hold[a].at||0));
+  box.innerHTML=`<div style="font-size:11.5px;font-weight:800;color:var(--t2);margin:8px 0 5px;">
+      가져오지 않기로 한 건 ${ids.length}건
+      <span style="font-weight:600;">— 되살리면 담당자에게 다시 물어봅니다</span>
+    </div>`
+    +ids.map(id=>`<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;border-top:1px solid var(--sf2);font-size:11.5px;">
+        <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+          ${escAttr(hold[id].name||id)}
+          <span style="color:var(--t2);margin-left:6px;">${escAttr(hold[id].byName||'')} · ${escAttr(new Date(hold[id].at||0).toISOString().slice(0,10))}</span>
+        </span>
+        <button class="btn btn-s" style="font-size:10.5px;padding:3px 8px;white-space:nowrap;" onclick="erpUnhold('${escAttr(id)}')">되살리기</button>
+      </div>`).join('');
+}
+
 function openErpImport(){
   if(!ERP.loaded){ toast('먼저 ERP에서 불러오기를 실행하세요','err'); return; }
   _erpPlan=erpBuildPlan();
@@ -5888,6 +6179,7 @@ async function openErpTab(){
   q('#erpStatus').textContent='ERP 데이터를 불러오는 중…';
   await erpLoadAll();
   renderErpMap();
+  renderErpHold();
 }
 
 // ===== 환경설정 =====
