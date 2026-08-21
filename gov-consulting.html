@@ -953,6 +953,15 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
         <button class="btn btn-s" id="importJsonBtn" style="width:100%;padding:10px;">JSON 파일 가져오기</button>
         <div id="importStatus" style="font-size:11px;color:var(--ok);font-weight:700;margin-top:8px;"></div>
       </div>
+      <!-- 클라우드 자동백업 — 파이어베이스는 동기화지 백업이 아니라서 따로 쌓는다 -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+          <div style="font-size:13px;font-weight:800;">☁ 클라우드 자동백업 (하루 2회 · 약 10일치)</div>
+          <button class="restore-btn" id="sbkNowBtn" style="border-color:var(--accent);color:var(--accent);background:transparent;">지금 백업</button>
+        </div>
+        <div style="font-size:11px;color:var(--t2);margin-bottom:10px;">서버에 스스로 쌓입니다. 이 기기를 잃어버리거나 브라우저 저장소가 지워져도 남습니다. <b>복원은 관리자만</b> 할 수 있습니다.</div>
+        <div id="serverBkList" style="max-height:180px;overflow-y:auto;"></div>
+      </div>
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
           <div style="font-size:13px;font-weight:800;">🛡 자동 백업 (이 기기)</div>
@@ -1514,7 +1523,7 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 
 <script>
 // ===== localStorage 안전 래퍼 (용량 초과 방지) =====
-const LS_VALID_KEYS=['p_staff','p_types','p_cos','p_scheds','p_env','p_fieldState','p_lastUserId','p_lastLoginEmail','p_session','p_autoSession','p_loginFails','p_loginLock','p_roundlog','p_favCos','p_autobackups','p_autoKeep','p_dashW','p_dashHintSeen','p_dashMCollapsed','p_dashMineFirst','p_photoHashes','p_photoLog','p_stampSize','p_slotMigrated','p_erpTypeMap','p_dashFilterOpen','p_conflictMatrix','p_conflictMigrated','p_calMode','p_attFilter','p_dashAtt','p_dashStatus','p_endedYear','p_tlStatus','p_tlMineOnly','p_erpConsHold'];
+const LS_VALID_KEYS=['p_staff','p_types','p_cos','p_scheds','p_env','p_fieldState','p_lastUserId','p_lastLoginEmail','p_session','p_autoSession','p_loginFails','p_loginLock','p_roundlog','p_favCos','p_autobackups','p_autoKeep','p_dashW','p_dashHintSeen','p_dashMCollapsed','p_dashMineFirst','p_photoHashes','p_photoLog','p_stampSize','p_slotMigrated','p_erpTypeMap','p_dashFilterOpen','p_conflictMatrix','p_conflictMigrated','p_calMode','p_attFilter','p_dashAtt','p_dashStatus','p_endedYear','p_tlStatus','p_tlMineOnly','p_erpConsHold','p_lastServerBk'];
 // 사용자별 동적 키(접두사 매칭) — 예: p_endConfirmHidden_<userId>
 const LS_VALID_PREFIXES=['p_endConfirmHidden_','p_erpAskDay_'];
 function lsKeyValid(k){ return LS_VALID_KEYS.includes(k)||LS_VALID_PREFIXES.some(p=>k.startsWith(p)); }
@@ -3120,6 +3129,141 @@ function importJson(file){
     }catch(err){toast('파일 읽기 실패','err');}
   };
   r.readAsText(file);
+}
+
+/* ══════ 서버 자동백업 (클라우드) ══════
+   대표 질문(2026-08-21) "파이어베이스에 저장하는데 다운받을 필요 없지 않나".
+   맞는 지적이지만 **파이어베이스는 동기화지 백업이 아니다** — 실수로 지우면
+   클라우드에서도 같이 지워진다(2026-07 실데이터 사고가 그랬다).
+   푸른이알피에 이미 있는 serverBackups 방식을 그대로 가져온다.
+
+   ⚠ 이 칸은 **동기화 대상이 아니다**(FB_NODES 에 넣지 않는다). 넣으면 백업이
+      다시 앱 데이터로 흘러 들어온다.
+   ⚠ pu-erp 는 데이터가 커서 조각내기가 필요했지만, 여기는 사업장 수십·일정
+      수백 줄이라 한 번에 쓴다. 그래도 크기를 재서 한도 근처면 건너뛴다.
+   ⚠ **콘솔 규칙이 있어야 저장된다.** 없으면 조용히 실패하는 대신 화면에 알린다. */
+const SBK_NODE='scal_serverBackups', SBK_IDX='scal_serverBackupsIndex';
+const SBK_KEEP=20;                    // 아침·저녁 2회 × 약 10일
+const SBK_MAX_CHARS=4000000;          // 한 번 쓰기 한도(16MB)의 1/4 안쪽
+
+/* 하루 두 번 — 오후 2시 전이면 아침(YYYY-MM-DD), 뒤면 저녁(-pm).
+   사전순이 곧 시간순이라 옛것 정리가 단순해진다. */
+function sbkId(d){
+  const t=d||new Date();
+  const ymd=`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+  return t.getHours()<14?ymd:ymd+'-pm';
+}
+function sbkSummary(data){
+  const n=k=>{ try{ const v=JSON.parse(data[k]||'[]'); return Array.isArray(v)?v.length:0; }catch(e){ return 0; } };
+  return `사업장 ${n('p_cos')} · 일정 ${n('p_scheds')} · 직원 ${n('p_staff')} · 종류 ${n('p_types')}`;
+}
+
+/* 백업할 만한 내용인가 — 빈 스냅샷을 올리면 멀쩡한 백업 자리를 덮는다.
+   2026-07 사고처럼 데이터가 비어 버린 상태에서 백업이 돌면 안 된다. */
+function sbkWorthSaving(data){
+  try{
+    const cos=JSON.parse(data.p_cos||'[]'), sch=JSON.parse(data.p_scheds||'[]');
+    return (Array.isArray(cos)&&cos.length>0)||(Array.isArray(sch)&&sch.length>0);
+  }catch(e){ return false; }
+}
+
+function serverBackupDaily(force){
+  if(!FB_READY||!_fbDB)return Promise.resolve(false);
+  const id=sbkId();
+  if(!force&&localStorage.getItem('p_lastServerBk')===id)return Promise.resolve(false);
+  const data=buildBackupData();
+  if(!sbkWorthSaving(data)){ console.warn('[서버백업] 데이터가 비어 건너뜀'); return Promise.resolve(false); }
+  const payload=JSON.stringify(data);
+  if(payload.length>SBK_MAX_CHARS){
+    console.warn('[서버백업] 스냅샷이 너무 커 건너뜀',payload.length);
+    return Promise.resolve(false);
+  }
+  const u={};
+  u[SBK_NODE+'/'+id]={savedAt:new Date().toISOString(),version:1,data};
+  u[SBK_IDX+'/'+id]={savedAt:new Date().toISOString(),summary:sbkSummary(data),size:payload.length};
+  return _fbDB.ref().update(u).then(()=>{
+    lsSet('p_lastServerBk',id);
+    console.log('[서버백업] 저장',id,payload.length+'자');
+    return sbkPrune();
+  }).then(()=>true).catch(e=>{
+    console.warn('[서버백업] 실패',e);
+    /* 규칙이 없으면 permission_denied 가 난다 — 「인터넷 문제」로 오해하지 않게 구분해 알린다. */
+    if(String(e&&e.code||e).indexOf('PERMISSION_DENIED')>=0){
+      sbkNeedRule=true;
+      renderServerBk();
+    }
+    return false;
+  });
+}
+
+/* 옛 백업 정리 — 목록(인덱스)만 읽어 가볍게 판단한다. */
+function sbkPrune(){
+  return _fbDB.ref(SBK_IDX).once('value').then(s=>{
+    const ids=Object.keys(s.val()||{}).sort();
+    if(ids.length<=SBK_KEEP)return 0;
+    const old=ids.slice(0,ids.length-SBK_KEEP);
+    const u={};
+    old.forEach(id=>{ u[SBK_NODE+'/'+id]=null; u[SBK_IDX+'/'+id]=null; });
+    return _fbDB.ref().update(u).then(()=>old.length);
+  }).catch(()=>0);
+}
+
+let sbkNeedRule=false, _sbkList=[];
+
+function renderServerBk(){
+  const box=q('#serverBkList');
+  if(!box)return;
+  if(sbkNeedRule){
+    box.innerHTML=`<div style="border:1.5px solid #e6a3a3;background:#fdf0f0;color:#991b1b;border-radius:9px;padding:10px 12px;font-size:12px;line-height:1.6;">
+      <b>클라우드 백업 칸이 아직 열려 있지 않습니다.</b><br>
+      파이어베이스 콘솔에서 규칙 두 줄을 넣어 주셔야 저장됩니다 —
+      <span style="color:#7f1d1d;">docs/파이어베이스-규칙-추가.md</span> 참고.
+      그때까지는 이 기기 스냅샷과 수동 내보내기로만 남습니다.
+    </div>`;
+    return;
+  }
+  if(!_sbkList.length){
+    box.innerHTML=`<div style="font-size:11.5px;color:var(--t2);padding:6px 2px;">아직 저장된 클라우드 백업이 없습니다. 잠시 뒤 자동으로 하나 만들어집니다.</div>`;
+    return;
+  }
+  box.innerHTML=_sbkList.map(r=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-top:1px solid var(--sf2);font-size:11.5px;">
+      <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+        <b>${escAttr(r.id.replace('-pm',' 오후'))}</b>
+        <span style="color:var(--t2);margin-left:6px;">${escAttr(r.summary||'')}</span>
+      </span>
+      <button class="btn btn-s" style="font-size:10.5px;padding:3px 9px;white-space:nowrap;" onclick="restoreServerBk('${escAttr(r.id)}')">복원</button>
+    </div>`).join('');
+}
+
+/* 목록 불러오기 — 인덱스만 읽으므로 가볍다(본문은 복원할 때만 받는다). */
+function loadServerBk(){
+  const box=q('#serverBkList');
+  if(!FB_READY||!_fbDB){ if(box)box.innerHTML='<div style="font-size:11.5px;color:var(--t2);padding:6px 2px;">클라우드에 연결되면 보입니다.</div>'; return; }
+  if(box)box.innerHTML='<div style="font-size:11.5px;color:var(--t2);padding:6px 2px;">불러오는 중…</div>';
+  _fbDB.ref(SBK_IDX).once('value').then(s=>{
+    const raw=s.val()||{};
+    _sbkList=Object.keys(raw).sort().reverse().map(id=>({id,...raw[id]}));
+    sbkNeedRule=false;
+    renderServerBk();
+  }).catch(e=>{
+    if(String(e&&e.code||e).indexOf('PERMISSION_DENIED')>=0)sbkNeedRule=true;
+    renderServerBk();
+  });
+}
+
+function restoreServerBk(id){
+  if(!isAdmin()){ toast('관리자만 복원할 수 있습니다','err'); return; }
+  const row=_sbkList.find(r=>r.id===id);
+  showConfirm(`${id.replace('-pm',' 오후')} 클라우드 백업으로 복원합니다.\n${(row&&row.summary)||''}\n\n지금 데이터를 덮어쓰고 클라우드에도 반영됩니다.`,()=>{
+    takeSnapshot('복원 직전 자동저장');   // 되돌릴 자리를 먼저 만든다
+    _fbDB.ref(SBK_NODE+'/'+id+'/data').once('value').then(s=>{
+      const data=s.val();
+      if(!data){ toast('백업 내용을 읽지 못했습니다','err'); return; }
+      applyBackup(data,q('#importStatus'));
+      renderAutoBackups();
+    }).catch(e=>{ toast('복원 실패 — '+((e&&e.message)||e),'err'); });
+  });
 }
 
 // ===== 자동 백업 (이 기기 localStorage 스냅샷, 최근 8개) =====
@@ -7284,7 +7428,7 @@ function bind(){
       if(!ERP.loaded&&!ERP.err)erpLoadAll().catch(()=>{});
     }
     if(btn.dataset.stab==='roundlog')renderRoundLog();
-    if(btn.dataset.stab==='backup')renderAutoBackups();
+    if(btn.dataset.stab==='backup'){renderAutoBackups();loadServerBk();}
     if(btn.dataset.stab==='erp')openErpTab();
   });
   q('#erpReloadBtn').onclick=openErpTab;
@@ -7374,6 +7518,9 @@ function bind(){
   q('#photoGalBtn').onclick=()=>openPhotoGal();
   q('#importJsonBtn').onclick=()=>q('#importJsonFi').click();
   q('#importJsonFi').onchange=e=>{const f=e.target.files[0];if(f)importJson(f);e.target.value='';};
+  const _sbn=q('#sbkNowBtn'); if(_sbn)_sbn.onclick=function(){ _sbn.disabled=true; _sbn.textContent='백업 중…';
+    serverBackupDaily(true).then(function(ok){ toast(ok?'클라우드에 백업했습니다':'백업하지 못했습니다 — 아래 안내를 확인하세요', ok?'':'err'); loadServerBk(); })
+    .then(function(){ _sbn.disabled=false; _sbn.textContent='지금 백업'; }); };
   const _snb=q('#snapNowBtn'); if(_snb)_snb.onclick=()=>{ takeSnapshot('수동 스냅샷'); renderAutoBackups(); toast('현재 데이터를 스냅샷으로 저장했습니다'); };
   // Company modal
   q('#mCoCls').onclick=()=>closeModal('mbCo');
@@ -7563,6 +7710,10 @@ function init(){
     };
   }
   setTimeout(autoSnapshotDaily,8000);
+  /* 클라우드 자동백업 — 하루 두 번(오전·오후). 파이어베이스는 동기화지 백업이
+     아니라서 실수로 지우면 클라우드에서도 사라진다. 그 대비다.
+     푸른이알피의 serverBackups 와 같은 방식(대표 지시 2026-08-21). */
+  setTimeout(function(){ serverBackupDaily(); }, 12000);
   /* 파일 자동 다운로드는 2026-08-21 대표 지시로 없앴다 — 로그인할 때마다
      다운로드 폴더에 JSON 이 쌓였다. 브라우저 안 스냅샷(위 줄)과 수동
      내보내기는 그대로 둔다. */
