@@ -39,6 +39,16 @@ function tokenizeOne(db, bucket, uid, year, id, out) {
     bucket.downloadUrl(photoPath(uid, year, id, 'thumbs'))
   ]).then(function (urls) {
     if (!urls[0] && !urls[1]) { out.skipped++; return; }   // 창고에 파일 자체가 없다
+    /* ⚠ 한쪽만 만들어진 것을 «세어서 알려 준다» (2026-08-21 조사). 한 번 돌린 뒤
+       32장이 미리보기 주소만 있고 원본 주소가 없었는데, 예전 셈법으로는 그것도
+       그냥 「채움」이라 대표 화면에는 다 된 것처럼 보였다. 원본이 정말 없으면
+       미리보기도 없을 테니, 한쪽만 빈 것은 그때그때 삐끗한 것이다 — 세어서
+       보여 주면 「한 번 더 눌러야 하는지」를 대표가 알 수 있다. */
+    if (!urls[0] || !urls[1]) {
+      out.partial = (out.partial || 0) + 1;
+      console.warn('[주소 채우기:반만]', uid, year, id,
+        '원본=' + (urls[0] ? 'O' : 'X') + ' 미리보기=' + (urls[1] ? 'O' : 'X'));
+    }
     return db.writeUrls(uid, year, id, { fullUrl: urls[0] || null, thumbUrl: urls[1] || null })
       .then(function () { out.linked++; });
   }).catch(function (e) {
@@ -64,7 +74,7 @@ function migrateOne(db, bucket, uid, year, id, out) {
       /* 방금 옮긴 사진도 주소를 바로 적는다 — 다음 통과를 기다릴 이유가 없다.
          ⚠ 주소 채우기 실패가 이사 성공을 뒤집으면 안 된다(사진은 이미 안전하다). */
       .then(function () {
-        return tokenizeOne(db, bucket, uid, year, id, { linked: 0, skipped: 0, failed: 0 });
+        return tokenizeOne(db, bucket, uid, year, id, { linked: 0, skipped: 0, failed: 0, partial: 0 });
       });
   }).catch(function (e) {
     console.warn('[사진 이사:서버]', uid, year, id, e && e.message);
@@ -106,7 +116,8 @@ function migrateOwner(db, bucket, uid, quotaLeft, out) {
 
 function migrateBatch(db, bucket, limit) {
   var cap = (Number(limit) > 0) ? Number(limit) : 30;
-  var out = { moved: 0, linked: 0, skipped: 0, failed: 0, done: true };
+  /* partial — 주소를 «반만» 만든 장수. 왜 세는지는 tokenizeOne 에 적었다. */
+  var out = { moved: 0, linked: 0, skipped: 0, failed: 0, partial: 0, done: true };
   /* 주소 채우기(linked)도 한도에 넣는다 — 한 번에 수백 장의 토큰을 만들면
      함수 시간제한(300초)에 걸린다. 여러 번 누르면 이어서 한다(멱등). */
   function quotaLeft() { return (out.moved + out.linked) < cap; }
