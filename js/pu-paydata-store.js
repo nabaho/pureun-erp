@@ -964,6 +964,111 @@
     return deps.db.ref(valueBoxPath(slot, owner)).once('value').then(function (s) { return s.val() || {}; });
   }
 
+  /* ══════ 저장한 값 고치기·지우기 (대표 승낙 2026-08-21, 목업 안 A + 안 C) ══════
+     여태 고치고 지우는 것은 판독 패널에서 **저장하기 전에만** 됐다. 한 번 저장하면
+     값 표에서는 손댈 수 없었다 — 1↔7·4↔9 필체 오독이 한 칸 섞이면 그 숫자가
+     그대로 더존까지 갔다.
+
+     ⚠ 여기서 지우는 것은 **값뿐이다.** 원본 사진·파일은 창고에 그대로 있고
+     보유기간도 그대로다 — 곧바로 다시 판독할 수 있다. */
+
+  /* 이 사업장·이 달에 값이 있는 사람 수를 다시 센다. 사업장 목록의 「표 N명」이
+     이 수를 읽는다(siteState) — 안 고치면 값이 다 없어져도 목록은 우긴다. */
+  function countValuePeople(box, companyId) {
+    var seen = {}, n = 0;
+    Object.keys(box || {}).forEach(function (id) {
+      var r = box[id];
+      if (!r || !r.name) return;
+      if (companyId && String(r.companyId || '') !== String(companyId)) return;
+      if (!seen[r.name]) { seen[r.name] = 1; n++; }
+    });
+    return n;
+  }
+
+  /* 값 한 칸 고치기(안 A).
+     ⚠ 그 줄을 **읽어서** 고친다. 화면이 들고 있는 줄을 그대로 덮어쓰면, 그 사이
+     남이 고친 옆 칸이 옛 값으로 되돌아간다. */
+  function editValueCell(o) {
+    o = o || {};
+    var slot = o.slot, rowId = o.rowId, item = String(o.item || '');
+    if (!slot || !rowId || !item) return Promise.reject(new Error('어느 값인지 알 수 없습니다'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var where = valuePath(slot, rowId, o.owner);
+    return deps.db.ref(where).once('value').then(function (snap) {
+      var row = snap.val();
+      if (!row) throw new Error('그 값을 찾을 수 없습니다 — 이미 지워졌을 수 있습니다');
+      var pairs = (row.pairs || []).slice(), hit = -1;
+      for (var i = 0; i < pairs.length; i++) {
+        if (pairs[i] && pairs[i].item === item) { hit = i; break; }
+      }
+      if (hit < 0) throw new Error('그 항목을 찾을 수 없습니다');
+      pairs[hit] = { item: item, value: String(o.value == null ? '' : o.value) };
+      var up = {};
+      up[where + '/pairs'] = pairs;
+      /* 사람이 원본을 옆에 놓고 고친 것이니 그것이 곧 확인이다 — 노란 칠을 걷는다
+         (저장이 곧 확인이라는 buildValueRows 의 원칙과 같다). */
+      up[where + '/confirmed'] = true;
+      /* 값 표는 at 오름차순으로 **나중 값이 이긴다**. 고친 값이 옛 시각으로 남으면
+         같은 항목을 가진 다른 서류 값에 그대로 덮여, 고친 것이 화면에서 사라진다. */
+      up[where + '/at'] = Number(o.at || Date.now());
+      up[where + '/by'] = deps.uid || '';
+      return deps.db.ref().update(up);
+    });
+  }
+
+  /* 값 한 칸 지우기(안 A). 그 줄의 마지막 항목이면 줄 자체를 없앤다 —
+     항목 없는 빈 줄이 남으면 값 표에는 안 보이면서 사람 수에는 들어간다. */
+  function deleteValueCell(o) {
+    o = o || {};
+    var slot = o.slot, rowId = o.rowId, item = String(o.item || '');
+    if (!slot || !rowId || !item) return Promise.reject(new Error('어느 값인지 알 수 없습니다'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(valueBoxPath(slot, o.owner)).once('value').then(function (snap) {
+      var box = snap.val() || {};
+      var row = box[rowId];
+      if (!row) throw new Error('그 값을 찾을 수 없습니다 — 이미 지워졌을 수 있습니다');
+      var left = (row.pairs || []).filter(function (pr) { return !pr || pr.item !== item; });
+      var rowGone = !left.length;
+      var where = valuePath(slot, rowId, o.owner);
+      var up = {};
+      if (rowGone) { up[where] = null; delete box[rowId]; }
+      else { up[where + '/pairs'] = left; box[rowId] = Object.assign({}, row, { pairs: left }); }
+      if (o.companyId) up[valsPath(o.companyId, slot)] = countValuePeople(box, o.companyId);
+      return deps.db.ref().update(up).then(function () {
+        return { rowGone: rowGone, left: left.length };
+      });
+    });
+  }
+
+  /* 서류 하나가 만든 값을 통째로 걷는다 — 판독 취소(안 C).
+     ⚠ 값 칸은 그 달 **전체 사업장**이 한 자리에 있다. 출처 번호만 보고 걷으면
+     우연히 같은 번호를 쓴 남의 사업장 값까지 사라진다 — companyId 로 한 번 더 가린다.
+     ⚠ sourceId 를 안 주면 거절한다. 빈 값으로 걷으면 출처가 비어 있는 줄이
+     통째로 날아가고, 되돌릴 길이 없다. */
+  function deleteValuesBySource(o) {
+    o = o || {};
+    var slot = o.slot, sourceId = String(o.sourceId == null ? '' : o.sourceId);
+    if (!slot) return Promise.reject(new Error('어느 달인지 알 수 없습니다'));
+    if (!sourceId) return Promise.reject(new Error('어느 서류인지 알 수 없습니다'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(valueBoxPath(slot, o.owner)).once('value').then(function (snap) {
+      var box = snap.val() || {};
+      var up = {}, n = 0;
+      Object.keys(box).forEach(function (id) {
+        var r = box[id];
+        if (!r) return;
+        if (String(r.sourceId || '') !== sourceId) return;
+        if (o.companyId && String(r.companyId || '') !== String(o.companyId)) return;
+        up[valuePath(slot, id, o.owner)] = null;
+        delete box[id];
+        n++;
+      });
+      if (!n) return 0;
+      if (o.companyId) up[valsPath(o.companyId, slot)] = countValuePeople(box, o.companyId);
+      return deps.db.ref().update(up).then(function () { return n; });
+    });
+  }
+
   /* ⚠ confirmValue(값 한 줄만 확인 처리) 는 **일부러 두지 않는다**(2026-08-15).
      만들어 두었지만 부르는 곳이 한 군데도 없었다 — 있는 것처럼 보이는 함수가
      저장 층에 남아 있으면, 다음 사람이 「확인 처리는 이미 된다」고 믿고 넘어간다.
@@ -1512,6 +1617,9 @@
     findValueOverlaps: findValueOverlaps,
     saveValues: saveValues,
     listValues: listValues,
+    editValueCell: editValueCell,
+    deleteValueCell: deleteValueCell,
+    deleteValuesBySource: deleteValuesBySource,
     ERP_COMPANIES: ERP_COMPANIES,
     normalizeCompanies: normalizeCompanies,
     listCompanies: listCompanies,
