@@ -2694,7 +2694,8 @@ function screenDrawer() {
     + (S.isKeepKind(App.kind) ? ''
       : '<button class="btn sm" onclick="App.go(\'values\')">📋 이 달 값</button>'
         + (S.canHandoffPayroll()
-          ? '<button class="btn sm" onclick="handoffMonth()">📤 급여관리에 알리기</button>' : ''))
+          ? '<button class="btn sm" onclick="handoffMonth()"' + (App.handoffBusy ? ' disabled' : '') + '>'
+          + (App.handoffBusy ? '넘기는 중…' : '📤 급여관리에 알리기') + '</button>' : ''))
     + '</span></div>';
 
   if (!S.isKeepKind(App.kind)) {
@@ -2782,6 +2783,14 @@ function screenDrawer() {
    사실만 handoff_log 에 남는다). 권한 없는 사람은 단추 자체가 안 보인다. */
 function handoffMonth() {
   if (!S.canHandoffPayroll()) return;
+  /* 두 번 눌리는 것을 막는다 — 값을 서버에서 읽는 사이(fetchValues)에 단추가
+     그대로 살아 있어, 빠르게 두 번 누르면 물음이 두 번 뜨고 두 번 넘어갔다.
+     ⚠ 어디로 빠져나가든 반드시 풀어야 한다 — 안 풀면 새로고침 전에는
+     영영 못 넘긴다(취소를 눌렀을 때·값이 없을 때·실패했을 때 모두). */
+  if (App.handoffBusy) return;
+  App.handoffBusy = true;
+  App.render();
+  const unlock = () => { App.handoffBusy = false; App.render(); };
   /* ⚠ 값을 **여기서 새로 읽는다** — 화면이 들고 있는 App.values 를 세면 안 된다.
      App.values 는 「이 달 값 보기」에 들어갈 때만 채워진다. 업체를 바꿔 들어오거나
      기준 월을 바꾸거나 남의 자리로 옮기는 길에는 채워지지도, 비워지지도 않는다.
@@ -2795,11 +2804,11 @@ function handoffMonth() {
        「이 사업장 이 달 자료가 정리됐나」다(설계서 4장). */
     const g = valueGridModel(values);
     const total = g.people.reduce((n, p) => n + Object.keys(p.cells).length, 0);
-    if (!total) { alert('이 달에 정리된 값이 없습니다.\n먼저 서류를 판독해 값을 만들어 주세요.'); return null; }
-    if (!confirm(companyName + ' ' + month + ' 값(' + total + '줄)이 정리됐다고 급여관리에 알릴까요?\n\n값 자체는 넘어가지 않습니다 — 계산은 바깥 프로그램에서 하십니다.')) return null;
+    if (!total) { unlock(); alert('이 달에 정리된 값이 없습니다.\n먼저 서류를 판독해 값을 만들어 주세요.'); return null; }
+    if (!confirm(companyName + ' ' + month + ' 값(' + total + '줄)이 정리됐다고 급여관리에 알릴까요?\n\n값 자체는 넘어가지 않습니다 — 계산은 바깥 프로그램에서 하십니다.')) { unlock(); return null; }
     return S.handoffToPayroll({ companyId: companyId, companyName: companyName, month: month, rowCount: total })
-      .then(() => alert('급여관리 수신함으로 넘겼습니다.'));
-  }).catch(e => alert('넘기지 못했습니다 — ' + (e.code || e.message)));
+      .then(() => { unlock(); alert('급여관리 수신함으로 넘겼습니다.'); });
+  }).catch(e => { unlock(); alert('넘기지 못했습니다 — ' + (e.code || e.message)); });
 }
 window.handoffMonth = handoffMonth;
 
