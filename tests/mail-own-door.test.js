@@ -16,6 +16,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const cp = require('node:child_process');
 
 const ROOT = path.join(__dirname, '..');
 const cards = fs.readFileSync(path.join(ROOT, 'pu-cards.html'), 'utf8');
@@ -35,8 +36,20 @@ test('★ 메일 아이콘은 제 이름·제 그림으로 따로 앉는다', ()
   const src = (mf.icons || []).map(i => i.src).join('|');
   assert.doesNotMatch(src, /(^|\|)icon-(192|512)\.png/,
     '★ 푸른 ERP 기본 아이콘을 그대로 쓰면 바탕화면에서 구별이 안 됩니다.');
+  /* ★ 「내 컴퓨터에 있나」가 아니라 「저장소에 올라갔나」를 본다.
+     .gitignore 가 *.png 를 통째로 막고 아이콘만 하나씩 풀어 주고 있어(개인정보가
+     담긴 스캔이 png 로 올라오는 것을 막는 규칙이다), 그림을 새로 그려도 조용히
+     안 올라간다 — 실제로 그랬다. 그러면 배포된 화면에서는 아이콘이 404 다. */
   (mf.icons || []).forEach(function (i) {
     assert.ok(fs.existsSync(path.join(ROOT, i.src)), '아이콘 파일이 없습니다: ' + i.src);
+    let tracked = true;
+    try {
+      cp.execFileSync('git', ['ls-files', '--error-unmatch', i.src],
+        { cwd: ROOT, stdio: 'ignore' });
+    } catch (e) { tracked = false; }
+    assert.ok(tracked,
+      '★ ' + i.src + ' 이 저장소에 없습니다 — .gitignore 의 *.png 에 막힌 것입니다.'
+      + ' `!' + i.src + '` 를 더해 주세요. 안 그러면 배포된 화면에서 아이콘이 안 뜹니다.');
   });
 });
 
