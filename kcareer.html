@@ -303,6 +303,21 @@ html.dark .empty{color:var(--text-mute)}
 /* 제목 + OCR 드롭존을 한 줄(하나의 헤더 블록)로 — OCR이 있는 실적/경력 화면만 */
 .page:has(> .ocr-zone){display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px}
 .page:has(> .ocr-zone) > .page-head{flex:1 1 240px;margin-bottom:0}
+
+/* ===== 목록 화면 머리줄을 한 줄로 =====
+   전에는 ①제목·설명 ②OCR 박스 ③툴바 ④원본없음/표시개수 로 네 줄이었다.
+   제목·설명은 상단 이름표(위촉장 · 경력관리)와 사이드바에 이미 나와 중복이라 숨긴다. */
+.page-view:has(.toolbar) .page-head{display:none}
+/* OCR 드롭존은 툴바 옆 작은 칩으로 — 클릭·드래그 등록 기능은 그대로다 */
+.page:has(> .ocr-zone) > .ocr-zone{flex:0 0 auto;margin-bottom:14px;padding:6px 10px}
+.ocr-zone .r{gap:7px}
+.ocr-zone .r>div:last-child>div:nth-child(2){display:none}   /* 부제(자동 추출 안내) 숨김 */
+.page:has(> .ocr-zone) > .toolbar{flex:1 1 380px}
+.page:has(> .ocr-zone) > .dt{flex:1 1 100%}
+/* 툴바에 끼워 넣은 보조 컨트롤 */
+.toolbar .tb-extra{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.toolbar .nofile-bar,.toolbar .pglimit-bar{margin:0!important}
+.toolbar .pglimit-bar{justify-content:flex-start}
 .page:has(> .ocr-zone) > .ocr-zone{flex:3 1 340px;margin-bottom:0}
 .page:has(> .ocr-zone) > *:not(.page-head):not(.ocr-zone):not(.page-drop-overlay){flex-basis:100%;width:100%}
 /* 그룹 메뉴 드래그 순서변경 피드백 */
@@ -4494,6 +4509,23 @@ function origLocked(){ return LS.get(NS+'orig_lock')!=='0'; } /* 기본값 = 보
 function deleteAttach(id,page){ if(origLocked()){ toast('🔒 원본 보호가 켜져 있습니다 — 위촉장 › ⋯ 더보기 › 원본 보호를 눌러 끈 뒤 삭제하세요'); return; }
   if(!confirm('첨부 원본만 삭제합니다.\n레코드 내용(기관·날짜 등)은 그대로 유지됩니다.\n삭제 후 📎 첨부 또는 드래그로 다시 올릴 수 있습니다.')) return;
   deleteFile(id); renderCareer(page); toast('원본 삭제됨 — 다시 첨부해 주세요'); }
+/* 툴바 오른쪽에 보조 컨트롤(원본없는 항목만·표시 개수)을 끼워 넣는다.
+   전에는 표 위에 각각 한 줄씩 쌓여 제목·OCR까지 네 줄이었다 → 한 줄로 합친다. */
+function _tbExtra(sec, html){
+  var tb = sec.querySelector('.toolbar'); if(!tb) return;
+  var ex = tb.querySelector('.tb-extra');
+  if(!ex){
+    ex = document.createElement('span'); ex.className = 'tb-extra';
+    /* ⋯ 더보기 · + 새 항목 버튼 앞에 둔다 */
+    var anchor = tb.querySelector('.more-wrap') || tb.querySelector('[data-act="new"]');
+    if(anchor) tb.insertBefore(ex, anchor); else tb.appendChild(ex);
+  }
+  ex.innerHTML = html;
+  /* '79건'은 '총 79건 중 20건 표시'와 겹치므로 그때만 숨긴다 */
+  var c = tb.querySelector('.cnt');
+  if(c) c.style.display = /pglimit-info/.test(html) ? 'none' : '';
+}
+
 function renderCareer(name){ const cfg=CAREER_CFG[name]; if(!cfg) return;
   const sec=document.getElementById('page-'+name); if(!sec) return;
   let data=get(cfg.store); if(cfg.filter) data=data.filter(cfg.filter);
@@ -4545,11 +4577,14 @@ function renderCareer(name){ const cfg=CAREER_CFG[name]; if(!cfg) return;
   const box=sec.querySelector('.dt');
   const raw=(_pageLimit[name]==null)?20:_pageLimit[name]; const limit=raw<0?rows.length:raw; const view=rows.slice(0,limit);
   const label=(typeof FORM_DEFS!=='undefined'&&FORM_DEFS[name]&&FORM_DEFS[name].title)||'항목';
-  if(!rows.length){ box.innerHTML=nofileBar+(_noFileOnly[name]?'<div class="empty"><div class="emp-ico">✅</div>미첨부 항목이 없습니다 — 모든 원본이 첨부되어 있습니다.</div>':'<div class="empty"><div class="emp-ico">📭</div>아직 등록된 '+label+'이(가) 없습니다.<br><span style="font-size:12px">상단 <b>＋ 새 '+label+'</b> 버튼으로 첫 항목을 등록하세요.</span></div>')+exBar; return; }
+  if(!rows.length){ _tbExtra(sec, nofileBar); box.innerHTML=(_noFileOnly[name]?'<div class="empty"><div class="emp-ico">✅</div>미첨부 항목이 없습니다 — 모든 원본이 첨부되어 있습니다.</div>':'<div class="empty"><div class="emp-ico">📭</div>아직 등록된 '+label+'이(가) 없습니다.<br><span style="font-size:12px">상단 <b>＋ 새 '+label+'</b> 버튼으로 첫 항목을 등록하세요.</span></div>')+exBar; return; }
   const pgSel='<div class="pglimit-bar" style="justify-content:flex-end;margin:0 0 8px">표시 개수 <select class="tb-select" onchange="setPageLimit(\''+name+'\',parseInt(this.value,10))">'+[20,50,100].map(function(n){ return '<option value="'+n+'"'+(raw===n?' selected':'')+'>'+n+'개</option>'; }).join('')+'<option value="-1"'+(raw<0?' selected':'')+'>전체</option></select><span class="pglimit-info">총 '+rows.length+'건 중 '+Math.min(limit,rows.length)+'건 표시</span></div>';
-  box.innerHTML=nofileBar+pgSel+'<table><thead><tr><th class="rownum-h">№</th>'+cfg.cols.map((c,ci)=> c==='관리' ? `<th>${c}</th>` : `<th class="th-sort" onclick="sortCol('${name}',${ci})">${c}${ss&&ss.col===ci?(ss.dir>0?' ▲':' ▼'):''}</th>`).join('')+'</tr></thead><tbody>'+view.map((r,i)=>cfg.row(r,name).replace(/<tr\b[^>]*>/, m=>m+'<td class="rownum">'+(i+1)+'</td>')).join('')+'</tbody></table>';
-  stampCellLabels(box);
+  /* 원본없음 필터·표시개수는 툴바 한 줄로 올린다 — 표 위에 줄이 쌓이지 않게 */
+  _tbExtra(sec, nofileBar+pgSel);
+  /* ⚠ 이 조립문 중간에 다른 호출을 끼워 넣지 말 것 — 뒤(scroll-hint·exBar)가 잘린다(회귀테스트 있음) */
+  box.innerHTML='<table><thead><tr><th class="rownum-h">№</th>'+cfg.cols.map((c,ci)=> c==='관리' ? `<th>${c}</th>` : `<th class="th-sort" onclick="sortCol('${name}',${ci})">${c}${ss&&ss.col===ci?(ss.dir>0?' ▲':' ▼'):''}</th>`).join('')+'</tr></thead><tbody>'+view.map((r,i)=>cfg.row(r,name).replace(/<tr\b[^>]*>/, m=>m+'<td class="rownum">'+(i+1)+'</td>')).join('')+'</tbody></table>'
     +'<div class="scroll-hint">← 좌우로 밀어 더 보기 →</div>'+exBar;
+  stampCellLabels(box);
   box.querySelectorAll('th').forEach((th,idx)=>{ if(th.textContent==='관리'||th.textContent==='№') return; th.style.cursor='pointer'; th.title='클릭하면 정렬'; th.onclick=()=>sortTable(box,th,idx); });
   box.querySelectorAll('tbody tr').forEach(tr=>{ const chip=tr.querySelector('.id-chip'); if(!chip) return; const rid=chip.textContent.trim();
     tr.addEventListener('dragover',e=>{ e.preventDefault(); tr.style.boxShadow='inset 0 0 0 2px var(--teal)'; });

@@ -110,6 +110,30 @@ test('_puBackfill: 이미 동기화된 레코드의 빈 유형·연도를 사건
   assert.equal(store.case.find((r) => r.id === 'CS0004').type, '', 'pu에서 온 게 아니면 안 건드림');
 });
 
+test('목록 표 조립문이 끊기지 않는다 — 배제 목록·안내가 렌더돼야 한다', () => {
+  // 다른 세션이 stampCellLabels(box);를 문장 중간에 끼워 넣어 뒤가 잘리고
+  // exBar(배제된 건·외부기관 안내)와 스크롤 힌트가 사라진 일이 있었다.
+  const src = funcSource('renderCareer');
+  // 빈 목록 분기에도 box.innerHTML= 이 있으므로 표 조립문을 정확히 겨냥한다
+  const i = src.indexOf("box.innerHTML='<table><thead>");
+  assert.ok(i >= 0, '표를 그리는 문장이 있어야 합니다');
+  const j = src.indexOf('exBar', i);
+  assert.ok(j > i, '조립문에 exBar가 있어야 합니다');
+  const stmt = src.slice(i, src.indexOf(';', j) + 1);
+  assert.match(stmt, /scroll-hint/, '스크롤 힌트가 같은 문장에 있어야 합니다');
+  assert.ok(!/stampCellLabels/.test(stmt), '조립문 중간에 다른 호출이 끼면 뒤가 잘립니다');
+});
+
+test('목록 화면은 제목·설명을 숨기고 보조 컨트롤을 툴바로 올린다', () => {
+  assert.match(source, /\.page-view:has\(\.toolbar\) \.page-head\{display:none\}/);
+  assert.match(source, /function _tbExtra\(/);
+  const src = funcSource('renderCareer');
+  assert.match(src, /_tbExtra\(sec,/, '원본없음·표시개수를 툴바로 옮겨야 합니다');
+  const i = src.indexOf("box.innerHTML='<table><thead>");
+  const stmt = src.slice(i, src.indexOf(';', src.indexOf('exBar', i)) + 1);
+  assert.ok(!/nofileBar|pgSel/.test(stmt), '표 위에 다시 붙이면 한 줄이 되지 않습니다');
+});
+
 test('실적 4탭 모두 담당 칸이 있다 — 누가 수행했는지 보여야 한다', () => {
   ['case', 'consult', 'fund', 'etc'].forEach((k) => {
     const m = source.match(new RegExp(k + ":\\{store:'" + k + "'[\\s\\S]{0,900}?cols:\\[([^\\]]*)\\]"));
