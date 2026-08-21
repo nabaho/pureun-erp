@@ -108,6 +108,12 @@ test('내 업무 묶음도 따로 움직인다', () => {
   assert.equal(S.calLay.sch, true, '푸른이알피 것은 안 건드린다');
 });
 
+test('★ 설정 저장이 실패하면 조용히 넘기지 않는다', () => {
+  // 삼키면, 켜고 끈 것이 다음에 안 남아 있는데 까닭을 알 수가 없다
+  assert.match(src, /캘린더 설정을 저장하지 못했습니다/);
+  assert.ok(!/r\.set\(\{on:!!S\.calOn[^)]*\}\)\.catch\(function\(\)\{\}\)/.test(src));
+});
+
 test('한 칩만 끄고 켜는 길도 그대로 있다', () => {
   assert.match(src, /function calLay\(k\)\{ S\.calLay=S\.calLay\|\|calDefLay\(\); S\.calLay\[k\]=!S\.calLay\[k\];/);
   assert.match(html, /onclick="calLay\('due'\)"/);
