@@ -75,5 +75,22 @@ function cut(a, b) {
   ok('포털이 그 manifest 를 쓴다', /<link[^>]+rel="manifest"[^>]+manifest\.json"/.test(en));
 })();
 
+/* ── 메일은 타일을 따로 두지 않는다 (대표 지시 2026-08-21) ──
+   메일은 기업정보함과 «같은 프로그램»이고 문만 달랐다. 문을 하나 더 내니 한 프로그램이
+   타일 둘을 차지해 첫 화면만 길어졌다 — 「메일은 여기 있을 필요 없다, 기업정보함으로」.
+   ★ 지키려는 것은 둘이다: «타일은 하나» 그리고 «기능은 그대로».
+     타일만 지우고 메일로 가는 길까지 막으면 그건 기능을 없앤 것이다. */
+(function () {
+  const apps = cut('var APPS = [', '\n  ];');
+  ok('★ 메일 타일을 따로 두지 않는다 (한 프로그램에 문 하나)', !/key:'mail'/.test(apps));
+  ok('★ 기업정보함 타일은 그대로 있다', /key:'cards'[\s\S]{0,160}?url:'pu-cards\.html'/.test(apps));
+  ok('★ 기업정보함 설명에 메일을 적는다 (안 적으면 메일을 어디서 찾는지 모른다)',
+     /key:'cards'[\s\S]{0,120}?메일/.test(apps));
+  /* 기능은 살아 있다 — 기업정보함 안에서 메일 화면으로 갈 수 있어야 한다.
+     ⚠ 이 줄이 깨지면 「타일만 지운 것」이 아니라 「메일을 없앤 것」이다. */
+  const cards = fs.readFileSync(path.join(__dirname, '..', 'pu-cards.html'), 'utf8');
+  ok('★ 메일 화면으로 가는 길이 살아 있다', cards.indexOf('mail') > 0);
+})();
+
 console.log('\n  === ' + pass + ' 통과 / ' + fail + ' 실패 ===');
 process.exit(fail ? 1 : 0);
