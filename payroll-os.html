@@ -532,7 +532,21 @@ function screenSlip(){
 }
 /* ── 수신함: 사업장별 자료 수신 현황(정상/미도착/지연/오류) + D-7 독촉 ──
    메일 도메인 연결 시 실제 메일 도착으로 자동 태깅 대체. 지금은 급여데이터 유무로 자동 판정. */
-function monthNum(s){ var m=String(s||'').match(/(\d{1,2})\s*월/); return m?parseInt(m[1],10):null; }
+/* 귀속월을 숫자(1~12)로. 여러 꼴을 다 받는다 —
+   「8월」(사람이 적는 꼴) · 「2026-08」(급여데이터함이 넘길 때 적는 꼴) ·
+   「2026.08」 · 「26-08」 · 「8」.
+   ⚠ 2026-08 에서 앞 네 자리를 월로 읽으면 20월·26월이 된다 — 그래서
+   연-월 꼴을 **먼저** 가려낸다. 이걸 안 해서 급여데이터함에서 값을 넘겨도
+   수신함이 영영 「미도착」이었다(2026-08-17에 찾음). */
+function monthNum(s){
+  var t=String(s==null?'':s).trim();
+  var m=t.match(/(\d{1,2})\s*월/);                        // 「8월」이 가장 흔하다
+  if(!m) m=t.match(/^\d{2,4}\s*[.\-\/]\s*(\d{1,2})$/);      // 「2026-08」·「26.8」
+  if(!m) m=t.match(/^(\d{1,2})$/);                         // 숫자만
+  if(!m) return null;
+  var n=parseInt(m[1],10);
+  return (n>=1&&n<=12)?n:null;
+}
 function dueDayOf(card){
   var g=String((card&&card.급여일)||'');
   if(/말일/.test(g)) return 'last';
@@ -1009,11 +1023,21 @@ function tagIncoming(item){
   var text=[item&&item.filename,item&&item.subject,item&&item.from].filter(Boolean).join(' ');
   return {사업장:guessSite(text,siteNamesFor(pay)), 월:guessMonth(text), 종류:guessKind(text)};
 }
+/* 사업장 이름 맞대보기용 알맹이 — ㈜·주식회사·괄호·빈칸을 떼어낸다.
+   업체관리 이름(급여데이터함이 적는 것)과 급여대장 시트 이름이 「㈜ 화담원」
+   / 「화담원(아산)」처럼 조금씩 달라 도착을 못 알아봤다.
+   ⚠ 알맹이가 **똑같을 때만** 같은 곳으로 본다. 앞글자만 같다고 붙이면
+   「화담원」과 「화담원물류」가 한 곳이 되어, 안 온 자료를 왔다고 읽는다 —
+   그러면 재촉을 안 해 마감을 놓친다. */
+function siteKey(s){ return String(s||'').replace(/\(.*?\)|㈜|주식회사|\s/g,''); }
+
 function arrivalFor(site, mLabel){
-  var map=inboxLog(), mn=monthNum(mLabel);
+  var map=inboxLog(), mn=monthNum(mLabel), key=siteKey(site);
   return Object.keys(map).some(function(id){ var a=map[id];
     var s=a.사업장||tagIncoming(a).사업장, mo=a.월||tagIncoming(a).월;
-    return s===site && (mn==null||monthNum(mo)===mn); });
+    if(!s) return false;
+    var same=(s===site)||(!!key&&siteKey(s)===key);
+    return same && (mn==null||monthNum(mo)===mn); });
 }
 function logArrival(){
   var fn=prompt('도착한 파일명 또는 메일 제목을 붙여넣으세요.\n예) 화담원 아산점_25년 07월_급여대장.xlsx');
