@@ -511,6 +511,7 @@ function loadRestore(isPc){
       setItem: (k, v) => { store[k] = String(v); }
     },
     document: { body: { classList: { contains: c => c==='pc' && !!isPc } } },
+    location: { search: '' },     // 「푸른 메일」 아이콘이 아닌 보통 주소
     __store: store,
     opened,
     openMatPage(){ opened.push('mat'); },
@@ -526,13 +527,10 @@ function loadRestore(isPc){
   vm.runInContext("var _lastScreenSig = ''; var _lastScreenDone = false;", ctx);
   return ctx;
 }
-/* ⚠ 한 줄짜리 함수(lastScreenKey)를 여러 줄용 규칙으로 자르면 다음 함수까지 삼킨다 —
-   cards-last-screen.test.js 가 밟았던 함정과 같다. 한 줄꼴을 먼저 본다. */
+/* 중괄호 짝을 세어 자른다 — 한 줄이든 여러 줄이든 똑같이 먹는다(tests/fnslice.js). */
 function withFns(ctx){
-  ['lastScreenKey', 'saveLastScreen', 'restoreLastScreen'].forEach(n=>{
-    const one = source.match(new RegExp('function ' + n + '\\([^)]*\\)\\{[^\\n]*\\}'));
-    vm.runInContext(one ? one[0] : slice(n), ctx);
-  });
+  ['lastScreenKey', 'urlWantsMail', 'saveLastScreen', 'restoreLastScreen']
+    .forEach(n=> vm.runInContext(sliceFn(source, 'function ' + n + '('), ctx));
   return ctx;
 }
 

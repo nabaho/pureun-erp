@@ -11,19 +11,15 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { sliceFn } = require('./fnslice.js');   // 함수를 «통째로» 자른다(줄 수에 안 매인다)
 
 const root = path.join(__dirname, '..');
 const app = fs.readFileSync(path.join(root, 'pu-cards.html'), 'utf8');
 
-/* ⚠ 한 줄짜리 함수를 먼저 본다. 여러 줄용 규칙(다음 줄머리 `}` 까지)을 그대로
-   쓰면 한 줄 함수에서 **다음 함수까지 통째로** 집어삼킨다(그래서 처음에 터졌다). */
-function fn(name) {
-  const one = app.match(new RegExp('function ' + name + '\\([^)]*\\)\\{[^\\n]*\\}'));
-  if (one) return one[0];
-  const m = app.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\r?\\n\\}'));
-  assert.ok(m, name + ' 을 찾을 수 없습니다');
-  return m[0];
-}
+/* 중괄호 짝을 세어 자른다 — 한 줄이든 여러 줄이든 똑같이 먹는다.
+   예전에는 「한 줄꼴을 먼저 본다」는 규칙을 두 곳에 베껴 두었는데, 그 규칙은
+   함수가 «몇 줄로 쓰였는지»를 검사가 알고 있어야 한다는 뜻이라 늘 깨졌다. */
+function fn(name) { return sliceFn(app, 'function ' + name + '('); }
 
 /* 진짜로 돌려 본다 — 적고, 사람이 바뀌고, 다시 읽는 흐름 전체 */
 function boot(who) {
@@ -32,6 +28,8 @@ function boot(who) {
   const ctx = {
     JSON, Object,
     myUid: who || '', myEmail: '',
+    /* 「푸른 메일」 아이콘으로 들어오면 주소가 첫 화면을 정한다 — 여기서는 보통 주소다 */
+    location: { search: '' },
     state: { view: 'list', tab: 'card', mailSent: false },
     localStorage: {
       getItem: k => (k in store ? store[k] : null),
@@ -50,7 +48,8 @@ function boot(who) {
   vm.createContext(ctx);
   vm.runInContext(app.match(/const LASTV_PREFIX = [^\n]*/)[0], ctx);
   vm.runInContext("var _lastScreenSig = ''; var _lastScreenDone = false;", ctx);
-  ['lastScreenKey', 'saveLastScreen', 'restoreLastScreen'].forEach(n => vm.runInContext(fn(n), ctx));
+  ['lastScreenKey', 'urlWantsMail', 'saveLastScreen', 'restoreLastScreen']
+    .forEach(n => vm.runInContext(fn(n), ctx));
   return ctx;
 }
 
@@ -198,4 +197,26 @@ test('★ 바뀔 때만 적는다 (render 는 수시로 돈다)', () => {
   c.state.view = 'mat';
   c.saveLastScreen();
   assert.equal(writes, 2, '바뀌었는데 안 적었습니다');
+});
+
+/* ── 「푸른 메일」 아이콘으로 들어온 창 (대표 지시 2026-08-21) ── */
+test('★ 주소가 메일이면 저장된 화면을 이긴다 — 아이콘을 눌렀는데 명함이 열리면 안 된다', () => {
+  const c = boot('uid-A');
+  c.state.view = 'co'; c.state.tab = 'biz';        // 마지막엔 기업 상세를 보고 있었다
+  c.saveLastScreen();
+  const back = boot('uid-A');
+  back.__store[back.lastScreenKey()] = c.__store[c.lastScreenKey()];
+  back.location.search = '?view=mail';             // 메일 아이콘으로 들어왔다
+  back.restoreLastScreen();
+  assert.deepEqual(back.opened, ['mail'], '★ 메일 아이콘을 눌렀으면 메일이 열려야 합니다.');
+});
+
+test('보통 주소로 들어오면 예전 그대로 — 마지막 보던 화면이 열린다', () => {
+  const c = boot('uid-B');
+  c.state.view = 'mail'; c.state.mailSent = true;
+  c.saveLastScreen();
+  const back = boot('uid-B');
+  back.__store[back.lastScreenKey()] = c.__store[c.lastScreenKey()];
+  back.restoreLastScreen();
+  assert.deepEqual(back.opened, ['sent']);
 });

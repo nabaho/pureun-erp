@@ -39,6 +39,10 @@
     { key: 'work',    name: '업무관리',     icon: '📋', url: 'work.html',           desc: '주간 업무기록' },
     { key: 'career',  name: '이력관리',     icon: '🗂', url: 'kcareer.html',        desc: '개인 이력서' },
     { key: 'cards',   name: '기업정보함',    icon: '📇', url: 'pu-cards.html',       desc: '사업자·명함·계약서' },
+    /* ⚠ 메일은 기업정보함과 같은 파일이고 주소만 다르다. whoAmI() 는 파일 이름만
+       견주므로(물음표 뒤는 안 본다) 메일 창에서도 「지금 앱」은 기업정보함으로 잡힌다 —
+       그래서 이 줄이 늘어도 지금 앱 표시가 흔들리지 않는다. */
+    { key: 'mail',    name: '메일',        icon: '✉️', url: 'pu-cards.html?view=mail', desc: '자료 붙여 보내기·예약' },
     { key: 'photos',  name: '사진첩',       icon: '🖼️', url: 'pu-photos.html',      desc: '사진·서류' },
     { key: 'paydata', name: '급여데이터함',  icon: '💼', url: 'pu-paydata.html',     desc: '급여자료 사업장별' },
     { key: 'fund',    name: '기금관리',     icon: '🏦', url: 'fund.html',           desc: '근로복지기금 운영' },
