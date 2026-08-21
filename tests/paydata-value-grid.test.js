@@ -26,7 +26,11 @@ function loadApp(appState) {
     'const App = ' + JSON.stringify(Object.assign({
       companyId: 'co_1', companyName: '화담원', month: '2026-08', values: {}
     }, appState)) + ';',
-    cut('esc'), cut('valueGridModel'), cut('screenValues'),
+    /* 값 표가 서류 목록(판독 취소)까지 그리므로 그쪽이 쓰는 것도 함께 싣는다.
+       findRow 는 서랍을 뒤져 원본을 찾는다 — 여기서는 자료가 없어 늘 못 찾는다
+       (그래도 「(서랍에 없는 서류)」로 그려져야 한다). */
+    cut('esc'), cut('jsq'), cut('canWrite'), cut('findRow'),
+    cut('valueGridModel'), cut('valueSourceRows'), cut('screenValues'),
     'window.App = App; window.valueGridModel = valueGridModel; window.screenValues = screenValues;'
   ].join('\n'), { filename: 'app.js' }).runInContext(sandbox);
   return sandbox.window;
@@ -85,9 +89,12 @@ test('★ 확인 안 된 값은 노랗게', () => {
   assert.match(W.screenValues(), /class="[^"]*iffy/);
 });
 
-test('★ 값을 누르면 출처 원본이 열린다', () => {
+test('★ 값을 누르면 고치기로 간다 — 그 줄·그 항목을 집어 준다', () => {
+  /* 2026-08-21 대표 승낙(안 A)으로 바뀐 자리다. 예전에는 원본 사진만 열려,
+     잘못 판독된 값을 보고도 고칠 길이 없었다. openValueFix 가 원본을 옆에
+     띄우고 그 자리에서 고치게 한다 — 원본 보기는 그 안에 들어 있다. */
   const W = loadApp({ values: VALS });
-  assert.match(W.screenValues(), /openViewer\('a1'\)/);
+  assert.match(W.screenValues(), /openValueFix\('v1','유급일수'\)/);
 });
 
 test('값이 없으면 빈 안내를 보여준다', () => {
@@ -134,7 +141,10 @@ test('★ 같은 사람·같은 항목이 겹치면 at 이 더 늦은(나중에 
     '나중에 저장한(at 이 더 큰) 값이 살아남아야 합니다');
 });
 
-test('★ 출처 없는 칸은 클릭할 수 있는 척하지 않는다(src 클래스 없음)', () => {
+test('★ 출처가 없는 값도 누를 수 있다 — 직접 적은 값을 고칠 길이 있어야 한다', () => {
+  /* 2026-08-21 뒤집힌 검사다. 예전에는 출처 없는 칸을 못 누르게 했다(원본이
+     없으니 열 것이 없었다). 이제 누르면 **고치기**로 가므로, 못 누르게 하면
+     직접 적은 값은 영영 손댈 수 없다 — 원본이 없으면 창 하나로 고친다. */
   const W = loadApp({ values: {
     a: { name: '무출처', sourceId: '', confirmed: true, at: 1,
          pairs: [{ item: '항목1', value: '10' }] },
@@ -146,10 +156,16 @@ test('★ 출처 없는 칸은 클릭할 수 있는 척하지 않는다(src 클�
   const hasSrc = h.match(/<td class="who">유출처<\/td><td class="([^"]*)"/);
   assert.ok(noSrc, '무출처 행을 찾을 수 없습니다');
   assert.ok(hasSrc, '유출처 행을 찾을 수 없습니다');
-  assert.ok(!/\bsrc\b/.test(noSrc[1]),
-    '출처가 없는 칸은 눌러도 아무 일이 없으니 src 클래스(커서·밑줄)를 붙이면 안 됩니다');
-  assert.ok(/\bsrc\b/.test(hasSrc[1]),
-    '출처가 있는 칸은 원본을 열 수 있어야 하니 src 클래스가 있어야 합니다');
+  assert.ok(/\bsrc\b/.test(noSrc[1]), '출처 없는 값도 고칠 수 있어야 합니다');
+  assert.ok(/\bsrc\b/.test(hasSrc[1]));
+  assert.match(h, /openValueFix\('a','항목1'\)/, '무출처 칸도 고치기로 이어져야 합니다');
+});
+
+test('★ 값을 만든 서류가 목록으로 나온다 (판독 취소)', () => {
+  const W = loadApp({ values: VALS });
+  const h = W.screenValues();
+  assert.match(h, /이 달 값을 만든 서류/);
+  assert.match(h, /cancelValueSource\('a1'/);
 });
 
 /* ══════ 내보내기 ══════ */
