@@ -818,6 +818,38 @@ function realPhotoDb() {
 function realPhotoBucket() {
   // 창고 이름은 PR #192 에서 만든 것과 반드시 같아야 한다 — pu-photos.html 이 보는 창고.
   const bucket = getStorage().bucket("pureun-erp-hrphotos");
+
+  /* 내려받기 주소(토큰 URL) 하나를 만든다. 파일에 토큰이 이미 있으면 그것을 쓰고,
+     없으면 하나 발급해 파일 메타데이터에 심는다(파이어베이스 표준 방식).
+     ⚠ 서명 URL(getSignedUrl)을 안 쓰는 이유: 만료가 있다 — 만료되면 사진첩의
+       모든 옛 사진이 어느 날 일제히 안 보이게 된다. 토큰 URL 은 안 만료된다.
+     ⚠ 한 번 삐끗한 것을 「파일이 없다」로 단정하지 않는다 (2026-08-21 조사).
+       한 번 돌린 뒤 세어 보니 32장이 **미리보기 주소는 있는데 원본 주소만** 없었다.
+       원본이 정말 없으면 미리보기도 같이 없을 텐데 한쪽만 빈 것은, 무더기로 돌 때
+       이 metadata 읽기·쓰기가 «간헐적으로» 실패했다는 뜻이다 — 예전에는 그것을
+       조용히 null 로 만들어, 대표가 버튼을 여러 번 눌러야 채워졌다.
+       그래서 잠깐 쉬고 스스로 다시 해 본다. 그래도 안 되면 그때 null 이다.
+     ⚠ 이름 있는 함수로 둔다 — 객체 안에서 this 로 저를 다시 부르면, 부르는
+       방식이 바뀌는 날(구조분해 등) 조용히 깨진다. */
+  function tokenUrl(objectPath, left) {
+    const file = bucket.file(objectPath);
+    return file.getMetadata().then(([meta]) => {
+      let tok = String((meta.metadata && meta.metadata.firebaseStorageDownloadTokens) || "").split(",")[0];
+      const ensure = tok
+        ? Promise.resolve()
+        : (tok = crypto.randomUUID(),
+          file.setMetadata({ metadata: { firebaseStorageDownloadTokens: tok } }));
+      return Promise.resolve(ensure).then(() =>
+        `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(objectPath)}?alt=media&token=${tok}`);
+    }).catch((e) => {
+      if (left <= 0) {
+        console.warn("[주소 만들기] 끝내 실패", objectPath, e && e.message);
+        return null;
+      }
+      return new Promise((ok) => setTimeout(ok, 400)).then(() => tokenUrl(objectPath, left - 1));
+    });
+  }
+
   return {
     upload(objectPath, dataUrl) {
       // ⚠ 진짜 base64 data URL 인지 확인한다(최종 리뷰 2026-08-13) — 확인 없이
@@ -834,23 +866,9 @@ function realPhotoBucket() {
     exists(objectPath) {
       return bucket.file(objectPath).exists().then((r) => !!(r && r[0]));
     },
-    /* 내려받기 주소(토큰 URL)를 만든다 — 파일에 토큰이 이미 있으면 그것을 쓰고,
-       없으면 하나 발급해 파일 메타데이터에 심는다(파이어베이스 표준 방식).
-       ⚠ 서명 URL(getSignedUrl)을 안 쓰는 이유: 만료가 있다 — 만료되면 사진첩의
-         모든 옛 사진이 어느 날 일제히 안 보이게 된다. 토큰 URL 은 안 만료된다.
-       파일이 없으면 null — 미리보기가 없는 사진도 있다(옛 자료). */
-    downloadUrl(objectPath) {
-      const file = bucket.file(objectPath);
-      return file.getMetadata().then(([meta]) => {
-        let tok = String((meta.metadata && meta.metadata.firebaseStorageDownloadTokens) || "").split(",")[0];
-        const ensure = tok
-          ? Promise.resolve()
-          : (tok = crypto.randomUUID(),
-            file.setMetadata({ metadata: { firebaseStorageDownloadTokens: tok } }));
-        return Promise.resolve(ensure).then(() =>
-          `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(objectPath)}?alt=media&token=${tok}`);
-      }).catch(() => null);
-    },
+    /* 주소 만들기는 위 tokenUrl 에 있다(왜 다시 해 보는지도 거기 적었다).
+       끝내 못 만들면 null — 미리보기가 없는 사진도 있다(옛 자료). */
+    downloadUrl(objectPath) { return tokenUrl(objectPath, 2); },
   };
 }
 
@@ -874,7 +892,9 @@ exports.migratePhotosToStorage = functions
     const result = await migrateBatch(db, realPhotoBucket(), limit);
     res.status(200).json({
       ok: true, moved: result.moved, linked: result.linked, skipped: result.skipped,
-      failed: result.failed, done: result.done, ownersCount: db.ownersCount,
+      // partial — 주소를 반만 만든 장수. 세고도 안 실으면 화면이 모른다.
+      failed: result.failed, partial: result.partial, done: result.done,
+      ownersCount: db.ownersCount,
     });
   } catch (error) {
     console.error("migratePhotosToStorage", error && error.stack || error);

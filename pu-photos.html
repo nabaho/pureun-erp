@@ -9221,20 +9221,28 @@ async function runServerMigrate() {
   }
   if (!confirm('전체 직원의 사진을 파일 창고로 옮기고, 이미 옮긴 사진에는 보기 주소를 채웁니다.\n(주소가 채워져야 관리자·공유받은 사람 화면에도 사진이 뜹니다.)\n옮긴 사진은 실시간DB에서 지워집니다(창고에는 그대로 남습니다). 계속할까요?')) return;
   const out = $('serverMigOut');
-  const total = { moved: 0, linked: 0, skipped: 0, failed: 0 };
+  /* partial — 주소를 «반만» 채운 장수(예: 미리보기는 됐고 원본은 안 됐다).
+     예전에는 이것도 그냥 「주소 채움」에 섞여, 다 된 것처럼 보이는데도 큰 사진이
+     안 열렸다(2026-08-21 조사: 32장). 따로 보여 줘야 한 번 더 누를 줄 안다. */
+  const total = { moved: 0, linked: 0, skipped: 0, failed: 0, partial: 0 };
   out.textContent = '옮기는 중…';
+  const line = function (head) {
+    return head + ' 옮김 ' + total.moved + ' · 주소 채움 ' + total.linked
+      + ' · 건너뜀 ' + total.skipped + ' · 실패 ' + total.failed
+      + (total.partial ? ' · 반만 채움 ' + total.partial : '');
+  };
   try {
     let done = false;
     while (!done) {
       const r = await callServerMigrate(30);
-      total.moved += r.moved; total.linked += (r.linked || 0); total.skipped += r.skipped; total.failed += r.failed;
+      total.moved += r.moved; total.linked += (r.linked || 0); total.skipped += r.skipped;
+      total.failed += r.failed; total.partial += (r.partial || 0);
       done = r.done;
-      out.textContent = '옮기는 중… 옮김 ' + total.moved + ' · 주소 채움 ' + total.linked
-        + ' · 건너뜀 ' + total.skipped + ' · 실패 ' + total.failed;
+      out.textContent = line('옮기는 중…');
     }
-    out.textContent = '끝났습니다 — 옮김 ' + total.moved + ' · 주소 채움 ' + total.linked
-      + ' · 건너뜀 ' + total.skipped + ' · 실패 ' + total.failed
-      + (total.failed ? '\n실패한 사진은 실시간DB에 그대로 남아 있습니다 — 나중에 버튼을 다시 눌러 보세요.' : '');
+    out.textContent = line('끝났습니다 —')
+      + (total.failed ? '\n실패한 사진은 실시간DB에 그대로 남아 있습니다 — 나중에 버튼을 다시 눌러 보세요.' : '')
+      + (total.partial ? '\n「반만 채움」은 그때그때 삐끗한 것입니다 — 한 번 더 누르면 채워집니다.' : '');
   } catch (e) {
     out.textContent = '멈췄습니다 — ' + ((e && e.message) || e) + '\n다시 눌러 이어서 할 수 있습니다.';
   }
