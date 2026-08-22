@@ -38171,18 +38171,35 @@ function FinanceLedger(props){
       catch(_pe){ if(window._erpErrLog) window._erpErrLog(_pe); }
     }
     var DOC = {tax:'세금계산서', cash:'현금영수증', none:'증빙없음'};
+    /* ── 자문료로 등록할 때 (대표 결정 2026-08-22, 김보람 건의 3번) ──
+       ★ 자문료는 «다른 항목» 이다. 기타(inc-other)로 적으면 자문료 매출에서 빠지고,
+         업체관리의 「미입금 대기」도 안 지워져 같은 달 자문료가 두 번 보인다.
+         미입금 대기는 «회사명|받을 달» 로 맞춘다(addAdvisoryPending) —
+         그래서 회사명과 advisoryYm 둘 다 제대로 적어야 지워진다.
+       ★ 성과급은 자문료에 안 붙는다. calcPerfShares 가 sourceKind==='company' 면
+         빈 배열을 돌려준다 — 확정창을 거친 자문료와 «같은 규칙» 을 쓰려고 그렇게 넣는다.
+         (창에서도 자문료를 고르면 성과급 칸이 사라진다 — 화면과 결과가 어긋나지 않게) */
+    var _isAdv = (d.kind === '자문료');
+    if(_isAdv){ shares = []; }
     var _ok = dbUpsert('finance_income', {
       id:'fi-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
       companyName:(d.name||'').trim() || (row.memo||'-'),
       amount:gross, date:paidDate,
-      kind:d.kind||'상담료', category:'inc-other',
-      sourceKind:'other', sourceId:'',
+      kind:d.kind||'상담료', category:_isAdv ? 'inc-advisory' : 'inc-other',
+      /* 받을 달 — 7월 자문료가 8월에 들어와도 7월 매출로 친다.
+         이 칸이 없으면 입금월로 잡혀 7월 미입금이 영영 안 지워진다. */
+      advisoryYm:_isAdv ? (d.advYm || String(paidDate).slice(0,7)) : undefined,
+      /* 업체관리에서 같은 이름을 찾았으면 그 업체를 가리켜 둔다 — 「확정 이력」이
+         무엇에서 나온 돈인지 짚을 수 있다. 못 찾았으면 빈 채로 둔다(읽는 쪽이
+         모두 `if(sourceId && sourceKind)` 로 막고 있어 빈 값이 안전하다). */
+      sourceKind:_isAdv ? 'company' : 'other', sourceId:(_isAdv && d.advCoId) ? d.advCoId : '',
       docType:d.doc||'cash',                              // tax | cash | none
       payMethod:d.cardMode?'card':'account',
       cardFee:cardFee,
-      managerSid:d.mainSid||'', managerName:d.mainSid?_sidName(d.mainSid):'',
+      managerSid:_isAdv ? '' : (d.mainSid||''),
+      managerName:(!_isAdv && d.mainSid) ? _sidName(d.mainSid) : '',
       deductions:ded, perfBaseAmount:perfBase, perfShares:shares,
-      perfExclude:!(d.perfOn && d.mainSid),
+      perfExclude:_isAdv || !(d.perfOn && d.mainSid),
       memo:'[하나'+(fileType==='bank'?'은행':'카드')+'] '+(row.memo||'')
            +' / ➕ 직접 등록 · '+(DOC[d.doc]||'증빙없음')+(d.cardMode?' · 카드':''),
       confirmedAt:new Date().toISOString(), confirmedBy:CURRENT_USER?CURRENT_USER.sid:''
@@ -40363,8 +40380,20 @@ function FinanceLedger(props){
       if(_gross < _r.amount) _gross = _r.amount;
       var _fee = dirPop.cardMode ? (_gross - _r.amount) : 0;
       var _base = calcDeductions(_gross, dirPop.vatIncluded?{vatIncluded:true}:{}).perfBaseAmount;
+      /* 자문료는 다른 항목이고 성과급도 안 붙는다 — 이 한 값이 창 전체를 가른다
+         (대표 결정 2026-08-22, 김보람 건의 3번) */
+      var _isAdv = (dirPop.kind === '자문료');
+      /* 업체관리에 같은 이름이 있나 — 미입금 대기가 «회사명|받을 달» 로 맞춰지므로
+         이름이 다르면 등록해도 그 달 미입금이 안 지워진다. 미리 알려 주려고 찾아 둔다. */
+      var _advCo = null;
+      if(_isAdv){
+        try {
+          var _nm = erpNormName((dirPop.name||'').trim());
+          if(_nm) _advCo = erpCoIndexByName(dbGet('companies', []) || [])[_nm] || null;
+        } catch(_e){ _advCo = null; }
+      }
       var _shares = [];
-      if(dirPop.perfOn && dirPop.mainSid){
+      if(!_isAdv && dirPop.perfOn && dirPop.mainSid){
         try{ _shares = calcPerfShares(_base, dirPop.mainSid, [], 'other', 100, {paidDate:_r.date||todayYMD()}) || []; }catch(_e){}
       }
       var _perfSum = 0; _shares.forEach(function(s){ _perfSum += s.amount||0; });
@@ -40398,7 +40427,25 @@ function FinanceLedger(props){
               h('div',{style:_lblS},'종류'),
               h('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap'}},
                 seg(dirPop.kind,'상담료','상담료',function(v){upd({kind:v});}),
-                seg(dirPop.kind,'기타수입','기타수입',function(v){upd({kind:v});}))),
+                seg(dirPop.kind,'자문료','자문료',function(v){upd({kind:v});}),
+                seg(dirPop.kind,'기타수입','기타수입',function(v){upd({kind:v});})),
+              /* ── 자문료를 고르면 (대표 결정 2026-08-22, 김보람 건의 3번) ──
+                 ★ 미입금 대기는 «회사명|받을 달» 문자열로 맞춘다(addAdvisoryPending).
+                   회사명이 업체관리와 한 글자라도 다르면 자문료를 등록해도 그 달 미입금이
+                   그대로 남아, 같은 돈이 두 번 보인다. 그래서 여기서 미리 알려 준다. */
+              _isAdv && h('div',{style:{marginTop:'7px',padding:'8px 10px',borderRadius:'6px',
+                  background:_advCo?'#eff6ff':'#fffbeb',
+                  border:'1px solid '+(_advCo?'#bfdbfe':'#fde68a')}},
+                h('div',{style:{fontSize:'10px',fontWeight:800,color:'#475569',marginBottom:'3px'}},'받을 달'),
+                h('input',{type:'month',style:_inpS,value:dirPop.advYm||String(_r.date||'').slice(0,7),
+                  onInput:function(e){ upd({advYm:e.target.value}); }}),
+                h('div',{style:{fontSize:'9.5px',color:'#64748b',marginTop:'3px',lineHeight:1.6}},
+                  '7월 자문료가 8월에 들어왔으면 7월로 두세요 — 그 달 매출로 잡힙니다.'),
+                h('div',{style:{fontSize:'10px',marginTop:'6px',lineHeight:1.6,
+                    color:_advCo?'#1e40af':'#854d0e',fontWeight:700}},
+                  _advCo
+                    ? ('✓ 업체관리의 「'+_advCo.name+'」 와 맞습니다 — 그 달 미입금이 지워집니다')
+                    : '⚠ 업체관리에 없는 이름입니다 — 이대로 등록하면 그 달 미입금이 그대로 남습니다. 업체관리의 상호와 똑같이 적어 주세요.'))),
 
             h('div',{style:_fldS},
               h('div',{style:_lblS},'결제수단'),
@@ -40423,7 +40470,10 @@ function FinanceLedger(props){
               h('div',{style:{fontSize:'9.5px',color:'#94a3b8',marginTop:'3px'}},
                 '현금영수증도 매출이므로 예상부가세에 함께 잡힙니다')),
 
-            h('div',{style:_fldS},
+            /* ★ 자문료는 성과급 대상이 아니다(calcPerfShares 가 'company' 면 빈 배열).
+               칸을 남겨 두면 「⭐ 성과급 자동 반영」을 켠 채 등록하고도 성과급이 0 이라
+               화면이 거짓말을 하게 된다 — 아예 감춘다. */
+            !_isAdv && h('div',{style:_fldS},
               h('div',{style:_lblS},'담당자 ',h('span',{style:{color:'#dc2626'}},'*')),
               h('select',{style:_inpS,value:dirPop.mainSid||'',
                 onChange:function(e){ upd({mainSid:e.target.value}); }},
@@ -40435,9 +40485,11 @@ function FinanceLedger(props){
               h('label',{style:{display:'flex',alignItems:'center',gap:'5px',fontSize:'11px',fontWeight:700,color:'#166534',cursor:'pointer'}},
                 h('input',{type:'checkbox',checked:!!dirPop.vatIncluded,
                   onChange:function(){ upd({vatIncluded:!dirPop.vatIncluded}); }}),'부가세 공제 (1/11)'),
-              h('label',{style:{display:'flex',alignItems:'center',gap:'5px',fontSize:'11px',fontWeight:700,color:'#166534',cursor:'pointer',marginTop:'4px'}},
+              !_isAdv && h('label',{style:{display:'flex',alignItems:'center',gap:'5px',fontSize:'11px',fontWeight:700,color:'#166534',cursor:'pointer',marginTop:'4px'}},
                 h('input',{type:'checkbox',checked:!!dirPop.perfOn,
                   onChange:function(){ upd({perfOn:!dirPop.perfOn}); }}),'⭐ 성과급 자동 반영'),
+              _isAdv && h('div',{style:{fontSize:'10px',color:'#475569',marginTop:'4px'}},
+                '자문료는 성과급 대상이 아닙니다 — 확정창에서 확정한 자문료와 같은 규칙입니다.'),
               h('div',{style:{fontSize:'10px',color:'#475569',marginTop:'5px',fontFamily:'ui-monospace,monospace'}},
                 _gross.toLocaleString()+(dirPop.vatIncluded?(' − '+(_gross-_base).toLocaleString()):'')
                 +' = 성과 기준 '+_base.toLocaleString(),
@@ -40449,20 +40501,28 @@ function FinanceLedger(props){
             h('div',{style:{flex:1}}),
             h('button',{className:'btn-secondary',onClick:function(){setDirPop(null);}},'취소'),
             h('button',{className:'btn-primary',
-              disabled:!(dirPop.name||'').trim() || (dirPop.perfOn && !dirPop.mainSid),
-              style:(!(dirPop.name||'').trim() || (dirPop.perfOn && !dirPop.mainSid)) ? {opacity:0.5,cursor:'not-allowed'} : {},
+              disabled:!(dirPop.name||'').trim() || (!_isAdv && dirPop.perfOn && !dirPop.mainSid),
+              style:(!(dirPop.name||'').trim() || (!_isAdv && dirPop.perfOn && !dirPop.mainSid)) ? {opacity:0.5,cursor:'not-allowed'} : {},
               onClick:async function(){
                 if(!(dirPop.name||'').trim()){ showToast('업체·의뢰인을 입력하세요'); return; }
-                if(dirPop.perfOn && !dirPop.mainSid){ showToast('담당자를 고르세요 (성과급을 끄면 없어도 됩니다)'); return; }
+                if(!_isAdv && dirPop.perfOn && !dirPop.mainSid){ showToast('담당자를 고르세요 (성과급을 끄면 없어도 됩니다)'); return; }
                 var _ym = String(_r.date||'').slice(0,7);
                 if(_ym && isIncomeLocked(_ym)){ showToast('🔒 '+_ym+' 입금 마감 — 등록할 수 없습니다'); return; }
+                var _advYm = dirPop.advYm || String(_r.date||'').slice(0,7);
                 if(!(await popConfirm((dirPop.name||'').trim()+' · '+(dirPop.kind||'상담료')
                       +' '+_gross.toLocaleString()+'원을 수입으로 등록합니다.'
+                      /* 받을 달과 「미입금이 지워지나」를 확인 글에도 적는다 —
+                         등록한 뒤에 알면 이미 두 번 잡힌 뒤다 */
+                      +(_isAdv?('\n\n· 받을 달: '+_advYm
+                          +(_advCo ? '\n· '+_advCo.name+' 의 '+_advYm+' 미입금이 지워집니다'
+                                   : '\n· ⚠ 업체관리에 없는 이름입니다 — 미입금은 그대로 남습니다')):'')
                       +'\n\n· 증빙: '+({tax:'세금계산서',cash:'현금영수증',none:'증빙없음'}[dirPop.doc]||'증빙없음')
                       +(_fee>0?'\n· 카드 수수료 '+_fee.toLocaleString()+'원을 지출로 기록':'')
-                      +(_shares.length?'\n· 성과급 '+_sidName(dirPop.mainSid)+' '+_perfSum.toLocaleString()+'원':'\n· 성과급 없음')
+                      +(_isAdv?'\n· 성과급 없음 (자문료는 대상이 아닙니다)'
+                             :(_shares.length?'\n· 성과급 '+_sidName(dirPop.mainSid)+' '+_perfSum.toLocaleString()+'원':'\n· 성과급 없음'))
                       +'\n\n→ 잘못되면 「확정 이력」에서 되돌릴 수 있습니다'))) return;
-                if(saveDirectIncome(dirPop)){
+                if(saveDirectIncome(Object.assign({}, dirPop,
+                      _isAdv ? { advYm:_advYm, advCoId:(_advCo && _advCo.id) || '' } : {}))){
                   setDirPop(null);
                   showToast('✅ '+(dirPop.name||'').trim()+' '+_gross.toLocaleString()+'원 등록'
                     +(_shares.length?' · 성과 '+_perfSum.toLocaleString():''));

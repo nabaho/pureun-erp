@@ -73,12 +73,18 @@ ok('상담접수와 이름이 맞으면 그 건에 이어 준다', /consultId:\(
 ok('팝업 상태가 있다', /var dirPopS=useState\(null\)/.test(src));
 
 console.log('\n[무엇을 남기나]');
-ok('기타수입으로 남긴다', /sourceKind:'other', sourceId:''/.test(src));
+/* 2026-08-22 자문료 갈래가 생겼다(김보람 건의 3번) — 상담료·기타수입은 예전 그대로 'other',
+   자문료만 'company' 다. 무엇이 «실제로 저장되는지»는 tests/income-direct-advisory.test.js
+   가 진짜 함수를 돌려서 본다. 여기서는 갈래가 살아 있는지만 지킨다. */
+ok('상담료·기타수입은 other, 자문료는 company 로 남긴다',
+   /sourceKind:_isAdv \? 'company' : 'other'/.test(src));
 ok('증빙 방식을 남긴다 (세금계산서·현금영수증·없음)', /docType:d\.doc\|\|'cash'/.test(src));
 ok('결제수단을 남긴다', /payMethod:d\.cardMode\?'card':'account'/.test(src));
-ok('담당자를 남긴다', /managerSid:d\.mainSid\|\|'', managerName:d\.mainSid\?_sidName\(d\.mainSid\)/.test(src));
+ok('담당자를 남긴다 (자문료는 담당자를 안 붙인다 — 확정창과 같게)',
+   /managerSid:_isAdv \? '' : \(d\.mainSid\|\|''\)/.test(src));
 ok('성과급을 계산해 남긴다', /perfBaseAmount:perfBase, perfShares:shares/.test(src));
-ok('담당자가 없으면 성과 미반영으로 표시', /perfExclude:!\(d\.perfOn && d\.mainSid\)/.test(src));
+ok('담당자가 없으면(또는 자문료면) 성과 미반영으로 표시',
+   /perfExclude:_isAdv \|\| !\(d\.perfOn && d\.mainSid\)/.test(src));
 ok('카드 수수료를 지출로 남긴다', /if\(cardFee > 0\)\{[\s\S]{0,300}?category:'exp-bankfee'/.test(src));
 ok('통장 행에 처리됨을 찍는다', /erpMarkBankRowProcessed\(row,'income','➕ '/.test(src));
 ok('저장이 실패하면 행을 그대로 둔다', /if\(_ok === false\)\{ showToast\('❌ 저장 실패 — 행을 그대로 둡니다'\); return false; \}/.test(src));
@@ -87,7 +93,8 @@ console.log('\n[안전장치]');
 ok('매출이 입금보다 적으면 입금액으로 맞춘다', /if\(gross < row\.amount\) gross = row\.amount;/.test(src));
 ok('마감된 달에는 등록할 수 없다', /isIncomeLocked\(_ym\)\)\{ showToast\('🔒 '\+_ym\+' 입금 마감 — 등록할 수 없습니다'\)/.test(src));
 ok('업체·의뢰인이 비면 등록 못 한다', /if\(!\(dirPop\.name\|\|''\)\.trim\(\)\)\{ showToast\('업체·의뢰인을 입력하세요'\)/.test(src));
-ok('성과급을 켜면 담당자가 있어야 한다', /if\(dirPop\.perfOn && !dirPop\.mainSid\)\{ showToast\('담당자를 고르세요/.test(src));
+ok('성과급을 켜면 담당자가 있어야 한다 (자문료는 성과급 자체가 없어 안 묻는다)',
+   /if\(!_isAdv && dirPop\.perfOn && !dirPop\.mainSid\)\{ showToast\('담당자를 고르세요/.test(src));
 ok('등록 전에 무엇이 저장되는지 보여준다', /을 수입으로 등록합니다\./.test(src));
 ok('되돌릴 수 있다고 알려준다', /확정 이력」에서 되돌릴 수 있습니다/.test(src));
 ok('담당자 목록은 표준 함수를 쓴다 (비관리자 기기에서도 안 빈다)',
