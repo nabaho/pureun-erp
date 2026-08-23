@@ -687,6 +687,74 @@ test('실적 4탭은 외부기관·배제 건을 걸러낸다', () => {
   });
 });
 
+/* ===== 이력서관리 네 화면 정리 (2026-08-23) ===== */
+
+test('이력서관리 네 화면은 제목·설명을 숨긴다 — 빵부스러기와 세 번 중복이었다', () => {
+  ['page-quickcv', 'page-resume-hub', 'page-profile', 'page-certdoc'].forEach((id) => {
+    assert.ok(
+      new RegExp('#' + id + '>\\.page>h2,#' + id + '>\\.page>\\.desc').test(source),
+      id + ' 의 제목·설명 숨김 규칙이 있어야 합니다'
+    );
+  });
+});
+
+test('네 화면 모두 접이식(.rh-fold) 같은 모양이다', () => {
+  assert.match(source, /\.rh-fold>summary\{/, '.rh-fold 요약줄 스타일이 있어야 합니다');
+  // 빠른이력서·이력서생성보관·프로필·경력증명서 = 4개
+  const folds = source.match(/<details class="rh-fold"/g) || [];
+  assert.ok(folds.length >= 4, '네 화면에 각각 접이식 묶음이 있어야 합니다 (지금 ' + folds.length + '개)');
+});
+
+test('빠른 이력서에서 중복 카드를 없앴다 — 서류 만들기 버튼은 같은 화면 안 중복이었다', () => {
+  // 주석에는 남아 있어도 된다 — 화면에 그려지는 마크업만 본다
+  assert.ok(!/>📑 서류 만들기</.test(source), '「서류 만들기」 카드를 되살리지 말 것');
+  assert.ok(!/onclick="goCV\('resume'\)"/.test(source), '같은 화면에서 goCV 버튼은 드롭다운과 중복입니다');
+  // 최근 생성 기록 자리는 남아 있어야 한다 (renderCvRecent가 이 id를 찾는다)
+  assert.match(source, /id="homeCvRecent"/);
+});
+
+test('A4 쪽 나눔 자 — 자는 #cvSheet 밖에 있고 인쇄에서 막힌다', () => {
+  assert.match(source, /id="cvPageGuide"/, '쪽 나눔 자 요소가 있어야 합니다');
+  // ⚠ 자가 #cvSheet 안에 있으면 renderQuickCV가 지우고 인쇄에도 찍힌다
+  const sheetTag = source.match(/<div id="cvSheet"[\s\S]{0,200}/);
+  assert.ok(sheetTag, '#cvSheet 요소를 찾을 수 없습니다');
+  assert.ok(!/cvPageGuide/.test(sheetTag[0].split('</div>')[0]),
+    '쪽 나눔 자를 #cvSheet 안으로 넣지 말 것');
+  // ⚠ 인쇄에서 래퍼가 relative로 남으면 #cvSheet의 absolute 기준이 바뀌어 PDF가 어긋난다
+  // @media print 블록이 파일에 둘 이상 있다 — #cvSheet를 담은 쪽을 골라야 한다
+  const printCss = (source.match(/@media print\{[\s\S]*?\n\}/g) || [])
+    .filter((b) => b.indexOf('#cvSheet') >= 0);
+  assert.equal(printCss.length, 1, '#cvSheet를 다루는 인쇄 CSS 블록을 찾을 수 없습니다');
+  assert.match(printCss[0], /\.cv-sheet-wrap\{position:static!important\}/,
+    '인쇄에서 .cv-sheet-wrap은 static이어야 합니다');
+  assert.match(printCss[0], /\.cv-pguide\{display:none!important\}/);
+});
+
+test('cvRenderGuide는 rect로 재고 cvApplyPages와 같은 한 장 높이를 쓴다', () => {
+  const src = funcSource('cvRenderGuide');
+  assert.match(src, /getBoundingClientRect/, 'zoom 때문에 높이를 offset으로 재면 어긋납니다');
+  // 실제 코드만 본다 — ⚠ 주석 자체가 그 낱말을 담고 있어서 주석을 지운 뒤 검사한다
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/\.offsetHeight/.test(code), '⚠ 높이를 offsetHeight로 재지 말 것 — zoom 해석이 브라우저마다 다릅니다');
+  assert.match(src, /CV_PAGE_MM/, '한 장 높이는 cvApplyPages와 같은 상수를 써야 합니다');
+  assert.match(funcSource('cvApplyPages'), /CV_PAGE_MM/);
+  assert.match(funcSource('cvApplyPages'), /cvRenderGuide\(\)/, '축소 맞춤 뒤 자를 다시 그려야 합니다');
+});
+
+test('타이핑 중에는 자만 다시 그린다 — 커서가 튀지 않게', () => {
+  // funcSource는 \n} 까지 먹으므로 한 줄 함수에는 못 쓴다 — 그 한 줄만 떼어 본다
+  const m = source.match(/function cvGuideSoon\(\)[^\n]*/);
+  assert.ok(m, 'cvGuideSoon 함수가 있어야 합니다');
+  assert.match(m[0], /cvRenderGuide/);
+  assert.ok(!/cvApplyPages/.test(m[0]), 'cvGuideSoon이 zoom을 다시 계산하면 커서가 튑니다');
+});
+
+test('내용이 바뀌는 자리마다 자를 다시 그린다', () => {
+  ['cvAddRow', 'cvDelRow', 'cvClearAll', 'cvInsert', 'cvDrop'].forEach((fn) => {
+    assert.match(funcSource(fn), /cvGuideSoon\(\)/, fn + ' 뒤에 쪽 수를 다시 세야 합니다');
+  });
+});
+
 test('내부 탭이 비어 보여도 외부기관 건이 어디 갔는지 안내한다', () => {
   // 컨설팅실적 79건이 전부 외부로 넘어가 0건이 되자 사용자가 데이터 유실로 오인했다(실사용 피드백)
   assert.match(source, /외부기관 실적.{0,10}탭에/, '외부로 넘어간 건수를 알려주는 안내가 있어야 합니다');
