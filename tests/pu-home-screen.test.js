@@ -92,8 +92,13 @@ function rowDeps() {
     fnSource('todayString'), fnSource('keptOf'), fnSource('rosterMarkOf'),
     fnSource('memberRows'), fnSource('pageIdsOf'), fnSource('pageRows'), fnSource('rowsOf'),
     fnSource('needsAttentionRow'), fnSource('statOf'),
-    fnSource('ownMinis'), fnSource('chkMinis'), fnSource('dashHtml'),
-    fnSource('visibleRows'), fnSource('chipsHtml')
+    fnSource('ownMinis'), fnSource('chkMinis'), fnSource('cardCount'), fnSource('dashHtml'),
+    fnSource('visibleRows'), fnSource('chipsHtml'),
+    /* 자문사현황 — 목록은 푸른ERP 업체관리에서 읽고, 올렸는지는 사람이 표시한다 */
+    constLine('POSTED_TEXT'), constLine('PARTNER_PATH'),
+    fnSource('companiesFrom'), fnSource('partnerMark'), fnSource('postedOf'),
+    fnSource('partnerRows'), fnSource('postedNames'), fnSource('postedPillHtml'),
+    fnSource('defaultFilterOf'), fnSource('listCountHtml'), fnSource('rowsHtml')
   ].map(noConst).join('\n') + '\n';
 }
 
@@ -1362,6 +1367,10 @@ function loadAllBox(dbRef) {
     + fnSource('keptOf') + '\n' + fnSource('rosterMarkOf') + '\n'
     + fnSource('memberRows') + '\n' + fnSource('pageRows') + '\n'
     + fnSource('rowsOf') + '\n' + fnSource('firstPickOf') + '\n' + fnSource('loadDraft') + '\n'
+    /* 자문사현황도 같은 자리에서 읽는다(업체관리·표시) — 그 부품이 없으면 loadAll 이 터진다 */
+    + noConst(constLine('PARTNER_PATH')) + '\n' + fnSource('companiesFrom') + '\n'
+    + fnSource('partnerMark') + '\n' + noConst(constLine('POSTED_TEXT')) + '\n'
+    + fnSource('postedOf') + '\n' + fnSource('partnerRows') + '\n'
     + fnSource('loadAll') + '\n'
     + expose('PAGE_IDS') + expose('PAGE_LABEL') + expose('DEFAULT_PAGES'));
   return ctx;
@@ -1776,6 +1785,96 @@ test('★ 「손댈 것」 딱지에 적힌 수와 눌러서 나온 줄 수가 �
   assert.ok(이름들.indexOf('임혜미') < 0, '내려간 사람이 아직 손댈 것으로 남습니다');
   assert.ok(이름들.indexOf('박성수') >= 0, '홈페이지에 남은 퇴사자가 손댈 것에서 빠졌습니다');
   assert.equal(s.hot, 2, '박성수(퇴사+홈페이지에 남음)를 두 번 셌거나 조현범을 빠뜨렸습니다');
+});
+
+/* ══════ 자문사현황 (4차 지시) ══════
+   홈페이지 자문사현황은 로고 «그림»이다. 회사명이 글자로 없어 대조를 «못 한다».
+   지킬 것은 ① 못 하는 것을 못 한다고 말하는가 ② 업체관리를 기준으로 삼는가
+   ③ 표시 안 한 회사가 할 일로 새지 않는가 ④ 안 올린 회사가 붙여넣을 목록에 안 드는가. */
+function partnerBox() {
+  const ctx = cfgBox(null);
+  ctx.App.group = 'partner';
+  ctx.App.q = '';
+  ctx.App.companiesErr = '';
+  ctx.App.companies = ctx.companiesFrom([
+    { id: 'co-1', name: '(주)가온전자', typeCode: '자문', status: 'active', ceo: '김가온' },
+    { id: 'co-2', name: '대성물류(주)', typeCode: '자문', status: 'active' },
+    { id: 'co-3', name: '세종정밀', typeCode: '자문', status: 'active' },
+    { id: 'co-4', name: '삼정테크', typeCode: '자문', status: 'closed', closedDate: '2026-03-31' },
+    { id: 'co-5', name: '한빛식품', typeCode: '급여', status: 'active' },
+    { id: 'co-6', name: '지운 업체', typeCode: '자문', status: 'active', _deleted: true }
+  ]);
+  ctx.App.partners = {
+    'co-1': { posted: true, by: '권형하', at: '2026-08-20' },
+    'co-3': { posted: false, why: '로고 파일을 못 받음', by: '권형하', at: '2026-08-21' },
+    'co-4': { posted: true, by: '권형하', at: '2026-08-01' }
+  };
+  return ctx;
+}
+
+test('★ 자문사현황은 «대조 못 함»이라고 말한다 — 「같음」으로 뭉개지 않는다', () => {
+  const ctx = partnerBox();
+  const card = ctx.dashHtml();
+  assert.ok(card.indexOf('대조 못 함') >= 0, '왜 대조가 없는지 카드에 안 적혀 있습니다');
+  assert.ok(card.indexOf('자문사현황') >= 0, '자문사현황 카드가 없습니다');
+  /* 목록 줄에 「확인 전」이 붙으면 언젠가 대조가 될 것처럼 들린다 — 그 갈래는 못 한다 */
+  assert.ok(ctx.rowsHtml().indexOf('확인 전') < 0, '자문사 줄에 「확인 전」이 붙었습니다');
+  /* 대조를 눌렀다고 「홈페이지와 같음」으로 바뀌어서도 안 된다 */
+  ctx.App.check = { at: 1, members: {}, pages: {}, duplicates: [], leftovers: {} };
+  assert.ok(ctx.dashHtml().indexOf('대조 못 함') >= 0,
+    '대조를 누른 뒤 자문사현황이 「같음」처럼 보입니다 — 회사명이 글자로 없어 못 하는 것입니다');
+});
+
+test('★ 자문사 목록은 업체관리가 기준이다 — 지운 업체는 안 보인다', () => {
+  const ctx = partnerBox();
+  const names = ctx.visibleRows('partner').map(r => r.name);
+  assert.ok(names.indexOf('지운 업체') < 0, '업체관리에서 지운 업체가 목록에 남았습니다');
+  assert.equal(names.length, 5, '업체관리 업체 수와 목록이 다릅니다: ' + names.length);
+  /* 여기서 회사를 만들 수 있으면 어느 쪽이 진짜인지 알 수 없게 된다 */
+  assert.ok(!/자문사.*추가|＋ *새 회사|＋ *자문사/.test(ctx.listHtml()),
+    '자문사 목록에 «회사 만들기»가 있습니다 — 업체관리에서 만들어야 합니다');
+});
+
+test('★ 표시 안 한 회사는 할 일이 아니다 — 「자문 종료」만 손댈 것이다', () => {
+  const ctx = partnerBox();
+  const rows = ctx.visibleRows('partner');
+  const 대성 = rows.find(r => r.name === '대성물류(주)');
+  const 삼정 = rows.find(r => r.name === '삼정테크');
+  assert.equal(대성.posted, '', '표시 안 한 회사를 다른 값으로 읽습니다');
+  assert.equal(ctx.needsAttentionRow(대성), false, '표시 안 한 회사가 할 일로 새어 나옵니다');
+  assert.ok(삼정.roster && 삼정.roster.kind === 'ended',
+    '올림으로 표시했는데 거래가 끝난 곳을 안 알립니다');
+  assert.equal(ctx.needsAttentionRow(삼정), true, '자문 종료가 손댈 것에서 빠졌습니다');
+  assert.equal(ctx.statOf('partner').hot, 1, '손댈 것을 겹쳐 셌거나 빠뜨렸습니다');
+});
+
+test('★ 안 올린 회사는 붙여넣을 회사명 목록에 안 든다', () => {
+  const ctx = partnerBox();
+  const names = ctx.postedNames();
+  assert.ok(names.indexOf('세종정밀') < 0, '「안 올림」으로 표시한 회사가 목록에 들어갔습니다');
+  assert.ok(names.indexOf('대성물류(주)') < 0, '표시 안 한 회사가 목록에 들어갔습니다');
+  assert.deepEqual(names.slice().sort(), ['(주)가온전자', '삼정테크'].sort(),
+    '올림으로 표시한 회사만 나와야 합니다');
+});
+
+test('★ 이름으로 찾을 수 있다 — 업체가 수백 개라 찾을 길이 없으면 고를 수 없다', () => {
+  const ctx = partnerBox();
+  ctx.App.filter = '';
+  ctx.App.q = '세종';
+  const found = ctx.visibleRows('partner');
+  assert.equal(found.length, 1, '이름으로 찾기가 안 됩니다');
+  assert.equal(found[0].name, '세종정밀');
+  ctx.App.q = '';
+  assert.equal(ctx.visibleRows('partner').length, 5, '찾기를 지우면 다시 다 보여야 합니다');
+});
+
+test('★ 자문사 표시는 «한 업체 자리»만 건드린다 — 통째로 덮지 않는다', () => {
+  /* 통째로 set 하면 다른 사람이 방금 한 표시가 지워진다. 경로에 업체 열쇠가 들어가야 한다. */
+  const src = fnSource('setPosted');
+  assert.match(src, /PARTNER_PATH \+ '\/' \+ id/,
+    '표시를 업체별 자리에 저장하지 않습니다 — 통째로 덮으면 남의 표시가 지워집니다');
+  assert.ok(src.indexOf('App.saveErr') >= 0,
+    '저장 실패를 화면에 안 알리면, 규칙이 없어 거부돼도 올렸다고 표시한 줄 압니다');
 });
 
 test('★ 편집칸의 머리와 발이 고정돼 가운데만 구른다', () => {
