@@ -123,11 +123,120 @@ function okAttachment(att) {
 
 /* 사람이 대기 칸에서 보게 될 한 줄. 앱의 pendingRecord 와 **같은 칸**이어야 한다 —
    집어갈 때 앱이 아는 칸만 남기므로, 없는 칸을 만들면 그 순간 사라진다. */
-function sharedPendingRecord(o) {
-  o = o || {};
+/* 보낸이·제목을 한 줄 메모로 — 나중에 「누가 보냈나」를 물을 수 있어야 한다. */
+function mailNoteOf(o) {
   const from = String(o.mailFrom || '');
   const subject = String(o.mailSubject || '').replace(/[\r\n]+/g, ' ').trim();
-  const note = ('메일 ' + from + (subject ? ' · ' + subject : '')).slice(0, 300);
+  return ('메일 ' + from + (subject ? ' · ' + subject : '')).slice(0, 300);
+}
+
+/* ══════ 메일을 담당자 칸으로 저절로 (대표 승낙 2026-08-21) ══════
+   여태 메일로 온 자료는 공용 칸에 쌓이고, 누군가 「내가 맡기」를 눌러야
+   내려왔다. 화면에는 이미 누가 맡을 사람인지 적혀 있었는데 그리로
+   **보내주지는** 않았다. 이제 서버가 바로 그 사람 칸에 넣는다.
+
+   ⚠ 못 갈랐으면 **반드시 공용 칸에 남긴다**(대표 결정). 아직 급여데이터함에
+   안 들어온 사람 자리에 넣으면 그 자리는 아무도 안 열어 자료가 사라진 것과
+   같아진다. 왜 못 갈랐는지(why)도 함께 적어 관리자가 손볼 수 있게 한다. */
+
+/* 주소 → 업체 지도. 업체 한 곳에 여러 주소가 적혀 있을 수 있다(대표·담당·경리).
+   ⚠ buildKnownList 는 주소를 **평평하게** 모으기만 해서 어느 업체 것인지 몰랐다 —
+   그래서 통과/차단에만 쓸 수 있었다. 여기서는 업체를 함께 담는다. */
+function buildCompanyIndex(companies) {
+  const box = (companies && typeof companies === 'object' && companies.v !== undefined)
+    ? companies.v : companies;
+  let list = box;
+  if (list && !Array.isArray(list) && typeof list === 'object') {
+    list = Object.keys(list).map(function (k) { return list[k]; });
+  }
+  const map = {};
+  if (!Array.isArray(list)) return map;
+  list.forEach(function (co) {
+    if (!co || typeof co !== 'object') return;
+    collectEmails(co).forEach(function (e) {
+      if (!e || map[e]) return;          // 먼저 적힌 업체가 이긴다
+      map[e] = co;
+    });
+  });
+  return map;
+}
+
+function companyFor(fromHeader, index) {
+  const a = normEmail(senderOf(fromHeader));
+  if (!a) return null;
+  return (index && index[a]) || null;
+}
+
+/* 그 업체 **주담당**의 자리(uid). 부담당에게는 안 보낸다 —
+   둘에게 다 보내면 같은 자료가 두 벌이 되고, 부담당에게만 보내면 주담당이 모른다.
+   아직 이 함에 안 들어온 사람은 자리가 없다(빈 문자열). */
+function seatFor(company, owners) {
+  if (!company) return '';
+  const sid = String(company.managerMain || '');
+  if (!sid) return '';
+  const want = sidToEmail(sid);
+  const ow = owners || {};
+  const keys = Object.keys(ow);
+  for (let i = 0; i < keys.length; i++) {
+    const o = ow[keys[i]] || {};
+    if (o.email && normEmail(o.email) === want) return keys[i];
+  }
+  return '';
+}
+
+/* 이름표 짐작 — 사업장은 **주소로** 알고(파일 이름보다 정확하다),
+   귀속월·종류는 파일 이름과 메일 제목에서 읽는다.
+   ⚠ 낱말 규칙은 급여데이터함 guessTag 와 **같아야** 한다 — 다르면 같은 파일이
+   서버와 화면에서 다른 종류로 잡힌다. */
+function tagFor(o, company) {
+  o = o || {};
+  const text = String(o.filename || '') + ' ' + String(o.subject || '');
+
+  let month = '';
+  let m = text.match(/(20\d{2})\D{0,3}(\d{1,2})\s*월/);        // 2026년 8월
+  if (!m) m = text.match(/(20\d{2})[.\-_](\d{1,2})(?!\d)/);      // 2026-08
+  if (!m) {
+    const yy = text.match(/(?:^|\D)(\d{2})\s*년\s*(\d{1,2})\s*월/); // 25년 07월
+    if (yy) m = [yy[0], '20' + yy[1], yy[2]];
+  }
+  if (m) {
+    const mo = parseInt(m[2], 10);
+    if (mo >= 1 && mo <= 12) month = m[1] + '-' + (mo < 10 ? '0' : '') + mo;
+  }
+
+  let kind = '';
+  if (/근로계약|계약서/.test(text)) kind = 'contract';
+  else if (/명세서|이체|신고|취득|상실/.test(text)) kind = 'output';
+  else if (/급여대장|노임|임금대장|대장/.test(text)) kind = 'ledger';
+  else if (/근태|출근|출역|근무|시간/.test(text)) kind = 'attend';
+
+  return {
+    companyId: company ? String(company.id || '') : '',
+    companyName: company ? String(company.name || '') : '',
+    month: month, kind: kind
+  };
+}
+
+/* 이 메일 한 통을 어디로 보낼지 — 자리 하나와 까닭 한 줄. */
+function routeFor(o, index, owners) {
+  o = o || {};
+  const co = companyFor(o.from, index);
+  const tag = tagFor(o, co);
+  if (!co) return { seat: '', shared: true, tag: tag, why: '업체관리에 없는 주소' };
+  const seat = seatFor(co, owners);
+  if (!seat) {
+    const sid = String(co.managerMain || '');
+    return { seat: '', shared: true, tag: tag,
+      why: sid ? '주담당이 아직 급여데이터함에 들어온 적이 없음' : '업체관리에 주담당이 없음' };
+  }
+  return { seat: seat, shared: false, tag: tag, why: '' };
+}
+
+/* 담당자 대기 칸에 넣을 줄. 사람이 담은 줄과 모양이 같아야 그 화면이 그대로 그린다 —
+   다만 by 는 비워 두고(서버가 담았다) routed 를 남겨 「저절로 온 것」을 갈라 본다. */
+function pendingRecordFor(o) {
+  o = o || {};
+  const tag = o.tag || {};
   return {
     filename: String(o.filename || ''),
     file: String(o.file || ''),
@@ -135,9 +244,36 @@ function sharedPendingRecord(o) {
     bytes: Number(o.bytes || 0),
     at: Number(o.at || 0),
     by: '',                    // 서버가 담았다 — 사람이 아니다
-    companyId: '', companyName: '', month: '', kind: '',
+    companyId: String(tag.companyId || ''),
+    companyName: String(tag.companyName || ''),
+    month: String(tag.month || ''),
+    kind: String(tag.kind || ''),
     from: 'mail',
-    note: note
+    routed: true,              // 사람이 맡은 것이 아니라 저절로 내려온 것
+    note: mailNoteOf(o)
+  };
+}
+
+/* 공용 칸에 넣을 줄 — 못 갈랐을 때만 쓴다.
+   알아낸 이름표는 함께 넘긴다(맡는 사람이 다시 고를 일이 없다).
+   why 는 관리자가 **왜 안 갈렸는지** 보는 곳이다. */
+function sharedPendingRecord(o) {
+  o = o || {};
+  const tag = o.tag || {};
+  return {
+    filename: String(o.filename || ''),
+    file: String(o.file || ''),
+    mime: String(o.mime || ''),
+    bytes: Number(o.bytes || 0),
+    at: Number(o.at || 0),
+    by: '',                    // 서버가 담았다 — 사람이 아니다
+    companyId: String(tag.companyId || ''),
+    companyName: String(tag.companyName || ''),
+    month: String(tag.month || ''),
+    kind: String(tag.kind || ''),
+    from: 'mail',
+    why: String(o.why || ''),
+    note: mailNoteOf(o)
   };
 }
 
@@ -145,5 +281,6 @@ module.exports = {
   UPLOAD_MAX, BAD_EXT,
   normEmail, senderOf, collectEmails, sidToEmail,
   buildKnownList, isKnownSender,
-  extOf, okAttachment, sharedPendingRecord
+  buildCompanyIndex, companyFor, seatFor, tagFor, routeFor,
+  extOf, okAttachment, sharedPendingRecord, pendingRecordFor, mailNoteOf
 };

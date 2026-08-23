@@ -932,8 +932,13 @@ exports.migratePhotosToStorage = functions
    ⚠ 처리한 메일은 **읽음으로만 표시**하고 지우지 않는다. 폴더에 그대로 남아
      있어야 "분명 보냈는데" 를 사람이 따라갈 수 있다.
 
-   ⚠ 담기는 자리는 공용 대기 칸(pending_shared)이다. 서버는 「누구 자리」가
-     없기 때문이다. 담당자가 집어가면 자기 자리로 내려간다(앱에 이미 있는 기능). */
+   ⚠ 담기는 자리는 **보낸 주소로 찾은 업체의 주담당 대기 칸**이다(대표 승낙
+     2026-08-21). 주소 → 업체 → 주담당 순서로 찾는다 — 파일 이름이
+     IMG_2841.jpg 여도 누가 보냈는지는 늘 안다.
+     못 갈랐으면 **공용 대기 칸(pending_shared)에 남긴다** — 업체를 모르거나,
+     주담당이 아직 급여데이터함에 안 들어와 자리가 없을 때다. 그 자리에 넣으면
+     아무도 안 열어 자료가 사라진 것과 같아진다. 왜 못 갈랐는지(why)도 적어
+     관리자가 손볼 수 있게 한다. */
 const MR = require("./mail-receive");
 
 const PAYDATA_ROOT = "paydata";
@@ -949,7 +954,7 @@ function payMailId() {
 
 /* 아는 주소 명단은 메일이 실제로 있을 때만 만들고, 따뜻한 함수 인스턴스에서는
    6시간 재사용한다. 예전에는 빈 메일함이어도 10분마다 업체·직원 전체를 읽었다. */
-let payMailKnownCache = { at: 0, list: null };
+let payMailKnownCache = { at: 0, list: null, index: null, owners: null };
 async function payMailKnownList(db) {
   const now = Date.now();
   if (payMailKnownCache.list && now - payMailKnownCache.at < 6 * 60 * 60 * 1000) {
@@ -959,12 +964,20 @@ async function payMailKnownList(db) {
     db.ref("data/companies").once("value").catch(() => null),
     db.ref("data/user_dir").once("value").catch(() => null),
   ]);
-  const list = MR.buildKnownList(coSnap && coSnap.val(), dirSnap && dirSnap.val());
-  payMailKnownCache = { at: now, list: list };
+  const cos = coSnap && coSnap.val();
+  const list = MR.buildKnownList(cos, dirSnap && dirSnap.val());
+  /* 갈라 보내려면 주소가 **어느 업체 것인지**와 그 업체 주담당의 자리가 필요하다.
+     명단과 같은 읽기로 함께 만든다 — 메일 한 통마다 다시 읽으면 요금이 된다.
+     owners(급여데이터함에 들어온 사람)는 늘어나므로 같은 6시간마다 다시 읽는다. */
+  const ownSnap = await db.ref(PAYDATA_ROOT + "/owners").once("value").catch(() => null);
+  const index = MR.buildCompanyIndex(cos);
+  const owners = (ownSnap && ownSnap.val()) || {};
+  payMailKnownCache = { at: now, list: list, index: index, owners: owners };
   return list;
 }
 
-/* 첨부 하나를 창고에 담고 공용 대기 칸에 한 줄 적는다. */
+/* 첨부 하나를 창고에 담고, **임자를 찾아 그 사람 대기 칸**에 한 줄 적는다.
+   못 찾으면 공용 칸에 남긴다(까닭과 함께). */
 async function payMailStoreOne(db, bucket, att, mail) {
   const id = payMailId();
   const ext = MR.extOf(att.filename);
@@ -973,15 +986,24 @@ async function payMailStoreOne(db, bucket, att, mail) {
     contentType: att.contentType || "application/octet-stream",
     resumable: false,
   });
-  const rec = MR.sharedPendingRecord({
+  const route = MR.routeFor(
+    { from: mail.from, subject: mail.subject, filename: att.filename },
+    payMailKnownCache.index, payMailKnownCache.owners);
+
+  const common = {
     filename: att.filename, file: where,
     mime: att.contentType || "", bytes: att.size || (att.content && att.content.length) || 0,
-    at: Date.now(), mailFrom: mail.from, mailSubject: mail.subject,
-  });
+    at: Date.now(), mailFrom: mail.from, mailSubject: mail.subject, tag: route.tag,
+  };
   const up = {};
-  up[PAYDATA_ROOT + "/pending_shared/" + id] = rec;
+  if (route.shared) {
+    up[PAYDATA_ROOT + "/pending_shared/" + id] =
+      MR.sharedPendingRecord(Object.assign({ why: route.why }, common));
+  } else {
+    up[PAYDATA_ROOT + "/u/" + route.seat + "/pending/" + id] = MR.pendingRecordFor(common);
+  }
   await db.ref().update(up);
-  return id;
+  return { id: id, seat: route.seat, shared: route.shared, why: route.why };
 }
 
 exports.receivePaydataMail = functions
@@ -1021,6 +1043,9 @@ exports.receivePaydataMail = functions
     }
 
     let took = 0, skipped = 0, unknown = 0;
+    /* 갈린 것·공용에 남은 것을 따로 센다 — 「왜 아무도 안 받나」를 로그만 보고 알아야 한다. */
+    let routed = 0, shared = 0;
+    const whys = {};
     try {
       let lock;
       try {
@@ -1076,7 +1101,11 @@ exports.receivePaydataMail = functions
             continue;
           }
           try {
-            await payMailStoreOne(db, bucket, att, { from: sender, subject: subject });
+            const r = await payMailStoreOne(db, bucket, att, { from: sender, subject: subject });
+            /* 갈린 것과 공용에 남은 것을 따로 센다 — 「왜 아무도 안 받나」를
+               로그만 보고 알 수 있어야 한다. */
+            if (r && r.shared) { shared++; whys[r.why] = (whys[r.why] || 0) + 1; }
+            else routed++;
             took++;
           } catch (e) {
             // 한 건이 막혀도 나머지는 담는다. 읽음 표시는 아래에서 한다.
@@ -1086,7 +1115,7 @@ exports.receivePaydataMail = functions
         }
         await client.messageFlagsAdd({ uid: String(item.uid) }, ["\\Seen"], { uid: true });
       }
-      console.log("receivePaydataMail", { looked: inbox.length, took, skipped, unknown });
+      console.log("receivePaydataMail", { looked: inbox.length, took, skipped, unknown, routed, shared, whys });
     } catch (e) {
       console.error("receivePaydataMail 실패:", String((e && e.message) || e));
     } finally {
