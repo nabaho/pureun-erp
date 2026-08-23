@@ -1471,11 +1471,14 @@ test('명함첩 보내기와 업체관리 보내기를 따로 둔다', () => {
 test('중소기업확인서가 아무 곳에도 안 들어가면 확인 필요로 잡는다', () => {
   // 확인서는 명함첩에 가지 않는다 — 이 줄이 없으면 조용히 묻힌다.
   const fn = fnBodyOf('needsCheck');
-  assert.match(fn, /CO_KINDS\[r\.kind\]/, '업체관리에 못 넣은 것을 놓칩니다');
   /* ⚠ 2026-08-11 다시 겨눔 — 판정을 coFilledOk 로 모았다(filled 가 실시간DB 에서
-     사라져 화면이 멎던 사고). 지킬 것은 「업체관리에 못 넣은 것을 잡는다」이지
-     이 함수 안에서 filedCo 를 직접 읽는 모양이 아니다. */
-  assert.match(fn, /coFilledOk\(r\)/, '업체관리에 넣었는지 안 따집니다');
+     사라져 화면이 멎던 사고). 지킬 것은 「업체관리 쪽 할 일을 잡는다」이지
+     이 함수 안에서 filedCo 를 직접 읽는 모양이 아니다.
+     ⚠ 2026-08-23 또 옮겼다 — 「업체가 아직 없다」는 기다림이라 coTodo 로 갈랐다.
+       CO_KINDS 를 보는 곳도 그 안으로 들어갔다. */
+  assert.match(fn, /coTodo\(r\)/, '업체관리 쪽 할 일을 안 따집니다');
+  assert.match(app, /function coTodo\(read\)[\s\S]*?CO_KINDS\[read\.kind\]/,
+    '갈래를 가리지 않으면 명함까지 업체관리 할 일이 됩니다');
   assert.match(app, /function coFilledOk\(read\)[\s\S]*?filedCo/, 'filedCo 를 보는 곳이 없습니다');
 });
 

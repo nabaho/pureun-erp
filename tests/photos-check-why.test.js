@@ -30,6 +30,9 @@ function load() {
        에서 사라져 화면이 멎던 사고). **진짜 함수를 함께 넣는다** — 가짜로 두면
        그 판정이 틀려도 아래 「할 일과 이유가 어긋나지 않는다」가 못 잡는다. */
     grab(/function coFilledOk\(read\)[\s\S]*?\n\}/, 'coFilledOk'),
+    /* ⚠ 2026-08-23 — 「업체가 아직 없다」는 기다림이지 할 일이 아니라는 판정이
+       coTodo 로 갈라졌다. 진짜 함수를 함께 넣는다 — 없으면 needsCheck 가 멎는다. */
+    grab(/function coTodo\(read\)[\s\S]*?\n\}/, 'coTodo'),
     /* ⚠ 2026-08-13 — 원본이 작은 서류 판정(tooSmall)도 **진짜 함수를 넣는다.**
        가짜로 두면 그 판정이 틀려도 아래 「할 일과 이유가 어긋나지 않는다」가 못 잡는다. */
     grab(/^const MIN_READ_EDGE = \{[\s\S]*?\n\};/m, 'MIN_READ_EDGE').replace('const ', 'var '),

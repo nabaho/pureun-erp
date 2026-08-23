@@ -45,7 +45,7 @@ function objOf(name) {
 const ctx = (function () {
   const src = [objOf('MIN_READ_EDGE'), objOf('KEEP_ONLY'), objOf('CARD_KINDS'), objOf('CO_KINDS'),
     lineOf('TEL_SHAPE'), lineOf('MAIL_SHAPE')].join('\n') + '\n' +
-    ['tooSmall', 'smallCheckedOk', 'readAnyField', 'coFilledOk', 'needsCheck', 'checkWhy']
+    ['tooSmall', 'smallCheckedOk', 'readAnyField', 'coFilledOk', 'coTodo', 'needsCheck', 'checkWhy']
       .map(fnOf).join('\n');
   const c = { Math, Number, String, Object, Boolean, Date };
   vm.createContext(c);
@@ -78,18 +78,25 @@ test('칸을 채운 것은 물론 할 일이 아니다', () => {
   assert.equal(ctx.needsCheck(x), false);
 });
 
-test('★ 업체가 «아예 없는» 것은 그대로 할 일이다 — 사람이 만들어야 끝난다', () => {
+/* ⚠ 2026-08-23 «두 번째» 결정으로 다시 뒤집힌 검사다. 처음에는 「업체가 아예
+   없으면 사람이 만들어야 하니 할 일」이라 두었다. 그런데 대표 지시가 나왔다:
+   **업체는 계약이 만든다** — 사진첩에서 업체를 만들면 갈래(자문·급여·기금·노조)를
+   짐작해야 하고, 상담으로 받아 둔 서류까지 업체가 되어 업체관리가 서류함이 된다.
+   그러니 「업체가 아직 없다」는 사진첩에서 할 수 있는 일이 없는 **기다림**이고,
+   계약관리에서 업체가 생기면 coSweep 이 저절로 채운다.
+   실데이터 152장이 이 꼴로 목록을 채우고 있었다.
+   자세한 것은 tests/photos-co-follows-contract.test.js. */
+test('★ 업체가 «아예 없는» 것은 기다림이지 할 일이 아니다 (2026-08-23 다시 뒤집음)', () => {
   const x = biz({ at: 1, found: false, message: '업체관리에 없습니다' });
-  assert.equal(ctx.coFilledOk(x.meta.read), false);
-  assert.equal(ctx.needsCheck(x), true,
-    '★ 여기까지 풀면 진짜 할 일(업체 만들기)이 조용히 사라집니다');
-  assert.match(ctx.checkWhy(x), /업체관리에 못 넣음/);
+  assert.equal(ctx.coFilledOk(x.meta.read), false, '넣지 못한 것은 맞다');
+  assert.equal(ctx.needsCheck(x), false,
+    '★ 사진첩에서 할 수 있는 일이 없는데 152장이 목록을 채웁니다');
+  assert.equal(ctx.checkWhy(x), '', '목록에서 뺐는데 이유가 남으면 떠다니는 이유가 됩니다');
 });
 
-test('★ found 가 false 인데 filled 가 있는 어긋난 기록도 할 일이다', () => {
-  /* 옛 기록에 이런 어긋난 짝이 있었다(tests/photos-filedco-empty.test.js). */
+test('found 가 false 인데 filled 가 있는 어긋난 옛 기록도 같다 — 이미 보낸 것이다', () => {
   const x = biz({ at: 1, found: false, filled: ['대표자'] });
-  assert.equal(ctx.needsCheck(x), true, '★ filled 만 보면 업체 없는 것이 통과합니다');
+  assert.equal(ctx.needsCheck(x), false);
 });
 
 test('업체관리로 보낸 적이 없으면 할 일이다 — 아직 아무것도 안 했다', () => {

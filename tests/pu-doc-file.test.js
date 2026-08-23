@@ -384,7 +384,11 @@ test('업체를 찾지 못하면 새로 만들지 않는다 — 유령 업체 �
   const r = await F.sendToCompany({ kind: 'bizreg', fields: BIZ });
   assert.equal(r.found, false);
   assert.equal(db.calls.update.length, 0, '업체를 만들었습니다');
-  assert.match(r.message, /업체를 먼저 만들어/, '무엇을 해야 하는지 알려주지 않습니다: ' + r.message);
+  /* ⚠ 2026-08-23 문구가 바뀌었다: 「업체를 먼저 만들어 주세요」→「계약이 만들어지면
+     저절로 들어갑니다」. **업체는 계약이 만든다**는 대표 결정 때문이다 — 사진첩에서
+     업체를 만들면 갈래를 짐작해야 하고, 상담으로 받아 둔 서류까지 업체가 된다.
+     이 검사가 지키는 것은 「무엇을 기다리는지 알려 준다」이지 그 문구가 아니다. */
+  assert.match(r.message, /계약이 만들어지면/, '무엇을 기다리는지 알려주지 않습니다: ' + r.message);
 });
 
 test('사업자번호를 못 읽었으면 찾지도 않는다', async () => {

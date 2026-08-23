@@ -50,7 +50,7 @@ function load() {
       return app.slice(i, app.indexOf(';', i) + 1);
     }).join('\n');
   const src = consts + '\n' +
-    ['tooSmall', 'smallCheckedOk', 'readAnyField', 'coFilledOk', 'needsCheck', 'checkWhy']
+    ['tooSmall', 'smallCheckedOk', 'readAnyField', 'coFilledOk', 'coTodo', 'needsCheck', 'checkWhy']
       .map(fnOf).join('\n');
   const ctx = { Math, Number, String, Object, Boolean, Date };
   vm.createContext(ctx);
@@ -75,7 +75,9 @@ test('★ 사업자등록증 — 번호 체크섬을 통과했으면 작아도 �
      명함첩에 안 갔으면 「명함첩에 아직 안 감」으로 또 걸린다. 한 사진이 걸릴 수
      있는 이유가 여럿이라, 크기 하나만 보려면 나머지를 다 치워 놓아야 한다. */
   const x = it('bizreg', { bizNoOk: true, fields: { company: '(주)가나', bizNo: '123-45-67890' },
-    filed: { id: 'C1' }, filedCo: { found: true, filled: ['addr'] } });
+  /* ⚠ filedCo 에 at 이 있어야 «보낸 것»이다 — at 이 없으면 coTodo 가 「아직 안
+     보냄」으로 보아 또 걸린다(여기서 한 번 걸렸다). */
+    filed: { id: 'C1' }, filedCo: { at: 1, found: true, filled: ['addr'] } });
   assert.equal(S.tooSmall(x), 360, '작다는 판정 자체는 그대로여야 합니다');
   assert.equal(S.smallCheckedOk(x.meta.read), true);
   assert.equal(S.needsCheck(x), false,
@@ -83,14 +85,16 @@ test('★ 사업자등록증 — 번호 체크섬을 통과했으면 작아도 �
   assert.equal(S.checkWhy(x), '', '목록에서 뺐는데 이유가 남으면 떠다니는 이유가 됩니다');
 });
 
-test('★ 크기 규칙을 풀어도 «업체관리» 규칙은 그대로다 — 두 일을 섞지 않았다', () => {
-  /* 실데이터에서 「작다」로 걸린 것 대부분이 업체관리에도 못 들어가 있었다.
-     크기를 풀었다고 그것까지 조용히 통과시키면, 사진첩이 할 일을 삼킨 셈이 된다. */
+test('★ 크기 규칙을 풀어도 «업체관리» 규칙은 따로 판단한다 — 두 일을 섞지 않았다', () => {
+  /* 크기 쪽은 통과, 업체관리 쪽은 «아직 안 보냄»이면 그것으로 걸려야 한다.
+     두 일을 한 덩이로 보면 크기를 풀다가 남의 할 일을 삼킨다.
+     ⚠ 「보냈는데 업체가 없다」는 2026-08-23 결정으로 기다림이 되었다(업체는 계약이
+       만든다) — 그건 tests/photos-co-follows-contract.test.js 에서 못박는다. */
   const x = it('bizreg', { bizNoOk: true, fields: { company: '(주)가나' },
-    filed: { id: 'C1' }, filedCo: { found: false, message: '업체관리에 없습니다' } });
+    filed: { id: 'C1' } });                       // filedCo 없음 = 아직 안 보냄
   assert.equal(S.smallCheckedOk(x.meta.read), true, '크기 쪽 판정은 통과여야 합니다');
   assert.equal(S.needsCheck(x), true, '★ 업체관리 할 일까지 삼켰습니다');
-  assert.match(S.checkWhy(x), /업체관리에 못 넣음/,
+  assert.match(S.checkWhy(x), /업체관리로 아직 안 보냄/,
     '★ 이유가 「원본이 작습니다」로 남으면 사람이 헛되이 원본을 대조합니다');
 });
 
