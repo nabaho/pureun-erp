@@ -607,18 +607,18 @@ exports.sendMaterialMail = functions
   });
 
 // ════════════════════════════════════════════════════════════════════════════
-// 예약해 둔 메일 보내기 — 5분마다 서버가 스스로 깨어난다
+// 예약해 둔 메일 보내기 — 15분마다 서버가 스스로 깨어난다
 // ════════════════════════════════════════════════════════════════════════════
 // 예전에는 화면(브라우저)이 때를 재고 있었다. 창을 닫으면 안 나갔다 —
 // 「예약했는데 안 갔다」가 되는 자리라 서버로 옮긴다(대표 지시 2026-08-10).
 //
-// ⚠ 5분마다 도므로 정확히 그 분에 나가지는 않는다. 최대 5분 늦는다.
-//   1분마다 돌리면 그만큼 요금이 붙고, 메일은 5분 늦어도 탈이 없다.
+// ⚠ 15분마다 도므로 정확히 그 분에 나가지는 않는다. 최대 15분 늦는다.
+//   너무 자주 돌리면 빈 대기열만 확인하는 유휴 호출이 늘어난다.
 // ⚠ 꺼낼 때 먼저 「보내는 중」으로 찜하고 보낸다. 안 그러면 앞 회차가 아직
 //   보내는 중인데 다음 회차가 같은 것을 또 집어 두 통이 나간다.
 // ═══ 여러 곳에 「한 통씩」 보내기 (2026-08-15, 대표 지시: 300곳 미만) ═══
 // ⚠ 여기서는 **보내지 않는다.** 받는 곳마다 예약 한 건씩을 자리에 담아 두기만 하고,
-//   실제 발송은 이미 돌고 있는 sendScheduledMail 이 5분마다 20통씩 빼 간다.
+//   실제 발송은 이미 돌고 있는 sendScheduledMail 이 15분마다 20통씩 빼 간다.
 //   새 발송기를 만들면 두 곳에서 같은 메일을 보낼 위험이 생긴다.
 // ⚠ 한꺼번에 쏟지 않는 것이 이 기능의 핵심이다 — 다음메일은 대량 발송용 계정이
 //   아니라 몰아 보내면 막히고, 막히면 평소 자료 발송까지 멈춘다.
@@ -672,7 +672,9 @@ exports.sendBulkMail = functions
 exports.sendScheduledMail = functions
   .region(MAIL_REGION)
   .runWith({ secrets: ["DAUM_MAIL_PASSWORD"], timeoutSeconds: 540, memory: "512MB" })
-  .pubsub.schedule("every 5 minutes")
+  // 빈 대기열을 하루 288번 확인할 필요가 없다. 15분 간격이어도 예약 메일은
+  // 예약시각 뒤 최대 15분 안에 발송되며, 유휴 호출은 3분의 1로 줄어든다.
+  .pubsub.schedule("every 15 minutes")
   .timeZone("Asia/Seoul")
   .onRun(async () => {
     const db = getDatabase();
@@ -913,7 +915,7 @@ exports.migratePhotosToStorage = functions
 });
 
 /* ══════════ 급여자료 메일 자동수신 (급여데이터함 5차) ══════════
-   대표 결정 2026-08-14 — 「전용 자리 + 10분마다 확인」.
+   비용 최적화 2026-08-23 — 「전용 자리 + 30분마다 확인」.
 
    ★ 왜 이 방식인가
    회사 도메인의 메일 배달 경로(MX)를 바꾸면 도착 즉시 받을 수 있지만, 잘못
@@ -945,13 +947,21 @@ function payMailId() {
   return "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-/* 아는 주소 명단을 그때그때 만든다 — 한쪽을 못 읽어도 나머지로 계속한다. */
+/* 아는 주소 명단은 메일이 실제로 있을 때만 만들고, 따뜻한 함수 인스턴스에서는
+   6시간 재사용한다. 예전에는 빈 메일함이어도 10분마다 업체·직원 전체를 읽었다. */
+let payMailKnownCache = { at: 0, list: null };
 async function payMailKnownList(db) {
+  const now = Date.now();
+  if (payMailKnownCache.list && now - payMailKnownCache.at < 6 * 60 * 60 * 1000) {
+    return payMailKnownCache.list;
+  }
   const [coSnap, dirSnap] = await Promise.all([
     db.ref("data/companies").once("value").catch(() => null),
     db.ref("data/user_dir").once("value").catch(() => null),
   ]);
-  return MR.buildKnownList(coSnap && coSnap.val(), dirSnap && dirSnap.val());
+  const list = MR.buildKnownList(coSnap && coSnap.val(), dirSnap && dirSnap.val());
+  payMailKnownCache = { at: now, list: list };
+  return list;
 }
 
 /* 첨부 하나를 창고에 담고 공용 대기 칸에 한 줄 적는다. */
@@ -977,7 +987,7 @@ async function payMailStoreOne(db, bucket, att, mail) {
 exports.receivePaydataMail = functions
   .region(MAIL_REGION)
   .runWith({ secrets: ["DAUM_MAIL_PASSWORD"], timeoutSeconds: 540, memory: "512MB" })
-  .pubsub.schedule("every 10 minutes")
+  .pubsub.schedule("every 30 minutes")
   .timeZone("Asia/Seoul")
   .onRun(async () => {
     const user = await mailUserAsync();
@@ -991,7 +1001,6 @@ exports.receivePaydataMail = functions
     const { simpleParser } = require("mailparser");
     const db = getDatabase();
     const bucket = getStorage().bucket(PAYDATA_BUCKET);
-    const known = await payMailKnownList(db);
 
     // 접속 아이디는 보내기와 **같은 후보 차례**를 쓴다(다음 계정마다 다르다).
     let client = null;
@@ -1031,6 +1040,11 @@ exports.receivePaydataMail = functions
       } finally {
         lock.release();
       }
+
+      // 빈 메일함이면 업체·직원 명부를 내려받지 않는다. 사람이 아무것도 하지
+      // 않아도 비용이 오르던 가장 불필요한 읽기를 이 지점에서 끊는다.
+      if (!inbox.length) return null;
+      const known = await payMailKnownList(db);
 
       for (const item of inbox) {
         let parsed;

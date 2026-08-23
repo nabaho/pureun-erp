@@ -157,6 +157,35 @@
     });
   }
 
+  /* 여러 관리자 탭·기기가 동시에 첫 화면을 열어도 큰 원본을 읽는 백업은 한 대만
+     수행한다. RTDB transaction으로 먼저 짧은 임대권을 얻고, 얻은 탭만 본문을 읽는다. */
+  var DAILY_CLAIM_MS = 20 * 60 * 1000;
+  function runDailySnapshot(app, config) {
+    var db = app.database();
+    var user = app.auth().currentUser;
+    if (!user) return Promise.resolve(false);
+    var now = Date.now();
+    var token = user.uid + ':' + now.toString(36) + ':' + Math.random().toString(36).slice(2, 8);
+    /* 이미 쓰기 권한이 배포돼 있는 백업 색인 아래에 둔다. 새 규칙을 요구하지 않는다. */
+    var claim = db.ref('systemBackupsIndex/' + safeKey(config.id) + '/_dailyClaim/' + dayKey());
+    return claim.transaction(function (current) {
+      if (current && current.status === 'done') return;
+      if (current && current.claimedAt && now - Number(current.claimedAt) < DAILY_CLAIM_MS) return;
+      return { token: token, claimedBy: user.uid, claimedAt: now, status: 'running' };
+    }, undefined, false).then(function (result) {
+      if (!result.committed || !result.snapshot || result.snapshot.child('token').val() !== token) return false;
+      return createSnapshot(app, config, 'daily').then(function (record) {
+        return claim.set({ token: token, claimedBy: user.uid, claimedAt: now, completedAt: Date.now(), status: 'done' })
+          .then(function () { return record; });
+      }, function (error) {
+        /* 실패 임대는 다음 시도까지 붙들지 않는다. 내 임대일 때만 지운다. */
+        return claim.transaction(function (current) {
+          return current && current.token === token ? null : current;
+        }, undefined, false).catch(function () {}).then(function () { throw error; });
+      });
+    });
+  }
+
   /* ── 실패 뒤 식힘 시간 ──
      백업이 실패하면 「오늘 했음」 표시가 안 남아 관리자 탭을 «열 때마다» 처음부터
      다시 했다 — 전체 읽기(과금)와 실패 쓰기가 종일 되풀이됐다(2026-08-16).
@@ -176,7 +205,8 @@
     var base = 'systemBackupsIndex/' + safeKey(config.id);
     return app.database().ref(base).once('value').then(function (snapshot) {
       var value = snapshot.val() || {};
-      var keys = Object.keys(value).sort(function (a, b) { return Number(value[a].createdAt || 0) - Number(value[b].createdAt || 0); });
+      var keys = Object.keys(value).filter(function (key) { return key !== '_dailyClaim'; })
+        .sort(function (a, b) { return Number(value[a].createdAt || 0) - Number(value[b].createdAt || 0); });
       if (keys.length <= KEEP_DAYS) return;
       var updates = {};
       keys.slice(0, keys.length - KEEP_DAYS).forEach(function (key) {
@@ -204,7 +234,8 @@
   function loadIndex(app, config) {
     return app.database().ref('systemBackupsIndex/' + safeKey(config.id)).once('value').then(function (snapshot) {
       var value = snapshot.val() || {};
-      return Object.keys(value).map(function (key) { return Object.assign({ key: key }, value[key] || {}); })
+      return Object.keys(value).filter(function (key) { return key !== '_dailyClaim'; })
+        .map(function (key) { return Object.assign({ key: key }, value[key] || {}); })
         .sort(function (a, b) { return Number(b.createdAt || 0) - Number(a.createdAt || 0); });
     });
   }
@@ -291,14 +322,12 @@
         if (!role.isAdmin && !role.isSubAdmin) return;
         current = { app: app, config: config };
         ensureButton(app, config);
-        return app.database().ref('systemBackupsIndex/' + safeKey(config.id) + '/' + dayKey()).once('value').then(function (daily) {
-          if (daily.exists()) return;
-          /* 아침에 실패했으면 지금은 쉰다 — 열 때마다 다시 하면 그게 폭주다 */
-          if (inCooldown(config.id)) return;
-          return createSnapshot(app, config, 'daily').catch(function (error) {
-            noteFail(config.id);
-            throw error;
-          });
+        /* 여러 기기가 같은 날짜 색인을 따로 읽은 뒤 경쟁하지 않도록 바로 서버 잠금으로
+           들어간다. 완료 여부까지 transaction 한 번이 판단하므로 유휴 읽기도 한 번 줄어든다. */
+        if (inCooldown(config.id)) return;
+        return runDailySnapshot(app, config).catch(function (error) {
+          noteFail(config.id);
+          throw error;
         });
       }).catch(function (error) { if (window.PUHealth) window.PUHealth.report('backup', error); });
     });

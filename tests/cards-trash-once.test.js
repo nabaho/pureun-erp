@@ -45,6 +45,8 @@ test('★ 읽기가 실패해도 명함첩이 멎지 않는다', () => {
 });
 
 test('명함 목록은 여전히 실시간이다 — 휴지통과 헷갈려 같이 끊으면 안 된다', () => {
-  assert.match(src, /ref\(DB_ROOT\+'\/items'\)\.on\('value'/,
+  assert.match(src, /watchCardMap\(this\.db\.ref\(DB_ROOT\+'\/items'\)/,
     '★ 명함 목록까지 끊으면 동료가 넣은 명함이 안 보입니다.');
+  assert.doesNotMatch(src, /ref\(DB_ROOT\+'\/items'\)\.on\('value'/,
+    '★ 명함 한 장이 바뀌 때 전체 목록을 다시 받으면 요금이 다시 늘어납니다.');
 });

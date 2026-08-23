@@ -75,7 +75,7 @@ test('새로 조립하라고 한 뒤에는 새 답을 준다', () => {
 test('명함·회사정보·푸른이알피 세 문에서 모두 새로 조립한다', () => {
   /* 한 곳만 빠져도 그 자료로 바뀐 회사가 목록에 조용히 안 나타난다. */
   const doors = [
-    ["items').on('value'", '명함이 들어오는 문'],
+    ["watchCardMap(this.db.ref(DB_ROOT+'/items')", '명함이 들어오는 문'],
     ["coInfo').on('value'", '회사정보가 들어오는 문'],
   ];
   doors.forEach(([mark, what]) => {
@@ -140,8 +140,8 @@ test('그리다 잘못돼도 다음 그리기가 막히지 않는다', () => {
 
 test('실시간으로 들어오는 자리들이 묶어 그리기를 쓴다', () => {
   /* 사람이 누른 것은 묶지 않는다 — 실시간 자리만이다. */
-  [["items').on('value'", 'renderSoon()'],
-   ["groups').on('value'", 'renderSoon()'],
+  [["watchCardMap(this.db.ref(DB_ROOT+'/items')", 'renderSoon()'],
+   ["watchCardMap(this.db.ref(DB_ROOT+'/groups')", 'renderSoon()'],
    ["coInfo').on('value'", 'renderCoSoon()'],
    ["coFolders').on('value'", 'renderCoSoon()'],
    ["coTagHidden').on('value'", 'renderCoSoon()']].forEach(([mark, want]) => {

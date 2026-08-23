@@ -1,9 +1,9 @@
 'use strict';
-/* 접속자 심장박동이 30초마다 «기록 전체»를 다시 쓰던 것 (요금 조사 2026-08-16)
+/* 접속자 심장박동이 짧은 간격으로 «기록 전체»를 다시 쓰던 것 (요금 조사 2026-08-16)
 
-   presence 는 모든 기기가 통째로 구독한다(`ref('presence').on('value')`).
-   그래서 한 기기가 자기 기록을 통째로 다시 쓰면 그 내용이 **접속 중인 모든
-   기기**에게 퍼진다. 기기 D 대면 30초마다 D×D 번이 오간다 — 아무도 일을 안
+   이제 presence 는 항목 단위 child 이벤트로 받는다. 한 기기가 자기 기록을
+   갱신해도 다른 기기가 전체 목록을 다시 받지 않으며, 백그라운드 탭은 쓰지 않는다.
+   예전에는 기기 D 대면 30초마다 D×D 번이 오갔다 — 아무도 일을 안
    해도 계속 나가는 돈이다. 바뀌는 것은 lastSeen 하나뿐인데도 그랬다.
 
    ⚠ 자가복구(이름·sid 가 늦게 도착해 사번으로 찍혔던 것을 바로잡는 것)는
@@ -52,9 +52,9 @@ test('★ 달라진 게 없으면 lastSeen 한 칸만 쓴다 — 이것이 새�
   const { sandbox, calls } = load();
   sandbox._writePresence(true);          // 로그인 직후 — 통째로
   assert.equal(calls.set.length, 1);
-  sandbox._writePresence();              // 30초 뒤
-  sandbox._writePresence();              // 60초 뒤
-  sandbox._writePresence();              // 90초 뒤
+  sandbox._writePresence();              // 다음 하트비트
+  sandbox._writePresence();
+  sandbox._writePresence();
   assert.equal(calls.set.length, 1,
     '★ 심장박동마다 기록 전체를 다시 써 모든 기기로 퍼집니다');
   assert.equal(calls.update.length, 3, '가볍게 쓰기가 안 걸렸습니다');
@@ -103,8 +103,15 @@ test('자리가 없으면 아무것도 안 쓴다', () => {
 test('★ 심장박동 타이머가 _writePresence 를 맨손으로 부른다', () => {
   /* setInterval(_writePresence, ...) 로 넘기면 타이머가 주는 인자가 full 로
      들어가 「통째로 쓰기」가 켜질 수 있다 — 고친 것이 조용히 되돌아간다. */
-  assert.match(app, /setInterval\(function\(\)\{ _writePresence\(\); \}, 30 \* 1000\)/,
+  assert.match(app, /setInterval\(function\(\)\{ if\(!document\.hidden\) _writePresence\(\); \}, 120 \* 1000\)/,
     '★ 타이머가 _writePresence 를 그대로 넘깁니다');
+});
+
+test('접속자 목록은 전체 value 대신 항목 단위로 받는다', () => {
+  assert.doesNotMatch(app, /ref\('presence'\)\.on\('value'/);
+  assert.match(app, /_presenceRootRef\.on\('child_added'/);
+  assert.match(app, /_presenceRootRef\.on\('child_changed'/);
+  assert.match(app, /_presenceRootRef\.on\('child_removed'/);
 });
 
 test('처음 기록은 반드시 통째로 쓴다', () => {
@@ -114,32 +121,36 @@ test('처음 기록은 반드시 통째로 쓴다', () => {
 
 /* ══════ 유령 접속자 치우기 (실데이터: 10건 중 9건이 9~43일 된 유령) ══════ */
 
-/* 구독 콜백만 떼어 실제로 돌린다 — 무엇을 지우는지 「지운 자리 목록」으로 센다. */
+/* child 이벤트로 모인 지도 발행기를 실제로 돌려 무엇을 지우는지 센다. */
 function loadPrune(entries, opts) {
   opts = opts || {};
-  const i = app.indexOf("fbDb.ref('presence').on('value', function(snap){");
-  assert.ok(i > 0, 'presence 구독을 찾을 수 없습니다');
-  const j = app.indexOf('\n      });', i);
-  assert.ok(j > i, '구독 토막의 끝을 찾을 수 없습니다');
-  const src = app.slice(i, j + '\n      });'.length);
+  const i = app.indexOf('function _schedulePresencePublish(){');
+  assert.ok(i > 0, 'presence 발행기를 찾을 수 없습니다');
+  const j = app.indexOf('\nfunction presenceListLive(', i);
+  assert.ok(j > i, 'presence 발행기 끝을 찾을 수 없습니다');
+  const src = app.slice(i, j);
 
   const removed = [];
   const NOW = 1000000000;
   const sandbox = {
     Object, Date: { now: () => NOW },
     console: { log() {} },
-    PRESENCE_STALE_MS: 90 * 1000,
+    setTimeout(fn) { fn(); return 1; },
+    clearTimeout() {},
+    PRESENCE_STALE_MS: 6 * 60 * 1000,
     PRESENCE_DEAD_MS: 24 * 60 * 60 * 1000,
     _presencePruned: opts.pruned || false,
     _presenceKey: 'me__P-001',
+    _presenceMap: entries,
+    _presencePublishTimer: null,
     _presenceList: [], _presenceAnnounced: {},
+    _presenceName(p) { return p.name || p.sid || '?'; },
     showToast() {},
     window: { dispatchEvent() {} },
     CustomEvent: function () {},
     fbDb: {
       ref(p) {
         return {
-          on(_ev, cb) { cb({ val: () => entries }); },
           remove() { removed.push(p); return { catch() {} }; }
         };
       }
@@ -148,6 +159,7 @@ function loadPrune(entries, opts) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   new vm.Script(src, { filename: 'presence-sub.js' }).runInContext(sandbox);
+  sandbox._schedulePresencePublish();
   return { removed, sandbox, NOW };
 }
 

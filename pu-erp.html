@@ -1502,10 +1502,10 @@ function notifyDeviceLock(){
 // ============================================================
 // 접속자 현황(presence) — "지금 누가 ERP에 접속해 있는지"를 보여주기만 함(잠금 아님, 동시작업 그대로).
 //   presence/{DEVICE_ID} = {sid, name, device, loginAt, lastSeen}
-//   onDisconnect로 탭 닫힘/새로고침/크래시 시 서버가 자동 삭제 · 30초 하트비트 · 90초 넘으면 stale로 숨김.
+//   onDisconnect로 탭 닫힘/새로고침/크래시 시 서버가 자동 삭제 · 2분 하트비트 · 6분 넘으면 stale로 숨김.
 //   data/ 와 완전히 분리된 경로라 데이터 동기화·급감차단과 전혀 섞이지 않음.
 // ============================================================
-var PRESENCE_STALE_MS = 90 * 1000;
+var PRESENCE_STALE_MS = 6 * 60 * 1000;
 /* 이보다 오래 조용하면 «죽은 자리»로 보고 치운다(요금 조사 2026-08-16).
    90초(STALE)와 일부러 멀리 띄웠다 — 90초로 지우면 잠깐 끊긴 멀쩡한 기기를
    남이 지워 버려 접속자 목록이 서로를 지우며 깜빡인다. */
@@ -1518,6 +1518,11 @@ var _presenceRef = null;       // 내 presence 경로 ref (onDisconnect 취소�
 var _presenceKey = null;       // 내 presence 키 = 기기ID + 계정(sid) → 같은 PC라도 계정 다르면 각각 표시
 var _presencePayload = null;   // 하트비트 시 통째로 다시 쓰기 위한 내 정보
 var _presenceSubbed = false;   // 전체 구독 1회만
+var _presenceRootRef = null;
+var _presenceMap = {};         // child 이벤트로 받은 기기별 상태 — 루트 전체 재수신 금지
+var _presenceHandlers = null;
+var _presencePublishTimer = null;
+var _presenceVisibilityBound = false;
 var _presenceCollapsed = !!window.IS_MOBILE;   // 폰: 기본 접힘(작은 알약) → 탭하면 펼침
 // sid(사번) → 이름 공용 해석기. 공개 명부(user_dir) → 직원계정(user_accounts) → 시드 → 현재 세션 순.
 //   어느 화면에서도 사번(P-007 등)이 그대로 노출되지 않도록 이 함수를 쓴다.
@@ -1578,6 +1583,38 @@ function _writePresence(full){
   }
   _presenceLastFull = { sid:sid, name:name, device:DEVICE_NAME, loginAt:loginAt };
   _presenceRef.set({ sid:sid, name:name, device:DEVICE_NAME, loginAt:loginAt, lastSeen:Date.now() }).catch(function(){});
+}
+function _schedulePresencePublish(){
+  if(_presencePublishTimer) return;
+  _presencePublishTimer = setTimeout(function(){
+    _presencePublishTimer = null;
+    var arr = [];
+    Object.keys(_presenceMap).forEach(function(devId){
+      var p = _presenceMap[devId]; if(!p) return;
+      arr.push({ devId:devId, sid:p.sid||'', name:p.name||'(이름없음)', device:p.device||'', loginAt:p.loginAt||0, lastSeen:p.lastSeen||0 });
+    });
+    _presenceList = arr;
+    try { window.dispatchEvent(new CustomEvent('presence_changed')); } catch(_){}
+    try {
+      if(!_presencePruned){
+        _presencePruned = true;
+        var deadBefore = Date.now() - PRESENCE_DEAD_MS;
+        arr.filter(function(p){ return p.devId !== _presenceKey && (!p.lastSeen || p.lastSeen < deadBefore); })
+          .forEach(function(p){ fbDb.ref('presence/' + p.devId).remove().catch(function(){}); });
+      }
+    } catch(_p){}
+    try {
+      var nowT = Date.now();
+      var fresh = arr.filter(function(p){
+        return p.devId !== _presenceKey && p.lastSeen && (nowT - p.lastSeen) < PRESENCE_STALE_MS && !_presenceAnnounced[p.devId];
+      });
+      fresh.forEach(function(p){ _presenceAnnounced[p.devId] = true; });
+      if(fresh.length && typeof showToast === 'function'){
+        var names = fresh.map(function(p){ return ((p.device && p.device.indexOf('폰') >= 0) ? '📱 폰 ' : '💻 PC ') + _presenceName(p); });
+        showToast('🟢 ' + (fresh.length === 1 ? names[0] + ' 님이 ERP에 접속했습니다.' : '현재 접속 중: ' + names.join(', ')));
+      }
+    } catch(_e){}
+  }, 100);
 }
 function presenceListLive(){
   var now = Date.now();
@@ -1680,58 +1717,26 @@ function initPresence(sid, name){
     _writePresence(true);                   // 즉시 1회 — 처음은 반드시 통째로
     _presenceRef.onDisconnect().remove();    // 닫힘/새로고침/크래시 시 서버가 자동 삭제
     if(_presenceHbTimer) clearInterval(_presenceHbTimer);
-    /* 30초 하트비트. ⚠ _writePresence 를 그대로 넘기지 않는다 — 넘기면 타이머가
+    /* 2분 하트비트. 백그라운드 탭에서는 쓰지 않고 다시 보일 때 한 번만 갱신한다.
+       ⚠ _writePresence 를 그대로 넘기지 않는다 — 넘기면 타이머가
        주는 인자가 full 로 들어가 「통째로 쓰기」가 켜질 수 있다. 빈손으로 부른다. */
-    _presenceHbTimer = setInterval(function(){ _writePresence(); }, 30 * 1000);
+    _presenceHbTimer = setInterval(function(){ if(!document.hidden) _writePresence(); }, 120 * 1000);
+    if(!_presenceVisibilityBound){
+      _presenceVisibilityBound = true;
+      document.addEventListener('visibilitychange', function(){ if(!document.hidden && _presenceRef) _writePresence(); });
+    }
     if(!_presenceSubbed){
       _presenceSubbed = true;
       try { window.addEventListener('presence_changed', _renderPresencePanel); } catch(_){}
-      fbDb.ref('presence').on('value', function(snap){
-        var v = snap.val() || {};
-        var arr = [];
-        Object.keys(v).forEach(function(devId){
-          var p = v[devId]; if(!p) return;
-          arr.push({ devId:devId, sid:p.sid||'', name:p.name||'(이름없음)', device:p.device||'', loginAt:p.loginAt||0, lastSeen:p.lastSeen||0 });
-        });
-        _presenceList = arr;
-        try { window.dispatchEvent(new CustomEvent('presence_changed')); } catch(_){}
-        /* ── 유령 접속자 치우기 (요금 조사 2026-08-16) ──
-           onDisconnect 가 놓친 자리가 몇 주씩 남는다(브라우저가 갑자기 죽거나
-           네트워크가 끊기면 서버가 지울 기회를 못 얻는다). 실데이터에서 10건 중
-           9건이 9~43일 된 유령이었다. 90초 규칙은 화면에서 «숨길» 뿐이라,
-           숨겨도 목록에는 계속 실려 와 접속 중인 모든 기기로 오간다.
-           ⚠ 세션당 한 번만 — 볼 때마다 지우면 기기들이 서로 쓰기를 퍼붓는다.
-           ⚠ **하루 넘게 조용한 것만** 지운다. 90초로 지우면 잠깐 끊긴 멀쩡한
-             기기를 남이 지워 버려, 접속자 목록이 서로를 지우며 깜빡인다.
-           ⚠ 내 자리는 건드리지 않는다. */
-        try {
-          if(!_presencePruned){
-            _presencePruned = true;
-            var deadBefore = Date.now() - PRESENCE_DEAD_MS;
-            var dead = arr.filter(function(p){
-              return p.devId !== _presenceKey && (!p.lastSeen || p.lastSeen < deadBefore);
-            });
-            dead.forEach(function(p){
-              fbDb.ref('presence/' + p.devId).remove().catch(function(){});
-            });
-            if(dead.length) console.log('[접속자] 유령 ' + dead.length + '건 치움');
-          }
-        } catch(_p){}
-        // 나 외 다른 기기 접속 → 토스트로 1회만 알림 (자동 사라짐, 확인 불필요). 한 번 알린 기기는 세션 동안 재알림 안 함.
-        try {
-          var nowT = Date.now();
-          var liveOthers = arr.filter(function(p){ return p.devId !== _presenceKey && p.lastSeen && (nowT - p.lastSeen) < PRESENCE_STALE_MS; });
-          var fresh = liveOthers.filter(function(p){ return !_presenceAnnounced[p.devId]; });
-          fresh.forEach(function(p){ _presenceAnnounced[p.devId] = true; });
-          if(fresh.length && typeof showToast === 'function'){
-            var names = fresh.map(function(p){ return ((p.device && p.device.indexOf('폰') >= 0) ? '📱 폰 ' : '💻 PC ') + p.name; });
-            var body = (fresh.length === 1)
-              ? names[0] + ' 님이 ERP에 접속했습니다.'
-              : '현재 접속 중: ' + names.join(', ');
-            showToast('🟢 ' + body);
-          }
-        } catch(_e){}
-      });
+      _presenceRootRef = fbDb.ref('presence');
+      _presenceHandlers = {
+        add:function(s){ _presenceMap[s.key] = s.val() || {}; _schedulePresencePublish(); },
+        change:function(s){ _presenceMap[s.key] = s.val() || {}; _schedulePresencePublish(); },
+        remove:function(s){ delete _presenceMap[s.key]; delete _presenceAnnounced[s.key]; _schedulePresencePublish(); }
+      };
+      _presenceRootRef.on('child_added', _presenceHandlers.add);
+      _presenceRootRef.on('child_changed', _presenceHandlers.change);
+      _presenceRootRef.on('child_removed', _presenceHandlers.remove);
     }
   } catch(e){ window._erpErrLog && window._erpErrLog(e); }
 }
@@ -1743,6 +1748,14 @@ function clearPresence(){
       _presenceRef.remove().catch(function(){});
       _presenceRef = null;
     }
+    if(_presenceRootRef && _presenceHandlers){
+      _presenceRootRef.off('child_added', _presenceHandlers.add);
+      _presenceRootRef.off('child_changed', _presenceHandlers.change);
+      _presenceRootRef.off('child_removed', _presenceHandlers.remove);
+    }
+    _presenceRootRef = null; _presenceHandlers = null; _presenceSubbed = false;
+    _presenceMap = {}; _presenceList = [];
+    if(_presencePublishTimer){ clearTimeout(_presencePublishTimer); _presencePublishTimer = null; }
     _presencePayload = null;
     try { var _pp = document.getElementById('erp-presence-panel'); if(_pp) _pp.remove(); } catch(_){}
   } catch(e){ window._erpErrLog && window._erpErrLog(e); }
@@ -2022,6 +2035,18 @@ var FB_APPCHECK_KEY = '6Ldu1hEtAAAAABB9lH9EMEyd7uBLEy9H5HxJoua_';
    ★ 콘솔에서 App Check 강제를 켤 때는 아래를 true 로 되돌려야 한다.
      되돌리지 않으면 모든 읽기·쓰기가 막힌다. */
 var FB_APPCHECK_ON = false;
+/* ERP를 켜 두기만 해도 명함 한 장 수정 때 검색색인 전체가 다시 내려오던 구조를
+   항목 단위로 바꾼다. 처음에는 같은 색인을 한 번 채우고 이후에는 변경 한 건만 받는다. */
+function watchPucardsIndexByChild(){
+  if(!fbDb || window._pcIdxHooked) return;
+  window._pcIdxHooked=true; window.pucardsIdx={};
+  var ref=fbDb.ref('pucards/idx');
+  function put(s){ window.pucardsIdx[s.key]=s.val(); }
+  function drop(s){ delete window.pucardsIdx[s.key]; }
+  ref.on('child_added',put);
+  ref.on('child_changed',put);
+  ref.on('child_removed',drop);
+}
 try {
   if(typeof firebase !== 'undefined' && firebase.initializeApp){
     firebase.initializeApp(FB_CONFIG);
@@ -2052,8 +2077,7 @@ try {
             // 사진첩 저장 층 연결 — 계약창의 "사진첩 계약서 가져오기"가 이 uid 자리만 읽는다
             try { if(typeof PuPhotoStore !== 'undefined') PuPhotoStore.init({ db: fbDb, uid: user.uid }); } catch(_){}
             // 명함첩 경량 검색 인덱스(pucards/idx) 로드 — 계약창 "과거 회사 불러오기"에서 명함첩 검색용
-            try { if(!window._pcIdxHooked){ window._pcIdxHooked=true; window.pucardsIdx={};
-              fbDb.ref('pucards/idx').on('value', function(s){ window.pucardsIdx = s.val() || {}; }); } } catch(_){}
+            try { watchPucardsIndexByChild(); } catch(_){}
           } else {
             fbAuthUid = null;
             fbAuthReady = false;
@@ -49513,22 +49537,41 @@ function PersonalCalendar(props){
    ⚠ 이 엔진은 푸른이알피 마스터(계약·사건·컨설팅·기금)를 dbPatch 로 고친다.
      첫 만남은 기준선만 기록하고 아무것도 바꾸지 않는다(대량 오종료 방지). */
 var _wsBusy = false;
+var _wsPendingId = null;
   var WS_STORE = { contract:'contracts', case:'cases', consulting:'consultings', fund:'funds', other:'other_projects' };
   function wsSafeKey(s){ return String(s == null ? '' : s).replace(/[.#$\/\[\]'"`\\\s\u0000-\u001F\u007F -]/g, '_'); }
   function wsToday(){ var d = new Date(), p = function(n){ return (n < 10 ? '0' : '') + n; };
     return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
-  function wsSyncRun(onDone){
-    if(_wsBusy) return;              // 겹쳐 돌면 같은 것을 두 번 쓴다
+  function wsSyncLoad(onlyWid){
+    if(!onlyWid) return Promise.all([
+      fbDb.ref('work_erp/items').once('value'),
+      fbDb.ref('work_erp/pesync').once('value'),
+      fbDb.ref('work_erp/steps').once('value')
+    ]).then(function(res){ return [res[0].val()||{},res[1].val()||{},res[2].val()||{}]; });
+    return fbDb.ref('work_erp/items/'+onlyWid).once('value').then(function(itemSnap){
+      var w=itemSnap.val();
+      if(!w || !w.ref || !w.ref.type || !w.ref.id) return [{},{},{}];
+      var key=w.ref.type+'-'+wsSafeKey(w.ref.id), W={}; W[onlyWid]=w;
+      return Promise.all([
+        fbDb.ref('work_erp/pesync/'+key).once('value'),
+        fbDb.ref('work_erp/steps/'+onlyWid).once('value')
+      ]).then(function(res){
+        var SN={}, ST={}; if(res[0].exists()) SN[key]=res[0].val(); if(res[1].exists()) ST[onlyWid]=res[1].val();
+        return [W,SN,ST];
+      });
+    });
+  }
+  function wsSyncRun(onDone,onlyWid){
+    if(_wsBusy){ _wsPendingId=onlyWid||null; return; } // 겹치면 마지막 변경 한 건만 뒤이어 처리
     _wsBusy = true;
-    var fin = function(){ _wsBusy = false; };
+    var fin = function(){
+      _wsBusy = false;
+      if(_wsPendingId){ var next=_wsPendingId; _wsPendingId=null; setTimeout(function(){ wsSyncRun(null,next); },0); }
+    };
     try{
       if(typeof fbDb === 'undefined' || !fbDb){ fin(); return; }
-      Promise.all([
-        fbDb.ref('work_erp/items').once('value'),
-        fbDb.ref('work_erp/pesync').once('value'),
-        fbDb.ref('work_erp/steps').once('value')
-      ]).then(function(res){
-        var W = res[0].val() || {}, SN = res[1].val() || {}, ST = res[2].val() || {};
+      wsSyncLoad(onlyWid).then(function(res){
+        var W = res[0] || {}, SN = res[1] || {}, ST = res[2] || {};
         var up = {}, toPe = [], toWs = 0, now = new Date().toISOString();
         var toPeB = [];                                    // 업무 요약 역방향 반영 대기열
         var toPeS = [];                                    // 부담당 참여 요청 반영 대기열
@@ -76085,10 +76128,11 @@ function App(){
     try{ wsSyncRun(); }catch(e){}
     var first = true, t = null;
     var ref = fbDb.ref('work_erp/sync_ping');
-    var onPing = function(){
+    var onPing = function(snapshot){
       if(first){ first = false; return; }
+      var signal=snapshot.val(), onlyWid=(signal&&typeof signal==='object')?String(signal.itemId||''):'';
       clearTimeout(t);                       // 몰아서 종료하면 신호가 연달아 온다 — 묶어서 한 번만
-      t = setTimeout(function(){ try{ wsSyncRun(); }catch(e){} }, 1200);
+      t = setTimeout(function(){ try{ wsSyncRun(null,onlyWid||null); }catch(e){} }, 1200);
     };
     ref.on('value', onPing);
     return function(){ clearTimeout(t); try{ ref.off('value', onPing); }catch(e){} };

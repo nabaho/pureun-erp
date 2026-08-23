@@ -1790,6 +1790,27 @@ const state = { tab:'card', group:'all', owner:'all', region:'', erpFilter:'', e
   view:'list', vtab:'' };
 
 /* ── 데이터 계층 ── */
+/* 명함 한 장을 고칠 때 수천 장 전체를 다시 받지 않도록 항목 단위로 동기화한다.
+   최초 자료량은 같지만 이후 전송량은 실제로 바뀐 한 건에 가깝게 줄어든다. */
+function watchCardMap(ref, assign, settled, denied){
+  const map={}; let timer=null;
+  const publish=()=>{
+    assign(map);
+    clearTimeout(timer);
+    timer=setTimeout(()=>{ if(settled) settled(); },140);
+  };
+  const put=s=>{ map[s.key]=s.val(); publish(); };
+  const drop=s=>{ delete map[s.key]; publish(); };
+  ref.on('child_added',put,denied);
+  ref.on('child_changed',put,denied);
+  ref.on('child_removed',drop,denied);
+  ref.limitToFirst(1).once('value').then(s=>{ if(!s.exists()) publish(); }).catch(e=>{ if(denied) denied(e); });
+  return ()=>{
+    clearTimeout(timer);
+    try{ ref.off('child_added',put); ref.off('child_changed',put); ref.off('child_removed',drop); }catch(_){ }
+  };
+}
+
 const Store = {
   mode:'local', db:null,
   init(){
@@ -1809,18 +1830,20 @@ const Store = {
       modeBadge.textContent='실시간 공유'; modeBadge.classList.add('live');
       modeBadge.title='전 직원 실시간 공유 중';
       const subscribe = () => {
-        this.db.ref(DB_ROOT+'/items').on('value', s => { state.items = s.val()||{}; coListBust(); renderSoon();
+        watchCardMap(this.db.ref(DB_ROOT+'/items'), value => { state.items = value||{}; }, () => { coListBust(); renderSoon();
           /* 명함이 도착한 **뒤에** 마지막 보던 화면으로 옮긴다(대표 지시 2026-08-10).
              먼저 옮기면 빈 화면이 잠깐 보이고, 자료함·보낸 메일은 아직 읽히지도 않았다. */
-          restoreLastScreen();
-          if(!Store._idxDone){ setTimeout(backfillIdx, 3000); }
-          /* 번호 열쇠 자리 첫 채우기 — 한 번만. 명함이 다 들어온 뒤라야 빠짐없이 찬다. */
-          if(!Store._byKeyDone){ Store._byKeyDone=true; setTimeout(ensureByKeyMap, 4000); } },
+          if(!Store._itemsReady){
+            Store._itemsReady=true; restoreLastScreen();
+            if(!Store._idxDone){ setTimeout(backfillIdx, 3000); }
+            /* 번호 열쇠 자리 첫 채우기 — 한 번만. 명함이 다 들어온 뒤라야 빠짐없이 찬다. */
+            if(!Store._byKeyDone){ Store._byKeyDone=true; setTimeout(ensureByKeyMap, 4000); }
+          } },
           e => { if(isDenied(e)) itemsDeniedTell(e); });
-        this.db.ref(DB_ROOT+'/groups').on('value', s => { state.groups = s.val()||{}; renderSoon();
+        watchCardMap(this.db.ref(DB_ROOT+'/groups'), value => { state.groups = value||{}; }, () => { renderSoon();
           if(!Store._bizSeedDone){ Store._bizSeedDone=true; setTimeout(seedBizFolders, 3000); } });
         /* 내 탭(저장된 검색·필터 조건) — 전 직원 공유 */
-        this.db.ref(DB_ROOT+'/views').on('value', s => { state.views = s.val()||{}; renderSoon();
+        watchCardMap(this.db.ref(DB_ROOT+'/views'), value => { state.views = value||{}; }, () => { renderSoon();
           if(!Store._erpTabSeedDone){ Store._erpTabSeedDone=true; setTimeout(seedErpTabs, 3500); } });
         /* ── 휴지통은 «구독하지 않는다» — 한 번만 읽는다 (요금 조사 2026-08-18) ──
            실측: 휴지통 1,888건 = **0.71MB**. `.on('value')` 로 구독하면 누가 명함을
@@ -1833,10 +1856,10 @@ const Store = {
         this.db.ref(DB_ROOT+'/trash').once('value').then(s => { state.trash = s.val()||{}; renderSoon();
           if(!Store._trashPurgeDone){ Store._trashPurgeDone=true; setTimeout(purgeTrash, 2000); } })
           .catch(()=>{});
-        this.db.ref(DB_ROOT+'/classifyRules').on('value', s => { state.rules = s.val()||{};
+        watchCardMap(this.db.ref(DB_ROOT+'/classifyRules'), value => { state.rules = value||{}; }, () => {
           if(!Store._ruleSeedDone){ Store._ruleSeedDone=true; setTimeout(seedClassifyRules, 3000); } });
         /* 메일 수신거부 명단 — 전 직원 공유. 목록 화면에 나오는 값이 아니라 render() 는 부르지 않는다. */
-        this.db.ref(DB_ROOT+'/config/mailBlock').on('value', s => { state.mailBlock = s.val()||{}; });
+        watchCardMap(this.db.ref(DB_ROOT+'/config/mailBlock'), value => { state.mailBlock = value||{}; });
         /* 자료함·메일 설정을 미리 읽는다 — 이메일을 눌렀을 때 어느 방법으로 보낼지
            바로 판정하려면 설정이 이미 손에 있어야 한다 */
         loadMaterials();

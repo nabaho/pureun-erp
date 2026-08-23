@@ -110,7 +110,25 @@
     return badge;
   }
 
+  /* 장애 이력은 오래될수록 커진다. 관리자 탭마다 전체 루트를 실시간 구독하면
+     오류 한 건이 생길 때마다 과거 이력까지 다시 내려온다. 평소에는 읽지 않고,
+     총괄관리자가 단추를 눌렀을 때 한 번만 최근 미처리 목록을 가져온다. */
   function showAdminPanel(app) {
+    var badge = ensureAdminBadge(app);
+    badge.disabled = true;
+    badge.textContent = '장애 알림 불러오는 중…';
+    app.database().ref('systemAlerts').once('value').then(function (alertsSnapshot) {
+      adminAlerts = flattenAlerts(alertsSnapshot.val());
+      renderAdminPanel(app);
+    }).catch(function () {
+      window.alert('장애 알림을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.');
+    }).then(function () {
+      badge.disabled = false;
+      badge.textContent = '장애 알림 확인';
+    });
+  }
+
+  function renderAdminPanel(app) {
     var old = window.document.getElementById('pu-health-panel');
     if (old) old.remove();
     var panel = window.document.createElement('div');
@@ -144,6 +162,7 @@
         resolve.disabled = true;
         app.database().ref('systemAlerts/' + item.uid + '/' + item.id).update({ status: 'resolved', resolvedAt: Date.now(), resolvedBy: app.auth().currentUser.uid }).then(function () {
           row.remove();
+          adminAlerts = adminAlerts.filter(function (x) { return !(x.uid === item.uid && x.id === item.id); });
           left -= 1;
           if (left <= 0) { panel.remove(); return; }   // 다 처리했으면 창도 함께 닫는다
           titleText.textContent = '시스템 장애 알림 (' + left + ')';
@@ -168,12 +187,8 @@
       var role = snapshot.val() || {};
       if (!role.isAdmin) return;
       var badge = ensureAdminBadge(app);
-      app.database().ref('systemAlerts').on('value', function (alertsSnapshot) {
-        adminAlerts = flattenAlerts(alertsSnapshot.val());
-        badge.hidden = adminAlerts.length === 0;
-        badge.textContent = '장애 알림 ' + adminAlerts.length + '건';
-        window.document.title = adminAlerts.length ? '⚠ ' + window.document.title.replace(/^⚠\s*/, '') : window.document.title.replace(/^⚠\s*/, '');
-      });
+      badge.hidden = false;
+      badge.textContent = '장애 알림 확인';
     }).catch(function () {});
   }
 
