@@ -52,9 +52,13 @@ test('접속자 현황은 항목 단위로 받고 백그라운드 하트비트�
 });
 
 test('급여메일은 새 메일이 있을 때만 업체·직원 명부를 읽는다', () => {
+  /* 본체가 runPaydataMailOnce 로 옮겨 갔다(2026-08-23, 「지금 가져오기」와 함께
+     쓰려고). 지키는 것은 그대로다 — 빈 메일함이면 명부를 안 읽는다. */
   const fn = read('functions/index.js');
-  const receive = fn.slice(fn.indexOf('exports.receivePaydataMail'), fn.indexOf('/* 지문·간편 로그인'));
-  assert.ok(receive.indexOf('if (!inbox.length) return null') < receive.indexOf('payMailKnownList(db)'));
+  const body = fn.slice(fn.indexOf('async function runPaydataMailOnce'), fn.indexOf('exports.receivePaydataMail'));
+  assert.ok(body.indexOf('if (!inbox.length)') > 0, '빈 메일함 갈래가 없습니다');
+  assert.ok(body.indexOf('if (!inbox.length)') < body.indexOf('payMailKnownList(db)'),
+    '빈 메일함인데도 업체·직원 명부를 먼저 읽습니다');
   assert.match(fn, /payMailKnownCache/);
 });
 

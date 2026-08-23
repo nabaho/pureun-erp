@@ -24,7 +24,7 @@
 <script src="js/pu-resilience.js?v=1"></script>
 <script src="js/pu-health.js?v=3"></script>
 <script src="js/pu-version.js?v=1"></script>
-<script src="js/pu-paydata-store.js?v=2"></script>
+<script src="js/pu-paydata-store.js?v=3"></script>
 <!-- ?v= 는 판독기 판 번호(READ_VERSION)와 **같이 올린다**(2026-08-15).
      ⚠ 사진첩만 올리고 여기를 빠뜨리면, 같은 브라우저 안에서 사진첩은 새 판독기·
        급여데이터함은 캐시에 묵은 옛 판독기로 갈린다 — 같은 서류를 두 앱이 다르게
@@ -686,6 +686,8 @@ const App = {
   owners: {}, shares: {}, myOrder: [], dir: null,
   /* 메일 폴더 설정 — 아직 안 읽었으면 null(그때는 아무것도 안 그린다). */
   mailConf: null,
+  /* 「지금 가져오기」를 누른 사이 — 두 번 눌리는 것을 막고 단추 글자를 바꾼다 */
+  mailPulling: false,
   sideView: 'mine', colFilter: 'all', colQuery: '', sideFold: false,
   /* 저장한 값 한 칸을 고치는 중일 때만 채워진다(대표 승낙 2026-08-21 안 A) —
      { rowId, item, name, value, sourceId, busy }. 원본이 있으면 뷰어 옆 패널로,
@@ -2018,6 +2020,30 @@ function toggleMailScan() {
 }
 window.toggleMailScan = toggleMailScan;
 
+/* 30분을 기다리지 않고 지금 당긴다(대표 결정 2026-08-23). 몇 초 걸린다 —
+   메일 서버에 붙는 시간이다. 끝나면 몇 통을 보고 몇 건을 담았는지 알린다.
+   ⚠ 두 번 눌리는 것을 막는다. 서버도 60초 잠금을 걸지만, 화면이 안 막으면
+   사람은 눌린 줄 모르고 계속 누른다. */
+function pullMailNow() {
+  if (App.mailPulling) return;
+  App.mailPulling = true; App.render();
+  return S.pullMailNow().then(r => {
+    App.mailPulling = false;
+    return ensureMail(true).then(() => {
+      const box = (r.boxes || []).join(', ');
+      alert('새 메일 ' + Number(r.looked || 0) + '통을 보고 ' + Number(r.took || 0) + '건을 담았습니다.'
+        + (r.routed ? '\n담당자 칸으로 ' + r.routed + '건' : '')
+        + (r.shared ? '\n공용 칸으로 ' + r.shared + '건' : '')
+        + (r.unknown ? '\n모르는 주소라 건너뛴 것 ' + r.unknown + '통 — 업체관리에 그 주소가 있는지 봐 주세요.' : '')
+        + (box ? '\n\n본 폴더: ' + box : ''));
+    });
+  }).catch(e => {
+    App.mailPulling = false; App.render();
+    alert('가져오지 못했습니다 — ' + (e.code || e.message));
+  });
+}
+window.pullMailNow = pullMailNow;
+
 function screenMail() {
   const rows = mailRows(App.mail, mailCtx());
   const ids = rows.map(r => r.id);
@@ -2028,7 +2054,9 @@ function screenMail() {
     + '<b class="dtitle">메일로 온 것</b>'
     + '<span class="dkpi"><b>' + rows.length + '</b>건'
     + (late ? ' · 오래된 것 <b class="wa">' + late + '</b>' : '') + '</span>'
-    + '<span class="dacts"><button class="btn sm" onclick="ensureMail(true)">↻ 다시 읽기</button></span>'
+    + '<span class="dacts"><button class="btn sm pri"' + (App.mailPulling ? ' disabled' : '') + ' onclick="pullMailNow()">'
+        + (App.mailPulling ? '가져오는 중…' : '📥 지금 가져오기') + '</button>'
+        + '<button class="btn sm" onclick="ensureMail(true)">↻ 다시 읽기</button></span>'
     + '</div></div>';
 
   if (App.mail === null) return h + '<div class="card"><div class="empty">읽는 중입니다…</div></div>';
