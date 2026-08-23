@@ -268,3 +268,34 @@ test('★ 남의 자리를 보는 중에는 맡기 단추가 없다', () => {
   ['claimMail', 'bulkClaimMail'].forEach(fn =>
     assert.match(cut(fn), /canWrite\(\)/, fn + ' 이 자리를 안 봅니다'));
 });
+
+/* ══════ 서버가 갈라 보내고 남긴 것 (대표 승낙 2026-08-21) ══════
+   이제 서버가 임자를 찾아 그 사람 칸으로 바로 보낸다. 공용 칸에 남는 것은
+   **못 갈랐던 것**뿐이고, 왜 못 갈랐는지(why)를 서버가 적어 둔다.
+   화면이 그것을 안 보여 주면 관리자는 왜 안 갈렸는지 알 수 없다. */
+
+test('★ 서버가 적은 까닭을 그대로 보여 준다', () => {
+  const W = load({ mail: { m1: mailRec({ mailFrom: 'x@y.com', why: '업체관리에 없는 주소' }) } });
+  const r = W.mailRows(W.App.mail, W.mailCtx())[0];
+  assert.equal(r.why, '업체관리에 없는 주소');
+});
+
+test('★ 서버가 알아낸 사업장을 화면이 버리지 않는다', () => {
+  /* 주소로는 못 찾았지만 서버가 다른 길로 알아낸 것이 있으면 그것을 쓴다 —
+     버리면 맡는 사람이 사업장을 처음부터 다시 골라야 한다. */
+  const W = load({ mail: { m1: mailRec({
+    mailFrom: 'nobody@nowhere.kr', why: '주담당이 아직 급여데이터함에 들어온 적이 없음',
+    tag: { companyId: 'co_2', companyName: '옛이름' } }) } });
+  const r = W.mailRows(W.App.mail, W.mailCtx())[0];
+  assert.equal(r.companyId, 'co_2');
+  /* 이름은 **업체관리 명단** 것을 쓴다 — 서버가 적어 둔 이름이 낡았을 수 있다
+     (업체 이름이 바뀌면 화면에는 새 이름이 떠야 한다). */
+  assert.equal(r.companyName, '늘봄반찬(배방점)');
+});
+
+test('까닭이 없던 옛 줄도 그대로 그려진다', () => {
+  const W = load({ mail: { m1: mailRec({ mailFrom: 'x@y.com' }) } });
+  const r = W.mailRows(W.App.mail, W.mailCtx())[0];
+  assert.equal(r.why, '');
+});
+
