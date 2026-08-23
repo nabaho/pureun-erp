@@ -103,7 +103,7 @@ console.log('\n■ 미리보기 값이 저장 값과 같은 셈인가 (진짜 �
   vm.runInContext('function erpWithholdTax(a,k,r){return {total:Math.round(a*(k==="biz"?0.033:(r||8.8)/100))};}', ctx);
   vm.runInContext('function getMgrRates(){return {};} function dbGet(k,d){return k==="user_accounts"?[{sid:"P-001",name:"권형하"},{sid:"P-002",name:"김동현"}]:d;}', ctx);
   vm.runInContext('function getRateAt(sid,d){return sid==="P-001"?15:10;} function resolveBaseRate(sid){return getRateAt(sid);}', ctx);
-  vm.runInContext(cut('function erpInitDeductions(item, vatType){', '\nfunction FeeDeductionPanel('), ctx);
+  vm.runInContext(cut('function erpInitDeductions(item, vatType){', '\nfunction calcPerfShares('), ctx);
   vm.runInContext(cut('function calcPerfShares(amount, mainSid, subSids, sourceKind, splitMainPct, opts){', '\nfunction genCaseNo('), ctx);
 
   // 정우신약 착수금 6,000,000 · 부가세 포함 → 성과 기준 5,454,545 · 주담당 15%

@@ -317,7 +317,7 @@ function gateCtx(){
     isAttendLocked(ym){ return (store.locked_attend_months || []).indexOf(ym) >= 0; }
   };
   vm.createContext(c);
-  vm.runInContext(slice('// ── 근태·휴가 마감월 관문', '// ── Phase 0 셀프테스트'), c);
+  vm.runInContext(slice('// ── 근태·휴가 마감월 관문', '\nfunction erpNormName('), c);
   c.__store = () => store;
   c.__toasts = toasts;
   return c;

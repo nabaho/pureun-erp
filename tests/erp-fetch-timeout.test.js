@@ -147,7 +147,15 @@ test('★ 시간이 지난 것을 「옛 서버」로 잘못 보고 다시 걸�
   // 급여 메일은 옛 서버용 되돌림이 있다 — 끊긴 것까지 다시 걸면 30초를 또 기다린다
   const p = grab('postMail');
   assert.match(p, /if\(e && e\.timeout\) throw e;/);
-  assert.ok(p.indexOf('if(e && e.timeout) throw e;') < p.indexOf('return fetchT(url, {\n          method:\'POST\',\n          headers:{ \'Content-Type\':\'application/json\' }'));
+  /* ★ 「띄어쓰기」가 아니라 «차례»를 지킨다.
+     예전에는 되돌림 요청을 글자 그대로(들여쓰기 10칸까지) 적어 두었는데,
+     postMail 을 한 단계 밖으로 꺼내자 들여쓰기가 8칸이 되어 검사가 깨졌다.
+     지키려는 것은 «끊긴 것은 다시 걸지 않는다»는 차례다 — 그것만 본다. */
+  const guard = p.indexOf('if(e && e.timeout) throw e;');
+  // 되돌림 요청 = 증표(Authorization) 없이 Content-Type 만 붙여 다시 거는 쪽
+  const fallback = p.search(/return fetchT\(url, \{[\s\S]{0,160}?headers:\{ 'Content-Type':'application\/json' \}/);
+  assert.ok(fallback > 0, '되돌림 요청을 찾지 못했다');
+  assert.ok(guard > 0 && guard < fallback, '끊김 확인이 되돌림보다 «먼저» 와야 한다');
 });
 
 test('화면이 갇히지 않는다 — 끝나면 반드시 푼다', () => {
