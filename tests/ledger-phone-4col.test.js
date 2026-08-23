@@ -85,6 +85,33 @@ test('★ 네 칸이 서로 다른 자리에 선다 — 겹치면 글자가 포�
   assert.match(PHONE, /\.ld-c-act\s*\{[^}]*grid-row:\s*1 \/ 3/);
 });
 
+test('★ 처리 칸은 폭이 «못 박혀» 있다 — auto 로 두면 나머지를 다 밀어낸다', () => {
+  /* 2026-08-23 대표 화면에서 잡힌 것. 넷째 칸을 auto 로 두었더니 단추가 셋·넷인 줄
+     (찾기·등록·보류·CMS)에서 가로로 쭉 늘어서 금액·적요·업체가 「01-02…」「0…」「C…」
+     처럼 앞만 남고 잘렸다. 줄마다 폭이 달라지면 «열 맞춤»도 함께 무너진다. */
+  /* ⚠ 폰 구간에는 grid-template-columns 가 여럿이다(⚙ 도구 띠도 쓴다) —
+     표의 줄(.ld-tb tr) 것을 집어야 한다. 그냥 첫 개를 잡았다가 엉뚱한 데를 쟀다. */
+  const at = PHONE.indexOf('.ld-tb tr{ display:grid');
+  assert.ok(at > 0, '.ld-tb tr 격자 규칙을 찾지 못했습니다');
+  const rule = PHONE.slice(at, PHONE.indexOf('}', at));
+  const m = rule.match(/grid-template-columns:([^;]*)/);
+  assert.ok(m, 'grid-template-columns 를 찾지 못했습니다');
+  const last = m[1].trim().split(/\s+/).pop();
+  assert.match(last, /^\d+px$/,
+    '★ 처리 칸이 «' + last + '» 입니다 — 내용만큼 커지면 나머지 칸을 밀어냅니다.');
+  /* 단추 셋(찾기·등록·보류)이 한 줄에 서야 줄 높이가 안 늘어난다.
+     폰 단추는 손가락 자리 규칙으로 min-height:38px 이라, 두 줄이 되면 줄이 91px 이 된다. */
+  assert.ok(parseInt(last, 10) >= 150,
+    '★ ' + last + ' 로는 단추 셋이 한 줄에 못 섭니다 — 후보 없음 줄만 두 배로 높아집니다.');
+});
+
+test('★ 손가락 자리 규칙(min-height:38px)을 뒤집지 않았다', () => {
+  /* 돈을 확정하는 단추다. 줄 높이를 줄이겠다고 단추를 작게 만들면 안 된다 —
+     줄이는 길은 «한 줄에 다 서게» 하는 것이지 «작게» 가 아니다. */
+  assert.doesNotMatch(PHONE, /\.ld-c-act[^}]*min-height:\s*(?!38)/);
+  assert.doesNotMatch(PHONE, /\.ld-tb[^}]*button\{[^}]*min-height/);
+});
+
 test('★ 접는 칸은 셋뿐이다 — 나머지는 다 남는다', () => {
   const hid = PHONE.match(/\.ld-tb \.ld-c-no, ?\.ld-tb \.ld-c-date, ?\.ld-tb \.ld-c-staff\{[^}]*display:none/);
   assert.ok(hid, '★ 접는 칸 명단이 바뀌었으면 값이 어디 갔는지 함께 봐야 합니다.');
