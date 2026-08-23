@@ -30,9 +30,13 @@ test('저장 층을 외부 파일로 불러온다', () => {
 });
 
 test('저장소 공용 파일 3개를 불러온다', () => {
-  assert.match(app, /<script src="js\/pu-resilience\.js"><\/script>/);
-  assert.match(app, /<script src="js\/pu-health\.js"><\/script>/);
-  assert.match(app, /<script src="js\/pu-version\.js"><\/script>/);
+  /* ⚠ ?v= 가 «붙어 있어도» 통과해야 한다. 지키려는 것은 「이 셋을 부르는가」이지
+     「어떤 모양으로 부르는가」가 아니다. 전에는 ?v= 없는 꼴을 그대로 못 박아 두어,
+     캐시에 묻히던 pu-health.js 에 ?v= 를 다는 «옳은 고침»이 이 검사에 막혔다
+     (2026-08-23). 실제로 달았는지는 tests/shared-js-cache-version.test.js 가 본다. */
+  assert.match(app, /<script src="js\/pu-resilience\.js(\?v=\d+)?"><\/script>/);
+  assert.match(app, /<script src="js\/pu-health\.js(\?v=\d+)?"><\/script>/);
+  assert.match(app, /<script src="js\/pu-version\.js(\?v=\d+)?"><\/script>/);
 });
 
 test('파이어베이스 SDK 버전이 다른 앱과 같다', () => {
