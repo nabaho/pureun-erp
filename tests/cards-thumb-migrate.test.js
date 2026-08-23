@@ -509,6 +509,36 @@ test('환경설정에 대표 전용 단추가 걸려 있다', () => {
   assert.ok(around.length < 400 && around.indexOf('state.isAdmin ?') === 0, '대표 전용 자리 밖에 있다');
 });
 
+/* 2026-08-23 대표: 「썸내일 어딘지 모르겠다 찾아달라」 — 두 번 찾다가 못 찾으셨다.
+   찾지 못한 원인 두 가지를 여기서 못 박는다
+     ① 대표 전용 칸의 «맨 끝»에 있어, 320px 로 접히는 칸에서 둘째 줄로 밀려 있었다
+     ② 이름·설명이 이 화면에서 가장 길어 글자가 칸 밖으로 새 나갔다 */
+test('썸네일 단추가 대표 전용 칸의 맨 앞에 있다', () => {
+  const p = cut("} else if(cur==='acct'){", '} else {');
+  const thumb  = p.indexOf('migrateInlineThumbs()');
+  const priv   = p.indexOf('openPrivateVault()');
+  const locked = p.indexOf('migrateLockedFolders()');
+  assert.ok(thumb > 0 && priv > 0 && locked > 0, '세 단추가 다 있어야 한다');
+  assert.ok(thumb < priv,   '개인 폴더보다 뒤에 있으면 둘째 줄로 밀린다');
+  assert.ok(thumb < locked, '옛 잠금 폴더보다 뒤에 있으면 둘째 줄로 밀린다');
+});
+
+test('썸네일 단추 글자가 한 칸(320px)에 들어갈 만큼 짧다', () => {
+  const i = src.indexOf("btn('migrateInlineThumbs()'");
+  const line = src.slice(i, src.indexOf('\n', i));
+  const arg = line.match(/'([^']*)'/g).map(s => s.slice(1, -1));
+  const label = arg[2], desc = arg[3];
+  assert.ok(label && label.length <= 10, '이름이 길면 줄바꿈되며 설명이 칸 밖으로 샌다: ' + label);
+  assert.ok(desc  && desc.length  <= 10, '설명이 길면 nowrap 이라 칸 밖으로 샌다: ' + desc);
+});
+
+test('설명 글자가 길어져도 단추 밖으로 새지 않는다 (CSS)', () => {
+  const css = cut('.setbtn .sdesc{', '}');
+  assert.ok(/min-width:\s*0/.test(css),            'min-width:0 이 없으면 nowrap 글자가 안 줄어든다');
+  assert.ok(/overflow:\s*hidden/.test(css),        'overflow:hidden 이 없으면 ellipsis 가 안 먹는다');
+  assert.ok(/text-overflow:\s*ellipsis/.test(css), '넘칠 때 … 로 잘려야 한다');
+});
+
 test('저절로 돌지 않는다 — 부르는 곳은 대표가 누르는 단추뿐이다', () => {
   const hits = src.split('migrateInlineThumbs()').length - 1;
   /* 정의 1 + 단추 1 + (테스트가 찾는) 없음 */
