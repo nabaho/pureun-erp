@@ -60,8 +60,12 @@ t('담당 칸에 너비가 정해져 있다', /colSortTh\('staff','담당','담�
 t('칸마다 넘침 처리를 공통으로 쓴다',
   /var _cell=Object\.assign\(\{\},tdS,\{padding:'5px 6px',overflow:'hidden',/.test(FL), true);
 t('업체는 제 칸에 홀로 있다', /_grp\.length \? _grp\[0\]\.company/.test(FL), true);
-// 업체가 여럿이어도 먼저 채울 후보의 담당은 보여준다 — 누구에게 물어볼지 알아야 한다
-t('담당이 제 칸에 있다', /\(_grp\.length \? \(_pendStaff\(_grp\[0\]\.head\.cand\)\|\|'—'\) : '—'\)/.test(FL), true);
+/* 업체가 여럿이어도 «먼저 채울 후보»의 담당은 보여준다 — 누구에게 물어볼지 알아야 한다.
+   ⚠ 값을 어디서 내는지(=_grp[0].head.cand)가 규칙이다. 글월 모양이 아니다 —
+     2026-08-23 폰에서 담당 칸을 접으며 값을 _staffTxt 한 곳으로 모았더니,
+     모양을 그대로 찾던 이 검사가 멀쩡한 고침에 걸렸다(CLAUDE.md). */
+t('담당 값은 먼저 채울 후보에서 낸다', /_pendStaff\(_grp\[0\]\.head\.cand\)/.test(FL), true);
+t('담당 칸이 그 값을 쓴다', /ld-c-staff[\s\S]{0,900}?\(_staffTxt \|\| '—'\)/.test(FL), true);
 t('업체가 여럿이어도 담당이 비지 않는다', /pItem \? \(_pendStaff\(pItem\)\|\|'—'\) : '—'/.test(FL), false);
 t('금액은 오른쪽 정렬·자릿수 고정', /textAlign:'right',padding:'5px 6px',whiteSpace:'nowrap',\s*\n\s*fontWeight:700,color:'#16a34a',fontSize:'12px',fontVariantNumeric:'tabular-nums'/.test(FL), true);
 

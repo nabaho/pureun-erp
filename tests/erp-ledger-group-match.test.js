@@ -32,7 +32,11 @@ test('짝이 겹친 행(_dup)은 묶지 않는다', () => {
 
 test('이미 있는 체크박스를 그대로 쓴다 (박스를 새로 만들지 않았다)', () => {
   const _from = FL.indexOf('var _gk=Object.keys(incChk)');
-  const btn = FL.slice(_from, FL.indexOf('h(\'button\',{onClick:function(){setConfHistOpen', _from));
+  /* ⚠ 끝 표시는 «잘 안 바뀌는 것»으로 잡는다. 예전에는 단추의 글월 모양을 통째로
+     찾았는데, 2026-08-23 그 단추에 class 하나가 붙자 -1 이 되어 잘린 데가 비었다. */
+  const _to = FL.indexOf('setConfHistOpen', _from);
+  assert.ok(_to > _from, '확정 이력 단추를 못 찾았다 — 끝 표시가 바뀌었습니다');
+  const btn = FL.slice(_from, _to);
   assert.ok(btn.length > 0, '묶기 단추를 못 찾았다');
   assert.ok(btn.indexOf('useState') < 0, '고르는 상태를 새로 두면 줄 체크와 어긋난다');
 });
