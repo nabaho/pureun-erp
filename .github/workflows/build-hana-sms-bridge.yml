@@ -31,11 +31,45 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
-      - name: APK 만들기
-        run: gradle :app:assembleDebug --no-daemon
+
+      - name: 정식 서명키 준비
+        shell: bash
+        env:
+          HANA_RELEASE_KEYSTORE_BASE64: ${{ secrets.HANA_RELEASE_KEYSTORE_BASE64 }}
+          HANA_RELEASE_STORE_PASSWORD_SECRET: ${{ secrets.HANA_RELEASE_STORE_PASSWORD }}
+          HANA_RELEASE_KEY_ALIAS_SECRET: ${{ secrets.HANA_RELEASE_KEY_ALIAS }}
+          HANA_RELEASE_KEY_PASSWORD_SECRET: ${{ secrets.HANA_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$HANA_RELEASE_KEYSTORE_BASE64"
+          test -n "$HANA_RELEASE_STORE_PASSWORD_SECRET"
+          test -n "$HANA_RELEASE_KEY_ALIAS_SECRET"
+          test -n "$HANA_RELEASE_KEY_PASSWORD_SECRET"
+          printf '%s' "$HANA_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/hana-message-release.p12"
+          echo "HANA_RELEASE_KEYSTORE_PATH=$RUNNER_TEMP/hana-message-release.p12" >> "$GITHUB_ENV"
+          echo "HANA_RELEASE_STORE_PASSWORD=$HANA_RELEASE_STORE_PASSWORD_SECRET" >> "$GITHUB_ENV"
+          echo "HANA_RELEASE_KEY_ALIAS=$HANA_RELEASE_KEY_ALIAS_SECRET" >> "$GITHUB_ENV"
+          echo "HANA_RELEASE_KEY_PASSWORD=$HANA_RELEASE_KEY_PASSWORD_SECRET" >> "$GITHUB_ENV"
+
+      - name: 정식 APK 만들기
+        run: gradle :app:assembleRelease --no-daemon
+
+      - name: 서명과 설치파일 검사
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -s "$APK"
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
+          cp "$APK" "app/build/outputs/apk/release/pureun-hana-message-s25-v3.apk"
+          sha256sum "app/build/outputs/apk/release/pureun-hana-message-s25-v3.apk" > "app/build/outputs/apk/release/pureun-hana-message-s25-v3.apk.sha256"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: pureun-hana-message-android
-          path: android/hana-sms-bridge/app/build/outputs/apk/debug/app-debug.apk
+          name: pureun-hana-message-s25-release
+          path: |
+            android/hana-sms-bridge/app/build/outputs/apk/release/pureun-hana-message-s25-v3.apk
+            android/hana-sms-bridge/app/build/outputs/apk/release/pureun-hana-message-s25-v3.apk.sha256
           if-no-files-found: error
           retention-days: 30
