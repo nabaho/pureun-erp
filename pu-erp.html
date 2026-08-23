@@ -37372,6 +37372,8 @@ function FinanceLedger(props){
   var rowsS=useState(null);    var rows=rowsS[0];     var setRows=rowsS[1];
   var detS =useState(null);    var detected=detS[0];  var setDetected=detS[1];
   var busyS=useState(false);   var busy=busyS[0];     var setBusy=busyS[1];
+  var hanaBusyS=useState(false); var hanaBusy=hanaBusyS[0]; var setHanaBusy=hanaBusyS[1];
+  var hanaPairS=useState(null);  var hanaPair=hanaPairS[0];  var setHanaPair=hanaPairS[1];
   var fNameS=useState('');     var fName=fNameS[0];   var setFName=fNameS[1];
   var inMatchS=useState({});   var inMatch=inMatchS[0]; var setInMatch=inMatchS[1];
   var expCatS=useState({});    var expCat=expCatS[0];   var setExpCat=expCatS[1];
@@ -37646,6 +37648,132 @@ function FinanceLedger(props){
     var u = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) ? CURRENT_USER : {};
     return { sid:u.sid || '', name:u.name || '', role:u.role || '', isAdmin:(u.isAdmin === true) };
   }
+
+  /* ── 권형하 휴대폰의 하나은행·하나카드 거래문자 연결 ──
+     휴대폰에는 ERP 비밀번호를 넣지 않는다. ERP가 5분짜리 연결번호를 만들고,
+     휴대폰 전용 보안키를 한 번 발급받는다. 서버도 문자 원문이나 인증번호를 저장하지
+     않고 거래일시·금액·입출금·적요만 대기함에 둔다. */
+  var HANA_SMS_FN_URL = 'https://asia-northeast3-pureun-erp.cloudfunctions.net/hanaMessageBridge';
+  async function hanaSmsCall(action, payload){
+    var au = (window.firebase && firebase.auth) ? firebase.auth().currentUser : null;
+    if(!au) throw new Error('푸른 통합시스템 로그인이 필요합니다');
+    var token = await au.getIdToken();
+    var resp = await fetchT(HANA_SMS_FN_URL, {
+      method:'POST',
+      headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' },
+      body:JSON.stringify(Object.assign({action:action}, payload||{}))
+    }, 20000);
+    var data = null;
+    try { data = await resp.json(); } catch(_je){ data = {}; }
+    if(!resp.ok || !data.ok) throw new Error(data.error || ('문자 연결 응답 '+resp.status));
+    return data;
+  }
+
+  async function startHanaSmsPair(){
+    if(hanaBusy) return;
+    setHanaBusy(true);
+    try{
+      var d = await hanaSmsCall('pairStart');
+      setHanaPair({code:String(d.code||''), expiresAt:Number(d.expiresAt||0)});
+    }catch(e){ showToast('❌ 휴대폰 연결번호를 만들지 못했습니다: '+e.message); }
+    setHanaBusy(false);
+  }
+
+  async function resetHanaSmsPair(){
+    if(hanaBusy) return;
+    if(!(await popConfirm('권형하 휴대폰의 문자 연결을 해제할까요?\n\n→ 이미 가져온 거래내역은 지워지지 않습니다\n→ 다시 연결하려면 새 연결번호를 발급하면 됩니다'))) return;
+    setHanaBusy(true);
+    try{
+      await hanaSmsCall('pairReset');
+      setHanaPair(null);
+      showToast('휴대폰 연결을 해제했습니다');
+    }catch(e){ showToast('❌ 연결을 해제하지 못했습니다: '+e.message); }
+    setHanaBusy(false);
+  }
+
+  async function importHanaSms(silent){
+    if(hanaBusy) return;
+    setHanaBusy(true);
+    try{
+      var d = await hanaSmsCall('list');
+      var items = Array.isArray(d.items) ? d.items : [];
+      if(!items.length){ if(!silent) showToast('📱 새 하나은행·하나카드 거래문자가 없습니다'); setHanaBusy(false); return; }
+
+      var incoming = items.map(function(x){
+        return _bankDraftSlimRow({
+          _k:'hana-'+String(x.id||''), date:String(x.date||''), memo:String(x.memo||''),
+          note:String(x.note||'휴대폰 문자'), amount:parseInt(x.amount,10)||0,
+          balance:parseInt(x.balance,10)||0, src:(x.src==='card'?'card':'bank')
+        }, x.type==='expense'?'expense':'income', x.src==='card'?'card':'bank');
+      }).filter(function(x){ return x.date && x.amount>0; });
+      if(!incoming.length) throw new Error('가져올 수 있는 거래가 없습니다');
+
+      var prev = dbGet(LEDGER_BATCH_KEY, []) || [];
+      if(!Array.isArray(prev)) prev = [];
+      var mg = erpBankMergeDraft(erpBatchRows(prev), incoming);
+      var oldKeys = {};
+      Object.keys(mg.remap||{}).forEach(function(k){ oldKeys[mg.remap[k]]=1; });
+      var newOnly = mg.rows.filter(function(x){ return !oldKeys[x._k]; });
+      var me = _meNow();
+      var bat = erpMakeBatch(newOnly, {
+        by:me.sid||'', byName:me.name||'', fileName:'권형하 휴대폰 · 하나 거래문자', src:'hana-sms'
+      });
+      var keep = prev;
+      if(bat){
+        if(!dbUpsert(LEDGER_BATCH_KEY, bat)) throw new Error('거래내역 저장에 실패했습니다');
+        var tr = erpTrimBatches(prev.concat([bat]), LEDGER_BATCH_MAX_ROWS);
+        if(tr.dropped.length){
+          try { dbRemoveMany(LEDGER_BATCH_KEY, tr.dropped.map(function(b){return b.id;})); }
+          catch(_de){ if(window._erpErrLog) window._erpErrLog(_de); }
+        }
+        keep = tr.keep;
+        setBatches(keep);
+      }
+
+      var view = _rowsOfBatches(keep, hidRow);
+      setRows({inc:view.inc, exp:view.exp, colMap:{}, hdrRow:[]});
+      setFileType(items.some(function(x){return x.src==='bank';}) ? 'bank' : 'card');
+      setFName('권형하 휴대폰 문자');
+      setUpAt(new Date().toISOString()); setRestored(false); setDetected(null);
+
+      /* 새로 들어온 입금만 기존 미입금 후보와 금액이 하나로 맞을 때 자동 연결한다. */
+      var auto = Object.assign({}, inMatch||{});
+      var newKeyMap = {}; newOnly.forEach(function(x){newKeyMap[x._k]=1;});
+      view.inc.forEach(function(row){
+        if(row._dup || !newKeyMap[row._k]) return;
+        var ms = pending.filter(function(p){ return p.amount===row.amount; });
+        if(ms.length===1) auto[row._k]=ms[0].id;
+      });
+      setInMatch(auto);
+      try{
+        var picks=dbGet(LEDGER_PICK_KEY,{})||{};
+        Object.keys(auto).forEach(function(k){ picks=erpPickSet(picks,k,auto[k],{sid:me.sid||'',name:me.name||''}); });
+        dbSet(LEDGER_PICK_KEY,picks);
+      }catch(_pe){ if(window._erpErrLog) window._erpErrLog(_pe); }
+
+      var summary=erpUploadSummary(mg,newOnly.length,0);
+      setUpSum(summary);
+      await hanaSmsCall('ack',{ids:items.map(function(x){return x.id;}),batchId:bat?bat.id:'duplicate'});
+      showToast(newOnly.length
+        ? ('📱 거래문자 '+newOnly.length+'건을 가져와 자동 매칭했습니다')
+        : ('📱 '+items.length+'건은 이미 있는 거래라 중복으로 넣지 않았습니다'));
+    }catch(e){
+      if(window._erpErrLog) window._erpErrLog(e);
+      showToast('❌ 거래문자를 가져오지 못했습니다: '+e.message);
+    }
+    setHanaBusy(false);
+  }
+
+  /* 거래내역 화면을 열면 대기 중인 문자를 한 번 자동으로 합친다.
+     수신 순간마다 큰 거래표를 다시 읽지 않고, 사용자가 이 화면에 들어올 때만 실행해
+     Firebase 사용량과 중복 저장을 함께 줄인다. 수동 단추는 즉시 새로고침용으로 남긴다. */
+  var hanaAutoOnce=useRef(false);
+  useEffect(function(){
+    if(hanaAutoOnce.current) return;
+    hanaAutoOnce.current=true;
+    var timer=setTimeout(function(){ importHanaSms(true); },1800);
+    return function(){ clearTimeout(timer); };
+  },[]);
   /* 묶음 하나를 «모두에게서» 지운다 — 그 묶음의 줄만 사라진다.
      겹쳐서 다른 묶음에도 있던 줄은 그 묶음 몫으로 남는다(다시 합치면 살아난다). */
   async function dropBatch(b){
@@ -39016,6 +39144,33 @@ function FinanceLedger(props){
 
   return h('div',{style:{padding:'0 2px'}},
 
+    hanaPair && h('div',{role:'dialog','aria-modal':'true','aria-label':'하나 거래문자 휴대폰 연결',
+      onClick:function(){setHanaPair(null);},
+      style:{position:'fixed',inset:0,zIndex:10040,background:'rgba(15,23,42,.58)',display:'flex',alignItems:'center',justifyContent:'center',padding:'18px'}},
+      h('div',{onClick:function(e){e.stopPropagation();},
+        style:{width:'min(430px,100%)',background:'#fff',borderRadius:'18px',padding:'22px',boxShadow:'0 22px 60px rgba(15,23,42,.32)'}},
+        h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'10px'}},
+          h('strong',{style:{fontSize:'18px',color:'#1e293b'}},'📱 권형하 휴대폰 연결'),
+          h('button',{onClick:function(){setHanaPair(null);},'aria-label':'닫기',
+            style:{border:0,background:'#f8fafc',borderRadius:'9px',width:'34px',height:'34px',cursor:'pointer',fontSize:'18px'}},'×')),
+        h('p',{style:{fontSize:'13px',lineHeight:1.6,color:'#475569',margin:'14px 0 8px'}},
+          '휴대폰의 「푸른 하나문자 연결」 앱에 아래 8자리 번호를 입력하세요. 번호는 5분 동안 한 번만 사용할 수 있습니다.'),
+        h('div',{style:{fontSize:'34px',fontWeight:900,letterSpacing:'8px',textAlign:'center',color:'#1e40af',background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'14px',padding:'16px 8px',margin:'12px 0'}},
+          String(hanaPair.code||'').replace(/(\d{4})(\d{4})/,'$1 $2')),
+        h('ol',{style:{fontSize:'13px',lineHeight:1.75,color:'#475569',paddingLeft:'22px',margin:'12px 0'}},
+          h('li',null,'휴대폰 앱에서 연결번호를 입력하고 「연결」을 누릅니다.'),
+          h('li',null,'「알림 접근 허용」을 눌러 푸른 앱만 허용합니다.'),
+          h('li',null,'다음에 거래내역 화면을 열면 자동으로 가져옵니다. 「문자 가져오기」는 즉시 확인할 때만 누릅니다.')),
+        h('div',{style:{background:'#f8fafc',borderRadius:'10px',padding:'10px 12px',fontSize:'12px',lineHeight:1.55,color:'#64748b'}},
+          '🔒 비밀번호·인증번호·문자 원문은 저장하지 않습니다. 거래일시·금액·입출금·가맹점만 전송합니다.'),
+        h('div',{style:{display:'flex',gap:'8px',marginTop:'16px'}},
+          h('button',{onClick:resetHanaSmsPair,disabled:hanaBusy,
+            style:{flex:1,padding:'10px',border:'1px solid #fecaca',background:'#fff',color:'#991b1b',borderRadius:'9px',fontWeight:700,cursor:'pointer'}},'연결 해제'),
+          h('button',{onClick:function(){setHanaPair(null);},
+            style:{flex:1,padding:'10px',border:0,background:'#2563eb',color:'#fff',borderRadius:'9px',fontWeight:800,cursor:'pointer'}},'확인'))
+      )
+    ),
+
     // ── 파일 유형 선택 + 드래그앤드롭 업로드 바 (컴팩트 1줄) ──
     h('div',{
       className:'ld-up' + (ldTools ? ' on' : ''),
@@ -39038,6 +39193,15 @@ function FinanceLedger(props){
       h('label',{title:'나이스빌 → CMS 출금 결과 내역 엑셀 (회원명·납부금액·정산예정일)',
         style:{display:'flex',alignItems:'center',gap:'4px',cursor:'pointer',fontSize:'11.5px',whiteSpace:'nowrap',fontWeight:fileType==='nicebill'?700:400,color:fileType==='nicebill'?'#2563eb':'#64748b'}},
         h('input',{type:'radio',name:'ledgerType',checked:fileType==='nicebill',onChange:function(){setFileType('nicebill');setRows(null);setDetected(null);}}),'🏦 나이스빌 CMS'),
+      h('span',{className:'ld-up-sep',style:{width:'1px',height:'18px',background:'#e2e8f0'}}),
+      h('button',{type:'button',disabled:hanaBusy,onClick:function(e){e.stopPropagation();startHanaSmsPair();},
+        title:'권형하 휴대폰을 하나은행·하나카드 거래문자와 연결합니다',
+        style:{padding:'5px 9px',border:'1px solid #bfdbfe',background:'#eff6ff',color:'#1e40af',borderRadius:'6px',fontSize:'11px',fontWeight:800,cursor:hanaBusy?'wait':'pointer',whiteSpace:'nowrap'}},
+        '🔗 휴대폰 연결'),
+      h('button',{type:'button',disabled:hanaBusy,onClick:function(e){e.stopPropagation();importHanaSms();},
+        title:'새로 받은 하나은행·하나카드 거래문자를 가져와 기존 거래내역과 자동으로 맞춥니다',
+        style:{padding:'5px 9px',border:'1px solid #bbf7d0',background:'#f0fdf4',color:'#16a34a',borderRadius:'6px',fontSize:'11px',fontWeight:800,cursor:hanaBusy?'wait':'pointer',whiteSpace:'nowrap'}},
+        hanaBusy?'⏳ 확인 중':'📱 문자 가져오기'),
       h('span',{className:'ld-up-sep',style:{width:'1px',height:'18px',background:'#e2e8f0'}}),
       // 드롭존 (1줄) — 폰에는 «끌어다 놓기» 가 없어 css 에서 접는다(.ld-up-drophint)
       h('span',{className:'ld-up-drophint',style:{fontSize:'17px',lineHeight:1}}, busy ? '⏳' : dragOver ? '📂' : '📥'),
