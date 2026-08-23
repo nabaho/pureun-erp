@@ -76,7 +76,10 @@ test('명함·회사정보·푸른이알피 세 문에서 모두 새로 조립�
   /* 한 곳만 빠져도 그 자료로 바뀐 회사가 목록에 조용히 안 나타난다. */
   const doors = [
     ["watchCardMap(this.db.ref(DB_ROOT+'/items')", '명함이 들어오는 문'],
-    ["coInfo').on('value'", '회사정보가 들어오는 문'],
+    /* ⚠ 짚는 것은 «들어오는 길(경로)» 이지 «구독 방식» 이 아니다.
+       2026-08-23 coInfo 를 건별 구독으로 바꾸자 on('value') 를 찾던 표시가 못 찾았다 —
+       규칙(들어오는 문에서 새로 뽑는다)은 하나도 안 바뀌었는데도 그랬다(CLAUDE.md). */
+    ["DB_ROOT+'/coInfo'", '회사정보가 들어오는 문'],
   ];
   doors.forEach(([mark, what]) => {
     const i = src.indexOf(mark);
@@ -142,12 +145,13 @@ test('실시간으로 들어오는 자리들이 묶어 그리기를 쓴다', () 
   /* 사람이 누른 것은 묶지 않는다 — 실시간 자리만이다. */
   [["watchCardMap(this.db.ref(DB_ROOT+'/items')", 'renderSoon()'],
    ["watchCardMap(this.db.ref(DB_ROOT+'/groups')", 'renderSoon()'],
-   ["coInfo').on('value'", 'renderCoSoon()'],
-   ["coFolders').on('value'", 'renderCoSoon()'],
-   ["coTagHidden').on('value'", 'renderCoSoon()']].forEach(([mark, want]) => {
+   ["DB_ROOT+'/coInfo'", 'renderCoSoon()'],
+   ["DB_ROOT+'/coFolders'", 'renderCoSoon()'],
+   ["DB_ROOT+'/coTagHidden'", 'renderCoSoon()']].forEach(([mark, want]) => {
     const i = src.indexOf(mark);
     assert.ok(i > 0, mark + ' 을 못 찾음');
-    assert.ok(src.slice(i, i + 240).includes(want), mark + ' 이 아직 바로 그린다');
+    /* 건별 구독은 줄이 나뉘므로 넉넉히 본다 — 보는 것은 «누구를 부르나» 다 */
+    assert.ok(src.slice(i, i + 420).includes(want), mark + ' 이 아직 바로 그린다');
   });
 });
 

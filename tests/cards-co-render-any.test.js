@@ -157,8 +157,9 @@ test('_coInfo/_coTagHidden/_coFolders 구독 콜백도 renderCoAny 를 쓴다', 
   ['coInfo','coTagHidden','coFolders'].forEach(k=>{
     const at = source.indexOf(`DB_ROOT+'/${k}'`);
     assert.ok(at > 0, `${k} 구독을 찾지 못했습니다`);
-    const end = source.indexOf('\n', at);
-    const line = source.slice(at, end);
+    /* ⚠ 한 «줄»만 보면 안 된다 — 건별 구독(watchCardMap)은 줄이 나뉜다.
+       2026-08-23 coInfo 를 그렇게 바꾸자 규칙은 그대로인데 이 검사가 깨졌다. */
+    const line = source.slice(at, at + 420);
     assert.match(line, /renderCoSoon\(\)/, `${k} 구독 콜백이 renderCoSoon() 을 불러야 합니다`);
     assert.doesNotMatch(line, /renderPC\(\)|renderCoPage\(\)|renderCoMobileList\(\)/,
       `${k} 구독 콜백이 화면을 직접 골라 그리면 안 됩니다`);

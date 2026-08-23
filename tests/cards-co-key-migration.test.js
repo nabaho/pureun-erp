@@ -129,12 +129,23 @@ function loadLoadCoInfo(){
   const end = source.indexOf('\nconst coKeyOf', at);
   assert.ok(end > at, 'loadCoInfo 끝을 찾지 못했습니다');
   const calls = { pcRendered: 0, coRendered: 0, anyRendered: 0, busted: 0 };
-  let onValueCb = null;
+  const _h = {};          // 붙잡아 둔 child_* 손잡이
+  let _empty = null;      // 「비었다」를 알리는 길
   const ctx = {
     _coInfoOn: false,
     _coInfo: {},
     state: { view: 'co' },
-    Store: { mode: 'firebase', db: { ref: () => ({ on: (evt, cb) => { onValueCb = cb; } }) } },
+    /* 2026-08-23 coInfo 가 «건별 구독»(watchCardMap)으로 바뀌었다 — 흉내 낸 ref 도
+       child_added·child_removed 와 「비었는지 한 번 보기」를 받아야 한다.
+       ⚠ 진짜 watchCardMap 을 떼어 함께 돌린다. 흉내로 갈음하면 「몰아친 것을 한 번으로
+         묶어 그리는가」를 이 검사가 더는 못 본다. */
+    Store: { mode: 'firebase', db: { ref: () => ({
+      on: (evt, cb) => { _h[evt] = cb; },
+      off: () => {},
+      limitToFirst: () => ({ once: () => ({ then: fn => { _empty = fn; return { catch: () => {} }; } }) })
+    }) } },
+    /* 묶어 그리기의 «기다림»만 걷는다 — 이 검사가 보려는 것은 누구를 부르는가다 */
+    setTimeout: fn => { fn(); }, clearTimeout: () => {},
     DB_ROOT: 'pucards',
     renderPC: () => { calls.pcRendered++; },
     renderCoPage: () => { calls.coRendered++; },
@@ -152,9 +163,18 @@ function loadLoadCoInfo(){
     renderCoAny: () => { calls.anyRendered++; }
   };
   vm.createContext(ctx);
+  /* 진짜 자르개를 함께 넣는다 */
+  const wAt = source.indexOf('function watchCardMap(');
+  assert.ok(wAt > 0, 'watchCardMap 을 찾지 못했습니다');
+  vm.runInContext(source.slice(wAt, source.indexOf('\n}', wAt) + 2), ctx);
   vm.runInContext(source.slice(at, end), ctx);
   ctx._calls = calls;
-  ctx._fireOnValue = v => onValueCb({ val: () => v });
+  /* 서버에서 이 자료가 왔다고 알린다 — 건이 있으면 건마다, 없으면 「비었다」로 */
+  ctx._fireOnValue = v => {
+    const keys = Object.keys(v || {});
+    if (keys.length) keys.forEach(k => _h.child_added({ key: k, val: () => v[k] }));
+    else if (_empty) _empty({ exists: () => false });
+  };
   return ctx;
 }
 
