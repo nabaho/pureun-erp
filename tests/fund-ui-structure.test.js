@@ -175,7 +175,10 @@ test('기금 정보 폼은 화면 폭을 다 쓴다 — 760px 2열에 갇히지 
     '넓은 폼 격자가 없다');
   // max-width:none(폰에서 푸는 것)은 괜찮다 — 실제 «폭 제한»만 막는다
   assert.ok(!/\.gridw\{[^}]*max-width:\s*(?!none)/.test(SRC), '넓은 폼에 폭 제한을 걸면 다시 아래로 흘러내린다');
-  assert.match(SRC, /class="gridw" style="margin-top:10px" oninput="markDirty\(\)"/, '기금 정보가 넓은 격자를 쓰지 않는다');
+  // 여백은 바뀔 수 있다 — 「기금 정보 폼이 넓은 격자를 쓰는가」만 본다
+  assert.match(SRC, /class="gridw"[^>]*oninput="markDirty\(\)"/, '기금 정보가 넓은 격자를 쓰지 않는다');
+  assert.ok(!/전기이월[\s\S]{0,400}class="grid" style="max-width:760px"/.test(SRC),
+    '전기이월 칸이 다시 2열 760px 에 갇혔다');
   const box = {};
   const i = SRC.indexOf('var INFO_SECS=');
   new Function(SRC.slice(i, SRC.indexOf('};', i) + 2) + ';this.S=INFO_SECS;').call(box);
