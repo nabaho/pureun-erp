@@ -10,6 +10,7 @@
 'use strict';
 
 const MS = require('./mail-send');
+const MA = require('./mail-archive');
 
 const DAUM_HOST = 'smtp.daum.net';
 const DAUM_PORT = 465;
@@ -166,6 +167,23 @@ async function deliver(opts) {
 
   // ★ 기록은 **실제로 나간 뒤**. 화면이 남기면 '보냈다는데 안 왔다'를 가릴 수 없다.
   const at = Date.now();
+
+  /* ★ 다음메일 「보낸메일함」에도 사본을 남긴다 (대표 지시 2026-08-23).
+     SMTP 는 「전해 줘」만 한다 — 보낸함에 사본을 넣는 일은 IMAP 이 따로 하는데
+     그동안 우리는 그 일을 안 했다. 그래서 앱에서 보낸 메일이 다음메일 보낸함에
+     한 통도 없었다(상대는 정상으로 받았다).
+     ⚠ 배달은 «이미 끝났다». 여기서 무슨 일이 나도 배달 결과를 바꾸지 않는다 —
+       실패를 되돌려 주면 대표가 「안 나갔다」고 오해해 같은 메일을 두 번 보낸다. */
+  try {
+    const raws = [];
+    for (const m of batches) raws.push(await MA.buildRaw(m));
+    const kept = await MA.archiveSent({
+      user: usedId, loginIds: loginIds(from, envId), pass: pass,
+      raws: raws, bytes: v.bytes,
+    });
+    if (!kept.ok) console.warn('archiveSent 못 남김:', kept.why, kept.box);
+    else if (kept.dropped) console.warn('archiveSent 상한 초과 —', kept.dropped, '통은 사본 없음');
+  } catch (e) { console.warn('archiveSent', (e && e.message) || e); }
   const cardId = String(body.cardId || '');
   if (cardId && !/[.#$/\[\]]/.test(cardId)) {
     try {
