@@ -387,8 +387,14 @@
     }
     /* 기업정보 화면(CO_FIELDS)이 이름표를 붙여 보여주는 칸들만 보낸다.
        모르는 칸까지 밀어 넣으면 화면에 안 나오면서 저장소만 불어난다. */
+    /* ⚠ product·sales·workers 를 늘렸다 (대표 지시 2026-08-23) — 기술보호울타리·
+       현장클리닉의 사업장 정보 화면을 캡처해 담을 때, 정작 자격을 가리는 숫자
+       (매출액·상시근로자수)가 pairs 에만 있어 기업 상세까지 오지 못했다.
+       늘릴 때는 pu-cards.html 의 CO_FIELDS 에도 이름표를 함께 넣어야 한다 —
+       여기만 늘리면 값은 쌓이는데 화면에 안 나온다. */
     var KEEP = ['company','ceo','corpno','address','companyTel','mobile','email','homepage',
-                'bizType','bizItem','openDate','smeType','docName','applyNo','applyItems',
+                'bizType','bizItem','openDate','smeType','product','sales','workers',
+                'docName','applyNo','applyItems',
                 'applyField','applyDetail','applyDate','dueDays','birth'];
     var ref = deps.db.ref(CARDS_ROOT + '/coInfo/' + key);
     return ref.once('value').then(function (s) {
