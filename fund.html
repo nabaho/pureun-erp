@@ -20,6 +20,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="hwpx_gen.js?v=14"></script>
+<script src="hwpx_doc.js?v=1"></script>
 <script src="fund_forms.js?v=1"></script>
 <style>
   :root{--acc:#2563eb;--acc2:#1b4bc0;--acc-soft:#e9f0fe;--ink:#182234;--sub:#59637a;--faint:#8b94a6;
@@ -3503,43 +3504,22 @@ function sidePreviewAll(){
   }).catch(function(e){ var w=$('docwrap'); if(w)w.innerHTML='<div class="msg err">'+esc(e.message)+'</div>'; });
 }
 /* ── 생성 서식 → 한글(HWPX) 저장 ──
-   화면에서 편집한 내용(#doced) 그대로 문단·표로 변환. 한글 프로그램 없이도 생성된다.
-   문단+표 조립 방식이라 관공서 별지서식의 정밀 격자·도장란까지는 재현하지 않는다.
-   (양식 그대로 제출해야 하면 기존 [🖨 인쇄/PDF] 또는 원본 엑셀 채움을 쓴다.) */
-function docToHwpx(kind){
-  confirmM('한글(HWPX) 저장은 화면 초안을 문단·표로 재조립한 것입니다.\n별지 서식의 정밀 격자·체크박스·도장란은 원본과 다르게 보일 수 있습니다.\n\n원본 모양 그대로 필요하면:\n· 엑셀 채워받기(인가 6종·지원신청서 — 형태 100%)\n· 📄 HWP 편집(원본 .hwp 등록 후)\n\n그래도 HWPX로 저장할까요?',{ok:'HWPX 저장'})
-    .then(function(ok){ if(ok)_docToHwpxRun(kind); });
-}
+   화면에 그려진 초안을 공용 서식층(hwpx_doc.js)이 그대로 옮긴다.
+   이전엔 이 자리에서 표를 «열폭이 모두 같은 격자»로 뭉개고 병합(colspan·rowspan)을
+   버렸다 — 별지 서식이 서식으로 보이지 않았던 까닭이다. 지금은 화면에 그려진 표를
+   실측해 원본 .hwp 에서 온 열폭 비율·병합을 그대로 쓴다. */
+function docToHwpx(kind){ _docToHwpxRun(kind); }
 function _docToHwpxRun(kind){
   var ed=$('doced'); if(!ed){ toast('문서를 먼저 여세요','warn'); return; }
-  if(typeof HWPX==='undefined'){ toast('한글 변환 모듈을 불러오지 못했습니다 — 새로고침 후 다시 시도','err'); return; }
+  if(typeof HWPX==='undefined'||typeof HWPXDOC==='undefined'){
+    toast('한글 변환 모듈을 불러오지 못했습니다 — 새로고침 후 다시 시도','err'); return; }
   var f=funds[S.formFund]||{};
   try{
-    HWPX.setPage({landscape:false});          // 서식은 A4 세로
-    var body='';
-    Array.prototype.forEach.call(ed.querySelectorAll('h1,h2,h3,p,table'), function(el){
-      if(el.tagName!=='TABLE' && el.closest('table')) return;   // 표 안 문단은 표에서 함께 처리
-      if(el.tagName==='TABLE'){
-        var rows=[];
-        Array.prototype.forEach.call(el.rows, function(tr){
-          rows.push(Array.prototype.map.call(tr.cells, function(c){
-            return String(c.innerText||c.textContent||'').replace(/ /g,' ').replace(/\s*\n\s*/g,'\n').trim();
-          }));
-        });
-        if(!rows.length) return;
-        var n=Math.max.apply(null, rows.map(function(r){ return r.length; }));   // 병합셀 대비 열 수 정규화
-        rows=rows.map(function(r){ var q=r.slice(0,n); while(q.length<n) q.push(''); return q; });
-        var ratios=[]; for(var i=0;i<n;i++) ratios.push(1);
-        body+=HWPX.tablePara(rows, HWPX.cols(ratios))+HWPX.para('');
-      } else {
-        var t=String(el.textContent||'').replace(/ /g,' ').replace(/\s+/g,' ').trim();
-        if(!t) return;
-        body+=HWPX.para(t, (el.tagName==='H1'||el.tagName==='H2'||el.tagName==='H3')?'90':'0');
-      }
-    });
+    var doc=HWPXDOC.begin('gov');                 // 별지 서식 원본 여백(별지 제15호서식 실측)
+    var body=HWPXDOC.fromHtml(ed, doc);
     if(!body){ toast('내보낼 내용이 없습니다','warn'); return; }
-    var name=((f.short_name||f.name||'기금')+'_'+docLabel(kind)+'_'+ymd()+'.hwpx').replace(/[\\/:*?"<>|]/g,'_');
-    HWPX.download(body, name);
+    var name=((f.short_name||f.name||'기금')+'_'+docLabel(kind)+'_'+ymd()+'.hwpx').replace(/[\/:*?"<>|]/g,'_');
+    HWPX.download([{body:body, landscape:false, margin:doc.margin}], name);
     toast('한글 파일로 저장했습니다');
   }catch(e){ toast('한글 변환 실패: '+((e&&e.message)||e),'err'); }
 }
