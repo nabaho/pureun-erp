@@ -54,7 +54,10 @@ test('설명은 화면에 깔지 않고 ⓘ 로 접는다 — 오류 메시지�
     assert.ok(box.HELP[k].h && box.HELP[k].h.length > 10, '본문 없음: ' + k);
     assert.ok(!/['"]/.test(box.HELP[k].t), '제목에 따옴표가 있으면 속성 삽입이 깨진다: ' + k);
   });
-  const used = [...SRC.matchAll(/hlp\('([^']+)'\)/g)].map(m => m[1]);
+  /* ⓘ 는 hlp('키') 로 직접 부르기도 하고, 표(CARD_TARGETS 등)에 help:'키' 로 적어 두고
+     hlp(T.help) 로 부르기도 한다 — 둘 다 «쓰고 있는 것»으로 센다. */
+  const used = [...SRC.matchAll(/hlp\('([^']+)'\)/g)].map(m => m[1])
+    .concat([...SRC.matchAll(/help:\s*'([^']+)'/g)].map(m => m[1]));
   const missing = [...new Set(used)].filter(k => !box.HELP[k]);
   assert.deepEqual(missing, [], '등록부에 없는 도움말을 부른다(빈 버튼이 된다)');
   const unused = keys.filter(k => !used.includes(k));

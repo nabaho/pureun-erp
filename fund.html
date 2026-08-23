@@ -4192,57 +4192,123 @@ function loadCardIdx(){
   if(_cardIdx) return Promise.resolve(_cardIdx);
   return fbDb.ref('pucards/idx').once('value').then(function(s){
     var v=s.val()||{};
+    /* 사업자등록증(biz)과 명함(card)을 모두 담는다 — 부르는 쪽이 골라 쓴다.
+       명함에는 사람(이름·직위·휴대폰·이메일)이, 사업자등록증에는 회사(번호·대표자·업태)가 있다. */
     _cardIdx=Object.keys(v).map(function(k){ var r=v[k]||{}; r._id=k; return r; })
-      .filter(function(r){ return r.k==='biz'&&(r.c||r.bz); });   // 사업자등록증 카드만
+      .filter(function(r){ return (r.k==='biz'||r.k==='card')&&(r.c||r.bz||r.n); });
     return _cardIdx;
   });
 }
-function openCardPick(){
-  var fid=S.fundId;
-  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">🏢 기업정보함에서 당겨오기</h2>'+hlp('info.card')+'</div>'
-    +'<input id="cardq" class="search" style="width:100%" placeholder="기금·회사 이름 또는 번호로 찾기" oninput="renderCardPick()">'
+/* 명함 한 장은 회사 칸이 비어 있는 일이 많다(사업자번호·대표자는 사업자등록증에만 있다).
+   그래서 «같은 회사의 사업자등록증»을 찾아 빈 칸을 메운 한 벌을 만든다. */
+function _cardNorm(s){ return String(s||'').toLowerCase().replace(/[\s\-㈜()]|주식회사/g,''); }
+function cardEffective(r){
+  if(!r) return {};
+  if(r.k==='biz') return r;
+  var key=_cardNorm(r.c); if(!key) return r;
+  var biz=(_cardIdx||[]).filter(function(x){ return x.k==='biz'&&_cardNorm(x.c)===key; })[0]||{};
+  var out={}; Object.keys(biz).forEach(function(k){ out[k]=biz[k]; });
+  Object.keys(r).forEach(function(k){ if(r[k]!=null&&r[k]!=='') out[k]=r[k]; });
+  return out;
+}
+/* ══ 기업정보함 가져오기 — 쓰는 곳마다 «어디에 넣을지»만 다르다 ══
+   fill : 열려 있는 폼의 빈 칸을 채운다(기금 정보). map = [카드칸, 화면 id, 이름]
+   make : 고른 값으로 새 창을 채워 띄운다(참여사업장 추가). map = [카드칸, 만들 자료의 칸]
+   새로 쓸 곳이 생기면 여기 한 줄만 더한다 — 목록·검색·명함 보강은 공용이다. */
+var CARD_TARGETS={
+  info:{ t:'기금 정보', mode:'fill', kinds:['biz'], help:'info.card',
+    map:[['c','fd-name','기금법인명'],['bz','fd-tax_id_no','고유번호'],
+         ['ceo','fd-chairman','대표자'],['ad','fd-address','소재지'],['ct','fd-phone','전화']] },
+  site:{ t:'참여사업장', mode:'make', kinds:['biz','card'], help:'site.card',
+    map:[['c','name'],['ceo','ceo'],['bz','biz_no'],['cno','corp_no'],['bt','biz_type'],['ad','address'],
+         ['n','_c_name'],['ti','_c_position'],['m','_c_mobile'],['e','_c_email']] }
+};
+function openCardPick(key){
+  var T=CARD_TARGETS[key||'info']; if(!T){ toast('알 수 없는 대상입니다','err'); return; }
+  _cardPick={q:'',items:[],fid:S.fundId,key:(key||'info')};
+  showModal('<div class="row" style="margin:0 0 8px"><h2 style="margin:0">🏢 기업정보함에서 '+(T.mode==='make'?'추가':'당겨오기')+'</h2>'
+    +'<span class="muted" style="font-size:11.5px">'+esc(T.t)+'</span>'+hlp(T.help)+'</div>'
+    +'<input id="cardq" class="search" style="width:100%" placeholder="회사·사람 이름 또는 번호로 찾기" oninput="renderCardPick()">'
     +'<div id="cardbody" style="max-height:56vh;overflow:auto;margin-top:10px">'+loadingHTML('기업정보함을 읽는 중…')+'</div>'
-    +'<p class="muted" style="font-size:11px;margin:8px 0 0"><b>빈 칸만</b> 채움 · 저장은 따로</p>');
-  _cardPick={q:'',items:[],fid:fid};
+    +'<p class="muted" style="font-size:11px;margin:8px 0 0">'+(T.mode==='make'?'고르면 <b>채워진 창</b>이 열림':'<b>빈 칸만</b> 채움 · 저장은 따로')+'</p>');
   loadCardIdx().then(function(){ if($('cardbody')) renderCardPick(); })
     .catch(function(e){ var b=$('cardbody');
       if(b) b.innerHTML='<div class="msg err">기업정보함을 읽지 못했습니다: '+esc((e&&e.message)||e)
-        +'<div class="muted" style="font-size:11.5px;margin-top:6px">명함첩(기업정보함)에 사업자등록증이 등록돼 있어야 합니다.</div></div>'; });
+        +'<div class="muted" style="font-size:11.5px;margin-top:6px">명함첩(기업정보함)에 사업자등록증·명함이 등록돼 있어야 합니다.</div></div>'; });
 }
 function renderCardPick(){
   var b=$('cardbody'); if(!b) return;
+  var T=CARD_TARGETS[_cardPick.key]||CARD_TARGETS.info;
   var q=(($('cardq')||{}).value||'').trim().toLowerCase();
-  var norm=function(s){ return String(s||'').toLowerCase().replace(/[\s\-㈜()]|주식회사/g,''); };
+  var norm=_cardNorm;
   var list=(_cardIdx||[]).filter(function(r){
+    if(T.kinds.indexOf(r.k)<0) return false;                       // 이 자리에서 쓸 종류만
     if(!q) return true;
-    return norm(r.c).indexOf(norm(q))>=0 || String(r.bz||'').replace(/\D/g,'').indexOf(q.replace(/\D/g,''))>=0;
+    return norm(r.c).indexOf(norm(q))>=0 || norm(r.n).indexOf(norm(q))>=0
+      || String(r.bz||'').replace(/\D/g,'').indexOf(q.replace(/\D/g,''))>=0;
   });
-  // 지금 기금 이름과 닮은 것을 위로
+  // 지금 기금 이름과 닮은 것을 위로, 그다음 사업자등록증을 명함보다 위로
   var f=funds[_cardPick.fid]||{}, key=norm(f.name||f.short_name||'');
-  if(key.length>1) list.sort(function(a,b2){
-    var A=norm(a.c).indexOf(key)>=0||key.indexOf(norm(a.c))>=0, B=norm(b2.c).indexOf(key)>=0||key.indexOf(norm(b2.c))>=0;
-    return (B?1:0)-(A?1:0);
+  list=list.slice().sort(function(a,b2){
+    if(key.length>1){
+      var A=(norm(a.c).indexOf(key)>=0||key.indexOf(norm(a.c))>=0)?0:1;
+      var B=(norm(b2.c).indexOf(key)>=0||key.indexOf(norm(b2.c))>=0)?0:1;
+      if(A!==B) return A-B;
+    }
+    var ka=(a.k==='biz')?0:1, kb=(b2.k==='biz')?0:1;
+    if(ka!==kb) return ka-kb;
+    return norm(a.c).localeCompare(norm(b2.c));
   });
   if(!list.length){ b.innerHTML='<div class="muted" style="padding:18px 4px;text-align:center">'
-    +(q?'찾는 이름이 없습니다.':'기업정보함에 등록된 사업자등록증이 없습니다.')+'</div>'; return; }
-  b.innerHTML='<div style="overflow-x:auto"><table><thead><tr><th>이름</th><th>번호</th><th>대표자</th><th class="mo">소재지</th><th></th></tr></thead><tbody>'
+    +(q?'찾는 이름이 없습니다.':'기업정보함에 등록된 자료가 없습니다.')+'</div>'; return; }
+  var many=T.kinds.length>1;
+  b.innerHTML='<div style="overflow-x:auto"><table><thead><tr>'
+    +(many?'<th>종류</th>':'')+'<th>회사</th>'+(many?'<th>사람</th>':'')
+    +'<th>번호</th><th>대표자</th><th class="mo">소재지</th><th></th></tr></thead><tbody>'
     +list.slice(0,80).map(function(r){
-      return '<tr><td style="font-weight:700">'+esc(r.c||'—')+'</td><td>'+esc(r.bz||'—')+'</td>'
-        +'<td>'+esc(r.ceo||'—')+'</td>'
-        +'<td class="muted mo" style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.ad||'—')+'</td>'
-        +'<td><button class="primary" onclick="applyCard(\''+r._id+'\')" style="padding:3px 10px">당겨오기</button></td></tr>';
+      var e=cardEffective(r);   // 명함이면 같은 회사 사업자등록증으로 빈 칸을 메운 값
+      return '<tr>'
+        +(many?'<td>'+(r.k==='biz'?'<span class="chip ok" style="font-size:10px">사업자등록증</span>'
+                                 :'<span class="chip" style="font-size:10px">명함</span>')+'</td>':'')
+        +'<td style="font-weight:700">'+esc(r.c||'—')+'</td>'
+        +(many?'<td>'+esc(r.n||'')+(r.ti?' <span class="muted" style="font-size:11px">'+esc(r.ti)+'</span>':'')+'</td>':'')
+        +'<td>'+esc(e.bz||'—')+'</td><td>'+esc(e.ceo||'—')+'</td>'
+        +'<td class="muted mo" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(e.ad||'—')+'</td>'
+        +'<td><button class="primary" onclick="applyCard(\''+r._id+'\')" style="padding:3px 10px">'
+        +(T.mode==='make'?'추가':'당겨오기')+'</button></td></tr>';
     }).join('')+'</tbody></table></div>'
     +(list.length>80?'<p class="muted" style="font-size:11px;margin:6px 0 0">'+list.length+'건 중 80건만 표시 — 검색으로 좁히세요.</p>':'');
 }
-/* 기업정보함 칸 → 기금 정보 칸. 빈 칸만 채우고, 무엇이 찼는지 알려 준다. */
-var CARD_MAP=[['c','fd-name','기금법인명'],['bz','fd-tax_id_no','고유번호'],
-              ['ceo','fd-chairman','대표자'],['ad','fd-address','소재지'],['ct','fd-phone','전화']];
+/* 기금 정보 칸 짝 — 옛 이름을 남겨 둔다(검사·다른 코드가 이 이름을 본다) */
+var CARD_MAP=CARD_TARGETS.info.map;
 function applyCard(id){
   var r=(_cardIdx||[]).filter(function(x){return x._id===id;})[0]; if(!r) return;
+  var T=CARD_TARGETS[_cardPick.key]||CARD_TARGETS.info;
   if(S.fundId!==_cardPick.fid){ toast('기금이 바뀌었습니다 — 다시 골라 주세요','warn'); closeM(); return; }
+  var e=cardEffective(r);                        // 명함이면 같은 회사 사업자등록증으로 보강한 값
+
+  /* make — 고른 값으로 새 창을 채워 띄운다.
+     창을 겹쳐 띄우면 뒤 창이 망가지므로, 먼저 닫고 «채워진 창»을 새로 연다. */
+  if(T.mode==='make'){
+    var pre={}, con={}, got=0;
+    T.map.forEach(function(m){
+      var v=String(e[m[0]]||'').trim(); if(!v) return;
+      got++;
+      if(m[1].indexOf('_c_')===0) con[m[1].slice(3)]=v; else pre[m[1]]=v;
+    });
+    if(!got){ toast('가져올 값이 없는 카드입니다','warn'); return; }
+    if(Object.keys(con).length) pre.contacts=[Object.assign({primary:true},con)];
+    pre.pucard_id=r._id;                          // 어디서 왔는지 남긴다(나중에 되짚기용)
+    closeM();
+    editSite('',pre);
+    toast('기업정보함에서 채웠습니다 — 확인하고 [저장]');
+    return;
+  }
+
+  /* fill — 열려 있는 폼의 «빈 칸만» 채운다 */
   var filled=[], skipped=[];
-  CARD_MAP.forEach(function(m){
-    var v=String(r[m[0]]||'').trim(); if(!v) return;
+  T.map.forEach(function(m){
+    var v=String(e[m[0]]||'').trim(); if(!v) return;
     var el=$(m[1]); if(!el) return;
     if(String(el.value||'').trim()){ skipped.push(m[2]); return; }   // 이미 적힌 값은 건드리지 않는다
     el.value=v; filled.push(m[2]);
@@ -4420,7 +4486,9 @@ function sitesTab(){
     +'<div class="tab'+(isYr?' on':'')+'" onclick="goSiteTab(\'years\')">📅 연도별 기록</div></div>';
   return '<div class="panel"><div class="row"><h2>참여사업장</h2>'
     +'<span class="stat">'+arr.length+'개사</span><span class="stat">상시근로자 '+totalEmp.toLocaleString()+'명</span>'
-    +'<span style="flex:1"></span><button class="primary" onclick="editSite(\'\')">+ 사업장 추가</button>'
+    +'<span style="flex:1"></span>'
+    +'<button onclick="openCardPick(\'site\')" title="푸른 기업정보함의 사업자등록증·명함에서 상호·대표자·사업자번호·업태·소재지·담당자를 가져와 채웁니다">🏢 기업정보함에서</button>'
+    +'<button class="primary" onclick="editSite(\'\')">+ 사업장 추가</button>'
     +' <button onclick="importSites()" title="전체 기금 사업장 일괄 가져오기(담당자 포함)">📥 백업(JSON) 가져오기</button></div>'
     +sub
     +(isYr ? sitesYearBody(arr)
@@ -7882,6 +7950,11 @@ var HELP={
    +'<p>격자·도장란이 그대로 필요하면 <b>엑셀</b> 또는 <b>HWP</b>를 쓰세요.</p>'},
  'setup.flow':{t:'설립 진행',h:'<p>신규 설립 절차입니다. 중간에 나가도 <b>이 상태로 저장</b>되며, 목록에서 <b>🏗 설립중</b> 표시로 다시 찾아 이어서 진행할 수 있습니다.</p>'
    +'<p>12단계를 마치면 <b>[운영 전환]</b>으로 정식 운영 기금이 됩니다.</p><p>인가번호·등기 등 실제 값은 <b>[기금 정보] 탭</b>에 입력합니다.</p>'},
+ 'site.card':{t:'기업정보함에서 사업장 추가',h:'<p>푸른 <b>기업정보함</b>의 <b>사업자등록증</b>이나 <b>명함</b>을 골라 참여사업장을 채워 넣습니다 — 다시 칠 이유가 없습니다.</p>'
+   +'<p><b>사업자등록증</b>에서는 상호·대표자·사업자등록번호·법인등록번호·업태·소재지를 가져옵니다.</p>'
+   +'<p><b>명함</b>에서는 위에 더해 <b>담당자</b>(이름·직위·휴대폰·이메일)까지 가져옵니다. 명함에 회사 번호가 없으면 <b>같은 회사의 사업자등록증을 찾아</b> 빈 칸을 메웁니다.</p>'
+   +'<p>고르면 값이 채워진 <b>사업장 추가 창</b>이 열립니다. 확인하고 [저장]을 눌러야 등록됩니다 — 바로 저장되지 않습니다.</p>'
+   +'<p>상시근로자수·기본 출연금은 기업정보함에 없는 값이라 직접 넣어야 합니다.</p>'},
  'info.card':{t:'기업정보함에서 당겨오기',h:'<p>푸른 <b>기업정보함</b>에 등록된 <b>사업자등록증</b> 카드에서 기금 정보를 그대로 가져옵니다 — 다시 칠 이유가 없습니다.</p>'
    +'<p><b>가져오는 칸</b> — 기금법인명 · 고유번호 · 대표자 · 소재지 · 전화</p>'
    +'<p><b>빈 칸만 채웁니다.</b> 이미 적혀 있는 값은 건드리지 않습니다. 채운 뒤 <b>[💾 저장]</b>을 눌러야 기록됩니다.</p>'

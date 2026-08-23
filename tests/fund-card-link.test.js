@@ -35,29 +35,33 @@ function grabDecl(name) {
   throw new Error('상수 끝을 못 찾음: ' + name);
 }
 
-/* applyCard 를 가짜 화면에 걸어 돌린다 */
-function run(cardRow, formValues, sameFund) {
+/* applyCard 를 가짜 화면에 걸어 돌린다.
+   opts: {key} 가져오는 자리(info=폼 채우기 · site=사업장 창 띄우기), {idx} 색인 전체, {sameFund} */
+function run(cardRow, formValues, sameFund, opts) {
+  opts = opts || {};
   const box = {};
   const els = {};
-  Object.keys(formValues).forEach(id => { els[id] = { value: formValues[id] }; });
+  Object.keys(formValues || {}).forEach(id => { els[id] = { value: formValues[id] }; });
   const toasts = [];
-  new Function('CARD', 'ELS', 'TOASTS', [
-    grabDecl('CARD_MAP'),
-    'var _cardIdx=[CARD];',
-    'var _cardPick={fid:"F1"};',
+  const made = [];
+  new Function('IDX', 'ELS', 'TOASTS', 'MADE', [
+    grabDecl('CARD_TARGETS'), grabDecl('CARD_MAP'),
+    'var _cardIdx=IDX;',
+    'var _cardPick={fid:"F1",key:"' + (opts.key || 'info') + '"};',
     'var S={fundId:' + (sameFund === false ? '"F2"' : '"F1"') + '};',
     'function $(id){ return ELS[id]||null; }',
     'function esc(s){ return String(s==null?"":s); }',
-    'function closeM(){}',
+    'function closeM(){ TOASTS.push("__closed__"); }',
     'function markDirty(){ TOASTS.push("__dirty__"); }',
     'function toast(m,k){ TOASTS.push((k?("["+k+"] "):"")+m); }',
-    grabFn('applyCard'),
+    'function editSite(sid,pre){ MADE.push({sid:sid,pre:pre}); }',
+    grabFn('_cardNorm'), grabFn('cardEffective'), grabFn('applyCard'),
     'this.applyCard=applyCard;'
-  ].join('\n')).call(box, cardRow, els, toasts);
+  ].join('\n')).call(box, opts.idx || [cardRow], els, toasts, made);
   box.applyCard(cardRow._id);
   const out = {};
   Object.keys(els).forEach(id => { out[id] = els[id].value; });
-  return { fields: out, toasts };
+  return { fields: out, toasts, made };
 }
 
 const CARD = { _id: 'c1', k: 'biz', c: '가짜공동근로복지기금', bz: '000-82-00000', ceo: '홍길동', ad: '○○도 ○○시 ○○로 1', ct: '000-000-0000' };
@@ -100,15 +104,73 @@ test('고르는 사이 다른 기금으로 옮겼으면 반영하지 않는다',
   assert.ok(r.toasts.some(t => t.includes('기금이 바뀌었습니다')));
 });
 
-test('칸 짝이 실제 기금 정보 폼과 맞는다', () => {
+test('칸 짝이 실제 화면·자료 칸과 맞는다', () => {
   const box = {};
-  new Function(grabDecl('CARD_MAP') + ';this.CARD_MAP=CARD_MAP;').call(box);
+  new Function(grabDecl('CARD_TARGETS') + ';this.T=CARD_TARGETS;').call(box);
   const fields = grabDecl('FIELDS');
-  box.CARD_MAP.forEach(m => {
-    const key = m[1].replace(/^fd-/, '');
+  const siteFields = grabDecl('SITE_FIELDS');
+  const contactFields = grabDecl('CONTACT_FIELDS');
+
+  // 기금 정보 — 열려 있는 폼의 id(fd-*)를 채운다
+  box.T.info.map.forEach(m => {
     assert.ok(m[1].indexOf('fd-') === 0, '기금 정보 폼의 id 는 fd- 로 시작한다: ' + m[1]);
-    assert.ok(fields.includes("'" + key + "'"), 'FIELDS 에 없는 칸을 채우려 한다: ' + key);
+    assert.ok(fields.includes("'" + m[1].replace(/^fd-/, '') + "'"), 'FIELDS 에 없는 칸을 채우려 한다: ' + m[1]);
   });
+
+  // 참여사업장 — 만들 자료의 칸 이름(SITE_FIELDS) 또는 담당자 칸(_c_*)
+  box.T.site.map.forEach(m => {
+    if (m[1].indexOf('_c_') === 0) {
+      assert.ok(contactFields.includes("'" + m[1].slice(3) + "'"), 'CONTACT_FIELDS 에 없는 담당자 칸: ' + m[1]);
+    } else {
+      assert.ok(siteFields.includes("'" + m[1] + "'"), 'SITE_FIELDS 에 없는 사업장 칸: ' + m[1]);
+    }
+  });
+
+  // 모든 대상이 mode·kinds·help 를 갖춰야 목록·안내가 그려진다
+  Object.keys(box.T).forEach(k => {
+    const T = box.T[k];
+    assert.ok(T.mode === 'fill' || T.mode === 'make', '알 수 없는 방식: ' + k + ' → ' + T.mode);
+    assert.ok(T.kinds.length && T.kinds.every(x => x === 'biz' || x === 'card'), '카드 종류가 틀렸다: ' + k);
+    assert.ok(SRC.includes("'" + T.help + "':{t:"), '등록되지 않은 도움말: ' + T.help);
+  });
+});
+
+test('명함을 고르면 담당자까지, 회사 칸은 같은 회사 사업자등록증으로 메운다', () => {
+  const biz = { _id: 'b1', k: 'biz', c: '㈜가나다', bz: '000-00-00000', ceo: '홍길동', cno: '000000-0000000', bt: '제조업', ad: '○○시 ○○로 1' };
+  const card = { _id: 'k1', k: 'card', c: '가나다', n: '김담당', ti: '과장', m: '000-0000-0000', e: 'a@b.c' };
+  const r = run(card, {}, true, { key: 'site', idx: [biz, card] });
+  assert.equal(r.made.length, 1, '사업장 추가 창이 열리지 않았다');
+  const pre = r.made[0].pre;
+  assert.equal(r.made[0].sid, '', '새 사업장이어야 한다');
+  assert.equal(pre.name, '가나다', '명함의 회사 이름이 우선');
+  assert.equal(pre.biz_no, '000-00-00000', '명함에 없는 사업자번호를 사업자등록증에서 메워야 한다');
+  assert.equal(pre.ceo, '홍길동', '대표자도 메워야 한다');
+  assert.equal(pre.corp_no, '000000-0000000');
+  assert.equal(pre.biz_type, '제조업');
+  assert.ok(pre.contacts && pre.contacts.length === 1, '담당자가 안 들어갔다');
+  assert.equal(pre.contacts[0].name, '김담당');
+  assert.equal(pre.contacts[0].position, '과장');
+  assert.equal(pre.contacts[0].mobile, '000-0000-0000');
+  assert.equal(pre.contacts[0].email, 'a@b.c');
+  assert.equal(pre.contacts[0].primary, true, '대표 연락처로 들어가야 한다');
+  assert.equal(pre.pucard_id, 'k1', '어느 카드에서 왔는지 남겨야 한다');
+  assert.ok(r.toasts.includes('__closed__'), '고른 창을 닫지 않으면 창이 겹쳐 망가진다');
+  assert.ok(!pre.company_size && !pre.contrib, '기업정보함에 없는 값을 지어내면 안 된다');
+});
+
+test('사업자등록증만 고르면 담당자 없이 회사 칸만 채운다', () => {
+  const biz = { _id: 'b1', k: 'biz', c: '㈜가나다', bz: '000-00-00000', ceo: '홍길동', ad: '○○시 ○○로 1' };
+  const r = run(biz, {}, true, { key: 'site', idx: [biz] });
+  const pre = r.made[0].pre;
+  assert.equal(pre.name, '㈜가나다');
+  assert.ok(!pre.contacts, '사업자등록증에는 사람이 없으므로 담당자를 만들지 않는다');
+});
+
+test('가져올 값이 없으면 창을 열지 않는다', () => {
+  const empty = { _id: 'z', k: 'card' };
+  const r = run(empty, {}, true, { key: 'site', idx: [empty] });
+  assert.equal(r.made.length, 0, '빈 카드로 창을 열면 안 된다');
+  assert.ok(r.toasts.some(t => t.includes('가져올 값이 없는')));
 });
 
 test('가벼운 검색목록만 읽고 원본 카드는 건드리지 않는다', () => {
