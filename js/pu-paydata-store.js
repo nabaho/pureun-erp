@@ -532,6 +532,33 @@
   }
 
   /* 공용 대기 칸 목록 — 서버가 메일로 받은 것. */
+  /* ══════ 메일 폴더 설정 (대표 결정 2026-08-23) ══════
+     서버는 이름에 「급여」가 든 폴더를 저절로 찾는다. 여기 담기는 것은 그것으로
+     모자랄 때 쓰는 두 가지다 — 받은메일함 전부 보기(scanInbox)와 폴더 이름
+     못 박기(folder). 그리고 서버가 마지막에 언제·어느 폴더를 봤는지(lastScan).
+
+     ⚠ 이 칸은 **콘솔 규칙이 있어야** 앱에서 쓸 수 있다(읽기는 전 직원, 쓰기는
+     총괄관리자). 규칙이 없으면 스위치를 눌러도 permission_denied 가 뜬다 —
+     그때는 규칙을 넣기 전이라는 뜻이지 고장이 아니다. */
+  function mailConfPath() { return DB_ROOT + '/mailconf'; }
+
+  function listMailConf() {
+    if (!deps.db) return Promise.resolve({});
+    return deps.db.ref(mailConfPath()).once('value')
+      .then(function (s) { return s.val() || {}; })
+      .catch(function () { return {}; });   // 못 읽어도 화면은 떠야 한다
+  }
+
+  /* 받은메일함 전부 보기 — **총괄관리자만**. 켜면 자문·산재 메일까지 서버가
+     열게 되므로 담당자에게 줄 스위치가 아니다. */
+  function setMailScanInbox(on) {
+    if (!amAdmin()) return Promise.reject(new Error('총괄관리자만 바꿀 수 있습니다'));
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var up = {};
+    up[mailConfPath() + '/scanInbox'] = !!on;
+    return deps.db.ref().update(up);
+  }
+
   function listSharedPending() {
     return deps.db.ref(sharedPendingBoxPath()).once('value')
       .then(function (s) { return s.val() || {}; });
@@ -1577,6 +1604,9 @@
     listArrivalOne: listArrivalOne,
     watchArrival: watchArrival,
     listSharedPending: listSharedPending,
+    mailConfPath: mailConfPath,
+    listMailConf: listMailConf,
+    setMailScanInbox: setMailScanInbox,
     mailNote: mailNote,
     companyByEmail: companyByEmail,
     listArrivals: listArrivals,
