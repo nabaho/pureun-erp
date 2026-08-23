@@ -118,7 +118,7 @@ test('카메라는 확인형 파일 입력 없이 화면 안 연속촬영만 쓴
 });
 
 test('업로드 대기열 파일을 불러오고 쓴다', () => {
-  assert.match(app, /<script src="js\/pu-photo-queue\.js"><\/script>/);
+  assert.match(app, /<script src="js\/pu-photo-queue\.js(\?v=\d+)?"><\/script>/);
   assert.match(app, /PuPhotoQueue\.create\(/);
 });
 
@@ -379,7 +379,7 @@ test('명함·서류·회의사진 세 가지를 가린다', () => {
 /* ── 다른 앱으로 끌어다 놓기 ── */
 
 test('사진을 끌 수 있다 — 공용 규약을 쓴다', () => {
-  assert.match(app, /<script src="js\/pu-drag\.js"><\/script>/);
+  assert.match(app, /<script src="js\/pu-drag\.js(\?v=\d+)?"><\/script>/);
   assert.match(app, /draggable="true"/);
   assert.match(app, /addEventListener\('dragstart'/);
   assert.match(app, /PuDrag\.set\(/);
@@ -482,7 +482,7 @@ test('★ 규약이 실제로 여러 장을 실어 나른다', () => {
 
 test('컨설팅이 사진첩 사진을 받는다', () => {
   const gov = fs.readFileSync(path.join(root, 'gov-consulting.html'), 'utf8');
-  assert.match(gov, /<script src="js\/pu-drag\.js"><\/script>/);
+  assert.match(gov, /<script src="js\/pu-drag\.js(\?v=\d+)?"><\/script>/);
   assert.match(gov, /<script src="js\/pu-photo-store\.js(\?v=\d+)?"><\/script>/);
   assert.match(gov, /PuDrag\.read\(/);
   assert.match(gov, /function dropFromAlbum\(/);
