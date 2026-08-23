@@ -96,6 +96,40 @@
     return list.sort(function (a, b) { return Number(b.createdAt || 0) - Number(a.createdAt || 0); });
   }
 
+  /* ── 단추 색은 «아는 것»만 말한다 (대표 제보 2026-08-23) ──
+     「장애알림 없는데 왜 빨간색 왼쪽아래 경고인가」.
+     전에는 관리자면 무조건 빨갛게 띄웠다 — 처리할 알림이 0건이어도 늘 빨갰다.
+     늘 켜져 있는 빨간불은 아무것도 알려 주지 못한다. 진짜 장애가 생겨도
+     달라지는 것이 없어 «구별이 안 된다» — 이 저장소가 이미 겪은 실수다
+     (금액 경고를 상시등으로 만들었다가 아무도 안 보게 된 일).
+     그래서 평소에는 조용한 회색 단추로 두고, «열어 본 수»가 1건이라도 있을 때만
+     빨갛게 켠다. 색이 뜻을 갖는다.
+     ⚠ 여기서 미리 세어 두지는 않는다 — 그러려면 장애 이력 전체(지금 191건·156KB)를
+       띄울 때마다 내려받아야 한다. 그 값을 싸게 알려면 «열린 건수»만 담는 작은 자리가
+       따로 있어야 하고, 그건 규칙(콘솔)에 새 경로를 여는 일이라 대표 확인이 필요하다. */
+  var HEALTH_QUIET = 'position:fixed;left:max(12px,env(safe-area-inset-left));bottom:max(12px,env(safe-area-inset-bottom));z-index:2147483646;border:1px solid #cbd5e1;border-radius:999px;padding:8px 13px;background:#fff;color:#475569;font:700 12px/1.2 system-ui,sans-serif;box-shadow:0 3px 12px #0002;cursor:pointer;opacity:.85;';
+  var HEALTH_ALARM = 'position:fixed;left:max(12px,env(safe-area-inset-left));bottom:max(12px,env(safe-area-inset-bottom));z-index:2147483646;border:0;border-radius:999px;padding:10px 14px;background:#b42318;color:#fff;font:800 12px/1.2 system-ui,sans-serif;box-shadow:0 6px 22px #0003;cursor:pointer;';
+
+  /* 아는 열린 건수. null = 아직 안 열어 봐서 «모른다»(모를 때는 조용히 둔다). */
+  var knownOpen = null;
+
+  function paintAdminBadge(badge) {
+    if (!badge) return;
+    if (knownOpen === null) {
+      badge.style.cssText = HEALTH_QUIET;
+      badge.textContent = '장애 알림';
+      badge.title = '눌러서 처리할 장애 알림이 있는지 봅니다';
+    } else if (knownOpen > 0) {
+      badge.style.cssText = HEALTH_ALARM;
+      badge.textContent = '⚠ 장애 알림 ' + knownOpen;
+      badge.title = '처리할 장애 알림이 ' + knownOpen + '건 있습니다';
+    } else {
+      badge.style.cssText = HEALTH_QUIET;
+      badge.textContent = '장애 알림 없음';
+      badge.title = '처리할 장애 알림이 없습니다';
+    }
+  }
+
   function ensureAdminBadge(app) {
     var badge = window.document.getElementById('pu-health-admin-badge');
     if (!badge) {
@@ -103,10 +137,10 @@
       badge.id = 'pu-health-admin-badge';
       badge.type = 'button';
       badge.hidden = true;
-      badge.style.cssText = 'position:fixed;left:max(12px,env(safe-area-inset-left));bottom:max(12px,env(safe-area-inset-bottom));z-index:2147483646;border:0;border-radius:999px;padding:10px 14px;background:#b42318;color:#fff;font:800 12px/1.2 system-ui,sans-serif;box-shadow:0 6px 22px #0003;cursor:pointer;';
       badge.onclick = function () { showAdminPanel(app); };
       window.document.body.appendChild(badge);
     }
+    paintAdminBadge(badge);
     return badge;
   }
 
@@ -119,12 +153,16 @@
     badge.textContent = '장애 알림 불러오는 중…';
     app.database().ref('systemAlerts').once('value').then(function (alertsSnapshot) {
       adminAlerts = flattenAlerts(alertsSnapshot.val());
+      knownOpen = adminAlerts.length;      // 이제 «안다» — 색이 뜻을 갖는다
       renderAdminPanel(app);
     }).catch(function () {
+      /* 못 읽었으면 «모르는 것»이지 «없는 것»이 아니다 — 0 으로 적어 두면
+         진짜 장애가 있어도 조용해진다. 모름(null)으로 되돌린다. */
+      knownOpen = null;
       window.alert('장애 알림을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.');
     }).then(function () {
       badge.disabled = false;
-      badge.textContent = '장애 알림 확인';
+      paintAdminBadge(badge);
     });
   }
 
@@ -164,6 +202,10 @@
           row.remove();
           adminAlerts = adminAlerts.filter(function (x) { return !(x.uid === item.uid && x.id === item.id); });
           left -= 1;
+          /* 처리한 만큼 단추도 함께 내린다 — 창을 닫고 나서 빨간불만 남으면
+             「처리했는데 왜 아직 빨갛나」가 된다(건의함 배지에서 겪은 것과 같은 일). */
+          knownOpen = left;
+          paintAdminBadge(window.document.getElementById('pu-health-admin-badge'));
           if (left <= 0) { panel.remove(); return; }   // 다 처리했으면 창도 함께 닫는다
           titleText.textContent = '시스템 장애 알림 (' + left + ')';
         }).catch(function () {
@@ -186,9 +228,8 @@
     app.database().ref('uid_roles/' + user.uid).once('value').then(function (snapshot) {
       var role = snapshot.val() || {};
       if (!role.isAdmin) return;
-      var badge = ensureAdminBadge(app);
+      var badge = ensureAdminBadge(app);   // 색·글자는 paintAdminBadge 가 정한다
       badge.hidden = false;
-      badge.textContent = '장애 알림 확인';
     }).catch(function () {});
   }
 
