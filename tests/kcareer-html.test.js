@@ -736,9 +736,56 @@ test('cvRenderGuide는 rect로 재고 cvApplyPages와 같은 한 장 높이를 �
   // 실제 코드만 본다 — ⚠ 주석 자체가 그 낱말을 담고 있어서 주석을 지운 뒤 검사한다
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '');
   assert.ok(!/\.offsetHeight/.test(code), '⚠ 높이를 offsetHeight로 재지 말 것 — zoom 해석이 브라우저마다 다릅니다');
-  assert.match(src, /CV_PAGE_MM/, '한 장 높이는 cvApplyPages와 같은 상수를 써야 합니다');
+  assert.match(funcSource('cvPaginate'), /CV_PAGE_MM/, '한 장 높이는 cvApplyPages와 같은 상수를 써야 합니다');
   assert.match(funcSource('cvApplyPages'), /CV_PAGE_MM/);
-  assert.match(funcSource('cvApplyPages'), /cvRenderGuide\(\)/, '축소 맞춤 뒤 자를 다시 그려야 합니다');
+  assert.match(funcSource('cvApplyPages'), /cvPaginate\(\); cvRenderGuide\(\)/, '축소 맞춤 뒤 다시 나눠야 합니다');
+});
+
+test('쪽 나눔은 줄 단위 — 표 한 줄이 쪽 경계에서 잘리지 않는다', () => {
+  const src = funcSource('cvPaginate');
+  // 쪼갤 수 없는 최소 단위를 행으로 잡고, 걸친 행 「앞」에 빈 공간을 넣어 다음 쪽으로 내린다
+  assert.match(src, /_cvAtoms\(sheet\)/);
+  assert.match(src, /_cvGapBefore\(a\.el,pad\)/, '걸친 줄 앞에 빈 공간을 넣어야 합니다');
+  assert.match(funcSource('_cvAtoms'), /ch\.rows/, '표는 행 단위로 쪼개야 합니다');
+  // 여러 번 불러도 같은 결과여야 한다 — 먼저 지난 빈 공간을 걷어낸다
+  assert.match(src, /_cvStripGaps\(sheet\)/, 'cvPaginate는 멱등이어야 합니다');
+  assert.match(funcSource('cvApplyPages'), /_cvStripGaps\(sheet\)/,
+    '축소 비율은 빈 공간을 뺀 알맹이 높이로 재야 합니다');
+});
+
+test('쪽 사이 빈 공간은 인쇄에서 사라지고 줄은 통째로 유지된다', () => {
+  const printCss = (source.match(/@media print\{[\s\S]*?\n\}/g) || [])
+    .filter((b) => b.indexOf('#cvSheet') >= 0);
+  assert.equal(printCss.length, 1);
+  assert.match(printCss[0], /\.cv-pgap\{display:none!important\}/,
+    '화면용 빈 공간이 PDF에 찍히면 안 됩니다');
+  assert.match(printCss[0], /#cvSheet tr[^\n]*page-break-inside:avoid!important/,
+    'PDF에서도 표 한 줄이 쪼개지면 안 됩니다');
+  // 화면 여백 = 인쇄 @page 여백이어야 미리보기 쪽 수가 PDF와 맞는다
+  assert.match(source, /\.cv-sheet\{[^}]*padding:14mm/, '시트 여백은 인쇄 여백(14mm)과 같아야 합니다');
+  assert.match(printCss[0], /@page\{size:A4;margin:14mm\}/);
+});
+
+test('회색 띠는 빈 공간 끝의 28mm만 덮는다 — 앞 쪽 남은 자리는 흰 종이', () => {
+  const src = funcSource('cvRenderGuide');
+  assert.match(src, /CV_GAP_MM\*_cvPxPerMm\(sheet\)\*z/, '띠 높이는 28mm 고정이어야 합니다');
+  assert.match(src, /Math\.min\(bandH,r\.height\)/);
+  assert.match(src, /top:\(r\.bottom-wr\.top\)-h/, '띠는 빈 공간 아래끝에 붙어야 합니다');
+  assert.match(source, /var CV_GAP_MM\s*=\s*28;/, '앞 쪽 아래여백 14 + 뒤 쪽 위여백 14');
+});
+
+test('_cvPxPerMm 대체값은 CSS 표준(96/25.4)이다 — 임의의 픽셀 숫자 금지', () => {
+  const src = funcSource('_cvPxPerMm');
+  assert.match(src, /96\/25\.4/, '폭을 못 재면 CSS 표준 mm값으로 돌아가야 합니다');
+  assert.ok(!/\b7\d\d\b/.test(src.replace(/\/\*[\s\S]*?\*\//g, '')),
+    '임의의 픽셀 상수를 넣으면 쪽 수가 통째로 틀어집니다');
+});
+
+test('빈 공간 행은 HWPX·텍스트 추출에 섞이지 않는다', () => {
+  // _cvTableRows가 cv-noprint 칸을 걸러내므로 빈 행이 되어 사라진다
+  assert.match(funcSource('_cvGapBefore'), /cv-pgap-c cv-noprint/,
+    '빈 공간 칸에 cv-noprint가 없으면 HWPX에 빈 행이 들어갑니다');
+  assert.match(funcSource('_cvTableRows'), /cv-noprint/);
 });
 
 test('타이핑 중에는 자만 다시 그린다 — 커서가 튀지 않게', () => {

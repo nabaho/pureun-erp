@@ -463,7 +463,9 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
 .nav-item.sub{margin:1px 10px;border-radius:8px;color:#BBC6DA}
 .nav-item.active{background:rgba(184,144,47,.18)!important;color:#fff!important;border-left-color:var(--gold)!important}
 .nav-item:hover{background:var(--sidebar-hover)!important}
-.cv-sheet{background:#fff;width:210mm;max-width:100%;min-height:280mm;margin:0 auto;padding:16mm;border:1px solid var(--border);box-shadow:0 1px 6px rgba(0,0,0,.08);color:#111;font-size:13px;line-height:1.5}
+/* 여백 14mm = 인쇄 @page margin과 같은 값 → 화면 내용 너비(182mm)가 인쇄와 똑같아
+   미리보기에서 센 쪽 수가 실제 PDF와 어긋나지 않는다. 바꾸면 둘이 틀어진다. */
+.cv-sheet{background:#fff;width:210mm;max-width:100%;min-height:280mm;margin:0 auto;padding:14mm;border:1px solid var(--border);box-shadow:0 1px 6px rgba(0,0,0,.08);color:#111;font-size:13px;line-height:1.5}
 .cv-sheet h2{font-size:26px;text-align:center;letter-spacing:8px;margin:0 0 16px}
 .cv-sheet table{width:100%;border-collapse:collapse;margin-bottom:14px}
 .cv-sheet th,.cv-sheet td{border:1px solid #333;padding:6px 8px;vertical-align:middle}
@@ -516,14 +518,21 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
 .rh-fold[open]>summary::before{content:'▾'}
 .rh-fold>summary .rh-fold-sub{font-weight:400;color:var(--text-mute);font-size:11.5px}
 .rh-fold>.rh-fold-b{padding-top:10px}
-/* ===== 빠른 이력서 A4 쪽 나눔 자 =====
-   시트가 몇 장짜리인지 PDF를 뽑아 봐야 알 수 있었다. A4 한 장 높이마다 선과 쪽 번호를 그린다.
+/* ===== 빠른 이력서 A4 쪽 나눔 =====
+   점선이 표 한 줄 가운데를 지나가 「짤린 것」처럼 보였다 → 줄은 절대 자르지 않고,
+   경계에 걸친 줄 앞에 빈 공간(.cv-pgap)을 넣어 다음 쪽 머리로 내린다.
+   그 빈 공간 위에 바탕색 띠(.cv-pgband)를 덮어 A4 두 장이 놓인 것처럼 보이게 한다.
    ⚠ 자는 #cvSheet 밖에 둔다 — 안에 넣으면 renderQuickCV가 지우고, 인쇄에도 찍힌다. */
 .cv-sheet-wrap{position:relative;width:210mm;max-width:100%;margin:0 auto}
 .cv-pguide{position:absolute;left:0;top:0;right:0;pointer-events:none;z-index:2}
-.cv-pmark{position:absolute;left:0;right:0}
-.cv-pmark:not(:last-child){border-bottom:1px dashed rgba(178,59,59,.55)}
-.cv-pnum{position:absolute;right:-72px;top:6px;pointer-events:auto;cursor:pointer;
+/* 쪽 사이 빈 공간 — 아래 쪽의 아래여백 14mm + 다음 쪽의 위여백 14mm = 28mm */
+.cv-pgap{background:none}
+.cv-pgap-c{border:none!important;padding:0!important;background:none!important}
+.cv-pgband{position:absolute;left:-1px;right:-1px;background:var(--bg);
+  border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.cv-pgband::after{content:'';position:absolute;left:0;right:0;top:50%;
+  border-top:1px dashed rgba(27,42,74,.20)}
+.cv-pnum{position:absolute;right:-72px;pointer-events:auto;cursor:pointer;
   background:var(--navy);color:#fff;font-size:11px;font-weight:700;border-radius:7px;
   padding:3px 8px;white-space:nowrap;opacity:.85;border:none}
 .cv-pnum:hover{opacity:1}
@@ -538,6 +547,9 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
      relative로 남으면 #cvSheet의 absolute 기준이 래퍼가 되어 PDF가 엉뚱한 위치에 찍힌다. */
   .cv-sheet-wrap{position:static!important}
   .cv-pguide{display:none!important}
+  /* 화면용 빈 공간은 지우고, 브라우저가 같은 줄에서 끊게 한다 → 미리보기와 PDF가 같아진다 */
+  .cv-pgap{display:none!important}
+  #cvSheet tr,#cvSheet td,#cvSheet th{break-inside:avoid!important;page-break-inside:avoid!important}
   .cv-noprint{display:none!important}
   @page{size:A4;margin:14mm}
 }
@@ -5304,51 +5316,142 @@ function cvApplyPages(){
   var sheet=document.getElementById('cvSheet'); if(!sheet) return;
   var v='auto'; try{ v=LS.get(NS+'cv_pages')||'auto'; }catch(e){}
   var sel=document.getElementById('cvPages'); if(sel && sel.value!==v) sel.value=v;
+  /* 축소 비율은 쪽 사이 빈 공간을 뺀 「알맹이 높이」로 재야 한다 — 빈 공간까지 세면
+     한 장 분량인데도 두 장으로 보여 과하게 줄어든다. */
+  _cvStripGaps(sheet);
   sheet.style.zoom='';
   var n=parseInt(v,10);
   if(n){
-    var pxPerMm=(sheet.offsetWidth||793)/210;
-    var target=n*CV_PAGE_MM*pxPerMm; /* A4 297mm - 상하 여백(14mm×2) ≈ 269mm/장 */
-    var actual=sheet.scrollHeight;
+    var pxPerMm=_cvPxPerMm(sheet);
+    var target=n*CV_PAGE_MM*pxPerMm; /* A4 297mm - 상하 여백(14mm×2) = 269mm/장 */
+    /* 시트의 위·아래 여백은 인쇄에서 @page 여백이 되므로 내용 높이에서 뺀다.
+       (안 빼면 min-height:280mm 때문에 「A4 1장」이 늘 과하게 줄어들었다) */
+    var cs0=getComputedStyle(sheet);
+    var actual=sheet.scrollHeight-(parseFloat(cs0.paddingTop)||0)-(parseFloat(cs0.paddingBottom)||0);
     if(actual>target+2){ sheet.style.zoom=Math.max(0.5, target/actual); }
   }
-  cvRenderGuide();
+  cvPaginate(); cvRenderGuide();
 }
-/* ===== A4 쪽 나눔 자 =====
-   인쇄 규칙(@page margin:14mm)에 맞춘 한 장 높이. cvApplyPages와 같은 값을 써야
-   「분량: A4 2장」을 골랐을 때 자도 정확히 2장으로 나뉜다. */
+/* ===== A4 쪽 나눔 =====
+   인쇄 규칙(@page margin:14mm)에 맞춘 한 장 내용 높이. 쪽 사이에 두는 빈 공간은
+   앞 쪽의 아래여백 + 뒤 쪽의 위여백(14+14) 그대로여서 화면이 실제 종이와 같아 보인다. */
 var CV_PAGE_MM = 269;
+var CV_GAP_MM  = 28;
+/* 내용 너비는 설계상 182mm(210 - 14×2). 그 실측값으로 mm당 픽셀을 얻는다.
+   폰에서 시트가 좁게 줄어들어도 같은 비율로 따라간다. */
+function _cvPxPerMm(sheet){
+  var cs=getComputedStyle(sheet);
+  var z=parseFloat(sheet.style.zoom)||1;
+  var outer=(sheet.getBoundingClientRect().width||0)/z;
+  var inner=outer-(parseFloat(cs.paddingLeft)||0)-(parseFloat(cs.paddingRight)||0);
+  /* 화면에 아직 안 붙었거나 폭이 0이면 CSS 표준값(1mm = 96/25.4px)으로 돌아간다.
+     ⚠ 여기에 임의의 픽셀 숫자를 넣지 말 것 — 쪽 수가 통째로 틀어진다. */
+  return (inner>40) ? inner/182 : 96/25.4;
+}
+function _cvStripGaps(sheet){
+  var olds=sheet.querySelectorAll('.cv-pgap');
+  for(var i=olds.length-1;i>=0;i--){ olds[i].parentNode.removeChild(olds[i]); }
+}
+/* 쪽 경계에 걸친 줄 「앞」에 넣는 빈 공간. 표 안이면 빈 행, 밖이면 빈 칸. */
+function _cvGapBefore(el,h){
+  var g;
+  if((el.tagName||'').toUpperCase()==='TR'){
+    g=document.createElement('tr'); g.className='cv-pgap';
+    /* cv-noprint를 함께 붙인다 — _cvTableRows가 이 칸을 걸러 HWPX에 빈 행이 안 들어간다 */
+    g.innerHTML='<td class="cv-pgap-c cv-noprint" colspan="20"></td>';
+    g.firstChild.style.height=Math.round(h)+'px';
+  }else{
+    g=document.createElement('div'); g.className='cv-pgap';
+    g.style.height=Math.round(h)+'px';
+  }
+  el.parentNode.insertBefore(g,el);
+  return g;
+}
+/* 쪽을 나눌 때 쪼갤 수 없는 최소 단위 — 표는 「행」, 나머지는 시트의 직계 자식 */
+function _cvAtoms(sheet){
+  var out=[];
+  Array.prototype.forEach.call(sheet.children,function(ch){
+    if((ch.tagName||'').toUpperCase()==='TABLE'){
+      Array.prototype.forEach.call(ch.rows,function(tr){ if(!/cv-pgap/.test(tr.className||'')) out.push(tr); });
+    }else if(!/cv-pgap/.test(ch.className||'')) out.push(ch);
+  });
+  return out;
+}
+/* 줄 단위로 쪽을 나누고, 경계에 걸린 줄은 다음 쪽 머리로 내린다. 여러 번 불러도 같은 결과. */
+function cvPaginate(){
+  var sheet=document.getElementById('cvSheet'); if(!sheet) return 1;
+  _cvStripGaps(sheet);
+  var z=parseFloat(sheet.style.zoom)||1;
+  var cs=getComputedStyle(sheet);
+  var pxPerMm=_cvPxPerMm(sheet);
+  /* zoom이 걸리면 종이 한 장이 담는 「배치 높이」가 그만큼 늘어난다 */
+  var pageH=CV_PAGE_MM*pxPerMm/z, gapH=CV_GAP_MM*pxPerMm/z;
+  if(!(pageH>40)) return 1;
+  var origin=sheet.getBoundingClientRect().top+(parseFloat(cs.paddingTop)||0)*z;
+  var atoms=_cvAtoms(sheet).map(function(el){
+    var r=el.getBoundingClientRect();
+    return { el:el, y:(r.top-origin)/z, h:r.height/z };
+  });
+  var shift=0, pageStart=0, pages=1, firstOnPage=true;
+  atoms.forEach(function(a){
+    var y=a.y+shift, limit=pageStart+pageH;
+    if(!firstOnPage && (y+a.h)>limit+1){
+      /* 표가 다음 쪽으로 이어지면 인쇄에서 머리글이 다시 찍힌다 — 그 높이를 미리 비워 둔다 */
+      var head=0;
+      if((a.el.tagName||'').toUpperCase()==='TR'){
+        var tb=a.el.closest?a.el.closest('table'):null;
+        if(tb&&tb.tHead) head=tb.tHead.getBoundingClientRect().height/z;
+      }
+      var pad=(limit-y)+gapH; if(pad<gapH) pad=gapH;
+      _cvGapBefore(a.el,pad);
+      shift+=pad; y+=pad;
+      pageStart=y-head; pages++; firstOnPage=true;
+    }
+    firstOnPage=false;
+  });
+  return pages;
+}
+/* 나뉜 결과를 눈에 보이게 — 빈 공간에 바탕색 띠를 덮고 쪽마다 번호를 붙인다 */
 function cvRenderGuide(){
   var sheet=document.getElementById('cvSheet'), g=document.getElementById('cvPageGuide');
   if(!sheet||!g||!g.parentNode) return;
-  /* ⚠ offsetHeight로 재지 말 것 — 「분량: A4 2장」이 걸리면 시트에 zoom이 붙고, zoom을 세는
-     방식이 브라우저마다 달라 자가 어긋난다. 실제로 보이는 사각형(rect)으로만 잰다.
-     시트 너비가 곧 210mm이므로 보이는 mm당 픽셀 = rect.width / 210. */
-  var sr=sheet.getBoundingClientRect(), wr=g.parentNode.getBoundingClientRect();
-  var pageH=CV_PAGE_MM*(sr.width||793)/210;
-  var total=sr.height||0, top0=sr.top-wr.top;
-  if(!(pageH>10)||!(total>10)){ g.innerHTML=''; g.style.height=''; return; }
-  var n=Math.max(1, Math.ceil((total-2)/pageH));
-  var html='';
-  for(var i=0;i<n;i++){
-    var top=i*pageH, h=Math.min(pageH, total-top);
-    html+='<div class="cv-pmark" style="top:'+Math.round(top0+top)+'px;height:'+Math.round(h)+'px">'
-      +'<button type="button" class="cv-pnum" onclick="cvGoPage('+(i+1)+')">'+(i+1)+' / '+n+' 쪽</button></div>';
-  }
-  g.innerHTML=html; g.style.height=Math.round(top0+total)+'px';
+  /* ⚠ 높이를 offsetHeight로 재지 말 것 — zoom이 걸리면 해석이 브라우저마다 달라 어긋난다.
+     보이는 사각형(rect)으로만 잰다. */
+  var wr=g.parentNode.getBoundingClientRect(), sr=sheet.getBoundingClientRect();
+  var gaps=sheet.querySelectorAll('.cv-pgap');
+  var n=gaps.length+1, html='';
+  /* 띠는 빈 공간 「끝의 28mm」만 덮는다 — 그 위쪽 남은 자리는 앞 쪽의 흰 종이다.
+     빈 공간을 통째로 덮으면 앞 쪽이 짧게 끝난 것처럼 보인다. */
+  var z=parseFloat(sheet.style.zoom)||1;
+  var bandH=CV_GAP_MM*_cvPxPerMm(sheet)*z;
+  var tops=[sr.top-wr.top], bands=[];
+  Array.prototype.forEach.call(gaps,function(el){
+    var r=el.getBoundingClientRect(), h=Math.min(bandH,r.height);
+    bands.push({ top:(r.bottom-wr.top)-h, h:h });
+    tops.push(r.bottom-wr.top);
+  });
+  bands.forEach(function(b){
+    html+='<div class="cv-pgband" style="top:'+Math.round(b.top)+'px;height:'+Math.round(b.h)+'px"></div>';
+  });
+  tops.forEach(function(t,i){
+    html+='<button type="button" class="cv-pnum" style="top:'+Math.round(t+8)+'px" '
+      +'onclick="cvGoPage('+(i+1)+')">'+(i+1)+' / '+n+' 쪽</button>';
+  });
+  g.innerHTML=html; g.style.height=Math.round(sr.bottom-wr.top)+'px';
   var badge=document.getElementById('cvPageCnt');
   if(badge){ badge.textContent='A4 '+n+'장'; badge.style.color=(n>3?'var(--red)':''); }
 }
-/* 쪽 번호를 누르면 그 쪽 머리로 이동 — 긴 이력서를 쪽 단위로 나눠 볼 수 있게 */
+/* 쪽 번호를 누르면 그 쪽 머리로 이동 — 긴 이력서를 쪽 단위로 나눠 볼 수 있게.
+   스크롤 컨테이너가 무엇이든 맞게 움직이도록 scrollIntoView를 쓴다. */
 function cvGoPage(no){
   var g=document.getElementById('cvPageGuide'); if(!g) return;
-  var m=g.children[no-1]; if(!m) return;
-  m.scrollIntoView({block:'start',behavior:'smooth'});
+  var b=g.querySelectorAll('.cv-pnum')[no-1]; if(!b) return;
+  b.scrollIntoView({ block:'start', behavior:'smooth' });
 }
-/* 타이핑 중에는 자만 다시 그린다 — cvApplyPages를 부르면 zoom이 바뀌며 커서가 튄다.
+/* 타이핑 중에는 나눔만 다시 한다 — cvApplyPages를 부르면 zoom이 바뀌며 커서가 튄다.
    창 크기가 바뀔 때는 배치가 달라지므로 축소 맞춤까지 다시 한다. */
 var _cvGuideT=null;
-function cvGuideSoon(){ clearTimeout(_cvGuideT); _cvGuideT=setTimeout(cvRenderGuide,400); }
+function cvGuideSoon(){ clearTimeout(_cvGuideT); _cvGuideT=setTimeout(function(){ cvPaginate(); cvRenderGuide(); },400); }
 var _cvFitT=null;
 window.addEventListener('resize', function(){ clearTimeout(_cvFitT); _cvFitT=setTimeout(cvApplyPages,300); });
 function renderCvStampSelect(){ const sel=document.getElementById('cvStamp'); if(!sel) return;
