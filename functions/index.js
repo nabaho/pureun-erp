@@ -1129,10 +1129,14 @@ async function runPaydataMailOnce() {
         const sender = MR.senderOf(fromText);
         const subject = String(parsed.subject || "");
 
-        if (!MR.isKnownSender(sender, known)) {
+        /* 급여 폴더에 온 것은 주소를 안 가린다(대표 결정 2026-08-23) — 대표가
+           규칙으로 손수 갈라 둔 곳이라 그 안의 것은 이미 「급여 자료」다.
+           받은메일함을 보게 켰을 때는 광고까지 들어오므로 그때만 가린다. */
+        if (!MR.trustBox(item.box) && !MR.isKnownSender(sender, known)) {
           // 모르는 곳에서 온 것 — 담지 않는다. 지우지도 않는다(폴더에 그대로 남는다).
           unknown++;
-          console.log("receivePaydataMail 모르는 주소라 건너뜀:", sender || "(주소 없음)");
+          console.log("receivePaydataMail 모르는 주소라 건너뜀:", sender || "(주소 없음)",
+            "폴더:", item.box || "(모름)");
           await markSeen(client, item);
           continue;
         }
