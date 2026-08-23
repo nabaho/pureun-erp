@@ -59,6 +59,21 @@ console.log('\n[⑥ 배지 — 완료 알림만 센다]');
 ok('접수·검토중 상태 변화는 배지에 안 센다',
    /if\(!v\.seen && \(v\.status\|\|'done'\)==='done'\) n\+\+;/.test(src));
 
+console.log('\n[⑥-2 배지가 목록과 어긋나지 않는다 (대표 제보 2026-08-23)]');
+/* 「건의함 처리했는데 왜 건의하기에 1이 남아 있나」 —
+   배지는 로그인할 때와 이 탭에서 뭘 했을 때만 다시 셌다. 다른 탭·다른 사람·서버
+   쪽에서 처리하면 새로고침 전까지 옛 수가 남았고, 건의함을 열어도 그대로여서
+   한 화면에 「미처리 0건」과 배지 1 이 같이 떴다.
+   ★ 지키려는 것: 두 숫자를 «같은 자리에서 같은 자료로» 낸다. */
+ok('★ 목록을 그릴 때 배지도 같은 수로 맞춘다',
+   /var totalOpen = arr\.filter\(function\(s\)\{ return s\.status !== 'done'; \}\)\.length;[\s\S]{0,900}?if\(sgIsAdmin\(\)\) sgSetBadge\(totalOpen\);/.test(src),
+   '목록의 미처리 수와 배지가 따로 계산되면 또 어긋납니다');
+ok('★ 건의함을 열면 목록을 다시 그린다 (그래서 배지도 그때 맞는다)',
+   /function sgOpen\(\)\{[\s\S]{0,400}?sgIsAdmin\(\)\?sgViewList\(\)/.test(src));
+ok('일반 직원 배지는 건드리지 않는다 (그쪽은 「내 건의가 해결됐다」를 세는 다른 수다)',
+   /if\(sgIsAdmin\(\)\) sgSetBadge\(totalOpen\);/.test(src));
+ok('0 이면 배지를 감춘다', /b\.style\.display = n > 0 \? 'inline-flex' : 'none';/.test(src));
+
 console.log('\n[⑦ 규칙을 건드리지 않았다 — 콘솔 규칙이 진짜이므로]');
 {
   const rules = fs.readFileSync(path.join(__dirname, '..', 'docs', 'firebase-rules-3순위-포털권한.json'), 'utf8');
