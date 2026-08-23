@@ -15,6 +15,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="rules_std.js?v=1"></script>
 <script src="hwpx_gen.js?v=14"></script>
+<script src="hwpx_doc.js?v=2"></script>
 <style>
 :root{--navy:#1B2A4A;--teal:#0E7C66;--orange:#e67e22;--line:#e2e8f0;--bg:#eef1f7;--card:#fff;--mute:#64748b;--txt:#1e293b}
 *{box-sizing:border-box}
@@ -369,26 +370,35 @@ function delDoc(id){ if(!confirm('이 취업규칙을 삭제할까요?')) return
   else { var all=lsDocs(); delete all[id]; localStorage.setItem('chwieop_docs',JSON.stringify(all)); openLoad(); toast('삭제했습니다'); }
 }
 
-/* ══════ 한글(.hwpx) 내보내기 — A4 세로 기준. 규정관리(rules.html)와 같은 생성기 사용 ══════ */
+/* ══════ 한글(.hwpx) 내보내기 — 노동부 표준취업규칙과 같은 조판 ══════
+   조 제목만 굵게, 조 제목과 첫 항을 한 문단으로 붙여 쓰고, 항·호는 내어쓰기.
+   줄 폭·줄간격·자간은 rule 용지 프리셋이 원본 실측값을 쓴다.
+   예전엔 조마다 「제N조 (제목) 본문」을 한 문단에 통째로 넣고 빈 줄로 띄웠다 —
+   원본과 줄간격·들여쓰기가 달라 한글에서 다시 손봐야 했다. */
 function exportHwpx(){
   if(countOn()===0){ toast('포함할 조항이 없습니다'); return; }
-  if(!window.HWPX){ toast('한글 생성기를 불러오지 못했습니다 — 워드로 저장하세요'); return; }
+  if(!window.HWPX||!window.HWPXDOC){ toast('한글 생성기를 불러오지 못했습니다 — 워드로 저장하세요'); return; }
   try{
-    var H=window.HWPX; H.setPage({landscape:false});           // 취업규칙 전문은 A4 세로
+    var H=window.HWPX, D=window.HWPXDOC;
+    var page=D.begin('rule');                                  // 표준취업규칙 본문 폭·여백
     var co=doc.info.company||'';
-    var body=H.para('취 업 규 칙',H.BOLD)+H.para(co)+H.para('');
+    var body=H.docTitle('취 업 규 칙')+(co?H.docSub(co):'')+H.spacer();
     var artNo=0;
     STD.forEach(function(ch){ if(!chapOn(ch))return;
       var onArts=ch.arts.filter(function(a){return artOn(ch,a);}); if(!onArts.length)return;
-      body+=H.para(ch.c==='부칙'?'부      칙':ch.c,H.BOLD)+H.para('');
+      body+=H.chapter(ch.c==='부칙'?'부      칙':ch.c);
       onArts.forEach(function(a){ artNo++;
-        body+=H.para('제'+artNo+'조 ('+applyMergeText(curTitle(a))+') '+applyMergeText(curBody(a)))+H.para('');
+        /* 조 제목과 첫 항은 한 문단, 그 뒤 항(①·1.)은 줄마다 한 문단 */
+        var txt=applyMergeText(curBody(a)).replace(/\r\n?/g,'\n');
+        var lines=txt.split('\n').map(function(s){return s.trim();}).filter(Boolean);
+        body+=H.articleRun({title:'제'+artNo+'조('+applyMergeText(curTitle(a))+')', rest:' '+(lines.shift()||'')}, lines);
       });
     });
-    body+=H.para('')+H.para(applyMergeText('{시행일}')+' 제정')+H.para(co+'  대표 '+(doc.info.ceo||'')+' (인)');
+    body+=H.spacer()+H.bodyPara(applyMergeText('{시행일}')+' 제정')
+      +D.signBlock([[co+'  대표', doc.info.ceo||'']], page);
     var safe=String(co||'회사').replace(/[()\s—📄🏢\/\\:*?"<>|]/gu,'');
-    H.download(body,'취업규칙_'+safe+'.hwpx');
-    toast('📕 한글 파일을 내려받았습니다 (A4 세로)');
+    H.download([{body:body, landscape:false, margin:page.margin}],'취업규칙_'+safe+'.hwpx');
+    toast('📕 한글 파일을 내려받았습니다 (표준취업규칙 조판)');
   }catch(e){ console.warn('hwpx 생성 실패:',e); toast('한글 생성 실패 — 워드로 저장하세요'); }
 }
 /* ══════ 규정관리(검토)로 넘기기 — 작성한 취업규칙을 92항목 자동 검토에 태운다 ══════ */

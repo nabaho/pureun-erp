@@ -59,6 +59,7 @@
 <!-- 푸른 공통 한글 엔진: 모든 ERP 한글 열기·미리보기·HWPX 저장을 한 경로로 처리 -->
 <script src="js/pu-hwp-engine.js?v=14"></script>
 <script src="hwpx_gen.js?v=14"></script>
+<script src="hwpx_doc.js?v=2"></script>
 <!-- Firebase SDK: 실시간 동기화 + 11명 동시 접속 -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-check-compat.js"></script>
@@ -29349,12 +29350,16 @@ function ContractFormPrintModal(props){
   }
   function doHwpxMulti(){
     if(selectedForms.length === 0){ showToast('체크된 양식이 없습니다'); return; }
+    if(typeof HWPXDOC==='undefined'){ showToast('한글 저장 기능을 불러오지 못했습니다'); return; }
     selectedForms.forEach(function(f){
       var rendered=fillContractVars(curBody(f),contract);
-      var body=HWPX.docTitle(f.name)+HWPX.bodyPara(rendered);
+      /* 계약서 본문을 한 문단에 통째로 넣으면 한글에서 조·항 구분이 사라진다.
+         공용 서식층이 줄의 성격(제N조·①·1.·가.·날짜·서명·귀하)을 가려 앉힌다. */
+      var doc=HWPXDOC.begin('plain');
+      var body=HWPXDOC.title(f.name)+HWPX.spacer()+HWPXDOC.fromText(rendered,doc,{noTitle:true});
       var company=(contract.companyName||(contract.company&&contract.company.name)||'업체').replace(/[\\/:*?"<>|]/g,'_');
       var base=(company+'_'+f.name).replace(/[\\/:*?"<>|]/g,'_');
-      HWPX.download(body,base+'.hwpx');
+      HWPX.download([{body:body, landscape:false, margin:doc.margin}],base+'.hwpx');
     });
     showToast('선택한 계약서 한글 파일 '+selectedForms.length+'건 저장 완료');
   }
@@ -70227,51 +70232,37 @@ function PayrollPayslip(props){
   var beS = useState(false); var bulkEmail = beS[0]; var setBulkEmail = beS[1];
 
   // 급여명세서 본문 생성 (이메일 본문용 평문)
-  function buildSlipBody(empSid, ym){
+  /* 명세서에 실을 숫자를 한 곳에서만 셈한다 — 글자본(메일)과 한글본이
+     따로 셈하면 같은 달 명세서가 서로 다른 금액을 말한다. */
+  function slipData(empSid, ym){
     var emp = users.find(function(x){return x.sid===empSid;}) || {};
     var allRecs = dbGet('payroll_monthly', []);
     var r = allRecs.find(function(x){return x.empSid===empSid && x.ym===ym;}) || {};
-    var base = +r.baseSalary||0, food = +r.allowFood||0, car = +r.allowCar||0, child = +r.allowChild||0, etc = +r.allowEtc||0, bonus = +r.bonus||0;
-    var gross = base + food + car + child + etc + bonus;
-    var ded = (+r.dedPension||0) + (+r.dedHealth||0) + (+r.dedLtc||0) + (+r.dedEmp||0) + (+r.dedIncome||0) + (+r.dedLocal||0) + (+r.dedEtc||0);
-    var net = gross - ded;
-    var body = [
-      '【'+ym+' 급여명세서】',
-      '',
-      '성명: '+(emp.name||''),
-      '사번: '+(emp.sid||''),
-      '직책: '+(emp.title||''),
-      '',
-      '─── 지급 ───',
-      '기본급:   '+base.toLocaleString()+'원',
-      '식대:     '+food.toLocaleString()+'원',
-      '차량유지: '+car.toLocaleString()+'원',
-      '육아수당: '+child.toLocaleString()+'원',
-      '기타수당: '+etc.toLocaleString()+'원',
-      '성과급:   '+bonus.toLocaleString()+'원',
-      '지급합계: '+gross.toLocaleString()+'원',
-      '',
-      '─── 공제 ───',
-      '국민연금: '+(+r.dedPension||0).toLocaleString()+'원',
-      '건강보험: '+(+r.dedHealth||0).toLocaleString()+'원',
-      '장기요양: '+(+r.dedLtc||0).toLocaleString()+'원',
-      '고용보험: '+(+r.dedEmp||0).toLocaleString()+'원',
-      '소득세:   '+(+r.dedIncome||0).toLocaleString()+'원',
-      '지방세:   '+(+r.dedLocal||0).toLocaleString()+'원',
-      '기타공제: '+(+r.dedEtc||0).toLocaleString()+'원',
-      '공제합계: '+ded.toLocaleString()+'원',
-      '',
-      '─── 실지급액 ───',
-      net.toLocaleString()+'원',
-      '',
-      '※ 푸른노무법인',
-      '※ 본 명세서는 ERP에서 자동 생성되었습니다.'
-    ].join('\n');
-    var _pn = getLeavePromoNotice(emp.name);
-    if(_pn){ body += '\n\n─── 연차 사용촉진 안내 ───\n미사용 연차 '+_pn.remain+'일 · 사용기간 ~'+_pn.expiryStr+' 까지\n사용시기를 지정해 주세요.'; }
+    var pay = [
+      ['기본급', +r.baseSalary||0], ['식대', +r.allowFood||0], ['차량유지', +r.allowCar||0],
+      ['육아수당', +r.allowChild||0], ['기타수당', +r.allowEtc||0], ['성과급', +r.bonus||0]
+    ];
+    var ded = [
+      ['국민연금', +r.dedPension||0], ['건강보험', +r.dedHealth||0], ['장기요양', +r.dedLtc||0],
+      ['고용보험', +r.dedEmp||0], ['소득세', +r.dedIncome||0], ['지방세', +r.dedLocal||0],
+      ['기타공제', +r.dedEtc||0]
+    ];
+    var sum = function(a){ return a.reduce(function(t,x){return t+x[1];},0); };
+    var gross = sum(pay), cut = sum(ded);
+    return { emp:emp, ym:ym, pay:pay, ded:ded, gross:gross, cut:cut, net:gross-cut,
+             promo:getLeavePromoNotice(emp.name) };
+  }
+  function buildSlipBody(empSid, ym){
+    var d = slipData(empSid, ym), won = function(v){ return v.toLocaleString()+'원'; };
+    var line = function(x){ return x[0]+': '+won(x[1]); };
+    var body = ['【'+d.ym+' 급여명세서】', '',
+      '성명: '+(d.emp.name||''), '사번: '+(d.emp.sid||''), '직책: '+(d.emp.title||''), '',
+      '─── 지급 ───'].concat(d.pay.map(line), ['지급합계: '+won(d.gross), '', '─── 공제 ───'],
+      d.ded.map(line), ['공제합계: '+won(d.cut), '', '─── 실지급액 ───', won(d.net), '',
+      '※ 푸른노무법인', '※ 본 명세서는 ERP에서 자동 생성되었습니다.']).join('\n');
+    if(d.promo){ body += '\n\n─── 연차 사용촉진 안내 ───\n미사용 연차 '+d.promo.remain+'일 · 사용기간 ~'+d.promo.expiryStr+' 까지\n사용시기를 지정해 주세요.'; }
     return body;
   }
-
   // 개인 이메일 송부 (mailto)
   function emailSlip(empSid){
     var emp = users.find(function(x){return x.sid===empSid;});
@@ -70282,14 +70273,26 @@ function PayrollPayslip(props){
     window.location.href = 'mailto:'+emp.email+'?subject='+subject+'&body='+body;
   }
   function exportSlipHwpx(empSid){
-    if(typeof HWPX==='undefined'){ showToast('한글 저장 기능을 불러오지 못했습니다'); return; }
-    var emp=users.find(function(x){return x.sid===empSid;})||{};
-    var body=HWPX.docTitle(props.selYM+' 급여명세서')+HWPX.bodyPara(buildSlipBody(empSid,props.selYM));
-    var base=('급여명세서_'+props.selYM+'_'+(emp.name||empSid||'직원')).replace(/[\\/:*?"<>|]/g,'_');
-    HWPX.download(body,base+'.hwpx');
+    if(typeof HWPXDOC==='undefined'){ showToast('한글 저장 기능을 불러오지 못했습니다'); return; }
+    var d=slipData(empSid, props.selYM);
+    var doc=HWPXDOC.begin('plain');
+    var body=HWPXDOC.title('임 금 명 세 서', props.selYM+'분')+HWPX.spacer()
+      +HWPXDOC.infoTable([
+        ['성명', d.emp.name||'', '사번', d.emp.sid||''],
+        ['직책', d.emp.title||'', '귀속월', props.selYM]
+      ], doc)+HWPX.spacer()
+      +HWPXDOC.moneyTable(['지급 내역','금액(원)'], d.pay, ['지급합계', d.gross], doc)+HWPX.spacer()
+      +HWPXDOC.moneyTable(['공제 내역','금액(원)'], d.ded, ['공제합계', d.cut], doc)+HWPX.spacer()
+      +HWPXDOC.moneyTable(null, [['실지급액', d.net]], null, doc, {strong:true})
+      +HWPXDOC.note('※ 근로기준법 제48조제2항에 따라 교부되는 임금명세서입니다. (푸른노무법인 ERP)');
+    if(d.promo){
+      body+=HWPX.spacer()+HWPXDOC.head('연차 사용촉진 안내')
+        +HWPXDOC.body('미사용 연차 '+d.promo.remain+'일 · 사용기간 ~'+d.promo.expiryStr+' 까지 — 사용시기를 지정해 주세요.');
+    }
+    var base=('급여명세서_'+props.selYM+'_'+(d.emp.name||empSid||'직원')).replace(/[\\/:*?"<>|]/g,'_');
+    HWPX.download([{body:body, landscape:false, margin:doc.margin}],base+'.hwpx');
     showToast('급여명세서 한글 파일 저장 완료');
   }
-
   // 레코드 필드 업데이트 (모든 필드 통합)
   function updateField(field, value){
     if(isPayrollLocked(props.selYM)){ showToast('🔒 잠긴 월은 수정 불가'); return; }
@@ -71637,21 +71640,24 @@ function EmploymentContractModal(props){
   function exportEmploymentHwpx(c){
     c=c||form||list[0];
     if(!c){ showToast('저장할 근로계약서를 선택해 주세요'); return; }
-    if(typeof HWPX==='undefined'){ showToast('한글 저장 기능을 불러오지 못했습니다'); return; }
-    var rows=[
-      ['근로자',u.name||''], ['계약 종류',c.type||'근로계약서'], ['체결일',c.signedDate||''],
-      ['계약 기간',(c.startDate||'')+' ~ '+(c.endDate||'기한 없음')], ['직책',c.position||u.title||''],
-      ['연봉',c.salary?c.salary.toLocaleString()+'원':''], ['근무시간',c.workHours||''], ['근무일',c.workDays||''],
-      ['수습 기간',c.probationPeriod||''], ['특이사항',c.notes||'']
-    ];
-    var body=HWPX.docTitle((c.type||'근로계약서')+' 초안')
-      +HWPX.tablePara(rows,HWPX.cols([0.25,0.75]))
-      +HWPX.bodyPara('※ 실제 근로조건과 법정 필수사항을 최종 확인한 뒤 서명·교부해 주세요.');
+    if(typeof HWPXDOC==='undefined'){ showToast('한글 저장 기능을 불러오지 못했습니다'); return; }
+    var doc=HWPXDOC.begin('plain');
+    var body=HWPXDOC.title((c.type||'근로계약서')+' 초안')+HWPX.spacer()
+      +HWPXDOC.infoTable([
+        ['근로자', u.name||'', '체결일', c.signedDate||''],
+        ['계약 종류', c.type||'근로계약서', '직책', c.position||u.title||''],
+        ['계약 기간', (c.startDate||'')+' ~ '+(c.endDate||'기한 없음')],
+        ['연봉', c.salary?c.salary.toLocaleString()+'원':'', '수습 기간', c.probationPeriod||''],
+        ['근무시간', c.workHours||'', '근무일', c.workDays||''],
+        ['특이사항', c.notes||'']
+      ], doc)
+      +HWPXDOC.note('※ 실제 근로조건과 법정 필수사항을 최종 확인한 뒤 서명·교부해 주세요.')
+      +HWPX.spacer()+HWPXDOC.dateLine(c.signedDate||todayYMD())
+      +HWPXDOC.signBlock([['사업주',''],['근로자', u.name||'']], doc);
     var base=((c.type||'근로계약서')+'_'+(u.name||u.sid||'근로자')+'_'+(c.signedDate||todayYMD())).replace(/[\\/:*?"<>|]/g,'_');
-    HWPX.download(body,base+'.hwpx');
+    HWPX.download([{body:body, landscape:false, margin:doc.margin}],base+'.hwpx');
     showToast('근로계약서 한글 초안 저장 완료');
   }
-
   return h('div', { className:'modal-bg', onClick:function(e){if(e.target===e.currentTarget)props.onClose();} },
     h('div', { className:'modal', style:{width:'700px', maxHeight:'92vh', display:'flex', flexDirection:'column'}, onClick:function(e){e.stopPropagation();} },
       h('div', { className:'modal-h' },

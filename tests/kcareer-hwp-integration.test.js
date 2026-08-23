@@ -27,8 +27,9 @@ test('편집기는 공통 엔진을 먼저 사용하고 기존 편집기를 안�
 });
 
 test('빠른 이력서와 경력증명서는 표 구조를 가진 정상 HWPX를 만든다', () => {
-  assert.match(source, /HWPX\.tablePara\(rows,HWPX\.cols/);
-  assert.match(source, /const bytes=HWPX\.build\(body\)/);
+  // 표는 «화면에 그려진 열폭을 실측»해 옮긴다 — 열폭이 모두 같은 격자로 뭉개지 않는다
+  assert.match(source, /HWPXDOC\.fromHtml\(sheet, doc/);
+  assert.match(source, /const bytes=HWPX\.build\(\[\{body:body/);
   assert.match(source, /PureunHwp\.validate\(bytes,name\)/);
   assert.match(source, /표 구조와 입력 내용이 함께 저장/);
 });

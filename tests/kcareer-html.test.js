@@ -836,10 +836,12 @@ test('보관한 한글 문서는 내려받지 않고 앱 안에서 본다', () =
 });
 
 test('빈 공간 행은 HWPX·텍스트 추출에 섞이지 않는다', () => {
-  // _cvTableRows가 cv-noprint 칸을 걸러내므로 빈 행이 되어 사라진다
+  // 빈 공간 칸에 cv-noprint를 붙여 두면 한글 저장이 그 칸을 문서에서 뺀다
   assert.match(funcSource('_cvGapBefore'), /cv-pgap-c cv-noprint/,
     '빈 공간 칸에 cv-noprint가 없으면 HWPX에 빈 행이 들어갑니다');
-  assert.match(funcSource('_cvTableRows'), /cv-noprint/);
+  // 거르는 쪽 — 공용 서식층에 「이 칸은 빼라」고 넘기는지
+  assert.match(funcSource('_cvBuildHwpx'), /skip:'\.cv-noprint'/,
+    '한글 저장이 cv-noprint 칸을 빼도록 넘기지 않으면 화면 전용 단추가 문서에 찍힙니다');
 });
 
 test('타이핑 중에는 자만 다시 그린다 — 커서가 튀지 않게', () => {

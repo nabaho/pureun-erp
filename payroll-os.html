@@ -18,6 +18,7 @@
 <script src="js/pu-backup.js?v=1"></script>
 <script src="js/pu-hwp-engine.js?v=14"></script>
 <script src="hwpx_gen.js?v=14"></script>
+<script src="hwpx_doc.js?v=2"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <style>
 :root{--navy:#2E3A8C;--violet:#7C6CE0;--ok:#2E7D4F;--warn:#B26A00;--bad:#C43D3D;
@@ -412,66 +413,57 @@ window.saveNotice=saveNotice;
 function payrollHwpxText(el){
   return String(el&&el.textContent||'').replace(/\s+/g,' ').trim();
 }
-function payrollHwpxRows(table){
-  return Array.prototype.map.call(table.querySelectorAll('tr'),function(tr){
-    return Array.prototype.map.call(tr.querySelectorAll('th,td'),payrollHwpxText);
-  }).filter(function(row){return row.length;});
-}
+/* 명세서 한글 저장 — 화면을 긁지 않고 «화면이 쓰는 그 자료»로 바로 만든다.
+   slipRows() 가 지급·공제·실수령을 셈하는 한 곳이므로, 화면과 문서가 어긋날 수 없다.
+   예전엔 .slip 을 긁어 지급·공제를 열폭 같은 두 칸 표로 뭉개고 금액을 왼쪽에 붙였다. */
 function exportPayrollSlipsHwpx(){
   try{
-    if(!window.HWPX||!window.PureunHwp) throw new Error('한글 문서 기능을 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.');
-    var slips=Array.prototype.slice.call(document.querySelectorAll('.slip'));
-    if(!slips.length) throw new Error('저장할 급여명세서가 없습니다.');
+    if(!window.HWPX||!window.HWPXDOC||!window.PureunHwp) throw new Error('한글 문서 기능을 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.');
+    var pay=dbGet('payroll',null);
+    var recs=(pay&&pay.sites&&pay.sites[App.site])||[];
+    var rec=recs.filter(function(r){return r.월===App.month;})[0];
+    if(!rec) throw new Error('저장할 급여명세서가 없습니다.');
+    var emps=dedupeEmps(rec.직원||[]);
+    if(!emps.length) throw new Error('저장할 급여명세서가 없습니다.');
+    var draft=!isLocked(App.site,App.month);
+    var notice=dbGet('payslip_notice','');
+    var payday=paydayOf(App.site);
+    var doc=HWPXDOC.begin('plain');
     var body='';
-    slips.forEach(function(slip,index){
-      var title=payrollHwpxText(slip.querySelector('.ttl'))||'급여명세서';
-      var site=payrollHwpxText(slip.querySelector('.co'));
-      body+=HWPX.docTitle(title,{pageBreak:index>0});
-      body+=HWPX.docSub(site+(slip.classList.contains('draft')?' · 미확정 검토용':''));
-      var meta=slip.querySelector('.meta');
-      if(meta){
-        var metaCells=Array.prototype.map.call(meta.querySelectorAll('td'),payrollHwpxText);
-        if(metaCells.length) body+=HWPX.tablePara([metaCells],HWPX.cols(metaCells.map(function(){return 1/metaCells.length;})),{noHead:true});
-      }
-      Array.prototype.forEach.call(slip.querySelectorAll('.cols>div'),function(section){
-        var heading=payrollHwpxText(section.querySelector('.sec'));
-        if(heading) body+=HWPX.bodyPara(heading);
-        var table=section.querySelector('table');
-        var rows=table?payrollHwpxRows(table):[];
-        if(rows.length) body+=HWPX.tablePara([['항목','금액']].concat(rows),HWPX.cols([.58,.42]));
-      });
-      ['.net','.calc','.snote','.foot'].forEach(function(sel){
-        var line=payrollHwpxText(slip.querySelector(sel));
-        if(line) body+=HWPX.bodyPara(line);
-      });
+    emps.forEach(function(e,i){
+      var r=slipRows(e);
+      body+=HWPXDOC.title('임 금 명 세 서', App.site+(draft?' · 미확정 검토용':''), {pageBreak:i>0})
+        +HWPX.spacer()
+        +HWPXDOC.infoTable([['성명', e.성명||'', '귀속', App.month], ['지급일', payday||'-']], doc)
+        +HWPX.spacer()
+        +HWPXDOC.moneyTable(['지급 내역','금액(원)'], r.pay, ['지급총액', r.gross], doc)
+        +HWPX.spacer()
+        +HWPXDOC.moneyTable(['공제 내역','금액(원)'], r.ded, ['공제총액', r.dedTotal], doc)
+        +HWPX.spacer()
+        +HWPXDOC.moneyTable(null, [['실수령액', r.net]], null, doc, {strong:true});
+      if(r.calc) body+=HWPXDOC.note('※ 계산방법: '+r.calc+' = '+won(r.gross)+'원');
+      if(notice) body+=HWPXDOC.note('※ '+String(notice).replace(/\s*\n\s*/g,' '));
+      body+=HWPXDOC.note('본 명세서는 근로기준법 제48조제2항에 따라 교부됩니다.');
     });
     var safe=function(v){return String(v||'').replace(/[\\/:*?"<>|]/g,'_').replace(/\s+/g,'_');};
     var fileName=safe(App.site)+'_'+safe(App.month)+'_급여명세서.hwpx';
-    var bytes=HWPX.build(body);
+    var bytes=HWPX.build([{body:body, landscape:false, margin:doc.margin}]);
     PureunHwp.validate(bytes,fileName);
     PureunHwp.download(bytes,fileName,'hwpx');
   }catch(err){ alert(err&&err.message?err.message:String(err)); }
 }
 window.exportPayrollSlipsHwpx=exportPayrollSlipsHwpx;
+/* 업무보고서 — 화면에 그려진 결과표를 실측해 그대로 옮긴다(열폭·병합 살림) */
 function exportPayrollReportHwpx(){
   try{
-    if(!window.HWPX||!window.PureunHwp) throw new Error('한글 문서 기능을 불러오지 못했습니다.');
+    if(!window.HWPX||!window.HWPXDOC||!window.PureunHwp) throw new Error('한글 문서 기능을 불러오지 못했습니다.');
     var main=document.getElementById('main');
-    var tables=Array.prototype.slice.call(main.querySelectorAll('table'));
-    if(!tables.length) throw new Error('저장할 상세 결과표가 없습니다.');
+    if(!main||!main.querySelector('table')) throw new Error('저장할 상세 결과표가 없습니다.');
     var title=payrollHwpxText(main.querySelector('h1'))||'급여 업무 보고서';
-    var summary=payrollHwpxText(main.querySelector('.sub'));
-    var body=HWPX.docTitle(title)+HWPX.docSub(summary);
-    tables.forEach(function(table,index){
-      var rows=payrollHwpxRows(table);
-      if(!rows.length) return;
-      var width=Math.max.apply(null,rows.map(function(row){return row.length;}));
-      rows=rows.map(function(row){while(row.length<width)row.push('');return row;});
-      body+=HWPX.tablePara(rows,HWPX.cols(new Array(width).fill(1/width)));
-      if(index<tables.length-1) body+=HWPX.spacer();
-    });
+    var doc=HWPXDOC.begin('plain');
+    var body=HWPXDOC.fromHtml(main, doc, {skip:'.noprint,.btn'});
     var fileName=title.replace(/[\\/:*?"<>|]/g,'_').replace(/\s+/g,'_')+'.hwpx';
-    var bytes=HWPX.build(body);
+    var bytes=HWPX.build([{body:body, landscape:false, margin:doc.margin}]);
     PureunHwp.validate(bytes,fileName);
     PureunHwp.download(bytes,fileName,'hwpx');
   }catch(err){ alert(err&&err.message?err.message:String(err)); }
