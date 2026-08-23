@@ -56,11 +56,27 @@ t('★ 「아는 열린 건수」를 따로 둔다 (모를 때는 null)',
   /var knownOpen = null;/.test(src), true);
 t('★ 모르면 조용한 회색으로 둔다',
   /if \(knownOpen === null\) \{[\s\S]{0,200}?HEALTH_QUIET/.test(src), true);
-t('★ 열린 것이 «있을 때만» 빨갛게 켠다',
-  /knownOpen > 0[\s\S]{0,200}?HEALTH_ALARM/.test(src), true);
+t('★ 열린 것이 있으면 빨갛게 켠다', /HEALTH_ALARM[\s\S]{0,120}?'⚠ 장애 알림 ' \+ knownOpen/.test(src), true);
 t('빨갈 때는 몇 건인지 함께 적는다 — 「확인」만으로는 눌러 봐야 안다',
   /'⚠ 장애 알림 ' \+ knownOpen/.test(src), true);
-t('0 건이면 그렇다고 적는다', /'장애 알림 없음'/.test(src), true);
+
+/* ══ 장애가 없으면 아무것도 안 띄운다 (대표 지시 2026-08-23, 위 고침에 이어) ══
+   「장애가 없을 경우 필요없다 … 이 문구 없애달라」 —
+   0건일 때 「장애 알림 없음」이라고 적어 두었더니, 없다는 말이 하루 종일 화면
+   구석을 차지했다. 없으면 치운다. */
+console.log('\n■ 장애가 없으면 치운다');
+t('★ 0 건이면 단추를 아예 감춘다', /knownOpen === 0\) \{ badge\.hidden = true; return; \}/.test(src), true);
+/* 따옴표로 감싼 «코드의 글자»만 본다 — 왜 없앴는지 적어 둔 주석까지 잡으면
+   설명을 남길 수가 없다(설명은 남겨야 다음 사람이 되돌리지 않는다). */
+t('★ 「장애 알림 없음」 을 화면에 적지 않는다', /'장애 알림 없음'/.test(src), false);
+t('★ 「모름」 과 「0건」 은 다르다 — 안 세어 봤으면 눌러 볼 단추를 남긴다',
+  /if \(knownOpen === null\) \{[\s\S]{0,200}?HEALTH_QUIET/.test(src), true);
+/* ⚠ 보임 판단이 두 곳에 있으면 서로 되돌린다 — monitorAdmin 이 hidden=false 로
+   덮어써 0건인데도 다시 뜨는 식이다. 한 곳(paintAdminBadge)에서만 정한다. */
+t('★ monitorAdmin 은 hidden 을 직접 만지지 않는다',
+  /if \(!role\.isAdmin\) return;\s*\n\s*isAdminUser = true;\s*\n\s*ensureAdminBadge\(app\);/.test(src), true);
+t('관리자가 아니면 어떤 경우에도 안 뜬다',
+  /if \(!isAdminUser \|\| knownOpen === 0\)/.test(src), true);
 
 console.log('\n■ 세어 본 뒤에는 색이 뜻을 갖는다');
 t('★ 열어 보면 그 수를 기억한다', /knownOpen = adminAlerts\.length;/.test(src), true);
