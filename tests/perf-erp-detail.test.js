@@ -22,7 +22,7 @@ test('성과급 줄은 푸른이알피 원본과 같은 열쇠로 업무를 찾�
 
 test('업무가 바뀌면 이은 색인을 다시 만든다', () => {
   /* 안 지우면 새로 들여온 업무가 성과급 줄에 영영 안 붙는다 */
-  const at = work.indexOf("fbDb.ref(NS+'/items').on('value'");
+  const at = work.indexOf("watchMapChildren(NS+'/items'");
   const fn = work.slice(at, at + 400);
   assert.match(fn, /_pcWorkIdx=null;/);
 });

@@ -934,6 +934,29 @@ try{
 }catch(e){ $('root').innerHTML='<div class="gate">초기화 실패: '+esc(e.message)+'</div>'; }
 function gate(){ $('root').innerHTML='<div class="gate"><h2>로그인이 필요합니다</h2><p><a href="'+PORTAL_URL+'">푸른 포털에서 로그인</a> 후 다시 들어와 주세요.</p></div>'; }
 
+/* 큰 목록은 value 로 지켜보지 않는다. value 는 항목 하나만 바뀌어도 목록 전체를
+   모든 열린 화면으로 다시 내려보낸다. 최초에는 child_added 로 한 번 채우고,
+   그 뒤에는 바뀐 항목 한 건만 받아 같은 화면 상태를 유지한다. */
+function watchMapChildren(path, assign, settled, denied){
+  var ref=fbDb.ref(path), map={}, timer=null;
+  function publish(){
+    assign(map);
+    clearTimeout(timer);
+    timer=setTimeout(function(){ if(settled) settled(); },140);
+  }
+  function put(snap){ map[snap.key]=snap.val(); publish(); }
+  function drop(snap){ delete map[snap.key]; publish(); }
+  ref.on('child_added',put,denied);
+  ref.on('child_changed',put,denied);
+  ref.on('child_removed',drop,denied);
+  /* 빈 목록은 child_added가 오지 않으므로 첫 항목만 확인해 초기 화면을 연다. */
+  ref.limitToFirst(1).once('value').then(function(s){ if(!s.exists()) publish(); }).catch(function(e){ if(denied) denied(e); });
+  return function(){
+    clearTimeout(timer);
+    try{ ref.off('child_added',put); ref.off('child_changed',put); ref.off('child_removed',drop); }catch(e){}
+  };
+}
+
 function start(){
   S.week=curMonday();
   $('root').innerHTML=shell();
@@ -942,23 +965,23 @@ function start(){
   resolveMe().then(function(){
     /* 내 성과급 — 배지·안내 띠용으로 한 번 읽는다. 실패해도 화면에 영향 없다 */
     pcRefresh().then(function(){ route(); pcNag(); }).catch(function(){ S.perfData=[]; S.perfAll=[]; });
-    fbDb.ref(NS+'/items').on('value',function(snap){ items=snap.val()||{};
+    watchMapChildren(NS+'/items',function(value){ items=value||{}; },function(){
       _pcWorkIdx=null;                      /* 업무가 바뀌면 성과급↔이알피 색인도 다시 만든다 */
       if(appHasFocus()){ S._pend=true; return; } route();
       if(!S._hashDone){ S._hashDone=1; openFromHash(); }   // 푸른이알피 → #item= 딥링크
     },function(err){ $('app').innerHTML='<div class="panel"><h2 style="color:var(--danger)">읽기 권한 오류</h2><p class="muted">'
       +esc(err.message)+'</p><p class="muted">Firebase 규칙에 work_erp 블록이 필요합니다 (관리자에게 문의).</p></div>'; });
     watchWeek();
-    fbDb.ref(NS+'/leaving').on('value',function(snap){ leaving=snap.val()||{};
+    watchMapChildren(NS+'/leaving',function(value){ leaving=value||{}; },function(){
       if(appHasFocus()){ S._pend=true; return; } route(); });
-    fbDb.ref(NS+'/pesync').on('value',function(snap){ pesync=snap.val()||{};
+    watchMapChildren(NS+'/pesync',function(value){ pesync=value||{}; },function(){
       if(appHasFocus()){ S._pend=true; return; }
       if(S.view==='archive') route(); },function(){ pesync={}; });
-    fbDb.ref(NS+'/kb').on('value',function(snap){ kb=snap.val()||{};
+    watchMapChildren(NS+'/kb',function(value){ kb=value||{}; },function(){
       if(appHasFocus()){ S._pend=true; return; } route(); },function(){ kb={}; });
-    fbDb.ref(NS+'/steps').on('value',function(snap){ steps=snap.val()||{};
+    watchMapChildren(NS+'/steps',function(value){ steps=value||{}; },function(){
       if(appHasFocus()){ S._pend=true; return; } route(); },function(){ steps={}; });
-    fbDb.ref(NS+'/tpl').on('value',function(snap){ tpls=snap.val()||{}; },function(){ tpls={}; });
+    watchMapChildren(NS+'/tpl',function(value){ tpls=value||{}; },null,function(){ tpls={}; });
     peWatch();                                   // 푸른이알피 등록 → 자동 연동
     calLoadPrefs().then(function(){ route(); }); // 캘린더 개인 설정(보임·보기·레이어)
   });
@@ -3566,7 +3589,7 @@ function setState(id,done,alsoPe,msg,way,to,res){
          규칙에 막히는 순간 묶음 전체가 실패해 종료 자체가 안 된다. 알림은
          곁다리이므로 따로 보내고, 실패해도 조용히 넘긴다(그때는 예전처럼
          푸른이알피를 열 때 반영된다). */
-    if(linked){ try{ fbDb.ref(NS+'/sync_ping').set(Date.now()).catch(function(){}); }catch(e){} }
+    if(linked){ try{ fbDb.ref(NS+'/sync_ping').set({at:Date.now(),itemId:id}).catch(function(){}); }catch(e){} }
     if(linked) addLog(id,(done?'업무 종료':'업무 재개')+' — 푸른이알피 '+(PE_KIND[it.ref.type]||'')+' 동기화 대상',todayStr(),'ho');
     closeM(); toast(msg+(linked?' · 푸른이알피에 곧 반영됩니다':''));
     if(done&&S.drawerId===id) closeDrawer();
