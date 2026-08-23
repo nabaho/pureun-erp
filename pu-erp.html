@@ -16237,13 +16237,6 @@ function ContractManagement(props){
     else showToast('❌ 계약 상태 저장 실패');
     return ok;
   }
-  function removeOne(id){
-    var cur = dbGet('contracts', []).find(function(x){ return x.id === id; });
-    if(cur && !lockGuard(cur)) return false;
-    var ok = dbRemove('contracts', id);
-    if(ok) refreshContracts();
-    return ok;
-  }
   function openAdd(){ setModal({ mode:'add', cur:null }); }
   window._erpOpenNewContract = openAdd; // 모바일 📷 버튼 연결용
   function openEdit(cur){ setModal({ mode:'edit', cur:cur }); }
@@ -16286,12 +16279,29 @@ function ContractManagement(props){
     }
     close();
   }
+  /* ── 계약 삭제 (대표 승인 2026-08-23) ────────────────────────────────
+     ★ 옛 코드는 «즉시 삭제» 였다 — 누구나, 사유 없이, 서버에서 바로 지우고,
+       되돌리기는 토스트가 사라지기 전까지뿐이었다. 그래서 단추가 떼어져 있었다.
+     되살리되 종료보관함이 이미 쓰는 «같은 절차» 로만 한다:
+       ① 총괄관리자만  ② 사유를 적어야 넘어간다  ③ 휴지통으로 간다(복원 가능)
+     ⚠ 새 규칙을 만드는 게 아니라, 이미 있는 안전한 길을 여기서도 쓰는 것이다.
+       TrashBin.remove 는 _deleted 딱지만 붙인다 — 목록은 그 딱지를 걸러 낸다. */
   async function del(id){
-    var c = contracts.find(function(x){return x.id===id;});
-    if(!(await popConfirm('계약 ' + (c?c.contractNo:'') + ' 을 삭제하시겠습니까?'))) return;
-    var _bak = dbGet('contracts', []).find(function(x){ return x.id === id; }) || c;
-    if(!removeOne(id)) return;
-    showToastUndo('🗑️ 계약 삭제됨', function(){ if(_bak) persistOne(_bak); });
+    if(!CURRENT_USER || !CURRENT_USER.isAdmin){ showToast('총괄관리자만 삭제할 수 있습니다'); return; }
+    var c = dbGet('contracts', []).find(function(x){ return x.id === id; })
+         || contracts.find(function(x){ return x.id === id; });
+    if(!c){ showToast('그 계약을 찾지 못했습니다'); return; }
+    // 잠긴 달의 계약은 고칠 수도 지울 수도 없다 — 마감을 뚫지 않는다
+    if(!lockGuard(c)) return;
+    var nm = (c.contractNo || '') + ' ' + (c.companyName || '');
+    var reason = prompt('🗑 ' + nm + ' 을 휴지통으로 보냅니다.\n\n왜 지우는지 적어 주세요 (기록에 남습니다)', '');
+    if(reason === null) return;
+    if(!String(reason).trim()){ showToast('사유를 적어 주세요'); return; }
+    if(!(await popConfirm(nm + '\n\n→ 휴지통으로 이동합니다.\n→ 환경설정 → 휴지통에서 되살릴 수 있습니다.'))) return;
+    var ok = TrashBin.remove('contracts', id, String(reason).trim());
+    if(!ok){ showToast('삭제 실패'); return; }
+    refreshContracts();
+    showToast('🗑️ 휴지통으로 옮겼습니다 (환경설정 → 휴지통에서 되살리기)');
   }
   function reseed(){ persist([]); showToast('초기화'); }
 
@@ -16620,6 +16630,9 @@ function ContractManagement(props){
         actionBtns.push(h('button', { key:'x',
           onClick:function(e){ e.stopPropagation(); doCancel(c.id); }, title:'취소',
           style:{ background:'#fef2f2', color:'#dc2626', border:'1px solid #fecaca', padding:'4px 8px', borderRadius:'4px', fontSize:'11px', cursor:'pointer' } }, '✕'));
+        if(CURRENT_USER && CURRENT_USER.isAdmin) actionBtns.push(h('button', { key:'del',
+          onClick:function(e){ e.stopPropagation(); del(c.id); }, title:'휴지통으로 이동 (총괄관리자)',
+          style:{ background:'#fef2f2', color:'#991b1b', border:'1px solid #fecaca', padding:'4px 8px', borderRadius:'4px', fontSize:'11px', fontWeight:700, cursor:'pointer' } }, '🗑'));
       } else {
         actionBtns.push(h('button', { key:'cl',
           onClick:function(e){ e.stopPropagation(); doClose(c.id); }, title:'계약 종료',
@@ -16627,6 +16640,9 @@ function ContractManagement(props){
         actionBtns.push(h('button', { key:'x',
           onClick:function(e){ e.stopPropagation(); doCancel(c.id); }, title:'취소',
           style:{ background:'#fef2f2', color:'#dc2626', border:'1px solid #fecaca', padding:'4px 8px', borderRadius:'4px', fontSize:'11px', cursor:'pointer' } }, '✕ 취소'));
+        if(CURRENT_USER && CURRENT_USER.isAdmin) actionBtns.push(h('button', { key:'del',
+          onClick:function(e){ e.stopPropagation(); del(c.id); }, title:'휴지통으로 이동 (총괄관리자)',
+          style:{ background:'#fef2f2', color:'#991b1b', border:'1px solid #fecaca', padding:'4px 8px', borderRadius:'4px', fontSize:'11px', fontWeight:700, cursor:'pointer' } }, '🗑'));
       }
       return h('div', { key:c.id, className:'kcard-row',
         draggable:true,
@@ -16700,6 +16716,8 @@ function ContractManagement(props){
         style:Object.assign({},mBtn,{ background:'#fffbeb', color:'#854d0e', border:'1px solid #fde68a' }) }, '종료'));
       mBtns.push(h('button', { key:'x', onClick:function(e){ e.stopPropagation(); doCancel(c.id); }, title:'취소',
         style:Object.assign({},mBtn,{ background:'#fef2f2', color:'#dc2626', border:'1px solid #fecaca' }) }, '✕'));
+      if(CURRENT_USER && CURRENT_USER.isAdmin) mBtns.push(h('button', { key:'del', onClick:function(e){ e.stopPropagation(); del(c.id); }, title:'휴지통으로 이동 (총괄관리자)',
+        style:Object.assign({},mBtn,{ background:'#fef2f2', color:'#991b1b', border:'1px solid #fecaca' }) }, '🗑'));
       var mk0 = kindInfo(kindsArr[0] || '');
       var mSub = kindsArr.length ? kindSubLabel(c, kindsArr[0]) : '';
       return h('div', { key:c.id,
