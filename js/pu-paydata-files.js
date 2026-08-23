@@ -23,6 +23,9 @@
   var SHEET_EXT = ['xlsx', 'xlsm', 'xls', 'csv', 'tsv'];
   var DOC_EXT = ['hwp', 'hwpx', 'docx', 'doc', 'odt', 'rtf'];
   var IMG_EXT = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif'];
+  /* 글자 파일 — 메일 본문을 .txt 로 담는다(2026-08-23). 카톡·문자를 내보낸
+     것도 같은 길로 들어온다. 뽑을 것이 없다, 이미 글자다. */
+  var TEXT_EXT = ['txt', 'text', 'md', 'log'];
 
   function extOf(name) {
     var m = String(name || '').toLowerCase().match(/\.([a-z0-9]+)$/);
@@ -37,6 +40,7 @@
     if (SHEET_EXT.indexOf(e) >= 0) return 'sheet';
     if (DOC_EXT.indexOf(e) >= 0) return 'doc';
     if (e === 'pdf') return 'pdf';
+    if (TEXT_EXT.indexOf(e) >= 0) return 'text';
     if (IMG_EXT.indexOf(e) >= 0) return 'image';
     return 'other';
   }
