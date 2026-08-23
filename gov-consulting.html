@@ -5957,11 +5957,56 @@ function erpRenameApply(){
   });
 }
 
+/* ── 사업장 이름 맞춰보기 ──
+   대표 보고(2026-08-23): 이미 일정관리에 있는 사업장이 「새 컨설팅」으로 또 떴다.
+   까닭은 표기 차이였다 — 푸른ERP 는 「(주)나래산업」, 일정관리는 「나래산업」.
+   예전 비교는 공백만 지워서 둘을 다른 회사로 봤다.
+
+   두 단계로 나눈다. 한 번에 느슨하게 풀면 다른 회사를 같은 회사로 붙여
+   엉뚱한 사업장에 컨설팅 종류가 들어간다.
+   ① 엄격: 법인 형태 표기만 뗀다((주)·㈜·주식회사·유한회사 …). 같은 회사의
+      다른 표기일 뿐이라 안전하다.
+   ② 느슨: 괄호 부기까지 뗀다(「수성 (구 진영산업)」 → 「수성」).
+      위험이 있어 **후보가 딱 하나일 때만** 인정한다. 둘 이상이면 사람이 정한다. */
+const CO_CORP_RE=/(주식회사|유한회사|유한책임회사|합자회사|합명회사|사단법인|재단법인|농업회사법인|영농조합법인|의료법인|학교법인|사회복지법인|㈜|㈐|\(주\)|\(유\)|\(사\)|\(재\)|\(합\)|co\.?,?\s*ltd\.?|corp\.?|inc\.?)/gi;
+
+/* ① 엄격 키 — 법인 형태 + 공백·구두점만 제거 */
+function coKey(s){
+  return String(s||'')
+    .replace(CO_CORP_RE,'')
+    .replace(/[\s·,.\-_'"]/g,'')
+    .toLowerCase();
+}
+/* ② 느슨 키 — 괄호와 그 안 내용까지 제거 */
+function coKeyLoose(s){
+  return coKey(String(s||'').replace(/[(（][^)）]*[)）]/g,''));
+}
+
+/* ERP 컨설팅 한 건에 맞는 일정관리 사업장 찾기.
+   찾은 방법(how)을 함께 돌려준다 — 느슨하게 찾은 것은 화면에서 알려 줘야 한다. */
+function findCoForErp(cos, erpId, name){
+  const live=cos.filter(x=>!x.deleted);
+  const byId=live.find(x=>x.erpId&&x.erpId===erpId);
+  if(byId)return {co:byId,how:'id'};
+  const k=coKey(name);
+  if(k){
+    const exact=live.filter(x=>coKey(x.name)===k);
+    if(exact.length===1)return {co:exact[0],how:'name'};
+    if(exact.length>1)return {co:exact[0],how:'name'};   // 같은 이름이 여럿이면 첫 것
+  }
+  const lk=coKeyLoose(name);
+  if(lk){
+    const loose=live.filter(x=>coKeyLoose(x.name)===lk);
+    /* 딱 하나일 때만 — 여럿이면 어느 쪽인지 앱이 정할 수 없다 */
+    if(loose.length===1)return {co:loose[0],how:'loose'};
+  }
+  return {co:null,how:''};
+}
+
 // ===== 사업장 가져오기 =====
 let _erpPlan=[];
 function erpBuildPlan(){
   const map=getErpTypeMap(), cos=getCos(), plan=[];
-  const norm=s=>String(s||'').replace(/\s/g,'');
   ERP.consultings.forEach(c=>{
     const nm=String(c.companyName||'').trim();
     if(!nm)return;
@@ -5977,11 +6022,12 @@ function erpBuildPlan(){
     const row={erpId:c.id,name:nm,code,govType,mainNm,subNms,mainId,subIds,rawType:erpConsRawType(c),mainSid:c.managerMain||''};
     if(!govType){ row.status='skip'; row.note=code?'연결 안 된 종류':'ERP에 컨설팅 유형이 비어 있음'; }
     else{
-      /* erpId 를 먼저 본다 — 이름으로만 짝지으면 ERP 에서 업체명을 조금만 고쳐도
-         ((주)수성 → 주식회사 수성) 새 컨설팅으로 잡혀 사업장이 두 개 생긴다.
-         가져올 때 co.erpId 를 이미 남기고 있으므로 그것을 먼저 쓴다. */
-      const exist=cos.find(x=>x.erpId&&x.erpId===c.id&&!x.deleted)
-                 ||cos.find(x=>norm(x.name)===norm(nm)&&!x.deleted);
+      /* erpId → 법인격 뗀 이름 → 괄호 부기까지 뗀 이름 순서로 찾는다.
+         공백만 지우던 예전 방식은 「(주)나래산업」과 「나래산업」을 다른 회사로 봤다. */
+      const hit=findCoForErp(cos,c.id,nm);
+      const exist=hit.co;
+      row.matchHow=hit.how;
+      if(exist)row.matchName=exist.name;
       if(exist&&(exist.types||[]).includes(govType)){ row.status='exists'; row.note='이미 있음'; row.coId=exist.id; }
       else if(!mainId){ row.status='warn'; row.note=`주담당 '${mainNm||'미지정'}' 을(를) 일정관리에서 찾을 수 없음`; row.coId=exist?exist.id:''; }
       else if(exist){ row.status='addtype'; row.note='기존 사업장에 종류 추가'; row.coId=exist.id; }
@@ -6108,7 +6154,8 @@ function renderErpAsk(){
       <span style="min-width:0;flex:1;">
         <span style="font-size:13px;font-weight:800;">${escAttr(r.name)}</span>
         <span style="font-size:10.5px;font-weight:800;color:var(--accent);background:rgba(21,101,192,.1);padding:1px 6px;border-radius:5px;margin-left:5px;">${role}</span>
-        ${r.status==='addtype'?'<span style="font-size:10.5px;font-weight:800;color:#cc7700;margin-left:4px;">기존 사업장에 종류만 추가</span>':''}
+        ${r.status==='addtype'?`<span style="font-size:10.5px;font-weight:800;color:#cc7700;margin-left:4px;">「${escAttr(r.matchName||'')}」에 종류만 추가</span>`:''}
+        ${r.matchHow==='loose'?`<span title="이름 표기가 조금 달라 비슷한 것으로 짝지었습니다 — 맞는지 확인해 주세요" style="font-size:10.5px;font-weight:800;color:#cc7700;margin-left:4px;cursor:help;">⚠️ 이름 다름</span>`:''}
         <span style="display:block;font-size:11px;color:var(--t2);margin-top:2px;">
           ${escAttr((t&&(t.fullName||t.name))||r.rawType||'')}${t&&t.agency?' · '+escAttr(t.agency):''}
         </span>
@@ -6138,12 +6185,12 @@ function erpAskPicked(){
 function erpAskApply(){
   const picks=erpAskPicked();
   if(!picks.length)return;
-  const norm=s=>String(s||'').replace(/\s/g,'');
   const cos=getCos();
   let added=0,typed=0,already=0;
   picks.forEach(r=>{
-    const exist=cos.find(x=>x.erpId&&x.erpId===r.erpId&&!x.deleted)
-              ||cos.find(x=>norm(x.name)===norm(r.name)&&!x.deleted);
+    /* 넣기 직전에도 같은 잣대로 다시 본다 — 그사이 다른 담당자가 넣었을 수 있고,
+       표기가 조금 달라도 같은 회사면 새로 만들면 안 된다. */
+    const exist=findCoForErp(cos,r.erpId,r.name).co;
     if(exist){
       const list=exist.types||[];
       if(list.includes(r.govType)){ already++; return; }   // 남이 먼저 가져갔다
