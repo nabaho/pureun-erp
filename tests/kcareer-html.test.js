@@ -781,6 +781,60 @@ test('_cvPxPerMm 대체값은 CSS 표준(96/25.4)이다 — 임의의 픽셀 숫
     '임의의 픽셀 상수를 넣으면 쪽 수가 통째로 틀어집니다');
 });
 
+/* ===== 한글(HWPX)로 보기 (2026-08-23) =====
+   실측: 경력 122행 → HTML 미리보기 6~11쪽 vs 한글 문서 7쪽.
+   쪽 수의 정답은 한글 엔진이 센 값이다. */
+
+test('한글 엔진(vendor/rhwp-core)이 실제로 들어 있다', () => {
+  const dir = path.join(__dirname, '..', 'vendor', 'rhwp-core');
+  assert.ok(fs.existsSync(path.join(dir, 'rhwp.js')), 'rhwp.js가 있어야 합니다');
+  assert.ok(fs.existsSync(path.join(dir, 'rhwp_bg.wasm')), 'rhwp_bg.wasm이 있어야 합니다');
+  const eng = fs.readFileSync(path.join(__dirname, '..', 'js', 'pu-hwp-engine.js'), 'utf8');
+  assert.match(eng, /coreUrl:\s*'vendor\/rhwp-core\/rhwp\.js'/, '엔진 경로가 바뀌면 한글 보기가 죽습니다');
+  assert.match(eng, /renderPageToCanvas/, '쪽을 캔버스로 그리는 호출이 있어야 합니다');
+});
+
+test('한글 문서 보기 모달과 함수가 있다', () => {
+  assert.match(source, /id="modalHwpView"/);
+  assert.match(source, /id="hwpViewBody"/);
+  assert.match(source, /id="hwpViewInfo"/);
+  const src = funcSource('openHwpViewer');
+  assert.match(src, /PureunHwp\.renderPreview\(box,\s*u8/, '진짜 한글 엔진으로 그려야 합니다');
+  assert.match(src, /pageCount/, '한글이 센 쪽 수를 보여줘야 합니다');
+  // 캔버스는 A4 한 장이 793×1122px이라 닫을 때 비워야 한다
+  assert.match(funcSource('closeHwpView'), /box\.innerHTML\s*=\s*''/);
+});
+
+test('7MB 엔진을 몰래 받아오지 않는다 — 누를 때만 올린다', () => {
+  const src = funcSource('cvHwpCount');
+  assert.match(src, /if\(!_hwpEngineReady && !force\) return;/,
+    '⚠ 이 가드를 지우면 화면만 열어도 7MB를 내려받습니다');
+  // 부팅·렌더 경로에서 force로 부르는 곳이 없어야 한다
+  assert.ok(!/cvHwpCount\(true\)/.test(funcSource('cvRenderGuide')));
+  assert.ok(!/cvHwpCount\(true\)/.test(funcSource('cvApplyPages')));
+  assert.match(funcSource('cvHwpView'), /cvHwpCount\(true\)/, '누를 때는 세야 합니다');
+});
+
+test('쪽 수 배지는 한글 값을 정답으로 쓰고, 어림값일 때는 그렇다고 밝힌다', () => {
+  const src = funcSource('cvRenderGuide');
+  assert.match(src, /if\(_hwpEngineReady\)\{ cvHwpCount\(\); \}/, '엔진이 있으면 한글 값이 정답입니다');
+  assert.match(src, /'A4 '\+n\+'장 · 화면'/, '어림값에는 · 화면을 붙여야 합니다');
+  assert.match(funcSource('cvHwpCount'), /'장 · 한글'/, '한글 값에는 · 한글을 붙여야 합니다');
+  // 툴바 진입점
+  assert.match(source, /onclick="cvHwpView\(\)"[^>]*>👁 한글로 보기/);
+  assert.match(source, /class="cv-pgcnt" id="cvPageCnt" onclick="cvHwpView\(\)"/, '배지도 눌러야 열립니다');
+});
+
+test('보관한 한글 문서는 내려받지 않고 앱 안에서 본다', () => {
+  const src = funcSource('openOriginal');
+  assert.match(src, /_isHwpName\(f\.name\)/, 'hwp·hwpx는 뷰어로 보내야 합니다');
+  assert.match(src, /openHwpViewer\(b64ToAb\(f\.base64\)/);
+  assert.match(funcSource('_isHwpName'), /hwp\|hwpx/);
+  // 기관 양식 칩과 값채우기 결과도 바로 볼 수 있어야 한다
+  assert.match(funcSource('renderCvForms'), /cvFormHwpView/);
+  assert.match(funcSource('hwpxFill'), /openHwpViewer\(await blob\.arrayBuffer\(\)/);
+});
+
 test('빈 공간 행은 HWPX·텍스트 추출에 섞이지 않는다', () => {
   // _cvTableRows가 cv-noprint 칸을 걸러내므로 빈 행이 되어 사라진다
   assert.match(funcSource('_cvGapBefore'), /cv-pgap-c cv-noprint/,
