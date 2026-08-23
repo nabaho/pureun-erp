@@ -373,6 +373,27 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
 .edit-photo-kind.original{color:var(--t2);}
 .edit-photo-actions{display:flex;gap:6px;margin-top:6px;}
 .edit-photo-actions button{flex:1;min-width:0;padding:6px 4px;border:none;border-radius:7px;color:#fff;font-size:11px;font-weight:900;cursor:pointer;font-family:inherit;}
+/* 제목 옆 작은 설명 — 「현장 사진은 증빙, 참고 캡처는 증빙 아님」을 자리에서 말해 준다.
+   두 칸이 나란히 있으면 무엇이 증빙인지 헷갈리는 것이 이 화면의 유일한 위험이다. */
+.ph-sub{font-weight:700;text-transform:none;letter-spacing:0;color:var(--t2);opacity:.85;}
+
+/* 📎 참고 캡처 (대표 승인 목업 2026-08-23) — 증빙 사진과 «눈에 보이게» 갈라 둔다.
+   초록 계열로 두어, 파랑 계열인 현장 사진(증빙)과 색으로도 구분된다. */
+.ref-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.ref-card{min-width:0;background:var(--sf2);border:1px solid #a7f3d0;border-radius:10px;padding:8px;}
+.ref-card img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:7px;display:block;background:var(--sf2);cursor:zoom-in;}
+.ref-card .rl{font-size:10px;font-weight:900;color:var(--text);margin-bottom:6px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;}
+.ref-card .rw{font-size:9px;color:var(--t2);margin-top:5px;line-height:1.4;}
+.ref-card .rb{display:flex;gap:6px;margin-top:6px;}
+.ref-card .rb button{flex:1;min-width:0;padding:5px 4px;border:none;border-radius:7px;color:#fff;
+  font-size:10.5px;font-weight:900;cursor:pointer;font-family:inherit;}
+.ref-add{min-width:0;border:2px dashed #a7f3d0;border-radius:10px;padding:10px 8px;background:var(--sf2);
+  display:flex;flex-direction:column;gap:6px;transition:border-color .12s,background .12s;}
+.ref-add.drag-over{border-color:var(--ok);border-style:solid;background:rgba(16,185,129,.08);}
+.ref-add button{width:100%;padding:8px;border:1px solid var(--ok);border-radius:7px;background:var(--surface);
+  color:var(--ok);font-weight:800;font-size:11px;cursor:pointer;font-family:inherit;}
+.ref-add .rh{font-size:9.5px;color:var(--t2);text-align:center;line-height:1.45;}
 
 /* 사진첩에서 고르기 — 목록 */
 .apk-day{font-size:11.5px;font-weight:800;color:var(--t2);margin:10px 0 6px;}
@@ -1453,11 +1474,21 @@ html,body{height:100%;font-family:'Noto Sans KR',sans-serif;background:var(--bg)
         </div>
         <aside id="mEditPhotos" class="edit-photo-panel" style="display:none;">
           <div class="edit-photo-head">
-            <div class="edit-photo-title">📷 현장 사진</div>
+            <div class="edit-photo-title">📷 현장 사진 <span class="ph-sub">— 방문 증빙(타임스탬프)</span></div>
           </div>
           <div id="mEditPhCtl" style="margin-bottom:10px;"></div>
           <div id="mEditPhGrid" class="edit-photo-grid"></div>
           <input type="file" id="mEditExtraFi" accept="image/*" style="display:none;">
+          <!-- 📎 참고 캡처 (대표 승인 목업 2026-08-23) — 기술보호·현장클리닉은 포털
+               화면을 캡처해 사업장 정보를 남길 일이 많다. 위 현장 사진은 «방문 증빙»
+               자리(타임스탬프·회차 규칙)라 거기 넣으면 증빙과 섞인다. 그래서 갈라 둔다.
+               ⚠ 사진 본문을 여기 담지 않는다 — 사진첩 사진을 «가리키는 표»만 담는다. -->
+          <div id="mEditRefWrap" style="display:none;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
+            <div class="edit-photo-head">
+              <div class="edit-photo-title">📎 참고 캡처 <span class="ph-sub">— 증빙 아님 · 몇 장이든</span></div>
+            </div>
+            <div id="mEditRefGrid" class="ref-grid"></div>
+          </div>
         </aside>
         </div>
       </div>
@@ -2394,6 +2425,10 @@ function renderEditPhotos(sid,sc){
       </div>`;
     } else ctl.innerHTML='';
   }
+  /* 📎 참고 캡처 — 현장 사진과 같은 자리에서 함께 그린다(대표 승인 목업 2026-08-23).
+     ⚠ 위 defs·extraPhotoCount 를 건드리지 않는다 — 증빙 판정에 참고 캡처가 섞이면
+       최대회차·의무방문 규칙이 어긋난다. */
+  renderRefCaps(sid, sc);
   const grid=q('#mEditPhGrid'); if(!grid)return;
   grid.innerHTML='';
   // 렌더 토큰: 개수를 빠르게 바꾸면 이전 비동기 루프가 현재 목록에 카드를 덧붙여
@@ -2437,6 +2472,149 @@ function renderEditPhotos(sid,sc){
   })();
 }
 let _editPhRenderToken=0;
+
+/* ══════ 📎 참고 캡처 (대표 승인 목업 2026-08-23) ══════
+   "기술보호컨설팅과 현장클리닉의 경우 화면캡처로 사업장의 정보를 저장해야 할
+    경우가 많이 있다. 이럴 경우 별도로 저장셀을 만들 거다."
+
+   위 현장 사진은 **방문 증빙**이다 — 타임스탬프가 찍히고, 최대회차·의무방문 규칙이
+   그 장수를 센다. 포털 캡처를 그 칸에 넣으면 증빙과 섞여, 나중에 어느 것이 증빙인지
+   가릴 수 없다. 그래서 자리를 갈랐다.
+
+   ⚠ **사진 본문을 여기 담지 않는다.** 사진첩 사진을 «가리키는 표»만 담는다
+     (어느 해·번호·주인 + 이름표 + 붙인 때·붙인 이). 기록에 그림을 박으면 기록이
+     무거워져 목록이 느려진다 — 급여자료함에서 겪은 그 문제다.
+   ⚠ 타임스탬프를 안 찍는다. 방문 시각이 아니다.
+   ⚠ 장수 제한이 없다. 상담 한 건에 캡처가 여러 장 나온다.
+   ⚠ 증빙 판정(extraPhotoCount·photoSlotDefs)에 **세지 않는다** — 저 함수들을
+     건드리지 않았다는 것이 이 기능의 안전선이다. */
+const REF_CAP_MAX = 30;   // 터무니없이 쌓이는 것만 막는다(장수 규칙이 아니다)
+
+function refCapsOf(sc){
+  const a = sc && sc.refCaps;
+  return Array.isArray(a) ? a : [];
+}
+/* 표 하나 = {y:연도, id:사진번호, own:주인, nm:이름표, at:붙인때, by:붙인이} */
+function refCapKey(r){ return String(r.y)+'/'+String(r.id); }
+
+function saveRefCaps(sid, list){
+  const scheds=getScheds(); const i=scheds.findIndex(s=>s.id===sid);
+  if(i<0) return false;
+  /* 빈 배열은 실시간DB 가 「값 없음」으로 보고 아예 안 적는다 — 지웠을 때 옛 값이
+     되살아나지 않게 «지움 표시»로 null 을 넣는다(읽는 쪽은 refCapsOf 가 감싼다). */
+  if(list.length) scheds[i].refCaps=list; else scheds[i].refCaps=null;
+  setScheds(scheds);
+  return true;
+}
+
+function addRefCaps(sid, refs){
+  const sc=getScheds().find(s=>s.id===sid);
+  if(!sc){ toast('일정을 찾지 못했습니다','err'); return; }
+  if(!canEdit(sc)){ toast('본인 컨설팅만 붙일 수 있습니다','err'); return; }
+  const cur=refCapsOf(sc).slice();
+  const seen={}; cur.forEach(function(r){ seen[refCapKey(r)]=1; });
+  /* 붙인 이 — 이 앱은 이름을 직원 명단에서 찾는다(myId 는 번호뿐이다).
+     못 찾아도 붙이는 일은 계속한다 — 이름이 없다고 캡처를 못 붙이면 안 된다. */
+  const me=(getStaff().find(function(x){ return x.id===myId(); })||{}).name||'';
+  let added=0, dup=0;
+  refs.forEach(function(ref){
+    if(!ref||!ref.id) return;
+    const row={ y:String(ref.year||''), id:String(ref.id), own:String(ref.owner||''),
+                nm:String(ref.name||'캡처'), at:Date.now(), by:me };
+    if(seen[refCapKey(row)]){ dup++; return; }               // 같은 사진을 두 번 붙이지 않는다
+    if(cur.length>=REF_CAP_MAX){ return; }
+    seen[refCapKey(row)]=1; cur.push(row); added++;
+  });
+  if(!added){ toast(dup?'이미 붙어 있는 캡처입니다':'붙일 캡처가 없습니다','err'); return; }
+  if(!saveRefCaps(sid,cur)) return;
+  renderRefCaps(sid, getScheds().find(s=>s.id===sid));
+  toast('참고 캡처 '+added+'장 붙였습니다'+(dup?' (이미 있던 '+dup+'장은 건너뜀)':''));
+}
+
+function delRefCap(sid, key){
+  const sc=getScheds().find(s=>s.id===sid);
+  if(!sc||!canEdit(sc)){ toast('본인 컨설팅만 뗄 수 있습니다','err'); return; }
+  const next=refCapsOf(sc).filter(function(r){ return refCapKey(r)!==key; });
+  if(!saveRefCaps(sid,next)) return;
+  renderRefCaps(sid, getScheds().find(s=>s.id===sid));
+  /* 사진첩 원본은 그대로다 — 표만 뗐다. 그 말을 해 줘야 「사진을 지웠나」 걱정을 안 한다. */
+  toast('표만 뗐습니다 — 사진첩 원본은 그대로 있습니다');
+}
+
+/* 사진첩에서 그 사진 열기 — 어느 캡처였는지 원본으로 확인할 수 있어야 한다. */
+function openRefCapPhoto(y, id, own){
+  const u='pu-photos.html?photo='+encodeURIComponent(id)+'&year='+encodeURIComponent(y)
+    +(own?'&owner='+encodeURIComponent(own):'');
+  window.open(u,'_blank');
+}
+
+function renderRefCaps(sid, sc){
+  const wrap=q('#mEditRefWrap'), grid=q('#mEditRefGrid');
+  if(!wrap||!grid) return;
+  const mine=canEdit(sc);
+  const list=refCapsOf(sc);
+  /* 붙일 수 있는 사람이거나 붙어 있는 것이 있을 때만 칸을 보여 준다 —
+     남의 일정을 볼 때 빈 칸이 뜨면 무엇을 하라는 건지 알 수 없다. */
+  wrap.style.display = (mine || list.length) ? 'block' : 'none';
+  if(!(mine || list.length)) return;
+
+  let h='';
+  list.forEach(function(r){
+    const k=escAttr(refCapKey(r));
+    h+='<div class="ref-card" data-ref-key="'+k+'">'
+      + '<div class="rl" title="'+escAttr(r.nm)+'">'+escAttr(r.nm)+'</div>'
+      + '<img alt="'+escAttr(r.nm)+'" onclick="openRefCapPhoto(\''+escAttr(r.y)+'\',\''+escAttr(r.id)+'\',\''+escAttr(r.own)+'\')">'
+      + '<div class="rw">'+(r.by?escAttr(r.by)+' · ':'')+fmtRefWhen(r.at)+'</div>'
+      + (mine ? '<div class="rb"><button style="background:var(--danger);" onclick="delRefCap(\''+escAttr(sid)+'\',\''+k+'\')">🗑 떼기</button></div>' : '')
+      + '</div>';
+  });
+  if(mine && list.length<REF_CAP_MAX){
+    h+='<div class="ref-add" ondragover="event.preventDefault();this.classList.add(\'drag-over\')"'
+      + ' ondragleave="this.classList.remove(\'drag-over\')"'
+      + ' ondrop="dropRefCap(event,\''+escAttr(sid)+'\')">'
+      + '<button onclick="openRefCapPicker(\''+escAttr(sid)+'\')">🖼 사진첩에서 고르기</button>'
+      + '<div class="rh">끌어다 놓아도 됩니다 · 여러 장 한꺼번에<br>타임스탬프는 안 찍힙니다</div>'
+      + '</div>';
+  }
+  grid.innerHTML=h;
+  loadRefCapThumbs(sid, list);
+}
+
+function fmtRefWhen(t){
+  const n=+t; if(!n) return '';
+  const d=new Date(n);
+  return (d.getMonth()+1)+'/'+d.getDate();
+}
+
+/* 미리보기는 사진첩에서 «작은 것»만 받는다 — 원본을 받으면 캡처 열 장에 수십 MB 다. */
+let _refThumbToken=0;
+function loadRefCapThumbs(sid, list){
+  if(!window.PuPhotoStore || !list.length) return;
+  const my=++_refThumbToken;
+  try{ PuPhotoStore.init({ db: firebase.database(), storage: photoStorage() }); }catch(e){}
+  list.forEach(function(r){
+    PuPhotoStore.loadThumb(r.y, r.id, r.own).then(function(t){
+      if(!t || my!==_refThumbToken) return;
+      const cell=q('#mEditRefGrid [data-ref-key="'+refCapKey(r)+'"] img');
+      if(cell) cell.src=t;
+    }).catch(function(){});
+  });
+}
+
+function dropRefCap(e, sid){
+  e.preventDefault();
+  const el=e.currentTarget; if(el&&el.classList) el.classList.remove('drag-over');
+  /* 여러 장을 한꺼번에 받는다 — 사진첩이 고른 전부를 실어 보낸다(PuDrag.readAll). */
+  const refs = (window.PuDrag && PuDrag.readAll(e.dataTransfer)) || [];
+  if(!refs.length){ toast('사진첩에서 사진을 끌어다 놓아 주세요','err'); return; }
+  addRefCaps(sid, refs);
+}
+
+/* 「사진첩에서 고르기」 창을 참고 캡처 쪽으로 연다 — 창은 이미 있는 것을 그대로 쓴다. */
+function openRefCapPicker(sid){
+  openAlbumPicker(sid, null, true);
+}
+
 // 추가 사진 개수 조절 (스테퍼)
 function stepExtraPhotos(sid,delta){
   const sc=getScheds().find(s=>s.id===sid); if(!sc)return;
@@ -2551,11 +2729,13 @@ let albumPickTarget = null;   // { sid, slotIdx }
 let albumPickOwner = null;    // 내 uid
 let albumPickItems = [];
 
-function openAlbumPicker(sid, slotIdx){
+/* ⚠ ref=true 면 «참고 캡처» 쪽으로 넣는다 (대표 승인 목업 2026-08-23) —
+   창을 두 벌 만들지 않는다. 넣는 자리만 다르고 고르는 일은 똑같다. */
+function openAlbumPicker(sid, slotIdx, ref){
   if(!window.PuPhotoStore){ toast('사진첩과 연결되지 않았습니다','err'); return; }
   const u=firebase.auth().currentUser;
   if(!u){ toast('로그인 정보를 확인할 수 없습니다','err'); return; }
-  albumPickTarget = { sid:sid, slotIdx:slotIdx };
+  albumPickTarget = { sid:sid, slotIdx:slotIdx, ref:!!ref };
   albumPickOwner = u.uid;
   q('#albumPickBody').innerHTML='<div class="apk-empty">불러오는 중…</div>';
   q('#mbAlbumPick').classList.add('open');
@@ -2616,6 +2796,14 @@ async function pickAlbumPhoto(id, year){
   const it=albumPickItems.find(function(x){ return x.id===id; });
   const target=albumPickTarget, owner=albumPickOwner;
   closeModal('mbAlbumPick');
+  /* 참고 캡처는 «표»만 붙인다 — 원본을 받아 오지 않는다. 그래서 기다림도 없다.
+     이름표는 판독한 서류 제목을 먼저 쓴다(「통합 기술보호지원반 신청서」). */
+  if(target.ref){
+    const rf=it&&it.meta&&it.meta.read&&it.meta.read.fields;
+    const nm=(rf&&(rf.docName||rf.company||rf.name))||'캡처';
+    addRefCaps(target.sid, [{ year:year, id:id, owner:owner, name:nm }]);
+    return;
+  }
   toast('사진첩에서 가져오는 중…');
   let full=null;
   try{
