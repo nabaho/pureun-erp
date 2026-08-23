@@ -24,7 +24,7 @@ test('인라인 스크립트가 문법 오류 없이 파싱된다', () => {
 });
 
 test('판정 모듈을 외부 파일로 로드한다', () => {
-  assert.match(source, /<script src="js\/kcareer-scan\.js"><\/script>/);
+  assert.match(source, /<script src="js\/kcareer-scan\.js(\?v=\d+)?"><\/script>/);
 });
 
 test('서류 폴더는 읽기 전용으로만 연다 — readwrite 요청이 없어야 한다', () => {
@@ -636,7 +636,7 @@ test('원본 없는 항목만 필터와 중복관리 표시가 fs 레코드를 �
 });
 
 test('동기화 모듈을 외부 파일로 로드한다', () => {
-  assert.match(source, /<script src="js\/kcareer-pusync\.js"><\/script>/);
+  assert.match(source, /<script src="js\/kcareer-pusync\.js(\?v=\d+)?"><\/script>/);
 });
 
 test('puSyncCommit은 스토어별 단일 쓰기와 꼬리표를 지킨다', () => {
