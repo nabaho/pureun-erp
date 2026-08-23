@@ -435,69 +435,118 @@
     });
   }
 
-  function sendToCompany(o) {
-    o = o || {};
+  /* ── 업체 목록을 «한 번만» 읽어 사업자번호 지도를 만든다 (2026-08-23) ──
+     findCompanyByBizNo 는 부를 때마다 업체 목록을 통째로 내려받는다(업체 371곳).
+     기다리는 사진이 152장인데 하나씩 확인하면 **152번** 내려받는다 — 실시간DB 는
+     내려받은 양으로 돈을 받으므로 그건 못 쓴다. 한 번 읽고 메모리에서 맞춘다.
+     ⚠ 같은 사업자번호가 두 벌 있으면 앞엣것을 쓴다 — findCompanyByBizNo 와 같다.
+       (업체관리에 중복이 있는 것은 별개 문제다. 여기서 골라 고치지 않는다.) */
+  function companyIndex() {
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    return deps.db.ref(ERP_CO).once('value').then(function (s) {
+      var wrap = s.val();
+      var raw = (wrap && wrap.v !== undefined) ? wrap.v : wrap;
+      var byBiz = {};
+      eachCompany(raw, function (co, at) {
+        var k = bizKey(co.bizNo);
+        if (k && !byBiz[k]) byBiz[k] = { id: co.id || at, at: at, rec: co };
+      });
+      return byBiz;
+    });
+  }
+
+  /* 사진 하나가 업체에 넣을 값 — 읽기 전에 가릴 수 있는 것을 여기서 다 가린다.
+     돌려주는 것: { stop: 결과 } 면 더 볼 것이 없다 / { key, mapped } 면 찾아본다. */
+  function coPlan(o) {
     var kind = o.kind;
     if (kind !== 'bizreg' && kind !== 'sme') {
-      return Promise.reject(new Error('사업자등록증과 중소기업확인서만 업체관리로 보낼 수 있습니다'));
+      return { err: new Error('사업자등록증과 중소기업확인서만 업체관리로 보낼 수 있습니다') };
     }
-    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
-
     var fields = o.fields || {};
-    if (!bizKey(fields.bizno)) {
-      return Promise.resolve({
-        found: false, filled: [],
-        message: '사업자번호를 읽지 못해 업체를 찾을 수 없습니다'
-      });
+    var key = bizKey(fields.bizno);
+    if (!key) {
+      return { stop: { found: false, filled: [],
+        message: '사업자번호를 읽지 못해 업체를 찾을 수 없습니다' } };
     }
-
     var mapped = global.PuDocRead.mapTo('erp', kind, fields);
     delete mapped.bizNo;                      // 찾는 열쇠다 — 다시 쓰지 않는다
     if (kind === 'sme') {
       Object.keys(mapped).forEach(function (k) { if (!SME_ONLY[k]) delete mapped[k]; });
     }
     if (!Object.keys(mapped).length) {
-      return Promise.resolve({
-        found: false, filled: [],
-        message: '업체에 채울 내용이 없습니다'
-      });
+      return { stop: { found: false, filled: [], message: '업체에 채울 내용이 없습니다' } };
     }
+    return { key: key, mapped: mapped };
+  }
 
-    return findCompanyByBizNo(fields.bizno).then(function (hit) {
-      if (!hit) {
-        /* 못 찾았다고 만들지 않는다. 사람이 업체관리에서 만들면 그때 채워진다. */
-        return {
-          found: false, filled: [],
-          message: '이 사업자번호의 업체가 업체관리에 없습니다 — 업체를 먼저 만들어 주세요'
-        };
-      }
-      var gaps = fillGaps(hit.rec, mapped);
-      var names = Object.keys(gaps);
-      if (!names.length) {
-        return {
-          found: true, id: hit.id, filled: [],
-          message: '업체 「' + (hit.rec.name || '') + '」에 이미 다 들어 있었습니다'
-        };
-      }
-      var now = Date.now();
-      var u = {};
-      var path = ERP_CO + '/v/' + hit.at + '/';
-      names.forEach(function (k) { u[path + k] = gaps[k]; });
-      /* 고친 때·고친 이를 남긴다 — 푸른이알피의 동시 편집 판단이 이걸 본다. */
-      u[path + 'updatedAt'] = now;
-      if (o.byName) u[path + 'updatedBy'] = o.byName;
-      /* 갱신시각 — 푸른이알피가 이걸 보고 다시 읽는다. 안 쓰면 화면에 안 나타난다. */
-      u[ERP_CO + '/u'] = now;
+  /* 지도에서 찾아 «쓸 것»을 만든다 — 실제 쓰기는 부르는 쪽이 한 번에 모아서 한다.
+     돌려주는 것: { result, writes } — writes 가 비면 쓸 것이 없다. */
+  function coFill(hit, mapped, o) {
+    if (!hit) {
+      /* 못 찾았다고 만들지 않는다 — **업체는 계약이 만든다**(대표 결정 2026-08-23).
+         사진첩이 업체를 만들면 갈래(자문·급여·기금·노조)를 짐작해야 하고, 상담으로
+         받아 둔 서류까지 업체가 되어 업체관리가 서류함이 된다. 계약관리에서 업체가
+         생기면 이 사진의 값은 그때 저절로 들어간다(사진첩이 다시 맞춰 본다). */
+      return { writes: {}, result: { found: false, filled: [],
+        message: '아직 업체관리에 없는 업체입니다 — 계약이 만들어지면 저절로 들어갑니다' } };
+    }
+    var gaps = fillGaps(hit.rec, mapped);
+    var names = Object.keys(gaps);
+    if (!names.length) {
+      return { writes: {}, result: { found: true, id: hit.id, filled: [],
+        message: '업체 「' + (hit.rec.name || '') + '」에 이미 다 들어 있었습니다' } };
+    }
+    var now = Date.now();
+    var u = {};
+    var path = ERP_CO + '/v/' + hit.at + '/';
+    names.forEach(function (k) { u[path + k] = gaps[k]; });
+    /* 고친 때·고친 이를 남긴다 — 푸른이알피의 동시 편집 판단이 이걸 본다. */
+    u[path + 'updatedAt'] = now;
+    if (o.byName) u[path + 'updatedBy'] = o.byName;
+    /* 갱신시각 — 푸른이알피가 이걸 보고 다시 읽는다. 안 쓰면 화면에 안 나타난다. */
+    u[ERP_CO + '/u'] = now;
 
-      var labels = names.map(function (n) { return CO_LABEL[n] || n; });
-      return deps.db.ref().update(u).then(function () {
-        return {
-          found: true, id: hit.id, filled: labels,
-          message: '업체 「' + (hit.rec.name || '') + '」의 빈 칸 ' + labels.length +
-            '개를 채웠습니다 (' + labels.join('·') + ')'
-        };
-      });
+    var labels = names.map(function (n) { return CO_LABEL[n] || n; });
+    return { writes: u, result: { found: true, id: hit.id, filled: labels,
+      message: '업체 「' + (hit.rec.name || '') + '」의 빈 칸 ' + labels.length +
+        '개를 채웠습니다 (' + labels.join('·') + ')' } };
+  }
+
+  /* 여러 장을 «한 번 읽고 한 번 써서» 처리한다. 돌려주는 것은 넣은 순서대로의
+     결과 배열 — 사진 하나하나가 저마다 filedCo 에 적을 값을 받는다.
+     ⚠ 쓰기도 한 번에 모은다. 152장을 하나씩 쓰면 그만큼 왕복이 생긴다. */
+  function sendToCompanyMany(list) {
+    var items = list || [];
+    if (!items.length) return Promise.resolve([]);
+    if (!deps.db) return Promise.reject(new Error('실시간DB가 연결되지 않았습니다'));
+    var plans = [], bad = null;
+    items.forEach(function (o) {
+      var p = coPlan(o || {});
+      if (p.err && !bad) bad = p.err;
+      plans.push(p);
     });
+    if (bad) return Promise.reject(bad);
+    /* 찾아볼 것이 하나도 없으면 **읽지 않는다** — 기다리는 사진이 없는데 업체
+       목록을 내려받으면 그냥 돈만 나간다. */
+    if (!plans.some(function (p) { return p.key; })) {
+      return Promise.resolve(plans.map(function (p) { return p.stop; }));
+    }
+    return companyIndex().then(function (idx) {
+      var out = [], u = {};
+      plans.forEach(function (p, i) {
+        if (p.stop) { out.push(p.stop); return; }
+        var got = coFill(idx[p.key] || null, p.mapped, items[i] || {});
+        Object.keys(got.writes).forEach(function (k) { u[k] = got.writes[k]; });
+        out.push(got.result);
+      });
+      if (!Object.keys(u).length) return out;
+      return deps.db.ref().update(u).then(function () { return out; });
+    });
+  }
+
+  /* 한 장 — 여러 장 길을 그대로 쓴다(길이 둘이면 한쪽만 고쳐진다). */
+  function sendToCompany(o) {
+    return sendToCompanyMany([o || {}]).then(function (r) { return r[0]; });
   }
 
   global.PuDocFile = {
@@ -510,7 +559,9 @@
     whenText: whenText,
     sendToCards: sendToCards,
     findCompanyByBizNo: findCompanyByBizNo,
+    companyIndex: companyIndex,
     sendToCoInfo: sendToCoInfo,
-    sendToCompany: sendToCompany
+    sendToCompany: sendToCompany,
+    sendToCompanyMany: sendToCompanyMany
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -32,8 +32,12 @@ test('연도를 먼저 맞춘 다음 목록을 부른다', () => {
 });
 
 test('목록이 실린 뒤에 연다', () => {
-  const at = photos.indexOf('function loadGrid()');
-  const fn = photos.slice(at, at + 1400);
+  /* ⚠ 고정 폭(1400자)으로 자르던 것을 중괄호 짝으로 바꿨다 (2026-08-23) —
+     loadGrid 에 한 줄(coSweep)이 붙자 함수가 1501자가 되어 창이 «끝에 못 닿았다».
+     창 숫자를 키워 쫓아가면 다음에 또 같은 일이 생긴다
+     (tests/test-cut-truncation.test.js 가 바로 그것을 잡아 알려 주었다).
+     아래 cut() 이 이 파일에 이미 있다 — 그것을 쓴다. */
+  const fn = cut(photos, 'function loadGrid()');
   const grid = fn.indexOf('renderGrid();');
   const open = fn.indexOf('openAskedPhoto();');
   assert.ok(grid > 0 && open > grid, '목록을 그리기 전에 열려고 한다');

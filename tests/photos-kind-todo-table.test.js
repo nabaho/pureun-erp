@@ -41,6 +41,7 @@ function load() {
     keep[0],
     fnOf(app, 'readAnyField'),
     fnOf(app, 'coFilledOk'),
+    fnOf(app, 'coTodo'),
     fnOf(app, 'tooSmall'),
     fnOf(app, 'checkWhy'),
     fnOf(app, 'needsCheck')

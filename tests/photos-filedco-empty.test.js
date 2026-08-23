@@ -52,7 +52,7 @@ function loadNeedsCheck() {
   const minEdge = app.match(/^const MIN_READ_EDGE = \{[\s\S]*?\n\};/m);
   assert.ok(minEdge, 'MIN_READ_EDGE 를 찾지 못했습니다');
   vm.runInContext(minEdge[0].replace('const ', 'var ') + '\n' + pick('tooSmall') + '\n' +
-    pick('coFilledOk') + '\n' + pick('needsCheck') + '\n' + pick('checkWhy'), ctx);
+    pick('coFilledOk') + '\n' + pick('coTodo') + '\n' + pick('needsCheck') + '\n' + pick('checkWhy'), ctx);
   return ctx;
 }
 
@@ -87,11 +87,19 @@ test('실제로 채웠으면 할 일이 아니다', () => {
   assert.equal(ctx.needsCheck(done), false);
 });
 
-test('업체를 못 찾았으면 filled 가 있어도 할 일이다', () => {
+/* ⚠ 2026-08-23 두 번째 결정으로 뒤집혔다: **업체는 계약이 만든다.** 업체가 아직
+   없는 것은 사진첩에서 할 수 있는 일이 없는 «기다림»이고, 계약관리에서 업체가
+   생기면 coSweep 이 저절로 채운다(실데이터 152장이 이 꼴이었다).
+   자세한 것은 tests/photos-co-follows-contract.test.js. */
+test('업체를 못 찾았으면 기다린다 — 보낸 것은 이미 보낸 것이다 (2026-08-23 뒤집음)', () => {
   const ctx = loadNeedsCheck();
   const notFound = { meta: { read: { kind: 'bizreg', auto: true, filed: { id: 'c1' },
     filedCo: { at: 1, found: false, filled: ['대표자'], message: '업체 없음' } } } };
-  assert.equal(ctx.needsCheck(notFound), true);
+  assert.equal(ctx.needsCheck(notFound), false);
+  /* 아직 «보낸 적이 없는» 것은 그대로 할 일이다 — 누르면 끝난다. */
+  const never = { meta: { read: { kind: 'sme', auto: true, filed: { id: 'c1' } } } };
+  assert.equal(ctx.needsCheck(never), true,
+    '★ 중소기업확인서는 명함첩에 안 가므로 이걸 놓치면 아무 곳에도 안 들어갑니다');
 });
 
 /* ── 한 곳으로 모았는가 ── */
@@ -105,8 +113,12 @@ test('★ filled 를 맨손으로 읽는 곳이 하나도 없다', () => {
 
 test('★ 읽는 곳이 모두 같은 함수를 쓴다', () => {
   assert.match(app, /function coFilledOk\(read\)/, '한 곳으로 모으는 함수가 없습니다.');
-  const uses = (app.match(/coFilledOk\(/g) || []).length;
-  assert.ok(uses >= 5, 'coFilledOk 를 쓰는 곳이 ' + uses + '곳뿐입니다 — 넷 다 옮겨야 합니다.');
+  /* ⚠ 2026-08-23 부터 «할 일인가»를 가리는 일은 coTodo 로 옮겼다(업체가 아직
+     없는 것은 기다림이다). 그래서 coFilledOk 를 쓰는 곳이 줄었다 — 줄었다고
+     흩어진 것은 아니다. 둘을 합쳐 세고, 맨손으로 읽는 곳이 없는지는 위 검사가 본다. */
+  const uses = (app.match(/coFilledOk\(/g) || []).length + (app.match(/coTodo\(/g) || []).length;
+  assert.ok(uses >= 6, '업체관리 판정을 쓰는 곳이 ' + uses + '곳뿐입니다 — 흩어져 있습니다.');
+  assert.match(app, /function coTodo\(read\)/, '할 일 판정을 모으는 함수가 없습니다.');
   const fn = app.match(/function coFilledOk\([\s\S]*?\n\}/)[0];
   /* ⚠ 2026-08-23 부터 filled 를 «아예 안 본다» — found 만으로 가른다. 그래서
      「없을 수 있다」를 다룰 필요 자체가 없어졌다(멎을 자리가 사라진 것이 더 낫다).
