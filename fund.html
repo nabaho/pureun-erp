@@ -1095,6 +1095,8 @@ function renderHome(){
     /* 셋(노동청·세무서·등기소)이 «같은 소재지»에서 나오므로 단추도 하나다 —
        종전에는 같은 42개 주소를 세 번 훑고 세 번 확인해야 했다. */
     +(edit?'<button onclick="bulkOffices()" title="소재지로 전체 기금의 관할 노동청·세무서·등기소를 한 번에 추정(빈 칸만)" style="margin-right:6px">🏤 관할 일괄</button>':'')
+    /* 미완비를 보고 있을 때 특히 쓸모 있다 — 기업정보함에 이미 있는 값을 다시 칠 이유가 없다 */
+    +((edit||S.homeTab==='inc')?'<button onclick="bulkFromCards()" title="기업정보함(사업자등록증)에 있는 법인등록번호·고유번호·소재지를 미완비 기금의 빈 칸에 일괄 채움" style="margin-right:6px">🏢 기업정보함 일괄</button>':'')
     +(edit?'<button class="primary" onclick="importFundsInfo()" title="로컬 프로그램에서 뽑은 기금 기본정보 JSON을 한 번에 반영(빈 칸만 채움)" style="margin-right:6px">📥 기금정보 가져오기</button>':'')
     +(edit?'<button onclick="importSubsidy()" title="과거 폴더에서 뽑은 지원금 신청·결정액·출연금·제출서류 JSON을 한 번에 반영(빈 칸만 채움)" style="margin-right:6px">🎁 지원금 자료 가져오기</button>':'')
     +'<button class="'+(edit?'primary':'')+'" onclick="S.homeEdit=!S.homeEdit;renderHome()" title="핵심 기본정보(인가번호·설립일 등) 직접 입력">'+(edit?'✓ 입력 종료':'✏️ 정보 채우기')+'</button>'
@@ -1520,6 +1522,81 @@ function bulkOffices(){
   window._offPlan=plan;
 }
 function applyBulkOffices(){ _applyBulkOffice(window._offPlan,null,'관할 기관',function(){window._offPlan=null;}); }
+
+/* ══ 미완비 일괄 — 기업정보함에 있는 값을 당겨온다 ══
+   기업정보함(사업자등록증)이 채울 수 있는 것은 셋뿐이다:
+     법인등록번호(cno) · 고유번호(bz) · 소재지(ad)
+   인가번호·인가일·설립등기일은 인가증·등기부에만 있어 여기서 못 채운다.
+   ⚠ 이름이 어정쩡하게 닮은 카드를 끌어오면 «남의 회사 번호»가 기금에 박힌다 —
+     확실할 때만 짝짓고, 후보가 둘 이상이면 아예 건너뛴다. */
+var CARD_BULK=[['cno','corp_reg_no','법인등록번호'],['bz','tax_id_no','고유번호'],['ad','address','소재지']];
+/* 기금 이름 ↔ 카드 회사 이름 짝짓기. 기금명은 양쪽에 「근로복지기금」이 붙으므로
+   그것까지 걷어낸 열쇠로 견주고, 짧은 열쇠(3자 미만)는 아예 쓰지 않는다. */
+function _cardFundKey(s){
+  return String(s||'').replace(/\(주\)|㈜|주식회사|사단법인|재단법인|유한회사/g,'')
+    .replace(/공동근로복지기금|사내근로복지기금|근로복지기금/g,'')
+    .replace(/[\s\-·_()\[\]]/g,'').toLowerCase();
+}
+function _cardMatch(f){
+  var cands=(_cardIdx||[]).filter(function(r){ return r.k==='biz'&&String(r.c||'').trim(); });
+  var dig=function(v){ return String(v||'').replace(/\D/g,''); };
+  // ① 이미 아는 번호로 맞추기 — 가장 확실하다
+  var byNo=cands.filter(function(r){
+    var b=dig(r.bz), c=dig(r.cno);
+    return (b&&b.length>=10&&b===dig(f.tax_id_no))||(c&&c.length>=10&&c===dig(f.corp_reg_no));
+  });
+  if(byNo.length===1) return byNo[0];
+  // ② 이름 — 완전히 같을 때만. 부분일치는 「충남 4호」와 「충남 40호」를 섞을 수 있다
+  var k=_cardFundKey(f.name||f.short_name);
+  if(k.length<3) return null;
+  var exact=cands.filter(function(r){ return _cardFundKey(r.c)===k; });
+  return exact.length===1?exact[0]:null;
+}
+function bulkFromCards(){
+  if(!_cardIdx){
+    toast('기업정보함을 읽는 중…');
+    loadCardIdx().then(bulkFromCards).catch(function(e){ toast('기업정보함을 읽지 못했습니다: '+((e&&e.message)||e),'err'); });
+    return;
+  }
+  var arr=Object.keys(funds).filter(function(k){ return !isTrashed(funds[k])&&funds[k].setup_stage!=='설립준비'; })
+    .map(function(k){ return Object.assign({_id:k},funds[k]); })
+    .filter(function(f){ return nDone(f)<5; });                    // 미완비만
+  var plan=[], rows=[], cnt={}, noCard=[];
+  CARD_BULK.forEach(function(c){ cnt[c[1]]=0; });
+  arr.forEach(function(f){
+    var card=_cardMatch(f);
+    if(!card){ noCard.push(f.short_name||f.name); return; }
+    var cell={}, any=false;
+    CARD_BULK.forEach(function(c){
+      if(String(f[c[1]]||'').trim()) return;                        // 이미 있으면 건드리지 않는다
+      var v=String(card[c[0]]||'').trim(); if(!v) return;
+      cell[c[1]]=v; cnt[c[1]]++; any=true;
+      plan.push({id:f._id,name:f.short_name||f.name,key:c[1],office:v});
+    });
+    if(any) rows.push({name:f.short_name||f.name,card:card.c,cell:cell});
+  });
+  if(!plan.length){
+    toast(arr.length? '기업정보함에서 채울 빈 칸이 없습니다'+(noCard.length?' (짝지을 카드 없음 '+noCard.length+'개)':'')
+                    : '미완비 기금이 없습니다','warn');
+    return;
+  }
+  var sum=CARD_BULK.filter(function(c){return cnt[c[1]];}).map(function(c){ return c[2]+' '+cnt[c[1]]+'개'; }).join(' · ');
+  showModal('<div class="row" style="margin:0 0 6px"><h2 style="margin:0">🏢 기업정보함에서 일괄 채우기</h2>'+hlp('bulk.card')+'</div>'
+    +'<p class="muted" style="font-size:12px;margin:0 0 10px">빈 칸만 채웁니다 — '+esc(sum)+'.'
+    +(noCard.length?'<br>짝지을 카드가 없어 제외 '+noCard.length+'개: '+esc(noCard.slice(0,8).join(', '))+(noCard.length>8?' 외':''):'')+'</p>'
+    +'<div style="max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:8px"><table><thead><tr>'
+    +'<th>기금</th><th>기업정보함 카드</th>'+CARD_BULK.map(function(c){return '<th>'+c[2]+'</th>';}).join('')+'</tr></thead><tbody>'
+    +rows.map(function(r){
+      return '<tr><td style="font-weight:600;white-space:nowrap">'+esc(r.name)+'</td>'
+        +'<td class="muted" style="white-space:nowrap">'+esc(r.card)+'</td>'
+        +CARD_BULK.map(function(c){ return '<td'+(r.cell[c[1]]?'':' class="muted"')+' style="white-space:nowrap">'
+          +(r.cell[c[1]]?esc(r.cell[c[1]]):'—')+'</td>'; }).join('')+'</tr>';
+    }).join('')+'</tbody></table></div>'
+    +'<div class="row" style="justify-content:flex-end;margin-top:14px"><button onclick="closeM()">취소</button>'
+    +'<button class="primary" onclick="applyBulkCards()">'+plan.length+'칸 채우기</button></div>',{width:820});
+  window._cardPlan=plan;
+}
+function applyBulkCards(){ _applyBulkOffice(window._cardPlan,null,'기업정보함 값',function(){window._cardPlan=null;}); }
 /* 공용 적용기 — 적용 직전 서버 현재값 재확인해 '아직 빈 칸'만 채움(그 사이 입력분 보호).
    field 를 안 주면 줄마다 제 칸(p.key)에 넣는다 — 노동청·세무서·등기소를 한 번에 채울 때. */
 function _applyBulkOffice(plan,field,label,clearPlan){
@@ -7910,6 +7987,11 @@ var HELP={
  'home.fill':{t:'정보 채우기',h:'<p>칸에 바로 입력하면 <b>자동 저장</b>됩니다. <b>빨간 테두리</b>는 빈 칸입니다.</p>'
    +'<p><b>완비 기준 5항목</b></p><ul><li>인가번호</li><li>인가일</li><li>법인등록번호</li><li>설립등기일</li><li>고유번호</li></ul>'
    +'<p>[🏛 관할등기소 일괄]은 소재지로 전 기금의 등기소를 <b>추정</b>합니다 — 확인이 필요합니다.</p>'},
+ 'bulk.card':{t:'기업정보함에서 일괄 채우기',h:'<p>기업정보함(사업자등록증)에 이미 있는 값을 미완비 기금의 <b>빈 칸에만</b> 넣습니다.</p>'
+   +'<p><b>채울 수 있는 것</b> — 법인등록번호 · 고유번호 · 소재지</p>'
+   +'<p><b>못 채우는 것</b> — 인가번호 · 인가일 · 설립등기일. 이 셋은 인가증·등기부에만 있으니 <b>서류 자동 입력</b>으로 넣으세요.</p>'
+   +'<p><b>짝짓는 방법</b> — 이미 아는 번호(고유번호·법인등록번호)가 맞으면 그것으로, 없으면 <b>이름이 완전히 같을 때만</b> 짝짓습니다. 「충남 4호」와 「충남 40호」를 섞지 않기 위해 부분일치는 쓰지 않습니다.</p>'
+   +'<p>후보가 둘 이상인 기금은 <b>건너뛰고</b> 몇 개를 건너뛰었는지 알려 줍니다. 넣기 전에 표로 보여 주고, 넣는 순간 서버 값을 다시 확인해 그 사이 채워진 칸은 건드리지 않습니다.</p>'},
  'home.inc':{t:'미완비 기금',h:'<p>운영 중인데 <b>기본정보 5항목</b>이 덜 찬 기금만 모았습니다.</p>'
    +'<p><b>5항목</b> — 인가번호 · 인가일 · 법인등록번호 · 설립등기일 · 고유번호</p>'
    +'<p>여기서는 <b>정보 채우기</b>가 켜진 채로 열립니다. 칸에 바로 입력하면 자동 저장되고, 다 채워지면 이 묶음에서 빠집니다.</p>'

@@ -341,3 +341,84 @@ test('회사 이름이 세로로 깨지지 않게 줄바꿈을 막는다', () =>
   assert.match(SRC, /width:T\.width\|\|640/, '칸 많은 목록을 넓게 여는 설정이 없다');
   assert.match(SRC, /need:'c', width:900/, '참여사업장 목록이 좁게 열린다');
 });
+
+/* ── 미완비 일괄 채우기 ──
+   기업정보함 카드를 기금에 짝지어 빈 칸을 채운다.
+   ⚠ 여기서 잘못 짝지으면 «남의 회사 번호»가 기금에 박힌다 — 짝짓기 규칙이 핵심이다. */
+function matcher(idx) {
+  const box = {};
+  new Function('IDX', [
+    'var _cardIdx=IDX;',
+    grabFn('_cardFundKey'), grabFn('_cardMatch'),
+    'this.match=_cardMatch; this.key=_cardFundKey;'
+  ].join('\n')).call(box, idx);
+  return box;
+}
+
+test('이름이 완전히 같을 때만 짝짓는다 — 4호와 40호를 섞지 않는다', () => {
+  const m = matcher([
+    { _id: 'a', k: 'biz', c: '가나공동근로복지기금4호', cno: '111111-1111111' },
+    { _id: 'b', k: 'biz', c: '가나공동근로복지기금40호', cno: '222222-2222222' }
+  ]);
+  assert.equal(m.match({ name: '가나공동근로복지기금4호' })._id, 'a', '정확히 같은 이름을 못 찾았다');
+  assert.equal(m.match({ name: '가나공동근로복지기금40호' })._id, 'b');
+  assert.equal(m.match({ name: '가나공동근로복지기금' }), null, '부분일치로 아무 카드나 끌어오면 안 된다');
+});
+
+test('기금·회사 표기가 달라도 같은 이름으로 본다', () => {
+  const m = matcher([{ _id: 'a', k: 'biz', c: '㈜ 가나다 사내근로복지기금', cno: '111111-1111111' }]);
+  assert.equal(m.key('주식회사 가나다 사내근로복지기금'), m.key('㈜가나다사내근로복지기금'),
+    '㈜·주식회사·공백 차이로 못 맞추면 대부분 안 붙는다');
+  assert.ok(m.match({ name: '주식회사 가나다 사내근로복지기금' }), '표기만 다른 같은 회사를 못 찾았다');
+});
+
+test('아는 번호가 있으면 이름보다 번호로 짝짓는다', () => {
+  const m = matcher([
+    { _id: 'a', k: 'biz', c: '전혀 다른 이름', bz: '123-82-00001' },
+    { _id: 'b', k: 'biz', c: '가나공동근로복지기금', bz: '999-82-99999' }
+  ]);
+  assert.equal(m.match({ name: '가나공동근로복지기금', tax_id_no: '123-82-00001' })._id, 'a',
+    '번호가 맞는 카드를 우선해야 한다');
+});
+
+test('후보가 둘 이상이거나 이름이 짧으면 건너뛴다', () => {
+  const dupe = matcher([
+    { _id: 'a', k: 'biz', c: '가나공동근로복지기금' },
+    { _id: 'b', k: 'biz', c: '가나 공동근로복지기금' }        // 표기만 다른 같은 열쇠 = 후보 둘
+  ]);
+  assert.equal(dupe.match({ name: '가나공동근로복지기금' }), null, '애매하면 짝짓지 말아야 한다');
+  const m = matcher([{ _id: 'a', k: 'biz', c: '가공동근로복지기금' }]);
+  assert.equal(m.match({ name: '가공동근로복지기금' }), null, '열쇠가 3자 미만이면 쓰지 않는다');
+});
+
+test('명함은 짝짓기에 쓰지 않는다 — 회사 번호는 사업자등록증에만 있다', () => {
+  const m = matcher([{ _id: 'c', k: 'card', c: '가나공동근로복지기금', n: '김담당' }]);
+  assert.equal(m.match({ name: '가나공동근로복지기금' }), null);
+});
+
+test('채우는 칸은 셋뿐이고, 못 채우는 셋은 서류로 안내한다', () => {
+  const box = {};
+  new Function(grabDecl('CARD_BULK') + ';this.B=CARD_BULK;').call(box);
+  assert.deepEqual(box.B.map(x => x[1]), ['corp_reg_no', 'tax_id_no', 'address'],
+    '기업정보함에 없는 칸을 채우려 하면 안 된다');
+  const led = grabDecl('LED_COLS');
+  box.B.forEach(b => assert.ok(led.includes("'" + b[1] + "'") || b[1] === 'address',
+    '미완비 표에 없는 칸을 채운다: ' + b[1]));
+  // 인가번호·인가일·설립등기일은 여기서 채우지 않는다
+  ['inka_no', 'inka_date', 'reg_date'].forEach(k =>
+    assert.ok(!box.B.some(b => b[1] === k), '인가증·등기부에만 있는 칸을 기업정보함에서 채우려 한다: ' + k));
+  assert.ok(SRC.includes("'bulk.card':{t:"), '도움말이 없다');
+  assert.match(SRC, /못 채우는 것[\s\S]{0,120}인가번호/, '못 채우는 칸을 안내하지 않는다');
+});
+
+test('빈 칸만 채우고, 넣는 순간 서버 값을 다시 확인한다', () => {
+  const fn = grabFn('bulkFromCards');
+  assert.match(fn, /if\(String\(f\[c\[1\]\]\|\|''\)\.trim\(\)\) return;/, '이미 있는 값을 덮어쓸 수 있다');
+  assert.match(fn, /nDone\(f\)<5/, '미완비만 대상으로 삼지 않는다');
+  assert.match(fn, /setup_stage!=='설립준비'/, '설립중 기금을 끌어들이면 목록이 무의미해진다');
+  // 실제 저장은 공용 적용기를 쓴다(서버 재확인 포함)
+  assert.match(SRC, /function applyBulkCards\(\)\{ _applyBulkOffice\(window\._cardPlan/, '공용 적용기를 쓰지 않는다');
+  const apply = grabFn('_applyBulkOffice');
+  assert.match(apply, /if\(String\(c\[fld\(p\)\]\|\|''\)\.trim\(\)\)\{ skip\+\+; return; \}/, '서버 재확인이 빠졌다');
+  assert.match(SRC, /onclick="bulkFromCards\(\)"/, '단추가 없다');
+});
