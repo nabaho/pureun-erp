@@ -21,6 +21,8 @@ function cut(name) {
 
 /* ⚠ 잘라 온 함수가 쓰는 **상수**도 함께 넣어야 한다 — 안 넣으면
    ReferenceError 로 터진다(2026-08-14 SHARE_TAG_OPTIONS 에서 같은 일을 겪었다). */
+const TEXTKINDS = html.match(/const READ_TEXT_KINDS = \[[^\]]*\];/);
+assert.ok(TEXTKINDS, 'READ_TEXT_KINDS 상수를 찾을 수 없습니다');
 const WAGE_FLAG = html.match(/const WAGE_READ_ON = (?:true|false);/);
 assert.ok(WAGE_FLAG, 'WAGE_READ_ON 상수를 찾을 수 없습니다');
 
@@ -52,7 +54,7 @@ function loadApp(appState, rec) {
   new vm.Script([
     'const PuPaydataFiles = window.PuPaydataFiles; const S = window.PuPaydataStore; S.init({uid:"U1"});',
     'const App = ' + JSON.stringify(st) + ';',
-    WAGE_FLAG[0], NOTICE_FLAG[0],
+    WAGE_FLAG[0], NOTICE_FLAG[0], TEXTKINDS[0],
     cut('esc'), cut('canWrite'), cut('findRow'), cut('isImageRec'),
     cut('dupNames'), cut('blankNames'), cut('rowMarkClass'), cut('valueRowsHtml'), cut('readPanelHtml'),
     'window.App = App; window.readPanelHtml = readPanelHtml;'
@@ -243,7 +245,7 @@ function loadRun(appState, opts) {
     'const PuDocRead = window.PuDocRead || globalThis.PuDocRead;',
     'const App = ' + JSON.stringify(runState(appState, opts)) + ';',
     'App.render = function(){};',
-    WAGE_FLAG[0], NOTICE_FLAG[0],       // doRead 가 이 상수들을 본다 — 안 넣으면 터진다
+    WAGE_FLAG[0], NOTICE_FLAG[0], TEXTKINDS[0],       // doRead 가 이 상수들을 본다 — 안 넣으면 터진다
     DOLLAR[0],
     /* 기계 찾기(2차)는 startMask 가 뒤에서 부른다 — 여기서 보려는 것은 판독 흐름이라
        빈 것으로 세워 둔다. 기계 찾기 자체는 tests/paydata-mask-auto.test.js 가 본다. */
