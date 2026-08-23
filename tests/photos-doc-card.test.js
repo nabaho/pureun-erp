@@ -75,9 +75,16 @@ test('카드 안에서 글자가 제 자리를 갖는다', async (t) => {
 
   await t.test('확인 필요 표가 마지막 줄 글자를 덮지 않는다', () => {
     /* ⚠ 딱지는 칸 오른쪽 아래에 절대위치로 뜬다. 카드 본문이 거기까지 차 있으면
-       업체 이름 끝글자를 가린다. */
-    assert.match(app, /#grid \.cell\.doc \.bd\{padding-bottom:\s*\d+px\}/,
-      '카드 아래에 딱지 자리를 안 비워 두면 글자가 덮입니다.');
+       업체 이름 끝글자를 가린다.
+       ⚠ 2026-08-21: 비우는 자리를 «표가 있는 칸»에만 준다(.wnpad). 예전에는 모든
+         서류 카드가 비웠는데, 경고가 없는 카드에서는 그냥 빈 줄이었다 — 대표
+         지적: "한 줄 일부러 차지 안 해도 되는데". 대개는 「서류」 딱지가 그대로
+         경고가 되어(.tag.need) 표를 안 쓴다. 자세한 것은
+         tests/photos-doc-warn-slot.test.js. */
+    assert.match(app, /#grid \.cell\.doc\.wnpad \.bd\{padding-bottom:\s*\d+px\}/,
+      '표가 뜨는 칸에 자리를 안 비워 두면 글자가 덮입니다.');
+    assert.ok(!/#grid \.cell\.doc \.bd\{padding-bottom:\s*\d+px\}/.test(app),
+      '★ 모든 서류 카드를 비우는 옛 규칙이 살아 있습니다 — 빈 줄이 다시 생깁니다.');
   });
 
   await t.test('미리보기는 종이 위쪽을 보여 준다', () => {
