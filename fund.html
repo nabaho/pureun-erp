@@ -99,6 +99,17 @@
   .tab.on{color:var(--acc2);border-bottom-color:var(--acc);font-weight:700}
   .tab.soon{color:#c3cad6;cursor:default}
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 18px;max-width:760px}
+  /* 넓은 폼(기금 정보) — 화면 폭을 다 쓴다. 종전에는 .grid 의 760px·2열에 묶여
+     칸 16개가 8줄로 흘러내려 한 화면에 안 들어왔다(오른쪽 절반은 비어 있었다). */
+  .gridw{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:8px 14px}
+  .gridw .fld.full{grid-column:1/-1}
+  .gridw .fld label{font-size:11px;margin-bottom:1px}
+  .gridw .fld input,.gridw .fld select{padding:5px 8px;font-size:12.5px}
+  .gridw .sec{grid-column:1/-1;font-size:11px;font-weight:800;color:var(--faint);letter-spacing:.03em;
+    border-top:1px solid var(--line);padding-top:7px;margin-top:3px}
+  .gridw .sec.first{border-top:none;padding-top:0;margin-top:0}
+  /* 안에 [🔍 소재지로] 단추가 붙는 칸은 좁으면 글자가 안 보인다 — 자리가 있을 때만 두 칸 폭 */
+  @media (min-width:1200px){ .gridw .fld.w2{grid-column:span 2} }
   .fld{display:flex;flex-direction:column;gap:4px}.fld.full{grid-column:1/-1}
   .fld label{font-size:11.5px;color:var(--sub);font-weight:600}
   .fld input,.fld select{padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px}
@@ -156,7 +167,9 @@
     .panel{padding:11px 12px;margin-bottom:10px;border-radius:10px;overflow-x:auto}
     h1{font-size:17px}h2{font-size:14.5px!important}
     .row{flex-wrap:wrap;gap:7px}
-    .grid{grid-template-columns:1fr;gap:9px;max-width:none}
+    .grid,.gridw{grid-template-columns:1fr;gap:9px;max-width:none}
+    .gridw .fld.w2{grid-column:auto}          /* 폰에서는 두 칸 폭을 쓰지 않는다 */
+    .gridw .fld input,.gridw .fld select{padding:7px 10px;font-size:16px}
     /* iOS는 16px 미만 입력칸에 포커스하면 화면을 확대해 버린다(손으로 되돌려야 함) → 주요 입력은 16px */
     .fld input,.fld select,.fld textarea,.search{font-size:16px}
     .search{min-width:0;flex:1 1 160px}
@@ -948,6 +961,9 @@ function homeBody(list,edit,mode,secFn){
    따로 세면 사이드바는 16, 본문은 15 처럼 어긋나고 어느 쪽이 맞는지 알 수 없게 된다. */
 var HOME_GROUPS=[
   ['지역공동','🏛 지역기금'],['개별공동','🤝 공동기금'],['사내','🏢 사내기금'],
+  /* 미완비는 «유형»이 아니라 «상태»라 셋 아래에 칸막이를 두고 따로 세운다.
+     종전에는 「기금 현황」 줄에 '· 미완비 22'로 붙어 두 줄로 접히고 눌러 볼 수도 없었다. */
+  ['inc','⚠ 미완비'],
   ['setup','🏗 설립중'],['past','🗂 종료기금'],['trash','🗑 삭제 보관']
 ];
 function homeBuckets(){
@@ -963,6 +979,8 @@ function homeBuckets(){
   var B={'지역공동':[],'개별공동':[],'사내':[],setup:setup,past:all.filter(isPast).sort(srt),trash:trash};
   live.forEach(function(f){ (B[grp(f)]=B[grp(f)]||[]).push(f); });
   ['지역공동','개별공동','사내'].forEach(function(k){ B[k].sort(srt); });
+  // 미완비 = 운영 중인데 핵심 5항목이 덜 찬 기금(설립중은 신규라 당연히 덜 차므로 제외)
+  B.inc=live.filter(function(f){ return nDone(f)<5; }).sort(srt);
   B._all=all; B._live=live; B._srt=srt;
   return B;
 }
@@ -975,9 +993,11 @@ function renderNav(){
   var cur=(S.view==='home')?S.homeTab:'';
   var html=HOME_GROUPS.map(function(g){
     var n=(B[g[0]]||[]).length;
-    if(!n && (g[0]==='setup'||g[0]==='trash'||g[0]==='past')) return '';   // 없으면 숨긴다
-    var sep=(g[0]==='setup')?'<div class="sep"></div>':'';
-    return sep+'<div class="sitem'+(cur===g[0]?' on':'')+'" onclick="goHomeTab(\''+g[0]+'\')">'
+    if(!n && (g[0]==='setup'||g[0]==='trash'||g[0]==='past'||g[0]==='inc')) return '';   // 없으면 숨긴다
+    var sep=(g[0]==='inc'||g[0]==='setup')?'<div class="sep"></div>':'';   // 유형/상태 사이에 칸막이
+    var warn=(g[0]==='inc')?' style="color:var(--warn)"':'';
+    return sep+'<div class="sitem'+(cur===g[0]?' on':'')+'"'+warn+' onclick="goHomeTab(\''+g[0]+'\')"'
+      +(g[0]==='inc'?' title="기본정보 5항목(인가번호·인가일·법인등록번호·설립등기일·고유번호)이 덜 찬 기금"':'')+'>'
       +g[1]+'<span class="ncnt">'+n+'</span></div>';
   }).join('');
   host.innerHTML=html;
@@ -988,7 +1008,9 @@ function renderNav(){
   if(hc){
     /* 접혀 있으면 어느 묶음을 보고 있는지 여기서 말해 준다 — 안 그러면 단서가 사라진다 */
     var lbl=''; HOME_GROUPS.forEach(function(g){ if(g[0]===cur) lbl=g[1].replace(/^\S+\s*/,''); });
-    hc.textContent=(!open&&lbl?lbl+' · ':'')+B._all.length+(incAll?' · 미완비 '+incAll:'');
+    /* 개수만 짧게 — 미완비는 아래 하위 줄(⚠ 미완비)로 옮겼다.
+       여기에 붙이면 「기금 현황  44 · 미완비 22」가 두 줄로 접혀 오히려 안 읽힌다. */
+    hc.textContent=(!open&&lbl?lbl+' · ':'')+B._all.length;
     hc.title=incAll?'전체 '+B._all.length+'개 · 기본정보가 덜 채워진 기금 '+incAll+'개':'전체 '+B._all.length+'개';
   }
 }
@@ -1031,8 +1053,10 @@ function renderHome(){
      종전에는 배지줄(운영·지난·설립중·미완비)과 탭줄이 같은 숫자를 두 번 되풀이했다. */
   if(!S.homeTab) S.homeTab='지역공동';
   var _GL={}; HOME_GROUPS.forEach(function(g){ _GL[g[0]]=g[1]; });
-  var _curList=(S.homeTab==='setup')?setup:(S.homeTab==='past')?past:(S.homeTab==='trash')?trash:(G[S.homeTab]||[]);
-  var curInc=_curList.filter(function(f){ return !isPast(f)&&!isSetup(f)&&nDone(f)<5; }).length;
+  var _curList=(S.homeTab==='setup')?setup:(S.homeTab==='past')?past:(S.homeTab==='trash')?trash
+    :(S.homeTab==='inc')?live.filter(function(f){return nDone(f)<5;}):(G[S.homeTab]||[]);
+  // 미완비 묶음에서는 전부가 미완비라 배지를 또 붙이지 않는다(같은 말 두 번)
+  var curInc=(S.homeTab==='inc')?0:_curList.filter(function(f){ return !isPast(f)&&!isSetup(f)&&nDone(f)<5; }).length;
   /* 분류(충남·경기…) 조각을 «머리줄에 넣기 전에» 만든다 — 종전에는 아래 본문에서 만들어
      상자가 하나 더 생겼고, 화면 위가 세 줄이 됐다. 한 줄로 모은다(대표 지시). */
   var _rs=null, _rk=[], regBar='';
@@ -1077,7 +1101,9 @@ function renderHome(){
     return;
   }
   /* 비어 버린 묶음을 고르고 있으면 첫 하위로 되돌린다 — 빈 화면만 보이는 것을 막는다 */
+  var incList=live.filter(function(f){ return nDone(f)<5; }).sort(srt);
   if((S.homeTab==='setup'&&!setup.length)||(S.homeTab==='past'&&!past.length)||(S.homeTab==='trash'&&!trash.length)
+     ||(S.homeTab==='inc'&&!incList.length)
      ||(['지역공동','개별공동','사내'].indexOf(S.homeTab)>=0&&!G[S.homeTab])) S.homeTab='지역공동';
   var tabbar='';   // 묶음 고르기는 사이드바로 옮겼다
   var body;
@@ -1088,7 +1114,13 @@ function renderHome(){
       return '<div class="grp-h" style="margin:10px 0 4px 10px;font-size:12.5px;color:var(--sub)">'+GL[k]+' <span class="cnt">'+PG[k].length+'</span></div>'+fundTable(PG[k],ed,mode);
     }).join('');
   }
-  if(S.homeTab==='setup'){
+  if(S.homeTab==='inc'){
+    /* 미완비 — 유형별로 나눠 보여 준다(어느 묶음이 덜 찼는지가 바로 보여야 한다).
+       바로 채울 수 있게 «정보 채우기» 모드를 켠 채로 연다. */
+    body='<div class="panel"><p class="muted" style="font-size:11.5px;margin:0 0 6px">⚠ 기본정보 5항목이 덜 찬 기금 '+hlp('home.inc')+'</p>'
+      +(incList.length?'':'<div class="muted" style="padding:12px">모든 기금의 기본정보가 채워졌습니다.</div>')+'</div>'
+      +(incList.length?homeBody(incList,true,'',catSecs):'');
+  } else if(S.homeTab==='setup'){
     body='<div class="panel"><p class="muted" style="font-size:11.5px;margin:0 0 6px">🏗 인가·등기 절차 중 — 운영 집계에서 제외 '+hlp('home.setup')+'</p>'
       +(setup.length?'':'<div class="muted" style="padding:12px">설립 중인 기금이 없습니다.</div>')+'</div>'
       +(setup.length?homeBody(setup,edit,'setup',catSecs):'');
@@ -3821,9 +3853,16 @@ function finishSetup(){ var _fid=S.fundId, f0=funds[_fid]; if(!f0) return;
     }).catch(function(e){ toast('전환 실패: '+e.message,'err'); });
   });
 }
+/* 기금 정보 칸을 넷으로 묶는다 — 6열로 촘촘히 깔면 묶음 표시가 없으면 읽기 어렵다.
+   키가 여기 있으면 그 칸 «앞»에 묶음 이름 줄을 넣는다. */
+var INFO_SECS={name:'기본',manager:'담당',chairman:'인가·등기',tax_office:'관할·연락'};
+var INFO_W2={tax_office:1,registry_office:1,labor_office:1};   // 안에 단추가 붙어 두 칸 폭이 필요한 칸
 function infoForm(f){
+  var _first=true;
   var flds=FIELDS.map(function(c){
-    if(c[0]==='manager') return '<div class="fld"><label>주담당</label>'+mgrMainField(f)+'</div>'
+    var sec='';
+    if(INFO_SECS[c[0]]){ sec='<div class="sec'+(_first?' first':'')+'">'+INFO_SECS[c[0]]+'</div>'; _first=false; }
+    if(c[0]==='manager') return sec+'<div class="fld"><label>주담당</label>'+mgrMainField(f)+'</div>'
       +'<div class="fld full"><label>부담당 (여러 명 선택)</label>'+mgrSubField(f)+'</div>';
     var v=f[c[0]]||'', inp;
     if(c[2]==='select') inp='<select id="fd-'+c[0]+'">'+['공동','사내'].map(function(o){return '<option'+(v===o?' selected':'')+'>'+o+'</option>';}).join('')+'</select>';
@@ -3834,7 +3873,7 @@ function infoForm(f){
     else if(c[0]==='labor_office') inp='<div style="display:flex;gap:5px"><input id="fd-'+c[0]+'" type="text" value="'+esc(v)+'" placeholder="예: 대전지방고용노동청 천안지청" style="flex:1">'
       +'<button type="button" onclick="fillLabor()" title="소재지로 관할 지방고용노동청·지청 자동 추정(확인 필요)" style="white-space:nowrap;padding:0 10px;cursor:pointer">🔍 소재지로</button></div>';
     else inp='<input id="fd-'+c[0]+'" type="'+c[2]+'" value="'+esc(v)+'">';
-    return '<div class="fld'+(c[0]==='address'?' full':'')+'"><label>'+c[1]+'</label>'+inp+'</div>';
+    return sec+'<div class="fld'+(c[0]==='address'?' full':'')+(INFO_W2[c[0]]?' w2':'')+'"><label>'+c[1]+'</label>'+inp+'</div>';
   }).join('');
   setTimeout(bindDocIntake,0);   // 렌더 후 드롭존 핸들러 연결
   /* 한 줄로 줄인 서류 받는 곳 — 설명·상태·버튼을 칸 안으로 넣어 세로를 아꼈다.
@@ -3849,9 +3888,9 @@ function infoForm(f){
     +'</div><div id="docIntakeOut" style="margin-top:8px"></div></div>'
     +'<div class="panel"><div class="row"><h2>기금 정보</h2>'+hlp('info.card')
     +'<span style="flex:1"></span><button onclick="openCardPick()" title="푸른 기업정보함(사업자등록증)에서 기금법인명·고유번호·대표자·소재지를 당겨옵니다">🏢 기업정보함에서 당겨오기</button></div>'
-    +'<div class="grid" style="margin-top:12px" oninput="markDirty()" onchange="markDirty()">'+flds+'</div>'
-    +'<div class="row" style="margin-top:16px"><button class="primary" onclick="saveInfo()">💾 저장</button>'
-    +'<span class="muted" style="font-size:11px">담당은 푸른이알피 재직자에서 선택 · Ctrl+S로도 저장 · Firebase 저장</span></div></div>'
+    +'<div class="gridw" style="margin-top:10px" oninput="markDirty()" onchange="markDirty()">'+flds+'</div>'
+    +'<div class="row" style="margin-top:12px"><button class="primary" onclick="saveInfo()">💾 저장</button>'
+    +'<span class="muted mo" style="font-size:11px">Ctrl+S로도 저장</span></div></div>'
     +officerPanel(f);
 }
 /* 임원 명부 — 감사보고서·협의회 회의록이 여기서 이름을 가져간다.
@@ -7726,6 +7765,10 @@ var HELP={
  'home.fill':{t:'정보 채우기',h:'<p>칸에 바로 입력하면 <b>자동 저장</b>됩니다. <b>빨간 테두리</b>는 빈 칸입니다.</p>'
    +'<p><b>완비 기준 5항목</b></p><ul><li>인가번호</li><li>인가일</li><li>법인등록번호</li><li>설립등기일</li><li>고유번호</li></ul>'
    +'<p>[🏛 관할등기소 일괄]은 소재지로 전 기금의 등기소를 <b>추정</b>합니다 — 확인이 필요합니다.</p>'},
+ 'home.inc':{t:'미완비 기금',h:'<p>운영 중인데 <b>기본정보 5항목</b>이 덜 찬 기금만 모았습니다.</p>'
+   +'<p><b>5항목</b> — 인가번호 · 인가일 · 법인등록번호 · 설립등기일 · 고유번호</p>'
+   +'<p>여기서는 <b>정보 채우기</b>가 켜진 채로 열립니다. 칸에 바로 입력하면 자동 저장되고, 다 채워지면 이 묶음에서 빠집니다.</p>'
+   +'<p>설립중 기금은 아직 절차 중이라 여기서 <b>제외</b>합니다 — 새로 만든 기금이 늘 미완비로 잡히면 이 목록이 쓸모없어집니다.</p>'},
  'home.setup':{t:'설립 진행 중 기금',h:'<p>인가·등기 절차를 밟고 있는 기금입니다. <b>운영 집계·미완비 점검에서 제외</b>됩니다.</p>'
    +'<p>기금을 열어 <b>[🏗 설립 진행]</b> 단계를 모두 마치면 <b>[✅ 운영 전환]</b>으로 정식 운영 기금이 됩니다.</p>'},
  'home.trash':{t:'삭제 보관함',h:'<p>목록·집계에서 빠졌지만 <b>데이터는 그대로 있습니다</b> — 참여사업장·서식·연간일정까지 모두 보존됩니다.</p>'

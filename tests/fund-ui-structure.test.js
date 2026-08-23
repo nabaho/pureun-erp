@@ -85,7 +85,9 @@ test('폰에서 보이는 구조가 살아 있다', () => {
   assert.match(m, /#side\{[^}]*translateX\(-100%\)/, '사이드바 서랍 전환이 빠졌다');
   assert.match(m, /body\.sideopen #sideveil\{display:block\}/, '오버레이 표시 규칙이 빠졌다');
   assert.match(m, /#main\{margin-left:0\}/, '본문 좌측 여백 해제가 빠졌다');
-  assert.match(m, /\.grid\{grid-template-columns:1fr/, '입력폼 1열 전환이 빠졌다');
+  // 좁은 화면에서 입력폼은 1열이어야 한다(.grid·.gridw 어느 이름으로 적어도 된다)
+  assert.match(m, /\.grid[^{]*\{grid-template-columns:1fr/, '입력폼 1열 전환이 빠졌다');
+  assert.match(m, /\.gridw/, '넓은 폼(.gridw)도 폰에서 1열로 접혀야 한다');
   assert.match(m, /\.tabbar\{flex-wrap:nowrap;overflow-x:auto/, '탭 좌우 스와이프가 빠졌다');
   assert.match(m, /\.fld input,\.fld select,\.fld textarea,\.search\{font-size:16px\}/,
     'iOS 는 16px 미만 입력칸에 포커스하면 화면을 확대한다');
@@ -147,4 +149,37 @@ test('결산 확정은 그때의 수치를 스냅샷으로 남긴다', () => {
     '해제는 잠금만 풀고 스냅샷은 남겨야 한다');
   assert.match(SRC, /ref\(NS\+'\/closing'\)\.once\('value'\)/,
     '결산 상태는 한 번에 읽어야 한다(기금별 반복 조회 금지)');
+});
+
+test('미완비는 사이드바 하위 묶음으로 — 제목줄에 붙이지 않는다', () => {
+  /* 「기금 현황  44 · 미완비 22」가 두 줄로 접혀 읽기 어려웠다(대표 지적).
+     미완비는 유형이 아니라 상태라 하위 묶음으로 따로 세운다. */
+  const box = {};
+  const i = SRC.indexOf('var HOME_GROUPS=');
+  new Function(SRC.slice(i, SRC.indexOf('];', i) + 2) + ';this.G=HOME_GROUPS;').call(box);
+  assert.ok(box.G.some(g => g[0] === 'inc'), '하위 묶음에 미완비가 없다');
+  // 제목줄에 «보이는 글자»만 본다 — 마우스 올림말(title)에는 남아 있어도 된다
+  assert.ok(!/hc\.textContent=[^\n]*미완비/.test(SRC), '제목줄 글자에 미완비를 다시 붙였다');
+  assert.match(SRC, /B\.inc=live\.filter\(function\(f\)\{ return nDone\(f\)<5; \}\)/, '미완비 목록 계산이 없다');
+  assert.match(SRC, /S\.homeTab==='inc'/, '본문이 미완비 묶음을 다루지 않는다');
+  assert.ok(SRC.includes("'home.inc':{t:"), '미완비 도움말이 없다');
+  // 비면 숨기고, 설립중은 제외한다
+  assert.match(SRC, /g\[0\]==='past'\|\|g\[0\]==='inc'\)\) return '';/, '빈 미완비 묶음을 숨기지 않는다');
+});
+
+test('기금 정보 폼은 화면 폭을 다 쓴다 — 760px 2열에 갇히지 않는다', () => {
+  assert.match(SRC, /\.gridw\{display:grid;grid-template-columns:repeat\(auto-fit,minmax\(215px,1fr\)\)/,
+    '넓은 폼 격자가 없다');
+  // max-width:none(폰에서 푸는 것)은 괜찮다 — 실제 «폭 제한»만 막는다
+  assert.ok(!/\.gridw\{[^}]*max-width:\s*(?!none)/.test(SRC), '넓은 폼에 폭 제한을 걸면 다시 아래로 흘러내린다');
+  assert.match(SRC, /class="gridw" style="margin-top:10px" oninput="markDirty\(\)"/, '기금 정보가 넓은 격자를 쓰지 않는다');
+  const box = {};
+  const i = SRC.indexOf('var INFO_SECS=');
+  new Function(SRC.slice(i, SRC.indexOf('};', i) + 2) + ';this.S=INFO_SECS;').call(box);
+  assert.equal(Object.keys(box.S).length, 4, '묶음 머리는 넷이어야 한다(기본·담당·인가등기·관할연락)');
+  const fields = SRC.slice(SRC.indexOf('var FIELDS='), SRC.indexOf('];', SRC.indexOf('var FIELDS=')));
+  Object.keys(box.S).forEach(k => assert.ok(fields.includes("'" + k + "'"), 'FIELDS 에 없는 칸에 묶음 머리를 걸었다: ' + k));
+  // 단추가 붙는 칸은 넓게, 단 자리가 있을 때만
+  assert.match(SRC, /@media \(min-width:1200px\)\{ \.gridw \.fld\.w2\{grid-column:span 2\} \}/, '넓은 칸 규칙이 없다');
+  assert.match(SRC, /\.gridw \.fld\.w2\{grid-column:auto\}/, '폰에서 두 칸 폭을 풀지 않으면 넘친다');
 });
