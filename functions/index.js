@@ -1112,6 +1112,10 @@ async function runPaydataMailOnce() {
       /* 빈 메일함이면 여기서 끝낸다. 「지금 가져오기」가 말할 것이 있어야 하므로
          0 을 담은 셈을 돌려준다 — null 이면 화면이 「0통」인지 「못 봤는지」를 못 가린다. */
       if (!inbox.length) {
+        /* 빈 폴더면 한 줄만 남긴다 — 아무 말도 안 남기면 「돌고는 있나」를
+           알 수 없다. 2026-08-23에 실제로 그것 때문에 배포가 먹었는지
+           로그로 확인할 수 없었다. 업체·직원 명부는 여전히 안 읽는다. */
+        console.log("receivePaydataMail 새 메일 없음", { boxes: boxes });
         return { boxes: boxes, looked: 0, took: 0, skipped: 0, unknown: 0, routed: 0, shared: 0 };
       }
       const known = await payMailKnownList(db);
