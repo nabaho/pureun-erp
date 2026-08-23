@@ -90,7 +90,13 @@ t('저장이 실패해도 화면은 그대로 둔다 (고른 것이 눈앞에서
 console.log('\n[⑦ 고르는 모든 길이 서버로 간다]');
 /* 한 곳이라도 빠지면 「어떤 것은 보이고 어떤 것은 안 보이는」 더 나쁜 상태가 된다 */
 t('표에서 고르기', /nm\[row\._k\] = pid; setInMatch\(nm\);\s*\n\s*savePick\(row\._k, pid\);/.test(src), true);
-t('확인 창에서 고르기', /nm\[row\._k\]=pid; setInMatch\(nm\);\s*\n\s*savePick\(row\._k, pid\);/.test(src), true);
+/* ★ 2026-08-23: 길이 셋인 줄 알았는데 하나(pickSug)는 «죽은 사본» 이었다 —
+   화면은 안 부르는데 검사만 지키고 있었다. 걷어내고, 산 길 둘만 본다.
+     · pickFor  — 표와 확인창이 함께 쓴다 (그러라고 밖으로 뺀 함수다)
+     · _pick    — 찾기 창
+   ※ 띄어쓰기는 안 본다. 지키려는 것은 «고르면 서버에도 올린다» 이다. */
+t('확인 창도 같은 길을 쓴다 (표와 함께 pickFor)',
+  (src.match(/[{;]\s*pickFor\(row, /g) || []).length >= 2, true);
 t('찾기 창에서 고르기', /nm\[sugPopK\]=pid; setInMatch\(nm\);\s*\n\s*savePick\(sugPopK, pid\);/.test(src), true);
 t('★ ⚡자동 매칭도 (한 번에 얹는다 — 한 줄씩 올리면 저장이 여러 번 돈다)',
   /Object\.keys\(nm\)\.forEach\(function\(k\)\{\s*\n\s*_cur2 = erpPickSet\(_cur2, k, nm\[k\]/.test(src), true);

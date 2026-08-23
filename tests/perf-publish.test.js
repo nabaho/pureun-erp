@@ -204,6 +204,17 @@ ok('이미 마감된 달은 또 못 한다', ctx.pcfCanClose(Object.assign({}, M
 ok('사람이 없으면 마감 대상 아님', ctx.pcfCanClose({ ym:'x', p:{} }) === false);
 ok('마감 경로가 그 달 아래', ctx.pcfLockPath('2026-06') === 'data/perf_confirm/2026-06/lock');
 
+/* ★★ 규칙이 옳은 것만으로는 모자란다 — 화면이 그 규칙을 «부르는지» 본다.
+   2026-08-23: pcfCanClose 는 「사람이 하나도 없으면 마감 대상 아님」까지 제대로
+   따지고 있었는데, 정작 화면(stateChip)은 그 함수를 안 부르고 규칙을 다시 적어
+   두었다. 그 사본에 「사람 0명」 검사가 빠져 있어서, 아무도 없는 빈 달에도
+   「마감하기」 단추가 떴다. 규칙을 두 곳에 적으면 반드시 한쪽이 뒤처진다. */
+/* stateChip 은 화면 부품 쪽(발행 창 뒤)이라 위 src 범위 밖이다 — 따로 떠 온다 */
+const chip = html.slice(html.indexOf('function stateChip(m){'), html.indexOf("}, '마감하기');"));
+ok('★ 마감 단추를 그릴 때 pcfCanClose 에게 물어본다', /pcfCanClose\(m\)/.test(chip));
+ok('★ 물어본 답이 아니면 단추를 안 낸다 (빈 달에 마감하기가 뜨지 않는다)',
+   chip.indexOf('pcfCanClose(m)') < chip.length && /if\(!pcfCanClose\(m\)\) return/.test(chip));
+
 /* ── 이의 펴기 ── */
 const OB = ctx.pcfOpenObjections({ ym:'x', p:{
   u1:{ name:'권형하', items:{ f1:{date:'2026-06-03',coName:'가',amount:100} },

@@ -91,9 +91,15 @@ console.log('\n[갈래가 바뀌는가 — 비즈사업비면 이름 대신 현�
 }
 
 console.log('\n[🔖 이름 기억 — 고르면 그 자리에서 배운다]');
-ok('후보를 고를 때 배운다', /function pickSug\(pid\)\{[\s\S]{0,600}?erpLearnPayerAlias\(_m, _c\)/.test(src));
-ok('같은 후보를 다시 눌러도 두 번 세지 않는다', /if\(inMatch\[row\._k\]===pid\) return;/.test(src));
-ok('무엇을 기억했는지 알려준다', /🔖 기억함 — 다음부터 「'\+_m\+'」 은 '\+_c\.companyName/.test(src));
+/* ★ 산 코드는 pickFor 다 — 표와 확인창 두 곳이 함께 쓰라고 밖으로 뺀 함수.
+   예전에는 같은 일을 하는 죽은 사본(pickSug)을 보고 있었다. 죽은 쪽을 지키면
+   진짜 쓰이는 쪽이 깨져도 초록불이 뜬다 — 2026-08-23 에 사본을 걷어내며 옮겼다.
+   띄어쓰기는 안 본다: 코드를 옮기면 들여쓰기가 바뀌는데 그때마다 깨질 까닭이 없다. */
+ok('후보를 고를 때 배운다', /function pickFor\(row, pid\)\{[\s\S]{0,700}?erpLearnPayerAlias\(\s*_m\s*,\s*_c\s*\)/.test(src));
+ok('같은 후보를 다시 눌러도 두 번 세지 않는다', /inMatch\[row\._k\]\s*===\s*pid\s*\) return;/.test(src));
+ok('무엇을 기억했는지 알려준다', /🔖 기억함 — 다음부터 「'\s*\+\s*_m\s*\+\s*'」 은 '\s*\+\s*_c\.companyName/.test(src));
+ok('★ 그 함수를 화면이 실제로 부른다 (죽은 사본을 지키지 않는다)',
+  (src.match(/[{;]\s*pickFor\(row, /g) || []).length >= 2);
 
 console.log('\n[📄 계약 단계 입금 — 이관 먼저]');
 ok('계약 안내 함수가 있다', /function erpContractHint\(txn\)/.test(src));
