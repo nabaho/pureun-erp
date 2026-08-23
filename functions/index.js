@@ -949,6 +949,22 @@ const PAYMAIL_BOX = "급여자료";      // 다음메일에서 규칙으로 모�
 const PAYMAIL_UPLOADER = "_mail";    // 창고 자리 — 사람이 아니라 서버가 담았다는 표시
 const PAYMAIL_MAX_PER_RUN = 30;      // 한 회차에 처리할 메일 수 — 오래 붙어 있지 않게
 
+/* 읽음 표시는 **그 메일이 있던 폴더**에서 해야 한다 — 폴더를 여러 개 보게 된 뒤로
+   마지막에 열려 있던 폴더에서 표시하면 엉뚱한 메일이 읽음이 되거나 아무 일도
+   안 일어난다(그러면 같은 메일을 회차마다 다시 담는다). */
+async function markSeen(client, item) {
+  if (!item || !item.box) {
+    await client.messageFlagsAdd({ uid: String(item.uid) }, ["\\Seen"], { uid: true });
+    return;
+  }
+  const lock = await client.getMailboxLock(item.box);
+  try {
+    await client.messageFlagsAdd({ uid: String(item.uid) }, ["\\Seen"], { uid: true });
+  } finally {
+    lock.release();
+  }
+}
+
 function payMailId() {
   return "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
@@ -1048,23 +1064,49 @@ exports.receivePaydataMail = functions
     let routed = 0, shared = 0;
     const whys = {};
     try {
-      let lock;
+      /* 볼 폴더를 **찾아서** 고른다(대표 결정 2026-08-23). 여태 「급여자료」라는
+         이름 하나만 찾아, 이미 있는 「2.급여+사무대행」 폴더를 못 보고 열흘 넘게
+         「폴더가 없습니다」만 남겼다. */
+      const confSnap = await db.ref(PAYDATA_ROOT + "/mailconf").once("value").catch(() => null);
+      const conf = MR.mailConfOf(confSnap && confSnap.val());
+      let boxList = [];
       try {
-        lock = await client.getMailboxLock(PAYMAIL_BOX);
+        boxList = await client.list();
       } catch (e) {
-        console.warn("receivePaydataMail: 「" + PAYMAIL_BOX + "」 폴더가 없습니다. 다음메일에서 만들어 주세요.");
+        console.warn("receivePaydataMail: 폴더 목록을 못 읽었습니다", String((e && e.message) || e));
+      }
+      const boxes = MR.pickMailboxes(boxList, conf);
+      if (!boxes.length) {
+        /* 폴더 이름을 사람이 알 수 있게 **있는 그대로** 남긴다 — 이것이 없어서
+           「무슨 이름으로 만들어야 하나」를 알 길이 없었다. */
+        console.warn("receivePaydataMail: 볼 폴더를 못 찾았습니다. 이름에 「"
+          + MR.MAILBOX_HINT + "」가 든 폴더가 없습니다. 지금 있는 폴더:",
+          (boxList || []).map(function (b) { return b && b.path; }).filter(Boolean).join(" | "));
         return null;
       }
 
       // 먼저 다 받아 둔 뒤 처리한다 — 읽는 도중에 읽음 표시를 바꾸면 목록이 흔들린다.
+      // 폴더마다 열고 닫으며 모은다. 한 회차 몫(PAYMAIL_MAX_PER_RUN)은 폴더를
+      // 합쳐서 센다 — 폴더가 늘어난다고 한 번에 더 오래 붙어 있으면 안 된다.
       const inbox = [];
-      try {
-        for await (const msg of client.fetch({ seen: false }, { uid: true, source: true })) {
-          inbox.push({ uid: msg.uid, source: msg.source });
-          if (inbox.length >= PAYMAIL_MAX_PER_RUN) break;
+      for (const box of boxes) {
+        if (inbox.length >= PAYMAIL_MAX_PER_RUN) break;
+        let lock;
+        try {
+          lock = await client.getMailboxLock(box);
+        } catch (e) {
+          console.warn("receivePaydataMail: 「" + box + "」 폴더를 열지 못했습니다",
+            String((e && e.message) || e));
+          continue;
         }
-      } finally {
-        lock.release();
+        try {
+          for await (const msg of client.fetch({ seen: false }, { uid: true, source: true })) {
+            inbox.push({ uid: msg.uid, source: msg.source, box: box });
+            if (inbox.length >= PAYMAIL_MAX_PER_RUN) break;
+          }
+        } finally {
+          lock.release();
+        }
       }
 
       // 빈 메일함이면 업체·직원 명부를 내려받지 않는다. 사람이 아무것도 하지
@@ -1089,7 +1131,7 @@ exports.receivePaydataMail = functions
           // 모르는 곳에서 온 것 — 담지 않는다. 지우지도 않는다(폴더에 그대로 남는다).
           unknown++;
           console.log("receivePaydataMail 모르는 주소라 건너뜀:", sender || "(주소 없음)");
-          await client.messageFlagsAdd({ uid: String(item.uid) }, ["\\Seen"], { uid: true });
+          await markSeen(client, item);
           continue;
         }
 
@@ -1114,9 +1156,16 @@ exports.receivePaydataMail = functions
             console.error("receivePaydataMail 담기 실패:", att.filename, String((e && e.message) || e));
           }
         }
-        await client.messageFlagsAdd({ uid: String(item.uid) }, ["\\Seen"], { uid: true });
+        await markSeen(client, item);
       }
-      console.log("receivePaydataMail", { looked: inbox.length, took, skipped, unknown, routed, shared, whys });
+      console.log("receivePaydataMail",
+        { boxes: boxes, looked: inbox.length, took, skipped, unknown, routed, shared, whys });
+      /* 앱이 「마지막에 언제·어느 폴더를 봤나」를 보여 줄 수 있게 적어 둔다 —
+         이것이 없으면 자료가 안 들어올 때 사람이 확인할 데가 로그뿐이다. */
+      await db.ref(PAYDATA_ROOT + "/mailconf/lastScan").set({
+        at: Date.now(), boxes: boxes, looked: inbox.length,
+        took: took, routed: routed, shared: shared, unknown: unknown
+      }).catch(function () { /* 적지 못해도 받는 일은 이미 끝났다 */ });
     } catch (e) {
       console.error("receivePaydataMail 실패:", String((e && e.message) || e));
     } finally {

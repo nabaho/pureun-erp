@@ -123,6 +123,61 @@ function okAttachment(att) {
 
 /* 사람이 대기 칸에서 보게 될 한 줄. 앱의 pendingRecord 와 **같은 칸**이어야 한다 —
    집어갈 때 앱이 아는 칸만 남기므로, 없는 칸을 만들면 그 순간 사라진다. */
+/* ══════ 어느 폴더를 볼지 (대표 결정 2026-08-23) ══════
+   여태 「급여자료」라는 **이름 하나만** 찾았다. 그런데 다음메일에는 이미
+   「2.급여+사무대행」 폴더가 있었다 — 이름이 달라 못 찾고, 로그에 열흘 넘게
+   「폴더가 없습니다. 만들어 주세요」만 남겼다. 폴더를 새로 만들 일이 아니라
+   **있는 폴더를 찾게** 할 일이었다.
+
+   차례: 이름을 못 박아 줬으면 그것만 → 아니면 이름에 「급여」가 든 폴더 전부
+   → 스위치(scanInbox)가 켜져 있으면 받은메일함을 뒤에 붙인다.
+   ⚠ 보낸메일함·임시보관함·휴지통·스팸은 절대 안 본다 — 우리가 보낸 것을
+   되받아 담으면 자료가 두 벌이 되고, 휴지통을 뒤지면 버린 것이 되살아난다. */
+const MAILBOX_HINT = '급여';
+const MAILBOX_NEVER = /보낸|임시|초안|휴지통|스팸|정크|Sent|Draft|Trash|Junk|Spam|Deleted/i;
+
+function mailConfOf(raw) {
+  const o = (raw && typeof raw === "object") ? raw : {};
+  return {
+    /* 참이라고 **확실할 때만** 켠다 — 받은메일함 전부 보기는 켜는 쪽이 위험하다
+       (자문·산재 메일까지 서버가 연다). */
+    scanInbox: o.scanInbox === true,
+    folder: (typeof o.folder === 'string') ? o.folder : ''
+  };
+}
+
+function pickMailboxes(list, conf) {
+  const c = mailConfOf(conf);
+  const rows = Array.isArray(list) ? list : [];
+  const out = [], seen = {};
+  const push = function (v) {
+    if (!v || seen[v]) return;
+    seen[v] = 1; out.push(v);
+  };
+
+  if (c.folder) {
+    /* 이름을 못 박아 줬으면 그것만 — 없으면 **아무것도 안 본다.**
+       엉뚱한 폴더를 대신 열면 남의 메일을 담는다. */
+    const hit = rows.filter(function (b) { return b && b.path === c.folder; })[0];
+    if (hit) push(hit.path);
+  } else {
+    rows.forEach(function (b) {
+      if (!b || !b.path) return;
+      const nm = String(b.name || b.path);
+      if (MAILBOX_NEVER.test(nm) || MAILBOX_NEVER.test(b.path)) return;
+      if (nm.indexOf(MAILBOX_HINT) >= 0) push(b.path);
+    });
+  }
+
+  /* 받은메일함은 **뒤에** 붙인다 — 확실한 급여 폴더를 먼저 다 보고 남은 몫으로
+     본다(한 회차에 처리할 수가 정해져 있다). */
+  if (c.scanInbox) {
+    const inbox = rows.filter(function (b) { return b && /^INBOX$/i.test(String(b.path)); })[0];
+    if (inbox) push(inbox.path);
+  }
+  return out;
+}
+
 /* 보낸이·제목을 한 줄 메모로 — 나중에 「누가 보냈나」를 물을 수 있어야 한다. */
 function mailNoteOf(o) {
   const from = String(o.mailFrom || '');
@@ -282,5 +337,6 @@ module.exports = {
   normEmail, senderOf, collectEmails, sidToEmail,
   buildKnownList, isKnownSender,
   buildCompanyIndex, companyFor, seatFor, tagFor, routeFor,
+  mailConfOf, pickMailboxes, MAILBOX_HINT,
   extOf, okAttachment, sharedPendingRecord, pendingRecordFor, mailNoteOf
 };
