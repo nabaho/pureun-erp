@@ -87,6 +87,31 @@
     return false;
   }
 
+  /* ── 글자 속 주민번호 지우기 (대표 결정 2026-08-23, 엑셀·한글 판독) ──
+     엑셀·한글은 사진으로 안 만들고 **글자로** AI 에 보낸다. 사진은 사람이
+     칠할 자리를 손으로 골라야 했지만(좌표를 틀리면 그대로 나갔다), 글자는
+     **정확히 지울 수 있다** — 자리를 틀릴 일이 없다.
+
+     ⚠ 하이픈 없는 13자리도 지운다(사진 가림과 같은 기준, 대표 결정 2026-08-15):
+     계좌번호를 잘못 지울 수 있지만 **잘못 지운 것은 사람이 되살리면 되고,
+     못 지운 것은 그대로 AI 로 나간다.** 급여 값 표에 계좌번호는 안 들어간다.
+     ⚠ 뒤돌아보기(lookbehind)를 쓰지 않는다 — 옛 아이폰 사파리가 통째로 터진다. */
+  var RRN_STAR = '******-*******';
+
+  function maskRrnInText(text) {
+    var t = String(text == null ? '' : text);
+    var n = 0;
+    /* 하이픈 있는 꼴을 먼저 — 나중에 13자리를 지우면 이 꼴이 이미 사라져 있다.
+       앞뒤에 붙은 숫자·글자는 그대로 두고 가운데만 바꾼다($1·$2). */
+    t = t.replace(/(^|[^0-9])(\d{6}[-–—]\s?\d{7})([^0-9]|$)/g, function (m, a, mid, b) {
+      n++; return a + RRN_STAR + b;
+    });
+    t = t.replace(/(^|[^0-9])(\d{13})([^0-9]|$)/g, function (m, a, mid, b) {
+      n++; return a + RRN_STAR + b;
+    });
+    return { text: t, count: n };
+  }
+
   /* 글자 가장자리가 남으면 그 한 자리로도 읽힌다 — 조금 넓게 덮는다. */
   var PAD = 0.01;
 
@@ -131,6 +156,7 @@
     toPixels: toPixels,
     maskToDataUrl: maskToDataUrl,
     looksLikeRrn: looksLikeRrn,
+    maskRrnInText: maskRrnInText,
     boxesFromWords: boxesFromWords
   };
 })(typeof window !== 'undefined' ? window : globalThis);

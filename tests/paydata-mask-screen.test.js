@@ -193,8 +193,12 @@ test('다 지우기는 기계가 칠한 것까지 다 뺀다', () => {
    그래서 반대로 한다: **사진을 안 보내는 것만** 이름을 적어 두고, 그 밖의 모든
    PuDocRead 부르기를 새는 길로 본다. 판독 함수를 새로 만들면 이 검사가 먼저
    깨진다 — 그것이 의도다. 통과시키려면 runRead 안에서 부르면 된다. */
+/* 이 이름들은 사진을 **안 보낸다** — 그래서 가림 화면(runRead)을 거칠 필요가 없다.
+   readTableText: 엑셀·한글에서 뽑은 **글자**를 보낸다(2026-08-23). 사진이 아니라
+   칠할 자리를 틀릴 일이 없고, 판독 층 자신이 주민번호를 한 번 더 지운다
+   — tests/paydata-file-read.test.js 가 그것을 지킨다. */
 const DOCREAD_SAFE = ['init', 'bizNoDigits', 'bizNoValid', 'fmtBizNo', 'mapTo', 'keysFrom',
-  'MODELS', 'PROMPTS', 'READ_VERSION', 'autoOk'];
+  'MODELS', 'PROMPTS', 'READ_VERSION', 'autoOk', 'readTableText'];
 
 test('★ 판독기를 부르는 곳은 runRead 하나뿐이다 — 이름을 늘어놓지 않고 막는다', () => {
   const runRead = cut('runRead');
