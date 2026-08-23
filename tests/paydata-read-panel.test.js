@@ -9,6 +9,9 @@ const vm = require('node:vm');
 const R = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(R, 'pu-paydata.html'), 'utf8');
 const store = fs.readFileSync(path.join(R, 'js', 'pu-paydata-store.js'), 'utf8');
+/* readPanelHtml 이 파일 종류를 가린다(엑셀이면 다른 화면, 2026-08-23) —
+   브라우저에서는 js/pu-paydata-files.js 가 window.PuPaydataFiles 를 만든다. */
+const filesSrc = fs.readFileSync(path.join(R, 'js', 'pu-paydata-files.js'), 'utf8');
 
 function cut(name) {
   const m = html.match(new RegExp('function ' + name + '\\s*\\([\\s\\S]*?\\n\\}'));
@@ -45,8 +48,9 @@ function loadApp(appState, rec) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   new vm.Script(store, { filename: 'store.js' }).runInContext(sandbox);
+  new vm.Script(filesSrc, { filename: 'files.js' }).runInContext(sandbox);
   new vm.Script([
-    'const S = window.PuPaydataStore; S.init({uid:"U1"});',
+    'const PuPaydataFiles = window.PuPaydataFiles; const S = window.PuPaydataStore; S.init({uid:"U1"});',
     'const App = ' + JSON.stringify(st) + ';',
     WAGE_FLAG[0], NOTICE_FLAG[0],
     cut('esc'), cut('canWrite'), cut('findRow'), cut('isImageRec'),
@@ -224,6 +228,7 @@ function loadRun(appState, opts) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   new vm.Script(store, { filename: 'store.js' }).runInContext(sandbox);
+  new vm.Script(filesSrc, { filename: 'files.js' }).runInContext(sandbox);
   /* ⚠ 2026-08-17 — 가림의 «긋기·사본 만들기»가 공용 층으로 옮겨 갔다
      (사진첩과 나눠 쓴다). maskConfirm 이 그 층을 부르므로 함께 실어야 한다. */
   ['pu-rrn-mask.js', 'pu-rrn-mask-ui.js'].forEach(function (f) {
@@ -232,7 +237,7 @@ function loadRun(appState, opts) {
   new vm.Script([
     'const PuRrnMaskUi = window.PuRrnMaskUi;',
     'PuRrnMaskUi.init({ state: function(){ return App.maskState; }, render: function(){ App.render(); } });',
-    'const S = window.PuPaydataStore;',
+    'const PuPaydataFiles = window.PuPaydataFiles; const S = window.PuPaydataStore;',
     'S.init({uid:"U1", storage:{ref:function(){return{getDownloadURL:function(){return Promise.resolve("https://x/f");}};}},'
       + ' fetch:function(){return Promise.resolve({ok:true,arrayBuffer:function(){return Promise.resolve(new ArrayBuffer(2));}});}});',
     'const PuDocRead = window.PuDocRead || globalThis.PuDocRead;',
@@ -513,12 +518,13 @@ function loadSave(existing, confirmYes, opts) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   new vm.Script(store, { filename: 'store.js' }).runInContext(sandbox);
+  new vm.Script(filesSrc, { filename: 'files.js' }).runInContext(sandbox);
   sandbox.__existing = existing || {};
   const viewerId = opts.viewerId || 'a1';
   const items = {};
   items[viewerId] = { companyId: 'co_1', kind: 'attend', month: '202608', file: 'p/' + viewerId + '.jpg' };
   new vm.Script([
-    'const S = window.PuPaydataStore;',
+    'const PuPaydataFiles = window.PuPaydataFiles; const S = window.PuPaydataStore;',
     'S.init({uid:"U1", db:{ref:function(p){ return {'
       + ' once:function(){ return Promise.resolve({val:function(){ return __existing; }}); },'
       + ' update:function(u){ __saved = u; return Promise.resolve(); } }; },'

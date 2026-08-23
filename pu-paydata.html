@@ -30,8 +30,13 @@
        급여데이터함은 캐시에 묵은 옛 판독기로 갈린다 — 같은 서류를 두 앱이 다르게
        읽고, 판독 결과에 적히는 판 번호(rv)도 어긋나 「다시 읽어야 하나」 판정이
        서로 달라진다. tests/photos-doc-title.test.js 가 두 파일을 함께 지킨다. -->
-<script src="js/pu-doc-read.js?v=11"></script>
-<script src="js/pu-rrn-mask.js?v=2"></script>
+<script src="js/pu-doc-read.js?v=12"></script>
+<script src="js/pu-rrn-mask.js?v=3"></script>
+<!-- 사진이 아닌 자료(엑셀·한글·PDF)를 글자로 뽑는다 (2026-08-23).
+     ⚠ 엑셀 읽기 도구(vendor/xlsx.full.min.js, 1MB)는 여기서 안 싣는다 —
+       엑셀을 실제로 열 때만 내려받는다(needSheetLib). 급여데이터함은 폰에서도
+       열므로, 쓰지도 않을 1MB를 늘 내려받게 하면 첫 화면이 그만큼 늦다. -->
+<script src="js/pu-paydata-files.js?v=1"></script>
 <!-- 긋기·사본 만들기 — 사진첩과 나눠 쓴다(2026-08-17 「안 1」) -->
 <script src="js/pu-rrn-mask-ui.js?v=2"></script>
 <script src="js/pu-appbar.js?v=4"></script>
@@ -470,6 +475,10 @@ table.vals tr.dup input{color:#8A1C1C;font-weight:700}
 .maskhint{font-size:12px;color:var(--sub);margin-top:8px;line-height:1.6}
 table.vals .del{color:var(--bad);cursor:pointer;padding:2px 6px;border-radius:5px}
 .okline{background:#EAF6EE;border:1px solid #B7E4C7;color:#1E5631;border-radius:9px;padding:8px 11px;font-size:12px;margin-bottom:10px}
+/* 엑셀에서 뽑은 글자 — 무엇을 AI 로 보내는지 사람이 눈으로 보게 한다 */
+.sheetraw{background:#F7F8FC;border:1px solid var(--line);border-radius:8px;padding:9px 11px;
+  font-size:11.5px;font-family:'JetBrains Mono',Consolas,monospace;white-space:pre;overflow:auto;
+  line-height:1.6;color:#3A3F5C;max-height:300px;margin:0}
 .mailtag{font-size:10.5px;background:#E7EBFB;color:var(--navy);border-radius:99px;padding:2px 8px;font-weight:700;white-space:nowrap}
 .tg.why{background:#FDECEC;color:#8E2F2F;font-weight:700}
 .warnline{background:#FDF6E3;border:1px solid #F0D9A8;color:#7C4A03;border-radius:9px;padding:8px 11px;font-size:12px;margin-bottom:10px}
@@ -3030,6 +3039,120 @@ const NOTICE_READ_ON = true;
 /* 「판독하기」를 누르면 **바로 판독하지 않는다** — 먼저 가릴 곳을 고른다(설계서 3장).
    막을 것(종류·권한·스위치·사진인가)은 여기서 그대로 막는다. 창고 파일은 여기서
    한 번만 받아 두고, 가림 화면과 사본 만들기가 그것을 함께 쓴다. */
+/* ══════ 엑셀을 칸 그대로 읽는다 (대표 결정 2026-08-23) ══════
+   급여 자료 대부분이 엑셀(근태표·급여대장)이다. 화면 찍어 AI 에 보내면
+   1↔7·4↔9 를 잘못 읽는데, 엑셀 파일을 열면 칸 값이 **글자 그대로** 나온다.
+   AI 가 하는 일은 읽기가 아니라 「어느 칸이 무엇인가」 판단뿐이다.
+
+   ⚠ 판독 결과 모양(App.readState.rows)은 사진 판독과 **같다** — 그래서 확인 표·
+   저장(saveVals)·값 표가 손댈 것 없이 그대로 돈다. */
+
+/* 엑셀 읽기 도구(1MB)는 엑셀을 실제로 열 때만 내려받는다 — 폰에서 첫 화면이
+   느려지지 않게 한다. 한 번 받으면 그 판에서는 다시 안 받는다. */
+let sheetLibP = null;
+function needSheetLib() {
+  if (window.XLSX && window.XLSX.read) return Promise.resolve();
+  if (sheetLibP) return sheetLibP;
+  sheetLibP = new Promise((ok, no) => {
+    const el = document.createElement('script');
+    el.src = 'vendor/xlsx.full.min.js';
+    el.onload = () => ok();
+    el.onerror = () => { sheetLibP = null; no(new Error('엑셀 읽기 도구를 내려받지 못했습니다')); };
+    document.head.appendChild(el);
+  });
+  return sheetLibP;
+}
+
+/* 열려 있는 엑셀을 받아 시트 목록을 만든다. 파일은 창고에서 그대로 가져온다 —
+   뷰어가 쓰는 주소(App.viewerUrl)를 함께 쓴다. */
+function startSheetRead() {
+  const rec = findRow(App.viewerId);
+  if (!rec || !canWrite()) return;
+  const rk = S.readKindFor(rec.kind);
+  if (!rk) {
+    App.readState = { status: 'err', rows: [], err: '이 종류는 값을 뽑지 않습니다.' };
+    App.render(); return;
+  }
+  if (!App.viewerUrl) {
+    App.readState = { status: 'err', rows: [], err: '파일을 아직 못 받았습니다 — 잠시 뒤 다시 해 주세요.' };
+    App.render(); return;
+  }
+  App.readState = { status: 'reading', rows: [], err: '' };
+  App.render();
+  const forId = App.viewerId;                 // 늦게 온 답이 다른 서류에 얹히지 않게
+  return needSheetLib()
+    .then(() => fetch(App.viewerUrl))
+    .then(r => { if (!r.ok) throw new Error('파일을 받지 못했습니다 (' + r.status + ')'); return r.arrayBuffer(); })
+    .then(ab => {
+      if (App.viewerId !== forId) return;      // 그 사이 다른 서류를 열었다
+      const names = PuPaydataFiles.sheetNames(ab);
+      if (!names.length) throw new Error('시트가 없는 엑셀입니다.');
+      App.sheetBuf = ab;                       // 시트를 갈아 볼 때 다시 안 받는다
+      App.readState = { status: 'idle', rows: [], err: '', sheet: { names: names, pick: '', text: '', masked: 0 } };
+      pickSheet(names[0]);
+    })
+    .catch(e => {
+      if (App.viewerId !== forId) return;
+      App.readState = { status: 'err', rows: [], err: (e && e.message) || String(e) };
+      App.render();
+    });
+}
+window.startSheetRead = startSheetRead;
+
+/* 시트를 고르면 그 칸 글자를 뽑아 보여 준다. **보내기 전에** 주민번호를 지우고,
+   몇 개를 지웠는지 사람에게 알린다 — 모르고 보내는 일이 없어야 한다. */
+function pickSheet(name) {
+  const st = App.readState || {};
+  if (!st.sheet || !App.sheetBuf) return;
+  let text = '';
+  try {
+    text = PuPaydataFiles.sheetText(App.sheetBuf, name);
+  } catch (e) {
+    App.readState = { status: 'err', rows: [], err: (e && e.message) || String(e) };
+    App.render(); return;
+  }
+  let masked = 0;
+  if (window.PuRrnMask && PuRrnMask.maskRrnInText) {
+    const m = PuRrnMask.maskRrnInText(text);
+    text = m.text; masked = m.count;
+  }
+  st.sheet = { names: st.sheet.names, pick: name, text: text, masked: masked };
+  st.status = 'idle'; st.rows = []; st.err = '';
+  App.readState = st;
+  App.render();
+}
+window.pickSheet = pickSheet;
+
+/* 고른 시트의 글자를 AI 에 보내 사람별 값으로 만든다. 그다음은 사진 판독과 같다 —
+   확인 표에서 고치고 「저장」을 눌러야 값이 된다(대표 결정: 사람이 한 번 보고 지장). */
+function runSheetRead() {
+  const st = App.readState || {};
+  const rec = findRow(App.viewerId);
+  if (!st.sheet || !st.sheet.text || !rec) return;
+  const forId = App.viewerId;
+  const hint = (rec.filename || '엑셀') + ' · ' + st.sheet.pick + ' 시트';
+  const keep = st.sheet;
+  App.readState = { status: 'reading', rows: [], err: '', sheet: keep };
+  App.render();
+  return PuDocRead.readTableText(st.sheet.text, hint).then(r => {
+    if (App.viewerId !== forId) return;
+    if (!r || !r.ok) {
+      App.readState = { status: 'err', rows: [], err: (r && r.error) || '읽지 못했습니다', sheet: keep };
+      App.render(); return;
+    }
+    /* 사진 판독과 같은 길로 넣는다 — rowsFromRead 가 값 줄 모양을 맞춘다. */
+    const rows = S.rowsFromRead(S.readKindFor(rec.kind), r);
+    if (!rows.length) {
+      App.readState = { status: 'err', rows: [], sheet: keep,
+        err: '사람 이름을 찾지 못했습니다 — 머리글이 여러 줄이거나 다른 시트일 수 있습니다.' };
+      App.render(); return;
+    }
+    App.readState = { status: 'done', rows: rows, err: '', sheet: keep };
+    App.render();
+  });
+}
+window.runSheetRead = runSheetRead;
+
 function startMask() {
   const rec = findRow(App.viewerId);
   if (!rec) return;
@@ -3518,11 +3641,37 @@ function readPanelHtml() {
     body = '<div class="pre"><div class="big">📄</div><p>'
       + (!rk ? '이 종류는 값을 뽑지 않습니다.' : '남의 자리에서는 판독할 수 없습니다.')
       + '</p></div>';
+  } else if (PuPaydataFiles.fileKind(rec.filename) === 'sheet') {
+    /* 엑셀은 **사진으로 만들지 않는다**(2026-08-23). 칸 값이 이미 글자라
+       그대로 읽으면 1↔7·4↔9 오독이 있을 수가 없다. */
+    const sh = st.sheet || null;
+    if (st.status === 'reading') {
+      body = '<div class="pre"><div class="big">⏳</div><p>읽는 중입니다…</p></div>';
+    } else if (!sh) {
+      body = '<div class="pre"><div class="big">📊</div><p><b>엑셀 파일입니다.</b><br>'
+        + '칸 값을 <b>그대로</b> 읽습니다 — 사진으로 만들지 않으니<br>'
+        + '숫자를 잘못 읽는 일이 없습니다.</p>'
+        + '<button class="btn pri" onclick="startSheetRead()">📊 엑셀 열기</button> '
+        + '<button class="btn" onclick="startManualRows()">✍ 직접 적기</button></div>';
+    } else {
+      body = '<div class="sub">시트를 고르면 그 칸 글자를 보여 줍니다. 확인하고 판독하세요.</div>'
+        + '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px">'
+        + sh.names.map(n =>
+          '<button class="btn sm" style="' + (n === sh.pick ? 'background:var(--navy);color:#fff;font-weight:700' : '')
+          + '" onclick="pickSheet(\'' + jsq(n) + '\')">' + esc(n) + '</button>').join('')
+        + '</div>'
+        + (sh.masked
+          ? '<div class="warnline">🔒 주민등록번호로 보이는 것 <b>' + sh.masked
+            + '개</b>를 지우고 보냅니다 — AI 로 나가지 않습니다.</div>' : '')
+        + '<div class="sub" style="margin:0 0 5px">이 시트에서 뽑은 글자</div>'
+        + '<pre class="sheetraw">' + esc(sh.text || '(빈 시트입니다)') + '</pre>';
+    }
   } else if (!isImageRec(rec)) {
     /* 「이 파일은 미리 볼 수 없습니다」 옆에 판독 단추를 두면 안 된다 — 눌러 봐야
-       오류 400 이고(isImageRec 머리말), 사람은 서비스가 죽은 줄 안다. */
-    body = '<div class="pre"><div class="big">📄</div><p><b>이 파일은 판독할 수 없습니다.</b><br>'
-      + 'AI는 사진만 읽습니다 — PDF·엑셀·한글 파일은<br>'
+       오류 400 이고(isImageRec 머리말), 사람은 서비스가 죽은 줄 안다.
+       ⚠ 엑셀은 위 갈래에서 이미 처리했다 — 한글·PDF 는 아직이다(다음 차례). */
+    body = '<div class="pre"><div class="big">📄</div><p><b>이 파일은 아직 판독할 수 없습니다.</b><br>'
+      + '한글·PDF 는 준비 중입니다 — 지금은<br>'
       + '사진으로 찍거나 화면을 캡처해 올려 주세요.</p></div>';
   } else if (st.status === 'reading') {
     body = '<div class="pre"><div class="big">⏳</div><p>읽는 중입니다…</p></div>';
@@ -3556,11 +3705,18 @@ function readPanelHtml() {
       + '<button class="btn pri" onclick="startMask()">🔍 판독하기</button> '
       + '<button class="btn" onclick="startManualRows()">✍ 직접 적기</button></div>';
   }
-  const foot = (st.status === 'done')
-    ? '<div class="pfoot"><span class="sub">' + st.rows.length + '명</span>'
+  let foot = '';
+  if (st.status === 'done') {
+    foot = '<div class="pfoot"><span class="sub">' + st.rows.length + '명</span>'
       + '<button class="btn" onclick="addValRow()">＋ 줄</button>'
-      + '<button class="btn pri" onclick="saveVals()">저장</button></div>'
-    : '';
+      + '<button class="btn pri" onclick="saveVals()">저장</button></div>';
+  } else if (st.sheet && st.status !== 'reading') {
+    /* 글자를 보여 준 뒤에 판독한다 — 무엇을 보내는지 보고 누르게 한다. */
+    foot = '<div class="pfoot"><span class="sub">' + esc(st.sheet.pick) + '</span>'
+      + '<button class="btn" onclick="startManualRows()">✍ 직접 적기</button>'
+      + '<button class="btn pri"' + (st.sheet.text ? '' : ' disabled')
+      + ' onclick="runSheetRead()">🔍 이 시트 판독</button></div>';
+  }
   return '<div id="readPanel"><div class="ph"><b>판독 결과</b></div>'
     + '<div class="pbody">' + body + '</div>' + foot + '</div>';
 }

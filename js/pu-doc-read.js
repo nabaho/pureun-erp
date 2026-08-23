@@ -430,6 +430,12 @@
       return { inline_data: { mime_type: 'image/jpeg', data: b64 } };
     });
     parts.push({ text: prompt + (imgs.length > 1 ? MULTI_NOTE : '') });
+    return runParts(parts);
+  }
+
+  /* 모델·재시도·키 조달·결과 다듬기 — 사진으로 보낼 때와 글자로 보낼 때가
+     **똑같이** 쓴다. 두 벌로 두면 한쪽만 고쳐 놓고 다른 쪽은 옛 길로 남는다. */
+  function runParts(parts) {
 
     /* 서버 대리인이 있으면 열쇠를 아예 안 챙긴다(2026-08-17) */
     if (useProxy()) {
@@ -457,6 +463,44 @@
         return wageFail((e && e.message) || String(e));
       });
     });
+  }
+
+  /* ── 글자로 된 표를 판독한다 (대표 결정 2026-08-23) ──
+     엑셀·한글·글자 있는 PDF 는 **사진으로 만들지 않는다.** 칸 값이 이미 글자라
+     1↔7·4↔9 오독이 있을 수가 없다 — 사진으로 보내면 오히려 나빠진다.
+     AI 가 하는 일은 「읽기」가 아니라 **어느 칸이 무엇인가 판단**뿐이다.
+
+     결과 모양은 readWageTable 과 **같게** 맞춘다 — 부르는 쪽(판독 패널·값 만들기)이
+     사진에서 온 것과 글자에서 온 것을 갈라 다룰 일이 없어야 한다. */
+  var TABLE_PROMPT =
+    '아래는 엑셀·한글 문서에서 그대로 뽑아 낸 표 글자입니다(탭으로 칸이 나뉘어 있습니다).\n' +
+    '이 글자에서 근로자별 항목·값을 뽑아 JSON 으로만 답하십시오.\n' +
+    '{"company":"사업장 이름 또는 빈 문자열","period":"YYYY-MM 또는 빈 문자열",' +
+    '"docName":"서류 이름 또는 빈 문자열","rows":[{"name":"근로자 이름",' +
+    '"pairs":[{"item":"항목 이름","value":"값"}],"iffy":false}]}\n' +
+    '규칙:\n' +
+    '- 값은 **글자에 적힌 그대로** 옮기십시오. 고쳐 쓰거나 계산하지 마십시오.\n' +
+    '- 항목 이름도 문서에 적힌 그대로 쓰십시오(「기본급」을 「기본임금」으로 바꾸지 마십시오).\n' +
+    '- 합계·소계 줄은 사람이 아니므로 담지 마십시오.\n' +
+    '- 머리글이 여러 줄이거나 칸이 합쳐져 어느 항목인지 확실치 않으면 그 줄에 iffy:true 를 주십시오.\n' +
+    '- 사람 이름을 못 찾으면 rows 를 빈 배열로 두십시오. 억지로 만들지 마십시오.';
+
+  function readTableText(text, hint) {
+    if (!deps.fetch) return Promise.resolve(wageFail('판독 준비가 되지 않았습니다'));
+    var body = String(text == null ? '' : text).trim();
+    /* 빈 글자로 AI 를 부르면 헛돈이고, 답도 쓸 수 없다 */
+    if (!body) return Promise.resolve(wageFail('읽을 글자가 없습니다 — 빈 시트이거나 글자가 없는 파일입니다'));
+    /* ⚠ 마지막 문지기 — 주민번호를 여기서 한 번 더 지운다. 부르는 쪽에서
+       지우는 것을 잊어도 AI 로는 안 나가게 한다(사진 가림과 같은 원칙:
+       문지기가 한 곳뿐이면 그 한 곳을 빠뜨렸을 때 그대로 나간다).
+       글자는 사진과 달리 **자리를 틀릴 일이 없다.** */
+    var RM = global.PuRrnMask;
+    if (RM && RM.maskRrnInText) body = RM.maskRrnInText(body).text;
+    var where = String(hint || '').trim();
+    var prompt = TABLE_PROMPT
+      + (where ? '\n\n[이 글자는 여기서 뽑았습니다: ' + where + ']' : '')
+      + '\n\n=== 표 글자 시작 ===\n' + body + '\n=== 표 글자 끝 ===';
+    return runParts([{ text: prompt }]);
   }
 
   /* 급여표(급여명세서·임금대장) 한 장(또는 여러 쪽)을 사람별 금액까지 판독한다.
@@ -719,6 +763,7 @@
     READ_VERSION: READ_VERSION,
     read: read,
     readWageTable: readWageTable,
+    readTableText: readTableText,
     readChangeNotice: readChangeNotice,
     autoOk: autoOk,
     /* 검사 전용 — 바깥 함수들은 실패를 한국어 글로 감싸 버려서, 서버가 준
