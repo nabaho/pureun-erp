@@ -88,7 +88,7 @@ function noConst(src) { return String(src).replace(/(^|\n)const /g, '$1var '); }
 function rowDeps() {
   return [
     constLine('DONE_STATUS'), constObj('STATUS_TEXT'), constSource('GROUPS'),
-    constLine('OWN_LABEL'), constLine('OWN_CLS'), constLine('GROUP_UNIT'),
+    constLine('OWN_LABEL'), constLine('OWN_CLS'), constLine('OWN_SHORT'), constLine('GROUP_UNIT'),
     fnSource('todayString'), fnSource('keptOf'), fnSource('rosterMarkOf'),
     fnSource('memberRows'), fnSource('pageIdsOf'), fnSource('pageRows'), fnSource('rowsOf'),
     fnSource('needsAttentionRow'), fnSource('statOf'),
@@ -1785,6 +1785,55 @@ test('★ 「손댈 것」 딱지에 적힌 수와 눌러서 나온 줄 수가 �
   assert.ok(이름들.indexOf('임혜미') < 0, '내려간 사람이 아직 손댈 것으로 남습니다');
   assert.ok(이름들.indexOf('박성수') >= 0, '홈페이지에 남은 퇴사자가 손댈 것에서 빠졌습니다');
   assert.equal(s.hot, 2, '박성수(퇴사+홈페이지에 남음)를 두 번 셌거나 조현범을 빠뜨렸습니다');
+});
+
+/* ══════ 대조 기준 글자를 «줄로» 보기 (5차 지시) ══════
+   대표 지시: 「한 줄로 이어져 있으면 확인이 어렵고 수정도 어렵다」.
+   지킬 것 ① 줄바꿈을 넣어도 대조 결과가 안 바뀌는가(공백을 뭉쳐 견주므로)
+   ② 나누는 자리를 지어내지 않는가(홈페이지에서 읽은 줄만 쓴다)
+   ③ 초안만 바뀌고 자료는 저장을 눌러야 바뀌는가. */
+test('★ 기준 글자에 줄바꿈을 넣어도 대조 결과가 안 바뀐다', () => {
+  /* 이것이 이 기능의 근거다 — 여기가 깨지면 줄을 나눈 쪽이 영영 「안 올라감」에 묶인다.
+     판단은 부품(PuHomeDiff)이 하므로 부품을 «돌려서» 확인한다. */
+  const 홈페이지 = '천안본사 충남 천안시 서북구 원두정8길 6, 301호 T. 041-556-0035 세종지사 세종 한누리대로 312';
+  const 줄나눔 = '천안본사\n충남 천안시 서북구 원두정8길 6, 301호\nT. 041-556-0035\n세종지사\n세종 한누리대로 312';
+  const ctx = box();
+  const r = ctx.PuHomeDiff.pageStatus({ inquiry: { text: 줄나눔 } }, { inquiry: 홈페이지 });
+  assert.equal(r[0].status, 'same',
+    '줄바꿈만 넣었는데 「안 올라감」이 됐습니다 — 그러면 읽기 좋게 나눌 수가 없습니다');
+  /* 뜻이 다르면 여전히 다르다고 해야 한다 — 공백을 뭉치는 것이 «내용»을 뭉개면 안 된다 */
+  const r2 = ctx.PuHomeDiff.pageStatus({ inquiry: { text: 줄나눔 + '\n대전지사' } }, { inquiry: 홈페이지 });
+  assert.equal(r2[0].status, 'pending', '글자가 늘었는데 「같음」이라고 합니다');
+});
+
+test('★ 홈페이지를 안 읽었으면 줄을 «지어내지» 않고 그 사실을 말한다', async () => {
+  const ctx = cfgBox(null);
+  ctx.App.group = 'work';
+  ctx.App.pick = 'work1';
+  ctx.App.pages = { work1: { text: '한 줄로 이어진 글자 275자쯤' } };
+  ctx.App.pageLines = {};                     // 아직 홈페이지를 안 읽었다
+  run(ctx, fnSource('splitByLive'));
+  ctx.loadDraft();
+  const 전 = ctx.App.draft.text;
+  await ctx.splitByLive();
+  assert.equal(ctx.App.draft.text, 전, '읽지도 않은 줄 모양으로 글자를 건드렸습니다');
+  assert.match(ctx.said.join(' '), /홈페이지를 읽지/, '왜 못 나누는지 말하지 않았습니다');
+});
+
+test('★ 줄로 나누는 것은 «초안»만 바꾼다 — 저장을 눌러야 자료에 남는다', async () => {
+  const ctx = cfgBox(null);
+  ctx.App.group = 'work';
+  ctx.App.pick = 'work1';
+  ctx.App.pages = { work1: { text: '자문서비스 01 노무관리 전반의 상시 자문' } };
+  ctx.App.pageLines = { work1: ['자문서비스', '01', '노무관리 전반의 상시 자문'] };
+  run(ctx, fnSource('splitByLive'));
+  ctx.loadDraft();
+  await ctx.splitByLive();
+  assert.equal(ctx.App.draft.text.split('\n').length, 3, '홈페이지 줄대로 안 나눠졌습니다');
+  assert.equal(ctx.App.dirty, true, '「저장 안 됨」 표시가 안 켜졌습니다');
+  assert.equal(ctx.App.pages.work1.text, '자문서비스 01 노무관리 전반의 상시 자문',
+    '저장을 누르지도 않았는데 자료가 바뀌었습니다');
+  assert.deepEqual(ctx.saved, [], '저장을 누르지도 않았는데 서버에 썼습니다');
 });
 
 /* ══════ 자문사현황 (4차 지시) ══════
