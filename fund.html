@@ -109,7 +109,15 @@
     border-top:1px solid var(--line);padding-top:7px;margin-top:3px}
   .gridw .sec.first{border-top:none;padding-top:0;margin-top:0}
   /* 안에 [🔍 소재지로] 단추가 붙는 칸은 좁으면 글자가 안 보인다 — 자리가 있을 때만 두 칸 폭 */
-  @media (min-width:1200px){ .gridw .fld.w2{grid-column:span 2} }
+  @media (min-width:1200px){ .gridw .fld.w2{grid-column:span 2} .gridw .fld.w3{grid-column:span 3} }
+  /* 담당 한 줄 — 주담당 드롭다운 + [+ 부담당] 드롭다운 + 고른 사람 알약 */
+  .mgrrow{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+  .mgrrow select{padding:5px 8px;font-size:12.5px;border:1px solid var(--line);border-radius:8px;background:#fff}
+  .mgrrow #fd-mgr-sub-add{color:var(--acc2);font-weight:600;max-width:110px}
+  .mchip{display:inline-flex;align-items:center;gap:3px;font-size:12px;font-weight:600;
+    background:var(--acc-soft);color:var(--acc2);border-radius:999px;padding:2px 5px 2px 9px;white-space:nowrap}
+  .mchip b{cursor:pointer;font-weight:700;color:var(--sub);padding:0 3px;border-radius:50%}
+  .mchip b:hover{background:#fff;color:var(--danger)}
   .fld{display:flex;flex-direction:column;gap:4px}.fld.full{grid-column:1/-1}
   .fld label{font-size:11.5px;color:var(--sub);font-weight:600}
   .fld input,.fld select{padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px}
@@ -168,7 +176,7 @@
     h1{font-size:17px}h2{font-size:14.5px!important}
     .row{flex-wrap:wrap;gap:7px}
     .grid,.gridw{grid-template-columns:1fr;gap:9px;max-width:none}
-    .gridw .fld.w2{grid-column:auto}          /* 폰에서는 두 칸 폭을 쓰지 않는다 */
+    .gridw .fld.w2,.gridw .fld.w3{grid-column:auto}   /* 폰에서는 여러 칸 폭을 쓰지 않는다 */
     .gridw .fld input,.gridw .fld select{padding:7px 10px;font-size:16px}
     /* iOS는 16px 미만 입력칸에 포커스하면 화면을 확대해 버린다(손으로 되돌려야 함) → 주요 입력은 16px */
     .fld input,.fld select,.fld textarea,.search{font-size:16px}
@@ -3731,15 +3739,50 @@ function mgrMainField(f){
     return '<select id="fd-mgr-main" disabled><option>재직자 명단 불러오는 중…</option></select>'; }
   if(!_staffCache.length){ // 명단 로드 실패/빈 명단 → 텍스트 폴백(입력 막지 않음)
     return '<input id="fd-mgr-text" value="'+esc(f.manager||'')+'" placeholder="예: 김혜민, 박재원(부)"><div class="muted" style="font-size:10.5px;margin-top:3px">재직자 명단을 못 불러왔습니다. 이 브라우저에서 <b>푸른이알피</b>를 한 번 열면 명단이 채워집니다. <a href="#" onclick="_staffCache=null;renderFund();return false;">다시 시도</a></div>'; }
-  return '<select id="fd-mgr-main"><option value="">(미지정)</option>'
+  return '<select id="fd-mgr-main" onchange="mgrMainChanged()"><option value="">(미지정)</option>'
     +_staffCache.map(function(u){return '<option value="'+esc(u.sid)+'"'+(u.sid===mainSid?' selected':'')+'>'+esc(u.name)+(u.title?' · '+esc(u.title):'')+'</option>';}).join('')+'</select>';
 }
+/* 부담당 — 재직자 열 명을 체크상자로 늘어놓아 한 줄을 통째로 먹던 것을
+   «드롭다운으로 골라 담는» 방식으로 바꿨다. 고른 사람은 알약으로 붙고 ×로 뺀다.
+   ⚠ 알약 안에 숨은 체크상자(class=fd-mgr-sub, checked)를 그대로 둔다 —
+     저장(saveInfo)이 '.fd-mgr-sub:checked' 를 읽으므로 저장 코드는 손대지 않는다. */
+function mgrSubChip(sid,name){
+  return '<span class="mchip" data-sid="'+esc(sid)+'">'+esc(name)
+    +'<b onclick="mgrSubDel(\''+esc(sid)+'\')" title="부담당에서 빼기">×</b>'
+    +'<input type="checkbox" class="fd-mgr-sub" value="'+esc(sid)+'" checked hidden></span>';
+}
 function mgrSubField(f){
-  if(!_staffCache||!_staffCache.length) return '<div class="muted" style="font-size:11.5px">—</div>';
+  if(!_staffCache||!_staffCache.length) return '<span class="muted" style="font-size:11.5px">—</span>';
   var subSids=(f.mgr_subs||[]).map(function(x){return x&&x.sid;}).filter(Boolean);
-  return '<div style="max-height:120px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:7px 10px">'
-    +_staffCache.map(function(u){return '<label style="display:inline-flex;align-items:center;gap:4px;margin:2px 10px 2px 0;font-size:12.5px;cursor:pointer">'
-      +'<input type="checkbox" class="fd-mgr-sub" value="'+esc(u.sid)+'"'+(subSids.indexOf(u.sid)>=0?' checked':'')+'> '+esc(u.name)+'</label>';}).join('')+'</div>';
+  var byId=function(sid){ return (_staffCache||[]).filter(function(u){return u.sid===sid;})[0]; };
+  return '<select id="fd-mgr-sub-add" onchange="mgrSubAdd(this.value);this.value=\'\'" title="부담당 추가">'
+    +'<option value="">+ 부담당</option>'
+    +_staffCache.map(function(u){return '<option value="'+esc(u.sid)+'">'+esc(u.name)+(u.title?' · '+esc(u.title):'')+'</option>';}).join('')
+    +'</select>'
+    +'<span id="fd-mgr-subchips" style="display:inline-flex;gap:4px;flex-wrap:wrap">'
+    +subSids.map(function(sid){ var u=byId(sid); return u?mgrSubChip(sid,u.name):''; }).join('')
+    +'</span>';
+}
+function mgrSubAdd(sid){
+  if(!sid) return;
+  var box=$('fd-mgr-subchips'); if(!box) return;
+  if(box.querySelector('[data-sid="'+sid+'"]')) return;                  // 이미 담겨 있음
+  var main=$('fd-mgr-main');
+  if(main&&main.value===sid){ toast('주담당으로 지정된 사람입니다','warn'); return; }
+  var u=(_staffCache||[]).filter(function(x){return x.sid===sid;})[0]; if(!u) return;
+  box.insertAdjacentHTML('beforeend',mgrSubChip(sid,u.name));
+  markDirty();
+}
+function mgrSubDel(sid){
+  var box=$('fd-mgr-subchips'); if(!box) return;
+  var el=box.querySelector('[data-sid="'+sid+'"]'); if(el){ el.remove(); markDirty(); }
+}
+/* 주담당을 바꾸면 그 사람이 부담당에 남아 있지 않게 한다 — 저장 때는 걸러지지만
+   화면에 둘 다 보이면 무엇이 저장될지 알 수 없다. */
+function mgrMainChanged(){
+  var main=$('fd-mgr-main'); if(!main) return;
+  mgrSubDel(main.value);
+  markDirty();
 }
 // 설립 단계별 연결 — 서식이 필요하면 서식 자료실(해당 서식), 입력 단계면 해당 탭으로
 var EST_LINK={
@@ -3862,8 +3905,9 @@ function infoForm(f){
   var flds=FIELDS.map(function(c){
     var sec='';
     if(INFO_SECS[c[0]]){ sec='<div class="sec'+(_first?' first':'')+'">'+INFO_SECS[c[0]]+'</div>'; _first=false; }
-    if(c[0]==='manager') return sec+'<div class="fld"><label>주담당</label>'+mgrMainField(f)+'</div>'
-      +'<div class="fld full"><label>부담당 (여러 명 선택)</label>'+mgrSubField(f)+'</div>';
+    /* 주담당·부담당을 한 줄에 — 종전에는 부담당이 전폭 한 줄을 통째로 먹었다 */
+    if(c[0]==='manager') return sec+'<div class="fld w3"><label>담당 <span class="muted" style="font-weight:400">주담당 · 부담당</span></label>'
+      +'<div class="mgrrow">'+mgrMainField(f)+mgrSubField(f)+'</div></div>';
     var v=f[c[0]]||'', inp;
     if(c[2]==='select') inp='<select id="fd-'+c[0]+'">'+['공동','사내'].map(function(o){return '<option'+(v===o?' selected':'')+'>'+o+'</option>';}).join('')+'</select>';
     else if(c[0]==='registry_office') inp='<div style="display:flex;gap:5px"><input id="fd-'+c[0]+'" type="text" value="'+esc(v)+'" style="flex:1">'

@@ -134,3 +134,79 @@ test('화면 배선 — 버튼·도움말·한 줄 서류칸', () => {
   const panel = SRC.slice(SRC.indexOf('📥 서류 자동 입력') - 400, SRC.indexOf('📥 서류 자동 입력') + 900);
   assert.ok(!panel.includes("dropZone('dz-inka'"), '서류칸이 다시 커졌다 — docZoneOne 을 쓸 것');
 });
+
+/* ── 담당 한 줄(주담당 드롭다운 + 부담당 드롭다운·알약) ──
+   부담당을 체크상자 열 개에서 «골라 담기»로 바꿨다. 저장 코드는 손대지 않았으므로
+   숨은 체크상자(class=fd-mgr-sub, checked)가 그대로 붙어 있는지가 관건이다. */
+function mgrBox() {
+  const box = {};
+  const chips = { html: '', kids: [] };
+  new Function('CHIPS', 'STAFF', [
+    'var _staffCache=STAFF;',
+    'var _dirty=0;',
+    'function markDirty(){ _dirty++; }',
+    'function toast(m,k){ CHIPS.toast=(CHIPS.toast||[]).concat(m); }',
+    'function esc(s){ return String(s==null?"":s); }',
+    'function $(id){ return id==="fd-mgr-subchips"?CHIPS.el:(id==="fd-mgr-main"?CHIPS.main:null); }',
+    grabFn('mgrSubChip'), grabFn('mgrSubField'), grabFn('mgrSubAdd'), grabFn('mgrSubDel'),
+    'this.mgrSubField=mgrSubField; this.mgrSubAdd=mgrSubAdd; this.mgrSubDel=mgrSubDel;',
+    'this.mgrSubChip=mgrSubChip; this.dirty=function(){ return _dirty; };'
+  ].join('\n')).call(box, chips, [
+    { sid: 'P-001', name: '가나다' }, { sid: 'P-002', name: '라마바' }, { sid: 'P-003', name: '사아자' }
+  ]);
+  return { box, chips };
+}
+
+test('부담당 알약에 숨은 체크상자가 붙어 저장이 그대로 된다', () => {
+  const { box } = mgrBox();
+  const chip = box.mgrSubChip('P-002', '라마바');
+  assert.match(chip, /class="fd-mgr-sub"/, '저장이 읽는 클래스가 없다');
+  assert.match(chip, /value="P-002"/, '사번이 없다');
+  assert.match(chip, /checked/, 'checked 가 없으면 :checked 로 안 잡혀 저장에서 빠진다');
+  assert.match(chip, /hidden/, '체크상자가 눈에 보이면 알약이 두 번 그려진 것처럼 보인다');
+  assert.match(chip, /data-sid="P-002"/, '중복·삭제를 가리는 표가 없다');
+  // 저장 코드가 여전히 그 선택자를 쓰는지
+  const save = SRC.slice(SRC.indexOf('function saveInfo'), SRC.indexOf('function saveInfo') + 1800);
+  assert.match(save, /\.fd-mgr-sub:checked/, '저장이 다른 방법으로 바뀌었다 — 알약도 같이 고쳐야 한다');
+});
+
+test('부담당은 드롭다운으로 담고 ×로 뺀다 — 중복·주담당 겹침을 막는다', () => {
+  const { box, chips } = mgrBox();
+  // 가짜 알약 상자: insertAdjacentHTML·querySelector 만 흉내낸다
+  const state = [];
+  chips.el = {
+    insertAdjacentHTML: (_, h) => { state.push((h.match(/data-sid="([^"]+)"/) || [])[1]); },
+    querySelector: sel => {
+      const sid = (sel.match(/data-sid="([^"]+)"/) || [])[1];
+      return state.includes(sid) ? { remove: () => { state.splice(state.indexOf(sid), 1); } } : null;
+    }
+  };
+  chips.main = { value: 'P-001' };
+
+  box.mgrSubAdd('P-002');
+  assert.deepEqual(state, ['P-002'], '고른 사람이 담기지 않았다');
+  box.mgrSubAdd('P-002');
+  assert.deepEqual(state, ['P-002'], '같은 사람이 두 번 담겼다');
+  box.mgrSubAdd('P-001');
+  assert.deepEqual(state, ['P-002'], '주담당인 사람이 부담당으로 담겼다');
+  assert.ok((chips.toast || []).some(t => t.includes('주담당')), '주담당 겹침을 알려 주지 않았다');
+  box.mgrSubAdd('');
+  assert.deepEqual(state, ['P-002'], '빈 값으로도 담겼다');
+  box.mgrSubDel('P-002');
+  assert.deepEqual(state, [], '×로 빠지지 않았다');
+  assert.ok(box.dirty() > 0, '바뀐 것을 저장 대상으로 표시하지 않았다');
+});
+
+test('담당은 한 줄 — 부담당이 전폭 한 줄을 먹지 않는다', () => {
+  assert.match(SRC, /if\(c\[0\]==='manager'\) return sec\+'<div class="fld w3">/, '담당이 한 칸(w3)으로 합쳐지지 않았다');
+  assert.ok(!/<div class="fld full"><label>부담당/.test(SRC), '부담당이 다시 전폭 한 줄을 먹는다');
+  assert.match(SRC, /class="mgrrow"/, '한 줄 상자가 없다');
+  const sub = grabFn('mgrSubField');
+  assert.match(sub, /<select id="fd-mgr-sub-add"/, '부담당이 드롭다운이 아니다');
+  assert.ok(!/type="checkbox" class="fd-mgr-sub"[^>]*>\s*'\+esc\(u\.name\)/.test(sub),
+    '재직자 전원을 체크상자로 늘어놓는 옛 방식이 남았다');
+  assert.match(SRC, /onchange="mgrMainChanged\(\)"/, '주담당을 바꿔도 부담당에서 안 빠진다');
+  assert.match(SRC, /\.mgrrow\{display:flex/, '한 줄 배치 CSS가 없다');
+  // 모달(담당자 지정)은 다른 클래스라 건드리지 않았는지
+  assert.match(SRC, /\.mgr-sub:checked/, '모달의 담당 저장이 깨졌다');
+});

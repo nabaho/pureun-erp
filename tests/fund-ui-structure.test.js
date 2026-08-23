@@ -179,7 +179,11 @@ test('기금 정보 폼은 화면 폭을 다 쓴다 — 760px 2열에 갇히지 
   assert.equal(Object.keys(box.S).length, 4, '묶음 머리는 넷이어야 한다(기본·담당·인가등기·관할연락)');
   const fields = SRC.slice(SRC.indexOf('var FIELDS='), SRC.indexOf('];', SRC.indexOf('var FIELDS=')));
   Object.keys(box.S).forEach(k => assert.ok(fields.includes("'" + k + "'"), 'FIELDS 에 없는 칸에 묶음 머리를 걸었다: ' + k));
-  // 단추가 붙는 칸은 넓게, 단 자리가 있을 때만
-  assert.match(SRC, /@media \(min-width:1200px\)\{ \.gridw \.fld\.w2\{grid-column:span 2\} \}/, '넓은 칸 규칙이 없다');
-  assert.match(SRC, /\.gridw \.fld\.w2\{grid-column:auto\}/, '폰에서 두 칸 폭을 풀지 않으면 넘친다');
+  /* 여러 칸 폭이 필요한 칸(단추가 붙는 관할 3칸·담당 한 줄)은 넓게, 단 «자리가 있을 때만».
+     좁은 화면에서 span 을 그대로 두면 없는 열이 생겨 화면 밖으로 넘친다. */
+  const wide = SRC.match(/@media \(min-width:1200px\)\{[^}]*\.gridw[\s\S]{0,200}?\}\s*\}/);
+  assert.ok(wide, '넓은 칸 규칙이 없다');
+  assert.match(wide[0], /\.fld\.w2\{grid-column:span 2\}/, 'w2 규칙이 없다');
+  assert.match(wide[0], /\.fld\.w3\{grid-column:span 3\}/, 'w3 규칙이 없다');
+  assert.match(SRC, /\.gridw \.fld\.w2,\.gridw \.fld\.w3\{grid-column:auto\}/, '폰에서 여러 칸 폭을 풀지 않으면 넘친다');
 });
