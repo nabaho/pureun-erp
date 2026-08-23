@@ -27,6 +27,8 @@ const grab = (from, to) => src.slice(src.indexOf(from), src.indexOf(to));
 const ctx = { console:console };
 ctx.window = ctx;
 vm.createContext(ctx);
+// 원단위 절사(10원 아래 버림)는 roundKRW 가 맡는다 — 흉내내지 말고 «진짜» 를 들여온다
+vm.runInContext(grab('function roundKRW(amount, mode){', '\nfunction fmtAmt('), ctx);
 vm.runInContext(grab('function erpWithholdTax(amount, kind, rate){', '\nfunction calcPerfShares('), ctx);
 // calcPerfShares 가 기대는 바깥 함수들 — 요율 15%, 사람 한 명으로 고정해 셈만 본다
 vm.runInContext([
