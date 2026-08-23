@@ -340,29 +340,31 @@ var FM = {   /* class → [정렬, 들여쓰기 칸수(반각), charPr] */
 function fromHtml(rootEl, doc, opts){
   opts = opts || {};
   if(!rootEl) return "";
-  var out = "", first = true, page = null, brk = false;
-  var kids = rootEl.querySelectorAll("h1,h2,h3,p,table,hr,div.sign,div.fmcols");
+  var out = "", first = true, page = null, brk = false, hasTitle = false;
+  var kids = rootEl.querySelectorAll("h1,h2,h3,h4,p,table,hr,div,li,blockquote");
   for(var i=0;i<kids.length;i++){
     var el = kids[i], tag = el.tagName, cl = String(el.className || "");
     /* 표 안의 문단·표는 표에서 함께 처리한다 */
     if(closestTag(el, "TABLE")) continue;
+    if(opts.skip && matches(el, opts.skip)) continue;
+    /* 칸을 감싸기만 하는 div 는 건너뛴다 — 안의 글은 안쪽 요소에서 나온다.
+       (이걸 안 가리면 같은 글이 겹쳐 나온다) */
+    if(tag === "DIV" && el.querySelector("h1,h2,h3,h4,p,table,div,hr,li")) continue;
     /* 화면이 용지 낱장(.a4)으로 나뉘어 있으면 장이 바뀔 때 쪽도 넘긴다 —
        여러 서류를 한 화면에 쌓아 보여주는 「전체 초안」이 한 쪽에 뭉치지 않게 */
     var pg = closestClass(el, "a4");
     if(pg !== page){ if(page) brk = true; page = pg; }
     if(tag === "HR"){ out += H.para("", CP.f10, {pageBreak:true}); brk = false; continue; }
-    if(tag === "TABLE"){ out += cut(brk) + tableFrom(el, doc) + H.spacer(); brk = false; continue; }
-    if(tag === "DIV"){
-      out += cut(brk) + (/\bfmcols\b/.test(cl) ? colsLine(el, doc) : signFrom(el));
-      brk = false; continue;
-    }
+    if(tag === "TABLE"){ out += cut(brk) + tableFrom(el, doc, opts.skip) + H.spacer(); brk = false; continue; }
+    if(tag === "DIV" && /\bsign\b/.test(cl)){ out += cut(brk) + signFrom(el); brk = false; continue; }
+    if(tag === "DIV" && /\bfmcols\b/.test(cl)){ out += cut(brk) + colsLine(el, doc); brk = false; continue; }
     var t = elText(el);
     if(!t) continue;
-    if(tag === "H1"){
+    if(tag === "H1" || (tag === "H2" && !hasTitle)){
       var ln = t.split("\n"), main = ln.shift();
       out += title(main, ln.join(" ") || null, {pageBreak:brk || (!first && !!opts.pageEach)});
-      out += H.spacer(); brk = false;
-    } else if(tag === "H2" || tag === "H3"){
+      out += H.spacer(); brk = false; hasTitle = true;
+    } else if(tag === "H2" || tag === "H3" || tag === "H4"){
       out += cut(brk) + H.spacer() + head(t); brk = false;
     } else {
       var st = null;
@@ -432,16 +434,20 @@ function signFrom(el){
   t.split("\n").forEach(function(s){ if(s.trim()) x += H.para(s.trim(), CP.f10, {paraPr:PP.right}); });
   return x;
 }
-/* 화면에 그려진 표를 실측해 한글 표로 — 병합·열폭·회색 머리칸을 살린다 */
-function tableFrom(tbl, doc){
+/* 화면에 그려진 표를 실측해 한글 표로 — 병합·열폭·회색 머리칸을 살린다.
+   skip: 문서에 넣지 않을 칸의 선택자(화면 전용 단추 칸 등). 그 칸의 폭은
+   빠지고 남은 열이 문서 폭을 나눠 쓴다. */
+function tableFrom(tbl, doc, skip){
   var W = (doc && doc.width) || H.bodyW();
   var rows = tbl.rows || [];
   if(!rows.length) return "";
+  var keep = function(cell){ return !(skip && matches(cell, skip)); };
   /* ① 열 경계 — 칸마다 좌우 끝을 모아 2px 안쪽은 같은 경계로 본다 */
   var edges = [], measured = true, r, c, cs;
   for(r=0;r<rows.length && measured;r++){
     cs = rows[r].cells;
     for(c=0;c<cs.length;c++){
+      if(!keep(cs[c])) continue;
       var b = cs[c].getBoundingClientRect ? cs[c].getBoundingClientRect() : null;
       if(!b || !b.width){ measured = false; break; }
       edges.push(b.left); edges.push(b.right);
@@ -454,11 +460,12 @@ function tableFrom(tbl, doc){
     for(var e=1;e<edges.length;e++) if(edges[e] - bounds[bounds.length-1] > 2) bounds.push(edges[e]);
   }
   /* ② 격자 — rowspan 이 덮은 자리에는 null 을 넣어야 한글이 칸을 어긋나게 놓지 않는다 */
-  var nCol = bounds ? bounds.length - 1 : maxCols(rows);
+  var nCol = bounds ? bounds.length - 1 : maxCols(rows, keep);
   if(nCol < 1) nCol = 1;
   var grid = [], busy = {};
   for(var ri=0;ri<rows.length;ri++){
-    var line = [], cells = rows[ri].cells, ci = 0, k = 0;
+    var line = [], cells = [], ci = 0, k = 0;
+    for(var q=0;q<rows[ri].cells.length;q++) if(keep(rows[ri].cells[q])) cells.push(rows[ri].cells[q]);
     while(ci < nCol){
       if(busy[ri + ":" + ci]){ line.push(null); ci++; continue; }
       var cell = cells[k++];
@@ -482,8 +489,8 @@ function tableFrom(tbl, doc){
   var w = [];
   if(bounds){
     var tot = bounds[nCol] - bounds[0], acc = 0;
-    for(var q=0;q<nCol;q++){
-      var v = Math.round(W * (bounds[q+1] - bounds[q]) / tot);
+    for(var p=0;p<nCol;p++){
+      var v = Math.round(W * (bounds[p+1] - bounds[p]) / tot);
       w.push(v); acc += v;
     }
     w[nCol-1] += W - acc;
@@ -499,11 +506,17 @@ function tableFrom(tbl, doc){
   });
   return H.tablePara(grid, w, tblOpt({sz:SZ.p10, cp:CP.f10, rowH:h, padY:250}));
 }
-function maxCols(rows){
+/* 이 요소가 선택자에 맞는가 — 브라우저마다 다른 옛 이름까지 본다 */
+function matches(el, sel){
+  if(!el || el.nodeType !== 1) return false;
+  var f = el.matches || el.msMatchesSelector || el.webkitMatchesSelector;
+  try{ return f ? f.call(el, sel) : false; }catch(e){ return false; }
+}
+function maxCols(rows, keep){
   var n = 0;
   for(var r=0;r<rows.length;r++){
     var s = 0, cs = rows[r].cells;
-    for(var c=0;c<cs.length;c++) s += (cs[c].colSpan || 1);
+    for(var c=0;c<cs.length;c++){ if(keep && !keep(cs[c])) continue; s += (cs[c].colSpan || 1); }
     if(s > n) n = s;
   }
   return n;
@@ -521,7 +534,10 @@ function cellFrom(cell, cs, rs){
   if(cs > 1) o.colSpan = cs;
   if(rs > 1) o.rowSpan = rs;
   if(isTh || /\bcenter\b/.test(cl)) o.align = "center";
-  else if(/\bright\b/.test(cl) || (t && /^[\d,.\- ]+$/.test(t))) o.align = "right";
+  /* 오른쪽 정렬은 «셈하는 숫자»만 — 「1990. 5. 6.」 같은 날짜를 오른쪽에 붙이면
+     서식이 어지럽다(날짜는 숫자로 보이지만 셈하는 값이 아니다) */
+  else if(/\bright\b/.test(cl) || (t && /^-?\d{1,3}(,\d{3})+$/.test(t)) || (t && /^-?\d+(\.\d+)?$/.test(t)))
+    o.align = "right";
   if(isTh || grayish(cell)) o.bf = BF.gray;
   return o;
 }
@@ -540,6 +556,68 @@ function grayish(cell){
   return Math.abs(r-g) < 12 && Math.abs(g-b) < 12 && r > 200 && r < 246;
 }
 
+/* ── 줄글(텍스트) → 한글 ────────────────────────────────────────
+   계약서 본문·제안서·명세서처럼 앱이 «글자 덩어리»로 들고 있는 문서가 있다.
+   그걸 한 문단에 통째로 넣으면 한글에서 조·항 구분이 사라지고 서명·날짜가
+   모두 왼쪽에 붙는다. 줄의 성격을 가려 관보 서식처럼 앉힌다.
+     제N조 → 조(제목 굵게)  ①~⑳ → 항  1. → 호  가. → 목  ○·※·- → 붙임표
+     「2026년 8월 1일」 → 가운데  「… 귀하」 → 왼쪽 굵게  「(인)」 → 오른쪽
+     「─── 지급 ───」 → 소제목                                        */
+var TX = {
+  jo:   /^\s*제\s*\d+\s*조/,
+  hang: /^\s*[①-⑳]/,
+  ho:   /^\s*\d{1,2}\s*[.)]\s/,
+  mok:  /^\s*[가-하]\s*[.)]\s/,
+  bul:  /^\s*([ㅇ○◦□■▪▶※•][  ]|[-–—]\s)/,
+  date: /^\s*(서기\s*)?\d{4}\s*[년.]\s*\d{0,2}\s*[월.]?\s*\d{0,2}\s*일?\s*\.?\s*$/,
+  to:   /(귀하|귀중)\s*$/,
+  sign: /\(\s*인\s*\)|（인）|서명\s*또는\s*인/,
+  band: /^\s*[─━=—-]{2,}\s*(.+?)\s*[─━=—-]{2,}\s*$/,
+  brac: /^\s*[【〔\[]\s*(.+?)\s*[】〕\]]\s*$/
+};
+function fromText(text, doc, opts){
+  opts = opts || {};
+  var src = String(text == null ? "" : text);
+  /* 앱마다 본문이 줄글일 때도 있고 <br> 섞인 HTML 일 때도 있다 — 표가 없는 HTML 은
+     여기서 줄글로 풀어 쓴다(표까지 있으면 fromHtml 을 써야 한다). */
+  if(/<(br|p|div|h[1-6]|li)\b/i.test(src)){
+    src = src.replace(/<\s*br\s*\/?>/gi, "\n")
+             .replace(/<\/\s*(p|div|h[1-6]|li|tr)\s*>/gi, "\n")
+             .replace(/<[^>]+>/g, "")
+             .replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+             .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+  }
+  var lines = src.replace(/\r\n?/g, "\n").split("\n");
+  var out = "", titled = !!opts.noTitle;
+  for(var i=0;i<lines.length;i++){
+    var s = lines[i].replace(/ /g, " ").replace(/[ \t]+$/, "");
+    if(!s.trim()){ out += H.spacer(); continue; }
+    var t = s.trim(), m;
+    if((m = TX.band.exec(t)) || (m = TX.brac.exec(t))){ out += H.spacer() + head(m[1]); continue; }
+    /* 첫 실한 줄이 짧으면 그게 표제다 */
+    if(!titled && t.length <= 32 && !TX.jo.test(t) && !TX.bul.test(t) && !TX.date.test(t)){
+      out += title(t) + H.spacer(); titled = true; continue;
+    }
+    titled = true;
+    if(TX.date.test(t)) out += H.para(t, CP.f10, {paraPr:PP.center});
+    else if(TX.to.test(t) && t.length <= 40) out += H.para(t, CP.f10b, {paraPr:PP.plain});
+    else if(TX.sign.test(t)) out += H.para(t, CP.f10, {paraPr:PP.right});
+    else if(TX.jo.test(t)) out += joLine(t);
+    else if(TX.hang.test(t)) out += H.para(pad(2) + t, CP.f10, {paraPr:PP.form});
+    else if(TX.ho.test(t))   out += H.para(pad(3) + t, CP.f10, {paraPr:PP.form});
+    else if(TX.mok.test(t))  out += H.para(pad(4) + t, CP.f10, {paraPr:PP.form});
+    else if(TX.bul.test(t))  out += H.para(pad(1) + t, CP.f10, {paraPr:PP.form});
+    else out += H.para(pad(1) + t, CP.f10, {paraPr:PP.form});
+  }
+  return out;
+}
+/* 「제3조 (출연금)  참여사업장은 …」 — 조 제목만 굵게, 나머지는 보통 */
+function joLine(t){
+  var m = /^(\s*제\s*\d+\s*조\s*(?:\([^)]*\))?)([\s\S]*)$/.exec(t);
+  if(!m) return H.para(t, CP.f10, {paraPr:PP.form});
+  return H.paraRuns([{t:m[1], cp:CP.f10b}, {t:m[2], cp:CP.f10}], {paraPr:PP.form});
+}
+
 /* ── 조립 도우미 ───────────────────────────────────────────────
    여러 문서를 한 파일로 묶을 때: 각 문서가 자기 구역을 갖고 자기 여백을 쓴다. */
 function pack(docs){
@@ -556,7 +634,7 @@ root.HWPXDOC = {
   dateLine:dateLine, signBlock:signBlock, signTable:signTable,
   receiver:receiver, blank:blank, bandTitle:bandTitle, attachBox:attachBox,
   paperNote:paperNote, body:body, note:note, head:head, pack:pack,
-  fromHtml:fromHtml, tableFrom:tableFrom, elText:elText
+  fromHtml:fromHtml, fromText:fromText, tableFrom:tableFrom, elText:elText
 };
 if(typeof module !== "undefined" && module.exports) module.exports = root.HWPXDOC;
 })(typeof window !== "undefined" ? window : globalThis);

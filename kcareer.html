@@ -559,6 +559,7 @@ h2,.page-title,.brand b,.brand-title,.g-title{font-family:'Noto Serif KR','Noto 
 </style>
 <script src="js/pu-hwp-engine.js?v=14"></script>
 <script src="hwpx_gen.js?v=14"></script>
+<script src="hwpx_doc.js?v=2"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
@@ -5420,7 +5421,7 @@ function _cvGapBefore(el,h){
   var g;
   if((el.tagName||'').toUpperCase()==='TR'){
     g=document.createElement('tr'); g.className='cv-pgap';
-    /* cv-noprint를 함께 붙인다 — _cvTableRows가 이 칸을 걸러 HWPX에 빈 행이 안 들어간다 */
+    /* cv-noprint를 함께 붙인다 — 한글 저장이 이 칸을 문서에서 빼고 남은 열이 폭을 나눈다 */
     g.innerHTML='<td class="cv-pgap-c cv-noprint" colspan="20"></td>';
     g.firstChild.style.height=Math.round(h)+'px';
   }else{
@@ -5630,36 +5631,20 @@ function printCV(){ const sheet=document.getElementById('cvSheet'); const tpl=(d
   if(typeof _logCv==='function') _logCv(tpl==='cert'?'경력증명서':'이력서','PDF(인쇄)');
   window.print(); }
 async function _ensureJSZip(){ if(window.JSZip) return; await new Promise(function(res,rej){ const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'; s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
-function _cvCollectLines(sheet){ const lines=[]; const h=sheet.querySelector('h2'); lines.push(h?h.textContent.trim():'이력서');
-  sheet.querySelectorAll('table').forEach(function(tb){ tb.querySelectorAll('tr').forEach(function(tr){ const c=Array.from(tr.querySelectorAll('th,td')).map(function(x){return (x.textContent||'').trim();}).filter(Boolean); if(c.length) lines.push(c.join('  ')); }); });
-  sheet.querySelectorAll(':scope > div[contenteditable]').forEach(function(d){ const t=(d.textContent||'').trim(); if(t) lines.push(t); });
-  return lines; }
-function _cvTableRows(table){
-  return Array.from(table.querySelectorAll('tr')).map(function(tr){
-    return Array.from(tr.querySelectorAll('th,td')).filter(function(cell){
-      return !cell.classList.contains('cv-noprint');
-    }).map(function(cell){ return (cell.textContent||'').trim(); });
-  }).filter(function(row){ return row.length; });
-}
 function _cvBuildHwpx(){
   const sheet=document.getElementById('cvSheet'); if(!sheet) return null;
-  if(typeof HWPX==='undefined'||!window.PureunHwp) throw new Error('공통 한글 문서 도구를 불러오지 못했습니다.');
+  if(typeof HWPX==='undefined'||typeof HWPXDOC==='undefined'||!window.PureunHwp) throw new Error('공통 한글 문서 도구를 불러오지 못했습니다.');
   const tpl=(document.getElementById('cvTpl')||{}).value||'resume';
   const title=tpl==='cert'?'경력증명서':'이력서';
-  let body=HWPX.docTitle(title);
-  sheet.querySelectorAll('table').forEach(function(table){
-    let rows=_cvTableRows(table); if(!rows.length) return;
-    const width=Math.max.apply(null,rows.map(function(row){return row.length;}));
-    rows=rows.map(function(row){ while(row.length<width) row.push(''); return row; });
-    body+=HWPX.tablePara(rows,HWPX.cols(new Array(width).fill(1/width)));
-    body+=HWPX.spacer();
-  });
-  sheet.querySelectorAll(':scope > div[contenteditable]').forEach(function(node){
-    const text=(node.textContent||'').trim(); if(text) body+=HWPX.para(text);
-  });
+  /* 화면 그대로 옮긴다 — 표는 브라우저가 계산한 열폭을 실측해 쓰고,
+     화면 전용 단추 칸(.cv-noprint)은 문서에서 빼며 남은 열이 폭을 나눈다.
+     예전엔 열폭이 모두 같은 격자로 뭉개져 이력서 표가 서식처럼 보이지 않았다. */
+  const doc=HWPXDOC.begin('plain');
+  /* 표제는 화면의 h2 를 그대로 쓴다 — 여기서 또 붙이면 제목이 두 번 나온다 */
+  const body=HWPXDOC.fromHtml(sheet, doc, {skip:'.cv-noprint'});
   const person=((get('profile_info')||{}).name||'').replace(/[\\/:*?"<>|]/g,'');
   const name=title+'_'+person+'.hwpx';
-  const bytes=HWPX.build(body);
+  const bytes=HWPX.build([{body:body, landscape:false, margin:doc.margin}]);
   PureunHwp.validate(bytes,name);
   return {bytes:bytes,name:name};
 }
