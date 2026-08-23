@@ -397,7 +397,9 @@ function build(input){
   const files=[
     {name:"mimetype",data:"application/hwp+zip",store:true},
     {name:"version.xml",data:TPL_VERSION,store:true},
-    {name:"Contents/header.xml",data:TPL_HEADER}
+    /* secCnt 는 구역 수와 반드시 같아야 한다 — 1로 두면 한글이 section1 이후를
+       통째로 무시한다(파일에는 있는데 문서에는 안 나온다) */
+    {name:"Contents/header.xml",data:TPL_HEADER.replace('secCnt="1"','secCnt="'+secs.length+'"')}
   ];
   secs.forEach(function(sc,i){
     files.push({name:"Contents/section"+i+".xml",data:sectionXml(sc.body,sc.landscape,sc.margin)});
