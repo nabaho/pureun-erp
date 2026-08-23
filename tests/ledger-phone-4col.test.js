@@ -99,10 +99,31 @@ test('★ 처리 칸은 폭이 «못 박혀» 있다 — auto 로 두면 나머�
   const last = m[1].trim().split(/\s+/).pop();
   assert.match(last, /^\d+px$/,
     '★ 처리 칸이 «' + last + '» 입니다 — 내용만큼 커지면 나머지 칸을 밀어냅니다.');
-  /* 단추 셋(찾기·등록·보류)이 한 줄에 서야 줄 높이가 안 늘어난다.
-     폰 단추는 손가락 자리 규칙으로 min-height:38px 이라, 두 줄이 되면 줄이 91px 이 된다. */
-  assert.ok(parseInt(last, 10) >= 150,
-    '★ ' + last + ' 로는 단추 셋이 한 줄에 못 섭니다 — 후보 없음 줄만 두 배로 높아집니다.');
+  /* 늘 보이는 것은 «주 단추 하나 + ⋯» 둘뿐이다(46+34+사이). 둘이 한 줄에 서야
+     줄 높이가 안 늘어난다 — 폰 단추는 손가락 자리 규칙으로 38px 이라 두 줄이면 91px 이 된다. */
+  assert.ok(parseInt(last, 10) >= 90,
+    '★ ' + last + ' 로는 「주 단추 + ⋯」 둘이 한 줄에 못 섭니다.');
+});
+
+test('★ 폰에서 늘 보이는 처리 단추는 «주 단추 하나 + ⋯» 뿐이다', () => {
+  /* 2026-08-23 대표 지시 「너무 클 필요 없다, 다른 방식을 찾아봐라」.
+     폰 단추는 38px 이라 찾기·등록·보류·CMS 넷이 서면 화면의 3분의 1을 먹었다.
+     줄여야 할 것은 «크기» 가 아니라 «개수» 다 — 크기는 손가락 자리 규칙이라 못 줄인다.
+     ⚠ 없애는 것이 아니다. ⋯ 를 누르면 그 줄에서 바로 편다(넓은 화면은 넷이 그대로). */
+  assert.match(PHONE, /\.ld-tb tbody \.ld-act-more\{[^}]*display:none/,
+    '★ 나머지 단추를 안 접으면 넷이 그대로 화면을 먹습니다.');
+  assert.match(PHONE, /tr\.ld-act-open \.ld-act-more\{[^}]*display:inline-block/,
+    '★ 접었으면 «펴는 길»이 있어야 합니다 — 없으면 그 기능을 없앤 것입니다.');
+  assert.match(erp, /className:'ld-act-toggle'/, '⋯ 단추가 없습니다.');
+  assert.match(erp, /setActRow\(actRow===row\._k\?'':row\._k\)/,
+    '★ 한 번에 한 줄만 펴야 합니다 — 여러 줄이 펴지면 도로 길어집니다.');
+  /* 주 단추는 상태마다 하나씩 — 확정·확인·CMS·찾기 */
+  ['확정', '확인', 'CMS', '찾기'].forEach(function (t) {
+    assert.ok(new RegExp("ld-act-p'[\\s\\S]{0,600}?'" + t + "'").test(erp),
+      '★ ' + t + ' 가 주 단추로 안 잡혀 있습니다 — ⋯ 뒤에 숨으면 한 번에 못 누릅니다.');
+  });
+  /* ⋯ 는 넓은 화면에 없다 — 자리가 넉넉해 넷이 나란히 들어간다 */
+  assert.match(css, /\.ld-act-toggle\{ ?display:none/);
 });
 
 test('★ 손가락 자리 규칙(min-height:38px)을 뒤집지 않았다', () => {

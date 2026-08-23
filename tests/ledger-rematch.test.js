@@ -23,8 +23,11 @@ function t(name, got, want){
 }
 
 console.log('\n■ 표 — 후보가 붙어 있어도 「바꾸기」 가 있다');
+/* ⚠ 단추의 «글월 모양»이 아니라 「어느 줄에 · 무엇을 여는가」를 본다.
+   2026-08-23 단추에 class 하나(ld-act-more)가 붙자 모양을 그대로 찾던 검사가 깨졌다 —
+   규칙은 하나도 안 바뀌었는데도 그랬다(CLAUDE.md). */
 t('후보가 붙은 줄(none 이 아닌 줄)에 바꾸기 단추가 나온다',
-  /_st\.state!=='none' && !isCms && h\('button',\{onClick:function\(\)\{ openFindRow\(row\); \}/.test(src), true);
+  /_st\.state!=='none' && !isCms && h\('button',\{[\s\S]{0,120}?openFindRow\(row\)/.test(src), true);
 t('그 단추 이름은 「↔ 바꾸기」', /\},'↔ 바꾸기'\)/.test(src), true);
 // 단추 «자신의» 코드만 떼어 본다 — 뒤따르는 확정 단추까지 훑으면 늘 confirmRow 가 걸린다
 const REMATCH_BTN = (function(){
@@ -39,7 +42,7 @@ t('바꾸기는 찾기 창만 연다', /openFindRow\(row\)/.test(REMATCH_BTN), t
 t('CMS 합계 줄에는 안 붙인다 — 거기선 CMS 단추 하나여야 한다',
   /_st\.state!=='none' && !isCms/.test(src), true);
 t('확정 단추는 그대로 있다',
-  /_st\.state==='ready' && pItem && h\('button',\{onClick:function\(\)\{ confirmRow\(row,pItem/.test(src), true);
+  /_st\.state==='ready' && pItem && h\('button',\{[\s\S]{0,120}?confirmRow\(row,pItem/.test(src), true);
 // 바꾸기가 확정보다 «왼쪽» 이어야 한다 — 오른쪽 끝은 늘 확정 자리다(손이 기억하는 위치)
 t('바꾸기가 확정보다 앞에 온다',
   src.indexOf("'↔ 바꾸기'") < src.indexOf("style:_actBtn('#16a34a','#fff','#16a34a')},'확정'"), true);
