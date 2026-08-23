@@ -23,6 +23,12 @@ function constOf(name) {
   assert.ok(m, name + ' 를 찾을 수 없습니다');
   return m[0].replace('const ', 'var ');
 }
+/* 한 줄짜리 값(정규식 등) — constOf 는 중괄호 덩이만 잡는다 */
+function lineOf(name) {
+  const m = app.match(new RegExp('^const ' + name + ' = [^\\n]*;$', 'm'));
+  assert.ok(m, name + ' 를 찾을 수 없습니다');
+  return m[0].replace('const ', 'var ');
+}
 
 /* tooSmall 을 실제로 돌린다 — 있는지만 보면 기준값을 0 으로 낮춰도 안 잡힌다 */
 function load() {
@@ -84,7 +90,10 @@ test('★ 알림이 무엇을 하라는 것인지까지 적는다', () => {
   assert.match(fn, /m\.w \+ '×' \+ m\.h/);
   // 작지 않으면 아무것도 안 낸다
   const ctx = load();
-  vm.runInContext(fnOf('smallBox'), ctx);
+  /* ⚠ 2026-08-23 부터 smallBox 가 smallCheckedOk 를 부른다(기계가 확인한 것은
+     말투를 낮춘다). 진짜 함수를 함께 넣는다 — 없으면 그 자리에서 멎는다. */
+  vm.runInContext(lineOf('TEL_SHAPE') + '\n' + lineOf('MAIL_SHAPE') + '\n' +
+    fnOf('smallCheckedOk') + '\n' + fnOf('smallBox'), ctx);
   assert.equal(ctx.smallBox(doc('form', 2480, 3508)), '');
   assert.match(ctx.smallBox(doc('form', 512, 755)), /512×755/);
 });
@@ -97,8 +106,13 @@ test('★ 표보다 먼저 나온다 — 다 읽은 뒤에 알면 이미 믿은 
 });
 
 test('★ 할 일로 남는다 — 사람이 대조해야 끝난다', () => {
+  /* ⚠ 2026-08-23 대표 결정: 「작다」만으로는 할 일로 안 만든다 — 기계가 값을
+     확인했으면(사업자번호 체크섬·전화·메일 꼴) 통과시킨다. 실데이터에서 이
+     경고로 남아 있던 43장이 전부 체크섬을 통과한 사업자등록증이었다.
+     확인할 «길이 없는» 것은 그대로 할 일이다 — 자세한 것은
+     tests/photos-small-but-checked.test.js. */
   const fn = fnOf('needsCheck');
-  assert.match(fn, /if \(tooSmall\(it\)\) return true;/);
+  assert.match(fn, /if \(tooSmall\(it\) && !smallCheckedOk\(r\)\) return true;/);
   /* 「확인했음」(ack)으로 치울 수 있어야 한다 — 못 치우는 할 일은 목록을 못 믿게 한다 */
   assert.ok(fn.indexOf('r.ack') < fn.indexOf('tooSmall(it)'),
     '★ 확인했음보다 앞에 있으면 영원히 안 지워지는 ⚠ 가 됩니다');
