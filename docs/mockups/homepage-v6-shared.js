@@ -1,0 +1,466 @@
+/* ══════════════════════════════════════════════════════════════
+   목업 v6 공통 부품 — 세 배치(띠형·기둥형·할일먼저)가 «같은 자료·같은 규격»을 쓴다.
+   배치마다 자료를 따로 두면 목업끼리 숫자가 달라져 무엇을 견주는지 알 수 없다.
+
+   ★ 대시보드 공통 규격 — 다섯 갈래가 모두 같은 다섯 칸을 채운다.
+     ① 이름  ② 총수(단위)  ③ 우리 자료 경고(바로 안다)
+     ④ 대조 결과(「홈페이지 다시 확인」을 눌러야 안다)  ⑤ 손댈 것 = ③+④
+     ③과 ④를 한 숫자로 뭉치지 않는다 — 뭉치면 「확인을 안 눌러 0건」이
+     「깨끗하다」로 읽힌다.
+
+   ★ 자문사현황은 홈페이지가 «로고 그림»이라 글자 대조를 못 한다.
+     ④ 칸에 「대조 못 함 (그림)」을 그대로 적고, 올렸는지는 사람이 표시한다.
+     못 하는 것을 「같음」으로 뭉개지 않는다.
+
+   회사명·업종은 목업용 «가상» 이름이다. 실제 자문사 자료가 아니다.
+   ══════════════════════════════════════════════════════════════ */
+
+var CHECKED = false;     // 「홈페이지 다시 확인」을 눌렀는지
+var G = 'members';       // 고른 갈래
+var PICK = 'm1';         // 고른 항목
+var FILTER = '';         // 누른 딱지(걸러 보기)
+
+var GROUPS = [
+  { k:'members',  l:'구성원 소개', u:'명',   kind:'member'  },
+  { k:'work',     l:'주요업무',    u:'쪽',   kind:'page'    },
+  { k:'inquiry',  l:'오시는길',    u:'쪽',   kind:'page'    },
+  { k:'greeting', l:'인사말',      u:'쪽',   kind:'page'    },
+  { k:'partner',  l:'자문사현황',  u:'개사', kind:'partner' }
+];
+
+/* own — 우리 자료만 보고 아는 딱지 (화면을 열면 바로 붙는다)
+   c   — 홈페이지와 대조해서 아는 딱지 (확인을 눌러야 붙는다) */
+var ITEMS = {
+  members: [
+    { id:'m1', n:'권형하', d:'대표 · 공인노무사',        srl:'190', own:'',                    c:'same' },
+    { id:'m2', n:'박성수', d:'공인노무사',              srl:'181', own:'left:퇴사 2026-06-30', c:'toRemove' },
+    { id:'m3', n:'박한별', d:'공인노무사',              srl:'176', own:'',                    c:'same' },
+    { id:'m4', n:'김혜민', d:'공인노무사',              srl:'170', own:'',                    c:'pending' },
+    { id:'m5', n:'박재원', d:'공인노무사',              srl:'',    own:'',                    c:'toAdd' },
+    { id:'m6', n:'임혜미', d:'공인노무사',              srl:'158', own:'left:퇴사 2026-05-22', c:'done' },
+    { id:'m7', n:'김동현', d:'공인노무사',              srl:'151', own:'',                    c:'same' },
+    { id:'m8', n:'장한돌', d:'세종지사장 · 공인노무사',  srl:'140', own:'left:퇴사 2023-12-31',
+      keep:'지사장 — 고용관계가 아니라 홈페이지에 남김', c:'same' },
+    { id:'m9', n:'조현범', d:'대전지사장 · 공인노무사',  srl:'133', own:'ask:명부에 없음',      c:'same' },
+    { id:'m10', n:'(홈페이지에만)', d:'홈페이지 글 번호 205', srl:'205', own:'', c:'liveOnly', ghost:1 }
+  ],
+  work: [
+    { id:'work1',  n:'자문서비스',        d:'/work1',  own:'', c:'same' },
+    { id:'work2',  n:'인사노무컨설팅',    d:'/work2',  own:'', c:'pending' },
+    { id:'work3',  n:'노동사건대리',      d:'/work3',  own:'', c:'same' },
+    { id:'work4',  n:'산재보상',          d:'/work4',  own:'nobase:기준 없음', c:'' },
+    { id:'work5a', n:'사내근로복지기금',  d:'/work5a', own:'', c:'same' },
+    { id:'work5b', n:'공동근로복지기금',  d:'/work5b', own:'', c:'same' }
+  ],
+  inquiry: [
+    { id:'inquiry', n:'오시는길', d:'/inquiry · 천안본사 · 세종 · 대전', own:'', c:'same' }
+  ],
+  greeting: [
+    { id:'greeting', n:'인사말', d:'/greeting', own:'', c:'pending',
+      note:'퇴사자 이름이 남아 있음 — 임혜미 1회' }
+  ],
+  /* 자문사현황 — 푸른ERP «업체관리»가 기준이다.
+     ★ 자리 확인함: RTDB data/companies · typeCode 가 '자문' 이고 status 가 'active' 인 것.
+       (업체 종류 다섯은 자문·급여·노조·기금·사무대행 — pu-erp.html:25448 COMPANY_TYPE_SEED)
+       자문이 끝난 곳은 status 가 'closed' 로 바뀌고 closedDate 가 남는다.
+     posted: 홈페이지에 올렸는지 «사람이» 표시한 값 (그림이라 기계가 못 본다) */
+  partner: [
+    { id:'p1',  n:'(주)가온전자',  d:'제조 · 자문 2021-03~', own:'',                       posted:1, c:'notext' },
+    { id:'p2',  n:'대성물류(주)',  d:'운수 · 자문 2022-01~', own:'',                       posted:1, c:'notext' },
+    { id:'p3',  n:'한빛식품',      d:'식품 · 자문 2020-07~', own:'',                       posted:1, c:'notext' },
+    { id:'p4',  n:'세종정밀',      d:'제조 · 자문 2023-05~', own:'',                       posted:0, c:'notext' },
+    { id:'p5',  n:'천안기계',      d:'제조 · 자문 2019-11~', own:'',                       posted:1, c:'notext' },
+    { id:'p6',  n:'온누리병원',    d:'의료 · 자문 2024-02~', own:'',                       posted:0, c:'notext' },
+    { id:'p7',  n:'백제건설',      d:'건설 · 자문 2021-09~', own:'',                       posted:1, c:'notext' },
+    { id:'p8',  n:'삼정테크',      d:'제조 · 자문 2018-04~', own:'ended:자문 종료 2026-03-31', posted:1, c:'notext' },
+    { id:'p9',  n:'유한산업',      d:'제조 · 자문 2022-06~', own:'',                       posted:1, c:'notext' },
+    { id:'p10', n:'아산화학',      d:'화학 · 자문 2017-02~', own:'ended:자문 종료 2025-12-31', posted:1, c:'notext' },
+    { id:'p11', n:'청솔유통',      d:'유통 · 자문 2023-10~', own:'',                       posted:1, c:'notext' },
+    { id:'p12', n:'미래교육원',    d:'교육 · 홈페이지에만',   own:'noroster:업체관리에 없음',    posted:1, c:'notext' }
+  ]
+};
+
+var TXT = { same:'같음', pending:'안 올라감', toAdd:'새로 올릴 것', toRemove:'내릴 것 (퇴사)',
+  liveOnly:'홈페이지에만', done:'내려감 (퇴사 완료)', noBase:'기준 없음', notext:'대조 못 함 (그림)' };
+var OWN = { left:'퇴사 (명부)', ask:'명부에 없음', nobase:'기준 없음',
+  ended:'자문 종료', noroster:'업체관리에 없음' };
+var OWNCLS = { left:'rm', ask:'ask', nobase:'noBase', ended:'ended', noroster:'noroster' };
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,
+  function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function groupOf(k){ return GROUPS.filter(function(g){ return g.k===k; })[0]; }
+function rowsOf(k){ return (ITEMS[k]||[]).filter(function(r){ return CHECKED || !r.ghost; }); }
+function itemOf(k, id){ return rowsOf(k).filter(function(r){ return r.id===id; })[0] || rowsOf(k)[0]; }
+function stOf(r){ return CHECKED ? (r.c||'') : ''; }
+function ownKind(r){ return r.own ? r.own.split(':')[0] : ''; }
+function ownLabel(r){ return r.own ? r.own.split(':')[1] : ''; }
+
+/* ── 공통 규격을 채운다. 갈래가 달라도 이 함수 하나가 다섯 칸을 만든다 ── */
+function statOf(k) {
+  var rows = rowsOf(k), own = {}, kept = 0;
+  rows.forEach(function(r){
+    if (r.keep) { kept++; return; }             // 「남김」은 경고가 아니다 — 따로 센다
+    var t = ownKind(r);
+    if (t) own[t] = (own[t]||0) + 1;
+  });
+  var hotOwn = Object.keys(own).reduce(function(s,t){ return s + own[t]; }, 0);
+  var hotChk = CHECKED ? rows.filter(function(r){
+    var s = r.c;
+    return s && s!=='same' && s!=='done' && s!=='notext';
+  }).length : 0;
+  var notPosted = (k==='partner') ? rows.filter(function(r){ return !r.posted; }).length : 0;
+  return { rows:rows, own:own, kept:kept, hotOwn:hotOwn, hotChk:hotChk,
+           notPosted:notPosted, hot:hotOwn + hotChk + notPosted };
+}
+
+/* ③ 우리 자료 경고 — 갈래마다 «이름»만 다르고 자리 다툼은 없다 */
+function ownMinis(k) {
+  var s = statOf(k), out = [];
+  Object.keys(s.own).forEach(function(t){
+    var cls = (t==='left'||t==='ended') ? 'rm' : (t==='nobase'||t==='ask'||t==='noroster' ? 'ask' : 'flat');
+    out.push('<span class="mini '+cls+'">'+esc(OWN[t]||t)+' '+s.own[t]+'</span>');
+  });
+  if (s.kept) out.push('<span class="mini ok">남김 '+s.kept+'</span>');
+  if (k==='partner' && s.notPosted) out.push('<span class="mini bad">안 올림 '+s.notPosted+'</span>');
+  if (!out.length) out.push('<span class="mini ok">이상 없음</span>');
+  return out.join('');
+}
+/* ④ 대조 결과 — 확인 전이면 «안 함», 자문사현황은 «못 함»이라고 적는다 */
+function chkMinis(k) {
+  if (!CHECKED) return '<span class="mini none">대조 안 함</span>';
+  if (k === 'partner') return '<span class="mini dash">대조 못 함 (그림)</span>';
+  var s = statOf(k);
+  return s.hotChk ? '<span class="mini bad">손댈 것 '+s.hotChk+'</span>'
+                  : '<span class="mini ok">홈페이지와 같음</span>';
+}
+
+/* ── 대시보드 카드 (배치마다 겉모양만 다르고 «내용은 하나») ── */
+function cardHtml(g, cls) {
+  var s = statOf(g.k);
+  return '<button class="dcard'+(G===g.k?' on':'')+(cls?' '+cls:'')+'" onclick="go(\''+g.k+'\')">'
+    + '<div class="t">'+(s.hot?'<span class="dot"></span>':'')+esc(g.l)+'</div>'
+    + '<div class="n">'+s.rows.length+'<em>'+g.u+'</em></div>'
+    + '<div class="own">'+ownMinis(g.k)+'</div>'
+    + '<div class="chk">'+chkMinis(g.k)+'</div>'
+    + '</button>';
+}
+function dashHtml(cls){ return GROUPS.map(function(g){ return cardHtml(g, cls); }).join(''); }
+
+/* ── 걸러 보기 딱지 ── */
+function filtered(k) {
+  var rows = rowsOf(k);
+  if (!FILTER) return rows;
+  if (FILTER === 'todo') return rows.filter(function(r){
+    var s = stOf(r);
+    return (r.own && !r.keep) || (k==='partner' && !r.posted)
+        || (s && s!=='same' && s!=='done' && s!=='notext'); });
+  if (FILTER.indexOf('own:') === 0) {
+    var t = FILTER.slice(4);
+    return rows.filter(function(r){ return !r.keep && ownKind(r)===t; });
+  }
+  if (FILTER === 'notPosted') return rows.filter(function(r){ return !r.posted; });
+  return rows.filter(function(r){ return stOf(r)===FILTER; });
+}
+function chipsHtml() {
+  var s = statOf(G), rows = s.rows, defs = [{ k:'', label:'전체' }];
+  if (s.hot) defs.push({ k:'todo', label:'손댈 것', n:s.hot });
+  Object.keys(s.own).forEach(function(t){
+    defs.push({ k:'own:'+t, label:OWN[t]||t, n:s.own[t] });
+  });
+  if (G==='partner' && s.notPosted) defs.push({ k:'notPosted', label:'안 올림', n:s.notPosted });
+  if (CHECKED) {
+    ['pending','toAdd','toRemove','liveOnly','done','same','notext'].forEach(function(st){
+      var n = rows.filter(function(r){ return r.c===st; }).length;
+      if (n) defs.push({ k:st, label:TXT[st], n:n });
+    });
+  }
+  return defs.map(function(d){
+    return '<button class="chip'+(FILTER===d.k?' on':'')+'" onclick="filt(\''+d.k+'\')">'
+      + esc(d.label) + (d.n!=null?'<span class="c">'+d.n+'</span>':'') + '</button>';
+  }).join('') + (CHECKED ? '' :
+    '<span class="sub" style="margin-left:2px">확인을 누르면 대조 딱지로도 걸러집니다</span>');
+}
+
+/* ── 목록 ── */
+function lhHtml() {
+  var g = groupOf(G), s = statOf(G), head, add = '';
+  if (G === 'members') {
+    head = '구성원 <b>'+s.rows.length+'명</b>' + (s.own.left?' · <b class="hot">퇴사 '+s.own.left+'</b>':'');
+    add = '<button class="btn sm">＋ 새 구성원</button>';
+  } else if (G === 'work') {
+    head = '관리 중인 쪽 <b>'+s.rows.length+'개</b>';
+    add = '<button class="btn sm">＋ 쪽 추가</button>';
+  } else if (G === 'partner') {
+    head = '자문사 <b>'+s.rows.length+'개사</b>' + (s.notPosted?' · <b class="hot">안 올림 '+s.notPosted+'</b>':'');
+    add = '<button class="btn sm">업체관리에서 다시 읽기</button>';
+  } else {
+    head = esc(g.l)+' <b>'+s.rows.length+'쪽</b>';
+  }
+  if (FILTER) head += ' <span class="sub">· 걸러서 '+filtered(G).length+'건</span>';
+  return '<span>'+head+'</span><span style="flex:1"></span>'+add;
+}
+function ownPill(r) {
+  if (r.keep) return '<span class="pill keep">남김</span>';
+  if (!r.own) return (G==='partner' && !r.posted) ? '<span class="pill notPosted">안 올림</span>' : '';
+  var t = ownKind(r);
+  return '<span class="pill '+(OWNCLS[t]||'ask')+'">'+esc(ownLabel(r))+'</span>';
+}
+function rowsHtml() {
+  var rows = filtered(G);
+  if (!rows.length) return '<div class="empty">이 딱지에 해당하는 줄이 없습니다.</div>';
+  return rows.map(function(r,i){
+    var line = [r.d, r.keep||'', r.note||''].filter(Boolean).join(' · ');
+    var s = stOf(r);
+    return '<div class="r'+(r.id===PICK?' on':'')+'" onclick="pick(\''+r.id+'\')">'
+      + '<span class="num">'+(i+1)+'</span>'
+      + '<div class="who"><div class="nm">'+esc(r.n)+'</div>'
+      + '<div class="po" title="'+esc(line)+'">'+esc(line)+'</div></div>'
+      + '<span class="tags">'+ownPill(r)
+      + '<span class="pill '+(s||'none')+'">'+esc(s?TXT[s]:'확인 전')+'</span></span></div>';
+  }).join('');
+}
+
+/* ── 편집칸 — 갈래 셋(구성원·쪽·자문사)이 «같은 틀»을 쓴다:
+   머리(band) 고정 → 가운데(.esc) 구름 → 발(.eft) 고정 ── */
+function editHtml() {
+  var g = groupOf(G), r = itemOf(G, PICK);
+  if (!r) return '<div class="esc"><div class="empty">왼쪽 목록에서 고르십시오.</div></div>';
+  if (g.kind === 'member')  return memberEdit(r);
+  if (g.kind === 'partner') return partnerEdit(r);
+  return pageEdit(r);
+}
+
+var CAREERS = ['現 푸른노무법인대표','現 충남 공무직인사위원회 위원','現 충남 노동정책 추진단위원',
+  '現 충남 노사민정협의회 분과의원','現 한국토지주택공사 안전보건 긴급상담위원','現 충남북부 상공회의소 자문위원'];
+
+function memberEdit(m) {
+  if (m.ghost) {
+    return '<div class="ehd"><div class="band rm"><b>홈페이지에만 있는 글입니다</b> — 글 번호 '
+      + esc(m.srl)+'<br><span class="sm">통합시스템에 이 사람 자료가 없습니다. 홈페이지에서 '
+      + '내리거나(삭제 말고 비공개), <b>＋ 새 구성원</b>으로 넣고 글 번호를 적어 주십시오.</span></div></div>'
+      + '<div class="esc"><div class="empty">고칠 우리 자료가 없습니다.</div></div>'
+      + '<div class="eft"><button class="btn">＋ 새 구성원으로 넣기</button>'
+      + '<span style="flex:1"></span><button class="btn pri">홈페이지에서 이 글 열기</button></div>';
+  }
+  var band = '', s = stOf(m);
+  if (m.keep) {
+    band = '<div class="band keep"><b>홈페이지에 남기기로 함</b> — '+esc(m.keep)
+      + '<br><span class="sm">권형하 · 2026-08-18 · 명부에 퇴사로 찍혀 있어도 「내릴 것(퇴사)」 '
+      + '딱지를 달지 않고 내용 대조만 합니다.</span></div>';
+  } else if (ownKind(m) === 'left') {
+    var down = s === 'done';
+    band = '<div class="band '+(down?'keep':'rm')+'"><b>푸른ERP 명부: '+esc(ownLabel(m))+'</b> · '
+      + (down ? '홈페이지에서도 <b>내려간 것으로 확인</b>됐습니다.'
+              : (CHECKED ? '홈페이지에는 <b>아직 올라가 있습니다</b>.'
+                         : '홈페이지에 올라가 있는지는 <b>「홈페이지 다시 확인」</b>을 눌러야 압니다.'))
+      + '<br><span class="sm">'
+      + (down ? '더 하실 일은 없습니다.'
+              : '내리실 때는 <b>삭제가 아니라 「비공개」</b>로 — 잘못 내렸어도 되살릴 수 있습니다.')
+      + '</span></div>';
+  } else if (ownKind(m) === 'ask') {
+    band = '<div class="band ask"><b>명부에 없음</b> — 푸른ERP 직원 명부에서 이름을 찾지 못했습니다'
+      + '<br><span class="sm">지사장처럼 고용관계가 아닌 분은 <b>「홈페이지에 남기기」</b>로 '
+      + '사유를 남겨 두십시오.</span></div>';
+  }
+  var h = '<div class="ehd">'+band+'</div><div class="esc">';
+  h += '<div class="fld"><label>이름</label><input value="'+esc(m.n)+'"></div>';
+  h += '<div class="two"><div class="fld"><label>직책1</label><input value="'
+    + esc(m.d.split(' · ')[0])+'"></div>'
+    + '<div class="fld"><label>직책2</label><input value="공인노무사"></div>'
+    + '<div class="fld" style="flex:0 0 150px"><label>홈페이지 글 번호</label><input value="'
+    + esc(m.srl)+'"></div></div>';
+  h += '<div class="fld"><label>메인 설명 (홈페이지 공개 화면에 안 나와 읽어올 수 없습니다 — 편집 화면을 보고 채우십시오)</label>'
+    + '<textarea rows="2"></textarea></div>';
+  h += '<div class="fld"><label>경력사항 — '+CAREERS.length+'줄</label><div class="car">'
+    + CAREERS.map(function(l,i){
+        return '<div class="l"><span class="no">'+(i+1)+'</span><input value="'+esc(l)+'">'
+          + '<button class="x">▲</button><button class="x">▼</button><button class="x">✕</button></div>';
+      }).join('')
+    + '<div class="add">＋ 줄 추가</div></div></div></div>';
+  h += '<div class="eft"><button class="btn pri">붙여넣을 내용 복사</button>'
+    + '<button class="btn">저장</button><button class="btn">경력관리에서 당겨오기</button>'
+    + '<button class="btn">되돌리기</button>'
+    + (m.keep ? '<button class="btn keep">남기기 예외 풀기</button>'
+              : '<button class="btn keep">홈페이지에 남기기</button>')
+    + '<span style="flex:1"></span>'
+    + (m.srl ? '<button class="btn">홈페이지에서 이 사람 글 열기</button>' : '')
+    + '<span class="sub">수정 기록 없음</span></div>';
+  return h;
+}
+
+function pageEdit(p) {
+  var lines = (p.id==='inquiry')
+    ? ['천안본사','충남 천안시 서북구 …','세종지사','세종특별자치시 …','대전지사','대전 서구 …']
+    : (p.id==='greeting')
+      ? ['인사말','푸른노무법인을 찾아 주신 여러분께 감사드립니다.','대표 공인노무사 권형하']
+      : ['자문서비스','01','노무관리 전반의 상시 자문','02','취업규칙·근로계약 검토','천안본사'];
+  var noBase = ownKind(p) === 'nobase';
+  var h = '<div class="ehd"><div class="band ask"><b>이 쪽의 글은 «대조용»으로만 씁니다.</b> '
+    + '붙여넣으면 지도·표·구획·지사 탭이 통째로 사라져 <b>붙여넣기를 드리지 않습니다</b>. '
+    + '쪽 내용은 홈페이지 관리자 화면에서 직접 고치십시오.</div>'
+    + (noBase ? '<div class="band rm"><b>대조 기준이 없습니다</b> — 이 쪽은 아직 한 번도 '
+        + '기준 글자를 저장하지 않았습니다.<br><span class="sm">「홈페이지 다시 확인」을 누르면 '
+        + '읽어온 글자를 기준으로 삼을 수 있습니다. 기준이 없으면 «같음/안 올라감»을 말할 수 없습니다.</span></div>' : '')
+    + (p.note ? '<div class="band rm"><b>'+esc(p.note)+'</b><br><span class="sm">'
+        + '동명이인일 수 있어 알려만 드립니다. 자동으로 고치지 않습니다.</span></div>' : '')
+    + '</div>';
+  h += '<div class="esc">';
+  h += '<div class="fld"><label>홈페이지 화면 그대로 보기 — '+lines.length+'줄 '
+    + '· 번호는 화면에서 세는 용도입니다 (홈페이지로 가지 않습니다)</label><div class="rows">'
+    + lines.map(function(l,i){
+        var k = /^\d{1,2}$/.test(l) ? '' : (l.length<=16 && l.indexOf(' ')<0 ? ' head' : '');
+        return '<div class="l'+k+'"><span class="n">'+(i+1)+'</span><span class="t">'+esc(l)+'</span></div>';
+      }).join('')+'</div></div>';
+  h += '<div class="fld"><label>'+esc(p.n)+' — 대조 기준 글자 ('+esc(p.d.split(' · ')[0])+') '
+    + '· 이 글자는 홈페이지로 «가지 않습니다». 대조 결과를 맞출 때만 고치십시오</label>'
+    + '<textarea rows="6">'+esc(noBase?'':lines.join(' '))+'</textarea></div>';
+  h += '<div class="guide"><b>이 쪽을 고치는 순서</b><ol>'
+    + '<li><b>홈페이지에서 이 쪽 열기</b> → 관리자 화면에서 고치고 저장</li>'
+    + '<li>돌아와 <b>홈페이지 다시 확인</b> → 딱지가 「안 올라감」으로 바뀝니다</li>'
+    + '<li>바꾼 내용을 그대로 두려면 <b>대조 기준 글자</b>를 맞춘 뒤 저장하고 한 번 더 확인</li>'
+    + '</ol></div></div>';
+  h += '<div class="eft"><button class="btn">대조 기준 저장</button>'
+    + '<button class="btn">되돌리기</button>'
+    + (p.id!=='inquiry' && p.id!=='greeting' ? '<button class="btn">목록에서 분리</button>' : '')
+    + '<span style="flex:1"></span><button class="btn pri">홈페이지에서 이 쪽 열기</button>'
+    + '<span class="sub">수정 기록 없음</span></div>';
+  return h;
+}
+
+/* 자문사현황 — 갈래는 셋과 같은 틀을 쓰되, «대조를 못 한다»는 것만 다르다 */
+function partnerEdit(c) {
+  var h = '<div class="ehd">';
+  h += '<div class="band ask"><b>홈페이지 자문사현황은 «로고 그림»입니다</b> — 회사명이 글자로 없어 '
+    + '통합시스템이 <b>대조를 못 합니다</b>.<br><span class="sm">그래서 올렸는지는 «사람이» 표시합니다. '
+    + '못 하는 것을 「같음」으로 뭉개지 않습니다 — 목록에는 늘 «대조 못 함 (그림)»으로 적힙니다.</span></div>';
+  if (ownKind(c) === 'ended') {
+    h += '<div class="band rm"><b>푸른ERP 업체관리: '+esc(ownLabel(c))+'</b> · 홈페이지에는 아직 올라가 있습니다.'
+      + '<br><span class="sm">내리실지는 사람이 판단합니다 — 자문이 끝나도 실적으로 남겨 두는 곳이 있습니다.</span></div>';
+  }
+  if (ownKind(c) === 'noroster') {
+    h += '<div class="band ask"><b>업체관리에 없음</b> — 푸른ERP 업체관리에서 이 회사를 찾지 못했습니다'
+      + '<br><span class="sm">이름 철자가 다르거나, 업체 종류가 「자문」이 아닐 수 있습니다. '
+      + '업체관리를 고치는 일은 푸른ERP에서 합니다 — 여기서는 읽기만 합니다.</span></div>';
+  }
+  h += '</div><div class="esc">';
+  h += '<div class="two"><div class="fld"><label>회사명</label><input value="'+esc(c.n)+'"></div>'
+    + '<div class="fld" style="flex:0 0 180px"><label>업종</label><input value="'
+    + esc(c.d.split(' · ')[0])+'"></div></div>';
+  h += '<div class="fld"><label>홈페이지에 올렸습니까? — 사람이 표시합니다 (그림이라 기계가 못 봅니다)</label>'
+    + '<div class="seg"><button class="'+(c.posted?'on':'')+'">올림</button>'
+    + '<button class="'+(c.posted?'':'on')+'">안 올림</button>'
+    + '<button>모름</button></div></div>';
+  h += '<div class="fld"><label>메모 (왜 올렸는지·왜 안 올렸는지)</label><textarea rows="2">'
+    + (c.posted?'':'로고 파일을 아직 못 받았습니다.')+'</textarea></div>';
+  h += '<div class="guide"><b>자문사현황을 다루는 방식</b><ol>'
+    + '<li>목록은 <b>푸른ERP 업체관리</b>에서 가져옵니다(업체 종류 「자문」·거래중) — '
+    + '여기서 회사를 새로 만들지 않습니다</li>'
+    + '<li>홈페이지는 로고 <b>그림</b>이라 대조를 못 합니다. <b>올림/안 올림</b>만 사람이 표시합니다</li>'
+    + '<li>붙여넣을 내용은 <b>회사명 목록</b>까지만 만들어 드립니다 — 로고 그림은 사람이 올립니다</li>'
+    + '</ol></div></div>';
+  h += '<div class="eft"><button class="btn pri">회사명 목록 복사</button>'
+    + '<button class="btn">저장</button><button class="btn">되돌리기</button>'
+    + '<span style="flex:1"></span><button class="btn">홈페이지에서 자문사현황 열기</button>'
+    + '<span class="sub">수정 기록 없음</span></div>';
+  return h;
+}
+
+/* ── 할 일 — 안내 띠를 모아 둔 칸. 띠마다 «가는 단추»가 달려 있다 ── */
+function todoItems() {
+  var out = [];
+  if (!CHECKED) {
+    out.push({ n:0, cls:'info', h:'<b>홈페이지와 아직 대조하지 않았습니다</b><br>'
+      + '딱지는 <b>「홈페이지 다시 확인」</b>을 누를 때만 붙습니다. 저절로 돌지 않습니다.'
+      + '<div class="go"><button class="btn pri sm" onclick="toggleCheck()">홈페이지 다시 확인</button></div>' });
+  }
+  var ms = statOf('members');
+  /* ★ 「남김」으로 둔 사람은 이 수에서 «뺀다» — 대시보드도 남김을 따로 센다.
+     여기서만 함께 세면 카드에는 2명, 할 일에는 3명이 되어 숫자가 어긋난다. */
+  if (ms.own.left) {
+    out.push({ n:ms.own.left, cls:'warn', h:'<b>명부상 퇴사 '+ms.own.left+'명</b><br>'
+      + '박성수(2026-06-30) · 임혜미(2026-05-22)<br>'
+      + '<span class="sub" style="color:inherit">'
+      + (CHECKED ? '홈페이지에 남아 있는 사람은 아래에 따로 적습니다.'
+                 : '홈페이지에 올라가 있는지는 확인을 눌러야 압니다.')+'</span>'
+      + '<div class="go"><button class="btn sm" onclick="go(\'members\');filt(\'own:left\')">'
+      + '이 '+ms.own.left+'명 보기</button></div>' });
+  }
+  if (ms.kept) {
+    /* 할 일이 아니다(n:0) — «왜 퇴사 경고가 없는지»를 알려 주는 줄이다 */
+    out.push({ n:0, cls:'ok', h:'<b>남기기 예외 '+ms.kept+'명</b> — 장한돌 (지사장, 고용관계 아님)<br>'
+      + '<span class="sub" style="color:inherit">명부에 퇴사로 찍혀 있어도 「내릴 것(퇴사)」 딱지를 '
+      + '달지 않고 내용 대조만 합니다. 예외를 풀면 다음 확인에서 퇴사 판정을 다시 받습니다.</span>'
+      + '<div class="go"><button class="btn sm" onclick="pickIn(\'members\',\'m8\')">장한돌 열기</button></div>' });
+  }
+  if (CHECKED) {
+    out.push({ n:1, cls:'bad', h:'<b>퇴사한 노무사가 홈페이지에 남아 있습니다 — 1명</b><br>박성수'
+      + '<details><summary>홈페이지에서 내리는 법</summary><ol>'
+      + '<li>홈페이지 관리자 로그인 <span class="kbd">푸른노무법인.kr/admin</span></li>'
+      + '<li><b>구성원 갤러리</b>에서 그 글을 찾습니다</li>'
+      + '<li><b>삭제하지 말고 「비공개」</b>로 바꾸십시오</li>'
+      + '<li>돌아와 <b>홈페이지 다시 확인</b></li></ol></details>'
+      + '<div class="go"><button class="btn sm" onclick="pickIn(\'members\',\'m2\')">박성수 열기</button></div>' });
+    out.push({ n:1, cls:'warn', h:'<b>홈페이지에만 있는 글 — 1건</b><br>글 번호 205'
+      + '<div class="go"><button class="btn sm" onclick="pickIn(\'members\',\'m10\')">이 줄 열기</button></div>' });
+    out.push({ n:1, cls:'warn', h:'<b>퇴사자 이름이 다른 쪽에도 남아 있습니다</b><br>임혜미 — 인사말 1회'
+      + '<div class="go"><button class="btn sm" onclick="pickIn(\'greeting\',\'greeting\')">인사말 열기</button></div>' });
+    out.push({ n:3, cls:'bad', h:'<b>안 올라간 것 — 3건</b><br>김혜민 · 인사노무컨설팅 · 인사말'
+      + '<div class="go"><button class="btn sm" onclick="go(\'members\');filt(\'pending\')">구성원에서 보기</button>'
+      + '<button class="btn sm" onclick="go(\'work\');filt(\'pending\')">주요업무에서 보기</button></div>' });
+    out.push({ n:1, cls:'info', h:'<b>새로 올릴 사람 — 1명</b><br>박재원 (홈페이지 글 번호 없음)'
+      + '<div class="go"><button class="btn sm" onclick="pickIn(\'members\',\'m5\')">박재원 열기</button></div>' });
+  }
+  var ws = statOf('work');
+  if (ws.own.nobase) {
+    out.push({ n:ws.own.nobase, cls:'info', h:'<b>대조 기준이 없는 쪽 — '+ws.own.nobase+'개</b><br>산재보상 (/work4)'
+      + '<div class="go"><button class="btn sm" onclick="pickIn(\'work\',\'work4\')">산재보상 열기</button></div>' });
+  }
+  var ps = statOf('partner');
+  if (ps.notPosted) {
+    out.push({ n:ps.notPosted, cls:'bad', h:'<b>자문사 — 홈페이지에 안 올린 곳 '+ps.notPosted+'개사</b><br>'
+      + '세종정밀 · 온누리병원<br><span class="sub" style="color:inherit">'
+      + '로고 그림이라 기계가 못 봅니다 — 사람이 표시한 값입니다.</span>'
+      + '<div class="go"><button class="btn sm" onclick="go(\'partner\');filt(\'notPosted\')">이 2개사 보기</button></div>' });
+  }
+  if (ps.own.ended) {
+    out.push({ n:ps.own.ended, cls:'warn', h:'<b>자문이 끝났는데 홈페이지에 남은 곳 — '+ps.own.ended+'개사</b><br>'
+      + '삼정테크(2026-03-31) · 아산화학(2025-12-31)<br>'
+      + '<span class="sub" style="color:inherit">실적으로 남겨 둘 수도 있어 «알리기만» 합니다.</span>'
+      + '<div class="go"><button class="btn sm" onclick="go(\'partner\');filt(\'own:ended\')">이 2개사 보기</button></div>' });
+  }
+  if (ps.own.noroster) {
+    out.push({ n:ps.own.noroster, cls:'info', h:'<b>업체관리에 없는 자문사 — '+ps.own.noroster+'개사</b><br>미래교육원'
+      + '<div class="go"><button class="btn sm" onclick="pickIn(\'partner\',\'p12\')">이 회사 열기</button></div>' });
+  }
+  return out;
+}
+function todoHtml() {
+  var items = todoItems();
+  var n = items.reduce(function(s,i){ return s + (i.n||0); }, 0);
+  var el = document.getElementById('todoN');
+  if (el) { el.textContent = n; el.className = 'c' + (n?'':' zero'); }
+  var w = document.getElementById('todoWhen');
+  if (w) w.textContent = CHECKED ? '확인: 2026-08-23 14:31' : '아직 대조 안 함';
+  return items.map(function(i){ return '<div class="bar '+i.cls+'">'+i.h+'</div>'; }).join('');
+}
+
+/* ── 그리기 ── */
+function put(id, html){ var el = document.getElementById(id); if (el) el.innerHTML = html; }
+function drawAll() {
+  put('dash', dashHtml());
+  put('chips', chipsHtml());
+  put('lh', lhHtml());
+  put('rows', rowsHtml());
+  put('edit', editHtml());
+  put('todoBody', todoHtml());
+  var w = document.getElementById('hWhen');
+  if (w) w.textContent = CHECKED ? '홈페이지 확인: 2026-08-23 14:31' : '홈페이지 확인: 아직 안 함';
+  var b = document.getElementById('mkBtn');
+  if (b) { b.textContent = '목업 보기: ' + (CHECKED ? '대조 후' : '대조 전');
+           b.className = 'mk' + (CHECKED ? ' on' : ''); }
+}
+function go(k){ G = k; FILTER = ''; PICK = (rowsOf(k)[0]||{}).id || ''; drawAll(); }
+function pick(id){ PICK = id; drawAll(); }
+function pickIn(k, id){ G = k; FILTER = ''; PICK = id; drawAll(); }
+function filt(k){ FILTER = (FILTER===k) ? '' : k; drawAll(); }
+function toggleCheck(){ CHECKED = !CHECKED; FILTER = ''; drawAll(); }
