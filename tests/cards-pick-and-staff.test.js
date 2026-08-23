@@ -145,20 +145,36 @@ function fnBody(name){
   return app.slice(i, j + 2);
 }
 
-test('세 목록이 모두 번호와 ☐ 를 그린다', () => {
-  for (const [fn, kind] of [['sentBoxHtml','sent'], ['schedBoxHtml','sched'], ['renderMatPage','mat']]){
+/* 2026-08-23 대표 지시: "모낸메일 은 체크표시 필요없고 번호만 있으면 된다"
+   보낸 메일은 「기록」이라 골라서 지울 일이 없다. 예약 메일·자료함은 골라서
+   취소·이동·삭제를 하니 ☐ 를 그대로 둔다. 2026-08-10 의 「세 목록 같은 모양」
+   지시를 이 한 목록에 대해서만 대표가 거두셨다. */
+test('예약 메일·자료함은 번호와 ☐ 를 그린다', () => {
+  for (const [fn, kind] of [['schedBoxHtml','sched'], ['renderMatPage','mat']]){
     const body = fnBody(fn);
     assert.match(body, new RegExp("pickHit\\('" + kind + "'"), fn + ' 에 ☐ 가 없습니다');
     assert.match(body, new RegExp("pickBar\\('" + kind + "'"), fn + ' 에 고르기 띠가 없습니다');
   }
-  /* 번호 — 표는 .no, 자료함은 이미 있는 순번(matno) 을 쓴다 */
-  assert.match(fnBody('sentBoxHtml'), /class="no">\$\{i\+1\}/, '보낸 메일에 번호가 없습니다');
+  /* 번호 — 표는 .no, 자료함은 이미 있는 순번(matno) 을 쓴다.
+     보낸 메일의 번호는 따로 「보낸 메일에는 ☐ 가 없고 번호만 있다」에서 본다. */
   assert.match(fnBody('schedBoxHtml'), /class="no">\$\{i\+1\}/, '예약 메일에 번호가 없습니다');
   assert.match(fnBody('renderMatPage'), /class="matno"/, '자료함에 순번이 없습니다');
 });
 
+test('보낸 메일에는 ☐ 가 없고 번호만 있다', () => {
+  const body = fnBody('sentBoxHtml');
+  assert.doesNotMatch(body, /pickHit\('sent'/,     '보낸 메일에 ☐ 가 남아 있습니다');
+  assert.doesNotMatch(body, /pickBar\('sent'/,     '고르기 띠가 남아 있으면 ☐ 없이 뜬다');
+  assert.doesNotMatch(body, /pickHeadBox\('sent'/, '표 머리에 전체 고르기 ☐ 가 남아 있습니다');
+  assert.match(body, /class="numonly">\$\{i\+1\}/, '번호가 없습니다');
+});
+
+test('번호만 있는 칸에도 폭 규칙이 있다', () => {
+  assert.match(app, /\.sbox (th|td)\.numonly/, 'numonly 칸의 CSS 가 없으면 폭이 흔들린다');
+});
+
 test('일괄 처리는 모두 pickList 로 지금 보이는 것만 손댄다', () => {
-  for (const fn of ['pickDelSent','pickCancelSched','pickDelMat','pickMoveMat']){
+  for (const fn of ['pickCancelSched','pickDelMat','pickMoveMat']){
     const body = fnBody(fn);
     assert.match(body, /pickList\(pickOf\('\w+'\), pickVisible\('\w+'\)\)/,
       fn + ' 이 안 보이는 것까지 손댈 수 있습니다');
@@ -173,8 +189,9 @@ test('폰 화면에도 같은 중복 단추를 두지 않는다', () => {
   assert.ok(!HAS_SEND_BTN.test(fn), '폰 화면에 중복 단추가 남아 있습니다');
 });
 
+/* 보낸 메일은 ☐ 를 거둬서(2026-08-23) 버릴 고르기가 아예 없다 — 빠졌다 */
 test('그릴 때마다 사라진 번호를 버린다', () => {
-  for (const fn of ['sentBoxHtml','schedBoxHtml','renderMatPage'])
+  for (const fn of ['schedBoxHtml','renderMatPage'])
     assert.match(fnBody(fn), /pickPrune\(/, fn + ' 이 낡은 고르기를 안 버립니다');
 });
 
