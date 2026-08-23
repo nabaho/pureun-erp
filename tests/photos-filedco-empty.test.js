@@ -68,11 +68,16 @@ test('★ filled 가 없어도 던지지 않는다 — 이것이 사진첩을 �
     '한 장만 이래도 격자 되돌이가 멎어 사진이 한 장도 안 보입니다.');
 });
 
-test('★ 채운 칸이 없으면 「확인 필요」로 남는다 — 조용히 넘기지 않는다', () => {
+/* ⚠ 2026-08-23 대표 결정으로 뒤집힌 검사다. 종전에는 「채운 칸이 없으면 확인
+   필요로 남는다」였다. 그런데 이 상태의 뜻은 «업체를 찾았고 이미 다 들어 있었다»
+   여서, 사람이 할 일이 하나도 없는데 목록에 쌓였다(실데이터 9장).
+   ⚠ 아래 「업체를 못 찾았으면」 검사는 그대로다 — 그것이 진짜 할 일이다. */
+test('★ 업체를 찾았고 이미 다 들어 있었으면 할 일이 아니다 (2026-08-23 뒤집음)', () => {
   const ctx = loadNeedsCheck();
-  assert.equal(ctx.needsCheck(fromDb), true,
-    '업체관리에 실제로 넣은 것이 없는데 다 된 일로 치면 아무도 못 챙깁니다.');
-  assert.match(ctx.checkWhy(fromDb), /업체 확인/, '왜 걸렸는지 안 알려 줍니다.');
+  assert.equal(ctx.needsCheck(fromDb), false,
+    '★ 할 일이 하나도 없는데 목록에 쌓입니다 — 치울 수 없는 할 일이 목록을 못 믿게 합니다.');
+  assert.equal(ctx.checkWhy(fromDb), '',
+    '목록에서 뺐는데 이유가 남으면 안 보이는 사진의 이유가 떠다닙니다.');
 });
 
 test('실제로 채웠으면 할 일이 아니다', () => {
@@ -103,7 +108,12 @@ test('★ 읽는 곳이 모두 같은 함수를 쓴다', () => {
   const uses = (app.match(/coFilledOk\(/g) || []).length;
   assert.ok(uses >= 5, 'coFilledOk 를 쓰는 곳이 ' + uses + '곳뿐입니다 — 넷 다 옮겨야 합니다.');
   const fn = app.match(/function coFilledOk\([\s\S]*?\n\}/)[0];
-  assert.match(fn, /\(c\.filled \|\| \[\]\)\.length/, '없을 수 있다는 것을 안 다룹니다.');
+  /* ⚠ 2026-08-23 부터 filled 를 «아예 안 본다» — found 만으로 가른다. 그래서
+     「없을 수 있다」를 다룰 필요 자체가 없어졌다(멎을 자리가 사라진 것이 더 낫다).
+     대신 맨몸으로 읽지 않는 것을 못박는다. */
+  assert.ok(!/\.filled\.length/.test(fn),
+    '★ filled 를 맨몸으로 읽으면 그 칸이 없을 때 그 줄에서 화면이 멎습니다.');
+  assert.match(fn, /c\.found/, 'found 를 안 보면 업체 없는 것까지 통과합니다.');
 });
 
 test('왜 없을 수 있는지 코드에 적어 둔다 — 다음 사람이 또 벗겨 낸다', () => {
