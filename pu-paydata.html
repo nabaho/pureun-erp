@@ -36,7 +36,7 @@
      ⚠ 엑셀 읽기 도구(vendor/xlsx.full.min.js, 1MB)는 여기서 안 싣는다 —
        엑셀을 실제로 열 때만 내려받는다(needSheetLib). 급여데이터함은 폰에서도
        열므로, 쓰지도 않을 1MB를 늘 내려받게 하면 첫 화면이 그만큼 늦다. -->
-<script src="js/pu-paydata-files.js?v=1"></script>
+<script src="js/pu-paydata-files.js?v=2"></script>
 <!-- 긋기·사본 만들기 — 사진첩과 나눠 쓴다(2026-08-17 「안 1」) -->
 <script src="js/pu-rrn-mask-ui.js?v=2"></script>
 <script src="js/pu-appbar.js?v=4"></script>
@@ -3079,7 +3079,7 @@ const NOTICE_READ_ON = true;
    느려지지 않게 한다. 한 번 받으면 그 판에서는 다시 안 받는다. */
 /* 글자로 읽는 파일 종류 — 사진으로 만들지 않고 글자를 그대로 뽑는다.
    여기 없는 종류(사진)는 지금까지처럼 가림 화면을 거쳐 AI 에 사진으로 간다. */
-const READ_TEXT_KINDS = ['sheet', 'doc', 'pdf'];
+const READ_TEXT_KINDS = ['sheet', 'doc', 'pdf', 'text'];
 
 let sheetLibP = null;
 let docLibP = null;
@@ -3172,10 +3172,20 @@ function startDocRead() {
   App.readState = { status: 'reading', rows: [], err: '' };
   App.render();
   const forId = App.viewerId;
-  return needDocLib()
+  /* 글자 파일은 도구가 필요 없다 — 2MB 를 내려받을 까닭이 없다. */
+  const needLib = PuPaydataFiles.fileKind(rec.filename) === 'text'
+    ? Promise.resolve() : needDocLib();
+  return needLib
     .then(() => fetch(App.viewerUrl))
     .then(r => { if (!r.ok) throw new Error('파일을 받지 못했습니다 (' + r.status + ')'); return r.arrayBuffer(); })
-    .then(ab => window.extractDocText(ab, window.XLSX, window.pako, window.pdfjsLib))
+    .then(ab => {
+      /* 글자 파일(.txt — 메일 본문·카톡 내보내기)은 **뽑을 것이 없다.** 이미 글자다.
+         추출기에 넣으면 HWP 로 여겨 터진다. */
+      if (PuPaydataFiles.fileKind(rec.filename) === 'text') {
+        return new TextDecoder().decode(new Uint8Array(ab));
+      }
+      return window.extractDocText(ab, window.XLSX, window.pako, window.pdfjsLib);
+    })
     .then(text => {
       if (App.viewerId !== forId) return;
       let body = String(text || '').replace(/\n{3,}/g, '\n\n').trim();
@@ -3754,15 +3764,19 @@ function readPanelHtml() {
     } else if (!sh) {
       const fk = PuPaydataFiles.fileKind(rec.filename);
       const isSheet = fk === 'sheet';
-      body = '<div class="pre"><div class="big">' + (isSheet ? '📊' : '📄') + '</div><p><b>'
-        + (isSheet ? '엑셀 파일입니다.' : (fk === 'pdf' ? 'PDF 파일입니다.' : '한글·워드 문서입니다.')) + '</b><br>'
+      const isText = fk === 'text';
+      body = '<div class="pre"><div class="big">' + (isSheet ? '📊' : isText ? '✉' : '📄') + '</div><p><b>'
+        + (isSheet ? '엑셀 파일입니다.'
+          : isText ? '메일 본문입니다.'
+          : (fk === 'pdf' ? 'PDF 파일입니다.' : '한글·워드 문서입니다.')) + '</b><br>'
         + (isSheet
           ? '칸 값을 <b>그대로</b> 읽습니다 — 사진으로 만들지 않으니<br>숫자를 잘못 읽는 일이 없습니다.'
+          : isText ? '이미 글자입니다 — 그대로 읽습니다.<br>첨부 없이 본문에 적어 보낸 것도 값이 됩니다.'
           : '글자를 <b>그대로</b> 뽑아 읽습니다 — 사진으로 만들지 않습니다.<br>'
             + (fk === 'pdf' ? '스캔한 종이 PDF 는 글자가 없어 안 됩니다.' : ''))
         + '</p>'
         + '<button class="btn pri" onclick="' + (isSheet ? 'startSheetRead()' : 'startDocRead()') + '">'
-        + (isSheet ? '📊 엑셀 열기' : '📄 글자 뽑기') + '</button> '
+        + (isSheet ? '📊 엑셀 열기' : isText ? '📄 본문 읽기' : '📄 글자 뽑기') + '</button> '
         + '<button class="btn" onclick="startManualRows()">✍ 직접 적기</button></div>';
     } else {
       body = '<div class="sub">' + (sh.names.length > 1

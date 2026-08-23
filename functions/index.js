@@ -993,6 +993,37 @@ async function payMailKnownList(db) {
   return list;
 }
 
+/* 메일 본문을 창고에 .txt 로 담고 대기 칸에 한 줄 적는다 (대표 결정 2026-08-23).
+   첨부가 **하나도 안 담긴** 메일에만 쓴다 — 첨부까지 있는 메일마다 줄을 하나 더
+   만들면 대기 칸이 두 배가 된다.
+   ⚠ RTDB 얇은 칸에 긴 글을 넣지 않는다. 창고에 담으면 원본 보존·뷰어·서랍·
+   휴지통·보유기간이 손댈 것 없이 그대로 돈다. */
+async function payMailStoreBody(db, bucket, text, mail) {
+  const id = payMailId();
+  const where = PAYDATA_BUCKET_ROOT + "/" + PAYMAIL_UPLOADER + "/pending/" + id + ".txt";
+  const buf = Buffer.from(text, "utf8");
+  await bucket.file(where).save(buf, { contentType: "text/plain; charset=utf-8", resumable: false });
+
+  const name = MR.bodyFilename(mail.subject);
+  const route = MR.routeFor(
+    { from: mail.from, subject: mail.subject, filename: name },
+    payMailKnownCache.index, payMailKnownCache.owners, mail.box);
+  const common = {
+    filename: name, file: where,
+    mime: "text/plain", bytes: buf.length,
+    at: Date.now(), mailFrom: mail.from, mailSubject: mail.subject, tag: route.tag,
+  };
+  const up = {};
+  if (route.shared) {
+    up[PAYDATA_ROOT + "/pending_shared/" + id] =
+      MR.sharedPendingRecord(Object.assign({ why: route.why }, common));
+  } else {
+    up[PAYDATA_ROOT + "/u/" + route.seat + "/pending/" + id] = MR.pendingRecordFor(common);
+  }
+  await db.ref().update(up);
+  return { id: id, seat: route.seat, shared: route.shared, why: route.why };
+}
+
 /* 첨부 하나를 창고에 담고, **임자를 찾아 그 사람 대기 칸**에 한 줄 적는다.
    못 찾으면 공용 칸에 남긴다(까닭과 함께). */
 async function payMailStoreOne(db, bucket, att, mail) {
@@ -1005,7 +1036,7 @@ async function payMailStoreOne(db, bucket, att, mail) {
   });
   const route = MR.routeFor(
     { from: mail.from, subject: mail.subject, filename: att.filename },
-    payMailKnownCache.index, payMailKnownCache.owners);
+    payMailKnownCache.index, payMailKnownCache.owners, mail.box);
 
   const common = {
     filename: att.filename, file: where,
@@ -1146,6 +1177,7 @@ async function runPaydataMailOnce() {
         }
 
         const atts = Array.isArray(parsed.attachments) ? parsed.attachments : [];
+        let tookHere = 0;              // 이 메일에서 담은 첨부 수
         for (const att of atts) {
           const chk = MR.okAttachment(att);
           if (!chk.ok) {
@@ -1154,16 +1186,38 @@ async function runPaydataMailOnce() {
             continue;
           }
           try {
-            const r = await payMailStoreOne(db, bucket, att, { from: sender, subject: subject });
+            const r = await payMailStoreOne(db, bucket, att,
+              { from: sender, subject: subject, box: item.box });
             /* 갈린 것과 공용에 남은 것을 따로 센다 — 「왜 아무도 안 받나」를
                로그만 보고 알 수 있어야 한다. */
             if (r && r.shared) { shared++; whys[r.why] = (whys[r.why] || 0) + 1; }
             else routed++;
-            took++;
+            took++; tookHere++;
           } catch (e) {
             // 한 건이 막혀도 나머지는 담는다. 읽음 표시는 아래에서 한다.
             skipped++;
             console.error("receivePaydataMail 담기 실패:", att.filename, String((e && e.message) || e));
+          }
+        }
+        /* 첨부가 하나도 안 담겼으면 **본문으로** 한 줄 만든다(대표 결정 2026-08-23).
+           첨부 없이 본문에 적어 보낸 메일이 통째로 버려지고 있었다. */
+        if (!tookHere) {
+          const bodyText = MR.bodyTextOf(parsed);
+          const bchk = MR.okBody(bodyText);
+          if (bchk.ok) {
+            try {
+              const r = await payMailStoreBody(db, bucket, bodyText,
+                { from: sender, subject: subject, box: item.box });
+              if (r && r.shared) { shared++; whys[r.why] = (whys[r.why] || 0) + 1; }
+              else routed++;
+              took++;
+            } catch (e) {
+              skipped++;
+              console.error("receivePaydataMail 본문 담기 실패:", String((e && e.message) || e));
+            }
+          } else {
+            skipped++;
+            console.log("receivePaydataMail 본문 건너뜀:", bchk.why);
           }
         }
         await markSeen(client, item);

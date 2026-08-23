@@ -178,6 +178,68 @@ function pickMailboxes(list, conf) {
   return out;
 }
 
+/* ══════ 메일 본문도 자료로 (대표 결정 2026-08-23) ══════
+   여태 **첨부만** 담고 본문은 통째로 버렸다. 그래서 첨부 없이 본문에 적어
+   보낸 메일(「이번달 김철수 22일」)이 아예 안 들어왔고, 카톡·문자를 메일로
+   전달한 것도 못 썼다.
+
+   ⚠ 본문은 **창고에 .txt 로** 담는다. RTDB 얇은 칸에 긴 글을 넣으면 목록을
+   읽을 때마다 그 글이 다 따라온다(요금·속도). 창고에 담으면 원본 보존·뷰어·
+   서랍·휴지통·보유기간이 손댈 것 없이 그대로 돈다. */
+var BODY_MAX = 20000;          // AI 한도와 창고 씀씀이를 함께 본 값
+
+/* 본문 글자. 글자 본문(text)이 있으면 그것을 쓰고, 없으면 HTML 에서 태그를
+   걷어낸다. ⚠ 줄바꿈을 살려야 한다 — 한 줄로 뭉치면 「김철수 22 이영희 21」이
+   되어 표를 못 읽는다. */
+function bodyTextOf(parsed) {
+  var p = parsed || {};
+  var t = String(p.text == null ? '' : p.text);
+  if (!t.trim() && p.html) {
+    t = String(p.html)
+      .replace(/<\s*(br|BR)\s*\/?\s*>/g, '\n')
+      .replace(/<\s*\/\s*(p|div|tr|li|h[1-6])\s*>/gi, '\n')
+      .replace(/<\s*(script|style)[\s\S]*?<\s*\/\s*\1\s*>/gi, ' ')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+      .replace(/&amp;/g, '&');
+  }
+  /* 줄마다 앞뒤 빈칸을 떼고, 빈 줄이 세 줄 넘게 이어지면 하나로 줄인다 —
+     메일은 서명·인용 때문에 빈 줄이 수십 줄 붙어 온다. */
+  t = t.replace(/\r/g, '')
+    .split('\n').map(function (l) { return l.replace(/[ \t]+/g, ' ').trim(); }).join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (!t) return '';
+  if (t.length > BODY_MAX) {
+    t = t.slice(0, BODY_MAX) + '\n… 본문이 너무 길어 여기서 잘랐습니다.';
+  }
+  return t;
+}
+
+/* 담을 만한 본문인가. ⚠ 「감사합니다」·「자료 보내드립니다」 같은 인사말까지
+   담으면 대기 칸이 쓰레기로 찬다. **숫자가 하나도 없으면** 값이 될 것이
+   없으므로 줄을 만들지 않는다(사람 이름만 있는 인사말도 그렇다). */
+function okBody(text) {
+  var t = String(text == null ? '' : text).trim();
+  if (t.length < 10) return { ok: false, why: '본문이 너무 짧습니다' };
+  if (!/[0-9]/.test(t)) return { ok: false, why: '숫자가 없어 값으로 만들 것이 없습니다' };
+  return { ok: true, why: '' };
+}
+
+/* 본문 파일 이름 — 사람이 대기 칸에서 보는 이름이라 **메일 제목**을 쓴다.
+   창고 자리에 못 쓰는 글자(\ / : * ? " < > |)는 걷어낸다. */
+function bodyFilename(subject) {
+  var s = String(subject == null ? '' : subject)
+    .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!s) s = '메일 본문';
+  if (s.length > 100) s = s.slice(0, 100);
+  return s + '.txt';
+}
+
 /* 보낸이·제목을 한 줄 메모로 — 나중에 「누가 보냈나」를 물을 수 있어야 한다. */
 function mailNoteOf(o) {
   const from = String(o.mailFrom || '');
@@ -238,6 +300,32 @@ function companyFor(fromHeader, index) {
   return (index && index[a]) || null;
 }
 
+/* ── 폴더 이름에서 사람 찾기 (대표 결정 2026-08-23) ──
+   다음메일에 「급여-최기운」 같은 폴더를 만들어 메일을 옮기면 그 사람에게 간다.
+   지금까지는 업체관리 담당만 보고 갈라, 주소가 등록 안 된 곳이나 담당을 바꿔야
+   할 건을 **사람이 바로잡을 길이 없었다.**
+
+   ⚠ 이름이 두 사람과 걸리면 **아무도 안 고른다.** 한쪽을 골라 보내면 나머지
+   사람은 그 자료가 어디 갔는지 모른다 — 공용 칸에 남기는 것이 낫다.
+   ⚠ 폴더는 필요한 사람만 만들면 된다. 없으면 예전처럼 자동 배정으로 간다. */
+function seatFromBox(box, owners) {
+  var b = String(box == null ? '' : box);
+  if (!b) return '';
+  var ow = owners || {};
+  var hit = [];
+  Object.keys(ow).forEach(function (uid) {
+    var o = ow[uid] || {};
+    var nm = String(o.name || '').trim();
+    if (nm && nm.length >= 2 && b.indexOf(nm) >= 0) { hit.push(uid); return; }
+    /* 사번으로 적어도 찾는다 — 이름이 겹치는 사람이 있을 때 쓸 수 있어야 한다.
+       p001@pureun.kr → 'p001'. 폴더에 'p-001' 로 적어도 붙게 붙임표를 뗀다. */
+    var sid = String(o.email || '').split('@')[0].toLowerCase();
+    if (sid && b.toLowerCase().replace(/-/g, '').indexOf(sid) >= 0) hit.push(uid);
+  });
+  if (hit.length !== 1) return '';       // 없거나 둘 이상이면 자동 배정에 맡긴다
+  return hit[0];
+}
+
 /* 그 업체 **주담당**의 자리(uid). 부담당에게는 안 보낸다 —
    둘에게 다 보내면 같은 자료가 두 벌이 되고, 부담당에게만 보내면 주담당이 모른다.
    아직 이 함에 안 들어온 사람은 자리가 없다(빈 문자열). */
@@ -288,19 +376,27 @@ function tagFor(o, company) {
   };
 }
 
-/* 이 메일 한 통을 어디로 보낼지 — 자리 하나와 까닭 한 줄. */
-function routeFor(o, index, owners) {
+/* 이 메일 한 통을 어디로 보낼지 — 자리 하나와 까닭 한 줄.
+   ⚠ 차례: **폴더가 사람을 가리키면 그것이 이긴다** > 업체관리 자동 배정.
+   사람이 손으로 옮긴 것이 자동보다 뒤로 밀리면 옮긴 뜻이 없다(대표 결정 2026-08-23). */
+function routeFor(o, index, owners, box) {
   o = o || {};
   const co = companyFor(o.from, index);
   const tag = tagFor(o, co);
-  if (!co) return { seat: '', shared: true, tag: tag, why: '업체관리에 없는 주소' };
+
+  /* 폴더로 사람이 정해졌으면 업체를 몰라도 그 사람에게 보낸다 — 이것이
+     폴더를 만드는 가장 큰 값이다(업체관리에 주소가 없어도 임자에게 간다). */
+  const byBox = seatFromBox(box, owners);
+  if (byBox) return { seat: byBox, shared: false, tag: tag, why: '', byBox: true };
+
+  if (!co) return { seat: '', shared: true, tag: tag, why: '업체관리에 없는 주소', byBox: false };
   const seat = seatFor(co, owners);
   if (!seat) {
     const sid = String(co.managerMain || '');
-    return { seat: '', shared: true, tag: tag,
+    return { seat: '', shared: true, tag: tag, byBox: false,
       why: sid ? '주담당이 아직 급여데이터함에 들어온 적이 없음' : '업체관리에 주담당이 없음' };
   }
-  return { seat: seat, shared: false, tag: tag, why: '' };
+  return { seat: seat, shared: false, tag: tag, why: '', byBox: false };
 }
 
 /* 담당자 대기 칸에 넣을 줄. 사람이 담은 줄과 모양이 같아야 그 화면이 그대로 그린다 —
@@ -355,5 +451,7 @@ module.exports = {
   buildCompanyIndex, companyFor, seatFor, tagFor, routeFor,
   mailConfOf, pickMailboxes, MAILBOX_HINT,
   trustBox,
+  BODY_MAX, bodyTextOf, okBody, bodyFilename,
+  seatFromBox,
   extOf, okAttachment, sharedPendingRecord, pendingRecordFor, mailNoteOf
 };
