@@ -1023,12 +1023,10 @@ async function payMailStoreOne(db, bucket, att, mail) {
   return { id: id, seat: route.seat, shared: route.shared, why: route.why };
 }
 
-exports.receivePaydataMail = functions
-  .region(MAIL_REGION)
-  .runWith({ secrets: ["DAUM_MAIL_PASSWORD"], timeoutSeconds: 540, memory: "512MB" })
-  .pubsub.schedule("every 30 minutes")
-  .timeZone("Asia/Seoul")
-  .onRun(async () => {
+/* 메일 한 회차 — 30분마다 도는 것과 사람이 누르는 「지금 가져오기」가 **함께** 쓴다.
+   두 벌로 두면 한쪽만 고쳐 놓고 다른 쪽은 옛 길로 남는다. */
+async function runPaydataMailOnce() {
+  {
     const user = await mailUserAsync();
     const pass = mailPass();
     if (!user || !pass) {
@@ -1111,7 +1109,11 @@ exports.receivePaydataMail = functions
 
       // 빈 메일함이면 업체·직원 명부를 내려받지 않는다. 사람이 아무것도 하지
       // 않아도 비용이 오르던 가장 불필요한 읽기를 이 지점에서 끊는다.
-      if (!inbox.length) return null;
+      /* 빈 메일함이면 여기서 끝낸다. 「지금 가져오기」가 말할 것이 있어야 하므로
+         0 을 담은 셈을 돌려준다 — null 이면 화면이 「0통」인지 「못 봤는지」를 못 가린다. */
+      if (!inbox.length) {
+        return { boxes: boxes, looked: 0, took: 0, skipped: 0, unknown: 0, routed: 0, shared: 0 };
+      }
       const known = await payMailKnownList(db);
 
       for (const item of inbox) {
@@ -1171,7 +1173,63 @@ exports.receivePaydataMail = functions
     } finally {
       try { await client.logout(); } catch (_) { /* 이미 끊겼다 */ }
     }
-    return null;
+    return { boxes: boxes, looked: inbox.length, took: took, skipped: skipped,
+      unknown: unknown, routed: routed, shared: shared };
+  }
+}
+
+exports.receivePaydataMail = functions
+  .region(MAIL_REGION)
+  .runWith({ secrets: ["DAUM_MAIL_PASSWORD"], timeoutSeconds: 540, memory: "512MB" })
+  .pubsub.schedule("every 30 minutes")
+  .timeZone("Asia/Seoul")
+  .onRun(async () => { await runPaydataMailOnce(); return null; });
+
+/* ── 「지금 가져오기」 (대표 결정 2026-08-23) ──
+   30분을 기다리지 않고 사람이 눌러 바로 당긴다. 「보냈다는데 왜 안 보이나」를
+   그 자리에서 확인할 수 있어야 한다.
+
+   ⚠ 직원만 부를 수 있다(requireStaff) — 아니면 회사 메일함을 아무나 뒤진다.
+   ⚠ 60초 안에 또 부르면 거절한다. 메일 서버에 붙는 일이라 연달아 누르면
+     계정이 잠긴다. 두 번 눌리는 것을 화면에서도 막지만 여기서도 막는다. */
+const PULL_COOL_MS = 60 * 1000;
+
+exports.pullPaydataMail = functions
+  .region(MAIL_REGION)
+  .runWith({ secrets: ["DAUM_MAIL_PASSWORD"], timeoutSeconds: 300, memory: "512MB" })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).json({ ok: false, error: "POST 요청만 허용됩니다." }); return; }
+    try {
+      await requireStaff(req);
+    } catch (e) {
+      res.status(e.status || 401).json({ ok: false, error: String(e.message || e) });
+      return;
+    }
+    const db = getDatabase();
+    const key = PAYDATA_ROOT + "/mailconf/lastPull";
+    const now = Date.now();
+    try {
+      const snap = await db.ref(key).once("value");
+      const last = Number((snap && snap.val()) || 0);
+      if (now - last < PULL_COOL_MS) {
+        const wait = Math.ceil((PULL_COOL_MS - (now - last)) / 1000);
+        res.status(429).json({ ok: false, error: wait + "초 뒤에 다시 눌러 주세요." });
+        return;
+      }
+      await db.ref(key).set(now);
+    } catch (e) {
+      /* 시각을 못 적어도 받는 일은 해야 한다 — 다만 그때는 잠금이 없는 셈이다 */
+      console.warn("pullPaydataMail 잠금 확인 실패:", String((e && e.message) || e));
+    }
+    try {
+      const out = await runPaydataMailOnce();
+      res.json(Object.assign({ ok: true }, out || {}));
+    } catch (e) {
+      console.error("pullPaydataMail 실패:", String((e && e.message) || e));
+      res.status(500).json({ ok: false, error: String((e && e.message) || e) });
+    }
   });
 
 

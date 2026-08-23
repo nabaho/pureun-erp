@@ -542,6 +542,32 @@
      그때는 규칙을 넣기 전이라는 뜻이지 고장이 아니다. */
   function mailConfPath() { return DB_ROOT + '/mailconf'; }
 
+  /* ── 「지금 가져오기」 (대표 결정 2026-08-23) ──
+     30분을 기다리지 않고 서버에 지금 메일을 보라고 시킨다.
+     ⚠ 로그인 표(idToken)를 함께 보낸다 — 서버가 직원인지 확인한다.
+     ⚠ 서버가 60초 잠금을 걸고 있다. 연달아 누르면 429 로 「몇 초 뒤에」라고 온다. */
+  var PULL_URL = 'https://asia-northeast3-pureun-erp.cloudfunctions.net/pullPaydataMail';
+
+  function pullMailNow() {
+    var fb = deps.firebase || (typeof firebase !== 'undefined' ? firebase : null);
+    if (!fb || !fb.auth) return Promise.reject(new Error('로그인을 확인할 수 없습니다'));
+    var u = fb.auth().currentUser;
+    if (!u) return Promise.reject(new Error('로그인이 필요합니다'));
+    return u.getIdToken().then(function (tok) {
+      return fetch(PULL_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
+        body: '{}'
+      });
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok || !j.ok) throw new Error(j.error || ('가져오지 못했습니다 (' + r.status + ')'));
+        return j;
+      });
+    });
+  }
+
+
   function listMailConf() {
     if (!deps.db) return Promise.resolve({});
     return deps.db.ref(mailConfPath()).once('value')
@@ -1605,6 +1631,7 @@
     watchArrival: watchArrival,
     listSharedPending: listSharedPending,
     mailConfPath: mailConfPath,
+    pullMailNow: pullMailNow,
     listMailConf: listMailConf,
     setMailScanInbox: setMailScanInbox,
     mailNote: mailNote,
